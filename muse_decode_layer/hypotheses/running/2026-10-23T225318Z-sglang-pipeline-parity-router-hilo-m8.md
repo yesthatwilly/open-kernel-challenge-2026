@@ -50,13 +50,19 @@ review: proceed
 status: running
 review_at: 2026-10-23T230349Z
 review_companions: null
-stage: claimed
+stage: implemented
 claimed_at: 2026-10-23T230349Z
 base_sha: c33a496b7fcb0965469bd5d5a5abc1b4f6da76ab
 base_blob: 0a0fc36b7854c07f5047c1df4e08ee984a830651
 branch: hyp/muse_decode_layer/sglang-pipeline-parity-router-hilo-m8
 worktree: .worktrees/muse_decode_layer/sglang-pipeline-parity-router-hilo-m8
 mode: null
+implemented_at: 2026-10-23T231146Z
+impl_commit: 54112d428da559b67789e07fa8f2e586fe5fb45e
+submission_sha256: a4494dce1b8eeddd142a3a93389ebb60076dbe1537de7ad691dedb9f52c65769
+norm_sha256: 6d5d907e8eaec21de3a7d64e0683a8b402a2d1e90f7520e0df8d8ca9e06a594f
+submission_blob: 6884d26a928d1de1b07bf8d28e1be4e53dfdcfc5
+lint_warnings: 1
 ---
 
 # sglang-pipeline-parity-router-hilo-m8
@@ -99,3 +105,73 @@ Nothing has landed on master (landed list empty; master is the plain-PyTorch sta
 - Will the ten pure-parity shapes land at ~1.00x? Any systematic offset there (harness-side differences in state construction, stream creation or graph capture) would undermine the base every queued dependent stacks on and should be investigated before dispatching dependents.
 - Follow-up, not a companion: at T=1 the fp32 gemv path costs 10.4 us (three kernels) on the side stream but is hidden under the 21 us pooler, so extending hi/lo to T=1 is not expected to pay; the hypothesis is right to leave decode_1 untouched.
 
+## Implementation notes
+
+Ported baseline.py (SGLang commit a55ab7d5, MuseSpark1xDecoderLayer.forward) into
+`muse_decode_layer/submission.py` on the branch, whole: the same imports (sgl_kernel FA3 and
+scalar_types; sglang.kernels silu_and_mul, store_cache, moe_wna16_marlin_gemm, FusedMuseSparkRouting,
+FusedRMSNormGate, FusedPostNormResidualPreNorm, fused_post_expert_norm_weighted_sum, FusedQKNorm;
+moe_align_block_size; the three MuseSpark1x norm/residual classes; marlin_make_workspace,
+prepare_moe_nvfp4_layer_for_marlin, _bf16_gemm_dispatch_impl), `prepare()` (Marlin bank via
+`_marlin_bank`, the fused modules, the [2^21, 64] cos|sin table, the router hi/lo bf16 split
+transposed for torch.mm, the side stream), `_experts()` and `kernel_fn(data, state)` (bf16 GEMM
+dispatch for qkv_gate/o/pooler/unpooler, FusedQKNorm with RoPE on sliding layers, FP8 k/v casts +
+`store_cache`, `flash_attn_with_kvcache` with `scheduler_metadata` passed through unchanged, the two
+boundary JIT kernels, the router + FusedMuseSparkRouting on the side stream with
+`main_stream.wait_stream(side_stream)` before `local_ids`, `moe_align_block_size`, the two
+`moe_wna16_marlin_gemm` calls, `silu_and_mul`, `fused_post_expert_norm_weighted_sum`, sliced unpooler
++ zero pad at T <= 8). The starter's Weights/Config/Inputs TypedDicts are kept verbatim (their field
+comments are a little fuller than baseline's; AST-identical). No reference.py import; the file is
+self-contained.
+
+The one change: `ROUTER_FP32_MAX_TOKENS = 1` (baseline: 8), at
+`muse_decode_layer/submission.py:148`, with its comment updated. Through baseline's own
+`split_router = tokens > ROUTER_FP32_MAX_TOKENS`, this means T=1 still runs
+`F.linear(router_input, state["router"])` in fp32 on the fp32 router input, while every T >= 2
+(the T=8 verify_1 shapes are the only scored ones that move; T=16..256 were already on this path) runs
+`torch.mm(ffn_input, router_hi_t, out_dtype=float32)` + `torch.mm(ffn_input, router_lo_t,
+out_dtype=float32)`. router_dtype consequence: `attn_boundary(..., router_dtype=None if split_router
+else torch.float32)` is therefore called with `router_dtype=None` at T=8, so the
+FusedPostNormResidualPreNorm JIT kernel no longer writes the fp32 [8, 8192] router input there
+(one fewer output), and the router consumes the bf16 `ffn_input` instead, exactly as SGLang does at
+T > 8.
+
+Verification: the commit step's normalized-AST hash (`churn.py:norm_sha256`, which strips
+docstrings, annotations and TypedDict classes) differs from baseline.py's, and the same file with
+the constant put back to 8 hashes identical to baseline.py, so the constant is the sole AST
+difference. Diff vs baseline.py's code lines: the module docstring, the starter's TypedDict
+comments, the constant and its comment; nothing else.
+
+Deviations: none in code. Not verified at runtime (no GPU/SGLang on this machine): that
+FusedMuseSparkRouting returns int32 [T, 8] ids (the judge's `collect` demands exactly that dtype;
+baseline.py returns the same tensor unchanged and is the judge's own timed kernel, so it must), and
+that m=8 `torch.mm(..., out_dtype=float32)` picks a decent cuBLAS kernel (the open question in the
+review). Syntax checked with ast.parse; lint OK.
+
+## Rules check
+
+- [x] CUDA-graph capturable: the only `torch.cuda.synchronize()` in the diff is baseline's own, in
+      `prepare()` (untimed); kernel_fn/_experts have no `.item()`/`.cpu()`/prints; the only
+      branches are on `cfg[...]` and `tokens` (config), and `torch.cuda.is_current_stream_capturing()`
+      exactly as baseline.
+- [x] Nothing derived from `data` is cached across calls: `state` is built only from `weights` in
+      `prepare()`; kernel_fn writes nothing into `state` or module globals (diff grepped for
+      `global`, container writes; none).
+- [x] Weights: the Marlin bank comes from SGLang's own `prepare_moe_nvfp4_layer_for_marlin`
+      (lossless NVFP4 repack); bf16 weights are only made contiguous; the router fp32 -> bf16 hi+lo
+      split with fp32 `out_dtype` accumulation is the named exception, now used at T >= 2 (allowed
+      "at any batch size").
+- [x] Activations: BF16 everywhere baseline keeps BF16 (same `branch_dtype=torch.bfloat16` calls,
+      same bf16 GEMM inputs); k/v cast to FP8 e4m3 as baseline; q to FP8 e4m3 for FA3 (the one
+      permitted rounding).
+- [x] Attention sees every key: `flash_attn_with_kvcache` call is byte-identical to baseline
+      (`causal=True`, `window_size=(window-1, 0)` on sliding layers, `(-1, -1)` on full,
+      `scheduler_metadata` passed through); no top-k/sparse/skipping anywhere.
+- [x] No timing patches, harness frames/I/O/secrets, module edits, reference import, subprocesses
+      or network: imports are exactly baseline's set plus nothing; diff grepped for
+      `reference`, `subprocess`, `socket`, `sys.modules`, `inspect`; none.
+- [x] All work happens inside the timed call; no output caching or replay: kernel_fn recomputes
+      everything from `data` each call; prepare() only repacks weights and builds modules/tables.
+
+Lint: `OK with warnings: muse_decode_layer/submission.py` (one warn: `host-sync L245:
+torch.cuda.synchronize() (outside kernel_fn's call graph; fine in prepare())`), exit 0.
