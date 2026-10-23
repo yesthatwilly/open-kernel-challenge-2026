@@ -45,9 +45,16 @@ priority: 1
 kind: primary
 controls_for: null
 review: proceed
-status: queued
+status: running
 review_at: 2026-10-23T230616Z
 review_companions: null
+stage: claimed
+claimed_at: 2026-10-23T230616Z
+base_sha: 4739730c9a8a22229401f2e07ef91550db8b0152
+base_blob: 8eeb6a4778875e37a1d9c55a5e27ee6079999847
+branch: hyp/muse_moe_w4a16/sglang-marlin-path-parity
+worktree: .worktrees/muse_moe_w4a16/sglang-marlin-path-parity
+mode: null
 ---
 
 # sglang-marlin-path-parity
