@@ -42,6 +42,7 @@ attempt_file: 2026-10-23T221952Z-check-sglang-gemm-dispatch-parity.md
 prepared_at: 2026-10-23T221952Z
 job: 017804b34fed40b3
 dispatched_at: 2026-10-23T222029Z
+recover_note: adopted from ~/.config/okc/jobs.json
 ---
 
 # sglang-gemm-dispatch-parity
