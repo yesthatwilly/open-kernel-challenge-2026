@@ -46,7 +46,7 @@ review: proceed
 status: running
 review_at: 2026-10-23T230544Z
 review_companions: null
-stage: implemented
+stage: dispatched
 claimed_at: 2026-10-23T230545Z
 base_sha: e64f27ef09b3512d26573dde4d35b8ec3ade1f63
 base_blob: 5a2064af06f442f01dff926cb4f1eca75f992a24
@@ -61,6 +61,8 @@ submission_blob: 2752a016d386e9261ec77e25b426c05b76c071ac
 lint_warnings: 0
 attempt_file: 2026-10-23T231158Z-check-pooler-triton-skinny-m32.md
 prepared_at: 2026-10-23T231158Z
+job: 9f0ad00bbc874d31
+dispatched_at: 2026-10-23T231206Z
 ---
 
 # pooler-triton-skinny-m32
