@@ -36,9 +36,16 @@ priority: 2
 kind: primary
 controls_for: null
 review: proceed
-status: queued
+status: running
 review_at: 2026-10-23T230427Z
 review_companions: null
+stage: claimed
+claimed_at: 2026-10-23T230427Z
+base_sha: e64f27ef09b3512d26573dde4d35b8ec3ade1f63
+base_blob: 5a2064af06f442f01dff926cb4f1eca75f992a24
+branch: hyp/muse_bf16_proj/unpooler-slice-triton-gemv
+worktree: .worktrees/muse_bf16_proj/unpooler-slice-triton-gemv
+mode: null
 ---
 
 # unpooler-slice-triton-gemv
