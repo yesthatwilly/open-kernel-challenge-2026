@@ -25,7 +25,14 @@ expected:
 risk: low
 depends_on: null
 priority: 1
-status: queued
+status: running
+stage: claimed
+claimed_at: 2026-10-23T221905Z
+base_sha: 965a5a2c44b96f0f62ef2d7cd77e99c879e9d3df
+base_blob: 6ce773a44036578450b1489df0030d65d2c67c0e
+branch: hyp/muse_bf16_proj/sglang-gemm-dispatch-parity
+worktree: .worktrees/muse_bf16_proj/sglang-gemm-dispatch-parity
+mode: null
 ---
 
 # sglang-gemm-dispatch-parity
