@@ -2,7 +2,7 @@
 """PreToolUse gate for `okc check` / `okc submit`.
 
 Refuses the run unless the problem's attempts/ directory holds an unconsumed attempt file for
-the same mode: named <YYYY-MM-DDTHHMMZ>-<mode>-<slug>.md, modified within the last 2 hours, and
+the same mode: named <YYYY-MM-DDTHHMM[SS]Z>-<mode>-<slug>.md, modified within the last 2 hours, and
 whose Job line is still the template placeholder (no job id filled in yet). Every run needs its
 own file, so a file whose job id has been filled in does not cover a second run.
 
@@ -110,7 +110,7 @@ def main():
         now = time.time()
         fresh, stale, consumed = [], [], []
         for name in sorted(os.listdir(attempts)):
-            if not re.match(r"\d{4}-\d{2}-\d{2}T\d{4}Z-" + mode + r"-.+\.md$", name):
+            if not re.match(r"\d{4}-\d{2}-\d{2}T\d{4}(\d{2})?Z-" + mode + r"-.+\.md$", name):
                 continue
             full = os.path.join(attempts, name)
             age = now - os.path.getmtime(full)
@@ -125,7 +125,7 @@ def main():
         if fresh:
             allow()
         hint = (f"okc {mode} refused for {problem}: no unconsumed attempt file in {attempts}. "
-                f"Every run needs its own file named <YYYY-MM-DDTHHMMZ>-{mode}-<slug>.md, modified in the "
+                f"Every run needs its own file named <YYYY-MM-DDTHHMM[SS]Z>-{mode}-<slug>.md, modified in the "
                 f"last 2 hours, with its Job line still '`<job id>`' (fill the id in after the run). "
                 f"Copy ATTEMPT_TEMPLATE.md from the repo root.")
         if stale:
