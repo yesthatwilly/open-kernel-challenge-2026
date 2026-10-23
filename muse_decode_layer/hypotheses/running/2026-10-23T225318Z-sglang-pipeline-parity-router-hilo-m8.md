@@ -47,9 +47,16 @@ priority: 1
 kind: primary
 controls_for: null
 review: proceed
-status: queued
+status: running
 review_at: 2026-10-23T230349Z
 review_companions: null
+stage: claimed
+claimed_at: 2026-10-23T230349Z
+base_sha: c33a496b7fcb0965469bd5d5a5abc1b4f6da76ab
+base_blob: 0a0fc36b7854c07f5047c1df4e08ee984a830651
+branch: hyp/muse_decode_layer/sglang-pipeline-parity-router-hilo-m8
+worktree: .worktrees/muse_decode_layer/sglang-pipeline-parity-router-hilo-m8
+mode: null
 ---
 
 # sglang-pipeline-parity-router-hilo-m8
