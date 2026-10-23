@@ -54,13 +54,15 @@ base_sha: 4739730c9a8a22229401f2e07ef91550db8b0152
 base_blob: 8eeb6a4778875e37a1d9c55a5e27ee6079999847
 branch: hyp/muse_moe_w4a16/sglang-marlin-path-parity
 worktree: .worktrees/muse_moe_w4a16/sglang-marlin-path-parity
-mode: null
+mode: check
 implemented_at: 2026-10-23T231147Z
 impl_commit: 6b5469bd92f0a43ce5908912b02fb8dee425c3fa
 submission_sha256: 149fe060036b35682f97b6bc5d6e9a1d8e206c9e925a7eba736043723613a5c3
 norm_sha256: 5ccbf8c8b17a3a86b37c90e49b77f70e05f67e397aa52c1c8ff73cb713084c58
 submission_blob: 11fbc1957daf7294cd2810ff82a0aad2f25644bd
 lint_warnings: 1
+attempt_file: 2026-10-23T231147Z-check-sglang-marlin-path-parity.md
+prepared_at: 2026-10-23T231147Z
 ---
 
 # sglang-marlin-path-parity
