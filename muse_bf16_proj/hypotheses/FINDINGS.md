@@ -1,6 +1,6 @@
 # muse_bf16_proj findings
 
-Regenerated 2026-10-23T221828Z by `churn.py index`. Read this before writing a hypothesis for muse_bf16_proj.
+Regenerated 2026-10-23T221905Z by `churn.py index`. Read this before writing a hypothesis for muse_bf16_proj.
 
 ## Current best
 
@@ -51,4 +51,4 @@ Where the time goes (per scored shape, top kernels):
 
 ## Queue and in flight
 
-- empty
+- queue: sglang-gemm-dispatch-parity [bf16 GEMM dispatch] p1 queued
