@@ -50,7 +50,7 @@ review: proceed
 status: running
 review_at: 2026-10-23T230349Z
 review_companions: null
-stage: implemented
+stage: dispatched
 claimed_at: 2026-10-23T230349Z
 base_sha: c33a496b7fcb0965469bd5d5a5abc1b4f6da76ab
 base_blob: 0a0fc36b7854c07f5047c1df4e08ee984a830651
@@ -65,6 +65,8 @@ submission_blob: 6884d26a928d1de1b07bf8d28e1be4e53dfdcfc5
 lint_warnings: 1
 attempt_file: 2026-10-23T231147Z-check-sglang-pipeline-parity-router-hilo-m8.md
 prepared_at: 2026-10-23T231147Z
+job: e260dfe413e448c7
+dispatched_at: 2026-10-23T231157Z
 ---
 
 # sglang-pipeline-parity-router-hilo-m8
