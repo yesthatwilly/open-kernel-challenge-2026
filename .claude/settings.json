@@ -1,0 +1,19 @@
+{
+  "hooks": {
+    "PreToolUse": [
+      {
+        "matcher": "Bash",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "python3 -I \"$CLAUDE_PROJECT_DIR/.claude/hooks/okc-attempt-gate.py\"",
+            "if": "Bash(okc *)",
+            "onFailure": "block",
+            "timeout": 10,
+            "statusMessage": "Checking for an attempt file before okc runs"
+          }
+        ]
+      }
+    ]
+  }
+}
