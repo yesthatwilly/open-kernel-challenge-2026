@@ -32,12 +32,14 @@ base_sha: 965a5a2c44b96f0f62ef2d7cd77e99c879e9d3df
 base_blob: 6ce773a44036578450b1489df0030d65d2c67c0e
 branch: hyp/muse_bf16_proj/sglang-gemm-dispatch-parity
 worktree: .worktrees/muse_bf16_proj/sglang-gemm-dispatch-parity
-mode: null
+mode: check
 implemented_at: 2026-10-23T221952Z
 impl_commit: e64f27ef09b3512d26573dde4d35b8ec3ade1f63
 submission_sha256: 476d72e0390c7112365e054459edf5e390f0c974fcd10232abb0c8af489d74cf
 submission_blob: 5a2064af06f442f01dff926cb4f1eca75f992a24
 lint_warnings: 0
+attempt_file: 2026-10-23T221952Z-check-sglang-gemm-dispatch-parity.md
+prepared_at: 2026-10-23T221952Z
 ---
 
 # sglang-gemm-dispatch-parity
