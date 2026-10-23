@@ -51,7 +51,7 @@ review: proceed
 status: running
 review_at: 2026-10-23T230544Z
 review_companions: [router-triton-hilo-fused-control-splitk-all-m]
-stage: implemented
+stage: dispatched
 claimed_at: 2026-10-23T230545Z
 base_sha: e64f27ef09b3512d26573dde4d35b8ec3ade1f63
 base_blob: 5a2064af06f442f01dff926cb4f1eca75f992a24
@@ -66,6 +66,8 @@ submission_blob: 3f59d3eeb5b8a1fe83df61cbea1c119b5926bc63
 lint_warnings: 0
 attempt_file: 2026-10-23T231247Z-check-router-triton-hilo-fused.md
 prepared_at: 2026-10-23T231247Z
+job: c2a8de5969374dff
+dispatched_at: 2026-10-23T231255Z
 ---
 
 # router-triton-hilo-fused
