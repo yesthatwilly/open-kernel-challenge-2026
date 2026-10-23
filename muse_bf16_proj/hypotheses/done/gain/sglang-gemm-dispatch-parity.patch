@@ -1,0 +1,65 @@
+diff --git a/muse_bf16_proj/submission.py b/muse_bf16_proj/submission.py
+index 6ce773a..5a2064a 100644
+--- a/muse_bf16_proj/submission.py
++++ b/muse_bf16_proj/submission.py
+@@ -1,11 +1,18 @@
+ # okc: problem=muse_bf16_proj
+-"""Starter: the projections in plain PyTorch, correct but slow.
++"""Parity with SGLang's dispatch (hypothesis sglang-gemm-dispatch-parity).
+ 
+-Implement kernel_fn, and prepare to repack the weights (called once, untimed)."""
++The four bf16 layers go through the same cuBLAS dispatch SGLang uses on H200
++(`_bf16_gemm_dispatch_impl`). The fp32 router runs F.linear in fp32 up to 8 tokens and, above
++that, two bf16 GEMMs on a hi + lo split of the weight with fp32 accumulation, as the rules allow
++("the router's FP32 weights may run as a BF16 hi + lo pair with FP32 accumulation"). The split is
++built once in prepare(); nothing derived from the inputs is kept between calls.
++"""
+ 
+ from typing import TypedDict
+ 
+ import torch
++import torch.nn.functional as F
++from sglang.srt.layers.quantization.unquant import _bf16_gemm_dispatch_impl
+ 
+ 
+ class Weights(TypedDict):
+@@ -28,14 +35,30 @@ class Inputs(TypedDict):
+     config: Config
+ 
+ 
+-def prepare(weights: Weights) -> Weights:
+-    """Called once, untimed, before any case. Repack the weights as you like."""
+-    return weights
++# Above this many tokens the router runs as the bf16 hi + lo pair instead of fp32 F.linear.
++ROUTER_FP32_MAX_TOKENS = 8
+ 
+ 
+-def kernel_fn(data: Inputs, weights: Weights) -> torch.Tensor:
+-    """Return x @ W[:n].T, where W is weights[config["layer"]]: bfloat16, or float32 for the router."""
+-    w = weights[data["config"]["layer"]][: data["config"]["n"]]
+-    if w.dtype == torch.float32:
+-        return data["x"].float() @ w.T
+-    return data["x"] @ w.T
++def prepare(weights: Weights) -> dict:
++    """Called once, untimed. Keep the bf16 weights as they are (contiguous) and add the router's
++    lossless-for-our-purpose hi/lo bf16 split, transposed for torch.mm."""
++    state = {name: w.contiguous() for name, w in weights.items()}
++    router = weights["router"]
++    hi = router.to(torch.bfloat16)
++    lo = (router - hi.float()).to(torch.bfloat16)
++    state["router_hi_t"] = hi.t().contiguous()
++    state["router_lo_t"] = lo.t().contiguous()
++    return state
++
++
++def kernel_fn(data: Inputs, state: dict) -> torch.Tensor:
++    x, cfg = data["x"], data["config"]
++    layer = cfg["layer"]
++    if layer != "router":
++        # The unpooler's slice is its first n rows (all of them above 8 tokens).
++        return _bf16_gemm_dispatch_impl(x, state[layer][: cfg["n"]], None)
++    if x.shape[0] <= ROUTER_FP32_MAX_TOKENS:
++        return F.linear(x.float(), state["router"])
++    acc = torch.mm(x, state["router_hi_t"], out_dtype=torch.float32)
++    acc += torch.mm(x, state["router_lo_t"], out_dtype=torch.float32)
++    return acc

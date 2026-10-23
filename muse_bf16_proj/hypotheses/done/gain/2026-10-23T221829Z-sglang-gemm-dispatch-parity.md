@@ -37,8 +37,8 @@ expected:
 risk: low
 depends_on: null
 priority: 1
-status: running
-stage: dispatched
+status: done
+stage: harvested
 claimed_at: 2026-10-23T221905Z
 base_sha: 965a5a2c44b96f0f62ef2d7cd77e99c879e9d3df
 base_blob: 6ce773a44036578450b1489df0030d65d2c67c0e
@@ -58,6 +58,13 @@ recover_note: adopted from ~/.config/okc/jobs.json
 review: proceed
 review_at: 2026-10-23T222740Z
 review_companions: null
+outcome: gain
+verdict_detail: gain
+speedup: 1.0022291437677175
+speedup_ci: [0.9871957066112018, 1.0172625809242333]
+harvested_at: 2026-10-23T225813Z
+best_at_harvest: 0.9020752041800139
+promotion: pending
 ---
 
 # sglang-gemm-dispatch-parity
@@ -135,4 +142,53 @@ No additional run is warranted. ab-revert is inapplicable (nothing landed). ab-t
 - Dedup against baseline.py and attempts: okc's same-code dedup did not fire because sha256 differs on docstrings alone; a normalized-AST hash would have returned job 1ccc6ba13da94194 for free.
 - First real hypothesis from this review: ROUTER_FP32_MAX_TOKENS=0 (hi/lo at every m). Verify the 0.1% exact-column bound at m=1 first, where hi/lo error has nowhere to average out.
 - Second target: pooler and unpooler at m>=16 run one nvjet kernel at ~1.5x their 14 µs floor on both sides; splitK/stream-K or a cuBLASLt algo search in prepare().
+
+## Result
+
+- job `017804b34fed40b3` (check), status done, passed True, tests 9/9
+- speedup 1.0022x, 95% CI [0.9872, 1.0173], score 4820.055403537152 µs vs SGLang 4830.8 µs
+- best at harvest: {"speedup": 0.9020752041800139, "ci": [0.8885440761173137, 0.9156063322427139], "job": "366189f0f1114da1"}; base result: muse_bf16_proj/hypotheses/BEST.result.json
+- **outcome: gain** (gain)
+- files: `muse_bf16_proj/hypotheses/done/gain/sglang-gemm-dispatch-parity.result.json`, `muse_bf16_proj/hypotheses/done/gain/sglang-gemm-dispatch-parity.patch`; branch `hyp/muse_bf16_proj/sglang-gemm-dispatch-parity`
+
+## Attribution
+
+| shape | w | base µs | hyp µs | delta | verdict |
+|---|---|---|---|---|---|
+| layer=qkv_gate load=decode_1 m=1 | 62 | 14.08 | 13.96 | 1.028 | flat |
+| layer=o load=decode_1 m=1 | 62 | 7.05 | 6.52 | 1.0162 | flat |
+| layer=pooler load=decode_1 m=1 | 62 | 21.45 | 21.22 | 1.0009 | flat |
+| layer=unpooler load=decode_1 m=1 | 62 | 6.87 | 6.48 | 1.025 | flat |
+| layer=router load=decode_1 m=1 | 62 | 10.45 | 10.36 | 1.0197 | flat |
+| layer=qkv_gate load=decode_16 m=16 | 62 | 14.31 | 13.89 | 1.016 | flat |
+| layer=o load=decode_16 m=16 | 62 | 6.7 | 6.7 | 1.0194 | flat |
+| layer=pooler load=decode_16 m=16 | 62 | 21.45 | 21.45 | 0.9924 | flat |
+| layer=unpooler load=decode_16 m=16 | 62 | 18.53 | 18.66 | 1.0033 | flat |
+| layer=router load=decode_16 m=16 | 62 | 26.19 | 14.51 | 1.7916 | gained |
+| layer=qkv_gate load=decode_32 m=32 | 62 | 14.46 | 14.19 | 0.9975 | flat |
+| layer=o load=decode_32 m=32 | 62 | 6.59 | 6.62 | 1.0243 | flat |
+| layer=pooler load=decode_32 m=32 | 62 | 22.06 | 21.75 | 1.006 | flat |
+| layer=unpooler load=decode_32 m=32 | 62 | 18.88 | 18.55 | 1.0212 | flat |
+| layer=router load=decode_32 m=32 | 62 | 19.75 | 15.14 | 1.3129 | gained |
+| layer=qkv_gate load=verify_1 m=8 | 62 | 14.31 | 14.04 | 1.0135 | flat |
+| layer=o load=verify_1 m=8 | 62 | 6.86 | 7.01 | 0.984 | flat |
+| layer=pooler load=verify_1 m=8 | 62 | 21.66 | 21.28 | 1.0011 | flat |
+| layer=unpooler load=verify_1 m=8 | 62 | 7.11 | 6.84 | 0.9989 | flat |
+| layer=router load=verify_1 m=8 | 62 | 26.59 | 26.14 | 1.0006 | flat |
+| layer=qkv_gate load=verify_16 m=128 | 62 | 16.96 | 16.9 | 0.9793 | flat |
+| layer=o load=verify_16 m=128 | 62 | 7.77 | 7.58 | 1.01 | flat |
+| layer=pooler load=verify_16 m=128 | 62 | 25.36 | 25.13 | 1.0197 | flat |
+| layer=unpooler load=verify_16 m=128 | 62 | 20.1 | 19.84 | 1.0107 | flat |
+| layer=router load=verify_16 m=128 | 62 | 29.15 | 16.62 | 1.7773 | gained |
+| layer=qkv_gate load=verify_32 m=256 | 62 | 20.37 | 19.58 | 1.0254 | flat |
+| layer=o load=verify_32 m=256 | 62 | 9.65 | 9.25 | 1.0365 | gained |
+| layer=pooler load=verify_32 m=256 | 62 | 30.88 | 31.17 | 1.002 | flat |
+| layer=unpooler load=verify_32 m=256 | 62 | 24.59 | 24.33 | 1.0108 | flat |
+| layer=router load=verify_32 m=256 | 62 | 45.85 | 17.76 | 2.6972 | gained |
+
+gained on router decode_16, decode_32, verify_16, verify_32; o verify_32. Expected hit: 7/7. Noise ±1.5%.
+
+## Follow-ups
+
+- candidate for promotion; stack further changes with `depends_on` once it lands.
 
