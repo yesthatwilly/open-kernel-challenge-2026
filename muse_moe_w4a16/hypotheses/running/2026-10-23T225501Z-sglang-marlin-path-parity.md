@@ -48,7 +48,7 @@ review: proceed
 status: running
 review_at: 2026-10-23T230616Z
 review_companions: null
-stage: implemented
+stage: dispatched
 claimed_at: 2026-10-23T230616Z
 base_sha: 4739730c9a8a22229401f2e07ef91550db8b0152
 base_blob: 8eeb6a4778875e37a1d9c55a5e27ee6079999847
@@ -63,6 +63,8 @@ submission_blob: 11fbc1957daf7294cd2810ff82a0aad2f25644bd
 lint_warnings: 1
 attempt_file: 2026-10-23T231147Z-check-sglang-marlin-path-parity.md
 prepared_at: 2026-10-23T231147Z
+job: fb2cc736613747df
+dispatched_at: 2026-10-23T231157Z
 ---
 
 # sglang-marlin-path-parity
