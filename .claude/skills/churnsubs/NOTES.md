@@ -63,3 +63,8 @@ backstop.
 Schedulable: `churn.py tick` is read-mostly and idempotent; the dispatch steps need the LLM and
 must run inside a Claude session (`/loop churnsubs`). Never schedule anything that spends a run
 outside the skill.
+
+## Frontmatter flow lists (fixed 2026-10-23)
+`_scalar` now parses `[a, b]` flow lists, so `speedup_ci: [lo, hi]` reads back as floats.
+Before the fix `promote` crashed on the first real gain ("'<=' not supported between
+instances of 'str' and 'float'") and the gain sat in `done/gain` unmerged for a tick.

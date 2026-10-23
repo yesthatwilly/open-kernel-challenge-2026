@@ -210,6 +210,9 @@ def _scalar(v):
         return False
     if (v[0] == v[-1] and v[0] in "\"'") and len(v) >= 2:
         return v[1:-1]
+    if v[0] == "[" and v[-1] == "]":
+        inner = v[1:-1].strip()
+        return [_scalar(x) for x in inner.split(",")] if inner else []
     if re.fullmatch(r"-?\d+", v):
         return int(v)
     if re.fullmatch(r"-?\d+\.\d*", v):
