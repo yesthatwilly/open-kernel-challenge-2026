@@ -64,7 +64,8 @@ speedup: 1.0022291437677175
 speedup_ci: [0.9871957066112018, 1.0172625809242333]
 harvested_at: 2026-10-23T225813Z
 best_at_harvest: 0.9020752041800139
-promotion: pending
+promotion: merged
+promotion_commit: 965b04691a75690b8c34d2cffcab24da88f291e6
 ---
 
 # sglang-gemm-dispatch-parity
