@@ -24,7 +24,13 @@ resolve the checkout from the submission file's path (worktrees have a `.git` fi
 - budget at 02:00/14:00/22:00 UTC with the live quotas gives pace 2/4/28 and N bounded by queue.
 - classify: SGLang's own baseline run → gain over the 0.902x starter best; starter vs that
   baseline as base → regression, "lost on router verify_*, o verify_*, qkv_gate verify_*".
-- End-to-end on one real check: see the first hypothesis in muse_bf16_proj/hypotheses/.
+- End-to-end on one real check (2026-10-23T2220Z): `sglang-gemm-dispatch-parity` claimed into
+  `.worktrees/muse_bf16_proj/...` on `hyp/muse_bf16_proj/sglang-gemm-dispatch-parity`, implemented,
+  lint clean, commit-impl + prepare-run, the gate allowed the printed `okc check`, job
+  `017804b34fed40b3` recorded on branch and master. Recovery drill: job id erased from the running
+  md → `recover` re-adopted it from ~/.config/okc/jobs.json. Second tick: pending, N=0, shortfall
+  reason names /hypothesize. Lock: a second preflight during a tick exits 2.
+- Found and fixed during the run: the gate's filename regex only took HHMM; now HHMM[SS].
 
 ## Open questions
 - `okc status` has no `problem` field; the hypothesis file is the source of truth for it.
