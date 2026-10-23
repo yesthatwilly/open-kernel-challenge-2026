@@ -57,13 +57,15 @@ base_sha: e64f27ef09b3512d26573dde4d35b8ec3ade1f63
 base_blob: 5a2064af06f442f01dff926cb4f1eca75f992a24
 branch: hyp/muse_bf16_proj/router-triton-hilo-fused
 worktree: .worktrees/muse_bf16_proj/router-triton-hilo-fused
-mode: null
+mode: check
 implemented_at: 2026-10-23T231247Z
 impl_commit: a392f0b6dcd3d6a023c67bc68ac2f22a8aeece5a
 submission_sha256: ec9861d026a40534fcb9849eff91dfc5e9445b244c416550d80400c68dd4eeb5
 norm_sha256: 50f9f53d9d718ccfcad4457491a44549fd068eb2505b47aa5f29ab2ed70f5d2d
 submission_blob: 3f59d3eeb5b8a1fe83df61cbea1c119b5926bc63
 lint_warnings: 0
+attempt_file: 2026-10-23T231247Z-check-router-triton-hilo-fused.md
+prepared_at: 2026-10-23T231247Z
 ---
 
 # router-triton-hilo-fused
