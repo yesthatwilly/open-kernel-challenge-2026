@@ -1,6 +1,6 @@
 # muse_moe_w4a16 findings
 
-Regenerated 2026-10-23T221828Z by `churn.py index`. Read this before writing a hypothesis for muse_moe_w4a16.
+Regenerated 2026-10-23T225814Z by `churn.py index`. Read this before writing a hypothesis for muse_moe_w4a16.
 
 ## Current best
 
@@ -27,4 +27,13 @@ Where the time goes (per scored shape, top kernels):
 
 ## Queue and in flight
 
-- empty
+- queue: sglang-marlin-path-parity [MoE align/dispatch] p1 queued
+- queue: triton-w13-grouped-gemv-small-m [w13 marlin] p2 queued
+- queue: triton-w13-silu-epilogue [silu-mul] p3 queued
+- queue: triton-w2-grouped-gemv-small-m [w2 marlin] p3 queued
+- queue: align-single-token-ep [MoE align/dispatch] p4 queued
+- queue: marlin-block-size-m-next-larger [MoE align/dispatch] p3 queued
+- queue: marlin-workspace-blocks-per-sm-8 [w13 marlin] p4 queued
+- queue: triton-small-m-threshold-32 [MoE align/dispatch] p4 queued
+- queue: w13-marlin-atomic-add-small-m [w13 marlin] p4 queued
+- queue: w13-marlin-bf16-reduce-verify [w13 marlin] p5 queued

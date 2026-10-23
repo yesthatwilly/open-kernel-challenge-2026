@@ -1,6 +1,6 @@
 # muse_bf16_proj findings
 
-Regenerated 2026-10-23T222030Z by `churn.py index`. Read this before writing a hypothesis for muse_bf16_proj.
+Regenerated 2026-10-23T225814Z by `churn.py index`. Read this before writing a hypothesis for muse_bf16_proj.
 
 ## Current best
 
@@ -41,6 +41,9 @@ Where the time goes (per scored shape, top kernels):
 
 ## By area
 
+### bf16 GEMM dispatch
+- **sglang-gemm-dispatch-parity** → gain (gain), 1.0022x — gained on router decode_16, decode_32, verify_16, verify_32; o verify_32. Replace the starter's plain x @ W[:n].T with the exact dispatch SGLang's kernel uses: sglang.srt.layers.quantization.unquant._bf16_gemm_dispatch_impl(x, W[:n], 
+
 ## Open follow-ups
 
 - none
@@ -51,4 +54,13 @@ Where the time goes (per scored shape, top kernels):
 
 ## Queue and in flight
 
-- running: sglang-gemm-dispatch-parity [bf16 GEMM dispatch] p1 running
+- queue: router-hilo-addmm-epilogue [router GEMM] p3 queued
+- queue: router-hilo-at-m8 [router GEMM] p1 queued
+- queue: router-triton-hilo-fused [router GEMM] p1 queued
+- queue: pooler-triton-skinny-m32 [pooler GEMM] p2 queued
+- queue: unpooler-slice-triton-gemv [unpooler GEMM] p2 queued
+- queue: bf16-cublaslt-backend-toggle [bf16 GEMM dispatch] p5 queued
+- queue: o-triton-skinny-m32 [o GEMM] p4 queued
+- queue: pooler-skinny-tiled-weight-layout [pooler GEMM] p4 queued
+- queue: unpooler-full-triton-skinny-m32 [unpooler GEMM] p3 queued
+- queue: qkv-gate-triton-skinny-m32 [qkv GEMM] p3 queued
