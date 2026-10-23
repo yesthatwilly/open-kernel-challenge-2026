@@ -56,13 +56,15 @@ base_sha: c33a496b7fcb0965469bd5d5a5abc1b4f6da76ab
 base_blob: 0a0fc36b7854c07f5047c1df4e08ee984a830651
 branch: hyp/muse_decode_layer/sglang-pipeline-parity-router-hilo-m8
 worktree: .worktrees/muse_decode_layer/sglang-pipeline-parity-router-hilo-m8
-mode: null
+mode: check
 implemented_at: 2026-10-23T231146Z
 impl_commit: 54112d428da559b67789e07fa8f2e586fe5fb45e
 submission_sha256: a4494dce1b8eeddd142a3a93389ebb60076dbe1537de7ad691dedb9f52c65769
 norm_sha256: 6d5d907e8eaec21de3a7d64e0683a8b402a2d1e90f7520e0df8d8ca9e06a594f
 submission_blob: 6884d26a928d1de1b07bf8d28e1be4e53dfdcfc5
 lint_warnings: 1
+attempt_file: 2026-10-23T231147Z-check-sglang-pipeline-parity-router-hilo-m8.md
+prepared_at: 2026-10-23T231147Z
 ---
 
 # sglang-pipeline-parity-router-hilo-m8
