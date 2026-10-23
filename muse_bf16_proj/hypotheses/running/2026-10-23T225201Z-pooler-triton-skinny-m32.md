@@ -46,13 +46,19 @@ review: proceed
 status: running
 review_at: 2026-10-23T230544Z
 review_companions: null
-stage: claimed
+stage: implemented
 claimed_at: 2026-10-23T230545Z
 base_sha: e64f27ef09b3512d26573dde4d35b8ec3ade1f63
 base_blob: 5a2064af06f442f01dff926cb4f1eca75f992a24
 branch: hyp/muse_bf16_proj/pooler-triton-skinny-m32
 worktree: .worktrees/muse_bf16_proj/pooler-triton-skinny-m32
 mode: null
+implemented_at: 2026-10-23T231157Z
+impl_commit: d2840d088aa35522a03b40c59e174287cf935f67
+submission_sha256: 4b6c05d0d794df548e24c23a8b2f1277ad050bc2af57165f099eb5325a52da22
+norm_sha256: 0a52fd3c358414044b2d1a31157de5a14a194a54644b1ea69d81491f90da5b75
+submission_blob: 2752a016d386e9261ec77e25b426c05b76c071ac
+lint_warnings: 0
 ---
 
 # pooler-triton-skinny-m32
@@ -97,3 +103,27 @@ No companion is warranted. A gain is unambiguous: the only code path that change
 - If the per-shape rows lose while the Triton kernel's own us is below 18.8 (m=1) / 19.8 (m=16) / 20.2 (m=32), the loss is launch/gap overhead of the Triton launch path, not bandwidth; separate those two readings before withdrawing the dependents.
 - At m=16/32 nvjet is slower than at m=1 (19.8-20.2 vs 18.8 us), so the bar is lower there; a Triton kernel flat across m at ~18.8 us would gain 1.10-1.15x on decode_16/32 even with zero bandwidth improvement.
 
+## Implementation notes
+
+Worktree `.worktrees/muse_bf16_proj/pooler-triton-skinny-m32`, one file changed: `muse_bf16_proj/submission.py` (+94/-7; first line unchanged).
+
+- `kernel_fn`: a new first branch, `layer == "pooler" and _pooler_skinny_applies(x, cfg)`, calls `_pooler_skinny_gemm(x, state["pooler"])`. The guard is config/shape only: `cfg m <= 32`, `cfg n == 4096`, `cfg k == 8192`, `x` 2-D of shape `(m, k)`, bf16, unit inner stride. Anything else (pooler at m > 32, any other n/k, qkv_gate, o, unpooler, router) falls through to the untouched parity code (`_bf16_gemm_dispatch_impl` / router hi+lo).
+- `_pooler_skinny_kernel` (`@triton.jit(do_not_specialize=["M"])`): grid `(4096 // 32,) = (128,)`, one program per 32 output columns, so one wave on 132 SMs. Tiles `BLOCK_N=32`, `BLOCK_K=256`, `BLOCK_M=16` for m <= 16 and `BLOCK_M=32` for 17 <= m <= 32; `K=8192` is a constexpr so the loop is a static 32 steps. Each step `tl.load`s the `[32, 256]` bf16 weight tile straight from the row-major `[N, K]` weight as stored (unmasked: n and k divide exactly, enforced by the guard) and the `[BLOCK_M, 256]` x tile with rows >= M masked to zero (`other=0.0`), then `acc = tl.dot(x_tile, tl.trans(w_tile), acc)` in fp32. After the loop a single `acc.to(tl.bfloat16)` store masked to rows < M into a `torch.empty((m, 4096), bf16)`. **`num_warps=4`, `num_stages=4`** (per stage 16 KB weight + 8/16 KB x; 96/128 KB smem at 4 stages, 64 KB of weight in flight per SM as the hypothesis states).
+- `M` is passed as a runtime int with `do_not_specialize`, so Triton does not mint an `M == 1` or divisible-by-16 variant: exactly two binaries exist (BLOCK_M 16 and 32). Strides are runtime ints (8192 / 8192 / 4096, all 16-divisible, identical between warm-up and the judge's contiguous inputs).
+- `prepare()`: unchanged parity body (contiguous bf16 weights, router hi/lo split, no repack), plus `_pooler_skinny_warmup(state["pooler"])`, which launches the kernel on synthetic `torch.zeros((m, 8192), bf16)` for every m in 1..32, so both specializations (and any int specialization Triton might still apply) are compiled before the first timed call; outputs are dropped and nothing derived from inputs is retained.
+- Deviations from the spec / review: (1) the reviewer's "consider BLOCK_M=16 for every m <= 32" was not taken: `tl.dot` needs M >= 16, so m = 32 at BLOCK_M=16 would need either a second M tile (a second pass over the 67 MB weight) or a second dot per step; two specializations is the smaller change and both are pre-warmed. (2) `pooler verify_32` (m = 256) is a flat control like verify_16; it stays on cuBLAS by the m <= 32 guard. No autotune; no TMA; no tf32/fp8 anywhere.
+- Untested on hardware (no GPU/Triton on this node): syntax checked with `ast.parse`, lint CLEAN. The one Triton-specific thing to watch in the run log is the `tl.trans(w_tile)` operand feeding `tl.dot` inside the pipelined loop; it is the standard pattern (`tl.dot(q, tl.trans(k))` in the Triton attention tutorial) but has not been compiled here.
+
+## Rules check
+
+Verified against `git diff` in the worktree (`muse_bf16_proj/submission.py`, +94/-7):
+
+- [x] CUDA-graph capturable: no `.item()`/`.cpu()`/`synchronize()`/tensor prints anywhere in the diff; the only allocation is `torch.empty((m, 4096))` from `x.shape`; all branching (`_pooler_skinny_applies`, `block_m`) is on `cfg` fields and `x.shape`/`stride`/`dtype`, never on values.
+- [x] Nothing derived from `data` is cached across calls: `kernel_fn` writes no module-level state; `out` is fresh per call and returned; the warm-up tensors in `prepare()` are synthetic zeros that are not kept.
+- [x] Weights: `prepare()` still only does `.contiguous()` on the bf16 weights (no repack, no dtype change); the Triton kernel reads `state["pooler"]` as stored; the router hi+lo split is the pre-existing parity code.
+- [x] Activations BF16: `x` is loaded as bf16, `tl.dot` is bf16 x bf16 with an fp32 accumulator, the output is rounded to bf16 once at the store, the same chain cuBLAS runs; no tf32/fp8 casts in the diff.
+- [x] Attention sees every key: not applicable, this problem is a dense GEMM; the diff computes the full `x @ W.T` over all 8192 K and all 4096 N (no skipping).
+- [x] No timing patches, harness frames/I/O/secrets, module edits, reference import, subprocesses or network: imports are `torch`, `torch.nn.functional`, `triton`, `triton.language`, and the same `sglang` dispatch as before; lint CLEAN.
+- [x] All work happens inside the timed call; no output caching or replay: `prepare()` only compiles the kernel on synthetic inputs (allowed untimed setup) and discards the result; every timed call streams the weight and writes a new output.
+
+Lint: `python3 -I .claude/skills/churnsubs/bin/okc_lint.py muse_bf16_proj/submission.py --problem muse_bf16_proj` -> `CLEAN: muse_bf16_proj/submission.py`
