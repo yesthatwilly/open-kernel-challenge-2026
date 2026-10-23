@@ -117,7 +117,7 @@ def norm_sha256(path):
             self.generic_visit(n)
             n.body = [b for b in n.body if not (isinstance(b, ast.ClassDef) and any(
                 (isinstance(x, ast.Name) and x.id == "TypedDict") for x in b.bases))]
-            return n
+            return self._nodoc(n)
 
         def _nodoc(self, n):
             if n.body and isinstance(n.body[0], ast.Expr) and isinstance(getattr(n.body[0], "value", None), ast.Constant) \
