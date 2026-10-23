@@ -6,6 +6,9 @@ the same mode: named <YYYY-MM-DDTHHMMZ>-<mode>-<slug>.md, modified within the la
 whose Job line is still the template placeholder (no job id filled in yet). Every run needs its
 own file, so a file whose job id has been filled in does not cover a second run.
 
+The attempts directory is the one in the checkout that owns the submission file, so a worktree's
+submission is gated by the worktree's own attempts/, not the main tree's.
+
 Reads the hook JSON on stdin, writes a permission decision as JSON on stdout. Anything that is
 not an okc check/submit command passes through untouched.
 """
@@ -37,9 +40,10 @@ def deny(reason):
 
 
 def repo_root(start):
+    """Walk up to the nearest git checkout: a `.git` directory (main tree) or `.git` file (worktree)."""
     d = os.path.abspath(start)
     while d != os.path.dirname(d):
-        if os.path.isdir(os.path.join(d, ".git")):
+        if os.path.exists(os.path.join(d, ".git")):
             return d
         d = os.path.dirname(d)
     return None
@@ -78,7 +82,6 @@ def main():
     if not re.search(r"\bokc\s+(check|submit)\b", command):
         allow()
     cwd = payload.get("cwd") or os.getcwd()
-    root = repo_root(cwd) or cwd
 
     for mode, pos in parse_invocations(command):
         if not pos:
@@ -98,6 +101,8 @@ def main():
             if not m:
                 deny(f"okc {mode}: {path} has no '# okc: problem=' first line, so the gate cannot find its problem.")
             problem = m.group(1)
+        # The checkout that owns the submission file (main tree or a worktree) holds its attempts.
+        root = repo_root(os.path.dirname(path)) or cwd
         attempts = os.path.join(root, problem, "attempts")
         if not os.path.isdir(attempts):
             deny(f"okc {mode} refused: {attempts} does not exist. Write the attempt file first "

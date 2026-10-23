@@ -1,0 +1,624 @@
+{
+ "schema": 1,
+ "problem": "muse_decode_layer",
+ "slug": null,
+ "job": "3c3181b1fce24b9a",
+ "mode": "check",
+ "duplicate_of": null,
+ "content_hash": "1828620d57e7c6c9ffe1c99cfda94e134b6fb8500d0338b64e1a6e32889625d0",
+ "submission_sha256": null,
+ "submission_blob": "0a0fc36b7854c07f5047c1df4e08ee984a830651",
+ "impl_commit": null,
+ "base_sha": null,
+ "created_at": 1792789526.244484,
+ "finished_at": 1792793727.5591686,
+ "gpu": "H200",
+ "evaluator_sha256": "2999d8a201bb2b0bad6c7b3998af2143a1ed720d531dbb4d15670721ee9f957b",
+ "status": "done",
+ "passed": true,
+ "error": null,
+ "returncode": 0,
+ "tests": {
+  "total": 13,
+  "passed": 13
+ },
+ "first_failing": null,
+ "speedup": 0.0045119870605644765,
+ "speedup_ci": [
+  0.00444430725465601,
+  0.004579666866472943
+ ],
+ "score_us": 5013378.738982922,
+ "baseline_us": 22620.3,
+ "flags": [],
+ "checks": {
+  "flagged": [],
+  "ok": true,
+  "rejected": []
+ },
+ "shapes": [
+  {
+   "key": "batch=1 ctx=80000 dist=soft layer=sliding load=decode_1 page=1 repeats=60",
+   "load": "decode 1",
+   "case": {
+    "batch": 1,
+    "ctx": 80000,
+    "dist": "soft",
+    "layer": "sliding",
+    "load": "decode 1",
+    "page": 1,
+    "repeats": 60,
+    "seed": 8292363851051643647,
+    "weight": 46
+   },
+   "weight": 46,
+   "median_ns": 39572918.64537895,
+   "baseline_ns": 172335.99768951535,
+   "speedup": 0.0043548973284951165,
+   "speedup_of_medians": 0.004353373779944003,
+   "err_ns": 2754.839211093674,
+   "speed_of_light_ns": 40024.746666666666,
+   "status": "pass",
+   "top_kernels": [
+    [
+     "void at::native::index_elementwise_kernel<128, 4, at::nat...",
+     7473.0,
+     18.6
+    ],
+    [
+     "void at::native::elementwise_kernel<128, 2, at::native::g...",
+     5549.2,
+     13.8
+    ],
+    [
+     "void at::native::vectorized_elementwise_kernel<4, at::nat...",
+     4994.0,
+     12.4
+    ],
+    [
+     "void at::native::unrolled_elementwise_kernel<at::native::...",
+     3665.5,
+     9.1
+    ]
+   ]
+  },
+  {
+   "key": "batch=1 ctx=80000 dist=soft layer=full load=decode_1 page=1 repeats=60",
+   "load": "decode 1",
+   "case": {
+    "batch": 1,
+    "ctx": 80000,
+    "dist": "soft",
+    "layer": "full",
+    "load": "decode 1",
+    "page": 1,
+    "repeats": 60,
+    "seed": 8292607869599889945,
+    "weight": 16
+   },
+   "weight": 16,
+   "median_ns": 39359895.67166834,
+   "baseline_ns": 179792.00277477503,
+   "speedup": 0.004567898357113562,
+   "speedup_of_medians": 0.004549702324703543,
+   "err_ns": 2949.595290693903,
+   "speed_of_light_ns": 44182.18666666667,
+   "status": "pass",
+   "top_kernels": [
+    [
+     "void at::native::index_elementwise_kernel<128, 4, at::nat...",
+     7478.7,
+     18.6
+    ],
+    [
+     "void at::native::elementwise_kernel<128, 2, at::native::g...",
+     5546.8,
+     13.8
+    ],
+    [
+     "void at::native::vectorized_elementwise_kernel<4, at::nat...",
+     4982.8,
+     12.4
+    ],
+    [
+     "void at::native::unrolled_elementwise_kernel<at::native::...",
+     3653.4,
+     9.1
+    ]
+   ]
+  },
+  {
+   "key": "batch=16 ctx=80000 dist=soft layer=sliding load=decode_16 page=1 spread=agentic",
+   "load": "decode 16",
+   "case": {
+    "batch": 16,
+    "ctx": 80000,
+    "dist": "soft",
+    "layer": "sliding",
+    "load": "decode 16",
+    "page": 1,
+    "seed": 8292851888148136244,
+    "spread": "agentic",
+    "weight": 46
+   },
+   "weight": 46,
+   "median_ns": 86418368.15382491,
+   "baseline_ns": 265839.99581635,
+   "speedup": 0.003076197821083061,
+   "speedup_of_medians": 0.0031066706845752304,
+   "err_ns": 6987.268664862495,
+   "speed_of_light_ns": 76721.90293333333,
+   "status": "pass",
+   "top_kernels": [
+    [
+     "void gemmSN_NN_kernel<float, 128, 2, 4, 8, 4, 4, false, c...",
+     42618.6,
+     49.4
+    ],
+    [
+     "void at::native::index_elementwise_kernel<128, 4, at::nat...",
+     7484.7,
+     8.7
+    ],
+    [
+     "void at::native::elementwise_kernel<128, 2, at::native::g...",
+     6659.3,
+     7.7
+    ],
+    [
+     "void at::native::vectorized_elementwise_kernel<4, at::nat...",
+     4990.2,
+     5.8
+    ]
+   ]
+  },
+  {
+   "key": "batch=16 ctx=80000 dist=soft layer=full load=decode_16 page=1 spread=agentic",
+   "load": "decode 16",
+   "case": {
+    "batch": 16,
+    "ctx": 80000,
+    "dist": "soft",
+    "layer": "full",
+    "load": "decode 16",
+    "page": 1,
+    "seed": 8293095906696382544,
+    "spread": "agentic",
+    "weight": 16
+   },
+   "weight": 16,
+   "median_ns": 84451192.67090632,
+   "baseline_ns": 430720.00052779913,
+   "speedup": 0.005100224009934953,
+   "speedup_of_medians": 0.00505244275804745,
+   "err_ns": 12567.139860280735,
+   "speed_of_light_ns": 137455.75253333335,
+   "status": "pass",
+   "top_kernels": [
+    [
+     "void gemmSN_NN_kernel<float, 128, 2, 4, 8, 4, 4, false, c...",
+     42803.2,
+     49.7
+    ],
+    [
+     "void at::native::index_elementwise_kernel<128, 4, at::nat...",
+     7476.1,
+     8.7
+    ],
+    [
+     "void at::native::elementwise_kernel<128, 2, at::native::g...",
+     6645.5,
+     7.7
+    ],
+    [
+     "void at::native::vectorized_elementwise_kernel<4, at::nat...",
+     4992.8,
+     5.8
+    ]
+   ]
+  },
+  {
+   "key": "batch=32 ctx=80000 dist=soft layer=sliding load=decode_32 page=1 spread=agentic",
+   "load": "decode 32",
+   "case": {
+    "batch": 32,
+    "ctx": 80000,
+    "dist": "soft",
+    "layer": "sliding",
+    "load": "decode 32",
+    "page": 1,
+    "seed": 8293339925244628845,
+    "spread": "agentic",
+    "weight": 46
+   },
+   "weight": 46,
+   "median_ns": 133430011.04072756,
+   "baseline_ns": 261184.00134146214,
+   "speedup": 0.0019574606889730343,
+   "speedup_of_medians": 0.00195056364743356,
+   "err_ns": 11433.383601833373,
+   "speed_of_light_ns": 84505.39520000001,
+   "status": "pass",
+   "top_kernels": [
+    [
+     "void gemmSN_NN_kernel<float, 128, 2, 4, 8, 4, 4, false, c...",
+     85519.8,
+     63.3
+    ],
+    [
+     "void at::native::elementwise_kernel<128, 2, at::native::g...",
+     7749.5,
+     5.7
+    ],
+    [
+     "void at::native::index_elementwise_kernel<128, 4, at::nat...",
+     7483.8,
+     5.5
+    ],
+    [
+     "void at::native::vectorized_elementwise_kernel<4, at::nat...",
+     4995.6,
+     3.7
+    ]
+   ]
+  },
+  {
+   "key": "batch=32 ctx=80000 dist=soft layer=full load=decode_32 page=1 spread=agentic",
+   "load": "decode 32",
+   "case": {
+    "batch": 32,
+    "ctx": 80000,
+    "dist": "soft",
+    "layer": "full",
+    "load": "decode 32",
+    "page": 1,
+    "seed": 8293583943792875147,
+    "spread": "agentic",
+    "weight": 16
+   },
+   "weight": 16,
+   "median_ns": 133660687.67286262,
+   "baseline_ns": 623471.9911590219,
+   "speedup": 0.004664587636156585,
+   "speedup_of_medians": 0.004677145011158991,
+   "err_ns": 7968.633723653179,
+   "speed_of_light_ns": 208096.46079999997,
+   "status": "pass",
+   "top_kernels": [
+    [
+     "void gemmSN_NN_kernel<float, 128, 2, 4, 8, 4, 4, false, c...",
+     85512.4,
+     63.6
+    ],
+    [
+     "void at::native::elementwise_kernel<128, 2, at::native::g...",
+     7728.4,
+     5.7
+    ],
+    [
+     "void at::native::index_elementwise_kernel<128, 4, at::nat...",
+     7476.1,
+     5.6
+    ],
+    [
+     "void at::native::vectorized_elementwise_kernel<4, at::nat...",
+     4996.7,
+     3.7
+    ]
+   ]
+  },
+  {
+   "key": "batch=1 ctx=80000 dist=soft layer=sliding load=verify_1 page=1 q_len=8",
+   "load": "verify 1",
+   "case": {
+    "batch": 1,
+    "ctx": 80000,
+    "dist": "soft",
+    "layer": "sliding",
+    "load": "verify 1",
+    "page": 1,
+    "q_len": 8,
+    "seed": 8293827962341121450,
+    "weight": 46
+   },
+   "weight": 46,
+   "median_ns": 40279201.703030966,
+   "baseline_ns": 267887.9937157035,
+   "speedup": 0.0066507771353260265,
+   "speedup_of_medians": 0.006621240824047309,
+   "err_ns": 5548.318994313801,
+   "speed_of_light_ns": 62286.50666666666,
+   "status": "pass",
+   "top_kernels": [
+    [
+     "void at::native::index_elementwise_kernel<128, 4, at::nat...",
+     7477.9,
+     18.2
+    ],
+    [
+     "void at::native::elementwise_kernel<128, 2, at::native::g...",
+     5634.1,
+     13.7
+    ],
+    [
+     "void at::native::vectorized_elementwise_kernel<4, at::nat...",
+     4992.8,
+     12.2
+    ],
+    [
+     "void at::native::unrolled_elementwise_kernel<at::native::...",
+     3659.8,
+     8.9
+    ]
+   ]
+  },
+  {
+   "key": "batch=1 ctx=80000 dist=soft layer=full load=verify_1 page=1 q_len=8",
+   "load": "verify 1",
+   "case": {
+    "batch": 1,
+    "ctx": 80000,
+    "dist": "soft",
+    "layer": "full",
+    "load": "verify 1",
+    "page": 1,
+    "q_len": 8,
+    "seed": 8294071980889367754,
+    "weight": 16
+   },
+   "weight": 16,
+   "median_ns": 40510911.64452527,
+   "baseline_ns": 270703.9890810847,
+   "speedup": 0.006682248759456596,
+   "speedup_of_medians": 0.006707976535602624,
+   "err_ns": 5135.499009782267,
+   "speed_of_light_ns": 66443.94666666666,
+   "status": "pass",
+   "top_kernels": [
+    [
+     "void at::native::index_elementwise_kernel<128, 4, at::nat...",
+     7479.3,
+     18.3
+    ],
+    [
+     "void at::native::elementwise_kernel<128, 2, at::native::g...",
+     5615.4,
+     13.7
+    ],
+    [
+     "void at::native::vectorized_elementwise_kernel<4, at::nat...",
+     4984.1,
+     12.2
+    ],
+    [
+     "void at::native::unrolled_elementwise_kernel<at::native::...",
+     3660.4,
+     8.9
+    ]
+   ]
+  },
+  {
+   "key": "batch=16 ctx=80000 dist=soft layer=sliding load=verify_16 page=1 q_len=8 spread=agentic",
+   "load": "verify 16",
+   "case": {
+    "batch": 16,
+    "ctx": 80000,
+    "dist": "soft",
+    "layer": "sliding",
+    "load": "verify 16",
+    "page": 1,
+    "q_len": 8,
+    "seed": 8294315999437614059,
+    "spread": "agentic",
+    "weight": 46
+   },
+   "weight": 46,
+   "median_ns": 93905261.49294138,
+   "baseline_ns": 515119.9921965599,
+   "speedup": 0.005485528542352019,
+   "speedup_of_medians": 0.005344529907688924,
+   "err_ns": 12184.807025082535,
+   "speed_of_light_ns": 126614.45973333334,
+   "status": "pass",
+   "top_kernels": [
+    [
+     "sm80_xmma_gemm_f32f32_f32f32_f32_nn_n_tilesize32x32x8_sta...",
+     50832.8,
+     52.3
+    ],
+    [
+     "void at::native::index_elementwise_kernel<128, 4, at::nat...",
+     7475.6,
+     7.7
+    ],
+    [
+     "void at::native::elementwise_kernel<128, 2, at::native::g...",
+     6799.9,
+     7.0
+    ],
+    [
+     "void at::native::vectorized_elementwise_kernel<4, at::nat...",
+     4992.6,
+     5.1
+    ]
+   ]
+  },
+  {
+   "key": "batch=16 ctx=80000 dist=soft layer=full load=verify_16 page=1 q_len=8 spread=agentic",
+   "load": "verify 16",
+   "case": {
+    "batch": 16,
+    "ctx": 80000,
+    "dist": "soft",
+    "layer": "full",
+    "load": "verify 16",
+    "page": 1,
+    "q_len": 8,
+    "seed": 8294560017985860365,
+    "spread": "agentic",
+    "weight": 16
+   },
+   "weight": 16,
+   "median_ns": 95959032.16992708,
+   "baseline_ns": 702687.9889890552,
+   "speedup": 0.007322791540297266,
+   "speedup_of_medians": 0.007311532374587306,
+   "err_ns": 53670.58297929609,
+   "speed_of_light_ns": 188675.41333333336,
+   "status": "pass",
+   "top_kernels": [
+    [
+     "sm80_xmma_gemm_f32f32_f32f32_f32_nn_n_tilesize32x32x8_sta...",
+     50807.4,
+     52.4
+    ],
+    [
+     "void at::native::index_elementwise_kernel<128, 4, at::nat...",
+     7472.5,
+     7.7
+    ],
+    [
+     "void at::native::elementwise_kernel<128, 2, at::native::g...",
+     6775.4,
+     7.0
+    ],
+    [
+     "void at::native::vectorized_elementwise_kernel<4, at::nat...",
+     4987.8,
+     5.1
+    ]
+   ]
+  },
+  {
+   "key": "batch=32 ctx=80000 dist=soft layer=sliding load=verify_32 page=1 q_len=8 spread=agentic",
+   "load": "verify 32",
+   "case": {
+    "batch": 32,
+    "ctx": 80000,
+    "dist": "soft",
+    "layer": "sliding",
+    "load": "verify 32",
+    "page": 1,
+    "q_len": 8,
+    "seed": 8294804036534106672,
+    "spread": "agentic",
+    "weight": 46
+   },
+   "weight": 46,
+   "median_ns": 153118925.92024904,
+   "baseline_ns": 682799.9874949455,
+   "speedup": 0.004459278847414181,
+   "speedup_of_medians": 0.004383244276157286,
+   "err_ns": 23894.347444899675,
+   "speed_of_light_ns": 143813.83679999996,
+   "status": "pass",
+   "top_kernels": [
+    [
+     "sm80_xmma_gemm_f32f32_f32f32_f32_nn_n_tilesize32x32x8_sta...",
+     101615.1,
+     64.8
+    ],
+    [
+     "void at::native::elementwise_kernel<128, 2, at::native::g...",
+     8017.2,
+     5.1
+    ],
+    [
+     "void at::native::index_elementwise_kernel<128, 4, at::nat...",
+     7474.0,
+     4.8
+    ],
+    [
+     "void at::native::vectorized_elementwise_kernel<4, at::nat...",
+     4989.2,
+     3.2
+    ]
+   ]
+  },
+  {
+   "key": "batch=32 ctx=80000 dist=soft layer=full load=verify_32 page=1 q_len=8 spread=agentic",
+   "load": "verify 32",
+   "case": {
+    "batch": 32,
+    "ctx": 80000,
+    "dist": "soft",
+    "layer": "full",
+    "load": "verify 32",
+    "page": 1,
+    "q_len": 8,
+    "seed": 8295048055082352980,
+    "spread": "agentic",
+    "weight": 16
+   },
+   "weight": 16,
+   "median_ns": 156958751.42388347,
+   "baseline_ns": 1051919.998601079,
+   "speedup": 0.006701888165255975,
+   "speedup_of_medians": 0.006767372139293145,
+   "err_ns": 12515.740747656839,
+   "speed_of_light_ns": 267183.7184,
+   "status": "pass",
+   "top_kernels": [
+    [
+     "sm80_xmma_gemm_f32f32_f32f32_f32_nn_n_tilesize32x32x8_sta...",
+     101608.9,
+     65.0
+    ],
+    [
+     "void at::native::elementwise_kernel<128, 2, at::native::g...",
+     8021.2,
+     5.1
+    ],
+    [
+     "void at::native::index_elementwise_kernel<128, 4, at::nat...",
+     7489.0,
+     4.8
+    ],
+    [
+     "void at::native::vectorized_elementwise_kernel<4, at::nat...",
+     4997.0,
+     3.2
+    ]
+   ]
+  }
+ ],
+ "loads": [
+  {
+   "load": "decode 1",
+   "sglang_ns": 10804127.938114107,
+   "yours_ns": 2450112588.434125,
+   "speedup": 0.004409645495115414
+  },
+  {
+   "load": "decode 16",
+   "sglang_ns": 19120159.815996885,
+   "yours_ns": 5326464017.810447,
+   "speedup": 0.003589653427126055
+  },
+  {
+   "load": "decode 32",
+   "sglang_ns": 21990015.920251608,
+   "yours_ns": 8276351510.639269,
+   "speedup": 0.0026569697881951232
+  },
+  {
+   "load": "verify 1",
+   "sglang_ns": 16654111.536219716,
+   "yours_ns": 2501017864.651829,
+   "speedup": 0.006658933457293863
+  },
+  {
+   "load": "verify 16",
+   "sglang_ns": 34938527.46486664,
+   "yours_ns": 5854986543.394136,
+   "speedup": 0.005967311317612828
+  },
+  {
+   "load": "verify 32",
+   "sglang_ns": 48239519.40238476,
+   "yours_ns": 9554810615.113592,
+   "speedup": 0.005048715390138715
+  }
+ ],
+ "attribution": null
+}

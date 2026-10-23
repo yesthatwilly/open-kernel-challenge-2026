@@ -1,0 +1,17 @@
+{
+ "problem": "muse_attention_decode",
+ "job": "a8d647772fa945e5",
+ "mode": "check",
+ "speedup": 0.0023193044319036226,
+ "ci": [
+  0.002284514865425068,
+  0.0023540939983821767
+ ],
+ "score_us": 1623892.03771267,
+ "commit": "ab21d70942315e8ad54b7981b399cee40c287eb3",
+ "submission_blob": "7cafe07522219f5d70a1d23f29e3ee2fbdb497b7",
+ "slug": null,
+ "result": "muse_attention_decode/hypotheses/BEST.result.json",
+ "updated_at": "2026-10-23T221827Z",
+ "note": "seeded by best-init from local job records"
+}

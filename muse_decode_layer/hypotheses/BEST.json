@@ -1,0 +1,17 @@
+{
+ "problem": "muse_decode_layer",
+ "job": "3c3181b1fce24b9a",
+ "mode": "check",
+ "speedup": 0.0045119870605644765,
+ "ci": [
+  0.00444430725465601,
+  0.004579666866472943
+ ],
+ "score_us": 5013378.738982922,
+ "commit": "ab21d70942315e8ad54b7981b399cee40c287eb3",
+ "submission_blob": "0a0fc36b7854c07f5047c1df4e08ee984a830651",
+ "slug": null,
+ "result": "muse_decode_layer/hypotheses/BEST.result.json",
+ "updated_at": "2026-10-23T221827Z",
+ "note": "seeded by best-init from local job records"
+}

@@ -1,0 +1,17 @@
+{
+ "problem": "muse_bf16_proj",
+ "job": "366189f0f1114da1",
+ "mode": "check",
+ "speedup": 0.9020752041800139,
+ "ci": [
+  0.8885440761173137,
+  0.9156063322427139
+ ],
+ "score_us": 5355.207611976428,
+ "commit": "ab21d70942315e8ad54b7981b399cee40c287eb3",
+ "submission_blob": "6ce773a44036578450b1489df0030d65d2c67c0e",
+ "slug": null,
+ "result": "muse_bf16_proj/hypotheses/BEST.result.json",
+ "updated_at": "2026-10-23T221827Z",
+ "note": "seeded by best-init from local job records"
+}

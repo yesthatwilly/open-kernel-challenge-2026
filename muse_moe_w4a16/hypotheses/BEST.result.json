@@ -1,0 +1,326 @@
+{
+ "schema": 1,
+ "problem": "muse_moe_w4a16",
+ "slug": null,
+ "job": "5e7d55323d75425e",
+ "mode": "check",
+ "duplicate_of": null,
+ "content_hash": "55d11fbe7bb27fe2a5f530825624965481ceaa1992876526e7167b0920870b42",
+ "submission_sha256": null,
+ "submission_blob": "8eeb6a4778875e37a1d9c55a5e27ee6079999847",
+ "impl_commit": null,
+ "base_sha": null,
+ "created_at": 1792789526.1059659,
+ "finished_at": 1792792889.8821826,
+ "gpu": "H200",
+ "evaluator_sha256": "afcead6a6ff090aa50fe9bc907f0fa8f4ba73d95fa92af93ec260b5e8ff00f00",
+ "status": "done",
+ "passed": true,
+ "error": null,
+ "returncode": 0,
+ "tests": {
+  "total": 5,
+  "passed": 5
+ },
+ "first_failing": null,
+ "speedup": 0.006105558011922052,
+ "speedup_ci": [
+  0.006013974641743221,
+  0.006197141382100883
+ ],
+ "score_us": 2202665.173885779,
+ "baseline_us": 13448.5,
+ "flags": [],
+ "checks": {
+  "flagged": [],
+  "ok": true,
+  "rejected": []
+ },
+ "shapes": [
+  {
+   "key": "bs=1 load=decode_1 sharding=ep8",
+   "load": "decode 1",
+   "case": {
+    "bs": 1,
+    "load": "decode 1",
+    "seed": 4077669341481116830,
+    "sharding": "ep8",
+    "weight": 60
+   },
+   "weight": 60,
+   "median_ns": 35747536.72798714,
+   "baseline_ns": 77119.99909952283,
+   "speedup": 0.002157351419381709,
+   "speedup_of_medians": 0.0021115456831228823,
+   "err_ns": 1329.320012927114,
+   "speed_of_light_ns": 11416.507733333334,
+   "status": "pass",
+   "top_kernels": [
+    [
+     "void at::native::index_elementwise_kernel<128, 4, at::nat...",
+     7486.2,
+     20.2
+    ],
+    [
+     "void at::native::elementwise_kernel<128, 2, at::native::g...",
+     5473.8,
+     14.7
+    ],
+    [
+     "void at::native::vectorized_elementwise_kernel<4, at::nat...",
+     4989.5,
+     13.4
+    ],
+    [
+     "void at::native::unrolled_elementwise_kernel<at::native::...",
+     3662.0,
+     9.9
+    ]
+   ]
+  },
+  {
+   "key": "bs=16 load=decode_16 sharding=ep8",
+   "load": "decode 16",
+   "case": {
+    "bs": 16,
+    "load": "decode 16",
+    "seed": 4077729209709737700,
+    "sharding": "ep8",
+    "weight": 60
+   },
+   "weight": 60,
+   "median_ns": 36335932.63611556,
+   "baseline_ns": 188975.9972691536,
+   "speedup": 0.005200802169071718,
+   "speedup_of_medians": 0.005124538294960381,
+   "err_ns": 1329.2050382524424,
+   "speed_of_light_ns": 52519.458133333326,
+   "status": "pass",
+   "top_kernels": [
+    [
+     "void at::native::index_elementwise_kernel<128, 4, at::nat...",
+     7488.6,
+     20.0
+    ],
+    [
+     "void at::native::elementwise_kernel<128, 2, at::native::g...",
+     5537.3,
+     14.8
+    ],
+    [
+     "void at::native::vectorized_elementwise_kernel<4, at::nat...",
+     4994.5,
+     13.3
+    ],
+    [
+     "void at::native::unrolled_elementwise_kernel<at::native::...",
+     3657.4,
+     9.7
+    ]
+   ]
+  },
+  {
+   "key": "bs=32 load=decode_32 sharding=ep8",
+   "load": "decode 32",
+   "case": {
+    "bs": 32,
+    "load": "decode 32",
+    "seed": 4077789077938358571,
+    "sharding": "ep8",
+    "weight": 60
+   },
+   "weight": 60,
+   "median_ns": 37342438.433559775,
+   "baseline_ns": 206847.99831360579,
+   "speedup": 0.005539220441686818,
+   "speedup_of_medians": 0.005599848115108659,
+   "err_ns": 1350.7269055850304,
+   "speed_of_light_ns": 70755.39626666668,
+   "status": "pass",
+   "top_kernels": [
+    [
+     "void at::native::index_elementwise_kernel<128, 4, at::nat...",
+     7485.9,
+     19.9
+    ],
+    [
+     "void at::native::elementwise_kernel<128, 2, at::native::g...",
+     5551.2,
+     14.8
+    ],
+    [
+     "void at::native::vectorized_elementwise_kernel<4, at::nat...",
+     4990.5,
+     13.3
+    ],
+    [
+     "void at::native::unrolled_elementwise_kernel<at::native::...",
+     3662.1,
+     9.7
+    ]
+   ]
+  },
+  {
+   "key": "bs=8 load=verify_1 sharding=ep8",
+   "load": "verify 1",
+   "case": {
+    "bs": 8,
+    "load": "verify 1",
+    "seed": 4077848946166979443,
+    "sharding": "ep8",
+    "weight": 60
+   },
+   "weight": 60,
+   "median_ns": 37560325.51319342,
+   "baseline_ns": 150688.00607696176,
+   "speedup": 0.004011892975315966,
+   "speedup_of_medians": 0.004100744863968499,
+   "err_ns": 1614.5670805118646,
+   "speed_of_light_ns": 37318.92906666667,
+   "status": "pass",
+   "top_kernels": [
+    [
+     "void at::native::index_elementwise_kernel<128, 4, at::nat...",
+     7487.3,
+     20.0
+    ],
+    [
+     "void at::native::elementwise_kernel<128, 2, at::native::g...",
+     5537.9,
+     14.8
+    ],
+    [
+     "void at::native::vectorized_elementwise_kernel<4, at::nat...",
+     4989.8,
+     13.4
+    ],
+    [
+     "void at::native::unrolled_elementwise_kernel<at::native::...",
+     3659.1,
+     9.8
+    ]
+   ]
+  },
+  {
+   "key": "bs=128 load=verify_16 sharding=ep8",
+   "load": "verify 16",
+   "case": {
+    "bs": 128,
+    "load": "verify 16",
+    "seed": 4077908814395600316,
+    "sharding": "ep8",
+    "weight": 60
+   },
+   "weight": 60,
+   "median_ns": 37162545.23909607,
+   "baseline_ns": 466703.990008682,
+   "speedup": 0.012558450639104664,
+   "speedup_of_medians": 0.012536397133575973,
+   "err_ns": 1548.0340991852536,
+   "speed_of_light_ns": 101341.04746666664,
+   "status": "pass",
+   "top_kernels": [
+    [
+     "void at::native::index_elementwise_kernel<128, 4, at::nat...",
+     7485.0,
+     19.7
+    ],
+    [
+     "void at::native::elementwise_kernel<128, 2, at::native::g...",
+     5654.6,
+     14.9
+    ],
+    [
+     "void at::native::vectorized_elementwise_kernel<4, at::nat...",
+     4990.4,
+     13.2
+    ],
+    [
+     "void at::native::unrolled_elementwise_kernel<at::native::...",
+     3656.1,
+     9.6
+    ]
+   ]
+  },
+  {
+   "key": "bs=256 load=verify_32 sharding=ep8",
+   "load": "verify 32",
+   "case": {
+    "bs": 256,
+    "load": "verify 32",
+    "seed": 4077968682624221190,
+    "sharding": "ep8",
+    "weight": 60
+   },
+   "weight": 60,
+   "median_ns": 37495373.2660893,
+   "baseline_ns": 620303.9889223874,
+   "speedup": 0.01654348083216412,
+   "speedup_of_medians": 0.016412950874892227,
+   "err_ns": 1702.6884648683504,
+   "speed_of_light_ns": 108944.31573333332,
+   "status": "pass",
+   "top_kernels": [
+    [
+     "void at::native::index_elementwise_kernel<128, 4, at::nat...",
+     7493.9,
+     19.5
+    ],
+    [
+     "void at::native::elementwise_kernel<128, 2, at::native::g...",
+     5782.1,
+     15.0
+    ],
+    [
+     "void at::native::vectorized_elementwise_kernel<4, at::nat...",
+     4986.6,
+     13.0
+    ],
+    [
+     "void at::native::unrolled_elementwise_kernel<at::native::...",
+     3656.4,
+     9.5
+    ]
+   ]
+  }
+ ],
+ "loads": [
+  {
+   "load": "decode 1",
+   "sglang_ns": 4627199.94597137,
+   "yours_ns": 2144852203.6792283,
+   "speedup": 0.002157351419381709
+  },
+  {
+   "load": "decode 16",
+   "sglang_ns": 11338559.836149216,
+   "yours_ns": 2180155958.1669335,
+   "speedup": 0.005200802169071717
+  },
+  {
+   "load": "decode 32",
+   "sglang_ns": 12410879.898816347,
+   "yours_ns": 2240546306.0135865,
+   "speedup": 0.005539220441686818
+  },
+  {
+   "load": "verify 1",
+   "sglang_ns": 9041280.364617705,
+   "yours_ns": 2253619530.7916055,
+   "speedup": 0.004011892975315966
+  },
+  {
+   "load": "verify 16",
+   "sglang_ns": 28002239.40052092,
+   "yours_ns": 2229752714.345764,
+   "speedup": 0.012558450639104664
+  },
+  {
+   "load": "verify 32",
+   "sglang_ns": 37218239.33534324,
+   "yours_ns": 2249722395.965358,
+   "speedup": 0.01654348083216412
+  }
+ ],
+ "attribution": null
+}
