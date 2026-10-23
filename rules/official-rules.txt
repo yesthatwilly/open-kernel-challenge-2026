@@ -1,0 +1,557 @@
+                        Paradigm Muse Spark Open Kernel Challenge
+                                      Official Rules
+
+IMPORTANT NOTICE: THESE OFFICIAL RULES CONTAIN A BINDING
+ARBITRATION PROVISION AND CLASS ACTION WAIVER (SECTION 16) THAT
+AFFECT YOUR LEGAL RIGHTS. PLEASE READ CAREFULLY.
+
+NO PURCHASE OR PAYMENT OF ANY KIND IS NECESSARY TO ENTER OR WIN.
+A PURCHASE WILL NOT INCREASE YOUR CHANCES OF WINNING. THIS
+CONTEST IS SUBJECT TO APPLICABLE LAW AND IS VOID WHERE
+PROHIBITED. PARTICIPATION IN THE CONTEST CONSTITUTES FULL AND
+UNCONDITIONAL AGREEMENT TO THESE OFFICIAL RULES.
+
+1.​ CONTEST. Welcome to the Muse Spark Open Kernel Challenge (the “Contest”), sponsored
+    by Paradigm Operations LP (the “Sponsor”). The Contest consists of multiple
+    challenge-based competitions, including kernel optimization challenges (the “Kernel Track”)
+    and a model-serving optimization competition (the “Serving Track”), as further described in
+    these Official Rules and the technical rules available at https://openkernelchallenge.dev/rules
+    (the “Technical Rules”), which are incorporated herein by reference.
+
+2.​ SPONSOR. The sponsor of this Contest is Paradigm Operations LP (“Sponsor”).
+
+3.​ CONTEST PERIOD. The Contest begins on October 22, 2026 at 11:00 AM Pacific Time
+    (“PT”) and ends on November 18, 2026 at 11:59 PM PT (the “Contest Period”). Certain
+    portions of the Contest, including leaderboard scoring, may conclude earlier, as determined
+    by Sponsor.
+
+   Sponsor reserves the right, in its discretion, to modify the timing, structure, or phases of the
+   Contest, including the start and end times, as necessary to address technical issues, maintain
+   fairness, or otherwise ensure the intended operation of the Contest. Any such changes will be
+   communicated by Sponsor in its discretion. Sponsor’s clock is the official clock of the
+   Contest.
+
+4.​ ELIGIBILITY. The Contest is open only to individuals who are at least eighteen (18) years
+    of age at the time of entry and who are able to participate in the Contest in accordance with
+    these Official Rules. The Contest is open globally, except where prohibited by law.
+    Individuals located in jurisdictions where participation is prohibited by applicable sanctions
+    or export controls, or who are otherwise prohibited from participating under such laws, are
+    not eligible to participate.
+
+   Participation must be by an individual and is limited to only one account per individual.
+   Teams, groups, or organizations are not permitted to enter or participate as a single entrant.
+
+   Employees, officers, directors, agents, and representatives of Sponsor and its parent
+   companies, subsidiaries, affiliates, and their immediate family members (spouse, parent,
+   child, sibling, and their respective spouses, regardless of where they reside) and members of
+   the same household, whether or not related, are not eligible to participate or win.
+
+   Sponsor reserves the right, in its discretion, to verify eligibility and to disqualify any
+   participant who does not meet the requirements set forth in these Official Rules or who
+   violates these Official Rules.
+
+5.​ ACCEPTANCE OF OFFICIAL RULES AND TERMS. Before participating in the
+    Contest, each participant must review and affirmatively agree to these Official Rules through
+    the Contest's terminal-based interface. By participating in the Contest, each participant agrees
+    to be bound by these Official Rules and by the decisions of Sponsor, which are final and
+    binding in all respects. Participants also agree to review and comply with Sponsor’s
+    applicable terms and policies, including its Terms of Use and Privacy Policy, which are
+    incorporated by reference.
+
+   These Official Rules govern the Contest, but they do not govern Sponsor’s websites or
+   services, which are governed by their own terms. Disputes arising out of or related to the
+   Contest will be governed exclusively by Section 16 of these Official Rules.
+
+   In the event of a conflict between these Official Rules and any instructions or interpretations
+   of these Official Rules given by an employee or agent of Sponsor regarding the Contest,
+   these Official Rules shall prevail, govern, and control. In the event of any discrepancy or
+   inconsistency between these Official Rules and any disclosures or other statements contained
+   in Contest-related materials, these Official Rules shall prevail and control.
+
+6.​ HOW TO PARTICIPATE. No purchase or payment is necessary to participate in the
+    Contest. The Contest consists of multiple competition tracks, including (i) kernel
+    optimization challenges (the “Kernel Track”) and (ii) a model-serving optimization
+    competition (the “Serving Track”), as further described in the Technical Rules.
+
+   ●​ Kernel Track. Participants may enter the Kernel Track by participating in one or more of
+      the designated kernel optimization challenges made available by Sponsor during the
+      Contest Period, in accordance with the Technical Rules. Participation in a Kernel Track
+      competition will constitute entry into that competition, as determined by Sponsor.
+
+   ●​ Serving Track. Participants may enter the Serving Track by submitting through the
+      Contest’s interface in accordance with the instructions, specifications, and requirements
+      set forth in the Technical Rules. To be eligible for consideration, participants must submit
+      their patch by the applicable deadline for the Serving Track, as determined by Sponsor.
+
+   Participants may participate in one or both tracks, subject to these Official Rules.
+
+   Sponsor reserves the right, in its discretion, to determine whether participation or
+   submissions satisfy the requirements for entry and eligibility in any track, including based on
+   data recorded by Sponsor’s systems or platforms, and to interpret and apply the rules, criteria,
+   and mechanics of each track.
+   Sponsor is not responsible for any technical issues, delays, or failures that may affect
+   participation, including without limitation any issues relating to access, connectivity, or
+   platform functionality. Participation that is incomplete, invalid, non-compliant, or determined
+   by Sponsor to involve manipulation, abuse, or other improper conduct may be disqualified.
+
+7.​ CONSENT TO COMMUNICATIONS. By participating in the Contest, each participant
+    consents to receive communications from Sponsor for purposes of administering the Contest,
+    including without limitation communications regarding participation, results, and prize
+    fulfillment. In the event a participant is selected as a winner, such participant may be
+    contacted by Sponsor for additional information, prize fulfillment, and reasonable
+    promotional or publicity purposes related to the Contest.
+
+8.​ PRIZE DETAILS AND RELATED TERMS. Prizes will be awarded to eligible
+    participants based on performance in the Serving Track, as determined by Sponsor in
+    accordance with these Official Rules and the Technical Rules.
+
+   The total cash prize pool is $100,000 USD, excluding the H200 GPU awarded to the
+   first-place winner . Prizes will be awarded as follows: (i) first place: $50,000 USD and a
+   H200 GPU; (ii) second place: $30,000 USD; (iii) third place: $10,000 USD; (iv) fourth place:
+   $3,000 USD; (v) fifth place: $2,000 USD; and (vi) sixth through tenth places: $1,000 USD
+   each.
+
+   All prizes are awarded as is and without warranties of any kind, either express or implied,
+   including, but not limited to, implied warranties of merchantability or fitness for a particular
+   purpose, except where prohibited by law.
+
+   Prizes are non-transferable and may not be redeemed for cash (unless expressly designated as
+   a cash prize). Sponsor reserves the right, in its discretion, to substitute any prize (or portion
+   thereof) with a prize of equal or greater value.
+
+   In particular, Sponsor is not required to ship the H200 GPU to any location where shipment
+   would violate applicable law (including export controls or sanctions), require a license or
+   authorization Sponsor does not obtain, or, in Sponsor's reasonable discretion, involve
+   unreasonable shipping costs or logistical difficulties.In those circumstances, Sponsor may
+   substitute cash or another prize of equal or greater value for the H200 GPU, to the extent
+   permitted by applicable law.
+
+   Winners are solely responsible for any taxes, fees, or other costs associated with receipt or
+   use of a prize. Sponsor may require winners to complete and return applicable tax forms or
+   other documentation as a condition of receiving a prize.
+
+   In addition to the prizes described above, Meta may, in its sole discretion, consider
+   participants ranked among the top 1,000 on the leaderboard at the conclusion of the Contest
+   for potential employment interviews. A top-1,000 ranking does not guarantee an interview,
+   job offer, or employment. Any disclosure by Sponsor of a participant's email address to Meta
+   for Meta's independent recruiting purposes requires the participant's separate, optional
+   authorization and must comply with applicable law. Whether to interview or hire any
+   participant is within Meta’s sole discretion and subject to Meta’s hiring processes and
+   eligibility requirements, including work authorization and applicable law. Declining to
+   authorize such sharing will not affect eligibility for the Contest or its cash and H200 GPU
+   prizes.
+
+9.​ SELECTION OF WINNERS. Winners will be determined based on performance in the
+    Serving Track, as determined by Sponsor in accordance with these Official Rules and the
+    Technical Rules.
+
+   Winners for the Serving Track will be determined based on participant performance on the
+   serving leaderboard, subject to final verification in accordance with the Technical Rules. At
+   the conclusion of the Contest, the top twenty-five (25) entries on the serving leaderboard will
+   be rerun at least three (3) times on a separate held-out set of data, alongside stock SGLang on
+   the same set and node. Final placements will be determined based on the median scores of
+   those reruns, subject to Sponsor’s review and verification in accordance with the Technical
+   Rules. Sponsor reserves the right to review, verify, and adjust leaderboard results prior to
+   final determination of winners to address technical issues, exploits, or other integrity
+   concerns.
+
+   All decisions regarding scoring, rankings, and winner determination are final and binding,
+   subject to Sponsor’s discretion. Sponsor reserves the right, in its discretion, to interpret and
+   apply the rules, criteria, and mechanics of the Contest and to resolve any ties, disputes, or
+   ambiguities.
+
+   Sponsor reserves the right not to award any prize if, in its discretion, it determines that no
+   eligible participant has met the requirements for such prize.
+
+10.​NOTIFICATION TO WINNERS. Sponsor will attempt to notify potential winners using
+    the contact information associated with their participation in the Contest (the “Notification”).
+    Potential winners may be required to confirm acceptance of the prize and provide any
+    requested information or documentation within a specified period of time, as determined by
+    Sponsor. Potential winners may be required to complete and return an affidavit of eligibility,
+    liability release, and, where permitted by law, a publicity release (collectively, the “Required
+    Documents”) within the timeframe specified by Sponsor. Failure to comply with any
+    Notification or Required Documents, or with these Official Rules, may result in
+    disqualification and forfeiture of the prize.
+
+   Except where prohibited by law, acceptance of a prize constitutes the winner’s consent to
+   Sponsor’s use of such winner’s name, likeness, and/or submitted materials for advertising,
+   promotional, and publicity purposes in any media, without further compensation.
+
+   If a potential winner cannot be contacted, fails to respond within the required timeframe, fails
+   to complete any Required Documents, or is otherwise determined to be ineligible, the prize
+   may be forfeited and an alternate winner may be selected, in Sponsor’s discretion.
+   Sponsor is not responsible for any inability to contact a potential winner or for any failure by
+   a participant to receive Notification due to inaccurate or outdated contact information or
+   technical issues.
+​
+11.​OTHER CONDITIONS. These Official Rules are final and binding in all respects and are
+    subject to all applicable laws and regulations.
+
+   CAUTION AND WARNING: ANY ATTEMPT TO DELIBERATELY DAMAGE ANY
+   SYSTEMS, PLATFORMS, OR INFRASTRUCTURE USED IN CONNECTION WITH
+   THE CONTEST OR TO UNDERMINE THE LEGITIMATE OPERATION OF THE
+   CONTEST MAY BE A VIOLATION OF CRIMINAL AND CIVIL LAWS. SHOULD
+   SUCH AN ATTEMPT BE MADE, SPONSOR RESERVES THE RIGHT TO SEEK
+   DAMAGES OR OTHER REMEDIES FROM ANY SUCH PERSON(S) RESPONSIBLE
+   TO THE FULLEST EXTENT PERMITTED BY LAW.
+
+   a.​ Right to Modify or Suspend Contest. Sponsor reserves the right, in its sole discretion,
+       to modify, suspend, or terminate the Contest or any portion thereof if, for any reason, the
+       Contest is not capable of running as planned or if any event occurs that, in Sponsor’s
+       discretion, affects the administration, security, fairness, integrity, or proper conduct of the
+       Contest. Such events may include, without limitation, technical failures, bugs, tampering,
+       unauthorized intervention, fraud, or any other causes beyond Sponsor’s control, including
+       force majeure events.
+
+      In the event of any such modification, suspension, or termination, Sponsor may
+      determine winners, if any, based on eligible participation and available data, as
+      determined by Sponsor in its discretion. Sponsor shall have no obligation to award any
+      prizes if the Contest is terminated, cancelled, or otherwise unable to be completed as
+      planned, except as required by applicable law.
+
+   b.​ Right to Disqualify Participants. Sponsor reserves the right, in its sole discretion, to
+       disqualify any participant at any time if Sponsor determines that such participant (i) has
+       violated these Official Rules; (ii) has engaged in any conduct that, in Sponsor’s
+       discretion, corrupts or affects the administration, security, fairness, integrity, or proper
+       conduct of the Contest; (iii) has improperly used automated means, scripts, or other
+       methods to improperly manipulate or interfere with participation, scoring, or results; (iv)
+       has acted in an unsportsmanlike, disruptive, or abusive manner, or has engaged in
+       conduct intended to disrupt or undermine the legitimate operation of the Contest or to
+       harass or harm any other participant or person; or (v) is otherwise determined by Sponsor,
+       in its discretion, to be ineligible or acting in a manner inconsistent with the spirit or
+       intended operation of the Contest.
+
+      Sponsor reserves the right to conduct background checks on potential winners to the
+      extent permitted by law. By participating, participants agree to cooperate with any such
+      background check and to provide any necessary authorizations or information. Sponsor
+       may disqualify any participant or potential winner based on the results of such
+       background check, in its discretion.
+
+12.​USE OF DATA. By participating in the Contest, each participant acknowledges and agrees
+    that Sponsor may collect, use, and process personal information provided in connection with
+    the Contest for purposes of administering the Contest, including without limitation to verify
+    eligibility, determine winners, and fulfill prizes. All personal information collected in
+    connection with the Contest will be handled in accordance with Sponsor’s Privacy Policy. By
+    participating, participants acknowledge that they have reviewed and agree to Sponsor’s
+    Privacy Policy. If a participant is selected as a winner, certain information about such winner
+    (such as name or username) may be included in a publicly available winners list or otherwise
+    used in accordance with these Official Rules.
+
+   Sponsor may use participants' email addresses to contact them about potential employment or
+   recruiting opportunities and may disclose those addresses to Meta for Meta's own recruiting
+   communications, in each case subject to applicable law and the relevant privacy notices.
+
+13.​OWNERSHIP AND PUBLICITY. As between Sponsor and each participant, participants
+    retain ownership of any rights they hold in code, materials, or other content they create or
+    provide in connection with the Contest, subject to any applicable third-party rights and
+    licenses. By participating in the Contest and providing any such materials, each participant
+    grants Sponsor and its affiliates a non-exclusive, worldwide, royalty-free, irrevocable license
+    to use, reproduce, display, publish, distribute, and create derivative works from such
+    materials, and to use the participant’s name, username, and likeness, for purposes of
+    administering the Contest and for reasonable promotional, marketing, and publicity purposes
+    related to the Contest, in any media now known or later developed, without further
+    compensation, unless prohibited by law. Sponsor shall have no obligation to use any such
+    materials and shall not incur any liability to the extent it elects not to exercise any rights
+    granted under this Section.
+
+   Each participant licenses the original code and other contributions they own and submit in
+   connection with the Contest under the Apache License, Version 2.0, subject to applicable
+   third-party rights and licenses. Participants must have the rights necessary to submit and
+   license their contributions in accordance with these Official Rules and the Technical Rules.
+
+14.​TAXES. Any valuation of prizes stated in these Official Rules is based on available
+    information at the time of drafting. All federal, state, local, and other applicable taxes, as well
+    as any costs and expenses associated with the acceptance and/or use of a prize not
+    specifically provided for in these Official Rules, are the sole responsibility of the winner.
+    Winners are solely responsible for reporting and paying any applicable taxes associated with
+    a prize. Sponsor may require any winner to provide valid identification and a completed and
+    signed IRS Form W-9 or other applicable tax documentation as a condition of receiving a
+    prize. Sponsor may issue an IRS Form 1099 or other applicable tax forms as required by
+    applicable law. Winners are encouraged to consult their own tax advisors regarding the tax
+    consequences of accepting a prize.
+15.​RELEASE, INDEMNIFICATION, AND LIMITATION ON LIABILITY. By entering
+    and participating in the Contest, each participant agrees to release and hold harmless
+    Sponsor, its parents, subsidiaries, affiliates, divisions, advertising and promotional agencies,
+    suppliers, third-party providers of funding or software for the Contest, and each of their
+    respective officers, directors, employees, shareholders, and agents (collectively, the
+    “Released Parties”) from and against any and all claims, actions, damages, losses, liabilities,
+    costs, or expenses of any kind, including personal injury, death, or property damage, arising
+    out of or in connection with participation in the Contest, any Contest-related activity, or the
+    acceptance, use, or misuse of any prize, including any claims based on publicity rights,
+    defamation, or invasion of privacy.
+
+   Each participant further agrees to indemnify, defend, and hold harmless the Released Parties
+   from and against any and all liability, claims, losses, damages, injuries, costs, or expenses,
+   including reasonable attorneys’ fees, arising out of or relating to (i) the participant’s
+   participation in the Contest, (ii) any materials, content, or information provided by the
+   participant in connection with the Contest, or (iii) any breach or alleged breach by the
+   participant of these Official Rules or of any representation, warranty, or obligation under
+   these Official Rules.
+
+   The Released Parties are not responsible or liable for any incorrect or inaccurate information
+   related to participation in the Contest, and assume no responsibility for: (i) any error,
+   omission, interruption, defect, or delay in operation, connectivity, or transmission at any
+   website, platform, network, or server; (ii) any failure of participation data, scores, or other
+   information to be received, recorded, or processed by Sponsor due to technical, mechanical,
+   electronic, or human error, or traffic congestion on the Internet or on any website, platform,
+   network, or server; (iii) communications line, hardware, or software failures; (iv) damage to
+   any computer, device, software, or data resulting from or related to participation in the
+   Contest; (v) theft, destruction, tampering, unauthorized access to, or alteration of
+   participation data or related information; (vi) participation data, scores, email messages, or
+   other communications related to the Contest that are late, lost, stolen, damaged, delayed,
+   garbled, inaccurate, incomplete, or misdirected (or any combination thereof); (vii) printing,
+   typographical, or other errors appearing in these Official Rules or in any Contest-related
+   materials; (viii) the administration of the Contest or the processing, scoring, or judging of
+   participation or materials; or (ix) any other errors or problems of any kind relating to the
+   Contest.
+
+16.​DISPUTE RESOLUTION. MANDATORY ARBITRATION; NO CLASS ACTIONS.
+    PLEASE READ THIS “DISPUTE RESOLUTION” SECTION CAREFULLY, AS IT MAY
+    SIGNIFICANTLY AFFECT YOUR LEGAL RIGHTS, INCLUDING YOUR RIGHT TO
+    FILE OR PARTICIPATE IN A LAWSUIT FILED IN COURT.
+
+   This Section 16 governs the resolution of any claim, dispute, or controversy (whether in
+   contract, tort, or otherwise) that may arise out of, relate to, or be connected in any way with
+   the Contest or these Official Rules between (i) each participant (“You” or “Your”) and (ii)
+   Paradigm Operations LP (“Sponsor”) (each, a “Contest Dispute”).
+a.​ Informal Dispute Resolution. The parties agree that before initiating any formal dispute
+    pursuant to the provisions below, we will engage in informal dispute resolution to settle
+    any Contest Dispute(s). Engaging in good faith negotiations to informally resolve such
+    Contest Dispute shall be a pre-condition to any lawsuit or arbitration. Consequently, if
+    You fail to engage in this process, additional fees could be imposed on You in arbitration.
+
+   To adequately engage in this initial dispute-resolution process, each party must notify the
+   other party, in writing, of the facts and circumstances giving rise to the Contest Dispute,
+   including the email address associated with the participant’s account or participation and
+   all damages claimed. Such a writing must be sent (i) by Sponsor to the email address
+   associated with the participant, or (ii) by You to legalops@paradigm.xyz, Subject Line:
+   Muse Spark Open Kernel Challenge – Dispute Notification (“Dispute Notification”).
+   Sponsor believes this informal process should facilitate resolution. However, if the parties
+   are unable to satisfactorily resolve the Contest Dispute within forty-five (45) days from
+   the receipt by the non-initiating party of the Dispute Notification, then You and Sponsor
+   agree to the dispute resolution provisions below.
+
+   Notwithstanding the foregoing 45-day notice requirement, You and Sponsor agree that if
+   the Contest Dispute involves either party’s intellectual property rights or defamation, this
+   informal dispute resolution provision shall not apply and either party may immediately
+   pursue relief in the manner set forth below.
+
+b.​ Binding Arbitration. If the parties do not reach an agreed-upon solution as a result of
+    the Informal Dispute Resolution provision above, then the parties agree that either party
+    may initiate binding arbitration as the sole means to resolve the Contest Dispute (except
+    as set forth below) subject to these Official Rules and this arbitration agreement.
+    Specifically, all Contest Disputes, including, but not limited to, any claim that all or any
+    part of these Official Rules are void or voidable, whether a claim is subject to arbitration,
+    and any dispute regarding the payment of arbitration fees (including the timing of such
+    payments and remedies for nonpayment), shall be finally settled by binding arbitration.
+
+   Thus, except as explicitly set forth in this Section 16, an arbitrator, and not any federal,
+   state, or local court or agency, shall have exclusive authority to resolve all disputes
+   arising out of or relating to the interpretation, applicability, enforceability, or formation of
+   these Official Rules. The parties understand that by entering this agreement to arbitrate,
+   an arbitrator and not a judge or jury will decide the Contest Dispute, and that rights to
+   discovery and appeals may be limited in arbitration. The parties further understand that
+   the costs of arbitration could exceed the costs of litigation in some instances.
+
+   YOU HEREBY ACKNOWLEDGE AND AGREE THAT BY AGREEING TO
+   THESE OFFICIAL RULES, WHICH INCLUDE THIS ARBITRATION
+   AGREEMENT, YOU AND SPONSOR ARE EACH WAIVING THE RIGHT TO A
+   TRIAL BY A JURY TO THE MAXIMUM EXTENT PERMITTED BY LAW.
+This agreement to arbitrate affects interstate commerce and shall be governed by the
+Federal Arbitration Act (“FAA”), 9 U.S.C. §§ 1 et seq., and applicable federal arbitration
+law.
+
+   i.​ Arbitration Rules. Any arbitration initiated pursuant to this Section 16 shall be
+       administered by JAMS and conducted before a single arbitrator in accordance
+       with the JAMS Streamlined Arbitration Rules and Procedures, excluding any
+       rules or procedures governing or permitting class or representative actions, and
+       except that each party shall be permitted at least one deposition unless otherwise
+       prohibited by applicable JAMS rules. If twenty-five (25) or more similar
+       arbitration demands are filed against Sponsor by the same party or similar parties
+       represented by the same law firm or law firms acting in coordination (a “Mass
+       Arbitration”), then the JAMS Mass Arbitration Procedures shall apply. The
+       applicable      JAMS       rules      and     procedures      are  available    at
+       https://www.jamsadr.com/adr-rules-procedures/. If for any reason JAMS is unable
+       to administer the arbitration, either party may apply to a court of competent
+       jurisdiction to appoint an arbitrator pursuant to 9 U.S.C. § 5.
+
+   ii.​ Class Action Waiver. You and Sponsor acknowledge and agree that, to the
+        maximum extent permitted by law, any arbitration shall be conducted in an
+        individual capacity only and not as a class, collective, or other representative
+        action. The arbitrator may award relief only in favor of the individual party
+        seeking relief and only to the extent necessary to resolve that party’s individual
+        claim.
+
+       Notwithstanding the foregoing, any arbitration involving You may proceed on a
+       consolidated basis only if Sponsor provides its prior written consent to such
+       consolidation.
+
+       Notwithstanding any other provision of these Official Rules, disputes regarding
+       the interpretation, applicability, or enforceability of this Class Action Waiver
+       subsection may be resolved only by a court of competent jurisdiction and not by
+       an arbitrator. If there is a final judicial determination that applicable law precludes
+       enforcement of this subsection as to a particular remedy, then that remedy (and
+       only that remedy) shall be severed from the arbitration and may be pursued in
+       court. The parties agree, however, that any adjudication of remedies not subject to
+       arbitration shall be stayed pending the outcome of any arbitrable claims and
+       remedies.
+
+   iii.​ Arbitration Location. If the amount in controversy does not exceed $25,000 and
+         does not involve injunctive or declaratory relief, the arbitration shall be conducted
+         solely on the basis of written submissions provided by You and Sponsor to the
+         arbitrator, unless (A) the arbitrator determines that a hearing is necessary or (B)
+         the parties agree otherwise. In such cases, the parties agree to remote participation
+         in any hearing by video or telephone conference.
+   If the amount in controversy exceeds $25,000 or involves declaratory or
+   injunctive relief, either party may request an arbitration hearing. Any such hearing
+   shall presumptively be conducted by video or telephone conference, unless (A)
+   the arbitrator determines that there is good cause to hold an in-person hearing or
+   (B) the parties agree otherwise. In the event an in-person hearing is required, the
+   location of the hearing shall be determined by mutual agreement of the parties or,
+   if the parties cannot agree, by the arbitrator in accordance with applicable JAMS
+   rules and applicable law.
+
+iv.​ Arbitration Procedures. Any arbitration demand or counterclaim asserted by either
+     party must contain sufficient information to provide fair notice to the other party
+     of the asserting party’s identity, the claims being asserted, and the factual
+     allegations on which the claims are based. The arbitrator and/or JAMS may
+     require amendment of any demand or counterclaim that does not satisfy these
+     requirements.
+
+   The arbitrator shall be empowered to grant any relief that would be available in a
+   court under law or in equity. The arbitrator also shall be empowered to impose
+   sanctions in accordance with JAMS Rules and Procedures, including for any
+   frivolous claims or submissions that the arbitrator determines have not been filed
+   in good faith under the standard set forth in Federal Rule of Civil Procedure 11,
+   and/or for a party’s failure to comply with any provision or condition of these
+   Official Rules.
+
+   Subject to the applicable JAMS rules and procedures, the parties agree that the
+   arbitrator will have the discretion to allow the filing of dispositive motions if they
+   are likely to efficiently resolve or narrow issues in dispute.
+
+   Unless otherwise prohibited by law, all arbitration proceedings shall be
+   confidential and closed to the public and any persons other than You and Sponsor
+   (and each party’s authorized representatives and agents), and all records relating
+   thereto shall be maintained as confidential, except as necessary to obtain court
+   confirmation of an arbitration award (provided that the party seeking confirmation
+   shall seek to file such records under seal to the extent permitted by law).
+
+v.​ Arbitrator’s Decision. The arbitrator will render an award within the time frame
+    specified in the applicable JAMS Rules and Procedures and will include the
+    essential findings and conclusions upon which the arbitrator based the award. The
+    arbitrator shall have the authority to award monetary damages on an individual
+    basis only and to grant, on an individual basis, any non-monetary remedy or relief
+    to the extent available under applicable law, the JAMS Rules and Procedures, and
+    these Official Rules.
+
+   The parties agree that any damages or other relief awarded, if any, must be
+   consistent with the terms of Section 15 (“Release, Indemnification, and Limitation
+   on Liability”).
+           The arbitrator’s award shall be written and binding on the parties and may be
+           entered as a judgment in any court of competent jurisdiction. No individual
+           arbitration award or decision will have any preclusive effect as to issues or claims
+           in any dispute with any person who is not a named party to the arbitration.
+
+       vi.​ Fees. Unless otherwise required by applicable law, the JAMS Rules and
+            Procedures will govern the amount that You and Sponsor must pay to JAMS for
+            arbitration fees, including with respect to any fee waivers. However, if the
+            arbitrator determines that Your claim(s) are frivolous or were asserted in bad faith,
+            You agree that You may be required to reimburse Sponsor for arbitration fees
+            (including reasonable attorneys’ fees) incurred by Sponsor in defending against
+            such claim(s).
+
+           The parties further agree that JAMS has the discretion to modify the amount or
+           timing of any administrative or arbitration fees due under the JAMS Rules and
+           Procedures where it deems appropriate, provided that such modification does not
+           increase the costs to You, and You waive any objection to such fee modification.
+           The parties also agree that a good-faith challenge by either party to the fees
+           imposed by JAMS does not constitute a default, waiver, or breach of this Section
+           16 while such challenge remains pending before JAMS, the arbitrator, and/or a
+           court of competent jurisdiction, as applicable.
+
+           Each party shall be responsible for its own attorneys’ fees, except as otherwise
+           provided in these Official Rules, the JAMS Rules and Procedures, or applicable
+           law. Sponsor will not seek attorneys’ fees or arbitration costs from You in
+           connection with claims You bring, unless the arbitrator determines that such
+           claims are frivolous or that You have engaged in conduct that is sanctionable
+           under the JAMS Rules and Procedures or Federal Rule of Civil Procedure 11.
+           Sponsor may seek attorneys’ fees and costs as permitted under these Official
+           Rules, the JAMS Rules and Procedures, and applicable law for claims it brings
+           against You.
+
+       vii.​Time to File. Any claim must be commenced by filing a demand for arbitration
+            within one (1) year after the date the party asserting the claim first knew or
+            reasonably should have known of the act, omission, or default giving rise to the
+            claim. If applicable law prohibits a one (1) year limitation period, the claim must
+            be asserted within the shortest time period permitted by applicable law.
+
+c.​ Exceptions to Arbitration – Litigation of Intellectual Property and Small Claims
+    Court Claims. Notwithstanding the parties’ agreement to resolve all Contest Disputes
+    through arbitration, either party may bring an action in state or federal court (subject to
+    these Official Rules, including the “Choice of Law/Venue” section below) to protect its
+    intellectual property rights (“intellectual property rights” means patents, copyrights,
+    moral rights, trademarks, and trade secrets, but not privacy or publicity rights). Either
+    party may also elect to have Contest Disputes resolved in a small claims court if and to
+       the extent such disputes fall within the jurisdiction of that court. Either party may also
+       seek a declaratory judgment or other equitable relief in a court of competent jurisdiction
+       regarding whether a party’s claims are time-barred or may be brought in small claims
+       court in the applicable jurisdiction of the participant’s residence. Seeking such relief shall
+       not waive a party’s right to arbitration under this agreement.
+
+   d.​ Choice of Law/Venue. Except where preempted by federal law, You agree that all
+       Contest Disputes, whether in arbitration or litigation (if excluded from arbitration under
+       these Official Rules or otherwise non-arbitrable), shall be governed by the laws of the
+       State of California, excluding its conflicts of law principles. You further agree that, solely
+       to the extent any Contest Dispute is not resolved pursuant to the arbitration provisions in
+       these Official Rules—including any arbitration-related litigation such as a motion to
+       compel arbitration, to stay proceedings pending arbitration, or to confirm, modify, vacate,
+       or enforce an arbitration award—such dispute shall be resolved exclusively in a court of
+       competent jurisdiction, federal or state (including small claims court), located in San
+       Francisco, California, and in no other forum. You consent to the personal jurisdiction of
+       such courts and agree to accept service of process from them to the fullest extent
+       permitted by applicable law.
+
+   e.​ 30-Day Right to Opt Out. You have the right to opt out of the arbitration and class
+       action waiver provisions set forth in this Section 16 by sending written notice of Your
+       decision to opt out by mail to 548 Market Street Ste 46425, San Francisco, CA 94104,
+       Attn: Legal Department, or by email to legalops@paradigm.xyz. The notice must be sent
+       within thirty (30) days of the date these Official Rules become effective or Your first
+       participation in the Contest, whichever occurs later. If You do not timely opt out, You
+       shall be bound to arbitrate disputes in accordance with the terms of this Section 16. If
+       You opt out of these arbitration provisions, Sponsor also will not be bound by them.
+       However, even if You opt out of arbitration, You will continue to be bound by the
+       remaining dispute resolution provisions set forth in this Section 16 to the extent
+       applicable.
+
+   f.​ Changes to this Section. Sponsor will provide at least thirty (30) days’ notice of any
+       material changes to this Section 16. Any such changes will become effective thirty (30)
+       days after such notice is provided to participants and will apply to all claims not yet filed,
+       to the extent permitted by applicable law. If Sponsor modifies this Dispute Resolution
+       section after the date You first accepted these Official Rules (or any subsequent updates),
+       Your continued participation in the Contest more than fifteen (15) days after such
+       changes become effective will constitute Your acceptance of those changes.
+
+17.​WINNERS LIST. The names of the winners will be available once winners have been
+    verified and prizes have been awarded. To request a copy of the winners list, you may: (i)
+    send a self-addressed, stamped envelope to 548 Market Street Ste 46425, San Francisco, CA
+    94104, Attn: Legal Department – Muse Spark Open Kernel Challenge; or (ii) send an email
+    to legalops@paradigm.xyz with the subject line “Winners List Request – Muse Spark Open
+    Kernel Challenge.”
+18.​NO THIRD-PARTY SPONSOR. This Contest is in no way sponsored, endorsed, or
+    administered by, or associated with, Instagram, TikTok, X (formerly Twitter), or any other
+    social media platform on which the Contest may be promoted.
+
+   By participating in the Contest, each participant agrees to release and hold harmless
+   Instagram, Meta, TikTok, X (formerly Twitter), and any other third-party platform on which
+   the Contest is promoted, from and against any and all claims, liabilities, damages, or causes
+   of action arising out of or relating to participation in the Contest or the acceptance, use, or
+   misuse of any prize.
+
+   Participants acknowledge that any information provided in connection with the Contest is
+   provided to Sponsor and not to Instagram, Meta, TikTok, X (formerly Twitter), or any other
+   third-party platform.
+
+The Contest and all accompanying materials are the property of Paradigm Operations LP
+and are © 2026 Paradigm Operations LP.
+
