@@ -26,7 +26,7 @@ risk: low
 depends_on: null
 priority: 1
 status: running
-stage: implemented
+stage: dispatched
 claimed_at: 2026-10-23T221905Z
 base_sha: 965a5a2c44b96f0f62ef2d7cd77e99c879e9d3df
 base_blob: 6ce773a44036578450b1489df0030d65d2c67c0e
@@ -40,6 +40,8 @@ submission_blob: 5a2064af06f442f01dff926cb4f1eca75f992a24
 lint_warnings: 0
 attempt_file: 2026-10-23T221952Z-check-sglang-gemm-dispatch-parity.md
 prepared_at: 2026-10-23T221952Z
+job: 017804b34fed40b3
+dispatched_at: 2026-10-23T222029Z
 ---
 
 # sglang-gemm-dispatch-parity
