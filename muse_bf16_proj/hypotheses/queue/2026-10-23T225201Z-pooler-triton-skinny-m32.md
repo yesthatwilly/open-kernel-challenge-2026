@@ -42,8 +42,10 @@ depends_on: sglang-gemm-dispatch-parity
 priority: 2
 kind: primary
 controls_for: null
-review: required
+review: proceed
 status: queued
+review_at: 2026-10-23T230544Z
+review_companions: null
 ---
 
 # pooler-triton-skinny-m32
@@ -64,3 +66,27 @@ For layer == 'pooler' and m <= 32 only, replace the _bf16_gemm_dispatch_impl cal
 ## Risk
 
 Risk: a full-K loop has only num_stages x BLOCK_N x BLOCK_K x 2 = 64 KB in flight per SM; if that is not enough memory-level parallelism to beat nvjet's splitK (which uses 4x more CTAs), the pooler shapes get slower, not faster, and the per-shape rows will show it directly (nothing else moves). Correctness: bf16 inputs, fp32 accumulate, one bf16 rounding at the store, same as cuBLAS; the m=7 pooler test exercises the masked-row path. CUDA graph: fixed-shape torch.empty only, no syncs. Compile: 3 BLOCK_M specializations, seconds. If faster, qkv-gate-triton-skinny-m32, unpooler-full-triton-skinny-m32, o-triton-skinny-m32 and pooler-skinny-tiled-weight-layout stack on it; if slower, they should be withdrawn or retuned (BLOCK_N=16 with 256 programs, or num_stages=6) before running.
+
+## Adversarial review
+
+Reviewed 2026-10-23T230544Z by an adversarial Fable subagent (model fable).
+
+**Verdict: proceed.** A single run is interpretable: only the four pooler m<=32 rows can move, nothing landed touches that path, and the profile's per-kernel us answers the stated question (achieved TB/s of a plain Triton full-K stream) whether the shapes gain or lose. The headroom is thinner than the hypothesis states: the ~1 us graph gap exists only at m=1; at m=16/32 the reduce kernel (1.8-1.9 us) is the only removable cost, so the Triton kernel must at least tie nvjet's 19.8-20.2 us there.
+
+### Justification
+Mechanism is plausible: pooler is a 67.1 MB bf16 weight stream (4096x8192), memory-bound at every m<=32, floor 14.0-14.1 us at 4.8 TB/s; the current path is nvjet splitK (18.8 us at m=1 = 3.57 TB/s; 19.8/20.2 us at m=16/32 = 3.3-3.4 TB/s) plus a cublasLt splitKreduce launch (1.6-1.9 us). Fusing to one kernel removes the reduce and its gap, and 128 programs x 4 stages x 16 KB = 8 MB in flight satisfies Little's law for 4.8 TB/s at ~1 us loaded latency, so bandwidth is not latency-bound on paper. Shape/direction consistency with TASK.md is fine: all shapes weigh 62, the four 'faster' globs are exactly the m<=32 pooler shapes, verify_16 (m=128) and unpooler are correct flat controls; pooler verify_32 (m=256, cuBLAS) is missing from the expected list and should be added as flat. Load-level arithmetic: pooler is 28-36% of four of the six loads (decode_1/16/32, verify_1); a full success (~21.4 -> ~19 us, -11%) is ~+3-4% per load and ~+2.3% geomean, right at the judge's +-1.5% CI edge, so the per-shape rows and the profile, not the headline speedup, are the readout. Weakest link: the hypothesis's own arithmetic '21.5 = 18.8 + 1.6 + gap' holds only at m=1 (profile kernel sum 20.3 vs 21.2-21.45 median); at m=16 and m=32 the kernel sum equals the median, so the removable cost is 1.8-1.9 us (8-9%), and a Triton pointer-load kernel with one 4-warp CTA per SM has no supporting measurement that it reaches even nvjet's 3.3-3.6 TB/s, let alone the 4.0 TB/s target. If the Triton stream lands at 3.2 TB/s (21 us) every pooler shape loses despite the fused launch. Second-order: each program re-streams the whole x tile from L2 every K step (for m=32: 128 x 512 KB = 64 MB of L2 traffic, comparable to the HBM weight bytes), which competes for the same issue slots; nvjet pays this too, but it is why 1 CTA/SM is a thin margin.
+
+### Confounders on the current kernel
+- sglang-gemm-dispatch-parity (parent, landed list on master is empty): no confound. Its pooler path is kernel-for-kernel the starter's (same nvjet splitK + splitKreduce, every pooler row flat 0.99-1.02x in its attribution), and its router hi/lo change is a different layer timed in its own CUDA graph. This hypothesis keeps _bf16_gemm_dispatch_impl only for pooler m>=128, which is untouched by the parent too. The change would behave identically with the parent absent (the starter's x @ w.T picks the same nvjet kernels).
+
+### Interference and A/B needs
+No companion is warranted. A gain is unambiguous: the only code path that changes is pooler at m<=32, the judge reports per shape, and nothing else in the graph for those shapes exists besides the one Triton launch and the torch.empty. A loss is interpretable at the mechanism level from the profile: the Triton kernel's own us gives 67.1 MB / t directly, which is the question the hypothesis poses (>= 4.0 TB/s or not); the total minus the kernel us gives the launch/gap cost. ab-revert is inapplicable (nothing landed that touches this path; reverting the parent would only change the router). ab-tune of the parent has no tunable that affects the pooler. A tile-config control (BLOCK_N=16/256 programs, num_warps=8, num_stages=6, or TMA descriptors) is a follow-on retune to queue only if this loses, not a disambiguator; the four dependents (qkv-gate, unpooler-full, o, pooler-skinny-tiled-weight-layout) are already gated by depends_on and should stay held until the achieved TB/s is recorded in FINDINGS.
+
+### Open questions
+- Record the achieved bandwidth from the profile (67.1 MB / Triton kernel us) in FINDINGS as the plain-tl.load skinny-GEMM ceiling on H200; the four dependents and the whole skinny-Triton family stand or fall on that one number.
+- Expected list omits pooler verify_32 (m=256, keeps cuBLAS); add it as a flat control so the attribution grid is complete.
+- num_warps is unspecified (Triton default 4): with one CTA per SM that is the entire issue capacity for 16 KB of cp.async per stage; state it in the change (4 vs 8) so a loss can be retuned on one axis.
+- '3 BLOCK_M specializations' is really 2 (m=1/7/8/16 -> 16, m=32 -> 32); consider BLOCK_M=16 for every m<=32 to cut compile and keep one kernel, since compute is irrelevant at these shapes.
+- If the per-shape rows lose while the Triton kernel's own us is below 18.8 (m=1) / 19.8 (m=16) / 20.2 (m=32), the loss is launch/gap overhead of the Triton launch path, not bandwidth; separate those two readings before withdrawing the dependents.
+- At m=16/32 nvjet is slower than at m=1 (19.8-20.2 vs 18.8 us), so the bar is lower there; a Triton kernel flat across m at ~18.8 us would gain 1.10-1.15x on decode_16/32 even with zero bandwidth improvement.
+
