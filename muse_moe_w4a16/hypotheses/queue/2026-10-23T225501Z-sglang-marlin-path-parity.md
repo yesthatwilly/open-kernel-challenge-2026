@@ -44,8 +44,10 @@ depends_on: null
 priority: 1
 kind: primary
 controls_for: null
-review: required
+review: proceed
 status: queued
+review_at: 2026-10-23T230616Z
+review_companions: null
 ---
 
 # sglang-marlin-path-parity
@@ -63,3 +65,26 @@ Replace the starter's 32-expert dense loop (dequantize every local expert to BF1
 ## Risk
 
 Parity base for every other muse_moe_w4a16 hypothesis. Risks: (1) sgl_kernel's moe_align_block_size must skip -1 ids at num_experts=32 exactly as it does at 256 (same code path, same -1 values; the five pre-timing tests, incl. bs=1 and dist=skewed, catch any miscount); (2) the SGLang wrapper may have a num_experts-dependent branch (older versions switched kernels at >=224 experts) so the 32 path could be a different, possibly slower align kernel: then the result is still parity +/- a few us and the attempt file must record which branch ran; (3) correctness is Marlin's own (BF16 activations, fp32 reduce), the same the judge's SGLang side passes. Rules: NVFP4 stays NVFP4 (Marlin repack is lossless), activations bf16 where SGLang keeps them, nothing derived from data is cached, no host syncs (block_size_m branches on num_tokens, a shape). Commit-step dedup: the num_experts change alters the stripped AST, so this does not collide with baseline.py.
+
+## Adversarial review
+
+Reviewed 2026-10-23T230616Z by an adversarial Fable subagent (model fable).
+
+**Verdict: proceed.** The 32-expert moe_align_block_size call is a genuine GPU-side change (shorter cumsum, 4.5x smaller sorted_ids/block_experts, and at bs=128 and bs=256 the removal of the separate sorted_ids.fill_ launch), not a cosmetic way past the dedup, and the judge's own SGLang column is a built-in A/B control for it because it is the only difference from baseline.py. Its expected signal is below the judge's +/-1.5% resolution on every shape, so the run should be read as 'parity base established' and the align-32 effect as 'not resolved' unless |speedup-1| clears the CI; no companion can sharpen that.
+
+### Justification
+A. Mechanism: with expert_map already mapping ids to [-1] U [0,32), passing num_experts=32 shrinks the align kernel's per-expert histogram/cumsum from 256 to 32 entries and sorted_ids from M*8+256*(bsm-1) to M*8+32*(bsm-1). Recomputing the baseline's block_size_m pick (ratio = M/4/bsm, break on first < 0.9): bs=1/8/16 -> 8, bs=32 -> 16, bs=128 -> 48, bs=256 -> 64. sorted_ids at 256 vs 32 experts: bs=1 1800->232, bs=8 1856->288, bs=16 1920->352, bs=32 4096->736, bs=128 13056->2528, bs=256 18176->4064. So the fuse_sorted_ids_padding threshold (<=4096, consistent with my recollection of sglang's wrapper, unverified locally) is crossed at bs=128 as well as bs=256; the hypothesis's expected list omits bs=128 and should be read as covering both verify shapes. The 4064 figure is only 32 below the threshold: if this SGLang commit sizes the buffer as (num_experts+1)*(block_size-1) (a variant that has existed upstream) it is 4127 and bs=256 does not cross; this is unverified. Magnitude: one fill_ of 72 KB (~2-3 us launch) out of 620 us at bs=256 is ~0.4%; at bs=128 ~0.5%; at bs=1 a shorter cumsum inside the same kernel is at most ~1-2 us of 77 us. All of these sit inside the judge's minimum +/-1.5% interval, and the geometric mean over six equally weighted loads of sub-1% effects is also inside it. FINDINGS has no profile of the Marlin pipeline (only the starter at 0.006x, where index/elementwise kernels dominate), so there is no measured align-kernel time to lean on; the SoL gap (SGLang 77 us vs 11.4 us floor at bs=1, 620 vs 109 at bs=256) is dominated by the two Marlin GEMMs, not align. Weakest link: the attribution rule 'anything above ~1.0x is the 32-expert align' is not supportable, because the align delta is below the judge's resolution; a result of 1.01x or 0.99x is noise. The redeeming property is that the SGLang side of the same run is baseline.py, which differs from this submission only in the num_experts argument, so speedup-1.0 (with its CI) IS the align-32 effect, measured under identical graph-replay, cold-L2, order-swapped pairing. Correctness: the ids passed to align are the expert_map-mapped local ids (the baseline passes the same tensor), -1 marks a remote expert, and the baseline's judge-side correctness at num_experts=256 is the only evidence the sgl_kernel align handles -1; whether that handling is independent of num_experts is unverified (SGLang's wrapper historically branched kernels at num_experts >= 224, and a small-num_experts kernel without a -1 guard would index shared memory at [-1], which could show up as extra empty blocks on local expert 31 (slower only) or a bad sorted_ids scatter (wrong output or OOB)). The five pre-timing tests, including bs=1 and dist=skewed, are the gate; a test failure here must not be read as a Marlin problem. Marlin indexes the 32-expert bank by block_experts values in [0,32) either way, so the GEMMs are unaffected by the change except possibly through a smaller max m-block count if the kernel sizes its loop from sorted_ids.numel() (unverified; if so, bs=128/256 get a second small effect). Unverified SGLang-source claims in the hypothesis: the <=4096 fused-padding threshold and its operator, the sorted_ids sizing formula, the -1 handling in the align kernel at 32 experts, and whether the wrapper still has a num_experts-dependent kernel branch at this commit.
+
+### Confounders on the current kernel
+- none identified
+
+### Interference and A/B needs
+Nothing is landed on master (landed: []), so ab-revert and ab-tune have no target. The only sub-change is the num_experts argument, and its control arm (num_experts=256, i.e. baseline.py) is supplied by the judge for free on every shape in the same run, under the same timing protocol; a `control` companion would be verbatim baseline.py (exempt from the dedup, but it re-measures harness symmetry, already known from the muse_bf16_proj verbatim-baseline check at 1.0028x [0.988, 1.018]) and could not resolve a sub-1% effect against a >=+/-1.5% interval anyway. Neither a gain nor a loss is ambiguous: 0.006x -> ~1.0x is the Marlin pipeline; any deviation from 1.0x outside the CI is the align-32 call and nothing else. No companions.
+
+### Open questions
+- At SGLang commit a55ab7d, does moe_align_block_size (fused_moe_triton) still branch on num_experts (historically >= 224 selected sgl_kernel's kernel, else a vLLM-style kernel)? The attempt file should record which kernel ran at 32 (nsys/profile kernel name) so a later align hypothesis is not misattributed.
+- Does the sgl_kernel align kernel guard expert_id < 0 explicitly, or does -1 work at 256 by a benign out-of-range path that changes meaning at 32? Only the tests answer this; a failure should be filed against the align call, not the pipeline.
+- Exact sorted_ids sizing formula and the fused-padding comparison operator at this commit: 4064 vs a 4096 threshold leaves 32 entries of margin, and (num_experts+1)*(block_size-1) would put bs=256 back over it.
+- Does moe_wna16_marlin_gemm size its m-block loop or grid from sorted_ids.numel() (284 -> 64 max blocks at bs=256) or only from num_tokens_post_padded on device? If the former, the verify shapes get a second, slightly larger effect that the hypothesis does not claim.
+- The hypothesis's expected list should add bs=128 to the fill_-removal shapes (13056 -> 2528 entries also crosses the threshold); as written it attributes that effect to bs=256 alone.
+
