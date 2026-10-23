@@ -11,17 +11,29 @@ change: >
   router) at m <= 8 but build the BF16 hi + lo split in prepare() and run two torch.mm(...,
   out_dtype=torch.float32) GEMMs above 8 tokens, as baseline.py does. No other change. This
   establishes parity (expected ~1.0x) as the base every later bf16_proj hypothesis stacks on, and
-  attributes the starter's 10% loss to the GEMM dispatch path alone.
+  attributes the starter's 10% loss (per the adversarial review: the fp32 router GEMM at m>8, not the bf16 dispatch) to the router path alone.
 expected:
-  - shapes: layer=router load=verify_*
+  - shapes: layer=router load=decode_16 *
     direction: faster
-    why: "fp32 F.linear on m=128/256 is the starter's worst shapes; the hi/lo bf16 GEMMs are what SGLang runs there"
-  - shapes: layer=qkv_gate *
+    why: "m=16 is above the 8-token threshold: fp32 SIMT GEMM becomes two bf16 tensor-core GEMMs"
+  - shapes: layer=router load=decode_32 *
     direction: faster
-    why: cuBLAS/nvjet dispatch picks splitK kernels the plain matmul does not
-  - shapes: layer=router load=decode_*
+    why: "m=32, same path change"
+  - shapes: layer=router load=verify_16 *
+    direction: faster
+    why: "m=128, same path change; starter was 0.560x here"
+  - shapes: layer=router load=verify_32 *
+    direction: faster
+    why: "m=256, same path change; starter was 0.374x here"
+  - shapes: layer=router load=decode_1 *
     direction: flat
-    why: same F.linear path at m<=8
+    why: "m=1 stays on fp32 F.linear"
+  - shapes: layer=router load=verify_1 *
+    direction: flat
+    why: "m=8 stays on fp32 F.linear"
+  - shapes: layer=qkv_gate *
+    direction: flat
+    why: "the starter already picks the same nvjet splitK kernels (adversarial review)"
 risk: low
 depends_on: null
 priority: 1
@@ -52,7 +64,7 @@ review_companions: null
 
 ## Change
 
-Replace the starter's plain x @ W[:n].T with the exact dispatch SGLang's kernel uses: sglang.srt.layers.quantization.unquant._bf16_gemm_dispatch_impl(x, W[:n], None) for the four bf16 layers (qkv_gate, o, pooler, unpooler), and for the fp32 router keep F.linear(x.float(), router) at m <= 8 but build the BF16 hi + lo split in prepare() and run two torch.mm(..., out_dtype=torch.float32) GEMMs above 8 tokens, as baseline.py does. No other change. This establishes parity (expected ~1.0x) as the base every later bf16_proj hypothesis stacks on, and attributes the starter's 10% loss to the GEMM dispatch path alone.
+Replace the starter's plain x @ W[:n].T with the exact dispatch SGLang's kernel uses: sglang.srt.layers.quantization.unquant._bf16_gemm_dispatch_impl(x, W[:n], None) for the four bf16 layers (qkv_gate, o, pooler, unpooler), and for the fp32 router keep F.linear(x.float(), router) at m <= 8 but build the BF16 hi + lo split in prepare() and run two torch.mm(..., out_dtype=torch.float32) GEMMs above 8 tokens, as baseline.py does. No other change. This establishes parity (expected ~1.0x) as the base every later bf16_proj hypothesis stacks on, and attributes the starter's 10% loss (per the adversarial review: the fp32 router GEMM at m>8, not the bf16 dispatch) to the router path alone.
 
 ## Expected
 
