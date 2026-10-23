@@ -52,13 +52,15 @@ base_sha: e64f27ef09b3512d26573dde4d35b8ec3ade1f63
 base_blob: 5a2064af06f442f01dff926cb4f1eca75f992a24
 branch: hyp/muse_bf16_proj/pooler-triton-skinny-m32
 worktree: .worktrees/muse_bf16_proj/pooler-triton-skinny-m32
-mode: null
+mode: check
 implemented_at: 2026-10-23T231157Z
 impl_commit: d2840d088aa35522a03b40c59e174287cf935f67
 submission_sha256: 4b6c05d0d794df548e24c23a8b2f1277ad050bc2af57165f099eb5325a52da22
 norm_sha256: 0a52fd3c358414044b2d1a31157de5a14a194a54644b1ea69d81491f90da5b75
 submission_blob: 2752a016d386e9261ec77e25b426c05b76c071ac
 lint_warnings: 0
+attempt_file: 2026-10-23T231158Z-check-pooler-triton-skinny-m32.md
+prepared_at: 2026-10-23T231158Z
 ---
 
 # pooler-triton-skinny-m32
