@@ -46,8 +46,10 @@ depends_on: null
 priority: 1
 kind: primary
 controls_for: null
-review: required
+review: proceed
 status: queued
+review_at: 2026-10-23T230349Z
+review_companions: null
 ---
 
 # sglang-pipeline-parity-router-hilo-m8
@@ -68,3 +70,25 @@ Replace the starter's plain-PyTorch layer with SGLang's own pipeline exactly as 
 ## Risk
 
 Risk: this is SGLang's own code path plus a one-constant dispatch change the rules explicitly permit, so correctness risk is near zero (routing ties are judged with 0.03-0.05 margins, far above the hi/lo split's ~2^-16 relative error). The expected gain on verify_1 is small (2-4%) and could be inside the +-1.5% CI if the router already hid under the pooler at m=8; a flat verify_1 result still leaves the parity base intact. The commit step's normalized-AST dedup must see a difference from baseline.py: the threshold constant and the resulting router_dtype branch are that difference; do not drop them. Implementation must keep the file self-contained (no import of reference.py), keep the side stream join (main_stream.wait_stream) before local_ids, and pass scheduler_metadata through unchanged on full decode. If the judge image's import paths differ from baseline.py's, the run fails at import, which is a rejection without timing cost.
+
+## Adversarial review
+
+Reviewed 2026-10-23T230349Z by an adversarial Fable subagent (model fable).
+
+**Verdict: proceed.** SGLang parity plus a single rules-sanctioned dispatch change (fp32 router only at T=1) is a genuine, quantitatively grounded mechanism whose only signal is on the two verify_1 (T=8) shapes; nothing has landed to confound it and the judge's same-run per-shape baseline timing is the parity control, so no companion run is warranted.
+
+### Justification
+A. Mechanism: in baseline.py the router runs on a side stream forked before the pooler GEMM and joined right after it, so at T=8 the critical path is max(pooler, fp32 router + routing JIT). Measured in isolation on muse_bf16_proj (job 017804b34fed40b3, cold L2): fp32 F.linear router at m=8 = 26.1 us (two sm80_xmma f32 SIMT kernels 9.3 + 8.2 us plus a 2.3 us elementwise), pooler at m=8 = 21.3 us (nvjet 128x8 splitK 18.9 + reduce 1.6), hi/lo bf16 router = 14.5 us at m=16, 15.1 at m=32, 16.6 at m=128, 17.8 at m=256 (nvjet splitK + splitKreduce + one add). So today the side branch (~26 + ~3 us routing) overruns the pooler by ~8-10 us; after the change the side branch (~14-15 + ~3) hides under the pooler. Expected saving ~8-10 us on shapes SGLang runs at 267.9/270.7 us, i.e. ~3%, matching the stated 2-4%. verify_1 is one of six equally weighted loads, so the overall geomean moves only ~0.5%, inside the +-1.5% CI; the attribution must come from the per-shape rows (per-shape err was ~0.3% on bf16_proj), which the result JSON provides. The expected table is consistent with TASK.md: only load=verify_1 has T=8; decode_1 (T=1) stays on the fp32 gemv (10.4 us, already hidden under the 21 us pooler, so correctly 'flat'); decode_16/32 and verify_16/32 (T=16..256) were already hi/lo, correctly 'flat'. The profile in FINDINGS is of the untouched starter (0.0045x) and says nothing about SGLang's pipeline; all the supporting numbers are borrowed from bf16_proj, measured in isolation, not concurrently. Numerics: the reference's router input is the bf16-rounded h (starter: h.to(bfloat16) then h.float() @ router.T), which is exactly the ffn_input the hi/lo path consumes, so the only deviation is the weight split (~2^-17 relative) and fp32 accumulation order, far below the 0.03-0.05 routing margins. Dedup judgement: the change alters which kernels execute at T=8 (SIMT fp32 GEMM -> tensor-core bf16 pair) with a falsifiable per-shape prediction; it is a genuine mechanism, not a cosmetic bypass, although it is the smallest possible one. Weakest link: the assumption that the two streams overlap in the captured graph as cleanly as the isolated numbers imply. The 26 us SIMT GEMM uses few CTAs (n=256, 32x32 tiles) and should co-run with the pooler, but if the fp32 router is already partly hidden or the pooler stretches under contention, the gain shrinks toward zero; a flat verify_1 would be uninformative about whether the router was on the critical path at all, though it still leaves the parity base intact.
+
+### Confounders on the current kernel
+- none identified
+
+### Interference and A/B needs
+Nothing has landed on master (landed list empty; master is the plain-PyTorch starter), so there is no landed hypothesis to revert or re-tune. The natural control, pure SGLang parity with ROUTER_FP32_MAX_TOKENS=8, is exactly what the judge already times in the same run as baseline_ns for every shape, with paired, order-swapped ratios; the ten non-T=8 shapes landing at ~1.0x validate that the parity port is faithful, and the two verify_1 shapes' ratio against that same-run baseline isolates the router change. A gain on verify_1 with the other ten at ~1.0x is unambiguous; a loss on verify_1 with the other ten at ~1.0x is also attributable to the router change alone (only one constant differs). The only ambiguous outcome is the ten parity shapes not landing at ~1.0x, and a control run could not disambiguate that any better than the run's own per-shape rows (a `control` companion would be AST-identical to baseline.py and measure what baseline_ns already reports). No companion.
+
+### Open questions
+- Does the m=8 hi/lo torch.mm(..., out_dtype=float32) pick a kernel pair comparable to m=16's ~14.5 us? There is no m=8 hi/lo measurement anywhere; if cuBLAS picks a poor shape at m=8 the side branch could still overrun the pooler.
+- Does the fp32 SIMT router actually extend the critical path when co-scheduled with the pooler's splitK kernel inside a replayed graph, or is it already mostly hidden? Only the verify_1 per-shape rows of this run will tell; a flat result cannot distinguish 'already hidden' from 'hi/lo no faster at m=8'.
+- Will the ten pure-parity shapes land at ~1.00x? Any systematic offset there (harness-side differences in state construction, stream creation or graph capture) would undermine the base every queued dependent stacks on and should be investigated before dispatching dependents.
+- Follow-up, not a companion: at T=1 the fp32 gemv path costs 10.4 us (three kernels) on the side stream but is hidden under the 21 us pooler, so extending hi/lo to T=1 is not expected to pay; the hypothesis is right to leave decode_1 untouched.
+
