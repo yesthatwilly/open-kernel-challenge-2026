@@ -43,6 +43,9 @@ prepared_at: 2026-10-23T221952Z
 job: 017804b34fed40b3
 dispatched_at: 2026-10-23T222029Z
 recover_note: adopted from ~/.config/okc/jobs.json
+review: proceed
+review_at: 2026-10-23T222740Z
+review_companions: null
 ---
 
 # sglang-gemm-dispatch-parity
@@ -95,3 +98,29 @@ Checked against the diff of the worktree's `submission.py` vs master:
 - [x] All work happens inside the timed call; no output caching or replay.
 
 Lint (`okc_lint.py`): CLEAN, no findings.
+
+## Adversarial review
+
+Reviewed 2026-10-23T222740Z by an adversarial Fable subagent (model fable).
+
+**Verdict: proceed.** The implementation is a functionally verbatim copy of baseline.py (diff vs baseline is docstrings, type hints and one local rename only), so the single run will land at ~1.00x within the ±1.5% interval and is fully interpretable as parity. But the answer is already on disk: job 1ccc6ba13da94194 ran baseline.py through the judge at 1.0028x [0.988, 1.018]; this run spends a daily check slot to re-measure it under a different sha256 so it can seat as BEST on master's lineage. Its real value is procedural (a parity base for later hypotheses), not evidential, and its expected-direction globs are wrong against the per-shape data already in BEST.result.json.
+
+### Justification
+Mechanism trivially plausible (SGLang's own path), but the hypothesis mislabels where the starter's 10% goes. The profiles show the four bf16 layers already run kernel-for-kernel identically in the starter and in SGLang (same nvjet splitK_TNT + splitKreduce pairs, every bf16 shape 0.96x-1.01x): on H200 _bf16_gemm_dispatch_impl resolves to the same cuBLAS TN GEMM as x @ w.T, so the dispatch half of the change is empty. The entire loss is the fp32 router above 8 tokens (SIMT/xmma f32 kernels, no tensor cores: 32.4 µs at m=256) vs SGLang's two bf16 tensor-core GEMMs: decode_16 0.563x, decode_32 0.763x, verify_16 0.560x, verify_32 0.374x. Expected globs: qkv_gate should be flat (starter already picks splitK); router verify_1 (m=8) stays on the identical fp32 path (flat); router decode_16/decode_32 (m=16/32) are above the threshold and will be the largest gains. Weakest link: 'attributes the loss to the GEMM dispatch path alone' is false; it is the router's fp32-vs-bf16-hi/lo path at m>8, and the two calibration runs already prove it. Router shapes sit 5-10x above their 1.8-2.7 µs floors even in SGLang; pooler/unpooler at ~1.5x their 14 µs floors: that is where later hypotheses must go.
+
+### Confounders on the current kernel
+- Nothing has landed on master's submission.py, so there is no landed-change confound.
+- The change bundles two sub-changes, (a) bf16 layers via _bf16_gemm_dispatch_impl and (b) the fp32 router via bf16 hi+lo above 8 tokens; they are separable from one run because the judge reports per shape: (a) is the non-router layers, (b) is layer=router at m in {16,32,128,256}.
+- Inert third sub-change: prepare() .contiguous() on every weight and the fp32 router kept beside the hi/lo pair; both no-ops for timing.
+- The result is predetermined by job 1ccc6ba13da94194 (same executable code, 1.0028x [0.988,1.018]); any deviation beyond that CI is judge noise or image drift, not an effect of the change.
+
+### Interference and A/B needs
+No additional run is warranted. ab-revert is inapplicable (nothing landed). ab-tune: the only tunable is ROUTER_FP32_MAX_TOKENS, and changing it is a different, real hypothesis (hi/lo at m<=8 is allowed at any batch size; SGLang's m=8 fp32 path is 26.2 µs vs 14.9 µs at m=16 on hi/lo), not a disambiguator of parity. A control isolating (a) or (b) is unnecessary because per-shape results already isolate them by layer. A result inside [0.988,1.018] confirms parity; outside it indicates harness variance. The job is already dispatched, so holding would not recover the slot.
+
+### Open questions
+- Fix the expected globs before the result is scored: qkv_gate flat; router faster = load=decode_16|decode_32|verify_16|verify_32 (m>8); router flat = decode_1|verify_1 (m<=8).
+- Rewrite the attribution claim: the starter's 10% is the fp32 router GEMM at m>8 (no tensor cores), not the GEMM dispatch path; FINDINGS should carry that as the first learning.
+- Dedup against baseline.py and attempts: okc's same-code dedup did not fire because sha256 differs on docstrings alone; a normalized-AST hash would have returned job 1ccc6ba13da94194 for free.
+- First real hypothesis from this review: ROUTER_FP32_MAX_TOKENS=0 (hi/lo at every m). Verify the 0.1% exact-column bound at m=1 first, where hi/lo error has nowhere to average out.
+- Second target: pooler and unpooler at m>=16 run one nvjet kernel at ~1.5x their 14 µs floor on both sides; splitK/stream-K or a cuBLASLt algo search in prepare().
+
