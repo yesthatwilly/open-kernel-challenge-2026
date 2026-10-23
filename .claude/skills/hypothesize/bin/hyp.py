@@ -87,7 +87,8 @@ def cmd_new(a):
             fm.append(f"    why: {yaml_scalar(e.get('why', ''))}")
     else:
         fm.append("expected: []")
-    fm += [f"risk: {a.risk}", f"depends_on: {yaml_scalar(a.depends_on)}", f"priority: {a.priority}", "status: queued", "---"]
+    fm += [f"risk: {a.risk}", f"depends_on: {yaml_scalar(a.depends_on)}", f"priority: {a.priority}",
+           f"kind: {a.kind}", f"controls_for: {yaml_scalar(a.controls_for)}", "review: required", "status: queued", "---"]
     body = [f"# {slug}", "", "## Change", "", a.change.strip(), "", "## Expected", ""]
     body += [f"- `{e.get('shapes', '*')}` {e.get('direction', 'faster')}: {e.get('why', '')}" for e in expected] or ["- (none stated)"]
     body += ["", "## Risk", "", (a.notes or f"{a.risk} risk.").strip(), ""]
@@ -139,6 +140,9 @@ def main():
     x.add_argument("--problem", required=True); x.add_argument("--slug", required=True); x.add_argument("--area", required=True)
     x.add_argument("--change", required=True); x.add_argument("--expected"); x.add_argument("--risk", default="medium", choices=["low", "medium", "high"])
     x.add_argument("--depends-on"); x.add_argument("--priority", type=int, default=3); x.add_argument("--notes")
+    x.add_argument("--kind", default="primary", choices=["primary", "ab-revert", "ab-tune", "control"],
+                   help="primary = an idea of its own; ab-revert/ab-tune/control = an A/B companion queued by the adversarial review")
+    x.add_argument("--controls-for", help="slug of the hypothesis this companion is an A/B control for")
     x.set_defaults(fn=cmd_new)
     x = sp.add_parser("list"); x.add_argument("problem", nargs="?"); x.set_defaults(fn=cmd_list)
     x = sp.add_parser("lint"); x.add_argument("file"); x.set_defaults(fn=cmd_lint)

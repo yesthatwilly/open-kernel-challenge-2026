@@ -36,8 +36,9 @@ C="python3 -I $CLAUDE_PROJECT_DIR/.claude/skills/churnsubs/bin/churn.py"
 
 ## Fixed rules
 
-- **Never create a hypothesis file.** If the queue is empty, report the shortfall and suggest
-  `/hypothesize`. Never "fix" a failed hypothesis by re-running it: identical code is never re-run,
+- **Never create a hypothesis file yourself.** The only hypotheses churnsubs causes to exist are
+  the A/B companions the adversarial reviewer specifies (step 4). If the queue is empty, report
+  the shortfall and suggest `/hypothesize`. Never "fix" a failed hypothesis by re-running it: identical code is never re-run,
   and a fix is a new hypothesis for /hypothesize to mint.
 - **One run per hypothesis.** `check` while the problem has checks left, else a scored `submit`
   (never a scored run for `risk: high`). The board shows only the best run, so a slow scored run
@@ -64,10 +65,31 @@ C="python3 -I $CLAUDE_PROJECT_DIR/.claude/skills/churnsubs/bin/churn.py"
    attribution summary from its `.result.json`. Mention gains that were merged or are `unmerged`.
 3. **Promotions.** For each entry in `promote`, run its `run` command verbatim, then
    `$C record-submit <p> <slug> '<okc output>'`.
-4. **Veto pass.** For each pick, read the hypothesis (path from `$C claim`'s output after step 5,
-   or `<p>/hypotheses/queue/` now) against `<p>/hypotheses/FINDINGS.md` and `BEST.json`. If a
-   landed finding supersedes or contradicts it, or it duplicates a done hypothesis, `$C hold <p>
-   <slug> --reason "..."` and re-run `$C budget` to refill the pick. Otherwise proceed.
+4. **Adversarial review (Fable), one subagent per pick, in parallel.** Every hypothesis is
+   attacked by a fresh Fable context before it is claimed; `claim` refuses anything whose
+   frontmatter is not `review: proceed`. For each pick whose `review` is not `proceed`:
+   - Gather its inputs: `$C landed <p>` (hypotheses already on master's kernel, with patch
+     paths), the hypothesis path, `<p>/hypotheses/FINDINGS.md`, `BEST.json`, the base
+     `submission.py` (master, or the parent's worktree for an A/B companion), and the other
+     queued/running slugs.
+   - Spawn `Agent` with `subagent_type: general-purpose`, **`model: fable`**, and the prompt in
+     `.claude/skills/churnsubs/ADVERSARY_PROMPT.md` with its `{PLACEHOLDERS}` filled in. The
+     adversary's specific job: judge the justification, name what already-landed hypotheses
+     confound it, and decide whether *this* hypothesis needs an A/B companion (the change with a
+     landed hypothesis reverted or tuned differently, or a control isolating a sub-change) for
+     its one result to mean anything. It returns JSON only.
+   - Save the JSON to the scratchpad and run `$C review-record <p> <slug> <file>`. That writes
+     `## Adversarial review` into the hypothesis, sets `review: proceed|hold` (hold → status
+     hold with the reason), and **queues each companion** as a real hypothesis file via
+     `hyp.py new --kind ab-revert|ab-tune|control --controls-for <slug> --depends-on <slug>`.
+     Companions are the one case where churnsubs causes hypothesis files to exist; they are
+     always the adversary's, never yours.
+   - Companions base on the parent's implementation commit and become eligible as soon as the
+     parent is implemented, so the A/B pair runs the same day. If the adversary held the pick,
+     re-run `$C budget` to refill it. Do not argue with a hold in the same tick; the reason is
+     in the file for the human.
+   - `$C claim --skip-review` exists for a human who has read the hypothesis and says so; never
+     use it on your own.
 5. **Dispatch each pick** (parallel is fine: run the implementation step for several picks as
    parallel subagents, one per worktree; keep steps 5a and 5c–5e in this thread, in order):
    - 5a `$C claim <p> <slug>` → `worktree`, `branch`, `submission`, `spec`, `base_sha`.
@@ -90,10 +112,17 @@ C="python3 -I $CLAUDE_PROJECT_DIR/.claude/skills/churnsubs/bin/churn.py"
 
 ## What to tell the user each tick
 
-Three lines unless something needs them: what was harvested (outcome per slug), what was
-dispatched (slug, mode, job id), and the budget line per problem (checks left / scored left /
+Three lines unless something needs them: what was harvested (outcome per slug), what the
+adversary said (verdict per slug, companions queued), what was dispatched (slug, mode, job id),
+and the budget line per problem (checks left / scored left /
 in flight / shortfall + reason). `needs_human` items and `unmerged` gains always get their own
 line with the file path.
+
+## Reviewing one hypothesis without dispatching it
+
+`/churnsubs review <problem> <slug>` runs step 4 alone on a queued hypothesis (no lock, no
+claim), so a batch from /hypothesize can be reviewed and its companions queued before the loop
+spends anything.
 
 ## Reading results by hand
 

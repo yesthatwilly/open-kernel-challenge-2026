@@ -103,6 +103,60 @@ def sha256(path):
     return hashlib.sha256(open(path, "rb").read()).hexdigest()
 
 
+def norm_sha256(path):
+    """sha256 of the code with docstrings, comments and formatting removed: two files that only
+    differ in prose hash the same, which the judge's own dedup does not catch."""
+    import ast
+    try:
+        tree = ast.parse(open(path, encoding="utf-8", errors="replace").read())
+    except SyntaxError:
+        return None
+    class Strip(ast.NodeTransformer):
+        # drop docstrings, type annotations, TypedDict classes and local-name differences
+        def visit_Module(self, n):
+            self.generic_visit(n)
+            n.body = [b for b in n.body if not (isinstance(b, ast.ClassDef) and any(
+                (isinstance(x, ast.Name) and x.id == "TypedDict") for x in b.bases))]
+            return n
+
+        def _nodoc(self, n):
+            if n.body and isinstance(n.body[0], ast.Expr) and isinstance(getattr(n.body[0], "value", None), ast.Constant) \
+                    and isinstance(n.body[0].value.value, str):
+                n.body = n.body[1:] or [ast.Pass()]
+            return n
+
+        def visit_FunctionDef(self, n):
+            self.generic_visit(n)
+            n.returns = None
+            for a in n.args.args + n.args.kwonlyargs + n.args.posonlyargs:
+                a.annotation = None
+            if n.args.vararg:
+                n.args.vararg.annotation = None
+            if n.args.kwarg:
+                n.args.kwarg.annotation = None
+            return self._nodoc(n)
+
+        def visit_ClassDef(self, n):
+            self.generic_visit(n)
+            return self._nodoc(n)
+
+        def visit_AnnAssign(self, n):
+            if n.value is None:
+                return None
+            return ast.Assign(targets=[n.target], value=n.value, lineno=0)
+
+        def visit_Name(self, n):
+            # local/parameter names are normalised to their binding order would be ideal; as a
+            # cheap approximation, names that are plain identifiers of one or two chars or common
+            # parameter spellings collapse to a placeholder
+            if n.id in ("weights", "state", "data", "cfg", "config", "x", "w", "acc", "layer"):
+                return ast.copy_location(ast.Name(id="_", ctx=n.ctx), n)
+            return n
+
+    tree = Strip().visit(tree)
+    return hashlib.sha256(ast.dump(tree, include_attributes=False).encode()).hexdigest()
+
+
 def problem_of(name):
     name = name.strip()
     if name in PROBLEMS:
@@ -1016,10 +1070,17 @@ def _eligible_queue(p):
             continue
         if h.get("depends_on"):
             dp, where = find_hyp(p, str(h["depends_on"]))
-            if not dp or not where.startswith("done/"):
+            if not dp:
                 continue
-            if where in ("done/regression", "done/failed", "done/rejected"):
-                continue
+            parent = read_hyp(dp)
+            if str(h.get("kind") or "").startswith("ab-"):
+                # an A/B companion only needs its parent's code to exist; a regressed parent is
+                # exactly what it is there to explain
+                if not parent.get("impl_commit") or where in ("done/failed", "done/rejected"):
+                    continue
+            else:
+                if not where.startswith("done/") or where in ("done/regression", "done/failed", "done/rejected"):
+                    continue
         items.append(h)
     items.sort(key=lambda h: (h.get("priority") or 3, h.get("created") or ""))
     return items
@@ -1074,7 +1135,7 @@ def budget_for(p, q, t=None):
         reason = f"{F} in flight (cap {MAX_IN_FLIGHT})"
     return {"problem": p, "checks_left": Lc, "scored_left": Ls, "hours_to_reset": round(H, 2), "in_flight": F, "in_flight_checks": Fc,
             "gains_pending": G, "promotion_hold": Ps, "spendable": L, "queue": len(Q), "need": need, "pace": pace,
-            "N": len(picks), "picks": [{"slug": h["slug"], "mode": m, "priority": h.get("priority")} for h, m in picks],
+            "N": len(picks), "picks": [{"slug": h["slug"], "mode": m, "priority": h.get("priority"), "review": h.get("review"), "kind": h.get("kind"), "controls_for": h.get("controls_for")} for h, m in picks],
             "shortfall": shortfall, "reason": reason, "wake_s": wake}
 
 
@@ -1125,9 +1186,14 @@ def cmd_claim(a):
     errs, _ = lint_hyp(h["_path"], p)
     if errs:
         refuse(f"{slug} fails lint-hyp: {errs}")
+    if h.get("review") != "proceed" and not a.skip_review:
+        refuse(f"{slug} has not passed the adversarial review (review={h.get('review')}); run the review and "
+               f"`churn.py review-record` first, or pass --skip-review deliberately", review=h.get("review"))
     base_ref = "master"
     if h.get("depends_on"):
-        base_ref = f"hyp/{p}/{h['depends_on']}"
+        dp, _ = find_hyp(p, str(h["depends_on"]))
+        parent = read_hyp(dp) if dp else {}
+        base_ref = parent.get("impl_commit") or f"hyp/{p}/{h['depends_on']}"
     elif h.get("base") and h["base"] != "master":
         base_ref = str(h["base"])
     base_sha = git("rev-parse", base_ref).strip()
@@ -1147,7 +1213,79 @@ def cmd_claim(a):
     hh = read_hyp(new_md)
     out({"ok": True, "problem": p, "slug": slug, "md": rel(new_md), "worktree": wt, "branch": br, "base_sha": base_sha,
          "submission": os.path.join(wt, p, "submission.py"), "spec": {k: hh.get(k) for k in ("area", "change", "expected", "risk", "depends_on", "priority")},
-         "findings": rel(hdir(p, "FINDINGS.md")), "best": load_best(p)})
+         "findings": rel(hdir(p, "FINDINGS.md")), "best": load_best(p), "landed": landed(p),
+         "review": hh.get("review"), "review_companions": hh.get("review_companions")})
+
+
+def landed(p):
+    """Hypotheses whose code is in master's submission.py lineage, oldest first, with their patches."""
+    res = []
+    for o in OUTCOMES:
+        for f in list_md(hdir(p, "done", o)):
+            h = read_hyp(os.path.join(hdir(p, "done", o), f))
+            pc = h.get("promotion_commit")
+            if not pc:
+                continue
+            if subprocess.run(["git", "merge-base", "--is-ancestor", str(pc), "HEAD"], cwd=REPO).returncode == 0:
+                res.append({"slug": h.get("slug"), "area": h.get("area"), "outcome": o, "speedup": h.get("speedup"),
+                            "promotion_commit": pc, "patch": rel(os.path.join(hdir(p, "done", o), f"{h['slug']}.patch")),
+                            "md": rel(h["_path"]), "change": str(h.get("change") or "")[:300]})
+    res.sort(key=lambda x: git("rev-list", "--count", x["promotion_commit"]).strip())
+    return res
+
+
+def cmd_landed(a):
+    out({"ok": True, "problem": problem_of(a.problem), "landed": landed(problem_of(a.problem))})
+
+
+def cmd_review_record(a):
+    """Record an adversarial review verdict on a queued hypothesis; queue its A/B companions."""
+    p = problem_of(a.problem)
+    path, where = find_hyp(p, a.slug)
+    if not path or where not in ("queue", "running"):
+        refuse(f"{a.slug} is not queued or running in {p}")
+    h = read_hyp(path)
+    v = json.load(open(a.json_file)) if a.json_file != "-" else json.load(sys.stdin)
+    verdict = v.get("verdict")
+    if verdict not in ("proceed", "hold", "proceed-with-companions"):
+        refuse("verdict must be proceed | hold | proceed-with-companions")
+    created = []
+    hyp_py = os.path.join(HERE, "..", "..", "hypothesize", "bin", "hyp.py")
+    for c in v.get("companions") or []:
+        kind = c.get("kind") or "ab-revert"
+        if kind not in ("ab-revert", "ab-tune", "control"):
+            refuse(f"companion kind {kind} must be ab-revert | ab-tune | control")
+        cmd = [sys.executable, "-I", hyp_py, "new", "--problem", p, "--slug", c["slug"], "--area", c.get("area") or h.get("area") or "?",
+               "--change", c["change"], "--risk", c.get("risk") or h.get("risk") or "medium",
+               "--priority", str(c.get("priority") or h.get("priority") or 3), "--kind", kind, "--controls-for", a.slug,
+               "--depends-on", c.get("depends_on") or a.slug, "--notes", c.get("reason") or "A/B companion from the adversarial review."]
+        if c.get("expected"):
+            cmd += ["--expected", json.dumps(c["expected"])]
+        r = subprocess.run(cmd, capture_output=True, text=True, cwd=REPO)
+        try:
+            j = json.loads(r.stdout or "{}")
+        except json.JSONDecodeError:
+            j = {"ok": False, "raw": (r.stdout + r.stderr)[-400:]}
+        if not j.get("ok"):
+            refuse(f"companion {c.get('slug')} could not be written: {j}")
+        created.append(j["slug"])
+    lines = [f"Reviewed {ts()} by an adversarial Fable subagent (model {v.get('model') or 'fable'}).", "",
+             f"**Verdict: {verdict}.** {v.get('summary') or ''}", "",
+             "### Justification", v.get("justification") or "(none given)", "",
+             "### Confounders on the current kernel"] + ([f"- {x}" for x in (v.get("confounders") or [])] or ["- none identified"]) + ["",
+             "### Interference and A/B needs", v.get("interference") or "(none)", ""]
+    if created:
+        lines += ["### Companions queued"] + [f"- `{c}`: {next((x.get('reason') for x in v.get('companions') or [] if x.get('slug') == c or c.startswith(x.get('slug', '') + '-')), '')}" for c in created] + [""]
+    if v.get("open_questions"):
+        lines += ["### Open questions"] + [f"- {x}" for x in v["open_questions"]] + [""]
+    set_section(path, "Adversarial review", "\n".join(lines))
+    upd = {"review": "hold" if verdict == "hold" else "proceed", "review_at": ts(), "review_companions": created or None}
+    if verdict == "hold":
+        upd.update(status="hold", hold_reason=f"adversarial review: {(v.get('summary') or '')[:160]}")
+    fm_set(path, **upd)
+    git("add", "--", rel(path), *[f"{p}/hypotheses/queue" for _ in [0]])
+    git("commit", "-q", "-m", f"churn({p}): adversarial review of {a.slug} → {verdict}" + (f" (+{len(created)} companions)" if created else ""), check=False)
+    out({"ok": True, "slug": a.slug, "verdict": verdict, "status": "hold" if verdict == "hold" else h.get("status"), "companions": created})
 
 
 def cmd_commit_impl(a):
@@ -1179,11 +1317,17 @@ def cmd_commit_impl(a):
     blob = git("rev-parse", f"HEAD:{p}/submission.py", cwd=wt).strip()
     if blob == h.get("base_blob"):
         _reject_local(p, h, "no-change: submission.py is identical to its base", lj)
-    # local duplicate: identical to a known submission
+    # local duplicate: identical to a known submission, or to SGLang's baseline.py once prose is
+    # stripped (the judge only dedups exact bytes)
+    ndigest = norm_sha256(sub)
     for x in all_hyps(p):
-        if x.get("slug") != a.slug and x.get("submission_sha256") == digest and x.get("job"):
+        if x.get("slug") != a.slug and x.get("job") and (x.get("submission_sha256") == digest or (ndigest and x.get("norm_sha256") == ndigest)):
             _reject_local(p, h, f"duplicate-local:{x['slug']}", lj, copy_from=x)
-    fm_set(path, stage="implemented", implemented_at=ts(), impl_commit=impl_commit, submission_sha256=digest, submission_blob=blob,
+    bl = os.path.join(REPO, p, "baseline.py")
+    if ndigest and os.path.exists(bl) and norm_sha256(bl) == ndigest and str(h.get("kind") or "primary") != "control":
+        base_jobs = [j for j, v in local_jobs().items() if (v.get("file") or "").endswith(f"/{p}/baseline.py")]
+        _reject_local(p, h, f"identical-to-baseline (prose aside); baseline jobs: {','.join(base_jobs) or 'none'}", lj)
+    fm_set(path, stage="implemented", implemented_at=ts(), impl_commit=impl_commit, submission_sha256=digest, norm_sha256=ndigest, submission_blob=blob,
            lint_warnings=len([f for f in lj.get("findings", []) if f["level"] == "warn"]))
     git("add", "--", rel(path))
     git("commit", "-q", "-m", f"churn({p}): {a.slug} implemented ({impl_commit[:10]})")
@@ -1333,7 +1477,7 @@ def cmd_index(a):
         roll.append(f"| {p} | {('%.4fx' % best['speedup']) if best else '—'} | {cnt('queue')} | {cnt('running')} | {cnt('done/gain')} | {cnt('done/neutral')} | {cnt('done/regression')} | {cnt('done/failed')} | {cnt('done/rejected')} | {((lim.get('checks') or {}).get('left', '?'))} | {((lim.get('scored') or {}).get('left', '?'))} |")
         # per-problem INDEX
         lines = [f"# {p} hypotheses", "", f"Regenerated {ts()}. Best: " + (f"{best['speedup']:.4f}x [{best['ci'][0]:.4f},{best['ci'][1]:.4f}] job `{best['job']}` ({best.get('mode')})" if best else "none yet"), "",
-                 "| created | slug | area | where | outcome | speedup | CI | job | mode | promotion | expected hit |", "|---|---|---|---|---|---|---|---|---|---|---|"]
+                 "| created | slug | kind | area | where | outcome | speedup | CI | job | mode | promotion | review | expected hit |", "|---|---|---|---|---|---|---|---|---|---|---|---|---|"]
         for h in sorted(hs, key=lambda h: str(h.get("created") or "")):
             ci = h.get("speedup_ci")
             cis = f"[{ci[0]:.3f},{ci[1]:.3f}]" if isinstance(ci, list) and len(ci) == 2 and ci[0] is not None else ""
@@ -1344,7 +1488,8 @@ def cmd_index(a):
                     hit = (json.load(open(rjp)).get("attribution") or {}).get("expected_hit") or ""
                 except Exception:
                     pass
-            lines.append(f"| {h.get('created')} | {h.get('slug')} | {h.get('area')} | {h['_where']} | {h.get('outcome') or h.get('status')} | {('%.4f' % h['speedup']) if isinstance(h.get('speedup'), (int, float)) else ''} | {cis} | {h.get('job') or ''} | {h.get('mode') or ''} | {h.get('promotion') or ''} | {hit} |")
+            kind = (h.get("kind") or "") + (f"→{h['controls_for']}" if h.get("controls_for") else "")
+            lines.append(f"| {h.get('created')} | {h.get('slug')} | {kind} | {h.get('area')} | {h['_where']} | {h.get('outcome') or h.get('status')} | {('%.4f' % h['speedup']) if isinstance(h.get('speedup'), (int, float)) else ''} | {cis} | {h.get('job') or ''} | {h.get('mode') or ''} | {h.get('promotion') or ''} | {h.get('review') or ''} | {hit} |")
         held = [h for h in hs if h.get("status") == "hold"]
         if held:
             lines += ["", "## Held", ""] + [f"- {h['slug']}: {h.get('hold_reason')}" for h in held]
@@ -1484,7 +1629,9 @@ def main():
     x = sp.add_parser("budget"); x.add_argument("--problem"); x.add_argument("--now"); x.add_argument("--quotas"); x.set_defaults(fn=cmd_budget)
     x = sp.add_parser("hold"); x.add_argument("problem"); x.add_argument("slug"); x.add_argument("--reason"); x.set_defaults(fn=cmd_hold, unhold=False)
     x = sp.add_parser("unhold"); x.add_argument("problem"); x.add_argument("slug"); x.set_defaults(fn=cmd_hold, unhold=True, reason=None)
-    x = sp.add_parser("claim"); x.add_argument("problem"); x.add_argument("slug", nargs="?"); x.add_argument("--mode"); x.set_defaults(fn=cmd_claim)
+    x = sp.add_parser("claim"); x.add_argument("problem"); x.add_argument("slug", nargs="?"); x.add_argument("--mode"); x.add_argument("--skip-review", action="store_true"); x.set_defaults(fn=cmd_claim)
+    x = sp.add_parser("landed"); x.add_argument("problem"); x.set_defaults(fn=cmd_landed)
+    x = sp.add_parser("review-record"); x.add_argument("problem"); x.add_argument("slug"); x.add_argument("json_file"); x.set_defaults(fn=cmd_review_record)
     x = sp.add_parser("commit-impl"); x.add_argument("problem"); x.add_argument("slug"); x.set_defaults(fn=cmd_commit_impl)
     x = sp.add_parser("prepare-run"); x.add_argument("problem"); x.add_argument("slug"); x.add_argument("--mode"); x.set_defaults(fn=cmd_prepare_run)
     x = sp.add_parser("record"); x.add_argument("problem"); x.add_argument("slug"); x.add_argument("job"); x.set_defaults(fn=cmd_record)

@@ -32,6 +32,24 @@ resolve the checkout from the submission file's path (worktrees have a `.git` fi
   reason names /hypothesize. Lock: a second preflight during a tick exits 2.
 - Found and fixed during the run: the gate's filename regex only took HHMM; now HHMM[SS].
 
+## Adversarial review (added 2026-10-23)
+Every hypothesis is reviewed by a fresh `model: fable` subagent before `claim` (which refuses
+`review != proceed`). Prompt: `ADVERSARY_PROMPT.md`. The reviewer's defined job: justification,
+confounding by landed hypotheses (`churn.py landed`), and whether an A/B companion (ab-revert /
+ab-tune / control, `controls_for`, `depends_on` the parent, based on the parent's `impl_commit`)
+is needed for the single result to be interpretable. `review-record` writes the verdict section,
+sets `review`/`hold`, and queues companions through `hyp.py new`. Companions are eligible as
+soon as the parent is implemented (even if the parent later regresses: that is what they
+explain), but not if the parent failed or was rejected.
+
+## Normalized duplicate check (added 2026-10-23)
+`commit-impl` rejects, without spending a run, an implementation whose docstring-, annotation-
+and TypedDict-stripped AST (common local names collapsed) equals SGLang's `baseline.py` or an
+already-run hypothesis. Motivated by the first adversarial review: the parity hypothesis was
+baseline.py with different prose, and the judge's byte-level dedup did not catch it. A `control`
+companion is exempt. Renames beyond the collapsed set still defeat it; the adversary is the
+backstop.
+
 ## Open questions
 - `okc status` has no `problem` field; the hypothesis file is the source of truth for it.
 - `content_hash` is not sha256 of the file; local duplicate detection uses sha256 of the file in
