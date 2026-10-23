@@ -48,13 +48,19 @@ review: proceed
 status: running
 review_at: 2026-10-23T230616Z
 review_companions: null
-stage: claimed
+stage: implemented
 claimed_at: 2026-10-23T230616Z
 base_sha: 4739730c9a8a22229401f2e07ef91550db8b0152
 base_blob: 8eeb6a4778875e37a1d9c55a5e27ee6079999847
 branch: hyp/muse_moe_w4a16/sglang-marlin-path-parity
 worktree: .worktrees/muse_moe_w4a16/sglang-marlin-path-parity
 mode: null
+implemented_at: 2026-10-23T231147Z
+impl_commit: 6b5469bd92f0a43ce5908912b02fb8dee425c3fa
+submission_sha256: 149fe060036b35682f97b6bc5d6e9a1d8e206c9e925a7eba736043723613a5c3
+norm_sha256: 5ccbf8c8b17a3a86b37c90e49b77f70e05f67e397aa52c1c8ff73cb713084c58
+submission_blob: 11fbc1957daf7294cd2810ff82a0aad2f25644bd
+lint_warnings: 1
 ---
 
 # sglang-marlin-path-parity
@@ -95,3 +101,30 @@ Nothing is landed on master (landed: []), so ab-revert and ab-tune have no targe
 - Does moe_wna16_marlin_gemm size its m-block loop or grid from sorted_ids.numel() (284 -> 64 max blocks at bs=256) or only from num_tokens_post_padded on device? If the former, the verify shapes get a second, slightly larger effect that the hypothesis does not claim.
 - The hypothesis's expected list should add bs=128 to the fill_-removal shapes (13056 -> 2528 entries also crosses the threshold); as written it attributes that effect to bs=256 alone.
 
+## Implementation notes
+
+Ported baseline.py (SGLang a55ab7d5, MuseSpark1xFp4Experts._forward_marlin after the pre-expert norm) into the worktree's `muse_moe_w4a16/submission.py`, keeping the starter's first line, module layout and the Weights/Config/Inputs TypedDicts, and the `prepare(weights)` / `kernel_fn(data, state)` signatures (annotated `prepare(weights: Weights) -> dict`, `kernel_fn(data: Inputs, state: dict) -> torch.Tensor`; the dedup strips annotations and docstrings).
+
+- `prepare()`: identical to baseline.py. `_marlin_layer` builds the SimpleNamespace that `prepare_moe_nvfp4_layer_for_marlin` reads for experts [0, 32) (SGLang's own lossless Marlin repack of w13/w2 + block scales + per-expert global scales), the bank dict keyed `(start, count)` with `expert_map` (-1 for remote experts, `arange(32)` for local), `marlin_make_workspace(device, max_blocks_per_sm=4)`, and `norm_w = (post_norm_w.float() + 1).to(bf16)`. The `torch.cuda.synchronize()` there is baseline.py's, untimed.
+- `kernel_fn()`: identical to baseline.py except the one change. `local_ids = expert_map[topk_ids.int()]`, fp32 contiguous topk_weights, the BLOCK_SIZE_M_CANDIDATES pick (`num_tokens*8/32/bsm < 0.9` -> break; a shape-only branch), the (dead under ep8) `moe_align_single_token` branch, `cache2`/`cache13` scratch, `common` kwargs (`is_ep=True`, `use_fp32_reduce=True`, `use_atomic_add=False`, `b_q_type=float4_e2m1f`, `is_k_full=True`, `mul_topk_weights=False`, `is_zp_float=False`), `moe_wna16_marlin_gemm` w13 (`top_k=8, size_m=M, size_n=2I, size_k=H`), `silu_and_mul(expert_ids=local_ids.view(-1), expert_step=1)`, `moe_wna16_marlin_gemm` w2 (`top_k=1, size_m=M*8, size_n=H, size_k=I`), `fused_post_expert_norm_weighted_sum(y, topk_weights, norm_weight=norm_w, eps=1e-8, weight_first=True, slot_expert_ids=local_ids)`.
+- The one change (the only line whose stripped AST differs from baseline.py), at the align call in `kernel_fn`:
+  - baseline: `moe_align_block_size(local_ids, block_size_m, N_EXPERTS if expert_map is not None else bank["count"])`
+  - here: `moe_align_block_size(local_ids, block_size_m, bank["count"])` i.e. 32 under ep8.
+  Buffer sizing is not done by the caller: SGLang's `fused_moe_triton.moe_align_block_size` wrapper allocates `sorted_ids`/`expert_ids` (block_experts) from `num_experts` itself, so passing 32 is exactly "sized as the wrapper would for 32 experts" with no further code. The hypothesis's fallback (hoisting host-only kwargs) was not needed and was not used.
+- `diff` of the code bodies (from `from typing` down) against baseline.py shows only: the two signature annotations, two function docstrings, a three-line comment, and the align argument. `churn.norm_sha256` (docstring/annotation/TypedDict-stripped AST) differs from both baseline.py (5bbaa397...) and the starter (d0428697...): submission 5ccbf8c8....
+- Which align kernel path runs at 32: cannot be determined from code on this machine (no SGLang / sgl_kernel source installed; the only local SGLang text is baseline.py). Recollection, unverified: at this era the `fused_moe_triton` wrapper calls `sgl_kernel.moe_align_block_size` for every expert count (the old `>= 224` kernel switch is gone), sizes `sorted_ids` as `topk_ids.numel() + num_experts * (block_size - 1)` (an `(num_experts + 1)` variant has existed upstream) and sets `fuse_sorted_ids_padding = sorted_ids.numel() <= 4096`, else runs `sorted_ids.fill_(topk_ids.numel())` as a separate launch. The attempt file must record the align kernel name and whether a `fill_` launch appears in the run's profile at bs=128/256, since that is the only way to settle it here.
+- Not run (no GPU/SGLang locally): correctness rests on the judge's five pre-timing tests; a failure must be filed against the align-32 call, not the Marlin pipeline (see Adversarial review).
+
+## Rules check
+
+Verified against `git diff -- muse_moe_w4a16/submission.py` in the worktree (165 lines: 130 insertions, 35 deletions, one file).
+
+- [x] CUDA-graph capturable: no `.item()`/`.cpu()`/`synchronize()`/tensor prints in `kernel_fn` or anything it calls; the only `synchronize()` is baseline.py's in untimed `prepare()`; the one branch in `kernel_fn` (`block_size_m` pick, `expert_map is None`) is on `num_tokens` (a shape) and a prepare-time constant.
+- [x] Nothing derived from `data` is cached across calls: `kernel_fn` writes only locals; `state` is read, never written; no module-level containers.
+- [x] Weights: repacked losslessly in `prepare()` only, via SGLang's `prepare_moe_nvfp4_layer_for_marlin` (NVFP4 E2M1 + E4M3 block scales + fp32 global scales stay as they are, only re-laid out); `norm_w` is the bf16 post-norm weight plus one in bf16, the parameterization SGLang itself binds.
+- [x] Activations BF16 where SGLang keeps BF16: `x`, `cache1/2/3` are `x.dtype` (bf16), the Marlin GEMMs reduce in fp32 (`use_fp32_reduce=True`) as SGLang does, `topk_weights` stays fp32; no KV cache or queries in this problem.
+- [x] Attention sees every key: not applicable (no attention in this problem); all 8 routed experts per token are passed to align/GEMM/weighted sum, no expert or token skipping beyond the ep8 remote-expert mask (-1) that the task defines.
+- [x] No timing patches, harness frames/I/O/secrets, module edits, reference import, subprocesses or network: imports are torch, sgl_kernel and sglang only (plus `types`); no `reference`/`checks`/`baseline` import; lint `harness`/`process`/`network` rules clean.
+- [x] All work happens inside the timed call: `kernel_fn` computes the full output from fresh inputs every call; `prepare()` holds only weight-derived state.
+
+Lint: `python3 -I .claude/skills/churnsubs/bin/okc_lint.py muse_moe_w4a16/submission.py --problem muse_moe_w4a16` -> `warn  host-sync    L110: torch.cuda.synchronize()  (outside kernel_fn's call graph; fine in prepare())` / `OK with warnings: muse_moe_w4a16/submission.py` (exit 0).
