@@ -1,6 +1,6 @@
 # muse_attention_decode findings
 
-Regenerated 2026-10-23T224055Z by `churn.py index`. Read this before writing a hypothesis for muse_attention_decode.
+Regenerated 2026-10-23T224703Z by `churn.py index`. Read this before writing a hypothesis for muse_attention_decode.
 
 ## Current best
 
@@ -33,7 +33,7 @@ Where the time goes (per scored shape, top kernels):
 
 ## Queue and in flight
 
-- queue: sglang-path-parity [SGLang path parity] p1 queued
+- queue: sglang-path-parity [SGLang path parity] p1 hold
 - queue: fa3-num-splits-full-decode [FA3 call] p4 queued
 - queue: fa3-num-splits-sliding [FA3 call] p3 queued
 - queue: fused-preattention-triton [pre-attention norm+rope] p2 queued
