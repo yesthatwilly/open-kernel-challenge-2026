@@ -41,7 +41,14 @@ priority: 2
 kind: primary
 controls_for: null
 review: required
-status: queued
+status: running
+stage: claimed
+claimed_at: 2026-10-24T231559Z
+base_sha: f6cc1452343c4d93911ad7303c4a5d7878afd2fe
+base_blob: b83f5ec1976c82d5b45dcd92b6c0818ce04eda9f
+branch: hyp/muse_decode_layer/full-decode-splitkv-restack-on-pdl
+worktree: .worktrees/muse_decode_layer/full-decode-splitkv-restack-on-pdl
+mode: null
 ---
 
 # full-decode-splitkv-restack-on-pdl
