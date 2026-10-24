@@ -57,7 +57,7 @@ base_sha: 8d596b6505434ea78352dd08f0494382c53bec54
 base_blob: 635cfee3ac2c3f7c66840b8c8a082cad2fa41a68
 branch: hyp/muse_prefill_layer/silu-mul-triton-local-rows-marlin-turn
 worktree: .worktrees/muse_prefill_layer/silu-mul-triton-local-rows-marlin-turn
-mode: null
+mode: check
 restack_of: null
 stale_base: null
 implemented_at: 2026-10-24T233142Z
@@ -66,6 +66,8 @@ submission_sha256: 6e334dcacbd3362a5ea8af73014be65b36baa52ed3366d5fb7f789a85c0b5
 norm_sha256: 33ecb03b26bd91e2ce8e02c2498526265158eb54e8c87026d69748507cc0d80a
 submission_blob: 1a06deda403ddee4b4693b34127fd50b8bcb791c
 lint_warnings: 7
+attempt_file: 2026-10-24T233142Z-check-silu-mul-triton-local-rows-marlin-turn.md
+prepared_at: 2026-10-24T233142Z
 ---
 
 # silu-mul-triton-local-rows-marlin-turn
