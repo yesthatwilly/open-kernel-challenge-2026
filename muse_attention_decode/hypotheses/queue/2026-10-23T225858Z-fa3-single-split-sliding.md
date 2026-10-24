@@ -47,9 +47,10 @@ priority: 4
 kind: primary
 controls_for: null
 review: proceed
-status: queued
+status: hold
 review_at: 2026-10-24T132543Z
 review_companions: null
+hold_reason: "reviewer expects an overall loss: one CTA per (request, KV head) streams 16-17 serial blocks, likely losing 8-12 us on sliding verify_1 and slowing decode_16/verify; only decode_32/verify_32 might gain; attention has 2 checks"
 ---
 
 # fa3-single-split-sliding
