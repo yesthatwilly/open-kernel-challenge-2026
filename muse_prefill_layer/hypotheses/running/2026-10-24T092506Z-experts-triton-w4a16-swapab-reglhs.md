@@ -81,13 +81,15 @@ base_sha: 6a70bfaac484039ebab2355adee2262c864eee2d
 base_blob: 2e6cb7c89a513e08be4b5e163319fbc34a35f854
 branch: hyp/muse_prefill_layer/experts-triton-w4a16-swapab-reglhs
 worktree: .worktrees/muse_prefill_layer/experts-triton-w4a16-swapab-reglhs
-mode: null
+mode: check
 implemented_at: 2026-10-24T100611Z
 impl_commit: 5f5af1d3fe4b9b1ef686af0d022040134029ee30
 submission_sha256: e495527df275f0bf5997efc21183e2925501631475b079f4417f68f87bb4061f
 norm_sha256: bbf03f9ead2961991b3a05cb17973e42ebf2f60126f59a8f460ab3e67e84d122
 submission_blob: 60abe04615110df3e4a9355a4b984b48b68f85e8
 lint_warnings: 2
+attempt_file: 2026-10-24T100611Z-check-experts-triton-w4a16-swapab-reglhs.md
+prepared_at: 2026-10-24T100611Z
 ---
 
 # experts-triton-w4a16-swapab-reglhs
