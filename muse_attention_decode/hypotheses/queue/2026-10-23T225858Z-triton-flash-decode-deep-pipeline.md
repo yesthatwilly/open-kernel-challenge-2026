@@ -43,7 +43,8 @@ priority: 4
 kind: primary
 controls_for: null
 review: required
-status: queued
+status: hold
+hold_reason: "moot under master 1.269x (sweep by the attention minter): stacks on triton-flash-decode-full-both-heads (held)"
 ---
 
 # triton-flash-decode-deep-pipeline
