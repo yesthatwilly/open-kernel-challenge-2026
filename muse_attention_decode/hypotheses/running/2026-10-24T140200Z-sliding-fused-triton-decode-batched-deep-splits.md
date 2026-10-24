@@ -44,7 +44,7 @@ review: proceed
 status: running
 review_at: 2026-10-24T140502Z
 review_companions: null
-stage: implemented
+stage: dispatched
 claimed_at: 2026-10-24T140502Z
 base_sha: 4c53fa864c3e6f5d9693120cc5890d9a0bf15753
 base_blob: 387dcb6a0e6137b74f7f65b048dce5a3fcbe2008
@@ -59,6 +59,8 @@ submission_blob: 9baa6cb5dafe3330ff14eac219f5b5a0fb90f127
 lint_warnings: 0
 attempt_file: 2026-10-24T140710Z-check-sliding-fused-triton-decode-batched-deep-splits.md
 prepared_at: 2026-10-24T140710Z
+job: 179dd013d3a347e4
+dispatched_at: 2026-10-24T140720Z
 ---
 
 # sliding-fused-triton-decode-batched-deep-splits
