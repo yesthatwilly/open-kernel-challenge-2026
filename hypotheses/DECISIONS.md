@@ -67,3 +67,4 @@ overrides of a reviewer) with the reason, newest last. Written by `churn.py note
 - 2026-10-24T120542Z `muse_attention_decode` **fused-sliding-preattn-into-window-kernel**: hold: moot under master 1.269x (sweep by the attention minter): stacks on triton-window-attention-sliding (held); same measured outcome
 - 2026-10-24T120542Z `muse_attention_decode` **fused-sliding-normgate-epilogue**: hold: moot under master 1.269x (sweep by the attention minter): stacks on the held sliding Triton chain; same measured outcome
 - 2026-10-24T120542Z `muse_attention_decode` **stream-fork-preattention**: hold: moot under master 1.269x (sweep by the attention minter): targets the parity pipeline's five pre-attention launches, which master fused into one kernel
+- 2026-10-24T120721Z `muse_attention_decode` **sliding-fused-triton-decode1-gate**: hold: reviewer: dispatch after fa3-window-trimmed-page-table (1f63fcbbc0394bed) harvests, which may shrink the decode_1 margin; then unhold
