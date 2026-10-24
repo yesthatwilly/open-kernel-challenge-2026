@@ -47,13 +47,19 @@ review: proceed
 status: running
 review_at: 2026-10-24T112151Z
 review_companions: null
-stage: claimed
+stage: implemented
 claimed_at: 2026-10-24T112151Z
 base_sha: 5f5af1d3fe4b9b1ef686af0d022040134029ee30
 base_blob: 60abe04615110df3e4a9355a4b984b48b68f85e8
 branch: hyp/muse_prefill_layer/experts-triton-w4a16-first-turn-blockt256
 worktree: .worktrees/muse_prefill_layer/experts-triton-w4a16-first-turn-blockt256
 mode: null
+implemented_at: 2026-10-24T112334Z
+impl_commit: 2226bae0a20f470cfa1bf733c1f71d1a60b1cbdd
+submission_sha256: f4fec2126a1c2053d6e81e8428393d17ace96a0ab00fa04c392ea86db5513a28
+norm_sha256: 7ffb167fe66532950a1ace39db2aec0f66f08752bbfee33f3655c7993d170fe0
+submission_blob: f17d41c9a9b0696f20e6679a493da9d4aa6d2934
+lint_warnings: 2
 ---
 
 # experts-triton-w4a16-first-turn-blockt256
@@ -101,3 +107,36 @@ No companion is warranted. This is a rewrite stage judged on _moe_nvfp4_gemm_ker
 - Why does identical expert math take 9.15 ms at ctx 65536 but 10.0 ms at ctx 0? If it is routing skew per shape, larger token tiles raise tail cost on hot experts. Compare the stage-3 delta per shape to see whether the gain shrinks where stage 2 was slowest.
 - Correct the headline expectation to ~+4% (geomean over three loads) so a milestone-2 result is not read as a disappointment.
 
+
+## Implementation notes
+
+Worktree `.worktrees/muse_prefill_layer/experts-triton-w4a16-first-turn-blockt256`, file `muse_prefill_layer/submission.py` only (uncommitted; 1 file, +31 / -18).
+
+- `EXPERT_CONFIGS`: the unbounded BLOCK_T 128 entry is now bounded at 4096 (byte-identical config, so turn_4 T=3012 and the T=4096 test run stage-2 code), and a new `(None, BLOCK_T=256, BLOCK_W=128, BLOCK_K=EXPERT_BLOCK_K, GROUP_SIZE_T=4, num_warps=8, num_stages=2)` entry serves T > 4096 (first_turn only). The comment above it is updated. `_experts` already passes `cfg["BLOCK_T"]` to `moe_align_block_size`, so padding to 256 needs no change. The kernel body, bank, scales, epilogue, ZERO_NONLOCAL_W2, silu_and_mul and post-expert sum are untouched.
+- `_check_expert_gemms` (the REQUIRED review fix): per config `check_rows = max(CHECK_ROWS, bt)` (128, 128, 256), and rows / want / want_codes / x one-hot are built per config from it. `expert_ids` is sized `triton.cdiv(total, bt)` with `total = check_rows + 2*bt`, the -1 block sits at `check_rows // bt`, the valid-but-past block right after it, and `n_padded = check_rows + bt`. The got / nonlocal / past slices use `check_rows`. For BLOCK_T 64 and 128 this is the same layout as before (check_rows 128). For BLOCK_T 256 it covers 256 rows (two passes over the 128-wide one-hot chunk), one -1 block and one past block, for both w13 (top_k 8) and w2 (top_k 1, ZERO_NONLOCAL). The loop runs over every EXPERT_CONFIGS entry, so prepare() compiles and checks the new T > 4096 config (no pre-timing test has T > 4096).
+- Open-question diagnostic from the review: `_nvfp4_moe_gemm` takes an optional `report=None`. Only `_check_expert_gemms` sets it. When set, it prints the variant's `n_regs`, `n_spills` and `shared` from the CompiledKernel the Triton launch returns, read with `getattr` and a `'?'` fallback so a Triton version difference cannot fail prepare(). This puts the register/spill reading for BLOCK_T 256 in the run's log tail. kernel_fn always passes report=None, so nothing new happens in the timed path (one Python `is not None` check).
+- No deviations from the spec. TTGIR async-wait inspection (open question 2) is not implemented: it needs the compiled asm and is not cheap to print within the 16 KB log tail. Next stage if wanted.
+- Uncertainties: (a) smem at 2 stages, about 146 KB plus scratch, should fit (per the review), but it is only confirmed when the judge compiles it in prepare(). (b) The `shared` attribute name differs across Triton versions, so it may print `?`. (c) The check's `out` buffer for w13 at BLOCK_T 256 is 768*8 x 8192 bf16, about 100 MB untimed, which is fine.
+
+## Rules check
+
+Checked against `git -C .worktrees/muse_prefill_layer/experts-triton-w4a16-first-turn-blockt256 diff`:
+
+- [x] CUDA-graph capturable: no new `.item()`/`.cpu()`/`synchronize()` in kernel_fn's path. The only new print is gated by `report`, which kernel_fn never sets, and it prints ints from compiled-kernel metadata, never a tensor. Config choice uses `num_tokens` (a shape) only, with no control flow on input values. The existing `torch.cuda.synchronize()` calls are in `_check_expert_gemms`/prepare() (lint warns, which is fine there).
+- [x] Nothing derived from `data` is cached across calls: no new state entries, and the config table is a module constant.
+- [x] Weights: no change to the bank (same nibble-reordered NVFP4, same scales and global scales). Dequant stays in registers inside the kernel, with no BF16 weight copy.
+- [x] Activations BF16 where SGLang keeps BF16 (the GEMM still takes BF16 A, BF16 out, FP32 acc). KV cache FP8 and queries are untouched.
+- [x] n/a: attention is untouched by this diff (expert GEMM tile config and the prepare() check only), so every key is still attended.
+- [x] No timing patches, harness frames/I/O/secrets, module edits, reference import, subprocesses or network. The diff adds only a print to stdout in prepare().
+- [x] All work happens inside the timed call. No output caching or replay, and prepare() only runs the synthetic weight-only check.
+- [x] No `triton.autotune` (fixed configs chosen from T), and the first line `# okc: problem=muse_prefill_layer` is kept.
+
+okc_lint output:
+
+```
+warn  host-sync    L424: torch.cuda.synchronize()  (outside kernel_fn's call graph; fine in prepare())
+warn  host-sync    L480: torch.cuda.synchronize()  (outside kernel_fn's call graph; fine in prepare())
+OK with warnings: .worktrees/muse_prefill_layer/experts-triton-w4a16-first-turn-blockt256/muse_prefill_layer/submission.py
+```
+
+`python3 -I -m py_compile` passes, and the __pycache__ was removed from the worktree.
