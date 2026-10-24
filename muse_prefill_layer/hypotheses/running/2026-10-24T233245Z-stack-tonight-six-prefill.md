@@ -20,7 +20,7 @@ kind: primary
 controls_for: null
 review: required
 status: running
-stage: implemented
+stage: dispatched
 claimed_at: 2026-10-24T233245Z
 base_sha: c1dfb14c99867d3818e9e99c82fd7d1fa4153ae3
 base_blob: 635cfee3ac2c3f7c66840b8c8a082cad2fa41a68
@@ -37,6 +37,8 @@ submission_blob: 6b59d3f29bc81303fae11ff2d74470087b55032c
 lint_warnings: 15
 attempt_file: 2026-10-24T233306Z-check-stack-tonight-six-prefill.md
 prepared_at: 2026-10-24T233306Z
+job: 5cb6e68a86ec48f0
+dispatched_at: 2026-10-24T233314Z
 ---
 
 # stack-tonight-six-prefill
