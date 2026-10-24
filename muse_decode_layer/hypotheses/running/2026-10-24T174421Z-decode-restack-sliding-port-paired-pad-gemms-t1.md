@@ -25,6 +25,12 @@ expected:
   - shapes: "*load=verify_1*"
     direction: flat
     why: GEMMs gated off at T=8
+  - shapes: "*layer=full*load=decode_1*"
+    direction: faster
+    why: full decode_1 faster (T=1 GEMMs)
+  - shapes: "*layer=full*load=verify_16*"
+    direction: faster
+    why: full verify_16 faster (paired)
 risk: low
 depends_on: null
 priority: 1
@@ -34,13 +40,19 @@ review: proceed
 status: running
 review_at: 2026-10-24T174912Z
 review_companions: null
-stage: claimed
+stage: implemented
 claimed_at: 2026-10-24T174912Z
 base_sha: c8af06125b23fb943b7a8f7c26fc6b9a677dd1e0
 base_blob: cc466fce207709c98ab0e78c2435c1c459890fdb
 branch: hyp/muse_decode_layer/decode-restack-sliding-port-paired-pad-gemms-t1
 worktree: .worktrees/muse_decode_layer/decode-restack-sliding-port-paired-pad-gemms-t1
 mode: null
+implemented_at: 2026-10-24T175146Z
+impl_commit: 62dae0d15ab7bbba9bbeece153ca2507bb23ba54
+submission_sha256: 72144e40a5588f9fef68d5f5da0390f04691c0e1d5b98fbf39879a5e81536fae
+norm_sha256: 7e9bd9b4762741435e4d182bf2d80b3db0a8acfba775a24bcc79c6174d0cf06e
+submission_blob: a37cb6c8e76c4e703a2e0c45e61f2b0a5f8418ea
+lint_warnings: 3
 ---
 
 # decode-restack-sliding-port-paired-pad-gemms-t1
@@ -54,6 +66,8 @@ Restack three harvested per-shape winners onto current master (post-expert-norm-
 - `*layer=sliding*load=decode_1*` faster: sliding fused port plus the T=1 GEMMs
 - `*layer=full*load=decode_16*` faster: paired pad/unpad
 - `*load=verify_1*` flat: GEMMs gated off at T=8
+- `*layer=full*load=decode_1*` faster: full decode_1 faster (T=1 GEMMs)
+- `*layer=full*load=verify_16*` faster: full verify_16 faster (paired)
 
 ## Risk
 
@@ -81,3 +95,43 @@ No companion warranted. The three pieces' own runs on the identical base blob al
 - If the headline lands inside the CI (likely, ~1.177-1.181 vs best 1.1665 [1.149, 1.184]), should promotion use the per-shape decode_1 rows (expected well outside noise: sliding ~+7.5%, full ~+3.5%) rather than the headline? That decision belongs to the harvester.
 - Should the T=1 GEMM warmup in _prepare_small_t_gemms be trimmed to m=1 now that only T==1 routes to it? It is harmless as is (untimed prepare), but leaving the 1..16 workspaces makes the code claim more than it uses.
 
+## Implementation notes
+
+Worktree file: `.worktrees/muse_decode_layer/decode-restack-sliding-port-paired-pad-gemms-t1/muse_decode_layer/submission.py` (base blob cc466fce; uncommitted). Diff stat: 1 file, +756 / -72.
+
+How it was merged: `git merge-file` of port + paired over cc466fce conflicted in two hunks (the helper insertion point and the whole re-indented attention block), as the review predicted. Resolved by hand: the file is the port branch blob (e33a32aa) verbatim, then the paired branch's two Triton kernels (`_pair_pad_q_kernel`, `_paired_norm_gate_kernel`) inserted after `_sliding_forward`, then the GEMM branch's helper block (`_bf16_splitk_kernel` through `_prepare_small_t_gemms`) inserted before `prepare`, then the kernel_fn edits of the paired and GEMM branches re-applied.
+
+- Port (1): unchanged from its branch (docstring bullet, `_INV_FREQ`/`_counters`/`_num_splits`, `_norm_rope`, `_gpu_fence`, `_online_update`, `_gate_epilogue`, `_sliding_fused_kernel`, `_sliding_forward`, the `if cfg["window"] and batch == 1 and length == 1: o = _sliding_forward(...) else:` re-indent).
+- Paired (2): both kernels byte-identical to the branch. Its two kernel_fn edits (the `_pair_pad_q_kernel` launch with its `assert qh.stride(2) == 1` replacing torch.zeros + slice copies, and the `if paired: _paired_norm_gate_kernel ... else: o = o_norm_gate(...)` epilogue) sit inside the port's `else:` branch, one indent deeper. `diff -w` of the merged kernel_fn against the paired branch's kernel_fn shows only the port and GEMM hunks.
+- GEMMs (3): kernels, shape guards, `_fallback` and its once-per-shape log kept unchanged. Changes from the branch: `SMALL_T_TRITON_GEMM = 1` and `small_t = tokens == SMALL_T_TRITON_GEMM` (was `1 <= tokens <= 16`); the unpooler-slice route is now gated `small_t and _unpool_shape_ok(...)` too (in the branch it ran at every T <= 8, i.e. also at verify_1 T=8, so leaving it would have broken "T>1 takes master's path"). The T>1 unpooler call is `_gemm(expert_output, unpool_w)` with `unpool_w = dense["unpooler"][:UNPOOL_SLICE]`, the same call as master's. Warmup trimmed to m=1 (`for m in (SMALL_T_TRITON_GEMM,)`), as the review allowed; the workspaces keep their 16-row size, since the kernels are verbatim and use WS_M=16 / BLOCK_M=16. Comments and docstring bullet updated to T == 1. `_prepare_small_t_gemms(state)` is called in prepare after `del freqs`, as in the branch.
+- `o` is defined on all three routes: sliding batch-1 decode (`_sliding_forward`), paired (`torch.empty` + `_paired_norm_gate_kernel`), plain (`o_norm_gate`). The o / pooler / unpooler GEMM selection follows after the attention block at the outer indent, so it sees `o` from any route.
+- T>1: `small_t` is False, so every GEMM is `_gemm(...)` with master's arguments. The only T>1 differences from master are the paired-path kernels (full layer, batch > 1), as intended.
+- Self-checks kept: paired `assert qh.stride(2) == 1`, GEMM `_*_shape_ok` guards with `_fallback` logging, port's config-only gate and `_num_splits`.
+
+Deviations: none beyond the specified T == 1 gate, the unpooler gate that it requires, and the warmup trim.
+
+Uncertainties: none tested (no GPU on this node). The port's `_counters` allocates its zeroed ticket buffer lazily on the first eager call (unchanged from the port branch, which passed); it is keyed on (batch, hkv, device), never on data values.
+
+## Rules check
+
+Checked against `git -C .worktrees/muse_decode_layer/decode-restack-sliding-port-paired-pad-gemms-t1 diff`.
+
+- [x] CUDA-graph capturable: no `.item()`/`.cpu()`/`synchronize()`/tensor prints in kernel_fn's call graph (the three synchronize calls are in prepare / `_prepare_small_t_gemms`; `_fallback` prints shapes only, never values); routing on `tokens`, `batch`, `q_len`, `window`, `rope_theta` and tensor shapes/strides only.
+- [x] Nothing derived from `data` is cached across calls: `_INV_FREQ` is keyed on (theta, d, device) from config, `_counters` on (batch, hkv, device) and holds only self-reset tickets, the GEMM split-K workspaces are fully rewritten for rows < M every launch, and `_FALLBACK_SEEN` stores shapes only.
+- [x] Weights: no new repack; the Triton GEMMs read the original BF16 `dense` weights in place (the unpooler slice by stride); NVFP4 experts untouched.
+- [x] Activations BF16 where SGLang keeps BF16 (GEMMs bf16 in / fp32 accumulate / bf16 out; paired epilogue stores bf16); KV cache FP8; queries rounded to FP8 E4M3 (paired pad kernel, `tl.float8e4nv`), and the port's kernel as in its branch.
+- [x] Attention sees every key: FA3 full context / whole window unchanged; the port's sliding kernel attends the full 2048-token window in 16 splits (unchanged from its branch).
+- [x] No timing patches, harness frames/I/O/secrets, module edits, reference import, subprocesses or network: imports unchanged from master.
+- [x] All work happens inside the timed call; no output caching or replay: prepare only allocates workspaces/counters and warms kernels on synthetic random inputs.
+- [x] First-line marker `# okc: problem=muse_decode_layer` kept; no `triton.autotune`.
+
+okc_lint output:
+
+```
+warn  host-sync    L881: torch.cuda.synchronize()  (outside kernel_fn's call graph; fine in prepare())
+warn  host-sync    L885: torch.cuda.synchronize()  (outside kernel_fn's call graph; fine in prepare())
+warn  host-sync    L928: torch.cuda.synchronize()  (outside kernel_fn's call graph; fine in prepare())
+OK with warnings: /home/user/git/musespark/.worktrees/muse_decode_layer/decode-restack-sliding-port-paired-pad-gemms-t1/muse_decode_layer/submission.py
+```
+
+`python3 -I -m py_compile`: OK; `__pycache__` removed.
