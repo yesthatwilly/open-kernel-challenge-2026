@@ -62,13 +62,15 @@ base_sha: b1395799d690a0aa9053a787f98c98321be85724
 base_blob: f17d41c9a9b0696f20e6679a493da9d4aa6d2934
 branch: hyp/muse_prefill_layer/experts-hybrid-marlin-turn-triton-first-turn
 worktree: .worktrees/muse_prefill_layer/experts-hybrid-marlin-turn-triton-first-turn
-mode: null
+mode: check
 implemented_at: 2026-10-24T125053Z
 impl_commit: c322454f5a0f28dabba91a7cf546d13eb4d3a230
 submission_sha256: ecb9bd833e29d3c4e9a90546156d72d305d53f40471f59c6f8a1edbc984f7f9a
 norm_sha256: bf96d2824fa9f5656c73c1770ff12c6244bae0c27fc96d325b87a360d4564300
 submission_blob: 635cfee3ac2c3f7c66840b8c8a082cad2fa41a68
 lint_warnings: 5
+attempt_file: 2026-10-24T125053Z-check-experts-hybrid-marlin-turn-triton-first-turn.md
+prepared_at: 2026-10-24T125053Z
 ---
 
 # experts-hybrid-marlin-turn-triton-first-turn
