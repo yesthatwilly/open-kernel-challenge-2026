@@ -40,7 +40,7 @@ review: proceed
 status: running
 review_at: 2026-10-24T071251Z
 review_companions: null
-stage: implemented
+stage: dispatched
 claimed_at: 2026-10-24T071251Z
 base_sha: f526f70d8a581a7fa0a7df17ee7a297eb2e2000b
 base_blob: e4931f050c7fb99835fe116d25bb454a5ea731e9
@@ -55,6 +55,8 @@ submission_blob: 0a23d0c3affb72b5ba2b8e554d5681065494a214
 lint_warnings: 1
 attempt_file: 2026-10-24T071713Z-check-qk-norm-fp8-cache-store-fusion.md
 prepared_at: 2026-10-24T071713Z
+job: fe8883a2fc264338
+dispatched_at: 2026-10-24T071725Z
 ---
 
 # qk-norm-fp8-cache-store-fusion
