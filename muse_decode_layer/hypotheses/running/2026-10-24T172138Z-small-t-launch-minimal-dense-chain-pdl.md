@@ -85,13 +85,19 @@ review: proceed
 status: running
 review_at: 2026-10-24T172646Z
 review_companions: null
-stage: claimed
+stage: implemented
 claimed_at: 2026-10-24T172706Z
 base_sha: 2b6cb6edd61405f6d01cf0aa39cd6e34d56fe812
 base_blob: cc466fce207709c98ab0e78c2435c1c459890fdb
 branch: hyp/muse_decode_layer/small-t-launch-minimal-dense-chain-pdl
 worktree: .worktrees/muse_decode_layer/small-t-launch-minimal-dense-chain-pdl
 mode: null
+implemented_at: 2026-10-24T174208Z
+impl_commit: 0ad20c672ef6e2e895e059ac05d69499299bea15
+submission_sha256: 0ff3803200d8a6a96cbe1712a67a1d0183eed13257d3140cfb49ce667f40b22c
+norm_sha256: 8494bbd10fed49ceb26daf4e42a46e5dbe87b5f22f9c916f4d5e295d1e7050ac
+submission_blob: 70b7563d2c5873c3eac4517889657268679f2098
+lint_warnings: 18
 ---
 
 # small-t-launch-minimal-dense-chain-pdl
@@ -146,3 +152,86 @@ No companion is warranted. Nothing has landed on master's lineage that this chan
 - Tie-break order in top-8 must match FusedMuseSparkRouting, or at least stay inside the judge's 0.05/0.03 routing tolerances. Equality is checked only on tie-free data; one near-tie synthetic case would give confidence.
 - If bf16-shape-gated-triton-gemms-small-t lands first, does this still beat the Triton pooler row it installs (likely about 3.7 TB/s)? If not, stage 1's win is mostly node removal, and the headline expectation should be revised down.
 
+
+## Implementation notes
+
+Worktree file: `.worktrees/muse_decode_layer/small-t-launch-minimal-dense-chain-pdl/muse_decode_layer/submission.py` (uncommitted; diff stat 1 file, +989 / -29). Only this file changed.
+
+What changed:
+- New section "Small-T dense chain" (between `_post_norm_combine_kernel` and `prepare`): one `load_inline` TU `muse_decode_dense_chain_v1` (`-O3 -arch=sm_90a`, compiled at import, the precedent attention module pattern) with:
+  - **Kernel P `dl_pooler_router_kernel<NF>`** (NF = 1/2/4 n8 token fragments for T <= 8/16/32). The swap-AB mma.sync m16n8k16 body and the XOR swizzle, ldmatrix and fragment mapping are taken from the audited `gemv_m8_kernel` (bf16-small-m-cuda-gemv-rewrite) and extended to NF fragments. W_pr bf16 [4608, 8192] is built in prepare(): pooler rows, then 16 tiles of [16 hi rows; their 16 lo rows]. **Grid (review fix): 64 rows x SPLIT_K 3 (K-chunks of 21/21/22 x 128) = 72 x 3 = 216 CTAs, a 4-stage ring of 16 KB weight + NF x 2 KB x per stage (72/80/96 KB), 2 CTAs/SM, so all 216 CTAs are resident in one wave**, with about 10 MB of weight in flight chip-wide. This replaces the spec's 288 CTAs x 128 KB. The fixed-order ticket split-K reduce writes expert_input bf16 (pooler tiles), or logits = sum(hi) + sum(lo) fp32 (router tiles), and resets its counter.
+  - **PDL:** P is launched from C++ with `cudaLaunchKernelEx` and `cudaLaunchAttributeProgrammaticStreamSerialization` on the current torch stream. Before `griddepcontrol.wait` it issues only `cp.async` of W_pr (a prepare() constant) for ring stages 0-2, uncommitted. The x copies (ffn_input), the commit groups and every global write come after the wait (review REQUIRED).
+  - **Kernel R `dl_route_norm_align_kernel`** (CUDA, grid T x 256). Per token it does the following:
+    - The pre-expert RMSNorm with fp32 math, eps 1e-5 and the module's effective (1+w) weight in fp32 (`_get_effective_weight()`, falling back to 1+w).
+    - sigmoid(0.1767766952966369 x logit), top-8 of score+bias with ties going to the lower id, and weights s/(sum+1e-15).
+    - It writes topk_ids int32 (global), topk_weights fp32 contiguous, and local_ids `(id - local_start) & 255`, set to -1 when >= 32 (master contract).
+    - Then an atomic ticket. The last block builds sorted_ids, block_experts and n_padded over the 32 local experts with `__match_any_sync` ranks. Capacity is T*8 + 32*(bsm-1), the sentinel is T*8, experts are ascending with routes ascending inside each expert, and block_experts is -1 past the used blocks. This is the layout of the Triton `_align_small` that passed the judge in moe-align-single-kernel-small-t. Finally it resets the ticket.
+  - PDL probe kernels: a spinning primary that calls `griddepcontrol.launch_dependents`, and a secondary that records `%globaltimer` before and after its wait.
+- `_block_size_m()` holds master's candidate loop plus the cap of 16, unchanged. `_experts()` gains `align=None`. With None it runs master's code as before; with a value it skips the expert_map gather, the cast and moe_align_block_size.
+- `kernel_fn`: the gate is `use_dl = state["dl"] is not None and tokens <= 32`, which depends only on config and the prepare flag. With the gate on, attn_boundary is called with `router_dtype=None`, also at T=1 (review), then P, R and the experts run. The side stream and its wait_stream and record_stream calls are gone. With the gate off (T > 32), the code is master's, line for line, re-indented under `else`.
+- `prepare()` ends with `state["dl"] = _dl_setup(weights, state)`, which does the following:
+  1. Builds the constants and prints P occupancy.
+  2. Runs the PDL probe. It is eager and then captured in a torch CUDA graph and replayed; pdl=1 only if the secondary started before the primary ended under capture.
+  3. Runs the self-check with that pdl, and on failure retries with pdl=0.
+  4. Times P with PDL off and on: 20 back-to-back launches in a graph, CUDA events, print only.
+  5. Prints `[small-t-dense-chain] ON|OFF pdl=0/1 compile Xs max errs ... PATH CHOSEN = DENSE-CHAIN|MASTER`.
+- Self-check (prepare only):
+  - Runs T in (1, 4, 8, 9, 16, 32) with varied local_start, twice each to catch ticket reset. Bounds: expert_input rel L2 <= 2e-3 vs cuBLAS; logits max abs err <= 1e-4 x max|logit| vs fp64; R norm vs `state["pre_expert_norm"]` <= 2e-3. Routing is compared with FusedMuseSparkRouting on the same logits (id sets equal where the 8th-9th gap > 1e-4, weights within 1e-5), and local_ids are checked exactly.
+  - Checks the align structure using only what Marlin consumes: per-expert route sets, block counts, n_padded and the sentinel. **It never compares capacity or n_padded with SGLang's** (this is the moe-sibling audit trap). It also compares Marlin output y between R's align and master's map plus moe_align_block_size (<= 1e-3).
+  - Runs crafted-logit cases through R alone at T = 1, 8 and 32: **no local slot** (checks n_padded == 0 and y == 0 when every slot is remote), one hot local expert, and a **near tie** (the 9th placed 1e-7 below the 8th, checked against the 8th best biased score).
+  - Captures the real chain (attn_boundary -> P -> R -> experts) at T = 8 and 32 in a CUDA graph and replays it against eager.
+
+Deviations from the spec, and why:
+- The grid is 216 CTAs, not 288, with a 72-96 KB ring. The review required one of these two fixes.
+- R is CUDA rather than Triton. It shares the TU, and the review allowed either.
+- PDL confirmation measures overlap with a globaltimer probe rather than querying graph edge types. The brief allows "or measure overlap". It also avoids `cudaGraphGetEdges` / `_v2`, whose signature differs between CUDA 12.3+ and 13 and would risk the whole TU failing to compile.
+- Logits are checked against an fp64 recompute rather than torch fp32 F.linear. This is stricter and avoids TF32 ambiguity.
+
+Uncertainties (nothing could be compiled or run here):
+- PTX forms are copied from the audited gemv kernel. The new pieces are `griddepcontrol.wait` / `launch_dependents`, `%globaltimer`, `cudaLaunchKernelEx` with a template kernel, `__match_any_sync`, and the 64-bit `__shfl_xor_sync`.
+- A CUDA fault in P or R inside the prepare self-check would be sticky and fail the whole run, not just fall back.
+- The FusedMuseSparkRouting call contract (returns (weights, ids)) is taken from master's usage. If its semantics differ, the self-check turns the path OFF.
+- At T=32, P re-reads x from L2 per CTA: about 37.7 MB against 75.5 MB of weight. This could cap P below 3.8 TB/s at T=32. BLOCK_N 128 would halve it, and is a possible stage-2 item.
+- The profiler row for P includes its PDL wait. Judge M1/M2 from the `P timing` lines.
+- At harvest, read the log tail first. `PATH CHOSEN = MASTER`, `SELF-CHECK FAILED` or `load_inline FAILED` means the run measured master.
+
+## Rules check
+
+Checked against `git -C .worktrees/muse_decode_layer/small-t-launch-minimal-dense-chain-pdl diff`:
+
+- [x] CUDA-graph capturable: no `.item()`/`.cpu()`/`synchronize()`/tensor prints in kernel_fn or anything it reaches. `_dl_forward`/`_dl_route`/`_experts` only allocate with sizes from T and launch, and the C++ wrappers do host-side TORCH_CHECKs on shapes and dtypes only. All `.tolist()`/`synchronize()` calls are in the prepare-only self-check, probe and timing (lint: outside kernel_fn's call graph). Branching is on `tokens` (config) and the prepare flag only. local_start is read on device.
+- [x] Nothing derived from `data` is cached across calls: `state["dl"]` holds W_pr, the zeroed workspace and tickets, the norm weight, the bias and the pdl flag, all built from weights in prepare(). The tickets self-reset in every launch. PDL prefetch reads only W_pr before griddepcontrol.wait.
+- [x] Weights: W_pr is a lossless repack. The pooler stays BF16, and the router is FP32 -> BF16 hi + lo with FP32 accumulation, the one allowed exception, now also used at T=1, which the rules allow at any batch. NVFP4 experts are untouched (master's Marlin bank).
+- [x] Activations: expert_input and the normed expert input are BF16 as in SGLang, logits FP32 and topk_weights FP32. No FP8/FP16 introduced. KV cache and queries are untouched.
+- [x] n/a: attention is untouched (the change is the FFN pre-expert chain only). Every key is still attended.
+- [x] No timing patches, harness frames/I/O/secrets, module edits, reference import, subprocesses or network. `load_inline` compiles at import, as the promoted attention precedent does (DECISIONS: the load_inline rules question is settled). reference.py was read for semantics only and is not imported.
+- [x] All work happens inside the timed call: P, R and the experts run every call on fresh inputs. No output caching or replay. The prepare() self-check uses synthetic inputs only.
+- [x] First line marker is `# okc: problem=muse_decode_layer` (kept).
+- [x] T > 32 keeps master byte for byte (verify_16/32 control). `_block_size_m` is the same loop plus cap 16 as master's inline code.
+
+Lint (`python3 -I .claude/skills/churnsubs/bin/okc_lint.py <worktree>/muse_decode_layer/submission.py --problem muse_decode_layer`):
+
+```
+warn  host-sync    L890: ids = local_ids.reshape(-1).tolist()  (outside kernel_fn's call graph; fine in prepare())
+warn  host-sync    L892: s_ids, b_exp, n_pad = sorted_ids.tolist(), block_experts.tolist(), int(n_padded[0])  (outside kernel_fn's call graph; fine in prepare())
+warn  host-sync    L929: if not bool((picked >= (eighth - 1e-5 - 1e-6 * eighth.abs())[:, None]).all()) or any(len(set(r)) != TOP_K for r in mine.tolist()):  (outside kernel_fn's call graph; fine in prepare())
+warn  host-sync    L934: gap = (eighth - ninth).tolist()  (outside kernel_fn's call graph; fine in prepare())
+warn  host-sync    L935: for t, (mi, ri) in enumerate(zip(mine.tolist(), ref_ids.tolist())):  (outside kernel_fn's call graph; fine in prepare())
+warn  host-sync    L940: mw = dict(zip(mi, topk_w[t].tolist()))  (outside kernel_fn's call graph; fine in prepare())
+warn  host-sync    L941: rw = dict(zip(ri, ref_w[t].tolist()))  (outside kernel_fn's call graph; fine in prepare())
+warn  host-sync    L968: torch.cuda.synchronize()  (outside kernel_fn's call graph; fine in prepare())
+warn  host-sync    L1014: torch.cuda.synchronize()  (outside kernel_fn's call graph; fine in prepare())
+warn  host-sync    L1041: torch.cuda.synchronize()  (outside kernel_fn's call graph; fine in prepare())
+warn  host-sync    L1046: torch.cuda.synchronize()  (outside kernel_fn's call graph; fine in prepare())
+warn  host-sync    L1064: torch.cuda.synchronize()  (outside kernel_fn's call graph; fine in prepare())
+warn  host-sync    L1065: eager = times.tolist()  (outside kernel_fn's call graph; fine in prepare())
+warn  host-sync    L1072: torch.cuda.synchronize()  (outside kernel_fn's call graph; fine in prepare())
+warn  host-sync    L1073: cap = times.tolist()  (outside kernel_fn's call graph; fine in prepare())
+warn  host-sync    L1101: torch.cuda.synchronize()  (outside kernel_fn's call graph; fine in prepare())
+warn  host-sync    L1107: torch.cuda.synchronize()  (outside kernel_fn's call graph; fine in prepare())
+warn  host-sync    L1221: torch.cuda.synchronize()  (outside kernel_fn's call graph; fine in prepare())
+OK with warnings: submission.py
+exit=0
+```
+
+`python3 -I -m py_compile`: OK (the __pycache__ it left in the worktree was deleted).
