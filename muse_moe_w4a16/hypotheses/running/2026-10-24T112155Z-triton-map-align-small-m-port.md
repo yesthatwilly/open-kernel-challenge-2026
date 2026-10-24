@@ -59,7 +59,7 @@ review: proceed
 status: running
 review_at: 2026-10-24T112524Z
 review_companions: null
-stage: implemented
+stage: dispatched
 claimed_at: 2026-10-24T112525Z
 base_sha: dd50db2750f6d64e57b62dd08f6867eefc3d5b3d
 base_blob: b81d47abe0c2e53a3ecc180884ae8d9671ba4e14
@@ -74,6 +74,8 @@ submission_blob: 55d57ae4bce945f45162af73ce6764ae5145c0df
 lint_warnings: 8
 attempt_file: 2026-10-24T112901Z-check-triton-map-align-small-m-port.md
 prepared_at: 2026-10-24T112901Z
+job: c2feb68aafb44aeb
+dispatched_at: 2026-10-24T112910Z
 ---
 
 # triton-map-align-small-m-port
