@@ -48,7 +48,7 @@ status: running
 review_at: 2026-10-24T120721Z
 review_companions: null
 hold_reason: null
-stage: implemented
+stage: dispatched
 claimed_at: 2026-10-24T124116Z
 base_sha: 4613c6fccb0ad0d891d7c837d1dc24c0465c5aff
 base_blob: efc544103e6d303d1f8602caa9439628043a17a7
@@ -63,6 +63,8 @@ submission_blob: 387dcb6a0e6137b74f7f65b048dce5a3fcbe2008
 lint_warnings: 0
 attempt_file: 2026-10-24T124236Z-check-sliding-fused-triton-decode1-gate.md
 prepared_at: 2026-10-24T124236Z
+job: 295727fc68e14093
+dispatched_at: 2026-10-24T124248Z
 ---
 
 # sliding-fused-triton-decode1-gate
