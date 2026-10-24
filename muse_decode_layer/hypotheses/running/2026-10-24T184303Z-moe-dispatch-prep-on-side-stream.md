@@ -66,8 +66,8 @@ submission_sha256: 8c1a130276e46913ceebef067b4777e81d6f7f966b13e607170313cb6c917
 norm_sha256: 6bfee5a728e9525e163cbdc21c63b6ff96a5892f79bfdb7283a3473969ccd303
 submission_blob: f3200629fd5e0cab6475535321218a16b010c752
 lint_warnings: 18
-attempt_file: 2026-10-24T224624Z-check-moe-dispatch-prep-on-side-stream.md
-prepared_at: 2026-10-24T224624Z
+attempt_file: 2026-10-24T231258Z-check-moe-dispatch-prep-on-side-stream.md
+prepared_at: 2026-10-24T231258Z
 ---
 
 # moe-dispatch-prep-on-side-stream
