@@ -46,13 +46,15 @@ base_sha: f526f70d8a581a7fa0a7df17ee7a297eb2e2000b
 base_blob: e4931f050c7fb99835fe116d25bb454a5ea731e9
 branch: hyp/muse_prefill_layer/qk-norm-fp8-cache-store-fusion
 worktree: .worktrees/muse_prefill_layer/qk-norm-fp8-cache-store-fusion
-mode: null
+mode: check
 implemented_at: 2026-10-24T071713Z
 impl_commit: 28a212da340b37c2c639d847cc19b3f5682bb48a
 submission_sha256: 53d5ff81af849ac6e1bf25fb7652483edd110b2033cbe396f6520c92c597647a
 norm_sha256: aca709ca28d3a4f7dcd31e0ba072a909b990cc9875ff7cc71c59f807a2dc8f1c
 submission_blob: 0a23d0c3affb72b5ba2b8e554d5681065494a214
 lint_warnings: 1
+attempt_file: 2026-10-24T071713Z-check-qk-norm-fp8-cache-store-fusion.md
+prepared_at: 2026-10-24T071713Z
 ---
 
 # qk-norm-fp8-cache-store-fusion
