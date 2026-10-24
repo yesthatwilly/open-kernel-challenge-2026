@@ -43,13 +43,15 @@ base_sha: d2840d088aa35522a03b40c59e174287cf935f67
 base_blob: 2752a016d386e9261ec77e25b426c05b76c071ac
 branch: hyp/muse_bf16_proj/unpooler-full-triton-skinny-m32
 worktree: .worktrees/muse_bf16_proj/unpooler-full-triton-skinny-m32
-mode: null
+mode: check
 implemented_at: 2026-10-24T032616Z
 impl_commit: fbfb795472c2ae79a1b093a08fb5e42d1867da77
 submission_sha256: 83ce8c03f0998b92424c4bf16cc65532a525c831594e41c331b11ebb7dfd3886
 norm_sha256: cc6fb688cf298485ad99f1cd118fb3517770742d80e0ee0508613285ce0462d0
 submission_blob: 29884ed7c43020beb1ad7c469eafaa8b9f362470
 lint_warnings: 0
+attempt_file: 2026-10-24T032616Z-check-unpooler-full-triton-skinny-m32.md
+prepared_at: 2026-10-24T032616Z
 ---
 
 # unpooler-full-triton-skinny-m32
