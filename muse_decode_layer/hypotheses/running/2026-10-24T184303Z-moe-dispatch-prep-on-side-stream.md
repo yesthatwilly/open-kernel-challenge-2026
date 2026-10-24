@@ -53,7 +53,7 @@ review: proceed
 status: running
 review_at: 2026-10-24T185010Z
 review_companions: null
-stage: implemented
+stage: dispatched
 claimed_at: 2026-10-24T185010Z
 base_sha: 6f8cac5640783bda29e10ba56c80ba50fc396141
 base_blob: 3d70ae6e2de0d48c4a4f2a469ced8234f5348182
@@ -68,6 +68,8 @@ submission_blob: f3200629fd5e0cab6475535321218a16b010c752
 lint_warnings: 18
 attempt_file: 2026-10-24T231258Z-check-moe-dispatch-prep-on-side-stream.md
 prepared_at: 2026-10-24T231258Z
+job: fe3422db9ea540d8
+dispatched_at: 2026-10-24T231312Z
 ---
 
 # moe-dispatch-prep-on-side-stream
