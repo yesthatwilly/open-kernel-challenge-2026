@@ -1,0 +1,148 @@
+diff --git a/muse_bf16_proj/submission.py b/muse_bf16_proj/submission.py
+index da55301..624e853 100644
+--- a/muse_bf16_proj/submission.py
++++ b/muse_bf16_proj/submission.py
+@@ -14,6 +14,16 @@ at every m. Each program owns one (M-block, N-block, K-slice), never loops over
+ atomically adds its fp32 K-partial into an output zeroed right before the launch; there is no
+ plain-store path. Configs are static, chosen from m at launch; rows beyond m are masked, so any
+ m is valid.
++
++Unpooler slice (n == 1024, m <= 8; hypothesis unpooler-slice-triton-splitk8-semaphore): ONE
++Triton launch of _bf16_splitk_kernel instead of cuBLAS splitK + splitKreduce. grid =
++(1024 // 64, 8) = 128 CTAs, each streaming 64 weight rows over a 512-wide K-slice, read in place
++from the first 1024 rows of the full row-major [8192, 4096] weight (row stride 4096, no copy).
++Each CTA stores its fp32 partial to a prepare()-allocated scratch workspace (fully rewritten, for
++rows < m, on every call), takes one gpu-scope acq_rel ticket on a per-N-tile counter, and the
++CTA that draws the last ticket sums the partials in fixed order 0..SPLIT_K-1, stores bf16 once
++and resets the counter to 0. The unpooler at n == 8192 and the other bf16 layers keep the cuBLAS
++dispatch.
+ """
+ 
+ from typing import TypedDict
+@@ -150,6 +160,98 @@ def _router_shape_ok(x: torch.Tensor, hi: torch.Tensor) -> bool:
+             and hi.stride(1) == 1)
+ 
+ 
++UNPOOL_N = 1024      # the sliced output width (this GPU's slice, m <= 8)
++UNPOOL_K = 4096
++UNPOOL_MAX_M = 16    # one BLOCK_M=16 tile; rows >= m masked
++UNPOOL_BLOCK_N = 64
++UNPOOL_BLOCK_K = 128
++UNPOOL_SPLIT_K = 8   # K-slice 512, 4 K-steps
++UNPOOL_NUM_WARPS = 4
++UNPOOL_NUM_STAGES = 3
++UNPOOL_WARM_MS = (1, 5, 8)
++
++
++@triton.jit(do_not_specialize=["M"])
++def _bf16_splitk_kernel(
++    x_ptr, w_ptr, out_ptr, ws_ptr, cnt_ptr,
++    M,
++    stride_xm, stride_wn, stride_om,
++    N: tl.constexpr, WS_M: tl.constexpr, K_SLICE: tl.constexpr, SPLIT_K: tl.constexpr,
++    BLOCK_M: tl.constexpr, BLOCK_N: tl.constexpr, BLOCK_K: tl.constexpr,
++):
++    """out[M, N] bf16 = x[M, K] @ w[N, K]^T, split-K with an in-kernel semaphore reduce.
++
++    Program (pid_n, pid_k) covers rows of N [pid_n*BLOCK_N, +BLOCK_N), K [pid_k*K_SLICE,
++    +K_SLICE) and all M rows (M <= BLOCK_M <= WS_M; rows >= M masked). w may be the leading N
++    rows of a taller row-major weight (stride_wn is its row stride). ws: fp32 [SPLIT_K, WS_M, N]
++    scratch; cnt: int32 [N // BLOCK_N], 0 between launches. There is no early exit: every CTA
++    stores its partial and takes exactly one ticket, so the counter always returns to 0.
++    """
++    pid_n = tl.program_id(0)
++    pid_k = tl.program_id(1)
++    k_start = pid_k * K_SLICE
++
++    offs_n = pid_n * BLOCK_N + tl.arange(0, BLOCK_N)
++    offs_k = k_start + tl.arange(0, BLOCK_K)
++    offs_m = tl.arange(0, BLOCK_M)
++    m_mask = offs_m < M
++    # Weight tiles read directly as [BLOCK_K, BLOCK_N] from the row-major [N, K] weight.
++    w_ptrs = w_ptr + offs_k[:, None] + offs_n[None, :] * stride_wn
++    x_ptrs = x_ptr + offs_m[:, None] * stride_xm + offs_k[None, :]
++    acc = tl.zeros((BLOCK_M, BLOCK_N), dtype=tl.float32)
++    for kk in range(0, K_SLICE // BLOCK_K):
++        x_tile = tl.load(x_ptrs, mask=m_mask[:, None], other=0.0)
++        w_tile = tl.load(w_ptrs)
++        acc = tl.dot(x_tile, w_tile, acc)
++        x_ptrs += BLOCK_K
++        w_ptrs += BLOCK_K
++
++    # fp32 partial -> workspace slice pid_k, rows < M only (the reducer reads the same mask).
++    ws_tile = offs_m[:, None] * N + offs_n[None, :]
++    tl.store(ws_ptr + pid_k * (WS_M * N) + ws_tile, acc, mask=m_mask[:, None])
++    # All threads' partial stores precede the (single, scalar) gpu-scope acq_rel ticket.
++    tl.debug_barrier()
++    ticket = tl.atomic_add(cnt_ptr + pid_n, 1, sem="acq_rel", scope="gpu")
++    # Order the other threads' reloads after the ticket's acquire.
++    tl.debug_barrier()
++    if ticket == SPLIT_K - 1:
++        total = tl.load(ws_ptr + ws_tile, mask=m_mask[:, None], other=0.0, cache_modifier=".cg")
++        for s in tl.static_range(1, SPLIT_K):
++            total += tl.load(ws_ptr + s * (WS_M * N) + ws_tile, mask=m_mask[:, None], other=0.0,
++                             cache_modifier=".cg")
++        out_ptrs = out_ptr + offs_m[:, None] * stride_om + offs_n[None, :]
++        tl.store(out_ptrs, total.to(tl.bfloat16), mask=m_mask[:, None])
++        # Self-reset so the next launch / graph replay starts from 0.
++        tl.atomic_xchg(cnt_ptr + pid_n, 0, sem="relaxed", scope="gpu")
++
++
++def _unpool_shape_ok(x: torch.Tensor, w: torch.Tensor, cfg) -> bool:
++    """Preconditions of the unpooler-slice split-K path: n == 1024, m <= 16, and the problem's
++    unpooler weight ([8192, 4096] row-major, of which only the first 1024 rows are read)."""
++    return (cfg["n"] == UNPOOL_N and cfg["k"] == UNPOOL_K and cfg["m"] <= UNPOOL_MAX_M
++            and x.dim() == 2 and x.dtype == torch.bfloat16 and x.stride(1) == 1
++            and 1 <= x.shape[0] <= UNPOOL_MAX_M and x.shape[1] == UNPOOL_K
++            and w.dim() == 2 and w.dtype == torch.bfloat16 and w.shape[0] >= UNPOOL_N
++            and w.shape[1] == UNPOOL_K and w.stride(1) == 1)
++
++
++def _unpool_forward(x: torch.Tensor, w: torch.Tensor, ws: torch.Tensor, cnt: torch.Tensor) -> torch.Tensor:
++    """x bf16 [m <= 16, 4096] @ w[:1024].T -> bf16 [m, 1024], one launch, w read in place
++    (stride_wn = w.stride(0) = 4096, no slice copy). Branches only on shapes."""
++    m, k = x.shape
++    out = torch.empty((m, UNPOOL_N), dtype=torch.bfloat16, device=x.device)
++    grid = (UNPOOL_N // UNPOOL_BLOCK_N, UNPOOL_SPLIT_K)
++    _bf16_splitk_kernel[grid](
++        x, w, out, ws, cnt,
++        m,
++        x.stride(0), w.stride(0), out.stride(0),
++        N=UNPOOL_N, WS_M=UNPOOL_MAX_M, K_SLICE=k // UNPOOL_SPLIT_K, SPLIT_K=UNPOOL_SPLIT_K,
++        BLOCK_M=UNPOOL_MAX_M, BLOCK_N=UNPOOL_BLOCK_N, BLOCK_K=UNPOOL_BLOCK_K,
++        num_warps=UNPOOL_NUM_WARPS, num_stages=UNPOOL_NUM_STAGES,
++    )
++    return out
++
++
+ def prepare(weights: Weights) -> dict:
+     """Called once, untimed. Keep the bf16 weights as they are (contiguous), build the router's
+     hi + lo bf16 split as [256, 8192] row-major (N x K), and pre-compile every m-bucket of the
+@@ -165,12 +267,27 @@ def prepare(weights: Weights) -> dict:
+         x = torch.randn((m, router.shape[1]), device=router.device, dtype=torch.float32).to(torch.bfloat16)
+         if _router_shape_ok(x, hi):
+             _router_forward(x, hi, lo)
++    # Unpooler-slice split-K scratch (fp32 partials, overwritten every call) and per-N-tile
++    # tickets; warmed on synthetic x against the real (full, stride-4096) unpooler weight.
++    unpooler = state["unpooler"]
++    state["unpool_ws"] = torch.empty((UNPOOL_SPLIT_K, UNPOOL_MAX_M, UNPOOL_N),
++                                     dtype=torch.float32, device=unpooler.device)
++    state["unpool_cnt"] = torch.zeros(UNPOOL_N // UNPOOL_BLOCK_N, dtype=torch.int32, device=unpooler.device)
++    ucfg = {"n": UNPOOL_N, "k": UNPOOL_K}
++    for m in UNPOOL_WARM_MS:
++        x = torch.randn((m, UNPOOL_K), device=unpooler.device, dtype=torch.float32).to(torch.bfloat16)
++        if _unpool_shape_ok(x, unpooler, dict(ucfg, m=m)):
++            _unpool_forward(x, unpooler, state["unpool_ws"], state["unpool_cnt"])
++    # The kernel self-resets, but re-zero after the warm-up regardless (stream-ordered).
++    state["unpool_cnt"].zero_()
+     return state
+ 
+ 
+ def kernel_fn(data: Inputs, state: dict) -> torch.Tensor:
+     x, cfg = data["x"], data["config"]
+     layer = cfg["layer"]
++    if layer == "unpooler" and _unpool_shape_ok(x, state["unpooler"], cfg):
++        return _unpool_forward(x, state["unpooler"], state["unpool_ws"], state["unpool_cnt"])
+     if layer != "router":
+         # The unpooler's slice is its first n rows (all of them above 8 tokens).
+         return _bf16_gemm_dispatch_impl(x, state[layer][: cfg["n"]], None)

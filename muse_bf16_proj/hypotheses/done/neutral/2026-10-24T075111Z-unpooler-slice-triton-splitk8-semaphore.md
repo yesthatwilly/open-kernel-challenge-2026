@@ -46,10 +46,10 @@ priority: 2
 kind: primary
 controls_for: null
 review: proceed
-status: running
+status: done
 review_at: 2026-10-24T083652Z
 review_companions: null
-stage: dispatched
+stage: harvested
 claimed_at: 2026-10-24T092007Z
 base_sha: 4463015ebd7f2b7014e5f694aa241cc9df7a78c1
 base_blob: da55301de1e911aeab09878b0873809f544f436c
@@ -66,6 +66,13 @@ attempt_file: 2026-10-24T092305Z-check-unpooler-slice-triton-splitk8-semaphore.m
 prepared_at: 2026-10-24T092305Z
 job: bb31bb36545a47bb
 dispatched_at: 2026-10-24T092313Z
+outcome: neutral
+verdict_detail: unproven-vs-best
+speedup: 1.1546360457892961
+speedup_ci: [1.1373165051024567, 1.1719555864761355]
+harvested_at: 2026-10-24T103710Z
+best_at_harvest: 1.1432568936693237
+promotion: null
 ---
 
 # unpooler-slice-triton-splitk8-semaphore
@@ -148,3 +155,53 @@ CLEAN: /home/user/git/musespark/.worktrees/muse_bf16_proj/unpooler-slice-triton-
 ```
 
 `python3 -I -m py_compile` OK. `__pycache__` removed.
+
+## Result
+
+- job `bb31bb36545a47bb` (check), status done, passed True, tests 9/9
+- speedup 1.1546x, 95% CI [1.1373, 1.1720], score 4183.829196755866 µs vs SGLang 4830.8 µs
+- best at harvest: {"speedup": 1.1432568936693237, "ci": [1.1261080402642838, 1.1604057470743634], "job": "240eb22ea0b6487e"}; base result: muse_bf16_proj/hypotheses/done/gain/router-triton-hilo-fused-control-splitk-all-m.result.json
+- **outcome: neutral** (unproven-vs-best)
+- files: `muse_bf16_proj/hypotheses/done/neutral/unpooler-slice-triton-splitk8-semaphore.result.json`, `muse_bf16_proj/hypotheses/done/neutral/unpooler-slice-triton-splitk8-semaphore.patch`; branch `hyp/muse_bf16_proj/unpooler-slice-triton-splitk8-semaphore`
+
+## Attribution
+
+| shape | w | base µs | hyp µs | delta | verdict |
+|---|---|---|---|---|---|
+| layer=qkv_gate load=decode_1 m=1 | 62 | 14.4 | 13.93 | 1.0293 | flat |
+| layer=o load=decode_1 m=1 | 62 | 6.69 | 6.66 | 1.0094 | flat |
+| layer=pooler load=decode_1 m=1 | 62 | 21.21 | 21.39 | 0.9821 | flat |
+| layer=unpooler load=decode_1 m=1 | 62 | 7.07 | 5.79 | 1.1742 | gained |
+| layer=router load=decode_1 m=1 | 62 | 5.8 | 5.76 | 1.0026 | flat |
+| layer=qkv_gate load=decode_16 m=16 | 62 | 13.82 | 14.02 | 1.0093 | flat |
+| layer=o load=decode_16 m=16 | 62 | 6.78 | 6.85 | 0.9993 | flat |
+| layer=pooler load=decode_16 m=16 | 62 | 21.3 | 21.8 | 0.9921 | flat |
+| layer=unpooler load=decode_16 m=16 | 62 | 18.45 | 18.5 | 1.0119 | flat |
+| layer=router load=decode_16 m=16 | 62 | 6.2 | 6.31 | 1.0038 | flat |
+| layer=qkv_gate load=decode_32 m=32 | 62 | 14.27 | 14.17 | 1.0183 | flat |
+| layer=o load=decode_32 m=32 | 62 | 6.58 | 6.85 | 0.9799 | flat |
+| layer=pooler load=decode_32 m=32 | 62 | 21.95 | 22.06 | 0.9905 | flat |
+| layer=unpooler load=decode_32 m=32 | 62 | 18.71 | 19.08 | 0.994 | flat |
+| layer=router load=decode_32 m=32 | 62 | 6.54 | 6.55 | 0.9894 | flat |
+| layer=qkv_gate load=verify_1 m=8 | 62 | 14.0 | 14.09 | 1.0067 | flat |
+| layer=o load=verify_1 m=8 | 62 | 6.28 | 6.57 | 1.0032 | flat |
+| layer=pooler load=verify_1 m=8 | 62 | 21.3 | 21.58 | 0.9842 | flat |
+| layer=unpooler load=verify_1 m=8 | 62 | 7.02 | 6.27 | 1.1353 | gained |
+| layer=router load=verify_1 m=8 | 62 | 5.67 | 5.99 | 0.952 | lost |
+| layer=qkv_gate load=verify_16 m=128 | 62 | 16.96 | 17.6 | 0.9915 | flat |
+| layer=o load=verify_16 m=128 | 62 | 6.98 | 7.46 | 0.9867 | flat |
+| layer=pooler load=verify_16 m=128 | 62 | 25.21 | 25.34 | 1.025 | flat |
+| layer=unpooler load=verify_16 m=128 | 62 | 19.65 | 19.63 | 0.9936 | flat |
+| layer=router load=verify_16 m=128 | 62 | 7.04 | 7.34 | 0.9677 | lost |
+| layer=qkv_gate load=verify_32 m=256 | 62 | 19.47 | 19.42 | 0.9986 | flat |
+| layer=o load=verify_32 m=256 | 62 | 9.51 | 9.21 | 0.9969 | flat |
+| layer=pooler load=verify_32 m=256 | 62 | 30.51 | 31.02 | 0.9873 | flat |
+| layer=unpooler load=verify_32 m=256 | 62 | 24.39 | 24.15 | 1.0032 | flat |
+| layer=router load=verify_32 m=256 | 62 | 9.27 | 9.62 | 0.9832 | flat |
+
+gained on unpooler decode_1, verify_1; lost on router verify_1, verify_16. Expected hit: 5/5. Noise ±1.5%.
+
+## Follow-ups
+
+- unproven-vs-best: the change is not proven either way; a stacked hypothesis (`depends_on: unpooler-slice-triton-splitk8-semaphore`) that adds a further change in the same area is the only way to learn more (identical code is never re-run).
+
