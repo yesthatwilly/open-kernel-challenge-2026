@@ -1,0 +1,126 @@
+okc run 88c62334775e48e4 on muse_attention_decode
+submission  /home/user/git/musespark/.worktrees/muse_attention_decode/sliding-decode-blockn128-single-tile/muse_attention_decode/submission.py
+status      ok
+passed      true
+speedup     1.3834281815427036
+speedup_ci  [1.362676758819563 1.4079296375843768]
+score_us    2722.4398420162893
+tests       16/16 passed
+
+scored shapes (µs; speed of light is the reference's bound)
+case                                                         sglang      yours  speedup        sol  
+batch=1 ctx=80000 dist=soft heads=tp8 layer=sliding load=decode 1 page=1      20.19      12.32   1.638x       0.11  
+batch=1 ctx=80000 dist=coherent heads=tp8 layer=full load=decode 1 page=1      30.98      27.40   1.131x       4.27  
+batch=16 ctx=80000 dist=soft heads=tp8 layer=sliding load=decode 16 page=1 spread=agentic      26.93      15.53   1.734x       1.65  
+batch=16 ctx=80000 dist=coherent heads=tp8 layer=full load=decode 16 page=1 spread=agentic     200.67     122.79   1.634x      63.18  
+batch=32 ctx=80000 dist=soft heads=tp8 layer=sliding load=decode 32 page=1 spread=agentic      30.99      24.02   1.290x       3.29  
+batch=32 ctx=80000 dist=coherent heads=tp8 layer=full load=decode 32 page=1 spread=agentic     383.70     257.44   1.490x     126.35  
+batch=1 ctx=80000 dist=soft heads=tp8 layer=sliding load=verify 1 page=1 q_len=8      22.22      16.92   1.314x       0.12  
+batch=1 ctx=80000 dist=coherent heads=tp8 layer=full load=verify 1 page=1 q_len=8      35.84      29.73   1.206x       4.28  
+batch=16 ctx=80000 dist=soft heads=tp8 layer=sliding load=verify 16 page=1 q_len=8 spread=agentic      29.25      22.56   1.297x       1.86  
+batch=16 ctx=80000 dist=coherent heads=tp8 layer=full load=verify 16 page=1 q_len=8 spread=agentic     204.45     161.73   1.264x      63.39  
+batch=32 ctx=80000 dist=soft heads=tp8 layer=sliding load=verify 32 page=1 q_len=8 spread=agentic      34.34      28.89   1.188x       3.72  
+batch=32 ctx=80000 dist=coherent heads=tp8 layer=full load=verify 32 page=1 q_len=8 spread=agentic     388.62     300.81   1.292x     126.78  
+
+profile 0: batch=1 ctx=80000 dist=soft heads=tp8 layer=sliding load=decode 1 page=1
+kernel                                                           GPU time  share  calls
+_sliding_fused_kernel                                              9.5 µs 100.0%      1
+total                                                              9.5 µs
+
+profile 1: batch=1 ctx=80000 dist=coherent heads=tp8 layer=full load=decode 1 page=1
+kernel                                                           GPU time  share  calls
+void cutlass::device_kernel<flash::enable_sm90_or_later<f...      14.7 µs  60.9%      1
+void cutlass::device_kernel<flash::FlashAttnFwdCombine<cu...       7.0 µs  29.1%      1
+_pre_attention_kernel                                              1.4 µs   5.7%      1
+void sglang::norm_gate_kernel<__nv_bfloat16, 64l, 8, 8, t...       1.0 µs   4.3%      1
+total                                                             24.1 µs
+GPU busy (kernels overlap: PDL or streams)                        22.6 µs
+an overlapping kernel's time includes any wait for the one before it, so the rows add up to more
+
+profile 2: batch=16 ctx=80000 dist=soft heads=tp8 layer=sliding load=decode 16 page=1 spread=agentic
+kernel                                                           GPU time  share  calls
+_sliding_fused_kernel                                             12.7 µs 100.0%      1
+total                                                             12.7 µs
+
+profile 3: batch=16 ctx=80000 dist=coherent heads=tp8 layer=full load=decode 16 page=1 spread=agentic
+kernel                                                           GPU time  share  calls
+(anonymous namespace)::splitkv_attn_kernel(unsigned char ...     111.1 µs  91.4%      1
+(anonymous namespace)::splitkv_combine_kernel(float const...       8.3 µs   6.8%      1
+_pre_attention_kernel                                              2.1 µs   1.7%      1
+total                                                            121.5 µs
+
+profile 4: batch=32 ctx=80000 dist=soft heads=tp8 layer=sliding load=decode 32 page=1 spread=agentic
+kernel                                                           GPU time  share  calls
+_sliding_fused_kernel                                             21.6 µs 100.0%      1
+total                                                             21.6 µs
+
+profile 5: batch=32 ctx=80000 dist=coherent heads=tp8 layer=full load=decode 32 page=1 spread=agentic
+kernel                                                           GPU time  share  calls
+(anonymous namespace)::splitkv_attn_kernel(unsigned char ...     244.8 µs  95.8%      1
+(anonymous namespace)::splitkv_combine_kernel(float const...       8.6 µs   3.4%      1
+_pre_attention_kernel                                              2.2 µs   0.9%      1
+total                                                            255.7 µs
+
+profile 6: batch=1 ctx=80000 dist=soft heads=tp8 layer=sliding load=verify 1 page=1 q_len=8
+kernel                                                           GPU time  share  calls
+void cutlass::device_kernel<flash::enable_sm90_or_later<f...       7.3 µs  49.8%      1
+void cutlass::device_kernel<flash::FlashAttnFwdCombine<cu...       2.9 µs  20.1%      1
+void flash::prepare_varlen_num_blocks_kernel<1, false>(in...       1.7 µs  11.8%      1
+_pre_attention_kernel                                              1.6 µs  11.1%      1
+void sglang::norm_gate_kernel<__nv_bfloat16, 64l, 8, 8, t...       1.1 µs   7.2%      1
+total                                                             14.7 µs
+
+profile 7: batch=1 ctx=80000 dist=coherent heads=tp8 layer=full load=verify 1 page=1 q_len=8
+kernel                                                           GPU time  share  calls
+void cutlass::device_kernel<flash::enable_sm90_or_later<f...      15.0 µs  53.6%      1
+void cutlass::device_kernel<flash::FlashAttnFwdCombine<cu...       7.6 µs  27.4%      1
+void flash::prepare_varlen_num_blocks_kernel<1, true>(int...       2.7 µs   9.6%      1
+_pre_attention_kernel                                              1.5 µs   5.4%      1
+void sglang::norm_gate_kernel<__nv_bfloat16, 64l, 8, 8, t...       1.1 µs   4.0%      1
+total                                                             27.9 µs
+GPU busy (kernels overlap: PDL or streams)                        26.4 µs
+an overlapping kernel's time includes any wait for the one before it, so the rows add up to more
+
+profile 8: batch=16 ctx=80000 dist=soft heads=tp8 layer=sliding load=verify 16 page=1 q_len=8 spread=agentic
+kernel                                                           GPU time  share  calls
+void cutlass::device_kernel<flash::enable_sm90_or_later<f...      10.7 µs  52.2%      1
+void cutlass::device_kernel<flash::FlashAttnFwdCombine<cu...       3.9 µs  19.3%      1
+_pre_attention_kernel                                              2.7 µs  13.3%      1
+void flash::prepare_varlen_num_blocks_kernel<1, false>(in...       1.8 µs   8.6%      1
+void sglang::norm_gate_kernel<__nv_bfloat16, 64l, 8, 8, t...       1.3 µs   6.6%      1
+total                                                             20.4 µs
+GPU busy (kernels overlap: PDL or streams)                        19.0 µs
+an overlapping kernel's time includes any wait for the one before it, so the rows add up to more
+
+profile 9: batch=16 ctx=80000 dist=coherent heads=tp8 layer=full load=verify 16 page=1 q_len=8 spread=agentic
+kernel                                                           GPU time  share  calls
+void cutlass::device_kernel<flash::enable_sm90_or_later<f...     149.8 µs  91.2%      1
+void cutlass::device_kernel<flash::FlashAttnFwdCombine<cu...       6.2 µs   3.8%      1
+void flash::prepare_varlen_num_blocks_kernel<1, true>(int...       3.0 µs   1.8%      1
+_pre_attention_kernel                                              2.7 µs   1.7%      1
+_paired_norm_gate_kernel                                           2.5 µs   1.5%      1
+total                                                            164.3 µs
+GPU busy (kernels overlap: PDL or streams)                       161.7 µs
+an overlapping kernel's time includes any wait for the one before it, so the rows add up to more
+
+profile 10: batch=32 ctx=80000 dist=soft heads=tp8 layer=sliding load=verify 32 page=1 q_len=8 spread=agentic
+kernel                                                           GPU time  share  calls
+void cutlass::device_kernel<flash::enable_sm90_or_later<f...      14.7 µs  55.8%      1
+void cutlass::device_kernel<flash::FlashAttnFwdCombine<cu...       4.2 µs  16.0%      1
+_pre_attention_kernel                                              4.2 µs  15.8%      1
+void flash::prepare_varlen_num_blocks_kernel<2, false>(in...       1.8 µs   6.8%      1
+void sglang::norm_gate_kernel<__nv_bfloat16, 64l, 16, 4, ...       1.5 µs   5.7%      1
+total                                                             26.4 µs
+GPU busy (kernels overlap: PDL or streams)                        24.8 µs
+an overlapping kernel's time includes any wait for the one before it, so the rows add up to more
+
+profile 11: batch=32 ctx=80000 dist=coherent heads=tp8 layer=full load=verify 32 page=1 q_len=8 spread=agentic
+kernel                                                           GPU time  share  calls
+void cutlass::device_kernel<flash::enable_sm90_or_later<f...     287.1 µs  93.9%      1
+void cutlass::device_kernel<flash::FlashAttnFwdCombine<cu...       7.1 µs   2.3%      1
+_pre_attention_kernel                                              4.1 µs   1.3%      1
+_paired_norm_gate_kernel                                           4.0 µs   1.3%      1
+void flash::prepare_varlen_num_blocks_kernel<2, true>(int...       3.5 µs   1.1%      1
+total                                                            305.8 µs
+GPU busy (kernels overlap: PDL or streams)                       302.2 µs
+an overlapping kernel's time includes any wait for the one before it, so the rows add up to more

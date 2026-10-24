@@ -27,10 +27,10 @@ priority: 4
 kind: primary
 controls_for: null
 review: proceed
-status: running
+status: done
 review_at: 2026-10-24T184058Z
 review_companions: null
-stage: dispatched
+stage: harvested
 claimed_at: 2026-10-24T184058Z
 base_sha: 591234f46b4e7e6b5307dd6a14ed904220f58742
 base_blob: c6854f093588da524e63657576b27ed720756e32
@@ -47,6 +47,13 @@ attempt_file: 2026-10-24T184519Z-check-sliding-decode-blockn128-single-tile.md
 prepared_at: 2026-10-24T184519Z
 job: 88c62334775e48e4
 dispatched_at: 2026-10-24T184530Z
+outcome: neutral
+verdict_detail: within-ci
+speedup: 1.3834281815427036
+speedup_ci: [1.362676758819563, 1.4079296375843768]
+harvested_at: 2026-10-24T232000Z
+best_at_harvest: 1.3948738389144513
+promotion: null
 ---
 
 # sliding-decode-blockn128-single-tile
@@ -114,3 +121,35 @@ Audited 2026-10-24 by an opus subagent (read-only emulation; no GPU on this node
 Fixes: none.
 
 Residual risk: num_stages=2 may already pipeline the second 64-key tile, so the gain may sit inside sliding decode_1 drift; decode_32 could be flat from lower occupancy.
+
+## Result
+
+- job `88c62334775e48e4` (check), status done, passed True, tests 16/16
+- speedup 1.3834x, 95% CI [1.3627, 1.4079], score 2722.4398420162893 µs vs SGLang 3766.3 µs
+- best at harvest: {"speedup": 1.3948738389144513, "ci": [1.3739507313307344, 1.415796946498168], "job": "698d4cd3838c4a63"}; base result: muse_attention_decode/hypotheses/done/gain/sliding-deep-splits-on-cuda-splitkv.result.json
+- **outcome: neutral** (within-ci)
+- files: `muse_attention_decode/hypotheses/done/neutral/sliding-decode-blockn128-single-tile.result.json`, `muse_attention_decode/hypotheses/done/neutral/sliding-decode-blockn128-single-tile.patch`; branch `hyp/muse_attention_decode/sliding-decode-blockn128-single-tile`
+
+## Attribution
+
+| shape | w | base µs | hyp µs | delta | verdict |
+|---|---|---|---|---|---|
+| batch=1 ctx=80000 dist=soft heads=tp8 layer=sliding load=decode_1 page=1 | 46 | 13.17 | 12.32 | 1.0376 | gained |
+| batch=1 ctx=80000 dist=coherent heads=tp8 layer=full load=decode_1 page=1 | 16 | 27.26 | 27.4 | 0.9889 | flat |
+| batch=16 ctx=80000 dist=soft heads=tp8 layer=sliding load=decode_16 page=1 spread=agentic | 46 | 15.34 | 15.53 | 0.9958 | flat |
+| batch=16 ctx=80000 dist=coherent heads=tp8 layer=full load=decode_16 page=1 spread=agentic | 16 | 122.79 | 122.79 | 0.9991 | flat |
+| batch=32 ctx=80000 dist=soft heads=tp8 layer=sliding load=decode_32 page=1 spread=agentic | 46 | 24.24 | 24.02 | 1.0022 | flat |
+| batch=32 ctx=80000 dist=coherent heads=tp8 layer=full load=decode_32 page=1 spread=agentic | 16 | 241.9 | 257.44 | 0.939 | lost |
+| batch=1 ctx=80000 dist=soft heads=tp8 layer=sliding load=verify_1 page=1 q_len=8 | 46 | 16.72 | 16.92 | 0.9682 | flat |
+| batch=1 ctx=80000 dist=coherent heads=tp8 layer=full load=verify_1 page=1 q_len=8 | 16 | 30.03 | 29.73 | 1.0062 | flat |
+| batch=16 ctx=80000 dist=soft heads=tp8 layer=sliding load=verify_16 page=1 q_len=8 spread=agentic | 46 | 22.67 | 22.56 | 1.0139 | flat |
+| batch=16 ctx=80000 dist=coherent heads=tp8 layer=full load=verify_16 page=1 q_len=8 spread=agentic | 16 | 161.98 | 161.73 | 1.0011 | flat |
+| batch=32 ctx=80000 dist=soft heads=tp8 layer=sliding load=verify_32 page=1 q_len=8 spread=agentic | 46 | 28.7 | 28.89 | 0.9957 | flat |
+| batch=32 ctx=80000 dist=coherent heads=tp8 layer=full load=verify_32 page=1 q_len=8 spread=agentic | 16 | 300.83 | 300.81 | 1.0008 | flat |
+
+gained on sliding decode_1; lost on full decode_32. Expected hit: 2/3. Noise ±1.6%.
+
+## Follow-ups
+
+- within-ci: the change is not proven either way; a stacked hypothesis (`depends_on: sliding-decode-blockn128-single-tile`) that adds a further change in the same area is the only way to learn more (identical code is never re-run).
+

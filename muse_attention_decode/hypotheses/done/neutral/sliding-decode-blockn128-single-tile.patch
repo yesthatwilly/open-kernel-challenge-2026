@@ -1,0 +1,22 @@
+diff --git a/muse_attention_decode/submission.py b/muse_attention_decode/submission.py
+index c6854f0..5118538 100644
+--- a/muse_attention_decode/submission.py
++++ b/muse_attention_decode/submission.py
+@@ -351,7 +351,7 @@ def _sliding_forward(data: Inputs) -> torch.Tensor:
+     theta = cfg["rope_theta"]
+     group = hq // hkv
+     m = max(16, triton.next_power_of_2(group * length))
+-    # Decode (L = 1): 16 splits at every batch, 2 BLOCK_N tiles of the window per program.
++    # Decode (L = 1): 16 splits at every batch, one BLOCK_N=128 tile of the window per program.
+     splits = 16 if length == 1 else _num_splits(batch, hkv)
+     out = torch.empty((batch, length, hq * d), dtype=torch.bfloat16, device=device)
+     if splits > 1:
+@@ -368,7 +368,7 @@ def _sliding_forward(data: Inputs) -> torch.Tensor:
+         data["k_cache"].view(torch.uint8), data["v_cache"].view(torch.uint8), ws_acc, ws_ml, counters, out,
+         qkv.stride(0), page_table.stride(0), cfg["qk_scale_factor"], cfg["sm_scale"] * LOG2E,
+         HQ=hq, HKV=hkv, D=d, L=length, M=m, LN=max(16, triton.next_power_of_2(length)),
+-        WINDOW=cfg["window"], PAGE=cfg["page_size"], S=splits, BLOCK_N=64, ROPE=bool(theta), EPS=RMS_EPS,
++        WINDOW=cfg["window"], PAGE=cfg["page_size"], S=splits, BLOCK_N=128 if length == 1 else 64, ROPE=bool(theta), EPS=RMS_EPS,
+         num_warps=4, num_stages=2,
+     )
+     return out
