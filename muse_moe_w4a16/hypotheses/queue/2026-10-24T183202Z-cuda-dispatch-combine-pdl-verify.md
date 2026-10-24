@@ -112,8 +112,10 @@ kind: rewrite
 controls_for: null
 rewrite_stage: 1
 replaces: _align_parallel_kernel + fused_post_expert_norm_weighted_sum at num_tokens > 32
-review: required
+review: proceed
 status: queued
+review_at: 2026-10-24T183415Z
+review_companions: null
 ---
 
 # cuda-dispatch-combine-pdl-verify
@@ -143,3 +145,28 @@ shape (profile top_kernels) against the incumbent and the speed-of-light floor, 
 2. at or below the incumbent kernels' time on the target shapes;
 3. within ~1.5x of the floor on the target shapes, and the headline CI clears 1.0 (promotable).
 The next stage is minted with `--kind rewrite --depends-on <this slug> --stage N+1`.
+
+## Adversarial review
+
+Reviewed 2026-10-24T183415Z by an adversarial subagent (model opus).
+
+**Verdict: proceed.** A sound, rules-clean stage-1 rewrite of the two latency-bound glue kernels at bs>32 (8.9 us at bs=128, 12.9 us at bs=256 in 45eacf4ca2e849d2) whose milestones can be read from the per-kernel profile rows; no companion is needed, but the replaced kernels' times should be logged directly, because a 2 us kernel can drop out of the profile's top-N list.
+
+### Justification
+Plausible on H100. _align_parallel_kernel is 33 Triton programs. Each one streams all n ids and builds a [512,32] one-hot per chunk, so it is compute/latency bound at 4.0/6.9 us for a job that moves ~8-16 KB. A single 1024-thread CTA using __match_any_sync ranks, a per-tile count table in shared memory (<=128x32) and one warp-0 scan should finish in ~1.5-2.5 us. The serial warp-0 scan over up to 64-65 tiles per expert is the longest part, at roughly 1 us of shared-memory round trips. The combine (_post_expert_norm_weighted_sum_kernel, 4.9/6.0 us in the parent profile, 6.8 us at bs=256 in the current-best profile) reads local y rows that Marlin w2 just wrote and that are mostly still in L2, then writes 1-2 MB, so its floor is ~1.5-3 us. With M CTAs x 256 threads, all slot loads issued before the reduction and one barrier, the 2.5-3 us target is reachable. Holding up to 8 slots x 32 B per thread as packed bf16 is ~64 registers, which is fine; converting everything to fp32 up front would double that. The localSizeBytes log will catch any spills. The expected directions match TASK.md. Only bs=128 and bs=256 change, each by ~1.5-1.8% of the shape, so ~0.5% of the headline, which is inside the +-1.5% CI. The hypothesis says this itself and correctly asks to be judged on the replaced rows. The bs<=32 shapes are untouched controls (bs=32 still uses master's SGLang combine and _align_small). Weakest link 1, readability: the profile lists only the top ~3-4 kernels per shape. At bs=128, act_and_mul is 3.8 us, so a kernel A that hits its 1.8 us target will drop out of the visible rows. M2/M3 for kernel A then cannot be confirmed from top_kernels, only inferred from its absence. The build should name the kernels distinctly, and the prepare() log should print a CUDA-event median for kernel A vs _align_parallel and kernel B vs fused_post_expert_norm_weighted_sum at M=128/256 (untimed, synthetic). Weakest link 2: the PDL gain is unmeasurable (<=1 us). Marlin never calls launch_dependents, so the implicit trigger only fires at grid exit and the overlap is at most launch latency plus kernel B's prologue. Treat PDL as free if the capture test passes, not as part of the claim. Prior evidence against the combine: post-norm-triton-all-m (one Triton program per token at every M) was within-ci. The idea that issuing all loads first and using a single barrier beats SGLang's kernel is the real bet, and the hypothesis names 'combine row not below 4 us' as the finding if it fails.
+
+### Confounders on the current kernel
+- align-parallel-per-expert-verify: this is the incumbent being replaced (4.0/6.9 us), and kernel A must reproduce its sorted_ids byte for byte. Its numbers are the comparison, not a confound: the profile row comparison is direct and nothing else in the launch sequence changes.
+- marlin-block-m-two-smaller-on-postnorm: sets bsm to 16 (bs=128) and 32 (bs=256/257), which fixes cap and n_blocks for kernel A and the padding fill. Kernel A's cost barely depends on bsm, and Marlin's time is unchanged because sorted_ids are identical, so no confound. The self-check covers every bsm kernel_fn can pick, including two-smaller.
+- post-expert-norm-triton-small-m: introduced the fp32 (1+w) combine that kernel B copies, and the remote-row-never-read convention, which relies on Marlin w2 leaving remote y rows unwritten. It only applies below 32 tokens, so it does not interact at bs>32. Its sibling post-norm-triton-all-m (neutral at large M) is the prior that kernel B has to beat.
+- sglang-marlin-path-parity / triton-map-align-on-block-m-restack: these define the Marlin calls and the bs<=32 path, which this change leaves byte-identical. No interaction with the replaced kernels beyond what is listed above.
+
+### Interference and A/B needs
+No companion is warranted. The change replaces two specific kernels on two shapes and leaves every other launch identical (same sorted_ids, so Marlin does identical work), so the per-kernel profile rows attribute kernel A and kernel B separately within one run. Reverting a landed hypothesis would not make a gain or loss more readable: the only landed change that shapes kernel A's inputs is the bsm pick, and kernel A's cost is nearly bsm-independent. A PDL-off control would isolate <=1 us, which is below any per-shape resolution, so it is not worth a check. The pdl_ok log line already tells you which path ran. The one real gap, kernel A falling out of the top-N profile rows, is fixed better by prepare()-time event timing in the log than by an extra run.
+
+### Open questions
+- Does the profile's top_kernels list show enough rows per shape to see kernel A once it drops below act_and_mul (3.8 us at bs=128)? If not, log prepare()-time CUDA-event medians for A vs _align_parallel and B vs fused_post_expert_norm_weighted_sum at M=128/256, so M2/M3 can be read.
+- Is moe_wna16_marlin_gemm (w2, use_atomic_add=False, use_fp32_reduce=True) exactly one kernel launch in the captured graph, so that PDL's preceding kernel is the Marlin GEMM itself?
+- Does the judge's torch 2.14.1+cu130 stream capture keep the programmatic-dependency edge from cudaLaunchKernelEx (it should on CUDA >= 12.3), or does it silently drop it to a full dependency? The capture test checks correctness only, not that overlap actually happens.
+- If the in-flight cuda-nvfp4-wgmma-rega-grouped-verify lands first, the kernel before kernel B changes. Re-check the PDL assumptions (trigger and number of launches) on restack.
+
