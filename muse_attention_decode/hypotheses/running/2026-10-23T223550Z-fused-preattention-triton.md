@@ -53,13 +53,19 @@ review: proceed
 status: running
 review_at: 2026-10-24T075244Z
 review_companions: null
-stage: claimed
+stage: implemented
 claimed_at: 2026-10-24T075244Z
 base_sha: ee19eef05eb85988ab83008de621ef92e267203b
 base_blob: 7cafe07522219f5d70a1d23f29e3ee2fbdb497b7
 branch: hyp/muse_attention_decode/fused-preattention-triton
 worktree: .worktrees/muse_attention_decode/fused-preattention-triton
 mode: null
+implemented_at: 2026-10-24T075304Z
+impl_commit: 5b9490d351677736d89780f3e73b0f331a8332d4
+submission_sha256: fde179d5b9e42bf50f8403b1b014c9e5d15141e65445669a5bddfceb09b64f27
+norm_sha256: cf6d25c1a6f133b50185228070b3bdbd2052abf2bf501fb0bf38c080d06b32f8
+submission_blob: f14211b4b0e88f8b3f683d9f9275b76a64b66e02
+lint_warnings: 0
 ---
 
 # fused-preattention-triton
@@ -103,3 +109,34 @@ No companion is warranted. The result already exists, and resubmitting identical
 - What are the actual check margins (k-entry rel-L2 and output error vs bound) in submission.dfee6f2939974bad.log? Recording them in FINDINGS lets dependents see whether they ate into the precision slack.
 - The hypothesis body is stale ('check job ... queued, no result yet', 'onto the parity base'). Update it to the measured result, and set base to master with whole-file replacement, before churnsubs dispatches dependents.
 
+
+## Implementation notes
+
+Whole-file replacement of master's starter `muse_attention_decode/submission.py` with the exact
+file behind check job dfee6f2939974bad (16/16 passed, 1.127x [1.111, 1.144]), copied verbatim
+from the main tree's uncommitted working copy (sha256 prefix fde179d5b9e42bf5). It is not a patch
+onto sglang-path-parity, which was held as identical to baseline.py. At the user's direction this
+hypothesis has no parent and is the base for the 12 re-pointed dependents. Nothing was changed
+from the measured code, so the measured result stands.
+
+`_pre_attention_kernel` fuses FusedQKNorm (+ interleaved RoPE on sliding layers), the k/v FP8
+casts, store_cache and the q FP8 cast into one launch. FA3 and rms_norm_gate are as in baseline.py.
+
+Follow-ups from the adversarial review, left out on purpose because they would change the measured
+code: add stride/contiguity asserts on qkv, k_cache, v_cache and the q buffer; build `_INV_FREQ`
+for theta=500000 at import (or warm it in prepare) so a capture before the first eager call cannot
+allocate inside the graph; check whether tl.cos/tl.sin lower to approximate MUFU at ~80K positions
+and record the k-entry check margin from the dfee6f2939974bad log. q and k go fp32 -> FP8 directly
+(SGLang goes fp32 -> bf16 -> FP8): finer, allowed, but not bit-identical to SGLang.
+
+## Rules check
+
+- [x] CUDA-graph capturable: no `.item()`/`.cpu()`/`synchronize()`/tensor prints in kernel_fn; q buffer allocated from shapes only; branching on config only.
+- [x] Nothing derived from `data` is cached across calls (`_INV_FREQ` derives from config theta/d only).
+- [x] Weights: n/a, this problem has no weights; nothing repacked.
+- [x] Activations BF16 where SGLang keeps BF16; KV cache FP8 E4M3; queries FP8 E4M3.
+- [x] Attention sees every key: FA3 called with the full window (window-1, 0) / full context, unchanged from baseline.py.
+- [x] No timing patches, harness frames/I/O/secrets, module edits, reference import, subprocesses or network.
+- [x] All work happens inside the timed call; no output caching or replay.
+
+okc_lint: `CLEAN: .../muse_attention_decode/submission.py`
