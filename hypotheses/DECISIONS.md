@@ -58,3 +58,4 @@ overrides of a reviewer) with the reason, newest last. Written by `churn.py note
 - 2026-10-24T120023Z `muse_decode_layer` **moe-align-single-kernel-small-t-control-capacity-256**: hold: control for moe-align-single-kernel-small-t, which was neutral; a capacity control of a non-gain cannot change a decision, and decode has 2 checks left for the attention rewrite and pairing follow-ups
 - 2026-10-24T120023Z `muse_bf16_proj` **router-splitk-semaphore-no-memset**: unhold:
 - 2026-10-24T120023Z `muse_bf16_proj` **router-splitk-semaphore-no-memset**: unheld: neither router-splitk32 run gained (1.143x, 1.152x vs 1.151x), so per the reviewer it runs as written at SPLIT_K=16
+- 2026-10-24T120541Z `muse_attention_decode` **fa3-num-splits-full-verify**: hold: moot under master 1.269x (sweep by the attention minter): num_splits is only a cap under FA3's on-device split sizing, and full verify at batch>1 is now paired with scheduler_metadata=None
