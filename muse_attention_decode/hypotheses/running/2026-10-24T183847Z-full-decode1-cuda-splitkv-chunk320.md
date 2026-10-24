@@ -47,9 +47,16 @@ priority: 1
 kind: primary
 controls_for: null
 review: proceed
-status: queued
+status: running
 review_at: 2026-10-24T184132Z
 review_companions: null
+stage: claimed
+claimed_at: 2026-10-24T184132Z
+base_sha: 29ab19ae2ed489e27e4307caeff5e2dd73cd86eb
+base_blob: c6854f093588da524e63657576b27ed720756e32
+branch: hyp/muse_attention_decode/full-decode1-cuda-splitkv-chunk320
+worktree: .worktrees/muse_attention_decode/full-decode1-cuda-splitkv-chunk320
+mode: null
 ---
 
 # full-decode1-cuda-splitkv-chunk320
