@@ -36,7 +36,7 @@ review: proceed
 status: running
 review_at: 2026-10-24T174842Z
 review_companions: null
-stage: implemented
+stage: dispatched
 claimed_at: 2026-10-24T174842Z
 base_sha: 4a04b3757546365d2227c1fc1762bc6c5072e92b
 base_blob: a8bb42ac483318e9fbc84bc7826a27b7a704d1fb
@@ -51,6 +51,8 @@ submission_blob: 970b415b746fa03cb92e419d270be92588273178
 lint_warnings: 0
 attempt_file: 2026-10-24T175228Z-submit-bf16-restack-m16-swapab-router-swapab-m32.md
 prepared_at: 2026-10-24T175228Z
+job: 1e90292c7b954d96
+dispatched_at: 2026-10-24T175236Z
 ---
 
 # bf16-restack-m16-swapab-router-swapab-m32
