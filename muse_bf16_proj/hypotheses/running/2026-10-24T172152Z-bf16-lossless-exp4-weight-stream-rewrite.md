@@ -137,13 +137,19 @@ review: proceed
 status: running
 review_at: 2026-10-24T172632Z
 review_companions: null
-stage: claimed
+stage: implemented
 claimed_at: 2026-10-24T172707Z
 base_sha: 43ae369dae50af5a98bad52c50a5e7ba904c492f
 base_blob: a8bb42ac483318e9fbc84bc7826a27b7a704d1fb
 branch: hyp/muse_bf16_proj/bf16-lossless-exp4-weight-stream-rewrite
 worktree: .worktrees/muse_bf16_proj/bf16-lossless-exp4-weight-stream-rewrite
 mode: null
+implemented_at: 2026-10-24T173953Z
+impl_commit: 7895e56373c79d74ba78b7c0e7146755b118ce2c
+submission_sha256: 1e17fa124212904431e3568047eadec88afa21490d54ae0fd8db4df92f05aee1
+norm_sha256: febc57c9b1e11a278749c0e85d270857319b42e94be31db23869513c3f8d4dd7
+submission_blob: a34e409b452e9a6e5f7ee3612486d30a989832f2
+lint_warnings: 8
 ---
 
 # bf16-lossless-exp4-weight-stream-rewrite
@@ -208,3 +214,73 @@ No hypothesis has landed on master's submission.py, so the list is empty and not
 - Will compile time (one TU, 3 NT instantiations, plus master's Triton warmups) stay well inside the 10-minute run? Record the compile seconds that are printed.
 - If bf16-small-m-cuda-gemv-rewrite (running) lands first, rebase onto its skeleton as the hypothesis suggests, and decide per shape at m<=8 which wins.
 
+
+## Implementation notes
+
+Worktree file: `.worktrees/muse_bf16_proj/bf16-lossless-exp4-weight-stream-rewrite/muse_bf16_proj/submission.py` (uncommitted). `git diff --stat`: 1 file, +700 / -0. Master's code is unchanged byte for byte. The only edits are a new section (6), one call at the end of `prepare()`, one route check at the top of `kernel_fn`, `import time`, and a docstring paragraph.
+
+What was added:
+- **CUDA module** (`_LL_CUDA`, one TU, `load_inline` at import with `-O3 -arch=sm_90a`, the attention precedent's flags; module `muse_bf16_lossless_v1`). It builds three instantiations `_lossless_swapab_kernel<8/16/32>` plus a prepare-only `lossless_decode_kernel`. Logs: `[lossless] load_inline compiled in Xs` or `[lossless] load_inline failed ... master path kept`.
+- **Codec** (`_ll_encode`, torch ops on the GPU, from the weights alone). It uses groups of 64 K, an `e_ref` = max exponent byte, an SM byte = sign<<7|mant7, and a 4-bit code c with exponent = e_ref - c.
+  - **Escape groups** (review fix): header sentinel `e_ref = 255`. The 16-bit side-table slot is stored in the group's own SM bytes, so there is no per-group int32 index. Raw bf16 rows go to a side table.
+  - **Layout**: Marlin-style chunks, one 1536 B chunk per (16-row tile, 64-K group) = [3][32 lanes][16 B] (SM 0-15, SM 16-31, nibbles). The 16 header bytes per tile-group are stored separately. The unpooler slice is a prefix of the unpooler's tiles.
+- **Dequant: integer only, no LUT.** This is a deviation, explained below. Per bf16 pair it computes `(byte_perm(sm, 0x1100|0x3322) & 0x807F807F) | (e_ref*0x00800080 - ((nib >> 4r) & 0x000F000F) << 7)`, about 5 int ops per pair. e_ref - c >= 1 always holds, so the subtraction never borrows across halves. Escape rows are patched from the side table with `__ldg`.
+- **Kernel**:
+  - swap-AB `mma.sync.m16n8k16` bf16 -> fp32. A is the dequantized weight held in registers; B is x^T via `ldmatrix.x4` from an XOR-swizzled smem tile, with token rows >= m zero-filled by cp.async src-size 0.
+  - 4 warps x 16 rows = 64 rows per CTA, 1 CTA/SM.
+  - 8-stage cp.async.cg ring. One stage is 128 K: 12288 B compressed + 128 B headers + NT x 256 B of x. The x tiles are counted in the smem budget (review fix): 164,864 B at NT=32, 132,096 B at NT=16, 115,712 B at NT=8.
+  - `cudaFuncAttributeMaxDynamicSharedMemorySize` is set explicitly.
+  - Grids as specced: pooler 64x2, unpooler-full 128x1, o 128x1, qkv 36x3 (K stages 21/21/22 of 128; the spec said 2752/2752/2688 in 64-K units, and 128-K stage units give 2688/2688/2816), unpooler slice 16x8.
+  - The split-K ticket reduce is copied from the reviewed gemv skeleton. It has its own ws `[split, 32, n]` and its own counters per route.
+- **Routing** (`_ll_route` / `_ll_route_ok`, first in `kernel_fn`): routes are qkv_gate, o, pooler, unpooler (n == 8192) at 1 <= cfg m <= 32, and unpooler_slice (n == 1024) at m <= 8. A route is used only when `state["lossless"][route]` is True, a constant fixed in prepare. The check also needs x to be bf16 [m, k], unit inner stride, and 16 B aligned. The router, m > 32, and every disabled route keep master.
+- **Self-check in prepare** (`_lossless_prepare`):
+  1. Ratio gate <= 0.80.
+  2. Escape gate <= 2.5% of groups and fewer than 65536 slots (review fix: the escape-fraction gate next to the ratio gate).
+  3. Bit-exact round trip of every weight through the kernel's own `load_grp`/`decode_step` (decode kernel), compared as int16 views with `torch.equal`. This is the assert the brief asked to keep.
+  4. A GEMM check per route at m in {1,5,7,8,9,16,17,32} (the slice at {1,5,7,8}), with NT boundaries 9 and 17 added. Each case runs twice, and the two outputs must be identical. Bounds: rel L2 <= 1e-3, worst row <= 5e-3, one-hot power-of-two rows exact. Counters must be back to 0.
+  - Logs: `[lossless] <layer> DISABLED: <reason>` on a failure, and `[lossless] PATH CHOSEN route=<r>: lossless|master` for each route.
+- **Diagnostics** (prints only, inside try/except): per weight it prints bits/element (payload + headers + side table, i.e. every byte kernel_fn reads), ratio, escape count and %, MB compressed vs raw, and encode seconds. Per NT it prints regs, local/spill bytes, smem and CTAs/SM from `cudaFuncGetAttributes` / `cudaOccupancyMaxActiveBlocksPerMultiprocessor`; there is no cuobjdump and no extra process (review RULES fix). Per route it prints warm-L2 eager us at m=1/16/32 (slice 1/8), with compressed and raw-equivalent TB/s.
+
+Deviations from the spec, and why:
+1. **No zero code, no 256-entry LUT, no HMUL2.** The spec had c=15 mean signed zero, with a bf16x2 scale from an smem LUT. The brief and review require no LUT bank conflicts and allow "replicate it or use bit ops", so all 16 codes are exponent offsets (e_ref - 0..15), and a zero or subnormal sends its group to the escape path. This is the integer fallback the review's open questions describe. The judge's randn/sqrt(K) weights essentially never hold exact zeros. The trade-off: weights with many exact zeros escape more, and the 2.5% gate then disables that layer and falls back to master.
+2. **The escape slot is 16 bits, not int32**, stored in the escape row's own SM bytes (half 0 = low byte, half 1 = high byte). Every lane holding that row reads it from its own SM word 0, so there is no shuffle. The gate keeps the slot count below 65536.
+3. **No warp ballot.** Each lane branches on its own two rows' headers (rare and divergent), which is simpler and equally correct.
+4. **8 stages instead of 4.** At 1 CTA/SM this keeps about 86 KB of compressed weight in flight per SM. The spec's 4 x 12 KB is about 36 KB, below a one-wave latency-bandwidth product. Each stage is still 12 KB compressed per warpgroup, as specced.
+
+Offline validation (numpy, no GPU here; scripts in /tmp/llemu, not in the repo):
+- **Codec**: the encoder (the same reshape/permute chain) and the lane-by-lane emulation of `load_grp` + `decode_step` round-trip bit-exactly on random weights. The test injects +0, -0, +Inf, NaN, a subnormal, an all-zero group and an out-of-range exponent, and every case went through the escape path.
+- **Escape rate** on judge-like weights (512 rows, K = 8192/1024/4096): 0.27% / 0.35% / 0.35% of groups, 12.17-12.18 bits/element, ratio about 0.761.
+- **One-stage GEMM** at NT=32, m=29, emulated with PTX fragment semantics: swizzled x staging, the ldmatrix.x4 lane addresses, the A/B/C fragment mapping and the transposed C store. It matches x @ W^T to 2.5e-14, and every row below m is written.
+- **Not tested here**: the real compile, the cp.async ring's group accounting (copied from the reviewed skeleton), register pressure and performance.
+
+## Rules check
+
+Checked against `git -C .worktrees/muse_bf16_proj/bf16-lossless-exp4-weight-stream-rewrite diff` (+700/-0, submission.py only):
+
+- [x] **CUDA-graph capturable.** The kernel_fn path (`_ll_route`, `_ll_route_ok`, `_ll_forward`, `lossless_gemm`) has no `.item()`, `.cpu()`, `synchronize()` or tensor prints. It allocates only the output with `torch.empty`, as master does. Branches are on cfg, shapes, strides, alignment and prepare-time constants only. Every `synchronize` / `.tolist()` / `int(tensor)` is in prepare-only functions (lint: warn, outside kernel_fn's call graph). The host `TORCH_CHECK`s are shape checks with no device reads. `cudaFuncSetAttribute` runs in prepare first through `lossless_attrs()`, after which a static flag makes it a no-op.
+- [x] **Nothing derived from `data` is cached across calls.** The payload, headers, side table, ws and counters are built or allocated in prepare from the weights. The ws holds per-call partials, read only for rows < m written in the same launch. Counters return to 0 every launch, and the self-check verifies this.
+- [x] **Weights repacked losslessly in `prepare()` only.** BF16 stays BF16: sign, mantissa and exponent are stored exactly (exponent as e_ref - c), escape groups as raw bf16, and the bit-exact round trip is asserted through the kernel's own decoder. Dequant happens in registers only, and no decompressed copy is written per call; the decode kernel runs only in prepare, and its output is compared and then dropped. The router is untouched. The three lint `dtype` warns are `.to(torch.uint8)` on the codec's byte fields (sign|mantissa bytes, 4-bit codes, header bytes). That is lossless byte packing, not a precision change.
+- [x] **Activations BF16 where SGLang keeps BF16.** x is consumed as bf16 by mma.sync with fp32 accumulation, and the output is bf16. n/a for KV cache and queries: there is no attention in this problem.
+- [x] **n/a: attention coverage.** No attention in muse_bf16_proj. All K is reduced for every output, with no skipping.
+- [x] **No timing patches, harness frames/I/O/secrets, module edits, reference import, subprocesses or network.** cuobjdump was dropped (review fix). `load_inline` (nvcc via torch's extension builder) is the same mechanism as the promoted, judge-accepted attention_decode kernel.
+- [x] **All work happens inside the timed call; no output caching or replay.** Each call launches the full GEMM on fresh x. Prepare-time work is limited to the weight-only encode, the checks and the diagnostics.
+- [x] **First-line marker kept:** `# okc: problem=muse_bf16_proj`.
+- [x] **No triton.autotune added, and no new Triton code at all.** Master's Triton paths are unchanged.
+
+Lint (`python3 -I .claude/skills/churnsubs/bin/okc_lint.py <worktree>/muse_bf16_proj/submission.py --problem muse_bf16_proj`):
+
+```
+warn  dtype        L1142: sm8 = sm.to(torch.uint8)  (allowed only where SGLang does the same)
+warn  dtype        L1143: c8 = c.to(torch.uint8)  (allowed only where SGLang does the same)
+warn  dtype        L1155: hdr_t = hdr.view(rt, 16, kg).permute(0, 2, 1).to(torch.uint8).contiguous().view(-1)  (allowed only where SGLang does the same)
+warn  host-sync    L1217: torch.cuda.synchronize()  (outside kernel_fn's call graph; fine in prepare())
+warn  host-sync    L1254: e1.synchronize()  (outside kernel_fn's call graph; fine in prepare())
+warn  host-sync    L1273: attrs = _LL_EXT.lossless_attrs().tolist()  (outside kernel_fn's call graph; fine in prepare())
+warn  host-sync    L1307: torch.cuda.synchronize()  (outside kernel_fn's call graph; fine in prepare())
+warn  host-sync    L1345: torch.cuda.synchronize()  (outside kernel_fn's call graph; fine in prepare())
+OK with warnings: .worktrees/muse_bf16_proj/bf16-lossless-exp4-weight-stream-rewrite/muse_bf16_proj/submission.py
+```
+
+`python3 -I -m py_compile`: OK. The `__pycache__` it left in the worktree was removed.
+
+Harvest note: read the log tail first. `[lossless] load_inline failed`, any `DISABLED`, or `PATH CHOSEN route=<r>: master` means that route measured master. A sticky CUDA fault in the prepare self-check (for example an illegal address) would fail the whole run instead of falling back.
