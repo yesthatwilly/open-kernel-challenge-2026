@@ -1,6 +1,6 @@
 # muse_decode_layer findings
 
-Regenerated 2026-10-24T053312Z by `churn.py index`. Read this before writing a hypothesis for muse_decode_layer.
+Regenerated 2026-10-24T060411Z by `churn.py index`. Read this before writing a hypothesis for muse_decode_layer.
 
 ## Current best
 
@@ -23,6 +23,9 @@ Where the time goes (per scored shape, top kernels):
 
 ## By area
 
+### MoE align/dispatch
+- **expert-id-map-single-kernel** → neutral (unproven-vs-best), 1.0374x — no shape moved outside noise. Replace the three small kernels that turn the routing output into Marlin's local expert ids with one Triton kernel. Today kernel_fn computes local_ids = (topk_i
+
 ### cache store
 - **cache-store-fused-fp8-cast** → neutral (unproven-vs-best), 1.0303x — no shape moved outside noise. In kernel_fn, replace the four separate launches between FusedQKNorm and flash_attn_with_kvcache, namely k.to(FP8), v.to(FP8), store_cache(...) and q.view(token
 
@@ -32,6 +35,7 @@ Where the time goes (per scored shape, top kernels):
 ## Open follow-ups
 
 - cache-store-fused-fp8-cast: unproven-vs-best: the change is not proven either way; a stacked hypothesis (`depends_on: cache-store-fused-fp8-cast`) that adds a further change in the same area is the only way to learn more (identical code is never re
+- expert-id-map-single-kernel: unproven-vs-best: the change is not proven either way; a stacked hypothesis (`depends_on: expert-id-map-single-kernel`) that adds a further change in the same area is the only way to learn more (identical code is never r
 
 ## Do not retry (rejected / duplicates)
 
@@ -44,6 +48,5 @@ Where the time goes (per scored shape, top kernels):
 - queue: trtllm-decode-full-attention [FA3 call] p5 queued
 - queue: fa3-num-splits-sliding [FA3 call] p2 hold
 - queue: moe-align-single-kernel-small-t [MoE align/dispatch] p3 queued
-- running: expert-id-map-single-kernel [MoE align/dispatch] p2 running
 - running: marlin-block-m-cap-16 [w13 marlin] p4 running
 - running: pooler-gemm-splitk-autotune [pooler GEMM] p3 running
