@@ -72,3 +72,4 @@ overrides of a reviewer) with the reason, newest last. Written by `churn.py note
 - 2026-10-24T124037Z `muse_prefill_layer` **experts-triton-w4a16-first-turn-blockt256**: rewrite stage 3 landed on master by hand (1.023x, CI 1.0075-1.038, above the 1.0 floor per the Rewrites rule): it replaces master's parity Marlin file wholesale; classify called it neutral only because master's parity CI high (1.019) overlaps. First_turn (60% of weight) gained 5-10% over stage 2; turn_1 still ~flat vs stage 2 and slightly behind Marlin
 - 2026-10-24T124058Z `muse_attention_decode` **sliding-fused-triton-decode1-gate**: unhold:
 - 2026-10-24T124058Z `muse_attention_decode` **sliding-fused-triton-decode1-gate**: unheld: fa3-window-trimmed-page-table regressed (1.141x vs 1.269x), so the untrimmed sliding call stays
+- 2026-10-24T124058Z `muse_attention_decode` **fa3-scheduler-metadata-side-stream**: unhold:
