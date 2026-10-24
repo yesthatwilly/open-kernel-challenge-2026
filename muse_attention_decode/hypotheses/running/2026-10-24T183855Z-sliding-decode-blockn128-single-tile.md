@@ -30,7 +30,7 @@ review: proceed
 status: running
 review_at: 2026-10-24T184058Z
 review_companions: null
-stage: implemented
+stage: dispatched
 claimed_at: 2026-10-24T184058Z
 base_sha: 591234f46b4e7e6b5307dd6a14ed904220f58742
 base_blob: c6854f093588da524e63657576b27ed720756e32
@@ -45,6 +45,8 @@ submission_blob: 5118538da13178bac467b5449d0bdd25010ca10d
 lint_warnings: 0
 attempt_file: 2026-10-24T184519Z-check-sliding-decode-blockn128-single-tile.md
 prepared_at: 2026-10-24T184519Z
+job: 88c62334775e48e4
+dispatched_at: 2026-10-24T184530Z
 ---
 
 # sliding-decode-blockn128-single-tile
