@@ -62,4 +62,4 @@ OK with warnings: muse_prefill_layer/submission.py
 low
 
 ## Result (after the run)
-(pending)
+Promotion passed: 1.0592x [1.0433,1.0751], board: {"rank": 239, "team": "yesthatwilly", "speedup": 1.0592, "first": false, "ahead": 238, "to_first": 1.6908}
