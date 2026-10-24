@@ -5,9 +5,7 @@ items here and in each tick's summary. Resolved items move to the log at the bot
 
 ## Open
 
-- **Scored submit, attention_decode fused-preattention-triton** (check 1.127x [1.111, 1.144], merged on
-  master; not yet on the board). Run: `okc submit muse_attention_decode /home/user/git/musespark/muse_attention_decode/submission.py --no-wait --json`
-  then `churn.py record-submit muse_attention_decode fused-preattention-triton <job>`. (2026-10-24)
+- (none)
 
 ## Standing answers
 
@@ -24,3 +22,4 @@ items here and in each tick's summary. Resolved items move to the log at the bot
 - 2026-10-24: bf16 router-triton-hilo-fused-control-splitk-all-m (check 1.151x) submitted by
   Claude with the user's approval, job 240eb22ea0b6487e.
 - 2026-10-24: decode marlin-block-m-cap-16 (check 1.062x) submitted at the user's request, job 2b1f82408ab64116.
+- 2026-10-24: attention_decode fused-preattention-triton (check 1.127x) submitted by the user, job c297440e53334f34.
