@@ -49,13 +49,15 @@ base_sha: d2840d088aa35522a03b40c59e174287cf935f67
 base_blob: 2752a016d386e9261ec77e25b426c05b76c071ac
 branch: hyp/muse_bf16_proj/qkv-gate-triton-skinny-m32
 worktree: .worktrees/muse_bf16_proj/qkv-gate-triton-skinny-m32
-mode: null
+mode: check
 implemented_at: 2026-10-24T032547Z
 impl_commit: 2a69a2d146c38a0d168d29f63143b7c24df609d6
 submission_sha256: 56eba367a935bfa02a930ac6b11ce795c7ac0e6ee458652f52a6ccf3a92d733d
 norm_sha256: dedea84a8d20ad2ee7f4b2948ea2b3731de1258e385478add816d204f4439a68
 submission_blob: fd570a4fb881459921b9f88e883f2a2b533ce5dc
 lint_warnings: 0
+attempt_file: 2026-10-24T032547Z-check-qkv-gate-triton-skinny-m32.md
+prepared_at: 2026-10-24T032547Z
 ---
 
 # qkv-gate-triton-skinny-m32
