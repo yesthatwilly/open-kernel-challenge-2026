@@ -78,9 +78,16 @@ controls_for: null
 rewrite_stage: 1
 replaces: "Triton m<=8 bf16 paths: pooler _bf16_splitk_kernel, qkv_gate _qkv_splitk_sem_kernel, o _pooler_skinny_kernel, unpooler-slice _bf16_splitk_kernel (decode_1 m=1 and verify_1 m=8)"
 review: proceed
-status: queued
+status: running
 review_at: 2026-10-24T165448Z
 review_companions: null
+stage: claimed
+claimed_at: 2026-10-24T165507Z
+base_sha: ec7244a1361d3e15e9b974bed90d02b05aa34980
+base_blob: a8bb42ac483318e9fbc84bc7826a27b7a704d1fb
+branch: hyp/muse_bf16_proj/bf16-small-m-cuda-gemv-rewrite
+worktree: .worktrees/muse_bf16_proj/bf16-small-m-cuda-gemv-rewrite
+mode: null
 ---
 
 # bf16-small-m-cuda-gemv-rewrite
