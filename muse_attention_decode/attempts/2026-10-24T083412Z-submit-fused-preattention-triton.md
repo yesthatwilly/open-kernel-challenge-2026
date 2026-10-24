@@ -2,7 +2,7 @@
 
 Hypothesis: `muse_attention_decode/hypotheses/done/gain/2026-10-23T223550Z-fused-preattention-triton.md` (branch `hyp/muse_attention_decode/fused-preattention-triton`).
 
-- **Job:** `<job id>` (`okc status <job>`)
+- **Job:** `c297440e53334f34` (`okc status <job>`)
 - **File:** `muse_attention_decode/submission.py` at git `c5eb032`
 
 ## Goal

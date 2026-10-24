@@ -76,9 +76,11 @@ speedup: 1.1274459340435283
 speedup_ci: [1.1105342450328755, 1.1443576230541812]
 harvested_at: 2026-10-24T083410Z
 best_at_harvest: 0.0023193044319036226
-promotion: merged
+promotion: submitted
 promotion_commit: 3e98bd00dcb717e6e3670b7819e7d1c2331f52ba
 promotion_attempt: 2026-10-24T083412Z-submit-fused-preattention-triton.md
+promotion_job: c297440e53334f34
+promotion_at: 2026-10-24T083843Z
 ---
 
 # fused-preattention-triton
