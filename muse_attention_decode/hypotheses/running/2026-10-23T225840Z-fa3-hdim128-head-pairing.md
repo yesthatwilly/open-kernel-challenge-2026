@@ -69,13 +69,15 @@ base_sha: e8c54b5ac52496d46ca232957689f65e6c729c2a
 base_blob: f14211b4b0e88f8b3f683d9f9275b76a64b66e02
 branch: hyp/muse_attention_decode/fa3-hdim128-head-pairing
 worktree: .worktrees/muse_attention_decode/fa3-hdim128-head-pairing
-mode: null
+mode: check
 implemented_at: 2026-10-24T092444Z
 impl_commit: aaa550bdabc89c81bbdaa382ce4bb68430021afc
 submission_sha256: eb6b0498ec6e6b03dbaee6c28df0f25db3807e50a13c3b103e6151ddd99a4eb2
 norm_sha256: 6bcb7977f4733b3f2b1e5d56ec31e4538e74e2d0507b7f84794a5715b24564ce
 submission_blob: bc007e643ac0b440147a732071f23d9b3563174c
 lint_warnings: 0
+attempt_file: 2026-10-24T092444Z-check-fa3-hdim128-head-pairing.md
+prepared_at: 2026-10-24T092444Z
 ---
 
 # fa3-hdim128-head-pairing
