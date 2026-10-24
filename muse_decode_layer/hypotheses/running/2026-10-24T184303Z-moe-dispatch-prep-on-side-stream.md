@@ -53,13 +53,19 @@ review: proceed
 status: running
 review_at: 2026-10-24T185010Z
 review_companions: null
-stage: claimed
+stage: implemented
 claimed_at: 2026-10-24T185010Z
 base_sha: 6f8cac5640783bda29e10ba56c80ba50fc396141
 base_blob: 3d70ae6e2de0d48c4a4f2a469ced8234f5348182
 branch: hyp/muse_decode_layer/moe-dispatch-prep-on-side-stream
 worktree: .worktrees/muse_decode_layer/moe-dispatch-prep-on-side-stream
 mode: null
+implemented_at: 2026-10-24T224624Z
+impl_commit: 4d1cabb79a605e1772dbea70c33fa05da298b460
+submission_sha256: 8c1a130276e46913ceebef067b4777e81d6f7f966b13e607170313cb6c917082
+norm_sha256: 6bfee5a728e9525e163cbdc21c63b6ff96a5892f79bfdb7283a3473969ccd303
+submission_blob: f3200629fd5e0cab6475535321218a16b010c752
+lint_warnings: 18
 ---
 
 # moe-dispatch-prep-on-side-stream
@@ -104,3 +110,30 @@ No companion is warranted. The change keeps the same kernel set, arguments and d
 - At T=256, does router hi+lo + routing + dispatch exceed pooler + pre-norm? If so, the verify_32 gain collapses to near zero.
 - Does the nvjet pooler GEMM occupy all 132 SMs for its whole duration, so that side-stream kernels serialize anyway? A GPU-busy and overlap read from the profile would settle it.
 
+
+## Implementation notes
+
+Only muse_decode_layer/submission.py in the worktree. Added `_expert_dispatch(topk_ids, topk_weights, local_start, num_tokens, state)` (shift, expert_map gather, fp32 cast, moe_align_block_size with `_block_size_m`) and an optional `dispatch=` argument on `_experts` (when given it replaces the in-function gather/cast/align). Deviation: instead of splitting `_experts` into two functions, I kept one function with an optional argument so the T<=32 dense-chain path and the prepare() self-check call it unchanged (byte-identical). In the T>32 branch of kernel_fn the dispatch runs on the side stream right after routing; pre_expert_norm runs on main before `main_stream.wait_stream(side_stream)`; record_stream(main_stream) (not when capturing) now covers topk_weights, topk_ids, local_ids, tw and the three align tensors. Side stream is still the one created in prepare(); events/wait_stream only, no host syncs. topk_ids returned unchanged.
+
+## Rules check
+
+- [x] CUDA-graph capturable: diff adds no .item()/.cpu()/synchronize(); stream fork/join uses wait_stream only; no input-value control flow.
+- [x] Nothing derived from `data` cached across calls: dispatch tensors are per-call locals.
+- [x] Weights: n/a: no weight changes.
+- [x] Activations dtype: n/a: kernels, args and dtypes identical to master.
+- [x] Attention: n/a: untouched.
+- [x] No timing patches, harness access, subprocesses or network in the diff.
+- [x] All work inside the timed call; no output caching or replay.
+
+Lint: `OK with warnings: muse_decode_layer/submission.py` (only host-sync warnings in prepare()-only code, none in kernel_fn). py_compile passed; __pycache__ removed.
+
+## Pre-flight audit
+
+Audited 2026-10-24 by an opus subagent, by reading (no GPU on this node). **Verdict: dispatch** (no fixes).
+
+- Graph capture: the fork (side.wait_stream(main) before the pooler) and join (main.wait_stream(side) before _experts) bracket all side-stream work; no syncs, no value-dependent control flow; record_stream is skipped while capturing and otherwise covers every side-produced tensor (topk_weights, topk_ids, local_ids, tw and the three moe_align_block_size tensors, all tensors). The shifted intermediate lives and dies on the side stream.
+- Consume-after-join: local_ids, tw and align are read only inside _experts, after the join; topk_ids is returned after the join. xn is produced and consumed on main.
+- Numerics: same kernels, args and dtypes as master; _block_size_m(tokens) on the side equals _experts own pick (num_tokens = x.shape[0] = tokens). With dl ON (T <= 32) the dense-chain branch is untouched, so T <= 32 is byte-identical; with dl OFF the T <= 32 fallback runs the same kernels in a new order and is also bitwise identical. The prepare() self-check calls _experts with the old signature unchanged.
+- Spec deviation (one function with an optional dispatch= argument rather than a split) is behaviour-neutral. Lint OK, with prepare()-only host-sync warnings.
+
+Residual risk: the gain shows only at verify_16 and verify_32 (T > 32), and it can vanish if the side branch outruns pooler + pre-norm at T=256 or the side kernels queue behind a full-SM pooler.
