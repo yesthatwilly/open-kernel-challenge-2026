@@ -38,13 +38,15 @@ base_sha: 49da3d4776ed7ee46334a320b804bc460500870c
 base_blob: c6854f093588da524e63657576b27ed720756e32
 branch: hyp/muse_attention_decode/paired-norm-gate-token-tiled
 worktree: .worktrees/muse_attention_decode/paired-norm-gate-token-tiled
-mode: null
+mode: check
 implemented_at: 2026-10-24T184519Z
 impl_commit: 0a45063a7f725fac051b4f4b807e67a28c828cd0
 submission_sha256: e68d28690a0bcab6368b7a18bcc9062833449787089e5d964012730a35c19678
 norm_sha256: 9141db89ab44d99fe7e00ecfef62cd150a2aa6c19f099a4a97d3cb6c4cf85f5d
 submission_blob: 7745b9a31df4e81584857589fa1185334d8ae8df
 lint_warnings: 0
+attempt_file: 2026-10-24T184520Z-check-paired-norm-gate-token-tiled.md
+prepared_at: 2026-10-24T184520Z
 ---
 
 # paired-norm-gate-token-tiled
