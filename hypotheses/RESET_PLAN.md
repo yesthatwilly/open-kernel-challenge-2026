@@ -31,7 +31,19 @@ neutral on the headline is still a restack candidate.
    - full-decode-cuda-fp8-qk-mma
 
    They touch disjoint shapes, so they can be combined.
-2. After #1 harvests: sliding-verify-cuda-streamk-window and full-verify1-cuda-streamk-batch1, both in pre-review.
+2. After #1 harvests: sliding-verify-cuda-streamk-window and full-verify1-cuda-streamk-batch1. Both are
+   reviewed (proceed, no companions) and both depend on the parent compiling and passing its
+   self-check: read the parent's log tail first, or the run silently measures FA3. Build notes from
+   the reviews, for the implement briefs:
+   - sliding: mask every tile that overlaps either edge band, not just the first and last. The
+     parent's full-verify path has the same gap, so fix it there too. Give the sliding route its own
+     self-check flag so a failure can't drop full decode_16/32 back to FA3. Make the window a
+     constexpr, cap the grid at batch x 33 tiles, and keep the route in its own predicate.
+     Expect verify_1 at ~11-13 us, down from 17.6.
+   - batch1: the B8 combine is the weak link (~8-13 us, vs the 2-3 us assumed). Build it single-pass
+     and wide, or as the two-level merge. Self-check batch-1 cases at the 132-CTA grid: ~80K, very
+     short, and non-multiple-of-64 lengths. Expect about +2% on the headline; judge it on the
+     verify_1 and A8/B8 rows.
 3. Rewrite stage 3 from whichever of the CUDA kernels lands.
 
 ### bf16 (20 checks)
@@ -39,7 +51,7 @@ neutral on the headline is still a restack candidate.
    - bf16-cublaslt-algo-pick-in-prepare-m128-m256
    - router-swapab-wgmma-all-m
    - bf16-m16-swapab-wgmma-extend
-   - bf16-m32-swapab-wgmma-triton promotion: eeb9985396764ac2 still pending
+   - bf16-m32-swapab-wgmma-triton is promoted: 1.196x on the board, rank 349.
 2. After the bf16 cuBLASLt result: unhold prefill's dense-gemm-cublaslt-algo-pick-prefill-t.
 3. If the m=128 rewrite lands: unhold qkv-gate-o-m128-wgmma-splitk-semaphore, its stage-2 extension.
 
@@ -51,7 +63,9 @@ neutral on the headline is still a restack candidate.
    - paired-heads-pad-unpad-triton
 2. After #2 (the CUDA port) harvests compiled and self-checked: full-verify-cuda-splitkv-stage2 (pre-reviewed).
 3. moe-align-small-t-restack-on-master (reviewed; ~+0.5-0.9%).
-4. fused-preattention-paired-pad-restack, in review. It depends on paired-heads-pad-unpad-triton.
+4. fused-preattention-paired-pad-restack: reviewed, proceed, est. +0.8-1.2%. Dispatch only after
+   paired-heads-pad-unpad-triton (a92b64be4c6547d3) harvests and its base is fixed. Skip the spec's
+   "prepare() warm-up": the parent patch has none.
 
 ### moe (20 checks)
 - Harvest w2-l2-prefetch-decode1 and align-parallel-per-expert-verify.
