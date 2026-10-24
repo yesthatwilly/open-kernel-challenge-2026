@@ -47,13 +47,19 @@ status: running
 hold_reason: null
 review_at: 2026-10-24T104248Z
 review_companions: null
-stage: claimed
+stage: implemented
 claimed_at: 2026-10-24T104248Z
 base_sha: cee590d58c6c34ded84fdb734c38ca129e327fee
 base_blob: 66ba1a39e2aaa5cedb2ce3ddfb809f67f86b37f9
 branch: hyp/muse_bf16_proj/pooler-triton-splitk2-blockn64-semaphore-control-blockk256
 worktree: .worktrees/muse_bf16_proj/pooler-triton-splitk2-blockn64-semaphore-control-blockk256
 mode: null
+implemented_at: 2026-10-24T104504Z
+impl_commit: af3b6a1476784362cd469277732045bddffea518
+submission_sha256: 18bea4e8be25b35a50713541d43da60b3bfec47cb78964dd0b69ea2cfd103b89
+norm_sha256: 192c5489ee09ac9f84ded74f7ec4958fb721edcd52f07c1ae9f35e00a0462b6b
+submission_blob: 8dbe14762ff0b27944d7a0005836ea5c606cfb6c
+lint_warnings: 0
 ---
 
 # pooler-triton-splitk2-blockn64-semaphore-control-blockk256
@@ -100,3 +106,34 @@ No companion is warranted. No landed hypothesis touches the pooler kernel, its m
 - Does the doubled per-step x tile ([BLOCK_M, 256], L2-resident) add measurable latency at BLOCK_M=32? The unpooler's 19.8 us there says probably not, but the pooler's x row is twice as long.
 - Readout rule for churnsubs: if this control and the TMA arm both land at about 18.5 us, promote this control (simpler, no Triton-version risk), and do not port TMA to qkv_gate or unpooler.
 
+
+## Implementation notes
+
+Worktree: `.worktrees/muse_bf16_proj/pooler-triton-splitk2-blockn64-semaphore-control-blockk256` (base cee590d). Diff stat: `muse_bf16_proj/submission.py | 39 ++++++++++++++++++++++++++++++++-------` (32 insertions, 7 deletions).
+
+- **The change:** `POOLER_BLOCK_K = 128` became `256`. Each CTA now covers its 4096-wide K-slice in 16 steps. `num_stages=4`, `num_warps=4`, `BLOCK_N=64`, `SPLIT_K=2`, grid (64, 2), the `BLOCK_M` 16/32 split, the direct `[BLOCK_K, BLOCK_N]` transposed weight addressing, the fp32 workspace, the barrier + acq_rel ticket + fixed-order last-CTA reduce + atomic_xchg reset, the routing (pooler m<=32 only) and the prepare() warm-up + re-zero are all unchanged. The kernel body is byte-identical.
+- **num_stages:** kept at 4 for both `BLOCK_M` specializations, giving 192 KB of smem at `BLOCK_M=32`. Nothing can be compiled on this node. The unpooler kernel compiled and ran with the same 4 x (64x256 + 32x256) x 2 B footprint, so no fallback was added. If the check run fails with an out-of-resources / shared-memory error at m in 17..32, apply the spec's fallback (`num_stages=3` for `BLOCK_M=32` only) as a follow-up and read decode_32 separately (96 KB in flight, two constants changed).
+- **Diagnostics (review open question 2):** `_pooler_forward` takes a `diag=False` keyword. With `diag=True` it also returns the Triton launch handle. Only prepare() passes `diag=True`. The timed path in kernel_fn is unchanged and returns only `out`. A new helper `_pooler_compile_diag(m, handle)` runs after the m=16 and m=32 warm-ups. It prints one `[pooler diag]` line per `BLOCK_M` specialization: n_regs, n_spills, metadata.shared, and PTX line counts for ldmatrix, ldmatrix with `.trans`, cp.async.cg and cp.async. It is wrapped in try/except so a Triton-version API difference cannot fail prepare(). These lines will appear in the run log (`profiles/submission.<job>.log`). Compare them with the unpooler kernel's lowering to settle whether the `[BLOCK_K, BLOCK_N]` addressing lowers the same way as `[BLOCK_N, BLOCK_K]` + `tl.trans`.
+- The module docstring's pooler paragraph now records BLOCK_K=256 and the smem budget.
+- **Deviation:** the only addition beyond the one constant is the prepare()-only diagnostic print, which the adversarial review asked for. It adds no work to the timed call.
+
+## Rules check
+
+Checked against `git -C <worktree> diff`:
+
+- [x] CUDA-graph capturable: no `.item()`/`.cpu()`/`synchronize()`/tensor prints, and no allocation or control flow on input values. The diff touches kernel_fn's path only through a constant. The `diag` branch is a Python bool that only prepare() sets. The prints run only in prepare() and print compile metadata, not tensors.
+- [x] Nothing derived from `data` is cached across calls. The launch handle and diagnostics come from prepare()'s synthetic warm-up inputs and are not stored in state.
+- [x] Weights: repacked losslessly in `prepare()` only, and BF16 stays BF16. Weight handling is unchanged by the diff.
+- [x] Activations BF16 where SGLang keeps BF16, with fp32 accumulation and a bf16 output, as before. n/a for the KV-cache and query parts: this problem has no attention.
+- [x] n/a: attention sees every key. This problem has no attention, and the GEMM still reads all of K (16 steps x 256 x 2 slices = 8192).
+- [x] No timing patches, harness frames/I/O/secrets, module edits, reference import, subprocesses or network. The diff adds only `print` in prepare().
+- [x] All work happens inside the timed call, with no output caching or replay. The workspace is still fully rewritten for rows < m on every call.
+- [x] No `triton.autotune`. The first-line marker `# okc: problem=muse_bf16_proj` is intact.
+
+okc_lint output:
+
+```
+CLEAN: /home/user/git/musespark/.worktrees/muse_bf16_proj/pooler-triton-splitk2-blockn64-semaphore-control-blockk256/muse_bf16_proj/submission.py
+```
+
+`python3 -I -m py_compile` passed. The `__pycache__` it left was removed.
