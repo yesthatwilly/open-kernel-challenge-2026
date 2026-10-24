@@ -63,9 +63,16 @@ controls_for: null
 rewrite_stage: 2
 replaces: "FA3 on full-attention decode (q_len=1): flash_fwd main + FlashAttnFwdCombine"
 review: proceed
-status: queued
+status: running
 review_at: 2026-10-24T104027Z
 review_companions: null
+stage: claimed
+claimed_at: 2026-10-24T111708Z
+base_sha: bbbf3168de76ebc524cb23723b2ebf734b893072
+base_blob: cf09a9196c4d7a20540bb82c9d79bdebaeea2a43
+branch: hyp/muse_decode_layer/triton-flash-decode-full-oversub-kv-prefetch
+worktree: .worktrees/muse_decode_layer/triton-flash-decode-full-oversub-kv-prefetch
+mode: null
 ---
 
 # triton-flash-decode-full-oversub-kv-prefetch
