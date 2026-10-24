@@ -86,10 +86,10 @@ controls_for: null
 rewrite_stage: 1
 replaces: "q.view(T,16,64).to(FP8) + flash_attn_with_kvcache (FA3 cutlass::device_kernel<flash::...> + FlashAttnFwdCombine) + state['o_norm_gate'] (FusedRMSNormGate) on sliding layers (cfg['window'] == 2048)"
 review: proceed
-status: running
+status: done
 review_at: 2026-10-24T183433Z
 review_companions: null
-stage: dispatched
+stage: harvested
 claimed_at: 2026-10-24T183433Z
 base_sha: c449be5350fc7f87e9daa73bc83715a041cff19e
 base_blob: 635cfee3ac2c3f7c66840b8c8a082cad2fa41a68
@@ -106,6 +106,13 @@ attempt_file: 2026-10-24T184732Z-submit-sliding-attn-block-triton-gqa-fused-norm
 prepared_at: 2026-10-24T184732Z
 job: 78d8d7bdec55491c
 dispatched_at: 2026-10-24T184743Z
+outcome: neutral
+verdict_detail: within-ci
+speedup: 1.050716287746176
+speedup_ci: [1.0349555434299833, 1.0664770320623684]
+harvested_at: 2026-10-24T232006Z
+best_at_harvest: 1.0591912383762452
+promotion: null
 ---
 
 # sliding-attn-block-triton-gqa-fused-normgate
@@ -223,3 +230,32 @@ Audited 2026-10-24 by an Opus subagent (read-only review, plus numpy emulation; 
 - **Rules.** kernel_fn branches only on config and strides. It allocates only a config-sized `torch.empty`; the workspace comes from prepare() and is overwritten every call. It has no syncs. KV is read as FP8, q is rounded to E4M3 (RNE), P is bf16, and every in-window key is visited.
 
 Residual risk: a hard device fault or compiler crash in the new kernel (not catchable) would fail the run instead of falling back. The judge's real FusedQKNorm q stride differs from the self-check's contiguous q, but the specialization is the same. Its correctness is checked only by the judge's tests.
+
+## Result
+
+- job `78d8d7bdec55491c` (submit), status done, passed True, tests 5/5
+- speedup 1.0507x, 95% CI [1.0350, 1.0665], score 368704.5727929042 µs vs SGLang 387403.9 µs
+- best at harvest: {"speedup": 1.0591912383762452, "ci": [1.0433033698006016, 1.0750791069518888], "job": "ba9c16b9cc6b4605"}; base result: muse_prefill_layer/hypotheses/done/gain/experts-hybrid-marlin-turn-triton-first-turn.result.json
+- **outcome: neutral** (within-ci)
+- files: `muse_prefill_layer/hypotheses/done/neutral/sliding-attn-block-triton-gqa-fused-normgate.result.json`, `muse_prefill_layer/hypotheses/done/neutral/sliding-attn-block-triton-gqa-fused-normgate.patch`; branch `hyp/muse_prefill_layer/sliding-attn-block-triton-gqa-fused-normgate`
+
+## Attribution
+
+| shape | w | base µs | hyp µs | delta | verdict |
+|---|---|---|---|---|---|
+| batch=1 ctx=80000 dist=soft layer=sliding load=turn_1 page=1 q_len=753 repeats=6 | 46 | 1079.54 | 1063.09 | 0.9873 | flat |
+| batch=1 ctx=80000 dist=soft layer=full load=turn_1 page=1 q_len=753 repeats=6 | 16 | 1419.09 | 1444.06 | 0.9984 | flat |
+| batch=4 ctx=80000 dist=soft layer=sliding load=turn_4 page=1 q_len=753 repeats=6 | 46 | 3334.9 | 3416.2 | 0.9733 | flat |
+| batch=4 ctx=80000 dist=soft layer=full load=turn_4 page=1 q_len=753 repeats=6 | 16 | 4937.98 | 4959.28 | 0.9976 | flat |
+| batch=1 ctx=0 dist=soft layer=full load=first_turn page=1 q_len=16384 repeats=6 | 16 | 15386.32 | 15546.43 | 0.9846 | flat |
+| batch=1 ctx=32768 dist=soft layer=sliding load=first_turn page=1 q_len=16384 repeats=6 | 138 | 14275.3 | 14108.47 | 1.0036 | flat |
+| batch=1 ctx=32768 dist=soft layer=full load=first_turn page=1 q_len=16384 repeats=6 | 16 | 18165.94 | 18512.18 | 1.0066 | flat |
+| batch=1 ctx=65536 dist=soft layer=full load=first_turn page=1 q_len=16384 repeats=6 | 16 | 22332.92 | 22301.25 | 1.0005 | flat |
+
+no shape moved outside noise. Expected hit: 1/4. Noise ±1.5%.
+
+## Follow-ups
+
+- rewrite stage 1 of `q.view(T,16,64).to(FP8) + flash_attn_with_kvcache (FA3 cutlass::device_kernel<flash::...> + FlashAttnFwdCombine) + state['o_norm_gate'] (FusedRMSNormGate) on sliding layers (cfg['window'] == 2048)`: read the replaced kernels' own us per shape (profile top_kernels) against the incumbent and the floor, and check which Milestone it reached. The next stage is `/hypothesize muse_prefill_layer "<what to fix or tune>" --kind rewrite --depends-on sliding-attn-block-triton-gqa-fused-normgate --stage 2`; a slow or failed first cut is the expected start, not a do-not-retry.
+- within-ci: the change is not proven either way; a stacked hypothesis (`depends_on: sliding-attn-block-triton-gqa-fused-normgate`) that adds a further change in the same area is the only way to learn more (identical code is never re-run).
+

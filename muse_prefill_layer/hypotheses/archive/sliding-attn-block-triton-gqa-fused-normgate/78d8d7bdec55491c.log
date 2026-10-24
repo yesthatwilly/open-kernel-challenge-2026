@@ -1,0 +1,32 @@
+[expert gemm] w13 BLOCK_T=64 BLOCK_W=128 warps=4 stages=3: n_regs=255 n_spills=0 shared=67584
+[expert gemm] w13 BLOCK_T=128 BLOCK_W=128 warps=8 stages=3: n_regs=176 n_spills=0 shared=116736
+[expert gemm] w13 BLOCK_T=256 BLOCK_W=128 warps=8 stages=2: n_regs=254 n_spills=4 shared=140288
+[expert gemm] w2 BLOCK_T=64 BLOCK_W=128 warps=4 stages=3: n_regs=255 n_spills=0 shared=67584
+[expert gemm] w2 BLOCK_T=128 BLOCK_W=128 warps=8 stages=3: n_regs=176 n_spills=0 shared=116736
+[expert gemm] w2 BLOCK_T=256 BLOCK_W=128 warps=8 stages=2: n_regs=255 n_spills=0 shared=140288
+[expert e2e] T=8192 triton vs marlin: rel L2 5.883e-03, worst row 6.892e-03 (8341 local routes)
+[sliding check] B=1 ctx=80000 L=753 page=1 kv=1      S=4 rel_vs_inc 9.999e-03 (tol 1.4e-01, margin 13.5x) worst_row 1.488e-02 (tol 3.1e-01) | vs fp32: inc 6.753e-02 new 6.688e-02 ratio 0.99 worst_row inc 1.019e-01 new 1.024e-01 | finite=True | eager us: triton 89.3 incumbent 100.7 -> PASS
+[sliding check] B=4 ctx=80000 L=753 page=1 kv=1      S=1 rel_vs_inc 1.169e-02 (tol 1.4e-01, margin 11.6x) worst_row 1.674e-02 (tol 3.4e-01) | vs fp32: inc 6.799e-02 new 6.701e-02 ratio 0.99 worst_row inc 1.127e-01 new 1.099e-01 | finite=True | eager us: triton 191.1 incumbent 105.8 -> PASS
+[sliding check] B=1 ctx=0 L=300 page=1 kv=1          S=4 rel_vs_inc 1.122e-02 (tol 1.2e-01, margin 10.3x) worst_row 1.691e-02 (tol 3.1e-01) | vs fp32: inc 5.760e-02 new 5.677e-02 ratio 0.99 (enforced) worst_row inc 1.020e-01 new 1.013e-01 | finite=True | eager us: triton 67.6 incumbent 88.1 -> PASS
+[sliding check] B=2 ctx=2500 L=753 page=1 kv=1       S=4 rel_vs_inc 1.163e-02 (tol 1.4e-01, margin 11.7x) worst_row 1.680e-02 (tol 3.0e-01) | vs fp32: inc 6.807e-02 new 6.713e-02 ratio 0.99 worst_row inc 1.003e-01 new 9.900e-02 | finite=True | eager us: triton 120.5 incumbent 91.3 -> PASS
+[sliding check] B=1 ctx=4096 L=4096 page=1 kv=1      S=1 rel_vs_inc 1.163e-02 (tol 1.4e-01, margin 11.7x) worst_row 1.898e-02 (tol 3.4e-01) | vs fp32: inc 6.794e-02 new 6.700e-02 ratio 0.99 worst_row inc 1.135e-01 new 1.110e-01 | finite=True | eager us: triton 193.2 incumbent 131.8 -> PASS
+[sliding check] B=3 ctx=5000 L=200 page=64 kv=1      S=4 rel_vs_inc 9.035e-03 (tol 1.4e-01, margin 15.0x) worst_row 1.378e-02 (tol 3.0e-01) | vs fp32: inc 6.762e-02 new 6.707e-02 ratio 0.99 (enforced) worst_row inc 9.975e-02 new 9.969e-02 | finite=True | eager us: triton 79.9 incumbent 97.2 -> PASS
+[sliding check] B=1 ctx=3000 L=753 page=1 kv=0.015625 S=4 rel_vs_inc 9.927e-03 (tol 1.3e-01, margin 13.6x) worst_row 1.441e-02 (tol 3.1e-01) | vs fp32: inc 6.728e-02 new 6.657e-02 ratio 0.99 worst_row inc 1.020e-01 new 1.047e-01 | finite=True | eager us: triton 84.2 incumbent 102.3 -> PASS
+[sliding timing] CUDA graph replay, cold L2 (256 MiB flush), median of 20, us incl. launch cost:
+[sliding timing] turn_1     T=753   incumbent (q cast + FA3 + combine + norm-gate)     38.8 | triton-gqa S=4     53.8 | ratio 1.389
+[sliding timing] turn_4     T=3012  incumbent (q cast + FA3 + combine + norm-gate)     74.9 | triton-gqa S=1    168.4 | ratio 2.247
+[sliding timing] first_turn T=16384 incumbent (q cast + FA3 + norm-gate)    346.2 | triton-gqa S=1    647.9 | ratio 1.871 (gate <= 0.92)
+[sliding prepare] 2.4 s, qk_fp8=True
+PATH CHOSEN sliding-attn: triton-gqa (S=4 at T=753) [turn_1 B=1 L=753]
+PATH CHOSEN sliding-attn: triton-gqa (S=1 at T=3012) [turn_4 B=4 L=753]
+PATH CHOSEN sliding-attn: FA3 fallback (T > 4096 not enabled by the timing gate (triton 647.9 us vs incumbent 346.2 us, ratio 1.871)) at T=16384 [first_turn B=1 L=16384]
+PATH CHOSEN sliding-attn: triton-gqa (S=4 at T=300) [test B=1 L=300]
+PATH CHOSEN sliding-attn: triton-gqa (S=4 at T=1506) [test B=2 L=753]
+PATH CHOSEN sliding-attn: triton-gqa (S=1 at T=4096) [test B=1 L=4096]
+[prepare] max_memory_allocated 4.91 GiB
+PATH CHOSEN sliding-attn: triton-gqa (S=4 at T=300) [B=1 L=300 page=1 qk_fp8=True]
+PATH CHOSEN sliding-attn: triton-gqa (S=4 at T=1506) [B=2 L=753 page=1 qk_fp8=True]
+PATH CHOSEN sliding-attn: triton-gqa (S=1 at T=4096) [B=1 L=4096 page=1 qk_fp8=True]
+PATH CHOSEN sliding-attn: triton-gqa (S=4 at T=753) [B=1 L=753 page=1 qk_fp8=True]
+PATH CHOSEN sliding-attn: triton-gqa (S=1 at T=3012) [B=4 L=753 page=1 qk_fp8=True]
+PATH CHOSEN sliding-attn: FA3 fallback (T > 4096 not enabled by the timing gate (triton 647.9 us vs incumbent 346.2 us, ratio 1.871)) [B=1 L=16384 T=16384 page=1]

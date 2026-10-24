@@ -1,0 +1,625 @@
+diff --git a/muse_prefill_layer/submission.py b/muse_prefill_layer/submission.py
+index 635cfee..078e057 100644
+--- a/muse_prefill_layer/submission.py
++++ b/muse_prefill_layer/submission.py
+@@ -48,6 +48,8 @@ Differs from SGLang (as baseline.py does):
+ 
+ from typing import TypedDict
+ 
++import statistics
++import time
+ import types
+ 
+ import nvfp4
+@@ -515,7 +517,541 @@ def _check_experts_e2e(state, device):
+         f"expert e2e check: worst row {worst:.3e} > {E2E_ROW_FACTOR:g} x {E2E_CHECK_TOL:g}")
+ 
+ 
++# ---------------------------------------------------------------------------------------------
++# Sliding-layer attention block (hypothesis sliding-attn-block-triton-gqa-fused-normgate, rewrite
++# stage 1). Replaces q.to(FP8) + FA3 (+ FlashAttnFwdCombine) + FusedRMSNormGate on sliding layers
++# with one GQA-packed Triton flash-attention kernel whose epilogue applies the output norm x gate
++# (plus a small combine kernel where the key range is split). The qkv GEMM, FusedQKNorm, the k/v
++# FP8 cast and store_cache run first and unchanged, so the step's own K/V rows are read back from
++# the paged FP8 cache as FA3 reads them. Full layers keep master's FA3 path byte-identical. Every
++# routing decision reads config only; prepare() self-checks the kernel against master's sequence
++# and any failure leaves every shape on master's path.
++LOG2E = 1.4426950408889634
++SLIDING_BLOCK_TOK = 16        # tokens per program; x 8 q heads per KV head = 128 query rows
++SLIDING_BLOCK_N = 64          # keys per tile
++SLIDING_SPLITS = 4            # key-range splits where the grid is thin
++SLIDING_SPLIT_BELOW = 264     # split when B * ceil(L / 16) * HKV programs < this (2 waves of 132 SMs)
++SLIDING_MAX_TOKENS = 4096     # above this (first turn) only if prepare()'s timing gate enables it
++SLIDING_LARGE_GAIN = 0.92     # the gate: Triton graph time <= 92% of master's sequence
++SLIDING_WARPS = 4
++SLIDING_STAGES = 3
++SLIDING_COMBINE_WARPS = 4
++# Split workspace: enough fp32 partials for every split case (B * ceil(L/16) * HKV < 264 programs).
++SLIDING_WS_PARTS = SLIDING_SPLIT_BELOW * SLIDING_SPLITS
++SLIDING_SUPPORTED_HEADS = (16, 2, 64)
++# prepare() self-check bars (per case), matched to the incumbent's own FP8 noise: the output vs
++# master's sequence within max(floor, factor x the incumbent's own error vs an fp32 reference).
++SLIDING_TOL_REL = 2e-2
++SLIDING_TOL_REL_FACTOR = 2.0
++SLIDING_TOL_ROW = 6e-2
++SLIDING_TOL_ROW_FACTOR = 3.0
++SLIDING_FP32_RATIO = 1.25     # vs the fp32 reference, at most 1.25x the incumbent's error (smallest cases)
++SLIDING_FP32_SLACK = 5e-4
++SLIDING_SYNTH_QK_SCALE = 5.4730064863875  # the model's qk_scale_factor, for the synthetic cases only
++FLUSH_BYTES = 256 << 20
++TIMING_REPS = 20
++SLIDING_LARGE_BUDGET_S = 180.0  # skip the T=16384 gate (stay on FA3) if prepare() is already this long
++_ANNOUNCED = set()
++
++
++@triton.jit
++def _online_update(qk, valid, v, m_i, l_i, acc):
++    """One key tile of the online softmax (base-2 logits qk [M, N], values v [N, D] bf16, P in bf16).
++    -inf safe: a row with no valid key so far keeps m = -inf, l = 0, acc = 0, never NaN."""
++    qk = tl.where(valid, qk, float("-inf"))
++    m_new = tl.maximum(m_i, tl.max(qk, axis=1))
++    m_use = tl.where(m_new == float("-inf"), 0.0, m_new)
++    alpha = tl.exp2(m_i - m_use)
++    p = tl.exp2(qk - m_use[:, None])
++    l_i = l_i * alpha + tl.sum(p, axis=1)
++    acc = acc * alpha[:, None] + tl.dot(p.to(tl.bfloat16), v)
++    return m_new, l_i, acc
++
++
++@triton.jit
++def _norm_gate_store(o, qkv_ptr, out_ptr, tok, head, rvalid, d, qkv_stride,
++                     GATE_OFF: tl.constexpr, HQ: tl.constexpr, D: tl.constexpr, EPS: tl.constexpr):
++    """out[tok, head] = rmsnorm(o) * sigmoid(gate) (FusedRMSNormGate's math, no weight), o [M, D]
++    fp32, gate = qkv[tok, GATE_OFF + head * D :], stored bf16 into out [T, HQ * D]."""
++    r = 1.0 / tl.sqrt(tl.sum(o * o, axis=1) / D + EPS)
++    gptr = qkv_ptr + tok[:, None] * qkv_stride + GATE_OFF + head[:, None] * D + d[None, :]
++    gate = tl.load(gptr, mask=rvalid[:, None], other=0.0).to(tl.float32)
++    y = o * r[:, None] * tl.sigmoid(gate)
++    tl.store(out_ptr + (tok[:, None] * HQ + head[:, None]) * D + d[None, :], y.to(tl.bfloat16),
++             mask=rvalid[:, None])
++
++
++@triton.jit
++def _sliding_rows(pid, g, L, NTB, HQ: tl.constexpr, HKV: tl.constexpr, BLOCK_TOK: tl.constexpr):
++    """Program pid's 128 query rows: row r = token (r // GROUP) of token block tb of request b, q
++    head g * GROUP + r % GROUP. Padding rows past L are clamped to the last token (finite) and
++    masked on store."""
++    GROUP: tl.constexpr = HQ // HKV
++    M: tl.constexpr = BLOCK_TOK * GROUP
++    b = pid // NTB
++    tb = pid % NTB
++    r = tl.arange(0, M)
++    j = tb * BLOCK_TOK + r // GROUP
++    rvalid = j < L
++    jc = tl.minimum(j, L - 1)
++    tok = (b * L + jc).to(tl.int64)
++    head = g * GROUP + r % GROUP
++    return b, tb, r, jc, rvalid, tok, head
++
++
++@triton.jit(do_not_specialize=["pt_stride", "L", "NTB"])
++def _sliding_prefill_attn_kernel(
++    q_ptr, qkv_ptr, seq_ptr, pt_ptr, k_cache_ptr, v_cache_ptr, k_scale_ptr, v_scale_ptr,
++    out_ptr, ws_acc_ptr, ws_ml_ptr,
++    q_stride, qkv_stride, pt_stride, L, NTB, score_scale,
++    HQ: tl.constexpr, HKV: tl.constexpr, D: tl.constexpr, BLOCK_TOK: tl.constexpr, WINDOW: tl.constexpr,
++    PAGE: tl.constexpr, S: tl.constexpr, BLOCK_N: tl.constexpr, QK_FP8: tl.constexpr, EPS: tl.constexpr,
++):
++    """GQA-packed sliding-window prefill attention. Grid (B * NTB, HKV, S): one program = KV head g
++    x BLOCK_TOK consecutive tokens of one request x the GROUP q heads sharing g (128 rows), over
++    split s of its key range [max(0, p_first - (WINDOW - 1)), p_last] (window (WINDOW - 1, 0): the
++    token at p sees keys p - WINDOW + 1 .. p). Keys are gathered through the page table from the
++    FP8 cache (the step's own rows were stored before this launch). Queries are rounded to E4M3 as
++    FA3's q.to(FP8). Every in-window key of every row is scored (per-element mask); only key tiles
++    outside the program's range are not visited. S == 1: o = acc / l * v_scale, then the norm-gate
++    epilogue. S > 1: fp32 partials (acc, m, l) go to the workspace for _sliding_combine_kernel."""
++    pid = tl.program_id(0)
++    g = tl.program_id(1)
++    s = tl.program_id(2)
++    GROUP: tl.constexpr = HQ // HKV
++    M: tl.constexpr = BLOCK_TOK * GROUP
++    GATE_OFF: tl.constexpr = (HQ + 2 * HKV) * D
++    b, tb, r, jc, rvalid, tok, head = _sliding_rows(pid, g, L, NTB, HQ, HKV, BLOCK_TOK)
++    d = tl.arange(0, D)
++    q = tl.load(q_ptr + tok[:, None] * q_stride + head[:, None] * D + d[None, :], mask=rvalid[:, None], other=0.0)
++    q8 = q.to(tl.float32).to(tl.float8e4nv)   # FA3's query precision (round to nearest even)
++    qb = q8.to(tl.bfloat16)                   # exact
++
++    seq = tl.load(seq_ptr + b)
++    qpos = seq + jc
++    t_first = tb * BLOCK_TOK
++    lo = tl.maximum(seq + t_first - (WINDOW - 1), 0)
++    hi = seq + tl.minimum(t_first + BLOCK_TOK - 1, L - 1) + 1   # exclusive
++    chunk = ((hi - lo + S - 1) // S + BLOCK_N - 1) // BLOCK_N * BLOCK_N
++    start = lo + s * chunk
++    end = tl.minimum(start + chunk, hi)
++
++    k_scale = tl.load(k_scale_ptr)
++    v_scale = tl.load(v_scale_ptr)
++    qk_scale = score_scale * k_scale   # sm_scale * qk_scale_factor * log2(e) * k_scale
++    m_i = tl.full([M], float("-inf"), dtype=tl.float32)
++    l_i = tl.zeros([M], dtype=tl.float32)
++    acc = tl.zeros([M, D], dtype=tl.float32)
++    n = tl.arange(0, BLOCK_N)
++    pt_row = pt_ptr + b.to(tl.int64) * pt_stride
++    for n0 in range(start, end, BLOCK_N):
++        t = n0 + n
++        tmask = t < end
++        page = tl.load(pt_row + t // PAGE, mask=tmask, other=0)
++        row = page.to(tl.int64) * PAGE + t % PAGE
++        kvoff = (row[:, None] * HKV + g) * D + d[None, :]
++        kb = tl.load(k_cache_ptr + kvoff, mask=tmask[:, None], other=0).to(tl.float8e4nv, bitcast=True)
++        vb = tl.load(v_cache_ptr + kvoff, mask=tmask[:, None], other=0).to(tl.float8e4nv, bitcast=True)
++        if QK_FP8:
++            qk = tl.dot(q8, tl.trans(kb))
++        else:
++            qk = tl.dot(qb, tl.trans(kb.to(tl.bfloat16)))
++        qk = qk * qk_scale
++        valid = tmask[None, :] & (t[None, :] <= qpos[:, None]) & (t[None, :] >= qpos[:, None] - (WINDOW - 1))
++        m_i, l_i, acc = _online_update(qk, valid, vb.to(tl.bfloat16), m_i, l_i, acc)
++
++    if S == 1:
++        # Every row (padding rows too, clamped) sees its own key, so l > 0.
++        o = acc / l_i[:, None] * v_scale
++        _norm_gate_store(o, qkv_ptr, out_ptr, tok, head, rvalid, d, qkv_stride, GATE_OFF, HQ, D, EPS)
++    else:
++        part = ((pid * HKV + g) * S + s).to(tl.int64)
++        tl.store(ws_acc_ptr + (part * M + r[:, None]) * D + d[None, :], acc)
++        tl.store(ws_ml_ptr + part * 2 * M + r, m_i)
++        tl.store(ws_ml_ptr + part * 2 * M + M + r, l_i)
++
++
++@triton.jit(do_not_specialize=["L", "NTB"])
++def _sliding_combine_kernel(
++    qkv_ptr, v_scale_ptr, out_ptr, ws_acc_ptr, ws_ml_ptr, qkv_stride, L, NTB,
++    HQ: tl.constexpr, HKV: tl.constexpr, D: tl.constexpr, BLOCK_TOK: tl.constexpr, S: tl.constexpr,
++    EPS: tl.constexpr,
++):
++    """Merges the S partials of program (pid, g) of _sliding_prefill_attn_kernel and applies the
++    norm-gate epilogue. Empty or fully masked partials (m = -inf) get weight 0; every row's own key
++    is in some split, so the merged l > 0."""
++    pid = tl.program_id(0)
++    g = tl.program_id(1)
++    GROUP: tl.constexpr = HQ // HKV
++    M: tl.constexpr = BLOCK_TOK * GROUP
++    GATE_OFF: tl.constexpr = (HQ + 2 * HKV) * D
++    b, tb, r, jc, rvalid, tok, head = _sliding_rows(pid, g, L, NTB, HQ, HKV, BLOCK_TOK)
++    d = tl.arange(0, D)
++    base = ((pid * HKV + g) * S).to(tl.int64)
++    m_max = tl.full([M], float("-inf"), dtype=tl.float32)
++    for s2 in tl.static_range(S):
++        m_max = tl.maximum(m_max, tl.load(ws_ml_ptr + (base + s2) * 2 * M + r))
++    m_max = tl.where(m_max == float("-inf"), 0.0, m_max)
++    l_sum = tl.zeros([M], dtype=tl.float32)
++    o = tl.zeros([M, D], dtype=tl.float32)
++    for s2 in tl.static_range(S):
++        m_s = tl.load(ws_ml_ptr + (base + s2) * 2 * M + r)
++        l_s = tl.load(ws_ml_ptr + (base + s2) * 2 * M + M + r)
++        a_s = tl.load(ws_acc_ptr + ((base + s2) * M + r[:, None]) * D + d[None, :])
++        w = tl.where(m_s == float("-inf"), 0.0, tl.exp2(m_s - m_max))
++        l_sum += l_s * w
++        o += a_s * w[:, None]
++    o = o / l_sum[:, None] * tl.load(v_scale_ptr)
++    _norm_gate_store(o, qkv_ptr, out_ptr, tok, head, rvalid, d, qkv_stride, GATE_OFF, HQ, D, EPS)
++
++
++def _sliding_splits(batch, length, hkv):
++    """Key-range splits, from the shape only: 4 where the grid is under two waves, else 1."""
++    ntb = triton.cdiv(length, SLIDING_BLOCK_TOK)
++    return SLIDING_SPLITS if batch * ntb * hkv < SLIDING_SPLIT_BELOW else 1
++
++
++def _sliding_route(sl, cfg):
++    """(splits, reason): splits for the Triton sliding path, or None and why master's FA3 path
++    runs. Reads config only."""
++    if not cfg["window"]:
++        return None, "full layer"
++    if not sl or not sl["ok"]:
++        return None, (sl or {}).get("reason", "not prepared")
++    if (cfg["num_q_heads"], cfg["num_kv_heads"], cfg["head_dim"]) != SLIDING_SUPPORTED_HEADS:
++        return None, "unsupported head shape"
++    if cfg["tokens"] > SLIDING_MAX_TOKENS and not sl["large"]:
++        return None, f"T > {SLIDING_MAX_TOKENS} not enabled by the timing gate ({sl['large_reason']})"
++    splits = _sliding_splits(cfg["batch"], cfg["q_len"], cfg["num_kv_heads"])
++    parts = cfg["batch"] * triton.cdiv(cfg["q_len"], SLIDING_BLOCK_TOK) * cfg["num_kv_heads"] * splits
++    if splits > 1 and parts > SLIDING_WS_PARTS:
++        return None, "split workspace too small"
++    return splits, "ok"
++
++
++def _announce_path(sl, cfg, splits, reason):
++    """Prints the sliding path once per shape (config only; no tensor is read)."""
++    key = (cfg["batch"], cfg["q_len"], cfg["page_size"], cfg["kv_scale"], cfg["window"])
++    if not cfg["window"] or key in _ANNOUNCED:
++        return
++    _ANNOUNCED.add(key)
++    if splits is None:
++        print(f"PATH CHOSEN sliding-attn: FA3 fallback ({reason}) [B={cfg['batch']} L={cfg['q_len']} "
++              f"T={cfg['tokens']} page={cfg['page_size']}]", flush=True)
++    else:
++        print(f"PATH CHOSEN sliding-attn: triton-gqa (S={splits} at T={cfg['tokens']}) "
++              f"[B={cfg['batch']} L={cfg['q_len']} page={cfg['page_size']} qk_fp8={sl['qk_fp8']}]", flush=True)
++
++
++def _attn_fa3(q, gate, data, cfg, state):
++    """Master's attention back end, unchanged: q to FP8, FA3 (paged, causal, window on sliding
++    layers), FusedRMSNormGate. kernel_fn's path for full layers and every fallback, and the
++    self-check's incumbent."""
++    batch, length, tokens = cfg["batch"], cfg["q_len"], cfg["tokens"]
++    hq, hkv, d = cfg["num_q_heads"], cfg["num_kv_heads"], cfg["head_dim"]
++    scaled = cfg["kv_scale"] != 1.0
++    window = cfg["window"]
++    descale = {}
++    if scaled:
++        descale = dict(k_descale=data["k_scale"].reshape(1, 1).expand(batch, hkv),
++                       v_descale=data["v_scale"].reshape(1, 1).expand(batch, hkv))
++    out = flash_attn_with_kvcache(
++        q=q.view(tokens, hq, d).to(FP8),
++        k_cache=data["k_cache"],
++        v_cache=data["v_cache"],
++        page_table=data["page_table"],
++        cache_seqlens=data["cache_seqlens"],
++        cu_seqlens_q=data["cu_seqlens_q"],
++        max_seqlen_q=length,
++        softmax_scale=cfg["sm_scale"] * cfg["qk_scale_factor"],
++        causal=True,
++        window_size=(window - 1, 0) if window else (-1, -1),
++        scheduler_metadata=data["scheduler_metadata"],
++        **descale,
++    )
++    if isinstance(out, tuple):
++        out = out[0]
++    return state["o_norm_gate"](out.reshape(tokens, hq * d).to(torch.bfloat16), gate)
++
++
++def _sliding_triton(q, qkv, data, cfg, sl, splits):
++    """The Triton sliding block: q [T, HQ*D] bf16 (FusedQKNorm's output), qkv the projection
++    (gate columns at (HQ + 2 HKV) * D). Returns the o GEMM's input, bf16 [T, HQ*D]. Allocates only
++    the output; the split partials use the workspace prepare() made. Grids from config only."""
++    batch, length, tokens = cfg["batch"], cfg["q_len"], cfg["tokens"]
++    hq, hkv, d = cfg["num_q_heads"], cfg["num_kv_heads"], cfg["head_dim"]
++    ntb = triton.cdiv(length, SLIDING_BLOCK_TOK)
++    out = torch.empty((tokens, hq * d), dtype=torch.bfloat16, device=qkv.device)
++    page_table = data["page_table"]
++    _sliding_prefill_attn_kernel[(batch * ntb, hkv, splits)](
++        q, qkv, data["seq_lens"], page_table, data["k_cache"].view(torch.uint8), data["v_cache"].view(torch.uint8),
++        data["k_scale"], data["v_scale"], out, sl["ws_acc"], sl["ws_ml"],
++        q.stride(0), qkv.stride(0), page_table.stride(0), length, ntb,
++        cfg["sm_scale"] * cfg["qk_scale_factor"] * LOG2E,
++        HQ=hq, HKV=hkv, D=d, BLOCK_TOK=SLIDING_BLOCK_TOK, WINDOW=cfg["window"], PAGE=cfg["page_size"],
++        S=splits, BLOCK_N=SLIDING_BLOCK_N, QK_FP8=sl["qk_fp8"], EPS=RMS_EPS,
++        num_warps=SLIDING_WARPS, num_stages=SLIDING_STAGES)
++    if splits > 1:
++        _sliding_combine_kernel[(batch * ntb, hkv)](
++            qkv, data["v_scale"], out, sl["ws_acc"], sl["ws_ml"], qkv.stride(0), length, ntb,
++            HQ=hq, HKV=hkv, D=d, BLOCK_TOK=SLIDING_BLOCK_TOK, S=splits, EPS=RMS_EPS,
++            num_warps=SLIDING_COMBINE_WARPS)
++    return out
++
++
++def _sliding_case(batch, ctx, length, page, kv_scale, seed, device):
++    """Untimed synthetic sliding case (built here, no reference import): soft unit-RMS keys
++    sharing a direction per KV head, N(0, 1) values, both FP8 at kv_scale, scattered pages; the
++    block's own rows are already in the cache (as after store_cache). q is unit-RMS per head in
++    bf16 (as FusedQKNorm returns it), gate N(0, 1) in the qkv projection's gate columns."""
++    gen = torch.Generator(device=device)
++    gen.manual_seed(seed)
++    hq, hkv, d = SLIDING_SUPPORTED_HEADS
++    tokens = batch * length
++    pages_per = triton.cdiv(ctx + length, page)
++    total = batch * pages_per
++    page_table = torch.randperm(total, generator=gen, device=device).to(torch.int32).view(batch, pages_per)
++    seq_lens = torch.full((batch,), ctx, dtype=torch.int32, device=device)
++    u = torch.randn((hkv, d), generator=gen, device=device)
++    u = u * torch.rsqrt(u.pow(2).mean(-1, keepdim=True))
++    k_cache = torch.empty((total, page, hkv, d), dtype=FP8, device=device)
++    v_cache = torch.empty((total, page, hkv, d), dtype=FP8, device=device)
++    kf, vf = k_cache.view(-1, hkv, d), v_cache.view(-1, hkv, d)
++    step = 1 << 18
++    for at in range(0, kf.shape[0], step):
++        n = min(step, kf.shape[0] - at)
++        z = torch.randn((n, hkv, d), generator=gen, device=device)
++        kf[at:at + n] = ((0.5 ** 0.5) * u + (0.5 ** 0.5) * z).div(kv_scale).to(FP8)
++        vf[at:at + n] = torch.randn((n, hkv, d), generator=gen, device=device).div(kv_scale).to(FP8)
++    q = torch.randn((tokens, hq, d), generator=gen, device=device)
++    q = (q * torch.rsqrt(q.pow(2).mean(-1, keepdim=True))).to(torch.bfloat16).reshape(tokens, hq * d)
++    qkv = torch.randn((tokens, 2 * hq * d + 2 * hkv * d), generator=gen, device=device).to(torch.bfloat16)
++    qkv[:, :hq * d] = q
++    cfg = {"batch": batch, "q_len": length, "tokens": tokens, "num_q_heads": hq, "num_kv_heads": hkv,
++           "head_dim": d, "page_size": page, "window": 2048, "rope_theta": ROPE_THETA,
++           "qk_scale_factor": SLIDING_SYNTH_QK_SCALE, "sm_scale": d ** -0.5, "kv_scale": kv_scale}
++    data = {
++        "k_cache": k_cache, "v_cache": v_cache, "page_table": page_table, "seq_lens": seq_lens,
++        "cache_seqlens": (seq_lens + length).to(torch.int32),
++        "cu_seqlens_q": torch.arange(0, tokens + 1, length, dtype=torch.int32, device=device),
++        "scheduler_metadata": None,
++        "k_scale": torch.tensor(kv_scale, dtype=torch.float32, device=device),
++        "v_scale": torch.tensor(kv_scale, dtype=torch.float32, device=device),
++        "config": cfg,
++    }
++    return {"data": data, "cfg": cfg, "q": q, "qkv": qkv, "gate": qkv[:, hq * d + 2 * hkv * d:],
++            "ctx": ctx, "name": f"B={batch} ctx={ctx} L={length} page={page} kv={kv_scale:g}"}
++
++
++def _sliding_ref32(case):
++    """fp32 reference of the block (unrounded bf16 queries, dequantized cache, SDPA per query
++    chunk over that chunk's window keys only), then rmsnorm x sigmoid(gate). [T, HQ*D] fp32."""
++    data, cfg = case["data"], case["cfg"]
++    batch, length = cfg["batch"], cfg["q_len"]
++    hq, hkv, d = SLIDING_SUPPORTED_HEADS
++    page, window, seq = cfg["page_size"], cfg["window"], case["ctx"]
++    device = case["q"].device
++    kf = data["k_cache"].view(-1, hkv, d)
++    vf = data["v_cache"].view(-1, hkv, d)
++    out = torch.empty((batch * length, hq, d), dtype=torch.float32, device=device)
++    first = max(0, seq - window + 1)
++    kpos = torch.arange(first, seq + length, device=device)
++    for b in range(batch):
++        rows = data["page_table"][b].long()[kpos // page] * page + kpos % page
++        kh = (kf[rows].float() * cfg["kv_scale"]).repeat_interleave(hq // hkv, dim=1).transpose(0, 1)
++        vh = (vf[rows].float() * cfg["kv_scale"]).repeat_interleave(hq // hkv, dim=1).transpose(0, 1)
++        qb = case["q"][b * length:(b + 1) * length].float().view(length, hq, d) * cfg["qk_scale_factor"]
++        for c in range(0, length, 1024):
++            ce = min(c + 1024, length)
++            qpos = seq + torch.arange(c, ce, device=device)
++            k_lo, k_hi = max(first, seq + c - window + 1) - first, seq + ce - first
++            kp = kpos[k_lo:k_hi]
++            vis = (kp[None, :] <= qpos[:, None]) & (kp[None, :] > qpos[:, None] - window)
++            o = torch.nn.functional.scaled_dot_product_attention(
++                qb[c:ce].transpose(0, 1), kh[:, k_lo:k_hi], vh[:, k_lo:k_hi], attn_mask=vis[None],
++                scale=cfg["sm_scale"])
++            out[b * length + c:b * length + ce] = o.transpose(0, 1)
++    out = out * torch.rsqrt(out.pow(2).mean(-1, keepdim=True) + RMS_EPS)
++    return out.reshape(batch * length, hq * d) * torch.sigmoid(case["gate"].float())
++
++
++def _rel_err(a, b):
++    return float((a - b).norm() / b.norm().clamp_min(1e-30))
++
++
++def _worst_row(a, b):
++    ref = b.norm(dim=-1)
++    return float(((a - b).norm(dim=-1) / torch.maximum(ref, 0.1 * ref.mean()).clamp_min(1e-30)).max())
++
++
++def _event_us(fn, reps=5):
++    """Eager per-call time (warm), median of reps: the self-check table's per-case kernel us."""
++    fn()
++    times = []
++    for _ in range(reps):
++        start, end = torch.cuda.Event(enable_timing=True), torch.cuda.Event(enable_timing=True)
++        start.record()
++        fn()
++        end.record()
++        end.synchronize()
++        times.append(start.elapsed_time(end) * 1e3)
++    return statistics.median(times)
++
++
++def _graph_us(fn, flush, reps=TIMING_REPS):
++    """fn captured as a CUDA graph, replayed reps times each after a 256 MiB flush write (cold L2);
++    median replay time in us (includes the graph launch's fixed cost, on both sides alike)."""
++    side = torch.cuda.Stream()
++    side.wait_stream(torch.cuda.current_stream())
++    with torch.cuda.stream(side):
++        fn()
++    torch.cuda.current_stream().wait_stream(side)
++    torch.cuda.synchronize()
++    graph = torch.cuda.CUDAGraph()
++    with torch.cuda.graph(graph):
++        fn()
++    torch.cuda.synchronize()
++    times = []
++    for _ in range(reps):
++        flush.zero_()
++        start, end = torch.cuda.Event(enable_timing=True), torch.cuda.Event(enable_timing=True)
++        start.record()
++        graph.replay()
++        end.record()
++        end.synchronize()
++        times.append(start.elapsed_time(end) * 1e3)
++    del graph
++    return statistics.median(times)
++
++
++def _sliding_check_case(case, sl, state, enforce_fp32):
++    """One self-check case: the Triton block vs master's sequence and an fp32 reference. Returns
++    (passed, row text)."""
++    data, cfg = case["data"], case["cfg"]
++    splits, _ = _sliding_route(sl, cfg)
++    if splits is None:
++        splits = _sliding_splits(cfg["batch"], cfg["q_len"], cfg["num_kv_heads"])
++    inc = _attn_fa3(case["q"], case["gate"], data, cfg, state).float()
++    new = _sliding_triton(case["q"], case["qkv"], data, cfg, sl, splits).float()
++    ref = _sliding_ref32(case)
++    torch.cuda.synchronize()
++    finite = bool(torch.isfinite(new).all())
++    e_inc, w_inc = _rel_err(inc, ref), _worst_row(inc, ref)
++    e_new, w_new = _rel_err(new, ref), _worst_row(new, ref)
++    rel, row = _rel_err(new, inc), _worst_row(new, inc)
++    tol_rel = max(SLIDING_TOL_REL, SLIDING_TOL_REL_FACTOR * e_inc)
++    tol_row = max(SLIDING_TOL_ROW, SLIDING_TOL_ROW_FACTOR * w_inc)
++    ratio = e_new / max(e_inc, 1e-30)
++    passed = finite and rel <= tol_rel and row <= tol_row
++    if enforce_fp32:
++        passed = passed and e_new <= SLIDING_FP32_RATIO * e_inc + SLIDING_FP32_SLACK
++    us_new = _event_us(lambda: _sliding_triton(case["q"], case["qkv"], data, cfg, sl, splits))
++    us_inc = _event_us(lambda: _attn_fa3(case["q"], case["gate"], data, cfg, state))
++    text = (f"[sliding check] {case['name']:<36} S={splits} rel_vs_inc {rel:.3e} (tol {tol_rel:.1e}, margin "
++            f"{tol_rel / max(rel, 1e-30):.1f}x) worst_row {row:.3e} (tol {tol_row:.1e}) | vs fp32: inc {e_inc:.3e} "
++            f"new {e_new:.3e} ratio {ratio:.2f}{' (enforced)' if enforce_fp32 else ''} worst_row inc {w_inc:.3e} "
++            f"new {w_new:.3e} | finite={finite} | eager us: triton {us_new:.1f} incumbent {us_inc:.1f} "
++            f"-> {'PASS' if passed else 'FAIL'}")
++    return passed, text
++
++
++# The self-check cases (batch, ctx, q_len, page, kv_scale): turn_1, turn_4, the three sliding
++# tests, one 64-token-page case and one kv_scale != 1 case. The two smallest (by tokens) also
++# enforce the fp32-reference ratio.
++SLIDING_CHECK_CASES = (
++    (1, 80000, 753, 1, 1.0),
++    (4, 80000, 753, 1, 1.0),
++    (1, 0, 300, 1, 1.0),
++    (2, 2500, 753, 1, 1.0),
++    (1, 4096, 4096, 1, 1.0),
++    (3, 5000, 200, 64, 1.0),
++    (1, 3000, 753, 1, 1.0 / 64),
++)
++SLIDING_LARGE_CASE = (1, 32768, 16384, 1, 1.0)
++# Shape classes the log reports a PATH CHOSEN line for (batch, q_len): turn_1, turn_4, first turn,
++# and the sliding tests.
++SLIDING_REPORT_SHAPES = (("turn_1", 1, 753), ("turn_4", 4, 753), ("first_turn", 1, 16384),
++                         ("test", 1, 300), ("test", 2, 753), ("test", 1, 4096))
++
++
++def _prepare_sliding(state, device, t_prepare):
++    """Untimed. Builds the split workspace, picks the QK dot variant (FP8 x FP8 if it compiles and
++    passes, else bf16) by the self-check, times master's sequence and the Triton block as CUDA
++    graphs at turn_1 / turn_4 (printed) and at the first turn's T=16384 (the >= 8% gate), and
++    self-checks T=16384 if it is to be routed. Any exception or failed case disables the Triton
++    path for every shape (state['sliding']['ok'] False): kernel_fn then runs master's code."""
++    t0 = time.perf_counter()
++    sl = {"ok": False, "large": False, "reason": "prepare did not finish", "large_reason": "not timed",
++          "qk_fp8": False,
++          "ws_acc": torch.empty((SLIDING_WS_PARTS, SLIDING_BLOCK_TOK * 8, 64), dtype=torch.float32, device=device),
++          "ws_ml": torch.empty((SLIDING_WS_PARTS, 2, SLIDING_BLOCK_TOK * 8), dtype=torch.float32, device=device)}
++    state["sliding"] = sl
++    cases = [_sliding_case(*spec, seed=100 + i, device=device) for i, spec in enumerate(SLIDING_CHECK_CASES)]
++    smallest = sorted(range(len(cases)), key=lambda i: cases[i]["cfg"]["tokens"])[:2]
++    reasons = []
++    for qk_fp8 in (True, False):
++        trial = dict(sl, ok=True, qk_fp8=qk_fp8)
++        try:
++            results = [_sliding_check_case(c, trial, state, i in smallest) for i, c in enumerate(cases)]
++        except Exception as exc:  # compile error, launch failure, ...
++            reasons.append(f"qk_fp8={qk_fp8}: {type(exc).__name__}: {str(exc).splitlines()[0][:160] if str(exc) else ''}")
++            print(f"[sliding check] qk_fp8={qk_fp8} raised: {reasons[-1]}", flush=True)
++            continue
++        for _, text in results:
++            print(text, flush=True)
++        if all(p for p, _ in results):
++            sl.update(ok=True, qk_fp8=qk_fp8, reason="ok")
++            break
++        failed = [c["name"] for c, (p, _) in zip(cases, results) if not p]
++        reasons.append(f"qk_fp8={qk_fp8}: self-check failed on {failed}")
++    if not sl["ok"]:
++        sl["reason"] = "; ".join(reasons) or "self-check did not run"
++        return sl
++
++    # Graph timing at the scored turn shapes (cases 0 and 1): master's sequence vs the Triton block.
++    flush = torch.empty(FLUSH_BYTES // 4, dtype=torch.float32, device=device)
++    print("[sliding timing] CUDA graph replay, cold L2 (256 MiB flush), median of "
++          f"{TIMING_REPS}, us incl. launch cost:", flush=True)
++    for label, case in (("turn_1", cases[0]), ("turn_4", cases[1])):
++        cfg = case["cfg"]
++        splits, _ = _sliding_route(sl, cfg)
++        us_inc = _graph_us(lambda: _attn_fa3(case["q"], case["gate"], case["data"], cfg, state), flush)
++        us_new = _graph_us(lambda: _sliding_triton(case["q"], case["qkv"], case["data"], cfg, sl, splits), flush)
++        print(f"[sliding timing] {label:<10} T={cfg['tokens']:<5} incumbent (q cast + FA3 + combine + norm-gate) "
++              f"{us_inc:8.1f} | triton-gqa S={splits} {us_new:8.1f} | ratio {us_new / us_inc:.3f}", flush=True)
++    del cases
++
++    # The first turn's T=16384: routed only if the graph time beats master's sequence by >= 8%.
++    elapsed = time.perf_counter() - t_prepare
++    if elapsed > SLIDING_LARGE_BUDGET_S:
++        sl["large_reason"] = f"skipped: prepare already at {elapsed:.0f} s"
++    else:
++        large = _sliding_case(*SLIDING_LARGE_CASE, seed=200, device=device)
++        cfg = large["cfg"]
++        splits = _sliding_splits(cfg["batch"], cfg["q_len"], cfg["num_kv_heads"])
++        us_inc = _graph_us(lambda: _attn_fa3(large["q"], large["gate"], large["data"], cfg, state), flush)
++        us_new = _graph_us(lambda: _sliding_triton(large["q"], large["qkv"], large["data"], cfg, sl, splits), flush)
++        win = us_new <= SLIDING_LARGE_GAIN * us_inc
++        print(f"[sliding timing] first_turn T={cfg['tokens']} incumbent (q cast + FA3 + norm-gate) {us_inc:8.1f} | "
++              f"triton-gqa S={splits} {us_new:8.1f} | ratio {us_new / us_inc:.3f} (gate <= {SLIDING_LARGE_GAIN})",
++              flush=True)
++        sl["large_reason"] = f"triton {us_new:.1f} us vs incumbent {us_inc:.1f} us, ratio {us_new / us_inc:.3f}"
++        if win:
++            passed, text = _sliding_check_case(large, dict(sl, large=True), state, False)
++            print(text, flush=True)
++            if not passed:
++                sl.update(ok=False, reason=f"self-check failed on {large['name']}")
++                return sl
++            sl["large"] = True
++        del large
++    del flush
++    torch.cuda.empty_cache()
++    print(f"[sliding prepare] {time.perf_counter() - t0:.1f} s, qk_fp8={sl['qk_fp8']}", flush=True)
++    return sl
++
++
+ def prepare(weights):
++    t_prepare = time.perf_counter()
+     device = weights["qkv_gate"].device
+     router = weights["router"]
+     hi = router.to(torch.bfloat16)
+@@ -568,6 +1104,22 @@ def prepare(weights):
+     torch.cuda.empty_cache()
+     _check_experts_e2e(state, device)
+     torch.cuda.synchronize()
++    # Sliding-layer attention block: self-check, timing, routing. Never raises: any failure keeps
++    # every shape on master's FA3 path.
++    try:
++        _prepare_sliding(state, device, t_prepare)
++    except Exception as exc:
++        sl = state.setdefault("sliding", {})
++        sl.update(ok=False, large=False, reason=f"prepare raised {type(exc).__name__}: {str(exc)[:200]}")
++        print(f"[sliding prepare] disabled: {sl['reason']}", flush=True)
++    torch.cuda.synchronize()
++    for label, batch, length in SLIDING_REPORT_SHAPES:
++        cfg = {"batch": batch, "q_len": length, "tokens": batch * length, "window": 2048, "num_q_heads": 16,
++               "num_kv_heads": 2, "head_dim": 64}
++        splits, reason = _sliding_route(state["sliding"], cfg)
++        path = (f"triton-gqa (S={splits} at T={batch * length})" if splits is not None
++                else f"FA3 fallback ({reason}) at T={batch * length}")
++        print(f"PATH CHOSEN sliding-attn: {path} [{label} B={batch} L={length}]", flush=True)
+     print(f"[prepare] max_memory_allocated {torch.cuda.max_memory_allocated(device) / 2**30:.2f} GiB", flush=True)
+     return state
+ 
+@@ -664,28 +1216,24 @@ def kernel_fn(data, state):
+     store_cache(k.to(FP8).view(torch.uint8), v.to(FP8).view(torch.uint8),
+                 k_cache.view(-1, hkv * d).view(torch.uint8), v_cache.view(-1, hkv * d).view(torch.uint8),
+                 data["cache_loc"], reserved_skip_index=-1)
+-    window = cfg["window"]
+-    descale = {}
+-    if scaled:
+-        descale = dict(k_descale=data["k_scale"].reshape(1, 1).expand(batch, hkv),
+-                       v_descale=data["v_scale"].reshape(1, 1).expand(batch, hkv))
+-    out = flash_attn_with_kvcache(
+-        q=q.view(tokens, hq, d).to(FP8),
+-        k_cache=k_cache,
+-        v_cache=v_cache,
+-        page_table=data["page_table"],
+-        cache_seqlens=data["cache_seqlens"],
+-        cu_seqlens_q=data["cu_seqlens_q"],
+-        max_seqlen_q=length,
+-        softmax_scale=cfg["sm_scale"] * cfg["qk_scale_factor"],
+-        causal=True,
+-        window_size=(window - 1, 0) if window else (-1, -1),
+-        scheduler_metadata=data["scheduler_metadata"],
+-        **descale,
+-    )
+-    if isinstance(out, tuple):
+-        out = out[0]
+-    o = state["o_norm_gate"](out.reshape(tokens, hq * d).to(torch.bfloat16), gate)
++    # Sliding layers: the Triton GQA block (attention + norm-gate) where prepare() enabled it for
++    # this shape; full layers and every fallback: master's q cast + FA3 + FusedRMSNormGate.
++    splits, reason = _sliding_route(state.get("sliding"), cfg)
++    if splits is not None:
++        q_rows = q.reshape(tokens, hq * d)
++        if q_rows.stride(1) != 1:
++            splits, reason = None, "query rows not contiguous"
++    _announce_path(state.get("sliding"), cfg, splits, reason)
++    o = None
++    if splits is not None:
++        try:
++            o = _sliding_triton(q_rows, qkv, data, cfg, state["sliding"], splits)
++        except Exception as exc:  # host-side (e.g. a compile error for an unseen shape): master's path
++            _announce_path(None, dict(cfg, kv_scale=("raised", cfg["kv_scale"])), None,
++                           f"launch raised {type(exc).__name__}")
++            o = None
++    if o is None:
++        o = _attn_fa3(q, gate, data, cfg, state)
+     attn_output = _gemm(o, dense["o"])  # all-reduce: identity
+ 
+     # Post-attention boundary, router and MoE block: MuseSpark1xMoE._forward_experts.
