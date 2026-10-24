@@ -2,7 +2,7 @@
 
 Hypothesis: `muse_moe_w4a16/hypotheses/done/gain/2026-10-24T132314Z-triton-map-align-on-block-m-restack.md` (branch `hyp/muse_moe_w4a16/triton-map-align-on-block-m-restack`).
 
-- **Job:** `<job id>` (`okc status <job>`)
+- **Job:** `3cabc739f1af493e` (`okc status <job>`)
 - **File:** `muse_moe_w4a16/submission.py` at git `56629c4`
 
 ## Goal
