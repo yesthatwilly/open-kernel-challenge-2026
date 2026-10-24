@@ -41,4 +41,4 @@ Lint (`okc_lint.py`): CLEAN, no findings.
 low
 
 ## Result (after the run)
-(pending)
+Promotion passed: 1.0307x [1.0152,1.0462], board: {"rank": 595, "team": "yesthatwilly", "speedup": 1.0307, "first": false, "ahead": 594, "to_first": 1.411}
