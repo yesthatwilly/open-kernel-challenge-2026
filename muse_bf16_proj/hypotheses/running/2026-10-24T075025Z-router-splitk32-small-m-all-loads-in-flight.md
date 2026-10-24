@@ -50,13 +50,15 @@ base_sha: 71681a43d83042174393c75e858c09263d2334aa
 base_blob: da55301de1e911aeab09878b0873809f544f436c
 branch: hyp/muse_bf16_proj/router-splitk32-small-m-all-loads-in-flight
 worktree: .worktrees/muse_bf16_proj/router-splitk32-small-m-all-loads-in-flight
-mode: null
+mode: check
 implemented_at: 2026-10-24T104146Z
 impl_commit: 60622cdebc40953738b4429ef80902673cd5f50f
 submission_sha256: 9834d41b193d508e1f4e3a13ef0a0474b06c1d99274e63e6bf9062e821f8a9d5
 norm_sha256: 25f5c6ce4256e43fd99221f01dbd3d5cdabee1d115fef5b6698a9497e0255641
 submission_blob: a0fcbb70e25fa568ef94f81935748440798a1410
 lint_warnings: 0
+attempt_file: 2026-10-24T104146Z-check-router-splitk32-small-m-all-loads-in-flight.md
+prepared_at: 2026-10-24T104146Z
 ---
 
 # router-splitk32-small-m-all-loads-in-flight
