@@ -39,7 +39,7 @@ review: proceed
 status: running
 review_at: 2026-10-24T032546Z
 review_companions: null
-stage: implemented
+stage: dispatched
 claimed_at: 2026-10-24T032546Z
 base_sha: 1e0262054793e9b504601277f857693e70332c70
 base_blob: 6884d26a928d1de1b07bf8d28e1be4e53dfdcfc5
@@ -54,6 +54,8 @@ submission_blob: d3cbff5d9d9e6de23eb2f6770a99cd93eea093b7
 lint_warnings: 1
 attempt_file: 2026-10-24T032749Z-check-expert-id-map-single-kernel.md
 prepared_at: 2026-10-24T032749Z
+job: 11b8df414a2245ae
+dispatched_at: 2026-10-24T032801Z
 ---
 
 # expert-id-map-single-kernel
