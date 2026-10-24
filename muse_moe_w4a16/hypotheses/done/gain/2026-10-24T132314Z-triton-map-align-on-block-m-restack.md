@@ -65,7 +65,8 @@ speedup: 1.3116740840932535
 speedup_ci: [1.2919989728318546, 1.3313491953546521]
 harvested_at: 2026-10-24T135613Z
 best_at_harvest: 1.2535643764852882
-promotion: pending
+promotion: merged
+promotion_commit: 8440ae5baaeda52f365611b273035480a61b2325
 ---
 
 # triton-map-align-on-block-m-restack
