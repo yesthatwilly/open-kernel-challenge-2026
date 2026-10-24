@@ -43,8 +43,8 @@ priority: 1
 kind: control
 controls_for: pooler-triton-splitk2-blockn64-semaphore
 review: required
-status: hold
-hold_reason: parent pooler-triton-splitk2-blockn64-semaphore harvested neutral (1.166x, CI low below best); a BLOCK_K control isolating a sub-change of a non-gain cannot change any decision
+status: queued
+hold_reason: null
 ---
 
 # pooler-triton-splitk2-blockn64-semaphore-control-blockk256
