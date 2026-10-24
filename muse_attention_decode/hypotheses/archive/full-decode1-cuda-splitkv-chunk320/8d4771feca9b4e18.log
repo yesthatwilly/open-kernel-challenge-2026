@@ -1,0 +1,13 @@
+[splitkv] load_inline compiled in 42.0s
+[splitkv] self-check batch=5 lens=[9000, 1025, 70, 4097, 1023] kv_scale=1.0 grid=device: rel L2 1.69e-03, finite True
+[splitkv] self-check batch=5 lens=[9000, 1025, 70, 4097, 1023] kv_scale=0.25 grid=3: rel L2 1.66e-03, finite True
+[splitkv] self-check batch=5 lens=[9000, 1025, 70, 4097, 1023] kv_scale=1.0 grid=3: rel L2 1.62e-03, finite True
+[splitkv] self-check batch=1 lens=[80000] kv_scale=1.0 grid=device: rel L2 1.54e-03, finite True
+[splitkv] self-check batch=1 lens=[80000] kv_scale=0.25 grid=device: rel L2 1.60e-03, finite True
+[splitkv] self-check batch=1 lens=[80000] kv_scale=1.0 grid=3: rel L2 1.59e-03, finite True
+[splitkv] self-check batch=1 lens=[80000] kv_scale=0.25 grid=3: rel L2 1.62e-03, finite True
+[splitkv] self-check batch=1 lens=[5000] kv_scale=1.0 grid=device: rel L2 1.72e-03, finite True
+[splitkv] self-check batch=1 lens=[5000] kv_scale=0.25 grid=device: rel L2 1.70e-03, finite True
+[splitkv] self-check batch=1 lens=[5000] kv_scale=1.0 grid=3: rel L2 1.64e-03, finite True
+[splitkv] self-check batch=1 lens=[5000] kv_scale=0.25 grid=3: rel L2 1.61e-03, finite True
+[splitkv] batch-1 chunk 320 path ON

@@ -1,0 +1,340 @@
+diff --git a/muse_attention_decode/submission.py b/muse_attention_decode/submission.py
+index c6854f0..904216d 100644
+--- a/muse_attention_decode/submission.py
++++ b/muse_attention_decode/submission.py
+@@ -423,15 +423,16 @@ def _paired_norm_gate_kernel(
+ # eps inside the sqrt, times sigmoid(gate)), bf16 out.
+ # ---------------------------------------------------------------------------------------------
+ 
+-_SPLITKV_CHUNK = 1024  # must match CHUNK in the CUDA source
++_SPLITKV_CHUNK = 1024  # default work chunk (batch > 1); batch 1 uses _SPLITKV_CHUNK_B1; both are template instantiations in the CUDA source
++_SPLITKV_CHUNK_B1 = 320
+ 
+ _SPLITKV_CPP = r"""
+ #include <torch/extension.h>
+ void splitkv_attn(torch::Tensor q, torch::Tensor k_cache, torch::Tensor v_cache, torch::Tensor page_table,
+                   torch::Tensor cache_seqlens, torch::Tensor k_scale, torch::Tensor ws_acc, torch::Tensor ws_ml,
+-                  double score_scale, int64_t max_chunks, int64_t grid);
++                  double score_scale, int64_t max_chunks, int64_t grid, int64_t chunk);
+ void splitkv_combine(torch::Tensor ws_acc, torch::Tensor ws_ml, torch::Tensor cache_seqlens, torch::Tensor v_scale,
+-                     torch::Tensor qkv, int64_t qkv_stride, torch::Tensor out, int64_t max_chunks, double eps);
++                     torch::Tensor qkv, int64_t qkv_stride, torch::Tensor out, int64_t max_chunks, double eps, int64_t chunk);
+ """
+ 
+ _SPLITKV_CUDA = r"""
+@@ -449,9 +450,7 @@ constexpr int HQ = 16;             // query heads
+ constexpr int HKV = 2;             // kv heads
+ constexpr int G = HQ / HKV;        // queries per kv head (8)
+ constexpr int ROW = HKV * D;       // bytes per cache row (page 1: both kv heads, 128)
+-constexpr int CHUNK = 1024;        // tokens per work item
+ constexpr int TILE = 64;           // tokens per pipeline tile
+-constexpr int TILES = CHUNK / TILE;
+ constexpr int STAGES = 4;
+ constexpr int THREADS = 256;
+ constexpr int WARPS = THREADS / 32;
+@@ -459,12 +458,13 @@ constexpr int MAXB = 64;
+ constexpr int STAGE_BYTES = 2 * TILE * ROW;                  // K tile + V tile = 16 KB
+ constexpr int RING_OFF = 0;
+ constexpr int IDX_OFF = RING_OFF + STAGES * STAGE_BYTES;     // int32 [2][CHUNK]
+-constexpr int Q_OFF = IDX_OFF + 2 * CHUNK * 4;               // e4m3 [2][HQ][D]
+-constexpr int ACC_OFF = Q_OFF + 2 * HQ * D;                  // f32 [WARPS][G][D]
+-constexpr int ML_OFF = ACC_OFF + WARPS * G * D * 4;          // f32 [WARPS][G][2]
+-constexpr int SEQ_OFF = ML_OFF + WARPS * G * 2 * 4;          // int32 [MAXB]
+-constexpr int PRE_OFF = SEQ_OFF + MAXB * 4;                  // int32 [MAXB + 1]
+-constexpr int SMEM_A = PRE_OFF + (MAXB + 4) * 4;
++// Shared-memory layout as constexpr functions of the work-item size CHUNK (tokens per item).
++__host__ __device__ constexpr int q_off(int chunk) { return IDX_OFF + 2 * chunk * 4; }                // e4m3 [2][HQ][D]
++__host__ __device__ constexpr int acc_off(int chunk) { return q_off(chunk) + 2 * HQ * D; }            // f32 [WARPS][G][D]
++__host__ __device__ constexpr int ml_off(int chunk) { return acc_off(chunk) + WARPS * G * D * 4; }    // f32 [WARPS][G][2]
++__host__ __device__ constexpr int seq_off(int chunk) { return ml_off(chunk) + WARPS * G * 2 * 4; }    // int32 [MAXB]
++__host__ __device__ constexpr int pre_off(int chunk) { return seq_off(chunk) + MAXB * 4; }            // int32 [MAXB + 1]
++__host__ __device__ constexpr int smem_a(int chunk) { return pre_off(chunk) + (MAXB + 4) * 4; }
+ 
+ __device__ __forceinline__ uint32_t smem_u32(const void* p) {
+   return static_cast<uint32_t>(__cvta_generic_to_shared(p));
+@@ -502,6 +502,7 @@ __device__ __forceinline__ void mma16816(float (&c)[4], uint32_t a0, uint32_t a1
+       : "r"(a0), "r"(a1), "r"(a2), "r"(a3), "r"(b0), "r"(b1));
+ }
+ 
++template <int CHUNK>
+ __global__ void __launch_bounds__(THREADS, 2)
+ splitkv_attn_kernel(const uint8_t* __restrict__ q,          // e4m3 [B, HQ, D]
+                     const uint8_t* __restrict__ kc,         // e4m3 [rows, ROW]
+@@ -512,14 +513,17 @@ splitkv_attn_kernel(const uint8_t* __restrict__ q,          // e4m3 [B, HQ, D]
+                     float* __restrict__ ws_acc,             // f32 [B * max_chunks, HQ, D]
+                     float* __restrict__ ws_ml,              // f32 [B * max_chunks, 2, HQ]
+                     int max_chunks) {
++  static_assert(CHUNK % TILE == 0, "CHUNK must be a whole number of tiles");
++  static_assert(CHUNK / TILE >= STAGES - 1, "cross-item meta prefetch needs TILES >= STAGES - 1");
++  constexpr int TILES = CHUNK / TILE;
+   extern __shared__ __align__(128) uint8_t smem[];
+   uint8_t* ring = smem + RING_OFF;
+   int* idx_s = reinterpret_cast<int*>(smem + IDX_OFF);
+-  uint8_t* q_s = smem + Q_OFF;
+-  float* acc_s = reinterpret_cast<float*>(smem + ACC_OFF);
+-  float* ml_s = reinterpret_cast<float*>(smem + ML_OFF);
+-  int* seq_s = reinterpret_cast<int*>(smem + SEQ_OFF);
+-  int* pre_s = reinterpret_cast<int*>(smem + PRE_OFF);
++  uint8_t* q_s = smem + q_off(CHUNK);
++  float* acc_s = reinterpret_cast<float*>(smem + acc_off(CHUNK));
++  float* ml_s = reinterpret_cast<float*>(smem + ml_off(CHUNK));
++  int* seq_s = reinterpret_cast<int*>(smem + seq_off(CHUNK));
++  int* pre_s = reinterpret_cast<int*>(smem + pre_off(CHUNK));
+   const float NEG_INF = __int_as_float(0xff800000u);
+ 
+   const int tid = threadIdx.x, lane = tid & 31, warp = tid >> 5;
+@@ -556,9 +560,7 @@ splitkv_attn_kernel(const uint8_t* __restrict__ q,          // e4m3 [B, HQ, D]
+     item_of(k, b, chunk, seq);
+     const int buf = k & 1;
+     const int* prow = page_table + (int64_t)b * pt_stride;
+-#pragma unroll
+-    for (int j = 0; j < CHUNK / THREADS; ++j) {
+-      const int e = tid + j * THREADS;
++    for (int e = tid; e < CHUNK; e += THREADS) {
+       const int pos = chunk * CHUNK + e;
+       const bool ok = pos < seq;
+       cp_async4(smem_u32(idx_s + buf * CHUNK + e), ok ? prow + pos : prow, ok ? 4 : 0);
+@@ -737,14 +739,15 @@ splitkv_attn_kernel(const uint8_t* __restrict__ q,          // e4m3 [B, HQ, D]
+   cp_wait<0>();  // the trailing groups are empty; drain anyway
+ }
+ 
+-__global__ void __launch_bounds__(128)
++template <int CHUNK, int NW>
++__global__ void __launch_bounds__(NW * 32)
+ splitkv_combine_kernel(const float* __restrict__ ws_acc, const float* __restrict__ ws_ml,
+                        const int* __restrict__ seqlens, const float* __restrict__ v_scale,
+                        const __nv_bfloat16* __restrict__ qkv, int64_t qkv_stride,
+                        __nv_bfloat16* __restrict__ out, int max_chunks, float eps) {
+-  __shared__ float red_m[4];
+-  __shared__ float red_l[4];
+-  __shared__ float red_acc[4][D];
++  __shared__ float red_m[NW];
++  __shared__ float red_l[NW];
++  __shared__ float red_acc[NW][D];
+   const float NEG_INF = __int_as_float(0xff800000u);
+   const int b = blockIdx.x, h = blockIdx.y;
+   const int tid = threadIdx.x, lane = tid & 31, warp = tid >> 5;
+@@ -752,17 +755,19 @@ splitkv_combine_kernel(const float* __restrict__ ws_acc, const float* __restrict
+   const int64_t base = (int64_t)b * max_chunks;
+ 
+   float M = NEG_INF;
+-  for (int c = tid; c < n; c += 128) M = fmaxf(M, ws_ml[(base + c) * 2 * HQ + h]);
++  for (int c = tid; c < n; c += NW * 32) M = fmaxf(M, ws_ml[(base + c) * 2 * HQ + h]);
+ #pragma unroll
+   for (int o = 16; o > 0; o >>= 1) M = fmaxf(M, __shfl_xor_sync(0xffffffffu, M, o));
+   if (lane == 0) red_m[warp] = M;
+   __syncthreads();
+-  M = fmaxf(fmaxf(red_m[0], red_m[1]), fmaxf(red_m[2], red_m[3]));
++  M = red_m[0];
++#pragma unroll
++  for (int w = 1; w < NW; ++w) M = fmaxf(M, red_m[w]);
+   const float Mu = M == NEG_INF ? 0.f : M;
+ 
+   float a0 = 0.f, a1 = 0.f, L = 0.f;
+ #pragma unroll 4
+-  for (int c = warp; c < n; c += 4) {
++  for (int c = warp; c < n; c += NW) {
+     const int64_t sl = base + c;
+     const float m = ws_ml[sl * 2 * HQ + h];
+     const float wt = m == NEG_INF ? 0.f : ex2(m - Mu);  // empty partials weigh 0
+@@ -778,7 +783,7 @@ splitkv_combine_kernel(const float* __restrict__ ws_acc, const float* __restrict
+   if (warp == 0) {
+     float o0 = 0.f, o1 = 0.f, Ls = 0.f;
+ #pragma unroll
+-    for (int w = 0; w < 4; ++w) { o0 += red_acc[w][lane * 2]; o1 += red_acc[w][lane * 2 + 1]; Ls += red_l[w]; }
++    for (int w = 0; w < NW; ++w) { o0 += red_acc[w][lane * 2]; o1 += red_acc[w][lane * 2 + 1]; Ls += red_l[w]; }
+     const float vs = __ldg(v_scale);
+     o0 = o0 / Ls * vs;
+     o1 = o1 / Ls * vs;
+@@ -794,22 +799,19 @@ splitkv_combine_kernel(const float* __restrict__ ws_acc, const float* __restrict
+   }
+ }
+ 
+-}  // namespace
+-
+-void splitkv_attn(torch::Tensor q, torch::Tensor k_cache, torch::Tensor v_cache, torch::Tensor page_table,
+-                  torch::Tensor cache_seqlens, torch::Tensor k_scale, torch::Tensor ws_acc, torch::Tensor ws_ml,
+-                  double score_scale, int64_t max_chunks, int64_t grid) {
++template <int CHUNK>
++static void launch_attn(torch::Tensor q, torch::Tensor k_cache, torch::Tensor v_cache, torch::Tensor page_table,
++                        torch::Tensor cache_seqlens, torch::Tensor k_scale, torch::Tensor ws_acc, torch::Tensor ws_ml,
++                        double score_scale, int64_t max_chunks, int64_t grid) {
+   const int B = static_cast<int>(cache_seqlens.size(0));
+-  TORCH_CHECK(B >= 1 && B <= MAXB, "splitkv_attn: batch out of range");
+-  TORCH_CHECK(page_table.stride(1) == 1 && q.is_contiguous() && k_cache.is_contiguous() && v_cache.is_contiguous(),
+-              "splitkv_attn: layout");
+-  static bool attr_set = false;
++  constexpr int SMEM_A = smem_a(CHUNK);
++  static bool attr_set = false;  // once per instantiation
+   if (!attr_set) {
+-    C10_CUDA_CHECK(cudaFuncSetAttribute(splitkv_attn_kernel, cudaFuncAttributeMaxDynamicSharedMemorySize, SMEM_A));
++    C10_CUDA_CHECK(cudaFuncSetAttribute(splitkv_attn_kernel<CHUNK>, cudaFuncAttributeMaxDynamicSharedMemorySize, SMEM_A));
+     attr_set = true;
+   }
+   auto stream = at::cuda::getCurrentCUDAStream();
+-  splitkv_attn_kernel<<<static_cast<unsigned>(grid), THREADS, SMEM_A, stream>>>(
++  splitkv_attn_kernel<CHUNK><<<static_cast<unsigned>(grid), THREADS, SMEM_A, stream>>>(
+       reinterpret_cast<const uint8_t*>(q.data_ptr()), reinterpret_cast<const uint8_t*>(k_cache.data_ptr()),
+       reinterpret_cast<const uint8_t*>(v_cache.data_ptr()), page_table.data_ptr<int>(), page_table.stride(0),
+       cache_seqlens.data_ptr<int>(), B, k_scale.data_ptr<float>(), static_cast<float>(score_scale),
+@@ -817,16 +819,45 @@ void splitkv_attn(torch::Tensor q, torch::Tensor k_cache, torch::Tensor v_cache,
+   C10_CUDA_KERNEL_LAUNCH_CHECK();
+ }
+ 
+-void splitkv_combine(torch::Tensor ws_acc, torch::Tensor ws_ml, torch::Tensor cache_seqlens, torch::Tensor v_scale,
+-                     torch::Tensor qkv, int64_t qkv_stride, torch::Tensor out, int64_t max_chunks, double eps) {
++template <int CHUNK, int NW>
++static void launch_combine(torch::Tensor ws_acc, torch::Tensor ws_ml, torch::Tensor cache_seqlens, torch::Tensor v_scale,
++                           torch::Tensor qkv, int64_t qkv_stride, torch::Tensor out, int64_t max_chunks, double eps) {
+   const int B = static_cast<int>(cache_seqlens.size(0));
+   auto stream = at::cuda::getCurrentCUDAStream();
+-  splitkv_combine_kernel<<<dim3(B, HQ), 128, 0, stream>>>(
++  splitkv_combine_kernel<CHUNK, NW><<<dim3(B, HQ), NW * 32, 0, stream>>>(
+       ws_acc.data_ptr<float>(), ws_ml.data_ptr<float>(), cache_seqlens.data_ptr<int>(), v_scale.data_ptr<float>(),
+       reinterpret_cast<const __nv_bfloat16*>(qkv.data_ptr()), qkv_stride,
+       reinterpret_cast<__nv_bfloat16*>(out.data_ptr()), static_cast<int>(max_chunks), static_cast<float>(eps));
+   C10_CUDA_KERNEL_LAUNCH_CHECK();
+ }
++
++}  // namespace
++
++void splitkv_attn(torch::Tensor q, torch::Tensor k_cache, torch::Tensor v_cache, torch::Tensor page_table,
++                  torch::Tensor cache_seqlens, torch::Tensor k_scale, torch::Tensor ws_acc, torch::Tensor ws_ml,
++                  double score_scale, int64_t max_chunks, int64_t grid, int64_t chunk) {
++  const int B = static_cast<int>(cache_seqlens.size(0));
++  TORCH_CHECK(B >= 1 && B <= MAXB, "splitkv_attn: batch out of range");
++  TORCH_CHECK(page_table.stride(1) == 1 && q.is_contiguous() && k_cache.is_contiguous() && v_cache.is_contiguous(),
++              "splitkv_attn: layout");
++  if (chunk == 1024)
++    launch_attn<1024>(q, k_cache, v_cache, page_table, cache_seqlens, k_scale, ws_acc, ws_ml, score_scale, max_chunks, grid);
++  else if (chunk == 320)
++    launch_attn<320>(q, k_cache, v_cache, page_table, cache_seqlens, k_scale, ws_acc, ws_ml, score_scale, max_chunks, grid);
++  else
++    TORCH_CHECK(false, "splitkv_attn: unsupported chunk ", chunk);
++}
++
++void splitkv_combine(torch::Tensor ws_acc, torch::Tensor ws_ml, torch::Tensor cache_seqlens, torch::Tensor v_scale,
++                     torch::Tensor qkv, int64_t qkv_stride, torch::Tensor out, int64_t max_chunks, double eps,
++                     int64_t chunk) {
++  if (chunk == 1024)
++    launch_combine<1024, 4>(ws_acc, ws_ml, cache_seqlens, v_scale, qkv, qkv_stride, out, max_chunks, eps);
++  else if (chunk == 320)
++    launch_combine<320, 16>(ws_acc, ws_ml, cache_seqlens, v_scale, qkv, qkv_stride, out, max_chunks, eps);
++  else
++    TORCH_CHECK(false, "splitkv_combine: unsupported chunk ", chunk);
++}
+ """
+ 
+ 
+@@ -836,7 +867,7 @@ def _build_splitkv():
+     try:
+         from torch.utils.cpp_extension import load_inline
+         ext = load_inline(
+-            name="muse_full_decode_splitkv_v1",
++            name="muse_full_decode_splitkv_v2",
+             cpp_sources=_SPLITKV_CPP,
+             cuda_sources=_SPLITKV_CUDA,
+             functions=["splitkv_attn", "splitkv_combine"],
+@@ -852,6 +883,7 @@ def _build_splitkv():
+ 
+ _EXT = None          # the compiled module; None keeps the master FA3 path everywhere
+ _SPLITKV_GRID = None  # grid override, set only by the import-time self-check
++_B1_ON = True         # batch-1 chunk-320 path; the import-time self-check turns it off on failure
+ _SMS = {}
+ 
+ 
+@@ -865,9 +897,10 @@ def _sm_count(device) -> int:
+ 
+ 
+ def _splitkv_gate(cfg) -> bool:
+-    """Config-only predicate for the CUDA split-KV path: full-layer decode, 1 < batch <= 64, tp8
+-    heads, head dim 64, page 1. Every other shape keeps the master path."""
+-    return (_EXT is not None and cfg["window"] == 0 and cfg["q_len"] == 1 and 1 < cfg["batch"] <= 64
++    """Config-only predicate for the CUDA split-KV path: full-layer decode, 1 <= batch <= 64, tp8
++    heads, head dim 64, page 1 (batch 1 only while _B1_ON). Every other shape keeps the master path."""
++    return (_EXT is not None and cfg["window"] == 0 and cfg["q_len"] == 1 and 1 <= cfg["batch"] <= 64
++            and (cfg["batch"] > 1 or _B1_ON)
+             and cfg["num_q_heads"] == 16 and cfg["num_kv_heads"] == 2 and cfg["head_dim"] == 64
+             and cfg["page_size"] == 1)
+ 
+@@ -879,15 +912,16 @@ def _full_decode_splitkv(data: Inputs, q: torch.Tensor, qkv: torch.Tensor) -> to
+     batch, hq, d = cfg["batch"], cfg["num_q_heads"], cfg["head_dim"]
+     device = qkv.device
+     page_table = data["page_table"]
+-    max_chunks = -(-page_table.shape[1] // _SPLITKV_CHUNK)  # page 1: one page per token
++    chunk = _SPLITKV_CHUNK_B1 if batch == 1 else _SPLITKV_CHUNK  # config only
++    max_chunks = -(-page_table.shape[1] // chunk)  # page 1: one page per token
+     ws_acc = torch.empty((batch * max_chunks, hq, d), dtype=torch.float32, device=device)
+     ws_ml = torch.empty((batch * max_chunks, 2, hq), dtype=torch.float32, device=device)
+     grid = _SPLITKV_GRID or 2 * _sm_count(device)
+     _EXT.splitkv_attn(q, data["k_cache"], data["v_cache"], page_table, data["cache_seqlens"], data["k_scale"],
+-                      ws_acc, ws_ml, cfg["sm_scale"] * cfg["qk_scale_factor"] * LOG2E, max_chunks, grid)
++                      ws_acc, ws_ml, cfg["sm_scale"] * cfg["qk_scale_factor"] * LOG2E, max_chunks, grid, chunk)
+     out = torch.empty((batch, 1, hq * d), dtype=torch.bfloat16, device=device)
+     _EXT.splitkv_combine(ws_acc, ws_ml, data["cache_seqlens"], data["v_scale"], qkv, qkv.stride(0), out,
+-                         max_chunks, RMS_EPS)
++                         max_chunks, RMS_EPS, chunk)
+     return out
+ 
+ 
+@@ -1040,17 +1074,13 @@ def _splitkv_reference(data, lens):
+     return (a * torch.sigmoid(gate)).reshape(batch, 1, hq * d)
+ 
+ 
+-def _splitkv_self_check() -> bool:
+-    """One-time eager check at import, on synthetic data only (never in the timed path): the
+-    gated path against an FP32 reference, with ragged lengths (partial chunks, fully masked
+-    warps), kv scale 1 and 1/4, the device grid and a 3-CTA grid (several items per CTA, so the
+-    cross-item pipeline and double-buffered meta are exercised)."""
++def _splitkv_check_cases(lens, cases, gen) -> bool:
++    """Run the gated path on synthetic ragged data for each (kv_scale, grid) and compare with the
++    FP32 reference (rel L2 < 2e-2, the FP8-noise bound the batch > 1 cases already pass)."""
+     global _SPLITKV_GRID
+-    lens = [9000, 1025, 70, 4097, 1023]
+-    gen = torch.Generator(device="cuda").manual_seed(1234)
+     ok = True
+     try:
+-        for kv_scale, grid in ((1.0, None), (0.25, 3), (1.0, 3)):
++        for kv_scale, grid in cases:
+             data = _splitkv_synthetic(lens, kv_scale, gen, torch.device("cuda"))
+             assert _splitkv_gate(data["config"])
+             _SPLITKV_GRID = grid
+@@ -1058,7 +1088,8 @@ def _splitkv_self_check() -> bool:
+             ref = _splitkv_reference(data, lens)
+             err = float((out - ref).norm() / ref.norm())
+             finite = bool(torch.isfinite(out).all())
+-            print(f"[splitkv] self-check kv_scale={kv_scale} grid={grid or 'device'}: rel L2 {err:.2e}, finite {finite}")
++            print(f"[splitkv] self-check batch={len(lens)} lens={lens} kv_scale={kv_scale} "
++                  f"grid={grid or 'device'}: rel L2 {err:.2e}, finite {finite}")
+             ok = ok and finite and err < 2e-2
+     except Exception as e:
+         print(f"[splitkv] self-check raised: {e!r}")
+@@ -1068,8 +1099,28 @@ def _splitkv_self_check() -> bool:
+     return ok
+ 
+ 
++def _splitkv_self_check() -> bool:
++    """One-time eager check at import, on synthetic data only (never in the timed path): the
++    gated path against an FP32 reference, with ragged lengths (partial chunks, fully masked
++    warps), kv scale 1 and 1/4, the device grid and a 3-CTA grid (several items per CTA, so the
++    cross-item pipeline and double-buffered meta are exercised). Returns the batch > 1 result;
++    the batch-1 chunk-320 pass sets _B1_ON on its own, so a batch-1 failure never costs batch > 1."""
++    global _B1_ON
++    gen = torch.Generator(device="cuda").manual_seed(1234)
++    ok = _splitkv_check_cases([9000, 1025, 70, 4097, 1023], ((1.0, None), (0.25, 3), (1.0, 3)), gen)
++    if not ok:
++        return False
++    _B1_ON = True
++    ok1 = True
++    for lens in ([80000], [5000]):
++        ok1 = _splitkv_check_cases(lens, ((1.0, None), (0.25, None), (1.0, 3), (0.25, 3)), gen) and ok1
++    _B1_ON = ok1
++    return True
++
++
+ if torch.cuda.is_available():
+     _EXT = _build_splitkv()
+     if _EXT is not None and not _splitkv_self_check():
+         print("[splitkv] SELF-CHECK FAILED: CUDA split-KV path disabled, master FA3 path kept")
+         _EXT = None
++print(f"[splitkv] batch-1 chunk 320 path {'ON' if _EXT is not None and _B1_ON else 'OFF'}")

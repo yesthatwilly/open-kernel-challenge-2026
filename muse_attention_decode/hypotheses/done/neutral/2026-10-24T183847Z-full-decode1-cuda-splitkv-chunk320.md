@@ -47,10 +47,10 @@ priority: 1
 kind: primary
 controls_for: null
 review: proceed
-status: running
+status: done
 review_at: 2026-10-24T184132Z
 review_companions: null
-stage: dispatched
+stage: harvested
 claimed_at: 2026-10-24T184132Z
 base_sha: 29ab19ae2ed489e27e4307caeff5e2dd73cd86eb
 base_blob: c6854f093588da524e63657576b27ed720756e32
@@ -67,6 +67,13 @@ attempt_file: 2026-10-24T184624Z-submit-full-decode1-cuda-splitkv-chunk320.md
 prepared_at: 2026-10-24T184624Z
 job: 8d4771feca9b4e18
 dispatched_at: 2026-10-24T184641Z
+outcome: neutral
+verdict_detail: unproven-vs-best
+speedup: 1.3953757999991567
+speedup_ci: [1.3744451629991694, 1.416306436999144]
+harvested_at: 2026-10-24T231956Z
+best_at_harvest: 1.3948738389144513
+promotion: null
 ---
 
 # full-decode1-cuda-splitkv-chunk320
@@ -147,3 +154,35 @@ Fixes:
 Lint CLEAN, py_compile OK, __pycache__ removed.
 
 Residual risk: a device fault (illegal address) in the batch-1 self-check would leave the CUDA context sticky-errored, and no Python fallback can recover from that. Also, the strided meta loop lost its `#pragma unroll`, so <1024> codegen could differ marginally from master's at decode_16/32.
+
+## Result
+
+- job `8d4771feca9b4e18` (submit), status done, passed True, tests 16/16
+- speedup 1.3954x, 95% CI [1.3744, 1.4163], score 2699.129510489057 µs vs SGLang 3766.3 µs
+- best at harvest: {"speedup": 1.3948738389144513, "ci": [1.3739507313307344, 1.415796946498168], "job": "698d4cd3838c4a63"}; base result: muse_attention_decode/hypotheses/done/gain/sliding-deep-splits-on-cuda-splitkv.result.json
+- **outcome: neutral** (unproven-vs-best)
+- files: `muse_attention_decode/hypotheses/done/neutral/full-decode1-cuda-splitkv-chunk320.result.json`, `muse_attention_decode/hypotheses/done/neutral/full-decode1-cuda-splitkv-chunk320.patch`; branch `hyp/muse_attention_decode/full-decode1-cuda-splitkv-chunk320`
+
+## Attribution
+
+| shape | w | base µs | hyp µs | delta | verdict |
+|---|---|---|---|---|---|
+| batch=1 ctx=80000 dist=soft heads=tp8 layer=sliding load=decode_1 page=1 | 46 | 13.17 | 13.44 | 1.0008 | flat |
+| batch=1 ctx=80000 dist=coherent heads=tp8 layer=full load=decode_1 page=1 | 16 | 27.26 | 19.49 | 1.4035 | gained |
+| batch=16 ctx=80000 dist=soft heads=tp8 layer=sliding load=decode_16 page=1 spread=agentic | 46 | 15.34 | 15.65 | 0.9854 | flat |
+| batch=16 ctx=80000 dist=coherent heads=tp8 layer=full load=decode_16 page=1 spread=agentic | 16 | 122.79 | 125.99 | 0.972 | flat |
+| batch=32 ctx=80000 dist=soft heads=tp8 layer=sliding load=decode_32 page=1 spread=agentic | 46 | 24.24 | 24.45 | 0.9929 | flat |
+| batch=32 ctx=80000 dist=coherent heads=tp8 layer=full load=decode_32 page=1 spread=agentic | 16 | 241.9 | 264.4 | 0.9163 | lost |
+| batch=1 ctx=80000 dist=soft heads=tp8 layer=sliding load=verify_1 page=1 q_len=8 | 46 | 16.72 | 17.31 | 0.9592 | lost |
+| batch=1 ctx=80000 dist=coherent heads=tp8 layer=full load=verify_1 page=1 q_len=8 | 16 | 30.03 | 30.22 | 0.9959 | flat |
+| batch=16 ctx=80000 dist=soft heads=tp8 layer=sliding load=verify_16 page=1 q_len=8 spread=agentic | 46 | 22.67 | 22.95 | 0.9991 | flat |
+| batch=16 ctx=80000 dist=coherent heads=tp8 layer=full load=verify_16 page=1 q_len=8 spread=agentic | 16 | 161.98 | 163.45 | 0.9957 | flat |
+| batch=32 ctx=80000 dist=soft heads=tp8 layer=sliding load=verify_32 page=1 q_len=8 spread=agentic | 46 | 28.7 | 29.07 | 0.9923 | flat |
+| batch=32 ctx=80000 dist=coherent heads=tp8 layer=full load=verify_32 page=1 q_len=8 spread=agentic | 16 | 300.83 | 301.24 | 1.0009 | flat |
+
+gained on full decode_1; lost on full decode_32; sliding verify_1. Expected hit: 3/4. Noise ±1.5%.
+
+## Follow-ups
+
+- unproven-vs-best: the change is not proven either way; a stacked hypothesis (`depends_on: full-decode1-cuda-splitkv-chunk320`) that adds a further change in the same area is the only way to learn more (identical code is never re-run).
+
