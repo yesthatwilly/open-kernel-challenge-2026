@@ -1,19 +1,19 @@
 # muse_moe_w4a16 findings
 
-Regenerated 2026-10-24T104514Z by `churn.py index`. Read this before writing a hypothesis for muse_moe_w4a16.
+Regenerated 2026-10-24T111615Z by `churn.py index`. Read this before writing a hypothesis for muse_moe_w4a16.
 
 ## Current best
 
-0.9888x [0.9739,1.0036] from job `fb2cc736613747df` (check), master commit `a646cb4151`, hypothesis sglang-marlin-path-parity
+1.1297x [1.1128,1.1467] from job `bacd1f502f4e46fa` (check), master commit `192f225d8f`, hypothesis post-expert-norm-triton-small-m
 
 Where the time goes (per scored shape, top kernels):
 
-- bs=1 load=decode_1 sharding=ep8: yours 80.2µs vs SGLang 77.0µs (SoL 11.4µs) · void sglang::device::marlin_moe::Marlin<__nv_bfloat16, 56... 41.1µs 52.6%, void at::native::reduce_kernel<512, 1, at::native::Reduce... 5.6µs 7.1%, void at::native::unrolled_elementwise_kernel<at::native::... 5.4µs 6.9%
-- bs=16 load=decode_16 sharding=ep8: yours 191.4µs vs SGLang 189.8µs (SoL 52.5µs) · void sglang::device::marlin_moe::Marlin<__nv_bfloat16, 56... 150.9µs 75.3%, void at::native::reduce_kernel<512, 1, at::native::Reduce... 8.9µs 4.5%, void at::native::elementwise_kernel<128, 2, at::native::g... 8.6µs 4.3%
-- bs=32 load=decode_32 sharding=ep8: yours 208.2µs vs SGLang 205.6µs (SoL 70.8µs) · void sglang::device::marlin_moe::Marlin<__nv_bfloat16, 56... 212.7µs 92.3%, void moe_align_block_size_small_batch_expert_kernel<int, ... 6.7µs 2.9%, _post_expert_norm_weighted_sum_kernel 4.1µs 1.8%
-- bs=8 load=verify_1 sharding=ep8: yours 152.0µs vs SGLang 151.1µs (SoL 37.3µs) · void sglang::device::marlin_moe::Marlin<__nv_bfloat16, 56... 107.6µs 70.5%, void at::native::reduce_kernel<512, 1, at::native::Reduce... 8.9µs 5.8%, void at::native::elementwise_kernel<128, 2, at::native::g... 6.5µs 4.3%
-- bs=128 load=verify_16 sharding=ep8: yours 462.5µs vs SGLang 462.4µs (SoL 101.3µs) · void sglang::device::marlin_moe::Marlin<__nv_bfloat16, 56... 495.4µs 95.8%, _post_expert_norm_weighted_sum_kernel 6.5µs 1.3%, void sglang::act_and_mul_kernel<__nv_bfloat16, (sglang::A... 4.0µs 0.8%
-- bs=256 load=verify_32 sharding=ep8: yours 621.3µs vs SGLang 621.4µs (SoL 108.9µs) · void sglang::device::marlin_moe::Marlin<__nv_bfloat16, 56... 611.8µs 96.4%, _post_expert_norm_weighted_sum_kernel 6.1µs 1.0%, void sglang::act_and_mul_kernel<__nv_bfloat16, (sglang::A... 5.5µs 0.9%
+- bs=1 load=decode_1 sharding=ep8: yours 55.3µs vs SGLang 77.3µs (SoL 11.4µs) · void sglang::device::marlin_moe::Marlin<__nv_bfloat16, 56... 40.1µs 77.0%, void moe_align_block_size_small_batch_expert_kernel<int, ... 4.4µs 8.4%, _post_norm_combine_kernel 2.8µs 5.3%
+- bs=16 load=decode_16 sharding=ep8: yours 155.7µs vs SGLang 187.8µs (SoL 52.5µs) · void sglang::device::marlin_moe::Marlin<__nv_bfloat16, 56... 138.2µs 90.4%, void moe_align_block_size_small_batch_expert_kernel<int, ... 5.6µs 3.6%, _post_norm_combine_kernel 3.2µs 2.1%
+- bs=32 load=decode_32 sharding=ep8: yours 206.9µs vs SGLang 204.2µs (SoL 70.8µs) · void sglang::device::marlin_moe::Marlin<__nv_bfloat16, 56... 189.9µs 91.9%, void moe_align_block_size_small_batch_expert_kernel<int, ... 6.5µs 3.2%, _post_expert_norm_weighted_sum_kernel 3.7µs 1.8%
+- bs=8 load=verify_1 sharding=ep8: yours 121.2µs vs SGLang 151.3µs (SoL 37.3µs) · void sglang::device::marlin_moe::Marlin<__nv_bfloat16, 56... 106.7µs 88.8%, void moe_align_block_size_small_batch_expert_kernel<int, ... 4.9µs 4.1%, _post_norm_combine_kernel 3.1µs 2.6%
+- bs=128 load=verify_16 sharding=ep8: yours 475.9µs vs SGLang 476.2µs (SoL 101.3µs) · void sglang::device::marlin_moe::Marlin<__nv_bfloat16, 56... 435.5µs 95.4%, _post_expert_norm_weighted_sum_kernel 6.1µs 1.3%, void sglang::act_and_mul_kernel<__nv_bfloat16, (sglang::A... 4.0µs 0.9%
+- bs=256 load=verify_32 sharding=ep8: yours 622.2µs vs SGLang 622.2µs (SoL 108.9µs) · void sglang::device::marlin_moe::Marlin<__nv_bfloat16, 56... 572.4µs 96.2%, void sglang::act_and_mul_kernel<__nv_bfloat16, (sglang::A... 5.4µs 0.9%, _post_expert_norm_weighted_sum_kernel 5.2µs 0.9%
 
 ## By area
 
@@ -23,11 +23,16 @@ Where the time goes (per scored shape, top kernels):
 - **marlin-block-size-m-next-larger** → regression (regression), 0.9178x — lost on decode_32 decode_32; verify_16 verify_16. Change only the block_size_m pick in kernel_fn. SGLang's loop breaks on the first candidate in (8, 16, 32, 48, 64) where num_tokens*8/32/block_size_m < 0.9, whi
 - **align-256-experts-below-128** → neutral (unproven-vs-best), 0.9998x — gained on decode_1 decode_1. In kernel_fn, for num_tokens < 128 only (bs=1, 8, 16, 32 and the bs=4/33 tests), call moe_align_block_size(local_ids, block_size_m, N_EXPERTS) exactly as baseli
 
+### post-expert norm+combine
+- **post-expert-norm-triton-small-m** → gain (gain), 1.1297x — gained on decode_1 decode_1; decode_16 decode_16; verify_1 verify_1. For num_tokens < 32 only (bs=1, 8, 16; the bs=4 test too), replace the call to SGLang's fused_post_expert_norm_weighted_sum at the end of kernel_fn with one lau
+
 ### w13 marlin
 - **triton-w13-grouped-gemv-small-m** → regression (regression), 0.7506x — lost on decode_1 decode_1; verify_1 verify_1. For num_tokens <= 8 only (decode_1 and verify_1; all other shapes keep the parity path untouched), replace the first moe_wna16_marlin_gemm (w13, top_k=8) with t
 - **marlin-workspace-blocks-per-sm-8** → neutral (unproven-vs-best), 0.9921x — no shape moved outside noise. In prepare(), build a second lock workspace marlin_make_workspace(device, max_blocks_per_sm=8) and pass it to the w13 moe_wna16_marlin_gemm call only; the w2 ca
 - **w13-marlin-atomic-add-small-m** → neutral (within-ci), 0.9869x — no shape moved outside noise. For num_tokens <= 32, pass use_atomic_add=True (and use_fp32_reduce=False, which Marlin requires alongside atomic add) to the w13 moe_wna16_marlin_gemm call onl
 - **w13-marlin-bf16-reduce-verify** → neutral (within-ci), 0.9840x — no shape moved outside noise. For num_tokens >= 128 (verify_16 and verify_32), pass use_fp32_reduce=False to the w13 moe_wna16_marlin_gemm call only (use_atomic_add stays False; w2 and all d
+- **marlin-block-size-m-next-smaller** → gain (gain), 1.0394x — gained on verify_16 verify_16; verify_32 verify_32. Change only the block_size_m pick in kernel_fn: keep SGLang's loop over BLOCK_SIZE_M_CANDIDATES = (8, 16, 32, 48, 64) (first candidate with num_tokens*8/32/bloc
+- **marlin-block-size-m-verify-two-smaller** → gain (gain), 1.0916x — gained on verify_16 verify_16; verify_32 verify_32. Change only the block_size_m pick in kernel_fn, for num_tokens >= 128 only: take SGLang's pick (the first of BLOCK_SIZE_M_CANDIDATES = (8, 16, 32, 48, 64) with 
 - **small-m-grouped-gemv-splitk-rewrite** → regression (regression), 0.6635x — lost on decode_1 decode_1; decode_16 decode_16; verify_1 verify_1. Stage 1 of a small-batch grouped W4A16 GEMV that replaces both moe_wna16_marlin_gemm calls when num_tokens <= 16 (decode_1 bs=1, verify_1 bs=8, decode_16 bs=16)
 
 ## Open follow-ups
@@ -48,7 +53,4 @@ Where the time goes (per scored shape, top kernels):
 - queue: triton-w2-grouped-gemv-small-m [w2 marlin] p3 queued
 - queue: triton-small-m-threshold-32 [MoE align/dispatch] p4 queued
 - queue: align-remote-sentinel-ids [MoE align/dispatch] p3 hold
-- running: post-expert-norm-triton-small-m [post-expert norm+combine] p1 running
-- running: marlin-block-size-m-next-smaller [w13 marlin] p2 running
-- running: marlin-block-size-m-verify-two-smaller [w13 marlin] p3 running
 - running: marlin-block-m-cap-16-port [w13 marlin] p1 running
