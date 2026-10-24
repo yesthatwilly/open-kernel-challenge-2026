@@ -46,10 +46,17 @@ priority: 4
 kind: primary
 controls_for: null
 review: proceed
-status: queued
+status: running
 review_at: 2026-10-24T111911Z
 review_companions: null
 hold_reason: null
+stage: claimed
+claimed_at: 2026-10-24T120042Z
+base_sha: caf555ec8435254c599ff4cf1e7741a96a88e5e1
+base_blob: da55301de1e911aeab09878b0873809f544f436c
+branch: hyp/muse_bf16_proj/router-splitk-semaphore-no-memset
+worktree: .worktrees/muse_bf16_proj/router-splitk-semaphore-no-memset
+mode: null
 ---
 
 # router-splitk-semaphore-no-memset
