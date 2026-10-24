@@ -1,0 +1,70 @@
+diff --git a/muse_bf16_proj/submission.py b/muse_bf16_proj/submission.py
+index da55301..a0fcbb7 100644
+--- a/muse_bf16_proj/submission.py
++++ b/muse_bf16_proj/submission.py
+@@ -48,7 +48,8 @@ class Inputs(TypedDict):
+ ROUTER_N = 256
+ ROUTER_K = 8192
+ ROUTER_BLOCK_K = 128
+-ROUTER_NUM_STAGES = 3
++ROUTER_NUM_STAGES = 3  # m > 32 buckets
++ROUTER_SMALL_M_NUM_STAGES = 2  # m <= 32 buckets (2 K-steps per CTA)
+ ROUTER_NUM_WARPS = 4
+ # m values pre-warmed in prepare(): one per config bucket plus the scored/tested ones, so that
+ # the timed call never compiles (M is not specialized and the grid's M extent is a launch
+@@ -57,21 +58,21 @@ ROUTER_WARM_MS = (1, 8, 16, 32, 64, 128, 256)
+ 
+ 
+ def _router_config(m: int):
+-    """Static launch config from m only: (BLOCK_M, BLOCK_N, SPLIT_K).
++    """Static launch config from m only: (BLOCK_M, BLOCK_N, SPLIT_K, NUM_STAGES).
+ 
+     grid = (cdiv(m, BLOCK_M), 256 // BLOCK_N, SPLIT_K), always atomic_add into a zeroed output:
+-      m <=  16: BLOCK_M=16, BLOCK_N=32, SPLIT_K=16 -> (1, 8, 16) = 128 CTAs, K-slice 512
+-      m <=  32: BLOCK_M=32, BLOCK_N=32, SPLIT_K=16 -> (1, 8, 16) = 128 CTAs, K-slice 512
++      m <=  16: BLOCK_M=16, BLOCK_N=32, SPLIT_K=32 -> (1, 8, 32) = 256 CTAs, K-slice 256, 2 stages
++      m <=  32: BLOCK_M=32, BLOCK_N=32, SPLIT_K=32 -> (1, 8, 32) = 256 CTAs, K-slice 256, 2 stages
+       m <= 128: BLOCK_M=64, BLOCK_N=64, SPLIT_K=16 -> (2, 4, 16) = 128 CTAs at m=128, K-slice 512
+       m >  128: BLOCK_M=64, BLOCK_N=64, SPLIT_K=8  -> (4, 4,  8) = 128 CTAs at m=256, K-slice 1024
+     """
+     if m <= 16:
+-        return 16, 32, 16
++        return 16, 32, 32, ROUTER_SMALL_M_NUM_STAGES
+     if m <= 32:
+-        return 32, 32, 16
++        return 32, 32, 32, ROUTER_SMALL_M_NUM_STAGES
+     if m <= 128:
+-        return 64, 64, 16
+-    return 64, 64, 8
++        return 64, 64, 16, ROUTER_NUM_STAGES
++    return 64, 64, 8, ROUTER_NUM_STAGES
+ 
+ 
+ @triton.jit(do_not_specialize=["M"])
+@@ -123,7 +124,7 @@ def _router_forward(x: torch.Tensor, hi: torch.Tensor, lo: torch.Tensor) -> torc
+     the memset of the zeroed output. Branches only on shapes."""
+     m, k = x.shape
+     n = hi.shape[0]
+-    block_m, block_n, split_k = _router_config(m)
++    block_m, block_n, split_k, num_stages = _router_config(m)
+     k_slice = k // split_k
+     # Zeroed right before the launch, every call: the K-partials are atomically added into it.
+     out = torch.zeros((m, n), dtype=torch.float32, device=x.device)
+@@ -134,7 +135,7 @@ def _router_forward(x: torch.Tensor, hi: torch.Tensor, lo: torch.Tensor) -> torc
+         x.stride(0), hi.stride(0), out.stride(0),
+         K_SLICE=k_slice,
+         BLOCK_M=block_m, BLOCK_N=block_n, BLOCK_K=ROUTER_BLOCK_K,
+-        num_warps=ROUTER_NUM_WARPS, num_stages=ROUTER_NUM_STAGES,
++        num_warps=ROUTER_NUM_WARPS, num_stages=num_stages,
+     )
+     return out
+ 
+@@ -145,7 +146,7 @@ def _router_shape_ok(x: torch.Tensor, hi: torch.Tensor) -> bool:
+         return False
+     m, k = x.shape
+     n = hi.shape[0]
+-    block_m, block_n, split_k = _router_config(m)
++    block_m, block_n, split_k, _ = _router_config(m)
+     return (k == hi.shape[1] and k % (ROUTER_BLOCK_K * split_k) == 0 and n % block_n == 0
+             and hi.stride(1) == 1)
+ 
