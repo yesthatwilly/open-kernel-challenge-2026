@@ -68,7 +68,7 @@ review: proceed
 status: running
 review_at: 2026-10-24T165424Z
 review_companions: null
-stage: implemented
+stage: dispatched
 claimed_at: 2026-10-24T165424Z
 base_sha: 278c4441e3dddcc35e9478bc678c6d596a9d3428
 base_blob: a8bb42ac483318e9fbc84bc7826a27b7a704d1fb
@@ -83,6 +83,8 @@ submission_blob: 64894c9c770c26cbcf15bbfbb4b3e44e48bd4f3e
 lint_warnings: 0
 attempt_file: 2026-10-24T165700Z-submit-router-swapab-wgmma-all-m.md
 prepared_at: 2026-10-24T165700Z
+job: 587e340476944b46
+dispatched_at: 2026-10-24T165714Z
 ---
 
 # router-swapab-wgmma-all-m
