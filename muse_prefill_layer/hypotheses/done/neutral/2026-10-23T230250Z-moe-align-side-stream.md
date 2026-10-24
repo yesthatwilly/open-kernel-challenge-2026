@@ -35,10 +35,10 @@ priority: 2
 kind: primary
 controls_for: null
 review: proceed
-status: running
+status: done
 review_at: 2026-10-24T044735Z
 review_companions: null
-stage: dispatched
+stage: harvested
 claimed_at: 2026-10-24T044735Z
 base_sha: a8970404e91613553aa3868dbafdca06fbc4b549
 base_blob: e4931f050c7fb99835fe116d25bb454a5ea731e9
@@ -55,6 +55,13 @@ attempt_file: 2026-10-24T044914Z-check-moe-align-side-stream.md
 prepared_at: 2026-10-24T044914Z
 job: f70d1f2eaef842d2
 dispatched_at: 2026-10-24T044925Z
+outcome: neutral
+verdict_detail: unproven-vs-best
+speedup: 1.0076184626819096
+speedup_ci: [0.9925041857416809, 1.0227327396221382]
+harvested_at: 2026-10-24T063613Z
+best_at_harvest: 1.0038664293875537
+promotion: null
 ---
 
 # moe-align-side-stream
@@ -129,3 +136,31 @@ OK with warnings: /home/user/git/musespark/.worktrees/muse_prefill_layer/moe-ali
 ```
 
 `python3 -I -m py_compile` passed; the `__pycache__` it left was removed. Not committed, not staged, okc not run.
+
+## Result
+
+- job `f70d1f2eaef842d2` (check), status done, passed True, tests 5/5
+- speedup 1.0076x, 95% CI [0.9925, 1.0227], score 384474.7931363558 µs vs SGLang 387403.9 µs
+- best at harvest: {"speedup": 1.0038664293875537, "ci": [0.9888084329467404, 1.018924425828367], "job": "62025c368c3c4e8e"}; base result: muse_prefill_layer/hypotheses/done/gain/sglang-pipeline-parity.result.json
+- **outcome: neutral** (unproven-vs-best)
+- files: `muse_prefill_layer/hypotheses/done/neutral/moe-align-side-stream.result.json`, `muse_prefill_layer/hypotheses/done/neutral/moe-align-side-stream.patch`; branch `hyp/muse_prefill_layer/moe-align-side-stream`
+
+## Attribution
+
+| shape | w | base µs | hyp µs | delta | verdict |
+|---|---|---|---|---|---|
+| batch=1 ctx=80000 dist=soft layer=sliding load=turn_1 page=1 q_len=753 repeats=6 | 46 | 1078.66 | 1049.83 | 1.0058 | flat |
+| batch=1 ctx=80000 dist=soft layer=full load=turn_1 page=1 q_len=753 repeats=6 | 16 | 1434.85 | 1458.98 | 1.0014 | flat |
+| batch=4 ctx=80000 dist=soft layer=sliding load=turn_4 page=1 q_len=753 repeats=6 | 46 | 3367.03 | 3209.04 | 1.0054 | flat |
+| batch=4 ctx=80000 dist=soft layer=full load=turn_4 page=1 q_len=753 repeats=6 | 16 | 4949.82 | 4894.58 | 1.0022 | flat |
+| batch=1 ctx=0 dist=soft layer=full load=first_turn page=1 q_len=16384 repeats=6 | 16 | 18279.1 | 17632.24 | 1.0012 | flat |
+| batch=1 ctx=32768 dist=soft layer=sliding load=first_turn page=1 q_len=16384 repeats=6 | 138 | 16995.2 | 16784.84 | 0.9997 | flat |
+| batch=1 ctx=32768 dist=soft layer=full load=first_turn page=1 q_len=16384 repeats=6 | 16 | 21535.66 | 21441.63 | 1.0216 | flat |
+| batch=1 ctx=65536 dist=soft layer=full load=first_turn page=1 q_len=16384 repeats=6 | 16 | 25286.61 | 24539.1 | 1.0043 | flat |
+
+no shape moved outside noise. Expected hit: 1/3. Noise ±1.5%.
+
+## Follow-ups
+
+- unproven-vs-best: the change is not proven either way; a stacked hypothesis (`depends_on: moe-align-side-stream`) that adds a further change in the same area is the only way to learn more (identical code is never re-run).
+

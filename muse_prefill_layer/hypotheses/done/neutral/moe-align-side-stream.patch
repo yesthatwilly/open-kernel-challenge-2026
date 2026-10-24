@@ -1,0 +1,70 @@
+diff --git a/muse_prefill_layer/submission.py b/muse_prefill_layer/submission.py
+index e4931f0..4be1dd8 100644
+--- a/muse_prefill_layer/submission.py
++++ b/muse_prefill_layer/submission.py
+@@ -262,18 +262,23 @@ def prepare(weights):
+     return state
+ 
+ 
+-def _experts(x, topk_weights, local_ids, state):
++def _block_size_m(num_tokens):
++    """MuseSpark1xFp4Experts' Marlin block size, chosen on the host from the token count."""
++    for block_size_m in BLOCK_SIZE_M_CANDIDATES:
++        if num_tokens * TOP_K / LOCAL_EXPERTS / block_size_m < 0.9:
++            break
++    return block_size_m
++
++
++def _experts(x, topk_weights, local_ids, sorted_ids, block_experts, n_padded, block_size_m, state):
+     """MuseSpark1xFp4Experts._marlin_expert_outputs and its post-expert-norm finalize, on ids
+-    already mapped to this GPU's experts (0-31, -1 elsewhere)."""
++    already mapped to this GPU's experts (0-31, -1 elsewhere), FP32 topk_weights and the
++    moe_align_block_size outputs, all computed on the side stream (hypothesis
++    moe-align-side-stream)."""
+     bank = state["bank"]
+     num_tokens, size_k = x.shape
+     size_n = bank["size_n"]
+     gemm1_n = 2 * size_n
+-    topk_weights = topk_weights.to(torch.float32).contiguous()
+-    for block_size_m in BLOCK_SIZE_M_CANDIDATES:
+-        if num_tokens * TOP_K / LOCAL_EXPERTS / block_size_m < 0.9:
+-            break
+-    sorted_ids, block_experts, n_padded = moe_align_block_size(local_ids, block_size_m, N_EXPERTS)
+     cache2 = torch.empty((num_tokens * TOP_K, size_n), device=x.device, dtype=x.dtype)
+     cache13 = torch.empty((num_tokens * TOP_K * max(gemm1_n, size_k),), device=x.device, dtype=x.dtype)
+     cache1 = cache13[: num_tokens * TOP_K * gemm1_n].view(-1, gemm1_n)
+@@ -347,22 +352,29 @@ def kernel_fn(data, state):
+     # Post-attention boundary, router and MoE block: MuseSpark1xMoE._forward_experts.
+     ffn_input, stream, _ = state["attn_boundary"](
+         data["stream"], attn_output, branch_dtype=torch.bfloat16, router_dtype=None)
+-    # The router and routing run on a side stream, overlapping the pooler on the main one.
++    # The router, routing, local-id remap, FP32 cast of the weights and moe_align_block_size run
++    # on a side stream, overlapping the pooler and pre-expert norm on the main one; the streams
++    # join just before the first Marlin GEMM.
+     main_stream, side_stream = torch.cuda.current_stream(), state["side_stream"]
++    block_size_m = _block_size_m(tokens)
+     side_stream.wait_stream(main_stream)
+     expert_input = _gemm(ffn_input, dense["pooler"])
+     with torch.cuda.stream(side_stream):
+         logits = torch.mm(ffn_input, state["router_hi_t"], out_dtype=torch.float32)
+         logits += torch.mm(ffn_input, state["router_lo_t"], out_dtype=torch.float32)
+         topk_weights, topk_ids = state["routing"](None, logits, TOP_K, True)
++        # This GPU's experts start at local_start: SGLang's expert_map on that EP rank, in one kernel.
++        local_ids = _local_expert_ids(topk_ids, data["local_start"])
++        topk_weights = topk_weights.to(torch.float32).contiguous()
++        sorted_ids, block_experts, n_padded = moe_align_block_size(local_ids, block_size_m, N_EXPERTS)
++    expert_input = state["pre_expert_norm"](expert_input)
+     main_stream.wait_stream(side_stream)
+     if not torch.cuda.is_current_stream_capturing():
+-        for tensor in (topk_weights, topk_ids):
++        for tensor in (topk_weights, topk_ids, local_ids, sorted_ids, block_experts, n_padded):
+             tensor.record_stream(main_stream)
+-    # This GPU's experts start at local_start: SGLang's expert_map on that EP rank, in one kernel.
+-    local_ids = _local_expert_ids(topk_ids, data["local_start"])
+     # all-reduce: identity
+-    expert_output = _experts(state["pre_expert_norm"](expert_input), topk_weights, local_ids, state)
++    expert_output = _experts(expert_input, topk_weights, local_ids, sorted_ids, block_experts, n_padded,
++                             block_size_m, state)
+     ffn_output = _gemm(expert_output, dense["unpooler"])
+ 
+     # Post-FFN boundary, with the next layer's pre-attention norm.
