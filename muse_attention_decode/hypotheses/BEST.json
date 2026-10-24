@@ -1,17 +1,17 @@
 {
  "problem": "muse_attention_decode",
- "job": "2846122f764043da",
- "check_job": "2846122f764043da",
+ "job": "bd64bf9f9e904f02",
+ "check_job": "bd64bf9f9e904f02",
  "mode": "check",
- "speedup": 1.2436140703098866,
+ "speedup": 1.2686474414890054,
  "ci": [
-  1.2249598592552382,
-  1.2622682813645347
+  1.2496177298666704,
+  1.2876771531113405
  ],
- "score_us": 3028.5118912023127,
- "commit": "fa95f6d9e5bbaa7ab5978727425c8247ebbaa5c1",
- "submission_blob": "60fc66432a00f0c6a1e2228f6a0775cc08f492fc",
- "slug": "paired-heads-launch-cleanup",
- "result": "muse_attention_decode/hypotheses/done/gain/paired-heads-launch-cleanup.result.json",
- "updated_at": "2026-10-24T115932Z"
+ "score_us": 2968.7522922676703,
+ "commit": "bfb7bac32c93cb1602f4273c5d2c65f69e1c7d6f",
+ "submission_blob": "efc544103e6d303d1f8602caa9439628043a17a7",
+ "slug": "paired-heads-launch-cleanup-ab-tune-batch-gate",
+ "result": "muse_attention_decode/hypotheses/done/neutral/paired-heads-launch-cleanup-ab-tune-batch-gate.result.json",
+ "updated_at": "2026-10-24T115952Z"
 }

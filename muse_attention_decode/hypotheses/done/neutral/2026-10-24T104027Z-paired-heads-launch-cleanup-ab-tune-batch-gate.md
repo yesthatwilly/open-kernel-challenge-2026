@@ -63,7 +63,8 @@ speedup: 1.2686474414890054
 speedup_ci: [1.2496177298666704, 1.2876771531113405]
 harvested_at: 2026-10-24T115930Z
 best_at_harvest: 1.1705932092473075
-promotion: null
+promotion: merged
+promotion_commit: bfb7bac32c93cb1602f4273c5d2c65f69e1c7d6f
 ---
 
 # paired-heads-launch-cleanup-ab-tune-batch-gate
