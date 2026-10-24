@@ -61,13 +61,15 @@ base_sha: 4a3b474ab343532548aeff7b0908beb14a4fae68
 base_blob: d9a9375ef4721ab9b28cc9d6364c92e67c7ccc59
 branch: hyp/muse_moe_w4a16/align-parallel-per-expert-verify
 worktree: .worktrees/muse_moe_w4a16/align-parallel-per-expert-verify
-mode: null
+mode: check
 implemented_at: 2026-10-24T165513Z
 impl_commit: 6c12cfed524c55040c6f5a306635414d6ee7b367
 submission_sha256: d2687e7d6e1d8b529e5b45491756a4fc3769da4951f05ed31f15b5431c65033c
 norm_sha256: af3d5c9f0c4ec4c9a67770ac2d78c0949c1a32203ab8362f4169efa81716ae0e
 submission_blob: 108d36e9f2266fc88531dd6ff0329a847c882013
 lint_warnings: 8
+attempt_file: 2026-10-24T165514Z-check-align-parallel-per-expert-verify.md
+prepared_at: 2026-10-24T165514Z
 ---
 
 # align-parallel-per-expert-verify
