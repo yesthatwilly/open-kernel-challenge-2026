@@ -50,9 +50,16 @@ priority: 2
 kind: primary
 controls_for: null
 review: proceed
-status: queued
+status: running
 review_at: 2026-10-24T075337Z
 review_companions: null
+stage: claimed
+claimed_at: 2026-10-24T075337Z
+base_sha: 7bcb8092c1665b25485402c87868a1ebb583ee27
+base_blob: da55301de1e911aeab09878b0873809f544f436c
+branch: hyp/muse_bf16_proj/qkv-gate-triton-splitk4-blockn64-semaphore
+worktree: .worktrees/muse_bf16_proj/qkv-gate-triton-splitk4-blockn64-semaphore
+mode: null
 ---
 
 # qkv-gate-triton-splitk4-blockn64-semaphore
