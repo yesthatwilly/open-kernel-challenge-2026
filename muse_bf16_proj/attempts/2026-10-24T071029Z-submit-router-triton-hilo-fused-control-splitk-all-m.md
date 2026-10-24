@@ -43,4 +43,4 @@ CLEAN: muse_bf16_proj/submission.py
 medium
 
 ## Result (after the run)
-(pending)
+Promotion passed: 1.1433x [1.1261,1.1604], board: {"rank": 472, "team": "yesthatwilly", "speedup": 1.1433, "first": false, "ahead": 471, "to_first": 1.3193}
