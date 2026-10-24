@@ -41,13 +41,15 @@ base_sha: e39e564e1c1c5afd6984d50a952b2d5550f92df2
 base_blob: d9a9375ef4721ab9b28cc9d6364c92e67c7ccc59
 branch: hyp/muse_moe_w4a16/triton-map-align-verify-chunked-pow2-fix
 worktree: .worktrees/muse_moe_w4a16/triton-map-align-verify-chunked-pow2-fix
-mode: null
+mode: check
 implemented_at: 2026-10-24T145124Z
 impl_commit: a453496e961fb78ad568648d426f6dad3894dad1
 submission_sha256: 57b303b52bb2e2bbcd6fcab107c4f697c5ea4fb912e35e276fe82f98c9422b9f
 norm_sha256: 314d624a58957ba6429fc972a10b2603f445056ab9f69699a4ad7c3aecde817e
 submission_blob: cd2708665a12b86a61abd60e3794272c1df2e6f7
 lint_warnings: 8
+attempt_file: 2026-10-24T145124Z-check-triton-map-align-verify-chunked-pow2-fix.md
+prepared_at: 2026-10-24T145125Z
 ---
 
 # triton-map-align-verify-chunked-pow2-fix
