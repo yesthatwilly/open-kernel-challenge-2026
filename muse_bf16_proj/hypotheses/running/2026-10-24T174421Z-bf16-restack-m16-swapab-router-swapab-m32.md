@@ -42,13 +42,15 @@ base_sha: 4a04b3757546365d2227c1fc1762bc6c5072e92b
 base_blob: a8bb42ac483318e9fbc84bc7826a27b7a704d1fb
 branch: hyp/muse_bf16_proj/bf16-restack-m16-swapab-router-swapab-m32
 worktree: .worktrees/muse_bf16_proj/bf16-restack-m16-swapab-router-swapab-m32
-mode: null
+mode: submit
 implemented_at: 2026-10-24T175227Z
 impl_commit: 8f97b729cc67149da5ac481e415f4402b9f1c88e
 submission_sha256: cda00e0118587bcdc1b3eed567f1677202b348f7cf16d9a96d931e0527e443cc
 norm_sha256: 5cf9fc70e2475e57ee93028771a3d36050cbb41a5e6635e39317bd202723a0e0
 submission_blob: 970b415b746fa03cb92e419d270be92588273178
 lint_warnings: 0
+attempt_file: 2026-10-24T175228Z-submit-bf16-restack-m16-swapab-router-swapab-m32.md
+prepared_at: 2026-10-24T175228Z
 ---
 
 # bf16-restack-m16-swapab-router-swapab-m32
