@@ -29,9 +29,16 @@ priority: 4
 kind: primary
 controls_for: null
 review: proceed
-status: queued
+status: running
 review_at: 2026-10-24T032411Z
 review_companions: null
+stage: claimed
+claimed_at: 2026-10-24T032412Z
+base_sha: 7c54c225a5de1458c4cd57d1fea92d4b3895d9f5
+base_blob: 11fbc1957daf7294cd2810ff82a0aad2f25644bd
+branch: hyp/muse_moe_w4a16/align-single-token-ep
+worktree: .worktrees/muse_moe_w4a16/align-single-token-ep
+mode: null
 ---
 
 # align-single-token-ep
