@@ -1,6 +1,6 @@
 # muse_attention_decode hypotheses
 
-Regenerated 2026-10-24T084809Z. Best: 1.1274x [1.1105,1.1444] job `9e8fcb3fe4b04458` (check)
+Regenerated 2026-10-24T092716Z. Best: 1.1274x [1.1105,1.1444] job `9e8fcb3fe4b04458` (check)
 
 | created | slug | kind | area | where | outcome | speedup | CI | job | mode | promotion | review | expected hit |
 |---|---|---|---|---|---|---|---|---|---|---|---|---|
@@ -14,8 +14,8 @@ Regenerated 2026-10-24T084809Z. Best: 1.1274x [1.1105,1.1444] job `9e8fcb3fe4b04
 | 2026-10-23T223722Z | triton-flash-decode-full-both-heads | primary | FA3 call | queue | queued |  |  |  |  |  | required |  |
 | 2026-10-23T223802Z | fused-sliding-preattn-into-window-kernel | primary | attention boundary | queue | queued |  |  |  |  |  | required |  |
 | 2026-10-23T223803Z | fused-sliding-normgate-epilogue | primary | output norm-gate | queue | queued |  |  |  |  |  | required |  |
-| 2026-10-23T225840Z | fa3-hdim128-head-pairing | primary | FA3 call (head packing) | queue | queued |  |  |  |  |  | required |  |
 | 2026-10-23T225840Z | paired-heads-launch-cleanup | primary | attention boundary | queue | queued |  |  |  |  |  | required |  |
+| 2026-10-23T225840Z | fa3-hdim128-head-pairing | primary | FA3 call (head packing) | running | running |  |  | facc479992e24a35 | check |  | proceed |  |
 | 2026-10-23T225858Z | fa3-batched-q-verify | primary | FA3 call (q layout) | queue | queued |  |  |  |  |  | required |  |
 | 2026-10-23T225858Z | fa3-num-splits-full-verify | primary | FA3 call | queue | queued |  |  |  |  |  | required |  |
 | 2026-10-23T225858Z | fa3-single-split-sliding | primary | FA3 call | queue | queued |  |  |  |  |  | required |  |

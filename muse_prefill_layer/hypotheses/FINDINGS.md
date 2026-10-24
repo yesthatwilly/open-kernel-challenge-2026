@@ -1,6 +1,6 @@
 # muse_prefill_layer findings
 
-Regenerated 2026-10-24T090935Z by `churn.py index`. Read this before writing a hypothesis for muse_prefill_layer.
+Regenerated 2026-10-24T092716Z by `churn.py index`. Read this before writing a hypothesis for muse_prefill_layer.
 
 ## Current best
 
@@ -53,5 +53,6 @@ Where the time goes (per scored shape, top kernels):
 - queue: experts-marlin-block-m-48-turn4 [w13 marlin + w2 marlin (block_size_m pick)] p3 queued
 - queue: router-triton-hilo-splitk-turn [router GEMM] p3 queued
 - queue: router-pooler-concat-gemm-turn [router GEMM + pooler GEMM (one concatenated GEMM, no side stream)] p5 queued
+- queue: experts-triton-w4a16-swapab-reglhs [w13 marlin + w2 marlin (W4A16 engine with in-kernel NVFP4 dequant, stage 2: swap-AB register-LHS dot)] p1 queued
 - running: experts-marlin-block-m-local-rows [w13 marlin + w2 marlin (block_size_m pick)] p1 running
 - running: experts-marlin-block-m-48-turn1 [w13 marlin + w2 marlin (block_size_m pick)] p2 running

@@ -1,6 +1,6 @@
 # muse_prefill_layer hypotheses
 
-Regenerated 2026-10-24T090935Z. Best: 1.0039x [0.9888,1.0189] job `62025c368c3c4e8e` (check)
+Regenerated 2026-10-24T092716Z. Best: 1.0039x [0.9888,1.0189] job `62025c368c3c4e8e` (check)
 
 | created | slug | kind | area | where | outcome | speedup | CI | job | mode | promotion | review | expected hit |
 |---|---|---|---|---|---|---|---|---|---|---|---|---|
@@ -19,6 +19,7 @@ Regenerated 2026-10-24T090935Z. Best: 1.0039x [0.9888,1.0189] job `62025c368c3c4
 | 2026-10-24T075435Z | experts-marlin-block-m-48-turn4 | primary | w13 marlin + w2 marlin (block_size_m pick) | queue | queued |  |  |  |  |  | required |  |
 | 2026-10-24T075454Z | router-triton-hilo-splitk-turn | primary | router GEMM | queue | queued |  |  |  |  |  | required |  |
 | 2026-10-24T075513Z | router-pooler-concat-gemm-turn | primary | router GEMM + pooler GEMM (one concatenated GEMM, no side stream) | queue | queued |  |  |  |  |  | required |  |
+| 2026-10-24T092506Z | experts-triton-w4a16-swapab-reglhs | rewrite | w13 marlin + w2 marlin (W4A16 engine with in-kernel NVFP4 dequant, stage 2: swap-AB register-LHS dot) | queue | queued |  |  |  |  |  | required |  |
 
 ## Held
 
