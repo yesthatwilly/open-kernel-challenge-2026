@@ -34,13 +34,19 @@ review: proceed
 status: running
 review_at: 2026-10-24T032603Z
 review_companions: null
-stage: claimed
+stage: implemented
 claimed_at: 2026-10-24T032603Z
 base_sha: 3a4f9cf09a44d1c6045ca118687902eacfb2b76f
 base_blob: 11fbc1957daf7294cd2810ff82a0aad2f25644bd
 branch: hyp/muse_moe_w4a16/marlin-workspace-blocks-per-sm-8
 worktree: .worktrees/muse_moe_w4a16/marlin-workspace-blocks-per-sm-8
 mode: null
+implemented_at: 2026-10-24T032701Z
+impl_commit: 8274bfd8743b4c57b172bda45394583589414306
+submission_sha256: ce831bb914c2917dfa3aa1bee7c792e2b7ad9953f27a895e4a1aa25d67338589
+norm_sha256: 76bb755c486de0ce3b6f91e4378d3b06b86a3013863893cb5cb57e7f2a2be54d
+submission_blob: fa8d1da0a06d91f85531897cfa722574bf356738
+lint_warnings: 1
 ---
 
 # marlin-workspace-blocks-per-sm-8
@@ -81,3 +87,35 @@ No companion is warranted. There is no second sub-change (w2 keeps the old works
 - The okc profile merges the two Marlin launches (calls=2). The attempt file should state that the hypothesis's 620/467 us figures are w13+w2 combined, and if nsys grid dimensions are obtainable from the run log, record the w13 grid at bs=1 and bs=256 (132 vs 528 would confirm the regime split).
 - If a verify-shape gain does appear, the next question is not 16-per-SM but why: the only way a larger lock pool speeds the kernel is if the port really does launch more CTAs, and then shared memory per CTA (max_shared_mem / blocks_per_sm - 1024) shrinks, which would change the stage count; check correctness margins on the bs=257 and skewed tests in that case.
 
+## Implementation notes
+
+Implemented 2026-10-24 in the worktree's `muse_moe_w4a16/submission.py` (diff: 1 file, +4/-1).
+
+- `prepare()`: adds `state["workspace_w13"] = marlin_make_workspace(device, max_blocks_per_sm=8)` beside the existing `state["workspace"]` (`max_blocks_per_sm=4`, unchanged). Built once, untimed, depends on nothing in `data`.
+- `kernel_fn()`: the w13 `moe_wna16_marlin_gemm` call passes `state["workspace_w13"]` as its workspace; the w2 call still passes `ws = state["workspace"]` (4 per SM), the built-in per-call control. Nothing else changes: same block_size_m choice, align, caches, flags, silu_and_mul and post-norm sum.
+- No deviation from the spec.
+- Expectation (per the adversarial review): the reviewer expects this to be **inert** on every shape. On their reading of the upstream Marlin MoE runner, the launch grid is sized by the kernel's exec config (`blocks = sms * blocks_per_sm`, with `blocks_per_sm = 1` when `thread_m_blocks > 1`, i.e. bs=128/256, and `min(allow_count, 4)` otherwise), and the workspace is only size-checked against that grid and used as the lock pool. A flat result should be read as "workspace size is not a lever", not as "shared memory caps residency"; do not spend the 2/16 ab-tune unless a verify-shape gain clears the CI.
+- Note for the attempt file: the 620/467 us figures in the hypothesis are w13+w2 combined (the okc profile reports both Marlin launches together, calls=2).
+- Not implemented (suggested follow-up, a separate idea): the reviewer's zero-cost prepare()-time probe, i.e. call `moe_wna16_marlin_gemm` once on dummy bs=4 and bs=128 inputs with a 1-per-SM workspace inside try/except and print the exception text, which would state the required workspace size (= blocks launched) per regime and settle the grid question without a timed run.
+
+## Rules check
+
+Checked against `git -C .worktrees/muse_moe_w4a16/marlin-workspace-blocks-per-sm-8 diff`.
+
+- [x] CUDA-graph capturable: the diff only swaps which prebuilt state tensor the w13 call receives; no `.item()`/`.cpu()`/`synchronize()`/tensor prints, no allocation or control flow on input values added in kernel_fn. (The existing `torch.cuda.synchronize()` is in prepare(), unchanged.)
+- [x] Nothing derived from `data` is cached across calls: the new workspace is built in prepare() from the device only.
+- [x] Weights: unchanged; repacking still in prepare() via prepare_moe_nvfp4_layer_for_marlin, NVFP4 stays NVFP4.
+- [x] Activations BF16 where SGLang keeps BF16: unchanged (n/a for KV cache / queries: no attention in this problem).
+- [x] n/a: attention-key rule does not apply (MoE problem, no attention); routing still computes every local route.
+- [x] No timing patches, harness frames/I/O/secrets, module edits, reference import, subprocesses or network: diff adds none.
+- [x] All work happens inside the timed call; no output caching or replay: the workspace is a zeroed lock pool reset by the kernel, not an output.
+- [x] First line `# okc: problem=muse_moe_w4a16` kept; no triton.autotune added.
+
+Lint (`okc_lint.py ... --problem muse_moe_w4a16`):
+
+```
+warn  host-sync    L110: torch.cuda.synchronize()  (outside kernel_fn's call graph; fine in prepare())
+OK with warnings: /home/user/git/musespark/.worktrees/muse_moe_w4a16/marlin-workspace-blocks-per-sm-8/muse_moe_w4a16/submission.py
+```
+
+`python3 -I -m py_compile`: OK (the `__pycache__` it left was deleted).
