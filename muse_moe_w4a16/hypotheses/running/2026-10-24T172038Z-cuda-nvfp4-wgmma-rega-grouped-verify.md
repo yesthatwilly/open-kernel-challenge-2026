@@ -126,13 +126,19 @@ review: proceed
 status: running
 review_at: 2026-10-24T172632Z
 review_companions: null
-stage: claimed
+stage: implemented
 claimed_at: 2026-10-24T172705Z
 base_sha: 392a74ee4f7b4f552a563e8bf1c922ac4974e1f6
 base_blob: d9a9375ef4721ab9b28cc9d6364c92e67c7ccc59
 branch: hyp/muse_moe_w4a16/cuda-nvfp4-wgmma-rega-grouped-verify
 worktree: .worktrees/muse_moe_w4a16/cuda-nvfp4-wgmma-rega-grouped-verify
 mode: null
+implemented_at: 2026-10-24T174835Z
+impl_commit: c1de32e970df6ea8955a83e66c1eb649c1fb79f4
+submission_sha256: 670bb3e60156fff04919c6794cdfdf40125173b6bda0c0bc462233548cbc3b8c
+norm_sha256: 84aa62a89b2bf35279c80755e2cde9cf335072874bd5e100e4c36a6f4b6f5b83
+submission_blob: 1013fdf3a7a798c37169ad2cffbe041ea908b6e2
+lint_warnings: 21
 ---
 
 # cuda-nvfp4-wgmma-rega-grouped-verify
@@ -190,3 +196,81 @@ No companion is warranted. This is kind: rewrite, judged on its own replaced row
 - The w2 epilogue scatters to cache3[sorted_ids[slot], :]. In swap-AB a thread's fragment is strided along H per token, so this needs the same smem-staged transpose (stmatrix .trans) as w13 to get 256 B coalesced row writes. Please specify it.
 - Pin the busiest-GPU local route counts at bs=128 and bs=256 (the file says ~350-450 at bs=256 but 70-90 us of MMA, which implies ~800). Logging items per shape from the profile run would ground M3.
 
+
+## Implementation notes
+
+Implemented 2026-10-24 in the worktree's muse_moe_w4a16/submission.py only. It is not committed, and nothing has been sent to okc. Diff: 1 file, +1009/-11.
+
+**What changed, and where**
+- New section "CUDA wgmma verify path" (constants `WG_*`, `_WG_CPP`, `_WG_SRC_HEAD`/`_WG_SRC_BODY`, `_wg_wgmma_src`, `_wg_build`, `_wg_tile_expert`/`_wg_bank`, `_wg_chunks`, `_wg_decode_nvfp4`, `_moe_wgmma`, `_wg_self_check`, `_wg_setup`). It sits before `_marlin_layer`. One load_inline TU (`-O3 -arch=sm_90a`, no fast-math) has two instantiations, `wg_kernel<GATED>` (w13+silu, w2), plus `wg_gather_kernel`. The compile seconds are printed.
+- Master's `kernel_fn` body moved verbatim into `_moe_marlin(x, topk_ids, topk_weights, bank, state)`, which returns (out, local_ids, cache2, y). The only edits are reading the three arguments instead of `data[...]`. The launch sequence is unchanged. The new `kernel_fn` takes the wgmma path only when `state["wgmma_ok"]` is set and 128 <= num_tokens <= 512. It branches on nothing else (shape, flag, config key). Every other M runs `_moe_marlin` byte for byte as master.
+- `prepare()` builds the state dict as before, then calls `_wg_setup`. Any exception, a failed build, a failed attribute or occupancy check, a tensor-map encode error, a failed self-check or a set device error word sets wgmma_ok = False, and everything then runs master.
+- Kernel, as specified: 384 threads = 3 warpgroups, launch_bounds(384, 1), grid = SM count, persistent. WG0 runs setmaxnreg.dec 40 and one thread issues the stage: one `cp.async.bulk` 1-D copy of the 9216-byte weight range (L2 evict_first, or evict_normal when the expert has more than one chunk) plus two 2-D TMA boxes (SWIZZLE_128B, box N x 64 bf16) of the xs / h_sorted slab, all on the stage's full mbarrier. WG1/WG2 run setmaxnreg.inc 232. Each owns 64 weight rows: it dequantizes exactly into the register A operand (the sibling's bit trick and e4m3 path, verbatim), issues 8 x `wgmma.mma_async m64nNk16.f32.bf16.bf16` (RS form, K-major SW128 descriptor, +32 B per k16), commits, runs wait_group(1), and releases the previous stage (empty barrier count 8, one arrive per consumer warp).
+- Align: master's expert_map gather + `moe_align_block_size(local_ids, 16, 32)`. Chunks are formed on device in every CTA with a warp-ballot prefix scan over block_experts: maximal runs of one local expert, cut every 8 blocks. Items are ordered (expert, tile, chunk), so a hot expert's chunks read each weight tile back to back. Item to CTA uses a static stride.
+- Epilogues: w13 applies acc * gs_eff, rounds gate and up to bf16, computes silu(gate) * up in fp32, converts to bf16, does stmatrix .x2.trans into a padded staging tile (pitch 144 B, conflict-free), then writes coalesced 16 B rows into h_sorted at the sorted slot. w2 applies acc * gs_eff, converts to bf16, does stmatrix .x4.trans (pitch 272 B), then writes coalesced 256 B rows to cache3[route], real routes only. Master's fused_post_expert_norm_weighted_sum then runs unchanged.
+- Weight bank (prepare, lossless): per expert, per 128-row tile, per 64-k block, one 4608 B record (4096 B codes in the sibling's per-warp, per-lane fragment order + 512 B E4M3 scales), so a BK=128 stage is one contiguous range. A round trip of both parts is asserted exact for every expert. gs_eff = gs * 2^7. The second bank is about 0.9 GiB, and xs/h_sorted scratch is 2 x 64 MiB (8192 rows), allocated in prepare and overwritten every call.
+
+**Deviations from the spec, and why**
+1. **Smem (BLOCKING fix from the review).** All buckets use one ring geometry: BK=128, 4 stages of (9216 B weight + 2 x 16 KB slab boxes) = 41 KB/stage. The N bucket is chosen per item at run time, and all buckets mix inside one launch, so a per-bucket stage depth would mean per-bucket launches. Dynamic smem is 187,392 B (w13) and 203,776 B (w2), plus about 7.8 KB static. Python asserts dynamic + 8 KB <= 227 KB before compiling. After the build it checks dynamic + cudaFuncGetAttributes' static <= 227 KB and occupancy >= 1. The cost is about 36 KB of weight in flight per SM, which is below the spec's 48 KB.
+2. **No split-K (SK=1 everywhere).** The spec lists split-K for w2 at bs=128 in both stage 1 and stage 2. I left it to stage 2 to cut ticket and workspace risk in a blind build. At bs=128 there are about 32 x n_chunks items per launch, so 132 CTAs are still kept busy. The self-check's "tickets are 0" item does not apply.
+3. **Buckets as run-time N.** One kernel template per GEMM, with `switch(bucket)` over 4 `consume_item<NB>` bodies. This gives 2 instantiations rather than 8 and keeps the compile shorter.
+4. **Tensor maps.** `cuTensorMapEncodeTiled` is reached through `cudaGetDriverEntryPoint(ByVersion)` from the runtime, not `-lcuda`. This needs no link against libcuda.so, which judge containers often expose only as libcuda.so.1. The 8 maps (4 buckets x {xs, h_sorted}) are encoded once in prepare over the persistent scratch and passed to the kernel as a `__grid_constant__` struct. A missing entry point or an encode error goes to the master fallback.
+5. **Bounded mbarrier waits.** These were not in the spec. After about 2^31 cycles a wait sets a device error word and stops waiting, so a pipeline bug ends in SELF-CHECK FAILED and the master fallback rather than a 15-minute timeout. The cost is one clock64 read per spin iteration.
+6. **Defensive expert range.** Any block expert outside [0, 32) counts as non-local in the chunking and the gather, and the gather skips SGLang's remote (-1) blocks. Master's log shows SGLang's align buckets remote routes into m-blocks of their own (r_pad > n_pad). As a result the gather copies only local slots.
+7. **"Items per shape"** is logged per synthetic self-check case (local routes, n_padded, chunks, N-bucket histogram, w13/w2 items). kernel_fn cannot log it without a host sync. The self-check's "skewed" routing gives every token the 4 hot local experts.
+8. **Not gated on `_align_self_check`.** As the caller instructed, the path checks only its own outputs (h via the slot permutation, y and out per row, local_ids equality, route coverage, graph replay, fp32 dequant).
+
+**Offline verification (no GPU, nvcc or torch here)**
+- A numpy emulation ran the actual `_wg_code_dims`/`_wg_scale_dims` perms (extracted from the file by AST). It covered the round trip, the per-lane word/nibble/scale extraction, the wgmma m64 A and D fragment layout, the w13 silu and w2 epilogues through an exact stmatrix .trans model and the staging tile, against a dense dequant matmul (gated N=16/32/128, w2 N=16/64). Error was exact (0.0). Every staging and A element was written exactly once.
+- The device chunk/decode logic (transcribed) was checked against `_wg_chunks` on 300 random block_experts layouts, including -1 and out-of-range blocks at either end: chunks are identical, the item order is (expert, tile, chunk), and every local block is covered exactly once.
+- The generated CUDA TU passes `g++ -std=c++17 -fsyntax-only` with CUDA/torch stub headers. This catches C++ errors only, not PTX.
+
+**Uncertainties (unverifiable here)**
+- The PTX forms are untested: wgmma RS m64nNk16 operand order and the SW128 K-major descriptor (LBO 1, SBO 1024, +32 B k-advance), TMA 2-D/bulk syntax, stmatrix .trans, setmaxnreg, createpolicy evict_normal. The cvt.e4m3x2 byte order is inherited from the sibling (also unverified on the judge).
+- ptxas should serialize or extend liveness for A registers rewritten while the previous wgmma group is in flight (wait_group(1)). That is correct either way, but if ptxas serializes, dequant does not overlap the MMA.
+- Producer code at setmaxnreg 40 may spill. The log shows localSizeBytes. This is not fatal.
+- The compile time of the 2-instantiation TU with 4 bucket branches is unknown. The precedent was 41 s.
+- Performance: the slab is re-read from L2 once per weight tile (the reviewer's note), there is no split-K, and weight in flight is 36 KB/SM. M2 is plausible, M3 is uncertain.
+
+**Harvest note.** Read the log tail first. `[cuda-wgmma-verify] PATH CHOSEN = MARLIN`, `SELF-CHECK FAILED` or `load_inline failed` means the run measured master at bs >= 128.
+
+## Rules check
+
+Checked against `git -C .worktrees/muse_moe_w4a16/cuda-nvfp4-wgmma-rega-grouped-verify diff`:
+
+- [x] CUDA-graph capturable. kernel_fn's new path (`_moe_wgmma`) has no `.item()`, `.cpu()`, `synchronize()` or tensor prints. Its allocations (cache3, align buffers) depend only on shape, like master's. Its control flow branches only on num_tokens, the prepare-time flag and the config key. The kernels read n_padded and block_experts on device. Every host sync in the diff is in `_wg_self_check`/`_wg_setup` (prepare). The self-check itself runs each case under torch.cuda.graph capture + 3 replays.
+- [x] Nothing derived from `data` is cached across calls. xs/h_sorted are prepare-allocated scratch, fully overwritten for every slot that is read as a valid token. Stale rows only ever feed masked output columns. The tensor maps describe the scratch, not inputs. Self-check inputs are synthetic (fixed torch.Generator).
+- [x] Weights are repacked losslessly in `prepare()` only. NVFP4 codes and E4M3 scales stay the same bytes, retiled, with round trips asserted exact for every expert. Global scales stay fp32 times 2^7 (exact). The dequant to bf16 inside the kernel is exact (at most 6 significant bits). No BF16 weights are involved.
+- [x] Activations stay BF16 where SGLang keeps BF16: x/xs, h (cache2-equivalent) and y are bf16. Gate and up are rounded to bf16 before silu as Marlin + silu_and_mul do. Accumulation is fp32.
+- [x] n/a: attention. This problem has no attention, KV cache or key skipping.
+- [x] No timing patches, harness frames/I/O/secrets, module edits, reference import, subprocesses or network. load_inline is the same build precedent as muse_attention_decode. The ROUTED experts are computed fully; no route is skipped except remote ones, as master does.
+- [x] All work happens inside the timed call: gather + two GEMMs + post-norm per call, with no output caching or replay. The CUDA graph replays in the self-check are prepare-only on synthetic data.
+- [x] First line `# okc: problem=muse_moe_w4a16` is kept. No triton.autotune. num_tokens < 128 runs `_moe_marlin`, which is master's launch sequence unchanged.
+
+okc_lint output:
+```
+warn  host-sync    L216: "random": [torch.randperm(N_EXPERTS, generator=gen)[:TOP_K].tolist() for _ in range(tokens)],  (outside kernel_fn's call graph; fine in prepare())
+warn  host-sync    L218: [remote_set[i] for i in torch.randperm(len(remote_set), generator=gen)[:5].tolist()]  (outside kernel_fn's call graph; fine in prepare())
+warn  host-sync    L220: "all-remote": [[remote_set[i] for i in torch.randperm(len(remote_set), generator=gen)[:TOP_K].tolist()]  (outside kernel_fn's call graph; fine in prepare())
+warn  host-sync    L239: torch.cuda.synchronize()  (outside kernel_fn's call graph; fine in prepare())
+warn  host-sync    L244: s_ids, b_exp, n_pad = s_ids.tolist(), b_exp.tolist(), int(n_pad.item())  (outside kernel_fn's call graph; fine in prepare())
+warn  host-sync    L245: r_ids, r_exp, r_pad = r_ids.tolist(), r_exp.tolist(), int(r_pad.item())  (outside kernel_fn's call graph; fine in prepare())
+warn  dtype        L1019: q13 = torch.empty((count, rec13), dtype=torch.uint8, device=w13.device)  (allowed only where SGLang does the same)
+warn  dtype        L1020: q2 = torch.empty((count, rec2), dtype=torch.uint8, device=w2.device)  (allowed only where SGLang does the same)
+warn  host-sync    L1110: "random": [torch.randperm(N_EXPERTS, generator=gen)[:TOP_K].tolist() for _ in range(tokens)],  (outside kernel_fn's call graph; fine in prepare())
+warn  host-sync    L1112: "skewed": [local_set[:4] + [others[i] for i in torch.randperm(len(others), generator=gen)[:4].tolist()]  (outside kernel_fn's call graph; fine in prepare())
+warn  host-sync    L1116: "all-remote": [[remote_set[i] for i in torch.randperm(len(remote_set), generator=gen)[:TOP_K].tolist()]  (outside kernel_fn's call graph; fine in prepare())
+warn  host-sync    L1128: torch.cuda.synchronize()  (outside kernel_fn's call graph; fine in prepare())
+warn  host-sync    L1130: used = int(n_pad.item())  (outside kernel_fn's call graph; fine in prepare())
+warn  host-sync    L1144: chunks = _wg_chunks(b_exp[:used // WG_BSM].tolist(), count)  (outside kernel_fn's call graph; fine in prepare())
+warn  host-sync    L1154: torch.cuda.synchronize()  (outside kernel_fn's call graph; fine in prepare())
+warn  host-sync    L1233: torch.cuda.synchronize()  (outside kernel_fn's call graph; fine in prepare())
+warn  host-sync    L1241: torch.cuda.synchronize()  (outside kernel_fn's call graph; fine in prepare())
+warn  host-sync    L1242: err_word = int(state["wg_err"].item())  (outside kernel_fn's call graph; fine in prepare())
+warn  host-sync    L1300: torch.cuda.synchronize()  (outside kernel_fn's call graph; fine in prepare())
+warn  host-sync    L1302: torch.cuda.synchronize()  (outside kernel_fn's call graph; fine in prepare())
+warn  host-sync    L1313: torch.cuda.synchronize()  (outside kernel_fn's call graph; fine in prepare())
+OK with warnings: submission.py
+lint rc=0
+```
+`python3 -I -m py_compile` OK; __pycache__ removed from the worktree.
