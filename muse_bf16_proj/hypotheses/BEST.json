@@ -1,17 +1,17 @@
 {
  "problem": "muse_bf16_proj",
- "job": "9aa98e889be140eb",
- "check_job": "aa3d033c208e4511",
- "mode": "submit",
- "speedup": 1.0307103903232853,
+ "job": "bd9fa14151644cee",
+ "check_job": "bd9fa14151644cee",
+ "mode": "check",
+ "speedup": 1.1510295903072447,
  "ci": [
-  1.015249734468436,
-  1.0461710461781344
+  1.133764146452636,
+  1.1682950341618532
  ],
- "score_us": 4686.864559970921,
- "commit": "f9dc05da5a1e98751f4fbb5a8ebe1b246a4b46b4",
- "submission_blob": "349be31cabc7d9b669b94032ae723c0b0a5e7f71",
- "slug": "router-hilo-at-m8",
- "result": "muse_bf16_proj/hypotheses/done/gain/router-hilo-at-m8.result.json",
- "updated_at": "2026-10-24T032012Z"
+ "score_us": 4196.938150573968,
+ "commit": "dba4ffd5945248c0299bb6953ab4b561d0b3eeeb",
+ "submission_blob": "da55301de1e911aeab09878b0873809f544f436c",
+ "slug": "router-triton-hilo-fused-control-splitk-all-m",
+ "result": "muse_bf16_proj/hypotheses/done/gain/router-triton-hilo-fused-control-splitk-all-m.result.json",
+ "updated_at": "2026-10-24T035938Z"
 }
