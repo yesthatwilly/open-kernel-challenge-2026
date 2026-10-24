@@ -75,13 +75,19 @@ review: proceed
 status: running
 review_at: 2026-10-24T100201Z
 review_companions: null
-stage: claimed
+stage: implemented
 claimed_at: 2026-10-24T100201Z
 base_sha: 6a70bfaac484039ebab2355adee2262c864eee2d
 base_blob: 2e6cb7c89a513e08be4b5e163319fbc34a35f854
 branch: hyp/muse_prefill_layer/experts-triton-w4a16-swapab-reglhs
 worktree: .worktrees/muse_prefill_layer/experts-triton-w4a16-swapab-reglhs
 mode: null
+implemented_at: 2026-10-24T100611Z
+impl_commit: 5f5af1d3fe4b9b1ef686af0d022040134029ee30
+submission_sha256: e495527df275f0bf5997efc21183e2925501631475b079f4417f68f87bb4061f
+norm_sha256: bbf03f9ead2961991b3a05cb17973e42ebf2f60126f59a8f460ab3e67e84d122
+submission_blob: 60abe04615110df3e4a9355a4b984b48b68f85e8
+lint_warnings: 2
 ---
 
 # experts-triton-w4a16-swapab-reglhs
@@ -136,3 +142,40 @@ No companions. This is a rewrite stage judged on the replaced kernel's own profi
 - With soft routing, how many experts exceed 64 rows at turn_1 or 128 at turn_4 (a second, mostly-padded token tile that re-dequantizes)? The routing histogram from one test run would settle whether BLOCK_T 64 is right at T=753.
 - Next-stage candidates if first_turn misses 9 ms: BLOCK_T 256 at first_turn (acc 128x256 fp32 = 128 regs/thread at 8 warps) to halve redundant dequant, or skipping the W2 zero-store for -1 blocks if the weighted sum can ignore them via slot_expert_ids.
 
+
+## Implementation notes
+
+Worktree `.worktrees/muse_prefill_layer/experts-triton-w4a16-swapab-reglhs`, file `muse_prefill_layer/submission.py` only (uncommitted, built on 6a70bfa's stage-1 kernel). Diff: 1 file, +136 / -86.
+
+- `_moe_nvfp4_gemm_kernel` rewritten as swap-AB: `acc[BLOCK_W, BLOCK_T] = tl.dot(w_lo, a_lo, acc); tl.dot(w_hi, a_hi, acc)` per 128-k step. The weight tile ([128, 64] bf16 per half, dequantized in registers) is the LHS. The activation is loaded as two [64, BLOCK_T] slabs, `a_ptr + (offs_token[None, :] // TOP_K) * K + offs_h[:, None]` and the same + 64 (pointer offsets only). The uint8 codes load as [128, 64] in the natural layout, and the bit ops run there. Stage-1 E2M1 to bf16 bit placement, the 2^119 scale bias and `gs * 2^7` in the epilogue are unchanged. No `tl.interleave` / `tl.trans`.
+- Scales (reviewer note): one compact [128, 8] e4m3 tile per 128-k step (8 contiguous bytes per row). It is converted to bf16 `* 2^119` once (8 converts per row instead of 128), split into groups 0..3 / 4..7 with `reshape(BW, 2, 4) -> permute(0, 2, 1) -> split`, and each half is broadcast to [128, 64] with `broadcast_to([BW, 4, 16]) -> reshape`. I could not check whether Triton keeps this broadcast in the dot-operand layout or does it through a layout conversion (see TTGIR below). If the turn_1 row barely moves, look here first.
+- Epilogue and -1 path are transposed: `c_ptr + offs_token[None, :] * N + offs_w[:, None]`, masked by `token_mask[None, :]`. ZERO_NONLOCAL keeps its stage-1 semantics.
+- Configs (`EXPERT_CONFIGS`): T <= 1024 uses BLOCK_T 64 / num_warps 4; above that, BLOCK_T 128 / num_warps 8. Both use BLOCK_W 128, BLOCK_K 128 (`EXPERT_BLOCK_K`, asserted to match the stored nibble order) and num_stages 3. The spec's T <= 4096 and "above" entries were the same config, so they are collapsed into one unbounded entry. Behaviour is identical. `moe_align_block_size` pads to BLOCK_T.
+- prepare(): `_reorder_nibbles` builds NEW uint8 [E, N, K/2] tensors for `bank["w13"]` / `bank["w2"]` (reviewer note: weights["w13"/"w2"] are not mutated). Within each 128-chunk, byte i = code(k0+i) | code(k0+64+i) << 4. The repack runs per expert to bound temporaries. Each expert is checked to invert bit-exactly to the original bytes (lossless permutation, untimed). sf/gs are as stored.
+- `_check_expert_gemms(bank, weights)` now compares the kernel on the reordered bank against `nvfp4.dequantize` of the ORIGINAL packing. The tile is a mid-K 128-aligned chunk (k0 = K/2 + 128) with CHECK_K = 128 one-hot columns over 128 rows: both nibble halves, all 8 scale groups and every N row through the transposed epilogue. It runs for every config, which also warm-compiles them. The -1 block / past-n_padded checks are kept.
+- **Deviation:** the spec says to drop GROUP_SIZE_M and order token tiles fastest. I kept a group swizzle (`GROUP_SIZE_T = 8`) with the token-tile index fastest *within* the group, as stage 1 already had. Token tiles of one (expert, weight tile) still run adjacent, so the weight tile is re-read from L2. Dropping the group entirely would make one wave sweep all ~160 first_turn token tiles at a single weight tile, so the w13 activation (16384 x 8192 bf16 = 256 MiB, larger than L2) would be re-read from DRAM once per weight tile (64x, ~16 GB, ~3.4 ms). At the turn shapes the two orderings read the weights once either way. To follow the spec literally, set GROUP_SIZE_T to a value >= num_pid_t (one group).
+- **TTGIR check (not done):** this node has no torch or Triton (`ModuleNotFoundError: triton`) and no GPU, so I could not compile a BLOCK_T 128 config and look for `ttng.warp_group_dot` with a register LHS (dot_op opIdx 0, parent mma v3). Two things are still open for the run's first_turn row to settle: whether the LHS stays in registers, and whether the scale broadcast stays in registers.
+- Nothing was run. Correctness depends on the prepare() assert at the judge's first compile.
+
+## Rules check
+
+Checked against `git -C .worktrees/muse_prefill_layer/experts-triton-w4a16-swapab-reglhs diff`:
+
+- [x] CUDA-graph capturable: the diff adds no `.item()`/`.cpu()`/`synchronize()`/tensor prints to kernel_fn's path. The only `torch.cuda.synchronize()` is in `_check_expert_gemms`/`prepare` (untimed). Configs branch on `num_tokens` (shape) only. No allocation or control flow on input values (the in-kernel `off_expert == -1` / n_padded early exits are device-side, as in stage 1).
+- [x] Nothing derived from `data` is cached across calls: state gains only the reordered weight banks, built from `weights` in prepare().
+- [x] Weights: repacked losslessly in `prepare()` only. NVFP4 stays NVFP4: the E2M1 codes are permuted within 128-k chunks into a new uint8 tensor of the same shape, inversion is asserted bit-exact per expert, and sf/gs are unchanged. Dequant happens in registers only, with no BF16 weight copy. weights["w13"/"w2"] are not modified.
+- [x] Activations BF16 where SGLang keeps BF16: A tiles are bf16, fp32 accumulate, bf16 output (unchanged). KV cache / query handling are untouched.
+- [x] n/a: attention is untouched by the diff (expert GEMM + prepare only); every key is still attended.
+- [x] No timing patches, harness frames/I/O/secrets, module edits, reference import, subprocesses or network: the diff adds none (imports unchanged).
+- [x] All work happens inside the timed call; no output caching or replay. The GEMMs run every call; only the weight repack is in prepare().
+- [x] No `triton.autotune`; fixed configs from T only. First line `# okc: problem=muse_prefill_layer` kept.
+
+Lint (`okc_lint.py ... --problem muse_prefill_layer`):
+
+```
+warn  host-sync    L411: torch.cuda.synchronize()  (outside kernel_fn's call graph; fine in prepare())
+warn  host-sync    L467: torch.cuda.synchronize()  (outside kernel_fn's call graph; fine in prepare())
+OK with warnings: /home/user/git/musespark/.worktrees/muse_prefill_layer/experts-triton-w4a16-swapab-reglhs/muse_prefill_layer/submission.py
+```
+
+`python3 -I -m py_compile`: OK (`__pycache__` removed).
