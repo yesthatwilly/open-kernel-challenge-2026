@@ -99,9 +99,16 @@ controls_for: null
 rewrite_stage: 1
 replaces: cuBLAS nvjet at m=256 (verify_32) for qkv_gate (nvjet_sm90_tst_96x64_64x10_2x4, 19.4 us), o (nvjet 128x128, 8.3 us), pooler (nvjet 128x64, 29.5 us) and unpooler (nvjet 128x128, 24.6 us)
 review: proceed
-status: queued
+status: running
 review_at: 2026-10-24T172632Z
 review_companions: null
+stage: claimed
+claimed_at: 2026-10-24T172707Z
+base_sha: 18e37900783719c41373a7e04963ba5b66578579
+base_blob: a8bb42ac483318e9fbc84bc7826a27b7a704d1fb
+branch: hyp/muse_bf16_proj/bf16-verify-streamk-cutlass-wgmma-rewrite
+worktree: .worktrees/muse_bf16_proj/bf16-verify-streamk-cutlass-wgmma-rewrite
+mode: null
 ---
 
 # bf16-verify-streamk-cutlass-wgmma-rewrite
