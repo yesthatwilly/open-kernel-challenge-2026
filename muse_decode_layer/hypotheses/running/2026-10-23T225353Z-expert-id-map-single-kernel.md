@@ -36,9 +36,16 @@ priority: 2
 kind: primary
 controls_for: null
 review: proceed
-status: queued
+status: running
 review_at: 2026-10-24T032546Z
 review_companions: null
+stage: claimed
+claimed_at: 2026-10-24T032546Z
+base_sha: 1e0262054793e9b504601277f857693e70332c70
+base_blob: 6884d26a928d1de1b07bf8d28e1be4e53dfdcfc5
+branch: hyp/muse_decode_layer/expert-id-map-single-kernel
+worktree: .worktrees/muse_decode_layer/expert-id-map-single-kernel
+mode: null
 ---
 
 # expert-id-map-single-kernel
