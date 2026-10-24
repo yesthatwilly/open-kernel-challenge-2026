@@ -35,10 +35,10 @@ priority: 3
 kind: control
 controls_for: unpooler-full-triton-skinny-m32
 review: proceed
-status: running
+status: done
 review_at: 2026-10-24T052937Z
 review_companions: null
-stage: dispatched
+stage: harvested
 claimed_at: 2026-10-24T052937Z
 base_sha: fbfb795472c2ae79a1b093a08fb5e42d1867da77
 base_blob: 29884ed7c43020beb1ad7c469eafaa8b9f362470
@@ -55,6 +55,13 @@ attempt_file: 2026-10-24T053058Z-check-unpooler-full-triton-skinny-m32-control-b
 prepared_at: 2026-10-24T053059Z
 job: 09abdd472faa4dce
 dispatched_at: 2026-10-24T053108Z
+outcome: neutral
+verdict_detail: within-ci
+speedup: 0.9990031805974584
+speedup_ci: [0.9840181328884965, 1.01398822830642]
+harvested_at: 2026-10-24T071028Z
+best_at_harvest: 1.1510295903072447
+promotion: null
 ---
 
 # unpooler-full-triton-skinny-m32-control-blockm16-all-m
@@ -133,3 +140,53 @@ CLEAN: /home/user/git/musespark/.worktrees/muse_bf16_proj/unpooler-full-triton-s
 ```
 
 `python3 -I -m py_compile`: OK; `__pycache__` removed from the worktree.
+
+## Result
+
+- job `09abdd472faa4dce` (check), status done, passed True, tests 9/9
+- speedup 0.9990x, 95% CI [0.9840, 1.0140], score 4835.620240078633 µs vs SGLang 4830.8 µs
+- best at harvest: {"speedup": 1.1510295903072447, "ci": [1.133764146452636, 1.1682950341618532], "job": "bd9fa14151644cee"}; base result: muse_bf16_proj/hypotheses/done/neutral/unpooler-full-triton-skinny-m32.result.json
+- **outcome: neutral** (within-ci)
+- files: `muse_bf16_proj/hypotheses/done/neutral/unpooler-full-triton-skinny-m32-control-blockm16-all-m.result.json`, `muse_bf16_proj/hypotheses/done/neutral/unpooler-full-triton-skinny-m32-control-blockm16-all-m.patch`; branch `hyp/muse_bf16_proj/unpooler-full-triton-skinny-m32-control-blockm16-all-m`
+
+## Attribution
+
+| shape | w | base µs | hyp µs | delta | verdict |
+|---|---|---|---|---|---|
+| layer=qkv_gate load=decode_1 m=1 | 62 | 14.1 | 14.25 | 0.9743 | flat |
+| layer=o load=decode_1 m=1 | 62 | 7.11 | 7.24 | 0.9708 | flat |
+| layer=pooler load=decode_1 m=1 | 62 | 20.23 | 20.26 | 0.9946 | flat |
+| layer=unpooler load=decode_1 m=1 | 62 | 6.78 | 7.14 | 0.9807 | flat |
+| layer=router load=decode_1 m=1 | 62 | 10.22 | 10.53 | 0.974 | flat |
+| layer=qkv_gate load=decode_16 m=16 | 62 | 13.95 | 14.7 | 0.9565 | lost |
+| layer=o load=decode_16 m=16 | 62 | 6.87 | 6.93 | 0.9781 | flat |
+| layer=pooler load=decode_16 m=16 | 62 | 20.44 | 20.62 | 0.9972 | flat |
+| layer=unpooler load=decode_16 m=16 | 62 | 17.97 | 18.37 | 0.9812 | flat |
+| layer=router load=decode_16 m=16 | 62 | 14.78 | 14.87 | 0.9971 | flat |
+| layer=qkv_gate load=decode_32 m=32 | 62 | 14.04 | 14.21 | 1.0058 | flat |
+| layer=o load=decode_32 m=32 | 62 | 6.7 | 7.01 | 0.9826 | flat |
+| layer=pooler load=decode_32 m=32 | 62 | 24.65 | 24.61 | 1.008 | flat |
+| layer=unpooler load=decode_32 m=32 | 62 | 19.27 | 20.81 | 0.9355 | lost |
+| layer=router load=decode_32 m=32 | 62 | 15.19 | 15.53 | 0.9926 | flat |
+| layer=qkv_gate load=verify_1 m=8 | 62 | 13.93 | 13.79 | 1.0101 | flat |
+| layer=o load=verify_1 m=8 | 62 | 6.41 | 6.64 | 0.9793 | flat |
+| layer=pooler load=verify_1 m=8 | 62 | 20.36 | 20.36 | 1.0053 | flat |
+| layer=unpooler load=verify_1 m=8 | 62 | 7.13 | 7.02 | 1.0158 | flat |
+| layer=router load=verify_1 m=8 | 62 | 26.31 | 26.24 | 1.004 | flat |
+| layer=qkv_gate load=verify_16 m=128 | 62 | 17.1 | 16.59 | 1.0225 | flat |
+| layer=o load=verify_16 m=128 | 62 | 7.81 | 7.55 | 1.0525 | gained |
+| layer=pooler load=verify_16 m=128 | 62 | 25.54 | 24.82 | 0.993 | flat |
+| layer=unpooler load=verify_16 m=128 | 62 | 19.87 | 19.69 | 1.0053 | flat |
+| layer=router load=verify_16 m=128 | 62 | 16.54 | 16.42 | 1.0044 | flat |
+| layer=qkv_gate load=verify_32 m=256 | 62 | 19.51 | 19.7 | 1.0011 | flat |
+| layer=o load=verify_32 m=256 | 62 | 9.22 | 9.35 | 0.9948 | flat |
+| layer=pooler load=verify_32 m=256 | 62 | 30.63 | 31.0 | 0.9947 | flat |
+| layer=unpooler load=verify_32 m=256 | 62 | 24.06 | 24.42 | 1.0091 | flat |
+| layer=router load=verify_32 m=256 | 62 | 17.44 | 17.79 | 0.9972 | flat |
+
+gained on o verify_16; lost on qkv_gate decode_16; unpooler decode_32. Expected hit: 3/4. Noise ±1.5%.
+
+## Follow-ups
+
+- within-ci: the change is not proven either way; a stacked hypothesis (`depends_on: unpooler-full-triton-skinny-m32-control-blockm16-all-m`) that adds a further change in the same area is the only way to learn more (identical code is never re-run).
+
