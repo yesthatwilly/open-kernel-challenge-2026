@@ -73,9 +73,10 @@ speedup: 1.2535643764852882
 speedup_ci: [1.2347609108380089, 1.2723678421325675]
 harvested_at: 2026-10-24T124010Z
 best_at_harvest: 1.1297159216968498
-promotion: merged
+promotion: superseded
 promotion_commit: cefc282ebdcb22f4a4e60d2acf151b862ee831ad
 promotion_attempt: 2026-10-24T132213Z-submit-marlin-block-m-two-smaller-on-postnorm.md
+promotion_reason: best is now 1.3075759186466844
 ---
 
 # marlin-block-m-two-smaller-on-postnorm
