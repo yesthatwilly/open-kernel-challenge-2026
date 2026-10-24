@@ -89,7 +89,7 @@ review: proceed
 status: running
 review_at: 2026-10-24T183433Z
 review_companions: null
-stage: implemented
+stage: dispatched
 claimed_at: 2026-10-24T183433Z
 base_sha: c449be5350fc7f87e9daa73bc83715a041cff19e
 base_blob: 635cfee3ac2c3f7c66840b8c8a082cad2fa41a68
@@ -104,6 +104,8 @@ submission_blob: 078e0578581a7a44fe8a8e9ba217559c9e4e4cf5
 lint_warnings: 11
 attempt_file: 2026-10-24T184732Z-submit-sliding-attn-block-triton-gqa-fused-normgate.md
 prepared_at: 2026-10-24T184732Z
+job: 78d8d7bdec55491c
+dispatched_at: 2026-10-24T184743Z
 ---
 
 # sliding-attn-block-triton-gqa-fused-normgate
