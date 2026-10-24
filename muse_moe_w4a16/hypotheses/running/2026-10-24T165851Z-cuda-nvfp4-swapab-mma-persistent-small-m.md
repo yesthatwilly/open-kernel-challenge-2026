@@ -118,11 +118,11 @@ base_blob: d9a9375ef4721ab9b28cc9d6364c92e67c7ccc59
 branch: hyp/muse_moe_w4a16/cuda-nvfp4-swapab-mma-persistent-small-m
 worktree: .worktrees/muse_moe_w4a16/cuda-nvfp4-swapab-mma-persistent-small-m
 mode: null
-implemented_at: 2026-10-24T171427Z
-impl_commit: b65c9aabd73e6480ee59cd3164c307aece6e622d
-submission_sha256: e2f8b43f8127ffe67d6835f756cc5b03009f37f999d8f4737df0189a76fee325
-norm_sha256: 4d6c01495799a459fbab53472840a1cbe587cd119add48667a6d9b690d4afb5d
-submission_blob: 79debc5dc69cde3f15d3087b59ed8f063b9debd9
+implemented_at: 2026-10-24T172804Z
+impl_commit: f8b3f7230f2656a4143b6a87bb6b8dc1be0b5e49
+submission_sha256: 80333ab54210bc3d700c08f1b58142f97338c6d78f28621124fbf90a5f7c2a92
+norm_sha256: dec0d5073345369630d930643912e31a595bde13dabf1c5efb9e35e0daef1252
+submission_blob: 7d31b758c60017e045f6e0f75d2e437931ea34b0
 lint_warnings: 20
 ---
 
@@ -203,6 +203,9 @@ Implemented 2026-10-24 in the worktree's `muse_moe_w4a16/submission.py` only (un
 - **Refactor:** kernel_fn's body moved into `_moe(x, topk_ids, topk_weights, bank, state, use_cuda)` so the self-check can run both paths and see the intermediates. The `use_cuda=False` branch is master's code verbatim, the same launches in the same order, so num_tokens > 32 and the fallback are byte for byte. kernel_fn branches only on num_tokens <= 32 and the prepare-time `cuda_ok` flag (plus the bank key).
 - **Offline verification (no GPU here):** a numpy emulation ran the actual retiling ops, the kernel's per-lane word/nibble extraction with the bit trick, scale bytes, slab swizzle with ldmatrix x4 semantics, mma m16n8k16 fragment definitions, split-K summation and the epilogue row/token mapping. It covered w2 NT1 SK2, w13 NT1 SK1, w13 NT2 and w2 NT4 SK2 with partial m-blocks and sentinels, against a dense dequant matmul. Max rel err was about 1e-15 in every config, which confirms both the indexing and the exactness. Not verifiable offline: PTX syntax and compile, the `cvt.e4m3x2` byte order (taken from the muse_attention_decode precedent), and performance.
 - **Deviations:** the gate/up interleave is per warp, not per 128-row half, per review fix (2). The spill is non-fatal per the review. `blocks_cap = 32` local experts is safe because BSM >= M and topk ids are distinct, so each expert takes at most one m-block; the clamp is a guard. No other new ideas were added.
+
+### Pre-flight fix (2026-10-24, after an Opus audit)
+The CUDA path's gate raised whenever `_align_self_check` returned a non-zero count, and its capacity message (L242) was counted as a hard mismatch. Capacity differs from SGLang by design: master's logs show 60/60 mismatches, all capacity. So the path would always have chosen MARLIN. That message is now tagged `(info)`. One-line change; nothing else moved.
 
 ## Rules check
 
