@@ -45,7 +45,8 @@ priority: 4
 kind: primary
 controls_for: null
 review: required
-status: queued
+status: hold
+hold_reason: "moot under master 1.269x (sweep by the attention minter): stacks on triton-window-attention-sliding (held); same measured outcome"
 ---
 
 # fused-sliding-preattn-into-window-kernel
