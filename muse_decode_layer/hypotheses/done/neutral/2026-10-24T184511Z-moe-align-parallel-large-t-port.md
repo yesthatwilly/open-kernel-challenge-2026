@@ -45,10 +45,10 @@ priority: 5
 kind: primary
 controls_for: null
 review: proceed
-status: running
+status: done
 review_at: 2026-10-24T185035Z
 review_companions: null
-stage: dispatched
+stage: harvested
 claimed_at: 2026-10-24T185036Z
 base_sha: 9f6e88b7296c037ca7b6ce685ffdaa4fa7303553
 base_blob: 3d70ae6e2de0d48c4a4f2a469ced8234f5348182
@@ -65,6 +65,13 @@ attempt_file: 2026-10-24T231252Z-check-moe-align-parallel-large-t-port.md
 prepared_at: 2026-10-24T231252Z
 job: b42e33406f2d4978
 dispatched_at: 2026-10-24T231312Z
+outcome: neutral
+verdict_detail: unproven-vs-best
+speedup: 1.2433040573734646
+speedup_ci: [1.2246544965128627, 1.2619536182340665]
+harvested_at: 2026-10-24T232004Z
+best_at_harvest: 1.228328123558382
+promotion: null
 ---
 
 # moe-align-parallel-large-t-port
@@ -125,3 +132,35 @@ Worktree muse_decode_layer/submission.py only (+188/-1). Added ALIGN_PAR_* const
 - [x] All work happens inside the timed call; no output caching or replay (align computed per call from topk_ids).
 
 okc_lint: "OK with warnings: muse_decode_layer/submission.py" (only host-sync warnings, all in prepare()-time code, noted as fine). py_compile clean, __pycache__ removed.
+
+## Result
+
+- job `b42e33406f2d4978` (check), status done, passed True, tests 13/13
+- speedup 1.2433x, 95% CI [1.2247, 1.2620], score 18193.699172659657 µs vs SGLang 22620.3 µs
+- best at harvest: {"speedup": 1.228328123558382, "ci": [1.2099032017050062, 1.2467530454117577], "job": "81ee6714b7614a99"}; base result: muse_decode_layer/hypotheses/done/gain/small-t-launch-minimal-dense-chain-pdl.result.json
+- **outcome: neutral** (unproven-vs-best)
+- files: `muse_decode_layer/hypotheses/done/neutral/moe-align-parallel-large-t-port.result.json`, `muse_decode_layer/hypotheses/done/neutral/moe-align-parallel-large-t-port.patch`; branch `hyp/muse_decode_layer/moe-align-parallel-large-t-port`
+
+## Attribution
+
+| shape | w | base µs | hyp µs | delta | verdict |
+|---|---|---|---|---|---|
+| batch=1 ctx=80000 dist=soft layer=sliding load=decode_1 page=1 repeats=60 | 46 | 132.74 | 133.28 | 1.0014 | flat |
+| batch=1 ctx=80000 dist=soft layer=full load=decode_1 page=1 repeats=60 | 16 | 142.57 | 143.09 | 1.0052 | flat |
+| batch=16 ctx=80000 dist=soft layer=sliding load=decode_16 page=1 spread=agentic | 46 | 217.06 | 207.0 | 1.0052 | flat |
+| batch=16 ctx=80000 dist=soft layer=full load=decode_16 page=1 spread=agentic | 16 | 347.51 | 350.26 | 0.9931 | flat |
+| batch=32 ctx=80000 dist=soft layer=sliding load=decode_32 page=1 spread=agentic | 46 | 246.99 | 250.58 | 1.0015 | flat |
+| batch=32 ctx=80000 dist=soft layer=full load=decode_32 page=1 spread=agentic | 16 | 534.98 | 524.93 | 1.0115 | flat |
+| batch=1 ctx=80000 dist=soft layer=sliding load=verify_1 page=1 q_len=8 | 46 | 186.48 | 180.76 | 1.0088 | flat |
+| batch=1 ctx=80000 dist=soft layer=full load=verify_1 page=1 q_len=8 | 16 | 195.92 | 198.8 | 0.9899 | flat |
+| batch=16 ctx=80000 dist=soft layer=sliding load=verify_16 page=1 q_len=8 spread=agentic | 46 | 447.55 | 433.91 | 1.0341 | gained |
+| batch=16 ctx=80000 dist=soft layer=full load=verify_16 page=1 q_len=8 spread=agentic | 16 | 599.37 | 582.55 | 1.0463 | gained |
+| batch=32 ctx=80000 dist=soft layer=sliding load=verify_32 page=1 q_len=8 spread=agentic | 46 | 626.79 | 587.8 | 1.0283 | flat |
+| batch=32 ctx=80000 dist=soft layer=full load=verify_32 page=1 q_len=8 spread=agentic | 16 | 910.91 | 867.34 | 1.0152 | flat |
+
+gained on sliding verify_16; full verify_16. Expected hit: 3/4. Noise ±1.5%.
+
+## Follow-ups
+
+- unproven-vs-best: the change is not proven either way; a stacked hypothesis (`depends_on: moe-align-parallel-large-t-port`) that adds a further change in the same area is the only way to learn more (identical code is never re-run).
+
