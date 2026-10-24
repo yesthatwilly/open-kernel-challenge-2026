@@ -48,13 +48,19 @@ review: proceed
 status: running
 review_at: 2026-10-24T183956Z
 review_companions: null
-stage: claimed
+stage: implemented
 claimed_at: 2026-10-24T183957Z
 base_sha: 52cd6c64bc16f41452b2a54313347fee80b36ffe
 base_blob: 108d36e9f2266fc88531dd6ff0329a847c882013
 branch: hyp/muse_moe_w4a16/align-parallel-from-17-tokens
 worktree: .worktrees/muse_moe_w4a16/align-parallel-from-17-tokens
 mode: null
+implemented_at: 2026-10-24T184142Z
+impl_commit: c9c2db8910c72640ae840940ba5b1aa8b1d990ea
+submission_sha256: d2afd64da35c3aa435424ca897931a56fc95a5f2700e80c1dbd379a28c12f03b
+norm_sha256: 093861823c70c0d3f9345734853027090106d860ec4f44091652f707c1d52be0
+submission_blob: b91c76ef847585a79561eb75a6c240987c726531
+lint_warnings: 8
 ---
 
 # align-parallel-from-17-tokens
@@ -100,3 +106,31 @@ No companion needed. Both arms already exist on master and are profiled at bs=32
 - Do 29..32 (bsm 16) and 17..28 (bsm 8) behave differently on the parallel kernel? Only bs=32 is scored, so bsm=8 timing stays unmeasured.
 - If marlin-two-class-block-m-decode32 or the swap-AB rewrites land, block_size_m at bs=32 changes (to 32, or 8*NT). The BSM=32 parallel variant is already compiled, but the win should be re-read on the new base.
 
+
+## Implementation notes
+
+In the worktree's muse_moe_w4a16/submission.py: ALIGN_FUSED_MAX_TOKENS 32 -> 16 with its comment extended; _align_parallel warm-up bsm loop in prepare() now (8, 16, 32, 48, 64), per the adversarial review (17..28 tokens get block_size_m 8), comment updated. Nothing else touched (stale "tokens <= 32" wording in the _align_self_check docstring and the "tokens > 32" comment left as is to keep the diff minimal; the self-check logic keys off the constant). Dummy warm-up ids use ALIGN_FUSED_MAX_TOKENS + 1 = 17 tokens; n is a runtime arg so the compiled variant is the same.
+
+## Rules check
+
+- [x] CUDA-graph capturable: diff touches only a constant and the prepare() warm-up tuple; no syncs/allocs added to kernel_fn.
+- [x] Nothing derived from `data` is cached across calls: no state added.
+- [x] Weights: n/a: no weight change.
+- [x] Activations BF16 / KV FP8 / queries: n/a: untouched.
+- [x] Attention sees every key: n/a: untouched.
+- [x] No timing patches, harness I/O, module edits, reference import, subprocesses or network: diff has none.
+- [x] All work inside the timed call; no output caching or replay: align kernels run per call as before.
+
+Lint (okc_lint.py): OK with warnings (8 host-sync warnings, all in prepare()/self-check, outside kernel_fn's call graph). py_compile OK; __pycache__ removed.
+
+## Pre-flight audit
+
+Audited 2026-10-24 by an opus subagent (read-only; no GPU on node). **Verdict: dispatch.** No fixes.
+
+- Diff is exactly the spec: ALIGN_FUSED_MAX_TOKENS 32 -> 16 plus BSM=8 added to the _align_parallel warm-up (the review's request). kernel_fn and the self-check key off the constant; no other area touched.
+- Gates: none. The self-check only prints (never gates), so the new path cannot be silently disabled. At bs=32, _block_size_m(32, 32) = 16, a variant compiled in prepare(); topk_ids is int32 per Inputs, matching the int32 warm-up dummies, and n/cap/n_blocks are do_not_specialize, so no first-call JIT at any scored/test shape (1, 4, 8, 16, 32, 33, 128, 256, 257). The only new user is bs=32.
+- Correctness: _align_parallel at n=256, bsm=16 is the same code path and same variant already exercised at T=33 (n=264, bsm=16, one CHUNK=512 pass); cap = 736 gives a 2-chunk tail loop on the last program, masked to [total, cap). Output buffers are sized identically by both wrappers. The self-check now also verifies T=32 on the parallel kernel.
+- Rules: unchanged call graph shape (host branch on num_tokens only, no syncs/allocs added in kernel_fn, nothing cached from data). okc_lint OK with warnings (prepare()/self-check only); py_compile OK; __pycache__ removed.
+- Fallback: none added; like master's >32 path, a compile error in prepare() would raise rather than fall back (warm-up of BSM 16 already runs on master, so no new build risk beyond the BSM=8 variant, which uses PAD_BLOCK=8 and is unused at scored shapes).
+
+Residual risk: the bs=32 gain (~1.5 us of ~70 us) is below headline noise; only the per-kernel align row can read it.
