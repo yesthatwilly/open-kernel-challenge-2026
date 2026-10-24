@@ -1,0 +1,734 @@
+diff --git a/muse_bf16_proj/submission.py b/muse_bf16_proj/submission.py
+index a8bb42a..a34e409 100644
+--- a/muse_bf16_proj/submission.py
++++ b/muse_bf16_proj/submission.py
+@@ -35,8 +35,19 @@ Swap-AB at 17 <= m <= 32 (hypothesis bf16-m32-swapab-wgmma-triton): all four bf1
+ _bf16_swapab_kernel, 64 weight rows on tl.dot's M side and the (<= 32) tokens on N, so Triton
+ can emit wgmma m64n32k16; pooler split-K 2, qkv_gate split-K 4 (same ticket reduce, transposed
+ workspace), unpooler / o full K. Every other shape keeps its path above.
++
++Lossless-compressed weight stream at 1 <= m <= 32 (hypothesis bf16-lossless-exp4-weight-stream-
++rewrite, stage 1): qkv_gate, o, pooler and unpooler (full and its n == 1024 slice) run ONE CUDA
++kernel (_lossless_swapab_kernel<NT>, load_inline at import) over a copy of the bf16 weight
++compressed losslessly in prepare(): per 64-K group a max-exponent byte, per element sign|mantissa
++(8 bits) and a 4-bit exponent offset, escape groups as raw bf16 in a side table (~12.2 bits per
++element). It dequantizes in registers only (bit-identical weights; no decompressed copy is ever
++written) and feeds mma.sync swap-AB. A layer takes this path only after an exact round trip
++through the kernel's own decoder, the ratio / escape gates and a GEMM self-check, all in prepare();
++otherwise it keeps the paths above. The original weights stay in state untouched.
+ """
+ 
++import time
+ from typing import TypedDict
+ 
+ import torch
+@@ -651,6 +662,689 @@ def _swapab_prepare(state: dict) -> None:
+     state["swapab_cnt_qkv"].zero_()
+ 
+ 
++# --- (6) all four bf16 layers, 1 <= m <= 32: lossless-compressed weight stream ---------------
++# (hypothesis bf16-lossless-exp4-weight-stream-rewrite, rewrite stage 1)
++#
++# CODEC (built in prepare() from the weights alone; lossless for ANY bf16 input). Each weight row
++# is cut into groups of 64 consecutive K elements. Per group: e_ref = the max exponent field (one
++# header byte). Per element: one SM byte = sign << 7 | mantissa7, and a 4-bit code c with
++# exponent = e_ref - c (c in 0..15). A group holding any element the code cannot express (exponent
++# field 0, i.e. a zero or subnormal; 255, i.e. Inf/NaN; or e_ref - e > 15) is an ESCAPE group: its
++# header is the sentinel 255 (never a valid e_ref, since a valid group has no Inf/NaN), its 64 raw
++# bf16 go to a side table, and its 16-bit side-table slot is stored in the group's own (otherwise
++# unused) SM bytes, so escapes cost no per-group index. The gate caps escapes at 2.5% of groups,
++# which also keeps every slot below 65536.
++#
++# LAYOUT (Marlin-style, mma.sync A-fragment order). Per (16-row tile rt, 64-K group kg) one
++# 1536-byte chunk = [3][32 lanes][16 B]: lane l's SM bytes 0-15, its SM bytes 16-31, its 16 nibble
++# bytes; the 16 headers of the tile's rows sit in a separate [rt][kg][16] array. Lane l (g = l/4,
++# t = l%4) holds, for k16 step s and A register r (row g + 8*(r&1), k 16s + 8*(r>>1) + 2t + {0,1}),
++# pair p = 4s + r: SM bytes 2p, 2p+1 and nibble word s, bits 4r (low k) and 16 + 4r (high k).
++#
++# DEQUANT in registers, integer only (no lookup table, so no bank conflicts):
++#   w2 = (byte_perm(sm_word, sel) & 0x807F807F) | (e_ref * 0x00800080 - ((nib >> 4r) & 0x000F000F) << 7)
++# i.e. 1 PRMT + 2 for the code + 1 IADD + 1 LOP3 per bf16 pair; e_ref - c >= 1 always, so the
++# subtraction never borrows across the halves.
++#
++# KERNEL (_lossless_swapab_kernel<NT>, NT = 8 / 16 / 32 token columns): swap-AB mma.sync
++# m16n8k16 bf16 -> fp32, the dequantized weight as A (16 rows per warp, 4 warps = 64 rows per CTA),
++# x^T as B through ldmatrix from an XOR-swizzled smem tile (tokens >= m zero-filled). A cp.async.cg
++# ring of 8 stages, each 128 K = 12288 B compressed weight + 128 B headers + NT x 256 B of x.
++# Work items (one wave, 1 CTA/SM): pooler 64 x split 2, unpooler 128 x 1, o 128 x 1, qkv_gate 36 x 3
++# (K stages 21/21/22), unpooler slice (n == 1024, m <= 8) 16 x 8. Split-K uses the gemv skeleton's
++# ticket reduce on this path's own workspace / counters.
++LL_GROUP_K = 64
++LL_CHUNK = 1536
++LL_HDR = 16
++LL_MAX_M = 32
++LL_STAGES = 8              # must match STAGES in the CUDA source
++LL_MAX_RATIO = 0.80        # compressed bytes / raw bytes, else the layer keeps master
++LL_MAX_ESC = 0.025         # escape-group fraction, else the layer keeps master
++LL_WEIGHTS = {             # weight name -> (N, K) it must have
++    "qkv_gate": (2304, 8192),
++    "o":        (8192, 1024),
++    "pooler":   (4096, 8192),
++    "unpooler": (8192, 4096),
++}
++# route -> (weight name, N, K, SPLIT_K, max m); static, from cfg layer / n only.
++LL_CFG = {
++    "qkv_gate":       ("qkv_gate", 2304, 8192, 3, LL_MAX_M),
++    "o":              ("o",        8192, 1024, 1, LL_MAX_M),
++    "pooler":         ("pooler",   4096, 8192, 2, LL_MAX_M),
++    "unpooler":       ("unpooler", 8192, 4096, 1, LL_MAX_M),
++    "unpooler_slice": ("unpooler", 1024, 4096, 8, 8),
++}
++LL_CHECK_MS = (1, 5, 7, 8, 9, 16, 17, 32)
++
++_LL_CPP = r"""
++#include <torch/extension.h>
++void lossless_gemm(torch::Tensor x, torch::Tensor payload, torch::Tensor hdr, torch::Tensor side,
++                   torch::Tensor out, torch::Tensor ws, torch::Tensor cnt,
++                   int64_t n, int64_t k, int64_t split);
++void lossless_decode(torch::Tensor payload, torch::Tensor hdr, torch::Tensor side, torch::Tensor out,
++                     int64_t n, int64_t k);
++torch::Tensor lossless_attrs();
++"""
++
++_LL_CUDA = r"""
++#include <torch/extension.h>
++#include <ATen/cuda/CUDAContext.h>
++#include <c10/cuda/CUDAException.h>
++#include <cuda_bf16.h>
++#include <cstdint>
++
++namespace {
++
++constexpr int THREADS = 128;                 // 4 warps x 16 weight rows
++constexpr int BLOCK_N = 64;                  // weight rows per CTA
++constexpr int GROUP_K = 64;                  // codec group
++constexpr int BLOCK_K = 128;                 // K per pipeline stage = 2 groups
++constexpr int CHUNK = 1536;                  // compressed bytes per (16-row tile, group)
++constexpr int HDR = 16;                      // header bytes per (16-row tile, group)
++constexpr int MAXM = 32;                     // workspace rows
++constexpr int STAGES = 8;
++constexpr int W_STAGE = 4 * 2 * CHUNK;       // 12288: 4 warps x 2 groups
++constexpr int H_STAGE = 4 * 2 * HDR;         // 128
++constexpr int X_ROW = BLOCK_K * 2;           // 256 B = 16 chunks of 16 B per token row
++template <int NT> struct Cfg {
++  static constexpr int X_STAGE = NT * X_ROW;
++  static constexpr int STAGE = W_STAGE + H_STAGE + X_STAGE;   // NT 32: 20608
++  static constexpr int SMEM = STAGES * STAGE;                 // NT 32: 164864 <= 232448
++};
++
++__device__ __forceinline__ uint32_t smem_u32(const void* p) {
++  return static_cast<uint32_t>(__cvta_generic_to_shared(p));
++}
++__device__ __forceinline__ void cp_async16(uint32_t dst, const void* src, int src_bytes) {
++  asm volatile("cp.async.cg.shared.global [%0], [%1], 16, %2;\n" :: "r"(dst), "l"(src), "r"(src_bytes) : "memory");
++}
++__device__ __forceinline__ void cp_commit() { asm volatile("cp.async.commit_group;\n" ::: "memory"); }
++template <int N>
++__device__ __forceinline__ void cp_wait() { asm volatile("cp.async.wait_group %0;\n" :: "n"(N) : "memory"); }
++__device__ __forceinline__ void ldsm_x4(uint32_t (&r)[4], uint32_t addr) {
++  asm volatile("ldmatrix.sync.aligned.m8n8.x4.shared.b16 {%0,%1,%2,%3}, [%4];\n"
++               : "=r"(r[0]), "=r"(r[1]), "=r"(r[2]), "=r"(r[3]) : "r"(addr));
++}
++// D = A B + D, m16n8k16, A row-major bf16 (4 regs), B col-major bf16 (2 regs), fp32 accumulate.
++__device__ __forceinline__ void mma_bf16(float (&c)[4], const uint32_t (&a)[4], uint32_t b0, uint32_t b1) {
++  asm volatile("mma.sync.aligned.m16n8k16.row.col.f32.bf16.bf16.f32 {%0,%1,%2,%3}, {%4,%5,%6,%7}, {%8,%9}, {%0,%1,%2,%3};\n"
++               : "+f"(c[0]), "+f"(c[1]), "+f"(c[2]), "+f"(c[3])
++               : "r"(a[0]), "r"(a[1]), "r"(a[2]), "r"(a[3]), "r"(b0), "r"(b1));
++}
++
++// One lane's share of one (16-row tile, 64-K group): 32 SM bytes, 16 nibble bytes, its two rows'
++// headers (rows g and g + 8).
++struct Grp {
++  uint32_t sm[8];
++  uint32_t nib[4];
++  uint32_t e2[2];    // e_ref * 0x00800080: e_ref in both bf16 exponent fields
++  uint32_t slot[2];  // side-table slot (escape groups only), from the group's own SM bytes
++  bool esc[2];
++};
++
++__device__ __forceinline__ void load_grp(Grp& G, const uint8_t* chunk, const uint8_t* hdr, int lane) {
++  const uint4 v0 = reinterpret_cast<const uint4*>(chunk)[lane];
++  const uint4 v1 = reinterpret_cast<const uint4*>(chunk)[32 + lane];
++  const uint4 v2 = reinterpret_cast<const uint4*>(chunk)[64 + lane];
++  G.sm[0] = v0.x; G.sm[1] = v0.y; G.sm[2] = v0.z; G.sm[3] = v0.w;
++  G.sm[4] = v1.x; G.sm[5] = v1.y; G.sm[6] = v1.z; G.sm[7] = v1.w;
++  G.nib[0] = v2.x; G.nib[1] = v2.y; G.nib[2] = v2.z; G.nib[3] = v2.w;
++  const int g = lane >> 2;
++  const uint32_t e0 = hdr[g], e1 = hdr[g + 8];
++  G.e2[0] = e0 * 0x00800080u;
++  G.e2[1] = e1 * 0x00800080u;
++  G.esc[0] = (e0 == 255u);
++  G.esc[1] = (e1 == 255u);
++  // SM word 0 = pair 0 (row g: bytes 0, 1) and pair 1 (row g + 8: bytes 2, 3).
++  G.slot[0] = G.sm[0] & 0xFFFFu;
++  G.slot[1] = G.sm[0] >> 16;
++}
++
++// A registers of k16 step s (0..3, compile-time after unrolling) of a group. Register r: row
++// g + 8 * (r & 1), k 16 s + 8 * (r >> 1) + 2 t + {0, 1}; low half = lower k.
++__device__ __forceinline__ void decode_step(const Grp& G, int s, int tig, const uint32_t* __restrict__ side,
++                                            uint32_t (&a)[4]) {
++#pragma unroll
++  for (int r = 0; r < 4; ++r) {
++    const int rh = r & 1;
++    const uint32_t smw = G.sm[s * 2 + (r >> 1)];
++    const uint32_t sp = __byte_perm(smw, 0u, rh ? 0x3322u : 0x1100u);   // [b b a a] of the pair
++    const uint32_t cc = ((G.nib[s] >> (4 * r)) & 0x000F000Fu) << 7;
++    a[r] = (sp & 0x807F807Fu) | (G.e2[rh] - cc);
++  }
++  if (G.esc[0] | G.esc[1]) {  // rare: this lane's escape row(s) read raw bf16 pairs
++#pragma unroll
++    for (int r = 0; r < 4; ++r) {
++      const int rh = r & 1;
++      if (G.esc[rh]) a[r] = __ldg(side + G.slot[rh] * 32u + (uint32_t)(s * 8 + (r >> 1) * 4 + tig));
++    }
++  }
++}
++
++// out[m, n] bf16 = x[m, k] @ W[:n, k]^T for 1 <= m <= NT, W in the compressed layout above (the
++// first n / 16 row tiles of it). Grid = (n / 64) * split CTAs: n-tile = blockIdx.x / split,
++// K-chunk = blockIdx.x % split, covering K stages [s * KS / split, (s + 1) * KS / split) of
++// KS = k / 128. split > 1: fp32 partials of token rows < m into ws [split, 32, n], one ticket per
++// n-tile in cnt (0 between launches), the CTA drawing ticket split - 1 sums in fixed order 0..split-1,
++// stores bf16 and resets the counter. No CTA waits on another.
++template <int NT>
++__global__ void __launch_bounds__(THREADS, 1)
++_lossless_swapab_kernel(const __nv_bfloat16* __restrict__ x, int64_t stride_x,
++                        const uint8_t* __restrict__ payload, const uint8_t* __restrict__ hdr,
++                        const uint32_t* __restrict__ side,
++                        __nv_bfloat16* __restrict__ out, int64_t stride_o,
++                        float* __restrict__ ws, int* __restrict__ cnt,
++                        int m, int n, int k, int split) {
++  extern __shared__ __align__(128) uint8_t smem[];
++  __shared__ int s_last;
++  constexpr int STAGE = Cfg<NT>::STAGE;
++  const int tid = threadIdx.x, lane = tid & 31, warp = tid >> 5;
++  const int ntile = blockIdx.x / split, sidx = blockIdx.x % split;
++  const int n0 = ntile * BLOCK_N;
++  const int KG = k / GROUP_K;
++  const int KS = k / BLOCK_K;
++  const int ks0 = sidx * KS / split, ks1 = (sidx + 1) * KS / split;
++  const int nsteps = ks1 - ks0;
++  const int rt0 = ntile * 4;   // first 16-row tile of this CTA
++
++  // One stage: 4 warps x 3072 contiguous compressed bytes (6 chunks of 16 B per thread), 4 x 32 B
++  // of headers (threads 0..7), NT token rows x 16 chunks of x (NT / 8 per thread).
++  auto issue = [&](int j) {
++    uint8_t* sw = smem + (j % STAGES) * STAGE;
++    uint8_t* sh = sw + W_STAGE;
++    uint8_t* sx = sh + H_STAGE;
++    const int g0 = (ks0 + j) * 2;   // first group of this stage
++#pragma unroll
++    for (int u = 0; u < W_STAGE / 16 / THREADS; ++u) {
++      const int q = tid + u * THREADS;
++      const int w = q / 192, off = q % 192;
++      cp_async16(smem_u32(sw + w * 3072 + off * 16),
++                 payload + ((int64_t)(rt0 + w) * KG + g0) * CHUNK + off * 16, 16);
++    }
++    if (tid < 8) {
++      const int w = tid >> 1, h = tid & 1;
++      cp_async16(smem_u32(sh + tid * 16), hdr + ((int64_t)(rt0 + w) * KG + g0 + h) * HDR, 16);
++    }
++    const int kel = (ks0 + j) * BLOCK_K;
++#pragma unroll
++    for (int u = 0; u < (NT * 16) / THREADS; ++u) {
++      const int q = tid + u * THREADS;
++      const int row = q >> 4, c = q & 15;
++      const bool ok = row < m;
++      const __nv_bfloat16* src = x + (ok ? (int64_t)row * stride_x : (int64_t)0) + kel + c * 8;
++      cp_async16(smem_u32(sx + row * X_ROW + ((c ^ (row & 7)) << 4)), src, ok ? 16 : 0);
++    }
++  };
++
++#pragma unroll
++  for (int j = 0; j < STAGES - 1; ++j) {
++    if (j < nsteps) issue(j);
++    cp_commit();  // always, so the group count stays uniform
++  }
++
++  float acc[NT / 8][4];
++#pragma unroll
++  for (int f = 0; f < NT / 8; ++f) { acc[f][0] = 0.f; acc[f][1] = 0.f; acc[f][2] = 0.f; acc[f][3] = 0.f; }
++  const int g = lane >> 2, tig = lane & 3;
++  const int xr = lane & 7;    // ldmatrix row (token within an 8-token fragment) of this lane
++  const int xq = lane >> 3;   // ldmatrix matrix index = 16 B chunk within a 32-K slice
++
++  for (int i = 0; i < nsteps; ++i) {
++    cp_wait<STAGES - 2>();  // stage i (and everything issued before it) has landed
++    __syncthreads();        // visible to all; every warp is done with stage i - 1's buffer
++    {
++      const int nx = i + STAGES - 1;
++      if (nx < nsteps) issue(nx);
++      cp_commit();
++    }
++    const uint8_t* sw = smem + (i % STAGES) * STAGE;
++    const uint8_t* sh = sw + W_STAGE;
++    const uint32_t sx = smem_u32(sh + H_STAGE);
++#pragma unroll
++    for (int h = 0; h < 2; ++h) {             // 64-K group within the stage
++      Grp G;
++      load_grp(G, sw + warp * 3072 + h * CHUNK, sh + (warp * 2 + h) * HDR, lane);
++#pragma unroll
++      for (int kp = 0; kp < 2; ++kp) {        // 32-K slice within the group
++        const int kc = h * 2 + kp;            // 32-K slice within the stage (0..3)
++        uint32_t b[NT / 8][4];                // b[f][0..1]: k16 step 2 kp; b[f][2..3]: 2 kp + 1
++#pragma unroll
++        for (int f = 0; f < NT / 8; ++f)
++          ldsm_x4(b[f], sx + (f * 8 + xr) * X_ROW + (((kc * 4 + xq) ^ xr) << 4));
++#pragma unroll
++        for (int t = 0; t < 2; ++t) {
++          uint32_t a[4];
++          decode_step(G, kp * 2 + t, tig, side, a);
++#pragma unroll
++          for (int f = 0; f < NT / 8; ++f) mma_bf16(acc[f], a, b[f][2 * t], b[f][2 * t + 1]);
++        }
++      }
++    }
++  }
++  cp_wait<0>();
++
++  // C fragment f: c0, c1 -> weight row g, tokens 8 f + 2 t + {0, 1}; c2, c3 -> row g + 8.
++  const int r0 = n0 + warp * 16 + g;
++  if (split == 1) {
++#pragma unroll
++    for (int f = 0; f < NT / 8; ++f) {
++      const int t0 = f * 8 + 2 * tig;
++      if (t0 < m) {
++        out[(int64_t)t0 * stride_o + r0] = __float2bfloat16_rn(acc[f][0]);
++        out[(int64_t)t0 * stride_o + r0 + 8] = __float2bfloat16_rn(acc[f][2]);
++      }
++      if (t0 + 1 < m) {
++        out[(int64_t)(t0 + 1) * stride_o + r0] = __float2bfloat16_rn(acc[f][1]);
++        out[(int64_t)(t0 + 1) * stride_o + r0 + 8] = __float2bfloat16_rn(acc[f][3]);
++      }
++    }
++    return;
++  }
++  float* wsp = ws + (int64_t)sidx * MAXM * n;
++#pragma unroll
++  for (int f = 0; f < NT / 8; ++f) {
++    const int t0 = f * 8 + 2 * tig;
++    if (t0 < m) {
++      wsp[(int64_t)t0 * n + r0] = acc[f][0];
++      wsp[(int64_t)t0 * n + r0 + 8] = acc[f][2];
++    }
++    if (t0 + 1 < m) {
++      wsp[(int64_t)(t0 + 1) * n + r0] = acc[f][1];
++      wsp[(int64_t)(t0 + 1) * n + r0 + 8] = acc[f][3];
++    }
++  }
++  __threadfence();   // each thread's partial stores are visible GPU-wide before the ticket
++  __syncthreads();
++  if (tid == 0) s_last = (atomicAdd(cnt + ntile, 1) == split - 1);
++  __syncthreads();
++  if (s_last) {
++    __threadfence();  // acquire side: the other CTAs' partials are read after their tickets
++    for (int e = tid; e < m * BLOCK_N; e += THREADS) {
++      const int t = e / BLOCK_N, r = n0 + (e % BLOCK_N);
++      float s = 0.f;
++      for (int p = 0; p < split; ++p) s += __ldcg(ws + ((int64_t)p * MAXM + t) * n + r);
++      out[(int64_t)t * stride_o + r] = __float2bfloat16_rn(s);
++    }
++    if (tid == 0) atomicExch(cnt + ntile, 0);  // self-reset for the next launch / replay
++  }
++}
++
++// prepare()-only check: decodes every (tile, group) with the GEMM's own load_grp / decode_step
++// into out [n, k] bf16 (one warp per tile-group), so the caller can compare it bit for bit.
++__global__ void lossless_decode_kernel(const uint8_t* __restrict__ payload, const uint8_t* __restrict__ hdr,
++                                       const uint32_t* __restrict__ side, uint32_t* __restrict__ out,
++                                       int n, int k) {
++  const int KG = k / GROUP_K;
++  const int64_t wid = ((int64_t)blockIdx.x * blockDim.x + threadIdx.x) >> 5;
++  const int lane = threadIdx.x & 31;
++  if (wid >= (int64_t)(n / 16) * KG) return;
++  const int rt = (int)(wid / KG), gk = (int)(wid % KG);
++  Grp G;
++  load_grp(G, payload + ((int64_t)rt * KG + gk) * CHUNK, hdr + ((int64_t)rt * KG + gk) * HDR, lane);
++  const int g = lane >> 2, tig = lane & 3;
++#pragma unroll
++  for (int s = 0; s < 4; ++s) {
++    uint32_t a[4];
++    decode_step(G, s, tig, side, a);
++#pragma unroll
++    for (int r = 0; r < 4; ++r) {
++      const int64_t row = rt * 16 + g + (r & 1) * 8;
++      const int64_t col = (int64_t)gk * GROUP_K + s * 16 + (r >> 1) * 8 + tig * 2;
++      out[(row * k + col) >> 1] = a[r];
++    }
++  }
++}
++
++template <int NT>
++void ensure_attr() {
++  static bool done = false;
++  if (!done) {
++    C10_CUDA_CHECK(cudaFuncSetAttribute(_lossless_swapab_kernel<NT>,
++                                        cudaFuncAttributeMaxDynamicSharedMemorySize, Cfg<NT>::SMEM));
++    C10_CUDA_CHECK(cudaFuncSetAttribute(_lossless_swapab_kernel<NT>,
++                                        cudaFuncAttributePreferredSharedMemoryCarveout,
++                                        cudaSharedmemCarveoutMaxShared));
++    done = true;
++  }
++}
++
++template <int NT>
++void launch(const torch::Tensor& x, const torch::Tensor& payload, const torch::Tensor& hdr,
++            const torch::Tensor& side, torch::Tensor& out, torch::Tensor& ws, torch::Tensor& cnt,
++            int64_t n, int64_t k, int64_t split) {
++  ensure_attr<NT>();
++  auto stream = at::cuda::getCurrentCUDAStream();
++  const unsigned grid = static_cast<unsigned>((n / BLOCK_N) * split);
++  _lossless_swapab_kernel<NT><<<grid, THREADS, Cfg<NT>::SMEM, stream>>>(
++      reinterpret_cast<const __nv_bfloat16*>(x.data_ptr()), x.stride(0),
++      payload.data_ptr<uint8_t>(), hdr.data_ptr<uint8_t>(),
++      reinterpret_cast<const uint32_t*>(side.data_ptr()),
++      reinterpret_cast<__nv_bfloat16*>(out.data_ptr()), out.stride(0),
++      ws.data_ptr<float>(), cnt.data_ptr<int>(),
++      static_cast<int>(x.size(0)), static_cast<int>(n), static_cast<int>(k), static_cast<int>(split));
++  C10_CUDA_KERNEL_LAUNCH_CHECK();
++}
++
++template <int NT>
++void fill_attr(int64_t* p) {
++  ensure_attr<NT>();
++  cudaFuncAttributes fa;
++  C10_CUDA_CHECK(cudaFuncGetAttributes(&fa, _lossless_swapab_kernel<NT>));
++  int occ = 0;
++  C10_CUDA_CHECK(cudaOccupancyMaxActiveBlocksPerMultiprocessor(&occ, _lossless_swapab_kernel<NT>, THREADS,
++                                                               Cfg<NT>::SMEM));
++  p[0] = NT; p[1] = fa.numRegs; p[2] = (int64_t)fa.localSizeBytes; p[3] = Cfg<NT>::SMEM; p[4] = occ;
++}
++
++}  // namespace
++
++void lossless_gemm(torch::Tensor x, torch::Tensor payload, torch::Tensor hdr, torch::Tensor side,
++                   torch::Tensor out, torch::Tensor ws, torch::Tensor cnt,
++                   int64_t n, int64_t k, int64_t split) {
++  const int64_t m = x.size(0);
++  TORCH_CHECK(m >= 1 && m <= MAXM, "lossless_gemm: m out of range");
++  TORCH_CHECK(x.scalar_type() == torch::kBFloat16 && x.dim() == 2 && x.size(1) == k && x.stride(1) == 1
++              && x.stride(0) % 8 == 0 && reinterpret_cast<uintptr_t>(x.data_ptr()) % 16 == 0, "lossless_gemm: x");
++  TORCH_CHECK(n % BLOCK_N == 0 && k % BLOCK_K == 0 && split >= 1 && k / BLOCK_K >= split, "lossless_gemm: tiling");
++  TORCH_CHECK(payload.scalar_type() == torch::kUInt8 && payload.numel() >= (n / 16) * (k / GROUP_K) * CHUNK
++              && reinterpret_cast<uintptr_t>(payload.data_ptr()) % 16 == 0, "lossless_gemm: payload");
++  TORCH_CHECK(hdr.scalar_type() == torch::kUInt8 && hdr.numel() >= (n / 16) * (k / GROUP_K) * HDR
++              && reinterpret_cast<uintptr_t>(hdr.data_ptr()) % 16 == 0, "lossless_gemm: hdr");
++  TORCH_CHECK(side.scalar_type() == torch::kBFloat16 && side.numel() >= GROUP_K, "lossless_gemm: side");
++  TORCH_CHECK(out.scalar_type() == torch::kBFloat16 && out.size(0) == m && out.size(1) == n && out.stride(1) == 1,
++              "lossless_gemm: out");
++  TORCH_CHECK(split == 1 || (ws.scalar_type() == torch::kFloat32 && ws.numel() >= split * MAXM * n
++                             && cnt.scalar_type() == torch::kInt32 && cnt.numel() >= n / BLOCK_N),
++              "lossless_gemm: workspace");
++  if (m <= 8) launch<8>(x, payload, hdr, side, out, ws, cnt, n, k, split);
++  else if (m <= 16) launch<16>(x, payload, hdr, side, out, ws, cnt, n, k, split);
++  else launch<32>(x, payload, hdr, side, out, ws, cnt, n, k, split);
++}
++
++void lossless_decode(torch::Tensor payload, torch::Tensor hdr, torch::Tensor side, torch::Tensor out,
++                     int64_t n, int64_t k) {
++  TORCH_CHECK(n % 16 == 0 && k % GROUP_K == 0, "lossless_decode: tiling");
++  TORCH_CHECK(payload.scalar_type() == torch::kUInt8 && payload.numel() >= (n / 16) * (k / GROUP_K) * CHUNK,
++              "lossless_decode: payload");
++  TORCH_CHECK(hdr.scalar_type() == torch::kUInt8 && hdr.numel() >= (n / 16) * (k / GROUP_K) * HDR,
++              "lossless_decode: hdr");
++  TORCH_CHECK(out.scalar_type() == torch::kBFloat16 && out.is_contiguous() && out.size(0) == n && out.size(1) == k,
++              "lossless_decode: out");
++  const int64_t warps = (n / 16) * (k / GROUP_K);
++  const unsigned grid = static_cast<unsigned>((warps * 32 + 255) / 256);
++  auto stream = at::cuda::getCurrentCUDAStream();
++  lossless_decode_kernel<<<grid, 256, 0, stream>>>(
++      payload.data_ptr<uint8_t>(), hdr.data_ptr<uint8_t>(), reinterpret_cast<const uint32_t*>(side.data_ptr()),
++      reinterpret_cast<uint32_t*>(out.data_ptr()), static_cast<int>(n), static_cast<int>(k));
++  C10_CUDA_KERNEL_LAUNCH_CHECK();
++}
++
++// Per NT (8, 16, 32): [NT, registers, local (spill) bytes, dynamic smem bytes, CTAs/SM].
++torch::Tensor lossless_attrs() {
++  auto t = torch::zeros({3, 5}, torch::kInt64);
++  int64_t* p = t.data_ptr<int64_t>();
++  fill_attr<8>(p);
++  fill_attr<16>(p + 5);
++  fill_attr<32>(p + 10);
++  return t;
++}
++"""
++
++
++def _build_lossless():
++    """Compile the CUDA module once per process, at import (never during graph capture). Any
++    failure keeps master's routing everywhere."""
++    t0 = time.perf_counter()
++    try:
++        from torch.utils.cpp_extension import load_inline
++        ext = load_inline(
++            name="muse_bf16_lossless_v1",
++            cpp_sources=_LL_CPP,
++            cuda_sources=_LL_CUDA,
++            functions=["lossless_gemm", "lossless_decode", "lossless_attrs"],
++            extra_cuda_cflags=["-O3", "-arch=sm_90a"],
++            verbose=False,
++        )
++    except Exception as e:
++        print(f"[lossless] load_inline failed after {time.perf_counter() - t0:.1f}s, master path kept: {e!r}",
++              flush=True)
++        return None
++    print(f"[lossless] load_inline compiled in {time.perf_counter() - t0:.1f}s", flush=True)
++    return ext
++
++
++_LL_EXT = _build_lossless() if torch.cuda.is_available() else None
++
++
++def _ll_encode(w: torch.Tensor) -> dict:
++    """Lossless encode of one bf16 [N, K] weight (prepare() only, from the weight alone) into the
++    fragment-ordered payload (uint8), headers (uint8) and escape side table (raw bf16 rows)."""
++    n, k = w.shape
++    kg = k // LL_GROUP_K
++    rt = n // 16
++    dev = w.device
++    wc = w.contiguous()
++    bits = (wc.view(torch.int16).to(torch.int32) & 0xFFFF).view(n, kg, LL_GROUP_K)
++    e = (bits >> 7) & 0xFF
++    sm = ((bits >> 8) & 0x80) | (bits & 0x7F)          # sign << 7 | mantissa7
++    eref = e.amax(dim=2)                                # [n, kg]
++    c = eref.unsqueeze(2) - e                           # >= 0
++    ok = ((e >= 1) & (e <= 254) & (c <= 15)).all(dim=2)
++    esc = ~ok
++    n_esc = int(esc.sum())
++    # Escape slots in row-major (row, group) order, the same order boolean indexing returns.
++    slot = (torch.cumsum(esc.reshape(-1).to(torch.int32), 0, dtype=torch.int32) - 1).view(n, kg)
++    slot = torch.where(esc, slot, torch.zeros_like(slot))
++    shift = (torch.arange(LL_GROUP_K, device=dev, dtype=torch.int32) & 1) * 8
++    sm = torch.where(esc.unsqueeze(2), (slot.unsqueeze(2) >> shift) & 0xFF, sm)
++    c = torch.where(ok.unsqueeze(2), c, torch.zeros_like(c))
++    hdr = torch.where(ok, eref, torch.full_like(eref, 255))
++    sm8 = sm.to(torch.uint8)
++    c8 = c.to(torch.uint8)
++
++    def frag(t):
++        # [n, kg, 64] with n = (rt, rhi, g), k-in-group = (s, khi, tig, half)
++        # -> [rt, kg, lane = (g, tig), element = (s, khi, rhi, half)] = pair p = 4 s + r, r = 2 khi + rhi
++        t = t.reshape(rt, 2, 8, kg, 4, 2, 4, 2).permute(0, 3, 2, 6, 4, 5, 1, 7)
++        return t.reshape(rt, kg, 32, 32)
++
++    smf = frag(sm8).reshape(rt, kg, 32, 2, 16).permute(0, 1, 3, 2, 4)            # [rt, kg, 2, 32, 16]
++    cf = frag(c8).reshape(rt, kg, 32, 4, 2, 2, 2).permute(0, 1, 2, 3, 6, 4, 5)  # [.., s, half, khi, rhi]
++    nib = (cf[..., 0] | (cf[..., 1] << 4)).reshape(rt, kg, 1, 32, 16)
++    payload = torch.cat((smf, nib), dim=2).contiguous().view(-1)
++    hdr_t = hdr.view(rt, 16, kg).permute(0, 2, 1).to(torch.uint8).contiguous().view(-1)
++    if n_esc:
++        side = wc.view(n, kg, LL_GROUP_K)[esc].contiguous()
++    else:
++        side = torch.zeros((1, LL_GROUP_K), dtype=torch.bfloat16, device=dev)
++    nbytes = payload.numel() + hdr_t.numel() + n_esc * LL_GROUP_K * 2
++    return {"payload": payload, "hdr": hdr_t, "side": side, "n_esc": n_esc,
++            "esc_frac": n_esc / float(n * kg), "bytes": nbytes, "ratio": nbytes / float(n * k * 2)}
++
++
++def _ll_route_ok(route: str, x: torch.Tensor, cfg, state: dict) -> bool:
++    """Lossless path: the route passed its prepare() checks, 1 <= cfg m <= its max m, the problem's
++    n / k and 16-byte-aligned bf16 rows. Branches on cfg, shapes, strides and prepare() constants."""
++    spec = LL_CFG.get(route)
++    if spec is None or _LL_EXT is None or not state["lossless"].get(route, False):
++        return False
++    _wname, n, k, _split, max_m = spec
++    m = cfg["m"]
++    return (1 <= m <= max_m and cfg["n"] == n and cfg["k"] == k
++            and x.dim() == 2 and x.shape[0] == m and x.shape[1] == k
++            and x.dtype == torch.bfloat16 and x.stride(1) == 1 and x.stride(0) % 8 == 0
++            and x.data_ptr() % 16 == 0)
++
++
++def _ll_route(layer: str, cfg) -> str:
++    """Route name from cfg only: the unpooler's n == 1024 slice has its own split."""
++    if layer == "unpooler" and cfg["n"] == LL_CFG["unpooler_slice"][1]:
++        return "unpooler_slice"
++    return layer
++
++
++def _ll_forward(route: str, x: torch.Tensor, state: dict) -> torch.Tensor:
++    """x bf16 [m <= 32, k] @ W[:n].T -> bf16 [m, n], ONE launch on the compressed weight."""
++    wname, n, k, split, _ = LL_CFG[route]
++    out = torch.empty((x.shape[0], n), dtype=torch.bfloat16, device=x.device)
++    _LL_EXT.lossless_gemm(x, state["ll_payload_" + wname], state["ll_hdr_" + wname],
++                          state["ll_side_" + wname], out, state["ll_ws_" + route],
++                          state["ll_cnt_" + route], n, k, split)
++    return out
++
++
++def _ll_check_route(route: str, state: dict) -> str:
++    """GEMM self-check of one route on synthetic x against an fp64 reference, each case launched
++    twice in a row (a counter-reset bug shows on the second launch). Returns "" on a pass. The
++    1e-3 rel-L2 bound is against the fp64 reference rounded to bf16; one-hot power-of-two rows must
++    be exact (a column of the original weights)."""
++    wname, n, k, _split, max_m = LL_CFG[route]
++    w = state[wname]
++    dev = w.device
++    wd = w[:n].double()
++    g = torch.Generator(device=dev)
++    g.manual_seed(4321)
++    cases = [(m, m >= 2) for m in LL_CHECK_MS if m <= max_m] + [(1, True)]
++    for m, onehot in cases:
++        x = torch.randn((m, k), device=dev, dtype=torch.float32, generator=g).to(torch.bfloat16)
++        if onehot:
++            x[m - 1].zero_()
++            x[m - 1, (37 * m + 5) % k] = 2.0
++        ref = x.double() @ wd.T
++        ref_b = ref.to(torch.bfloat16).double()
++        out1 = _ll_forward(route, x, state)
++        out2 = _ll_forward(route, x, state)
++        torch.cuda.synchronize()
++        if not torch.equal(out1, out2):
++            return f"m={m}: second launch differs from the first"
++        o = out1.double()
++        if not bool(torch.isfinite(o).all()):
++            return f"m={m}: non-finite output"
++        err = float((o - ref_b).norm() / ref.norm().clamp_min(1e-30))
++        row_ref = ref.norm(dim=1)
++        row_den = torch.maximum(row_ref, 0.1 * row_ref.mean()).clamp_min(1e-30)
++        row_err = float(((o - ref_b).norm(dim=1) / row_den).max())
++        if not (err <= 1e-3 and row_err <= 5e-3):
++            return f"m={m}: rel L2 {err:.2e} (bound 1e-3), worst row {row_err:.2e} (bound 5e-3)"
++        if onehot and not torch.equal(o[m - 1], ref_b[m - 1]):
++            return f"m={m}: one-hot row is not exact"
++    if int(state["ll_cnt_" + route].abs().sum()) != 0:
++        return "ticket counters not reset to 0"
++    return ""
++
++
++def _ll_time_route(route: str, state: dict) -> None:
++    """Diagnostic only (prepare): warm-L2 cudaEvent time per launch with compressed and
++    raw-equivalent TB/s. Prints only; never routes."""
++    wname, n, k, _split, max_m = LL_CFG[route]
++    comp = state["ll_bytes_" + wname] * n / float(state[wname].shape[0])  # this route's share
++    for m in (1, 16, 32):
++        if m > max_m:
++            m = max_m
++        x = torch.randn((m, k), device=state[wname].device, dtype=torch.float32).to(torch.bfloat16)
++        for _ in range(3):
++            _ll_forward(route, x, state)
++        e0 = torch.cuda.Event(enable_timing=True)
++        e1 = torch.cuda.Event(enable_timing=True)
++        reps = 20
++        e0.record()
++        for _ in range(reps):
++            _ll_forward(route, x, state)
++        e1.record()
++        e1.synchronize()
++        us = e0.elapsed_time(e1) * 1e3 / reps
++        print(f"[lossless] route={route} m={m}: {us:.2f} us/launch warm-L2 (eager, incl. launch), "
++              f"{comp / (us * 1e-6) / 1e12:.2f} TB/s compressed, "
++              f"{n * k * 2 / (us * 1e-6) / 1e12:.2f} TB/s raw-equivalent", flush=True)
++        if m == max_m:
++            break
++
++
++def _lossless_prepare(state: dict) -> None:
++    """Encode each bf16 weight losslessly, gate it (exact round trip through the kernel's own
++    decoder, ratio <= 0.80, escapes <= 2.5%), then GEMM-self-check each route and enable it only on a
++    pass (state["lossless"], constants fixed here). The original weights stay in state untouched."""
++    state["lossless"] = {}
++    if _LL_EXT is None:
++        print("[lossless] PATH CHOSEN: master everywhere (no CUDA module)", flush=True)
++        return
++    dev = state["pooler"].device
++    try:
++        attrs = _LL_EXT.lossless_attrs().tolist()
++        for nt, regs, local, smem, occ in attrs:
++            print(f"[lossless] _lossless_swapab_kernel<{nt}>: {regs} regs, {local} B local (spills), "
++                  f"{smem} B dynamic smem ({LL_STAGES} stages), {occ} CTAs/SM", flush=True)
++        if any(a[4] < 1 for a in attrs):
++            print("[lossless] PATH CHOSEN: master everywhere (a kernel cannot launch: 0 CTAs/SM)", flush=True)
++            return
++    except Exception as e:
++        print(f"[lossless] attribute query failed ({e!r}); PATH CHOSEN: master everywhere", flush=True)
++        return
++    ok_w = {}
++    for wname, (n, k) in LL_WEIGHTS.items():
++        w = state[wname]
++        if not (w.dim() == 2 and tuple(w.shape) == (n, k) and w.dtype == torch.bfloat16
++                and n % 64 == 0 and k % 128 == 0):
++            print(f"[lossless] {wname} DISABLED: weight {tuple(w.shape)} {w.dtype} unexpected", flush=True)
++            continue
++        try:
++            t0 = time.perf_counter()
++            enc = _ll_encode(w)
++            t_enc = time.perf_counter() - t0
++            print(f"[lossless] {wname}: {enc['bytes'] * 8 / (n * k):.3f} bits/element, ratio {enc['ratio']:.4f}, "
++                  f"escape groups {enc['n_esc']} ({100 * enc['esc_frac']:.3f}%), "
++                  f"{enc['bytes'] / 1e6:.1f} MB compressed vs {n * k * 2 / 1e6:.1f} MB raw, "
++                  f"encode {t_enc:.2f}s", flush=True)
++            if enc["ratio"] > LL_MAX_RATIO:
++                print(f"[lossless] {wname} DISABLED: ratio {enc['ratio']:.4f} > {LL_MAX_RATIO}", flush=True)
++                continue
++            if enc["esc_frac"] > LL_MAX_ESC or enc["n_esc"] >= 65536:
++                print(f"[lossless] {wname} DISABLED: escape fraction {enc['esc_frac']:.4f} > {LL_MAX_ESC} "
++                      f"(or {enc['n_esc']} slots >= 65536)", flush=True)
++                continue
++            dec = torch.empty_like(w)
++            _LL_EXT.lossless_decode(enc["payload"], enc["hdr"], enc["side"], dec, n, k)
++            torch.cuda.synchronize()
++            exact = torch.equal(dec.view(torch.int16), w.contiguous().view(torch.int16))
++            del dec
++            if not exact:
++                print(f"[lossless] {wname} DISABLED: round trip is not bit-exact", flush=True)
++                continue
++            print(f"[lossless] {wname}: round trip bit-exact through the kernel decoder", flush=True)
++        except Exception as e:
++            print(f"[lossless] {wname} DISABLED: encode/decode raised {e!r}", flush=True)
++            continue
++        state["ll_payload_" + wname] = enc["payload"]
++        state["ll_hdr_" + wname] = enc["hdr"]
++        state["ll_side_" + wname] = enc["side"]
++        state["ll_bytes_" + wname] = enc["bytes"]
++        ok_w[wname] = True
++    for route, (wname, n, k, split, max_m) in LL_CFG.items():
++        state["ll_ws_" + route] = torch.empty((max(split, 1), LL_MAX_M, n), dtype=torch.float32, device=dev)
++        state["ll_cnt_" + route] = torch.zeros(n // 64, dtype=torch.int32, device=dev)
++        if not ok_w.get(wname, False):
++            print(f"[lossless] PATH CHOSEN route={route}: master (weight disabled)", flush=True)
++            continue
++        try:
++            why = _ll_check_route(route, state)
++        except Exception as e:
++            why = f"raised {e!r}"
++        state["ll_cnt_" + route].zero_()
++        if why:
++            print(f"[lossless] {route} DISABLED: GEMM self-check failed: {why}", flush=True)
++            print(f"[lossless] PATH CHOSEN route={route}: master", flush=True)
++            continue
++        state["lossless"][route] = True
++        print(f"[lossless] PATH CHOSEN route={route}: lossless (m 1..{max_m}, grid {(n // 64) * split} = "
++              f"{n // 64} n-tiles x SPLIT_K {split}); self-check passed", flush=True)
++        try:
++            _ll_time_route(route, state)
++        except Exception as e:
++            print(f"[lossless] route={route}: timing diagnostics failed ({e!r})", flush=True)
++        state["ll_cnt_" + route].zero_()
++    torch.cuda.synchronize()
++
++
+ def prepare(weights: Weights) -> dict:
+     """Called once, untimed. Keep the bf16 weights as they are (contiguous), build the router's
+     hi + lo bf16 split as [256, 8192] row-major (N x K), and pre-compile every m-bucket of the
+@@ -708,6 +1402,8 @@ def prepare(weights: Weights) -> dict:
+     state["unpool_cnt"].zero_()
+     # (5) Swap-AB at 17 <= m <= 32 for all four bf16 layers (own workspaces / tickets).
+     _swapab_prepare(state)
++    # (6) Lossless-compressed weight stream at 1 <= m <= 32 (own buffers, per-route self-check).
++    _lossless_prepare(state)
+     return state
+ 
+ 
+@@ -715,6 +1411,10 @@ def kernel_fn(data: Inputs, state: dict) -> torch.Tensor:
+     x, cfg = data["x"], data["config"]
+     layer = cfg["layer"]
+     # Shape gate (cfg layer / m / n and shape preconditions only; never on input values).
++    # 1 <= m <= 32 on a self-checked layer: the lossless-compressed CUDA path, ahead of every gate.
++    route = _ll_route(layer, cfg)
++    if _ll_route_ok(route, x, cfg, state):
++        return _ll_forward(route, x, state)
+     if layer == "pooler" and _pooler_shape_ok(x, state["pooler"], cfg):
+         return _pooler_forward(x, state["pooler"], state["pooler_ws"], state["pooler_cnt"])
+     if (layer == "qkv_gate" and state["qkv_gate"].shape == (QKV_N, QKV_K)

@@ -134,10 +134,10 @@ controls_for: null
 rewrite_stage: 1
 replaces: "m<=32 bf16 weight streams: pooler _bf16_splitk_kernel / _bf16_swapab_kernel, qkv_gate _qkv_splitk_sem_kernel / _bf16_swapab_kernel, o _pooler_skinny_kernel / _bf16_swapab_kernel, unpooler slice _bf16_splitk_kernel, unpooler-full nvjet_sm90_tst_64x16 / _bf16_swapab_kernel (decode_1, decode_16, decode_32, verify_1)"
 review: proceed
-status: running
+status: done
 review_at: 2026-10-24T172632Z
 review_companions: null
-stage: dispatched
+stage: harvested
 claimed_at: 2026-10-24T172707Z
 base_sha: 43ae369dae50af5a98bad52c50a5e7ba904c492f
 base_blob: a8bb42ac483318e9fbc84bc7826a27b7a704d1fb
@@ -154,6 +154,13 @@ attempt_file: 2026-10-24T181732Z-submit-bf16-lossless-exp4-weight-stream-rewrite
 prepared_at: 2026-10-24T181733Z
 job: 542f2b169c934706
 dispatched_at: 2026-10-24T181805Z
+outcome: regression
+verdict_detail: regression
+speedup: 0.7071439283149933
+speedup_ci: [0.6965367693902684, 0.7177510872397181]
+harvested_at: 2026-10-24T184717Z
+best_at_harvest: 1.1958517819004566
+promotion: null
 ---
 
 # bf16-lossless-exp4-weight-stream-rewrite
@@ -288,3 +295,53 @@ OK with warnings: .worktrees/muse_bf16_proj/bf16-lossless-exp4-weight-stream-rew
 `python3 -I -m py_compile`: OK. The `__pycache__` it left in the worktree was removed.
 
 Harvest note: read the log tail first. `[lossless] load_inline failed`, any `DISABLED`, or `PATH CHOSEN route=<r>: master` means that route measured master. A sticky CUDA fault in the prepare self-check (for example an illegal address) would fail the whole run instead of falling back.
+
+## Result
+
+- job `542f2b169c934706` (submit), status done, passed True, tests 9/9
+- speedup 0.7071x, 95% CI [0.6965, 0.7178], score 6831.423995269245 µs vs SGLang 4830.8 µs
+- best at harvest: {"speedup": 1.1958517819004566, "ci": [1.1779140051719497, 1.2137895586289633], "job": "eeb9985396764ac2"}; base result: muse_bf16_proj/hypotheses/done/neutral/bf16-m32-swapab-wgmma-triton.result.json
+- **outcome: regression** (regression)
+- files: `muse_bf16_proj/hypotheses/done/regression/bf16-lossless-exp4-weight-stream-rewrite.result.json`, `muse_bf16_proj/hypotheses/done/regression/bf16-lossless-exp4-weight-stream-rewrite.patch`; branch `hyp/muse_bf16_proj/bf16-lossless-exp4-weight-stream-rewrite`
+
+## Attribution
+
+| shape | w | base µs | hyp µs | delta | verdict |
+|---|---|---|---|---|---|
+| layer=qkv_gate load=decode_1 m=1 | 62 | 12.91 | 30.19 | 0.4222 | lost |
+| layer=o load=decode_1 m=1 | 62 | 6.32 | 15.46 | 0.4176 | lost |
+| layer=pooler load=decode_1 m=1 | 62 | 19.0 | 41.49 | 0.4667 | lost |
+| layer=unpooler load=decode_1 m=1 | 62 | 5.94 | 10.98 | 0.5497 | lost |
+| layer=router load=decode_1 m=1 | 62 | 5.73 | 6.26 | 0.9619 | lost |
+| layer=qkv_gate load=decode_16 m=16 | 62 | 13.39 | 33.86 | 0.4027 | lost |
+| layer=o load=decode_16 m=16 | 62 | 6.66 | 15.29 | 0.415 | lost |
+| layer=pooler load=decode_16 m=16 | 62 | 19.85 | 44.82 | 0.4402 | lost |
+| layer=unpooler load=decode_16 m=16 | 62 | 18.61 | 41.58 | 0.444 | lost |
+| layer=router load=decode_16 m=16 | 62 | 6.03 | 5.85 | 1.0405 | gained |
+| layer=qkv_gate load=decode_32 m=32 | 62 | 13.69 | 38.7 | 0.351 | lost |
+| layer=o load=decode_32 m=32 | 62 | 6.67 | 16.58 | 0.3903 | lost |
+| layer=pooler load=decode_32 m=32 | 62 | 20.0 | 51.05 | 0.3888 | lost |
+| layer=unpooler load=decode_32 m=32 | 62 | 18.48 | 44.83 | 0.4115 | lost |
+| layer=router load=decode_32 m=32 | 62 | 6.55 | 6.59 | 1.006 | flat |
+| layer=qkv_gate load=verify_1 m=8 | 62 | 13.18 | 31.59 | 0.4134 | lost |
+| layer=o load=verify_1 m=8 | 62 | 6.32 | 15.56 | 0.4022 | lost |
+| layer=pooler load=verify_1 m=8 | 62 | 19.14 | 42.11 | 0.4466 | lost |
+| layer=unpooler load=verify_1 m=8 | 62 | 6.13 | 11.49 | 0.5227 | lost |
+| layer=router load=verify_1 m=8 | 62 | 5.91 | 6.22 | 0.9795 | flat |
+| layer=qkv_gate load=verify_16 m=128 | 62 | 16.81 | 17.24 | 0.9858 | flat |
+| layer=o load=verify_16 m=128 | 62 | 7.09 | 7.5 | 0.9613 | lost |
+| layer=pooler load=verify_16 m=128 | 62 | 25.55 | 25.57 | 1.0212 | flat |
+| layer=unpooler load=verify_16 m=128 | 62 | 19.79 | 20.1 | 0.9799 | flat |
+| layer=router load=verify_16 m=128 | 62 | 7.35 | 7.96 | 0.9477 | lost |
+| layer=qkv_gate load=verify_32 m=256 | 62 | 19.62 | 19.57 | 0.9722 | flat |
+| layer=o load=verify_32 m=256 | 62 | 9.01 | 9.56 | 0.9799 | flat |
+| layer=pooler load=verify_32 m=256 | 62 | 30.53 | 31.12 | 0.9843 | flat |
+| layer=unpooler load=verify_32 m=256 | 62 | 24.5 | 24.74 | 0.9913 | flat |
+| layer=router load=verify_32 m=256 | 62 | 9.3 | 9.58 | 0.9796 | flat |
+
+gained on router decode_16; lost on qkv_gate decode_1, decode_16, decode_32, verify_1; o decode_1, decode_16, decode_32, verify_1, verify_16; pooler decode_1, decode_16, decode_32, verify_1; unpooler decode_1, decode_16, decode_32, verify_1; router decode_1, verify_16. Expected hit: 2/17. Noise ±1.5%.
+
+## Follow-ups
+
+- rewrite stage 1 of `m<=32 bf16 weight streams: pooler _bf16_splitk_kernel / _bf16_swapab_kernel, qkv_gate _qkv_splitk_sem_kernel / _bf16_swapab_kernel, o _pooler_skinny_kernel / _bf16_swapab_kernel, unpooler slice _bf16_splitk_kernel, unpooler-full nvjet_sm90_tst_64x16 / _bf16_swapab_kernel (decode_1, decode_16, decode_32, verify_1)`: read the replaced kernels' own us per shape (profile top_kernels) against the incumbent and the floor, and check which Milestone it reached. The next stage is `/hypothesize muse_bf16_proj "<what to fix or tune>" --kind rewrite --depends-on bf16-lossless-exp4-weight-stream-rewrite --stage 2`; a slow or failed first cut is the expected start, not a do-not-retry.
+

@@ -1,0 +1,35 @@
+[lossless] load_inline compiled in 52.2s
+[swapab] layer=pooler m=32 N=4096 K=8192 SPLIT_K=2 BLOCK_K=256 stages=4: n_regs=96 n_spills=0 wgmma=16 mma.sync=0 cp.async=106
+[swapab] layer=qkv_gate m=32 N=2304 K=8192 SPLIT_K=4 BLOCK_K=128 stages=4: n_regs=56 n_spills=0 wgmma=8 mma.sync=0 cp.async=58
+[swapab] layer=unpooler m=32 N=8192 K=4096 SPLIT_K=1 BLOCK_K=256 stages=4: n_regs=96 n_spills=0 wgmma=16 mma.sync=0 cp.async=106
+[swapab] layer=o m=32 N=8192 K=1024 SPLIT_K=1 BLOCK_K=256 stages=4: n_regs=96 n_spills=0 wgmma=16 mma.sync=0 cp.async=106
+[lossless] _lossless_swapab_kernel<8>: 98 regs, 0 B local (spills), 115712 B dynamic smem (8 stages), 1 CTAs/SM
+[lossless] _lossless_swapab_kernel<16>: 112 regs, 0 B local (spills), 132096 B dynamic smem (8 stages), 1 CTAs/SM
+[lossless] _lossless_swapab_kernel<32>: 115 regs, 0 B local (spills), 164864 B dynamic smem (8 stages), 1 CTAs/SM
+[lossless] qkv_gate: 12.168 bits/element, ratio 0.7605, escape groups 785 (0.266%), 28.7 MB compressed vs 37.7 MB raw, encode 0.11s
+[lossless] qkv_gate: round trip bit-exact through the kernel decoder
+[lossless] o: 12.173 bits/element, ratio 0.7608, escape groups 395 (0.301%), 12.8 MB compressed vs 16.8 MB raw, encode 0.00s
+[lossless] o: round trip bit-exact through the kernel decoder
+[lossless] pooler: 12.171 bits/element, ratio 0.7607, escape groups 1517 (0.289%), 51.1 MB compressed vs 67.1 MB raw, encode 0.00s
+[lossless] pooler: round trip bit-exact through the kernel decoder
+[lossless] unpooler: 12.175 bits/element, ratio 0.7609, escape groups 1628 (0.311%), 51.1 MB compressed vs 67.1 MB raw, encode 0.00s
+[lossless] unpooler: round trip bit-exact through the kernel decoder
+[lossless] PATH CHOSEN route=qkv_gate: lossless (m 1..32, grid 108 = 36 n-tiles x SPLIT_K 3); self-check passed
+[lossless] route=qkv_gate m=1: 24.21 us/launch warm-L2 (eager, incl. launch), 1.19 TB/s compressed, 1.56 TB/s raw-equivalent
+[lossless] route=qkv_gate m=16: 27.24 us/launch warm-L2 (eager, incl. launch), 1.05 TB/s compressed, 1.39 TB/s raw-equivalent
+[lossless] route=qkv_gate m=32: 33.27 us/launch warm-L2 (eager, incl. launch), 0.86 TB/s compressed, 1.13 TB/s raw-equivalent
+[lossless] PATH CHOSEN route=o: lossless (m 1..32, grid 128 = 128 n-tiles x SPLIT_K 1); self-check passed
+[lossless] route=o m=1: 12.18 us/launch warm-L2 (eager, incl. launch), 1.05 TB/s compressed, 1.38 TB/s raw-equivalent
+[lossless] route=o m=16: 12.65 us/launch warm-L2 (eager, incl. launch), 1.01 TB/s compressed, 1.33 TB/s raw-equivalent
+[lossless] route=o m=32: 13.58 us/launch warm-L2 (eager, incl. launch), 0.94 TB/s compressed, 1.24 TB/s raw-equivalent
+[lossless] PATH CHOSEN route=pooler: lossless (m 1..32, grid 128 = 64 n-tiles x SPLIT_K 2); self-check passed
+[lossless] route=pooler m=1: 43.13 us/launch warm-L2 (eager, incl. launch), 1.18 TB/s compressed, 1.56 TB/s raw-equivalent
+[lossless] route=pooler m=16: 46.53 us/launch warm-L2 (eager, incl. launch), 1.10 TB/s compressed, 1.44 TB/s raw-equivalent
+[lossless] route=pooler m=32: 53.99 us/launch warm-L2 (eager, incl. launch), 0.95 TB/s compressed, 1.24 TB/s raw-equivalent
+[lossless] PATH CHOSEN route=unpooler: lossless (m 1..32, grid 128 = 128 n-tiles x SPLIT_K 1); self-check passed
+[lossless] route=unpooler m=1: 42.98 us/launch warm-L2 (eager, incl. launch), 1.19 TB/s compressed, 1.56 TB/s raw-equivalent
+[lossless] route=unpooler m=16: 43.68 us/launch warm-L2 (eager, incl. launch), 1.17 TB/s compressed, 1.54 TB/s raw-equivalent
+[lossless] route=unpooler m=32: 47.07 us/launch warm-L2 (eager, incl. launch), 1.08 TB/s compressed, 1.43 TB/s raw-equivalent
+[lossless] PATH CHOSEN route=unpooler_slice: lossless (m 1..8, grid 128 = 16 n-tiles x SPLIT_K 8); self-check passed
+[lossless] route=unpooler_slice m=1: 11.01 us/launch warm-L2 (eager, incl. launch), 0.58 TB/s compressed, 0.76 TB/s raw-equivalent
+[lossless] route=unpooler_slice m=8: 11.47 us/launch warm-L2 (eager, incl. launch), 0.56 TB/s compressed, 0.73 TB/s raw-equivalent
