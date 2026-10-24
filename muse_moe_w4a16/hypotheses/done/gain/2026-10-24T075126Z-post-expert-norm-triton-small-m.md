@@ -53,10 +53,10 @@ priority: 1
 kind: primary
 controls_for: null
 review: proceed
-status: running
+status: done
 review_at: 2026-10-24T092219Z
 review_companions: null
-stage: dispatched
+stage: harvested
 claimed_at: 2026-10-24T092224Z
 base_sha: 33ef80e4b77343ccd0fc4ec2b90a87eeb044bc95
 base_blob: 11fbc1957daf7294cd2810ff82a0aad2f25644bd
@@ -73,6 +73,13 @@ attempt_file: 2026-10-24T092454Z-check-post-expert-norm-triton-small-m.md
 prepared_at: 2026-10-24T092454Z
 job: bacd1f502f4e46fa
 dispatched_at: 2026-10-24T092502Z
+outcome: gain
+verdict_detail: gain
+speedup: 1.1297159216968498
+speedup_ci: [1.112770182871397, 1.1466616605223023]
+harvested_at: 2026-10-24T111613Z
+best_at_harvest: 0.9887547325362586
+promotion: pending
 ---
 
 # post-expert-norm-triton-small-m
@@ -147,4 +154,29 @@ OK with warnings: muse_moe_w4a16/submission.py
 ```
 
 (The warning is the existing `torch.cuda.synchronize()` in `prepare()`, untimed, which this change does not touch.) `python3 -I -m py_compile` passed, and the `__pycache__` it left was removed.
+
+## Result
+
+- job `bacd1f502f4e46fa` (check), status done, passed True, tests 5/5
+- speedup 1.1297x, 95% CI [1.1128, 1.1467], score 11904.320140766147 µs vs SGLang 13448.5 µs
+- best at harvest: {"speedup": 0.9887547325362586, "ci": [0.9739234115482147, 1.0035860535243024], "job": "fb2cc736613747df"}; base result: muse_moe_w4a16/hypotheses/done/gain/sglang-marlin-path-parity.result.json
+- **outcome: gain** (gain)
+- files: `muse_moe_w4a16/hypotheses/done/gain/post-expert-norm-triton-small-m.result.json`, `muse_moe_w4a16/hypotheses/done/gain/post-expert-norm-triton-small-m.patch`; branch `hyp/muse_moe_w4a16/post-expert-norm-triton-small-m`
+
+## Attribution
+
+| shape | w | base µs | hyp µs | delta | verdict |
+|---|---|---|---|---|---|
+| bs=1 load=decode_1 sharding=ep8 | 60 | 80.23 | 55.3 | 1.4569 | gained |
+| bs=16 load=decode_16 sharding=ep8 | 60 | 191.41 | 155.66 | 1.2166 | gained |
+| bs=32 load=decode_32 sharding=ep8 | 60 | 208.15 | 206.92 | 0.9992 | flat |
+| bs=8 load=verify_1 sharding=ep8 | 60 | 152.04 | 121.24 | 1.2555 | gained |
+| bs=128 load=verify_16 sharding=ep8 | 60 | 462.46 | 475.92 | 1.0006 | flat |
+| bs=256 load=verify_32 sharding=ep8 | 60 | 621.28 | 622.17 | 1.0 | flat |
+
+gained on decode_1 decode_1; decode_16 decode_16; verify_1 verify_1. Expected hit: 6/6. Noise ±1.5%.
+
+## Follow-ups
+
+- candidate for promotion; stack further changes with `depends_on` once it lands.
 
