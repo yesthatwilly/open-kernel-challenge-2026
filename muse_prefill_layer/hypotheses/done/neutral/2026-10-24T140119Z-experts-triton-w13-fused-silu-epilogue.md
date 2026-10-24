@@ -41,10 +41,10 @@ priority: 2
 kind: primary
 controls_for: null
 review: proceed
-status: running
+status: done
 review_at: 2026-10-24T164610Z
 review_companions: null
-stage: dispatched
+stage: harvested
 claimed_at: 2026-10-24T164610Z
 base_sha: 721aada38118e1641389dda5e890b5a18175f8d8
 base_blob: 635cfee3ac2c3f7c66840b8c8a082cad2fa41a68
@@ -61,6 +61,13 @@ attempt_file: 2026-10-24T164944Z-submit-experts-triton-w13-fused-silu-epilogue.m
 prepared_at: 2026-10-24T164944Z
 job: 108231906a30407e
 dispatched_at: 2026-10-24T165008Z
+outcome: neutral
+verdict_detail: within-ci
+speedup: 1.05253431013166
+speedup_ci: [1.036746295479685, 1.0683223247836349]
+harvested_at: 2026-10-24T173235Z
+best_at_harvest: 1.0591912383762452
+promotion: null
 ---
 
 # experts-triton-w13-fused-silu-epilogue
@@ -167,3 +174,31 @@ OK with warnings: .../experts-triton-w13-fused-silu-epilogue/muse_prefill_layer/
 ```
 
 `python3 -I -m py_compile` passes, and the `__pycache__` it left was removed.
+
+## Result
+
+- job `108231906a30407e` (submit), status done, passed True, tests 5/5
+- speedup 1.0525x, 95% CI [1.0367, 1.0683], score 368067.7164353343 µs vs SGLang 387403.9 µs
+- best at harvest: {"speedup": 1.0591912383762452, "ci": [1.0433033698006016, 1.0750791069518888], "job": "ba9c16b9cc6b4605"}; base result: muse_prefill_layer/hypotheses/done/gain/experts-hybrid-marlin-turn-triton-first-turn.result.json
+- **outcome: neutral** (within-ci)
+- files: `muse_prefill_layer/hypotheses/done/neutral/experts-triton-w13-fused-silu-epilogue.result.json`, `muse_prefill_layer/hypotheses/done/neutral/experts-triton-w13-fused-silu-epilogue.patch`; branch `hyp/muse_prefill_layer/experts-triton-w13-fused-silu-epilogue`
+
+## Attribution
+
+| shape | w | base µs | hyp µs | delta | verdict |
+|---|---|---|---|---|---|
+| batch=1 ctx=80000 dist=soft layer=sliding load=turn_1 page=1 q_len=753 repeats=6 | 46 | 1079.54 | 1093.55 | 0.9995 | flat |
+| batch=1 ctx=80000 dist=soft layer=full load=turn_1 page=1 q_len=753 repeats=6 | 16 | 1419.09 | 1527.02 | 1.0002 | flat |
+| batch=4 ctx=80000 dist=soft layer=sliding load=turn_4 page=1 q_len=753 repeats=6 | 46 | 3334.9 | 3376.25 | 1.0004 | flat |
+| batch=4 ctx=80000 dist=soft layer=full load=turn_4 page=1 q_len=753 repeats=6 | 16 | 4937.98 | 4918.35 | 0.9968 | flat |
+| batch=1 ctx=0 dist=soft layer=full load=first_turn page=1 q_len=16384 repeats=6 | 16 | 15386.32 | 14887.3 | 0.9598 | lost |
+| batch=1 ctx=32768 dist=soft layer=sliding load=first_turn page=1 q_len=16384 repeats=6 | 138 | 14275.3 | 14594.81 | 0.9798 | flat |
+| batch=1 ctx=32768 dist=soft layer=full load=first_turn page=1 q_len=16384 repeats=6 | 16 | 18165.94 | 18422.87 | 0.9887 | flat |
+| batch=1 ctx=65536 dist=soft layer=full load=first_turn page=1 q_len=16384 repeats=6 | 16 | 22332.92 | 21733.08 | 0.9894 | flat |
+
+lost on full first_turn. Expected hit: 0/2. Noise ±1.5%.
+
+## Follow-ups
+
+- within-ci: the change is not proven either way; a stacked hypothesis (`depends_on: experts-triton-w13-fused-silu-epilogue`) that adds a further change in the same area is the only way to learn more (identical code is never re-run).
+

@@ -1,0 +1,292 @@
+diff --git a/muse_prefill_layer/submission.py b/muse_prefill_layer/submission.py
+index 635cfee..8af5773 100644
+--- a/muse_prefill_layer/submission.py
++++ b/muse_prefill_layer/submission.py
+@@ -35,7 +35,9 @@ Everything else is SGLang's pipeline as baseline.py composes it:
+                                    experts-triton-w4a16-inkernel-fp4 and -swapab-reglhs) a Triton
+                                    fused_moe_kernel, computed swap-AB, that dequantizes the
+                                    NVFP4 tiles (nibble-reordered in prepare) in registers as the
+-                                   dot's LHS, in place of moe_wna16_marlin_gemm), silu_and_mul, Triton
++                                   dot's LHS, in place of moe_wna16_marlin_gemm), silu_and_mul (above
++                                   4096 tokens fused into that w13 GEMM's epilogue on a gate/up-paired
++                                   row order, hypothesis experts-triton-w13-fused-silu-epilogue), Triton
+                                    post-expert norm weighted sum; then the all-reduce (identity)
+   unpooler                         the whole weight (bf16_gemm_dispatch)
+   FusedPostNormResidualPreNorm     post-FFN norm + residual gate + the next layer's pre-attention
+@@ -182,6 +184,13 @@ EPILOGUE_BIAS = tl.constexpr(2.0 ** 7)
+ # the second GEMM's output reaches the weighted sum (the first GEMM's -1 rows only feed the
+ # second GEMM's -1 blocks, which never read A), so only that GEMM pays for it.
+ ZERO_NONLOCAL_W2 = True
++# Fuse SGLang's silu_and_mul into the Triton w13 GEMM's epilogue (T > 4096 only; hypothesis
++# experts-triton-w13-fused-silu-epilogue). prepare() then permutes the Triton bank's w13 rows (codes
++# and block scales, lossless) so each BLOCK_W = 128 row tile holds W13_FUSE_ROWS gate rows followed
++# by the matching W13_FUSE_ROWS up rows; the epilogue writes silu(gate) * up, 4096 wide. False
++# restores the unfused bank and the separate silu_and_mul launch. The Marlin bank is never permuted.
++FUSE_SILU_W13 = True
++W13_FUSE_ROWS = 64
+ ROPE_POSITIONS = 1 << 21
+ ROPE_THETA = 500_000.0
+ REMAP_BLOCK = 1024
+@@ -245,7 +254,7 @@ def _moe_nvfp4_gemm_kernel(
+     num_valid_tokens, EM,
+     N: tl.constexpr, K: tl.constexpr, TOP_K: tl.constexpr,
+     BLOCK_T: tl.constexpr, BLOCK_W: tl.constexpr, BLOCK_K: tl.constexpr, GROUP_SIZE_T: tl.constexpr,
+-    ZERO_NONLOCAL: tl.constexpr,
++    ZERO_NONLOCAL: tl.constexpr, FUSE_SILU: tl.constexpr,
+ ):
+     """SGLang's fused_moe_kernel (fused_moe_triton/fused_moe.py) in its W4A16 form, computed
+     transposed (swap-AB): acc[n, tokens] += W[n, k] @ A[tokens, k].T, so the weight tile,
+@@ -258,7 +267,13 @@ def _moe_nvfp4_gemm_kernel(
+       W global  float32 [E], applied once to the fp32 accumulator in the epilogue
+ 
+     A is bf16 [M, K] (row = sorted id // TOP_K), C is bf16 [num_valid_tokens, N] (row = sorted
+-    id). No routed-weight multiply. All strides follow from N and K (contiguous tensors)."""
++    id). No routed-weight multiply. All strides follow from N and K (contiguous tensors).
++
++    FUSE_SILU (w13 only, on prepare()'s gate/up-paired row order): each W tile's rows 0..BLOCK_W/2-1
++    are gate rows and the rest the matching up rows; the epilogue rounds acc * gs to bf16 (as the
++    unfused bf16 output feeding silu_and_mul would be), computes silu(g) * u in fp32 as SGLang's
++    act_and_mul does, and stores bf16 into C [num_valid_tokens, N/2] at columns
++    pid_w * BLOCK_W/2 + arange(BLOCK_W/2)."""
+     HALF: tl.constexpr = BLOCK_K // 2
+     GROUPS_HALF: tl.constexpr = HALF // SF_BLOCK
+     pid = tl.program_id(axis=0)
+@@ -289,6 +304,7 @@ def _moe_nvfp4_gemm_kernel(
+     if off_expert == -1:
+         # Routes to experts on other GPUs.
+         if ZERO_NONLOCAL:
++            tl.static_assert(not FUSE_SILU, "zero-storing -1 blocks uses the unfused [N] output layout")
+             tl.store(c_ptrs, tl.zeros((BLOCK_W, BLOCK_T), dtype=c_ptr.dtype.element_ty),
+                      mask=token_mask[None, :])
+         return
+@@ -330,7 +346,19 @@ def _moe_nvfp4_gemm_kernel(
+ 
+     # The per-expert global scale (and the 2^7 the W tile left out), once per output.
+     gs = tl.load(gs_ptr + off_expert) * EPILOGUE_BIAS
+-    tl.store(c_ptrs, (acc * gs).to(c_ptr.dtype.element_ty), mask=token_mask[None, :])
++    if FUSE_SILU:
++        HALF_W: tl.constexpr = BLOCK_W // 2
++        # The gate|up value as the unfused path would have stored it (bf16), back in fp32.
++        h = (acc * gs).to(tl.bfloat16).to(tl.float32)
++        # [BLOCK_W, BLOCK_T] -> g = rows 0..HALF_W-1 (gate), u = rows HALF_W.. (the matching up rows).
++        g, u = tl.split(tl.permute(tl.reshape(h, (2, HALF_W, BLOCK_T)), (1, 2, 0)))
++        y = g * tl.sigmoid(g) * u
++        # Output [num_valid_tokens, N / 2]: its own row stride and column base.
++        offs_f = pid_w * HALF_W + tl.arange(0, HALF_W)
++        f_ptrs = c_ptr + offs_token[None, :] * (N // 2) + offs_f[:, None]
++        tl.store(f_ptrs, y.to(c_ptr.dtype.element_ty), mask=token_mask[None, :])
++    else:
++        tl.store(c_ptrs, (acc * gs).to(c_ptr.dtype.element_ty), mask=token_mask[None, :])
+ 
+ 
+ def _expert_config(tokens):
+@@ -341,11 +369,14 @@ def _expert_config(tokens):
+ 
+ 
+ def _nvfp4_moe_gemm(a, w, sf, gs, out, sorted_ids, expert_ids, n_padded, top_k, num_valid, cfg, zero_nonlocal,
+-                    report=None):
++                    report=None, fuse_silu=False):
+     """out[sorted id] = a[sorted id // top_k] @ dequant(w[expert of its block]).T, on the
+-    token blocks moe_align_block_size laid out (cfg's BLOCK_T). w is the nibble-reordered bank."""
++    token blocks moe_align_block_size laid out (cfg's BLOCK_T). w is the nibble-reordered bank.
++    fuse_silu: w is the gate/up-paired w13 bank and out [num_valid, n / 2] gets silu(gate) * up."""
+     n, k = w.shape[1], w.shape[2] * 2
+-    assert a.shape[1] == k and out.shape[1] == n and sf.shape[2] * nvfp4.BLOCK == k
++    assert a.shape[1] == k and out.shape[1] == (n // 2 if fuse_silu else n) and sf.shape[2] * nvfp4.BLOCK == k
++    assert not (fuse_silu and zero_nonlocal)
++    assert not fuse_silu or cfg["BLOCK_W"] == 2 * W13_FUSE_ROWS
+     assert cfg["BLOCK_K"] == EXPERT_BLOCK_K and nvfp4.BLOCK == SF_BLOCK.value
+     assert n % cfg["BLOCK_W"] == 0 and k % cfg["BLOCK_K"] == 0
+     em = sorted_ids.shape[0]
+@@ -353,7 +384,7 @@ def _nvfp4_moe_gemm(a, w, sf, gs, out, sorted_ids, expert_ids, n_padded, top_k,
+     compiled = _moe_nvfp4_gemm_kernel[grid](
+         a, w, sf, gs, out, sorted_ids, expert_ids, n_padded, num_valid, em,
+         N=n, K=k, TOP_K=top_k, BLOCK_T=cfg["BLOCK_T"], BLOCK_W=cfg["BLOCK_W"], BLOCK_K=cfg["BLOCK_K"],
+-        GROUP_SIZE_T=cfg["GROUP_SIZE_T"], ZERO_NONLOCAL=zero_nonlocal,
++        GROUP_SIZE_T=cfg["GROUP_SIZE_T"], ZERO_NONLOCAL=zero_nonlocal, FUSE_SILU=fuse_silu,
+         num_warps=cfg["num_warps"], num_stages=cfg["num_stages"])
+     if report is not None:  # prepare() only: register / spill / smem use of this variant, for the log
+         print(f"[expert gemm] {report} BLOCK_T={cfg['BLOCK_T']} BLOCK_W={cfg['BLOCK_W']} "
+@@ -388,18 +419,30 @@ def _marlin_bank(weights):
+     }
+ 
+ 
+-def _reorder_nibbles(packed):
++def _w13_fused_row_perm(n, device):
++    """The w13 row order of the fused-silu bank: new row 128j + r is old row 64j + r (gate) for
++    r < 64 and old row n/2 + 64j + (r - 64) (up) for r >= 64 (W13_FUSE_ROWS = 64), so each
++    128-row W tile pairs 64 gate rows with their up rows. int64 [n], a permutation of 0..n-1."""
++    half = n // 2
++    assert half % W13_FUSE_ROWS == 0
++    perm = torch.arange(n, device=device).view(2, half // W13_FUSE_ROWS, W13_FUSE_ROWS).permute(1, 0, 2).reshape(n)
++    assert torch.equal(perm.sort().values, torch.arange(n, device=device)), "w13 row order is not a permutation"
++    return perm
++
++
++def _reorder_nibbles(packed, row_perm=None):
+     """Lossless repack of uint8 [E, N, K/2] E2M1 codes (element 2i low nibble, 2i + 1 high) into
+     the kernel's order: in each EXPERT_BLOCK_K chunk at k0, byte i holds k0 + i (low nibble) and
+-    k0 + EXPERT_BLOCK_K/2 + i (high nibble). The same codes, permuted; a new tensor (the input is
+-    not modified). Each expert is checked to invert exactly."""
++    k0 + EXPERT_BLOCK_K/2 + i (high nibble). With row_perm, row r of each expert is input row
++    row_perm[r] (whole rows moved). The same codes, permuted; a new tensor (the input is not
++    modified). Each expert is checked to invert exactly."""
+     experts, n, kh = packed.shape
+     k = kh * 2
+     assert k % EXPERT_BLOCK_K == 0
+     chunks, half = k // EXPERT_BLOCK_K, EXPERT_BLOCK_K // 2
+     out = torch.empty_like(packed)
+     for i in range(experts):
+-        p = packed[i]
++        p = packed[i] if row_perm is None else packed[i].index_select(0, row_perm)
+         codes = torch.stack((p & 0x0F, p >> 4), dim=-1).reshape(n, chunks, 2, half)  # k order
+         q = codes[:, :, 0, :] | (codes[:, :, 1, :] << 4)
+         out[i] = q.reshape(n, kh)
+@@ -410,10 +453,16 @@ def _reorder_nibbles(packed):
+ 
+ def _expert_bank(weights):
+     """The local experts: E2M1 codes nibble-reordered for the kernel (new tensors, the weights are
+-    untouched), e4m3 block scales and fp32 global scales as stored, contiguous."""
++    untouched), e4m3 block scales and fp32 global scales as stored, contiguous. With FUSE_SILU_W13
++    the w13 codes and block scales also have their rows in _w13_fused_row_perm's order (new tensors;
++    w13_gs is per expert and unchanged)."""
+     bank = {name: weights[name].contiguous() for name in ("w13_sf", "w13_gs", "w2_sf", "w2_gs")}
+-    for name in ("w13", "w2"):
+-        bank[name] = _reorder_nibbles(weights[name].contiguous())
++    perm = _w13_fused_row_perm(weights["w13"].shape[1], weights["w13"].device) if FUSE_SILU_W13 else None
++    bank["w13_perm"] = perm
++    if perm is not None:
++        bank["w13_sf"] = weights["w13_sf"].index_select(1, perm).contiguous()
++    bank["w13"] = _reorder_nibbles(weights["w13"].contiguous(), perm)
++    bank["w2"] = _reorder_nibbles(weights["w2"].contiguous())
+     return bank
+ 
+ 
+@@ -431,17 +480,25 @@ def _check_expert_gemms(bank, weights):
+     k0 + r % 128, so output row r is column k0 + r % 128 of the dequantized expert, through the
+     real pointer arithmetic, K loop, nibble order, scale indexing and transposed epilogue. One -1
+     block and one block past the padded count must leave their rows untouched (or zero, for the -1
+-    block when zero-storing)."""
++    block when zero-storing). The w13 bank's rows may be permuted (FUSE_SILU_W13): its reference is
++    the original rows taken in the bank's order. With FUSE_SILU_W13, the fused-silu w13 variant is
++    then checked against SGLang's silu_and_mul run on the unfused variant's output put back in the
++    original gate|up column order (the column mapping, row stride and the -1 / past-n_padded blocks
++    included)."""
+     device = bank["w13"].device
+     e = LOCAL_EXPERTS - 1  # the largest expert offsets
+     for name, top_k, zero_nonlocal in (("w13", TOP_K, False), ("w2", 1, ZERO_NONLOCAL_W2)):
+         w, sf, gs = bank[name], bank[name + "_sf"], bank[name + "_gs"]
+-        orig = weights[name]
++        orig, orig_sf = weights[name], weights[name + "_sf"]
++        perm = bank["w13_perm"] if name == "w13" else None
+         n, k = w.shape[1], w.shape[2] * 2
+         k0 = k // 2 + CHECK_K  # a chunk in the middle of the K loop
+         assert k0 % EXPERT_BLOCK_K == 0
+-        ref = nvfp4.dequantize(orig[e, :, k0 // 2:(k0 + CHECK_K) // 2], sf[e, :, k0 // 16:(k0 + CHECK_K) // 16], gs[e])
++        ref = nvfp4.dequantize(orig[e, :, k0 // 2:(k0 + CHECK_K) // 2], orig_sf[e, :, k0 // 16:(k0 + CHECK_K) // 16],
++                               gs[e])
+         codes = nvfp4.unpack_e2m1(orig[e, :, k0 // 2:(k0 + CHECK_K) // 2])
++        if perm is not None:  # the bank's row r is original row perm[r]
++            ref, codes = ref.index_select(0, perm), codes.index_select(0, perm)
+         for _, cfg in EXPERT_CONFIGS:
+             bt = cfg["BLOCK_T"]
+             check_rows = max(CHECK_ROWS, bt)        # whole token blocks of valid rows
+@@ -476,6 +533,44 @@ def _check_expert_gemms(bank, weights):
+                 assert bool(nonlocal_rows.isnan().all()), f"{name} BLOCK_T={bt}: -1 block was written"
+             past = out[(check_rows + bt) * top_k::top_k].float()
+             assert bool(past.isnan().all()), f"{name} BLOCK_T={bt}: block past n_padded was written"
++            if perm is not None:
++                _check_fused_silu(x, w, sf, gs, out, perm, sorted_ids, expert_ids, n_padded, top_k, total, check_rows,
++                                  e, cfg)
++
++
++def _check_fused_silu(x, w, sf, gs, out, perm, sorted_ids, expert_ids, n_padded, top_k, total, check_rows, e, cfg):
++    """Untimed. The FUSE_SILU w13 variant on _check_expert_gemms' synthetic case against SGLang's
++    silu_and_mul on the unfused variant's output (already checked against nvfp4.dequantize), its
++    columns put back in the original gate|up order: the same bf16 gate|up values through
++    act_and_mul. Also the -1 block and the block past n_padded must stay unwritten."""
++    bt, n = cfg["BLOCK_T"], w.shape[1]
++    half = n // 2
++    inv = torch.argsort(perm)                      # original row h is bank row inv[h]
++    cache1 = out[0:check_rows * top_k:top_k].index_select(1, inv).contiguous()  # [check_rows, n] gate | up
++    want = torch.empty((check_rows, half), dtype=torch.bfloat16, device=x.device)
++    slot_ids = torch.full((check_rows,), e, dtype=torch.int32, device=x.device)
++    silu_and_mul(cache1, want, expert_ids=slot_ids, expert_step=1)
++    fused = torch.full((total * top_k, half), float("nan"), dtype=torch.bfloat16, device=x.device)
++    _nvfp4_moe_gemm(x, w, sf, gs, fused, sorted_ids, expert_ids, n_padded, top_k, total * top_k, cfg, False,
++                    report="w13 fused-silu", fuse_silu=True)
++    torch.cuda.synchronize()
++    got = fused[0:check_rows * top_k:top_k].float()
++    want = want.float()
++    # Both are bf16 roundings of silu(g) * u from the same bf16 g, u; the fp32 op order may differ, so
++    # allow about two bf16 ulps. A wrong column, row stride or gate/up pairing is far outside this.
++    tol = want.abs() * 2.0 ** -6 + want.abs().max() * 2.0 ** -24
++    bad = ((got - want).abs() > tol) | got.isnan()
++    if bool(bad.any()):
++        idx = bad.nonzero()[0].tolist()
++        raise AssertionError(
++            f"fused w13 silu epilogue mismatch vs silu_and_mul: BLOCK_T={bt}, {int(bad.sum())} of {bad.numel()} "
++            f"values, max err {float((got - want).abs().nan_to_num(float('inf')).max())}, first bad "
++            f"[row {idx[0]}, col {idx[1]}] got {float(got[idx[0], idx[1]])} want {float(want[idx[0], idx[1]])} "
++            f"(col c is pid_w {idx[1] // W13_FUSE_ROWS}, gate row {idx[1]}, up row {half + idx[1]})")
++    assert bool(fused[check_rows * top_k:(check_rows + bt) * top_k:top_k].float().isnan().all()), (
++        f"fused w13 BLOCK_T={bt}: -1 block was written")
++    assert bool(fused[(check_rows + bt) * top_k::top_k].float().isnan().all()), (
++        f"fused w13 BLOCK_T={bt}: block past n_padded was written")
+ 
+ 
+ # prepare()'s end-to-end expert check: a synthetic case above MARLIN_MAX_TOKENS (so _experts_triton
+@@ -550,21 +645,23 @@ def prepare(weights):
+         "_modules": (pre_ffn, next_pre_attn, post_attn, post_ffn, post_expert),
+     }
+     del freqs
+-    # The Triton bank first (its scales alias the weights), and its check: compiles every
+-    # expert-GEMM variant and checks its dequant against nvfp4.dequantize.
++    # The Triton bank first (its scales alias the weights, except a row-permuted w13_sf under
++    # FUSE_SILU_W13), and its check: compiles every expert-GEMM variant and checks its dequant
++    # against nvfp4.dequantize.
+     state["bank"] = _expert_bank(weights)
+     _check_expert_gemms(state["bank"], weights)
+     torch.cuda.synchronize()
+     scale_names = ("w13_sf", "w13_gs", "w2_sf", "w2_gs")
+     scales_before = {name: state["bank"][name].clone() for name in scale_names}
++    weight_scales_before = {name: weights[name].clone() for name in scale_names}
+     # Then the Marlin bank, from copies, so SGLang's repack cannot touch the weights or the Triton bank.
+     state["marlin"] = _marlin_bank(
+         {name: weights[name].clone() for name in ("w13", "w2", "w13_sf", "w2_sf", "w13_gs", "w2_gs")})
+     torch.cuda.synchronize()
+     for name in scale_names:
+         assert torch.equal(state["bank"][name], scales_before[name]), f"{name} changed by the Marlin repack"
+-        assert torch.equal(weights[name], scales_before[name]), f"weights[{name}] changed by the Marlin repack"
+-    del scales_before
++        assert torch.equal(weights[name], weight_scales_before[name]), f"weights[{name}] changed by the Marlin repack"
++    del scales_before, weight_scales_before
+     torch.cuda.empty_cache()
+     _check_experts_e2e(state, device)
+     torch.cuda.synchronize()
+@@ -627,12 +724,19 @@ def _experts_triton(x, topk_weights, local_ids, state):
+     cfg = _expert_config(num_tokens)
+     sorted_ids, block_experts, n_padded = moe_align_block_size(local_ids, cfg["BLOCK_T"], N_EXPERTS)
+     cache2 = torch.empty((num_slots, size_n), device=x.device, dtype=x.dtype)
+-    cache13 = torch.empty((num_slots * max(gemm1_n, size_k),), device=x.device, dtype=x.dtype)
+-    cache1 = cache13[: num_slots * gemm1_n].view(-1, gemm1_n)
+-    cache3 = cache13[: num_slots * size_k].view(-1, size_k)
+-    _nvfp4_moe_gemm(x.contiguous(), bank["w13"], bank["w13_sf"], bank["w13_gs"], cache1, sorted_ids, block_experts,
+-                    n_padded, TOP_K, num_slots, cfg, False)
+-    silu_and_mul(cache1, cache2, expert_ids=local_ids.view(-1), expert_step=1)
++    if bank["w13_perm"] is not None:
++        # FUSE_SILU_W13: the w13 GEMM writes silu(gate) * up straight into cache2 (-1 slots unwritten,
++        # as silu_and_mul leaves them; w2's -1 blocks never read A).
++        cache3 = torch.empty((num_slots, size_k), device=x.device, dtype=x.dtype)
++        _nvfp4_moe_gemm(x.contiguous(), bank["w13"], bank["w13_sf"], bank["w13_gs"], cache2, sorted_ids,
++                        block_experts, n_padded, TOP_K, num_slots, cfg, False, fuse_silu=True)
++    else:
++        cache13 = torch.empty((num_slots * max(gemm1_n, size_k),), device=x.device, dtype=x.dtype)
++        cache1 = cache13[: num_slots * gemm1_n].view(-1, gemm1_n)
++        cache3 = cache13[: num_slots * size_k].view(-1, size_k)
++        _nvfp4_moe_gemm(x.contiguous(), bank["w13"], bank["w13_sf"], bank["w13_gs"], cache1, sorted_ids,
++                        block_experts, n_padded, TOP_K, num_slots, cfg, False)
++        silu_and_mul(cache1, cache2, expert_ids=local_ids.view(-1), expert_step=1)
+     y = _nvfp4_moe_gemm(cache2, bank["w2"], bank["w2_sf"], bank["w2_gs"], cache3, sorted_ids, block_experts,
+                         n_padded, 1, num_slots, cfg, ZERO_NONLOCAL_W2).view(num_tokens, TOP_K, size_k)
+     return fused_post_expert_norm_weighted_sum(
