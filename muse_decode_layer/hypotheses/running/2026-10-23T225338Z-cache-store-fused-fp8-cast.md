@@ -40,7 +40,7 @@ review: proceed
 status: running
 review_at: 2026-10-24T024344Z
 review_companions: null
-stage: implemented
+stage: dispatched
 claimed_at: 2026-10-24T024344Z
 base_sha: 54112d428da559b67789e07fa8f2e586fe5fb45e
 base_blob: 6884d26a928d1de1b07bf8d28e1be4e53dfdcfc5
@@ -55,6 +55,8 @@ submission_blob: 03d45c741603c0d133b48ff4e65bbbf0cf86980f
 lint_warnings: 1
 attempt_file: 2026-10-24T024848Z-check-cache-store-fused-fp8-cast.md
 prepared_at: 2026-10-24T024848Z
+job: 7264526cf9f94c37
+dispatched_at: 2026-10-24T024859Z
 ---
 
 # cache-store-fused-fp8-cast
