@@ -42,7 +42,7 @@ review: proceed
 status: running
 review_at: 2026-10-24T165634Z
 review_companions: null
-stage: implemented
+stage: dispatched
 claimed_at: 2026-10-24T165634Z
 base_sha: 700fed761b57b25cbae687d07371c4020bf38af9
 base_blob: 1c0f5fa1bfc4e602b62e5e9edd9df6d5652b297b
@@ -57,6 +57,8 @@ submission_blob: 2ee93584612efa3b3320db386889110c4f2c939b
 lint_warnings: 0
 attempt_file: 2026-10-24T165946Z-submit-full-decode-cuda-fp8-qk-mma.md
 prepared_at: 2026-10-24T165946Z
+job: b939681d3ab549d7
+dispatched_at: 2026-10-24T170002Z
 ---
 
 # full-decode-cuda-fp8-qk-mma
