@@ -34,9 +34,16 @@ priority: 3
 kind: primary
 controls_for: null
 review: proceed
-status: queued
+status: running
 review_at: 2026-10-24T032454Z
 review_companions: [unpooler-full-triton-skinny-m32-control-blockm16-all-m]
+stage: claimed
+claimed_at: 2026-10-24T032454Z
+base_sha: d2840d088aa35522a03b40c59e174287cf935f67
+base_blob: 2752a016d386e9261ec77e25b426c05b76c071ac
+branch: hyp/muse_bf16_proj/unpooler-full-triton-skinny-m32
+worktree: .worktrees/muse_bf16_proj/unpooler-full-triton-skinny-m32
+mode: null
 ---
 
 # unpooler-full-triton-skinny-m32
