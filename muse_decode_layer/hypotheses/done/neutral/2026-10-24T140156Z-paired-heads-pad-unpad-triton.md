@@ -54,10 +54,10 @@ priority: 3
 kind: primary
 controls_for: null
 review: proceed
-status: running
+status: done
 review_at: 2026-10-24T164538Z
 review_companions: null
-stage: dispatched
+stage: harvested
 claimed_at: 2026-10-24T164752Z
 base_sha: c6b167670ed7835c8c0a38fc7064ea60ab8726dc
 base_blob: cc466fce207709c98ab0e78c2435c1c459890fdb
@@ -74,6 +74,13 @@ attempt_file: 2026-10-24T165043Z-submit-paired-heads-pad-unpad-triton.md
 prepared_at: 2026-10-24T165043Z
 job: a92b64be4c6547d3
 dispatched_at: 2026-10-24T165053Z
+outcome: neutral
+verdict_detail: within-ci
+speedup: 1.1654011064815313
+speedup_ci: [1.1479200898843083, 1.182882123078754]
+harvested_at: 2026-10-24T173234Z
+best_at_harvest: 1.1664628806987323
+promotion: null
 ---
 
 # paired-heads-pad-unpad-triton
@@ -151,4 +158,35 @@ OK with warnings: muse_decode_layer/submission.py
 ```
 
 `python3 -I -m py_compile` passed; its `__pycache__` was removed from the worktree.
+
+## Result
+
+- job `a92b64be4c6547d3` (submit), status done, passed True, tests 13/13
+- speedup 1.1654x, 95% CI [1.1479, 1.1829], score 19409.883750919944 µs vs SGLang 22620.3 µs
+- best at harvest: {"speedup": 1.1664628806987323, "ci": [1.1489659374882513, 1.183959823909213], "job": "a017e10aec544c55"}; base result: muse_decode_layer/hypotheses/done/gain/post-expert-norm-triton-small-t.result.json
+- **outcome: neutral** (within-ci)
+- files: `muse_decode_layer/hypotheses/done/neutral/paired-heads-pad-unpad-triton.result.json`, `muse_decode_layer/hypotheses/done/neutral/paired-heads-pad-unpad-triton.patch`; branch `hyp/muse_decode_layer/paired-heads-pad-unpad-triton`
+
+## Attribution
+
+| shape | w | base µs | hyp µs | delta | verdict |
+|---|---|---|---|---|---|
+| batch=1 ctx=80000 dist=soft layer=sliding load=decode_1 page=1 repeats=60 | 46 | 145.83 | 146.76 | 0.9964 | flat |
+| batch=1 ctx=80000 dist=soft layer=full load=decode_1 page=1 repeats=60 | 16 | 156.95 | 157.73 | 0.998 | flat |
+| batch=16 ctx=80000 dist=soft layer=sliding load=decode_16 page=1 spread=agentic | 46 | 225.79 | 227.58 | 0.9893 | flat |
+| batch=16 ctx=80000 dist=soft layer=full load=decode_16 page=1 spread=agentic | 16 | 364.88 | 364.56 | 1.0135 | flat |
+| batch=32 ctx=80000 dist=soft layer=sliding load=decode_32 page=1 spread=agentic | 46 | 251.94 | 267.37 | 0.9961 | flat |
+| batch=32 ctx=80000 dist=soft layer=full load=decode_32 page=1 spread=agentic | 16 | 535.78 | 543.26 | 1.0081 | flat |
+| batch=1 ctx=80000 dist=soft layer=sliding load=verify_1 page=1 q_len=8 | 46 | 200.79 | 211.06 | 0.9902 | flat |
+| batch=1 ctx=80000 dist=soft layer=full load=verify_1 page=1 q_len=8 | 16 | 218.06 | 218.79 | 0.9974 | flat |
+| batch=16 ctx=80000 dist=soft layer=sliding load=verify_16 page=1 q_len=8 spread=agentic | 46 | 462.37 | 450.04 | 1.0029 | flat |
+| batch=16 ctx=80000 dist=soft layer=full load=verify_16 page=1 q_len=8 spread=agentic | 16 | 603.87 | 569.69 | 1.0388 | gained |
+| batch=32 ctx=80000 dist=soft layer=sliding load=verify_32 page=1 q_len=8 spread=agentic | 46 | 639.36 | 607.91 | 1.0142 | flat |
+| batch=32 ctx=80000 dist=soft layer=full load=verify_32 page=1 q_len=8 spread=agentic | 16 | 932.92 | 895.99 | 0.9984 | flat |
+
+gained on full verify_16. Expected hit: 4/7. Noise ±1.5%.
+
+## Follow-ups
+
+- within-ci: the change is not proven either way; a stacked hypothesis (`depends_on: paired-heads-pad-unpad-triton`) that adds a further change in the same area is the only way to learn more (identical code is never re-run).
 
