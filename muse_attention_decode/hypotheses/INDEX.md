@@ -1,6 +1,6 @@
 # muse_attention_decode hypotheses
 
-Regenerated 2026-10-24T092716Z. Best: 1.1274x [1.1105,1.1444] job `9e8fcb3fe4b04458` (check)
+Regenerated 2026-10-24T095815Z. Best: 1.1284x [1.1115,1.1454] job `c297440e53334f34` (submit)
 
 | created | slug | kind | area | where | outcome | speedup | CI | job | mode | promotion | review | expected hit |
 |---|---|---|---|---|---|---|---|---|---|---|---|---|
@@ -8,7 +8,7 @@ Regenerated 2026-10-24T092716Z. Best: 1.1274x [1.1105,1.1444] job `9e8fcb3fe4b04
 | 2026-10-23T223550Z | fa3-num-splits-full-decode | primary | FA3 call | queue | queued |  |  |  |  |  | required |  |
 | 2026-10-23T223550Z | fa3-num-splits-sliding | primary | FA3 call | queue | queued |  |  |  |  |  | required |  |
 | 2026-10-23T223550Z | triton-window-attention-sliding | primary | FA3 call | queue | queued |  |  |  |  |  | required |  |
-| 2026-10-23T223550Z | fused-preattention-triton | primary | pre-attention norm+rope | done/gain | gain | 1.1274 | [1.111,1.144] | 9e8fcb3fe4b04458 | check | submitted | proceed | 6/8 |
+| 2026-10-23T223550Z | fused-preattention-triton | primary | pre-attention norm+rope | done/gain | gain | 1.1274 | [1.111,1.144] | 9e8fcb3fe4b04458 | check | done | proceed | 6/8 |
 | 2026-10-23T223722Z | fa3-drop-cu-seqlens-decode | primary | FA3 call | queue | queued |  |  |  |  |  | required |  |
 | 2026-10-23T223722Z | fa3-scheduler-metadata-full-verify | primary | FA3 call | queue | queued |  |  |  |  |  | required |  |
 | 2026-10-23T223722Z | triton-flash-decode-full-both-heads | primary | FA3 call | queue | queued |  |  |  |  |  | required |  |

@@ -1,6 +1,6 @@
 # muse_decode_layer hypotheses
 
-Regenerated 2026-10-24T092716Z. Best: 1.0635x [1.0475,1.0794] job `2b1f82408ab64116` (submit)
+Regenerated 2026-10-24T095815Z. Best: 1.0635x [1.0475,1.0794] job `2b1f82408ab64116` (submit)
 
 | created | slug | kind | area | where | outcome | speedup | CI | job | mode | promotion | review | expected hit |
 |---|---|---|---|---|---|---|---|---|---|---|---|---|
@@ -19,7 +19,7 @@ Regenerated 2026-10-24T092716Z. Best: 1.0635x [1.0475,1.0794] job `2b1f82408ab64
 | 2026-10-24T075400Z | fused-preattention-triton | primary | pre-attention norm+rope | queue | queued |  |  |  |  |  | required |  |
 | 2026-10-24T075400Z | router-triton-splitk-side-stream | primary | router GEMM | queue | hold |  |  |  |  |  | proceed |  |
 | 2026-10-24T075400Z | triton-flash-decode-full-verify-paired-kv | rewrite | FA3 call | queue | queued |  |  |  |  |  | required |  |
-| 2026-10-24T075400Z | triton-flash-decode-full-paired-kv | rewrite | FA3 call | running | running |  |  | e82b11f9d9f64b23 | check |  | proceed |  |
+| 2026-10-24T075400Z | triton-flash-decode-full-paired-kv | rewrite | FA3 call | done/neutral | neutral | 1.0702 | [1.054,1.086] | e82b11f9d9f64b23 | check |  | proceed | 1/5 |
 
 ## Held
 

@@ -1,10 +1,10 @@
 # muse_attention_decode findings
 
-Regenerated 2026-10-24T092716Z by `churn.py index`. Read this before writing a hypothesis for muse_attention_decode.
+Regenerated 2026-10-24T095815Z by `churn.py index`. Read this before writing a hypothesis for muse_attention_decode.
 
 ## Current best
 
-1.1274x [1.1105,1.1444] from job `9e8fcb3fe4b04458` (check), master commit `3e98bd00dc`, hypothesis fused-preattention-triton
+1.1284x [1.1115,1.1454] from job `c297440e53334f34` (submit), master commit `3e98bd00dc`, hypothesis fused-preattention-triton
 
 Where the time goes (per scored shape, top kernels):
 
