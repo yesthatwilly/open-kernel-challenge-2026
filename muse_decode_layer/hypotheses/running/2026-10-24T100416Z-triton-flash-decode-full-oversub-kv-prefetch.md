@@ -66,7 +66,7 @@ review: proceed
 status: running
 review_at: 2026-10-24T104027Z
 review_companions: null
-stage: implemented
+stage: dispatched
 claimed_at: 2026-10-24T111708Z
 base_sha: bbbf3168de76ebc524cb23723b2ebf734b893072
 base_blob: cf09a9196c4d7a20540bb82c9d79bdebaeea2a43
@@ -81,6 +81,8 @@ submission_blob: 9edba2e3f2af4501a24fa85b5d87aef96700d4b9
 lint_warnings: 1
 attempt_file: 2026-10-24T111950Z-check-triton-flash-decode-full-oversub-kv-prefetch.md
 prepared_at: 2026-10-24T111950Z
+job: e55908a05eec4000
+dispatched_at: 2026-10-24T111959Z
 ---
 
 # triton-flash-decode-full-oversub-kv-prefetch
