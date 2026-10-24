@@ -1,0 +1,39 @@
+{
+ "schema": 1,
+ "problem": "muse_moe_w4a16",
+ "slug": "cuda-nvfp4-swapab-mma-persistent-small-m",
+ "job": "8f198afc3bf14f6f",
+ "mode": "submit",
+ "duplicate_of": null,
+ "content_hash": "4426411e7ca6c0d6541f13eb21ba21dfab10c3be9fc64cca30d1d3b93fd873f9",
+ "submission_sha256": "80333ab54210bc3d700c08f1b58142f97338c6d78f28621124fbf90a5f7c2a92",
+ "submission_blob": "7d31b758c60017e045f6e0f75d2e437931ea34b0",
+ "impl_commit": "f8b3f7230f2656a4143b6a87bb6b8dc1be0b5e49",
+ "base_sha": "663f5edaa1c1e7a6a50c7a891240deafb601a765",
+ "created_at": 1792865874.4953077,
+ "finished_at": 1792866002.7879395,
+ "gpu": "H200",
+ "evaluator_sha256": "afcead6a6ff090aa50fe9bc907f0fa8f4ba73d95fa92af93ec260b5e8ff00f00",
+ "status": "done",
+ "passed": false,
+ "error": null,
+ "returncode": 112,
+ "tests": {
+  "total": 0,
+  "passed": 0
+ },
+ "first_failing": null,
+ "speedup": null,
+ "speedup_ci": null,
+ "score_us": null,
+ "baseline_us": null,
+ "flags": [],
+ "checks": {
+  "flagged": [],
+  "ok": true,
+  "rejected": []
+ },
+ "shapes": [],
+ "loads": [],
+ "attribution": null
+}

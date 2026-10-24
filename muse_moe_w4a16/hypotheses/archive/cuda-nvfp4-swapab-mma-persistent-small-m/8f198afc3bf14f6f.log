@@ -1,0 +1,178 @@
+SGLang 296/37
+[triton-map-align-small-m-port]   T=8 local_start=0 skewed: (info) capacity 288/36 vs SGLang 296/37
+[triton-map-align-small-m-port]   T=8 local_start=0 skewed: (info) within-expert order differs from SGLang's
+[triton-map-align-small-m-port]   T=8 local_start=0 all-remote: (info) capacity 288/36 vs SGLang 296/37
+[triton-map-align-small-m-port]   T=8 local_start=0 all-one-expert: (info) capacity 288/36 vs SGLang 296/37
+[triton-map-align-small-m-port]   pad T=1 local_start=0 random bsm=8: n_pad=8 r_pad=16 DIFF
+[triton-map-align-small-m-port]   pad T=1 local_start=0 skewed bsm=8: n_pad=24 r_pad=32 DIFF
+[triton-map-align-small-m-port]   pad T=1 local_start=0 all-remote bsm=8: n_pad=0 r_pad=8 DIFF
+[triton-map-align-small-m-port]   pad T=1 local_start=0 all-one-expert bsm=8: n_pad=8 r_pad=16 DIFF
+[triton-map-align-small-m-port]   pad T=1 local_start=0 all-local bsm=8: n_pad=64 r_pad=64
+[triton-map-align-small-m-port]   pad T=1 local_start=32 random bsm=8: n_pad=0 r_pad=8 DIFF
+[triton-map-align-small-m-port]   pad T=1 local_start=32 skewed bsm=8: n_pad=24 r_pad=32 DIFF
+[triton-map-align-small-m-port]   pad T=1 local_start=32 all-remote bsm=8: n_pad=0 r_pad=8 DIFF
+[triton-map-align-small-m-port]   pad T=1 local_start=32 all-one-expert bsm=8: n_pad=8 r_pad=16 DIFF
+[triton-map-align-small-m-port]   pad T=1 local_start=32 all-local bsm=8: n_pad=64 r_pad=64
+[triton-map-align-small-m-port]   pad T=1 local_start=224 random bsm=8: n_pad=0 r_pad=8 DIFF
+[triton-map-align-small-m-port]   pad T=1 local_start=224 skewed bsm=8: n_pad=24 r_pad=32 DIFF
+[triton-map-align-small-m-port]   pad T=1 local_start=224 all-remote bsm=8: n_pad=0 r_pad=8 DIFF
+[triton-map-align-small-m-port]   pad T=1 local_start=224 all-one-expert bsm=8: n_pad=8 r_pad=16 DIFF
+[triton-map-align-small-m-port]   pad T=1 local_start=224 all-local bsm=8: n_pad=64 r_pad=64
+[triton-map-align-small-m-port]   pad T=8 local_start=0 random bsm=8: n_pad=64 r_pad=120 DIFF
+[triton-map-align-small-m-port]   pad T=8 local_start=0 skewed bsm=8: n_pad=24 r_pad=64 DIFF
+[triton-map-align-small-m-port]   pad T=8 local_start=0 all-remote bsm=8: n_pad=0 r_pad=64 DIFF
+[triton-map-align-small-m-port]   pad T=8 local_start=0 all-one-expert bsm=8: n_pad=8 r_pad=64 DIFF
+[triton-map-align-small-m-port]   pad T=8 local_start=0 all-local bsm=8: n_pad=64 r_pad=64
+[triton-map-align-small-m-port]   pad T=8 local_start=32 random bsm=8: n_pad=48 r_pad=112 DIFF
+[triton-map-align-small-m-port]   pad T=8 local_start=32 skewed bsm=8: n_pad=24 r_pad=64 DIFF
+[triton-map-align-small-m-port]   pad T=8 local_start=32 all-remote bsm=8: n_pad=0 r_pad=64 DIFF
+[triton-map-align-small-m-port]   pad T=8 local_start=32 all-one-expert bsm=8: n_pad=8 r_pad=64 DIFF
+[triton-map-align-small-m-port]   pad T=8 local_start=32 all-local bsm=8: n_pad=64 r_pad=64
+[triton-map-align-small-m-port]   pad T=8 local_start=224 random bsm=8: n_pad=72 r_pad=128 DIFF
+[triton-map-align-small-m-port]   pad T=8 local_start=224 skewed bsm=8: n_pad=24 r_pad=64 DIFF
+[triton-map-align-small-m-port]   pad T=8 local_start=224 all-remote bsm=8: n_pad=0 r_pad=64 DIFF
+[triton-map-align-small-m-port]   pad T=8 local_start=224 all-one-expert bsm=8: n_pad=8 r_pad=64 DIFF
+[triton-map-align-small-m-port]   pad T=8 local_start=224 all-local bsm=8: n_pad=64 r_pad=64
+[triton-map-align-small-m-port]   pad T=16 local_start=0 random bsm=8: n_pad=120 r_pad=232 DIFF
+[triton-map-align-small-m-port]   pad T=16 local_start=0 skewed bsm=8: n_pad=48 r_pad=128 DIFF
+[triton-map-align-small-m-port]   pad T=16 local_start=0 all-remote bsm=8: n_pad=0 r_pad=128 DIFF
+[triton-map-align-small-m-port]   pad T=16 local_start=0 all-one-expert bsm=8: n_pad=16 r_pad=128 DIFF
+[triton-map-align-small-m-port]   pad T=16 local_start=0 all-local bsm=8: n_pad=128 r_pad=128
+[triton-map-align-small-m-port]   pad T=16 local_start=32 random bsm=8: n_pad=88 r_pad=208 DIFF
+[triton-map-align-small-m-port]   pad T=16 local_start=32 skewed bsm=8: n_pad=48 r_pad=128 DIFF
+[triton-map-align-small-m-port]   pad T=16 local_start=32 all-remote bsm=8: n_pad=0 r_pad=128 DIFF
+[triton-map-align-small-m-port]   pad T=16 local_start=32 all-one-expert bsm=8: n_pad=16 r_pad=128 DIFF
+[triton-map-align-small-m-port]   pad T=16 local_start=32 all-local bsm=8: n_pad=128 r_pad=128
+[triton-map-align-small-m-port]   pad T=16 local_start=224 random bsm=8: n_pad=96 r_pad=216 DIFF
+[triton-map-align-small-m-port]   pad T=16 local_start=224 skewed bsm=8: n_pad=48 r_pad=128 DIFF
+[triton-map-align-small-m-port]   pad T=16 local_start=224 all-remote bsm=8: n_pad=0 r_pad=128 DIFF
+[triton-map-align-small-m-port]   pad T=16 local_start=224 all-one-expert bsm=8: n_pad=16 r_pad=128 DIFF
+[triton-map-align-small-m-port]   pad T=16 local_start=224 all-local bsm=8: n_pad=128 r_pad=128
+[triton-map-align-small-m-port]   pad T=32 local_start=0 random bsm=16: n_pad=336 r_pad=560 DIFF
+[triton-map-align-small-m-port]   pad T=32 local_start=0 skewed bsm=16: n_pad=96 r_pad=256 DIFF
+[triton-map-align-small-m-port]   pad T=32 local_start=0 all-remote bsm=16: n_pad=0 r_pad=256 DIFF
+[triton-map-align-small-m-port]   pad T=32 local_start=0 all-one-expert bsm=16: n_pad=32 r_pad=256 DIFF
+[triton-map-align-small-m-port]   pad T=32 local_start=0 all-local bsm=16: n_pad=256 r_pad=256
+[triton-map-align-small-m-port]   pad T=32 local_start=32 random bsm=16: n_pad=288 r_pad=528 DIFF
+[triton-map-align-small-m-port]   pad T=32 local_start=32 skewed bsm=16: n_pad=96 r_pad=256 DIFF
+[triton-map-align-small-m-port]   pad T=32 local_start=32 all-remote bsm=16: n_pad=0 r_pad=256 DIFF
+[triton-map-align-small-m-port]   pad T=32 local_start=32 all-one-expert bsm=16: n_pad=32 r_pad=256 DIFF
+[triton-map-align-small-m-port]   pad T=32 local_start=32 all-local bsm=16: n_pad=256 r_pad=256
+[triton-map-align-small-m-port]   pad T=32 local_start=224 random bsm=16: n_pad=368 r_pad=592 DIFF
+[triton-map-align-small-m-port]   pad T=32 local_start=224 skewed bsm=16: n_pad=96 r_pad=256 DIFF
+[triton-map-align-small-m-port]   pad T=32 local_start=224 all-remote bsm=16: n_pad=0 r_pad=256 DIFF
+[triton-map-align-small-m-port]   pad T=32 local_start=224 all-one-expert bsm=16: n_pad=32 r_pad=256 DIFF
+[triton-map-align-small-m-port]   pad T=32 local_start=224 all-local bsm=16: n_pad=256 r_pad=256
+[cuda-w4a16][align] self-check vs moe_align_block_size(ref_local, bsm, 32): 60 cases, 0 mismatches, 93 order-only differences, 48 cases n_pad != SGLang r_pad
+[cuda-w4a16][align]   T=1 local_start=0 random: (info) capacity 232/29 vs SGLang 64/8
+[cuda-w4a16][align]   T=1 local_start=0 skewed: (info) capacity 232/29 vs SGLang 64/8
+[cuda-w4a16][align]   T=1 local_start=0 all-remote: (info) capacity 232/29 vs SGLang 64/8
+[cuda-w4a16][align]   T=1 local_start=0 all-one-expert: (info) capacity 232/29 vs SGLang 64/8
+[cuda-w4a16][align]   T=1 local_start=0 all-local: (info) capacity 232/29 vs SGLang 64/8
+[cuda-w4a16][align]   T=1 local_start=32 random: (info) capacity 232/29 vs SGLang 64/8
+[cuda-w4a16][align]   T=1 local_start=32 skewed: (info) capacity 232/29 vs SGLang 64/8
+[cuda-w4a16][align]   T=1 local_start=32 all-remote: (info) capacity 232/29 vs SGLang 64/8
+[cuda-w4a16][align]   T=1 local_start=32 all-one-expert: (info) capacity 232/29 vs SGLang 64/8
+[cuda-w4a16][align]   T=1 local_start=32 all-local: (info) capacity 232/29 vs SGLang 64/8
+[cuda-w4a16][align]   T=1 local_start=224 random: (info) capacity 232/29 vs SGLang 64/8
+[cuda-w4a16][align]   T=1 local_start=224 skewed: (info) capacity 232/29 vs SGLang 64/8
+[cuda-w4a16][align]   T=1 local_start=224 all-remote: (info) capacity 232/29 vs SGLang 64/8
+[cuda-w4a16][align]   T=1 local_start=224 all-one-expert: (info) capacity 232/29 vs SGLang 64/8
+[cuda-w4a16][align]   T=1 local_start=224 all-local: (info) capacity 232/29 vs SGLang 64/8
+[cuda-w4a16][align]   T=8 local_start=0 random: (info) capacity 288/36 vs SGLang 296/37
+[cuda-w4a16][align]   T=8 local_start=0 skewed: (info) capacity 288/36 vs SGLang 296/37
+[cuda-w4a16][align]   T=8 local_start=0 skewed: (info) within-expert order differs from SGLang's
+[cuda-w4a16][align]   T=8 local_start=0 all-remote: (info) capacity 288/36 vs SGLang 296/37
+[cuda-w4a16][align]   T=8 local_start=0 all-one-expert: (info) capacity 288/36 vs SGLang 296/37
+[cuda-w4a16][align]   pad T=1 local_start=0 random bsm=8: n_pad=8 r_pad=16 DIFF
+[cuda-w4a16][align]   pad T=1 local_start=0 skewed bsm=8: n_pad=24 r_pad=32 DIFF
+[cuda-w4a16][align]   pad T=1 local_start=0 all-remote bsm=8: n_pad=0 r_pad=8 DIFF
+[cuda-w4a16][align]   pad T=1 local_start=0 all-one-expert bsm=8: n_pad=8 r_pad=16 DIFF
+[cuda-w4a16][align]   pad T=1 local_start=0 all-local bsm=8: n_pad=64 r_pad=64
+[cuda-w4a16][align]   pad T=1 local_start=32 random bsm=8: n_pad=0 r_pad=8 DIFF
+[cuda-w4a16][align]   pad T=1 local_start=32 skewed bsm=8: n_pad=24 r_pad=32 DIFF
+[cuda-w4a16][align]   pad T=1 local_start=32 all-remote bsm=8: n_pad=0 r_pad=8 DIFF
+[cuda-w4a16][align]   pad T=1 local_start=32 all-one-expert bsm=8: n_pad=8 r_pad=16 DIFF
+[cuda-w4a16][align]   pad T=1 local_start=32 all-local bsm=8: n_pad=64 r_pad=64
+[cuda-w4a16][align]   pad T=1 local_start=224 random bsm=8: n_pad=0 r_pad=8 DIFF
+[cuda-w4a16][align]   pad T=1 local_start=224 skewed bsm=8: n_pad=24 r_pad=32 DIFF
+[cuda-w4a16][align]   pad T=1 local_start=224 all-remote bsm=8: n_pad=0 r_pad=8 DIFF
+[cuda-w4a16][align]   pad T=1 local_start=224 all-one-expert bsm=8: n_pad=8 r_pad=16 DIFF
+[cuda-w4a16][align]   pad T=1 local_start=224 all-local bsm=8: n_pad=64 r_pad=64
+[cuda-w4a16][align]   pad T=8 local_start=0 random bsm=8: n_pad=64 r_pad=120 DIFF
+[cuda-w4a16][align]   pad T=8 local_start=0 skewed bsm=8: n_pad=24 r_pad=64 DIFF
+[cuda-w4a16][align]   pad T=8 local_start=0 all-remote bsm=8: n_pad=0 r_pad=64 DIFF
+[cuda-w4a16][align]   pad T=8 local_start=0 all-one-expert bsm=8: n_pad=8 r_pad=64 DIFF
+[cuda-w4a16][align]   pad T=8 local_start=0 all-local bsm=8: n_pad=64 r_pad=64
+[cuda-w4a16][align]   pad T=8 local_start=32 random bsm=8: n_pad=48 r_pad=112 DIFF
+[cuda-w4a16][align]   pad T=8 local_start=32 skewed bsm=8: n_pad=24 r_pad=64 DIFF
+[cuda-w4a16][align]   pad T=8 local_start=32 all-remote bsm=8: n_pad=0 r_pad=64 DIFF
+[cuda-w4a16][align]   pad T=8 local_start=32 all-one-expert bsm=8: n_pad=8 r_pad=64 DIFF
+[cuda-w4a16][align]   pad T=8 local_start=32 all-local bsm=8: n_pad=64 r_pad=64
+[cuda-w4a16][align]   pad T=8 local_start=224 random bsm=8: n_pad=72 r_pad=128 DIFF
+[cuda-w4a16][align]   pad T=8 local_start=224 skewed bsm=8: n_pad=24 r_pad=64 DIFF
+[cuda-w4a16][align]   pad T=8 local_start=224 all-remote bsm=8: n_pad=0 r_pad=64 DIFF
+[cuda-w4a16][align]   pad T=8 local_start=224 all-one-expert bsm=8: n_pad=8 r_pad=64 DIFF
+[cuda-w4a16][align]   pad T=8 local_start=224 all-local bsm=8: n_pad=64 r_pad=64
+[cuda-w4a16][align]   pad T=16 local_start=0 random bsm=16: n_pad=240 r_pad=352 DIFF
+[cuda-w4a16][align]   pad T=16 local_start=0 skewed bsm=16: n_pad=48 r_pad=128 DIFF
+[cuda-w4a16][align]   pad T=16 local_start=0 all-remote bsm=16: n_pad=0 r_pad=128 DIFF
+[cuda-w4a16][align]   pad T=16 local_start=0 all-one-expert bsm=16: n_pad=16 r_pad=128 DIFF
+[cuda-w4a16][align]   pad T=16 local_start=0 all-local bsm=16: n_pad=128 r_pad=128
+[cuda-w4a16][align]   pad T=16 local_start=32 random bsm=16: n_pad=176 r_pad=304 DIFF
+[cuda-w4a16][align]   pad T=16 local_start=32 skewed bsm=16: n_pad=48 r_pad=128 DIFF
+[cuda-w4a16][align]   pad T=16 local_start=32 all-remote bsm=16: n_pad=0 r_pad=128 DIFF
+[cuda-w4a16][align]   pad T=16 local_start=32 all-one-expert bsm=16: n_pad=16 r_pad=128 DIFF
+[cuda-w4a16][align]   pad T=16 local_start=32 all-local bsm=16: n_pad=128 r_pad=128
+[cuda-w4a16][align]   pad T=16 local_start=224 random bsm=16: n_pad=192 r_pad=320 DIFF
+[cuda-w4a16][align]   pad T=16 local_start=224 skewed bsm=16: n_pad=48 r_pad=128 DIFF
+[cuda-w4a16][align]   pad T=16 local_start=224 all-remote bsm=16: n_pad=0 r_pad=128 DIFF
+[cuda-w4a16][align]   pad T=16 local_start=224 all-one-expert bsm=16: n_pad=16 r_pad=128 DIFF
+[cuda-w4a16][align]   pad T=16 local_start=224 all-local bsm=16: n_pad=128 r_pad=128
+[cuda-w4a16][align]   pad T=32 local_start=0 random bsm=32: n_pad=672 r_pad=896 DIFF
+[cuda-w4a16][align]   pad T=32 local_start=0 skewed bsm=32: n_pad=96 r_pad=256 DIFF
+[cuda-w4a16][align]   pad T=32 local_start=0 all-remote bsm=32: n_pad=0 r_pad=256 DIFF
+[cuda-w4a16][align]   pad T=32 local_start=0 all-one-expert bsm=32: n_pad=32 r_pad=256 DIFF
+[cuda-w4a16][align]   pad T=32 local_start=0 all-local bsm=32: n_pad=256 r_pad=256
+[cuda-w4a16][align]   pad T=32 local_start=32 random bsm=32: n_pad=576 r_pad=832 DIFF
+[cuda-w4a16][align]   pad T=32 local_start=32 skewed bsm=32: n_pad=96 r_pad=256 DIFF
+[cuda-w4a16][align]   pad T=32 local_start=32 all-remote bsm=32: n_pad=0 r_pad=256 DIFF
+[cuda-w4a16][align]   pad T=32 local_start=32 all-one-expert bsm=32: n_pad=32 r_pad=256 DIFF
+[cuda-w4a16][align]   pad T=32 local_start=32 all-local bsm=32: n_pad=256 r_pad=256
+[cuda-w4a16][align]   pad T=32 local_start=224 random bsm=32: n_pad=736 r_pad=960 DIFF
+[cuda-w4a16][align]   pad T=32 local_start=224 skewed bsm=32: n_pad=96 r_pad=256 DIFF
+[cuda-w4a16][align]   pad T=32 local_start=224 all-remote bsm=32: n_pad=0 r_pad=256 DIFF
+[cuda-w4a16][align]   pad T=32 local_start=224 all-one-expert bsm=32: n_pad=32 r_pad=256 DIFF
+[cuda-w4a16][align]   pad T=32 local_start=224 all-local bsm=32: n_pad=256 r_pad=256
+[cuda-w4a16] load_inline compiled in 51.2s
+[cuda-w4a16] kernel w13+silu NT=1: attrs ok True, numRegs 104, localSizeBytes 0, dynamic smem 90112 B
+[cuda-w4a16] kernel w13+silu NT=2: attrs ok True, numRegs 80, localSizeBytes 0, dynamic smem 106496 B
+[cuda-w4a16] kernel w13+silu NT=4: attrs ok True, numRegs 128, localSizeBytes 0, dynamic smem 139264 B
+[cuda-w4a16] kernel w2 NT=1: attrs ok True, numRegs 104, localSizeBytes 0, dynamic smem 90112 B
+[cuda-w4a16] kernel w2 NT=2: attrs ok True, numRegs 80, localSizeBytes 0, dynamic smem 106496 B
+[cuda-w4a16] kernel w2 NT=4: attrs ok True, numRegs 128, localSizeBytes 0, dynamic smem 139264 B
+[cuda-w4a16] retiled 32 experts losslessly (round trips exact) in 0.1s
+[cuda-w4a16] grid 132, SK w13 {1: 4, 2: 2, 4: 1}, SK w2 {1: 8, 2: 4, 4: 2}, workspace 32 MiB
+[cuda-w4a16] CUDA path setup raised: AcceleratorError("CUDA error: an illegal instruction was encountered\nSearch for `cudaErrorIllegalInstruction' in https://docs.nvidia.com/cuda/cuda-runtime-api/group__CUDART__TYPES.html for more information.\nCUDA kernel errors might be asynchronously reported at some other API call, so the stacktrace below might be incorrect.\nFor debugging consider passing CUDA_LAUNCH_BLOCKING=1\nThe CUDA driver logged these messages, which may provide useful details:\nReturning 715 (CUDA_ERROR_ILLEGAL_INSTRUCTION) from cuCtxSynchronize_v2\n\n")
+[cuda-w4a16] PATH CHOSEN = MARLIN for num_tokens <= 32; MARLIN above
+Traceback (most recent call last):
+  File "/tmp/muse_moe_w4a16-du1cgvhi/run/worker.py", line 423, in child_main
+    send(_setup_op(msg, module, state, sync, perf))
+         ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/tmp/muse_moe_w4a16-du1cgvhi/run/worker.py", line 322, in _setup_op
+    state["prep"] = prepare(weights)
+                    ^^^^^^^^^^^^^^^^
+  File "/tmp/muse_moe_w4a16-du1cgvhi/run/submission.py", line 1004, in prepare
+    torch.cuda.synchronize()
+  File "/opt/sglang/lib/python3.12/site-packages/torch/cuda/__init__.py", line 1281, in synchronize
+    return torch._C._cuda_synchronize()
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+torch.AcceleratorError: CUDA error: an illegal instruction was encountered
+Search for `cudaErrorIllegalInstruction' in https://docs.nvidia.com/cuda/cuda-runtime-api/group__CUDART__TYPES.html for more information.
+CUDA kernel errors might be asynchronously reported at some other API call, so the stacktrace below might be incorrect.
+For debugging consider passing CUDA_LAUNCH_BLOCKING=1
+The CUDA driver logged these messages, which may provide useful details:
+Sticky error detected
+Returning 715 (CUDA_ERROR_ILLEGAL_INSTRUCTION) from cuCtxSynchronize_v2
+
+

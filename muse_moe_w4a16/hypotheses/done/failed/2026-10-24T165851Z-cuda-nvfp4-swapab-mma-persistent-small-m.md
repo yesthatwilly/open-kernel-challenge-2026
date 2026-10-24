@@ -108,10 +108,10 @@ controls_for: null
 rewrite_stage: 1
 replaces: Marlin w13+w2 (moe_wna16_marlin_gemm x2) at bs<=32
 review: proceed
-status: running
+status: done
 review_at: 2026-10-24T170237Z
 review_companions: null
-stage: dispatched
+stage: harvested
 claimed_at: 2026-10-24T170237Z
 base_sha: 663f5edaa1c1e7a6a50c7a891240deafb601a765
 base_blob: d9a9375ef4721ab9b28cc9d6364c92e67c7ccc59
@@ -128,6 +128,13 @@ attempt_file: 2026-10-24T181733Z-submit-cuda-nvfp4-swapab-mma-persistent-small-m
 prepared_at: 2026-10-24T181733Z
 job: 8f198afc3bf14f6f
 dispatched_at: 2026-10-24T181805Z
+outcome: failed
+verdict_detail: "test:failed"
+speedup: null
+speedup_ci: null
+harvested_at: 2026-10-24T184719Z
+best_at_harvest: 1.3249153782392282
+promotion: null
 ---
 
 # cuda-nvfp4-swapab-mma-persistent-small-m
@@ -251,3 +258,15 @@ OK with warnings: .../cuda-nvfp4-swapab-mma-persistent-small-m/muse_moe_w4a16/su
 ```
 
 The dtype warnings are the uint8 byte buffers that hold the retiled NVFP4 codes and E4M3 scales (prepare, lossless); no activation is cast. `python3 -I -m py_compile` passed and the `__pycache__` was removed.
+
+## Result
+
+- job `8f198afc3bf14f6f` (submit), status done, passed False, tests 0/0
+- best at harvest: {"speedup": 1.3249153782392282, "ci": [1.30504164756564, 1.3447891089128166], "job": "45eacf4ca2e849d2"}; base result: muse_moe_w4a16/hypotheses/done/gain/triton-map-align-on-block-m-restack.result.json
+- **outcome: failed** (test:failed)
+- files: `muse_moe_w4a16/hypotheses/done/failed/cuda-nvfp4-swapab-mma-persistent-small-m.result.json`, `muse_moe_w4a16/hypotheses/done/failed/cuda-nvfp4-swapab-mma-persistent-small-m.patch`; branch `hyp/muse_moe_w4a16/cuda-nvfp4-swapab-mma-persistent-small-m`
+
+## Follow-ups
+
+- rewrite stage 1 of `Marlin w13+w2 (moe_wna16_marlin_gemm x2) at bs<=32`: read the replaced kernels' own us per shape (profile top_kernels) against the incumbent and the floor, and check which Milestone it reached. The next stage is `/hypothesize muse_moe_w4a16 "<what to fix or tune>" --kind rewrite --depends-on cuda-nvfp4-swapab-mma-persistent-small-m --stage 2`; a slow or failed first cut is the expected start, not a do-not-retry.
+

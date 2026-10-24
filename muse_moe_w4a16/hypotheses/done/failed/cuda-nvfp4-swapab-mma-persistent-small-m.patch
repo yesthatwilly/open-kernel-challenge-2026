@@ -1,0 +1,894 @@
+diff --git a/muse_moe_w4a16/submission.py b/muse_moe_w4a16/submission.py
+index d9a9375..7d31b75 100644
+--- a/muse_moe_w4a16/submission.py
++++ b/muse_moe_w4a16/submission.py
+@@ -22,10 +22,20 @@ Up to 32 tokens (hypothesis triton-map-align-small-m-port), one single-program T
+ experts (capacity M*8 + 32*(block_size_m - 1), as the 32-expert align allocates; remote routes get
+ no bucket). Above 32 tokens the expert_map gather and moe_align_block_size(..., 32) run as before.
+ 
++Up to 32 tokens (hypothesis cuda-nvfp4-swapab-mma-persistent-small-m), when the prepare-time
++build and self-check pass, the two moe_wna16_marlin_gemm calls and silu_and_mul are replaced by two
++launches of one hand-written CUDA kernel (load_inline): swap-AB mma.sync m16n8k16 with the NVFP4
++weight as operand A (dequantized in registers, exactly), the gathered BF16 activations as B, a
++persistent grid with one cp.async ring across work items, ticket split-K, and silu(gate) * up in
++the w13 epilogue. It reads its own lossless retiling of the same NVFP4 codes and E4M3 scales.
++_align_small feeds it with block_size_m = 8 / 16 / 32 (M <= 8 / 16 / 32); the post-norm tail is
++unchanged. Above 32 tokens, or when the CUDA path is off, every launch is as before.
++
+ Differs from SGLang: the expert all-reduce is not run."""
+ 
+ from typing import TypedDict
+ 
++import time
+ import types
+ 
+ import torch
+@@ -188,12 +198,12 @@ def _align_small(topk_ids, local_start, local_count, block_size_m):
+     return local_ids, (sorted_ids, block_experts, n_padded)
+ 
+ 
+-def _align_self_check(device, count):
++def _align_self_check(device, count, bsm_of=None, tag0="[triton-map-align-small-m-port]"):
+     """Untimed, prepare() only: _align_small against SGLang's moe_align_block_size(ref_local, bsm,
+     count) on synthetic routings (fixed seeds), per local expert. Prints a one-line summary, any
+     mismatch, and per case n_padded vs SGLang's own r_pad (info: whether SGLang's align buckets the
+-    -1 routes into m-blocks of its own)."""
+-    tag0 = "[triton-map-align-small-m-port]"
++    -1 routes into m-blocks of its own). bsm_of(tokens) overrides the block size (the CUDA path's
++    8 / 16 / 32); by default it is SGLang's pick. Returns the number of hard mismatches."""
+     gen = torch.Generator().manual_seed(20261024)
+     bad = []
+     pads = []
+@@ -216,7 +226,7 @@ def _align_self_check(device, count):
+                 cases += 1
+                 tag = f"T={tokens} local_start={start} {name}"
+                 topk_ids = torch.tensor(ids, dtype=torch.int32, device=device)
+-                bsm = _block_size_m(tokens, count)
++                bsm = bsm_of(tokens) if bsm_of is not None else _block_size_m(tokens, count)
+                 local_ids, (s_ids, b_exp, n_pad) = _align_small(topk_ids, start, count, bsm)
+                 ref_map = torch.full((N_EXPERTS,), -1, dtype=torch.int32, device=device)
+                 ref_map[start:start + count] = torch.arange(count, dtype=torch.int32, device=device)
+@@ -229,7 +239,7 @@ def _align_self_check(device, count):
+                 torch.cuda.synchronize()
+                 numel = tokens * TOP_K
+                 if s_ids.numel() != r_ids.numel() or b_exp.numel() != r_exp.numel():
+-                    bad.append(f"{tag}: capacity {s_ids.numel()}/{b_exp.numel()} vs SGLang "
++                    bad.append(f"{tag}: (info) capacity {s_ids.numel()}/{b_exp.numel()} vs SGLang "
+                                f"{r_ids.numel()}/{r_exp.numel()}")
+                 s_ids, b_exp, n_pad = s_ids.tolist(), b_exp.tolist(), int(n_pad.item())
+                 r_ids, r_exp, r_pad = r_ids.tolist(), r_exp.tolist(), int(r_pad.item())
+@@ -270,6 +280,668 @@ def _align_self_check(device, count):
+         print(f"{tag0}   {message}")
+     for line in pads:
+         print(f"{tag0}   pad {line}")
++    return len(hard)
++
++
++# ---------------------------------------------------------------------------------------------
++# CUDA small-M path (hypothesis cuda-nvfp4-swapab-mma-persistent-small-m).
++#
++# One kernel template w4a16_kernel<NT, GATED>, launched twice per call (w13 with GATED = silu
++# epilogue, then w2). Swap-AB: the weight is mma.sync m16n8k16 operand A (16 weight rows on M),
++# the m-block's gathered BF16 activation rows are B (tokens on N = 8 per fragment, NT fragments,
++# BSM = 8 * NT tokens per m-block). CTA = 8 warps, tile = 128 weight rows (16 per warp) x BSM
++# tokens, BK = 256 per pipeline stage, 4 stages. Work items (m-block b, N-tile j, k-split s), b
++# slowest, are walked by a persistent grid (one CTA per SM) as one flat (item, stage) sequence,
++# so the cp.async ring never drains at item boundaries. Split-K partials are reduced by the last
++# arriver of a per-tile ticket (fixed split order, deterministic; the ticket is reset to 0).
++#
++# Weight layout (prepare, lossless retiling of the same NVFP4 bytes): per expert, per N-tile j,
++# per k-stage kb, per warp w, per 64-k sub-tile kk, per lane: 16 bytes = 4 uint32 words, word s
++# = the 8 E2M1 codes of the lane's A fragment for k16 step s; register pair i (a0a1, a2a3, a4a5,
++# a6a7) sits at nibbles 3 - i (lo) and 7 - i (hi). Scales: per (j, kb, w, kk), per lane group g
++# (lane / 4), 8 E4M3 bytes: step s, rows g (byte 2s) and g + 8 (byte 2s + 1). For w13 each warp's
++# 16 rows are gate column 64j + 8w + g (rows 0-7) and the matching up column (rows 8-15), so a
++# thread holds gate and up of the same column and token and the silu epilogue needs no exchange.
++# Activation slab rows are 512 B apart; 16-byte chunk c of row r is stored at c ^ (r & 7), so
++# ldmatrix is conflict-free.
++# ---------------------------------------------------------------------------------------------
++
++CUDA_MAX_TOKENS = 32
++CUDA_TAG = "[cuda-w4a16]"
++# Split-K per NT (host constants by shape, no autotune): w13 K = 4096, w2 K = 4096.
++CUDA_SK13 = {1: 4, 2: 2, 4: 1}
++CUDA_SK2 = {1: 8, 2: 4, 4: 2}
++CUDA_THREADS = 256
++CUDA_STAGES = 4
++_E2M1_GRID = (0.0, 0.5, 1.0, 1.5, 2.0, 3.0, 4.0, 6.0)
++
++_CUDA_CPP = r"""
++#include <torch/extension.h>
++#include <vector>
++std::vector<int64_t> w4a16_init();
++void w4a16_gemm(torch::Tensor wq, torch::Tensor wsf, torch::Tensor gs, torch::Tensor act, int64_t a_shift,
++                torch::Tensor sorted_ids, torch::Tensor block_experts, torch::Tensor n_padded,
++                int64_t num_routes, int64_t n_tiles, int64_t K, int64_t nt, int64_t sk, int64_t gated,
++                int64_t blocks_cap, torch::Tensor ws, torch::Tensor tickets, torch::Tensor out, int64_t grid);
++"""
++
++_CUDA_SRC = r"""
++#include <torch/extension.h>
++#include <ATen/cuda/CUDAContext.h>
++#include <c10/cuda/CUDAException.h>
++#include <cuda_fp16.h>
++#include <cuda_bf16.h>
++#include <cstdint>
++#include <vector>
++
++namespace {
++
++constexpr int THREADS = 256;
++constexpr int STAGES = 4;
++constexpr int BN = 128;                   // weight rows per CTA tile
++constexpr int BK = 256;                   // k per pipeline stage
++constexpr int W_BYTES = BN * BK / 2;      // 16384: E2M1 codes per stage
++constexpr int S_BYTES = BN * BK / 16;     // 2048: E4M3 scales per stage
++constexpr int SLAB_ROW = BK * 2;          // 512: bytes per activation row per stage
++
++template <int NT>
++struct Cfg {
++  static constexpr int BSM = 8 * NT;
++  static constexpr int STAGE = W_BYTES + S_BYTES + BSM * SLAB_ROW;
++  static constexpr int SMEM = STAGES * STAGE;
++};
++
++__device__ __forceinline__ uint32_t smem_u32(const void* p) {
++  return static_cast<uint32_t>(__cvta_generic_to_shared(p));
++}
++__device__ __forceinline__ void cp_async16_ef(uint32_t dst, const void* src, uint64_t policy) {
++  asm volatile("cp.async.cg.shared.global.L2::cache_hint [%0], [%1], 16, %2;\n"
++               :: "r"(dst), "l"(src), "l"(policy) : "memory");
++}
++__device__ __forceinline__ void cp_async16_ca(uint32_t dst, const void* src, int src_bytes) {
++  asm volatile("cp.async.ca.shared.global [%0], [%1], 16, %2;\n" :: "r"(dst), "l"(src), "r"(src_bytes) : "memory");
++}
++__device__ __forceinline__ void cp_commit() { asm volatile("cp.async.commit_group;\n" ::: "memory"); }
++template <int N>
++__device__ __forceinline__ void cp_wait() { asm volatile("cp.async.wait_group %0;\n" :: "n"(N) : "memory"); }
++
++__device__ __forceinline__ void ldsm_x4(uint32_t addr, uint32_t& r0, uint32_t& r1, uint32_t& r2, uint32_t& r3) {
++  asm volatile("ldmatrix.sync.aligned.m8n8.x4.shared.b16 {%0,%1,%2,%3}, [%4];\n"
++               : "=r"(r0), "=r"(r1), "=r"(r2), "=r"(r3) : "r"(addr));
++}
++// Four E4M3 bytes -> two f16x2: lo from bytes 0,1 (byte 0 in the low half), hi from bytes 2,3.
++__device__ __forceinline__ void e4m3x4_to_f16x2x2(uint32_t w, uint32_t& lo, uint32_t& hi) {
++  asm("{\n\t.reg .b16 a, b;\n\tmov.b32 {a, b}, %2;\n\t"
++      "cvt.rn.f16x2.e4m3x2 %0, a;\n\tcvt.rn.f16x2.e4m3x2 %1, b;\n\t}\n"
++      : "=r"(lo), "=r"(hi) : "r"(w));
++}
++__device__ __forceinline__ uint32_t bf16x2_bcast(float v) {
++  __nv_bfloat162 b = __float2bfloat162_rn(v);
++  return *reinterpret_cast<uint32_t*>(&b);
++}
++// a * b (+ -0), bf16x2, round to nearest; subnormal inputs are kept.
++__device__ __forceinline__ uint32_t mul_bf16x2(uint32_t a, uint32_t b) {
++  uint32_t d;
++  asm("fma.rn.bf16x2 %0, %1, %2, %3;\n" : "=r"(d) : "r"(a), "r"(b), "r"(0x80008000u));
++  return d;
++}
++// 8 E2M1 codes -> the 4 bf16x2 A registers, exact: (q & 0x80008000) | ((q & 0x70007000) >> 6) is
++// e2m1 * 2^-126 in each half (nibbles 3 - i and 7 - i); sg / sg8 are the row g / g + 8 scales
++// times 2^119, so each product is e2m1 * sf * 2^-7 (at most 6 significant bits, exact in bf16).
++__device__ __forceinline__ void dequant8(uint32_t q, uint32_t sg, uint32_t sg8, uint32_t (&a)[4]) {
++#pragma unroll
++  for (int i = 0; i < 4; ++i) {
++    const uint32_t v = (q & 0x80008000u) | ((q & 0x70007000u) >> 6);
++    a[i] = mul_bf16x2(v, (i & 1) ? sg8 : sg);
++    q <<= 4;
++  }
++}
++// D = A B + D, m16n8k16, A row-major bf16 (4 regs), B col-major bf16 (2 regs), fp32 accumulate.
++__device__ __forceinline__ void mma_bf16(float (&c)[4], const uint32_t (&a)[4], uint32_t b0, uint32_t b1) {
++  asm("mma.sync.aligned.m16n8k16.row.col.f32.bf16.bf16.f32 {%0,%1,%2,%3}, {%4,%5,%6,%7}, {%8,%9}, {%0,%1,%2,%3};\n"
++      : "+f"(c[0]), "+f"(c[1]), "+f"(c[2]), "+f"(c[3])
++      : "r"(a[0]), "r"(a[1]), "r"(a[2]), "r"(a[3]), "r"(b0), "r"(b1));
++}
++
++template <int NT, bool GATED>
++__global__ void __launch_bounds__(THREADS, 1)
++w4a16_kernel(const uint8_t* __restrict__ wq,           // tiled codes, W_BYTES per (e, j, kb)
++             const uint8_t* __restrict__ wsf,          // tiled e4m3 scales, S_BYTES per (e, j, kb)
++             const float* __restrict__ gs,             // fp32 [E] global scale * 2^7
++             const __nv_bfloat16* __restrict__ act,    // bf16 activation rows [*, K]
++             int a_shift,                              // act row = route >> a_shift
++             const int* __restrict__ sorted_ids,       // route ids grouped by expert, sentinel num_routes
++             const int* __restrict__ block_experts,    // expert of each m-block
++             const int* __restrict__ n_padded,         // [1] used length of sorted_ids
++             int num_routes, int n_tiles, int K, int SK, int blocks_cap,
++             float* __restrict__ ws,                   // fp32 split-K partials
++             int* __restrict__ tickets,                // int32 per (b, j), zero between launches
++             __nv_bfloat16* __restrict__ out, int out_ld) {
++  using C = Cfg<NT>;
++  constexpr int BSM = C::BSM;
++  extern __shared__ __align__(128) uint8_t smem[];
++  __shared__ int last_s;
++  const int tid = threadIdx.x, lane = tid & 31, warp = tid >> 5;
++  const int g = lane >> 2, t4 = lane & 3;
++  const int bx = blockIdx.x, gx = gridDim.x;
++
++  int nb = __ldg(n_padded) / BSM;
++  nb = nb < blocks_cap ? nb : blocks_cap;
++  const int per_b = n_tiles * SK;
++  const int total = nb * per_b;
++  if (bx >= total) return;  // uniform over the CTA
++  const int nk = (total - bx + gx - 1) / gx;  // items of this CTA
++  const int KB = K / BK;
++  const int KS = KB / SK;                     // stages per item
++  const int N = nk * KS;                      // stages of this CTA, one flat pipeline
++
++  uint64_t policy;
++  asm volatile("createpolicy.fractional.L2::evict_first.b64 %0, 1.0;\n" : "=l"(policy));
++
++  // Producer-side item meta: the item being issued (ce, crow) and the next one, prefetched (ne, nrow).
++  int ik = -1, ce = -1, ne = -1;
++  int crow[NT], nrow[NT];
++  auto load_meta = [&](int kk, int& e, int (&rows)[NT]) {
++    e = -1;
++#pragma unroll
++    for (int i = 0; i < NT; ++i) rows[i] = num_routes;
++    if (kk < nk) {
++      const int b = (bx + kk * gx) / per_b;
++      e = __ldg(block_experts + b);
++#pragma unroll
++      for (int i = 0; i < NT; ++i) rows[i] = __ldg(sorted_ids + b * BSM + (tid >> 5) + 8 * i);
++    }
++  };
++  load_meta(0, ne, nrow);
++
++  auto issue = [&](int nn) {
++    const int kk = nn / KS, t = nn - kk * KS;
++    if (kk != ik) {
++      ik = kk;
++      ce = ne;
++#pragma unroll
++      for (int i = 0; i < NT; ++i) crow[i] = nrow[i];
++      load_meta(kk + 1, ne, nrow);
++    }
++    const int it = bx + kk * gx;
++    const int s = it % SK;
++    const int j = (it / SK) % n_tiles;
++    const int kb = s * KS + t;
++    uint8_t* st = smem + (nn % STAGES) * C::STAGE;
++    const int ee = ce < 0 ? 0 : ce;  // e < 0: any valid weight, zero activations, no epilogue
++    const size_t tile = (size_t)(ee * n_tiles + j) * KB + kb;
++    const uint8_t* wsrc = wq + tile * W_BYTES;
++#pragma unroll
++    for (int i = 0; i < W_BYTES / 16 / THREADS; ++i) {
++      const int c = tid + i * THREADS;
++      cp_async16_ef(smem_u32(st + c * 16), wsrc + c * 16, policy);
++    }
++    if (tid < S_BYTES / 16) cp_async16_ef(smem_u32(st + W_BYTES + tid * 16), wsf + tile * S_BYTES + tid * 16, policy);
++    const int ch = tid & 31;
++#pragma unroll
++    for (int i = 0; i < NT; ++i) {
++      const int r = (tid >> 5) + 8 * i;  // token row of the m-block
++      const int route = crow[i];
++      const bool ok = ce >= 0 && route < num_routes;
++      const __nv_bfloat16* src = ok ? act + (size_t)(route >> a_shift) * K + kb * BK + ch * 8 : act;
++      cp_async16_ca(smem_u32(st + W_BYTES + S_BYTES + r * SLAB_ROW + ((ch ^ (r & 7)) << 4)), src, ok ? 16 : 0);
++    }
++  };
++
++#pragma unroll
++  for (int j = 0; j < STAGES - 1; ++j) {
++    if (j < N) issue(j);
++    cp_commit();
++  }
++
++  const float P119 = __int_as_float(0x7B000000);  // 2^119
++  float acc[NT][4];
++  for (int n = 0; n < N; ++n) {
++    cp_wait<STAGES - 2>();  // stage n (and everything issued before it) has landed
++    __syncthreads();        // visible to all; every warp is done with stage n - 1's buffer
++    {
++      const int nn = n + STAGES - 1;
++      if (nn < N) issue(nn);
++      cp_commit();  // always, so the group count stays uniform
++    }
++    const int kk = n / KS, t = n - kk * KS;
++    if (t == 0) {
++#pragma unroll
++      for (int f = 0; f < NT; ++f) acc[f][0] = acc[f][1] = acc[f][2] = acc[f][3] = 0.f;
++    }
++    const uint8_t* st = smem + (n % STAGES) * C::STAGE;
++    const uint4* wst = reinterpret_cast<const uint4*>(st) + warp * 4 * 32;
++    const uint2* sst = reinterpret_cast<const uint2*>(st + W_BYTES) + warp * 4 * 8;
++    const uint32_t slab = smem_u32(st + W_BYTES + S_BYTES);
++#pragma unroll
++    for (int sub = 0; sub < 4; ++sub) {
++      const uint4 q = wst[sub * 32 + lane];
++      const uint2 sc = sst[sub * 8 + g];
++      // B fragments: matrix i of the x4 at half h is logical chunk sub * 8 + h * 4 + i of the 8
++      // token rows f * 8 + (lane & 7); step s uses regs 2s (k 0-7) and 2s + 1 (k 8-15).
++      uint32_t b[NT][8];
++#pragma unroll
++      for (int f = 0; f < NT; ++f) {
++#pragma unroll
++        for (int h = 0; h < 2; ++h) {
++          const int row = f * 8 + (lane & 7);
++          const int c = sub * 8 + h * 4 + (lane >> 3);
++          ldsm_x4(slab + row * SLAB_ROW + ((c ^ (lane & 7)) << 4),
++                  b[f][4 * h], b[f][4 * h + 1], b[f][4 * h + 2], b[f][4 * h + 3]);
++        }
++      }
++      uint32_t hs[4];
++      e4m3x4_to_f16x2x2(sc.x, hs[0], hs[1]);
++      e4m3x4_to_f16x2x2(sc.y, hs[2], hs[3]);
++      const uint32_t qw[4] = {q.x, q.y, q.z, q.w};
++#pragma unroll
++      for (int s = 0; s < 4; ++s) {
++        const float2 fs = __half22float2(*reinterpret_cast<const __half2*>(&hs[s]));
++        const uint32_t sg = bf16x2_bcast(fs.x * P119), sg8 = bf16x2_bcast(fs.y * P119);
++        uint32_t a[4];
++        dequant8(qw[s], sg, sg8, a);
++#pragma unroll
++        for (int f = 0; f < NT; ++f) mma_bf16(acc[f], a, b[f][2 * s], b[f][2 * s + 1]);
++      }
++    }
++
++    if (t == KS - 1) {
++      // Item end. All branches below are uniform over the CTA.
++      const int it = bx + kk * gx;
++      const int s = it % SK;
++      const int tj = it / SK;  // tile index b * n_tiles + j
++      const int j = tj % n_tiles, b = tj / n_tiles;
++      const int e = __ldg(block_experts + b);
++      if (e < 0) continue;
++      if (SK > 1) {
++        constexpr int PART = THREADS * NT * 4;  // floats per (tile, split)
++        float* base = ws + (size_t)tj * SK * PART;
++        float4* mine = reinterpret_cast<float4*>(base + (size_t)s * PART) + tid * NT;
++#pragma unroll
++        for (int f = 0; f < NT; ++f) __stcg(mine + f, make_float4(acc[f][0], acc[f][1], acc[f][2], acc[f][3]));
++        __threadfence();
++        __syncthreads();
++        if (tid == 0) {
++          const int old = atomicAdd(tickets + tj, 1);
++          const int last = old == SK - 1;
++          if (last) tickets[tj] = 0;  // every split has arrived: reset for the next launch
++          last_s = last;
++        }
++        __syncthreads();
++        if (!last_s) continue;
++        __threadfence();
++#pragma unroll
++        for (int f = 0; f < NT; ++f) acc[f][0] = acc[f][1] = acc[f][2] = acc[f][3] = 0.f;
++        for (int s2 = 0; s2 < SK; ++s2) {  // fixed split order: deterministic
++          const float4* src = reinterpret_cast<const float4*>(base + (size_t)s2 * PART) + tid * NT;
++#pragma unroll
++          for (int f = 0; f < NT; ++f) {
++            const float4 v = __ldcg(src + f);
++            acc[f][0] += v.x; acc[f][1] += v.y; acc[f][2] += v.z; acc[f][3] += v.w;
++          }
++        }
++      }
++      const float gsc = __ldg(gs + e);
++#pragma unroll
++      for (int f = 0; f < NT; ++f) {
++        const int p0 = f * 8 + 2 * t4;
++        const int r0 = __ldg(sorted_ids + b * BSM + p0);
++        const int r1 = __ldg(sorted_ids + b * BSM + p0 + 1);
++        if (GATED) {
++          // Row g = gate column n0, row g + 8 = up column n0; c0 / c2 token p0, c1 / c3 token p0 + 1.
++          const int n0 = j * 64 + warp * 8 + g;
++          if (r0 < num_routes) {
++            const float hg = acc[f][0] * gsc, hu = acc[f][2] * gsc;
++            out[(size_t)r0 * out_ld + n0] = __float2bfloat16_rn(hg / (1.f + expf(-hg)) * hu);
++          }
++          if (r1 < num_routes) {
++            const float hg = acc[f][1] * gsc, hu = acc[f][3] * gsc;
++            out[(size_t)r1 * out_ld + n0] = __float2bfloat16_rn(hg / (1.f + expf(-hg)) * hu);
++          }
++        } else {
++          const int o0 = j * BN + warp * 16 + g;
++          if (r0 < num_routes) {
++            out[(size_t)r0 * out_ld + o0] = __float2bfloat16_rn(acc[f][0] * gsc);
++            out[(size_t)r0 * out_ld + o0 + 8] = __float2bfloat16_rn(acc[f][2] * gsc);
++          }
++          if (r1 < num_routes) {
++            out[(size_t)r1 * out_ld + o0] = __float2bfloat16_rn(acc[f][1] * gsc);
++            out[(size_t)r1 * out_ld + o0 + 8] = __float2bfloat16_rn(acc[f][3] * gsc);
++          }
++        }
++      }
++    }
++  }
++  cp_wait<0>();  // the trailing groups are empty; drain anyway
++}
++
++template <int NT, bool GATED>
++void info_one(std::vector<int64_t>& r) {
++  const void* fn = reinterpret_cast<const void*>(w4a16_kernel<NT, GATED>);
++  const cudaError_t e1 = cudaFuncSetAttribute(fn, cudaFuncAttributeMaxDynamicSharedMemorySize, Cfg<NT>::SMEM);
++  cudaFuncAttributes a{};
++  const cudaError_t e2 = cudaFuncGetAttributes(&a, fn);
++  if (e1 != cudaSuccess || e2 != cudaSuccess) (void)cudaGetLastError();
++  r.push_back(GATED ? 1 : 0);
++  r.push_back(NT);
++  r.push_back(e1 == cudaSuccess && e2 == cudaSuccess ? 1 : 0);
++  r.push_back(a.numRegs);
++  r.push_back(static_cast<int64_t>(a.localSizeBytes));
++  r.push_back(Cfg<NT>::SMEM);
++}
++
++}  // namespace
++
++// Per instantiation: gated, NT, attribute calls ok, numRegs, localSizeBytes, dynamic smem.
++std::vector<int64_t> w4a16_init() {
++  std::vector<int64_t> r;
++  info_one<1, true>(r);
++  info_one<2, true>(r);
++  info_one<4, true>(r);
++  info_one<1, false>(r);
++  info_one<2, false>(r);
++  info_one<4, false>(r);
++  return r;
++}
++
++void w4a16_gemm(torch::Tensor wq, torch::Tensor wsf, torch::Tensor gs, torch::Tensor act, int64_t a_shift,
++                torch::Tensor sorted_ids, torch::Tensor block_experts, torch::Tensor n_padded,
++                int64_t num_routes, int64_t n_tiles, int64_t K, int64_t nt, int64_t sk, int64_t gated,
++                int64_t blocks_cap, torch::Tensor ws, torch::Tensor tickets, torch::Tensor out, int64_t grid) {
++  TORCH_CHECK(wq.is_contiguous() && wsf.is_contiguous() && gs.is_contiguous() && act.is_contiguous() &&
++              sorted_ids.is_contiguous() && block_experts.is_contiguous() && out.is_contiguous(), "w4a16: layout");
++  TORCH_CHECK(act.scalar_type() == at::kBFloat16 && out.scalar_type() == at::kBFloat16 &&
++              gs.scalar_type() == at::kFloat && sorted_ids.scalar_type() == at::kInt &&
++              block_experts.scalar_type() == at::kInt && n_padded.scalar_type() == at::kInt &&
++              ws.scalar_type() == at::kFloat && tickets.scalar_type() == at::kInt, "w4a16: dtype");
++  TORCH_CHECK(K % (BK * sk) == 0 && act.size(-1) == K, "w4a16: K");
++  TORCH_CHECK(nt == 1 || nt == 2 || nt == 4, "w4a16: nt");
++  TORCH_CHECK(tickets.numel() >= blocks_cap * n_tiles, "w4a16: tickets");
++  TORCH_CHECK(sk == 1 || ws.numel() >= blocks_cap * n_tiles * sk * THREADS * nt * 4, "w4a16: workspace");
++  TORCH_CHECK(wq.numel() >= (int64_t)gs.numel() * n_tiles * (K / BK) * W_BYTES, "w4a16: weights");
++  auto stream = at::cuda::getCurrentCUDAStream();
++  const int out_ld = static_cast<int>(out.size(1));
++#define W4A16_LAUNCH(NT_, G_)                                                                           \
++  w4a16_kernel<NT_, G_><<<static_cast<unsigned>(grid), THREADS, Cfg<NT_>::SMEM, stream>>>(            \
++      wq.data_ptr<uint8_t>(), wsf.data_ptr<uint8_t>(), gs.data_ptr<float>(),                          \
++      reinterpret_cast<const __nv_bfloat16*>(act.data_ptr()), static_cast<int>(a_shift),               \
++      sorted_ids.data_ptr<int>(), block_experts.data_ptr<int>(), n_padded.data_ptr<int>(),             \
++      static_cast<int>(num_routes), static_cast<int>(n_tiles), static_cast<int>(K), static_cast<int>(sk), \
++      static_cast<int>(blocks_cap), ws.data_ptr<float>(), tickets.data_ptr<int>(),                     \
++      reinterpret_cast<__nv_bfloat16*>(out.data_ptr()), out_ld)
++  if (gated) {
++    if (nt == 1) W4A16_LAUNCH(1, true); else if (nt == 2) W4A16_LAUNCH(2, true); else W4A16_LAUNCH(4, true);
++  } else {
++    if (nt == 1) W4A16_LAUNCH(1, false); else if (nt == 2) W4A16_LAUNCH(2, false); else W4A16_LAUNCH(4, false);
++  }
++#undef W4A16_LAUNCH
++  C10_CUDA_KERNEL_LAUNCH_CHECK();
++}
++"""
++
++
++def _cuda_nt(num_tokens):
++    """n8 fragments per m-block: 1 for M <= 8, 2 for M <= 16, 4 for M <= 32."""
++    return 1 if num_tokens <= 8 else 2 if num_tokens <= 16 else 4
++
++
++def _cuda_bsm(num_tokens):
++    """The CUDA path's block_size_m (8, 16, 32): one m-block holds all of an expert's routes."""
++    return 8 * _cuda_nt(num_tokens)
++
++
++def _build_cuda():
++    """Compile the CUDA module once (prepare only, never during capture); None on failure."""
++    t0 = time.perf_counter()
++    try:
++        from torch.utils.cpp_extension import load_inline
++        ext = load_inline(
++            name="muse_moe_w4a16_swapab_v1",
++            cpp_sources=_CUDA_CPP,
++            cuda_sources=_CUDA_SRC,
++            functions=["w4a16_init", "w4a16_gemm"],
++            extra_cuda_cflags=["-O3", "-arch=sm_90a"],
++            verbose=False,
++        )
++    except Exception as e:  # keep the master path if the build fails
++        print(f"{CUDA_TAG} load_inline failed after {time.perf_counter() - t0:.1f}s, Marlin kept: {e!r}")
++        return None
++    print(f"{CUDA_TAG} load_inline compiled in {time.perf_counter() - t0:.1f}s")
++    return ext
++
++
++def _nibbles(packed):
++    """uint8 [..., n] -> uint8 [..., 2n]: element 2i is the low nibble, as nvfp4 packs."""
++    return torch.stack((packed & 0x0F, packed >> 4), dim=-1).flatten(-2)
++
++
++def _pack_nibbles(nib):
++    """Inverse of _nibbles."""
++    nib = nib.reshape(*nib.shape[:-1], -1, 2)
++    return nib[..., 0] | (nib[..., 1] << 4)
++
++
++def _code_dims(rows, k, gated):
++    """Source view and permutation for one expert's [rows, k] nibbles. Source dims: rh (gate/up
++    half, w13) or rh (row half of the warp's 16, w2), j (N-tile), w (warp), g (lane / 4), kb
++    (256-k stage), kk (64-k sub-tile), s (k16 step), kh (k 8-15 half), t (lane % 4), kl (k
++    parity). Target: j kb w kk g t s kl kh rh, then kh and rh are reversed, so the nibble index
++    in the lane's word is 4 kl + 2 (1 - kh) + (1 - rh): register pair i = rh + 2 kh at nibbles
++    3 - i (kl = 0) and 7 - i (kl = 1)."""
++    kb = k // 256
++    if gated:  # row = rh * I + 64 j + 8 w + g
++        return (2, rows // 128, 8, 8, kb, 4, 4, 2, 4, 2), (1, 4, 2, 5, 3, 8, 6, 9, 7, 0)
++    # row = 128 j + 16 w + 8 rh + g
++    return (rows // 128, 8, 2, 8, kb, 4, 4, 2, 4, 2), (0, 4, 1, 5, 3, 8, 6, 9, 7, 2)
++
++
++def _scale_dims(rows, kg, gated):
++    """Source view and permutation for one expert's [rows, k / 16] scale bytes. Target: j kb w kk
++    g s rh, i.e. per lane group g 8 bytes, byte 2 s + rh = row g + 8 rh at k16 step s."""
++    kb = kg // 16
++    if gated:
++        return (2, rows // 128, 8, 8, kb, 4, 4), (1, 4, 2, 5, 3, 6, 0)
++    return (rows // 128, 8, 2, 8, kb, 4, 4), (0, 4, 1, 5, 3, 6, 2)
++
++
++def _inverse(perm):
++    inv = [0] * len(perm)
++    for i, p in enumerate(perm):
++        inv[p] = i
++    return inv
++
++
++def _tile_codes(packed, gated):
++    """One expert's uint8 [rows, k / 2] E2M1 codes -> the kernel's tiled bytes (flat, same bytes
++    count), asserting the inverse retiling gives the source bytes back exactly."""
++    rows, k = packed.shape[0], packed.shape[1] * 2
++    shape, perm = _code_dims(rows, k, gated)
++    tiled = _pack_nibbles(_nibbles(packed).view(shape).permute(perm).flip(-1, -2).reshape(-1, 8)).reshape(-1)
++    back = _nibbles(tiled).view([shape[p] for p in perm]).flip(-1, -2).permute(_inverse(perm)).reshape(rows, k)
++    assert torch.equal(_pack_nibbles(back), packed), "code retiling is not lossless"
++    return tiled
++
++
++def _tile_scales(sf, gated):
++    """One expert's float8_e4m3fn [rows, k / 16] -> the kernel's tiled scale bytes (flat uint8),
++    asserting the round trip."""
++    rows, kg = sf.shape
++    src = sf.contiguous().view(torch.uint8)
++    shape, perm = _scale_dims(rows, kg, gated)
++    tiled = src.view(shape).permute(perm).reshape(-1)
++    back = tiled.view([shape[p] for p in perm]).permute(_inverse(perm)).reshape(rows, kg)
++    assert torch.equal(back, src), "scale retiling is not lossless"
++    return tiled
++
++
++def _cuda_bank(weights, start, count):
++    """The CUDA path's lossless retiling of experts [start, start + count): codes and E4M3 scales
++    stay NVFP4 bytes, global scales stay fp32 with the dequant bias 2^7 folded in (exact)."""
++    w13, w2 = weights["w13"], weights["w2"]
++    q13 = torch.empty((count, w13[0].numel()), dtype=torch.uint8, device=w13.device)
++    s13 = torch.empty((count, weights["w13_sf"][0].numel()), dtype=torch.uint8, device=w13.device)
++    q2 = torch.empty((count, w2[0].numel()), dtype=torch.uint8, device=w2.device)
++    s2 = torch.empty((count, weights["w2_sf"][0].numel()), dtype=torch.uint8, device=w2.device)
++    for i in range(count):
++        e = start + i
++        q13[i] = _tile_codes(w13[e].contiguous(), True)
++        s13[i] = _tile_scales(weights["w13_sf"][e], True)
++        q2[i] = _tile_codes(w2[e].contiguous(), False)
++        s2[i] = _tile_scales(weights["w2_sf"][e], False)
++    sl = slice(start, start + count)
++    return {
++        "q13": q13, "s13": s13, "gs13": (weights["w13_gs"][sl].float() * 128.0).contiguous(),
++        "q2": q2, "s2": s2, "gs2": (weights["w2_gs"][sl].float() * 128.0).contiguous(),
++    }
++
++
++def _decode_nvfp4(packed, sf, gs):
++    """fp32 dequant of one expert, written locally (E2M1 grid x E4M3 block scale x global)."""
++    nib = _nibbles(packed).long()
++    grid = torch.tensor(_E2M1_GRID, dtype=torch.float32, device=packed.device)
++    mag = grid[nib & 7]
++    val = torch.where((nib & 8) != 0, -mag, mag)
++    rows, k = val.shape
++    return (val.view(rows, k // 16, 16) * (sf.float() * gs.float()).unsqueeze(-1)).view(rows, k)
++
++
++def _row_rel(a, b):
++    """Max over rows of |a - b| / |b| (rows of b that are 0 must match exactly)."""
++    a, b = a.float().reshape(-1, a.shape[-1]), b.float().reshape(-1, b.shape[-1])
++    if a.shape[0] == 0:
++        return 0.0
++    d = (a - b).norm(dim=-1)
++    r = b.norm(dim=-1)
++    rel = torch.where(r > 0, d / r.clamp_min(1e-30), torch.where(d > 0, torch.full_like(d, float("inf")), d))
++    return float(rel.max())
++
++
++def _cuda_self_check(weights, bank, state, device):
++    """Untimed, prepare() only, synthetic inputs (fixed seed): the CUDA path against master's
++    Marlin path for M in 1..32 over every NT class (cache2 and y per local route, out per row),
++    plus one expert against a local fp32 dequant. Returns (ok, max rel-L2)."""
++    gen = torch.Generator().manual_seed(20261025)
++    start, count = bank["start"], bank["count"]
++    hidden = weights["w2"].shape[1]
++    local_set = list(range(start, start + count))
++    remote_set = [e for e in range(N_EXPERTS) if e not in local_set]
++    worst = 0.0
++    ok = True
++    for tokens in (1, 2, 4, 8, 12, 16, 24, 32):
++        cases = {
++            "random": [torch.randperm(N_EXPERTS, generator=gen)[:TOP_K].tolist() for _ in range(tokens)],
++            "skewed": [[local_set[0], local_set[count - 1], local_set[5]] +
++                       [remote_set[i] for i in torch.randperm(len(remote_set), generator=gen)[:5].tolist()]
++                       for _ in range(tokens)],
++            "all-one-expert": [[local_set[3]] + remote_set[7 * t % 200: 7 * t % 200 + 7] for t in range(tokens)],
++            "all-remote": [[remote_set[i] for i in torch.randperm(len(remote_set), generator=gen)[:TOP_K].tolist()]
++                           for _ in range(tokens)],
++            "all-local": [local_set[8:16] for _ in range(tokens)],
++        }
++        m_worst = 0.0
++        for name, ids in cases.items():
++            topk_ids = torch.tensor(ids, dtype=torch.int32, device=device)
++            x = torch.randn((tokens, hidden), generator=gen).to(torch.bfloat16).to(device)
++            tw = torch.rand((tokens, TOP_K), generator=gen)
++            tw = (tw / tw.sum(-1, keepdim=True)).to(device)
++            r_out, r_local, r_c2, r_y = _moe(x, topk_ids, tw, bank, state, False)
++            n_out, n_local, n_c2, n_y = _moe(x, topk_ids, tw, bank, state, True)
++            torch.cuda.synchronize()
++            local = r_local.reshape(-1) >= 0
++            errs = (_row_rel(n_c2[local], r_c2[local]),
++                    _row_rel(n_y.reshape(-1, hidden)[local], r_y.reshape(-1, hidden)[local]),
++                    _row_rel(n_out, r_out))
++            finite = bool(torch.isfinite(n_out).all())
++            same_ids = torch.equal(n_local, r_local)
++            err = max(errs)
++            m_worst = max(m_worst, err)
++            if not (finite and same_ids and err <= 1e-2):
++                ok = False
++                print(f"{CUDA_TAG}   FAIL M={tokens} {name}: cache2 {errs[0]:.2e} y {errs[1]:.2e} "
++                      f"out {errs[2]:.2e} finite {finite} local_ids equal {same_ids}")
++            if name == "all-one-expert" and tokens in (1, 8, 16, 32):
++                # One expert against a local fp32 dequant (catches an error Marlin would share).
++                e = local_set[3]
++                routes = (n_local.reshape(-1) == 3).nonzero().flatten()
++                w13f = _decode_nvfp4(weights["w13"][e], weights["w13_sf"][e], weights["w13_gs"][e])
++                h = x[routes // TOP_K].float() @ w13f.T
++                inter = torch.nn.functional.silu(h[:, :bank["size_n"]]) * h[:, bank["size_n"]:]
++                del w13f
++                w2f = _decode_nvfp4(weights["w2"][e], weights["w2_sf"][e], weights["w2_gs"][e])
++                y_ref = n_c2[routes].float() @ w2f.T
++                del w2f
++                f_errs = (_row_rel(n_c2[routes], inter), _row_rel(n_y.reshape(-1, hidden)[routes], y_ref))
++                print(f"{CUDA_TAG}   fp32-dequant M={tokens} expert {e}: {routes.numel()} routes, "
++                      f"cache2 {f_errs[0]:.2e} y {f_errs[1]:.2e}")
++                m_worst = max(m_worst, *f_errs)
++                if max(f_errs) > 1e-2:
++                    ok = False
++        print(f"{CUDA_TAG}   self-check M={tokens} (NT={_cuda_nt(tokens)} BSM={_cuda_bsm(tokens)}): "
++              f"max per-row rel-L2 vs Marlin {m_worst:.2e}")
++        worst = max(worst, m_worst)
++    return ok, worst
++
++
++def _cuda_setup(weights, banks, state, device):
++    """Build, retile, warm and self-check the CUDA path. Sets state['cuda_ok']; on any failure
++    every M keeps master's Marlin path. Nothing here sees any input."""
++    state["cuda_ok"] = False
++    ok = False
++    try:
++        bank = banks[(0, 32)]
++        start, count = bank["start"], bank["count"]
++        if bank["expert_map"] is None:
++            raise RuntimeError("the CUDA path needs the EP bank (expert_map)")
++        # _align_small at the CUDA path's block sizes, for every M it serves; then its check.
++        for tokens in range(1, CUDA_MAX_TOKENS + 1):
++            _align_small(torch.full((tokens, TOP_K), start, dtype=torch.int32, device=device),
++                         start, count, _cuda_bsm(tokens))
++        torch.cuda.synchronize()
++        if _align_self_check(device, count, bsm_of=_cuda_bsm, tag0=f"{CUDA_TAG}[align]"):
++            raise RuntimeError("_align_small self-check at BSM 8/16/32 has mismatches")
++        ext = _build_cuda()
++        if ext is None:
++            raise RuntimeError("load_inline failed")
++        info = ext.w4a16_init()
++        attrs_ok = True
++        for i in range(0, len(info), 6):
++            gated, nt, a_ok, regs, local_bytes, smem = info[i:i + 6]
++            print(f"{CUDA_TAG} kernel {'w13+silu' if gated else 'w2'} NT={nt}: attrs ok {bool(a_ok)}, "
++                  f"numRegs {regs}, localSizeBytes {local_bytes}"
++                  f"{' (SPILL, not fatal)' if local_bytes > 0 else ''}, dynamic smem {smem} B")
++            attrs_ok = attrs_ok and bool(a_ok)
++        if not attrs_ok:
++            raise RuntimeError("cudaFuncSetAttribute / cudaFuncGetAttributes failed")
++        t0 = time.perf_counter()
++        state["cuda_banks"] = {(start, count): _cuda_bank(weights, start, count)}
++        torch.cuda.synchronize()
++        print(f"{CUDA_TAG} retiled {count} experts losslessly (round trips exact) in {time.perf_counter() - t0:.1f}s")
++        n_tiles13, n_tiles2 = bank["size_n"] // 64, weights["w2"].shape[1] // 128
++        state["cuda_ext"] = ext
++        state["cuda_grid"] = torch.cuda.get_device_properties(device).multi_processor_count
++        ws_floats = max(count * n * sk * CUDA_THREADS * nt * 4
++                        for n, table in ((n_tiles13, CUDA_SK13), (n_tiles2, CUDA_SK2)) for nt, sk in table.items())
++        state["cuda_ws"] = torch.empty((ws_floats,), dtype=torch.float32, device=device)
++        # Separate tickets for the w13 and w2 launches; zero between launches (the last arriver resets).
++        state["cuda_tk13"] = torch.zeros((count * n_tiles13,), dtype=torch.int32, device=device)
++        state["cuda_tk2"] = torch.zeros((count * n_tiles2,), dtype=torch.int32, device=device)
++        print(f"{CUDA_TAG} grid {state['cuda_grid']}, SK w13 {CUDA_SK13}, SK w2 {CUDA_SK2}, "
++              f"workspace {ws_floats * 4 / 2**20:.0f} MiB")
++        ok, worst = _cuda_self_check(weights, bank, state, device)
++        torch.cuda.synchronize()
++        tickets_zero = int(torch.count_nonzero(state["cuda_tk13"])) == 0 and \
++            int(torch.count_nonzero(state["cuda_tk2"])) == 0
++        if not tickets_zero:
++            print(f"{CUDA_TAG} tickets not back to 0 after the self-check")
++            ok = False
++        print(f"{CUDA_TAG} SELF-CHECK {'PASSED' if ok else 'FAILED'}: max rel-L2 {worst:.3e} "
++              f"(bound 1e-2), tickets zero {tickets_zero}")
++    except Exception as e:
++        print(f"{CUDA_TAG} CUDA path setup raised: {e!r}")
++        ok = False
++    state["cuda_ok"] = ok
++    print(f"{CUDA_TAG} PATH CHOSEN = {'CUDA' if ok else 'MARLIN'} for num_tokens <= {CUDA_MAX_TOKENS}; "
++          f"MARLIN above")
+ 
+ 
+ def _marlin_layer(weights, start, count):
+@@ -319,7 +991,7 @@ def prepare(weights: Weights) -> dict:
+             torch.cuda.synchronize()
+             _align_self_check(device, count)
+     torch.cuda.synchronize()
+-    return {
++    state = {
+         "banks": banks,
+         "workspace": marlin_make_workspace(device, max_blocks_per_sm=4),
+         # MuseSpark1xFp4Experts binds the effective (1 + w) weight of the post-expert norm.
+@@ -327,70 +999,107 @@ def prepare(weights: Weights) -> dict:
+         # The original BF16 weight for _post_norm_combine_kernel, which adds the 1 in fp32.
+         "post_norm_w": weights["post_norm_w"].contiguous(),
+     }
++    # The CUDA small-M path: built, retiled and self-checked here; state["cuda_ok"] gates it.
++    _cuda_setup(weights, banks, state, device)
++    torch.cuda.synchronize()
++    return state
+ 
+ 
+-def kernel_fn(data: Inputs, state: dict) -> torch.Tensor:
+-    """This GPU's share of the MoE output, bfloat16 [M, H]."""
+-    cfg = data["config"]
+-    bank = state["banks"][(cfg["local_start"], cfg["local_count"])]
+-    x = data["hidden_states"].contiguous()
++def _moe(x, topk_ids, topk_weights, bank, state, use_cuda):
++    """(out, local_ids, cache2, y) for x [M, H]. use_cuda (a host flag from the shape and
++    prepare's check) selects the CUDA w13+silu / w2 launches; otherwise master's launches run
++    unchanged. The post-norm tail is shared."""
+     num_tokens, size_k = x.shape
+     size_n = bank["size_n"]
+     gemm1_n = 2 * size_n
+     expert_map = bank["expert_map"]
+ 
+-    topk_weights = data["topk_weights"].to(torch.float32).contiguous()
+-    block_size_m = _block_size_m(num_tokens, bank["count"])
+-
+-    if num_tokens >= 128:
+-        # Hypothesis marlin-block-m-two-smaller-on-postnorm: two candidates below SGLang's pick
+-        # at the verify shapes (bs=128: 48 -> 16, bs=256/257: 64 -> 32). A host-side pick on the
+-        # shape only; num_tokens < 128 keeps SGLang's pick.
+-        block_size_m = BLOCK_SIZE_M_CANDIDATES[max(BLOCK_SIZE_M_CANDIDATES.index(block_size_m) - 2, 0)]
+-    if expert_map is not None and num_tokens <= ALIGN_FUSED_MAX_TOKENS:
+-        # Up to 32 tokens (branch on shape only): one launch does the expert_map gather and the
+-        # align, with the bank's prepare-time start/count (hypothesis triton-map-align-small-m-port).
+-        local_ids, (sorted_ids, block_experts, n_padded) = _align_small(
+-            data["topk_ids"], bank["start"], bank["count"], block_size_m)
++    topk_weights = topk_weights.to(torch.float32).contiguous()
++    if use_cuda:
++        nt = _cuda_nt(num_tokens)
++        start, count = bank["start"], bank["count"]
++        local_ids, (sorted_ids, block_experts, n_padded) = _align_small(topk_ids, start, count, 8 * nt)
++        cb = state["cuda_banks"][(start, count)]
++        ext, grid, ws = state["cuda_ext"], state["cuda_grid"], state["cuda_ws"]
++        routes = num_tokens * TOP_K
++        cache2 = torch.empty((routes, size_n), device=x.device, dtype=x.dtype)
++        cache3 = torch.empty((routes, size_k), device=x.device, dtype=x.dtype)
++        # w13 + silu(gate) * up: act row = route >> 3 (the token), 64 intermediate columns per tile.
++        ext.w4a16_gemm(cb["q13"], cb["s13"], cb["gs13"], x, 3, sorted_ids, block_experts, n_padded,
++                       routes, size_n // 64, size_k, nt, CUDA_SK13[nt], 1, count, ws, state["cuda_tk13"],
++                       cache2, grid)
++        # w2: act row = route (cache2), y written at the flat route index, as Marlin writes it.
++        ext.w4a16_gemm(cb["q2"], cb["s2"], cb["gs2"], cache2, 0, sorted_ids, block_experts, n_padded,
++                       routes, size_k // 128, size_n, nt, CUDA_SK2[nt], 0, count, ws, state["cuda_tk2"],
++                       cache3, grid)
++        y = cache3.view(num_tokens, TOP_K, size_k)
+     else:
+-        local_ids = data["topk_ids"].to(torch.int32)
+-        if expert_map is not None:
+-            local_ids = expert_map[local_ids]
+-        local_ids = local_ids.contiguous()
+-        if num_tokens == 1 and expert_map is None:
+-            from sglang.kernels.ops.moe.moe_align_single_token import moe_align_single_token
++        block_size_m = _block_size_m(num_tokens, bank["count"])
+ 
+-            sorted_ids, block_experts, n_padded = moe_align_single_token(local_ids, block_size_m)
++        if num_tokens >= 128:
++            # Hypothesis marlin-block-m-two-smaller-on-postnorm: two candidates below SGLang's pick
++            # at the verify shapes (bs=128: 48 -> 16, bs=256/257: 64 -> 32). A host-side pick on the
++            # shape only; num_tokens < 128 keeps SGLang's pick.
++            block_size_m = BLOCK_SIZE_M_CANDIDATES[max(BLOCK_SIZE_M_CANDIDATES.index(block_size_m) - 2, 0)]
++        if expert_map is not None and num_tokens <= ALIGN_FUSED_MAX_TOKENS:
++            # Up to 32 tokens (branch on shape only): one launch does the expert_map gather and the
++            # align, with the bank's prepare-time start/count (hypothesis triton-map-align-small-m-port).
++            local_ids, (sorted_ids, block_experts, n_padded) = _align_small(
++                topk_ids, bank["start"], bank["count"], block_size_m)
+         else:
+-            # The one change from baseline.py: the ids are already local ([-1] U [0, count)), so
+-            # align over the bank's count (32) rather than N_EXPERTS (256). SGLang's wrapper sizes
+-            # sorted_ids and block_experts from this count.
+-            sorted_ids, block_experts, n_padded = moe_align_block_size(local_ids, block_size_m, bank["count"])
+-
+-    cache2 = torch.empty((num_tokens * TOP_K, size_n), device=x.device, dtype=x.dtype)
+-    cache13 = torch.empty((num_tokens * TOP_K * max(gemm1_n, size_k),), device=x.device, dtype=x.dtype)
+-    cache1 = cache13[: num_tokens * TOP_K * gemm1_n].view(-1, gemm1_n)
+-    cache3 = cache13[: num_tokens * TOP_K * size_k].view(-1, size_k)
+-    common = dict(moe_block_size=block_size_m, mul_topk_weights=False, is_ep=expert_map is not None,
+-                  b_q_type=scalar_types.float4_e2m1f, is_k_full=True, use_atomic_add=False,
+-                  use_fp32_reduce=True, is_zp_float=False)
+-    ws = state["workspace"]
+-    cache1 = moe_wna16_marlin_gemm(
+-        x, cache1, bank["w13"], None, bank["w13_s"], bank["w13_gs"], None, None, None, ws,
+-        sorted_ids, block_experts, n_padded, topk_weights, top_k=TOP_K,
+-        size_m=num_tokens, size_n=gemm1_n, size_k=size_k, **common)
+-    silu_and_mul(cache1.view(-1, gemm1_n), cache2, expert_ids=local_ids.view(-1), expert_step=1)
+-    y = moe_wna16_marlin_gemm(
+-        cache2, cache3, bank["w2"], None, bank["w2_s"], bank["w2_gs"], None, None, None, ws,
+-        sorted_ids, block_experts, n_padded, topk_weights, top_k=1,
+-        size_m=num_tokens * TOP_K, size_n=size_k, size_k=size_n, **common).view(num_tokens, TOP_K, size_k)
++            local_ids = topk_ids.to(torch.int32)
++            if expert_map is not None:
++                local_ids = expert_map[local_ids]
++            local_ids = local_ids.contiguous()
++            if num_tokens == 1 and expert_map is None:
++                from sglang.kernels.ops.moe.moe_align_single_token import moe_align_single_token
++
++                sorted_ids, block_experts, n_padded = moe_align_single_token(local_ids, block_size_m)
++            else:
++                # The one change from baseline.py: the ids are already local ([-1] U [0, count)), so
++                # align over the bank's count (32) rather than N_EXPERTS (256). SGLang's wrapper sizes
++                # sorted_ids and block_experts from this count.
++                sorted_ids, block_experts, n_padded = moe_align_block_size(local_ids, block_size_m, bank["count"])
++
++        cache2 = torch.empty((num_tokens * TOP_K, size_n), device=x.device, dtype=x.dtype)
++        cache13 = torch.empty((num_tokens * TOP_K * max(gemm1_n, size_k),), device=x.device, dtype=x.dtype)
++        cache1 = cache13[: num_tokens * TOP_K * gemm1_n].view(-1, gemm1_n)
++        cache3 = cache13[: num_tokens * TOP_K * size_k].view(-1, size_k)
++        common = dict(moe_block_size=block_size_m, mul_topk_weights=False, is_ep=expert_map is not None,
++                      b_q_type=scalar_types.float4_e2m1f, is_k_full=True, use_atomic_add=False,
++                      use_fp32_reduce=True, is_zp_float=False)
++        ws = state["workspace"]
++        cache1 = moe_wna16_marlin_gemm(
++            x, cache1, bank["w13"], None, bank["w13_s"], bank["w13_gs"], None, None, None, ws,
++            sorted_ids, block_experts, n_padded, topk_weights, top_k=TOP_K,
++            size_m=num_tokens, size_n=gemm1_n, size_k=size_k, **common)
++        silu_and_mul(cache1.view(-1, gemm1_n), cache2, expert_ids=local_ids.view(-1), expert_step=1)
++        y = moe_wna16_marlin_gemm(
++            cache2, cache3, bank["w2"], None, bank["w2_s"], bank["w2_gs"], None, None, None, ws,
++            sorted_ids, block_experts, n_padded, topk_weights, top_k=1,
++            size_m=num_tokens * TOP_K, size_n=size_k, size_k=size_n, **common).view(num_tokens, TOP_K, size_k)
+     if num_tokens < SMALL_M_POST_NORM:
+         y = y.contiguous()
+         out = torch.empty((num_tokens, size_k), device=x.device, dtype=torch.bfloat16)
+         _post_norm_combine_kernel[(num_tokens,)](
+             y, local_ids, topk_weights, state["post_norm_w"], out, size_k, POST_NORM_EPS,
+             TOP_K_C=TOP_K, BLOCK_H=triton.next_power_of_2(size_k), num_warps=8)
+-        return out
+-    return fused_post_expert_norm_weighted_sum(
++        return out, local_ids, cache2, y
++    out = fused_post_expert_norm_weighted_sum(
+         y, topk_weights, norm_weight=state["norm_w"], eps=POST_NORM_EPS, weight_first=True,
+         slot_expert_ids=local_ids)
++    return out, local_ids, cache2, y
++
++
++def kernel_fn(data: Inputs, state: dict) -> torch.Tensor:
++    """This GPU's share of the MoE output, bfloat16 [M, H]."""
++    cfg = data["config"]
++    bank = state["banks"][(cfg["local_start"], cfg["local_count"])]
++    x = data["hidden_states"].contiguous()
++    num_tokens = x.shape[0]
++    # Branch on the shape and the prepare-time flag only (hypothesis
++    # cuda-nvfp4-swapab-mma-persistent-small-m): the CUDA w13+silu / w2 launches up to 32 tokens.
++    use_cuda = (state.get("cuda_ok", False) and num_tokens <= CUDA_MAX_TOKENS
++                and bank["expert_map"] is not None
++                and (cfg["local_start"], cfg["local_count"]) in state.get("cuda_banks", {}))
++    return _moe(x, data["topk_ids"], data["topk_weights"], bank, state, use_cuda)[0]
