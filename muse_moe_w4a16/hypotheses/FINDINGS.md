@@ -1,6 +1,6 @@
 # muse_moe_w4a16 findings
 
-Regenerated 2026-10-24T044311Z by `churn.py index`. Read this before writing a hypothesis for muse_moe_w4a16.
+Regenerated 2026-10-24T052415Z by `churn.py index`. Read this before writing a hypothesis for muse_moe_w4a16.
 
 ## Current best
 
@@ -19,6 +19,7 @@ Where the time goes (per scored shape, top kernels):
 
 ### MoE align/dispatch
 - **sglang-marlin-path-parity** → gain (gain), 0.9888x — gained on decode_1 decode_1; decode_16 decode_16; decode_32 decode_32; verify_1 verify_1; verify_16 verify_16; verify_32 verify_32. Replace the starter's 32-expert dense loop (dequantize every local expert to BF16 on every call, x @ w13.T over all tokens, masked weighted sum) with SGLang's M
+- **align-single-token-ep** → neutral (unproven-vs-best), 0.9951x — gained on decode_1 decode_1. At num_tokens == 1 only, call SGLang's moe_align_single_token(local_ids, block_size_m) (from sglang.kernels.ops.moe.moe_align_single_token) with the expert_map-
 - **marlin-block-size-m-next-larger** → regression (regression), 0.9178x — lost on decode_32 decode_32; verify_16 verify_16. Change only the block_size_m pick in kernel_fn. SGLang's loop breaks on the first candidate in (8, 16, 32, 48, 64) where num_tokens*8/32/block_size_m < 0.9, whi
 
 ### w13 marlin
@@ -26,7 +27,7 @@ Where the time goes (per scored shape, top kernels):
 
 ## Open follow-ups
 
-- none
+- align-single-token-ep: unproven-vs-best: the change is not proven either way; a stacked hypothesis (`depends_on: align-single-token-ep`) that adds a further change in the same area is the only way to learn more (identical code is never re-run)
 
 ## Do not retry (rejected / duplicates)
 
@@ -37,7 +38,6 @@ Where the time goes (per scored shape, top kernels):
 - queue: triton-w13-silu-epilogue [silu-mul] p3 queued
 - queue: triton-w2-grouped-gemv-small-m [w2 marlin] p3 queued
 - queue: triton-small-m-threshold-32 [MoE align/dispatch] p4 queued
-- running: align-single-token-ep [MoE align/dispatch] p4 running
 - running: marlin-workspace-blocks-per-sm-8 [w13 marlin] p4 running
 - running: w13-marlin-atomic-add-small-m [w13 marlin] p4 running
 - running: w13-marlin-bf16-reduce-verify [w13 marlin] p5 running
