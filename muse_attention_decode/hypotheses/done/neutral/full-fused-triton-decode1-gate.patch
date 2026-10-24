@@ -1,0 +1,262 @@
+diff --git a/muse_attention_decode/submission.py b/muse_attention_decode/submission.py
+index 1c0f5fa..dbe93e3 100644
+--- a/muse_attention_decode/submission.py
++++ b/muse_attention_decode/submission.py
+@@ -8,7 +8,9 @@ does all five in one launch: per (token, head) it RMS-normalizes q or k, applies
+ RoPE when the layer has it, and writes q as FP8 for FA3 and the new k and v rows as FP8 into
+ the cache (divided by the cache scales). FA3 and the output norm x sigmoid(gate) are SGLang's, except on full-layer decode at
+ 1 < batch <= 64 (tp8, page 1), where two CUDA kernels (split-KV gather attention, combine +
+-epilogue; see below) replace FA3 and the epilogue.
++epilogue; see below) replace FA3 and the epilogue. Batch-1 decode runs as one fused Triton
++launch (_sliding_fused_kernel): always on sliding layers, and on full layers once an
++import-time self-check against FA3 has passed.
+ """
+ 
+ import time
+@@ -218,18 +220,21 @@ def _sliding_fused_kernel(
+     qkv_stride, pt_stride, q_scale, score_scale,
+     HQ: tl.constexpr, HKV: tl.constexpr, D: tl.constexpr, L: tl.constexpr, M: tl.constexpr,
+     LN: tl.constexpr, WINDOW: tl.constexpr, PAGE: tl.constexpr, S: tl.constexpr,
+-    BLOCK_N: tl.constexpr, ROPE: tl.constexpr, EPS: tl.constexpr,
++    BLOCK_N: tl.constexpr, ROPE: tl.constexpr, EPS: tl.constexpr, FULL: tl.constexpr,
+ ):
+-    """Sliding-window layer, one launch: pre-attention, attention, output norm x gate.
++    """Sliding-window layer (or, when FULL, a full layer: lo = 0 and no window lower edge),
++    one launch: pre-attention, attention, output norm x gate.
+     Grid (B, HKV, S). Program (b, g, s) serves kv head g's GROUP query heads for the block's L
+     tokens as one M-row tile (row r = j * GROUP + hh; rows past GROUP * L are padding), over
+     chunk s of the old keys [lo, seq - 1], lo = max(0, seq - (WINDOW - 1)). Program S - 1 also
+     builds the L new keys/values, stores them (E4M3) at cache_loc and attends them from
+-    registers (causal i <= j). Splits combine in-kernel through a ticket counter."""
++    registers (causal i <= j). Splits combine in-kernel through a ticket counter; at S > 16
++    (full decode) the combine is vectorized across splits instead of unrolled per split."""
+     b = tl.program_id(0)
+     g = tl.program_id(1)
+     s = tl.program_id(2)
+     GROUP: tl.constexpr = HQ // HKV
++    CS: tl.constexpr = 8  # partials per combine step when S > 16
+     d = tl.arange(0, D)
+     dsw = d ^ 1
+     freq = tl.load(inv_freq_ptr + d // 2) if ROPE else tl.zeros([D], dtype=tl.float32)
+@@ -281,7 +286,11 @@ def _sliding_fused_kernel(
+         m_i, l_i, acc = _online_update(qk, valid, v8.to(tl.bfloat16), m_i, l_i, acc)
+ 
+     # Old keys: chunk s of [lo, seq - 1]; every key of every row's window is scored.
+-    lo = tl.maximum(seq - (WINDOW - 1), 0)
++    # FULL: every old key t < seq <= p_row is attended (lo = 0, no lower edge).
++    if FULL:
++        lo = 0
++    else:
++        lo = tl.maximum(seq - (WINDOW - 1), 0)
+     count = seq - lo
+     chunk = ((count + S - 1) // S + BLOCK_N - 1) // BLOCK_N * BLOCK_N
+     start = lo + s * chunk
+@@ -296,8 +305,11 @@ def _sliding_fused_kernel(
+         kb = tl.load(k_cache_ptr + kvoff, mask=tmask[:, None], other=0).to(tl.float8e4nv, bitcast=True)
+         vb = tl.load(v_cache_ptr + kvoff, mask=tmask[:, None], other=0).to(tl.float8e4nv, bitcast=True)
+         qk = tl.dot(q, tl.trans(kb.to(tl.bfloat16))) * qk_scale
+-        # t <= p_j for every old key; the window's lower edge is per row.
+-        valid = tmask[None, :] & (t[None, :] >= p_row[:, None] - (WINDOW - 1))
++        # t <= p_j for every old key; the window's lower edge is per row (none when FULL).
++        if FULL:
++            valid = tmask[None, :]
++        else:
++            valid = tmask[None, :] & (t[None, :] >= p_row[:, None] - (WINDOW - 1))
+         m_i, l_i, acc = _online_update(qk, valid, vb.to(tl.bfloat16), m_i, l_i, acc)
+ 
+     if S == 1:
+@@ -319,29 +331,53 @@ def _sliding_fused_kernel(
+         if ticket == S - 1:
+             _gpu_fence(r)  # acquire side, every thread, before the L2 (.cg) reloads
+             base = (bg * S).to(tl.int64)
+-            m_max = tl.full([M], float("-inf"), dtype=tl.float32)
+-            for s2 in tl.static_range(S):
+-                m_s = tl.load(ws_ml_ptr + (base + s2) * 2 * M + r, cache_modifier=".cg")
+-                m_max = tl.maximum(m_max, m_s)
+-            # Partial S - 1 holds the new keys and is finite on every row, so m_max is too;
+-            # empty or fully masked partials (m = -inf) get weight 0, never exp2(-inf - -inf).
+-            m_max = tl.where(m_max == float("-inf"), 0.0, m_max)
+-            l_sum = tl.zeros([M], dtype=tl.float32)
+-            o = tl.zeros([M, D], dtype=tl.float32)
+-            for s2 in tl.static_range(S):
+-                m_s = tl.load(ws_ml_ptr + (base + s2) * 2 * M + r, cache_modifier=".cg")
+-                l_s = tl.load(ws_ml_ptr + (base + s2) * 2 * M + M + r, cache_modifier=".cg")
+-                a_s = tl.load(ws_acc_ptr + ((base + s2) * M + r[:, None]) * D + d[None, :], cache_modifier=".cg")
+-                w = tl.where(m_s == float("-inf"), 0.0, tl.exp2(m_s - m_max))
+-                l_sum += l_s * w
+-                o += a_s * w[:, None]
++            if S > 16:
++                # Deep split (full decode): all S (m, l) partials as one [S, M] tile, weights and
++                # l_sum vectorized; acc streamed CS partials at a time as independent [CS, M, D]
++                # loads (unrolled over S // CS groups), reduced across the split axis.
++                sidx = tl.arange(0, S)
++                mlp = ws_ml_ptr + (base + sidx)[:, None] * (2 * M) + r[None, :]
++                m_all = tl.load(mlp, cache_modifier=".cg")
++                l_all = tl.load(mlp + M, cache_modifier=".cg")
++                m_max = tl.max(m_all, axis=0)
++                # Partial S - 1 holds the new key, so m_max is finite; -inf partials weigh 0.
++                m_max = tl.where(m_max == float("-inf"), 0.0, m_max)
++                w_all = tl.where(m_all == float("-inf"), 0.0, tl.exp2(m_all - m_max[None, :]))
++                l_sum = tl.sum(l_all * w_all, axis=0)
++                o = tl.zeros([M, D], dtype=tl.float32)
++                c = tl.arange(0, CS)
++                for c0 in tl.static_range(0, S, CS):
++                    sc = base + c0 + c
++                    m_c = tl.load(ws_ml_ptr + sc[:, None] * (2 * M) + r[None, :], cache_modifier=".cg")
++                    w_c = tl.where(m_c == float("-inf"), 0.0, tl.exp2(m_c - m_max[None, :]))
++                    a_c = tl.load(ws_acc_ptr + (sc[:, None, None] * M + r[None, :, None]) * D + d[None, None, :],
++                                  cache_modifier=".cg")
++                    o += tl.sum(a_c * w_c[:, :, None], axis=0)
++            else:
++                m_max = tl.full([M], float("-inf"), dtype=tl.float32)
++                for s2 in tl.static_range(S):
++                    m_s = tl.load(ws_ml_ptr + (base + s2) * 2 * M + r, cache_modifier=".cg")
++                    m_max = tl.maximum(m_max, m_s)
++                # Partial S - 1 holds the new keys and is finite on every row, so m_max is too;
++                # empty or fully masked partials (m = -inf) get weight 0, never exp2(-inf - -inf).
++                m_max = tl.where(m_max == float("-inf"), 0.0, m_max)
++                l_sum = tl.zeros([M], dtype=tl.float32)
++                o = tl.zeros([M, D], dtype=tl.float32)
++                for s2 in tl.static_range(S):
++                    m_s = tl.load(ws_ml_ptr + (base + s2) * 2 * M + r, cache_modifier=".cg")
++                    l_s = tl.load(ws_ml_ptr + (base + s2) * 2 * M + M + r, cache_modifier=".cg")
++                    a_s = tl.load(ws_acc_ptr + ((base + s2) * M + r[:, None]) * D + d[None, :], cache_modifier=".cg")
++                    w = tl.where(m_s == float("-inf"), 0.0, tl.exp2(m_s - m_max))
++                    l_sum += l_s * w
++                    o += a_s * w[:, None]
+             o = o / l_sum[:, None] * v_scale
+             _gate_epilogue(o, qkv_ptr, out_ptr, tok, head, rvalid, d, qkv_stride, HQ, HKV, D, EPS)
+             tl.store(cnt_ptr + bg, 0)  # ready for the next launch / graph replay
+ 
+ 
+ def _sliding_forward(data: Inputs) -> torch.Tensor:
+-    """Sliding-window layers: one launch of _sliding_fused_kernel. Branches on config only."""
++    """One launch of _sliding_fused_kernel: sliding batch-1 decode, and (FULL) full-layer batch-1
++    decode behind _full_fused_gate. Branches on config only."""
+     cfg = data["config"]
+     batch, length = cfg["batch"], cfg["q_len"]
+     hq, hkv, d = cfg["num_q_heads"], cfg["num_kv_heads"], cfg["head_dim"]
+@@ -351,7 +387,12 @@ def _sliding_forward(data: Inputs) -> torch.Tensor:
+     theta = cfg["rope_theta"]
+     group = hq // hkv
+     m = max(16, triton.next_power_of_2(group * length))
+-    splits = _num_splits(batch, hkv)
++    full = cfg["window"] == 0
++    if full:
++        # Full decode: 64 splits x 2 kv heads = 128 CTAs over ~80K old keys (1280 per split).
++        splits, block_n, stages = _FULL_SPLITS, 128, 3
++    else:
++        splits, block_n, stages = _num_splits(batch, hkv), 64, 2
+     out = torch.empty((batch, length, hq * d), dtype=torch.bfloat16, device=device)
+     if splits > 1:
+         ws_acc = torch.empty((batch * hkv * splits, m, d), dtype=torch.float32, device=device)
+@@ -367,12 +408,24 @@ def _sliding_forward(data: Inputs) -> torch.Tensor:
+         data["k_cache"].view(torch.uint8), data["v_cache"].view(torch.uint8), ws_acc, ws_ml, counters, out,
+         qkv.stride(0), page_table.stride(0), cfg["qk_scale_factor"], cfg["sm_scale"] * LOG2E,
+         HQ=hq, HKV=hkv, D=d, L=length, M=m, LN=max(16, triton.next_power_of_2(length)),
+-        WINDOW=cfg["window"], PAGE=cfg["page_size"], S=splits, BLOCK_N=64, ROPE=bool(theta), EPS=RMS_EPS,
+-        num_warps=4, num_stages=2,
++        WINDOW=cfg["window"], PAGE=cfg["page_size"], S=splits, BLOCK_N=block_n, ROPE=bool(theta), EPS=RMS_EPS,
++        FULL=full, num_warps=4, num_stages=stages,
+     )
+     return out
+ 
+ 
++_FULL_SPLITS = 64     # multiple of the kernel's CS (8) and a power of two (tl.arange over splits)
++_FULL_FUSED = False   # set only by the import-time self-check; False keeps master's FA3 path
++
++
++def _full_fused_gate(cfg) -> bool:
++    """Config-only predicate for the fused full-layer path: full-layer decode at batch 1, tp8
++    heads, head dim 64, page 1 (what the self-check covers). Everything else keeps its path."""
++    return (_FULL_FUSED and cfg["window"] == 0 and cfg["batch"] == 1 and cfg["q_len"] == 1
++            and cfg["num_q_heads"] == 16 and cfg["num_kv_heads"] == 2 and cfg["head_dim"] == 64
++            and cfg["page_size"] == 1)
++
++
+ @triton.jit
+ def _paired_norm_gate_kernel(
+     attn_ptr, qkv_ptr, out_ptr,
+@@ -892,9 +945,9 @@ def _full_decode_splitkv(data: Inputs, q: torch.Tensor, qkv: torch.Tensor) -> to
+ 
+ def kernel_fn(data: Inputs) -> torch.Tensor:
+     cfg = data["config"]
+-    # Sliding batch-1 decode only (config-only predicate): the whole step in one fused launch.
+-    # Every other shape (sliding batch > 1, sliding verify, every full layer) keeps the path below.
+-    if cfg["window"] and cfg["batch"] == 1 and cfg["q_len"] == 1:
++    # Batch-1 decode (config-only predicates): the whole step in one fused launch, sliding always,
++    # full when the import-time self-check passed. Every other shape keeps the path below.
++    if (cfg["window"] and cfg["batch"] == 1 and cfg["q_len"] == 1) or _full_fused_gate(cfg):
+         return _sliding_forward(data)
+     batch, length = cfg["batch"], cfg["q_len"]
+     hq, hkv, d = cfg["num_q_heads"], cfg["num_kv_heads"], cfg["head_dim"]
+@@ -1016,14 +1069,18 @@ def _splitkv_synthetic(lens, kv_scale, gen, device):
+     }
+ 
+ 
+-def _splitkv_reference(data, lens):
+-    """FP32 attention over the cache as kernel_fn left it (new rows included), FP8 queries."""
++def _splitkv_reference(data, lens, q_dtype=FP8):
++    """FP32 attention over the cache as kernel_fn left it (new rows included), FP8 queries
++    (q_dtype bfloat16: rounded after qk_scale_factor, as the fused Triton kernel does)."""
+     cfg = data["config"]
+     batch, hq, hkv, d = cfg["batch"], cfg["num_q_heads"], cfg["num_kv_heads"], cfg["head_dim"]
+     qkv = data["qkv"].reshape(batch, -1).float()
+     q = qkv[:, :hq * d].view(batch, hq, d)
+     q = q * torch.rsqrt(q.pow(2).mean(-1, keepdim=True) + RMS_EPS)
+-    q = q.to(FP8).float() * cfg["qk_scale_factor"]
++    if q_dtype is FP8:
++        q = q.to(FP8).float() * cfg["qk_scale_factor"]
++    else:
++        q = (q * cfg["qk_scale_factor"]).to(q_dtype).float()
+     kf = data["k_cache"].view(-1, hkv, d)
+     vf = data["v_cache"].view(-1, hkv, d)
+     outs = []
+@@ -1067,7 +1124,47 @@ def _splitkv_self_check() -> bool:
+     return ok
+ 
+ 
++def _full_fused_self_check() -> bool:
++    """One-time eager check at import, on synthetic data only (never in the timed path): full
++    batch-1 decode through the fused kernel against master's FA3 path on the same inputs and
++    against FP32 references (bf16 queries for the fused kernel, FP8 for FA3), at the scored length (80000) and at short lengths (empty
++    splits, a single old key), kv scale 1 and 1/4; the new cache rows must match FA3's too."""
++    global _FULL_FUSED
++    gen = torch.Generator(device="cuda").manual_seed(4321)
++    device = torch.device("cuda")
++    ok = True
++    try:
++        for n, kv_scale in ((80000, 1.0), (80000, 0.25), (5000, 1.0), (70, 0.25), (1, 1.0)):
++            data = _splitkv_synthetic([n], kv_scale, gen, device)
++            fa3_data = dict(data, k_cache=data["k_cache"].clone(), v_cache=data["v_cache"].clone())
++            _FULL_FUSED = True
++            assert _full_fused_gate(data["config"])
++            out = kernel_fn(data).float()
++            _FULL_FUSED = False
++            fa3 = kernel_fn(fa3_data).float()
++            ref = _splitkv_reference(data, [n], q_dtype=torch.bfloat16)
++            err = float((out - ref).norm() / ref.norm())
++            ref8 = _splitkv_reference(fa3_data, [n])
++            err_fa3 = float((fa3 - ref8).norm() / ref8.norm())
++            diff = float((out - fa3).norm() / fa3.norm())
++            loc = data["cache_loc"]
++            kerr = max(float((data[c][loc].float() - fa3_data[c][loc].float()).norm()
++                             / fa3_data[c][loc].float().norm().clamp_min(1e-30)) for c in ("k_cache", "v_cache"))
++            finite = bool(torch.isfinite(out).all())
++            print(f"[fullfused] self-check n={n} kv_scale={kv_scale}: rel L2 vs fp32 (bf16 q) {err:.2e}, "
++                  f"FA3 vs fp32 (fp8 q) {err_fa3:.2e}, fused vs FA3 {diff:.2e}, new rows vs FA3 {kerr:.2e}, "
++                  f"finite {finite}")
++            ok = ok and finite and err < 2e-2 and kerr < 2e-2
++    except Exception as e:
++        print(f"[fullfused] self-check raised: {e!r}")
++        ok = False
++    _FULL_FUSED = ok
++    return ok
++
++
+ if torch.cuda.is_available():
++    if not _full_fused_self_check():
++        print("[fullfused] SELF-CHECK FAILED: full batch-1 decode keeps master FA3 path")
+     _EXT = _build_splitkv()
+     if _EXT is not None and not _splitkv_self_check():
+         print("[splitkv] SELF-CHECK FAILED: CUDA split-KV path disabled, master FA3 path kept")

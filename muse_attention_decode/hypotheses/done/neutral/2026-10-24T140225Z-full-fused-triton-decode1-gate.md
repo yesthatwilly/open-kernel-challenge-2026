@@ -40,10 +40,10 @@ priority: 3
 kind: primary
 controls_for: null
 review: proceed
-status: running
+status: done
 review_at: 2026-10-24T164553Z
 review_companions: null
-stage: dispatched
+stage: harvested
 claimed_at: 2026-10-24T164553Z
 base_sha: bcc7ea4a50f9cbe47528f96e0ab15b661666ecdf
 base_blob: 1c0f5fa1bfc4e602b62e5e9edd9df6d5652b297b
@@ -60,6 +60,13 @@ attempt_file: 2026-10-24T164956Z-submit-full-fused-triton-decode1-gate.md
 prepared_at: 2026-10-24T164956Z
 job: af3c6a46badf4e50
 dispatched_at: 2026-10-24T165008Z
+outcome: neutral
+verdict_detail: within-ci
+speedup: 1.3416677326703164
+speedup_ci: [1.3215427166802616, 1.361792748660371]
+harvested_at: 2026-10-24T173231Z
+best_at_harvest: 1.3492076314709118
+promotion: null
 ---
 
 # full-fused-triton-decode1-gate
@@ -139,3 +146,35 @@ CLEAN: submission.py
 ```
 
 `python3 -I -m py_compile` OK; `__pycache__` removed.
+
+## Result
+
+- job `af3c6a46badf4e50` (submit), status done, passed True, tests 16/16
+- speedup 1.3417x, 95% CI [1.3215, 1.3618], score 2807.1778938172324 µs vs SGLang 3766.3 µs
+- best at harvest: {"speedup": 1.3492076314709118, "ci": [1.328969516998848, 1.3729544014677721], "job": "de486093311d4bb9"}; base result: muse_attention_decode/hypotheses/done/gain/full-decode-cuda-gather-splitkv.result.json
+- **outcome: neutral** (within-ci)
+- files: `muse_attention_decode/hypotheses/done/neutral/full-fused-triton-decode1-gate.result.json`, `muse_attention_decode/hypotheses/done/neutral/full-fused-triton-decode1-gate.patch`; branch `hyp/muse_attention_decode/full-fused-triton-decode1-gate`
+
+## Attribution
+
+| shape | w | base µs | hyp µs | delta | verdict |
+|---|---|---|---|---|---|
+| batch=1 ctx=80000 dist=soft heads=tp8 layer=sliding load=decode_1 page=1 | 46 | 13.88 | 13.73 | 1.018 | flat |
+| batch=1 ctx=80000 dist=coherent heads=tp8 layer=full load=decode_1 page=1 | 16 | 27.93 | 29.19 | 0.9477 | lost |
+| batch=16 ctx=80000 dist=soft heads=tp8 layer=sliding load=decode_16 page=1 spread=agentic | 46 | 20.84 | 21.42 | 0.9846 | flat |
+| batch=16 ctx=80000 dist=coherent heads=tp8 layer=full load=decode_16 page=1 spread=agentic | 16 | 123.02 | 122.28 | 1.0044 | flat |
+| batch=32 ctx=80000 dist=soft heads=tp8 layer=sliding load=decode_32 page=1 spread=agentic | 46 | 25.2 | 25.55 | 0.9946 | flat |
+| batch=32 ctx=80000 dist=coherent heads=tp8 layer=full load=decode_32 page=1 spread=agentic | 16 | 257.75 | 259.07 | 0.9947 | flat |
+| batch=1 ctx=80000 dist=soft heads=tp8 layer=sliding load=verify_1 page=1 q_len=8 | 46 | 17.63 | 17.47 | 0.9918 | flat |
+| batch=1 ctx=80000 dist=coherent heads=tp8 layer=full load=verify_1 page=1 q_len=8 | 16 | 30.29 | 30.08 | 0.9961 | flat |
+| batch=16 ctx=80000 dist=soft heads=tp8 layer=sliding load=verify_16 page=1 q_len=8 spread=agentic | 46 | 22.77 | 23.17 | 0.9936 | flat |
+| batch=16 ctx=80000 dist=coherent heads=tp8 layer=full load=verify_16 page=1 q_len=8 spread=agentic | 16 | 162.83 | 162.63 | 1.0034 | flat |
+| batch=32 ctx=80000 dist=soft heads=tp8 layer=sliding load=verify_32 page=1 q_len=8 spread=agentic | 46 | 29.35 | 28.93 | 1.0031 | flat |
+| batch=32 ctx=80000 dist=coherent heads=tp8 layer=full load=verify_32 page=1 q_len=8 spread=agentic | 16 | 301.91 | 300.89 | 1.0024 | flat |
+
+lost on full decode_1. Expected hit: 2/4. Noise ±1.5%.
+
+## Follow-ups
+
+- within-ci: the change is not proven either way; a stacked hypothesis (`depends_on: full-fused-triton-decode1-gate`) that adds a further change in the same area is the only way to learn more (identical code is never re-run).
+

@@ -1,0 +1,9 @@
+[fullfused] self-check n=80000 kv_scale=1.0: rel L2 vs fp32 (bf16 q) 1.81e-03, FA3 vs fp32 (fp8 q) 3.36e-03, fused vs FA3 1.04e-01, new rows vs FA3 0.00e+00, finite True
+[fullfused] self-check n=80000 kv_scale=0.25: rel L2 vs fp32 (bf16 q) 1.74e-03, FA3 vs fp32 (fp8 q) 3.37e-03, fused vs FA3 6.32e-02, new rows vs FA3 0.00e+00, finite True
+[fullfused] self-check n=5000 kv_scale=1.0: rel L2 vs fp32 (bf16 q) 1.67e-03, FA3 vs fp32 (fp8 q) 4.77e-03, fused vs FA3 8.16e-02, new rows vs FA3 0.00e+00, finite True
+[fullfused] self-check n=70 kv_scale=0.25: rel L2 vs fp32 (bf16 q) 1.69e-03, FA3 vs fp32 (fp8 q) 7.24e-03, fused vs FA3 5.43e-02, new rows vs FA3 0.00e+00, finite True
+[fullfused] self-check n=1 kv_scale=1.0: rel L2 vs fp32 (bf16 q) 1.65e-03, FA3 vs fp32 (fp8 q) 4.82e-03, fused vs FA3 4.16e-02, new rows vs FA3 0.00e+00, finite True
+[splitkv] load_inline compiled in 49.2s
+[splitkv] self-check kv_scale=1.0 grid=device: rel L2 1.69e-03, finite True
+[splitkv] self-check kv_scale=0.25 grid=3: rel L2 1.66e-03, finite True
+[splitkv] self-check kv_scale=1.0 grid=3: rel L2 1.62e-03, finite True
