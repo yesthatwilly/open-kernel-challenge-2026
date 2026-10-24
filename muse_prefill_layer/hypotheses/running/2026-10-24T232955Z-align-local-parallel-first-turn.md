@@ -24,7 +24,7 @@ kind: primary
 controls_for: null
 review: required
 status: running
-stage: claimed
+stage: implemented
 claimed_at: 2026-10-24T232955Z
 base_sha: 67f7473c299ffe95b9bb8701cdaf2079f00e3cab
 base_blob: 8780061c8886bf3d70fe3c433fbbfade9bdf8507
@@ -33,6 +33,12 @@ worktree: .worktrees/muse_prefill_layer/align-local-parallel-first-turn
 mode: null
 restack_of: null
 stale_base: null
+implemented_at: 2026-10-24T233023Z
+impl_commit: 0b61b2b6f3bb4a07433e7bea0e169e70d46d0894
+submission_sha256: 8177399e276e2bedb4909471f4c254855cefe2f038c518e9d9a63b93fc8f34cb
+norm_sha256: 35c68a631fd3932f72e0d779eeda2bc5b8a3e654c1334fa62fc41f2fd1058792
+submission_blob: 32d9f1e7e5c9c472ea3b8c05d97fa7de566e6135
+lint_warnings: 12
 ---
 
 # align-local-parallel-first-turn
@@ -48,3 +54,18 @@ Built on moe-align-local-routes-parallel-port (running, its implementation commi
 ## Risk
 
 Main-thread build before the 00:00Z reset, user-approved self-review.
+
+## Implementation notes
+
+Built in the main thread 2026-10-24 ~23:30Z with user-approved self-review, on moe-align-local-routes-parallel-port's implementation commit (claim based it there: parent still running). `_experts_triton`: `_align_parallel(local_ids, 0, LOCAL_EXPERTS, cfg["BLOCK_T"])` when `state["align_par_ok"]`, else master's call. `_align_par_setup` now also tests T=16384 at the Triton path's BLOCK_T (256), which also compiles that variant before capture; a mismatch there turns the whole parallel align OFF (both paths), never just one.
+
+## Rules check
+
+- [x] CUDA-graph capturable: shape-only allocations, prepare()-set gate, no host sync in kernel_fn.
+- [x] Fresh inputs: nothing derived from `data` cached.
+- [x] Weights unchanged.
+- [x] Activations BF16; KV FP8; attention untouched.
+- [x] Every key attended.
+- [x] No timing/harness access, processes, network or module edits.
+- [x] No work outside timed calls added.
+- [x] okc_lint: no errors.
