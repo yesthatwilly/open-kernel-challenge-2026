@@ -35,7 +35,7 @@ review: proceed
 status: running
 review_at: 2026-10-24T184058Z
 review_companions: null
-stage: implemented
+stage: dispatched
 claimed_at: 2026-10-24T184059Z
 base_sha: b0b3da52d52b15557f59e3c3631b16eb6fc5c2cd
 base_blob: c6854f093588da524e63657576b27ed720756e32
@@ -50,6 +50,8 @@ submission_blob: b7aab820247a0f90842e548756b6633dc3c7673d
 lint_warnings: 0
 attempt_file: 2026-10-24T184626Z-check-sliding-fused-hoist-first-tile.md
 prepared_at: 2026-10-24T184626Z
+job: ead13d58c6c843e9
+dispatched_at: 2026-10-24T184641Z
 ---
 
 # sliding-fused-hoist-first-tile
