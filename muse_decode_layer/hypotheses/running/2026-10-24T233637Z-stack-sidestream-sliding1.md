@@ -20,7 +20,16 @@ priority: 2
 kind: primary
 controls_for: null
 review: required
-status: queued
+status: running
+stage: claimed
+claimed_at: 2026-10-24T233637Z
+base_sha: f7c9823e181e8f7f0fbb2200b2c38b4ad7be6085
+base_blob: 3d70ae6e2de0d48c4a4f2a469ced8234f5348182
+branch: hyp/muse_decode_layer/stack-sidestream-sliding1
+worktree: .worktrees/muse_decode_layer/stack-sidestream-sliding1
+mode: null
+restack_of: null
+stale_base: null
 ---
 
 # stack-sidestream-sliding1
