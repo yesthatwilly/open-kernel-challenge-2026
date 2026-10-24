@@ -63,13 +63,13 @@ attempt_file: 2026-10-23T231158Z-check-pooler-triton-skinny-m32.md
 prepared_at: 2026-10-23T231158Z
 job: 9f0ad00bbc874d31
 dispatched_at: 2026-10-23T231206Z
-outcome: gain
-verdict_detail: gain
+outcome: neutral
+verdict_detail: within-ci
 speedup: 0.9982564855805014
 speedup_ci: [0.9832826382967939, 1.0132303328642087]
 harvested_at: 2026-10-24T021807Z
-best_at_harvest: 0.9020752041800139
-promotion: pending
+best_at_harvest: 1.0022291437677175
+promotion: null
 ---
 
 # pooler-triton-skinny-m32
@@ -186,5 +186,6 @@ gained on pooler decode_1, decode_16, verify_1, verify_16; lost on qkv_gate deco
 
 ## Follow-ups
 
-- candidate for promotion; stack further changes with `depends_on` once it lands.
+- within-ci: the change is not proven either way; a stacked hypothesis (`depends_on: pooler-triton-skinny-m32`) that adds a further change in the same area is the only way to learn more (identical code is never re-run).
+- re-filed from done/gain: harvest compared against the stale BEST.json (0.902x starter) instead of the merged parity base (1.0022x); fixed in churn.py classify.
 

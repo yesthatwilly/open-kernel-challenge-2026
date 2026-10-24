@@ -68,13 +68,13 @@ attempt_file: 2026-10-23T231247Z-check-router-triton-hilo-fused.md
 prepared_at: 2026-10-23T231247Z
 job: c2a8de5969374dff
 dispatched_at: 2026-10-23T231255Z
-outcome: gain
-verdict_detail: gain
+outcome: regression
+verdict_detail: regression
 speedup: 0.9402163894062671
 speedup_ci: [0.926113143565173, 0.954319635247361]
 harvested_at: 2026-10-24T021807Z
-best_at_harvest: 0.9020752041800139
-promotion: pending
+best_at_harvest: 1.0022291437677175
+promotion: null
 ---
 
 # router-triton-hilo-fused
@@ -214,5 +214,6 @@ gained on router decode_1, decode_16, decode_32, verify_1; qkv_gate verify_1; o 
 
 ## Follow-ups
 
-- candidate for promotion; stack further changes with `depends_on` once it lands.
+- record which shapes lost (Attribution) and do not retry this area in this form.
+- re-filed from done/gain: harvest compared against the stale BEST.json (0.902x starter) instead of the merged parity base (1.0022x); fixed in churn.py classify.
 

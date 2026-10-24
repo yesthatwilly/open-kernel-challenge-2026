@@ -612,6 +612,9 @@ def classify(res, best, base):
     b = (base or {}).get("speedup") if base else None
     if b is None:
         b = B
+    elif b > B:
+        # A base merged without a scored submit can be ahead of BEST.json; a gain must beat it too.
+        B, Bhi = b, ((base or {}).get("speedup_ci") or [b, b])[1] or b
     if lo > max(B, Bhi) and s > B:
         return "gain", "gain"
     if s > B:
@@ -926,6 +929,9 @@ def _land(p, h, res, result_rel, submitted_job=None):
                       "slug": slug, "result": result_rel, "updated_at": ts()})
         fm_set(h["_path"], promotion="done", promotion_commit=commit, promotion_job=submitted_job)
     else:
+        save_best(p, {"problem": p, "job": res.get("job"), "check_job": res.get("job"), "mode": "check", "speedup": s,
+                      "ci": ci, "score_us": res.get("score_us"), "commit": commit, "submission_blob": _master_blob(p),
+                      "slug": slug, "result": result_rel, "updated_at": ts()})
         fm_set(h["_path"], promotion="merged", promotion_commit=commit)
     git("add", "--", rel(h["_path"]), rel(best_path(p)))
     git("commit", "-q", "-m", f"churn({p}): {slug} landed on master", check=False)
