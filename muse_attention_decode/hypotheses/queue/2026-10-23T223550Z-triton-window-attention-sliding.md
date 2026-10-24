@@ -46,7 +46,8 @@ priority: 5
 kind: primary
 controls_for: null
 review: required
-status: queued
+status: hold
+hold_reason: "moot under master 1.269x (sweep by the attention minter): its chain ends in the single fused sliding launch, measured as sliding-single-launch-fused-attention (0.945x); its one winning shape is covered by sliding-fused-triton-decode1-gate"
 ---
 
 # triton-window-attention-sliding
