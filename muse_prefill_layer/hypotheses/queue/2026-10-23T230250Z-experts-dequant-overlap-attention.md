@@ -31,7 +31,8 @@ priority: 3
 kind: primary
 controls_for: null
 review: required
-status: queued
+status: hold
+hold_reason: "standing answer: the per-call BF16 dequant family stays held; pursue in-kernel dequant only (experts-cuda-wgmma-mixed-input-grouped-gemm)"
 ---
 
 # experts-dequant-overlap-attention
