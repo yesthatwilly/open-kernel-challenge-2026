@@ -1,6 +1,6 @@
 # muse_bf16_proj findings
 
-Regenerated 2026-10-24T092716Z by `churn.py index`. Read this before writing a hypothesis for muse_bf16_proj.
+Regenerated 2026-10-24T100619Z by `churn.py index`. Read this before writing a hypothesis for muse_bf16_proj.
 
 ## Current best
 
@@ -90,7 +90,7 @@ Where the time goes (per scored shape, top kernels):
 - queue: router-splitk32-small-m-all-loads-in-flight [router GEMM] p3 queued
 - queue: router-splitk-semaphore-no-memset [router GEMM] p4 queued
 - queue: pooler-triton-splitk2-blockn64-semaphore-control-blockk256 [pooler GEMM] p1 hold
-- queue: pooler-unpooler-m128-wgmma-splitk-semaphore [pooler GEMM + unpooler GEMM (m=128)] p2 queued
-- queue: qkv-gate-o-m128-wgmma-splitk-semaphore [qkv GEMM + o GEMM (m=128)] p2 queued
+- queue: qkv-gate-o-m128-wgmma-splitk-semaphore [qkv GEMM + o GEMM (m=128)] p2 hold
 - queue: pooler-splitk2-tma-weight-stream [pooler GEMM] p3 queued
 - running: unpooler-slice-triton-splitk8-semaphore [unpooler GEMM] p2 running
+- running: pooler-unpooler-m128-wgmma-splitk-semaphore [pooler GEMM + unpooler GEMM (m=128)] p2 running

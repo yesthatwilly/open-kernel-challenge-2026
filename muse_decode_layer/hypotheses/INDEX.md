@@ -1,6 +1,6 @@
 # muse_decode_layer hypotheses
 
-Regenerated 2026-10-24T095815Z. Best: 1.0635x [1.0475,1.0794] job `2b1f82408ab64116` (submit)
+Regenerated 2026-10-24T100619Z. Best: 1.0635x [1.0475,1.0794] job `2b1f82408ab64116` (submit)
 
 | created | slug | kind | area | where | outcome | speedup | CI | job | mode | promotion | review | expected hit |
 |---|---|---|---|---|---|---|---|---|---|---|---|---|
@@ -18,8 +18,9 @@ Regenerated 2026-10-24T095815Z. Best: 1.0635x [1.0475,1.0794] job `2b1f82408ab64
 | 2026-10-24T075400Z | fa3-full-single-split-probe | primary | FA3 call | queue | hold |  |  |  |  |  | hold |  |
 | 2026-10-24T075400Z | fused-preattention-triton | primary | pre-attention norm+rope | queue | queued |  |  |  |  |  | required |  |
 | 2026-10-24T075400Z | router-triton-splitk-side-stream | primary | router GEMM | queue | hold |  |  |  |  |  | proceed |  |
-| 2026-10-24T075400Z | triton-flash-decode-full-verify-paired-kv | rewrite | FA3 call | queue | queued |  |  |  |  |  | required |  |
+| 2026-10-24T075400Z | triton-flash-decode-full-verify-paired-kv | rewrite | FA3 call | queue | hold |  |  |  |  |  | hold |  |
 | 2026-10-24T075400Z | triton-flash-decode-full-paired-kv | rewrite | FA3 call | done/neutral | neutral | 1.0702 | [1.054,1.086] | e82b11f9d9f64b23 | check |  | proceed | 1/5 |
+| 2026-10-24T100416Z | triton-flash-decode-full-oversub-kv-prefetch | rewrite | FA3 call | queue | queued |  |  |  |  |  | required |  |
 
 ## Held
 
@@ -28,3 +29,4 @@ Regenerated 2026-10-24T095815Z. Best: 1.0635x [1.0475,1.0794] job `2b1f82408ab64
 - fa3-num-splits-sliding: adversarial review: The premise (FA3 sizes the sliding split-KV for the 80K page-table extent) is contradicted by both FA3's own get_num_splits, which clamps seqlen_k by the window
 - fa3-full-single-split-probe: adversarial review: The probe is sound and would give a clear reading, but neither reading can change a decision that is open right now. The rewrite it is meant to inform (triton-f
 - router-triton-splitk-side-stream: reviewer: the 9.2-9.5 us splitK row is 2 calls (~4.6 us each), so the side-stream router branch (~14-18 us) already finishes before the ~22-25 us pooler and is off the critical path; most likely flat, and decode has 4 checks left
+- triton-flash-decode-full-verify-paired-kv: adversarial review: Stage 1 measured the paired-KV kernel at about 1.63-1.66 TB/s, which is slower than FA3: 200.8 vs 188.8 us at decode_16 and 394.8 vs 374.4 us at decode_32. That

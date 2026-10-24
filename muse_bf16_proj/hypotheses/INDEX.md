@@ -1,6 +1,6 @@
 # muse_bf16_proj hypotheses
 
-Regenerated 2026-10-24T092716Z. Best: 1.1433x [1.1261,1.1604] job `240eb22ea0b6487e` (submit)
+Regenerated 2026-10-24T100619Z. Best: 1.1433x [1.1261,1.1604] job `240eb22ea0b6487e` (submit)
 
 | created | slug | kind | area | where | outcome | speedup | CI | job | mode | promotion | review | expected hit |
 |---|---|---|---|---|---|---|---|---|---|---|---|---|
@@ -25,8 +25,8 @@ Regenerated 2026-10-24T092716Z. Best: 1.1433x [1.1261,1.1604] job `240eb22ea0b64
 | 2026-10-24T075041Z | router-splitk-semaphore-no-memset | primary | router GEMM | queue | queued |  |  |  |  |  | required |  |
 | 2026-10-24T075111Z | unpooler-slice-triton-splitk8-semaphore | primary | unpooler GEMM | running | running |  |  | bb31bb36545a47bb | check |  | proceed |  |
 | 2026-10-24T075347Z | pooler-triton-splitk2-blockn64-semaphore-control-blockk256 | control→pooler-triton-splitk2-blockn64-semaphore | pooler GEMM | queue | hold |  |  |  |  |  | required |  |
-| 2026-10-24T092553Z | pooler-unpooler-m128-wgmma-splitk-semaphore | primary | pooler GEMM + unpooler GEMM (m=128) | queue | queued |  |  |  |  |  | required |  |
-| 2026-10-24T092629Z | qkv-gate-o-m128-wgmma-splitk-semaphore | primary | qkv GEMM + o GEMM (m=128) | queue | queued |  |  |  |  |  | required |  |
+| 2026-10-24T092553Z | pooler-unpooler-m128-wgmma-splitk-semaphore | primary | pooler GEMM + unpooler GEMM (m=128) | running | running |  |  | d34fd76f9c444728 | check |  | proceed |  |
+| 2026-10-24T092629Z | qkv-gate-o-m128-wgmma-splitk-semaphore | primary | qkv GEMM + o GEMM (m=128) | queue | hold |  |  |  |  |  | required |  |
 | 2026-10-24T092648Z | pooler-splitk2-tma-weight-stream | primary | pooler GEMM | queue | queued |  |  |  |  |  | required |  |
 
 ## Held
@@ -35,3 +35,4 @@ Regenerated 2026-10-24T092716Z. Best: 1.1433x [1.1261,1.1604] job `240eb22ea0b64
 - router-triton-hilo-fused-control-hybrid-cublas-above-m32: superseded: router-triton-hilo-fused-control-splitk-all-m landed (1.151x); its 3-D Triton grid beats cuBLAS hi/lo at every m (5.7-9.3 us vs 10.5-17.7 us), so a hybrid using cuBLAS above m=32 can only be slower
 - router-hilo-addmm-epilogue-control-inplace-out: superseded: master's router no longer uses the cuBLAS hi/lo pair (Triton split-K landed, 1.151x), so the add node this control targets is gone; the primary read flat (1.026x, within CI)
 - pooler-triton-splitk2-blockn64-semaphore-control-blockk256: parent pooler-triton-splitk2-blockn64-semaphore harvested neutral (1.166x, CI low below best); a BLOCK_K control isolating a sub-change of a non-gain cannot change any decision
+- qkv-gate-o-m128-wgmma-splitk-semaphore: same m=128 wgmma split-K design as pooler-unpooler-m128-wgmma-splitk-semaphore (dispatching now); its reviewer asked to wait for that harvest; re-queue by hand if that kernel reaches its target
