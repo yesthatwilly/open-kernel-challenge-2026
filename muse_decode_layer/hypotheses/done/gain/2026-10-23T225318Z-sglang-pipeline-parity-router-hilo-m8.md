@@ -73,7 +73,8 @@ speedup: 1.021632132299037
 speedup_ci: [1.0063076503145514, 1.0369566142835225]
 harvested_at: 2026-10-24T021808Z
 best_at_harvest: 0.0045119870605644765
-promotion: pending
+promotion: merged
+promotion_commit: 164c1d27648cffdd4d7f5a04f0d6f582e1f9ac56
 ---
 
 # sglang-pipeline-parity-router-hilo-m8
