@@ -108,6 +108,7 @@ harvested_at: 2026-10-24T144810Z
 best_at_harvest: 1.1760470299345995
 promotion: merged
 promotion_commit: 8b9ad430b2ed965f732443cb8de2069b58f43366
+promotion_attempt: 2026-10-24T163537Z-submit-bf16-m32-swapab-wgmma-triton.md
 ---
 
 # bf16-m32-swapab-wgmma-triton
