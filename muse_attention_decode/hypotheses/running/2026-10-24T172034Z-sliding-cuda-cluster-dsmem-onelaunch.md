@@ -102,13 +102,19 @@ review: proceed
 status: running
 review_at: 2026-10-24T172529Z
 review_companions: null
-stage: claimed
+stage: implemented
 claimed_at: 2026-10-24T172705Z
 base_sha: 2a1c23034c065ac604a00e741363c6bf9812e9de
 base_blob: 1c0f5fa1bfc4e602b62e5e9edd9df6d5652b297b
 branch: hyp/muse_attention_decode/sliding-cuda-cluster-dsmem-onelaunch
 worktree: .worktrees/muse_attention_decode/sliding-cuda-cluster-dsmem-onelaunch
 mode: null
+implemented_at: 2026-10-24T174609Z
+impl_commit: 589a8918c1578bffcb5db1fa68723688293c0c94
+submission_sha256: 125d3fc281dc91004d6cb4256246e2e5723c6d3dc27d55d04358d1283922196a
+norm_sha256: 66b17f195025b4c94713feea756cf7e53e5f7246e5d9d3b10c49cd8d67a667a0
+submission_blob: dc4890e2f571f63a11b6dd7fd2174029c4069ae4
+lint_warnings: 0
 ---
 
 # sliding-cuda-cluster-dsmem-onelaunch
@@ -163,3 +169,112 @@ No companions. It is a kind: rewrite judged on its own kernel time per shape (pr
 - At B=1, C=16 uses only 16 SMs, against the incumbent's 32 CTAs. Is the cold gather of ~33 KB per CTA latency-bound enough that C=16 with 2 CTAs/SM, or multi-stage cp.async, matters for the <= 4.5 us target?
 - For the test cases with ctx < window (batch 1 ctx 10 is page 64 and stays on master, but the self-check's seq_len 10 hits the new kernel), most ranks have empty chunks. Confirm that the m = -inf partials get weight 0 in the DSMEM merge, as master's combine does.
 
+
+## Implementation notes
+
+Implemented 2026-10-24 in the worktree `muse_attention_decode/submission.py` only (uncommitted, +887/-5). It was built blind: nothing was compiled here. Every master path is unchanged. Only the sliding branch of `kernel_fn` and the import block were touched, plus new code.
+
+- **New module `muse_sliding_cluster_v1`.** A separate `load_inline` with its own `_SLIDE_CPP`/`_SLIDE_CUDA`, built in `_slide_init()` after the splitkv build and self-check. The splitkv module is not touched.
+  - Contents: `sliding_cluster_kernel<L>` (L in {1, 8}, 256 threads, `__launch_bounds__(256, 2)`), `slide_setup()` and `slide_attn()`.
+  - Launch: `cudaLaunchKernelEx` with a `cudaLaunchAttributeClusterDimension` (C, 1, 1) attribute on the current torch stream. The grid is B*C.
+- **Cluster size.** C comes from config only.
+  - C is 16 at batch 1 when `cudaOccupancyMaxActiveClusters(C=16)` > 0, measured after setting `cudaFuncAttributeNonPortableClusterSizeAllowed`. Otherwise C is 8.
+  - `slide_setup()` returns, for both L: occupancy for C=8 and C=16 at the real smem size, `numRegs`, `localSizeBytes` (spills) and smem bytes. All of these are printed.
+  - If C=8 reports <= 0, that L is not used.
+- **Scale (review fix 1).** qk_scale_factor is applied exactly once.
+  - q is RMS-normalized, rotated (RoPE), multiplied by qk_scale_factor, then rounded to E4M3 with `cvt.rn.satfinite.e4m3x2.f32`.
+  - The score scale is `sm_scale*log2e` (host) times `k_scale` (device pointer).
+  - The self-check reference uses the same rounding order.
+- **Smem (review fix 2).**
+  - There is no f16 V copy. V is widened per fragment in registers, using master splitkv's byte_perm + cvt.
+  - The fp32 partials, and the L=1 per-warp staging, alias the consumed K region after a `__syncthreads`. static_asserts guard the fit.
+  - Per CTA: K 34,816 B + V 34,816 B (272 rows x 128 B, token-XOR swizzle, no pad), plus q (1 KB or 8 KB).
+  - Total: 70,656 B at L=1 and 77,824 B at L=8. Both fit 2 CTAs/SM (the target was under 113 KB).
+- **Prologue.**
+  - Page indices: 8 per thread, loaded with `__ldg` into registers, all issued before use.
+  - Gather: one 16-byte `cp.async.cg` pass over the chunk's old K and V rows. Thread -> token tid/8 + 32i, chunk tid%8, so each warp instruction covers 4 full lines.
+  - Rows from the last key up to the end of the 16-token tile are zero-stored.
+  - While the gather is in flight, every CTA builds the L*16 queries: one warp per head vector, lane = RoPE pair, `sincosf` on an fp32 angle, IEEE `1/sqrtf`.
+  - The last rank also builds the L new keys and values. It stores them at `cache_loc` and in smem rows `n_old+i` (swizzled), and never reads them back from the cache.
+- **Compute.**
+  - QK^T: `mma.sync.m16n8k32.e4m3` on the raw bytes, 2 k-steps per 16-token tile. P@V: `m16n8k16` f16.
+  - Softmax: online, exp2 domain, -inf safe.
+  - Mask: per row, `e < ntok && p_row-(W-1) <= pos <= p_row`, applied on every tile.
+  - L=1: warp w takes kv head w&1 and tiles k ≡ w>>1 (mod 4). The 4 slice warps are merged in smem.
+  - L=8: warp w takes kv head w&1 and m-tile w>>1. Rows quad and quad+8 are heads 2mt and 2mt+1 of token quad, so they share one mask. No intra-CTA merge is needed.
+- **DSMEM merge.**
+  - `cg::this_cluster().sync()`, then rank r owns rows [r*R/C, (r+1)*R/C).
+  - It reads the C partials with `cluster.map_shared_rank`, the cooperative-groups API, instead of hand-written mapa/ld.shared::cluster asm.
+  - Partials with m=-inf get weight 0 (review open question 5).
+  - Then: LSE merge, times v_scale, RMSNorm (eps inside the sqrt), times sigmoid(gate), bf16 store.
+  - A second `cluster.sync()` runs before exit.
+- **Gate (`_slide_gate`, config only).**
+  - Conditions: `0 < window <= 2048`, rope_theta != 0, hq 16, hkv 2, head_dim 64, page 1, 1 <= batch <= 64, and q_len in {1, 8} with a passed self-check for that q_len.
+  - Otherwise the master path runs as before: the Triton fused kernel at decode_1, FA3 elsewhere.
+- **Fallback (review open question 3).** The CUDA source has `#define SLIDE_FP8QK 1/0`.
+  - The fp8-QK build (`muse_sliding_cluster_v1`) is tried first.
+  - For any q_len whose build or self-check failed, the f16-QK build (`muse_sliding_cluster_v1_f16qk`) is built and checked. It uses the m16n8k16 path with master's k-permutation.
+  - Only if that also fails does the q_len drop to master.
+- **Self-check (at import, synthetic data only).** Four cases per L:
+  - Coverage: B in {1, 3, 5}; seq 10, 17, 2046, 2047, 2048, 2049, 3000 and 5000; kv_scale 1 and 1/64; aligned keys planted at p-W+1 and p-W.
+  - Output: rel L2 < 2e-2 against an FP32 windowed causal reference, and finite.
+  - New cache rows: compared against master `_pre_attention_kernel` run on cloned caches. The bar is a byte match >= 99.9% and rel < 1e-2, not exact equality, because the Triton kernel uses approximate sqrt and division.
+  - CUDA graph: one capture plus replay must equal the eager output.
+  - A failure clears only that L.
+- **Log lines.**
+  - Build: `[slide] load_inline (fp8qk) compiled in Xs` or `FAILED`.
+  - Occupancy: `[slide] fp8qk L=..: cudaOccupancyMaxActiveClusters C=8 -> n, C=16 -> m (smem, regs, local/spill)`.
+  - Self-check: `[slide] self-check ... rel L2 ..., cache k match ...` and `graph capture + replay matches`.
+  - Decision: `[slide] PATH CHOSEN q_len=1/8: CLUSTER kernel (...)` or `MASTER`.
+  - Per shape: one `[slide] path batch=.. q_len=..: ...` line per sliding config that `kernel_fn` sees (host print, once per config).
+- **Offline verification.** A numpy emulator of the kernel's per-lane indexing is at `/home/user/.claude/jobs/7156a0da/tmp/slide/emu.py`.
+  - It covers the gather swizzle, fragment loads, masks, softmax, the L=1 staging merge, the L=8 partial layout and the DSMEM reduce-scatter.
+  - Its MMAs are written from the PTX m16n8k32 and m16n8k16 fragment tables, and its smem is NaN-poisoned.
+  - Coverage: L in {1,8} x C in {8,16} x seq in {0,1,10,300,2046,2047,2049,5000}, with planted edge keys.
+  - Result: both the fp8 and f16 paths match a float64 reference to ~1e-15. A mutation (window edge off by one) is caught.
+
+Deviations from the spec:
+1. Page indices go into registers via `__ldg` instead of 4-byte `cp.async` copies into smem. The dependency is the same single index round trip before the KV gather (review point 3), with less smem and no extra wait_group.
+2. There is no 16 B row pad. Master splitkv's token-XOR swizzle avoids the bank conflicts instead, and saves about 4 KB per CTA.
+3. The mask is applied on every tile, not only on tiles that overlap a window edge. This is correct everywhere and costs little ALU.
+4. The gate adds `window <= 2048`. This bounds the per-CTA chunk to 256 old keys and keeps the smem plan valid.
+5. DSMEM uses cooperative_groups `map_shared_rank` and `cluster.sync()` rather than raw `mapa` + `barrier.cluster` asm. These are the same instructions, with less hand-written PTX to get wrong blind.
+6. An f16-QK build of the same module is the fallback before master (review open question 3).
+
+Uncertainties:
+- (a) Nothing has been compiled. The untested pieces are the e4m3 mma (PTX 8.4), the cooperative_groups cluster API and the `cudaLaunchKernelEx` template on the judge toolchain. The f16 build covers only the first.
+- (b) An out-of-bounds bug would raise a sticky error during the import self-check and take the whole run down. Bounds were checked by hand and in the emulator, which asserts on every smem word read.
+- (c) Two or three module builds add about 40-80 s to the ~41 s splitkv build.
+- (d) C=16 at B=1 is used for decode_1 and verify_1 only if occupancy reports > 0.
+- (e) sincosf on angles near 8e4 rad takes the slow (Payne-Hanek) path. It is correct but costs some ALU per head.
+
+## Rules check
+
+Checked against `git -C .worktrees/muse_attention_decode/sliding-cuda-cluster-dsmem-onelaunch diff`:
+
+- [x] CUDA-graph capturable.
+  - The new path in kernel_fn has no `.item()`, `.cpu()`, synchronize or tensor prints. It does `torch.empty` for the output and one `cudaLaunchKernelEx` on the current stream.
+  - Branching is on config (`_slide_gate`, `_slide_clusters`) and import-time module state only. The `_slide_note` print is a host string, printed once per config.
+  - The self-check also captures and replays once.
+- [x] Nothing derived from `data` is cached across calls.
+  - `_SLIDE_MOD`, `_SLIDE_C16` and `_SLIDE_TAG` hold import-time build and occupancy results. `_SLIDE_NOTED` holds config tuples only.
+  - `_inv_freq` is master's, keyed on theta, and unchanged.
+- [x] Weights: n/a, since this problem has no weights and no prepare().
+- [x] Activations are BF16 where SGLang keeps BF16, the KV cache is FP8, and queries are at most FP8 E4M3.
+  - qkv and the output stay bf16. New K/V are stored E4M3 at cache_loc.
+  - The query is rounded to E4M3 (after qk_scale_factor), which is the precision FA3 uses.
+  - P@V uses f16 P and V, finer than FA3, with fp32 softmax and accumulation.
+- [x] Attention sees every key.
+  - Each request's window [max(0, p-2047), p] is split across the C ranks with no gaps (C*ck >= count).
+  - The per-row mask is exactly the window edge plus causal. Nothing is skipped by weight.
+- [x] No timing patches, harness frames/I/O/secrets, module edits, reference import, subprocesses or network. The only import is `torch.utils.cpp_extension.load_inline`, which master already uses. There is no cuobjdump and no process start.
+- [x] All work happens inside the timed call, with no output caching or replay. The import-time self-check uses synthetic tensors only, and kernel_fn recomputes everything per call.
+- [x] The first-line marker `# okc: problem=muse_attention_decode` is kept, and no triton.autotune was added.
+
+okc_lint output:
+
+```
+CLEAN: /home/user/git/musespark/.worktrees/muse_attention_decode/sliding-cuda-cluster-dsmem-onelaunch/muse_attention_decode/submission.py
+```
+
+`python3 -I -m py_compile`: OK (the `__pycache__` it left in the worktree was removed).
