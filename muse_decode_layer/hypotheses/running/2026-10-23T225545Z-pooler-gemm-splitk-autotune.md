@@ -40,7 +40,7 @@ review: proceed
 status: running
 review_at: 2026-10-24T044925Z
 review_companions: null
-stage: implemented
+stage: dispatched
 claimed_at: 2026-10-24T044925Z
 base_sha: 952188da0ff9551ff95f13844604e502f412b70f
 base_blob: 6884d26a928d1de1b07bf8d28e1be4e53dfdcfc5
@@ -55,6 +55,8 @@ submission_blob: f0a682c9218ad58ca95c95bb33cc0dddc9f9fffc
 lint_warnings: 4
 attempt_file: 2026-10-24T045249Z-check-pooler-gemm-splitk-autotune.md
 prepared_at: 2026-10-24T045249Z
+job: 2e1a43ab85324776
+dispatched_at: 2026-10-24T045257Z
 ---
 
 # pooler-gemm-splitk-autotune
