@@ -35,9 +35,16 @@ priority: 3
 kind: primary
 controls_for: null
 review: proceed
-status: queued
+status: running
 review_at: 2026-10-24T184124Z
 review_companions: null
+stage: claimed
+claimed_at: 2026-10-24T184124Z
+base_sha: 80056b8b63f9285186da431dd2ea8568beb3c0bf
+base_blob: c6854f093588da524e63657576b27ed720756e32
+branch: hyp/muse_attention_decode/preattention-tiled-gate-large-tokens
+worktree: .worktrees/muse_attention_decode/preattention-tiled-gate-large-tokens
+mode: null
 ---
 
 # preattention-tiled-gate-large-tokens
