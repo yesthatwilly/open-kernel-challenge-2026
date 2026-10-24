@@ -49,9 +49,10 @@ priority: 4
 kind: primary
 controls_for: null
 review: proceed
-status: queued
+status: hold
 review_at: 2026-10-24T165634Z
 review_companions: null
+hold_reason: "reviewer: same one-row-per-program structure as the incumbent; expect 0.2-0.4% headline, below run noise; re-mint as a multi-row/persistent variant if wanted"
 ---
 
 # norm-residual-boundaries-triton-row-kernel
