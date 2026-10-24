@@ -1,17 +1,17 @@
 {
  "problem": "muse_attention_decode",
- "job": "9e8fcb3fe4b04458",
+ "job": "c297440e53334f34",
  "check_job": "9e8fcb3fe4b04458",
- "mode": "check",
- "speedup": 1.1274459340435283,
+ "mode": "submit",
+ "speedup": 1.1284429079326423,
  "ci": [
-  1.1105342450328755,
-  1.1443576230541812
+  1.1115162643136527,
+  1.1453695515516318
  ],
- "score_us": 3340.5592998081547,
+ "score_us": 3337.607931711875,
  "commit": "3e98bd00dcb717e6e3670b7819e7d1c2331f52ba",
  "submission_blob": "f14211b4b0e88f8b3f683d9f9275b76a64b66e02",
  "slug": "fused-preattention-triton",
  "result": "muse_attention_decode/hypotheses/done/gain/fused-preattention-triton.result.json",
- "updated_at": "2026-10-24T083412Z"
+ "updated_at": "2026-10-24T095814Z"
 }

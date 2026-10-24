@@ -43,4 +43,4 @@ okc_lint: `CLEAN: .../muse_attention_decode/submission.py`
 low
 
 ## Result (after the run)
-(pending)
+Promotion passed: 1.1284x [1.1115,1.1454], board: {"rank": 451, "team": "yesthatwilly", "speedup": 1.1284, "first": false, "ahead": 450, "to_first": 2.4155}
