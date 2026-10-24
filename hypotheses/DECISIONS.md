@@ -26,3 +26,4 @@ overrides of a reviewer) with the reason, newest last. Written by `churn.py note
 
 ## Log
 - 2026-10-24T083652Z `muse_bf16_proj` **unpooler-slice-triton-splitk8-semaphore**: deferred one tick: the reviewer passed it but asks to confirm the ticket-semaphore ordering first; the in-flight pooler/qkv-gate semaphore checks (08ec203e5717406e, 135ef6499875416a) use the same pattern, so dispatch after they harvest (fix the pattern first if they fail correctness).
+- 2026-10-24T090934Z `muse_bf16_proj` **unpooler-slice-triton-splitk8-semaphore**: deferral cleared: pooler (08ec203e5717406e) and qkv-gate (135ef6499875416a) semaphore checks both passed correctness, so the ticket-semaphore split-K reduce is sound; eligible for the next dispatch.
