@@ -41,9 +41,16 @@ priority: 2
 kind: primary
 controls_for: null
 review: proceed
-status: queued
+status: running
 review_at: 2026-10-24T164610Z
 review_companions: null
+stage: claimed
+claimed_at: 2026-10-24T164610Z
+base_sha: 721aada38118e1641389dda5e890b5a18175f8d8
+base_blob: 635cfee3ac2c3f7c66840b8c8a082cad2fa41a68
+branch: hyp/muse_prefill_layer/experts-triton-w13-fused-silu-epilogue
+worktree: .worktrees/muse_prefill_layer/experts-triton-w13-fused-silu-epilogue
+mode: null
 ---
 
 # experts-triton-w13-fused-silu-epilogue
