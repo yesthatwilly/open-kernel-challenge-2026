@@ -117,13 +117,15 @@ base_sha: 663f5edaa1c1e7a6a50c7a891240deafb601a765
 base_blob: d9a9375ef4721ab9b28cc9d6364c92e67c7ccc59
 branch: hyp/muse_moe_w4a16/cuda-nvfp4-swapab-mma-persistent-small-m
 worktree: .worktrees/muse_moe_w4a16/cuda-nvfp4-swapab-mma-persistent-small-m
-mode: null
+mode: submit
 implemented_at: 2026-10-24T172804Z
 impl_commit: f8b3f7230f2656a4143b6a87bb6b8dc1be0b5e49
 submission_sha256: 80333ab54210bc3d700c08f1b58142f97338c6d78f28621124fbf90a5f7c2a92
 norm_sha256: dec0d5073345369630d930643912e31a595bde13dabf1c5efb9e35e0daef1252
 submission_blob: 7d31b758c60017e045f6e0f75d2e437931ea34b0
 lint_warnings: 20
+attempt_file: 2026-10-24T181733Z-submit-cuda-nvfp4-swapab-mma-persistent-small-m.md
+prepared_at: 2026-10-24T181733Z
 ---
 
 # cuda-nvfp4-swapab-mma-persistent-small-m
