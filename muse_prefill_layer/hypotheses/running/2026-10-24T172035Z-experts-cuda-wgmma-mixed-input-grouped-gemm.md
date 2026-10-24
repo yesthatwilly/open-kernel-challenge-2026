@@ -89,13 +89,19 @@ review: proceed
 status: running
 review_at: 2026-10-24T172614Z
 review_companions: null
-stage: claimed
+stage: implemented
 claimed_at: 2026-10-24T172706Z
 base_sha: da2ab55f3d3cd86efc0ec9a2708632b85a44ae0b
 base_blob: 635cfee3ac2c3f7c66840b8c8a082cad2fa41a68
 branch: hyp/muse_prefill_layer/experts-cuda-wgmma-mixed-input-grouped-gemm
 worktree: .worktrees/muse_prefill_layer/experts-cuda-wgmma-mixed-input-grouped-gemm
 mode: null
+implemented_at: 2026-10-24T174507Z
+impl_commit: f5fbef745de8fb1e21880e2efae9c7992035c785
+submission_sha256: 7de964e963f3e8626e192b10bb871d85952e300d8242e3cf35e883c104bfb0e4
+norm_sha256: 45284fae7ef84da695c63aa29961f4cb6a61176dcec4de5670f76dd83f734a40
+submission_blob: be4b7c0a12465e88ecc3b07b0b5db7bcf7e935f3
+lint_warnings: 13
 ---
 
 # experts-cuda-wgmma-mixed-input-grouped-gemm
@@ -175,3 +181,79 @@ Two cross-queue facts for scheduling, not for this run's reading:
 - Is BLOCK_T 256 the right first tile, given about 20% padding waste at about 512 rows per expert? An m64n128 tile with 2 WGs on different weight tiles keeps dequant cheap (about 120 of 512 cycles) and halves the padding. Worth measuring in stage 2 alongside the turn_4 tile.
 - Debuggability without a local GPU: have the self-check report which layer failed (dequant values, fragment/MMA layout via the one-hot rows, scatter-by-sorted-id, -1/past-n_padded handling) so an OFF run still tells the next stage what to fix.
 
+
+## Implementation notes
+
+Implemented 2026-10-24 in the worktree's `muse_prefill_layer/submission.py` only (uncommitted; +789/-9). Nothing outside the expert GEMM engine changed: Marlin at T <= 4096, moe_align_block_size at 256, silu_and_mul, the post-expert weighted sum and the whole layer stay master's.
+
+What changed, and where:
+- **CUDA module** (new block after `_nvfp4_moe_gemm`): `_CUDA_EXPERTS_CUDA` / `_CUDA_EXPERTS_CPP`, built by `load_inline` at import (`-O3 -arch=sm_90a -lineinfo`, no `--use_fast_math`, no ftz). Kernel `_nvfp4_wgmma_grouped_kernel`, host wrapper `nvfp4_wgmma_gemm` (the `_nvfp4_moe_gemm` contract plus an error word and grid), `nvfp4_wgmma_attrs` (regs, local bytes, smem, CTAs/SM via cudaFuncGetAttributes and occupancy, no cuobjdump). The 128-operand wgmma asm is generated in Python (`_WGMMA_SRC`), so no operand list is hand-typed.
+- **Kernel design**: a persistent grid of SM-count CTAs with 288 threads. Warps 0-3 and 4-7 are two **cooperative** consumer warpgroups: they share one 256-token B tile and take weight rows 0-63 and 64-127 of a 128-row tile, each running `wgmma.mma_async.m64n256k16.f32.bf16.bf16` in the RS form. Warp 8 is the producer. The ring has 5 stages of 37888 B: a [256][64] bf16 B tile in 128B-swizzled K-major layout plus a 4608 B weight block. Full barriers count 33 (32 `cp.async.mbarrier.arrive.noinc` plus 1 `arrive.expect_tx`) and empty barriers count 8 (one per consumer warp). The work order is master's GROUP_SIZE_T=4 formula, computed on device from the item index and bounded by the device `n_padded`. Items for `-1` blocks never touch the ring; on w2 the consumers zero-store them.
+- **A-fragment overlap (review a)**: double-buffered `A0`/`A1` with the loop unrolled by two so the buffer index is static. Each chunk is dequantized and issued while the previous chunk's group is in flight. After `wgmma.wait_group 1`, a buffer gets an empty `"+r"` fence that keeps its registers live, then its stage is released, and only after that is the buffer rewritten. `wgmma.fence` runs before every chunk's wgmma, and the accumulators get CUTLASS-style operand fences.
+- **Weights (review b)**: `_cuda_bank` writes uint8 [E, N/128, K/64, 4608] tensors. Each block is 4096 code bytes in each consumer thread's A-fragment order (one LDS.128 = 32 nibbles) followed by 512 e4m3 scale bytes (one LDS.64 per 4-thread quad, broadcast). The producer fetches a block with one 1-D `cp.async.bulk`. `_cuda_fragment_maps` asserts that both maps are permutations, and `_cuda_bank_one` asserts an **exact inverse** of codes and scales for every expert. The global scales are the Triton bank's tensors.
+- **Dequant (review d)**: master's E2M1 bit placement (two codes per `and/shift/or`), then the scale multiply. The scale is e4m3 * 2^119 built by integer bit math, exact, including e4m3 subnormals. The multiply is `fma.rn.bf16x2` with -0.0, so subnormals are kept. The epilogue computes acc * gs * 2^7, converts with `cvt.rn.bf16.f32` and stores by sorted id, skipping slots >= num_valid.
+- **Bounded waits**: every mbarrier wait gives up after about 4e9 clock64 cycles. It then sets an error bit (1 = full, 2 = empty) and an abort flag in shared memory, and the CTA drains instead of hanging the run. The self-checks read the error word.
+- **Self-checks in prepare()** (`_setup_cuda_experts`, after the existing Triton checks):
+  - **Build gate**: the module built and the device is sm_90.
+  - **Resource asserts**: kernel attributes are printed, and the occupancy and max-thread asserts must pass.
+  - **One-hot check**: `_check_cuda_onehot` covers w13 and w2, every N row, two full 64-k chunks, the -1 block and the block past n_padded. A failure is classified as nothing written, ±0.5 subnormal flush, A-fragment/row placement (the row values are right but permuted), token side / B swizzle / scatter (rows match other rows), or dequant values.
+  - **e2e at T=16384**: `_check_cuda_e2e` compares (1) the w13 GEMM against the Triton kernel on local slots, NaN-prefilled so unwritten rows are caught, (2) the w2 GEMM against Triton on the same silu-mul input plus exact zeros on non-local slots, and (3) the whole `_experts_triton(use_cuda=True)` against `_experts_marlin`, with rel L2 <= 2e-2 and worst row <= 5x.
+  - Exactly one `[cuda expert gemm] ON` or `[cuda expert gemm] OFF: <reason>` line is printed. On OFF the CUDA bank is freed and the Triton kernel runs unchanged.
+- **Routing**: `_experts` prints `[cuda expert gemm] PATH CHOSEN T=<T>: marlin|cuda|triton` once per token count. `_use_cuda_experts` is true only when the shape's config has BLOCK_T 256 (T > 4096) and the prepare() flag is ON. `_experts_triton(use_cuda=...)` routes both GEMMs.
+
+Deviations from the spec, and why:
+1. **No setmaxnreg; 1 producer warp instead of a producer warpgroup.** With 288 threads and `__launch_bounds__(288, 1)` ptxas can give every thread up to 224 registers. That covers the consumers' ~190-200 (128 acc + 32 A + addressing) without depending on how ptxas handles setmaxnreg regions, which is one less blind risk. One warp issues 64 cp.async per lane per stage against about 1000 tensor cycles per stage, which is enough.
+2. **Activation gather by cp.async with mbarrier noinc, and the weights by 1-D bulk (review b).** No TMA tensor maps at all, so no cuTensorMapEncode or -lcuda dependency.
+3. **The epilogue stores straight from the accumulator registers** (16 B row segments per 8 lanes) instead of an stmatrix transpose through shared memory. This keeps all 5 stages in 190 KB and keeps the code simple. It is a later-stage optimisation.
+4. **The one-hot check uses only BLOCK_T 256** (the only CUDA config). The e2e check runs at T=16384 instead of 8192, per the review's open question.
+
+Offline verification, since nothing can run here:
+- g++ `-fsyntax-only` passes on the extracted CUDA/C++ source with stubbed CUDA and torch headers (launch syntax stripped). This checks the C++ only; asm constraints and the PTX are not checked.
+- A numpy emulation (scratch, not in the repo) builds a block with the Python maps and decodes it bit-for-bit as each CUDA thread does (LDS offsets, `e2m1_pair`, `scale_pair`, the byte and shift order). It places values by the PTX m64k16 A-fragment layout, and the result equals the reference dequant on the whole 128x64 block.
+- The same emulation shows `scale_pair` is exact for all 254 non-NaN e4m3 bytes and `e2m1_pair` for all 16 codes.
+- The producer's swizzled write matches the SW128 K-major read (start + 32 B per k16 step) for all 256x64 elements.
+- The device work order is a bijection over (pid_t, pid_w).
+
+Uncertainties, untested here:
+- The PTX forms have never been assembled: the RS wgmma operand list, `cp.async.mbarrier.arrive.noinc`, `cp.async.bulk ... complete_tx`, and the descriptor encoding (layout type 1 at bits 62-63, SBO 1024, LBO 1).
+- Whether ptxas serializes the wgmma pipeline. That would hurt speed only.
+- Whether `fence.proxy.async` after the full-barrier wait is needed or enough for cp.async writes that wgmma reads. It is there to be conservative.
+- Compile time. It should be well under the 41 s attention precedent plus the extension build.
+- Register spills: `local_bytes` in the attrs line shows them.
+
+A bug in any of these shows up as OFF with a reason, or a build failure. The exceptions are a hard fault (illegal address) or a hang that the bounded waits do not catch, either of which would fail the whole run.
+
+## Rules check
+
+Checked against `git -C .worktrees/muse_prefill_layer/experts-cuda-wgmma-mixed-input-grouped-gemm diff` (only `muse_prefill_layer/submission.py` changed):
+
+- [x] CUDA-graph capturable. The new timed code (`_experts` → `_use_cuda_experts` → `_experts_triton` → `_cuda_moe_gemm` → one kernel launch on `getCurrentCUDAStream()`) has no `.item()`, `.cpu()`, `synchronize()` or tensor prints. The only print is a Python string with the token count. The path choice depends on a shape and a prepare() flag. The kernel reads n_padded and expert ids on device, and the host allocates nothing new: the buffers are master's. `cudaFuncSetAttribute` runs once in prepare(), before any capture, through the attrs call and the self-check launches.
+- [x] Nothing derived from `data` is cached across calls. `state` gains `cuda_bank` (from the weights), `cuda_err` (a device error word, only ever read in prepare()), `cuda_grid` (the SM count) and `cuda_experts` (the self-check flag). `_PATH_LOGGED` holds token counts only.
+- [x] Weights are repacked losslessly in `prepare()` only. NVFP4 stays NVFP4: E2M1 codes and e4m3 scales are byte-permuted into tile blocks (same bytes, same total size), with an exact inverse asserted per expert and both maps asserted to be permutations. Global scales are the stored fp32. Dequantization happens in registers inside the kernel, with no per-call BF16 weight copy.
+- [x] Activations stay BF16 where SGLang keeps BF16 (W4A16: bf16 activations, fp32 accumulation, bf16 outputs, the same as the Triton and Marlin paths). The KV cache and queries are untouched.
+- [x] Attention sees every key. n/a: attention code is unchanged.
+- [x] No timing patches, harness frames, harness I/O or secrets, module edits, reference import or network. `load_inline` builds through torch's cpp_extension at import, the same mechanism as the promoted `muse_attention_decode` CUDA kernel (DECISIONS: the load_inline rules flag is settled). Diagnostics use `cudaFuncGetAttributes` and occupancy, not cuobjdump.
+- [x] All work happens inside the timed call, with no output caching or replay. Both GEMMs run every call; prepare() only builds the bank and runs synthetic self-checks.
+- [x] No fast-math or ftz in the build flags or the bf16 path (`fma.rn.bf16x2`, `cvt.rn.bf16.f32`). No `triton.autotune` was added.
+- [x] First-line marker `# okc: problem=muse_prefill_layer` kept.
+
+okc_lint output:
+```
+warn  host-sync    L950: torch.cuda.synchronize()  (outside kernel_fn's call graph; fine in prepare())
+warn  host-sync    L992: torch.cuda.synchronize()  (outside kernel_fn's call graph; fine in prepare())
+warn  host-sync    L1108: torch.cuda.synchronize()  (outside kernel_fn's call graph; fine in prepare())
+warn  host-sync    L1127: idx = bad.nonzero()[0].tolist()  (outside kernel_fn's call graph; fine in prepare())
+warn  host-sync    L1179: torch.cuda.synchronize()  (outside kernel_fn's call graph; fine in prepare())
+warn  host-sync    L1200: torch.cuda.synchronize()  (outside kernel_fn's call graph; fine in prepare())
+warn  host-sync    L1217: torch.cuda.synchronize()  (outside kernel_fn's call graph; fine in prepare())
+warn  host-sync    L1248: torch.cuda.synchronize()  (outside kernel_fn's call graph; fine in prepare())
+warn  host-sync    L1252: torch.cuda.synchronize()  (outside kernel_fn's call graph; fine in prepare())
+warn  host-sync    L1304: torch.cuda.synchronize()  (outside kernel_fn's call graph; fine in prepare())
+warn  host-sync    L1310: torch.cuda.synchronize()  (outside kernel_fn's call graph; fine in prepare())
+warn  host-sync    L1317: torch.cuda.synchronize()  (outside kernel_fn's call graph; fine in prepare())
+warn  host-sync    L1321: torch.cuda.synchronize()  (outside kernel_fn's call graph; fine in prepare())
+OK with warnings: .worktrees/muse_prefill_layer/experts-cuda-wgmma-mixed-input-grouped-gemm/muse_prefill_layer/submission.py
+```
+`python3 -I -m py_compile` passed; `__pycache__` removed.
+
+Harvest note: read the log tail first. `[cuda expert gemm] build FAILED` or `OFF: ...` means the run measured master's Triton kernel. `PATH CHOSEN T=16384: cuda` together with an `_nvfp4_wgmma_grouped_kernel` row (2 calls) in the profile means the kernel ran.
