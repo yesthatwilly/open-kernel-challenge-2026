@@ -21,6 +21,19 @@ neutral on the headline is still a restack candidate.
 | 6 | bf16 | bf16-small-m-cuda-gemv-rewrite | implemented | CUDA weight stream at m<=8 (Triton tops out at ~3.7 TB/s). |
 | 7 | moe | marlin-two-stream-expert-halves-small-m | implemented | Overlap the bs=8..32 Marlin chains (expect flat to +2%). |
 
+**Pre-flight audits (Opus, read-only), 2026-10-24.** All 7 builds are cleared to dispatch.
+- moe swap-AB: had a blocker, its gate always chose Marlin. Fixed in f8b3f72.
+- moe fused bs1: three fallback-safety fixes, in 0efab7b.
+- The other four CUDA builds: dispatch as-is.
+- marlin-two-stream: Python streams only, not audited.
+
+Also pre-building nine newly reviewed stage-1 rewrites under the 40% rule; each is audited when its build lands:
+- attention: sliding cluster, full one-launch
+- moe: wgmma at bs>=128
+- decode: MoE chain at T>32, small-T PDL
+- prefill: wgmma experts, FP8 attention
+- bf16: lossless compression, CUTLASS stream-K
+
 ## After harvest (depends on results in the judge now)
 
 ### attention (10 checks)
