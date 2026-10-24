@@ -26,7 +26,7 @@ base_sha: 45997c629d0d2ab4312c7688acc660b9616ec817
 base_blob: 3d70ae6e2de0d48c4a4f2a469ced8234f5348182
 branch: hyp/muse_decode_layer/stack-align-par-sliding-batched
 worktree: .worktrees/muse_decode_layer/stack-align-par-sliding-batched
-mode: null
+mode: check
 restack_of: null
 stale_base: null
 implemented_at: 2026-10-24T233649Z
@@ -35,6 +35,8 @@ submission_sha256: 4bb95888bbec38bfabc90a40fa18a7a42348d3c1edb7f18fe85469c9c00fc
 norm_sha256: 616c9fd296da0615fe139ad0ae76c96b3a379f65a9262dda83ea270f29d9eb40
 submission_blob: f9fc0379411724907de05cd9cdb046eeaf5382e7
 lint_warnings: 30
+attempt_file: 2026-10-24T233649Z-check-stack-align-par-sliding-batched.md
+prepared_at: 2026-10-24T233649Z
 ---
 
 # stack-align-par-sliding-batched
