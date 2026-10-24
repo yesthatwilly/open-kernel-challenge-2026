@@ -75,13 +75,15 @@ base_sha: 0e3d04d3405a65d8916f21e7fac2e822929939e7
 base_blob: 387dcb6a0e6137b74f7f65b048dce5a3fcbe2008
 branch: hyp/muse_attention_decode/full-decode-cuda-gather-splitkv
 worktree: .worktrees/muse_attention_decode/full-decode-cuda-gather-splitkv
-mode: null
+mode: check
 implemented_at: 2026-10-24T141722Z
 impl_commit: 02d7023484fe904ef0028896853d8689cd3e9c73
 submission_sha256: 1645e5cccd6de02aa4bfe75e1b33677bc2f4d435f8cc175db3f41148a9cfa6af
 norm_sha256: f04a8ab8b2046f0895a5ff82df943dd7e1dc7a2efd5a027132457485546a6f7d
 submission_blob: 1c0f5fa1bfc4e602b62e5e9edd9df6d5652b297b
 lint_warnings: 0
+attempt_file: 2026-10-24T141722Z-check-full-decode-cuda-gather-splitkv.md
+prepared_at: 2026-10-24T141722Z
 ---
 
 # full-decode-cuda-gather-splitkv
