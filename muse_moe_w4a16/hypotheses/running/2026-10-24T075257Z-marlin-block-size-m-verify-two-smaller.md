@@ -41,9 +41,16 @@ priority: 3
 kind: primary
 controls_for: null
 review: proceed
-status: queued
+status: running
 review_at: 2026-10-24T100034Z
 review_companions: null
+stage: claimed
+claimed_at: 2026-10-24T100034Z
+base_sha: fc28840b9d1e2741aebe085a82c80e31c12ca710
+base_blob: 11fbc1957daf7294cd2810ff82a0aad2f25644bd
+branch: hyp/muse_moe_w4a16/marlin-block-size-m-verify-two-smaller
+worktree: .worktrees/muse_moe_w4a16/marlin-block-size-m-verify-two-smaller
+mode: null
 ---
 
 # marlin-block-size-m-verify-two-smaller
