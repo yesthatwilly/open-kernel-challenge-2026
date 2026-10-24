@@ -2,7 +2,7 @@
 
 Hypothesis: `muse_bf16_proj/hypotheses/done/gain/2026-10-23T225128Z-router-hilo-at-m8.md` (branch `hyp/muse_bf16_proj/router-hilo-at-m8`).
 
-- **Job:** `<job id>` (`okc status <job>`)
+- **Job:** `9aa98e889be140eb` (`okc status <job>`)
 - **File:** `muse_bf16_proj/submission.py` at git `d2eb172`
 
 ## Goal
