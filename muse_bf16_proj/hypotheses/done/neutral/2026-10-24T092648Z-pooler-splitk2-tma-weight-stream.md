@@ -52,10 +52,10 @@ priority: 3
 kind: primary
 controls_for: null
 review: proceed
-status: running
+status: done
 review_at: 2026-10-24T104016Z
 review_companions: null
-stage: dispatched
+stage: harvested
 claimed_at: 2026-10-24T104051Z
 base_sha: cee590d58c6c34ded84fdb734c38ca129e327fee
 base_blob: 66ba1a39e2aaa5cedb2ce3ddfb809f67f86b37f9
@@ -72,6 +72,13 @@ attempt_file: 2026-10-24T104413Z-check-pooler-splitk2-tma-weight-stream.md
 prepared_at: 2026-10-24T104413Z
 job: 4e89311eefdc4bc3
 dispatched_at: 2026-10-24T104423Z
+outcome: neutral
+verdict_detail: unproven-vs-best
+speedup: 1.1692690130827805
+speedup_ci: [1.1517299778865389, 1.1868080482790222]
+harvested_at: 2026-10-24T124010Z
+best_at_harvest: 1.1432568936693237
+promotion: null
 ---
 
 # pooler-splitk2-tma-weight-stream
@@ -153,3 +160,53 @@ CLEAN: submission.py
 ```
 
 `python3 -I -m py_compile`: OK, and the `__pycache__` it created in the worktree was removed.
+
+## Result
+
+- job `4e89311eefdc4bc3` (check), status done, passed True, tests 9/9
+- speedup 1.1693x, 95% CI [1.1517, 1.1868], score 4131.470128729046 µs vs SGLang 4830.8 µs
+- best at harvest: {"speedup": 1.1432568936693237, "ci": [1.1261080402642838, 1.1604057470743634], "job": "240eb22ea0b6487e"}; base result: muse_bf16_proj/hypotheses/done/neutral/pooler-triton-splitk2-blockn64-semaphore.result.json
+- **outcome: neutral** (unproven-vs-best)
+- files: `muse_bf16_proj/hypotheses/done/neutral/pooler-splitk2-tma-weight-stream.result.json`, `muse_bf16_proj/hypotheses/done/neutral/pooler-splitk2-tma-weight-stream.patch`; branch `hyp/muse_bf16_proj/pooler-splitk2-tma-weight-stream`
+
+## Attribution
+
+| shape | w | base µs | hyp µs | delta | verdict |
+|---|---|---|---|---|---|
+| layer=qkv_gate load=decode_1 m=1 | 62 | 14.04 | 14.41 | 0.9931 | flat |
+| layer=o load=decode_1 m=1 | 62 | 6.83 | 6.76 | 0.985 | flat |
+| layer=pooler load=decode_1 m=1 | 62 | 20.19 | 19.15 | 1.0406 | gained |
+| layer=unpooler load=decode_1 m=1 | 62 | 7.23 | 6.88 | 1.0088 | flat |
+| layer=router load=decode_1 m=1 | 62 | 5.88 | 5.78 | 1.0107 | flat |
+| layer=qkv_gate load=decode_16 m=16 | 62 | 13.91 | 13.74 | 0.9882 | flat |
+| layer=o load=decode_16 m=16 | 62 | 6.91 | 6.86 | 0.986 | flat |
+| layer=pooler load=decode_16 m=16 | 62 | 20.67 | 19.48 | 1.0407 | gained |
+| layer=unpooler load=decode_16 m=16 | 62 | 18.28 | 18.53 | 0.9978 | flat |
+| layer=router load=decode_16 m=16 | 62 | 6.18 | 5.77 | 1.0517 | gained |
+| layer=qkv_gate load=decode_32 m=32 | 62 | 14.2 | 14.33 | 0.971 | flat |
+| layer=o load=decode_32 m=32 | 62 | 6.81 | 6.92 | 0.9748 | flat |
+| layer=pooler load=decode_32 m=32 | 62 | 22.2 | 20.81 | 1.0677 | gained |
+| layer=unpooler load=decode_32 m=32 | 62 | 18.81 | 18.86 | 0.9906 | flat |
+| layer=router load=decode_32 m=32 | 62 | 6.49 | 6.47 | 1.0026 | flat |
+| layer=qkv_gate load=verify_1 m=8 | 62 | 14.12 | 14.38 | 0.9901 | flat |
+| layer=o load=verify_1 m=8 | 62 | 6.69 | 6.73 | 0.9964 | flat |
+| layer=pooler load=verify_1 m=8 | 62 | 19.87 | 19.35 | 1.0376 | gained |
+| layer=unpooler load=verify_1 m=8 | 62 | 7.16 | 7.11 | 0.9974 | flat |
+| layer=router load=verify_1 m=8 | 62 | 5.93 | 6.02 | 0.9862 | flat |
+| layer=qkv_gate load=verify_16 m=128 | 62 | 17.02 | 17.09 | 0.9693 | lost |
+| layer=o load=verify_16 m=128 | 62 | 7.37 | 7.48 | 1.0011 | flat |
+| layer=pooler load=verify_16 m=128 | 62 | 24.6 | 24.83 | 0.9882 | flat |
+| layer=unpooler load=verify_16 m=128 | 62 | 19.99 | 20.29 | 0.9806 | flat |
+| layer=router load=verify_16 m=128 | 62 | 7.64 | 7.6 | 0.9958 | flat |
+| layer=qkv_gate load=verify_32 m=256 | 62 | 19.62 | 20.26 | 0.9782 | flat |
+| layer=o load=verify_32 m=256 | 62 | 9.53 | 9.47 | 0.9926 | flat |
+| layer=pooler load=verify_32 m=256 | 62 | 30.85 | 31.05 | 0.9909 | flat |
+| layer=unpooler load=verify_32 m=256 | 62 | 24.52 | 24.15 | 0.9961 | flat |
+| layer=router load=verify_32 m=256 | 62 | 9.43 | 9.44 | 0.9872 | flat |
+
+gained on pooler decode_1, decode_16, decode_32, verify_1; router decode_16; lost on qkv_gate verify_16. Expected hit: 5/6. Noise ±1.5%.
+
+## Follow-ups
+
+- unproven-vs-best: the change is not proven either way; a stacked hypothesis (`depends_on: pooler-splitk2-tma-weight-stream`) that adds a further change in the same area is the only way to learn more (identical code is never re-run).
+

@@ -1,0 +1,225 @@
+diff --git a/muse_bf16_proj/submission.py b/muse_bf16_proj/submission.py
+index 66ba1a3..c7d9d9d 100644
+--- a/muse_bf16_proj/submission.py
++++ b/muse_bf16_proj/submission.py
+@@ -22,6 +22,12 @@ prepare()-allocated scratch workspace (fully rewritten, for rows < m, on every c
+ gpu-scope acq_rel ticket on a per-N-tile counter, and the CTA that draws the last ticket sums
+ the partials in fixed order 0..SPLIT_K-1, stores bf16 once and resets the counter to 0. Pooler
+ at m >= 128 and the other bf16 layers keep the cuBLAS dispatch.
++
++Pooler weight stream via TMA (hypothesis pooler-splitk2-tma-weight-stream): the same kernel,
++grid, split-K and reduce, but the [64, 256] weight tile reaches shared memory through a Hopper
++TMA tensor descriptor built once in prepare() from the pooler weight alone (BLOCK_K 256,
++num_stages 4), fed to tl.dot as a transposed view. If this Triton has no descriptor API the
++parent's cp.async kernel (BLOCK_K 128) runs instead; prepare() prints which.
+ """
+ 
+ from typing import TypedDict
+@@ -162,11 +168,29 @@ POOLER_N = 4096
+ POOLER_K = 8192
+ POOLER_MAX_M = 32
+ POOLER_BLOCK_N = 64
+-POOLER_BLOCK_K = 128
++POOLER_BLOCK_K = 128       # cp.async fallback only (the parent's config, if no TMA API exists)
++POOLER_TMA_BLOCK_K = 256   # TMA path: one [64, 256] bf16 box = 32 KB of weight per stage
+ POOLER_SPLIT_K = 2
+ POOLER_NUM_WARPS = 4
+ POOLER_NUM_STAGES = 4
+ 
++# Hopper TMA tensor-descriptor API, by feature: the host TensorDescriptor (Triton >= 3.4 style,
++# w_desc.load in-kernel) first, else the older experimental 2-D descriptor
++# (tl._experimental_descriptor_load), else none (the parent's cp.async kernel is used).
++try:
++    from triton.tools.tensor_descriptor import TensorDescriptor as _TensorDescriptor
++    POOLER_TMA_API = "tensor_descriptor"
++except ImportError:
++    _TensorDescriptor = None
++    try:
++        from triton.tools.experimental_descriptor import (
++            create_2d_tma_descriptor as _create_2d_tma_descriptor,
++        )
++        POOLER_TMA_API = "experimental_descriptor"
++    except ImportError:
++        _create_2d_tma_descriptor = None
++        POOLER_TMA_API = None
++
+ 
+ @triton.jit(do_not_specialize=["M"])
+ def _bf16_splitk_kernel(
+@@ -221,6 +245,74 @@ def _bf16_splitk_kernel(
+         tl.atomic_xchg(cnt_ptr + pid_n, 0, sem="relaxed", scope="gpu")
+ 
+ 
++@triton.jit(do_not_specialize=["M"])
++def _bf16_splitk_tma_kernel(
++    x_ptr, w_desc, out_ptr, ws_ptr, cnt_ptr,
++    M,
++    stride_xm, stride_om,
++    N: tl.constexpr, WS_M: tl.constexpr, K_SLICE: tl.constexpr, SPLIT_K: tl.constexpr,
++    BLOCK_M: tl.constexpr, BLOCK_N: tl.constexpr, BLOCK_K: tl.constexpr,
++    NEW_DESC_API: tl.constexpr,
++):
++    """_bf16_splitk_kernel with the weight tile brought to shared memory by TMA.
++
++    Identical to _bf16_splitk_kernel except for how the weight tile is loaded: w_desc is a
++    host-built TMA descriptor over the row-major [N, K] bf16 weight with a [BLOCK_N, BLOCK_K]
++    box, so each K-step loads one K-contiguous [BLOCK_N, BLOCK_K] tile (as stored) and the dot
++    takes its transposed view. x stays a plain masked tl.load. Same workspace, ticket and
++    fixed-order last-CTA reduce, same self-reset.
++    """
++    pid_n = tl.program_id(0)
++    pid_k = tl.program_id(1)
++    k_start = pid_k * K_SLICE
++    n0 = pid_n * BLOCK_N
++
++    offs_n = n0 + tl.arange(0, BLOCK_N)
++    offs_k = k_start + tl.arange(0, BLOCK_K)
++    offs_m = tl.arange(0, BLOCK_M)
++    m_mask = offs_m < M
++    x_ptrs = x_ptr + offs_m[:, None] * stride_xm + offs_k[None, :]
++    acc = tl.zeros((BLOCK_M, BLOCK_N), dtype=tl.float32)
++    for kk in range(0, K_SLICE // BLOCK_K):
++        k = k_start + kk * BLOCK_K
++        x_tile = tl.load(x_ptrs, mask=m_mask[:, None], other=0.0)
++        if NEW_DESC_API:
++            w_tile = w_desc.load([n0, k])
++        else:
++            w_tile = tl._experimental_descriptor_load(w_desc, [n0, k], [BLOCK_N, BLOCK_K], tl.bfloat16)
++        acc = tl.dot(x_tile, tl.trans(w_tile), acc)
++        x_ptrs += BLOCK_K
++
++    # fp32 partial -> workspace slice pid_k, rows < M only (the reducer reads the same mask).
++    ws_tile = offs_m[:, None] * N + offs_n[None, :]
++    tl.store(ws_ptr + pid_k * (WS_M * N) + ws_tile, acc, mask=m_mask[:, None])
++    # All threads' partial stores precede the (single, scalar) gpu-scope acq_rel ticket.
++    tl.debug_barrier()
++    ticket = tl.atomic_add(cnt_ptr + pid_n, 1, sem="acq_rel", scope="gpu")
++    # Order the other threads' reloads after the ticket's acquire.
++    tl.debug_barrier()
++    if ticket == SPLIT_K - 1:
++        total = tl.load(ws_ptr + ws_tile, mask=m_mask[:, None], other=0.0, cache_modifier=".cg")
++        for s in tl.static_range(1, SPLIT_K):
++            total += tl.load(ws_ptr + s * (WS_M * N) + ws_tile, mask=m_mask[:, None], other=0.0,
++                             cache_modifier=".cg")
++        out_ptrs = out_ptr + offs_m[:, None] * stride_om + offs_n[None, :]
++        tl.store(out_ptrs, total.to(tl.bfloat16), mask=m_mask[:, None])
++        # Self-reset so the next launch / graph replay starts from 0.
++        tl.atomic_xchg(cnt_ptr + pid_n, 0, sem="relaxed", scope="gpu")
++
++
++def _pooler_w_desc(w: torch.Tensor):
++    """TMA descriptor over the pooler weight [4096, 8192] bf16 (strides [8192, 1]), box
++    [BLOCK_N, TMA_BLOCK_K]. Built once in prepare() from the weight alone; None if no API."""
++    if POOLER_TMA_API == "tensor_descriptor":
++        return _TensorDescriptor.from_tensor(w, [POOLER_BLOCK_N, POOLER_TMA_BLOCK_K])
++    if POOLER_TMA_API == "experimental_descriptor":
++        return _create_2d_tma_descriptor(w.data_ptr(), w.shape[0], w.shape[1],
++                                         POOLER_BLOCK_N, POOLER_TMA_BLOCK_K, w.element_size())
++    return None
++
++
+ def _pooler_block_m(m: int) -> int:
+     return 16 if m <= 16 else 32
+ 
+@@ -233,20 +325,52 @@ def _pooler_shape_ok(x: torch.Tensor, w: torch.Tensor, cfg) -> bool:
+             and tuple(w.shape) == (POOLER_N, POOLER_K) and w.stride(1) == 1)
+ 
+ 
+-def _pooler_forward(x: torch.Tensor, w: torch.Tensor, ws: torch.Tensor, cnt: torch.Tensor) -> torch.Tensor:
+-    """x bf16 [m <= 32, 8192] @ w.T -> bf16 [m, 4096], one launch. Branches only on shapes."""
++def _pooler_forward(x: torch.Tensor, w: torch.Tensor, ws: torch.Tensor, cnt: torch.Tensor,
++                   w_desc=None, stages=None):
++    """x bf16 [m <= 32, 8192] @ w.T -> bf16 [m, 4096], one launch. Branches only on shapes.
++
++    With a TMA descriptor (built in prepare() from the weight) the weight tile is loaded by TMA
++    at BLOCK_K=256; without one, the parent's cp.async kernel at BLOCK_K=128. `stages` maps
++    BLOCK_M to num_stages (fixed in prepare()). Returns the launch handle as well."""
+     m, k = x.shape
+     out = torch.empty((m, POOLER_N), dtype=torch.bfloat16, device=x.device)
+     grid = (POOLER_N // POOLER_BLOCK_N, POOLER_SPLIT_K)
+-    _bf16_splitk_kernel[grid](
++    block_m = _pooler_block_m(m)
++    if w_desc is not None:
++        num_stages = stages[block_m] if stages is not None else POOLER_NUM_STAGES
++        handle = _bf16_splitk_tma_kernel[grid](
++            x, w_desc, out, ws, cnt,
++            m,
++            x.stride(0), out.stride(0),
++            N=POOLER_N, WS_M=POOLER_MAX_M, K_SLICE=k // POOLER_SPLIT_K, SPLIT_K=POOLER_SPLIT_K,
++            BLOCK_M=block_m, BLOCK_N=POOLER_BLOCK_N, BLOCK_K=POOLER_TMA_BLOCK_K,
++            NEW_DESC_API=POOLER_TMA_API == "tensor_descriptor",
++            num_warps=POOLER_NUM_WARPS, num_stages=num_stages,
++        )
++        return out, handle
++    handle = _bf16_splitk_kernel[grid](
+         x, w, out, ws, cnt,
+         m,
+         x.stride(0), w.stride(0), out.stride(0),
+         N=POOLER_N, WS_M=POOLER_MAX_M, K_SLICE=k // POOLER_SPLIT_K, SPLIT_K=POOLER_SPLIT_K,
+-        BLOCK_M=_pooler_block_m(m), BLOCK_N=POOLER_BLOCK_N, BLOCK_K=POOLER_BLOCK_K,
++        BLOCK_M=block_m, BLOCK_N=POOLER_BLOCK_N, BLOCK_K=POOLER_BLOCK_K,
+         num_warps=POOLER_NUM_WARPS, num_stages=POOLER_NUM_STAGES,
+     )
+-    return out
++    return out, handle
++
++
++def _pooler_report(block_m: int, num_stages: int, handle) -> None:
++    """prepare()-time diagnostics only: registers/spills and TMA / ldmatrix / mbarrier counts."""
++    try:
++        ptx = handle.asm["ptx"]
++        print(f"pooler TMA BLOCK_M={block_m} num_stages={num_stages}: n_regs={handle.n_regs} "
++              f"n_spills={handle.n_spills} "
++              f"cp.async.bulk.tensor={ptx.count('cp.async.bulk.tensor')} "
++              f"ldmatrix={ptx.count('ldmatrix')} ldmatrix.trans={ptx.count('.trans')} "
++              f"mbarrier={ptx.count('mbarrier.')} cp.async(non-bulk)={ptx.count('cp.async.ca') + ptx.count('cp.async.cg')} "
++              f"wgmma={ptx.count('wgmma.mma_async')} mma.sync={ptx.count('mma.sync')}", flush=True)
++    except Exception as e:  # diagnostics must never fail prepare()
++        print(f"pooler TMA BLOCK_M={block_m}: no asm report ({type(e).__name__}: {e})", flush=True)
+ 
+ 
+ def prepare(weights: Weights) -> dict:
+@@ -270,10 +394,32 @@ def prepare(weights: Weights) -> dict:
+                                      dtype=torch.float32, device=pooler.device)
+     state["pooler_cnt"] = torch.zeros(POOLER_N // POOLER_BLOCK_N, dtype=torch.int32, device=pooler.device)
+     pcfg = {"n": POOLER_N, "k": POOLER_K}
++    # TMA descriptor over the pooler weight alone (never over anything input-derived).
++    print(f"triton {triton.__version__}; pooler weight load API: {POOLER_TMA_API or 'none (cp.async fallback)'}",
++          flush=True)
++    state["pooler_w_desc"] = _pooler_w_desc(pooler)
++    stages = {16: POOLER_NUM_STAGES, 32: POOLER_NUM_STAGES}
++    state["pooler_stages"] = stages
++    if state["pooler_w_desc"] is not None:
++        # Compile both BLOCK_M specializations; BLOCK_M=32 drops to 3 stages only if 4 do not fit.
++        for m in (16, 32):
++            x = torch.randn((m, POOLER_K), device=pooler.device, dtype=torch.float32).to(torch.bfloat16)
++            try:
++                _, handle = _pooler_forward(x, pooler, state["pooler_ws"], state["pooler_cnt"],
++                                            state["pooler_w_desc"], stages)
++            except triton.runtime.errors.OutOfResources as e:
++                if m != 32:
++                    raise
++                print(f"pooler TMA BLOCK_M=32 num_stages=4 does not fit ({e}); using 3", flush=True)
++                stages[32] = 3
++                _, handle = _pooler_forward(x, pooler, state["pooler_ws"], state["pooler_cnt"],
++                                            state["pooler_w_desc"], stages)
++            _pooler_report(m, stages[m], handle)
+     for m in range(1, POOLER_MAX_M + 1):
+         x = torch.randn((m, POOLER_K), device=pooler.device, dtype=torch.float32).to(torch.bfloat16)
+         if _pooler_shape_ok(x, pooler, dict(pcfg, m=m)):
+-            _pooler_forward(x, pooler, state["pooler_ws"], state["pooler_cnt"])
++            _pooler_forward(x, pooler, state["pooler_ws"], state["pooler_cnt"],
++                            state["pooler_w_desc"], stages)
+     # The kernel self-resets, but re-zero after the warm-up regardless (stream-ordered).
+     state["pooler_cnt"].zero_()
+     return state
+@@ -283,7 +429,8 @@ def kernel_fn(data: Inputs, state: dict) -> torch.Tensor:
+     x, cfg = data["x"], data["config"]
+     layer = cfg["layer"]
+     if layer == "pooler" and _pooler_shape_ok(x, state["pooler"], cfg):
+-        return _pooler_forward(x, state["pooler"], state["pooler_ws"], state["pooler_cnt"])
++        return _pooler_forward(x, state["pooler"], state["pooler_ws"], state["pooler_cnt"],
++                               state["pooler_w_desc"], state["pooler_stages"])[0]
+     if layer != "router":
+         # The unpooler's slice is its first n rows (all of them above 8 tokens).
+         return _bf16_gemm_dispatch_impl(x, state[layer][: cfg["n"]], None)

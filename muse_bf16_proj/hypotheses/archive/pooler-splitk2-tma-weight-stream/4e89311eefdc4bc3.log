@@ -1,0 +1,3 @@
+triton 3.8.0; pooler weight load API: tensor_descriptor
+pooler TMA BLOCK_M=16 num_stages=4: n_regs=111 n_spills=0 cp.async.bulk.tensor=4 ldmatrix=32 ldmatrix.trans=0 mbarrier=11 cp.async(non-bulk)=16 wgmma=0 mma.sync=32
+pooler TMA BLOCK_M=32 num_stages=4: n_regs=255 n_spills=0 cp.async.bulk.tensor=4 ldmatrix=48 ldmatrix.trans=0 mbarrier=11 cp.async(non-bulk)=32 wgmma=0 mma.sync=64
