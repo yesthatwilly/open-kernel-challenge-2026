@@ -33,7 +33,7 @@ kind: primary
 controls_for: null
 review: required
 status: running
-stage: implemented
+stage: dispatched
 claimed_at: 2026-10-24T231740Z
 base_sha: 32a19128ff06ed728e345e32098cd6f0a13cea32
 base_blob: 635cfee3ac2c3f7c66840b8c8a082cad2fa41a68
@@ -48,6 +48,8 @@ submission_blob: 9316ae43a54ccbf24f65d14815c68fa6c81f557a
 lint_warnings: 5
 attempt_file: 2026-10-24T231833Z-check-moe-align-32-experts-first-turn.md
 prepared_at: 2026-10-24T231833Z
+job: b5bf94b463d34d21
+dispatched_at: 2026-10-24T231843Z
 ---
 
 # moe-align-32-experts-first-turn
