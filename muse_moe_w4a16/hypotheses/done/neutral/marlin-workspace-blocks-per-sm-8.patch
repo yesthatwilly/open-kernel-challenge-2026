@@ -1,0 +1,23 @@
+diff --git a/muse_moe_w4a16/submission.py b/muse_moe_w4a16/submission.py
+index 11fbc19..fa8d1da 100644
+--- a/muse_moe_w4a16/submission.py
++++ b/muse_moe_w4a16/submission.py
+@@ -111,6 +111,9 @@ def prepare(weights: Weights) -> dict:
+     return {
+         "banks": banks,
+         "workspace": marlin_make_workspace(device, max_blocks_per_sm=4),
++        # Hypothesis marlin-workspace-blocks-per-sm-8: a larger lock pool for the w13 call only;
++        # w2 keeps the 4-per-SM workspace above as the per-call control.
++        "workspace_w13": marlin_make_workspace(device, max_blocks_per_sm=8),
+         # MuseSpark1xFp4Experts binds the effective (1 + w) weight of the post-expert norm.
+         "norm_w": (weights["post_norm_w"].float() + 1.0).to(torch.bfloat16),
+     }
+@@ -154,7 +157,7 @@ def kernel_fn(data: Inputs, state: dict) -> torch.Tensor:
+                   use_fp32_reduce=True, is_zp_float=False)
+     ws = state["workspace"]
+     cache1 = moe_wna16_marlin_gemm(
+-        x, cache1, bank["w13"], None, bank["w13_s"], bank["w13_gs"], None, None, None, ws,
++        x, cache1, bank["w13"], None, bank["w13_s"], bank["w13_gs"], None, None, None, state["workspace_w13"],
+         sorted_ids, block_experts, n_padded, topk_weights, top_k=TOP_K,
+         size_m=num_tokens, size_n=gemm1_n, size_k=size_k, **common)
+     silu_and_mul(cache1.view(-1, gemm1_n), cache2, expert_ids=local_ids.view(-1), expert_step=1)

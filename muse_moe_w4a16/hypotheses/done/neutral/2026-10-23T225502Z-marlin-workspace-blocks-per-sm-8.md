@@ -31,10 +31,10 @@ priority: 4
 kind: primary
 controls_for: null
 review: proceed
-status: running
+status: done
 review_at: 2026-10-24T032603Z
 review_companions: null
-stage: dispatched
+stage: harvested
 claimed_at: 2026-10-24T032603Z
 base_sha: 3a4f9cf09a44d1c6045ca118687902eacfb2b76f
 base_blob: 11fbc1957daf7294cd2810ff82a0aad2f25644bd
@@ -51,6 +51,13 @@ attempt_file: 2026-10-24T032702Z-check-marlin-workspace-blocks-per-sm-8.md
 prepared_at: 2026-10-24T032702Z
 job: 75805dc2f18a4d06
 dispatched_at: 2026-10-24T032709Z
+outcome: neutral
+verdict_detail: unproven-vs-best
+speedup: 0.9920696374542664
+speedup_ci: [0.9771885928924523, 1.0069506820160803]
+harvested_at: 2026-10-24T060410Z
+best_at_harvest: 0.9887547325362586
+promotion: null
 ---
 
 # marlin-workspace-blocks-per-sm-8
@@ -123,3 +130,29 @@ OK with warnings: /home/user/git/musespark/.worktrees/muse_moe_w4a16/marlin-work
 ```
 
 `python3 -I -m py_compile`: OK (the `__pycache__` it left was deleted).
+
+## Result
+
+- job `75805dc2f18a4d06` (check), status done, passed True, tests 5/5
+- speedup 0.9921x, 95% CI [0.9772, 1.0070], score 13556.004026602383 µs vs SGLang 13448.5 µs
+- best at harvest: {"speedup": 0.9887547325362586, "ci": [0.9739234115482147, 1.0035860535243024], "job": "fb2cc736613747df"}; base result: muse_moe_w4a16/hypotheses/done/gain/sglang-marlin-path-parity.result.json
+- **outcome: neutral** (unproven-vs-best)
+- files: `muse_moe_w4a16/hypotheses/done/neutral/marlin-workspace-blocks-per-sm-8.result.json`, `muse_moe_w4a16/hypotheses/done/neutral/marlin-workspace-blocks-per-sm-8.patch`; branch `hyp/muse_moe_w4a16/marlin-workspace-blocks-per-sm-8`
+
+## Attribution
+
+| shape | w | base µs | hyp µs | delta | verdict |
+|---|---|---|---|---|---|
+| bs=1 load=decode_1 sharding=ep8 | 60 | 80.23 | 78.82 | 1.011 | flat |
+| bs=16 load=decode_16 sharding=ep8 | 60 | 191.41 | 189.82 | 1.0024 | flat |
+| bs=32 load=decode_32 sharding=ep8 | 60 | 208.15 | 207.9 | 1.0025 | flat |
+| bs=8 load=verify_1 sharding=ep8 | 60 | 152.04 | 143.51 | 1.0025 | flat |
+| bs=128 load=verify_16 sharding=ep8 | 60 | 462.46 | 467.64 | 1.0011 | flat |
+| bs=256 load=verify_32 sharding=ep8 | 60 | 621.28 | 620.36 | 1.0006 | flat |
+
+no shape moved outside noise. Expected hit: 2/4. Noise ±1.5%.
+
+## Follow-ups
+
+- unproven-vs-best: the change is not proven either way; a stacked hypothesis (`depends_on: marlin-workspace-blocks-per-sm-8`) that adds a further change in the same area is the only way to learn more (identical code is never re-run).
+
