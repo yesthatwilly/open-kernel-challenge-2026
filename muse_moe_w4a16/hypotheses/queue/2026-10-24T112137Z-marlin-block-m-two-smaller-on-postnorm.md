@@ -46,10 +46,10 @@ priority: 1
 kind: primary
 controls_for: null
 review: proceed
-status: hold
+status: queued
 review_at: 2026-10-24T112356Z
 review_companions: null
-hold_reason: "reviewer: dispatch after marlin-block-m-cap-16-port (1c33392914594026) harvests; if its bs=256 row beats two-smaller's by >~3%, use block 16 at bs=256 (an ab-tune or edit before claim), then unhold"
+hold_reason: null
 ---
 
 # marlin-block-m-two-smaller-on-postnorm
