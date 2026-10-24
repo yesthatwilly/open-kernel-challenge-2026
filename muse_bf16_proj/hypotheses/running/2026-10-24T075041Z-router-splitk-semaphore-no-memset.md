@@ -50,7 +50,7 @@ status: running
 review_at: 2026-10-24T111911Z
 review_companions: null
 hold_reason: null
-stage: implemented
+stage: dispatched
 claimed_at: 2026-10-24T120042Z
 base_sha: caf555ec8435254c599ff4cf1e7741a96a88e5e1
 base_blob: da55301de1e911aeab09878b0873809f544f436c
@@ -65,6 +65,8 @@ submission_blob: 18566e908b406cf0a8ee22fe4d4bb21d1c3a6be0
 lint_warnings: 0
 attempt_file: 2026-10-24T120252Z-check-router-splitk-semaphore-no-memset.md
 prepared_at: 2026-10-24T120252Z
+job: cb76350d40ee4617
+dispatched_at: 2026-10-24T120300Z
 ---
 
 # router-splitk-semaphore-no-memset
