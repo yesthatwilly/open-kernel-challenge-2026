@@ -46,9 +46,16 @@ priority: 2
 kind: primary
 controls_for: null
 review: proceed
-status: queued
+status: running
 review_at: 2026-10-24T083652Z
 review_companions: null
+stage: claimed
+claimed_at: 2026-10-24T092007Z
+base_sha: 4463015ebd7f2b7014e5f694aa241cc9df7a78c1
+base_blob: da55301de1e911aeab09878b0873809f544f436c
+branch: hyp/muse_bf16_proj/unpooler-slice-triton-splitk8-semaphore
+worktree: .worktrees/muse_bf16_proj/unpooler-slice-triton-splitk8-semaphore
+mode: null
 ---
 
 # unpooler-slice-triton-splitk8-semaphore
