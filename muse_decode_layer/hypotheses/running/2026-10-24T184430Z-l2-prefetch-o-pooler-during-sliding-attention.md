@@ -61,8 +61,8 @@ base_blob: 3d70ae6e2de0d48c4a4f2a469ced8234f5348182
 branch: hyp/muse_decode_layer/l2-prefetch-o-pooler-during-sliding-attention
 worktree: .worktrees/muse_decode_layer/l2-prefetch-o-pooler-during-sliding-attention
 mode: check
-implemented_at: 2026-10-24T224625Z
-impl_commit: fff46a432598e9e0ffd985f8cc577b90d72ddbc1
+implemented_at: 2026-10-24T231258Z
+impl_commit: 9ba13fedec36e2e76fdc91063ae1a3e44544d2b6
 submission_sha256: 3f698cb9766a8e912fdb25f631dabc1758833a909fdd557d98fdb84be481cfd9
 norm_sha256: 4ee52d6fe57a4f257f0af76d6362e95894bab1c1ff971fed3200d5e0b8f8cdde
 submission_blob: 7377122bbca5108db2e61fbac020db0883b446cb
