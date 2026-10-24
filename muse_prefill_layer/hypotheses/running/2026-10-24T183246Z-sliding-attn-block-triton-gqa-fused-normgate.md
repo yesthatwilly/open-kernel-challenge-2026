@@ -86,9 +86,16 @@ controls_for: null
 rewrite_stage: 1
 replaces: "q.view(T,16,64).to(FP8) + flash_attn_with_kvcache (FA3 cutlass::device_kernel<flash::...> + FlashAttnFwdCombine) + state['o_norm_gate'] (FusedRMSNormGate) on sliding layers (cfg['window'] == 2048)"
 review: proceed
-status: queued
+status: running
 review_at: 2026-10-24T183433Z
 review_companions: null
+stage: claimed
+claimed_at: 2026-10-24T183433Z
+base_sha: c449be5350fc7f87e9daa73bc83715a041cff19e
+base_blob: 635cfee3ac2c3f7c66840b8c8a082cad2fa41a68
+branch: hyp/muse_prefill_layer/sliding-attn-block-triton-gqa-fused-normgate
+worktree: .worktrees/muse_prefill_layer/sliding-attn-block-triton-gqa-fused-normgate
+mode: null
 ---
 
 # sliding-attn-block-triton-gqa-fused-normgate
