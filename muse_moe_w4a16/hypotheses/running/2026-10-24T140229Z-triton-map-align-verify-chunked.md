@@ -47,7 +47,7 @@ review: proceed
 status: running
 review_at: 2026-10-24T140447Z
 review_companions: null
-stage: implemented
+stage: dispatched
 claimed_at: 2026-10-24T140447Z
 base_sha: 001aa1c251231981cfc4254d1cf8ce63b737a236
 base_blob: d9a9375ef4721ab9b28cc9d6364c92e67c7ccc59
@@ -62,6 +62,8 @@ submission_blob: dd6c55be3fb9c7ca9e51737d697a4edabe866330
 lint_warnings: 8
 attempt_file: 2026-10-24T140755Z-check-triton-map-align-verify-chunked.md
 prepared_at: 2026-10-24T140755Z
+job: 3aa4d7e193244255
+dispatched_at: 2026-10-24T140804Z
 ---
 
 # triton-map-align-verify-chunked
