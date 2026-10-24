@@ -45,13 +45,15 @@ base_sha: 1e0262054793e9b504601277f857693e70332c70
 base_blob: 6884d26a928d1de1b07bf8d28e1be4e53dfdcfc5
 branch: hyp/muse_decode_layer/expert-id-map-single-kernel
 worktree: .worktrees/muse_decode_layer/expert-id-map-single-kernel
-mode: null
+mode: check
 implemented_at: 2026-10-24T032749Z
 impl_commit: 08e8fcb6d37d8a5b6a21eda279552962cc244ea8
 submission_sha256: 5d73fb4ecde1d98939aade05c6b73c1f9ceb588b43583f7b05df077e89780e8a
 norm_sha256: 4c2c02ad6bce9f12080d8e56fa226a4da6f0fef1d40bbed2d7b90a38a3b38a4e
 submission_blob: d3cbff5d9d9e6de23eb2f6770a99cd93eea093b7
 lint_warnings: 1
+attempt_file: 2026-10-24T032749Z-check-expert-id-map-single-kernel.md
+prepared_at: 2026-10-24T032749Z
 ---
 
 # expert-id-map-single-kernel
