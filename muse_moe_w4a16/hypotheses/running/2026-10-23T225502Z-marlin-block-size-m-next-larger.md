@@ -39,13 +39,19 @@ review: proceed
 status: running
 review_at: 2026-10-24T024434Z
 review_companions: null
-stage: claimed
+stage: implemented
 claimed_at: 2026-10-24T024440Z
 base_sha: 6b5469bd92f0a43ce5908912b02fb8dee425c3fa
 base_blob: 11fbc1957daf7294cd2810ff82a0aad2f25644bd
 branch: hyp/muse_moe_w4a16/marlin-block-size-m-next-larger
 worktree: .worktrees/muse_moe_w4a16/marlin-block-size-m-next-larger
 mode: null
+implemented_at: 2026-10-24T024739Z
+impl_commit: 82f0d6b82a41b67d6bb345cf96bfe9395893dcb4
+submission_sha256: 75ee78230e1088f981d58c67e6c3a17fa9b6577092aa7267a46640c7eaf82856
+norm_sha256: 720215ee0bb4a27760957d101e8325ead34b55b3039f9444514b862e30b29a82
+submission_blob: a0ffc54f6d1673a2c83389daf9ea103c36350490
+lint_warnings: 1
 ---
 
 # marlin-block-size-m-next-larger
@@ -90,3 +96,35 @@ ab-revert means the 0.006x starter, meaningless; ab-tune (256-expert align) only
 - If bs=128 wins with 64, stack marlin-workspace-blocks-per-sm-8 explicitly on it rather than running both against the same base.
 - Do not fold the '64 everywhere' ab-tune into this run.
 
+
+## Implementation notes
+
+Worktree `.worktrees/muse_moe_w4a16/marlin-block-size-m-next-larger`, `muse_moe_w4a16/submission.py`, uncommitted, on base 6b5469bd92 (diff stat: 1 file, +8 -1).
+
+- SGLang's selection loop is kept verbatim except that it now enumerates, so it yields SGLang's index `idx` (first candidate with `num_tokens*8/32/block_size_m < 0.9`, else the last). The block size actually used is then `BLOCK_SIZE_M_CANDIDATES[min(idx + BLOCK_SIZE_M_STEP(num_tokens), 4)]`.
+- `BLOCK_SIZE_M_STEP = lambda num_tokens: 1` is a new module constant beside the candidates. Adopting part of the change per shape is a one-line edit there (e.g. `lambda num_tokens: 0 if num_tokens < 32 else 1`), as the review asked.
+- Picks checked offline, SGLang -> new: bs=1/4/8/16: 8 -> 16; bs=32/33: 16 -> 32; bs=128: 48 -> 64; bs=256/257: 64 -> 64 (the control). These match the `change` paragraph.
+- The same `block_size_m` still feeds `moe_align_block_size` (over the bank's 32 experts, as on master) and the `moe_block_size` kwarg of both Marlin calls. Align, workspace, caches, and everything else are unchanged. There is no other tuning, and the "64 everywhere" ab-tune is not folded in.
+- For the review's open question, the profile should record the Marlin template (thread_m_blocks) for each shape, to confirm which config ran.
+
+## Rules check
+
+Checked against `git -C .worktrees/muse_moe_w4a16/marlin-block-size-m-next-larger diff`:
+
+- [x] CUDA-graph capturable: the pick is pure Python on `num_tokens` (a shape) and a constant. There is no `.item()`/`.cpu()`/sync, and no control flow on tensor values.
+- [x] Nothing derived from `data` is cached across calls: no new state.
+- [x] Weights: n/a. prepare() is untouched, and NVFP4 stays NVFP4 via the same Marlin repack.
+- [x] Activations BF16 where SGLang keeps BF16; KV cache FP8; queries at most FP8 E4M3: n/a for KV/queries (MoE problem). Activation dtypes are unchanged.
+- [x] Attention sees every key: n/a (no attention in this problem). The diff skips no routes or experts. Padding only grows.
+- [x] No timing patches, harness frames/I/O/secrets, module edits, reference import, subprocesses or network: the diff adds none.
+- [x] All work happens inside the timed call; no output caching or replay: unchanged.
+- [x] First line `# okc: problem=muse_moe_w4a16` kept. `python3 -m py_compile` passes.
+
+okc_lint (`python3 -I .claude/skills/churnsubs/bin/okc_lint.py <worktree>/muse_moe_w4a16/submission.py --problem muse_moe_w4a16`), rc=0:
+
+```
+warn  host-sync    L113: torch.cuda.synchronize()  (outside kernel_fn's call graph; fine in prepare())
+OK with warnings: muse_moe_w4a16/submission.py
+```
+
+The one warning was already on master: it is in prepare(), not this diff, so there was nothing to fix.
