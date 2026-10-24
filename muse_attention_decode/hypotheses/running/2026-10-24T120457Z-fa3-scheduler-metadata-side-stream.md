@@ -55,7 +55,7 @@ status: running
 review_at: 2026-10-24T120904Z
 review_companions: null
 hold_reason: null
-stage: implemented
+stage: dispatched
 claimed_at: 2026-10-24T124117Z
 base_sha: 10d039a6478096a1360009f69d62cd7b1c17f800
 base_blob: efc544103e6d303d1f8602caa9439628043a17a7
@@ -70,6 +70,8 @@ submission_blob: 35854e68c3519cf7cd8e08030ed8c5f1af9983eb
 lint_warnings: 0
 attempt_file: 2026-10-24T124759Z-check-fa3-scheduler-metadata-side-stream.md
 prepared_at: 2026-10-24T124759Z
+job: 42964d938c5842f4
+dispatched_at: 2026-10-24T124808Z
 ---
 
 # fa3-scheduler-metadata-side-stream
