@@ -87,13 +87,15 @@ base_sha: ec7244a1361d3e15e9b974bed90d02b05aa34980
 base_blob: a8bb42ac483318e9fbc84bc7826a27b7a704d1fb
 branch: hyp/muse_bf16_proj/bf16-small-m-cuda-gemv-rewrite
 worktree: .worktrees/muse_bf16_proj/bf16-small-m-cuda-gemv-rewrite
-mode: null
+mode: submit
 implemented_at: 2026-10-24T170114Z
 impl_commit: 6fa230cf03af3a914049ff88e1046984a01fc7df
 submission_sha256: 7e4e64746de65a34075781899634e6dd890fd40c083728f34f1c38469168e20d
 norm_sha256: b8c6df82a7fb561c0d7070007b266a51c52eac2a433bcff9cc1d0afa38359a43
 submission_blob: 49423021596e590a05c4c5f2e83ac3555ce2028d
 lint_warnings: 3
+attempt_file: 2026-10-24T181732Z-submit-bf16-small-m-cuda-gemv-rewrite.md
+prepared_at: 2026-10-24T181732Z
 ---
 
 # bf16-small-m-cuda-gemv-rewrite
