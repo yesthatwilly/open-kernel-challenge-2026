@@ -49,13 +49,15 @@ base_sha: fe9a5a37d2a2208f820e8c3696faae713a1bb583
 base_blob: 349be31cabc7d9b669b94032ae723c0b0a5e7f71
 branch: hyp/muse_bf16_proj/router-hilo-addmm-epilogue
 worktree: .worktrees/muse_bf16_proj/router-hilo-addmm-epilogue
-mode: null
+mode: check
 implemented_at: 2026-10-24T024717Z
 impl_commit: 5fec3218be0e36938926e1686f5f594fad1ebb92
 submission_sha256: 2e80c092b0fc20de5989016d605fa6fadc3a53ea59be5f7b4ca17240c2be51b4
 norm_sha256: d89ca258fd504b13e42bab75a167dc746e892dd74f749585cebb8d401b70bd7e
 submission_blob: b30f7112740b8be9d4d5d5e4f42ea46fa49771f1
 lint_warnings: 0
+attempt_file: 2026-10-24T024717Z-check-router-hilo-addmm-epilogue.md
+prepared_at: 2026-10-24T024717Z
 ---
 
 # router-hilo-addmm-epilogue
