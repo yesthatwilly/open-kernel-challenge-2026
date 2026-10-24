@@ -31,9 +31,16 @@ priority: 5
 kind: primary
 controls_for: null
 review: proceed
-status: queued
+status: running
 review_at: 2026-10-24T184111Z
 review_companions: null
+stage: claimed
+claimed_at: 2026-10-24T184125Z
+base_sha: f6e63f1cb26d879530432b8f29b2946a17411828
+base_blob: c6854f093588da524e63657576b27ed720756e32
+branch: hyp/muse_attention_decode/splitkv-pdl-attn-to-combine
+worktree: .worktrees/muse_attention_decode/splitkv-pdl-attn-to-combine
+mode: null
 ---
 
 # splitkv-pdl-attn-to-combine
