@@ -20,7 +20,16 @@ priority: 1
 kind: primary
 controls_for: null
 review: required
-status: queued
+status: running
+stage: claimed
+claimed_at: 2026-10-24T233529Z
+base_sha: ba5ea90a00632b3485c30650134f0a6871ea09da
+base_blob: 3d70ae6e2de0d48c4a4f2a469ced8234f5348182
+branch: hyp/muse_decode_layer/stack-align-par-sliding1
+worktree: .worktrees/muse_decode_layer/stack-align-par-sliding1
+mode: null
+restack_of: null
+stale_base: null
 ---
 
 # stack-align-par-sliding1
