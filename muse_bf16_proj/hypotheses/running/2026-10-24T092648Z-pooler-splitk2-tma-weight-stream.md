@@ -52,9 +52,16 @@ priority: 3
 kind: primary
 controls_for: null
 review: proceed
-status: queued
+status: running
 review_at: 2026-10-24T104016Z
 review_companions: null
+stage: claimed
+claimed_at: 2026-10-24T104051Z
+base_sha: cee590d58c6c34ded84fdb734c38ca129e327fee
+base_blob: 66ba1a39e2aaa5cedb2ce3ddfb809f67f86b37f9
+branch: hyp/muse_bf16_proj/pooler-splitk2-tma-weight-stream
+worktree: .worktrees/muse_bf16_proj/pooler-splitk2-tma-weight-stream
+mode: null
 ---
 
 # pooler-splitk2-tma-weight-stream
