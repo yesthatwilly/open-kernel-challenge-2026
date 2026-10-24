@@ -60,8 +60,8 @@ base_blob: 3d70ae6e2de0d48c4a4f2a469ced8234f5348182
 branch: hyp/muse_decode_layer/moe-dispatch-prep-on-side-stream
 worktree: .worktrees/muse_decode_layer/moe-dispatch-prep-on-side-stream
 mode: check
-implemented_at: 2026-10-24T224624Z
-impl_commit: 4d1cabb79a605e1772dbea70c33fa05da298b460
+implemented_at: 2026-10-24T231258Z
+impl_commit: 6c8d697b4b4037e842d132d72243352b85abe10a
 submission_sha256: 8c1a130276e46913ceebef067b4777e81d6f7f966b13e607170313cb6c917082
 norm_sha256: 6bfee5a728e9525e163cbdc21c63b6ff96a5892f79bfdb7283a3473969ccd303
 submission_blob: f3200629fd5e0cab6475535321218a16b010c752
