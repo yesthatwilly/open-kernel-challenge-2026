@@ -38,7 +38,7 @@ review: proceed
 status: running
 review_at: 2026-10-24T184124Z
 review_companions: null
-stage: implemented
+stage: dispatched
 claimed_at: 2026-10-24T184124Z
 base_sha: 80056b8b63f9285186da431dd2ea8568beb3c0bf
 base_blob: c6854f093588da524e63657576b27ed720756e32
@@ -53,6 +53,8 @@ submission_blob: 1e5e94e81eba7fcf7f1ea16ec0cb3e1108ab0942
 lint_warnings: 0
 attempt_file: 2026-10-24T184725Z-check-preattention-tiled-gate-large-tokens.md
 prepared_at: 2026-10-24T184725Z
+job: c2ebf6ed05824692
+dispatched_at: 2026-10-24T184744Z
 ---
 
 # preattention-tiled-gate-large-tokens
