@@ -27,9 +27,16 @@ priority: 4
 kind: primary
 controls_for: null
 review: proceed
-status: queued
+status: running
 review_at: 2026-10-24T184058Z
 review_companions: null
+stage: claimed
+claimed_at: 2026-10-24T184058Z
+base_sha: 591234f46b4e7e6b5307dd6a14ed904220f58742
+base_blob: c6854f093588da524e63657576b27ed720756e32
+branch: hyp/muse_attention_decode/sliding-decode-blockn128-single-tile
+worktree: .worktrees/muse_attention_decode/sliding-decode-blockn128-single-tile
+mode: null
 ---
 
 # sliding-decode-blockn128-single-tile
