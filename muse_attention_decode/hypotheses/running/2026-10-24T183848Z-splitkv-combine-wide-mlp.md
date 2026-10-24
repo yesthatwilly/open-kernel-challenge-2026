@@ -32,7 +32,7 @@ review: proceed
 status: running
 review_at: 2026-10-24T184058Z
 review_companions: null
-stage: implemented
+stage: dispatched
 claimed_at: 2026-10-24T184059Z
 base_sha: fd196766321a96a51dff2121a23a1567a5ad7180
 base_blob: c6854f093588da524e63657576b27ed720756e32
@@ -47,6 +47,8 @@ submission_blob: 31ed3c702d83c72d0d5fb8de074c4d890fc9496e
 lint_warnings: 0
 attempt_file: 2026-10-24T184625Z-check-splitkv-combine-wide-mlp.md
 prepared_at: 2026-10-24T184625Z
+job: 47967b6c4d98454b
+dispatched_at: 2026-10-24T184641Z
 ---
 
 # splitkv-combine-wide-mlp
