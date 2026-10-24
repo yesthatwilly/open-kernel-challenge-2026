@@ -44,10 +44,10 @@ controls_for: null
 rewrite_stage: 3
 replaces: Marlin w13+w2 (moe_wna16_marlin_gemm x2) at every prefill T
 review: proceed
-status: running
+status: done
 review_at: 2026-10-24T112151Z
 review_companions: null
-stage: dispatched
+stage: harvested
 claimed_at: 2026-10-24T112151Z
 base_sha: 5f5af1d3fe4b9b1ef686af0d022040134029ee30
 base_blob: 60abe04615110df3e4a9355a4b984b48b68f85e8
@@ -64,6 +64,13 @@ attempt_file: 2026-10-24T112334Z-check-experts-triton-w4a16-first-turn-blockt256
 prepared_at: 2026-10-24T112335Z
 job: b33b87b5083b4d1c
 dispatched_at: 2026-10-24T112343Z
+outcome: neutral
+verdict_detail: unproven-vs-best
+speedup: 1.0228712349305686
+speedup_ci: [1.00752816640661, 1.038214303454527]
+harvested_at: 2026-10-24T124011Z
+best_at_harvest: 1.0038664293875537
+promotion: null
 ---
 
 # experts-triton-w4a16-first-turn-blockt256
@@ -144,3 +151,32 @@ OK with warnings: .worktrees/muse_prefill_layer/experts-triton-w4a16-first-turn-
 ```
 
 `python3 -I -m py_compile` passes, and the __pycache__ was removed from the worktree.
+
+## Result
+
+- job `b33b87b5083b4d1c` (check), status done, passed True, tests 5/5
+- speedup 1.0229x, 95% CI [1.0075, 1.0382], score 378741.61162259744 µs vs SGLang 387403.9 µs
+- best at harvest: {"speedup": 1.0038664293875537, "ci": [0.9888084329467404, 1.018924425828367], "job": "62025c368c3c4e8e"}; base result: muse_prefill_layer/hypotheses/done/neutral/experts-triton-w4a16-swapab-reglhs.result.json
+- **outcome: neutral** (unproven-vs-best)
+- files: `muse_prefill_layer/hypotheses/done/neutral/experts-triton-w4a16-first-turn-blockt256.result.json`, `muse_prefill_layer/hypotheses/done/neutral/experts-triton-w4a16-first-turn-blockt256.patch`; branch `hyp/muse_prefill_layer/experts-triton-w4a16-first-turn-blockt256`
+
+## Attribution
+
+| shape | w | base µs | hyp µs | delta | verdict |
+|---|---|---|---|---|---|
+| batch=1 ctx=80000 dist=soft layer=sliding load=turn_1 page=1 q_len=753 repeats=6 | 46 | 1095.07 | 1141.1 | 0.9976 | flat |
+| batch=1 ctx=80000 dist=soft layer=full load=turn_1 page=1 q_len=753 repeats=6 | 16 | 1497.85 | 1517.93 | 0.9913 | flat |
+| batch=4 ctx=80000 dist=soft layer=sliding load=turn_4 page=1 q_len=753 repeats=6 | 46 | 3250.81 | 3435.39 | 0.9613 | lost |
+| batch=4 ctx=80000 dist=soft layer=full load=turn_4 page=1 q_len=753 repeats=6 | 16 | 4729.14 | 4975.37 | 0.9825 | flat |
+| batch=1 ctx=0 dist=soft layer=full load=first_turn page=1 q_len=16384 repeats=6 | 16 | 16528.39 | 15029.51 | 1.0984 | gained |
+| batch=1 ctx=32768 dist=soft layer=sliding load=first_turn page=1 q_len=16384 repeats=6 | 138 | 15920.71 | 14426.71 | 1.0955 | gained |
+| batch=1 ctx=32768 dist=soft layer=full load=first_turn page=1 q_len=16384 repeats=6 | 16 | 19591.67 | 18568.92 | 1.0743 | gained |
+| batch=1 ctx=65536 dist=soft layer=full load=first_turn page=1 q_len=16384 repeats=6 | 16 | 23188.88 | 22521.73 | 1.0512 | gained |
+
+gained on full first_turn; sliding first_turn; lost on sliding turn_4. Expected hit: 2/2. Noise ±1.5%.
+
+## Follow-ups
+
+- rewrite stage 3 of `Marlin w13+w2 (moe_wna16_marlin_gemm x2) at every prefill T`: read the replaced kernels' own us per shape (profile top_kernels) against the incumbent and the floor, and check which Milestone it reached. The next stage is `/hypothesize muse_prefill_layer "<what to fix or tune>" --kind rewrite --depends-on experts-triton-w4a16-first-turn-blockt256 --stage 4`; a slow or failed first cut is the expected start, not a do-not-retry.
+- unproven-vs-best: the change is not proven either way; a stacked hypothesis (`depends_on: experts-triton-w4a16-first-turn-blockt256`) that adds a further change in the same area is the only way to learn more (identical code is never re-run).
+

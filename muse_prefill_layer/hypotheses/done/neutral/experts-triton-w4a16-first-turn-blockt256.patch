@@ -1,0 +1,116 @@
+diff --git a/muse_prefill_layer/submission.py b/muse_prefill_layer/submission.py
+index 60abe04..f17d41c 100644
+--- a/muse_prefill_layer/submission.py
++++ b/muse_prefill_layer/submission.py
+@@ -147,13 +147,16 @@ SMALL_BATCH_MAX_TOKENS = 8
+ # (the MMA N side) covers one expert in one tile at the turn shapes (~24 rows at turn_1, ~94 at
+ # turn_4) and four tiles at the first turn's ~512. BLOCK_W is the MMA M side (rows of the expert's
+ # N). moe_align_block_size pads to BLOCK_T. Entries are (max tokens, config); the last one has no
+-# bound (the same config serves T <= 4096 and above).
++# bound. Above 4096 tokens (first turn) BLOCK_T 256 feeds each in-register dequantized W tile to twice
++# the MMA columns (wgmma m64n256 per warpgroup); its two [64, 256] activation slabs per K step leave
++# room for 2 smem stages, not 3.
+ # BLOCK_K is fixed by the nibble order prepare() stores (EXPERT_BLOCK_K): each byte of a 128-k chunk
+ # holds k0 + i (low nibble) and k0 + 64 + i (high nibble).
+ EXPERT_BLOCK_K = 128
+ EXPERT_CONFIGS = (
+     (1024, dict(BLOCK_T=64, BLOCK_W=128, BLOCK_K=EXPERT_BLOCK_K, GROUP_SIZE_T=8, num_warps=4, num_stages=3)),
+-    (None, dict(BLOCK_T=128, BLOCK_W=128, BLOCK_K=EXPERT_BLOCK_K, GROUP_SIZE_T=8, num_warps=8, num_stages=3)),
++    (4096, dict(BLOCK_T=128, BLOCK_W=128, BLOCK_K=EXPERT_BLOCK_K, GROUP_SIZE_T=8, num_warps=8, num_stages=3)),
++    (None, dict(BLOCK_T=256, BLOCK_W=128, BLOCK_K=EXPERT_BLOCK_K, GROUP_SIZE_T=4, num_warps=8, num_stages=2)),
+ )
+ SF_BLOCK = tl.constexpr(16)  # nvfp4.BLOCK: k per e4m3 block scale
+ # The kernel's W tile is E2M1 * block scale * 2^-7 (exact in BF16); the epilogue multiplies by
+@@ -322,7 +325,8 @@ def _expert_config(tokens):
+     raise AssertionError("unreachable")
+ 
+ 
+-def _nvfp4_moe_gemm(a, w, sf, gs, out, sorted_ids, expert_ids, n_padded, top_k, num_valid, cfg, zero_nonlocal):
++def _nvfp4_moe_gemm(a, w, sf, gs, out, sorted_ids, expert_ids, n_padded, top_k, num_valid, cfg, zero_nonlocal,
++                    report=None):
+     """out[sorted id] = a[sorted id // top_k] @ dequant(w[expert of its block]).T, on the
+     token blocks moe_align_block_size laid out (cfg's BLOCK_T). w is the nibble-reordered bank."""
+     n, k = w.shape[1], w.shape[2] * 2
+@@ -331,11 +335,17 @@ def _nvfp4_moe_gemm(a, w, sf, gs, out, sorted_ids, expert_ids, n_padded, top_k,
+     assert n % cfg["BLOCK_W"] == 0 and k % cfg["BLOCK_K"] == 0
+     em = sorted_ids.shape[0]
+     grid = (triton.cdiv(em, cfg["BLOCK_T"]) * (n // cfg["BLOCK_W"]),)
+-    _moe_nvfp4_gemm_kernel[grid](
++    compiled = _moe_nvfp4_gemm_kernel[grid](
+         a, w, sf, gs, out, sorted_ids, expert_ids, n_padded, num_valid, em,
+         N=n, K=k, TOP_K=top_k, BLOCK_T=cfg["BLOCK_T"], BLOCK_W=cfg["BLOCK_W"], BLOCK_K=cfg["BLOCK_K"],
+         GROUP_SIZE_T=cfg["GROUP_SIZE_T"], ZERO_NONLOCAL=zero_nonlocal,
+         num_warps=cfg["num_warps"], num_stages=cfg["num_stages"])
++    if report is not None:  # prepare() only: register / spill / smem use of this variant, for the log
++        print(f"[expert gemm] {report} BLOCK_T={cfg['BLOCK_T']} BLOCK_W={cfg['BLOCK_W']} "
++              f"warps={cfg['num_warps']} stages={cfg['num_stages']}: "
++              f"n_regs={getattr(compiled, 'n_regs', '?')} n_spills={getattr(compiled, 'n_spills', '?')} "
++              f"shared={getattr(compiled, 'shared', getattr(getattr(compiled, 'metadata', None), 'shared', '?'))}",
++              flush=True)
+     return out
+ 
+ 
+@@ -368,8 +378,9 @@ def _expert_bank(weights):
+     return bank
+ 
+ 
+-# The prepare() check covers one full 128 (rows) x 128 (k) tile: one whole BLOCK_K chunk, i.e. both
+-# nibble halves and all eight scale groups, every N row.
++# The prepare() check covers at least one full 128 (rows) x 128 (k) tile: one whole BLOCK_K chunk,
++# i.e. both nibble halves and all eight scale groups, every N row. A config's check uses
++# max(CHECK_ROWS, BLOCK_T) rows, so the valid region is whole token blocks at every BLOCK_T.
+ CHECK_ROWS = 128
+ CHECK_K = EXPERT_BLOCK_K
+ 
+@@ -392,24 +403,26 @@ def _check_expert_gemms(bank, weights):
+         assert k0 % EXPERT_BLOCK_K == 0
+         ref = nvfp4.dequantize(orig[e, :, k0 // 2:(k0 + CHECK_K) // 2], sf[e, :, k0 // 16:(k0 + CHECK_K) // 16], gs[e])
+         codes = nvfp4.unpack_e2m1(orig[e, :, k0 // 2:(k0 + CHECK_K) // 2])
+-        rows = torch.arange(CHECK_ROWS, device=device)
+-        want = ref[:, rows % CHECK_K].t()          # [CHECK_ROWS, n]
+-        want_codes = codes[:, rows % CHECK_K].t()
+         for _, cfg in EXPERT_CONFIGS:
+             bt = cfg["BLOCK_T"]
+-            total = CHECK_ROWS + 2 * bt             # + one -1 block + one block past n_padded
++            check_rows = max(CHECK_ROWS, bt)        # whole token blocks of valid rows
++            assert check_rows % bt == 0
++            rows = torch.arange(check_rows, device=device)
++            want = ref[:, rows % CHECK_K].t()       # [check_rows, n]
++            want_codes = codes[:, rows % CHECK_K].t()
++            total = check_rows + 2 * bt             # + one -1 block + one block past n_padded
+             x = torch.zeros((total, k), dtype=torch.bfloat16, device=device)
+             x[rows, k0 + rows % CHECK_K] = 1.0
+             sorted_ids = (torch.arange(total, device=device, dtype=torch.int32) * top_k).contiguous()
+-            expert_ids = torch.full((total // bt,), e, dtype=torch.int32, device=device)
+-            expert_ids[CHECK_ROWS // bt] = -1
+-            expert_ids[CHECK_ROWS // bt + 1] = 0    # valid expert, but past n_padded: must not run
+-            n_padded = torch.tensor([CHECK_ROWS + bt], dtype=torch.int32, device=device)
++            expert_ids = torch.full((triton.cdiv(total, bt),), e, dtype=torch.int32, device=device)
++            expert_ids[check_rows // bt] = -1
++            expert_ids[check_rows // bt + 1] = 0    # valid expert, but past n_padded: must not run
++            n_padded = torch.tensor([check_rows + bt], dtype=torch.int32, device=device)
+             out = torch.full((total * top_k, n), float("nan"), dtype=torch.bfloat16, device=device)
+             _nvfp4_moe_gemm(x, w, sf, gs, out, sorted_ids, expert_ids, n_padded, top_k, total * top_k, cfg,
+-                            zero_nonlocal)
++                            zero_nonlocal, report=name)
+             torch.cuda.synchronize()
+-            got = out[0:CHECK_ROWS * top_k:top_k].float()
++            got = out[0:check_rows * top_k:top_k].float()
+             bad = ((got - want).abs() > want.abs() * 2.0 ** -7) | got.isnan()
+             if bool(bad.any()):
+                 halves = bool((want_codes[bad].abs() == 0.5).all())
+@@ -417,12 +430,12 @@ def _check_expert_gemms(bank, weights):
+                     f"NVFP4 in-kernel dequant mismatch: {name} BLOCK_T={bt}, {int(bad.sum())} of {bad.numel()} "
+                     f"values, max err {float((got - want).abs().max())}"
+                     + (" (only E2M1 +-0.5 codes: bf16 subnormals flushed to zero)" if halves else ""))
+-            nonlocal_rows = out[CHECK_ROWS * top_k:(CHECK_ROWS + bt) * top_k:top_k].float()
++            nonlocal_rows = out[check_rows * top_k:(check_rows + bt) * top_k:top_k].float()
+             if zero_nonlocal:
+                 assert bool((nonlocal_rows == 0).all()), f"{name} BLOCK_T={bt}: -1 block not zeroed"
+             else:
+                 assert bool(nonlocal_rows.isnan().all()), f"{name} BLOCK_T={bt}: -1 block was written"
+-            past = out[(CHECK_ROWS + bt) * top_k::top_k].float()
++            past = out[(check_rows + bt) * top_k::top_k].float()
+             assert bool(past.isnan().all()), f"{name} BLOCK_T={bt}: block past n_padded was written"
+ 
+ 
