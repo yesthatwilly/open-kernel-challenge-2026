@@ -42,7 +42,8 @@ priority: 3
 kind: control
 controls_for: moe-align-single-kernel-small-t
 review: required
-status: queued
+status: hold
+hold_reason: control for moe-align-single-kernel-small-t, which was neutral; a capacity control of a non-gain cannot change a decision, and decode has 2 checks left for the attention rewrite and pairing follow-ups
 ---
 
 # moe-align-single-kernel-small-t-control-capacity-256
