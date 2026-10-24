@@ -42,13 +42,19 @@ review: proceed
 status: running
 review_at: 2026-10-24T083634Z
 review_companions: null
-stage: claimed
+stage: implemented
 claimed_at: 2026-10-24T083634Z
 base_sha: 67649c559d5a07d10b659c84bf80c1b1ec29c879
 base_blob: e4931f050c7fb99835fe116d25bb454a5ea731e9
 branch: hyp/muse_prefill_layer/experts-marlin-block-m-local-rows
 worktree: .worktrees/muse_prefill_layer/experts-marlin-block-m-local-rows
 mode: null
+implemented_at: 2026-10-24T083755Z
+impl_commit: ed2a571cf7bccd94cf9148aed7baa997bbe73c57
+submission_sha256: 6d80a359d004ca1f07e7d4192af251108ed4a76502c1cb56ceb7b1df459c824e
+norm_sha256: 14334b52ebd2b5045e65bf21d09f43476099101511d70f70b31dc07d8fa4cf5f
+submission_blob: 3d09290ced5f8f540573ed73c5f64b3aaeb0cc99
+lint_warnings: 1
 ---
 
 # experts-marlin-block-m-local-rows
@@ -89,3 +95,45 @@ No companion is warranted. Only one landed item exists and it is the base. The c
 - If experts-triton-w4a16-inkernel-fp4 (running) replaces Marlin on the turn shapes, this pick becomes moot for turn_1. Whichever lands second should be rebased onto the winner.
 - Turn_4 (T=3012, 94 rows/expert) is left at 64 by this rule even though 48 fits 2 blocks of 96 almost exactly. That belongs to experts-marlin-block-m-48-turn4; do not fold it in here.
 
+
+## Implementation notes
+
+- Worktree file: `.worktrees/muse_prefill_layer/experts-marlin-block-m-local-rows/muse_prefill_layer/submission.py`, `_experts`, the block_size_m selection loop (base lines 273-275).
+- One expression changed: `num_tokens * TOP_K / LOCAL_EXPERTS / block_size_m < 0.9` becomes `num_tokens * TOP_K / N_EXPERTS / block_size_m < 0.9`. Candidate list (8, 16, 32, 48, 64) and the 0.9 rule unchanged. Added a two-line comment above the loop.
+- The single `block_size_m` still feeds `moe_align_block_size(local_ids, block_size_m, N_EXPERTS)` and the `moe_block_size=block_size_m` in the shared `common` kwargs of both `moe_wna16_marlin_gemm` calls (w13 and w2); nothing else touched. The pick branches on `num_tokens` (a shape int) only.
+- Picks, before (LOCAL_EXPERTS) -> after (N_EXPERTS), computed offline with the same loop:
+
+  | T (num_tokens) | where | before | after |
+  |---|---|---|---|
+  | 753 | scored turn_1 (both shapes); test ctx 3000 q 753 | 64 | 32 |
+  | 3012 | scored turn_4 (both shapes) | 64 | 64 |
+  | 16384 | scored first_turn (all four shapes) | 64 | 64 |
+  | 300 | test batch 1 q 300 | 64 | 16 |
+  | 600 | test batch 3 q 200 (dist outliers) | 64 | 32 |
+  | 1506 | test batch 2 q 753 | 64 | 64 |
+  | 4096 | test q 4096 | 64 | 64 |
+
+- Deviation from spec: none. Note the md's "T=300 -> 16, T=600 -> 32" matches; the "before" column is 64 everywhere under the parity rule (T*8/32/64 >= 0.9 for every T >= 231).
+- Uncertainty: the T=600 test uses dist outliers, so hot experts there take several 32-row blocks; this is a tiling choice and does not affect correctness.
+
+## Rules check
+
+Checked against `git -C .worktrees/muse_prefill_layer/experts-marlin-block-m-local-rows diff` (1 file, +3/-1, one expression plus a comment).
+
+- [x] CUDA-graph capturable: the diff adds no `.item()`/`.cpu()`/`synchronize()`/prints; the branch is on `num_tokens` (x.shape[0]), a shape, not on input values.
+- [x] Nothing derived from `data` is cached across calls: the diff touches no `state` writes.
+- [x] Weights: n/a: diff does not touch `prepare()` or weight storage; NVFP4 stays NVFP4.
+- [x] Activations BF16 / KV FP8 / queries <= FP8: n/a: diff changes no dtype; activations stay as before.
+- [x] Attention sees every key: n/a: diff is in the experts path only; attention untouched.
+- [x] No timing patches, harness frames/I/O/secrets, module edits, reference import, subprocesses or network: diff adds no imports or calls of any kind.
+- [x] All work happens inside the timed call; no output caching or replay: the pick runs in `_experts` within `kernel_fn` every call.
+- [x] First-line marker `# okc: problem=muse_prefill_layer` kept; no triton.autotune added.
+
+Lint (`okc_lint.py ... --problem muse_prefill_layer`):
+
+```
+warn  host-sync    L261: torch.cuda.synchronize()  (outside kernel_fn's call graph; fine in prepare())
+OK with warnings: submission.py
+```
+
+`python3 -I -m py_compile` OK; the `__pycache__` it left was deleted.
