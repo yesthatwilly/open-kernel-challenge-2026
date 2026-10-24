@@ -60,10 +60,10 @@ priority: 1
 kind: primary
 controls_for: null
 review: proceed
-status: running
+status: done
 review_at: 2026-10-24T104215Z
 review_companions: null
-stage: dispatched
+stage: harvested
 claimed_at: 2026-10-24T104215Z
 base_sha: ed35ab329cbc75571509536e87957f38db9f4df0
 base_blob: de98030423860cfc9507b61d19f82a416223a23d
@@ -80,6 +80,13 @@ attempt_file: 2026-10-24T104412Z-check-fa3-hdim128-head-pairing-batched.md
 prepared_at: 2026-10-24T104412Z
 job: fb07a3bd3aa54baf
 dispatched_at: 2026-10-24T104423Z
+outcome: neutral
+verdict_detail: unproven-vs-best
+speedup: 1.0873503247934666
+speedup_ci: [1.0710400699215645, 1.1036605796653685]
+harvested_at: 2026-10-24T115931Z
+best_at_harvest: 1.0634521974439426
+promotion: null
 ---
 
 # fa3-hdim128-head-pairing-batched
@@ -162,3 +169,35 @@ OK with warnings: /home/user/git/musespark/.worktrees/muse_decode_layer/fa3-hdim
 ```
 
 The warning is the existing synchronize in prepare() and is not part of this diff. `python3 -I -m py_compile` passed, and the `__pycache__` it left was removed.
+
+## Result
+
+- job `fb07a3bd3aa54baf` (check), status done, passed True, tests 13/13
+- speedup 1.0874x, 95% CI [1.0710, 1.1037], score 20803.139047479057 µs vs SGLang 22620.3 µs
+- best at harvest: {"speedup": 1.0634521974439426, "ci": [1.0475004144822835, 1.0794039804056017], "job": "2b1f82408ab64116"}; base result: muse_decode_layer/hypotheses/done/gain/marlin-block-m-cap-16.result.json
+- **outcome: neutral** (unproven-vs-best)
+- files: `muse_decode_layer/hypotheses/done/neutral/fa3-hdim128-head-pairing-batched.result.json`, `muse_decode_layer/hypotheses/done/neutral/fa3-hdim128-head-pairing-batched.patch`; branch `hyp/muse_decode_layer/fa3-hdim128-head-pairing-batched`
+
+## Attribution
+
+| shape | w | base µs | hyp µs | delta | verdict |
+|---|---|---|---|---|---|
+| batch=1 ctx=80000 dist=soft layer=sliding load=decode_1 page=1 repeats=60 | 46 | 171.1 | 172.77 | 0.9986 | flat |
+| batch=1 ctx=80000 dist=soft layer=full load=decode_1 page=1 repeats=60 | 16 | 183.78 | 182.09 | 1.0115 | flat |
+| batch=16 ctx=80000 dist=soft layer=sliding load=decode_16 page=1 spread=agentic | 46 | 259.9 | 259.55 | 0.9984 | flat |
+| batch=16 ctx=80000 dist=soft layer=full load=decode_16 page=1 spread=agentic | 16 | 432.97 | 406.82 | 1.0699 | gained |
+| batch=32 ctx=80000 dist=soft layer=sliding load=decode_32 page=1 spread=agentic | 46 | 253.85 | 263.78 | 1.0016 | flat |
+| batch=32 ctx=80000 dist=soft layer=full load=decode_32 page=1 spread=agentic | 16 | 601.7 | 543.54 | 1.1314 | gained |
+| batch=1 ctx=80000 dist=soft layer=sliding load=verify_1 page=1 q_len=8 | 46 | 234.75 | 238.23 | 0.9906 | flat |
+| batch=1 ctx=80000 dist=soft layer=full load=verify_1 page=1 q_len=8 | 16 | 240.09 | 247.75 | 0.9943 | flat |
+| batch=16 ctx=80000 dist=soft layer=sliding load=verify_16 page=1 q_len=8 spread=agentic | 46 | 436.67 | 453.17 | 1.0153 | flat |
+| batch=16 ctx=80000 dist=soft layer=full load=verify_16 page=1 q_len=8 spread=agentic | 16 | 618.93 | 587.43 | 1.0758 | gained |
+| batch=32 ctx=80000 dist=soft layer=sliding load=verify_32 page=1 q_len=8 spread=agentic | 46 | 631.95 | 637.71 | 1.0068 | flat |
+| batch=32 ctx=80000 dist=soft layer=full load=verify_32 page=1 q_len=8 spread=agentic | 16 | 969.88 | 906.69 | 1.0974 | gained |
+
+gained on full decode_16, decode_32, verify_16, verify_32. Expected hit: 7/7. Noise ±1.5%.
+
+## Follow-ups
+
+- unproven-vs-best: the change is not proven either way; a stacked hypothesis (`depends_on: fa3-hdim128-head-pairing-batched`) that adds a further change in the same area is the only way to learn more (identical code is never re-run).
+
