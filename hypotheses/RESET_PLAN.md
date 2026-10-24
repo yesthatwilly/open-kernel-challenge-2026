@@ -34,7 +34,14 @@ Also pre-building nine newly reviewed stage-1 rewrites under the 40% rule; each 
 - prefill: wgmma experts, FP8 attention
 - bf16: lossless compression, CUTLASS stream-K
 
-## After harvest (depends on results in the judge now)
+## Harvest results (2026-10-24 ~18:00Z, per-shape analysis by an Opus agent)
+- attention: no restack. Drop full-fused-decode1 (lost 5% on its target); fp8-qk-mma was flat. Go straight to item 2.
+- bf16: restack m16-swapab + router-swapab (router gated to m<=32), expected ~1.215-1.222. Drop cuBLASLt (it lost at m=256), and keep prefill's dense-gemm-cublaslt held.
+- decode: restack sliding-port + paired-pad + small-T GEMMs (GEMMs gated to T==1), expected ~1.18. fused-preattention-paired-pad-restack can follow.
+- moe: align-parallel (check 1.325) is a gain on current master: hand-merge and promote. w2-l2-prefetch is dead.
+- prefill: the packed-dequant condition is NOT met (ON but flat). Stages 6/7 and moe's swapab-nvfp4-gemm-verify-rewrite stay held.
+
+## After harvest (as planned before the harvest)
 
 ### attention (10 checks)
 1. Restack the winners among the four scored runs onto master:
