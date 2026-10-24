@@ -30,10 +30,10 @@ priority: 4
 kind: primary
 controls_for: null
 review: proceed
-status: running
+status: done
 review_at: 2026-10-24T164523Z
 review_companions: null
-stage: dispatched
+stage: harvested
 claimed_at: 2026-10-24T164753Z
 base_sha: aef5220ede19f282df557fb2e7493a375aeb6107
 base_blob: 1c0f5fa1bfc4e602b62e5e9edd9df6d5652b297b
@@ -50,6 +50,13 @@ attempt_file: 2026-10-24T164946Z-submit-sliding-fused-triton-decode1-splits-32.m
 prepared_at: 2026-10-24T164946Z
 job: f9ac830932cb4eb6
 dispatched_at: 2026-10-24T165008Z
+outcome: neutral
+verdict_detail: unproven-vs-best
+speedup: 1.3519879034764586
+speedup_ci: [1.3317080849243117, 1.3764335008113282]
+harvested_at: 2026-10-24T173231Z
+best_at_harvest: 1.3492076314709118
+promotion: null
 ---
 
 # sliding-fused-triton-decode1-splits-32
@@ -141,3 +148,35 @@ CLEAN: /home/user/git/musespark/.worktrees/muse_attention_decode/sliding-fused-t
 ```
 
 `python3 -I -m py_compile`: OK. The `__pycache__` it left was removed from the worktree.
+
+## Result
+
+- job `f9ac830932cb4eb6` (submit), status done, passed True, tests 16/16
+- speedup 1.3520x, 95% CI [1.3317, 1.3764], score 2785.749776544196 µs vs SGLang 3766.3 µs
+- best at harvest: {"speedup": 1.3492076314709118, "ci": [1.328969516998848, 1.3729544014677721], "job": "de486093311d4bb9"}; base result: muse_attention_decode/hypotheses/done/gain/full-decode-cuda-gather-splitkv.result.json
+- **outcome: neutral** (unproven-vs-best)
+- files: `muse_attention_decode/hypotheses/done/neutral/sliding-fused-triton-decode1-splits-32.result.json`, `muse_attention_decode/hypotheses/done/neutral/sliding-fused-triton-decode1-splits-32.patch`; branch `hyp/muse_attention_decode/sliding-fused-triton-decode1-splits-32`
+
+## Attribution
+
+| shape | w | base µs | hyp µs | delta | verdict |
+|---|---|---|---|---|---|
+| batch=1 ctx=80000 dist=soft heads=tp8 layer=sliding load=decode_1 page=1 | 46 | 13.88 | 13.34 | 1.0309 | flat |
+| batch=1 ctx=80000 dist=coherent heads=tp8 layer=full load=decode_1 page=1 | 16 | 27.93 | 27.41 | 1.0231 | flat |
+| batch=16 ctx=80000 dist=soft heads=tp8 layer=sliding load=decode_16 page=1 spread=agentic | 46 | 20.84 | 20.97 | 1.0038 | flat |
+| batch=16 ctx=80000 dist=coherent heads=tp8 layer=full load=decode_16 page=1 spread=agentic | 16 | 123.02 | 122.54 | 0.9978 | flat |
+| batch=32 ctx=80000 dist=soft heads=tp8 layer=sliding load=decode_32 page=1 spread=agentic | 46 | 25.2 | 25.26 | 1.0068 | flat |
+| batch=32 ctx=80000 dist=coherent heads=tp8 layer=full load=decode_32 page=1 spread=agentic | 16 | 257.75 | 256.96 | 1.0003 | flat |
+| batch=1 ctx=80000 dist=soft heads=tp8 layer=sliding load=verify_1 page=1 q_len=8 | 46 | 17.63 | 17.34 | 0.9878 | flat |
+| batch=1 ctx=80000 dist=coherent heads=tp8 layer=full load=verify_1 page=1 q_len=8 | 16 | 30.29 | 30.47 | 0.9946 | flat |
+| batch=16 ctx=80000 dist=soft heads=tp8 layer=sliding load=verify_16 page=1 q_len=8 spread=agentic | 46 | 22.77 | 22.97 | 0.9971 | flat |
+| batch=16 ctx=80000 dist=coherent heads=tp8 layer=full load=verify_16 page=1 q_len=8 spread=agentic | 16 | 162.83 | 162.74 | 1.0028 | flat |
+| batch=32 ctx=80000 dist=soft heads=tp8 layer=sliding load=verify_32 page=1 q_len=8 spread=agentic | 46 | 29.35 | 28.62 | 1.016 | flat |
+| batch=32 ctx=80000 dist=coherent heads=tp8 layer=full load=verify_32 page=1 q_len=8 spread=agentic | 16 | 301.91 | 300.18 | 1.0027 | flat |
+
+no shape moved outside noise. Expected hit: 1/3. Noise ±1.7%.
+
+## Follow-ups
+
+- unproven-vs-best: the change is not proven either way; a stacked hypothesis (`depends_on: sliding-fused-triton-decode1-splits-32`) that adds a further change in the same area is the only way to learn more (identical code is never re-run).
+
