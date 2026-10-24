@@ -79,9 +79,11 @@ speedup: 1.0599319720006266
 speedup_ci: [1.044032992420617, 1.075830951580636]
 harvested_at: 2026-10-24T135614Z
 best_at_harvest: 1.0228712349305686
-promotion: merged
+promotion: submitted
 promotion_commit: b92a0f47192b31b8618c3c53aab281b72204f3c4
 promotion_attempt: 2026-10-24T163459Z-submit-experts-hybrid-marlin-turn-triton-first-turn.md
+promotion_job: ba9c16b9cc6b4605
+promotion_at: 2026-10-24T163515Z
 ---
 
 # experts-hybrid-marlin-turn-triton-first-turn

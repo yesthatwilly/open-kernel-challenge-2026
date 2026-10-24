@@ -2,7 +2,7 @@
 
 Hypothesis: `muse_prefill_layer/hypotheses/done/gain/2026-10-24T124504Z-experts-hybrid-marlin-turn-triton-first-turn.md` (branch `hyp/muse_prefill_layer/experts-hybrid-marlin-turn-triton-first-turn`).
 
-- **Job:** `<job id>` (`okc status <job>`)
+- **Job:** `ba9c16b9cc6b4605` (`okc status <job>`)
 - **File:** `muse_prefill_layer/submission.py` at git `a5a4d42`
 
 ## Goal
