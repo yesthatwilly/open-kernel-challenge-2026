@@ -50,13 +50,19 @@ status: running
 review_at: 2026-10-24T111911Z
 review_companions: null
 hold_reason: null
-stage: claimed
+stage: implemented
 claimed_at: 2026-10-24T120042Z
 base_sha: caf555ec8435254c599ff4cf1e7741a96a88e5e1
 base_blob: da55301de1e911aeab09878b0873809f544f436c
 branch: hyp/muse_bf16_proj/router-splitk-semaphore-no-memset
 worktree: .worktrees/muse_bf16_proj/router-splitk-semaphore-no-memset
 mode: null
+implemented_at: 2026-10-24T120252Z
+impl_commit: 0584e34794a8d344213bf6f52cdb2a36db670a69
+submission_sha256: 6d75462c08bca37e0fcf4d14129fe01336330fbcb30b83b0860bc8e4cfe60068
+norm_sha256: b90a0b40894de56dd41f4d98f961699c95b1ae43979288fb054931bb24341096
+submission_blob: 18566e908b406cf0a8ee22fe4d4bb21d1c3a6be0
+lint_warnings: 0
 ---
 
 # router-splitk-semaphore-no-memset
@@ -100,3 +106,37 @@ No companion is needed for the run itself. The profile already separates the two
 - Does Triton emit the scalar acq_rel ticket by one thread with a broadcast (an extra smem barrier on the winner path)? Check the TTGIR/PTX in the implement step; it adds to the tail.
 - If the tail eats the saving, the cheaper follow-up is to keep the relaxed atomics and remove only the memset by having split 0 zero-and-add under a ticket. That still needs ordering, so it is probably no better. Worth a line in FINDINGS whichever way this lands.
 
+
+## Implementation notes
+
+Built at SPLIT_K=16 as written (neither SPLIT_K=32 run gained), in the worktree's `muse_bf16_proj/submission.py` only:
+
+- New `@triton.jit(do_not_specialize=["M"]) _router_hilo_sem_kernel` with the same tiles and K loop as `_router_hilo_kernel`. The loop is copied verbatim, not factored into a shared helper, so master's kernel source stays byte-for-byte unchanged for m > 32. `SPLIT_K`, `N`, `WS_M` and `K_SLICE` are constexprs, and the winner test is `ticket == SPLIT_K - 1`. Epilogue: masked fp32 partial store to `ws[pid_k, rows<M, tile]`, `tl.debug_barrier()`, one scalar `tl.atomic_add(cnt_ptr + pid_n, 1, sem="acq_rel", scope="gpu")`, then `tl.debug_barrier()`. The winner reloads, sums, masked-stores fp32 to `out` and runs `tl.atomic_xchg(cnt_ptr + pid_n, 0, sem="relaxed", scope="gpu")`. This is the ticket pattern copied from `hyp/muse_bf16_proj/pooler-triton-splitk2-blockn64-semaphore`, which passed correctness.
+- The reload is one `[SPLIT_K, BLOCK_M, BLOCK_N]` `.cg` load using the same `m_mask` footprint as the store, so all partials are in flight before any add. It is followed by `tl.sum(parts, axis=0)`. **Deviation:** the order is fixed at compile time and deterministic, but it is Triton's reduction order, not a literal left-to-right 0..15 chain. A `static_range` load-then-add loop cannot be guaranteed to hoist the loads, because issue is in order and each add stalls before the next load issues. The reviewer named the single tile load as an acceptable option. Register cost of the tile is 64 fp32/thread at BLOCK_M=16 and 128 at BLOCK_M=32. The dot accumulator is dead by then, but watch for spills at m=32. `tl.arange(0, SPLIT_K)` requires SPLIT_K to be a power of 2, which the `_router_config` docstring notes.
+- `_router_forward(x, hi, lo, ws, cnt)`: for m <= `ROUTER_SEM_MAX_M` (32) it uses `torch.empty` and launches the new kernel on the same grid `(1, 8, 16)`, BLOCK_K=128, stages 3, warps 4. For m > 32 it runs master's `torch.zeros` and atomic kernel unchanged.
+- `_router_shape_ok`: for m <= 32 it also requires `m <= block_m` (one M-block, so pid_m == 0 and a per-N-tile counter suffices) and `n == ROUTER_N`. This always holds for the problem.
+- `prepare()`: `state["router_ws"] = torch.empty((16, 32, 256), fp32)` and `state["router_cnt"] = torch.zeros(8, int32)`, both sized from `_router_config` over m = 1..32. They are allocated before the warm-up (ROUTER_WARM_MS 1, 8, 16, 32 compile both small buckets), and `router_cnt.zero_()` runs after the warm-up.
+- Module and `_router_config` docstrings were updated. Nothing else was touched.
+- Not checked (no GPU or Triton on this node): the reviewer's open question on whether the scalar acq_rel ticket adds an smem broadcast on the winner path (TTGIR/PTX), and whether the 3-D tile load spills.
+
+## Rules check
+
+Checked against `git -C .worktrees/muse_bf16_proj/router-splitk-semaphore-no-memset diff`:
+
+- [x] CUDA-graph capturable: there is no `.item()`, `.cpu()`, `synchronize()` or tensor print. `torch.empty` in `_router_forward` is a shape-only allocation, the same as master's `torch.zeros`. Branches depend on `m` (shape) only. The ticket branch is in-kernel.
+- [x] Nothing derived from `data` is cached across calls. `router_ws` rows < m are fully rewritten before they are read on every call, and rows >= m are never read (masked). `router_cnt` returns to 0 at the end of every launch.
+- [x] Weights: hi + lo split built in `prepare()` (unchanged from master). The router keeps the allowed FP32 → BF16 hi+lo with FP32 accumulation. BF16 layers are untouched.
+- [x] Activations BF16 where SGLang keeps BF16: x is still loaded as bf16, and accumulation, partials and output are fp32. n/a for KV cache and queries: there is no attention in this problem.
+- [x] n/a: there is no attention in this problem (dense projections only), so no key skipping.
+- [x] No timing patches, harness frames, I/O, secrets, module edits, reference import, subprocesses or network. The diff adds no imports.
+- [x] All work happens inside the timed call. The GEMM and reduce both run in `kernel_fn`'s launch, with no output caching or replay. The prepare() warm-up runs on synthetic inputs only.
+- [x] No `triton.autotune`. Configs are static from `m`.
+- [x] The first line `# okc: problem=muse_bf16_proj` is kept.
+
+okc_lint output:
+
+```
+CLEAN: muse_bf16_proj/submission.py
+```
+
+`python3 -I -m py_compile` succeeded, and the `__pycache__` it left was removed.
