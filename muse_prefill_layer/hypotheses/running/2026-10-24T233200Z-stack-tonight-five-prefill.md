@@ -41,6 +41,9 @@ attempt_file: 2026-10-24T233216Z-check-stack-tonight-five-prefill.md
 prepared_at: 2026-10-24T233216Z
 job: c4d14d62f11e4aaf
 dispatched_at: 2026-10-24T233227Z
+promotion: submitted
+promotion_job: 502f2eab95164781
+promotion_at: 2026-10-24T234001Z
 ---
 
 # stack-tonight-five-prefill
