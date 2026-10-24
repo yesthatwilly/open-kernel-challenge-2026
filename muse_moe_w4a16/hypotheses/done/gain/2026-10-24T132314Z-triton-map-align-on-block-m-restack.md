@@ -39,10 +39,10 @@ priority: 1
 kind: primary
 controls_for: null
 review: proceed
-status: running
+status: done
 review_at: 2026-10-24T132520Z
 review_companions: null
-stage: dispatched
+stage: harvested
 claimed_at: 2026-10-24T132520Z
 base_sha: a36124bb66d280ad8d9fdcad53738d33f599a856
 base_blob: c7bf9ffedc48b757f56765004e5d65f6ad5ba841
@@ -59,6 +59,13 @@ attempt_file: 2026-10-24T132521Z-check-triton-map-align-on-block-m-restack.md
 prepared_at: 2026-10-24T132521Z
 job: bc56182a80444d16
 dispatched_at: 2026-10-24T132529Z
+outcome: gain
+verdict_detail: gain
+speedup: 1.3116740840932535
+speedup_ci: [1.2919989728318546, 1.3313491953546521]
+harvested_at: 2026-10-24T135613Z
+best_at_harvest: 1.2535643764852882
+promotion: pending
 ---
 
 # triton-map-align-on-block-m-restack
@@ -129,3 +136,29 @@ rules-checked in its own run, plus master's 5-line block-m pick).
 - [x] First line marker kept; no triton.autotune.
 
 okc_lint: OK with warnings (host-syncs only in prepare()/the align self-check).
+
+## Result
+
+- job `bc56182a80444d16` (check), status done, passed True, tests 5/5
+- speedup 1.3117x, 95% CI [1.2920, 1.3313], score 10252.928042942014 µs vs SGLang 13448.5 µs
+- best at harvest: {"speedup": 1.2535643764852882, "ci": [1.2347609108380089, 1.2723678421325675], "job": "c00ef7295c154867"}; base result: muse_moe_w4a16/hypotheses/done/gain/marlin-block-m-two-smaller-on-postnorm.result.json
+- **outcome: gain** (gain)
+- files: `muse_moe_w4a16/hypotheses/done/gain/triton-map-align-on-block-m-restack.result.json`, `muse_moe_w4a16/hypotheses/done/gain/triton-map-align-on-block-m-restack.patch`; branch `hyp/muse_moe_w4a16/triton-map-align-on-block-m-restack`
+
+## Attribution
+
+| shape | w | base µs | hyp µs | delta | verdict |
+|---|---|---|---|---|---|
+| bs=1 load=decode_1 sharding=ep8 | 60 | 55.52 | 48.37 | 1.147 | gained |
+| bs=16 load=decode_16 sharding=ep8 | 60 | 155.89 | 147.87 | 1.0512 | gained |
+| bs=32 load=decode_32 sharding=ep8 | 60 | 209.65 | 200.73 | 1.0439 | gained |
+| bs=8 load=verify_1 sharding=ep8 | 60 | 120.38 | 107.77 | 1.0655 | gained |
+| bs=128 load=verify_16 sharding=ep8 | 60 | 339.69 | 333.39 | 0.9827 | flat |
+| bs=256 load=verify_32 sharding=ep8 | 60 | 466.86 | 469.91 | 0.9959 | flat |
+
+gained on decode_1 decode_1; decode_16 decode_16; decode_32 decode_32; verify_1 verify_1. Expected hit: 6/6. Noise ±1.5%.
+
+## Follow-ups
+
+- candidate for promotion; stack further changes with `depends_on` once it lands.
+
