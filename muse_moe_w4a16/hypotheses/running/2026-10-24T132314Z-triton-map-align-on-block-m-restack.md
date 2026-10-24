@@ -42,7 +42,7 @@ review: proceed
 status: running
 review_at: 2026-10-24T132520Z
 review_companions: null
-stage: implemented
+stage: dispatched
 claimed_at: 2026-10-24T132520Z
 base_sha: a36124bb66d280ad8d9fdcad53738d33f599a856
 base_blob: c7bf9ffedc48b757f56765004e5d65f6ad5ba841
@@ -57,6 +57,8 @@ submission_blob: d9a9375ef4721ab9b28cc9d6364c92e67c7ccc59
 lint_warnings: 8
 attempt_file: 2026-10-24T132521Z-check-triton-map-align-on-block-m-restack.md
 prepared_at: 2026-10-24T132521Z
+job: bc56182a80444d16
+dispatched_at: 2026-10-24T132529Z
 ---
 
 # triton-map-align-on-block-m-restack
