@@ -40,9 +40,16 @@ priority: 3
 kind: primary
 controls_for: null
 review: proceed
-status: queued
+status: running
 review_at: 2026-10-24T164553Z
 review_companions: null
+stage: claimed
+claimed_at: 2026-10-24T164553Z
+base_sha: bcc7ea4a50f9cbe47528f96e0ab15b661666ecdf
+base_blob: 1c0f5fa1bfc4e602b62e5e9edd9df6d5652b297b
+branch: hyp/muse_attention_decode/full-fused-triton-decode1-gate
+worktree: .worktrees/muse_attention_decode/full-fused-triton-decode1-gate
+mode: null
 ---
 
 # full-fused-triton-decode1-gate
