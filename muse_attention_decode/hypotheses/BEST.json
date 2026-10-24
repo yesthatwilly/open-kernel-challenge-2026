@@ -1,17 +1,17 @@
 {
  "problem": "muse_attention_decode",
- "job": "c297440e53334f34",
- "check_job": "9e8fcb3fe4b04458",
- "mode": "submit",
- "speedup": 1.1284429079326423,
+ "job": "facc479992e24a35",
+ "check_job": "facc479992e24a35",
+ "mode": "check",
+ "speedup": 1.1705932092473075,
  "ci": [
-  1.1115162643136527,
-  1.1453695515516318
+  1.1530343111085979,
+  1.1923944446416679
  ],
- "score_us": 3337.607931711875,
- "commit": "3e98bd00dcb717e6e3670b7819e7d1c2331f52ba",
- "submission_blob": "f14211b4b0e88f8b3f683d9f9275b76a64b66e02",
- "slug": "fused-preattention-triton",
- "result": "muse_attention_decode/hypotheses/done/gain/fused-preattention-triton.result.json",
- "updated_at": "2026-10-24T095814Z"
+ "score_us": 3217.4285398611996,
+ "commit": "86dc7133cb6594c6738fddf31911079e71700bfc",
+ "submission_blob": "bc007e643ac0b440147a732071f23d9b3563174c",
+ "slug": "fa3-hdim128-head-pairing",
+ "result": "muse_attention_decode/hypotheses/done/gain/fa3-hdim128-head-pairing.result.json",
+ "updated_at": "2026-10-24T103712Z"
 }
