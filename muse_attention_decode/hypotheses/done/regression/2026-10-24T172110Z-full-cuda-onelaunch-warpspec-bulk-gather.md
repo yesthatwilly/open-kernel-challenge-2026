@@ -89,10 +89,10 @@ controls_for: null
 rewrite_stage: 1
 replaces: "full layer at tp8/page 1: _pre_attention_kernel + splitkv_attn_kernel + splitkv_combine_kernel at decode 1<B<=64 (stage 1); verify A8/B8 or FA3 (stage 2); batch-1 FA3/Triton (stage 3)"
 review: proceed
-status: running
+status: done
 review_at: 2026-10-24T172607Z
 review_companions: null
-stage: dispatched
+stage: harvested
 claimed_at: 2026-10-24T172705Z
 base_sha: c0821b3a0b916336d23e7bbe2a454636be5b21cc
 base_blob: 1c0f5fa1bfc4e602b62e5e9edd9df6d5652b297b
@@ -109,6 +109,13 @@ attempt_file: 2026-10-24T181732Z-submit-full-cuda-onelaunch-warpspec-bulk-gather
 prepared_at: 2026-10-24T181732Z
 job: 4994759f5b4b4278
 dispatched_at: 2026-10-24T181804Z
+outcome: regression
+verdict_detail: regression
+speedup: 0.8238176856758931
+speedup_ci: [0.8114604203907547, 0.8361749509610314]
+harvested_at: 2026-10-24T184714Z
+best_at_harvest: 1.3948738389144513
+promotion: null
 ---
 
 # full-cuda-onelaunch-warpspec-bulk-gather
@@ -224,3 +231,35 @@ OK with warnings: muse_attention_decode/submission.py
 ```
 
 `python3 -I -m py_compile` passed, and the `__pycache__` it left in the worktree was removed.
+
+## Result
+
+- job `4994759f5b4b4278` (submit), status done, passed True, tests 16/16
+- speedup 0.8238x, 95% CI [0.8115, 0.8362], score 4571.763953950535 µs vs SGLang 3766.3 µs
+- best at harvest: {"speedup": 1.3948738389144513, "ci": [1.3739507313307344, 1.415796946498168], "job": "698d4cd3838c4a63"}; base result: muse_attention_decode/hypotheses/done/gain/full-decode-cuda-gather-splitkv.result.json
+- **outcome: regression** (regression)
+- files: `muse_attention_decode/hypotheses/done/regression/full-cuda-onelaunch-warpspec-bulk-gather.result.json`, `muse_attention_decode/hypotheses/done/regression/full-cuda-onelaunch-warpspec-bulk-gather.patch`; branch `hyp/muse_attention_decode/full-cuda-onelaunch-warpspec-bulk-gather`
+
+## Attribution
+
+| shape | w | base µs | hyp µs | delta | verdict |
+|---|---|---|---|---|---|
+| batch=1 ctx=80000 dist=soft heads=tp8 layer=sliding load=decode_1 page=1 | 46 | 13.88 | 13.44 | 1.0061 | flat |
+| batch=1 ctx=80000 dist=coherent heads=tp8 layer=full load=decode_1 page=1 | 16 | 27.93 | 27.35 | 1.0201 | flat |
+| batch=16 ctx=80000 dist=soft heads=tp8 layer=sliding load=decode_16 page=1 spread=agentic | 46 | 20.84 | 21.06 | 1.0004 | flat |
+| batch=16 ctx=80000 dist=coherent heads=tp8 layer=full load=decode_16 page=1 spread=agentic | 16 | 123.02 | 710.8 | 0.1729 | lost |
+| batch=32 ctx=80000 dist=soft heads=tp8 layer=sliding load=decode_32 page=1 spread=agentic | 46 | 25.2 | 25.43 | 1.0089 | flat |
+| batch=32 ctx=80000 dist=coherent heads=tp8 layer=full load=decode_32 page=1 spread=agentic | 16 | 257.75 | 1414.61 | 0.1826 | lost |
+| batch=1 ctx=80000 dist=soft heads=tp8 layer=sliding load=verify_1 page=1 q_len=8 | 46 | 17.63 | 17.68 | 0.9698 | lost |
+| batch=1 ctx=80000 dist=coherent heads=tp8 layer=full load=verify_1 page=1 q_len=8 | 16 | 30.29 | 30.6 | 0.984 | flat |
+| batch=16 ctx=80000 dist=soft heads=tp8 layer=sliding load=verify_16 page=1 q_len=8 spread=agentic | 46 | 22.77 | 22.95 | 1.0034 | flat |
+| batch=16 ctx=80000 dist=coherent heads=tp8 layer=full load=verify_16 page=1 q_len=8 spread=agentic | 16 | 162.83 | 163.0 | 1.0018 | flat |
+| batch=32 ctx=80000 dist=soft heads=tp8 layer=sliding load=verify_32 page=1 q_len=8 spread=agentic | 46 | 29.35 | 29.25 | 0.9983 | flat |
+| batch=32 ctx=80000 dist=coherent heads=tp8 layer=full load=verify_32 page=1 q_len=8 spread=agentic | 16 | 301.91 | 301.35 | 1.0014 | flat |
+
+lost on full decode_16, decode_32; sliding verify_1. Expected hit: 3/5. Noise ±1.5%.
+
+## Follow-ups
+
+- rewrite stage 1 of `full layer at tp8/page 1: _pre_attention_kernel + splitkv_attn_kernel + splitkv_combine_kernel at decode 1<B<=64 (stage 1); verify A8/B8 or FA3 (stage 2); batch-1 FA3/Triton (stage 3)`: read the replaced kernels' own us per shape (profile top_kernels) against the incumbent and the floor, and check which Milestone it reached. The next stage is `/hypothesize muse_attention_decode "<what to fix or tune>" --kind rewrite --depends-on full-cuda-onelaunch-warpspec-bulk-gather --stage 2`; a slow or failed first cut is the expected start, not a do-not-retry.
+
