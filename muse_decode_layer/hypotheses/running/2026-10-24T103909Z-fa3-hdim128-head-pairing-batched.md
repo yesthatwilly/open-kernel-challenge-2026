@@ -63,7 +63,7 @@ review: proceed
 status: running
 review_at: 2026-10-24T104215Z
 review_companions: null
-stage: implemented
+stage: dispatched
 claimed_at: 2026-10-24T104215Z
 base_sha: ed35ab329cbc75571509536e87957f38db9f4df0
 base_blob: de98030423860cfc9507b61d19f82a416223a23d
@@ -78,6 +78,8 @@ submission_blob: 3a358375a50dcc6e19437992f7c610431582ea72
 lint_warnings: 1
 attempt_file: 2026-10-24T104412Z-check-fa3-hdim128-head-pairing-batched.md
 prepared_at: 2026-10-24T104412Z
+job: fb07a3bd3aa54baf
+dispatched_at: 2026-10-24T104423Z
 ---
 
 # fa3-hdim128-head-pairing-batched
