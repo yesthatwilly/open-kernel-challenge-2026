@@ -5,13 +5,14 @@ items here and in each tick's summary. Resolved items move to the log at the bot
 
 ## Open
 
-- 2026-10-24 attention_decode **fa3-hdim128-head-pairing** gained (check 1.171x, CI 1.153-1.192; board best is 1.128x) and is merged to master. Scored submit, if you approve:
-  `okc submit muse_attention_decode /home/user/git/musespark/muse_attention_decode/submission.py --no-wait --json`
-  then `churn.py record-submit muse_attention_decode fa3-hdim128-head-pairing <job>`. A batch-gated follow-up (pair only at batch > 1, where it lost 27-35%) is being minted and may beat it.
+All three run `okc submit <p> <p>/submission.py --no-wait --json` on master, then `churn.py record-submit <p> <slug> <job>`.
 
-- 2026-10-24 moe_w4a16 **post-expert-norm-triton-small-m** gained (check 1.130x, CI 1.113-1.147; no moe scored result yet) and is merged to master. Scored submit, if you approve:
+- 2026-10-24 attention_decode: master is now **paired-heads-launch-cleanup-ab-tune-batch-gate** (check 1.269x, CI 1.250-1.288; board 1.128x). Supersedes the earlier head-pairing ask.
+  `okc submit muse_attention_decode /home/user/git/musespark/muse_attention_decode/submission.py --no-wait --json`
+- 2026-10-24 moe_w4a16: master is **post-expert-norm-triton-small-m** (check 1.130x; no board result yet). The block-m restack in flight may beat it.
   `okc submit muse_moe_w4a16 /home/user/git/musespark/muse_moe_w4a16/submission.py --no-wait --json`
-  then `churn.py record-submit muse_moe_w4a16 post-expert-norm-triton-small-m <job>`. The Marlin block-m sweep (two-smaller 1.092x on the old base) is being restacked on it and may beat it.
+- 2026-10-24 decode_layer: master is now **fa3-hdim128-head-pairing-batched** (check 1.087x; board 1.063x).
+  `okc submit muse_decode_layer /home/user/git/musespark/muse_decode_layer/submission.py --no-wait --json`
 
 ## Standing answers
 

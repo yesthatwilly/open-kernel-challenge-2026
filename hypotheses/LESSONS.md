@@ -40,6 +40,8 @@ profile are in `<problem>/hypotheses/archive/<slug>/`.
 - Split-K ticket-semaphore reduce (masked partial store, debug_barrier, one gpu-scope acq_rel
   atomic_add ticket, winner reloads .cg, fixed-order sum, atomic_xchg reset) passes correctness
   (bf16 pooler 1.166x and qkv-gate 1.143x vs 1.151x master: both neutral, within drift).
+- bf16 router: SPLIT_K 32 at m<=32 was flat with num_stages 2 (1.143x) or 3 (1.152x) vs 1.151x master:
+  the router's small-m grid depth is settled.
 - A 128x128x64 Triton split-K kernel at m=128 (pooler SPLIT_K 4, unpooler 2) lost to cuBLAS (1.116x vs
   1.151x master; pooler-unpooler-m128-wgmma-splitk-semaphore).
 - cuBLAS vs cublasLt backend preference changes nothing on this image (bf16-cublaslt-backend-toggle).
@@ -79,6 +81,10 @@ profile are in `<problem>/hypotheses/archive/<slug>/`.
 - FA3 head pairing (two hdim-64 KV heads viewed as one hdim-128 row, query zero-padded into its half)
   gained 14-24% on full batch 16/32 decode and verify (attention fa3-hdim128-head-pairing, 1.171x) but lost
   27-35% at batch 1, where the pad/unpad launches dominate. Gate it on batch.
+- Writing the padded paired query straight from the pre-attention kernel and un-padding in a Triton
+  norm-gate epilogue took attention to 1.244x (paired-heads-launch-cleanup); gating pairing to batch > 1 on
+  top gave 1.269x. Ported to decode_layer (batch > 1 only) it gained 7-13% on every full batch-16/32 shape
+  (1.087x, fa3-hdim128-head-pairing-batched).
 - One fused sliding-window Triton launch won sliding decode_1 by 24% but lost 13-60% everywhere else,
   2-2.6x on verify (attention sliding-single-launch-fused-attention, 0.945x).
 - A Triton split flash-decode reading both KV heads of a token as one paired 128-byte row (decode
