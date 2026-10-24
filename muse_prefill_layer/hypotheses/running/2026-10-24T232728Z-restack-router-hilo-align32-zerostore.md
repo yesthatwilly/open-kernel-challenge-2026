@@ -30,7 +30,7 @@ base_sha: 40aa18e2a31c08252c27c88f94c261e2614a4998
 base_blob: 635cfee3ac2c3f7c66840b8c8a082cad2fa41a68
 branch: hyp/muse_prefill_layer/restack-router-hilo-align32-zerostore
 worktree: .worktrees/muse_prefill_layer/restack-router-hilo-align32-zerostore
-mode: null
+mode: check
 restack_of: null
 stale_base: null
 implemented_at: 2026-10-24T232747Z
@@ -39,6 +39,8 @@ submission_sha256: 51d9aae3271de2a6a6f75b1685b671555308bb6d0c6e48bd26720d6709d16
 norm_sha256: 334f0fbaafcf919ce79ea57db3b84728feb24fd13b67f5317e29ab65ff53d24e
 submission_blob: 191990ad36719ff9ae1c2c997b53a68fbd2933a8
 lint_warnings: 6
+attempt_file: 2026-10-24T232747Z-check-restack-router-hilo-align32-zerostore.md
+prepared_at: 2026-10-24T232747Z
 ---
 
 # restack-router-hilo-align32-zerostore
