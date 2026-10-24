@@ -50,7 +50,8 @@ priority: 2
 kind: primary
 controls_for: null
 review: required
-status: queued
+status: hold
+hold_reason: same m=128 wgmma split-K design as pooler-unpooler-m128-wgmma-splitk-semaphore (dispatching now); its reviewer asked to wait for that harvest; re-queue by hand if that kernel reaches its target
 ---
 
 # qkv-gate-o-m128-wgmma-splitk-semaphore
