@@ -1,6 +1,6 @@
 # muse_decode_layer hypotheses
 
-Regenerated 2026-10-24T112911Z. Best: 1.0635x [1.0475,1.0794] job `2b1f82408ab64116` (submit)
+Regenerated 2026-10-24T115933Z. Best: 1.0635x [1.0475,1.0794] job `2b1f82408ab64116` (submit)
 
 | created | slug | kind | area | where | outcome | speedup | CI | job | mode | promotion | review | expected hit |
 |---|---|---|---|---|---|---|---|---|---|---|---|---|
@@ -21,7 +21,7 @@ Regenerated 2026-10-24T112911Z. Best: 1.0635x [1.0475,1.0794] job `2b1f82408ab64
 | 2026-10-24T075400Z | triton-flash-decode-full-verify-paired-kv | rewrite | FA3 call | queue | hold |  |  |  |  |  | hold |  |
 | 2026-10-24T075400Z | triton-flash-decode-full-paired-kv | rewrite | FA3 call | done/neutral | neutral | 1.0702 | [1.054,1.086] | e82b11f9d9f64b23 | check |  | proceed | 1/5 |
 | 2026-10-24T100416Z | triton-flash-decode-full-oversub-kv-prefetch | rewrite | FA3 call | running | running |  |  | e55908a05eec4000 | check |  | proceed |  |
-| 2026-10-24T103909Z | fa3-hdim128-head-pairing-batched | primary | FA3 call | running | running |  |  | fb07a3bd3aa54baf | check |  | proceed |  |
+| 2026-10-24T103909Z | fa3-hdim128-head-pairing-batched | primary | FA3 call | done/neutral | neutral | 1.0874 | [1.071,1.104] | fb07a3bd3aa54baf | check |  | proceed | 7/7 |
 
 ## Held
 

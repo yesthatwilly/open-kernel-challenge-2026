@@ -1,6 +1,6 @@
 # muse_bf16_proj hypotheses
 
-Regenerated 2026-10-24T112911Z. Best: 1.1433x [1.1261,1.1604] job `240eb22ea0b6487e` (submit)
+Regenerated 2026-10-24T115933Z. Best: 1.1433x [1.1261,1.1604] job `240eb22ea0b6487e` (submit)
 
 | created | slug | kind | area | where | outcome | speedup | CI | job | mode | promotion | review | expected hit |
 |---|---|---|---|---|---|---|---|---|---|---|---|---|
@@ -21,14 +21,14 @@ Regenerated 2026-10-24T112911Z. Best: 1.1433x [1.1261,1.1604] job `240eb22ea0b64
 | 2026-10-24T032454Z | unpooler-full-triton-skinny-m32-control-blockm16-all-m | control→unpooler-full-triton-skinny-m32 | unpooler GEMM | done/neutral | neutral | 0.9990 | [0.984,1.014] | 09abdd472faa4dce | check |  | proceed | 3/4 |
 | 2026-10-24T074946Z | pooler-triton-splitk2-blockn64-semaphore | primary | pooler GEMM | done/neutral | neutral | 1.1664 | [1.149,1.184] | 08ec203e5717406e | check |  | proceed | 6/7 |
 | 2026-10-24T075006Z | qkv-gate-triton-splitk4-blockn64-semaphore | primary | qkv GEMM | done/neutral | neutral | 1.1431 | [1.126,1.160] | 135ef6499875416a | check |  | proceed | 4/6 |
-| 2026-10-24T075025Z | router-splitk32-small-m-all-loads-in-flight | primary | router GEMM | running | running |  |  | 1e339074b1844a43 | check |  | proceed |  |
+| 2026-10-24T075025Z | router-splitk32-small-m-all-loads-in-flight | primary | router GEMM | done/neutral | neutral | 1.1427 | [1.126,1.160] | 1e339074b1844a43 | check |  | proceed | 2/6 |
 | 2026-10-24T075041Z | router-splitk-semaphore-no-memset | primary | router GEMM | queue | hold |  |  |  |  |  | proceed |  |
 | 2026-10-24T075111Z | unpooler-slice-triton-splitk8-semaphore | primary | unpooler GEMM | done/neutral | neutral | 1.1546 | [1.137,1.172] | bb31bb36545a47bb | check |  | proceed | 5/5 |
 | 2026-10-24T075347Z | pooler-triton-splitk2-blockn64-semaphore-control-blockk256 | control→pooler-triton-splitk2-blockn64-semaphore | pooler GEMM | running | running |  |  | 75d595a29a4c4b57 | check |  | proceed |  |
 | 2026-10-24T092553Z | pooler-unpooler-m128-wgmma-splitk-semaphore | primary | pooler GEMM + unpooler GEMM (m=128) | done/regression | regression | 1.1158 | [1.099,1.133] | d34fd76f9c444728 | check |  | proceed | 3/6 |
 | 2026-10-24T092629Z | qkv-gate-o-m128-wgmma-splitk-semaphore | primary | qkv GEMM + o GEMM (m=128) | queue | hold |  |  |  |  |  | required |  |
 | 2026-10-24T092648Z | pooler-splitk2-tma-weight-stream | primary | pooler GEMM | running | running |  |  | 4e89311eefdc4bc3 | check |  | proceed |  |
-| 2026-10-24T103959Z | router-splitk32-small-m-all-loads-in-flight-control-stages3 | control→router-splitk32-small-m-all-loads-in-flight | router GEMM | running | running |  |  | 4685bac7a662454d | check |  | proceed |  |
+| 2026-10-24T103959Z | router-splitk32-small-m-all-loads-in-flight-control-stages3 | control→router-splitk32-small-m-all-loads-in-flight | router GEMM | done/neutral | neutral | 1.1518 | [1.135,1.169] | 4685bac7a662454d | check |  | proceed | 4/6 |
 | 2026-10-24T112147Z | bf16-shape-gated-triton-winners-combo | primary | bf16 GEMM dispatch (shape-gated Triton routing, m<=16) | queue | hold |  |  |  |  |  | proceed |  |
 | 2026-10-24T112213Z | bf16-m128-nn-weight-layout-probe | primary | bf16 GEMM dispatch (m>=128, weight layout) | running | running |  |  | 2dc5dce078be4a24 | check |  | proceed |  |
 
