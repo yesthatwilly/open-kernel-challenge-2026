@@ -29,10 +29,10 @@ priority: 4
 kind: primary
 controls_for: null
 review: proceed
-status: running
+status: done
 review_at: 2026-10-24T032411Z
 review_companions: null
-stage: dispatched
+stage: harvested
 claimed_at: 2026-10-24T032412Z
 base_sha: 7c54c225a5de1458c4cd57d1fea92d4b3895d9f5
 base_blob: 11fbc1957daf7294cd2810ff82a0aad2f25644bd
@@ -49,6 +49,13 @@ attempt_file: 2026-10-24T032534Z-check-align-single-token-ep.md
 prepared_at: 2026-10-24T032534Z
 job: a7bb0cecaf8d4de1
 dispatched_at: 2026-10-24T032541Z
+outcome: neutral
+verdict_detail: unproven-vs-best
+speedup: 0.995123635495788
+speedup_ci: [0.9801967809633512, 1.0100504900282248]
+harvested_at: 2026-10-24T052413Z
+best_at_harvest: 0.9887547325362586
+promotion: null
 ---
 
 # align-single-token-ep
@@ -118,3 +125,29 @@ OK with warnings: /home/user/git/musespark/.worktrees/muse_moe_w4a16/align-singl
 ```
 
 The warning is the pre-existing synchronize() in prepare(), untouched by this diff. `py_compile` OK; __pycache__ removed.
+
+## Result
+
+- job `a7bb0cecaf8d4de1` (check), status done, passed True, tests 5/5
+- speedup 0.9951x, 95% CI [0.9802, 1.0101], score 13514.401146044253 µs vs SGLang 13448.5 µs
+- best at harvest: {"speedup": 0.9887547325362586, "ci": [0.9739234115482147, 1.0035860535243024], "job": "fb2cc736613747df"}; base result: muse_moe_w4a16/hypotheses/done/gain/sglang-marlin-path-parity.result.json
+- **outcome: neutral** (unproven-vs-best)
+- files: `muse_moe_w4a16/hypotheses/done/neutral/align-single-token-ep.result.json`, `muse_moe_w4a16/hypotheses/done/neutral/align-single-token-ep.patch`; branch `hyp/muse_moe_w4a16/align-single-token-ep`
+
+## Attribution
+
+| shape | w | base µs | hyp µs | delta | verdict |
+|---|---|---|---|---|---|
+| bs=1 load=decode_1 sharding=ep8 | 60 | 80.23 | 76.99 | 1.0411 | gained |
+| bs=16 load=decode_16 sharding=ep8 | 60 | 191.41 | 190.58 | 0.9998 | flat |
+| bs=32 load=decode_32 sharding=ep8 | 60 | 208.15 | 207.24 | 1.0006 | flat |
+| bs=8 load=verify_1 sharding=ep8 | 60 | 152.04 | 144.7 | 0.9971 | flat |
+| bs=128 load=verify_16 sharding=ep8 | 60 | 462.46 | 469.84 | 1.0007 | flat |
+| bs=256 load=verify_32 sharding=ep8 | 60 | 621.28 | 624.07 | 1.0001 | flat |
+
+gained on decode_1 decode_1. Expected hit: 3/3. Noise ±1.5%.
+
+## Follow-ups
+
+- unproven-vs-best: the change is not proven either way; a stacked hypothesis (`depends_on: align-single-token-ep`) that adds a further change in the same area is the only way to learn more (identical code is never re-run).
+

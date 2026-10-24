@@ -1,0 +1,47 @@
+diff --git a/muse_moe_w4a16/submission.py b/muse_moe_w4a16/submission.py
+index 11fbc19..6075ec2 100644
+--- a/muse_moe_w4a16/submission.py
++++ b/muse_moe_w4a16/submission.py
+@@ -17,6 +17,10 @@ expert_map to [-1] U [0, 32), so 32 is the true expert count; SGLang's wrapper t
+ sorted_ids and block_experts from 32 experts (M*8 + 32*(block_size_m-1) entries instead of
+ M*8 + 256*(block_size_m-1)) and its per-expert cumsum runs over 32 counters.
+ 
++Hypothesis align-single-token-ep: at num_tokens == 1 (shape-only branch) the align is SGLang's
++moe_align_single_token on the expert_map-mapped ids, under EP as well (baseline.py uses it only
++when expert_map is None); every other shape keeps moe_align_block_size over 32 experts.
++
+ Differs from SGLang: the expert all-reduce is not run."""
+ 
+ from typing import TypedDict
+@@ -35,6 +39,18 @@ from sglang.srt.layers.moe.fused_moe_triton import moe_align_block_size
+ from sglang.srt.layers.quantization.marlin_utils import marlin_make_workspace
+ from sglang.srt.layers.quantization.marlin_utils_fp4 import prepare_moe_nvfp4_layer_for_marlin
+ 
++# Hypothesis align-single-token-ep: at num_tokens == 1 use SGLang's single-token align under EP
++# too. Imported here so a missing op is reported at import time; if it is absent, bs=1 falls back
++# to moe_align_block_size so the run still produces a result.
++try:
++    from sglang.kernels.ops.moe.moe_align_single_token import moe_align_single_token
++except ImportError as _e:  # pragma: no cover - depends on the judge's SGLang build
++    moe_align_single_token = None
++    print(f"[align-single-token-ep] moe_align_single_token unavailable ({_e!r}); "
++          "bs=1 path: moe_align_block_size (fallback)", flush=True)
++else:
++    print("[align-single-token-ep] bs=1 path: moe_align_single_token", flush=True)
++
+ 
+ class Weights(TypedDict):
+     w13: torch.Tensor          # uint8 [256, 2I, H/2], gate rows [0, I) then up rows [I, 2I), packed E2M1
+@@ -135,9 +151,9 @@ def kernel_fn(data: Inputs, state: dict) -> torch.Tensor:
+     for block_size_m in BLOCK_SIZE_M_CANDIDATES:
+         if num_tokens * TOP_K / bank["count"] / block_size_m < 0.9:
+             break
+-    if num_tokens == 1 and expert_map is None:
+-        from sglang.kernels.ops.moe.moe_align_single_token import moe_align_single_token
+-
++    if num_tokens == 1 and moe_align_single_token is not None:
++        # Shape-only branch: one token, ids already mapped by expert_map (-1 for remote experts).
++        # n_padded stays on device and goes straight to Marlin; no host sync.
+         sorted_ids, block_experts, n_padded = moe_align_single_token(local_ids, block_size_m)
+     else:
+         # The one change from baseline.py: the ids are already local ([-1] U [0, count)), so
