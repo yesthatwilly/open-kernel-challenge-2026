@@ -38,13 +38,15 @@ base_sha: fd196766321a96a51dff2121a23a1567a5ad7180
 base_blob: c6854f093588da524e63657576b27ed720756e32
 branch: hyp/muse_attention_decode/splitkv-combine-wide-mlp
 worktree: .worktrees/muse_attention_decode/splitkv-combine-wide-mlp
-mode: null
+mode: check
 implemented_at: 2026-10-24T184625Z
 impl_commit: 34daa031e5c47e356ac5099160925f3af5db09a9
 submission_sha256: 399fb765e78b10807dafa1d2ebb0f35b2e103c0041c094276ce89c0aad97e588
 norm_sha256: ee240910e1745bae19b7d4007fa4d3c5a6aa9e2fbc0fe5447d17f178d9cec162
 submission_blob: 31ed3c702d83c72d0d5fb8de074c4d890fc9496e
 lint_warnings: 0
+attempt_file: 2026-10-24T184625Z-check-splitkv-combine-wide-mlp.md
+prepared_at: 2026-10-24T184625Z
 ---
 
 # splitkv-combine-wide-mlp
