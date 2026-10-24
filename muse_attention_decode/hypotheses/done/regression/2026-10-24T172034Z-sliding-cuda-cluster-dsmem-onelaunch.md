@@ -99,10 +99,10 @@ controls_for: null
 rewrite_stage: 1
 replaces: "sliding layer at tp8/page 1, every batch, decode and verify: _pre_attention_kernel + FA3 prepare_varlen_num_blocks + FA3 main + FlashAttnFwdCombine + sglang rms_norm_gate, and the Triton _sliding_fused_kernel at decode_1"
 review: proceed
-status: running
+status: done
 review_at: 2026-10-24T172529Z
 review_companions: null
-stage: dispatched
+stage: harvested
 claimed_at: 2026-10-24T172705Z
 base_sha: 2a1c23034c065ac604a00e741363c6bf9812e9de
 base_blob: 1c0f5fa1bfc4e602b62e5e9edd9df6d5652b297b
@@ -119,6 +119,13 @@ attempt_file: 2026-10-24T181732Z-submit-sliding-cuda-cluster-dsmem-onelaunch.md
 prepared_at: 2026-10-24T181732Z
 job: 6821e67ff3e749b7
 dispatched_at: 2026-10-24T181804Z
+outcome: regression
+verdict_detail: regression
+speedup: 1.22057141323443
+speedup_ci: [1.2022628420359136, 1.2388799844329463]
+harvested_at: 2026-10-24T184714Z
+best_at_harvest: 1.3948738389144513
+promotion: null
 ---
 
 # sliding-cuda-cluster-dsmem-onelaunch
@@ -285,3 +292,35 @@ CLEAN: /home/user/git/musespark/.worktrees/muse_attention_decode/sliding-cuda-cl
 ```
 
 `python3 -I -m py_compile`: OK (the `__pycache__` it left in the worktree was removed).
+
+## Result
+
+- job `6821e67ff3e749b7` (submit), status done, passed True, tests 16/16
+- speedup 1.2206x, 95% CI [1.2023, 1.2389], score 3085.685900196175 µs vs SGLang 3766.3 µs
+- best at harvest: {"speedup": 1.3948738389144513, "ci": [1.3739507313307344, 1.415796946498168], "job": "698d4cd3838c4a63"}; base result: muse_attention_decode/hypotheses/done/gain/full-decode-cuda-gather-splitkv.result.json
+- **outcome: regression** (regression)
+- files: `muse_attention_decode/hypotheses/done/regression/sliding-cuda-cluster-dsmem-onelaunch.result.json`, `muse_attention_decode/hypotheses/done/regression/sliding-cuda-cluster-dsmem-onelaunch.patch`; branch `hyp/muse_attention_decode/sliding-cuda-cluster-dsmem-onelaunch`
+
+## Attribution
+
+| shape | w | base µs | hyp µs | delta | verdict |
+|---|---|---|---|---|---|
+| batch=1 ctx=80000 dist=soft heads=tp8 layer=sliding load=decode_1 page=1 | 46 | 13.88 | 11.82 | 1.17 | gained |
+| batch=1 ctx=80000 dist=coherent heads=tp8 layer=full load=decode_1 page=1 | 16 | 27.93 | 27.8 | 1.0117 | flat |
+| batch=16 ctx=80000 dist=soft heads=tp8 layer=sliding load=decode_16 page=1 spread=agentic | 46 | 20.84 | 15.31 | 1.3627 | gained |
+| batch=16 ctx=80000 dist=coherent heads=tp8 layer=full load=decode_16 page=1 spread=agentic | 16 | 123.02 | 122.6 | 1.0037 | flat |
+| batch=32 ctx=80000 dist=soft heads=tp8 layer=sliding load=decode_32 page=1 spread=agentic | 46 | 25.2 | 25.84 | 0.9916 | flat |
+| batch=32 ctx=80000 dist=coherent heads=tp8 layer=full load=decode_32 page=1 spread=agentic | 16 | 257.75 | 258.6 | 0.9984 | flat |
+| batch=1 ctx=80000 dist=soft heads=tp8 layer=sliding load=verify_1 page=1 q_len=8 | 46 | 17.63 | 28.45 | 0.6182 | lost |
+| batch=1 ctx=80000 dist=coherent heads=tp8 layer=full load=verify_1 page=1 q_len=8 | 16 | 30.29 | 30.03 | 1.0056 | flat |
+| batch=16 ctx=80000 dist=soft heads=tp8 layer=sliding load=verify_16 page=1 q_len=8 spread=agentic | 46 | 22.77 | 41.52 | 0.5495 | lost |
+| batch=16 ctx=80000 dist=coherent heads=tp8 layer=full load=verify_16 page=1 q_len=8 spread=agentic | 16 | 162.83 | 162.91 | 1.0018 | flat |
+| batch=32 ctx=80000 dist=soft heads=tp8 layer=sliding load=verify_32 page=1 q_len=8 spread=agentic | 46 | 29.35 | 65.57 | 0.4463 | lost |
+| batch=32 ctx=80000 dist=coherent heads=tp8 layer=full load=verify_32 page=1 q_len=8 spread=agentic | 16 | 301.91 | 301.81 | 1.0007 | flat |
+
+gained on sliding decode_1, decode_16; lost on sliding verify_1, verify_16, verify_32. Expected hit: 3/7. Noise ±1.5%.
+
+## Follow-ups
+
+- rewrite stage 1 of `sliding layer at tp8/page 1, every batch, decode and verify: _pre_attention_kernel + FA3 prepare_varlen_num_blocks + FA3 main + FlashAttnFwdCombine + sglang rms_norm_gate, and the Triton _sliding_fused_kernel at decode_1`: read the replaced kernels' own us per shape (profile top_kernels) against the incumbent and the floor, and check which Milestone it reached. The next stage is `/hypothesize muse_attention_decode "<what to fix or tune>" --kind rewrite --depends-on sliding-cuda-cluster-dsmem-onelaunch --stage 2`; a slow or failed first cut is the expected start, not a do-not-retry.
+

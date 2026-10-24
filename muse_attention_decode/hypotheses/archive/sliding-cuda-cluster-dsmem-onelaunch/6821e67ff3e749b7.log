@@ -1,0 +1,39 @@
+[splitkv] load_inline compiled in 40.5s
+[splitkv] self-check kv_scale=1.0 grid=device: rel L2 1.69e-03, finite True
+[splitkv] self-check kv_scale=0.25 grid=3: rel L2 1.66e-03, finite True
+[splitkv] self-check kv_scale=1.0 grid=3: rel L2 1.62e-03, finite True
+[slide] load_inline (fp8qk) compiled in 45.4s
+[slide] fp8qk L=1: cudaOccupancyMaxActiveClusters C=8 -> 30, C=16 -> 14 (smem 70656 B/CTA, 104 regs, 32 B local/spill)
+[slide] fp8qk L=8: cudaOccupancyMaxActiveClusters C=8 -> 30, C=16 -> 14 (smem 77824 B/CTA, 98 regs, 32 B local/spill)
+[slide] path batch=1 q_len=1 page=1 hq=16 kv_scale=1.0: CLUSTER kernel (None, C=16)
+[slide] self-check fp8qk L=1 B=1 C=16 kv_scale=1: rel L2 1.56e-03, finite True, cache k match 1.0000 rel 0.0e+00, v match 1.0000 rel 0.0e+00
+[slide] path batch=3 q_len=1 page=1 hq=16 kv_scale=0.015625: CLUSTER kernel (None, C=8)
+[slide] self-check fp8qk L=1 B=3 C=8 kv_scale=0.015625: rel L2 1.66e-03, finite True, cache k match 1.0000 rel 0.0e+00, v match 1.0000 rel 0.0e+00
+[slide] path batch=5 q_len=1 page=1 hq=16 kv_scale=1.0: CLUSTER kernel (None, C=8)
+[slide] self-check fp8qk L=1 B=5 C=8 kv_scale=1: rel L2 1.62e-03, finite True, cache k match 1.0000 rel 0.0e+00, v match 1.0000 rel 0.0e+00
+[slide] path batch=1 q_len=1 page=1 hq=16 kv_scale=0.015625: CLUSTER kernel (None, C=16)
+[slide] self-check fp8qk L=1 B=1 C=16 kv_scale=0.015625: rel L2 1.65e-03, finite True, cache k match 1.0000 rel 0.0e+00, v match 1.0000 rel 0.0e+00
+[slide] self-check fp8qk L=1: graph capture + replay matches
+[slide] path batch=1 q_len=8 page=1 hq=16 kv_scale=1.0: CLUSTER kernel (None, C=16)
+[slide] self-check fp8qk L=8 B=1 C=16 kv_scale=1: rel L2 1.60e-03, finite True, cache k match 1.0000 rel 0.0e+00, v match 1.0000 rel 0.0e+00
+[slide] path batch=3 q_len=8 page=1 hq=16 kv_scale=0.015625: CLUSTER kernel (None, C=8)
+[slide] self-check fp8qk L=8 B=3 C=8 kv_scale=0.015625: rel L2 1.64e-03, finite True, cache k match 1.0000 rel 0.0e+00, v match 1.0000 rel 0.0e+00
+[slide] path batch=5 q_len=8 page=1 hq=16 kv_scale=1.0: CLUSTER kernel (None, C=8)
+[slide] self-check fp8qk L=8 B=5 C=8 kv_scale=1: rel L2 1.65e-03, finite True, cache k match 1.0000 rel 0.0e+00, v match 1.0000 rel 0.0e+00
+[slide] path batch=1 q_len=8 page=1 hq=16 kv_scale=0.015625: CLUSTER kernel (None, C=16)
+[slide] self-check fp8qk L=8 B=1 C=16 kv_scale=0.015625: rel L2 1.67e-03, finite True, cache k match 1.0000 rel 0.0e+00, v match 1.0000 rel 0.0e+00
+[slide] self-check fp8qk L=8: graph capture + replay matches
+[slide] PATH CHOSEN q_len=1: CLUSTER kernel (fp8qk), C=16 at batch 1, C=8 at batch 2..64
+[slide] PATH CHOSEN q_len=8: CLUSTER kernel (fp8qk), C=16 at batch 1, C=8 at batch 2..64
+[slide] path batch=1 q_len=1 page=64 hq=16 kv_scale=1.0: master Triton _sliding_fused_kernel
+[slide] path batch=3 q_len=1 page=64 hq=16 kv_scale=1.0: master FA3
+[slide] path batch=5 q_len=8 page=1 hq=16 kv_scale=1.0: CLUSTER kernel (fp8qk, C=8)
+[slide] path batch=4 q_len=1 page=1 hq=16 kv_scale=1.0: CLUSTER kernel (fp8qk, C=8)
+[slide] path batch=3 q_len=8 page=1 hq=16 kv_scale=0.015625: CLUSTER kernel (fp8qk, C=8)
+[slide] path batch=4 q_len=8 page=1 hq=16 kv_scale=1.0: CLUSTER kernel (fp8qk, C=8)
+[slide] path batch=1 q_len=1 page=1 hq=16 kv_scale=1.0: CLUSTER kernel (fp8qk, C=16)
+[slide] path batch=16 q_len=1 page=1 hq=16 kv_scale=1.0: CLUSTER kernel (fp8qk, C=8)
+[slide] path batch=32 q_len=1 page=1 hq=16 kv_scale=1.0: CLUSTER kernel (fp8qk, C=8)
+[slide] path batch=1 q_len=8 page=1 hq=16 kv_scale=1.0: CLUSTER kernel (fp8qk, C=16)
+[slide] path batch=16 q_len=8 page=1 hq=16 kv_scale=1.0: CLUSTER kernel (fp8qk, C=8)
+[slide] path batch=32 q_len=8 page=1 hq=16 kv_scale=1.0: CLUSTER kernel (fp8qk, C=8)
