@@ -41,7 +41,9 @@ hardware and these shapes (parallelism, bytes in flight, dequant cost, tensor-co
 correctness plan adequate, is the stage's milestone readable from the profile, and what is the
 single biggest risk to fix in the next stage. Do not hold a rewrite because one run cannot
 attribute a headline change or because the first stage may be slower than the incumbent; hold it
-only for a rules problem or a design that cannot reach its floor. Companions are rarely useful for
+only for a rules problem or a design that cannot reach its floor. Ambition is not a defect: the
+user keeps 40% of the day's checks for rewrites, so a large overhaul is judged on whether its
+target is physically reachable and its plan sound, not on how much it changes. Companions are rarely useful for
 a rewrite: the next stage is the follow-up.
 
 Return ONLY a JSON object, no prose around it, with this schema:

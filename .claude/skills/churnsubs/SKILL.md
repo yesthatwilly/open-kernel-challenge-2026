@@ -119,6 +119,13 @@ is eligible once the previous stage has run, whatever its outcome, because it bu
 regression is not a do-not-retry for a rewrite. Promotion is unchanged: only a stage whose headline
 CI clears the floor lands on master.
 
+**The 40% rule** (the user, 2026-10-24): `REWRITE_SHARE` (40%) of each problem's daily checks is
+kept for rewrites and the rest for everything else; `budget` enforces it from the day's dispatched
+checks. A side with nothing eligible releases its share to the other, and both shares open in the
+last 2 hours, so the split never leaves a check unspent. When a problem has no eligible rewrite,
+that is a shortfall to fix by minting one (`/hypothesize <p> --kind rewrite`), not by spending the
+share on primaries all day.
+
 ## What to tell the user each tick
 
 Three lines unless something needs them: what was harvested (outcome per slug), what the

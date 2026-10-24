@@ -38,6 +38,7 @@ ALIASES = {
 OUTCOMES = ["gain", "neutral", "regression", "failed", "rejected"]
 MAX_IN_FLIGHT = 8          # M: per problem
 PER_TICK_CAP = 4           # C: per problem per tick
+REWRITE_SHARE = 0.4        # share of each day's checks kept for kind: rewrite (user, 2026-10-24)
 GLOBAL_TICK_CAP = 6
 SUBMIT_FLOOR = 1.0         # a check-proven gain is promoted with a scored run only if ci.low >= this
 STALE_H = 6.0              # queued this long: no longer counts as in flight
@@ -1138,6 +1139,24 @@ def _eligible_queue(p):
     return items
 
 
+def checks_today_by_kind(p, t=None):
+    """Checks dispatched this UTC day, as (rewrites, everything else), from running and done files."""
+    day = (t or now()).strftime("%Y-%m-%d")
+    r = o = 0
+    dirs = [hdir(p, "running")] + [os.path.join(hdir(p, "done"), d) for d in os.listdir(hdir(p, "done"))
+                                   if os.path.isdir(os.path.join(hdir(p, "done"), d))]
+    for d in dirs:
+        for f in list_md(d):
+            h = read_hyp(os.path.join(d, f))
+            if h.get("mode") != "check" or str(h.get("dispatched_at") or "")[:10] != day:
+                continue
+            if h.get("kind") == "rewrite":
+                r += 1
+            else:
+                o += 1
+    return r, o
+
+
 def budget_for(p, q, t=None):
     lim = q.get(p) or {}
     Lc = ((lim.get("checks") or {}).get("left")) or 0
@@ -1155,17 +1174,34 @@ def budget_for(p, q, t=None):
     need = L
     pace = need if H <= 2 else math.ceil(need / max(H - 1, 0.5))
     N = max(0, min(L, len(Q), PER_TICK_CAP, MAX_IN_FLIGHT - F, pace))
-    modes = []
-    lc = Lc
-    for h in Q[:N]:
-        if lc > 0:
-            modes.append("check")
+    # the 40% rule: REWRITE_SHARE of the day's checks goes to rewrites, the rest to everything else.
+    # Each side's unused share is released to the other when it has nothing eligible, and in the
+    # last 2 hours, so the split never leaves a check unspent.
+    per_day = ((lim.get("checks") or {}).get("per_day")) or 0
+    r_used, o_used = checks_today_by_kind(p, t)
+    r_share = math.ceil(REWRITE_SHARE * per_day)
+    r_left, o_left = max(0, r_share - r_used), max(0, per_day - r_share - o_used)
+    has_r = any(h.get("kind") == "rewrite" for h in Q)
+    has_o = any(h.get("kind") != "rewrite" for h in Q)
+    if H <= 2 or not has_o:
+        r_left = Lc
+    if H <= 2 or not has_r:
+        o_left = Lc
+    picks, lc = [], Lc
+    for h in Q:
+        if len(picks) >= N:
+            break
+        rw = h.get("kind") == "rewrite"
+        if lc > 0 and (r_left if rw else o_left) > 0:
+            picks.append((h, "check"))
             lc -= 1
-        elif h.get("risk") == "high":
-            modes.append(None)   # high risk takes a check only; none left
-        else:
-            modes.append("submit")
-    picks = [(h, m) for h, m in zip(Q[:N], modes) if m]
+            if rw:
+                r_left -= 1
+            else:
+                o_left -= 1
+        elif h.get("risk") != "high" and not rw:
+            picks.append((h, "submit"))
+        # a rewrite or high-risk pick with no check in its share waits for one
     ticks_left = max(1, int((H - 0.25) * 3600 / 900))
     projected = min(need, len(Q), pace * ticks_left)
     shortfall = max(0, need - projected)

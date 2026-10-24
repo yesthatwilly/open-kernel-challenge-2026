@@ -11,6 +11,11 @@ items here and in each tick's summary. Resolved items move to the log at the bot
 
 - Scored runs for experiments: when a problem's checks are spent, churnsubs may dispatch reviewed hypotheses as scored submits (never risk: high), since the board shows only the best run. (2026-10-24, the user: "yes, do all three")
 
+- The 40% rule: 40% of each problem's daily checks go to ambitious rewrites (whole-subsystem or
+  whole-layer overhauls), the rest to incremental hypotheses. Unused shares are released so
+  nothing idles. Mint big rewrites so the share is always fed. (2026-10-24, the user: "yes, add
+  the 40% rule and mint the big rewrites")
+
 - Scored submits (promotions with CI low above 1.0): ask each time, but never hold the loop for
   the answer. Leave the planned `okc submit` command here and keep going.
 - Prefill expert-dequant family (per-call BF16 copy of NVFP4 expert weights): keep held. Pursue

@@ -57,7 +57,11 @@ H="python3 -I $CLAUDE_PROJECT_DIR/.claude/skills/hypothesize/bin/hyp.py"
    flight, tensor-core path, dequant). A rewrite is judged on the replaced kernels' time against
    its Milestones, not on the headline; later stages use `--depends-on <previous stage>
    --stage N+1` and build on that code whatever its score. churnsubs runs rewrites ahead of
-   primaries.
+   primaries and keeps 40% of each day's checks for them, so every `all` round mints at least
+   one rewrite per problem whose queue has none. Aim big: a whole-layer or whole-pipeline
+   overhaul (one fused or persistent kernel across stages, a new parallel decomposition, a
+   different data layout) is in scope when the profile says the gap to the leaders is
+   structural. Plan it as stages, each with a readable milestone and a fallback to the incumbent.
 4. Every new file starts with `review: required`. Before /churnsubs claims it, a fresh Opus
    subagent reviews it adversarially (justification, confounding by landed hypotheses, whether
    an A/B companion with another hypothesis reverted or retuned is needed) and may queue
