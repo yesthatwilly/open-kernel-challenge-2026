@@ -1,0 +1,29 @@
+diff --git a/muse_moe_w4a16/submission.py b/muse_moe_w4a16/submission.py
+index 11fbc19..3253b43 100644
+--- a/muse_moe_w4a16/submission.py
++++ b/muse_moe_w4a16/submission.py
+@@ -7,7 +7,7 @@ baseline.py composes it: prepare() repacks this GPU's 32 experts into Marlin's l
+ prepare_moe_nvfp4_layer_for_marlin (SGLang's own lossless repack, NVFP4 stays NVFP4), builds
+ the expert_map (-1 for remote experts), the Marlin workspace and the effective (1 + w) weight of
+ the post-expert norm; kernel_fn maps the global ids to local ids, picks block_size_m, runs
+-moe_align_block_size, moe_wna16_marlin_gemm for w13 (W4A16, FP32 reduce), silu_and_mul,
++moe_align_block_size, moe_wna16_marlin_gemm for w13 (W4A16, FP32 reduce; BF16 reduce at >= 128 tokens), silu_and_mul,
+ moe_wna16_marlin_gemm for w2 and the Triton post-expert-norm weighted sum. Activations stay
+ BF16 where SGLang keeps them BF16; nothing derived from the inputs is kept between calls.
+ 
+@@ -153,10 +153,14 @@ def kernel_fn(data: Inputs, state: dict) -> torch.Tensor:
+                   b_q_type=scalar_types.float4_e2m1f, is_k_full=True, use_atomic_add=False,
+                   use_fp32_reduce=True, is_zp_float=False)
+     ws = state["workspace"]
++    # Hypothesis w13-marlin-bf16-reduce-verify: at the verify shapes (>= 128 tokens) the w13 call
++    # combines split-k partials in bf16 instead of through the fp32 c_tmp scratch (shape-only
++    # branch; atomic add stays off; w2 and the smaller shapes keep fp32 reduce).
++    w13_args = dict(common, use_fp32_reduce=num_tokens < 128)
+     cache1 = moe_wna16_marlin_gemm(
+         x, cache1, bank["w13"], None, bank["w13_s"], bank["w13_gs"], None, None, None, ws,
+         sorted_ids, block_experts, n_padded, topk_weights, top_k=TOP_K,
+-        size_m=num_tokens, size_n=gemm1_n, size_k=size_k, **common)
++        size_m=num_tokens, size_n=gemm1_n, size_k=size_k, **w13_args)
+     silu_and_mul(cache1.view(-1, gemm1_n), cache2, expert_ids=local_ids.view(-1), expert_step=1)
+     y = moe_wna16_marlin_gemm(
+         cache2, cache3, bank["w2"], None, bank["w2_s"], bank["w2_gs"], None, None, None, ws,

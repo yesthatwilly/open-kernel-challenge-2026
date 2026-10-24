@@ -27,10 +27,10 @@ priority: 5
 kind: primary
 controls_for: null
 review: proceed
-status: running
+status: done
 review_at: 2026-10-24T040540Z
 review_companions: null
-stage: dispatched
+stage: harvested
 claimed_at: 2026-10-24T040540Z
 base_sha: 58b624e7f1438bb67b466c3fa63d9278bcff3406
 base_blob: 11fbc1957daf7294cd2810ff82a0aad2f25644bd
@@ -47,6 +47,13 @@ attempt_file: 2026-10-24T040655Z-check-w13-marlin-bf16-reduce-verify.md
 prepared_at: 2026-10-24T040655Z
 job: 8d389f3d3e2d473f
 dispatched_at: 2026-10-24T040704Z
+outcome: neutral
+verdict_detail: within-ci
+speedup: 0.9840449302145878
+speedup_ci: [0.969284256261369, 0.9988056041678065]
+harvested_at: 2026-10-24T060410Z
+best_at_harvest: 0.9887547325362586
+promotion: null
 ---
 
 # w13-marlin-bf16-reduce-verify
@@ -119,3 +126,29 @@ OK with warnings: /home/user/git/musespark/.worktrees/muse_moe_w4a16/w13-marlin-
 ```
 
 `python3 -I -m py_compile`: OK (worktree __pycache__ removed). The one warning is pre-existing (in `prepare()`, unchanged by this diff).
+
+## Result
+
+- job `8d389f3d3e2d473f` (check), status done, passed True, tests 5/5
+- speedup 0.9840x, 95% CI [0.9693, 0.9988], score 13666.550771281678 µs vs SGLang 13448.5 µs
+- best at harvest: {"speedup": 0.9887547325362586, "ci": [0.9739234115482147, 1.0035860535243024], "job": "fb2cc736613747df"}; base result: muse_moe_w4a16/hypotheses/done/gain/sglang-marlin-path-parity.result.json
+- **outcome: neutral** (within-ci)
+- files: `muse_moe_w4a16/hypotheses/done/neutral/w13-marlin-bf16-reduce-verify.result.json`, `muse_moe_w4a16/hypotheses/done/neutral/w13-marlin-bf16-reduce-verify.patch`; branch `hyp/muse_moe_w4a16/w13-marlin-bf16-reduce-verify`
+
+## Attribution
+
+| shape | w | base µs | hyp µs | delta | verdict |
+|---|---|---|---|---|---|
+| bs=1 load=decode_1 sharding=ep8 | 60 | 80.23 | 80.0 | 1.004 | flat |
+| bs=16 load=decode_16 sharding=ep8 | 60 | 191.41 | 190.25 | 0.998 | flat |
+| bs=32 load=decode_32 sharding=ep8 | 60 | 208.15 | 207.69 | 0.999 | flat |
+| bs=8 load=verify_1 sharding=ep8 | 60 | 152.04 | 147.1 | 0.9986 | flat |
+| bs=128 load=verify_16 sharding=ep8 | 60 | 462.46 | 465.44 | 0.9879 | flat |
+| bs=256 load=verify_32 sharding=ep8 | 60 | 621.28 | 625.04 | 0.9839 | flat |
+
+no shape moved outside noise. Expected hit: 1/3. Noise ±1.5%.
+
+## Follow-ups
+
+- within-ci: the change is not proven either way; a stacked hypothesis (`depends_on: w13-marlin-bf16-reduce-verify`) that adds a further change in the same area is the only way to learn more (identical code is never re-run).
+
