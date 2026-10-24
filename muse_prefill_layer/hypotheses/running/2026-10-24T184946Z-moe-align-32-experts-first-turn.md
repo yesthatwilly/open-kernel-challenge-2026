@@ -39,13 +39,15 @@ base_sha: 32a19128ff06ed728e345e32098cd6f0a13cea32
 base_blob: 635cfee3ac2c3f7c66840b8c8a082cad2fa41a68
 branch: hyp/muse_prefill_layer/moe-align-32-experts-first-turn
 worktree: .worktrees/muse_prefill_layer/moe-align-32-experts-first-turn
-mode: null
+mode: check
 implemented_at: 2026-10-24T231833Z
 impl_commit: 1f58c81d8380134a4c855a96cc0db4966daaf34f
 submission_sha256: c841fab1d4e92edea4c0e1c3ecce5eb32c88740c605e8154a8839364643d84d5
 norm_sha256: 93c740ab7098bc4e2b58b618c5d2002f9364593414ecf53a4140f6c386224087
 submission_blob: 9316ae43a54ccbf24f65d14815c68fa6c81f557a
 lint_warnings: 5
+attempt_file: 2026-10-24T231833Z-check-moe-align-32-experts-first-turn.md
+prepared_at: 2026-10-24T231833Z
 ---
 
 # moe-align-32-experts-first-turn
