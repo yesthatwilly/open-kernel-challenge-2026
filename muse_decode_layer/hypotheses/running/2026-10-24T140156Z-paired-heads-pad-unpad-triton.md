@@ -63,13 +63,15 @@ base_sha: c6b167670ed7835c8c0a38fc7064ea60ab8726dc
 base_blob: cc466fce207709c98ab0e78c2435c1c459890fdb
 branch: hyp/muse_decode_layer/paired-heads-pad-unpad-triton
 worktree: .worktrees/muse_decode_layer/paired-heads-pad-unpad-triton
-mode: null
+mode: submit
 implemented_at: 2026-10-24T165043Z
 impl_commit: 77b5def59734f76b5e6958035565c4e3f8736610
 submission_sha256: 45278e3031121a7a145878e248deeda626966c7c20a4c70ce895bdc05d8a1775
 norm_sha256: a70d4776079015c5fc2f18777db97c197ab7ee66cbfd7f85750cadafd66ee575
 submission_blob: 408bdcbabc3deb4579e60bbdcd0a88e095a17b79
 lint_warnings: 1
+attempt_file: 2026-10-24T165043Z-submit-paired-heads-pad-unpad-triton.md
+prepared_at: 2026-10-24T165043Z
 ---
 
 # paired-heads-pad-unpad-triton
