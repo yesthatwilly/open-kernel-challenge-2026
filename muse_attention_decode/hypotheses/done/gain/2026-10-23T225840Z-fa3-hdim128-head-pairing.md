@@ -86,9 +86,10 @@ speedup: 1.1705932092473075
 speedup_ci: [1.1530343111085979, 1.1923944446416679]
 harvested_at: 2026-10-24T103710Z
 best_at_harvest: 1.1284429079326423
-promotion: merged
+promotion: superseded
 promotion_commit: 86dc7133cb6594c6738fddf31911079e71700bfc
 promotion_attempt: 2026-10-24T111614Z-submit-fa3-hdim128-head-pairing.md
+promotion_reason: best is now 1.2686474414890054
 ---
 
 # fa3-hdim128-head-pairing
