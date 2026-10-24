@@ -69,7 +69,7 @@ review: proceed
 status: running
 review_at: 2026-10-24T140601Z
 review_companions: null
-stage: implemented
+stage: dispatched
 claimed_at: 2026-10-24T140601Z
 base_sha: 0e3d04d3405a65d8916f21e7fac2e822929939e7
 base_blob: 387dcb6a0e6137b74f7f65b048dce5a3fcbe2008
@@ -84,6 +84,8 @@ submission_blob: 1c0f5fa1bfc4e602b62e5e9edd9df6d5652b297b
 lint_warnings: 0
 attempt_file: 2026-10-24T141722Z-check-full-decode-cuda-gather-splitkv.md
 prepared_at: 2026-10-24T141722Z
+job: 82085a4e82154393
+dispatched_at: 2026-10-24T141733Z
 ---
 
 # full-decode-cuda-gather-splitkv
