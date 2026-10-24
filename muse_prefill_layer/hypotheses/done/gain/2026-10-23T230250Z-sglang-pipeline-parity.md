@@ -73,8 +73,9 @@ speedup: 1.0038664293875537
 speedup_ci: [0.9888084329467404, 1.018924425828367]
 harvested_at: 2026-10-24T044310Z
 best_at_harvest: null
-promotion: merged
+promotion: merged-unsubmitted
 promotion_commit: 6e616b8a059e028919a29923a63abca52d6f180d
+promotion_reason: ci.low 0.989 < submit floor 1.0
 ---
 
 # sglang-pipeline-parity
