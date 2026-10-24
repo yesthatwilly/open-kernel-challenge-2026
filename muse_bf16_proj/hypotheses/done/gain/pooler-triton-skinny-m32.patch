@@ -1,0 +1,139 @@
+diff --git a/muse_bf16_proj/submission.py b/muse_bf16_proj/submission.py
+index 5a2064a..2752a01 100644
+--- a/muse_bf16_proj/submission.py
++++ b/muse_bf16_proj/submission.py
+@@ -1,17 +1,24 @@
+ # okc: problem=muse_bf16_proj
+-"""Parity with SGLang's dispatch (hypothesis sglang-gemm-dispatch-parity).
++"""Parity with SGLang's dispatch, plus one Triton skinny GEMM for the pooler at m <= 32
++(hypothesis pooler-triton-skinny-m32).
+ 
+ The four bf16 layers go through the same cuBLAS dispatch SGLang uses on H200
+-(`_bf16_gemm_dispatch_impl`). The fp32 router runs F.linear in fp32 up to 8 tokens and, above
+-that, two bf16 GEMMs on a hi + lo split of the weight with fp32 accumulation, as the rules allow
+-("the router's FP32 weights may run as a BF16 hi + lo pair with FP32 accumulation"). The split is
+-built once in prepare(); nothing derived from the inputs is kept between calls.
++(`_bf16_gemm_dispatch_impl`), except the pooler at m <= 32: there cuBLAS picks a split-K nvjet
++kernel plus a splitKreduce launch, and this file runs instead one split-K-free Triton kernel that
++streams the 67 MB [4096, 8192] weight exactly once, as stored (no repack): 128 programs of 32
++output columns each, the full K in 256-wide steps, bf16 x bf16 tl.dot with fp32 accumulation and
++a single bf16 rounding at the store. The fp32 router runs F.linear in fp32 up to 8 tokens and,
++above that, two bf16 GEMMs on a hi + lo split of the weight with fp32 accumulation, as the rules
++allow ("the router's FP32 weights may run as a BF16 hi + lo pair with FP32 accumulation"). The
++split is built once in prepare(); nothing derived from the inputs is kept between calls.
+ """
+ 
+ from typing import TypedDict
+ 
+ import torch
+ import torch.nn.functional as F
++import triton
++import triton.language as tl
+ from sglang.srt.layers.quantization.unquant import _bf16_gemm_dispatch_impl
+ 
+ 
+@@ -38,22 +45,102 @@ class Inputs(TypedDict):
+ # Above this many tokens the router runs as the bf16 hi + lo pair instead of fp32 F.linear.
+ ROUTER_FP32_MAX_TOKENS = 8
+ 
++# The pooler's Triton skinny GEMM: only for m <= POOLER_SKINNY_MAX_M at exactly this [N, K];
++# everything else (pooler at m > 32, any other n / k, every other layer) keeps cuBLAS.
++POOLER_SKINNY_MAX_M = 32
++POOLER_N = 4096
++POOLER_K = 8192
++POOLER_BLOCK_N = 32    # 4096 / 32 = 128 programs: one wave on 132 SMs, one program per SM
++POOLER_BLOCK_K = 256   # 8192 / 256 = 32 K steps per program
++POOLER_NUM_WARPS = 4
++POOLER_NUM_STAGES = 4  # 4 x (32 x 256 x 2 B) = 64 KB of weight in flight per program
++
++
++@triton.jit(do_not_specialize=["M"])
++def _pooler_skinny_kernel(
++    x_ptr, w_ptr, out_ptr,
++    M,
++    stride_xm, stride_wn, stride_om,
++    K: tl.constexpr, BLOCK_M: tl.constexpr, BLOCK_N: tl.constexpr, BLOCK_K: tl.constexpr,
++):
++    """out[:M, n0:n0+BLOCK_N] = x[:M, :K] @ w[n0:n0+BLOCK_N, :K].T for program n0 = pid * BLOCK_N.
++
++    One program owns BLOCK_N rows of the row-major [N, K] weight and walks the whole K in
++    BLOCK_K steps, so each weight byte is read once and there is no split-K reduce. Rows of x
++    at or past M load as zero and are not stored, so M need not fill BLOCK_M. The dot is bf16 x
++    bf16 with an fp32 accumulator; the only bf16 rounding is at the store."""
++    pid = tl.program_id(0)
++    offs_m = tl.arange(0, BLOCK_M)
++    offs_n = pid * BLOCK_N + tl.arange(0, BLOCK_N)
++    offs_k = tl.arange(0, BLOCK_K)
++    row_ok = offs_m < M
++
++    x_ptrs = x_ptr + offs_m[:, None] * stride_xm + offs_k[None, :]   # [BLOCK_M, BLOCK_K]
++    w_ptrs = w_ptr + offs_n[:, None] * stride_wn + offs_k[None, :]   # [BLOCK_N, BLOCK_K], as stored
++    acc = tl.zeros((BLOCK_M, BLOCK_N), dtype=tl.float32)
++    for _ in range(0, K, BLOCK_K):
++        x_tile = tl.load(x_ptrs, mask=row_ok[:, None], other=0.0)
++        w_tile = tl.load(w_ptrs)
++        acc = tl.dot(x_tile, tl.trans(w_tile), acc)
++        x_ptrs += BLOCK_K
++        w_ptrs += BLOCK_K
++
++    out_ptrs = out_ptr + offs_m[:, None] * stride_om + offs_n[None, :]
++    tl.store(out_ptrs, acc.to(tl.bfloat16), mask=row_ok[:, None])
++
++
++def _pooler_skinny_applies(x: torch.Tensor, cfg: Config) -> bool:
++    """Shape- and config-only guard for the Triton pooler path."""
++    m, n, k = cfg["m"], cfg["n"], cfg["k"]
++    return (m <= POOLER_SKINNY_MAX_M and n == POOLER_N and k == POOLER_K
++            and x.dim() == 2 and x.shape[0] == m and x.shape[1] == k and x.stride(1) == 1
++            and x.dtype == torch.bfloat16)
++
++
++def _pooler_skinny_gemm(x: torch.Tensor, w: torch.Tensor) -> torch.Tensor:
++    """x [m, 8192] bf16 @ w [4096, 8192] bf16 .T -> [m, 4096] bf16, m <= 32."""
++    m = x.shape[0]
++    block_m = 16 if m <= 16 else 32
++    out = torch.empty((m, POOLER_N), dtype=torch.bfloat16, device=x.device)
++    _pooler_skinny_kernel[(POOLER_N // POOLER_BLOCK_N,)](
++        x, w, out,
++        m,
++        x.stride(0), w.stride(0), out.stride(0),
++        K=POOLER_K, BLOCK_M=block_m, BLOCK_N=POOLER_BLOCK_N, BLOCK_K=POOLER_BLOCK_K,
++        num_warps=POOLER_NUM_WARPS, num_stages=POOLER_NUM_STAGES,
++    )
++    return out
++
++
++def _pooler_skinny_warmup(w: torch.Tensor) -> None:
++    """Compile every specialization the timed path can hit (BLOCK_M 16 and 32; M is not
++    specialized) on synthetic inputs, so no call to kernel_fn compiles. Outputs are dropped."""
++    for m in range(1, POOLER_SKINNY_MAX_M + 1):
++        x = torch.zeros((m, POOLER_K), dtype=torch.bfloat16, device=w.device)
++        _pooler_skinny_gemm(x, w)
++
+ 
+ def prepare(weights: Weights) -> dict:
+-    """Called once, untimed. Keep the bf16 weights as they are (contiguous) and add the router's
+-    lossless-for-our-purpose hi/lo bf16 split, transposed for torch.mm."""
++    """Called once, untimed. Keep the bf16 weights as they are (contiguous), add the router's
++    lossless-for-our-purpose hi/lo bf16 split, transposed for torch.mm, and pre-compile the
++    pooler's Triton kernel."""
+     state = {name: w.contiguous() for name, w in weights.items()}
+     router = weights["router"]
+     hi = router.to(torch.bfloat16)
+     lo = (router - hi.float()).to(torch.bfloat16)
+     state["router_hi_t"] = hi.t().contiguous()
+     state["router_lo_t"] = lo.t().contiguous()
++    pooler = state["pooler"]
++    if pooler.shape == (POOLER_N, POOLER_K):
++        _pooler_skinny_warmup(pooler)
+     return state
+ 
+ 
+ def kernel_fn(data: Inputs, state: dict) -> torch.Tensor:
+     x, cfg = data["x"], data["config"]
+     layer = cfg["layer"]
++    if layer == "pooler" and _pooler_skinny_applies(x, cfg):
++        return _pooler_skinny_gemm(x, state["pooler"])
+     if layer != "router":
+         # The unpooler's slice is its first n rows (all of them above 8 tokens).
+         return _bf16_gemm_dispatch_impl(x, state[layer][: cfg["n"]], None)
