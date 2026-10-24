@@ -44,9 +44,16 @@ priority: 3
 kind: primary
 controls_for: null
 review: proceed
-status: queued
+status: running
 review_at: 2026-10-24T071442Z
 review_companions: [moe-align-single-kernel-small-t-control-capacity-256]
+stage: claimed
+claimed_at: 2026-10-24T071443Z
+base_sha: 08e8fcb6d37d8a5b6a21eda279552962cc244ea8
+base_blob: d3cbff5d9d9e6de23eb2f6770a99cd93eea093b7
+branch: hyp/muse_decode_layer/moe-align-single-kernel-small-t
+worktree: .worktrees/muse_decode_layer/moe-align-single-kernel-small-t
+mode: null
 ---
 
 # moe-align-single-kernel-small-t
