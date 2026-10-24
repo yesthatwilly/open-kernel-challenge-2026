@@ -53,7 +53,7 @@ review: proceed
 status: running
 review_at: 2026-10-24T075244Z
 review_companions: null
-stage: implemented
+stage: dispatched
 claimed_at: 2026-10-24T075244Z
 base_sha: ee19eef05eb85988ab83008de621ef92e267203b
 base_blob: 7cafe07522219f5d70a1d23f29e3ee2fbdb497b7
@@ -68,6 +68,8 @@ submission_blob: f14211b4b0e88f8b3f683d9f9275b76a64b66e02
 lint_warnings: 0
 attempt_file: 2026-10-24T075304Z-check-fused-preattention-triton.md
 prepared_at: 2026-10-24T075304Z
+job: 9e8fcb3fe4b04458
+dispatched_at: 2026-10-24T075315Z
 ---
 
 # fused-preattention-triton
