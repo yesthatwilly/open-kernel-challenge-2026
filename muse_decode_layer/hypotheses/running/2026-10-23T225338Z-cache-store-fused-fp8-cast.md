@@ -40,13 +40,19 @@ review: proceed
 status: running
 review_at: 2026-10-24T024344Z
 review_companions: null
-stage: claimed
+stage: implemented
 claimed_at: 2026-10-24T024344Z
 base_sha: 54112d428da559b67789e07fa8f2e586fe5fb45e
 base_blob: 6884d26a928d1de1b07bf8d28e1be4e53dfdcfc5
 branch: hyp/muse_decode_layer/cache-store-fused-fp8-cast
 worktree: .worktrees/muse_decode_layer/cache-store-fused-fp8-cast
 mode: null
+implemented_at: 2026-10-24T024848Z
+impl_commit: 4630a4dc3abbef94b3293018d7490b59ebeea37d
+submission_sha256: d0de623c11e01c92a025fbdfafb41aa60a68f774b3a8f166ac03dc6ec571881b
+norm_sha256: 1ff1758a3aea755c91e1cd7b5126fd32e66575d15a58a4257c207d81d165e4d1
+submission_blob: 03d45c741603c0d133b48ff4e65bbbf0cf86980f
+lint_warnings: 1
 ---
 
 # cache-store-fused-fp8-cast
@@ -88,3 +94,38 @@ No companion. ab-revert of the router constant only perturbs T=8 rows via an unr
 - Verify no at::native copy/elementwise kernel remains between FusedQKNorm and FA3 in the profile.
 - Confirm the fp8 q buffer handed to FA3 is [T,16,64] with unit last-dim stride and FA3 inserts no extra cast/copy.
 
+
+## Implementation notes
+
+Worktree `.worktrees/muse_decode_layer/cache-store-fused-fp8-cast`, only `muse_decode_layer/submission.py` (uncommitted; diff stat: 1 file, +48 / -11).
+
+- New `@triton.jit _cache_store_q_fp8_kernel`, grid `(T,)`, fixed `num_warps=4`, no autotune. Per token: loads the q row as a `[16, 64]` tile from FusedQKNorm's q via explicit strides, casts bf16 -> fp32 -> `tl.float8e4nv` and stores into a contiguous fp8 `[T, 16, 64]` buffer; loads k (`[2, 64]`, explicit strides) and v (the strided `qkv[:, 1152:1280]` view via `v.stride(0)/stride(1)`, no `.contiguous()`), upcasts to fp32, divides by `k_scale`/`v_scale` only under `SCALED` (constexpr = host-side `cfg["kv_scale"] != 1.0`), casts to fp8 and stores at `k_cache.view(-1,128)[cache_loc[t]]` / `v_cache.view(-1,128)[cache_loc[t]]`. No row is skipped (reserved_skip_index=-1 semantics); no value-dependent masking or branching.
+- The fp8 q buffer is `torch.empty` inside `kernel_fn` on every call (no per-shape buffer in `state`), passed to FA3 as `q=q_fp8`.
+- Removed: `k.to(FP8)`, `v.to(FP8)`, the scaled-path `k / k_scale`, `v / v_scale` elementwise ops, `store_cache(...)` (import dropped), `q.view(...).to(FP8)`.
+- `k = k.reshape(tokens, hkv, d)` (master also reshaped; a view when FusedQKNorm's k is contiguous); `q.view(tokens, hq, d)` as master. A host-side assert checks the two cache row views share strides with unit last stride (shape-only, graph-safe).
+- FusedQKNorm, the FA3 call, FusedRMSNormGate, the o GEMM and everything downstream are untouched. The module docstring line for the cache-store stage is updated.
+- Numerics: the unscaled path is one RNE rounding bf16 -> fp8, as torch's cast. The scaled path divides in fp32 then rounds once, where master rounded the quotient to bf16 first (double rounding); the difference is far inside the 8% cache bound.
+- Uncertainty: Triton's fp32 -> fp8e4nv cast on sm90 saturates at +/-448 (cvt.rn.satfinite) where torch gives NaN above 448; this can only remove NaNs, not add them. Not run on GPU here.
+
+## Rules check
+
+Checked against `git -C .worktrees/muse_decode_layer/cache-store-fused-fp8-cast diff`.
+
+- [x] CUDA-graph capturable: no `.item()`/`.cpu()`/`synchronize()`/tensor prints in kernel_fn; branching only on `cfg["kv_scale"]` (config) and strides (shape); the fp8 q `torch.empty` is a shape-sized allocation as master's `.to(FP8)` already made, not allocation on input values.
+- [x] Nothing derived from `data` is cached across calls: the q buffer is allocated per call, nothing new in `state`.
+- [x] Weights: n/a: no weight or `prepare()` change.
+- [x] Activations BF16 where SGLang keeps BF16 (k/v stay bf16 until the cast); KV cache FP8 E4M3; queries FP8 E4M3, no coarser.
+- [x] Attention sees every key: n/a for this change; the FA3 call (window, causal, page table, seqlens) is unchanged.
+- [x] No timing patches, harness frames/I/O/secrets, module edits, reference import, subprocesses or network: only `triton` / `triton.language` imports added.
+- [x] All work happens inside the timed call; no output caching or replay.
+- [x] First-line marker `# okc: problem=muse_decode_layer` kept.
+- [x] Review rules notes followed: no `triton.autotune`; fixed constexpr config; v read with explicit strides, no `.contiguous()`; kv_scale divide only under the host-side config branch, in fp32 then cast; no row skipped; no value masking or branching.
+
+Lint (`python3 -I .claude/skills/churnsubs/bin/okc_lint.py <worktree>/muse_decode_layer/submission.py --problem muse_decode_layer`):
+
+```
+warn  host-sync    L276: torch.cuda.synchronize()  (outside kernel_fn's call graph; fine in prepare())
+OK with warnings: submission.py
+```
+
+The one warning is pre-existing (in `prepare()`), not from this diff. `python3 -m py_compile` passes.
