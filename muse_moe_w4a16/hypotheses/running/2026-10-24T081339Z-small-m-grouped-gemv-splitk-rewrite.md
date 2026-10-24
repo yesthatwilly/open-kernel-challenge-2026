@@ -76,7 +76,7 @@ depends_on: null
 priority: 1
 kind: rewrite
 controls_for: null
-stage: claimed
+stage: implemented
 replaces: Marlin w13 + silu + w2 at num_tokens <= 16
 review: proceed
 status: running
@@ -88,6 +88,12 @@ base_blob: 11fbc1957daf7294cd2810ff82a0aad2f25644bd
 branch: hyp/muse_moe_w4a16/small-m-grouped-gemv-splitk-rewrite
 worktree: .worktrees/muse_moe_w4a16/small-m-grouped-gemv-splitk-rewrite
 mode: null
+implemented_at: 2026-10-24T084758Z
+impl_commit: 0193fee7339d60d90360931ecbc466df3bacedd1
+submission_sha256: d32912216cff529a28507bea9d3b0d06086b881e04efd2179e13091b32b1eae8
+norm_sha256: 9b40d2120136a0ec1be7e03f95fc13fb0f28065be33c00b5c4c186932dd86291
+submission_blob: 644e024fd9b306357107599e01908bc26281ea22
+lint_warnings: 2
 ---
 
 # small-m-grouped-gemv-splitk-rewrite
@@ -141,3 +147,44 @@ No companions. This is a rewrite judged on its replaced kernels' own time per sh
 - Several queued hypotheses build on the regressed triton-w13 kernel: triton-w2-grouped-gemv-small-m, triton-w13-silu-epilogue and possibly triton-small-m-threshold-32. Should they be retired or re-based on this line? The rewrite's own risk (f) says not to stack them.
 - align-256-experts-below-128 (p1, queued) changes the align call this path reuses. If it lands first, the rewrite's base and its align row move. Decide the order.
 
+
+## Implementation notes
+
+Worktree `.worktrees/muse_moe_w4a16/small-m-grouped-gemv-splitk-rewrite`, only `muse_moe_w4a16/submission.py` changed (uncommitted; 293 insertions, 1 deletion, the docstring's last line). First-line marker kept. Untested: no GPU/Triton on this node, so the first run is also the compile test; `py_compile` and okc_lint pass.
+
+- **Dispatch** (`kernel_fn`): `if bank["small"] is not None and expert_map is not None and num_tokens <= 16` (a shape branch plus a decision fixed in prepare) -> `_small_forward` then the unchanged `fused_post_expert_norm_weighted_sum`. Otherwise the parity Marlin code runs byte for byte (the new branch is inserted before it; no parity line edited).
+- **Small path** (`_small_forward`): `moe_align_block_size(local_ids, 16, 32)`; cache2/cache13/cache1/cache3 allocated exactly as parity (cache3 aliases cache1's storage); w13 GEMV (x rows gathered `x[slot // 8]`, top_k=8) -> cache1; unchanged `silu_and_mul(cache1, cache2, expert_ids=local_ids, expert_step=1)`; w2 GEMV (rows `cache2[slot]`, top_k=1) -> cache3. Launches: gather, align, w13 GEMV, silu, w2 GEMV, post-norm. The w13 output column n is w13 weight row n, so gate is cache1[:, :I) and up cache1[:, I:2I), the same order Marlin writes and silu_and_mul (silu(x[:, :d]) * x[:, d:]) and the reference expect.
+- **Kernel** `_grouped_gemv_splitk_kernel` (one `@triton.jit`, two constexpr variants, `do_not_specialize` on `n_valid`, `nb_static` so one compile serves every M; fixed configs, no autotune), num_warps=4, num_stages=4, BLOCK_M=16, BLOCK_K=256:
+  - **Grid/items**: persistent 1-D grid of `SMs x CTAs/SM`. CTAs/SM is measured once in prepare from the compiled kernel's `metadata.shared` and `n_regs` (capped at 4, default 2 if the metadata is unreadable); it is printed. Items = live local block x n-tile x k-split, strided over CTAs (`item = pid + j*G`). w13: BLOCK_N=64, SPLIT_K=4 -> 128 n-tiles x 4 = 512 items per touched expert, 4 k-steps each. w2: BLOCK_N=64, SPLIT_K=8 -> 64 x 8 = 512 items per touched expert, 2 k-steps each. Approx. 1k items at bs=1 (~2 experts), ~3k at bs=8, ~4.6k at bs=16.
+  - **Pipelining choice: FLATTENED.** The (item x k-step) space is ONE linear `range(0, n_iters)` loop (`n_iters = items_of_this_CTA * KSTEPS`, from device values) in the style of Triton's persistent-matmul tutorial: the item decode is scalar math each iteration and the epilogue sits under `if ks == KSTEPS - 1`, so the pipeliner prefetches the next item's tiles across item boundaries. w2 therefore keeps the spec's SPLIT_K=8 (2 steps per item); the review's alternative (w2 SPLIT_K=4/BLOCK_N=32) was not needed.
+  - **Live blocks / remote routes**: the live-block count is read on device: `n_blocks = min(n_padded // 16, nb_static)` (no `.item()`); the prologue loads block_experts[0..64) masked to n_blocks, counts the -1 blocks (Marlin's is_ep skip) and finds where their run starts (r0), so live local block lb maps to block `lb` below r0 and `lb + n_neg` from r0 on. The decode re-loads `e = block_experts[blk]` and masks the whole item if `e < 0` (never reads expert -1's weights; clamped to 0 for address math); slots are masked by `sorted_ids < M*8` (the sentinel). Assumption: the -1 blocks form one contiguous run (one align bucket); the prepare self-test runs the real moe_align with remote slots and would fail (fallback) if not.
+  - **Dequant (method)**: plain Triton, not inline asm (deviation from the "use inline_asm if plain ops do not produce packed code" clause: nothing can be inspected here, and plain ops avoid a PTX compile risk on the first run; inline asm / LUT is a stage-2 lever). Bytes are loaded as `[BLOCK_N, 16 groups, 8 bytes]` (8 bytes = one 16-element scale group) and widened to uint16; E2M1 -> fp16 by bit placement (`((b&7)<<9)|((b&8)<<12)` low nibble, `((b&0x70)<<5)|((b&0x80)<<8)` high nibble: e2m1 * 2^-14 exactly, the 0.5 code an exact fp16 subnormal), bitcast fp16, cvt fp32 (exact), ONE fp32 multiply by `sf_e4m3 * 2^14` broadcast per group from a `[BLOCK_N, 16]` scale tile (no per-element scale gather), cvt bf16 (exact, <= 6 significant bits). No tl.where, no exp2, no tl.interleave. The x tile `[16, 256]` is loaded contiguously and split with `tl.split(tl.reshape(x, (16, 128, 2)))` into even/odd K (the "permute x's K index instead"), and the tile does two `tl.dot(bf16, bf16 -> fp32)` with K=128: x_even @ W_lo^T + x_odd @ W_hi^T. No fp16 activations; bf16 dot kept.
+  - **Reduce / ticket ordering**: at the last k-step of an item: masked fp32 partial store to `part[split, slot, n]` -> `tl.debug_barrier()` -> one scalar `tl.atomic_add(cnt[e, n_tile], 1, sem="acq_rel", scope="gpu")` -> `tl.debug_barrier()` -> the CTA that drew SPLIT_K-1 reloads all SPLIT_K partials with `cache_modifier=".cg"` in fixed order 0..SPLIT_K-1, multiplies by the expert's fp32 global scale once, stores bf16 to `out[slot, n-tile]` masked to live slots, then `atomic_xchg(cnt, 0)` (self-resetting). Counters are keyed by (local expert, n-tile) (each touched expert is exactly one block at M <= 16), separate arrays `cnt13` [32*128] and `cnt2` [32*64], zeroed once in prepare. Scratch `part13` fp32 [4, 128, 8192] and `part2` fp32 [8, 128, 4096] (16 MB each), workspace overwritten every call.
+- **Weights** (`_prepare_small`): `w13`, `w13_sf`, `w2`, `w2_sf` of experts [0, 32) are `.clone()`d contiguous (identical NVFP4 bytes as stored, no permutation; fp8 scales as stored), `w13_gs`/`w2_gs` fp32. No BF16 copy.
+- **prepare() self-test** (`_small_self_test`): weights-only synthetic data from `torch.Generator(seed 1234)`: three cases in order M=16 (expert 7 with 16 slots, experts 0, 31, 3 with 1 slot each, the remaining 108 slots remote -1), M=1 (experts 31, 3, 12 plus 5 remote slots), M=16 again. Each runs the real `moe_align_block_size(ids, 16, 32)` and both GEMVs into NaN-prefilled outputs and compares each local row to an fp32 reference `x_rows @ nvfp4.dequantize(w, sf, gs).T`; requires max row rel-L2 < 1e-2, remote rows still NaN (never written), and both counter arrays exactly zero after every case (checks self-reset; the repeated M=16 case runs on counters left by the earlier ones). The first case also measures CTAs/SM and sets the final grid, so cases 2-3 test the grid used in timing. Any exception (compile/launch) is caught. The result is printed LOUDLY between `=` banners in both outcomes: PASSED/FAILED with both rel-L2 values, the grid and occupancy, and `PATH CHOSEN ... TRITON split-K grouped GEMV` or `FALLBACK to Marlin (parity path)`. On failure `bank["small"] = None` and every shape runs Marlin (flat, not wrong).
+- **Stage-1 readout**: pending the run. Read from `top_kernels`: `_grouped_gemv_splitk_kernel` (both variants share one name; the per-shape row is w13+w2 combined) against Marlin's combined 41.1 (bs=1) / 107.6 (bs=8) / 150.9 (bs=16) us; floors 11.4 / 37.3 / 52.5 us. Also grep the log for the `[small-m-grouped-gemv-splitk]` banner first: if it says FALLBACK the run measured Marlin only.
+
+Uncertainties: (1) compile of the flattened loop with a conditional atomic/barrier epilogue, tl.split/reshape and 3-D tile loads in the judge's Triton (caught -> fallback, shown in the banner); (2) the plain-Triton dequant is ~6-7 lane-ops per weight, above the spec's ~3.5 full-HBM budget, so stage 1 may land at or a bit under the incumbent rather than at target; (3) smem per CTA (4 stages x ~17 KB + dot-operand conversion scratch) probably allows 2 CTAs/SM, i.e. ~9.5 MB in flight vs ~6 MB needed; (4) the contiguous -1 run assumption about moe_align (self-tested).
+
+## Rules check
+
+Checked against `git -C .worktrees/muse_moe_w4a16/small-m-grouped-gemv-splitk-rewrite diff`.
+
+- [x] CUDA-graph capturable: no `.item()`/`.cpu()`/`synchronize()`/tensor prints on the timed path (`kernel_fn` -> `_small_forward` -> `_small_gemv`); the live-block count is read on device from n_padded; the only host branches are `num_tokens <= 16` (shape) and `bank["small"] is not None` (fixed in prepare). Allocations (cache2/cache13) are shape-sized as in parity; the grid is a constant from prepare. The syncs and `int(...)`/`float(...)` reads are in `_prepare_small`/`_small_self_test` (prepare only).
+- [x] Nothing derived from `data` is cached across calls: `part13/part2` and `cnt13/cnt2` are workspace rewritten every call (counters return to zero by construction); routing is recomputed by moe_align each call.
+- [x] Weights: repacked losslessly in `prepare()` only: a `.clone()` of the same NVFP4 uint8 bytes, fp8 e4m3 block scales and fp32 global scales, no BF16 copy; dequantized only in registers inside the kernel. The Marlin bank is unchanged.
+- [x] Activations BF16 where SGLang keeps BF16: x, cache1, cache2, cache3 bf16; fp32 only in the dot accumulator and the split-K scratch; bf16 x bf16 tl.dot (no fp16 activations; fp16 appears only as the exact intermediate of the weight decode). KV cache / queries: n/a: no attention in this problem.
+- [x] Attention sees every key: n/a: MoE problem, no attention; every local route is computed (remote -1 routes are skipped exactly as Marlin's is_ep path skips them).
+- [x] No timing patches, harness frames/I/O/secrets, module edits, reference import, subprocesses or network: diff adds `import nvfp4` (the problem's helper, used only in the prepare self-test), `triton`, `triton.language`, one `@triton.jit` kernel and host helpers.
+- [x] All work happens inside the timed call; no output caching or replay: align, both GEMVs, silu and post-norm run in kernel_fn every call; the self-test's outputs are discarded.
+- [x] No `triton.autotune`: fixed constexpr configs `SMALL_W13_CFG=(64, 4)`, `SMALL_W2_CFG=(64, 8)` (checked: no `autotune` in the diff).
+
+okc_lint (`python3 -I .claude/skills/churnsubs/bin/okc_lint.py <worktree>/muse_moe_w4a16/submission.py --problem muse_moe_w4a16`), exit 0:
+
+```
+warn  host-sync    L291: torch.cuda.synchronize()  (outside kernel_fn's call graph; fine in prepare())
+warn  host-sync    L356: torch.cuda.synchronize()  (outside kernel_fn's call graph; fine in prepare())
+OK with warnings: .worktrees/muse_moe_w4a16/small-m-grouped-gemv-splitk-rewrite/muse_moe_w4a16/submission.py
+```
+
+L291 is the new self-test's sync (prepare only); L356 is the pre-existing parity `torch.cuda.synchronize()` in `prepare()`. `python3 -I -m py_compile` passes; its `__pycache__` was removed from the worktree.
