@@ -58,7 +58,7 @@ review: proceed
 status: running
 review_at: 2026-10-24T100116Z
 review_companions: null
-stage: implemented
+stage: dispatched
 claimed_at: 2026-10-24T100116Z
 base_sha: 93fae4dfde47a06219a581785dc8c4ff2e7dab3b
 base_blob: da55301de1e911aeab09878b0873809f544f436c
@@ -73,6 +73,8 @@ submission_blob: 0b015466e5e9b9493bde1d3340bf405a837f8d4f
 lint_warnings: 1
 attempt_file: 2026-10-24T100317Z-check-pooler-unpooler-m128-wgmma-splitk-semaphore.md
 prepared_at: 2026-10-24T100317Z
+job: d34fd76f9c444728
+dispatched_at: 2026-10-24T100325Z
 ---
 
 # pooler-unpooler-m128-wgmma-splitk-semaphore
