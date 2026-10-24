@@ -44,13 +44,15 @@ base_sha: 80056b8b63f9285186da431dd2ea8568beb3c0bf
 base_blob: c6854f093588da524e63657576b27ed720756e32
 branch: hyp/muse_attention_decode/preattention-tiled-gate-large-tokens
 worktree: .worktrees/muse_attention_decode/preattention-tiled-gate-large-tokens
-mode: null
+mode: check
 implemented_at: 2026-10-24T184725Z
 impl_commit: 880b01bf4480651ad77d1308303edd3c8aeea04b
 submission_sha256: 64523e4176a8994f9bbb93b22074c30d13598ce4aeace5a27f757caee61e45db
 norm_sha256: 7a8dab84a7bd3a8ed25a03e479b5a97eab3905c27d95ee25100a9548f91271da
 submission_blob: 1e5e94e81eba7fcf7f1ea16ec0cb3e1108ab0942
 lint_warnings: 0
+attempt_file: 2026-10-24T184725Z-check-preattention-tiled-gate-large-tokens.md
+prepared_at: 2026-10-24T184725Z
 ---
 
 # preattention-tiled-gate-large-tokens
