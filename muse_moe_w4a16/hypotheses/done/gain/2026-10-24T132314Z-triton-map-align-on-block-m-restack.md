@@ -65,11 +65,12 @@ speedup: 1.3116740840932535
 speedup_ci: [1.2919989728318546, 1.3313491953546521]
 harvested_at: 2026-10-24T135613Z
 best_at_harvest: 1.2535643764852882
-promotion: submitted
+promotion: done
 promotion_commit: 8440ae5baaeda52f365611b273035480a61b2325
 promotion_attempt: 2026-10-24T163458Z-submit-triton-map-align-on-block-m-restack.md
 promotion_job: 3cabc739f1af493e
 promotion_at: 2026-10-24T163515Z
+board: "{\"rank\": 419, \"team\": \"yesthatwilly\", \"speedup\": 1.3076, \"first\": false, \"ahead\": 418, \"to_first\": 1.7967}"
 ---
 
 # triton-map-align-on-block-m-restack

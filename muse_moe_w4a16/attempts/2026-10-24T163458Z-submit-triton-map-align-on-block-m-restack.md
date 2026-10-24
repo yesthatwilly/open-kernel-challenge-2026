@@ -37,4 +37,4 @@ okc_lint: OK with warnings (host-syncs only in prepare()/the align self-check).
 low
 
 ## Result (after the run)
-(pending)
+Promotion passed: 1.3076x [1.2880,1.3272], board: {"rank": 419, "team": "yesthatwilly", "speedup": 1.3076, "first": false, "ahead": 418, "to_first": 1.7967}

@@ -1,17 +1,17 @@
 {
  "problem": "muse_moe_w4a16",
- "job": "bc56182a80444d16",
+ "job": "3cabc739f1af493e",
  "check_job": "bc56182a80444d16",
- "mode": "check",
- "speedup": 1.3116740840932535,
+ "mode": "submit",
+ "speedup": 1.3075759186466844,
  "ci": [
-  1.2919989728318546,
-  1.3313491953546521
+  1.287962279866984,
+  1.3271895574263846
  ],
- "score_us": 10252.928042942014,
+ "score_us": 10285.062464226885,
  "commit": "8440ae5baaeda52f365611b273035480a61b2325",
  "submission_blob": "d9a9375ef4721ab9b28cc9d6364c92e67c7ccc59",
  "slug": "triton-map-align-on-block-m-restack",
  "result": "muse_moe_w4a16/hypotheses/done/gain/triton-map-align-on-block-m-restack.result.json",
- "updated_at": "2026-10-24T135614Z"
+ "updated_at": "2026-10-24T165805Z"
 }
