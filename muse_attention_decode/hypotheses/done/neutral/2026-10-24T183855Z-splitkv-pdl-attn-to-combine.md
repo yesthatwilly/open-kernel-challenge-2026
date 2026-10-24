@@ -31,10 +31,10 @@ priority: 5
 kind: primary
 controls_for: null
 review: proceed
-status: running
+status: done
 review_at: 2026-10-24T184111Z
 review_companions: null
-stage: dispatched
+stage: harvested
 claimed_at: 2026-10-24T184125Z
 base_sha: f6e63f1cb26d879530432b8f29b2946a17411828
 base_blob: c6854f093588da524e63657576b27ed720756e32
@@ -51,6 +51,13 @@ attempt_file: 2026-10-24T184726Z-check-splitkv-pdl-attn-to-combine.md
 prepared_at: 2026-10-24T184726Z
 job: 113cbf3093dd40b9
 dispatched_at: 2026-10-24T184744Z
+outcome: neutral
+verdict_detail: within-ci
+speedup: 1.392869831857895
+speedup_ci: [1.3719767843800266, 1.4137628793357633]
+harvested_at: 2026-10-24T232002Z
+best_at_harvest: 1.3948738389144513
+promotion: null
 ---
 
 # splitkv-pdl-attn-to-combine
@@ -137,3 +144,35 @@ Fixes:
 Lint CLEAN (the three host-sync warnings went with the A/B), py_compile OK, __pycache__ removed.
 
 Residual risk: not compiled here, and the expected effect (<1 us on 122/242 us shapes) is below per-shape drift now that the in-run A/B is gone, so the result will likely read as neutral.
+
+## Result
+
+- job `113cbf3093dd40b9` (check), status done, passed True, tests 16/16
+- speedup 1.3929x, 95% CI [1.3720, 1.4138], score 2703.9856229611055 µs vs SGLang 3766.3 µs
+- best at harvest: {"speedup": 1.3948738389144513, "ci": [1.3739507313307344, 1.415796946498168], "job": "698d4cd3838c4a63"}; base result: muse_attention_decode/hypotheses/done/gain/sliding-deep-splits-on-cuda-splitkv.result.json
+- **outcome: neutral** (within-ci)
+- files: `muse_attention_decode/hypotheses/done/neutral/splitkv-pdl-attn-to-combine.result.json`, `muse_attention_decode/hypotheses/done/neutral/splitkv-pdl-attn-to-combine.patch`; branch `hyp/muse_attention_decode/splitkv-pdl-attn-to-combine`
+
+## Attribution
+
+| shape | w | base µs | hyp µs | delta | verdict |
+|---|---|---|---|---|---|
+| batch=1 ctx=80000 dist=soft heads=tp8 layer=sliding load=decode_1 page=1 | 46 | 13.17 | 13.03 | 0.9901 | flat |
+| batch=1 ctx=80000 dist=coherent heads=tp8 layer=full load=decode_1 page=1 | 16 | 27.26 | 27.7 | 0.9988 | flat |
+| batch=16 ctx=80000 dist=soft heads=tp8 layer=sliding load=decode_16 page=1 spread=agentic | 46 | 15.34 | 15.63 | 1.0176 | flat |
+| batch=16 ctx=80000 dist=coherent heads=tp8 layer=full load=decode_16 page=1 spread=agentic | 16 | 122.79 | 120.56 | 1.0223 | flat |
+| batch=32 ctx=80000 dist=soft heads=tp8 layer=sliding load=decode_32 page=1 spread=agentic | 46 | 24.24 | 24.2 | 1.0127 | flat |
+| batch=32 ctx=80000 dist=coherent heads=tp8 layer=full load=decode_32 page=1 spread=agentic | 16 | 241.9 | 256.11 | 0.9465 | lost |
+| batch=1 ctx=80000 dist=soft heads=tp8 layer=sliding load=verify_1 page=1 q_len=8 | 46 | 16.72 | 16.74 | 1.0199 | flat |
+| batch=1 ctx=80000 dist=coherent heads=tp8 layer=full load=verify_1 page=1 q_len=8 | 16 | 30.03 | 30.13 | 0.9902 | flat |
+| batch=16 ctx=80000 dist=soft heads=tp8 layer=sliding load=verify_16 page=1 q_len=8 spread=agentic | 46 | 22.67 | 22.84 | 1.0093 | flat |
+| batch=16 ctx=80000 dist=coherent heads=tp8 layer=full load=verify_16 page=1 q_len=8 spread=agentic | 16 | 161.98 | 162.4 | 1.0031 | flat |
+| batch=32 ctx=80000 dist=soft heads=tp8 layer=sliding load=verify_32 page=1 q_len=8 spread=agentic | 46 | 28.7 | 29.07 | 1.0015 | flat |
+| batch=32 ctx=80000 dist=coherent heads=tp8 layer=full load=verify_32 page=1 q_len=8 spread=agentic | 16 | 300.83 | 301.32 | 1.0067 | flat |
+
+lost on full decode_32. Expected hit: 0/2. Noise ±1.5%.
+
+## Follow-ups
+
+- within-ci: the change is not proven either way; a stacked hypothesis (`depends_on: splitkv-pdl-attn-to-combine`) that adds a further change in the same area is the only way to learn more (identical code is never re-run).
+

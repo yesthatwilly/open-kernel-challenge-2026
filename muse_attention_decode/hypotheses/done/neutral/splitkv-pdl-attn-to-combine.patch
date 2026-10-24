@@ -1,0 +1,129 @@
+diff --git a/muse_attention_decode/submission.py b/muse_attention_decode/submission.py
+index c6854f0..0850f42 100644
+--- a/muse_attention_decode/submission.py
++++ b/muse_attention_decode/submission.py
+@@ -432,6 +432,8 @@ void splitkv_attn(torch::Tensor q, torch::Tensor k_cache, torch::Tensor v_cache,
+                   double score_scale, int64_t max_chunks, int64_t grid);
+ void splitkv_combine(torch::Tensor ws_acc, torch::Tensor ws_ml, torch::Tensor cache_seqlens, torch::Tensor v_scale,
+                      torch::Tensor qkv, int64_t qkv_stride, torch::Tensor out, int64_t max_chunks, double eps);
++void splitkv_set_pdl(bool on);
++bool splitkv_get_pdl();
+ """
+ 
+ _SPLITKV_CUDA = r"""
+@@ -734,6 +736,9 @@ splitkv_attn_kernel(const uint8_t* __restrict__ q,          // e4m3 [B, HQ, D]
+       if ((tid & 15) == 0) { ws_ml[slot * 2 * HQ + h] = M; ws_ml[slot * 2 * HQ + HQ + h] = L; }
+     }
+   }
++  // PDL: let the combine kernel launch now; its griddepcontrol.wait still blocks until this grid
++  // has fully completed and flushed, so the partials it reads are the same as without PDL.
++  asm volatile("griddepcontrol.launch_dependents;" :::);
+   cp_wait<0>();  // the trailing groups are empty; drain anyway
+ }
+ 
+@@ -742,6 +747,9 @@ splitkv_combine_kernel(const float* __restrict__ ws_acc, const float* __restrict
+                        const int* __restrict__ seqlens, const float* __restrict__ v_scale,
+                        const __nv_bfloat16* __restrict__ qkv, int64_t qkv_stride,
+                        __nv_bfloat16* __restrict__ out, int max_chunks, float eps) {
++  // PDL: everything below reads kernel A's partials; wait for A's completion and memory flush.
++  // (A no-op when launched without the programmatic-serialization attribute.)
++  asm volatile("griddepcontrol.wait;" ::: "memory");
+   __shared__ float red_m[4];
+   __shared__ float red_l[4];
+   __shared__ float red_acc[4][D];
+@@ -796,6 +804,8 @@ splitkv_combine_kernel(const float* __restrict__ ws_acc, const float* __restrict
+ 
+ }  // namespace
+ 
++static bool g_pdl = false;  // set from Python at import; cleared if cudaLaunchKernelEx fails
++
+ void splitkv_attn(torch::Tensor q, torch::Tensor k_cache, torch::Tensor v_cache, torch::Tensor page_table,
+                   torch::Tensor cache_seqlens, torch::Tensor k_scale, torch::Tensor ws_acc, torch::Tensor ws_ml,
+                   double score_scale, int64_t max_chunks, int64_t grid) {
+@@ -821,12 +831,37 @@ void splitkv_combine(torch::Tensor ws_acc, torch::Tensor ws_ml, torch::Tensor ca
+                      torch::Tensor qkv, int64_t qkv_stride, torch::Tensor out, int64_t max_chunks, double eps) {
+   const int B = static_cast<int>(cache_seqlens.size(0));
+   auto stream = at::cuda::getCurrentCUDAStream();
+-  splitkv_combine_kernel<<<dim3(B, HQ), 128, 0, stream>>>(
+-      ws_acc.data_ptr<float>(), ws_ml.data_ptr<float>(), cache_seqlens.data_ptr<int>(), v_scale.data_ptr<float>(),
+-      reinterpret_cast<const __nv_bfloat16*>(qkv.data_ptr()), qkv_stride,
+-      reinterpret_cast<__nv_bfloat16*>(out.data_ptr()), static_cast<int>(max_chunks), static_cast<float>(eps));
++  const float* p_acc = ws_acc.data_ptr<float>();
++  const float* p_ml = ws_ml.data_ptr<float>();
++  const int* p_seq = cache_seqlens.data_ptr<int>();
++  const float* p_vs = v_scale.data_ptr<float>();
++  const __nv_bfloat16* p_qkv = reinterpret_cast<const __nv_bfloat16*>(qkv.data_ptr());
++  __nv_bfloat16* p_out = reinterpret_cast<__nv_bfloat16*>(out.data_ptr());
++  const int mc = static_cast<int>(max_chunks);
++  const float ep = static_cast<float>(eps);
++  if (g_pdl) {
++    cudaLaunchConfig_t cfg = {};
++    cfg.gridDim = dim3(B, HQ);
++    cfg.blockDim = dim3(128);
++    cfg.dynamicSmemBytes = 0;
++    cfg.stream = stream;
++    cudaLaunchAttribute attr[1];
++    attr[0].id = cudaLaunchAttributeProgrammaticStreamSerialization;
++    attr[0].val.programmaticStreamSerializationAllowed = 1;
++    cfg.attrs = attr;
++    cfg.numAttrs = 1;
++    cudaError_t err = cudaLaunchKernelEx(&cfg, splitkv_combine_kernel, p_acc, p_ml, p_seq, p_vs, p_qkv,
++                                         qkv_stride, p_out, mc, ep);
++    if (err == cudaSuccess) return;
++    (void)cudaGetLastError();  // unsupported: clear the error, drop to the plain launch for good
++    g_pdl = false;
++  }
++  splitkv_combine_kernel<<<dim3(B, HQ), 128, 0, stream>>>(p_acc, p_ml, p_seq, p_vs, p_qkv, qkv_stride, p_out, mc, ep);
+   C10_CUDA_KERNEL_LAUNCH_CHECK();
+ }
++
++void splitkv_set_pdl(bool on) { g_pdl = on; }
++bool splitkv_get_pdl() { return g_pdl; }
+ """
+ 
+ 
+@@ -836,10 +871,10 @@ def _build_splitkv():
+     try:
+         from torch.utils.cpp_extension import load_inline
+         ext = load_inline(
+-            name="muse_full_decode_splitkv_v1",
++            name="muse_full_decode_splitkv_v2",
+             cpp_sources=_SPLITKV_CPP,
+             cuda_sources=_SPLITKV_CUDA,
+-            functions=["splitkv_attn", "splitkv_combine"],
++            functions=["splitkv_attn", "splitkv_combine", "splitkv_set_pdl", "splitkv_get_pdl"],
+             extra_cuda_cflags=["-O3", "-arch=sm_90a"],
+             verbose=False,
+         )
+@@ -1068,8 +1103,29 @@ def _splitkv_self_check() -> bool:
+     return ok
+ 
+ 
+-if torch.cuda.is_available():
++def _prepare_splitkv() -> None:
++    """Import-time setup: build, enable PDL if the launch is supported, self-check."""
++    global _EXT
+     _EXT = _build_splitkv()
+-    if _EXT is not None and not _splitkv_self_check():
++    if _EXT is None:
++        print("[splitkv] PATH CHOSEN: master FA3 (split-KV build failed)")
++        return
++    _EXT.splitkv_set_pdl(True)
++    ok = _splitkv_self_check()
++    pdl = bool(_EXT.splitkv_get_pdl())  # cleared by the launcher if cudaLaunchKernelEx failed
++    if not ok and pdl:
++        _EXT.splitkv_set_pdl(False)
++        pdl = False
++        print("[splitkv] PDL self-check failed, retrying without PDL")
++        ok = _splitkv_self_check()
++    if not ok:
+         print("[splitkv] SELF-CHECK FAILED: CUDA split-KV path disabled, master FA3 path kept")
+         _EXT = None
++        print("[splitkv] PATH CHOSEN: master FA3 (split-KV self-check failed)")
++        return
++    print(f"[splitkv] PDL {'on' if pdl else 'off'}")
++    print(f"[splitkv] PATH CHOSEN: split-KV CUDA, PDL {'on' if pdl else 'off'}")
++
++
++if torch.cuda.is_available():
++    _prepare_splitkv()
