@@ -57,9 +57,16 @@ controls_for: null
 rewrite_stage: 1
 replaces: paired FA3 flash_fwd main + FlashAttnFwdCombine + pad/unpad copies + FusedRMSNormGate on full-layer decode, batch 16/32
 review: proceed
-status: queued
+status: running
 review_at: 2026-10-24T165606Z
 review_companions: null
+stage: claimed
+claimed_at: 2026-10-24T165606Z
+base_sha: f3620a153798c4af3feb47a7fc26977635b8a6f3
+base_blob: cc466fce207709c98ab0e78c2435c1c459890fdb
+branch: hyp/muse_decode_layer/full-decode-cuda-splitkv-port
+worktree: .worktrees/muse_decode_layer/full-decode-cuda-splitkv-port
+mode: null
 ---
 
 # full-decode-cuda-splitkv-port
