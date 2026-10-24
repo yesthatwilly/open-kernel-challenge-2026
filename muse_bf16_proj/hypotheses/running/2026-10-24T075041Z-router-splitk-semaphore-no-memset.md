@@ -56,13 +56,15 @@ base_sha: caf555ec8435254c599ff4cf1e7741a96a88e5e1
 base_blob: da55301de1e911aeab09878b0873809f544f436c
 branch: hyp/muse_bf16_proj/router-splitk-semaphore-no-memset
 worktree: .worktrees/muse_bf16_proj/router-splitk-semaphore-no-memset
-mode: null
+mode: check
 implemented_at: 2026-10-24T120252Z
 impl_commit: 0584e34794a8d344213bf6f52cdb2a36db670a69
 submission_sha256: 6d75462c08bca37e0fcf4d14129fe01336330fbcb30b83b0860bc8e4cfe60068
 norm_sha256: b90a0b40894de56dd41f4d98f961699c95b1ae43979288fb054931bb24341096
 submission_blob: 18566e908b406cf0a8ee22fe4d4bb21d1c3a6be0
 lint_warnings: 0
+attempt_file: 2026-10-24T120252Z-check-router-splitk-semaphore-no-memset.md
+prepared_at: 2026-10-24T120252Z
 ---
 
 # router-splitk-semaphore-no-memset
