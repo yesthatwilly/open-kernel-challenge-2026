@@ -39,7 +39,7 @@ review: proceed
 status: running
 review_at: 2026-10-24T071318Z
 review_companions: null
-stage: implemented
+stage: dispatched
 claimed_at: 2026-10-24T071319Z
 base_sha: 036af8be03a756684fc9d199dd2f6b1f05eab3a4
 base_blob: da55301de1e911aeab09878b0873809f544f436c
@@ -54,6 +54,8 @@ submission_blob: 28705d2c9ec47de74a4c47cd5424516a8f56d432
 lint_warnings: 0
 attempt_file: 2026-10-24T071431Z-check-bf16-cublaslt-backend-toggle.md
 prepared_at: 2026-10-24T071431Z
+job: 5ed9ace10d9a4f68
+dispatched_at: 2026-10-24T071442Z
 ---
 
 # bf16-cublaslt-backend-toggle
