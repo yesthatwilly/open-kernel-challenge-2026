@@ -40,13 +40,15 @@ base_sha: b1c16f8f1b1394bbe7c86189ca2cccf026a288d2
 base_blob: 1c0f5fa1bfc4e602b62e5e9edd9df6d5652b297b
 branch: hyp/muse_attention_decode/sliding-deep-splits-on-cuda-splitkv
 worktree: .worktrees/muse_attention_decode/sliding-deep-splits-on-cuda-splitkv
-mode: null
+mode: submit
 implemented_at: 2026-10-24T164510Z
 impl_commit: 54501c287d8d9decabf616f35dc603dd7ea76c42
 submission_sha256: 0439afc99fcc468b7d31bc4f9929bab4b57d54cf90d77eb8027905939a72df92
 norm_sha256: 060b9a1bf0c60fea977edc418c77fcf0708231e3d4c4f2559b2b01c6372aa02f
 submission_blob: c6854f093588da524e63657576b27ed720756e32
 lint_warnings: 0
+attempt_file: 2026-10-24T164511Z-submit-sliding-deep-splits-on-cuda-splitkv.md
+prepared_at: 2026-10-24T164511Z
 ---
 
 # sliding-deep-splits-on-cuda-splitkv
