@@ -59,13 +59,15 @@ base_sha: 90040c7132925d246133b05640f35bf2b6622eb8
 base_blob: 3d70ae6e2de0d48c4a4f2a469ced8234f5348182
 branch: hyp/muse_decode_layer/sliding-fused-batched-decode-port
 worktree: .worktrees/muse_decode_layer/sliding-fused-batched-decode-port
-mode: null
+mode: check
 implemented_at: 2026-10-24T224624Z
 impl_commit: 0a2ec0ae226bb4b8c8260db1ba7aa74832619632
 submission_sha256: b671bd387506452d90e24f197c10a969ff30824efd32c0dba3fd5db5bada9d99
 norm_sha256: 4df695a2d87724d8a398580b8b49d2f64f7e0d52e089e3ce56ee4adbf424af36
 submission_blob: f99bbe8e814e229a1d528bd8f951814baf1f0aaf
 lint_warnings: 20
+attempt_file: 2026-10-24T224624Z-check-sliding-fused-batched-decode-port.md
+prepared_at: 2026-10-24T224625Z
 ---
 
 # sliding-fused-batched-decode-port
