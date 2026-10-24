@@ -51,7 +51,7 @@ status: running
 review_at: 2026-10-24T165654Z
 review_companions: null
 hold_reason: null
-stage: claimed
+stage: implemented
 claimed_at: 2026-10-24T233107Z
 base_sha: 8d596b6505434ea78352dd08f0494382c53bec54
 base_blob: 635cfee3ac2c3f7c66840b8c8a082cad2fa41a68
@@ -60,6 +60,12 @@ worktree: .worktrees/muse_prefill_layer/silu-mul-triton-local-rows-marlin-turn
 mode: null
 restack_of: null
 stale_base: null
+implemented_at: 2026-10-24T233142Z
+impl_commit: d4d4c077f75b6689b16c96c62fb5598b1756d3b5
+submission_sha256: 6e334dcacbd3362a5ea8af73014be65b36baa52ed3366d5fb7f789a85c0b5311
+norm_sha256: 33ecb03b26bd91e2ce8e02c2498526265158eb54e8c87026d69748507cc0d80a
+submission_blob: 1a06deda403ddee4b4693b34127fd50b8bcb791c
+lint_warnings: 7
 ---
 
 # silu-mul-triton-local-rows-marlin-turn
@@ -100,3 +106,18 @@ No companion is warranted. The result can be read directly: the act_and_mul_kern
 - How much of cache1's local rows is still L2-resident after Marlin w13 at turn_4 (~49 MB of local rows, about L2 size)? This sets whether turn_4 can reach ~20 us or stays nearer 30 us.
 - Is the prepare() reference check bit-exact achievable given CUDA expf vs Triton exp lowering, or should it accept 1 bf16 ulp?
 
+
+## Implementation notes
+
+Built in the main thread 2026-10-24 ~23:31Z (user-approved; reviewed "proceed" earlier, unheld to spend an expiring check). `_silu_mul_sorted_kernel`: grid (cdiv(EM, 16), size_n / 512), 4 warps; loads n_padded on device and skips blocks past it; per row the sorted slot id, masked to slots < T*8 AND local_ids[slot] >= 0. Deviation: rather than asserting in prepare() that SGLang's align never buckets remote routes, the kernel always masks on local_ids, which is correct either way. Math in fp32 as SGLang (g / (1 + exp(-g)) * u, one bf16 rounding); prepare() compares against silu_and_mul on the local rows of synthetic caches at T=753 and 3012 with a 2^-7 relative bound (exp may differ in the last fp32 bits, so not bit-exact) and falls back to silu_and_mul on any failure (`[silu-sorted] ON|OFF ... PATH CHOSEN`). Runs before `_check_experts_e2e`, so the end-to-end check covers it. `_experts_triton` (first_turn) unchanged.
+
+## Rules check
+
+- [x] CUDA-graph capturable: one Triton launch with a static grid; the n_padded early-out is in-kernel; no host sync in kernel_fn.
+- [x] Fresh inputs: nothing derived from `data` cached.
+- [x] Weights unchanged.
+- [x] Activations BF16 (silu-mul output bf16 as SGLang's); KV FP8; attention untouched.
+- [x] Every key attended.
+- [x] No timing/harness access, processes, network or module edits.
+- [x] No work outside timed calls added (self-check in prepare()).
+- [x] okc_lint: no errors.
