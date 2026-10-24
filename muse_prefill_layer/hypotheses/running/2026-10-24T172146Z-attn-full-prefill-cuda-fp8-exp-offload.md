@@ -91,11 +91,11 @@ base_blob: 635cfee3ac2c3f7c66840b8c8a082cad2fa41a68
 branch: hyp/muse_prefill_layer/attn-full-prefill-cuda-fp8-exp-offload
 worktree: .worktrees/muse_prefill_layer/attn-full-prefill-cuda-fp8-exp-offload
 mode: null
-implemented_at: 2026-10-24T175053Z
-impl_commit: cfd635fc9a176e85ec7e91cf54a476c2cacb8c49
-submission_sha256: 3e661a696bc95cba2e2082d63c623d26efbf6161dbfc19ec010c9d06ebe1f608
-norm_sha256: b9ee3e0af75dc96ff4c926fc1974716dad552f9dcd6f502f2a8c4819000aff2b
-submission_blob: 60d698d8147fbb03ce61d68536555ee179a28611
+implemented_at: 2026-10-24T175822Z
+impl_commit: 5e83a89f3d795dd06017b84c099185bfc7f9e164
+submission_sha256: ef0142cf0dfabf0a0662fa8397521da0194ad527448c9609929804dabaa124b2
+norm_sha256: 36fe2e061a50081744b9338793410d614c4ddfccea61fb6721cd9a83f234f6a8
+submission_blob: 32f2233dad7a871bb1fbf53182923a115bae4782
 lint_warnings: 11
 ---
 
@@ -193,6 +193,9 @@ Only `muse_prefill_layer/submission.py` changed, in the worktree, uncommitted. T
 - Whether `fence.proxy.async` is sufficient for cp.async-written smem.
 - A fault in the wgmma kernel would be a sticky CUDA error and would fail the whole run. The fallback cannot catch that.
 - Read the log tail before judging. A `PATH CHOSEN: FA3` or `OFF` line means the run timed master.
+
+### Pre-flight fix (2026-10-24, after an Opus audit)
+The audit verified the RS wgmma e4m3 form, the 8-bit A layout, the LBO/SBO order (documented order correct; a swapped descriptor cannot read outside shared memory), the software exp and the split-KV combine. Added an absolute cap (rel L2 <= 0.1, worst row <= 0.5) to the 'no worse than FA3' pass rule, so a broken FA3 run in the self-check cannot let a garbage output through.
 
 ## Rules check
 
