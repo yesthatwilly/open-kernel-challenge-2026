@@ -1,6 +1,6 @@
 # muse_prefill_layer findings
 
-Regenerated 2026-10-24T084809Z by `churn.py index`. Read this before writing a hypothesis for muse_prefill_layer.
+Regenerated 2026-10-24T090935Z by `churn.py index`. Read this before writing a hypothesis for muse_prefill_layer.
 
 ## Current best
 
@@ -28,6 +28,9 @@ Where the time goes (per scored shape, top kernels):
 ### pre-attention norm+rope + cache store
 - **qk-norm-fp8-cache-store-fusion** → neutral (unproven-vs-best), 1.0093x — no shape moved outside noise. One Triton kernel replaces five launches on the attention front: FusedQKNorm, k.to(FP8), v.to(FP8), store_cache and q.view(T, 16, 64).to(FP8). One program per t
 
+### w13 marlin + w2 marlin (W4A16 engine with in-kernel NVFP4 dequant, for the turn shapes)
+- **experts-triton-w4a16-inkernel-fp4** → regression (regression), 0.6891x — lost on sliding first_turn, turn_1, turn_4; full first_turn, turn_1, turn_4. A Triton grouped-GEMM kernel with in-register NVFP4 dequant replaces both moe_wna16_marlin_gemm calls wherever master still runs Marlin (if a dequant-to-BF16 pa
+
 ### whole-layer parity (SGLang pipeline) + routing remap
 - **sglang-pipeline-parity** → gain (gain), 1.0039x — no shape moved outside noise. Rewrite kernel_fn and prepare in muse_prefill_layer/submission.py to run SGLang's own pipeline module for module as baseline.py does: _bf16_gemm_dispatch_impl f
 
@@ -50,6 +53,5 @@ Where the time goes (per scored shape, top kernels):
 - queue: experts-marlin-block-m-48-turn4 [w13 marlin + w2 marlin (block_size_m pick)] p3 queued
 - queue: router-triton-hilo-splitk-turn [router GEMM] p3 queued
 - queue: router-pooler-concat-gemm-turn [router GEMM + pooler GEMM (one concatenated GEMM, no side stream)] p5 queued
-- running: experts-triton-w4a16-inkernel-fp4 [w13 marlin + w2 marlin (W4A16 engine with in-kernel NVFP4 dequant, for the turn shapes)] p5 running
 - running: experts-marlin-block-m-local-rows [w13 marlin + w2 marlin (block_size_m pick)] p1 running
 - running: experts-marlin-block-m-48-turn1 [w13 marlin + w2 marlin (block_size_m pick)] p2 running
