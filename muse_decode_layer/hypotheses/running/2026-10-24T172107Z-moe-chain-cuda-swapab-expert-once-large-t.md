@@ -82,9 +82,16 @@ controls_for: null
 rewrite_stage: 1
 replaces: moe_align_block_size + Marlin w13 + silu_and_mul (act_and_mul_kernel) + Marlin w2 at T > 32 (verify_16 T=128, verify_32 T=256)
 review: proceed
-status: queued
+status: running
 review_at: 2026-10-24T172543Z
 review_companions: null
+stage: claimed
+claimed_at: 2026-10-24T172706Z
+base_sha: a449561e2d3c5c1910b17badcd989afdfcebd989
+base_blob: cc466fce207709c98ab0e78c2435c1c459890fdb
+branch: hyp/muse_decode_layer/moe-chain-cuda-swapab-expert-once-large-t
+worktree: .worktrees/muse_decode_layer/moe-chain-cuda-swapab-expert-once-large-t
+mode: null
 ---
 
 # moe-chain-cuda-swapab-expert-once-large-t
