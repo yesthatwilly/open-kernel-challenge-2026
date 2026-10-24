@@ -83,7 +83,7 @@ review: proceed
 status: running
 review_at: 2026-10-24T140535Z
 review_companions: null
-stage: implemented
+stage: dispatched
 claimed_at: 2026-10-24T140535Z
 base_sha: f19e0a9125db56de07444e6a99a642c35003206d
 base_blob: 3f76eb805990314f5f7e6de6e9e184464edd6019
@@ -98,6 +98,8 @@ submission_blob: a8bb42ac483318e9fbc84bc7826a27b7a704d1fb
 lint_warnings: 0
 attempt_file: 2026-10-24T140833Z-check-bf16-m32-swapab-wgmma-triton.md
 prepared_at: 2026-10-24T140833Z
+job: 1602a4e947e64090
+dispatched_at: 2026-10-24T140843Z
 ---
 
 # bf16-m32-swapab-wgmma-triton
