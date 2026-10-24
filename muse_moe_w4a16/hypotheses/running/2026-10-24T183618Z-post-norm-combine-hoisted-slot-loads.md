@@ -46,9 +46,16 @@ priority: 1
 kind: primary
 controls_for: null
 review: proceed
-status: queued
+status: running
 review_at: 2026-10-24T183956Z
 review_companions: null
+stage: claimed
+claimed_at: 2026-10-24T183956Z
+base_sha: 91975540841cb14ebba858121c83ff760c528591
+base_blob: 108d36e9f2266fc88531dd6ff0329a847c882013
+branch: hyp/muse_moe_w4a16/post-norm-combine-hoisted-slot-loads
+worktree: .worktrees/muse_moe_w4a16/post-norm-combine-hoisted-slot-loads
+mode: null
 ---
 
 # post-norm-combine-hoisted-slot-loads
