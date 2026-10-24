@@ -1,6 +1,6 @@
 # muse_moe_w4a16 findings
 
-Regenerated 2026-10-24T063614Z by `churn.py index`. Read this before writing a hypothesis for muse_moe_w4a16.
+Regenerated 2026-10-24T080316Z by `churn.py index`. Read this before writing a hypothesis for muse_moe_w4a16.
 
 ## Current best
 
@@ -44,3 +44,8 @@ Where the time goes (per scored shape, top kernels):
 - queue: triton-w13-silu-epilogue [silu-mul] p3 queued
 - queue: triton-w2-grouped-gemv-small-m [w2 marlin] p3 queued
 - queue: triton-small-m-threshold-32 [MoE align/dispatch] p4 queued
+- queue: post-expert-norm-triton-small-m [post-expert norm+combine] p1 queued
+- queue: align-256-experts-below-128 [MoE align/dispatch] p1 queued
+- queue: marlin-block-size-m-next-smaller [w13 marlin] p2 queued
+- queue: align-remote-sentinel-ids [MoE align/dispatch] p3 queued
+- queue: marlin-block-size-m-verify-two-smaller [w13 marlin] p3 queued

@@ -1,6 +1,6 @@
 # muse_attention_decode findings
 
-Regenerated 2026-10-24T015224Z by `churn.py index`. Read this before writing a hypothesis for muse_attention_decode.
+Regenerated 2026-10-24T080316Z by `churn.py index`. Read this before writing a hypothesis for muse_attention_decode.
 
 ## Current best
 
@@ -36,7 +36,6 @@ Where the time goes (per scored shape, top kernels):
 - queue: sglang-path-parity [SGLang path parity] p1 hold
 - queue: fa3-num-splits-full-decode [FA3 call] p4 queued
 - queue: fa3-num-splits-sliding [FA3 call] p3 queued
-- queue: fused-preattention-triton [pre-attention norm+rope] p2 queued
 - queue: triton-window-attention-sliding [FA3 call] p5 queued
 - queue: fa3-drop-cu-seqlens-decode [FA3 call] p5 queued
 - queue: fa3-scheduler-metadata-full-verify [FA3 call] p4 queued
@@ -53,3 +52,4 @@ Where the time goes (per scored shape, top kernels):
 - queue: stream-fork-preattention [launch overhead] p4 queued
 - queue: triton-flash-decode-deep-pipeline [FA3 call (Triton pipeline)] p4 queued
 - queue: triton-flash-decode-full-verify [FA3 call] p4 queued
+- running: fused-preattention-triton [pre-attention norm+rope] p2 running

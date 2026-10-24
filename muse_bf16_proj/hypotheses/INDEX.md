@@ -1,6 +1,6 @@
 # muse_bf16_proj hypotheses
 
-Regenerated 2026-10-24T075012Z. Best: 1.1510x [1.1338,1.1683] job `bd9fa14151644cee` (check)
+Regenerated 2026-10-24T080316Z. Best: 1.1510x [1.1338,1.1683] job `bd9fa14151644cee` (check)
 
 | created | slug | kind | area | where | outcome | speedup | CI | job | mode | promotion | review | expected hit |
 |---|---|---|---|---|---|---|---|---|---|---|---|---|
@@ -19,8 +19,12 @@ Regenerated 2026-10-24T075012Z. Best: 1.1510x [1.1338,1.1683] job `bd9fa14151644
 | 2026-10-24T024326Z | router-triton-hilo-fused-control-hybrid-cublas-above-m32 | control→router-triton-hilo-fused-control-splitk-all-m | router GEMM | queue | hold |  |  |  |  |  | required |  |
 | 2026-10-24T024434Z | router-hilo-addmm-epilogue-control-inplace-out | control→router-hilo-addmm-epilogue | router GEMM | queue | hold |  |  |  |  |  | required |  |
 | 2026-10-24T032454Z | unpooler-full-triton-skinny-m32-control-blockm16-all-m | control→unpooler-full-triton-skinny-m32 | unpooler GEMM | done/neutral | neutral | 0.9990 | [0.984,1.014] | 09abdd472faa4dce | check |  | proceed | 3/4 |
-| 2026-10-24T074946Z | pooler-triton-splitk2-blockn64-semaphore | primary | pooler GEMM | queue | queued |  |  |  |  |  | required |  |
-| 2026-10-24T075006Z | qkv-gate-triton-splitk4-blockn64-semaphore | primary | qkv GEMM | queue | queued |  |  |  |  |  | required |  |
+| 2026-10-24T074946Z | pooler-triton-splitk2-blockn64-semaphore | primary | pooler GEMM | running | running |  |  | 08ec203e5717406e | check |  | proceed |  |
+| 2026-10-24T075006Z | qkv-gate-triton-splitk4-blockn64-semaphore | primary | qkv GEMM | running | running |  |  | 135ef6499875416a | check |  | proceed |  |
+| 2026-10-24T075025Z | router-splitk32-small-m-all-loads-in-flight | primary | router GEMM | queue | queued |  |  |  |  |  | required |  |
+| 2026-10-24T075041Z | router-splitk-semaphore-no-memset | primary | router GEMM | queue | queued |  |  |  |  |  | required |  |
+| 2026-10-24T075111Z | unpooler-slice-triton-splitk8-semaphore | primary | unpooler GEMM | queue | queued |  |  |  |  |  | required |  |
+| 2026-10-24T075347Z | pooler-triton-splitk2-blockn64-semaphore-control-blockk256 | control→pooler-triton-splitk2-blockn64-semaphore | pooler GEMM | queue | queued |  |  |  |  |  | required |  |
 
 ## Held
 
