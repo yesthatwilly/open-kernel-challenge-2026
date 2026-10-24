@@ -53,7 +53,7 @@ review: proceed
 status: running
 review_at: 2026-10-24T075337Z
 review_companions: null
-stage: implemented
+stage: dispatched
 claimed_at: 2026-10-24T075337Z
 base_sha: 7bcb8092c1665b25485402c87868a1ebb583ee27
 base_blob: da55301de1e911aeab09878b0873809f544f436c
@@ -68,6 +68,8 @@ submission_blob: f32bf01cad482965a6a7a50f390dd14ab62a4fa0
 lint_warnings: 0
 attempt_file: 2026-10-24T075611Z-check-qkv-gate-triton-splitk4-blockn64-semaphore.md
 prepared_at: 2026-10-24T075611Z
+job: 135ef6499875416a
+dispatched_at: 2026-10-24T075620Z
 ---
 
 # qkv-gate-triton-splitk4-blockn64-semaphore
