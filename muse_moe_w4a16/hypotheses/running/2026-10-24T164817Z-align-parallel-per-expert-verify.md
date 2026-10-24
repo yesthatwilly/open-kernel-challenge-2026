@@ -55,7 +55,7 @@ review: proceed
 status: running
 review_at: 2026-10-24T165146Z
 review_companions: null
-stage: implemented
+stage: dispatched
 claimed_at: 2026-10-24T165146Z
 base_sha: 4a3b474ab343532548aeff7b0908beb14a4fae68
 base_blob: d9a9375ef4721ab9b28cc9d6364c92e67c7ccc59
@@ -70,6 +70,8 @@ submission_blob: 108d36e9f2266fc88531dd6ff0329a847c882013
 lint_warnings: 8
 attempt_file: 2026-10-24T165514Z-check-align-parallel-per-expert-verify.md
 prepared_at: 2026-10-24T165514Z
+job: 45eacf4ca2e849d2
+dispatched_at: 2026-10-24T165523Z
 ---
 
 # align-parallel-per-expert-verify
