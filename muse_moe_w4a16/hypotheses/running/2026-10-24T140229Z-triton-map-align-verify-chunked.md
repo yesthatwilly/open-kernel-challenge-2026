@@ -47,13 +47,19 @@ review: proceed
 status: running
 review_at: 2026-10-24T140447Z
 review_companions: null
-stage: claimed
+stage: implemented
 claimed_at: 2026-10-24T140447Z
 base_sha: 001aa1c251231981cfc4254d1cf8ce63b737a236
 base_blob: d9a9375ef4721ab9b28cc9d6364c92e67c7ccc59
 branch: hyp/muse_moe_w4a16/triton-map-align-verify-chunked
 worktree: .worktrees/muse_moe_w4a16/triton-map-align-verify-chunked
 mode: null
+implemented_at: 2026-10-24T140755Z
+impl_commit: eb5d866f75bc4c23be16cdeedc1948ad59abf2d2
+submission_sha256: 218d5b05ef911cba6b2b4069b9bee0d0fd87ed8271be4e0c7b55eb62088bad48
+norm_sha256: a95d879e69161f8fb99d50100cad723f96c72e0b19c830cf6150a714aa34357f
+submission_blob: dd6c55be3fb9c7ca9e51737d697a4edabe866330
+lint_warnings: 8
 ---
 
 # triton-map-align-verify-chunked
@@ -96,3 +102,53 @@ No companion is warranted. Attribution needs no A/B: the change is visible direc
 - Is unrolled_elementwise (2.8 us) really the wrapper's sorted_ids fill and not some other cast? topk_ids is already int32, so .to(int32) is a no-op. If it were something else that stays, the saving is smaller.
 - If the swap-AB rewrite later needs BSM=64/128 from this kernel, the [NUM_E, BSM] padding tile grows to 4K int32. That is fine for one CTA, but add those BSMs to the prepare compile list and the self-check, as the spec notes.
 
+
+
+## Implementation notes
+
+Worktree `.worktrees/muse_moe_w4a16/triton-map-align-verify-chunked`, `muse_moe_w4a16/submission.py` only (uncommitted; diff stat: 1 file, +124 / -16).
+
+- **New `_align_chunked_kernel`** (Triton, one program, `num_warps=8`, `CHUNK=ALIGN_CHUNK=512` constexpr, `NUM_E=next_pow2(32)`, `do_not_specialize` on local_start/local_count/n/cap/n_blocks, so BSM is the only per-call constexpr).
+  - Pass 1 loops over the 512-route chunks of the flat ids. It maps `local = id - local_start` (masked to [0, count), else -1), stores local_ids and accumulates `counts += sum(onehot[CHUNK, NUM_E], axis=0)`.
+  - padded / seg_end / seg_start / total are computed exactly as in `_align_small_kernel`.
+  - Pass 2 (as the review REQUIRES) **recomputes** local from topk_ids. It never reloads local_ids, which avoids the intra-CTA store-to-load race. The running `base` starts at seg_start, `pos = base[e] + within-chunk cumsum rank`, it stores `sorted_ids[pos] = flat index` for local routes, and does `base += chunk counts`.
+  - Padding slots: a single `[NUM_E, BSM]` sentinel tile, identical to the small kernel's. **Deviation:** the spec says "a loop". One tile covers all 32 experts at any BSM up to 64 (2K int32), so no loop is needed.
+  - A CHUNK-strided loop fills slots [total, cap) with n. Another CHUNK-strided loop over m-blocks writes block_experts (-1 past the used blocks), then n_padded.
+  - The store sets into sorted_ids are disjoint (real positions, per-expert padding, tail), so their order does not matter.
+- **New `_align_chunked` wrapper**: the same sizes as `_align_small` (cap = n + count*(bsm-1), n_blocks = cdiv(cap, bsm)).
+- **kernel_fn**: `expert_map is not None and num_tokens <= ALIGN_FUSED_MAX_TOKENS` became `expert_map is not None`, choosing `_align_small` at <=32 tokens and `_align_chunked` above (a shape-only branch). The fallback `else` branch (expert_map None) is untouched. The block_size_m picks (including the two-smaller pick at >=128), the Marlin calls, silu and the post-norm are unchanged. The bs<=32 code path is byte-identical.
+- **prepare()**: after the existing `_align_small` warm loop, `_align_chunked` is compiled once per BLOCK_SIZE_M_CANDIDATES entry (8..64) on 33x8 dummy ids. Nothing sees any input.
+- **`_align_self_check`** is extended to tokens (33, 128, 256, 257) x **every** block_size_m candidate (not just SGLang's pick, so kernel_fn's two-smaller picks 16/32 at bs>=128 are covered). These cases use `_align_chunked`, with the same per-expert comparison against `moe_align_block_size(ref_local, bsm, 32)`. The <=32 cases run first with the same seed, so they are unchanged.
+  - Pad lines for the >32 cases print only when they DIFF. This keeps the log under the 16K-char tail, since there are 300 new cases.
+  - Master's existing summary counts the known capacity difference (SGLang's wrapper allocates more: e.g. T=8 296/37 vs 288/36) as a "mismatch" in every case, so a separate `[triton-map-align-verify-chunked]` line reports the >32 mismatches split into capacity-only vs other and prints up to 10 "other" ones. **Read that line: "0 other" is the pass criterion.**
+- Open questions from the review: CHUNK=256 and a 2-CTA variant are not tried (follow-ups). BSM=64/128 for swap-AB is not added (that hypothesis has not landed). BSM=64 is already in the compile list and the self-check.
+
+## Rules check
+
+Checked against `git -C .worktrees/muse_moe_w4a16/triton-map-align-verify-chunked diff`:
+
+- [x] CUDA-graph capturable: no `.item()`/`.cpu()`/`synchronize()`/tensor prints were added in kernel_fn's path. `_align_chunked` only allocates with sizes from shapes/count/bsm (host ints) and launches one kernel. Its loop bounds n/cap/n_blocks are host ints from shapes. The branch `num_tokens <= 32` is on shape. In-kernel loops are device-side. The new syncs/`.tolist()` are only in the prepare()-time self-check.
+- [x] Nothing derived from `data` is cached across calls: local_ids/sorted_ids/block_experts/n_padded are fresh `torch.empty` each call. The state is unchanged.
+- [x] Weights: untouched (no change to the repack; NVFP4 stays NVFP4).
+- [x] Activations BF16 where SGLang keeps BF16: untouched. The new kernel only handles int32 routing metadata.
+- [x] n/a: attention sees every key. No attention in this problem, and there is no routing skipping: every local route still gets a slot.
+- [x] No timing patches, harness frames/I/O/secrets, module edits, reference import, subprocesses or network: the diff only adds a Triton kernel, a wrapper, prepare-time warmup/self-check and a dispatch line.
+- [x] All work happens inside the timed call; no output caching or replay. The align work moved from SGLang ops into one Triton launch inside kernel_fn. prepare() only warms compile and self-checks on synthetic ids.
+- [x] No triton.autotune. The first-line marker `# okc: problem=muse_moe_w4a16` is kept.
+
+okc_lint output:
+
+```
+warn  host-sync    L300: "random": [torch.randperm(N_EXPERTS, generator=gen)[:TOP_K].tolist() for _ in range(tokens)],  (outside kernel_fn's call graph; fine in prepare())
+warn  host-sync    L302: [remote_set[i] for i in torch.randperm(len(remote_set), generator=gen)[:5].tolist()]  (outside kernel_fn's call graph; fine in prepare())
+warn  host-sync    L304: "all-remote": [[remote_set[i] for i in torch.randperm(len(remote_set), generator=gen)[:TOP_K].tolist()]  (outside kernel_fn's call graph; fine in prepare())
+warn  host-sync    L322: torch.cuda.synchronize()  (outside kernel_fn's call graph; fine in prepare())
+warn  host-sync    L327: s_ids, b_exp, n_pad = s_ids.tolist(), b_exp.tolist(), int(n_pad.item())  (outside kernel_fn's call graph; fine in prepare())
+warn  host-sync    L328: r_ids, r_exp, r_pad = r_ids.tolist(), r_exp.tolist(), int(r_pad.item())  (outside kernel_fn's call graph; fine in prepare())
+warn  host-sync    L425: torch.cuda.synchronize()  (outside kernel_fn's call graph; fine in prepare())
+warn  host-sync    L427: torch.cuda.synchronize()  (outside kernel_fn's call graph; fine in prepare())
+OK with warnings: muse_moe_w4a16/submission.py
+exit 0
+```
+
+`python3 -I -m py_compile`: OK (the __pycache__ was removed).
