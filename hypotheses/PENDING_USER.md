@@ -6,7 +6,6 @@ items here and in each tick's summary. Resolved items move to the log at the bot
 ## Open
 
 - 2026-10-24 rules heads-up (not blocking): bf16 **bf16-cublaslt-algo-pick-in-prepare-m128-m256** times cuBLASLt algorithm candidates on synthetic data inside the untimed prepare() and replays the winner in kernel_fn (no timing or autotune in kernel_fn). The Opus reviewer read the rules as allowing it, and decode's pooler-gemm-splitk-autotune used the same pattern. It runs on tomorrow's quota unless you say to hold it.
-- 2026-10-24 rules heads-up (not blocking): bf16 **bf16-lossless-exp4-weight-stream-rewrite** stores the bf16 weights in a lossless compressed form, built once in prepare() (a shared exponent per 64-element group, one byte of sign and mantissa, a 4-bit exponent offset, and raw bf16 for groups out of range), and decompresses them bit-exactly in registers inside kernel_fn. That cuts weight bytes to about 0.77x. prepare() asserts a bit-exact round trip. The weights are fixed parameters, not inputs, and the math stays bf16. The minter read the rules as allowing it; the Opus review checks again. It runs at the reset unless you say to hold it.
 
 ## Standing answers
 
@@ -34,3 +33,4 @@ items here and in each tick's summary. Resolved items move to the log at the bot
 - 2026-10-24: decode marlin-block-m-cap-16 (check 1.062x) submitted at the user's request, job 2b1f82408ab64116.
 - 2026-10-24: attention_decode fused-preattention-triton (check 1.127x) submitted by the user, job c297440e53334f34.
 - 2026-10-24: the user said "submit all five promotions"; Claude ran them: attention full-decode-cuda-gather-splitkv (check 1.347x) de486093311d4bb9, decode post-expert-norm-triton-small-t (1.164x) a017e10aec544c55, moe triton-map-align-on-block-m-restack (1.312x) 3cabc739f1af493e, prefill experts-hybrid-marlin-turn-triton-first-turn (1.060x) ba9c16b9cc6b4605, bf16 bf16-m32-swapab-wgmma-triton (1.198x) eeb9985396764ac2.
+- 2026-10-24: bf16-lossless-exp4-weight-stream-rewrite heads-up closed: TASK.md says weights may be compressed losslessly ("BF16 weights stay BF16, or smaller, losslessly"). The review also had cuobjdump removed from its diagnostics, since it starts a process.
