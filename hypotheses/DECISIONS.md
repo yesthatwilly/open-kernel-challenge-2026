@@ -82,3 +82,4 @@ overrides of a reviewer) with the reason, newest last. Written by `churn.py note
 - 2026-10-24T135641Z `muse_bf16_proj` **bf16-shape-gated-triton-winners-combo**: merged by hand (1.176x vs 1.151x): 14/16 targeted shapes gained 5-17% (unpooler slice decode_1 1.174, verify_1 1.113; pooler/qkv/o at m<=16 5-8%); the only losses are router verify_1/verify_16 (0.92/0.94), whose code is byte-identical to master, so that is run drift
 - 2026-10-24T135641Z `muse_decode_layer` **fused-preattention-triton**: not merged: 1.097x vs 1.087x, all shapes flat but sliding decode_32 (+3.3%); within drift
 - 2026-10-24T140307Z `muse_moe_w4a16` **triton-w13-silu-epilogue**: hold: stacks on triton-w13-grouped-gemv-small-m, which regressed (2-2.6x slower than Marlin at small M)
+- 2026-10-24T140307Z `muse_moe_w4a16` **triton-w2-grouped-gemv-small-m**: hold: stacks on triton-w13-grouped-gemv-small-m, which regressed (2-2.6x slower than Marlin at small M)
