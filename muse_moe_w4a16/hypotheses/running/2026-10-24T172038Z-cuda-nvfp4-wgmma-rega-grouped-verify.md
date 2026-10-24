@@ -126,7 +126,7 @@ review: proceed
 status: running
 review_at: 2026-10-24T172632Z
 review_companions: null
-stage: implemented
+stage: dispatched
 claimed_at: 2026-10-24T172705Z
 base_sha: 392a74ee4f7b4f552a563e8bf1c922ac4974e1f6
 base_blob: d9a9375ef4721ab9b28cc9d6364c92e67c7ccc59
@@ -141,6 +141,8 @@ submission_blob: 5c34fabe0f05fb53014dd85b66864cd3b38bc673
 lint_warnings: 23
 attempt_file: 2026-10-24T181733Z-submit-cuda-nvfp4-wgmma-rega-grouped-verify.md
 prepared_at: 2026-10-24T181733Z
+job: 3bb822f22ebc4a5c
+dispatched_at: 2026-10-24T181917Z
 ---
 
 # cuda-nvfp4-wgmma-rega-grouped-verify
