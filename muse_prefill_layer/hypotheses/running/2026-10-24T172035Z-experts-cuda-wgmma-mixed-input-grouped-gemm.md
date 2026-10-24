@@ -86,9 +86,16 @@ controls_for: null
 rewrite_stage: 1
 replaces: _moe_nvfp4_gemm_kernel x2 (w13, w2) at T > 4096 in stage 1; moe_wna16_marlin_gemm x2 at T <= 4096 in stages 2-3
 review: proceed
-status: queued
+status: running
 review_at: 2026-10-24T172614Z
 review_companions: null
+stage: claimed
+claimed_at: 2026-10-24T172706Z
+base_sha: da2ab55f3d3cd86efc0ec9a2708632b85a44ae0b
+base_blob: 635cfee3ac2c3f7c66840b8c8a082cad2fa41a68
+branch: hyp/muse_prefill_layer/experts-cuda-wgmma-mixed-input-grouped-gemm
+worktree: .worktrees/muse_prefill_layer/experts-cuda-wgmma-mixed-input-grouped-gemm
+mode: null
 ---
 
 # experts-cuda-wgmma-mixed-input-grouped-gemm
