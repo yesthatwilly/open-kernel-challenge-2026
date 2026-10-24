@@ -1,6 +1,6 @@
 # muse_bf16_proj findings
 
-Regenerated 2026-10-23T225814Z by `churn.py index`. Read this before writing a hypothesis for muse_bf16_proj.
+Regenerated 2026-10-24T015224Z by `churn.py index`. Read this before writing a hypothesis for muse_bf16_proj.
 
 ## Current best
 
@@ -55,12 +55,13 @@ Where the time goes (per scored shape, top kernels):
 ## Queue and in flight
 
 - queue: router-hilo-addmm-epilogue [router GEMM] p3 queued
-- queue: router-hilo-at-m8 [router GEMM] p1 queued
-- queue: router-triton-hilo-fused [router GEMM] p1 queued
-- queue: pooler-triton-skinny-m32 [pooler GEMM] p2 queued
-- queue: unpooler-slice-triton-gemv [unpooler GEMM] p2 queued
 - queue: bf16-cublaslt-backend-toggle [bf16 GEMM dispatch] p5 queued
 - queue: o-triton-skinny-m32 [o GEMM] p4 queued
 - queue: pooler-skinny-tiled-weight-layout [pooler GEMM] p4 queued
 - queue: unpooler-full-triton-skinny-m32 [unpooler GEMM] p3 queued
 - queue: qkv-gate-triton-skinny-m32 [qkv GEMM] p3 queued
+- queue: router-triton-hilo-fused-control-splitk-all-m [router GEMM] p1 queued
+- running: router-hilo-at-m8 [router GEMM] p1 running
+- running: router-triton-hilo-fused [router GEMM] p1 running
+- running: pooler-triton-skinny-m32 [pooler GEMM] p2 running
+- running: unpooler-slice-triton-gemv [unpooler GEMM] p2 running

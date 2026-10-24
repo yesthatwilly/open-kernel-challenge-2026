@@ -1,6 +1,6 @@
 # muse_attention_decode hypotheses
 
-Regenerated 2026-10-23T224703Z. Best: 0.0023x [0.0023,0.0024] job `a8d647772fa945e5` (check)
+Regenerated 2026-10-24T015224Z. Best: 0.0023x [0.0023,0.0024] job `a8d647772fa945e5` (check)
 
 | created | slug | kind | area | where | outcome | speedup | CI | job | mode | promotion | review | expected hit |
 |---|---|---|---|---|---|---|---|---|---|---|---|---|
@@ -14,6 +14,16 @@ Regenerated 2026-10-23T224703Z. Best: 0.0023x [0.0023,0.0024] job `a8d647772fa94
 | 2026-10-23T223722Z | triton-flash-decode-full-both-heads | primary | FA3 call | queue | queued |  |  |  |  |  | required |  |
 | 2026-10-23T223802Z | fused-sliding-preattn-into-window-kernel | primary | attention boundary | queue | queued |  |  |  |  |  | required |  |
 | 2026-10-23T223803Z | fused-sliding-normgate-epilogue | primary | output norm-gate | queue | queued |  |  |  |  |  | required |  |
+| 2026-10-23T225840Z | fa3-hdim128-head-pairing | primary | FA3 call (head packing) | queue | queued |  |  |  |  |  | required |  |
+| 2026-10-23T225840Z | paired-heads-launch-cleanup | primary | attention boundary | queue | queued |  |  |  |  |  | required |  |
+| 2026-10-23T225858Z | fa3-batched-q-verify | primary | FA3 call (q layout) | queue | queued |  |  |  |  |  | required |  |
+| 2026-10-23T225858Z | fa3-num-splits-full-verify | primary | FA3 call | queue | queued |  |  |  |  |  | required |  |
+| 2026-10-23T225858Z | fa3-single-split-sliding | primary | FA3 call | queue | queued |  |  |  |  |  | required |  |
+| 2026-10-23T225858Z | fa3-window-trimmed-page-table | primary | page table (sliding) | queue | queued |  |  |  |  |  | required |  |
+| 2026-10-23T225858Z | fused-full-combine-normgate | primary | output norm-gate | queue | queued |  |  |  |  |  | required |  |
+| 2026-10-23T225858Z | stream-fork-preattention | primary | launch overhead | queue | queued |  |  |  |  |  | required |  |
+| 2026-10-23T225858Z | triton-flash-decode-deep-pipeline | primary | FA3 call (Triton pipeline) | queue | queued |  |  |  |  |  | required |  |
+| 2026-10-23T225858Z | triton-flash-decode-full-verify | primary | FA3 call | queue | queued |  |  |  |  |  | required |  |
 
 ## Held
 

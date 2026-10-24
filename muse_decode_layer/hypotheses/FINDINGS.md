@@ -1,6 +1,6 @@
 # muse_decode_layer findings
 
-Regenerated 2026-10-23T225814Z by `churn.py index`. Read this before writing a hypothesis for muse_decode_layer.
+Regenerated 2026-10-24T015224Z by `churn.py index`. Read this before writing a hypothesis for muse_decode_layer.
 
 ## Current best
 
@@ -33,7 +33,6 @@ Where the time goes (per scored shape, top kernels):
 
 ## Queue and in flight
 
-- queue: sglang-pipeline-parity-router-hilo-m8 [router GEMM] p1 queued
 - queue: cache-store-fused-fp8-cast [cache store] p2 queued
 - queue: expert-id-map-single-kernel [MoE align/dispatch] p2 queued
 - queue: fa3-num-splits-full-no-metadata [FA3 call] p3 queued
@@ -43,3 +42,4 @@ Where the time goes (per scored shape, top kernels):
 - queue: trtllm-decode-full-attention [FA3 call] p5 queued
 - queue: fa3-num-splits-sliding [FA3 call] p2 queued
 - queue: moe-align-single-kernel-small-t [MoE align/dispatch] p3 queued
+- running: sglang-pipeline-parity-router-hilo-m8 [router GEMM] p1 running
