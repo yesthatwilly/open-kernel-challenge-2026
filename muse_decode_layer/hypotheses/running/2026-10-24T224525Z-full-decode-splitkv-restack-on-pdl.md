@@ -44,9 +44,12 @@ review: required
 status: running
 stage: claimed
 claimed_at: 2026-10-24T231559Z
-base_sha: f6cc1452343c4d93911ad7303c4a5d7878afd2fe
-base_blob: b83f5ec1976c82d5b45dcd92b6c0818ce04eda9f
+base_sha: c9bcd4b9a93b6243df95314fc89a265e1d556bc3
+base_blob: 3d70ae6e2de0d48c4a4f2a469ced8234f5348182
 branch: hyp/muse_decode_layer/full-decode-splitkv-restack-on-pdl
+restack_of: full-decode-cuda-splitkv-port
+restack_patch: muse_decode_layer/hypotheses/done/neutral/full-decode-cuda-splitkv-port.patch
+restack: conflicts
 worktree: .worktrees/muse_decode_layer/full-decode-splitkv-restack-on-pdl
 mode: null
 ---
