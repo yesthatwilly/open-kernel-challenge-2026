@@ -41,8 +41,8 @@ kind: rewrite
 controls_for: null
 review: required
 status: queued
-stage: 2
 replaces: FA3 on full-attention verify (q_len=8)
+rewrite_stage: 2
 ---
 
 # triton-flash-decode-full-verify-paired-kv

@@ -76,7 +76,6 @@ depends_on: null
 priority: 1
 kind: rewrite
 controls_for: null
-stage: dispatched
 replaces: Marlin w13 + silu + w2 at num_tokens <= 16
 review: proceed
 status: running
@@ -98,6 +97,8 @@ attempt_file: 2026-10-24T084758Z-check-small-m-grouped-gemv-splitk-rewrite.md
 prepared_at: 2026-10-24T084758Z
 job: 734a1159ff334c3d
 dispatched_at: 2026-10-24T084809Z
+stage: dispatched
+rewrite_stage: 1
 ---
 
 # small-m-grouped-gemv-splitk-rewrite

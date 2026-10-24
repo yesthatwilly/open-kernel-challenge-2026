@@ -876,9 +876,9 @@ def _harvest_one(p, h, job, sj):
         set_section(new_md, "Attribution", "\n".join(tbl) + extra)
     fu = []
     if str(h.get("kind") or "") == "rewrite":
-        fu.append(f"- rewrite stage {h.get('stage') or 1} of `{h.get('replaces') or h.get('area')}`: read the replaced kernels' own us per shape "
+        fu.append(f"- rewrite stage {h.get('rewrite_stage') or 1} of `{h.get('replaces') or h.get('area')}`: read the replaced kernels' own us per shape "
                   f"(profile top_kernels) against the incumbent and the floor, and check which Milestone it reached. The next stage is "
-                  f"`/hypothesize {p} \"<what to fix or tune>\" --kind rewrite --depends-on {slug} --stage {int(h.get('stage') or 1) + 1}`; "
+                  f"`/hypothesize {p} \"<what to fix or tune>\" --kind rewrite --depends-on {slug} --stage {int(h.get('rewrite_stage') or 1) + 1}`; "
                   "a slow or failed first cut is the expected start, not a do-not-retry.")
     if outcome == "failed" and res.get("first_failing"):
         fu.append(f"- first failing case {json.dumps(res['first_failing'].get('case'))}: {res['first_failing'].get('message')}. Suggest `/hypothesize {p} \"fix {slug}: ...\"` with the fix as its own change.")

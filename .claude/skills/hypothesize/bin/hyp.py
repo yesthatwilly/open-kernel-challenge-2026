@@ -90,7 +90,7 @@ def cmd_new(a):
     fm += [f"risk: {a.risk}", f"depends_on: {yaml_scalar(a.depends_on)}", f"priority: {a.priority}",
            f"kind: {a.kind}", f"controls_for: {yaml_scalar(a.controls_for)}"]
     if a.kind == "rewrite":
-        fm += [f"stage: {a.stage}", f"replaces: {yaml_scalar(a.replaces or a.area)}"]
+        fm += [f"rewrite_stage: {a.stage}", f"replaces: {yaml_scalar(a.replaces or a.area)}"]
     fm += ["review: required", "status: queued", "---"]
     body = [f"# {slug}", "", "## Change", "", a.change.strip(), "", "## Expected", ""]
     body += [f"- `{e.get('shapes', '*')}` {e.get('direction', 'faster')}: {e.get('why', '')}" for e in expected] or ["- (none stated)"]

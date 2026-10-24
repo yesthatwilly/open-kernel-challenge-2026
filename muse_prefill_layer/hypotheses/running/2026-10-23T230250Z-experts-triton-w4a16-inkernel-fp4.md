@@ -41,7 +41,6 @@ review: proceed
 status: running
 review_at: 2026-10-24T075347Z
 review_companions: null
-stage: 1
 claimed_at: 2026-10-24T075347Z
 base_sha: 79a102b3fd18c6ab5fa1e8d8d7390e6645a26ec3
 base_blob: e4931f050c7fb99835fe116d25bb454a5ea731e9
@@ -59,6 +58,8 @@ prepared_at: 2026-10-24T080302Z
 job: 218515e2d0b14ce7
 dispatched_at: 2026-10-24T080316Z
 replaces: Marlin w13+w2 (moe_wna16_marlin_gemm x2) at every prefill T
+stage: dispatched
+rewrite_stage: 1
 ---
 
 # experts-triton-w4a16-inkernel-fp4
