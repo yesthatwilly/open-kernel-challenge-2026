@@ -112,8 +112,10 @@ kind: rewrite
 controls_for: null
 rewrite_stage: 1
 replaces: _align_small + Marlin w13 + silu_and_mul + Marlin w2 + post-norm combine (the whole MoE, 5 launches) at 2 <= num_tokens <= 32
-review: required
+review: proceed
 status: queued
+review_at: 2026-10-24T172507Z
+review_companions: null
 ---
 
 # cuda-fused-moe-midm-single-launch-routed
@@ -143,3 +145,26 @@ shape (profile top_kernels) against the incumbent and the speed-of-light floor, 
 2. at or below the incumbent kernels' time on the target shapes;
 3. within ~1.5x of the floor on the target shapes, and the headline CI clears 1.0 (promotable).
 The next stage is minted with `--kind rewrite --depends-on <this slug> --stage N+1`.
+
+## Adversarial review
+
+Reviewed 2026-10-24T172507Z by an adversarial subagent (model opus).
+
+**Verdict: proceed.** This is a sound stage-1 rewrite and its floor is reachable: the work is weight-stream bound, and there are enough items per phase to keep all 132 SMs busy. But the epoch/flag scheme as written hangs on the second call that uses a different set of active experts, and a hang gets past the exception-based fallback. Fix the flag scheme and bound every spin before running.
+
+### Justification
+Mechanism: at 2 <= M <= 32 every target shape is dominated by streaming NVFP4 weights. FINDINGS puts Marlin at 92.8 / 92.6 / 94.6% of the time at bs 8 / 16 / 32 (105.8 / 116.0 / 187.6 us) against floors of 37.3 / 52.5 / 70.8 us. Each local expert is about 28 MB (w13 16.8 MB + 2.1 MB scales, w2 8.4 MB + 1 MB), so the floors imply roughly 6 / 9 / 12 hot experts per call. Marlin sits 2.6-2.8x off the floor. A persistent swap-AB mma.sync kernel that streams each hot expert once (NT <= 4 n8 fragments) can plausibly close most of that gap. Parallelism is adequate. Phase 1 has about 6 x 64 x 4 = 1536 items at bs=8 and 12 x 64 x 1 = 768 at bs=32; phase 2 has about 1536 / 768. Each item moves 32-64 KB of weights, which is enough bytes in flight per SM if the cp.async ring is 3-4 deep. Removing align (2.7-4.4 us), post-norm (3.5-4.2 us), silu_and_mul and the w13->w2 drain/ramp is a real but secondary gain of about 10-15 us. Almost all of the expected win is the mainloop beating Marlin, which the hypothesis inherits from the in-flight sibling cuda-nvfp4-swapab-mma-persistent-small-m. The expected directions are consistent with TASK.md: bs 8 / 16 / 32 faster, bs 1 / 128 / 256 flat because those shapes run master byte for byte. M3 (<= 1.4x of floor, about 3.4 TB/s through an mma.sync dequant path) is ambitious. At bs=32 the NT=4 activation slab is the shared-memory-bound case the sibling's reviewer flagged (~2.9 TB/s), so M3 at bs=32 is probably a stage-2 target, and the hypothesis says so. WEAKEST LINK, correctness and liveness: flags 'count up and are never reset' and phase 2 waits until each flag == 8 * (epoch + 1). A flag for expert a only advances in calls where a is active. Whether a_local is the local expert id or the rank among active experts, the active set changes between calls, so flags fall out of step with epoch and phase 2 spins forever. The self-check's 50 identical repeats would not catch this; the switch from one case to the next would, as a hang in prepare. A hang raises no exception, so the FALLBACK never fires, and the run burns its 15-minute budget as a timeout. Required fixes: (a) give each flag the expected value it will reach by the end of this call, for example by having CTA 0 add 8 to every inactive expert's flags in phase 0, or by having the exit-ticket CTA reset all flags to 0 and waiting for == 8; and (b) put an iteration bound on every ld.acquire spin. When the bound trips, the CTA should set a device error word and exit, and the self-check should read that word and fall back. Secondary weakness in the expectations: the cited 'replaced sum' figures (~114 / ~125 / ~198 us) are profiler kernel sums, but the scored times are 107.8 / 147.9 / 200.7. At bs=16 the scored time is 23 us above the kernel sum, so 'shape time minus fused row <= 2 us' may not be readable or achievable. Judge milestones on the profile's fused row, as the Milestones section already says. Smaller notes: (1) the phase-3 combine reads y and ssq that other CTAs wrote, so the arriver needs acquire semantics after its atomicAdd (atom.acq_rel.gpu, or __threadfence after the add) before it reads them. (2) Phase 0 sits on the critical path before any weight byte moves (each CTA scans 256 routes redundantly); keep it to well under 1 us, for example with one warp-ballot pass and no __syncthreads chain beyond what is needed. (3) At bs=32 the combines for tokens that finish last are serialized at the tail. Each covers R_t <= 8 rows of 8 KB from L2, which is small, but it should appear in the stage-2 profile.
+
+### Confounders on the current kernel
+- No landed hypotheses on master's lineage (landed list is empty), so no landed change can confound the result. The pieces master already carries (_align_small, _post_norm_combine_kernel, the block_size_m pick) are what this kernel replaces wholesale at 2 <= M <= 32, so they set the incumbent being measured against rather than interacting with the change.
+- Not a landed item, but a correlated one: the mainloop and bank come from the in-flight cuda-nvfp4-swapab-mma-persistent-small-m. If that sibling's mainloop misses its M2, this run will also miss its own, and the cause will be the shared mainloop design, not the fusion. Read the sibling's per-shape rows, numRegs and spill figures first, as the Risk section says.
+
+### Interference and A/B needs
+No companions. This is a kind: rewrite judged on its own fused row against the replaced Marlin, align, silu and post-norm rows and against the floor, and there is no landed hypothesis to revert or tune. A control that keeps the sibling's two-launch path to isolate the fusion gain would just duplicate the sibling's own run, which is already in flight. Comparing this run's fused row with the sibling's GEMM rows on the same shapes gives that attribution for free. The next stage is the follow-up.
+
+### Open questions
+- Is a_local in flag[a_local][j/8] the local expert id (0..31) or the rank among active experts? Under either reading the 'never reset, wait for 8*(epoch+1)' rule needs every flag to advance by exactly 8 every call, and the change does not specify that.
+- Is the judge's L2-flush read always on the same stream and finished before the graph replay starts, so all 132 CTAs are co-resident? Bounded spins make the answer non-fatal, but log the residency assert and the measured co-residency.
+- If both this and cuda-nvfp4-swapab-mma-persistent-small-m harvest positively, who owns 2 <= M <= 32 on master, and does the sibling's bank get built once and shared, or twice? A second bank is about 0.9 GB.
+- Was the bs=16 gap of about 23 us between the scored time (147.9) and the kernel sum (~125) launch or graph overhead (which this kernel would remove) or measurement method (which it would not)? The answer changes what the headline can show at bs=16.
+
