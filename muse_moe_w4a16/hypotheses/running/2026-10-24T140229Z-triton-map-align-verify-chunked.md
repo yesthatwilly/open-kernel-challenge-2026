@@ -53,13 +53,15 @@ base_sha: 001aa1c251231981cfc4254d1cf8ce63b737a236
 base_blob: d9a9375ef4721ab9b28cc9d6364c92e67c7ccc59
 branch: hyp/muse_moe_w4a16/triton-map-align-verify-chunked
 worktree: .worktrees/muse_moe_w4a16/triton-map-align-verify-chunked
-mode: null
+mode: check
 implemented_at: 2026-10-24T140755Z
 impl_commit: eb5d866f75bc4c23be16cdeedc1948ad59abf2d2
 submission_sha256: 218d5b05ef911cba6b2b4069b9bee0d0fd87ed8271be4e0c7b55eb62088bad48
 norm_sha256: a95d879e69161f8fb99d50100cad723f96c72e0b19c830cf6150a714aa34357f
 submission_blob: dd6c55be3fb9c7ca9e51737d697a4edabe866330
 lint_warnings: 8
+attempt_file: 2026-10-24T140755Z-check-triton-map-align-verify-chunked.md
+prepared_at: 2026-10-24T140755Z
 ---
 
 # triton-map-align-verify-chunked
