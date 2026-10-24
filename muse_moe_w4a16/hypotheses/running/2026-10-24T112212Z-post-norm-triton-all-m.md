@@ -43,13 +43,19 @@ review: proceed
 status: running
 review_at: 2026-10-24T124248Z
 review_companions: null
-stage: claimed
+stage: implemented
 claimed_at: 2026-10-24T124248Z
 base_sha: a98ef454e7901f7ff47efb4c4c0e77e7261da827
 base_blob: c7bf9ffedc48b757f56765004e5d65f6ad5ba841
 branch: hyp/muse_moe_w4a16/post-norm-triton-all-m
 worktree: .worktrees/muse_moe_w4a16/post-norm-triton-all-m
 mode: null
+implemented_at: 2026-10-24T124312Z
+impl_commit: 051681e95e3823c612c005d02947784ffa8cb571
+submission_sha256: 2d3d1695ec4120364f5b5731c0ff616cc12ff8208b446e91217ad2a64febaaef
+norm_sha256: bfc194196f18b1333b8ffa8706000a047c5a683a029a8f0ea364c9278bdc8379
+submission_blob: 5278292a55237533aacca2d10cb426a81f65fb9b
+lint_warnings: 1
 ---
 
 # post-norm-triton-all-m
@@ -94,3 +100,26 @@ No companion is warranted. The change replaces one kernel with another whose own
 - If _post_norm_combine_kernel is slower than SGLang's at bs=256 but faster at bs=128/32, the follow-up is SMALL_M_POST_NORM = 257 (or a bs<256 gate), not a redesign. If it ties everywhere, keep it only for code simplicity, since it would land as neutral.
 - Correctness at the new shapes: the bs=33, bs=257 and skewed bs=128 tests now exercise this kernel. M=257 gives a non-multiple-of-anything grid, which is fine for one program per token. Confirm 5/5 pass and note the max row error versus SGLang's bf16 (1+w) path (ours is fp32 (1+w), expected equal or better).
 
+
+## Implementation notes
+
+Implemented inline by churnsubs on master (marlin-block-m-two-smaller-on-postnorm): the `num_tokens <
+SMALL_M_POST_NORM` test before the Triton combine became `if True:` (with a comment), so every num_tokens
+takes master's unchanged `_post_norm_combine_kernel` (grid (num_tokens,), 8 warps, BLOCK_H 4096). The
+SGLang `fused_post_expert_norm_weighted_sum` return after it is now unreachable and left in place, as the
+spec allows; `state['norm_w']` stays. A minimal diff keeps the attribution to the one branch.
+
+## Rules check
+
+Checked against `git -C .worktrees/muse_moe_w4a16/post-norm-triton-all-m diff` (one condition line plus a comment).
+
+- [x] CUDA-graph capturable: no new host code; the kernel launch is master's; no `.item()`/`.cpu()`/`synchronize()` added.
+- [x] Nothing derived from `data` is cached across calls: no state writes added.
+- [x] Weights: `post_norm_w` stays the original bf16 tensor; (1+w) formed in fp32 in-kernel, as on master.
+- [x] Activations BF16 where SGLang keeps BF16: bf16 output, fp32 math, as on master; KV/query items n/a.
+- [x] Attention sees every key: n/a: no attention; every local slot is combined, remote slots skipped as before.
+- [x] No timing patches, harness frames/I/O/secrets, module edits, reference import, subprocesses or network: none.
+- [x] All work happens inside the timed call; no output caching or replay: unchanged.
+- [x] First line marker kept; no triton.autotune added.
+
+okc_lint: OK with warnings (only the existing `torch.cuda.synchronize()` in prepare()).
