@@ -41,7 +41,8 @@ priority: 5
 kind: primary
 controls_for: null
 review: required
-status: queued
+status: hold
+hold_reason: "moot under master 1.269x (sweep by the attention minter): master's paired FA3 already gathers one 128-byte row per token (156 us at decode_16); decode_layer's Triton paired-row kernel ran ~29% behind FA3"
 ---
 
 # triton-flash-decode-full-both-heads
