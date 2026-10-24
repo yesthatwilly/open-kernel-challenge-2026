@@ -44,6 +44,8 @@ profile are in `<problem>/hypotheses/archive/<slug>/`.
   the router's small-m grid depth is settled.
 - bf16 pooler at m<=32: TMA weight loads (1.169x) and BLOCK_K=256 cp.async (1.162x) both landed within
   noise of master 1.151x; TMA adds little over deeper cp.async.
+- Several per-shape Triton wins that were each neutral on the headline combine: bf16 shape-gated combo
+  (pooler/qkv/o at m<=16, unpooler slice) 1.176x vs 1.151x. Judge single-area runs per shape, then combine.
 - A 128x128x64 Triton split-K kernel at m=128 (pooler SPLIT_K 4, unpooler 2) lost to cuBLAS (1.116x vs
   1.151x master; pooler-unpooler-m128-wgmma-splitk-semaphore).
 - cuBLAS vs cublasLt backend preference changes nothing on this image (bf16-cublaslt-backend-toggle).
@@ -69,6 +71,11 @@ profile are in `<problem>/hypotheses/archive/<slug>/`.
   turn_4/first_turn (prefill experts-triton-w4a16-swapab-reglhs, 1.007x overall).
 - Prefill rewrite stage 3: BLOCK_T 256 (8 warps, 2 stages) at T>4096 took first_turn w13+w2 from 9.1-10.0 to
   8.0-8.7 ms (1.023x overall, landed): fewer redundant per-tile dequants at ~512 rows per expert.
+- Prefill stage 4: Marlin at T<=4096, Triton NVFP4 above (both banks built in prepare, +0.9 GiB) -> 1.060x:
+  route each shape to the engine that measured faster there.
+- moe: one Triton map+align launch at bs<=32 gained 4.5-12.6% (triton-map-align-small-m-port) and stacked
+  with the bs>=128 block-m pick to 1.312x (triton-map-align-on-block-m-restack). Stacking shape-disjoint wins
+  by 3-way merge reproduced both parents' per-shape gains.
 - moe: the block-m win stacked cleanly on the post-norm win: 1.254x (marlin-block-m-two-smaller-on-postnorm).
 - moe: smaller Marlin block_size_m at bs=128/256 gained on its own (verify-two-smaller 1.092x,
   next-smaller 1.039x), confirming decode's cap-16 lesson on the standalone MoE.
@@ -90,6 +97,8 @@ profile are in `<problem>/hypotheses/archive/<slug>/`.
   norm-gate epilogue took attention to 1.244x (paired-heads-launch-cleanup); gating pairing to batch > 1 on
   top gave 1.269x. Ported to decode_layer (batch > 1 only) it gained 7-13% on every full batch-16/32 shape
   (1.087x, fa3-hdim128-head-pairing-batched).
+- The fused sliding Triton kernel gated to batch-1 decode only: sliding decode_1 16.6 -> 13.1 us (1.293x).
+  Building FA3's schedule on a side stream lost (1.225x, fa3-scheduler-metadata-side-stream).
 - One fused sliding-window Triton launch won sliding decode_1 by 24% but lost 13-60% everywhere else,
   2-2.6x on verify (attention sliding-single-launch-fused-attention, 0.945x).
 - A Triton split flash-decode reading both KV heads of a token as one paired 128-byte row (decode
