@@ -52,10 +52,10 @@ priority: 3
 kind: primary
 controls_for: null
 review: proceed
-status: running
+status: done
 review_at: 2026-10-24T111856Z
 review_companions: null
-stage: dispatched
+stage: harvested
 claimed_at: 2026-10-24T111857Z
 base_sha: def56122736897df0372457a74ffefcdf4c21add
 base_blob: bc007e643ac0b440147a732071f23d9b3563174c
@@ -72,6 +72,13 @@ attempt_file: 2026-10-24T112038Z-check-fa3-window-trimmed-page-table.md
 prepared_at: 2026-10-24T112038Z
 job: 1f63fcbbc0394bed
 dispatched_at: 2026-10-24T112046Z
+outcome: regression
+verdict_detail: regression
+speedup: 1.1410953284146765
+speedup_ci: [1.1239788984884564, 1.1582117583408966]
+harvested_at: 2026-10-24T124009Z
+best_at_harvest: 1.2686474414890054
+promotion: null
 ---
 
 # fa3-window-trimmed-page-table
@@ -143,3 +150,35 @@ CLEAN: muse_attention_decode/submission.py
 ```
 
 `python3 -I -m py_compile`: OK; no `__pycache__` left in the worktree.
+
+## Result
+
+- job `1f63fcbbc0394bed` (check), status done, passed True, tests 16/16
+- speedup 1.1411x, 95% CI [1.1240, 1.1582], score 3300.6006651806383 µs vs SGLang 3766.3 µs
+- best at harvest: {"speedup": 1.2686474414890054, "ci": [1.2496177298666704, 1.2876771531113405], "job": "bd64bf9f9e904f02"}; base result: muse_attention_decode/hypotheses/done/gain/fa3-hdim128-head-pairing.result.json
+- **outcome: regression** (regression)
+- files: `muse_attention_decode/hypotheses/done/regression/fa3-window-trimmed-page-table.result.json`, `muse_attention_decode/hypotheses/done/regression/fa3-window-trimmed-page-table.patch`; branch `hyp/muse_attention_decode/fa3-window-trimmed-page-table`
+
+## Attribution
+
+| shape | w | base µs | hyp µs | delta | verdict |
+|---|---|---|---|---|---|
+| batch=1 ctx=80000 dist=soft heads=tp8 layer=sliding load=decode_1 page=1 | 46 | 16.6 | 18.46 | 0.908 | lost |
+| batch=1 ctx=80000 dist=coherent heads=tp8 layer=full load=decode_1 page=1 | 16 | 38.75 | 38.78 | 0.994 | flat |
+| batch=16 ctx=80000 dist=soft heads=tp8 layer=sliding load=decode_16 page=1 spread=agentic | 46 | 20.77 | 23.06 | 0.9161 | lost |
+| batch=16 ctx=80000 dist=coherent heads=tp8 layer=full load=decode_16 page=1 spread=agentic | 16 | 165.21 | 166.69 | 1.0007 | flat |
+| batch=32 ctx=80000 dist=soft heads=tp8 layer=sliding load=decode_32 page=1 spread=agentic | 46 | 25.54 | 26.52 | 0.9642 | lost |
+| batch=32 ctx=80000 dist=coherent heads=tp8 layer=full load=decode_32 page=1 spread=agentic | 16 | 306.99 | 306.7 | 1.0032 | flat |
+| batch=1 ctx=80000 dist=soft heads=tp8 layer=sliding load=verify_1 page=1 q_len=8 | 46 | 17.43 | 18.81 | 0.9243 | lost |
+| batch=1 ctx=80000 dist=coherent heads=tp8 layer=full load=verify_1 page=1 q_len=8 | 16 | 45.98 | 46.07 | 0.9919 | flat |
+| batch=16 ctx=80000 dist=soft heads=tp8 layer=sliding load=verify_16 page=1 q_len=8 spread=agentic | 46 | 22.78 | 24.35 | 0.9398 | lost |
+| batch=16 ctx=80000 dist=coherent heads=tp8 layer=full load=verify_16 page=1 q_len=8 spread=agentic | 16 | 172.95 | 172.02 | 1.0058 | flat |
+| batch=32 ctx=80000 dist=soft heads=tp8 layer=sliding load=verify_32 page=1 q_len=8 spread=agentic | 46 | 28.85 | 30.43 | 0.9546 | lost |
+| batch=32 ctx=80000 dist=coherent heads=tp8 layer=full load=verify_32 page=1 q_len=8 spread=agentic | 16 | 309.37 | 309.22 | 0.9993 | flat |
+
+lost on sliding decode_1, decode_16, decode_32, verify_1, verify_16, verify_32. Expected hit: 1/7. Noise ±1.5%.
+
+## Follow-ups
+
+- record which shapes lost (Attribution) and do not retry this area in this form.
+

@@ -1,0 +1,67 @@
+diff --git a/muse_attention_decode/submission.py b/muse_attention_decode/submission.py
+index bc007e6..ac136b3 100644
+--- a/muse_attention_decode/submission.py
++++ b/muse_attention_decode/submission.py
+@@ -125,6 +125,25 @@ def _pre_attention_kernel(
+         tl.store(vout + j, (v / v_scale).to(tl.float8e4nv))
+ 
+ 
++@triton.jit
++def _window_trim_kernel(
++    page_table_ptr, seqlens_ptr, pt_win_ptr, len_win_ptr,
++    pt_stride, max_pages,
++    W: tl.constexpr, P: tl.constexpr, NP: tl.constexpr, BLOCK: tl.constexpr,
++):
++    """One program per request: the NP pages that hold the union of the block's sliding windows,
++    starting at the page boundary at or before len - W, and the length measured from there."""
++    b = tl.program_id(0)
++    n = tl.load(seqlens_ptr + b)
++    first_page = tl.maximum(n - W, 0) // P
++    i = tl.arange(0, BLOCK)
++    src = first_page + i
++    pages = tl.load(page_table_ptr + b.to(tl.int64) * pt_stride + src,
++                    mask=(i < NP) & (src < max_pages), other=-1)
++    tl.store(pt_win_ptr + b * NP + i, pages, mask=i < NP)
++    tl.store(len_win_ptr + b, n - first_page * P)
++
++
+ def kernel_fn(data: Inputs) -> torch.Tensor:
+     cfg = data["config"]
+     batch, length = cfg["batch"], cfg["q_len"]
+@@ -169,6 +188,25 @@ def kernel_fn(data: Inputs) -> torch.Tensor:
+         k_attn, v_attn, q_attn = k_cache, v_cache, q
+         attn_heads = hkv
+         metadata = data["scheduler_metadata"]
++    page_table, cache_seqlens = data["page_table"], data["cache_seqlens"]
++    if window:
++        # Sliding layers: hand FA3 only the pages that hold the block's windows (the union of the
++        # L queries' windows is the last window - 1 + L tokens), so it sizes max_seqlen_k and its
++        # split schedule for ~2K tokens instead of the whole context. FA3 aligns causal masking to
++        # the bottom right, so each query keeps the same relative window, and its window mask still
++        # excludes the keys before it; RoPE is already applied, so absolute positions do not matter.
++        page_size = cfg["page_size"]
++        w_tok = window - 1 + length
++        n_win = -(-w_tok // page_size) + 1
++        pt_win = torch.empty((batch, n_win), dtype=torch.int32, device=device)
++        len_win = torch.empty((batch,), dtype=torch.int32, device=device)
++        _window_trim_kernel[(batch,)](
++            page_table, cache_seqlens, pt_win, len_win,
++            page_table.stride(0), page_table.shape[1],
++            W=w_tok, P=page_size, NP=n_win, BLOCK=triton.next_power_of_2(n_win),
++            num_warps=4,
++        )
++        page_table, cache_seqlens = pt_win, len_win
+     descale = {}
+     if cfg["kv_scale"] != 1.0:
+         descale = dict(k_descale=data["k_scale"].reshape(1, 1).expand(batch, attn_heads),
+@@ -177,8 +215,8 @@ def kernel_fn(data: Inputs) -> torch.Tensor:
+         q=q_attn,
+         k_cache=k_attn,
+         v_cache=v_attn,
+-        page_table=data["page_table"],
+-        cache_seqlens=data["cache_seqlens"],
++        page_table=page_table,
++        cache_seqlens=cache_seqlens,
+         cu_seqlens_q=data["cu_seqlens_q"],
+         max_seqlen_q=length,
+         softmax_scale=cfg["sm_scale"] * cfg["qk_scale_factor"],
