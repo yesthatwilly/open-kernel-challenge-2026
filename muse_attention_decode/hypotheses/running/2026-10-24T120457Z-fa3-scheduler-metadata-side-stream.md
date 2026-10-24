@@ -55,13 +55,19 @@ status: running
 review_at: 2026-10-24T120904Z
 review_companions: null
 hold_reason: null
-stage: claimed
+stage: implemented
 claimed_at: 2026-10-24T124117Z
 base_sha: 10d039a6478096a1360009f69d62cd7b1c17f800
 base_blob: efc544103e6d303d1f8602caa9439628043a17a7
 branch: hyp/muse_attention_decode/fa3-scheduler-metadata-side-stream
 worktree: .worktrees/muse_attention_decode/fa3-scheduler-metadata-side-stream
 mode: null
+implemented_at: 2026-10-24T124759Z
+impl_commit: 83e8e876b2b559d7cd2f185d528af527d4c32dd0
+submission_sha256: 965e87bd0e4400924d89aa7f49bb3079e4df0e0302effadd93d2d662a47cab4a
+norm_sha256: c57e179c589b5624b63de22d734c7222680687561b3371f17fbba433844bcf28
+submission_blob: 35854e68c3519cf7cd8e08030ed8c5f1af9983eb
+lint_warnings: 0
 ---
 
 # fa3-scheduler-metadata-side-stream
@@ -106,3 +112,47 @@ No companion. The obvious control is the same metadata built serially on the cur
 - Sequencing: fa3-window-trimmed-page-table is in the judge now. If it lands, rebuild this on it and size the sliding metadata from the trimmed page_table. If it is not landed, build on current master. Do not claim before it harvests.
 - The expected-shape globs use 'load=decode_1' while profile case keys print 'load=decode 1'. Confirm the harvest's glob matcher normalises spaces to underscores, or the per-shape expectations will not match.
 
+
+## Implementation notes
+
+Built on master 10d039a (untrimmed sliding page table; fa3-window-trimmed-page-table regressed, so nothing trimmed). Only `muse_attention_decode/submission.py` changed, only around the FA3 call in `kernel_fn` (plus imports and two module-level helpers).
+
+- Imports `get_scheduler_metadata` next to `flash_attn_with_kvcache`, and `inspect`.
+- Module level: `_SIDE` dict plus `_side_stream(device)`, which creates one `torch.cuda.Stream` per device on first use. The first use is the first eager test call, before any capture. It is never per call and never derived from data.
+- Module level: `_SCHED_WINDOW = "window_size" in inspect.signature(get_scheduler_metadata).parameters`, printed once at import (`[okc] get_scheduler_metadata accepts window_size: ...`), so the run log answers the review's open question. **Deviation from the brief:** the brief says to check that the wrapper accepts `window_size` and otherwise stop and report. No sgl_kernel source or install exists on this node (searched the filesystem), so I could not check statically. Instead the code does what the review's open-question guidance says to do in the "no" case: if the wrapper lacks `window_size`, sliding calls keep `metadata=None` (in-call prepare, as on master), and only the full-layer half (paired batch>1 and verify_1) uses the side-stream schedule. Read the log line on the run. If it prints False, the sliding expectations do not apply.
+- The FA3 geometry block (paired views, `attn_heads`, judge metadata) now runs before the `_pre_attention_kernel` launch. It is views only, no launches. `window_size` is computed once and passed to both FA3 and the scheduler.
+- `own_schedule = (paired or window != 0 or length != 1) and (window == 0 or _SCHED_WINDOW)`. This is config-only: every call that master made with metadata None. Full unpaired decode (decode_1 full) keeps `data["scheduler_metadata"]` unchanged.
+- Fork, then side launch, then pre-attention, then join: `side.wait_stream(cur)` comes first. Then `get_scheduler_metadata` runs under `torch.cuda.stream(side)`, `_pre_attention_kernel` launches on `cur` as before, and `cur.wait_stream(side)` plus `metadata.record_stream(cur)` happen before `flash_attn_with_kvcache`.
+- Scheduler arguments come from the tensors actually passed to FA3, never from cfg alone:
+  - `batch_size=cache_seqlens.shape[0]`, `max_seqlen_q=L`
+  - `max_seqlen_k=page_table.shape[1] * k_attn.shape[1]`, the shape-derived value mha_fwd uses for paged KV, with no host sync
+  - `num_heads=q_attn.shape[1]`, `num_heads_k=k_attn.shape[2]` (Hkv unpaired, Hkv/2 paired), `headdim=q_attn.shape[-1]` (2d paired, d unpaired)
+  - `cache_seqlens`, `qkv_dtype=q_attn.dtype` (FP8), `cu_seqlens_q`, `page_size=k_attn.shape[1]` (an explicit int, 1 in the scored cases), `causal=True`, `num_splits=0`
+- `headdim_v`, `has_softcap`, `pack_gqa` and `sm_margin` are left at the wrapper defaults (headdim, False, None, 0). Those match the FA3 call. I left them out so that a wrapper naming them differently does not fail. Only the keywords the reference itself uses, plus `causal`/`window_size`, are passed.
+- Window normalisation, following the review: before the scheduler call, apply mha_fwd's `left >= max_seqlen_k-1 -> -1` and `right >= max_seqlen_q-1 -> -1` clamps in Python, then pass `causal=True`. The C++ scheduler's own `seqlen_q==1 && both -1 -> non-causal` and `causal -> right=0` steps then reproduce mha_fwd. Examples: sliding at large context becomes (2047,0) local. The ctx-10 page-64 test gets (-1,-1), which at L=1 is non-causal as in mha_fwd. Full verify gets (-1,0) causal.
+
+Uncertainties:
+1. Not verifiable here: whether the installed scheduler's L==1 causal collapse matches mha_fwd's hdim-128 paged-KV exception (newer FA3 keeps causal for hdim 128 + paged at L=1). This matters only for paired full decode_16/32. The review's profile test covers it: the FA3 main/combine rows must stay within ~1% of bd64bf9f9e904f02. If they move, the schedule differs.
+2. Whether the wrapper's keyword names match beyond those the reference uses (`causal`, `window_size`). `causal` is a standard parameter, and `window_size` is guarded.
+3. Whether a TypeError would surface. If the wrapper rejects a keyword, the first test fails at once with a clear TypeError, not silently.
+
+## Rules check
+
+Checked against `git -C .worktrees/muse_attention_decode/fa3-scheduler-metadata-side-stream diff` (1 file, +61/-11).
+
+- [x] CUDA-graph capturable. There is no `.item()`, `.cpu()`, `synchronize()` or tensor print in kernel_fn, and `max_seqlen_k` comes from shapes, not `cache_seqlens.max()`. The only branch is `own_schedule`, from config/shapes plus an import-time library signature check. The fork (`side.wait_stream(cur)`) comes before the side launch, and the join (`cur.wait_stream(side)`) before FA3, so the capture has no unjoined branch. The stream is created on the first eager call, not during capture. The import-time `print` is a string, not a tensor.
+- [x] Nothing derived from `data` is cached across calls. `_SIDE` holds only a Stream per device. The schedule is rebuilt every call, and `metadata` is a local.
+- [x] n/a: weights. This problem has no weights or `prepare()`, and no repacking was added.
+- [x] Activations BF16 where SGLang keeps BF16, the KV cache FP8, queries FP8 E4M3. The query layout, cache writes, FA3 call and epilogues are unchanged. The scheduler takes `qkv_dtype=q_attn.dtype` (FP8), which matches the call.
+- [x] Attention sees every key. The FA3 `window_size` and `causal` are unchanged (the same expression, now a local). Only FA3's tile schedule is supplied explicitly, with no top-k, sparse or block-skip.
+- [x] No timing patches, harness frames/I/O/secrets, module edits, reference import, subprocesses or network. The new imports are `inspect` (only `inspect.signature` on an sgl_kernel function, which reads no frames) and `get_scheduler_metadata` from sgl_kernel.
+- [x] All work happens inside the timed call, with no output caching or replay. The schedule is computed inside kernel_fn on a captured side branch. Fork-first keeps it from running eagerly outside the graph.
+- [x] The first-line marker `# okc: problem=muse_attention_decode` is kept. There is no `triton.autotune`.
+
+okc_lint output:
+
+```
+CLEAN: /home/user/git/musespark/.worktrees/muse_attention_decode/fa3-scheduler-metadata-side-stream/muse_attention_decode/submission.py
+```
+
+`python3 -I -m py_compile` passed, and the `__pycache__` it left was removed from the worktree.
