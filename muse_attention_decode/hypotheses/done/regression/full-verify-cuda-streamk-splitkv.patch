@@ -1,0 +1,761 @@
+diff --git a/muse_attention_decode/submission.py b/muse_attention_decode/submission.py
+index 1c0f5fa..2b7e5db 100644
+--- a/muse_attention_decode/submission.py
++++ b/muse_attention_decode/submission.py
+@@ -8,7 +8,8 @@ does all five in one launch: per (token, head) it RMS-normalizes q or k, applies
+ RoPE when the layer has it, and writes q as FP8 for FA3 and the new k and v rows as FP8 into
+ the cache (divided by the cache scales). FA3 and the output norm x sigmoid(gate) are SGLang's, except on full-layer decode at
+ 1 < batch <= 64 (tp8, page 1), where two CUDA kernels (split-KV gather attention, combine +
+-epilogue; see below) replace FA3 and the epilogue.
++epilogue; see below) replace FA3 and the epilogue, and on full-layer verify (q_len 8) at the same
++batches, where two more (stream-K split-KV attention, combine + epilogue) do, from their own module.
+ """
+ 
+ import time
+@@ -890,6 +891,604 @@ def _full_decode_splitkv(data: Inputs, q: torch.Tensor, qkv: torch.Tensor) -> to
+     return out
+ 
+ 
++# ---------------------------------------------------------------------------------------------
++# Full-layer VERIFY (q_len 8, causal inside the block) at 1 < batch <= 64 (tp8, page 1): stage 2,
++# in a SECOND load_inline module so a build or self-check failure here never touches the decode
++# kernels above.
++#
++# Kernel A8 (splitkv_verify_kernel): persistent grid of 2 CTAs per SM, 8 warps. Stream-K over
++# 64-token tiles: tiles_b = ceil(cache_seqlens[b] / 64), prefix TP (warp scan in smem), Ttot =
++# TP[B]; CTA c owns flat tiles [start(c), start(c + 1)), start(c) = floor(c * Ttot / grid) (int64),
++# which may begin and end mid-request. It emits one fp32 partial per request segment it touches,
++# at slot c + b (unique: ranges are monotone), so the workspace is [grid + B, 8, 16, 64]. Page
++# indices of the CTA's next 16 tiles are prefetched with 4-byte cp.async (double-buffered,
++# zero-filled past each request end); K/V tiles stream through a 4-stage cp.async.cg ring (64
++# tokens x (128 B K + 128 B V), 16-byte chunks XOR-swizzled by token), running across segment
++# boundaries. Warp w serves kv head g = w & 1 and m-tile mt = w >> 1: row quad of the C fragment
++# is (head g*8 + 2*mt, block token quad) and row quad + 8 is (head g*8 + 2*mt + 1, block token
++# quad), so both rows a lane holds share one causal limit. QK^T: mma m16n8k32 e4m3 with the FP8
++# query bytes (A, loaded once per segment) and raw FP8 K bytes (B) from the ring, 16 mma per tile
++# per warp. P@V: the whole CTA converts the tile's V once to f16 (exact) into a swizzled 16 KB
++# tile; each warp loads B fragments with ldmatrix.x4.trans and runs m16n8k16 with P in f16 (finer
++# than FA3's e4m3 P). Online softmax in the exp2 domain, -inf safe. Key t is valid for block
++# token j iff t <= cache_seqlens[b] - 8 + j. A row with no valid key in a segment stores m = -inf,
++# l = 0, acc = 0.
++# Kernel B8 (splitkv_verify_combine_kernel): grid (B * 8, 16), 128 threads per (request, token,
++# head): recomputes TP/Ttot, finds the CTAs whose range covers the request with the same start()
++# helper, merges exactly those slots (log-sum-exp, -inf partials weigh 0), times v_scale, then
++# the master epilogue (scaleless RMSNorm, eps inside the sqrt, times sigmoid(gate)), bf16 out.
++# ---------------------------------------------------------------------------------------------
++
++_VERIFY_CPP = r"""
++#include <torch/extension.h>
++void splitkv_verify_attn(torch::Tensor q, torch::Tensor k_cache, torch::Tensor v_cache, torch::Tensor page_table,
++                         torch::Tensor cache_seqlens, torch::Tensor k_scale, torch::Tensor ws_acc, torch::Tensor ws_ml,
++                         double score_scale, int64_t grid);
++void splitkv_verify_combine(torch::Tensor ws_acc, torch::Tensor ws_ml, torch::Tensor cache_seqlens,
++                            torch::Tensor v_scale, torch::Tensor qkv, int64_t qkv_stride, torch::Tensor out,
++                            int64_t grid, double eps);
++torch::Tensor splitkv_verify_attrs();
++"""
++
++_VERIFY_CUDA = r"""
++#include <torch/extension.h>
++#include <ATen/cuda/CUDAContext.h>
++#include <c10/cuda/CUDAException.h>
++#include <cuda_fp16.h>
++#include <cuda_bf16.h>
++#include <cstdint>
++
++namespace {
++
++constexpr int D = 64;              // head dim
++constexpr int HQ = 16;             // query heads
++constexpr int HKV = 2;             // kv heads
++constexpr int G = HQ / HKV;        // queries per kv head (8)
++constexpr int QL = 8;              // block tokens (q_len)
++constexpr int ROW = HKV * D;       // bytes per cache row (page 1: both kv heads, 128)
++constexpr int TILE = 64;           // tokens per tile (the stream-K unit)
++constexpr int IDX_TILES = 16;      // tiles per page-index prefetch block
++constexpr int IDX_N = IDX_TILES * TILE;
++constexpr int STAGES = 4;
++constexpr int THREADS = 256;
++constexpr int MAXB = 64;
++constexpr int STAGE_BYTES = 2 * TILE * ROW;                  // K tile + V tile = 16 KB
++constexpr int VH_ROW = ROW * 2;                              // f16 V row, both heads: 256 B
++constexpr int RING_OFF = 0;
++constexpr int VH_OFF = RING_OFF + STAGES * STAGE_BYTES;      // f16 [TILE][ROW], swizzled
++constexpr int IDX_OFF = VH_OFF + TILE * VH_ROW;              // int32 [2][IDX_N]
++constexpr int SEQ_OFF = IDX_OFF + 2 * IDX_N * 4;             // int32 [MAXB]
++constexpr int PRE_OFF = SEQ_OFF + MAXB * 4;                  // int32 [MAXB + 1]
++constexpr int SMEM_A = PRE_OFF + (MAXB + 4) * 4;             // 90,640 B: 2 CTAs per SM
++
++__device__ __forceinline__ uint32_t smem_u32(const void* p) {
++  return static_cast<uint32_t>(__cvta_generic_to_shared(p));
++}
++__device__ __forceinline__ void cp_async16(uint32_t dst, const void* src, int src_bytes) {
++  asm volatile("cp.async.cg.shared.global [%0], [%1], 16, %2;\n" :: "r"(dst), "l"(src), "r"(src_bytes) : "memory");
++}
++__device__ __forceinline__ void cp_async4(uint32_t dst, const void* src, int src_bytes) {
++  asm volatile("cp.async.ca.shared.global [%0], [%1], 4, %2;\n" :: "r"(dst), "l"(src), "r"(src_bytes) : "memory");
++}
++__device__ __forceinline__ void cp_commit() { asm volatile("cp.async.commit_group;\n" ::: "memory"); }
++template <int N>
++__device__ __forceinline__ void cp_wait() { asm volatile("cp.async.wait_group %0;\n" :: "n"(N) : "memory"); }
++
++// Four E4M3 bytes -> two f16x2: lo from bytes 0,1 (byte 0 in the low half), hi from bytes 2,3.
++__device__ __forceinline__ void e4m3x4_to_f16x2x2(uint32_t w, uint32_t& lo, uint32_t& hi) {
++  asm("{\n\t.reg .b16 a, b;\n\tmov.b32 {a, b}, %2;\n\t"
++      "cvt.rn.f16x2.e4m3x2 %0, a;\n\tcvt.rn.f16x2.e4m3x2 %1, b;\n\t}\n"
++      : "=r"(lo), "=r"(hi) : "r"(w));
++}
++__device__ __forceinline__ uint32_t pack_f16x2(float lo, float hi) {
++  __half2 h = __floats2half2_rn(lo, hi);  // .x (low half) = lo
++  return *reinterpret_cast<uint32_t*>(&h);
++}
++__device__ __forceinline__ float ex2(float x) {
++  float y;
++  asm("ex2.approx.ftz.f32 %0, %1;" : "=f"(y) : "f"(x));
++  return y;
++}
++// D = A B + D, m16n8k16, A row-major f16 (4 regs), B col-major f16 (2 regs), fp32 accumulate.
++__device__ __forceinline__ void mma16816(float (&c)[4], uint32_t a0, uint32_t a1, uint32_t a2, uint32_t a3,
++                                         uint32_t b0, uint32_t b1) {
++  asm("mma.sync.aligned.m16n8k16.row.col.f32.f16.f16.f32 {%0,%1,%2,%3}, {%4,%5,%6,%7}, {%8,%9}, {%0,%1,%2,%3};\n"
++      : "+f"(c[0]), "+f"(c[1]), "+f"(c[2]), "+f"(c[3])
++      : "r"(a0), "r"(a1), "r"(a2), "r"(a3), "r"(b0), "r"(b1));
++}
++// D = A B + D, m16n8k32, A row-major e4m3 (4 regs of 4 bytes), B col-major e4m3 (2 regs), fp32.
++// a0: row grp, k 4*tig..+3; a1: row grp + 8, same k; a2: row grp, k 16 + 4*tig..+3; a3: row grp + 8.
++// b0: k 4*tig..+3, col grp; b1: k 16 + 4*tig..+3. Low byte = lowest k.
++__device__ __forceinline__ void mma_e4m3(float (&c)[4], const uint32_t (&a)[4], uint32_t b0, uint32_t b1) {
++  asm("mma.sync.aligned.m16n8k32.row.col.f32.e4m3.e4m3.f32 {%0,%1,%2,%3}, {%4,%5,%6,%7}, {%8,%9}, {%0,%1,%2,%3};\n"
++      : "+f"(c[0]), "+f"(c[1]), "+f"(c[2]), "+f"(c[3])
++      : "r"(a[0]), "r"(a[1]), "r"(a[2]), "r"(a[3]), "r"(b0), "r"(b1));
++}
++// Four 8x8 b16 matrices, transposed: lanes 8i..8i+7 give the row addresses of matrix i.
++__device__ __forceinline__ void ldsm_x4_t(uint32_t addr, uint32_t& r0, uint32_t& r1, uint32_t& r2, uint32_t& r3) {
++  asm volatile("ldmatrix.sync.aligned.m8n8.x4.trans.shared.b16 {%0,%1,%2,%3}, [%4];\n"
++               : "=r"(r0), "=r"(r1), "=r"(r2), "=r"(r3) : "r"(addr) : "memory");
++}
++
++// First flat tile of CTA c: floor(c * T / grid), int64 math. Shared by A8 and B8.
++__device__ __forceinline__ int start_of(int c, int T, int grid) {
++  return static_cast<int>((static_cast<int64_t>(c) * T) / grid);
++}
++// The CTA whose range holds flat tile x (0 <= x < T): the largest c with start(c) <= x, from the
++// closed form floor(((x + 1) * grid - 1) / T), then corrected on exact start() comparisons.
++__device__ __forceinline__ int owner_of(int x, int T, int grid) {
++  int c = static_cast<int>(((static_cast<int64_t>(x) + 1) * grid - 1) / T);
++  c = c < 0 ? 0 : (c > grid - 1 ? grid - 1 : c);
++  while (c > 0 && start_of(c, T, grid) > x) --c;
++  while (c + 1 < grid && start_of(c + 1, T, grid) <= x) ++c;
++  return c;
++}
++// Request of flat tile f: the largest b with pre[b] <= f (skips zero-tile batch rows).
++__device__ __forceinline__ int req_of(const int* pre, int B, int f) {
++  int lo = 0, hi = B - 1;
++  while (lo < hi) {
++    const int mid = (lo + hi + 1) >> 1;
++    if (pre[mid] <= f) lo = mid; else hi = mid - 1;
++  }
++  return lo;
++}
++// Warp 0: pre[0] = 0, pre[b + 1] = sum of tiles of batch rows 0..b (seq in smem, B <= 64).
++__device__ __forceinline__ void tile_prefix(const int* seq, int* pre, int B, int lane) {
++  const int i0 = lane * 2, i1 = lane * 2 + 1;
++  const int v0 = i0 < B ? (seq[i0] + TILE - 1) / TILE : 0;
++  const int v1 = i1 < B ? (seq[i1] + TILE - 1) / TILE : 0;
++  int s = v0 + v1;
++#pragma unroll
++  for (int o = 1; o < 32; o <<= 1) {
++    const int t = __shfl_up_sync(0xffffffffu, s, o);
++    if (lane >= o) s += t;
++  }
++  if (i0 < B) pre[i0 + 1] = s - v1;
++  if (i1 < B) pre[i1 + 1] = s;
++  if (lane == 0) pre[0] = 0;
++}
++
++__global__ void __launch_bounds__(THREADS, 2)
++splitkv_verify_kernel(const uint8_t* __restrict__ q,          // e4m3 [B * QL, HQ, D]
++                      const uint8_t* __restrict__ kc,         // e4m3 [rows, ROW]
++                      const uint8_t* __restrict__ vc,         // e4m3 [rows, ROW]
++                      const int* __restrict__ page_table, int64_t pt_stride,
++                      const int* __restrict__ seqlens, int B,
++                      const float* __restrict__ k_scale, float score_scale,
++                      float* __restrict__ ws_acc,             // f32 [grid + B, QL, HQ, D]
++                      float* __restrict__ ws_ml) {            // f32 [grid + B, 2, QL * HQ]
++  extern __shared__ __align__(128) uint8_t smem[];
++  uint8_t* ring = smem + RING_OFF;
++  uint8_t* vh = smem + VH_OFF;
++  int* idx_s = reinterpret_cast<int*>(smem + IDX_OFF);
++  int* seq_s = reinterpret_cast<int*>(smem + SEQ_OFF);
++  int* pre_s = reinterpret_cast<int*>(smem + PRE_OFF);
++  const float NEG_INF = __int_as_float(0xff800000u);
++
++  const int tid = threadIdx.x, lane = tid & 31, warp = tid >> 5;
++  const int bx = blockIdx.x, gx = gridDim.x;
++  if (tid < B) seq_s[tid] = seqlens[tid];
++  __syncthreads();
++  if (warp == 0) tile_prefix(seq_s, pre_s, B, lane);
++  __syncthreads();
++  const int T = pre_s[B];
++  const int s0 = start_of(bx, T, gx), s1 = start_of(bx + 1, T, gx);
++  if (s0 >= s1) return;  // empty range (grid > Ttot): writes nothing; uniform over the CTA
++  const int N = s1 - s0;                             // tiles of this CTA, one flat pipeline
++  const int nk = (N + IDX_TILES - 1) / IDX_TILES;    // page-index blocks
++  const float scale = score_scale * __ldg(k_scale);  // sm_scale * qk_scale_factor * log2(e) * k_scale
++  const int bfirst = req_of(pre_s, B, s0);
++
++  // Page indices of the CTA's tiles 16k .. 16k + 15 into buffer k & 1 (entry (tile % 16) * 64 +
++  // token); positions past the CTA range or the request's length are zero-filled, never read.
++  auto issue_meta = [&](int k) {
++    const int buf = k & 1;
++#pragma unroll
++    for (int j = 0; j < IDX_N / THREADS; ++j) {
++      const int e = tid + j * THREADS;
++      const int f = s0 + k * IDX_TILES + e / TILE;
++      const int* src = page_table;
++      bool ok = false;
++      if (f < s1) {
++        const int b = req_of(pre_s, B, f);
++        const int pos = (f - pre_s[b]) * TILE + (e % TILE);
++        if (pos < seq_s[b]) {
++          ok = true;
++          src = page_table + static_cast<int64_t>(b) * pt_stride + pos;
++        }
++      }
++      cp_async4(smem_u32(idx_s + buf * IDX_N + e), src, ok ? 4 : 0);
++    }
++  };
++  // Tile nn of the CTA into ring stage nn % STAGES: thread -> token tid / 4, 16-byte chunks
++  // 2 * (tid % 4) + {0, 1} of its K row and its V row, chunk c stored at c ^ (token % 8).
++  int ib = bfirst;
++  auto issue_tile = [&](int nn) {
++    const int f = s0 + nn;
++    while (f >= pre_s[ib + 1]) ++ib;
++    uint8_t* st = ring + (nn % STAGES) * STAGE_BYTES;
++    const int tt = tid >> 2;
++    const bool ok = (f - pre_s[ib]) * TILE + tt < seq_s[ib];
++    const int64_t row = ok ? static_cast<int64_t>(idx_s[((nn / IDX_TILES) & 1) * IDX_N + (nn % IDX_TILES) * TILE + tt]) : 0;
++    const uint8_t* ks = kc + row * ROW;
++    const uint8_t* vs = vc + row * ROW;
++#pragma unroll
++    for (int j = 0; j < 2; ++j) {
++      const int c = (tid & 3) * 2 + j;
++      const int dst = tt * ROW + ((c ^ (tt & 7)) << 4);
++      cp_async16(smem_u32(st + dst), ks + c * 16, ok ? 16 : 0);
++      cp_async16(smem_u32(st + TILE * ROW + dst), vs + c * 16, ok ? 16 : 0);
++    }
++  };
++
++  // Prologue: index block 0 (waited), then tiles 0 .. STAGES-2; block 1 rides tile 0's group.
++  issue_meta(0);
++  cp_commit();
++  cp_wait<0>();
++  __syncthreads();
++#pragma unroll
++  for (int j = 0; j < STAGES - 1; ++j) {
++    if (j < N) {
++      issue_tile(j);
++      if (j % IDX_TILES == 0 && j / IDX_TILES + 1 < nk) issue_meta(j / IDX_TILES + 1);
++    }
++    cp_commit();
++  }
++
++  const int g = warp & 1;                 // kv head
++  const int hA = g * G + 2 * (warp >> 1); // C row quad: head hA; row quad + 8: head hA + 1
++  const int quad = lane >> 2, qi = lane & 3;  // quad = the block token of both rows
++  const int lm_r = lane & 7, lm_hi = (lane >> 3) & 1, lm_db = lane >> 4;  // ldmatrix lane roles
++  const uint32_t vh_u32 = smem_u32(vh);
++  uint32_t qa[2][4];
++  float mA = NEG_INF, mB = NEG_INF, lA = 0.f, lB = 0.f;
++  float acc[8][4];
++  int cb = bfirst;
++
++  for (int n = 0; n < N; ++n) {
++    cp_wait<STAGES - 2>();  // tile n (and everything issued before it) has landed
++    __syncthreads();        // visible to all; every warp is done with tile n - 1 (ring and f16 V)
++    {
++      const int nn = n + STAGES - 1;
++      if (nn < N) {
++        issue_tile(nn);
++        if (nn % IDX_TILES == 0 && nn / IDX_TILES + 1 < nk) issue_meta(nn / IDX_TILES + 1);
++      }
++      cp_commit();  // always, so the group count stays uniform
++    }
++    const int f = s0 + n;
++    while (f >= pre_s[cb + 1]) ++cb;
++    const int lt = f - pre_s[cb];   // tile index inside request cb
++    const int seq = seq_s[cb];
++    const uint8_t* Ks = ring + (n % STAGES) * STAGE_BYTES;
++    const uint8_t* Vs = Ks + TILE * ROW;
++
++    // V tile -> f16 once for the CTA: thread -> token tid / 4, FP8 chunks 2 * (tid % 4) + {0, 1}
++    // (16 dims each) -> f16 chunks 2c, 2c + 1 (8 dims each), chunk cc stored at cc ^ (token % 8).
++    {
++      const int tt = tid >> 2;
++      uint8_t* dr = vh + tt * VH_ROW;
++#pragma unroll
++      for (int j = 0; j < 2; ++j) {
++        const int c = (tid & 3) * 2 + j;
++        const uint4 w = *reinterpret_cast<const uint4*>(Vs + tt * ROW + ((c ^ (tt & 7)) << 4));
++        uint4 lo, hi;
++        e4m3x4_to_f16x2x2(w.x, lo.x, lo.y);
++        e4m3x4_to_f16x2x2(w.y, lo.z, lo.w);
++        e4m3x4_to_f16x2x2(w.z, hi.x, hi.y);
++        e4m3x4_to_f16x2x2(w.w, hi.z, hi.w);
++        *reinterpret_cast<uint4*>(dr + (((2 * c) ^ (tt & 7)) << 4)) = lo;
++        *reinterpret_cast<uint4*>(dr + (((2 * c + 1) ^ (tt & 7)) << 4)) = hi;
++      }
++    }
++
++    if (n == 0 || lt == 0) {
++      // Segment start: the request's FP8 query A fragments straight from global (L2-resident,
++      // 32 B per lane), then a fresh online-softmax state.
++      const uint8_t* qra = q + (static_cast<int64_t>(cb) * QL + quad) * HQ * D + hA * D + qi * 4;
++      const uint8_t* qrb = qra + D;  // head hA + 1, same block token
++#pragma unroll
++      for (int ks = 0; ks < 2; ++ks) {
++        qa[ks][0] = __ldg(reinterpret_cast<const unsigned int*>(qra + ks * 32));
++        qa[ks][1] = __ldg(reinterpret_cast<const unsigned int*>(qrb + ks * 32));
++        qa[ks][2] = __ldg(reinterpret_cast<const unsigned int*>(qra + ks * 32 + 16));
++        qa[ks][3] = __ldg(reinterpret_cast<const unsigned int*>(qrb + ks * 32 + 16));
++      }
++      mA = mB = NEG_INF;
++      lA = lB = 0.f;
++#pragma unroll
++      for (int nd = 0; nd < 8; ++nd) acc[nd][0] = acc[nd][1] = acc[nd][2] = acc[nd][3] = 0.f;
++    }
++
++    // S = Q K^T: n-block nb holds tokens nb * 8 + (0..7); k-step ks covers dims ks * 32 .. +31 of
++    // head g (ring chunks g * 4 + 2 * ks and + 1; token nb * 8 + quad has swizzle key quad).
++    float s[8][4];
++#pragma unroll
++    for (int nb = 0; nb < 8; ++nb) {
++      s[nb][0] = s[nb][1] = s[nb][2] = s[nb][3] = 0.f;
++      const uint8_t* kr = Ks + (nb * 8 + quad) * ROW + qi * 4;
++#pragma unroll
++      for (int ks = 0; ks < 2; ++ks) {
++        const int c = g * 4 + ks * 2;
++        const uint32_t k0 = *reinterpret_cast<const uint32_t*>(kr + ((c ^ quad) << 4));
++        const uint32_t k1 = *reinterpret_cast<const uint32_t*>(kr + (((c + 1) ^ quad) << 4));
++        mma_e4m3(s[nb], qa[ks], k0, k1);
++      }
++    }
++    // Lane's scores: s[nb][e] (head hA) and s[nb][2 + e] (head hA + 1) at tile token
++    // nb * 8 + 2 * qi + e, both for block token quad. Key t is valid iff t <= seq - QL + quad, i.e.
++    // tile token < lim; only tiles reaching past seq - QL need the test (the last one or two).
++    const bool edge = lt * TILE + TILE + (QL - 1) > seq;
++    const int lim = seq - (QL - 1) + quad - lt * TILE;
++    float mxA = NEG_INF, mxB = NEG_INF;
++#pragma unroll
++    for (int nb = 0; nb < 8; ++nb) {
++#pragma unroll
++      for (int e = 0; e < 2; ++e) {
++        float xa = s[nb][e] * scale, xb = s[nb][2 + e] * scale;
++        if (edge && nb * 8 + 2 * qi + e >= lim) { xa = NEG_INF; xb = NEG_INF; }
++        s[nb][e] = xa;
++        s[nb][2 + e] = xb;
++        mxA = fmaxf(mxA, xa);
++        mxB = fmaxf(mxB, xb);
++      }
++    }
++    mxA = fmaxf(mxA, __shfl_xor_sync(0xffffffffu, mxA, 1));
++    mxA = fmaxf(mxA, __shfl_xor_sync(0xffffffffu, mxA, 2));
++    mxB = fmaxf(mxB, __shfl_xor_sync(0xffffffffu, mxB, 1));
++    mxB = fmaxf(mxB, __shfl_xor_sync(0xffffffffu, mxB, 2));
++    const float nA = fmaxf(mA, mxA), nB = fmaxf(mB, mxB);
++    const float uA = nA == NEG_INF ? 0.f : nA, uB = nB == NEG_INF ? 0.f : nB;
++    const float aA = ex2(mA - uA), aB = ex2(mB - uB);  // 0 while the row has seen no valid key
++    mA = nA;
++    mB = nB;
++    uint32_t pf[8][2];  // P as f16x2: [n-block][row quad (hA) / row quad + 8 (hA + 1)]
++    float sumA = 0.f, sumB = 0.f;
++#pragma unroll
++    for (int nb = 0; nb < 8; ++nb) {
++      const float p0 = ex2(s[nb][0] - uA), p1 = ex2(s[nb][1] - uA);
++      const float p2 = ex2(s[nb][2] - uB), p3 = ex2(s[nb][3] - uB);
++      sumA += p0 + p1;
++      sumB += p2 + p3;
++      pf[nb][0] = pack_f16x2(p0, p1);
++      pf[nb][1] = pack_f16x2(p2, p3);
++    }
++    lA = lA * aA + sumA;  // this lane's columns; quad-reduced at segment end
++    lB = lB * aB + sumB;
++#pragma unroll
++    for (int nd = 0; nd < 8; ++nd) { acc[nd][0] *= aA; acc[nd][1] *= aA; acc[nd][2] *= aB; acc[nd][3] *= aB; }
++
++    __syncthreads();  // the f16 V tile is complete
++
++    // O += P V: k-step kt = tokens kt * 16 .. +15 (n-blocks 2kt, 2kt + 1 of P); dim-block nd =
++    // dims nd * 8 .. +7 of head g (f16 chunk g * 8 + nd). ldmatrix.x4.trans per pair p: matrix 0 =
++    // (tokens lo, nd 2p), 1 = (tokens hi, nd 2p), 2 = (lo, 2p + 1), 3 = (hi, 2p + 1).
++#pragma unroll
++    for (int kt = 0; kt < 4; ++kt) {
++      const int tok = kt * 16 + lm_hi * 8 + lm_r;
++      const uint32_t rowa = vh_u32 + tok * VH_ROW;
++#pragma unroll
++      for (int p = 0; p < 4; ++p) {
++        const int c = g * 8 + 2 * p + lm_db;
++        uint32_t b0, b1, b2, b3;
++        ldsm_x4_t(rowa + ((c ^ lm_r) << 4), b0, b1, b2, b3);
++        mma16816(acc[2 * p], pf[2 * kt][0], pf[2 * kt][1], pf[2 * kt + 1][0], pf[2 * kt + 1][1], b0, b1);
++        mma16816(acc[2 * p + 1], pf[2 * kt][0], pf[2 * kt][1], pf[2 * kt + 1][0], pf[2 * kt + 1][1], b2, b3);
++      }
++    }
++
++    if (n == N - 1 || f + 1 == pre_s[cb + 1]) {
++      // Segment end: this warp's 16 rows of request cb's partial at slot bx + cb.
++      float la = lA, lb = lB;
++      la += __shfl_xor_sync(0xffffffffu, la, 1);
++      la += __shfl_xor_sync(0xffffffffu, la, 2);
++      lb += __shfl_xor_sync(0xffffffffu, lb, 1);
++      lb += __shfl_xor_sync(0xffffffffu, lb, 2);
++      const int64_t slot = static_cast<int64_t>(bx) + cb;
++      float* pa = ws_acc + ((slot * QL + quad) * HQ + hA) * D + 2 * qi;
++      float* pb = pa + D;  // head hA + 1
++#pragma unroll
++      for (int nd = 0; nd < 8; ++nd) {
++        *reinterpret_cast<float2*>(pa + nd * 8) = make_float2(acc[nd][0], acc[nd][1]);
++        *reinterpret_cast<float2*>(pb + nd * 8) = make_float2(acc[nd][2], acc[nd][3]);
++      }
++      if (qi == 0) {
++        float* ml = ws_ml + slot * 2 * QL * HQ + quad * HQ + hA;
++        ml[0] = mA;
++        ml[1] = mB;
++        ml[QL * HQ] = la;
++        ml[QL * HQ + 1] = lb;
++      }
++    }
++  }
++  cp_wait<0>();  // the trailing groups are empty; drain anyway
++}
++
++__global__ void __launch_bounds__(128)
++splitkv_verify_combine_kernel(const float* __restrict__ ws_acc, const float* __restrict__ ws_ml,
++                              const int* __restrict__ seqlens, int B, int grid,
++                              const float* __restrict__ v_scale,
++                              const __nv_bfloat16* __restrict__ qkv, int64_t qkv_stride,
++                              __nv_bfloat16* __restrict__ out, float eps) {
++  __shared__ int seq_s[MAXB];
++  __shared__ int pre_s[MAXB + 4];
++  __shared__ float red_m[4];
++  __shared__ float red_l[4];
++  __shared__ float red_acc[4][D];
++  const float NEG_INF = __int_as_float(0xff800000u);
++  const int b = blockIdx.x / QL, j = blockIdx.x % QL, h = blockIdx.y;
++  const int tid = threadIdx.x, lane = tid & 31, warp = tid >> 5;
++  if (tid < B) seq_s[tid] = seqlens[tid];
++  __syncthreads();
++  if (warp == 0) tile_prefix(seq_s, pre_s, B, lane);
++  __syncthreads();
++  const int T = pre_s[B], x0 = pre_s[b], x1 = pre_s[b + 1];  // request b's flat tiles [x0, x1)
++  int c_lo = 0, c_hi = -1;
++  if (x1 > x0) {
++    c_lo = owner_of(x0, T, grid);
++    c_hi = owner_of(x1 - 1, T, grid);
++  }
++  // CTA c wrote slot c + b iff its range [start(c), start(c + 1)) meets [x0, x1).
++  auto covers = [&](int c) {
++    const int lo = max(start_of(c, T, grid), x0), hi = min(start_of(c + 1, T, grid), x1);
++    return lo < hi;
++  };
++  const int row = j * HQ + h;
++
++  float M = NEG_INF;
++  for (int c = c_lo + tid; c <= c_hi; c += 128)
++    if (covers(c)) M = fmaxf(M, ws_ml[static_cast<int64_t>(c + b) * 2 * QL * HQ + row]);
++#pragma unroll
++  for (int o = 16; o > 0; o >>= 1) M = fmaxf(M, __shfl_xor_sync(0xffffffffu, M, o));
++  if (lane == 0) red_m[warp] = M;
++  __syncthreads();
++  M = fmaxf(fmaxf(red_m[0], red_m[1]), fmaxf(red_m[2], red_m[3]));
++  const float Mu = M == NEG_INF ? 0.f : M;
++
++  float a0 = 0.f, a1 = 0.f, L = 0.f;
++  for (int c = c_lo + warp; c <= c_hi; c += 4) {
++    if (!covers(c)) continue;  // warp-uniform
++    const int64_t sl = static_cast<int64_t>(c + b);
++    const float m = ws_ml[sl * 2 * QL * HQ + row];
++    const float wt = m == NEG_INF ? 0.f : ex2(m - Mu);  // rows with no valid key here weigh 0
++    L += wt * ws_ml[sl * 2 * QL * HQ + QL * HQ + row];
++    const float2 a = *reinterpret_cast<const float2*>(ws_acc + (sl * QL * HQ + row) * D + lane * 2);
++    a0 += wt * a.x;
++    a1 += wt * a.y;
++  }
++  red_acc[warp][lane * 2] = a0;
++  red_acc[warp][lane * 2 + 1] = a1;
++  if (lane == 0) red_l[warp] = L;
++  __syncthreads();
++  if (warp == 0) {
++    float o0 = 0.f, o1 = 0.f, Ls = 0.f;
++#pragma unroll
++    for (int w = 0; w < 4; ++w) { o0 += red_acc[w][lane * 2]; o1 += red_acc[w][lane * 2 + 1]; Ls += red_l[w]; }
++    const float f = Ls > 0.f ? __ldg(v_scale) / Ls : 0.f;  // every row has key 0, so Ls > 0
++    o0 *= f;
++    o1 *= f;
++    float ss = o0 * o0 + o1 * o1;
++#pragma unroll
++    for (int o = 16; o > 0; o >>= 1) ss += __shfl_xor_sync(0xffffffffu, ss, o);
++    const float r = 1.f / sqrtf(ss / D + eps);
++    const int64_t tok = static_cast<int64_t>(b) * QL + j;
++    const __nv_bfloat16* gp = qkv + tok * qkv_stride + (HQ + 2 * HKV) * D + h * D + lane * 2;
++    const float g0 = __bfloat162float(gp[0]), g1 = __bfloat162float(gp[1]);
++    const float y0 = o0 * r / (1.f + expf(-g0));
++    const float y1 = o1 * r / (1.f + expf(-g1));
++    *reinterpret_cast<__nv_bfloat162*>(out + (tok * HQ + h) * D + lane * 2) = __floats2bfloat162_rn(y0, y1);
++  }
++}
++
++}  // namespace
++
++void splitkv_verify_attn(torch::Tensor q, torch::Tensor k_cache, torch::Tensor v_cache, torch::Tensor page_table,
++                         torch::Tensor cache_seqlens, torch::Tensor k_scale, torch::Tensor ws_acc, torch::Tensor ws_ml,
++                         double score_scale, int64_t grid) {
++  const int B = static_cast<int>(cache_seqlens.size(0));
++  TORCH_CHECK(B >= 1 && B <= MAXB, "splitkv_verify_attn: batch out of range");
++  TORCH_CHECK(q.size(0) == static_cast<int64_t>(B) * QL && q.size(1) == HQ && q.size(2) == D, "splitkv_verify_attn: q shape");
++  TORCH_CHECK(ws_acc.size(0) >= grid + B && ws_ml.size(0) >= grid + B, "splitkv_verify_attn: workspace too small");
++  TORCH_CHECK(page_table.stride(1) == 1 && q.is_contiguous() && k_cache.is_contiguous() && v_cache.is_contiguous()
++              && ws_acc.is_contiguous() && ws_ml.is_contiguous(), "splitkv_verify_attn: layout");
++  static bool attr_set = false;
++  if (!attr_set) {
++    C10_CUDA_CHECK(cudaFuncSetAttribute(splitkv_verify_kernel, cudaFuncAttributeMaxDynamicSharedMemorySize, SMEM_A));
++    attr_set = true;
++  }
++  auto stream = at::cuda::getCurrentCUDAStream();
++  splitkv_verify_kernel<<<static_cast<unsigned>(grid), THREADS, SMEM_A, stream>>>(
++      reinterpret_cast<const uint8_t*>(q.data_ptr()), reinterpret_cast<const uint8_t*>(k_cache.data_ptr()),
++      reinterpret_cast<const uint8_t*>(v_cache.data_ptr()), page_table.data_ptr<int>(), page_table.stride(0),
++      cache_seqlens.data_ptr<int>(), B, k_scale.data_ptr<float>(), static_cast<float>(score_scale),
++      ws_acc.data_ptr<float>(), ws_ml.data_ptr<float>());
++  C10_CUDA_KERNEL_LAUNCH_CHECK();
++}
++
++void splitkv_verify_combine(torch::Tensor ws_acc, torch::Tensor ws_ml, torch::Tensor cache_seqlens,
++                            torch::Tensor v_scale, torch::Tensor qkv, int64_t qkv_stride, torch::Tensor out,
++                            int64_t grid, double eps) {
++  const int B = static_cast<int>(cache_seqlens.size(0));
++  TORCH_CHECK(B >= 1 && B <= MAXB, "splitkv_verify_combine: batch out of range");
++  auto stream = at::cuda::getCurrentCUDAStream();
++  splitkv_verify_combine_kernel<<<dim3(B * QL, HQ), 128, 0, stream>>>(
++      ws_acc.data_ptr<float>(), ws_ml.data_ptr<float>(), cache_seqlens.data_ptr<int>(), B, static_cast<int>(grid),
++      v_scale.data_ptr<float>(), reinterpret_cast<const __nv_bfloat16*>(qkv.data_ptr()), qkv_stride,
++      reinterpret_cast<__nv_bfloat16*>(out.data_ptr()), static_cast<float>(eps));
++  C10_CUDA_KERNEL_LAUNCH_CHECK();
++}
++
++// [A8 registers, A8 local (spill) bytes, B8 registers, B8 local bytes, A8 dynamic smem], CPU int64.
++torch::Tensor splitkv_verify_attrs() {
++  cudaFuncAttributes a, b;
++  C10_CUDA_CHECK(cudaFuncGetAttributes(&a, splitkv_verify_kernel));
++  C10_CUDA_CHECK(cudaFuncGetAttributes(&b, splitkv_verify_combine_kernel));
++  auto t = torch::empty({5}, torch::dtype(torch::kInt64));
++  int64_t* p = t.data_ptr<int64_t>();
++  p[0] = a.numRegs;
++  p[1] = static_cast<int64_t>(a.localSizeBytes);
++  p[2] = b.numRegs;
++  p[3] = static_cast<int64_t>(b.localSizeBytes);
++  p[4] = SMEM_A;
++  return t;
++}
++"""
++
++
++def _build_splitkv_verify():
++    """Compile the verify module once per process, at import (never during graph capture). A
++    failure here leaves the decode module (_EXT) untouched."""
++    t0 = time.perf_counter()
++    try:
++        from torch.utils.cpp_extension import load_inline
++        ext = load_inline(
++            name="muse_full_verify_splitkv_v1",
++            cpp_sources=_VERIFY_CPP,
++            cuda_sources=_VERIFY_CUDA,
++            functions=["splitkv_verify_attn", "splitkv_verify_combine", "splitkv_verify_attrs"],
++            extra_cuda_cflags=["-O3", "-arch=sm_90a"],
++            verbose=False,
++        )
++    except Exception as e:  # keep the master path for verify if the build fails
++        print(f"[splitkv-verify] load_inline failed after {time.perf_counter() - t0:.1f}s, verify keeps FA3: {e!r}")
++        return None
++    print(f"[splitkv-verify] load_inline compiled in {time.perf_counter() - t0:.1f}s")
++    return ext
++
++
++_VEXT = None          # the compiled verify module
++_VERIFY_ON = False    # set True only once the q_len-8 self-check has passed
++_VERIFY_GRID = None   # grid override, set only by the verify self-check
++
++
++def _splitkv_verify_gate(cfg) -> bool:
++    """Config-only predicate for the CUDA stream-K verify path: full layer, q_len 8,
++    1 < batch <= 64, tp8 heads, head dim 64, page 1, and the verify self-check passed."""
++    return (_VEXT is not None and _VERIFY_ON and cfg["window"] == 0 and cfg["q_len"] == 8
++            and 1 < cfg["batch"] <= 64 and cfg["num_q_heads"] == 16 and cfg["num_kv_heads"] == 2
++            and cfg["head_dim"] == 64 and cfg["page_size"] == 1)
++
++
++def _full_verify_splitkv(data: Inputs, q: torch.Tensor, qkv: torch.Tensor) -> torch.Tensor:
++    """Kernels A8 and B8 on the gated verify path; q is the unpaired FP8 query [B*8, 16, 64]. The
++    grid and workspace come from shapes and the device only: CTA c writes slot c + b for each
++    request b its range touches, so slots never exceed (grid - 1) + (B - 1)."""
++    cfg = data["config"]
++    batch, length, hq, d = cfg["batch"], cfg["q_len"], cfg["num_q_heads"], cfg["head_dim"]
++    device = qkv.device
++    grid = _VERIFY_GRID or 2 * _sm_count(device)
++    slots = grid + batch
++    ws_acc = torch.empty((slots, length, hq, d), dtype=torch.float32, device=device)
++    ws_ml = torch.empty((slots, 2, length * hq), dtype=torch.float32, device=device)
++    _VEXT.splitkv_verify_attn(q, data["k_cache"], data["v_cache"], data["page_table"], data["cache_seqlens"],
++                              data["k_scale"], ws_acc, ws_ml, cfg["sm_scale"] * cfg["qk_scale_factor"] * LOG2E,
++                              grid)
++    out = torch.empty((batch, length, hq * d), dtype=torch.bfloat16, device=device)
++    _VEXT.splitkv_verify_combine(ws_acc, ws_ml, data["cache_seqlens"], data["v_scale"], qkv, qkv.stride(0), out,
++                                 grid, RMS_EPS)
++    return out
++
++
+ def kernel_fn(data: Inputs) -> torch.Tensor:
+     cfg = data["config"]
+     # Sliding batch-1 decode only (config-only predicate): the whole step in one fused launch.
+@@ -915,8 +1514,10 @@ def kernel_fn(data: Inputs) -> torch.Tensor:
+     # Companion paired-heads-launch-cleanup-ab-tune-batch-gate: pair only at batch > 1 (batch 1
+     # keeps the unpaired path, where pairing lost 27-35%).
+     # The CUDA split-KV path (full decode, 1 < batch <= 64, tp8, page 1) takes the unpaired query.
++    # The CUDA stream-K verify path (full verify, 1 < batch <= 64, tp8, page 1) does too.
+     splitkv = _splitkv_gate(cfg)
+-    paired = window == 0 and hkv % 2 == 0 and batch > 1 and not splitkv
++    splitkv_verify = _splitkv_verify_gate(cfg)
++    paired = window == 0 and hkv % 2 == 0 and batch > 1 and not splitkv and not splitkv_verify
+     g = hq // hkv
+     q = torch.empty((tokens, hq, 2 * d if paired else d), dtype=FP8, device=device)
+     inv_freq = _inv_freq(theta, d, device) if theta else data["k_scale"]  # unused when ROPE is off
+@@ -929,6 +1530,8 @@ def kernel_fn(data: Inputs) -> torch.Tensor:
+     )
+     if splitkv:
+         return _full_decode_splitkv(data, q, qkv)
++    if splitkv_verify:
++        return _full_verify_splitkv(data, q, qkv)
+ 
+     # The judge's scheduler_metadata was built for the unpaired geometry, so on the paired path
+     # it is not passed (FA3 builds its own schedule from the paged lengths).
+@@ -1067,8 +1670,120 @@ def _splitkv_self_check() -> bool:
+     return ok
+ 
+ 
++def _verify_synthetic(lens, kv_scale, gen, device):
++    """Gated verify inputs (full layer, q_len 8, tp8, page 1). lens are cache_seqlens (seq_lens +
++    8): a request of length 8 has seq_lens 0. Built as reference.generate_input builds them
++    (scattered pages, odd page-table stride, 8 positions / cache rows per request)."""
++    batch, length, hq, hkv, d = len(lens), 8, 16, 2, 64
++    max_pages = max(lens) + 37
++    total = batch * max_pages
++    perm = torch.randperm(total, generator=gen, device=device).to(torch.int32)
++    page_table = torch.full((batch, max_pages), -1, dtype=torch.int32, device=device)
++    off = 0
++    for b, n in enumerate(lens):
++        page_table[b, :n] = perm[off:off + n]
++        off += n
++    seq = torch.tensor([n - length for n in lens], dtype=torch.int64, device=device)
++    pos = seq[:, None] + torch.arange(length, dtype=torch.int64, device=device)[None, :]
++    k_cache = (torch.randn((total, 1, hkv, d), generator=gen, device=device) / kv_scale).to(FP8)
++    v_cache = (torch.randn((total, 1, hkv, d), generator=gen, device=device) / kv_scale).to(FP8)
++    qkv = (2 * torch.randn((batch, length, (2 * hq + 2 * hkv) * d), generator=gen, device=device)).to(torch.bfloat16)
++    return {
++        "qkv": qkv,
++        "positions": pos.reshape(-1).clone(),
++        "cache_loc": torch.gather(page_table.long(), 1, pos).reshape(-1),
++        "cache_seqlens": (seq + length).to(torch.int32),
++        "cu_seqlens_q": torch.arange(0, batch + 1, dtype=torch.int32, device=device) * length,
++        "scheduler_metadata": None,
++        "k_cache": k_cache,
++        "v_cache": v_cache,
++        "k_scale": torch.tensor(kv_scale, dtype=torch.float32, device=device),
++        "v_scale": torch.tensor(kv_scale, dtype=torch.float32, device=device),
++        "page_table": page_table,
++        "seq_lens": seq.to(torch.int32),
++        "config": {"batch": batch, "q_len": length, "num_q_heads": hq, "num_kv_heads": hkv, "head_dim": d,
++                   "page_size": 1, "window": 0, "rope_theta": 0.0, "qk_scale_factor": 5.4730064863875,
++                   "sm_scale": d ** -0.5, "kv_scale": kv_scale},
++    }
++
++
++def _verify_reference(data, lens):
++    """FP32 causal attention over the cache as kernel_fn left it (the block's own keys included),
++    FP8 queries: block token i of request b sees keys t <= cache_seqlens[b] - 8 + i."""
++    cfg = data["config"]
++    batch, length = cfg["batch"], cfg["q_len"]
++    hq, hkv, d = cfg["num_q_heads"], cfg["num_kv_heads"], cfg["head_dim"]
++    qkv = data["qkv"].reshape(batch, length, -1).float()
++    q = qkv[..., :hq * d].reshape(batch, length, hq, d)
++    q = q * torch.rsqrt(q.pow(2).mean(-1, keepdim=True) + RMS_EPS)
++    q = q.to(FP8).float() * cfg["qk_scale_factor"]
++    kf = data["k_cache"].view(-1, hkv, d)
++    vf = data["v_cache"].view(-1, hkv, d)
++    outs = []
++    for b, n in enumerate(lens):
++        rows = data["page_table"][b, :n].long()
++        keys = (kf[rows].float() * data["k_scale"]).repeat_interleave(hq // hkv, dim=1)
++        vals = (vf[rows].float() * data["v_scale"]).repeat_interleave(hq // hkv, dim=1)
++        s = torch.einsum("lhd,nhd->lhn", q[b], keys) * cfg["sm_scale"]
++        t = torch.arange(n, device=s.device)
++        lim = n - length + torch.arange(length, device=s.device)
++        s = s.masked_fill((t[None, :] > lim[:, None])[:, None, :], float("-inf"))
++        p = torch.softmax(s, dim=-1)
++        outs.append(torch.einsum("lhn,nhd->lhd", p, vals))
++    a = torch.stack(outs)
++    a = a * torch.rsqrt(a.pow(2).mean(-1, keepdim=True) + RMS_EPS)
++    gate = qkv[..., (hq + 2 * hkv) * d:].reshape(batch, length, hq, d)
++    return (a * torch.sigmoid(gate)).reshape(batch, length, hq * d)
++
++
++def _splitkv_verify_self_check() -> bool:
++    """One-time eager check at import, on synthetic data only (never in the timed path): the gated
++    verify path through kernel_fn against an FP32 causal reference. Lengths (cache_seqlens) 9000,
++    1025 (% 64 == 1: rows j <= 6 have no valid key in the last tile), 70 (% 64 == 6), 4097, 1023
++    and 8 (the block alone); kv scale 1 and 1/4; grids 3 and 7 (CTAs spanning several batch rows,
++    segments starting and ending mid-request), 61 and the device grid (single-tile segments,
++    fully masked rows in a segment, empty CTAs when grid > Ttot = 242). The path is enabled for
++    the trial only; the caller turns it on if every case passes."""
++    global _VERIFY_GRID, _VERIFY_ON
++    lens = [9000, 1025, 70, 4097, 1023, 8]
++    gen = torch.Generator(device="cuda").manual_seed(4321)
++    ok = True
++    _VERIFY_ON = True
++    try:
++        attrs = _VEXT.splitkv_verify_attrs().tolist()
++        print(f"[splitkv-verify] A8 regs {attrs[0]}, A8 local bytes {attrs[1]}, B8 regs {attrs[2]}, "
++              f"B8 local bytes {attrs[3]}, A8 smem {attrs[4]}")
++        for kv_scale, grid in ((1.0, None), (0.25, 3), (1.0, 7), (0.25, 61)):
++            data = _verify_synthetic(lens, kv_scale, gen, torch.device("cuda"))
++            assert _splitkv_verify_gate(data["config"])
++            _VERIFY_GRID = grid
++            out = kernel_fn(data).float()
++            ref = _verify_reference(data, lens)
++            err = float((out - ref).norm() / ref.norm())
++            finite = bool(torch.isfinite(out).all())
++            print(f"[splitkv-verify] self-check kv_scale={kv_scale} grid={grid or 'device'}: rel L2 {err:.2e}, "
++                  f"finite {finite}")
++            ok = ok and finite and err < 2e-2
++    except Exception as e:
++        print(f"[splitkv-verify] self-check raised: {e!r}")
++        ok = False
++    finally:
++        _VERIFY_GRID = None
++        _VERIFY_ON = False
++    return ok
++
++
+ if torch.cuda.is_available():
+     _EXT = _build_splitkv()
+     if _EXT is not None and not _splitkv_self_check():
+         print("[splitkv] SELF-CHECK FAILED: CUDA split-KV path disabled, master FA3 path kept")
+         _EXT = None
++    # Verify path: its own module and its own flag, so neither a build nor a self-check failure
++    # here can disable the decode path above.
++    _VEXT = _build_splitkv_verify()
++    if _VEXT is not None:
++        if _splitkv_verify_self_check():
++            _VERIFY_ON = True
++        else:
++            print("[splitkv-verify] SELF-CHECK FAILED: CUDA verify path disabled, FA3 verify path kept")
++            _VEXT = None

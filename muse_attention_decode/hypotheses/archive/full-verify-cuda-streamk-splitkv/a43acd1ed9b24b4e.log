@@ -1,0 +1,10 @@
+[splitkv] load_inline compiled in 41.1s
+[splitkv] self-check kv_scale=1.0 grid=device: rel L2 1.69e-03, finite True
+[splitkv] self-check kv_scale=0.25 grid=3: rel L2 1.66e-03, finite True
+[splitkv] self-check kv_scale=1.0 grid=3: rel L2 1.62e-03, finite True
+[splitkv-verify] load_inline compiled in 43.6s
+[splitkv-verify] A8 regs 128, A8 local bytes 0, B8 regs 35, B8 local bytes 0, A8 smem 90640
+[splitkv-verify] self-check kv_scale=1.0 grid=device: rel L2 1.64e-03, finite True
+[splitkv-verify] self-check kv_scale=0.25 grid=3: rel L2 1.67e-03, finite True
+[splitkv-verify] self-check kv_scale=1.0 grid=7: rel L2 1.65e-03, finite True
+[splitkv-verify] self-check kv_scale=0.25 grid=61: rel L2 1.69e-03, finite True

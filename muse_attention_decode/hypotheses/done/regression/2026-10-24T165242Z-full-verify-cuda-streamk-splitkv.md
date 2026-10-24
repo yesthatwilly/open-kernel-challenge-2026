@@ -80,10 +80,10 @@ controls_for: null
 rewrite_stage: 2
 replaces: "full-layer decode at batch>1: FA3 flash_fwd main + prepare_varlen_num_blocks + FlashAttnFwdCombine + _paired_norm_gate_kernel"
 review: proceed
-status: running
+status: done
 review_at: 2026-10-24T165728Z
 review_companions: null
-stage: dispatched
+stage: harvested
 claimed_at: 2026-10-24T165728Z
 base_sha: 27b43dcd8b752ab9c2454f7e20fb949c059b9213
 base_blob: 1c0f5fa1bfc4e602b62e5e9edd9df6d5652b297b
@@ -100,6 +100,13 @@ attempt_file: 2026-10-24T181703Z-submit-full-verify-cuda-streamk-splitkv.md
 prepared_at: 2026-10-24T181703Z
 job: a43acd1ed9b24b4e
 dispatched_at: 2026-10-24T181732Z
+outcome: regression
+verdict_detail: regression
+speedup: 1.2314392540788628
+speedup_ci: [1.2104805609205453, 1.2499108428900456]
+harvested_at: 2026-10-24T184714Z
+best_at_harvest: 1.3948738389144513
+promotion: null
 ---
 
 # full-verify-cuda-streamk-splitkv
@@ -191,3 +198,35 @@ OK with warnings: muse_attention_decode/submission.py
 (The first lint pass flagged the word "requests" in three comments as `network`. They were reworded to "batch rows"; no code changed.) The warning is the import-time self-check's read of a CPU attrs tensor, not in kernel_fn's call graph.
 
 `python3 -I -m py_compile`: OK (worktree `__pycache__` removed).
+
+## Result
+
+- job `a43acd1ed9b24b4e` (submit), status done, passed True, tests 16/16
+- speedup 1.2314x, 95% CI [1.2105, 1.2499], score 3058.4537463175607 µs vs SGLang 3766.3 µs
+- best at harvest: {"speedup": 1.3948738389144513, "ci": [1.3739507313307344, 1.415796946498168], "job": "698d4cd3838c4a63"}; base result: muse_attention_decode/hypotheses/done/gain/full-decode-cuda-gather-splitkv.result.json
+- **outcome: regression** (regression)
+- files: `muse_attention_decode/hypotheses/done/regression/full-verify-cuda-streamk-splitkv.result.json`, `muse_attention_decode/hypotheses/done/regression/full-verify-cuda-streamk-splitkv.patch`; branch `hyp/muse_attention_decode/full-verify-cuda-streamk-splitkv`
+
+## Attribution
+
+| shape | w | base µs | hyp µs | delta | verdict |
+|---|---|---|---|---|---|
+| batch=1 ctx=80000 dist=soft heads=tp8 layer=sliding load=decode_1 page=1 | 46 | 13.88 | 13.91 | 1.0018 | flat |
+| batch=1 ctx=80000 dist=coherent heads=tp8 layer=full load=decode_1 page=1 | 16 | 27.93 | 27.5 | 1.0173 | flat |
+| batch=16 ctx=80000 dist=soft heads=tp8 layer=sliding load=decode_16 page=1 spread=agentic | 46 | 20.84 | 20.75 | 1.0002 | flat |
+| batch=16 ctx=80000 dist=coherent heads=tp8 layer=full load=decode_16 page=1 spread=agentic | 16 | 123.02 | 122.37 | 1.0019 | flat |
+| batch=32 ctx=80000 dist=soft heads=tp8 layer=sliding load=decode_32 page=1 spread=agentic | 46 | 25.2 | 25.16 | 1.0077 | flat |
+| batch=32 ctx=80000 dist=coherent heads=tp8 layer=full load=decode_32 page=1 spread=agentic | 16 | 257.75 | 226.29 | 1.1398 | gained |
+| batch=1 ctx=80000 dist=soft heads=tp8 layer=sliding load=verify_1 page=1 q_len=8 | 46 | 17.63 | 16.85 | 1.0095 | flat |
+| batch=1 ctx=80000 dist=coherent heads=tp8 layer=full load=verify_1 page=1 q_len=8 | 16 | 30.29 | 29.88 | 0.9966 | flat |
+| batch=16 ctx=80000 dist=soft heads=tp8 layer=sliding load=verify_16 page=1 q_len=8 spread=agentic | 46 | 22.77 | 22.25 | 1.022 | flat |
+| batch=16 ctx=80000 dist=coherent heads=tp8 layer=full load=verify_16 page=1 q_len=8 spread=agentic | 16 | 162.83 | 243.99 | 0.668 | lost |
+| batch=32 ctx=80000 dist=soft heads=tp8 layer=sliding load=verify_32 page=1 q_len=8 spread=agentic | 46 | 29.35 | 28.93 | 1.006 | flat |
+| batch=32 ctx=80000 dist=coherent heads=tp8 layer=full load=verify_32 page=1 q_len=8 spread=agentic | 16 | 301.91 | 465.11 | 0.6474 | lost |
+
+gained on full decode_32; lost on full verify_16, verify_32. Expected hit: 2/5. Noise ±1.6%.
+
+## Follow-ups
+
+- rewrite stage 2 of `full-layer decode at batch>1: FA3 flash_fwd main + prepare_varlen_num_blocks + FlashAttnFwdCombine + _paired_norm_gate_kernel`: read the replaced kernels' own us per shape (profile top_kernels) against the incumbent and the floor, and check which Milestone it reached. The next stage is `/hypothesize muse_attention_decode "<what to fix or tune>" --kind rewrite --depends-on full-verify-cuda-streamk-splitkv --stage 3`; a slow or failed first cut is the expected start, not a do-not-retry.
+

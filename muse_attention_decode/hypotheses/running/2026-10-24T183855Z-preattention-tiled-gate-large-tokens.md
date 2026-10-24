@@ -88,3 +88,31 @@ No companion warranted. The parent run already is the A/B: the identical tiled k
 - Obsolescence risk: sliding-cuda-cluster-dsmem-onelaunch (running) and fused-sliding-preattn-into-window-kernel / sliding-verify-cuda-streamk-window (queued) may absorb sliding verify pre-attention; stream-fork-preattention would overlap the same launch and should be evaluated on top of this if both proceed.
 - Could tiling several tokens per program (e.g. 4 tokens x 1 group per CTA at verify_32) push the kernel further toward ~1 us? Worth a follow-up hypothesis if this one lands.
 
+
+## Implementation notes
+
+In the worktree's muse_attention_decode/submission.py: added `_pre_attention_tiled_kernel` (the group-tiled kernel from the done/neutral patch, copied; same arithmetic and rounding points) after `_pre_attention_kernel`, which is untouched. kernel_fn now builds the shared argument tuple and launches the tiled kernel on grid (tokens, hkv), num_warps=4, when `tokens >= 64`, else the old kernel on (tokens, hq+hkv), num_warps=1. The gate is config-only (batch * q_len). No deviation from the spec; the reviewer's open questions (dropping the gate, a masked PAIRED store) were left alone as new ideas.
+
+## Rules check
+
+- [x] CUDA-graph capturable: diff adds only a Triton kernel and a shape-based launch branch; no .item()/.cpu()/sync/allocation on input values.
+- [x] Nothing derived from `data` is cached across calls: no new caches.
+- [x] Weights: n/a: not touched.
+- [x] Activations BF16 / KV cache FP8 / queries at most FP8 E4M3: q, k, v are stored as float8e4nv exactly as the old kernel.
+- [x] Attention sees every key: n/a: attention untouched; only the pre-attention launch changed.
+- [x] No timing patches, harness frames/I/O/secrets, module edits, reference import, subprocesses or network: none in the diff.
+- [x] All work happens inside the timed call; no output caching or replay.
+- [x] No triton.autotune; no host syncs in kernel_fn.
+
+okc_lint output: `CLEAN: muse_attention_decode/submission.py`. py_compile passed, __pycache__ removed.
+
+## Pre-flight audit
+
+Audited 2026-10-24 (opus). **Verdict: dispatch** (no fixes).
+
+- `_pre_attention_tiled_kernel` is the parent patch's kernel (done/neutral/preattention-group-tiled-programs.patch, job 877731a3, which passed every test and timed-call check including PAIRED full verify) copied token-for-token; master's `_pre_attention_kernel` is untouched.
+- PAIRED [G, D] zero-tile store: `qrow` is [G, 1], `qrow + (1-half)*D + zj[None, :]` is [G, D] against a [G, D] FP8 zero tile; `half = g % 2` equals master's `(h // G) % 2` for every head in group g; value stores hit `qrow + half*D + even/odd[None, :]`. Every byte of the G padded rows is written. G = 8 (power of two) under tp8 and dp.
+- Gate `tokens >= 64` is config-only (batch * q_len): it takes verify_16 (128 tokens) and verify_32 (256), sliding and full; decode (<= 32 tokens), verify_1 (8) and every test (max 40 tokens) take master's kernel. So the 16 pre-tests never exercise the tiled kernel, but the timed calls are checked against the reference and the parent ran the identical kernel on those shapes cleanly.
+- Rules: no sync, allocation or value branching added; no caches; FP8 q/k/v as master. Lint CLEAN.
+
+Residual risk: the tiled kernel is only exercised on scored verify_16/32 timed calls (no pre-test covers it), relying on the parent run's clean pass of the same code.

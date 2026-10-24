@@ -1,0 +1,702 @@
+{
+ "schema": 1,
+ "problem": "muse_attention_decode",
+ "slug": "full-verify-cuda-streamk-splitkv",
+ "job": "a43acd1ed9b24b4e",
+ "mode": "submit",
+ "duplicate_of": null,
+ "content_hash": "8955d957b5b00196366a3f9a8d4757d98800ebc76c6a245dec30ac8d8152bc73",
+ "submission_sha256": "973a5b33afa15091df69a32c232dd5ebffb8e54a79635158d4daf0aa5aa1581f",
+ "submission_blob": "2b7e5dbf0fde0ae0163e5ecaefd87a5f0848e6b0",
+ "impl_commit": "ee7dd2035bcffc84a11faafb7b5574466ee3bcae",
+ "base_sha": "27b43dcd8b752ab9c2454f7e20fb949c059b9213",
+ "created_at": 1792865845.7373977,
+ "finished_at": 1792866237.936061,
+ "gpu": "H200",
+ "evaluator_sha256": "1d519ebf2014fef91b41ffea9bcd7e9c5066784ef5a2a5e2cf06a8cec554d188",
+ "status": "done",
+ "passed": true,
+ "error": null,
+ "returncode": 0,
+ "tests": {
+  "total": 16,
+  "passed": 16
+ },
+ "first_failing": null,
+ "speedup": 1.2314392540788628,
+ "speedup_ci": [
+  1.2104805609205453,
+  1.2499108428900456
+ ],
+ "score_us": 3058.4537463175607,
+ "baseline_us": 3766.3,
+ "flags": [],
+ "checks": {
+  "flagged": [],
+  "ok": true,
+  "rejected": []
+ },
+ "shapes": [
+  {
+   "key": "batch=1 ctx=80000 dist=soft heads=tp8 layer=sliding load=decode_1 page=1",
+   "load": "decode 1",
+   "case": {
+    "batch": 1,
+    "ctx": 80000,
+    "dist": "soft",
+    "heads": "tp8",
+    "layer": "sliding",
+    "load": "decode 1",
+    "page": 1,
+    "seed": 1336887632544790781,
+    "weight": 46
+   },
+   "weight": 46,
+   "median_ns": 13911.269773704926,
+   "baseline_ns": 20991.999190300703,
+   "speedup": 1.5089923157108036,
+   "speedup_of_medians": 1.5115206741305474,
+   "err_ns": 49.57982979808331,
+   "speed_of_light_ns": 111.14666666666666,
+   "status": "pass",
+   "top_kernels": [
+    [
+     "_sliding_fused_kernel",
+     10.2,
+     100.0
+    ]
+   ]
+  },
+  {
+   "key": "batch=1 ctx=80000 dist=coherent heads=tp8 layer=full load=decode_1 page=1",
+   "load": "decode 1",
+   "case": {
+    "batch": 1,
+    "ctx": 80000,
+    "dist": "coherent",
+    "heads": "tp8",
+    "layer": "full",
+    "load": "decode 1",
+    "page": 1,
+    "seed": 1337072845619207998,
+    "weight": 16
+   },
+   "weight": 16,
+   "median_ns": 27497.630118124733,
+   "baseline_ns": 31408.00166875124,
+   "speedup": 1.1422075842110129,
+   "speedup_of_medians": 1.1412790530236898,
+   "err_ns": 46.083467965772876,
+   "speed_of_light_ns": 4268.586666666666,
+   "status": "pass",
+   "top_kernels": [
+    [
+     "void cutlass::device_kernel<flash::enable_sm90_or_later<f...",
+     14.7,
+     60.2
+    ],
+    [
+     "void cutlass::device_kernel<flash::FlashAttnFwdCombine<cu...",
+     7.3,
+     30.0
+    ],
+    [
+     "_pre_attention_kernel",
+     1.4,
+     5.6
+    ],
+    [
+     "void sglang::norm_gate_kernel<__nv_bfloat16, 64l, 8, 8, t...",
+     1.0,
+     4.2
+    ]
+   ]
+  },
+  {
+   "key": "batch=16 ctx=80000 dist=soft heads=tp8 layer=sliding load=decode_16 page=1 spread=agentic",
+   "load": "decode 16",
+   "case": {
+    "batch": 16,
+    "ctx": 80000,
+    "dist": "soft",
+    "heads": "tp8",
+    "layer": "sliding",
+    "load": "decode 16",
+    "page": 1,
+    "seed": 1337258058693625216,
+    "spread": "agentic",
+    "weight": 46
+   },
+   "weight": 46,
+   "median_ns": 20751.53200072555,
+   "baseline_ns": 26703.9998434484,
+   "speedup": 1.2868447419937348,
+   "speedup_of_medians": 1.2897990200646163,
+   "err_ns": 56.29709383216347,
+   "speed_of_light_ns": 1647.2746666666667,
+   "status": "pass",
+   "top_kernels": [
+    [
+     "void cutlass::device_kernel<flash::enable_sm90_or_later<f...",
+     9.7,
+     55.1
+    ],
+    [
+     "void cutlass::device_kernel<flash::FlashAttnFwdCombine<cu...",
+     3.1,
+     17.6
+    ],
+    [
+     "void flash::prepare_varlen_num_blocks_kernel<1, false>(in...",
+     1.8,
+     10.4
+    ],
+    [
+     "_pre_attention_kernel",
+     1.8,
+     10.0
+    ]
+   ]
+  },
+  {
+   "key": "batch=16 ctx=80000 dist=coherent heads=tp8 layer=full load=decode_16 page=1 spread=agentic",
+   "load": "decode 16",
+   "case": {
+    "batch": 16,
+    "ctx": 80000,
+    "dist": "coherent",
+    "heads": "tp8",
+    "layer": "full",
+    "load": "decode 16",
+    "page": 1,
+    "seed": 1337443271768042435,
+    "spread": "agentic",
+    "weight": 16
+   },
+   "weight": 16,
+   "median_ns": 122372.97790072714,
+   "baseline_ns": 199967.99668297172,
+   "speedup": 1.6340862183250302,
+   "speedup_of_medians": 1.6369351862632813,
+   "err_ns": 86.61971514489177,
+   "speed_of_light_ns": 63177.38666666667,
+   "status": "pass",
+   "top_kernels": [
+    [
+     "(anonymous namespace)::splitkv_attn_kernel(unsigned char ...",
+     111.3,
+     91.5
+    ],
+    [
+     "(anonymous namespace)::splitkv_combine_kernel(float const...",
+     7.9,
+     6.5
+    ],
+    [
+     "_pre_attention_kernel",
+     2.4,
+     1.9
+    ]
+   ]
+  },
+  {
+   "key": "batch=32 ctx=80000 dist=soft heads=tp8 layer=sliding load=decode_32 page=1 spread=agentic",
+   "load": "decode 32",
+   "case": {
+    "batch": 32,
+    "ctx": 80000,
+    "dist": "soft",
+    "heads": "tp8",
+    "layer": "sliding",
+    "load": "decode 32",
+    "page": 1,
+    "seed": 1337628484842459655,
+    "spread": "agentic",
+    "weight": 46
+   },
+   "weight": 46,
+   "median_ns": 25164.450657589663,
+   "baseline_ns": 31200.000550597906,
+   "speedup": 1.2398442936479483,
+   "speedup_of_medians": 1.2483995175620843,
+   "err_ns": 156.92673017520767,
+   "speed_of_light_ns": 3294.5493333333334,
+   "status": "pass",
+   "top_kernels": [
+    [
+     "void cutlass::device_kernel<flash::enable_sm90_or_later<f...",
+     13.1,
+     61.4
+    ],
+    [
+     "void cutlass::device_kernel<flash::FlashAttnFwdCombine<cu...",
+     3.1,
+     14.4
+    ],
+    [
+     "_pre_attention_kernel",
+     2.1,
+     10.1
+    ],
+    [
+     "void flash::prepare_varlen_num_blocks_kernel<2, false>(in...",
+     1.7,
+     8.0
+    ]
+   ]
+  },
+  {
+   "key": "batch=32 ctx=80000 dist=coherent heads=tp8 layer=full load=decode_32 page=1 spread=agentic",
+   "load": "decode 32",
+   "case": {
+    "batch": 32,
+    "ctx": 80000,
+    "dist": "coherent",
+    "heads": "tp8",
+    "layer": "full",
+    "load": "decode 32",
+    "page": 1,
+    "seed": 1337813697916876876,
+    "spread": "agentic",
+    "weight": 16
+   },
+   "weight": 16,
+   "median_ns": 226287.047777165,
+   "baseline_ns": 384320.0011178851,
+   "speedup": 1.698373834884011,
+   "speedup_of_medians": 1.4934095874914242,
+   "err_ns": 166.94669564611922,
+   "speed_of_light_ns": 126354.77333333335,
+   "status": "pass",
+   "top_kernels": [
+    [
+     "(anonymous namespace)::splitkv_attn_kernel(unsigned char ...",
+     246.7,
+     95.8
+    ],
+    [
+     "(anonymous namespace)::splitkv_combine_kernel(float const...",
+     8.4,
+     3.3
+    ],
+    [
+     "_pre_attention_kernel",
+     2.4,
+     0.9
+    ]
+   ]
+  },
+  {
+   "key": "batch=1 ctx=80000 dist=soft heads=tp8 layer=sliding load=verify_1 page=1 q_len=8",
+   "load": "verify 1",
+   "case": {
+    "batch": 1,
+    "ctx": 80000,
+    "dist": "soft",
+    "heads": "tp8",
+    "layer": "sliding",
+    "load": "verify 1",
+    "page": 1,
+    "q_len": 8,
+    "seed": 1337998910991294098,
+    "weight": 46
+   },
+   "weight": 46,
+   "median_ns": 16854.20746402109,
+   "baseline_ns": 22367.99942329526,
+   "speedup": 1.327146320646909,
+   "speedup_of_medians": 1.3251184850073752,
+   "err_ns": 45.1543185605661,
+   "speed_of_light_ns": 124.58666666666666,
+   "status": "pass",
+   "top_kernels": [
+    [
+     "void cutlass::device_kernel<flash::enable_sm90_or_later<f...",
+     7.8,
+     48.3
+    ],
+    [
+     "void cutlass::device_kernel<flash::FlashAttnFwdCombine<cu...",
+     3.8,
+     23.4
+    ],
+    [
+     "void flash::prepare_varlen_num_blocks_kernel<1, false>(in...",
+     1.8,
+     10.9
+    ],
+    [
+     "_pre_attention_kernel",
+     1.7,
+     10.5
+    ]
+   ]
+  },
+  {
+   "key": "batch=1 ctx=80000 dist=coherent heads=tp8 layer=full load=verify_1 page=1 q_len=8",
+   "load": "verify 1",
+   "case": {
+    "batch": 1,
+    "ctx": 80000,
+    "dist": "coherent",
+    "heads": "tp8",
+    "layer": "full",
+    "load": "verify 1",
+    "page": 1,
+    "q_len": 8,
+    "seed": 1338184124065711321,
+    "weight": 16
+   },
+   "weight": 16,
+   "median_ns": 29878.88932219918,
+   "baseline_ns": 35840.00002592802,
+   "speedup": 1.1995091129207371,
+   "speedup_of_medians": 1.2010724254696132,
+   "err_ns": 49.16458298631645,
+   "speed_of_light_ns": 4282.026666666667,
+   "status": "pass",
+   "top_kernels": [
+    [
+     "void cutlass::device_kernel<flash::enable_sm90_or_later<f...",
+     14.9,
+     54.1
+    ],
+    [
+     "void cutlass::device_kernel<flash::FlashAttnFwdCombine<cu...",
+     7.4,
+     26.8
+    ],
+    [
+     "void flash::prepare_varlen_num_blocks_kernel<1, true>(int...",
+     2.7,
+     9.7
+    ],
+    [
+     "_pre_attention_kernel",
+     1.5,
+     5.3
+    ]
+   ]
+  },
+  {
+   "key": "batch=16 ctx=80000 dist=soft heads=tp8 layer=sliding load=verify_16 page=1 q_len=8 spread=agentic",
+   "load": "verify 16",
+   "case": {
+    "batch": 16,
+    "ctx": 80000,
+    "dist": "soft",
+    "heads": "tp8",
+    "layer": "sliding",
+    "load": "verify 16",
+    "page": 1,
+    "q_len": 8,
+    "seed": 1338369337140128545,
+    "spread": "agentic",
+    "weight": 46
+   },
+   "weight": 46,
+   "median_ns": 22247.99873062491,
+   "baseline_ns": 29040.001332759857,
+   "speedup": 1.305286002771368,
+   "speedup_of_medians": 1.3020086486394398,
+   "err_ns": 45.058964669070455,
+   "speed_of_light_ns": 1862.3146666666669,
+   "status": "pass",
+   "top_kernels": [
+    [
+     "void cutlass::device_kernel<flash::enable_sm90_or_later<f...",
+     10.7,
+     52.0
+    ],
+    [
+     "void cutlass::device_kernel<flash::FlashAttnFwdCombine<cu...",
+     3.9,
+     19.0
+    ],
+    [
+     "_pre_attention_kernel",
+     2.8,
+     13.6
+    ],
+    [
+     "void flash::prepare_varlen_num_blocks_kernel<1, false>(in...",
+     1.8,
+     8.9
+    ]
+   ]
+  },
+  {
+   "key": "batch=16 ctx=80000 dist=coherent heads=tp8 layer=full load=verify_16 page=1 q_len=8 spread=agentic",
+   "load": "verify 16",
+   "case": {
+    "batch": 16,
+    "ctx": 80000,
+    "dist": "coherent",
+    "heads": "tp8",
+    "layer": "full",
+    "load": "verify 16",
+    "page": 1,
+    "q_len": 8,
+    "seed": 1338554550214545770,
+    "spread": "agentic",
+    "weight": 16
+   },
+   "weight": 16,
+   "median_ns": 243990.87147569453,
+   "baseline_ns": 204831.9960013032,
+   "speedup": 0.8395068010636939,
+   "speedup_of_medians": 0.8411853572103694,
+   "err_ns": 318.2691316361543,
+   "speed_of_light_ns": 63392.42666666667,
+   "status": "pass",
+   "top_kernels": [
+    [
+     "(anonymous namespace)::splitkv_verify_kernel(unsigned cha...",
+     227.8,
+     93.2
+    ],
+    [
+     "(anonymous namespace)::splitkv_verify_combine_kernel(floa...",
+     13.9,
+     5.7
+    ],
+    [
+     "_pre_attention_kernel",
+     2.7,
+     1.1
+    ]
+   ]
+  },
+  {
+   "key": "batch=32 ctx=80000 dist=soft heads=tp8 layer=sliding load=verify_32 page=1 q_len=8 spread=agentic",
+   "load": "verify 32",
+   "case": {
+    "batch": 32,
+    "ctx": 80000,
+    "dist": "soft",
+    "heads": "tp8",
+    "layer": "sliding",
+    "load": "verify 32",
+    "page": 1,
+    "q_len": 8,
+    "seed": 1338739763288962996,
+    "spread": "agentic",
+    "weight": 46
+   },
+   "weight": 46,
+   "median_ns": 28929.829012570153,
+   "baseline_ns": 34239.999018609524,
+   "speedup": 1.1835534528645875,
+   "speedup_of_medians": 1.1777654877143557,
+   "err_ns": 55.10158841814707,
+   "speed_of_light_ns": 3724.6293333333338,
+   "status": "pass",
+   "top_kernels": [
+    [
+     "void cutlass::device_kernel<flash::enable_sm90_or_later<f...",
+     15.4,
+     56.6
+    ],
+    [
+     "_pre_attention_kernel",
+     4.2,
+     15.4
+    ],
+    [
+     "void cutlass::device_kernel<flash::FlashAttnFwdCombine<cu...",
+     4.2,
+     15.3
+    ],
+    [
+     "void flash::prepare_varlen_num_blocks_kernel<2, false>(in...",
+     1.7,
+     6.4
+    ]
+   ]
+  },
+  {
+   "key": "batch=32 ctx=80000 dist=coherent heads=tp8 layer=full load=verify_32 page=1 q_len=8 spread=agentic",
+   "load": "verify 32",
+   "case": {
+    "batch": 32,
+    "ctx": 80000,
+    "dist": "coherent",
+    "heads": "tp8",
+    "layer": "full",
+    "load": "verify 32",
+    "page": 1,
+    "q_len": 8,
+    "seed": 1338924976363380223,
+    "spread": "agentic",
+    "weight": 16
+   },
+   "weight": 16,
+   "median_ns": 465114.3468624125,
+   "baseline_ns": 388447.9966945946,
+   "speedup": 0.8351666623809888,
+   "speedup_of_medians": 0.8372878986203132,
+   "err_ns": 514.8530477939954,
+   "speed_of_light_ns": 126784.85333333335,
+   "status": "pass",
+   "top_kernels": [
+    [
+     "(anonymous namespace)::splitkv_verify_kernel(unsigned cha...",
+     447.7,
+     95.3
+    ],
+    [
+     "(anonymous namespace)::splitkv_verify_combine_kernel(floa...",
+     17.8,
+     3.8
+    ],
+    [
+     "_pre_attention_kernel",
+     4.2,
+     0.9
+    ]
+   ]
+  }
+ ],
+ "loads": [
+  {
+   "load": "decode 1",
+   "sglang_ns": 1468159.9894538522,
+   "yours_ns": 1079880.4914804222,
+   "speedup": 1.3595578409247235
+  },
+  {
+   "load": "decode 16",
+   "sglang_ns": 4427871.939726174,
+   "yours_ns": 2912538.1184450095,
+   "speedup": 1.5202794812142044
+  },
+  {
+   "load": "decode 32",
+   "sglang_ns": 7584320.0432136655,
+   "yours_ns": 4778157.494683765,
+   "speedup": 1.5872896721491643
+  },
+  {
+   "load": "verify 1",
+   "sglang_ns": 1602367.9738864303,
+   "yours_ns": 1253355.772500157,
+   "speedup": 1.2784621964839833
+  },
+  {
+   "load": "verify 16",
+   "sglang_ns": 4613151.997327805,
+   "yours_ns": 4927261.885219858,
+   "speedup": 0.9362506204847203
+  },
+  {
+   "load": "verify 32",
+   "sglang_ns": 7790207.901969552,
+   "yours_ns": 8772601.684376828,
+   "speedup": 0.8880156859102784
+  }
+ ],
+ "attribution": {
+  "base_result": "muse_attention_decode/hypotheses/done/gain/full-decode-cuda-gather-splitkv.result.json",
+  "noise": 0.016,
+  "shapes": [
+   {
+    "key": "batch=1 ctx=80000 dist=soft heads=tp8 layer=sliding load=decode_1 page=1",
+    "weight": 46,
+    "base_us": 13.88,
+    "hyp_us": 13.91,
+    "delta": 1.0018,
+    "verdict": "flat"
+   },
+   {
+    "key": "batch=1 ctx=80000 dist=coherent heads=tp8 layer=full load=decode_1 page=1",
+    "weight": 16,
+    "base_us": 27.93,
+    "hyp_us": 27.5,
+    "delta": 1.0173,
+    "verdict": "flat"
+   },
+   {
+    "key": "batch=16 ctx=80000 dist=soft heads=tp8 layer=sliding load=decode_16 page=1 spread=agentic",
+    "weight": 46,
+    "base_us": 20.84,
+    "hyp_us": 20.75,
+    "delta": 1.0002,
+    "verdict": "flat"
+   },
+   {
+    "key": "batch=16 ctx=80000 dist=coherent heads=tp8 layer=full load=decode_16 page=1 spread=agentic",
+    "weight": 16,
+    "base_us": 123.02,
+    "hyp_us": 122.37,
+    "delta": 1.0019,
+    "verdict": "flat"
+   },
+   {
+    "key": "batch=32 ctx=80000 dist=soft heads=tp8 layer=sliding load=decode_32 page=1 spread=agentic",
+    "weight": 46,
+    "base_us": 25.2,
+    "hyp_us": 25.16,
+    "delta": 1.0077,
+    "verdict": "flat"
+   },
+   {
+    "key": "batch=32 ctx=80000 dist=coherent heads=tp8 layer=full load=decode_32 page=1 spread=agentic",
+    "weight": 16,
+    "base_us": 257.75,
+    "hyp_us": 226.29,
+    "delta": 1.1398,
+    "verdict": "gained"
+   },
+   {
+    "key": "batch=1 ctx=80000 dist=soft heads=tp8 layer=sliding load=verify_1 page=1 q_len=8",
+    "weight": 46,
+    "base_us": 17.63,
+    "hyp_us": 16.85,
+    "delta": 1.0095,
+    "verdict": "flat"
+   },
+   {
+    "key": "batch=1 ctx=80000 dist=coherent heads=tp8 layer=full load=verify_1 page=1 q_len=8",
+    "weight": 16,
+    "base_us": 30.29,
+    "hyp_us": 29.88,
+    "delta": 0.9966,
+    "verdict": "flat"
+   },
+   {
+    "key": "batch=16 ctx=80000 dist=soft heads=tp8 layer=sliding load=verify_16 page=1 q_len=8 spread=agentic",
+    "weight": 46,
+    "base_us": 22.77,
+    "hyp_us": 22.25,
+    "delta": 1.022,
+    "verdict": "flat"
+   },
+   {
+    "key": "batch=16 ctx=80000 dist=coherent heads=tp8 layer=full load=verify_16 page=1 q_len=8 spread=agentic",
+    "weight": 16,
+    "base_us": 162.83,
+    "hyp_us": 243.99,
+    "delta": 0.668,
+    "verdict": "lost"
+   },
+   {
+    "key": "batch=32 ctx=80000 dist=soft heads=tp8 layer=sliding load=verify_32 page=1 q_len=8 spread=agentic",
+    "weight": 46,
+    "base_us": 29.35,
+    "hyp_us": 28.93,
+    "delta": 1.006,
+    "verdict": "flat"
+   },
+   {
+    "key": "batch=32 ctx=80000 dist=coherent heads=tp8 layer=full load=verify_32 page=1 q_len=8 spread=agentic",
+    "weight": 16,
+    "base_us": 301.91,
+    "hyp_us": 465.11,
+    "delta": 0.6474,
+    "verdict": "lost"
+   }
+  ],
+  "summary": "gained on full decode_32; lost on full verify_16, verify_32",
+  "expected_hit": "2/5"
+ }
+}
