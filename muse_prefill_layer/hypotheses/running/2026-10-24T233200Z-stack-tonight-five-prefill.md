@@ -22,7 +22,7 @@ kind: primary
 controls_for: null
 review: required
 status: running
-stage: claimed
+stage: implemented
 claimed_at: 2026-10-24T233200Z
 base_sha: 3b2b91dc85a1be9e6563f3f0987fd41e4d4c0841
 base_blob: 635cfee3ac2c3f7c66840b8c8a082cad2fa41a68
@@ -31,6 +31,12 @@ worktree: .worktrees/muse_prefill_layer/stack-tonight-five-prefill
 mode: null
 restack_of: null
 stale_base: null
+implemented_at: 2026-10-24T233216Z
+impl_commit: b9ad6f2d2af0db453232b54cc0dbec7d034c51d9
+submission_sha256: d42aba8c748c992af59f39c2879c3adda94cb677341926f1f59fb8d69c985dc5
+norm_sha256: 4340f5135c3e58122409931d064ba571c954db3fd4f36921dd730a20c3a3d04b
+submission_blob: db8a3344398bca79ea5cafeb580f701c055fd475
+lint_warnings: 15
 ---
 
 # stack-tonight-five-prefill
@@ -46,3 +52,18 @@ Built on master. stack-tonight-four-prefill (router-hilo-one-gemm-n512, moe-alig
 ## Risk
 
 Main-thread stack before the 00:00Z reset, user-approved self-review.
+
+## Implementation notes
+
+Built in the main thread 2026-10-24 ~23:33Z with user-approved self-review. Worktree on master; `git apply -3` of the three done/neutral patches, moe-align-local-routes-parallel-port's implementation diff and silu-mul-triton-local-rows-marlin-turn's implementation diff. Two conflicts, both "both sides added" (the two prepare() setup calls before _check_experts_e2e, and the two new code sections before _experts_marlin), resolved by keeping both, align first; no line edited. On the Marlin path the sorted silu-mul consumes the parallel align's sorted_ids/n_padded (local routes only) and still masks on local_ids >= 0.
+
+## Rules check
+
+- [x] CUDA-graph capturable: unchanged from the five parents.
+- [x] Fresh inputs: nothing derived from `data` cached.
+- [x] Weights unchanged; router hi+lo split as the rules allow.
+- [x] Activations BF16; KV FP8; attention untouched.
+- [x] Every key attended.
+- [x] No timing/harness access, processes, network or module edits.
+- [x] No work outside timed calls added.
+- [x] okc_lint: no errors.
