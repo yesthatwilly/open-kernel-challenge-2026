@@ -1,0 +1,56 @@
+diff --git a/muse_decode_layer/submission.py b/muse_decode_layer/submission.py
+index 3d70ae6..f320062 100644
+--- a/muse_decode_layer/submission.py
++++ b/muse_decode_layer/submission.py
+@@ -1222,7 +1222,18 @@ def prepare(weights):
+     return state
+ 
+ 
+-def _experts(x, topk_weights, topk_ids, state, align=None):
++def _expert_dispatch(topk_ids, topk_weights, local_start, num_tokens, state):
++    """Routing-only half of master's _experts (expert_map gather, fp32 cast, moe_align_block_size);
++    topk_ids are the raw routing ids. Returns (local_ids, topk_weights fp32, (sorted_ids, block_experts,
++    n_padded)). Runs on the side stream for T > DL_MAX_TOKENS."""
++    shifted = (topk_ids - local_start) % N_EXPERTS
++    local_ids = state["bank"]["expert_map"][shifted].contiguous()
++    tw = topk_weights.to(torch.float32).contiguous()
++    align = moe_align_block_size(local_ids, _block_size_m(num_tokens), N_EXPERTS)
++    return local_ids, tw, align
++
++
++def _experts(x, topk_weights, topk_ids, state, align=None, dispatch=None):
+     """MuseSpark1xFp4Experts._marlin_expert_outputs and its post-expert-norm finalize.
+ 
+     align=None: master (topk_ids are (id - local_start) % 256; expert_map gather, fp32 cast and
+@@ -1233,7 +1244,9 @@ def _experts(x, topk_weights, topk_ids, state, align=None):
+     size_n = bank["size_n"]
+     gemm1_n = 2 * size_n
+     block_size_m = _block_size_m(num_tokens)
+-    if align is None:
++    if dispatch is not None:
++        local_ids, topk_weights, (sorted_ids, block_experts, n_padded) = dispatch
++    elif align is None:
+         local_ids = bank["expert_map"][topk_ids].contiguous()
+         topk_weights = topk_weights.to(torch.float32).contiguous()
+         sorted_ids, block_experts, n_padded = moe_align_block_size(local_ids, block_size_m, N_EXPERTS)
+@@ -1374,14 +1387,16 @@ def kernel_fn(data, state):
+             else:
+                 logits = F.linear(router_input, state["router"])
+             topk_weights, topk_ids = state["routing"](None, logits, TOP_K, True)
++            # This GPU's experts start at local_start: as SGLang's expert_map on that EP rank.
++            # Routing-only dispatch stays on the side stream, off the pooler's critical path.
++            local_ids, tw, align = _expert_dispatch(topk_ids, topk_weights, data["local_start"], tokens, state)
++        xn = state["pre_expert_norm"](expert_input)  # main stream, overlaps the side branch
+         main_stream.wait_stream(side_stream)
+         if not torch.cuda.is_current_stream_capturing():
+-            for tensor in (topk_weights, topk_ids):
++            for tensor in (topk_weights, topk_ids, local_ids, tw, *align):
+                 tensor.record_stream(main_stream)
+-        # This GPU's experts start at local_start: as SGLang's expert_map on that EP rank.
+-        local_ids = (topk_ids - data["local_start"]) % N_EXPERTS
+         # all-reduce: identity
+-        expert_output = _experts(state["pre_expert_norm"](expert_input), topk_weights, local_ids, state)
++        expert_output = _experts(xn, None, None, state, dispatch=(local_ids, tw, align))
+     if tokens <= SLICED_UNPOOL_MAX_TOKENS:
+         unpooled = _gemm(expert_output, dense["unpooler"][:UNPOOL_SLICE])
+         ffn_output = F.pad(unpooled, (0, HIDDEN - UNPOOL_SLICE))  # all-gather: identity

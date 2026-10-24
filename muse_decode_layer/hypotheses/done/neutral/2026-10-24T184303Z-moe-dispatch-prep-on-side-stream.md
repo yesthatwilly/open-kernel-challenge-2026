@@ -50,10 +50,10 @@ priority: 2
 kind: primary
 controls_for: null
 review: proceed
-status: running
+status: done
 review_at: 2026-10-24T185010Z
 review_companions: null
-stage: dispatched
+stage: harvested
 claimed_at: 2026-10-24T185010Z
 base_sha: 6f8cac5640783bda29e10ba56c80ba50fc396141
 base_blob: 3d70ae6e2de0d48c4a4f2a469ced8234f5348182
@@ -70,6 +70,13 @@ attempt_file: 2026-10-24T231258Z-check-moe-dispatch-prep-on-side-stream.md
 prepared_at: 2026-10-24T231258Z
 job: fe3422db9ea540d8
 dispatched_at: 2026-10-24T231312Z
+outcome: neutral
+verdict_detail: unproven-vs-best
+speedup: 1.2294349224543215
+speedup_ci: [1.2109933986175068, 1.2478764462911363]
+harvested_at: 2026-10-24T232003Z
+best_at_harvest: 1.228328123558382
+promotion: null
 ---
 
 # moe-dispatch-prep-on-side-stream
@@ -141,3 +148,35 @@ Audited 2026-10-24 by an opus subagent, by reading (no GPU on this node). **Verd
 - Spec deviation (one function with an optional dispatch= argument rather than a split) is behaviour-neutral. Lint OK, with prepare()-only host-sync warnings.
 
 Residual risk: the gain shows only at verify_16 and verify_32 (T > 32), and it can vanish if the side branch outruns pooler + pre-norm at T=256 or the side kernels queue behind a full-SM pooler.
+
+## Result
+
+- job `fe3422db9ea540d8` (check), status done, passed True, tests 13/13
+- speedup 1.2294x, 95% CI [1.2110, 1.2479], score 18398.940510688506 µs vs SGLang 22620.3 µs
+- best at harvest: {"speedup": 1.228328123558382, "ci": [1.2099032017050062, 1.2467530454117577], "job": "81ee6714b7614a99"}; base result: muse_decode_layer/hypotheses/done/gain/small-t-launch-minimal-dense-chain-pdl.result.json
+- **outcome: neutral** (unproven-vs-best)
+- files: `muse_decode_layer/hypotheses/done/neutral/moe-dispatch-prep-on-side-stream.result.json`, `muse_decode_layer/hypotheses/done/neutral/moe-dispatch-prep-on-side-stream.patch`; branch `hyp/muse_decode_layer/moe-dispatch-prep-on-side-stream`
+
+## Attribution
+
+| shape | w | base µs | hyp µs | delta | verdict |
+|---|---|---|---|---|---|
+| batch=1 ctx=80000 dist=soft layer=sliding load=decode_1 page=1 repeats=60 | 46 | 132.74 | 132.46 | 0.9948 | flat |
+| batch=1 ctx=80000 dist=soft layer=full load=decode_1 page=1 repeats=60 | 16 | 142.57 | 142.67 | 0.9975 | flat |
+| batch=16 ctx=80000 dist=soft layer=sliding load=decode_16 page=1 spread=agentic | 46 | 217.06 | 207.51 | 1.0041 | flat |
+| batch=16 ctx=80000 dist=soft layer=full load=decode_16 page=1 spread=agentic | 16 | 347.51 | 351.48 | 0.9931 | flat |
+| batch=32 ctx=80000 dist=soft layer=sliding load=decode_32 page=1 spread=agentic | 46 | 246.99 | 243.71 | 1.0027 | flat |
+| batch=32 ctx=80000 dist=soft layer=full load=decode_32 page=1 spread=agentic | 16 | 534.98 | 523.25 | 1.0051 | flat |
+| batch=1 ctx=80000 dist=soft layer=sliding load=verify_1 page=1 q_len=8 | 46 | 186.48 | 184.66 | 1.0085 | flat |
+| batch=1 ctx=80000 dist=soft layer=full load=verify_1 page=1 q_len=8 | 16 | 195.92 | 201.84 | 0.9976 | flat |
+| batch=16 ctx=80000 dist=soft layer=sliding load=verify_16 page=1 q_len=8 spread=agentic | 46 | 447.55 | 436.99 | 0.9921 | flat |
+| batch=16 ctx=80000 dist=soft layer=full load=verify_16 page=1 q_len=8 spread=agentic | 16 | 599.37 | 594.57 | 1.0032 | flat |
+| batch=32 ctx=80000 dist=soft layer=sliding load=verify_32 page=1 q_len=8 spread=agentic | 46 | 626.79 | 607.78 | 1.0058 | flat |
+| batch=32 ctx=80000 dist=soft layer=full load=verify_32 page=1 q_len=8 spread=agentic | 16 | 910.91 | 889.82 | 1.0039 | flat |
+
+no shape moved outside noise. Expected hit: 0/6. Noise ±1.5%.
+
+## Follow-ups
+
+- unproven-vs-best: the change is not proven either way; a stacked hypothesis (`depends_on: moe-dispatch-prep-on-side-stream`) that adds a further change in the same area is the only way to learn more (identical code is never re-run).
+
