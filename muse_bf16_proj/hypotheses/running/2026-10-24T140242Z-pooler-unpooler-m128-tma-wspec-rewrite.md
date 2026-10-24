@@ -77,13 +77,15 @@ base_sha: 1221521e184643a43f27ff79cef68b5fed5ad2b1
 base_blob: a8bb42ac483318e9fbc84bc7826a27b7a704d1fb
 branch: hyp/muse_bf16_proj/pooler-unpooler-m128-tma-wspec-rewrite
 worktree: .worktrees/muse_bf16_proj/pooler-unpooler-m128-tma-wspec-rewrite
-mode: null
+mode: submit
 implemented_at: 2026-10-24T165200Z
 impl_commit: fd7d7ee356c58d5a2dd113f6d6ea476d57cf8953
 submission_sha256: 850a87881ace734d04302dcd6cac627825dfdc1367b3deb1ab8f685b4fa65c04
 norm_sha256: 28b34e0951842c66b92e645f661656706f61b25c92f12f0a3036f0038895c389
 submission_blob: 87f758fdc12055bf479245175d17662450df69eb
 lint_warnings: 9
+attempt_file: 2026-10-24T181732Z-submit-pooler-unpooler-m128-tma-wspec-rewrite.md
+prepared_at: 2026-10-24T181732Z
 ---
 
 # pooler-unpooler-m128-tma-wspec-rewrite
