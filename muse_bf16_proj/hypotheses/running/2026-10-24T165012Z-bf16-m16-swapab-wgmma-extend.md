@@ -88,13 +88,19 @@ review: proceed
 status: running
 review_at: 2026-10-24T165449Z
 review_companions: null
-stage: claimed
+stage: implemented
 claimed_at: 2026-10-24T165449Z
 base_sha: e82b94f9414d0fe3381c39c7722efd47759f3360
 base_blob: a8bb42ac483318e9fbc84bc7826a27b7a704d1fb
 branch: hyp/muse_bf16_proj/bf16-m16-swapab-wgmma-extend
 worktree: .worktrees/muse_bf16_proj/bf16-m16-swapab-wgmma-extend
 mode: null
+implemented_at: 2026-10-24T165742Z
+impl_commit: bdeadf44e3811fcedbb18e1d3f7816b41e677f3c
+submission_sha256: 842aaea331cffb88f97ec5e3190afa3600a44f7ed9415d1916aa236ce16b852e
+norm_sha256: 6c67d2184cdc3340f8b7929330d864969d666b4db1f733264cfe77476ce97d91
+submission_blob: bb41afb76ea0a0dea82ed0246aa441d6b3922a19
+lint_warnings: 0
 ---
 
 # bf16-m16-swapab-wgmma-extend
@@ -150,3 +156,52 @@ No companion is warranted. (i) ab-revert of the shape-gated combo would compare 
 - With do_not_specialize=['M'], m=1..16 share one compile per layer, but Triton still specializes stride_xm/stride_om by divisibility. Confirm the warm-up at m=1 and at m=16 hits the same cache entry, so the timed call never compiles.
 - If pooler and qkv_gate read flat or slower, as the m=32 kernel times predict, keep master's kernels for them in the follow-up combo and route only the layers that gained, with no rerun of identical code.
 
+## Implementation notes
+
+Worktree `.worktrees/muse_bf16_proj/bf16-m16-swapab-wgmma-extend`, `muse_bf16_proj/submission.py` only. The diff only adds lines (+203, 0 removed); every line of master's code is still there.
+
+- New section `(6)` after `_swapab_prepare`:
+  - `SWAPAB16_CFG` uses the keys `pooler` (4096, 8192, SK 2, BK 256, 4 st), `qkv_gate` (2304, 8192, SK 4, BK 128, 4 st), `o` (8192, 1024, SK 1, BK 256, 4 st) and `unpooler_slice` (1024, 4096, SK 8, BK 128, 3 st).
+  - `SWAPAB16_BLOCK_T = SWAPAB16_WS_M = 16`.
+- `_swapab16_forward` is a separate launcher for the unchanged `_bf16_swapab_kernel`. It passes `WS_M=16` and `BLOCK_T=16`, as the review REQUIRED. Master's `_swapab_forward`, which hardcodes 32/32, is not reused and not modified. The unpooler slice passes the full `[8192, 4096]` weight in place (`stride_wn = w.stride(0) = 4096`), with grid `(1024 // 64, 8)`, so only the first 1024 rows are read.
+- `_swapab16_route_ok` is a separate gate. Master's `_swapab_route_ok` (m >= 17, full weight shape) is not used here.
+  - It requires `1 <= cfg m <= 16`, the key's cfg n/k, `x.shape == (m, k)`, x bf16 and `stride(1) == 1`, and w bf16 with `stride(1) == 1`.
+  - pooler, qkv_gate and o also need `w.shape == (n, k)`. The unpooler slice needs `w.shape[0] >= 1024` and `w.shape[1] == 4096`.
+  - `_swapab16_key` maps the unpooler to `unpooler_slice` only when `cfg n == 1024`. So the unpooler's full width at m = 16 (cuBLAS) and m = 130 / 1000 keep master.
+- Buffers have their own keys: `swapab16_ws_{pooler,qkv_gate,unpooler_slice}` fp32 `[SPLIT_K, 16, n]` and `swapab16_cnt_*` int32 `[n // 64]`, zeroed. Master's `swapab_*`, `pooler_*`, `qkv_*` and `unpool_*` buffers are untouched by the routed path.
+- `_swapab16_prepare`:
+  - It warms m = 1..16 per layer (1..8 for the slice) on synthetic randn x. The first launch is at the top m with `report=True`.
+  - On OutOfResources it steps down to 3 stages (`SWAPAB_FALLBACK_STAGES`), and records `state["swapab16_stages"]`.
+  - It then calls `_incumbent16_report`, which relaunches master's four incumbent m <= 16 kernels once each at m = 16 on zero x, with the same constants and their own buffers, and prints `n_regs / n_spills / wgmma / mma.sync / cp.async` as `[incumbent16] ...` lines. After that it re-zeroes every counter it touched.
+  - The new path prints `[swapab16] <key> m=...: ...` lines.
+- `kernel_fn` checks the new gate first, before master's m <= 16 branches. Master's m <= 16 kernels stay in the file but are no longer reached for these shapes.
+- The module docstring has a paragraph describing the new path.
+- Deviation 1: the slice gate accepts `1 <= m <= 16` rather than only m <= 8. `cfg n == 1024` only occurs at m <= 8. The 16-row workspace covers m <= 16, and M is not specialized (`do_not_specialize=["M"]`; `stride_xm = k` and `stride_om = n` are shape constants), so any m 9..16 would hit the same compile. The warm-up is 1..8 as specified.
+- Deviation 2: the incumbent PTX report relaunches the kernels directly instead of changing master's forward helpers to return the compiled handle. This keeps master's functions byte-identical.
+- Open questions from the review:
+  - wgmma at n16: the `[swapab16]` lines answer it in the log.
+  - Same cache entry for m = 1 and m = 16: yes by construction. M is in `do_not_specialize` and the strides are shape constants. The full 1..16 warm-up also guarantees no compile in a timed call even if Triton specialized further.
+
+## Rules check
+
+Checked against `git -C .worktrees/muse_bf16_proj/bf16-m16-swapab-wgmma-extend diff`.
+
+- [x] CUDA-graph capturable. There is no `.item()`, `.cpu()`, `synchronize()` or tensor print in `kernel_fn` or `_swapab16_forward`. Prints are only in prepare(), and they print compile metadata, not tensors. The only allocation in the timed path is `torch.empty` of the output, whose shape comes from `x.shape` and the static cfg, never from input values. Branches are on cfg layer, m, n, k and on shapes, dtypes and strides.
+- [x] Nothing derived from `data` is cached across calls. The workspaces are overwritten every call, and the reducer reads only token rows < M written in the same launch. The counters self-reset. Warm-ups use synthetic x.
+- [x] Weights: no repack and no precision change. bf16 weights are read in place, and the unpooler slice reads the full weight's first 1024 rows via its stride. The router is untouched.
+- [x] Activations stay bf16. Accumulation is fp32 in the MMA. Split-K partials are fp32, summed in fixed order 0..SPLIT_K-1, and stored bf16 once, the same as the incumbent.
+- [x] n/a: attention. This problem has no attention, KV cache or queries.
+- [x] No timing patches, harness frames or I/O, secrets, module edits, reference import, subprocesses or network. The diff only adds Triton launches, torch allocations and prepare-time prints.
+- [x] All work happens inside the timed call, with no output caching or replay. Each call launches the full GEMM on its fresh x.
+- [x] First-line marker `# okc: problem=muse_bf16_proj` kept (line 1 unchanged).
+- [x] No `triton.autotune`. The config is static per layer key.
+- [x] Workspace sizing: the `[SPLIT_K, 16, n]` workspace is indexed with `WS_M=16` and the tokens are masked `< M <= 16`, so nothing is written out of bounds. This is the review's REQUIRED fix.
+
+Lint (`python3 -I .claude/skills/churnsubs/bin/okc_lint.py <worktree>/muse_bf16_proj/submission.py --problem muse_bf16_proj`):
+
+```
+CLEAN: /home/user/git/musespark/.worktrees/muse_bf16_proj/bf16-m16-swapab-wgmma-extend/muse_bf16_proj/submission.py
+lint rc=0
+```
+
+`python3 -I -m py_compile` passed, and the leftover `__pycache__` was removed from the worktree.
