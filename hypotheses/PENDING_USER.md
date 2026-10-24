@@ -5,21 +5,6 @@ items here and in each tick's summary. Resolved items move to the log at the bot
 
 ## Open
 
-All run `okc submit <p> <p>/submission.py --no-wait --json` on master, then `churn.py record-submit <p> <slug> <job>`.
-
-- 2026-10-24 attention_decode: master is now **full-decode-cuda-gather-splitkv** (custom CUDA split-KV full decode; check 1.347x, CI 1.327-1.367). Supersedes the earlier head-pairing ask.
-  `okc submit muse_attention_decode /home/user/git/musespark/muse_attention_decode/submission.py --no-wait --json`
-- 2026-10-24 moe_w4a16: master is now **triton-map-align-on-block-m-restack** (check 1.312x, CI 1.292-1.331; no board result yet).
-  `okc submit muse_moe_w4a16 /home/user/git/musespark/muse_moe_w4a16/submission.py --no-wait --json`
-- 2026-10-24 decode_layer: master is now **post-expert-norm-triton-small-t** (check 1.164x, CI 1.146-1.181).
-  `okc submit muse_decode_layer /home/user/git/musespark/muse_decode_layer/submission.py --no-wait --json`
-
-- 2026-10-24 prefill_layer: master is now **experts-hybrid-marlin-turn-triton-first-turn** (Marlin at T<=4096, Triton NVFP4 above; check 1.060x, CI 1.044-1.076; board: none yet).
-  `okc submit muse_prefill_layer /home/user/git/musespark/muse_prefill_layer/submission.py --no-wait --json`
-
-- 2026-10-24 bf16_proj: master is now **bf16-m32-swapab-wgmma-triton** (check 1.198x, CI 1.181-1.216).
-  `okc submit muse_bf16_proj /home/user/git/musespark/muse_bf16_proj/submission.py --no-wait --json`
-
 - 2026-10-24 rules heads-up (not blocking): bf16 **bf16-cublaslt-algo-pick-in-prepare-m128-m256** times cuBLASLt algorithm candidates on synthetic data inside the untimed prepare() and replays the winner in kernel_fn (no timing or autotune in kernel_fn). The Opus reviewer read the rules as allowing it, and decode's pooler-gemm-splitk-autotune used the same pattern. It runs on tomorrow's quota unless you say to hold it.
 
 ## Standing answers
@@ -40,3 +25,4 @@ All run `okc submit <p> <p>/submission.py --no-wait --json` on master, then `chu
   Claude with the user's approval, job 240eb22ea0b6487e.
 - 2026-10-24: decode marlin-block-m-cap-16 (check 1.062x) submitted at the user's request, job 2b1f82408ab64116.
 - 2026-10-24: attention_decode fused-preattention-triton (check 1.127x) submitted by the user, job c297440e53334f34.
+- 2026-10-24: the user said "submit all five promotions"; Claude ran them: attention full-decode-cuda-gather-splitkv (check 1.347x) de486093311d4bb9, decode post-expert-norm-triton-small-t (1.164x) a017e10aec544c55, moe triton-map-align-on-block-m-restack (1.312x) 3cabc739f1af493e, prefill experts-hybrid-marlin-turn-triton-first-turn (1.060x) ba9c16b9cc6b4605, bf16 bf16-m32-swapab-wgmma-triton (1.198x) eeb9985396764ac2.
