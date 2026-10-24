@@ -81,6 +81,7 @@ harvested_at: 2026-10-24T111613Z
 best_at_harvest: 0.9887547325362586
 promotion: merged
 promotion_commit: 192f225d8fbfa65bb838ce448c7d6b5e2c522ecd
+promotion_attempt: 2026-10-24T111614Z-submit-post-expert-norm-triton-small-m.md
 ---
 
 # post-expert-norm-triton-small-m
