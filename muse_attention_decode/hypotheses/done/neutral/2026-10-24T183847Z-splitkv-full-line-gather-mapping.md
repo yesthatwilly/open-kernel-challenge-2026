@@ -30,10 +30,10 @@ priority: 2
 kind: primary
 controls_for: null
 review: proceed
-status: running
+status: done
 review_at: 2026-10-24T184058Z
 review_companions: null
-stage: dispatched
+stage: harvested
 claimed_at: 2026-10-24T184059Z
 base_sha: 4c028efec3a6ee2276ec49319d77241309209016
 base_blob: c6854f093588da524e63657576b27ed720756e32
@@ -50,6 +50,13 @@ attempt_file: 2026-10-24T184625Z-check-splitkv-full-line-gather-mapping.md
 prepared_at: 2026-10-24T184625Z
 job: cfa8c89e4f2b488d
 dispatched_at: 2026-10-24T184641Z
+outcome: neutral
+verdict_detail: unproven-vs-best
+speedup: 1.4160325252380863
+speedup_ci: [1.394792037359515, 1.4422950117881554]
+harvested_at: 2026-10-24T231957Z
+best_at_harvest: 1.3948738389144513
+promotion: null
 ---
 
 # splitkv-full-line-gather-mapping
@@ -115,3 +122,35 @@ Audited 2026-10-24 (opus). **Verdict: dispatch-with-fixes.**
 - Rules: unchanged from master (no new syncs, allocs, caching or precision changes). okc_lint CLEAN, py_compile OK.
 
 Residual risk: the effect on kernel A is likely 0-4%, inside full decode_32 run-to-run drift; judge on splitkv_attn_kernel rows.
+
+## Result
+
+- job `cfa8c89e4f2b488d` (check), status done, passed True, tests 16/16
+- speedup 1.4160x, 95% CI [1.3948, 1.4423], score 2659.7552901313115 µs vs SGLang 3766.3 µs
+- best at harvest: {"speedup": 1.3948738389144513, "ci": [1.3739507313307344, 1.415796946498168], "job": "698d4cd3838c4a63"}; base result: muse_attention_decode/hypotheses/done/gain/sliding-deep-splits-on-cuda-splitkv.result.json
+- **outcome: neutral** (unproven-vs-best)
+- files: `muse_attention_decode/hypotheses/done/neutral/splitkv-full-line-gather-mapping.result.json`, `muse_attention_decode/hypotheses/done/neutral/splitkv-full-line-gather-mapping.patch`; branch `hyp/muse_attention_decode/splitkv-full-line-gather-mapping`
+
+## Attribution
+
+| shape | w | base µs | hyp µs | delta | verdict |
+|---|---|---|---|---|---|
+| batch=1 ctx=80000 dist=soft heads=tp8 layer=sliding load=decode_1 page=1 | 46 | 13.17 | 13.62 | 0.9612 | lost |
+| batch=1 ctx=80000 dist=coherent heads=tp8 layer=full load=decode_1 page=1 | 16 | 27.26 | 27.33 | 1.001 | flat |
+| batch=16 ctx=80000 dist=soft heads=tp8 layer=sliding load=decode_16 page=1 spread=agentic | 46 | 15.34 | 15.43 | 0.9955 | flat |
+| batch=16 ctx=80000 dist=coherent heads=tp8 layer=full load=decode_16 page=1 spread=agentic | 16 | 122.79 | 115.41 | 1.0619 | gained |
+| batch=32 ctx=80000 dist=soft heads=tp8 layer=sliding load=decode_32 page=1 spread=agentic | 46 | 24.24 | 24.23 | 0.9977 | flat |
+| batch=32 ctx=80000 dist=coherent heads=tp8 layer=full load=decode_32 page=1 spread=agentic | 16 | 241.9 | 221.76 | 1.0924 | gained |
+| batch=1 ctx=80000 dist=soft heads=tp8 layer=sliding load=verify_1 page=1 q_len=8 | 46 | 16.72 | 16.9 | 1.0037 | flat |
+| batch=1 ctx=80000 dist=coherent heads=tp8 layer=full load=verify_1 page=1 q_len=8 | 16 | 30.03 | 29.56 | 1.0152 | flat |
+| batch=16 ctx=80000 dist=soft heads=tp8 layer=sliding load=verify_16 page=1 q_len=8 spread=agentic | 46 | 22.67 | 22.89 | 1.0031 | flat |
+| batch=16 ctx=80000 dist=coherent heads=tp8 layer=full load=verify_16 page=1 q_len=8 spread=agentic | 16 | 161.98 | 162.93 | 0.9975 | flat |
+| batch=32 ctx=80000 dist=soft heads=tp8 layer=sliding load=verify_32 page=1 q_len=8 spread=agentic | 46 | 28.7 | 29.2 | 0.9839 | flat |
+| batch=32 ctx=80000 dist=coherent heads=tp8 layer=full load=verify_32 page=1 q_len=8 spread=agentic | 16 | 300.83 | 301.58 | 0.9994 | flat |
+
+gained on full decode_16, decode_32; lost on sliding decode_1. Expected hit: 0/2. Noise ±1.7%.
+
+## Follow-ups
+
+- unproven-vs-best: the change is not proven either way; a stacked hypothesis (`depends_on: splitkv-full-line-gather-mapping`) that adds a further change in the same area is the only way to learn more (identical code is never re-run).
+

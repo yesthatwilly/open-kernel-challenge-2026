@@ -1,0 +1,51 @@
+diff --git a/muse_attention_decode/submission.py b/muse_attention_decode/submission.py
+index c6854f0..8baca1f 100644
+--- a/muse_attention_decode/submission.py
++++ b/muse_attention_decode/submission.py
+@@ -566,22 +566,23 @@ splitkv_attn_kernel(const uint8_t* __restrict__ q,          // e4m3 [B, HQ, D]
+     if (tid < HQ * D / 16)
+       cp_async16(smem_u32(q_s + buf * HQ * D + tid * 16), q + (int64_t)b * HQ * D + tid * 16, 16);
+   };
+-  // Tile nn of the flat sequence into ring stage nn % STAGES: thread -> token tid / 4, 16-byte
+-  // chunks 2 * (tid % 4) + {0, 1} of its K row and its V row, chunk c stored at c ^ (token % 8).
++  // Tile nn of the flat sequence into ring stage nn % STAGES: thread -> tokens tid / 8 + 32 * j,
++  // 16-byte chunk tid % 8 of its K row and V row (a warp instruction covers 4 whole 128 B rows),
++  // chunk c stored at c ^ (token % 8).
+   int ik = -1, ib = 0, ichunk = 0, iseq = 0;
+   auto issue_tile = [&](int nn) {
+     const int k = nn / TILES, t = nn % TILES;
+     if (k != ik) { ik = k; item_of(k, ib, ichunk, iseq); }
+     uint8_t* st = ring + (nn % STAGES) * STAGE_BYTES;
+-    const int tt = tid >> 2;
+-    const int e = t * TILE + tt;
+-    const bool ok = ichunk * CHUNK + e < iseq;
+-    const int64_t row = ok ? (int64_t)idx_s[(k & 1) * CHUNK + e] : 0;
+-    const uint8_t* ks = kc + row * ROW;
+-    const uint8_t* vs = vc + row * ROW;
++    const int c = tid & 7;
+ #pragma unroll
+     for (int j = 0; j < 2; ++j) {
+-      const int c = (tid & 3) * 2 + j;
++      const int tt = (tid >> 3) + 32 * j;
++      const int e = t * TILE + tt;
++      const bool ok = ichunk * CHUNK + e < iseq;
++      const int64_t row = ok ? (int64_t)idx_s[(k & 1) * CHUNK + e] : 0;
++      const uint8_t* ks = kc + row * ROW;
++      const uint8_t* vs = vc + row * ROW;
+       const int dst = tt * ROW + ((c ^ (tt & 7)) << 4);
+       cp_async16(smem_u32(st + dst), ks + c * 16, ok ? 16 : 0);
+       cp_async16(smem_u32(st + TILE * ROW + dst), vs + c * 16, ok ? 16 : 0);
+@@ -836,7 +837,7 @@ def _build_splitkv():
+     try:
+         from torch.utils.cpp_extension import load_inline
+         ext = load_inline(
+-            name="muse_full_decode_splitkv_v1",
++            name="muse_full_decode_splitkv_v2",
+             cpp_sources=_SPLITKV_CPP,
+             cuda_sources=_SPLITKV_CUDA,
+             functions=["splitkv_attn", "splitkv_combine"],
+@@ -1073,3 +1074,4 @@ if torch.cuda.is_available():
+     if _EXT is not None and not _splitkv_self_check():
+         print("[splitkv] SELF-CHECK FAILED: CUDA split-KV path disabled, master FA3 path kept")
+         _EXT = None
++    print(f"[splitkv] PATH CHOSEN: full decode 1<B<=64 -> {'CUDA split-KV (muse_full_decode_splitkv_v2)' if _EXT is not None else 'master FA3 (fallback)'}")
