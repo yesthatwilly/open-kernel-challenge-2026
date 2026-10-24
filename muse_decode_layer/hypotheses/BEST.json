@@ -1,17 +1,17 @@
 {
  "problem": "muse_decode_layer",
- "job": "a017e10aec544c55",
- "check_job": "9dcaec316b3045a7",
+ "job": "81ee6714b7614a99",
+ "check_job": null,
  "mode": "submit",
- "speedup": 1.1664628806987323,
+ "speedup": 1.228328123558382,
  "ci": [
-  1.1489659374882513,
-  1.183959823909213
+  1.2099032017050062,
+  1.2467530454117577
  ],
- "score_us": 19392.215881271793,
- "commit": "ea896254423db20bfb9c584010c4b8ca73228a23",
- "submission_blob": "cc466fce207709c98ab0e78c2435c1c459890fdb",
- "slug": "post-expert-norm-triton-small-t",
- "result": "muse_decode_layer/hypotheses/done/gain/post-expert-norm-triton-small-t.result.json",
- "updated_at": "2026-10-24T165804Z"
+ "score_us": 18415.519083346026,
+ "commit": "f1f2f35cf76890e924a0d0ae1576b1050ed9020f",
+ "submission_blob": "3d70ae6e2de0d48c4a4f2a469ced8234f5348182",
+ "slug": "small-t-launch-minimal-dense-chain-pdl",
+ "result": "muse_decode_layer/hypotheses/done/gain/small-t-launch-minimal-dense-chain-pdl.result.json",
+ "updated_at": "2026-10-24T184718Z"
 }

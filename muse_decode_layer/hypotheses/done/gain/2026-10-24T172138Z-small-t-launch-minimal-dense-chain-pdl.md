@@ -108,7 +108,9 @@ speedup: 1.228328123558382
 speedup_ci: [1.2099032017050062, 1.2467530454117577]
 harvested_at: 2026-10-24T184718Z
 best_at_harvest: 1.1664628806987323
-promotion: onboard
+promotion: done
+promotion_commit: f1f2f35cf76890e924a0d0ae1576b1050ed9020f
+promotion_job: 81ee6714b7614a99
 ---
 
 # small-t-launch-minimal-dense-chain-pdl
