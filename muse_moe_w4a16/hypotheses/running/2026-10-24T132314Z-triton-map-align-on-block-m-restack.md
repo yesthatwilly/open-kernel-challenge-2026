@@ -42,13 +42,19 @@ review: proceed
 status: running
 review_at: 2026-10-24T132520Z
 review_companions: null
-stage: claimed
+stage: implemented
 claimed_at: 2026-10-24T132520Z
 base_sha: a36124bb66d280ad8d9fdcad53738d33f599a856
 base_blob: c7bf9ffedc48b757f56765004e5d65f6ad5ba841
 branch: hyp/muse_moe_w4a16/triton-map-align-on-block-m-restack
 worktree: .worktrees/muse_moe_w4a16/triton-map-align-on-block-m-restack
 mode: null
+implemented_at: 2026-10-24T132520Z
+impl_commit: c602dde3c12a2bb803948dbab6e4e9a63e669a19
+submission_sha256: c1cf1b696539bedbea9f1aea0722f967b861df8be7fb232543ac9fce2e854ae5
+norm_sha256: 4fab8ac8450b304f28ff5a2b1d78fa84510ce7e89c1b94132f96c3e84142bc6a
+submission_blob: d9a9375ef4721ab9b28cc9d6364c92e67c7ccc59
+lint_warnings: 8
 ---
 
 # triton-map-align-on-block-m-restack
@@ -94,3 +100,28 @@ No companion is warranted. The two changes are shape-disjoint by code, not just 
 - triton-small-m-threshold-32 (queued): confirm it moves SMALL_M_POST_NORM, not ALIGN_FUSED_MAX_TOKENS (already 32), so it does not duplicate this.
 - Read bs=32 against master's 209.7 us row, not against the +4.5% figure, which was taken from the older base. A flat bs=32 is consistent with the parent.
 
+
+## Implementation notes
+
+Built by churnsubs as a 3-way merge (`git merge-file`) of hyp/muse_moe_w4a16/triton-map-align-small-m-port's
+submission.py (on its base, post-expert-norm master) onto current master (marlin-block-m-two-smaller-on-postnorm).
+The one conflict was the block_size_m pick: resolved by keeping map-align's `_block_size_m()` call and the
+`_align_small` dispatch, with master's `num_tokens >= 128` two-step adjustment placed right after the pick.
+The result differs from the map-align branch's file only by that 5-line block (checked with diff). No other
+deviation; the reviewer confirmed the merge.
+
+## Rules check
+
+Checked against `git -C .worktrees/muse_moe_w4a16/triton-map-align-on-block-m-restack diff` (the map-align diff, already
+rules-checked in its own run, plus master's 5-line block-m pick).
+
+- [x] CUDA-graph capturable: both branches are on `num_tokens`/`expert_map` (shape/config); no `.item()`/`.cpu()`/`synchronize()` in kernel_fn.
+- [x] Nothing derived from `data` is cached across calls: bank start/count come from prepare(); no new state from inputs.
+- [x] Weights: NVFP4 stays NVFP4; Marlin repack unchanged.
+- [x] Activations BF16 where SGLang keeps BF16; KV/query items n/a.
+- [x] Attention sees every key: n/a: no attention; every local route is aligned, remote routes dropped as on master.
+- [x] No timing patches, harness frames/I/O/secrets, module edits, reference import, subprocesses or network.
+- [x] All work happens inside the timed call; no output caching or replay.
+- [x] First line marker kept; no triton.autotune.
+
+okc_lint: OK with warnings (host-syncs only in prepare()/the align self-check).
