@@ -109,11 +109,11 @@ base_blob: a8bb42ac483318e9fbc84bc7826a27b7a704d1fb
 branch: hyp/muse_bf16_proj/bf16-verify-streamk-cutlass-wgmma-rewrite
 worktree: .worktrees/muse_bf16_proj/bf16-verify-streamk-cutlass-wgmma-rewrite
 mode: null
-implemented_at: 2026-10-24T173936Z
-impl_commit: d9d309e8bc053c2ce703d3b7cac4fecf16fadc1d
-submission_sha256: a4537e29d984f113ae9c830cb1c298a8fea07b2637dbfde47a6e9fc920f2d7a6
-norm_sha256: 8fa0b430c49425e2c0613a266c051ef0e7a02e24812d56d251176152139dbf5b
-submission_blob: 437a4112a0e4f1638464e1c81f39512689c9ffd4
+implemented_at: 2026-10-24T175038Z
+impl_commit: 08a0e62cc3362766ca2ccbf300325a40d50aff53
+submission_sha256: 5977ea3f9abd58bf0a4c738dbb70ea598a145f6f80aef68c6f21db4e819ad6a0
+norm_sha256: a5bc01680872a0370a392f6e64cbbc8158eed8bed14f3d2d96ed82f8d3ee7d98
+submission_blob: 7161897671cd56878ce6338f47c57b9b0dd9b63c
 lint_warnings: 4
 ---
 
@@ -214,6 +214,9 @@ Uncertainties (things that can only be learned on the judge):
 - (d) A sticky CUDA error during the prepare self-check would poison the context and fail the run instead of falling back.
 - (e) The memset node from initialize_workspace adds about 1 us per forced stream-K call (qkv_gate, pooler).
 - Harvest note: read the `[streamk]` log lines first. `no CUTLASS headers`, `build FAILED` or `DISABLED` means the run measured master, not the kernel.
+
+### Pre-flight fix (2026-10-24, after an Opus audit)
+The route also requires `x.data_ptr() % 16 == 0`. A misaligned TMA descriptor would be a sticky fault, and this is a pointer check, not a value branch. The audit found the CUTLASS API usage valid across 3.4-4.8.
 
 ## Rules check
 
