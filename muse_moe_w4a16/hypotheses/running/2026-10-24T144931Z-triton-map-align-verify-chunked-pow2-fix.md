@@ -35,13 +35,19 @@ review: proceed
 status: running
 review_at: 2026-10-24T145123Z
 review_companions: null
-stage: claimed
+stage: implemented
 claimed_at: 2026-10-24T145124Z
 base_sha: e39e564e1c1c5afd6984d50a952b2d5550f92df2
 base_blob: d9a9375ef4721ab9b28cc9d6364c92e67c7ccc59
 branch: hyp/muse_moe_w4a16/triton-map-align-verify-chunked-pow2-fix
 worktree: .worktrees/muse_moe_w4a16/triton-map-align-verify-chunked-pow2-fix
 mode: null
+implemented_at: 2026-10-24T145124Z
+impl_commit: a453496e961fb78ad568648d426f6dad3894dad1
+submission_sha256: 57b303b52bb2e2bbcd6fcab107c4f697c5ea4fb912e35e276fe82f98c9422b9f
+norm_sha256: 314d624a58957ba6429fc972a10b2603f445056ab9f69699a4ad7c3aecde817e
+submission_blob: cd2708665a12b86a61abd60e3794272c1df2e6f7
+lint_warnings: 8
 ---
 
 # triton-map-align-verify-chunked-pow2-fix
@@ -85,3 +91,25 @@ No companion is warranted. The change is directly attributable per shape: at bs=
 - Should _align_small_kernel get the same BSM_P2 hardening now, before triton-small-m-threshold-32 or marlin-two-class-block-m-decode32 can send BSM=48 to it? Doing it in this run would break byte-identity at bs<=32, so it belongs in a separate change.
 - The extended self-check (360 cases with Python per-slot loops) adds prepare time. It is expected to take seconds, well inside the 300 s prepare budget and the 15 min run budget, but watch for it.
 
+
+## Implementation notes
+
+Built by churnsubs: hyp/muse_moe_w4a16/triton-map-align-verify-chunked's submission.py (same base blob as current
+master, d9a9375) plus the 4-line fix: `_align_chunked_kernel` gains constexpr `BSM_P2`, the padding tile uses
+`tl.arange(0, BSM_P2)` and `[NUM_E, BSM_P2]` with the unchanged mask, and the launch passes
+`BSM_P2=triton.next_power_of_2(block_size_m)`. The reviewer confirmed no other non-power-of-2 arange remains.
+
+## Rules check
+
+Checked against `git -C .worktrees/muse_moe_w4a16/triton-map-align-verify-chunked-pow2-fix diff` (the reviewed chunked-align diff plus the 4-line fix).
+
+- [x] CUDA-graph capturable: branches on num_tokens/expert_map only; no `.item()`/`.cpu()`/`synchronize()` in kernel_fn.
+- [x] Nothing derived from `data` is cached across calls.
+- [x] Weights: NVFP4 unchanged; Marlin repack untouched.
+- [x] Activations BF16 where SGLang keeps BF16; KV/query items n/a.
+- [x] Attention sees every key: n/a; every local route aligned, remote routes dropped as on master.
+- [x] No timing patches, harness frames/I/O/secrets, module edits, reference import, subprocesses or network.
+- [x] All work happens inside the timed call; no output caching or replay.
+- [x] First line marker kept; no triton.autotune.
+
+okc_lint: OK with warnings (host-syncs only in prepare()/the self-check).
