@@ -52,8 +52,10 @@ kind: rewrite
 controls_for: null
 rewrite_stage: 4
 replaces: Marlin w13+w2 (moe_wna16_marlin_gemm x2) at every prefill T
-review: required
+review: proceed
 status: queued
+review_at: 2026-10-24T124746Z
+review_companions: null
 ---
 
 # experts-hybrid-marlin-turn-triton-first-turn
@@ -80,3 +82,26 @@ shape (profile top_kernels) against the incumbent and the speed-of-light floor, 
 2. at or below the incumbent kernels' time on the target shapes;
 3. within ~1.5x of the floor on the target shapes, and the headline CI clears 1.0 (promotable).
 The next stage is minted with `--kind rewrite --depends-on <this slug> --stage N+1`.
+
+## Adversarial review
+
+Reviewed 2026-10-24T124746Z by an adversarial subagent (model opus).
+
+**Verdict: proceed.** A sound, low-risk stage-4 gate: put Marlin back where it has won every within-run comparison (turn_1) or tied (turn_4), and keep stage-3 Triton BLOCK_T 256 at T=16384, where it is about 25% faster than Marlin. The one real build hazard is tensor aliasing between the two banks in prepare(). With prefill on its last check, close it by cloning the inputs to _marlin_bank and running the Triton bank and its self-check first.
+
+### Justification
+Mechanism: SGLang's baseline is the same Marlin kernel. At T<=4096 the paired ratio against SGLang should therefore return to ~1.00, the parity run's 1.007/1.009 (turn_1) and 1.002/1.003 (turn_4). The turn_1 evidence is strong and consistent. Triton was 0.935/0.952 vs SGLang in stage 2 (00148fbe…) and 0.932/0.943 in stage 3 (b33b87b5), with kernel rows 796/823 and 847/729 us against Marlin's 730/681. At ~24 rows per local expert, the per-tile in-register dequant cannot amortize. The turn_4 evidence is the weakest link and is a near-tie, not a measured crossover. In stage 2, byte-identical Triton code was 1.012/0.999 vs SGLang (kernel 2158/2100 us, below Marlin's 2248/2201). In stage 3 the same code was 0.973/0.981 (2275/2318 us). The hypothesis's 'Triton loses at T=3012' leans on the second run only. The two Triton runs average ~0.99 against Marlin's ~1.00, so sending turn_4 to Marlin is the safe choice (a guaranteed ~1.0 floor), but expect +0-2.5% there, not a clear win. Cross-run kernel comparisons are noisier than LESSONS' '~1%' claim, because every run draws new routing seeds, so expert imbalance changes. The same Triton code moved +5%/+10% at turn_4 and -11% at full turn_1 between stages 2 and 3. Read this stage on the within-run paired ratio vs SGLang per shape, which is self-calibrating here because both sides run Marlin at T<=4096. Do not read it on kernel-µs against the parity profile. The 4096 bound is consistent with TASK: turn_1 T=753, turn_4 T=3012 and all five tests (max T=4096) go to Marlin, and the four first_turn shapes (T=16384) go to Triton. The headline estimate is understated. With load-geomean (0.935·0.975·1.17)^(1/3)≈1.022 today, returning turn_1 to ~1.005 and turn_4 to ~1.0 while first_turn holds ~1.17 gives ≈1.055-1.06, not 1.04. As a rewrite milestone: (1) correctness at T<=4096 is the parity path that already passed; (2) turn shapes at or below the incumbent by construction; (3) floor distance is unchanged (Marlin is 2.8x/1.4x the floor at turn_1 sliding/full), so this stage reaches 'promotable', not 'near floor'. Memory (+~0.86 GiB) and prepare time are non-issues.
+
+### Confounders on the current kernel
+- sglang-pipeline-parity: no confound. The restored _experts_marlin is that hypothesis's own code, verbatim, and everything around the experts is byte-identical. Its run is the reference for what turn shapes should read (~1.00 vs SGLang).
+- experts-triton-w4a16-first-turn-blockt256: no confound on the T=16384 shapes, where the code is byte-identical (only reached through the new gate). Its T<=4096 configs become unreachable, so turn-shape movement cannot come from them. Residual interaction is limited to prepare(): its bank aliases weights[*_sf/_gs] through .contiguous(), so an in-place change by prepare_moe_nvfp4_layer_for_marlin would corrupt the Triton path (see open_questions).
+
+### Interference and A/B needs
+No companion is warranted. Both outcomes read unambiguously without one. At turn shapes both sides of the paired ratio run the same Marlin kernel, so anything other than ~1.00±drift means a wiring bug in the gate (e.g., the wrong bank or block size), not an interaction. At first_turn the kernel row should match stage 3's 8574/8535/7960/8722 us within routing drift, and the shape ratio should match 1.19/1.19/1.14/1.11. An ab-revert of stage 3 would just recreate stage 2 or parity, which are already measured. A control isolating the turn_4 half of the gate (MARLIN_MAX_TOKENS=1024) would resolve a ~1-2% effect that one run cannot resolve anyway. It is not worth a check with prefill at 1 check left. Leave it for a later stage if turn_4 is tuned.
+
+### Open questions
+- Aliasing (build must address it): master's _expert_bank stores weights['w13_sf'/'w13_gs'/'w2_sf'/'w2_gs'].contiguous(), which is the same storage as the weights. Parity's _marlin_bank hands the same aliased tensors to prepare_moe_nvfp4_layer_for_marlin. Its source is not available on this node, so whether it mutates scales or global scales in place cannot be verified. If it does, the Triton bank's scales change silently. _check_expert_gemms would not catch it, because it reads sf/gs from the bank, not from the weights. The failure would then surface only at the first_turn timed calls, burning the last check. Cheap fix: pass .clone() tensors into _marlin_bank. Also build state['bank'] and run _check_expert_gemms before _marlin_bank, and assert torch.equal on the four scale tensors before and after.
+- Is the prepare() self-check enough, given that no pre-timing test reaches T>4096? Mostly yes. It compiles and checks the BLOCK_T 256 variant's dequant, indexing, -1 and past-n_padded handling. The first_turn path is byte-identical to stage 3, which passed timed-call correctness at T=16384, and every timed call is checked against the reference, so a bug fails loudly rather than scoring. What it does not cover is the new wiring: which bank _experts_triton reads, and moe_align_block_size at cfg BLOCK_T on the >4096 branch. Recommended additional untimed check: one end-to-end call each of _experts_triton and _experts_marlin on a synthetic T=8192 case (random bf16 x, random top-8 local ids and weights, all built in prepare), asserting relative L2 between them below ~1e-2. That covers the aliasing hazard and the branch wiring for a few hundred ms.
+- Make sure _experts' dispatch reads x.shape[0] (= config tokens), not num_slots, and that the Marlin branch uses state['marlin'] for the bank and workspace while the Triton branch uses state['bank'].
+- T between 4096 and 16384 is untuned and unscored, so the crossover there is unknown. That is acceptable, but note it in FINDINGS so a later turn_4 stage does not assume 4096 was measured.
+
