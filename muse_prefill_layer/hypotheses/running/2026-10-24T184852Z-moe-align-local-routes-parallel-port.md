@@ -53,7 +53,16 @@ priority: 2
 kind: primary
 controls_for: null
 review: required
-status: queued
+status: running
+stage: claimed
+claimed_at: 2026-10-24T232823Z
+base_sha: a4d96a9424579e84f7664be536951edfda597297
+base_blob: 635cfee3ac2c3f7c66840b8c8a082cad2fa41a68
+branch: hyp/muse_prefill_layer/moe-align-local-routes-parallel-port
+worktree: .worktrees/muse_prefill_layer/moe-align-local-routes-parallel-port
+mode: null
+restack_of: null
+stale_base: null
 ---
 
 # moe-align-local-routes-parallel-port
