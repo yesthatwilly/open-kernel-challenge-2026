@@ -65,10 +65,10 @@ priority: 2
 kind: primary
 controls_for: null
 review: proceed
-status: running
+status: done
 review_at: 2026-10-24T165424Z
 review_companions: null
-stage: dispatched
+stage: harvested
 claimed_at: 2026-10-24T165424Z
 base_sha: 278c4441e3dddcc35e9478bc678c6d596a9d3428
 base_blob: a8bb42ac483318e9fbc84bc7826a27b7a704d1fb
@@ -85,6 +85,13 @@ attempt_file: 2026-10-24T165700Z-submit-router-swapab-wgmma-all-m.md
 prepared_at: 2026-10-24T165700Z
 job: 587e340476944b46
 dispatched_at: 2026-10-24T165714Z
+outcome: neutral
+verdict_detail: within-ci
+speedup: 1.195127545591659
+speedup_ci: [1.1772006324077842, 1.2130544587755339]
+harvested_at: 2026-10-24T173233Z
+best_at_harvest: 1.1958517819004566
+promotion: null
 ---
 
 # router-swapab-wgmma-all-m
@@ -174,3 +181,53 @@ CLEAN: muse_bf16_proj/submission.py
 ```
 
 `python3 -I -m py_compile` passed. The `__pycache__` it left in the worktree was removed.
+
+## Result
+
+- job `587e340476944b46` (submit), status done, passed True, tests 9/9
+- speedup 1.1951x, 95% CI [1.1772, 1.2131], score 4042.0790381904117 µs vs SGLang 4830.8 µs
+- best at harvest: {"speedup": 1.1958517819004566, "ci": [1.1779140051719497, 1.2137895586289633], "job": "eeb9985396764ac2"}; base result: muse_bf16_proj/hypotheses/done/neutral/bf16-m32-swapab-wgmma-triton.result.json
+- **outcome: neutral** (within-ci)
+- files: `muse_bf16_proj/hypotheses/done/neutral/router-swapab-wgmma-all-m.result.json`, `muse_bf16_proj/hypotheses/done/neutral/router-swapab-wgmma-all-m.patch`; branch `hyp/muse_bf16_proj/router-swapab-wgmma-all-m`
+
+## Attribution
+
+| shape | w | base µs | hyp µs | delta | verdict |
+|---|---|---|---|---|---|
+| layer=qkv_gate load=decode_1 m=1 | 62 | 12.91 | 13.39 | 0.9388 | lost |
+| layer=o load=decode_1 m=1 | 62 | 6.32 | 6.21 | 1.0157 | flat |
+| layer=pooler load=decode_1 m=1 | 62 | 19.0 | 19.61 | 1.0001 | flat |
+| layer=unpooler load=decode_1 m=1 | 62 | 5.94 | 6.25 | 0.9706 | flat |
+| layer=router load=decode_1 m=1 | 62 | 5.73 | 5.65 | 1.0408 | gained |
+| layer=qkv_gate load=decode_16 m=16 | 62 | 13.39 | 14.31 | 0.9535 | lost |
+| layer=o load=decode_16 m=16 | 62 | 6.66 | 6.52 | 1.0017 | flat |
+| layer=pooler load=decode_16 m=16 | 62 | 19.85 | 20.02 | 0.9904 | flat |
+| layer=unpooler load=decode_16 m=16 | 62 | 18.61 | 18.74 | 1.0005 | flat |
+| layer=router load=decode_16 m=16 | 62 | 6.03 | 5.83 | 1.0582 | gained |
+| layer=qkv_gate load=decode_32 m=32 | 62 | 13.69 | 14.34 | 0.9643 | lost |
+| layer=o load=decode_32 m=32 | 62 | 6.67 | 6.63 | 1.02 | flat |
+| layer=pooler load=decode_32 m=32 | 62 | 20.0 | 20.18 | 1.0031 | flat |
+| layer=unpooler load=decode_32 m=32 | 62 | 18.48 | 18.7 | 1.0032 | flat |
+| layer=router load=decode_32 m=32 | 62 | 6.55 | 5.96 | 1.0989 | gained |
+| layer=qkv_gate load=verify_1 m=8 | 62 | 13.18 | 13.63 | 0.9457 | lost |
+| layer=o load=verify_1 m=8 | 62 | 6.32 | 6.49 | 1.0158 | flat |
+| layer=pooler load=verify_1 m=8 | 62 | 19.14 | 19.3 | 1.0006 | flat |
+| layer=unpooler load=verify_1 m=8 | 62 | 6.13 | 6.34 | 1.0278 | flat |
+| layer=router load=verify_1 m=8 | 62 | 5.91 | 5.23 | 1.1284 | gained |
+| layer=qkv_gate load=verify_16 m=128 | 62 | 16.81 | 17.2 | 0.9809 | flat |
+| layer=o load=verify_16 m=128 | 62 | 7.09 | 7.48 | 0.9973 | flat |
+| layer=pooler load=verify_16 m=128 | 62 | 25.55 | 25.38 | 1.012 | flat |
+| layer=unpooler load=verify_16 m=128 | 62 | 19.79 | 20.15 | 1.0018 | flat |
+| layer=router load=verify_16 m=128 | 62 | 7.35 | 7.61 | 0.9589 | lost |
+| layer=qkv_gate load=verify_32 m=256 | 62 | 19.62 | 19.54 | 0.9867 | flat |
+| layer=o load=verify_32 m=256 | 62 | 9.01 | 9.65 | 1.0133 | flat |
+| layer=pooler load=verify_32 m=256 | 62 | 30.53 | 30.35 | 0.9897 | flat |
+| layer=unpooler load=verify_32 m=256 | 62 | 24.5 | 24.08 | 1.016 | flat |
+| layer=router load=verify_32 m=256 | 62 | 9.3 | 9.46 | 1.0124 | flat |
+
+gained on router decode_1, decode_16, decode_32, verify_1; lost on qkv_gate decode_1, decode_16, decode_32, verify_1; router verify_16. Expected hit: 4/10. Noise ±1.5%.
+
+## Follow-ups
+
+- within-ci: the change is not proven either way; a stacked hypothesis (`depends_on: router-swapab-wgmma-all-m`) that adds a further change in the same area is the only way to learn more (identical code is never re-run).
+

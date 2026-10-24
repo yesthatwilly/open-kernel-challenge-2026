@@ -1,0 +1,12 @@
+[router] swapab m=1 BLOCK_T=16 SPLIT_K=32 grid=(1, 4, 32) stages=3: n_regs=64 n_spills=0 wgmma=16 mma.sync=0 red=54 atom=2 cp.async=65
+[router] master hilo m=1 BLOCK_M=16 BLOCK_N=32 SPLIT_K=16 grid=(1, 8, 16) stages=3: n_regs=72 n_spills=0 wgmma=0 mma.sync=16 red=30 atom=1 cp.async=41
+[router] swapab m=32 BLOCK_T=32 SPLIT_K=32 grid=(1, 4, 32) stages=3: n_regs=80 n_spills=0 wgmma=16 mma.sync=0 red=60 atom=4 cp.async=71
+[router] master hilo m=32 BLOCK_M=32 BLOCK_N=32 SPLIT_K=16 grid=(1, 8, 16) stages=3: n_regs=119 n_spills=0 wgmma=0 mma.sync=64 red=36 atom=2 cp.async=47
+[router] swapab m=64 BLOCK_T=64 SPLIT_K=16 grid=(1, 4, 16) stages=3: n_regs=128 n_spills=0 wgmma=16 mma.sync=0 red=72 atom=8 cp.async=83
+[router] master hilo m=64 BLOCK_M=64 BLOCK_N=64 SPLIT_K=16 grid=(1, 4, 16) stages=3: n_regs=127 n_spills=0 wgmma=16 mma.sync=0 red=72 atom=8 cp.async=83
+[router] swapab m=256 BLOCK_T=64 SPLIT_K=8 grid=(4, 4, 8) stages=3: n_regs=128 n_spills=0 wgmma=16 mma.sync=0 red=72 atom=8 cp.async=83
+[router] master hilo m=256 BLOCK_M=64 BLOCK_N=64 SPLIT_K=8 grid=(4, 4, 8) stages=3: n_regs=127 n_spills=0 wgmma=16 mma.sync=0 red=72 atom=8 cp.async=83
+[swapab] layer=pooler m=32 N=4096 K=8192 SPLIT_K=2 BLOCK_K=256 stages=4: n_regs=96 n_spills=0 wgmma=16 mma.sync=0 cp.async=106
+[swapab] layer=qkv_gate m=32 N=2304 K=8192 SPLIT_K=4 BLOCK_K=128 stages=4: n_regs=56 n_spills=0 wgmma=8 mma.sync=0 cp.async=58
+[swapab] layer=unpooler m=32 N=8192 K=4096 SPLIT_K=1 BLOCK_K=256 stages=4: n_regs=96 n_spills=0 wgmma=16 mma.sync=0 cp.async=106
+[swapab] layer=o m=32 N=8192 K=1024 SPLIT_K=1 BLOCK_K=256 stages=4: n_regs=96 n_spills=0 wgmma=16 mma.sync=0 cp.async=106
