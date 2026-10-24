@@ -23,7 +23,7 @@ kind: primary
 controls_for: null
 review: required
 status: running
-stage: implemented
+stage: dispatched
 claimed_at: 2026-10-24T233722Z
 base_sha: 90c5720f9cb1f796aeb6a987abdd676cba19ef5f
 base_blob: 3d70ae6e2de0d48c4a4f2a469ced8234f5348182
@@ -40,6 +40,8 @@ submission_blob: 4da94677234faaa06b42b5ced541db8961fd6f34
 lint_warnings: 28
 attempt_file: 2026-10-24T233750Z-check-stack-align-par-sidestream-sliding1.md
 prepared_at: 2026-10-24T233750Z
+job: cc92097b64784c0f
+dispatched_at: 2026-10-24T233759Z
 ---
 
 # stack-align-par-sidestream-sliding1
