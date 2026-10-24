@@ -49,7 +49,7 @@ review: proceed
 status: running
 review_at: 2026-10-24T183956Z
 review_companions: null
-stage: implemented
+stage: dispatched
 claimed_at: 2026-10-24T183956Z
 base_sha: 91975540841cb14ebba858121c83ff760c528591
 base_blob: 108d36e9f2266fc88531dd6ff0329a847c882013
@@ -64,6 +64,8 @@ submission_blob: 1c0ea2b5746442d53faef544107710c2d27b689b
 lint_warnings: 8
 attempt_file: 2026-10-24T184142Z-submit-post-norm-combine-hoisted-slot-loads.md
 prepared_at: 2026-10-24T184142Z
+job: d7501477ce2748d5
+dispatched_at: 2026-10-24T184157Z
 ---
 
 # post-norm-combine-hoisted-slot-loads
