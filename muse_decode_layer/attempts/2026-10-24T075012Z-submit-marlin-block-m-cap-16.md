@@ -2,7 +2,7 @@
 
 Hypothesis: `muse_decode_layer/hypotheses/done/gain/2026-10-23T225545Z-marlin-block-m-cap-16.md` (branch `hyp/muse_decode_layer/marlin-block-m-cap-16`).
 
-- **Job:** `<job id>` (`okc status <job>`)
+- **Job:** `2b1f82408ab64116` (`okc status <job>`)
 - **File:** `muse_decode_layer/submission.py` at git `e0303f1`
 
 ## Goal
