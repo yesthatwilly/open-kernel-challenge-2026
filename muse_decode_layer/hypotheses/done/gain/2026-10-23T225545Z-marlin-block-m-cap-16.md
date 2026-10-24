@@ -63,6 +63,7 @@ harvested_at: 2026-10-24T075010Z
 best_at_harvest: 1.020038644953596
 promotion: merged
 promotion_commit: ef7dea6cac43678c09ae91b20ece2c40e0670c4b
+promotion_attempt: 2026-10-24T075012Z-submit-marlin-block-m-cap-16.md
 ---
 
 # marlin-block-m-cap-16
