@@ -67,7 +67,8 @@ speedup: 1.0916165083160805
 speedup_ci: [1.0752422606913392, 1.1079907559408215]
 harvested_at: 2026-10-24T111614Z
 best_at_harvest: 0.9887547325362586
-promotion: pending
+promotion: superseded
+promotion_reason: best is now 1.3075759186466844
 ---
 
 # marlin-block-size-m-verify-two-smaller
