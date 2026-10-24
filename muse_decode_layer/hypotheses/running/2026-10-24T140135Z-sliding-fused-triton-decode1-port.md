@@ -49,7 +49,7 @@ review: proceed
 status: running
 review_at: 2026-10-24T164533Z
 review_companions: null
-stage: implemented
+stage: dispatched
 claimed_at: 2026-10-24T164533Z
 base_sha: d170c1fd1af3e71b7de6f970d623da8b2a86af59
 base_blob: cc466fce207709c98ab0e78c2435c1c459890fdb
@@ -64,6 +64,8 @@ submission_blob: e33a32aa5580fbd5b38764ea287a6364c865432e
 lint_warnings: 1
 attempt_file: 2026-10-24T164838Z-submit-sliding-fused-triton-decode1-port.md
 prepared_at: 2026-10-24T164838Z
+job: 12198572363b49a4
+dispatched_at: 2026-10-24T164858Z
 ---
 
 # sliding-fused-triton-decode1-port
