@@ -33,13 +33,19 @@ review: proceed
 status: running
 review_at: 2026-10-24T184058Z
 review_companions: null
-stage: claimed
+stage: implemented
 claimed_at: 2026-10-24T184059Z
 base_sha: 4c028efec3a6ee2276ec49319d77241309209016
 base_blob: c6854f093588da524e63657576b27ed720756e32
 branch: hyp/muse_attention_decode/splitkv-full-line-gather-mapping
 worktree: .worktrees/muse_attention_decode/splitkv-full-line-gather-mapping
 mode: null
+implemented_at: 2026-10-24T184625Z
+impl_commit: 7dafeb48bc57fc18b4e72ce32e77d0a3e1551fb0
+submission_sha256: 8c2c608f4a035b5c6f4afd94d546358bc9b7d1a9648b8b2458caf75677fe9b64
+norm_sha256: 5b99a3f1858a7f3c021f1ce45cfee8f39caa2e5cfdaae946009de25b690db0a4
+submission_blob: 8baca1f0ee9cd9c5e15bb0a9829567ea6095fc91
+lint_warnings: 0
 ---
 
 # splitkv-full-line-gather-mapping
@@ -78,3 +84,30 @@ No companion warranted. The change is a single indivisible sub-change (the copy 
 - Does an ncu run of master kernel A show lts__t_sectors_srcunit_tex_op_read about 2x lts__t_sectors_srcunit_tex_lookup_miss (duplicate sector requests), and is L2 or L1TEX throughput, rather than DRAM, near its limit? That would justify the mechanism. The profile available here only gives kernel us.
 - Should the module rename be coordinated? Both this and splitkv-l2-128b-prefetch-hint rename to muse_full_decode_splitkv_v2. That is fine on separate branches but collides if they are ever stacked.
 
+
+## Implementation notes
+
+In splitkv_attn_kernel's issue_tile (submission.py), thread mapping is now tt = (tid >> 3) + 32 * j for j in {0,1}, c = tid & 7. The validity test, page-index read and row pointers are computed per tt (inside the j loop). dst swizzle, K/V offsets, src_bytes, ring layout and commit/wait counts are unchanged, so smem contents are byte-identical. The module is renamed to muse_full_decode_splitkv_v2. The comment above issue_tile is updated. No deviation from the spec. The review's mechanism correction (win is fewer duplicate L2 sector requests, not DRAM merging) is a judging note only.
+
+## Rules check
+
+- [x] CUDA-graph capturable: diff only changes cp.async addressing inside the kernel; no syncs, allocation or value-dependent control flow added.
+- [x] Nothing derived from `data` is cached across calls: diff adds no state.
+- [x] Weights: n/a: no weight handling changed.
+- [x] Activations/KV dtype: n/a: unchanged; the same FP8 bytes are copied.
+- [x] Attention sees every key: the same tokens are covered (64 per tile via 2 x 32), same validity test.
+- [x] No timing patches, harness access, subprocesses or network: diff touches only the gather mapping and the module name.
+- [x] All work inside the timed call; no output caching or replay.
+
+okc_lint: `CLEAN: submission.py`. py_compile OK, __pycache__ removed.
+
+## Pre-flight audit
+
+Audited 2026-10-24 (opus). **Verdict: dispatch-with-fixes.**
+
+- Mapping verified by emulation (THREADS=256, TILE=64, ROW=128): new tt = (tid>>3)+32j, c = tid&7 hits each of the 64 x 8 (token, 16 B chunk) pairs exactly once, and the set of (tt, c, dst) triples equals master's, so per-stage smem is byte-identical. Each warp instruction writes 32 distinct 16 B smem slots (no bank conflicts on the swizzle). CUDA edit is syntactically sound (per-tt locals moved inside the unrolled j loop; nothing outside uses them).
+- Module name muse_full_decode_splitkv_v2 is used in the one load_inline call; no other reference to v1. Build failure returns None (master FA3 kept); self-check miss or raise sets _EXT=None; non-gated shapes never touch _EXT.
+- Fix: appended a `[splitkv] PATH CHOSEN: ...` print after the import-time build/self-check so the run log states loudly which path ran (master printed only on failure). Reason: fallback must be visible in the log.
+- Rules: unchanged from master (no new syncs, allocs, caching or precision changes). okc_lint CLEAN, py_compile OK.
+
+Residual risk: the effect on kernel A is likely 0-4%, inside full decode_32 run-to-run drift; judge on splitkv_attn_kernel rows.
