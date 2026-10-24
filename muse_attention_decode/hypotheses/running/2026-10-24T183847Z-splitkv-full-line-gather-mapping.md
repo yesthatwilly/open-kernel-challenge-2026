@@ -33,7 +33,7 @@ review: proceed
 status: running
 review_at: 2026-10-24T184058Z
 review_companions: null
-stage: implemented
+stage: dispatched
 claimed_at: 2026-10-24T184059Z
 base_sha: 4c028efec3a6ee2276ec49319d77241309209016
 base_blob: c6854f093588da524e63657576b27ed720756e32
@@ -48,6 +48,8 @@ submission_blob: 8baca1f0ee9cd9c5e15bb0a9829567ea6095fc91
 lint_warnings: 0
 attempt_file: 2026-10-24T184625Z-check-splitkv-full-line-gather-mapping.md
 prepared_at: 2026-10-24T184625Z
+job: cfa8c89e4f2b488d
+dispatched_at: 2026-10-24T184641Z
 ---
 
 # splitkv-full-line-gather-mapping
