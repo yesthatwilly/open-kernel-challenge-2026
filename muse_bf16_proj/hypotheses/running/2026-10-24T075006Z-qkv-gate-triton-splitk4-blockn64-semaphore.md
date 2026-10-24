@@ -53,13 +53,19 @@ review: proceed
 status: running
 review_at: 2026-10-24T075337Z
 review_companions: null
-stage: claimed
+stage: implemented
 claimed_at: 2026-10-24T075337Z
 base_sha: 7bcb8092c1665b25485402c87868a1ebb583ee27
 base_blob: da55301de1e911aeab09878b0873809f544f436c
 branch: hyp/muse_bf16_proj/qkv-gate-triton-splitk4-blockn64-semaphore
 worktree: .worktrees/muse_bf16_proj/qkv-gate-triton-splitk4-blockn64-semaphore
 mode: null
+implemented_at: 2026-10-24T075610Z
+impl_commit: e54c744dee2ab8331f353b9286b04a288e726448
+submission_sha256: f5c43d66f26d509dc2122fa11a824fa6e5c6d3a19553da27df739b81cd6cecf3
+norm_sha256: 425d076936adb0abd301565ba098b1b63b41de156f2f3d0d71cfd9a3e2e8ea9f
+submission_blob: f32bf01cad482965a6a7a50f390dd14ab62a4fa0
+lint_warnings: 0
 ---
 
 # qkv-gate-triton-splitk4-blockn64-semaphore
@@ -105,3 +111,37 @@ No companion is warranted. Only the qkv_gate m<=32 cells change, and each scored
 - If m=32 regresses while m<=16 gains, restrict the route to m<=16 rather than retuning BLOCK_M=32. The per-shape table will show it directly.
 - If both this and the pooler semaphore hypothesis gain, merge them into one parametrized kernel with per-layer state keys, as the hypothesis itself suggests.
 
+
+## Implementation notes
+
+Worktree `.worktrees/muse_bf16_proj/qkv-gate-triton-splitk4-blockn64-semaphore`, file `muse_bf16_proj/submission.py` only (+117 lines, nothing removed). Router kernel, its config, state keys and warm-up are untouched.
+
+- New `_qkv_splitk_sem_kernel` (`@triton.jit(do_not_specialize=["M"])`), grid `(2304 // 64, 4) = (36, 4)` = 144 CTAs, BLOCK_N=64, BLOCK_K=128, SPLIT_K=4 (K_SLICE=2048, 16 K-steps), BLOCK_M=16 for m<=16 and 32 for 17..32, num_warps=4, num_stages=4. Weight tiles are read as `[BLOCK_K, BLOCK_N]` straight from the row-major `[N, K]` weight (the router's transposed addressing, no repack), and the accumulator is fp32 via `tl.dot(x_tile, w_tile, acc)`.
+- Workspace hygiene: the fp32 partial is stored to `ws[pid_k, offs_m, offs_n]` under `mask=offs_m < M`. The reducer loads the same tile offsets under the same mask. Every value it reads was therefore written by one of this launch's 4 CTAs for that n-tile, and stale rows (>= m) of `qkv_ws` are never read. The output store is masked the same way.
+- Ordering: partial store, then `tl.debug_barrier()`, then `ticket = tl.atomic_add(cnt_ptr + pid_n, 1, sem="acq_rel", scope="gpu")`, then `tl.debug_barrier()` (unconditional, before the branch). Inside `if ticket == SPLIT_K - 1:` the reducer reloads partials 0..3 with `cache_modifier=".cg"` and sums them in fixed order with a `tl.static_range(1, SPLIT_K)` loop starting from partial 0. It casts once to bf16, does a masked store and resets the counter with `tl.atomic_xchg(cnt_ptr + pid_n, 0, sem="relaxed", scope="gpu")`. Relaxed is enough for the reset because the next reader is a later kernel on the same stream, and the kernel boundary orders it. No CTA waits on another, so it cannot deadlock.
+- One scalar atomic per CTA: `cnt_ptr + pid_n` is a scalar pointer (pid_n is a scalar program id) and the value is the scalar `1`, with no tensor operand. Triton lowers a scalar `atomic_rmw` to a single atom predicated on one thread and broadcasts the result through shared memory, so each CTA issues exactly one ticket. The `xchg` reset is also scalar. The PTX was NOT dumped (there is no GPU or Triton on this node). The attempt file should confirm one `atom.acq_rel.gpu.global.add` per CTA in the compiled PTX and the kernel's smem size (for the 2-CTA/SM claim).
+- State: these use separate keys, `state["qkv_ws"] = torch.empty((4, 32, 2304), fp32)` and `state["qkv_cnt"] = torch.zeros(36, int32)`, both allocated in prepare(). prepare() warms every m in 1..32 (both BLOCK_M binaries) on synthetic `torch.zeros` x, then calls `state["qkv_cnt"].zero_()`.
+- Route guard in kernel_fn: `layer == "qkv_gate"`, the stored weight shape is (2304, 8192), cfg `1 <= m <= 32`, `n == 2304` and `k == 8192`, and x is 2-D, bf16, shape `(cfg m, 8192)` with `stride(1) == 1`. Everything else (qkv_gate m >= 128, the m=512 outlier test, o/pooler/unpooler, router) runs master's code unchanged. The output is `torch.empty((m, 2304), bf16)` with shape-only allocation. There is no autotune and no host sync, and the code branches only on cfg and shapes.
+- Deviation: the spec warmed m in {1, 8, 16, 32}. Per the review instructions, the warm-up covers all m in 1..32. That is still only two compiled binaries, because M is not specialized. Also, the module docstring gained a 4-line paragraph describing the new path.
+
+## Rules check
+
+Checked against `git -C .worktrees/muse_bf16_proj/qkv-gate-triton-splitk4-blockn64-semaphore diff`:
+
+- [x] CUDA-graph capturable: there is no `.item()`, `.cpu()`, `synchronize()` or tensor print in the diff. Output allocation is shape-only (`torch.empty((m, 2304))`). Branching is on cfg/shape/dtype/stride only. The in-kernel `if ticket == ...` is device-side control flow, not a host branch on input values. The counters reset in-kernel, so replays are self-consistent.
+- [x] Nothing derived from `data` is cached across calls. `qkv_ws` holds per-launch partials, and every value the reducer reads is rewritten in the same launch (same mask). `qkv_cnt` returns to 0 at the end of each launch.
+- [x] Weights: the qkv_gate bf16 weight is used as is (`state["qkv_gate"]`, the contiguous original), with no repack and no precision change. The router hi+lo split is unchanged from master.
+- [x] Activations: x stays bf16 into `tl.dot`, accumulation and partials are fp32, and the output is bf16, as SGLang does.
+- [x] Attention sees every key: n/a (dense projection problem, no attention).
+- [x] No timing patches, harness frames/I/O/secrets, module edits, reference import, subprocesses or network. The only imports are the existing torch/triton/sglang ones.
+- [x] All work happens inside the timed call, with no output caching or replay. The prepare() warm-up runs on synthetic zeros only and its outputs are discarded.
+- [x] No `triton.autotune` (static constexpr config chosen from m).
+- [x] Only qkv_gate m<=32 is rerouted. The router, o, pooler, unpooler and qkv_gate m>=128 keep master's code paths, as the diff shows (additions only).
+
+Lint (`okc_lint.py <worktree>/muse_bf16_proj/submission.py --problem muse_bf16_proj`):
+
+```
+CLEAN: submission.py
+```
+
+`python3 -I -m py_compile` passed. No `__pycache__` was left in the worktree.
