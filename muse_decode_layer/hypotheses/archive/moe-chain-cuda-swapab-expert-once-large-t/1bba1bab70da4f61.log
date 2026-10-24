@@ -1,0 +1,29 @@
+[moe-cuda-large-t] load_inline compiled in 41.6s
+[moe-cuda-large-t] kernel moe_route_list: attrs ok True, numRegs 22, localSizeBytes 0, dynamic smem 0 B
+[moe-cuda-large-t] kernel moe_w13_silu_swapab: attrs ok True, numRegs 148, localSizeBytes 0, dynamic smem 221184 B
+[moe-cuda-large-t] kernel moe_w2_swapab: attrs ok True, numRegs 148, localSizeBytes 0, dynamic smem 221184 B
+[moe-cuda-large-t] retiled 32 experts losslessly (round trips exact) in 0.1s
+[moe-cuda-large-t] grid 132 persistent CTAs x 256 threads, chunk 64 routes
+[moe-cuda-large-t] OFF: compile 41.6s, max row rel nan (bound 1e-2), setup raised AcceleratorError("CUDA error: an illegal instruction was encountered\nSearch for `cudaErrorIllegalInstruction' in https://docs.nvidia.com/cuda/cuda-runtime-api/group__CUDART__TYPES.html for more information.\nCUDA kernel errors might be asynchronously reported at some other API call, so the stacktrace below might be incorrect.\nFor debugging consider passing CUDA_LAUNCH_BLOCKING=1\nThe CUDA driver logged these messages, which may provide useful details:\nReturning 715 (CUDA_ERROR_ILLEGAL_INSTRUCTION) from cuCtxSynchronize_v2\n\n")
+[moe-cuda-large-t] PATH CHOSEN = MARLIN for tokens > 32; MARLIN at tokens <= 32
+Traceback (most recent call last):
+  File "/tmp/muse_decode_layer-y7ynds5v/run/worker.py", line 423, in child_main
+    send(_setup_op(msg, module, state, sync, perf))
+         ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/tmp/muse_decode_layer-y7ynds5v/run/worker.py", line 322, in _setup_op
+    state["prep"] = prepare(weights)
+                    ^^^^^^^^^^^^^^^^
+  File "/tmp/muse_decode_layer-y7ynds5v/run/submission.py", line 1050, in prepare
+    torch.cuda.synchronize()
+  File "/opt/sglang/lib/python3.12/site-packages/torch/cuda/__init__.py", line 1281, in synchronize
+    return torch._C._cuda_synchronize()
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+torch.AcceleratorError: CUDA error: an illegal instruction was encountered
+Search for `cudaErrorIllegalInstruction' in https://docs.nvidia.com/cuda/cuda-runtime-api/group__CUDART__TYPES.html for more information.
+CUDA kernel errors might be asynchronously reported at some other API call, so the stacktrace below might be incorrect.
+For debugging consider passing CUDA_LAUNCH_BLOCKING=1
+The CUDA driver logged these messages, which may provide useful details:
+Sticky error detected
+Returning 715 (CUDA_ERROR_ILLEGAL_INSTRUCTION) from cuCtxSynchronize_v2
+
+

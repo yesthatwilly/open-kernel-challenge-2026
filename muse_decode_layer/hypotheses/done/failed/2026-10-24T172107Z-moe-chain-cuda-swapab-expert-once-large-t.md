@@ -82,10 +82,10 @@ controls_for: null
 rewrite_stage: 1
 replaces: moe_align_block_size + Marlin w13 + silu_and_mul (act_and_mul_kernel) + Marlin w2 at T > 32 (verify_16 T=128, verify_32 T=256)
 review: proceed
-status: running
+status: done
 review_at: 2026-10-24T172543Z
 review_companions: null
-stage: dispatched
+stage: harvested
 claimed_at: 2026-10-24T172706Z
 base_sha: a449561e2d3c5c1910b17badcd989afdfcebd989
 base_blob: cc466fce207709c98ab0e78c2435c1c459890fdb
@@ -102,6 +102,13 @@ attempt_file: 2026-10-24T181733Z-submit-moe-chain-cuda-swapab-expert-once-large-
 prepared_at: 2026-10-24T181733Z
 job: 1bba1bab70da4f61
 dispatched_at: 2026-10-24T181805Z
+outcome: failed
+verdict_detail: "test:failed"
+speedup: null
+speedup_ci: null
+harvested_at: 2026-10-24T184717Z
+best_at_harvest: 1.1664628806987323
+promotion: null
 ---
 
 # moe-chain-cuda-swapab-expert-once-large-t
@@ -223,3 +230,15 @@ OK with warnings: submission.py
 ```
 
 The uint8 warnings are the packed NVFP4 code and scale byte buffers (weights, not activations). The host-sync warnings are all in prepare-only code. `python3 -I -m py_compile` passed, and the `__pycache__` it left was removed.
+
+## Result
+
+- job `1bba1bab70da4f61` (submit), status done, passed False, tests 0/0
+- best at harvest: {"speedup": 1.1664628806987323, "ci": [1.1489659374882513, 1.183959823909213], "job": "a017e10aec544c55"}; base result: muse_decode_layer/hypotheses/done/gain/post-expert-norm-triton-small-t.result.json
+- **outcome: failed** (test:failed)
+- files: `muse_decode_layer/hypotheses/done/failed/moe-chain-cuda-swapab-expert-once-large-t.result.json`, `muse_decode_layer/hypotheses/done/failed/moe-chain-cuda-swapab-expert-once-large-t.patch`; branch `hyp/muse_decode_layer/moe-chain-cuda-swapab-expert-once-large-t`
+
+## Follow-ups
+
+- rewrite stage 1 of `moe_align_block_size + Marlin w13 + silu_and_mul (act_and_mul_kernel) + Marlin w2 at T > 32 (verify_16 T=128, verify_32 T=256)`: read the replaced kernels' own us per shape (profile top_kernels) against the incumbent and the floor, and check which Milestone it reached. The next stage is `/hypothesize muse_decode_layer "<what to fix or tune>" --kind rewrite --depends-on moe-chain-cuda-swapab-expert-once-large-t --stage 2`; a slow or failed first cut is the expected start, not a do-not-retry.
+

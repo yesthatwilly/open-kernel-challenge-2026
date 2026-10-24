@@ -1,0 +1,39 @@
+{
+ "schema": 1,
+ "problem": "muse_decode_layer",
+ "slug": "moe-chain-cuda-swapab-expert-once-large-t",
+ "job": "1bba1bab70da4f61",
+ "mode": "submit",
+ "duplicate_of": null,
+ "content_hash": "a44d8c69c44a116da8fd7a060450d43bf9d12a39d76ef2d6c653d1eac4dc1a1f",
+ "submission_sha256": "2f179228e60c6ace4d98de410580e5b5865f5d612ff771aa143fa2dda9fbff40",
+ "submission_blob": "81d11fec488c02b0e7fe3a48f764aca20bb6a438",
+ "impl_commit": "e65eda8e263ae1408bdb9e263068ca89a29ceb0d",
+ "base_sha": "a449561e2d3c5c1910b17badcd989afdfcebd989",
+ "created_at": 1792865873.7315636,
+ "finished_at": 1792866002.3753428,
+ "gpu": "H200",
+ "evaluator_sha256": "2999d8a201bb2b0bad6c7b3998af2143a1ed720d531dbb4d15670721ee9f957b",
+ "status": "done",
+ "passed": false,
+ "error": null,
+ "returncode": 112,
+ "tests": {
+  "total": 0,
+  "passed": 0
+ },
+ "first_failing": null,
+ "speedup": null,
+ "speedup_ci": null,
+ "score_us": null,
+ "baseline_us": null,
+ "flags": [],
+ "checks": {
+  "flagged": [],
+  "ok": true,
+  "rejected": []
+ },
+ "shapes": [],
+ "loads": [],
+ "attribution": null
+}
