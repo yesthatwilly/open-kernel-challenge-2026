@@ -57,13 +57,15 @@ base_sha: 85d607280348efbd3eef09246edcdfa7132f09fe
 base_blob: e4931f050c7fb99835fe116d25bb454a5ea731e9
 branch: hyp/muse_prefill_layer/fa3-contiguous-kv-gather
 worktree: .worktrees/muse_prefill_layer/fa3-contiguous-kv-gather
-mode: null
+mode: check
 implemented_at: 2026-10-24T053303Z
 impl_commit: bf34ed281f7cb6c4d9425fcbabb532e6321f566e
 submission_sha256: fb3ee1bcd938c2c092d1909c93c139a120a5604a2b749a7529ed3a8ad304e0fb
 norm_sha256: 027ee9a916288967957fc1037dd7fb13d6b42e28bb1cd9474c5a352c0a05ddaa
 submission_blob: 01e9a2100d168ca5955d1465bb3308871c7d8847
 lint_warnings: 1
+attempt_file: 2026-10-24T053303Z-check-fa3-contiguous-kv-gather.md
+prepared_at: 2026-10-24T053303Z
 ---
 
 # fa3-contiguous-kv-gather
