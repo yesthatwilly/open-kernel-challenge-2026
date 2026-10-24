@@ -16,6 +16,8 @@ items here and in each tick's summary. Resolved items move to the log at the bot
 - Attention-decode base: fused-preattention-triton with no parent; the 12 parity dependents
   re-pointed to it. (2026-10-24)
 - Adversarial review model: Opus, not Fable. (2026-10-24)
+- Autonomy: run the loop all day, every day. Mint hypotheses when queues run low, and mint next
+  rewrite stages. Submits are still asked as above. (2026-10-24)
 
 ## Log
 
