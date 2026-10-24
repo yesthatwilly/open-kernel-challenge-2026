@@ -53,13 +53,15 @@ base_sha: 81028ae9b9d5098940f55070c9174a5674a3aaaf
 base_blob: bc007e643ac0b440147a732071f23d9b3563174c
 branch: hyp/muse_attention_decode/paired-heads-launch-cleanup
 worktree: .worktrees/muse_attention_decode/paired-heads-launch-cleanup
-mode: null
+mode: check
 implemented_at: 2026-10-24T104221Z
 impl_commit: 12230f154820fa60ff8dc5f1e9efca0e1d05c4c9
 submission_sha256: 9a39092406218bc28179ef0a494d95f6575165f73da1dba63e44b168aa5a82ff
 norm_sha256: 53b59c7f32fce92796ec3a97e3c5c5231248249bd61512719e8cb1fe4279cbd9
 submission_blob: 60fc66432a00f0c6a1e2228f6a0775cc08f492fc
 lint_warnings: 0
+attempt_file: 2026-10-24T104221Z-check-paired-heads-launch-cleanup.md
+prepared_at: 2026-10-24T104221Z
 ---
 
 # paired-heads-launch-cleanup
