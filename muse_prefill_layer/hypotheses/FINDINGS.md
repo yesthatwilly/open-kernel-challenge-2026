@@ -1,6 +1,6 @@
 # muse_prefill_layer findings
 
-Regenerated 2026-10-24T015224Z by `churn.py index`. Read this before writing a hypothesis for muse_prefill_layer.
+Regenerated 2026-10-24T024944Z by `churn.py index`. Read this before writing a hypothesis for muse_prefill_layer.
 
 ## Current best
 
@@ -27,4 +27,4 @@ none recorded yet (run `churn.py best-init`).
 - queue: fa3-contiguous-kv-gather [FA3 call] p3 queued
 - queue: moe-align-side-stream [MoE align/dispatch] p2 queued
 - queue: qk-norm-fp8-cache-store-fusion [pre-attention norm+rope + cache store] p4 queued
-- queue: sglang-pipeline-parity [whole-layer parity (SGLang pipeline) + routing remap] p1 queued
+- running: sglang-pipeline-parity [whole-layer parity (SGLang pipeline) + routing remap] p1 running

@@ -1,11 +1,11 @@
 # muse_decode_layer hypotheses
 
-Regenerated 2026-10-24T021809Z. Best: 0.0045x [0.0044,0.0046] job `3c3181b1fce24b9a` (check)
+Regenerated 2026-10-24T024944Z. Best: 0.0045x [0.0044,0.0046] job `3c3181b1fce24b9a` (check)
 
 | created | slug | kind | area | where | outcome | speedup | CI | job | mode | promotion | review | expected hit |
 |---|---|---|---|---|---|---|---|---|---|---|---|---|
-| 2026-10-23T225318Z | sglang-pipeline-parity-router-hilo-m8 | primary | router GEMM | done/gain | gain | 1.0216 | [1.006,1.037] | e260dfe413e448c7 | check | merged | proceed | 1/6 |
-| 2026-10-23T225338Z | cache-store-fused-fp8-cast | primary | cache store | queue | queued |  |  |  |  |  | required |  |
+| 2026-10-23T225318Z | sglang-pipeline-parity-router-hilo-m8 | primary | router GEMM | done/gain | gain | 1.0216 | [1.006,1.037] | e260dfe413e448c7 | check | submitted | proceed | 1/6 |
+| 2026-10-23T225338Z | cache-store-fused-fp8-cast | primary | cache store | running | running |  |  | 7264526cf9f94c37 | check |  | proceed |  |
 | 2026-10-23T225353Z | expert-id-map-single-kernel | primary | MoE align/dispatch | queue | queued |  |  |  |  |  | required |  |
 | 2026-10-23T225545Z | fa3-num-splits-full-no-metadata | primary | FA3 call | queue | queued |  |  |  |  |  | required |  |
 | 2026-10-23T225545Z | marlin-block-m-cap-16 | primary | w13 marlin | queue | queued |  |  |  |  |  | required |  |
