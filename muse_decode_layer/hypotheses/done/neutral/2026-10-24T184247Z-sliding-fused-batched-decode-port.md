@@ -50,10 +50,10 @@ priority: 1
 kind: primary
 controls_for: null
 review: proceed
-status: running
+status: done
 review_at: 2026-10-24T185011Z
 review_companions: null
-stage: dispatched
+stage: harvested
 claimed_at: 2026-10-24T185011Z
 base_sha: 90040c7132925d246133b05640f35bf2b6622eb8
 base_blob: 3d70ae6e2de0d48c4a4f2a469ced8234f5348182
@@ -70,6 +70,13 @@ attempt_file: 2026-10-24T231258Z-check-sliding-fused-batched-decode-port.md
 prepared_at: 2026-10-24T231258Z
 job: b01fd2df41a040b3
 dispatched_at: 2026-10-24T231312Z
+outcome: neutral
+verdict_detail: within-ci
+speedup: 1.2247710412397999
+speedup_ci: [1.2063994756212029, 1.2431426068583968]
+harvested_at: 2026-10-24T232002Z
+best_at_harvest: 1.228328123558382
+promotion: null
 ---
 
 # sliding-fused-batched-decode-port
@@ -148,3 +155,35 @@ Fix:
 - The new path had no fallback and no PATH CHOSEN line, so a Triton build or launch error would have raised out of kernel_fn and failed the run. The fused call is now wrapped in try/except keyed on config (batch, page, window, rope, scaled). On failure it turns the key off for good, prints "PATH CHOSEN = MASTER (FA3)" and runs the master branch (else became `if not fused`). On first success it prints "PATH CHOSEN = FUSED". Lint OK (only host-sync warnings in prepare-only code). py_compile OK, and __pycache__ was removed.
 
 Residual risk: this kernel has never run inside the layer at batch 16/32. A wrong result would fail the run rather than fall back (there is no numeric self-check), and the decode_32 gain may come out flat if the 16-split workspace traffic cancels the launches saved.
+
+## Result
+
+- job `b01fd2df41a040b3` (check), status done, passed True, tests 13/13
+- speedup 1.2248x, 95% CI [1.2064, 1.2431], score 18469.002971446916 µs vs SGLang 22620.3 µs
+- best at harvest: {"speedup": 1.228328123558382, "ci": [1.2099032017050062, 1.2467530454117577], "job": "81ee6714b7614a99"}; base result: muse_decode_layer/hypotheses/done/gain/small-t-launch-minimal-dense-chain-pdl.result.json
+- **outcome: neutral** (within-ci)
+- files: `muse_decode_layer/hypotheses/done/neutral/sliding-fused-batched-decode-port.result.json`, `muse_decode_layer/hypotheses/done/neutral/sliding-fused-batched-decode-port.patch`; branch `hyp/muse_decode_layer/sliding-fused-batched-decode-port`
+
+## Attribution
+
+| shape | w | base µs | hyp µs | delta | verdict |
+|---|---|---|---|---|---|
+| batch=1 ctx=80000 dist=soft layer=sliding load=decode_1 page=1 repeats=60 | 46 | 132.74 | 133.14 | 1.0002 | flat |
+| batch=1 ctx=80000 dist=soft layer=full load=decode_1 page=1 repeats=60 | 16 | 142.57 | 143.68 | 1.0028 | flat |
+| batch=16 ctx=80000 dist=soft layer=sliding load=decode_16 page=1 spread=agentic | 46 | 217.06 | 209.07 | 1.0376 | gained |
+| batch=16 ctx=80000 dist=soft layer=full load=decode_16 page=1 spread=agentic | 16 | 347.51 | 363.42 | 0.9895 | flat |
+| batch=32 ctx=80000 dist=soft layer=sliding load=decode_32 page=1 spread=agentic | 46 | 246.99 | 245.52 | 1.0305 | gained |
+| batch=32 ctx=80000 dist=soft layer=full load=decode_32 page=1 spread=agentic | 16 | 534.98 | 529.09 | 1.005 | flat |
+| batch=1 ctx=80000 dist=soft layer=sliding load=verify_1 page=1 q_len=8 | 46 | 186.48 | 190.44 | 0.9939 | flat |
+| batch=1 ctx=80000 dist=soft layer=full load=verify_1 page=1 q_len=8 | 16 | 195.92 | 202.52 | 0.9896 | flat |
+| batch=16 ctx=80000 dist=soft layer=sliding load=verify_16 page=1 q_len=8 spread=agentic | 46 | 447.55 | 445.96 | 1.014 | flat |
+| batch=16 ctx=80000 dist=soft layer=full load=verify_16 page=1 q_len=8 spread=agentic | 16 | 599.37 | 591.19 | 0.9792 | flat |
+| batch=32 ctx=80000 dist=soft layer=sliding load=verify_32 page=1 q_len=8 spread=agentic | 46 | 626.79 | 622.95 | 0.9503 | lost |
+| batch=32 ctx=80000 dist=soft layer=full load=verify_32 page=1 q_len=8 spread=agentic | 16 | 910.91 | 929.33 | 0.9469 | lost |
+
+gained on sliding decode_16, decode_32; lost on sliding verify_32; full verify_32. Expected hit: 5/5. Noise ±1.5%.
+
+## Follow-ups
+
+- within-ci: the change is not proven either way; a stacked hypothesis (`depends_on: sliding-fused-batched-decode-port`) that adds a further change in the same area is the only way to learn more (identical code is never re-run).
+
