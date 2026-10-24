@@ -36,10 +36,10 @@ priority: 2
 kind: primary
 controls_for: null
 review: proceed
-status: running
+status: done
 review_at: 2026-10-23T230427Z
 review_companions: null
-stage: dispatched
+stage: harvested
 claimed_at: 2026-10-23T230427Z
 base_sha: e64f27ef09b3512d26573dde4d35b8ec3ade1f63
 base_blob: 5a2064af06f442f01dff926cb4f1eca75f992a24
@@ -56,6 +56,13 @@ attempt_file: 2026-10-24T015218Z-check-unpooler-slice-triton-gemv.md
 prepared_at: 2026-10-24T015218Z
 job: 4c2b113f81434570
 dispatched_at: 2026-10-24T015224Z
+outcome: regression
+verdict_detail: regression
+speedup: 0.880091413038843
+speedup_ci: [0.8668900418432604, 0.8932927842344255]
+harvested_at: 2026-10-24T021807Z
+best_at_harvest: 0.9020752041800139
+promotion: null
 ---
 
 # unpooler-slice-triton-gemv
@@ -134,3 +141,53 @@ Verified against `git diff` in the worktree (hyp/muse_bf16_proj/unpooler-slice-t
 - [x] All work happens inside the timed call, with no output caching or replay: every call launches the kernel on the fresh x and writes a fresh output.
 
 Lint: `python3 -I .claude/skills/churnsubs/bin/okc_lint.py muse_bf16_proj/submission.py --problem muse_bf16_proj` -> `CLEAN: submission.py`
+
+## Result
+
+- job `4c2b113f81434570` (check), status done, passed True, tests 9/9
+- speedup 0.8801x, 95% CI [0.8669, 0.8933], score 5488.975268284764 µs vs SGLang 4830.8 µs
+- best at harvest: {"speedup": 0.9020752041800139, "ci": [0.8885440761173137, 0.9156063322427139], "job": "366189f0f1114da1"}; base result: muse_bf16_proj/hypotheses/done/gain/sglang-gemm-dispatch-parity.result.json
+- **outcome: regression** (regression)
+- files: `muse_bf16_proj/hypotheses/done/regression/unpooler-slice-triton-gemv.result.json`, `muse_bf16_proj/hypotheses/done/regression/unpooler-slice-triton-gemv.patch`; branch `hyp/muse_bf16_proj/unpooler-slice-triton-gemv`
+
+## Attribution
+
+| shape | w | base µs | hyp µs | delta | verdict |
+|---|---|---|---|---|---|
+| layer=qkv_gate load=decode_1 m=1 | 62 | 13.96 | 14.35 | 0.9717 | flat |
+| layer=o load=decode_1 m=1 | 62 | 6.52 | 6.89 | 0.9784 | flat |
+| layer=pooler load=decode_1 m=1 | 62 | 21.22 | 21.52 | 0.9996 | flat |
+| layer=unpooler load=decode_1 m=1 | 62 | 6.48 | 11.53 | 0.5978 | lost |
+| layer=router load=decode_1 m=1 | 62 | 10.36 | 10.44 | 0.9731 | flat |
+| layer=qkv_gate load=decode_16 m=16 | 62 | 13.89 | 14.33 | 0.994 | flat |
+| layer=o load=decode_16 m=16 | 62 | 6.7 | 6.69 | 0.9776 | flat |
+| layer=pooler load=decode_16 m=16 | 62 | 21.45 | 21.49 | 1.0048 | flat |
+| layer=unpooler load=decode_16 m=16 | 62 | 18.66 | 18.79 | 0.9946 | flat |
+| layer=router load=decode_16 m=16 | 62 | 14.51 | 15.19 | 0.9976 | flat |
+| layer=qkv_gate load=decode_32 m=32 | 62 | 14.19 | 13.97 | 1.019 | flat |
+| layer=o load=decode_32 m=32 | 62 | 6.62 | 6.84 | 1.021 | flat |
+| layer=pooler load=decode_32 m=32 | 62 | 21.75 | 21.51 | 1.0097 | flat |
+| layer=unpooler load=decode_32 m=32 | 62 | 18.55 | 18.86 | 0.9963 | flat |
+| layer=router load=decode_32 m=32 | 62 | 15.14 | 15.1 | 1.0043 | flat |
+| layer=qkv_gate load=verify_1 m=8 | 62 | 14.04 | 14.39 | 1.0054 | flat |
+| layer=o load=verify_1 m=8 | 62 | 7.01 | 6.96 | 1.0374 | gained |
+| layer=pooler load=verify_1 m=8 | 62 | 21.28 | 21.17 | 1.0151 | flat |
+| layer=unpooler load=verify_1 m=8 | 62 | 6.84 | 84.79 | 0.0857 | lost |
+| layer=router load=verify_1 m=8 | 62 | 26.14 | 26.43 | 1.0067 | flat |
+| layer=qkv_gate load=verify_16 m=128 | 62 | 16.9 | 17.26 | 1.011 | flat |
+| layer=o load=verify_16 m=128 | 62 | 7.58 | 7.79 | 1.0125 | flat |
+| layer=pooler load=verify_16 m=128 | 62 | 25.13 | 25.41 | 0.9935 | flat |
+| layer=unpooler load=verify_16 m=128 | 62 | 19.84 | 20.29 | 0.9859 | flat |
+| layer=router load=verify_16 m=128 | 62 | 16.62 | 16.64 | 1.0038 | flat |
+| layer=qkv_gate load=verify_32 m=256 | 62 | 19.58 | 19.82 | 0.9892 | flat |
+| layer=o load=verify_32 m=256 | 62 | 9.25 | 9.81 | 0.9951 | flat |
+| layer=pooler load=verify_32 m=256 | 62 | 31.17 | 30.63 | 1.0066 | flat |
+| layer=unpooler load=verify_32 m=256 | 62 | 24.33 | 25.0 | 0.993 | flat |
+| layer=router load=verify_32 m=256 | 62 | 17.76 | 17.71 | 0.9919 | flat |
+
+gained on o verify_1; lost on unpooler decode_1, verify_1. Expected hit: 1/4. Noise ±1.5%.
+
+## Follow-ups
+
+- record which shapes lost (Attribution) and do not retry this area in this form.
+
