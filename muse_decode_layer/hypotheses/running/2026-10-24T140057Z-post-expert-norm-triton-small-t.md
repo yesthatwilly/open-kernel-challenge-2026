@@ -63,13 +63,15 @@ base_sha: 5f6055ebd1ea05b43c2b3a6e3a02c0f86b49ce62
 base_blob: 3a358375a50dcc6e19437992f7c610431582ea72
 branch: hyp/muse_decode_layer/post-expert-norm-triton-small-t
 worktree: .worktrees/muse_decode_layer/post-expert-norm-triton-small-t
-mode: null
+mode: check
 implemented_at: 2026-10-24T140647Z
 impl_commit: 880154e5c77f242f5b80b4a179282de316a6f3c5
 submission_sha256: b7656c884dc96c0aa5d211b88628f9ea32e2b70a73321ee6300040edb7b202f2
 norm_sha256: c0c86f13672cb0be3211d73ca478ff0b5676a667b03822b1b5ebb356b1194896
 submission_blob: cc466fce207709c98ab0e78c2435c1c459890fdb
 lint_warnings: 1
+attempt_file: 2026-10-24T140648Z-check-post-expert-norm-triton-small-t.md
+prepared_at: 2026-10-24T140648Z
 ---
 
 # post-expert-norm-triton-small-t
