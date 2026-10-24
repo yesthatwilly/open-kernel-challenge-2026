@@ -29,10 +29,10 @@ priority: 5
 kind: primary
 controls_for: null
 review: proceed
-status: running
+status: done
 review_at: 2026-10-24T184058Z
 review_companions: null
-stage: dispatched
+stage: harvested
 claimed_at: 2026-10-24T184059Z
 base_sha: 49da3d4776ed7ee46334a320b804bc460500870c
 base_blob: c6854f093588da524e63657576b27ed720756e32
@@ -49,6 +49,13 @@ attempt_file: 2026-10-24T184520Z-check-paired-norm-gate-token-tiled.md
 prepared_at: 2026-10-24T184520Z
 job: 5e01430a8dfe4977
 dispatched_at: 2026-10-24T184530Z
+outcome: neutral
+verdict_detail: within-ci
+speedup: 1.391106406928478
+speedup_ci: [1.3702398108245508, 1.4148797388327192]
+harvested_at: 2026-10-24T231958Z
+best_at_harvest: 1.3948738389144513
+promotion: null
 ---
 
 # paired-norm-gate-token-tiled
@@ -122,3 +129,35 @@ No gate or fallback is involved: this rewrites the incumbent epilogue in place, 
 Fixes: none.
 
 Residual risk: moot if full-verify-cuda-streamk-splitkv lands; the 2.8/4.0 us epilogue saving is ~0.2% geomean, readable only on the kernel row.
+
+## Result
+
+- job `5e01430a8dfe4977` (check), status done, passed True, tests 16/16
+- speedup 1.3911x, 95% CI [1.3702, 1.4149], score 2707.4133087460073 µs vs SGLang 3766.3 µs
+- best at harvest: {"speedup": 1.3948738389144513, "ci": [1.3739507313307344, 1.415796946498168], "job": "698d4cd3838c4a63"}; base result: muse_attention_decode/hypotheses/done/gain/sliding-deep-splits-on-cuda-splitkv.result.json
+- **outcome: neutral** (within-ci)
+- files: `muse_attention_decode/hypotheses/done/neutral/paired-norm-gate-token-tiled.result.json`, `muse_attention_decode/hypotheses/done/neutral/paired-norm-gate-token-tiled.patch`; branch `hyp/muse_attention_decode/paired-norm-gate-token-tiled`
+
+## Attribution
+
+| shape | w | base µs | hyp µs | delta | verdict |
+|---|---|---|---|---|---|
+| batch=1 ctx=80000 dist=soft heads=tp8 layer=sliding load=decode_1 page=1 | 46 | 13.17 | 12.85 | 1.0192 | flat |
+| batch=1 ctx=80000 dist=coherent heads=tp8 layer=full load=decode_1 page=1 | 16 | 27.26 | 26.97 | 1.0031 | flat |
+| batch=16 ctx=80000 dist=soft heads=tp8 layer=sliding load=decode_16 page=1 spread=agentic | 46 | 15.34 | 15.18 | 1.0205 | flat |
+| batch=16 ctx=80000 dist=coherent heads=tp8 layer=full load=decode_16 page=1 spread=agentic | 16 | 122.79 | 121.67 | 1.0031 | flat |
+| batch=32 ctx=80000 dist=soft heads=tp8 layer=sliding load=decode_32 page=1 spread=agentic | 46 | 24.24 | 23.99 | 1.0119 | flat |
+| batch=32 ctx=80000 dist=coherent heads=tp8 layer=full load=decode_32 page=1 spread=agentic | 16 | 241.9 | 257.14 | 0.9408 | lost |
+| batch=1 ctx=80000 dist=soft heads=tp8 layer=sliding load=verify_1 page=1 q_len=8 | 46 | 16.72 | 16.7 | 1.0141 | flat |
+| batch=1 ctx=80000 dist=coherent heads=tp8 layer=full load=verify_1 page=1 q_len=8 | 16 | 30.03 | 30.11 | 1.0008 | flat |
+| batch=16 ctx=80000 dist=soft heads=tp8 layer=sliding load=verify_16 page=1 q_len=8 spread=agentic | 46 | 22.67 | 22.43 | 1.0094 | flat |
+| batch=16 ctx=80000 dist=coherent heads=tp8 layer=full load=verify_16 page=1 q_len=8 spread=agentic | 16 | 161.98 | 162.82 | 0.9943 | flat |
+| batch=32 ctx=80000 dist=soft heads=tp8 layer=sliding load=verify_32 page=1 q_len=8 spread=agentic | 46 | 28.7 | 28.75 | 0.9985 | flat |
+| batch=32 ctx=80000 dist=coherent heads=tp8 layer=full load=verify_32 page=1 q_len=8 spread=agentic | 16 | 300.83 | 299.51 | 1.0017 | flat |
+
+lost on full decode_32. Expected hit: 0/3. Noise ±1.6%.
+
+## Follow-ups
+
+- within-ci: the change is not proven either way; a stacked hypothesis (`depends_on: paired-norm-gate-token-tiled`) that adds a further change in the same area is the only way to learn more (identical code is never re-run).
+
