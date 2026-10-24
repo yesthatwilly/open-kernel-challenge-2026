@@ -59,13 +59,15 @@ base_sha: a928067ca1fead9b9f3da0998e11f654e387579f
 base_blob: d9a9375ef4721ab9b28cc9d6364c92e67c7ccc59
 branch: hyp/muse_moe_w4a16/marlin-two-stream-expert-halves-small-m
 worktree: .worktrees/muse_moe_w4a16/marlin-two-stream-expert-halves-small-m
-mode: null
+mode: submit
 implemented_at: 2026-10-24T165728Z
 impl_commit: ea345883a3f48ce1b31b2198648961ff034fc764
 submission_sha256: f9e813ee29cbf3a31bc6fca81c79cae37f8068070204751507caec392dbdd99e
 norm_sha256: e14b6ce4971370f6e2e4020d4604ad411719c3aa6d9f59f8f097e088b4e144d9
 submission_blob: bf2d61e93501721a0e00508157ae60ae4b279d10
 lint_warnings: 15
+attempt_file: 2026-10-24T181733Z-submit-marlin-two-stream-expert-halves-small-m.md
+prepared_at: 2026-10-24T181733Z
 ---
 
 # marlin-two-stream-expert-halves-small-m
