@@ -54,13 +54,19 @@ review: proceed
 status: running
 review_at: 2026-10-24T164610Z
 review_companions: null
-stage: claimed
+stage: implemented
 claimed_at: 2026-10-24T164610Z
 base_sha: 9b3df649d0389c5bd6c8e6885d9ab4d33f1e701d
 base_blob: 635cfee3ac2c3f7c66840b8c8a082cad2fa41a68
 branch: hyp/muse_prefill_layer/experts-triton-nvfp4-packed-asm-dequant
 worktree: .worktrees/muse_prefill_layer/experts-triton-nvfp4-packed-asm-dequant
 mode: null
+implemented_at: 2026-10-24T164945Z
+impl_commit: 3c444875aef3f2a85c86b412e22d10ce0a6290dc
+submission_sha256: 1906d1a59c89b18216925dfaec1f22e22238b39df6c45c6c9db25c5eebd01ef0
+norm_sha256: 5908ab4aba141d6199bf362659b5869fea3728447c301eafd5f0f1a02825ee69
+submission_blob: 526518b54879e7929be2f03a0c8084907596fa70
+lint_warnings: 7
 ---
 
 # experts-triton-nvfp4-packed-asm-dequant
@@ -110,3 +116,47 @@ No companions. This is a rewrite stage judged on _moe_nvfp4_gemm_kernel's own ti
 - Is the bf16 multiply already native HMUL2.BF16 on sm_90 in this Triton version? If yes, the per-element saving is ~6-8 instructions, not 7-9, and the win is near the low end of ~0.5-0.9 ms.
 - Should the sb_lo/sb_hi permute/reshape/broadcast also move into the asm? Each register could take the 8 compact scales per row and select by group index. It is left byte-identical here and may be a comparable cost. The ttgir counts should show whether it is a convert_layout of its own.
 
+
+## Implementation notes
+
+Worktree `.worktrees/muse_prefill_layer/experts-triton-nvfp4-packed-asm-dequant`, file `muse_prefill_layer/submission.py` only (112 insertions, 17 deletions, uncommitted).
+
+- New module constant `PACKED_DEQUANT = True`. False skips the packed variant entirely, so the Triton path runs master's scalar dequant.
+- New `@triton.jit _e2m1x4_dequant_bf16(b, s_lo, s_hi)`: one `tl.inline_asm_elementwise` (pack=4, is_pure=True, dtype=(bf16, bf16), constraints `=r,=r,=r,=r,r,r,r,r,r`). Operand map: $0,$1 = w_lo bf16x2 regs, $2,$3 = w_hi, $4 = 4 packed code bytes, $5,$6 = s_lo, $7,$8 = s_hi (the same result-major register order as Triton's test_inline_asm_packed_multiple_outputs). Body: `prmt.b32 t0, $4, 0, 0x4140` / `0x4342` spreads bytes (0,1)/(2,3) into the low byte of each half. Then, per register, shl/and/shl/and/or (ptxas should fuse to shl+lop3) gives the spec's masks 0x01C001C0 / 0x80008000 at shifts 6/12 (low nibble) and 2/8 (high nibble). `fma.rn.bf16x2 d, x, s, 0x80008000` (-0.0 addend) is the multiply. I used fma rather than mul.rn.bf16x2 because fma works on sm_80+ and needs no PTX 7.8 check. The spec allows either.
+- I checked the bit placement offline with a Python simulation of prmt + shifts + masks against the scalar `((b&7)<<6)|((b&8)<<12)` and `((b&0x70)<<2)|((b&0x80)<<8)` on 200k random 4-byte words, with element j = byte j: 0 mismatches. I could not test the PTX itself or Triton's packing order (no GPU).
+- `_moe_nvfp4_gemm_kernel` gets a `PACKED: tl.constexpr` argument, as the review requires. `if PACKED:` loads the raw uint8 code tile and calls the asm helper. The else branch is master's lines unchanged (`.to(tl.int32)` load, the two `_e2m1_bits_to_bf16(...) * sb_*` lines). The sb_lo/sb_hi construction, the dots and the epilogue are untouched.
+- `_nvfp4_moe_gemm` takes a positional `packed` argument and passes `PACKED=packed`. Its prepare()-only report line now also prints `packed=`, plus `convert_layout=N local_alloc=N` counted by regex `(?:ttg|triton_gpu)[.]convert_layout|local_alloc` over `compiled.asm["ttgir"]` (new helper `_ttgir_counts`, which prints `?` if asm is unavailable).
+- `_check_expert_gemms(bank, weights, packed)`: the only change is the flag passed through. The check logic is unchanged.
+- prepare(): it always runs `_check_expert_gemms(..., packed=False)` first. That is master's check, still fatal on failure, and it gives the control layout counts. If PACKED_DEQUANT is set, it then runs `_check_expert_gemms(..., packed=True)` under try/except. On any exception it prints the type and the first 3000 chars of the message (including the mismatch summary) and leaves `state["packed"] = False`. It then prints `[expert gemm] packed dequant ON|OFF`.
+- Deviation, a small extra safety step beyond the review: `_check_experts_e2e` (Triton vs Marlin at T=8192) also falls back. If it fails with packed=True, prepare logs it, sets packed False and reruns the e2e check, which must then pass. A failure with packed=False raises as on master.
+- `_experts_triton` passes `state["packed"]` to both GEMMs. This is the review's sanctioned deviation from "byte-identical _experts_*". It branches on prepare-time state only, never on input values. `_experts`, `_experts_marlin`, kernel_fn, EXPERT_CONFIGS, the nibble order and the Marlin path are byte-identical.
+- Limit: a CUDA-level fault in the packed kernel (sticky context error) cannot be recovered by the fallback. The asm touches no memory, so this is unlikely. Compile errors and value mismatches are recovered.
+- Compile cost: prepare() now compiles 12 expert-GEMM variants instead of 6 (3 configs x 2 GEMMs x packed on/off), well inside 300 s.
+
+## Rules check
+
+Checked against `git -C .worktrees/muse_prefill_layer/experts-triton-nvfp4-packed-asm-dequant diff`:
+
+- [x] CUDA-graph capturable: the diff adds no `.item()`/`.cpu()`/tensor prints in kernel_fn's call graph. The new synchronize calls are in prepare() only (lint: outside kernel_fn's call graph). The `state["packed"]` branch is on a prepare-time Python bool, not on input values. Allocations are unchanged.
+- [x] Nothing derived from `data` is cached across calls: `state["packed"]` comes from the prepare() checks on weights and synthetic data only.
+- [x] Weights: there is no new weight storage and no BF16 weight copy. The packed path dequantizes the same NVFP4 codes in registers per tile. The nibble reorder is unchanged (lossless, checked).
+- [x] Activations BF16 where SGLang keeps BF16: the A tiles, dot inputs and outputs are unchanged. The dequantized W tile is BF16 as before and the product is exact. KV cache/queries: n/a, attention is untouched.
+- [x] Attention sees every key: n/a, the attention code is not in the diff.
+- [x] No timing patches, harness frames/I/O/secrets, module edits, reference import, subprocesses or network: the only new import is stdlib `re`, used on Triton's own compiled TTGIR string in prepare().
+- [x] All work happens inside the timed call; no output caching or replay: the expert GEMMs still run per call. prepare() only compiles and checks.
+- [x] First-line marker `# okc: problem=muse_prefill_layer` kept. No triton.autotune.
+
+okc_lint output:
+
+```
+warn  host-sync    L536: torch.cuda.synchronize()  (outside kernel_fn's call graph; fine in prepare())
+warn  host-sync    L578: torch.cuda.synchronize()  (outside kernel_fn's call graph; fine in prepare())
+warn  host-sync    L632: torch.cuda.synchronize()  (outside kernel_fn's call graph; fine in prepare())
+warn  host-sync    L637: torch.cuda.synchronize()  (outside kernel_fn's call graph; fine in prepare())
+warn  host-sync    L648: torch.cuda.synchronize()  (outside kernel_fn's call graph; fine in prepare())
+warn  host-sync    L656: torch.cuda.synchronize()  (outside kernel_fn's call graph; fine in prepare())
+warn  host-sync    L665: torch.cuda.synchronize()  (outside kernel_fn's call graph; fine in prepare())
+OK with warnings: muse_prefill_layer/submission.py
+```
+
+`python3 -I -m py_compile`: OK (__pycache__ removed).
