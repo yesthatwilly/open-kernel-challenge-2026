@@ -961,7 +961,7 @@ def cmd_promote(a):
         s, ci = h.get("speedup") or 0, h.get("speedup_ci") or [0, 0]
         B = (best or {}).get("speedup") or 0
         Bhi = ((best or {}).get("ci") or [B, B])[1] or B
-        if ci[0] <= max(B, Bhi):
+        if ci[0] <= max(B, Bhi) and (best or {}).get("slug") != h["slug"]:
             fm_set(h["_path"], promotion="superseded", promotion_reason=f"best is now {B}")
             git("add", "--", rel(h["_path"]))
             git("commit", "-q", "-m", f"churn({p}): {h['slug']} superseded", check=False)
