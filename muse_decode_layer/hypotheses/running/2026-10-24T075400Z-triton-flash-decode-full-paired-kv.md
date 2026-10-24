@@ -61,13 +61,15 @@ base_sha: 5785b27b7b785ce157d4372280668438549e2c34
 base_blob: de98030423860cfc9507b61d19f82a416223a23d
 branch: hyp/muse_decode_layer/triton-flash-decode-full-paired-kv
 worktree: .worktrees/muse_decode_layer/triton-flash-decode-full-paired-kv
-mode: null
+mode: check
 implemented_at: 2026-10-24T084126Z
 impl_commit: bbbf3168de76ebc524cb23723b2ebf734b893072
 submission_sha256: 25f223ef917c96cffb2a5965c921b85e5c5aa0ddd099b70cc4e00b9d30a62c7f
 norm_sha256: 17685f9ed93efa351a1232036b6b85bc10c7ec8db305f4d0668059c225536acc
 submission_blob: cf09a9196c4d7a20540bb82c9d79bdebaeea2a43
 lint_warnings: 1
+attempt_file: 2026-10-24T084126Z-check-triton-flash-decode-full-paired-kv.md
+prepared_at: 2026-10-24T084126Z
 ---
 
 # triton-flash-decode-full-paired-kv
