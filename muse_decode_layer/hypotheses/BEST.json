@@ -1,17 +1,17 @@
 {
  "problem": "muse_decode_layer",
- "job": "9dcaec316b3045a7",
+ "job": "a017e10aec544c55",
  "check_job": "9dcaec316b3045a7",
- "mode": "check",
- "speedup": 1.1635238875350442,
+ "mode": "submit",
+ "speedup": 1.1664628806987323,
  "ci": [
-  1.1460710292220184,
-  1.1809767458480698
+  1.1489659374882513,
+  1.183959823909213
  ],
- "score_us": 19441.199482308606,
+ "score_us": 19392.215881271793,
  "commit": "ea896254423db20bfb9c584010c4b8ca73228a23",
  "submission_blob": "cc466fce207709c98ab0e78c2435c1c459890fdb",
  "slug": "post-expert-norm-triton-small-t",
  "result": "muse_decode_layer/hypotheses/done/gain/post-expert-norm-triton-small-t.result.json",
- "updated_at": "2026-10-24T144811Z"
+ "updated_at": "2026-10-24T165804Z"
 }

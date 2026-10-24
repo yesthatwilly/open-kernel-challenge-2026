@@ -52,4 +52,4 @@ The warning predates this change: it flags the existing `torch.cuda.synchronize(
 low
 
 ## Result (after the run)
-(pending)
+Promotion passed: 1.1665x [1.1490,1.1840], board: {"rank": 405, "team": "yesthatwilly", "speedup": 1.1665, "first": false, "ahead": 404, "to_first": 1.8691}
