@@ -1,43 +1,43 @@
 # muse_bf16_proj findings
 
-Regenerated 2026-10-24T144812Z by `churn.py index`. Read this before writing a hypothesis for muse_bf16_proj.
+Regenerated 2026-10-24T145134Z by `churn.py index`. Read this before writing a hypothesis for muse_bf16_proj.
 
 ## Current best
 
-1.1760x [1.1584,1.1937] from job `875f3e0172ee48a1` (check), master commit `658d63bcdf`, hypothesis bf16-shape-gated-triton-winners-combo
+1.1984x [1.1805,1.2164] from job `1602a4e947e64090` (check), master commit `8b9ad430b2`, hypothesis bf16-m32-swapab-wgmma-triton
 
 Where the time goes (per scored shape, top kernels):
 
-- layer=qkv_gate load=decode_1 m=1: yours 13.2µs vs SGLang 14.1µs (SoL 7.9µs) · _qkv_splitk_sem_kernel 11.6µs 100.0%
-- layer=o load=decode_1 m=1: yours 6.6µs vs SGLang 7.1µs (SoL 3.5µs) · _pooler_skinny_kernel 4.4µs 100.0%
-- layer=pooler load=decode_1 m=1: yours 19.2µs vs SGLang 20.8µs (SoL 14.0µs) · _bf16_splitk_kernel 18.6µs 100.0%
-- layer=unpooler load=decode_1 m=1: yours 5.7µs vs SGLang 6.7µs (SoL 1.7µs) · _bf16_splitk_kernel 4.4µs 100.0%
-- layer=router load=decode_1 m=1: yours 5.7µs vs SGLang 10.2µs (SoL 1.8µs) · _router_hilo_kernel 3.4µs 82.2%, void at::native::vectorized_elementwise_kernel<4, at::nat... 0.7µs 17.8%
-- layer=qkv_gate load=decode_16 m=16: yours 14.0µs vs SGLang 14.1µs (SoL 7.9µs) · _qkv_splitk_sem_kernel 12.3µs 100.0%
-- layer=o load=decode_16 m=16: yours 6.4µs vs SGLang 6.7µs (SoL 3.6µs) · _pooler_skinny_kernel 4.6µs 100.0%
-- layer=pooler load=decode_16 m=16: yours 19.5µs vs SGLang 20.9µs (SoL 14.1µs) · _bf16_splitk_kernel 20.3µs 100.0%
-- layer=unpooler load=decode_16 m=16: yours 18.5µs vs SGLang 18.6µs (SoL 14.1µs) · nvjet_sm90_tst_64x16_64x16_2x1_v_bz_TNT 18.3µs 100.0%
-- layer=router load=decode_16 m=16: yours 6.2µs vs SGLang 15.0µs (SoL 1.8µs) · _router_hilo_kernel 3.5µs 83.3%, void at::native::vectorized_elementwise_kernel<4, at::nat... 0.7µs 16.7%
-- layer=qkv_gate load=decode_32 m=32: yours 14.1µs vs SGLang 14.2µs (SoL 8.0µs) · nvjet_sm90_tst_64x32_64x16_4x1_v_bz_splitK_TNT 8.8µs 83.1%, void cublasLt::splitKreduce_kernel<32, 16, int, float, __... 1.8µs 16.9%
-- layer=o load=decode_32 m=32: yours 7.0µs vs SGLang 7.1µs (SoL 3.6µs) · nvjet_sm90_tst_64x32_64x16_2x1_v_bz_TNT 4.8µs 100.0%
-- layer=pooler load=decode_32 m=32: yours 21.6µs vs SGLang 21.7µs (SoL 14.1µs) · nvjet_sm90_tst_128x32_64x10_4x1_v_bz_splitK_TNT 20.2µs 91.2%, void cublasLt::splitKreduce_kernel<32, 16, int, float, __... 2.0µs 8.8%
-- layer=unpooler load=decode_32 m=32: yours 18.9µs vs SGLang 18.8µs (SoL 14.1µs) · nvjet_sm90_tst_64x32_64x16_2x1_v_bz_TNT 18.9µs 100.0%
-- layer=router load=decode_32 m=32: yours 6.4µs vs SGLang 15.0µs (SoL 1.9µs) · _router_hilo_kernel 4.2µs 85.5%, void at::native::vectorized_elementwise_kernel<4, at::nat... 0.7µs 14.5%
-- layer=qkv_gate load=verify_1 m=8: yours 13.5µs vs SGLang 13.8µs (SoL 7.9µs) · _qkv_splitk_sem_kernel 11.9µs 100.0%
-- layer=o load=verify_1 m=8: yours 6.8µs vs SGLang 6.8µs (SoL 3.5µs) · _pooler_skinny_kernel 4.7µs 100.0%
-- layer=pooler load=verify_1 m=8: yours 19.6µs vs SGLang 20.9µs (SoL 14.0µs) · _bf16_splitk_kernel 19.5µs 100.0%
-- layer=unpooler load=verify_1 m=8: yours 6.5µs vs SGLang 7.3µs (SoL 1.8µs) · _bf16_splitk_kernel 4.6µs 100.0%
-- layer=router load=verify_1 m=8: yours 6.2µs vs SGLang 26.2µs (SoL 1.8µs) · _router_hilo_kernel 3.3µs 82.5%, void at::native::vectorized_elementwise_kernel<4, at::nat... 0.7µs 17.5%
-- layer=qkv_gate load=verify_16 m=128: yours 17.1µs vs SGLang 17.1µs (SoL 8.4µs) · nvjet_sm90_tst_96x64_64x10_4x2_h_bz_splitK_TNN 13.2µs 81.4%, void cublasLt::splitKreduce_kernel<32, 16, int, float, __... 3.0µs 18.6%
-- layer=o load=verify_16 m=128: yours 7.4µs vs SGLang 7.4µs (SoL 4.0µs) · nvjet_sm90_tst_128x64_64x8_1x2_h_bz_TNT 5.6µs 100.0%
-- layer=pooler load=verify_16 m=128: yours 26.0µs vs SGLang 25.3µs (SoL 14.6µs) · nvjet_sm90_tst_64x64_64x13_2x1_v_bz_TNT 26.2µs 100.0%
-- layer=unpooler load=verify_16 m=128: yours 20.3µs vs SGLang 20.2µs (SoL 14.6µs) · nvjet_sm90_tst_128x64_64x8_1x2_h_bz_TNT 20.3µs 100.0%
-- layer=router load=verify_16 m=128: yours 7.7µs vs SGLang 16.4µs (SoL 2.2µs) · _router_hilo_kernel 4.9µs 85.5%, void at::native::vectorized_elementwise_kernel<4, at::nat... 0.8µs 14.5%
-- layer=qkv_gate load=verify_32 m=256: yours 19.6µs vs SGLang 19.8µs (SoL 9.8µs) · nvjet_sm90_tst_96x64_64x10_2x4_h_bz_TNN 19.2µs 100.0%
-- layer=o load=verify_32 m=256: yours 9.7µs vs SGLang 9.6µs (SoL 4.5µs) · nvjet_sm90_tst_128x128_64x6_2x1_v_bz_TNT 8.2µs 100.0%
-- layer=pooler load=verify_32 m=256: yours 29.2µs vs SGLang 29.5µs (SoL 17.4µs) · nvjet_sm90_tst_128x64_64x8_1x2_h_bz_TNT 31.2µs 100.0%
-- layer=unpooler load=verify_32 m=256: yours 24.0µs vs SGLang 24.3µs (SoL 17.4µs) · nvjet_sm90_tst_128x128_64x6_2x1_v_bz_TNT 24.8µs 100.0%
-- layer=router load=verify_32 m=256: yours 9.4µs vs SGLang 17.6µs (SoL 2.7µs) · _router_hilo_kernel 7.1µs 90.2%, void at::native::vectorized_elementwise_kernel<4, at::nat... 0.8µs 9.8%
+- layer=qkv_gate load=decode_1 m=1: yours 12.9µs vs SGLang 14.2µs (SoL 7.9µs) · _qkv_splitk_sem_kernel 11.8µs 100.0%
+- layer=o load=decode_1 m=1: yours 6.3µs vs SGLang 6.7µs (SoL 3.5µs) · _pooler_skinny_kernel 4.6µs 100.0%
+- layer=pooler load=decode_1 m=1: yours 19.0µs vs SGLang 20.9µs (SoL 14.0µs) · _bf16_splitk_kernel 19.0µs 100.0%
+- layer=unpooler load=decode_1 m=1: yours 5.9µs vs SGLang 6.8µs (SoL 1.7µs) · _bf16_splitk_kernel 4.5µs 100.0%
+- layer=router load=decode_1 m=1: yours 5.7µs vs SGLang 10.2µs (SoL 1.8µs) · _router_hilo_kernel 3.2µs 82.1%, void at::native::vectorized_elementwise_kernel<4, at::nat... 0.7µs 17.9%
+- layer=qkv_gate load=decode_16 m=16: yours 13.4µs vs SGLang 13.9µs (SoL 7.9µs) · _qkv_splitk_sem_kernel 12.3µs 100.0%
+- layer=o load=decode_16 m=16: yours 6.7µs vs SGLang 6.8µs (SoL 3.6µs) · _pooler_skinny_kernel 4.8µs 100.0%
+- layer=pooler load=decode_16 m=16: yours 19.8µs vs SGLang 21.6µs (SoL 14.1µs) · _bf16_splitk_kernel 19.5µs 100.0%
+- layer=unpooler load=decode_16 m=16: yours 18.6µs vs SGLang 18.6µs (SoL 14.1µs) · nvjet_sm90_tst_64x16_64x16_2x1_v_bz_TNT 18.5µs 100.0%
+- layer=router load=decode_16 m=16: yours 6.0µs vs SGLang 14.7µs (SoL 1.8µs) · _router_hilo_kernel 3.5µs 83.2%, void at::native::vectorized_elementwise_kernel<4, at::nat... 0.7µs 16.8%
+- layer=qkv_gate load=decode_32 m=32: yours 13.7µs vs SGLang 14.3µs (SoL 8.0µs) · _bf16_swapab_kernel 12.1µs 100.0%
+- layer=o load=decode_32 m=32: yours 6.7µs vs SGLang 7.0µs (SoL 3.6µs) · _bf16_swapab_kernel 4.5µs 100.0%
+- layer=pooler load=decode_32 m=32: yours 20.0µs vs SGLang 22.0µs (SoL 14.1µs) · _bf16_swapab_kernel 20.5µs 100.0%
+- layer=unpooler load=decode_32 m=32: yours 18.5µs vs SGLang 18.7µs (SoL 14.1µs) · _bf16_swapab_kernel 18.9µs 100.0%
+- layer=router load=decode_32 m=32: yours 6.6µs vs SGLang 15.2µs (SoL 1.9µs) · _router_hilo_kernel 4.1µs 84.6%, void at::native::vectorized_elementwise_kernel<4, at::nat... 0.7µs 15.4%
+- layer=qkv_gate load=verify_1 m=8: yours 13.2µs vs SGLang 14.4µs (SoL 7.9µs) · _qkv_splitk_sem_kernel 12.0µs 100.0%
+- layer=o load=verify_1 m=8: yours 6.3µs vs SGLang 6.6µs (SoL 3.5µs) · _pooler_skinny_kernel 5.2µs 100.0%
+- layer=pooler load=verify_1 m=8: yours 19.1µs vs SGLang 21.1µs (SoL 14.0µs) · _bf16_splitk_kernel 19.3µs 100.0%
+- layer=unpooler load=verify_1 m=8: yours 6.1µs vs SGLang 6.9µs (SoL 1.8µs) · _bf16_splitk_kernel 4.6µs 100.0%
+- layer=router load=verify_1 m=8: yours 5.9µs vs SGLang 26.2µs (SoL 1.8µs) · _router_hilo_kernel 3.2µs 82.1%, void at::native::vectorized_elementwise_kernel<4, at::nat... 0.7µs 17.9%
+- layer=qkv_gate load=verify_16 m=128: yours 16.8µs vs SGLang 17.1µs (SoL 8.4µs) · nvjet_sm90_tst_96x64_64x10_4x2_h_bz_splitK_TNN 13.0µs 81.3%, void cublasLt::splitKreduce_kernel<32, 16, int, float, __... 3.0µs 18.7%
+- layer=o load=verify_16 m=128: yours 7.1µs vs SGLang 7.3µs (SoL 4.0µs) · nvjet_sm90_tst_128x64_64x8_1x2_h_bz_TNT 5.8µs 100.0%
+- layer=pooler load=verify_16 m=128: yours 25.6µs vs SGLang 24.9µs (SoL 14.6µs) · nvjet_sm90_tst_64x64_64x13_2x1_v_bz_TNT 25.7µs 100.0%
+- layer=unpooler load=verify_16 m=128: yours 19.8µs vs SGLang 19.8µs (SoL 14.6µs) · nvjet_sm90_tst_128x64_64x8_1x2_h_bz_TNT 20.4µs 100.0%
+- layer=router load=verify_16 m=128: yours 7.3µs vs SGLang 16.3µs (SoL 2.2µs) · _router_hilo_kernel 4.9µs 85.5%, void at::native::vectorized_elementwise_kernel<4, at::nat... 0.8µs 14.5%
+- layer=qkv_gate load=verify_32 m=256: yours 19.6µs vs SGLang 20.0µs (SoL 9.8µs) · nvjet_sm90_tst_96x64_64x10_2x4_h_bz_TNN 19.4µs 100.0%
+- layer=o load=verify_32 m=256: yours 9.0µs vs SGLang 9.1µs (SoL 4.5µs) · nvjet_sm90_tst_128x128_64x6_2x1_v_bz_TNT 8.3µs 100.0%
+- layer=pooler load=verify_32 m=256: yours 30.5µs vs SGLang 31.1µs (SoL 17.4µs) · nvjet_sm90_tst_128x64_64x8_1x2_h_bz_TNT 29.5µs 100.0%
+- layer=unpooler load=verify_32 m=256: yours 24.5µs vs SGLang 24.5µs (SoL 17.4µs) · nvjet_sm90_tst_128x128_64x6_2x1_v_bz_TNT 24.6µs 100.0%
+- layer=router load=verify_32 m=256: yours 9.3µs vs SGLang 17.4µs (SoL 2.7µs) · _router_hilo_kernel 6.9µs 89.6%, void at::native::vectorized_elementwise_kernel<4, at::nat... 0.8µs 10.4%
 
 ## By area
 

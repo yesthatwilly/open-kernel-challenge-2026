@@ -1,6 +1,6 @@
 # muse_moe_w4a16 findings
 
-Regenerated 2026-10-24T144812Z by `churn.py index`. Read this before writing a hypothesis for muse_moe_w4a16.
+Regenerated 2026-10-24T145134Z by `churn.py index`. Read this before writing a hypothesis for muse_moe_w4a16.
 
 ## Current best
 
@@ -68,3 +68,4 @@ Where the time goes (per scored shape, top kernels):
 - queue: marlin-two-class-block-m-decode32 [MoE align/dispatch + block_size_m pick] p2 hold
 - queue: swapab-nvfp4-gemm-verify-rewrite [w13 marlin + w2 marlin] p1 hold
 - queue: swapab-w13-silu-epilogue-verify [silu-mul] p2 queued
+- running: triton-map-align-verify-chunked-pow2-fix [MoE align/dispatch] p1 running
