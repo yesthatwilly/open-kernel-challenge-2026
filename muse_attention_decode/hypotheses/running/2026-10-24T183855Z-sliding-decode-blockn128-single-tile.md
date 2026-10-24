@@ -36,13 +36,15 @@ base_sha: 591234f46b4e7e6b5307dd6a14ed904220f58742
 base_blob: c6854f093588da524e63657576b27ed720756e32
 branch: hyp/muse_attention_decode/sliding-decode-blockn128-single-tile
 worktree: .worktrees/muse_attention_decode/sliding-decode-blockn128-single-tile
-mode: null
+mode: check
 implemented_at: 2026-10-24T184519Z
 impl_commit: e5892c6cdb4175b793ed05d56834089ccc8dc8d5
 submission_sha256: df6470f19463c48cd61417096d3b2ce3199e3468ba523073f251b29814666f96
 norm_sha256: 055479c9f389631efceec3a962f7417b4cc245cc3787c6db6be6018845e02271
 submission_blob: 5118538da13178bac467b5449d0bdd25010ca10d
 lint_warnings: 0
+attempt_file: 2026-10-24T184519Z-check-sliding-decode-blockn128-single-tile.md
+prepared_at: 2026-10-24T184519Z
 ---
 
 # sliding-decode-blockn128-single-tile
