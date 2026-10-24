@@ -29,9 +29,16 @@ priority: 5
 kind: primary
 controls_for: null
 review: proceed
-status: queued
+status: running
 review_at: 2026-10-24T184058Z
 review_companions: null
+stage: claimed
+claimed_at: 2026-10-24T184059Z
+base_sha: 49da3d4776ed7ee46334a320b804bc460500870c
+base_blob: c6854f093588da524e63657576b27ed720756e32
+branch: hyp/muse_attention_decode/paired-norm-gate-token-tiled
+worktree: .worktrees/muse_attention_decode/paired-norm-gate-token-tiled
+mode: null
 ---
 
 # paired-norm-gate-token-tiled
