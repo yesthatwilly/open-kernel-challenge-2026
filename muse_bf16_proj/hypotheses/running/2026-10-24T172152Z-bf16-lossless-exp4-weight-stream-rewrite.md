@@ -137,7 +137,7 @@ review: proceed
 status: running
 review_at: 2026-10-24T172632Z
 review_companions: null
-stage: implemented
+stage: dispatched
 claimed_at: 2026-10-24T172707Z
 base_sha: 43ae369dae50af5a98bad52c50a5e7ba904c492f
 base_blob: a8bb42ac483318e9fbc84bc7826a27b7a704d1fb
@@ -152,6 +152,8 @@ submission_blob: a34e409b452e9a6e5f7ee3612486d30a989832f2
 lint_warnings: 8
 attempt_file: 2026-10-24T181732Z-submit-bf16-lossless-exp4-weight-stream-rewrite.md
 prepared_at: 2026-10-24T181733Z
+job: 542f2b169c934706
+dispatched_at: 2026-10-24T181805Z
 ---
 
 # bf16-lossless-exp4-weight-stream-rewrite
