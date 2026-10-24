@@ -2,7 +2,7 @@
 
 Hypothesis: `muse_decode_layer/hypotheses/done/gain/2026-10-23T225318Z-sglang-pipeline-parity-router-hilo-m8.md` (branch `hyp/muse_decode_layer/sglang-pipeline-parity-router-hilo-m8`).
 
-- **Job:** `<job id>` (`okc status <job>`)
+- **Job:** `5755a412dda244a1` (`okc status <job>`)
 - **File:** `muse_decode_layer/submission.py` at git `b5bbc79`
 
 ## Goal
