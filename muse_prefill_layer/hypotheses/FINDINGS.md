@@ -1,21 +1,21 @@
 # muse_prefill_layer findings
 
-Regenerated 2026-10-24T125104Z by `churn.py index`. Read this before writing a hypothesis for muse_prefill_layer.
+Regenerated 2026-10-24T135615Z by `churn.py index`. Read this before writing a hypothesis for muse_prefill_layer.
 
 ## Current best
 
-1.0229x [1.0075,1.0382] from job `b33b87b5083b4d1c` (check), master commit `a1f93c2948`, hypothesis experts-triton-w4a16-first-turn-blockt256
+1.0599x [1.0440,1.0758] from job `fb1e52d2119d4175` (check), master commit `b92a0f4719`, hypothesis experts-hybrid-marlin-turn-triton-first-turn
 
 Where the time goes (per scored shape, top kernels):
 
-- batch=1 ctx=80000 dist=soft layer=sliding load=turn_1 page=1 q_len=753 repeats=6: yours 1141.1µs vs SGLang 1063.9µs (SoL 257.0µs) · _moe_nvfp4_gemm_kernel 847.4µs 69.8%, nvjet_sm90_tst_128x192_64x5_2x1_v_bz_coopB_TNN 156.0µs 12.9%, nvjet_sm90_tst_112x128_64x7_1x2_h_bz_TNN 38.8µs 3.2%
-- batch=1 ctx=80000 dist=soft layer=full load=turn_1 page=1 q_len=753 repeats=6: yours 1517.9µs vs SGLang 1431.8µs (SoL 496.7µs) · _moe_nvfp4_gemm_kernel 728.5µs 47.6%, void cutlass::device_kernel<flash::enable_sm90_or_later<f... 417.2µs 27.2%, nvjet_sm90_tst_128x192_64x5_2x1_v_bz_coopB_TNN 153.1µs 10.0%
-- batch=4 ctx=80000 dist=soft layer=sliding load=turn_4 page=1 q_len=753 repeats=6: yours 3435.4µs vs SGLang 3340.9µs (SoL 1036.3µs) · _moe_nvfp4_gemm_kernel 2274.6µs 64.7%, nvjet_sm90_tst_256x152_64x4_1x2_h_bz_coopA_TNT 325.1µs 9.3%, nvjet_sm90_tst_128x256_64x4_2x1_v_bz_coopA_TNN 253.3µs 7.2%
-- batch=4 ctx=80000 dist=soft layer=full load=turn_4 page=1 q_len=753 repeats=6: yours 4975.4µs vs SGLang 4881.5µs (SoL 1992.4µs) · _moe_nvfp4_gemm_kernel 2317.7µs 44.9%, void cutlass::device_kernel<flash::enable_sm90_or_later<f... 1640.5µs 31.8%, nvjet_sm90_tst_256x152_64x4_1x2_h_bz_coopA_TNT 322.6µs 6.3%
-- batch=1 ctx=0 dist=soft layer=full load=first_turn page=1 q_len=16384 repeats=6: yours 15029.5µs vs SGLang 17847.8µs (SoL 5518.4µs) · _moe_nvfp4_gemm_kernel 8573.7µs 56.5%, nvjet_sm90_tst_192x192_64x4_2x1_v_bz_coopB_TNN 2514.6µs 16.6%, nvjet_sm90_tst_320x128_64x3_1x2_h_bz_coopB_TNT 1375.0µs 9.1%
-- batch=1 ctx=32768 dist=soft layer=sliding load=first_turn page=1 q_len=16384 repeats=6: yours 14426.7µs vs SGLang 17115.0µs (SoL 5663.4µs) · _moe_nvfp4_gemm_kernel 8535.2µs 58.2%, nvjet_sm90_tst_192x192_64x4_2x1_v_bz_coopB_TNN 2517.6µs 17.2%, nvjet_sm90_tst_320x128_64x3_1x2_h_bz_coopB_TNT 1474.5µs 10.1%
-- batch=1 ctx=32768 dist=soft layer=full load=first_turn page=1 q_len=16384 repeats=6: yours 18568.9µs vs SGLang 21250.7µs (SoL 7710.0µs) · _moe_nvfp4_gemm_kernel 7959.7µs 43.9%, void cutlass::device_kernel<flash::enable_sm90_or_later<f... 4480.4µs 24.7%, nvjet_sm90_tst_192x192_64x4_2x1_v_bz_coopB_TNN 2516.2µs 13.9%
-- batch=1 ctx=65536 dist=soft layer=full load=first_turn page=1 q_len=16384 repeats=6: yours 22521.7µs vs SGLang 24976.4µs (SoL 9847.7µs) · _moe_nvfp4_gemm_kernel 8721.8µs 38.9%, void cutlass::device_kernel<flash::enable_sm90_or_later<f... 8017.7µs 35.7%, nvjet_sm90_tst_192x192_64x4_2x1_v_bz_coopB_TNN 2509.7µs 11.2%
+- batch=1 ctx=80000 dist=soft layer=sliding load=turn_1 page=1 q_len=753 repeats=6: yours 1079.5µs vs SGLang 1088.2µs (SoL 257.0µs) · void sglang::device::marlin_moe::Marlin<__nv_bfloat16, 56... 752.4µs 67.4%, nvjet_sm90_tst_128x192_64x5_2x1_v_bz_coopB_TNN 154.0µs 13.8%, nvjet_sm90_tst_112x128_64x7_1x2_h_bz_TNN 39.0µs 3.5%
+- batch=1 ctx=80000 dist=soft layer=full load=turn_1 page=1 q_len=753 repeats=6: yours 1419.1µs vs SGLang 1431.0µs (SoL 496.7µs) · void sglang::device::marlin_moe::Marlin<__nv_bfloat16, 56... 653.9µs 45.0%, void cutlass::device_kernel<flash::enable_sm90_or_later<f... 415.2µs 28.6%, nvjet_sm90_tst_128x192_64x5_2x1_v_bz_coopB_TNN 150.7µs 10.4%
+- batch=4 ctx=80000 dist=soft layer=sliding load=turn_4 page=1 q_len=753 repeats=6: yours 3334.9µs vs SGLang 3340.9µs (SoL 1036.3µs) · void sglang::device::marlin_moe::Marlin<__nv_bfloat16, 56... 2217.1µs 64.3%, nvjet_sm90_tst_256x152_64x4_1x2_h_bz_coopA_TNT 322.2µs 9.3%, nvjet_sm90_tst_128x256_64x4_2x1_v_bz_coopA_TNN 253.1µs 7.3%
+- batch=4 ctx=80000 dist=soft layer=full load=turn_4 page=1 q_len=753 repeats=6: yours 4938.0µs vs SGLang 4952.8µs (SoL 1992.4µs) · void sglang::device::marlin_moe::Marlin<__nv_bfloat16, 56... 2131.0µs 43.0%, void cutlass::device_kernel<flash::enable_sm90_or_later<f... 1634.0µs 33.0%, nvjet_sm90_tst_256x152_64x4_1x2_h_bz_coopA_TNT 319.2µs 6.4%
+- batch=1 ctx=0 dist=soft layer=full load=first_turn page=1 q_len=16384 repeats=6: yours 15386.3µs vs SGLang 18586.1µs (SoL 5518.4µs) · _moe_nvfp4_gemm_kernel 8873.3µs 57.4%, nvjet_sm90_tst_192x192_64x4_2x1_v_bz_coopB_TNN 2499.4µs 16.2%, nvjet_sm90_tst_320x128_64x3_1x2_h_bz_coopB_TNT 1366.2µs 8.8%
+- batch=1 ctx=32768 dist=soft layer=sliding load=first_turn page=1 q_len=16384 repeats=6: yours 14275.3µs vs SGLang 17028.2µs (SoL 5663.4µs) · _moe_nvfp4_gemm_kernel 8323.7µs 58.1%, nvjet_sm90_tst_192x192_64x4_2x1_v_bz_coopB_TNN 2502.5µs 17.5%, nvjet_sm90_tst_320x128_64x3_1x2_h_bz_coopB_TNT 1365.9µs 9.5%
+- batch=1 ctx=32768 dist=soft layer=full load=first_turn page=1 q_len=16384 repeats=6: yours 18165.9µs vs SGLang 20628.6µs (SoL 7710.0µs) · _moe_nvfp4_gemm_kernel 8338.7µs 44.8%, void cutlass::device_kernel<flash::enable_sm90_or_later<f... 4471.1µs 24.0%, nvjet_sm90_tst_192x192_64x4_2x1_v_bz_coopB_TNN 2501.3µs 13.4%
+- batch=1 ctx=65536 dist=soft layer=full load=first_turn page=1 q_len=16384 repeats=6: yours 22332.9µs vs SGLang 24889.1µs (SoL 9847.7µs) · _moe_nvfp4_gemm_kernel 8149.4µs 37.1%, void cutlass::device_kernel<flash::enable_sm90_or_later<f... 8006.7µs 36.5%, nvjet_sm90_tst_192x192_64x4_2x1_v_bz_coopB_TNN 2497.3µs 11.4%
 
 ## By area
 
@@ -40,6 +40,9 @@ Where the time goes (per scored shape, top kernels):
 ### w13 marlin + w2 marlin (block_size_m pick)
 - **experts-marlin-block-m-local-rows** → regression (regression), 0.9836x — lost on sliding turn_1; full turn_1. Change only the block_size_m pick in _experts (muse_prefill_layer/submission.py). The parity loop walks BLOCK_SIZE_M_CANDIDATES (8, 16, 32, 48, 64) and breaks o
 - **experts-marlin-block-m-48-turn1** → neutral (within-ci), 1.0030x — no shape moved outside noise. Change only the block_size_m pick in _experts (muse_prefill_layer/submission.py): when 512 < num_tokens <= 1024 use block_size_m = 48; every other token count k
+
+### w13 marlin + w2 marlin (stage 4: hybrid shape gate, Marlin at T<=4096, Triton NVFP4 above)
+- **experts-hybrid-marlin-turn-triton-first-turn** → gain (gain), 1.0599x — gained on sliding turn_1, turn_4; full turn_1. Stage 4 of the Triton NVFP4 expert rewrite, built on master (a1f93c2, = stage 3 experts-triton-w4a16-first-turn-blockt256). Only prepare() and _experts in muse_
 
 ### whole-layer parity (SGLang pipeline) + routing remap
 - **sglang-pipeline-parity** → gain (gain), 1.0039x — no shape moved outside noise. Rewrite kernel_fn and prepare in muse_prefill_layer/submission.py to run SGLang's own pipeline module for module as baseline.py does: _bf16_gemm_dispatch_impl f
@@ -66,4 +69,3 @@ Where the time goes (per scored shape, top kernels):
 - queue: experts-marlin-block-m-48-turn4 [w13 marlin + w2 marlin (block_size_m pick)] p3 hold
 - queue: router-triton-hilo-splitk-turn [router GEMM] p3 hold
 - queue: router-pooler-concat-gemm-turn [router GEMM + pooler GEMM (one concatenated GEMM, no side stream)] p5 hold
-- running: experts-hybrid-marlin-turn-triton-first-turn [w13 marlin + w2 marlin (stage 4: hybrid shape gate, Marlin at T<=4096, Triton NVFP4 above)] p1 running

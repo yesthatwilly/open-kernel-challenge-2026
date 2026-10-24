@@ -1,6 +1,6 @@
 # muse_bf16_proj findings
 
-Regenerated 2026-10-24T132213Z by `churn.py index`. Read this before writing a hypothesis for muse_bf16_proj.
+Regenerated 2026-10-24T135615Z by `churn.py index`. Read this before writing a hypothesis for muse_bf16_proj.
 
 ## Current best
 
@@ -47,6 +47,9 @@ Where the time goes (per scored shape, top kernels):
 
 ### bf16 GEMM dispatch (m>=128, weight layout)
 - **bf16-m128-nn-weight-layout-probe** → neutral (unproven-vs-best), 1.1580x — gained on pooler verify_16; unpooler verify_16; lost on o decode_1; router verify_1, verify_16; qkv_gate verify_32. Built on master (dba4ffd; router untouched; m <= 32 paths untouched). The m=128/256 shapes are where cuBLAS sits furthest from the floor (pooler verify_16 25.2 
+
+### bf16 GEMM dispatch (shape-gated Triton routing, m<=16)
+- **bf16-shape-gated-triton-winners-combo** → neutral (unproven-vs-best), 1.1760x — gained on qkv_gate decode_1; o decode_1, decode_16; pooler decode_1, decode_16, verify_1; unpooler decode_1, verify_1; lost on router verify_1, verify_16. Built on master (dba4ffd: parity dispatch + 3-D split-K Triton router; router untouched). Combine, behind one shape gate in kernel_fn, the four individually-neu
 
 ### o GEMM
 - **o-triton-skinny-m32** → neutral (within-ci), 1.0057x — gained on qkv_gate decode_1, decode_16; o decode_1, decode_16, verify_1; unpooler decode_1; router decode_1; lost on o decode_32; pooler verify_16. Extend the skinny Triton GEMM from pooler-triton-skinny-m32 to layer == 'o' at m <= 32 (n=8192, k=1024, 16.8 MB): in kernel_fn route o at m <= 32 to the same ke
@@ -95,6 +98,7 @@ Where the time goes (per scored shape, top kernels):
 - pooler-triton-splitk2-blockn64-semaphore-control-blockk256: within-ci: the change is not proven either way; a stacked hypothesis (`depends_on: pooler-triton-splitk2-blockn64-semaphore-control-blockk256`) that adds a further change in the same area is the only way to learn more (i
 - pooler-splitk2-tma-weight-stream: unproven-vs-best: the change is not proven either way; a stacked hypothesis (`depends_on: pooler-splitk2-tma-weight-stream`) that adds a further change in the same area is the only way to learn more (identical code is ne
 - router-splitk32-small-m-all-loads-in-flight-control-stages3: unproven-vs-best: the change is not proven either way; a stacked hypothesis (`depends_on: router-splitk32-small-m-all-loads-in-flight-control-stages3`) that adds a further change in the same area is the only way to learn
+- bf16-shape-gated-triton-winners-combo: unproven-vs-best: the change is not proven either way; a stacked hypothesis (`depends_on: bf16-shape-gated-triton-winners-combo`) that adds a further change in the same area is the only way to learn more (identical code 
 - bf16-m128-nn-weight-layout-probe: unproven-vs-best: the change is not proven either way; a stacked hypothesis (`depends_on: bf16-m128-nn-weight-layout-probe`) that adds a further change in the same area is the only way to learn more (identical code is ne
 
 ## Do not retry (rejected / duplicates)
@@ -107,4 +111,3 @@ Where the time goes (per scored shape, top kernels):
 - queue: router-triton-hilo-fused-control-hybrid-cublas-above-m32 [router GEMM] p1 hold
 - queue: router-hilo-addmm-epilogue-control-inplace-out [router GEMM] p1 hold
 - queue: qkv-gate-o-m128-wgmma-splitk-semaphore [qkv GEMM + o GEMM (m=128)] p2 hold
-- running: bf16-shape-gated-triton-winners-combo [bf16 GEMM dispatch (shape-gated Triton routing, m<=16)] p1 running

@@ -1,6 +1,6 @@
 # muse_decode_layer findings
 
-Regenerated 2026-10-24T132543Z by `churn.py index`. Read this before writing a hypothesis for muse_decode_layer.
+Regenerated 2026-10-24T135615Z by `churn.py index`. Read this before writing a hypothesis for muse_decode_layer.
 
 ## Current best
 
@@ -38,6 +38,9 @@ Where the time goes (per scored shape, top kernels):
 ### pooler GEMM
 - **pooler-gemm-splitk-autotune** → neutral (within-ci), 1.0189x — no shape moved outside noise. For the pooler GEMM only (ffn_input [T, 8192] bf16 x pooler [4096, 8192] bf16, a 67 MB weight read whose floor is 14 us), pick the GEMM form per scored T in pre
 
+### pre-attention norm+rope
+- **fused-preattention-triton** → neutral (unproven-vs-best), 1.0970x — gained on sliding decode_32. Port muse_attention_decode's fused pre-attention Triton kernel (main tree muse_attention_decode/submission.py, _pre_attention_kernel: passed 16/16 at 1.127x the
+
 ### router GEMM
 - **sglang-pipeline-parity-router-hilo-m8** → gain (gain), 1.0216x — gained on sliding decode_1, decode_16, decode_32, verify_1, verify_16, verify_32; full decode_1, decode_16, decode_32, verify_1, verify_16, verify_32. Replace the starter's plain-PyTorch layer with SGLang's own pipeline exactly as baseline.py composes it: prepare() builds the Marlin bank via prepare_moe_nvfp4_
 
@@ -50,6 +53,7 @@ Where the time goes (per scored shape, top kernels):
 - expert-id-map-single-kernel: unproven-vs-best: the change is not proven either way; a stacked hypothesis (`depends_on: expert-id-map-single-kernel`) that adds a further change in the same area is the only way to learn more (identical code is never r
 - pooler-gemm-splitk-autotune: within-ci: the change is not proven either way; a stacked hypothesis (`depends_on: pooler-gemm-splitk-autotune`) that adds a further change in the same area is the only way to learn more (identical code is never re-run).
 - moe-align-single-kernel-small-t: within-ci: the change is not proven either way; a stacked hypothesis (`depends_on: moe-align-single-kernel-small-t`) that adds a further change in the same area is the only way to learn more (identical code is never re-r
+- fused-preattention-triton: unproven-vs-best: the change is not proven either way; a stacked hypothesis (`depends_on: fused-preattention-triton`) that adds a further change in the same area is the only way to learn more (identical code is never re-
 - triton-flash-decode-full-paired-kv: rewrite stage 1 of `FA3 on full-attention decode (q_len=1): flash_fwd main + FlashAttnFwdCombine`: read the replaced kernels' own us per shape (profile top_kernels) against the incumbent and the floor, and check which Mi
 - fa3-hdim128-head-pairing-batched: unproven-vs-best: the change is not proven either way; a stacked hypothesis (`depends_on: fa3-hdim128-head-pairing-batched`) that adds a further change in the same area is the only way to learn more (identical code is ne
 
@@ -67,4 +71,3 @@ Where the time goes (per scored shape, top kernels):
 - queue: fa3-full-single-split-probe [FA3 call] p2 hold
 - queue: router-triton-splitk-side-stream [router GEMM] p1 hold
 - queue: triton-flash-decode-full-verify-paired-kv [FA3 call] p5 hold
-- running: fused-preattention-triton [pre-attention norm+rope] p4 running

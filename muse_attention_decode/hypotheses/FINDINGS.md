@@ -1,6 +1,6 @@
 # muse_attention_decode findings
 
-Regenerated 2026-10-24T132543Z by `churn.py index`. Read this before writing a hypothesis for muse_attention_decode.
+Regenerated 2026-10-24T135615Z by `churn.py index`. Read this before writing a hypothesis for muse_attention_decode.
 
 ## Current best
 
@@ -28,6 +28,9 @@ Where the time goes (per scored shape, top kernels):
 
 ### FA3 call (head packing) gate
 - **paired-heads-launch-cleanup-ab-tune-batch-gate** → neutral (unproven-vs-best), 1.2686x — gained on full decode_1, verify_1. From the parent's branch (paired-heads-launch-cleanup built on master), change only the pairing predicate to paired = (window == 0 and hkv % 2 == 0 and batch > 
+
+### FA3 call (schedule, off critical path)
+- **fa3-scheduler-metadata-side-stream** → regression (regression), 1.2245x — lost on sliding decode_1, decode_16, decode_32, verify_1, verify_16, verify_32; full verify_1. Wherever master calls flash_attn_with_kvcache with scheduler_metadata=None (every sliding shape, full paired shapes at batch > 1, full verify_1), FA3 runs flash
 
 ### attention boundary
 - **paired-heads-launch-cleanup** → gain (gain), 1.2436x — gained on full decode_1, decode_16, decode_32, verify_1, verify_16. Stacked on fa3-hdim128-head-pairing (and using fused-preattention-triton's kernel, which must have landed too): remove the five pad/un-pad launches the pairing 
@@ -73,4 +76,3 @@ Where the time goes (per scored shape, top kernels):
 - queue: stream-fork-preattention [launch overhead] p4 hold
 - queue: triton-flash-decode-deep-pipeline [FA3 call (Triton pipeline)] p4 hold
 - queue: triton-flash-decode-full-verify [FA3 call] p4 hold
-- running: fa3-scheduler-metadata-side-stream [FA3 call (schedule, off critical path)] p2 running
