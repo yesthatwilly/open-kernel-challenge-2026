@@ -38,7 +38,7 @@ kind: primary
 controls_for: null
 review: required
 status: running
-stage: implemented
+stage: dispatched
 claimed_at: 2026-10-24T231559Z
 base_sha: 2569d7e0d6f208921d432fd4237dc483601b39ca
 base_blob: e33a32aa5580fbd5b38764ea287a6364c865432e
@@ -53,6 +53,8 @@ submission_blob: 54c2a04b2a56aa2b7315c6ccc78d2573fc28a3ce
 lint_warnings: 18
 attempt_file: 2026-10-24T231719Z-check-sliding-decode1-fused-restack-on-pdl.md
 prepared_at: 2026-10-24T231719Z
+job: 30027c28212946fd
+dispatched_at: 2026-10-24T231729Z
 ---
 
 # sliding-decode1-fused-restack-on-pdl
