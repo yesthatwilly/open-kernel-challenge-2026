@@ -42,7 +42,7 @@ review: proceed
 status: running
 review_at: 2026-10-24T083634Z
 review_companions: null
-stage: implemented
+stage: dispatched
 claimed_at: 2026-10-24T083634Z
 base_sha: 67649c559d5a07d10b659c84bf80c1b1ec29c879
 base_blob: e4931f050c7fb99835fe116d25bb454a5ea731e9
@@ -57,6 +57,8 @@ submission_blob: 3d09290ced5f8f540573ed73c5f64b3aaeb0cc99
 lint_warnings: 1
 attempt_file: 2026-10-24T083755Z-check-experts-marlin-block-m-local-rows.md
 prepared_at: 2026-10-24T083755Z
+job: 8e9943ec1b004b0f
+dispatched_at: 2026-10-24T083825Z
 ---
 
 # experts-marlin-block-m-local-rows
