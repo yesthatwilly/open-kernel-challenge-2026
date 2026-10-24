@@ -43,9 +43,10 @@ priority: 3
 kind: primary
 controls_for: null
 review: proceed
-status: queued
+status: hold
 review_at: 2026-10-24T104017Z
 review_companions: null
+hold_reason: "reviewer: the side-stream router (~40-45 us) already fits under the main branch (the 39.3 us nvjet is qkv_gate, not the pooler), expected 0.3-1% inside noise; prefill has 2 checks and the rewrite's next stage needs them"
 ---
 
 # router-triton-hilo-splitk-turn
