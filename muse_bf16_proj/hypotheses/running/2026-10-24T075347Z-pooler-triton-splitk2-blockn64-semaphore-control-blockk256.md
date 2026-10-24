@@ -53,13 +53,15 @@ base_sha: cee590d58c6c34ded84fdb734c38ca129e327fee
 base_blob: 66ba1a39e2aaa5cedb2ce3ddfb809f67f86b37f9
 branch: hyp/muse_bf16_proj/pooler-triton-splitk2-blockn64-semaphore-control-blockk256
 worktree: .worktrees/muse_bf16_proj/pooler-triton-splitk2-blockn64-semaphore-control-blockk256
-mode: null
+mode: check
 implemented_at: 2026-10-24T104504Z
 impl_commit: af3b6a1476784362cd469277732045bddffea518
 submission_sha256: 18bea4e8be25b35a50713541d43da60b3bfec47cb78964dd0b69ea2cfd103b89
 norm_sha256: 192c5489ee09ac9f84ded74f7ec4958fb721edcd52f07c1ae9f35e00a0462b6b
 submission_blob: 8dbe14762ff0b27944d7a0005836ea5c606cfb6c
 lint_warnings: 0
+attempt_file: 2026-10-24T104504Z-check-pooler-triton-splitk2-blockn64-semaphore-control-blockk256.md
+prepared_at: 2026-10-24T104504Z
 ---
 
 # pooler-triton-splitk2-blockn64-semaphore-control-blockk256
