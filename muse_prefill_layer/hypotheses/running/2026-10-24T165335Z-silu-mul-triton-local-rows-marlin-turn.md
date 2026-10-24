@@ -47,10 +47,19 @@ priority: 3
 kind: primary
 controls_for: null
 review: proceed
-status: queued
+status: running
 review_at: 2026-10-24T165654Z
 review_companions: null
 hold_reason: null
+stage: claimed
+claimed_at: 2026-10-24T233107Z
+base_sha: 8d596b6505434ea78352dd08f0494382c53bec54
+base_blob: 635cfee3ac2c3f7c66840b8c8a082cad2fa41a68
+branch: hyp/muse_prefill_layer/silu-mul-triton-local-rows-marlin-turn
+worktree: .worktrees/muse_prefill_layer/silu-mul-triton-local-rows-marlin-turn
+mode: null
+restack_of: null
+stale_base: null
 ---
 
 # silu-mul-triton-local-rows-marlin-turn
