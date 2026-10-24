@@ -51,13 +51,19 @@ review: proceed
 status: running
 review_at: 2026-10-24T165124Z
 review_companions: null
-stage: claimed
+stage: implemented
 claimed_at: 2026-10-24T165146Z
 base_sha: 6d0eb9a85a363fc7597458f944be4ea123bab837
 base_blob: d9a9375ef4721ab9b28cc9d6364c92e67c7ccc59
 branch: hyp/muse_moe_w4a16/w2-l2-prefetch-decode1
 worktree: .worktrees/muse_moe_w4a16/w2-l2-prefetch-decode1
 mode: null
+implemented_at: 2026-10-24T165402Z
+impl_commit: f47176b2a014f27ffda111301069b23704a7b3b4
+submission_sha256: 1ace8ef1794adab8a7d19c4580d4f81828576455308a5615ecc7791b72d78024
+norm_sha256: e6fe6ae9508165b316dc6100217c722f3ecc0b8386f621203da2885bf8e85342
+submission_blob: 56c4644f6fa8d38d3b76fbcabd0fd3a5d99f7f8f
+lint_warnings: 8
 ---
 
 # w2-l2-prefetch-decode1
