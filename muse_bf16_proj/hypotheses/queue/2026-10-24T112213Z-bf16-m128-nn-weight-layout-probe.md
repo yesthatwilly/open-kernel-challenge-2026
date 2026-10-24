@@ -55,8 +55,10 @@ depends_on: null
 priority: 3
 kind: primary
 controls_for: null
-review: required
+review: proceed
 status: queued
+review_at: 2026-10-24T112447Z
+review_companions: null
 ---
 
 # bf16-m128-nn-weight-layout-probe
@@ -79,3 +81,25 @@ Built on master (dba4ffd; router untouched; m <= 32 paths untouched). The m=128/
 ## Risk
 
 A probe, like bf16-cublaslt-backend-toggle: direction is genuinely unknown per shape, and it may lose on some (cuBLAS tuned TN most for nn.Linear). It is attributable per shape because only m >= 128 bf16 rows change, and it costs no engineering. Its value is the per-shape table: any m=128/256 shape where NN beats TN by more than drift becomes one more component of a later shape-gated combo (like bf16-shape-gated-triton-winners-combo); shapes where it loses are simply not routed. Also informs the held qkv-gate-o-m128-wgmma-splitk-semaphore (if cuBLAS NN already closes the m=128 qkv gap, that rewrite is not worth it). Extra memory: ~189 MB of transposed bf16 copies, lossless, same precision (allowed repack). Risk: torch.mm may internally detect a transposed-contiguous operand and re-normalize to the same TN call; the implementer must ensure the [K, N] copy is truly contiguous (not a .t() view of W) and confirm from top_kernels that kernel names changed (NN suffix); if every name is unchanged the run is void, not neutral.
+
+## Adversarial review
+
+Reviewed 2026-10-24T112447Z by an adversarial subagent (model opus).
+
+**Verdict: proceed.** A cheap, rules-clean cuBLAS heuristic probe on the m=128/256 bf16 shapes. Those shapes are disjoint from everything landed and in flight, so a single run reads per shape from the kernel names and times. Do not judge it on the headline: the best realistic gain (about 3 us each on pooler and qkv_gate at verify_16) is about 1-1.5% on the geomean, inside drift.
+
+### Justification
+The mechanism is real. torch.mm(x, Wt) with a contiguous [K, N] Wt reaches cuBLAS as an NN GEMM: the weight is an MN-major operand with ld=N. Master's x @ W.T reaches it as TN. cuBLASLt keys its nvjet table on layout, so a different tile and split-K choice is plausible. On Hopper, bf16 wgmma takes MN-major shared-memory operands natively, so NN has no inherent MMA penalty. The profile supports the targets. pooler verify_16 moves 67.1 MB in 25.2 us (2.66 TB/s; floor 14.6) on a 64x64 non-split tile. qkv_gate verify_16 moves 37.7 MB in 17.0 us (2.2 TB/s; floor 8.4) on a 96x64 split-K tile plus a 3.1 us splitKreduce, so the 96-row pad and the reduce are real waste. unpooler verify_16 is 19.7 vs 14.6 at about 3.4 TB/s. The verify_32 rows are close to compute-bound: pooler at m=256 is 17.2 GFLOP, a 17.4 us floor, and nvjet's 29.5 us is about 580 TFLOP/s. Calling them flat or probe is consistent with TASK.md's floors. Expected directions match the weights: every shape has weight 62, and only m>=128 rows change, so decode, verify_1 and router must be flat. Any movement there is drift (LESSONS: 1.5-2.5% per shape) and evidence of nothing. Weakest link: nothing says the NN table is better. cuBLAS is tuned hardest for TN, because that is nn.Linear's layout, and the heuristic that picked a 64x64 non-split tile for pooler m=128 may pick the same tile or a worse one under NN. The 'should pick a larger N tile or split-K' claim is a hope, not an inference. Second-weakest: the run is void, not neutral, if the nvjet names keep their TN prefix (e.g. _TNT/_TNN to _NN?). The attempt file must record the names per shape, and the harvest must read top_kernels before classifying.
+
+### Confounders on the current kernel
+- sglang-gemm-dispatch-parity: on the m>=128 bf16 rows the probe replaces _bf16_gemm_dispatch_impl with torch.mm, so two things change at once: the entry point and the layout. On this image the dispatch lands on the same nvjet kernels as plain x @ W.T (the parity review and the starter-vs-parity qkv_gate rows), so the entry-point part should be inert. The kernel-name change is what attributes the result. No revert is needed.
+- router-triton-hilo-fused-control-splitk-all-m and router-hilo-at-m8: router only. Each shape is captured and timed as its own graph with a cold L2, so they share no launch sequence, memory traffic or numerical path with the bf16 m>=128 rows. They do not confound.
+
+### Interference and A/B needs
+No companion is warranted. Each landed hypothesis touches only the router or the m<=32/dispatch entry, and the judge times shapes independently with a cold L2, so there is nothing to interact with. Both a per-shape gain and a per-shape loss are readable without a second run, as long as top_kernels shows a changed nvjet name for that shape. Unchanged names mean a void run, and no companion fixes that. The only conceivable control is torch.mm(x, W[:n].t()) to separate the torch.mm entry from the layout. It is redundant, because the kernel name already shows which heuristic entry ran, and spending one of bf16's 4 remaining checks on it is not justified. It also does not need to wait for the in-flight harvests. Router split-K32 and its stages3 control touch the router only. Pooler TMA and the pooler BLOCK_K=256 control touch pooler at m<=32 only. This probe is gated to m>=128 on the four bf16 layers, so the shape sets are disjoint and any winner composes with it by gate later. Dispatch it as a check. Read it per shape, and route only the shapes where NN beats TN by more than about 2% into a later shape-gated combo. Read the qkv_gate m=128 row before unholding qkv-gate-o-m128-wgmma-splitk-semaphore.
+
+### Open questions
+- Do the nvjet names at m=128/256 actually change prefix under NN? If cuBLASLt canonicalizes the problem (for example by computing the transposed product) and picks the same kernel, the run is void. Record the names and do not file it as neutral.
+- If NN wins on qkv_gate m=128 by removing the 96-row pad and the splitKreduce, the held qkv-gate-o-m128-wgmma-splitk-semaphore loses most of its rationale. Decide that from this run's per-shape row.
+- Final review reruns nearby shapes (m=130 unpooler, m=512, m=1000 are already in the tests). If NN wins at m=128 but loses badly at a nearby m, gate tighter than m>=128 in the later combo.
+
