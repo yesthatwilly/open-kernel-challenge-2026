@@ -71,13 +71,19 @@ review: proceed
 status: running
 review_at: 2026-10-24T164610Z
 review_companions: null
-stage: claimed
+stage: implemented
 claimed_at: 2026-10-24T164753Z
 base_sha: 1221521e184643a43f27ff79cef68b5fed5ad2b1
 base_blob: a8bb42ac483318e9fbc84bc7826a27b7a704d1fb
 branch: hyp/muse_bf16_proj/pooler-unpooler-m128-tma-wspec-rewrite
 worktree: .worktrees/muse_bf16_proj/pooler-unpooler-m128-tma-wspec-rewrite
 mode: null
+implemented_at: 2026-10-24T165200Z
+impl_commit: fd7d7ee356c58d5a2dd113f6d6ea476d57cf8953
+submission_sha256: 850a87881ace734d04302dcd6cac627825dfdc1367b3deb1ab8f685b4fa65c04
+norm_sha256: 28b34e0951842c66b92e645f661656706f61b25c92f12f0a3036f0038895c389
+submission_blob: 87f758fdc12055bf479245175d17662450df69eb
+lint_warnings: 9
 ---
 
 # pooler-unpooler-m128-tma-wspec-rewrite
@@ -131,3 +137,45 @@ No companions. No landed hypothesis touches pooler or unpooler at m=128, so ab-r
 - Is the 26 us mainloop limited by DRAM issue or by L2-to-SM traffic from re-reading x (~2x the weight bytes at BLOCK_N=128)? If M1 stalls near ~20 us even with warp specialization compiled, stage 2 should take BLOCK_N 256 (one x read per 256 weight rows) before stream-K.
 - Masked rows at 65..127 are never scored and never tested. Is it worth warming and self-checking them, or should the gate be m == 128 only, to shrink the untested surface on a scored run?
 
+
+## Implementation notes
+
+Built on worktree master 1221521 (has bf16-m32-swapab-wgmma-triton; the swap-AB gate and every other path are unchanged). The only file touched is `muse_bf16_proj/submission.py`, with +244 lines and nothing deleted:
+
+- New section (6) after swap-AB: `_bf16_m128_tma_ws_kernel`. The tile is BLOCK_M = N = K = 128 with num_warps 8. The weight arrives by TMA as `w_desc.load([n0, k])`. The descriptor is `triton.tools.tensor_descriptor.TensorDescriptor.from_tensor(W, [128, 128])` and is built once in prepare() from the weight alone. x is a masked `tl.load` (rows >= M are zero) and the dot is `tl.dot(x_tile, tl.trans(w_tile), acc)`. The K loop is `tl.range(k_start, k_start + K_SLICE, BLOCK_K, warp_specialize=WARP_SPEC)`, where WARP_SPEC is a constexpr fixed in prepare(). Grid is (N // 128, SPLIT_K): pooler (32, 4), unpooler (64, 2), K-slice 2048.
+- Reduce, per the REQUIRED note. EVERY CTA, the winner included, stores its masked fp32 partial into `state[layer+"_m128_ws"]` [SPLIT_K, 128, n]. Then come debug_barrier, one gpu-scope acq_rel ticket per N-tile, and debug_barrier. The last-ticket CTA starts from its in-register `acc` and adds all SPLIT_K slices in index order. Its own slice is masked off with `m_mask & (pid_k != s)`, so it costs no memory traffic and is not reloaded. The CTA then stores bf16 once and resets with atomic_xchg. The spec text said the winner does "NOT store" its own partial. As the review required, I did not implement that: only the reload is skipped. The constexpr REDUCE=False variant is used only by the diagnostics.
+- `_m128_prepare` runs per layer. It allocates the descriptor, workspace and int32 counters [n // 128] under its own keys (`<layer>_m128_desc/_ws/_cnt`). It then tries the variants (warp_specialize, num_stages) in the order (T,3), (T,2), (F,3), (F,2). `OutOfResources` steps down to 2 stages. Any other compile or run exception, such as warp_specialize being rejected on sm90, moves to the next variant. The first variant that compiles AND passes `_m128_selfcheck` is fixed in `state["m128_variants"][layer]`. If none passes, the value is None and that layer keeps cuBLAS. After that, prepare() warms m in {65, 96, 128}, prints the diagnostics and re-zeroes the counters. The selected variant is printed on the `[m128_ws <layer>] selected variant:` line.
+- The self-check runs on synthetic x at m in {65, 96, 128}, and each m runs twice. The workspace is NaN-poisoned first, so a masked row leaking into out shows up as a failure. Row 0 is a one-hot 2.0 and must be within 1e-3 rel L2. Every row must be within 5e-3 rel L2 against an fp64 reference, the output must be finite, and the counters must read 0 after each launch.
+- The diagnostics (try/except, prints only) report n_regs, n_spills, PTX counts of `wgmma.mma_async` and `cp.async.bulk.tensor`, and warm-L2 event times at m=128 for the full kernel vs REDUCE=False (tail = the difference). Per the review, read these as a mainloop-vs-tail ratio and judge M1-M3 on the profile top_kernels.
+- kernel_fn gate: after the swap-AB check and before cuBLAS. It requires `state["m128_variants"][layer]` not None, layer in {pooler, unpooler}, 65 <= cfg m <= 128, cfg n/k equal to the layer's, and x a contiguous bf16 [m, k]. m = 130, 256, 512 and 1000 keep cuBLAS.
+- Not adopted: the review's optional host TensorDescriptor for x. The spec says x stays a masked tl.load. If the printed variant shows warp_specialize=False, this run measures TMA plus BLOCK_K 128 only, and the x-descriptor is the natural stage-1b follow-up. On the gate (open question 3), I kept 65..128 as specified. The self-check covers 65, 96 and 128.
+
+## Rules check
+
+Checked against `git -C .worktrees/muse_bf16_proj/pooler-unpooler-m128-tma-wspec-rewrite diff`:
+
+- [x] CUDA-graph capturable. kernel_fn's new path is one Triton launch plus `torch.empty`. There is no `.item()`, `.cpu()`, sync or print. Branches depend only on cfg, shapes, dtype, contiguity and a prepare()-fixed variant. All `.item()` and synchronize calls are in `_m128_selfcheck`, `_m128_diagnostics` and `_m128_prepare`, which run in prepare() only.
+- [x] Nothing derived from `data` is cached. The workspace and counters are allocated in prepare(). Partials are rewritten for rows < m on every call, and the reducer reads only those rows. The descriptor is built from the weight only. No `triton.autotune` is used.
+- [x] Weights: the bf16 weights are used as-is (contiguous) through a TMA descriptor. There is no repack and no precision change. The router path is untouched.
+- [x] Activations stay bf16 (x as given); accumulation is fp32 and the output bf16, as in cuBLAS. KV-cache / query FP8: n/a, since this problem has no attention.
+- [x] Attention sees every key: n/a, since this problem has no attention. No weight-based skipping: every weight tile is read.
+- [x] No timing patches, harness frames, I/O, secrets, module edits, reference import, subprocesses or network. The only new import is `triton.tools.tensor_descriptor`.
+- [x] All work happens inside the timed call; no output caching or replay. The self-check and warm-ups use synthetic x only, and their outputs are dropped.
+- [x] First line `# okc: problem=muse_bf16_proj` is kept.
+
+Lint (`okc_lint.py ... --problem muse_bf16_proj`):
+
+```
+warn  host-sync    L794: torch.cuda.synchronize()  (outside kernel_fn's call graph; fine in prepare())
+warn  host-sync    L799: if row_err.max().item() > 5e-3:  (outside kernel_fn's call graph; fine in prepare())
+warn  host-sync    L800: return f"m={m} rep={rep}: max row rel L2 {row_err.max().item():.3e}"  (outside kernel_fn's call graph; fine in prepare())
+warn  host-sync    L801: if row_err[0].item() > 1e-3:  (outside kernel_fn's call graph; fine in prepare())
+warn  host-sync    L802: return f"m={m} rep={rep}: one-hot row rel L2 {row_err[0].item():.3e}"  (outside kernel_fn's call graph; fine in prepare())
+warn  host-sync    L803: if int(cnt.abs().sum().item()) != 0:  (outside kernel_fn's call graph; fine in prepare())
+warn  host-sync    L831: end.synchronize()  (outside kernel_fn's call graph; fine in prepare())
+warn  host-sync    L864: torch.cuda.synchronize()  (outside kernel_fn's call graph; fine in prepare())
+warn  host-sync    L886: torch.cuda.synchronize()  (outside kernel_fn's call graph; fine in prepare())
+OK with warnings
+```
+
+`python3 -I -m py_compile` passed; the __pycache__ was removed.
