@@ -94,13 +94,15 @@ base_sha: e82b94f9414d0fe3381c39c7722efd47759f3360
 base_blob: a8bb42ac483318e9fbc84bc7826a27b7a704d1fb
 branch: hyp/muse_bf16_proj/bf16-m16-swapab-wgmma-extend
 worktree: .worktrees/muse_bf16_proj/bf16-m16-swapab-wgmma-extend
-mode: null
+mode: submit
 implemented_at: 2026-10-24T165742Z
 impl_commit: bdeadf44e3811fcedbb18e1d3f7816b41e677f3c
 submission_sha256: 842aaea331cffb88f97ec5e3190afa3600a44f7ed9415d1916aa236ce16b852e
 norm_sha256: 6c67d2184cdc3340f8b7929330d864969d666b4db1f733264cfe77476ce97d91
 submission_blob: bb41afb76ea0a0dea82ed0246aa441d6b3922a19
 lint_warnings: 0
+attempt_file: 2026-10-24T165742Z-submit-bf16-m16-swapab-wgmma-extend.md
+prepared_at: 2026-10-24T165742Z
 ---
 
 # bf16-m16-swapab-wgmma-extend
