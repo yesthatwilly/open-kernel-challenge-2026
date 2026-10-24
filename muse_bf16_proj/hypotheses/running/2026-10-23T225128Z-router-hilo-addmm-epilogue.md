@@ -43,13 +43,19 @@ review: proceed
 status: running
 review_at: 2026-10-24T024434Z
 review_companions: [router-hilo-addmm-epilogue-control-inplace-out]
-stage: claimed
+stage: implemented
 claimed_at: 2026-10-24T024439Z
 base_sha: fe9a5a37d2a2208f820e8c3696faae713a1bb583
 base_blob: 349be31cabc7d9b669b94032ae723c0b0a5e7f71
 branch: hyp/muse_bf16_proj/router-hilo-addmm-epilogue
 worktree: .worktrees/muse_bf16_proj/router-hilo-addmm-epilogue
 mode: null
+implemented_at: 2026-10-24T024717Z
+impl_commit: 5fec3218be0e36938926e1686f5f594fad1ebb92
+submission_sha256: 2e80c092b0fc20de5989016d605fa6fadc3a53ea59be5f7b4ca17240c2be51b4
+norm_sha256: d89ca258fd504b13e42bab75a167dc746e892dd74f749585cebb8d401b70bd7e
+submission_blob: b30f7112740b8be9d4d5d5e4f42ea46fa49771f1
+lint_warnings: 0
 ---
 
 # router-hilo-addmm-epilogue
@@ -100,3 +106,35 @@ ab-revert/ab-tune of landed items is pointless. What is needed is a control on t
 - Classify from the router rows (~8-10%), not the headline (~1.5%).
 - If router-triton-hilo-fused-control-splitk-all-m gains at every m, this and its control become moot except for attributing the add node's cost.
 
+
+## Implementation notes
+
+- File: `.worktrees/muse_bf16_proj/router-hilo-addmm-epilogue/muse_bf16_proj/submission.py`, `kernel_fn`, router branch only (above `ROUTER_FP32_MAX_TOKENS = 1`, i.e. m >= 2).
+- Replaced `acc += torch.mm(x, state["router_lo_t"], out_dtype=torch.float32)` with
+  `acc = torch.addmm(acc, x, state["router_lo_t"], beta=1.0, alpha=1.0, out_dtype=torch.float32)`
+  (out-of-place, exactly as the change paragraph specifies), plus a one-line comment.
+- Unchanged: the hi `torch.mm(..., out_dtype=torch.float32)`, `prepare()` and the hi/lo split, the fp32 `F.linear` path at m <= 1, the bf16 layers via `_bf16_gemm_dispatch_impl`, the first-line marker.
+- Deviation: none. Deliberately NOT `out=acc`; the in-place form is the queued companion `router-hilo-addmm-epilogue-control-inplace-out`, so this primary vs that control is the A/B.
+- Expected-table note (from review): base has ROUTER_FP32_MAX_TOKENS = 1, so verify_1 (m=8) is on the hi/lo path and is touched by this change (expect faster, not flat); only decode_1 (m=1) is the flat control. Attribute against job aa3d033c208e4511 per-shape router medians.
+- Not run locally (no GPU, no torch on this node). Unverified: that the image's torch accepts `addmm(..., out_dtype=)` with bf16 mat1/mat2 and fp32 self; a TypeError/dtype check would fail the first router test (m 8).
+
+## Rules check
+
+Checked against `git -C .worktrees/muse_bf16_proj/router-hilo-addmm-epilogue diff` (1 file, +4/-1, router branch of `kernel_fn` only).
+
+- [x] CUDA-graph capturable: no `.item()`/`.cpu()`/`synchronize()`/tensor prints; the only branch is on `x.shape[0]` and `cfg["layer"]` (shape/config); addmm's output allocation is shape-determined, graph-safe.
+- [x] Nothing derived from `data` is cached across calls: `acc` is a per-call local; `state` is only read.
+- [x] Weights: repacked only in `prepare()` (unchanged); bf16 layers stay BF16; router uses the allowed BF16 hi+lo pair with FP32 accumulation (addmm with fp32 self and out_dtype=float32).
+- [x] Activations BF16 where SGLang keeps BF16: x enters both router GEMMs as BF16, as before; bf16 layers untouched.
+- [x] n/a: attention — this problem is dense projections; no attention, no key skipping.
+- [x] n/a: KV cache / FP8 queries — no KV cache or queries in this problem.
+- [x] No timing patches, harness frames/I/O/secrets, module edits, reference import, subprocesses or network: diff adds only a `torch.addmm` call and a comment.
+- [x] All work happens inside the timed call; no output caching or replay: both router GEMMs run every call.
+- [x] First line still `# okc: problem=muse_bf16_proj`; `python3 -m py_compile` passes.
+
+Lint (`python3 -I .claude/skills/churnsubs/bin/okc_lint.py <worktree>/muse_bf16_proj/submission.py --problem muse_bf16_proj`):
+
+```
+CLEAN: submission.py
+```
+(exit 0; no findings)
