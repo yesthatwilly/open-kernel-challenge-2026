@@ -38,13 +38,19 @@ review: proceed
 status: running
 review_at: 2026-10-24T052937Z
 review_companions: null
-stage: claimed
+stage: implemented
 claimed_at: 2026-10-24T052937Z
 base_sha: fbfb795472c2ae79a1b093a08fb5e42d1867da77
 base_blob: 29884ed7c43020beb1ad7c469eafaa8b9f362470
 branch: hyp/muse_bf16_proj/unpooler-full-triton-skinny-m32-control-blockm16-all-m
 worktree: .worktrees/muse_bf16_proj/unpooler-full-triton-skinny-m32-control-blockm16-all-m
 mode: null
+implemented_at: 2026-10-24T053058Z
+impl_commit: 150b4380dc6444a2de1c28541b03408d02ab839f
+submission_sha256: c24c1a76065ea5e509a882541d53b22db80bb69acdfaf490f43fd1697830ece7
+norm_sha256: 999ad52be55588d1bf405f7ba1e6d7e56ff4916137aa7183bf753934f692d8de
+submission_blob: 72d10599c11fae92a3c5d7068a9025c07fbca037
+lint_warnings: 0
 ---
 
 # unpooler-full-triton-skinny-m32-control-blockm16-all-m
@@ -89,3 +95,37 @@ Noise: the +-4% cross-run swings the prompt cites are on cuBLAS split-K rows (qk
 - If gain: unpooler decode_16 and decode_32 both beat nvjet by ~3%; the gain only reaches the board after rebasing the parent + control onto master (router-triton-hilo-fused-control-splitk-all-m is not in the build base) and a fresh run; also revisit the pooler with BLOCK_N=64 (64 programs) or BLOCK_M=16 tiles, since the parent's data say the pooler's 3.3 TB/s is the BLOCK_N=32 / 32-step tile, not a Triton ceiling.
 - Frontmatter says base: master while depends_on names the parent; confirm churn.py bases on fbfb795 (the parent's impl_commit) as the prompt states, otherwise the comparison rows are wrong.
 
+
+## Implementation notes
+
+Worktree `.worktrees/muse_bf16_proj/unpooler-full-triton-skinny-m32-control-blockm16-all-m`, `muse_bf16_proj/submission.py` only (diff: 1 file, +53 / -6). Uncommitted.
+
+- New `@triton.jit(do_not_specialize=["M"]) _unpooler_two_tile_kernel`, a SEPARATE kernel as the review's first open question asks: `_pooler_skinny_kernel` is textually unchanged (no new constexpr), so every pooler specialization and the unpooler m <= 16 specialization (BLOCK_M=16, BLOCK_N=64, BLOCK_K=256, 4 stages, 4 warps) are the parent's exact kernels under the same cache key; unpooler decode_16 is the in-run control.
+- The two-tile kernel: per K step it loads one [64, 256] weight tile, `tl.trans` once, and two [16, 256] x tiles (`offs_m1 = tl.arange(0, 16)`, `offs_m2 = 16 + tl.arange(0, 16)`), each masked on `offs_m* < M` with `other=0.0`; two `tl.dot` into two fp32 [16, 64] accumulators; two bf16 stores masked on `offs_m1 < M` / `offs_m2 < M`. Same K order as the parent, so per-row arithmetic is the parent's.
+- `_unpooler_skinny_gemm`: always BLOCK_M = `UNPOOLER_BLOCK_M` = 16 (new constant); picks `_pooler_skinny_kernel` for m <= 16 and `_unpooler_two_tile_kernel` for 16 < m <= 32. Grid (128), BLOCK_N 64, BLOCK_K 256, num_warps 4, num_stages 4 unchanged.
+- Routing (`_unpooler_skinny_applies`, 9 <= m <= 32 at [8192, 4096]), pooler path, router, cuBLAS fallback: unchanged.
+- Warmup: `_unpooler_skinny_warmup` already loops m in 9..32 on synthetic zeros through `_unpooler_skinny_gemm`, so it now compiles both kernels (single-tile for 9..16, two-tile for 17..32); only its docstring changed. Module docstring updated with one sentence.
+- Deviations: none. Smem: 4 x (32 KB w + 2 x 8 KB x) = 192 KB, same as the parent's BLOCK_M=32 at 4 stages, which compiled and ran; kept 4 stages.
+- Not runnable here (no GPU/Triton on this node): compile/smem behavior of the two-tile kernel is unverified until the okc run; a shared-memory failure would surface in prepare().
+
+## Rules check
+
+Checked against `git -C .worktrees/muse_bf16_proj/unpooler-full-triton-skinny-m32-control-blockm16-all-m diff`.
+
+- [x] CUDA-graph capturable: no `.item()`/`.cpu()`/`synchronize()`/tensor prints; the only new branch is on `x.shape[0]` (a shape); allocation is the same `torch.empty((m, 8192))` as the parent.
+- [x] Nothing derived from `data` is cached across calls: no new state entries; warmup uses synthetic zeros and drops outputs.
+- [x] Weights: unchanged (no repack); BF16 stays BF16, read as stored; router hi+lo untouched.
+- [x] Activations BF16 where SGLang keeps BF16: x bf16 in, bf16 x bf16 tl.dot with fp32 accumulate, bf16 out.
+- [x] n/a: attention-key rule (no attention in this problem); no skipping of any weight — every weight tile is loaded and used.
+- [x] No timing patches, harness frames/I/O/secrets, module edits, reference import, subprocesses or network: diff adds only a Triton kernel and a dispatch line.
+- [x] All work happens inside the timed call; no output caching or replay.
+- [x] First-line marker `# okc: problem=muse_bf16_proj` kept; no `triton.autotune`.
+- [x] Masking: second tile masked with `offs_m2 = 16 + tl.arange(0, 16) < M` on both load and store.
+
+Lint (`okc_lint.py ... --problem muse_bf16_proj`):
+
+```
+CLEAN: /home/user/git/musespark/.worktrees/muse_bf16_proj/unpooler-full-triton-skinny-m32-control-blockm16-all-m/muse_bf16_proj/submission.py
+```
+
+`python3 -I -m py_compile`: OK; `__pycache__` removed from the worktree.
