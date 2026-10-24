@@ -1,17 +1,17 @@
 {
  "problem": "muse_bf16_proj",
- "job": "875f3e0172ee48a1",
- "check_job": "875f3e0172ee48a1",
+ "job": "1602a4e947e64090",
+ "check_job": "1602a4e947e64090",
  "mode": "check",
- "speedup": 1.1760470299345995,
+ "speedup": 1.1984474737274622,
  "ci": [
-  1.1584063244855805,
-  1.1936877353836184
+  1.1804707616215502,
+  1.216424185833374
  ],
- "score_us": 4107.658858054889,
- "commit": "658d63bcdf2a330b0c3093873d5f04a9ee92ff9f",
- "submission_blob": "3f76eb805990314f5f7e6de6e9e184464edd6019",
- "slug": "bf16-shape-gated-triton-winners-combo",
- "result": "muse_bf16_proj/hypotheses/done/neutral/bf16-shape-gated-triton-winners-combo.result.json",
- "updated_at": "2026-10-24T135641Z"
+ "score_us": 4030.8817081278007,
+ "commit": "8b9ad430b2ed965f732443cb8de2069b58f43366",
+ "submission_blob": "a8bb42ac483318e9fbc84bc7826a27b7a704d1fb",
+ "slug": "bf16-m32-swapab-wgmma-triton",
+ "result": "muse_bf16_proj/hypotheses/done/neutral/bf16-m32-swapab-wgmma-triton.result.json",
+ "updated_at": "2026-10-24T144859Z"
 }

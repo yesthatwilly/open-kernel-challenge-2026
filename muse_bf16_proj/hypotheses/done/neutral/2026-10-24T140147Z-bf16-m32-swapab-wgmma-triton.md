@@ -106,7 +106,8 @@ speedup: 1.1984474737274622
 speedup_ci: [1.1804707616215502, 1.216424185833374]
 harvested_at: 2026-10-24T144810Z
 best_at_harvest: 1.1760470299345995
-promotion: null
+promotion: merged
+promotion_commit: 8b9ad430b2ed965f732443cb8de2069b58f43366
 ---
 
 # bf16-m32-swapab-wgmma-triton
