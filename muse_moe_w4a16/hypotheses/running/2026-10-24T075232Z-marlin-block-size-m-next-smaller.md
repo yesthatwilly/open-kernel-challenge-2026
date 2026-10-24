@@ -56,13 +56,15 @@ base_sha: 38f7ef0c3079751ea38f770d5bf9c79242b606ef
 base_blob: 11fbc1957daf7294cd2810ff82a0aad2f25644bd
 branch: hyp/muse_moe_w4a16/marlin-block-size-m-next-smaller
 worktree: .worktrees/muse_moe_w4a16/marlin-block-size-m-next-smaller
-mode: null
+mode: check
 implemented_at: 2026-10-24T100227Z
 impl_commit: fa264a1be6ccfd5b5ece1f9a22b89c21d38c1c97
 submission_sha256: 132ed645c5ca1b4ff06144d4a6d4031b1819fb985c504e3d0811fb875d2560a1
 norm_sha256: e6c8aa1ba3511b86b59de78362bf48d851b5b6a6f6b813b93b1beb2beac3c40f
 submission_blob: 12f7f3441aa7dfa758d69dd9147422a0c972317a
 lint_warnings: 1
+attempt_file: 2026-10-24T100227Z-check-marlin-block-size-m-next-smaller.md
+prepared_at: 2026-10-24T100227Z
 ---
 
 # marlin-block-size-m-next-smaller
