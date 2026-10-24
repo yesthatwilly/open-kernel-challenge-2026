@@ -52,8 +52,10 @@ depends_on: null
 priority: 1
 kind: primary
 controls_for: null
-review: required
+review: proceed
 status: queued
+review_at: 2026-10-24T092231Z
+review_companions: null
 ---
 
 # router-triton-splitk-side-stream
@@ -74,3 +76,25 @@ Port muse_bf16_proj's landed router kernel (master muse_bf16_proj/submission.py,
 ## Risk
 
 Risk: the router's 128 CTAs now run concurrently with the pooler's splitK nvjet kernel on the main stream; SM contention could slow the pooler by about what the router saves, which would read as flat at T>=16. Routing numerics at T=1 change from the fp32 router input to the bf16 ffn_input with a hi/lo weight split (already what every T>=2 does on master and what passed 13/13 for hilo-m8); the routing tie rules (0.05 / 0.03 margins) absorb bf16-input logit error at 8192-dim. Atomic fp32 accumulation order is nondeterministic across 16 K-slices: logit ties can flip run to run, still within the tie rules. The test shapes T in {1, 8, 9, 16, 24, 32, 33, 40} must all be warmed in prepare. If this is flat, the follow-up is running the router on the main stream ahead of the pooler (no overlap) to separate contention from the critical-path effect.
+
+## Adversarial review
+
+Reviewed 2026-10-24T092231Z by an adversarial subagent (model opus).
+
+**Verdict: proceed.** The change is cheap, breaks no rule, duplicates nothing, and the per-shape rows attribute it cleanly, so it should run. Its premise that the router is on the critical path at T>=16 comes from misreading the profile, though, so the most likely result is flat, and its priority should drop from 1.
+
+### Justification
+The kernel itself is well proven: muse_bf16_proj measured the same [T,8192]x[256,8192] hi/lo router going from 10.5-17.7 us to 5.7-9.3 us with this exact 3-D split-K Triton kernel, and LESSONS.md lists it as the one large bf16 win. The mechanism claimed for THIS layer is the weak part. It says the side-stream router at T>=16 is 'two cuBLAS tss splitK GEMMs (~9.3 us each)'. In the profile the GPU-time column is a total over all calls, and the master profile 2b1f82408ab64116 shows nvjet_sm90_tss_64x16_64x16_4x1_v_bz_splitK_NNT at 9.2 us for 2 calls at decode_16 (both layers) and nvjet_sm90_tss_32x64 at 9.5 us for 2 calls at decode_32 sliding. That is about 4.6-4.8 us per GEMM. Add two splitKreduce launches, the fp32 add and FusedMuseSparkRouting, and the side branch is roughly 14-18 us. The hilo-m8 review's own isolated numbers agree: hi/lo router 14.5 us at m=16 and 15.1 at m=32, routing ~3 us, against a pooler of nvjet 128x16/128x32 splitK at 20.0-22.4 us plus its reduce (~22-25 us). So at decode_16/32 the router most likely already finishes before the pooler and main_stream.wait_stream does not stall. Saving 6-9 us of side-stream time then saves nothing on the critical path. The verify shapes are the same story with more slack: the pooler is 25-34 us at m=128/256 against a 16.6-17.8 us router. decode_1 (a 5 us dot_kernel gemv) is clearly hidden. The secondary claim, 'halves the bandwidth it steals from the pooler (x is read once, not twice)', is also wrong in size: the traffic is the 8 MB hi+lo weight read, which the Triton kernel still does in full; reading x once saves only 256-512 KB. The real second-order effects are fewer graph nodes on the side stream (two splitKreduce, one add) and different SM occupancy next to the pooler's splitK kernel (128 CTAs, can go either way). These are worth perhaps 0-3 us, below the ~1.5% per-shape drift on 254-602 us shapes. The 'expected' directions agree with TASK.md's weights and floors only if the router is critical, which the data does not support, so 'faster' on decode_16/32 should be read as 'flat-to-slightly-faster'. Weakest link: the per-call versus total misreading of the tss splitK row, on which the whole critical-path argument rests.
+
+### Confounders on the current kernel
+- sglang-pipeline-parity-router-hilo-m8 (router GEMM, same code). This hypothesis replaces that patch's T>=2 torch.mm hi/lo pair and also overrides its ROUTER_FP32_MAX_TOKENS (1 -> 0). The change supersedes it rather than interacting with it. Reverting it would only restore SGLang's fp32 path at T<=8, which the new ROUTER_FP32_MAX_TOKENS=0 bypasses anyway, so an ab-revert would measure the same code at every T except the dead constant. Not a confounder.
+- marlin-block-m-cap-16 (w13 marlin). It only shortens the main-stream MoE after the side-stream join, at T=128/256. It does not change how long the pooler runs relative to the router, and the router is not on the critical path at those shapes in either case. It cannot create or hide a router-attributable change. Not a confounder.
+
+### Interference and A/B needs
+No companion is warranted. Neither landed hypothesis confounds the change (see confounders), so ab-revert and ab-tune have nothing to separate. The bundled sub-changes are already separated by shape: switching T=1 to bf16 input + hi/lo shows only on decode_1, and the Triton kernel replacing the cuBLAS pair shows on decode_16/32 and verify_*. The per-shape rows therefore attribute each one without a control. A gain at decode_16/32 is unambiguous because only the side-stream router kernel changed. A loss at T>=16 would be readable from the profile: if the pooler's nvjet splitK row grows against master's 20.0-22.4 us, that is SM contention. The one ambiguous outcome, flat, cannot be resolved by a companion run of this change. Its explanation is that the router was already hidden, which master's numbers already predict, and the kernel's own top_kernels time in this run confirms the kernel got faster. The hypothesis's suggested follow-up (router on the main stream ahead of the pooler) is a new hypothesis, not a control, and should only be minted if this run is flat and the router-critical question still matters for a later fusion.
+
+### Open questions
+- Is the profile's GPU-time column per kernel name summed over calls (as Marlin's 2 calls suggest)? If so, the hypothesis's '~9.3 us each' is 9.3 us for both, and the decode_16/32 'faster' prediction should be restated as flat. Priority 1 is not justified on that basis.
+- In this run's profile, does the pooler's nvjet 128x16/128x32 splitK row stay at master's 20.0-22.4 us next to a 128-CTA Triton kernel? A rise means SM contention, which makes the main-stream-router follow-up worth minting.
+- Does 'GPU busy' versus 'total' in the decode_16/32 profiles move relative to master (for example decode_32 full: 639.2 total vs 611.4 busy)? It is the one in-run signal of whether the side branch was overlapping or overrunning.
+
