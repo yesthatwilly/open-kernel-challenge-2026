@@ -40,10 +40,10 @@ priority: 3
 kind: primary
 controls_for: null
 review: proceed
-status: running
+status: done
 review_at: 2026-10-24T032407Z
 review_companions: null
-stage: dispatched
+stage: harvested
 claimed_at: 2026-10-24T032412Z
 base_sha: d2840d088aa35522a03b40c59e174287cf935f67
 base_blob: 2752a016d386e9261ec77e25b426c05b76c071ac
@@ -60,6 +60,13 @@ attempt_file: 2026-10-24T032547Z-check-qkv-gate-triton-skinny-m32.md
 prepared_at: 2026-10-24T032547Z
 job: abcd45776f244c8c
 dispatched_at: 2026-10-24T032603Z
+outcome: regression
+verdict_detail: regression
+speedup: 0.9238363951263349
+speedup_ci: [0.9099788491994398, 0.9376939410532298]
+harvested_at: 2026-10-24T052413Z
+best_at_harvest: 1.1510295903072447
+promotion: null
 ---
 
 # qkv-gate-triton-skinny-m32
@@ -138,3 +145,53 @@ CLEAN: submission.py
 ```
 
 `python3 -I -m py_compile`: OK; the `__pycache__` it left was removed.
+
+## Result
+
+- job `abcd45776f244c8c` (check), status done, passed True, tests 9/9
+- speedup 0.9238x, 95% CI [0.9100, 0.9377], score 5229.064394393541 µs vs SGLang 4830.8 µs
+- best at harvest: {"speedup": 1.1510295903072447, "ci": [1.133764146452636, 1.1682950341618532], "job": "bd9fa14151644cee"}; base result: muse_bf16_proj/hypotheses/done/neutral/pooler-triton-skinny-m32.result.json
+- **outcome: regression** (regression)
+- files: `muse_bf16_proj/hypotheses/done/regression/qkv-gate-triton-skinny-m32.result.json`, `muse_bf16_proj/hypotheses/done/regression/qkv-gate-triton-skinny-m32.patch`; branch `hyp/muse_bf16_proj/qkv-gate-triton-skinny-m32`
+
+## Attribution
+
+| shape | w | base µs | hyp µs | delta | verdict |
+|---|---|---|---|---|---|
+| layer=qkv_gate load=decode_1 m=1 | 62 | 14.48 | 22.64 | 0.6445 | lost |
+| layer=o load=decode_1 m=1 | 62 | 6.89 | 7.06 | 1.0189 | flat |
+| layer=pooler load=decode_1 m=1 | 62 | 20.51 | 20.32 | 0.9989 | flat |
+| layer=unpooler load=decode_1 m=1 | 62 | 7.07 | 7.2 | 1.0122 | flat |
+| layer=router load=decode_1 m=1 | 62 | 10.8 | 10.57 | 1.0047 | flat |
+| layer=qkv_gate load=decode_16 m=16 | 62 | 14.25 | 22.3 | 0.6335 | lost |
+| layer=o load=decode_16 m=16 | 62 | 6.77 | 7.07 | 0.9983 | flat |
+| layer=pooler load=decode_16 m=16 | 62 | 20.28 | 20.42 | 0.9909 | flat |
+| layer=unpooler load=decode_16 m=16 | 62 | 18.71 | 18.68 | 1.0006 | flat |
+| layer=router load=decode_16 m=16 | 62 | 14.82 | 14.8 | 0.9963 | flat |
+| layer=qkv_gate load=decode_32 m=32 | 62 | 14.22 | 26.07 | 0.5598 | lost |
+| layer=o load=decode_32 m=32 | 62 | 6.77 | 6.94 | 0.9789 | flat |
+| layer=pooler load=decode_32 m=32 | 62 | 24.49 | 24.71 | 0.9937 | flat |
+| layer=unpooler load=decode_32 m=32 | 62 | 18.63 | 18.77 | 0.9826 | flat |
+| layer=router load=decode_32 m=32 | 62 | 15.14 | 15.52 | 0.9896 | flat |
+| layer=qkv_gate load=verify_1 m=8 | 62 | 14.5 | 22.9 | 0.6458 | lost |
+| layer=o load=verify_1 m=8 | 62 | 6.9 | 6.86 | 0.9894 | flat |
+| layer=pooler load=verify_1 m=8 | 62 | 20.27 | 20.4 | 0.9937 | flat |
+| layer=unpooler load=verify_1 m=8 | 62 | 7.2 | 7.01 | 1.0271 | flat |
+| layer=router load=verify_1 m=8 | 62 | 26.33 | 26.35 | 1.004 | flat |
+| layer=qkv_gate load=verify_16 m=128 | 62 | 17.13 | 16.97 | 1.0103 | flat |
+| layer=o load=verify_16 m=128 | 62 | 7.32 | 7.45 | 1.0047 | flat |
+| layer=pooler load=verify_16 m=128 | 62 | 25.15 | 25.25 | 0.983 | flat |
+| layer=unpooler load=verify_16 m=128 | 62 | 20.27 | 19.98 | 1.0109 | flat |
+| layer=router load=verify_16 m=128 | 62 | 16.42 | 16.28 | 1.0054 | flat |
+| layer=qkv_gate load=verify_32 m=256 | 62 | 19.94 | 19.67 | 1.0087 | flat |
+| layer=o load=verify_32 m=256 | 62 | 9.35 | 9.44 | 0.9958 | flat |
+| layer=pooler load=verify_32 m=256 | 62 | 31.15 | 30.58 | 1.0162 | flat |
+| layer=unpooler load=verify_32 m=256 | 62 | 24.66 | 24.46 | 1.007 | flat |
+| layer=router load=verify_32 m=256 | 62 | 17.59 | 17.71 | 0.9982 | flat |
+
+lost on qkv_gate decode_1, decode_16, decode_32, verify_1. Expected hit: 2/6. Noise ±1.5%.
+
+## Follow-ups
+
+- record which shapes lost (Attribution) and do not retry this area in this form.
+

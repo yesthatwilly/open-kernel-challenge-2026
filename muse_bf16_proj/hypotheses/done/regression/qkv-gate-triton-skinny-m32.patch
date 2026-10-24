@@ -1,0 +1,129 @@
+diff --git a/muse_bf16_proj/submission.py b/muse_bf16_proj/submission.py
+index 2752a01..fd570a4 100644
+--- a/muse_bf16_proj/submission.py
++++ b/muse_bf16_proj/submission.py
+@@ -1,6 +1,7 @@
+ # okc: problem=muse_bf16_proj
+-"""Parity with SGLang's dispatch, plus one Triton skinny GEMM for the pooler at m <= 32
+-(hypothesis pooler-triton-skinny-m32).
++"""Parity with SGLang's dispatch, plus one Triton skinny GEMM for the pooler and qkv_gate at
++m <= 32 (hypotheses pooler-triton-skinny-m32, qkv-gate-triton-skinny-m32; qkv_gate uses a
++16-column tile, 144 programs).
+ 
+ The four bf16 layers go through the same cuBLAS dispatch SGLang uses on H200
+ (`_bf16_gemm_dispatch_impl`), except the pooler at m <= 32: there cuBLAS picks a split-K nvjet
+@@ -55,6 +56,16 @@ POOLER_BLOCK_K = 256   # 8192 / 256 = 32 K steps per program
+ POOLER_NUM_WARPS = 4
+ POOLER_NUM_STAGES = 4  # 4 x (32 x 256 x 2 B) = 64 KB of weight in flight per program
+ 
++# qkv_gate reuses the same kernel at m <= 32 (hypothesis qkv-gate-triton-skinny-m32) with a
++# narrower tile; qkv_gate at m > 32 (and any other n / k) keeps cuBLAS.
++QKV_SKINNY_MAX_M = 32
++QKV_N = 2304
++QKV_K = 8192
++QKV_BLOCK_N = 16       # 2304 / 16 = 144 programs (~1.09 waves); tl.dot needs N >= 16
++QKV_BLOCK_K = 256
++QKV_NUM_WARPS = 4
++QKV_NUM_STAGES = 4     # 4 x (16 x 256 x 2 B) = 32 KB of weight in flight per program
++
+ 
+ @triton.jit(do_not_specialize=["M"])
+ def _pooler_skinny_kernel(
+@@ -89,29 +100,50 @@ def _pooler_skinny_kernel(
+     tl.store(out_ptrs, acc.to(tl.bfloat16), mask=row_ok[:, None])
+ 
+ 
+-def _pooler_skinny_applies(x: torch.Tensor, cfg: Config) -> bool:
+-    """Shape- and config-only guard for the Triton pooler path."""
++def _skinny_applies(x: torch.Tensor, cfg: Config, max_m: int, n_req: int, k_req: int) -> bool:
++    """Shape- and config-only guard for a Triton skinny path."""
+     m, n, k = cfg["m"], cfg["n"], cfg["k"]
+-    return (m <= POOLER_SKINNY_MAX_M and n == POOLER_N and k == POOLER_K
++    return (m <= max_m and n == n_req and k == k_req
+             and x.dim() == 2 and x.shape[0] == m and x.shape[1] == k and x.stride(1) == 1
+             and x.dtype == torch.bfloat16)
+ 
+ 
+-def _pooler_skinny_gemm(x: torch.Tensor, w: torch.Tensor) -> torch.Tensor:
+-    """x [m, 8192] bf16 @ w [4096, 8192] bf16 .T -> [m, 4096] bf16, m <= 32."""
++def _pooler_skinny_applies(x: torch.Tensor, cfg: Config) -> bool:
++    return _skinny_applies(x, cfg, POOLER_SKINNY_MAX_M, POOLER_N, POOLER_K)
++
++
++def _qkv_skinny_applies(x: torch.Tensor, cfg: Config) -> bool:
++    return _skinny_applies(x, cfg, QKV_SKINNY_MAX_M, QKV_N, QKV_K)
++
++
++def _skinny_gemm(x: torch.Tensor, w: torch.Tensor, n: int, k: int, block_n: int, block_k: int,
++                 num_warps: int, num_stages: int) -> torch.Tensor:
++    """x [m, k] bf16 @ w [n, k] bf16 .T -> [m, n] bf16, m <= 32."""
+     m = x.shape[0]
+     block_m = 16 if m <= 16 else 32
+-    out = torch.empty((m, POOLER_N), dtype=torch.bfloat16, device=x.device)
+-    _pooler_skinny_kernel[(POOLER_N // POOLER_BLOCK_N,)](
++    out = torch.empty((m, n), dtype=torch.bfloat16, device=x.device)
++    _pooler_skinny_kernel[(n // block_n,)](
+         x, w, out,
+         m,
+         x.stride(0), w.stride(0), out.stride(0),
+-        K=POOLER_K, BLOCK_M=block_m, BLOCK_N=POOLER_BLOCK_N, BLOCK_K=POOLER_BLOCK_K,
+-        num_warps=POOLER_NUM_WARPS, num_stages=POOLER_NUM_STAGES,
++        K=k, BLOCK_M=block_m, BLOCK_N=block_n, BLOCK_K=block_k,
++        num_warps=num_warps, num_stages=num_stages,
+     )
+     return out
+ 
+ 
++def _pooler_skinny_gemm(x: torch.Tensor, w: torch.Tensor) -> torch.Tensor:
++    """x [m, 8192] bf16 @ w [4096, 8192] bf16 .T -> [m, 4096] bf16, m <= 32."""
++    return _skinny_gemm(x, w, POOLER_N, POOLER_K, POOLER_BLOCK_N, POOLER_BLOCK_K,
++                        POOLER_NUM_WARPS, POOLER_NUM_STAGES)
++
++
++def _qkv_skinny_gemm(x: torch.Tensor, w: torch.Tensor) -> torch.Tensor:
++    """x [m, 8192] bf16 @ w [2304, 8192] bf16 .T -> [m, 2304] bf16, m <= 32."""
++    return _skinny_gemm(x, w, QKV_N, QKV_K, QKV_BLOCK_N, QKV_BLOCK_K,
++                        QKV_NUM_WARPS, QKV_NUM_STAGES)
++
++
+ def _pooler_skinny_warmup(w: torch.Tensor) -> None:
+     """Compile every specialization the timed path can hit (BLOCK_M 16 and 32; M is not
+     specialized) on synthetic inputs, so no call to kernel_fn compiles. Outputs are dropped."""
+@@ -120,10 +152,17 @@ def _pooler_skinny_warmup(w: torch.Tensor) -> None:
+         _pooler_skinny_gemm(x, w)
+ 
+ 
++def _qkv_skinny_warmup(w: torch.Tensor) -> None:
++    """Same as _pooler_skinny_warmup for the qkv_gate tile (BLOCK_N 16)."""
++    for m in range(1, QKV_SKINNY_MAX_M + 1):
++        x = torch.zeros((m, QKV_K), dtype=torch.bfloat16, device=w.device)
++        _qkv_skinny_gemm(x, w)
++
++
+ def prepare(weights: Weights) -> dict:
+     """Called once, untimed. Keep the bf16 weights as they are (contiguous), add the router's
+     lossless-for-our-purpose hi/lo bf16 split, transposed for torch.mm, and pre-compile the
+-    pooler's Triton kernel."""
++    pooler's and qkv_gate's Triton kernels."""
+     state = {name: w.contiguous() for name, w in weights.items()}
+     router = weights["router"]
+     hi = router.to(torch.bfloat16)
+@@ -133,6 +172,9 @@ def prepare(weights: Weights) -> dict:
+     pooler = state["pooler"]
+     if pooler.shape == (POOLER_N, POOLER_K):
+         _pooler_skinny_warmup(pooler)
++    qkv = state["qkv_gate"]
++    if qkv.shape == (QKV_N, QKV_K):
++        _qkv_skinny_warmup(qkv)
+     return state
+ 
+ 
+@@ -141,6 +183,8 @@ def kernel_fn(data: Inputs, state: dict) -> torch.Tensor:
+     layer = cfg["layer"]
+     if layer == "pooler" and _pooler_skinny_applies(x, cfg):
+         return _pooler_skinny_gemm(x, state["pooler"])
++    if layer == "qkv_gate" and _qkv_skinny_applies(x, cfg):
++        return _qkv_skinny_gemm(x, state["qkv_gate"])
+     if layer != "router":
+         # The unpooler's slice is its first n rows (all of them above 8 tokens).
+         return _bf16_gemm_dispatch_impl(x, state[layer][: cfg["n"]], None)
