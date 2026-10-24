@@ -1,0 +1,5 @@
+[splitkv] load_inline compiled in 48.2s
+[splitkv] self-check kv_scale=1.0 grid=device: rel L2 1.69e-03, finite True
+[splitkv] self-check kv_scale=0.25 grid=3: rel L2 1.66e-03, finite True
+[splitkv] self-check kv_scale=1.0 grid=3: rel L2 1.62e-03, finite True
+[splitkv] PATH CHOSEN: full decode 1<B<=64 -> CUDA split-KV (muse_full_decode_splitkv_v2)

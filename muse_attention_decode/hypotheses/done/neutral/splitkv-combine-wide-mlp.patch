@@ -1,0 +1,115 @@
+diff --git a/muse_attention_decode/submission.py b/muse_attention_decode/submission.py
+index c6854f0..31ed3c7 100644
+--- a/muse_attention_decode/submission.py
++++ b/muse_attention_decode/submission.py
+@@ -418,7 +418,7 @@ def _paired_norm_gate_kernel(
+ # dereferenced (zero-filled copies) and are masked to -inf. At item end the four warps of each
+ # KV head merge in shared memory and the CTA stores one fp32 partial (acc [16, 64] unnormalized,
+ # m [16], l [16]) at slot b * max_chunks + chunk.
+-# Kernel B (splitkv_combine_kernel): grid (B, 16), 4 warps per (request, head): log-sum-exp merge
++# Kernel B (splitkv_combine_kernel): grid (B, 16), 8 warps per (request, head): log-sum-exp merge
+ # of the request's partials, times v_scale, then the master epilogue (scaleless RMSNorm over 64,
+ # eps inside the sqrt, times sigmoid(gate)), bf16 out.
+ # ---------------------------------------------------------------------------------------------
+@@ -737,14 +737,14 @@ splitkv_attn_kernel(const uint8_t* __restrict__ q,          // e4m3 [B, HQ, D]
+   cp_wait<0>();  // the trailing groups are empty; drain anyway
+ }
+ 
+-__global__ void __launch_bounds__(128)
++__global__ void __launch_bounds__(256)
+ splitkv_combine_kernel(const float* __restrict__ ws_acc, const float* __restrict__ ws_ml,
+                        const int* __restrict__ seqlens, const float* __restrict__ v_scale,
+                        const __nv_bfloat16* __restrict__ qkv, int64_t qkv_stride,
+                        __nv_bfloat16* __restrict__ out, int max_chunks, float eps) {
+-  __shared__ float red_m[4];
+-  __shared__ float red_l[4];
+-  __shared__ float red_acc[4][D];
++  __shared__ float red_m[8];
++  __shared__ float red_l[8];
++  __shared__ float red_acc[8][D];
+   const float NEG_INF = __int_as_float(0xff800000u);
+   const int b = blockIdx.x, h = blockIdx.y;
+   const int tid = threadIdx.x, lane = tid & 31, warp = tid >> 5;
+@@ -752,24 +752,39 @@ splitkv_combine_kernel(const float* __restrict__ ws_acc, const float* __restrict
+   const int64_t base = (int64_t)b * max_chunks;
+ 
+   float M = NEG_INF;
+-  for (int c = tid; c < n; c += 128) M = fmaxf(M, ws_ml[(base + c) * 2 * HQ + h]);
++  for (int c = tid; c < n; c += 256) M = fmaxf(M, ws_ml[(base + c) * 2 * HQ + h]);
+ #pragma unroll
+   for (int o = 16; o > 0; o >>= 1) M = fmaxf(M, __shfl_xor_sync(0xffffffffu, M, o));
+   if (lane == 0) red_m[warp] = M;
+   __syncthreads();
+-  M = fmaxf(fmaxf(red_m[0], red_m[1]), fmaxf(red_m[2], red_m[3]));
++  M = fmaxf(fmaxf(fmaxf(red_m[0], red_m[1]), fmaxf(red_m[2], red_m[3])),
++            fmaxf(fmaxf(red_m[4], red_m[5]), fmaxf(red_m[6], red_m[7])));
+   const float Mu = M == NEG_INF ? 0.f : M;
+ 
+   float a0 = 0.f, a1 = 0.f, L = 0.f;
+-#pragma unroll 4
+-  for (int c = warp; c < n; c += 4) {
+-    const int64_t sl = base + c;
+-    const float m = ws_ml[sl * 2 * HQ + h];
+-    const float wt = m == NEG_INF ? 0.f : ex2(m - Mu);  // empty partials weigh 0
+-    L += wt * ws_ml[sl * 2 * HQ + HQ + h];
+-    const float2 a = *reinterpret_cast<const float2*>(ws_acc + (sl * HQ + h) * D + lane * 2);
+-    a0 += wt * a.x;
+-    a1 += wt * a.y;
++  for (int c0 = warp; c0 < n; c0 += 8 * 4) {
++    float mm[4], ll[4];
++    float2 aa[4];
++#pragma unroll
++    for (int j = 0; j < 4; ++j) {
++      const int c = c0 + 8 * j;
++      mm[j] = NEG_INF;
++      ll[j] = 0.f;
++      aa[j] = make_float2(0.f, 0.f);
++      if (c < n) {
++        const int64_t sl = base + c;
++        mm[j] = ws_ml[sl * 2 * HQ + h];
++        ll[j] = ws_ml[sl * 2 * HQ + HQ + h];
++        aa[j] = *reinterpret_cast<const float2*>(ws_acc + (sl * HQ + h) * D + lane * 2);
++      }
++    }
++#pragma unroll
++    for (int j = 0; j < 4; ++j) {
++      const float wt = mm[j] == NEG_INF ? 0.f : ex2(mm[j] - Mu);  // empty/out-of-range partials weigh 0
++      L += wt * ll[j];
++      a0 += wt * aa[j].x;
++      a1 += wt * aa[j].y;
++    }
+   }
+   red_acc[warp][lane * 2] = a0;
+   red_acc[warp][lane * 2 + 1] = a1;
+@@ -778,7 +793,7 @@ splitkv_combine_kernel(const float* __restrict__ ws_acc, const float* __restrict
+   if (warp == 0) {
+     float o0 = 0.f, o1 = 0.f, Ls = 0.f;
+ #pragma unroll
+-    for (int w = 0; w < 4; ++w) { o0 += red_acc[w][lane * 2]; o1 += red_acc[w][lane * 2 + 1]; Ls += red_l[w]; }
++    for (int w = 0; w < 8; ++w) { o0 += red_acc[w][lane * 2]; o1 += red_acc[w][lane * 2 + 1]; Ls += red_l[w]; }
+     const float vs = __ldg(v_scale);
+     o0 = o0 / Ls * vs;
+     o1 = o1 / Ls * vs;
+@@ -821,7 +836,7 @@ void splitkv_combine(torch::Tensor ws_acc, torch::Tensor ws_ml, torch::Tensor ca
+                      torch::Tensor qkv, int64_t qkv_stride, torch::Tensor out, int64_t max_chunks, double eps) {
+   const int B = static_cast<int>(cache_seqlens.size(0));
+   auto stream = at::cuda::getCurrentCUDAStream();
+-  splitkv_combine_kernel<<<dim3(B, HQ), 128, 0, stream>>>(
++  splitkv_combine_kernel<<<dim3(B, HQ), 256, 0, stream>>>(
+       ws_acc.data_ptr<float>(), ws_ml.data_ptr<float>(), cache_seqlens.data_ptr<int>(), v_scale.data_ptr<float>(),
+       reinterpret_cast<const __nv_bfloat16*>(qkv.data_ptr()), qkv_stride,
+       reinterpret_cast<__nv_bfloat16*>(out.data_ptr()), static_cast<int>(max_chunks), static_cast<float>(eps));
+@@ -836,7 +851,7 @@ def _build_splitkv():
+     try:
+         from torch.utils.cpp_extension import load_inline
+         ext = load_inline(
+-            name="muse_full_decode_splitkv_v1",
++            name="muse_full_decode_splitkv_v2",
+             cpp_sources=_SPLITKV_CPP,
+             cuda_sources=_SPLITKV_CUDA,
+             functions=["splitkv_attn", "splitkv_combine"],
+@@ -1073,3 +1088,4 @@ if torch.cuda.is_available():
+     if _EXT is not None and not _splitkv_self_check():
+         print("[splitkv] SELF-CHECK FAILED: CUDA split-KV path disabled, master FA3 path kept")
+         _EXT = None
++    print(f"[splitkv] PATH CHOSEN: full decode 1<B<=64 -> {'CUDA split-KV (muse_full_decode_splitkv_v2)' if _EXT is not None else 'master FA3 (fallback)'}")
