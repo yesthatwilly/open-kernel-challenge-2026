@@ -58,13 +58,19 @@ review: proceed
 status: running
 review_at: 2026-10-24T100116Z
 review_companions: null
-stage: claimed
+stage: implemented
 claimed_at: 2026-10-24T100116Z
 base_sha: 93fae4dfde47a06219a581785dc8c4ff2e7dab3b
 base_blob: da55301de1e911aeab09878b0873809f544f436c
 branch: hyp/muse_bf16_proj/pooler-unpooler-m128-wgmma-splitk-semaphore
 worktree: .worktrees/muse_bf16_proj/pooler-unpooler-m128-wgmma-splitk-semaphore
 mode: null
+implemented_at: 2026-10-24T100317Z
+impl_commit: 239347475304cfa19cb1e3c219132295d5b9a54c
+submission_sha256: ff8dec1b80cb0f2f7c3ad1a2b0b36b91d231a0ac4de5c86e8a88afc83e55acdd
+norm_sha256: 0953bd239fd01c8505ba6ace2691d2852a03ac8881b85a1a13946cf38cbeccf9
+submission_blob: 0b015466e5e9b9493bde1d3340bf405a837f8d4f
+lint_warnings: 1
 ---
 
 # pooler-unpooler-m128-wgmma-splitk-semaphore
@@ -109,3 +115,38 @@ No companion is warranted. A gain is unambiguous: the readout is the _bf16_tc_sp
 - The verbatim epilogue makes the winner reload its own partial too. Keeping the winner's acc in registers and reloading only the other SPLIT_K-1 partials would cut the pooler tail by about 25% and the unpooler's by 50%, at the cost of a summation order that depends on which CTA wins (still correct, but not bitwise reproducible). This is a candidate stacked follow-up, not for this run.
 - Does Triton's epilogue convert the 128x128 fp32 accumulator through shared memory for the partial store? If so, 128 KB of pipeline buffers plus 64 KB of conversion scratch is about 192 KB. That fits, but check n_spills and occupancy in the printed diagnostics.
 
+
+## Implementation notes
+
+All changes in the worktree's `muse_bf16_proj/submission.py` (+155 lines, nothing removed; router and qkv_gate/o paths untouched):
+
+- New constants `TC_*` and `TC_LAYERS = {"pooler": (4096, 8192, 4), "unpooler": (8192, 4096, 2)}` (N, K, SPLIT_K). BLOCK_M=128, BLOCK_N=128, BLOCK_K=64, num_warps=8, num_stages=4; grid (N // 128, SPLIT_K) = 128 CTAs for both layers, K-slice 2048.
+- New `_bf16_tc_splitk_kernel` (`do_not_specialize=["M"]`). Its mainloop and the ticket-semaphore epilogue are copied verbatim from `_bf16_splitk_kernel` on `hyp/muse_bf16_proj/pooler-triton-splitk2-blockn64-semaphore`, which already has the `tl.debug_barrier()` after the ticket. The direct transposed `[BLOCK_K, BLOCK_N]` weight addressing needs no repack. The one addition is a `REDUCE: tl.constexpr` guard around the winner's reload, sum and store. The counter reset (`atomic_xchg`) runs whatever REDUCE is. The timed path always passes REDUCE=True, which compiles to the parent's epilogue.
+- `_tc_shape_ok` gates on layer in {pooler, unpooler}, 65 <= m <= 128 (cfg and x.shape), the full cfg n/k, and bf16 contiguous x and w. The m=130 unpooler test and m=256/1000 therefore keep master's cuBLAS path, and so do m <= 64 (1/5/7/8/16/32). `_tc_forward` allocates `out = torch.empty((m, n), bf16)` and launches once.
+- `prepare()` allocates `state[layer+"_ws"] = torch.empty((SPLIT_K, 128, n), fp32)` (8 MB each) and `state[layer+"_cnt"] = torch.zeros(n // 128, int32)`. It warms m=65 and m=128 on synthetic x (one compile per layer, since M is not specialized), then runs the reviewer's diagnostics via `_tc_diagnostics`, and re-zeroes the counters afterwards.
+- `kernel_fn` takes the new path first when `_tc_shape_ok` holds. Otherwise the master logic is unchanged.
+- Diagnostics follow the review's suggestion and run in prepare() only, untimed, wrapped in try/except. They print `[tc_splitk <layer>] wgmma_in_ptx=... n_regs=... n_spills=...`, plus the warm-L2 event-timed us of the full kernel and the REDUCE=False variant, which gives the tail estimate. They cost one extra compile per layer (REDUCE=False). The timing uses `end.synchronize()` in prepare(), which the lint warns about; it is outside kernel_fn's call graph.
+- Deviation: only the constexpr REDUCE guard, as above, so the diagnostics can measure the tail. No other change to the verbatim epilogue. The suggestion to keep the winner's acc in registers is NOT applied, because the review lists it as a follow-up.
+- The sibling qkv-gate-o-m128-wgmma-splitk-semaphore must merge the `_bf16_tc_splitk_kernel` name, the `TC_*` names and the `_ws`/`_cnt` keys by hand if both land.
+
+## Rules check
+
+Checked against `git -C .worktrees/muse_bf16_proj/pooler-unpooler-m128-wgmma-splitk-semaphore diff`:
+
+- [x] CUDA-graph capturable. The timed path (`kernel_fn` → `_tc_shape_ok`, `_tc_forward`) has no `.item()`/`.cpu()`/`synchronize()`/tensor prints. It branches only on layer, cfg m/n/k and x shape/dtype/stride. Its only allocation is `torch.empty` for out, sized by shape. The counter self-resets in-kernel, so graph replays start from 0. The only `synchronize()` is in prepare()'s diagnostics.
+- [x] Nothing derived from `data` is cached across calls. ws is fully rewritten for rows < m before it is read, every call, and the reducer reads the same mask. cnt holds only tickets and returns to 0. Warm-up and diagnostics use synthetic x.
+- [x] Weights stay BF16 as given and are read in place: no repack, no precision change. The router hi+lo is unchanged from master.
+- [x] Activations: x is read as BF16, accumulation is fp32 (tl.dot), and the output is a single cast to BF16, as SGLang does. n/a for the KV cache / FP8 queries: no attention in this problem.
+- [x] n/a: no attention in this problem (dense GEMMs only).
+- [x] No timing patches, harness frames/I/O/secrets, module edits, reference import, subprocesses or network. The only new imports used are the existing torch/triton. torch.cuda.Event is used only for prepare()-local timing and is not reassigned.
+- [x] All work happens inside the timed call. prepare() runs only warm-up/diagnostic launches on synthetic x, and kernel_fn recomputes the full GEMM every call. No output caching or replay.
+- [x] First-line marker `# okc: problem=muse_bf16_proj` kept. No triton.autotune.
+
+Lint (`okc_lint.py ... --problem muse_bf16_proj`):
+
+```
+warn  host-sync    L285: end.synchronize()  (outside kernel_fn's call graph; fine in prepare())
+OK with warnings: submission.py
+```
+
+`python3 -I -m py_compile` OK; __pycache__ removed.
