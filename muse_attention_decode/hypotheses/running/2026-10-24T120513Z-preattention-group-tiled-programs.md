@@ -52,13 +52,15 @@ base_sha: f51cac06481cef9d3ac77248b4fec8d18a7cfb47
 base_blob: efc544103e6d303d1f8602caa9439628043a17a7
 branch: hyp/muse_attention_decode/preattention-group-tiled-programs
 worktree: .worktrees/muse_attention_decode/preattention-group-tiled-programs
-mode: null
+mode: check
 implemented_at: 2026-10-24T120945Z
 impl_commit: 9c4ab08ef055946e96f9948d58ac0f3c1a6d0fbf
 submission_sha256: 40addb5e78b0b903307dcd262a3e1275a0741fee661d5cc0d28260bb33303fd5
 norm_sha256: cfeefb47ca2a3b60a887c47f8d39042a2afe875627913dec587018e833ed7462
 submission_blob: 27ab22aeaf1a6560ffa2596c7525b13b2cedc730
 lint_warnings: 0
+attempt_file: 2026-10-24T120945Z-check-preattention-group-tiled-programs.md
+prepared_at: 2026-10-24T120945Z
 ---
 
 # preattention-group-tiled-programs
