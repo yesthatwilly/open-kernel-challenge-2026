@@ -54,13 +54,19 @@ review: proceed
 status: running
 review_at: 2026-10-24T185025Z
 review_companions: null
-stage: claimed
+stage: implemented
 claimed_at: 2026-10-24T185025Z
 base_sha: 1659dce115b4c66c089ef675d5ac97c41f6798a1
 base_blob: 3d70ae6e2de0d48c4a4f2a469ced8234f5348182
 branch: hyp/muse_decode_layer/l2-prefetch-o-pooler-during-sliding-attention
 worktree: .worktrees/muse_decode_layer/l2-prefetch-o-pooler-during-sliding-attention
 mode: null
+implemented_at: 2026-10-24T224625Z
+impl_commit: fff46a432598e9e0ffd985f8cc577b90d72ddbc1
+submission_sha256: 3f698cb9766a8e912fdb25f631dabc1758833a909fdd557d98fdb84be481cfd9
+norm_sha256: 4ee52d6fe57a4f257f0af76d6362e95894bab1c1ff971fed3200d5e0b8f8cdde
+submission_blob: 7377122bbca5108db2e61fbac020db0883b446cb
+lint_warnings: 19
 ---
 
 # l2-prefetch-o-pooler-during-sliding-attention
@@ -106,3 +112,41 @@ No companion is warranted. The gate is config-only and limited to three sliding 
 - Which pooler rows should be warmed for kernel P? All 216 CTAs run in one wave and each streams a K-chunk of 64 rows, so warming rows 0..1535 makes 24 of 72 n-tiles cheap while the rest still set the HBM-bound tail. Total bytes saved is what matters, but check that P's row drops by roughly 25 MB / ~3.3 TB/s ≈ 7 us.
 - Overlap with the queued sliding-fused-batched-decode-port (shorter attention window to hide in) and prefork-qkv-o-swapab-t16-t32 (a different o kernel). Whichever lands first changes this one's budget, so re-baseline before stacking.
 
+
+## Implementation notes
+
+Edited only the worktree's muse_decode_layer/submission.py (+43 lines, no deletions).
+- New `_l2_warm_kernel(ptr, n_words, sink_ptr, WORDS_PER_PROG, BLOCK)` as specified (evict_last int32 loads, XOR fold, sink store only under mask acc == 0x7F3A5C1D). Constants L2_WARM_* near ROPE_POSITIONS: gate 2 <= T <= 32, 32 programs, BLOCK 4096, 1536 pooler rows.
+- prepare(), after _dl_setup: state["prefetch_stream"], state["l2_sink"] (int32, device), state["l2_warm"] = ((int32 view, n_words) for dense["o"], pooler slice). Prints which buffer is warmed.
+- RETARGET (required by review): pooler slice is `state["dl"]["w_pr"][:1536]` when the dense chain is ON (what kernel P reads at T<=32), else `dense["pooler"][:1536]` (master's non-dl path, which reads dense["pooler"]). o: `dense["o"]` is read by master at every T, so unchanged. Decided at prepare() from state["dl"] (a prepare-time fact, not input-derived).
+- kernel_fn: gate is config-only (window != 0 and 2 <= tokens <= 32); fork right after the qkv GEMM, join (main.wait_stream) just before return. Warm kernels write only the sink; outputs untouched. Other shapes: master path.
+- Deviation: none beyond the retarget.
+
+## Rules check
+
+- [x] CUDA-graph capturable: no host sync/alloc in kernel_fn; stream fork/join via wait_stream, same pattern as the existing side stream; Triton kernel precompiled-on-first-launch pattern same as _post_norm_combine_kernel (first launch happens in warmup/capture as for other Triton kernels).
+- [x] Nothing derived from data cached: only constant weights read; sink is scratch.
+- [x] Weights: no repack/precision change; int32 views alias existing bf16 buffers.
+- [x] Activations/KV/queries: untouched (diff only adds warm-up).
+- [x] Attention sees every key: attention code unchanged.
+- [x] No timing patches, harness access, module edits, reference import, subprocess, network.
+- [x] All work in the timed call; no output caching or replay (warm-up is extra loads only).
+- [x] n/a: no triton.autotune used.
+
+Lint (okc_lint.py): `OK with warnings` — 18 host-sync warnings, all pre-existing in prepare()/self-check helpers (outside kernel_fn), none from this change. py_compile OK, __pycache__ removed.
+
+## Pre-flight audit
+
+Audited 2026-10-24 by an opus subagent, by reading (no GPU on this node). **Verdict: dispatch-with-fixes.**
+
+Checked and found sound:
+- Outputs cannot change. The warm kernel only loads constant weights and stores to l2_sink, which nothing reads. The sink store fires only when the XOR of a program's range equals 0x7F3A5C1D (odds about 2^-32 per program), and even then it writes only the sink. The store depends on every loaded word, so the compiler cannot drop the loads.
+- Warm targets match what master reads at every gated T (sliding, 2 <= T <= 32: decode_16, decode_32, verify_1, plus tests at T = 8, 9, 32). The o GEMM reads dense["o"] at every T. With the dense chain ON, kernel P reads dl["w_pr"] = cat(pooler, router tiles), so rows 0..1535 are pooler rows. With the chain OFF, master reads dense["pooler"]. The int32 views are views of contiguous buffers with an even element count, and 32 x per_prog covers n_words with a masked tail.
+- Capture: the fork comes right after the qkv GEMM, there is a single return, and the join (main.wait_stream) precedes it on every gated path. Nothing is allocated or synced in kernel_fn, and the gate reads config only.
+
+Fixes:
+- Rules: the evict_last hint was removed (the loads now use the default policy). A persisting-priority hint on 42 MB of weights could survive the judge's cold-L2 flush between replays. That would carry weights across timed calls and shrink the L2 available to SGLang's paired replays. The warm-up only needs the lines to last ~30 us under normal LRU.
+- Build: `tl.reduce(acc, 0, lambda a, b: a ^ b)` was replaced with a @triton.jit _xor_combine. Lambdas as reduce combine functions are not reliably supported by the Triton JIT.
+- Fallback: the warm kernel had no fallback, so a build error would have raised inside kernel_fn and failed the run. prepare() now builds and runs both warm launches once inside try/except. On failure it sets state["l2_warm"] = None and prints "PATH CHOSEN = MASTER at every T". On success it prints "PATH CHOSEN = L2-WARM", and the kernel_fn gate also requires state["l2_warm"]. The per-program word count moved into the shared helper _l2_warm_per_prog. Lint OK (only host-sync warnings in prepare-only code). py_compile OK, and __pycache__ was removed.
+
+Residual risk: 32 programs of 4 warps with one 16 KB load in flight per iteration probably reach well under 1 TB/s. Pulling 42 MB could then outlast the ~25 us attention phase and contend with the o GEMM and kernel P. With default eviction, part of the warmed lines may be gone before they are used. Judge the run on the warm rows' duration and on the P and o rows.
