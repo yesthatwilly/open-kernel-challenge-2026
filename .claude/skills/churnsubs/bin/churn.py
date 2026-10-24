@@ -1202,7 +1202,9 @@ def cmd_claim(a):
     if h.get("depends_on"):
         dp, _ = find_hyp(p, str(h["depends_on"]))
         parent = read_hyp(dp) if dp else {}
-        base_ref = parent.get("impl_commit") or f"hyp/{p}/{h['depends_on']}"
+        # A parent already on master builds on master, so later landings are not lost.
+        if parent.get("promotion") not in ("merged", "merged-unsubmitted", "submitted", "done", "onboard"):
+            base_ref = parent.get("impl_commit") or f"hyp/{p}/{h['depends_on']}"
     elif h.get("base") and h["base"] != "master":
         base_ref = str(h["base"])
     base_sha = git("rev-parse", base_ref).strip()

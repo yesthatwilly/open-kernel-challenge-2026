@@ -45,8 +45,8 @@ review_at: 2026-10-24T024434Z
 review_companions: [router-hilo-addmm-epilogue-control-inplace-out]
 stage: claimed
 claimed_at: 2026-10-24T024439Z
-base_sha: e64f27ef09b3512d26573dde4d35b8ec3ade1f63
-base_blob: 5a2064af06f442f01dff926cb4f1eca75f992a24
+base_sha: fe9a5a37d2a2208f820e8c3696faae713a1bb583
+base_blob: 349be31cabc7d9b669b94032ae723c0b0a5e7f71
 branch: hyp/muse_bf16_proj/router-hilo-addmm-epilogue
 worktree: .worktrees/muse_bf16_proj/router-hilo-addmm-epilogue
 mode: null
