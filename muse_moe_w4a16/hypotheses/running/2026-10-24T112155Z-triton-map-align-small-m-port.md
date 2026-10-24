@@ -56,9 +56,16 @@ priority: 2
 kind: primary
 controls_for: null
 review: proceed
-status: queued
+status: running
 review_at: 2026-10-24T112524Z
 review_companions: null
+stage: claimed
+claimed_at: 2026-10-24T112525Z
+base_sha: dd50db2750f6d64e57b62dd08f6867eefc3d5b3d
+base_blob: b81d47abe0c2e53a3ecc180884ae8d9671ba4e14
+branch: hyp/muse_moe_w4a16/triton-map-align-small-m-port
+worktree: .worktrees/muse_moe_w4a16/triton-map-align-small-m-port
+mode: null
 ---
 
 # triton-map-align-small-m-port
