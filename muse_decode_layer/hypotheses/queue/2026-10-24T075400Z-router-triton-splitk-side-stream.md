@@ -53,9 +53,10 @@ priority: 1
 kind: primary
 controls_for: null
 review: proceed
-status: queued
+status: hold
 review_at: 2026-10-24T092231Z
 review_companions: null
+hold_reason: "reviewer: the 9.2-9.5 us splitK row is 2 calls (~4.6 us each), so the side-stream router branch (~14-18 us) already finishes before the ~22-25 us pooler and is off the critical path; most likely flat, and decode has 4 checks left"
 ---
 
 # router-triton-splitk-side-stream
