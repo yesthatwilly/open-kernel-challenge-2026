@@ -44,7 +44,7 @@ review: proceed
 status: running
 review_at: 2026-10-24T164610Z
 review_companions: null
-stage: implemented
+stage: dispatched
 claimed_at: 2026-10-24T164610Z
 base_sha: 721aada38118e1641389dda5e890b5a18175f8d8
 base_blob: 635cfee3ac2c3f7c66840b8c8a082cad2fa41a68
@@ -59,6 +59,8 @@ submission_blob: 8af5773ce409a540cbe7c1829ef6b27b6fbb055b
 lint_warnings: 7
 attempt_file: 2026-10-24T164944Z-submit-experts-triton-w13-fused-silu-epilogue.md
 prepared_at: 2026-10-24T164944Z
+job: 108231906a30407e
+dispatched_at: 2026-10-24T165008Z
 ---
 
 # experts-triton-w13-fused-silu-epilogue
