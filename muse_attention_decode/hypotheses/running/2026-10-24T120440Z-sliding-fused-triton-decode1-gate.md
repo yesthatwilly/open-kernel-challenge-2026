@@ -54,13 +54,15 @@ base_sha: 4613c6fccb0ad0d891d7c837d1dc24c0465c5aff
 base_blob: efc544103e6d303d1f8602caa9439628043a17a7
 branch: hyp/muse_attention_decode/sliding-fused-triton-decode1-gate
 worktree: .worktrees/muse_attention_decode/sliding-fused-triton-decode1-gate
-mode: null
+mode: check
 implemented_at: 2026-10-24T124236Z
 impl_commit: 5e0c27cca32d3300b0653db04b25fe7a72fb03e1
 submission_sha256: 3178c8c418f2d89cbd468deeca07b683922af8f04f2945fbf7cf5e87f185dd2b
 norm_sha256: ff853cb8d70fa1861bfe365b397ad2db92085721e9e815e5c20e6057cc40571b
 submission_blob: 387dcb6a0e6137b74f7f65b048dce5a3fcbe2008
 lint_warnings: 0
+attempt_file: 2026-10-24T124236Z-check-sliding-fused-triton-decode1-gate.md
+prepared_at: 2026-10-24T124236Z
 ---
 
 # sliding-fused-triton-decode1-gate
