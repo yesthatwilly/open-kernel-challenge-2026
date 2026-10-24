@@ -5,9 +5,7 @@ items here and in each tick's summary. Resolved items move to the log at the bot
 
 ## Open
 
-- **Scored submit, decode marlin-block-m-cap-16** (check 1.062x [1.046, 1.078], merged on master;
-  current board 1.020x). Run: `okc submit muse_decode_layer /home/user/git/musespark/muse_decode_layer/submission.py --no-wait --json`
-  then `churn.py record-submit muse_decode_layer marlin-block-m-cap-16 <job>`. (2026-10-24)
+- (none)
 
 ## Standing answers
 
@@ -23,3 +21,4 @@ items here and in each tick's summary. Resolved items move to the log at the bot
 
 - 2026-10-24: bf16 router-triton-hilo-fused-control-splitk-all-m (check 1.151x) submitted by
   Claude with the user's approval, job 240eb22ea0b6487e.
+- 2026-10-24: decode marlin-block-m-cap-16 (check 1.062x) submitted at the user's request, job 2b1f82408ab64116.
