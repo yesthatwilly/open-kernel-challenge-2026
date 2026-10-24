@@ -73,6 +73,9 @@ attempt_file: 2026-10-24T232909Z-check-moe-align-local-routes-parallel-port.md
 prepared_at: 2026-10-24T232909Z
 job: 7e91d9ee93144387
 dispatched_at: 2026-10-24T232928Z
+promotion: submitted
+promotion_job: 2e6f4005a9854ac7
+promotion_at: 2026-10-24T234001Z
 ---
 
 # moe-align-local-routes-parallel-port
