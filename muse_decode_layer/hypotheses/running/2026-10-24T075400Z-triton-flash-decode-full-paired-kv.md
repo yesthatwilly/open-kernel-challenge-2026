@@ -52,7 +52,7 @@ kind: rewrite
 controls_for: null
 review: proceed
 status: running
-stage: implemented
+stage: dispatched
 replaces: "FA3 on full-attention decode (q_len=1): flash_fwd main + FlashAttnFwdCombine"
 review_at: 2026-10-24T083747Z
 review_companions: null
@@ -70,6 +70,8 @@ submission_blob: cf09a9196c4d7a20540bb82c9d79bdebaeea2a43
 lint_warnings: 1
 attempt_file: 2026-10-24T084126Z-check-triton-flash-decode-full-paired-kv.md
 prepared_at: 2026-10-24T084126Z
+job: e82b11f9d9f64b23
+dispatched_at: 2026-10-24T084136Z
 ---
 
 # triton-flash-decode-full-paired-kv
