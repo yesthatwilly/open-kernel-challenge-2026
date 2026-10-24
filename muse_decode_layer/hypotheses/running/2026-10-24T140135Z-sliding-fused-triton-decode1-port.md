@@ -49,13 +49,19 @@ review: proceed
 status: running
 review_at: 2026-10-24T164533Z
 review_companions: null
-stage: claimed
+stage: implemented
 claimed_at: 2026-10-24T164533Z
 base_sha: d170c1fd1af3e71b7de6f970d623da8b2a86af59
 base_blob: cc466fce207709c98ab0e78c2435c1c459890fdb
 branch: hyp/muse_decode_layer/sliding-fused-triton-decode1-port
 worktree: .worktrees/muse_decode_layer/sliding-fused-triton-decode1-port
 mode: null
+implemented_at: 2026-10-24T164837Z
+impl_commit: 2569d7e0d6f208921d432fd4237dc483601b39ca
+submission_sha256: a7fdce245795b5c4fb76c25616180ec6564090ab39265a09e8c2f7f4da569c8a
+norm_sha256: e28f6354345920a15ce2904cfeec7c25a5a572b2d1373ffea4eeea50111a5d87
+submission_blob: e33a32aa5580fbd5b38764ea287a6364c865432e
+lint_warnings: 1
 ---
 
 # sliding-fused-triton-decode1-port
@@ -101,3 +107,89 @@ No companion is warranted. The change is a config-only branch touching exactly o
 - bf16-shape-gated-triton-gemms-small-t (queued) replaces the qkv GEMM at m=1. If it lands first, its output must stay a [1, 2304] bf16 tensor with stride(1)=1, and the gate must pass its actual stride(0). The two changes compose because they touch disjoint kernels on the same shape.
 - The gate is batch == 1 only. muse_attention_decode later measured the fused kernel at 16 splits on decode_16 as +33% (sliding-fused-triton-decode-batched-deep-splits). Sliding decode_16 and decode_32 are a larger lever here (weight 46 each), and that should be a follow-up hypothesis once this one is proven.
 
+
+## Implementation notes
+
+Implemented 2026-10-24 in the worktree's `muse_decode_layer/submission.py` only (uncommitted). `git diff --stat` shows 327+/69-. `git diff -w --stat` shows 258+/0-: the 69 removed lines are master's attention block re-indented under `else:` and nothing else.
+
+- **Ported verbatim** from `git show HEAD:muse_attention_decode/submission.py`, inserted before `prepare()`: `_INV_FREQ`/`_inv_freq` (attention lines 60-69) and `LOG2E`, `_COUNTERS`/`_counters`, `_num_splits`, `_norm_rope`, `_gpu_fence`, `_online_update`, `_gate_epilogue` and `_sliding_fused_kernel` (attention lines 142-340). A `diff` against those line ranges came back empty. The `_norm_rope` docstring still mentions `_pre_attention_kernel`, which exists only in the sibling. I left it because the copy is verbatim.
+- **Adapted `_sliding_forward(data, qkv)`.** It takes the qkv GEMM output `[T, 2304]` directly instead of `data["qkv"].reshape`, passes its own `qkv.stride(0)` (2304), and allocates `out` as `[T, 1024]` bf16, the shape `_gemm(o, dense["o"])` expects, instead of `[B, L, 1024]`. Otherwise the body is the sibling's. At B=1, Hkv=2, `_num_splits` gives 16, so the grid is (1, 2, 16), with M=16, LN=16, BLOCK_N 64, num_warps 4, num_stages 2, ROPE=bool(rope_theta), EPS=RMS_EPS and PAGE=cfg["page_size"].
+- **Added the gate in `kernel_fn`** right after `qkv = _gemm(...)`: `if cfg["window"] and batch == 1 and length == 1: o = _sliding_forward(data, qkv)`. Otherwise master's whole attention block runs unchanged under `else:`, from FusedQKNorm through `state["o_norm_gate"]`. Both paths rejoin at `attn_output = _gemm(o, dense["o"])`. The gate reads config only.
+- **Module docstring:** added one bullet under "Differs from SGLang".
+- **Indexing self-review, done twice:**
+  - Offsets: q at head*64, k at (16+g)*64 = 1024+64g, v at (18+g)*64 = 1152+64g, gate at 1280+64h. These match master's slices `v = qkv[:, 1152:1280]` and `gate = qkv[:, 1280:]`.
+  - Cache rows: `(loc*2+g)*64+d` on the uint8 view, the same as master's `k_cache.view(-1, 128)` at `cache_loc`.
+  - Positions: `positions[tok]` with tok = b*L + j.
+  - Window: old keys [seq-2047, seq-1] plus the new key, which equals the reference's `first = seq - window + 1` and FA3's (2047, 0).
+  - Scales: q is multiplied by qk_scale_factor and then rounded to bf16, as the reference does. Scores use sm_scale*log2e*k_scale with exp2.
+  - inv_freq: same formula as the reference's `_rope` and as prepare()'s cos_sin table.
+  - k/v scale: the kernel always divides by k_scale/v_scale, while master divides only when kv_scale != 1. The two are identical at scale 1, and the kv_scale test is q_len 8, so it never reaches this path.
+- **No deviations from the spec.**
+- **Open question answered:** muse_attention_decode's TASK test list does contain `batch 1, ctx 10, heads tp8, layer sliding` (line 57), so this exact small-ctx path (splits 1..15 empty, masked to -inf) is already proven there.
+- **bf16-shape-gated-triton-gemms-small-t:** not landed, so qkv still comes from `_bf16_gemm_dispatch_impl` (contiguous, stride(1)=1). The gate passes the real stride(0).
+- **Assumption:** `page_table.stride(1) == 1`. The kernel indexes `pt_ptr + b*pt_stride + t//PAGE`, the same assumption the sibling makes, and the input is a freshly generated int32 [B, max_pages].
+
+## Rules check
+
+Checked against `git -C .worktrees/muse_decode_layer/sliding-fused-triton-decode1-port diff` (and `diff -w`).
+
+- [x] CUDA-graph capturable. The new path has no `.item()`, `.cpu()`, `synchronize()` or tensor prints; a grep of the added lines finds none. It allocates only `torch.empty` for out and workspaces, of sizes fixed by config. `_counters` does a one-time `torch.zeros` keyed by (B, Hkv, device). Control flow reads `cfg` only.
+- [x] Nothing derived from `data` is cached across calls. `_INV_FREQ` is keyed on (rope_theta, head_dim, device), which is config. `_COUNTERS` holds ticket counters that every launch returns to 0, so they carry no data.
+- [x] Weights: n/a, no change. prepare() and the weights are untouched.
+- [x] Activations BF16 where SGLang keeps BF16. The qkv input and the [T, 1024] output are bf16, as before. The KV cache entries are stored as E4M3. Queries are bf16 operands, finer than FA3's E4M3. Internals are fp32.
+- [x] Attention sees every key. All 2047 old keys plus the new key on every call, split 16 ways with no skipping. Masked or empty splits carry weight 0 in the combine, which is not value skipping.
+- [x] No timing patches, harness frames/I/O/secrets, module edits, reference import, subprocesses or network. The diff adds only Triton kernels and a Python launcher, and no new imports.
+- [x] All work happens inside the timed call, with no output caching or replay. The K/V store, attention and epilogue all run in kernel_fn on each call's fresh inputs.
+- [x] First-line marker `# okc: problem=muse_decode_layer` kept. No `triton.autotune`.
+
+Lint (`python3 -I .claude/skills/churnsubs/bin/okc_lint.py <worktree>/muse_decode_layer/submission.py --problem muse_decode_layer`):
+
+```
+warn  host-sync    L530: torch.cuda.synchronize()  (outside kernel_fn's call graph; fine in prepare())
+OK with warnings: .worktrees/muse_decode_layer/sliding-fused-triton-decode1-port/muse_decode_layer/submission.py
+```
+
+That warning is master's existing `torch.cuda.synchronize()` at the end of prepare(). `python3 -I -m py_compile` passed, and the `__pycache__` it left was removed.
+
+## Implementation notes
+
+Implemented 2026-10-24 in the worktree's `muse_decode_layer/submission.py` only (uncommitted). `git diff --stat` shows 327+/69-. `git diff -w --stat` shows 258+/0-: the 69 removed lines are master's attention block re-indented under `else:` and nothing else.
+
+- **Ported verbatim** from `git show HEAD:muse_attention_decode/submission.py`, inserted before `prepare()`: `_INV_FREQ`/`_inv_freq` (attention lines 60-69) and `LOG2E`, `_COUNTERS`/`_counters`, `_num_splits`, `_norm_rope`, `_gpu_fence`, `_online_update`, `_gate_epilogue` and `_sliding_fused_kernel` (attention lines 142-340). A `diff` against those line ranges came back empty. The `_norm_rope` docstring still mentions `_pre_attention_kernel`, which exists only in the sibling. I left it because the copy is verbatim.
+- **Adapted `_sliding_forward(data, qkv)`.** It takes the qkv GEMM output `[T, 2304]` directly instead of `data["qkv"].reshape`, passes its own `qkv.stride(0)` (2304), and allocates `out` as `[T, 1024]` bf16, the shape `_gemm(o, dense["o"])` expects, instead of `[B, L, 1024]`. Otherwise the body is the sibling's. At B=1, Hkv=2, `_num_splits` gives 16, so the grid is (1, 2, 16), with M=16, LN=16, BLOCK_N 64, num_warps 4, num_stages 2, ROPE=bool(rope_theta), EPS=RMS_EPS and PAGE=cfg["page_size"].
+- **Added the gate in `kernel_fn`** right after `qkv = _gemm(...)`: `if cfg["window"] and batch == 1 and length == 1: o = _sliding_forward(data, qkv)`. Otherwise master's whole attention block runs unchanged under `else:`, from FusedQKNorm through `state["o_norm_gate"]`. Both paths rejoin at `attn_output = _gemm(o, dense["o"])`. The gate reads config only.
+- **Module docstring:** added one bullet under "Differs from SGLang".
+- **Indexing self-review, done twice:**
+  - Offsets: q at head*64, k at (16+g)*64 = 1024+64g, v at (18+g)*64 = 1152+64g, gate at 1280+64h. These match master's slices `v = qkv[:, 1152:1280]` and `gate = qkv[:, 1280:]`.
+  - Cache rows: `(loc*2+g)*64+d` on the uint8 view, the same as master's `k_cache.view(-1, 128)` at `cache_loc`.
+  - Positions: `positions[tok]` with tok = b*L + j.
+  - Window: old keys [seq-2047, seq-1] plus the new key, which equals the reference's `first = seq - window + 1` and FA3's (2047, 0).
+  - Scales: q is multiplied by qk_scale_factor and then rounded to bf16, as the reference does. Scores use sm_scale*log2e*k_scale with exp2.
+  - inv_freq: same formula as the reference's `_rope` and as prepare()'s cos_sin table.
+  - k/v scale: the kernel always divides by k_scale/v_scale, while master divides only when kv_scale != 1. The two are identical at scale 1, and the kv_scale test is q_len 8, so it never reaches this path.
+- **No deviations from the spec.**
+- **Open question answered:** muse_attention_decode's TASK test list does contain `batch 1, ctx 10, heads tp8, layer sliding` (its TASK.md line 57), so this exact small-ctx path (splits 1..15 empty, masked to -inf) is already proven there.
+- **bf16-shape-gated-triton-gemms-small-t:** not landed, so qkv still comes from `_bf16_gemm_dispatch_impl` (contiguous, stride(1)=1). The gate passes the real stride(0).
+- **Assumption:** `page_table.stride(1) == 1`. The kernel indexes `pt_ptr + b*pt_stride + t//PAGE`, the same assumption the sibling makes.
+
+## Rules check
+
+Checked against `git -C .worktrees/muse_decode_layer/sliding-fused-triton-decode1-port diff` (and `diff -w`).
+
+- [x] CUDA-graph capturable. The new path has no `.item()`, `.cpu()`, `synchronize()` or tensor prints; a grep of the added lines finds none. It allocates only `torch.empty` for out and workspaces, of sizes fixed by config. `_counters` does a one-time `torch.zeros` keyed by (B, Hkv, device). Control flow reads `cfg` only.
+- [x] Nothing derived from `data` is cached across calls. `_INV_FREQ` is keyed on (rope_theta, head_dim, device), which is config. `_COUNTERS` holds ticket counters that every launch returns to 0, so they carry no data.
+- [x] Weights: n/a, no change. prepare() and the weights are untouched.
+- [x] Activations BF16 where SGLang keeps BF16. The qkv input and the [T, 1024] output are bf16, as before. The KV cache entries are stored as E4M3. Queries are bf16 operands, finer than FA3's E4M3. Internals are fp32.
+- [x] Attention sees every key. All 2047 old keys plus the new key on every call, split 16 ways with no skipping. Masked or empty splits carry weight 0 in the combine, which is not value skipping.
+- [x] No timing patches, harness frames/I/O/secrets, module edits, reference import, subprocesses or network. The diff adds only Triton kernels and a Python launcher, and no new imports.
+- [x] All work happens inside the timed call, with no output caching or replay. The K/V store, attention and epilogue all run in kernel_fn on each call's fresh inputs.
+- [x] First-line marker `# okc: problem=muse_decode_layer` kept. No `triton.autotune`.
+
+Lint (`python3 -I .claude/skills/churnsubs/bin/okc_lint.py <worktree>/muse_decode_layer/submission.py --problem muse_decode_layer`):
+
+```
+warn  host-sync    L530: torch.cuda.synchronize()  (outside kernel_fn's call graph; fine in prepare())
+OK with warnings: .worktrees/muse_decode_layer/sliding-fused-triton-decode1-port/muse_decode_layer/submission.py
+```
+
+That warning is master's existing `torch.cuda.synchronize()` at the end of prepare(). `python3 -I -m py_compile` passed, and the `__pycache__` it left was removed.
