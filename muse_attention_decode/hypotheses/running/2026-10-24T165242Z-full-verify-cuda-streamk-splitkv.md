@@ -83,13 +83,19 @@ review: proceed
 status: running
 review_at: 2026-10-24T165728Z
 review_companions: null
-stage: claimed
+stage: implemented
 claimed_at: 2026-10-24T165728Z
 base_sha: 27b43dcd8b752ab9c2454f7e20fb949c059b9213
 base_blob: 1c0f5fa1bfc4e602b62e5e9edd9df6d5652b297b
 branch: hyp/muse_attention_decode/full-verify-cuda-streamk-splitkv
 worktree: .worktrees/muse_attention_decode/full-verify-cuda-streamk-splitkv
 mode: null
+implemented_at: 2026-10-24T170811Z
+impl_commit: ee7dd2035bcffc84a11faafb7b5574466ee3bcae
+submission_sha256: 973a5b33afa15091df69a32c232dd5ebffb8e54a79635158d4daf0aa5aa1581f
+norm_sha256: 1eae68bc16e4eacbe1bdff87763fd906eddaf7be52ec2e0c078bd252377fcf8a
+submission_blob: 2b7e5dbf0fde0ae0163e5ecaefd87a5f0848e6b0
+lint_warnings: 1
 ---
 
 # full-verify-cuda-streamk-splitkv
@@ -143,3 +149,41 @@ No companion is warranted. This is a rewrite judged on the replaced kernels' own
 - Report from the build log: A8 registers and spills at __launch_bounds__(256,2); and from the profile: achieved KV bandwidth (sum(cache_seqlens)*256 B / A8 time) at verify_16/32 vs stage 1's 2.95/2.7 TB/s. If A8 is clearly above 1.15x stage 1 decode A with no spills, the next stage should first try moving QK before the V-convert barrier and cutting the 4x redundant smem reads, before stream-K is ported back to decode.
 - Dispatch: risk is high, so per the standing instruction this goes out as a check after the reset, not as a scored submit.
 
+
+## Implementation notes
+
+Worktree `.worktrees/muse_attention_decode/full-verify-cuda-streamk-splitkv`, file `muse_attention_decode/submission.py` only (+717/-2). Not compiled or run here (no GPU, torch or nvcc on this node). Indexing, pipeline hazards, masking and the combine's slot lookup were each self-reviewed twice.
+
+- **Build isolation (review requirement 2 / open question 1):** A8 and B8 live in a SECOND module, `load_inline(name="muse_full_verify_splitkv_v1", ...)` (`_VERIFY_CPP` / `_VERIFY_CUDA`, built by `_build_splitkv_verify()`). The stage-1 decode module `muse_full_decode_splitkv_v1`, its source, its gate and its self-check are byte-for-byte unchanged. Deviation from the spec: the module is not renamed to `_v2`, because the review's isolation replaces the rename. If the e4m3 mma, or anything else in the new source, fails to build, the run prints `[splitkv-verify] load_inline failed`, verify stays on paired FA3, and decode is unaffected.
+- **Separate flag (requirement 1):** `_splitkv_verify_gate(cfg)` = `_VEXT is not None and _VERIFY_ON and window == 0 and q_len == 8 and 1 < batch <= 64 and hq == 16 and hkv == 2 and head_dim == 64 and page_size == 1`. `_VERIFY_ON` is False by default. The self-check turns it on only for its own trial and resets it in `finally`. The import block sets it True only when every case passes; otherwise it prints `[splitkv-verify] SELF-CHECK FAILED` and sets `_VEXT = None`. `paired = ... and not splitkv and not splitkv_verify`, so the gated shapes run master `_pre_attention_kernel` with PAIRED=False (FP8 q [B*8,16,64]). Then `kernel_fn` returns `_full_verify_splitkv(...)`. scheduler_metadata is ignored.
+- **A8 `splitkv_verify_kernel`:** grid = 2 x SM count (or the self-check override `_VERIFY_GRID`), 256 threads, `__launch_bounds__(256, 2)`, 90,640 B of dynamic smem: a 64 KB ring, a 16 KB f16 V tile, 2 x 4 KB page indices, and seqlens/prefix. The tile prefix is a warp-0 shfl scan (`tile_prefix`, B <= 64, 2 per lane) instead of a serial loop. Stream-K: `start_of(c) = floor(c*Ttot/grid)` (int64), and CTAs with an empty range return before issuing anything. The page indices of CTA tiles [16k, 16k+16) use 4-byte cp.async (each entry's request found by binary search `req_of`, zero-filled past the CTA range or the request length), double-buffered and riding tile 16(k-1)'s group, with the same reuse distances as stage 1. The 4-stage ring with the token-XOR swizzle runs across segment boundaries. Warp w: g = w & 1, hA = g*8 + 2*(w>>1). C row quad = (hA, block token quad) and row quad+8 = (hA+1, token quad), so one causal limit per lane. QK uses `mma.sync.m16n8k32.row.col.f32.e4m3.e4m3.f32`: A = raw FP8 q words (a0/a1 = heads hA/hA+1 at dims 32ks+4qi, a2/a3 = +16), B = raw FP8 K words from the ring (chunk g*4+2ks(+1) ^ quad, conflict-free). That is 16 mma per tile per warp with no K cvt. V: all 256 threads convert the tile once (cvt.rn.f16x2.e4m3x2, exact) into a 64x256 B f16 tile, with chunk cc stored at cc ^ (token & 7). PV loads with `ldmatrix.x4.trans` (row addresses conflict-free) into m16n8k16 with P packed f16 from the fp32 exp2 scores (FA2 register reuse, no smem for P): 16 ldmatrix + 32 mma per tile per warp. Barriers: top (cp wait), then V convert, QK and softmax, then one `__syncthreads` before PV. Review note (a) is applied this way, since QK runs between the convert and its barrier. Masking: `edge = lt*64 + 71 > seq`, so tiles that reach past seq-7 get the test. That covers the last tile and, when seq % 64 is in 1..7, the one before it; the spec said only the last tile, which is wrong for those lengths. `lim = seq - 7 + quad - lt*64`, and tile token t is valid iff t < lim (that is, t <= seq - 8 + j, which implies t < seq). The softmax is -inf safe: a row with no valid key in a segment keeps m = -inf, l = 0, acc = 0 (requirement 4). At segment end (last CTA tile, or the request's last tile), each warp quad-reduces l and stores acc (float2), plus m and l (qi == 0), at slot bx + cb.
+- **Deviation, q fetch:** the spec double-buffers the 8 KB query block in smem, issued with the segment's first tile. With a 3-tile issue lead and 1-tile segments, which grid > Ttot and small requests produce, up to 4 segment starts can be in flight. A 2-slot buffer would then be overwritten before it is read, and 4 slots (32 KB) break the 2-CTA/SM smem budget. Instead, at segment start each warp loads its 8 A-fragment words straight from global (`__ldg`, L2-resident, 32 B per lane). That is one L2 round trip per segment, about 1-3 per CTA at the scored shapes, and it saves 16 KB of smem.
+- **B8 `splitkv_verify_combine_kernel` (requirement 3):** grid (B*8, 16), 128 threads. It recomputes the prefix with the same `tile_prefix` and finds `c_lo = owner_of(TP[b])` and `c_hi = owner_of(TP[b+1]-1)`. `owner_of` is the closed form floor(((x+1)*grid-1)/Ttot) with +/-1 correction loops on exact `start_of` comparisons, a helper shared with A8 (review open question 3). It reads slot c+b only when `covers(c)`, i.e. when [start(c), start(c+1)) meets [TP[b], TP[b+1]). That is exactly the set of (c, b) for which A8 wrote a segment, so empty CTAs and uninitialized `torch.empty` slots are never read. The merge is log-sum-exp: m = -inf partials weigh 0, it uses `v_scale/Ls` (guarded for Ls = 0, which cannot occur because key 0 is valid for every row), and then the stage-1 epilogue: RMSNorm with eps inside the sqrt, times sigmoid(gate) of qkv row b*8+j, bf16 into [B,8,1024].
+- **Workspace:** `ws_acc` f32 [grid+B, 8, 16, 64] and `ws_ml` f32 [grid+B, 2, 128], allocated per call from grid and batch. The maximum slot is (grid-1)+(B-1). A host `TORCH_CHECK` (on shapes only) asserts the size.
+- **Self-check (requirement 5):** `_verify_synthetic(lens)`, where lens = cache_seqlens and seq_lens = lens-8. It builds 8 positions and cache_loc per request, cu_seqlens_q with stride 8, and scattered pages. lens are [9000, 1025, 70, 4097, 1023, 8], with Ttot = 242. 1025 % 64 = 1, so rows j <= 6 have no valid key in the last tile, and the tile before it is also edge-masked. 70 % 64 = 6. 8 is the block alone. Cases: (kv 1, device grid > 242: empty CTAs, single-tile segments), (kv 0.25, grid 3), (kv 1, grid 7), (kv 0.25, grid 61). All run through `kernel_fn` against an FP32 causal reference (`_verify_reference`, FP8 queries), with the rel-L2 bound 2e-2 and a finiteness test. It also prints A8/B8 registers and local (spill) bytes via `cudaFuncGetAttributes`, as the review asked, without turning on a verbose build.
+- **Log lines to read:** `[splitkv-verify] load_inline compiled in`, `A8 regs .. local bytes ..`, four `self-check ... rel L2`, or `SELF-CHECK FAILED` / `load_inline failed`. The decode lines `[splitkv] ...` are separate.
+- **Uncertainties:** (a) The code has never been compiled. The m16n8k32 e4m3 mma needs PTX ISA >= 8.4 (CUDA >= 12.4), and the toolchain version is unknown. A failure costs only the verify path. (b) Register pressure at a 128-register cap: acc 32 + S 32 (dying into pf 16) + qa 8 + m/l 4 + addressing. Spills would show as A8 local bytes > 0. (c) An out-of-bounds bug in A8 would be a sticky CUDA error during the import-time self-check and would take the whole run down, not just verify. Indexing was reviewed twice for this. (d) Only one judge test reaches the path (batch 2, ctx 100000, full, q_len 8, page 1). kv_scale != 1 on this path is covered only by the self-check. (e) Two modules compile serially, roughly 2 x 41 s of the 15-minute budget. (f) The 4x redundant smem reads of K and f16 V across a head's warps remain (review: a stage-3 lever).
+
+## Rules check
+
+Checked against `git -C .worktrees/muse_attention_decode/full-verify-cuda-streamk-splitkv diff`:
+
+- [x] CUDA-graph capturable: `_full_verify_splitkv` and A8/B8 have no `.item()`/`.cpu()`/`synchronize()`/tensor prints. Grid = 2 x SM count (device property). The workspace comes from grid and `cfg["batch"]`. Kernels launch on `getCurrentCUDAStream()`. cache_seqlens, k_scale and v_scale are read only on device. The only branches are the config predicates. The host syncs (`float(...)`, `bool(...)`, `.tolist()` of the CPU attrs tensor) live only in the import-time self-check on synthetic data. `TORCH_CHECK`s read tensor metadata only.
+- [x] Nothing derived from `data` is cached across calls: `_VEXT` (module), `_VERIFY_ON` (self-check result) and `_SMS` (SM count) are not data. The workspaces are allocated per call.
+- [x] Weights: n/a. This problem has no weights or prepare().
+- [x] Activations BF16 where SGLang keeps BF16; KV cache stays FP8 (K used raw in the e4m3 mma, V widened exactly to f16); queries are master's FP8 E4M3, no coarser; P is f16 (finer than FA3's e4m3 P); accumulation, softmax, merge and epilogue are fp32; the output is bf16.
+- [x] Attention sees every key. Stream-K ranges partition [0, Ttot) exactly, tiles_b = ceil(cache_seqlens/64) covers each request completely, and only keys past the causal limit (t > cache_seqlens - 8 + j) or past the length are masked. No top-k, sparse, block-skip or weight-based skipping. Partials get weight 0 only when they hold no valid key for that row.
+- [x] No timing patches, harness frames/I/O/secrets, module edits, reference import, subprocesses (beyond `load_inline`'s nvcc, as stage 1) or network. The self-check builds its own synthetic reference.
+- [x] All work happens inside the timed call; no output caching or replay. The import-time self-check output is discarded.
+- [x] No `triton.autotune`; first line `# okc: problem=muse_attention_decode` kept.
+
+okc_lint output:
+
+```
+warn  host-sync    L1753: attrs = _VEXT.splitkv_verify_attrs().tolist()  (outside kernel_fn's call graph; fine in prepare())
+OK with warnings: muse_attention_decode/submission.py
+```
+
+(The first lint pass flagged the word "requests" in three comments as `network`. They were reworded to "batch rows"; no code changed.) The warning is the import-time self-check's read of a CPU attrs tensor, not in kernel_fn's call graph.
+
+`python3 -I -m py_compile`: OK (worktree `__pycache__` removed).
