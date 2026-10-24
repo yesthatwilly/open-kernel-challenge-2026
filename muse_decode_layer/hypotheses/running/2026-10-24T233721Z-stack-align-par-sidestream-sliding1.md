@@ -29,7 +29,7 @@ base_sha: 90c5720f9cb1f796aeb6a987abdd676cba19ef5f
 base_blob: 3d70ae6e2de0d48c4a4f2a469ced8234f5348182
 branch: hyp/muse_decode_layer/stack-align-par-sidestream-sliding1
 worktree: .worktrees/muse_decode_layer/stack-align-par-sidestream-sliding1
-mode: null
+mode: check
 restack_of: null
 stale_base: null
 implemented_at: 2026-10-24T233750Z
@@ -38,6 +38,8 @@ submission_sha256: af794c2403236844b6251445a0b6d93f20e4e5dcbc7b55bd8ecf4eac1db73
 norm_sha256: f1839f83287cb09ca68022b5ab9082c485a17f447bd5f892662edeba2963485e
 submission_blob: 4da94677234faaa06b42b5ced541db8961fd6f34
 lint_warnings: 28
+attempt_file: 2026-10-24T233750Z-check-stack-align-par-sidestream-sliding1.md
+prepared_at: 2026-10-24T233750Z
 ---
 
 # stack-align-par-sidestream-sliding1
