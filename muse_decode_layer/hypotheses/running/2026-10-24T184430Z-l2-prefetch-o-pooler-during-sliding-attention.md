@@ -51,9 +51,16 @@ priority: 4
 kind: primary
 controls_for: null
 review: proceed
-status: queued
+status: running
 review_at: 2026-10-24T185025Z
 review_companions: null
+stage: claimed
+claimed_at: 2026-10-24T185025Z
+base_sha: 1659dce115b4c66c089ef675d5ac97c41f6798a1
+base_blob: 3d70ae6e2de0d48c4a4f2a469ced8234f5348182
+branch: hyp/muse_decode_layer/l2-prefetch-o-pooler-during-sliding-attention
+worktree: .worktrees/muse_decode_layer/l2-prefetch-o-pooler-during-sliding-attention
+mode: null
 ---
 
 # l2-prefetch-o-pooler-during-sliding-attention
