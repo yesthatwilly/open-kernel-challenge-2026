@@ -1,0 +1,287 @@
+{
+ "ok": true,
+ "promote": [],
+ "dispatch": [
+  {
+   "problem": "muse_decode_layer",
+   "picks": [
+    {
+     "slug": "moe-align-small-t-restack-on-master",
+     "mode": "submit",
+     "priority": 4,
+     "review": "proceed",
+     "kind": "primary",
+     "controls_for": null
+    }
+   ]
+  },
+  {
+   "problem": "muse_prefill_layer",
+   "picks": [
+    {
+     "slug": "silu-mul-triton-local-rows-marlin-turn",
+     "mode": "submit",
+     "priority": 3,
+     "review": "proceed",
+     "kind": "primary",
+     "controls_for": null
+    }
+   ]
+  }
+ ],
+ "wake_s": 1800,
+ "needs_human": [],
+ "report": {
+  "preflight": {
+   "ok": true,
+   "branch": "master",
+   "whoami": "yesthatwilly",
+   "quotas": {
+    "muse_bf16_proj": {
+     "scored": {
+      "per_day": 10,
+      "used": 6,
+      "left": 4
+     },
+     "checks": {
+      "per_day": 20,
+      "used": 20,
+      "left": 0
+     }
+    },
+    "muse_attention_decode": {
+     "scored": {
+      "per_day": 10,
+      "used": 6,
+      "left": 4
+     },
+     "checks": {
+      "per_day": 10,
+      "used": 10,
+      "left": 0
+     }
+    },
+    "muse_moe_w4a16": {
+     "scored": {
+      "per_day": 10,
+      "used": 1,
+      "left": 9
+     },
+     "checks": {
+      "per_day": 20,
+      "used": 20,
+      "left": 0
+     }
+    },
+    "muse_decode_layer": {
+     "scored": {
+      "per_day": 10,
+      "used": 6,
+      "left": 4
+     },
+     "checks": {
+      "per_day": 10,
+      "used": 10,
+      "left": 0
+     }
+    },
+    "muse_prefill_layer": {
+     "scored": {
+      "per_day": 10,
+      "used": 3,
+      "left": 7
+     },
+     "checks": {
+      "per_day": 10,
+      "used": 10,
+      "left": 0
+     }
+    }
+   },
+   "tracks": null,
+   "hours_to_reset": 6.36,
+   "lock": ".claude/churn.lock",
+   "_exit": 0
+  },
+  "intake": {
+   "ok": true,
+   "added": [],
+   "skipped": [],
+   "_exit": 0
+  },
+  "recover": {
+   "ok": true,
+   "actions": [],
+   "needs_human": [],
+   "_exit": 0
+  },
+  "harvest": {
+   "ok": true,
+   "harvested": [
+    {
+     "problem": "muse_attention_decode",
+     "slug": "full-decode-cuda-fp8-qk-mma",
+     "job": "b939681d3ab549d7",
+     "outcome": "neutral",
+     "detail": "within-ci",
+     "speedup": 1.3438993089368396,
+     "ci": [
+      1.323740819302787,
+      1.3640577985708922
+     ],
+     "md": "muse_attention_decode/hypotheses/done/neutral/2026-10-24T165302Z-full-decode-cuda-fp8-qk-mma.md"
+    }
+   ],
+   "pending": [],
+   "_exit": 0
+  },
+  "harvest-promotions": {
+   "ok": true,
+   "promotions": [],
+   "_exit": 1
+  },
+  "promote": {
+   "ok": true,
+   "promote": [],
+   "skipped": [
+    {
+     "problem": "muse_moe_w4a16",
+     "slug": "marlin-block-size-m-verify-two-smaller",
+     "reason": "superseded by current best"
+    }
+   ],
+   "_exit": 1
+  },
+  "budget": {
+   "ok": true,
+   "plans": [
+    {
+     "problem": "muse_attention_decode",
+     "checks_left": 0,
+     "scored_left": 4,
+     "hours_to_reset": 6.36,
+     "in_flight": 3,
+     "in_flight_checks": 0,
+     "gains_pending": 0,
+     "promotion_hold": 0,
+     "spendable": 4,
+     "queue": 0,
+     "need": 4,
+     "pace": 1,
+     "N": 0,
+     "picks": [],
+     "shortfall": 4,
+     "reason": "queue has 0 eligible hypotheses; 4 more could be absorbed today (run /hypothesize muse_attention_decode)",
+     "wake_s": 1800
+    },
+    {
+     "problem": "muse_bf16_proj",
+     "checks_left": 0,
+     "scored_left": 4,
+     "hours_to_reset": 6.36,
+     "in_flight": 4,
+     "in_flight_checks": 0,
+     "gains_pending": 0,
+     "promotion_hold": 0,
+     "spendable": 4,
+     "queue": 0,
+     "need": 4,
+     "pace": 1,
+     "N": 0,
+     "picks": [],
+     "shortfall": 4,
+     "reason": "queue has 0 eligible hypotheses; 4 more could be absorbed today (run /hypothesize muse_bf16_proj)",
+     "wake_s": 1800
+    },
+    {
+     "problem": "muse_decode_layer",
+     "checks_left": 0,
+     "scored_left": 4,
+     "hours_to_reset": 6.36,
+     "in_flight": 3,
+     "in_flight_checks": 0,
+     "gains_pending": 0,
+     "promotion_hold": 0,
+     "spendable": 4,
+     "queue": 2,
+     "need": 4,
+     "pace": 1,
+     "N": 1,
+     "picks": [
+      {
+       "slug": "moe-align-small-t-restack-on-master",
+       "mode": "submit",
+       "priority": 4,
+       "review": "proceed",
+       "kind": "primary",
+       "controls_for": null
+      }
+     ],
+     "shortfall": 2,
+     "reason": null,
+     "wake_s": 3600
+    },
+    {
+     "problem": "muse_moe_w4a16",
+     "checks_left": 0,
+     "scored_left": 9,
+     "hours_to_reset": 6.36,
+     "in_flight": 4,
+     "in_flight_checks": 0,
+     "gains_pending": 1,
+     "promotion_hold": 1,
+     "spendable": 8,
+     "queue": 1,
+     "need": 8,
+     "pace": 2,
+     "N": 0,
+     "picks": [],
+     "shortfall": 7,
+     "reason": "queue has 1 eligible hypotheses; 7 more could be absorbed today (run /hypothesize muse_moe_w4a16)",
+     "wake_s": 1800
+    },
+    {
+     "problem": "muse_prefill_layer",
+     "checks_left": 0,
+     "scored_left": 7,
+     "hours_to_reset": 6.36,
+     "in_flight": 2,
+     "in_flight_checks": 0,
+     "gains_pending": 0,
+     "promotion_hold": 0,
+     "spendable": 7,
+     "queue": 2,
+     "need": 7,
+     "pace": 2,
+     "N": 1,
+     "picks": [
+      {
+       "slug": "silu-mul-triton-local-rows-marlin-turn",
+       "mode": "submit",
+       "priority": 3,
+       "review": "proceed",
+       "kind": "primary",
+       "controls_for": null
+      }
+     ],
+     "shortfall": 5,
+     "reason": null,
+     "wake_s": 2757
+    }
+   ],
+   "wake_s": 1800,
+   "dispatch_total": 2,
+   "_exit": 0
+  },
+  "index": {
+   "ok": true,
+   "changed": [
+    "muse_attention_decode/hypotheses/INDEX.md",
+    "muse_attention_decode/hypotheses/FINDINGS.md",
+    "muse_moe_w4a16/hypotheses/INDEX.md",
+    "hypotheses/INDEX.md"
+   ],
+   "_exit": 0
+  }
+ }
+}
