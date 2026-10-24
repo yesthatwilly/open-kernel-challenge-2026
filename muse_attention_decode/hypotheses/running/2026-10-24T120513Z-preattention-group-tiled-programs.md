@@ -46,13 +46,19 @@ review: proceed
 status: running
 review_at: 2026-10-24T120745Z
 review_companions: null
-stage: claimed
+stage: implemented
 claimed_at: 2026-10-24T120745Z
 base_sha: f51cac06481cef9d3ac77248b4fec8d18a7cfb47
 base_blob: efc544103e6d303d1f8602caa9439628043a17a7
 branch: hyp/muse_attention_decode/preattention-group-tiled-programs
 worktree: .worktrees/muse_attention_decode/preattention-group-tiled-programs
 mode: null
+implemented_at: 2026-10-24T120945Z
+impl_commit: 9c4ab08ef055946e96f9948d58ac0f3c1a6d0fbf
+submission_sha256: 40addb5e78b0b903307dcd262a3e1275a0741fee661d5cc0d28260bb33303fd5
+norm_sha256: cfeefb47ca2a3b60a887c47f8d39042a2afe875627913dec587018e833ed7462
+submission_blob: 27ab22aeaf1a6560ffa2596c7525b13b2cedc730
+lint_warnings: 0
 ---
 
 # preattention-group-tiled-programs
@@ -95,3 +101,35 @@ No companion is warranted. The change is confined to one kernel whose own time i
 - Should the new grid be gated on token count, with the per-head grid kept for decode_1/verify_1, if the batch-1 kernel rows regress by more than ~0.2 us? Decide from this run's per-shape _pre_attention_kernel rows.
 - num_warps=4 with a [8,32] tile is 2 elements per thread per half. Would num_warps=2 cut per-CTA overhead further at verify_32? That is a cheap later ab-tune if the main run gains.
 
+
+## Implementation notes
+
+- Only `_pre_attention_kernel` and its launch in `kernel_fn` changed (worktree `muse_attention_decode/submission.py`; diff 62+/48-, most of it the kernel body and docstrings).
+- Grid `(tokens, hq + hkv)` with `num_warps=1` becomes `(tokens, hkv)` with `num_warps=4`. Program `(t, g)` loads the group's G query heads (`heads = g*G + arange(G)`) as two `[G, HALF]` even/odd tiles, and key head g as two `[HALF]` vectors (the key is kept 1-D as in master, not as a `[1, D]` tile). Value head g is loaded as `[D]`.
+- The math is the same as master, per row. RMSNorm is `sum(x_e^2, axis=1) + sum(x_o^2, axis=1)`, then `1/sqrt(ss/D + 1e-5)` in fp32. RoPE reads `positions[t]` and the cached `inv_freq` and computes `cos`/`sin` once on `[HALF]`, broadcast over the G query rows and reused for the key. The cast points are unchanged: FP8 for q, `k/k_scale` and `v/v_scale` to FP8.
+- PAIRED query store: `half = g % 2`, which equals master's `(h // G) % 2` because `h // G == g` for every query in the group. Each of the G padded rows gets its D values in `half*D` and a `[G, D]` FP8 zero tile in `(1-half)*D`. That covers all `G * 2D` bytes of the group's rows, so with `hkv` groups every byte of `[tokens, HQ, 2D]` is written on every call. The unpaired path writes `(t*HQ + h)*D`, which covers `[tokens, HQ, D]` fully. Both constexpr branches were regridded, as the review asked.
+- K/V stores go to `(loc*HKV + g)*D` with `loc = cache_loc[t]`, the same address as master's `kh = h - HQ`, so the page-64 layout is unchanged. Each of the `tokens*hkv` programs writes exactly one k row and one v row.
+- Deviation: none in behavior. Docstrings were updated, and one constraint is now stated: G must be a power of two (`tl.arange`). G = 8 under both tp8 (16/2) and dp (128/16), so every test and scored shape satisfies it.
+- No shape gate was added. Per the review, a batch-1 regression is a follow-up decision based on this run's per-shape `_pre_attention_kernel` rows. num_warps=2 is also a later ab-tune.
+- Not run: this node has no GPU, Triton or torch. Correctness and compile were not exercised beyond `py_compile`.
+
+## Rules check
+
+Checked against `git -C .worktrees/muse_attention_decode/preattention-group-tiled-programs diff`:
+
+- [x] CUDA-graph capturable: the diff adds no `.item()`, `.cpu()`, `synchronize()` or tensor prints. The only host-side change is the grid tuple and num_warps, both derived from config (`tokens`, `hkv`). There is no new allocation and no branching on input values.
+- [x] Nothing derived from `data` is cached across calls. `_INV_FREQ` is unchanged and keyed on config theta and d only.
+- [x] n/a: this problem has no weights or `prepare()`. The diff touches no weight path.
+- [x] Activations: the qkv reads are bf16 to fp32, the KV cache is written as FP8 E4M3 (`float8e4nv`), and queries are FP8 E4M3, the same as master. The diff changes no precision.
+- [x] Attention sees every key: FA3 call, window and page table are untouched by the diff.
+- [x] No timing patches, harness frames/I/O/secrets, module edits, reference import, subprocesses or network: none of these appear in the diff (grep clean).
+- [x] All work happens inside the timed call, and nothing is cached or replayed: the kernel still runs in full inside `kernel_fn` on every call.
+- [x] First line `# okc: problem=muse_attention_decode` kept. No `triton.autotune`.
+
+okc_lint output:
+
+```
+CLEAN: /home/user/git/musespark/.worktrees/muse_attention_decode/preattention-group-tiled-programs/muse_attention_decode/submission.py
+```
+
+`python3 -I -m py_compile` passed. The `__pycache__` it left was removed, and none remains in the worktree.
