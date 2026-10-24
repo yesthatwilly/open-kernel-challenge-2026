@@ -47,10 +47,10 @@ priority: 1
 kind: primary
 controls_for: null
 review: proceed
-status: running
+status: done
 review_at: 2026-10-23T230349Z
 review_companions: null
-stage: dispatched
+stage: harvested
 claimed_at: 2026-10-23T230349Z
 base_sha: c33a496b7fcb0965469bd5d5a5abc1b4f6da76ab
 base_blob: 0a0fc36b7854c07f5047c1df4e08ee984a830651
@@ -67,6 +67,13 @@ attempt_file: 2026-10-23T231147Z-check-sglang-pipeline-parity-router-hilo-m8.md
 prepared_at: 2026-10-23T231147Z
 job: e260dfe413e448c7
 dispatched_at: 2026-10-23T231157Z
+outcome: gain
+verdict_detail: gain
+speedup: 1.021632132299037
+speedup_ci: [1.0063076503145514, 1.0369566142835225]
+harvested_at: 2026-10-24T021808Z
+best_at_harvest: 0.0045119870605644765
+promotion: pending
 ---
 
 # sglang-pipeline-parity-router-hilo-m8
@@ -179,3 +186,35 @@ review). Syntax checked with ast.parse; lint OK.
 
 Lint: `OK with warnings: muse_decode_layer/submission.py` (one warn: `host-sync L245:
 torch.cuda.synchronize() (outside kernel_fn's call graph; fine in prepare())`), exit 0.
+
+## Result
+
+- job `e260dfe413e448c7` (check), status done, passed True, tests 13/13
+- speedup 1.0216x, 95% CI [1.0063, 1.0370], score 22141.335696926693 µs vs SGLang 22620.3 µs
+- best at harvest: {"speedup": 0.0045119870605644765, "ci": [0.00444430725465601, 0.004579666866472943], "job": "3c3181b1fce24b9a"}; base result: muse_decode_layer/hypotheses/BEST.result.json
+- **outcome: gain** (gain)
+- files: `muse_decode_layer/hypotheses/done/gain/sglang-pipeline-parity-router-hilo-m8.result.json`, `muse_decode_layer/hypotheses/done/gain/sglang-pipeline-parity-router-hilo-m8.patch`; branch `hyp/muse_decode_layer/sglang-pipeline-parity-router-hilo-m8`
+
+## Attribution
+
+| shape | w | base µs | hyp µs | delta | verdict |
+|---|---|---|---|---|---|
+| batch=1 ctx=80000 dist=soft layer=sliding load=decode_1 page=1 repeats=60 | 46 | 39572.92 | 168.73 | 232.9472 | gained |
+| batch=1 ctx=80000 dist=soft layer=full load=decode_1 page=1 repeats=60 | 16 | 39359.9 | 180.65 | 220.7863 | gained |
+| batch=16 ctx=80000 dist=soft layer=sliding load=decode_16 page=1 spread=agentic | 46 | 86418.37 | 269.71 | 325.6824 | gained |
+| batch=16 ctx=80000 dist=soft layer=full load=decode_16 page=1 spread=agentic | 16 | 84451.19 | 440.57 | 196.0362 | gained |
+| batch=32 ctx=80000 dist=soft layer=sliding load=decode_32 page=1 spread=agentic | 46 | 133430.01 | 265.68 | 512.0663 | gained |
+| batch=32 ctx=80000 dist=soft layer=full load=decode_32 page=1 spread=agentic | 16 | 133660.69 | 614.9 | 214.5705 | gained |
+| batch=1 ctx=80000 dist=soft layer=sliding load=verify_1 page=1 q_len=8 | 46 | 40279.2 | 233.99 | 169.1083 | gained |
+| batch=1 ctx=80000 dist=soft layer=full load=verify_1 page=1 q_len=8 | 16 | 40510.91 | 250.89 | 166.3812 | gained |
+| batch=16 ctx=80000 dist=soft layer=sliding load=verify_16 page=1 q_len=8 spread=agentic | 46 | 93905.26 | 521.15 | 181.9507 | gained |
+| batch=16 ctx=80000 dist=soft layer=full load=verify_16 page=1 q_len=8 spread=agentic | 16 | 95959.03 | 714.3 | 136.5507 | gained |
+| batch=32 ctx=80000 dist=soft layer=sliding load=verify_32 page=1 q_len=8 spread=agentic | 46 | 153118.93 | 713.04 | 224.0812 | gained |
+| batch=32 ctx=80000 dist=soft layer=full load=verify_32 page=1 q_len=8 spread=agentic | 16 | 156958.75 | 1049.76 | 149.3163 | gained |
+
+gained on sliding decode_1, decode_16, decode_32, verify_1, verify_16, verify_32; full decode_1, decode_16, decode_32, verify_1, verify_16, verify_32. Expected hit: 1/6. Noise ±1.5%.
+
+## Follow-ups
+
+- candidate for promotion; stack further changes with `depends_on` once it lands.
+
