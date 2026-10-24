@@ -141,3 +141,16 @@ against today's scored quota (the board keeps only the best run, so a slow one c
 Only `bf16-verify-streamk-cutlass-wgmma-rewrite` is still unrun: bf16 had 3 scored slots left, and
 this rewrite overlaps pooler-m128 on the pooler shapes. It runs as a check at the reset.
 The reset tick harvests these, then dispatches the "after these harvest" follow-ups as checks.
+
+## Reset priorities for 2026-10-25 (user, 2026-10-24 ~23:50Z), in order
+
+Run these before ordinary queue dispatch. Harvest first (tonight's decode stacks and the prefill scored runs).
+
+1. **Scored confirmations, then land.**
+   - decode `stack-align-par-sidestream-sliding1`: check `cc92097b64784c0f` 1.2495 [1.231, 1.268], the best decode result (board best 1.2283). One scored submit; if it again beats 1.2283, land it on master (it already contains the dense-chain PDL master).
+   - bf16 `bf16-restack-m16-swapab-router-swapab-m32`: scored `1e90292c7b954d96` 1.2215 [1.203, 1.240] vs master lineage 1.1959. One more scored submit of the same code to confirm (user-approved exception to "identical code is never re-run"), then land it on master.
+2. **Prefill master = the five-way stack.** `stack-tonight-five-prefill` measured 1.0705 (check `c4d14d62f11e4aaf`) and 1.0744 (scored `502f2eab95164781`, now on the board, rank 273). Land it on master (user-approved). Do NOT carry `align-local-parallel-first-turn` (six-way stack 1.0642 / 1.0672: it costs ~0.6%). `silu-mul-sorted-first-turn` (built, unrun) is now a stage on the five-stack lineage: re-base it on the new master before running.
+3. **Per-shape read of today's 15 rewrites before any stage 2.** For each rewrite in done/ from 2026-10-24 (bf16 x3, attention x3, moe x4, decode x2 incl. the failed moe-chain, prefill x2 + the sliding-attn and the moe/prefill night rewrites): read the replaced kernels' per-shape rows and PATH CHOSEN lines from the archived profiles, against the incumbent and floor in its `## Milestones`. Record per rewrite: path actually taken, target-shape speedup, verdict (promising stage 2 / dead). Mint stage 2 only for the promising ones. One Opus agent per problem is fine.
+4. **moe: stack the sub-noise winners**, the way prefill's stack showed accumulation. Candidates at 1.328-1.329 vs best 1.3278: `align-small-one-warp-tiny-m`, `post-norm-combine-hoisted-slot-loads`, `cuda-dispatch-combine-pdl-verify` (bs >= 128 align+combine, disjoint from the other two). Mint one stack of all three (+ `align-parallel-from-17-tokens` as a separate variant), restack via the fixed claim, run as checks.
+
+Decode note: `stack-align-par-sliding-batched` (`b94e797333fb4a27`) FAILED its tests: the parallel align and the batched sliding port do not compose as built; do not stack them again without a diagnosis.
