@@ -65,9 +65,16 @@ priority: 2
 kind: primary
 controls_for: null
 review: proceed
-status: queued
+status: running
 review_at: 2026-10-24T165424Z
 review_companions: null
+stage: claimed
+claimed_at: 2026-10-24T165424Z
+base_sha: 278c4441e3dddcc35e9478bc678c6d596a9d3428
+base_blob: a8bb42ac483318e9fbc84bc7826a27b7a704d1fb
+branch: hyp/muse_bf16_proj/router-swapab-wgmma-all-m
+worktree: .worktrees/muse_bf16_proj/router-swapab-wgmma-all-m
+mode: null
 ---
 
 # router-swapab-wgmma-all-m
