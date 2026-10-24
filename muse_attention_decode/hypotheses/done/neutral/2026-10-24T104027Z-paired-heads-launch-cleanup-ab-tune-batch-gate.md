@@ -37,10 +37,10 @@ priority: 2
 kind: ab-tune
 controls_for: paired-heads-launch-cleanup
 review: proceed
-status: running
+status: done
 review_at: 2026-10-24T104320Z
 review_companions: null
-stage: dispatched
+stage: harvested
 claimed_at: 2026-10-24T104320Z
 base_sha: 12230f154820fa60ff8dc5f1e9efca0e1d05c4c9
 base_blob: 60fc66432a00f0c6a1e2228f6a0775cc08f492fc
@@ -57,6 +57,13 @@ attempt_file: 2026-10-24T104354Z-check-paired-heads-launch-cleanup-ab-tune-batch
 prepared_at: 2026-10-24T104354Z
 job: bd64bf9f9e904f02
 dispatched_at: 2026-10-24T104412Z
+outcome: neutral
+verdict_detail: unproven-vs-best
+speedup: 1.2686474414890054
+speedup_ci: [1.2496177298666704, 1.2876771531113405]
+harvested_at: 2026-10-24T115930Z
+best_at_harvest: 1.1705932092473075
+promotion: null
 ---
 
 # paired-heads-launch-cleanup-ab-tune-batch-gate
@@ -121,3 +128,35 @@ okc_lint output:
 ```
 CLEAN: .worktrees/muse_attention_decode/paired-heads-launch-cleanup-ab-tune-batch-gate/muse_attention_decode/submission.py
 ```
+
+## Result
+
+- job `bd64bf9f9e904f02` (check), status done, passed True, tests 16/16
+- speedup 1.2686x, 95% CI [1.2496, 1.2877], score 2968.7522922676703 µs vs SGLang 3766.3 µs
+- best at harvest: {"speedup": 1.1705932092473075, "ci": [1.1530343111085979, 1.1923944446416679], "job": "facc479992e24a35"}; base result: muse_attention_decode/hypotheses/done/gain/paired-heads-launch-cleanup.result.json
+- **outcome: neutral** (unproven-vs-best)
+- files: `muse_attention_decode/hypotheses/done/neutral/paired-heads-launch-cleanup-ab-tune-batch-gate.result.json`, `muse_attention_decode/hypotheses/done/neutral/paired-heads-launch-cleanup-ab-tune-batch-gate.patch`; branch `hyp/muse_attention_decode/paired-heads-launch-cleanup-ab-tune-batch-gate`
+
+## Attribution
+
+| shape | w | base µs | hyp µs | delta | verdict |
+|---|---|---|---|---|---|
+| batch=1 ctx=80000 dist=soft heads=tp8 layer=sliding load=decode_1 page=1 | 46 | 16.33 | 16.56 | 0.9984 | flat |
+| batch=1 ctx=80000 dist=coherent heads=tp8 layer=full load=decode_1 page=1 | 16 | 30.51 | 28.09 | 1.095 | gained |
+| batch=16 ctx=80000 dist=soft heads=tp8 layer=sliding load=decode_16 page=1 spread=agentic | 46 | 20.58 | 20.92 | 0.9904 | flat |
+| batch=16 ctx=80000 dist=coherent heads=tp8 layer=full load=decode_16 page=1 spread=agentic | 16 | 155.95 | 156.19 | 0.9989 | flat |
+| batch=32 ctx=80000 dist=soft heads=tp8 layer=sliding load=decode_32 page=1 spread=agentic | 46 | 25.11 | 25.0 | 1.0123 | flat |
+| batch=32 ctx=80000 dist=coherent heads=tp8 layer=full load=decode_32 page=1 spread=agentic | 16 | 297.97 | 298.45 | 0.996 | flat |
+| batch=1 ctx=80000 dist=soft heads=tp8 layer=sliding load=verify_1 page=1 q_len=8 | 46 | 17.16 | 17.15 | 1.0098 | flat |
+| batch=1 ctx=80000 dist=coherent heads=tp8 layer=full load=verify_1 page=1 q_len=8 | 16 | 36.39 | 30.23 | 1.217 | gained |
+| batch=16 ctx=80000 dist=soft heads=tp8 layer=sliding load=verify_16 page=1 q_len=8 spread=agentic | 46 | 22.45 | 22.89 | 0.9952 | flat |
+| batch=16 ctx=80000 dist=coherent heads=tp8 layer=full load=verify_16 page=1 q_len=8 spread=agentic | 16 | 163.48 | 163.33 | 1.0053 | flat |
+| batch=32 ctx=80000 dist=soft heads=tp8 layer=sliding load=verify_32 page=1 q_len=8 spread=agentic | 46 | 29.26 | 28.93 | 1.004 | flat |
+| batch=32 ctx=80000 dist=coherent heads=tp8 layer=full load=verify_32 page=1 q_len=8 spread=agentic | 16 | 302.59 | 301.68 | 1.0025 | flat |
+
+gained on full decode_1, verify_1. Expected hit: 5/5. Noise ±1.5%.
+
+## Follow-ups
+
+- unproven-vs-best: the change is not proven either way; a stacked hypothesis (`depends_on: paired-heads-launch-cleanup-ab-tune-batch-gate`) that adds a further change in the same area is the only way to learn more (identical code is never re-run).
+
