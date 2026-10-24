@@ -32,10 +32,10 @@ priority: 1
 kind: primary
 controls_for: null
 review: proceed
-status: running
+status: done
 review_at: 2026-10-24T145123Z
 review_companions: null
-stage: dispatched
+stage: harvested
 claimed_at: 2026-10-24T145124Z
 base_sha: e39e564e1c1c5afd6984d50a952b2d5550f92df2
 base_blob: d9a9375ef4721ab9b28cc9d6364c92e67c7ccc59
@@ -52,6 +52,13 @@ attempt_file: 2026-10-24T145124Z-check-triton-map-align-verify-chunked-pow2-fix.
 prepared_at: 2026-10-24T145125Z
 job: c1c72d5d19ea444f
 dispatched_at: 2026-10-24T145134Z
+outcome: neutral
+verdict_detail: within-ci
+speedup: 1.310657397871377
+speedup_ci: [1.2909975369033062, 1.3303172588394474]
+harvested_at: 2026-10-24T152209Z
+best_at_harvest: 1.3116740840932535
+promotion: null
 ---
 
 # triton-map-align-verify-chunked-pow2-fix
@@ -117,3 +124,29 @@ Checked against `git -C .worktrees/muse_moe_w4a16/triton-map-align-verify-chunke
 - [x] First line marker kept; no triton.autotune.
 
 okc_lint: OK with warnings (host-syncs only in prepare()/the self-check).
+
+## Result
+
+- job `c1c72d5d19ea444f` (check), status done, passed True, tests 5/5
+- speedup 1.3107x, 95% CI [1.2910, 1.3303], score 10260.881311806997 µs vs SGLang 13448.5 µs
+- best at harvest: {"speedup": 1.3116740840932535, "ci": [1.2919989728318546, 1.3313491953546521], "job": "bc56182a80444d16"}; base result: muse_moe_w4a16/hypotheses/done/gain/triton-map-align-on-block-m-restack.result.json
+- **outcome: neutral** (within-ci)
+- files: `muse_moe_w4a16/hypotheses/done/neutral/triton-map-align-verify-chunked-pow2-fix.result.json`, `muse_moe_w4a16/hypotheses/done/neutral/triton-map-align-verify-chunked-pow2-fix.patch`; branch `hyp/muse_moe_w4a16/triton-map-align-verify-chunked-pow2-fix`
+
+## Attribution
+
+| shape | w | base µs | hyp µs | delta | verdict |
+|---|---|---|---|---|---|
+| bs=1 load=decode_1 sharding=ep8 | 60 | 48.37 | 50.27 | 0.9822 | flat |
+| bs=16 load=decode_16 sharding=ep8 | 60 | 147.87 | 144.09 | 1.0098 | flat |
+| bs=32 load=decode_32 sharding=ep8 | 60 | 200.73 | 199.28 | 0.9977 | flat |
+| bs=8 load=verify_1 sharding=ep8 | 60 | 107.77 | 106.87 | 0.9955 | flat |
+| bs=128 load=verify_16 sharding=ep8 | 60 | 333.39 | 326.49 | 1.0205 | flat |
+| bs=256 load=verify_32 sharding=ep8 | 60 | 469.91 | 482.05 | 0.9901 | flat |
+
+no shape moved outside noise. Expected hit: 2/4. Noise ±1.5%.
+
+## Follow-ups
+
+- within-ci: the change is not proven either way; a stacked hypothesis (`depends_on: triton-map-align-verify-chunked-pow2-fix`) that adds a further change in the same area is the only way to learn more (identical code is never re-run).
+
