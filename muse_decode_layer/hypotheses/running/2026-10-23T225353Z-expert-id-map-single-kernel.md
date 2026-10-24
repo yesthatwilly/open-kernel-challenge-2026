@@ -39,13 +39,19 @@ review: proceed
 status: running
 review_at: 2026-10-24T032546Z
 review_companions: null
-stage: claimed
+stage: implemented
 claimed_at: 2026-10-24T032546Z
 base_sha: 1e0262054793e9b504601277f857693e70332c70
 base_blob: 6884d26a928d1de1b07bf8d28e1be4e53dfdcfc5
 branch: hyp/muse_decode_layer/expert-id-map-single-kernel
 worktree: .worktrees/muse_decode_layer/expert-id-map-single-kernel
 mode: null
+implemented_at: 2026-10-24T032749Z
+impl_commit: 08e8fcb6d37d8a5b6a21eda279552962cc244ea8
+submission_sha256: 5d73fb4ecde1d98939aade05c6b73c1f9ceb588b43583f7b05df077e89780e8a
+norm_sha256: 4c2c02ad6bce9f12080d8e56fa226a4da6f0fef1d40bbed2d7b90a38a3b38a4e
+submission_blob: d3cbff5d9d9e6de23eb2f6770a99cd93eea093b7
+lint_warnings: 1
 ---
 
 # expert-id-map-single-kernel
@@ -86,3 +92,38 @@ No companion is warranted. The change replaces one code path (three or four eage
 - Can one run's decode_1 row separate a +2-3% gain from flat, given the observed 1.014x vs 0.999x drift of identical code across e260fde413e448c7 and 5755a412dda244a1? Record a sub-CI move as flat per the hypothesis's own rule and let moe-align-single-kernel-small-t carry the decision.
 - Minor: SGLang's moe_align_block_size with num_experts=256 and -1 ids is unchanged behaviour here, but the queued moe-align-local-expert-count (32 experts) will stack on this kernel's output; the -1 sentinel must survive both.
 
+
+## Implementation notes
+
+Worktree `.worktrees/muse_decode_layer/expert-id-map-single-kernel`, file `muse_decode_layer/submission.py` only (36 insertions, 8 deletions).
+
+- Added `import triton` / `import triton.language as tl`.
+- New `_local_expert_ids_kernel` (`@triton.jit(do_not_specialize=["n"])`, no autotune): masked loads over `n = T*8` ids with a fixed constexpr `BLOCK = LOCAL_ID_BLOCK = 2048`, grid `cdiv(n, 2048)` (one program for every T <= 256; larger T gets a multi-program grid). `local_start` is loaded on device from its pointer (no `.item()`). Wrap is `(id - local_start) & 255` (Triton `%` truncates; `& 255` equals the non-negative mod 256 in two's complement), then `where(local < 32, local, -1)`, which is exactly `expert_map[(id - local_start) % 256]` since expert_map was `arange(32)` then `-1`. Literal 255/32 are used inside the kernel rather than module globals (some Triton versions reject non-constexpr globals).
+- New host wrapper `_local_expert_ids(topk_ids, local_start)`: allocates `torch.empty((T, 8), int32)` per call and launches once. `n` is a runtime int and `do_not_specialize=["n"]` stops the divisible-by-16 specialization, so T=1/8/9/... and the scored T=128/256 all share one compiled variant.
+- `kernel_fn`: `local_ids = (topk_ids - data["local_start"]) % N_EXPERTS` replaced by `local_ids = _local_expert_ids(topk_ids, data["local_start"])`, same position (main stream, after the side-stream join).
+- `_experts`: parameter renamed `topk_ids` -> `local_ids` (it already received the local ids); the `bank["expert_map"][topk_ids].contiguous()` gather is removed and `local_ids` flows unchanged to `moe_align_block_size`, `silu_and_mul(expert_ids=...)` and `fused_post_expert_norm_weighted_sum(slot_expert_ids=...)`.
+- `_marlin_bank`: `expert_map` construction and bank entry removed (grep confirms nothing else used it).
+- `prepare()`: one warm-up launch on dummy `zeros((1, 8), int32)` ids and `zeros((1,), int32)` local_start before the existing `synchronize()`, so the JIT compile happens outside any timed call. Untimed, nothing data-derived, result discarded.
+- Returned `topk_ids` (global ids) unchanged; topk_weights, moe_align_block_size and the Marlin calls untouched.
+- Deviation: none in substance. `do_not_specialize` goes beyond the review note (which asked for a runtime `n`) to also neutralize Triton's integer-divisibility specialization of `n`.
+- Uncertainty: the warm-up compiles for int32 `topk_ids`; FusedMuseSparkRouting is expected to return int32 (kernel_fn returns it as the int32 output). If it ever returned int64 the kernel still works (load then `.to(int32)`) but would compile a second variant on first use. Not runnable on this node (no GPU/torch/Triton).
+
+## Rules check
+
+- [x] CUDA-graph capturable: no `.item()`/`.cpu()`/`synchronize()`/tensor prints in kernel_fn's path; `local_start` read on device; the only allocation is `torch.empty((T, 8))` from shapes; grid depends only on `numel()` (shape).
+- [x] Nothing derived from `data` is cached across calls: the bank lost `expert_map` and gained nothing; the prepare warm-up uses dummy zeros only.
+- [x] Weights: n/a, no weight code changed (only the expert_map index table, not a weight, was dropped).
+- [x] Activations BF16 where SGLang keeps BF16; KV cache FP8; queries at most FP8 E4M3: n/a, those paths are not modified (integer ids only).
+- [x] Attention sees every key: n/a, attention untouched.
+- [x] No timing patches, harness frames/I/O/secrets, module edits, reference import, subprocesses or network: only `import triton` added.
+- [x] All work happens inside the timed call; no output caching or replay: the id map is computed every call from that call's topk_ids and local_start.
+- [x] No triton.autotune; fixed constexpr BLOCK=2048, `n` runtime and not specialized.
+
+Lint (`okc_lint.py ... --problem muse_decode_layer`):
+
+```
+warn  host-sync    L273: torch.cuda.synchronize()  (outside kernel_fn's call graph; fine in prepare())
+OK with warnings: /home/user/git/musespark/.worktrees/muse_decode_layer/expert-id-map-single-kernel/muse_decode_layer/submission.py
+```
+
+`python3 -I -m py_compile`: OK; `__pycache__` removed from the worktree.
