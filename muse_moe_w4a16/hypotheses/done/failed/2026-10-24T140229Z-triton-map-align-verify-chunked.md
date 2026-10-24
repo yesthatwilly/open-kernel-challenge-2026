@@ -44,10 +44,10 @@ priority: 2
 kind: primary
 controls_for: null
 review: proceed
-status: running
+status: done
 review_at: 2026-10-24T140447Z
 review_companions: null
-stage: dispatched
+stage: harvested
 claimed_at: 2026-10-24T140447Z
 base_sha: 001aa1c251231981cfc4254d1cf8ce63b737a236
 base_blob: d9a9375ef4721ab9b28cc9d6364c92e67c7ccc59
@@ -64,6 +64,13 @@ attempt_file: 2026-10-24T140755Z-check-triton-map-align-verify-chunked.md
 prepared_at: 2026-10-24T140755Z
 job: 3aa4d7e193244255
 dispatched_at: 2026-10-24T140804Z
+outcome: failed
+verdict_detail: "test:failed"
+speedup: null
+speedup_ci: null
+harvested_at: 2026-10-24T144810Z
+best_at_harvest: 1.3116740840932535
+promotion: null
 ---
 
 # triton-map-align-verify-chunked
@@ -156,3 +163,15 @@ exit 0
 ```
 
 `python3 -I -m py_compile`: OK (the __pycache__ was removed).
+
+## Result
+
+- job `3aa4d7e193244255` (check), status done, passed False, tests 0/0
+- best at harvest: {"speedup": 1.3116740840932535, "ci": [1.2919989728318546, 1.3313491953546521], "job": "bc56182a80444d16"}; base result: muse_moe_w4a16/hypotheses/done/gain/triton-map-align-on-block-m-restack.result.json
+- **outcome: failed** (test:failed)
+- files: `muse_moe_w4a16/hypotheses/done/failed/triton-map-align-verify-chunked.result.json`, `muse_moe_w4a16/hypotheses/done/failed/triton-map-align-verify-chunked.patch`; branch `hyp/muse_moe_w4a16/triton-map-align-verify-chunked`
+
+## Follow-ups
+
+- none
+

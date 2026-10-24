@@ -1,0 +1,215 @@
+diff --git a/muse_moe_w4a16/submission.py b/muse_moe_w4a16/submission.py
+index d9a9375..dd6c55b 100644
+--- a/muse_moe_w4a16/submission.py
++++ b/muse_moe_w4a16/submission.py
+@@ -20,7 +20,8 @@ M*8 + 256*(block_size_m-1)) and its per-expert cumsum runs over 32 counters.
+ Up to 32 tokens (hypothesis triton-map-align-small-m-port), one single-program Triton kernel
+ (_align_small_kernel) does the expert_map gather and moe_align_block_size's work over the 32 local
+ experts (capacity M*8 + 32*(block_size_m - 1), as the 32-expert align allocates; remote routes get
+-no bucket). Above 32 tokens the expert_map gather and moe_align_block_size(..., 32) run as before.
++no bucket). Above 32 tokens (hypothesis triton-map-align-verify-chunked) a chunked single-program
++variant (_align_chunked_kernel) does the same work in two passes over CHUNK-route chunks.
+ 
+ Differs from SGLang: the expert all-reduce is not run."""
+ 
+@@ -80,8 +81,11 @@ POST_NORM_EPS = 1e-8
+ # fused_post_expert_norm_weighted_sum (hypothesis post-expert-norm-triton-small-m).
+ SMALL_M_POST_NORM = 32
+ # Up to this many tokens _align_small_kernel does the expert_map gather and the align in one
+-# launch (hypothesis triton-map-align-small-m-port); above it, master's gather + moe_align_block_size.
++# launch (hypothesis triton-map-align-small-m-port); above it, _align_chunked_kernel does the same
++# in one launch (hypothesis triton-map-align-verify-chunked).
+ ALIGN_FUSED_MAX_TOKENS = 32
++# Routes per chunk in _align_chunked_kernel.
++ALIGN_CHUNK = 512
+ 
+ 
+ @triton.jit
+@@ -158,6 +162,71 @@ def _align_small_kernel(topk_ids_ptr, local_ids_ptr, sorted_ids_ptr, block_exper
+     tl.store(n_padded_ptr, total)
+ 
+ 
++@triton.jit(do_not_specialize=["local_start", "local_count", "n", "cap", "n_blocks"])
++def _align_chunked_kernel(topk_ids_ptr, local_ids_ptr, sorted_ids_ptr, block_experts_ptr, n_padded_ptr,
++                          local_start, local_count, n, cap, n_blocks, CHUNK: tl.constexpr,
++                          BSM: tl.constexpr, NUM_E: tl.constexpr):
++    """_align_small_kernel's outputs for any n, one program, in CHUNK-route chunks.
++
++    Pass 1 maps the ids, stores local_ids and accumulates the per-expert counts. Pass 2 recomputes
++    the local ids from topk_ids (it never reloads local_ids: those stores by other threads of this
++    program are not ordered before the loads) and places each real route at its expert's segment
++    start plus the routes of that expert already placed by earlier chunks (base) plus its rank
++    within the chunk. Then the padding slots, the slots past the used length and block_experts.
++    The store sets into sorted_ids are disjoint, so no ordering is needed."""
++    offs0 = tl.arange(0, CHUNK)
++    experts = tl.arange(0, NUM_E)
++
++    counts = tl.zeros([NUM_E], dtype=tl.int32)
++    for c in range(0, n, CHUNK):
++        offs = c + offs0
++        mask = offs < n
++        ids = tl.load(topk_ids_ptr + offs, mask=mask, other=0).to(tl.int32)
++        local = ids - local_start
++        local = tl.where(mask & (local >= 0) & (local < local_count), local, -1)
++        tl.store(local_ids_ptr + offs, local, mask=mask)
++        onehot = (local[:, None] == experts[None, :]).to(tl.int32)    # [CHUNK, NUM_E]
++        counts += tl.sum(onehot, axis=0)
++
++    padded = (counts + BSM - 1) // BSM * BSM
++    seg_end = tl.cumsum(padded, axis=0)
++    seg_start = seg_end - padded
++    total = tl.sum(padded, axis=0)
++
++    base = seg_start
++    for c in range(0, n, CHUNK):
++        offs = c + offs0
++        mask = offs < n
++        ids = tl.load(topk_ids_ptr + offs, mask=mask, other=0).to(tl.int32)
++        local = ids - local_start
++        local = tl.where(mask & (local >= 0) & (local < local_count), local, -1)
++        onehot = (local[:, None] == experts[None, :]).to(tl.int32)
++        rank = tl.sum(onehot * (tl.cumsum(onehot, axis=0) - 1), axis=1)
++        pos = tl.sum(onehot * base[None, :], axis=1) + rank
++        tl.store(sorted_ids_ptr + pos, offs, mask=mask & (local >= 0))
++        base += tl.sum(onehot, axis=0)
++
++    # Each expert's padding slots (one [NUM_E, BSM] tile, as in _align_small_kernel).
++    j = tl.arange(0, BSM)
++    pad_ptrs = sorted_ids_ptr + (seg_start + counts)[:, None] + j[None, :]
++    sentinel = tl.zeros([NUM_E, BSM], dtype=tl.int32) + n
++    tl.store(pad_ptrs, sentinel, mask=j[None, :] < (padded - counts)[:, None])
++    # Every slot past the used length.
++    for s in range(0, cap, CHUNK):
++        slots = s + offs0
++        tl.store(sorted_ids_ptr + slots, tl.zeros([CHUNK], dtype=tl.int32) + n,
++                 mask=(slots >= total) & (slots < cap))
++
++    for b in range(0, n_blocks, CHUNK):
++        blocks = b + offs0
++        block_start = blocks * BSM
++        inseg = (block_start[:, None] >= seg_start[None, :]) & (block_start[:, None] < seg_end[None, :])
++        block_expert = tl.sum(tl.where(inseg, experts[None, :], 0), axis=1)
++        block_expert = tl.where(tl.sum(inseg.to(tl.int32), axis=1) > 0, block_expert, -1)
++        tl.store(block_experts_ptr + blocks, block_expert, mask=blocks < n_blocks)
++    tl.store(n_padded_ptr, total)
++
++
+ def _block_size_m(num_tokens, count):
+     """MuseSpark1xFp4Experts' block_size_m choice (unchanged)."""
+     for block_size_m in BLOCK_SIZE_M_CANDIDATES:
+@@ -188,17 +257,42 @@ def _align_small(topk_ids, local_start, local_count, block_size_m):
+     return local_ids, (sorted_ids, block_experts, n_padded)
+ 
+ 
++def _align_chunked(topk_ids, local_start, local_count, block_size_m):
++    """_align_small's outputs (same sizes) for M > ALIGN_FUSED_MAX_TOKENS, in one launch of
++    _align_chunked_kernel. n, cap and n_blocks are runtime arguments, so only block_size_m
++    selects a compiled variant."""
++    topk_ids = topk_ids.contiguous()
++    device = topk_ids.device
++    n = topk_ids.numel()
++    cap = n + local_count * (block_size_m - 1)
++    n_blocks = triton.cdiv(cap, block_size_m)
++    local_ids = torch.empty(topk_ids.shape, dtype=torch.int32, device=device)
++    sorted_ids = torch.empty((cap,), dtype=torch.int32, device=device)
++    block_experts = torch.empty((n_blocks,), dtype=torch.int32, device=device)
++    n_padded = torch.empty((1,), dtype=torch.int32, device=device)
++    _align_chunked_kernel[(1,)](
++        topk_ids, local_ids, sorted_ids, block_experts, n_padded, local_start, local_count, n, cap,
++        n_blocks, CHUNK=ALIGN_CHUNK, BSM=block_size_m, NUM_E=triton.next_power_of_2(local_count),
++        num_warps=8)
++    return local_ids, (sorted_ids, block_experts, n_padded)
++
++
+ def _align_self_check(device, count):
+-    """Untimed, prepare() only: _align_small against SGLang's moe_align_block_size(ref_local, bsm,
+-    count) on synthetic routings (fixed seeds), per local expert. Prints a one-line summary, any
+-    mismatch, and per case n_padded vs SGLang's own r_pad (info: whether SGLang's align buckets the
+-    -1 routes into m-blocks of its own)."""
++    """Untimed, prepare() only: _align_small (tokens <= 32, SGLang's block_size_m) and _align_chunked
++    (tokens > 32, every block_size_m candidate, covering kernel_fn's picks at bs >= 128) against
++    SGLang's moe_align_block_size(ref_local, bsm, count) on synthetic routings (fixed seeds), per
++    local expert. Prints a one-line summary, any mismatch, and per case n_padded vs SGLang's own
++    r_pad (info: whether SGLang's align buckets the -1 routes into m-blocks of its own); for the
++    tokens > 32 cases only the pad lines that differ, to keep the log short."""
+     tag0 = "[triton-map-align-small-m-port]"
+     gen = torch.Generator().manual_seed(20261024)
+     bad = []
+     pads = []
+     cases = 0
+-    for tokens in (1, 8, 16, 32):
++    shapes = [(tokens, _block_size_m(tokens, count)) for tokens in (1, 8, 16, 32)]
++    shapes += [(tokens, bsm) for tokens in (33, 128, 256, 257) for bsm in BLOCK_SIZE_M_CANDIDATES]
++    for tokens, bsm in shapes:
++        align = _align_small if tokens <= ALIGN_FUSED_MAX_TOKENS else _align_chunked
+         for start in (0, 32, N_EXPERTS - count):
+             local_set = list(range(start, start + count))
+             remote_set = [e for e in range(N_EXPERTS) if e not in local_set]
+@@ -214,10 +308,9 @@ def _align_self_check(device, count):
+             }
+             for name, ids in rows.items():
+                 cases += 1
+-                tag = f"T={tokens} local_start={start} {name}"
++                tag = f"T={tokens} bsm={bsm} local_start={start} {name}"
+                 topk_ids = torch.tensor(ids, dtype=torch.int32, device=device)
+-                bsm = _block_size_m(tokens, count)
+-                local_ids, (s_ids, b_exp, n_pad) = _align_small(topk_ids, start, count, bsm)
++                local_ids, (s_ids, b_exp, n_pad) = align(topk_ids, start, count, bsm)
+                 ref_map = torch.full((N_EXPERTS,), -1, dtype=torch.int32, device=device)
+                 ref_map[start:start + count] = torch.arange(count, dtype=torch.int32, device=device)
+                 ref_local = ref_map[topk_ids].contiguous()
+@@ -233,8 +326,8 @@ def _align_self_check(device, count):
+                                f"{r_ids.numel()}/{r_exp.numel()}")
+                 s_ids, b_exp, n_pad = s_ids.tolist(), b_exp.tolist(), int(n_pad.item())
+                 r_ids, r_exp, r_pad = r_ids.tolist(), r_exp.tolist(), int(r_pad.item())
+-                pads.append(f"{tag} bsm={bsm}: n_pad={n_pad} r_pad={r_pad}"
+-                            + (" DIFF" if n_pad != r_pad else ""))
++                if tokens <= ALIGN_FUSED_MAX_TOKENS or n_pad != r_pad:
++                    pads.append(f"{tag}: n_pad={n_pad} r_pad={r_pad}" + (" DIFF" if n_pad != r_pad else ""))
+ 
+                 def per_expert(sorted_ids, block_experts, used):
+                     groups, blocks = {}, {}
+@@ -270,6 +363,15 @@ def _align_self_check(device, count):
+         print(f"{tag0}   {message}")
+     for line in pads:
+         print(f"{tag0}   pad {line}")
++    # The _align_chunked cases (tokens > 32), apart: only their mismatches other than the known
++    # capacity difference (SGLang's wrapper allocates more), so a real one is not hidden above.
++    tag1 = "[triton-map-align-verify-chunked]"
++    big = [m for m in hard if int(m.split()[0][2:]) > ALIGN_FUSED_MAX_TOKENS]
++    big_real = [m for m in big if ": capacity " not in m]
++    print(f"{tag1} self-check tokens > {ALIGN_FUSED_MAX_TOKENS}: {len(big)} mismatches, "
++          f"{len(big) - len(big_real)} capacity-only, {len(big_real)} other")
++    for message in big_real[:10]:
++        print(f"{tag1}   {message}")
+ 
+ 
+ def _marlin_layer(weights, start, count):
+@@ -316,6 +418,10 @@ def prepare(weights: Weights) -> dict:
+             for tokens in range(1, ALIGN_FUSED_MAX_TOKENS + 1):
+                 _align_small(torch.full((tokens, TOP_K), start, dtype=torch.int32, device=device),
+                              start, count, _block_size_m(tokens, count))
++            # _align_chunked_kernel: one variant per block_size_m candidate (n is runtime).
++            for bsm in BLOCK_SIZE_M_CANDIDATES:
++                _align_chunked(torch.full((ALIGN_FUSED_MAX_TOKENS + 1, TOP_K), start, dtype=torch.int32,
++                                          device=device), start, count, bsm)
+             torch.cuda.synchronize()
+             _align_self_check(device, count)
+     torch.cuda.synchronize()
+@@ -347,10 +453,12 @@ def kernel_fn(data: Inputs, state: dict) -> torch.Tensor:
+         # at the verify shapes (bs=128: 48 -> 16, bs=256/257: 64 -> 32). A host-side pick on the
+         # shape only; num_tokens < 128 keeps SGLang's pick.
+         block_size_m = BLOCK_SIZE_M_CANDIDATES[max(BLOCK_SIZE_M_CANDIDATES.index(block_size_m) - 2, 0)]
+-    if expert_map is not None and num_tokens <= ALIGN_FUSED_MAX_TOKENS:
+-        # Up to 32 tokens (branch on shape only): one launch does the expert_map gather and the
+-        # align, with the bank's prepare-time start/count (hypothesis triton-map-align-small-m-port).
+-        local_ids, (sorted_ids, block_experts, n_padded) = _align_small(
++    if expert_map is not None:
++        # One launch does the expert_map gather and the align, with the bank's prepare-time
++        # start/count: up to 32 tokens _align_small (hypothesis triton-map-align-small-m-port), above
++        # it _align_chunked (hypothesis triton-map-align-verify-chunked). Branch on shape only.
++        align = _align_small if num_tokens <= ALIGN_FUSED_MAX_TOKENS else _align_chunked
++        local_ids, (sorted_ids, block_experts, n_padded) = align(
+             data["topk_ids"], bank["start"], bank["count"], block_size_m)
+     else:
+         local_ids = data["topk_ids"].to(torch.int32)

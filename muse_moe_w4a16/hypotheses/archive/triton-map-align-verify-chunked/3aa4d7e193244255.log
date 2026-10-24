@@ -1,0 +1,54 @@
+Traceback (most recent call last):
+  File "/opt/sglang/lib/python3.12/site-packages/triton/language/core.py", line 43, in wrapper
+    return fn(*args, **kwargs)
+           ^^^^^^^^^^^^^^^^^^^
+  File "/opt/sglang/lib/python3.12/site-packages/triton/language/core.py", line 1984, in arange
+    return _semantic.arange(start, end)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/opt/sglang/lib/python3.12/site-packages/triton/language/semantic.py", line 594, in arange
+    raise ValueError("arange's range must be a power of 2")
+ValueError: arange's range must be a power of 2
+
+The above exception was the direct cause of the following exception:
+
+Traceback (most recent call last):
+  File "/tmp/muse_moe_w4a16-f1ecsj4x/run/worker.py", line 423, in child_main
+    send(_setup_op(msg, module, state, sync, perf))
+         ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/tmp/muse_moe_w4a16-f1ecsj4x/run/worker.py", line 322, in _setup_op
+    state["prep"] = prepare(weights)
+                    ^^^^^^^^^^^^^^^^
+  File "/tmp/muse_moe_w4a16-f1ecsj4x/run/submission.py", line 423, in prepare
+    _align_chunked(torch.full((ALIGN_FUSED_MAX_TOKENS + 1, TOP_K), start, dtype=torch.int32,
+  File "/tmp/muse_moe_w4a16-f1ecsj4x/run/submission.py", line 273, in _align_chunked
+    _align_chunked_kernel[(1,)](
+  File "/opt/sglang/lib/python3.12/site-packages/triton/runtime/jit.py", line 374, in <lambda>
+    return lambda *args, **kwargs: self.run(grid=grid, warmup=False, *args, **kwargs)
+                                   ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/opt/sglang/lib/python3.12/site-packages/triton/runtime/jit.py", line 757, in run
+    kernel = self._do_compile(key, signature, device, constexprs, options, attrs, warmup)
+             ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/opt/sglang/lib/python3.12/site-packages/triton/runtime/jit.py", line 902, in _do_compile
+    kernel = self.compile(src, target=target, options=options.__dict__)
+             ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/opt/sglang/lib/python3.12/site-packages/triton/compiler/compiler.py", line 307, in compile
+    module = src.make_ir(target, options, codegen_fns, module_map, context)
+             ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/opt/sglang/lib/python3.12/site-packages/triton/compiler/compiler.py", line 80, in make_ir
+    return ast_to_ttir(self.fn, self, context=context, options=options, codegen_fns=codegen_fns,
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+triton.compiler.errors.CompilationError: at 45:8:
+        mask = offs < n
+        ids = tl.load(topk_ids_ptr + offs, mask=mask, other=0).to(tl.int32)
+        local = ids - local_start
+        local = tl.where(mask & (local >= 0) & (local < local_count), local, -1)
+        onehot = (local[:, None] == experts[None, :]).to(tl.int32)
+        rank = tl.sum(onehot * (tl.cumsum(onehot, axis=0) - 1), axis=1)
+        pos = tl.sum(onehot * base[None, :], axis=1) + rank
+        tl.store(sorted_ids_ptr + pos, offs, mask=mask & (local >= 0))
+        base += tl.sum(onehot, axis=0)
+
+    # Each expert's padding slots (one [NUM_E, BSM] tile, as in _align_small_kernel).
+    j = tl.arange(0, BSM)
+        ^
+arange's range must be a power of 2

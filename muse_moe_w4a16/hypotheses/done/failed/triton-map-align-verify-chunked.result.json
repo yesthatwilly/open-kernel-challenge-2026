@@ -1,0 +1,39 @@
+{
+ "schema": 1,
+ "problem": "muse_moe_w4a16",
+ "slug": "triton-map-align-verify-chunked",
+ "job": "3aa4d7e193244255",
+ "mode": "check",
+ "duplicate_of": null,
+ "content_hash": "0406f786ceb1052433fca6b27b0916a0d5ee493698089fc0e26c8c9709a9316a",
+ "submission_sha256": "218d5b05ef911cba6b2b4069b9bee0d0fd87ed8271be4e0c7b55eb62088bad48",
+ "submission_blob": "dd6c55be3fb9c7ca9e51737d697a4edabe866330",
+ "impl_commit": "eb5d866f75bc4c23be16cdeedc1948ad59abf2d2",
+ "base_sha": "001aa1c251231981cfc4254d1cf8ce63b737a236",
+ "created_at": 1792850880.2090282,
+ "finished_at": 1792851784.9378004,
+ "gpu": "H200",
+ "evaluator_sha256": "afcead6a6ff090aa50fe9bc907f0fa8f4ba73d95fa92af93ec260b5e8ff00f00",
+ "status": "done",
+ "passed": false,
+ "error": null,
+ "returncode": 112,
+ "tests": {
+  "total": 0,
+  "passed": 0
+ },
+ "first_failing": null,
+ "speedup": null,
+ "speedup_ci": null,
+ "score_us": null,
+ "baseline_us": null,
+ "flags": [],
+ "checks": {
+  "flagged": [],
+  "ok": true,
+  "rejected": []
+ },
+ "shapes": [],
+ "loads": [],
+ "attribution": null
+}
