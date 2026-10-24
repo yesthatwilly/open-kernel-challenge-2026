@@ -43,7 +43,7 @@ review: proceed
 status: running
 review_at: 2026-10-24T124248Z
 review_companions: null
-stage: implemented
+stage: dispatched
 claimed_at: 2026-10-24T124248Z
 base_sha: a98ef454e7901f7ff47efb4c4c0e77e7261da827
 base_blob: c7bf9ffedc48b757f56765004e5d65f6ad5ba841
@@ -58,6 +58,8 @@ submission_blob: 5278292a55237533aacca2d10cb426a81f65fb9b
 lint_warnings: 1
 attempt_file: 2026-10-24T124312Z-check-post-norm-triton-all-m.md
 prepared_at: 2026-10-24T124312Z
+job: 2ec5387ffe8748c9
+dispatched_at: 2026-10-24T124333Z
 ---
 
 # post-norm-triton-all-m
