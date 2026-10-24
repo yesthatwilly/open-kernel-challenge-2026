@@ -133,8 +133,10 @@ kind: rewrite
 controls_for: null
 rewrite_stage: 1
 replaces: "m<=32 bf16 weight streams: pooler _bf16_splitk_kernel / _bf16_swapab_kernel, qkv_gate _qkv_splitk_sem_kernel / _bf16_swapab_kernel, o _pooler_skinny_kernel / _bf16_swapab_kernel, unpooler slice _bf16_splitk_kernel, unpooler-full nvjet_sm90_tst_64x16 / _bf16_swapab_kernel (decode_1, decode_16, decode_32, verify_1)"
-review: required
+review: proceed
 status: queued
+review_at: 2026-10-24T172632Z
+review_companions: null
 ---
 
 # bf16-lossless-exp4-weight-stream-rewrite
@@ -175,3 +177,27 @@ shape (profile top_kernels) against the incumbent and the speed-of-light floor, 
 2. at or below the incumbent kernels' time on the target shapes;
 3. within ~1.5x of the floor on the target shapes, and the headline CI clears 1.0 (promotable).
 The next stage is minted with `--kind rewrite --depends-on <this slug> --stage N+1`.
+
+## Adversarial review
+
+Reviewed 2026-10-24T172632Z by an adversarial subagent (model opus).
+
+**Verdict: proceed.** The rules explicitly allow lossless compression of BF16 weights in prepare() with dequant inside the kernel. The codec is sound and the 0.765x byte cut puts M2 (about 2.9-3.0 TB/s compressed) within reach of streams this repo already runs. Proceed with three fixes: no cuobjdump or other subprocess call, no per-group int32 slot index (it silently costs 0.5 bit/element), and add an escape-fraction gate next to the ratio gate.
+
+### Justification
+Mechanism: every m<=32 bf16 row in FINDINGS is a single weight-streaming kernel at 3.3-3.6 TB/s raw. Pooler _bf16_splitk_kernel runs 19.0-19.5 us for 67.1 MB (floor 14.0). qkv _qkv_splitk_sem_kernel runs 11.8-12.3 us for 37.7 MB (floor 7.9). unpooler-full nvjet/swapab runs 18.5-18.9 us (floor 14.1). o runs 4.5-5.2 us (floor 3.5). Because these rows are byte-bound, cutting bytes is the only lever that goes below the raw floors. The byte estimate holds up: 8 bits sign+mantissa, 4-bit code and 8 bits/64 of header is 12.125 bits/element, and 0.6% escape groups add 16 bits each, about 0.1 bit. That gives about 12.23 bits. The escape rate also checks out analytically: for N(0,s) groups of 64 with max near 2.5-3s, P(|w| < max*2^-14) is about 1.5e-4 per element, about 1% per group. The reference's generate_weights is exactly randn/sqrt(K) cast to bf16, so the simulation matches the judge's distribution. The milestone arithmetic is consistent with TASK.md's floors and weights: the compressed floors are 10.7/10.8 us for pooler and unpooler-full, 6.0 us for qkv and 2.7 us for o. M2 (pooler m=16 <= 17.5 us, qkv <= 11 us) only needs 2.9-3.4 TB/s compressed, below what master's Triton streams already reach raw. M3 needs about 3.6 TB/s compressed plus 1 us of fixed cost, which is the plausible ceiling. The ALU budget is less tight than the hypothesis fears. At 4 TB/s compressed (about 1.53 B/element) an SM must dequant about 10 elements/clk, which is 5 pairs/clk. The design spends 3 INT ops per pair, about 15 of 64 INT32 lanes/clk, plus 5 HMUL2 and 5 LDS lane-ops/clk. So the integer pipe is not the binding resource at 1 CTA/SM. The real dequant risk is (a) bank conflicts on the 256-entry nibble-pair LUT (the peaked code distribution means many lanes hit different entries in the same bank) and (b) issue and latency when only 4 warps per SM must cover both the cp.async producer work and the dequant+mma consumer work. Other design issues: (1) 'int32 slot index per group' adds 32/64 = 0.5 bit/element (about 4%, which takes the ratio to about 0.79), and that does not match the simulated 12.23-12.34 bits. Use e_ref=255 as the escape sentinel (Inf/NaN groups escape anyway, so 255 is otherwise unused) and store the int32 side-table slot inside the escape group's own unused 96 bytes of SM/nibble slots. That costs zero extra bytes and keeps the fragment layout fixed. (2) x is restaged per K-stage from L2 by every CTA. At pooler m=32 that is 128 CTAs x 4096 x 32 x 2 B = 32 MB of L2 reads beside 51 MB of HBM, and it must fit in the 227 KB stage budget next to the 4x12 KB weight ring. That is fine, but budget the smem with x included and keep x in an ldmatrix-friendly swizzle. (3) qkv runs 108 CTAs on 132 SMs (82% of the SMs). A 1-CTA/SM stream may not reach 3.6 TB/s from 108 SMs. 2 CTAs/SM (216 items, 36 x 6 split-K) with a smaller ring is the obvious next-stage knob. (4) mma.sync on Hopper runs at roughly 60-70% of wgmma peak. At m=32 that is about 3.3 us of tensor work for the pooler, hidden under an 11-15 us stream, so it is fine through m=32 but marginal for stage 2. Weakest link: whether one CTA of 4 warps per SM, mixing the cp.async ring, LUT dequant and mma.sync, sustains >= 3.6 TB/s of compressed bytes. Master's best raw streams top out at 3.5-3.7 TB/s with no dequant at all. If the compressed stream lands near 3.0 TB/s, M2 still passes but M3 and the 'below raw floor' claim do not. The printed warm-L2 compressed and raw-equivalent TB/s per layer is the right diagnostic to read first.
+
+### Confounders on the current kernel
+- none identified
+
+### Interference and A/B needs
+No hypothesis has landed on master's submission.py, so the list is empty and nothing can be reverted to isolate an interaction. The new path is self-contained: its own load_inline kernel, its own prepare()-allocated workspace and ticket counters, and routing gated on a prepare-time constant per layer. It replaces master's m<=32 incumbents wholesale rather than stacking on them. The original bf16 weights stay untouched for m>32, the router and fallbacks, so the verify_16/verify_32 and router rows should read flat, and any movement there is noise or a cold-L2 side effect. This is a kind: rewrite judged on the replaced kernels' own times in the profile's top_kernels (_lossless_swapab_kernel<NT>) against the incumbents and floors, so no companion is needed. The one sub-change a control could isolate (the codec versus a same-skeleton raw-bf16 CUDA stream) is already being run by the in-flight bf16-small-m-cuda-gemv-rewrite (m<=8, raw bytes, the same mma.sync swap-AB plus ticket skeleton). Read the two runs' per-shape kernel times side by side at harvest: gemv-rewrite's raw TB/s against this run's compressed and raw-equivalent TB/s attributes the gain to fewer bytes versus a better stream. A companion would duplicate that run.
+
+### Open questions
+- Escape-slot addressing: drop the per-group int32 index (0.5 bit/element). Is the e_ref=255 sentinel with the slot stored in the escape group's own unused SM/nibble bytes acceptable to the implementer? Confirm the printed bits/element includes every byte read in kernel_fn (headers, side table, LUT excluded).
+- LUT bank conflicts: with the code distribution peaked at c=0..3, how many replays does the 256-entry bf16x2 table take per warp? If the SASS or timings show the LDS path binding, the fallback is an integer path: subtract (c<<7) per half via a PRMT-spread of the nibble pair, plus a zero mask.
+- Is 1 CTA/SM with 4 warps enough to keep >= 36 KB of compressed weight in flight per SM while also doing dequant+mma, or should the consumer be split from a dedicated producer warp (warp specialization) in stage 2?
+- qkv at 108 CTAs: does the 82% SM coverage cap bandwidth? Compare with 216 items at 2 CTAs/SM in the next stage.
+- Will compile time (one TU, 3 NT instantiations, plus master's Triton warmups) stay well inside the 10-minute run? Record the compile seconds that are printed.
+- If bf16-small-m-cuda-gemv-rewrite (running) lands first, rebase onto its skeleton as the hypothesis suggests, and decide per shape at m<=8 which wins.
+
