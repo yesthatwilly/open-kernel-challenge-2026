@@ -90,9 +90,10 @@ priority: 1
 kind: primary
 controls_for: null
 review: proceed
-status: queued
+status: hold
 review_at: 2026-10-24T112458Z
 review_companions: null
+hold_reason: "reviewer: dispatch after pooler-splitk2-tma-weight-stream (4e89311eefdc4bc3) and its BLOCK_K=256 control (75d595a29a4c4b57) harvest; choose the pooler kernel by their m<=16 pooler rows, then unhold"
 ---
 
 # bf16-shape-gated-triton-winners-combo
