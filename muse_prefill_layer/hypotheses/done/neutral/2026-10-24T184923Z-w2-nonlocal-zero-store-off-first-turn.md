@@ -36,8 +36,8 @@ priority: 4
 kind: primary
 controls_for: null
 review: required
-status: running
-stage: dispatched
+status: done
+stage: harvested
 claimed_at: 2026-10-24T231849Z
 base_sha: 27a44fb6ced1bfd563c16ae512b70c9222e795f8
 base_blob: 635cfee3ac2c3f7c66840b8c8a082cad2fa41a68
@@ -54,6 +54,13 @@ attempt_file: 2026-10-24T231931Z-check-w2-nonlocal-zero-store-off-first-turn.md
 prepared_at: 2026-10-24T231931Z
 job: 9b731599dfa24278
 dispatched_at: 2026-10-24T231940Z
+outcome: neutral
+verdict_detail: unproven-vs-best
+speedup: 1.0609256881613394
+speedup_ci: [1.0450118028389193, 1.0768395734837592]
+harvested_at: 2026-10-24T232736Z
+best_at_harvest: 1.0591912383762452
+promotion: null
 ---
 
 # w2-nonlocal-zero-store-off-first-turn
@@ -88,3 +95,31 @@ Built in the main thread 2026-10-24 ~23:40Z with self-review (user approved; no 
 - [x] No timing/harness access, processes, network or module edits.
 - [x] No work outside timed calls added: the probe is a correctness check in prepare(), like the existing ones.
 - [x] okc_lint: OK, no errors.
+
+## Result
+
+- job `9b731599dfa24278` (check), status done, passed True, tests 5/5
+- speedup 1.0609x, 95% CI [1.0450, 1.0768], score 365156.48958542885 µs vs SGLang 387403.9 µs
+- best at harvest: {"speedup": 1.0591912383762452, "ci": [1.0433033698006016, 1.0750791069518888], "job": "ba9c16b9cc6b4605"}; base result: muse_prefill_layer/hypotheses/done/gain/experts-hybrid-marlin-turn-triton-first-turn.result.json
+- **outcome: neutral** (unproven-vs-best)
+- files: `muse_prefill_layer/hypotheses/done/neutral/w2-nonlocal-zero-store-off-first-turn.result.json`, `muse_prefill_layer/hypotheses/done/neutral/w2-nonlocal-zero-store-off-first-turn.patch`; branch `hyp/muse_prefill_layer/w2-nonlocal-zero-store-off-first-turn`
+
+## Attribution
+
+| shape | w | base µs | hyp µs | delta | verdict |
+|---|---|---|---|---|---|
+| batch=1 ctx=80000 dist=soft layer=sliding load=turn_1 page=1 q_len=753 repeats=6 | 46 | 1079.54 | 1089.33 | 1.0014 | flat |
+| batch=1 ctx=80000 dist=soft layer=full load=turn_1 page=1 q_len=753 repeats=6 | 16 | 1419.09 | 1475.73 | 0.9991 | flat |
+| batch=4 ctx=80000 dist=soft layer=sliding load=turn_4 page=1 q_len=753 repeats=6 | 46 | 3334.9 | 3363.64 | 0.9989 | flat |
+| batch=4 ctx=80000 dist=soft layer=full load=turn_4 page=1 q_len=753 repeats=6 | 16 | 4937.98 | 4800.68 | 0.9985 | flat |
+| batch=1 ctx=0 dist=soft layer=full load=first_turn page=1 q_len=16384 repeats=6 | 16 | 15386.32 | 14759.08 | 0.9875 | flat |
+| batch=1 ctx=32768 dist=soft layer=sliding load=first_turn page=1 q_len=16384 repeats=6 | 138 | 14275.3 | 14349.09 | 1.0038 | flat |
+| batch=1 ctx=32768 dist=soft layer=full load=first_turn page=1 q_len=16384 repeats=6 | 16 | 18165.94 | 17603.8 | 1.0023 | flat |
+| batch=1 ctx=65536 dist=soft layer=full load=first_turn page=1 q_len=16384 repeats=6 | 16 | 22332.92 | 21727.63 | 1.0112 | flat |
+
+no shape moved outside noise. Expected hit: 0/2. Noise ±1.5%.
+
+## Follow-ups
+
+- unproven-vs-best: the change is not proven either way; a stacked hypothesis (`depends_on: w2-nonlocal-zero-store-off-first-turn`) that adds a further change in the same area is the only way to learn more (identical code is never re-run).
+
