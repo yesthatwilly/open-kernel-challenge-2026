@@ -38,7 +38,7 @@ review: proceed
 status: running
 review_at: 2026-10-24T044735Z
 review_companions: null
-stage: implemented
+stage: dispatched
 claimed_at: 2026-10-24T044735Z
 base_sha: a8970404e91613553aa3868dbafdca06fbc4b549
 base_blob: e4931f050c7fb99835fe116d25bb454a5ea731e9
@@ -53,6 +53,8 @@ submission_blob: 4be1dd8c787a25f3d8b23461adea032d3588c6d8
 lint_warnings: 1
 attempt_file: 2026-10-24T044914Z-check-moe-align-side-stream.md
 prepared_at: 2026-10-24T044914Z
+job: f70d1f2eaef842d2
+dispatched_at: 2026-10-24T044925Z
 ---
 
 # moe-align-side-stream
