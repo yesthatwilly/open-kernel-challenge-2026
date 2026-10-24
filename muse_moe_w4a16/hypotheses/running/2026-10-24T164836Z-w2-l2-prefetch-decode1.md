@@ -48,9 +48,16 @@ priority: 2
 kind: primary
 controls_for: null
 review: proceed
-status: queued
+status: running
 review_at: 2026-10-24T165124Z
 review_companions: null
+stage: claimed
+claimed_at: 2026-10-24T165146Z
+base_sha: 6d0eb9a85a363fc7597458f944be4ea123bab837
+base_blob: d9a9375ef4721ab9b28cc9d6364c92e67c7ccc59
+branch: hyp/muse_moe_w4a16/w2-l2-prefetch-decode1
+worktree: .worktrees/muse_moe_w4a16/w2-l2-prefetch-decode1
+mode: null
 ---
 
 # w2-l2-prefetch-decode1
