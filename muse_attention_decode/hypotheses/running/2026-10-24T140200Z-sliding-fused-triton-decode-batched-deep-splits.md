@@ -41,9 +41,16 @@ priority: 2
 kind: primary
 controls_for: null
 review: proceed
-status: queued
+status: running
 review_at: 2026-10-24T140502Z
 review_companions: null
+stage: claimed
+claimed_at: 2026-10-24T140502Z
+base_sha: 4c53fa864c3e6f5d9693120cc5890d9a0bf15753
+base_blob: 387dcb6a0e6137b74f7f65b048dce5a3fcbe2008
+branch: hyp/muse_attention_decode/sliding-fused-triton-decode-batched-deep-splits
+worktree: .worktrees/muse_attention_decode/sliding-fused-triton-decode-batched-deep-splits
+mode: null
 ---
 
 # sliding-fused-triton-decode-batched-deep-splits
