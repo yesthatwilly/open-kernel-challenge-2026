@@ -51,10 +51,10 @@ controls_for: null
 rewrite_stage: 5
 replaces: Marlin w13+w2 (moe_wna16_marlin_gemm x2) at every prefill T
 review: proceed
-status: running
+status: done
 review_at: 2026-10-24T164610Z
 review_companions: null
-stage: dispatched
+stage: harvested
 claimed_at: 2026-10-24T164610Z
 base_sha: 9b3df649d0389c5bd6c8e6885d9ab4d33f1e701d
 base_blob: 635cfee3ac2c3f7c66840b8c8a082cad2fa41a68
@@ -71,6 +71,13 @@ attempt_file: 2026-10-24T164945Z-submit-experts-triton-nvfp4-packed-asm-dequant.
 prepared_at: 2026-10-24T164945Z
 job: 49ff8248b96547de
 dispatched_at: 2026-10-24T165008Z
+outcome: neutral
+verdict_detail: within-ci
+speedup: 1.055570324153372
+speedup_ci: [1.0397367692910715, 1.0714038790156726]
+harvested_at: 2026-10-24T173234Z
+best_at_harvest: 1.0591912383762452
+promotion: null
 ---
 
 # experts-triton-nvfp4-packed-asm-dequant
@@ -164,3 +171,32 @@ OK with warnings: muse_prefill_layer/submission.py
 ```
 
 `python3 -I -m py_compile`: OK (__pycache__ removed).
+
+## Result
+
+- job `49ff8248b96547de` (submit), status done, passed True, tests 5/5
+- speedup 1.0556x, 95% CI [1.0397, 1.0714], score 367009.08611723257 µs vs SGLang 387403.9 µs
+- best at harvest: {"speedup": 1.0591912383762452, "ci": [1.0433033698006016, 1.0750791069518888], "job": "ba9c16b9cc6b4605"}; base result: muse_prefill_layer/hypotheses/done/gain/experts-hybrid-marlin-turn-triton-first-turn.result.json
+- **outcome: neutral** (within-ci)
+- files: `muse_prefill_layer/hypotheses/done/neutral/experts-triton-nvfp4-packed-asm-dequant.result.json`, `muse_prefill_layer/hypotheses/done/neutral/experts-triton-nvfp4-packed-asm-dequant.patch`; branch `hyp/muse_prefill_layer/experts-triton-nvfp4-packed-asm-dequant`
+
+## Attribution
+
+| shape | w | base µs | hyp µs | delta | verdict |
+|---|---|---|---|---|---|
+| batch=1 ctx=80000 dist=soft layer=sliding load=turn_1 page=1 q_len=753 repeats=6 | 46 | 1079.54 | 1075.58 | 1.0036 | flat |
+| batch=1 ctx=80000 dist=soft layer=full load=turn_1 page=1 q_len=753 repeats=6 | 16 | 1419.09 | 1466.96 | 1.0015 | flat |
+| batch=4 ctx=80000 dist=soft layer=sliding load=turn_4 page=1 q_len=753 repeats=6 | 46 | 3334.9 | 3338.2 | 1.0007 | flat |
+| batch=4 ctx=80000 dist=soft layer=full load=turn_4 page=1 q_len=753 repeats=6 | 16 | 4937.98 | 4850.82 | 0.9984 | flat |
+| batch=1 ctx=0 dist=soft layer=full load=first_turn page=1 q_len=16384 repeats=6 | 16 | 15386.32 | 15319.02 | 0.978 | flat |
+| batch=1 ctx=32768 dist=soft layer=sliding load=first_turn page=1 q_len=16384 repeats=6 | 138 | 14275.3 | 14627.35 | 0.9833 | flat |
+| batch=1 ctx=32768 dist=soft layer=full load=first_turn page=1 q_len=16384 repeats=6 | 16 | 18165.94 | 18624.39 | 0.9908 | flat |
+| batch=1 ctx=65536 dist=soft layer=full load=first_turn page=1 q_len=16384 repeats=6 | 16 | 22332.92 | 22367.92 | 0.9934 | flat |
+
+no shape moved outside noise. Expected hit: 0/2. Noise ±1.5%.
+
+## Follow-ups
+
+- rewrite stage 5 of `Marlin w13+w2 (moe_wna16_marlin_gemm x2) at every prefill T`: read the replaced kernels' own us per shape (profile top_kernels) against the incumbent and the floor, and check which Milestone it reached. The next stage is `/hypothesize muse_prefill_layer "<what to fix or tune>" --kind rewrite --depends-on experts-triton-nvfp4-packed-asm-dequant --stage 6`; a slow or failed first cut is the expected start, not a do-not-retry.
+- within-ci: the change is not proven either way; a stacked hypothesis (`depends_on: experts-triton-nvfp4-packed-asm-dequant`) that adds a further change in the same area is the only way to learn more (identical code is never re-run).
+

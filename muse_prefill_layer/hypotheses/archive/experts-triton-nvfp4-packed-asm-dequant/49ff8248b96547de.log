@@ -1,0 +1,15 @@
+[expert gemm] w13 packed=False BLOCK_T=64 BLOCK_W=128 warps=4 stages=3: n_regs=255 n_spills=0 shared=67584 convert_layout=1 local_alloc=4
+[expert gemm] w13 packed=False BLOCK_T=128 BLOCK_W=128 warps=8 stages=3: n_regs=176 n_spills=0 shared=116736 convert_layout=1 local_alloc=4
+[expert gemm] w13 packed=False BLOCK_T=256 BLOCK_W=128 warps=8 stages=2: n_regs=254 n_spills=4 shared=140288 convert_layout=6 local_alloc=4
+[expert gemm] w2 packed=False BLOCK_T=64 BLOCK_W=128 warps=4 stages=3: n_regs=255 n_spills=0 shared=67584 convert_layout=1 local_alloc=4
+[expert gemm] w2 packed=False BLOCK_T=128 BLOCK_W=128 warps=8 stages=3: n_regs=176 n_spills=0 shared=116736 convert_layout=1 local_alloc=4
+[expert gemm] w2 packed=False BLOCK_T=256 BLOCK_W=128 warps=8 stages=2: n_regs=255 n_spills=0 shared=140288 convert_layout=7 local_alloc=4
+[expert gemm] w13 packed=True BLOCK_T=64 BLOCK_W=128 warps=4 stages=3: n_regs=241 n_spills=0 shared=83968 convert_layout=1 local_alloc=5
+[expert gemm] w13 packed=True BLOCK_T=128 BLOCK_W=128 warps=8 stages=3: n_regs=207 n_spills=0 shared=133120 convert_layout=1 local_alloc=5
+[expert gemm] w13 packed=True BLOCK_T=256 BLOCK_W=128 warps=8 stages=2: n_regs=255 n_spills=4 shared=156672 convert_layout=6 local_alloc=5
+[expert gemm] w2 packed=True BLOCK_T=64 BLOCK_W=128 warps=4 stages=3: n_regs=241 n_spills=0 shared=83968 convert_layout=1 local_alloc=5
+[expert gemm] w2 packed=True BLOCK_T=128 BLOCK_W=128 warps=8 stages=3: n_regs=207 n_spills=0 shared=133120 convert_layout=1 local_alloc=5
+[expert gemm] w2 packed=True BLOCK_T=256 BLOCK_W=128 warps=8 stages=2: n_regs=255 n_spills=4 shared=156672 convert_layout=7 local_alloc=5
+[expert gemm] packed dequant ON
+[expert e2e] T=8192 triton vs marlin: rel L2 5.894e-03, worst row 7.098e-03 (8341 local routes)
+[prepare] max_memory_allocated 4.90 GiB
