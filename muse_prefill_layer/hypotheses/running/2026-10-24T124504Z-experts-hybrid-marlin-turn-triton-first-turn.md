@@ -56,7 +56,7 @@ review: proceed
 status: running
 review_at: 2026-10-24T124746Z
 review_companions: null
-stage: implemented
+stage: dispatched
 claimed_at: 2026-10-24T124746Z
 base_sha: b1395799d690a0aa9053a787f98c98321be85724
 base_blob: f17d41c9a9b0696f20e6679a493da9d4aa6d2934
@@ -71,6 +71,8 @@ submission_blob: 635cfee3ac2c3f7c66840b8c8a082cad2fa41a68
 lint_warnings: 5
 attempt_file: 2026-10-24T125053Z-check-experts-hybrid-marlin-turn-triton-first-turn.md
 prepared_at: 2026-10-24T125053Z
+job: fb1e52d2119d4175
+dispatched_at: 2026-10-24T125104Z
 ---
 
 # experts-hybrid-marlin-turn-triton-first-turn
