@@ -46,13 +46,15 @@ base_sha: 10e97df213c296823faa2881225ed84509e1e385
 base_blob: 635cfee3ac2c3f7c66840b8c8a082cad2fa41a68
 branch: hyp/muse_prefill_layer/router-hilo-one-gemm-n512
 worktree: .worktrees/muse_prefill_layer/router-hilo-one-gemm-n512
-mode: null
+mode: check
 implemented_at: 2026-10-24T231832Z
 impl_commit: dcffe36980df8afe57be826a1f26f654096549fa
 submission_sha256: e86b3cfd18fb722b5dbbe9b08aa32555a0f3f54d2d96314e4b3bcb3ba76f3d05
 norm_sha256: 94ff691d37c4cd8e749e4ebdbf5d35b9f3ac544108c86ca51b7de82ab52a297d
 submission_blob: 1d99c85e29e4eea02f922f841550643a9f1a62f9
 lint_warnings: 5
+attempt_file: 2026-10-24T231833Z-check-router-hilo-one-gemm-n512.md
+prepared_at: 2026-10-24T231833Z
 ---
 
 # router-hilo-one-gemm-n512
