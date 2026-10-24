@@ -38,7 +38,7 @@ review: proceed
 status: running
 review_at: 2026-10-24T052937Z
 review_companions: null
-stage: implemented
+stage: dispatched
 claimed_at: 2026-10-24T052937Z
 base_sha: fbfb795472c2ae79a1b093a08fb5e42d1867da77
 base_blob: 29884ed7c43020beb1ad7c469eafaa8b9f362470
@@ -53,6 +53,8 @@ submission_blob: 72d10599c11fae92a3c5d7068a9025c07fbca037
 lint_warnings: 0
 attempt_file: 2026-10-24T053058Z-check-unpooler-full-triton-skinny-m32-control-blockm16-all-m.md
 prepared_at: 2026-10-24T053059Z
+job: 09abdd472faa4dce
+dispatched_at: 2026-10-24T053108Z
 ---
 
 # unpooler-full-triton-skinny-m32-control-blockm16-all-m
