@@ -55,13 +55,15 @@ base_sha: d170c1fd1af3e71b7de6f970d623da8b2a86af59
 base_blob: cc466fce207709c98ab0e78c2435c1c459890fdb
 branch: hyp/muse_decode_layer/sliding-fused-triton-decode1-port
 worktree: .worktrees/muse_decode_layer/sliding-fused-triton-decode1-port
-mode: null
+mode: submit
 implemented_at: 2026-10-24T164837Z
 impl_commit: 2569d7e0d6f208921d432fd4237dc483601b39ca
 submission_sha256: a7fdce245795b5c4fb76c25616180ec6564090ab39265a09e8c2f7f4da569c8a
 norm_sha256: e28f6354345920a15ce2904cfeec7c25a5a572b2d1373ffea4eeea50111a5d87
 submission_blob: e33a32aa5580fbd5b38764ea287a6364c865432e
 lint_warnings: 1
+attempt_file: 2026-10-24T164838Z-submit-sliding-fused-triton-decode1-port.md
+prepared_at: 2026-10-24T164838Z
 ---
 
 # sliding-fused-triton-decode1-port
