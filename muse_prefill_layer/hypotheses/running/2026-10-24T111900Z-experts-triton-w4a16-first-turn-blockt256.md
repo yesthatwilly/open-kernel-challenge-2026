@@ -53,13 +53,15 @@ base_sha: 5f5af1d3fe4b9b1ef686af0d022040134029ee30
 base_blob: 60abe04615110df3e4a9355a4b984b48b68f85e8
 branch: hyp/muse_prefill_layer/experts-triton-w4a16-first-turn-blockt256
 worktree: .worktrees/muse_prefill_layer/experts-triton-w4a16-first-turn-blockt256
-mode: null
+mode: check
 implemented_at: 2026-10-24T112334Z
 impl_commit: 2226bae0a20f470cfa1bf733c1f71d1a60b1cbdd
 submission_sha256: f4fec2126a1c2053d6e81e8428393d17ace96a0ab00fa04c392ea86db5513a28
 norm_sha256: 7ffb167fe66532950a1ace39db2aec0f66f08752bbfee33f3655c7993d170fe0
 submission_blob: f17d41c9a9b0696f20e6679a493da9d4aa6d2934
 lint_warnings: 2
+attempt_file: 2026-10-24T112334Z-check-experts-triton-w4a16-first-turn-blockt256.md
+prepared_at: 2026-10-24T112335Z
 ---
 
 # experts-triton-w4a16-first-turn-blockt256
