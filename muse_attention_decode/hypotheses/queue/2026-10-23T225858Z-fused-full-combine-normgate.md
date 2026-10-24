@@ -40,7 +40,8 @@ priority: 5
 kind: primary
 controls_for: null
 review: required
-status: queued
+status: hold
+hold_reason: "moot under master 1.269x (sweep by the attention minter): stacks on triton-flash-decode-full-both-heads (held); the paired epilogue already fuses the full-layer norm-gate"
 ---
 
 # fused-full-combine-normgate
