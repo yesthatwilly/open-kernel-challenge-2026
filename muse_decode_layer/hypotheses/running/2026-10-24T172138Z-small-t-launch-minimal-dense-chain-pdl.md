@@ -82,9 +82,16 @@ controls_for: null
 rewrite_stage: 1
 replaces: "T<=32 dense chain: stage 1 = pooler GEMM (nvjet + splitKreduce), router (fp32 dot gemv at T=1, bf16 hi/lo mm pair + add at T>=2) and its side-stream fork/join, FusedMuseSparkRouting, local-id modulo + expert_map gather + contiguous + topk_weights cast, moe align, pre-expert F.rms_norm; stage 2 = qkv GEMM + FusedQKNorm + k/v/q FP8 casts + store_cache + paired pad, o GEMM + FusedRMSNormGate + unpad; stage 3 = unpooler + F.pad and PDL across the chain"
 review: proceed
-status: queued
+status: running
 review_at: 2026-10-24T172646Z
 review_companions: null
+stage: claimed
+claimed_at: 2026-10-24T172706Z
+base_sha: 2b6cb6edd61405f6d01cf0aa39cd6e34d56fe812
+base_blob: cc466fce207709c98ab0e78c2435c1c459890fdb
+branch: hyp/muse_decode_layer/small-t-launch-minimal-dense-chain-pdl
+worktree: .worktrees/muse_decode_layer/small-t-launch-minimal-dense-chain-pdl
+mode: null
 ---
 
 # small-t-launch-minimal-dense-chain-pdl
