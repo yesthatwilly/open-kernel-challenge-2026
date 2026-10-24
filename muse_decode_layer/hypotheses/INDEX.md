@@ -1,6 +1,6 @@
 # muse_decode_layer hypotheses
 
-Regenerated 2026-10-24T125104Z. Best: 1.0874x [1.0710,1.1037] job `fb07a3bd3aa54baf` (check)
+Regenerated 2026-10-24T132543Z. Best: 1.0874x [1.0710,1.1037] job `fb07a3bd3aa54baf` (check)
 
 | created | slug | kind | area | where | outcome | speedup | CI | job | mode | promotion | review | expected hit |
 |---|---|---|---|---|---|---|---|---|---|---|---|---|
@@ -9,7 +9,7 @@ Regenerated 2026-10-24T125104Z. Best: 1.0874x [1.0710,1.1037] job `fb07a3bd3aa54
 | 2026-10-23T225353Z | expert-id-map-single-kernel | primary | MoE align/dispatch | done/neutral | neutral | 1.0374 | [1.022,1.053] | 11b8df414a2245ae | check |  | proceed | 2/4 |
 | 2026-10-23T225545Z | fa3-num-splits-full-no-metadata | primary | FA3 call | queue | hold |  |  |  |  |  | hold |  |
 | 2026-10-23T225545Z | moe-align-local-expert-count | primary | MoE align/dispatch | queue | hold |  |  |  |  |  | proceed |  |
-| 2026-10-23T225545Z | trtllm-decode-full-attention | primary | FA3 call | queue | queued |  |  |  |  |  | required |  |
+| 2026-10-23T225545Z | trtllm-decode-full-attention | primary | FA3 call | queue | hold |  |  |  |  |  | hold |  |
 | 2026-10-23T225545Z | marlin-block-m-cap-16 | primary | w13 marlin | done/gain | gain | 1.0621 | [1.046,1.078] | 0730135cdcac43b7 | check | done | proceed | 4/4 |
 | 2026-10-23T225545Z | pooler-gemm-splitk-autotune | primary | pooler GEMM | done/neutral | neutral | 1.0189 | [1.004,1.034] | 2e1a43ab85324776 | check |  | proceed | 2/4 |
 | 2026-10-23T225609Z | fa3-num-splits-sliding | primary | FA3 call | queue | hold |  |  |  |  |  | hold |  |
@@ -27,6 +27,7 @@ Regenerated 2026-10-24T125104Z. Best: 1.0874x [1.0710,1.1037] job `fb07a3bd3aa54
 
 - fa3-num-splits-full-no-metadata: adversarial review: An explicit num_splits cannot raise FA3's split count on this call: every flash_attn_with_kvcache call with cache_seqlens is varlen, so FA3 runs its device-side
 - moe-align-local-expert-count: weak: the identical one-argument change (align over 32 experts instead of 256) was already measured in muse_moe_w4a16 (sglang-marlin-path-parity): verify_16/32 flat, decode_1 about 4% slower. Under the landed block cap the verify effect is a ~2 us fill launch, below resolution; decode has few checks left today. The reviewer suggests at most a T>=128-only variant later.
+- trtllm-decode-full-attention: adversarial review: Hold. The spec was written on 2026-10-23 against the parity base. Since then master has landed head-paired FA3 for full layers at batch>1, so as written this ch
 - fa3-num-splits-sliding: adversarial review: The premise (FA3 sizes the sliding split-KV for the 80K page-table extent) is contradicted by both FA3's own get_num_splits, which clamps seqlen_k by the window
 - moe-align-single-kernel-small-t-control-capacity-256: control for moe-align-single-kernel-small-t, which was neutral; a capacity control of a non-gain cannot change a decision, and decode has 2 checks left for the attention rewrite and pairing follow-ups
 - fa3-full-single-split-probe: adversarial review: The probe is sound and would give a clear reading, but neither reading can change a decision that is open right now. The rewrite it is meant to inform (triton-f

@@ -1,25 +1,25 @@
 # muse_attention_decode findings
 
-Regenerated 2026-10-24T132213Z by `churn.py index`. Read this before writing a hypothesis for muse_attention_decode.
+Regenerated 2026-10-24T132543Z by `churn.py index`. Read this before writing a hypothesis for muse_attention_decode.
 
 ## Current best
 
-1.2686x [1.2496,1.2877] from job `bd64bf9f9e904f02` (check), master commit `bfb7bac32c`, hypothesis paired-heads-launch-cleanup-ab-tune-batch-gate
+1.2931x [1.2737,1.3212] from job `295727fc68e14093` (check), master commit `b8a0e4db5c`, hypothesis sliding-fused-triton-decode1-gate
 
 Where the time goes (per scored shape, top kernels):
 
-- batch=1 ctx=80000 dist=soft heads=tp8 layer=sliding load=decode_1 page=1: yours 16.6µs vs SGLang 20.8µs (SoL 0.1µs) · void cutlass::device_kernel<flash::enable_sm90_or_later<f... 8.2µs 52.3%, void cutlass::device_kernel<flash::FlashAttnFwdCombine<cu... 2.6µs 16.3%, _pre_attention_kernel 2.1µs 13.4%
-- batch=1 ctx=80000 dist=coherent heads=tp8 layer=full load=decode_1 page=1: yours 28.1µs vs SGLang 31.6µs (SoL 4.3µs) · void cutlass::device_kernel<flash::enable_sm90_or_later<f... 14.5µs 60.3%, void cutlass::device_kernel<flash::FlashAttnFwdCombine<cu... 7.0µs 29.4%, _pre_attention_kernel 1.4µs 5.9%
-- batch=16 ctx=80000 dist=soft heads=tp8 layer=sliding load=decode_16 page=1 spread=agentic: yours 20.9µs vs SGLang 27.1µs (SoL 1.6µs) · void cutlass::device_kernel<flash::enable_sm90_or_later<f... 9.9µs 55.5%, void cutlass::device_kernel<flash::FlashAttnFwdCombine<cu... 3.2µs 17.8%, _pre_attention_kernel 1.8µs 10.1%
-- batch=16 ctx=80000 dist=coherent heads=tp8 layer=full load=decode_16 page=1 spread=agentic: yours 156.2µs vs SGLang 200.8µs (SoL 63.2µs) · void cutlass::device_kernel<flash::enable_sm90_or_later<f... 150.4µs 93.3%, void cutlass::device_kernel<flash::FlashAttnFwdCombine<cu... 4.1µs 2.6%, void flash::prepare_varlen_num_blocks_kernel<1, true>(int... 3.1µs 1.9%
-- batch=32 ctx=80000 dist=soft heads=tp8 layer=sliding load=decode_32 page=1 spread=agentic: yours 25.0µs vs SGLang 31.4µs (SoL 3.3µs) · void cutlass::device_kernel<flash::enable_sm90_or_later<f... 13.3µs 61.8%, void cutlass::device_kernel<flash::FlashAttnFwdCombine<cu... 3.1µs 14.4%, _pre_attention_kernel 2.2µs 10.2%
-- batch=32 ctx=80000 dist=coherent heads=tp8 layer=full load=decode_32 page=1 spread=agentic: yours 298.5µs vs SGLang 384.6µs (SoL 126.4µs) · void cutlass::device_kernel<flash::enable_sm90_or_later<f... 291.2µs 96.3%, void cutlass::device_kernel<flash::FlashAttnFwdCombine<cu... 3.8µs 1.2%, void flash::prepare_varlen_num_blocks_kernel<2, true>(int... 3.5µs 1.1%
-- batch=1 ctx=80000 dist=soft heads=tp8 layer=sliding load=verify_1 page=1 q_len=8: yours 17.2µs vs SGLang 23.1µs (SoL 0.1µs) · void cutlass::device_kernel<flash::enable_sm90_or_later<f... 7.9µs 48.5%, void cutlass::device_kernel<flash::FlashAttnFwdCombine<cu... 3.8µs 23.7%, void flash::prepare_varlen_num_blocks_kernel<1, false>(in... 1.7µs 10.7%
-- batch=1 ctx=80000 dist=coherent heads=tp8 layer=full load=verify_1 page=1 q_len=8: yours 30.2µs vs SGLang 36.6µs (SoL 4.3µs) · void cutlass::device_kernel<flash::enable_sm90_or_later<f... 15.1µs 54.1%, void cutlass::device_kernel<flash::FlashAttnFwdCombine<cu... 7.4µs 26.6%, void flash::prepare_varlen_num_blocks_kernel<1, true>(int... 2.8µs 9.9%
-- batch=16 ctx=80000 dist=soft heads=tp8 layer=sliding load=verify_16 page=1 q_len=8 spread=agentic: yours 22.9µs vs SGLang 29.5µs (SoL 1.9µs) · void cutlass::device_kernel<flash::enable_sm90_or_later<f... 10.8µs 52.5%, void cutlass::device_kernel<flash::FlashAttnFwdCombine<cu... 3.9µs 18.9%, _pre_attention_kernel 2.8µs 13.3%
-- batch=16 ctx=80000 dist=coherent heads=tp8 layer=full load=verify_16 page=1 q_len=8 spread=agentic: yours 163.3µs vs SGLang 206.0µs (SoL 63.4µs) · void cutlass::device_kernel<flash::enable_sm90_or_later<f... 152.1µs 91.0%, void cutlass::device_kernel<flash::FlashAttnFwdCombine<cu... 6.8µs 4.1%, void flash::prepare_varlen_num_blocks_kernel<1, true>(int... 2.9µs 1.7%
-- batch=32 ctx=80000 dist=soft heads=tp8 layer=sliding load=verify_32 page=1 q_len=8 spread=agentic: yours 28.9µs vs SGLang 34.7µs (SoL 3.7µs) · void cutlass::device_kernel<flash::enable_sm90_or_later<f... 15.6µs 57.5%, _pre_attention_kernel 4.2µs 15.3%, void cutlass::device_kernel<flash::FlashAttnFwdCombine<cu... 4.1µs 15.1%
-- batch=32 ctx=80000 dist=coherent heads=tp8 layer=full load=verify_32 page=1 q_len=8 spread=agentic: yours 301.7µs vs SGLang 390.0µs (SoL 126.8µs) · void cutlass::device_kernel<flash::enable_sm90_or_later<f... 286.7µs 93.9%, void cutlass::device_kernel<flash::FlashAttnFwdCombine<cu... 6.9µs 2.3%, _pre_attention_kernel 4.2µs 1.4%
+- batch=1 ctx=80000 dist=soft heads=tp8 layer=sliding load=decode_1 page=1: yours 13.1µs vs SGLang 20.7µs (SoL 0.1µs) · _sliding_fused_kernel 10.5µs 100.0%
+- batch=1 ctx=80000 dist=coherent heads=tp8 layer=full load=decode_1 page=1: yours 27.0µs vs SGLang 30.9µs (SoL 4.3µs) · void cutlass::device_kernel<flash::enable_sm90_or_later<f... 14.8µs 60.7%, void cutlass::device_kernel<flash::FlashAttnFwdCombine<cu... 7.2µs 29.5%, _pre_attention_kernel 1.3µs 5.5%
+- batch=16 ctx=80000 dist=soft heads=tp8 layer=sliding load=decode_16 page=1 spread=agentic: yours 20.7µs vs SGLang 26.8µs (SoL 1.6µs) · void cutlass::device_kernel<flash::enable_sm90_or_later<f... 9.9µs 55.2%, void cutlass::device_kernel<flash::FlashAttnFwdCombine<cu... 3.2µs 17.9%, void flash::prepare_varlen_num_blocks_kernel<1, false>(in... 1.9µs 10.4%
+- batch=16 ctx=80000 dist=coherent heads=tp8 layer=full load=decode_16 page=1 spread=agentic: yours 156.8µs vs SGLang 200.3µs (SoL 63.2µs) · void cutlass::device_kernel<flash::enable_sm90_or_later<f... 150.4µs 93.2%, void cutlass::device_kernel<flash::FlashAttnFwdCombine<cu... 4.4µs 2.7%, void flash::prepare_varlen_num_blocks_kernel<1, true>(int... 3.0µs 1.9%
+- batch=32 ctx=80000 dist=soft heads=tp8 layer=sliding load=decode_32 page=1 spread=agentic: yours 24.9µs vs SGLang 31.0µs (SoL 3.3µs) · void cutlass::device_kernel<flash::enable_sm90_or_later<f... 13.3µs 62.0%, void cutlass::device_kernel<flash::FlashAttnFwdCombine<cu... 3.3µs 15.4%, _pre_attention_kernel 1.9µs 8.7%
+- batch=32 ctx=80000 dist=coherent heads=tp8 layer=full load=decode_32 page=1 spread=agentic: yours 298.5µs vs SGLang 382.9µs (SoL 126.4µs) · void cutlass::device_kernel<flash::enable_sm90_or_later<f... 292.0µs 96.0%, void cutlass::device_kernel<flash::FlashAttnFwdCombine<cu... 4.8µs 1.6%, void flash::prepare_varlen_num_blocks_kernel<2, true>(int... 3.4µs 1.1%
+- batch=1 ctx=80000 dist=soft heads=tp8 layer=sliding load=verify_1 page=1 q_len=8: yours 17.0µs vs SGLang 22.6µs (SoL 0.1µs) · void cutlass::device_kernel<flash::enable_sm90_or_later<f... 7.7µs 48.0%, void cutlass::device_kernel<flash::FlashAttnFwdCombine<cu... 3.7µs 23.1%, void flash::prepare_varlen_num_blocks_kernel<1, false>(in... 1.8µs 11.2%
+- batch=1 ctx=80000 dist=coherent heads=tp8 layer=full load=verify_1 page=1 q_len=8: yours 29.7µs vs SGLang 35.8µs (SoL 4.3µs) · void cutlass::device_kernel<flash::enable_sm90_or_later<f... 14.9µs 53.1%, void cutlass::device_kernel<flash::FlashAttnFwdCombine<cu... 7.7µs 27.4%, void flash::prepare_varlen_num_blocks_kernel<1, true>(int... 2.8µs 9.9%
+- batch=16 ctx=80000 dist=soft heads=tp8 layer=sliding load=verify_16 page=1 q_len=8 spread=agentic: yours 22.6µs vs SGLang 29.1µs (SoL 1.9µs) · void cutlass::device_kernel<flash::enable_sm90_or_later<f... 10.7µs 51.5%, void cutlass::device_kernel<flash::FlashAttnFwdCombine<cu... 4.2µs 20.2%, _pre_attention_kernel 2.7µs 13.0%
+- batch=16 ctx=80000 dist=coherent heads=tp8 layer=full load=verify_16 page=1 q_len=8 spread=agentic: yours 163.1µs vs SGLang 204.1µs (SoL 63.4µs) · void cutlass::device_kernel<flash::enable_sm90_or_later<f... 152.5µs 91.3%, void cutlass::device_kernel<flash::FlashAttnFwdCombine<cu... 6.3µs 3.8%, void flash::prepare_varlen_num_blocks_kernel<1, true>(int... 3.2µs 1.9%
+- batch=32 ctx=80000 dist=soft heads=tp8 layer=sliding load=verify_32 page=1 q_len=8 spread=agentic: yours 28.6µs vs SGLang 34.3µs (SoL 3.7µs) · void cutlass::device_kernel<flash::enable_sm90_or_later<f... 15.1µs 56.4%, _pre_attention_kernel 4.1µs 15.3%, void cutlass::device_kernel<flash::FlashAttnFwdCombine<cu... 4.1µs 15.2%
+- batch=32 ctx=80000 dist=coherent heads=tp8 layer=full load=verify_32 page=1 q_len=8 spread=agentic: yours 302.2µs vs SGLang 387.6µs (SoL 126.8µs) · void cutlass::device_kernel<flash::enable_sm90_or_later<f... 292.7µs 94.1%, void cutlass::device_kernel<flash::FlashAttnFwdCombine<cu... 6.8µs 2.2%, _pre_attention_kernel 4.1µs 1.3%
 
 ## By area
 
@@ -61,14 +61,14 @@ Where the time goes (per scored shape, top kernels):
 - queue: fa3-num-splits-full-decode [FA3 call] p4 hold
 - queue: fa3-num-splits-sliding [FA3 call] p3 hold
 - queue: triton-window-attention-sliding [FA3 call] p5 hold
-- queue: fa3-drop-cu-seqlens-decode [FA3 call] p5 queued
+- queue: fa3-drop-cu-seqlens-decode [FA3 call] p5 hold
 - queue: fa3-scheduler-metadata-full-verify [FA3 call] p4 hold
 - queue: triton-flash-decode-full-both-heads [FA3 call] p5 hold
 - queue: fused-sliding-preattn-into-window-kernel [attention boundary] p4 hold
 - queue: fused-sliding-normgate-epilogue [output norm-gate] p5 hold
 - queue: fa3-batched-q-verify [FA3 call (q layout)] p4 hold
 - queue: fa3-num-splits-full-verify [FA3 call] p5 hold
-- queue: fa3-single-split-sliding [FA3 call] p4 queued
+- queue: fa3-single-split-sliding [FA3 call] p4 hold
 - queue: fused-full-combine-normgate [output norm-gate] p5 hold
 - queue: stream-fork-preattention [launch overhead] p4 hold
 - queue: triton-flash-decode-deep-pipeline [FA3 call (Triton pipeline)] p4 hold

@@ -1,6 +1,6 @@
 # muse_decode_layer findings
 
-Regenerated 2026-10-24T125104Z by `churn.py index`. Read this before writing a hypothesis for muse_decode_layer.
+Regenerated 2026-10-24T132543Z by `churn.py index`. Read this before writing a hypothesis for muse_decode_layer.
 
 ## Current best
 
@@ -61,7 +61,7 @@ Where the time goes (per scored shape, top kernels):
 
 - queue: fa3-num-splits-full-no-metadata [FA3 call] p3 hold
 - queue: moe-align-local-expert-count [MoE align/dispatch] p4 hold
-- queue: trtllm-decode-full-attention [FA3 call] p5 queued
+- queue: trtllm-decode-full-attention [FA3 call] p5 hold
 - queue: fa3-num-splits-sliding [FA3 call] p2 hold
 - queue: moe-align-single-kernel-small-t-control-capacity-256 [MoE align/dispatch] p3 hold
 - queue: fa3-full-single-split-probe [FA3 call] p2 hold
