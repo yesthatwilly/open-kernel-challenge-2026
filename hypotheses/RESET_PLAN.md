@@ -1,7 +1,7 @@
 # Check-quota reset plan (2026-10-25 UTC day)
 
-Written 2026-10-24 ~17:15Z by churnsubs, while about 18 runs were still in the judge. The check
-limits per day are bf16 20, moe 20, attention 10, decode 10, prefill 10. Order is the dispatch
+Written 2026-10-24 ~17:15Z by churnsubs, while about 18 runs were still in the judge. CORRECTION: the
+real limits are 20 checks and 10 scored submits per problem per day (okc problems). Order is the dispatch
 order at the reset.
 
 **Rule for every slot marked "after harvest":** read the run's per-shape rows and its log
@@ -133,3 +133,11 @@ Six audits found a gate that would have switched a correct kernel off, or a casc
 ## Scored runs left today, for reference
 bf16 4, attention 4, moe 9, decode 4, prefill 7. These go to restacks of winning scored
 experiments as they harvest. High-risk rewrites always run as checks.
+
+## Change of plan (2026-10-24 ~18:17Z, user request)
+The user asked to spend the day's leftover scored submits on ambitious tests. 15 of the 16
+audited builds went out **today as scored submits**, not as checks at the reset. They count
+against today's scored quota (the board keeps only the best run, so a slow one costs no rank).
+Only `bf16-verify-streamk-cutlass-wgmma-rewrite` is still unrun: bf16 had 3 scored slots left, and
+this rewrite overlaps pooler-m128 on the pooler shapes. It runs as a check at the reset.
+The reset tick harvests these, then dispatches the "after these harvest" follow-ups as checks.
