@@ -1,6 +1,6 @@
 # muse_prefill_layer hypotheses
 
-Regenerated 2026-10-24T053312Z. Best: 1.0039x [0.9888,1.0189] job `62025c368c3c4e8e` (check)
+Regenerated 2026-10-24T063614Z. Best: 1.0039x [0.9888,1.0189] job `62025c368c3c4e8e` (check)
 
 | created | slug | kind | area | where | outcome | speedup | CI | job | mode | promotion | review | expected hit |
 |---|---|---|---|---|---|---|---|---|---|---|---|---|
@@ -12,8 +12,8 @@ Regenerated 2026-10-24T053312Z. Best: 1.0039x [0.9888,1.0189] job `62025c368c3c4
 | 2026-10-23T230250Z | fa3-batched-mode | primary | FA3 call | queue | queued |  |  |  |  |  | required |  |
 | 2026-10-23T230250Z | qk-norm-fp8-cache-store-fusion | primary | pre-attention norm+rope + cache store | queue | queued |  |  |  |  |  | required |  |
 | 2026-10-23T230250Z | fa3-contiguous-kv-gather | primary | FA3 call | running | running |  |  | 75bbf278dd9e430e | check |  | proceed |  |
-| 2026-10-23T230250Z | moe-align-side-stream | primary | MoE align/dispatch | running | running |  |  | f70d1f2eaef842d2 | check |  | proceed |  |
 | 2026-10-23T230250Z | sglang-pipeline-parity | primary | whole-layer parity (SGLang pipeline) + routing remap | done/gain | gain | 1.0039 | [0.989,1.019] | 62025c368c3c4e8e | check | merged-unsubmitted | proceed | 3/3 |
+| 2026-10-23T230250Z | moe-align-side-stream | primary | MoE align/dispatch | done/neutral | neutral | 1.0076 | [0.993,1.023] | f70d1f2eaef842d2 | check |  | proceed | 1/3 |
 
 ## Held
 

@@ -1,6 +1,6 @@
 # muse_prefill_layer findings
 
-Regenerated 2026-10-24T053312Z by `churn.py index`. Read this before writing a hypothesis for muse_prefill_layer.
+Regenerated 2026-10-24T063614Z by `churn.py index`. Read this before writing a hypothesis for muse_prefill_layer.
 
 ## Current best
 
@@ -19,12 +19,15 @@ Where the time goes (per scored shape, top kernels):
 
 ## By area
 
+### MoE align/dispatch
+- **moe-align-side-stream** → neutral (unproven-vs-best), 1.0076x — no shape moved outside noise. Keep the parity base and move three pieces of work that depend only on the routing outputs and local_start onto the existing side stream, inside the same torch.
+
 ### whole-layer parity (SGLang pipeline) + routing remap
 - **sglang-pipeline-parity** → gain (gain), 1.0039x — no shape moved outside noise. Rewrite kernel_fn and prepare in muse_prefill_layer/submission.py to run SGLang's own pipeline module for module as baseline.py does: _bf16_gemm_dispatch_impl f
 
 ## Open follow-ups
 
-- none
+- moe-align-side-stream: unproven-vs-best: the change is not proven either way; a stacked hypothesis (`depends_on: moe-align-side-stream`) that adds a further change in the same area is the only way to learn more (identical code is never re-run)
 
 ## Do not retry (rejected / duplicates)
 
@@ -40,4 +43,3 @@ Where the time goes (per scored shape, top kernels):
 - queue: fa3-batched-mode [FA3 call] p4 queued
 - queue: qk-norm-fp8-cache-store-fusion [pre-attention norm+rope + cache store] p4 queued
 - running: fa3-contiguous-kv-gather [FA3 call] p3 running
-- running: moe-align-side-stream [MoE align/dispatch] p2 running
