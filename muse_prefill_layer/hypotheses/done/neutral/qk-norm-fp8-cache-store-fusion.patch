@@ -1,0 +1,189 @@
+diff --git a/muse_prefill_layer/submission.py b/muse_prefill_layer/submission.py
+index e4931f0..0a23d0c 100644
+--- a/muse_prefill_layer/submission.py
++++ b/muse_prefill_layer/submission.py
+@@ -1,7 +1,8 @@
+ # okc: problem=muse_prefill_layer
+ """SGLang's decoder layer pipeline (baseline.py, MuseSpark1xDecoderLayer.forward at SGLang commit
+ a55ab7d5ae1bba59ac351e55026fe7f7644ecc5f) ported module for module at the prefill shapes, with two
+-deliberate changes (hypothesis sglang-pipeline-parity):
++deliberate changes (hypothesis sglang-pipeline-parity), plus the fused attention front of
++hypothesis qk-norm-fp8-cache-store-fusion (one Triton kernel, see below):
+ 
+   1. The local-expert id remap. SGLang's path runs three small kernels on the int32 [T, 8] routing
+      ids: (topk_ids - local_start), % 256, then a gather through the expert_map table (-1 for
+@@ -15,10 +16,12 @@ deliberate changes (hypothesis sglang-pipeline-parity):
+ Everything else is SGLang's pipeline as baseline.py composes it:
+ 
+   qkv_gate projection              bf16_gemm_dispatch (cuBLAS on H200)
+-  FusedQKNorm (Triton)             per-head RMSNorm of q and k, read from the fused projection,
+-                                   with the interleaved RoPE fused in on sliding layers
+-  cache store, q to FP8            as FlashAttentionBackend and set_kv_buffer do for an FP8 cache
+-                                   (cast, then the store_cache JIT kernel at the step's rows)
++  attention front (one Triton      replaces FusedQKNorm (per-head RMSNorm of q and k, interleaved
++  kernel, _qk_norm_fp8_store)      RoPE on sliding layers), the k and v FP8 casts, store_cache and
++                                   the q FP8 cast: q and k rounded to bf16 as FusedQKNorm's output
++                                   is, then (k and v divided by the cache scales when scaled and
++                                   rounded to bf16 again, as the bf16 division does) cast to FP8;
++                                   k and v stored at every cache_loc row, q written FP8 for FA3
+   flash_attn_with_kvcache (FA3)    paged, causal, window (2047, 0) on sliding layers
+   FusedRMSNormGate (JIT)           per-head output norm x sigmoid(gate)
+   o projection                     bf16_gemm_dispatch; then the all-reduce (identity here)
+@@ -54,7 +57,6 @@ from sgl_kernel.scalar_type import scalar_types
+ from torch import nn
+ 
+ from sglang.kernels.ops.activation.activation import silu_and_mul
+-from sglang.kernels.ops.kvcache.kvcache import store_cache
+ from sglang.kernels.ops.moe.moe_wna16_marlin import moe_wna16_marlin_gemm
+ from sglang.kernels.ops.muse_spark_v12.fused_muse_spark_routing import FusedMuseSparkRouting
+ from sglang.kernels.ops.muse_spark_v12.fused_norm_gate import FusedRMSNormGate
+@@ -62,7 +64,6 @@ from sglang.kernels.ops.muse_spark_v12.fused_norm_residual import FusedPostNormR
+ from sglang.kernels.ops.muse_spark_v12.fused_post_expert_norm_weighted_sum_triton import (
+     fused_post_expert_norm_weighted_sum,
+ )
+-from sglang.kernels.ops.muse_spark_v12.fused_qk_norm import FusedQKNorm
+ from sglang.srt.layers.moe.fused_moe_triton import moe_align_block_size
+ from sglang.srt.layers.muse_spark_layers import (
+     MuseSpark1xNormPreservingResidualConnection,
+@@ -165,6 +166,89 @@ def _local_expert_ids_kernel(ids_ptr, start_ptr, out_ptr, n, LOCAL: tl.constexpr
+     tl.store(out_ptr + offs, out, mask=mask)
+ 
+ 
++@triton.jit
++def _qk_norm_fp8_store_kernel(
++    qkv_ptr, pos_ptr, loc_ptr, cos_sin_ptr, k_scale_ptr, v_scale_ptr,
++    q_out_ptr, k_cache_ptr, v_cache_ptr,
++    qkv_stride, cos_sin_stride, k_row_stride, k_head_stride, v_row_stride, v_head_stride,
++    HQ: tl.constexpr, HKV: tl.constexpr, D: tl.constexpr,
++    ROPE: tl.constexpr, SCALED: tl.constexpr, EPS: tl.constexpr,
++):
++    """One program per token row t of the qkv GEMM output [T, (2 HQ + 2 HKV) D] bf16.
++
++    Per q head (HQ) and k head (HKV): scaleless RMSNorm over D lanes in fp32, then on sliding
++    layers the interleaved RoPE (pairs (2i, 2i+1)) from the cos | sin table row at positions[t]
++    (cos lanes 0..D/2-1, sin lanes D/2..D-1). The result is rounded to bf16 (FusedQKNorm's output
++    dtype) and then to FP8 E4M3. q goes to q_out [T, HQ, D]. k, and v (the bf16 GEMM columns after
++    k, no norm), are divided by k_scale / v_scale when SCALED (after the bf16 rounding, and rounded
++    to bf16 again, as parity's bf16 tensor / fp32 scalar does) and stored as FP8 at cache row
++    cache_loc[t]. Every row is written (no reserved skip slot)."""
++    t = tl.program_id(0).to(tl.int64)
++    HALF: tl.constexpr = D // 2
++    i = tl.arange(0, HALF)[None, :]
++    row = qkv_ptr + t * qkv_stride
++
++    if ROPE:
++        pos = tl.load(pos_ptr + t).to(tl.int64)
++        cs = cos_sin_ptr + pos * cos_sin_stride
++        c = tl.load(cs + i)
++        s = tl.load(cs + HALF + i)
++    else:
++        c = tl.zeros([1, HALF], dtype=tl.float32)
++        s = tl.zeros([1, HALF], dtype=tl.float32)
++
++    # Queries: heads 0..HQ-1 at lanes h*D.
++    hq = tl.arange(0, HQ)[:, None]
++    q_even = hq * D + 2 * i
++    qe = tl.load(row + q_even).to(tl.float32)
++    qo = tl.load(row + q_even + 1).to(tl.float32)
++    r = 1.0 / tl.sqrt((tl.sum(qe * qe, axis=1) + tl.sum(qo * qo, axis=1)) / D + EPS)
++    qe = qe * r[:, None]
++    qo = qo * r[:, None]
++    if ROPE:
++        ye = qe * c - qo * s
++        yo = qe * s + qo * c
++        qe = ye
++        qo = yo
++    q_out = q_out_ptr + t * (HQ * D)
++    tl.store(q_out + q_even, qe.to(tl.bfloat16).to(tl.float32).to(tl.float8e4nv))
++    tl.store(q_out + q_even + 1, qo.to(tl.bfloat16).to(tl.float32).to(tl.float8e4nv))
++
++    # Keys: heads HQ..HQ+HKV-1 of the row.
++    hk = tl.arange(0, HKV)[:, None]
++    k_even = (HQ + hk) * D + 2 * i
++    ke = tl.load(row + k_even).to(tl.float32)
++    ko = tl.load(row + k_even + 1).to(tl.float32)
++    r = 1.0 / tl.sqrt((tl.sum(ke * ke, axis=1) + tl.sum(ko * ko, axis=1)) / D + EPS)
++    ke = ke * r[:, None]
++    ko = ko * r[:, None]
++    if ROPE:
++        ye = ke * c - ko * s
++        yo = ke * s + ko * c
++        ke = ye
++        ko = yo
++    ke = ke.to(tl.bfloat16).to(tl.float32)
++    ko = ko.to(tl.bfloat16).to(tl.float32)
++
++    # Values: the HKV heads after the keys, no norm and no RoPE.
++    j = tl.arange(0, D)[None, :]
++    v = tl.load(row + (HQ + HKV + hk) * D + j).to(tl.float32)
++
++    if SCALED:
++        k_scale = tl.load(k_scale_ptr)
++        v_scale = tl.load(v_scale_ptr)
++        ke = (ke / k_scale).to(tl.bfloat16).to(tl.float32)
++        ko = (ko / k_scale).to(tl.bfloat16).to(tl.float32)
++        v = (v / v_scale).to(tl.bfloat16).to(tl.float32)
++
++    loc = tl.load(loc_ptr + t).to(tl.int64)
++    k_out = k_cache_ptr + loc * k_row_stride + hk * k_head_stride
++    tl.store(k_out + 2 * i, ke.to(tl.float8e4nv))
++    tl.store(k_out + 2 * i + 1, ko.to(tl.float8e4nv))
++    v_out = v_cache_ptr + loc * v_row_stride + hk * v_head_stride
++    tl.store(v_out + j, v.to(tl.float8e4nv))
++
++
+ def _local_expert_ids(topk_ids, local_start):
+     ids = topk_ids.contiguous()
+     out = torch.empty(ids.shape, dtype=torch.int32, device=ids.device)
+@@ -246,7 +330,6 @@ def prepare(weights):
+                                          router_output_multiplier=0.1767766952966369,
+                                          router_score_division_eps=1e-15),
+         "cos_sin": torch.cat((freqs.cos(), freqs.sin()), dim=-1),
+-        "qk_norm": FusedQKNorm(head_dim=64, num_q_heads=16, num_kv_heads=2, eps=RMS_EPS),
+         "o_norm_gate": FusedRMSNormGate(MuseSpark1xRMSNorm(64, eps=RMS_EPS, has_weight=False), True, 64),
+         "attn_boundary": FusedPostNormResidualPreNorm(post_attn, _residual(weights["attn_residual_gate"]), pre_ffn),
+         "ffn_boundary": FusedPostNormResidualPreNorm(post_ffn, _residual(weights["ffn_residual_gate"]), next_pre_attn),
+@@ -305,28 +388,30 @@ def kernel_fn(data, state):
+     dense = state["dense"]
+     # Attention: MuseSpark1xAttention.forward.
+     qkv = _gemm(data["attn_input"], dense["qkv_gate"])
+-    if cfg["rope_theta"]:
+-        q, k = state["qk_norm"](qkv, data["positions"], state["cos_sin"])
+-    else:
+-        q, k = state["qk_norm"](qkv)
+-    v = qkv[:, hq * d + hkv * d: hq * d + 2 * hkv * d]
+     gate = qkv[:, hq * d + 2 * hkv * d:]
+     k_cache, v_cache = data["k_cache"], data["v_cache"]
+     scaled = cfg["kv_scale"] != 1.0
+-    k = k.reshape(tokens, hkv * d)
+-    if scaled:
+-        k, v = k / data["k_scale"], v / data["v_scale"]
+-    # The pool keeps FP8 rows as bytes; slot 0 is a live row here (SGLang reserves it for padding).
+-    store_cache(k.to(FP8).view(torch.uint8), v.to(FP8).view(torch.uint8),
+-                k_cache.view(-1, hkv * d).view(torch.uint8), v_cache.view(-1, hkv * d).view(torch.uint8),
+-                data["cache_loc"], reserved_skip_index=-1)
++    # FusedQKNorm (+RoPE), the k/v FP8 casts, store_cache and the q FP8 cast in one launch. The cache
++    # is written in place through [rows, hkv, d] views of its own storage (page_size 1 or 64); every
++    # cache_loc row is written, slot 0 included (parity's reserved_skip_index=-1).
++    k_rows, v_rows = k_cache.view(-1, hkv, d), v_cache.view(-1, hkv, d)
++    assert k_rows.stride(2) == 1 and v_rows.stride(2) == 1 and qkv.stride(1) == 1
++    cos_sin = state["cos_sin"]
++    q_fp8 = torch.empty((tokens, hq, d), dtype=FP8, device=qkv.device)
++    _qk_norm_fp8_store_kernel[(tokens,)](
++        qkv, data["positions"], data["cache_loc"], cos_sin, data["k_scale"], data["v_scale"],
++        q_fp8, k_rows, v_rows,
++        qkv.stride(0), cos_sin.stride(0), k_rows.stride(0), k_rows.stride(1), v_rows.stride(0), v_rows.stride(1),
++        HQ=hq, HKV=hkv, D=d, ROPE=bool(cfg["rope_theta"]), SCALED=scaled, EPS=RMS_EPS,
++        num_warps=4,
++    )
+     window = cfg["window"]
+     descale = {}
+     if scaled:
+         descale = dict(k_descale=data["k_scale"].reshape(1, 1).expand(batch, hkv),
+                        v_descale=data["v_scale"].reshape(1, 1).expand(batch, hkv))
+     out = flash_attn_with_kvcache(
+-        q=q.view(tokens, hq, d).to(FP8),
++        q=q_fp8,
+         k_cache=k_cache,
+         v_cache=v_cache,
+         page_table=data["page_table"],

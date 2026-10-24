@@ -37,10 +37,10 @@ priority: 4
 kind: primary
 controls_for: null
 review: proceed
-status: running
+status: done
 review_at: 2026-10-24T071251Z
 review_companions: null
-stage: dispatched
+stage: harvested
 claimed_at: 2026-10-24T071251Z
 base_sha: f526f70d8a581a7fa0a7df17ee7a297eb2e2000b
 base_blob: e4931f050c7fb99835fe116d25bb454a5ea731e9
@@ -57,6 +57,13 @@ attempt_file: 2026-10-24T071713Z-check-qk-norm-fp8-cache-store-fusion.md
 prepared_at: 2026-10-24T071713Z
 job: fe8883a2fc264338
 dispatched_at: 2026-10-24T071725Z
+outcome: neutral
+verdict_detail: unproven-vs-best
+speedup: 1.0092868187485216
+speedup_ci: [0.9941475164672937, 1.0244261210297492]
+harvested_at: 2026-10-24T083411Z
+best_at_harvest: 1.0038664293875537
+promotion: null
 ---
 
 # qk-norm-fp8-cache-store-fusion
@@ -137,4 +144,31 @@ OK with warnings: /home/user/git/musespark/.worktrees/muse_prefill_layer/qk-norm
 ```
 
 The single warning is the existing `torch.cuda.synchronize()` at the end of `prepare()`, which is untimed and unchanged. `python3 -I -m py_compile` passes, and I removed the `__pycache__` it left behind.
+
+## Result
+
+- job `fe8883a2fc264338` (check), status done, passed True, tests 5/5
+- speedup 1.0093x, 95% CI [0.9941, 1.0244], score 383839.254415674 µs vs SGLang 387403.9 µs
+- best at harvest: {"speedup": 1.0038664293875537, "ci": [0.9888084329467404, 1.018924425828367], "job": "62025c368c3c4e8e"}; base result: muse_prefill_layer/hypotheses/done/gain/sglang-pipeline-parity.result.json
+- **outcome: neutral** (unproven-vs-best)
+- files: `muse_prefill_layer/hypotheses/done/neutral/qk-norm-fp8-cache-store-fusion.result.json`, `muse_prefill_layer/hypotheses/done/neutral/qk-norm-fp8-cache-store-fusion.patch`; branch `hyp/muse_prefill_layer/qk-norm-fp8-cache-store-fusion`
+
+## Attribution
+
+| shape | w | base µs | hyp µs | delta | verdict |
+|---|---|---|---|---|---|
+| batch=1 ctx=80000 dist=soft layer=sliding load=turn_1 page=1 q_len=753 repeats=6 | 46 | 1078.66 | 1100.86 | 1.0059 | flat |
+| batch=1 ctx=80000 dist=soft layer=full load=turn_1 page=1 q_len=753 repeats=6 | 16 | 1434.85 | 1473.23 | 1.002 | flat |
+| batch=4 ctx=80000 dist=soft layer=sliding load=turn_4 page=1 q_len=753 repeats=6 | 46 | 3367.03 | 3301.54 | 1.0079 | flat |
+| batch=4 ctx=80000 dist=soft layer=full load=turn_4 page=1 q_len=753 repeats=6 | 16 | 4949.82 | 4956.2 | 0.9991 | flat |
+| batch=1 ctx=0 dist=soft layer=full load=first_turn page=1 q_len=16384 repeats=6 | 16 | 18279.1 | 16982.54 | 0.9914 | flat |
+| batch=1 ctx=32768 dist=soft layer=sliding load=first_turn page=1 q_len=16384 repeats=6 | 138 | 16995.2 | 17135.28 | 1.0048 | flat |
+| batch=1 ctx=32768 dist=soft layer=full load=first_turn page=1 q_len=16384 repeats=6 | 16 | 21535.66 | 20704.2 | 1.0203 | flat |
+| batch=1 ctx=65536 dist=soft layer=full load=first_turn page=1 q_len=16384 repeats=6 | 16 | 25286.61 | 24128.49 | 1.0169 | flat |
+
+no shape moved outside noise. Expected hit: 2/3. Noise ±1.5%.
+
+## Follow-ups
+
+- unproven-vs-best: the change is not proven either way; a stacked hypothesis (`depends_on: qk-norm-fp8-cache-store-fusion`) that adds a further change in the same area is the only way to learn more (identical code is never re-run).
 
