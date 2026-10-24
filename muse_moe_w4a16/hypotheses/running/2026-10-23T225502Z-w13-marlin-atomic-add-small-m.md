@@ -35,13 +35,19 @@ review: proceed
 status: running
 review_at: 2026-10-24T040704Z
 review_companions: null
-stage: claimed
+stage: implemented
 claimed_at: 2026-10-24T040704Z
 base_sha: b0739163836e46200abd3b7d9a76de8b3467d783
 base_blob: 11fbc1957daf7294cd2810ff82a0aad2f25644bd
 branch: hyp/muse_moe_w4a16/w13-marlin-atomic-add-small-m
 worktree: .worktrees/muse_moe_w4a16/w13-marlin-atomic-add-small-m
 mode: null
+implemented_at: 2026-10-24T040816Z
+impl_commit: a1e0555ef3d13b14a47f7ddf2ce118450f5c57f9
+submission_sha256: 53bfd3d1fcddb9f1561ecf52ca0c17959faabb9ec5efa2606b91dd129b277e2a
+norm_sha256: 35019a046f63b8a7bc46696b66d327d6d57984ed93665acf3d9a23ad8ac77cb1
+submission_blob: c2c950b382881f1b57b3a0c814bf085efdbf5086
+lint_warnings: 1
 ---
 
 # w13-marlin-atomic-add-small-m
@@ -83,3 +89,40 @@ No companion. The change is one flag on one call (the fp32_reduce flip is dead c
 - What is slice_count at bs=1 in practice (depends on the thread_k/thread_n config Marlin's heuristic picks for m_block_size_8 and on how many local routes the skewed routing lands on this GPU)? A print of n_padded/block_size_m in a check run's log would bound it and tell whether the mechanism can account for a 5-15 us win.
 - If this gains at bs=1, the natural follow-ups are (a) the same flag on the w2 call (N=4096, K=4096, top_k=1: slice_count similar at bs=1), (b) atomic add for every M where slice_count > 1 rather than a token threshold, and (c) the merged run with marlin-workspace-blocks-per-sm-8.
 
+
+## Implementation notes
+
+Worktree `.worktrees/muse_moe_w4a16/w13-marlin-atomic-add-small-m`, file `muse_moe_w4a16/submission.py` only (+10/-1).
+
+- New module constant `W13_ATOMIC_ADD_MAX_TOKENS = 32` beside `POST_NORM_EPS`.
+- In `kernel_fn`, just before the w13 `moe_wna16_marlin_gemm` call: if `num_tokens <= W13_ATOMIC_ADD_MAX_TOKENS`, run `cache1.zero_()` and pass `w13_common = dict(common, use_atomic_add=True)` to the w13 call. Otherwise the w13 call gets `common` unchanged. The branch is on `num_tokens` (the shape) only.
+- The w2 call is untouched and still gets `common` (`use_atomic_add=False`, `use_fp32_reduce=True`), so shapes above 32 tokens run exactly the base code.
+- `cache1` is a view of the shared `cache13` buffer. Zeroing it before w13 is safe because `cache3` (the w2 output, the same memory) is only written later by the non-atomic w2 call, which stores plainly.
+- **Deviation from the spec (from the adversarial review):** `use_fp32_reduce` stays **True** next to `use_atomic_add=True`, where the spec said `use_fp32_reduce=False`. Why: the spec's premise that Marlin needs fp32 reduce off when atomic add is on is probably false. vLLM's fused_marlin_moe passes atomic add together with use_fp32_reduce=True, and the kernel allocates c_tmp only when `use_fp32_reduce && !use_atomic_add`. Leaving it True also keeps this run separate from the sibling `w13-marlin-bf16-reduce-verify`, which flips only `use_fp32_reduce`. If the binding rejects the combination, fall back to `use_fp32_reduce=False` and record the error text in the attempt log.
+- The output zeroing (`cache1.zero_()`) is kept as the spec wrote it, even though the review thinks it may be unnecessary (slice 0 stores plainly). If bs=1 comes out flat by about 1 us, dropping it is the first follow-up.
+- **Precision watch (review):** the atomic path accumulates the k-slice partials in bf16, rounding once per slice. At bs=1/4 (slice_count up to ~16) that is roughly 0.5-0.8% extra relative error on the w13 output before silu*up and w2. The 1.5% rel-L2 budget should hold, but the margin is not wide, and the pre-timing tests at bs=1 and bs=4 exercise the deepest slicing. The per-row 5x bound on near-zero rows is the one to watch.
+- **Determinism:** with atomic adds the summation order of the k-slice partials is nondeterministic, so outputs at bs<=32 can differ in the last bf16 bits between replays and runs. That does not break any rule, but bit-exact comparisons across runs will not hold.
+- Expectation per the review: any gain should show mainly at bs=1. At bs=8/16/32, slice_count is already about 1-2 (a no-op at slice_count 1), so expect flat there despite the spec's "faster".
+
+## Rules check
+
+Checked against `git -C .worktrees/muse_moe_w4a16/w13-marlin-atomic-add-small-m diff`:
+
+- [x] CUDA-graph capturable: the new branch is on `num_tokens` (from `x.shape`), not on input values. `cache1.zero_()` is a capturable memset with no allocation (`dict(...)` is host-side kwargs only). No `.item()`/`.cpu()`/`synchronize()`/prints were added.
+- [x] Nothing derived from `data` is cached across calls: no new state is written.
+- [x] Weights: untouched. `prepare()` is unchanged and NVFP4 stays NVFP4.
+- [x] Activations BF16 where SGLang keeps BF16: cache1 is still the bf16 output of w13. Only the reduction mode of k-slice partials changes, which is a Marlin kernel option SGLang/vLLM expose.
+- [x] n/a: KV cache FP8 / queries FP8 (no attention in this problem).
+- [x] n/a: attention sees every key (no attention in this problem). No expert or route skipping was added.
+- [x] No timing patches, harness frames/I/O/secrets, module edits, reference import, subprocesses or network.
+- [x] All work happens inside the timed call, with no output caching or replay.
+- [x] First line is still `# okc: problem=muse_moe_w4a16`. No triton.autotune.
+
+okc_lint output:
+
+```
+warn  host-sync    L114: torch.cuda.synchronize()  (outside kernel_fn's call graph; fine in prepare())
+OK with warnings: /home/user/git/musespark/.worktrees/muse_moe_w4a16/w13-marlin-atomic-add-small-m/muse_moe_w4a16/submission.py
+```
+
+The L114 warning is pre-existing (in `prepare()`), not part of this diff. `python3 -I -m py_compile` passed, and its `__pycache__` was removed.
