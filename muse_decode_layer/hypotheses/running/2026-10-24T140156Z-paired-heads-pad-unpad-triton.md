@@ -54,9 +54,16 @@ priority: 3
 kind: primary
 controls_for: null
 review: proceed
-status: queued
+status: running
 review_at: 2026-10-24T164538Z
 review_companions: null
+stage: claimed
+claimed_at: 2026-10-24T164752Z
+base_sha: c6b167670ed7835c8c0a38fc7064ea60ab8726dc
+base_blob: cc466fce207709c98ab0e78c2435c1c459890fdb
+branch: hyp/muse_decode_layer/paired-heads-pad-unpad-triton
+worktree: .worktrees/muse_decode_layer/paired-heads-pad-unpad-triton
+mode: null
 ---
 
 # paired-heads-pad-unpad-triton
