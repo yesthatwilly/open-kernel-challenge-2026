@@ -1,25 +1,25 @@
 # muse_decode_layer findings
 
-Regenerated 2026-10-24T141733Z by `churn.py index`. Read this before writing a hypothesis for muse_decode_layer.
+Regenerated 2026-10-24T144812Z by `churn.py index`. Read this before writing a hypothesis for muse_decode_layer.
 
 ## Current best
 
-1.0874x [1.0710,1.1037] from job `fb07a3bd3aa54baf` (check), master commit `09da1e0d71`, hypothesis fa3-hdim128-head-pairing-batched
+1.1635x [1.1461,1.1810] from job `9dcaec316b3045a7` (check), master commit `ea89625442`, hypothesis post-expert-norm-triton-small-t
 
 Where the time goes (per scored shape, top kernels):
 
-- batch=1 ctx=80000 dist=soft layer=sliding load=decode_1 page=1 repeats=60: yours 172.8µs vs SGLang 173.1µs (SoL 40.0µs) · void sglang::device::marlin_moe::Marlin<__nv_bfloat16, 56... 41.1µs 23.4%, nvjet_sm90_tst_128x8_64x12_4x1_v_bz_splitK_TNT 31.7µs 18.1%, void cutlass::device_kernel<flash::enable_sm90_or_later<f... 10.0µs 5.7%
-- batch=1 ctx=80000 dist=soft layer=full load=decode_1 page=1 repeats=60: yours 182.1µs vs SGLang 183.5µs (SoL 44.2µs) · void sglang::device::marlin_moe::Marlin<__nv_bfloat16, 56... 41.2µs 22.3%, nvjet_sm90_tst_128x8_64x12_4x1_v_bz_splitK_TNT 32.3µs 17.5%, void cutlass::device_kernel<flash::enable_sm90_or_later<f... 18.8µs 10.2%
-- batch=16 ctx=80000 dist=soft layer=sliding load=decode_16 page=1 spread=agentic: yours 259.6µs vs SGLang 259.7µs (SoL 76.7µs) · void sglang::device::marlin_moe::Marlin<__nv_bfloat16, 56... 99.0µs 36.5%, nvjet_sm90_tst_64x16_64x16_2x1_v_bz_TNT 27.7µs 10.2%, nvjet_sm90_tst_128x16_64x11_4x1_v_bz_splitK_TNT 20.4µs 7.5%
-- batch=16 ctx=80000 dist=soft layer=full load=decode_16 page=1 spread=agentic: yours 406.8µs vs SGLang 436.1µs (SoL 137.5µs) · void cutlass::device_kernel<flash::enable_sm90_or_later<f... 152.3µs 35.4%, void sglang::device::marlin_moe::Marlin<__nv_bfloat16, 56... 108.4µs 25.2%, nvjet_sm90_tst_64x16_64x16_2x1_v_bz_TNT 27.1µs 6.3%
-- batch=32 ctx=80000 dist=soft layer=sliding load=decode_32 page=1 spread=agentic: yours 263.8µs vs SGLang 264.3µs (SoL 84.5µs) · void sglang::device::marlin_moe::Marlin<__nv_bfloat16, 56... 105.9µs 42.1%, nvjet_sm90_tst_64x32_64x16_2x1_v_bz_TNT 27.4µs 10.9%, nvjet_sm90_tst_128x32_64x10_4x1_v_bz_splitK_TNT 21.4µs 8.5%
-- batch=32 ctx=80000 dist=soft layer=full load=decode_32 page=1 spread=agentic: yours 543.5µs vs SGLang 615.3µs (SoL 208.1µs) · void cutlass::device_kernel<flash::enable_sm90_or_later<f... 290.2µs 50.3%, void sglang::device::marlin_moe::Marlin<__nv_bfloat16, 56... 148.1µs 25.7%, nvjet_sm90_tst_64x32_64x16_2x1_v_bz_TNT 26.5µs 4.6%
-- batch=1 ctx=80000 dist=soft layer=sliding load=verify_1 page=1 q_len=8: yours 238.2µs vs SGLang 268.4µs (SoL 62.3µs) · void sglang::device::marlin_moe::Marlin<__nv_bfloat16, 56... 87.6µs 36.2%, nvjet_sm90_tst_128x8_64x12_4x1_v_bz_splitK_TNT 33.1µs 13.7%, void cutlass::device_kernel<flash::enable_sm90_or_later<f... 10.0µs 4.2%
-- batch=1 ctx=80000 dist=soft layer=full load=verify_1 page=1 q_len=8: yours 247.7µs vs SGLang 278.2µs (SoL 66.4µs) · void sglang::device::marlin_moe::Marlin<__nv_bfloat16, 56... 86.7µs 34.4%, nvjet_sm90_tst_128x8_64x12_4x1_v_bz_splitK_TNT 33.6µs 13.4%, void cutlass::device_kernel<flash::enable_sm90_or_later<f... 18.6µs 7.4%
-- batch=16 ctx=80000 dist=soft layer=sliding load=verify_16 page=1 q_len=8 spread=agentic: yours 453.2µs vs SGLang 529.9µs (SoL 126.6µs) · void sglang::device::marlin_moe::Marlin<__nv_bfloat16, 56... 273.7µs 62.9%, nvjet_sm90_tst_128x64_64x8_1x2_h_bz_TNT 28.5µs 6.6%, nvjet_sm90_tst_64x64_64x13_2x1_v_bz_TNT 26.6µs 6.1%
-- batch=16 ctx=80000 dist=soft layer=full load=verify_16 page=1 q_len=8 spread=agentic: yours 587.4µs vs SGLang 696.5µs (SoL 188.7µs) · void sglang::device::marlin_moe::Marlin<__nv_bfloat16, 56... 284.7µs 47.9%, void cutlass::device_kernel<flash::enable_sm90_or_later<f... 155.0µs 26.1%, nvjet_sm90_tst_128x64_64x8_1x2_h_bz_TNT 28.3µs 4.8%
-- batch=32 ctx=80000 dist=soft layer=sliding load=verify_32 page=1 q_len=8 spread=agentic: yours 637.7µs vs SGLang 723.2µs (SoL 143.8µs) · void sglang::device::marlin_moe::Marlin<__nv_bfloat16, 56... 429.3µs 69.0%, nvjet_sm90_tst_128x128_64x6_2x1_v_bz_TNT 34.1µs 5.5%, nvjet_sm90_tst_128x64_64x8_1x2_h_bz_TNT 31.3µs 5.0%
-- batch=32 ctx=80000 dist=soft layer=full load=verify_32 page=1 q_len=8 spread=agentic: yours 906.7µs vs SGLang 1071.8µs (SoL 267.2µs) · void sglang::device::marlin_moe::Marlin<__nv_bfloat16, 56... 454.1µs 47.1%, void cutlass::device_kernel<flash::enable_sm90_or_later<f... 292.1µs 30.3%, nvjet_sm90_tss_64x32_64x16_1x2_h_bz_splitK_NNT 43.7µs 4.5%
+- batch=1 ctx=80000 dist=soft layer=sliding load=decode_1 page=1 repeats=60: yours 145.8µs vs SGLang 170.9µs (SoL 40.0µs) · void sglang::device::marlin_moe::Marlin<__nv_bfloat16, 56... 40.1µs 27.0%, nvjet_sm90_tst_128x8_64x12_4x1_v_bz_splitK_TNT 31.9µs 21.5%, void cutlass::device_kernel<flash::enable_sm90_or_later<f... 10.2µs 6.9%
+- batch=1 ctx=80000 dist=soft layer=full load=decode_1 page=1 repeats=60: yours 157.0µs vs SGLang 181.5µs (SoL 44.2µs) · void sglang::device::marlin_moe::Marlin<__nv_bfloat16, 56... 40.2µs 25.5%, nvjet_sm90_tst_128x8_64x12_4x1_v_bz_splitK_TNT 32.6µs 20.7%, void cutlass::device_kernel<flash::enable_sm90_or_later<f... 18.3µs 11.6%
+- batch=16 ctx=80000 dist=soft layer=sliding load=decode_16 page=1 spread=agentic: yours 225.8µs vs SGLang 261.8µs (SoL 76.7µs) · void sglang::device::marlin_moe::Marlin<__nv_bfloat16, 56... 115.6µs 45.9%, nvjet_sm90_tst_64x16_64x16_2x1_v_bz_TNT 26.3µs 10.4%, nvjet_sm90_tst_128x16_64x11_4x1_v_bz_splitK_TNT 20.0µs 7.9%
+- batch=16 ctx=80000 dist=soft layer=full load=decode_16 page=1 spread=agentic: yours 364.9µs vs SGLang 430.8µs (SoL 137.5µs) · void cutlass::device_kernel<flash::enable_sm90_or_later<f... 146.8µs 38.0%, void sglang::device::marlin_moe::Marlin<__nv_bfloat16, 56... 108.2µs 28.0%, nvjet_sm90_tst_64x16_64x16_2x1_v_bz_TNT 26.1µs 6.8%
+- batch=32 ctx=80000 dist=soft layer=sliding load=decode_32 page=1 spread=agentic: yours 251.9µs vs SGLang 252.8µs (SoL 84.5µs) · void sglang::device::marlin_moe::Marlin<__nv_bfloat16, 56... 103.9µs 42.1%, nvjet_sm90_tst_64x32_64x16_2x1_v_bz_TNT 27.0µs 10.9%, nvjet_sm90_tst_128x32_64x10_4x1_v_bz_splitK_TNT 20.5µs 8.3%
+- batch=32 ctx=80000 dist=soft layer=full load=decode_32 page=1 spread=agentic: yours 535.8µs vs SGLang 608.4µs (SoL 208.1µs) · void cutlass::device_kernel<flash::enable_sm90_or_later<f... 289.0µs 52.4%, void sglang::device::marlin_moe::Marlin<__nv_bfloat16, 56... 125.2µs 22.7%, nvjet_sm90_tst_64x32_64x16_2x1_v_bz_TNT 26.6µs 4.8%
+- batch=1 ctx=80000 dist=soft layer=sliding load=verify_1 page=1 q_len=8: yours 200.8µs vs SGLang 259.9µs (SoL 62.3µs) · void sglang::device::marlin_moe::Marlin<__nv_bfloat16, 56... 76.1µs 38.7%, nvjet_sm90_tst_128x8_64x12_4x1_v_bz_splitK_TNT 32.7µs 16.7%, void cutlass::device_kernel<flash::enable_sm90_or_later<f... 10.1µs 5.1%
+- batch=1 ctx=80000 dist=soft layer=full load=verify_1 page=1 q_len=8: yours 218.1µs vs SGLang 279.2µs (SoL 66.4µs) · void sglang::device::marlin_moe::Marlin<__nv_bfloat16, 56... 86.8µs 39.2%, nvjet_sm90_tst_128x8_64x12_4x1_v_bz_splitK_TNT 32.8µs 14.8%, void cutlass::device_kernel<flash::enable_sm90_or_later<f... 19.0µs 8.6%
+- batch=16 ctx=80000 dist=soft layer=sliding load=verify_16 page=1 q_len=8 spread=agentic: yours 462.4µs vs SGLang 536.8µs (SoL 126.6µs) · void sglang::device::marlin_moe::Marlin<__nv_bfloat16, 56... 284.9µs 64.2%, nvjet_sm90_tst_128x64_64x8_1x2_h_bz_TNT 28.6µs 6.4%, nvjet_sm90_tst_64x64_64x13_2x1_v_bz_TNT 24.3µs 5.5%
+- batch=16 ctx=80000 dist=soft layer=full load=verify_16 page=1 q_len=8 spread=agentic: yours 603.9µs vs SGLang 696.6µs (SoL 188.7µs) · void sglang::device::marlin_moe::Marlin<__nv_bfloat16, 56... 284.3µs 47.9%, void cutlass::device_kernel<flash::enable_sm90_or_later<f... 153.3µs 25.9%, nvjet_sm90_tst_128x64_64x8_1x2_h_bz_TNT 28.6µs 4.8%
+- batch=32 ctx=80000 dist=soft layer=sliding load=verify_32 page=1 q_len=8 spread=agentic: yours 639.4µs vs SGLang 723.9µs (SoL 143.8µs) · void sglang::device::marlin_moe::Marlin<__nv_bfloat16, 56... 466.8µs 70.7%, nvjet_sm90_tst_128x128_64x6_2x1_v_bz_TNT 34.4µs 5.2%, nvjet_sm90_tst_128x64_64x8_1x2_h_bz_TNT 31.7µs 4.8%
+- batch=32 ctx=80000 dist=soft layer=full load=verify_32 page=1 q_len=8 spread=agentic: yours 932.9µs vs SGLang 1103.2µs (SoL 267.2µs) · void sglang::device::marlin_moe::Marlin<__nv_bfloat16, 56... 501.0µs 50.9%, void cutlass::device_kernel<flash::enable_sm90_or_later<f... 296.3µs 30.1%, nvjet_sm90_tst_128x128_64x6_2x1_v_bz_TNT 34.1µs 3.5%
 
 ## By area
 
@@ -37,6 +37,9 @@ Where the time goes (per scored shape, top kernels):
 
 ### pooler GEMM
 - **pooler-gemm-splitk-autotune** → neutral (within-ci), 1.0189x — no shape moved outside noise. For the pooler GEMM only (ffn_input [T, 8192] bf16 x pooler [4096, 8192] bf16, a 67 MB weight read whose floor is 14 us), pick the GEMM form per scored T in pre
+
+### post-expert norm+combine
+- **post-expert-norm-triton-small-t** → gain (gain), 1.1635x — gained on sliding decode_1, decode_16, verify_1; full decode_1, decode_16, verify_1. Port muse_moe_w4a16's landed post-expert-norm-triton-small-m (1.130x there, job bacd1f502f4e46fa; patch muse_moe_w4a16/hypotheses/done/gain/post-expert-norm-tri
 
 ### pre-attention norm+rope
 - **fused-preattention-triton** → neutral (unproven-vs-best), 1.0970x — gained on sliding decode_32. Port muse_attention_decode's fused pre-attention Triton kernel (main tree muse_attention_decode/submission.py, _pre_attention_kernel: passed 16/16 at 1.127x the
@@ -74,4 +77,3 @@ Where the time goes (per scored shape, top kernels):
 - queue: bf16-shape-gated-triton-gemms-small-t [pooler GEMM] p2 queued
 - queue: sliding-fused-triton-decode1-port [FA3 call] p3 queued
 - queue: paired-heads-pad-unpad-triton [output norm-gate] p3 queued
-- running: post-expert-norm-triton-small-t [post-expert norm+combine] p1 running

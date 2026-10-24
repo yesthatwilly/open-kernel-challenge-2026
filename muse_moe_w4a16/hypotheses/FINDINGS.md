@@ -1,6 +1,6 @@
 # muse_moe_w4a16 findings
 
-Regenerated 2026-10-24T141733Z by `churn.py index`. Read this before writing a hypothesis for muse_moe_w4a16.
+Regenerated 2026-10-24T144812Z by `churn.py index`. Read this before writing a hypothesis for muse_moe_w4a16.
 
 ## Current best
 
@@ -23,6 +23,7 @@ Where the time goes (per scored shape, top kernels):
 - **marlin-block-size-m-next-larger** → regression (regression), 0.9178x — lost on decode_32 decode_32; verify_16 verify_16. Change only the block_size_m pick in kernel_fn. SGLang's loop breaks on the first candidate in (8, 16, 32, 48, 64) where num_tokens*8/32/block_size_m < 0.9, whi
 - **align-256-experts-below-128** → neutral (unproven-vs-best), 0.9998x — gained on decode_1 decode_1. In kernel_fn, for num_tokens < 128 only (bs=1, 8, 16, 32 and the bs=4/33 tests), call moe_align_block_size(local_ids, block_size_m, N_EXPERTS) exactly as baseli
 - **triton-map-align-small-m-port** → neutral (beats-base-not-best), 1.1850x — gained on decode_1 decode_1; decode_16 decode_16; decode_32 decode_32; verify_1 verify_1. Port muse_decode_layer moe-align-single-kernel-small-t (patch: muse_decode_layer/hypotheses/done/neutral/moe-align-single-kernel-small-t.patch; its _align_small
+- **triton-map-align-verify-chunked** → failed (test:failed). Extend master's single-program map+align (_align_small_kernel, triton-map-align-small-m-port) to num_tokens > 32 (bs=128/256, and the bs=33/257/skewed-128 tests
 
 ### MoE align/dispatch + block_size_m pick
 - **triton-map-align-on-block-m-restack** → gain (gain), 1.3117x — gained on decode_1 decode_1; decode_16 decode_16; decode_32 decode_32; verify_1 verify_1. Stack the two measured, shape-disjoint moe wins: start from master (marlin-block-m-two-smaller-on-postnorm, 1.254x: block_size_m two candidates down at num_toke
@@ -52,6 +53,7 @@ Where the time goes (per scored shape, top kernels):
 - marlin-block-m-cap-16-port: beats-base-not-best: the change is not proven either way; a stacked hypothesis (`depends_on: marlin-block-m-cap-16-port`) that adds a further change in the same area is the only way to learn more (identical code is never
 - triton-map-align-small-m-port: beats-base-not-best: the change is not proven either way; a stacked hypothesis (`depends_on: triton-map-align-small-m-port`) that adds a further change in the same area is the only way to learn more (identical code is ne
 - post-norm-triton-all-m: within-ci: the change is not proven either way; a stacked hypothesis (`depends_on: post-norm-triton-all-m`) that adds a further change in the same area is the only way to learn more (identical code is never re-run).
+- triton-map-align-verify-chunked: none
 
 ## Do not retry (rejected / duplicates)
 
@@ -66,4 +68,3 @@ Where the time goes (per scored shape, top kernels):
 - queue: marlin-two-class-block-m-decode32 [MoE align/dispatch + block_size_m pick] p2 hold
 - queue: swapab-nvfp4-gemm-verify-rewrite [w13 marlin + w2 marlin] p1 hold
 - queue: swapab-w13-silu-epilogue-verify [silu-mul] p2 queued
-- running: triton-map-align-verify-chunked [MoE align/dispatch] p2 running

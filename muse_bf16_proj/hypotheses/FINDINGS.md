@@ -1,6 +1,6 @@
 # muse_bf16_proj findings
 
-Regenerated 2026-10-24T141733Z by `churn.py index`. Read this before writing a hypothesis for muse_bf16_proj.
+Regenerated 2026-10-24T144812Z by `churn.py index`. Read this before writing a hypothesis for muse_bf16_proj.
 
 ## Current best
 
@@ -44,6 +44,9 @@ Where the time goes (per scored shape, top kernels):
 ### bf16 GEMM dispatch
 - **sglang-gemm-dispatch-parity** → gain (gain), 1.0022x — gained on router decode_16, decode_32, verify_16, verify_32; o verify_32. Replace the starter's plain x @ W[:n].T with the exact dispatch SGLang's kernel uses: sglang.srt.layers.quantization.unquant._bf16_gemm_dispatch_impl(x, W[:n], 
 - **bf16-cublaslt-backend-toggle** → neutral (within-ci), 1.1505x — gained on qkv_gate decode_1, verify_16; pooler decode_32; lost on o decode_1, verify_1; unpooler decode_1, verify_1; router verify_1; qkv_gate verify_32. A dispatch probe, pure PyTorch, no kernel of ours: in kernel_fn, for the four bf16 layers only, call torch.backends.cuda.preferred_blas_library('cublaslt') imme
+
+### bf16 GEMM dispatch (m=17..32, swap-AB Triton)
+- **bf16-m32-swapab-wgmma-triton** → neutral (unproven-vs-best), 1.1984x — gained on qkv_gate decode_1, decode_16, decode_32, verify_1; o decode_32, verify_1, verify_16; pooler decode_32, verify_1; router verify_1, verify_16. Built on master (658d63b, submission blob 3f76eb8: shape-gated Triton at m<=16 + unpooler slice + 3-D split-K router; cuBLAS everywhere else). Add ONE new swap-
 
 ### bf16 GEMM dispatch (m>=128, weight layout)
 - **bf16-m128-nn-weight-layout-probe** → neutral (unproven-vs-best), 1.1580x — gained on pooler verify_16; unpooler verify_16; lost on o decode_1; router verify_1, verify_16; qkv_gate verify_32. Built on master (dba4ffd; router untouched; m <= 32 paths untouched). The m=128/256 shapes are where cuBLAS sits furthest from the floor (pooler verify_16 25.2 
@@ -100,6 +103,7 @@ Where the time goes (per scored shape, top kernels):
 - router-splitk32-small-m-all-loads-in-flight-control-stages3: unproven-vs-best: the change is not proven either way; a stacked hypothesis (`depends_on: router-splitk32-small-m-all-loads-in-flight-control-stages3`) that adds a further change in the same area is the only way to learn
 - bf16-shape-gated-triton-winners-combo: unproven-vs-best: the change is not proven either way; a stacked hypothesis (`depends_on: bf16-shape-gated-triton-winners-combo`) that adds a further change in the same area is the only way to learn more (identical code 
 - bf16-m128-nn-weight-layout-probe: unproven-vs-best: the change is not proven either way; a stacked hypothesis (`depends_on: bf16-m128-nn-weight-layout-probe`) that adds a further change in the same area is the only way to learn more (identical code is ne
+- bf16-m32-swapab-wgmma-triton: unproven-vs-best: the change is not proven either way; a stacked hypothesis (`depends_on: bf16-m32-swapab-wgmma-triton`) that adds a further change in the same area is the only way to learn more (identical code is never 
 
 ## Do not retry (rejected / duplicates)
 
@@ -114,4 +118,3 @@ Where the time goes (per scored shape, top kernels):
 - queue: bf16-cublaslt-algo-pick-in-prepare-m128-m256 [bf16 GEMM dispatch (m=128/256, cuBLASLt algo selection)] p2 queued
 - queue: pooler-unpooler-m128-tma-wspec-rewrite [pooler GEMM + unpooler GEMM (m=128)] p2 queued
 - queue: pooler-m32-tma-splitk-extend [pooler GEMM (m=17..32)] p3 queued
-- running: bf16-m32-swapab-wgmma-triton [bf16 GEMM dispatch (m=17..32, swap-AB Triton)] p1 running

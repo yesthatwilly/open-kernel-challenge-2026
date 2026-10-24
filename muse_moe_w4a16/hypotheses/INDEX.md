@@ -1,6 +1,6 @@
 # muse_moe_w4a16 hypotheses
 
-Regenerated 2026-10-24T141733Z. Best: 1.3117x [1.2920,1.3313] job `bc56182a80444d16` (check)
+Regenerated 2026-10-24T144812Z. Best: 1.3117x [1.2920,1.3313] job `bc56182a80444d16` (check)
 
 | created | slug | kind | area | where | outcome | speedup | CI | job | mode | promotion | review | expected hit |
 |---|---|---|---|---|---|---|---|---|---|---|---|---|
@@ -28,7 +28,7 @@ Regenerated 2026-10-24T141733Z. Best: 1.3117x [1.2920,1.3313] job `bc56182a80444
 | 2026-10-24T140229Z | marlin-two-class-block-m-decode32 | primary | MoE align/dispatch + block_size_m pick | queue | hold |  |  |  |  |  | proceed |  |
 | 2026-10-24T140229Z | swapab-nvfp4-gemm-verify-rewrite | rewrite | w13 marlin + w2 marlin | queue | hold |  |  |  |  |  | proceed |  |
 | 2026-10-24T140229Z | swapab-w13-silu-epilogue-verify | rewrite | silu-mul | queue | queued |  |  |  |  |  | required |  |
-| 2026-10-24T140229Z | triton-map-align-verify-chunked | primary | MoE align/dispatch | running | running |  |  | 3aa4d7e193244255 | check |  | proceed |  |
+| 2026-10-24T140229Z | triton-map-align-verify-chunked | primary | MoE align/dispatch | done/failed | failed |  |  | 3aa4d7e193244255 | check |  | proceed |  |
 
 ## Held
 
