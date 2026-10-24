@@ -60,7 +60,7 @@ base_sha: a4d96a9424579e84f7664be536951edfda597297
 base_blob: 635cfee3ac2c3f7c66840b8c8a082cad2fa41a68
 branch: hyp/muse_prefill_layer/moe-align-local-routes-parallel-port
 worktree: .worktrees/muse_prefill_layer/moe-align-local-routes-parallel-port
-mode: null
+mode: check
 restack_of: null
 stale_base: null
 implemented_at: 2026-10-24T232909Z
@@ -69,6 +69,8 @@ submission_sha256: ee2820cb9b1b12e45b3717b33bea5e0ca20eb1cce03a3eb39591cbf32ffa9
 norm_sha256: 26793774d30d3dfa2648fb9a62a4c67bd307158f4e6329d0ad1012a9bf163330
 submission_blob: 8780061c8886bf3d70fe3c433fbbfade9bdf8507
 lint_warnings: 12
+attempt_file: 2026-10-24T232909Z-check-moe-align-local-routes-parallel-port.md
+prepared_at: 2026-10-24T232909Z
 ---
 
 # moe-align-local-routes-parallel-port
