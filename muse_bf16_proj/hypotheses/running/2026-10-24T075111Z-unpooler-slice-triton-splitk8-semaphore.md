@@ -49,7 +49,7 @@ review: proceed
 status: running
 review_at: 2026-10-24T083652Z
 review_companions: null
-stage: implemented
+stage: dispatched
 claimed_at: 2026-10-24T092007Z
 base_sha: 4463015ebd7f2b7014e5f694aa241cc9df7a78c1
 base_blob: da55301de1e911aeab09878b0873809f544f436c
@@ -64,6 +64,8 @@ submission_blob: 624e853ce7ad81e7d9dbc088ddf90dc63639382a
 lint_warnings: 0
 attempt_file: 2026-10-24T092305Z-check-unpooler-slice-triton-splitk8-semaphore.md
 prepared_at: 2026-10-24T092305Z
+job: bb31bb36545a47bb
+dispatched_at: 2026-10-24T092313Z
 ---
 
 # unpooler-slice-triton-splitk8-semaphore
