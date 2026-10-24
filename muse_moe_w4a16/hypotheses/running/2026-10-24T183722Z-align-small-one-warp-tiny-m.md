@@ -51,13 +51,15 @@ base_sha: 6ef6502619e893cbf1037aeccc0405617e73620d
 base_blob: 108d36e9f2266fc88531dd6ff0329a847c882013
 branch: hyp/muse_moe_w4a16/align-small-one-warp-tiny-m
 worktree: .worktrees/muse_moe_w4a16/align-small-one-warp-tiny-m
-mode: null
+mode: submit
 implemented_at: 2026-10-24T184146Z
 impl_commit: 1333b371d035b1380ecf095a92cea3b903f993c6
 submission_sha256: aa88ec9dd62eba95ff78c88aabb0300e47c36e8bb79f29a120e5c2f104f8466c
 norm_sha256: 179ed1c50ddffe533effbcc8aabafdda031ecefaa1fbfa203a06017978de4cfd
 submission_blob: 92f9e59575322a03267aab74308a495aeeaf19f1
 lint_warnings: 8
+attempt_file: 2026-10-24T184146Z-submit-align-small-one-warp-tiny-m.md
+prepared_at: 2026-10-24T184146Z
 ---
 
 # align-small-one-warp-tiny-m
