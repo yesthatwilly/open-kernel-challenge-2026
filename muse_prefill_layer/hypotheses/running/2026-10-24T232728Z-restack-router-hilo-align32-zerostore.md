@@ -23,7 +23,16 @@ priority: 1
 kind: primary
 controls_for: null
 review: required
-status: queued
+status: running
+stage: claimed
+claimed_at: 2026-10-24T232737Z
+base_sha: 40aa18e2a31c08252c27c88f94c261e2614a4998
+base_blob: 635cfee3ac2c3f7c66840b8c8a082cad2fa41a68
+branch: hyp/muse_prefill_layer/restack-router-hilo-align32-zerostore
+worktree: .worktrees/muse_prefill_layer/restack-router-hilo-align32-zerostore
+mode: null
+restack_of: null
+stale_base: null
 ---
 
 # restack-router-hilo-align32-zerostore
