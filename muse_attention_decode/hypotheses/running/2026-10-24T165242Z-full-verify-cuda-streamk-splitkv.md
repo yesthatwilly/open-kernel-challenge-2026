@@ -80,9 +80,16 @@ controls_for: null
 rewrite_stage: 2
 replaces: "full-layer decode at batch>1: FA3 flash_fwd main + prepare_varlen_num_blocks + FlashAttnFwdCombine + _paired_norm_gate_kernel"
 review: proceed
-status: queued
+status: running
 review_at: 2026-10-24T165728Z
 review_companions: null
+stage: claimed
+claimed_at: 2026-10-24T165728Z
+base_sha: 27b43dcd8b752ab9c2454f7e20fb949c059b9213
+base_blob: 1c0f5fa1bfc4e602b62e5e9edd9df6d5652b297b
+branch: hyp/muse_attention_decode/full-verify-cuda-streamk-splitkv
+worktree: .worktrees/muse_attention_decode/full-verify-cuda-streamk-splitkv
+mode: null
 ---
 
 # full-verify-cuda-streamk-splitkv
