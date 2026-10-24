@@ -41,13 +41,19 @@ review: proceed
 status: running
 review_at: 2026-10-24T104313Z
 review_companions: null
-stage: claimed
+stage: implemented
 claimed_at: 2026-10-24T104313Z
 base_sha: 60622cdebc40953738b4429ef80902673cd5f50f
 base_blob: a0fcbb70e25fa568ef94f81935748440798a1410
 branch: hyp/muse_bf16_proj/router-splitk32-small-m-all-loads-in-flight-control-stages3
 worktree: .worktrees/muse_bf16_proj/router-splitk32-small-m-all-loads-in-flight-control-stages3
 mode: null
+implemented_at: 2026-10-24T104354Z
+impl_commit: 3a8ae33a5a1e448fd4425cc85c9e4b571abde5c2
+submission_sha256: 338da3e88be1bc1d7f6d1f2aba8ba0d35ef91f148a12a23cc08dc930175dbce8
+norm_sha256: 69a8d95d184ceefb689de66ef3353b175b0d20bb85ec00666c814860044e215e
+submission_blob: efe58306beefac9bf49baced3db1ac91f79ac357
+lint_warnings: 0
 ---
 
 # router-splitk32-small-m-all-loads-in-flight-control-stages3
@@ -92,3 +98,26 @@ No further companions (as instructed), and none are needed. With the parent and 
 - Confirm in the profile that _router_hilo_kernel runs as one wave (256 CTAs, >=2 CTAs/SM) at m=32 with 3 stages. If smem or registers push it to 2 waves, the decode_32 row would mostly measure that, not the atomics.
 - Note for readers: control vs master isolates SPLIT_K at fixed per-CTA code. It differs from the parent's framing ('without the 2-stage restructure'), because master also ran 3 stages, only with 4 K-steps.
 
+
+## Implementation notes
+
+Implemented inline by churnsubs on the parent's commit (60622cd): `ROUTER_SMALL_M_NUM_STAGES` 2 -> 3, so the m <= 32 buckets keep SPLIT_K=32 (grid 1x8x32) with master's num_stages=3. Nothing else differs from the parent. No deviation.
+
+## Rules check
+
+Checked against `git -C .worktrees/muse_bf16_proj/router-splitk32-small-m-all-loads-in-flight-control-stages3 diff` (one constant).
+
+- [x] CUDA-graph capturable: the edit is on config values only (a module constant); no `.item()`/`.cpu()`/`synchronize()` added; no control flow on input values.
+- [x] Nothing derived from `data` is cached across calls: no state writes added.
+- [x] Weights: n/a: untouched.
+- [x] Activations BF16 where SGLang keeps BF16; KV cache FP8 and queries FP8 E4M3: unchanged by this edit (both paths already exist on the parent and passed review).
+- [x] Attention sees every key: n/a: no attention in this problem.
+- [x] No timing patches, harness frames/I/O/secrets, module edits, reference import, subprocesses or network: none added.
+- [x] All work happens inside the timed call; no output caching or replay: unchanged.
+- [x] First line marker kept; no triton.autotune added.
+
+okc_lint output:
+
+```
+CLEAN: .worktrees/muse_bf16_proj/router-splitk32-small-m-all-loads-in-flight-control-stages3/muse_bf16_proj/submission.py
+```
