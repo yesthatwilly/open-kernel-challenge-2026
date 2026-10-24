@@ -6,6 +6,7 @@ items here and in each tick's summary. Resolved items move to the log at the bot
 ## Open
 
 - 2026-10-24 rules heads-up (not blocking): bf16 **bf16-cublaslt-algo-pick-in-prepare-m128-m256** times cuBLASLt algorithm candidates on synthetic data inside the untimed prepare() and replays the winner in kernel_fn (no timing or autotune in kernel_fn). The Opus reviewer read the rules as allowing it, and decode's pooler-gemm-splitk-autotune used the same pattern. It runs on tomorrow's quota unless you say to hold it.
+- 2026-10-24 promotion ready: moe **align-parallel-per-expert-verify** (check 1.3249x [1.305,1.345] vs board 1.308x). Merged to master by hand on its per-shape rows (align +3-4.6% at bs>=128, other shapes flat). Planned command: `okc submit muse_moe_w4a16 /home/user/git/musespark/muse_moe_w4a16/submission.py --no-wait --json`, then `churn.py record-submit muse_moe_w4a16 align-parallel-per-expert-verify <job>`. Uses 1 of moe's 9 scored runs left today.
 
 ## Standing answers
 
