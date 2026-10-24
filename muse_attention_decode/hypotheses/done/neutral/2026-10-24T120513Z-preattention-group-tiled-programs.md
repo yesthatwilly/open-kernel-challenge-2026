@@ -43,10 +43,10 @@ priority: 3
 kind: primary
 controls_for: null
 review: proceed
-status: running
+status: done
 review_at: 2026-10-24T120745Z
 review_companions: null
-stage: dispatched
+stage: harvested
 claimed_at: 2026-10-24T120745Z
 base_sha: f51cac06481cef9d3ac77248b4fec8d18a7cfb47
 base_blob: efc544103e6d303d1f8602caa9439628043a17a7
@@ -63,6 +63,13 @@ attempt_file: 2026-10-24T120945Z-check-preattention-group-tiled-programs.md
 prepared_at: 2026-10-24T120945Z
 job: 877731a3b2214ddb
 dispatched_at: 2026-10-24T120954Z
+outcome: neutral
+verdict_detail: within-ci
+speedup: 1.2613943554062683
+speedup_ci: [1.2424734400751742, 1.2803152707373622]
+harvested_at: 2026-10-24T132211Z
+best_at_harvest: 1.2686474414890054
+promotion: null
 ---
 
 # preattention-group-tiled-programs
@@ -137,3 +144,35 @@ CLEAN: /home/user/git/musespark/.worktrees/muse_attention_decode/preattention-gr
 ```
 
 `python3 -I -m py_compile` passed. The `__pycache__` it left was removed, and none remains in the worktree.
+
+## Result
+
+- job `877731a3b2214ddb` (check), status done, passed True, tests 16/16
+- speedup 1.2614x, 95% CI [1.2425, 1.2803], score 2985.8227792583984 µs vs SGLang 3766.3 µs
+- best at harvest: {"speedup": 1.2686474414890054, "ci": [1.2496177298666704, 1.2876771531113405], "job": "bd64bf9f9e904f02"}; base result: muse_attention_decode/hypotheses/done/neutral/paired-heads-launch-cleanup-ab-tune-batch-gate.result.json
+- **outcome: neutral** (within-ci)
+- files: `muse_attention_decode/hypotheses/done/neutral/preattention-group-tiled-programs.result.json`, `muse_attention_decode/hypotheses/done/neutral/preattention-group-tiled-programs.patch`; branch `hyp/muse_attention_decode/preattention-group-tiled-programs`
+
+## Attribution
+
+| shape | w | base µs | hyp µs | delta | verdict |
+|---|---|---|---|---|---|
+| batch=1 ctx=80000 dist=soft heads=tp8 layer=sliding load=decode_1 page=1 | 46 | 16.56 | 16.57 | 0.9627 | lost |
+| batch=1 ctx=80000 dist=coherent heads=tp8 layer=full load=decode_1 page=1 | 16 | 28.09 | 26.98 | 1.0109 | flat |
+| batch=16 ctx=80000 dist=soft heads=tp8 layer=sliding load=decode_16 page=1 spread=agentic | 46 | 20.92 | 20.41 | 1.0085 | flat |
+| batch=16 ctx=80000 dist=coherent heads=tp8 layer=full load=decode_16 page=1 spread=agentic | 16 | 156.19 | 156.32 | 0.9945 | flat |
+| batch=32 ctx=80000 dist=soft heads=tp8 layer=sliding load=decode_32 page=1 spread=agentic | 46 | 25.0 | 25.0 | 0.9942 | flat |
+| batch=32 ctx=80000 dist=coherent heads=tp8 layer=full load=decode_32 page=1 spread=agentic | 16 | 298.45 | 298.03 | 1.0034 | flat |
+| batch=1 ctx=80000 dist=soft heads=tp8 layer=sliding load=verify_1 page=1 q_len=8 | 46 | 17.15 | 17.07 | 0.9918 | flat |
+| batch=1 ctx=80000 dist=coherent heads=tp8 layer=full load=verify_1 page=1 q_len=8 | 16 | 30.23 | 29.95 | 0.9748 | flat |
+| batch=16 ctx=80000 dist=soft heads=tp8 layer=sliding load=verify_16 page=1 q_len=8 spread=agentic | 46 | 22.89 | 22.54 | 1.0023 | flat |
+| batch=16 ctx=80000 dist=coherent heads=tp8 layer=full load=verify_16 page=1 q_len=8 spread=agentic | 16 | 163.33 | 164.23 | 0.9887 | flat |
+| batch=32 ctx=80000 dist=soft heads=tp8 layer=sliding load=verify_32 page=1 q_len=8 spread=agentic | 46 | 28.93 | 27.37 | 1.0423 | gained |
+| batch=32 ctx=80000 dist=coherent heads=tp8 layer=full load=verify_32 page=1 q_len=8 spread=agentic | 16 | 301.68 | 300.96 | 0.9986 | flat |
+
+gained on sliding verify_32; lost on sliding decode_1. Expected hit: 1/5. Noise ±1.5%.
+
+## Follow-ups
+
+- within-ci: the change is not proven either way; a stacked hypothesis (`depends_on: preattention-group-tiled-programs`) that adds a further change in the same area is the only way to learn more (identical code is never re-run).
+

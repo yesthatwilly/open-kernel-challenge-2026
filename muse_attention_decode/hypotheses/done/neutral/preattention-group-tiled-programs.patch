@@ -1,0 +1,156 @@
+diff --git a/muse_attention_decode/submission.py b/muse_attention_decode/submission.py
+index efc5441..27ab22a 100644
+--- a/muse_attention_decode/submission.py
++++ b/muse_attention_decode/submission.py
+@@ -4,9 +4,10 @@
+ SGLang's path launches, before FlashAttention 3: the fused QK-norm (+RoPE), a k cast to FP8,
+ a v cast to FP8, the cache store and a q cast to FP8. On sliding-window layers at decode the
+ attention itself moves under a megabyte, so those launches are most of the time. This kernel
+-does all five in one launch: per (token, head) it RMS-normalizes q or k, applies interleaved
+-RoPE when the layer has it, and writes q as FP8 for FA3 and the new k and v rows as FP8 into
+-the cache (divided by the cache scales). FA3 and the output norm x sigmoid(gate) are SGLang's.
++does all five in one launch: per (token, KV group) it RMS-normalizes the group's q heads and
++its k, applies interleaved RoPE when the layer has it, and writes q as FP8 for FA3 and the new
++k and v rows as FP8 into the cache (divided by the cache scales). FA3 and the output
++norm x sigmoid(gate) are SGLang's.
+ """
+ 
+ from typing import TypedDict
+@@ -74,29 +75,38 @@ def _pre_attention_kernel(
+     HQ: tl.constexpr, HKV: tl.constexpr, D: tl.constexpr, ROPE: tl.constexpr, EPS: tl.constexpr,
+     PAIRED: tl.constexpr, G: tl.constexpr,
+ ):
+-    """One program per (token, head). Heads 0..HQ-1 are queries; HQ..HQ+HKV-1 are the new keys,
+-    whose program also stores the matching value head. The q and k heads are contiguous in the
++    """One program per (token, KV group g). It owns the G query heads g*G .. g*G+G-1 as one
++    [G, D] tile, plus new key head g and value head g. The q and k heads are contiguous in the
+     fused row, so head h starts at h*D for both. When PAIRED, q_out is the zero-padded
+-    [tokens, HQ, 2*D] FA3 query: query h writes its D values into the half (h // G) % 2 (its KV
+-    head's half of the paired 128-byte row) and D FP8 zeros into the other half, so the program
+-    owns its whole padded row and every byte of it is written on every call."""
++    [tokens, HQ, 2*D] FA3 query: query h writes its D values into the half (h // G) % 2 = g % 2
++    (its KV head's half of the paired 128-byte row) and D FP8 zeros into the other half, so the
++    program owns its G whole padded rows and every byte of them is written on every call.
++    G must be a power of two (8 under both tp8 and dp)."""
+     t = tl.program_id(0)
+-    h = tl.program_id(1)
++    g = tl.program_id(1)
+     HALF: tl.constexpr = D // 2
+     i = tl.arange(0, HALF)
+     even = 2 * i
+     odd = 2 * i + 1
++    heads = g * G + tl.arange(0, G)         # [G] query heads of this group
+ 
+     row = qkv_ptr + t.to(tl.int64) * qkv_stride
+-    base = row + h * D
+-    xe = tl.load(base + even).to(tl.float32)
+-    xo = tl.load(base + odd).to(tl.float32)
++    qbase = row + heads[:, None] * D        # [G, 1]
++    qe = tl.load(qbase + even[None, :]).to(tl.float32)   # [G, HALF]
++    qo = tl.load(qbase + odd[None, :]).to(tl.float32)
++    kbase = row + (HQ + g) * D
++    ke = tl.load(kbase + even).to(tl.float32)             # [HALF]
++    ko = tl.load(kbase + odd).to(tl.float32)
+ 
+-    # Scaleless RMSNorm over the head's D entries.
+-    ss = tl.sum(xe * xe, axis=0) + tl.sum(xo * xo, axis=0)
+-    r = 1.0 / tl.sqrt(ss / D + EPS)
+-    xe = xe * r
+-    xo = xo * r
++    # Scaleless RMSNorm over each head's D entries.
++    qss = tl.sum(qe * qe, axis=1) + tl.sum(qo * qo, axis=1)
++    qr = 1.0 / tl.sqrt(qss / D + EPS)
++    qe = qe * qr[:, None]
++    qo = qo * qr[:, None]
++    kss = tl.sum(ke * ke, axis=0) + tl.sum(ko * ko, axis=0)
++    kr = 1.0 / tl.sqrt(kss / D + EPS)
++    ke = ke * kr
++    ko = ko * kr
+ 
+     if ROPE:
+         # Interleaved (GPT-J) RoPE: pair (2i, 2i+1) rotates by pos * theta^(-2i/d).
+@@ -104,36 +114,40 @@ def _pre_attention_kernel(
+         ang = p * tl.load(inv_freq_ptr + i)
+         c = tl.cos(ang)
+         s = tl.sin(ang)
+-        ye = xe * c - xo * s
+-        yo = xe * s + xo * c
+-        xe = ye
+-        xo = yo
+-
+-    if h < HQ:
+-        # Query, rounded to FP8 E4M3 for FA3 (the 5.473 factor is folded into the softmax scale).
+-        if PAIRED:
+-            half = (h // G) % 2
+-            qrow = q_out_ptr + (t.to(tl.int64) * HQ + h) * (2 * D)
+-            out = qrow + half * D
+-            zj = tl.arange(0, D)
+-            tl.store(qrow + (1 - half) * D + zj, tl.zeros([D], dtype=tl.float32).to(tl.float8e4nv))
+-        else:
+-            out = q_out_ptr + (t.to(tl.int64) * HQ + h) * D
+-        tl.store(out + even, xe.to(tl.float8e4nv))
+-        tl.store(out + odd, xo.to(tl.float8e4nv))
++        qye = qe * c[None, :] - qo * s[None, :]
++        qyo = qe * s[None, :] + qo * c[None, :]
++        qe = qye
++        qo = qyo
++        kye = ke * c - ko * s
++        kyo = ke * s + ko * c
++        ke = kye
++        ko = kyo
++
++    # Queries, rounded to FP8 E4M3 for FA3 (the 5.473 factor is folded into the softmax scale).
++    if PAIRED:
++        half = g % 2
++        qrow = q_out_ptr + (t.to(tl.int64) * HQ + heads[:, None]) * (2 * D)   # [G, 1]
++        out = qrow + half * D
++        zj = tl.arange(0, D)
++        tl.store(qrow + (1 - half) * D + zj[None, :],
++                 tl.zeros([G, D], dtype=tl.float32).to(tl.float8e4nv))
+     else:
+-        kh = h - HQ
+-        loc = tl.load(loc_ptr + t).to(tl.int64)
+-        k_scale = tl.load(k_scale_ptr)
+-        v_scale = tl.load(v_scale_ptr)
+-        kout = k_cache_ptr + (loc * HKV + kh) * D
+-        tl.store(kout + even, (xe / k_scale).to(tl.float8e4nv))
+-        tl.store(kout + odd, (xo / k_scale).to(tl.float8e4nv))
+-        # The value head: no norm, no RoPE, just the scale and the FP8 cast.
+-        j = tl.arange(0, D)
+-        v = tl.load(row + (HQ + HKV + kh) * D + j).to(tl.float32)
+-        vout = v_cache_ptr + (loc * HKV + kh) * D
+-        tl.store(vout + j, (v / v_scale).to(tl.float8e4nv))
++        out = q_out_ptr + (t.to(tl.int64) * HQ + heads[:, None]) * D
++    tl.store(out + even[None, :], qe.to(tl.float8e4nv))
++    tl.store(out + odd[None, :], qo.to(tl.float8e4nv))
++
++    # The new key and value rows of KV head g at cache_loc[t].
++    loc = tl.load(loc_ptr + t).to(tl.int64)
++    k_scale = tl.load(k_scale_ptr)
++    v_scale = tl.load(v_scale_ptr)
++    kout = k_cache_ptr + (loc * HKV + g) * D
++    tl.store(kout + even, (ke / k_scale).to(tl.float8e4nv))
++    tl.store(kout + odd, (ko / k_scale).to(tl.float8e4nv))
++    # The value head: no norm, no RoPE, just the scale and the FP8 cast.
++    j = tl.arange(0, D)
++    v = tl.load(row + (HQ + HKV + g) * D + j).to(tl.float32)
++    vout = v_cache_ptr + (loc * HKV + g) * D
++    tl.store(vout + j, (v / v_scale).to(tl.float8e4nv))
+ 
+ 
+ @triton.jit
+@@ -183,12 +197,12 @@ def kernel_fn(data: Inputs) -> torch.Tensor:
+     g = hq // hkv
+     q = torch.empty((tokens, hq, 2 * d if paired else d), dtype=FP8, device=device)
+     inv_freq = _inv_freq(theta, d, device) if theta else data["k_scale"]  # unused when ROPE is off
+-    _pre_attention_kernel[(tokens, hq + hkv)](
++    _pre_attention_kernel[(tokens, hkv)](
+         qkv, data["positions"], data["cache_loc"], inv_freq, data["k_scale"], data["v_scale"],
+         q, k_cache, v_cache,
+         qkv.stride(0),
+         HQ=hq, HKV=hkv, D=d, ROPE=bool(theta), EPS=RMS_EPS, PAIRED=paired, G=g,
+-        num_warps=1,
++        num_warps=4,
+     )
+ 
+     # The judge's scheduler_metadata was built for the unpaired geometry, so on the paired path
