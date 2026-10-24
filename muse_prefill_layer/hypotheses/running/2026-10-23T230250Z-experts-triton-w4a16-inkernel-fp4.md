@@ -38,9 +38,16 @@ priority: 5
 kind: primary
 controls_for: null
 review: proceed
-status: queued
+status: running
 review_at: 2026-10-24T075347Z
 review_companions: null
+stage: claimed
+claimed_at: 2026-10-24T075347Z
+base_sha: 79a102b3fd18c6ab5fa1e8d8d7390e6645a26ec3
+base_blob: e4931f050c7fb99835fe116d25bb454a5ea731e9
+branch: hyp/muse_prefill_layer/experts-triton-w4a16-inkernel-fp4
+worktree: .worktrees/muse_prefill_layer/experts-triton-w4a16-inkernel-fp4
+mode: null
 ---
 
 # experts-triton-w4a16-inkernel-fp4
