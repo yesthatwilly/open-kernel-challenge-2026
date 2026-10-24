@@ -46,9 +46,16 @@ priority: 3
 kind: primary
 controls_for: null
 review: proceed
-status: queued
+status: running
 review_at: 2026-10-24T164533Z
 review_companions: null
+stage: claimed
+claimed_at: 2026-10-24T164533Z
+base_sha: d170c1fd1af3e71b7de6f970d623da8b2a86af59
+base_blob: cc466fce207709c98ab0e78c2435c1c459890fdb
+branch: hyp/muse_decode_layer/sliding-fused-triton-decode1-port
+worktree: .worktrees/muse_decode_layer/sliding-fused-triton-decode1-port
+mode: null
 ---
 
 # sliding-fused-triton-decode1-port
