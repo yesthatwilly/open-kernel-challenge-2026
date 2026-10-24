@@ -56,10 +56,10 @@ priority: 3
 kind: primary
 controls_for: null
 review: proceed
-status: running
+status: done
 review_at: 2026-10-24T112447Z
 review_companions: null
-stage: dispatched
+stage: harvested
 claimed_at: 2026-10-24T112447Z
 base_sha: d7e6aa9aa0faeb496ce10cb8bef5d8c21c203563
 base_blob: da55301de1e911aeab09878b0873809f544f436c
@@ -76,6 +76,13 @@ attempt_file: 2026-10-24T112600Z-check-bf16-m128-nn-weight-layout-probe.md
 prepared_at: 2026-10-24T112600Z
 job: 2dc5dce078be4a24
 dispatched_at: 2026-10-24T112608Z
+outcome: neutral
+verdict_detail: unproven-vs-best
+speedup: 1.1580086710983108
+speedup_ci: [1.1406385410318363, 1.1753788011647854]
+harvested_at: 2026-10-24T132211Z
+best_at_harvest: 1.1432568936693237
+promotion: null
 ---
 
 # bf16-m128-nn-weight-layout-probe
@@ -151,3 +158,53 @@ CLEAN: muse_bf16_proj/submission.py
 ```
 
 `python3 -I -m py_compile` OK. The `__pycache__` it left was removed from the worktree.
+
+## Result
+
+- job `2dc5dce078be4a24` (check), status done, passed True, tests 9/9
+- speedup 1.1580x, 95% CI [1.1406, 1.1754], score 4171.644064994987 µs vs SGLang 4830.8 µs
+- best at harvest: {"speedup": 1.1432568936693237, "ci": [1.1261080402642838, 1.1604057470743634], "job": "240eb22ea0b6487e"}; base result: muse_bf16_proj/hypotheses/done/gain/router-triton-hilo-fused-control-splitk-all-m.result.json
+- **outcome: neutral** (unproven-vs-best)
+- files: `muse_bf16_proj/hypotheses/done/neutral/bf16-m128-nn-weight-layout-probe.result.json`, `muse_bf16_proj/hypotheses/done/neutral/bf16-m128-nn-weight-layout-probe.patch`; branch `hyp/muse_bf16_proj/bf16-m128-nn-weight-layout-probe`
+
+## Attribution
+
+| shape | w | base µs | hyp µs | delta | verdict |
+|---|---|---|---|---|---|
+| layer=qkv_gate load=decode_1 m=1 | 62 | 14.4 | 14.31 | 1.0073 | flat |
+| layer=o load=decode_1 m=1 | 62 | 6.69 | 6.67 | 0.9599 | lost |
+| layer=pooler load=decode_1 m=1 | 62 | 21.21 | 21.15 | 0.9926 | flat |
+| layer=unpooler load=decode_1 m=1 | 62 | 7.07 | 6.99 | 1.0204 | flat |
+| layer=router load=decode_1 m=1 | 62 | 5.8 | 6.07 | 0.9777 | flat |
+| layer=qkv_gate load=decode_16 m=16 | 62 | 13.82 | 13.96 | 1.0228 | flat |
+| layer=o load=decode_16 m=16 | 62 | 6.78 | 6.82 | 0.9988 | flat |
+| layer=pooler load=decode_16 m=16 | 62 | 21.3 | 21.18 | 0.9986 | flat |
+| layer=unpooler load=decode_16 m=16 | 62 | 18.45 | 18.58 | 1.0188 | flat |
+| layer=router load=decode_16 m=16 | 62 | 6.2 | 6.13 | 1.0089 | flat |
+| layer=qkv_gate load=decode_32 m=32 | 62 | 14.27 | 14.09 | 1.0251 | flat |
+| layer=o load=decode_32 m=32 | 62 | 6.58 | 6.81 | 1.0138 | flat |
+| layer=pooler load=decode_32 m=32 | 62 | 21.95 | 21.67 | 1.0114 | flat |
+| layer=unpooler load=decode_32 m=32 | 62 | 18.71 | 18.65 | 1.0082 | flat |
+| layer=router load=decode_32 m=32 | 62 | 6.54 | 6.54 | 0.9932 | flat |
+| layer=qkv_gate load=verify_1 m=8 | 62 | 14.0 | 14.14 | 0.9901 | flat |
+| layer=o load=verify_1 m=8 | 62 | 6.28 | 6.38 | 0.9718 | flat |
+| layer=pooler load=verify_1 m=8 | 62 | 21.3 | 21.37 | 0.9842 | flat |
+| layer=unpooler load=verify_1 m=8 | 62 | 7.02 | 6.92 | 0.988 | flat |
+| layer=router load=verify_1 m=8 | 62 | 5.67 | 5.88 | 0.9641 | lost |
+| layer=qkv_gate load=verify_16 m=128 | 62 | 16.96 | 16.81 | 0.9965 | flat |
+| layer=o load=verify_16 m=128 | 62 | 6.98 | 7.33 | 0.9804 | flat |
+| layer=pooler load=verify_16 m=128 | 62 | 25.21 | 22.86 | 1.1196 | gained |
+| layer=unpooler load=verify_16 m=128 | 62 | 19.65 | 19.15 | 1.0428 | gained |
+| layer=router load=verify_16 m=128 | 62 | 7.04 | 7.64 | 0.9427 | lost |
+| layer=qkv_gate load=verify_32 m=256 | 62 | 19.47 | 20.86 | 0.941 | lost |
+| layer=o load=verify_32 m=256 | 62 | 9.51 | 9.06 | 1.0066 | flat |
+| layer=pooler load=verify_32 m=256 | 62 | 30.51 | 29.73 | 1.0208 | flat |
+| layer=unpooler load=verify_32 m=256 | 62 | 24.39 | 24.23 | 1.01 | flat |
+| layer=router load=verify_32 m=256 | 62 | 9.27 | 9.41 | 0.9911 | flat |
+
+gained on pooler verify_16; unpooler verify_16; lost on o decode_1; router verify_1, verify_16; qkv_gate verify_32. Expected hit: 7/8. Noise ±1.5%.
+
+## Follow-ups
+
+- unproven-vs-best: the change is not proven either way; a stacked hypothesis (`depends_on: bf16-m128-nn-weight-layout-probe`) that adds a further change in the same area is the only way to learn more (identical code is never re-run).
+
