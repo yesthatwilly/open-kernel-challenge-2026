@@ -65,14 +65,14 @@ C="python3 -I $CLAUDE_PROJECT_DIR/.claude/skills/churnsubs/bin/churn.py"
    attribution summary from its `.result.json`. Mention gains that were merged or are `unmerged`.
 3. **Promotions.** For each entry in `promote`, run its `run` command verbatim, then
    `$C record-submit <p> <slug> '<okc output>'`.
-4. **Adversarial review (Fable), one subagent per pick, in parallel.** Every hypothesis is
-   attacked by a fresh Fable context before it is claimed; `claim` refuses anything whose
+4. **Adversarial review (Opus), one subagent per pick, in parallel.** Every hypothesis is
+   attacked by a fresh Opus context before it is claimed; `claim` refuses anything whose
    frontmatter is not `review: proceed`. For each pick whose `review` is not `proceed`:
    - Gather its inputs: `$C landed <p>` (hypotheses already on master's kernel, with patch
      paths), the hypothesis path, `<p>/hypotheses/FINDINGS.md`, `BEST.json`, the base
      `submission.py` (master, or the parent's worktree for an A/B companion), and the other
      queued/running slugs.
-   - Spawn `Agent` with `subagent_type: general-purpose`, **`model: fable`**, and the prompt in
+   - Spawn `Agent` with `subagent_type: general-purpose`, **`model: opus`**, and the prompt in
      `.claude/skills/churnsubs/ADVERSARY_PROMPT.md` with its `{PLACEHOLDERS}` filled in. The
      adversary's specific job: judge the justification, name what already-landed hypotheses
      confound it, and decide whether *this* hypothesis needs an A/B companion (the change with a

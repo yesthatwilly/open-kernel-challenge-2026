@@ -1280,7 +1280,7 @@ def cmd_review_record(a):
         if not j.get("ok"):
             refuse(f"companion {c.get('slug')} could not be written: {j}")
         created.append(j["slug"])
-    lines = [f"Reviewed {ts()} by an adversarial Fable subagent (model {v.get('model') or 'fable'}).", "",
+    lines = [f"Reviewed {ts()} by an adversarial subagent (model {v.get('model') or 'opus'}).", "",
              f"**Verdict: {verdict}.** {v.get('summary') or ''}", "",
              "### Justification", v.get("justification") or "(none given)", "",
              "### Confounders on the current kernel"] + ([f"- {x}" for x in (v.get("confounders") or [])] or ["- none identified"]) + ["",

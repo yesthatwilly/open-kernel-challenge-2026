@@ -36,7 +36,7 @@ D. **Rules.** Flag anything in the change that could break the competition rules
 
 Return ONLY a JSON object, no prose around it, with this schema:
 {
- "model": "fable",
+ "model": "opus",
  "verdict": "proceed" | "hold" | "proceed-with-companions",
  "summary": "one or two sentences",
  "justification": "your assessment of A, including the weakest link",

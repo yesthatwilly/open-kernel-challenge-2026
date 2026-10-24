@@ -50,7 +50,7 @@ H="python3 -I $CLAUDE_PROJECT_DIR/.claude/skills/hypothesize/bin/hyp.py"
    `{shapes: glob over shape keys like "layer=sliding load=decode_*", direction, why}`),
    `--risk`, `--priority` (1 = first), `--depends-on` when stacking, `--notes` for the risk text.
    The command lints the file and prints its path; on an error, fix the arguments and retry.
-4. Every new file starts with `review: required`. Before /churnsubs claims it, a fresh Fable
+4. Every new file starts with `review: required`. Before /churnsubs claims it, a fresh Opus
    subagent reviews it adversarially (justification, confounding by landed hypotheses, whether
    an A/B companion with another hypothesis reverted or retuned is needed) and may queue
    companions beside it with `kind: ab-revert|ab-tune|control` and `controls_for: <slug>`.

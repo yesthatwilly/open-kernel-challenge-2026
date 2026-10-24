@@ -33,7 +33,7 @@ resolve the checkout from the submission file's path (worktrees have a `.git` fi
 - Found and fixed during the run: the gate's filename regex only took HHMM; now HHMM[SS].
 
 ## Adversarial review (added 2026-10-23)
-Every hypothesis is reviewed by a fresh `model: fable` subagent before `claim` (which refuses
+Every hypothesis is reviewed by a fresh `model: opus` subagent before `claim` (which refuses
 `review != proceed`). Prompt: `ADVERSARY_PROMPT.md`. The reviewer's defined job: justification,
 confounding by landed hypotheses (`churn.py landed`), and whether an A/B companion (ab-revert /
 ab-tune / control, `controls_for`, `depends_on` the parent, based on the parent's `impl_commit`)
