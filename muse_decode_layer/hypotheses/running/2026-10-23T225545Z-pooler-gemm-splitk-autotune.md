@@ -46,13 +46,15 @@ base_sha: 952188da0ff9551ff95f13844604e502f412b70f
 base_blob: 6884d26a928d1de1b07bf8d28e1be4e53dfdcfc5
 branch: hyp/muse_decode_layer/pooler-gemm-splitk-autotune
 worktree: .worktrees/muse_decode_layer/pooler-gemm-splitk-autotune
-mode: null
+mode: check
 implemented_at: 2026-10-24T045248Z
 impl_commit: 3212dc6f2523fcc1167d7d7cde69207b1aa90e31
 submission_sha256: 0083fdfae7be1d98338e77af5438f30aa94fd4b7139cf4156152b3a2bcb52acf
 norm_sha256: a8ed9cbc2ee7518fa36313fed4f197106f5a5eb7a48d97b84cb33c40ddf44354
 submission_blob: f0a682c9218ad58ca95c95bb33cc0dddc9f9fffc
 lint_warnings: 4
+attempt_file: 2026-10-24T045249Z-check-pooler-gemm-splitk-autotune.md
+prepared_at: 2026-10-24T045249Z
 ---
 
 # pooler-gemm-splitk-autotune
