@@ -1,6 +1,6 @@
 # muse_bf16_proj hypotheses
 
-Regenerated 2026-10-24T032013Z. Best: 1.0307x [1.0152,1.0462] job `9aa98e889be140eb` (submit)
+Regenerated 2026-10-24T032801Z. Best: 1.0307x [1.0152,1.0462] job `9aa98e889be140eb` (submit)
 
 | created | slug | kind | area | where | outcome | speedup | CI | job | mode | promotion | review | expected hit |
 |---|---|---|---|---|---|---|---|---|---|---|---|---|
@@ -13,8 +13,9 @@ Regenerated 2026-10-24T032013Z. Best: 1.0307x [1.0152,1.0462] job `9aa98e889be14
 | 2026-10-23T225303Z | bf16-cublaslt-backend-toggle | primary | bf16 GEMM dispatch | queue | queued |  |  |  |  |  | required |  |
 | 2026-10-23T225303Z | o-triton-skinny-m32 | primary | o GEMM | queue | queued |  |  |  |  |  | required |  |
 | 2026-10-23T225303Z | pooler-skinny-tiled-weight-layout | primary | pooler GEMM | queue | queued |  |  |  |  |  | required |  |
-| 2026-10-23T225303Z | unpooler-full-triton-skinny-m32 | primary | unpooler GEMM | queue | queued |  |  |  |  |  | required |  |
-| 2026-10-23T225317Z | qkv-gate-triton-skinny-m32 | primary | qkv GEMM | queue | queued |  |  |  |  |  | required |  |
+| 2026-10-23T225303Z | unpooler-full-triton-skinny-m32 | primary | unpooler GEMM | running | running |  |  | 635c2693bd4147a4 | check |  | proceed |  |
+| 2026-10-23T225317Z | qkv-gate-triton-skinny-m32 | primary | qkv GEMM | running | running |  |  | abcd45776f244c8c | check |  | proceed |  |
 | 2026-10-23T230544Z | router-triton-hilo-fused-control-splitk-all-m | control→router-triton-hilo-fused | router GEMM | running | running |  |  | bd9fa14151644cee | check |  | proceed |  |
 | 2026-10-24T024326Z | router-triton-hilo-fused-control-hybrid-cublas-above-m32 | control→router-triton-hilo-fused-control-splitk-all-m | router GEMM | queue | queued |  |  |  |  |  | required |  |
 | 2026-10-24T024434Z | router-hilo-addmm-epilogue-control-inplace-out | control→router-hilo-addmm-epilogue | router GEMM | queue | queued |  |  |  |  |  | required |  |
+| 2026-10-24T032454Z | unpooler-full-triton-skinny-m32-control-blockm16-all-m | control→unpooler-full-triton-skinny-m32 | unpooler GEMM | queue | queued |  |  |  |  |  | required |  |
