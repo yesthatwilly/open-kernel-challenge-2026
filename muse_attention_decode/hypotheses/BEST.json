@@ -1,17 +1,17 @@
 {
  "problem": "muse_attention_decode",
- "job": "facc479992e24a35",
- "check_job": "facc479992e24a35",
+ "job": "2846122f764043da",
+ "check_job": "2846122f764043da",
  "mode": "check",
- "speedup": 1.1705932092473075,
+ "speedup": 1.2436140703098866,
  "ci": [
-  1.1530343111085979,
-  1.1923944446416679
+  1.2249598592552382,
+  1.2622682813645347
  ],
- "score_us": 3217.4285398611996,
- "commit": "86dc7133cb6594c6738fddf31911079e71700bfc",
- "submission_blob": "bc007e643ac0b440147a732071f23d9b3563174c",
- "slug": "fa3-hdim128-head-pairing",
- "result": "muse_attention_decode/hypotheses/done/gain/fa3-hdim128-head-pairing.result.json",
- "updated_at": "2026-10-24T103712Z"
+ "score_us": 3028.5118912023127,
+ "commit": "fa95f6d9e5bbaa7ab5978727425c8247ebbaa5c1",
+ "submission_blob": "60fc66432a00f0c6a1e2228f6a0775cc08f492fc",
+ "slug": "paired-heads-launch-cleanup",
+ "result": "muse_attention_decode/hypotheses/done/gain/paired-heads-launch-cleanup.result.json",
+ "updated_at": "2026-10-24T115932Z"
 }
