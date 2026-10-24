@@ -1,6 +1,6 @@
 # muse_bf16_proj hypotheses
 
-Regenerated 2026-10-24T083412Z. Best: 1.1433x [1.1261,1.1604] job `240eb22ea0b6487e` (submit)
+Regenerated 2026-10-24T084809Z. Best: 1.1433x [1.1261,1.1604] job `240eb22ea0b6487e` (submit)
 
 | created | slug | kind | area | where | outcome | speedup | CI | job | mode | promotion | review | expected hit |
 |---|---|---|---|---|---|---|---|---|---|---|---|---|
@@ -23,7 +23,7 @@ Regenerated 2026-10-24T083412Z. Best: 1.1433x [1.1261,1.1604] job `240eb22ea0b64
 | 2026-10-24T075006Z | qkv-gate-triton-splitk4-blockn64-semaphore | primary | qkv GEMM | running | running |  |  | 135ef6499875416a | check |  | proceed |  |
 | 2026-10-24T075025Z | router-splitk32-small-m-all-loads-in-flight | primary | router GEMM | queue | queued |  |  |  |  |  | required |  |
 | 2026-10-24T075041Z | router-splitk-semaphore-no-memset | primary | router GEMM | queue | queued |  |  |  |  |  | required |  |
-| 2026-10-24T075111Z | unpooler-slice-triton-splitk8-semaphore | primary | unpooler GEMM | queue | queued |  |  |  |  |  | required |  |
+| 2026-10-24T075111Z | unpooler-slice-triton-splitk8-semaphore | primary | unpooler GEMM | queue | queued |  |  |  |  |  | proceed |  |
 | 2026-10-24T075347Z | pooler-triton-splitk2-blockn64-semaphore-control-blockk256 | control→pooler-triton-splitk2-blockn64-semaphore | pooler GEMM | queue | queued |  |  |  |  |  | required |  |
 
 ## Held

@@ -1,6 +1,6 @@
 # muse_moe_w4a16 findings
 
-Regenerated 2026-10-24T083412Z by `churn.py index`. Read this before writing a hypothesis for muse_moe_w4a16.
+Regenerated 2026-10-24T084809Z by `churn.py index`. Read this before writing a hypothesis for muse_moe_w4a16.
 
 ## Current best
 
@@ -49,4 +49,4 @@ Where the time goes (per scored shape, top kernels):
 - queue: marlin-block-size-m-next-smaller [w13 marlin] p2 queued
 - queue: align-remote-sentinel-ids [MoE align/dispatch] p3 queued
 - queue: marlin-block-size-m-verify-two-smaller [w13 marlin] p3 queued
-- queue: small-m-grouped-gemv-splitk-rewrite [w13 marlin] p1 queued
+- running: small-m-grouped-gemv-splitk-rewrite [w13 marlin] p1 running

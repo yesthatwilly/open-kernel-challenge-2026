@@ -1,6 +1,6 @@
 # muse_prefill_layer hypotheses
 
-Regenerated 2026-10-24T083412Z. Best: 1.0039x [0.9888,1.0189] job `62025c368c3c4e8e` (check)
+Regenerated 2026-10-24T084809Z. Best: 1.0039x [0.9888,1.0189] job `62025c368c3c4e8e` (check)
 
 | created | slug | kind | area | where | outcome | speedup | CI | job | mode | promotion | review | expected hit |
 |---|---|---|---|---|---|---|---|---|---|---|---|---|
@@ -14,8 +14,8 @@ Regenerated 2026-10-24T083412Z. Best: 1.0039x [0.9888,1.0189] job `62025c368c3c4
 | 2026-10-23T230250Z | moe-align-side-stream | primary | MoE align/dispatch | done/neutral | neutral | 1.0076 | [0.993,1.023] | f70d1f2eaef842d2 | check |  | proceed | 1/3 |
 | 2026-10-23T230250Z | qk-norm-fp8-cache-store-fusion | primary | pre-attention norm+rope + cache store | done/neutral | neutral | 1.0093 | [0.994,1.024] | fe8883a2fc264338 | check |  | proceed | 2/3 |
 | 2026-10-23T230250Z | fa3-contiguous-kv-gather | primary | FA3 call | done/regression | regression | 0.9879 | [0.973,1.003] | 75bbf278dd9e430e | check |  | proceed | 2/6 |
-| 2026-10-24T075409Z | experts-marlin-block-m-local-rows | primary | w13 marlin + w2 marlin (block_size_m pick) | queue | queued |  |  |  |  |  | required |  |
-| 2026-10-24T075422Z | experts-marlin-block-m-48-turn1 | primary | w13 marlin + w2 marlin (block_size_m pick) | queue | queued |  |  |  |  |  | required |  |
+| 2026-10-24T075409Z | experts-marlin-block-m-local-rows | primary | w13 marlin + w2 marlin (block_size_m pick) | running | running |  |  | 8e9943ec1b004b0f | check |  | proceed |  |
+| 2026-10-24T075422Z | experts-marlin-block-m-48-turn1 | primary | w13 marlin + w2 marlin (block_size_m pick) | running | running |  |  | 0606f849d2f441ad | check |  | proceed |  |
 | 2026-10-24T075435Z | experts-marlin-block-m-48-turn4 | primary | w13 marlin + w2 marlin (block_size_m pick) | queue | queued |  |  |  |  |  | required |  |
 | 2026-10-24T075454Z | router-triton-hilo-splitk-turn | primary | router GEMM | queue | queued |  |  |  |  |  | required |  |
 | 2026-10-24T075513Z | router-pooler-concat-gemm-turn | primary | router GEMM + pooler GEMM (one concatenated GEMM, no side stream) | queue | queued |  |  |  |  |  | required |  |

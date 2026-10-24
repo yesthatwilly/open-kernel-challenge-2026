@@ -1,6 +1,6 @@
 # muse_decode_layer hypotheses
 
-Regenerated 2026-10-24T083412Z. Best: 1.0621x [1.0462,1.0780] job `0730135cdcac43b7` (check)
+Regenerated 2026-10-24T084809Z. Best: 1.0621x [1.0462,1.0780] job `0730135cdcac43b7` (check)
 
 | created | slug | kind | area | where | outcome | speedup | CI | job | mode | promotion | review | expected hit |
 |---|---|---|---|---|---|---|---|---|---|---|---|---|
@@ -18,8 +18,8 @@ Regenerated 2026-10-24T083412Z. Best: 1.0621x [1.0462,1.0780] job `0730135cdcac4
 | 2026-10-24T075400Z | fa3-full-single-split-probe | primary | FA3 call | queue | queued |  |  |  |  |  | required |  |
 | 2026-10-24T075400Z | fused-preattention-triton | primary | pre-attention norm+rope | queue | queued |  |  |  |  |  | required |  |
 | 2026-10-24T075400Z | router-triton-splitk-side-stream | primary | router GEMM | queue | queued |  |  |  |  |  | required |  |
-| 2026-10-24T075400Z | triton-flash-decode-full-paired-kv | rewrite | FA3 call | queue | queued |  |  |  |  |  | required |  |
 | 2026-10-24T075400Z | triton-flash-decode-full-verify-paired-kv | rewrite | FA3 call | queue | queued |  |  |  |  |  | required |  |
+| 2026-10-24T075400Z | triton-flash-decode-full-paired-kv | rewrite | FA3 call | running | running |  |  | e82b11f9d9f64b23 | check |  | proceed |  |
 
 ## Held
 
