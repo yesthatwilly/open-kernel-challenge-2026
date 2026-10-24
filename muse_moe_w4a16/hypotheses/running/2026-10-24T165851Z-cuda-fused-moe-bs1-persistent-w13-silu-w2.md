@@ -97,13 +97,15 @@ base_sha: b9590f4d98a9e3d4afd62cdaab9dd4d48694655f
 base_blob: d9a9375ef4721ab9b28cc9d6364c92e67c7ccc59
 branch: hyp/muse_moe_w4a16/cuda-fused-moe-bs1-persistent-w13-silu-w2
 worktree: .worktrees/muse_moe_w4a16/cuda-fused-moe-bs1-persistent-w13-silu-w2
-mode: null
+mode: submit
 implemented_at: 2026-10-24T173021Z
 impl_commit: 0efab7bdfa79cfea6a430d51c5b7c038a7bd2af3
 submission_sha256: d29c7f2a65e49524517329ed777359b30007b5dd86e745280232009eae219ae7
 norm_sha256: 99d090b0bb9ae62e16da7aae7d6a411e5e99a196e3de960b43290684ff552f3d
 submission_blob: 62b00bb77cbc9e2fce8ed39dd25d87fb78503a5d
 lint_warnings: 18
+attempt_file: 2026-10-24T181733Z-submit-cuda-fused-moe-bs1-persistent-w13-silu-w2.md
+prepared_at: 2026-10-24T181733Z
 ---
 
 # cuda-fused-moe-bs1-persistent-w13-silu-w2
