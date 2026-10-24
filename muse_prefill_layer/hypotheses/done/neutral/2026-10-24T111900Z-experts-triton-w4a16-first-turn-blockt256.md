@@ -70,7 +70,8 @@ speedup: 1.0228712349305686
 speedup_ci: [1.00752816640661, 1.038214303454527]
 harvested_at: 2026-10-24T124011Z
 best_at_harvest: 1.0038664293875537
-promotion: null
+promotion: merged
+promotion_commit: a1f93c294889a5676375f229f5a889a1419686fe
 ---
 
 # experts-triton-w4a16-first-turn-blockt256
