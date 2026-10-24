@@ -44,13 +44,19 @@ review: proceed
 status: running
 review_at: 2026-10-24T103959Z
 review_companions: [router-splitk32-small-m-all-loads-in-flight-control-stages3]
-stage: claimed
+stage: implemented
 claimed_at: 2026-10-24T103959Z
 base_sha: 71681a43d83042174393c75e858c09263d2334aa
 base_blob: da55301de1e911aeab09878b0873809f544f436c
 branch: hyp/muse_bf16_proj/router-splitk32-small-m-all-loads-in-flight
 worktree: .worktrees/muse_bf16_proj/router-splitk32-small-m-all-loads-in-flight
 mode: null
+implemented_at: 2026-10-24T104146Z
+impl_commit: 60622cdebc40953738b4429ef80902673cd5f50f
+submission_sha256: 9834d41b193d508e1f4e3a13ef0a0474b06c1d99274e63e6bf9062e821f8a9d5
+norm_sha256: 25f5c6ce4256e43fd99221f01dbd3d5cdabee1d115fef5b6698a9497e0255641
+submission_blob: a0fcbb70e25fa568ef94f81935748440798a1410
+lint_warnings: 0
 ---
 
 # router-splitk32-small-m-all-loads-in-flight
@@ -100,3 +106,36 @@ No ab-revert or ab-tune of a landed item is useful: the only landed item in this
 - Fix the Risk section's claim that this is 'independent of the memset hypothesis'. router-splitk-semaphore-no-memset hardcodes SPLIT_K=16 (16-way workspace, ticket == 15). If both gain, the combined run needs a 32-way version of that reduce.
 - Confirm occupancy in the profile (achieved CTAs/SM ~2 and a single wave). Sixteen more registers per thread or a larger smem than estimated would split 256 CTAs into two waves and reverse the sign.
 
+
+## Implementation notes
+
+- Worktree file: `.worktrees/muse_bf16_proj/router-splitk32-small-m-all-loads-in-flight/muse_bf16_proj/submission.py` (base blob da55301). Diff: 1 file, 12 insertions, 11 deletions.
+- `_router_config(m)` now returns `(BLOCK_M, BLOCK_N, SPLIT_K, NUM_STAGES)`:
+  - m <= 16: `(16, 32, 32, 2)`; 17..32: `(32, 32, 32, 2)`. Both use the new constant `ROUTER_SMALL_M_NUM_STAGES = 2`. Grid is (1, 8, 32) = 256 CTAs, K_SLICE = 256, so 2 K-steps of BLOCK_K = 128.
+  - m <= 128: `(64, 64, 16, 3)`; m > 128: `(64, 64, 8, 3)`. These are unchanged from master and use `ROUTER_NUM_STAGES = 3`.
+  - Docstring updated to match.
+- `_router_forward` unpacks `num_stages` and passes `num_stages=num_stages` to the launch, replacing the global `ROUTER_NUM_STAGES`.
+- `_router_shape_ok` unpacks the 4-tuple and ignores the stages value. Its `k % (128 * SPLIT_K)` check holds: 8192 % 4096 == 0.
+- Unchanged: the kernel body, the torch.zeros output with the relaxed fp32 atomic_add epilogue, BLOCK_K, num_warps=4, and the bf16 layers. `ROUTER_WARM_MS = (1, 8, 16, 32, 64, 128, 256)` is also unchanged, so prepare() compiles both new (K_SLICE=256, stages=2) specializations at m=1/8/16 and m=32.
+- No deviation from the spec. The reviewer's open questions (whether Triton pipelines a 2-iteration loop at num_stages=2, occupancy and wave count, kernel-us vs memset) are about reading the results and cannot be checked on this node. Read them from the profile. The stages=3 control is queued separately as `router-splitk32-small-m-all-loads-in-flight-control-stages3`.
+
+## Rules check
+
+Checked against `git -C .worktrees/muse_bf16_proj/router-splitk32-small-m-all-loads-in-flight diff`:
+
+- [x] CUDA-graph capturable: no `.item()`/`.cpu()`/`synchronize()`/tensor prints. The new branch picks num_stages from `m` (a shape) only. No new allocation; the zeroed output is the same as master.
+- [x] Nothing derived from `data` is cached across calls. The diff adds no state writes.
+- [x] Weights: unchanged. The router is still the BF16 hi + lo split built in prepare(), with FP32 accumulation. The bf16 weights are untouched.
+- [x] Activations BF16 where SGLang keeps BF16. x is still bf16 into the kernel, and the router output is fp32 as before.
+- [x] n/a: attention. This problem has no attention, KV cache or queries; it is dense projections only.
+- [x] No timing patches, harness frames/I/O/secrets, module edits, reference import, subprocesses or network. The diff touches only launch-config constants.
+- [x] All work happens inside the timed call, with no output caching or replay. The memset and kernel run on every call, and prepare() only warms compiles on synthetic x.
+- [x] First line is still `# okc: problem=muse_bf16_proj`. No triton.autotune.
+
+okc_lint output:
+
+```
+CLEAN: /home/user/git/musespark/.worktrees/muse_bf16_proj/router-splitk32-small-m-all-loads-in-flight/muse_bf16_proj/submission.py
+```
+
+`python3 -I -m py_compile` passed. The `__pycache__` it left in the worktree was removed.
