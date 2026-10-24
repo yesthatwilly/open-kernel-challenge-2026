@@ -44,8 +44,10 @@ depends_on: null
 priority: 2
 kind: primary
 controls_for: null
-review: required
+review: proceed
 status: queued
+review_at: 2026-10-24T183956Z
+review_companions: null
 ---
 
 # align-parallel-from-17-tokens
@@ -66,3 +68,28 @@ One constant plus its warm-up: lower ALIGN_FUSED_MAX_TOKENS from 32 to 16, so 17
 ## Risk
 
 A pure kernel-choice A/B at one shape: compare _align_parallel_kernel's bs=32 row with _align_small_kernel's 4.2-4.4 us in master runs. Headline effect is under noise and decode_32 Marlin rows are seed-noisy, so the kernel row is the evidence. If it wins, try 9..16 next. Overlap: the running cuda-dispatch-combine-pdl-verify replaces _align_parallel only at >32 (host branch on num_tokens > 32, independent of this constant? the implementer must keep that rewrite's gate untouched; here it is not present on master). The queued midm single-launch rewrite would replace the align at 2..32. The running swap-AB changes block_size_m at bs<=32 to 8*NT (32 at bs=32), so if it lands this would need a BSM=32 parallel variant (already compiled).
+
+## Adversarial review
+
+Reviewed 2026-10-24T183956Z by an adversarial subagent (model opus).
+
+**Verdict: proceed.** A clean, shape-only kernel-choice A/B at bs=32, with bitwise-identical outputs and no confounders; the headline will sit inside noise, so judge it on the bs=32 align kernel row (_align_small 4.2-4.4 us vs _align_parallel). Before building, add BSM=8 to _align_parallel's warm-up, because the hypothesis is wrong that 17..32 tokens always get block_size_m 16.
+
+### Justification
+Plausible. Master's profiles show _align_small_kernel at 1.4 us (bs=1), 2.7 us (bs=8), 2.8-2.9 us (bs=16) and 4.2-4.4 us (bs=32), so it grows with n on one program. _align_parallel_kernel measured 4.0 us at n=1024 (bs=128) and 6.9 us at n=2048 (bs=256), about 1.45 us per 512-route chunk on top of a fixed cost. With one chunk at n=256 that extrapolates to about 2.5 us, which matches the hypothesis's 2.5-3 us. The saving is about 1.5-1.9 us of a 200 us shape (about 0.8%, against a 1.5% noise band), so `expected` is honest that the align row is the evidence. Outputs are identical: both kernels place each expert's routes in ascending route order, with the same capacity, sentinel fill and block_experts layout, so Marlin, silu and post-norm see byte-identical inputs and should not move. Weakest link: the extrapolation assumes per-chunk cost is linear and the parallel kernel's fixed cost stays well below _align_small's at bs=32. The parallel kernel runs two dependent passes per program (count, then place) plus a 736-slot tail loop of 2 chunks on the last program, with half of each 512-lane chunk masked, so a result of about 3.5-4 us (a wash) is a real possibility. A smaller factual error: the change paragraph says block_size_m at 17..32 is SGLang's pick of 16, but _block_size_m(M, 32) returns 8 for M <= 28 (28*8/32/8 = 0.875 < 0.9) and 16 only for 29..32. The prepare() warm-up compiles _align_parallel only for BSM 16/32/48/64, so any M in 17..28 would JIT-compile BSM=8 on first call. No scored shape or test (1, 4, 8, 16, 32, 33, 128, 256, 257) hits 17..28, so this is harmless for the run but is a latent first-call compile.
+
+### Confounders on the current kernel
+- triton-map-align-small-m-port / triton-map-align-on-block-m-restack: owns _align_small_kernel, which is the control arm of this A/B, not a confounder. Removing it would make the comparison moot (SGLang's align would run instead).
+- align-parallel-per-expert-verify: owns _align_parallel_kernel, the treatment arm. Its ALIGN_PAR_CHUNK=512 / 8 warps tuning was chosen for n >= 1024. At n=256 half of every chunk is masked, so the result measures 'parallel kernel as tuned for verify' and not the best a parallel align could do at bs=32. Gain or loss is still unambiguous for this constant.
+- marlin-block-m-two-smaller-on-postnorm: no interaction. Its pick applies only at num_tokens >= 128, so bs=32 keeps SGLang's 16.
+- post-expert-norm-triton-small-m: no interaction. bs=32 is at SMALL_M_POST_NORM and runs SGLang's post-norm either way, and local_ids is identical from both align kernels.
+- sglang-marlin-path-parity: base pipeline. Marlin consumes identical sorted_ids/block_experts/n_padded, so Marlin time should not change; any Marlin-row movement at bs=32 is seed noise.
+
+### Interference and A/B needs
+No companion needed. Both arms already exist on master and are profiled at bs=32 in the same harness: _align_small 4.2-4.4 us in jobs 45eacf4ca2e849d2 and 3cabc739f1af493e. The per-kernel row in this run gives a direct, unconfounded A/B: if _align_parallel_kernel at bs=32 is below about 3.8 us it is a gain, and above about 4.4 us it is a loss. Neither reading depends on a landed hypothesis being present or tuned differently. A revert companion would not help (reverting either align hypothesis removes one arm), and a tune companion (for example CHUNK=256 at small n) is a follow-up hypothesis, not a disambiguator. The headline cannot resolve 0.8%, which the hypothesis already accepts.
+
+### Open questions
+- If _align_parallel at n=256 comes in at about 3.5-4 us (a wash), is the fixed cost the two-pass structure or the half-masked 512-wide chunk? A follow-up could pick CHUNK = next_pow2(n) capped at 512 (256 here) and/or 4 warps at n <= 256.
+- Do 29..32 (bsm 16) and 17..28 (bsm 8) behave differently on the parallel kernel? Only bs=32 is scored, so bsm=8 timing stays unmeasured.
+- If marlin-two-class-block-m-decode32 or the swap-AB rewrites land, block_size_m at bs=32 changes (to 32, or 8*NT). The BSM=32 parallel variant is already compiled, but the win should be re-read on the new base.
+
