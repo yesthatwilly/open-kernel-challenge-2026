@@ -60,9 +60,16 @@ priority: 1
 kind: primary
 controls_for: null
 review: proceed
-status: queued
+status: running
 review_at: 2026-10-24T104215Z
 review_companions: null
+stage: claimed
+claimed_at: 2026-10-24T104215Z
+base_sha: ed35ab329cbc75571509536e87957f38db9f4df0
+base_blob: de98030423860cfc9507b61d19f82a416223a23d
+branch: hyp/muse_decode_layer/fa3-hdim128-head-pairing-batched
+worktree: .worktrees/muse_decode_layer/fa3-hdim128-head-pairing-batched
+mode: null
 ---
 
 # fa3-hdim128-head-pairing-batched
