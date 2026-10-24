@@ -67,8 +67,8 @@ submission_sha256: 3f698cb9766a8e912fdb25f631dabc1758833a909fdd557d98fdb84be481c
 norm_sha256: 4ee52d6fe57a4f257f0af76d6362e95894bab1c1ff971fed3200d5e0b8f8cdde
 submission_blob: 7377122bbca5108db2e61fbac020db0883b446cb
 lint_warnings: 19
-attempt_file: 2026-10-24T224625Z-check-l2-prefetch-o-pooler-during-sliding-attention.md
-prepared_at: 2026-10-24T224625Z
+attempt_file: 2026-10-24T231259Z-check-l2-prefetch-o-pooler-during-sliding-attention.md
+prepared_at: 2026-10-24T231259Z
 ---
 
 # l2-prefetch-o-pooler-during-sliding-attention
