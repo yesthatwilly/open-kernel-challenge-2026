@@ -51,7 +51,7 @@ review: proceed
 status: running
 review_at: 2026-10-24T165124Z
 review_companions: null
-stage: implemented
+stage: dispatched
 claimed_at: 2026-10-24T165146Z
 base_sha: 6d0eb9a85a363fc7597458f944be4ea123bab837
 base_blob: d9a9375ef4721ab9b28cc9d6364c92e67c7ccc59
@@ -66,6 +66,8 @@ submission_blob: 56c4644f6fa8d38d3b76fbcabd0fd3a5d99f7f8f
 lint_warnings: 8
 attempt_file: 2026-10-24T165402Z-check-w2-l2-prefetch-decode1.md
 prepared_at: 2026-10-24T165403Z
+job: ac6897f284934dad
+dispatched_at: 2026-10-24T165448Z
 ---
 
 # w2-l2-prefetch-decode1
