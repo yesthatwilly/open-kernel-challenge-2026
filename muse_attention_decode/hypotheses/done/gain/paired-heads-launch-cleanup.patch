@@ -1,0 +1,141 @@
+diff --git a/muse_attention_decode/submission.py b/muse_attention_decode/submission.py
+index bc007e6..60fc664 100644
+--- a/muse_attention_decode/submission.py
++++ b/muse_attention_decode/submission.py
+@@ -72,10 +72,14 @@ def _pre_attention_kernel(
+     q_out_ptr, k_cache_ptr, v_cache_ptr,
+     qkv_stride,
+     HQ: tl.constexpr, HKV: tl.constexpr, D: tl.constexpr, ROPE: tl.constexpr, EPS: tl.constexpr,
++    PAIRED: tl.constexpr, G: tl.constexpr,
+ ):
+     """One program per (token, head). Heads 0..HQ-1 are queries; HQ..HQ+HKV-1 are the new keys,
+     whose program also stores the matching value head. The q and k heads are contiguous in the
+-    fused row, so head h starts at h*D for both."""
++    fused row, so head h starts at h*D for both. When PAIRED, q_out is the zero-padded
++    [tokens, HQ, 2*D] FA3 query: query h writes its D values into the half (h // G) % 2 (its KV
++    head's half of the paired 128-byte row) and D FP8 zeros into the other half, so the program
++    owns its whole padded row and every byte of it is written on every call."""
+     t = tl.program_id(0)
+     h = tl.program_id(1)
+     HALF: tl.constexpr = D // 2
+@@ -107,7 +111,14 @@ def _pre_attention_kernel(
+ 
+     if h < HQ:
+         # Query, rounded to FP8 E4M3 for FA3 (the 5.473 factor is folded into the softmax scale).
+-        out = q_out_ptr + (t.to(tl.int64) * HQ + h) * D
++        if PAIRED:
++            half = (h // G) % 2
++            qrow = q_out_ptr + (t.to(tl.int64) * HQ + h) * (2 * D)
++            out = qrow + half * D
++            zj = tl.arange(0, D)
++            tl.store(qrow + (1 - half) * D + zj, tl.zeros([D], dtype=tl.float32).to(tl.float8e4nv))
++        else:
++            out = q_out_ptr + (t.to(tl.int64) * HQ + h) * D
+         tl.store(out + even, xe.to(tl.float8e4nv))
+         tl.store(out + odd, xo.to(tl.float8e4nv))
+     else:
+@@ -125,6 +136,29 @@ def _pre_attention_kernel(
+         tl.store(vout + j, (v / v_scale).to(tl.float8e4nv))
+ 
+ 
++@triton.jit
++def _paired_norm_gate_kernel(
++    attn_ptr, qkv_ptr, out_ptr,
++    attn_stride_t, attn_stride_h, qkv_stride,
++    HQ: tl.constexpr, HKV: tl.constexpr, D: tl.constexpr, G: tl.constexpr, EPS: tl.constexpr,
++):
++    """Full-layer epilogue for the paired path, one program per (token, query head): reads head
++    h's own half (h // G) % 2 of FA3's [tokens, HQ, 2*D] output (the other half is the other KV
++    head's P@V and is never read), applies the scaleless RMSNorm (eps inside the sqrt of the mean
++    of D squares, fp32) times sigmoid(gate) and stores bf16 into the [tokens, HQ*D] output."""
++    t = tl.program_id(0)
++    h = tl.program_id(1)
++    j = tl.arange(0, D)
++    half = (h // G) % 2
++    src = attn_ptr + t.to(tl.int64) * attn_stride_t + h * attn_stride_h + half * D
++    x = tl.load(src + j).to(tl.float32)
++    r = 1.0 / tl.sqrt(tl.sum(x * x, axis=0) / D + EPS)
++    gate = tl.load(qkv_ptr + t.to(tl.int64) * qkv_stride + (HQ + 2 * HKV) * D + h * D + j)
++    gate = gate.to(tl.float32)
++    y = x * r * tl.sigmoid(gate)
++    tl.store(out_ptr + (t.to(tl.int64) * HQ + h) * D + j, y.to(tl.bfloat16))
++
++
+ def kernel_fn(data: Inputs) -> torch.Tensor:
+     cfg = data["config"]
+     batch, length = cfg["batch"], cfg["q_len"]
+@@ -135,34 +169,34 @@ def kernel_fn(data: Inputs) -> torch.Tensor:
+     theta = cfg["rope_theta"]
+ 
+     k_cache, v_cache = data["k_cache"], data["v_cache"]
+-    q = torch.empty((tokens, hq, d), dtype=FP8, device=device)
++    window = cfg["window"]
++    # Full layers: pair the two KV heads of each token into one 128-byte FP8 row (heads 2s and
++    # 2s+1 are adjacent halves of it) so FA3 gathers one row per token instead of two. Each
++    # query sits in its own head's half of a zero-padded 128-wide query, so the zero half adds
++    # exactly 0 to every logit; FA3 maps query head h to super-head h // (2G), which keeps the
++    # original grouping. The pre-attention kernel writes that padded query directly and a Triton
++    # epilogue reads each head's half of FA3's output, so no pad/un-pad copies are launched. This
++    # one config-only predicate selects both the query layout and the FA3/epilogue branch.
++    paired = window == 0 and hkv % 2 == 0
++    g = hq // hkv
++    q = torch.empty((tokens, hq, 2 * d if paired else d), dtype=FP8, device=device)
+     inv_freq = _inv_freq(theta, d, device) if theta else data["k_scale"]  # unused when ROPE is off
+     _pre_attention_kernel[(tokens, hq + hkv)](
+         qkv, data["positions"], data["cache_loc"], inv_freq, data["k_scale"], data["v_scale"],
+         q, k_cache, v_cache,
+         qkv.stride(0),
+-        HQ=hq, HKV=hkv, D=d, ROPE=bool(theta), EPS=RMS_EPS,
++        HQ=hq, HKV=hkv, D=d, ROPE=bool(theta), EPS=RMS_EPS, PAIRED=paired, G=g,
+         num_warps=1,
+     )
+ 
+-    window = cfg["window"]
+-    # Full layers: pair the two KV heads of each token into one 128-byte FP8 row (heads 2s and
+-    # 2s+1 are adjacent halves of it) so FA3 gathers one row per token instead of two. Each
+-    # query sits in its own head's half of a zero-padded 128-wide query, so the zero half adds
+-    # exactly 0 to every logit; FA3 maps query head h to super-head h // (2G), which keeps the
+-    # original grouping. The judge's scheduler_metadata was built for the unpaired geometry, so
++    # The judge's scheduler_metadata was built for the unpaired geometry, so on the paired path
+     # it is not passed (FA3 builds its own schedule from the paged lengths).
+-    paired = window == 0 and hkv % 2 == 0
+     if paired:
+-        g, s = hq // hkv, hkv // 2
++        s = hkv // 2
+         pages, page_size = k_cache.shape[0], k_cache.shape[1]
+         k_attn = k_cache.view(pages, page_size, s, 2 * d)
+         v_attn = v_cache.view(pages, page_size, s, 2 * d)
+-        q_attn = torch.zeros((tokens, hq, 2 * d), dtype=FP8, device=device)
+-        qp = q_attn.view(tokens, s, 2, g, 2 * d)
+-        qv = q.view(tokens, s, 2, g, d)
+-        qp[:, :, 0, :, :d] = qv[:, :, 0]
+-        qp[:, :, 1, :, d:] = qv[:, :, 1]
++        q_attn = q
+         attn_heads = s
+         metadata = None
+     else:
+@@ -190,14 +224,16 @@ def kernel_fn(data: Inputs) -> torch.Tensor:
+     if isinstance(out, tuple):
+         out = out[0]
+     if paired:
+-        # Keep each query's own half of FA3's 128-wide output; the other half is the other
+-        # head's P@V and is discarded.
+-        attn = torch.empty((tokens, hq, d), dtype=torch.bfloat16, device=device)
+-        a = attn.view(tokens, s, 2, g, d)
+-        o = out.view(tokens, s, 2, g, 2 * d)
+-        a[:, :, 0] = o[:, :, 0, :, :d]
+-        a[:, :, 1] = o[:, :, 1, :, d:]
+-        out = attn
++        # Each query's own half of FA3's 128-wide output, normalized and gated in one launch.
++        attn = out.view(tokens, hq, 2 * d)
++        o = torch.empty((tokens, hq * d), dtype=torch.bfloat16, device=device)
++        _paired_norm_gate_kernel[(tokens, hq)](
++            attn, qkv, o,
++            attn.stride(0), attn.stride(1), qkv.stride(0),
++            HQ=hq, HKV=hkv, D=d, G=g, EPS=RMS_EPS,
++            num_warps=1,
++        )
++        return o.view(batch, length, hq * d)
+     gate = qkv[:, (hq + 2 * hkv) * d:]
+     o = rms_norm_gate(out.reshape(tokens, hq * d).to(torch.bfloat16), gate, None, head_dim=d, eps=RMS_EPS,
+                       has_norm=True)
