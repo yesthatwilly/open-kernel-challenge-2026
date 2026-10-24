@@ -71,8 +71,10 @@ kind: rewrite
 controls_for: null
 rewrite_stage: 2
 replaces: Marlin w13+w2 (moe_wna16_marlin_gemm x2) at every prefill T
-review: required
+review: proceed
 status: queued
+review_at: 2026-10-24T100201Z
+review_companions: null
 ---
 
 # experts-triton-w4a16-swapab-reglhs
@@ -104,3 +106,26 @@ shape (profile top_kernels) against the incumbent and the speed-of-light floor, 
 2. at or below the incumbent kernels' time on the target shapes;
 3. within ~1.5x of the floor on the target shapes, and the headline CI clears 1.0 (promotable).
 The next stage is minted with `--kind rewrite --depends-on <this slug> --stage N+1`.
+
+## Adversarial review
+
+Reviewed 2026-10-24T100201Z by an adversarial subagent (model opus).
+
+**Verdict: proceed.** This is a sound stage-2 rewrite: putting the dequantized weight tile on the register-LHS side of an MMAv3 dot is the standard Hopper mixed-precision pattern, the nibble reorder is a lossless repack, and the profile rows (_moe_nvfp4_gemm_kernel vs Marlin per shape) will show which milestone it reached. There are two sharp notes. The turn_1 premise that the change 'halves the dequant passes' is mostly wrong, and splitting each K step into two halves doubles the per-element scale gather and convert relative to stage 1. Either could hide the layout-conversion savings, so make the cheap fixes below while building.
+
+### Justification
+Mechanism. On sm_90, wgmma takes A from registers (opIdx 0, parent mma v3) and B only from smem. Stage 1 put the in-register dequantized weight on the B side (tl.trans(tl.interleave(...))), which forces a local_store/convert of 8192 bf16 per K step. At BLOCK_M 16/32 (turn_1) it was also below wgmma's M=64, so it ran mma.sync. Swapping to acc[W, T] += W[128, k] @ A_t[k, T] makes the expert N the MMA M side (128 = 2 x m64 per warpgroup) and the tokens the MMA N side (n 64/128 is legal). The nibble reorder (byte i = k0+i low and k0+64+i high per 128-chunk) lets the same code byte feed both half-dots at the same layout position, so no interleave or trans is needed. That is the right design, and the scale indexing (k0/16 + i//16 for the low half, +4 for the high half) checks out. Profile support. Stage 1 measured 2026/2008 us at turn_1, 3341/3457 us at turn_4 and 13.3-14.4 ms at first_turn. Marlin is at 730/681, 2248/2201 and 10.2-12.0 ms. The weight-stream floor is ~190 us (864 MiB), and first_turn is ~1.65 TFLOP, so ~1.7 ms at 989 TFLOP/s and ~2.5 ms at a realistic 660. The losses shrinking with T (0.46x to 0.90x) fit a per-tile overhead, so the expected directions (first_turn faster, turn_4 to parity, turn_1 still slower) are consistent with TASK's weights and floors. The 138-weight sliding first_turn shape dominates its load, so first_turn is where the headline can move. Weakest links. (1) turn_1 attribution: at T=753 stage 1 already ran BLOCK_M 32 against ~24 rows per expert, so most experts were already dequantized once. Going to BLOCK_T 64 does not halve the passes there (it does at turn_4, where 64 becomes 128 against ~94 rows). Any turn_1 change will come from the removed convert/interleave/trans and the change of MMA path, not from fewer passes. (2) Stage 1 loaded one [BLOCK_N, 32] scale tile per 64 k, one scale load per byte shared by both nibbles. Stage 2 loads two [128, 64] gather tiles per 128 k, one per element, and repeats fp8->fp32, *2^119 and ->bf16 on each. That doubles the scale-gather LSU work and the scale-convert ALU work per weight element. Also, a 1-byte gather with constancy 16 cannot be staged with cp.async (4/8/16-byte only), so it is probably a synchronous ld.global on every K step in both stages, an unpipelined latency nobody has measured. (3) first_turn ALU vs MMA. Per 128x128 tile per 128-k step, the dequant is ~16K elements at ~8-12 int/bf16 ops each, ~0.6 us of one SM's ALU, about the same as the 4.2 MFLOP MMA at peak (~0.56 us/SM). BLOCK_T 128 re-dequantizes each weight tile 4x per expert. If Triton serializes a register-A wgmma (wait 0 before the next dequant), first_turn lands near (ALU + MMA) rather than max(ALU, MMA). That is still a plausible 6-9 ms, but the 9 ms milestone is not safe and the ~2.5 ms floor is out of reach for this design without BLOCK_T 256 or warp specialization. Cheap fixes while building, all within this hypothesis's area: compute sb once on a compact [128, 8] (8-byte-per-row, cp.async-able) scale tile per 128-chunk and broadcast it to each half, if Triton keeps the broadcast in the dot-op layout (record in the notes whether it does). Do not mutate weights['w13'] / ['w2'] in place: build the reordered bank as a new tensor.
+
+### Confounders on the current kernel
+- sglang-pipeline-parity (the only landed hypothesis): it supplies the local-id remap (-1 for non-local), moe_align_block_size, silu_and_mul and the post-expert weighted sum around the expert GEMMs. Stage 2 keeps all of these unchanged from stage 1 and changes only the GEMM kernel, its tile pick and the weight packing. The rewrite is judged on _moe_nvfp4_gemm_kernel's own us against the Marlin rows from the same parity base, so the parity change cannot pass for an effect of the rewrite. The one coupling is moe_align padding to BLOCK_T, which changes the -1/zero-store block count (ZERO_NONLOCAL_W2 writes ~T*7 x 4096 bf16 of zeros, ~200 us at first_turn). It counts inside the kernel's time in both stages, so read it as a fixed cost, not a confounder.
+
+### Interference and A/B needs
+No companions. This is a rewrite stage judged on the replaced kernel's own profile time per shape against Marlin and the floor. The per-shape _moe_nvfp4_gemm_kernel rows of this run against stage 1's (2026/3341/13524 us) and Marlin's attribute the result directly. No landed hypothesis tunes the same kernel: the block-m Marlin knobs were neutral or regressed and never landed, and the parity base is common to both sides. A control that isolates the nibble reorder or the swap from the tile change would not change the next-stage decision. With 3 prefill checks left, the next stage is the follow-up.
+
+### Open questions
+- Does the judge's Triton version keep a computed bf16 LHS in registers for ttng.warp_group_dot (no local_alloc of the LHS)? This node has no GPU, but triton.compile with a GPUTarget('cuda', 90, 32) may still emit TTGIR offline if ptxas is installed. Worth trying, as the hypothesis asks.
+- Is the register-A wgmma issued async with the next K step's dequant overlapping, or does Triton insert warp_group_dot_wait 0 after each of the two half-dots? The first_turn time per tile tells which (near ALU+MMA means serialized).
+- Is the [128, 64] i//16 scale gather pipelined or a synchronous per-iteration global load? If the turn_1 row barely moves from 2026 us, suspect the scale path before the MMA path.
+- With soft routing, how many experts exceed 64 rows at turn_1 or 128 at turn_4 (a second, mostly-padded token tile that re-dequantizes)? The routing histogram from one test run would settle whether BLOCK_T 64 is right at T=753.
+- Next-stage candidates if first_turn misses 9 ms: BLOCK_T 256 at first_turn (acc 128x256 fp32 = 128 regs/thread at 8 warps) to halve redundant dequant, or skipping the W2 zero-store for -1 blocks if the weighted sum can ignore them via slot_expert_ids.
+
