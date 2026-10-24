@@ -84,13 +84,19 @@ review: proceed
 status: running
 review_at: 2026-10-24T172640Z
 review_companions: null
-stage: claimed
+stage: implemented
 claimed_at: 2026-10-24T172706Z
 base_sha: 41c4efc3448061b0f924c89315352fe690c80db8
 base_blob: 635cfee3ac2c3f7c66840b8c8a082cad2fa41a68
 branch: hyp/muse_prefill_layer/attn-full-prefill-cuda-fp8-exp-offload
 worktree: .worktrees/muse_prefill_layer/attn-full-prefill-cuda-fp8-exp-offload
 mode: null
+implemented_at: 2026-10-24T175053Z
+impl_commit: cfd635fc9a176e85ec7e91cf54a476c2cacb8c49
+submission_sha256: 3e661a696bc95cba2e2082d63c623d26efbf6161dbfc19ec010c9d06ebe1f608
+norm_sha256: b9ee3e0af75dc96ff4c926fc1974716dad552f9dcd6f502f2a8c4819000aff2b
+submission_blob: 60d698d8147fbb03ce61d68536555ee179a28611
+lint_warnings: 11
 ---
 
 # attn-full-prefill-cuda-fp8-exp-offload
@@ -148,3 +154,72 @@ No companions. Nothing has landed, so there is nothing to ab-revert or ab-tune. 
 - Does FA3 here actually run its FP8 hdim-64 path with IntraWGOverlap and pingpong? A quick ncu of FA3's MUFU pipe utilisation (expect ~60% if it is exp-bound) would confirm the mechanism before many stages are invested; if MUFU is well below that, the bound is elsewhere (sync/latency) and the offload buys less.
 - Stated register/smem budget for 2 x 64-row consumers plus producer at 176 keys/stage with V transposed in smem, and whether 3 x 64 fits without spills (the log line should print it, as planned).
 
+
+## Implementation notes
+
+Only `muse_prefill_layer/submission.py` changed, in the worktree, uncommitted. The diff is +959/-17 lines.
+
+- **New CUDA section** (before `prepare`). It is one source, `_ATTN_CUDA`, compiled at import by `load_inline` into two separate modules: `USE_WGMMA=1` ("wgmma") and `USE_WGMMA=0` ("mma"). A build error in one module cannot take down the other. Each build logs `[cuda full attn] <backend>: load_inline compiled in Xs`, or `FAILED` with the last 3000 characters of the error.
+  - **`attn_fwd_kernel<SW>`**: 256 threads. One CTA per (16-token block x KV head x split), giving 128 GQA-packed rows (8 heads per KV row). Warp w owns tokens 2w and 2w+1, so the causal mask applies per token.
+    - Tiles are 64 keys, loaded through a 4-stage cp.async ring of 16-byte page-size-1 gathers. The page-table entry for the next tile is prefetched into a register.
+    - K lands in the no-swizzle core-matrix layout (LBO 128, SBO 512).
+    - V lands row-major. All threads then transpose it into Vt in the same core-matrix layout, with keys permuted so that the S accumulator fragment of QK^T is the A fragment of PV directly: no P shuffles, only E4M3 packs. Store order is rotated per lane to spread banks.
+    - S = QK^T and O += PV use FP8 E4M3 with fp32 accumulation. The wgmma module uses `wgmma.mma_async m64n64k32` RS, with Q and P from registers and B from a smem descriptor, plus `fence.proxy.async` and wgmma fence/commit/wait 0. The mma module uses `mma.sync m16n8k32 e4m3` with the same layouts and the same softmax.
+    - Softmax is online in exp2, with FA3's FP8 max offset: P = 2^(x - m + 8), so P sits in [0, 256] in E4M3. O and l carry the same factor, so it cancels. l is summed in fp32.
+  - **Software exp `exp2_sw`**: the review's required form, FP32 FFMA only, no HFMA2. Clamp to [-127, 0]. Floor with `__fadd_rd(x, 1.5*2^23 + 8)`, the FADD.RM magic, which also folds in the +8 offset. Then f = x - floor exactly, a degree-3 minimax polynomial (3 FFMA), and an integer add of `t << 23` into the exponent. The exponent field stays in [8, 135], so it never goes denormal or NaN.
+    - The coefficients were fitted offline in numpy. A float32 emulation gives max rel err 7.5e-5 on [-126, 0] (limit 2^-11 = 4.9e-4). -inf, -200 and -127 give 2^-119; tiny positive inputs give 255.98.
+    - The offload is constexpr `SW` columns of every 8, spread Bresenham-style. `EXP_SW_NB = 2` (25%) matches the reviewer's 25-30% balance estimate. It was not measured.
+  - **Split-KV from config**: `_attn_splits` = ceil(8 x SMs / items), capped at 16 and at max_pages/256. That gives turn_1 full 96 items -> 11 splits, turn_4 -> 3, first_turn -> 1, the ctx 3000 test -> 11 and the b3 L200 test -> 14. Each split stores an unnormalized fp32 partial (O, m, l). `attn_combine_kernel` merges them by log-sum-exp into bf16. Every key is still attended; splits only partition the key range. Empty splits store m = -inf and weigh 0.
+  - **Grid order**: the grid is ordered last token block first (longest-first), not persistent.
+- **`kernel_fn`**: the config-only `_full_attn_gate` takes window 0, page_size 1, kv_scale 1 and tp8 heads, and requires `state["full_attn"]` to be set. The gated path calls `_full_attn` (CUDA kernel, plus combine when split). Everything else calls FA3 exactly as master. The FP8 query is master's `q.view(T,16,64).to(FP8)`.
+- **`prepare`**: `_attn_prepare` does the following, then logs `[cuda full attn] ON: PATH CHOSEN: CUDA <backend> ...` or `[cuda full attn] OFF: <reasons>. PATH CHOSEN: FA3 (master)`.
+  - Prints regs, local (spill) bytes and CTAs/SM for both SW instances, plus smem.
+  - Runs the exp2 unit test over [-126, 0] (2M points) and the special inputs.
+  - Runs the self-check against FA3 and an FP64 reference on the FP8 values. The cases are b1 ctx3000 L753 (judge test), b3 ctx5000 L200 with outlier Q/K (judge test), b4 seq {0, 777, 5000, 80000} L753, b1 ctx0 L16384, and b2 {37, 1000} L211. SW = 2 runs on all of them, and SW = 0 also on the first two.
+  - Picks the first passing option, in this order: (wgmma, documented descriptor order), (wgmma, LBO/SBO swapped), mma.
+  - Times FA3 against the chosen backend at sw = 0 and sw = 2 with CUDA events on synthetic turn_1 and turn_4 full shapes. This is print-only and never routes anything.
+
+**Deviations, and why**
+1. **Not warp-specialized or persistent.** There is no producer warpgroup, no mbarriers and no intra-WG overlap. All threads issue cp.async, with `__syncthreads`, and wgmma waits 0 after each GEMM. The grid is non-persistent, with longest-first blockIdx order relying on the hardware block scheduler. This keeps a blind-built stage 1 small enough to be right. Overlap, ping-pong and the persistent schedule are levers for stage 2. As a result M1 (beating FA3) is less likely in this stage than the md's M2 math assumes.
+2. **Two backends instead of one.** The mma.sync module is a correctness backstop. It also diagnoses the wgmma pieces: if mma passes and wgmma fails, the fault is in the descriptor or fragment code. It is likely slower than FA3.
+3. **The descriptor's LBO/SBO order is a runtime flag** (`desc_swap`). prepare() tries the swapped order only if the documented order (LBO = K-direction 128 B, SBO = N-direction 512 B, as in CUTLASS's INTERLEAVE K-major layout) fails. Both orders stay inside the CTA's smem, so neither can fault.
+4. **Self-check pass rule.** A case passes if it is finite, and either (a) within rel L2 1e-2 and worst row 5e-2 of FA3, or (b) no worse than FA3 against the FP64 reference (1.25x + 2e-3, and 1.25x + 1e-2 for the worst row). Rule (b) protects against the case where FA3's own P handling differs, since FA3's max-offset behaviour on this build is unverified.
+5. **The md's planned turn_4 timing case** is replaced by synthetic turn_1 and turn_4 full shapes, eager with warm L2, print-only.
+
+**Uncertainties (nothing could be compiled or run here)**
+- That mma.sync m16n8k32 .e4m3 compiles and runs on sm_90a (PTX lists it as sm_89+).
+- The wgmma register-A fragment layout. It is assumed to equal mma.m16n8k32's for 8-bit types.
+- The wgmma RS e4m3 syntax `d, {a}, desc, p, 1, 1`.
+- Whether `fence.proxy.async` is sufficient for cp.async-written smem.
+- A fault in the wgmma kernel would be a sticky CUDA error and would fail the whole run. The fallback cannot catch that.
+- Read the log tail before judging. A `PATH CHOSEN: FA3` or `OFF` line means the run timed master.
+
+## Rules check
+
+Checked against `git -C .worktrees/muse_prefill_layer/attn-full-prefill-cuda-fp8-exp-offload diff`:
+
+- [x] CUDA-graph capturable. The new path has no `.item()`, `.cpu()`, `synchronize()` or tensor prints. All of those are in prepare()-only helpers, and lint confirms none is reachable from kernel_fn. Splits, grid and workspace sizes come from config, `page_table.shape` and the SM count, which prepare() stores in state. Per-item key counts are read on the device. Allocations are shape-sized `torch.empty`.
+- [x] Nothing derived from `data` is cached across calls. The state holds only the compiled module, the descriptor flag and the SM count.
+- [x] Weights untouched. n/a for attention; no weight is repacked or changed in precision.
+- [x] Activations are BF16 where SGLang keeps BF16. The KV cache stays FP8 and is read as stored. Queries are E4M3, exactly master's `q.to(FP8)`. P is E4M3, as FA3 does, with FA3's max offset 8. The exp is fp32 (rel err 7.5e-5 by emulation). The output is bf16 [T, 16, 64], as FA3 returns.
+- [x] Attention sees every key: every key in [0, position] on full layers. Split-KV partitions the key range and combines it exactly by log-sum-exp. There is no skipping, top-k or weight-based dropping. Masked keys are only the causal ones beyond the position.
+- [x] No timing patches, harness frames or I/O, secrets, module edits, reference import, subprocesses or network. `load_inline` builds the module in-process, the same precedent attention_decode used on the judge. CUDA events are used print-only in prepare().
+- [x] All work happens inside the timed call; no output caching or replay. prepare() runs only self-checks and print-only timing on synthetic data.
+- [x] First line `# okc: problem=muse_prefill_layer` kept; no `triton.autotune` added.
+
+Lint output (`okc_lint.py ... --problem muse_prefill_layer`):
+```
+warn  host-sync    L468: torch.cuda.synchronize()  (outside kernel_fn's call graph; fine in prepare())
+warn  host-sync    L510: torch.cuda.synchronize()  (outside kernel_fn's call graph; fine in prepare())
+warn  host-sync    L1350: torch.cuda.synchronize()  (outside kernel_fn's call graph; fine in prepare())
+warn  host-sync    L1365: torch.cuda.synchronize()  (outside kernel_fn's call graph; fine in prepare())
+warn  host-sync    L1396: torch.cuda.synchronize()  (outside kernel_fn's call graph; fine in prepare())
+warn  host-sync    L1431: torch.cuda.synchronize()  (outside kernel_fn's call graph; fine in prepare())
+warn  host-sync    L1444: torch.cuda.synchronize()  (outside kernel_fn's call graph; fine in prepare())
+warn  host-sync    L1490: torch.cuda.synchronize()  (outside kernel_fn's call graph; fine in prepare())
+warn  host-sync    L1496: torch.cuda.synchronize()  (outside kernel_fn's call graph; fine in prepare())
+warn  host-sync    L1503: torch.cuda.synchronize()  (outside kernel_fn's call graph; fine in prepare())
+warn  host-sync    L1506: torch.cuda.synchronize()  (outside kernel_fn's call graph; fine in prepare())
+OK with warnings
+```
+`python3 -I -m py_compile` passed; `__pycache__` was removed from the worktree.
