@@ -56,7 +56,8 @@ controls_for: null
 rewrite_stage: 1
 replaces: Marlin w13 + silu_and_mul + Marlin w2 + SGLang align at T<=32
 review: required
-status: queued
+status: hold
+hold_reason: its parent, moe cuda-nvfp4-swapab-mma-persistent-small-m (8f198afc3bf14f6f), failed its tests on 2026-10-24; the minter made dispatch conditional on that parent winning
 ---
 
 # moe-small-t-cuda-swapab-port
