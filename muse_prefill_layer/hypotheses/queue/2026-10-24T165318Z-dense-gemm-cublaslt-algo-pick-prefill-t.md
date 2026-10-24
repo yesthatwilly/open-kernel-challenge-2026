@@ -54,9 +54,10 @@ priority: 2
 kind: primary
 controls_for: null
 review: proceed
-status: queued
+status: hold
 review_at: 2026-10-24T165736Z
 review_companions: null
+hold_reason: "reviewer: claim only after the bf16 precedent (bf16-cublaslt-algo-pick-in-prepare-m128-m256, 26a8be34a5eb4426) harvests; ~0.5-1.1% headline; time pooler keys with the router running or require a >=5% margin"
 ---
 
 # dense-gemm-cublaslt-algo-pick-prefill-t
