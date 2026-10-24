@@ -50,7 +50,7 @@ review: proceed
 status: running
 review_at: 2026-10-24T024326Z
 review_companions: [router-triton-hilo-fused-control-hybrid-cublas-above-m32]
-stage: implemented
+stage: dispatched
 claimed_at: 2026-10-24T024344Z
 base_sha: a392f0b6dcd3d6a023c67bc68ac2f22a8aeece5a
 base_blob: 3f59d3eeb5b8a1fe83df61cbea1c119b5926bc63
@@ -65,6 +65,8 @@ submission_blob: da55301de1e911aeab09878b0873809f544f436c
 lint_warnings: 0
 attempt_file: 2026-10-24T024843Z-check-router-triton-hilo-fused-control-splitk-all-m.md
 prepared_at: 2026-10-24T024843Z
+job: bd9fa14151644cee
+dispatched_at: 2026-10-24T024853Z
 ---
 
 # router-triton-hilo-fused-control-splitk-all-m
