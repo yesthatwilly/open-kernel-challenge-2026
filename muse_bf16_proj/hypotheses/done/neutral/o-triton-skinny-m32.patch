@@ -1,0 +1,94 @@
+diff --git a/muse_bf16_proj/submission.py b/muse_bf16_proj/submission.py
+index 2752a01..97cd491 100644
+--- a/muse_bf16_proj/submission.py
++++ b/muse_bf16_proj/submission.py
+@@ -1,6 +1,7 @@
+ # okc: problem=muse_bf16_proj
+ """Parity with SGLang's dispatch, plus one Triton skinny GEMM for the pooler at m <= 32
+-(hypothesis pooler-triton-skinny-m32).
++(hypothesis pooler-triton-skinny-m32) and, with BLOCK_N = 64, for the o projection at m <= 32
++(hypothesis o-triton-skinny-m32).
+ 
+ The four bf16 layers go through the same cuBLAS dispatch SGLang uses on H200
+ (`_bf16_gemm_dispatch_impl`), except the pooler at m <= 32: there cuBLAS picks a split-K nvjet
+@@ -55,6 +56,16 @@ POOLER_BLOCK_K = 256   # 8192 / 256 = 32 K steps per program
+ POOLER_NUM_WARPS = 4
+ POOLER_NUM_STAGES = 4  # 4 x (32 x 256 x 2 B) = 64 KB of weight in flight per program
+ 
++# The same kernel on the o projection (hypothesis o-triton-skinny-m32): only for m <= 32 at
++# exactly this [N, K]. o at m > 32 (the m = 33 test, m >= 128) keeps cuBLAS.
++O_SKINNY_MAX_M = 32
++O_N = 8192
++O_K = 1024
++O_BLOCK_N = 64    # 8192 / 64 = 128 programs: one wave on 132 SMs
++O_BLOCK_K = 256   # 1024 / 256 = 4 K steps per program, all covered by the 4-stage pipeline
++O_NUM_WARPS = 4
++O_NUM_STAGES = 4  # 4 x (64 x 256 + BLOCK_M x 256) x 2 B: 160 KB at BLOCK_M 16, 192 KB at 32
++
+ 
+ @triton.jit(do_not_specialize=["M"])
+ def _pooler_skinny_kernel(
+@@ -120,10 +131,42 @@ def _pooler_skinny_warmup(w: torch.Tensor) -> None:
+         _pooler_skinny_gemm(x, w)
+ 
+ 
++def _o_skinny_applies(x: torch.Tensor, cfg: Config) -> bool:
++    """Shape- and config-only guard for the Triton o path (m <= 32)."""
++    m, n, k = cfg["m"], cfg["n"], cfg["k"]
++    return (m <= O_SKINNY_MAX_M and n == O_N and k == O_K
++            and x.dim() == 2 and x.shape[0] == m and x.shape[1] == k and x.stride(1) == 1
++            and x.dtype == torch.bfloat16)
++
++
++def _o_skinny_gemm(x: torch.Tensor, w: torch.Tensor) -> torch.Tensor:
++    """x [m, 1024] bf16 @ w [8192, 1024] bf16 .T -> [m, 8192] bf16, m <= 32."""
++    m = x.shape[0]
++    block_m = 16 if m <= 16 else 32
++    out = torch.empty((m, O_N), dtype=torch.bfloat16, device=x.device)
++    _pooler_skinny_kernel[(O_N // O_BLOCK_N,)](
++        x, w, out,
++        m,
++        x.stride(0), w.stride(0), out.stride(0),
++        K=O_K, BLOCK_M=block_m, BLOCK_N=O_BLOCK_N, BLOCK_K=O_BLOCK_K,
++        num_warps=O_NUM_WARPS, num_stages=O_NUM_STAGES,
++    )
++    return out
++
++
++def _o_skinny_warmup(w: torch.Tensor) -> None:
++    """Compile both o specializations (BLOCK_M 16 and 32) for every m in 1..32 the timed path
++    can route here, on synthetic zeros, so a compile or shared-memory failure surfaces in
++    prepare() and no call to kernel_fn compiles. Outputs are dropped."""
++    for m in range(1, O_SKINNY_MAX_M + 1):
++        x = torch.zeros((m, O_K), dtype=torch.bfloat16, device=w.device)
++        _o_skinny_gemm(x, w)
++
++
+ def prepare(weights: Weights) -> dict:
+     """Called once, untimed. Keep the bf16 weights as they are (contiguous), add the router's
+     lossless-for-our-purpose hi/lo bf16 split, transposed for torch.mm, and pre-compile the
+-    pooler's Triton kernel."""
++    pooler's and the o projection's Triton kernels."""
+     state = {name: w.contiguous() for name, w in weights.items()}
+     router = weights["router"]
+     hi = router.to(torch.bfloat16)
+@@ -133,6 +176,10 @@ def prepare(weights: Weights) -> dict:
+     pooler = state["pooler"]
+     if pooler.shape == (POOLER_N, POOLER_K):
+         _pooler_skinny_warmup(pooler)
++    o = state["o"]
++    state["o_skinny"] = o.shape == (O_N, O_K)
++    if state["o_skinny"]:
++        _o_skinny_warmup(o)
+     return state
+ 
+ 
+@@ -141,6 +188,8 @@ def kernel_fn(data: Inputs, state: dict) -> torch.Tensor:
+     layer = cfg["layer"]
+     if layer == "pooler" and _pooler_skinny_applies(x, cfg):
+         return _pooler_skinny_gemm(x, state["pooler"])
++    if layer == "o" and state["o_skinny"] and _o_skinny_applies(x, cfg):
++        return _o_skinny_gemm(x, state["o"])
+     if layer != "router":
+         # The unpooler's slice is its first n rows (all of them above 8 tokens).
+         return _bf16_gemm_dispatch_impl(x, state[layer][: cfg["n"]], None)
