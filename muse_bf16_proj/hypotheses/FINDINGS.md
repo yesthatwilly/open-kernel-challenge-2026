@@ -1,6 +1,6 @@
 # muse_bf16_proj findings
 
-Regenerated 2026-10-24T015224Z by `churn.py index`. Read this before writing a hypothesis for muse_bf16_proj.
+Regenerated 2026-10-24T021809Z by `churn.py index`. Read this before writing a hypothesis for muse_bf16_proj.
 
 ## Current best
 
@@ -44,6 +44,16 @@ Where the time goes (per scored shape, top kernels):
 ### bf16 GEMM dispatch
 - **sglang-gemm-dispatch-parity** → gain (gain), 1.0022x — gained on router decode_16, decode_32, verify_16, verify_32; o verify_32. Replace the starter's plain x @ W[:n].T with the exact dispatch SGLang's kernel uses: sglang.srt.layers.quantization.unquant._bf16_gemm_dispatch_impl(x, W[:n], 
 
+### pooler GEMM
+- **pooler-triton-skinny-m32** → gain (gain), 0.9983x — gained on pooler decode_1, decode_16, verify_1, verify_16; lost on qkv_gate decode_1; unpooler decode_1; pooler decode_32. For layer == 'pooler' and m <= 32 only, replace the _bf16_gemm_dispatch_impl call in kernel_fn with one Triton kernel, a split-K-free skinny GEMM that streams t
+
+### router GEMM
+- **router-hilo-at-m8** → gain (gain), 1.0219x — gained on unpooler verify_1; router verify_1. In kernel_fn's router branch, lower the threshold at which the router switches from F.linear(x.float(), router) to the BF16 hi + lo pair: change ROUTER_FP32_MAX
+- **router-triton-hilo-fused** → gain (gain), 0.9402x — gained on router decode_1, decode_16, decode_32, verify_1; qkv_gate verify_1; o verify_1, verify_16; unpooler verify_1; lost on router verify_16, verify_32. Replace the whole router branch of kernel_fn (both the F.linear fp32 path at m<=8 and the two torch.mm hi/lo GEMMs + add above 8) with one Triton kernel launch 
+
+### unpooler GEMM
+- **unpooler-slice-triton-gemv** → regression (regression), 0.8801x — gained on o verify_1; lost on unpooler decode_1, verify_1. For layer == 'unpooler' and m <= 8 only (the sliced case: n=1024, k=4096, an 8.4 MB weight read), replace the _bf16_gemm_dispatch_impl(x, W[:1024], None) call i
+
 ## Open follow-ups
 
 - none
@@ -61,7 +71,3 @@ Where the time goes (per scored shape, top kernels):
 - queue: unpooler-full-triton-skinny-m32 [unpooler GEMM] p3 queued
 - queue: qkv-gate-triton-skinny-m32 [qkv GEMM] p3 queued
 - queue: router-triton-hilo-fused-control-splitk-all-m [router GEMM] p1 queued
-- running: router-hilo-at-m8 [router GEMM] p1 running
-- running: router-triton-hilo-fused [router GEMM] p1 running
-- running: pooler-triton-skinny-m32 [pooler GEMM] p2 running
-- running: unpooler-slice-triton-gemv [unpooler GEMM] p2 running

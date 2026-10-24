@@ -1,6 +1,6 @@
 # muse_decode_layer findings
 
-Regenerated 2026-10-24T015224Z by `churn.py index`. Read this before writing a hypothesis for muse_decode_layer.
+Regenerated 2026-10-24T021809Z by `churn.py index`. Read this before writing a hypothesis for muse_decode_layer.
 
 ## Current best
 
@@ -23,6 +23,9 @@ Where the time goes (per scored shape, top kernels):
 
 ## By area
 
+### router GEMM
+- **sglang-pipeline-parity-router-hilo-m8** → gain (gain), 1.0216x — gained on sliding decode_1, decode_16, decode_32, verify_1, verify_16, verify_32; full decode_1, decode_16, decode_32, verify_1, verify_16, verify_32. Replace the starter's plain-PyTorch layer with SGLang's own pipeline exactly as baseline.py composes it: prepare() builds the Marlin bank via prepare_moe_nvfp4_
+
 ## Open follow-ups
 
 - none
@@ -42,4 +45,3 @@ Where the time goes (per scored shape, top kernels):
 - queue: trtllm-decode-full-attention [FA3 call] p5 queued
 - queue: fa3-num-splits-sliding [FA3 call] p2 queued
 - queue: moe-align-single-kernel-small-t [MoE align/dispatch] p3 queued
-- running: sglang-pipeline-parity-router-hilo-m8 [router GEMM] p1 running

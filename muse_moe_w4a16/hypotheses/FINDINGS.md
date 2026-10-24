@@ -1,6 +1,6 @@
 # muse_moe_w4a16 findings
 
-Regenerated 2026-10-24T015224Z by `churn.py index`. Read this before writing a hypothesis for muse_moe_w4a16.
+Regenerated 2026-10-24T021809Z by `churn.py index`. Read this before writing a hypothesis for muse_moe_w4a16.
 
 ## Current best
 
@@ -16,6 +16,9 @@ Where the time goes (per scored shape, top kernels):
 - bs=256 load=verify_32 sharding=ep8: yours 37495.4µs vs SGLang 620.3µs (SoL 108.9µs) · void at::native::index_elementwise_kernel<128, 4, at::nat... 7493.9µs 19.5%, void at::native::elementwise_kernel<128, 2, at::native::g... 5782.1µs 15.0%, void at::native::vectorized_elementwise_kernel<4, at::nat... 4986.6µs 13.0%
 
 ## By area
+
+### MoE align/dispatch
+- **sglang-marlin-path-parity** → gain (gain), 0.9888x — gained on decode_1 decode_1; decode_16 decode_16; decode_32 decode_32; verify_1 verify_1; verify_16 verify_16; verify_32 verify_32. Replace the starter's 32-expert dense loop (dequantize every local expert to BF16 on every call, x @ w13.T over all tokens, masked weighted sum) with SGLang's M
 
 ## Open follow-ups
 
@@ -36,4 +39,3 @@ Where the time goes (per scored shape, top kernels):
 - queue: triton-small-m-threshold-32 [MoE align/dispatch] p4 queued
 - queue: w13-marlin-atomic-add-small-m [w13 marlin] p4 queued
 - queue: w13-marlin-bf16-reduce-verify [w13 marlin] p5 queued
-- running: sglang-marlin-path-parity [MoE align/dispatch] p1 running
