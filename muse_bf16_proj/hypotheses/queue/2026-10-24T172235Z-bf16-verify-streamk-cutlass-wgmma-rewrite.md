@@ -98,8 +98,10 @@ kind: rewrite
 controls_for: null
 rewrite_stage: 1
 replaces: cuBLAS nvjet at m=256 (verify_32) for qkv_gate (nvjet_sm90_tst_96x64_64x10_2x4, 19.4 us), o (nvjet 128x128, 8.3 us), pooler (nvjet 128x64, 29.5 us) and unpooler (nvjet 128x128, 24.6 us)
-review: required
+review: proceed
 status: queued
+review_at: 2026-10-24T172632Z
+review_companions: null
 ---
 
 # bf16-verify-streamk-cutlass-wgmma-rewrite
@@ -131,3 +133,28 @@ shape (profile top_kernels) against the incumbent and the speed-of-light floor, 
 2. at or below the incumbent kernels' time on the target shapes;
 3. within ~1.5x of the floor on the target shapes, and the headline CI clears 1.0 (promotable).
 The next stage is minted with `--kind rewrite --depends-on <this slug> --stage N+1`.
+
+## Adversarial review
+
+Reviewed 2026-10-24T172632Z by an adversarial subagent (model opus).
+
+**Verdict: proceed.** The judge image does ship CUTLASS. rules/technical-rules.llms.txt (Environment) says submissions run in lmsysorg/sglang:dev-muse-spark-open and may 'import and build on anything in the image, including PyTorch, Triton, FlashInfer, DeepGEMM, TileLang, CuTe DSL and CUTLASS', with native CUDA via load_inline/nvcc, and attention's load_inline already compiled on the judge in 41 s. So stage 1 can be built and interpreted; proceed with sharp notes on header discovery, cluster orientation and forced stream-K on o/unpooler.
+
+### Justification
+Environment (the make-or-break question): nothing in the repo names a CUTLASS include path, the torch version or the nvcc version. TASK.md and AGENTS.md say nothing about headers, and no bf16 log prints a path. What is on record: (1) the official technical rules list CUTLASS, CuTe DSL, DeepGEMM and FlashInfer as present in the image and endorse load_inline (nvcc); (2) muse_attention_decode archive logs 82085a4e82154393 and de486093311d4bb9 show '[splitkv] load_inline compiled in 41.0s/41.5s' on the judge with -arch=sm_90a, so nvcc, ninja and a writable build dir all exist. The cutlass:: kernels in BEST.result.json and FINDINGS (cutlass_80_simt_sgemm, flash::...) are prebuilt binaries, not evidence of headers. Header locations are therefore likely but unverified. The most probable C++ trees are flashinfer/data/cutlass/include (plus flashinfer/data/cutlass/tools/util/include) and deep_gemm/include (cute/ + cutlass/, no tools/util). The brief's 'flashinfer data/3rdparty' path is probably wrong, and the CuTe DSL python package (nvidia-cutlass-dsl) ships no C++ headers. The hypothesis's fallback ('no CUTLASS headers, master kept') makes a miss harmless but wastes the run, so find the headers by glob, not a fixed list. Mechanism: sound. At m=256 the four layers are math-heavy (qkv 9.66 GFLOP against a 7.9 us byte floor; pooler and unpooler 17.2 GFLOP) and nvjet runs them at 498-699 TFLOP/s. qkv_gate (36 tiles of 128x128) and pooler (64 tiles) clearly under-fill 132 SMs, so stream-K on those two is the right lever, and the profile rows (19.4 / 29.5 us) can show the milestone directly. o and unpooler have 128 tiles of 128x128 on 132 SMs, already about one wave, so stream-K buys almost nothing there. For o (16 K-blocks) a forced StreamK decomposition adds fixup and memset cost to an 8.3 us kernel, so M2 for o is at risk. Design issue: ClusterShape 1x2x1 multicasts x, the SMALL operand (256x8192 bf16 = 4 MB), and leaves both M-tiles to fetch the weight separately (37.7-67 MB, the operand that sets the byte floor under a cold L2). With m=256 and TileM=128 there are exactly 2 M-tiles, so ClusterShape 2x1x1 (multicast W across the two M-tiles) makes each weight tile cross DRAM to SM exactly once and halves L2-to-SM weight traffic. It also keeps cluster count = N-tiles (qkv 18, pooler 32, o/unpooler 64 on 66 cluster slots). Expected shapes and directions match TASK floors and weights: only verify_32 rows are targeted, and m<=128 keeps master byte for byte. The m=130 unpooler test is correctly routed and needs TMA OOB zero-fill, which CUTLASS handles. WEAKEST LINK: the qkv_gate M3 target (<=14 us) needs ~690 TFLOP/s sustained in a ~14 us kernel on a cold L2 that must also stream 37.7 MB at ~2.7 TB/s. The fixed costs (prologue/pipeline fill, deterministic stream-K fixup with serialized peers, and the initialize() memset node of ~1-2 us under the graph) are 10-15% of that budget. M2 is plausible; M3 for qkv and o is optimistic.
+
+### Confounders on the current kernel
+- none identified
+
+### Interference and A/B needs
+Nothing has landed on master's lineage beyond the base the hypothesis names (landed list empty), and the change replaces only the cuBLAS call at 129<=m<=256, which no landed Triton path touches (all are m<=32 plus the router). No landed interaction can produce a gain or loss here. The stage is a rewrite judged on its own profile rows, and the brief already builds an in-run per-layer A/B (cudaEvent warm-L2 time of the CUTLASS kernel vs master's cuBLAS on the same synthetic x). That diagnostic, together with the top_kernels rows, makes both a gain and a loss attributable without a companion. A control isolating stream-K vs data-parallel would be useful but belongs in stage 2 (pass DecompositionMode as a runtime argument and print both in the prepare diagnostics instead of spending a run). In-flight overlap to note, not to companion: bf16-cublaslt-algo-pick-in-prepare-m128-m256 targets the same m=256 rows. If both land, the per-shape rows decide which is kept; do not stack them in one run.
+
+### Open questions
+- Header discovery: rather than a fixed list, glob importlib-resolved package dirs (flashinfer, deep_gemm, sgl_kernel, tilelang, cutlass_library) plus /usr/local/cutlass and /usr/include for '**/cutlass/gemm/collective/collective_builder.hpp' with a sibling 'cute/' directory. Print every hit and the CUTLASS_MAJOR/MINOR/PATCH from cutlass/version.h. The StreamK scheduler argument names (decomposition_mode, reduction_mode) moved between 3.x releases, and DeepGEMM's tree may be 4.x.
+- Avoid any dependency on cutlass/util/* (packed_stride.hpp, device_memory.h): it lives in tools/util/include, which deep_gemm does not ship. Build strides with cute::make_stride (or include tools/util only if found).
+- Switch ClusterShape to 2x1x1 (multicast the weight across the two M-tiles at m=256), or justify 1x2x1. Multicasting x (4 MB) saves little, while W is the floor-setting operand under a cold L2.
+- For o and unpooler (128 tiles on 132 SMs), use DecompositionMode::Heuristic, or DataParallel, instead of forced StreamK. Otherwise the fixup plus memset can make o miss M2 (9.0 us). Print the scheduler's chosen mode and unit count per layer.
+- Deterministic reduction serializes peer fixups. If M2 is missed on qkv/pooler, test Nondeterministic in stage 2 (correctness bounds do not require bitwise determinism; relax the self-check to finite plus rel L2 then).
+- Budget compile time: torch/extension.h plus a CUTLASS 3 sm90 collective is typically 60-150 s. If bf16-small-m-cuda-gemv-rewrite's load_inline later lands alongside, compile both in one load_inline module so the 10-minute run holds.
+- Does CUTLASS's StreamK tile scheduler accept a 2-CTA cluster in the installed version together with KernelTmaWarpSpecializedCooperative? If can_implement fails, the fallback to cluster 1x1x1 should be a second compiled instantiation only if compile time allows; otherwise log and keep master.
+
