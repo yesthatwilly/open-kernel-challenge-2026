@@ -40,7 +40,7 @@ review: proceed
 status: running
 review_at: 2026-10-24T174912Z
 review_companions: null
-stage: implemented
+stage: dispatched
 claimed_at: 2026-10-24T174912Z
 base_sha: c8af06125b23fb943b7a8f7c26fc6b9a677dd1e0
 base_blob: cc466fce207709c98ab0e78c2435c1c459890fdb
@@ -55,6 +55,8 @@ submission_blob: a37cb6c8e76c4e703a2e0c45e61f2b0a5f8418ea
 lint_warnings: 3
 attempt_file: 2026-10-24T175151Z-submit-decode-restack-sliding-port-paired-pad-gemms-t1.md
 prepared_at: 2026-10-24T175151Z
+job: 4739dd4590524487
+dispatched_at: 2026-10-24T175201Z
 ---
 
 # decode-restack-sliding-port-paired-pad-gemms-t1
