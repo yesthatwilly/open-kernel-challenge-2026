@@ -66,13 +66,15 @@ base_sha: f3620a153798c4af3feb47a7fc26977635b8a6f3
 base_blob: cc466fce207709c98ab0e78c2435c1c459890fdb
 branch: hyp/muse_decode_layer/full-decode-cuda-splitkv-port
 worktree: .worktrees/muse_decode_layer/full-decode-cuda-splitkv-port
-mode: null
+mode: submit
 implemented_at: 2026-10-24T165933Z
 impl_commit: f6cc1452343c4d93911ad7303c4a5d7878afd2fe
 submission_sha256: e75a020601d212ebaa00461ad6dc4445ca25ba188504358caf0c2bdf8c143999
 norm_sha256: ddd10ed8feb4284fb885cd0f51c6fa848a93f1de545aeda01bb91b67a228eca3
 submission_blob: b83f5ec1976c82d5b45dcd92b6c0818ce04eda9f
 lint_warnings: 1
+attempt_file: 2026-10-24T181733Z-submit-full-decode-cuda-splitkv-port.md
+prepared_at: 2026-10-24T181733Z
 ---
 
 # full-decode-cuda-splitkv-port
