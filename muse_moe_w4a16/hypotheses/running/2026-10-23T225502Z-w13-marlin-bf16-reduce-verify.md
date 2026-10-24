@@ -30,13 +30,19 @@ review: proceed
 status: running
 review_at: 2026-10-24T040540Z
 review_companions: null
-stage: claimed
+stage: implemented
 claimed_at: 2026-10-24T040540Z
 base_sha: 58b624e7f1438bb67b466c3fa63d9278bcff3406
 base_blob: 11fbc1957daf7294cd2810ff82a0aad2f25644bd
 branch: hyp/muse_moe_w4a16/w13-marlin-bf16-reduce-verify
 worktree: .worktrees/muse_moe_w4a16/w13-marlin-bf16-reduce-verify
 mode: null
+implemented_at: 2026-10-24T040654Z
+impl_commit: 429b078d6423e2459c0baff41c6a22b04c35dfe2
+submission_sha256: 239d7ab9312acda47846988189792e3890c37b680815474a06f52f5c76c01c9f
+norm_sha256: 2d087ca6c5a748898c20fe9f4b4932dee3c9dcceda7d4b0cc3f5c3686d8db9ef
+submission_blob: 3253b43542c9a969bffb55cbbb9c3dd72d50ff11
+lint_warnings: 1
 ---
 
 # w13-marlin-bf16-reduce-verify
@@ -76,3 +82,36 @@ No companion is warranted. A gain can only come from the one changed bool (same 
 - If marlin-workspace-blocks-per-sm-8 lands (more CTAs, more split columns), re-run this knob on top of it; its value is grid-dependent.
 - The parity profile cannot split the 611.8 us Marlin total between w13 and w2 (one symbol, 2 calls); the hypothesis's 'w13 only' scoping leaves w2's reduce (output 2048x4096, half the bytes) untouched, which is fine as scoping but the expected effect should be sized against ~2/3 of the Marlin time, not all of it.
 
+
+## Implementation notes
+
+- Worktree file: `.worktrees/muse_moe_w4a16/w13-marlin-bf16-reduce-verify/muse_moe_w4a16/submission.py` (diff: 1 file, +6/-2).
+- `kernel_fn`: the w13 `moe_wna16_marlin_gemm` call now takes `**w13_args`, where
+  `w13_args = dict(common, use_fp32_reduce=num_tokens < 128)`. For num_tokens >= 128 (verify 16, bs=128; verify 32, bs=256 — the only scored shapes at or above 128 per TASK.md) the w13 call runs with `use_fp32_reduce=False`; every other shape keeps `True`. `use_atomic_add` stays False for all calls (per review: atomic add into a bf16 output would need a zeroed cache1). The w2 call still uses `**common` unchanged. The branch is on `num_tokens` (a shape) only, so it is CUDA-graph safe and nothing is derived from input values.
+- Module docstring: the one-line w13 description updated to say BF16 reduce at >= 128 tokens. Nothing else touched.
+- Precision note (per review): with fp32 reduce off, intermediate k-slice partials are rounded to bf16 at each hand-off between CTAs that share a split column (Marlin's bf16 global-reduce path, which still round-trips the partial tile through C in global memory). This is a kernel-internal accumulation choice: within a CTA the MMA accumulation is still fp32, and the output cache1 is bf16 either way, so no activation is stored below the BF16 SGLang keeps. Only tiles whose column straddles a CTA boundary (slice_count > 1) are affected.
+- Error margin: the harness does not report per-row error margins (it reports pass/fail against the relative-L2 bound), so no per-row margin is claimed; the Risk section's "attempt file must show the per-row margin" cannot be satisfied from the harness output and is replaced by the pass/fail result.
+- Open question carried forward: if sgl_kernel's binding rejects use_fp32_reduce=False with use_atomic_add=False (no source on this node to check), record the run as rejected, not failed. Retirement text if flat: "knob below CI on master", not "Marlin not traffic-bound".
+- Not run (no GPU/torch on this node); not committed or staged.
+
+## Rules check
+
+Checked against `git -C .worktrees/muse_moe_w4a16/w13-marlin-bf16-reduce-verify diff`:
+
+- [x] CUDA-graph capturable: the diff adds only a Python-level dict built from `num_tokens` (a shape) and a comment; no `.item()`/`.cpu()`/`synchronize()`/prints, no allocation or control flow on input values.
+- [x] Nothing derived from `data` is cached across calls: `w13_args` is a local in `kernel_fn`; `state` untouched.
+- [x] Weights: n/a to this diff — `prepare()` and the repack are unchanged; NVFP4 stays NVFP4.
+- [x] Activations BF16 where SGLang keeps BF16: cache1 is bf16 in both paths; only the kernel-internal combination of split-k partials is bf16 instead of fp32 (see Implementation notes). KV cache / queries: n/a (MoE problem, no attention).
+- [x] Attention sees every key: n/a — no attention in this problem; no skipping of experts, tokens or weights introduced.
+- [x] No timing patches, harness frames/I/O/secrets, module edits, reference import, subprocesses or network: diff adds none.
+- [x] All work happens inside the timed call; no output caching or replay: both GEMMs still run every call.
+- [x] First-line marker `# okc: problem=muse_moe_w4a16` intact; no triton.autotune added.
+
+Lint (`okc_lint.py ... --problem muse_moe_w4a16`):
+
+```
+warn  host-sync    L110: torch.cuda.synchronize()  (outside kernel_fn's call graph; fine in prepare())
+OK with warnings: /home/user/git/musespark/.worktrees/muse_moe_w4a16/w13-marlin-bf16-reduce-verify/muse_moe_w4a16/submission.py
+```
+
+`python3 -I -m py_compile`: OK (worktree __pycache__ removed). The one warning is pre-existing (in `prepare()`, unchanged by this diff).
