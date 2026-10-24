@@ -46,9 +46,16 @@ priority: 4
 kind: primary
 controls_for: null
 review: proceed
-status: queued
+status: running
 review_at: 2026-10-24T124334Z
 review_companions: null
+stage: claimed
+claimed_at: 2026-10-24T124334Z
+base_sha: 2d766b8ec8494820bc79165703df0b509a3ef4b5
+base_blob: 3a358375a50dcc6e19437992f7c610431582ea72
+branch: hyp/muse_decode_layer/fused-preattention-triton
+worktree: .worktrees/muse_decode_layer/fused-preattention-triton
+mode: null
 ---
 
 # fused-preattention-triton
