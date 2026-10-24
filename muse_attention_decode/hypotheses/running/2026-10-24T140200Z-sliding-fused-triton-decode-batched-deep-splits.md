@@ -93,3 +93,12 @@ No companion is warranted. The control that isolates sub-change (1), the gate wi
 - Is the ~10.5 us kernel time at B=1 (32 CTAs, 2 tiles) mostly the serialized combine tail (last ticket reloads 16 partials from L2 after a gpu-scope fence)? If so, it stays fixed at large B and caps decode_16/32 near 11-13 us. The S=32 follow-up would double the combine work and may not help.
 - If sliding-fused-triton-decode1-splits-32 lands first, check that this branch's split-count edit still leaves B=1 at whatever S master then uses (i.e. it should only override for batch > 1).
 
+
+## Implementation notes
+
+Worktree: `.worktrees/muse_attention_decode/sliding-fused-triton-decode-batched-deep-splits`, file `muse_attention_decode/submission.py` only (diff stat: 1 file, +5 / -4).
+
+- `kernel_fn`: gate widened from `cfg["window"] and cfg["batch"] == 1 and cfg["q_len"] == 1` to `cfg["window"] and cfg["q_len"] == 1`, so sliding decode at every batch takes `_sliding_forward` (one `_sliding_fused_kernel` launch). Comment updated. Sliding verify (q_len 8) and every full layer (window == 0) still take the FA3 path below, unchanged.
+- `_sliding_forward`: `splits = _num_splits(batch, hkv)` became `splits = 16 if length == 1 else _num_splits(batch, hkv)`, the form the review asked for so a 3-way merge with sliding-fused-triton-decode1-splits-32 stays clean. B=1 decode was already 16 (`_num_splits(1, 2) == 16`), so decode_1 behaves exactly as before. `_num_splits` itself is unchanged.
+- Workspace and counters are still sized from config (`batch * hkv * splits`): ws_acc is 32*2*16*16*64*4 B = 2 MB at B=32, and counters are `B*HKV` int32 through the existing `_counters` cache keyed on (batch, hkv, device). Kernel body, BLOCK_N=64, num_warps=4, num_stages=2 and the ticket combine are untouched.
+- No deviation from the spec. Review open question 3 does not apply yet: splits-32 has not landed on this base. If it lands first, the merge should keep the B=1 override from master and let this branchs
