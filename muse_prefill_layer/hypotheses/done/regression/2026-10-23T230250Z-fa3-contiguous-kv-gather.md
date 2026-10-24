@@ -48,10 +48,10 @@ priority: 3
 kind: primary
 controls_for: null
 review: proceed
-status: running
+status: done
 review_at: 2026-10-24T053108Z
 review_companions: null
-stage: dispatched
+stage: harvested
 claimed_at: 2026-10-24T053109Z
 base_sha: 85d607280348efbd3eef09246edcdfa7132f09fe
 base_blob: e4931f050c7fb99835fe116d25bb454a5ea731e9
@@ -68,6 +68,13 @@ attempt_file: 2026-10-24T053303Z-check-fa3-contiguous-kv-gather.md
 prepared_at: 2026-10-24T053303Z
 job: 75bbf278dd9e430e
 dispatched_at: 2026-10-24T053311Z
+outcome: regression
+verdict_detail: regression
+speedup: 0.9878819025723335
+speedup_ci: [0.9730636740337485, 1.0027001311109185]
+harvested_at: 2026-10-24T075011Z
+best_at_harvest: 1.0038664293875537
+promotion: null
 ---
 
 # fa3-contiguous-kv-gather
@@ -150,3 +157,31 @@ OK with warnings: muse_prefill_layer/submission.py
 ```
 
 (The warning is the pre-existing synchronize in prepare(), unchanged by this diff.) `py_compile`: OK; `__pycache__` removed.
+
+## Result
+
+- job `75bbf278dd9e430e` (check), status done, passed True, tests 5/5
+- speedup 0.9879x, 95% CI [0.9731, 1.0027], score 392156.0856527929 µs vs SGLang 387403.9 µs
+- best at harvest: {"speedup": 1.0038664293875537, "ci": [0.9888084329467404, 1.018924425828367], "job": "62025c368c3c4e8e"}; base result: muse_prefill_layer/hypotheses/done/gain/sglang-pipeline-parity.result.json
+- **outcome: regression** (regression)
+- files: `muse_prefill_layer/hypotheses/done/regression/fa3-contiguous-kv-gather.result.json`, `muse_prefill_layer/hypotheses/done/regression/fa3-contiguous-kv-gather.patch`; branch `hyp/muse_prefill_layer/fa3-contiguous-kv-gather`
+
+## Attribution
+
+| shape | w | base µs | hyp µs | delta | verdict |
+|---|---|---|---|---|---|
+| batch=1 ctx=80000 dist=soft layer=sliding load=turn_1 page=1 q_len=753 repeats=6 | 46 | 1078.66 | 1149.57 | 0.9881 | flat |
+| batch=1 ctx=80000 dist=soft layer=full load=turn_1 page=1 q_len=753 repeats=6 | 16 | 1434.85 | 1588.26 | 0.9405 | lost |
+| batch=4 ctx=80000 dist=soft layer=sliding load=turn_4 page=1 q_len=753 repeats=6 | 46 | 3367.03 | 3469.65 | 0.9917 | flat |
+| batch=4 ctx=80000 dist=soft layer=full load=turn_4 page=1 q_len=753 repeats=6 | 16 | 4949.82 | 5206.76 | 0.9382 | lost |
+| batch=1 ctx=0 dist=soft layer=full load=first_turn page=1 q_len=16384 repeats=6 | 16 | 18279.1 | 18110.26 | 1.0037 | flat |
+| batch=1 ctx=32768 dist=soft layer=sliding load=first_turn page=1 q_len=16384 repeats=6 | 138 | 16995.2 | 17085.36 | 1.0044 | flat |
+| batch=1 ctx=32768 dist=soft layer=full load=first_turn page=1 q_len=16384 repeats=6 | 16 | 21535.66 | 21445.28 | 1.0235 | flat |
+| batch=1 ctx=65536 dist=soft layer=full load=first_turn page=1 q_len=16384 repeats=6 | 16 | 25286.61 | 24741.4 | 1.0078 | flat |
+
+lost on full turn_1, turn_4. Expected hit: 2/6. Noise ±1.5%.
+
+## Follow-ups
+
+- record which shapes lost (Attribution) and do not retry this area in this form.
+

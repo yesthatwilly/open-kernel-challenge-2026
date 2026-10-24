@@ -1,0 +1,91 @@
+diff --git a/muse_prefill_layer/submission.py b/muse_prefill_layer/submission.py
+index e4931f0..01e9a21 100644
+--- a/muse_prefill_layer/submission.py
++++ b/muse_prefill_layer/submission.py
+@@ -19,7 +19,9 @@ Everything else is SGLang's pipeline as baseline.py composes it:
+                                    with the interleaved RoPE fused in on sliding layers
+   cache store, q to FP8            as FlashAttentionBackend and set_kv_buffer do for an FP8 cache
+                                    (cast, then the store_cache JIT kernel at the step's rows)
+-  flash_attn_with_kvcache (FA3)    paged, causal, window (2047, 0) on sliding layers
++  flash_attn_with_kvcache (FA3)    causal, window (2047, 0) on sliding layers; at page size 1 on
++                                   contiguous K/V gathered from the cache (fa3-contiguous-kv-gather),
++                                   else paged
+   FusedRMSNormGate (JIT)           per-head output norm x sigmoid(gate)
+   o projection                     bf16_gemm_dispatch; then the all-reduce (identity here)
+   FusedPostNormResidualPreNorm     post-attention norm + residual gate + pre-FFN norm (JIT)
+@@ -325,20 +327,61 @@ def kernel_fn(data, state):
+     if scaled:
+         descale = dict(k_descale=data["k_scale"].reshape(1, 1).expand(batch, hkv),
+                        v_descale=data["v_scale"].reshape(1, 1).expand(batch, hkv))
+-    out = flash_attn_with_kvcache(
+-        q=q.view(tokens, hq, d).to(FP8),
+-        k_cache=k_cache,
+-        v_cache=v_cache,
+-        page_table=data["page_table"],
+-        cache_seqlens=data["cache_seqlens"],
+-        cu_seqlens_q=data["cu_seqlens_q"],
+-        max_seqlen_q=length,
+-        softmax_scale=cfg["sm_scale"] * cfg["qk_scale_factor"],
+-        causal=True,
+-        window_size=(window - 1, 0) if window else (-1, -1),
+-        scheduler_metadata=data["scheduler_metadata"],
+-        **descale,
+-    )
++    if cfg["page_size"] == 1:
++        # Contiguous FA3 (hypothesis fa3-contiguous-kv-gather): gather this call's K/V rows, after
++        # store_cache on the same stream, into [B, S, 2, 64] FP8 buffers and call FA3 unpaged, so its
++        # KV loads take the TMA path instead of the page-size-1 per-row gather. The rows are copied
++        # as 8-byte integer lanes (bytes unchanged, the cache stays FP8). Buffer key j is absolute
++        # position start + j; every key the paged call attends is in the buffer.
++        page_table = data["page_table"]
++        max_pages = page_table.shape[1]
++        if window:
++            # The window-trimmed range: the first query's left edge (seq_lens - 2047, clamped at 0)
++            # to the last query's right edge (cache_seqlens - 1), at most W = window - 1 + L keys.
++            span = window - 1 + length
++            start = (data["seq_lens"] - (window - 1)).clamp(min=0)
++            pos = start.to(torch.int64)[:, None] + torch.arange(
++                span, device=page_table.device, dtype=torch.int64)[None, :]
++            rows = page_table.gather(1, pos.clamp(max=max_pages - 1))
++            kv_seqlens = (data["cache_seqlens"] - start).to(torch.int32)
++        else:
++            span = max_pages
++            rows = page_table
++            kv_seqlens = data["cache_seqlens"]
++        rows = rows.clamp(min=0).reshape(-1)  # -1 (unused) pages read row 0; masked by kv_seqlens
++        k_buf = k_cache.view(-1, hkv * d).view(torch.int64).index_select(0, rows)
++        v_buf = v_cache.view(-1, hkv * d).view(torch.int64).index_select(0, rows)
++        k_buf = k_buf.view(FP8).view(batch, span, hkv, d)
++        v_buf = v_buf.view(FP8).view(batch, span, hkv, d)
++        out = flash_attn_with_kvcache(
++            q=q.view(tokens, hq, d).to(FP8),
++            k_cache=k_buf,
++            v_cache=v_buf,
++            page_table=None,
++            cache_seqlens=kv_seqlens,
++            cu_seqlens_q=data["cu_seqlens_q"],
++            max_seqlen_q=length,
++            softmax_scale=cfg["sm_scale"] * cfg["qk_scale_factor"],
++            causal=True,
++            window_size=(window - 1, 0) if window else (-1, -1),
++            scheduler_metadata=None,  # a paged tile schedule would not apply; None on prefill anyway
++            **descale,
++        )
++    else:
++        out = flash_attn_with_kvcache(
++            q=q.view(tokens, hq, d).to(FP8),
++            k_cache=k_cache,
++            v_cache=v_cache,
++            page_table=data["page_table"],
++            cache_seqlens=data["cache_seqlens"],
++            cu_seqlens_q=data["cu_seqlens_q"],
++            max_seqlen_q=length,
++            softmax_scale=cfg["sm_scale"] * cfg["qk_scale_factor"],
++            causal=True,
++            window_size=(window - 1, 0) if window else (-1, -1),
++            scheduler_metadata=data["scheduler_metadata"],
++            **descale,
++        )
+     if isinstance(out, tuple):
+         out = out[0]
+     o = state["o_norm_gate"](out.reshape(tokens, hq * d).to(torch.bfloat16), gate)
