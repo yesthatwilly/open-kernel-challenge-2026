@@ -57,7 +57,9 @@ speedup: 1.3948738389144513
 speedup_ci: [1.3739507313307344, 1.415796946498168]
 harvested_at: 2026-10-24T173231Z
 best_at_harvest: 1.3492076314709118
-promotion: onboard
+promotion: done
+promotion_commit: 0a56d22c1f1e824cf006d1c3c939fb7fa0d0e962
+promotion_job: 698d4cd3838c4a63
 ---
 
 # sliding-deep-splits-on-cuda-splitkv
