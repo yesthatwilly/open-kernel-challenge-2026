@@ -32,13 +32,19 @@ review: proceed
 status: running
 review_at: 2026-10-24T032411Z
 review_companions: null
-stage: claimed
+stage: implemented
 claimed_at: 2026-10-24T032412Z
 base_sha: 7c54c225a5de1458c4cd57d1fea92d4b3895d9f5
 base_blob: 11fbc1957daf7294cd2810ff82a0aad2f25644bd
 branch: hyp/muse_moe_w4a16/align-single-token-ep
 worktree: .worktrees/muse_moe_w4a16/align-single-token-ep
 mode: null
+implemented_at: 2026-10-24T032534Z
+impl_commit: 626e602e8c42555cd6e31cc1c17c4714b410deea
+submission_sha256: cf85d53e18535b069939208616928ffd52a8310ee5d4e0241d53905f2b5a48c7
+norm_sha256: 43c2b0c4373e5cfb2c37d4e20dc791c706e54ff607c5da6d9fd53f08ab85515d
+submission_blob: 6075ec2ba91b451ab6510be0763073337419e243
+lint_warnings: 1
 ---
 
 # align-single-token-ep
@@ -80,3 +86,31 @@ No companion warranted. The change is a single kernel swap on one shape with two
 - Why is master 3.2 us slower than SGLang at bs=1 (80.2 vs 77.0 us, err 0.48 us) despite the 32-expert align that was expected to make bs=1 faster? If the 32-expert small-batch kernel is for some reason slower than the 256-expert one at bs=1 (e.g. different branch of the wrapper), this hypothesis is testing on a shape whose align regression is unexplained.
 - The ~16 us of at::native reduce_kernel / unrolled_elementwise / elementwise kernels at bs=1 (20% of the shape) are a larger target than the align; what are they (the .to(int32)/.to(float32) copies, the expert_map gather, the Marlin wrapper's workspace zeroing, torch.zeros for the align cumsum)?
 
+
+## Implementation notes
+
+- Worktree `.worktrees/muse_moe_w4a16/align-single-token-ep`, file `muse_moe_w4a16/submission.py` only (diff stat: 1 file, +19 / -3).
+- kernel_fn align branch: `if num_tokens == 1 and expert_map is None:` became `if num_tokens == 1 and moe_align_single_token is not None:`. The branch is shape-only (num_tokens) plus a module-level constant; it now fires under ep8. It is called exactly as baseline.py calls it, `moe_align_single_token(local_ids, block_size_m)`, on the expert_map-mapped ids (-1 for remote experts). sorted_ids / block_experts / n_padded go straight into both Marlin GEMMs unchanged; n_padded is never read on the host. All other shapes keep `moe_align_block_size(local_ids, block_size_m, bank["count"])`.
+- Import hoisted from inside kernel_fn to module level, guarded with try/except ImportError (per review). On success it prints `[align-single-token-ep] bs=1 path: moe_align_single_token`; on failure it sets the name to None, prints `... unavailable (<err>); bs=1 path: moe_align_block_size (fallback)`, and bs=1 runs master's path. Check log_tail for which line appears: a fallback run is a master re-run on bs=1 and says nothing about the hypothesis.
+- Docstring gained one paragraph describing the change.
+- Deviation: none from the change paragraph. Not verified (no SGLang source or GPU on this node): whether the kernel tolerates -1 ids and whether it compacts or emits -1 blocks. The bs=1 pre-timing test covers correctness; the bs=1 per-kernel profile separates align time from Marlin m-block cost (see review).
+
+## Rules check
+
+- [x] CUDA-graph capturable: no `.item()`/`.cpu()`/`synchronize()`/tensor prints in kernel_fn; the new branch is on `num_tokens` (shape) and a module constant; n_padded stays on device. The prints are at import time, strings only.
+- [x] Nothing derived from `data` is cached across calls (no new state; module global is set at import from an import result only).
+- [x] Weights: unchanged; prepare() untouched, NVFP4 stays NVFP4.
+- [x] Activations BF16 where SGLang keeps BF16: unchanged; only the int32 align outputs differ. KV cache / queries: n/a, no attention in this problem.
+- [x] Attention sees every key: n/a, MoE problem with no attention.
+- [x] No timing patches, harness frames/I/O/secrets, module edits, reference import, subprocesses or network: the only addition is an import of an SGLang op baseline.py itself imports.
+- [x] All work happens inside the timed call; no output caching or replay.
+- [x] First line `# okc: problem=muse_moe_w4a16` kept; no triton.autotune added.
+
+Lint (`okc_lint.py ... --problem muse_moe_w4a16`, exit 0):
+
+```
+warn  host-sync    L126: torch.cuda.synchronize()  (outside kernel_fn's call graph; fine in prepare())
+OK with warnings: /home/user/git/musespark/.worktrees/muse_moe_w4a16/align-single-token-ep/muse_moe_w4a16/submission.py
+```
+
+The warning is the pre-existing synchronize() in prepare(), untouched by this diff. `py_compile` OK; __pycache__ removed.
