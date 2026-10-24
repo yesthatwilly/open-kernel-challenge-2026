@@ -25,9 +25,16 @@ priority: 5
 kind: primary
 controls_for: null
 review: proceed
-status: queued
+status: running
 review_at: 2026-10-24T184104Z
 review_companions: null
+stage: claimed
+claimed_at: 2026-10-24T184104Z
+base_sha: 7636e41481d93a8dc77886fc9674dcdb6c52067e
+base_blob: c6854f093588da524e63657576b27ed720756e32
+branch: hyp/muse_attention_decode/sliding-decode32-splits-8
+worktree: .worktrees/muse_attention_decode/sliding-decode32-splits-8
+mode: null
 ---
 
 # sliding-decode32-splits-8
