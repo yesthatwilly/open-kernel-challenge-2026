@@ -48,13 +48,19 @@ review: proceed
 status: running
 review_at: 2026-10-24T185035Z
 review_companions: null
-stage: claimed
+stage: implemented
 claimed_at: 2026-10-24T185036Z
 base_sha: 9f6e88b7296c037ca7b6ce685ffdaa4fa7303553
 base_blob: 3d70ae6e2de0d48c4a4f2a469ced8234f5348182
 branch: hyp/muse_decode_layer/moe-align-parallel-large-t-port
 worktree: .worktrees/muse_decode_layer/moe-align-parallel-large-t-port
 mode: null
+implemented_at: 2026-10-24T231252Z
+impl_commit: 18c7ee4a2a60eadad634cc9604c9f5d784a5d60e
+submission_sha256: 475c36ec4787179bcf460dc2d76121eab621ab0e609fd8529ff3b7cd4982d690
+norm_sha256: 76b07b1ceec1bed137f3127441c4067199d8eeef1404b97abc05c18f84b4f60f
+submission_blob: d2f6a92e8b7373cb05038d8797e96598f16d3cc8
+lint_warnings: 28
 ---
 
 # moe-align-parallel-large-t-port
@@ -99,3 +105,19 @@ No companion is warranted. The change replaces 3-4 small integer launches on the
 - Should the self-check also run the Marlin y comparison (y_new vs y_ref via _experts with both aligns), as _dl_self_check does for kernel R? That would catch a layout error that the structural check misses, at a few seconds of prepare time.
 - The test case 'batch 33, ctx 20000, layer full' (T=33, bsm 16) and the q_len-8 tests at T=24..40 exercise the new path at small n. Confirm the 'ON' line in the log before trusting the timings.
 
+
+## Implementation notes
+
+Worktree muse_decode_layer/submission.py only (+188/-1). Added ALIGN_PAR_* constants, `_align_parallel_kernel` and `_align_parallel` copied verbatim from muse_moe_w4a16 master (docstring of the wrapper reworded only). `_experts`: when `align is None`, num_tokens >= 33 and `state["align_par_ok"]`, the expert_map gather and moe_align_block_size are replaced by `_align_parallel(topk_ids, 0, LOCAL_EXPERTS, block_size_m)`; otherwise master statements unchanged. T<=32 never reaches the new branch (dense chain path and its master fallback byte-identical). `_align_par_setup` (called in prepare() after `_dl_setup`) warms every block_size_m reachable above 32 tokens (computed from `_block_size_m` over T 33..1024, plus 8 and 16; in practice 16) for int32 and int64 id dtypes, then self-checks T in 33, 40, 57, 128, 256, 257 on random / skewed / remote-heavy routings: local_ids equality, per-expert route set and block count vs moe_align_block_size(expert_map[ids], bsm, 256); capacity/padding ignored. Mismatch or exception -> align_par_ok False (master kept). Prints "[align-parallel-large-t] ON|OFF cases=.. mismatches=..". Deviation: none in the kernel; self-check is structural only (no Marlin y comparison, per review open question left as optional).
+
+## Rules check
+
+- [x] CUDA-graph capturable: new kernel_fn path only launches a Triton kernel and torch.empty allocs on shapes; host syncs/.cpu() are only in prepare()-time setup (checked in diff).
+- [x] Nothing derived from `data` is cached across calls (state gets only the prepare-time bool align_par_ok).
+- [x] Weights: n/a: no weight changes in the diff.
+- [x] Activations BF16 where SGLang keeps BF16; KV cache FP8: n/a: integer routing work only, no dtype changes.
+- [x] Attention sees every key: n/a: attention untouched.
+- [x] No timing patches, harness frames/I/O/secrets, module edits, reference import, subprocesses or network (diff checked).
+- [x] All work happens inside the timed call; no output caching or replay (align computed per call from topk_ids).
+
+okc_lint: "OK with warnings: muse_decode_layer/submission.py" (only host-sync warnings, all in prepare()-time code, noted as fine). py_compile clean, __pycache__ removed.
