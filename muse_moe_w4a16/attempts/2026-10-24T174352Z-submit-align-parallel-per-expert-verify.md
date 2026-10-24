@@ -2,7 +2,7 @@
 
 Hypothesis: `muse_moe_w4a16/hypotheses/done/neutral/2026-10-24T164817Z-align-parallel-per-expert-verify.md` (branch `hyp/muse_moe_w4a16/align-parallel-per-expert-verify`).
 
-- **Job:** `<job id>` (`okc status <job>`)
+- **Job:** `1947e3ec2abb4bdf` (`okc status <job>`)
 - **File:** `muse_moe_w4a16/submission.py` at git `89b2252`
 
 ## Goal
