@@ -31,7 +31,7 @@ H="python3 -I $CLAUDE_PROJECT_DIR/.claude/skills/hypothesize/bin/hyp.py"
 ## Procedure
 
 1. `$H context <problem>` → the files to read, the current best, the queue, done slugs, area
-   hints. Read **FINDINGS.md first** (learnings by area, open follow-ups, do-not-retry, where the
+   hints. Read `hypotheses/LESSONS.md` (cross-problem measured facts) and **FINDINGS.md first** (learnings by area, open follow-ups, do-not-retry, where the
    best spends its time), then TASK.md (shapes, weights, floors, tests, rules), `baseline.py`
    (SGLang's pipeline: the named parts a hypothesis may touch), and master's `submission.py`
    (what the next hypothesis will be built on). For `all`, spawn one subagent per problem with

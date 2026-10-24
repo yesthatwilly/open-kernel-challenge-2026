@@ -1,0 +1,7 @@
+pooler autotune T=1: dispatch=30.02 bmm2_nn=33.10 bmm4_nn=31.90 bmm2_tn=33.06 bmm4_tn=32.34 us -> dispatch (dispatch median 30.02 us, pick median 30.02 us)
+pooler autotune T=8: dispatch=30.45 bmm2_nn=33.50 bmm4_nn=32.06 bmm2_tn=32.61 bmm4_tn=32.53 us -> dispatch (dispatch median 30.45 us, pick median 30.45 us)
+pooler autotune T=16: dispatch=30.24 bmm2_nn=33.41 bmm4_nn=32.64 bmm2_tn=33.33 bmm4_tn=33.09 us -> dispatch (dispatch median 30.24 us, pick median 30.24 us)
+pooler autotune T=32: dispatch=31.06 bmm2_nn=33.73 bmm4_nn=33.22 bmm2_tn=33.89 bmm4_tn=33.94 us -> dispatch (dispatch median 31.06 us, pick median 31.06 us)
+pooler autotune T=128: dispatch=31.97 bmm2_nn=36.70 bmm4_nn=36.67 bmm2_tn=37.22 bmm4_tn=38.53 us -> dispatch (dispatch median 31.97 us, pick median 31.97 us)
+pooler autotune T=256: dispatch=38.35 bmm2_nn=44.22 bmm4_nn=43.28 bmm2_tn=43.12 bmm4_tn=44.32 us -> dispatch (dispatch median 38.35 us, pick median 38.35 us)
+pooler autotune table: T=1:dispatch, T=8:dispatch, T=16:dispatch, T=32:dispatch, T=128:dispatch, T=256:dispatch

@@ -808,6 +808,29 @@ def cmd_harvest(a):
     out({"ok": True, "harvested": harvested, "pending": pending}, 0 if (harvested or pending) else 1)
 
 
+def archive_job(p, slug, job, sj):
+    """Keep everything okc returned for a run: the raw status JSON (all records) and the profile
+    files okc writes next to the submission, which vanish with the worktree. Lives at
+    <p>/hypotheses/archive/<slug>/ and is committed with the harvest."""
+    import gzip
+    adir = hdir(p, "archive", slug)
+    os.makedirs(adir, exist_ok=True)
+    with gzip.open(os.path.join(adir, f"{job}.okc.json.gz"), "wt") as f:
+        json.dump(sj, f)
+    paths = dict(sj.get("profile") or {})
+    paths.update({f"log": (sj.get("output") or {}).get("log")})
+    for kind, src in paths.items():
+        if not src or not os.path.exists(src) or os.path.getsize(src) == 0:
+            continue
+        dst = os.path.join(adir, {"text": f"{job}.profile.txt", "log": f"{job}.log"}.get(kind, f"{job}.profile.{kind}"))
+        if kind == "json":
+            with open(src, "rb") as fi, gzip.open(dst + ".gz", "wb") as fo:
+                fo.write(fi.read())
+        else:
+            shutil.copyfile(src, dst)
+    return adir
+
+
 def _harvest_one(p, h, job, sj):
     slug = h["slug"]
     best = load_best(p)
@@ -881,6 +904,10 @@ def _harvest_one(p, h, job, sj):
                          "## Result (after the run)\n" + "\n".join(lines) + "\n", txt, flags=re.S)
             open(ap, "w").write(txt)
             git("add", "--", f"{p}/attempts/{h['attempt_file']}")
+    try:
+        git("add", "-A", "--", rel(archive_job(p, slug, job, sj)))
+    except Exception as e:  # archiving must never block a harvest
+        print(f"warning: archive of {slug} failed: {e}", file=sys.stderr)
     git("add", "-A", "--", rel(ddir), rel(hdir(p, "running")))
     msg = f"churn({p}): {slug} → {outcome} (job {job}" + (f", {s:.4f}x [{ci[0]:.4f},{ci[1]:.4f}]" if s is not None else "") + ")"
     git("commit", "-q", "-m", msg)
@@ -1048,6 +1075,10 @@ def cmd_harvest_promotions(a):
                 st = sj.get("status")
             if not _terminal(st):
                 continue
+            try:
+                git("add", "-A", "--", rel(archive_job(p, h["slug"], job, sj)))
+            except Exception as e:
+                print(f"warning: archive of {h['slug']} submit failed: {e}", file=sys.stderr)
             r = sj.get("result") or {}
             name = h.get("promotion_attempt")
             if st == "done" and r.get("passed"):

@@ -93,7 +93,7 @@ C="python3 -I $CLAUDE_PROJECT_DIR/.claude/skills/churnsubs/bin/churn.py"
 5. **Dispatch each pick** (parallel is fine: run the implementation step for several picks as
    parallel subagents, one per worktree; keep steps 5a and 5c–5e in this thread, in order):
    - 5a `$C claim <p> <slug>` → `worktree`, `branch`, `submission`, `spec`, `base_sha`.
-   - 5b **Implement** the `change` in `<worktree>/<p>/submission.py` exactly as specified,
+   - 5b **Implement** (a subagent per pick, briefed with `IMPLEMENT_PROMPT.md`) the `change` in `<worktree>/<p>/submission.py` exactly as specified,
      modestly, touching only the named area; keep the first-line marker. Then edit the hypothesis
      file (its `md` path, on master) and write `## Implementation notes` (what you changed, where,
      any deviation from the spec) and `## Rules check` with every box ticked only after checking
@@ -132,6 +132,14 @@ line with the file path.
 `/churnsubs review <problem> <slug>` runs step 4 alone on a queued hypothesis (no lock, no
 claim), so a batch from /hypothesize can be reviewed and its companions queued before the loop
 spends anything.
+
+## Records kept
+
+Every harvested job's raw okc record and profile files are archived to
+`<p>/hypotheses/archive/<slug>/` (`<job>.okc.json.gz`, `.profile.txt`, `.profile.json.gz`), because the
+profiles otherwise vanish with the worktree. Cross-problem lessons go in `hypotheses/LESSONS.md`:
+after a harvest that teaches something general (a measured hardware fact, a knob that is dead), add
+one line there with the slug that showed it.
 
 ## Reading results by hand
 

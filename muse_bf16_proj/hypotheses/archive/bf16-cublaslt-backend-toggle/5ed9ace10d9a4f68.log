@@ -1,0 +1,5 @@
+[bf16-cublaslt] torch 2.14.1+cu130
+[bf16-cublaslt] preferred_blas_library before set: _BlasBackend.Cublas
+[W1024 07:49:09.244347670 Context.cpp:629] Warning: torch.backends.cuda.preferred_blas_library is an experimental feature. If you see any error or unexpected behavior when this flag is set please file an issue on GitHub. (function operator())
+[bf16-cublaslt] preferred_blas_library after set: _BlasBackend.Cublaslt
+[bf16-cublaslt] preferred_blas_library after restore: _BlasBackend.Cublas
