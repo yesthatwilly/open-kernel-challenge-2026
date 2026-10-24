@@ -50,7 +50,7 @@ review: proceed
 status: running
 review_at: 2026-10-24T184132Z
 review_companions: null
-stage: implemented
+stage: dispatched
 claimed_at: 2026-10-24T184132Z
 base_sha: 29ab19ae2ed489e27e4307caeff5e2dd73cd86eb
 base_blob: c6854f093588da524e63657576b27ed720756e32
@@ -65,6 +65,8 @@ submission_blob: 904216da4aa79256b7df64682f8a336d882c722f
 lint_warnings: 0
 attempt_file: 2026-10-24T184624Z-submit-full-decode1-cuda-splitkv-chunk320.md
 prepared_at: 2026-10-24T184624Z
+job: 8d4771feca9b4e18
+dispatched_at: 2026-10-24T184641Z
 ---
 
 # full-decode1-cuda-splitkv-chunk320
