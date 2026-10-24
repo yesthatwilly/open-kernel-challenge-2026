@@ -60,10 +60,10 @@ priority: 2
 kind: primary
 controls_for: null
 review: proceed
-status: running
+status: done
 review_at: 2026-10-24T092245Z
 review_companions: null
-stage: dispatched
+stage: harvested
 claimed_at: 2026-10-24T092246Z
 base_sha: e8c54b5ac52496d46ca232957689f65e6c729c2a
 base_blob: f14211b4b0e88f8b3f683d9f9275b76a64b66e02
@@ -80,6 +80,13 @@ attempt_file: 2026-10-24T092444Z-check-fa3-hdim128-head-pairing.md
 prepared_at: 2026-10-24T092444Z
 job: facc479992e24a35
 dispatched_at: 2026-10-24T092453Z
+outcome: gain
+verdict_detail: gain
+speedup: 1.1705932092473075
+speedup_ci: [1.1530343111085979, 1.1923944446416679]
+harvested_at: 2026-10-24T103710Z
+best_at_harvest: 1.1284429079326423
+promotion: pending
 ---
 
 # fa3-hdim128-head-pairing
@@ -158,3 +165,35 @@ CLEAN: muse_attention_decode/submission.py
 ```
 
 `python3 -I -m py_compile` OK. The resulting `__pycache__` was removed from the worktree.
+
+## Result
+
+- job `facc479992e24a35` (check), status done, passed True, tests 16/16
+- speedup 1.1706x, 95% CI [1.1530, 1.1924], score 3217.4285398611996 µs vs SGLang 3766.3 µs
+- best at harvest: {"speedup": 1.1284429079326423, "ci": [1.1115162643136527, 1.1453695515516318], "job": "c297440e53334f34"}; base result: muse_attention_decode/hypotheses/done/gain/fused-preattention-triton.result.json
+- **outcome: gain** (gain)
+- files: `muse_attention_decode/hypotheses/done/gain/fa3-hdim128-head-pairing.result.json`, `muse_attention_decode/hypotheses/done/gain/fa3-hdim128-head-pairing.patch`; branch `hyp/muse_attention_decode/fa3-hdim128-head-pairing`
+
+## Attribution
+
+| shape | w | base µs | hyp µs | delta | verdict |
+|---|---|---|---|---|---|
+| batch=1 ctx=80000 dist=soft heads=tp8 layer=sliding load=decode_1 page=1 | 46 | 16.77 | 16.6 | 1.0024 | flat |
+| batch=1 ctx=80000 dist=coherent heads=tp8 layer=full load=decode_1 page=1 | 16 | 27.87 | 38.75 | 0.7261 | lost |
+| batch=16 ctx=80000 dist=soft heads=tp8 layer=sliding load=decode_16 page=1 spread=agentic | 46 | 20.8 | 20.77 | 0.9947 | flat |
+| batch=16 ctx=80000 dist=coherent heads=tp8 layer=full load=decode_16 page=1 spread=agentic | 16 | 194.45 | 165.21 | 1.1764 | gained |
+| batch=32 ctx=80000 dist=soft heads=tp8 layer=sliding load=decode_32 page=1 spread=agentic | 46 | 25.14 | 25.54 | 0.9938 | flat |
+| batch=32 ctx=80000 dist=coherent heads=tp8 layer=full load=decode_32 page=1 spread=agentic | 16 | 377.92 | 306.99 | 1.2282 | gained |
+| batch=1 ctx=80000 dist=soft heads=tp8 layer=sliding load=verify_1 page=1 q_len=8 | 46 | 17.12 | 17.43 | 0.9744 | flat |
+| batch=1 ctx=80000 dist=coherent heads=tp8 layer=full load=verify_1 page=1 q_len=8 | 16 | 30.02 | 45.98 | 0.6518 | lost |
+| batch=16 ctx=80000 dist=soft heads=tp8 layer=sliding load=verify_16 page=1 q_len=8 spread=agentic | 46 | 22.5 | 22.78 | 0.9828 | flat |
+| batch=16 ctx=80000 dist=coherent heads=tp8 layer=full load=verify_16 page=1 q_len=8 spread=agentic | 16 | 198.32 | 172.95 | 1.143 | gained |
+| batch=32 ctx=80000 dist=soft heads=tp8 layer=sliding load=verify_32 page=1 q_len=8 spread=agentic | 46 | 28.72 | 28.85 | 0.9929 | flat |
+| batch=32 ctx=80000 dist=coherent heads=tp8 layer=full load=verify_32 page=1 q_len=8 spread=agentic | 16 | 383.11 | 309.37 | 1.238 | gained |
+
+gained on full decode_16, decode_32, verify_16, verify_32; lost on full decode_1, verify_1. Expected hit: 7/7. Noise ±1.7%.
+
+## Follow-ups
+
+- candidate for promotion; stack further changes with `depends_on` once it lands.
+
