@@ -54,10 +54,10 @@ priority: 1
 kind: primary
 controls_for: null
 review: proceed
-status: running
+status: done
 review_at: 2026-10-24T140432Z
 review_companions: null
-stage: dispatched
+stage: harvested
 claimed_at: 2026-10-24T140432Z
 base_sha: 5f6055ebd1ea05b43c2b3a6e3a02c0f86b49ce62
 base_blob: 3a358375a50dcc6e19437992f7c610431582ea72
@@ -74,6 +74,13 @@ attempt_file: 2026-10-24T140648Z-check-post-expert-norm-triton-small-t.md
 prepared_at: 2026-10-24T140648Z
 job: 9dcaec316b3045a7
 dispatched_at: 2026-10-24T140659Z
+outcome: gain
+verdict_detail: gain
+speedup: 1.1635238875350442
+speedup_ci: [1.1460710292220184, 1.1809767458480698]
+harvested_at: 2026-10-24T144810Z
+best_at_harvest: 1.0873503247934666
+promotion: pending
 ---
 
 # post-expert-norm-triton-small-t
@@ -158,3 +165,35 @@ OK with warnings: muse_decode_layer/submission.py
 ```
 
 The warning predates this change: it flags the existing `torch.cuda.synchronize()` at the end of `prepare()`. `python3 -I -m py_compile` passes, and the __pycache__ it left has been removed.
+
+## Result
+
+- job `9dcaec316b3045a7` (check), status done, passed True, tests 13/13
+- speedup 1.1635x, 95% CI [1.1461, 1.1810], score 19441.199482308606 µs vs SGLang 22620.3 µs
+- best at harvest: {"speedup": 1.0873503247934666, "ci": [1.0710400699215645, 1.1036605796653685], "job": "fb07a3bd3aa54baf"}; base result: muse_decode_layer/hypotheses/done/neutral/fa3-hdim128-head-pairing-batched.result.json
+- **outcome: gain** (gain)
+- files: `muse_decode_layer/hypotheses/done/gain/post-expert-norm-triton-small-t.result.json`, `muse_decode_layer/hypotheses/done/gain/post-expert-norm-triton-small-t.patch`; branch `hyp/muse_decode_layer/post-expert-norm-triton-small-t`
+
+## Attribution
+
+| shape | w | base µs | hyp µs | delta | verdict |
+|---|---|---|---|---|---|
+| batch=1 ctx=80000 dist=soft layer=sliding load=decode_1 page=1 repeats=60 | 46 | 172.77 | 145.83 | 1.1694 | gained |
+| batch=1 ctx=80000 dist=soft layer=full load=decode_1 page=1 repeats=60 | 16 | 182.09 | 156.95 | 1.1476 | gained |
+| batch=16 ctx=80000 dist=soft layer=sliding load=decode_16 page=1 spread=agentic | 46 | 259.55 | 225.79 | 1.1588 | gained |
+| batch=16 ctx=80000 dist=soft layer=full load=decode_16 page=1 spread=agentic | 16 | 406.82 | 364.88 | 1.1014 | gained |
+| batch=32 ctx=80000 dist=soft layer=sliding load=decode_32 page=1 spread=agentic | 46 | 263.78 | 251.94 | 1.0015 | flat |
+| batch=32 ctx=80000 dist=soft layer=full load=decode_32 page=1 spread=agentic | 16 | 543.54 | 535.78 | 1.0031 | flat |
+| batch=1 ctx=80000 dist=soft layer=sliding load=verify_1 page=1 q_len=8 | 46 | 238.23 | 200.79 | 1.1493 | gained |
+| batch=1 ctx=80000 dist=soft layer=full load=verify_1 page=1 q_len=8 | 16 | 247.75 | 218.06 | 1.1404 | gained |
+| batch=16 ctx=80000 dist=soft layer=sliding load=verify_16 page=1 q_len=8 spread=agentic | 46 | 453.17 | 462.37 | 0.9927 | flat |
+| batch=16 ctx=80000 dist=soft layer=full load=verify_16 page=1 q_len=8 spread=agentic | 16 | 587.43 | 603.87 | 0.9728 | flat |
+| batch=32 ctx=80000 dist=soft layer=sliding load=verify_32 page=1 q_len=8 spread=agentic | 46 | 637.71 | 639.36 | 0.9983 | flat |
+| batch=32 ctx=80000 dist=soft layer=full load=verify_32 page=1 q_len=8 spread=agentic | 16 | 906.69 | 932.92 | 1.0004 | flat |
+
+gained on sliding decode_1, decode_16, verify_1; full decode_1, decode_16, verify_1. Expected hit: 6/6. Noise ±1.5%.
+
+## Follow-ups
+
+- candidate for promotion; stack further changes with `depends_on` once it lands.
+
