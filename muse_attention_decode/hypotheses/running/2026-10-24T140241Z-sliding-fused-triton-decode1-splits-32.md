@@ -39,13 +39,15 @@ base_sha: aef5220ede19f282df557fb2e7493a375aeb6107
 base_blob: 1c0f5fa1bfc4e602b62e5e9edd9df6d5652b297b
 branch: hyp/muse_attention_decode/sliding-fused-triton-decode1-splits-32
 worktree: .worktrees/muse_attention_decode/sliding-fused-triton-decode1-splits-32
-mode: null
+mode: submit
 implemented_at: 2026-10-24T164945Z
 impl_commit: 5c273c610329d018bc24efcc0b7258b86916c1ab
 submission_sha256: 94189d78786b4af9b506718e173eb13b577e86274a8f53604e9cfabb34da33ab
 norm_sha256: d8d704215ab9869a714a18e9b4f9c5af8759dfba687cb4d89a5df00518dbf126
 submission_blob: 12abfe018e63baaf449e4c4e21afb7b93bcdb6f2
 lint_warnings: 0
+attempt_file: 2026-10-24T164946Z-submit-sliding-fused-triton-decode1-splits-32.md
+prepared_at: 2026-10-24T164946Z
 ---
 
 # sliding-fused-triton-decode1-splits-32
