@@ -81,7 +81,7 @@ review: proceed
 status: running
 review_at: 2026-10-24T165448Z
 review_companions: null
-stage: implemented
+stage: dispatched
 claimed_at: 2026-10-24T165507Z
 base_sha: ec7244a1361d3e15e9b974bed90d02b05aa34980
 base_blob: a8bb42ac483318e9fbc84bc7826a27b7a704d1fb
@@ -96,6 +96,8 @@ submission_blob: 49423021596e590a05c4c5f2e83ac3555ce2028d
 lint_warnings: 3
 attempt_file: 2026-10-24T181732Z-submit-bf16-small-m-cuda-gemv-rewrite.md
 prepared_at: 2026-10-24T181732Z
+job: b76aca7ec1a048e7
+dispatched_at: 2026-10-24T181804Z
 ---
 
 # bf16-small-m-cuda-gemv-rewrite
