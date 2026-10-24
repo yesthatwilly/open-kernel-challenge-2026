@@ -48,9 +48,16 @@ priority: 3
 kind: primary
 controls_for: null
 review: proceed
-status: queued
+status: running
 review_at: 2026-10-24T053108Z
 review_companions: null
+stage: claimed
+claimed_at: 2026-10-24T053109Z
+base_sha: 85d607280348efbd3eef09246edcdfa7132f09fe
+base_blob: e4931f050c7fb99835fe116d25bb454a5ea731e9
+branch: hyp/muse_prefill_layer/fa3-contiguous-kv-gather
+worktree: .worktrees/muse_prefill_layer/fa3-contiguous-kv-gather
+mode: null
 ---
 
 # fa3-contiguous-kv-gather
