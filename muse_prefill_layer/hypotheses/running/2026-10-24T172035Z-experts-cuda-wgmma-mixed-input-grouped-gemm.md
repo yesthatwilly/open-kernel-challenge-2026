@@ -96,11 +96,11 @@ base_blob: 635cfee3ac2c3f7c66840b8c8a082cad2fa41a68
 branch: hyp/muse_prefill_layer/experts-cuda-wgmma-mixed-input-grouped-gemm
 worktree: .worktrees/muse_prefill_layer/experts-cuda-wgmma-mixed-input-grouped-gemm
 mode: null
-implemented_at: 2026-10-24T174507Z
-impl_commit: f5fbef745de8fb1e21880e2efae9c7992035c785
-submission_sha256: 7de964e963f3e8626e192b10bb871d85952e300d8242e3cf35e883c104bfb0e4
-norm_sha256: 45284fae7ef84da695c63aa29961f4cb6a61176dcec4de5670f76dd83f734a40
-submission_blob: be4b7c0a12465e88ecc3b07b0b5db7bcf7e935f3
+implemented_at: 2026-10-24T175504Z
+impl_commit: 746b97699dd7180075f90f2298335e84d5dadaa1
+submission_sha256: 803fabbfeb87549a6a35e19275112b93c35ce252cae9e5bc1086ef7ace4cd6b4
+norm_sha256: 974e36bd93ce3d7022b5a7b8bbe894b2c9ae730265c5ef0167d1a03187ca6a7b
+submission_blob: 1b34a89a32d4c08cb11a3bb8a08a2018637504fc
 lint_warnings: 13
 ---
 
@@ -222,6 +222,11 @@ Uncertainties, untested here:
 - Register spills: `local_bytes` in the attrs line shows them.
 
 A bug in any of these shows up as OFF with a reason, or a build failure. The exceptions are a hard fault (illegal address) or a hang that the bounded waits do not catch, either of which would fail the whole run.
+
+### Pre-flight fixes (2026-10-24, after an Opus audit)
+The audit confirmed the RS wgmma form, the descriptor fields, the fences and the bulk copy against the PTX ISA and CUTLASS. Two fixes for gates that could fail every run:
+- The non-local w2 slots are now compared with the Triton incumbent's output (NaN-prefilled on both sides), not asserted to be zero. That assertion relied on unverified moe_align behaviour.
+- The producer warp runs `cp.async.wait_all` before it exits, so pending noinc arrivals cannot be lost.
 
 ## Rules check
 
