@@ -47,7 +47,7 @@ review: proceed
 status: running
 review_at: 2026-10-24T071442Z
 review_companions: [moe-align-single-kernel-small-t-control-capacity-256]
-stage: implemented
+stage: dispatched
 claimed_at: 2026-10-24T071443Z
 base_sha: 08e8fcb6d37d8a5b6a21eda279552962cc244ea8
 base_blob: d3cbff5d9d9e6de23eb2f6770a99cd93eea093b7
@@ -62,6 +62,8 @@ submission_blob: c641d42a3930199e12a8ec66d93e2abd2b81f515
 lint_warnings: 8
 attempt_file: 2026-10-24T071925Z-check-moe-align-single-kernel-small-t.md
 prepared_at: 2026-10-24T071925Z
+job: 0a0af8669ffe4cb0
+dispatched_at: 2026-10-24T071935Z
 ---
 
 # moe-align-single-kernel-small-t
