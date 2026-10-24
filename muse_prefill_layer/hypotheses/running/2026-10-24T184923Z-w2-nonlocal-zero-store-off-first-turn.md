@@ -43,13 +43,15 @@ base_sha: 27a44fb6ced1bfd563c16ae512b70c9222e795f8
 base_blob: 635cfee3ac2c3f7c66840b8c8a082cad2fa41a68
 branch: hyp/muse_prefill_layer/w2-nonlocal-zero-store-off-first-turn
 worktree: .worktrees/muse_prefill_layer/w2-nonlocal-zero-store-off-first-turn
-mode: null
+mode: check
 implemented_at: 2026-10-24T231931Z
 impl_commit: 749edd39f465d8f7a10b9f03dfb2ca122002e43c
 submission_sha256: 0c199e69da2c065b8ddcf6418157c8e034c27c8ac3efc5196e615a27961bce4d
 norm_sha256: 7ad0a1bd699965b5fcf833a09614dcd2854b5b6c322487ee10c2b89abae8fe01
 submission_blob: 39f26f165918e7ccc5c37ebbaed148b6b28cff71
 lint_warnings: 6
+attempt_file: 2026-10-24T231931Z-check-w2-nonlocal-zero-store-off-first-turn.md
+prepared_at: 2026-10-24T231931Z
 ---
 
 # w2-nonlocal-zero-store-off-first-turn
