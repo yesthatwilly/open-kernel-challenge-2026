@@ -2,7 +2,7 @@
 
 Hypothesis: `muse_bf16_proj/hypotheses/done/neutral/2026-10-24T140147Z-bf16-m32-swapab-wgmma-triton.md` (branch `hyp/muse_bf16_proj/bf16-m32-swapab-wgmma-triton`).
 
-- **Job:** `<job id>` (`okc status <job>`)
+- **Job:** `eeb9985396764ac2` (`okc status <job>`)
 - **File:** `muse_bf16_proj/submission.py` at git `1afaa45`
 
 ## Goal
