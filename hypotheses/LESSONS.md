@@ -49,6 +49,8 @@ profile are in `<problem>/hypotheses/archive/<slug>/`.
   (moe marlin-block-size-m-next-larger, 0.918x). Capping at 16 gained 8-15% at T=128/256
   (decode marlin-block-m-cap-16, 1.062x). SGLang's T*8/32 rule overcounts rows per local expert
   8x under EP8.
+- On prefill, Marlin block_size_m from local rows per expert lost (0.984x, experts-marlin-block-m-local-rows)
+  and block 48 at turn_1 was flat (1.003x, experts-marlin-block-m-48-turn1): block-m tuning there is settled.
 - Knobs that did nothing: workspace blocks per SM, use_fp32_reduce=False, use_atomic_add.
 - Prefill stage-1 Triton W4A16 grouped GEMM (in-register arithmetic NVFP4 dequant, 128x128x64 tiles,
   SGLang fused_moe_kernel skeleton) is correct but ~2.0 ms for w13+w2 at turn_1 and 3.3 ms at turn_4,
@@ -63,6 +65,9 @@ profile are in `<problem>/hypotheses/archive/<slug>/`.
   (decode fa3-num-splits-* reviews).
 - FA3 sits at ~600 TFLOP/s on every full prefill shape whatever the CTA count (fa3-batched-mode review).
 - Full-attention decode reaches only 1.3-1.7 TB/s: the page-size-1 row gather is the limit.
+- A Triton split flash-decode reading both KV heads of a token as one paired 128-byte row (decode
+  triton-flash-decode-full-paired-kv, e82b11f9d9f64b23) is correct and within ~5-7% of FA3 on full
+  decode: 200.8 vs 188.8 us at decode_16, 394.8 vs 374.4 us at decode_32 (1.070x overall, neutral).
 - Copying KV into a contiguous buffer per call cost more than it saved on prefill
   (fa3-contiguous-kv-gather, 0.988x).
 
