@@ -45,13 +45,15 @@ base_sha: 036af8be03a756684fc9d199dd2f6b1f05eab3a4
 base_blob: da55301de1e911aeab09878b0873809f544f436c
 branch: hyp/muse_bf16_proj/bf16-cublaslt-backend-toggle
 worktree: .worktrees/muse_bf16_proj/bf16-cublaslt-backend-toggle
-mode: null
+mode: check
 implemented_at: 2026-10-24T071431Z
 impl_commit: 800f6067f64f879ada6b5e9581cb9b6ea1fad7ab
 submission_sha256: 6efaab54bc52d03ec76b303278fe8b9fc2dd73e511c12aa2ae22fc7a748f8e5f
 norm_sha256: 8d52c7ee11e8d05c245bb76ff71ffdc4a84c49ad3a944e3ad3f58fd886a9de22
 submission_blob: 28705d2c9ec47de74a4c47cd5424516a8f56d432
 lint_warnings: 0
+attempt_file: 2026-10-24T071431Z-check-bf16-cublaslt-backend-toggle.md
+prepared_at: 2026-10-24T071431Z
 ---
 
 # bf16-cublaslt-backend-toggle
