@@ -91,7 +91,7 @@ review: proceed
 status: running
 review_at: 2026-10-24T170224Z
 review_companions: null
-stage: implemented
+stage: dispatched
 claimed_at: 2026-10-24T170224Z
 base_sha: b9590f4d98a9e3d4afd62cdaab9dd4d48694655f
 base_blob: d9a9375ef4721ab9b28cc9d6364c92e67c7ccc59
@@ -106,6 +106,8 @@ submission_blob: 62b00bb77cbc9e2fce8ed39dd25d87fb78503a5d
 lint_warnings: 18
 attempt_file: 2026-10-24T181733Z-submit-cuda-fused-moe-bs1-persistent-w13-silu-w2.md
 prepared_at: 2026-10-24T181733Z
+job: 1105a02aa3fa4e56
+dispatched_at: 2026-10-24T181917Z
 ---
 
 # cuda-fused-moe-bs1-persistent-w13-silu-w2
