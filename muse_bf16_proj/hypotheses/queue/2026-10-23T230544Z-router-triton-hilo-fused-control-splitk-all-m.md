@@ -46,8 +46,10 @@ depends_on: router-triton-hilo-fused
 priority: 1
 kind: control
 controls_for: router-triton-hilo-fused
-review: required
+review: proceed
 status: queued
+review_at: 2026-10-24T024326Z
+review_companions: [router-triton-hilo-fused-control-hybrid-cublas-above-m32]
 ---
 
 # router-triton-hilo-fused-control-splitk-all-m
@@ -69,3 +71,34 @@ Built from hyp/muse_bf16_proj/sglang-gemm-dispatch-parity exactly as the primary
 ## Risk
 
 Separates 'a fused Triton hi/lo kernel cannot beat cuBLAS splitK + reduce + add on this shape' from 'the primary's grid under-fills the GPU (32 CTAs at m<=32, 4-8 at m>=128)'. If the primary loses at verify_16/verify_32 and this control gains there, the primary's tiling is the cause and the Triton route stays alive; if both lose, the Triton route for the router at large m goes on the do-not-retry list with evidence. If the primary gains everywhere, this control is the tuning data for the follow-up.
+
+## Adversarial review
+
+Reviewed 2026-10-24T024326Z by an adversarial Fable subagent (model fable).
+
+**Verdict: proceed-with-companions.** The parent's result already explains its own regression (8 CTAs x ~60 GB/s per CTA = 49.7/98.1 us at m=128/256, while the same kernel won 1.3-3.4x at m<=32), so this run no longer disambiguates the parent; it is now the de-facto primary for 'can a filled-grid Triton split-K beat cuBLAS hi/lo (16.2/17.7 us) at m=128/256', which is worth one check slot. One companion is recommended: a hybrid (parent's Triton config at m<=32, cuBLAS hi/lo above) that turns the parent's already-measured small-m wins into a promotable kernel regardless of how the 3-D grid fares at large m.
+
+### Justification
+Mechanism is plausible and the numbers support it. From done/regression/router-triton-hilo-fused.result.json (job c2a8de5969374dff) the parent's 2-D grid gave router m=1 7.7 us (kernel 5.3 + memset 0.7; master 10.5), m=8 7.6 (master after router-hilo-at-m8: 14.2), m=16 8.0 (14.5), m=32 8.4 (15.0) with 32 CTAs/SPLIT_K=8, but m=128 49.7 us and m=256 98.1 us with 8 CTAs/SPLIT_K=1 and M looped. Per-CTA arithmetic matches: ~61-62 GB/s per CTA. The loss is per-CTA bandwidth times an 8-CTA grid, not 'Triton vs cuBLAS'. The control's 128-CTA 3-D grid should bring m>=128 back to the 5-10 us range; floors are 2.2/2.7 us and master's cuBLAS hi/lo path is 16.2/17.7 us, so ~9-10 us per shape to win on 2 of 6 loads (~4% geomean). Notes: (1) expected 'why' lines are stale against master (verify_1 is 14.2 us now); the control's marginal change at m<=32 is BLOCK_N 64->32, SPLIT_K 8->16, 32->128 CTAs, not obviously better than the parent's 5.3-6.4 us there. (2) At m=128/256 atomic traffic ~2 MB per launch and the weight is re-read once per M-block relying on L2 after the cold-L2 flush. (3) Weakest link: SPLIT_K=16 at m=128 is untuned; a result between 50/98 us and 16/18 us says 'this config loses', not 'Triton loses'.
+
+### Confounders on the current kernel
+- sglang-gemm-dispatch-parity (965b046): inert on the router path; compare per-shape against master's lineage, not BEST.json's starter.
+- router-hilo-at-m8 (f9dc05d): no code interaction (its constant is deleted by this change) but it moves the comparison point for router verify_1 m=8 from 26.1 us to 14.2 us; harvest must use aa3d033c208e4511's per-shape medians.
+- router-hilo-at-m8 promotion mechanics: build from master, not from the parity branch, or promotion conflicts on the docstring/ROUTER_FP32_MAX_TOKENS hunks.
+- Run noise: the parent's untouched bf16 rows swung -2.2% to +4.4% in one run; router rows moving less than ~4% vs the parent are not evidence of a config difference.
+
+### Interference and A/B needs
+ab-revert/ab-tune of the landed items is inapplicable (nothing they change survives this change). A single run is interpretable per shape: m<=32 rows vs the parent's rows, m>=128 rows vs the parent and master's cuBLAS. The ambiguity is in promotion: the likely mixed outcome leaves no run with a promotable kernel even though the parent measured 2.6-6.6 us/shape wins at m<=32. One companion fixes that: the parent's kernel at m<=32 with cuBLAS hi/lo at m>32. No second companion.
+
+### Companions queued
+- `router-triton-hilo-fused-control-hybrid-cublas-above-m32`: The promotable composite of what has already been measured: if the control's m>=128 rows lose to cuBLAS, this run carries the parent's 2.6-6.6 us/shape small-m wins onto master (~1.05x over master's 1.0219x by load arithmetic). If the control wins everywhere it is superseded at the cost of one check slot. Its m<=32 rows are also the same-day baseline for the control's small-m config.
+
+### Open questions
+- Build from master (f9dc05d), not from the parity branch as the change paragraph says.
+- Attribution base for router verify_1 m=8 must be router-hilo-at-m8's 14.2 us (job aa3d033c208e4511), not the parity result's 26.1 us.
+- Read the control's m<=32 rows against the parent's (7.7/7.6/8.0/8.4 us), not only against master.
+- From the profile, record the memset and _router_hilo_kernel time at m=128/256 separately; if the kernel is 6-9 us but the row is >12 us, the atomics epilogue or memset is the cost.
+- If verify_32 is much worse than verify_16 relative to cuBLAS, swap the grid order so the M-blocks of one (N-block, K-slice) run concurrently.
+- Confirm m=128 lands in the SPLIT_K=16 bucket (2x4x16).
+- router-hilo-addmm-epilogue remains relevant only for m>=128 if the hybrid lands and the 3-D grid does not; deprioritize rather than run in parallel.
+
