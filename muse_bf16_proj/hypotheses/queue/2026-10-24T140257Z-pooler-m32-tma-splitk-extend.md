@@ -57,8 +57,11 @@ depends_on: null
 priority: 3
 kind: primary
 controls_for: null
-review: required
-status: queued
+review: hold
+status: hold
+review_at: 2026-10-24T164414Z
+review_companions: null
+hold_reason: "adversarial review: Moot under master 8b9ad43 (bf16-m32-swapab-wgmma-triton, 1.198x): pooler decode_32 m=32 already runs _bf16_swapab_kernel at 20.0 us row / 20.5 us kernel vs SGLa"
 ---
 
 # pooler-m32-tma-splitk-extend
@@ -83,3 +86,24 @@ Built on master (658d63b). Extend the combo's pooler Triton path to 17 <= cfg m 
 ## Risk
 
 The only m in 17..32 Triton row with a measured win (the combo dropped it because it took the cp.async BLOCK_K 256 kernel, which read 1.014x at m=32). Small: ~1.2 us x 62 on one of 30 shapes, ~+0.3% headline, inside the CI, so it is judged by the pooler decode_32 row and kernel time, exactly as the combo was. Cheap to implement (verbatim kernel). Overlaps bf16-m32-swapab-wgmma-triton on this one row; if both run, the faster pooler m=32 row goes into the next combo. Its BLOCK_M=32 compile was 255 regs / mma.sync, so it is the floor for a Triton mma.sync m=32 pooler, not a stepping stone.
+
+## Adversarial review
+
+Reviewed 2026-10-24T164414Z by an adversarial subagent (model opus).
+
+**Verdict: hold.** Moot under master 8b9ad43 (bf16-m32-swapab-wgmma-triton, 1.198x): pooler decode_32 m=32 already runs _bf16_swapab_kernel at 20.0 us row / 20.5 us kernel vs SGLang 22.0, which beats the TMA split-K kernel this hypothesis would install (20.8 us row / 21.0 us kernel in 4e89311eefdc4bc3). Rebased on master, the change would replace a faster wgmma kernel with a slower mma.sync one on the only row it targets.
+
+### Justification
+The mechanism (TMA weight stream, split-K 2, 128 CTAs, ticket reduce) was plausible against the base it names, 658d63b, where pooler m=32 was cuBLAS nvjet 20.2 + splitKreduce 2.0 us (21.6 us row) against a 14.1 us floor; a 1.061x paired gain on that row was measured. But the base is stale. FINDINGS (regenerated on master 8b9ad43) shows layer=pooler load=decode_32 m=32 at 20.0 us with _bf16_swapab_kernel 20.5 us (wgmma m64n32k16, same grid (64,2), split-K 2, BLOCK_K 256, 4 stages). The TMA kernel's own record is 20.8 us row / 21.0 us kernel and, per the hypothesis's Risk section, it compiled to 255 registers on mma.sync, which it calls 'the floor for a Triton mma.sync m=32 pooler'. So the expected 'faster' on pooler decode_32 has no support against the current incumbent; the expected direction is flat-to-slower (~+0.5-1 us). Weakest link: the 'expected' line compares to master 21.6 us, a number master no longer has. The headline effect would be ~0.3% at most even in its favour, well inside the CI, so it cannot be read from a scored run either.
+
+### Confounders on the current kernel
+- bf16-m32-swapab-wgmma-triton (landed, master 8b9ad43): it already owns pooler at 17 <= m <= 32 with a faster kernel, so this change, rebased, would compete with it rather than with cuBLAS. A gate placed 'before the cuBLAS fallback' and after the swap-AB route never fires; placed before the swap-AB route it displaces the faster kernel. Either way any measured delta is an interaction with the swap-AB route, not the TMA kernel's own merit.
+- bf16-shape-gated-triton-winners-combo (landed, 658d63b): the hypothesis's stated base; it deliberately left pooler m=32 on cuBLAS. That premise was removed by the swap-AB promotion.
+
+### Interference and A/B needs
+No companion makes this interpretable worth a scored submit. The only informative comparison is TMA split-K vs swap-AB wgmma on pooler decode_32, which existing records already answer (20.8/21.0 us vs 20.0/20.5 us). An ab-revert of bf16-m32-swapab-wgmma-triton would only reproduce job 4e89311eefdc4bc3's already-measured result on a worse base. The run is also a scored submit with checks spent, so spending it on an expected flat-to-slower, sub-CI change is not justified.
+
+### Open questions
+- If anyone wants more out of pooler m=32, the next lever is inside _bf16_swapab_kernel (wgmma path, 20.5 us vs 14.1 us floor), e.g. TMA loads of the weight into the swap-AB kernel. That would be a new hypothesis stacked on bf16-m32-swapab-wgmma-triton, not this one.
+- Is there a measured paired comparison of the swap-AB and TMA split-K kernels on the same job? FINDINGS numbers come from different jobs (1602a4e947e64090 vs 4e89311eefdc4bc3). The gap (~0.5-0.8 us) is consistent but not paired.
+
