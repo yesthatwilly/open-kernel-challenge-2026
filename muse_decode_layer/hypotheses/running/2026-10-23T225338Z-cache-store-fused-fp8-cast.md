@@ -37,9 +37,16 @@ priority: 2
 kind: primary
 controls_for: null
 review: proceed
-status: queued
+status: running
 review_at: 2026-10-24T024344Z
 review_companions: null
+stage: claimed
+claimed_at: 2026-10-24T024344Z
+base_sha: 54112d428da559b67789e07fa8f2e586fe5fb45e
+base_blob: 6884d26a928d1de1b07bf8d28e1be4e53dfdcfc5
+branch: hyp/muse_decode_layer/cache-store-fused-fp8-cast
+worktree: .worktrees/muse_decode_layer/cache-store-fused-fp8-cast
+mode: null
 ---
 
 # cache-store-fused-fp8-cast
