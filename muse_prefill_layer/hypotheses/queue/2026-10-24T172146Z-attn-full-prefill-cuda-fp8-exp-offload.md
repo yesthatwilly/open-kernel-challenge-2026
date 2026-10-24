@@ -80,8 +80,10 @@ kind: rewrite
 controls_for: null
 rewrite_stage: 1
 replaces: "flash_attn_with_kvcache (FA3 cutlass::device_kernel<flash::...> + FlashAttnFwdCombine) on full-attention layers at page_size 1"
-review: required
+review: proceed
 status: queued
+review_at: 2026-10-24T172640Z
+review_companions: null
 ---
 
 # attn-full-prefill-cuda-fp8-exp-offload
@@ -114,3 +116,28 @@ shape (profile top_kernels) against the incumbent and the speed-of-light floor, 
 2. at or below the incumbent kernels' time on the target shapes;
 3. within ~1.5x of the floor on the target shapes, and the headline CI clears 1.0 (promotable).
 The next stage is minted with `--kind rewrite --depends-on <this slug> --stage N+1`.
+
+## Adversarial review
+
+Reviewed 2026-10-24T172640Z by an adversarial subagent (model opus).
+
+**Verdict: proceed.** This is a sound stage-1 rewrite. The bound-by-exponentials argument checks out against the profile, an fp32 degree-3 polynomial exp sits about 800x below the E4M3 rounding of P, and nothing in it breaks a rule. Before building, fix three things: turn_1 full needs split-KV (96 items on 132 SMs caps it near FA3 parity), the software exp must clamp -inf and very negative inputs (masked columns would otherwise give NaN), and the HFMA2 option should be dropped because it fails the proposal's own 2^-11 test.
+
+### Justification
+Numbers check out. Score elements (0.97G/3.87G/2.15G/10.7G/19.3G) match T x keys x 16 heads, including the causal half on ctx0. The MUFU rate of 132 SMs x 16 ex2/clk x 1.83 GHz = 3.87 T/s gives 250/1000/555/2770/4990 us. FA3 runs at 1.60-1.66x that on all five full shapes, which is ~600 TFLOP/s against 256 FLOP per element, and FP8 MMA alone would need ~0.5x. A uniform ratio across shapes that differ in occupancy, split-KV and causal fraction fits a pipe bound better than a latency or schedule bound. It also agrees with LESSONS (no response to CTA count) and with fa3-batched-mode being held. The issue-slot model supports the offload. Each element needs ~4.5 issue slots (FMNMX, FFMA, FADD, half an F2FP, the MUFU issue) at 128 slots/clk/SM, against 1/16 clk of MUFU. With ~7 slots per offloaded exp, the MUFU and issue times balance at about 25-30% offloaded (MUFU ~0.7, as the minter says), for ~0.75x the MUFU-only time. So M2 (0.75x FA3 = ~1.2x MUFU-only) needs FA3-class overlap on top of an offload that pays its full ideal. It is reachable but tight, and the stretch goal of 0.65x FA3 is at the theoretical edge. Expected gains: the per-shape percentages are right (shape gains 7.9% turn_1 full, 8.3% turn_4 full, 1.4/6.2/9.0% first_turn), but the per-load ones are not. Recomputed from FINDINGS times x TASK weights, the loads gain 2.48% turn_1 (minter: 1.5%), 2.82% turn_4 (1.8%) and 1.87% first_turn (2.3%). The geomean is +2.45% (1.059 -> ~1.085), which agrees with the ~+2.4% headline. The directions are right, and sliding stays flat by construction. As a rewrite it is judged on the replaced kernel's own time anyway. WEAKEST LINK: occupancy on turn_1 full. The work item is 16 tokens x 8 q heads of one KV head, and turn_1 has ceil(753/16) x 2 KV heads = 96 items. The design is a persistent 132-CTA grid with no split-KV, so 36 SMs idle and each item walks all 80753 keys: 128 x 80753 / (16 x 1.83e9) = 353 us of MUFU-only time per SM. That is already above the 310 us M2 target and close to FA3's 415+7 us, because FA3 splits and combines there (the 7 us FlashAttnFwdCombine). Even an ideal offload (0.75x) leaves ~265 us before overhead. Stage 1 needs a KV split for the batch-1 turn shape: split from config so that items reach >= ~4 waves (e.g. 11 splits -> 1056 items = 8 waves), plus a small combine. turn_4 (384 items = 2.9 waves, ~97% wave efficiency) and first_turn (2048 causal items, longest-first) are fine. Second-weakest link: hand-writing FA3's FP8 machinery blind (V byte transpose, accumulator-to-A-fragment permute for P, producer/consumer ping-pong), which the minter already names.
+
+### Confounders on the current kernel
+- No landed hypothesis to confound (landed list is empty).
+- Not landed but relevant: in-flight expert rewrites (experts-triton-nvfp4-packed-asm-dequant, experts-triton-w13-fused-silu-epilogue, experts-triton-packed-dequant-turn4) change the headline denominator, so the per-load % and headline will shift with merge order. Judge on the attention kernel's own us per shape, as the Milestones say.
+- Future interaction: experts-dequant-overlap-attention (held) would run side-stream work while attention runs. A 132-CTA persistent kernel with a static schedule is fragile to SM contention: CTAs that cannot launch serialise their whole work list. If that family is ever revived, re-measure this kernel under it.
+- qk-norm-fp8-cache-store-fusion (neutral, not landed) changes the producer of the FP8 q and cache rows. Not a confound for stage 1, but stage 3 (query-side fusion) overlaps it and should stack on or supersede it explicitly.
+
+### Interference and A/B needs
+No companions. Nothing has landed, so there is nothing to ab-revert or ab-tune. The sub-changes (new kernel at MUFU-only vs with exp offload) are better isolated inside the stage than with a second okc run. Make the offload fraction a constexpr and run the kernel twice in prepare(): offload fraction 0 and the tuned fraction, timed with CUDA events on a synthetic turn_4-size case. Print both us to the log, so one run shows whether the base kernel or the offload carries any gain. As the brief says, the next stage is the follow-up.
+
+### Open questions
+- Does stage 1 add split-KV (from config) for batch-1 turn shapes? Without it, turn_1 full is capped at ~353 us MUFU-only per item, and M1/M2 there are unlikely.
+- Will the self-check include the judge's own full-layer test cases verbatim: batch 3 ctx 5000 L 200 with dist outliers (L 200 is not a multiple of 16), with outlier-magnitude Q/K so large scores exercise the clamp and the row max?
+- Does FA3 here actually run its FP8 hdim-64 path with IntraWGOverlap and pingpong? A quick ncu of FA3's MUFU pipe utilisation (expect ~60% if it is exp-bound) would confirm the mechanism before many stages are invested; if MUFU is well below that, the bound is elsewhere (sync/latency) and the offload buys less.
+- Stated register/smem budget for 2 x 64-row consumers plus producer at 176 keys/stage with V transposed in smem, and whether 3 x 64 fits without spills (the log line should print it, as planned).
+
