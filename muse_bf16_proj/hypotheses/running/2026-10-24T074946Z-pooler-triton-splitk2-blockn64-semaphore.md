@@ -55,9 +55,16 @@ priority: 1
 kind: primary
 controls_for: null
 review: proceed
-status: queued
+status: running
 review_at: 2026-10-24T075347Z
 review_companions: [pooler-triton-splitk2-blockn64-semaphore-control-blockk256]
+stage: claimed
+claimed_at: 2026-10-24T075347Z
+base_sha: 3fe0dcca6e3cc2a8200f9881dba77770f6234d3e
+base_blob: da55301de1e911aeab09878b0873809f544f436c
+branch: hyp/muse_bf16_proj/pooler-triton-splitk2-blockn64-semaphore
+worktree: .worktrees/muse_bf16_proj/pooler-triton-splitk2-blockn64-semaphore
+mode: null
 ---
 
 # pooler-triton-splitk2-blockn64-semaphore
