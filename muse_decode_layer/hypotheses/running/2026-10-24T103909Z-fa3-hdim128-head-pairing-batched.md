@@ -69,13 +69,15 @@ base_sha: ed35ab329cbc75571509536e87957f38db9f4df0
 base_blob: de98030423860cfc9507b61d19f82a416223a23d
 branch: hyp/muse_decode_layer/fa3-hdim128-head-pairing-batched
 worktree: .worktrees/muse_decode_layer/fa3-hdim128-head-pairing-batched
-mode: null
+mode: check
 implemented_at: 2026-10-24T104412Z
 impl_commit: b694721e6b806b8c1adb777acc826094f4d14c80
 submission_sha256: b9cb335fd586596582b1474c7bfc96325dd08028a2e5419643eb6ddff9f6350a
 norm_sha256: bbc12cdfdca98fd90e7da8b0d71baab360386430bdf34d9f06abc61045afd80d
 submission_blob: 3a358375a50dcc6e19437992f7c610431582ea72
 lint_warnings: 1
+attempt_file: 2026-10-24T104412Z-check-fa3-hdim128-head-pairing-batched.md
+prepared_at: 2026-10-24T104412Z
 ---
 
 # fa3-hdim128-head-pairing-batched
