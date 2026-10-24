@@ -102,7 +102,7 @@ review: proceed
 status: running
 review_at: 2026-10-24T172529Z
 review_companions: null
-stage: implemented
+stage: dispatched
 claimed_at: 2026-10-24T172705Z
 base_sha: 2a1c23034c065ac604a00e741363c6bf9812e9de
 base_blob: 1c0f5fa1bfc4e602b62e5e9edd9df6d5652b297b
@@ -117,6 +117,8 @@ submission_blob: bd96c94a12cf87fdcdac119d1e0508f009c4120c
 lint_warnings: 0
 attempt_file: 2026-10-24T181732Z-submit-sliding-cuda-cluster-dsmem-onelaunch.md
 prepared_at: 2026-10-24T181732Z
+job: 6821e67ff3e749b7
+dispatched_at: 2026-10-24T181804Z
 ---
 
 # sliding-cuda-cluster-dsmem-onelaunch
