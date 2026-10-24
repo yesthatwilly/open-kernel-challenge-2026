@@ -50,13 +50,15 @@ base_sha: 721aada38118e1641389dda5e890b5a18175f8d8
 base_blob: 635cfee3ac2c3f7c66840b8c8a082cad2fa41a68
 branch: hyp/muse_prefill_layer/experts-triton-w13-fused-silu-epilogue
 worktree: .worktrees/muse_prefill_layer/experts-triton-w13-fused-silu-epilogue
-mode: null
+mode: submit
 implemented_at: 2026-10-24T164944Z
 impl_commit: 920e9579fb9b71ed4395118162eea218b955683d
 submission_sha256: 8b06abe54917fa7d773db41f1de49de3c10f14a29085a8d97d2b738b077ba6c7
 norm_sha256: be322cc6a4706ad9e4fa62b303655ab77308e947d4fcb39adfb997207731151c
 submission_blob: 8af5773ce409a540cbe7c1829ef6b27b6fbb055b
 lint_warnings: 7
+attempt_file: 2026-10-24T164944Z-submit-experts-triton-w13-fused-silu-epilogue.md
+prepared_at: 2026-10-24T164944Z
 ---
 
 # experts-triton-w13-fused-silu-epilogue
