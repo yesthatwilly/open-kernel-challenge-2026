@@ -1,0 +1,123 @@
+diff --git a/muse_attention_decode/submission.py b/muse_attention_decode/submission.py
+index efc5441..35854e6 100644
+--- a/muse_attention_decode/submission.py
++++ b/muse_attention_decode/submission.py
+@@ -9,12 +9,13 @@ RoPE when the layer has it, and writes q as FP8 for FA3 and the new k and v rows
+ the cache (divided by the cache scales). FA3 and the output norm x sigmoid(gate) are SGLang's.
+ """
+ 
++import inspect
+ from typing import TypedDict
+ 
+ import torch
+ import triton
+ import triton.language as tl
+-from sgl_kernel.flash_attn import flash_attn_with_kvcache
++from sgl_kernel.flash_attn import flash_attn_with_kvcache, get_scheduler_metadata
+ 
+ from sglang.kernels.ops.muse_spark_v12.norm_gate import rms_norm_gate
+ 
+@@ -55,6 +56,21 @@ class Inputs(TypedDict):
+ RMS_EPS = 1e-5
+ FP8 = torch.float8_e4m3fn
+ _INV_FREQ = {}
++# One side stream per device for FA3's tile schedule, created on the first (eager) call; never
++# derived from data. The schedule itself is rebuilt on every call.
++_SIDE = {}
++# The sliding half needs the scheduler to see the local window. If this sgl_kernel's wrapper
++# does not take window_size, sliding calls keep FA3's in-call prepare (metadata None).
++_SCHED_WINDOW = "window_size" in inspect.signature(get_scheduler_metadata).parameters
++print(f"[okc] get_scheduler_metadata accepts window_size: {_SCHED_WINDOW}")
++
++
++def _side_stream(device) -> torch.cuda.Stream:
++    key = str(device)
++    stream = _SIDE.get(key)
++    if stream is None:
++        stream = _SIDE[key] = torch.cuda.Stream(device=device)
++    return stream
+ 
+ 
+ def _inv_freq(theta: float, d: int, device) -> torch.Tensor:
+@@ -183,16 +199,9 @@ def kernel_fn(data: Inputs) -> torch.Tensor:
+     g = hq // hkv
+     q = torch.empty((tokens, hq, 2 * d if paired else d), dtype=FP8, device=device)
+     inv_freq = _inv_freq(theta, d, device) if theta else data["k_scale"]  # unused when ROPE is off
+-    _pre_attention_kernel[(tokens, hq + hkv)](
+-        qkv, data["positions"], data["cache_loc"], inv_freq, data["k_scale"], data["v_scale"],
+-        q, k_cache, v_cache,
+-        qkv.stride(0),
+-        HQ=hq, HKV=hkv, D=d, ROPE=bool(theta), EPS=RMS_EPS, PAIRED=paired, G=g,
+-        num_warps=1,
+-    )
+ 
+     # The judge's scheduler_metadata was built for the unpaired geometry, so on the paired path
+-    # it is not passed (FA3 builds its own schedule from the paged lengths).
++    # it is not passed.
+     if paired:
+         s = hkv // 2
+         pages, page_size = k_cache.shape[0], k_cache.shape[1]
+@@ -205,6 +214,47 @@ def kernel_fn(data: Inputs) -> torch.Tensor:
+         k_attn, v_attn, q_attn = k_cache, v_cache, q
+         attn_heads = hkv
+         metadata = data["scheduler_metadata"]
++    page_table = data["page_table"]
++    window_size = (window - 1, 0) if window else (-1, -1)
++
++    # Wherever FA3 would otherwise run its prepare_varlen_num_blocks kernel inside the call
++    # (sliding layers, verify blocks, the paired path), build the same schedule on a forked
++    # capture branch so it runs alongside the pre-attention kernel, which never writes the
++    # lengths it reads. Full unpaired decode keeps the judge's metadata. Every argument comes
++    # from the tensors handed to FA3 below; max_seqlen_k is what mha_fwd derives for paged KV
++    # (page_table width x page size), and the window gets mha_fwd's clamping to the lengths.
++    own_schedule = (paired or window != 0 or length != 1) and (window == 0 or _SCHED_WINDOW)
++    cur = torch.cuda.current_stream(device)
++    if own_schedule:
++        side = _side_stream(device)
++        side.wait_stream(cur)  # fork first, so the side launch joins the capture
++        attn_page = k_attn.shape[1]
++        max_seqlen_k = page_table.shape[1] * attn_page
++        left, right = window_size
++        if left >= max_seqlen_k - 1:
++            left = -1
++        if right >= length - 1:
++            right = -1
++        sched_kwargs = dict(window_size=(left, right)) if _SCHED_WINDOW else {}
++        with torch.cuda.stream(side):
++            metadata = get_scheduler_metadata(
++                batch_size=data["cache_seqlens"].shape[0], max_seqlen_q=length, max_seqlen_k=max_seqlen_k,
++                num_heads=q_attn.shape[1], num_heads_k=k_attn.shape[2], headdim=q_attn.shape[-1],
++                cache_seqlens=data["cache_seqlens"], qkv_dtype=q_attn.dtype,
++                cu_seqlens_q=data["cu_seqlens_q"], page_size=attn_page, causal=True, num_splits=0,
++                **sched_kwargs,
++            )
++
++    _pre_attention_kernel[(tokens, hq + hkv)](
++        qkv, data["positions"], data["cache_loc"], inv_freq, data["k_scale"], data["v_scale"],
++        q, k_cache, v_cache,
++        qkv.stride(0),
++        HQ=hq, HKV=hkv, D=d, ROPE=bool(theta), EPS=RMS_EPS, PAIRED=paired, G=g,
++        num_warps=1,
++    )
++    if own_schedule:
++        cur.wait_stream(side)  # join before FA3 reads the schedule
++        metadata.record_stream(cur)
+     descale = {}
+     if cfg["kv_scale"] != 1.0:
+         descale = dict(k_descale=data["k_scale"].reshape(1, 1).expand(batch, attn_heads),
+@@ -213,13 +263,13 @@ def kernel_fn(data: Inputs) -> torch.Tensor:
+         q=q_attn,
+         k_cache=k_attn,
+         v_cache=v_attn,
+-        page_table=data["page_table"],
++        page_table=page_table,
+         cache_seqlens=data["cache_seqlens"],
+         cu_seqlens_q=data["cu_seqlens_q"],
+         max_seqlen_q=length,
+         softmax_scale=cfg["sm_scale"] * cfg["qk_scale_factor"],
+         causal=True,
+-        window_size=(window - 1, 0) if window else (-1, -1),
++        window_size=window_size,
+         scheduler_metadata=metadata,
+         **descale,
+     )
