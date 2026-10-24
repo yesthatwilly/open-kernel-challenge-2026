@@ -56,13 +56,15 @@ base_sha: a392f0b6dcd3d6a023c67bc68ac2f22a8aeece5a
 base_blob: 3f59d3eeb5b8a1fe83df61cbea1c119b5926bc63
 branch: hyp/muse_bf16_proj/router-triton-hilo-fused-control-splitk-all-m
 worktree: .worktrees/muse_bf16_proj/router-triton-hilo-fused-control-splitk-all-m
-mode: null
+mode: check
 implemented_at: 2026-10-24T024842Z
 impl_commit: 5a6396fe2748ab499bae433184806f1bf37ec2fe
 submission_sha256: 47a30adef4272ae7c37c39b599606fb897d649c3e428f65cc34e0c46de54b8d0
 norm_sha256: 237ae650767cbb0fe54c632ec74520e07436e37ee713c427a18657372321a464
 submission_blob: da55301de1e911aeab09878b0873809f544f436c
 lint_warnings: 0
+attempt_file: 2026-10-24T024843Z-check-router-triton-hilo-fused-control-splitk-all-m.md
+prepared_at: 2026-10-24T024843Z
 ---
 
 # router-triton-hilo-fused-control-splitk-all-m
