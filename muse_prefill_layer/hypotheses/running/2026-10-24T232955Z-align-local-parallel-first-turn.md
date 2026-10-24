@@ -23,7 +23,16 @@ priority: 2
 kind: primary
 controls_for: null
 review: required
-status: queued
+status: running
+stage: claimed
+claimed_at: 2026-10-24T232955Z
+base_sha: 67f7473c299ffe95b9bb8701cdaf2079f00e3cab
+base_blob: 8780061c8886bf3d70fe3c433fbbfade9bdf8507
+branch: hyp/muse_prefill_layer/align-local-parallel-first-turn
+worktree: .worktrees/muse_prefill_layer/align-local-parallel-first-turn
+mode: null
+restack_of: null
+stale_base: null
 ---
 
 # align-local-parallel-first-turn
