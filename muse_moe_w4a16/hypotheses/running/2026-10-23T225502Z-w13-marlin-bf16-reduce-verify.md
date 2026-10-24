@@ -30,7 +30,7 @@ review: proceed
 status: running
 review_at: 2026-10-24T040540Z
 review_companions: null
-stage: implemented
+stage: dispatched
 claimed_at: 2026-10-24T040540Z
 base_sha: 58b624e7f1438bb67b466c3fa63d9278bcff3406
 base_blob: 11fbc1957daf7294cd2810ff82a0aad2f25644bd
@@ -45,6 +45,8 @@ submission_blob: 3253b43542c9a969bffb55cbbb9c3dd72d50ff11
 lint_warnings: 1
 attempt_file: 2026-10-24T040655Z-check-w13-marlin-bf16-reduce-verify.md
 prepared_at: 2026-10-24T040655Z
+job: 8d389f3d3e2d473f
+dispatched_at: 2026-10-24T040704Z
 ---
 
 # w13-marlin-bf16-reduce-verify
