@@ -27,9 +27,16 @@ priority: 5
 kind: primary
 controls_for: null
 review: proceed
-status: queued
+status: running
 review_at: 2026-10-24T040540Z
 review_companions: null
+stage: claimed
+claimed_at: 2026-10-24T040540Z
+base_sha: 58b624e7f1438bb67b466c3fa63d9278bcff3406
+base_blob: 11fbc1957daf7294cd2810ff82a0aad2f25644bd
+branch: hyp/muse_moe_w4a16/w13-marlin-bf16-reduce-verify
+worktree: .worktrees/muse_moe_w4a16/w13-marlin-bf16-reduce-verify
+mode: null
 ---
 
 # w13-marlin-bf16-reduce-verify
