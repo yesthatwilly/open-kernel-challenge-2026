@@ -77,7 +77,7 @@ depends_on: fused-preattention-triton
 priority: 1
 kind: rewrite
 controls_for: null
-stage: claimed
+stage: implemented
 replaces: "sliding-layer attention after the QKV projection: _pre_attention_kernel + FA3 (+combine/prepare) + rms_norm_gate"
 review: proceed
 status: running
@@ -89,6 +89,12 @@ base_blob: f14211b4b0e88f8b3f683d9f9275b76a64b66e02
 branch: hyp/muse_attention_decode/sliding-single-launch-fused-attention
 worktree: .worktrees/muse_attention_decode/sliding-single-launch-fused-attention
 mode: null
+implemented_at: 2026-10-24T084220Z
+impl_commit: db5fa4d87590c050d3108322d81e5b226fdd427d
+submission_sha256: dcba0f814ecd82f4b07cf9ebdb1cf209a498adf98e6d5fe8685aca4247e9aa5d
+norm_sha256: f612c1ff67ac7b11c8d0882fbf0d6144cee4b75972c597aeea83ef4f7bb9202d
+submission_blob: ddc819f35e8b6aa78cd2ad84e3be00a879437e8e
+lint_warnings: 0
 ---
 
 # sliding-single-launch-fused-attention
@@ -142,3 +148,58 @@ No companion is warranted. (i) An ab-revert of fused-preattention-triton is mean
 - Milestone 3 (within ~1.5x of the floor) cannot be met at B=1/verify_1, where the floor is 0.1 us after the judge's ~4 us fixed-cost subtraction. Churnsubs should judge stage 1 on M1/M2 and on whether B=16/32 approach the page-1 gather ceiling (~1.3-1.7 TB/s per LESSONS), and not treat a missed M3 at B=1 as a failure.
 - If this lands, the queued sliding-only FA3 hypotheses become moot for sliding layers: triton-window-attention-sliding, fused-sliding-preattn-into-window-kernel, fused-sliding-normgate-epilogue, fa3-single-split-sliding, fa3-window-trimmed-page-table and fa3-num-splits-sliding. Churnsubs should park them rather than run them against the new base.
 
+
+## Implementation notes
+
+Implemented 2026-10-24 in the worktree's `muse_attention_decode/submission.py` only (+236 lines, nothing removed). Uncommitted, and not run: this node has no GPU, torch or Triton.
+
+**Dispatch.** `kernel_fn` returns `_sliding_forward(data)` when `config["window"] != 0`. Otherwise it falls through to master's code, which is unchanged byte for byte: `_pre_attention_kernel` + FA3 with scheduler_metadata + `rms_norm_gate`. Full layers are the drift control.
+
+**Kernel `_sliding_fused_kernel`.** Grid `(B, Hkv, S)` with `num_warps=4` and `num_stages=2`. It uses these helpers: `_norm_rope`, `_online_update`, `_gate_epilogue` and `_gpu_fence`.
+- **S per batch**, from `_num_splits` (config only). S is the power of two that keeps `B*Hkv*S <= 128`, capped at 16. That gives B=1 → 16 (32 CTAs, 128 keys per split), B=16 → 4 (128 CTAs), B=32 → 2 (128 CTAs). The tests get B=3/4 → 16 and B=5 → 8.
+- **Row tile.** M = max(16, next_pow2(GROUP*L)): 16 at decode (8 real rows plus 8 padding rows) and 64 at verify. Row r maps to token j = min(r // GROUP, L-1) and head g*GROUP + r % GROUP. Padding rows load q = 0 and stay finite, and their stores are masked.
+- **Prologue.** RMSNorm and interleaved RoPE run on full [R, 64] tiles. A second load at `d ^ 1` gives the pair-swapped row: y = x·cos + sign·x_swap·sin, with sign −1 on even d and +1 on odd d. That is the same arithmetic as the base kernel's even/odd form, with `inv_freq[d//2]` and `pos = positions[b*L+j]`.
+- **Query precision for QK^T: bf16 operands.** q is normalized, rotated, multiplied by qk_scale_factor and only then cast to bf16, which is exactly where the reference rounds. Each K/V block is converted E4M3 → bf16, which is exact. The score scale is `sm_scale*log2e*k_scale` and accumulation is fp32. P is fed to the P@V dot as bf16 with fp32 accumulation, and v_scale is applied once at the end.
+- **New rows, program s == S-1 only.** It does RMSNorm+RoPE on k, divides k and v by k_scale and v_scale, casts to E4M3, and stores at `cache_loc[b*L+i]` (masked i < L). It then attends the dequantized **E4M3 register values** as one 16-row key block masked to `i < L & i <= j`. No new row is ever read back from the cache. The caches are passed as `uint8` views and loads and stores bitcast to `float8e4nv`, which avoids any fp8 `other=` cast on masked loads.
+- **Old keys** are positions `[lo, seq-1]` with `lo = max(0, seq-2047)`. They are split into S contiguous chunks of `ceil(count/S)` rounded up to 64, and empty chunks are allowed (seq 10 / 2047). Each BLOCK_N = 64 block is fetched through the page table: `row = page_table[b, t//PAGE]*PAGE + t%PAGE`, and PAGE is the config page_size constexpr. Pages of 1 and of 64 run the same code, so there is no fallback to master's path. Each row is masked `t >= seq + j - 2047`; `t <= p_j` always holds for old keys.
+- **Every key in every token's window is scored.** Edge check: lo = p0-2047, so p0-2048 is never loaded. For j=0, p0-2047 is in the window. For j >= 1 the per-row mask excludes it. Within the block, i <= j holds for q_len = 8. Nothing is skipped based on a score.
+- **Online softmax is -inf safe.** `m_use = where(m_new == -inf, 0, m_new)`. Then `alpha = exp2(m_i - m_use)` and `p = exp2(qk - m_use)`, so a row with no valid key keeps m = -inf, l = 0 and acc = 0, and exp2(-inf - -inf) never occurs. In the combine, m_max is the maximum over the partials; partial S-1 is finite on every row because its diagonal i = j is always valid, padding rows included. As a second guard, m_max is also clamped with `where(-inf → 0)`. Each partial's weight is `where(m_s == -inf, 0, exp2(m_s - m_max))`. With S == 1, l > 0 on every row because that program holds the new keys.
+- **Epilogue** (the S==1 program, or the combine winner). o = acc/l·v_scale in fp32, with no bf16 rounding of o. Then `rsqrt(mean(o²)+1e-5)` over 64 is multiplied by sigmoid(gate) loaded from `qkv[tok, (Hq+2Hkv)*64 + h*64 :]`, the result is cast to bf16, and it is stored to `out[b, j, h*64:]`.
+
+**How ordering is ensured (ticket combine, S > 1).**
+1. Each thread stores its partials: acc goes to `ws_acc [B*Hkv*S, M, 64]` and m, l go to `ws_ml [B*Hkv*S, 2, M]`, both fp32 and `torch.empty` per call. This layout is two buffers in place of the spec's single [.., M, 66] buffer, a layout change only.
+2. Every thread executes `fence.acq_rel.gpu` through `tl.inline_asm_elementwise(..., is_pure=False)` on an [M] tensor. With 128 threads and M ≤ 64 the elements are replicated, so all threads execute it.
+3. `tl.debug_barrier()`.
+4. ONE scalar `tl.atomic_add(cnt_ptr + b*Hkv + g, 1, sem="acq_rel", scope="gpu")`.
+5. `tl.debug_barrier()`.
+6. The program that draws `ticket == S-1` fences again on every thread (acquire side). It then reloads all S partials with `cache_modifier=".cg"`, combines them, runs the epilogue, and stores 0 to its counter.
+
+The counters are int32 `[B*Hkv]`, allocated with `torch.zeros` once per (B, Hkv, device) in `_COUNTERS` on the first eager call. They hold no input-derived data and are left at 0 after every launch. On S == 1 they are not allocated or touched; dummy pointers are passed instead. Everything runs on the current stream, with no side stream.
+
+**Deviations and uncertainties.**
+- **No warm-up in `prepare()`.** This problem has no `prepare` hook: the technical rules say muse_attention_decode is the one problem without weights or prepare. The Triton variants compile on the first eager call per config, as the base's `_pre_attention_kernel` already does.
+- **Unverified Triton features.** `tl.inline_asm_elementwise` (the fence) and `scope=` on `atomic_add` both need Triton ≥ 3.0-ish. If either fails to compile, the first fix is to drop the fence: the barrier plus the acq_rel atomic remain.
+- **The S-1 program does the new-row work and also a full chunk.** The review's suggestion of a shorter chunk for S-1 was not done; it is stage-2 material.
+- **Untested.** The stress test (many replays at B=1, S=16) could not be run here. A sporadic mis-combine would show up as a flaky correctness failure on a timed call.
+- **Pipelining of the gathers** relies on Triton's pipeliner with `num_stages=2` on a loop with runtime bounds and indirect loads.
+
+**Readout plan.** Judge on the single `_sliding_fused_kernel` time per sliding shape in the profile, against the incumbent's replaced 15-27 µs. The replaced kernels are `_pre_attention_kernel`, FA3 main, FlashAttnFwdCombine, prepare_varlen_num_blocks and rms_norm_gate. Rough targets, adjusted per the review: about 5-8 µs at decode_1 and verify_1, and about 10-13 µs at B=32. The full-layer rows must stay flat (drift ±1.5-2.5%). Milestone 1: all 16 tests pass. Milestone 2: each sliding shape is faster than the incumbent's replaced time. Milestone 3 (≤ 1.5× floor) cannot be reached at B=1 and verify_1, where the floor is 0.1 µs. At B=16/32, compare instead against the page-1 gather ceiling of about 1.3-1.7 TB/s. A missed milestone 3 at B=1 is not a failure.
+
+## Rules check
+
+Checked against `git -C .worktrees/muse_attention_decode/sliding-single-launch-fused-attention diff` (+236 lines in submission.py only):
+- [x] CUDA-graph capturable. There is no `.item()`, `.cpu()`, `synchronize()` or tensor print. `torch.empty` allocations take their shapes from config. S, M, LN, PAGE, WINDOW and ROPE are all derived from config. The only runtime branches are on program ids and on the ticket value inside the kernel; there is no host control flow on input values. The counters are zero-initialised on the first eager call, not during capture.
+- [x] Nothing derived from `data` is cached across calls. `_COUNTERS` is keyed by (B, Hkv, device) and holds zeros, restored to 0 by every launch. `_inv_freq` is the base's theta-only cache.
+- [x] n/a: weights. This problem has no weights and no `prepare()`.
+- [x] Activations BF16 where SGLang keeps BF16. The KV cache stays FP8 E4M3: new rows are stored as E4M3, and old and new keys are attended as E4M3 values. Queries are bf16, which is finer than the E4M3 allowance. The output is bf16.
+- [x] Attention sees every key. Every key in `[max(0, p_j-2047), p_j]` is scored for each token j: old keys in S contiguous chunks covering `[lo, seq-1]` exactly, plus the new keys with i <= j. There is no top-k, sparsity, block skipping or weight-based skipping.
+- [x] No timing patches, no access to harness frames, I/O or secrets, no module edits, no reference import, no subprocesses and no network. The imports are unchanged.
+- [x] All work happens inside the timed call. No output is cached or replayed; the workspace is per call and the counters are pure synchronisation state.
+- [x] Only the named area changed: the sliding path in `kernel_fn` plus the new helpers. The full-layer path is byte-identical. The first line, `# okc: problem=muse_attention_decode`, is kept.
+- [x] No `triton.autotune`, no side stream, and no host syncs in kernel_fn.
+
+Lint (`okc_lint.py ... --problem muse_attention_decode`):
+```
+CLEAN: .worktrees/muse_attention_decode/sliding-single-launch-fused-attention/muse_attention_decode/submission.py
+```
+`python3 -I -m py_compile` passed, and the `__pycache__` it left in the worktree was deleted.
