@@ -53,7 +53,7 @@ review: proceed
 status: running
 review_at: 2026-10-24T185011Z
 review_companions: null
-stage: implemented
+stage: dispatched
 claimed_at: 2026-10-24T185011Z
 base_sha: 90040c7132925d246133b05640f35bf2b6622eb8
 base_blob: 3d70ae6e2de0d48c4a4f2a469ced8234f5348182
@@ -68,6 +68,8 @@ submission_blob: f99bbe8e814e229a1d528bd8f951814baf1f0aaf
 lint_warnings: 20
 attempt_file: 2026-10-24T231258Z-check-sliding-fused-batched-decode-port.md
 prepared_at: 2026-10-24T231258Z
+job: b01fd2df41a040b3
+dispatched_at: 2026-10-24T231312Z
 ---
 
 # sliding-fused-batched-decode-port
