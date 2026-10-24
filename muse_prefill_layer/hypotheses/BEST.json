@@ -1,17 +1,17 @@
 {
  "problem": "muse_prefill_layer",
- "job": "b33b87b5083b4d1c",
- "check_job": "b33b87b5083b4d1c",
+ "job": "fb1e52d2119d4175",
+ "check_job": "fb1e52d2119d4175",
  "mode": "check",
- "speedup": 1.0228712349305686,
+ "speedup": 1.0599319720006266,
  "ci": [
-  1.00752816640661,
-  1.038214303454527
+  1.044032992420617,
+  1.075830951580636
  ],
- "score_us": 378741.61162259744,
- "commit": "a1f93c294889a5676375f229f5a889a1419686fe",
- "submission_blob": "f17d41c9a9b0696f20e6679a493da9d4aa6d2934",
- "slug": "experts-triton-w4a16-first-turn-blockt256",
- "result": "muse_prefill_layer/hypotheses/done/neutral/experts-triton-w4a16-first-turn-blockt256.result.json",
- "updated_at": "2026-10-24T124037Z"
+ "score_us": 365498.83410797897,
+ "commit": "b92a0f47192b31b8618c3c53aab281b72204f3c4",
+ "submission_blob": "635cfee3ac2c3f7c66840b8c8a082cad2fa41a68",
+ "slug": "experts-hybrid-marlin-turn-triton-first-turn",
+ "result": "muse_prefill_layer/hypotheses/done/gain/experts-hybrid-marlin-turn-triton-first-turn.result.json",
+ "updated_at": "2026-10-24T135614Z"
 }
