@@ -65,8 +65,10 @@ kind: rewrite
 controls_for: null
 rewrite_stage: 1
 replaces: "full-layer decode at batch>1: FA3 flash_fwd main + prepare_varlen_num_blocks + FlashAttnFwdCombine + _paired_norm_gate_kernel"
-review: required
+review: proceed
 status: queued
+review_at: 2026-10-24T140601Z
+review_companions: null
 ---
 
 # full-decode-cuda-gather-splitkv
@@ -95,3 +97,28 @@ shape (profile top_kernels) against the incumbent and the speed-of-light floor, 
 2. at or below the incumbent kernels' time on the target shapes;
 3. within ~1.5x of the floor on the target shapes, and the headline CI clears 1.0 (promotable).
 The next stage is minted with `--kind rewrite --depends-on <this slug> --stage N+1`.
+
+## Adversarial review
+
+Reviewed 2026-10-24T140601Z by an adversarial subagent (model opus).
+
+**Verdict: proceed.** This is a sound stage-1 rewrite, aimed at the one place left with real headroom: full-layer decode at batch 16/32, which is 72-81% of those loads and runs at 2.1 TB/s against a 4.8 TB/s floor. load_inline is explicitly allowed. The weakest link is the 3.3 TB/s target on uniformly random 128-byte rows, and stage 1's milestone will measure it directly. Fix three robustness gaps before claiming: when the kernel compiles, a batch<=64 gate, and PAIRED=False on the gated path.
+
+### Justification
+Profile support is strong. At decode_16 the full layer takes 156.8 us (FA3 main 150.4, combine 4.4, prepare 3.0) against a 63.2 us floor. At decode_32 it takes 298.5 us (main 292.0) against 126.4 us. Both are ~2.4x off the floor and these are the largest absolute rows in the problem. The byte count checks out: 16 x ~80K tokens x (128 B K + 128 B V) = ~328 MB, 2.1 TB/s at 156 us. reference.generate_input builds the page table from a torch.randperm over batch*max_pages, so every token's K row and V row is an independent random 128-byte line spread over ~350 MB. The kernel design itself is reasonable for H200. Kernel A has 264 persistent CTAs with 64 KB of cp.async ring each, ~128 KB in flight per SM; Little's law needs only ~20 KB/SM to sustain 3.3 TB/s at ~800 ns latency, so in-flight depth is ample. The page-index preload removes the dependent load, and 1024-token chunks over a flat (b, chunk) list balance the ragged lengths (~1280 items at decode_16 = 4.85 waves, ~97% balanced). Compute is small: mma.sync with 8 of 16 rows wasted is still far below the tensor-core roof. The fp8->f16 conversion of all 328 M K+V elements is ~164 M cvt.e4m3x2 instructions. At ~16/clk/SM that is ~40 us of ALU, which must overlap the memory stream, so it is not free at a 100 us target. Weakest link: whether FA3's 2.1 TB/s is limited by latency and in-flight depth (which this design fixes) or by HBM efficiency on uniformly random 128-byte lines plus TLB reach over a ~350 MB randomly scattered cache (which no kernel fixes). FA3 sm90 already pipelines its paged K/V loads, so the claim that FA3 'keeps the page-table load on the critical path of every tile' is unverified. Both earlier Triton gather kernels topped out at 1.6 TB/s, so there is no in-repo evidence of anything above 2.1 TB/s on this access pattern. The M1/M2 bandwidth readout (sum(cache_seqlens)*256 B / A time) is the right test. The per-load arithmetic is overstated. At the stated shape targets (105 us and 200 us), decode_16 goes from 952+2509=3461 to 952+1680=2632 (1.315x, not ~1.4x), and decode_32 from 1145+4776=5921 to 1145+3200=4345 (1.363x, not ~1.45x). That would still be ~1.10x on the 6-load geomean, about 1.42x headline. Directions are all consistent with TASK.md: decode_1, verify and sliding are outside the gate and byte-identical, so flat.
+
+### Confounders on the current kernel
+- fa3-hdim128-head-pairing / paired-heads-launch-cleanup / -ab-tune-batch-gate: these build the incumbent this rewrite replaces on the gated shapes (paired FA3 plus _paired_norm_gate_kernel). They do not confound: the new kernel keeps the same one-128-byte-K-row-per-token gather, so the measured delta is purely replacing paired FA3 with kernels A and B. One implementation hazard: the paired predicate must become (window==0 and hkv%2==0 and batch>1 and not gated). Otherwise the pre-attention kernel writes the padded [T,16,128] q and kernel A reads it as [T,16,64]. Full verify_16/32 must stay paired.
+- fused-preattention-triton: the gated path reuses _pre_attention_kernel unchanged with PAIRED=False, the same launch master uses on unpaired paths. It is a constant ~1.3-2 us with no interaction, except that the unpaired q write is slightly smaller than the paired one, a sub-0.5 us effect.
+- sliding-fused-triton-decode1-gate: disjoint (sliding batch-1 only). No shared launches or memory, and cold L2 on every replay removes cache interaction.
+
+### Interference and A/B needs
+No companion is warranted. This is kind: rewrite, judged on kernels A+B's own profile time against the 156.8/298.5 us incumbent and the 63.2/126.4 us floors. Those times are directly readable from top_kernels, because load_inline kernels appear under their own names. Reverting pairing (ab-revert) would only compare against a slower unpaired FA3, which answers nothing new. A control that splits off the index preload or the chunk balancing would need a second full CUDA implementation; that is stage-2 tuning (C, stage count, CTAs/SM), not a disambiguator. With only 2 attention checks left today, spend one on this stage and keep one for the stage-2 fix.
+
+### Open questions
+- Is FA3's 2.1 TB/s latency-bound or limited by DRAM efficiency on random rows? If kernel A also stalls near 2.0-2.5 TB/s with a deep ring and balanced chunks, random 128-byte HBM3e efficiency plus TLB reach over the ~350 MB randomly permuted cache is the ceiling, and the rewrite should stop. Report achieved bandwidth and, if the profile allows, sector and L2-miss ratios.
+- Conversion cost: should QK use the native FP8 mma.sync m16n8k32 e4m3 path (sm_89+), with q already FP8, so K needs no cvt? That roughly halves conversion ALU. V still needs widening, or an FP8 P@V with P rounded to e4m3 as FA3 does.
+- Only one test exercises the gated path: batch 4, ctx 80000, spread mixed, coherent, page 1, with lengths up to ~4x ctx, so ~313 chunks per request and a larger workspace. kv_scale != 1 never reaches kernel A in tests. Is a local CPU or emulated check of the scale path worth adding before stage 2?
+- Kernel B: one warp per (request, head) serially merging ~80 partials (decode_16) to ~85 (decode_32), with C=1024, reads ~5-11 MB in total. Check that it stays at or below FA3 combine plus norm-gate (~6 us). If not, use two-level reduction or larger C in stage 2.
+- Losing FA3's PDL overlap between pre-attention, main and combine costs ~1-2 us per shape. Consider cudaLaunchAttributeProgrammaticStreamSerialization on A and B in a later stage.
+
