@@ -88,9 +88,16 @@ controls_for: null
 rewrite_stage: 1
 replaces: Marlin w13+w2 (moe_wna16_marlin_gemm x2) at bs<=32
 review: proceed
-status: queued
+status: running
 review_at: 2026-10-24T170224Z
 review_companions: null
+stage: claimed
+claimed_at: 2026-10-24T170224Z
+base_sha: b9590f4d98a9e3d4afd62cdaab9dd4d48694655f
+base_blob: d9a9375ef4721ab9b28cc9d6364c92e67c7ccc59
+branch: hyp/muse_moe_w4a16/cuda-fused-moe-bs1-persistent-w13-silu-w2
+worktree: .worktrees/muse_moe_w4a16/cuda-fused-moe-bs1-persistent-w13-silu-w2
+mode: null
 ---
 
 # cuda-fused-moe-bs1-persistent-w13-silu-w2
