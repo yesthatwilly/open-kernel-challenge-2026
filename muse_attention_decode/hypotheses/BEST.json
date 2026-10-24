@@ -1,17 +1,17 @@
 {
  "problem": "muse_attention_decode",
- "job": "82085a4e82154393",
+ "job": "de486093311d4bb9",
  "check_job": "82085a4e82154393",
- "mode": "check",
- "speedup": 1.3467624733171553,
+ "mode": "submit",
+ "speedup": 1.3492076314709118,
  "ci": [
-  1.3265610362173978,
-  1.3669639104169125
+  1.328969516998848,
+  1.3729544014677721
  ],
- "score_us": 2796.5584686387806,
+ "score_us": 2791.4902881878634,
  "commit": "3693fb89b6ce898de437c29d4859b90c33277309",
  "submission_blob": "1c0f5fa1bfc4e602b62e5e9edd9df6d5652b297b",
  "slug": "full-decode-cuda-gather-splitkv",
  "result": "muse_attention_decode/hypotheses/done/gain/full-decode-cuda-gather-splitkv.result.json",
- "updated_at": "2026-10-24T144811Z"
+ "updated_at": "2026-10-24T165804Z"
 }

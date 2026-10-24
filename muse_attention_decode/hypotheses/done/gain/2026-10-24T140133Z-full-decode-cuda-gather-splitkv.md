@@ -92,11 +92,12 @@ speedup: 1.3467624733171553
 speedup_ci: [1.3265610362173978, 1.3669639104169125]
 harvested_at: 2026-10-24T144809Z
 best_at_harvest: 1.2930643047593426
-promotion: submitted
+promotion: done
 promotion_commit: 3693fb89b6ce898de437c29d4859b90c33277309
 promotion_attempt: 2026-10-24T163458Z-submit-full-decode-cuda-gather-splitkv.md
 promotion_job: de486093311d4bb9
 promotion_at: 2026-10-24T163514Z
+board: "{\"rank\": 342, \"team\": \"yesthatwilly\", \"speedup\": 1.3492, \"first\": false, \"ahead\": 341, \"to_first\": 2.0202}"
 ---
 
 # full-decode-cuda-gather-splitkv

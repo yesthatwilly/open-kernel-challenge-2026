@@ -49,4 +49,4 @@ CLEAN: submission.py
 high
 
 ## Result (after the run)
-(pending)
+Promotion passed: 1.3492x [1.3290,1.3730], board: {"rank": 342, "team": "yesthatwilly", "speedup": 1.3492, "first": false, "ahead": 341, "to_first": 2.0202}
