@@ -99,11 +99,11 @@ base_blob: 1c0f5fa1bfc4e602b62e5e9edd9df6d5652b297b
 branch: hyp/muse_attention_decode/full-cuda-onelaunch-warpspec-bulk-gather
 worktree: .worktrees/muse_attention_decode/full-cuda-onelaunch-warpspec-bulk-gather
 mode: null
-implemented_at: 2026-10-24T175215Z
-impl_commit: 0785778cf4276e171a84f2a4c7d3ffc25893c346
-submission_sha256: 34c696904f50319c35239749cf44711e4f93131f11c63d5588ade541a9712916
-norm_sha256: c89f844774678ac0733b25b3098234d13b3e86133f22dd0501a3ea0aed197f80
-submission_blob: a5c7945998f7e658cae185cc448230a0eb6c9bed
+implemented_at: 2026-10-24T175437Z
+impl_commit: fa289e54f415aaff2104e1a6ef842b26ced3982d
+submission_sha256: 384a9250cbeb581fd702c802192739fa6fd3e7c3982f380a7586ff854f3c803a
+norm_sha256: 6f29133ec2914cc3495557cee8c601810c9b9843cfa8b81e781b5f5a274626f7
+submission_blob: 3f64b0622823eb70c127565c98aed1972953bf87
 lint_warnings: 3
 ---
 
@@ -193,6 +193,9 @@ Worktree file `.worktrees/muse_attention_decode/full-cuda-onelaunch-warpspec-bul
 
 ### Pre-flight fixes (2026-10-24, after an Opus audit)
 The audit verified every flagged PTX form (against CUTLASS) and emulated 3108 stream-K/ticket mixes. Two Python-only changes: the self-check stops at the first failure, and the diagnostics skip timing BULK=0 when its own check failed, so a broken variant costs ~1 s, not ~30-60 s. No kernel-side short-circuit was added; the audit explained why one would be unsafe here.
+
+### Pre-flight fix 2 (2026-10-24)
+The same always-fail risk found by the sliding-cluster audit applies here: new cache rows were required to be >= 99% byte-identical to master's Triton RoPE kernel (likely fast sin/cos), at positions up to 9000. Now rel L2 < 5e-2 only (judge CACHE_TOL 8e-2); the byte match is printed for information.
 
 ## Rules check
 
