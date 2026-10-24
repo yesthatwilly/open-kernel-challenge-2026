@@ -26,7 +26,7 @@ base_sha: fc2c96a83dc62731f5a5ebd4f4791da8fdeb14ed
 base_blob: 3d70ae6e2de0d48c4a4f2a469ced8234f5348182
 branch: hyp/muse_decode_layer/stack-sidestream-sliding-batched
 worktree: .worktrees/muse_decode_layer/stack-sidestream-sliding-batched
-mode: null
+mode: check
 restack_of: null
 stale_base: null
 implemented_at: 2026-10-24T233649Z
@@ -35,6 +35,8 @@ submission_sha256: e23a3d22a0e73566331aee6c9cc6efe861d22e889fb609b52f614c784e84b
 norm_sha256: 1a60c51db7a15d6deb5b1f6895c0ac2cf257c888d59bdc52b03462e5fa078383
 submission_blob: ad7bee5bbcdcf3ad7d2f24aa5ab58e7ed67db773
 lint_warnings: 20
+attempt_file: 2026-10-24T233649Z-check-stack-sidestream-sliding-batched.md
+prepared_at: 2026-10-24T233649Z
 ---
 
 # stack-sidestream-sliding-batched
