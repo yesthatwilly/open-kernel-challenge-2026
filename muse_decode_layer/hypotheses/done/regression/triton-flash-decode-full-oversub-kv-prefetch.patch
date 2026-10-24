@@ -1,0 +1,101 @@
+diff --git a/muse_decode_layer/submission.py b/muse_decode_layer/submission.py
+index cf09a91..9edba2e 100644
+--- a/muse_decode_layer/submission.py
++++ b/muse_decode_layer/submission.py
+@@ -162,8 +162,8 @@ BLOCK_SIZE_M_CANDIDATES = (8, 16, 32, 48, 64)
+ # Cap on that pick for both Marlin MoE GEMMs (SGLang has none): 48/64 at T=128/256 become 16.
+ MARLIN_BLOCK_SIZE_M_CAP = 16
+ ROPE_POSITIONS = 1 << 21
+-# Full-attention decode (Triton flash-decoding): about two waves of CTAs on H200's 132 SMs.
+-FD_NUM_SMS = 132
++# Full-attention decode (Triton flash-decoding): about 1024 CTAs, ~4 resident per SM over ~2 waves.
++FD_SPLIT_CTAS = 1024
+ FD_MAX_SPLITS = 128
+ FD_BLOCK_N = 64
+ ROPE_THETA = 500_000.0
+@@ -334,26 +334,35 @@ def _full_decode_split_kernel(
+     acc = tl.zeros([HQ, W], dtype=tl.float32)
+     pt_row = pt_ptr + b.to(tl.int64) * pt_stride
+ 
+-    # The first tile's cache rows; every later tile's rows are loaded one iteration ahead.
++    # Tile 0's K/V and tile 1's cache rows are loaded before the loop; each iteration issues tile
++    # i+1's K/V and tile i+2's rows before tile i's math, so one tile's K/V stays in flight. A tile
++    # past end has valid all false: its loads are masked and its scores are -inf.
+     t = start + n
+-    valid = (t < end) & (t // PAGE < max_pages)
+-    page = tl.load(pt_row + t // PAGE, mask=valid, other=0)
++    valid_cur = (t < end) & (t // PAGE < max_pages)
++    page = tl.load(pt_row + t // PAGE, mask=valid_cur, other=0)
+     rows = page.to(tl.int64) * PAGE + t % PAGE
++    kv_off = rows[:, None] * W + c[None, :]
++    k_cur = tl.load(k_ptr + kv_off, mask=valid_cur[:, None], other=0)
++    v_cur = tl.load(v_ptr + kv_off, mask=valid_cur[:, None], other=0)
++    t = start + BLOCK_N + n
++    valid_next = (t < end) & (t // PAGE < max_pages)
++    page = tl.load(pt_row + t // PAGE, mask=valid_next, other=0)
++    rows_next = page.to(tl.int64) * PAGE + t % PAGE
+     for tile in range(start, end, BLOCK_N):
+-        kv_off = rows[:, None] * W + c[None, :]
+-        k = tl.load(k_ptr + kv_off, mask=valid[:, None], other=0)
+-        v = tl.load(v_ptr + kv_off, mask=valid[:, None], other=0)
+-        cur_valid = valid
+-        # Prefetch the next tile's page-table indices before this tile's math.
+-        t_next = tile + BLOCK_N + n
+-        valid = (t_next < end) & (t_next // PAGE < max_pages)
+-        page = tl.load(pt_row + t_next // PAGE, mask=valid, other=0)
+-        rows = page.to(tl.int64) * PAGE + t_next % PAGE
+-
+-        k = k.to(tl.float8e4nv, bitcast=True).to(tl.bfloat16)
+-        v = v.to(tl.float8e4nv, bitcast=True).to(tl.bfloat16)
++        # Issue tile i+1's K/V loads (its rows are in hand), then tile i+2's page-table indices.
++        kv_off = rows_next[:, None] * W + c[None, :]
++        k_next = tl.load(k_ptr + kv_off, mask=valid_next[:, None], other=0)
++        v_next = tl.load(v_ptr + kv_off, mask=valid_next[:, None], other=0)
++        t2 = tile + 2 * BLOCK_N + n
++        valid_next2 = (t2 < end) & (t2 // PAGE < max_pages)
++        page = tl.load(pt_row + t2 // PAGE, mask=valid_next2, other=0)
++        rows_next2 = page.to(tl.int64) * PAGE + t2 % PAGE
++
++        # Tile i's math on the K/V loaded one iteration earlier.
++        k = k_cur.to(tl.float8e4nv, bitcast=True).to(tl.bfloat16)
++        v = v_cur.to(tl.float8e4nv, bitcast=True).to(tl.bfloat16)
+         qk = tl.dot(q2, tl.trans(k))  # [HQ, BLOCK_N] fp32
+-        qk = tl.where(cur_valid[None, :], qk * scale, float("-inf"))
++        qk = tl.where(valid_cur[None, :], qk * scale, float("-inf"))
+         m_new = tl.maximum(m_i, tl.max(qk, 1))
+         m_use = tl.where(m_new == float("-inf"), 0.0, m_new)  # no -inf - -inf
+         alpha = tl.exp2(m_i - m_use)
+@@ -362,6 +371,13 @@ def _full_decode_split_kernel(
+         acc = acc * alpha[:, None] + tl.dot(p.to(tl.bfloat16), v)
+         m_i = m_new
+ 
++        # Rotate: valid travels with its tile.
++        k_cur = k_next
++        v_cur = v_next
++        valid_cur = valid_next
++        rows_next = rows_next2
++        valid_next = valid_next2
++
+     part = b.to(tl.int64) * num_splits + s
+     tl.store(acc_ptr + (part * HQ + h[:, None]) * D + (c[None, :] % D), acc, mask=own)
+     tl.store(m_ptr + part * HQ + h, m_i)
+@@ -395,8 +411,8 @@ def _full_decode_combine_kernel(
+ 
+ 
+ def _full_decode_splits(batch):
+-    """S from the batch only: about two waves of CTAs, 1..128."""
+-    return max(1, min(FD_MAX_SPLITS, -(-2 * FD_NUM_SMS // batch)))
++    """S from the batch only: about FD_SPLIT_CTAS CTAs (~4 resident per SM over ~2 waves), 1..128."""
++    return max(1, min(FD_MAX_SPLITS, FD_SPLIT_CTAS // batch))
+ 
+ 
+ def _full_decode_attention(q8, k_cache, v_cache, page_table, cache_seqlens, k_scale, v_scale, softmax_scale):
+@@ -418,7 +434,7 @@ def _full_decode_attention(q8, k_cache, v_cache, page_table, cache_seqlens, k_sc
+         k_scale, acc, m, l,
+         page_table.stride(0), max_pages, split_len, num_splits, softmax_scale,
+         HQ=hq, HKV=hkv, D=d, PAGE=page, BLOCK_N=FD_BLOCK_N,
+-        num_warps=4, num_stages=3,
++        num_warps=4, num_stages=1,
+     )
+     _full_decode_combine_kernel[(batch, hq)](
+         acc, m, l, v_scale, out, num_splits,
