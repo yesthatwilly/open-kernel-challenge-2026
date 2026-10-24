@@ -143,13 +143,15 @@ base_sha: 43ae369dae50af5a98bad52c50a5e7ba904c492f
 base_blob: a8bb42ac483318e9fbc84bc7826a27b7a704d1fb
 branch: hyp/muse_bf16_proj/bf16-lossless-exp4-weight-stream-rewrite
 worktree: .worktrees/muse_bf16_proj/bf16-lossless-exp4-weight-stream-rewrite
-mode: null
+mode: submit
 implemented_at: 2026-10-24T173953Z
 impl_commit: 7895e56373c79d74ba78b7c0e7146755b118ce2c
 submission_sha256: 1e17fa124212904431e3568047eadec88afa21490d54ae0fd8db4df92f05aee1
 norm_sha256: febc57c9b1e11a278749c0e85d270857319b42e94be31db23869513c3f8d4dd7
 submission_blob: a34e409b452e9a6e5f7ee3612486d30a989832f2
 lint_warnings: 8
+attempt_file: 2026-10-24T181732Z-submit-bf16-lossless-exp4-weight-stream-rewrite.md
+prepared_at: 2026-10-24T181733Z
 ---
 
 # bf16-lossless-exp4-weight-stream-rewrite
