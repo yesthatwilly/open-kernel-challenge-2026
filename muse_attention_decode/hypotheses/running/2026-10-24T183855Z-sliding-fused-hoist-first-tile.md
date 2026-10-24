@@ -32,9 +32,16 @@ priority: 4
 kind: primary
 controls_for: null
 review: proceed
-status: queued
+status: running
 review_at: 2026-10-24T184058Z
 review_companions: null
+stage: claimed
+claimed_at: 2026-10-24T184059Z
+base_sha: b0b3da52d52b15557f59e3c3631b16eb6fc5c2cd
+base_blob: c6854f093588da524e63657576b27ed720756e32
+branch: hyp/muse_attention_decode/sliding-fused-hoist-first-tile
+worktree: .worktrees/muse_attention_decode/sliding-fused-hoist-first-tile
+mode: null
 ---
 
 # sliding-fused-hoist-first-tile
