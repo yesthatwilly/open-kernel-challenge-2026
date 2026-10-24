@@ -1,0 +1,16 @@
+diff --git a/muse_prefill_layer/submission.py b/muse_prefill_layer/submission.py
+index e4931f0..3d09290 100644
+--- a/muse_prefill_layer/submission.py
++++ b/muse_prefill_layer/submission.py
+@@ -270,8 +270,10 @@ def _experts(x, topk_weights, local_ids, state):
+     size_n = bank["size_n"]
+     gemm1_n = 2 * size_n
+     topk_weights = topk_weights.to(torch.float32).contiguous()
++    # Expected local rows per local expert under EP8: num_tokens * TOP_K / N_EXPERTS (only
++    # LOCAL_EXPERTS of the N_EXPERTS are on this GPU). Shape-only pick; feeds the align and both GEMMs.
+     for block_size_m in BLOCK_SIZE_M_CANDIDATES:
+-        if num_tokens * TOP_K / LOCAL_EXPERTS / block_size_m < 0.9:
++        if num_tokens * TOP_K / N_EXPERTS / block_size_m < 0.9:
+             break
+     sorted_ids, block_experts, n_padded = moe_align_block_size(local_ids, block_size_m, N_EXPERTS)
+     cache2 = torch.empty((num_tokens * TOP_K, size_n), device=x.device, dtype=x.dtype)
