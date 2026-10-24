@@ -44,6 +44,8 @@ profile are in `<problem>/hypotheses/archive/<slug>/`.
   the router's small-m grid depth is settled.
 - bf16 pooler at m<=32: TMA weight loads (1.169x) and BLOCK_K=256 cp.async (1.162x) both landed within
   noise of master 1.151x; TMA adds little over deeper cp.async.
+- bf16 m=32: swap-AB (64 weight rows on tl.dot's LHS, 32 tokens on N) emits wgmma (tokens-on-M had
+  wgmma=0, 255 regs); pooler m=32 +9.3%, o +4.1%, qkv +3.6%, 1.198x (bf16-m32-swapab-wgmma-triton).
 - Several per-shape Triton wins that were each neutral on the headline combine: bf16 shape-gated combo
   (pooler/qkv/o at m<=16, unpooler slice) 1.176x vs 1.151x. Judge single-area runs per shape, then combine.
 - A 128x128x64 Triton split-K kernel at m=128 (pooler SPLIT_K 4, unpooler 2) lost to cuBLAS (1.116x vs
@@ -76,6 +78,8 @@ profile are in `<problem>/hypotheses/archive/<slug>/`.
 - moe: one Triton map+align launch at bs<=32 gained 4.5-12.6% (triton-map-align-small-m-port) and stacked
   with the bs>=128 block-m pick to 1.312x (triton-map-align-on-block-m-restack). Stacking shape-disjoint wins
   by 3-way merge reproduced both parents' per-shape gains.
+- decode_layer: porting moe's single-program Triton post-norm at T<32 gave 1.164x (from 1.087x).
+- moe chunked align failed to compile: tl.arange needs a power of 2 and block_size_m 48 is not.
 - moe: the block-m win stacked cleanly on the post-norm win: 1.254x (marlin-block-m-two-smaller-on-postnorm).
 - moe: smaller Marlin block_size_m at bs=128/256 gained on its own (verify-two-smaller 1.092x,
   next-smaller 1.039x), confirming decode's cap-16 lesson on the standalone MoE.
@@ -89,6 +93,12 @@ profile are in `<problem>/hypotheses/archive/<slug>/`.
 - num_splits is only a cap under varlen dynamic split, and FA3 already sizes splits on the GPU
   (decode fa3-num-splits-* reviews).
 - FA3 sits at ~600 TFLOP/s on every full prefill shape whatever the CTA count (fa3-batched-mode review).
+- A hand-written CUDA split-KV kernel (load_inline, compiled at import in 41 s) for full-layer decode at batch
+  16/32: persistent 2xSM grid over 1024-token chunks, page indices prefetched to smem one item ahead, 4-stage
+  cp.async ring of 128-byte K/V rows, f16 mma.sync; plus a combine + norm-gate kernel. Self-check rel L2 1.7e-3;
+  attention 1.293x -> 1.347x (full-decode-cuda-gather-splitkv). Triton never got past ~2.1 TB/s on this gather.
+- The fused sliding Triton kernel at 16 splits for every decode batch: sliding decode_16 +33%
+  (sliding-fused-triton-decode-batched-deep-splits).
 - Full-attention decode reaches only 1.3-1.7 TB/s: the page-size-1 row gather is the limit.
 - FA3 head pairing (two hdim-64 KV heads viewed as one hdim-128 row, query zero-padded into its half)
   gained 14-24% on full batch 16/32 decode and verify (attention fa3-hdim128-head-pairing, 1.171x) but lost
