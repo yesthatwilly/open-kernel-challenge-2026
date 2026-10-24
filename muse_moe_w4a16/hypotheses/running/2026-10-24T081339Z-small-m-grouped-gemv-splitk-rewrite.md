@@ -87,13 +87,15 @@ base_sha: 713276ec0ed1f2c1c4e621ba4314e63f989307e4
 base_blob: 11fbc1957daf7294cd2810ff82a0aad2f25644bd
 branch: hyp/muse_moe_w4a16/small-m-grouped-gemv-splitk-rewrite
 worktree: .worktrees/muse_moe_w4a16/small-m-grouped-gemv-splitk-rewrite
-mode: null
+mode: check
 implemented_at: 2026-10-24T084758Z
 impl_commit: 0193fee7339d60d90360931ecbc466df3bacedd1
 submission_sha256: d32912216cff529a28507bea9d3b0d06086b881e04efd2179e13091b32b1eae8
 norm_sha256: 9b40d2120136a0ec1be7e03f95fc13fb0f28065be33c00b5c4c186932dd86291
 submission_blob: 644e024fd9b306357107599e01908bc26281ea22
 lint_warnings: 2
+attempt_file: 2026-10-24T084758Z-check-small-m-grouped-gemv-splitk-rewrite.md
+prepared_at: 2026-10-24T084758Z
 ---
 
 # small-m-grouped-gemv-splitk-rewrite
