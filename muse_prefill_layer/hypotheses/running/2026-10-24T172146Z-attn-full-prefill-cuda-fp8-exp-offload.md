@@ -90,13 +90,15 @@ base_sha: 41c4efc3448061b0f924c89315352fe690c80db8
 base_blob: 635cfee3ac2c3f7c66840b8c8a082cad2fa41a68
 branch: hyp/muse_prefill_layer/attn-full-prefill-cuda-fp8-exp-offload
 worktree: .worktrees/muse_prefill_layer/attn-full-prefill-cuda-fp8-exp-offload
-mode: null
+mode: submit
 implemented_at: 2026-10-24T175822Z
 impl_commit: 5e83a89f3d795dd06017b84c099185bfc7f9e164
 submission_sha256: ef0142cf0dfabf0a0662fa8397521da0194ad527448c9609929804dabaa124b2
 norm_sha256: 36fe2e061a50081744b9338793410d614c4ddfccea61fb6721cd9a83f234f6a8
 submission_blob: 32f2233dad7a871bb1fbf53182923a115bae4782
 lint_warnings: 11
+attempt_file: 2026-10-24T181734Z-submit-attn-full-prefill-cuda-fp8-exp-offload.md
+prepared_at: 2026-10-24T181734Z
 ---
 
 # attn-full-prefill-cuda-fp8-exp-offload
