@@ -37,9 +37,16 @@ priority: 4
 kind: primary
 controls_for: null
 review: proceed
-status: queued
+status: running
 review_at: 2026-10-24T071251Z
 review_companions: null
+stage: claimed
+claimed_at: 2026-10-24T071251Z
+base_sha: f526f70d8a581a7fa0a7df17ee7a297eb2e2000b
+base_blob: e4931f050c7fb99835fe116d25bb454a5ea731e9
+branch: hyp/muse_prefill_layer/qk-norm-fp8-cache-store-fusion
+worktree: .worktrees/muse_prefill_layer/qk-norm-fp8-cache-store-fusion
+mode: null
 ---
 
 # qk-norm-fp8-cache-store-fusion
