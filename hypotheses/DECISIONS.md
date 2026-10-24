@@ -25,3 +25,4 @@ overrides of a reviewer) with the reason, newest last. Written by `churn.py note
 - 2026-10-24 `muse_decode_layer` **marlin-block-m-cap-16**: scored submit 2b1f82408ab64116, run by Claude at the user's request.
 
 ## Log
+- 2026-10-24T083652Z `muse_bf16_proj` **unpooler-slice-triton-splitk8-semaphore**: deferred one tick: the reviewer passed it but asks to confirm the ticket-semaphore ordering first; the in-flight pooler/qkv-gate semaphore checks (08ec203e5717406e, 135ef6499875416a) use the same pattern, so dispatch after they harvest (fix the pattern first if they fail correctness).
