@@ -1,0 +1,350 @@
+{
+ "ok": true,
+ "promote": [],
+ "dispatch": [
+  {
+   "problem": "muse_attention_decode",
+   "picks": [
+    {
+     "slug": "sliding-deep-splits-on-cuda-splitkv",
+     "mode": "submit",
+     "priority": 1,
+     "review": "required",
+     "kind": "primary",
+     "controls_for": null
+    }
+   ]
+  },
+  {
+   "problem": "muse_bf16_proj",
+   "picks": [
+    {
+     "slug": "bf16-cublaslt-algo-pick-in-prepare-m128-m256",
+     "mode": "submit",
+     "priority": 2,
+     "review": "proceed",
+     "kind": "primary",
+     "controls_for": null
+    }
+   ]
+  },
+  {
+   "problem": "muse_decode_layer",
+   "picks": [
+    {
+     "slug": "bf16-shape-gated-triton-gemms-small-t",
+     "mode": "submit",
+     "priority": 2,
+     "review": "required",
+     "kind": "primary",
+     "controls_for": null
+    },
+    {
+     "slug": "sliding-fused-triton-decode1-port",
+     "mode": "submit",
+     "priority": 3,
+     "review": "required",
+     "kind": "primary",
+     "controls_for": null
+    }
+   ]
+  },
+  {
+   "problem": "muse_prefill_layer",
+   "picks": [
+    {
+     "slug": "experts-triton-nvfp4-packed-asm-dequant",
+     "mode": "submit",
+     "priority": 1,
+     "review": "required",
+     "kind": "rewrite",
+     "controls_for": null
+    },
+    {
+     "slug": "experts-triton-w13-fused-silu-epilogue",
+     "mode": "submit",
+     "priority": 2,
+     "review": "required",
+     "kind": "primary",
+     "controls_for": null
+    }
+   ]
+  }
+ ],
+ "wake_s": 2515,
+ "needs_human": [],
+ "report": {
+  "preflight": {
+   "ok": true,
+   "branch": "master",
+   "whoami": "yesthatwilly",
+   "quotas": {
+    "muse_bf16_proj": {
+     "scored": {
+      "per_day": 10,
+      "used": 3,
+      "left": 7
+     },
+     "checks": {
+      "per_day": 20,
+      "used": 20,
+      "left": 0
+     }
+    },
+    "muse_attention_decode": {
+     "scored": {
+      "per_day": 10,
+      "used": 2,
+      "left": 8
+     },
+     "checks": {
+      "per_day": 10,
+      "used": 10,
+      "left": 0
+     }
+    },
+    "muse_moe_w4a16": {
+     "scored": {
+      "per_day": 10,
+      "used": 1,
+      "left": 9
+     },
+     "checks": {
+      "per_day": 20,
+      "used": 18,
+      "left": 2
+     }
+    },
+    "muse_decode_layer": {
+     "scored": {
+      "per_day": 10,
+      "used": 3,
+      "left": 7
+     },
+     "checks": {
+      "per_day": 10,
+      "used": 10,
+      "left": 0
+     }
+    },
+    "muse_prefill_layer": {
+     "scored": {
+      "per_day": 10,
+      "used": 1,
+      "left": 9
+     },
+     "checks": {
+      "per_day": 10,
+      "used": 10,
+      "left": 0
+     }
+    }
+   },
+   "tracks": null,
+   "hours_to_reset": 7.29,
+   "lock": ".claude/churn.lock",
+   "_exit": 0
+  },
+  "intake": {
+   "ok": true,
+   "added": [],
+   "skipped": [],
+   "_exit": 0
+  },
+  "recover": {
+   "ok": true,
+   "actions": [],
+   "needs_human": [],
+   "_exit": 0
+  },
+  "harvest": {
+   "ok": true,
+   "harvested": [],
+   "pending": [],
+   "_exit": 1
+  },
+  "harvest-promotions": {
+   "ok": true,
+   "promotions": [],
+   "_exit": 1
+  },
+  "promote": {
+   "ok": true,
+   "promote": [],
+   "skipped": [
+    {
+     "problem": "muse_moe_w4a16",
+     "reason": "a promotion is still unharvested"
+    }
+   ],
+   "_exit": 1
+  },
+  "budget": {
+   "ok": true,
+   "plans": [
+    {
+     "problem": "muse_attention_decode",
+     "checks_left": 0,
+     "scored_left": 8,
+     "hours_to_reset": 7.29,
+     "in_flight": 0,
+     "in_flight_checks": 0,
+     "gains_pending": 0,
+     "promotion_hold": 0,
+     "spendable": 8,
+     "queue": 3,
+     "need": 8,
+     "pace": 2,
+     "N": 1,
+     "picks": [
+      {
+       "slug": "sliding-deep-splits-on-cuda-splitkv",
+       "mode": "submit",
+       "priority": 1,
+       "review": "required",
+       "kind": "primary",
+       "controls_for": null
+      }
+     ],
+     "shortfall": 5,
+     "reason": null,
+     "wake_s": 2830
+    },
+    {
+     "problem": "muse_bf16_proj",
+     "checks_left": 0,
+     "scored_left": 7,
+     "hours_to_reset": 7.29,
+     "in_flight": 0,
+     "in_flight_checks": 0,
+     "gains_pending": 0,
+     "promotion_hold": 0,
+     "spendable": 7,
+     "queue": 3,
+     "need": 7,
+     "pace": 2,
+     "N": 1,
+     "picks": [
+      {
+       "slug": "bf16-cublaslt-algo-pick-in-prepare-m128-m256",
+       "mode": "submit",
+       "priority": 2,
+       "review": "proceed",
+       "kind": "primary",
+       "controls_for": null
+      }
+     ],
+     "shortfall": 4,
+     "reason": null,
+     "wake_s": 3234
+    },
+    {
+     "problem": "muse_decode_layer",
+     "checks_left": 0,
+     "scored_left": 7,
+     "hours_to_reset": 7.29,
+     "in_flight": 0,
+     "in_flight_checks": 0,
+     "gains_pending": 0,
+     "promotion_hold": 0,
+     "spendable": 7,
+     "queue": 3,
+     "need": 7,
+     "pace": 2,
+     "N": 2,
+     "picks": [
+      {
+       "slug": "bf16-shape-gated-triton-gemms-small-t",
+       "mode": "submit",
+       "priority": 2,
+       "review": "required",
+       "kind": "primary",
+       "controls_for": null
+      },
+      {
+       "slug": "sliding-fused-triton-decode1-port",
+       "mode": "submit",
+       "priority": 3,
+       "review": "required",
+       "kind": "primary",
+       "controls_for": null
+      }
+     ],
+     "shortfall": 4,
+     "reason": null,
+     "wake_s": 3234
+    },
+    {
+     "problem": "muse_moe_w4a16",
+     "checks_left": 2,
+     "scored_left": 9,
+     "hours_to_reset": 7.29,
+     "in_flight": 0,
+     "in_flight_checks": 0,
+     "gains_pending": 4,
+     "promotion_hold": 4,
+     "spendable": 7,
+     "queue": 0,
+     "need": 7,
+     "pace": 2,
+     "N": 0,
+     "picks": [],
+     "shortfall": 7,
+     "reason": "queue has 0 eligible hypotheses; 7 more could be absorbed today (run /hypothesize muse_moe_w4a16)",
+     "wake_s": 3234
+    },
+    {
+     "problem": "muse_prefill_layer",
+     "checks_left": 0,
+     "scored_left": 9,
+     "hours_to_reset": 7.29,
+     "in_flight": 0,
+     "in_flight_checks": 0,
+     "gains_pending": 0,
+     "promotion_hold": 0,
+     "spendable": 9,
+     "queue": 2,
+     "need": 9,
+     "pace": 2,
+     "N": 2,
+     "picks": [
+      {
+       "slug": "experts-triton-nvfp4-packed-asm-dequant",
+       "mode": "submit",
+       "priority": 1,
+       "review": "required",
+       "kind": "rewrite",
+       "controls_for": null
+      },
+      {
+       "slug": "experts-triton-w13-fused-silu-epilogue",
+       "mode": "submit",
+       "priority": 2,
+       "review": "required",
+       "kind": "primary",
+       "controls_for": null
+      }
+     ],
+     "shortfall": 7,
+     "reason": null,
+     "wake_s": 2515
+    }
+   ],
+   "wake_s": 2515,
+   "dispatch_total": 6,
+   "_exit": 0
+  },
+  "index": {
+   "ok": true,
+   "changed": [
+    "muse_attention_decode/hypotheses/INDEX.md",
+    "muse_bf16_proj/hypotheses/INDEX.md",
+    "muse_decode_layer/hypotheses/INDEX.md",
+    "muse_moe_w4a16/hypotheses/INDEX.md",
+    "muse_prefill_layer/hypotheses/INDEX.md",
+    "hypotheses/INDEX.md"
+   ],
+   "_exit": 0
+  }
+ }
+}
