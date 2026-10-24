@@ -32,13 +32,19 @@ review: proceed
 status: running
 review_at: 2026-10-24T184058Z
 review_companions: null
-stage: claimed
+stage: implemented
 claimed_at: 2026-10-24T184059Z
 base_sha: 49da3d4776ed7ee46334a320b804bc460500870c
 base_blob: c6854f093588da524e63657576b27ed720756e32
 branch: hyp/muse_attention_decode/paired-norm-gate-token-tiled
 worktree: .worktrees/muse_attention_decode/paired-norm-gate-token-tiled
 mode: null
+implemented_at: 2026-10-24T184519Z
+impl_commit: 0a45063a7f725fac051b4f4b807e67a28c828cd0
+submission_sha256: e68d28690a0bcab6368b7a18bcc9062833449787089e5d964012730a35c19678
+norm_sha256: 9141db89ab44d99fe7e00ecfef62cd150a2aa6c19f099a4a97d3cb6c4cf85f5d
+submission_blob: 7745b9a31df4e81584857589fa1185334d8ae8df
+lint_warnings: 0
 ---
 
 # paired-norm-gate-token-tiled
@@ -81,3 +87,34 @@ No companion is warranted. The change has no sub-changes to isolate: it is one r
 - Is the 4.0 us kernel time launch/ramp-bound (in which case a regrid gains little and PDL or folding the epilogue into FA3's combine, as fused-full-combine-normgate proposes, is the real lever) or per-CTA-overhead-bound (in which case the regrid helps)? An nsys/ncu look at achieved occupancy and the CTA count per SM would settle it before spending a check.
 - Correctness detail for the implementer: the per-row column offset depends on the row (half = (h // G) % 2 varies with h), so the [16,64] load needs a 2-D pointer block with a per-row offset, not a single base plus arange. The tl.sum over axis 1 must stay in fp32.
 
+
+## Implementation notes
+
+Only `_paired_norm_gate_kernel` and its launch in the worktree's muse_attention_decode/submission.py changed. The grid is now (tokens,) with num_warps=4. Each program loads a [HQ=16, 64] tile with a 2-D pointer block (row offset h * attn_stride_h + ((h // G) % 2) * D, per the review's correctness note). The RMSNorm is tl.sum over axis 1 in fp32, and gate and store are 2-D. Arithmetic and rounding are unchanged. No deviation. The kernel now requires HQ to be a power of two (16 on this path).
+
+## Rules check
+
+- [x] CUDA-graph capturable: the diff adds no host syncs, `.item()` or prints.
+- [x] Nothing derived from `data` is cached across calls: the diff adds no state.
+- [x] Weights: n/a, not touched.
+- [x] Activations stay BF16/fp32 as before; the output is bf16, KV cache and queries are unchanged.
+- [x] Attention sees every key: n/a, only the epilogue changed.
+- [x] No timing patches, harness access, module edits or reference import in the diff.
+- [x] All work stays inside the timed kernel_fn; no output caching or replay.
+- [x] No triton.autotune; the `# okc: problem=muse_attention_decode` first line is untouched.
+
+Lint output: `CLEAN: muse_attention_decode/submission.py`. py_compile passed and __pycache__ was removed.
+
+## Pre-flight audit
+
+Audited 2026-10-24 by an opus subagent (read-only plus numpy emulation; no GPU on this node).
+
+**Verdict: dispatch.** The diff is the spec and nothing else: `_paired_norm_gate_kernel` regridded to one 4-warp program per token over a [HQ, D] tile, and its single launch changed to grid (tokens,), num_warps=4. Indexing is the master formulas broadcast over h = arange(HQ)[:, None]: per-row half (h // G) % 2 on the attn read, gate at (HQ + 2*HKV)*D + h*D + j, store at t*HQ*D + h*D + j (= (t*HQ + h)*D + j); a numpy emulation of old vs new mapping is bit-identical at both head configs. RMSNorm sums axis 1 in fp32, eps inside the sqrt, unchanged rounding.
+
+New HQ-is-a-power-of-two assumption (tl.arange(0, HQ)), checked against every TASK.md shape: reference.py HEADS = tp8 (16, 2) and dp (128, 16), so HQ is 16 or 128, both powers of two. All 12 scored shapes are tp8 (HQ 16); the paired path (full, batch > 1, not split-KV) is reached by scored full verify_16/32 and by the tests batch 4 ctx 3000 full, batch 8 ctx 8192 dp full (HQ 128, G 8), batch 2 ctx 100000 full q_len 8, batch 4 ctx 6000 full q_len 8, batch 2 ctx 9000 full, batch 4 ctx 80000 full (page 64), batch 2 ctx 20000 dp full q_len 8 (x2), and every full decode shape if the CUDA split-KV build fails. All have HQ in {16, 128}; the dp [128, 64] tile is 64 fp32 values per thread per operand at 4 warps, no spill risk worth flagging. No unmasked out-of-bounds: the tile is exactly HQ x D and both are exact.
+
+No gate or fallback is involved: this rewrites the incumbent epilogue in place, so a Triton compile error would fail the run, but the kernel uses only constructs already used elsewhere in the file (2-D broadcast loads, tl.sum axis 1, r[:, None]). Rules unchanged: no syncs, no allocation or value-dependent control flow added, no state cached. okc_lint CLEAN, py_compile OK, __pycache__ removed.
+
+Fixes: none.
+
+Residual risk: moot if full-verify-cuda-streamk-splitkv lands; the 2.8/4.0 us epilogue saving is ~0.2% geomean, readable only on the kernel row.
