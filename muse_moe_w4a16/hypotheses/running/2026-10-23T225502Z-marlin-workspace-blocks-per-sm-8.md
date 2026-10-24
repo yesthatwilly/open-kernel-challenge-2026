@@ -40,13 +40,15 @@ base_sha: 3a4f9cf09a44d1c6045ca118687902eacfb2b76f
 base_blob: 11fbc1957daf7294cd2810ff82a0aad2f25644bd
 branch: hyp/muse_moe_w4a16/marlin-workspace-blocks-per-sm-8
 worktree: .worktrees/muse_moe_w4a16/marlin-workspace-blocks-per-sm-8
-mode: null
+mode: check
 implemented_at: 2026-10-24T032701Z
 impl_commit: 8274bfd8743b4c57b172bda45394583589414306
 submission_sha256: ce831bb914c2917dfa3aa1bee7c792e2b7ad9953f27a895e4a1aa25d67338589
 norm_sha256: 76bb755c486de0ce3b6f91e4378d3b06b86a3013863893cb5cb57e7f2a2be54d
 submission_blob: fa8d1da0a06d91f85531897cfa722574bf356738
 lint_warnings: 1
+attempt_file: 2026-10-24T032702Z-check-marlin-workspace-blocks-per-sm-8.md
+prepared_at: 2026-10-24T032702Z
 ---
 
 # marlin-workspace-blocks-per-sm-8
