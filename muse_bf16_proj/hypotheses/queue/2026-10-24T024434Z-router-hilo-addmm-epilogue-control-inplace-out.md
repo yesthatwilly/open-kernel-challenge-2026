@@ -51,7 +51,8 @@ priority: 1
 kind: control
 controls_for: router-hilo-addmm-epilogue
 review: required
-status: queued
+status: hold
+hold_reason: "superseded: master's router no longer uses the cuBLAS hi/lo pair (Triton split-K landed, 1.151x), so the add node this control targets is gone; the primary read flat (1.026x, within CI)"
 ---
 
 # router-hilo-addmm-epilogue-control-inplace-out
