@@ -41,10 +41,10 @@ priority: 3
 kind: primary
 controls_for: null
 review: proceed
-status: running
+status: done
 review_at: 2026-10-24T100034Z
 review_companions: null
-stage: dispatched
+stage: harvested
 claimed_at: 2026-10-24T100034Z
 base_sha: fc28840b9d1e2741aebe085a82c80e31c12ca710
 base_blob: 11fbc1957daf7294cd2810ff82a0aad2f25644bd
@@ -61,6 +61,13 @@ attempt_file: 2026-10-24T100132Z-check-marlin-block-size-m-verify-two-smaller.md
 prepared_at: 2026-10-24T100133Z
 job: ed837a4a46d44a95
 dispatched_at: 2026-10-24T100141Z
+outcome: gain
+verdict_detail: gain
+speedup: 1.0916165083160805
+speedup_ci: [1.0752422606913392, 1.1079907559408215]
+harvested_at: 2026-10-24T111614Z
+best_at_harvest: 0.9887547325362586
+promotion: pending
 ---
 
 # marlin-block-size-m-verify-two-smaller
@@ -131,3 +138,29 @@ OK with warnings: muse_moe_w4a16/submission.py
 ```
 
 `python3 -I -m py_compile` passed; the `__pycache__` it left was removed. Not committed, staged or run.
+
+## Result
+
+- job `ed837a4a46d44a95` (check), status done, passed True, tests 5/5
+- speedup 1.0916x, 95% CI [1.0752, 1.1080], score 12319.802694029935 µs vs SGLang 13448.5 µs
+- best at harvest: {"speedup": 0.9887547325362586, "ci": [0.9739234115482147, 1.0035860535243024], "job": "fb2cc736613747df"}; base result: muse_moe_w4a16/hypotheses/done/gain/sglang-marlin-path-parity.result.json
+- **outcome: gain** (gain)
+- files: `muse_moe_w4a16/hypotheses/done/gain/marlin-block-size-m-verify-two-smaller.result.json`, `muse_moe_w4a16/hypotheses/done/gain/marlin-block-size-m-verify-two-smaller.patch`; branch `hyp/muse_moe_w4a16/marlin-block-size-m-verify-two-smaller`
+
+## Attribution
+
+| shape | w | base µs | hyp µs | delta | verdict |
+|---|---|---|---|---|---|
+| bs=1 load=decode_1 sharding=ep8 | 60 | 80.23 | 80.25 | 1.007 | flat |
+| bs=16 load=decode_16 sharding=ep8 | 60 | 191.41 | 197.43 | 1.0002 | flat |
+| bs=32 load=decode_32 sharding=ep8 | 60 | 208.15 | 209.63 | 1.0003 | flat |
+| bs=8 load=verify_1 sharding=ep8 | 60 | 152.04 | 151.59 | 0.9985 | flat |
+| bs=128 load=verify_16 sharding=ep8 | 60 | 462.46 | 343.68 | 1.3641 | gained |
+| bs=256 load=verify_32 sharding=ep8 | 60 | 621.28 | 468.68 | 1.3196 | gained |
+
+gained on verify_16 verify_16; verify_32 verify_32. Expected hit: 6/6. Noise ±1.5%.
+
+## Follow-ups
+
+- candidate for promotion; stack further changes with `depends_on` once it lands.
+
