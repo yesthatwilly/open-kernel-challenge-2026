@@ -22,7 +22,16 @@ priority: 1
 kind: primary
 controls_for: null
 review: required
-status: queued
+status: running
+stage: claimed
+claimed_at: 2026-10-24T233335Z
+base_sha: d4d4c077f75b6689b16c96c62fb5598b1756d3b5
+base_blob: 1a06deda403ddee4b4693b34127fd50b8bcb791c
+branch: hyp/muse_prefill_layer/silu-mul-sorted-first-turn
+worktree: .worktrees/muse_prefill_layer/silu-mul-sorted-first-turn
+mode: null
+restack_of: null
+stale_base: null
 ---
 
 # silu-mul-sorted-first-turn
