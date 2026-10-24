@@ -47,7 +47,7 @@ review: proceed
 status: running
 review_at: 2026-10-24T112151Z
 review_companions: null
-stage: implemented
+stage: dispatched
 claimed_at: 2026-10-24T112151Z
 base_sha: 5f5af1d3fe4b9b1ef686af0d022040134029ee30
 base_blob: 60abe04615110df3e4a9355a4b984b48b68f85e8
@@ -62,6 +62,8 @@ submission_blob: f17d41c9a9b0696f20e6679a493da9d4aa6d2934
 lint_warnings: 2
 attempt_file: 2026-10-24T112334Z-check-experts-triton-w4a16-first-turn-blockt256.md
 prepared_at: 2026-10-24T112335Z
+job: b33b87b5083b4d1c
+dispatched_at: 2026-10-24T112343Z
 ---
 
 # experts-triton-w4a16-first-turn-blockt256
