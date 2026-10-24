@@ -26,7 +26,7 @@ base_sha: c1dfb14c99867d3818e9e99c82fd7d1fa4153ae3
 base_blob: 635cfee3ac2c3f7c66840b8c8a082cad2fa41a68
 branch: hyp/muse_prefill_layer/stack-tonight-six-prefill
 worktree: .worktrees/muse_prefill_layer/stack-tonight-six-prefill
-mode: null
+mode: check
 restack_of: null
 stale_base: null
 implemented_at: 2026-10-24T233306Z
@@ -35,6 +35,8 @@ submission_sha256: 8b0585c9064b33f4be5d7811f94773a1b141ec0e7dac414fa831ba93a4288
 norm_sha256: 3d352ddfccf4b76aa072a333b7fe425d93ef144d4aa53497ec3316abb5b55d98
 submission_blob: 6b59d3f29bc81303fae11ff2d74470087b55032c
 lint_warnings: 15
+attempt_file: 2026-10-24T233306Z-check-stack-tonight-six-prefill.md
+prepared_at: 2026-10-24T233306Z
 ---
 
 # stack-tonight-six-prefill
