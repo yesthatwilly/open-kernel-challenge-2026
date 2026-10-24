@@ -42,9 +42,10 @@ priority: 2
 kind: primary
 controls_for: null
 review: proceed
-status: queued
+status: hold
 review_at: 2026-10-24T140520Z
 review_companions: null
+hold_reason: "reviewer expects flat: uniform block 8 cost only ~2.4% at bs=32, and the 239 vs 186 us premise is seed noise (unchanged bs=32 rows range 147-265 us); two extra Marlin launches (~2-4 us each) likely eat the rest"
 ---
 
 # marlin-two-class-block-m-decode32

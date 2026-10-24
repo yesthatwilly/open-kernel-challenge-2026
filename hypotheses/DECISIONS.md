@@ -84,3 +84,4 @@ overrides of a reviewer) with the reason, newest last. Written by `churn.py note
 - 2026-10-24T140307Z `muse_moe_w4a16` **triton-w13-silu-epilogue**: hold: stacks on triton-w13-grouped-gemv-small-m, which regressed (2-2.6x slower than Marlin at small M)
 - 2026-10-24T140307Z `muse_moe_w4a16` **triton-w2-grouped-gemv-small-m**: hold: stacks on triton-w13-grouped-gemv-small-m, which regressed (2-2.6x slower than Marlin at small M)
 - 2026-10-24T140307Z `muse_moe_w4a16` **triton-small-m-threshold-32**: hold: stacks on triton-w13-grouped-gemv-small-m, which regressed (2-2.6x slower than Marlin at small M)
+- 2026-10-24T140520Z `muse_moe_w4a16` **marlin-two-class-block-m-decode32**: hold: reviewer expects flat: uniform block 8 cost only ~2.4% at bs=32, and the 239 vs 186 us premise is seed noise (unchanged bs=32 rows range 147-265 us); two extra Marlin launches (~2-4 us each) likely eat the rest
