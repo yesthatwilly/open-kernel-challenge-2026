@@ -1,17 +1,17 @@
 {
  "problem": "muse_moe_w4a16",
- "job": "bacd1f502f4e46fa",
- "check_job": "bacd1f502f4e46fa",
+ "job": "c00ef7295c154867",
+ "check_job": "c00ef7295c154867",
  "mode": "check",
- "speedup": 1.1297159216968498,
+ "speedup": 1.2535643764852882,
  "ci": [
-  1.112770182871397,
-  1.1466616605223023
+  1.2347609108380089,
+  1.2723678421325675
  ],
- "score_us": 11904.320140766147,
- "commit": "192f225d8fbfa65bb838ce448c7d6b5e2c522ecd",
- "submission_blob": "b81d47abe0c2e53a3ecc180884ae8d9671ba4e14",
- "slug": "post-expert-norm-triton-small-m",
- "result": "muse_moe_w4a16/hypotheses/done/gain/post-expert-norm-triton-small-m.result.json",
- "updated_at": "2026-10-24T111614Z"
+ "score_us": 10728.208500712633,
+ "commit": "cefc282ebdcb22f4a4e60d2acf151b862ee831ad",
+ "submission_blob": "c7bf9ffedc48b757f56765004e5d65f6ad5ba841",
+ "slug": "marlin-block-m-two-smaller-on-postnorm",
+ "result": "muse_moe_w4a16/hypotheses/done/gain/marlin-block-m-two-smaller-on-postnorm.result.json",
+ "updated_at": "2026-10-24T124011Z"
 }
