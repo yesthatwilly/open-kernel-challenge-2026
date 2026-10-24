@@ -1,0 +1,157 @@
+diff --git a/muse_moe_w4a16/submission.py b/muse_moe_w4a16/submission.py
+index 11fbc19..09d727e 100644
+--- a/muse_moe_w4a16/submission.py
++++ b/muse_moe_w4a16/submission.py
+@@ -17,13 +17,23 @@ expert_map to [-1] U [0, 32), so 32 is the true expert count; SGLang's wrapper t
+ sorted_ids and block_experts from 32 experts (M*8 + 32*(block_size_m-1) entries instead of
+ M*8 + 256*(block_size_m-1)) and its per-expert cumsum runs over 32 counters.
+ 
+-Differs from SGLang: the expert all-reduce is not run."""
++Differs from SGLang: the expert all-reduce is not run.
++
++Hypothesis triton-w13-grouped-gemv-small-m: for num_tokens <= 8 only, the w13 Marlin GEMM is
++replaced by two Triton launches writing the same cache1 [M*8, 2I] bf16 rows (row = token*8 +
++slot): _compact_routes_kernel builds each local expert's slot list and count, and
++_w13_gemv_kernel reads a lossless raw-layout copy of the local experts' NVFP4 w13 (same bytes,
++same fp8 block scales, same fp32 global scales), dequantizes E2M1 * E4M3 exactly into bf16,
++accumulates in fp32 and applies the fp32 global scale after the K loop. silu_and_mul, the w2
++Marlin GEMM and the post-norm are unchanged; larger num_tokens keep the parity path."""
+ 
+ from typing import TypedDict
+ 
+ import types
+ 
+ import torch
++import triton
++import triton.language as tl
+ from sgl_kernel.scalar_type import scalar_types
+ 
+ from sglang.kernels.ops.activation.activation import silu_and_mul
+@@ -70,6 +80,95 @@ TOP_K = 8
+ BLOCK_SIZE_M_CANDIDATES = (8, 16, 32, 48, 64)
+ POST_NORM_EPS = 1e-8
+ 
++# Small-M w13 path (num_tokens <= GEMV_MAX_TOKENS). Fixed configs, no autotune.
++GEMV_MAX_TOKENS = 8
++GEMV_BLOCK_M = 16   # >= the most slots one expert can get (a token routes to an expert once)
++GEMV_BLOCK_N = 32
++GEMV_BLOCK_K = 256
++GEMV_WARPS = 4
++GEMV_STAGES = 3
++COMPACT_BLOCK_S = 64  # >= GEMV_MAX_TOKENS * TOP_K flat slots
++
++
++@triton.jit
++def _compact_routes_kernel(ids_ptr, cnt_ptr, slot_ptr, n_slots,
++                           BLOCK_S: tl.constexpr, BLOCK_M: tl.constexpr):
++    """Program e: cnt[e] = #slots routed to local expert e, slot[e, :cnt] = those flat slots."""
++    e = tl.program_id(0)
++    offs = tl.arange(0, BLOCK_S)
++    ids = tl.load(ids_ptr + offs, mask=offs < n_slots, other=-1)
++    hit = (ids == e).to(tl.int32)
++    pos = tl.cumsum(hit, axis=0) - 1
++    tl.store(slot_ptr + e * BLOCK_M + pos, offs, mask=(hit != 0) & (pos < BLOCK_M))
++    tl.store(cnt_ptr + e, tl.minimum(tl.sum(hit, axis=0), BLOCK_M))
++
++
++@triton.jit
++def _e2m1_to_f32(c):
++    """4-bit E2M1 code (bit 3 sign) -> float32, built from bits: magnitude grid
++    (0, .5, 1, 1.5, 2, 3, 4, 6) for code & 7, exactly as nvfp4.unpack_e2m1."""
++    c = c.to(tl.int32)
++    ex = (c >> 1) & 3
++    m = c & 1
++    bits = tl.where(ex == 0, m * (126 << 23), ((ex + 126) << 23) | (m << 22))
++    bits = bits | ((c & 8) << 28)
++    return bits.to(tl.float32, bitcast=True)
++
++
++@triton.jit
++def _w13_gemv_kernel(x_ptr, w_ptr, sf_ptr, gs_ptr, cnt_ptr, slot_ptr, out_ptr,
++                     N: tl.constexpr, K: tl.constexpr, TOPK: tl.constexpr,
++                     BLOCK_M: tl.constexpr, BLOCK_N: tl.constexpr, BLOCK_K: tl.constexpr):
++    """Program (e, n): out[slot, n-tile] = x[slot // TOPK] @ dequant(w13[e])[n-tile].T for the
++    cnt[e] slots of local expert e; returns at once if expert e has no slot."""
++    e = tl.program_id(0)
++    pid_n = tl.program_id(1)
++    cnt = tl.load(cnt_ptr + e)
++    if cnt == 0:
++        return
++    offs_m = tl.arange(0, BLOCK_M)
++    m_mask = offs_m < cnt
++    slots = tl.load(slot_ptr + e * BLOCK_M + offs_m, mask=m_mask, other=0)
++    toks = slots // TOPK
++    offs_n = pid_n * BLOCK_N + tl.arange(0, BLOCK_N)
++    offs_kb = tl.arange(0, BLOCK_K // 2)   # packed bytes: byte j holds elements 2j (lo), 2j+1 (hi)
++    offs_k = tl.arange(0, BLOCK_K)
++    e64 = e.to(tl.int64)
++    w_rows = w_ptr + e64 * (N * (K // 2)) + offs_n[:, None].to(tl.int64) * (K // 2)
++    sf_rows = sf_ptr + e64 * (N * (K // 16)) + offs_n[:, None].to(tl.int64) * (K // 16)
++    x_rows = x_ptr + toks[:, None].to(tl.int64) * K
++    acc = tl.zeros((BLOCK_M, BLOCK_N), dtype=tl.float32)
++    for k0 in range(0, K, BLOCK_K):
++        kb = k0 // 2 + offs_kb
++        packed = tl.load(w_rows + kb[None, :])
++        # Elements 2j and 2j+1 share block scale (2j) // 16 = j // 8.
++        scale = tl.load(sf_rows + (kb // 8)[None, :]).to(tl.float32)
++        lo = _e2m1_to_f32(packed & 0xF) * scale
++        hi = _e2m1_to_f32(packed >> 4) * scale
++        # e2m1 * e4m3 has <= 6 significant bits: exact in bf16. Natural K order via interleave.
++        w = tl.interleave(lo, hi).to(tl.bfloat16)          # [BLOCK_N, BLOCK_K]
++        xt = tl.load(x_rows + (k0 + offs_k)[None, :], mask=m_mask[:, None], other=0.0)
++        acc = tl.dot(xt, tl.trans(w), acc)
++    # The fp32 per-expert global scale, once, after the K loop.
++    acc = acc * tl.load(gs_ptr + e)
++    out = out_ptr + slots[:, None].to(tl.int64) * N + offs_n[None, :]
++    tl.store(out, acc.to(tl.bfloat16), mask=m_mask[:, None])
++
++
++def _w13_small_m(x, local_ids, cache1, raw, count):
++    """The w13 projection for num_tokens <= GEMV_MAX_TOKENS into cache1 [M*8, 2I] (local slots)."""
++    n_slots = local_ids.numel()
++    cnt = torch.empty((count,), dtype=torch.int32, device=x.device)
++    slot_list = torch.empty((count * GEMV_BLOCK_M,), dtype=torch.int32, device=x.device)
++    _compact_routes_kernel[(count,)](local_ids, cnt, slot_list, n_slots,
++                                     BLOCK_S=COMPACT_BLOCK_S, BLOCK_M=GEMV_BLOCK_M, num_warps=1)
++    n, k = cache1.shape[1], x.shape[1]
++    _w13_gemv_kernel[(count, n // GEMV_BLOCK_N)](
++        x, raw["w13"], raw["w13_sf"], raw["w13_gs"], cnt, slot_list, cache1,
++        N=n, K=k, TOPK=TOP_K, BLOCK_M=GEMV_BLOCK_M, BLOCK_N=GEMV_BLOCK_N, BLOCK_K=GEMV_BLOCK_K,
++        num_warps=GEMV_WARPS, num_stages=GEMV_STAGES)
++    return cache1
++
+ 
+ def _marlin_layer(weights, start, count):
+     """The parameters prepare_moe_nvfp4_layer_for_marlin reads, for experts [start, start+count)."""
+@@ -106,6 +205,13 @@ def prepare(weights: Weights) -> dict:
+             "w13": layer.w13_weight.data, "w13_s": layer.w13_weight_scale.data, "w13_gs": layer.w13_weight_scale_2.data,
+             "w2": layer.w2_weight.data, "w2_s": layer.w2_weight_scale.data, "w2_gs": layer.w2_weight_scale_2.data,
+             "expert_map": expert_map, "count": count, "size_n": layer.intermediate_size_per_partition,
++            # Lossless second copy of the same experts' w13 for the small-M Triton GEMV: the
++            # identical NVFP4 bytes, fp8 e4m3 block scales and fp32 global scales, contiguous.
++            "raw13": {
++                "w13": weights["w13"][start:start + count].contiguous(),
++                "w13_sf": weights["w13_sf"][start:start + count].contiguous(),
++                "w13_gs": weights["w13_gs"][start:start + count].to(torch.float32).contiguous(),
++            },
+         }
+     torch.cuda.synchronize()
+     return {
+@@ -153,10 +259,13 @@ def kernel_fn(data: Inputs, state: dict) -> torch.Tensor:
+                   b_q_type=scalar_types.float4_e2m1f, is_k_full=True, use_atomic_add=False,
+                   use_fp32_reduce=True, is_zp_float=False)
+     ws = state["workspace"]
+-    cache1 = moe_wna16_marlin_gemm(
+-        x, cache1, bank["w13"], None, bank["w13_s"], bank["w13_gs"], None, None, None, ws,
+-        sorted_ids, block_experts, n_padded, topk_weights, top_k=TOP_K,
+-        size_m=num_tokens, size_n=gemm1_n, size_k=size_k, **common)
++    if num_tokens <= GEMV_MAX_TOKENS:  # shape branch: small-M grouped GEMV for w13
++        cache1 = _w13_small_m(x, local_ids.view(-1), cache1, bank["raw13"], bank["count"])
++    else:
++        cache1 = moe_wna16_marlin_gemm(
++            x, cache1, bank["w13"], None, bank["w13_s"], bank["w13_gs"], None, None, None, ws,
++            sorted_ids, block_experts, n_padded, topk_weights, top_k=TOP_K,
++            size_m=num_tokens, size_n=gemm1_n, size_k=size_k, **common)
+     silu_and_mul(cache1.view(-1, gemm1_n), cache2, expert_ids=local_ids.view(-1), expert_step=1)
+     y = moe_wna16_marlin_gemm(
+         cache2, cache3, bank["w2"], None, bank["w2_s"], bank["w2_gs"], None, None, None, ws,
