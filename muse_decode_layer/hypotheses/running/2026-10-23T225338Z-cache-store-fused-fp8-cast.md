@@ -46,13 +46,15 @@ base_sha: 54112d428da559b67789e07fa8f2e586fe5fb45e
 base_blob: 6884d26a928d1de1b07bf8d28e1be4e53dfdcfc5
 branch: hyp/muse_decode_layer/cache-store-fused-fp8-cast
 worktree: .worktrees/muse_decode_layer/cache-store-fused-fp8-cast
-mode: null
+mode: check
 implemented_at: 2026-10-24T024848Z
 impl_commit: 4630a4dc3abbef94b3293018d7490b59ebeea37d
 submission_sha256: d0de623c11e01c92a025fbdfafb41aa60a68f774b3a8f166ac03dc6ec571881b
 norm_sha256: 1ff1758a3aea755c91e1cd7b5126fd32e66575d15a58a4257c207d81d165e4d1
 submission_blob: 03d45c741603c0d133b48ff4e65bbbf0cf86980f
 lint_warnings: 1
+attempt_file: 2026-10-24T024848Z-check-cache-store-fused-fp8-cast.md
+prepared_at: 2026-10-24T024848Z
 ---
 
 # cache-store-fused-fp8-cast
