@@ -1,0 +1,12 @@
+Implement one REWRITE hypothesis (stage 1). Follow /home/user/git/musespark/.claude/skills/churnsubs/IMPLEMENT_PROMPT.md exactly (read it first).
+- problem: muse_attention_decode
+- hypothesis md: /home/user/git/musespark/muse_attention_decode/hypotheses/running/2026-10-24T081233Z-sliding-single-launch-fused-attention.md (read the whole spec, its Milestones and its Adversarial review)
+- worktree: /home/user/git/musespark/.worktrees/muse_attention_decode/sliding-single-launch-fused-attention (based on master = the fused pre-attention base, 1.127x; reuse its _pre_attention_kernel code for the norm/RoPE/FP8/store math)
+Build the single Triton kernel for sliding layers (window 2048) exactly as specified: pre-attention for the new rows, attention over the window of FP8 KV via the page table (new rows attended from registers, never re-read from the cache), RMSNorm x sigmoid(gate) epilogue, bf16 output. Full layers keep master's path byte-identical.
+Review requirements (all mandatory):
+- Ticket combine ordering: every thread stores its partials, then tl.debug_barrier(), then ONE gpu-scope acq_rel scalar atomic ticket, then tl.debug_barrier() before the winner's .cg reloads. If you can express a gpu-scope fence, add it before the barrier on the release side. Counters are int32 workspace allocated once per (B, Hkv, device) from config only, reset to 0 by the winner on every S>1 path, untouched when S==1. Never launch on a side stream.
+- Online softmax must be -inf safe (fully masked rows/blocks: guard exp2(-inf - -inf)); the combine takes m_max from finite partials only. No NaN/Inf may ever reach the output.
+- Every key in each token's 2048-window is scored (old keys [p_j-2047, seq-1] plus new keys i<=j); verify q_len=8 causal within the block; dist=edges keys at p0-2047/p0-2048 on the correct side. No skipping by score.
+- page_size: support 1 (scored) and 64 (tests) via a constexpr; if 64 is not practical, branch on config page_size to master's path and say so.
+- Queries: record whether QK^T uses bf16 or E4M3 operands. No autotune, no host syncs, branches on config only. Warm every constexpr variant in prepare().
+Record in Implementation notes: the grid and S per batch, how ordering was ensured, which operand precision, and the readout plan (judge on the single kernel's time per sliding shape vs the incumbent's replaced 15-27 us; full rows are the drift control; milestone 3 is unreachable at B=1).
