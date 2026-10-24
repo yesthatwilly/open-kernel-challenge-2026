@@ -34,7 +34,7 @@ review: proceed
 status: running
 review_at: 2026-10-24T032603Z
 review_companions: null
-stage: implemented
+stage: dispatched
 claimed_at: 2026-10-24T032603Z
 base_sha: 3a4f9cf09a44d1c6045ca118687902eacfb2b76f
 base_blob: 11fbc1957daf7294cd2810ff82a0aad2f25644bd
@@ -49,6 +49,8 @@ submission_blob: fa8d1da0a06d91f85531897cfa722574bf356738
 lint_warnings: 1
 attempt_file: 2026-10-24T032702Z-check-marlin-workspace-blocks-per-sm-8.md
 prepared_at: 2026-10-24T032702Z
+job: 75805dc2f18a4d06
+dispatched_at: 2026-10-24T032709Z
 ---
 
 # marlin-workspace-blocks-per-sm-8
