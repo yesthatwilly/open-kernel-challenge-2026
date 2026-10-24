@@ -38,13 +38,19 @@ review: proceed
 status: running
 review_at: 2026-10-24T083825Z
 review_companions: null
-stage: claimed
+stage: implemented
 claimed_at: 2026-10-24T083826Z
 base_sha: 4735619dba9401926cf675fc366d56f69d945921
 base_blob: e4931f050c7fb99835fe116d25bb454a5ea731e9
 branch: hyp/muse_prefill_layer/experts-marlin-block-m-48-turn1
 worktree: .worktrees/muse_prefill_layer/experts-marlin-block-m-48-turn1
 mode: null
+implemented_at: 2026-10-24T083936Z
+impl_commit: 80dcbc040baf3ff15273366870c8e3756a88a5c2
+submission_sha256: e6dc2af631f9accd2027d9dad4ccf60d4f973c6d4208141eb3a4e90def273589
+norm_sha256: 99870116ea7ac224540a17a71afcc32f869678c08376a3e79c8cca05a90c0a82
+submission_blob: 2ad966454adce5a619a1ebff11848b5463f1295a
+lint_warnings: 1
 ---
 
 # experts-marlin-block-m-48-turn1
@@ -86,3 +92,41 @@ No companion is warranted. A gain is unambiguous: one knob changes, only the tur
 - If both 48-turn1 and 48-turn4 win, combine them as one T->block table in a stacked follow-up. They touch disjoint T ranges, but each was measured against master alone.
 - Check moe_align_block_size's sorted_ids/expert_ids buffer sizing at block 48 with num_experts=256 (non-power-of-two block). It is SGLang's own code path at bs=128 on the sister problem, so expect it to be fine.
 
+
+## Implementation notes
+
+- Where: `_experts` in `muse_prefill_layer/submission.py`, directly after the parity loop over `BLOCK_SIZE_M_CANDIDATES`. Three added lines: `if 512 < num_tokens <= 1024: block_size_m = 48` (plus a one-line comment). `num_tokens` is `x.shape[0]`, i.e. total tokens B*L, a shape, so this is a static branch under graph capture.
+- The single `block_size_m` variable already feeds `moe_align_block_size(local_ids, block_size_m, N_EXPERTS)` and `common["moe_block_size"]`, which both `moe_wna16_marlin_gemm` calls take, so all three use 48 together. Nothing else changed.
+- Before/after picks. The parity loop breaks only when T*8/32/bs < 0.9. That never happens for T >= 231 at bs=64, so master picks 64 for every T here:
+
+  | T (case) | master pick | this branch |
+  |---|---|---|
+  | 753 (scored turn_1 sliding / full) | 64 | **48** |
+  | 3012 (scored turn_4, B=4 x 753) | 64 | 64 |
+  | 16384 (scored first_turn, all 4) | 64 | 64 |
+  | 300 (test B1 sliding q300) | 64 | 64 |
+  | 753 (test B1 ctx3000 full) | 64 | **48** |
+  | 1506 (test B2 x 753 sliding) | 64 | 64 |
+  | 600 (test B3 x 200 full, outliers) | 64 | **48** |
+  | 4096 (test B1 q4096 sliding) | 64 | 64 |
+
+- No deviation from the spec. I did not compute the routing histogram the review's open question asks for, because this node has no GPU or torch.
+
+## Rules check
+
+Checked against `git -C .worktrees/muse_prefill_layer/experts-marlin-block-m-48-turn1 diff` (+3 lines in `_experts`):
+- [x] CUDA-graph capturable: the new branch reads `num_tokens = x.shape[0]`, a shape, not an input value. It adds no `.item()`, `.cpu()`, synchronize or prints.
+- [x] Nothing derived from `data` is cached across calls. The diff does not touch `state`.
+- [x] Weights: n/a. `prepare()` and the weight bank are untouched, and NVFP4 stays NVFP4.
+- [x] Activations: BF16 where SGLang keeps BF16 and the KV cache is FP8. The diff changes only Marlin tiling, not dtypes or the cache.
+- [x] Attention sees every key: n/a. Attention is untouched.
+- [x] No timing patches, harness access, module edits, reference import, subprocesses or network. The diff adds no imports or calls.
+- [x] All work happens inside the timed call. The diff adds no output caching or replay.
+- [x] The first-line marker `# okc: problem=muse_prefill_layer` is kept, and there is no triton.autotune.
+
+okc_lint output:
+```
+warn  host-sync    L261: torch.cuda.synchronize()  (outside kernel_fn's call graph; fine in prepare())
+OK with warnings: muse_prefill_layer/submission.py
+```
+The warning comes from the existing line in `prepare()` and is unchanged from master. `py_compile` passed, and I removed the __pycache__ it left.
