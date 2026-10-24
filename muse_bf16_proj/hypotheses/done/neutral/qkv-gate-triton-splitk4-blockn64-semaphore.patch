@@ -1,0 +1,148 @@
+diff --git a/muse_bf16_proj/submission.py b/muse_bf16_proj/submission.py
+index da55301..f32bf01 100644
+--- a/muse_bf16_proj/submission.py
++++ b/muse_bf16_proj/submission.py
+@@ -14,6 +14,11 @@ at every m. Each program owns one (M-block, N-block, K-slice), never loops over
+ atomically adds its fp32 K-partial into an output zeroed right before the launch; there is no
+ plain-store path. Configs are static, chosen from m at launch; rows beyond m are masked, so any
+ m is valid.
++
++qkv_gate at m <= 32 (hypothesis qkv-gate-triton-splitk4-blockn64-semaphore) runs as ONE Triton
++split-K launch, grid (2304 // 64, 4), whose last-arriving K-slice per n-tile (a ticket counter)
++sums the four fp32 partials in fixed order and stores bf16 once, replacing cuBLAS's splitK
++kernel + splitKreduce pair. qkv_gate at m >= 128 keeps the cuBLAS dispatch.
+ """
+ 
+ from typing import TypedDict
+@@ -150,6 +155,104 @@ def _router_shape_ok(x: torch.Tensor, hi: torch.Tensor) -> bool:
+             and hi.stride(1) == 1)
+ 
+ 
++QKV_N = 2304
++QKV_K = 8192
++QKV_MAX_M = 32
++QKV_BLOCK_N = 64
++QKV_BLOCK_K = 128
++QKV_SPLIT_K = 4
++QKV_NUM_WARPS = 4
++QKV_NUM_STAGES = 4
++
++
++@triton.jit(do_not_specialize=["M"])
++def _qkv_splitk_sem_kernel(
++    x_ptr, w_ptr, ws_ptr, cnt_ptr, out_ptr,
++    M,
++    stride_xm, stride_wn, stride_ws_s, stride_ws_m, stride_om,
++    K_SLICE: tl.constexpr, SPLIT_K: tl.constexpr,
++    BLOCK_M: tl.constexpr, BLOCK_N: tl.constexpr, BLOCK_K: tl.constexpr,
++):
++    """out[M, N] = x[M, K] @ w[N, K]^T in one launch, split-K with a ticket-semaphore epilogue.
++
++    Grid (N // BLOCK_N, SPLIT_K). Program (pid_n, pid_k) streams w rows [pid_n*BLOCK_N, +BLOCK_N)
++    over K [pid_k*K_SLICE, +K_SLICE) with one M-block (M <= BLOCK_M, rows >= M masked), stores its
++    fp32 partial to ws[pid_k, :M, n-tile], then draws one ticket on cnt[pid_n]. The program that
++    draws ticket SPLIT_K-1 (all partials of this n-tile are written by then) reloads the SPLIT_K
++    partials (.cg, bypassing L1), sums them in fixed order 0..SPLIT_K-1, stores bf16 once and
++    resets cnt[pid_n] to 0 for the next launch. No program waits on another, so it cannot
++    deadlock whether or not the CTAs are co-resident.
++    """
++    pid_n = tl.program_id(0)
++    pid_k = tl.program_id(1)
++    k_start = pid_k * K_SLICE
++
++    offs_n = pid_n * BLOCK_N + tl.arange(0, BLOCK_N)
++    offs_k = k_start + tl.arange(0, BLOCK_K)
++    offs_m = tl.arange(0, BLOCK_M)
++    m_mask = offs_m < M
++    # Weight tiles read directly as [BLOCK_K, BLOCK_N] from the row-major [N, K] weight (K
++    # contiguous), i.e. w.T for this tile, as in the router kernel; no repack.
++    w_ptrs = w_ptr + offs_k[:, None] + offs_n[None, :] * stride_wn
++    x_ptrs = x_ptr + offs_m[:, None] * stride_xm + offs_k[None, :]
++    acc = tl.zeros((BLOCK_M, BLOCK_N), dtype=tl.float32)
++    for kk in range(0, K_SLICE // BLOCK_K):
++        x_tile = tl.load(x_ptrs, mask=m_mask[:, None], other=0.0)
++        w_tile = tl.load(w_ptrs)
++        acc = tl.dot(x_tile, w_tile, acc)
++        x_ptrs += BLOCK_K
++        w_ptrs += BLOCK_K
++
++    # fp32 partial for rows < M only; the reducer reads exactly the same (masked) rows, so every
++    # value it reads was written in this launch and nothing from an earlier call can reach out.
++    tile_off = offs_m[:, None] * stride_ws_m + offs_n[None, :]
++    tl.store(ws_ptr + pid_k * stride_ws_s + tile_off, acc, mask=m_mask[:, None])
++    # All threads' partial stores precede the (single, scalar) release atomic below.
++    tl.debug_barrier()
++    ticket = tl.atomic_add(cnt_ptr + pid_n, 1, sem="acq_rel", scope="gpu")
++    # The acquire done by the atomic's issuing thread is ordered before every thread's reloads.
++    tl.debug_barrier()
++    if ticket == SPLIT_K - 1:
++        total = tl.load(ws_ptr + tile_off, mask=m_mask[:, None], other=0.0, cache_modifier=".cg")
++        for s in tl.static_range(1, SPLIT_K):
++            part = tl.load(ws_ptr + s * stride_ws_s + tile_off, mask=m_mask[:, None], other=0.0,
++                           cache_modifier=".cg")
++            total += part
++        out_ptrs = out_ptr + offs_m[:, None] * stride_om + offs_n[None, :]
++        tl.store(out_ptrs, total.to(tl.bfloat16), mask=m_mask[:, None])
++        # Reset for the next launch (all SPLIT_K tickets of this n-tile are drawn).
++        tl.atomic_xchg(cnt_ptr + pid_n, 0, sem="relaxed", scope="gpu")
++
++
++def _qkv_forward(x: torch.Tensor, w: torch.Tensor, ws: torch.Tensor, cnt: torch.Tensor) -> torch.Tensor:
++    """x bf16 [m, 8192] @ w[2304, 8192].T -> bf16 [m, 2304], m <= 32, ONE launch. Branches only on
++    shapes; ws (fp32 [SPLIT_K, 32, 2304]) and cnt (int32 [36], all zero between launches) come
++    from prepare()."""
++    m, k = x.shape
++    n = w.shape[0]
++    block_m = 16 if m <= 16 else 32
++    out = torch.empty((m, n), dtype=torch.bfloat16, device=x.device)
++    grid = (n // QKV_BLOCK_N, QKV_SPLIT_K)
++    _qkv_splitk_sem_kernel[grid](
++        x, w, ws, cnt, out,
++        m,
++        x.stride(0), w.stride(0), ws.stride(0), ws.stride(1), out.stride(0),
++        K_SLICE=k // QKV_SPLIT_K, SPLIT_K=QKV_SPLIT_K,
++        BLOCK_M=block_m, BLOCK_N=QKV_BLOCK_N, BLOCK_K=QKV_BLOCK_K,
++        num_warps=QKV_NUM_WARPS, num_stages=QKV_NUM_STAGES,
++    )
++    return out
++
++
++def _qkv_route_ok(x: torch.Tensor, cfg: Config) -> bool:
++    """qkv_gate Triton path: cfg m <= 32, n == 2304, k == 8192 and x a bf16 [m, 8192] with unit
++    inner stride. Everything else (m >= 128, the m=512 outlier test) keeps cuBLAS."""
++    m = cfg["m"]
++    return (1 <= m <= QKV_MAX_M and cfg["n"] == QKV_N and cfg["k"] == QKV_K
++            and x.dim() == 2 and x.shape[0] == m and x.shape[1] == QKV_K
++            and x.dtype == torch.bfloat16 and x.stride(1) == 1)
++
++
+ def prepare(weights: Weights) -> dict:
+     """Called once, untimed. Keep the bf16 weights as they are (contiguous), build the router's
+     hi + lo bf16 split as [256, 8192] row-major (N x K), and pre-compile every m-bucket of the
+@@ -165,12 +268,26 @@ def prepare(weights: Weights) -> dict:
+         x = torch.randn((m, router.shape[1]), device=router.device, dtype=torch.float32).to(torch.bfloat16)
+         if _router_shape_ok(x, hi):
+             _router_forward(x, hi, lo)
++    # qkv_gate m <= 32: persistent split-K workspace and per-n-tile ticket counters (own keys).
++    qkv = state["qkv_gate"]
++    state["qkv_ws"] = torch.empty((QKV_SPLIT_K, QKV_MAX_M, QKV_N), dtype=torch.float32,
++                                  device=qkv.device)
++    state["qkv_cnt"] = torch.zeros((QKV_N // QKV_BLOCK_N,), dtype=torch.int32, device=qkv.device)
++    if qkv.shape == (QKV_N, QKV_K) and qkv.dtype == torch.bfloat16:
++        # Warm every m in 1..32 (both BLOCK_M binaries) on synthetic zeros.
++        for m in range(1, QKV_MAX_M + 1):
++            x = torch.zeros((m, QKV_K), device=qkv.device, dtype=torch.bfloat16)
++            _qkv_forward(x, qkv, state["qkv_ws"], state["qkv_cnt"])
++        state["qkv_cnt"].zero_()
+     return state
+ 
+ 
+ def kernel_fn(data: Inputs, state: dict) -> torch.Tensor:
+     x, cfg = data["x"], data["config"]
+     layer = cfg["layer"]
++    if (layer == "qkv_gate" and state["qkv_gate"].shape == (QKV_N, QKV_K)
++            and _qkv_route_ok(x, cfg)):
++        return _qkv_forward(x, state["qkv_gate"], state["qkv_ws"], state["qkv_cnt"])
+     if layer != "router":
+         # The unpooler's slice is its first n rows (all of them above 8 tokens).
+         return _bf16_gemm_dispatch_impl(x, state[layer][: cfg["n"]], None)

@@ -50,10 +50,10 @@ priority: 2
 kind: primary
 controls_for: null
 review: proceed
-status: running
+status: done
 review_at: 2026-10-24T075337Z
 review_companions: null
-stage: dispatched
+stage: harvested
 claimed_at: 2026-10-24T075337Z
 base_sha: 7bcb8092c1665b25485402c87868a1ebb583ee27
 base_blob: da55301de1e911aeab09878b0873809f544f436c
@@ -70,6 +70,13 @@ attempt_file: 2026-10-24T075611Z-check-qkv-gate-triton-splitk4-blockn64-semaphor
 prepared_at: 2026-10-24T075611Z
 job: 135ef6499875416a
 dispatched_at: 2026-10-24T075620Z
+outcome: neutral
+verdict_detail: within-ci
+speedup: 1.1431095202269639
+speedup_ci: [1.1259628774235595, 1.1602561630303683]
+harvested_at: 2026-10-24T090807Z
+best_at_harvest: 1.1432568936693237
+promotion: null
 ---
 
 # qkv-gate-triton-splitk4-blockn64-semaphore
@@ -149,3 +156,53 @@ CLEAN: submission.py
 ```
 
 `python3 -I -m py_compile` passed. No `__pycache__` was left in the worktree.
+
+## Result
+
+- job `135ef6499875416a` (check), status done, passed True, tests 9/9
+- speedup 1.1431x, 95% CI [1.1260, 1.1603], score 4226.016767877891 µs vs SGLang 4830.8 µs
+- best at harvest: {"speedup": 1.1432568936693237, "ci": [1.1261080402642838, 1.1604057470743634], "job": "240eb22ea0b6487e"}; base result: muse_bf16_proj/hypotheses/done/gain/router-triton-hilo-fused-control-splitk-all-m.result.json
+- **outcome: neutral** (within-ci)
+- files: `muse_bf16_proj/hypotheses/done/neutral/qkv-gate-triton-splitk4-blockn64-semaphore.result.json`, `muse_bf16_proj/hypotheses/done/neutral/qkv-gate-triton-splitk4-blockn64-semaphore.patch`; branch `hyp/muse_bf16_proj/qkv-gate-triton-splitk4-blockn64-semaphore`
+
+## Attribution
+
+| shape | w | base µs | hyp µs | delta | verdict |
+|---|---|---|---|---|---|
+| layer=qkv_gate load=decode_1 m=1 | 62 | 14.4 | 13.83 | 1.0493 | gained |
+| layer=o load=decode_1 m=1 | 62 | 6.69 | 7.12 | 0.9702 | flat |
+| layer=pooler load=decode_1 m=1 | 62 | 21.21 | 21.53 | 0.9882 | flat |
+| layer=unpooler load=decode_1 m=1 | 62 | 7.07 | 7.1 | 0.9922 | flat |
+| layer=router load=decode_1 m=1 | 62 | 5.8 | 5.84 | 0.9782 | flat |
+| layer=qkv_gate load=decode_16 m=16 | 62 | 13.82 | 13.72 | 1.033 | gained |
+| layer=o load=decode_16 m=16 | 62 | 6.78 | 6.66 | 0.9854 | flat |
+| layer=pooler load=decode_16 m=16 | 62 | 21.3 | 21.75 | 0.9828 | flat |
+| layer=unpooler load=decode_16 m=16 | 62 | 18.45 | 18.96 | 0.9984 | flat |
+| layer=router load=decode_16 m=16 | 62 | 6.2 | 5.98 | 1.0318 | gained |
+| layer=qkv_gate load=decode_32 m=32 | 62 | 14.27 | 17.0 | 0.8642 | lost |
+| layer=o load=decode_32 m=32 | 62 | 6.58 | 7.15 | 0.9714 | flat |
+| layer=pooler load=decode_32 m=32 | 62 | 21.95 | 21.96 | 1.0075 | flat |
+| layer=unpooler load=decode_32 m=32 | 62 | 18.71 | 18.89 | 0.9938 | flat |
+| layer=router load=decode_32 m=32 | 62 | 6.54 | 6.7 | 0.9841 | flat |
+| layer=qkv_gate load=verify_1 m=8 | 62 | 14.0 | 13.61 | 1.0358 | gained |
+| layer=o load=verify_1 m=8 | 62 | 6.28 | 6.9 | 0.9635 | lost |
+| layer=pooler load=verify_1 m=8 | 62 | 21.3 | 21.66 | 0.9876 | flat |
+| layer=unpooler load=verify_1 m=8 | 62 | 7.02 | 7.29 | 0.964 | lost |
+| layer=router load=verify_1 m=8 | 62 | 5.67 | 6.24 | 0.9245 | lost |
+| layer=qkv_gate load=verify_16 m=128 | 62 | 16.96 | 16.71 | 1.0155 | flat |
+| layer=o load=verify_16 m=128 | 62 | 6.98 | 7.46 | 0.9846 | flat |
+| layer=pooler load=verify_16 m=128 | 62 | 25.21 | 25.29 | 1.0506 | gained |
+| layer=unpooler load=verify_16 m=128 | 62 | 19.65 | 19.97 | 0.9854 | flat |
+| layer=router load=verify_16 m=128 | 62 | 7.04 | 7.63 | 0.9489 | lost |
+| layer=qkv_gate load=verify_32 m=256 | 62 | 19.47 | 19.98 | 1.0056 | flat |
+| layer=o load=verify_32 m=256 | 62 | 9.51 | 9.43 | 1.0035 | flat |
+| layer=pooler load=verify_32 m=256 | 62 | 30.51 | 30.94 | 0.9888 | flat |
+| layer=unpooler load=verify_32 m=256 | 62 | 24.39 | 24.92 | 1.005 | flat |
+| layer=router load=verify_32 m=256 | 62 | 9.27 | 9.24 | 1.0088 | flat |
+
+gained on qkv_gate decode_1, decode_16, verify_1; router decode_16; pooler verify_16; lost on qkv_gate decode_32; o verify_1; unpooler verify_1; router verify_1, verify_16. Expected hit: 4/6. Noise ±1.5%.
+
+## Follow-ups
+
+- within-ci: the change is not proven either way; a stacked hypothesis (`depends_on: qkv-gate-triton-splitk4-blockn64-semaphore`) that adds a further change in the same area is the only way to learn more (identical code is never re-run).
+
