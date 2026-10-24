@@ -1,17 +1,17 @@
 {
  "problem": "muse_decode_layer",
- "job": "5755a412dda244a1",
- "check_job": "e260dfe413e448c7",
- "mode": "submit",
- "speedup": 1.020038644953596,
+ "job": "0730135cdcac43b7",
+ "check_job": "0730135cdcac43b7",
+ "mode": "check",
+ "speedup": 1.0620874943175542,
  "ci": [
-  1.004738065279292,
-  1.0353392246278998
+  1.046156181902791,
+  1.0780188067323175
  ],
- "score_us": 22175.924521986173,
- "commit": "164c1d27648cffdd4d7f5a04f0d6f582e1f9ac56",
- "submission_blob": "6884d26a928d1de1b07bf8d28e1be4e53dfdcfc5",
- "slug": "sglang-pipeline-parity-router-hilo-m8",
- "result": "muse_decode_layer/hypotheses/done/gain/sglang-pipeline-parity-router-hilo-m8.result.json",
- "updated_at": "2026-10-24T032012Z"
+ "score_us": 21297.962852424607,
+ "commit": "ef7dea6cac43678c09ae91b20ece2c40e0670c4b",
+ "submission_blob": "de98030423860cfc9507b61d19f82a416223a23d",
+ "slug": "marlin-block-m-cap-16",
+ "result": "muse_decode_layer/hypotheses/done/gain/marlin-block-m-cap-16.result.json",
+ "updated_at": "2026-10-24T075012Z"
 }

@@ -61,7 +61,8 @@ speedup: 1.0620874943175542
 speedup_ci: [1.046156181902791, 1.0780188067323175]
 harvested_at: 2026-10-24T075010Z
 best_at_harvest: 1.020038644953596
-promotion: pending
+promotion: merged
+promotion_commit: ef7dea6cac43678c09ae91b20ece2c40e0670c4b
 ---
 
 # marlin-block-m-cap-16
