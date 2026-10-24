@@ -44,9 +44,16 @@ controls_for: null
 rewrite_stage: 3
 replaces: Marlin w13+w2 (moe_wna16_marlin_gemm x2) at every prefill T
 review: proceed
-status: queued
+status: running
 review_at: 2026-10-24T112151Z
 review_companions: null
+stage: claimed
+claimed_at: 2026-10-24T112151Z
+base_sha: 5f5af1d3fe4b9b1ef686af0d022040134029ee30
+base_blob: 60abe04615110df3e4a9355a4b984b48b68f85e8
+branch: hyp/muse_prefill_layer/experts-triton-w4a16-first-turn-blockt256
+worktree: .worktrees/muse_prefill_layer/experts-triton-w4a16-first-turn-blockt256
+mode: null
 ---
 
 # experts-triton-w4a16-first-turn-blockt256
