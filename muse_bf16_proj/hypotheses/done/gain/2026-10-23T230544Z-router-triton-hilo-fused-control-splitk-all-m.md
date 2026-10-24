@@ -47,10 +47,10 @@ priority: 1
 kind: control
 controls_for: router-triton-hilo-fused
 review: proceed
-status: running
+status: done
 review_at: 2026-10-24T024326Z
 review_companions: [router-triton-hilo-fused-control-hybrid-cublas-above-m32]
-stage: dispatched
+stage: harvested
 claimed_at: 2026-10-24T024344Z
 base_sha: a392f0b6dcd3d6a023c67bc68ac2f22a8aeece5a
 base_blob: 3f59d3eeb5b8a1fe83df61cbea1c119b5926bc63
@@ -67,6 +67,13 @@ attempt_file: 2026-10-24T024843Z-check-router-triton-hilo-fused-control-splitk-a
 prepared_at: 2026-10-24T024843Z
 job: bd9fa14151644cee
 dispatched_at: 2026-10-24T024853Z
+outcome: gain
+verdict_detail: gain
+speedup: 1.1510295903072447
+speedup_ci: [1.133764146452636, 1.1682950341618532]
+harvested_at: 2026-10-24T035910Z
+best_at_harvest: 1.0307103903232853
+promotion: pending
 ---
 
 # router-triton-hilo-fused-control-splitk-all-m
@@ -150,3 +157,53 @@ okc_lint output (`python3 -I .claude/skills/churnsubs/bin/okc_lint.py <worktree>
 ```
 CLEAN: muse_bf16_proj/submission.py
 ```
+
+## Result
+
+- job `bd9fa14151644cee` (check), status done, passed True, tests 9/9
+- speedup 1.1510x, 95% CI [1.1338, 1.1683], score 4196.938150573968 µs vs SGLang 4830.8 µs
+- best at harvest: {"speedup": 1.0307103903232853, "ci": [1.015249734468436, 1.0461710461781344], "job": "9aa98e889be140eb"}; base result: muse_bf16_proj/hypotheses/done/regression/router-triton-hilo-fused.result.json
+- **outcome: gain** (gain)
+- files: `muse_bf16_proj/hypotheses/done/gain/router-triton-hilo-fused-control-splitk-all-m.result.json`, `muse_bf16_proj/hypotheses/done/gain/router-triton-hilo-fused-control-splitk-all-m.patch`; branch `hyp/muse_bf16_proj/router-triton-hilo-fused-control-splitk-all-m`
+
+## Attribution
+
+| shape | w | base µs | hyp µs | delta | verdict |
+|---|---|---|---|---|---|
+| layer=qkv_gate load=decode_1 m=1 | 62 | 13.94 | 14.4 | 0.9649 | lost |
+| layer=o load=decode_1 m=1 | 62 | 6.74 | 6.69 | 1.0082 | flat |
+| layer=pooler load=decode_1 m=1 | 62 | 21.46 | 21.21 | 0.9865 | flat |
+| layer=unpooler load=decode_1 m=1 | 62 | 6.95 | 7.07 | 1.006 | flat |
+| layer=router load=decode_1 m=1 | 62 | 7.73 | 5.8 | 1.3361 | gained |
+| layer=qkv_gate load=decode_16 m=16 | 62 | 13.95 | 13.82 | 0.9807 | flat |
+| layer=o load=decode_16 m=16 | 62 | 6.34 | 6.78 | 0.9962 | flat |
+| layer=pooler load=decode_16 m=16 | 62 | 21.57 | 21.3 | 1.0168 | flat |
+| layer=unpooler load=decode_16 m=16 | 62 | 18.52 | 18.45 | 1.0002 | flat |
+| layer=router load=decode_16 m=16 | 62 | 7.97 | 6.2 | 1.3008 | gained |
+| layer=qkv_gate load=decode_32 m=32 | 62 | 14.28 | 14.27 | 0.9785 | flat |
+| layer=o load=decode_32 m=32 | 62 | 6.83 | 6.58 | 1.0056 | flat |
+| layer=pooler load=decode_32 m=32 | 62 | 21.62 | 21.95 | 0.9982 | flat |
+| layer=unpooler load=decode_32 m=32 | 62 | 18.96 | 18.71 | 1.0013 | flat |
+| layer=router load=decode_32 m=32 | 62 | 8.41 | 6.54 | 1.2947 | gained |
+| layer=qkv_gate load=verify_1 m=8 | 62 | 14.14 | 14.0 | 0.9745 | flat |
+| layer=o load=verify_1 m=8 | 62 | 6.7 | 6.28 | 0.9928 | flat |
+| layer=pooler load=verify_1 m=8 | 62 | 21.17 | 21.3 | 1.0059 | flat |
+| layer=unpooler load=verify_1 m=8 | 62 | 6.62 | 7.02 | 0.9912 | flat |
+| layer=router load=verify_1 m=8 | 62 | 7.6 | 5.67 | 1.3399 | gained |
+| layer=qkv_gate load=verify_16 m=128 | 62 | 16.7 | 16.96 | 1.0045 | flat |
+| layer=o load=verify_16 m=128 | 62 | 7.39 | 6.98 | 1.0132 | flat |
+| layer=pooler load=verify_16 m=128 | 62 | 25.31 | 25.21 | 0.984 | flat |
+| layer=unpooler load=verify_16 m=128 | 62 | 19.84 | 19.65 | 0.9966 | flat |
+| layer=router load=verify_16 m=128 | 62 | 49.68 | 7.04 | 6.8531 | gained |
+| layer=qkv_gate load=verify_32 m=256 | 62 | 19.3 | 19.47 | 1.0062 | flat |
+| layer=o load=verify_32 m=256 | 62 | 9.5 | 9.51 | 1.0153 | flat |
+| layer=pooler load=verify_32 m=256 | 62 | 30.77 | 30.51 | 0.9991 | flat |
+| layer=unpooler load=verify_32 m=256 | 62 | 24.46 | 24.39 | 1.0043 | flat |
+| layer=router load=verify_32 m=256 | 62 | 98.12 | 9.27 | 10.4912 | gained |
+
+gained on router decode_1, decode_16, decode_32, verify_1, verify_16, verify_32; lost on qkv_gate decode_1. Expected hit: 7/7. Noise ±1.5%.
+
+## Follow-ups
+
+- candidate for promotion; stack further changes with `depends_on` once it lands.
+
