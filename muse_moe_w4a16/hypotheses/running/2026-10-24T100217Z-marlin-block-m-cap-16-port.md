@@ -52,9 +52,16 @@ priority: 1
 kind: primary
 controls_for: null
 review: proceed
-status: queued
+status: running
 review_at: 2026-10-24T103919Z
 review_companions: null
+stage: claimed
+claimed_at: 2026-10-24T103919Z
+base_sha: 150297e8627364911bee843d85d02b432ebf9b41
+base_blob: 11fbc1957daf7294cd2810ff82a0aad2f25644bd
+branch: hyp/muse_moe_w4a16/marlin-block-m-cap-16-port
+worktree: .worktrees/muse_moe_w4a16/marlin-block-m-cap-16-port
+mode: null
 ---
 
 # marlin-block-m-cap-16-port
