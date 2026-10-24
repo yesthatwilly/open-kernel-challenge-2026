@@ -1,6 +1,6 @@
 # muse_moe_w4a16 findings
 
-Regenerated 2026-10-24T100619Z by `churn.py index`. Read this before writing a hypothesis for muse_moe_w4a16.
+Regenerated 2026-10-24T103713Z by `churn.py index`. Read this before writing a hypothesis for muse_moe_w4a16.
 
 ## Current best
 
@@ -21,12 +21,14 @@ Where the time goes (per scored shape, top kernels):
 - **sglang-marlin-path-parity** → gain (gain), 0.9888x — gained on decode_1 decode_1; decode_16 decode_16; decode_32 decode_32; verify_1 verify_1; verify_16 verify_16; verify_32 verify_32. Replace the starter's 32-expert dense loop (dequantize every local expert to BF16 on every call, x @ w13.T over all tokens, masked weighted sum) with SGLang's M
 - **align-single-token-ep** → neutral (unproven-vs-best), 0.9951x — gained on decode_1 decode_1. At num_tokens == 1 only, call SGLang's moe_align_single_token(local_ids, block_size_m) (from sglang.kernels.ops.moe.moe_align_single_token) with the expert_map-
 - **marlin-block-size-m-next-larger** → regression (regression), 0.9178x — lost on decode_32 decode_32; verify_16 verify_16. Change only the block_size_m pick in kernel_fn. SGLang's loop breaks on the first candidate in (8, 16, 32, 48, 64) where num_tokens*8/32/block_size_m < 0.9, whi
+- **align-256-experts-below-128** → neutral (unproven-vs-best), 0.9998x — gained on decode_1 decode_1. In kernel_fn, for num_tokens < 128 only (bs=1, 8, 16, 32 and the bs=4/33 tests), call moe_align_block_size(local_ids, block_size_m, N_EXPERTS) exactly as baseli
 
 ### w13 marlin
 - **triton-w13-grouped-gemv-small-m** → regression (regression), 0.7506x — lost on decode_1 decode_1; verify_1 verify_1. For num_tokens <= 8 only (decode_1 and verify_1; all other shapes keep the parity path untouched), replace the first moe_wna16_marlin_gemm (w13, top_k=8) with t
 - **marlin-workspace-blocks-per-sm-8** → neutral (unproven-vs-best), 0.9921x — no shape moved outside noise. In prepare(), build a second lock workspace marlin_make_workspace(device, max_blocks_per_sm=8) and pass it to the w13 moe_wna16_marlin_gemm call only; the w2 ca
 - **w13-marlin-atomic-add-small-m** → neutral (within-ci), 0.9869x — no shape moved outside noise. For num_tokens <= 32, pass use_atomic_add=True (and use_fp32_reduce=False, which Marlin requires alongside atomic add) to the w13 moe_wna16_marlin_gemm call onl
 - **w13-marlin-bf16-reduce-verify** → neutral (within-ci), 0.9840x — no shape moved outside noise. For num_tokens >= 128 (verify_16 and verify_32), pass use_fp32_reduce=False to the w13 moe_wna16_marlin_gemm call only (use_atomic_add stays False; w2 and all d
+- **small-m-grouped-gemv-splitk-rewrite** → regression (regression), 0.6635x — lost on decode_1 decode_1; decode_16 decode_16; verify_1 verify_1. Stage 1 of a small-batch grouped W4A16 GEMV that replaces both moe_wna16_marlin_gemm calls when num_tokens <= 16 (decode_1 bs=1, verify_1 bs=8, decode_16 bs=16)
 
 ## Open follow-ups
 
@@ -34,6 +36,7 @@ Where the time goes (per scored shape, top kernels):
 - marlin-workspace-blocks-per-sm-8: unproven-vs-best: the change is not proven either way; a stacked hypothesis (`depends_on: marlin-workspace-blocks-per-sm-8`) that adds a further change in the same area is the only way to learn more (identical code is ne
 - w13-marlin-atomic-add-small-m: within-ci: the change is not proven either way; a stacked hypothesis (`depends_on: w13-marlin-atomic-add-small-m`) that adds a further change in the same area is the only way to learn more (identical code is never re-run
 - w13-marlin-bf16-reduce-verify: within-ci: the change is not proven either way; a stacked hypothesis (`depends_on: w13-marlin-bf16-reduce-verify`) that adds a further change in the same area is the only way to learn more (identical code is never re-run
+- align-256-experts-below-128: unproven-vs-best: the change is not proven either way; a stacked hypothesis (`depends_on: align-256-experts-below-128`) that adds a further change in the same area is the only way to learn more (identical code is never r
 
 ## Do not retry (rejected / duplicates)
 
@@ -47,7 +50,5 @@ Where the time goes (per scored shape, top kernels):
 - queue: align-remote-sentinel-ids [MoE align/dispatch] p3 hold
 - queue: marlin-block-m-cap-16-port [w13 marlin] p1 queued
 - running: post-expert-norm-triton-small-m [post-expert norm+combine] p1 running
-- running: align-256-experts-below-128 [MoE align/dispatch] p1 running
 - running: marlin-block-size-m-next-smaller [w13 marlin] p2 running
 - running: marlin-block-size-m-verify-two-smaller [w13 marlin] p3 running
-- running: small-m-grouped-gemv-splitk-rewrite [w13 marlin] p1 running

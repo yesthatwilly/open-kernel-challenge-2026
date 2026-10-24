@@ -1,6 +1,6 @@
 # muse_bf16_proj findings
 
-Regenerated 2026-10-24T100619Z by `churn.py index`. Read this before writing a hypothesis for muse_bf16_proj.
+Regenerated 2026-10-24T103713Z by `churn.py index`. Read this before writing a hypothesis for muse_bf16_proj.
 
 ## Current best
 
@@ -66,6 +66,7 @@ Where the time goes (per scored shape, top kernels):
 - **unpooler-slice-triton-gemv** → regression (regression), 0.8801x — gained on o verify_1; lost on unpooler decode_1, verify_1. For layer == 'unpooler' and m <= 8 only (the sliced case: n=1024, k=4096, an 8.4 MB weight read), replace the _bf16_gemm_dispatch_impl(x, W[:1024], None) call i
 - **unpooler-full-triton-skinny-m32** → neutral (within-ci), 1.0053x — gained on qkv_gate decode_1, decode_16, verify_1; unpooler decode_16, verify_1; o verify_1; lost on unpooler decode_32; pooler verify_16. Extend the skinny Triton GEMM from pooler-triton-skinny-m32 to layer == 'unpooler' at m in {16, 32} (the full weight: n=8192, k=4096, 67 MB): in kernel_fn route
 - **unpooler-full-triton-skinny-m32-control-blockm16-all-m** → neutral (within-ci), 0.9990x — gained on o verify_16; lost on qkv_gate decode_16; unpooler decode_32. From the parent's branch (unpooler-full-triton-skinny-m32), keep the unpooler routing, grid (8192/64 = 128 programs), BLOCK_N=64, BLOCK_K=256, num_stages=4, num
+- **unpooler-slice-triton-splitk8-semaphore** → neutral (unproven-vs-best), 1.1546x — gained on unpooler decode_1, verify_1; lost on router verify_1, verify_16. Built on master (dba4ffd; router untouched). For layer == 'unpooler' with cfg n == 1024 (the sliced case, m <= 8: k=4096, an 8.4 MB bf16 read of W[:1024]) only,
 
 ## Open follow-ups
 
@@ -77,6 +78,7 @@ Where the time goes (per scored shape, top kernels):
 - unpooler-full-triton-skinny-m32-control-blockm16-all-m: within-ci: the change is not proven either way; a stacked hypothesis (`depends_on: unpooler-full-triton-skinny-m32-control-blockm16-all-m`) that adds a further change in the same area is the only way to learn more (ident
 - pooler-triton-splitk2-blockn64-semaphore: unproven-vs-best: the change is not proven either way; a stacked hypothesis (`depends_on: pooler-triton-splitk2-blockn64-semaphore`) that adds a further change in the same area is the only way to learn more (identical co
 - qkv-gate-triton-splitk4-blockn64-semaphore: within-ci: the change is not proven either way; a stacked hypothesis (`depends_on: qkv-gate-triton-splitk4-blockn64-semaphore`) that adds a further change in the same area is the only way to learn more (identical code is
+- unpooler-slice-triton-splitk8-semaphore: unproven-vs-best: the change is not proven either way; a stacked hypothesis (`depends_on: unpooler-slice-triton-splitk8-semaphore`) that adds a further change in the same area is the only way to learn more (identical cod
 
 ## Do not retry (rejected / duplicates)
 
@@ -92,5 +94,4 @@ Where the time goes (per scored shape, top kernels):
 - queue: pooler-triton-splitk2-blockn64-semaphore-control-blockk256 [pooler GEMM] p1 hold
 - queue: qkv-gate-o-m128-wgmma-splitk-semaphore [qkv GEMM + o GEMM (m=128)] p2 hold
 - queue: pooler-splitk2-tma-weight-stream [pooler GEMM] p3 queued
-- running: unpooler-slice-triton-splitk8-semaphore [unpooler GEMM] p2 running
 - running: pooler-unpooler-m128-wgmma-splitk-semaphore [pooler GEMM + unpooler GEMM (m=128)] p2 running

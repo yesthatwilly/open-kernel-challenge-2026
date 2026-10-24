@@ -1,6 +1,6 @@
 # muse_attention_decode hypotheses
 
-Regenerated 2026-10-24T100619Z. Best: 1.1284x [1.1115,1.1454] job `c297440e53334f34` (submit)
+Regenerated 2026-10-24T103713Z. Best: 1.1706x [1.1530,1.1924] job `facc479992e24a35` (check)
 
 | created | slug | kind | area | where | outcome | speedup | CI | job | mode | promotion | review | expected hit |
 |---|---|---|---|---|---|---|---|---|---|---|---|---|
@@ -15,7 +15,7 @@ Regenerated 2026-10-24T100619Z. Best: 1.1284x [1.1115,1.1454] job `c297440e53334
 | 2026-10-23T223802Z | fused-sliding-preattn-into-window-kernel | primary | attention boundary | queue | queued |  |  |  |  |  | required |  |
 | 2026-10-23T223803Z | fused-sliding-normgate-epilogue | primary | output norm-gate | queue | queued |  |  |  |  |  | required |  |
 | 2026-10-23T225840Z | paired-heads-launch-cleanup | primary | attention boundary | queue | queued |  |  |  |  |  | required |  |
-| 2026-10-23T225840Z | fa3-hdim128-head-pairing | primary | FA3 call (head packing) | running | running |  |  | facc479992e24a35 | check |  | proceed |  |
+| 2026-10-23T225840Z | fa3-hdim128-head-pairing | primary | FA3 call (head packing) | done/gain | gain | 1.1706 | [1.153,1.192] | facc479992e24a35 | check | merged | proceed | 7/7 |
 | 2026-10-23T225858Z | fa3-batched-q-verify | primary | FA3 call (q layout) | queue | queued |  |  |  |  |  | required |  |
 | 2026-10-23T225858Z | fa3-num-splits-full-verify | primary | FA3 call | queue | queued |  |  |  |  |  | required |  |
 | 2026-10-23T225858Z | fa3-single-split-sliding | primary | FA3 call | queue | queued |  |  |  |  |  | required |  |
@@ -24,7 +24,7 @@ Regenerated 2026-10-24T100619Z. Best: 1.1284x [1.1115,1.1454] job `c297440e53334
 | 2026-10-23T225858Z | stream-fork-preattention | primary | launch overhead | queue | queued |  |  |  |  |  | required |  |
 | 2026-10-23T225858Z | triton-flash-decode-deep-pipeline | primary | FA3 call (Triton pipeline) | queue | queued |  |  |  |  |  | required |  |
 | 2026-10-23T225858Z | triton-flash-decode-full-verify | primary | FA3 call | queue | queued |  |  |  |  |  | required |  |
-| 2026-10-24T081233Z | sliding-single-launch-fused-attention | rewrite | sliding-layer attention (whole-path rewrite) | running | running |  |  | f389af196ddf47b1 | check |  | proceed |  |
+| 2026-10-24T081233Z | sliding-single-launch-fused-attention | rewrite | sliding-layer attention (whole-path rewrite) | done/regression | regression | 0.9452 | [0.931,0.959] | f389af196ddf47b1 | check |  | proceed | 2/7 |
 
 ## Held
 
