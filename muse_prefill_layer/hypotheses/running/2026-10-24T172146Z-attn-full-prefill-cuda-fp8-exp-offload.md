@@ -84,7 +84,7 @@ review: proceed
 status: running
 review_at: 2026-10-24T172640Z
 review_companions: null
-stage: implemented
+stage: dispatched
 claimed_at: 2026-10-24T172706Z
 base_sha: 41c4efc3448061b0f924c89315352fe690c80db8
 base_blob: 635cfee3ac2c3f7c66840b8c8a082cad2fa41a68
@@ -99,6 +99,8 @@ submission_blob: 32f2233dad7a871bb1fbf53182923a115bae4782
 lint_warnings: 11
 attempt_file: 2026-10-24T181734Z-submit-attn-full-prefill-cuda-fp8-exp-offload.md
 prepared_at: 2026-10-24T181734Z
+job: f5c30b15fd284c15
+dispatched_at: 2026-10-24T181917Z
 ---
 
 # attn-full-prefill-cuda-fp8-exp-offload
