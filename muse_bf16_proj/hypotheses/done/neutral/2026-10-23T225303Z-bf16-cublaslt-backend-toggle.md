@@ -36,10 +36,10 @@ priority: 5
 kind: primary
 controls_for: null
 review: proceed
-status: running
+status: done
 review_at: 2026-10-24T071318Z
 review_companions: null
-stage: dispatched
+stage: harvested
 claimed_at: 2026-10-24T071319Z
 base_sha: 036af8be03a756684fc9d199dd2f6b1f05eab3a4
 base_blob: da55301de1e911aeab09878b0873809f544f436c
@@ -56,6 +56,13 @@ attempt_file: 2026-10-24T071431Z-check-bf16-cublaslt-backend-toggle.md
 prepared_at: 2026-10-24T071431Z
 job: 5ed9ace10d9a4f68
 dispatched_at: 2026-10-24T071442Z
+outcome: neutral
+verdict_detail: within-ci
+speedup: 1.1505470634697526
+speedup_ci: [1.1332888575177062, 1.1678052694217986]
+harvested_at: 2026-10-24T075010Z
+best_at_harvest: 1.1510295903072447
+promotion: null
 ---
 
 # bf16-cublaslt-backend-toggle
@@ -121,3 +128,53 @@ okc_lint output:
 CLEAN: /home/user/git/musespark/.worktrees/muse_bf16_proj/bf16-cublaslt-backend-toggle/muse_bf16_proj/submission.py
 ```
 `python3 -I -m py_compile` passed; the `__pycache__` it left was deleted.
+
+## Result
+
+- job `5ed9ace10d9a4f68` (check), status done, passed True, tests 9/9
+- speedup 1.1505x, 95% CI [1.1333, 1.1678], score 4198.698300468958 µs vs SGLang 4830.8 µs
+- best at harvest: {"speedup": 1.1510295903072447, "ci": [1.133764146452636, 1.1682950341618532], "job": "bd9fa14151644cee"}; base result: muse_bf16_proj/hypotheses/done/gain/router-triton-hilo-fused-control-splitk-all-m.result.json
+- **outcome: neutral** (within-ci)
+- files: `muse_bf16_proj/hypotheses/done/neutral/bf16-cublaslt-backend-toggle.result.json`, `muse_bf16_proj/hypotheses/done/neutral/bf16-cublaslt-backend-toggle.patch`; branch `hyp/muse_bf16_proj/bf16-cublaslt-backend-toggle`
+
+## Attribution
+
+| shape | w | base µs | hyp µs | delta | verdict |
+|---|---|---|---|---|---|
+| layer=qkv_gate load=decode_1 m=1 | 62 | 14.4 | 13.77 | 1.0444 | gained |
+| layer=o load=decode_1 m=1 | 62 | 6.69 | 7.07 | 0.9681 | lost |
+| layer=pooler load=decode_1 m=1 | 62 | 21.21 | 21.42 | 0.9835 | flat |
+| layer=unpooler load=decode_1 m=1 | 62 | 7.07 | 7.1 | 0.9468 | lost |
+| layer=router load=decode_1 m=1 | 62 | 5.8 | 5.96 | 0.9892 | flat |
+| layer=qkv_gate load=decode_16 m=16 | 62 | 13.82 | 14.2 | 1.0168 | flat |
+| layer=o load=decode_16 m=16 | 62 | 6.78 | 6.9 | 0.9977 | flat |
+| layer=pooler load=decode_16 m=16 | 62 | 21.3 | 21.93 | 0.9929 | flat |
+| layer=unpooler load=decode_16 m=16 | 62 | 18.45 | 18.79 | 0.9992 | flat |
+| layer=router load=decode_16 m=16 | 62 | 6.2 | 6.04 | 1.0207 | flat |
+| layer=qkv_gate load=decode_32 m=32 | 62 | 14.27 | 14.43 | 1.0226 | flat |
+| layer=o load=decode_32 m=32 | 62 | 6.58 | 7.2 | 0.9869 | flat |
+| layer=pooler load=decode_32 m=32 | 62 | 21.95 | 19.48 | 1.1226 | gained |
+| layer=unpooler load=decode_32 m=32 | 62 | 18.71 | 18.91 | 1.0013 | flat |
+| layer=router load=decode_32 m=32 | 62 | 6.54 | 6.56 | 0.989 | flat |
+| layer=qkv_gate load=verify_1 m=8 | 62 | 14.0 | 14.26 | 0.9949 | flat |
+| layer=o load=verify_1 m=8 | 62 | 6.28 | 6.73 | 0.9676 | lost |
+| layer=pooler load=verify_1 m=8 | 62 | 21.3 | 21.57 | 0.977 | flat |
+| layer=unpooler load=verify_1 m=8 | 62 | 7.02 | 7.29 | 0.9673 | lost |
+| layer=router load=verify_1 m=8 | 62 | 5.67 | 6.15 | 0.931 | lost |
+| layer=qkv_gate load=verify_16 m=128 | 62 | 16.96 | 16.24 | 1.0646 | gained |
+| layer=o load=verify_16 m=128 | 62 | 6.98 | 7.4 | 0.9903 | flat |
+| layer=pooler load=verify_16 m=128 | 62 | 25.21 | 25.14 | 1.0246 | flat |
+| layer=unpooler load=verify_16 m=128 | 62 | 19.65 | 19.87 | 0.9897 | flat |
+| layer=router load=verify_16 m=128 | 62 | 7.04 | 7.23 | 0.9864 | flat |
+| layer=qkv_gate load=verify_32 m=256 | 62 | 19.47 | 22.08 | 0.9186 | lost |
+| layer=o load=verify_32 m=256 | 62 | 9.51 | 9.53 | 1.0044 | flat |
+| layer=pooler load=verify_32 m=256 | 62 | 30.51 | 31.26 | 0.9848 | flat |
+| layer=unpooler load=verify_32 m=256 | 62 | 24.39 | 24.77 | 1.0048 | flat |
+| layer=router load=verify_32 m=256 | 62 | 9.27 | 9.44 | 0.9957 | flat |
+
+gained on qkv_gate decode_1, verify_16; pooler decode_32; lost on o decode_1, verify_1; unpooler decode_1, verify_1; router verify_1; qkv_gate verify_32. Expected hit: 3/4. Noise ±1.5%.
+
+## Follow-ups
+
+- within-ci: the change is not proven either way; a stacked hypothesis (`depends_on: bf16-cublaslt-backend-toggle`) that adds a further change in the same area is the only way to learn more (identical code is never re-run).
+
