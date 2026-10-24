@@ -1,0 +1,414 @@
+{
+ "ok": true,
+ "promote": [
+  {
+   "problem": "muse_moe_w4a16",
+   "slug": "marlin-block-m-two-smaller-on-postnorm",
+   "run": "okc submit muse_moe_w4a16 /home/user/git/musespark/muse_moe_w4a16/submission.py --no-wait --json",
+   "then": "churn.py record-submit muse_moe_w4a16 marlin-block-m-two-smaller-on-postnorm <job>"
+  }
+ ],
+ "dispatch": [
+  {
+   "problem": "muse_attention_decode",
+   "picks": [
+    {
+     "slug": "fa3-single-split-sliding",
+     "mode": "check",
+     "priority": 4,
+     "review": "required",
+     "kind": "primary",
+     "controls_for": null
+    },
+    {
+     "slug": "fa3-drop-cu-seqlens-decode",
+     "mode": "check",
+     "priority": 5,
+     "review": "required",
+     "kind": "primary",
+     "controls_for": null
+    }
+   ]
+  },
+  {
+   "problem": "muse_decode_layer",
+   "picks": [
+    {
+     "slug": "trtllm-decode-full-attention",
+     "mode": "check",
+     "priority": 5,
+     "review": "required",
+     "kind": "primary",
+     "controls_for": null
+    }
+   ]
+  }
+ ],
+ "wake_s": 1800,
+ "needs_human": [],
+ "report": {
+  "preflight": {
+   "ok": true,
+   "branch": "master",
+   "whoami": "yesthatwilly",
+   "quotas": {
+    "muse_bf16_proj": {
+     "scored": {
+      "per_day": 10,
+      "used": 2,
+      "left": 8
+     },
+     "checks": {
+      "per_day": 20,
+      "used": 19,
+      "left": 1
+     }
+    },
+    "muse_attention_decode": {
+     "scored": {
+      "per_day": 10,
+      "used": 1,
+      "left": 9
+     },
+     "checks": {
+      "per_day": 10,
+      "used": 8,
+      "left": 2
+     }
+    },
+    "muse_moe_w4a16": {
+     "scored": {
+      "per_day": 10,
+      "used": 0,
+      "left": 10
+     },
+     "checks": {
+      "per_day": 20,
+      "used": 15,
+      "left": 5
+     }
+    },
+    "muse_decode_layer": {
+     "scored": {
+      "per_day": 10,
+      "used": 2,
+      "left": 8
+     },
+     "checks": {
+      "per_day": 10,
+      "used": 9,
+      "left": 1
+     }
+    },
+    "muse_prefill_layer": {
+     "scored": {
+      "per_day": 10,
+      "used": 0,
+      "left": 10
+     },
+     "checks": {
+      "per_day": 10,
+      "used": 10,
+      "left": 0
+     }
+    }
+   },
+   "tracks": null,
+   "hours_to_reset": 10.63,
+   "lock": ".claude/churn.lock",
+   "_exit": 0
+  },
+  "intake": {
+   "ok": true,
+   "added": [],
+   "skipped": [],
+   "_exit": 0
+  },
+  "recover": {
+   "ok": true,
+   "actions": [],
+   "needs_human": [],
+   "_exit": 0
+  },
+  "harvest": {
+   "ok": true,
+   "harvested": [
+    {
+     "problem": "muse_attention_decode",
+     "slug": "sliding-fused-triton-decode1-gate",
+     "job": "295727fc68e14093",
+     "outcome": "neutral",
+     "detail": "unproven-vs-best",
+     "speedup": 1.2930643047593426,
+     "ci": [
+      1.2736683401879525,
+      1.3211607975952195
+     ],
+     "md": "muse_attention_decode/hypotheses/done/neutral/2026-10-24T120440Z-sliding-fused-triton-decode1-gate.md"
+    },
+    {
+     "problem": "muse_attention_decode",
+     "slug": "preattention-group-tiled-programs",
+     "job": "877731a3b2214ddb",
+     "outcome": "neutral",
+     "detail": "within-ci",
+     "speedup": 1.2613943554062683,
+     "ci": [
+      1.2424734400751742,
+      1.2803152707373622
+     ],
+     "md": "muse_attention_decode/hypotheses/done/neutral/2026-10-24T120513Z-preattention-group-tiled-programs.md"
+    },
+    {
+     "problem": "muse_bf16_proj",
+     "slug": "router-splitk-semaphore-no-memset",
+     "job": "cb76350d40ee4617",
+     "outcome": "neutral",
+     "detail": "unproven-vs-best",
+     "speedup": 1.1515574524208294,
+     "ci": [
+      1.1342840906345169,
+      1.1688308142071417
+     ],
+     "md": "muse_bf16_proj/hypotheses/done/neutral/2026-10-24T075041Z-router-splitk-semaphore-no-memset.md"
+    },
+    {
+     "problem": "muse_bf16_proj",
+     "slug": "bf16-m128-nn-weight-layout-probe",
+     "job": "2dc5dce078be4a24",
+     "outcome": "neutral",
+     "detail": "unproven-vs-best",
+     "speedup": 1.1580086710983108,
+     "ci": [
+      1.1406385410318363,
+      1.1753788011647854
+     ],
+     "md": "muse_bf16_proj/hypotheses/done/neutral/2026-10-24T112213Z-bf16-m128-nn-weight-layout-probe.md"
+    },
+    {
+     "problem": "muse_moe_w4a16",
+     "slug": "triton-map-align-small-m-port",
+     "job": "c2feb68aafb44aeb",
+     "outcome": "neutral",
+     "detail": "beats-base-not-best",
+     "speedup": 1.1849842916584477,
+     "ci": [
+      1.167209527283571,
+      1.2027590560333243
+     ],
+     "md": "muse_moe_w4a16/hypotheses/done/neutral/2026-10-24T112155Z-triton-map-align-small-m-port.md"
+    },
+    {
+     "problem": "muse_moe_w4a16",
+     "slug": "post-norm-triton-all-m",
+     "job": "2ec5387ffe8748c9",
+     "outcome": "neutral",
+     "detail": "within-ci",
+     "speedup": 1.248315071373178,
+     "ci": [
+      1.2295903453025805,
+      1.2670397974437757
+     ],
+     "md": "muse_moe_w4a16/hypotheses/done/neutral/2026-10-24T112212Z-post-norm-triton-all-m.md"
+    }
+   ],
+   "pending": [
+    {
+     "problem": "muse_attention_decode",
+     "slug": "fa3-scheduler-metadata-side-stream",
+     "job": "42964d938c5842f4",
+     "status": "queued",
+     "age_h": 0.6
+    },
+    {
+     "problem": "muse_bf16_proj",
+     "slug": "bf16-shape-gated-triton-winners-combo",
+     "job": "875f3e0172ee48a1",
+     "status": "queued",
+     "age_h": 0.6
+    },
+    {
+     "problem": "muse_decode_layer",
+     "slug": "fused-preattention-triton",
+     "job": "c7c26e2fd8b142a7",
+     "status": "queued",
+     "age_h": 0.6
+    },
+    {
+     "problem": "muse_prefill_layer",
+     "slug": "experts-hybrid-marlin-turn-triton-first-turn",
+     "job": "fb1e52d2119d4175",
+     "status": "queued",
+     "age_h": 0.5
+    }
+   ],
+   "_exit": 0
+  },
+  "harvest-promotions": {
+   "ok": true,
+   "promotions": [],
+   "_exit": 1
+  },
+  "promote": {
+   "ok": true,
+   "promote": [
+    {
+     "problem": "muse_moe_w4a16",
+     "slug": "marlin-block-m-two-smaller-on-postnorm",
+     "run": "okc submit muse_moe_w4a16 /home/user/git/musespark/muse_moe_w4a16/submission.py --no-wait --json",
+     "then": "churn.py record-submit muse_moe_w4a16 marlin-block-m-two-smaller-on-postnorm <job>"
+    }
+   ],
+   "skipped": [
+    {
+     "problem": "muse_attention_decode",
+     "slug": "fa3-hdim128-head-pairing",
+     "reason": "superseded by current best"
+    }
+   ],
+   "_exit": 0
+  },
+  "budget": {
+   "ok": true,
+   "plans": [
+    {
+     "problem": "muse_attention_decode",
+     "checks_left": 2,
+     "scored_left": 9,
+     "hours_to_reset": 10.63,
+     "in_flight": 1,
+     "in_flight_checks": 1,
+     "gains_pending": 0,
+     "promotion_hold": 1,
+     "spendable": 10,
+     "queue": 2,
+     "need": 10,
+     "pace": 2,
+     "N": 2,
+     "picks": [
+      {
+       "slug": "fa3-single-split-sliding",
+       "mode": "check",
+       "priority": 4,
+       "review": "required",
+       "kind": "primary",
+       "controls_for": null
+      },
+      {
+       "slug": "fa3-drop-cu-seqlens-decode",
+       "mode": "check",
+       "priority": 5,
+       "review": "required",
+       "kind": "primary",
+       "controls_for": null
+      }
+     ],
+     "shortfall": 8,
+     "reason": null,
+     "wake_s": 3466
+    },
+    {
+     "problem": "muse_bf16_proj",
+     "checks_left": 1,
+     "scored_left": 8,
+     "hours_to_reset": 10.63,
+     "in_flight": 1,
+     "in_flight_checks": 1,
+     "gains_pending": 0,
+     "promotion_hold": 1,
+     "spendable": 8,
+     "queue": 0,
+     "need": 8,
+     "pace": 1,
+     "N": 0,
+     "picks": [],
+     "shortfall": 8,
+     "reason": "queue has 0 eligible hypotheses; 8 more could be absorbed today (run /hypothesize muse_bf16_proj)",
+     "wake_s": 1800
+    },
+    {
+     "problem": "muse_decode_layer",
+     "checks_left": 1,
+     "scored_left": 8,
+     "hours_to_reset": 10.63,
+     "in_flight": 1,
+     "in_flight_checks": 1,
+     "gains_pending": 0,
+     "promotion_hold": 1,
+     "spendable": 8,
+     "queue": 1,
+     "need": 8,
+     "pace": 1,
+     "N": 1,
+     "picks": [
+      {
+       "slug": "trtllm-decode-full-attention",
+       "mode": "check",
+       "priority": 5,
+       "review": "required",
+       "kind": "primary",
+       "controls_for": null
+      }
+     ],
+     "shortfall": 7,
+     "reason": null,
+     "wake_s": 3600
+    },
+    {
+     "problem": "muse_moe_w4a16",
+     "checks_left": 5,
+     "scored_left": 10,
+     "hours_to_reset": 10.63,
+     "in_flight": 0,
+     "in_flight_checks": 0,
+     "gains_pending": 4,
+     "promotion_hold": 4,
+     "spendable": 11,
+     "queue": 0,
+     "need": 11,
+     "pace": 2,
+     "N": 0,
+     "picks": [],
+     "shortfall": 11,
+     "reason": "queue has 0 eligible hypotheses; 11 more could be absorbed today (run /hypothesize muse_moe_w4a16)",
+     "wake_s": 3151
+    },
+    {
+     "problem": "muse_prefill_layer",
+     "checks_left": 0,
+     "scored_left": 10,
+     "hours_to_reset": 10.63,
+     "in_flight": 1,
+     "in_flight_checks": 1,
+     "gains_pending": 0,
+     "promotion_hold": 1,
+     "spendable": 9,
+     "queue": 0,
+     "need": 9,
+     "pace": 1,
+     "N": 0,
+     "picks": [],
+     "shortfall": 9,
+     "reason": "queue has 0 eligible hypotheses; 9 more could be absorbed today (run /hypothesize muse_prefill_layer)",
+     "wake_s": 1800
+    }
+   ],
+   "wake_s": 1800,
+   "dispatch_total": 3,
+   "_exit": 0
+  },
+  "index": {
+   "ok": true,
+   "changed": [
+    "muse_attention_decode/hypotheses/INDEX.md",
+    "muse_attention_decode/hypotheses/FINDINGS.md",
+    "muse_bf16_proj/hypotheses/INDEX.md",
+    "muse_bf16_proj/hypotheses/FINDINGS.md",
+    "muse_moe_w4a16/hypotheses/INDEX.md",
+    "muse_moe_w4a16/hypotheses/FINDINGS.md",
+    "hypotheses/INDEX.md"
+   ],
+   "_exit": 0
+  }
+ }
+}
