@@ -36,10 +36,10 @@ priority: 2
 kind: primary
 controls_for: null
 review: proceed
-status: running
+status: done
 review_at: 2026-10-24T032546Z
 review_companions: null
-stage: dispatched
+stage: harvested
 claimed_at: 2026-10-24T032546Z
 base_sha: 1e0262054793e9b504601277f857693e70332c70
 base_blob: 6884d26a928d1de1b07bf8d28e1be4e53dfdcfc5
@@ -56,6 +56,13 @@ attempt_file: 2026-10-24T032749Z-check-expert-id-map-single-kernel.md
 prepared_at: 2026-10-24T032749Z
 job: 11b8df414a2245ae
 dispatched_at: 2026-10-24T032801Z
+outcome: neutral
+verdict_detail: unproven-vs-best
+speedup: 1.0374314004021346
+speedup_ci: [1.0218699293961024, 1.0529928714081664]
+harvested_at: 2026-10-24T060409Z
+best_at_harvest: 1.020038644953596
+promotion: null
 ---
 
 # expert-id-map-single-kernel
@@ -131,3 +138,35 @@ OK with warnings: /home/user/git/musespark/.worktrees/muse_decode_layer/expert-i
 ```
 
 `python3 -I -m py_compile`: OK; `__pycache__` removed from the worktree.
+
+## Result
+
+- job `11b8df414a2245ae` (check), status done, passed True, tests 13/13
+- speedup 1.0374x, 95% CI [1.0219, 1.0530], score 21804.14048700647 µs vs SGLang 22620.3 µs
+- best at harvest: {"speedup": 1.020038644953596, "ci": [1.004738065279292, 1.0353392246278998], "job": "5755a412dda244a1"}; base result: muse_decode_layer/hypotheses/done/gain/sglang-pipeline-parity-router-hilo-m8.result.json
+- **outcome: neutral** (unproven-vs-best)
+- files: `muse_decode_layer/hypotheses/done/neutral/expert-id-map-single-kernel.result.json`, `muse_decode_layer/hypotheses/done/neutral/expert-id-map-single-kernel.patch`; branch `hyp/muse_decode_layer/expert-id-map-single-kernel`
+
+## Attribution
+
+| shape | w | base µs | hyp µs | delta | verdict |
+|---|---|---|---|---|---|
+| batch=1 ctx=80000 dist=soft layer=sliding load=decode_1 page=1 repeats=60 | 46 | 168.73 | 167.64 | 1.0132 | flat |
+| batch=1 ctx=80000 dist=soft layer=full load=decode_1 page=1 repeats=60 | 16 | 180.65 | 177.25 | 1.0098 | flat |
+| batch=16 ctx=80000 dist=soft layer=sliding load=decode_16 page=1 spread=agentic | 46 | 269.71 | 262.83 | 1.0136 | flat |
+| batch=16 ctx=80000 dist=soft layer=full load=decode_16 page=1 spread=agentic | 16 | 440.57 | 430.18 | 1.0091 | flat |
+| batch=32 ctx=80000 dist=soft layer=sliding load=decode_32 page=1 spread=agentic | 46 | 265.68 | 261.09 | 1.0201 | flat |
+| batch=32 ctx=80000 dist=soft layer=full load=decode_32 page=1 spread=agentic | 16 | 614.9 | 619.04 | 1.0085 | flat |
+| batch=1 ctx=80000 dist=soft layer=sliding load=verify_1 page=1 q_len=8 | 46 | 233.99 | 226.89 | 1.0245 | flat |
+| batch=1 ctx=80000 dist=soft layer=full load=verify_1 page=1 q_len=8 | 16 | 250.89 | 240.83 | 1.0247 | flat |
+| batch=16 ctx=80000 dist=soft layer=sliding load=verify_16 page=1 q_len=8 spread=agentic | 46 | 521.15 | 499.6 | 1.0194 | flat |
+| batch=16 ctx=80000 dist=soft layer=full load=verify_16 page=1 q_len=8 spread=agentic | 16 | 714.3 | 688.53 | 1.0118 | flat |
+| batch=32 ctx=80000 dist=soft layer=sliding load=verify_32 page=1 q_len=8 spread=agentic | 46 | 713.04 | 671.67 | 1.0155 | flat |
+| batch=32 ctx=80000 dist=soft layer=full load=verify_32 page=1 q_len=8 spread=agentic | 16 | 1049.76 | 1044.17 | 1.0062 | flat |
+
+no shape moved outside noise. Expected hit: 2/4. Noise ±1.5%.
+
+## Follow-ups
+
+- unproven-vs-best: the change is not proven either way; a stacked hypothesis (`depends_on: expert-id-map-single-kernel`) that adds a further change in the same area is the only way to learn more (identical code is never re-run).
+

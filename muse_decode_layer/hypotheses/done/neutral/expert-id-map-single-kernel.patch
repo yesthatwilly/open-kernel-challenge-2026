@@ -1,0 +1,94 @@
+diff --git a/muse_decode_layer/submission.py b/muse_decode_layer/submission.py
+index 6884d26..d3cbff5 100644
+--- a/muse_decode_layer/submission.py
++++ b/muse_decode_layer/submission.py
+@@ -50,6 +50,8 @@ import types
+ 
+ import torch
+ import torch.nn.functional as F
++import triton
++import triton.language as tl
+ from sgl_kernel.flash_attn import flash_attn_with_kvcache
+ from sgl_kernel.scalar_type import scalar_types
+ from torch import nn
+@@ -153,6 +155,31 @@ UNPOOL_SLICE = HIDDEN // 8
+ BLOCK_SIZE_M_CANDIDATES = (8, 16, 32, 48, 64)
+ ROPE_POSITIONS = 1 << 21
+ ROPE_THETA = 500_000.0
++# One fixed block for the expert-id map: every T up to 256 is a single program, larger T a grid.
++LOCAL_ID_BLOCK = 2048
++
++
++@triton.jit(do_not_specialize=["n"])
++def _local_expert_ids_kernel(topk_ids_ptr, local_start_ptr, out_ptr, n, BLOCK: tl.constexpr):
++    """out = (id - local_start) mod 256 where that is < 32, else -1: SGLang's expert_map[id] on
++    this EP rank, in one launch. The & 255 is the non-negative mod (Triton's % truncates)."""
++    offs = tl.program_id(0) * BLOCK + tl.arange(0, BLOCK)
++    mask = offs < n
++    ids = tl.load(topk_ids_ptr + offs, mask=mask, other=0).to(tl.int32)
++    local_start = tl.load(local_start_ptr).to(tl.int32)
++    local = (ids - local_start) & 255
++    local = tl.where(local < 32, local, -1)
++    tl.store(out_ptr + offs, local, mask=mask)
++
++
++def _local_expert_ids(topk_ids, local_start):
++    """int32 [T, 8] local expert ids (0..31, or -1 for another GPU's expert)."""
++    topk_ids = topk_ids.contiguous()
++    out = torch.empty(topk_ids.shape, dtype=torch.int32, device=topk_ids.device)
++    n = topk_ids.numel()
++    _local_expert_ids_kernel[(triton.cdiv(n, LOCAL_ID_BLOCK),)](
++        topk_ids, local_start, out, n, BLOCK=LOCAL_ID_BLOCK)
++    return out
+ 
+ 
+ def _gemm(x, w):
+@@ -195,12 +222,10 @@ def _marlin_bank(weights):
+         w2_weight_scale_2=weights["w2_gs"].contiguous(),
+     )
+     prepare_moe_nvfp4_layer_for_marlin(layer)
+-    expert_map = torch.full((N_EXPERTS,), -1, dtype=torch.int32, device=device)
+-    expert_map[:LOCAL_EXPERTS] = torch.arange(LOCAL_EXPERTS, dtype=torch.int32, device=device)
+     return {
+         "w13": layer.w13_weight.data, "w13_s": layer.w13_weight_scale.data, "w13_gs": layer.w13_weight_scale_2.data,
+         "w2": layer.w2_weight.data, "w2_s": layer.w2_weight_scale.data, "w2_gs": layer.w2_weight_scale_2.data,
+-        "expert_map": expert_map, "size_n": layer.intermediate_size_per_partition,
++        "size_n": layer.intermediate_size_per_partition,
+         "workspace": marlin_make_workspace(device, max_blocks_per_sm=4),
+     }
+ 
+@@ -242,17 +267,20 @@ def prepare(weights):
+         "_modules": (pre_ffn, next_pre_attn, post_attn, post_ffn, post_expert),
+     }
+     del freqs
++    # Compile the expert-id map kernel once, untimed, on dummy ids (nothing from any input).
++    _local_expert_ids(torch.zeros((1, TOP_K), dtype=torch.int32, device=device),
++                      torch.zeros((1,), dtype=torch.int32, device=device))
+     torch.cuda.synchronize()
+     return state
+ 
+ 
+-def _experts(x, topk_weights, topk_ids, state):
+-    """MuseSpark1xFp4Experts._marlin_expert_outputs and its post-expert-norm finalize."""
++def _experts(x, topk_weights, local_ids, state):
++    """MuseSpark1xFp4Experts._marlin_expert_outputs and its post-expert-norm finalize; local_ids is
++    the int32 [T, 8] local expert ids (expert_map applied) from _local_expert_ids."""
+     bank = state["bank"]
+     num_tokens, size_k = x.shape
+     size_n = bank["size_n"]
+     gemm1_n = 2 * size_n
+-    local_ids = bank["expert_map"][topk_ids].contiguous()
+     topk_weights = topk_weights.to(torch.float32).contiguous()
+     for block_size_m in BLOCK_SIZE_M_CANDIDATES:
+         if num_tokens * TOP_K / LOCAL_EXPERTS / block_size_m < 0.9:
+@@ -345,8 +373,8 @@ def kernel_fn(data, state):
+     if not torch.cuda.is_current_stream_capturing():
+         for tensor in (topk_weights, topk_ids):
+             tensor.record_stream(main_stream)
+-    # This GPU's experts start at local_start: as SGLang's expert_map on that EP rank.
+-    local_ids = (topk_ids - data["local_start"]) % N_EXPERTS
++    # This GPU's experts start at local_start: SGLang's expert_map on that EP rank, in one kernel.
++    local_ids = _local_expert_ids(topk_ids, data["local_start"])
+     # all-reduce: identity
+     expert_output = _experts(state["pre_expert_norm"](expert_input), topk_weights, local_ids, state)
+     if tokens <= SLICED_UNPOOL_MAX_TOKENS:
