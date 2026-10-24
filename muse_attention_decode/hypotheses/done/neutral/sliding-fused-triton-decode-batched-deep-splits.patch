@@ -1,0 +1,27 @@
+diff --git a/muse_attention_decode/submission.py b/muse_attention_decode/submission.py
+index 387dcb6..9baa6cb 100644
+--- a/muse_attention_decode/submission.py
++++ b/muse_attention_decode/submission.py
+@@ -348,7 +348,8 @@ def _sliding_forward(data: Inputs) -> torch.Tensor:
+     theta = cfg["rope_theta"]
+     group = hq // hkv
+     m = max(16, triton.next_power_of_2(group * length))
+-    splits = _num_splits(batch, hkv)
++    # Decode (L = 1): 16 splits at every batch, 2 BLOCK_N tiles of the window per program.
++    splits = 16 if length == 1 else _num_splits(batch, hkv)
+     out = torch.empty((batch, length, hq * d), dtype=torch.bfloat16, device=device)
+     if splits > 1:
+         ws_acc = torch.empty((batch * hkv * splits, m, d), dtype=torch.float32, device=device)
+@@ -395,9 +396,9 @@ def _paired_norm_gate_kernel(
+ 
+ def kernel_fn(data: Inputs) -> torch.Tensor:
+     cfg = data["config"]
+-    # Sliding batch-1 decode only (config-only predicate): the whole step in one fused launch.
+-    # Every other shape (sliding batch > 1, sliding verify, every full layer) keeps the path below.
+-    if cfg["window"] and cfg["batch"] == 1 and cfg["q_len"] == 1:
++    # Sliding decode at every batch (config-only predicate): the whole step in one fused launch.
++    # Every other shape (sliding verify, every full layer) keeps the path below.
++    if cfg["window"] and cfg["q_len"] == 1:
+         return _sliding_forward(data)
+     batch, length = cfg["batch"], cfg["q_len"]
+     hq, hkv, d = cfg["num_q_heads"], cfg["num_kv_heads"], cfg["head_dim"]
