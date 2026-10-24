@@ -1,0 +1,14 @@
+diff --git a/muse_prefill_layer/submission.py b/muse_prefill_layer/submission.py
+index e4931f0..2ad9664 100644
+--- a/muse_prefill_layer/submission.py
++++ b/muse_prefill_layer/submission.py
+@@ -273,6 +273,9 @@ def _experts(x, topk_weights, local_ids, state):
+     for block_size_m in BLOCK_SIZE_M_CANDIDATES:
+         if num_tokens * TOP_K / LOCAL_EXPERTS / block_size_m < 0.9:
+             break
++    # experts-marlin-block-m-48-turn1: at turn_1 token counts, thread_m_blocks 3 instead of 4.
++    if 512 < num_tokens <= 1024:
++        block_size_m = 48
+     sorted_ids, block_experts, n_padded = moe_align_block_size(local_ids, block_size_m, N_EXPERTS)
+     cache2 = torch.empty((num_tokens * TOP_K, size_n), device=x.device, dtype=x.dtype)
+     cache13 = torch.empty((num_tokens * TOP_K * max(gemm1_n, size_k),), device=x.device, dtype=x.dtype)

@@ -35,10 +35,10 @@ priority: 2
 kind: primary
 controls_for: null
 review: proceed
-status: running
+status: done
 review_at: 2026-10-24T083825Z
 review_companions: null
-stage: dispatched
+stage: harvested
 claimed_at: 2026-10-24T083826Z
 base_sha: 4735619dba9401926cf675fc366d56f69d945921
 base_blob: e4931f050c7fb99835fe116d25bb454a5ea731e9
@@ -55,6 +55,13 @@ attempt_file: 2026-10-24T083936Z-check-experts-marlin-block-m-48-turn1.md
 prepared_at: 2026-10-24T083936Z
 job: 0606f849d2f441ad
 dispatched_at: 2026-10-24T083946Z
+outcome: neutral
+verdict_detail: within-ci
+speedup: 1.0030005750632152
+speedup_ci: [0.9879555664372669, 1.0180455836891633]
+harvested_at: 2026-10-24T095814Z
+best_at_harvest: 1.0038664293875537
+promotion: null
 ---
 
 # experts-marlin-block-m-48-turn1
@@ -134,3 +141,31 @@ warn  host-sync    L261: torch.cuda.synchronize()  (outside kernel_fn's call gra
 OK with warnings: muse_prefill_layer/submission.py
 ```
 The warning comes from the existing line in `prepare()` and is unchanged from master. `py_compile` passed, and I removed the __pycache__ it left.
+
+## Result
+
+- job `0606f849d2f441ad` (check), status done, passed True, tests 5/5
+- speedup 1.0030x, 95% CI [0.9880, 1.0180], score 386244.9430555745 µs vs SGLang 387403.9 µs
+- best at harvest: {"speedup": 1.0038664293875537, "ci": [0.9888084329467404, 1.018924425828367], "job": "62025c368c3c4e8e"}; base result: muse_prefill_layer/hypotheses/done/gain/sglang-pipeline-parity.result.json
+- **outcome: neutral** (within-ci)
+- files: `muse_prefill_layer/hypotheses/done/neutral/experts-marlin-block-m-48-turn1.result.json`, `muse_prefill_layer/hypotheses/done/neutral/experts-marlin-block-m-48-turn1.patch`; branch `hyp/muse_prefill_layer/experts-marlin-block-m-48-turn1`
+
+## Attribution
+
+| shape | w | base µs | hyp µs | delta | verdict |
+|---|---|---|---|---|---|
+| batch=1 ctx=80000 dist=soft layer=sliding load=turn_1 page=1 q_len=753 repeats=6 | 46 | 1078.66 | 1112.09 | 1.0036 | flat |
+| batch=1 ctx=80000 dist=soft layer=full load=turn_1 page=1 q_len=753 repeats=6 | 16 | 1434.85 | 1487.59 | 0.983 | flat |
+| batch=4 ctx=80000 dist=soft layer=sliding load=turn_4 page=1 q_len=753 repeats=6 | 46 | 3367.03 | 3402.82 | 1.0002 | flat |
+| batch=4 ctx=80000 dist=soft layer=full load=turn_4 page=1 q_len=753 repeats=6 | 16 | 4949.82 | 4770.61 | 0.9986 | flat |
+| batch=1 ctx=0 dist=soft layer=full load=first_turn page=1 q_len=16384 repeats=6 | 16 | 18279.1 | 17328.16 | 0.995 | flat |
+| batch=1 ctx=32768 dist=soft layer=sliding load=first_turn page=1 q_len=16384 repeats=6 | 138 | 16995.2 | 17598.48 | 0.9973 | flat |
+| batch=1 ctx=32768 dist=soft layer=full load=first_turn page=1 q_len=16384 repeats=6 | 16 | 21535.66 | 20789.9 | 1.0289 | flat |
+| batch=1 ctx=65536 dist=soft layer=full load=first_turn page=1 q_len=16384 repeats=6 | 16 | 25286.61 | 24817.75 | 1.0014 | flat |
+
+no shape moved outside noise. Expected hit: 2/3. Noise ±1.5%.
+
+## Follow-ups
+
+- within-ci: the change is not proven either way; a stacked hypothesis (`depends_on: experts-marlin-block-m-48-turn1`) that adds a further change in the same area is the only way to learn more (identical code is never re-run).
+
