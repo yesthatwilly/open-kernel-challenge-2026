@@ -99,9 +99,16 @@ controls_for: null
 rewrite_stage: 1
 replaces: "sliding layer at tp8/page 1, every batch, decode and verify: _pre_attention_kernel + FA3 prepare_varlen_num_blocks + FA3 main + FlashAttnFwdCombine + sglang rms_norm_gate, and the Triton _sliding_fused_kernel at decode_1"
 review: proceed
-status: queued
+status: running
 review_at: 2026-10-24T172529Z
 review_companions: null
+stage: claimed
+claimed_at: 2026-10-24T172705Z
+base_sha: 2a1c23034c065ac604a00e741363c6bf9812e9de
+base_blob: 1c0f5fa1bfc4e602b62e5e9edd9df6d5652b297b
+branch: hyp/muse_attention_decode/sliding-cuda-cluster-dsmem-onelaunch
+worktree: .worktrees/muse_attention_decode/sliding-cuda-cluster-dsmem-onelaunch
+mode: null
 ---
 
 # sliding-cuda-cluster-dsmem-onelaunch
