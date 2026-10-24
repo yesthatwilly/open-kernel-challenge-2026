@@ -51,9 +51,10 @@ priority: 2
 kind: primary
 controls_for: null
 review: proceed
-status: queued
+status: hold
 review_at: 2026-10-24T120904Z
 review_companions: null
+hold_reason: "reviewer: claim after fa3-window-trimmed-page-table (1f63fcbbc0394bed) harvests; if it lands, the sliding metadata must use its trimmed page table; then unhold"
 ---
 
 # fa3-scheduler-metadata-side-stream
