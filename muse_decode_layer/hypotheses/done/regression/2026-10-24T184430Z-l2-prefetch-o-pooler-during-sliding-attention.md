@@ -51,10 +51,10 @@ priority: 4
 kind: primary
 controls_for: null
 review: proceed
-status: running
+status: done
 review_at: 2026-10-24T185025Z
 review_companions: null
-stage: dispatched
+stage: harvested
 claimed_at: 2026-10-24T185025Z
 base_sha: 1659dce115b4c66c089ef675d5ac97c41f6798a1
 base_blob: 3d70ae6e2de0d48c4a4f2a469ced8234f5348182
@@ -71,6 +71,13 @@ attempt_file: 2026-10-24T231259Z-check-l2-prefetch-o-pooler-during-sliding-atten
 prepared_at: 2026-10-24T231259Z
 job: 96ee63e15edb438c
 dispatched_at: 2026-10-24T231312Z
+outcome: regression
+verdict_detail: regression
+speedup: 1.1670206006882573
+speedup_ci: [1.1495152916779334, 1.184525909698581]
+harvested_at: 2026-10-24T232004Z
+best_at_harvest: 1.228328123558382
+promotion: null
 ---
 
 # l2-prefetch-o-pooler-during-sliding-attention
@@ -154,3 +161,35 @@ Fixes:
 - Fallback: the warm kernel had no fallback, so a build error would have raised inside kernel_fn and failed the run. prepare() now builds and runs both warm launches once inside try/except. On failure it sets state["l2_warm"] = None and prints "PATH CHOSEN = MASTER at every T". On success it prints "PATH CHOSEN = L2-WARM", and the kernel_fn gate also requires state["l2_warm"]. The per-program word count moved into the shared helper _l2_warm_per_prog. Lint OK (only host-sync warnings in prepare-only code). py_compile OK, and __pycache__ was removed.
 
 Residual risk: 32 programs of 4 warps with one 16 KB load in flight per iteration probably reach well under 1 TB/s. Pulling 42 MB could then outlast the ~25 us attention phase and contend with the o GEMM and kernel P. With default eviction, part of the warmed lines may be gone before they are used. Judge the run on the warm rows' duration and on the P and o rows.
+
+## Result
+
+- job `96ee63e15edb438c` (check), status done, passed True, tests 13/13
+- speedup 1.1670x, 95% CI [1.1495, 1.1845], score 19382.948327269925 µs vs SGLang 22620.3 µs
+- best at harvest: {"speedup": 1.228328123558382, "ci": [1.2099032017050062, 1.2467530454117577], "job": "81ee6714b7614a99"}; base result: muse_decode_layer/hypotheses/done/gain/small-t-launch-minimal-dense-chain-pdl.result.json
+- **outcome: regression** (regression)
+- files: `muse_decode_layer/hypotheses/done/regression/l2-prefetch-o-pooler-during-sliding-attention.result.json`, `muse_decode_layer/hypotheses/done/regression/l2-prefetch-o-pooler-during-sliding-attention.patch`; branch `hyp/muse_decode_layer/l2-prefetch-o-pooler-during-sliding-attention`
+
+## Attribution
+
+| shape | w | base µs | hyp µs | delta | verdict |
+|---|---|---|---|---|---|
+| batch=1 ctx=80000 dist=soft layer=sliding load=decode_1 page=1 repeats=60 | 46 | 132.74 | 134.62 | 0.9913 | flat |
+| batch=1 ctx=80000 dist=soft layer=full load=decode_1 page=1 repeats=60 | 16 | 142.57 | 143.64 | 0.9932 | flat |
+| batch=16 ctx=80000 dist=soft layer=sliding load=decode_16 page=1 spread=agentic | 46 | 217.06 | 254.47 | 0.8105 | lost |
+| batch=16 ctx=80000 dist=soft layer=full load=decode_16 page=1 spread=agentic | 16 | 347.51 | 351.15 | 0.9961 | flat |
+| batch=32 ctx=80000 dist=soft layer=sliding load=decode_32 page=1 spread=agentic | 46 | 246.99 | 292.12 | 0.842 | lost |
+| batch=32 ctx=80000 dist=soft layer=full load=decode_32 page=1 spread=agentic | 16 | 534.98 | 526.92 | 1.0229 | flat |
+| batch=1 ctx=80000 dist=soft layer=sliding load=verify_1 page=1 q_len=8 | 46 | 186.48 | 204.61 | 0.9017 | lost |
+| batch=1 ctx=80000 dist=soft layer=full load=verify_1 page=1 q_len=8 | 16 | 195.92 | 195.5 | 1.0056 | flat |
+| batch=16 ctx=80000 dist=soft layer=sliding load=verify_16 page=1 q_len=8 spread=agentic | 46 | 447.55 | 445.05 | 1.0171 | flat |
+| batch=16 ctx=80000 dist=soft layer=full load=verify_16 page=1 q_len=8 spread=agentic | 16 | 599.37 | 611.4 | 1.0053 | flat |
+| batch=32 ctx=80000 dist=soft layer=sliding load=verify_32 page=1 q_len=8 spread=agentic | 46 | 626.79 | 646.08 | 0.9967 | flat |
+| batch=32 ctx=80000 dist=soft layer=full load=verify_32 page=1 q_len=8 spread=agentic | 16 | 910.91 | 926.77 | 0.9878 | flat |
+
+lost on sliding decode_16, decode_32, verify_1. Expected hit: 3/6. Noise ±1.5%.
+
+## Follow-ups
+
+- record which shapes lost (Attribution) and do not retry this area in this form.
+
