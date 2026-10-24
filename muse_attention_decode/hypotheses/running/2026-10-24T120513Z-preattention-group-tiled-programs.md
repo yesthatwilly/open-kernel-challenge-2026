@@ -43,9 +43,16 @@ priority: 3
 kind: primary
 controls_for: null
 review: proceed
-status: queued
+status: running
 review_at: 2026-10-24T120745Z
 review_companions: null
+stage: claimed
+claimed_at: 2026-10-24T120745Z
+base_sha: f51cac06481cef9d3ac77248b4fec8d18a7cfb47
+base_blob: efc544103e6d303d1f8602caa9439628043a17a7
+branch: hyp/muse_attention_decode/preattention-group-tiled-programs
+worktree: .worktrees/muse_attention_decode/preattention-group-tiled-programs
+mode: null
 ---
 
 # preattention-group-tiled-programs
