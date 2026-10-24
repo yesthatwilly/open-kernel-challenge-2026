@@ -46,8 +46,10 @@ depends_on: null
 priority: 1
 kind: primary
 controls_for: null
-review: required
+review: proceed
 status: queued
+review_at: 2026-10-24T024401Z
+review_companions: null
 ---
 
 # sglang-pipeline-parity
@@ -65,3 +67,27 @@ Rewrite kernel_fn and prepare in muse_prefill_layer/submission.py to run SGLang'
 ## Risk
 
 Low risk: it is SGLang's own code path. Failure modes: an import or signature drift of a JIT module inside the judge image (baseline.py imports the same symbols, so they exist); the Triton remap kernel must produce int32 and -1 exactly where expert_map gave -1 (local_start is a multiple of 32, so (ids - local_start) & 255 == (ids - local_start) % 256 for the int32 range in play). The commit step rejects an AST identical to baseline.py: the fused remap and the removed dead branches make it differ structurally, not only in docstrings. Rules: no host sync, state holds weights only, NVFP4 stays in Marlin's lossless repack, BF16 activations where SGLang keeps them, FP8 cache, FA3 over every key.
+
+## Adversarial review
+
+Reviewed 2026-10-24T024401Z by an adversarial Fable subagent (model fable).
+
+**Verdict: proceed.** The parity port carries two genuine, non-cosmetic AST differences from baseline.py (a Triton local-id remap replacing three launches plus the expert_map table, and removal of the two T<=8 branches), so commit-impl's normalized-AST check will not reject it; its own mechanism is unmeasurable inside the 1.5% CI, but the run is justified as the judged base for nine dependents and the first SGLang-path profile at prefill shapes.
+
+### Justification
+The only GPU-visible change collapses baseline.py's remap chain ((topk_ids - local_start) % 256, then expert_map[topk_ids].contiguous()) into one Triton elementwise kernel over int32 [T, 8]; & 255 equals % 256 here and r < 32 ? r : -1 reproduces expert_map exactly. Saving 2-6 us against 1.1-25.6 ms shapes, 0.1-0.5%, below the CI everywhere, matching the flat expected table. Dead-branch removal (T<=8 FP32 router, sliced unpooler + F.pad) has no runtime effect at T>=200 and is legitimate specialization to TASK.md's q_len 200-16384. block_size_m is 64 everywhere. SGLang sits 2.5-4.4x off the floor on every shape, so a parity base leaves the headroom dependents target. Evidence a faithful port lands near 1.00x: decode_layer e260dfe413e448c7 (0.998-1.015x on pure-parity shapes) and bf16 017804b34fed40b3 (1.0022x); counter-evidence: moe fb2cc736613747df at 0.989x. Weakest link: the run cannot validate the hypothesis's own mechanism; a result in [0.985, 1.015] is consistent with any saving from 0 to 6 us; it is a base commit with a judged result, not a falsifiable claim. Secondary: the spec says the cos|sin table is [2^21, 128]; baseline.py builds [2^21, 64]. Follow baseline.py.
+
+### Confounders on the current kernel
+- none identified
+
+### Interference and A/B needs
+Nothing has landed for this problem, so ab-revert and ab-tune have no target. A verbatim-baseline control is not warranted up front: the judge times SGLang in the same run, the same modules landed at parity on decode_layer, and the hypothesis's own effect is below noise. Conditional follow-up, not a companion: if any shape lands outside [0.985, 1.015], queue a verbatim-baseline control before dispatching the nine dependents.
+
+### Open questions
+- cos|sin table width: implement as baseline.py does ([2^21, 64]), not the spec's 128.
+- Whether the judge's SGLang copy equals baseline.py on prefill-specific paths; any shape outside [0.985, 1.015] should trigger a verbatim control before dependents dispatch.
+- Under graph replay expect 2-5 us saved; the profile should show one Triton kernel in place of three tiny at::native kernels.
+- The Triton kernel must load/store int32 and emit -1 exactly.
+- Keep moe_align_block_size at N_EXPERTS=256 with -1 sentinels, as baseline does.
+- Decide whether a merged parity base with ci.low below 1.0 is acceptable as the comparison point for dependents.
+
