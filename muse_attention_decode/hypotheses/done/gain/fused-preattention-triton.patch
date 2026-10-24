@@ -1,0 +1,202 @@
+diff --git a/muse_attention_decode/submission.py b/muse_attention_decode/submission.py
+index 7cafe07..f14211b 100644
+--- a/muse_attention_decode/submission.py
++++ b/muse_attention_decode/submission.py
+@@ -1,13 +1,22 @@
+ # okc: problem=muse_attention_decode
+-"""Starter: the attention step in plain PyTorch, correct but slow. Each request attends over
+-every position its page table can hold in the paged FP8 cache, with positions past its
+-context or outside the window masked out.
++"""Gated attention decode with the pre-attention chain fused into one Triton kernel.
+ 
+-Implement kernel_fn."""
++SGLang's path launches, before FlashAttention 3: the fused QK-norm (+RoPE), a k cast to FP8,
++a v cast to FP8, the cache store and a q cast to FP8. On sliding-window layers at decode the
++attention itself moves under a megabyte, so those launches are most of the time. This kernel
++does all five in one launch: per (token, head) it RMS-normalizes q or k, applies interleaved
++RoPE when the layer has it, and writes q as FP8 for FA3 and the new k and v rows as FP8 into
++the cache (divided by the cache scales). FA3 and the output norm x sigmoid(gate) are SGLang's.
++"""
+ 
+ from typing import TypedDict
+ 
+ import torch
++import triton
++import triton.language as tl
++from sgl_kernel.flash_attn import flash_attn_with_kvcache
++
++from sglang.kernels.ops.muse_spark_v12.norm_gate import rms_norm_gate
+ 
+ 
+ class Config(TypedDict):
+@@ -43,59 +52,121 @@ class Inputs(TypedDict):
+     config: Config
+ 
+ 
+-def rms(x, eps=1e-5):
+-    x = x.float()
+-    return x * torch.rsqrt(x.pow(2).mean(-1, keepdim=True) + eps)
++RMS_EPS = 1e-5
++FP8 = torch.float8_e4m3fn
++_INV_FREQ = {}
++
++
++def _inv_freq(theta: float, d: int, device) -> torch.Tensor:
++    """[d/2] float32 theta^(-2i/d), built exactly as the reference builds it; cached per theta."""
++    key = (theta, d, str(device))
++    cache = _INV_FREQ.get(key)
++    if cache is None:
++        cache = _INV_FREQ[key] = 1.0 / (theta ** (torch.arange(0, d, 2, device=device).float() / d))
++    return cache
++
++
++@triton.jit
++def _pre_attention_kernel(
++    qkv_ptr, pos_ptr, loc_ptr, inv_freq_ptr, k_scale_ptr, v_scale_ptr,
++    q_out_ptr, k_cache_ptr, v_cache_ptr,
++    qkv_stride,
++    HQ: tl.constexpr, HKV: tl.constexpr, D: tl.constexpr, ROPE: tl.constexpr, EPS: tl.constexpr,
++):
++    """One program per (token, head). Heads 0..HQ-1 are queries; HQ..HQ+HKV-1 are the new keys,
++    whose program also stores the matching value head. The q and k heads are contiguous in the
++    fused row, so head h starts at h*D for both."""
++    t = tl.program_id(0)
++    h = tl.program_id(1)
++    HALF: tl.constexpr = D // 2
++    i = tl.arange(0, HALF)
++    even = 2 * i
++    odd = 2 * i + 1
+ 
++    row = qkv_ptr + t.to(tl.int64) * qkv_stride
++    base = row + h * D
++    xe = tl.load(base + even).to(tl.float32)
++    xo = tl.load(base + odd).to(tl.float32)
+ 
+-def rope(x, pos, theta):
+-    """Interleaved (GPT-J) RoPE: pairs (2i, 2i+1) rotate by pos * theta^(-2i/d)."""
+-    d = x.shape[-1]
+-    inv_freq = 1.0 / (theta ** (torch.arange(0, d, 2, device=x.device).float() / d))
+-    ang = pos.float()[..., None] * inv_freq
+-    cos, sin = ang.cos().unsqueeze(-2), ang.sin().unsqueeze(-2)
+-    even, odd = x[..., 0::2], x[..., 1::2]
+-    return torch.stack([even * cos - odd * sin, even * sin + odd * cos], -1).flatten(-2)
++    # Scaleless RMSNorm over the head's D entries.
++    ss = tl.sum(xe * xe, axis=0) + tl.sum(xo * xo, axis=0)
++    r = 1.0 / tl.sqrt(ss / D + EPS)
++    xe = xe * r
++    xo = xo * r
++
++    if ROPE:
++        # Interleaved (GPT-J) RoPE: pair (2i, 2i+1) rotates by pos * theta^(-2i/d).
++        p = tl.load(pos_ptr + t).to(tl.float32)
++        ang = p * tl.load(inv_freq_ptr + i)
++        c = tl.cos(ang)
++        s = tl.sin(ang)
++        ye = xe * c - xo * s
++        yo = xe * s + xo * c
++        xe = ye
++        xo = yo
++
++    if h < HQ:
++        # Query, rounded to FP8 E4M3 for FA3 (the 5.473 factor is folded into the softmax scale).
++        out = q_out_ptr + (t.to(tl.int64) * HQ + h) * D
++        tl.store(out + even, xe.to(tl.float8e4nv))
++        tl.store(out + odd, xo.to(tl.float8e4nv))
++    else:
++        kh = h - HQ
++        loc = tl.load(loc_ptr + t).to(tl.int64)
++        k_scale = tl.load(k_scale_ptr)
++        v_scale = tl.load(v_scale_ptr)
++        kout = k_cache_ptr + (loc * HKV + kh) * D
++        tl.store(kout + even, (xe / k_scale).to(tl.float8e4nv))
++        tl.store(kout + odd, (xo / k_scale).to(tl.float8e4nv))
++        # The value head: no norm, no RoPE, just the scale and the FP8 cast.
++        j = tl.arange(0, D)
++        v = tl.load(row + (HQ + HKV + kh) * D + j).to(tl.float32)
++        vout = v_cache_ptr + (loc * HKV + kh) * D
++        tl.store(vout + j, (v / v_scale).to(tl.float8e4nv))
+ 
+ 
+ def kernel_fn(data: Inputs) -> torch.Tensor:
+-    """Normalize the queries and new keys (scaleless RMSNorm, queries also times
+-    qk_scale_factor), apply RoPE on sliding-window layers, write the block's keys and values
+-    into the FP8 cache at positions seq_lens[b] .. seq_lens[b] + L - 1, attend (each token sees
+-    the cache and the block's tokens up to itself), then return rmsnorm(attention) *
+-    sigmoid(gate) as bfloat16 [B, L, Hq*64]."""
+     cfg = data["config"]
+     batch, length = cfg["batch"], cfg["q_len"]
+-    hq, hkv, d, page = cfg["num_q_heads"], cfg["num_kv_heads"], cfg["head_dim"], cfg["page_size"]
+-    q_in, k_in, v_in, gate = data["qkv"].split([hq * d, hkv * d, hkv * d, hq * d], -1)
+-    pos = data["positions"].view(batch, length)  # [B, L]
+-    q = rms(q_in.reshape(batch, length, hq, d)) * cfg["qk_scale_factor"]
+-    k = rms(k_in.reshape(batch, length, hkv, d))
+-    if cfg["rope_theta"]:
+-        q, k = rope(q, pos, cfg["rope_theta"]), rope(k, pos, cfg["rope_theta"])
+-    q = q.to(torch.bfloat16)
+-
+-    table = data["page_table"].long()
+-    slots = data["cache_loc"].view(batch, length)  # [B, L]
+-    k_cache = data["k_cache"].view(-1, hkv, d)
+-    v_cache = data["v_cache"].view(-1, hkv, d)
+-    k_scale, v_scale = data["k_scale"], data["v_scale"]
+-    k_cache[slots] = (k / k_scale).to(torch.float8_e4m3fn)
+-    v_cache[slots] = (v_in.reshape(batch, length, hkv, d).float() / v_scale).to(torch.float8_e4m3fn)
+-
+-    # Every position a request's page table can hold; unused pages (-1) read page 0 and
+-    # are masked out with everything else past the token's own position.
+-    t = torch.arange(table.shape[1] * page, device=q.device)
+-    out = torch.empty((batch, length, hq, d), dtype=torch.bfloat16, device=q.device)
+-    for b in range(batch):
+-        rows = table[b].clamp(min=0)[t // page] * page + t % page
+-        keys = k_cache[rows].float() * k_scale  # [S, Hkv, d]
+-        vals = v_cache[rows].float() * v_scale
+-        visible = t[None, :] <= pos[b][:, None]  # [L, S]: causal, including the block's own tokens
+-        if cfg["window"]:
+-            visible &= t[None, :] > pos[b][:, None] - cfg["window"]
+-        att = torch.einsum("lkgd,skd->lkgs", q[b].view(length, hkv, hq // hkv, d).float(), keys) * cfg["sm_scale"]
+-        att = att.masked_fill(~visible[:, None, None, :], float("-inf")).softmax(-1)
+-        out[b] = torch.einsum("lkgs,skd->lkgd", att, vals).reshape(length, hq, d)
+-    out = rms(out) * torch.sigmoid(gate.float()).view(batch, length, hq, d)
+-    return out.reshape(batch, length, hq * d).to(torch.bfloat16)
++    hq, hkv, d = cfg["num_q_heads"], cfg["num_kv_heads"], cfg["head_dim"]
++    tokens = batch * length
++    qkv = data["qkv"].reshape(tokens, -1)
++    device = qkv.device
++    theta = cfg["rope_theta"]
++
++    k_cache, v_cache = data["k_cache"], data["v_cache"]
++    q = torch.empty((tokens, hq, d), dtype=FP8, device=device)
++    inv_freq = _inv_freq(theta, d, device) if theta else data["k_scale"]  # unused when ROPE is off
++    _pre_attention_kernel[(tokens, hq + hkv)](
++        qkv, data["positions"], data["cache_loc"], inv_freq, data["k_scale"], data["v_scale"],
++        q, k_cache, v_cache,
++        qkv.stride(0),
++        HQ=hq, HKV=hkv, D=d, ROPE=bool(theta), EPS=RMS_EPS,
++        num_warps=1,
++    )
++
++    window = cfg["window"]
++    descale = {}
++    if cfg["kv_scale"] != 1.0:
++        descale = dict(k_descale=data["k_scale"].reshape(1, 1).expand(batch, hkv),
++                       v_descale=data["v_scale"].reshape(1, 1).expand(batch, hkv))
++    out = flash_attn_with_kvcache(
++        q=q,
++        k_cache=k_cache,
++        v_cache=v_cache,
++        page_table=data["page_table"],
++        cache_seqlens=data["cache_seqlens"],
++        cu_seqlens_q=data["cu_seqlens_q"],
++        max_seqlen_q=length,
++        softmax_scale=cfg["sm_scale"] * cfg["qk_scale_factor"],
++        causal=True,
++        window_size=(window - 1, 0) if window else (-1, -1),
++        scheduler_metadata=data["scheduler_metadata"],
++        **descale,
++    )
++    if isinstance(out, tuple):
++        out = out[0]
++    gate = qkv[:, (hq + 2 * hkv) * d:]
++    o = rms_norm_gate(out.reshape(tokens, hq * d).to(torch.bfloat16), gate, None, head_dim=d, eps=RMS_EPS,
++                      has_norm=True)
++    return o.view(batch, length, hq * d)
