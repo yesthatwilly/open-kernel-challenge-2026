@@ -41,7 +41,7 @@ review: proceed
 status: running
 review_at: 2026-10-24T075347Z
 review_companions: null
-stage: implemented
+stage: dispatched
 claimed_at: 2026-10-24T075347Z
 base_sha: 79a102b3fd18c6ab5fa1e8d8d7390e6645a26ec3
 base_blob: e4931f050c7fb99835fe116d25bb454a5ea731e9
@@ -56,6 +56,8 @@ submission_blob: 2e6cb7c89a513e08be4b5e163319fbc34a35f854
 lint_warnings: 2
 attempt_file: 2026-10-24T080302Z-check-experts-triton-w4a16-inkernel-fp4.md
 prepared_at: 2026-10-24T080302Z
+job: 218515e2d0b14ce7
+dispatched_at: 2026-10-24T080316Z
 ---
 
 # experts-triton-w4a16-inkernel-fp4
