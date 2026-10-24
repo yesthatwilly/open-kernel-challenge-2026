@@ -1,17 +1,17 @@
 {
  "problem": "muse_decode_layer",
- "job": "2b1f82408ab64116",
- "check_job": "0730135cdcac43b7",
- "mode": "submit",
- "speedup": 1.0634521974439426,
+ "job": "fb07a3bd3aa54baf",
+ "check_job": "fb07a3bd3aa54baf",
+ "mode": "check",
+ "speedup": 1.0873503247934666,
  "ci": [
-  1.0475004144822835,
-  1.0794039804056017
+  1.0710400699215645,
+  1.1036605796653685
  ],
- "score_us": 21270.631678949892,
- "commit": "ef7dea6cac43678c09ae91b20ece2c40e0670c4b",
- "submission_blob": "de98030423860cfc9507b61d19f82a416223a23d",
- "slug": "marlin-block-m-cap-16",
- "result": "muse_decode_layer/hypotheses/done/gain/marlin-block-m-cap-16.result.json",
- "updated_at": "2026-10-24T091914Z"
+ "score_us": 20803.139047479057,
+ "commit": "09da1e0d71f2fca87bd222e2507f638ddb81d38e",
+ "submission_blob": "3a358375a50dcc6e19437992f7c610431582ea72",
+ "slug": "fa3-hdim128-head-pairing-batched",
+ "result": "muse_decode_layer/hypotheses/done/neutral/fa3-hdim128-head-pairing-batched.result.json",
+ "updated_at": "2026-10-24T115952Z"
 }
