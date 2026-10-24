@@ -89,9 +89,16 @@ controls_for: null
 rewrite_stage: 1
 replaces: "full layer at tp8/page 1: _pre_attention_kernel + splitkv_attn_kernel + splitkv_combine_kernel at decode 1<B<=64 (stage 1); verify A8/B8 or FA3 (stage 2); batch-1 FA3/Triton (stage 3)"
 review: proceed
-status: queued
+status: running
 review_at: 2026-10-24T172607Z
 review_companions: null
+stage: claimed
+claimed_at: 2026-10-24T172705Z
+base_sha: c0821b3a0b916336d23e7bbe2a454636be5b21cc
+base_blob: 1c0f5fa1bfc4e602b62e5e9edd9df6d5652b297b
+branch: hyp/muse_attention_decode/full-cuda-onelaunch-warpspec-bulk-gather
+worktree: .worktrees/muse_attention_decode/full-cuda-onelaunch-warpspec-bulk-gather
+mode: null
 ---
 
 # full-cuda-onelaunch-warpspec-bulk-gather
