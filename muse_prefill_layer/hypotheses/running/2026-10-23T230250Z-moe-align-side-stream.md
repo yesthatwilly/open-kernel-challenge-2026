@@ -38,13 +38,19 @@ review: proceed
 status: running
 review_at: 2026-10-24T044735Z
 review_companions: null
-stage: claimed
+stage: implemented
 claimed_at: 2026-10-24T044735Z
 base_sha: a8970404e91613553aa3868dbafdca06fbc4b549
 base_blob: e4931f050c7fb99835fe116d25bb454a5ea731e9
 branch: hyp/muse_prefill_layer/moe-align-side-stream
 worktree: .worktrees/muse_prefill_layer/moe-align-side-stream
 mode: null
+implemented_at: 2026-10-24T044913Z
+impl_commit: 0199b9927fac74d4189a4107b74801542abda5a8
+submission_sha256: c68c2d40fd6702c142ecf827abd26e28a3c075b645d779565f705c57d8ca3e79
+norm_sha256: 4a606e5a258f85dfd83542336b87fe4fd7a94dd1188165e2189221c0de3f21ba
+submission_blob: 4be1dd8c787a25f3d8b23461adea032d3588c6d8
+lint_warnings: 1
 ---
 
 # moe-align-side-stream
@@ -85,3 +91,37 @@ Only one hypothesis has landed and it is the whole SGLang-path base, so ab-rever
 - Does the queued experts-dequant-overlap-attention also put work on state['side_stream']? Two consumers of one side stream serialize; if both land, the side branch may become the critical path and this hypothesis's small gain would be undone.
 - The parity base's turn_1 full shape shows GPU busy 1420 us vs kernel total 1498 us (78 us overlap) while sliding shows only 18 us; worth checking whether cublas chose a different router algorithm per shape, which would make the side-branch length vary run to run and widen the noise this hypothesis has to beat.
 
+
+## Implementation notes
+
+Worktree `.worktrees/muse_prefill_layer/moe-align-side-stream`, file `muse_prefill_layer/submission.py` only (diff stat: 1 file, +24 / -12).
+
+- `kernel_fn`: inside the existing `torch.cuda.stream(side_stream)` block, right after `state['routing'](...)`, now issue `_local_expert_ids(topk_ids, local_start)`, `topk_weights.to(torch.float32).contiguous()` and `moe_align_block_size(local_ids, block_size_m, N_EXPERTS)`. On the main stream the order is pooler GEMM (issued before the side block, as before), then `state['pre_expert_norm'](expert_input)`, then `main_stream.wait_stream(side_stream)`, then `_experts`. The join was moved from before the remap to after the pre-expert norm, i.e. directly before the first `moe_wna16_marlin_gemm` (only host-side `torch.empty` allocations of cache2/cache13 and Python view slicing sit between the join and that GEMM; no GPU work).
+- The non-capturing `record_stream(main_stream)` loop now covers every side-stream tensor consumed on the main stream: `topk_weights` (the fp32 one), `topk_ids` (returned), `local_ids`, `sorted_ids`, `block_experts`, `n_padded`.
+- `block_size_m` selection is factored into `_block_size_m(num_tokens)` and called on the host in `kernel_fn` from `cfg['tokens']` (same loop, same candidates; `tokens == x.shape[0]` as before). `_experts` now takes `(x, topk_weights, local_ids, sorted_ids, block_experts, n_padded, block_size_m, state)` and no longer computes the cast, the block size or the align. cache13/cache2 are still allocated in `_experts` on the main stream.
+- No new kernels, no precision change, no host syncs, nothing cached in state.
+- Deviation: none in substance. The only nuance is that cache allocations happen after the join rather than strictly before it; torch.empty issues no GPU work, so the captured graph is the same as the spec's ordering.
+- FusedMuseSparkRouting dtype: the SGLang source is not on this node, so whether its topk_weights are already contiguous fp32 could not be verified. The cast is kept on the side stream; if they are already fp32 contiguous, `.to()`/`.contiguous()` return the same tensor and the cast is a no-op (no launch), and only the remap + align move.
+- Eager safety beyond the loop: `ffn_input` (main-stream allocation read on the side stream) stays referenced until after the join, as in the base; `logits`, the pre-cast topk_weights and moe_align's temporaries are allocated on the side stream and freed there, so no extra record_stream is needed.
+
+## Rules check
+
+Checked against `git -C .worktrees/muse_prefill_layer/moe-align-side-stream diff`:
+
+- [x] CUDA-graph capturable: the diff adds no `.item()`/`.cpu()`/`synchronize()`/tensor prints; block_size_m is chosen from `cfg['tokens']` (config), no allocation or control flow on input values. The `is_current_stream_capturing()` guard on record_stream is existing code.
+- [x] Nothing derived from `data` is cached across calls: no new state entries; all moved tensors are locals.
+- [x] Weights: untouched; `prepare()` is unchanged.
+- [x] Activations BF16 where SGLang keeps BF16; KV cache FP8; queries at most FP8 E4M3: no dtype changes (the fp32 topk_weights cast is the same cast, moved).
+- [x] Attention sees every key: attention code untouched.
+- [x] No timing patches, harness frames/I/O/secrets, module edits, reference import, subprocesses or network: none added; imports unchanged.
+- [x] All work happens inside the timed call; no output caching or replay: all moved work is still inside `kernel_fn`.
+- [x] First-line marker `# okc: problem=muse_prefill_layer` kept; no `triton.autotune`.
+
+Lint (`okc_lint.py ... --problem muse_prefill_layer`):
+
+```
+warn  host-sync    L261: torch.cuda.synchronize()  (outside kernel_fn's call graph; fine in prepare())
+OK with warnings: /home/user/git/musespark/.worktrees/muse_prefill_layer/moe-align-side-stream/muse_prefill_layer/submission.py
+```
+
+`python3 -I -m py_compile` passed; the `__pycache__` it left was removed. Not committed, not staged, okc not run.
