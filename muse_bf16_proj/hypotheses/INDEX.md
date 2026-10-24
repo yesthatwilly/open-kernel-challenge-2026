@@ -1,6 +1,6 @@
 # muse_bf16_proj hypotheses
 
-Regenerated 2026-10-24T052415Z. Best: 1.1510x [1.1338,1.1683] job `bd9fa14151644cee` (check)
+Regenerated 2026-10-24T053312Z. Best: 1.1510x [1.1338,1.1683] job `bd9fa14151644cee` (check)
 
 | created | slug | kind | area | where | outcome | speedup | CI | job | mode | promotion | review | expected hit |
 |---|---|---|---|---|---|---|---|---|---|---|---|---|
@@ -11,14 +11,14 @@ Regenerated 2026-10-24T052415Z. Best: 1.1510x [1.1338,1.1683] job `bd9fa14151644
 | 2026-10-23T225201Z | pooler-triton-skinny-m32 | primary | pooler GEMM | done/neutral | neutral | 0.9983 | [0.983,1.013] | 9f0ad00bbc874d31 | check |  | proceed | 4/6 |
 | 2026-10-23T225201Z | unpooler-slice-triton-gemv | primary | unpooler GEMM | done/regression | regression | 0.8801 | [0.867,0.893] | 4c2b113f81434570 | check |  | proceed | 1/4 |
 | 2026-10-23T225303Z | bf16-cublaslt-backend-toggle | primary | bf16 GEMM dispatch | queue | queued |  |  |  |  |  | required |  |
-| 2026-10-23T225303Z | o-triton-skinny-m32 | primary | o GEMM | queue | queued |  |  |  |  |  | proceed |  |
 | 2026-10-23T225303Z | pooler-skinny-tiled-weight-layout | primary | pooler GEMM | queue | queued |  |  |  |  |  | proceed |  |
+| 2026-10-23T225303Z | o-triton-skinny-m32 | primary | o GEMM | running | running |  |  | d75669d46acb42a5 | check |  | proceed |  |
 | 2026-10-23T225303Z | unpooler-full-triton-skinny-m32 | primary | unpooler GEMM | done/neutral | neutral | 1.0053 | [0.990,1.020] | 635c2693bd4147a4 | check |  | proceed | 3/4 |
 | 2026-10-23T225317Z | qkv-gate-triton-skinny-m32 | primary | qkv GEMM | done/regression | regression | 0.9238 | [0.910,0.938] | abcd45776f244c8c | check |  | proceed | 2/6 |
 | 2026-10-23T230544Z | router-triton-hilo-fused-control-splitk-all-m | control→router-triton-hilo-fused | router GEMM | done/gain | gain | 1.1510 | [1.134,1.168] | bd9fa14151644cee | check | merged | proceed | 7/7 |
 | 2026-10-24T024326Z | router-triton-hilo-fused-control-hybrid-cublas-above-m32 | control→router-triton-hilo-fused-control-splitk-all-m | router GEMM | queue | hold |  |  |  |  |  | required |  |
 | 2026-10-24T024434Z | router-hilo-addmm-epilogue-control-inplace-out | control→router-hilo-addmm-epilogue | router GEMM | queue | hold |  |  |  |  |  | required |  |
-| 2026-10-24T032454Z | unpooler-full-triton-skinny-m32-control-blockm16-all-m | control→unpooler-full-triton-skinny-m32 | unpooler GEMM | queue | queued |  |  |  |  |  | required |  |
+| 2026-10-24T032454Z | unpooler-full-triton-skinny-m32-control-blockm16-all-m | control→unpooler-full-triton-skinny-m32 | unpooler GEMM | running | running |  |  | 09abdd472faa4dce | check |  | proceed |  |
 
 ## Held
 

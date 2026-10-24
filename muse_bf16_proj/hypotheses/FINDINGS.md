@@ -1,6 +1,6 @@
 # muse_bf16_proj findings
 
-Regenerated 2026-10-24T052415Z by `churn.py index`. Read this before writing a hypothesis for muse_bf16_proj.
+Regenerated 2026-10-24T053312Z by `churn.py index`. Read this before writing a hypothesis for muse_bf16_proj.
 
 ## Current best
 
@@ -73,8 +73,8 @@ Where the time goes (per scored shape, top kernels):
 ## Queue and in flight
 
 - queue: bf16-cublaslt-backend-toggle [bf16 GEMM dispatch] p5 queued
-- queue: o-triton-skinny-m32 [o GEMM] p4 queued
 - queue: pooler-skinny-tiled-weight-layout [pooler GEMM] p4 queued
 - queue: router-triton-hilo-fused-control-hybrid-cublas-above-m32 [router GEMM] p1 hold
 - queue: router-hilo-addmm-epilogue-control-inplace-out [router GEMM] p1 hold
-- queue: unpooler-full-triton-skinny-m32-control-blockm16-all-m [unpooler GEMM] p3 queued
+- running: o-triton-skinny-m32 [o GEMM] p4 running
+- running: unpooler-full-triton-skinny-m32-control-blockm16-all-m [unpooler GEMM] p3 running

@@ -1,6 +1,6 @@
 # muse_decode_layer findings
 
-Regenerated 2026-10-24T045257Z by `churn.py index`. Read this before writing a hypothesis for muse_decode_layer.
+Regenerated 2026-10-24T053312Z by `churn.py index`. Read this before writing a hypothesis for muse_decode_layer.
 
 ## Current best
 
@@ -40,10 +40,10 @@ Where the time goes (per scored shape, top kernels):
 ## Queue and in flight
 
 - queue: fa3-num-splits-full-no-metadata [FA3 call] p3 hold
-- queue: marlin-block-m-cap-16 [w13 marlin] p4 queued
 - queue: moe-align-local-expert-count [MoE align/dispatch] p4 queued
 - queue: trtllm-decode-full-attention [FA3 call] p5 queued
 - queue: fa3-num-splits-sliding [FA3 call] p2 hold
 - queue: moe-align-single-kernel-small-t [MoE align/dispatch] p3 queued
 - running: expert-id-map-single-kernel [MoE align/dispatch] p2 running
+- running: marlin-block-m-cap-16 [w13 marlin] p4 running
 - running: pooler-gemm-splitk-autotune [pooler GEMM] p3 running

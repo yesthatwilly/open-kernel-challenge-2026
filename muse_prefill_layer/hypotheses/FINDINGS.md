@@ -1,6 +1,6 @@
 # muse_prefill_layer findings
 
-Regenerated 2026-10-24T045257Z by `churn.py index`. Read this before writing a hypothesis for muse_prefill_layer.
+Regenerated 2026-10-24T053312Z by `churn.py index`. Read this before writing a hypothesis for muse_prefill_layer.
 
 ## Current best
 
@@ -38,6 +38,6 @@ Where the time goes (per scored shape, top kernels):
 - queue: experts-dequant-triton-moe-16k [w13 marlin + w2 marlin (expert grouped GEMM engine at 16K tokens)] p2 hold
 - queue: experts-triton-w4a16-inkernel-fp4 [w13 marlin + w2 marlin (W4A16 engine with in-kernel NVFP4 dequant, for the turn shapes)] p5 queued
 - queue: fa3-batched-mode [FA3 call] p4 queued
-- queue: fa3-contiguous-kv-gather [FA3 call] p3 queued
 - queue: qk-norm-fp8-cache-store-fusion [pre-attention norm+rope + cache store] p4 queued
+- running: fa3-contiguous-kv-gather [FA3 call] p3 running
 - running: moe-align-side-stream [MoE align/dispatch] p2 running
