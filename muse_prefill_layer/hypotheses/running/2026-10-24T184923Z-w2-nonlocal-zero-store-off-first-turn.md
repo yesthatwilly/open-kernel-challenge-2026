@@ -37,7 +37,7 @@ kind: primary
 controls_for: null
 review: required
 status: running
-stage: implemented
+stage: dispatched
 claimed_at: 2026-10-24T231849Z
 base_sha: 27a44fb6ced1bfd563c16ae512b70c9222e795f8
 base_blob: 635cfee3ac2c3f7c66840b8c8a082cad2fa41a68
@@ -52,6 +52,8 @@ submission_blob: 39f26f165918e7ccc5c37ebbaed148b6b28cff71
 lint_warnings: 6
 attempt_file: 2026-10-24T231931Z-check-w2-nonlocal-zero-store-off-first-turn.md
 prepared_at: 2026-10-24T231931Z
+job: 9b731599dfa24278
+dispatched_at: 2026-10-24T231940Z
 ---
 
 # w2-nonlocal-zero-store-off-first-turn
