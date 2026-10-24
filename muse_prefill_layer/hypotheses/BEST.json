@@ -1,0 +1,17 @@
+{
+ "problem": "muse_prefill_layer",
+ "job": "62025c368c3c4e8e",
+ "check_job": "62025c368c3c4e8e",
+ "mode": "check",
+ "speedup": 1.0038664293875537,
+ "ci": [
+  0.9888084329467404,
+  1.018924425828367
+ ],
+ "score_us": 385911.79927826684,
+ "commit": "6e616b8a059e028919a29923a63abca52d6f180d",
+ "submission_blob": "e4931f050c7fb99835fe116d25bb454a5ea731e9",
+ "slug": "sglang-pipeline-parity",
+ "result": "muse_prefill_layer/hypotheses/done/gain/sglang-pipeline-parity.result.json",
+ "updated_at": "2026-10-24T044310Z"
+}
