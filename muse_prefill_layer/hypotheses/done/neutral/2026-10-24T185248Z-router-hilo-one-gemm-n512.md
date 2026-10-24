@@ -39,8 +39,8 @@ priority: 4
 kind: primary
 controls_for: null
 review: required
-status: running
-stage: dispatched
+status: done
+stage: harvested
 claimed_at: 2026-10-24T231740Z
 base_sha: 10e97df213c296823faa2881225ed84509e1e385
 base_blob: 635cfee3ac2c3f7c66840b8c8a082cad2fa41a68
@@ -57,6 +57,13 @@ attempt_file: 2026-10-24T231833Z-check-router-hilo-one-gemm-n512.md
 prepared_at: 2026-10-24T231833Z
 job: f4e3c5f4c306427b
 dispatched_at: 2026-10-24T231843Z
+outcome: neutral
+verdict_detail: unproven-vs-best
+speedup: 1.0607453847521948
+speedup_ci: [1.044834203980912, 1.0766565655234777]
+harvested_at: 2026-10-24T232737Z
+best_at_harvest: 1.0591912383762452
+promotion: null
 ---
 
 # router-hilo-one-gemm-n512
@@ -89,3 +96,31 @@ Built in the main thread 2026-10-24 ~23:35Z with self-review (user approved; no 
 - [x] No timing/harness access, processes, network or module edits.
 - [x] No work outside timed calls added (prepare() only builds a weight repack).
 - [x] okc_lint: OK with warnings (pre-existing prepare-only host syncs).
+
+## Result
+
+- job `f4e3c5f4c306427b` (check), status done, passed True, tests 5/5
+- speedup 1.0607x, 95% CI [1.0448, 1.0767], score 365218.55816558946 µs vs SGLang 387403.9 µs
+- best at harvest: {"speedup": 1.0591912383762452, "ci": [1.0433033698006016, 1.0750791069518888], "job": "ba9c16b9cc6b4605"}; base result: muse_prefill_layer/hypotheses/done/gain/experts-hybrid-marlin-turn-triton-first-turn.result.json
+- **outcome: neutral** (unproven-vs-best)
+- files: `muse_prefill_layer/hypotheses/done/neutral/router-hilo-one-gemm-n512.result.json`, `muse_prefill_layer/hypotheses/done/neutral/router-hilo-one-gemm-n512.patch`; branch `hyp/muse_prefill_layer/router-hilo-one-gemm-n512`
+
+## Attribution
+
+| shape | w | base µs | hyp µs | delta | verdict |
+|---|---|---|---|---|---|
+| batch=1 ctx=80000 dist=soft layer=sliding load=turn_1 page=1 q_len=753 repeats=6 | 46 | 1079.54 | 1062.65 | 1.0025 | flat |
+| batch=1 ctx=80000 dist=soft layer=full load=turn_1 page=1 q_len=753 repeats=6 | 16 | 1419.09 | 1495.35 | 0.9962 | flat |
+| batch=4 ctx=80000 dist=soft layer=sliding load=turn_4 page=1 q_len=753 repeats=6 | 46 | 3334.9 | 3350.8 | 1.0026 | flat |
+| batch=4 ctx=80000 dist=soft layer=full load=turn_4 page=1 q_len=753 repeats=6 | 16 | 4937.98 | 4971.29 | 1.0024 | flat |
+| batch=1 ctx=0 dist=soft layer=full load=first_turn page=1 q_len=16384 repeats=6 | 16 | 15386.32 | 14909.57 | 0.993 | flat |
+| batch=1 ctx=32768 dist=soft layer=sliding load=first_turn page=1 q_len=16384 repeats=6 | 138 | 14275.3 | 14392.08 | 0.9984 | flat |
+| batch=1 ctx=32768 dist=soft layer=full load=first_turn page=1 q_len=16384 repeats=6 | 16 | 18165.94 | 18616.96 | 1.0029 | flat |
+| batch=1 ctx=65536 dist=soft layer=full load=first_turn page=1 q_len=16384 repeats=6 | 16 | 22332.92 | 22323.34 | 1.0074 | flat |
+
+no shape moved outside noise. Expected hit: 0/3. Noise ±1.5%.
+
+## Follow-ups
+
+- unproven-vs-best: the change is not proven either way; a stacked hypothesis (`depends_on: router-hilo-one-gemm-n512`) that adds a further change in the same area is the only way to learn more (identical code is never re-run).
+
