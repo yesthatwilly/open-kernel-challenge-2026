@@ -40,13 +40,19 @@ review: proceed
 status: running
 review_at: 2026-10-24T104320Z
 review_companions: null
-stage: claimed
+stage: implemented
 claimed_at: 2026-10-24T104320Z
 base_sha: 12230f154820fa60ff8dc5f1e9efca0e1d05c4c9
 base_blob: 60fc66432a00f0c6a1e2228f6a0775cc08f492fc
 branch: hyp/muse_attention_decode/paired-heads-launch-cleanup-ab-tune-batch-gate
 worktree: .worktrees/muse_attention_decode/paired-heads-launch-cleanup-ab-tune-batch-gate
 mode: null
+implemented_at: 2026-10-24T104354Z
+impl_commit: f6513e3feb35334cdc64baa24953ca46621839de
+submission_sha256: c1520ef7b632076cf4a4f3e9b65ba5c859c2dd8802ddf7bbece8ab2230ba0c7d
+norm_sha256: 4535a46c53b9f66d462750c869d90bcae1dec2ef9af0856e2f8a0587fc648433
+submission_blob: efc544103e6d303d1f8602caa9439628043a17a7
+lint_warnings: 0
 ---
 
 # paired-heads-launch-cleanup-ab-tune-batch-gate
@@ -88,3 +94,26 @@ No further companions (as instructed), and none needed. The parent/companion pai
 - Implement it by editing only line 180 of the parent's submission.py (`paired = window == 0 and hkv % 2 == 0 and batch > 1`). Do not duplicate the predicate. Confirm the batch=1 correctness tests at page_size 64 and kv_scale != 1 now take the unpaired branch and still pass. They are master's validated path, but the tests are the check.
 - If the parent has not finished yet, check out its committed branch head (hyp/muse_attention_decode/paired-heads-launch-cleanup) before applying the one-line change, so that B>=16 really is byte-identical.
 
+
+## Implementation notes
+
+Implemented inline by churnsubs on the parent's commit (12230f1): the single predicate in kernel_fn became `paired = window == 0 and hkv % 2 == 0 and batch > 1` (batch = cfg["batch"]). The parent already uses that one predicate for the q layout (PAIRED constexpr and buffer shape) and for the FA3/epilogue branch, and its unpaired branch is the pre-pairing path (unpadded FP8 q, original cache views, descale (B, Hkv), the judge's scheduler_metadata, SGLang rms_norm_gate). B>=16 full layers are byte-identical to the parent. No deviation.
+
+## Rules check
+
+Checked against `git -C .worktrees/muse_attention_decode/paired-heads-launch-cleanup-ab-tune-batch-gate diff` (one predicate line plus a comment).
+
+- [x] CUDA-graph capturable: the edit is on config values only (cfg window, num_kv_heads and batch); no `.item()`/`.cpu()`/`synchronize()` added; no control flow on input values.
+- [x] Nothing derived from `data` is cached across calls: no state writes added.
+- [x] Weights: n/a: untouched.
+- [x] Activations BF16 where SGLang keeps BF16; KV cache FP8 and queries FP8 E4M3: unchanged by this edit (both paths already exist on the parent and passed review).
+- [x] Attention sees every key: unchanged: both branches attend every key (the paired branch reads the same KV rows two heads at a time).
+- [x] No timing patches, harness frames/I/O/secrets, module edits, reference import, subprocesses or network: none added.
+- [x] All work happens inside the timed call; no output caching or replay: unchanged.
+- [x] First line marker kept; no triton.autotune added.
+
+okc_lint output:
+
+```
+CLEAN: .worktrees/muse_attention_decode/paired-heads-launch-cleanup-ab-tune-batch-gate/muse_attention_decode/submission.py
+```
