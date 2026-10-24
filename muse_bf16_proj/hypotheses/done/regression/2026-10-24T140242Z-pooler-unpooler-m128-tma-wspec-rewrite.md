@@ -68,10 +68,10 @@ controls_for: null
 rewrite_stage: 1
 replaces: cuBLAS nvjet at m=128 for pooler (nvjet_sm90_tst_64x64_64x13_2x1, 26.0 us) and unpooler (nvjet_sm90_tst_128x64_64x8_1x2, 20.3 us)
 review: proceed
-status: running
+status: done
 review_at: 2026-10-24T164610Z
 review_companions: null
-stage: dispatched
+stage: harvested
 claimed_at: 2026-10-24T164753Z
 base_sha: 1221521e184643a43f27ff79cef68b5fed5ad2b1
 base_blob: a8bb42ac483318e9fbc84bc7826a27b7a704d1fb
@@ -88,6 +88,13 @@ attempt_file: 2026-10-24T181732Z-submit-pooler-unpooler-m128-tma-wspec-rewrite.m
 prepared_at: 2026-10-24T181732Z
 job: 61da9b91dab44bf4
 dispatched_at: 2026-10-24T181804Z
+outcome: regression
+verdict_detail: regression
+speedup: 1.163939020820857
+speedup_ci: [1.1464799355085442, 1.1813981061331698]
+harvested_at: 2026-10-24T184716Z
+best_at_harvest: 1.1958517819004566
+promotion: null
 ---
 
 # pooler-unpooler-m128-tma-wspec-rewrite
@@ -183,3 +190,53 @@ OK with warnings
 ```
 
 `python3 -I -m py_compile` passed; the __pycache__ was removed.
+
+## Result
+
+- job `61da9b91dab44bf4` (submit), status done, passed True, tests 9/9
+- speedup 1.1639x, 95% CI [1.1465, 1.1814], score 4150.389250283167 µs vs SGLang 4830.8 µs
+- best at harvest: {"speedup": 1.1958517819004566, "ci": [1.1779140051719497, 1.2137895586289633], "job": "eeb9985396764ac2"}; base result: muse_bf16_proj/hypotheses/done/neutral/bf16-m32-swapab-wgmma-triton.result.json
+- **outcome: regression** (regression)
+- files: `muse_bf16_proj/hypotheses/done/regression/pooler-unpooler-m128-tma-wspec-rewrite.result.json`, `muse_bf16_proj/hypotheses/done/regression/pooler-unpooler-m128-tma-wspec-rewrite.patch`; branch `hyp/muse_bf16_proj/pooler-unpooler-m128-tma-wspec-rewrite`
+
+## Attribution
+
+| shape | w | base µs | hyp µs | delta | verdict |
+|---|---|---|---|---|---|
+| layer=qkv_gate load=decode_1 m=1 | 62 | 12.91 | 13.43 | 0.9684 | lost |
+| layer=o load=decode_1 m=1 | 62 | 6.32 | 6.23 | 1.004 | flat |
+| layer=pooler load=decode_1 m=1 | 62 | 19.0 | 19.1 | 1.0161 | flat |
+| layer=unpooler load=decode_1 m=1 | 62 | 5.94 | 6.23 | 0.987 | flat |
+| layer=router load=decode_1 m=1 | 62 | 5.73 | 6.14 | 0.9713 | flat |
+| layer=qkv_gate load=decode_16 m=16 | 62 | 13.39 | 13.75 | 0.9644 | lost |
+| layer=o load=decode_16 m=16 | 62 | 6.66 | 6.75 | 1.004 | flat |
+| layer=pooler load=decode_16 m=16 | 62 | 19.85 | 19.91 | 1.0027 | flat |
+| layer=unpooler load=decode_16 m=16 | 62 | 18.61 | 18.35 | 1.0069 | flat |
+| layer=router load=decode_16 m=16 | 62 | 6.03 | 5.92 | 1.0232 | flat |
+| layer=qkv_gate load=decode_32 m=32 | 62 | 13.69 | 13.97 | 0.9595 | lost |
+| layer=o load=decode_32 m=32 | 62 | 6.67 | 6.38 | 1.0166 | flat |
+| layer=pooler load=decode_32 m=32 | 62 | 20.0 | 20.05 | 1.0031 | flat |
+| layer=unpooler load=decode_32 m=32 | 62 | 18.48 | 18.43 | 1.0149 | flat |
+| layer=router load=decode_32 m=32 | 62 | 6.55 | 6.69 | 0.9867 | flat |
+| layer=qkv_gate load=verify_1 m=8 | 62 | 13.18 | 13.65 | 0.945 | lost |
+| layer=o load=verify_1 m=8 | 62 | 6.32 | 6.58 | 0.9795 | flat |
+| layer=pooler load=verify_1 m=8 | 62 | 19.14 | 19.18 | 1.0028 | flat |
+| layer=unpooler load=verify_1 m=8 | 62 | 6.13 | 6.18 | 1.0034 | flat |
+| layer=router load=verify_1 m=8 | 62 | 5.91 | 5.6 | 1.0408 | gained |
+| layer=qkv_gate load=verify_16 m=128 | 62 | 16.81 | 17.09 | 0.9985 | flat |
+| layer=o load=verify_16 m=128 | 62 | 7.09 | 7.42 | 0.98 | flat |
+| layer=pooler load=verify_16 m=128 | 62 | 25.55 | 31.69 | 0.8256 | lost |
+| layer=unpooler load=verify_16 m=128 | 62 | 19.79 | 25.68 | 0.7762 | lost |
+| layer=router load=verify_16 m=128 | 62 | 7.35 | 7.74 | 0.9605 | lost |
+| layer=qkv_gate load=verify_32 m=256 | 62 | 19.62 | 19.39 | 0.9899 | flat |
+| layer=o load=verify_32 m=256 | 62 | 9.01 | 9.02 | 0.9866 | flat |
+| layer=pooler load=verify_32 m=256 | 62 | 30.53 | 30.62 | 0.9884 | flat |
+| layer=unpooler load=verify_32 m=256 | 62 | 24.5 | 24.18 | 0.9933 | flat |
+| layer=router load=verify_32 m=256 | 62 | 9.3 | 9.54 | 0.9791 | flat |
+
+gained on router verify_1; lost on qkv_gate decode_1, decode_16, decode_32, verify_1; pooler verify_16; unpooler verify_16; router verify_16. Expected hit: 4/7. Noise ±1.5%.
+
+## Follow-ups
+
+- rewrite stage 1 of `cuBLAS nvjet at m=128 for pooler (nvjet_sm90_tst_64x64_64x13_2x1, 26.0 us) and unpooler (nvjet_sm90_tst_128x64_64x8_1x2, 20.3 us)`: read the replaced kernels' own us per shape (profile top_kernels) against the incumbent and the floor, and check which Milestone it reached. The next stage is `/hypothesize muse_bf16_proj "<what to fix or tune>" --kind rewrite --depends-on pooler-unpooler-m128-tma-wspec-rewrite --stage 2`; a slow or failed first cut is the expected start, not a do-not-retry.
+

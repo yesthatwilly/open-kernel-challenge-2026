@@ -1,0 +1,276 @@
+diff --git a/muse_bf16_proj/submission.py b/muse_bf16_proj/submission.py
+index a8bb42a..87f758f 100644
+--- a/muse_bf16_proj/submission.py
++++ b/muse_bf16_proj/submission.py
+@@ -35,6 +35,14 @@ Swap-AB at 17 <= m <= 32 (hypothesis bf16-m32-swapab-wgmma-triton): all four bf1
+ _bf16_swapab_kernel, 64 weight rows on tl.dot's M side and the (<= 32) tokens on N, so Triton
+ can emit wgmma m64n32k16; pooler split-K 2, qkv_gate split-K 4 (same ticket reduce, transposed
+ workspace), unpooler / o full K. Every other shape keeps its path above.
++
++Pooler / unpooler at 65 <= m <= 128 (hypothesis pooler-unpooler-m128-tma-wspec-rewrite):
++_bf16_m128_tma_ws_kernel, tile 128 x 128 x 128, 8 warps, grid (N // 128, SPLIT_K) = 128 CTAs
++(pooler SPLIT_K 4, unpooler 2). The weight tile arrives by TMA through a descriptor built in
++prepare() from the weight alone; the K loop asks for warp specialization. Same store-then-ticket
++reduce, except the last-ticket CTA adds the other partials to its own in-register acc instead of
++reloading its own slice. prepare() picks (warp_specialize, num_stages) from (T,3) (T,2) (F,3)
++(F,2): the first that compiles and passes a synthetic self-check; none -> cuBLAS.
+ """
+ 
+ from typing import TypedDict
+@@ -651,6 +659,237 @@ def _swapab_prepare(state: dict) -> None:
+     state["swapab_cnt_qkv"].zero_()
+ 
+ 
++# --- (6) pooler / unpooler, 65 <= m <= 128: TMA weight stream + warp specialization -----------
++# (hypothesis pooler-unpooler-m128-tma-wspec-rewrite). Tile 128 x 128 x 128, two warpgroups;
++# grid (N // 128, SPLIT_K) = 128 CTAs for both layers, K-slice 2048.
++M128_MIN_M = 65
++M128_MAX_M = 128
++M128_BLOCK_M = 128
++M128_BLOCK_N = 128
++M128_BLOCK_K = 128
++M128_NUM_WARPS = 8
++M128_WARM_MS = (65, 96, 128)
++# layer -> (N, K, SPLIT_K)
++M128_LAYERS = {"pooler": (4096, 8192, 4), "unpooler": (8192, 4096, 2)}
++# Variants tried in prepare() in this order, (warp_specialize, num_stages); the first that compiles
++# and passes the self-check is fixed as a constant for the layer; none -> cuBLAS.
++M128_VARIANTS = ((True, 3), (True, 2), (False, 3), (False, 2))
++
++try:
++    from triton.tools.tensor_descriptor import TensorDescriptor as _M128TensorDescriptor
++except ImportError:
++    _M128TensorDescriptor = None
++
++
++@triton.jit(do_not_specialize=["M"])
++def _bf16_m128_tma_ws_kernel(
++    x_ptr, w_desc, out_ptr, ws_ptr, cnt_ptr,
++    M,
++    stride_xm, stride_om,
++    N: tl.constexpr, WS_M: tl.constexpr, K_SLICE: tl.constexpr, SPLIT_K: tl.constexpr,
++    BLOCK_M: tl.constexpr, BLOCK_N: tl.constexpr, BLOCK_K: tl.constexpr,
++    WARP_SPEC: tl.constexpr, REDUCE: tl.constexpr,
++):
++    """out[M, N] bf16 = x[M, K] @ w[N, K]^T, split-K with an in-kernel ticket reduce.
++
++    Program (pid_n, pid_k) covers rows of N [pid_n*BLOCK_N, +BLOCK_N), K [pid_k*K_SLICE,
++    +K_SLICE) and all M <= BLOCK_M rows (rows >= M masked). The weight tile [BLOCK_N, BLOCK_K]
++    arrives by TMA through w_desc (built in prepare() from the weight alone); x is a masked
++    tl.load. ws: fp32 [SPLIT_K, WS_M, N]; cnt: int32 [N // BLOCK_N], 0 between launches.
++    Every CTA stores its fp32 partial, then takes exactly one gpu-scope acq_rel ticket (no early
++    exit, so the counter always returns to 0). The CTA drawing ticket SPLIT_K-1 keeps its own
++    partial in registers and adds the other SPLIT_K-1 slices (.cg, index order, its own slice
++    masked off so it is not reloaded), stores bf16 once and resets the counter.
++    REDUCE=False (prepare()-only diagnostic) skips the winner's reload/sum/store but still resets.
++    """
++    pid_n = tl.program_id(0)
++    pid_k = tl.program_id(1)
++    k_start = pid_k * K_SLICE
++    n0 = pid_n * BLOCK_N
++
++    offs_n = n0 + tl.arange(0, BLOCK_N)
++    offs_kb = tl.arange(0, BLOCK_K)
++    offs_m = tl.arange(0, BLOCK_M)
++    m_mask = offs_m < M
++    x_rows = x_ptr + offs_m[:, None] * stride_xm
++    acc = tl.zeros((BLOCK_M, BLOCK_N), dtype=tl.float32)
++    for k in tl.range(k_start, k_start + K_SLICE, BLOCK_K, warp_specialize=WARP_SPEC):
++        x_tile = tl.load(x_rows + (k + offs_kb)[None, :], mask=m_mask[:, None], other=0.0)
++        w_tile = w_desc.load([n0, k])
++        acc = tl.dot(x_tile, tl.trans(w_tile), acc)
++
++    # fp32 partial -> workspace slice pid_k, rows < M only (the reducer reads the same mask).
++    # Stored by EVERY CTA before its ticket, the winner included.
++    ws_tile = offs_m[:, None] * N + offs_n[None, :]
++    tl.store(ws_ptr + pid_k * (WS_M * N) + ws_tile, acc, mask=m_mask[:, None])
++    # All threads' partial stores precede the (single, scalar) gpu-scope acq_rel ticket.
++    tl.debug_barrier()
++    ticket = tl.atomic_add(cnt_ptr + pid_n, 1, sem="acq_rel", scope="gpu")
++    # Order the other threads' reloads after the ticket's acquire.
++    tl.debug_barrier()
++    if ticket == SPLIT_K - 1:
++        if REDUCE:
++            total = acc
++            for s in tl.static_range(0, SPLIT_K):
++                # The winner's own slice is masked off (no memory traffic): it is already in acc.
++                total += tl.load(ws_ptr + s * (WS_M * N) + ws_tile,
++                                 mask=m_mask[:, None] & (pid_k != s), other=0.0,
++                                 cache_modifier=".cg")
++            out_ptrs = out_ptr + offs_m[:, None] * stride_om + offs_n[None, :]
++            tl.store(out_ptrs, total.to(tl.bfloat16), mask=m_mask[:, None])
++        # Self-reset so the next launch / graph replay starts from 0.
++        tl.atomic_xchg(cnt_ptr + pid_n, 0, sem="relaxed", scope="gpu")
++
++
++def _m128_route_ok(layer: str, x: torch.Tensor, cfg) -> bool:
++    """pooler / unpooler at 65 <= cfg m <= 128 with the problem's n/k and a contiguous bf16 x.
++    Branches on cfg and shapes only (m = 130 and above keep cuBLAS)."""
++    spec = M128_LAYERS.get(layer)
++    if spec is None:
++        return False
++    n, k, _ = spec
++    m = cfg["m"]
++    return (M128_MIN_M <= m <= M128_MAX_M and cfg["n"] == n and cfg["k"] == k
++            and x.dim() == 2 and x.shape[0] == m and x.shape[1] == k
++            and x.dtype == torch.bfloat16 and x.is_contiguous())
++
++
++def _m128_forward(layer: str, x: torch.Tensor, ws: torch.Tensor, cnt: torch.Tensor, w_desc,
++                  variant, reduce: bool = True):
++    """x bf16 [65..128, k] @ w.T -> bf16 [m, n], ONE launch. variant = (warp_specialize,
++    num_stages), a constant fixed in prepare(). Returns (out, compiled handle)."""
++    n, k, split_k = M128_LAYERS[layer]
++    warp_spec, num_stages = variant
++    m = x.shape[0]
++    out = torch.empty((m, n), dtype=torch.bfloat16, device=x.device)
++    grid = (n // M128_BLOCK_N, split_k)
++    handle = _bf16_m128_tma_ws_kernel[grid](
++        x, w_desc, out, ws, cnt,
++        m,
++        x.stride(0), out.stride(0),
++        N=n, WS_M=M128_MAX_M, K_SLICE=k // split_k, SPLIT_K=split_k,
++        BLOCK_M=M128_BLOCK_M, BLOCK_N=M128_BLOCK_N, BLOCK_K=M128_BLOCK_K,
++        WARP_SPEC=warp_spec, REDUCE=reduce,
++        num_warps=M128_NUM_WARPS, num_stages=num_stages,
++    )
++    return out, handle
++
++
++def _m128_selfcheck(layer: str, w: torch.Tensor, ws: torch.Tensor, cnt: torch.Tensor, w_desc,
++                    variant) -> str:
++    """prepare()-only correctness check on synthetic x at every warmed m: returns '' if OK, else
++    the reason. The workspace is poisoned with NaN first (rows >= m must never reach out), each m
++    runs twice (the ticket counters must self-reset), one row is a power-of-two one-hot (its
++    output must be the weight column), and every row is held to 0.5% relative L2 vs fp64."""
++    n, k, _ = M128_LAYERS[layer]
++    w64 = w.double()
++    for m in M128_WARM_MS:
++        x = torch.randn((m, k), device=w.device, dtype=torch.float32).to(torch.bfloat16)
++        x[0].zero_()
++        x[0, 7] = 2.0
++        ref = x.double() @ w64.T
++        ws.fill_(float("nan"))
++        for rep in range(2):
++            out, _ = _m128_forward(layer, x, ws, cnt, w_desc, variant)
++            torch.cuda.synchronize()
++            o = out.double()
++            if not torch.isfinite(o).all():
++                return f"m={m} rep={rep}: non-finite output"
++            row_err = (o - ref).norm(dim=1) / ref.norm(dim=1).clamp_min(1e-30)
++            if row_err.max().item() > 5e-3:
++                return f"m={m} rep={rep}: max row rel L2 {row_err.max().item():.3e}"
++            if row_err[0].item() > 1e-3:
++                return f"m={m} rep={rep}: one-hot row rel L2 {row_err[0].item():.3e}"
++            if int(cnt.abs().sum().item()) != 0:
++                return f"m={m} rep={rep}: ticket counters not reset"
++    return ""
++
++
++def _m128_diagnostics(layer: str, w_desc, ws: torch.Tensor, cnt: torch.Tensor, variant,
++                      handle) -> None:
++    """prepare()-only: registers/spills, PTX counts of wgmma / TMA, and warm-L2 event times of
++    the full kernel vs REDUCE=False (the difference is the reduce tail). Synthetic x only."""
++    try:
++        ptx = handle.asm.get("ptx", "") if hasattr(handle, "asm") else ""
++        print(f"[m128_ws {layer}] variant warp_specialize={variant[0]} num_stages={variant[1]} "
++              f"n_regs={getattr(handle, 'n_regs', '?')} n_spills={getattr(handle, 'n_spills', '?')} "
++              f"wgmma={ptx.count('wgmma.mma_async')} "
++              f"cp.async.bulk.tensor={ptx.count('cp.async.bulk.tensor')}", flush=True)
++        n, k, _ = M128_LAYERS[layer]
++        x = torch.randn((M128_MAX_M, k), device=ws.device, dtype=torch.float32).to(torch.bfloat16)
++        times = {}
++        for reduce in (True, False):
++            for _ in range(3):
++                _m128_forward(layer, x, ws, cnt, w_desc, variant, reduce=reduce)
++            start = torch.cuda.Event(enable_timing=True)
++            end = torch.cuda.Event(enable_timing=True)
++            reps = 20
++            start.record()
++            for _ in range(reps):
++                _m128_forward(layer, x, ws, cnt, w_desc, variant, reduce=reduce)
++            end.record()
++            end.synchronize()
++            times[reduce] = start.elapsed_time(end) * 1000.0 / reps
++        print(f"[m128_ws {layer}] m=128 warm-L2 us: full={times[True]:.2f} "
++              f"no_reduce={times[False]:.2f} tail~{times[True] - times[False]:.2f}", flush=True)
++    except Exception as exc:  # diagnostics must never break prepare()
++        print(f"[m128_ws {layer}] diagnostics failed: {exc!r}", flush=True)
++
++
++def _m128_prepare(state: dict) -> None:
++    """Per layer: build the weight's TMA descriptor, allocate the workspace / tickets (own keys),
++    pick the first variant of M128_VARIANTS that compiles (OutOfResources steps down to 2 stages;
++    a warp_specialize compile failure falls back to the plain loop) and passes the self-check,
++    warm every M128_WARM_MS, print diagnostics, and re-zero the counters. A layer with no passing
++    variant gets None and keeps cuBLAS."""
++    variants = {}
++    print(f"[m128_ws] triton {triton.__version__}; TensorDescriptor "
++          f"{'available' if _M128TensorDescriptor is not None else 'missing (cuBLAS kept)'}", flush=True)
++    for layer, (n, k, split_k) in M128_LAYERS.items():
++        variants[layer] = None
++        w = state[layer]
++        if (_M128TensorDescriptor is None or w.dim() != 2 or tuple(w.shape) != (n, k)
++                or w.dtype != torch.bfloat16 or not w.is_contiguous()):
++            continue
++        w_desc = _M128TensorDescriptor.from_tensor(w, [M128_BLOCK_N, M128_BLOCK_K])
++        ws = torch.empty((split_k, M128_MAX_M, n), dtype=torch.float32, device=w.device)
++        cnt = torch.zeros(n // M128_BLOCK_N, dtype=torch.int32, device=w.device)
++        state[layer + "_m128_desc"] = w_desc
++        state[layer + "_m128_ws"] = ws
++        state[layer + "_m128_cnt"] = cnt
++        x = torch.zeros((M128_MAX_M, k), dtype=torch.bfloat16, device=w.device)
++        for variant in M128_VARIANTS:
++            try:
++                _, handle = _m128_forward(layer, x, ws, cnt, w_desc, variant)
++                torch.cuda.synchronize()
++            except _OutOfResources as e:
++                print(f"[m128_ws {layer}] variant {variant} OutOfResources ({e})", flush=True)
++                cnt.zero_()
++                continue
++            except Exception as e:  # e.g. warp_specialize rejected on sm90 at compile time
++                print(f"[m128_ws {layer}] variant {variant} failed to compile/run "
++                      f"({type(e).__name__}: {str(e)[:300]})", flush=True)
++                cnt.zero_()
++                continue
++            cnt.zero_()
++            reason = _m128_selfcheck(layer, w, ws, cnt, w_desc, variant)
++            if reason:
++                print(f"[m128_ws {layer}] variant {variant} self-check FAILED: {reason}", flush=True)
++                cnt.zero_()
++                continue
++            variants[layer] = variant
++            for m in M128_WARM_MS:
++                xm = torch.randn((m, k), device=w.device, dtype=torch.float32).to(torch.bfloat16)
++                _m128_forward(layer, xm, ws, cnt, w_desc, variant)
++            _m128_diagnostics(layer, w_desc, ws, cnt, variant, handle)
++            break
++        torch.cuda.synchronize()
++        cnt.zero_()
++        print(f"[m128_ws {layer}] selected variant: "
++              f"{variants[layer] if variants[layer] is not None else 'none -> cuBLAS'}", flush=True)
++    state["m128_variants"] = variants
++
++
+ def prepare(weights: Weights) -> dict:
+     """Called once, untimed. Keep the bf16 weights as they are (contiguous), build the router's
+     hi + lo bf16 split as [256, 8192] row-major (N x K), and pre-compile every m-bucket of the
+@@ -708,6 +947,8 @@ def prepare(weights: Weights) -> dict:
+     state["unpool_cnt"].zero_()
+     # (5) Swap-AB at 17 <= m <= 32 for all four bf16 layers (own workspaces / tickets).
+     _swapab_prepare(state)
++    # (6) pooler / unpooler at 65 <= m <= 128: TMA + warp-specialized split-K (own keys).
++    _m128_prepare(state)
+     return state
+ 
+ 
+@@ -728,6 +969,9 @@ def kernel_fn(data: Inputs, state: dict) -> torch.Tensor:
+             and _swapab_route_ok(layer, x, state[layer], cfg)):
+         ws, cnt = _swapab_buffers(state, layer)
+         return _swapab_forward(layer, x, state[layer], ws, cnt, state["swapab_stages"][layer])
++    if (state["m128_variants"].get(layer) is not None and _m128_route_ok(layer, x, cfg)):
++        return _m128_forward(layer, x, state[layer + "_m128_ws"], state[layer + "_m128_cnt"],
++                             state[layer + "_m128_desc"], state["m128_variants"][layer])[0]
+     if layer != "router":
+         # The unpooler's slice is its first n rows (all of them above 8 tokens).
+         return _bf16_gemm_dispatch_impl(x, state[layer][: cfg["n"]], None)

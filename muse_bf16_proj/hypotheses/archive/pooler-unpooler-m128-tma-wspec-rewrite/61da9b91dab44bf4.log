@@ -1,0 +1,11 @@
+[swapab] layer=pooler m=32 N=4096 K=8192 SPLIT_K=2 BLOCK_K=256 stages=4: n_regs=96 n_spills=0 wgmma=16 mma.sync=0 cp.async=106
+[swapab] layer=qkv_gate m=32 N=2304 K=8192 SPLIT_K=4 BLOCK_K=128 stages=4: n_regs=56 n_spills=0 wgmma=8 mma.sync=0 cp.async=58
+[swapab] layer=unpooler m=32 N=8192 K=4096 SPLIT_K=1 BLOCK_K=256 stages=4: n_regs=96 n_spills=0 wgmma=16 mma.sync=0 cp.async=106
+[swapab] layer=o m=32 N=8192 K=1024 SPLIT_K=1 BLOCK_K=256 stages=4: n_regs=96 n_spills=0 wgmma=16 mma.sync=0 cp.async=106
+[m128_ws] triton 3.8.0; TensorDescriptor available
+[m128_ws pooler] variant warp_specialize=True num_stages=3 n_regs=255 n_spills=110 wgmma=8 cp.async.bulk.tensor=3
+[m128_ws pooler] m=128 warm-L2 us: full=36.85 no_reduce=27.64 tail~9.21
+[m128_ws pooler] selected variant: (True, 3)
+[m128_ws unpooler] variant warp_specialize=True num_stages=3 n_regs=218 n_spills=0 wgmma=8 cp.async.bulk.tensor=3
+[m128_ws unpooler] m=128 warm-L2 us: full=30.73 no_reduce=27.43 tail~3.30
+[m128_ws unpooler] selected variant: (True, 3)
