@@ -47,7 +47,8 @@ priority: 1
 kind: control
 controls_for: router-triton-hilo-fused-control-splitk-all-m
 review: required
-status: queued
+status: hold
+hold_reason: "superseded: router-triton-hilo-fused-control-splitk-all-m landed (1.151x); its 3-D Triton grid beats cuBLAS hi/lo at every m (5.7-9.3 us vs 10.5-17.7 us), so a hybrid using cuBLAS above m=32 can only be slower"
 ---
 
 # router-triton-hilo-fused-control-hybrid-cublas-above-m32
