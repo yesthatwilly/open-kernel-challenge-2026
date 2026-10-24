@@ -54,7 +54,7 @@ kind: primary
 controls_for: null
 review: required
 status: running
-stage: implemented
+stage: dispatched
 claimed_at: 2026-10-24T232823Z
 base_sha: a4d96a9424579e84f7664be536951edfda597297
 base_blob: 635cfee3ac2c3f7c66840b8c8a082cad2fa41a68
@@ -71,6 +71,8 @@ submission_blob: 8780061c8886bf3d70fe3c433fbbfade9bdf8507
 lint_warnings: 12
 attempt_file: 2026-10-24T232909Z-check-moe-align-local-routes-parallel-port.md
 prepared_at: 2026-10-24T232909Z
+job: 7e91d9ee93144387
+dispatched_at: 2026-10-24T232928Z
 ---
 
 # moe-align-local-routes-parallel-port
