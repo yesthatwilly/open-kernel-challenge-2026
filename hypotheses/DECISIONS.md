@@ -83,3 +83,4 @@ overrides of a reviewer) with the reason, newest last. Written by `churn.py note
 - 2026-10-24T135641Z `muse_decode_layer` **fused-preattention-triton**: not merged: 1.097x vs 1.087x, all shapes flat but sliding decode_32 (+3.3%); within drift
 - 2026-10-24T140307Z `muse_moe_w4a16` **triton-w13-silu-epilogue**: hold: stacks on triton-w13-grouped-gemv-small-m, which regressed (2-2.6x slower than Marlin at small M)
 - 2026-10-24T140307Z `muse_moe_w4a16` **triton-w2-grouped-gemv-small-m**: hold: stacks on triton-w13-grouped-gemv-small-m, which regressed (2-2.6x slower than Marlin at small M)
+- 2026-10-24T140307Z `muse_moe_w4a16` **triton-small-m-threshold-32**: hold: stacks on triton-w13-grouped-gemv-small-m, which regressed (2-2.6x slower than Marlin at small M)

@@ -31,7 +31,8 @@ priority: 4
 kind: primary
 controls_for: null
 review: required
-status: queued
+status: hold
+hold_reason: stacks on triton-w13-grouped-gemv-small-m, which regressed (2-2.6x slower than Marlin at small M)
 ---
 
 # triton-small-m-threshold-32
