@@ -136,6 +136,240 @@ def _pre_attention_kernel(
         tl.store(vout + j, (v / v_scale).to(tl.float8e4nv))
 
 
+LOG2E = 1.4426950408889634
+_COUNTERS = {}
+
+
+def _counters(batch: int, hkv: int, device) -> torch.Tensor:
+    """int32 [B*Hkv] ticket counters for the in-kernel split combine. Zeroed once per
+    (B, Hkv, device) on the first (eager) call; every launch leaves them at 0 again (the
+    program that draws the last ticket resets its counter), so they hold no data."""
+    key = (batch, hkv, str(device))
+    buf = _COUNTERS.get(key)
+    if buf is None:
+        buf = _COUNTERS[key] = torch.zeros(batch * hkv, dtype=torch.int32, device=device)
+    return buf
+
+
+def _num_splits(batch: int, hkv: int) -> int:
+    """Window splits per (request, kv head), from config only: the power of two that brings
+    the grid to ~128 CTAs, capped at 16 (B=1: 16, B=16: 4, B=32: 2, B>=64: 1)."""
+    s = 1
+    while s < 16 and batch * hkv * s * 2 <= 128:
+        s *= 2
+    return s
+
+
+@triton.jit
+def _norm_rope(x, xs, pos, freq, d, D: tl.constexpr, ROPE: tl.constexpr, EPS: tl.constexpr):
+    """Rows of x [R, D] (xs: the same rows with each pair swapped, xs[:, d] = x[:, d ^ 1]):
+    scaleless RMSNorm, then interleaved RoPE at pos [R] with freq [D] = inv_freq[d // 2].
+    Even d: x_e cos - x_o sin; odd d: x_o cos + x_e sin, as _pre_attention_kernel."""
+    r = 1.0 / tl.sqrt(tl.sum(x * x, axis=1) / D + EPS)
+    x = x * r[:, None]
+    if ROPE:
+        xs = xs * r[:, None]
+        ang = pos[:, None] * freq[None, :]
+        sign = tl.where(d % 2 == 0, -1.0, 1.0)
+        x = x * tl.cos(ang) + sign[None, :] * xs * tl.sin(ang)
+    return x
+
+
+@triton.jit
+def _gpu_fence(x):
+    """fence.acq_rel.gpu executed by every thread holding an element of x (int32)."""
+    return tl.inline_asm_elementwise("fence.acq_rel.gpu;\n\tmov.b32 $0, $1;", "=r,r", [x],
+                                     dtype=tl.int32, is_pure=False, pack=1)
+
+
+@triton.jit
+def _online_update(qk, valid, v, m_i, l_i, acc):
+    """One key block of the online softmax (base-2 logits qk [M, N], values v [N, D] bf16).
+    -inf safe: a row with no valid key so far keeps m = -inf, l = 0, acc = 0, never NaN."""
+    qk = tl.where(valid, qk, float("-inf"))
+    m_new = tl.maximum(m_i, tl.max(qk, axis=1))
+    m_use = tl.where(m_new == float("-inf"), 0.0, m_new)
+    alpha = tl.exp2(m_i - m_use)
+    p = tl.exp2(qk - m_use[:, None])
+    l_i = l_i * alpha + tl.sum(p, axis=1)
+    acc = acc * alpha[:, None] + tl.dot(p.to(tl.bfloat16), v)
+    return m_new, l_i, acc
+
+
+@triton.jit
+def _gate_epilogue(o, qkv_ptr, out_ptr, tok, head, rvalid, d, qkv_stride,
+                   HQ: tl.constexpr, HKV: tl.constexpr, D: tl.constexpr, EPS: tl.constexpr):
+    """out[tok, head] = rmsnorm(o) * sigmoid(gate), o [M, D] fp32 (no bf16 rounding before)."""
+    r = 1.0 / tl.sqrt(tl.sum(o * o, axis=1) / D + EPS)
+    gptr = qkv_ptr + tok.to(tl.int64)[:, None] * qkv_stride + (HQ + 2 * HKV) * D + head[:, None] * D + d[None, :]
+    gate = tl.load(gptr, mask=rvalid[:, None], other=0.0).to(tl.float32)
+    y = o * r[:, None] * tl.sigmoid(gate)
+    optr = out_ptr + (tok.to(tl.int64)[:, None] * HQ + head[:, None]) * D + d[None, :]
+    tl.store(optr, y.to(tl.bfloat16), mask=rvalid[:, None])
+
+
+@triton.jit
+def _sliding_fused_kernel(
+    qkv_ptr, pos_ptr, loc_ptr, seq_ptr, pt_ptr, inv_freq_ptr, k_scale_ptr, v_scale_ptr,
+    k_cache_ptr, v_cache_ptr, ws_acc_ptr, ws_ml_ptr, cnt_ptr, out_ptr,
+    qkv_stride, pt_stride, q_scale, score_scale,
+    HQ: tl.constexpr, HKV: tl.constexpr, D: tl.constexpr, L: tl.constexpr, M: tl.constexpr,
+    LN: tl.constexpr, WINDOW: tl.constexpr, PAGE: tl.constexpr, S: tl.constexpr,
+    BLOCK_N: tl.constexpr, ROPE: tl.constexpr, EPS: tl.constexpr,
+):
+    """Sliding-window layer, one launch: pre-attention, attention, output norm x gate.
+    Grid (B, HKV, S). Program (b, g, s) serves kv head g's GROUP query heads for the block's L
+    tokens as one M-row tile (row r = j * GROUP + hh; rows past GROUP * L are padding), over
+    chunk s of the old keys [lo, seq - 1], lo = max(0, seq - (WINDOW - 1)). Program S - 1 also
+    builds the L new keys/values, stores them (E4M3) at cache_loc and attends them from
+    registers (causal i <= j). Splits combine in-kernel through a ticket counter."""
+    b = tl.program_id(0)
+    g = tl.program_id(1)
+    s = tl.program_id(2)
+    GROUP: tl.constexpr = HQ // HKV
+    d = tl.arange(0, D)
+    dsw = d ^ 1
+    freq = tl.load(inv_freq_ptr + d // 2) if ROPE else tl.zeros([D], dtype=tl.float32)
+
+    # Query rows: token j = r // GROUP (clamped for padding rows, which stay finite), head h.
+    r = tl.arange(0, M)
+    rvalid = r < GROUP * L
+    j = tl.minimum(r // GROUP, L - 1)
+    head = g * GROUP + r % GROUP
+    tok = b * L + j
+    qrow = qkv_ptr + tok.to(tl.int64)[:, None] * qkv_stride + head[:, None] * D
+    xq = tl.load(qrow + d[None, :], mask=rvalid[:, None], other=0.0).to(tl.float32)
+    xqs = tl.load(qrow + dsw[None, :], mask=rvalid[:, None], other=0.0).to(tl.float32)
+    qpos = tl.load(pos_ptr + tok).to(tl.float32)
+    q = _norm_rope(xq, xqs, qpos, freq, d, D, ROPE, EPS)
+    # bf16 operands (finer than FA3's E4M3), rounded after qk_scale_factor as the reference.
+    q = (q * q_scale).to(tl.bfloat16)
+
+    k_scale = tl.load(k_scale_ptr)
+    v_scale = tl.load(v_scale_ptr)
+    qk_scale = score_scale * k_scale  # sm_scale * log2(e) * k_scale
+    seq = tl.load(seq_ptr + b)
+    p_row = seq + j  # each row's token position
+
+    m_i = tl.full([M], float("-inf"), dtype=tl.float32)
+    l_i = tl.zeros([M], dtype=tl.float32)
+    acc = tl.zeros([M, D], dtype=tl.float32)
+
+    if s == S - 1:
+        # The block's new keys/values for head g: never read back from the cache.
+        i = tl.arange(0, LN)
+        ivalid = i < L
+        ntok = b * L + tl.minimum(i, L - 1)
+        nrow = qkv_ptr + ntok.to(tl.int64)[:, None] * qkv_stride
+        xk = tl.load(nrow + (HQ + g) * D + d[None, :], mask=ivalid[:, None], other=0.0).to(tl.float32)
+        xks = tl.load(nrow + (HQ + g) * D + dsw[None, :], mask=ivalid[:, None], other=0.0).to(tl.float32)
+        kpos = tl.load(pos_ptr + ntok).to(tl.float32)
+        kn = _norm_rope(xk, xks, kpos, freq, d, D, ROPE, EPS)
+        k8 = (kn / k_scale).to(tl.float8e4nv)
+        vn = tl.load(nrow + (HQ + HKV + g) * D + d[None, :], mask=ivalid[:, None], other=0.0).to(tl.float32)
+        v8 = (vn / v_scale).to(tl.float8e4nv)
+        loc = tl.load(loc_ptr + ntok).to(tl.int64)
+        cptr = (loc[:, None] * HKV + g) * D + d[None, :]
+        tl.store(k_cache_ptr + cptr, k8.to(tl.uint8, bitcast=True), mask=ivalid[:, None])
+        tl.store(v_cache_ptr + cptr, v8.to(tl.uint8, bitcast=True), mask=ivalid[:, None])
+        # Attend the stored E4M3 values (dequantized via the scales), causal inside the block.
+        qk = tl.dot(q, tl.trans(k8.to(tl.bfloat16))) * qk_scale
+        valid = ivalid[None, :] & (i[None, :] <= j[:, None])
+        m_i, l_i, acc = _online_update(qk, valid, v8.to(tl.bfloat16), m_i, l_i, acc)
+
+    # Old keys: chunk s of [lo, seq - 1]; every key of every row's window is scored.
+    lo = tl.maximum(seq - (WINDOW - 1), 0)
+    count = seq - lo
+    chunk = ((count + S - 1) // S + BLOCK_N - 1) // BLOCK_N * BLOCK_N
+    start = lo + s * chunk
+    end = tl.minimum(start + chunk, seq)
+    n = tl.arange(0, BLOCK_N)
+    for n0 in range(start, end, BLOCK_N):
+        t = n0 + n
+        tmask = t < end
+        page = tl.load(pt_ptr + b.to(tl.int64) * pt_stride + t // PAGE, mask=tmask, other=0)
+        row = page.to(tl.int64) * PAGE + t % PAGE
+        kvoff = (row[:, None] * HKV + g) * D + d[None, :]
+        kb = tl.load(k_cache_ptr + kvoff, mask=tmask[:, None], other=0).to(tl.float8e4nv, bitcast=True)
+        vb = tl.load(v_cache_ptr + kvoff, mask=tmask[:, None], other=0).to(tl.float8e4nv, bitcast=True)
+        qk = tl.dot(q, tl.trans(kb.to(tl.bfloat16))) * qk_scale
+        # t <= p_j for every old key; the window's lower edge is per row.
+        valid = tmask[None, :] & (t[None, :] >= p_row[:, None] - (WINDOW - 1))
+        m_i, l_i, acc = _online_update(qk, valid, vb.to(tl.bfloat16), m_i, l_i, acc)
+
+    if S == 1:
+        # Program 0 holds the new keys, so l > 0 on every row.
+        o = acc / l_i[:, None] * v_scale
+        _gate_epilogue(o, qkv_ptr, out_ptr, tok, head, rvalid, d, qkv_stride, HQ, HKV, D, EPS)
+    else:
+        bg = b * HKV + g
+        part = (bg * S + s).to(tl.int64)
+        tl.store(ws_acc_ptr + (part * M + r[:, None]) * D + d[None, :], acc)
+        tl.store(ws_ml_ptr + part * 2 * M + r, m_i)
+        tl.store(ws_ml_ptr + part * 2 * M + M + r, l_i)
+        # Release: every thread fences its partial stores at gpu scope, the CTA syncs, then one
+        # acq_rel gpu-scope ticket. The program drawing the last ticket combines.
+        _gpu_fence(r)
+        tl.debug_barrier()
+        ticket = tl.atomic_add(cnt_ptr + bg, 1, sem="acq_rel", scope="gpu")
+        tl.debug_barrier()
+        if ticket == S - 1:
+            _gpu_fence(r)  # acquire side, every thread, before the L2 (.cg) reloads
+            base = (bg * S).to(tl.int64)
+            m_max = tl.full([M], float("-inf"), dtype=tl.float32)
+            for s2 in tl.static_range(S):
+                m_s = tl.load(ws_ml_ptr + (base + s2) * 2 * M + r, cache_modifier=".cg")
+                m_max = tl.maximum(m_max, m_s)
+            # Partial S - 1 holds the new keys and is finite on every row, so m_max is too;
+            # empty or fully masked partials (m = -inf) get weight 0, never exp2(-inf - -inf).
+            m_max = tl.where(m_max == float("-inf"), 0.0, m_max)
+            l_sum = tl.zeros([M], dtype=tl.float32)
+            o = tl.zeros([M, D], dtype=tl.float32)
+            for s2 in tl.static_range(S):
+                m_s = tl.load(ws_ml_ptr + (base + s2) * 2 * M + r, cache_modifier=".cg")
+                l_s = tl.load(ws_ml_ptr + (base + s2) * 2 * M + M + r, cache_modifier=".cg")
+                a_s = tl.load(ws_acc_ptr + ((base + s2) * M + r[:, None]) * D + d[None, :], cache_modifier=".cg")
+                w = tl.where(m_s == float("-inf"), 0.0, tl.exp2(m_s - m_max))
+                l_sum += l_s * w
+                o += a_s * w[:, None]
+            o = o / l_sum[:, None] * v_scale
+            _gate_epilogue(o, qkv_ptr, out_ptr, tok, head, rvalid, d, qkv_stride, HQ, HKV, D, EPS)
+            tl.store(cnt_ptr + bg, 0)  # ready for the next launch / graph replay
+
+
+def _sliding_forward(data: Inputs) -> torch.Tensor:
+    """Sliding-window layers: one launch of _sliding_fused_kernel. Branches on config only."""
+    cfg = data["config"]
+    batch, length = cfg["batch"], cfg["q_len"]
+    hq, hkv, d = cfg["num_q_heads"], cfg["num_kv_heads"], cfg["head_dim"]
+    tokens = batch * length
+    qkv = data["qkv"].reshape(tokens, -1)
+    device = qkv.device
+    theta = cfg["rope_theta"]
+    group = hq // hkv
+    m = max(16, triton.next_power_of_2(group * length))
+    splits = _num_splits(batch, hkv)
+    out = torch.empty((batch, length, hq * d), dtype=torch.bfloat16, device=device)
+    if splits > 1:
+        ws_acc = torch.empty((batch * hkv * splits, m, d), dtype=torch.float32, device=device)
+        ws_ml = torch.empty((batch * hkv * splits, 2, m), dtype=torch.float32, device=device)
+        counters = _counters(batch, hkv, device)
+    else:
+        ws_acc = ws_ml = counters = out  # unused when S == 1
+    inv_freq = _inv_freq(theta, d, device) if theta else data["k_scale"]  # unused when ROPE is off
+    page_table = data["page_table"]
+    _sliding_fused_kernel[(batch, hkv, splits)](
+        qkv, data["positions"], data["cache_loc"], data["seq_lens"], page_table, inv_freq,
+        data["k_scale"], data["v_scale"],
+        data["k_cache"].view(torch.uint8), data["v_cache"].view(torch.uint8), ws_acc, ws_ml, counters, out,
+        qkv.stride(0), page_table.stride(0), cfg["qk_scale_factor"], cfg["sm_scale"] * LOG2E,
+        HQ=hq, HKV=hkv, D=d, L=length, M=m, LN=max(16, triton.next_power_of_2(length)),
+        WINDOW=cfg["window"], PAGE=cfg["page_size"], S=splits, BLOCK_N=64, ROPE=bool(theta), EPS=RMS_EPS,
+        num_warps=4, num_stages=2,
+    )
+    return out
+
+
 @triton.jit
 def _paired_norm_gate_kernel(
     attn_ptr, qkv_ptr, out_ptr,
@@ -161,6 +395,10 @@ def _paired_norm_gate_kernel(
 
 def kernel_fn(data: Inputs) -> torch.Tensor:
     cfg = data["config"]
+    # Sliding batch-1 decode only (config-only predicate): the whole step in one fused launch.
+    # Every other shape (sliding batch > 1, sliding verify, every full layer) keeps the path below.
+    if cfg["window"] and cfg["batch"] == 1 and cfg["q_len"] == 1:
+        return _sliding_forward(data)
     batch, length = cfg["batch"], cfg["q_len"]
     hq, hkv, d = cfg["num_q_heads"], cfg["num_kv_heads"], cfg["head_dim"]
     tokens = batch * length
