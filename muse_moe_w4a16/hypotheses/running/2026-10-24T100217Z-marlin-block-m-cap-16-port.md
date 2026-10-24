@@ -55,13 +55,19 @@ review: proceed
 status: running
 review_at: 2026-10-24T103919Z
 review_companions: null
-stage: claimed
+stage: implemented
 claimed_at: 2026-10-24T103919Z
 base_sha: 150297e8627364911bee843d85d02b432ebf9b41
 base_blob: 11fbc1957daf7294cd2810ff82a0aad2f25644bd
 branch: hyp/muse_moe_w4a16/marlin-block-m-cap-16-port
 worktree: .worktrees/muse_moe_w4a16/marlin-block-m-cap-16-port
 mode: null
+implemented_at: 2026-10-24T103946Z
+impl_commit: b8486202d1a2c8a04ae0062a6f40d7fd032a03b1
+submission_sha256: e669cc000af15e319b8e9074fca10237d3760e2a29bd9d651d67ea8ccd4d0247
+norm_sha256: c6510aeab6e5b2aef0281bf950133dd666e08f8d68aecedc112b8ba009ae051d
+submission_blob: ba5f406f1a775b1d0a7cc0c2a78d6ab844e2a298
+lint_warnings: 1
 ---
 
 # marlin-block-m-cap-16-port
@@ -104,3 +110,31 @@ No companions. The only diff is one host-side int, and the shapes it moves (bs=1
 - Since this run and verify-two-smaller share the bs=128 pick exactly, if both harvest as gains at bs=128 the promotion should take only one of them. They edit the same line, so a by-hand pick is needed: prefer whichever bs=256 point wins.
 - If bs=128 gains here, a natural follow-up is whether the w13 and w2 Marlin calls want different block sizes (w2 has size_m = M*8 rows of K=size_n). That is out of scope for this run.
 
+
+## Implementation notes
+
+Implemented inline by churnsubs (a one-line change): `MARLIN_BLOCK_SIZE_M_CAP = 16` added beside
+`BLOCK_SIZE_M_CANDIDATES`, and `block_size_m = min(block_size_m, MARLIN_BLOCK_SIZE_M_CAP)` right after
+SGLang's unchanged selection loop in `kernel_fn`. The capped value feeds `moe_align_block_size` (still
+over the bank's 32 experts), `moe_align_single_token` and both Marlin calls' `moe_block_size`. Picks:
+bs<=33 unchanged (8/16), bs=128 48->16, bs=256/257 64->16. No deviation from the spec.
+
+## Rules check
+
+Checked against `git -C .worktrees/muse_moe_w4a16/marlin-block-m-cap-16-port diff` (+4 lines: one constant, one line in kernel_fn, comments).
+
+- [x] CUDA-graph capturable: a Python `min` on an int chosen from `num_tokens` (a shape); no `.item()`/`.cpu()`/`synchronize()` added; no control flow on input values.
+- [x] Nothing derived from `data` is cached across calls: no state writes added.
+- [x] Weights: n/a: prepare() and the Marlin repack untouched; NVFP4 stays NVFP4.
+- [x] Activations BF16 where SGLang keeps BF16: unchanged; KV cache / query items n/a: no attention in this problem.
+- [x] Attention sees every key: n/a: no attention; alignment still covers every local route.
+- [x] No timing patches, harness frames/I/O/secrets, module edits, reference import, subprocesses or network: none added.
+- [x] All work happens inside the timed call; no output caching or replay: unchanged.
+- [x] First line `# okc: problem=muse_moe_w4a16` kept; no triton.autotune added.
+
+okc_lint output:
+
+```
+warn  host-sync    L113: torch.cuda.synchronize()  (outside kernel_fn's call graph; fine in prepare())
+OK with warnings: .worktrees/muse_moe_w4a16/marlin-block-m-cap-16-port/muse_moe_w4a16/submission.py
+```
