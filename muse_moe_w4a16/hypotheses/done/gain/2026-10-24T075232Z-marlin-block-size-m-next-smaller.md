@@ -47,10 +47,10 @@ priority: 2
 kind: primary
 controls_for: null
 review: proceed
-status: running
+status: done
 review_at: 2026-10-24T100105Z
 review_companions: null
-stage: dispatched
+stage: harvested
 claimed_at: 2026-10-24T100106Z
 base_sha: 38f7ef0c3079751ea38f770d5bf9c79242b606ef
 base_blob: 11fbc1957daf7294cd2810ff82a0aad2f25644bd
@@ -67,6 +67,13 @@ attempt_file: 2026-10-24T100227Z-check-marlin-block-size-m-next-smaller.md
 prepared_at: 2026-10-24T100227Z
 job: 198f10f446a847cb
 dispatched_at: 2026-10-24T100235Z
+outcome: gain
+verdict_detail: gain
+speedup: 1.0393635319069174
+speedup_ci: [1.0237730789283137, 1.0549539848855212]
+harvested_at: 2026-10-24T111613Z
+best_at_harvest: 0.9887547325362586
+promotion: pending
 ---
 
 # marlin-block-size-m-next-smaller
@@ -141,3 +148,29 @@ OK with warnings: muse_moe_w4a16/submission.py
 ```
 
 The warning is the existing `torch.cuda.synchronize()` at the end of `prepare()` on master, not something the diff added. `python3 -I -m py_compile` passed, and I removed the `__pycache__` it left.
+
+## Result
+
+- job `198f10f446a847cb` (check), status done, passed True, tests 5/5
+- speedup 1.0394x, 95% CI [1.0238, 1.0550], score 12939.1686230573 µs vs SGLang 13448.5 µs
+- best at harvest: {"speedup": 0.9887547325362586, "ci": [0.9739234115482147, 1.0035860535243024], "job": "fb2cc736613747df"}; base result: muse_moe_w4a16/hypotheses/done/gain/sglang-marlin-path-parity.result.json
+- **outcome: gain** (gain)
+- files: `muse_moe_w4a16/hypotheses/done/gain/marlin-block-size-m-next-smaller.result.json`, `muse_moe_w4a16/hypotheses/done/gain/marlin-block-size-m-next-smaller.patch`; branch `hyp/muse_moe_w4a16/marlin-block-size-m-next-smaller`
+
+## Attribution
+
+| shape | w | base µs | hyp µs | delta | verdict |
+|---|---|---|---|---|---|
+| bs=1 load=decode_1 sharding=ep8 | 60 | 80.23 | 79.79 | 1.0098 | flat |
+| bs=16 load=decode_16 sharding=ep8 | 60 | 191.41 | 189.55 | 1.0005 | flat |
+| bs=32 load=decode_32 sharding=ep8 | 60 | 208.15 | 215.21 | 0.9756 | flat |
+| bs=8 load=verify_1 sharding=ep8 | 60 | 152.04 | 143.86 | 0.9959 | flat |
+| bs=128 load=verify_16 sharding=ep8 | 60 | 462.46 | 382.5 | 1.1945 | gained |
+| bs=256 load=verify_32 sharding=ep8 | 60 | 621.28 | 530.39 | 1.1508 | gained |
+
+gained on verify_16 verify_16; verify_32 verify_32. Expected hit: 5/6. Noise ±1.5%.
+
+## Follow-ups
+
+- candidate for promotion; stack further changes with `depends_on` once it lands.
+

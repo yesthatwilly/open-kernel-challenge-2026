@@ -1,0 +1,32 @@
+diff --git a/muse_moe_w4a16/submission.py b/muse_moe_w4a16/submission.py
+index 11fbc19..12f7f34 100644
+--- a/muse_moe_w4a16/submission.py
++++ b/muse_moe_w4a16/submission.py
+@@ -68,6 +68,10 @@ N_EXPERTS = 256
+ TOP_K = 8
+ # MuseSpark1xFp4Experts' candidates, smallest first.
+ BLOCK_SIZE_M_CANDIDATES = (8, 16, 32, 48, 64)
++# Hypothesis marlin-block-size-m-next-smaller: how many candidate indices below SGLang's pick
++# to take (floored at index 0), per num_tokens. 1 everywhere: bs<=16 stays 8, bs=32/33 16->8,
++# bs=128 48->32, bs=256/257 64->48. Per-shape partial adoption is a one-line change here.
++BLOCK_SIZE_M_STEP_DOWN = lambda num_tokens: 1  # noqa: E731
+ POST_NORM_EPS = 1e-8
+ 
+ 
+@@ -132,9 +136,14 @@ def kernel_fn(data: Inputs, state: dict) -> torch.Tensor:
+     local_ids = local_ids.contiguous()
+     topk_weights = data["topk_weights"].to(torch.float32).contiguous()
+ 
+-    for block_size_m in BLOCK_SIZE_M_CANDIDATES:
+-        if num_tokens * TOP_K / bank["count"] / block_size_m < 0.9:
++    # SGLang's rule picks the first candidate under 0.9 (the last one if none is); step down
++    # from it by BLOCK_SIZE_M_STEP_DOWN, floored at the smallest candidate.
++    idx = len(BLOCK_SIZE_M_CANDIDATES) - 1
++    for i, candidate in enumerate(BLOCK_SIZE_M_CANDIDATES):
++        if num_tokens * TOP_K / bank["count"] / candidate < 0.9:
++            idx = i
+             break
++    block_size_m = BLOCK_SIZE_M_CANDIDATES[max(idx - BLOCK_SIZE_M_STEP_DOWN(num_tokens), 0)]
+     if num_tokens == 1 and expert_map is None:
+         from sglang.kernels.ops.moe.moe_align_single_token import moe_align_single_token
+ 
