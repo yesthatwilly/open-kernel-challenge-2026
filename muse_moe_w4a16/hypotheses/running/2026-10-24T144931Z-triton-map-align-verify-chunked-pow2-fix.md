@@ -32,9 +32,16 @@ priority: 1
 kind: primary
 controls_for: null
 review: proceed
-status: queued
+status: running
 review_at: 2026-10-24T145123Z
 review_companions: null
+stage: claimed
+claimed_at: 2026-10-24T145124Z
+base_sha: e39e564e1c1c5afd6984d50a952b2d5550f92df2
+base_blob: d9a9375ef4721ab9b28cc9d6364c92e67c7ccc59
+branch: hyp/muse_moe_w4a16/triton-map-align-verify-chunked-pow2-fix
+worktree: .worktrees/muse_moe_w4a16/triton-map-align-verify-chunked-pow2-fix
+mode: null
 ---
 
 # triton-map-align-verify-chunked-pow2-fix
