@@ -13,7 +13,7 @@ neutral on the headline is still a restack candidate.
 
 | # | problem | hypothesis | state | why first |
 |---|---|---|---|---|
-| 1 | attention | full-verify-cuda-streamk-splitkv | building | Rewrite stage 2. Extends the CUDA split-KV kernel (attention 1.293x -> 1.347x) to full verify_16/32, the two largest shapes. Est. 1.12-1.18x on those loads. |
+| 1 | attention | full-verify-cuda-streamk-splitkv | implemented | Rewrite stage 2. Extends the CUDA split-KV kernel (attention 1.293x -> 1.347x) to full verify_16/32, the two largest shapes. Est. 1.12-1.18x on those loads. |
 | 2 | decode | full-decode-cuda-splitkv-port | implemented | Ports attention's CUDA kernel to decode's full decode_16/32 (est. +4% on those loads). |
 | 3 | moe | cuda-nvfp4-swapab-mma-persistent-small-m | building | The big moe lever. CUDA W4A16 swap-AB replaces Marlin w13+w2 at bs<=32 (Marlin runs at 1.2-2.2 TB/s, floors 2.6-4x lower). |
 | 4 | moe | cuda-fused-moe-bs1-persistent-w13-silu-w2 | building | One persistent kernel for all of bs=1 (target 20 us vs 48 us). |
