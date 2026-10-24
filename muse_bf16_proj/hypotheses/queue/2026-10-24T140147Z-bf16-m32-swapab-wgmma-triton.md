@@ -79,8 +79,10 @@ depends_on: null
 priority: 1
 kind: primary
 controls_for: null
-review: required
+review: proceed
 status: queued
+review_at: 2026-10-24T140535Z
+review_companions: null
 ---
 
 # bf16-m32-swapab-wgmma-triton
@@ -105,3 +107,27 @@ Built on master (658d63b, submission blob 3f76eb8: shape-gated Triton at m<=16 +
 ## Risk
 
 Every m=32 Triton attempt lost (pooler skinny 0.89x, qkv split-K4 0.858x, o 0.907x, unpooler 0.91-0.97x; only the pooler TMA kernel won, 1.061x). The TMA run's PTX dump says why: tokens on the MMA M side compile to mma.sync (wgmma=0) and BLOCK_M=32 hits 255 registers. Swap-AB (weight as tl.dot LHS, tokens on N) is what nvjet's 64x32 tiles do and is the operand swap that doubled the prefill Triton W4A16 GEMM (LESSONS). Weakest link: Triton must accept the masked, transposed-addressed [BLOCK_K, 32] x tile as an MN-major wgmma B operand; if the printed PTX still shows mma.sync, the run settles that Triton cannot reach wgmma at 32 tokens and the m=32 family should go to the cuBLASLt route instead. decode_32 is 1 of 6 loads and its five shapes sum to ~69 us; saving ~4 us there is ~+1% on the headline, so read the four m=32 rows and kernel times. Overlaps pooler-m32-tma-splitk-extend on the pooler m=32 row only; a later combo takes whichever row is faster. Follow-up if it wins: the same kernel at m<=16 (wgmma n16/n8).
+
+## Adversarial review
+
+Reviewed 2026-10-24T140535Z by an adversarial subagent (model opus).
+
+**Verdict: proceed.** The mechanism is sound and well targeted. Triton's MMAv3 (wgmma) lowering needs the dot's M extent to be a multiple of 64 per warpgroup, so tokens on M (16/32) can only get mma.sync, while a 64-row weight tile on M with 32 tokens on N is exactly nvjet's 64x32 TN orientation. The four m=32 rows share no shapes with anything that has landed, and the prepare() PTX/register printout makes a single run readable whichever way it goes, so no companion is needed.
+
+### Justification
+A. Plausible. The archived TMA log (4e89311eefdc4bc3.log) shows BLOCK_M=32 compiled to wgmma=0, mma.sync=64 and n_regs=255, against 111 registers at BLOCK_M=16. The m=128 kernel (d34fd76f9c444728.log, BLOCK_M=128) did get wgmma_in_ptx=True. Together these are consistent with Triton's MMAv3 rule (M % 64 == 0 per warpgroup, N % 8 == 0, num_warps % 4 == 0), and the swapped tile (M=64 weight rows, N=32 tokens, num_warps=4) meets it. Both operands are K-contiguous: w[64, BLOCK_K] is a K-major A, and x loaded as [BLOCK_K, 32] with k on dim 0 is a K-major B. That is wgmma's native TN layout, so the 'MN-major B' worry in the Risk section is mislabelled and less of a risk than stated. Profile support: master's combo run (875f3e01) has m=32 at qkv 14.19 us (floor 8.0), o 7.10 (3.62), pooler 21.66 (14.14) and unpooler 18.82 (14.14). These are the bf16 shapes furthest above their floors after the m<=16 Triton wins, and at m<=16 the same weight streams beat nvjet by 5-8%. The configs fit: pooler/unpooler/o use 4 x 48 KB = 192 KB of shared memory (under 227 KB, with an OutOfResources fallback); qkv uses 96 KB, so two CTAs per SM cover the 144-CTA grid. The x shared-memory footprint per stage at BLOCK_K=256 equals the old BLOCK_M=32 attempts', so bytes in flight do not change and the MMA path and register pressure are the variable under test. The expected directions are consistent: every changed shape is m=32 at decode_32 (weight 62), and every other shape is untouched by construction. WEAKEST LINK: the claim that the MMA instruction and register pressure caused the m=32 losses. These are bandwidth-bound shapes (about 2.1 GFLOP for the pooler is about 2 us at peak, well under the 14 us floor), so even with wgmma the kernel may only tie nvjet, and the 255-register mma.sync tile may not have been the binding cost. Secondary: per-shape gains of about 1-1.5 us on four shapes in one of six loads come to about +1% on the geomean, inside the ±1.5% CI. The headline will not resolve it; the per-shape paired ratios and top_kernels times will, since Triton times reproduce within about 1%.
+
+### Confounders on the current kernel
+- bf16-shape-gated-triton-winners-combo (658d63b): its gates (pooler/qkv/o m<=16, unpooler n==1024) run first, and the new gate covers 17<=m<=32 only. The shapes are disjoint and the new path has its own ws/cnt keys, so there is no shared state. Not a confounder; if anything it is the evidence that the same weight streams win at m<=16.
+- sglang-gemm-dispatch-parity: the m=32 baseline path being replaced is _bf16_gemm_dispatch_impl (nvjet). The comparison is a paired ratio against SGLang in the same run, so removing parity would not change the answer. Not a confounder.
+- router-triton-hilo-fused-control-splitk-all-m / router-hilo-at-m8: router only, a separate graph per shape, cold L2 for every replay. Not a confounder.
+
+### Interference and A/B needs
+No companion is warranted. (i) ab-revert: no landed hypothesis touches the m=32 bf16 shapes, the launch sequence of those graphs, or their workspaces, so reverting any of them cannot change what this kernel measures. (ii) ab-tune: per-layer constants (SPLIT_K, BLOCK_K, stages) could be swept, but a sweep is a follow-up to a win, not something needed to read the result. (iii) control: the key disambiguation, whether wgmma was actually emitted and at what register count, comes from the prepare() PTX/n_regs printout, not from a second run. Reading the result: if wgmma was emitted and a row is faster, that is a gain attributable to swap-AB. If wgmma was emitted and a row is slower, the mma.sync explanation is refuted and m=32 goes to cuBLASLt or stays on nvjet. If mma.sync is still emitted, the run says Triton cannot reach wgmma here. Every outcome is interpretable from one run. With bf16's one remaining check today, spending it on companions would be wasteful.
+
+### Open questions
+- Will Triton's pipeliner keep the masked transposed x load as cp.async with zero-fill (fine), or fall back to synchronous register loads, which would stall the wgmma pipeline? The printed PTX should also count cp.async.
+- What does the transposed epilogue store (a 64x32 tile, w-contiguous in registers, stored into out[m, n] row-major) cost? Triton will insert a layout conversion through shared memory. This is minor, but it could matter on o (7 us shape).
+- Overlap with the queued pooler-m32-tma-splitk-extend on the pooler decode_32 row only. Do not combine both before each has been read on its own row.
+- No correctness test exercises 17<=m<=32, so only the timed m=32 calls check this path. Make sure the warm-up covers every m from 17 to 31 (nearby shapes in final review) and that the masks are correct at m<32.
+
