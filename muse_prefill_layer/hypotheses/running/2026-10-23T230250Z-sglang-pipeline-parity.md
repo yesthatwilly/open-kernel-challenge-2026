@@ -50,7 +50,7 @@ review: proceed
 status: running
 review_at: 2026-10-24T024401Z
 review_companions: null
-stage: implemented
+stage: dispatched
 claimed_at: 2026-10-24T024401Z
 base_sha: 077528f1affb9d72e841d65b80b285e7f23a0184
 base_blob: 15e2cafa9040cfadc7045aca96417bbeb8707aa9
@@ -65,6 +65,8 @@ submission_blob: e4931f050c7fb99835fe116d25bb454a5ea731e9
 lint_warnings: 1
 attempt_file: 2026-10-24T024934Z-check-sglang-pipeline-parity.md
 prepared_at: 2026-10-24T024934Z
+job: 62025c368c3c4e8e
+dispatched_at: 2026-10-24T024944Z
 ---
 
 # sglang-pipeline-parity
