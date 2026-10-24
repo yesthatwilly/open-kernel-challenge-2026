@@ -53,13 +53,15 @@ base_sha: 08e8fcb6d37d8a5b6a21eda279552962cc244ea8
 base_blob: d3cbff5d9d9e6de23eb2f6770a99cd93eea093b7
 branch: hyp/muse_decode_layer/moe-align-single-kernel-small-t
 worktree: .worktrees/muse_decode_layer/moe-align-single-kernel-small-t
-mode: null
+mode: check
 implemented_at: 2026-10-24T071924Z
 impl_commit: f0f9511bac9784936e451d51cb7bf33ba912947d
 submission_sha256: b986de6ede76c2509f2de77d6543f0ef8ca0388985fefd9de2837fdb8a6c8e8c
 norm_sha256: ccbd37c57b6999979576e6a467c238b8062bb9b14bcc1bf72486a53f25751989
 submission_blob: c641d42a3930199e12a8ec66d93e2abd2b81f515
 lint_warnings: 8
+attempt_file: 2026-10-24T071925Z-check-moe-align-single-kernel-small-t.md
+prepared_at: 2026-10-24T071925Z
 ---
 
 # moe-align-single-kernel-small-t
