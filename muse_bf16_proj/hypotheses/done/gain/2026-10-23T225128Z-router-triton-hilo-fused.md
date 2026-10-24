@@ -48,10 +48,10 @@ priority: 1
 kind: primary
 controls_for: null
 review: proceed
-status: running
+status: done
 review_at: 2026-10-23T230544Z
 review_companions: [router-triton-hilo-fused-control-splitk-all-m]
-stage: dispatched
+stage: harvested
 claimed_at: 2026-10-23T230545Z
 base_sha: e64f27ef09b3512d26573dde4d35b8ec3ade1f63
 base_blob: 5a2064af06f442f01dff926cb4f1eca75f992a24
@@ -68,6 +68,13 @@ attempt_file: 2026-10-23T231247Z-check-router-triton-hilo-fused.md
 prepared_at: 2026-10-23T231247Z
 job: c2a8de5969374dff
 dispatched_at: 2026-10-23T231255Z
+outcome: gain
+verdict_detail: gain
+speedup: 0.9402163894062671
+speedup_ci: [0.926113143565173, 0.954319635247361]
+harvested_at: 2026-10-24T021807Z
+best_at_harvest: 0.9020752041800139
+promotion: pending
 ---
 
 # router-triton-hilo-fused
@@ -159,3 +166,53 @@ Verified against `git diff` in the worktree (`.worktrees/muse_bf16_proj/router-t
 - [x] All work happens inside the timed call; no output caching or replay. prepare() runs warm-up launches on `torch.randn` synthetic x and discards their outputs; every timed call computes its own output from its own `data["x"]` into a tensor allocated in that call.
 
 Lint: `python3 -I .claude/skills/churnsubs/bin/okc_lint.py muse_bf16_proj/submission.py --problem muse_bf16_proj` -> `CLEAN: muse_bf16_proj/submission.py` (exit 0, no warnings).
+
+## Result
+
+- job `c2a8de5969374dff` (check), status done, passed True, tests 9/9
+- speedup 0.9402x, 95% CI [0.9261, 0.9543], score 5137.966168671639 µs vs SGLang 4830.8 µs
+- best at harvest: {"speedup": 0.9020752041800139, "ci": [0.8885440761173137, 0.9156063322427139], "job": "366189f0f1114da1"}; base result: muse_bf16_proj/hypotheses/done/gain/sglang-gemm-dispatch-parity.result.json
+- **outcome: gain** (gain)
+- files: `muse_bf16_proj/hypotheses/done/gain/router-triton-hilo-fused.result.json`, `muse_bf16_proj/hypotheses/done/gain/router-triton-hilo-fused.patch`; branch `hyp/muse_bf16_proj/router-triton-hilo-fused`
+
+## Attribution
+
+| shape | w | base µs | hyp µs | delta | verdict |
+|---|---|---|---|---|---|
+| layer=qkv_gate load=decode_1 m=1 | 62 | 13.96 | 13.94 | 1.0047 | flat |
+| layer=o load=decode_1 m=1 | 62 | 6.52 | 6.74 | 1.0002 | flat |
+| layer=pooler load=decode_1 m=1 | 62 | 21.22 | 21.46 | 1.0135 | flat |
+| layer=unpooler load=decode_1 m=1 | 62 | 6.48 | 6.95 | 0.9778 | flat |
+| layer=router load=decode_1 m=1 | 62 | 10.36 | 7.73 | 1.3134 | gained |
+| layer=qkv_gate load=decode_16 m=16 | 62 | 13.89 | 13.95 | 1.0036 | flat |
+| layer=o load=decode_16 m=16 | 62 | 6.7 | 6.34 | 0.9956 | flat |
+| layer=pooler load=decode_16 m=16 | 62 | 21.45 | 21.57 | 0.9928 | flat |
+| layer=unpooler load=decode_16 m=16 | 62 | 18.66 | 18.52 | 0.9836 | flat |
+| layer=router load=decode_16 m=16 | 62 | 14.51 | 7.97 | 1.8314 | gained |
+| layer=qkv_gate load=decode_32 m=32 | 62 | 14.19 | 14.28 | 1.022 | flat |
+| layer=o load=decode_32 m=32 | 62 | 6.62 | 6.83 | 0.9884 | flat |
+| layer=pooler load=decode_32 m=32 | 62 | 21.75 | 21.62 | 0.9942 | flat |
+| layer=unpooler load=decode_32 m=32 | 62 | 18.55 | 18.96 | 0.9826 | flat |
+| layer=router load=decode_32 m=32 | 62 | 15.14 | 8.41 | 1.8107 | gained |
+| layer=qkv_gate load=verify_1 m=8 | 62 | 14.04 | 14.14 | 1.0338 | gained |
+| layer=o load=verify_1 m=8 | 62 | 7.01 | 6.7 | 1.0416 | gained |
+| layer=pooler load=verify_1 m=8 | 62 | 21.28 | 21.17 | 1.0068 | flat |
+| layer=unpooler load=verify_1 m=8 | 62 | 6.84 | 6.62 | 1.0435 | gained |
+| layer=router load=verify_1 m=8 | 62 | 26.14 | 7.6 | 3.4425 | gained |
+| layer=qkv_gate load=verify_16 m=128 | 62 | 16.9 | 16.7 | 1.0121 | flat |
+| layer=o load=verify_16 m=128 | 62 | 7.58 | 7.39 | 1.0339 | gained |
+| layer=pooler load=verify_16 m=128 | 62 | 25.13 | 25.31 | 0.9966 | flat |
+| layer=unpooler load=verify_16 m=128 | 62 | 19.84 | 19.84 | 1.005 | flat |
+| layer=router load=verify_16 m=128 | 62 | 16.62 | 49.68 | 0.3314 | lost |
+| layer=qkv_gate load=verify_32 m=256 | 62 | 19.58 | 19.3 | 0.9918 | flat |
+| layer=o load=verify_32 m=256 | 62 | 9.25 | 9.5 | 0.9941 | flat |
+| layer=pooler load=verify_32 m=256 | 62 | 31.17 | 30.77 | 1.0177 | flat |
+| layer=unpooler load=verify_32 m=256 | 62 | 24.33 | 24.46 | 0.9925 | flat |
+| layer=router load=verify_32 m=256 | 62 | 17.76 | 98.12 | 0.1775 | lost |
+
+gained on router decode_1, decode_16, decode_32, verify_1; qkv_gate verify_1; o verify_1, verify_16; unpooler verify_1; lost on router verify_16, verify_32. Expected hit: 4/7. Noise ±1.5%.
+
+## Follow-ups
+
+- candidate for promotion; stack further changes with `depends_on` once it lands.
+
