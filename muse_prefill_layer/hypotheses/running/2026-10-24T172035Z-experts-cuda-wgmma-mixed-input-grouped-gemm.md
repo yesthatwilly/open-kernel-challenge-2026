@@ -89,7 +89,7 @@ review: proceed
 status: running
 review_at: 2026-10-24T172614Z
 review_companions: null
-stage: implemented
+stage: dispatched
 claimed_at: 2026-10-24T172706Z
 base_sha: da2ab55f3d3cd86efc0ec9a2708632b85a44ae0b
 base_blob: 635cfee3ac2c3f7c66840b8c8a082cad2fa41a68
@@ -104,6 +104,8 @@ submission_blob: 1b34a89a32d4c08cb11a3bb8a08a2018637504fc
 lint_warnings: 13
 attempt_file: 2026-10-24T181734Z-submit-experts-cuda-wgmma-mixed-input-grouped-gemm.md
 prepared_at: 2026-10-24T181734Z
+job: 1821bb0e1f7246e2
+dispatched_at: 2026-10-24T181917Z
 ---
 
 # experts-cuda-wgmma-mixed-input-grouped-gemm
