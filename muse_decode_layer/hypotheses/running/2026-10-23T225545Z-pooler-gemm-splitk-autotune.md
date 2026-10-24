@@ -40,13 +40,19 @@ review: proceed
 status: running
 review_at: 2026-10-24T044925Z
 review_companions: null
-stage: claimed
+stage: implemented
 claimed_at: 2026-10-24T044925Z
 base_sha: 952188da0ff9551ff95f13844604e502f412b70f
 base_blob: 6884d26a928d1de1b07bf8d28e1be4e53dfdcfc5
 branch: hyp/muse_decode_layer/pooler-gemm-splitk-autotune
 worktree: .worktrees/muse_decode_layer/pooler-gemm-splitk-autotune
 mode: null
+implemented_at: 2026-10-24T045248Z
+impl_commit: 3212dc6f2523fcc1167d7d7cde69207b1aa90e31
+submission_sha256: 0083fdfae7be1d98338e77af5438f30aa94fd4b7139cf4156152b3a2bcb52acf
+norm_sha256: a8ed9cbc2ee7518fa36313fed4f197106f5a5eb7a48d97b84cb33c40ddf44354
+submission_blob: f0a682c9218ad58ca95c95bb33cc0dddc9f9fffc
+lint_warnings: 4
 ---
 
 # pooler-gemm-splitk-autotune
@@ -88,3 +94,40 @@ No companion is warranted. A gain is unambiguous: the only changed code path is 
 - Record in FINDINGS, from the profile, the achieved TB/s of whatever bmm kernel the autotune selects (67 MB / kernel us): the skinny-GEMM family on this problem (and bf16_proj's pooler-skinny-tiled-weight-layout) hinges on whether anything beats ~3.6 TB/s on H200 for this weight stream.
 - If the table picks (c)/(d) for T=16/32 but the sliding decode rows are flat, the next step is an in-situ autotune (candidates timed with the router hi/lo + routing on the side stream) rather than more split factors; if the table picks (a) everywhere, the area should go on the do-not-retry list for cuBLAS-level tricks and any further pooler work needs a different mechanism (e.g. overlapping the pooler with the unpooler/attention tail, not a faster stream).
 
+
+## Implementation notes
+
+All in the worktree's `muse_decode_layer/submission.py` (uncommitted; 136 +, 2 -):
+
+- New `_pooler(x, state, tokens)` replaces `_gemm(ffn_input, dense["pooler"])` in kernel_fn (main stream, same spot, still overlapping the side-stream router). It branches on `cfg['tokens']` only via `state["pooler_form"].get(tokens, 0)`; form 0, the default for any T not in the table, is the unchanged `_bf16_gemm_dispatch_impl` call.
+- `_pooler_split`: `x.view(T, S, 8192 // S).transpose(0, 1)` (strided batch view, no copy), `torch.bmm(..., out_dtype=torch.float32)` partials, `.sum(0)` in fp32, `.to(bfloat16)` once. Output is bf16 exactly where SGLang has it.
+- Candidates: 0 = dispatch (a); 1/2 = 2-/4-way split-K, "nn" weight operand `[S, K/S, N]` = views of one contiguous `pooler.t()` copy (one buffer serves both S); 3/4 = 2-/4-way split-K, "tn" operand: contiguous `[S, N, K/S]` chunk copy used through `.transpose(1, 2)`. All are lossless relayouts of the same bf16 values.
+- `_tune_pooler` (called at the end of prepare()): guards `torch.bmm(out_dtype=float32)` with a try on a small strided bf16 test (also checks dtype and allclose to fp32 bmm); on failure it prints a line and DROPS every split-K candidate (table empty, kernel_fn = base). For each T in {1, 8, 16, 32, 128, 256} on synthetic randn x (local seeded generator, global RNG untouched): eagerly checks each split form against dispatch (rel L2 <= 1e-2, else dropped), warms up 3x on a side stream, captures a CUDA graph per candidate (private pools), then 5 warmup + 50 timed rounds, interleaving candidates, each replay preceded by a 256 MB `flush.zero_()` cold-L2 flush and bracketed by CUDA events; medians in us. A split form wins only if the best one beats dispatch by >= 3% or >= 0.5 us; otherwise 0. It prints per T every candidate median, the pick, and both the dispatch and the pick medians, then the final table. Graphs, events, x, ref, flush, w_t and unused chunk copies are freed (sync, then empty_cache), and the current stream is restored in a `finally`. Only `pooler_form` (dict T -> int) and `pooler_chunks` (only the chunk tensors the table actually uses) persist in state.
+- Deviations: (b) F.linear dropped. Per the review it resolves to the same cuBLAS TN kernel as `_bf16_gemm_dispatch_impl` / `x @ w.T` on H200, so it would just re-time (a). Added the review's open-question TN-layout variant (`[S, N, K/S]` + transpose) as candidates 3/4, beside the spec's NN layout, because layout can change the cuBLAS kernel family. The spec's "x viewed as [S, T, 8192/S]" is done as `x.view(T, S, K/S).transpose(0, 1)`, as required (a plain `x.view(S, T, ...)` would be wrong).
+- Memory: at most +67 MB per persisted layout (NN shared across S; TN one copy per S picked). Transient during prepare: about 3 x 67 MB of chunk copies + 256 MB flush.
+- Uncertainties: whether bmm with this strided x (batch stride K/S, ld K) goes to cuBLAS strided-batched without an internal copy (x is at most 4 MB, so even a copy is cheap and gets timed by the autotune anyway); whether the judge's torch has `bmm(out_dtype=)` (if not, the run is the base). Nothing was run: this node has no GPU.
+
+## Rules check
+
+Checked against `git -C .worktrees/muse_decode_layer/pooler-gemm-splitk-autotune diff`:
+
+- [x] CUDA-graph capturable: kernel_fn's new path is a dict lookup on `cfg['tokens']` (a shape), a view, bmm, sum and cast. No `.item()`/`.cpu()`/`synchronize()`/prints/events in kernel_fn; every sync, event and print is in `_tune_pooler`, called only from prepare().
+- [x] Nothing derived from `data` is cached across calls: the table and chunks come from synthetic randn inputs and the weights in prepare().
+- [x] Weights: the pooler chunk copies are lossless bf16 relayouts (transpose/permute + contiguous) made in prepare(). BF16 stays BF16 and no other weight is touched.
+- [x] Activations: the pooler output is bf16, as in SGLang. The split-K partials are fp32 (finer than cuBLAS's bf16 output) and are rounded to bf16 once. KV cache and queries are unchanged.
+- [x] n/a: attention untouched (every key still attended; no top-k/sparse/skip).
+- [x] No timing patches (torch.cuda.Event is only *used* in prepare(), never reassigned), no harness frames/I/O/secrets, no module edits, no reference import, no subprocess/network. The only new import is `statistics` (stdlib).
+- [x] All work happens inside the timed call: the per-call pooler GEMM runs in kernel_fn. prepare() only chooses which GEMM form to run for a T and relays the weight; it caches no outputs.
+- [x] First line `# okc: problem=muse_decode_layer` kept; no triton.autotune.
+
+okc_lint output:
+
+```
+warn  dtype        L242: flush = torch.empty(L2_FLUSH_BYTES, dtype=torch.uint8, device=device)  (allowed only where SGLang does the same)
+warn  host-sync    L274: torch.cuda.synchronize(device)  (outside kernel_fn's call graph; fine in prepare())
+warn  host-sync    L286: torch.cuda.synchronize(device)  (outside kernel_fn's call graph; fine in prepare())
+warn  host-sync    L379: torch.cuda.synchronize()  (outside kernel_fn's call graph; fine in prepare())
+OK with warnings: muse_decode_layer/submission.py
+```
+
+The dtype warn is the prepare-only uint8 L2-flush buffer, not an activation. py_compile passed and the resulting __pycache__ was removed.
