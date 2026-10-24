@@ -41,13 +41,19 @@ review: proceed
 status: running
 review_at: 2026-10-24T184117Z
 review_companions: null
-stage: claimed
+stage: implemented
 claimed_at: 2026-10-24T184117Z
 base_sha: 73b4e99428db4a11b88721dc46a80f6e938f17e5
 base_blob: c6854f093588da524e63657576b27ed720756e32
 branch: hyp/muse_attention_decode/full-decode1-cuda-splitkv-chunk640
 worktree: .worktrees/muse_attention_decode/full-decode1-cuda-splitkv-chunk640
 mode: null
+implemented_at: 2026-10-24T184625Z
+impl_commit: 299b00d2433c741d41acc832edd2f24a7083a934
+submission_sha256: f717653baf663168198a63c36f520a0fd43865d488be444851b892a50fdf5ce9
+norm_sha256: d51a6f40c92eab33b483846edf12c405f4b2da2d3708bf4c7244ad7677b5e0f9
+submission_blob: edf00ade1e0a0382d6beb3fdefaff5afade611f1
+lint_warnings: 0
 ---
 
 # full-decode1-cuda-splitkv-chunk640
@@ -91,3 +97,38 @@ No companion is warranted. A gain or a loss on full decode_1 is attributable fro
 - With only 125 CTAs on 132 SMs and one item each, does the block scheduler place one CTA per SM (as assumed), or does it pack 2 per SM on fewer SMs? The latter would halve per-SM bandwidth headroom; check splitkv_attn_kernel<640> duration against the ~8-10 us estimate.
 - Is the 7.1 us FA3 combine at batch 1 partly launch-gap/serialization that the new 2-kernel sequence also pays? The gap between kernel A's end and the combine's start at batch 1 is worth reading in the profile, as the follow-up (PDL attn->combine, already queued as splitkv-pdl-attn-to-combine) depends on it.
 
+
+## Implementation notes
+
+Only `muse_attention_decode/submission.py` in the worktree changed (+108/-61).
+- CUDA: `CHUNK`/`TILES` global constants removed; `splitkv_attn_kernel<int CHUNK>` derives TILES and the smem offsets from a `Lay<CHUNK>` struct (SMEM_A per instantiation); `issue_meta` loops `for (e = tid; e < CHUNK; e += THREADS)`. Bodies otherwise unchanged, so `<1024>` is today's kernel.
+- `splitkv_combine_kernel<CHUNK, NW>`: red arrays [NW], first-pass stride NW*32, warp stride NW, warp-0 final loop NW, and the red_m max reduction is now a loop over NW (the review's trap), `__launch_bounds__(NW*32)`, launched with NW*32 threads.
+- Host: `launch_attn<CHUNK>` / `launch_combine<CHUNK,NW>` templates (per-instantiation cudaFuncSetAttribute flag); `splitkv_attn`/`splitkv_combine` take int64 chunk (1024 -> <1024>/<1024,4>, 640 -> <640>/<640,8>, else TORCH_CHECK). `_SPLITKV_CPP` updated; module `muse_full_decode_splitkv_v2`.
+- Python: gate allows batch 1 only when `_B1_OK`; chunk = 640 at batch 1 else 1024; max_chunks from that chunk; grid unchanged.
+- Deviation (per review open question 2): batch-1 self-check (lens [80000] and [5000], kv_scale 1 and 0.25, device and 3-CTA grids, rel L2 < 2e-2, finite) runs after the batch>1 check, and a failure there only sets `_B1_OK = False` (batch 1 stays on FA3, batch>1 split-KV stays on). Prints `[splitkv] batch-1 chunk 640 path ON/OFF`. Gate never raises. Not run (no GPU).
+
+## Rules check
+
+- [x] CUDA-graph capturable: no .item()/.cpu()/synchronize() in kernel_fn; the only new host work is shape/config arithmetic; the self-check is import-time only.
+- [x] Nothing derived from `data` is cached across calls (only a per-instantiation static attribute flag; `_B1_OK` is set from synthetic data at import, not from inputs).
+- [x] Weights: n/a: no weights touched.
+- [x] Activations/KV/query dtypes unchanged (FP8 KV, FP8 e4m3 q, bf16 out).
+- [x] Attention sees every key: positions < cache_seqlens all processed (chunk 640 items cover ceil(len/640) chunks); no skipping.
+- [x] No timing patches, harness access, reference import, subprocess or network (diff checked).
+- [x] All work inside the timed call; no output caching or replay.
+
+okc_lint output: `CLEAN: submission.py`
+
+## Pre-flight audit
+
+Audited 2026-10-24 (opus, read-only plus emulation; no GPU). **Verdict: dispatch-with-fixes.**
+
+- Compile: templated kernels and host launchers read clean (Lay<CHUNK> static constexpr offsets, `splitkv_attn_kernel<CHUNK>` passed to cudaFuncSetAttribute, `__launch_bounds__(NW * 32)`, templates inside the anonymous namespace with public entry points outside). The `#pragma unroll` on the now tid-strided meta loop can at most produce a "not unrolled" warning, not an error.
+- issue_meta coverage at CHUNK 640: emulated `for (e = tid; e < 640; e += 256)` over tid 0..255; it covers 0..639 exactly once each (tids 0..127 take 3 iterations, the rest 2). TILES = 10 ≥ STAGES - 1, so the meta double buffer (items k-1 and k+1 sharing a buffer) is still safe.
+- Shared memory: SMEM_A is 90,128 B at <640> and 93,200 B at <1024>. Two CTAs per SM need 182-188 KB, under the H200 228 KB per SM and 227 KB per block. Combine<640,8> static smem is about 2.1 KB. Offsets stay 16-byte aligned for the cp.async16 and float4 accesses.
+- NW=8 combine: every hardcoded 4 is generalized (red arrays [NW], first-pass stride NW*32, the red_m max is a loop over all NW warps, warp stride NW, final loop NW). Warps with no partials contribute M=-inf, L=0 and acc=0. Fine for n < NW.
+- Batch-1 self-check: the kernel and the reference consume the same FP8 q and FP8 K/V, so the residual error is fp16 P and fp32 accumulation, around 1e-3 against a 2e-2 bound. Items are ceil(80001/640) = 126 ≤ max_chunks = ceil(80038/640) = 126. On a miss, `_B1_OK = False` returns only batch 1 to FA3 and the check never raises (it catches exceptions; `_SPLITKV_GRID` is reset in finally).
+- Fix: added one `[splitkv] PATH CHOSEN: ...` import-time line after the build and self-check block. It reports the batch>1 and batch-1 paths on every outcome: build fail, batch>1 miss, batch-1 miss or all ON. Reason: the spec ON/OFF line is skipped when the build or the batch>1 check fails. Lint CLEAN, py_compile OK.
+- Rules: no new host sync, allocation or input-dependent control flow in kernel_fn (the chunk is chosen from config batch). Nothing data-derived is cached. Dtypes are unchanged. Every key is attended.
+
+Residual risk: a sticky CUDA fault (rather than a numeric miss) in the never-run <640>/<640,8> instantiations during the batch-1 self-check would poison the context and cannot fall back. Also, templating may shift <1024> codegen slightly; watch the full decode_16/32 rows.
