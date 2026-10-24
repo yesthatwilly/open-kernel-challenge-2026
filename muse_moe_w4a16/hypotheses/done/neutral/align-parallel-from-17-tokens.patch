@@ -1,0 +1,29 @@
+diff --git a/muse_moe_w4a16/submission.py b/muse_moe_w4a16/submission.py
+index 108d36e..b91c76e 100644
+--- a/muse_moe_w4a16/submission.py
++++ b/muse_moe_w4a16/submission.py
+@@ -84,8 +84,9 @@ POST_NORM_EPS = 1e-8
+ SMALL_M_POST_NORM = 32
+ # Up to this many tokens _align_small_kernel does the expert_map gather and the align in one
+ # launch (hypothesis triton-map-align-small-m-port); above it, _align_parallel_kernel does the same
+-# in one 33-program launch (hypothesis align-parallel-per-expert-verify).
+-ALIGN_FUSED_MAX_TOKENS = 32
++# in one 33-program launch (hypothesis align-parallel-per-expert-verify; from 17 tokens on,
++# hypothesis align-parallel-from-17-tokens).
++ALIGN_FUSED_MAX_TOKENS = 16
+ # _align_parallel_kernel: routes per chunk (a [512, 32] one-hot at 8 warps is 64 int32 per thread
+ # per temporary), warps, and the block_experts store tile.
+ ALIGN_PAR_CHUNK = 512
+@@ -447,9 +448,9 @@ def prepare(weights: Weights) -> dict:
+             for tokens in range(1, ALIGN_FUSED_MAX_TOKENS + 1):
+                 _align_small(torch.full((tokens, TOP_K), start, dtype=torch.int32, device=device),
+                              start, count, _block_size_m(tokens, count))
+-            # _align_parallel_kernel: one variant per block_size_m it can see above 32 tokens
+-            # (n is runtime), on dummy ids.
+-            for bsm in (16, 32, 48, 64):
++            # _align_parallel_kernel: one variant per block_size_m it can see above 16 tokens
++            # (n is runtime), on dummy ids; 8 is what 17..28 tokens get.
++            for bsm in (8, 16, 32, 48, 64):
+                 _align_parallel(torch.full((ALIGN_FUSED_MAX_TOKENS + 1, TOP_K), start, dtype=torch.int32,
+                                            device=device), start, count, bsm)
+             torch.cuda.synchronize()

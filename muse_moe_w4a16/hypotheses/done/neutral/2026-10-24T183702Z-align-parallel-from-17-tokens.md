@@ -45,10 +45,10 @@ priority: 2
 kind: primary
 controls_for: null
 review: proceed
-status: running
+status: done
 review_at: 2026-10-24T183956Z
 review_companions: null
-stage: dispatched
+stage: harvested
 claimed_at: 2026-10-24T183957Z
 base_sha: 52cd6c64bc16f41452b2a54313347fee80b36ffe
 base_blob: 108d36e9f2266fc88531dd6ff0329a847c882013
@@ -65,6 +65,13 @@ attempt_file: 2026-10-24T184142Z-submit-align-parallel-from-17-tokens.md
 prepared_at: 2026-10-24T184142Z
 job: ed6d884240084d9c
 dispatched_at: 2026-10-24T184157Z
+outcome: neutral
+verdict_detail: unproven-vs-best
+speedup: 1.3249983089262432
+speedup_ci: [1.3051233342923494, 1.3448732835601367]
+harvested_at: 2026-10-24T184719Z
+best_at_harvest: 1.3249153782392282
+promotion: null
 ---
 
 # align-parallel-from-17-tokens
@@ -138,3 +145,29 @@ Audited 2026-10-24 by an opus subagent (read-only; no GPU on node). **Verdict: d
 - Fallback: none added; like master's >32 path, a compile error in prepare() would raise rather than fall back (warm-up of BSM 16 already runs on master, so no new build risk beyond the BSM=8 variant, which uses PAD_BLOCK=8 and is unused at scored shapes).
 
 Residual risk: the bs=32 gain (~1.5 us of ~70 us) is below headline noise; only the per-kernel align row can read it.
+
+## Result
+
+- job `ed6d884240084d9c` (submit), status done, passed True, tests 5/5
+- speedup 1.3250x, 95% CI [1.3051, 1.3449], score 10149.82427479356 µs vs SGLang 13448.5 µs
+- best at harvest: {"speedup": 1.3249153782392282, "ci": [1.30504164756564, 1.3447891089128166], "job": "45eacf4ca2e849d2"}; base result: muse_moe_w4a16/hypotheses/done/neutral/align-parallel-per-expert-verify.result.json
+- **outcome: neutral** (unproven-vs-best)
+- files: `muse_moe_w4a16/hypotheses/done/neutral/align-parallel-from-17-tokens.result.json`, `muse_moe_w4a16/hypotheses/done/neutral/align-parallel-from-17-tokens.patch`; branch `hyp/muse_moe_w4a16/align-parallel-from-17-tokens`
+
+## Attribution
+
+| shape | w | base µs | hyp µs | delta | verdict |
+|---|---|---|---|---|---|
+| bs=1 load=decode_1 sharding=ep8 | 60 | 48.82 | 48.0 | 1.0113 | flat |
+| bs=16 load=decode_16 sharding=ep8 | 60 | 148.37 | 148.32 | 0.9976 | flat |
+| bs=32 load=decode_32 sharding=ep8 | 60 | 199.88 | 196.35 | 1.0082 | flat |
+| bs=8 load=verify_1 sharding=ep8 | 60 | 107.74 | 106.08 | 1.0051 | flat |
+| bs=128 load=verify_16 sharding=ep8 | 60 | 318.26 | 323.0 | 0.9876 | flat |
+| bs=256 load=verify_32 sharding=ep8 | 60 | 454.28 | 456.64 | 0.9907 | flat |
+
+no shape moved outside noise. Expected hit: 5/6. Noise ±1.5%.
+
+## Follow-ups
+
+- unproven-vs-best: the change is not proven either way; a stacked hypothesis (`depends_on: align-parallel-from-17-tokens`) that adds a further change in the same area is the only way to learn more (identical code is never re-run).
+
