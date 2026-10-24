@@ -52,10 +52,10 @@ priority: 1
 kind: primary
 controls_for: null
 review: proceed
-status: running
+status: done
 review_at: 2026-10-24T165146Z
 review_companions: null
-stage: dispatched
+stage: harvested
 claimed_at: 2026-10-24T165146Z
 base_sha: 4a3b474ab343532548aeff7b0908beb14a4fae68
 base_blob: d9a9375ef4721ab9b28cc9d6364c92e67c7ccc59
@@ -72,6 +72,13 @@ attempt_file: 2026-10-24T165514Z-check-align-parallel-per-expert-verify.md
 prepared_at: 2026-10-24T165514Z
 job: 45eacf4ca2e849d2
 dispatched_at: 2026-10-24T165523Z
+outcome: neutral
+verdict_detail: unproven-vs-best
+speedup: 1.3249153782392282
+speedup_ci: [1.30504164756564, 1.3447891089128166]
+harvested_at: 2026-10-24T173234Z
+best_at_harvest: 1.3075759186466844
+promotion: null
 ---
 
 # align-parallel-per-expert-verify
@@ -166,3 +173,29 @@ OK with warnings: muse_moe_w4a16/submission.py
 ```
 
 `python3 -I -m py_compile`: OK (worktree __pycache__ removed).
+
+## Result
+
+- job `45eacf4ca2e849d2` (check), status done, passed True, tests 5/5
+- speedup 1.3249x, 95% CI [1.3050, 1.3448], score 10150.459584726568 µs vs SGLang 13448.5 µs
+- best at harvest: {"speedup": 1.3075759186466844, "ci": [1.287962279866984, 1.3271895574263846], "job": "3cabc739f1af493e"}; base result: muse_moe_w4a16/hypotheses/done/gain/triton-map-align-on-block-m-restack.result.json
+- **outcome: neutral** (unproven-vs-best)
+- files: `muse_moe_w4a16/hypotheses/done/neutral/align-parallel-per-expert-verify.result.json`, `muse_moe_w4a16/hypotheses/done/neutral/align-parallel-per-expert-verify.patch`; branch `hyp/muse_moe_w4a16/align-parallel-per-expert-verify`
+
+## Attribution
+
+| shape | w | base µs | hyp µs | delta | verdict |
+|---|---|---|---|---|---|
+| bs=1 load=decode_1 sharding=ep8 | 60 | 48.37 | 48.82 | 0.9817 | flat |
+| bs=16 load=decode_16 sharding=ep8 | 60 | 147.87 | 148.37 | 1.0027 | flat |
+| bs=32 load=decode_32 sharding=ep8 | 60 | 200.73 | 199.88 | 0.9996 | flat |
+| bs=8 load=verify_1 sharding=ep8 | 60 | 107.77 | 107.74 | 1.003 | flat |
+| bs=128 load=verify_16 sharding=ep8 | 60 | 333.39 | 318.26 | 1.0427 | gained |
+| bs=256 load=verify_32 sharding=ep8 | 60 | 469.91 | 454.28 | 1.0321 | gained |
+
+gained on verify_16 verify_16; verify_32 verify_32. Expected hit: 4/4. Noise ±1.5%.
+
+## Follow-ups
+
+- unproven-vs-best: the change is not proven either way; a stacked hypothesis (`depends_on: align-parallel-per-expert-verify`) that adds a further change in the same area is the only way to learn more (identical code is never re-run).
+
