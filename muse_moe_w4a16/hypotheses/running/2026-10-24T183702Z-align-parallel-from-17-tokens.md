@@ -45,9 +45,16 @@ priority: 2
 kind: primary
 controls_for: null
 review: proceed
-status: queued
+status: running
 review_at: 2026-10-24T183956Z
 review_companions: null
+stage: claimed
+claimed_at: 2026-10-24T183957Z
+base_sha: 52cd6c64bc16f41452b2a54313347fee80b36ffe
+base_blob: 108d36e9f2266fc88531dd6ff0329a847c882013
+branch: hyp/muse_moe_w4a16/align-parallel-from-17-tokens
+worktree: .worktrees/muse_moe_w4a16/align-parallel-from-17-tokens
+mode: null
 ---
 
 # align-parallel-from-17-tokens
