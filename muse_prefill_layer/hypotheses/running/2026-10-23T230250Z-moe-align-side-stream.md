@@ -44,13 +44,15 @@ base_sha: a8970404e91613553aa3868dbafdca06fbc4b549
 base_blob: e4931f050c7fb99835fe116d25bb454a5ea731e9
 branch: hyp/muse_prefill_layer/moe-align-side-stream
 worktree: .worktrees/muse_prefill_layer/moe-align-side-stream
-mode: null
+mode: check
 implemented_at: 2026-10-24T044913Z
 impl_commit: 0199b9927fac74d4189a4107b74801542abda5a8
 submission_sha256: c68c2d40fd6702c142ecf827abd26e28a3c075b645d779565f705c57d8ca3e79
 norm_sha256: 4a606e5a258f85dfd83542336b87fe4fd7a94dd1188165e2189221c0de3f21ba
 submission_blob: 4be1dd8c787a25f3d8b23461adea032d3588c6d8
 lint_warnings: 1
+attempt_file: 2026-10-24T044914Z-check-moe-align-side-stream.md
+prepared_at: 2026-10-24T044914Z
 ---
 
 # moe-align-side-stream
