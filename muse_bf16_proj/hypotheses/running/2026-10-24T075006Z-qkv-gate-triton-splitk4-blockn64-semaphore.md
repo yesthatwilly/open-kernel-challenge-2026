@@ -59,13 +59,15 @@ base_sha: 7bcb8092c1665b25485402c87868a1ebb583ee27
 base_blob: da55301de1e911aeab09878b0873809f544f436c
 branch: hyp/muse_bf16_proj/qkv-gate-triton-splitk4-blockn64-semaphore
 worktree: .worktrees/muse_bf16_proj/qkv-gate-triton-splitk4-blockn64-semaphore
-mode: null
+mode: check
 implemented_at: 2026-10-24T075610Z
 impl_commit: e54c744dee2ab8331f353b9286b04a288e726448
 submission_sha256: f5c43d66f26d509dc2122fa11a824fa6e5c6d3a19553da27df739b81cd6cecf3
 norm_sha256: 425d076936adb0abd301565ba098b1b63b41de156f2f3d0d71cfd9a3e2e8ea9f
 submission_blob: f32bf01cad482965a6a7a50f390dd14ab62a4fa0
 lint_warnings: 0
+attempt_file: 2026-10-24T075611Z-check-qkv-gate-triton-splitk4-blockn64-semaphore.md
+prepared_at: 2026-10-24T075611Z
 ---
 
 # qkv-gate-triton-splitk4-blockn64-semaphore
