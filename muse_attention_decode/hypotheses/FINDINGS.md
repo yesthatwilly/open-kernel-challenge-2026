@@ -1,6 +1,6 @@
 # muse_attention_decode findings
 
-Regenerated 2026-10-24T103713Z by `churn.py index`. Read this before writing a hypothesis for muse_attention_decode.
+Regenerated 2026-10-24T104514Z by `churn.py index`. Read this before writing a hypothesis for muse_attention_decode.
 
 ## Current best
 
@@ -51,7 +51,6 @@ Where the time goes (per scored shape, top kernels):
 - queue: triton-flash-decode-full-both-heads [FA3 call] p5 queued
 - queue: fused-sliding-preattn-into-window-kernel [attention boundary] p4 queued
 - queue: fused-sliding-normgate-epilogue [output norm-gate] p5 queued
-- queue: paired-heads-launch-cleanup [attention boundary] p3 queued
 - queue: fa3-batched-q-verify [FA3 call (q layout)] p4 queued
 - queue: fa3-num-splits-full-verify [FA3 call] p5 queued
 - queue: fa3-single-split-sliding [FA3 call] p4 queued
@@ -60,3 +59,5 @@ Where the time goes (per scored shape, top kernels):
 - queue: stream-fork-preattention [launch overhead] p4 queued
 - queue: triton-flash-decode-deep-pipeline [FA3 call (Triton pipeline)] p4 queued
 - queue: triton-flash-decode-full-verify [FA3 call] p4 queued
+- running: paired-heads-launch-cleanup [attention boundary] p3 running
+- running: paired-heads-launch-cleanup-ab-tune-batch-gate [FA3 call (head packing) gate] p2 running

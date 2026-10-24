@@ -1,6 +1,6 @@
 # muse_moe_w4a16 hypotheses
 
-Regenerated 2026-10-24T103713Z. Best: 0.9888x [0.9739,1.0036] job `fb2cc736613747df` (check)
+Regenerated 2026-10-24T104514Z. Best: 0.9888x [0.9739,1.0036] job `fb2cc736613747df` (check)
 
 | created | slug | kind | area | where | outcome | speedup | CI | job | mode | promotion | review | expected hit |
 |---|---|---|---|---|---|---|---|---|---|---|---|---|
@@ -20,7 +20,7 @@ Regenerated 2026-10-24T103713Z. Best: 0.9888x [0.9739,1.0036] job `fb2cc73661374
 | 2026-10-24T075257Z | align-remote-sentinel-ids | primary | MoE align/dispatch | queue | hold |  |  |  |  |  | required |  |
 | 2026-10-24T075257Z | marlin-block-size-m-verify-two-smaller | primary | w13 marlin | running | running |  |  | ed837a4a46d44a95 | check |  | proceed |  |
 | 2026-10-24T081339Z | small-m-grouped-gemv-splitk-rewrite | rewrite | w13 marlin | done/regression | regression | 0.6635 | [0.654,0.673] | 734a1159ff334c3d | check |  | proceed | 3/6 |
-| 2026-10-24T100217Z | marlin-block-m-cap-16-port | primary | w13 marlin | queue | queued |  |  |  |  |  | required |  |
+| 2026-10-24T100217Z | marlin-block-m-cap-16-port | primary | w13 marlin | running | running |  |  | 1c33392914594026 | check |  | proceed |  |
 
 ## Held
 

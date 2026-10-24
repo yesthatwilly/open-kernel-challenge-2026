@@ -1,6 +1,6 @@
 # muse_bf16_proj hypotheses
 
-Regenerated 2026-10-24T103713Z. Best: 1.1433x [1.1261,1.1604] job `240eb22ea0b6487e` (submit)
+Regenerated 2026-10-24T104514Z. Best: 1.1433x [1.1261,1.1604] job `240eb22ea0b6487e` (submit)
 
 | created | slug | kind | area | where | outcome | speedup | CI | job | mode | promotion | review | expected hit |
 |---|---|---|---|---|---|---|---|---|---|---|---|---|
@@ -21,18 +21,18 @@ Regenerated 2026-10-24T103713Z. Best: 1.1433x [1.1261,1.1604] job `240eb22ea0b64
 | 2026-10-24T032454Z | unpooler-full-triton-skinny-m32-control-blockm16-all-m | control→unpooler-full-triton-skinny-m32 | unpooler GEMM | done/neutral | neutral | 0.9990 | [0.984,1.014] | 09abdd472faa4dce | check |  | proceed | 3/4 |
 | 2026-10-24T074946Z | pooler-triton-splitk2-blockn64-semaphore | primary | pooler GEMM | done/neutral | neutral | 1.1664 | [1.149,1.184] | 08ec203e5717406e | check |  | proceed | 6/7 |
 | 2026-10-24T075006Z | qkv-gate-triton-splitk4-blockn64-semaphore | primary | qkv GEMM | done/neutral | neutral | 1.1431 | [1.126,1.160] | 135ef6499875416a | check |  | proceed | 4/6 |
-| 2026-10-24T075025Z | router-splitk32-small-m-all-loads-in-flight | primary | router GEMM | queue | queued |  |  |  |  |  | required |  |
+| 2026-10-24T075025Z | router-splitk32-small-m-all-loads-in-flight | primary | router GEMM | running | running |  |  | 1e339074b1844a43 | check |  | proceed |  |
 | 2026-10-24T075041Z | router-splitk-semaphore-no-memset | primary | router GEMM | queue | queued |  |  |  |  |  | required |  |
 | 2026-10-24T075111Z | unpooler-slice-triton-splitk8-semaphore | primary | unpooler GEMM | done/neutral | neutral | 1.1546 | [1.137,1.172] | bb31bb36545a47bb | check |  | proceed | 5/5 |
-| 2026-10-24T075347Z | pooler-triton-splitk2-blockn64-semaphore-control-blockk256 | control→pooler-triton-splitk2-blockn64-semaphore | pooler GEMM | queue | hold |  |  |  |  |  | required |  |
+| 2026-10-24T075347Z | pooler-triton-splitk2-blockn64-semaphore-control-blockk256 | control→pooler-triton-splitk2-blockn64-semaphore | pooler GEMM | running | running |  |  | 75d595a29a4c4b57 | check |  | proceed |  |
 | 2026-10-24T092553Z | pooler-unpooler-m128-wgmma-splitk-semaphore | primary | pooler GEMM + unpooler GEMM (m=128) | running | running |  |  | d34fd76f9c444728 | check |  | proceed |  |
 | 2026-10-24T092629Z | qkv-gate-o-m128-wgmma-splitk-semaphore | primary | qkv GEMM + o GEMM (m=128) | queue | hold |  |  |  |  |  | required |  |
-| 2026-10-24T092648Z | pooler-splitk2-tma-weight-stream | primary | pooler GEMM | queue | queued |  |  |  |  |  | required |  |
+| 2026-10-24T092648Z | pooler-splitk2-tma-weight-stream | primary | pooler GEMM | running | running |  |  | 4e89311eefdc4bc3 | check |  | proceed |  |
+| 2026-10-24T103959Z | router-splitk32-small-m-all-loads-in-flight-control-stages3 | control→router-splitk32-small-m-all-loads-in-flight | router GEMM | running | running |  |  | 4685bac7a662454d | check |  | proceed |  |
 
 ## Held
 
 - pooler-skinny-tiled-weight-layout: skinny-Triton family settled: pooler neutral, qkv-gate regression, unpooler-full neutral, o neutral (1.006x), and the BLOCK_M=16 control showed the m=32 penalty is not the tile (20.8 us vs 18.4 us in-run at m=16). The reviewer expected both of this hypothesis's mechanisms to be ~zero, and it builds on the unpromoted pooler branch, so a gain could not be promoted without a rebase and rerun.
 - router-triton-hilo-fused-control-hybrid-cublas-above-m32: superseded: router-triton-hilo-fused-control-splitk-all-m landed (1.151x); its 3-D Triton grid beats cuBLAS hi/lo at every m (5.7-9.3 us vs 10.5-17.7 us), so a hybrid using cuBLAS above m=32 can only be slower
 - router-hilo-addmm-epilogue-control-inplace-out: superseded: master's router no longer uses the cuBLAS hi/lo pair (Triton split-K landed, 1.151x), so the add node this control targets is gone; the primary read flat (1.026x, within CI)
-- pooler-triton-splitk2-blockn64-semaphore-control-blockk256: parent pooler-triton-splitk2-blockn64-semaphore harvested neutral (1.166x, CI low below best); a BLOCK_K control isolating a sub-change of a non-gain cannot change any decision
 - qkv-gate-o-m128-wgmma-splitk-semaphore: same m=128 wgmma split-K design as pooler-unpooler-m128-wgmma-splitk-semaphore (dispatching now); its reviewer asked to wait for that harvest; re-queue by hand if that kernel reaches its target

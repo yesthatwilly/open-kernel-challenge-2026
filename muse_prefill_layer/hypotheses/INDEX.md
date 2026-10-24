@@ -1,6 +1,6 @@
 # muse_prefill_layer hypotheses
 
-Regenerated 2026-10-24T100619Z. Best: 1.0039x [0.9888,1.0189] job `62025c368c3c4e8e` (check)
+Regenerated 2026-10-24T104514Z. Best: 1.0039x [0.9888,1.0189] job `62025c368c3c4e8e` (check)
 
 | created | slug | kind | area | where | outcome | speedup | CI | job | mode | promotion | review | expected hit |
 |---|---|---|---|---|---|---|---|---|---|---|---|---|
@@ -17,7 +17,7 @@ Regenerated 2026-10-24T100619Z. Best: 1.0039x [0.9888,1.0189] job `62025c368c3c4
 | 2026-10-24T075409Z | experts-marlin-block-m-local-rows | primary | w13 marlin + w2 marlin (block_size_m pick) | done/regression | regression | 0.9836 | [0.969,0.998] | 8e9943ec1b004b0f | check |  | proceed | 2/3 |
 | 2026-10-24T075422Z | experts-marlin-block-m-48-turn1 | primary | w13 marlin + w2 marlin (block_size_m pick) | done/neutral | neutral | 1.0030 | [0.988,1.018] | 0606f849d2f441ad | check |  | proceed | 2/3 |
 | 2026-10-24T075435Z | experts-marlin-block-m-48-turn4 | primary | w13 marlin + w2 marlin (block_size_m pick) | queue | hold |  |  |  |  |  | required |  |
-| 2026-10-24T075454Z | router-triton-hilo-splitk-turn | primary | router GEMM | queue | queued |  |  |  |  |  | required |  |
+| 2026-10-24T075454Z | router-triton-hilo-splitk-turn | primary | router GEMM | queue | hold |  |  |  |  |  | proceed |  |
 | 2026-10-24T075513Z | router-pooler-concat-gemm-turn | primary | router GEMM + pooler GEMM (one concatenated GEMM, no side stream) | queue | queued |  |  |  |  |  | required |  |
 | 2026-10-24T092506Z | experts-triton-w4a16-swapab-reglhs | rewrite | w13 marlin + w2 marlin (W4A16 engine with in-kernel NVFP4 dequant, stage 2: swap-AB register-LHS dot) | running | running |  |  | 00148fbedfb6414f | check |  | proceed |  |
 
@@ -26,3 +26,4 @@ Regenerated 2026-10-24T100619Z. Best: 1.0039x [0.9888,1.0189] job `62025c368c3c4
 - experts-dequant-triton-moe-16k: needs human: rules check. The change materializes a full 3.2 GB BF16 copy of the NVFP4 expert weights in global memory on every call, then runs BF16 grouped GEMMs on it. TASK.md allows 'dequantizing inside your kernels' but forbids storing weights at a different precision; a per-call BF16 weight tensor is the strongest reading of that clause (reviewer's words) and may not survive the organizers' manual review. Proceed only if the user confirms it is within the rules; the adversarial review otherwise says proceed (~1.08x geomean upside).
 - fa3-batched-mode: adversarial review: The occupancy mechanism is contradicted by the landed profile: the FA3 kernel already runs at the same ~590-606 TFLOP/s on turn_1 full (96 nominal CTAs) as on t
 - experts-marlin-block-m-48-turn4: block 48 at turn_1 was neutral (1.003x, 0606f849d2f441ad) and local-rows regressed (0.984x); block-m tuning on prefill is settled, and prefill has 3 checks for the rewrite
+- router-triton-hilo-splitk-turn: reviewer: the side-stream router (~40-45 us) already fits under the main branch (the 39.3 us nvjet is qkv_gate, not the pooler), expected 0.3-1% inside noise; prefill has 2 checks and the rewrite's next stage needs them
