@@ -1,6 +1,6 @@
 # muse_prefill_layer findings
 
-Regenerated 2026-10-24T071935Z by `churn.py index`. Read this before writing a hypothesis for muse_prefill_layer.
+Regenerated 2026-10-24T075012Z by `churn.py index`. Read this before writing a hypothesis for muse_prefill_layer.
 
 ## Current best
 
@@ -18,6 +18,9 @@ Where the time goes (per scored shape, top kernels):
 - batch=1 ctx=65536 dist=soft layer=full load=first_turn page=1 q_len=16384 repeats=6: yours 25286.6µs vs SGLang 25296.3µs (SoL 9847.7µs) · void sglang::device::marlin_moe::Marlin<__nv_bfloat16, 56... 10911.6µs 43.9%, void cutlass::device_kernel<flash::enable_sm90_or_later<f... 8164.1µs 32.8%, nvjet_sm90_tst_192x192_64x4_2x1_v_bz_coopB_TNN 2545.9µs 10.2%
 
 ## By area
+
+### FA3 call
+- **fa3-contiguous-kv-gather** → regression (regression), 0.9879x — lost on full turn_1, turn_4. Replace the paged FA3 call with a contiguous one; everything before and after stays the parity path. After store_cache (so the new tokens' rows are in the cache
 
 ### MoE align/dispatch
 - **moe-align-side-stream** → neutral (unproven-vs-best), 1.0076x — no shape moved outside noise. Keep the parity base and move three pieces of work that depend only on the routing outputs and local_start onto the existing side stream, inside the same torch.
@@ -41,5 +44,4 @@ Where the time goes (per scored shape, top kernels):
 - queue: experts-dequant-triton-moe-16k [w13 marlin + w2 marlin (expert grouped GEMM engine at 16K tokens)] p2 hold
 - queue: experts-triton-w4a16-inkernel-fp4 [w13 marlin + w2 marlin (W4A16 engine with in-kernel NVFP4 dequant, for the turn shapes)] p5 queued
 - queue: fa3-batched-mode [FA3 call] p4 hold
-- running: fa3-contiguous-kv-gather [FA3 call] p3 running
 - running: qk-norm-fp8-cache-store-fusion [pre-attention norm+rope + cache store] p4 running
