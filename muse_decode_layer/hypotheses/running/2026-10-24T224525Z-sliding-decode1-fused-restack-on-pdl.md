@@ -44,13 +44,15 @@ base_sha: 2569d7e0d6f208921d432fd4237dc483601b39ca
 base_blob: e33a32aa5580fbd5b38764ea287a6364c865432e
 branch: hyp/muse_decode_layer/sliding-decode1-fused-restack-on-pdl
 worktree: .worktrees/muse_decode_layer/sliding-decode1-fused-restack-on-pdl
-mode: null
+mode: check
 implemented_at: 2026-10-24T231719Z
 impl_commit: b85563b6593313a0cbabdf1acf5f57e9d4ed02a7
 submission_sha256: 9aca5bba7f7575c8840f3e7d8100a979ee214b744cdf4db9a590e01990d5cd99
 norm_sha256: e796e3016e09bfe67dc431bb28642d866430cd13ad6cc9e8034410752a4bebb7
 submission_blob: 54c2a04b2a56aa2b7315c6ccc78d2573fc28a3ce
 lint_warnings: 18
+attempt_file: 2026-10-24T231719Z-check-sliding-decode1-fused-restack-on-pdl.md
+prepared_at: 2026-10-24T231719Z
 ---
 
 # sliding-decode1-fused-restack-on-pdl
