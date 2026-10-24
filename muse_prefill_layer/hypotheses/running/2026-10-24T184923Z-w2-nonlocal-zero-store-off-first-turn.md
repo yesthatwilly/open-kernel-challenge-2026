@@ -37,13 +37,19 @@ kind: primary
 controls_for: null
 review: required
 status: running
-stage: claimed
+stage: implemented
 claimed_at: 2026-10-24T231849Z
 base_sha: 27a44fb6ced1bfd563c16ae512b70c9222e795f8
 base_blob: 635cfee3ac2c3f7c66840b8c8a082cad2fa41a68
 branch: hyp/muse_prefill_layer/w2-nonlocal-zero-store-off-first-turn
 worktree: .worktrees/muse_prefill_layer/w2-nonlocal-zero-store-off-first-turn
 mode: null
+implemented_at: 2026-10-24T231931Z
+impl_commit: 749edd39f465d8f7a10b9f03dfb2ca122002e43c
+submission_sha256: 0c199e69da2c065b8ddcf6418157c8e034c27c8ac3efc5196e615a27961bce4d
+norm_sha256: 7ad0a1bd699965b5fcf833a09614dcd2854b5b6c322487ee10c2b89abae8fe01
+submission_blob: 39f26f165918e7ccc5c37ebbaed148b6b28cff71
+lint_warnings: 6
 ---
 
 # w2-nonlocal-zero-store-off-first-turn
@@ -60,3 +66,21 @@ Built on master (635cfee). One flag and one prepare() guard. Today ZERO_NONLOCAL
 ## Risk
 
 Single-factor measurement of the zero-store cost. It is a strict subset of moe-align-local-routes-parallel-port and first-turn-moe-dead-work-stack at first_turn (those remove the -1 blocks altogether); worth running on its own because experts-cuda-wgmma-mixed-input-grouped-gemm (in the judge) keeps the zero-store by design ('w2 still zero-stores them'), so this row tells that rewrite whether to drop it. Risk: if the guard finds NaN leaking it keeps the zero-store and the run measures master (the log line says so).
+
+## Implementation notes
+
+Built in the main thread 2026-10-24 ~23:40Z with self-review (user approved; no new agents before the reset), as specified:
+- `_weighted_sum_skips_remote(state, device)` (prepare only): T=4096, ~7/8 remote slots, y remote rows NaN vs 0, outputs must be finite and bitwise equal; prints `[w2 zero-store] OFF ...` or `ON: <reason>`; any exception -> ON (master behaviour).
+- prepare(): `state["zero_nonlocal_w2"] = not _weighted_sum_skips_remote(...)` before `_check_expert_gemms(bank, weights, state["zero_nonlocal_w2"])` (new `zero_w2` parameter, default the module constant), so the GEMM check and `_check_experts_e2e` both run for the chosen setting.
+- `_experts_triton`: the w2 call passes `state["zero_nonlocal_w2"]`. w13 and the Marlin path unchanged.
+
+## Rules check
+
+- [x] CUDA-graph capturable: kernel_fn gains only a dict lookup of a prepare()-chosen bool.
+- [x] Fresh inputs: the flag is derived from synthetic data in prepare(), never from `data`.
+- [x] Weights unchanged; NVFP4 stays NVFP4.
+- [x] Activations BF16 as in SGLang; KV FP8; attention untouched.
+- [x] Every key attended (attention untouched).
+- [x] No timing/harness access, processes, network or module edits.
+- [x] No work outside timed calls added: the probe is a correctness check in prepare(), like the existing ones.
+- [x] okc_lint: OK, no errors.
