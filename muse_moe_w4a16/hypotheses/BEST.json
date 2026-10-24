@@ -1,17 +1,17 @@
 {
  "problem": "muse_moe_w4a16",
- "job": "fb2cc736613747df",
- "check_job": "fb2cc736613747df",
+ "job": "bacd1f502f4e46fa",
+ "check_job": "bacd1f502f4e46fa",
  "mode": "check",
- "speedup": 0.9887547325362586,
+ "speedup": 1.1297159216968498,
  "ci": [
-  0.9739234115482147,
-  1.0035860535243024
+  1.112770182871397,
+  1.1466616605223023
  ],
- "score_us": 13601.451965244405,
- "commit": "a646cb4151c0a45f926a49b68de21789e11a8102",
- "submission_blob": "11fbc1957daf7294cd2810ff82a0aad2f25644bd",
- "slug": "sglang-marlin-path-parity",
- "result": "muse_moe_w4a16/hypotheses/done/gain/sglang-marlin-path-parity.result.json",
- "updated_at": "2026-10-24T023730Z"
+ "score_us": 11904.320140766147,
+ "commit": "192f225d8fbfa65bb838ce448c7d6b5e2c522ecd",
+ "submission_blob": "b81d47abe0c2e53a3ecc180884ae8d9671ba4e14",
+ "slug": "post-expert-norm-triton-small-m",
+ "result": "muse_moe_w4a16/hypotheses/done/gain/post-expert-norm-triton-small-m.result.json",
+ "updated_at": "2026-10-24T111614Z"
 }
