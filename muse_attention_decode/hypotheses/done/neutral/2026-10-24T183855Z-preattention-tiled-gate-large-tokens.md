@@ -35,10 +35,10 @@ priority: 3
 kind: primary
 controls_for: null
 review: proceed
-status: running
+status: done
 review_at: 2026-10-24T184124Z
 review_companions: null
-stage: dispatched
+stage: harvested
 claimed_at: 2026-10-24T184124Z
 base_sha: 80056b8b63f9285186da431dd2ea8568beb3c0bf
 base_blob: c6854f093588da524e63657576b27ed720756e32
@@ -55,6 +55,13 @@ attempt_file: 2026-10-24T184725Z-check-preattention-tiled-gate-large-tokens.md
 prepared_at: 2026-10-24T184725Z
 job: c2ebf6ed05824692
 dispatched_at: 2026-10-24T184744Z
+outcome: neutral
+verdict_detail: within-ci
+speedup: 1.386291131225002
+speedup_ci: [1.365496764256627, 1.407085498193377]
+harvested_at: 2026-10-24T231959Z
+best_at_harvest: 1.3948738389144513
+promotion: null
 ---
 
 # preattention-tiled-gate-large-tokens
@@ -126,3 +133,35 @@ Audited 2026-10-24 (opus). **Verdict: dispatch** (no fixes).
 - Rules: no sync, allocation or value branching added; no caches; FP8 q/k/v as master. Lint CLEAN.
 
 Residual risk: the tiled kernel is only exercised on scored verify_16/32 timed calls (no pre-test covers it), relying on the parent run's clean pass of the same code.
+
+## Result
+
+- job `c2ebf6ed05824692` (check), status done, passed True, tests 16/16
+- speedup 1.3863x, 95% CI [1.3655, 1.4071], score 2716.8174960997503 µs vs SGLang 3766.3 µs
+- best at harvest: {"speedup": 1.3948738389144513, "ci": [1.3739507313307344, 1.415796946498168], "job": "698d4cd3838c4a63"}; base result: muse_attention_decode/hypotheses/done/gain/sliding-deep-splits-on-cuda-splitkv.result.json
+- **outcome: neutral** (within-ci)
+- files: `muse_attention_decode/hypotheses/done/neutral/preattention-tiled-gate-large-tokens.result.json`, `muse_attention_decode/hypotheses/done/neutral/preattention-tiled-gate-large-tokens.patch`; branch `hyp/muse_attention_decode/preattention-tiled-gate-large-tokens`
+
+## Attribution
+
+| shape | w | base µs | hyp µs | delta | verdict |
+|---|---|---|---|---|---|
+| batch=1 ctx=80000 dist=soft heads=tp8 layer=sliding load=decode_1 page=1 | 46 | 13.17 | 13.56 | 0.9926 | flat |
+| batch=1 ctx=80000 dist=coherent heads=tp8 layer=full load=decode_1 page=1 | 16 | 27.26 | 27.39 | 0.9995 | flat |
+| batch=16 ctx=80000 dist=soft heads=tp8 layer=sliding load=decode_16 page=1 spread=agentic | 46 | 15.34 | 15.32 | 1.0057 | flat |
+| batch=16 ctx=80000 dist=coherent heads=tp8 layer=full load=decode_16 page=1 spread=agentic | 16 | 122.79 | 122.09 | 0.9976 | flat |
+| batch=32 ctx=80000 dist=soft heads=tp8 layer=sliding load=decode_32 page=1 spread=agentic | 46 | 24.24 | 24.32 | 1.0039 | flat |
+| batch=32 ctx=80000 dist=coherent heads=tp8 layer=full load=decode_32 page=1 spread=agentic | 16 | 241.9 | 257.68 | 0.9392 | lost |
+| batch=1 ctx=80000 dist=soft heads=tp8 layer=sliding load=verify_1 page=1 q_len=8 | 46 | 16.72 | 16.94 | 1.0002 | flat |
+| batch=1 ctx=80000 dist=coherent heads=tp8 layer=full load=verify_1 page=1 q_len=8 | 16 | 30.03 | 30.26 | 1.0054 | flat |
+| batch=16 ctx=80000 dist=soft heads=tp8 layer=sliding load=verify_16 page=1 q_len=8 spread=agentic | 46 | 22.67 | 22.74 | 0.9955 | flat |
+| batch=16 ctx=80000 dist=coherent heads=tp8 layer=full load=verify_16 page=1 q_len=8 spread=agentic | 16 | 161.98 | 162.12 | 1.0009 | flat |
+| batch=32 ctx=80000 dist=soft heads=tp8 layer=sliding load=verify_32 page=1 q_len=8 spread=agentic | 46 | 28.7 | 27.55 | 1.0385 | gained |
+| batch=32 ctx=80000 dist=coherent heads=tp8 layer=full load=verify_32 page=1 q_len=8 spread=agentic | 16 | 300.83 | 299.49 | 1.0065 | flat |
+
+gained on sliding verify_32; lost on full decode_32. Expected hit: 1/4. Noise ±1.5%.
+
+## Follow-ups
+
+- within-ci: the change is not proven either way; a stacked hypothesis (`depends_on: preattention-tiled-gate-large-tokens`) that adds a further change in the same area is the only way to learn more (identical code is never re-run).
+
