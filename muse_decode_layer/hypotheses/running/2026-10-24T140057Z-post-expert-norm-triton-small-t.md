@@ -57,13 +57,19 @@ review: proceed
 status: running
 review_at: 2026-10-24T140432Z
 review_companions: null
-stage: claimed
+stage: implemented
 claimed_at: 2026-10-24T140432Z
 base_sha: 5f6055ebd1ea05b43c2b3a6e3a02c0f86b49ce62
 base_blob: 3a358375a50dcc6e19437992f7c610431582ea72
 branch: hyp/muse_decode_layer/post-expert-norm-triton-small-t
 worktree: .worktrees/muse_decode_layer/post-expert-norm-triton-small-t
 mode: null
+implemented_at: 2026-10-24T140647Z
+impl_commit: 880154e5c77f242f5b80b4a179282de316a6f3c5
+submission_sha256: b7656c884dc96c0aa5d211b88628f9ea32e2b70a73321ee6300040edb7b202f2
+norm_sha256: c0c86f13672cb0be3211d73ca478ff0b5676a667b03822b1b5ebb356b1194896
+submission_blob: cc466fce207709c98ab0e78c2435c1c459890fdb
+lint_warnings: 1
 ---
 
 # post-expert-norm-triton-small-t
@@ -108,3 +114,43 @@ No companion is warranted. A gain can be read per kernel: reduce_kernel<512,1>, 
 - bf16-shape-gated-triton-gemms-small-t is queued for the same T<32 shapes. If it runs close to this one, attribute each result per kernel, not by headline, and combine them later by 3-way merge as LESSONS records for moe.
 - If this gains, a separate stacked hypothesis could test the same kernel against SGLang's Triton kernel at T>=32 (3.6-5.8 us). The gain there would be under 1.5% per shape and hard to resolve in one run.
 
+
+## Implementation notes
+
+Worktree `.worktrees/muse_decode_layer/post-expert-norm-triton-small-t`, `muse_decode_layer/submission.py` only (+37 lines, 0 removed):
+
+- Imports: `import triton` and `import triton.language as tl`, after `torch.nn.functional`.
+- Constant `SMALL_T_POST_NORM = 32`, after `MARLIN_BLOCK_SIZE_M_CAP`.
+- `_post_norm_combine_kernel` is copied verbatim from muse_moe_w4a16 post-expert-norm-triton-small-m and sits between `_marlin_bank` and `prepare`. Its math matches `reference.post_expert_norm`:
+  - `y.float() * (1 + w.float())`
+  - `rsqrt(mean(v^2) + 1e-8)`
+  - weighted by the fp32 topk_weights and summed over local slots
+  
+  A scalar branch skips remote slots (`eid < 0`), so they are never loaded. A token with no local slot stores the zero `acc`.
+- `prepare()`: `state["post_expert_norm_w"] = weights["post_expert_norm"].contiguous()`. This is the original BF16 [4096] weight, not a copy at a new precision. `post_expert_w` stays for the SGLang path.
+- `_experts()`, after the w2 Marlin call: `if num_tokens < SMALL_T_POST_NORM`, the code calls `y.contiguous()` and `torch.empty((T, 4096), bf16)`. It then launches grid `(T,)` with `TOP_K_C=8`, `BLOCK_H=next_power_of_2(4096)=4096` and `num_warps=8`, and returns the result. The inputs are `local_ids` (`bank["expert_map"][topk_ids]`, int32, -1 for remote slots) and the fp32 contiguous `topk_weights`, both already computed earlier in `_experts`. Otherwise the code falls through to the SGLang `fused_post_expert_norm_weighted_sum` call, unchanged, which serves as the T>=32 control.
+- Deviations: none in the code. In decode_layer, cache3 aliases the start of cache13, which cache1 also uses. Remote rows therefore hold stale w13 output, not truly uninitialised memory. They must not be read either way, and the `eid >= 0` skip handles that. I kept the docstring wording verbatim.
+- Untouched: the local_ids arithmetic in kernel_fn, moe_align_block_size, the block_size_m pick and its cap, both Marlin calls, silu_and_mul, the pre-expert norm, the unpooler, the boundaries and attention.
+
+## Rules check
+
+Checked against `git -C .worktrees/muse_decode_layer/post-expert-norm-triton-small-t diff`:
+
+- [x] The new path can be captured in a CUDA graph. There are no `.item()`, `.cpu()`, synchronize calls or tensor prints. The only host branch is on `num_tokens`, which is a shape. `torch.empty` is sized by shape. The in-kernel `eid >= 0` is device-side control flow, not a host branch.
+- [x] Nothing derived from `data` is cached across calls. The only addition to state is a weight copy made in `prepare()`.
+- [x] Weights: `post_expert_norm_w` is the original BF16 tensor with only `.contiguous()` applied, so its precision is unchanged. `1 + w` is computed in fp32 inside the kernel.
+- [x] Activations: y is read as BF16 from Marlin, math runs in fp32, and the output is stored as BF16, the same dtype the SGLang wrapper returns. The KV cache and queries are untouched.
+- [x] n/a: attention is untouched, so every key is still attended.
+- [x] No timing patches, harness access, module edits, reference import, subprocesses or network. The only new imports are triton and triton.language.
+- [x] All the work happens inside the timed call, and nothing is cached or replayed. The kernel runs on each call with that call's y, ids and weights.
+- [x] No `triton.autotune`. The config is fixed: num_warps=8 and a constexpr BLOCK_H.
+- [x] The first line is still `# okc: problem=muse_decode_layer`.
+
+Lint (`okc_lint.py ... --problem muse_decode_layer`):
+
+```
+warn  host-sync    L277: torch.cuda.synchronize()  (outside kernel_fn's call graph; fine in prepare())
+OK with warnings: muse_decode_layer/submission.py
+```
+
+The warning predates this change: it flags the existing `torch.cuda.synchronize()` at the end of `prepare()`. `python3 -I -m py_compile` passes, and the __pycache__ it left has been removed.
