@@ -60,9 +60,16 @@ priority: 2
 kind: primary
 controls_for: null
 review: proceed
-status: queued
+status: running
 review_at: 2026-10-24T092245Z
 review_companions: null
+stage: claimed
+claimed_at: 2026-10-24T092246Z
+base_sha: e8c54b5ac52496d46ca232957689f65e6c729c2a
+base_blob: f14211b4b0e88f8b3f683d9f9275b76a64b66e02
+branch: hyp/muse_attention_decode/fa3-hdim128-head-pairing
+worktree: .worktrees/muse_attention_decode/fa3-hdim128-head-pairing
+mode: null
 ---
 
 # fa3-hdim128-head-pairing
