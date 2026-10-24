@@ -49,8 +49,10 @@ depends_on: null
 priority: 2
 kind: primary
 controls_for: null
-review: required
+review: proceed
 status: queued
+review_at: 2026-10-24T075337Z
+review_companions: null
 ---
 
 # qkv-gate-triton-splitk4-blockn64-semaphore
@@ -71,3 +73,28 @@ Built on master (dba4ffd; router untouched). For layer == 'qkv_gate' and cfg m <
 ## Risk
 
 Why this is not a retry of qkv-gate-triton-skinny-m32 (0.924x, 22-26 us, ~1.6 TB/s): that kernel was full-K with BLOCK_N=16 (each CTA streamed 16 rows x 8192 K with 32 KB in flight per SM). This one uses the two levers the landed router proved and the unpooler control measured: BLOCK_N=64 tiles (3.73 TB/s on unpooler) and a split-K grid with short slices that keeps 144 CTAs each with 4 x 16 KB weight stages in flight (~9 MB fleet-wide, above Little's law for 4.8 TB/s). Main risk: nvjet is unusually efficient on qkv_gate (8.1 us = 4.66 TB/s at m=16), so the bar is high; the gain must come mostly from removing the reduce node and the gap. 144 CTAs on 132 SMs means 12 SMs host two CTAs; if the profile shows a 2x tail, the one-axis retune is SPLIT_K=8/num_stages=3 (288 CTAs, ~2.2 per SM) or BLOCK_N=128/SPLIT_K=8 (144 CTAs, larger tiles). Semaphore correctness risk as in pooler-triton-splitk2-blockn64-semaphore; a broken ordering fails the m=1 qkv_gate test. If both land they should share one kernel; they are minted independently so each attributes on its own.
+
+## Adversarial review
+
+Reviewed 2026-10-24T075337Z by an adversarial subagent (model opus).
+
+**Verdict: proceed.** Plausible and not a retry. Done results show single-kernel Triton paths report about what their kernel takes, while the two-node nvjet+splitKreduce qkv_gate path reports 2-4 us more than its kernel sum. A one-node kernel at the measured BLOCK_N=64 Triton bandwidth (3.73 TB/s) lands around 10.5-12 us against today's 13.8-14.4 us. One run is interpretable on its own because only qkv_gate m<=32 changes and the profile names the new kernel's time.
+
+### Justification
+Mechanism: qkv_gate m<=32 is pure weight streaming (37.7 MB, floor 7.9 us). Today it is two graph nodes. Reported vs profiled kernel sums: decode_1 14.4 vs 10.8+1.7; decode_16 13.8 vs 8.1+1.7; decode_32 14.3 vs 10.2+1.8; verify_1 14.0 vs 9.2+2.0. Every single-kernel Triton result in done/ has reported close to profiled: unpooler-full-triton-skinny-m32 decode_16 18.0 vs 18.0, qkv-gate-triton-skinny-m32 decode_1 22.6 vs 22.0. So the 'reported-minus-kernel gap' is real and tied to the extra node, and folding the reduce into one launch should remove most of it. The bandwidth premise also has evidence: the BLOCK_N=64 Triton stream measured 3.73 TB/s on unpooler (67 MB in 18.0 us), and 37.7 MB at that rate is 10.1 us. The 144-CTA split-K grid answers the in-flight-bytes failure of the full-K BLOCK_N=16 kernel (0.924x, ~1.6 TB/s). Its ~9 MB in flight is above Little's law for HBM3e. The ticket semaphore does not spin, so it cannot deadlock even if CTAs are not co-resident. It is graph-safe: counters reset in-kernel, workspace and counters are allocated in prepare(), there are no host syncs, and it branches only on m. The fixed 0..3 summation order makes it deterministic. Shape expectations: faster at m=1/8/16 and flat-or-slower at m=32 matches the per-shape evidence. BLOCK_M=32 Triton tiles were slower than nvjet on unpooler decode_32: 19.8 and 21.9 us vs 18.5. m=128/256 untouched is correct. Payoff in score terms: about 2-3 us off a roughly 55 us decode_1 load is about 4-5% on that load, and four of six loads are affected. That is above the about 1.5% CI half-width and well above the qkv_gate decode_1 cell's run-to-run drift (0.981-1.025 across five master-equivalent runs). WEAKEST LINK: carrying the 3.73 TB/s unpooler number over to a kernel half its size with shorter per-CTA streams. Unpooler streamed 67 MB over 18 us. Here each CTA does only 16 K-steps of 256-byte row segments (BLOCK_K=128 vs unpooler's 256), so pipeline ramp, first-byte latency and the semaphore tail (last-arriving CTA per column reloads 4 partials and stores) are a larger share. The 12 SMs hosting two of the 144 CTAs may also set the tail. If effective bandwidth falls to about 3.0 TB/s plus about 1 us of epilogue and ramp, the kernel is about 13.5 us and the result is flat. Second weakest: the 'nvjet is at 4.66 TB/s' figure (8.1 us at m=16) is a profile number that varies 8.0-10.8 us run to run on identical code. Don't read it as the cold-L2 bar. The reported 13.8-14.4 us is the bar.
+
+### Confounders on the current kernel
+- sglang-gemm-dispatch-parity (965b046): this defines the qkv_gate path being replaced, and the baseline uses the same dispatch, so the measured delta is Triton vs nvjet with no interaction. qkv_gate m>=128 stays on it as a control. Not a confounder.
+- router-triton-hilo-fused-control-splitk-all-m (dba4ffd): this is the design template only. The router shapes, kernel and state are untouched, so router cells are a clean control. Its own result logged a 'loss' on qkv_gate decode_1 (0.981) with unchanged qkv code, which shows that cell drifts by about ±2% from noise. Gains or losses on qkv_gate under about 3% should not be attributed. The expected about 15-20% cell effect is far outside that.
+- router-hilo-at-m8 (f9dc05d): router-only threshold, superseded by the all-m Triton router. No shared launch sequence, memory or numerics with qkv_gate. Not a confounder.
+
+### Interference and A/B needs
+No companion is warranted. Only the qkv_gate m<=32 cells change, and each scored shape is timed as its own graph after an L2 flush, so a landed hypothesis cannot leak into these cells through cache or launch-sequence effects. Reverting or retuning a landed item would not change what this run measures. The run is still interpretable whichever way it goes. A gain is unambiguous, since only one new kernel is on the path. A loss or a split result can be read from the per-shape table plus the profile's single-kernel duration: kernel time well above 10 us means bandwidth or occupancy, and the hypothesis already pre-registers the one-axis retunes (SPLIT_K=8/num_stages=3 or BLOCK_N=128/SPLIT_K=8); a slowdown only at m=32 means the BLOCK_M=32 penalty and the follow-up is restricting to m<=16. The one ambiguity a companion could resolve is epilogue cost vs streaming cost. A fair control for that (atomic_add into a zeroed fp32 buffer) would add a memset and a cast node and reintroduce the very gap under test, so it would not isolate cleanly. It is better run only if the primary comes back flat with a kernel time near 11-12 us.
+
+### Open questions
+- Does the installed Triton lower the scalar atomic_add with sem/scope to a single-thread atom.acq_rel.gpu? Dump the PTX in the attempt file.
+- Smem per CTA at num_stages=4: weight 16 KB + x 4 KB (BLOCK_M=16) or 8 KB (BLOCK_M=32) per stage is 80-96 KB, so 2 CTAs/SM fit in 228 KB only if Triton does not add epilogue scratch. Confirm the occupancy claim from the compiled kernel's shared-memory size.
+- Is BLOCK_K=128 (256-byte row segments from the [N, K] weight) chosen on purpose over unpooler's BLOCK_K=256 (512-byte segments, 8 K-steps per 2048 slice)? If the result is flat, that is a third cheap retune axis.
+- If m=32 regresses while m<=16 gains, restrict the route to m<=16 rather than retuning BLOCK_M=32. The per-shape table will show it directly.
+- If both this and the pooler semaphore hypothesis gain, merge them into one parametrized kernel with per-layer state keys, as the hypothesis itself suggests.
+
