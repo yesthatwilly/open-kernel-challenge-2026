@@ -49,13 +49,15 @@ base_sha: bcc7ea4a50f9cbe47528f96e0ab15b661666ecdf
 base_blob: 1c0f5fa1bfc4e602b62e5e9edd9df6d5652b297b
 branch: hyp/muse_attention_decode/full-fused-triton-decode1-gate
 worktree: .worktrees/muse_attention_decode/full-fused-triton-decode1-gate
-mode: null
+mode: submit
 implemented_at: 2026-10-24T164956Z
 impl_commit: 96908abef931000bcc9d79b0d10a47c895f466f4
 submission_sha256: dd8d09f5010575141d2e2b4a424688fd1bbd4c244f9c6e9cd2b79a67005ee9af
 norm_sha256: dc3f357b4467875a82260c8b98e78b3c66b06d2f13f8b70a001c39505c25f181
 submission_blob: dbe93e3308cb9143edde3f8784fbffce594bf70a
 lint_warnings: 0
+attempt_file: 2026-10-24T164956Z-submit-full-fused-triton-decode1-gate.md
+prepared_at: 2026-10-24T164956Z
 ---
 
 # full-fused-triton-decode1-gate
