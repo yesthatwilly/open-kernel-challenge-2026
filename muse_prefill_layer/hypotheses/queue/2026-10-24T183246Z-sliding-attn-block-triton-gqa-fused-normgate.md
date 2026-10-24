@@ -85,8 +85,10 @@ kind: rewrite
 controls_for: null
 rewrite_stage: 1
 replaces: "q.view(T,16,64).to(FP8) + flash_attn_with_kvcache (FA3 cutlass::device_kernel<flash::...> + FlashAttnFwdCombine) + state['o_norm_gate'] (FusedRMSNormGate) on sliding layers (cfg['window'] == 2048)"
-review: required
+review: proceed
 status: queued
+review_at: 2026-10-24T183433Z
+review_companions: null
 ---
 
 # sliding-attn-block-triton-gqa-fused-normgate
@@ -114,3 +116,27 @@ shape (profile top_kernels) against the incumbent and the speed-of-light floor, 
 2. at or below the incumbent kernels' time on the target shapes;
 3. within ~1.5x of the floor on the target shapes, and the headline CI clears 1.0 (promotable).
 The next stage is minted with `--kind rewrite --depends-on <this slug> --stage N+1`.
+
+## Adversarial review
+
+Reviewed 2026-10-24T183433Z by an adversarial subagent (model opus).
+
+**Verdict: proceed.** A sound, rules-clean stage-1 rewrite of the sliding-layer attention back end. The turn_1 and turn_4 targets are physically reachable, and the T=16384 timing gate protects first_turn. No landed hypothesis confounds it, so no companions are needed. The main gap: the incumbent's q-cast and FusedRMSNormGate rows are hidden in the profile's '... 11 more', so prepare() should time the incumbent sequence beside the new one at the scored turn shapes.
+
+### Justification
+Mechanism is plausible. Master profile ba9c16b9cc6b4605 confirms FA3 at 25.3 us plus FlashAttnFwdCombine at 7.1 us on sliding turn_1, 63.1 us at sliding turn_4 and 300.6 us at sliding first_turn. At turn_1, 96 per-head 128-row tiles do not fill 132 SMs and the work is latency-chain bound. GQA packing gives 16 tokens x 8 heads = 128 MMA rows per program and halves K/V gathers; with the 4-way split at turn_1 that makes 384 programs of about 8 64-key tiles each, against about 17 serial 128-key tiles in FA3. The ~15 us turn_1 target is credible. The window K/V working set (about 0.7 MB cold) is L2-resident and per-program gathers are latency-bound, not bandwidth-bound, so the LESSONS 2.1 TB/s gather ceiling does not bind. Floors check out: 4*753*2048*16*64 = 6.3 GFLOP, which is 6.4 us at 989 TF, with exp count at the same order. The expected directions match TASK weights. turn_1 is sliding 46 + full 16, about 72.4 ms per load, so saving ~22 us x 46 is about 1.4% on that load; turn_4 is about 0.6% of its load; first_turn is flat or gated. The headline gain is therefore about 0.6-0.7%, inside the +/-1.5% CI, as the hypothesis itself says. That is acceptable because, as a rewrite, it is judged on the replaced kernel rows. Weakest link: the incumbent's 'q cast + FusedRMSNormGate 2-5 us each' is an estimate, not in the profile. Both rows fall into '... 11 more' at turn_1 and turn_4, as the new combine kernel likely will too, so milestone 2 (at or below the incumbent kernels' time) cannot be fully read from top_kernels without extra prints. Secondary weak links: (a) the 'combine folded in' saving at turn_1 is partly given back by the stage's own split-combine launch; (b) a Triton bf16-dot FA at first_turn will very likely lose to FA3, so the gate will keep FA3 there; that is expected and fine.
+
+### Confounders on the current kernel
+- sglang-pipeline-parity: not a confounder but the incumbent definition. It established the exact q.to(FP8) + paged FA3 (window (2047,0)) + FusedRMSNormGate sequence being replaced and used as the self-check oracle; nothing tunable in it alters this comparison.
+- experts-triton-w4a16-first-turn-blockt256 and experts-hybrid-marlin-turn-triton-first-turn: touch only prepare()/_experts after the o GEMM. The timed replay starts with a cold L2 and the attention block runs strictly before the experts on the main stream, so they share no memory traffic, numerical path or launch adjacency with the replaced kernels. A change in attention kernel time is not caused by them. The only weak coupling is that master's prepare() spends time on expert self-checks, which shares the 300 s prepare and 15 min run budget with this hypothesis's T=16384 graph timing and self-checks.
+
+### Interference and A/B needs
+No companion is warranted. No landed hypothesis touches the sliding-attention back end, its inputs (qkv GEMM, FusedQKNorm, store_cache stay byte-identical) or its consumer (o GEMM unchanged). A gain or loss on the replaced rows is therefore attributable to the change itself. Full-layer shapes are a built-in control because they stay byte-identical. The first_turn sub-change is self-isolating through the prepare() timing gate and the PATH CHOSEN line. An ab-revert of a landed experts hypothesis would not change the attention rows, and a control splitting 'GQA kernel' from 'fused norm-gate epilogue' would cost a check to attribute about 2-5 us, which the next stage can do more cheaply. For a rewrite, the next stage is the follow-up.
+
+### Open questions
+- The incumbent q.to(FP8) and FusedRMSNormGate rows, and the new combine kernel, will likely be hidden in the profile's '... 11 more' at turn_1 and turn_4. Should prepare() also time master's exact sequence and the new path as captured graphs at the scored turn_1 (B=1 ctx=80000 L=753) and turn_4 (B=4) shapes (cold L2, median), printing both, so milestone 2 is readable from the log?
+- Is the 2e-2 rel-L2-vs-incumbent pass bar safe, given that the incumbent uses FP8 P and the new kernel uses BF16 P? The difference after per-head RMSNorm and gating should be well under 1e-2, but if the bar trips spuriously the run silently becomes byte-identical to master and wastes a rewrite check. Print the margin.
+- At turn_1 the 4-way split adds a combine launch. Was S=2 or S=1 with BLOCK_TOK=16 (96 programs) considered as an alternative recorded in prepare() timing? A small in-prepare sweep over S in {1,2,4} at the turn_1 shape would choose from data at no check cost.
+- Does the profile show master's FA3 launching with PDL? Replacing it with non-PDL Triton launches could lose a few us of overlap with the neighbouring qk_norm/store_cache and o GEMM, which would show up as noise in the per-kernel rows.
+- Budget: the T=16384 synthetic self-check plus graph timing with a 256 MiB flush x 20 replays for both paths, on top of master's existing expert checks. Confirm prepare() stays well under 300 s and the whole run under 15 min including the Triton compile.
+
