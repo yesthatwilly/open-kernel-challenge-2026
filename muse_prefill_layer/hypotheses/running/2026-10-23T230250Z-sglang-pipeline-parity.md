@@ -56,13 +56,15 @@ base_sha: 077528f1affb9d72e841d65b80b285e7f23a0184
 base_blob: 15e2cafa9040cfadc7045aca96417bbeb8707aa9
 branch: hyp/muse_prefill_layer/sglang-pipeline-parity
 worktree: .worktrees/muse_prefill_layer/sglang-pipeline-parity
-mode: null
+mode: check
 implemented_at: 2026-10-24T024934Z
 impl_commit: 3312002050f7eff48ef21b830ec6d2ace0ed9c61
 submission_sha256: 238f0a359aca8364cd00480bdc5c7a5ff7f727f50db71e81644e78252b8dda10
 norm_sha256: f988cda4ec6fe66e35755f3c9baaac048d96b5e531080d94e5ef30728aa97376
 submission_blob: e4931f050c7fb99835fe116d25bb454a5ea731e9
 lint_warnings: 1
+attempt_file: 2026-10-24T024934Z-check-sglang-pipeline-parity.md
+prepared_at: 2026-10-24T024934Z
 ---
 
 # sglang-pipeline-parity
