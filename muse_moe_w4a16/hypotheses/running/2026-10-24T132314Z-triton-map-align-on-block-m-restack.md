@@ -39,9 +39,16 @@ priority: 1
 kind: primary
 controls_for: null
 review: proceed
-status: queued
+status: running
 review_at: 2026-10-24T132520Z
 review_companions: null
+stage: claimed
+claimed_at: 2026-10-24T132520Z
+base_sha: a36124bb66d280ad8d9fdcad53738d33f599a856
+base_blob: c7bf9ffedc48b757f56765004e5d65f6ad5ba841
+branch: hyp/muse_moe_w4a16/triton-map-align-on-block-m-restack
+worktree: .worktrees/muse_moe_w4a16/triton-map-align-on-block-m-restack
+mode: null
 ---
 
 # triton-map-align-on-block-m-restack
