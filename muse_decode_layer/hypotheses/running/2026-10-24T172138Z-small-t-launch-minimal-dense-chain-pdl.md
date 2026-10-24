@@ -91,13 +91,15 @@ base_sha: 2b6cb6edd61405f6d01cf0aa39cd6e34d56fe812
 base_blob: cc466fce207709c98ab0e78c2435c1c459890fdb
 branch: hyp/muse_decode_layer/small-t-launch-minimal-dense-chain-pdl
 worktree: .worktrees/muse_decode_layer/small-t-launch-minimal-dense-chain-pdl
-mode: null
+mode: submit
 implemented_at: 2026-10-24T175023Z
 impl_commit: d1f98358cdcbb86e35c76ea28e6848c9ed94f45e
 submission_sha256: 0fd54ff8dde9f3880a68f1905e982e5a702cecb50595133f87672f4c2fe9f180
 norm_sha256: 082ed8c7b988ceb59d9f044e203e992dfe268f0bd06f0f356a5973aaf36214ce
 submission_blob: 3d70ae6e2de0d48c4a4f2a469ced8234f5348182
 lint_warnings: 18
+attempt_file: 2026-10-24T181733Z-submit-small-t-launch-minimal-dense-chain-pdl.md
+prepared_at: 2026-10-24T181733Z
 ---
 
 # small-t-launch-minimal-dense-chain-pdl
