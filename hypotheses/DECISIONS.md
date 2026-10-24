@@ -73,3 +73,4 @@ overrides of a reviewer) with the reason, newest last. Written by `churn.py note
 - 2026-10-24T124058Z `muse_attention_decode` **sliding-fused-triton-decode1-gate**: unhold:
 - 2026-10-24T124058Z `muse_attention_decode` **sliding-fused-triton-decode1-gate**: unheld: fa3-window-trimmed-page-table regressed (1.141x vs 1.269x), so the untrimmed sliding call stays
 - 2026-10-24T124058Z `muse_attention_decode` **fa3-scheduler-metadata-side-stream**: unhold:
+- 2026-10-24T124058Z `muse_attention_decode` **fa3-scheduler-metadata-side-stream**: unheld: fa3-window-trimmed-page-table regressed (1.141x vs 1.269x), so the untrimmed sliding call stays
