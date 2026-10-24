@@ -45,10 +45,10 @@ priority: 1
 kind: primary
 controls_for: null
 review: proceed
-status: running
+status: done
 review_at: 2026-10-23T230616Z
 review_companions: null
-stage: dispatched
+stage: harvested
 claimed_at: 2026-10-23T230616Z
 base_sha: 4739730c9a8a22229401f2e07ef91550db8b0152
 base_blob: 8eeb6a4778875e37a1d9c55a5e27ee6079999847
@@ -65,6 +65,13 @@ attempt_file: 2026-10-23T231147Z-check-sglang-marlin-path-parity.md
 prepared_at: 2026-10-23T231147Z
 job: fb2cc736613747df
 dispatched_at: 2026-10-23T231157Z
+outcome: gain
+verdict_detail: gain
+speedup: 0.9887547325362586
+speedup_ci: [0.9739234115482147, 1.0035860535243024]
+harvested_at: 2026-10-24T021808Z
+best_at_harvest: 0.006105558011922052
+promotion: pending
 ---
 
 # sglang-marlin-path-parity
@@ -132,3 +139,29 @@ Verified against `git diff -- muse_moe_w4a16/submission.py` in the worktree (165
 - [x] All work happens inside the timed call: `kernel_fn` computes the full output from fresh inputs every call; `prepare()` holds only weight-derived state.
 
 Lint: `python3 -I .claude/skills/churnsubs/bin/okc_lint.py muse_moe_w4a16/submission.py --problem muse_moe_w4a16` -> `warn  host-sync    L110: torch.cuda.synchronize()  (outside kernel_fn's call graph; fine in prepare())` / `OK with warnings: muse_moe_w4a16/submission.py` (exit 0).
+
+## Result
+
+- job `fb2cc736613747df` (check), status done, passed True, tests 5/5
+- speedup 0.9888x, 95% CI [0.9739, 1.0036], score 13601.451965244405 µs vs SGLang 13448.5 µs
+- best at harvest: {"speedup": 0.006105558011922052, "ci": [0.006013974641743221, 0.006197141382100883], "job": "5e7d55323d75425e"}; base result: muse_moe_w4a16/hypotheses/BEST.result.json
+- **outcome: gain** (gain)
+- files: `muse_moe_w4a16/hypotheses/done/gain/sglang-marlin-path-parity.result.json`, `muse_moe_w4a16/hypotheses/done/gain/sglang-marlin-path-parity.patch`; branch `hyp/muse_moe_w4a16/sglang-marlin-path-parity`
+
+## Attribution
+
+| shape | w | base µs | hyp µs | delta | verdict |
+|---|---|---|---|---|---|
+| bs=1 load=decode_1 sharding=ep8 | 60 | 35747.54 | 80.23 | 444.8057 | gained |
+| bs=16 load=decode_16 sharding=ep8 | 60 | 36335.93 | 191.41 | 190.6341 | gained |
+| bs=32 load=decode_32 sharding=ep8 | 60 | 37342.44 | 208.15 | 178.3436 | gained |
+| bs=8 load=verify_1 sharding=ep8 | 60 | 37560.33 | 152.04 | 247.7846 | gained |
+| bs=128 load=verify_16 sharding=ep8 | 60 | 37162.55 | 462.46 | 79.6225 | gained |
+| bs=256 load=verify_32 sharding=ep8 | 60 | 37495.37 | 621.28 | 60.4562 | gained |
+
+gained on decode_1 decode_1; decode_16 decode_16; decode_32 decode_32; verify_1 verify_1; verify_16 verify_16; verify_32 verify_32. Expected hit: 3/3. Noise ±1.5%.
+
+## Follow-ups
+
+- candidate for promotion; stack further changes with `depends_on` once it lands.
+
