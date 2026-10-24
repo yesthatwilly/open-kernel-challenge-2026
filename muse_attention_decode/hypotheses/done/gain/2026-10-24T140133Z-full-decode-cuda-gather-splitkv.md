@@ -66,10 +66,10 @@ controls_for: null
 rewrite_stage: 1
 replaces: "full-layer decode at batch>1: FA3 flash_fwd main + prepare_varlen_num_blocks + FlashAttnFwdCombine + _paired_norm_gate_kernel"
 review: proceed
-status: running
+status: done
 review_at: 2026-10-24T140601Z
 review_companions: null
-stage: dispatched
+stage: harvested
 claimed_at: 2026-10-24T140601Z
 base_sha: 0e3d04d3405a65d8916f21e7fac2e822929939e7
 base_blob: 387dcb6a0e6137b74f7f65b048dce5a3fcbe2008
@@ -86,6 +86,13 @@ attempt_file: 2026-10-24T141722Z-check-full-decode-cuda-gather-splitkv.md
 prepared_at: 2026-10-24T141722Z
 job: 82085a4e82154393
 dispatched_at: 2026-10-24T141733Z
+outcome: gain
+verdict_detail: gain
+speedup: 1.3467624733171553
+speedup_ci: [1.3265610362173978, 1.3669639104169125]
+harvested_at: 2026-10-24T144809Z
+best_at_harvest: 1.2930643047593426
+promotion: pending
 ---
 
 # full-decode-cuda-gather-splitkv
@@ -176,3 +183,36 @@ CLEAN: submission.py
 ```
 
 `python3 -I -m py_compile`: OK (worktree `__pycache__` removed).
+
+## Result
+
+- job `82085a4e82154393` (check), status done, passed True, tests 16/16
+- speedup 1.3468x, 95% CI [1.3266, 1.3670], score 2796.5584686387806 µs vs SGLang 3766.3 µs
+- best at harvest: {"speedup": 1.2930643047593426, "ci": [1.2736683401879525, 1.3211607975952195], "job": "295727fc68e14093"}; base result: muse_attention_decode/hypotheses/done/neutral/sliding-fused-triton-decode1-gate.result.json
+- **outcome: gain** (gain)
+- files: `muse_attention_decode/hypotheses/done/gain/full-decode-cuda-gather-splitkv.result.json`, `muse_attention_decode/hypotheses/done/gain/full-decode-cuda-gather-splitkv.patch`; branch `hyp/muse_attention_decode/full-decode-cuda-gather-splitkv`
+
+## Attribution
+
+| shape | w | base µs | hyp µs | delta | verdict |
+|---|---|---|---|---|---|
+| batch=1 ctx=80000 dist=soft heads=tp8 layer=sliding load=decode_1 page=1 | 46 | 13.12 | 13.88 | 0.9551 | lost |
+| batch=1 ctx=80000 dist=coherent heads=tp8 layer=full load=decode_1 page=1 | 16 | 26.99 | 27.93 | 0.9809 | flat |
+| batch=16 ctx=80000 dist=soft heads=tp8 layer=sliding load=decode_16 page=1 spread=agentic | 46 | 20.66 | 20.84 | 0.9939 | flat |
+| batch=16 ctx=80000 dist=coherent heads=tp8 layer=full load=decode_16 page=1 spread=agentic | 16 | 156.82 | 123.02 | 1.2767 | gained |
+| batch=32 ctx=80000 dist=soft heads=tp8 layer=sliding load=decode_32 page=1 spread=agentic | 46 | 24.89 | 25.2 | 0.9889 | flat |
+| batch=32 ctx=80000 dist=coherent heads=tp8 layer=full load=decode_32 page=1 spread=agentic | 16 | 298.53 | 257.75 | 1.1616 | gained |
+| batch=1 ctx=80000 dist=soft heads=tp8 layer=sliding load=verify_1 page=1 q_len=8 | 46 | 17.01 | 17.63 | 0.991 | flat |
+| batch=1 ctx=80000 dist=coherent heads=tp8 layer=full load=verify_1 page=1 q_len=8 | 16 | 29.67 | 30.29 | 0.9963 | flat |
+| batch=16 ctx=80000 dist=soft heads=tp8 layer=sliding load=verify_16 page=1 q_len=8 spread=agentic | 46 | 22.59 | 22.77 | 0.9901 | flat |
+| batch=16 ctx=80000 dist=coherent heads=tp8 layer=full load=verify_16 page=1 q_len=8 spread=agentic | 16 | 163.06 | 162.83 | 1.0042 | flat |
+| batch=32 ctx=80000 dist=soft heads=tp8 layer=sliding load=verify_32 page=1 q_len=8 spread=agentic | 46 | 28.61 | 29.35 | 0.9812 | flat |
+| batch=32 ctx=80000 dist=coherent heads=tp8 layer=full load=verify_32 page=1 q_len=8 spread=agentic | 16 | 302.16 | 301.91 | 1.0058 | flat |
+
+gained on full decode_16, decode_32; lost on sliding decode_1. Expected hit: 4/5. Noise ±1.5%.
+
+## Follow-ups
+
+- rewrite stage 1 of `full-layer decode at batch>1: FA3 flash_fwd main + prepare_varlen_num_blocks + FlashAttnFwdCombine + _paired_norm_gate_kernel`: read the replaced kernels' own us per shape (profile top_kernels) against the incumbent and the floor, and check which Milestone it reached. The next stage is `/hypothesize muse_attention_decode "<what to fix or tune>" --kind rewrite --depends-on full-decode-cuda-gather-splitkv --stage 2`; a slow or failed first cut is the expected start, not a do-not-retry.
+- candidate for promotion; stack further changes with `depends_on` once it lands.
+
