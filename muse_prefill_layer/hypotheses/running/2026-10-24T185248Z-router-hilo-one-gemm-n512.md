@@ -39,7 +39,14 @@ priority: 4
 kind: primary
 controls_for: null
 review: required
-status: queued
+status: running
+stage: claimed
+claimed_at: 2026-10-24T231740Z
+base_sha: 10e97df213c296823faa2881225ed84509e1e385
+base_blob: 635cfee3ac2c3f7c66840b8c8a082cad2fa41a68
+branch: hyp/muse_prefill_layer/router-hilo-one-gemm-n512
+worktree: .worktrees/muse_prefill_layer/router-hilo-one-gemm-n512
+mode: null
 ---
 
 # router-hilo-one-gemm-n512
