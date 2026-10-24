@@ -38,7 +38,7 @@ review: proceed
 status: running
 review_at: 2026-10-24T053040Z
 review_companions: null
-stage: implemented
+stage: dispatched
 claimed_at: 2026-10-24T053040Z
 base_sha: 66e598a7966dd1ac8380100ad95bc3a0a4d21449
 base_blob: 6884d26a928d1de1b07bf8d28e1be4e53dfdcfc5
@@ -53,6 +53,8 @@ submission_blob: de98030423860cfc9507b61d19f82a416223a23d
 lint_warnings: 1
 attempt_file: 2026-10-24T053147Z-check-marlin-block-m-cap-16.md
 prepared_at: 2026-10-24T053147Z
+job: 0730135cdcac43b7
+dispatched_at: 2026-10-24T053154Z
 ---
 
 # marlin-block-m-cap-16
