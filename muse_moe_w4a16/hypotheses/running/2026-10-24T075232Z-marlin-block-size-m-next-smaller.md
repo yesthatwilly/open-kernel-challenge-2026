@@ -50,7 +50,7 @@ review: proceed
 status: running
 review_at: 2026-10-24T100105Z
 review_companions: null
-stage: implemented
+stage: dispatched
 claimed_at: 2026-10-24T100106Z
 base_sha: 38f7ef0c3079751ea38f770d5bf9c79242b606ef
 base_blob: 11fbc1957daf7294cd2810ff82a0aad2f25644bd
@@ -65,6 +65,8 @@ submission_blob: 12f7f3441aa7dfa758d69dd9147422a0c972317a
 lint_warnings: 1
 attempt_file: 2026-10-24T100227Z-check-marlin-block-size-m-next-smaller.md
 prepared_at: 2026-10-24T100227Z
+job: 198f10f446a847cb
+dispatched_at: 2026-10-24T100235Z
 ---
 
 # marlin-block-size-m-next-smaller
