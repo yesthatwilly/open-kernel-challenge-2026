@@ -132,13 +132,15 @@ base_sha: 392a74ee4f7b4f552a563e8bf1c922ac4974e1f6
 base_blob: d9a9375ef4721ab9b28cc9d6364c92e67c7ccc59
 branch: hyp/muse_moe_w4a16/cuda-nvfp4-wgmma-rega-grouped-verify
 worktree: .worktrees/muse_moe_w4a16/cuda-nvfp4-wgmma-rega-grouped-verify
-mode: null
+mode: submit
 implemented_at: 2026-10-24T180001Z
 impl_commit: f50b333a602cc590f2785a1fdd2171af25fe94bb
 submission_sha256: a7fdef83dbf98e25a4d58f6e4e6cccf3a73c2b080e18267c4809f7bdb9c4264d
 norm_sha256: 1b43a3f3bea47906633c64e78cbada93a6b6003a3b8bdc838ce21a53b0f64595
 submission_blob: 5c34fabe0f05fb53014dd85b66864cd3b38bc673
 lint_warnings: 23
+attempt_file: 2026-10-24T181733Z-submit-cuda-nvfp4-wgmma-rega-grouped-verify.md
+prepared_at: 2026-10-24T181733Z
 ---
 
 # cuda-nvfp4-wgmma-rega-grouped-verify
