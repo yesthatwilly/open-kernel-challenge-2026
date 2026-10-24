@@ -78,7 +78,7 @@ kind: rewrite
 controls_for: null
 replaces: Marlin w13 + silu + w2 at num_tokens <= 16
 review: proceed
-status: running
+status: done
 review_at: 2026-10-24T083755Z
 review_companions: null
 claimed_at: 2026-10-24T083755Z
@@ -97,8 +97,15 @@ attempt_file: 2026-10-24T084758Z-check-small-m-grouped-gemv-splitk-rewrite.md
 prepared_at: 2026-10-24T084758Z
 job: 734a1159ff334c3d
 dispatched_at: 2026-10-24T084809Z
-stage: dispatched
+stage: harvested
 rewrite_stage: 1
+outcome: regression
+verdict_detail: regression
+speedup: 0.6635161301441485
+speedup_ci: [0.6535633881919862, 0.6734688720963106]
+harvested_at: 2026-10-24T103712Z
+best_at_harvest: 0.9887547325362586
+promotion: null
 ---
 
 # small-m-grouped-gemv-splitk-rewrite
@@ -193,3 +200,29 @@ OK with warnings: .worktrees/muse_moe_w4a16/small-m-grouped-gemv-splitk-rewrite/
 ```
 
 L291 is the new self-test's sync (prepare only); L356 is the pre-existing parity `torch.cuda.synchronize()` in `prepare()`. `python3 -I -m py_compile` passes; its `__pycache__` was removed from the worktree.
+
+## Result
+
+- job `734a1159ff334c3d` (check), status done, passed True, tests 5/5
+- speedup 0.6635x, 95% CI [0.6536, 0.6735], score 20268.535140326312 µs vs SGLang 13448.5 µs
+- best at harvest: {"speedup": 0.9887547325362586, "ci": [0.9739234115482147, 1.0035860535243024], "job": "fb2cc736613747df"}; base result: muse_moe_w4a16/hypotheses/done/gain/sglang-marlin-path-parity.result.json
+- **outcome: regression** (regression)
+- files: `muse_moe_w4a16/hypotheses/done/regression/small-m-grouped-gemv-splitk-rewrite.result.json`, `muse_moe_w4a16/hypotheses/done/regression/small-m-grouped-gemv-splitk-rewrite.patch`; branch `hyp/muse_moe_w4a16/small-m-grouped-gemv-splitk-rewrite`
+
+## Attribution
+
+| shape | w | base µs | hyp µs | delta | verdict |
+|---|---|---|---|---|---|
+| bs=1 load=decode_1 sharding=ep8 | 60 | 80.23 | 137.4 | 0.5866 | lost |
+| bs=16 load=decode_16 sharding=ep8 | 60 | 191.41 | 491.75 | 0.3854 | lost |
+| bs=32 load=decode_32 sharding=ep8 | 60 | 208.15 | 210.98 | 1.0004 | flat |
+| bs=8 load=verify_1 sharding=ep8 | 60 | 152.04 | 355.38 | 0.4034 | lost |
+| bs=128 load=verify_16 sharding=ep8 | 60 | 462.46 | 467.08 | 1.0005 | flat |
+| bs=256 load=verify_32 sharding=ep8 | 60 | 621.28 | 618.12 | 1.0006 | flat |
+
+lost on decode_1 decode_1; decode_16 decode_16; verify_1 verify_1. Expected hit: 3/6. Noise ±1.5%.
+
+## Follow-ups
+
+- rewrite stage 1 of `Marlin w13 + silu + w2 at num_tokens <= 16`: read the replaced kernels' own us per shape (profile top_kernels) against the incumbent and the floor, and check which Milestone it reached. The next stage is `/hypothesize muse_moe_w4a16 "<what to fix or tune>" --kind rewrite --depends-on small-m-grouped-gemv-splitk-rewrite --stage 2`; a slow or failed first cut is the expected start, not a do-not-retry.
+

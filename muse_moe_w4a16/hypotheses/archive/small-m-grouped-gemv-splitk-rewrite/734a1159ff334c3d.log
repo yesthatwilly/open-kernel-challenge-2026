@@ -1,0 +1,5 @@
+====================================================================================================
+[small-m-grouped-gemv-splitk] SELF-TEST PASSED: max row rel-L2 w13 1.709e-03, w2 1.700e-03 (tol 0.01)
+[small-m-grouped-gemv-splitk] grid=264 CTAs (2 per SM; w13 shared=8192B regs=211; w2 shared=8192B regs=211); w13 cfg (BLOCK_N, SPLIT_K)=(64, 4), w2 cfg=(64, 8), BLOCK_K=256, stages=4, warps=4
+[small-m-grouped-gemv-splitk] PATH CHOSEN for num_tokens <= 16: TRITON split-K grouped GEMV (w13 + w2)
+====================================================================================================
