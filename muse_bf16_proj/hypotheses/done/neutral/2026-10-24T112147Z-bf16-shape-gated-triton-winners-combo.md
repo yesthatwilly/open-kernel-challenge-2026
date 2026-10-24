@@ -117,7 +117,8 @@ speedup: 1.1760470299345995
 speedup_ci: [1.1584063244855805, 1.1936877353836184]
 harvested_at: 2026-10-24T135613Z
 best_at_harvest: 1.1432568936693237
-promotion: null
+promotion: merged
+promotion_commit: 658d63bcdf2a330b0c3093873d5f04a9ee92ff9f
 ---
 
 # bf16-shape-gated-triton-winners-combo

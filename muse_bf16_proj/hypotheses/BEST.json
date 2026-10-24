@@ -1,17 +1,17 @@
 {
  "problem": "muse_bf16_proj",
- "job": "240eb22ea0b6487e",
- "check_job": "bd9fa14151644cee",
- "mode": "submit",
- "speedup": 1.1432568936693237,
+ "job": "875f3e0172ee48a1",
+ "check_job": "875f3e0172ee48a1",
+ "mode": "check",
+ "speedup": 1.1760470299345995,
  "ci": [
-  1.1261080402642838,
-  1.1604057470743634
+  1.1584063244855805,
+  1.1936877353836184
  ],
- "score_us": 4225.472006116994,
- "commit": "dba4ffd5945248c0299bb6953ab4b561d0b3eeeb",
- "submission_blob": "da55301de1e911aeab09878b0873809f544f436c",
- "slug": "router-triton-hilo-fused-control-splitk-all-m",
- "result": "muse_bf16_proj/hypotheses/done/gain/router-triton-hilo-fused-control-splitk-all-m.result.json",
- "updated_at": "2026-10-24T083411Z"
+ "score_us": 4107.658858054889,
+ "commit": "658d63bcdf2a330b0c3093873d5f04a9ee92ff9f",
+ "submission_blob": "3f76eb805990314f5f7e6de6e9e184464edd6019",
+ "slug": "bf16-shape-gated-triton-winners-combo",
+ "result": "muse_bf16_proj/hypotheses/done/neutral/bf16-shape-gated-triton-winners-combo.result.json",
+ "updated_at": "2026-10-24T135641Z"
 }
