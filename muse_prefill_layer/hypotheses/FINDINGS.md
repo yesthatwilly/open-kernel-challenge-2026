@@ -1,21 +1,21 @@
 # muse_prefill_layer findings
 
-Regenerated 2026-10-24T124012Z by `churn.py index`. Read this before writing a hypothesis for muse_prefill_layer.
+Regenerated 2026-10-24T125104Z by `churn.py index`. Read this before writing a hypothesis for muse_prefill_layer.
 
 ## Current best
 
-1.0039x [0.9888,1.0189] from job `62025c368c3c4e8e` (check), master commit `6e616b8a05`, hypothesis sglang-pipeline-parity
+1.0229x [1.0075,1.0382] from job `b33b87b5083b4d1c` (check), master commit `a1f93c2948`, hypothesis experts-triton-w4a16-first-turn-blockt256
 
 Where the time goes (per scored shape, top kernels):
 
-- batch=1 ctx=80000 dist=soft layer=sliding load=turn_1 page=1 q_len=753 repeats=6: yours 1078.7µs vs SGLang 1088.2µs (SoL 257.0µs) · void sglang::device::marlin_moe::Marlin<__nv_bfloat16, 56... 730.1µs 66.4%, nvjet_sm90_tst_128x192_64x5_2x1_v_bz_coopB_TNN 157.0µs 14.3%, nvjet_sm90_tst_112x128_64x7_1x2_h_bz_TNN 39.3µs 3.6%
-- batch=1 ctx=80000 dist=soft layer=full load=turn_1 page=1 q_len=753 repeats=6: yours 1434.8µs vs SGLang 1445.1µs (SoL 496.7µs) · void sglang::device::marlin_moe::Marlin<__nv_bfloat16, 56... 680.7µs 45.4%, void cutlass::device_kernel<flash::enable_sm90_or_later<f... 419.9µs 28.0%, nvjet_sm90_tst_128x192_64x5_2x1_v_bz_coopB_TNN 162.1µs 10.8%
-- batch=4 ctx=80000 dist=soft layer=sliding load=turn_4 page=1 q_len=753 repeats=6: yours 3367.0µs vs SGLang 3373.4µs (SoL 1036.3µs) · void sglang::device::marlin_moe::Marlin<__nv_bfloat16, 56... 2248.2µs 64.3%, nvjet_sm90_tst_256x152_64x4_1x2_h_bz_coopA_TNT 327.9µs 9.4%, nvjet_sm90_tst_128x256_64x4_2x1_v_bz_coopA_TNN 256.8µs 7.3%
-- batch=4 ctx=80000 dist=soft layer=full load=turn_4 page=1 q_len=753 repeats=6: yours 4949.8µs vs SGLang 4962.0µs (SoL 1992.4µs) · void sglang::device::marlin_moe::Marlin<__nv_bfloat16, 56... 2200.8µs 43.5%, void cutlass::device_kernel<flash::enable_sm90_or_later<f... 1656.1µs 32.7%, nvjet_sm90_tst_256x152_64x4_1x2_h_bz_coopA_TNT 325.5µs 6.4%
-- batch=1 ctx=0 dist=soft layer=full load=first_turn page=1 q_len=16384 repeats=6: yours 18279.1µs vs SGLang 18372.8µs (SoL 5518.4µs) · void sglang::device::marlin_moe::Marlin<__nv_bfloat16, 56... 11995.4µs 64.2%, nvjet_sm90_tst_192x192_64x4_2x1_v_bz_coopB_TNN 2552.1µs 13.6%, nvjet_sm90_tst_320x128_64x3_1x2_h_bz_coopB_TNT 1399.2µs 7.5%
-- batch=1 ctx=32768 dist=soft layer=sliding load=first_turn page=1 q_len=16384 repeats=6: yours 16995.2µs vs SGLang 17046.7µs (SoL 5663.4µs) · void sglang::device::marlin_moe::Marlin<__nv_bfloat16, 56... 11106.5µs 64.1%, nvjet_sm90_tst_192x192_64x4_2x1_v_bz_coopB_TNN 2550.2µs 14.7%, nvjet_sm90_tst_320x128_64x3_1x2_h_bz_coopB_TNT 1500.8µs 8.7%
-- batch=1 ctx=32768 dist=soft layer=full load=first_turn page=1 q_len=16384 repeats=6: yours 21535.7µs vs SGLang 21245.7µs (SoL 7710.0µs) · void sglang::device::marlin_moe::Marlin<__nv_bfloat16, 56... 10239.8µs 49.6%, void cutlass::device_kernel<flash::enable_sm90_or_later<f... 4545.7µs 22.0%, nvjet_sm90_tst_192x192_64x4_2x1_v_bz_coopB_TNN 2544.3µs 12.3%
-- batch=1 ctx=65536 dist=soft layer=full load=first_turn page=1 q_len=16384 repeats=6: yours 25286.6µs vs SGLang 25296.3µs (SoL 9847.7µs) · void sglang::device::marlin_moe::Marlin<__nv_bfloat16, 56... 10911.6µs 43.9%, void cutlass::device_kernel<flash::enable_sm90_or_later<f... 8164.1µs 32.8%, nvjet_sm90_tst_192x192_64x4_2x1_v_bz_coopB_TNN 2545.9µs 10.2%
+- batch=1 ctx=80000 dist=soft layer=sliding load=turn_1 page=1 q_len=753 repeats=6: yours 1141.1µs vs SGLang 1063.9µs (SoL 257.0µs) · _moe_nvfp4_gemm_kernel 847.4µs 69.8%, nvjet_sm90_tst_128x192_64x5_2x1_v_bz_coopB_TNN 156.0µs 12.9%, nvjet_sm90_tst_112x128_64x7_1x2_h_bz_TNN 38.8µs 3.2%
+- batch=1 ctx=80000 dist=soft layer=full load=turn_1 page=1 q_len=753 repeats=6: yours 1517.9µs vs SGLang 1431.8µs (SoL 496.7µs) · _moe_nvfp4_gemm_kernel 728.5µs 47.6%, void cutlass::device_kernel<flash::enable_sm90_or_later<f... 417.2µs 27.2%, nvjet_sm90_tst_128x192_64x5_2x1_v_bz_coopB_TNN 153.1µs 10.0%
+- batch=4 ctx=80000 dist=soft layer=sliding load=turn_4 page=1 q_len=753 repeats=6: yours 3435.4µs vs SGLang 3340.9µs (SoL 1036.3µs) · _moe_nvfp4_gemm_kernel 2274.6µs 64.7%, nvjet_sm90_tst_256x152_64x4_1x2_h_bz_coopA_TNT 325.1µs 9.3%, nvjet_sm90_tst_128x256_64x4_2x1_v_bz_coopA_TNN 253.3µs 7.2%
+- batch=4 ctx=80000 dist=soft layer=full load=turn_4 page=1 q_len=753 repeats=6: yours 4975.4µs vs SGLang 4881.5µs (SoL 1992.4µs) · _moe_nvfp4_gemm_kernel 2317.7µs 44.9%, void cutlass::device_kernel<flash::enable_sm90_or_later<f... 1640.5µs 31.8%, nvjet_sm90_tst_256x152_64x4_1x2_h_bz_coopA_TNT 322.6µs 6.3%
+- batch=1 ctx=0 dist=soft layer=full load=first_turn page=1 q_len=16384 repeats=6: yours 15029.5µs vs SGLang 17847.8µs (SoL 5518.4µs) · _moe_nvfp4_gemm_kernel 8573.7µs 56.5%, nvjet_sm90_tst_192x192_64x4_2x1_v_bz_coopB_TNN 2514.6µs 16.6%, nvjet_sm90_tst_320x128_64x3_1x2_h_bz_coopB_TNT 1375.0µs 9.1%
+- batch=1 ctx=32768 dist=soft layer=sliding load=first_turn page=1 q_len=16384 repeats=6: yours 14426.7µs vs SGLang 17115.0µs (SoL 5663.4µs) · _moe_nvfp4_gemm_kernel 8535.2µs 58.2%, nvjet_sm90_tst_192x192_64x4_2x1_v_bz_coopB_TNN 2517.6µs 17.2%, nvjet_sm90_tst_320x128_64x3_1x2_h_bz_coopB_TNT 1474.5µs 10.1%
+- batch=1 ctx=32768 dist=soft layer=full load=first_turn page=1 q_len=16384 repeats=6: yours 18568.9µs vs SGLang 21250.7µs (SoL 7710.0µs) · _moe_nvfp4_gemm_kernel 7959.7µs 43.9%, void cutlass::device_kernel<flash::enable_sm90_or_later<f... 4480.4µs 24.7%, nvjet_sm90_tst_192x192_64x4_2x1_v_bz_coopB_TNN 2516.2µs 13.9%
+- batch=1 ctx=65536 dist=soft layer=full load=first_turn page=1 q_len=16384 repeats=6: yours 22521.7µs vs SGLang 24976.4µs (SoL 9847.7µs) · _moe_nvfp4_gemm_kernel 8721.8µs 38.9%, void cutlass::device_kernel<flash::enable_sm90_or_later<f... 8017.7µs 35.7%, nvjet_sm90_tst_192x192_64x4_2x1_v_bz_coopB_TNN 2509.7µs 11.2%
 
 ## By area
 
@@ -65,4 +65,5 @@ Where the time goes (per scored shape, top kernels):
 - queue: fa3-batched-mode [FA3 call] p4 hold
 - queue: experts-marlin-block-m-48-turn4 [w13 marlin + w2 marlin (block_size_m pick)] p3 hold
 - queue: router-triton-hilo-splitk-turn [router GEMM] p3 hold
-- queue: router-pooler-concat-gemm-turn [router GEMM + pooler GEMM (one concatenated GEMM, no side stream)] p5 queued
+- queue: router-pooler-concat-gemm-turn [router GEMM + pooler GEMM (one concatenated GEMM, no side stream)] p5 hold
+- running: experts-hybrid-marlin-turn-triton-first-turn [w13 marlin + w2 marlin (stage 4: hybrid shape gate, Marlin at T<=4096, Triton NVFP4 above)] p1 running

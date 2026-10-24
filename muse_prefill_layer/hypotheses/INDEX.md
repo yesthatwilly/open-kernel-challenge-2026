@@ -1,6 +1,6 @@
 # muse_prefill_layer hypotheses
 
-Regenerated 2026-10-24T124012Z. Best: 1.0039x [0.9888,1.0189] job `62025c368c3c4e8e` (check)
+Regenerated 2026-10-24T125104Z. Best: 1.0229x [1.0075,1.0382] job `b33b87b5083b4d1c` (check)
 
 | created | slug | kind | area | where | outcome | speedup | CI | job | mode | promotion | review | expected hit |
 |---|---|---|---|---|---|---|---|---|---|---|---|---|
@@ -18,9 +18,10 @@ Regenerated 2026-10-24T124012Z. Best: 1.0039x [0.9888,1.0189] job `62025c368c3c4
 | 2026-10-24T075422Z | experts-marlin-block-m-48-turn1 | primary | w13 marlin + w2 marlin (block_size_m pick) | done/neutral | neutral | 1.0030 | [0.988,1.018] | 0606f849d2f441ad | check |  | proceed | 2/3 |
 | 2026-10-24T075435Z | experts-marlin-block-m-48-turn4 | primary | w13 marlin + w2 marlin (block_size_m pick) | queue | hold |  |  |  |  |  | required |  |
 | 2026-10-24T075454Z | router-triton-hilo-splitk-turn | primary | router GEMM | queue | hold |  |  |  |  |  | proceed |  |
-| 2026-10-24T075513Z | router-pooler-concat-gemm-turn | primary | router GEMM + pooler GEMM (one concatenated GEMM, no side stream) | queue | queued |  |  |  |  |  | required |  |
+| 2026-10-24T075513Z | router-pooler-concat-gemm-turn | primary | router GEMM + pooler GEMM (one concatenated GEMM, no side stream) | queue | hold |  |  |  |  |  | hold |  |
 | 2026-10-24T092506Z | experts-triton-w4a16-swapab-reglhs | rewrite | w13 marlin + w2 marlin (W4A16 engine with in-kernel NVFP4 dequant, stage 2: swap-AB register-LHS dot) | done/neutral | neutral | 1.0068 | [0.992,1.022] | 00148fbedfb6414f | check |  | proceed | 1/3 |
-| 2026-10-24T111900Z | experts-triton-w4a16-first-turn-blockt256 | rewrite | w13 marlin + w2 marlin (W4A16 Triton engine, stage 3: first_turn token tile 256) | done/neutral | neutral | 1.0229 | [1.008,1.038] | b33b87b5083b4d1c | check |  | proceed | 2/2 |
+| 2026-10-24T111900Z | experts-triton-w4a16-first-turn-blockt256 | rewrite | w13 marlin + w2 marlin (W4A16 Triton engine, stage 3: first_turn token tile 256) | done/neutral | neutral | 1.0229 | [1.008,1.038] | b33b87b5083b4d1c | check | merged | proceed | 2/2 |
+| 2026-10-24T124504Z | experts-hybrid-marlin-turn-triton-first-turn | rewrite | w13 marlin + w2 marlin (stage 4: hybrid shape gate, Marlin at T<=4096, Triton NVFP4 above) | running | running |  |  | fb1e52d2119d4175 | check |  | proceed |  |
 
 ## Held
 
@@ -28,3 +29,4 @@ Regenerated 2026-10-24T124012Z. Best: 1.0039x [0.9888,1.0189] job `62025c368c3c4
 - fa3-batched-mode: adversarial review: The occupancy mechanism is contradicted by the landed profile: the FA3 kernel already runs at the same ~590-606 TFLOP/s on turn_1 full (96 nominal CTAs) as on t
 - experts-marlin-block-m-48-turn4: block 48 at turn_1 was neutral (1.003x, 0606f849d2f441ad) and local-rows regressed (0.984x); block-m tuning on prefill is settled, and prefill has 3 checks for the rewrite
 - router-triton-hilo-splitk-turn: reviewer: the side-stream router (~40-45 us) already fits under the main branch (the 39.3 us nvjet is qkv_gate, not the pooler), expected 0.3-1% inside noise; prefill has 2 checks and the rewrite's next stage needs them
+- router-pooler-concat-gemm-turn: adversarial review: Rule-clean, but the size of the win rests on a router side branch of ~80-90 us that the current master profile does not show. At turn_1 sliding the router pair 

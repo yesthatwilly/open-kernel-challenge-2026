@@ -1,6 +1,6 @@
 # muse_attention_decode hypotheses
 
-Regenerated 2026-10-24T124012Z. Best: 1.2686x [1.2496,1.2877] job `bd64bf9f9e904f02` (check)
+Regenerated 2026-10-24T125104Z. Best: 1.2686x [1.2496,1.2877] job `bd64bf9f9e904f02` (check)
 
 | created | slug | kind | area | where | outcome | speedup | CI | job | mode | promotion | review | expected hit |
 |---|---|---|---|---|---|---|---|---|---|---|---|---|
@@ -26,8 +26,8 @@ Regenerated 2026-10-24T124012Z. Best: 1.2686x [1.2496,1.2877] job `bd64bf9f9e904
 | 2026-10-23T225858Z | fa3-window-trimmed-page-table | primary | page table (sliding) | done/regression | regression | 1.1411 | [1.124,1.158] | 1f63fcbbc0394bed | check |  | proceed | 1/7 |
 | 2026-10-24T081233Z | sliding-single-launch-fused-attention | rewrite | sliding-layer attention (whole-path rewrite) | done/regression | regression | 0.9452 | [0.931,0.959] | f389af196ddf47b1 | check |  | proceed | 2/7 |
 | 2026-10-24T104027Z | paired-heads-launch-cleanup-ab-tune-batch-gate | ab-tune→paired-heads-launch-cleanup | FA3 call (head packing) gate | done/neutral | neutral | 1.2686 | [1.250,1.288] | bd64bf9f9e904f02 | check | merged | proceed | 5/5 |
-| 2026-10-24T120440Z | sliding-fused-triton-decode1-gate | primary | sliding-layer attention (batch-1 decode gate) | queue | hold |  |  |  |  |  | proceed |  |
-| 2026-10-24T120457Z | fa3-scheduler-metadata-side-stream | primary | FA3 call (schedule, off critical path) | queue | hold |  |  |  |  |  | proceed |  |
+| 2026-10-24T120440Z | sliding-fused-triton-decode1-gate | primary | sliding-layer attention (batch-1 decode gate) | running | running |  |  | 295727fc68e14093 | check |  | proceed |  |
+| 2026-10-24T120457Z | fa3-scheduler-metadata-side-stream | primary | FA3 call (schedule, off critical path) | running | running |  |  | 42964d938c5842f4 | check |  | proceed |  |
 | 2026-10-24T120513Z | preattention-group-tiled-programs | primary | pre-attention norm+rope | running | running |  |  | 877731a3b2214ddb | check |  | proceed |  |
 
 ## Held
@@ -46,5 +46,3 @@ Regenerated 2026-10-24T124012Z. Best: 1.2686x [1.2496,1.2877] job `bd64bf9f9e904
 - stream-fork-preattention: moot under master 1.269x (sweep by the attention minter): targets the parity pipeline's five pre-attention launches, which master fused into one kernel
 - triton-flash-decode-deep-pipeline: moot under master 1.269x (sweep by the attention minter): stacks on triton-flash-decode-full-both-heads (held)
 - triton-flash-decode-full-verify: moot under master 1.269x (sweep by the attention minter): stacks on triton-flash-decode-full-both-heads (held)
-- sliding-fused-triton-decode1-gate: reviewer: dispatch after fa3-window-trimmed-page-table (1f63fcbbc0394bed) harvests, which may shrink the decode_1 margin; then unhold
-- fa3-scheduler-metadata-side-stream: reviewer: claim after fa3-window-trimmed-page-table (1f63fcbbc0394bed) harvests; if it lands, the sliding metadata must use its trimmed page table; then unhold

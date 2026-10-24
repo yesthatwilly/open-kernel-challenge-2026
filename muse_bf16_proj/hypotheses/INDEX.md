@@ -1,6 +1,6 @@
 # muse_bf16_proj hypotheses
 
-Regenerated 2026-10-24T124012Z. Best: 1.1433x [1.1261,1.1604] job `240eb22ea0b6487e` (submit)
+Regenerated 2026-10-24T125104Z. Best: 1.1433x [1.1261,1.1604] job `240eb22ea0b6487e` (submit)
 
 | created | slug | kind | area | where | outcome | speedup | CI | job | mode | promotion | review | expected hit |
 |---|---|---|---|---|---|---|---|---|---|---|---|---|
@@ -29,7 +29,7 @@ Regenerated 2026-10-24T124012Z. Best: 1.1433x [1.1261,1.1604] job `240eb22ea0b64
 | 2026-10-24T092629Z | qkv-gate-o-m128-wgmma-splitk-semaphore | primary | qkv GEMM + o GEMM (m=128) | queue | hold |  |  |  |  |  | required |  |
 | 2026-10-24T092648Z | pooler-splitk2-tma-weight-stream | primary | pooler GEMM | done/neutral | neutral | 1.1693 | [1.152,1.187] | 4e89311eefdc4bc3 | check |  | proceed | 5/6 |
 | 2026-10-24T103959Z | router-splitk32-small-m-all-loads-in-flight-control-stages3 | control→router-splitk32-small-m-all-loads-in-flight | router GEMM | done/neutral | neutral | 1.1518 | [1.135,1.169] | 4685bac7a662454d | check |  | proceed | 4/6 |
-| 2026-10-24T112147Z | bf16-shape-gated-triton-winners-combo | primary | bf16 GEMM dispatch (shape-gated Triton routing, m<=16) | queue | hold |  |  |  |  |  | proceed |  |
+| 2026-10-24T112147Z | bf16-shape-gated-triton-winners-combo | primary | bf16 GEMM dispatch (shape-gated Triton routing, m<=16) | running | running |  |  | 875f3e0172ee48a1 | check |  | proceed |  |
 | 2026-10-24T112213Z | bf16-m128-nn-weight-layout-probe | primary | bf16 GEMM dispatch (m>=128, weight layout) | running | running |  |  | 2dc5dce078be4a24 | check |  | proceed |  |
 
 ## Held
@@ -38,4 +38,3 @@ Regenerated 2026-10-24T124012Z. Best: 1.1433x [1.1261,1.1604] job `240eb22ea0b64
 - router-triton-hilo-fused-control-hybrid-cublas-above-m32: superseded: router-triton-hilo-fused-control-splitk-all-m landed (1.151x); its 3-D Triton grid beats cuBLAS hi/lo at every m (5.7-9.3 us vs 10.5-17.7 us), so a hybrid using cuBLAS above m=32 can only be slower
 - router-hilo-addmm-epilogue-control-inplace-out: superseded: master's router no longer uses the cuBLAS hi/lo pair (Triton split-K landed, 1.151x), so the add node this control targets is gone; the primary read flat (1.026x, within CI)
 - qkv-gate-o-m128-wgmma-splitk-semaphore: same m=128 wgmma split-K design as pooler-unpooler-m128-wgmma-splitk-semaphore (dispatching now); its reviewer asked to wait for that harvest; re-queue by hand if that kernel reaches its target
-- bf16-shape-gated-triton-winners-combo: reviewer: dispatch after pooler-splitk2-tma-weight-stream (4e89311eefdc4bc3) and its BLOCK_K=256 control (75d595a29a4c4b57) harvest; choose the pooler kernel by their m<=16 pooler rows, then unhold
