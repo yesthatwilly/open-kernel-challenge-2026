@@ -44,13 +44,15 @@ base_sha: 66e598a7966dd1ac8380100ad95bc3a0a4d21449
 base_blob: 6884d26a928d1de1b07bf8d28e1be4e53dfdcfc5
 branch: hyp/muse_decode_layer/marlin-block-m-cap-16
 worktree: .worktrees/muse_decode_layer/marlin-block-m-cap-16
-mode: null
+mode: check
 implemented_at: 2026-10-24T053147Z
 impl_commit: 9a0492ffc41d11d5f4dd958b1838e238df63cd49
 submission_sha256: 90ab84928d8ef488a0d6cfd3efb112d1d09ebec5cb93035bd1d55e6c7e33fc67
 norm_sha256: a0b7b726786a9cdcf0ceb09b25226d60ca943727f1bc26e5bab11fc8c6be3a11
 submission_blob: de98030423860cfc9507b61d19f82a416223a23d
 lint_warnings: 1
+attempt_file: 2026-10-24T053147Z-check-marlin-block-m-cap-16.md
+prepared_at: 2026-10-24T053147Z
 ---
 
 # marlin-block-m-cap-16
