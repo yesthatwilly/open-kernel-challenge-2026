@@ -1,6 +1,6 @@
 # muse_moe_w4a16 hypotheses
 
-Regenerated 2026-10-24T173817Z. Best: 1.3076x [1.2880,1.3272] job `3cabc739f1af493e` (submit)
+Regenerated 2026-10-24T184810Z. Best: 1.3278x [1.3079,1.3477] job `1947e3ec2abb4bdf` (submit)
 
 | created | slug | kind | area | where | outcome | speedup | CI | job | mode | promotion | review | expected hit |
 |---|---|---|---|---|---|---|---|---|---|---|---|---|
@@ -30,13 +30,19 @@ Regenerated 2026-10-24T173817Z. Best: 1.3076x [1.2880,1.3272] job `3cabc739f1af4
 | 2026-10-24T140229Z | swapab-w13-silu-epilogue-verify | rewrite | silu-mul | queue | queued |  |  |  |  |  | required |  |
 | 2026-10-24T140229Z | triton-map-align-verify-chunked | primary | MoE align/dispatch | done/failed | failed |  |  | 3aa4d7e193244255 | check |  | proceed |  |
 | 2026-10-24T144931Z | triton-map-align-verify-chunked-pow2-fix | primary | MoE align/dispatch | done/neutral | neutral | 1.3107 | [1.291,1.330] | c1c72d5d19ea444f | check |  | proceed | 2/4 |
-| 2026-10-24T164817Z | align-parallel-per-expert-verify | primary | MoE align/dispatch | done/neutral | neutral | 1.3249 | [1.305,1.345] | 45eacf4ca2e849d2 | check |  | proceed | 4/4 |
+| 2026-10-24T164817Z | align-parallel-per-expert-verify | primary | MoE align/dispatch | done/neutral | neutral | 1.3249 | [1.305,1.345] | 45eacf4ca2e849d2 | check | done | proceed | 4/4 |
 | 2026-10-24T164836Z | w2-l2-prefetch-decode1 | primary | w2 marlin | done/regression | regression | 1.2615 | [1.243,1.280] | ac6897f284934dad | check |  | proceed | 3/4 |
-| 2026-10-24T164857Z | marlin-two-stream-expert-halves-small-m | primary | launch overhead | running | running |  |  |  |  |  | proceed |  |
-| 2026-10-24T165851Z | cuda-fused-moe-bs1-persistent-w13-silu-w2 | rewrite | whole-layer fusion | running | running |  |  |  |  |  | proceed |  |
-| 2026-10-24T165851Z | cuda-nvfp4-swapab-mma-persistent-small-m | rewrite | w13 marlin + silu-mul + w2 marlin | running | running |  |  |  |  |  | proceed |  |
-| 2026-10-24T172038Z | cuda-nvfp4-wgmma-rega-grouped-verify | rewrite | w13 marlin + silu-mul + w2 marlin | running | running |  |  |  |  |  | proceed |  |
+| 2026-10-24T164857Z | marlin-two-stream-expert-halves-small-m | primary | launch overhead | done/neutral | neutral | 1.3024 | [1.283,1.322] | 5d630369b1634f77 | submit |  | proceed | 2/5 |
+| 2026-10-24T165851Z | cuda-fused-moe-bs1-persistent-w13-silu-w2 | rewrite | whole-layer fusion | done/neutral | neutral | 1.3074 | [1.269,1.327] | 1105a02aa3fa4e56 | submit |  | proceed | 5/6 |
+| 2026-10-24T165851Z | cuda-nvfp4-swapab-mma-persistent-small-m | rewrite | w13 marlin + silu-mul + w2 marlin | done/failed | failed |  |  | 8f198afc3bf14f6f | submit |  | proceed |  |
+| 2026-10-24T172038Z | cuda-nvfp4-wgmma-rega-grouped-verify | rewrite | w13 marlin + silu-mul + w2 marlin | done/neutral | neutral | 1.3123 | [1.293,1.332] | 3bb822f22ebc4a5c | submit |  | proceed | 4/6 |
 | 2026-10-24T172123Z | cuda-fused-moe-midm-single-launch-routed | rewrite | whole-layer fusion | queue | queued |  |  |  |  |  | proceed |  |
+| 2026-10-24T183202Z | cuda-dispatch-combine-pdl-verify | rewrite | MoE align/dispatch + post-expert norm+combine | running | running |  |  | c41860068fe4432f | submit |  | proceed |  |
+| 2026-10-24T183618Z | post-norm-combine-hoisted-slot-loads | primary | post-expert norm+combine | done/neutral | neutral | 1.3282 | [1.308,1.348] | d7501477ce2748d5 | submit |  | proceed | 3/6 |
+| 2026-10-24T183635Z | post-norm-triton-hoisted-decode32 | primary | post-expert norm+combine | queue | queued |  |  |  |  |  | proceed |  |
+| 2026-10-24T183649Z | post-norm-pdl-launch-small-m | primary | launch overhead | queue | queued |  |  |  |  |  | proceed |  |
+| 2026-10-24T183702Z | align-parallel-from-17-tokens | primary | MoE align/dispatch | done/neutral | neutral | 1.3250 | [1.305,1.345] | ed6d884240084d9c | submit |  | proceed | 5/6 |
+| 2026-10-24T183722Z | align-small-one-warp-tiny-m | primary | MoE align/dispatch | done/neutral | neutral | 1.3287 | [1.309,1.349] | 38532ba10e394e3c | submit |  | proceed | 4/6 |
 
 ## Held
 

@@ -1,6 +1,6 @@
 # muse_bf16_proj findings
 
-Regenerated 2026-10-24T173236Z by `churn.py index`. Read this before writing a hypothesis for muse_bf16_proj.
+Regenerated 2026-10-24T184810Z by `churn.py index`. Read this before writing a hypothesis for muse_bf16_proj.
 
 ## Current best
 
@@ -48,6 +48,12 @@ Where the time goes (per scored shape, top kernels):
 ### bf16 GEMM dispatch (m<=16, swap-AB Triton)
 - **bf16-m16-swapab-wgmma-extend** → neutral (unproven-vs-best), 1.2115x — gained on qkv_gate decode_1; o decode_1, decode_16, verify_1; pooler decode_1; unpooler decode_1, verify_1; lost on router decode_16. Built on master (8b9ad43, submission blob a8bb42a). Master's m<=16 Triton paths all put the tokens on tl.dot's M side with BLOCK_M=16 (pooler _bf16_splitk_kerne
 
+### bf16 GEMM dispatch (m<=32, lossless-compressed weight stream)
+- **bf16-lossless-exp4-weight-stream-rewrite** → regression (regression), 0.7071x — gained on router decode_16; lost on qkv_gate decode_1, decode_16, decode_32, verify_1; o decode_1, decode_16, decode_32, verify_1, verify_16; pooler decode_1, decode_16, decode_32, verify_1; unpooler decode_1, decode_16, decode_32, verify_1; router decode_1, verify_16. Built on master (8b9ad43); no dependency on an unharvested hypothesis. WHY: every m<=32 bf16 shape is a pure weight stream (FINDINGS: pooler 19.0-20.5 us kernel
+
+### bf16 GEMM dispatch (m<=8, hand-written CUDA weight stream)
+- **bf16-small-m-cuda-gemv-rewrite** → regression (regression), 1.1667x — gained on pooler verify_16; lost on o decode_1, verify_1; router decode_1; qkv_gate verify_1; pooler verify_1; unpooler verify_1. Built on master (8b9ad43). LESSONS: Triton weight streams top out at ~3.7 TB/s here, and the incumbent m<=8 kernels run 1.9-3.6 TB/s against 4.8 TB/s floors; at
+
 ### bf16 GEMM dispatch (m=128/256, cuBLASLt algo selection)
 - **bf16-cublaslt-algo-pick-in-prepare-m128-m256** → neutral (within-ci), 1.1879x — lost on qkv_gate decode_1, decode_32, verify_1, verify_32; router verify_1. Built on master (658d63b). For the four bf16 layers at exactly cfg m == 128 and cfg m == 256 (loads verify_16 and verify_32; 8 shapes), replace _bf16_gemm_dispa
 
@@ -71,10 +77,14 @@ Where the time goes (per scored shape, top kernels):
 
 ### pooler GEMM + unpooler GEMM (m=128)
 - **pooler-unpooler-m128-wgmma-splitk-semaphore** → regression (regression), 1.1158x — gained on router decode_16; lost on qkv_gate verify_1; o verify_1; unpooler verify_1, verify_16; router verify_1, verify_16; pooler verify_16. Built on master (dba4ffd: parity dispatch + 3-D split-K Triton router; router untouched). For layer in {pooler, unpooler} and cfg m == 128 only (verify_16; any 
+- **pooler-unpooler-m128-tma-wspec-rewrite** → regression (regression), 1.1639x — gained on router verify_1; lost on qkv_gate decode_1, decode_16, decode_32, verify_1; pooler verify_16; unpooler verify_16; router verify_16. Built on master (658d63b). New kernel _bf16_m128_tma_ws_kernel for layer in {pooler, unpooler} at 65 <= cfg m <= 128 only (scored: verify_16 m=128; rows >= m ma
 
 ### qkv GEMM
 - **qkv-gate-triton-skinny-m32** → regression (regression), 0.9238x — lost on qkv_gate decode_1, decode_16, decode_32, verify_1. Extend the skinny Triton GEMM from pooler-triton-skinny-m32 to layer == 'qkv_gate' at m <= 32 (n=2304, k=8192, a 37.7 MB weight): in kernel_fn route qkv_gate at
 - **qkv-gate-triton-splitk4-blockn64-semaphore** → neutral (within-ci), 1.1431x — gained on qkv_gate decode_1, decode_16, verify_1; router decode_16; pooler verify_16; lost on qkv_gate decode_32; o verify_1; unpooler verify_1; router verify_1, verify_16. Built on master (dba4ffd; router untouched). For layer == 'qkv_gate' and cfg m <= 32 only (n=2304, k=8192, 37.7 MB bf16), replace _bf16_gemm_dispatch_impl (nvje
+
+### restack (m<=16 swap-AB GEMMs + router swap-AB)
+- **bf16-restack-m16-swapab-router-swapab-m32** → neutral (unproven-vs-best), 1.2215x — gained on o decode_1, decode_16, decode_32, verify_1; unpooler decode_1, verify_1; router decode_1, decode_16, decode_32, verify_1. Restack two harvested per-shape winners onto current master (bf16-m32-swapab-wgmma-triton) by a 3-way git merge-file of their patches. (1) bf16-m16-swapab-wgmma
 
 ### router GEMM
 - **router-hilo-at-m8** → gain (gain), 1.0219x — gained on unpooler verify_1; router verify_1. In kernel_fn's router branch, lower the threshold at which the router switches from F.linear(x.float(), router) to the BF16 hi + lo pair: change ROUTER_FP32_MAX
@@ -114,6 +124,7 @@ Where the time goes (per scored shape, top kernels):
 - bf16-cublaslt-algo-pick-in-prepare-m128-m256: within-ci: the change is not proven either way; a stacked hypothesis (`depends_on: bf16-cublaslt-algo-pick-in-prepare-m128-m256`) that adds a further change in the same area is the only way to learn more (identical code 
 - bf16-m16-swapab-wgmma-extend: unproven-vs-best: the change is not proven either way; a stacked hypothesis (`depends_on: bf16-m16-swapab-wgmma-extend`) that adds a further change in the same area is the only way to learn more (identical code is never 
 - router-swapab-wgmma-all-m: within-ci: the change is not proven either way; a stacked hypothesis (`depends_on: router-swapab-wgmma-all-m`) that adds a further change in the same area is the only way to learn more (identical code is never re-run).
+- bf16-restack-m16-swapab-router-swapab-m32: unproven-vs-best: the change is not proven either way; a stacked hypothesis (`depends_on: bf16-restack-m16-swapab-router-swapab-m32`) that adds a further change in the same area is the only way to learn more (identical c
 
 ## Do not retry (rejected / duplicates)
 
@@ -126,7 +137,4 @@ Where the time goes (per scored shape, top kernels):
 - queue: router-hilo-addmm-epilogue-control-inplace-out [router GEMM] p1 hold
 - queue: qkv-gate-o-m128-wgmma-splitk-semaphore [qkv GEMM + o GEMM (m=128)] p2 hold
 - queue: pooler-m32-tma-splitk-extend [pooler GEMM (m=17..32)] p3 hold
-- running: pooler-unpooler-m128-tma-wspec-rewrite [pooler GEMM + unpooler GEMM (m=128)] p2 running
-- running: bf16-small-m-cuda-gemv-rewrite [bf16 GEMM dispatch (m<=8, hand-written CUDA weight stream)] p3 running
-- running: bf16-lossless-exp4-weight-stream-rewrite [bf16 GEMM dispatch (m<=32, lossless-compressed weight stream)] p1 running
 - running: bf16-verify-streamk-cutlass-wgmma-rewrite [bf16 GEMM dispatch (m=129..256, persistent stream-K TMA/wgmma)] p2 running

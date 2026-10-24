@@ -1,6 +1,6 @@
 # muse_decode_layer hypotheses
 
-Regenerated 2026-10-24T173236Z. Best: 1.1665x [1.1490,1.1840] job `a017e10aec544c55` (submit)
+Regenerated 2026-10-24T184810Z. Best: 1.2283x [1.2099,1.2468] job `81ee6714b7614a99` (submit)
 
 | created | slug | kind | area | where | outcome | speedup | CI | job | mode | promotion | review | expected hit |
 |---|---|---|---|---|---|---|---|---|---|---|---|---|
@@ -26,13 +26,23 @@ Regenerated 2026-10-24T173236Z. Best: 1.1665x [1.1490,1.1840] job `a017e10aec544
 | 2026-10-24T140116Z | bf16-shape-gated-triton-gemms-small-t | primary | pooler GEMM | done/neutral | neutral | 1.1688 | [1.151,1.186] | 6076ae1f250143aa | submit |  | proceed | 2/6 |
 | 2026-10-24T140135Z | sliding-fused-triton-decode1-port | primary | FA3 call | done/neutral | neutral | 1.1690 | [1.152,1.187] | 12198572363b49a4 | submit |  | proceed | 5/5 |
 | 2026-10-24T140156Z | paired-heads-pad-unpad-triton | primary | output norm-gate | done/neutral | neutral | 1.1654 | [1.148,1.183] | a92b64be4c6547d3 | submit |  | proceed | 4/7 |
-| 2026-10-24T165154Z | full-decode-cuda-splitkv-port | rewrite | FA3 call | running | running |  |  |  |  |  | proceed |  |
+| 2026-10-24T165154Z | full-decode-cuda-splitkv-port | rewrite | FA3 call | done/neutral | neutral | 1.1862 | [1.168,1.204] | e789032128df4291 | submit |  | proceed | 5/5 |
 | 2026-10-24T165224Z | full-verify-cuda-splitkv-stage2 | rewrite | FA3 call | queue | queued |  |  |  |  |  | proceed |  |
 | 2026-10-24T165242Z | bf16-m32-swapab-wgmma-port | primary | pooler GEMM | queue | hold |  |  |  |  |  | proceed |  |
-| 2026-10-24T165302Z | moe-align-small-t-restack-on-master | primary | MoE align/dispatch | queue | queued |  |  |  |  |  | proceed |  |
+| 2026-10-24T165302Z | moe-align-small-t-restack-on-master | primary | MoE align/dispatch | queue | hold |  |  |  |  |  | proceed |  |
 | 2026-10-24T165619Z | fused-preattention-paired-pad-restack | primary | pre-attention norm+rope | queue | queued |  |  |  |  |  | proceed |  |
-| 2026-10-24T172107Z | moe-chain-cuda-swapab-expert-once-large-t | rewrite | w13 marlin + silu-mul + w2 marlin | running | running |  |  |  |  |  | proceed |  |
-| 2026-10-24T172138Z | small-t-launch-minimal-dense-chain-pdl | rewrite | whole-layer fusion | running | running |  |  |  |  |  | proceed |  |
+| 2026-10-24T172107Z | moe-chain-cuda-swapab-expert-once-large-t | rewrite | w13 marlin + silu-mul + w2 marlin | done/failed | failed |  |  | 1bba1bab70da4f61 | submit |  | proceed |  |
+| 2026-10-24T172138Z | small-t-launch-minimal-dense-chain-pdl | rewrite | whole-layer fusion | done/gain | gain | 1.2283 | [1.210,1.247] | 81ee6714b7614a99 | submit | done | proceed | 6/6 |
+| 2026-10-24T174421Z | decode-restack-sliding-port-paired-pad-gemms-t1 | primary | restack (sliding decode_1 port + paired pad/unpad + T=1 Triton GEMMs) | done/neutral | neutral | 1.1937 | [1.176,1.212] | 4739dd4590524487 | submit |  | proceed | 3/5 |
+| 2026-10-24T184247Z | sliding-fused-batched-decode-port | primary | FA3 call (sliding decode, batch > 1) | queue | queued |  |  |  |  |  | required |  |
+| 2026-10-24T184303Z | moe-dispatch-prep-on-side-stream | primary | MoE align/dispatch (stream placement) | queue | queued |  |  |  |  |  | required |  |
+| 2026-10-24T184316Z | pre-expert-rmsnorm-triton | primary | pre-expert norm | queue | queued |  |  |  |  |  | required |  |
+| 2026-10-24T184335Z | moe-small-t-cuda-swapab-port | rewrite | w13 marlin + silu-mul + w2 marlin (T<=32) | queue | queued |  |  |  |  |  | required |  |
+| 2026-10-24T184355Z | moe-bs1-fused-persistent-port | primary | w13 marlin + silu-mul + w2 marlin + post-expert combine (T=1) | queue | queued |  |  |  |  |  | required |  |
+| 2026-10-24T184430Z | l2-prefetch-o-pooler-during-sliding-attention | primary | o GEMM + pooler GEMM (L2 warm-up overlapped with attention) | queue | queued |  |  |  |  |  | required |  |
+| 2026-10-24T184451Z | prefork-qkv-o-swapab-t16-t32 | primary | qkv GEMM + o GEMM (before the router fork) | queue | queued |  |  |  |  |  | required |  |
+| 2026-10-24T184511Z | moe-align-parallel-large-t-port | primary | MoE align/dispatch (T>32) | queue | queued |  |  |  |  |  | required |  |
+| 2026-10-24T184527Z | marlin-two-stream-halves-port | primary | w13 marlin + silu-mul + w2 marlin (8<=T<=32, stream overlap) | queue | queued |  |  |  |  |  | required |  |
 
 ## Held
 
@@ -45,3 +55,4 @@ Regenerated 2026-10-24T173236Z. Best: 1.1665x [1.1490,1.1840] job `a017e10aec544
 - router-triton-splitk-side-stream: reviewer: the 9.2-9.5 us splitK row is 2 calls (~4.6 us each), so the side-stream router branch (~14-18 us) already finishes before the ~22-25 us pooler and is off the critical path; most likely flat, and decode has 4 checks left
 - triton-flash-decode-full-verify-paired-kv: adversarial review: Stage 1 measured the paired-KV kernel at about 1.63-1.66 TB/s, which is slower than FA3: 200.8 vs 188.8 us at decode_16 and 394.8 vs 374.4 us at decode_32. That
 - bf16-m32-swapab-wgmma-port: reviewer: ~0.15% headline (3-5 us at decode_32), inside drift; edits the same call sites as bf16-shape-gated-triton-gemms-small-t (in the judge). Revisit as part of a combined decode GEMM restack after that harvests (per-layer kernel names for attribution)
+- moe-align-small-t-restack-on-master: projected +0.5-0.9% is below noise, and small-t-launch-minimal-dense-chain-pdl (built for the reset) replaces the same align at T<=32. Revisit only if that rewrite fails.

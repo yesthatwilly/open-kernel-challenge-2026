@@ -1,6 +1,6 @@
 # muse_attention_decode findings
 
-Regenerated 2026-10-24T173817Z by `churn.py index`. Read this before writing a hypothesis for muse_attention_decode.
+Regenerated 2026-10-24T184810Z by `churn.py index`. Read this before writing a hypothesis for muse_attention_decode.
 
 ## Current best
 
@@ -27,6 +27,9 @@ Where the time goes (per scored shape, top kernels):
 - **full-decode-cuda-gather-splitkv** → gain (gain), 1.3468x — gained on full decode_16, decode_32; lost on sliding decode_1. Stage 1 of a rewrite of full-attention decode, built on master (sliding-fused-triton-decode1-gate). Gate (config/shape only): cfg window == 0 and q_len == 1 and
 - **full-decode-cuda-fp8-qk-mma** → neutral (within-ci), 1.3439x — gained on sliding decode_1. Built on master (full-decode-cuda-gather-splitkv). One change inside splitkv_attn_kernel (full-layer decode at 1 < batch <= 64, the only kernel touched): comput
 
+### FA3 call (full-layer verify gather)
+- **full-verify-cuda-streamk-splitkv** → regression (regression), 1.2314x — gained on full decode_32; lost on full verify_16, verify_32. Stage 2 of the full-attention rewrite, built on master (stage 1 full-decode-cuda-gather-splitkv landed). Extend the CUDA split-KV path to full-layer VERIFY (q_l
+
 ### FA3 call (head packing)
 - **fa3-hdim128-head-pairing** → gain (gain), 1.1706x — gained on full decode_16, decode_32, verify_16, verify_32; lost on full decode_1, verify_1. On full-attention layers only (config window == 0, decode and verify) call flash_attn_with_kvcache on a head-paired view of the cache so each token's two KV hea
 
@@ -41,6 +44,9 @@ Where the time goes (per scored shape, top kernels):
 
 ### full-layer attention (batch-1 decode gate)
 - **full-fused-triton-decode1-gate** → neutral (within-ci), 1.3417x — lost on full decode_1. Built on master. Route full-attention batch-1 decode (config window == 0 and batch == 1 and q_len == 1) through master _sliding_fused_kernel via _sliding_forwar
+
+### full-layer attention (whole-path rewrite, warp-specialized one launch)
+- **full-cuda-onelaunch-warpspec-bulk-gather** → regression (regression), 0.8238x — lost on full decode_16, decode_32; sliding verify_1. Stage 1 of a rewrite of the FULL-layer path, built on master (stage 1 of the first CUDA kernel, full-decode-cuda-gather-splitkv, has landed; no depends_on). Why
 
 ### page table (sliding)
 - **fa3-window-trimmed-page-table** → regression (regression), 1.1411x — lost on sliding decode_1, decode_16, decode_32, verify_1, verify_16, verify_32. On sliding-window layers only (config window != 0) hand FA3 a window-trimmed view of each request instead of the whole 80K-token context. Let W = window - 1 + L
@@ -63,6 +69,9 @@ Where the time goes (per scored shape, top kernels):
 
 ### sliding-layer attention (whole-path rewrite)
 - **sliding-single-launch-fused-attention** → regression (regression), 0.9452x — gained on sliding decode_1; lost on sliding decode_16, decode_32, verify_1, verify_16, verify_32. Stage 1 of a rewrite of the sliding-layer path. Built on hyp/muse_attention_decode/fused-preattention-triton (1.127x, job dfee6f2939974bad). On sliding layers (
+
+### sliding-layer attention (whole-path rewrite, CUDA cluster)
+- **sliding-cuda-cluster-dsmem-onelaunch** → regression (regression), 1.2206x — gained on sliding decode_1, decode_16; lost on sliding verify_1, verify_16, verify_32. Stage 1 of a rewrite of the whole SLIDING-layer path, built on master (no depends_on). Why: the sliding layer runs 46x per step in every load, and it costs 13.9
 
 ## Open follow-ups
 
@@ -98,6 +107,15 @@ Where the time goes (per scored shape, top kernels):
 - queue: triton-flash-decode-full-verify [FA3 call] p4 hold
 - queue: sliding-verify-cuda-streamk-window [sliding-layer attention (verify)] p2 queued
 - queue: full-verify1-cuda-streamk-batch1 [full-layer attention (batch-1 verify gate)] p2 queued
-- running: full-verify-cuda-streamk-splitkv [FA3 call (full-layer verify gather)] p1 running
-- running: sliding-cuda-cluster-dsmem-onelaunch [sliding-layer attention (whole-path rewrite, CUDA cluster)] p1 running
-- running: full-cuda-onelaunch-warpspec-bulk-gather [full-layer attention (whole-path rewrite, warp-specialized one launch)] p2 running
+- queue: splitkv-l2-128b-prefetch-hint [FA3 call (full-layer decode gather)] p5 hold
+- running: full-decode1-cuda-splitkv-chunk320 [full-layer attention (batch-1 decode gate)] p1 running
+- running: full-decode1-cuda-splitkv-chunk640 [full-layer attention (batch-1 decode gate)] p3 running
+- running: splitkv-full-line-gather-mapping [FA3 call (full-layer decode gather)] p2 running
+- running: splitkv-combine-wide-mlp [split-KV combine] p4 running
+- running: paired-norm-gate-token-tiled [output norm-gate] p5 running
+- running: preattention-tiled-gate-large-tokens [pre-attention norm+rope] p3 running
+- running: sliding-decode-blockn128-single-tile [sliding-layer attention (batched decode, tile size)] p4 running
+- running: sliding-decode32-splits-8 [sliding-layer attention (batched decode, split depth)] p5 running
+- running: sliding-fused-hoist-first-tile [sliding-layer attention (batched decode, gather prologue)] p4 running
+- running: splitkv-chunk2048-batch32 [FA3 call (full-layer decode gather)] p4 running
+- running: splitkv-pdl-attn-to-combine [launch overhead] p5 running

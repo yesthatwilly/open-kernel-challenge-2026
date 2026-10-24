@@ -1,6 +1,6 @@
 # muse_bf16_proj hypotheses
 
-Regenerated 2026-10-24T173236Z. Best: 1.1959x [1.1779,1.2138] job `eeb9985396764ac2` (submit)
+Regenerated 2026-10-24T184810Z. Best: 1.1959x [1.1779,1.2138] job `eeb9985396764ac2` (submit)
 
 | created | slug | kind | area | where | outcome | speedup | CI | job | mode | promotion | review | expected hit |
 |---|---|---|---|---|---|---|---|---|---|---|---|---|
@@ -33,13 +33,14 @@ Regenerated 2026-10-24T173236Z. Best: 1.1959x [1.1779,1.2138] job `eeb9985396764
 | 2026-10-24T112213Z | bf16-m128-nn-weight-layout-probe | primary | bf16 GEMM dispatch (m>=128, weight layout) | done/neutral | neutral | 1.1580 | [1.141,1.175] | 2dc5dce078be4a24 | check |  | proceed | 7/8 |
 | 2026-10-24T140147Z | bf16-m32-swapab-wgmma-triton | primary | bf16 GEMM dispatch (m=17..32, swap-AB Triton) | done/neutral | neutral | 1.1984 | [1.180,1.216] | 1602a4e947e64090 | check | done | proceed | 4/10 |
 | 2026-10-24T140216Z | bf16-cublaslt-algo-pick-in-prepare-m128-m256 | primary | bf16 GEMM dispatch (m=128/256, cuBLASLt algo selection) | done/neutral | neutral | 1.1879 | [1.170,1.206] | 26a8be34a5eb4426 | submit |  | proceed | 7/10 |
-| 2026-10-24T140242Z | pooler-unpooler-m128-tma-wspec-rewrite | rewrite | pooler GEMM + unpooler GEMM (m=128) | running | running |  |  |  |  |  | proceed |  |
+| 2026-10-24T140242Z | pooler-unpooler-m128-tma-wspec-rewrite | rewrite | pooler GEMM + unpooler GEMM (m=128) | done/regression | regression | 1.1639 | [1.146,1.181] | 61da9b91dab44bf4 | submit |  | proceed | 4/7 |
 | 2026-10-24T140257Z | pooler-m32-tma-splitk-extend | primary | pooler GEMM (m=17..32) | queue | hold |  |  |  |  |  | hold |  |
 | 2026-10-24T165012Z | bf16-m16-swapab-wgmma-extend | primary | bf16 GEMM dispatch (m<=16, swap-AB Triton) | done/neutral | neutral | 1.2115 | [1.193,1.230] | 89fabef70bd745f7 | submit |  | proceed | 5/16 |
 | 2026-10-24T165036Z | router-swapab-wgmma-all-m | primary | router GEMM | done/neutral | neutral | 1.1951 | [1.177,1.213] | 587e340476944b46 | submit |  | proceed | 4/10 |
-| 2026-10-24T165102Z | bf16-small-m-cuda-gemv-rewrite | rewrite | bf16 GEMM dispatch (m<=8, hand-written CUDA weight stream) | running | running |  |  |  |  |  | proceed |  |
-| 2026-10-24T172152Z | bf16-lossless-exp4-weight-stream-rewrite | rewrite | bf16 GEMM dispatch (m<=32, lossless-compressed weight stream) | running | running |  |  |  |  |  | proceed |  |
+| 2026-10-24T165102Z | bf16-small-m-cuda-gemv-rewrite | rewrite | bf16 GEMM dispatch (m<=8, hand-written CUDA weight stream) | done/regression | regression | 1.1667 | [1.149,1.184] | b76aca7ec1a048e7 | submit |  | proceed | 4/13 |
+| 2026-10-24T172152Z | bf16-lossless-exp4-weight-stream-rewrite | rewrite | bf16 GEMM dispatch (m<=32, lossless-compressed weight stream) | done/regression | regression | 0.7071 | [0.697,0.718] | 542f2b169c934706 | submit |  | proceed | 2/17 |
 | 2026-10-24T172235Z | bf16-verify-streamk-cutlass-wgmma-rewrite | rewrite | bf16 GEMM dispatch (m=129..256, persistent stream-K TMA/wgmma) | running | running |  |  |  |  |  | proceed |  |
+| 2026-10-24T174421Z | bf16-restack-m16-swapab-router-swapab-m32 | primary | restack (m<=16 swap-AB GEMMs + router swap-AB) | done/neutral | neutral | 1.2215 | [1.203,1.240] | 1e90292c7b954d96 | submit |  | proceed | 3/4 |
 
 ## Held
 
