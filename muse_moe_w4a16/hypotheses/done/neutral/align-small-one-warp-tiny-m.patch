@@ -1,0 +1,14 @@
+diff --git a/muse_moe_w4a16/submission.py b/muse_moe_w4a16/submission.py
+index 108d36e..92f9e59 100644
+--- a/muse_moe_w4a16/submission.py
++++ b/muse_moe_w4a16/submission.py
+@@ -274,7 +274,8 @@ def _align_small(topk_ids, local_start, local_count, block_size_m):
+         topk_ids, local_ids, sorted_ids, block_experts, n_padded, local_start, local_count, n, cap,
+         n_blocks, BLOCK_N=triton.next_power_of_2(n), CAP_BLOCK=triton.next_power_of_2(cap),
+         MB_BLOCK=triton.next_power_of_2(n_blocks), BSM=block_size_m,
+-        NUM_E=triton.next_power_of_2(local_count), num_warps=4)
++        NUM_E=triton.next_power_of_2(local_count),
++        num_warps=1 if n <= 64 else 4)
+     return local_ids, (sorted_ids, block_experts, n_padded)
+ 
+ 

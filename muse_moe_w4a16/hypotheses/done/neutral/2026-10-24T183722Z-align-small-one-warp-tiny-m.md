@@ -42,10 +42,10 @@ priority: 3
 kind: primary
 controls_for: null
 review: proceed
-status: running
+status: done
 review_at: 2026-10-24T183956Z
 review_companions: null
-stage: dispatched
+stage: harvested
 claimed_at: 2026-10-24T183957Z
 base_sha: 6ef6502619e893cbf1037aeccc0405617e73620d
 base_blob: 108d36e9f2266fc88531dd6ff0329a847c882013
@@ -62,6 +62,13 @@ attempt_file: 2026-10-24T184146Z-submit-align-small-one-warp-tiny-m.md
 prepared_at: 2026-10-24T184146Z
 job: 38532ba10e394e3c
 dispatched_at: 2026-10-24T184157Z
+outcome: neutral
+verdict_detail: unproven-vs-best
+speedup: 1.328709212434543
+speedup_ci: [1.308778574248025, 1.348639850621061]
+harvested_at: 2026-10-24T184720Z
+best_at_harvest: 1.3249153782392282
+promotion: null
 ---
 
 # align-small-one-warp-tiny-m
@@ -135,3 +142,29 @@ Audited 2026-10-24 by an opus subagent, by reading only (no GPU on this node). *
 - Lint: OK with warnings (only pre-existing prepare()-side host syncs).
 
 Residual risk: 1 warp at bs=8 ([64,32] temporaries, 64 int32 per thread each) may spill or serialize, making bs=8 flat or slower. bs=4 (n=32) is not self-checked. Neither affects correctness.
+
+## Result
+
+- job `38532ba10e394e3c` (submit), status done, passed True, tests 5/5
+- speedup 1.3287x, 95% CI [1.3088, 1.3486], score 10121.477200687748 µs vs SGLang 13448.5 µs
+- best at harvest: {"speedup": 1.3249153782392282, "ci": [1.30504164756564, 1.3447891089128166], "job": "45eacf4ca2e849d2"}; base result: muse_moe_w4a16/hypotheses/done/neutral/align-parallel-per-expert-verify.result.json
+- **outcome: neutral** (unproven-vs-best)
+- files: `muse_moe_w4a16/hypotheses/done/neutral/align-small-one-warp-tiny-m.result.json`, `muse_moe_w4a16/hypotheses/done/neutral/align-small-one-warp-tiny-m.patch`; branch `hyp/muse_moe_w4a16/align-small-one-warp-tiny-m`
+
+## Attribution
+
+| shape | w | base µs | hyp µs | delta | verdict |
+|---|---|---|---|---|---|
+| bs=1 load=decode_1 sharding=ep8 | 60 | 48.82 | 49.07 | 0.9981 | flat |
+| bs=16 load=decode_16 sharding=ep8 | 60 | 148.37 | 147.99 | 1.0009 | flat |
+| bs=32 load=decode_32 sharding=ep8 | 60 | 199.88 | 200.17 | 1.0004 | flat |
+| bs=8 load=verify_1 sharding=ep8 | 60 | 107.74 | 106.8 | 0.9938 | flat |
+| bs=128 load=verify_16 sharding=ep8 | 60 | 318.26 | 323.2 | 1.0214 | flat |
+| bs=256 load=verify_32 sharding=ep8 | 60 | 454.28 | 457.74 | 1.0027 | flat |
+
+no shape moved outside noise. Expected hit: 4/6. Noise ±1.5%.
+
+## Follow-ups
+
+- unproven-vs-best: the change is not proven either way; a stacked hypothesis (`depends_on: align-small-one-warp-tiny-m`) that adds a further change in the same area is the only way to learn more (identical code is never re-run).
+
