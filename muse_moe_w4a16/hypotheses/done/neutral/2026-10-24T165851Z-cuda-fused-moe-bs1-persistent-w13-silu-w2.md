@@ -88,10 +88,10 @@ controls_for: null
 rewrite_stage: 1
 replaces: Marlin w13+w2 (moe_wna16_marlin_gemm x2) at bs<=32
 review: proceed
-status: running
+status: done
 review_at: 2026-10-24T170224Z
 review_companions: null
-stage: dispatched
+stage: harvested
 claimed_at: 2026-10-24T170224Z
 base_sha: b9590f4d98a9e3d4afd62cdaab9dd4d48694655f
 base_blob: d9a9375ef4721ab9b28cc9d6364c92e67c7ccc59
@@ -108,6 +108,13 @@ attempt_file: 2026-10-24T181733Z-submit-cuda-fused-moe-bs1-persistent-w13-silu-w
 prepared_at: 2026-10-24T181733Z
 job: 1105a02aa3fa4e56
 dispatched_at: 2026-10-24T181917Z
+outcome: neutral
+verdict_detail: within-ci
+speedup: 1.3073552548275276
+speedup_ci: [1.2688536038941807, 1.3269655836499403]
+harvested_at: 2026-10-24T184718Z
+best_at_harvest: 1.3249153782392282
+promotion: null
 ---
 
 # cuda-fused-moe-bs1-persistent-w13-silu-w2
@@ -239,3 +246,30 @@ OK with warnings: .worktrees/muse_moe_w4a16/cuda-fused-moe-bs1-persistent-w13-si
 ```
 
 `python3 -I -m py_compile`: OK, and the `__pycache__` it left was removed.
+
+## Result
+
+- job `1105a02aa3fa4e56` (submit), status done, passed True, tests 5/5
+- speedup 1.3074x, 95% CI [1.2689, 1.3270], score 10286.798443147107 µs vs SGLang 13448.5 µs
+- best at harvest: {"speedup": 1.3249153782392282, "ci": [1.30504164756564, 1.3447891089128166], "job": "45eacf4ca2e849d2"}; base result: muse_moe_w4a16/hypotheses/done/gain/triton-map-align-on-block-m-restack.result.json
+- **outcome: neutral** (within-ci)
+- files: `muse_moe_w4a16/hypotheses/done/neutral/cuda-fused-moe-bs1-persistent-w13-silu-w2.result.json`, `muse_moe_w4a16/hypotheses/done/neutral/cuda-fused-moe-bs1-persistent-w13-silu-w2.patch`; branch `hyp/muse_moe_w4a16/cuda-fused-moe-bs1-persistent-w13-silu-w2`
+
+## Attribution
+
+| shape | w | base µs | hyp µs | delta | verdict |
+|---|---|---|---|---|---|
+| bs=1 load=decode_1 sharding=ep8 | 60 | 48.37 | 50.93 | 0.9752 | flat |
+| bs=16 load=decode_16 sharding=ep8 | 60 | 147.87 | 145.32 | 1.0068 | flat |
+| bs=32 load=decode_32 sharding=ep8 | 60 | 200.73 | 200.28 | 1.0002 | flat |
+| bs=8 load=verify_1 sharding=ep8 | 60 | 107.77 | 104.72 | 1.011 | flat |
+| bs=128 load=verify_16 sharding=ep8 | 60 | 333.39 | 336.48 | 0.9922 | flat |
+| bs=256 load=verify_32 sharding=ep8 | 60 | 469.91 | 471.59 | 0.9952 | flat |
+
+no shape moved outside noise. Expected hit: 5/6. Noise ±2.2%.
+
+## Follow-ups
+
+- rewrite stage 1 of `Marlin w13+w2 (moe_wna16_marlin_gemm x2) at bs<=32`: read the replaced kernels' own us per shape (profile top_kernels) against the incumbent and the floor, and check which Milestone it reached. The next stage is `/hypothesize muse_moe_w4a16 "<what to fix or tune>" --kind rewrite --depends-on cuda-fused-moe-bs1-persistent-w13-silu-w2 --stage 2`; a slow or failed first cut is the expected start, not a do-not-retry.
+- within-ci: the change is not proven either way; a stacked hypothesis (`depends_on: cuda-fused-moe-bs1-persistent-w13-silu-w2`) that adds a further change in the same area is the only way to learn more (identical code is never re-run).
+

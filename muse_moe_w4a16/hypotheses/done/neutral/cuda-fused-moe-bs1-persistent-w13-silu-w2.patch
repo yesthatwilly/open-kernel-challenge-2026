@@ -1,0 +1,774 @@
+diff --git a/muse_moe_w4a16/submission.py b/muse_moe_w4a16/submission.py
+index d9a9375..62b00bb 100644
+--- a/muse_moe_w4a16/submission.py
++++ b/muse_moe_w4a16/submission.py
+@@ -22,10 +22,16 @@ Up to 32 tokens (hypothesis triton-map-align-small-m-port), one single-program T
+ experts (capacity M*8 + 32*(block_size_m - 1), as the 32-expert align allocates; remote routes get
+ no bucket). Above 32 tokens the expert_map gather and moe_align_block_size(..., 32) run as before.
+ 
++At one token (hypothesis cuda-fused-moe-bs1-persistent-w13-silu-w2) the whole MoE (routing, w13,
++silu * up, w2, post-expert-norm combine) is one persistent CUDA kernel (_FUSED_CUDA, built with
++load_inline in prepare) over a lossless mma-fragment repack of the same NVFP4 bank; prepare checks
++it against the master path and falls back to master on any failure. Every other M runs master.
++
+ Differs from SGLang: the expert all-reduce is not run."""
+ 
+ from typing import TypedDict
+ 
++import time
+ import types
+ 
+ import torch
+@@ -272,6 +278,716 @@ def _align_self_check(device, count):
+         print(f"{tag0}   pad {line}")
+ 
+ 
++# ---------------------------------------------------------------------------------------------
++# bs=1: one persistent CUDA kernel for the whole MoE (hypothesis cuda-fused-moe-bs1-persistent-w13-silu-w2)
++#
++# grid = SM count (1 CTA per SM, 256 threads, ~155 KB dynamic smem), asserted co-resident in prepare.
++# Every CTA compacts the token's local routes (R <= 8, slot order) in smem, then walks its items
++# c, c + grid, ... as one flat (item, k-stage) cp.async ring (STAGES x 18 KB: 128 weight rows x
++# BK 256 codes + e4m3 scales), so the ring never drains between items or phases.
++#   phase 1, R*64 items (r, j): 64 gate + 64 up rows (warp w: gate rows 8 then the matching up
++#     rows 8), K = H. Epilogue: silu(gate) * up in fp32 -> bf16 h[r, 64j..64j+64), then one
++#     release-ordered count per (r, 1024-column chunk).
++#   phase 2, R*128 items (r, s, n): 128 rows of w2, k-split s of 4 over I. The weight stages are
++#     already streaming; thread 0 waits (bounded spin, ld.acquire) for the 16 phase-1 tiles of
++#     chunk s, the h slice comes in with ld.global.cg. fp32 partials; the last of the 4 splits
++#     (ticket) sums them in split order, times gs, bf16 y[r, 128n..128n+128).
++#   phase 3: the CTA completing the R*32-th y tile runs the post-norm combine (fp32, eps 1e-8).
++# All counters, tickets and the done counter are reset by the last CTA through an exit ticket at
++# the end of every launch (so R may change freely between calls); a spin that exceeds SPIN_MAX
++# sets a sticky error flag instead of hanging. A weight is dequantized in registers exactly:
++# (q & 0x80008000) | ((q & 0x70007000) >> 6) is e2m1 * 2^-126 as bf16x2, times the e4m3 block
++# scale * 2^119 (exact in bf16); the global scale is folded as gs * 2^7. MMA: m16n8k16 bf16 with the
++# weight as A and the token in column 0 of B.
++# ---------------------------------------------------------------------------------------------
++
++FUSED_H = 4096          # d_hidden and d_expert the kernel is built for
++FUSED_STAGE_CODES = 16384  # bytes of codes per ring stage (128 rows x 256 k / 2)
++FUSED_STAGE_SCALES = 2048  # bytes of e4m3 scales per ring stage
++FUSED_PERM = (0, 4, 1, 5, 3, 8, 6, 9, 7, 2)  # (j w hr g kb sub s h8 t b) -> (j kb w sub g t s b h8' hr')
++FUSED_SC_PERM = (0, 4, 1, 5, 3, 6, 2)        # (j w hr g kb sub s) -> (j kb w sub g s hr)
++
++_FUSED_CPP = r"""
++#include <torch/extension.h>
++#include <vector>
++void moe_bs1(torch::Tensor x, torch::Tensor ids, torch::Tensor tw, torch::Tensor c13, torch::Tensor s13,
++             torch::Tensor gs13, torch::Tensor c2, torch::Tensor s2, torch::Tensor gs2, torch::Tensor post_w,
++             torch::Tensor hbuf, torch::Tensor part, torch::Tensor ybuf, torch::Tensor ctrl, torch::Tensor out,
++             int64_t local_start, int64_t local_count, int64_t grid);
++std::vector<int64_t> moe_bs1_info();
++"""
++
++_FUSED_CUDA = r"""
++#include <torch/extension.h>
++#include <ATen/cuda/CUDAContext.h>
++#include <c10/cuda/CUDAGuard.h>
++#include <c10/cuda/CUDAException.h>
++#include <cuda_fp16.h>
++#include <cuda_bf16.h>
++#include <cstdint>
++#include <vector>
++
++namespace {
++
++constexpr int H = 4096;                        // d_hidden: w13 K, w2 rows
++constexpr int I = 4096;                        // d_expert: w13 rows per half, w2 K
++constexpr int TOPK = 8;
++constexpr int THREADS = 256;
++constexpr int WARPS = THREADS / 32;
++constexpr int ROWS = 16 * WARPS;               // 128 weight rows per tile
++constexpr int BK = 256;
++constexpr int STAGES = 8;
++constexpr int CODE_BYTES = ROWS * BK / 2;      // 16 KB
++constexpr int SC_BYTES = ROWS * BK / 16;       // 2 KB
++constexpr int STAGE_BYTES = CODE_BYTES + SC_BYTES;
++constexpr int T1 = I / 64;                     // phase-1 tiles per route (64 gate + 64 up rows)
++constexpr int KS1 = H / BK;                    // k-stages per phase-1 item (16)
++constexpr int NT2 = H / ROWS;                  // phase-2 row tiles (32)
++constexpr int SPLIT2 = 4;                      // phase-2 k-splits
++constexpr int KCH = I / SPLIT2;                // h columns per k-split (1024)
++constexpr int KS2 = KCH / BK;                  // k-stages per phase-2 item (4)
++constexpr int KB2 = I / BK;                    // k-blocks per w2 tile (16)
++constexpr int TILES_PER_CHUNK = KCH / 64;      // phase-1 tiles that feed one k-split (16)
++constexpr int X_OFF = STAGES * STAGE_BYTES;
++constexpr int HS_OFF = X_OFF + H * 2;
++constexpr int MISC_OFF = HS_OFF + KCH * 2;
++constexpr int SMEM = MISC_OFF + 512;
++constexpr int C_CNT = 0;                       // [TOPK][SPLIT2] phase-1 tiles done per chunk
++constexpr int C_TICK = C_CNT + TOPK * SPLIT2;  // [TOPK][NT2] phase-2 split tickets
++constexpr int C_DONE = C_TICK + TOPK * NT2;    // y tiles done
++constexpr int C_EXIT = C_DONE + 1;             // CTAs finished
++constexpr int C_ERR = C_EXIT + 1;              // sticky: a spin hit SPIN_MAX
++constexpr int C_LEN = C_ERR + 1;
++constexpr int SPIN_MAX = 1 << 22;
++constexpr float EPS = 1e-8f;
++static_assert(CODE_BYTES % (THREADS * 16) == 0, "code stage split");
++static_assert(SC_BYTES / 16 <= THREADS, "scale stage split");
++static_assert(THREADS * 16 == H, "combine: 16 columns per thread");
++
++__device__ __forceinline__ uint32_t smem_u32(const void* p) {
++  return static_cast<uint32_t>(__cvta_generic_to_shared(p));
++}
++__device__ __forceinline__ void cp_async16(uint32_t dst, const void* src) {
++  asm volatile("cp.async.cg.shared.global [%0], [%1], 16;\n" :: "r"(dst), "l"(src) : "memory");
++}
++__device__ __forceinline__ void cp_commit() { asm volatile("cp.async.commit_group;\n" ::: "memory"); }
++template <int N>
++__device__ __forceinline__ void cp_wait() { asm volatile("cp.async.wait_group %0;\n" :: "n"(N) : "memory"); }
++__device__ __forceinline__ int ld_acquire(const int* p) {
++  int v;
++  asm volatile("ld.acquire.gpu.global.s32 %0, [%1];\n" : "=r"(v) : "l"(p) : "memory");
++  return v;
++}
++__device__ __forceinline__ uint4 ld_cg4(const void* p) {
++  uint4 v;
++  asm volatile("ld.global.cg.v4.u32 {%0, %1, %2, %3}, [%4];\n"
++               : "=r"(v.x), "=r"(v.y), "=r"(v.z), "=r"(v.w) : "l"(p) : "memory");
++  return v;
++}
++__device__ __forceinline__ float ld_cg_f(const float* p) {
++  float v;
++  asm volatile("ld.global.cg.f32 %0, [%1];\n" : "=f"(v) : "l"(p) : "memory");
++  return v;
++}
++// Four E4M3 bytes -> two f16x2 (exact): lo from bytes 0,1 (byte 0 in the low half), hi from bytes 2,3.
++__device__ __forceinline__ void e4m3x4_to_f16x2x2(uint32_t w, uint32_t& lo, uint32_t& hi) {
++  asm("{\n\t.reg .b16 a, b;\n\tmov.b32 {a, b}, %2;\n\t"
++      "cvt.rn.f16x2.e4m3x2 %0, a;\n\tcvt.rn.f16x2.e4m3x2 %1, b;\n\t}\n"
++      : "=r"(lo), "=r"(hi) : "r"(w));
++}
++__device__ __forceinline__ uint32_t bf162_bits(__nv_bfloat162 v) { return *reinterpret_cast<uint32_t*>(&v); }
++// f16x2 {row g, row g+8} block scales -> bf16x2 {s_g, s_g} and {s_g8, s_g8}, each times 2^119 (exact:
++// at most 4 significant bits, below 2^128).
++__device__ __forceinline__ void scale_pair(uint32_t h2, uint32_t& slo, uint32_t& shi) {
++  const float2 f = __half22float2(*reinterpret_cast<__half2*>(&h2));
++  const float k = __int_as_float((119 + 127) << 23);
++  slo = bf162_bits(__floats2bfloat162_rn(f.x * k, f.x * k));
++  shi = bf162_bits(__floats2bfloat162_rn(f.y * k, f.y * k));
++}
++__device__ __forceinline__ uint32_t mul_bf16x2(uint32_t a, uint32_t b) {
++  uint32_t d;
++  const uint32_t mz = 0x80008000u;  // -0: a * b + -0 == a * b, subnormals kept
++  asm("fma.rn.bf16x2 %0, %1, %2, %3;\n" : "=r"(d) : "r"(a), "r"(b), "r"(mz));
++  return d;
++}
++__device__ __forceinline__ void mma_bf16(float (&c)[4], uint32_t a0, uint32_t a1, uint32_t a2, uint32_t a3,
++                                         uint32_t b0, uint32_t b1) {
++  asm volatile(
++      "mma.sync.aligned.m16n8k16.row.col.f32.bf16.bf16.f32 {%0,%1,%2,%3}, {%4,%5,%6,%7}, {%8,%9}, {%0,%1,%2,%3};\n"
++      : "+f"(c[0]), "+f"(c[1]), "+f"(c[2]), "+f"(c[3])
++      : "r"(a0), "r"(a1), "r"(a2), "r"(a3), "r"(b0), "r"(b1));
++}
++
++// One ring stage for this warp: 4 sub-tiles of (16 rows x 64 k), 4 k16 steps each. The lane's
++// uint32 for step s holds register pair j (a0a1, a2a3, a4a5, a6a7) at nibbles 3-j (lo) and 7-j (hi);
++// its 8 scale bytes are (step s, row g / g+8) at byte 2s / 2s+1. bsrc: bf16 pairs of the B operand
++// for this stage's 256 k (only column 0, lanes 0-3, carries the token).
++__device__ __forceinline__ void compute_stage(float (&c)[4], const uint8_t* slot, const uint32_t* bsrc,
++                                              int warp, int lane) {
++  const int g = lane >> 2, t = lane & 3;
++  const bool col0 = g == 0;
++  const uint8_t* cw = slot + warp * (CODE_BYTES / WARPS) + lane * 16;
++  const uint8_t* sw = slot + CODE_BYTES + warp * (SC_BYTES / WARPS) + g * 8;
++#pragma unroll
++  for (int sub = 0; sub < 4; ++sub) {
++    const uint4 q4 = *reinterpret_cast<const uint4*>(cw + sub * 512);
++    const uint2 sc = *reinterpret_cast<const uint2*>(sw + sub * 64);
++    uint32_t f[4];
++    e4m3x4_to_f16x2x2(sc.x, f[0], f[1]);
++    e4m3x4_to_f16x2x2(sc.y, f[2], f[3]);
++    const uint32_t qs[4] = {q4.x, q4.y, q4.z, q4.w};
++#pragma unroll
++    for (int s = 0; s < 4; ++s) {
++      uint32_t slo, shi;
++      scale_pair(f[s], slo, shi);
++      const int kp = sub * 32 + s * 8 + t;
++      uint32_t b0 = bsrc[kp], b1 = bsrc[kp + 4];
++      if (!col0) { b0 = 0u; b1 = 0u; }
++      uint32_t q = qs[s], a[4];
++#pragma unroll
++      for (int i = 0; i < 4; ++i) {
++        a[i] = (q & 0x80008000u) | ((q & 0x70007000u) >> 6);
++        q <<= 4;
++      }
++      mma_bf16(c, mul_bf16x2(a[0], slo), mul_bf16x2(a[1], shi), mul_bf16x2(a[2], slo), mul_bf16x2(a[3], shi),
++               b0, b1);
++    }
++  }
++}
++
++__device__ __forceinline__ void bf16x16_to_f32(uint4 u0, uint4 u1, float (&v)[16]) {
++  const uint32_t w[8] = {u0.x, u0.y, u0.z, u0.w, u1.x, u1.y, u1.z, u1.w};
++#pragma unroll
++  for (int i = 0; i < 8; ++i) {
++    v[2 * i] = __uint_as_float(w[i] << 16);
++    v[2 * i + 1] = __uint_as_float(w[i] & 0xffff0000u);
++  }
++}
++
++// Phase 3: out = sum_r g_r * rmsnorm(y_r * (1 + w)), fp32 (the _post_norm_combine_kernel formula).
++__device__ void combine(const __nv_bfloat16* ybuf, const __nv_bfloat16* __restrict__ post_w, const float* r_g,
++                        int R, float* red, float* inv, __nv_bfloat16* __restrict__ out, int tid, int warp,
++                        int lane) {
++  const int c0 = tid * 16;
++  float nw[16];
++  bf16x16_to_f32(__ldg(reinterpret_cast<const uint4*>(post_w + c0)),
++                 __ldg(reinterpret_cast<const uint4*>(post_w + c0 + 8)), nw);
++#pragma unroll
++  for (int i = 0; i < 16; ++i) nw[i] += 1.0f;
++  for (int r = 0; r < R; ++r) {
++    float v[16];
++    bf16x16_to_f32(ld_cg4(ybuf + (size_t)r * H + c0), ld_cg4(ybuf + (size_t)r * H + c0 + 8), v);
++    float ss = 0.f;
++#pragma unroll
++    for (int i = 0; i < 16; ++i) { const float a = v[i] * nw[i]; ss += a * a; }
++#pragma unroll
++    for (int o = 16; o > 0; o >>= 1) ss += __shfl_xor_sync(0xffffffffu, ss, o);
++    if (lane == 0) red[warp * TOPK + r] = ss;
++  }
++  __syncthreads();
++  if (tid < R) {
++    float s = 0.f;
++    for (int w = 0; w < WARPS; ++w) s += red[w * TOPK + tid];
++    inv[tid] = rsqrtf(s / H + EPS);
++  }
++  __syncthreads();
++  float acc[16];
++#pragma unroll
++  for (int i = 0; i < 16; ++i) acc[i] = 0.f;
++  for (int r = 0; r < R; ++r) {
++    float v[16];
++    bf16x16_to_f32(ld_cg4(ybuf + (size_t)r * H + c0), ld_cg4(ybuf + (size_t)r * H + c0 + 8), v);
++    const float gr = r_g[r], ir = inv[r];
++#pragma unroll
++    for (int i = 0; i < 16; ++i) acc[i] += gr * (v[i] * nw[i]) * ir;
++  }
++  uint32_t w[8];
++#pragma unroll
++  for (int i = 0; i < 8; ++i) w[i] = bf162_bits(__floats2bfloat162_rn(acc[2 * i], acc[2 * i + 1]));
++  reinterpret_cast<uint4*>(out + c0)[0] = make_uint4(w[0], w[1], w[2], w[3]);
++  reinterpret_cast<uint4*>(out + c0)[1] = make_uint4(w[4], w[5], w[6], w[7]);
++}
++
++__global__ void __launch_bounds__(THREADS, 1)
++moe_bs1_kernel(const __nv_bfloat16* __restrict__ x,      // [H]
++               const int* __restrict__ topk_ids,         // [TOPK] global ids
++               const float* __restrict__ topk_w,         // [TOPK]
++               const uint8_t* __restrict__ c13,          // [count][T1][KS1][CODE_BYTES]
++               const uint8_t* __restrict__ s13,          // [count][T1][KS1][SC_BYTES]
++               const float* __restrict__ gs13,           // [count] gs * 2^7
++               const uint8_t* __restrict__ c2,           // [count][NT2][KB2][CODE_BYTES]
++               const uint8_t* __restrict__ s2,           // [count][NT2][KB2][SC_BYTES]
++               const float* __restrict__ gs2,            // [count] gs * 2^7
++               const __nv_bfloat16* __restrict__ post_w, // [H]
++               __nv_bfloat16* hbuf,                      // [TOPK][I] scratch
++               float* part,                              // [SPLIT2][TOPK][H] scratch
++               __nv_bfloat16* ybuf,                      // [TOPK][H] scratch
++               int* ctrl,                                // [C_LEN], all 0 between launches (C_ERR sticky)
++               __nv_bfloat16* __restrict__ out,          // [H]
++               int local_start, int local_count) {
++  extern __shared__ __align__(128) uint8_t smem[];
++  __nv_bfloat16* xs = reinterpret_cast<__nv_bfloat16*>(smem + X_OFF);
++  __nv_bfloat16* hs = reinterpret_cast<__nv_bfloat16*>(smem + HS_OFF);
++  int* r_e = reinterpret_cast<int*>(smem + MISC_OFF);            // [TOPK] local expert per route
++  float* r_g = reinterpret_cast<float*>(smem + MISC_OFF + 32);   // [TOPK] routing weight per route
++  int* r_n = reinterpret_cast<int*>(smem + MISC_OFF + 64);       // R, last-split, combine, last-CTA
++  float* inv = reinterpret_cast<float*>(smem + MISC_OFF + 96);   // [TOPK]
++  float* red = reinterpret_cast<float*>(smem + MISC_OFF + 128);  // [WARPS][TOPK]
++  const uint32_t ring = smem_u32(smem);
++  const int tid = threadIdx.x, warp = tid >> 5, lane = tid & 31;
++  const int g = lane >> 2, t = lane & 3;
++  const int G = gridDim.x, cta = blockIdx.x;
++
++  // Routing: the local routes in slot order (identical in every CTA).
++  if (tid == 0) {
++    int R = 0;
++    for (int s = 0; s < TOPK; ++s) {
++      const int e = topk_ids[s] - local_start;
++      if (e >= 0 && e < local_count) { r_e[R] = e; r_g[R] = topk_w[s]; ++R; }
++    }
++    r_n[0] = R;
++  }
++  for (int i = tid; i < H / 8; i += THREADS)
++    reinterpret_cast<uint4*>(xs)[i] = __ldg(reinterpret_cast<const uint4*>(x) + i);
++  __syncthreads();
++  const int R = r_n[0];
++  const int n1 = R * T1, N = n1 + R * NT2 * SPLIT2;
++
++  auto nst = [&](int item) { return item < n1 ? KS1 : KS2; };
++  auto issue = [&](int item, int k, int slot) {
++    size_t blk;
++    const uint8_t* cb;
++    const uint8_t* sb;
++    if (item < n1) {
++      const int r = item / T1, j = item - r * T1;
++      blk = ((size_t)r_e[r] * T1 + j) * KS1 + k;
++      cb = c13; sb = s13;
++    } else {
++      const int i2 = item - n1, r = i2 / (NT2 * SPLIT2), rem = i2 - r * (NT2 * SPLIT2);
++      const int s = rem / NT2, n = rem - s * NT2;
++      blk = ((size_t)r_e[r] * NT2 + n) * KB2 + s * KS2 + k;
++      cb = c2; sb = s2;
++    }
++    const uint32_t dst = ring + slot * STAGE_BYTES + tid * 16;
++    const uint8_t* src = cb + blk * CODE_BYTES + tid * 16;
++#pragma unroll
++    for (int i = 0; i < CODE_BYTES / (THREADS * 16); ++i) cp_async16(dst + i * THREADS * 16, src + i * THREADS * 16);
++    if (tid < SC_BYTES / 16) cp_async16(dst + CODE_BYTES, sb + blk * SC_BYTES + tid * 16);
++  };
++
++  // Producer cursor (pi, pk) runs STAGES - 1 steps ahead of the consumer (ci, ck), across items.
++  int pi = cta, pk = 0;
++#pragma unroll 1
++  for (int st = 0; st < STAGES - 1; ++st) {
++    if (pi < N) {
++      issue(pi, pk, st);
++      if (++pk == nst(pi)) { pk = 0; pi += G; }
++    }
++    cp_commit();
++  }
++  int ci = cta, ck = 0, step = 0;
++  float c[4] = {0.f, 0.f, 0.f, 0.f};
++#pragma unroll 1
++  while (ci < N) {
++    cp_wait<STAGES - 2>();
++    __syncthreads();  // stage `step` landed for every thread; slot (step - 1) % STAGES is free
++    if (pi < N) {
++      issue(pi, pk, (step + STAGES - 1) % STAGES);
++      if (++pk == nst(pi)) { pk = 0; pi += G; }
++    }
++    cp_commit();
++    const bool p1 = ci < n1;
++    if (ck == 0) {
++      c[0] = c[1] = c[2] = c[3] = 0.f;
++      if (!p1) {
++        // Phase 2: wait for the 16 phase-1 tiles of this k-split (weights are already streaming).
++        const int i2 = ci - n1, r = i2 / (NT2 * SPLIT2), s = (i2 - r * (NT2 * SPLIT2)) / NT2;
++        if (tid == 0) {
++          const int* f = ctrl + C_CNT + r * SPLIT2 + s;
++          int it = 0;
++          while (ld_acquire(f) < TILES_PER_CHUNK) {
++            // a set error flag stops every later wait at once, so a broken launch costs one bound, not many
++            if (++it > SPIN_MAX || ((it & 1023) == 0 && ld_acquire(ctrl + C_ERR))) { atomicExch(ctrl + C_ERR, 1); break; }
++            __nanosleep(32);
++          }
++          __threadfence();
++        }
++        __syncthreads();
++        if (tid < KCH / 8)
++          reinterpret_cast<uint4*>(hs)[tid] = ld_cg4(hbuf + (size_t)r * I + s * KCH + tid * 8);
++        __syncthreads();
++      }
++    }
++    const uint32_t* bsrc = reinterpret_cast<const uint32_t*>(p1 ? xs : hs) + ck * (BK / 2);
++    compute_stage(c, smem + (step % STAGES) * STAGE_BYTES, bsrc, warp, lane);
++    ++step;
++    if (++ck < nst(ci)) continue;
++    // ---- item epilogue ----
++    if (p1) {
++      const int r = ci / T1, j = ci - r * T1;
++      if (t == 0) {
++        const float gsc = gs13[r_e[r]];
++        const float gate = c[0] * gsc, up = c[2] * gsc;
++        hbuf[(size_t)r * I + 64 * j + 8 * warp + g] = __float2bfloat16_rn(gate / (1.0f + expf(-gate)) * up);
++        __threadfence();
++      }
++      __syncthreads();
++      if (tid == 0) {
++        __threadfence();
++        atomicAdd(ctrl + C_CNT + r * SPLIT2 + j / TILES_PER_CHUNK, 1);
++      }
++    } else {
++      const int i2 = ci - n1, r = i2 / (NT2 * SPLIT2), rem = i2 - r * (NT2 * SPLIT2);
++      const int s = rem / NT2, n = rem - s * NT2;
++      if (t == 0) {
++        float* p = part + ((size_t)s * TOPK + r) * H + ROWS * n + 16 * warp + g;
++        p[0] = c[0];
++        p[8] = c[2];
++        __threadfence();
++      }
++      __syncthreads();
++      if (tid == 0) {
++        __threadfence();
++        const int old = atomicAdd(ctrl + C_TICK + r * NT2 + n, 1);
++        __threadfence();
++        r_n[1] = old == SPLIT2 - 1;
++      }
++      __syncthreads();
++      if (r_n[1]) {
++        // Last of the 4 splits: sum the partials in split order, times gs, bf16 y.
++        if (tid < ROWS) {
++          const size_t o = (size_t)r * H + ROWS * n + tid;
++          float acc = 0.f;
++#pragma unroll
++          for (int ss = 0; ss < SPLIT2; ++ss) acc += ld_cg_f(part + (size_t)ss * TOPK * H + o);
++          ybuf[o] = __float2bfloat16_rn(acc * gs2[r_e[r]]);
++          __threadfence();
++        }
++        __syncthreads();
++        if (tid == 0) {
++          __threadfence();
++          const int old = atomicAdd(ctrl + C_DONE, 1);
++          __threadfence();
++          r_n[2] = old == R * NT2 - 1;
++        }
++        __syncthreads();
++        if (r_n[2]) combine(ybuf, post_w, r_g, R, red, inv, out, tid, warp, lane);
++      }
++    }
++    ck = 0;
++    ci += G;
++  }
++  cp_wait<0>();
++
++  // Exit ticket: the last CTA writes the zero row when R == 0 and resets every counter.
++  __syncthreads();
++  if (tid == 0) {
++    __threadfence();
++    const int old = atomicAdd(ctrl + C_EXIT, 1);
++    __threadfence();
++    r_n[3] = old == G - 1;
++  }
++  __syncthreads();
++  if (r_n[3]) {
++    if (R == 0) {
++      reinterpret_cast<uint4*>(out + tid * 16)[0] = make_uint4(0u, 0u, 0u, 0u);
++      reinterpret_cast<uint4*>(out + tid * 16)[1] = make_uint4(0u, 0u, 0u, 0u);
++    }
++    for (int i = tid; i < C_EXIT; i += THREADS) ctrl[i] = 0;
++    __syncthreads();
++    if (tid == 0) ctrl[C_EXIT] = 0;
++  }
++}
++
++}  // namespace
++
++void moe_bs1(torch::Tensor x, torch::Tensor ids, torch::Tensor tw, torch::Tensor c13, torch::Tensor s13,
++             torch::Tensor gs13, torch::Tensor c2, torch::Tensor s2, torch::Tensor gs2, torch::Tensor post_w,
++             torch::Tensor hbuf, torch::Tensor part, torch::Tensor ybuf, torch::Tensor ctrl, torch::Tensor out,
++             int64_t local_start, int64_t local_count, int64_t grid) {
++  const at::cuda::OptionalCUDAGuard guard(device_of(x));
++  auto stream = at::cuda::getCurrentCUDAStream();
++  moe_bs1_kernel<<<static_cast<int>(grid), THREADS, SMEM, stream>>>(
++      reinterpret_cast<const __nv_bfloat16*>(x.data_ptr()), ids.data_ptr<int>(), tw.data_ptr<float>(),
++      c13.data_ptr<uint8_t>(), s13.data_ptr<uint8_t>(), gs13.data_ptr<float>(), c2.data_ptr<uint8_t>(),
++      s2.data_ptr<uint8_t>(), gs2.data_ptr<float>(), reinterpret_cast<const __nv_bfloat16*>(post_w.data_ptr()),
++      reinterpret_cast<__nv_bfloat16*>(hbuf.data_ptr()), part.data_ptr<float>(),
++      reinterpret_cast<__nv_bfloat16*>(ybuf.data_ptr()), ctrl.data_ptr<int>(),
++      reinterpret_cast<__nv_bfloat16*>(out.data_ptr()), static_cast<int>(local_start), static_cast<int>(local_count));
++  C10_CUDA_KERNEL_LAUNCH_CHECK();
++}
++
++// Sets the dynamic smem limit (once, before any launch or capture) and returns
++// [numRegs, localSizeBytes, blocks per SM at SMEM, SMEM, STAGES, C_LEN, C_ERR].
++std::vector<int64_t> moe_bs1_info() {
++  C10_CUDA_CHECK(cudaFuncSetAttribute(moe_bs1_kernel, cudaFuncAttributeMaxDynamicSharedMemorySize, SMEM));
++  cudaFuncAttributes a;
++  C10_CUDA_CHECK(cudaFuncGetAttributes(&a, moe_bs1_kernel));
++  int occ = 0;
++  C10_CUDA_CHECK(cudaOccupancyMaxActiveBlocksPerMultiprocessor(&occ, moe_bs1_kernel, THREADS, SMEM));
++  return {a.numRegs, static_cast<int64_t>(a.localSizeBytes), occ, SMEM, STAGES, C_LEN, C_ERR};
++}
++"""
++
++
++def _build_fused():
++    """Compile the bs=1 CUDA module once per process, in prepare (never during graph capture)."""
++    t0 = time.perf_counter()
++    try:
++        from torch.utils.cpp_extension import load_inline
++        ext = load_inline(
++            name="muse_moe_w4a16_fused_bs1_v1",
++            cpp_sources=_FUSED_CPP,
++            cuda_sources=_FUSED_CUDA,
++            functions=["moe_bs1", "moe_bs1_info"],
++            extra_cuda_cflags=["-O3", "-arch=sm_90a"],
++            verbose=False,
++        )
++    except Exception as e:  # keep the master path if the build fails
++        print(f"[cuda-moe-bs1] load_inline failed after {time.perf_counter() - t0:.1f}s: {e!r}")
++        return None
++    print(f"[cuda-moe-bs1] load_inline compiled in {time.perf_counter() - t0:.1f}s")
++    return ext
++
++
++def _unpack_codes(packed):
++    """uint8 [..., K/2] -> uint8 [..., K] of 4-bit codes, element 2i from the low nibble."""
++    return torch.stack((packed & 0xF, packed >> 4), dim=-1).flatten(-2)
++
++
++def _frag_codes(codes):
++    """codes [T, 8 warp, 2 half, 8 g, K] (row in tile = 16 warp + 8 half + g) -> flat bytes in the
++    kernel's order [T][K/256][warp][sub 4][lane 32][16 B]: lane g*4+t, word s = k16 step, nibble
++    p = 4b + 2(1 - h8) + (1 - half) holds (row 8 half + g, k = 16 s + 8 h8 + 2t + b)."""
++    t_, k = codes.shape[0], codes.shape[-1]
++    c = codes.reshape(t_, 8, 2, 8, k // 256, 4, 4, 2, 4, 2).flip(2).flip(7)
++    c = c.permute(*FUSED_PERM).contiguous().view(-1, 8)
++    return (c[:, 0::2] | (c[:, 1::2] << 4)).flatten()
++
++
++def _unfrag_codes(b, shape):
++    """Inverse of _frag_codes, for the round-trip assert."""
++    t_, k = shape[0], shape[-1]
++    n = _unpack_codes(b.view(-1, 4)).view(t_, k // 256, 8, 4, 8, 4, 4, 2, 2, 2)
++    inv = [FUSED_PERM.index(i) for i in range(len(FUSED_PERM))]
++    return n.permute(*inv).flip(2).flip(7).reshape(shape)
++
++
++def _frag_scales(sf):
++    """e4m3 bytes [T, 8 warp, 2 half, 8 g, K/16] -> flat [T][K/256][warp][sub][g][step s][half]."""
++    t_, kb = sf.shape[0], sf.shape[-1] // 16
++    return sf.reshape(t_, 8, 2, 8, kb, 4, 4).permute(*FUSED_SC_PERM).contiguous().flatten()
++
++
++def _unfrag_scales(b, shape):
++    t_, kb = shape[0], shape[-1] // 16
++    inv = [FUSED_SC_PERM.index(i) for i in range(len(FUSED_SC_PERM))]
++    return b.view(t_, kb, 8, 4, 8, 4, 2).permute(*inv).reshape(shape)
++
++
++def _fused_repack(weights, start, count):
++    """Lossless mma-fragment repack of experts [start, start + count): codes and e4m3 scale bytes
++    are only moved (round-trip asserted per expert); global scales times 2^7 (exact)."""
++    hh = FUSED_H
++    t1 = hh // 64
++    w13, w13_sf, w2, w2_sf = weights["w13"], weights["w13_sf"], weights["w2"], weights["w2_sf"]
++    c13 = w13.new_empty((count, 2 * hh * hh // 2))
++    c2 = w2.new_empty((count, hh * hh // 2))
++    s13 = w13.new_empty((count, 2 * hh * hh // 16))
++    s2 = w2.new_empty((count, hh * hh // 16))
++    for e in range(count):
++        ge = start + e
++        codes = _unpack_codes(w13[ge])                                     # [2I, H]
++        rows = torch.stack((codes[:hh].reshape(t1, 8, 8, hh), codes[hh:].reshape(t1, 8, 8, hh)), dim=2)
++        c13[e] = _frag_codes(rows)
++        assert torch.equal(_unfrag_codes(c13[e], rows.shape), rows), "w13 code repack round trip"
++        sf = w13_sf[ge].view(torch.uint8)                                  # [2I, H/16]
++        srows = torch.stack((sf[:hh].reshape(t1, 8, 8, hh // 16), sf[hh:].reshape(t1, 8, 8, hh // 16)), dim=2)
++        s13[e] = _frag_scales(srows)
++        assert torch.equal(_unfrag_scales(s13[e], srows.shape), srows), "w13 scale repack round trip"
++        rows2 = _unpack_codes(w2[ge]).reshape(hh // 128, 8, 2, 8, hh)       # [H, I]
++        c2[e] = _frag_codes(rows2)
++        assert torch.equal(_unfrag_codes(c2[e], rows2.shape), rows2), "w2 code repack round trip"
++        sf2 = w2_sf[ge].view(torch.uint8).reshape(hh // 128, 8, 2, 8, hh // 16)
++        s2[e] = _frag_scales(sf2)
++        assert torch.equal(_unfrag_scales(s2[e], sf2.shape), sf2), "w2 scale repack round trip"
++    return {
++        "c13": c13, "s13": s13, "c2": c2, "s2": s2,
++        "gs13": (weights["w13_gs"][start:start + count].float() * 128.0).contiguous(),
++        "gs2": (weights["w2_gs"][start:start + count].float() * 128.0).contiguous(),
++    }
++
++
++def _fused_forward(data, fused):
++    """bs=1: the whole MoE in one launch of moe_bs1_kernel. Scratch and counters come from prepare;
++    the kernel leaves every counter at 0, so nothing carries between calls."""
++    x = data["hidden_states"].contiguous()
++    if x.data_ptr() % 16:  # pointer alignment for the 16 B loads (an address, not a value)
++        x = x.clone()
++    ids = data["topk_ids"].to(torch.int32).contiguous()
++    tw = data["topk_weights"].to(torch.float32).contiguous()
++    out = torch.empty((1, FUSED_H), dtype=torch.bfloat16, device=x.device)
++    fused["ext"].moe_bs1(x, ids, tw, fused["c13"], fused["s13"], fused["gs13"], fused["c2"], fused["s2"],
++                         fused["gs2"], fused["post_norm_w"], fused["hbuf"], fused["part"], fused["ybuf"],
++                         fused["ctrl"], out, fused["start"], fused["count"], fused["grid"])
++    return out
++
++
++def _fused_case(device, gen, n_local, start, count):
++    """Synthetic bs=1 input with exactly n_local local routes in random slots (prepare only)."""
++    local = [start + i for i in torch.randperm(count, generator=gen)[:n_local].tolist()]
++    pool = [e for e in range(N_EXPERTS) if not start <= e < start + count]
++    remote = [pool[i] for i in torch.randperm(len(pool), generator=gen)[:TOP_K - n_local].tolist()]
++    ids = local + remote
++    ids = [ids[i] for i in torch.randperm(TOP_K, generator=gen).tolist()]
++    w = torch.rand((1, TOP_K), generator=gen) + 0.05
++    return {
++        "hidden_states": torch.randn((1, FUSED_H), generator=gen).to(device=device, dtype=torch.bfloat16),
++        "topk_ids": torch.tensor([ids], dtype=torch.int32, device=device),
++        "topk_weights": (w / w.sum()).to(device),
++        "config": {"bs": 1, "d_hidden": FUSED_H, "d_expert": FUSED_H, "n_experts": N_EXPERTS,
++                   "local_start": start, "local_count": count, "top_k": TOP_K, "sharding": "ep8"},
++    }
++
++
++def _fp32_dequant(packed, sf, gs):
++    """Local NVFP4 decode (e2m1 grid, e4m3 block scales, fp32 global scale), fp32 [rows, K]."""
++    codes = _unpack_codes(packed).long()
++    grid = torch.tensor((0.0, 0.5, 1.0, 1.5, 2.0, 3.0, 4.0, 6.0), device=packed.device)
++    v = torch.where((codes & 8) != 0, -grid[codes & 7], grid[codes & 7])
++    v = v.view(v.shape[0], -1, 16) * (sf.float() * gs.float())[..., None]
++    return v.flatten(-2)
++
++
++def _fp32_moe(data, weights, start, count):
++    """fp32 bs=1 MoE from the raw weights (self-check only)."""
++    x = data["hidden_states"].float()[0]
++    nw = weights["post_norm_w"].float() + 1.0
++    out = torch.zeros_like(x)
++    for s, e in enumerate(data["topk_ids"][0].tolist()):
++        if not start <= e < start + count:
++            continue
++        h = _fp32_dequant(weights["w13"][e], weights["w13_sf"][e], weights["w13_gs"][e]) @ x
++        gate, up = h[:FUSED_H], h[FUSED_H:]
++        y = _fp32_dequant(weights["w2"][e], weights["w2_sf"][e], weights["w2_gs"][e]) @ (torch.nn.functional.silu(gate) * up)
++        v = y * nw
++        out += data["topk_weights"][0, s].float() * v * torch.rsqrt(v.pow(2).mean() + POST_NORM_EPS)
++    return out[None]
++
++
++def _rel(out, ref):
++    ref = ref.float()
++    return float((out.float() - ref).norm() / ref.norm().clamp_min(1e-30))
++
++
++def _fused_setup(weights, state, start, count):
++    """Untimed, prepare() only: build, residency check, repack, self-check. Returns the fused-path
++    state, or None (bs=1 then runs master byte for byte)."""
++    tag = "[cuda-moe-bs1]"
++    device = weights["w13"].device
++    if weights["w13"].shape[1:] != (2 * FUSED_H, FUSED_H // 2) or weights["w2"].shape[1:] != (FUSED_H, FUSED_H // 2):
++        print(f"{tag} shapes differ from the built kernel; PATH CHOSEN = master")
++        return None
++    ext = _build_fused()
++    if ext is None:
++        print(f"{tag} SELF-CHECK FAILED (build); PATH CHOSEN = master")
++        return None
++    try:
++        regs, local_bytes, occ, smem, stages, ctrl_len, err_idx = ext.moe_bs1_info()
++        sms = torch.cuda.get_device_properties(device).multi_processor_count
++        print(f"{tag} regs {regs}, localSizeBytes {local_bytes}, smem {smem} B, stages {stages}, "
++              f"blocks/SM {occ}, SMs {sms}, grid {sms}")
++        assert occ >= 1, "moe_bs1_kernel cannot be resident at 1 CTA per SM"
++        t0 = time.perf_counter()
++        fused = _fused_repack(weights, start, count)
++        print(f"{tag} repack (round trip asserted) in {time.perf_counter() - t0:.1f}s")
++        fused.update({
++            "ext": ext, "start": start, "count": count, "grid": sms,
++            "post_norm_w": weights["post_norm_w"].clone(),  # fresh, 16 B aligned for the uint4 loads
++            "hbuf": torch.zeros((TOP_K, FUSED_H), dtype=torch.bfloat16, device=device),
++            "part": torch.zeros((4, TOP_K, FUSED_H), dtype=torch.float32, device=device),
++            "ybuf": torch.zeros((TOP_K, FUSED_H), dtype=torch.bfloat16, device=device),
++            "ctrl": torch.zeros((ctrl_len,), dtype=torch.int32, device=device),
++        })
++        gen = torch.Generator().manual_seed(20261024)
++        order = (2, 1, 8, 0, 3)
++        worst = 0.0
++        ok = True
++        # 50 back-to-back launches with R changing every call (counter reuse across R).
++        for rnd in range(10):
++            for n_local in order:
++                case = _fused_case(device, gen, n_local, start, count)
++                out = _fused_forward(case, fused)
++                if rnd == 0 and n_local == order[0]:
++                    torch.cuda.synchronize()
++                    if fused["ctrl"][err_idx].item():
++                        print(f"{tag} first launch hit a spin bound")
++                        ok = False
++                        break
++                # master never runs Marlin with zero blocks, so R=0 is checked for exact zeros only
++                ref = _master_kernel_fn(case, state) if n_local else None
++                if n_local == 0:
++                    good = bool((out == 0).all())
++                else:
++                    err = _rel(out, ref)
++                    worst = max(worst, err)
++                    good = err <= 1e-2 and bool(torch.isfinite(out).all())
++                if not good:
++                    print(f"{tag} mismatch round {rnd} R={n_local}")
++                    ok = False
++                    break
++            if not ok:
++                break
++        # One fp32-dequant reference from the raw weights (catches what Marlin would share).
++        for n_local in (1, 2):
++            case = _fused_case(device, gen, n_local, start, count)
++            e32 = _rel(_fused_forward(case, fused), _fp32_moe(case, weights, start, count))
++            em = _rel(_master_kernel_fn(case, state), _fp32_moe(case, weights, start, count))
++            print(f"{tag} R={n_local} vs fp32 dequant: fused {e32:.2e}, master {em:.2e}")
++            ok = ok and e32 <= 1e-2
++        # Graph capture + replays with R varying between replays.
++        static = _fused_case(device, gen, 2, start, count)
++        _fused_forward(static, fused)
++        torch.cuda.synchronize()
++        graph = torch.cuda.CUDAGraph()
++        with torch.cuda.graph(graph):
++            g_out = _fused_forward(static, fused)
++        for n_local in order + order:
++            case = _fused_case(device, gen, n_local, start, count)
++            for key in ("hidden_states", "topk_ids", "topk_weights"):
++                static[key].copy_(case[key])
++            graph.replay()
++            ref = _master_kernel_fn(case, state) if n_local else None
++            if n_local == 0:
++                good = bool((g_out == 0).all())
++            else:
++                err = _rel(g_out, ref)
++                worst = max(worst, err)
++                good = err <= 1e-2
++            if not good:
++                print(f"{tag} graph replay mismatch R={n_local}")
++                ok = False
++                break
++        torch.cuda.synchronize()
++        del graph
++        ctrl = fused["ctrl"].tolist()
++        if ctrl[err_idx]:
++            print(f"{tag} a spin wait hit its bound (error flag set)")
++            ok = False
++        if any(ctrl[:err_idx]):
++            print(f"{tag} counters not reset after the launches: {ctrl[:err_idx]}")
++            ok = False
++    except Exception as e:
++        print(f"{tag} self-check raised: {e!r}")
++        ok, worst = False, float("nan")
++    if not ok:
++        print(f"{tag} SELF-CHECK FAILED (max rel-L2 vs master {worst:.2e}); PATH CHOSEN = master")
++        return None
++    print(f"{tag} SELF-CHECK PASSED: 50 eager + 10 graph replays, R in {{0,1,2,3,8}}, max rel-L2 vs master "
++          f"{worst:.2e}; PATH CHOSEN = fused")
++    return fused
++
++
+ def _marlin_layer(weights, start, count):
+     """The parameters prepare_moe_nvfp4_layer_for_marlin reads, for experts [start, start+count)."""
+     sl = slice(start, start + count)
+@@ -319,7 +1035,7 @@ def prepare(weights: Weights) -> dict:
+             torch.cuda.synchronize()
+             _align_self_check(device, count)
+     torch.cuda.synchronize()
+-    return {
++    state = {
+         "banks": banks,
+         "workspace": marlin_make_workspace(device, max_blocks_per_sm=4),
+         # MuseSpark1xFp4Experts binds the effective (1 + w) weight of the post-expert norm.
+@@ -327,10 +1043,25 @@ def prepare(weights: Weights) -> dict:
+         # The original BF16 weight for _post_norm_combine_kernel, which adds the 1 in fp32.
+         "post_norm_w": weights["post_norm_w"].contiguous(),
+     }
++    # bs=1 fused kernel for the bank (None on any build/residency/self-check failure: master path).
++    state["fused"] = _fused_setup(weights, state, 0, 32)
++    torch.cuda.synchronize()
++    return state
+ 
+ 
+ def kernel_fn(data: Inputs, state: dict) -> torch.Tensor:
+-    """This GPU's share of the MoE output, bfloat16 [M, H]."""
++    """This GPU's share of the MoE output, bfloat16 [M, H]. One token runs the fused CUDA kernel
++    when prepare() validated it (a shape/config branch); everything else runs master."""
++    cfg = data["config"]
++    fused = state["fused"]
++    if fused is not None and data["hidden_states"].shape[0] == 1 \
++            and (cfg["local_start"], cfg["local_count"]) == (fused["start"], fused["count"]):
++        return _fused_forward(data, fused)
++    return _master_kernel_fn(data, state)
++
++
++def _master_kernel_fn(data: Inputs, state: dict) -> torch.Tensor:
++    """master's kernel_fn, unchanged."""
+     cfg = data["config"]
+     bank = state["banks"][(cfg["local_start"], cfg["local_count"])]
+     x = data["hidden_states"].contiguous()
