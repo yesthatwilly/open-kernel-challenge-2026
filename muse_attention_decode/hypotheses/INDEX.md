@@ -1,11 +1,11 @@
 # muse_attention_decode hypotheses
 
-Regenerated 2026-10-24T104514Z. Best: 1.1706x [1.1530,1.1924] job `facc479992e24a35` (check)
+Regenerated 2026-10-24T112911Z. Best: 1.1706x [1.1530,1.1924] job `facc479992e24a35` (check)
 
 | created | slug | kind | area | where | outcome | speedup | CI | job | mode | promotion | review | expected hit |
 |---|---|---|---|---|---|---|---|---|---|---|---|---|
 | 2026-10-23T223444Z | sglang-path-parity | primary | SGLang path parity | queue | hold |  |  |  |  |  | hold |  |
-| 2026-10-23T223550Z | fa3-num-splits-full-decode | primary | FA3 call | queue | queued |  |  |  |  |  | required |  |
+| 2026-10-23T223550Z | fa3-num-splits-full-decode | primary | FA3 call | queue | hold |  |  |  |  |  | required |  |
 | 2026-10-23T223550Z | fa3-num-splits-sliding | primary | FA3 call | queue | hold |  |  |  |  |  | required |  |
 | 2026-10-23T223550Z | triton-window-attention-sliding | primary | FA3 call | queue | queued |  |  |  |  |  | required |  |
 | 2026-10-23T223550Z | fused-preattention-triton | primary | pre-attention norm+rope | done/gain | gain | 1.1274 | [1.111,1.144] | 9e8fcb3fe4b04458 | check | done | proceed | 6/8 |
@@ -19,15 +19,16 @@ Regenerated 2026-10-24T104514Z. Best: 1.1706x [1.1530,1.1924] job `facc479992e24
 | 2026-10-23T225858Z | fa3-batched-q-verify | primary | FA3 call (q layout) | queue | queued |  |  |  |  |  | required |  |
 | 2026-10-23T225858Z | fa3-num-splits-full-verify | primary | FA3 call | queue | queued |  |  |  |  |  | required |  |
 | 2026-10-23T225858Z | fa3-single-split-sliding | primary | FA3 call | queue | queued |  |  |  |  |  | required |  |
-| 2026-10-23T225858Z | fa3-window-trimmed-page-table | primary | page table (sliding) | queue | queued |  |  |  |  |  | required |  |
 | 2026-10-23T225858Z | fused-full-combine-normgate | primary | output norm-gate | queue | queued |  |  |  |  |  | required |  |
 | 2026-10-23T225858Z | stream-fork-preattention | primary | launch overhead | queue | queued |  |  |  |  |  | required |  |
 | 2026-10-23T225858Z | triton-flash-decode-deep-pipeline | primary | FA3 call (Triton pipeline) | queue | queued |  |  |  |  |  | required |  |
 | 2026-10-23T225858Z | triton-flash-decode-full-verify | primary | FA3 call | queue | queued |  |  |  |  |  | required |  |
+| 2026-10-23T225858Z | fa3-window-trimmed-page-table | primary | page table (sliding) | running | running |  |  | 1f63fcbbc0394bed | check |  | proceed |  |
 | 2026-10-24T081233Z | sliding-single-launch-fused-attention | rewrite | sliding-layer attention (whole-path rewrite) | done/regression | regression | 0.9452 | [0.931,0.959] | f389af196ddf47b1 | check |  | proceed | 2/7 |
 | 2026-10-24T104027Z | paired-heads-launch-cleanup-ab-tune-batch-gate | ab-tune→paired-heads-launch-cleanup | FA3 call (head packing) gate | running | running |  |  | bd64bf9f9e904f02 | check |  | proceed |  |
 
 ## Held
 
 - sglang-path-parity: adversarial review: As specified the change is baseline.py line for line (same five calls, same _NORMS/_ROPE caches, same descale and tuple handling), so churn.py commit-impl (.cla
+- fa3-num-splits-full-decode: num_splits is only a cap under FA3's on-device split sizing (LESSONS; the decode_layer equivalents were held for the same reason), and full layers are now paired, which changes FA3's split decision anyway
 - fa3-num-splits-sliding: num_splits is only a cap under FA3's on-device split sizing (LESSONS; decode held the same idea), and sliding-single-launch-fused-attention, now running, replaces the sliding FA3 call outright

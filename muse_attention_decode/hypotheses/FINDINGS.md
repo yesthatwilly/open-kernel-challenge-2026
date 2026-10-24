@@ -1,6 +1,6 @@
 # muse_attention_decode findings
 
-Regenerated 2026-10-24T104514Z by `churn.py index`. Read this before writing a hypothesis for muse_attention_decode.
+Regenerated 2026-10-24T112911Z by `churn.py index`. Read this before writing a hypothesis for muse_attention_decode.
 
 ## Current best
 
@@ -43,7 +43,7 @@ Where the time goes (per scored shape, top kernels):
 ## Queue and in flight
 
 - queue: sglang-path-parity [SGLang path parity] p1 hold
-- queue: fa3-num-splits-full-decode [FA3 call] p4 queued
+- queue: fa3-num-splits-full-decode [FA3 call] p4 hold
 - queue: fa3-num-splits-sliding [FA3 call] p3 hold
 - queue: triton-window-attention-sliding [FA3 call] p5 queued
 - queue: fa3-drop-cu-seqlens-decode [FA3 call] p5 queued
@@ -54,10 +54,10 @@ Where the time goes (per scored shape, top kernels):
 - queue: fa3-batched-q-verify [FA3 call (q layout)] p4 queued
 - queue: fa3-num-splits-full-verify [FA3 call] p5 queued
 - queue: fa3-single-split-sliding [FA3 call] p4 queued
-- queue: fa3-window-trimmed-page-table [page table (sliding)] p3 queued
 - queue: fused-full-combine-normgate [output norm-gate] p5 queued
 - queue: stream-fork-preattention [launch overhead] p4 queued
 - queue: triton-flash-decode-deep-pipeline [FA3 call (Triton pipeline)] p4 queued
 - queue: triton-flash-decode-full-verify [FA3 call] p4 queued
 - running: paired-heads-launch-cleanup [attention boundary] p3 running
+- running: fa3-window-trimmed-page-table [page table (sliding)] p3 running
 - running: paired-heads-launch-cleanup-ab-tune-batch-gate [FA3 call (head packing) gate] p2 running
