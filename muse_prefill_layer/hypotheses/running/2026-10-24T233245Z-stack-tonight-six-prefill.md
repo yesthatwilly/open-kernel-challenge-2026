@@ -39,6 +39,9 @@ attempt_file: 2026-10-24T233306Z-check-stack-tonight-six-prefill.md
 prepared_at: 2026-10-24T233306Z
 job: 5cb6e68a86ec48f0
 dispatched_at: 2026-10-24T233314Z
+promotion: submitted
+promotion_job: 3358a99eb27a405a
+promotion_at: 2026-10-24T234001Z
 ---
 
 # stack-tonight-six-prefill
