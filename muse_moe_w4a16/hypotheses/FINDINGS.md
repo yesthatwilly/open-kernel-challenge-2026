@@ -1,6 +1,6 @@
 # muse_moe_w4a16 findings
 
-Regenerated 2026-10-24T032801Z by `churn.py index`. Read this before writing a hypothesis for muse_moe_w4a16.
+Regenerated 2026-10-24T035911Z by `churn.py index`. Read this before writing a hypothesis for muse_moe_w4a16.
 
 ## Current best
 
@@ -19,6 +19,7 @@ Where the time goes (per scored shape, top kernels):
 
 ### MoE align/dispatch
 - **sglang-marlin-path-parity** → gain (gain), 0.9888x — gained on decode_1 decode_1; decode_16 decode_16; decode_32 decode_32; verify_1 verify_1; verify_16 verify_16; verify_32 verify_32. Replace the starter's 32-expert dense loop (dequantize every local expert to BF16 on every call, x @ w13.T over all tokens, masked weighted sum) with SGLang's M
+- **marlin-block-size-m-next-larger** → regression (regression), 0.9178x — lost on decode_32 decode_32; verify_16 verify_16. Change only the block_size_m pick in kernel_fn. SGLang's loop breaks on the first candidate in (8, 16, 32, 48, 64) where num_tokens*8/32/block_size_m < 0.9, whi
 
 ## Open follow-ups
 
@@ -37,5 +38,4 @@ Where the time goes (per scored shape, top kernels):
 - queue: w13-marlin-bf16-reduce-verify [w13 marlin] p5 queued
 - running: triton-w13-grouped-gemv-small-m [w13 marlin] p2 running
 - running: align-single-token-ep [MoE align/dispatch] p4 running
-- running: marlin-block-size-m-next-larger [MoE align/dispatch] p3 running
 - running: marlin-workspace-blocks-per-sm-8 [w13 marlin] p4 running
