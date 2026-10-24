@@ -1,0 +1,471 @@
+{
+ "ok": true,
+ "promote": [
+  {
+   "problem": "muse_attention_decode",
+   "slug": "fa3-hdim128-head-pairing",
+   "run": "okc submit muse_attention_decode /home/user/git/musespark/muse_attention_decode/submission.py --no-wait --json",
+   "then": "churn.py record-submit muse_attention_decode fa3-hdim128-head-pairing <job>"
+  }
+ ],
+ "dispatch": [
+  {
+   "problem": "muse_attention_decode",
+   "picks": [
+    {
+     "slug": "paired-heads-launch-cleanup",
+     "mode": "check",
+     "priority": 3,
+     "review": "required",
+     "kind": "primary",
+     "controls_for": null
+    }
+   ]
+  },
+  {
+   "problem": "muse_bf16_proj",
+   "picks": [
+    {
+     "slug": "router-splitk32-small-m-all-loads-in-flight",
+     "mode": "check",
+     "priority": 3,
+     "review": "required",
+     "kind": "primary",
+     "controls_for": null
+    },
+    {
+     "slug": "pooler-splitk2-tma-weight-stream",
+     "mode": "check",
+     "priority": 3,
+     "review": "required",
+     "kind": "primary",
+     "controls_for": null
+    }
+   ]
+  },
+  {
+   "problem": "muse_decode_layer",
+   "picks": [
+    {
+     "slug": "triton-flash-decode-full-oversub-kv-prefetch",
+     "mode": "check",
+     "priority": 1,
+     "review": "required",
+     "kind": "rewrite",
+     "controls_for": null
+    }
+   ]
+  },
+  {
+   "problem": "muse_moe_w4a16",
+   "picks": [
+    {
+     "slug": "marlin-block-m-cap-16-port",
+     "mode": "check",
+     "priority": 1,
+     "review": "required",
+     "kind": "primary",
+     "controls_for": null
+    }
+   ]
+  },
+  {
+   "problem": "muse_prefill_layer",
+   "picks": [
+    {
+     "slug": "router-triton-hilo-splitk-turn",
+     "mode": "check",
+     "priority": 3,
+     "review": "required",
+     "kind": "primary",
+     "controls_for": null
+    }
+   ]
+  }
+ ],
+ "wake_s": 2475,
+ "needs_human": [],
+ "report": {
+  "preflight": {
+   "ok": true,
+   "branch": "master",
+   "whoami": "yesthatwilly",
+   "quotas": {
+    "muse_bf16_proj": {
+     "scored": {
+      "per_day": 10,
+      "used": 2,
+      "left": 8
+     },
+     "checks": {
+      "per_day": 20,
+      "used": 12,
+      "left": 8
+     }
+    },
+    "muse_attention_decode": {
+     "scored": {
+      "per_day": 10,
+      "used": 1,
+      "left": 9
+     },
+     "checks": {
+      "per_day": 10,
+      "used": 2,
+      "left": 8
+     }
+    },
+    "muse_moe_w4a16": {
+     "scored": {
+      "per_day": 10,
+      "used": 0,
+      "left": 10
+     },
+     "checks": {
+      "per_day": 20,
+      "used": 11,
+      "left": 9
+     }
+    },
+    "muse_decode_layer": {
+     "scored": {
+      "per_day": 10,
+      "used": 2,
+      "left": 8
+     },
+     "checks": {
+      "per_day": 10,
+      "used": 6,
+      "left": 4
+     }
+    },
+    "muse_prefill_layer": {
+     "scored": {
+      "per_day": 10,
+      "used": 0,
+      "left": 10
+     },
+     "checks": {
+      "per_day": 10,
+      "used": 8,
+      "left": 2
+     }
+    }
+   },
+   "tracks": null,
+   "hours_to_reset": 13.38,
+   "lock": ".claude/churn.lock",
+   "_exit": 0
+  },
+  "intake": {
+   "ok": true,
+   "added": [
+    "muse_decode_layer/hypotheses/queue/2026-10-24T100416Z-triton-flash-decode-full-oversub-kv-prefetch.md",
+    "muse_moe_w4a16/hypotheses/queue/2026-10-24T100217Z-marlin-block-m-cap-16-port.md"
+   ],
+   "skipped": [],
+   "_exit": 0
+  },
+  "recover": {
+   "ok": true,
+   "actions": [],
+   "needs_human": [],
+   "_exit": 0
+  },
+  "harvest": {
+   "ok": true,
+   "harvested": [
+    {
+     "problem": "muse_attention_decode",
+     "slug": "fa3-hdim128-head-pairing",
+     "job": "facc479992e24a35",
+     "outcome": "gain",
+     "detail": "gain",
+     "speedup": 1.1705932092473075,
+     "ci": [
+      1.1530343111085979,
+      1.1923944446416679
+     ],
+     "md": "muse_attention_decode/hypotheses/done/gain/2026-10-23T225840Z-fa3-hdim128-head-pairing.md"
+    },
+    {
+     "problem": "muse_attention_decode",
+     "slug": "sliding-single-launch-fused-attention",
+     "job": "f389af196ddf47b1",
+     "outcome": "regression",
+     "detail": "regression",
+     "speedup": 0.9452410112427269,
+     "ci": [
+      0.9310623960740859,
+      0.9594196264113677
+     ],
+     "md": "muse_attention_decode/hypotheses/done/regression/2026-10-24T081233Z-sliding-single-launch-fused-attention.md"
+    },
+    {
+     "problem": "muse_bf16_proj",
+     "slug": "unpooler-slice-triton-splitk8-semaphore",
+     "job": "bb31bb36545a47bb",
+     "outcome": "neutral",
+     "detail": "unproven-vs-best",
+     "speedup": 1.1546360457892961,
+     "ci": [
+      1.1373165051024567,
+      1.1719555864761355
+     ],
+     "md": "muse_bf16_proj/hypotheses/done/neutral/2026-10-24T075111Z-unpooler-slice-triton-splitk8-semaphore.md"
+    },
+    {
+     "problem": "muse_moe_w4a16",
+     "slug": "align-256-experts-below-128",
+     "job": "e753d5b9df644ebb",
+     "outcome": "neutral",
+     "detail": "unproven-vs-best",
+     "speedup": 0.9997517334586111,
+     "ci": [
+      0.984755457456732,
+      1.0147480094604902
+     ],
+     "md": "muse_moe_w4a16/hypotheses/done/neutral/2026-10-24T075232Z-align-256-experts-below-128.md"
+    },
+    {
+     "problem": "muse_moe_w4a16",
+     "slug": "small-m-grouped-gemv-splitk-rewrite",
+     "job": "734a1159ff334c3d",
+     "outcome": "regression",
+     "detail": "regression",
+     "speedup": 0.6635161301441485,
+     "ci": [
+      0.6535633881919862,
+      0.6734688720963106
+     ],
+     "md": "muse_moe_w4a16/hypotheses/done/regression/2026-10-24T081339Z-small-m-grouped-gemv-splitk-rewrite.md"
+    }
+   ],
+   "pending": [
+    {
+     "problem": "muse_bf16_proj",
+     "slug": "pooler-unpooler-m128-wgmma-splitk-semaphore",
+     "job": "d34fd76f9c444728",
+     "status": "queued",
+     "age_h": 0.6
+    },
+    {
+     "problem": "muse_moe_w4a16",
+     "slug": "post-expert-norm-triton-small-m",
+     "job": "bacd1f502f4e46fa",
+     "status": "queued",
+     "age_h": 1.2
+    },
+    {
+     "problem": "muse_moe_w4a16",
+     "slug": "marlin-block-size-m-next-smaller",
+     "job": "198f10f446a847cb",
+     "status": "queued",
+     "age_h": 0.6
+    },
+    {
+     "problem": "muse_moe_w4a16",
+     "slug": "marlin-block-size-m-verify-two-smaller",
+     "job": "ed837a4a46d44a95",
+     "status": "queued",
+     "age_h": 0.6
+    },
+    {
+     "problem": "muse_prefill_layer",
+     "slug": "experts-triton-w4a16-swapab-reglhs",
+     "job": "00148fbedfb6414f",
+     "status": "queued",
+     "age_h": 0.5
+    }
+   ],
+   "_exit": 0
+  },
+  "harvest-promotions": {
+   "ok": true,
+   "promotions": [],
+   "_exit": 1
+  },
+  "promote": {
+   "ok": true,
+   "promote": [
+    {
+     "problem": "muse_attention_decode",
+     "slug": "fa3-hdim128-head-pairing",
+     "run": "okc submit muse_attention_decode /home/user/git/musespark/muse_attention_decode/submission.py --no-wait --json",
+     "then": "churn.py record-submit muse_attention_decode fa3-hdim128-head-pairing <job>"
+    }
+   ],
+   "skipped": [],
+   "_exit": 0
+  },
+  "budget": {
+   "ok": true,
+   "plans": [
+    {
+     "problem": "muse_attention_decode",
+     "checks_left": 8,
+     "scored_left": 9,
+     "hours_to_reset": 13.38,
+     "in_flight": 0,
+     "in_flight_checks": 0,
+     "gains_pending": 1,
+     "promotion_hold": 1,
+     "spendable": 16,
+     "queue": 11,
+     "need": 16,
+     "pace": 2,
+     "N": 1,
+     "picks": [
+      {
+       "slug": "paired-heads-launch-cleanup",
+       "mode": "check",
+       "priority": 3,
+       "review": "required",
+       "kind": "primary",
+       "controls_for": null
+      }
+     ],
+     "shortfall": 5,
+     "reason": null,
+     "wake_s": 2785
+    },
+    {
+     "problem": "muse_bf16_proj",
+     "checks_left": 8,
+     "scored_left": 8,
+     "hours_to_reset": 13.38,
+     "in_flight": 1,
+     "in_flight_checks": 1,
+     "gains_pending": 0,
+     "promotion_hold": 1,
+     "spendable": 15,
+     "queue": 3,
+     "need": 15,
+     "pace": 2,
+     "N": 2,
+     "picks": [
+      {
+       "slug": "router-splitk32-small-m-all-loads-in-flight",
+       "mode": "check",
+       "priority": 3,
+       "review": "required",
+       "kind": "primary",
+       "controls_for": null
+      },
+      {
+       "slug": "pooler-splitk2-tma-weight-stream",
+       "mode": "check",
+       "priority": 3,
+       "review": "required",
+       "kind": "primary",
+       "controls_for": null
+      }
+     ],
+     "shortfall": 12,
+     "reason": null,
+     "wake_s": 2971
+    },
+    {
+     "problem": "muse_decode_layer",
+     "checks_left": 4,
+     "scored_left": 8,
+     "hours_to_reset": 13.38,
+     "in_flight": 0,
+     "in_flight_checks": 0,
+     "gains_pending": 0,
+     "promotion_hold": 0,
+     "spendable": 12,
+     "queue": 4,
+     "need": 12,
+     "pace": 1,
+     "N": 1,
+     "picks": [
+      {
+       "slug": "triton-flash-decode-full-oversub-kv-prefetch",
+       "mode": "check",
+       "priority": 1,
+       "review": "required",
+       "kind": "rewrite",
+       "controls_for": null
+      }
+     ],
+     "shortfall": 8,
+     "reason": null,
+     "wake_s": 3600
+    },
+    {
+     "problem": "muse_moe_w4a16",
+     "checks_left": 9,
+     "scored_left": 10,
+     "hours_to_reset": 13.38,
+     "in_flight": 3,
+     "in_flight_checks": 3,
+     "gains_pending": 0,
+     "promotion_hold": 1,
+     "spendable": 18,
+     "queue": 1,
+     "need": 18,
+     "pace": 2,
+     "N": 1,
+     "picks": [
+      {
+       "slug": "marlin-block-m-cap-16-port",
+       "mode": "check",
+       "priority": 1,
+       "review": "required",
+       "kind": "primary",
+       "controls_for": null
+      }
+     ],
+     "shortfall": 17,
+     "reason": "queue has 1 eligible hypotheses; 17 more could be absorbed today (run /hypothesize muse_moe_w4a16)",
+     "wake_s": 2475
+    },
+    {
+     "problem": "muse_prefill_layer",
+     "checks_left": 2,
+     "scored_left": 10,
+     "hours_to_reset": 13.38,
+     "in_flight": 1,
+     "in_flight_checks": 1,
+     "gains_pending": 0,
+     "promotion_hold": 1,
+     "spendable": 11,
+     "queue": 2,
+     "need": 11,
+     "pace": 1,
+     "N": 1,
+     "picks": [
+      {
+       "slug": "router-triton-hilo-splitk-turn",
+       "mode": "check",
+       "priority": 3,
+       "review": "required",
+       "kind": "primary",
+       "controls_for": null
+      }
+     ],
+     "shortfall": 9,
+     "reason": null,
+     "wake_s": 3600
+    }
+   ],
+   "wake_s": 2475,
+   "dispatch_total": 6,
+   "_exit": 0
+  },
+  "index": {
+   "ok": true,
+   "changed": [
+    "muse_attention_decode/hypotheses/INDEX.md",
+    "muse_attention_decode/hypotheses/FINDINGS.md",
+    "muse_bf16_proj/hypotheses/INDEX.md",
+    "muse_bf16_proj/hypotheses/FINDINGS.md",
+    "muse_moe_w4a16/hypotheses/INDEX.md",
+    "muse_moe_w4a16/hypotheses/FINDINGS.md",
+    "hypotheses/INDEX.md"
+   ],
+   "_exit": 0
+  }
+ }
+}
