@@ -39,9 +39,16 @@ priority: 1
 kind: primary
 controls_for: null
 review: proceed
-status: queued
+status: running
 review_at: 2026-10-24T083634Z
 review_companions: null
+stage: claimed
+claimed_at: 2026-10-24T083634Z
+base_sha: 67649c559d5a07d10b659c84bf80c1b1ec29c879
+base_blob: e4931f050c7fb99835fe116d25bb454a5ea731e9
+branch: hyp/muse_prefill_layer/experts-marlin-block-m-local-rows
+worktree: .worktrees/muse_prefill_layer/experts-marlin-block-m-local-rows
+mode: null
 ---
 
 # experts-marlin-block-m-local-rows
