@@ -979,10 +979,14 @@ def cmd_promote(a):
     for p in probs:
         best = load_best(p)
         cands = []
-        for o in ["gain"]:
+        for o in ["gain", "neutral"]:
             for f in list_md(hdir(p, "done", o)):
                 h = read_hyp(os.path.join(hdir(p, "done", o), f))
+                # a neutral is a candidate only once `land` merged it by hand on its per-shape rows
+                if o == "neutral" and not h.get("hand_landed"):
+                    continue
                 if h.get("promotion") in (None, "pending", "merged") and h.get("mode") != "submit":
+                    h["_dir"] = o
                     cands.append(h)
         if not cands:
             continue
@@ -994,13 +998,13 @@ def cmd_promote(a):
         s, ci = h.get("speedup") or 0, h.get("speedup_ci") or [0, 0]
         B = (best or {}).get("speedup") or 0
         Bhi = ((best or {}).get("ci") or [B, B])[1] or B
-        if ci[0] <= max(B, Bhi) and (best or {}).get("slug") != h["slug"]:
+        if ci[0] <= max(B, Bhi) and (best or {}).get("slug") != h["slug"] and not h.get("hand_landed"):
             fm_set(h["_path"], promotion="superseded", promotion_reason=f"best is now {B}")
             git("add", "--", rel(h["_path"]))
             git("commit", "-q", "-m", f"churn({p}): {h['slug']} superseded", check=False)
             skipped.append({"problem": p, "slug": h["slug"], "reason": "superseded by current best"})
             continue
-        rj = os.path.join(hdir(p, "done", "gain"), f"{h['slug']}.result.json")
+        rj = os.path.join(hdir(p, "done", h.get("_dir", "gain")), f"{h['slug']}.result.json")
         res = json.load(open(rj)) if os.path.exists(rj) else {"speedup": s, "speedup_ci": ci, "job": h.get("job")}
         if h.get("promotion") != "merged":
             if not _land(p, h, res, rel(rj)):
@@ -1029,6 +1033,22 @@ def cmd_promote(a):
                      "run": f"okc submit {p} {os.path.join(REPO, p, 'submission.py')} --no-wait --json",
                      "then": f"churn.py record-submit {p} {h['slug']} <job>"})
     out({"ok": True, "promote": plan, "skipped": skipped}, 0 if plan else 1)
+
+
+def cmd_land(a):
+    """Merge a neutral result by hand when its per-shape rows clearly gained (the headline CI only
+    overlapped). promote then submits it like any gain. The reason goes to DECISIONS.md."""
+    p = problem_of(a.problem)
+    path, where = find_hyp(p, a.slug)
+    if not path or where != "done/neutral":
+        refuse(f"{a.slug} is not in {p}/hypotheses/done/neutral")
+    h = read_hyp(path)
+    rj = os.path.join(hdir(p, "done", "neutral"), f"{a.slug}.result.json")
+    res = json.load(open(rj)) if os.path.exists(rj) else {"speedup": h.get("speedup"), "speedup_ci": h.get("speedup_ci"), "job": h.get("job")}
+    fm_set(path, hand_landed=True)
+    log_decision(p, a.slug, "land by hand: " + (a.reason or ""))
+    ok = _land(p, read_hyp(path), res, rel(rj))
+    out({"ok": ok, "slug": a.slug, "promotion": read_hyp(path).get("promotion"), "reason": read_hyp(path).get("promotion_reason")}, 0 if ok else 1)
 
 
 def cmd_record_submit(a):
@@ -1771,6 +1791,7 @@ def main():
     x = sp.add_parser("landed"); x.add_argument("problem"); x.set_defaults(fn=cmd_landed)
     x = sp.add_parser("review-record"); x.add_argument("problem"); x.add_argument("slug"); x.add_argument("json_file"); x.add_argument("--prompt", help="the filled adversary prompt, archived beside the review"); x.set_defaults(fn=cmd_review_record)
     x = sp.add_parser("note"); x.add_argument("problem"); x.add_argument("slug"); x.add_argument("text"); x.set_defaults(fn=cmd_note)
+    x = sp.add_parser("land"); x.add_argument("problem"); x.add_argument("slug"); x.add_argument("--reason", required=True); x.set_defaults(fn=cmd_land)
     x = sp.add_parser("archive-file"); x.add_argument("problem"); x.add_argument("slug"); x.add_argument("file"); x.add_argument("--as", dest="name"); x.set_defaults(fn=cmd_archive_file)
     x = sp.add_parser("commit-impl"); x.add_argument("problem"); x.add_argument("slug"); x.set_defaults(fn=cmd_commit_impl)
     x = sp.add_parser("prepare-run"); x.add_argument("problem"); x.add_argument("slug"); x.add_argument("--mode"); x.set_defaults(fn=cmd_prepare_run)
