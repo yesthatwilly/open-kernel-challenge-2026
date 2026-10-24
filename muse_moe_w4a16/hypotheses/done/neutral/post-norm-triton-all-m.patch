@@ -1,0 +1,14 @@
+diff --git a/muse_moe_w4a16/submission.py b/muse_moe_w4a16/submission.py
+index c7bf9ff..5278292 100644
+--- a/muse_moe_w4a16/submission.py
++++ b/muse_moe_w4a16/submission.py
+@@ -197,7 +197,8 @@ def kernel_fn(data: Inputs, state: dict) -> torch.Tensor:
+         cache2, cache3, bank["w2"], None, bank["w2_s"], bank["w2_gs"], None, None, None, ws,
+         sorted_ids, block_experts, n_padded, topk_weights, top_k=1,
+         size_m=num_tokens * TOP_K, size_n=size_k, size_k=size_n, **common).view(num_tokens, TOP_K, size_k)
+-    if num_tokens < SMALL_M_POST_NORM:
++    # Hypothesis post-norm-triton-all-m: the Triton combine at every num_tokens (was < SMALL_M_POST_NORM).
++    if True:
+         y = y.contiguous()
+         out = torch.empty((num_tokens, size_k), device=x.device, dtype=torch.bfloat16)
+         _post_norm_combine_kernel[(num_tokens,)](

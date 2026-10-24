@@ -40,10 +40,10 @@ priority: 4
 kind: primary
 controls_for: null
 review: proceed
-status: running
+status: done
 review_at: 2026-10-24T124248Z
 review_companions: null
-stage: dispatched
+stage: harvested
 claimed_at: 2026-10-24T124248Z
 base_sha: a98ef454e7901f7ff47efb4c4c0e77e7261da827
 base_blob: c7bf9ffedc48b757f56765004e5d65f6ad5ba841
@@ -60,6 +60,13 @@ attempt_file: 2026-10-24T124312Z-check-post-norm-triton-all-m.md
 prepared_at: 2026-10-24T124312Z
 job: 2ec5387ffe8748c9
 dispatched_at: 2026-10-24T124333Z
+outcome: neutral
+verdict_detail: within-ci
+speedup: 1.248315071373178
+speedup_ci: [1.2295903453025805, 1.2670397974437757]
+harvested_at: 2026-10-24T132212Z
+best_at_harvest: 1.2535643764852882
+promotion: null
 ---
 
 # post-norm-triton-all-m
@@ -127,3 +134,29 @@ Checked against `git -C .worktrees/muse_moe_w4a16/post-norm-triton-all-m diff` (
 - [x] First line marker kept; no triton.autotune added.
 
 okc_lint: OK with warnings (only the existing `torch.cuda.synchronize()` in prepare()).
+
+## Result
+
+- job `2ec5387ffe8748c9` (check), status done, passed True, tests 5/5
+- speedup 1.2483x, 95% CI [1.2296, 1.2670], score 10773.321822675993 µs vs SGLang 13448.5 µs
+- best at harvest: {"speedup": 1.2535643764852882, "ci": [1.2347609108380089, 1.2723678421325675], "job": "c00ef7295c154867"}; base result: muse_moe_w4a16/hypotheses/done/gain/marlin-block-m-two-smaller-on-postnorm.result.json
+- **outcome: neutral** (within-ci)
+- files: `muse_moe_w4a16/hypotheses/done/neutral/post-norm-triton-all-m.result.json`, `muse_moe_w4a16/hypotheses/done/neutral/post-norm-triton-all-m.patch`; branch `hyp/muse_moe_w4a16/post-norm-triton-all-m`
+
+## Attribution
+
+| shape | w | base µs | hyp µs | delta | verdict |
+|---|---|---|---|---|---|
+| bs=1 load=decode_1 sharding=ep8 | 60 | 55.52 | 54.71 | 1.0024 | flat |
+| bs=16 load=decode_16 sharding=ep8 | 60 | 155.89 | 154.23 | 1.0006 | flat |
+| bs=32 load=decode_32 sharding=ep8 | 60 | 209.65 | 207.05 | 0.9977 | flat |
+| bs=8 load=verify_1 sharding=ep8 | 60 | 120.38 | 114.36 | 1.0005 | flat |
+| bs=128 load=verify_16 sharding=ep8 | 60 | 339.69 | 341.34 | 0.9831 | flat |
+| bs=256 load=verify_32 sharding=ep8 | 60 | 466.86 | 472.66 | 0.9907 | flat |
+
+no shape moved outside noise. Expected hit: 4/6. Noise ±1.5%.
+
+## Follow-ups
+
+- within-ci: the change is not proven either way; a stacked hypothesis (`depends_on: post-norm-triton-all-m`) that adds a further change in the same area is the only way to learn more (identical code is never re-run).
+
