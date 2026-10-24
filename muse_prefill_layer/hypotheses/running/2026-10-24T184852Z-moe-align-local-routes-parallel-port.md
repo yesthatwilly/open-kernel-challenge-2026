@@ -54,7 +54,7 @@ kind: primary
 controls_for: null
 review: required
 status: running
-stage: claimed
+stage: implemented
 claimed_at: 2026-10-24T232823Z
 base_sha: a4d96a9424579e84f7664be536951edfda597297
 base_blob: 635cfee3ac2c3f7c66840b8c8a082cad2fa41a68
@@ -63,6 +63,12 @@ worktree: .worktrees/muse_prefill_layer/moe-align-local-routes-parallel-port
 mode: null
 restack_of: null
 stale_base: null
+implemented_at: 2026-10-24T232909Z
+impl_commit: 67f7473c299ffe95b9bb8701cdaf2079f00e3cab
+submission_sha256: ee2820cb9b1b12e45b3717b33bea5e0ca20eb1cce03a3eb39591cbf32ffa9c99
+norm_sha256: 26793774d30d3dfa2648fb9a62a4c67bd307158f4e6329d0ad1012a9bf163330
+submission_blob: 8780061c8886bf3d70fe3c433fbbfade9bdf8507
+lint_warnings: 12
 ---
 
 # moe-align-local-routes-parallel-port
@@ -80,3 +86,22 @@ Built on master (635cfee). Port muse_moe_w4a16's measured align (master there: _
 ## Risk
 
 Port of a measured muse_moe_w4a16 win; touches only the dispatch, not either expert engine, so it composes with experts-cuda-wgmma-mixed-input-grouped-gemm (its stage 1 keeps moe_align_block_size at 256 and still zero-stores -1 items; this removes them at the source). Read the Marlin rows at turn_1/turn_4 to settle whether remote m-blocks cost Marlin anything. Risks: _align_parallel streams all T*8 ids twice in each of 33 programs; at first_turn (131072 ids) that may take ~50-80 us, not the ~5 us it took at bs=256 (judge on its own row against count_and_sort + moe_align); the sorted order within an expert differs from SGLang's (ascending route index), harmless for Marlin and the Triton kernel.
+
+## Implementation notes
+
+Built in the main thread 2026-10-24 ~23:30Z with user-approved self-review (no new agents before the reset). DEVIATION, scoped down for time and risk:
+- Marlin path only (T <= MARLIN_MAX_TOKENS: turn_1, turn_4, every test). `_experts_triton` (first_turn, 131K routes) keeps master's align: the kernel's per-program chunk loop is serial in n, unmeasured at that size.
+- The `_local_expert_ids` remap launch is kept; `_align_parallel(local_ids, 0, LOCAL_EXPERTS, bsm)` takes its output (ids already 0-31 / -1), so local_start stays on device with no kernel change. The remap fusion is left for a follow-up.
+- Kernel, wrapper and `_align_par_ref_view` copied unchanged from the decode port audited tonight (moe-align-parallel-large-t-port, 1.2433 on the judge); new `_align_par_setup` in prepare(): warms every BLOCK_SIZE_M_CANDIDATES variant, compares per-expert route sets and block counts with moe_align_block_size(local_ids, bsm, N_EXPERTS) at T = 9/200/753/3012/4096 x random/skewed/all-remote, sets state["align_par_ok"], prints `[align-local] ON|OFF ... PATH CHOSEN`. It runs before `_check_experts_e2e`, which then checks the Marlin path end to end against the Triton path with the chosen align.
+- Remote rows of the Marlin outputs are no longer written; silu_and_mul(expert_ids=local_ids) and fused_post_expert_norm_weighted_sum(slot_expert_ids=local_ids) skip -1 slots, as muse_moe_w4a16 master relies on.
+
+## Rules check
+
+- [x] CUDA-graph capturable: allocations are shape-only, no host sync or value-dependent control flow in kernel_fn (the gate is a prepare()-set bool).
+- [x] Fresh inputs: nothing derived from `data` cached.
+- [x] Weights unchanged.
+- [x] Activations BF16; KV FP8; attention untouched.
+- [x] Every key attended.
+- [x] No timing/harness access, processes, network or module edits.
+- [x] No work outside timed calls added (self-check in prepare()).
+- [x] okc_lint: no errors.
