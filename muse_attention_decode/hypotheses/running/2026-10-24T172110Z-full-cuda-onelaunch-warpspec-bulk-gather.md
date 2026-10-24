@@ -98,13 +98,15 @@ base_sha: c0821b3a0b916336d23e7bbe2a454636be5b21cc
 base_blob: 1c0f5fa1bfc4e602b62e5e9edd9df6d5652b297b
 branch: hyp/muse_attention_decode/full-cuda-onelaunch-warpspec-bulk-gather
 worktree: .worktrees/muse_attention_decode/full-cuda-onelaunch-warpspec-bulk-gather
-mode: null
+mode: submit
 implemented_at: 2026-10-24T175437Z
 impl_commit: fa289e54f415aaff2104e1a6ef842b26ced3982d
 submission_sha256: 384a9250cbeb581fd702c802192739fa6fd3e7c3982f380a7586ff854f3c803a
 norm_sha256: 6f29133ec2914cc3495557cee8c601810c9b9843cfa8b81e781b5f5a274626f7
 submission_blob: 3f64b0622823eb70c127565c98aed1972953bf87
 lint_warnings: 3
+attempt_file: 2026-10-24T181732Z-submit-full-cuda-onelaunch-warpspec-bulk-gather.md
+prepared_at: 2026-10-24T181732Z
 ---
 
 # full-cuda-onelaunch-warpspec-bulk-gather
