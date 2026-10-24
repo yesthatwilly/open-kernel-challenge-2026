@@ -35,7 +35,7 @@ review: proceed
 status: running
 review_at: 2026-10-24T040704Z
 review_companions: null
-stage: implemented
+stage: dispatched
 claimed_at: 2026-10-24T040704Z
 base_sha: b0739163836e46200abd3b7d9a76de8b3467d783
 base_blob: 11fbc1957daf7294cd2810ff82a0aad2f25644bd
@@ -50,6 +50,8 @@ submission_blob: c2c950b382881f1b57b3a0c814bf085efdbf5086
 lint_warnings: 1
 attempt_file: 2026-10-24T040816Z-check-w13-marlin-atomic-add-small-m.md
 prepared_at: 2026-10-24T040816Z
+job: c8ea8e21eea447f9
+dispatched_at: 2026-10-24T040823Z
 ---
 
 # w13-marlin-atomic-add-small-m
