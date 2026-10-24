@@ -1,0 +1,400 @@
+{
+ "ok": true,
+ "promote": [],
+ "dispatch": [
+  {
+   "problem": "muse_attention_decode",
+   "picks": [
+    {
+     "slug": "fa3-hdim128-head-pairing",
+     "mode": "check",
+     "priority": 2,
+     "review": "required",
+     "kind": "primary",
+     "controls_for": null
+    }
+   ]
+  },
+  {
+   "problem": "muse_bf16_proj",
+   "picks": [
+    {
+     "slug": "pooler-triton-splitk2-blockn64-semaphore-control-blockk256",
+     "mode": "check",
+     "priority": 1,
+     "review": "required",
+     "kind": "control",
+     "controls_for": "pooler-triton-splitk2-blockn64-semaphore"
+    }
+   ]
+  },
+  {
+   "problem": "muse_decode_layer",
+   "picks": [
+    {
+     "slug": "router-triton-splitk-side-stream",
+     "mode": "check",
+     "priority": 1,
+     "review": "required",
+     "kind": "primary",
+     "controls_for": null
+    }
+   ]
+  },
+  {
+   "problem": "muse_moe_w4a16",
+   "picks": [
+    {
+     "slug": "post-expert-norm-triton-small-m",
+     "mode": "check",
+     "priority": 1,
+     "review": "required",
+     "kind": "primary",
+     "controls_for": null
+    },
+    {
+     "slug": "align-256-experts-below-128",
+     "mode": "check",
+     "priority": 1,
+     "review": "required",
+     "kind": "primary",
+     "controls_for": null
+    }
+   ]
+  },
+  {
+   "problem": "muse_prefill_layer",
+   "picks": [
+    {
+     "slug": "experts-marlin-block-m-48-turn4",
+     "mode": "check",
+     "priority": 3,
+     "review": "required",
+     "kind": "primary",
+     "controls_for": null
+    }
+   ]
+  }
+ ],
+ "wake_s": 2238,
+ "needs_human": [],
+ "report": {
+  "preflight": {
+   "ok": true,
+   "branch": "master",
+   "whoami": "yesthatwilly",
+   "quotas": {
+    "muse_bf16_proj": {
+     "scored": {
+      "per_day": 10,
+      "used": 2,
+      "left": 8
+     },
+     "checks": {
+      "per_day": 20,
+      "used": 10,
+      "left": 10
+     }
+    },
+    "muse_attention_decode": {
+     "scored": {
+      "per_day": 10,
+      "used": 1,
+      "left": 9
+     },
+     "checks": {
+      "per_day": 10,
+      "used": 1,
+      "left": 9
+     }
+    },
+    "muse_moe_w4a16": {
+     "scored": {
+      "per_day": 10,
+      "used": 0,
+      "left": 10
+     },
+     "checks": {
+      "per_day": 20,
+      "used": 7,
+      "left": 13
+     }
+    },
+    "muse_decode_layer": {
+     "scored": {
+      "per_day": 10,
+      "used": 2,
+      "left": 8
+     },
+     "checks": {
+      "per_day": 10,
+      "used": 6,
+      "left": 4
+     }
+    },
+    "muse_prefill_layer": {
+     "scored": {
+      "per_day": 10,
+      "used": 0,
+      "left": 10
+     },
+     "checks": {
+      "per_day": 10,
+      "used": 7,
+      "left": 3
+     }
+    }
+   },
+   "tracks": null,
+   "hours_to_reset": 14.68,
+   "lock": ".claude/churn.lock",
+   "_exit": 0
+  },
+  "intake": {
+   "ok": true,
+   "added": [],
+   "skipped": [],
+   "_exit": 0
+  },
+  "recover": {
+   "ok": true,
+   "actions": [],
+   "needs_human": [],
+   "_exit": 0
+  },
+  "harvest": {
+   "ok": true,
+   "harvested": [],
+   "pending": [
+    {
+     "problem": "muse_attention_decode",
+     "slug": "sliding-single-launch-fused-attention",
+     "job": "f389af196ddf47b1",
+     "status": "queued",
+     "age_h": 0.6
+    },
+    {
+     "problem": "muse_decode_layer",
+     "slug": "triton-flash-decode-full-paired-kv",
+     "job": "e82b11f9d9f64b23",
+     "status": "queued",
+     "age_h": 0.6
+    },
+    {
+     "problem": "muse_moe_w4a16",
+     "slug": "small-m-grouped-gemv-splitk-rewrite",
+     "job": "734a1159ff334c3d",
+     "status": "queued",
+     "age_h": 0.5
+    },
+    {
+     "problem": "muse_prefill_layer",
+     "slug": "experts-marlin-block-m-local-rows",
+     "job": "8e9943ec1b004b0f",
+     "status": "queued",
+     "age_h": 0.7
+    },
+    {
+     "problem": "muse_prefill_layer",
+     "slug": "experts-marlin-block-m-48-turn1",
+     "job": "0606f849d2f441ad",
+     "status": "queued",
+     "age_h": 0.7
+    }
+   ],
+   "_exit": 0
+  },
+  "harvest-promotions": {
+   "ok": true,
+   "promotions": [
+    {
+     "problem": "muse_decode_layer",
+     "slug": "marlin-block-m-cap-16",
+     "job": "2b1f82408ab64116",
+     "promotion": "done",
+     "speedup": 1.0634521974439426,
+     "you": {
+      "rank": 412,
+      "team": "yesthatwilly",
+      "speedup": 1.0635,
+      "first": false,
+      "ahead": 411,
+      "to_first": 1.9754
+     }
+    }
+   ],
+   "_exit": 0
+  },
+  "promote": {
+   "ok": true,
+   "promote": [],
+   "skipped": [],
+   "_exit": 1
+  },
+  "budget": {
+   "ok": true,
+   "plans": [
+    {
+     "problem": "muse_attention_decode",
+     "checks_left": 9,
+     "scored_left": 9,
+     "hours_to_reset": 14.68,
+     "in_flight": 1,
+     "in_flight_checks": 1,
+     "gains_pending": 0,
+     "promotion_hold": 1,
+     "spendable": 17,
+     "queue": 12,
+     "need": 17,
+     "pace": 2,
+     "N": 1,
+     "picks": [
+      {
+       "slug": "fa3-hdim128-head-pairing",
+       "mode": "check",
+       "priority": 2,
+       "review": "required",
+       "kind": "primary",
+       "controls_for": null
+      }
+     ],
+     "shortfall": 5,
+     "reason": null,
+     "wake_s": 2896
+    },
+    {
+     "problem": "muse_bf16_proj",
+     "checks_left": 10,
+     "scored_left": 8,
+     "hours_to_reset": 14.68,
+     "in_flight": 0,
+     "in_flight_checks": 0,
+     "gains_pending": 0,
+     "promotion_hold": 0,
+     "spendable": 18,
+     "queue": 4,
+     "need": 18,
+     "pace": 2,
+     "N": 1,
+     "picks": [
+      {
+       "slug": "pooler-triton-splitk2-blockn64-semaphore-control-blockk256",
+       "mode": "check",
+       "priority": 1,
+       "review": "required",
+       "kind": "control",
+       "controls_for": "pooler-triton-splitk2-blockn64-semaphore"
+      }
+     ],
+     "shortfall": 14,
+     "reason": null,
+     "wake_s": 2735
+    },
+    {
+     "problem": "muse_decode_layer",
+     "checks_left": 4,
+     "scored_left": 8,
+     "hours_to_reset": 14.68,
+     "in_flight": 1,
+     "in_flight_checks": 1,
+     "gains_pending": 0,
+     "promotion_hold": 1,
+     "spendable": 11,
+     "queue": 5,
+     "need": 11,
+     "pace": 1,
+     "N": 1,
+     "picks": [
+      {
+       "slug": "router-triton-splitk-side-stream",
+       "mode": "check",
+       "priority": 1,
+       "review": "required",
+       "kind": "primary",
+       "controls_for": null
+      }
+     ],
+     "shortfall": 6,
+     "reason": null,
+     "wake_s": 3600
+    },
+    {
+     "problem": "muse_moe_w4a16",
+     "checks_left": 13,
+     "scored_left": 10,
+     "hours_to_reset": 14.68,
+     "in_flight": 1,
+     "in_flight_checks": 1,
+     "gains_pending": 0,
+     "promotion_hold": 1,
+     "spendable": 22,
+     "queue": 5,
+     "need": 22,
+     "pace": 2,
+     "N": 2,
+     "picks": [
+      {
+       "slug": "post-expert-norm-triton-small-m",
+       "mode": "check",
+       "priority": 1,
+       "review": "required",
+       "kind": "primary",
+       "controls_for": null
+      },
+      {
+       "slug": "align-256-experts-below-128",
+       "mode": "check",
+       "priority": 1,
+       "review": "required",
+       "kind": "primary",
+       "controls_for": null
+      }
+     ],
+     "shortfall": 17,
+     "reason": null,
+     "wake_s": 2238
+    },
+    {
+     "problem": "muse_prefill_layer",
+     "checks_left": 3,
+     "scored_left": 10,
+     "hours_to_reset": 14.68,
+     "in_flight": 2,
+     "in_flight_checks": 2,
+     "gains_pending": 0,
+     "promotion_hold": 1,
+     "spendable": 12,
+     "queue": 3,
+     "need": 12,
+     "pace": 1,
+     "N": 1,
+     "picks": [
+      {
+       "slug": "experts-marlin-block-m-48-turn4",
+       "mode": "check",
+       "priority": 3,
+       "review": "required",
+       "kind": "primary",
+       "controls_for": null
+      }
+     ],
+     "shortfall": 9,
+     "reason": null,
+     "wake_s": 3600
+    }
+   ],
+   "wake_s": 2238,
+   "dispatch_total": 6,
+   "_exit": 0
+  },
+  "index": {
+   "ok": true,
+   "changed": [
+    "muse_decode_layer/hypotheses/INDEX.md",
+    "muse_decode_layer/hypotheses/FINDINGS.md",
+    "hypotheses/INDEX.md"
+   ],
+   "_exit": 0
+  }
+ }
+}
