@@ -40,7 +40,7 @@ review: proceed
 status: running
 review_at: 2026-10-24T104320Z
 review_companions: null
-stage: implemented
+stage: dispatched
 claimed_at: 2026-10-24T104320Z
 base_sha: 12230f154820fa60ff8dc5f1e9efca0e1d05c4c9
 base_blob: 60fc66432a00f0c6a1e2228f6a0775cc08f492fc
@@ -55,6 +55,8 @@ submission_blob: efc544103e6d303d1f8602caa9439628043a17a7
 lint_warnings: 0
 attempt_file: 2026-10-24T104354Z-check-paired-heads-launch-cleanup-ab-tune-batch-gate.md
 prepared_at: 2026-10-24T104354Z
+job: bd64bf9f9e904f02
+dispatched_at: 2026-10-24T104412Z
 ---
 
 # paired-heads-launch-cleanup-ab-tune-batch-gate
