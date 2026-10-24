@@ -33,10 +33,10 @@ priority: 1
 kind: primary
 controls_for: null
 review: proceed
-status: running
+status: done
 review_at: 2026-10-24T174842Z
 review_companions: null
-stage: dispatched
+stage: harvested
 claimed_at: 2026-10-24T174842Z
 base_sha: 4a04b3757546365d2227c1fc1762bc6c5072e92b
 base_blob: a8bb42ac483318e9fbc84bc7826a27b7a704d1fb
@@ -53,6 +53,13 @@ attempt_file: 2026-10-24T175228Z-submit-bf16-restack-m16-swapab-router-swapab-m3
 prepared_at: 2026-10-24T175228Z
 job: 1e90292c7b954d96
 dispatched_at: 2026-10-24T175236Z
+outcome: neutral
+verdict_detail: unproven-vs-best
+speedup: 1.2215006063849365
+speedup_ci: [1.2031780972891624, 1.2398231154807104]
+harvested_at: 2026-10-24T184717Z
+best_at_harvest: 1.1958517819004566
+promotion: null
 ---
 
 # bf16-restack-m16-swapab-router-swapab-m32
@@ -125,3 +132,53 @@ okc_lint output:
 CLEAN: /home/user/git/musespark/.worktrees/muse_bf16_proj/bf16-restack-m16-swapab-router-swapab-m32/muse_bf16_proj/submission.py
 ```
 `python3 -I -m py_compile` passed; __pycache__ removed from the worktree.
+
+## Result
+
+- job `1e90292c7b954d96` (submit), status done, passed True, tests 9/9
+- speedup 1.2215x, 95% CI [1.2032, 1.2398], score 3954.807696982551 µs vs SGLang 4830.8 µs
+- best at harvest: {"speedup": 1.1958517819004566, "ci": [1.1779140051719497, 1.2137895586289633], "job": "eeb9985396764ac2"}; base result: muse_bf16_proj/hypotheses/done/neutral/bf16-m32-swapab-wgmma-triton.result.json
+- **outcome: neutral** (unproven-vs-best)
+- files: `muse_bf16_proj/hypotheses/done/neutral/bf16-restack-m16-swapab-router-swapab-m32.result.json`, `muse_bf16_proj/hypotheses/done/neutral/bf16-restack-m16-swapab-router-swapab-m32.patch`; branch `hyp/muse_bf16_proj/bf16-restack-m16-swapab-router-swapab-m32`
+
+## Attribution
+
+| shape | w | base µs | hyp µs | delta | verdict |
+|---|---|---|---|---|---|
+| layer=qkv_gate load=decode_1 m=1 | 62 | 12.91 | 12.18 | 1.0275 | flat |
+| layer=o load=decode_1 m=1 | 62 | 6.32 | 5.89 | 1.0675 | gained |
+| layer=pooler load=decode_1 m=1 | 62 | 19.0 | 18.84 | 1.0206 | flat |
+| layer=unpooler load=decode_1 m=1 | 62 | 5.94 | 6.15 | 1.0356 | gained |
+| layer=router load=decode_1 m=1 | 62 | 5.73 | 5.38 | 1.0812 | gained |
+| layer=qkv_gate load=decode_16 m=16 | 62 | 13.39 | 13.15 | 1.0286 | flat |
+| layer=o load=decode_16 m=16 | 62 | 6.66 | 6.23 | 1.0783 | gained |
+| layer=pooler load=decode_16 m=16 | 62 | 19.85 | 19.47 | 1.017 | flat |
+| layer=unpooler load=decode_16 m=16 | 62 | 18.61 | 18.51 | 1.0102 | flat |
+| layer=router load=decode_16 m=16 | 62 | 6.03 | 5.47 | 1.1108 | gained |
+| layer=qkv_gate load=decode_32 m=32 | 62 | 13.69 | 14.19 | 0.99 | flat |
+| layer=o load=decode_32 m=32 | 62 | 6.67 | 6.34 | 1.035 | gained |
+| layer=pooler load=decode_32 m=32 | 62 | 20.0 | 19.73 | 1.0047 | flat |
+| layer=unpooler load=decode_32 m=32 | 62 | 18.48 | 18.08 | 1.0202 | flat |
+| layer=router load=decode_32 m=32 | 62 | 6.55 | 6.2 | 1.0805 | gained |
+| layer=qkv_gate load=verify_1 m=8 | 62 | 13.18 | 12.5 | 1.019 | flat |
+| layer=o load=verify_1 m=8 | 62 | 6.32 | 6.13 | 1.045 | gained |
+| layer=pooler load=verify_1 m=8 | 62 | 19.14 | 18.89 | 1.0124 | flat |
+| layer=unpooler load=verify_1 m=8 | 62 | 6.13 | 6.0 | 1.0434 | gained |
+| layer=router load=verify_1 m=8 | 62 | 5.91 | 5.47 | 1.0848 | gained |
+| layer=qkv_gate load=verify_16 m=128 | 62 | 16.81 | 17.05 | 0.9934 | flat |
+| layer=o load=verify_16 m=128 | 62 | 7.09 | 6.98 | 0.9993 | flat |
+| layer=pooler load=verify_16 m=128 | 62 | 25.55 | 25.0 | 1.0216 | flat |
+| layer=unpooler load=verify_16 m=128 | 62 | 19.79 | 19.96 | 1.0003 | flat |
+| layer=router load=verify_16 m=128 | 62 | 7.35 | 7.28 | 1.0091 | flat |
+| layer=qkv_gate load=verify_32 m=256 | 62 | 19.62 | 19.69 | 0.9823 | flat |
+| layer=o load=verify_32 m=256 | 62 | 9.01 | 9.26 | 1.0046 | flat |
+| layer=pooler load=verify_32 m=256 | 62 | 30.53 | 31.19 | 0.9822 | flat |
+| layer=unpooler load=verify_32 m=256 | 62 | 24.5 | 24.42 | 1.0003 | flat |
+| layer=router load=verify_32 m=256 | 62 | 9.3 | 9.6 | 0.9848 | flat |
+
+gained on o decode_1, decode_16, decode_32, verify_1; unpooler decode_1, verify_1; router decode_1, decode_16, decode_32, verify_1. Expected hit: 3/4. Noise ±1.5%.
+
+## Follow-ups
+
+- unproven-vs-best: the change is not proven either way; a stacked hypothesis (`depends_on: bf16-restack-m16-swapab-router-swapab-m32`) that adds a further change in the same area is the only way to learn more (identical code is never re-run).
+
