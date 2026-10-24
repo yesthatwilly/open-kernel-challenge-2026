@@ -47,10 +47,10 @@ priority: 1
 kind: primary
 controls_for: null
 review: proceed
-status: running
+status: done
 review_at: 2026-10-24T024401Z
 review_companions: null
-stage: dispatched
+stage: harvested
 claimed_at: 2026-10-24T024401Z
 base_sha: 077528f1affb9d72e841d65b80b285e7f23a0184
 base_blob: 15e2cafa9040cfadc7045aca96417bbeb8707aa9
@@ -67,6 +67,13 @@ attempt_file: 2026-10-24T024934Z-check-sglang-pipeline-parity.md
 prepared_at: 2026-10-24T024934Z
 job: 62025c368c3c4e8e
 dispatched_at: 2026-10-24T024944Z
+outcome: gain
+verdict_detail: gain
+speedup: 1.0038664293875537
+speedup_ci: [0.9888084329467404, 1.018924425828367]
+harvested_at: 2026-10-24T044310Z
+best_at_harvest: null
+promotion: pending
 ---
 
 # sglang-pipeline-parity
@@ -158,3 +165,31 @@ OK with warnings: .../sglang-pipeline-parity/muse_prefill_layer/submission.py
 ```
 
 The warning is the sync at the end of prepare(), which baseline.py has too, so it is accepted. `python3 -m py_compile` passes.
+
+## Result
+
+- job `62025c368c3c4e8e` (check), status done, passed True, tests 5/5
+- speedup 1.0039x, 95% CI [0.9888, 1.0189], score 385911.79927826684 µs vs SGLang 387403.9 µs
+- best at harvest: none; base result: SGLang (no base result)
+- **outcome: gain** (gain)
+- files: `muse_prefill_layer/hypotheses/done/gain/sglang-pipeline-parity.result.json`, `muse_prefill_layer/hypotheses/done/gain/sglang-pipeline-parity.patch`; branch `hyp/muse_prefill_layer/sglang-pipeline-parity`
+
+## Attribution
+
+| shape | w | base µs | hyp µs | delta | verdict |
+|---|---|---|---|---|---|
+| batch=1 ctx=80000 dist=soft layer=sliding load=turn_1 page=1 q_len=753 repeats=6 | 46 | 1088.21 | 1078.66 | 1.0089 | flat |
+| batch=1 ctx=80000 dist=soft layer=full load=turn_1 page=1 q_len=753 repeats=6 | 16 | 1445.07 | 1434.85 | 1.0071 | flat |
+| batch=4 ctx=80000 dist=soft layer=sliding load=turn_4 page=1 q_len=753 repeats=6 | 46 | 3373.42 | 3367.03 | 1.0019 | flat |
+| batch=4 ctx=80000 dist=soft layer=full load=turn_4 page=1 q_len=753 repeats=6 | 16 | 4962.05 | 4949.82 | 1.0025 | flat |
+| batch=1 ctx=0 dist=soft layer=full load=first_turn page=1 q_len=16384 repeats=6 | 16 | 18372.82 | 18279.1 | 1.0051 | flat |
+| batch=1 ctx=32768 dist=soft layer=sliding load=first_turn page=1 q_len=16384 repeats=6 | 138 | 17046.66 | 16995.2 | 1.003 | flat |
+| batch=1 ctx=32768 dist=soft layer=full load=first_turn page=1 q_len=16384 repeats=6 | 16 | 21245.73 | 21535.66 | 0.9865 | flat |
+| batch=1 ctx=65536 dist=soft layer=full load=first_turn page=1 q_len=16384 repeats=6 | 16 | 25296.32 | 25286.61 | 1.0004 | flat |
+
+no shape moved outside noise. Expected hit: 3/3. Noise ±1.5%.
+
+## Follow-ups
+
+- candidate for promotion; stack further changes with `depends_on` once it lands.
+
