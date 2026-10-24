@@ -5,7 +5,9 @@ items here and in each tick's summary. Resolved items move to the log at the bot
 
 ## Open
 
-- (none)
+- 2026-10-24 attention_decode **fa3-hdim128-head-pairing** gained (check 1.171x, CI 1.153-1.192; board best is 1.128x) and is merged to master. Scored submit, if you approve:
+  `okc submit muse_attention_decode /home/user/git/musespark/muse_attention_decode/submission.py --no-wait --json`
+  then `churn.py record-submit muse_attention_decode fa3-hdim128-head-pairing <job>`. A batch-gated follow-up (pair only at batch > 1, where it lost 27-35%) is being minted and may beat it.
 
 ## Standing answers
 

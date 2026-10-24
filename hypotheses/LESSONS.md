@@ -56,6 +56,7 @@ profile are in `<problem>/hypotheses/archive/<slug>/`.
   SGLang fused_moe_kernel skeleton) is correct but ~2.0 ms for w13+w2 at turn_1 and 3.3 ms at turn_4,
   0.689x overall (experts-triton-w4a16-inkernel-fp4, 218515e2d0b14ce7). Losses shrink with T (0.46x
   turn_1 sliding to 0.90x first_turn), so the cost is per-tile dequant overhead, not the MMA.
+- moe small-m-grouped-gemv-splitk-rewrite stage 1 (split-K grouped GEMV) lost 1.7-2.6x at bs 1/8/16 (0.664x).
 - A Triton W4A16 grouped GEMV with arithmetic FP4 dequant was 2-2.6x slower than Marlin at small M
   (triton-w13-grouped-gemv-small-m). It was dequant-ALU-bound with too few busy CTAs.
 
@@ -65,6 +66,11 @@ profile are in `<problem>/hypotheses/archive/<slug>/`.
   (decode fa3-num-splits-* reviews).
 - FA3 sits at ~600 TFLOP/s on every full prefill shape whatever the CTA count (fa3-batched-mode review).
 - Full-attention decode reaches only 1.3-1.7 TB/s: the page-size-1 row gather is the limit.
+- FA3 head pairing (two hdim-64 KV heads viewed as one hdim-128 row, query zero-padded into its half)
+  gained 14-24% on full batch 16/32 decode and verify (attention fa3-hdim128-head-pairing, 1.171x) but lost
+  27-35% at batch 1, where the pad/unpad launches dominate. Gate it on batch.
+- One fused sliding-window Triton launch won sliding decode_1 by 24% but lost 13-60% everywhere else,
+  2-2.6x on verify (attention sliding-single-launch-fused-attention, 0.945x).
 - A Triton split flash-decode reading both KV heads of a token as one paired 128-byte row (decode
   triton-flash-decode-full-paired-kv, e82b11f9d9f64b23) is correct and within ~5-7% of FA3 on full
   decode: 200.8 vs 188.8 us at decode_16, 394.8 vs 374.4 us at decode_32 (1.070x overall, neutral).
