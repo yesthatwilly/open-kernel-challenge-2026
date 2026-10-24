@@ -46,13 +46,15 @@ base_sha: c8af06125b23fb943b7a8f7c26fc6b9a677dd1e0
 base_blob: cc466fce207709c98ab0e78c2435c1c459890fdb
 branch: hyp/muse_decode_layer/decode-restack-sliding-port-paired-pad-gemms-t1
 worktree: .worktrees/muse_decode_layer/decode-restack-sliding-port-paired-pad-gemms-t1
-mode: null
+mode: submit
 implemented_at: 2026-10-24T175146Z
 impl_commit: 62dae0d15ab7bbba9bbeece153ca2507bb23ba54
 submission_sha256: 72144e40a5588f9fef68d5f5da0390f04691c0e1d5b98fbf39879a5e81536fae
 norm_sha256: 7e9bd9b4762741435e4d182bf2d80b3db0a8acfba775a24bcc79c6174d0cf06e
 submission_blob: a37cb6c8e76c4e703a2e0c45e61f2b0a5f8418ea
 lint_warnings: 3
+attempt_file: 2026-10-24T175151Z-submit-decode-restack-sliding-port-paired-pad-gemms-t1.md
+prepared_at: 2026-10-24T175151Z
 ---
 
 # decode-restack-sliding-port-paired-pad-gemms-t1
