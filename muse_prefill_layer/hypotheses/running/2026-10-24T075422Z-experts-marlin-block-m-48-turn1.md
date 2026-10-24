@@ -38,7 +38,7 @@ review: proceed
 status: running
 review_at: 2026-10-24T083825Z
 review_companions: null
-stage: implemented
+stage: dispatched
 claimed_at: 2026-10-24T083826Z
 base_sha: 4735619dba9401926cf675fc366d56f69d945921
 base_blob: e4931f050c7fb99835fe116d25bb454a5ea731e9
@@ -53,6 +53,8 @@ submission_blob: 2ad966454adce5a619a1ebff11848b5463f1295a
 lint_warnings: 1
 attempt_file: 2026-10-24T083936Z-check-experts-marlin-block-m-48-turn1.md
 prepared_at: 2026-10-24T083936Z
+job: 0606f849d2f441ad
+dispatched_at: 2026-10-24T083946Z
 ---
 
 # experts-marlin-block-m-48-turn1
