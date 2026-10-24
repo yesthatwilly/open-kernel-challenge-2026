@@ -90,13 +90,15 @@ base_sha: 13bdacf95cb5cf6521efd5d84b33f2580fb203f7
 base_blob: a8bb42ac483318e9fbc84bc7826a27b7a704d1fb
 branch: hyp/muse_bf16_proj/bf16-cublaslt-algo-pick-in-prepare-m128-m256
 worktree: .worktrees/muse_bf16_proj/bf16-cublaslt-algo-pick-in-prepare-m128-m256
-mode: null
+mode: submit
 implemented_at: 2026-10-24T164830Z
 impl_commit: a77cdec64609c037327ef9e9a511154dd9463de4
 submission_sha256: 64af013bdd366ad4e03a1a286a339a1fc999c34dca8128d117071d97fa0547cf
 norm_sha256: 6628c5ad469e8670e7fe761f21e7f008f8ce4b03cf9f692ae2b75ac51aeae7f0
 submission_blob: 944e64ec552e22118083c1b6febff93fff2de4e2
 lint_warnings: 12
+attempt_file: 2026-10-24T164831Z-submit-bf16-cublaslt-algo-pick-in-prepare-m128-m256.md
+prepared_at: 2026-10-24T164831Z
 ---
 
 # bf16-cublaslt-algo-pick-in-prepare-m128-m256
