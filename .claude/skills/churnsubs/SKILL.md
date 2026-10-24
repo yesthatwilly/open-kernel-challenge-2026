@@ -137,7 +137,15 @@ spends anything.
 
 Every harvested job's raw okc record and profile files are archived to
 `<p>/hypotheses/archive/<slug>/` (`<job>.okc.json.gz`, `.profile.txt`, `.profile.json.gz`), because the
-profiles otherwise vanish with the worktree. Cross-problem lessons go in `hypotheses/LESSONS.md`:
+profiles otherwise vanish with the worktree. Keep everything with reproducibility value, not full
+transcripts:
+- the filled adversary prompt: `review-record ... --prompt <file>` archives it beside the raw review JSON;
+- the per-pick implementer brief: write it to a file, then `churn.py archive-file <p> <slug> <file> --as implement-brief.md`;
+- every judgement call (hold, deferral, merge by hand, overriding a reviewer, a deviation you
+  approved): `churn.py note <p> <slug> "<what and why>"` appends to `hypotheses/DECISIONS.md` (hold
+  writes there itself);
+- each tick's full plan and report is saved to `hypotheses/ticks/<ts>.json` by `tick`.
+Cross-problem lessons go in `hypotheses/LESSONS.md`:
 after a harvest that teaches something general (a measured hardware fact, a knob that is dead), add
 one line there with the slug that showed it.
 

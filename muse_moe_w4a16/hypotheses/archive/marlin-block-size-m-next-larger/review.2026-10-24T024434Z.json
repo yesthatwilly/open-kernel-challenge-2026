@@ -1,0 +1,21 @@
+{
+ "model": "fable",
+ "verdict": "proceed",
+ "summary": "Cheap, low-risk, rule-clean tuning knob whose single run is interpretable per shape because the only code change is the block_size_m pick and the SGLang column is the built-in control; but the stated mechanism (fewer weight passes on a memory-bound kernel) does not hold for the scored shapes, so a gain or loss must be read as 'Marlin's next thread_m_blocks config wins/loses at this M', not as 'fewer HBM passes'. No companions needed.",
+ "justification": "In the parity run (fb2cc736613747df; FINDINGS' profile block is the stale starter) Marlin is 53% of bs=1, 71% bs=8, 75% bs=16, 92% bs=32, 96% bs=128/256. The mechanism breaks: route counts are miscounted 8x (only this GPU's 32 experts are computed: ~2-3 routes per expert at bs=32, so block 16 is already one m-block; at bs=128 48->64 collapses a second block only for rare experts with 49-64 routes). The kernel is not memory-bound (~1.3 TB/s at bs=128, a quarter of HBM). What the change really does is select Marlin's thread_m_blocks (16->32 is 1->2, 48->64 is 3->4), a tile-shape/occupancy change; bs=1/8/16 go from the 8-row special path to the 16-row path, more likely a small loss than flat. Padded rows cost a little in align and reduce scratch. Weakest link: the premise of multi-block experts on a bandwidth-bound kernel; neither holds, so this is an empirical probe of the next-larger Marlin m-tile config, still worth one run.",
+ "confounders": [
+  "sglang-marlin-path-parity (align with num_experts=32): keeps sorted_ids <= 4096 for every new block size so no fused-padding fill_ launch appears; upstream 256-expert align would add ~2 us at bs=32/128. Inside the CI.",
+  "sglang-marlin-path-parity: the small-batch align kernel's padding work grows with block size, so a few-us decode loss can come from align rather than Marlin; the profile separates them."
+ ],
+ "interference": "ab-revert means the 0.006x starter, meaningless; ab-tune (256-expert align) only re-adds a ~2 us launch. Isolating 'fewer m-blocks' from 'different thread_m_blocks' is impossible via the public API and unnecessary: per shape a gain means keep the next-larger block, a loss means keep SGLang's pick. No companions.",
+ "rules_flags": [],
+ "companions": [],
+ "open_questions": [
+  "Read per shape: bs=1/8/16 may lose while bs=32 or bs=128 gains; implement the pick as a per-shape table so partial adoption is a one-line follow-up.",
+  "Expected list rests on an 8x miscount; honest expectation is 'unknown, config-dependent' at bs=32/128 and 'flat to slightly slower' at bs=1/8/16.",
+  "Record the Marlin kernel template name per shape (thread_m_blocks) from the profile to confirm which config ran.",
+  "A skewed-test failure at bs=128 would point at thread_m_blocks=4 smem, not the pick.",
+  "If bs=128 wins with 64, stack marlin-workspace-blocks-per-sm-8 explicitly on it rather than running both against the same base.",
+  "Do not fold the '64 everywhere' ab-tune into this run."
+ ]
+}

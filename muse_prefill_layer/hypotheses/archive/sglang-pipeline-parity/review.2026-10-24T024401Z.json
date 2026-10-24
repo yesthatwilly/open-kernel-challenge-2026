@@ -1,0 +1,25 @@
+{
+ "model": "fable",
+ "verdict": "proceed",
+ "summary": "The parity port carries two genuine, non-cosmetic AST differences from baseline.py (a Triton local-id remap replacing three launches plus the expert_map table, and removal of the two T<=8 branches), so commit-impl's normalized-AST check will not reject it; its own mechanism is unmeasurable inside the 1.5% CI, but the run is justified as the judged base for nine dependents and the first SGLang-path profile at prefill shapes.",
+ "justification": "The only GPU-visible change collapses baseline.py's remap chain ((topk_ids - local_start) % 256, then expert_map[topk_ids].contiguous()) into one Triton elementwise kernel over int32 [T, 8]; & 255 equals % 256 here and r < 32 ? r : -1 reproduces expert_map exactly. Saving 2-6 us against 1.1-25.6 ms shapes, 0.1-0.5%, below the CI everywhere, matching the flat expected table. Dead-branch removal (T<=8 FP32 router, sliced unpooler + F.pad) has no runtime effect at T>=200 and is legitimate specialization to TASK.md's q_len 200-16384. block_size_m is 64 everywhere. SGLang sits 2.5-4.4x off the floor on every shape, so a parity base leaves the headroom dependents target. Evidence a faithful port lands near 1.00x: decode_layer e260dfe413e448c7 (0.998-1.015x on pure-parity shapes) and bf16 017804b34fed40b3 (1.0022x); counter-evidence: moe fb2cc736613747df at 0.989x. Weakest link: the run cannot validate the hypothesis's own mechanism; a result in [0.985, 1.015] is consistent with any saving from 0 to 6 us; it is a base commit with a judged result, not a falsifiable claim. Secondary: the spec says the cos|sin table is [2^21, 128]; baseline.py builds [2^21, 64]. Follow baseline.py.",
+ "confounders": [],
+ "interference": "Nothing has landed for this problem, so ab-revert and ab-tune have no target. A verbatim-baseline control is not warranted up front: the judge times SGLang in the same run, the same modules landed at parity on decode_layer, and the hypothesis's own effect is below noise. Conditional follow-up, not a companion: if any shape lands outside [0.985, 1.015], queue a verbatim-baseline control before dispatching the nine dependents.",
+ "rules_flags": [
+  "None breaking: NVFP4 stays in Marlin's lossless repack, FP8 cache via store_cache, q FP8 E4M3 for FA3 only; router hi/lo with fp32 out at every T is allowed.",
+  "FA3 call unchanged (every key attended); scheduler_metadata passed through.",
+  "No host syncs: the Triton remap reads local_start on device; block_size_m chosen from config on the host; no autotune.",
+  "Nothing derived from inputs cached; state holds weights, modules, cos|sin table and side stream only.",
+  "Removing the T<=8 branch makes a T<=8 call wrong rather than slow; unreachable per TASK.md, but add a host-side shape assert (tokens > 8) so it fails loudly.",
+  "The AST difference is real work, not a rename or docstring edit; it will hash differently from baseline.py and prior jobs."
+ ],
+ "companions": [],
+ "open_questions": [
+  "cos|sin table width: implement as baseline.py does ([2^21, 64]), not the spec's 128.",
+  "Whether the judge's SGLang copy equals baseline.py on prefill-specific paths; any shape outside [0.985, 1.015] should trigger a verbatim control before dependents dispatch.",
+  "Under graph replay expect 2-5 us saved; the profile should show one Triton kernel in place of three tiny at::native kernels.",
+  "The Triton kernel must load/store int32 and emit -1 exactly.",
+  "Keep moe_align_block_size at N_EXPERTS=256 with -1 sentinels, as baseline does.",
+  "Decide whether a merged parity base with ci.low below 1.0 is acceptable as the comparison point for dependents."
+ ]
+}

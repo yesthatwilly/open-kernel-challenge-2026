@@ -1208,12 +1208,43 @@ def cmd_budget(a):
     out({"ok": True, "plans": plans, "wake_s": wake, "dispatch_total": sum(x["N"] for x in plans)})
 
 
+def log_decision(p, slug, text):
+    """Append one line to hypotheses/DECISIONS.md: every hold, deferral and judgement call, with why."""
+    path = os.path.join(REPO, "hypotheses", "DECISIONS.md")
+    if not os.path.exists(path):
+        open(path, "w").write("# Decisions\n\nAppend-only log of churnsubs judgement calls (holds, deferrals, merges by hand,\n"
+                              "overrides of a reviewer) with the reason, newest last. Written by `churn.py note` and `hold`.\n\n")
+    with open(path, "a") as f:
+        f.write(f"- {ts()} `{p}` **{slug}**: {' '.join(str(text).split())}\n")
+    git("add", "--", rel(path))
+
+
+def cmd_archive_file(a):
+    """Copy a file with reproducibility value (an implementer brief, a mint prompt) into the archive."""
+    p = problem_of(a.problem)
+    adir = hdir(p, "archive", a.slug)
+    os.makedirs(adir, exist_ok=True)
+    dst = os.path.join(adir, a.name or f"{ts()}.{os.path.basename(a.file)}")
+    shutil.copyfile(a.file, dst)
+    git("add", "--", rel(dst))
+    git("commit", "-q", "-m", f"churn({p}): archive {os.path.basename(dst)} for {a.slug}", check=False)
+    out({"ok": True, "path": rel(dst)})
+
+
+def cmd_note(a):
+    p = problem_of(a.problem)
+    log_decision(p, a.slug, a.text)
+    git("commit", "-q", "-m", f"churn({p}): note {a.slug}", check=False)
+    out({"ok": True})
+
+
 def cmd_hold(a):
     p = problem_of(a.problem)
     path, where = find_hyp(p, a.slug)
     if not path or where != "queue":
         refuse(f"{a.slug} is not in {p}/hypotheses/queue")
     fm_set(path, status="hold" if not a.unhold else "queued", hold_reason=None if a.unhold else (a.reason or "held"))
+    log_decision(p, a.slug, ("unhold: " if a.unhold else "hold: ") + (a.reason or ""))
     git("add", "--", rel(path))
     git("commit", "-q", "-m", f"churn({p}): {'unhold' if a.unhold else 'hold'} {a.slug}" + (f": {a.reason}" if a.reason and not a.unhold else ""), check=False)
     out({"ok": True, "slug": a.slug, "status": "queued" if a.unhold else "hold"})
@@ -1299,6 +1330,13 @@ def cmd_review_record(a):
         refuse(f"{a.slug} is not queued or running in {p}")
     h = read_hyp(path)
     v = json.load(open(a.json_file)) if a.json_file != "-" else json.load(sys.stdin)
+    adir = hdir(p, "archive", a.slug)
+    os.makedirs(adir, exist_ok=True)
+    stamp = ts()
+    json.dump(v, open(os.path.join(adir, f"review.{stamp}.json"), "w"), indent=1)
+    if getattr(a, "prompt", None) and os.path.exists(a.prompt):
+        shutil.copyfile(a.prompt, os.path.join(adir, f"review-prompt.{stamp}.md"))
+    git("add", "--", rel(adir))
     verdict = v.get("verdict")
     if verdict not in ("proceed", "hold", "proceed-with-companions"):
         refuse("verdict must be proceed | hold | proceed-with-companions")
@@ -1662,8 +1700,18 @@ def cmd_tick(a):
     pr = sub("promote")
     b = sub("budget")
     sub("index")
-    out({"ok": True, "promote": pr.get("promote", []), "dispatch": [{"problem": x["problem"], "picks": x["picks"]} for x in b.get("plans", []) if x.get("picks")],
-         "wake_s": b.get("wake_s", 1800), "needs_human": rc.get("needs_human", []), "report": report}, 0)
+    res = {"ok": True, "promote": pr.get("promote", []), "dispatch": [{"problem": x["problem"], "picks": x["picks"]} for x in b.get("plans", []) if x.get("picks")],
+           "wake_s": b.get("wake_s", 1800), "needs_human": rc.get("needs_human", []), "report": report}
+    try:
+        tdir = os.path.join(REPO, "hypotheses", "ticks")
+        os.makedirs(tdir, exist_ok=True)
+        tp = os.path.join(tdir, f"{ts()}.json")
+        json.dump(res, open(tp, "w"), indent=1)
+        git("add", "--", rel(tp))
+        git("commit", "-q", "-m", "churn: tick log", check=False)
+    except Exception as e:
+        print(f"warning: tick log failed: {e}", file=sys.stderr)
+    out(res, 0)
 
 
 # ----------------------------------------------------------------------------- main
@@ -1684,7 +1732,9 @@ def main():
     x = sp.add_parser("unhold"); x.add_argument("problem"); x.add_argument("slug"); x.set_defaults(fn=cmd_hold, unhold=True, reason=None)
     x = sp.add_parser("claim"); x.add_argument("problem"); x.add_argument("slug", nargs="?"); x.add_argument("--mode"); x.add_argument("--skip-review", action="store_true"); x.set_defaults(fn=cmd_claim)
     x = sp.add_parser("landed"); x.add_argument("problem"); x.set_defaults(fn=cmd_landed)
-    x = sp.add_parser("review-record"); x.add_argument("problem"); x.add_argument("slug"); x.add_argument("json_file"); x.set_defaults(fn=cmd_review_record)
+    x = sp.add_parser("review-record"); x.add_argument("problem"); x.add_argument("slug"); x.add_argument("json_file"); x.add_argument("--prompt", help="the filled adversary prompt, archived beside the review"); x.set_defaults(fn=cmd_review_record)
+    x = sp.add_parser("note"); x.add_argument("problem"); x.add_argument("slug"); x.add_argument("text"); x.set_defaults(fn=cmd_note)
+    x = sp.add_parser("archive-file"); x.add_argument("problem"); x.add_argument("slug"); x.add_argument("file"); x.add_argument("--as", dest="name"); x.set_defaults(fn=cmd_archive_file)
     x = sp.add_parser("commit-impl"); x.add_argument("problem"); x.add_argument("slug"); x.set_defaults(fn=cmd_commit_impl)
     x = sp.add_parser("prepare-run"); x.add_argument("problem"); x.add_argument("slug"); x.add_argument("--mode"); x.set_defaults(fn=cmd_prepare_run)
     x = sp.add_parser("record"); x.add_argument("problem"); x.add_argument("slug"); x.add_argument("job"); x.set_defaults(fn=cmd_record)

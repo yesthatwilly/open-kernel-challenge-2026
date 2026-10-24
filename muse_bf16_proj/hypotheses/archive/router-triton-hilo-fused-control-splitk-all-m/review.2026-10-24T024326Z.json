@@ -1,0 +1,50 @@
+{
+ "model": "fable",
+ "verdict": "proceed-with-companions",
+ "summary": "The parent's result already explains its own regression (8 CTAs x ~60 GB/s per CTA = 49.7/98.1 us at m=128/256, while the same kernel won 1.3-3.4x at m<=32), so this run no longer disambiguates the parent; it is now the de-facto primary for 'can a filled-grid Triton split-K beat cuBLAS hi/lo (16.2/17.7 us) at m=128/256', which is worth one check slot. One companion is recommended: a hybrid (parent's Triton config at m<=32, cuBLAS hi/lo above) that turns the parent's already-measured small-m wins into a promotable kernel regardless of how the 3-D grid fares at large m.",
+ "justification": "Mechanism is plausible and the numbers support it. From done/regression/router-triton-hilo-fused.result.json (job c2a8de5969374dff) the parent's 2-D grid gave router m=1 7.7 us (kernel 5.3 + memset 0.7; master 10.5), m=8 7.6 (master after router-hilo-at-m8: 14.2), m=16 8.0 (14.5), m=32 8.4 (15.0) with 32 CTAs/SPLIT_K=8, but m=128 49.7 us and m=256 98.1 us with 8 CTAs/SPLIT_K=1 and M looped. Per-CTA arithmetic matches: ~61-62 GB/s per CTA. The loss is per-CTA bandwidth times an 8-CTA grid, not 'Triton vs cuBLAS'. The control's 128-CTA 3-D grid should bring m>=128 back to the 5-10 us range; floors are 2.2/2.7 us and master's cuBLAS hi/lo path is 16.2/17.7 us, so ~9-10 us per shape to win on 2 of 6 loads (~4% geomean). Notes: (1) expected 'why' lines are stale against master (verify_1 is 14.2 us now); the control's marginal change at m<=32 is BLOCK_N 64->32, SPLIT_K 8->16, 32->128 CTAs, not obviously better than the parent's 5.3-6.4 us there. (2) At m=128/256 atomic traffic ~2 MB per launch and the weight is re-read once per M-block relying on L2 after the cold-L2 flush. (3) Weakest link: SPLIT_K=16 at m=128 is untuned; a result between 50/98 us and 16/18 us says 'this config loses', not 'Triton loses'.",
+ "confounders": [
+  "sglang-gemm-dispatch-parity (965b046): inert on the router path; compare per-shape against master's lineage, not BEST.json's starter.",
+  "router-hilo-at-m8 (f9dc05d): no code interaction (its constant is deleted by this change) but it moves the comparison point for router verify_1 m=8 from 26.1 us to 14.2 us; harvest must use aa3d033c208e4511's per-shape medians.",
+  "router-hilo-at-m8 promotion mechanics: build from master, not from the parity branch, or promotion conflicts on the docstring/ROUTER_FP32_MAX_TOKENS hunks.",
+  "Run noise: the parent's untouched bf16 rows swung -2.2% to +4.4% in one run; router rows moving less than ~4% vs the parent are not evidence of a config difference."
+ ],
+ "interference": "ab-revert/ab-tune of the landed items is inapplicable (nothing they change survives this change). A single run is interpretable per shape: m<=32 rows vs the parent's rows, m>=128 rows vs the parent and master's cuBLAS. The ambiguity is in promotion: the likely mixed outcome leaves no run with a promotable kernel even though the parent measured 2.6-6.6 us/shape wins at m<=32. One companion fixes that: the parent's kernel at m<=32 with cuBLAS hi/lo at m>32. No second companion.",
+ "rules_flags": [
+  "hi+lo at every m: explicitly allowed by TASK.md; the parent passed 9/9.",
+  "torch.zeros((m,256), fp32) per call: fixed-shape allocation, memset under graph capture; allowed. No host syncs.",
+  "tl.atomic_add makes fp32 summation order nondeterministic across replays (~1e-7 relative), far inside the router's bound.",
+  "prepare() warm-up compiles on synthetic inputs from weight shapes only; nothing from data is cached.",
+  "Shapes outside the kernel's preconditions must still fall back to F.linear fp32 as the parent does.",
+  "Keep the parent's direct addressing of the [N,K] weight rather than tl.trans; same memory read."
+ ],
+ "companions": [
+  {
+   "slug": "router-triton-hilo-fused-control-hybrid-cublas-above-m32",
+   "kind": "control",
+   "area": "router GEMM",
+   "change": "From hyp/muse_bf16_proj/router-triton-hilo-fused (commit a392f0b6dc; rebase onto master f9dc05d first, the conflict is only the docstring/ROUTER_FP32_MAX_TOKENS hunks the parent deletes), keep _router_hilo_kernel, _router_forward and _router_config exactly as the parent for m <= 32 (m<=16: BLOCK_M=16, BLOCK_N=64, SPLIT_K=8; 17..32: BLOCK_M=32, BLOCK_N=64, SPLIT_K=8; 32 CTAs; tl.atomic_add into torch.zeros((m,256), fp32) created right before the launch). For x.shape[0] > 32 do not launch Triton at all: return the cuBLAS hi/lo pair exactly as master does, acc = torch.mm(x, state['router_hi_t'], out_dtype=torch.float32); acc += torch.mm(x, state['router_lo_t'], out_dtype=torch.float32). prepare() therefore stores both layouts, built from the weights alone: router_hi/router_lo as [256, 8192] bf16 row-major for the Triton path and router_hi_t/router_lo_t = hi.t().contiguous()/lo.t().contiguous() for torch.mm (8.4 MB extra state, lossless). Remove the parent's m<128 (BLOCK_M=64) and m>=128 (SPLIT_K=1) buckets so no m reaches an under-filled grid; ROUTER_WARM_MS becomes (1, 8, 16, 32). The threshold branches on x.shape[0] only. bf16 layers untouched on _bf16_gemm_dispatch_impl. The fp32 F.linear fallback for shapes outside the kernel's preconditions stays.",
+   "expected": [
+    {"shapes": "layer=router load=decode_1 *", "direction": "faster", "why": "parent measured 7.7 us vs master 10.5 us with this exact config"},
+    {"shapes": "layer=router load=verify_1 *", "direction": "faster", "why": "parent measured 7.6 us vs master's cuBLAS hi/lo 14.2 us (router-hilo-at-m8)"},
+    {"shapes": "layer=router load=decode_16 *", "direction": "faster", "why": "parent measured 8.0 us vs master 14.5 us"},
+    {"shapes": "layer=router load=decode_32 *", "direction": "faster", "why": "parent measured 8.4 us vs master 15.0 us"},
+    {"shapes": "layer=router load=verify_16 *", "direction": "flat", "why": "master's own torch.mm hi/lo path, 16.2 us; control"},
+    {"shapes": "layer=router load=verify_32 *", "direction": "flat", "why": "master's own torch.mm hi/lo path, 17.7 us; control"},
+    {"shapes": "*layer=qkv_gate*", "direction": "flat", "why": "bf16 layers untouched; control"}
+   ],
+   "reason": "The promotable composite of what has already been measured: if the control's m>=128 rows lose to cuBLAS, this run carries the parent's 2.6-6.6 us/shape small-m wins onto master (~1.05x over master's 1.0219x by load arithmetic). If the control wins everywhere it is superseded at the cost of one check slot. Its m<=32 rows are also the same-day baseline for the control's small-m config.",
+   "priority": 1,
+   "risk": "low"
+  }
+ ],
+ "open_questions": [
+  "Build from master (f9dc05d), not from the parity branch as the change paragraph says.",
+  "Attribution base for router verify_1 m=8 must be router-hilo-at-m8's 14.2 us (job aa3d033c208e4511), not the parity result's 26.1 us.",
+  "Read the control's m<=32 rows against the parent's (7.7/7.6/8.0/8.4 us), not only against master.",
+  "From the profile, record the memset and _router_hilo_kernel time at m=128/256 separately; if the kernel is 6-9 us but the row is >12 us, the atomics epilogue or memset is the cost.",
+  "If verify_32 is much worse than verify_16 relative to cuBLAS, swap the grid order so the M-blocks of one (N-block, K-slice) run concurrently.",
+  "Confirm m=128 lands in the SPLIT_K=16 bucket (2x4x16).",
+  "router-hilo-addmm-epilogue remains relevant only for m>=128 if the hybrid lands and the 3-D grid does not; deprioritize rather than run in parallel."
+ ]
+}
