@@ -57,3 +57,4 @@ overrides of a reviewer) with the reason, newest last. Written by `churn.py note
 - 2026-10-24T120007Z `muse_decode_layer` **fa3-hdim128-head-pairing-batched**: merged by hand (1.087x vs 1.063x board): classified neutral because CI low 1.071 < best CI high 1.079; every predicted shape gained 7-13% (full decode/verify 16/32), batch 1 and sliding flat
 - 2026-10-24T120023Z `muse_decode_layer` **moe-align-single-kernel-small-t-control-capacity-256**: hold: control for moe-align-single-kernel-small-t, which was neutral; a capacity control of a non-gain cannot change a decision, and decode has 2 checks left for the attention rewrite and pairing follow-ups
 - 2026-10-24T120023Z `muse_bf16_proj` **router-splitk-semaphore-no-memset**: unhold:
+- 2026-10-24T120023Z `muse_bf16_proj` **router-splitk-semaphore-no-memset**: unheld: neither router-splitk32 run gained (1.143x, 1.152x vs 1.151x), so per the reviewer it runs as written at SPLIT_K=16
