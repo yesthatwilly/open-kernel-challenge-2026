@@ -59,13 +59,15 @@ base_sha: 1fd1f0ad0ecb64aecc30d851ca5c1c9149f46de0
 base_blob: cc466fce207709c98ab0e78c2435c1c459890fdb
 branch: hyp/muse_decode_layer/bf16-shape-gated-triton-gemms-small-t
 worktree: .worktrees/muse_decode_layer/bf16-shape-gated-triton-gemms-small-t
-mode: null
+mode: submit
 implemented_at: 2026-10-24T164845Z
 impl_commit: 060c5bd147ca9c61a42f45940fed168db05affef
 submission_sha256: 57cf77d42680ebadde8963a382e902a9da9aef62cbd1e43c49316083d709d71e
 norm_sha256: 6b554775127b23873d9ab8f08bd2d1e80afac710c523d40cc752e631c5daf2b2
 submission_blob: 4ba81ce06744ae630e16d82a46eeb6bebf7de2ff
 lint_warnings: 3
+attempt_file: 2026-10-24T164845Z-submit-bf16-shape-gated-triton-gemms-small-t.md
+prepared_at: 2026-10-24T164845Z
 ---
 
 # bf16-shape-gated-triton-gemms-small-t
