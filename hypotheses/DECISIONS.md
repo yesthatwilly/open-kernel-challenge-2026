@@ -47,3 +47,4 @@ overrides of a reviewer) with the reason, newest last. Written by `churn.py note
 - 2026-10-24T111652Z `muse_attention_decode` **fa3-num-splits-full-decode**: hold: num_splits is only a cap under FA3's on-device split sizing (LESSONS; the decode_layer equivalents were held for the same reason), and full layers are now paired, which changes FA3's split decision anyway
 - 2026-10-24T111652Z `muse_prefill_layer` **router-pooler-concat-gemm-turn**: deferred: prefill has 2 checks and the expert rewrite reached Marlin parity at stage 2 (1.007x, 00148fbedfb6414f); stage 3 gets the next check
 - 2026-10-24T111912Z `muse_bf16_proj` **router-splitk-semaphore-no-memset**: hold: reviewer: wait for router-splitk32-small-m-all-loads-in-flight (1e339074b1844a43) and its stages3 control (4685bac7a662454d), then build on the winning SPLIT_K/num_stages; unhold by hand after they harvest
+- 2026-10-24T112256Z `muse_moe_w4a16` **align-remote-sentinel-ids**: unhold:

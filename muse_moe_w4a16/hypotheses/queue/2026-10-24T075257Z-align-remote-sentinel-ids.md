@@ -44,8 +44,8 @@ priority: 3
 kind: primary
 controls_for: null
 review: required
-status: hold
-hold_reason: reviewer of align-256-experts-below-128 asked not to stack on the align path until that run (e753d5b9df644ebb) harvests; re-queue by hand if it is a gain or neutral
+status: queued
+hold_reason: null
 ---
 
 # align-remote-sentinel-ids
