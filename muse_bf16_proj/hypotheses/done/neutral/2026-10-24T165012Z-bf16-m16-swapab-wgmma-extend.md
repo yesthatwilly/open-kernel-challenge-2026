@@ -85,10 +85,10 @@ priority: 2
 kind: primary
 controls_for: null
 review: proceed
-status: running
+status: done
 review_at: 2026-10-24T165449Z
 review_companions: null
-stage: dispatched
+stage: harvested
 claimed_at: 2026-10-24T165449Z
 base_sha: e82b94f9414d0fe3381c39c7722efd47759f3360
 base_blob: a8bb42ac483318e9fbc84bc7826a27b7a704d1fb
@@ -105,6 +105,13 @@ attempt_file: 2026-10-24T165742Z-submit-bf16-m16-swapab-wgmma-extend.md
 prepared_at: 2026-10-24T165742Z
 job: 89fabef70bd745f7
 dispatched_at: 2026-10-24T165751Z
+outcome: neutral
+verdict_detail: unproven-vs-best
+speedup: 1.2115489260435024
+speedup_ci: [1.1933756921528498, 1.2297221599341548]
+harvested_at: 2026-10-24T173232Z
+best_at_harvest: 1.1958517819004566
+promotion: null
 ---
 
 # bf16-m16-swapab-wgmma-extend
@@ -209,3 +216,53 @@ lint rc=0
 ```
 
 `python3 -I -m py_compile` passed, and the leftover `__pycache__` was removed from the worktree.
+
+## Result
+
+- job `89fabef70bd745f7` (submit), status done, passed True, tests 9/9
+- speedup 1.2115x, 95% CI [1.1934, 1.2297], score 3987.29254440901 µs vs SGLang 4830.8 µs
+- best at harvest: {"speedup": 1.1958517819004566, "ci": [1.1779140051719497, 1.2137895586289633], "job": "eeb9985396764ac2"}; base result: muse_bf16_proj/hypotheses/done/neutral/bf16-m32-swapab-wgmma-triton.result.json
+- **outcome: neutral** (unproven-vs-best)
+- files: `muse_bf16_proj/hypotheses/done/neutral/bf16-m16-swapab-wgmma-extend.result.json`, `muse_bf16_proj/hypotheses/done/neutral/bf16-m16-swapab-wgmma-extend.patch`; branch `hyp/muse_bf16_proj/bf16-m16-swapab-wgmma-extend`
+
+## Attribution
+
+| shape | w | base µs | hyp µs | delta | verdict |
+|---|---|---|---|---|---|
+| layer=qkv_gate load=decode_1 m=1 | 62 | 12.91 | 12.46 | 1.03 | gained |
+| layer=o load=decode_1 m=1 | 62 | 6.32 | 6.27 | 1.0661 | gained |
+| layer=pooler load=decode_1 m=1 | 62 | 19.0 | 18.95 | 1.0318 | gained |
+| layer=unpooler load=decode_1 m=1 | 62 | 5.94 | 5.46 | 1.0696 | gained |
+| layer=router load=decode_1 m=1 | 62 | 5.73 | 5.9 | 0.9837 | flat |
+| layer=qkv_gate load=decode_16 m=16 | 62 | 13.39 | 13.28 | 1.0211 | flat |
+| layer=o load=decode_16 m=16 | 62 | 6.66 | 6.49 | 1.0728 | gained |
+| layer=pooler load=decode_16 m=16 | 62 | 19.85 | 19.49 | 1.0243 | flat |
+| layer=unpooler load=decode_16 m=16 | 62 | 18.61 | 18.39 | 0.9977 | flat |
+| layer=router load=decode_16 m=16 | 62 | 6.03 | 6.41 | 0.957 | lost |
+| layer=qkv_gate load=decode_32 m=32 | 62 | 13.69 | 14.2 | 0.973 | flat |
+| layer=o load=decode_32 m=32 | 62 | 6.67 | 6.73 | 1.0076 | flat |
+| layer=pooler load=decode_32 m=32 | 62 | 20.0 | 19.66 | 1.0066 | flat |
+| layer=unpooler load=decode_32 m=32 | 62 | 18.48 | 18.57 | 1.0069 | flat |
+| layer=router load=decode_32 m=32 | 62 | 6.55 | 6.81 | 0.9793 | flat |
+| layer=qkv_gate load=verify_1 m=8 | 62 | 13.18 | 12.67 | 1.0239 | flat |
+| layer=o load=verify_1 m=8 | 62 | 6.32 | 6.08 | 1.0539 | gained |
+| layer=pooler load=verify_1 m=8 | 62 | 19.14 | 18.79 | 1.0272 | flat |
+| layer=unpooler load=verify_1 m=8 | 62 | 6.13 | 5.84 | 1.0473 | gained |
+| layer=router load=verify_1 m=8 | 62 | 5.91 | 5.8 | 1.0174 | flat |
+| layer=qkv_gate load=verify_16 m=128 | 62 | 16.81 | 17.49 | 0.9773 | flat |
+| layer=o load=verify_16 m=128 | 62 | 7.09 | 7.2 | 0.9889 | flat |
+| layer=pooler load=verify_16 m=128 | 62 | 25.55 | 25.13 | 1.0095 | flat |
+| layer=unpooler load=verify_16 m=128 | 62 | 19.79 | 19.8 | 1.0053 | flat |
+| layer=router load=verify_16 m=128 | 62 | 7.35 | 7.4 | 0.9867 | flat |
+| layer=qkv_gate load=verify_32 m=256 | 62 | 19.62 | 19.59 | 0.9847 | flat |
+| layer=o load=verify_32 m=256 | 62 | 9.01 | 9.22 | 0.9961 | flat |
+| layer=pooler load=verify_32 m=256 | 62 | 30.53 | 30.83 | 0.9788 | flat |
+| layer=unpooler load=verify_32 m=256 | 62 | 24.5 | 23.89 | 1.0113 | flat |
+| layer=router load=verify_32 m=256 | 62 | 9.3 | 9.18 | 1.0084 | flat |
+
+gained on qkv_gate decode_1; o decode_1, decode_16, verify_1; pooler decode_1; unpooler decode_1, verify_1; lost on router decode_16. Expected hit: 5/16. Noise ±1.5%.
+
+## Follow-ups
+
+- unproven-vs-best: the change is not proven either way; a stacked hypothesis (`depends_on: bf16-m16-swapab-wgmma-extend`) that adds a further change in the same area is the only way to learn more (identical code is never re-run).
+
