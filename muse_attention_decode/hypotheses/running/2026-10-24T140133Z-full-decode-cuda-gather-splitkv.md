@@ -69,13 +69,19 @@ review: proceed
 status: running
 review_at: 2026-10-24T140601Z
 review_companions: null
-stage: claimed
+stage: implemented
 claimed_at: 2026-10-24T140601Z
 base_sha: 0e3d04d3405a65d8916f21e7fac2e822929939e7
 base_blob: 387dcb6a0e6137b74f7f65b048dce5a3fcbe2008
 branch: hyp/muse_attention_decode/full-decode-cuda-gather-splitkv
 worktree: .worktrees/muse_attention_decode/full-decode-cuda-gather-splitkv
 mode: null
+implemented_at: 2026-10-24T141722Z
+impl_commit: 02d7023484fe904ef0028896853d8689cd3e9c73
+submission_sha256: 1645e5cccd6de02aa4bfe75e1b33677bc2f4d435f8cc175db3f41148a9cfa6af
+norm_sha256: f04a8ab8b2046f0895a5ff82df943dd7e1dc7a2efd5a027132457485546a6f7d
+submission_blob: 1c0f5fa1bfc4e602b62e5e9edd9df6d5652b297b
+lint_warnings: 0
 ---
 
 # full-decode-cuda-gather-splitkv
@@ -129,3 +135,40 @@ No companion is warranted. This is kind: rewrite, judged on kernels A+B's own pr
 - Kernel B: one warp per (request, head) serially merging ~80 partials (decode_16) to ~85 (decode_32), with C=1024, reads ~5-11 MB in total. Check that it stays at or below FA3 combine plus norm-gate (~6 us). If not, use two-level reduction or larger C in stage 2.
 - Losing FA3's PDL overlap between pre-attention, main and combine costs ~1-2 us per shape. Consider cudaLaunchAttributeProgrammaticStreamSerialization on A and B in a later stage.
 
+
+## Implementation notes
+
+Worktree `.worktrees/muse_attention_decode/full-decode-cuda-gather-splitkv`, file `muse_attention_decode/submission.py` only (+596/-2). Not compiled or run here (no GPU/torch/nvcc on this node); self-reviewed twice for indexing, ragged-length masking, key coverage, softmax numerics and the FP8 descale.
+
+- **Gate** `_splitkv_gate(cfg)` (config only): `_EXT is not None and window == 0 and q_len == 1 and 1 < batch <= 64 and hq == 16 and hkv == 2 and head_dim == 64 and page_size == 1`. Review fix (1): `paired = window == 0 and hkv % 2 == 0 and batch > 1 and not splitkv`, so the master `_pre_attention_kernel` runs with PAIRED=False on the gated path (q FP8 [T,16,64]); right after it, `kernel_fn` returns `_full_decode_splitkv(...)`. Every other shape runs master code unchanged (full verify_16/32 stay paired).
+- **Kernel A** `splitkv_attn_kernel`: follows the spec. Grid = 2 x `multi_processor_count`, read from the device (review fix (2)); 256 threads, `__launch_bounds__(256, 2)`; 93,200 B of dynamic smem (64 KB ring, 2x4 KB page-index buffers, 2x1 KB q buffers, 16 KB merge, seqlens/prefix). The in-kernel chunk prefix sum is computed per CTA; items are request-major and strided by grid. Implementation details the spec left open:
+  - The tile pipeline runs across item boundaries without draining. Item k+1's 1024 page indices (4-byte `cp.async.ca`, zero-filled past the length) and its query (1 KB) ride in tile (k,0)'s commit group, double-buffered by k & 1. One commit group per tile and `wait_group 2`, with a barrier before each issue, so the hazards are covered. I traced each reuse distance in the code.
+  - 16-byte chunks of each 128-byte smem row are XOR-swizzled by `token & 7`. K fragment reads (32-bit) are conflict-free; V reads (64-bit) are 2-way, the minimum for 256 B.
+  - QK^T: the k (dim) order is permuted identically for the Q A-fragment and the K B-fragment, so each lane reads 4 contiguous K bytes: k = 2qi + j maps to dim 4qi + j, and k = 8 + 2qi + j maps to dim 4qi + 2 + j. One `cvt.rn.f16x2.e4m3x2` pair per word.
+  - P@V: V is the B operand. The output column n of dim-block nb is physical dim n*8 + nb, so each lane reads 8 contiguous bytes per token (4 tokens) and interleaves token pairs with `__byte_perm` (0x5140 / 0x7362) before the cvt. The merge writes the columns back in physical order. This replaces the ldmatrix.trans option the risk section mentions.
+  - P is f16 (finer than FA3's e4m3 P), l is summed from the fp32 p, and the scale is sm_scale*qk_scale_factor*log2e*k_scale (k_scale read on device). Masked positions give -inf, and the m = -inf case uses 0, as master `_online_update` does. Warps whose slice is fully masked for a whole item (short last chunks) carry m = -inf and get weight 0 in the merge.
+  - The workspace is `ws_acc` f32 [B*max_chunks,16,64] and `ws_ml` f32 [B*max_chunks,2,16], with max_chunks = ceil(page_table.shape[1]/1024). Both are allocated per call from shapes.
+- **Kernel B** `splitkv_combine_kernel`: grid (B,16). Deviation: 128 threads (4 warps) per (request, head) instead of one warp, following the review's open question on the serial ~80-partial chain. Pass 1 takes the block max of m over the chunks. Pass 2 has each warp accumulate the exp2-weighted acc/l of every 4th chunk (independent loads, unroll 4), followed by an smem reduce. Warp 0 then divides by l, multiplies by v_scale (device pointer), applies RMSNorm (eps inside the sqrt, fp32) and multiplies by sigmoid(gate) from qkv, storing bf16x2 into [B,1,1024]. scheduler_metadata is ignored on this path.
+- **Compile** (review fix (3)): `load_inline(name="muse_full_decode_splitkv_v1", extra_cuda_cflags=["-O3","-arch=sm_90a"])` runs at module import, never inside kernel_fn or capture. It prints `[splitkv] load_inline compiled in X s`. `cudaFuncSetAttribute` for the 93 KB smem runs on the first launch, which is the eager self-check. If the build fails, the error is printed and `_EXT = None`, so the master path is used everywhere.
+- **Self-check** (review fix (4)): runs once, eagerly, at import and only on synthetic data, so the timed path has no host sync. Inputs: lengths [9000,1025,70,4097,1023] (partial chunks, fully masked warps, an exact 1024 chunk), scattered pages, odd page-table stride. Three configurations: kv_scale 1 with the device grid, kv_scale 0.25 with a 3-CTA grid, and kv_scale 1 with a 3-CTA grid. The 3-CTA grid gives several items per CTA, which exercises the cross-item pipeline and the meta double-buffering. Each run's `kernel_fn` output is compared to an FP32 torch reference (FP8 queries, the cache as written), and rel L2 is printed. If any error is >= 2e-2, the output is non-finite, or the check raises, it prints `SELF-CHECK FAILED`, disables the path (`_EXT = None`) and the run continues on master. **Read the log tail**: a flat result plus that line means the kernel is wrong, not slow. The self-check runs against an FP32 reference rather than FA3, because FA3's e4m3 P would blur a ~1e-3 comparison.
+- **Uncertainties:** (a) The code has never been compiled. Likely first-compile issues: lambda captures in device code, `"n"` asm constraints from a template parameter, the `-arch=sm_90a` interplay with torch's own arch flags (torch skips adding its own when a flag containing "arch" is present). (b) Register pressure under `(256,2)` (≤128 regs: acc 32, scores 8, q 8, V words 8, ...). Spills would show in the kernel time. (c) Only one judge test reaches this path (batch 4, ctx 80000, spread mixed, coherent, page 1). kv_scale != 1 is covered only by the self-check. (d) Losing FA3's PDL overlap (~1-2 us) remains, as the review noted.
+
+## Rules check
+
+Checked against `git -C .worktrees/muse_attention_decode/full-decode-cuda-gather-splitkv diff`:
+
+- [x] CUDA-graph capturable: kernel_fn and everything it reaches has no `.item()`/`.cpu()`/`synchronize()`/tensor prints. Grid = 2 x SM count (device property), and the workspace sizes come from `cfg["batch"]` and `page_table.shape[1]`. Kernels launch on `at::cuda::getCurrentCUDAStream()`. k_scale/v_scale/cache_seqlens are read only on device. The only branch is the config predicate `_splitkv_gate`. The host syncs (`float(...)`, `bool(...)`) live only in the import-time self-check on synthetic data.
+- [x] Nothing derived from `data` is cached across calls. `_SMS` caches the device SM count and `_EXT` the compiled module; the workspaces are allocated per call.
+- [x] Weights: n/a. This problem has no weights or prepare().
+- [x] Activations BF16 where SGLang keeps BF16; KV cache stays FP8 (read raw, widened exactly to f16); queries are master's FP8 E4M3, no coarser; P is f16 (finer than FA3's e4m3); accumulation and the epilogue are fp32; the output is bf16.
+- [x] Attention sees every key: chunks cover [0, cache_seqlens[b]) completely (n_chunks = ceil(seq/1024), 16 tiles x 64 tokens each), and only positions >= cache_seqlens[b] are masked. There is no top-k, sparse, block-skip or weight-based skipping, and empty partials get weight 0 only when they hold no valid key.
+- [x] No timing patches, harness frames/I/O/secrets, module edits, reference import, subprocesses or network. `load_inline` (nvcc) is the rules' stated way to write native CUDA. The self-check builds its own synthetic reference and does not import reference.py.
+- [x] All work happens inside the timed call; no output caching or replay. The import-time self-check output is discarded, and every timed call computes from its own inputs.
+
+okc_lint output:
+
+```
+CLEAN: submission.py
+```
+
+`python3 -I -m py_compile`: OK (worktree `__pycache__` removed).
