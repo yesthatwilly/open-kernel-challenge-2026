@@ -50,13 +50,15 @@ base_sha: fc28840b9d1e2741aebe085a82c80e31c12ca710
 base_blob: 11fbc1957daf7294cd2810ff82a0aad2f25644bd
 branch: hyp/muse_moe_w4a16/marlin-block-size-m-verify-two-smaller
 worktree: .worktrees/muse_moe_w4a16/marlin-block-size-m-verify-two-smaller
-mode: null
+mode: check
 implemented_at: 2026-10-24T100132Z
 impl_commit: 4df94f38320bc45c5ba2fd3dfc548dbfa35251d6
 submission_sha256: 53cecd0b198a0c4d1c6ed7271f683ce638be35f284ce62282dfb2c4e342ff066
 norm_sha256: fa21ef8fce76f481ec6846b6f730dabce03124ee72750f5713bba4892b4c7daa
 submission_blob: d046cd42e462a82dcefc683527d7d97f6953e470
 lint_warnings: 1
+attempt_file: 2026-10-24T100132Z-check-marlin-block-size-m-verify-two-smaller.md
+prepared_at: 2026-10-24T100133Z
 ---
 
 # marlin-block-size-m-verify-two-smaller
