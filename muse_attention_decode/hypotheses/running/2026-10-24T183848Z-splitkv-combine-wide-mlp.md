@@ -29,9 +29,16 @@ priority: 4
 kind: primary
 controls_for: null
 review: proceed
-status: queued
+status: running
 review_at: 2026-10-24T184058Z
 review_companions: null
+stage: claimed
+claimed_at: 2026-10-24T184059Z
+base_sha: fd196766321a96a51dff2121a23a1567a5ad7180
+base_blob: c6854f093588da524e63657576b27ed720756e32
+branch: hyp/muse_attention_decode/splitkv-combine-wide-mlp
+worktree: .worktrees/muse_attention_decode/splitkv-combine-wide-mlp
+mode: null
 ---
 
 # splitkv-combine-wide-mlp
