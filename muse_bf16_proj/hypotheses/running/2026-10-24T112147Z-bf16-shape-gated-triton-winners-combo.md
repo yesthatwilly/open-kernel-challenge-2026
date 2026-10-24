@@ -94,7 +94,7 @@ status: running
 review_at: 2026-10-24T112458Z
 review_companions: null
 hold_reason: null
-stage: implemented
+stage: dispatched
 claimed_at: 2026-10-24T124117Z
 base_sha: 16c093703ec548a902760680cda97f6018325276
 base_blob: da55301de1e911aeab09878b0873809f544f436c
@@ -109,6 +109,8 @@ submission_blob: 3f76eb805990314f5f7e6de6e9e184464edd6019
 lint_warnings: 0
 attempt_file: 2026-10-24T124537Z-check-bf16-shape-gated-triton-winners-combo.md
 prepared_at: 2026-10-24T124537Z
+job: 875f3e0172ee48a1
+dispatched_at: 2026-10-24T124546Z
 ---
 
 # bf16-shape-gated-triton-winners-combo
