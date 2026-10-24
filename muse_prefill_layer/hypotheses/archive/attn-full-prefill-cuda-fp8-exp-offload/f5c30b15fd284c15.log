@@ -1,0 +1,40 @@
+[cuda full attn] wgmma: load_inline FAILED after 23.1s: RuntimeError: ...rror   : Instruction 'wgmma.wait_group' not supported on .target 'sm_90'
+ptxas /tmp/muse_prefill_layer-1q5tjqdj/sandbox/tmp/tmpxft_00000089_00000000-7_cuda.compute_90.ptx, line 1948; error   : Instruction 'wgmma.fence' not supported on .target 'sm_90'
+ptxas /tmp/muse_prefill_layer-1q5tjqdj/sandbox/tmp/tmpxft_00000089_00000000-7_cuda.compute_90.ptx, line 1960; error   : Instruction 'wgmma.mma_async with FP8 types' not supported on .target 'sm_90'
+ptxas /tmp/muse_prefill_layer-1q5tjqdj/sandbox/tmp/tmpxft_00000089_00000000-7_cuda.compute_90.ptx, line 1973; error   : Instruction 'wgmma.mma_async with FP8 types' not supported on .target 'sm_90'
+ptxas /tmp/muse_prefill_layer-1q5tjqdj/sandbox/tmp/tmpxft_00000089_00000000-7_cuda.compute_90.ptx, line 1978; error   : Instruction 'wgmma.commit_group' not supported on .target 'sm_90'
+ptxas /tmp/muse_prefill_layer-1q5tjqdj/sandbox/tmp/tmpxft_00000089_00000000-7_cuda.compute_90.ptx, line 1982; error   : Instruction 'wgmma.wait_group' not supported on .target 'sm_90'
+ptxas /tmp/muse_prefill_layer-1q5tjqdj/sandbox/tmp/tmpxft_00000089_00000000-7_cuda.compute_90.ptx, line 2953; error   : Instruction 'wgmma.fence' not supported on .target 'sm_90'
+ptxas /tmp/muse_prefill_layer-1q5tjqdj/sandbox/tmp/tmpxft_00000089_00000000-7_cuda.compute_90.ptx, line 2966; error   : Instruction 'wgmma.mma_async with FP8 types' not supported on .target 'sm_90'
+ptxas /tmp/muse_prefill_layer-1q5tjqdj/sandbox/tmp/tmpxft_00000089_00000000-7_cuda.compute_90.ptx, line 2980; error   : Instruction 'wgmma.mma_async with FP8 types' not supported on .target 'sm_90'
+ptxas /tmp/muse_prefill_layer-1q5tjqdj/sandbox/tmp/tmpxft_00000089_00000000-7_cuda.compute_90.ptx, line 2985; error   : Instruction 'wgmma.commit_group' not supported on .target 'sm_90'
+ptxas /tmp/muse_prefill_layer-1q5tjqdj/sandbox/tmp/tmpxft_00000089_00000000-7_cuda.compute_90.ptx, line 2989; error   : Instruction 'wgmma.wait_group' not supported on .target 'sm_90'
+ptxas /tmp/muse_prefill_layer-1q5tjqdj/sandbox/tmp/tmpxft_00000089_00000000-7_cuda.compute_90.ptx, line 3688; error   : Instruction 'wgmma.fence' not supported on .target 'sm_90'
+ptxas /tmp/muse_prefill_layer-1q5tjqdj/sandbox/tmp/tmpxft_00000089_00000000-7_cuda.compute_90.ptx, line 3700; error   : Instruction 'wgmma.mma_async with FP8 types' not supported on .target 'sm_90'
+ptxas /tmp/muse_prefill_layer-1q5tjqdj/sandbox/tmp/tmpxft_00000089_00000000-7_cuda.compute_90.ptx, line 3713; error   : Instruction 'wgmma.mma_async with FP8 types' not supported on .target 'sm_90'
+ptxas /tmp/muse_prefill_layer-1q5tjqdj/sandbox/tmp/tmpxft_00000089_00000000-7_cuda.compute_90.ptx, line 3718; error   : Instruction 'wgmma.commit_group' not supported on .target 'sm_90'
+ptxas /tmp/muse_prefill_layer-1q5tjqdj/sandbox/tmp/tmpxft_00000089_00000000-7_cuda.compute_90.ptx, line 3722; error   : Instruction 'wgmma.wait_group' not supported on .target 'sm_90'
+ptxas fatal   : Ptx assembly aborted due to errors
+ninja: build stopped: subcommand failed.
+
+[cuda full attn] mma: load_inline compiled in 41.4s
+[expert gemm] w13 BLOCK_T=64 BLOCK_W=128 warps=4 stages=3: n_regs=255 n_spills=0 shared=67584
+[expert gemm] w13 BLOCK_T=128 BLOCK_W=128 warps=8 stages=3: n_regs=176 n_spills=0 shared=116736
+[expert gemm] w13 BLOCK_T=256 BLOCK_W=128 warps=8 stages=2: n_regs=254 n_spills=4 shared=140288
+[expert gemm] w2 BLOCK_T=64 BLOCK_W=128 warps=4 stages=3: n_regs=255 n_spills=0 shared=67584
+[expert gemm] w2 BLOCK_T=128 BLOCK_W=128 warps=8 stages=3: n_regs=176 n_spills=0 shared=116736
+[expert gemm] w2 BLOCK_T=256 BLOCK_W=128 warps=8 stages=2: n_regs=255 n_spills=0 shared=140288
+[expert e2e] T=8192 triton vs marlin: rel L2 5.890e-03, worst row 6.866e-03 (8341 local routes)
+[cuda full attn] mma compiled in 41.4s: sw=0 regs 128 local 0 B CTAs/SM 2; sw=2 regs 128 local 0 B CTAs/SM 2; dynamic smem 36864 B
+[cuda full attn] exp2_sw unit test: max rel err 7.484e-05 on [-126, 0] (limit 4.883e-04); -inf/-200/-127 -> 1.505e-36/1.505e-36/1.505e-36; tiny positive -> 255.981; PASS
+[cuda full attn] mma desc_swap=0 self-check b1_ctx3000_L753 sw=2/8 splits=11: vs FA3 rel L2 6.40e-03 worst row 4.93e-02; vs fp64 ref 3.51e-03 / 3.53e-02 (FA3 6.18e-03 / 3.50e-02); finite True: PASS
+[cuda full attn] mma desc_swap=0 self-check b1_ctx3000_L753 sw=0/8 splits=11: vs FA3 rel L2 6.40e-03 worst row 4.93e-02; vs fp64 ref 3.51e-03 / 3.53e-02 (FA3 6.18e-03 / 3.50e-02); finite True: PASS
+[cuda full attn] mma desc_swap=0 self-check b3_ctx5000_L200_outliers sw=2/8 splits=14: vs FA3 rel L2 1.40e-02 worst row 5.12e-02; vs fp64 ref 8.32e-03 / 2.89e-02 (FA3 1.25e-02 / 3.86e-02); finite True: PASS
+[cuda full attn] mma desc_swap=0 self-check b3_ctx5000_L200_outliers sw=0/8 splits=14: vs FA3 rel L2 1.40e-02 worst row 5.12e-02; vs fp64 ref 8.32e-03 / 2.89e-02 (FA3 1.25e-02 / 3.86e-02); finite True: PASS
+[cuda full attn] mma desc_swap=0 self-check b4_ragged_L753 sw=2/8 splits=3: vs FA3 rel L2 9.70e-03 worst row 5.11e-02; vs fp64 ref 6.94e-03 / 3.67e-02 (FA3 9.32e-03 / 4.00e-02); finite True: PASS
+[cuda full attn] mma desc_swap=0 self-check b1_ctx0_L16384 sw=2/8 splits=1: vs FA3 rel L2 1.26e-02 worst row 5.85e-02; vs fp64 ref 9.23e-03 / 4.27e-02 (FA3 9.35e-03 / 4.55e-02); finite True: PASS
+[cuda full attn] mma desc_swap=0 self-check b2_ragged_L211 sw=2/8 splits=4: vs FA3 rel L2 5.92e-03 worst row 4.37e-02; vs fp64 ref 5.58e-03 / 3.38e-02 (FA3 7.02e-03 / 3.39e-02); finite True: PASS
+[cuda full attn] timing turn_1 full (eager, print only): fa3 421.8 us, mma sw=0/8 1264.0 us, mma sw=2/8 1306.6 us
+[cuda full attn] timing turn_4 full (eager, print only): fa3 1640.8 us, mma sw=0/8 5069.5 us, mma sw=2/8 5236.2 us
+[cuda full attn] ON: PATH CHOSEN: CUDA mma kernel (desc_swap=0, exp offload 2/8 on FMA) on full layers at page size 1 and kv_scale 1; FA3 elsewhere (rejected: wgmma build FAILED after 23.1s)
+[prepare] max_memory_allocated 4.90 GiB

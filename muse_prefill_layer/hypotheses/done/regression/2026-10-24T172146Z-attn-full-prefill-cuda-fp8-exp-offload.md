@@ -81,10 +81,10 @@ controls_for: null
 rewrite_stage: 1
 replaces: "flash_attn_with_kvcache (FA3 cutlass::device_kernel<flash::...> + FlashAttnFwdCombine) on full-attention layers at page_size 1"
 review: proceed
-status: running
+status: done
 review_at: 2026-10-24T172640Z
 review_companions: null
-stage: dispatched
+stage: harvested
 claimed_at: 2026-10-24T172706Z
 base_sha: 41c4efc3448061b0f924c89315352fe690c80db8
 base_blob: 635cfee3ac2c3f7c66840b8c8a082cad2fa41a68
@@ -101,6 +101,13 @@ attempt_file: 2026-10-24T181734Z-submit-attn-full-prefill-cuda-fp8-exp-offload.m
 prepared_at: 2026-10-24T181734Z
 job: f5c30b15fd284c15
 dispatched_at: 2026-10-24T181917Z
+outcome: regression
+verdict_detail: regression
+speedup: 0.8813268577308946
+speedup_ci: [0.8681069548649312, 0.8945467605968579]
+harvested_at: 2026-10-24T184720Z
+best_at_harvest: 1.0591912383762452
+promotion: null
 ---
 
 # attn-full-prefill-cuda-fp8-exp-offload
@@ -230,3 +237,31 @@ warn  host-sync    L1506: torch.cuda.synchronize()  (outside kernel_fn's call gr
 OK with warnings
 ```
 `python3 -I -m py_compile` passed; `__pycache__` was removed from the worktree.
+
+## Result
+
+- job `f5c30b15fd284c15` (submit), status done, passed True, tests 5/5
+- speedup 0.8813x, 95% CI [0.8681, 0.8945], score 439568.92565084 µs vs SGLang 387403.9 µs
+- best at harvest: {"speedup": 1.0591912383762452, "ci": [1.0433033698006016, 1.0750791069518888], "job": "ba9c16b9cc6b4605"}; base result: muse_prefill_layer/hypotheses/done/gain/experts-hybrid-marlin-turn-triton-first-turn.result.json
+- **outcome: regression** (regression)
+- files: `muse_prefill_layer/hypotheses/done/regression/attn-full-prefill-cuda-fp8-exp-offload.result.json`, `muse_prefill_layer/hypotheses/done/regression/attn-full-prefill-cuda-fp8-exp-offload.patch`; branch `hyp/muse_prefill_layer/attn-full-prefill-cuda-fp8-exp-offload`
+
+## Attribution
+
+| shape | w | base µs | hyp µs | delta | verdict |
+|---|---|---|---|---|---|
+| batch=1 ctx=80000 dist=soft layer=sliding load=turn_1 page=1 q_len=753 repeats=6 | 46 | 1079.54 | 1088.63 | 1.0006 | flat |
+| batch=1 ctx=80000 dist=soft layer=full load=turn_1 page=1 q_len=753 repeats=6 | 16 | 1419.09 | 2351.64 | 0.6203 | lost |
+| batch=4 ctx=80000 dist=soft layer=sliding load=turn_4 page=1 q_len=753 repeats=6 | 46 | 3334.9 | 3345.3 | 0.9998 | flat |
+| batch=4 ctx=80000 dist=soft layer=full load=turn_4 page=1 q_len=753 repeats=6 | 16 | 4937.98 | 8513.62 | 0.5801 | lost |
+| batch=1 ctx=0 dist=soft layer=full load=first_turn page=1 q_len=16384 repeats=6 | 16 | 15386.32 | 16393.27 | 0.8665 | lost |
+| batch=1 ctx=32768 dist=soft layer=sliding load=first_turn page=1 q_len=16384 repeats=6 | 138 | 14275.3 | 14391.74 | 0.9904 | flat |
+| batch=1 ctx=32768 dist=soft layer=full load=first_turn page=1 q_len=16384 repeats=6 | 16 | 18165.94 | 27449.69 | 0.6592 | lost |
+| batch=1 ctx=65536 dist=soft layer=full load=first_turn page=1 q_len=16384 repeats=6 | 16 | 22332.92 | 39242.46 | 0.5601 | lost |
+
+lost on full first_turn, turn_1, turn_4. Expected hit: 0/4. Noise ±1.5%.
+
+## Follow-ups
+
+- rewrite stage 1 of `flash_attn_with_kvcache (FA3 cutlass::device_kernel<flash::...> + FlashAttnFwdCombine) on full-attention layers at page_size 1`: read the replaced kernels' own us per shape (profile top_kernels) against the incumbent and the floor, and check which Milestone it reached. The next stage is `/hypothesize muse_prefill_layer "<what to fix or tune>" --kind rewrite --depends-on attn-full-prefill-cuda-fp8-exp-offload --stage 2`; a slow or failed first cut is the expected start, not a do-not-retry.
+
