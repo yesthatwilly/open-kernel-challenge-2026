@@ -37,9 +37,16 @@ priority: 3
 kind: primary
 controls_for: null
 review: proceed
-status: queued
+status: running
 review_at: 2026-10-24T044925Z
 review_companions: null
+stage: claimed
+claimed_at: 2026-10-24T044925Z
+base_sha: 952188da0ff9551ff95f13844604e502f412b70f
+base_blob: 6884d26a928d1de1b07bf8d28e1be4e53dfdcfc5
+branch: hyp/muse_decode_layer/pooler-gemm-splitk-autotune
+worktree: .worktrees/muse_decode_layer/pooler-gemm-splitk-autotune
+mode: null
 ---
 
 # pooler-gemm-splitk-autotune
