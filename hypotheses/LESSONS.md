@@ -40,6 +40,8 @@ profile are in `<problem>/hypotheses/archive/<slug>/`.
 - Split-K ticket-semaphore reduce (masked partial store, debug_barrier, one gpu-scope acq_rel
   atomic_add ticket, winner reloads .cg, fixed-order sum, atomic_xchg reset) passes correctness
   (bf16 pooler 1.166x and qkv-gate 1.143x vs 1.151x master: both neutral, within drift).
+- A 128x128x64 Triton split-K kernel at m=128 (pooler SPLIT_K 4, unpooler 2) lost to cuBLAS (1.116x vs
+  1.151x master; pooler-unpooler-m128-wgmma-splitk-semaphore).
 - cuBLAS vs cublasLt backend preference changes nothing on this image (bf16-cublaslt-backend-toggle).
 - FMA-broadcast (no tl.dot) GEMV was 10x slower (unpooler-slice-triton-gemv).
 
@@ -57,6 +59,14 @@ profile are in `<problem>/hypotheses/archive/<slug>/`.
   0.689x overall (experts-triton-w4a16-inkernel-fp4, 218515e2d0b14ce7). Losses shrink with T (0.46x
   turn_1 sliding to 0.90x first_turn), so the cost is per-tile dequant overhead, not the MMA.
 - moe small-m-grouped-gemv-splitk-rewrite stage 1 (split-K grouped GEMV) lost 1.7-2.6x at bs 1/8/16 (0.664x).
+- Swapping operands so the in-register-dequantized FP4 weight tile is tl.dot's LHS (tokens on the MMA N
+  side) plus a lossless nibble reorder in prepare() doubled the Triton W4A16 expert GEMM: w13+w2 went
+  2.0 ms -> 0.80 ms at turn_1, 3.3 -> 2.1 ms at turn_4, 13.5 -> 9.1-10.0 ms at first_turn, beating Marlin at
+  turn_4/first_turn (prefill experts-triton-w4a16-swapab-reglhs, 1.007x overall).
+- moe: smaller Marlin block_size_m at bs=128/256 gained on its own (verify-two-smaller 1.092x,
+  next-smaller 1.039x), confirming decode's cap-16 lesson on the standalone MoE.
+- moe: replacing SGLang's post-expert norm at bs<32 (where its wrapper launches ~9 at::native
+  reduce/elementwise kernels) with one Triton program per token gained 1.130x (post-expert-norm-triton-small-m).
 - A Triton W4A16 grouped GEMV with arithmetic FP4 dequant was 2-2.6x slower than Marlin at small M
   (triton-w13-grouped-gemv-small-m). It was dequant-ALU-bound with too few busy CTAs.
 
