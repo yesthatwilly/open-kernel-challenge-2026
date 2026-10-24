@@ -81,6 +81,7 @@ best_at_harvest: 1.3075759186466844
 promotion: merged
 hand_landed: true
 promotion_commit: 1a5da3d22ce48904de76852a1d585563f4c53048
+promotion_attempt: 2026-10-24T174352Z-submit-align-parallel-per-expert-verify.md
 ---
 
 # align-parallel-per-expert-verify
