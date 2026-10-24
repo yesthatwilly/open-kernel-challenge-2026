@@ -45,13 +45,19 @@ review: proceed
 status: running
 review_at: 2026-10-24T183956Z
 review_companions: null
-stage: claimed
+stage: implemented
 claimed_at: 2026-10-24T183957Z
 base_sha: 6ef6502619e893cbf1037aeccc0405617e73620d
 base_blob: 108d36e9f2266fc88531dd6ff0329a847c882013
 branch: hyp/muse_moe_w4a16/align-small-one-warp-tiny-m
 worktree: .worktrees/muse_moe_w4a16/align-small-one-warp-tiny-m
 mode: null
+implemented_at: 2026-10-24T184146Z
+impl_commit: 1333b371d035b1380ecf095a92cea3b903f993c6
+submission_sha256: aa88ec9dd62eba95ff78c88aabb0300e47c36e8bb79f29a120e5c2f104f8466c
+norm_sha256: 179ed1c50ddffe533effbcc8aabafdda031ecefaa1fbfa203a06017978de4cfd
+submission_blob: 92f9e59575322a03267aab74308a495aeeaf19f1
+lint_warnings: 8
 ---
 
 # align-small-one-warp-tiny-m
@@ -97,3 +103,31 @@ No companion is warranted. The change is one scalar on one launch at shapes no o
 - If bs=1 improves and bs=8 does not, is the sync cost or the per-thread one-hot/cumsum work the dominant term at n=64? The n_regs/n_spills print plus the bs=8 row will tell. Consider num_warps=2 at 32 < n <= 64 as the follow-up.
 - Overlap with in-flight rewrites: cuda-fused-moe-bs1-persistent-w13-silu-w2 (bs=1) and cuda-fused-moe-midm-single-launch-routed (2..32) would retire this kernel at these shapes if they land. The gain here is worth landing only while _align_small remains on the bs<=8 path.
 
+
+## Implementation notes
+
+In `_align_small` (host wrapper, submission.py ~L277) the `_align_small_kernel` launch now passes `num_warps=1 if n <= 64 else 4` (n = num_tokens*8, so 1 warp at tokens <= 8). Kernel body unchanged. Triton's tl.sum/tl.cumsum are layout-generic, so the 1-warp variant is correct with no kernel change (nothing is hard-sized for 4 warps). The prepare() warm-up loop calls `_align_small` for tokens 1..32, so the num_warps=1 variants for 1..8 compile there, and `_align_self_check` (tokens 1, 8, 16, 32) runs through the same wrapper. Deviations: did not add the n_regs/n_spills print (no GPU to verify; the profile row at bs=8 decides) and did not add tokens=4 to the self-check shapes (reviewer's optional suggestion, kept diff minimal).
+
+## Rules check
+
+- [x] CUDA-graph capturable: diff is one host-side int expression on a static shape; no syncs, no value-dependent control flow.
+- [x] Nothing derived from `data` is cached across calls: n comes from the shape only.
+- [x] Weights: n/a: no weight handling touched.
+- [x] Activations dtype: n/a: only a launch parameter changed; outputs bitwise identical.
+- [x] Attention: n/a: MoE align kernel only.
+- [x] No timing patches, harness frames/I/O/secrets, module edits, reference import, subprocesses or network: diff contains none.
+- [x] All work inside the timed call; no output caching or replay.
+- [x] No triton.autotune; first-line marker `# okc: problem=muse_moe_w4a16` unchanged.
+
+Lint: `OK with warnings: muse_moe_w4a16/submission.py` (only prepare()-side host-sync warnings, pre-existing and outside kernel_fn).
+
+## Pre-flight audit
+
+Audited 2026-10-24 by an opus subagent, by reading only (no GPU on this node). **Verdict: dispatch.** No fixes.
+
+- The diff is one line: `num_warps=1 if n <= 64 else 4` on the `_align_small_kernel` launch. The kernel body is unchanged and contains nothing tied to the warp count; Triton reductions and scans give the same result under any layout. n = numel is shape-only, so there is no host sync and no value-dependent control flow, and the change is graph-capturable.
+- Gates and fallback: no new gate. prepare() warm-up compiles the 1-warp variants for tokens 1..8 with kernel_fn's own block_size_m (the two-smaller pick applies only at >=128 tokens), so no variant compiles at capture or timing. As on master, `_align_self_check` only prints on a mismatch. It checks the 1-warp variants at tokens 1 and 8.
+- Scope: matches the change paragraph. bs>=16 (n>=128) still launch exactly as on master. The n_regs/n_spills print and adding tokens=4 to the self-check were left out, as the implementation notes say. The bs=8 profile row still decides the result.
+- Lint: OK with warnings (only pre-existing prepare()-side host syncs).
+
+Residual risk: 1 warp at bs=8 ([64,32] temporaries, 64 int32 per thread each) may spill or serialize, making bs=8 flat or slower. bs=4 (n=32) is not self-checked. Neither affects correctness.
