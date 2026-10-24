@@ -81,6 +81,7 @@ harvested_at: 2026-10-24T135614Z
 best_at_harvest: 1.0228712349305686
 promotion: merged
 promotion_commit: b92a0f47192b31b8618c3c53aab281b72204f3c4
+promotion_attempt: 2026-10-24T135614Z-submit-experts-hybrid-marlin-turn-triton-first-turn.md
 ---
 
 # experts-hybrid-marlin-turn-triton-first-turn
