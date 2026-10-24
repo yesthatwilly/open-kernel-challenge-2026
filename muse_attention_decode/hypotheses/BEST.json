@@ -1,17 +1,17 @@
 {
  "problem": "muse_attention_decode",
- "job": "295727fc68e14093",
- "check_job": "295727fc68e14093",
+ "job": "82085a4e82154393",
+ "check_job": "82085a4e82154393",
  "mode": "check",
- "speedup": 1.2930643047593426,
+ "speedup": 1.3467624733171553,
  "ci": [
-  1.2736683401879525,
-  1.3211607975952195
+  1.3265610362173978,
+  1.3669639104169125
  ],
- "score_us": 2912.693503437914,
- "commit": "b8a0e4db5c9dfb55e627e0feb577fbd51ca8959d",
- "submission_blob": "387dcb6a0e6137b74f7f65b048dce5a3fcbe2008",
- "slug": "sliding-fused-triton-decode1-gate",
- "result": "muse_attention_decode/hypotheses/done/neutral/sliding-fused-triton-decode1-gate.result.json",
- "updated_at": "2026-10-24T132235Z"
+ "score_us": 2796.5584686387806,
+ "commit": "3693fb89b6ce898de437c29d4859b90c33277309",
+ "submission_blob": "1c0f5fa1bfc4e602b62e5e9edd9df6d5652b297b",
+ "slug": "full-decode-cuda-gather-splitkv",
+ "result": "muse_attention_decode/hypotheses/done/gain/full-decode-cuda-gather-splitkv.result.json",
+ "updated_at": "2026-10-24T144811Z"
 }

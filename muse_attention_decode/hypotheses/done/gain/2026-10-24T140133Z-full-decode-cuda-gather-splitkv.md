@@ -92,7 +92,8 @@ speedup: 1.3467624733171553
 speedup_ci: [1.3265610362173978, 1.3669639104169125]
 harvested_at: 2026-10-24T144809Z
 best_at_harvest: 1.2930643047593426
-promotion: pending
+promotion: merged
+promotion_commit: 3693fb89b6ce898de437c29d4859b90c33277309
 ---
 
 # full-decode-cuda-gather-splitkv
