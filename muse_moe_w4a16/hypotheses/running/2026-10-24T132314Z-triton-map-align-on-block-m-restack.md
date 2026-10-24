@@ -48,13 +48,15 @@ base_sha: a36124bb66d280ad8d9fdcad53738d33f599a856
 base_blob: c7bf9ffedc48b757f56765004e5d65f6ad5ba841
 branch: hyp/muse_moe_w4a16/triton-map-align-on-block-m-restack
 worktree: .worktrees/muse_moe_w4a16/triton-map-align-on-block-m-restack
-mode: null
+mode: check
 implemented_at: 2026-10-24T132520Z
 impl_commit: c602dde3c12a2bb803948dbab6e4e9a63e669a19
 submission_sha256: c1cf1b696539bedbea9f1aea0722f967b861df8be7fb232543ac9fce2e854ae5
 norm_sha256: 4fab8ac8450b304f28ff5a2b1d78fa84510ce7e89c1b94132f96c3e84142bc6a
 submission_blob: d9a9375ef4721ab9b28cc9d6364c92e67c7ccc59
 lint_warnings: 8
+attempt_file: 2026-10-24T132521Z-check-triton-map-align-on-block-m-restack.md
+prepared_at: 2026-10-24T132521Z
 ---
 
 # triton-map-align-on-block-m-restack
