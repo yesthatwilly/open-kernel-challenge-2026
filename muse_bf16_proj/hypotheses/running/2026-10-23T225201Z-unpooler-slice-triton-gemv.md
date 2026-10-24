@@ -39,7 +39,7 @@ review: proceed
 status: running
 review_at: 2026-10-23T230427Z
 review_companions: null
-stage: implemented
+stage: dispatched
 claimed_at: 2026-10-23T230427Z
 base_sha: e64f27ef09b3512d26573dde4d35b8ec3ade1f63
 base_blob: 5a2064af06f442f01dff926cb4f1eca75f992a24
@@ -54,6 +54,8 @@ submission_blob: 8b4a1d5c203a5775cb41fad007ee95a18f9765a3
 lint_warnings: 0
 attempt_file: 2026-10-24T015218Z-check-unpooler-slice-triton-gemv.md
 prepared_at: 2026-10-24T015218Z
+job: 4c2b113f81434570
+dispatched_at: 2026-10-24T015224Z
 ---
 
 # unpooler-slice-triton-gemv
