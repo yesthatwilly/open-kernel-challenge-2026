@@ -62,13 +62,15 @@ base_sha: 33ef80e4b77343ccd0fc4ec2b90a87eeb044bc95
 base_blob: 11fbc1957daf7294cd2810ff82a0aad2f25644bd
 branch: hyp/muse_moe_w4a16/post-expert-norm-triton-small-m
 worktree: .worktrees/muse_moe_w4a16/post-expert-norm-triton-small-m
-mode: null
+mode: check
 implemented_at: 2026-10-24T092453Z
 impl_commit: ca838d0e381ee2aca06d7d8bff28a9840f8012ef
 submission_sha256: 9deab074f199a27ffa6cd180ecef168cb4d082dc1b940d9a529c3351c07c3442
 norm_sha256: 49b1373f82a5ccfc7eb7acb86319048931fa7c63b746231632bc1f3bfe4a3603
 submission_blob: b81d47abe0c2e53a3ecc180884ae8d9671ba4e14
 lint_warnings: 1
+attempt_file: 2026-10-24T092454Z-check-post-expert-norm-triton-small-m.md
+prepared_at: 2026-10-24T092454Z
 ---
 
 # post-expert-norm-triton-small-m
