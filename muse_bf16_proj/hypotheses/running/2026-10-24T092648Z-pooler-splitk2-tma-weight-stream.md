@@ -61,13 +61,15 @@ base_sha: cee590d58c6c34ded84fdb734c38ca129e327fee
 base_blob: 66ba1a39e2aaa5cedb2ce3ddfb809f67f86b37f9
 branch: hyp/muse_bf16_proj/pooler-splitk2-tma-weight-stream
 worktree: .worktrees/muse_bf16_proj/pooler-splitk2-tma-weight-stream
-mode: null
+mode: check
 implemented_at: 2026-10-24T104412Z
 impl_commit: 954d39338b5e6e0be9df9f550b6ba7ff10a7a6e7
 submission_sha256: 253d30c05c8eec77961865b4ee1be97c9705eac5c91fbb94e6b152a414c396b1
 norm_sha256: 1e415f07907b4d6c9b704d4cf61f58bd7d8e8528e2ede19f65fd7900bf5878bd
 submission_blob: c7d9d9d449e9412239f90ab6648b4d6f6bd658e7
 lint_warnings: 0
+attempt_file: 2026-10-24T104413Z-check-pooler-splitk2-tma-weight-stream.md
+prepared_at: 2026-10-24T104413Z
 ---
 
 # pooler-splitk2-tma-weight-stream
