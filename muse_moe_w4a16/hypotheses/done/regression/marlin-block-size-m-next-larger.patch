@@ -1,0 +1,29 @@
+diff --git a/muse_moe_w4a16/submission.py b/muse_moe_w4a16/submission.py
+index 11fbc19..a0ffc54 100644
+--- a/muse_moe_w4a16/submission.py
++++ b/muse_moe_w4a16/submission.py
+@@ -68,6 +68,9 @@ N_EXPERTS = 256
+ TOP_K = 8
+ # MuseSpark1xFp4Experts' candidates, smallest first.
+ BLOCK_SIZE_M_CANDIDATES = (8, 16, 32, 48, 64)
++# How many candidates past SGLang's pick to go, per shape. Partial per-shape adoption is a
++# one-line change here, e.g. `lambda num_tokens: 0 if num_tokens < 32 else 1`.
++BLOCK_SIZE_M_STEP = lambda num_tokens: 1  # noqa: E731
+ POST_NORM_EPS = 1e-8
+ 
+ 
+@@ -132,9 +135,13 @@ def kernel_fn(data: Inputs, state: dict) -> torch.Tensor:
+     local_ids = local_ids.contiguous()
+     topk_weights = data["topk_weights"].to(torch.float32).contiguous()
+ 
+-    for block_size_m in BLOCK_SIZE_M_CANDIDATES:
++    # SGLang's pick (first candidate under 0.9 routes per expert per block, else the last), then
++    # BLOCK_SIZE_M_STEP candidates larger, capped at 64 (hypothesis marlin-block-size-m-next-larger).
++    for idx, block_size_m in enumerate(BLOCK_SIZE_M_CANDIDATES):
+         if num_tokens * TOP_K / bank["count"] / block_size_m < 0.9:
+             break
++    idx = min(idx + BLOCK_SIZE_M_STEP(num_tokens), len(BLOCK_SIZE_M_CANDIDATES) - 1)
++    block_size_m = BLOCK_SIZE_M_CANDIDATES[idx]
+     if num_tokens == 1 and expert_map is None:
+         from sglang.kernels.ops.moe.moe_align_single_token import moe_align_single_token
+ 

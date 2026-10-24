@@ -36,10 +36,10 @@ priority: 3
 kind: primary
 controls_for: null
 review: proceed
-status: running
+status: done
 review_at: 2026-10-24T024434Z
 review_companions: null
-stage: dispatched
+stage: harvested
 claimed_at: 2026-10-24T024440Z
 base_sha: 6b5469bd92f0a43ce5908912b02fb8dee425c3fa
 base_blob: 11fbc1957daf7294cd2810ff82a0aad2f25644bd
@@ -56,6 +56,13 @@ attempt_file: 2026-10-24T024739Z-check-marlin-block-size-m-next-larger.md
 prepared_at: 2026-10-24T024740Z
 job: 2639e3ca7f5549de
 dispatched_at: 2026-10-24T024747Z
+outcome: regression
+verdict_detail: regression
+speedup: 0.917841731023605
+speedup_ci: [0.9040741050582509, 0.931609356988959]
+harvested_at: 2026-10-24T035910Z
+best_at_harvest: 0.9887547325362586
+promotion: null
 ---
 
 # marlin-block-size-m-next-larger
@@ -132,3 +139,29 @@ OK with warnings: muse_moe_w4a16/submission.py
 ```
 
 The one warning was already on master: it is in prepare(), not this diff, so there was nothing to fix.
+
+## Result
+
+- job `2639e3ca7f5549de` (check), status done, passed True, tests 5/5
+- speedup 0.9178x, 95% CI [0.9041, 0.9316], score 14652.30828522236 µs vs SGLang 13448.5 µs
+- best at harvest: {"speedup": 0.9887547325362586, "ci": [0.9739234115482147, 1.0035860535243024], "job": "fb2cc736613747df"}; base result: muse_moe_w4a16/hypotheses/done/gain/sglang-marlin-path-parity.result.json
+- **outcome: regression** (regression)
+- files: `muse_moe_w4a16/hypotheses/done/regression/marlin-block-size-m-next-larger.result.json`, `muse_moe_w4a16/hypotheses/done/regression/marlin-block-size-m-next-larger.patch`; branch `hyp/muse_moe_w4a16/marlin-block-size-m-next-larger`
+
+## Attribution
+
+| shape | w | base µs | hyp µs | delta | verdict |
+|---|---|---|---|---|---|
+| bs=1 load=decode_1 sharding=ep8 | 60 | 80.23 | 85.76 | 0.9805 | flat |
+| bs=16 load=decode_16 sharding=ep8 | 60 | 191.41 | 192.33 | 0.984 | flat |
+| bs=32 load=decode_32 sharding=ep8 | 60 | 208.15 | 261.46 | 0.7948 | lost |
+| bs=8 load=verify_1 sharding=ep8 | 60 | 152.04 | 155.61 | 0.9701 | flat |
+| bs=128 load=verify_16 sharding=ep8 | 60 | 462.46 | 545.16 | 0.8596 | lost |
+| bs=256 load=verify_32 sharding=ep8 | 60 | 621.28 | 617.78 | 1.0005 | flat |
+
+lost on decode_32 decode_32; verify_16 verify_16. Expected hit: 3/5. Noise ±1.5%.
+
+## Follow-ups
+
+- record which shapes lost (Attribution) and do not retry this area in this form.
+
