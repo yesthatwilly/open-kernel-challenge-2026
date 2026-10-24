@@ -11,6 +11,6 @@ Repo: /home/user/git/musespark (shell is nushell; use `bash -c` for bash syntax)
 ## This pick
 
 - problem: muse_bf16_proj
-- hypothesis md (main tree): /home/user/git/musespark/None
-- worktree: None
-- The `## Adversarial review` section in the md has build notes from the reviewer; follow its rules notes. If the hypothesis depends on a Triton API you cannot confirm exists in the judge image and the md says to stop in that case, stop and report instead of guessing.
+- hypothesis md (main tree): /home/user/git/musespark/muse_bf16_proj/hypotheses/running/2026-10-24T075347Z-pooler-triton-splitk2-blockn64-semaphore-control-blockk256.md
+- worktree: /home/user/git/musespark/.worktrees/muse_bf16_proj/pooler-triton-splitk2-blockn64-semaphore-control-blockk256 (based on the parent pooler-triton-splitk2-blockn64-semaphore commit)
+- Change only BLOCK_K (and num_stages only if the spec says so). Follow the review notes in the md.
