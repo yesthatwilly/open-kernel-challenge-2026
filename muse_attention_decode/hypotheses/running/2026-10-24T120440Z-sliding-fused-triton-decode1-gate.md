@@ -44,10 +44,17 @@ priority: 2
 kind: primary
 controls_for: null
 review: proceed
-status: queued
+status: running
 review_at: 2026-10-24T120721Z
 review_companions: null
 hold_reason: null
+stage: claimed
+claimed_at: 2026-10-24T124116Z
+base_sha: 4613c6fccb0ad0d891d7c837d1dc24c0465c5aff
+base_blob: efc544103e6d303d1f8602caa9439628043a17a7
+branch: hyp/muse_attention_decode/sliding-fused-triton-decode1-gate
+worktree: .worktrees/muse_attention_decode/sliding-fused-triton-decode1-gate
+mode: null
 ---
 
 # sliding-fused-triton-decode1-gate
