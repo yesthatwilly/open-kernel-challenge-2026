@@ -44,13 +44,15 @@ base_sha: 4735619dba9401926cf675fc366d56f69d945921
 base_blob: e4931f050c7fb99835fe116d25bb454a5ea731e9
 branch: hyp/muse_prefill_layer/experts-marlin-block-m-48-turn1
 worktree: .worktrees/muse_prefill_layer/experts-marlin-block-m-48-turn1
-mode: null
+mode: check
 implemented_at: 2026-10-24T083936Z
 impl_commit: 80dcbc040baf3ff15273366870c8e3756a88a5c2
 submission_sha256: e6dc2af631f9accd2027d9dad4ccf60d4f973c6d4208141eb3a4e90def273589
 norm_sha256: 99870116ea7ac224540a17a71afcc32f869678c08376a3e79c8cca05a90c0a82
 submission_blob: 2ad966454adce5a619a1ebff11848b5463f1295a
 lint_warnings: 1
+attempt_file: 2026-10-24T083936Z-check-experts-marlin-block-m-48-turn1.md
+prepared_at: 2026-10-24T083936Z
 ---
 
 # experts-marlin-block-m-48-turn1
