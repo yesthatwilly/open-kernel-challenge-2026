@@ -50,7 +50,7 @@ status: running
 review_at: 2026-10-24T112356Z
 review_companions: null
 hold_reason: null
-stage: implemented
+stage: dispatched
 claimed_at: 2026-10-24T112420Z
 base_sha: 2a10183f4da4f215e94343a98324a39e52be5cb6
 base_blob: b81d47abe0c2e53a3ecc180884ae8d9671ba4e14
@@ -65,6 +65,8 @@ submission_blob: c7bf9ffedc48b757f56765004e5d65f6ad5ba841
 lint_warnings: 1
 attempt_file: 2026-10-24T112434Z-check-marlin-block-m-two-smaller-on-postnorm.md
 prepared_at: 2026-10-24T112434Z
+job: c00ef7295c154867
+dispatched_at: 2026-10-24T112447Z
 ---
 
 # marlin-block-m-two-smaller-on-postnorm
