@@ -59,7 +59,8 @@ priority: 4
 kind: primary
 controls_for: null
 review: required
-status: queued
+status: hold
+hold_reason: "moot under master 1.269x (sweep by the attention minter): targets the parity pipeline's five pre-attention launches, which master fused into one kernel"
 ---
 
 # stream-fork-preattention
