@@ -49,3 +49,4 @@ overrides of a reviewer) with the reason, newest last. Written by `churn.py note
 - 2026-10-24T111912Z `muse_bf16_proj` **router-splitk-semaphore-no-memset**: hold: reviewer: wait for router-splitk32-small-m-all-loads-in-flight (1e339074b1844a43) and its stages3 control (4685bac7a662454d), then build on the winning SPLIT_K/num_stages; unhold by hand after they harvest
 - 2026-10-24T112256Z `muse_moe_w4a16` **align-remote-sentinel-ids**: unhold:
 - 2026-10-24T112256Z `muse_moe_w4a16` **align-remote-sentinel-ids**: unheld: its hold condition (align-256-experts-below-128 harvested) is met; that run was neutral (1.000x)
+- 2026-10-24T112356Z `muse_moe_w4a16` **marlin-block-m-two-smaller-on-postnorm**: hold: reviewer: dispatch after marlin-block-m-cap-16-port (1c33392914594026) harvests; if its bs=256 row beats two-smaller's by >~3%, use block 16 at bs=256 (an ab-tune or edit before claim), then unhold
