@@ -38,13 +38,15 @@ base_sha: 7c54c225a5de1458c4cd57d1fea92d4b3895d9f5
 base_blob: 11fbc1957daf7294cd2810ff82a0aad2f25644bd
 branch: hyp/muse_moe_w4a16/align-single-token-ep
 worktree: .worktrees/muse_moe_w4a16/align-single-token-ep
-mode: null
+mode: check
 implemented_at: 2026-10-24T032534Z
 impl_commit: 626e602e8c42555cd6e31cc1c17c4714b410deea
 submission_sha256: cf85d53e18535b069939208616928ffd52a8310ee5d4e0241d53905f2b5a48c7
 norm_sha256: 43c2b0c4373e5cfb2c37d4e20dc791c706e54ff607c5da6d9fd53f08ab85515d
 submission_blob: 6075ec2ba91b451ab6510be0763073337419e243
 lint_warnings: 1
+attempt_file: 2026-10-24T032534Z-check-align-single-token-ep.md
+prepared_at: 2026-10-24T032534Z
 ---
 
 # align-single-token-ep
