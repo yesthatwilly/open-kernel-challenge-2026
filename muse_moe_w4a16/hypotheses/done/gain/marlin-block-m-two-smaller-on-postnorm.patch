@@ -1,0 +1,16 @@
+diff --git a/muse_moe_w4a16/submission.py b/muse_moe_w4a16/submission.py
+index b81d47a..c7bf9ff 100644
+--- a/muse_moe_w4a16/submission.py
++++ b/muse_moe_w4a16/submission.py
+@@ -165,6 +165,11 @@ def kernel_fn(data: Inputs, state: dict) -> torch.Tensor:
+     for block_size_m in BLOCK_SIZE_M_CANDIDATES:
+         if num_tokens * TOP_K / bank["count"] / block_size_m < 0.9:
+             break
++    if num_tokens >= 128:
++        # Hypothesis marlin-block-m-two-smaller-on-postnorm: two candidates below SGLang's pick
++        # at the verify shapes (bs=128: 48 -> 16, bs=256/257: 64 -> 32). A host-side pick on the
++        # shape only; num_tokens < 128 keeps SGLang's pick.
++        block_size_m = BLOCK_SIZE_M_CANDIDATES[max(BLOCK_SIZE_M_CANDIDATES.index(block_size_m) - 2, 0)]
+     if num_tokens == 1 and expert_map is None:
+         from sglang.kernels.ops.moe.moe_align_single_token import moe_align_single_token
+ 
