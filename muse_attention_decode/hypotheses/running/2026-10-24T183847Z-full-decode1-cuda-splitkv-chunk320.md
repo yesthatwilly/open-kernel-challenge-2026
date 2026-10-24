@@ -50,13 +50,19 @@ review: proceed
 status: running
 review_at: 2026-10-24T184132Z
 review_companions: null
-stage: claimed
+stage: implemented
 claimed_at: 2026-10-24T184132Z
 base_sha: 29ab19ae2ed489e27e4307caeff5e2dd73cd86eb
 base_blob: c6854f093588da524e63657576b27ed720756e32
 branch: hyp/muse_attention_decode/full-decode1-cuda-splitkv-chunk320
 worktree: .worktrees/muse_attention_decode/full-decode1-cuda-splitkv-chunk320
 mode: null
+implemented_at: 2026-10-24T184624Z
+impl_commit: 183eb5501d2bccb2e31b88527333c29660d2a576
+submission_sha256: bca1e6cdafc45ed7c61d6764cfd0c44b7a880645746d38b58d8caca7e877743c
+norm_sha256: 3c1ea96d105c934be4dbf727040fd7bb34dc8f69b1562130cad1c55885b3f809
+submission_blob: 904216da4aa79256b7df64682f8a336d882c722f
+lint_warnings: 0
 ---
 
 # full-decode1-cuda-splitkv-chunk320
@@ -100,3 +106,40 @@ No companion warranted. The readout is per-shape and per-kernel: the profile wil
 - Merge risk: full-verify-cuda-streamk-splitkv and full-verify1-cuda-streamk-batch1 (running/queued) likely edit _SPLITKV_CUDA too; the CHUNK template refactor will conflict textually with them if both land.
 - At 250 items on 264 slots, 14 CTAs exit immediately and ~7 SMs host one CTA; does SM-level imbalance (some SMs 2 CTAs, some 1) show up as a tail? Chunk 304-ish (264 items) is a possible later tune.
 
+
+## Implementation notes
+
+All in the worktree's muse_attention_decode/submission.py (+108/-57). _SPLITKV_CUDA: CHUNK is now a template parameter of splitkv_attn_kernel<CHUNK> and splitkv_combine_kernel<CHUNK, NW>; smem offsets are constexpr functions of CHUNK; issue_meta loops `for (e = tid; e < CHUNK; e += THREADS)`; static_asserts on CHUNK % TILE and TILES >= STAGES-1. Combine: red_m/red_l/red_acc sized [NW], loop 1 strides NW*32, loop 2 strides NW, warp-0 merge sums NW entries, max over red_m is a loop, __launch_bounds__(NW*32), launched with NW*32 threads (the trap from the brief). Host: launch_attn<CHUNK>/launch_combine<CHUNK,NW> templates, dispatch 1024 -> <1024>/<1024,4>, 320 -> <320>/<320,16>, else TORCH_CHECK; cudaFuncSetAttribute once per instantiation (function-local static). New int64 chunk arg in both functions and _SPLITKV_CPP; module renamed muse_full_decode_splitkv_v2. Python: gate 1 <= batch (batch 1 additionally requires _B1_ON), chunk = 320 if batch == 1 else 1024, max_chunks from chunk, chunk passed to both calls.
+
+Deviation (self-check, per the brief's fall-back rule): the batch-1 pass (lens [80000] and [5000], kv_scale 1 and 0.25, device grid and grid 3, same rel L2 < 2e-2 bound) is separate from the batch>1 pass, and a batch-1 failure or exception only clears _B1_ON (batch 1 returns to the master FA3 path) without disabling the batch > 1 CUDA path; it never raises. Import prints '[splitkv] batch-1 chunk 320 path ON/OFF'. Nothing could be compiled or run on this node (no GPU/nvcc).
+
+## Rules check
+
+- [x] CUDA-graph capturable: no .item()/.cpu()/synchronize()/prints in kernel_fn; chunk and grid come from shapes/config/device only (checked in git diff).
+- [x] Nothing derived from `data` is cached across calls: the only new statics are the per-instantiation cudaFuncSetAttribute flag and _B1_ON, set at import from synthetic data.
+- [x] Weights: n/a: no weights touched.
+- [x] Activations BF16, KV cache FP8, queries FP8 E4M3: unchanged (same pre-attention kernel, same FP8 q).
+- [x] Attention sees every key: items cover all tokens (ceil(seq / chunk)), no skipping; self-check compares against a full FP32 reference.
+- [x] No timing patches, harness access, reference import, subprocesses or network: none added (load_inline was already there).
+- [x] All work happens inside the timed call; no output caching or replay: workspaces and outputs are allocated and computed per call.
+
+okc_lint.py output: `CLEAN: muse_attention_decode/submission.py`; py_compile OK, __pycache__ removed.
+
+## Pre-flight audit
+
+Audited 2026-10-24 by an opus subagent (read-only plus numpy emulation; no GPU on this node). **Verdict: dispatch-with-fixes.**
+
+Checked and found OK:
+- Strided issue_meta covers every entry: for CHUNK 320, tids 0-63 load 2 entries and tids 64-255 load 1, so all 320 are covered exactly once (emulated). CHUNK 1024 still loads 4 per thread.
+- Cross-item meta prefetch: TILES = 5 >= STAGES - 1. Item k+2's idx/q go into buffer k&1 only after item k's last tile has been issued and its q has been read, with a __syncthreads in between. Item k+1's meta lands (wait_group 2) before its first tile is issued.
+- Smem: <320> uses 87,568 B and <1024> uses 93,200 B (unchanged). Both fit 2 CTAs/SM within H200's 228 KB/SM. The cp.async16 and float4 offsets are 16-B aligned.
+- Combine <320,16>: red_m/red_l are [16] and red_acc is [16][64] (4.1 KB static). All 16 warps write red_acc and red_l, including warps with no partials, which write zeros. The max reduction loops over NW. Launched with NW*32 = 512 threads, matching __launch_bounds__. At B=1 with 80,001 tokens there are 251 partials, and max_chunks (from page_table.shape[1]) is at least that.
+- Batch-1 gate: the self-check reference uses the same FP8-rounded q and FP8 K/V. The only kernel-side error is f16 P plus ex2.approx, far below the 2e-2 bound at 80K keys, so the gate can pass. On a miss or an exception it clears only _B1_ON. Batch 1 then falls back to master's unpaired FA3 path (paired requires batch > 1), nothing raises, and the batch-1 path is printed ON/OFF.
+- Rules: chunk, grid and workspace come only from config, shapes and the device. kernel_fn has no syncs. The only new state is _B1_ON, set at import from synthetic data.
+
+Fixes:
+- The six constexpr smem-offset helpers (q_off ... smem_a) were host-only functions called inside the __global__ kernel, so they compiled only because torch's default nvcc flags include --expt-relaxed-constexpr. They are now marked `__host__ __device__`, so the never-compiled build does not depend on that flag.
+
+Lint CLEAN, py_compile OK, __pycache__ removed.
+
+Residual risk: a device fault (illegal address) in the batch-1 self-check would leave the CUDA context sticky-errored, and no Python fallback can recover from that. Also, the strided meta loop lost its `#pragma unroll`, so <1024> codegen could differ marginally from master's at decode_16/32.
