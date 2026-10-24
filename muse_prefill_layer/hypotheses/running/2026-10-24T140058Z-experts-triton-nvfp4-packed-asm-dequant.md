@@ -60,13 +60,15 @@ base_sha: 9b3df649d0389c5bd6c8e6885d9ab4d33f1e701d
 base_blob: 635cfee3ac2c3f7c66840b8c8a082cad2fa41a68
 branch: hyp/muse_prefill_layer/experts-triton-nvfp4-packed-asm-dequant
 worktree: .worktrees/muse_prefill_layer/experts-triton-nvfp4-packed-asm-dequant
-mode: null
+mode: submit
 implemented_at: 2026-10-24T164945Z
 impl_commit: 3c444875aef3f2a85c86b412e22d10ce0a6290dc
 submission_sha256: 1906d1a59c89b18216925dfaec1f22e22238b39df6c45c6c9db25c5eebd01ef0
 norm_sha256: 5908ab4aba141d6199bf362659b5869fea3728447c301eafd5f0f1a02825ee69
 submission_blob: 526518b54879e7929be2f03a0c8084907596fa70
 lint_warnings: 7
+attempt_file: 2026-10-24T164945Z-submit-experts-triton-nvfp4-packed-asm-dequant.md
+prepared_at: 2026-10-24T164945Z
 ---
 
 # experts-triton-nvfp4-packed-asm-dequant
