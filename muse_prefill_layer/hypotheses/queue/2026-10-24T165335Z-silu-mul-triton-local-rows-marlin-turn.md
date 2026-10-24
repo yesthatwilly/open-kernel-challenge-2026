@@ -47,10 +47,10 @@ priority: 3
 kind: primary
 controls_for: null
 review: proceed
-status: hold
+status: queued
 review_at: 2026-10-24T165654Z
 review_companions: null
-hold_reason: projected ~0.7% is below run-to-run noise (shape medians move 2-6% between batches; see LESSONS); not worth an agent plus a run. Fold into a larger prefill change if one lands.
+hold_reason: null
 ---
 
 # silu-mul-triton-local-rows-marlin-turn
