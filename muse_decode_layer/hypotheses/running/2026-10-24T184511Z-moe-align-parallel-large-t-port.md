@@ -45,9 +45,16 @@ priority: 5
 kind: primary
 controls_for: null
 review: proceed
-status: queued
+status: running
 review_at: 2026-10-24T185035Z
 review_companions: null
+stage: claimed
+claimed_at: 2026-10-24T185036Z
+base_sha: 9f6e88b7296c037ca7b6ce685ffdaa4fa7303553
+base_blob: 3d70ae6e2de0d48c4a4f2a469ced8234f5348182
+branch: hyp/muse_decode_layer/moe-align-parallel-large-t-port
+worktree: .worktrees/muse_decode_layer/moe-align-parallel-large-t-port
+mode: null
 ---
 
 # moe-align-parallel-large-t-port
