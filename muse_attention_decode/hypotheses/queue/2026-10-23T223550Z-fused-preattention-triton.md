@@ -49,8 +49,10 @@ depends_on: null
 priority: 2
 kind: primary
 controls_for: null
-review: required
+review: proceed
 status: queued
+review_at: 2026-10-24T075244Z
+review_companions: null
 ---
 
 # fused-preattention-triton
@@ -73,3 +75,24 @@ Replace the five pre-attention launches of the parity pipeline (FusedQKNorm (+Ro
 ## Risk
 
 Risks: the per-(theta, device) inv_freq table is built lazily on the first sliding call; build it at import or in the first eager call so nothing allocates under graph capture. num_warps=1 with 32 lanes per half-head is sized for head_dim 64 only. New FP8 cache entries must stay within 8% of the reference: norm and RoPE are computed in fp32 exactly as reference._rms/_rope, so the only difference is the fp32-vs-bf16 rounding before the FP8 cast, which SGLang's own path shares. The rms check for the output is against the submission's own cache entries, so the k/v write path is checked separately.
+
+## Adversarial review
+
+Reviewed 2026-10-24T075244Z by an adversarial subagent (model opus).
+
+**Verdict: proceed.** Sound, rules-compliant base. The measured result (dfee6f2939974bad, 1.127x [1.111,1.144], 16/16) matches every expected direction, and nothing has landed that could confound it. Land it as a verbatim whole-file replacement of master's submission.py, not as a patch onto the held parity base. Fix two latent fragilities (contiguity assumptions, the lazy inv_freq table) before 12 dependents inherit them.
+
+### Justification
+Mechanism: SGLang's sliding and small full shapes are launch-bound (floors 0.1-4.3 us vs 21-36 us measured), and the kernel collapses FusedQKNorm(+RoPE), the k and v FP8 casts, store_cache and the q cast into one launch. The profile of dfee6f2939974bad confirms it: _pre_attention_kernel takes 1.3-2.7 us per shape and the remaining time is FA3 main, FA3 combine, prepare_varlen_num_blocks and norm_gate. Per-shape paired ratios: sliding decode_1 1.246, decode_16 1.298, decode_32 1.249, verify_1 1.334, verify_16 1.304, verify_32 1.194; full decode_1 1.127, verify_1 1.213 (both faster, as expected); full decode_16 1.029, decode_32 1.015, verify_16 1.036, verify_32 1.015 (expected flat; they come out slightly faster, as expected from saving a few us on 200-390 us). The expected list matches the TASK weights: the sliding shapes (weight 46) carry the gain. Weakest link: the RoPE angle precision at large positions. ang = float(pos) * inv_freq goes through tl.cos/tl.sin. If Triton lowers these to the approximate MUFU path (cos.approx.f32), the error grows with |angle| (up to about 8e4 rad at 80K context for i=0), whereas the reference uses accurate torch cos/sin on the same fp32 product. All 16 tests passed and every timed 80K sliding call was checked, so it is within bounds today. The margin against the 8% k-entry bound and the output bound is not known, and a dependent that changes rounding elsewhere (an extra bf16 hop, a different FP8 cast) could take the slack. A second, minor point: k and q go fp32 -> FP8 directly, while SGLang goes fp32 -> bf16 -> FP8. This is finer, not coarser, so it is allowed, but the bits differ from SGLang.
+
+### Confounders on the current kernel
+- None: landed-muse_attention_decode.json is empty, and master is the plain-PyTorch starter (BEST 0.0023x). This hypothesis is itself the first base, so no landed change can share its launch sequence, memory traffic or numerics.
+
+### Interference and A/B needs
+No companion is warranted. The result already exists, and resubmitting identical code returns the same job. Nothing has landed to revert or tune. Splitting the sub-changes (q fused vs k/v store fused) would only re-attribute a gain that all comes from one mechanism (removing launches), and it would not change any dependent's interpretation. Each dependent measures against this base, so its own A/B is internal to its own change. The real risk to dependents is procedural, not statistical. The kernel lives only in the dirty working tree, and the hypothesis text says 'take that code verbatim onto the parity base', but sglang-path-parity is held and was never landed. Churnsubs must commit the .bak file as a whole-file replacement of master's submission.py (blob identical to the dfee6f2939974bad submission), so that every dependent's parent commit is that exact code and their baseline-relative numbers are comparable to 1.127x.
+
+### Open questions
+- Does tl.cos/tl.sin on fp32 lower to libdevice cosf/sinf or to cos.approx/sin.approx on this Triton version? If approx, how much of the 8% k-entry margin is left at position ~80K, and should the kernel compute angles with explicit range reduction (or a precomputed fp32 table via libdevice) to protect dependents?
+- What are the actual check margins (k-entry rel-L2 and output error vs bound) in submission.dfee6f2939974bad.log? Recording them in FINDINGS lets dependents see whether they ate into the precision slack.
+- The hypothesis body is stale ('check job ... queued, no result yet', 'onto the parity base'). Update it to the measured result, and set base to master with whole-file replacement, before churnsubs dispatches dependents.
+
