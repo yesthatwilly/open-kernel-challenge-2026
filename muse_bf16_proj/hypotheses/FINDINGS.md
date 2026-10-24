@@ -1,6 +1,6 @@
 # muse_bf16_proj findings
 
-Regenerated 2026-10-24T120954Z by `churn.py index`. Read this before writing a hypothesis for muse_bf16_proj.
+Regenerated 2026-10-24T124012Z by `churn.py index`. Read this before writing a hypothesis for muse_bf16_proj.
 
 ## Current best
 
@@ -51,6 +51,8 @@ Where the time goes (per scored shape, top kernels):
 ### pooler GEMM
 - **pooler-triton-skinny-m32** → neutral (within-ci), 0.9983x — gained on pooler decode_1, decode_16, verify_1, verify_16; lost on qkv_gate decode_1; unpooler decode_1; pooler decode_32. For layer == 'pooler' and m <= 32 only, replace the _bf16_gemm_dispatch_impl call in kernel_fn with one Triton kernel, a split-K-free skinny GEMM that streams t
 - **pooler-triton-splitk2-blockn64-semaphore** → neutral (unproven-vs-best), 1.1664x — gained on pooler decode_1, decode_16, verify_1, verify_16; qkv_gate decode_32; lost on router verify_1, verify_16; o verify_16. Built on master (dba4ffd: parity dispatch + 3-D split-K Triton router; router untouched). For layer == 'pooler' and cfg m <= 32 only (n=4096, k=8192, 67.1 MB bf
+- **pooler-triton-splitk2-blockn64-semaphore-control-blockk256** → neutral (within-ci), 1.1620x — gained on pooler decode_1; lost on qkv_gate decode_16, verify_1; router verify_1, verify_16, verify_32. From the parent's branch (pooler-triton-splitk2-blockn64-semaphore), change exactly one constant: the pooler split-K kernel's BLOCK_K from 128 to 256, so each C
+- **pooler-splitk2-tma-weight-stream** → neutral (unproven-vs-best), 1.1693x — gained on pooler decode_1, decode_16, decode_32, verify_1; router decode_16; lost on qkv_gate verify_16. From branch hyp/muse_bf16_proj/pooler-triton-splitk2-blockn64-semaphore (pooler at m <= 32: _bf16_splitk_kernel, grid (64, 2) = 128 CTAs, BLOCK_N=64, SPLIT_K=2,
 
 ### pooler GEMM + unpooler GEMM (m=128)
 - **pooler-unpooler-m128-wgmma-splitk-semaphore** → regression (regression), 1.1158x — gained on router decode_16; lost on qkv_gate verify_1; o verify_1; unpooler verify_1, verify_16; router verify_1, verify_16; pooler verify_16. Built on master (dba4ffd: parity dispatch + 3-D split-K Triton router; router untouched). For layer in {pooler, unpooler} and cfg m == 128 only (verify_16; any 
@@ -85,6 +87,8 @@ Where the time goes (per scored shape, top kernels):
 - qkv-gate-triton-splitk4-blockn64-semaphore: within-ci: the change is not proven either way; a stacked hypothesis (`depends_on: qkv-gate-triton-splitk4-blockn64-semaphore`) that adds a further change in the same area is the only way to learn more (identical code is
 - router-splitk32-small-m-all-loads-in-flight: within-ci: the change is not proven either way; a stacked hypothesis (`depends_on: router-splitk32-small-m-all-loads-in-flight`) that adds a further change in the same area is the only way to learn more (identical code i
 - unpooler-slice-triton-splitk8-semaphore: unproven-vs-best: the change is not proven either way; a stacked hypothesis (`depends_on: unpooler-slice-triton-splitk8-semaphore`) that adds a further change in the same area is the only way to learn more (identical cod
+- pooler-triton-splitk2-blockn64-semaphore-control-blockk256: within-ci: the change is not proven either way; a stacked hypothesis (`depends_on: pooler-triton-splitk2-blockn64-semaphore-control-blockk256`) that adds a further change in the same area is the only way to learn more (i
+- pooler-splitk2-tma-weight-stream: unproven-vs-best: the change is not proven either way; a stacked hypothesis (`depends_on: pooler-splitk2-tma-weight-stream`) that adds a further change in the same area is the only way to learn more (identical code is ne
 - router-splitk32-small-m-all-loads-in-flight-control-stages3: unproven-vs-best: the change is not proven either way; a stacked hypothesis (`depends_on: router-splitk32-small-m-all-loads-in-flight-control-stages3`) that adds a further change in the same area is the only way to learn
 
 ## Do not retry (rejected / duplicates)
@@ -99,6 +103,4 @@ Where the time goes (per scored shape, top kernels):
 - queue: qkv-gate-o-m128-wgmma-splitk-semaphore [qkv GEMM + o GEMM (m=128)] p2 hold
 - queue: bf16-shape-gated-triton-winners-combo [bf16 GEMM dispatch (shape-gated Triton routing, m<=16)] p1 hold
 - running: router-splitk-semaphore-no-memset [router GEMM] p4 running
-- running: pooler-triton-splitk2-blockn64-semaphore-control-blockk256 [pooler GEMM] p1 running
-- running: pooler-splitk2-tma-weight-stream [pooler GEMM] p3 running
 - running: bf16-m128-nn-weight-layout-probe [bf16 GEMM dispatch (m>=128, weight layout)] p3 running

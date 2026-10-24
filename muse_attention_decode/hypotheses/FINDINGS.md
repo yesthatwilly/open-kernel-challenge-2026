@@ -1,6 +1,6 @@
 # muse_attention_decode findings
 
-Regenerated 2026-10-24T120954Z by `churn.py index`. Read this before writing a hypothesis for muse_attention_decode.
+Regenerated 2026-10-24T124012Z by `churn.py index`. Read this before writing a hypothesis for muse_attention_decode.
 
 ## Current best
 
@@ -31,6 +31,9 @@ Where the time goes (per scored shape, top kernels):
 
 ### attention boundary
 - **paired-heads-launch-cleanup** → gain (gain), 1.2436x — gained on full decode_1, decode_16, decode_32, verify_1, verify_16. Stacked on fa3-hdim128-head-pairing (and using fused-preattention-triton's kernel, which must have landed too): remove the five pad/un-pad launches the pairing 
+
+### page table (sliding)
+- **fa3-window-trimmed-page-table** → regression (regression), 1.1411x — lost on sliding decode_1, decode_16, decode_32, verify_1, verify_16, verify_32. On sliding-window layers only (config window != 0) hand FA3 a window-trimmed view of each request instead of the whole 80K-token context. Let W = window - 1 + L
 
 ### pre-attention norm+rope
 - **fused-preattention-triton** → gain (gain), 1.1274x — gained on sliding decode_1, decode_16, decode_32, verify_1, verify_16, verify_32; full decode_1, decode_16, decode_32, verify_1, verify_16, verify_32. Replace the five pre-attention launches of the parity pipeline (FusedQKNorm (+RoPE), k .to(FP8), v .to(FP8), store_cache, q .to(FP8)) with one Triton kernel, gr
@@ -66,5 +69,4 @@ Where the time goes (per scored shape, top kernels):
 - queue: triton-flash-decode-full-verify [FA3 call] p4 hold
 - queue: sliding-fused-triton-decode1-gate [sliding-layer attention (batch-1 decode gate)] p2 hold
 - queue: fa3-scheduler-metadata-side-stream [FA3 call (schedule, off critical path)] p2 hold
-- running: fa3-window-trimmed-page-table [page table (sliding)] p3 running
 - running: preattention-group-tiled-programs [pre-attention norm+rope] p3 running
