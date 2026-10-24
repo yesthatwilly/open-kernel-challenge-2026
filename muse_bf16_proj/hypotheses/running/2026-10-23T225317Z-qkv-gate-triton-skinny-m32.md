@@ -43,7 +43,7 @@ review: proceed
 status: running
 review_at: 2026-10-24T032407Z
 review_companions: null
-stage: implemented
+stage: dispatched
 claimed_at: 2026-10-24T032412Z
 base_sha: d2840d088aa35522a03b40c59e174287cf935f67
 base_blob: 2752a016d386e9261ec77e25b426c05b76c071ac
@@ -58,6 +58,8 @@ submission_blob: fd570a4fb881459921b9f88e883f2a2b533ce5dc
 lint_warnings: 0
 attempt_file: 2026-10-24T032547Z-check-qkv-gate-triton-skinny-m32.md
 prepared_at: 2026-10-24T032547Z
+job: abcd45776f244c8c
+dispatched_at: 2026-10-24T032603Z
 ---
 
 # qkv-gate-triton-skinny-m32
