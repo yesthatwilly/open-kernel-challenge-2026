@@ -33,9 +33,16 @@ priority: 1
 kind: primary
 controls_for: null
 review: proceed
-status: queued
+status: running
 review_at: 2026-10-24T174842Z
 review_companions: null
+stage: claimed
+claimed_at: 2026-10-24T174842Z
+base_sha: 4a04b3757546365d2227c1fc1762bc6c5072e92b
+base_blob: a8bb42ac483318e9fbc84bc7826a27b7a704d1fb
+branch: hyp/muse_bf16_proj/bf16-restack-m16-swapab-router-swapab-m32
+worktree: .worktrees/muse_bf16_proj/bf16-restack-m16-swapab-router-swapab-m32
+mode: null
 ---
 
 # bf16-restack-m16-swapab-router-swapab-m32
