@@ -46,9 +46,10 @@ priority: 4
 kind: primary
 controls_for: null
 review: proceed
-status: queued
+status: hold
 review_at: 2026-10-24T111911Z
 review_companions: null
+hold_reason: "reviewer: wait for router-splitk32-small-m-all-loads-in-flight (1e339074b1844a43) and its stages3 control (4685bac7a662454d), then build on the winning SPLIT_K/num_stages; unhold by hand after they harvest"
 ---
 
 # router-splitk-semaphore-no-memset
