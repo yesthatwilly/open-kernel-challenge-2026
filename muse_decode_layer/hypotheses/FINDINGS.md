@@ -1,6 +1,6 @@
 # muse_decode_layer findings
 
-Regenerated 2026-10-24T135615Z by `churn.py index`. Read this before writing a hypothesis for muse_decode_layer.
+Regenerated 2026-10-24T141733Z by `churn.py index`. Read this before writing a hypothesis for muse_decode_layer.
 
 ## Current best
 
@@ -71,3 +71,7 @@ Where the time goes (per scored shape, top kernels):
 - queue: fa3-full-single-split-probe [FA3 call] p2 hold
 - queue: router-triton-splitk-side-stream [router GEMM] p1 hold
 - queue: triton-flash-decode-full-verify-paired-kv [FA3 call] p5 hold
+- queue: bf16-shape-gated-triton-gemms-small-t [pooler GEMM] p2 queued
+- queue: sliding-fused-triton-decode1-port [FA3 call] p3 queued
+- queue: paired-heads-pad-unpad-triton [output norm-gate] p3 queued
+- running: post-expert-norm-triton-small-t [post-expert norm+combine] p1 running

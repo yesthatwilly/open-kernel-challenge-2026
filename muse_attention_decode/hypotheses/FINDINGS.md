@@ -1,6 +1,6 @@
 # muse_attention_decode findings
 
-Regenerated 2026-10-24T135615Z by `churn.py index`. Read this before writing a hypothesis for muse_attention_decode.
+Regenerated 2026-10-24T141733Z by `churn.py index`. Read this before writing a hypothesis for muse_attention_decode.
 
 ## Current best
 
@@ -76,3 +76,7 @@ Where the time goes (per scored shape, top kernels):
 - queue: stream-fork-preattention [launch overhead] p4 hold
 - queue: triton-flash-decode-deep-pipeline [FA3 call (Triton pipeline)] p4 hold
 - queue: triton-flash-decode-full-verify [FA3 call] p4 hold
+- queue: full-fused-triton-decode1-gate [full-layer attention (batch-1 decode gate)] p3 queued
+- queue: sliding-fused-triton-decode1-splits-32 [sliding-layer attention (batch-1 decode, split depth)] p4 queued
+- running: full-decode-cuda-gather-splitkv [FA3 call (full-layer decode gather)] p1 running
+- running: sliding-fused-triton-decode-batched-deep-splits [sliding-layer attention (batched decode, split depth)] p2 running

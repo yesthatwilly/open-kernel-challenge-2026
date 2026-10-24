@@ -1,6 +1,6 @@
 # muse_attention_decode hypotheses
 
-Regenerated 2026-10-24T135615Z. Best: 1.2931x [1.2737,1.3212] job `295727fc68e14093` (check)
+Regenerated 2026-10-24T141733Z. Best: 1.2931x [1.2737,1.3212] job `295727fc68e14093` (check)
 
 | created | slug | kind | area | where | outcome | speedup | CI | job | mode | promotion | review | expected hit |
 |---|---|---|---|---|---|---|---|---|---|---|---|---|
@@ -29,6 +29,10 @@ Regenerated 2026-10-24T135615Z. Best: 1.2931x [1.2737,1.3212] job `295727fc68e14
 | 2026-10-24T120440Z | sliding-fused-triton-decode1-gate | primary | sliding-layer attention (batch-1 decode gate) | done/neutral | neutral | 1.2931 | [1.274,1.321] | 295727fc68e14093 | check | merged | proceed | 1/5 |
 | 2026-10-24T120457Z | fa3-scheduler-metadata-side-stream | primary | FA3 call (schedule, off critical path) | done/regression | regression | 1.2245 | [1.206,1.247] | 42964d938c5842f4 | check |  | proceed | 0/5 |
 | 2026-10-24T120513Z | preattention-group-tiled-programs | primary | pre-attention norm+rope | done/neutral | neutral | 1.2614 | [1.242,1.280] | 877731a3b2214ddb | check |  | proceed | 1/5 |
+| 2026-10-24T140133Z | full-decode-cuda-gather-splitkv | rewrite | FA3 call (full-layer decode gather) | running | running |  |  | 82085a4e82154393 | check |  | proceed |  |
+| 2026-10-24T140200Z | sliding-fused-triton-decode-batched-deep-splits | primary | sliding-layer attention (batched decode, split depth) | running | running |  |  | 179dd013d3a347e4 | check |  | proceed |  |
+| 2026-10-24T140225Z | full-fused-triton-decode1-gate | primary | full-layer attention (batch-1 decode gate) | queue | queued |  |  |  |  |  | required |  |
+| 2026-10-24T140241Z | sliding-fused-triton-decode1-splits-32 | primary | sliding-layer attention (batch-1 decode, split depth) | queue | queued |  |  |  |  |  | required |  |
 
 ## Held
 
