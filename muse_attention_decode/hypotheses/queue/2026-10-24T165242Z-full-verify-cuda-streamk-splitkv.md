@@ -79,8 +79,10 @@ kind: rewrite
 controls_for: null
 rewrite_stage: 2
 replaces: "full-layer decode at batch>1: FA3 flash_fwd main + prepare_varlen_num_blocks + FlashAttnFwdCombine + _paired_norm_gate_kernel"
-review: required
+review: proceed
 status: queued
+review_at: 2026-10-24T165728Z
+review_companions: null
 ---
 
 # full-verify-cuda-streamk-splitkv
@@ -109,3 +111,28 @@ shape (profile top_kernels) against the incumbent and the speed-of-light floor, 
 2. at or below the incumbent kernels' time on the target shapes;
 3. within ~1.5x of the floor on the target shapes, and the headline CI clears 1.0 (promotable).
 The next stage is minted with `--kind rewrite --depends-on <this slug> --stage N+1`.
+
+## Adversarial review
+
+Reviewed 2026-10-24T165728Z by an adversarial subagent (model opus).
+
+**Verdict: proceed.** The stage-2 rewrite is sound and fits the hardware. Stream-K over 64-token tiles balances the agentic spread, FP8 QK mma avoids converting K, and f16 PV is finer than FA3, so it should beat the paired-FA3 verify kernels (150.7/287.4 us). The 120/255 us targets are tight because ex2 and shared-memory traffic grow about 6x over stage 1. Proceed as a post-reset check (risk high, never a scored submit), with the correctness and fallback fixes below built in.
+
+### Justification
+The mechanism is plausible. FINDINGS shows full verify_16/32 dominated by FA3 main: 150.7 us of 162.8 at verify_16 and 287.4 of 301.9 at verify_32, against floors of 63.4/126.8 us. Stage 1's kernel A streams the same bytes in 111.4/245.5 us (about 2.95/2.7 TB/s), so a gather-bound verify kernel at <=1.15x of stage 1 would clear M2, and anything under FA3 clears M1. The expected directions match TASK: full layers are about 71%/78% of the verify_16/32 load time (16 x 162.8 vs 46 x 22.8; 16 x 301.9 vs 46 x 29.3). The predicted ~1.18x/1.12x on those two loads gives about +4-5% on the headline geomean. verify_1 (batch 1), every decode shape and every sliding shape are gated out, so 'flat' there is right. Weakest link: q_len 8 makes the kernel no longer purely gather-bound. Per key it does 128 rows of QK+PV (about 84 GFLOP at verify_32). It also does 128 ex2: about 328M MUFU ops at verify_32, roughly 88 us at 16 SFU/clk/SM, and about 44 us at verify_16. Shared memory is the second ceiling. Each warp reads its head's whole K half (4x redundant across the 4 warps of a head) and ldmatrix-loads the whole f16 V half (8 KB per warp, 64 KB per tile per CTA), on top of the convert pass (8 KB read, 16 KB write) and the cp.async fill. That is about 130 KB of shared-memory traffic per 16 KB of global, about 1000+ clk per tile at 128 B/clk. With 2 CTAs/SM this caps at roughly 3.5 TB/s equivalent, close to the 2.95 TB/s the targets assume. So 120/255 us needs MUFU, the mma.sync issue (16 k32 + 32 k16 per warp-tile) and smem all to overlap the gather almost perfectly. M1 and beating FA3 are likely; M3 is optimistic. The headline 'shape ~128 us' at verify_16 should be read as a stretch. Other design notes. (a) The single f16 V buffer works with one extra barrier only because the top-of-loop barrier already guarantees PV(n-1) is done. QK(n) could be issued before the convert barrier to hide it. (b) Registers at __launch_bounds__(256,2) give a 128-reg cap: acc 32 + S 32 + q A-fragments 8 + P 16 + ldmatrix 4-8 + addressing. This is likely 110-128, so the build log must show 0 spills. The spec's fallback of splitting S into 2x32 tokens is the right lever. (c) The m16n8k32 e4m3 mma needs PTX ISA >= 8.4 for sm_90a. A build failure here takes down the whole renamed module, including stage 1's decode kernels (see rules_flags/open_questions).
+
+### Confounders on the current kernel
+- full-decode-cuda-gather-splitkv (stage 1, same load_inline module): the rename to _v2 rebuilds decode kernels A/B. If the new verify kernels fail to compile (e.g. e4m3 mma unsupported by the toolchain), load_inline fails as a unit and _EXT=None, which silently reverts decode_16/32 too and shows as a regression on those shapes that the verify change did not cause. If the import-time self-check is not split per path, a verify failure would also disable decode. Read the log tail ('[splitkv] load_inline failed' / 'SELF-CHECK FAILED') before attributing any shape.
+- paired-heads-launch-cleanup and paired-heads-launch-cleanup-ab-tune-batch-gate: the incumbent being replaced at verify_16/32 is the PAIRED FA3 call plus _paired_norm_gate_kernel. The change flips the pre-attention kernel to PAIRED=False for these shapes, so the pre-attention kernel's q store changes (64- vs 128-wide FP8 rows, half the q bytes written). That is a small part of the measured shape delta (_pre_attention_kernel is 2.7/4.1 us there), not part of A8+B8. Judge the milestone on A8+B8 vs FA3 main+prepare+combine+paired-norm-gate from top_kernels, as the spec says, not on shape time alone.
+- fused-preattention-triton: A8 attends to the 8 new keys that the pre-attention kernel stores in the same stream just before it. Ordering is plain stream order, so there is no confound beyond the PAIRED layout change above. The causal limit t <= cache_seqlens-8+j relies on cache_seqlens = seq_lens + q_len, as reference.generate_input builds it.
+
+### Interference and A/B needs
+No companion is warranted. This is a rewrite judged on the replaced kernels' own time against the incumbent and the floor, and the gate is shape-disjoint (only full verify at 1<batch<=64, tp8, page 1 changes). The per-shape top_kernels rows therefore attribute the effect without an A/B. An ab-revert of the head pairing would not be informative: pairing is simply bypassed on the gated shapes, so reverting it changes only the incumbent, which the same run measures through SGLang's paired ratio anyway. A control isolating fp8-QK vs f16-QK or per-CTA vs per-warp V conversion would be a stage-3 tuning question, not something needed to read this stage. The one interpretive hazard is the shared-module build/self-check coupling with stage 1, which is a log check, not an extra run.
+
+### Open questions
+- Build isolation: put A8/B8 in a second load_inline module (e.g. muse_full_verify_splitkv_v1) instead of renaming the stage-1 module. A toolchain problem with mma m16n8k32 e4m3 would then cost only the verify path, not the landed decode gain. At minimum, catch the build failure and retry building the stage-1 source alone. Watch the compile time too: stage 1 alone took 41 s inside the 15-minute budget.
+- Self-check strength: add several grids (e.g. 3, 7, 61, device), so that segments starting and ending mid-request, single-tile segments and fully masked rows in a last partial tile are all hit. Also add one lens case with cache_seqlens % 64 in 1..7. Keep the 2e-2 rel-L2 bound and the finiteness test. Make clear whether `lens` means seq_lens or cache_seqlens; the 8-token request should have seq_lens 0, cache_seqlens 8. The synthetic builder must also produce 8 positions/cache_loc per request and cu_seqlens_q with stride 8.
+- B8 locating c_lo..c_hi: what exact inverse of floor(c*Ttot/grid) is used? Recommend a shared device helper plus a +/-1 correction loop on exact start(c) comparisons.
+- Report from the build log: A8 registers and spills at __launch_bounds__(256,2); and from the profile: achieved KV bandwidth (sum(cache_seqlens)*256 B / A8 time) at verify_16/32 vs stage 1's 2.95/2.7 TB/s. If A8 is clearly above 1.15x stage 1 decode A with no spills, the next stage should first try moving QK before the V-convert barrier and cutting the 4x redundant smem reads, before stream-K is ported back to decode.
+- Dispatch: risk is high, so per the standing instruction this goes out as a check after the reset, not as a scored submit.
+
