@@ -51,9 +51,16 @@ controls_for: null
 rewrite_stage: 5
 replaces: Marlin w13+w2 (moe_wna16_marlin_gemm x2) at every prefill T
 review: proceed
-status: queued
+status: running
 review_at: 2026-10-24T164610Z
 review_companions: null
+stage: claimed
+claimed_at: 2026-10-24T164610Z
+base_sha: 9b3df649d0389c5bd6c8e6885d9ab4d33f1e701d
+base_blob: 635cfee3ac2c3f7c66840b8c8a082cad2fa41a68
+branch: hyp/muse_prefill_layer/experts-triton-nvfp4-packed-asm-dequant
+worktree: .worktrees/muse_prefill_layer/experts-triton-nvfp4-packed-asm-dequant
+mode: null
 ---
 
 # experts-triton-nvfp4-packed-asm-dequant
