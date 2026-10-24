@@ -89,13 +89,19 @@ review: proceed
 status: running
 review_at: 2026-10-24T183433Z
 review_companions: null
-stage: claimed
+stage: implemented
 claimed_at: 2026-10-24T183433Z
 base_sha: c449be5350fc7f87e9daa73bc83715a041cff19e
 base_blob: 635cfee3ac2c3f7c66840b8c8a082cad2fa41a68
 branch: hyp/muse_prefill_layer/sliding-attn-block-triton-gqa-fused-normgate
 worktree: .worktrees/muse_prefill_layer/sliding-attn-block-triton-gqa-fused-normgate
 mode: null
+implemented_at: 2026-10-24T184731Z
+impl_commit: dd376f045ed7c6df58640da4091967acb44b4e17
+submission_sha256: eb3f81db96dd4883127b7d7fe51a28623f0ff3fffd69a024798569ef03b43f04
+norm_sha256: 53aaad2a4420b80e3945dfe26ff00789612febcaba26cb3c2e37c9589eddc3c3
+submission_blob: 078e0578581a7a44fe8a8e9ba217559c9e4e4cf5
+lint_warnings: 11
 ---
 
 # sliding-attn-block-triton-gqa-fused-normgate
