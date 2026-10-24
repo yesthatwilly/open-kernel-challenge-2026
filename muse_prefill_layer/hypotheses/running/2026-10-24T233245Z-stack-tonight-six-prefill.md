@@ -19,7 +19,16 @@ priority: 1
 kind: primary
 controls_for: null
 review: required
-status: queued
+status: running
+stage: claimed
+claimed_at: 2026-10-24T233245Z
+base_sha: c1dfb14c99867d3818e9e99c82fd7d1fa4153ae3
+base_blob: 635cfee3ac2c3f7c66840b8c8a082cad2fa41a68
+branch: hyp/muse_prefill_layer/stack-tonight-six-prefill
+worktree: .worktrees/muse_prefill_layer/stack-tonight-six-prefill
+mode: null
+restack_of: null
+stale_base: null
 ---
 
 # stack-tonight-six-prefill
