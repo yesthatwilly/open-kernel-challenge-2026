@@ -30,13 +30,19 @@ review: proceed
 status: running
 review_at: 2026-10-24T184058Z
 review_companions: null
-stage: claimed
+stage: implemented
 claimed_at: 2026-10-24T184058Z
 base_sha: 591234f46b4e7e6b5307dd6a14ed904220f58742
 base_blob: c6854f093588da524e63657576b27ed720756e32
 branch: hyp/muse_attention_decode/sliding-decode-blockn128-single-tile
 worktree: .worktrees/muse_attention_decode/sliding-decode-blockn128-single-tile
 mode: null
+implemented_at: 2026-10-24T184519Z
+impl_commit: e5892c6cdb4175b793ed05d56834089ccc8dc8d5
+submission_sha256: df6470f19463c48cd61417096d3b2ce3199e3468ba523073f251b29814666f96
+norm_sha256: 055479c9f389631efceec3a962f7417b4cc245cc3787c6db6be6018845e02271
+submission_blob: 5118538da13178bac467b5449d0bdd25010ca10d
+lint_warnings: 0
 ---
 
 # sliding-decode-blockn128-single-tile
@@ -77,3 +83,30 @@ No companion is warranted. The change is a single constexpr on one kernel that o
 - Should num_warps go to 8 together with BLOCK_N=128 (the 128x64 bf16 conversion of K and V doubles per-thread work)? Kept out by design; a candidate follow-up if decode_32 regresses.
 - If sliding-cuda-cluster-dsmem-onelaunch (running) lands and replaces this kernel on all sliding tp8/page-1 shapes, this result becomes moot; the scheduler should check that outcome before spending the run, or accept it as a cheap tuning of the fallback.
 
+
+## Implementation notes
+
+In `_sliding_forward` of muse_attention_decode/submission.py, the kernel launch now passes `BLOCK_N=128 if length == 1 else 64` (was 64) and the adjacent comment was updated. Nothing else changed: num_warps 4, num_stages 2, S=16, kernel body untouched. The file has no `prepare()` and no warm-up, so there is nothing to extend; the new BLOCK_N variant compiles on first call as the old one did (the same constexpr-specialised launch, no extra variant for verify since length 8 keeps 64). No deviation from the spec.
+
+## Rules check
+
+- [x] CUDA-graph capturable: diff only changes a constexpr from a config-derived value (`length`); no syncs, allocation or value-dependent control flow.
+- [x] Nothing derived from `data` is cached across calls: diff adds no state.
+- [x] Weights: n/a: no weight handling touched.
+- [x] Activations/KV dtypes: n/a: unchanged by the diff.
+- [x] Attention sees every key: 16 splits x 128 keys cover all 2047 old keys (last split masked); no skipping.
+- [x] No timing patches, harness access, subprocesses or network in the diff.
+- [x] All work inside the timed call; no output caching or replay.
+- [x] No triton.autotune, no host syncs in kernel_fn.
+
+okc_lint output: `CLEAN: submission.py`. py_compile passed; __pycache__ removed.
+
+## Pre-flight audit
+
+Audited 2026-10-24 by an opus subagent (read-only emulation; no GPU on this node).
+
+**Verdict: dispatch.** The diff is exactly the spec: one constexpr (`BLOCK_N=128 if length == 1 else 64`) plus a comment, in `_sliding_forward` only. No gate, no new path, no fallback surface. The kernel body is generic in BLOCK_N: `chunk` rounds up to a BLOCK_N multiple so S*chunk >= count for every count (ctx 10 → split 0 covers all, splits 1-15 empty with m=-inf weighted 0 in the combine; ctx 2047 and the 80K scored shapes → 16 x 128 >= 2047, last split masked at t < end), page 1 and page 64 index the same way via `t // PAGE`, and tl.dot shapes [16,64]x[64,128] are valid. Verify (L=8) never reaches this kernel. Rules unchanged: no syncs, allocations or value-dependent host control flow added; no cached data. okc_lint CLEAN, py_compile OK, __pycache__ removed.
+
+Fixes: none.
+
+Residual risk: num_stages=2 may already pipeline the second 64-key tile, so the gain may sit inside sliding decode_1 drift; decode_32 could be flat from lower occupancy.
