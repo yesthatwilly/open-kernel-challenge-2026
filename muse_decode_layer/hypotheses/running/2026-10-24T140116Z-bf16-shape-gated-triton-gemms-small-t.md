@@ -53,7 +53,7 @@ review: proceed
 status: running
 review_at: 2026-10-24T164553Z
 review_companions: null
-stage: implemented
+stage: dispatched
 claimed_at: 2026-10-24T164553Z
 base_sha: 1fd1f0ad0ecb64aecc30d851ca5c1c9149f46de0
 base_blob: cc466fce207709c98ab0e78c2435c1c459890fdb
@@ -68,6 +68,8 @@ submission_blob: 4ba81ce06744ae630e16d82a46eeb6bebf7de2ff
 lint_warnings: 3
 attempt_file: 2026-10-24T164845Z-submit-bf16-shape-gated-triton-gemms-small-t.md
 prepared_at: 2026-10-24T164845Z
+job: 6076ae1f250143aa
+dispatched_at: 2026-10-24T164859Z
 ---
 
 # bf16-shape-gated-triton-gemms-small-t
