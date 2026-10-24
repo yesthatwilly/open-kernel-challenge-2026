@@ -85,9 +85,16 @@ priority: 2
 kind: primary
 controls_for: null
 review: proceed
-status: queued
+status: running
 review_at: 2026-10-24T165449Z
 review_companions: null
+stage: claimed
+claimed_at: 2026-10-24T165449Z
+base_sha: e82b94f9414d0fe3381c39c7722efd47759f3360
+base_blob: a8bb42ac483318e9fbc84bc7826a27b7a704d1fb
+branch: hyp/muse_bf16_proj/bf16-m16-swapab-wgmma-extend
+worktree: .worktrees/muse_bf16_proj/bf16-m16-swapab-wgmma-extend
+mode: null
 ---
 
 # bf16-m16-swapab-wgmma-extend
