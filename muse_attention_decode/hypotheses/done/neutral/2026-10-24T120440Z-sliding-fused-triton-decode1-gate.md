@@ -71,7 +71,8 @@ speedup: 1.2930643047593426
 speedup_ci: [1.2736683401879525, 1.3211607975952195]
 harvested_at: 2026-10-24T132210Z
 best_at_harvest: 1.2686474414890054
-promotion: null
+promotion: merged
+promotion_commit: b8a0e4db5c9dfb55e627e0feb577fbd51ca8959d
 ---
 
 # sliding-fused-triton-decode1-gate

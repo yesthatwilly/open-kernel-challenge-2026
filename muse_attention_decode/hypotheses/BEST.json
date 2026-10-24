@@ -1,17 +1,17 @@
 {
  "problem": "muse_attention_decode",
- "job": "bd64bf9f9e904f02",
- "check_job": "bd64bf9f9e904f02",
+ "job": "295727fc68e14093",
+ "check_job": "295727fc68e14093",
  "mode": "check",
- "speedup": 1.2686474414890054,
+ "speedup": 1.2930643047593426,
  "ci": [
-  1.2496177298666704,
-  1.2876771531113405
+  1.2736683401879525,
+  1.3211607975952195
  ],
- "score_us": 2968.7522922676703,
- "commit": "bfb7bac32c93cb1602f4273c5d2c65f69e1c7d6f",
- "submission_blob": "efc544103e6d303d1f8602caa9439628043a17a7",
- "slug": "paired-heads-launch-cleanup-ab-tune-batch-gate",
- "result": "muse_attention_decode/hypotheses/done/neutral/paired-heads-launch-cleanup-ab-tune-batch-gate.result.json",
- "updated_at": "2026-10-24T115952Z"
+ "score_us": 2912.693503437914,
+ "commit": "b8a0e4db5c9dfb55e627e0feb577fbd51ca8959d",
+ "submission_blob": "387dcb6a0e6137b74f7f65b048dce5a3fcbe2008",
+ "slug": "sliding-fused-triton-decode1-gate",
+ "result": "muse_attention_decode/hypotheses/done/neutral/sliding-fused-triton-decode1-gate.result.json",
+ "updated_at": "2026-10-24T132235Z"
 }
