@@ -71,7 +71,7 @@ review: proceed
 status: running
 review_at: 2026-10-24T164610Z
 review_companions: null
-stage: implemented
+stage: dispatched
 claimed_at: 2026-10-24T164753Z
 base_sha: 1221521e184643a43f27ff79cef68b5fed5ad2b1
 base_blob: a8bb42ac483318e9fbc84bc7826a27b7a704d1fb
@@ -86,6 +86,8 @@ submission_blob: 87f758fdc12055bf479245175d17662450df69eb
 lint_warnings: 9
 attempt_file: 2026-10-24T181732Z-submit-pooler-unpooler-m128-tma-wspec-rewrite.md
 prepared_at: 2026-10-24T181732Z
+job: 61da9b91dab44bf4
+dispatched_at: 2026-10-24T181804Z
 ---
 
 # pooler-unpooler-m128-tma-wspec-rewrite
