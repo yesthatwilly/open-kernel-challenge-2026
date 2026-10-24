@@ -53,10 +53,10 @@ controls_for: null
 rewrite_stage: 4
 replaces: Marlin w13+w2 (moe_wna16_marlin_gemm x2) at every prefill T
 review: proceed
-status: running
+status: done
 review_at: 2026-10-24T124746Z
 review_companions: null
-stage: dispatched
+stage: harvested
 claimed_at: 2026-10-24T124746Z
 base_sha: b1395799d690a0aa9053a787f98c98321be85724
 base_blob: f17d41c9a9b0696f20e6679a493da9d4aa6d2934
@@ -73,6 +73,13 @@ attempt_file: 2026-10-24T125053Z-check-experts-hybrid-marlin-turn-triton-first-t
 prepared_at: 2026-10-24T125053Z
 job: fb1e52d2119d4175
 dispatched_at: 2026-10-24T125104Z
+outcome: gain
+verdict_detail: gain
+speedup: 1.0599319720006266
+speedup_ci: [1.044032992420617, 1.075830951580636]
+harvested_at: 2026-10-24T135614Z
+best_at_harvest: 1.0228712349305686
+promotion: pending
 ---
 
 # experts-hybrid-marlin-turn-triton-first-turn
@@ -172,3 +179,32 @@ OK with warnings: muse_prefill_layer/submission.py
 `python3 -I -m py_compile` passed. The __pycache__ was removed from the worktree.
 
 - churnsubs: loosened E2E_CHECK_TOL from 1e-2 to 2e-2 before dispatch (still under the judge's tightest 3%): the check compares two bf16 pipelines (Triton vs Marlin), not either against the reference, and a spurious prepare() failure would burn prefill's last check of the day.
+
+## Result
+
+- job `fb1e52d2119d4175` (check), status done, passed True, tests 5/5
+- speedup 1.0599x, 95% CI [1.0440, 1.0758], score 365498.83410797897 µs vs SGLang 387403.9 µs
+- best at harvest: {"speedup": 1.0228712349305686, "ci": [1.00752816640661, 1.038214303454527], "job": "b33b87b5083b4d1c"}; base result: muse_prefill_layer/hypotheses/done/neutral/experts-triton-w4a16-first-turn-blockt256.result.json
+- **outcome: gain** (gain)
+- files: `muse_prefill_layer/hypotheses/done/gain/experts-hybrid-marlin-turn-triton-first-turn.result.json`, `muse_prefill_layer/hypotheses/done/gain/experts-hybrid-marlin-turn-triton-first-turn.patch`; branch `hyp/muse_prefill_layer/experts-hybrid-marlin-turn-triton-first-turn`
+
+## Attribution
+
+| shape | w | base µs | hyp µs | delta | verdict |
+|---|---|---|---|---|---|
+| batch=1 ctx=80000 dist=soft layer=sliding load=turn_1 page=1 q_len=753 repeats=6 | 46 | 1141.1 | 1079.54 | 1.0812 | gained |
+| batch=1 ctx=80000 dist=soft layer=full load=turn_1 page=1 q_len=753 repeats=6 | 16 | 1517.93 | 1419.09 | 1.0691 | gained |
+| batch=4 ctx=80000 dist=soft layer=sliding load=turn_4 page=1 q_len=753 repeats=6 | 46 | 3435.39 | 3334.9 | 1.0301 | gained |
+| batch=4 ctx=80000 dist=soft layer=full load=turn_4 page=1 q_len=753 repeats=6 | 16 | 4975.37 | 4937.98 | 1.0223 | flat |
+| batch=1 ctx=0 dist=soft layer=full load=first_turn page=1 q_len=16384 repeats=6 | 16 | 15029.51 | 15386.32 | 1.0172 | flat |
+| batch=1 ctx=32768 dist=soft layer=sliding load=first_turn page=1 q_len=16384 repeats=6 | 138 | 14426.71 | 14275.3 | 1.0055 | flat |
+| batch=1 ctx=32768 dist=soft layer=full load=first_turn page=1 q_len=16384 repeats=6 | 16 | 18568.92 | 18165.94 | 0.9923 | flat |
+| batch=1 ctx=65536 dist=soft layer=full load=first_turn page=1 q_len=16384 repeats=6 | 16 | 22521.73 | 22332.92 | 1.0049 | flat |
+
+gained on sliding turn_1, turn_4; full turn_1. Expected hit: 2/3. Noise ±1.5%.
+
+## Follow-ups
+
+- rewrite stage 4 of `Marlin w13+w2 (moe_wna16_marlin_gemm x2) at every prefill T`: read the replaced kernels' own us per shape (profile top_kernels) against the incumbent and the floor, and check which Milestone it reached. The next stage is `/hypothesize muse_prefill_layer "<what to fix or tune>" --kind rewrite --depends-on experts-hybrid-marlin-turn-triton-first-turn --stage 5`; a slow or failed first cut is the expected start, not a do-not-retry.
+- candidate for promotion; stack further changes with `depends_on` once it lands.
+

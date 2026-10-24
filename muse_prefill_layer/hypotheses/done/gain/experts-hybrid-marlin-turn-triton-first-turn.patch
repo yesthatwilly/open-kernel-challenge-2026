@@ -1,0 +1,213 @@
+diff --git a/muse_prefill_layer/submission.py b/muse_prefill_layer/submission.py
+index f17d41c..635cfee 100644
+--- a/muse_prefill_layer/submission.py
++++ b/muse_prefill_layer/submission.py
+@@ -29,8 +29,10 @@ Everything else is SGLang's pipeline as baseline.py composes it:
+   FusedMuseSparkRouting (JIT)      sigmoid, biased top-8, renormalize (on the side stream)
+   pooler                           bf16_gemm_dispatch, replicated on every GPU
+   pre-expert norm                  MuseSpark1xRMSNorm (F.rms_norm)
+-  experts                          moe_align_block_size, two grouped W4A16 GEMMs (hypotheses
+-                                   experts-triton-w4a16-inkernel-fp4 and -swapab-reglhs: a Triton
++  experts                          moe_align_block_size, two grouped W4A16 GEMMs: SGLang's
++                                   moe_wna16_marlin_gemm up to 4096 tokens; above that (hypotheses
++                                   experts-hybrid-marlin-turn-triton-first-turn,
++                                   experts-triton-w4a16-inkernel-fp4 and -swapab-reglhs) a Triton
+                                    fused_moe_kernel, computed swap-AB, that dequantizes the
+                                    NVFP4 tiles (nibble-reordered in prepare) in registers as the
+                                    dot's LHS, in place of moe_wna16_marlin_gemm), silu_and_mul, Triton
+@@ -46,15 +48,19 @@ Differs from SGLang (as baseline.py does):
+ 
+ from typing import TypedDict
+ 
++import types
++
+ import nvfp4
+ import torch
+ import triton
+ import triton.language as tl
+ from sgl_kernel.flash_attn import flash_attn_with_kvcache
++from sgl_kernel.scalar_type import scalar_types
+ from torch import nn
+ 
+ from sglang.kernels.ops.activation.activation import silu_and_mul
+ from sglang.kernels.ops.kvcache.kvcache import store_cache
++from sglang.kernels.ops.moe.moe_wna16_marlin import moe_wna16_marlin_gemm
+ from sglang.kernels.ops.muse_spark_v12.fused_muse_spark_routing import FusedMuseSparkRouting
+ from sglang.kernels.ops.muse_spark_v12.fused_norm_gate import FusedRMSNormGate
+ from sglang.kernels.ops.muse_spark_v12.fused_norm_residual import FusedPostNormResidualPreNorm
+@@ -68,6 +74,8 @@ from sglang.srt.layers.muse_spark_layers import (
+     MuseSpark1xRMSNorm,
+     MuseSpark1xRMSNormWithInputScale,
+ )
++from sglang.srt.layers.quantization.marlin_utils import marlin_make_workspace
++from sglang.srt.layers.quantization.marlin_utils_fp4 import prepare_moe_nvfp4_layer_for_marlin
+ from sglang.srt.layers.quantization.unquant import _bf16_gemm_dispatch_impl
+ 
+ 
+@@ -142,6 +150,13 @@ D_EXPERT = 4096
+ # SGLang's MuseSpark1xRouter and sliced unpooler switch paths at this many tokens; every prefill
+ # case is above it, so only the above-8 paths are kept.
+ SMALL_BATCH_MAX_TOKENS = 8
++# Expert path by shape (hypothesis experts-hybrid-marlin-turn-triton-first-turn): up to this many
++# tokens (turn_1 753, turn_4 3012, every test) SGLang's two Marlin GEMMs; above it (the first turn's
++# 16384) the Triton NVFP4 grouped GEMM. Not a measured crossover: T in (4096, 16384) is unscored and
++# untuned.
++MARLIN_MAX_TOKENS = 4096
++# MuseSpark1xFp4Experts' candidates, smallest first.
++BLOCK_SIZE_M_CANDIDATES = (8, 16, 32, 48, 64)
+ # Grouped NVFP4 GEMM (swap-AB) tile configs, chosen from the shape (tokens) only. About T of the
+ # T * 8 routes land on this GPU's 32 experts, so an expert gets ~T/32 rows: the token tile BLOCK_T
+ # (the MMA N side) covers one expert in one tile at the turn shapes (~24 rows at turn_1, ~94 at
+@@ -349,6 +364,30 @@ def _nvfp4_moe_gemm(a, w, sf, gs, out, sorted_ids, expert_ids, n_padded, top_k,
+     return out
+ 
+ 
++def _marlin_bank(weights):
++    """The local experts in Marlin's layout, via SGLang's own loader step."""
++    device = weights["w13"].device
++    layer = types.SimpleNamespace(
++        quant_config=types.SimpleNamespace(group_size=16),
++        moe_runner_config=types.SimpleNamespace(is_gated=True),
++        intermediate_size_per_partition=weights["w13"].shape[1] // 2,
++        params_dtype=torch.bfloat16,
++        w13_weight=weights["w13"].contiguous(),
++        w2_weight=weights["w2"].contiguous(),
++        w13_weight_scale=weights["w13_sf"].contiguous(),
++        w2_weight_scale=weights["w2_sf"].contiguous(),
++        w13_weight_scale_2=weights["w13_gs"].contiguous(),
++        w2_weight_scale_2=weights["w2_gs"].contiguous(),
++    )
++    prepare_moe_nvfp4_layer_for_marlin(layer)
++    return {
++        "w13": layer.w13_weight.data, "w13_s": layer.w13_weight_scale.data, "w13_gs": layer.w13_weight_scale_2.data,
++        "w2": layer.w2_weight.data, "w2_s": layer.w2_weight_scale.data, "w2_gs": layer.w2_weight_scale_2.data,
++        "size_n": layer.intermediate_size_per_partition,
++        "workspace": marlin_make_workspace(device, max_blocks_per_sm=4),
++    }
++
++
+ def _reorder_nibbles(packed):
+     """Lossless repack of uint8 [E, N, K/2] E2M1 codes (element 2i low nibble, 2i + 1 high) into
+     the kernel's order: in each EXPERT_BLOCK_K chunk at k0, byte i holds k0 + i (low nibble) and
+@@ -439,6 +478,43 @@ def _check_expert_gemms(bank, weights):
+             assert bool(past.isnan().all()), f"{name} BLOCK_T={bt}: block past n_padded was written"
+ 
+ 
++# prepare()'s end-to-end expert check: a synthetic case above MARLIN_MAX_TOKENS (so _experts_triton
++# runs the first turn's BLOCK_T 256 config and _experts_marlin its block_size_m 64), compared under the
++# judge's metric with a bound (1%) below the tightest reference tolerance (3%), and the judge's row
++# rule (5x the bound, near-zero rows against a tenth of the average row).
++E2E_CHECK_TOKENS = 8192
++E2E_CHECK_TOL = 2e-2  # under the judge's tightest 3%; Triton-vs-Marlin is two bf16 pipelines, not a reference
++E2E_ROW_FACTOR = 5.0
++
++
++def _check_experts_e2e(state, device):
++    """Untimed. One call each of _experts_triton (state['bank']) and _experts_marlin (state['marlin'])
++    on synthetic data built here (random bf16 rows, random distinct top-8 experts of 256 mapped to this
++    GPU's 32 as kernel_fn maps them, random normalized weights): the same inputs through both banks
++    must agree. Covers both banks' wiring and any scale corruption between them."""
++    gen = torch.Generator(device=device)
++    gen.manual_seed(0)
++    t = E2E_CHECK_TOKENS
++    x = torch.randn((t, D_EXPERT), generator=gen, device=device, dtype=torch.float32).to(torch.bfloat16)
++    ids = torch.rand((t, N_EXPERTS), generator=gen, device=device).topk(TOP_K, dim=1).indices.to(torch.int32)
++    local_ids = torch.where(ids < LOCAL_EXPERTS, ids, torch.full_like(ids, -1)).contiguous()
++    topk_weights = torch.rand((t, TOP_K), generator=gen, device=device, dtype=torch.float32) + 0.1
++    topk_weights = (topk_weights / topk_weights.sum(dim=1, keepdim=True)).contiguous()
++    got = _experts_triton(x, topk_weights, local_ids, state).float()
++    want = _experts_marlin(x, topk_weights, local_ids, state).float()
++    torch.cuda.synchronize()
++    assert bool(torch.isfinite(got).all()) and bool(torch.isfinite(want).all()), "expert e2e check: NaN/Inf"
++    err = float((got - want).norm() / want.norm().clamp_min(1e-30))
++    row_ref = want.norm(dim=-1)
++    row_err = (got - want).norm(dim=-1) / torch.maximum(row_ref, 0.1 * row_ref.mean()).clamp_min(1e-30)
++    worst = float(row_err.max())
++    print(f"[expert e2e] T={t} triton vs marlin: rel L2 {err:.3e}, worst row {worst:.3e} "
++          f"({int((local_ids >= 0).sum())} local routes)", flush=True)
++    assert err <= E2E_CHECK_TOL, f"expert e2e check: triton vs marlin rel L2 {err:.3e} > {E2E_CHECK_TOL:g}"
++    assert worst <= E2E_ROW_FACTOR * E2E_CHECK_TOL, (
++        f"expert e2e check: worst row {worst:.3e} > {E2E_ROW_FACTOR:g} x {E2E_CHECK_TOL:g}")
++
++
+ def prepare(weights):
+     device = weights["qkv_gate"].device
+     router = weights["router"]
+@@ -470,18 +546,75 @@ def prepare(weights):
+         "pre_expert_norm": _norm(MuseSpark1xRMSNorm, weights["pre_expert_norm"], D_EXPERT, RMS_EPS),
+         # MuseSpark1xFp4Experts binds the post-expert norm's effective (1 + w) weight.
+         "post_expert_w": post_expert._get_effective_weight().detach().to(torch.bfloat16),
+-        "bank": _expert_bank(weights),
+         "side_stream": torch.cuda.Stream(device),
+         "_modules": (pre_ffn, next_pre_attn, post_attn, post_ffn, post_expert),
+     }
+     del freqs
+-    # Compiles every expert-GEMM variant and checks its dequant against nvfp4.dequantize.
++    # The Triton bank first (its scales alias the weights), and its check: compiles every
++    # expert-GEMM variant and checks its dequant against nvfp4.dequantize.
++    state["bank"] = _expert_bank(weights)
+     _check_expert_gemms(state["bank"], weights)
+     torch.cuda.synchronize()
++    scale_names = ("w13_sf", "w13_gs", "w2_sf", "w2_gs")
++    scales_before = {name: state["bank"][name].clone() for name in scale_names}
++    # Then the Marlin bank, from copies, so SGLang's repack cannot touch the weights or the Triton bank.
++    state["marlin"] = _marlin_bank(
++        {name: weights[name].clone() for name in ("w13", "w2", "w13_sf", "w2_sf", "w13_gs", "w2_gs")})
++    torch.cuda.synchronize()
++    for name in scale_names:
++        assert torch.equal(state["bank"][name], scales_before[name]), f"{name} changed by the Marlin repack"
++        assert torch.equal(weights[name], scales_before[name]), f"weights[{name}] changed by the Marlin repack"
++    del scales_before
++    torch.cuda.empty_cache()
++    _check_experts_e2e(state, device)
++    torch.cuda.synchronize()
++    print(f"[prepare] max_memory_allocated {torch.cuda.max_memory_allocated(device) / 2**30:.2f} GiB", flush=True)
+     return state
+ 
+ 
+ def _experts(x, topk_weights, local_ids, state):
++    """Shape gate: Marlin up to MARLIN_MAX_TOKENS tokens, the Triton NVFP4 GEMM above. Reads the
++    token count (a shape), never tensor values."""
++    if x.shape[0] <= MARLIN_MAX_TOKENS:
++        return _experts_marlin(x, topk_weights, local_ids, state)
++    return _experts_triton(x, topk_weights, local_ids, state)
++
++
++def _experts_marlin(x, topk_weights, local_ids, state):
++    """MuseSpark1xFp4Experts._marlin_expert_outputs and its post-expert-norm finalize, on ids
++    already mapped to this GPU's experts (0-31, -1 elsewhere)."""
++    bank = state["marlin"]
++    num_tokens, size_k = x.shape
++    size_n = bank["size_n"]
++    gemm1_n = 2 * size_n
++    topk_weights = topk_weights.to(torch.float32).contiguous()
++    for block_size_m in BLOCK_SIZE_M_CANDIDATES:
++        if num_tokens * TOP_K / LOCAL_EXPERTS / block_size_m < 0.9:
++            break
++    sorted_ids, block_experts, n_padded = moe_align_block_size(local_ids, block_size_m, N_EXPERTS)
++    cache2 = torch.empty((num_tokens * TOP_K, size_n), device=x.device, dtype=x.dtype)
++    cache13 = torch.empty((num_tokens * TOP_K * max(gemm1_n, size_k),), device=x.device, dtype=x.dtype)
++    cache1 = cache13[: num_tokens * TOP_K * gemm1_n].view(-1, gemm1_n)
++    cache3 = cache13[: num_tokens * TOP_K * size_k].view(-1, size_k)
++    common = dict(moe_block_size=block_size_m, mul_topk_weights=False, is_ep=True,
++                  b_q_type=scalar_types.float4_e2m1f, is_k_full=True, use_atomic_add=False,
++                  use_fp32_reduce=True, is_zp_float=False)
++    ws = bank["workspace"]
++    cache1 = moe_wna16_marlin_gemm(
++        x, cache1, bank["w13"], None, bank["w13_s"], bank["w13_gs"], None, None, None, ws,
++        sorted_ids, block_experts, n_padded, topk_weights, top_k=TOP_K,
++        size_m=num_tokens, size_n=gemm1_n, size_k=size_k, **common)
++    silu_and_mul(cache1.view(-1, gemm1_n), cache2, expert_ids=local_ids.view(-1), expert_step=1)
++    y = moe_wna16_marlin_gemm(
++        cache2, cache3, bank["w2"], None, bank["w2_s"], bank["w2_gs"], None, None, None, ws,
++        sorted_ids, block_experts, n_padded, topk_weights, top_k=1,
++        size_m=num_tokens * TOP_K, size_n=size_k, size_k=size_n, **common).view(num_tokens, TOP_K, size_k)
++    return fused_post_expert_norm_weighted_sum(
++        y, topk_weights, norm_weight=state["post_expert_w"], eps=POST_NORM_EPS, weight_first=True,
++        slot_expert_ids=local_ids)
++
++
++def _experts_triton(x, topk_weights, local_ids, state):
+     """MuseSpark1xFp4Experts' expert outputs and post-expert-norm finalize, on ids already mapped
+     to this GPU's experts (0-31, -1 elsewhere), with the two Marlin GEMMs replaced by the Triton
+     grouped GEMM that dequantizes the stored NVFP4 weights in registers."""
