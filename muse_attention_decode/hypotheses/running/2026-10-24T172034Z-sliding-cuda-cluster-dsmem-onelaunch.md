@@ -109,11 +109,11 @@ base_blob: 1c0f5fa1bfc4e602b62e5e9edd9df6d5652b297b
 branch: hyp/muse_attention_decode/sliding-cuda-cluster-dsmem-onelaunch
 worktree: .worktrees/muse_attention_decode/sliding-cuda-cluster-dsmem-onelaunch
 mode: null
-implemented_at: 2026-10-24T174609Z
-impl_commit: 589a8918c1578bffcb5db1fa68723688293c0c94
-submission_sha256: 125d3fc281dc91004d6cb4256246e2e5723c6d3dc27d55d04358d1283922196a
-norm_sha256: 66b17f195025b4c94713feea756cf7e53e5f7246e5d9d3b10c49cd8d67a667a0
-submission_blob: dc4890e2f571f63a11b6dd7fd2174029c4069ae4
+implemented_at: 2026-10-24T175426Z
+impl_commit: 593859d3ce482d60c7bb0ec1fb4e4101e7b1ce31
+submission_sha256: f5c7fe82954b307189ff8d38afc62a1b8fabe2a962aed8fbd05cdd5e78d23b56
+norm_sha256: fde3b2ec6399e2de9350f962623f669f9851968aff48928a7b89a8bbe5f04be8
+submission_blob: bd96c94a12cf87fdcdac119d1e0508f009c4120c
 lint_warnings: 0
 ---
 
@@ -247,6 +247,9 @@ Uncertainties:
 - (c) Two or three module builds add about 40-80 s to the ~41 s splitkv build.
 - (d) C=16 at B=1 is used for decode_1 and verify_1 only if occupancy reports > 0.
 - (e) sincosf on angles near 8e4 rad takes the slow (Payne-Hanek) path. It is correct but costs some ALU per head.
+
+### Pre-flight fix (2026-10-24, after an Opus audit)
+The new-cache-row check required >= 99.9% identical bytes against master's Triton `_pre_attention_kernel`. That kernel's sin/cos are likely the fast approximations, which at positions 2049-5007 (angles up to ~5000 rad) flip 1-6% of E4M3 bytes in emulation. A single flipped byte in a 128-byte case failed the gate, so the check would likely have switched a correct kernel off. Now: rel L2 < 5e-2 only, with the judge's CACHE_TOL at 8e-2; the byte match is still printed.
 
 ## Rules check
 
