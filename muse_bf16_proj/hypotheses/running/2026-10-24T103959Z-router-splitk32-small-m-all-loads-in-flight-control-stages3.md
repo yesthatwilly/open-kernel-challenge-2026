@@ -41,7 +41,7 @@ review: proceed
 status: running
 review_at: 2026-10-24T104313Z
 review_companions: null
-stage: implemented
+stage: dispatched
 claimed_at: 2026-10-24T104313Z
 base_sha: 60622cdebc40953738b4429ef80902673cd5f50f
 base_blob: a0fcbb70e25fa568ef94f81935748440798a1410
@@ -56,6 +56,8 @@ submission_blob: efe58306beefac9bf49baced3db1ac91f79ac357
 lint_warnings: 0
 attempt_file: 2026-10-24T104355Z-check-router-splitk32-small-m-all-loads-in-flight-control-stages3.md
 prepared_at: 2026-10-24T104355Z
+job: 4685bac7a662454d
+dispatched_at: 2026-10-24T104412Z
 ---
 
 # router-splitk32-small-m-all-loads-in-flight-control-stages3
