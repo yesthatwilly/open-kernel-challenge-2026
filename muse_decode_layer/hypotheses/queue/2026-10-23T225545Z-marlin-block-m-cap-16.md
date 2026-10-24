@@ -34,8 +34,10 @@ depends_on: sglang-pipeline-parity-router-hilo-m8
 priority: 4
 kind: primary
 controls_for: null
-review: required
+review: proceed
 status: queued
+review_at: 2026-10-24T053040Z
+review_companions: null
 ---
 
 # marlin-block-m-cap-16
@@ -54,3 +56,25 @@ Cap SGLang's block_size_m choice for the two Marlin MoE GEMMs at 16. Today _expe
 ## Risk
 
 Risk: SGLang's 0.9 occupancy rule exists because at large per-expert M a bigger tile reuses each weight fragment across more rows from registers/smem; with 16-row tiles Marlin re-streams the hot expert's 25 MB weight once per m-block from L2 (an 80K-token-context H200 has 50 MB L2, so one expert's w13 fits, w2 fits), which could make verify_32 slower instead. Either sign is a clean attribution to the tile choice; if slower, queue the opposite (cap at 32) as an ab-tune. Correctness unaffected (same fp32 reduce, same math). If this lands, a follow-up should also try block 8 at T=32 (decode_32), which the 0.9 rule just misses.
+
+## Adversarial review
+
+Reviewed 2026-10-24T053040Z by an adversarial Fable subagent (model fable).
+
+**Verdict: proceed.** A one-knob tile-size probe whose only moving shapes are verify_16 (T=128, block 48->16) and verify_32 (T=256, block 64->16); the stated mechanism (padding bytes, m-block parallelism) is wrong, but the sister problem's measurements that larger thread_m_blocks cost 18-28% on Marlin at T=32/128 with the m-block count unchanged make the direction credible, and either sign is cleanly attributable from the single run. No companions.
+
+### Justification
+A. Arithmetic of the pick is verified against submission.py:257-259 (break keeps the first candidate with T*8/32/bsm < 0.9; T<=28 -> 8, 32 -> 16, 128 -> 48, 256 -> 64, the last by loop exhaustion). Profile (job 5755a412dda244a1): the two Marlin launches are 425/402 us of verify_16 (73%/54%) and 512/552 us of verify_32 (73%/49%) against SoL floors of 127-267 us for the whole layer, so a 25% Marlin change moves those shapes ~12-18% and the geomean ~4-6%, far outside the +-1.5% CI; the expected table is consistent with TASK.md (only the two verify_16/verify_32 loads carry T=128/256; all other scored shapes and all 13 tests have T<=33 and keep their block, so they are true controls, including decode_16 and verify_1 which the table omits but which also keep 8). The mechanism as written does not hold: Marlin parallelizes over n-tiles x k-tiles x m-blocks (8192/128 = 64 n-tiles per m-block already feed 132 SMs x 4 blocks), padding cold experts to 48/64 rows costs MMA issue, not bytes, and giving the hot expert 3-4x more m-blocks means 3-4x more weight passes and dequant for that expert (served from L2 only if the consecutive m-blocks of one expert stay resident; L2 bandwidth on Hopper is not much above the 4.8 TB/s HBM figure). What actually supports the direction is empirical: muse_moe_w4a16 marlin-block-size-m-next-larger (job 2639e3ca7f5549de) measured thread_m_blocks 1->2 at T=32 as 208 -> 261 us (~+28% on Marlin) and 3->4 at T=128 as 462 -> 545 us (~+18%), both with the m-block count essentially unchanged (its review counted ~32 local routes at T=32 and ~128 at T=128, i.e. one block per expert at either size), and its reviewer measured the kernel at ~1.3 TB/s, i.e. not bandwidth-bound. A per-m-block cost of roughly a*(1 + 0.4*thread_m_blocks) fits both points and, extrapolated down to thread_m_blocks=1, predicts Marlin 25-35% faster at T=128/256 before the extra m-blocks of hot experts (at T=256 a 100-route expert needs 7 blocks of 16 instead of 2 of 64, so total m-blocks grow maybe 30-40%), net perhaps 10-25%. Weakest link: the extrapolation below SGLang's own pick. The two sister points sit above the pick; nothing measured yet says the curve keeps falling at thread_m_blocks=1 for large padded M, and SGLang's 0.9 rule may have been tuned to exactly this crossover (though if the rule is vLLM's global-E heuristic applied to the 32 local experts, it picks 8x larger blocks than vLLM would at E=256, which would favour the hypothesis). A secondary weakness: the m-block count at T=256 depends on how skewed the local routing is, and Marlin time already varies 10-40% between the sliding and full inputs at the same T in the profile, so verify_32 sliding and full may move by different amounts; the paired per-shape ratio still isolates the change.
+
+### Confounders on the current kernel
+- sglang-pipeline-parity-router-hilo-m8 (the only landed item): its one non-parity change is ROUTER_FP32_MAX_TOKENS 8->1, which alters kernels only at T=8 (verify_1); at T=128/256 the router was already hi/lo in SGLang, routing/topk_ids feeding moe_align_block_size are produced identically, and the Marlin path is byte-for-byte SGLang's. No interaction with the block-size pick; the change would behave the same with it absent.
+
+### Interference and A/B needs
+Reverting the landed hypothesis is meaningless (master would be the 0.0045x starter) and nothing in it touches T=128/256. A gain on verify_16/verify_32 with the other ten shapes at ~1.0x says block 16 beats 48/64 at that M; a loss says it does not; both are unambiguous attributions to the tile choice because the diff is one pick and the same-run SGLang column is the control. The only bundled side effect is moe_align_block_size's host-sized capacity shrinking with block size (T*8 + 256*(bsm-1): 18176 -> 5888 slots at T=256), which changes its fill kernels by ~1-2 us against 500 us of Marlin, not enough to flip a sign. A cap-32 ab-tune or a block-8 probe would be a tuning sweep to find the optimum, not a disambiguation, so it belongs in the follow-up queue after this result, not as a companion. The in-flight expert-id-map-single-kernel and the queued moe-align-* hypotheses touch the align launch sequence but not block_size_m; they are not duplicates and gains may simply not add.
+
+### Open questions
+- Which Marlin template (thread_m_blocks) actually runs at T=128/256 cannot be read from the saved profile (names truncated at 'Marlin<__nv_bfloat16, 56...'); if the implementer can print the launched config or the padded block count in prepare()/log, it would confirm 48 -> 16 maps to thread_m_blocks 3 -> 1 and 64 -> 16 to 4 -> 1.
+- If verify_16 and verify_32 move in opposite directions, read it as the m-block growth of hot experts at T=256 (block 16 multiplies their weight passes) outweighing the per-block saving; the next probe is cap 32 for T=256 only, and block 8 (the special m_block_size_8 path, which the sister data shows slightly ahead of 16 at T<=16) for T=32/128.
+- Does the SGLang moe_align_block_size + Marlin m-block loop walk the device num_tokens_post_pad or the host-sized capacity (the question moe-align-local-expert-count raises)? If the latter, block 16 at T=256 walks 368 instead of 284 slots and part of any gain or loss belongs to that interaction; combined later with moe-align-local-expert-count the two gains will not simply add.
+- The hypothesis's own expected magnitudes are unstated; a useful falsification threshold is: Marlin at T=128 should drop by more than the ~18% the sister measured for 48->64 if per-block cost is the driver; a change inside +-5% would say the per-block cost model saturates at thread_m_blocks<=3 and SGLang's pick is already near-optimal.
+
