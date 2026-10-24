@@ -32,13 +32,19 @@ review: proceed
 status: running
 review_at: 2026-10-24T184058Z
 review_companions: null
-stage: claimed
+stage: implemented
 claimed_at: 2026-10-24T184059Z
 base_sha: fd196766321a96a51dff2121a23a1567a5ad7180
 base_blob: c6854f093588da524e63657576b27ed720756e32
 branch: hyp/muse_attention_decode/splitkv-combine-wide-mlp
 worktree: .worktrees/muse_attention_decode/splitkv-combine-wide-mlp
 mode: null
+implemented_at: 2026-10-24T184625Z
+impl_commit: 34daa031e5c47e356ac5099160925f3af5db09a9
+submission_sha256: 399fb765e78b10807dafa1d2ebb0f35b2e103c0041c094276ce89c0aad97e588
+norm_sha256: ee240910e1745bae19b7d4007fa4d3c5a6aa9e2fbc0fe5447d17f178d9cec162
+submission_blob: 31ed3c702d83c72d0d5fb8de074c4d890fc9496e
+lint_warnings: 0
 ---
 
 # splitkv-combine-wide-mlp
@@ -78,3 +84,32 @@ No companion is warranted. The change touches one kernel, splitkv_combine_kernel
 - Should the gate prefetch and a single-pass online-rescale merge (removing the separate M pass) be included? They attack the remaining fixed round trips and would make the 3-4 us target more reachable.
 - If full-cuda-onelaunch-warpspec-bulk-gather lands and self-checks before this runs, this hypothesis is moot for its shapes; hold it then rather than spend a check.
 
+
+## Implementation notes
+
+Edited only `.worktrees/muse_attention_decode/splitkv-combine-wide-mlp/muse_attention_decode/submission.py`. In `splitkv_combine_kernel`: `__launch_bounds__(256)`, red_m/red_l/red_acc sized [8], M pass strides by 256, 8-way max of red_m, loop 2 rewritten as groups of 4 (c = warp + 8*j from c0, step 32): all m, l, float2 acc loaded into registers (masked c < n, m = -inf, l = 0, acc = 0 out of range) before weights/accumulate; final warp-0 merge sums 8 entries; host launch 256 threads; module renamed muse_full_decode_splitkv_v2; header comment updated. Epilogue unchanged. Deviation: none. Not included (review's optional suggestions, new ideas rather than implementation details): gate prefetch at kernel start and single-pass online-rescale merge.
+
+## Rules check
+
+- [x] CUDA-graph capturable: diff only touches kernel code and launch block size; no syncs, allocation or value-dependent host control flow.
+- [x] Nothing derived from `data` is cached across calls: diff adds no state.
+- [x] Weights: n/a: attention problem, no weights touched.
+- [x] Activations BF16 where SGLang keeps BF16; KV cache FP8; queries at most FP8 E4M3: unchanged; combine still fp32 merge and bf16 store.
+- [x] Attention sees every key: merge still covers all n partials (masked loads only for c >= n); no skipping.
+- [x] No timing patches, harness frames/I/O/secrets, module edits, reference import, subprocesses or network: none in diff.
+- [x] All work happens inside the timed call; no output caching or replay.
+- [x] No triton.autotune, no host syncs in kernel_fn; first-line marker kept.
+
+okc_lint output: `CLEAN: muse_attention_decode/submission.py`; py_compile OK, __pycache__ removed.
+
+## Pre-flight audit
+
+Audited 2026-10-24 (opus). **Verdict: dispatch-with-fixes.**
+
+- 8-warp/256-thread consistency checked everywhere: __launch_bounds__(256), host launch `<<<dim3(B, HQ), 256>>>`, red_m/red_l/red_acc sized [8] and indexed by warp in 0..7, M pass strides 256, 8-way red_m max, warp-0 merge loops w < 8. Static smem 8*(64+2)*4 B, fine.
+- Loop 2 coverage: c0 = warp, step 32, c = c0 + 8j (j<4) visits every c < n with c % 8 == warp exactly once; out-of-range slots get m=-inf -> weight 0, l=0, acc=0, and no OOB load. Empty partials still weigh 0. Epilogue unchanged. CUDA source reads as compilable (no new symbols).
+- Module name muse_full_decode_splitkv_v2 is the only load_inline name. Build failure -> None (master FA3); self-check miss/raise -> _EXT=None.
+- Fix: appended a `[splitkv] PATH CHOSEN: ...` print after the import-time build/self-check so the log states which path ran. Reason: fallback must be visible.
+- Rules: unchanged from master. okc_lint CLEAN, py_compile OK.
+
+Residual risk: combine is ~8 us of 120-250 us, so the expected 2-4% shape gain is near the noise floor; judge on the splitkv_combine_kernel row.
