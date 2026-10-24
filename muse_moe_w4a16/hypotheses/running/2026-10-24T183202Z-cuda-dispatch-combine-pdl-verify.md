@@ -116,7 +116,7 @@ review: proceed
 status: running
 review_at: 2026-10-24T183415Z
 review_companions: null
-stage: implemented
+stage: dispatched
 claimed_at: 2026-10-24T183415Z
 base_sha: b17562ed4f8acdd2a6e2e98f542acc2bba35a2b4
 base_blob: 108d36e9f2266fc88531dd6ff0329a847c882013
@@ -131,6 +131,8 @@ submission_blob: 005e9bed2e9971ae7413b3fe0c398f7241911804
 lint_warnings: 19
 attempt_file: 2026-10-24T184624Z-submit-cuda-dispatch-combine-pdl-verify.md
 prepared_at: 2026-10-24T184624Z
+job: c41860068fe4432f
+dispatched_at: 2026-10-24T184641Z
 ---
 
 # cuda-dispatch-combine-pdl-verify
