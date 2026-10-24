@@ -1,10 +1,10 @@
 # muse_decode_layer findings
 
-Regenerated 2026-10-24T084809Z by `churn.py index`. Read this before writing a hypothesis for muse_decode_layer.
+Regenerated 2026-10-24T091915Z by `churn.py index`. Read this before writing a hypothesis for muse_decode_layer.
 
 ## Current best
 
-1.0621x [1.0462,1.0780] from job `0730135cdcac43b7` (check), master commit `ef7dea6cac`, hypothesis marlin-block-m-cap-16
+1.0635x [1.0475,1.0794] from job `2b1f82408ab64116` (submit), master commit `ef7dea6cac`, hypothesis marlin-block-m-cap-16
 
 Where the time goes (per scored shape, top kernels):
 
