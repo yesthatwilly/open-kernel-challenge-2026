@@ -30,9 +30,16 @@ priority: 2
 kind: primary
 controls_for: null
 review: proceed
-status: queued
+status: running
 review_at: 2026-10-24T184058Z
 review_companions: null
+stage: claimed
+claimed_at: 2026-10-24T184059Z
+base_sha: 4c028efec3a6ee2276ec49319d77241309209016
+base_blob: c6854f093588da524e63657576b27ed720756e32
+branch: hyp/muse_attention_decode/splitkv-full-line-gather-mapping
+worktree: .worktrees/muse_attention_decode/splitkv-full-line-gather-mapping
+mode: null
 ---
 
 # splitkv-full-line-gather-mapping
