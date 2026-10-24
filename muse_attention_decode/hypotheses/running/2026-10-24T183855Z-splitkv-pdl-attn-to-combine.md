@@ -34,13 +34,19 @@ review: proceed
 status: running
 review_at: 2026-10-24T184111Z
 review_companions: null
-stage: claimed
+stage: implemented
 claimed_at: 2026-10-24T184125Z
 base_sha: f6e63f1cb26d879530432b8f29b2946a17411828
 base_blob: c6854f093588da524e63657576b27ed720756e32
 branch: hyp/muse_attention_decode/splitkv-pdl-attn-to-combine
 worktree: .worktrees/muse_attention_decode/splitkv-pdl-attn-to-combine
 mode: null
+implemented_at: 2026-10-24T184726Z
+impl_commit: 9b85387ffcecdf922cc0a253c2a04c415bac2803
+submission_sha256: aafafbb0a07a0bdc643a4ad69f6399a1cbb394663c59dbc6a6e8830f3d23146f
+norm_sha256: b080f5a8e5b40f73d908e95c71c7d5e2d3831240f0cadc6fdbc318864ea34725
+submission_blob: 0850f42d4d30f72ada131ff2fc52603126c56cd1
+lint_warnings: 0
 ---
 
 # splitkv-pdl-attn-to-combine
