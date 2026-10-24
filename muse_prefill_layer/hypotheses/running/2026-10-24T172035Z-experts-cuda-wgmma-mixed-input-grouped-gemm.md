@@ -95,13 +95,15 @@ base_sha: da2ab55f3d3cd86efc0ec9a2708632b85a44ae0b
 base_blob: 635cfee3ac2c3f7c66840b8c8a082cad2fa41a68
 branch: hyp/muse_prefill_layer/experts-cuda-wgmma-mixed-input-grouped-gemm
 worktree: .worktrees/muse_prefill_layer/experts-cuda-wgmma-mixed-input-grouped-gemm
-mode: null
+mode: submit
 implemented_at: 2026-10-24T175504Z
 impl_commit: 746b97699dd7180075f90f2298335e84d5dadaa1
 submission_sha256: 803fabbfeb87549a6a35e19275112b93c35ce252cae9e5bc1086ef7ace4cd6b4
 norm_sha256: 974e36bd93ce3d7022b5a7b8bbe894b2c9ae730265c5ef0167d1a03187ca6a7b
 submission_blob: 1b34a89a32d4c08cb11a3bb8a08a2018637504fc
 lint_warnings: 13
+attempt_file: 2026-10-24T181734Z-submit-experts-cuda-wgmma-mixed-input-grouped-gemm.md
+prepared_at: 2026-10-24T181734Z
 ---
 
 # experts-cuda-wgmma-mixed-input-grouped-gemm
