@@ -9,10 +9,13 @@ All three run `okc submit <p> <p>/submission.py --no-wait --json` on master, the
 
 - 2026-10-24 attention_decode: master is now **paired-heads-launch-cleanup-ab-tune-batch-gate** (check 1.269x, CI 1.250-1.288; board 1.128x). Supersedes the earlier head-pairing ask.
   `okc submit muse_attention_decode /home/user/git/musespark/muse_attention_decode/submission.py --no-wait --json`
-- 2026-10-24 moe_w4a16: master is **post-expert-norm-triton-small-m** (check 1.130x; no board result yet). The block-m restack in flight may beat it.
+- 2026-10-24 moe_w4a16: master is now **marlin-block-m-two-smaller-on-postnorm** (check 1.254x, CI 1.235-1.272; no board result yet).
   `okc submit muse_moe_w4a16 /home/user/git/musespark/muse_moe_w4a16/submission.py --no-wait --json`
 - 2026-10-24 decode_layer: master is now **fa3-hdim128-head-pairing-batched** (check 1.087x; board 1.063x).
   `okc submit muse_decode_layer /home/user/git/musespark/muse_decode_layer/submission.py --no-wait --json`
+
+- 2026-10-24 prefill_layer: master is now the Triton NVFP4 expert rewrite **experts-triton-w4a16-first-turn-blockt256** (check 1.023x, CI 1.008-1.038; board: none yet).
+  `okc submit muse_prefill_layer /home/user/git/musespark/muse_prefill_layer/submission.py --no-wait --json`
 
 ## Standing answers
 

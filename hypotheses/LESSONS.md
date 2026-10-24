@@ -42,6 +42,8 @@ profile are in `<problem>/hypotheses/archive/<slug>/`.
   (bf16 pooler 1.166x and qkv-gate 1.143x vs 1.151x master: both neutral, within drift).
 - bf16 router: SPLIT_K 32 at m<=32 was flat with num_stages 2 (1.143x) or 3 (1.152x) vs 1.151x master:
   the router's small-m grid depth is settled.
+- bf16 pooler at m<=32: TMA weight loads (1.169x) and BLOCK_K=256 cp.async (1.162x) both landed within
+  noise of master 1.151x; TMA adds little over deeper cp.async.
 - A 128x128x64 Triton split-K kernel at m=128 (pooler SPLIT_K 4, unpooler 2) lost to cuBLAS (1.116x vs
   1.151x master; pooler-unpooler-m128-wgmma-splitk-semaphore).
 - cuBLAS vs cublasLt backend preference changes nothing on this image (bf16-cublaslt-backend-toggle).
@@ -65,6 +67,9 @@ profile are in `<problem>/hypotheses/archive/<slug>/`.
   side) plus a lossless nibble reorder in prepare() doubled the Triton W4A16 expert GEMM: w13+w2 went
   2.0 ms -> 0.80 ms at turn_1, 3.3 -> 2.1 ms at turn_4, 13.5 -> 9.1-10.0 ms at first_turn, beating Marlin at
   turn_4/first_turn (prefill experts-triton-w4a16-swapab-reglhs, 1.007x overall).
+- Prefill rewrite stage 3: BLOCK_T 256 (8 warps, 2 stages) at T>4096 took first_turn w13+w2 from 9.1-10.0 to
+  8.0-8.7 ms (1.023x overall, landed): fewer redundant per-tile dequants at ~512 rows per expert.
+- moe: the block-m win stacked cleanly on the post-norm win: 1.254x (marlin-block-m-two-smaller-on-postnorm).
 - moe: smaller Marlin block_size_m at bs=128/256 gained on its own (verify-two-smaller 1.092x,
   next-smaller 1.039x), confirming decode's cap-16 lesson on the standalone MoE.
 - moe: replacing SGLang's post-expert norm at bs<32 (where its wrapper launches ~9 at::native
@@ -90,6 +95,11 @@ profile are in `<problem>/hypotheses/archive/<slug>/`.
 - A Triton split flash-decode reading both KV heads of a token as one paired 128-byte row (decode
   triton-flash-decode-full-paired-kv, e82b11f9d9f64b23) is correct and within ~5-7% of FA3 on full
   decode: 200.8 vs 188.8 us at decode_16, 394.8 vs 374.4 us at decode_32 (1.070x overall, neutral).
+- Trimming the sliding FA3 page table to the window on device lost (attention fa3-window-trimmed-page-table,
+  1.141x vs 1.269x): FA3 already limits sliding work to the window; the extra launch costs more.
+- decode rewrite stage 2 (more splits + explicit one-tile K/V prefetch, num_stages 1) slowed the Triton
+  flash-decode to 245/478 us at decode_16/32 from 200.8/394.8 (1.041x): Triton's own num_stages=3
+  pipelining was better than the manual prefetch.
 - Copying KV into a contiguous buffer per call cost more than it saved on prefill
   (fa3-contiguous-kv-gather, 0.988x).
 
