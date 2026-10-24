@@ -53,7 +53,7 @@ review: proceed
 status: running
 review_at: 2026-10-24T165207Z
 review_companions: null
-stage: implemented
+stage: dispatched
 claimed_at: 2026-10-24T165338Z
 base_sha: a928067ca1fead9b9f3da0998e11f654e387579f
 base_blob: d9a9375ef4721ab9b28cc9d6364c92e67c7ccc59
@@ -68,6 +68,8 @@ submission_blob: bf2d61e93501721a0e00508157ae60ae4b279d10
 lint_warnings: 15
 attempt_file: 2026-10-24T181733Z-submit-marlin-two-stream-expert-halves-small-m.md
 prepared_at: 2026-10-24T181733Z
+job: 5d630369b1634f77
+dispatched_at: 2026-10-24T181917Z
 ---
 
 # marlin-two-stream-expert-halves-small-m
