@@ -75,7 +75,7 @@ review: proceed
 status: running
 review_at: 2026-10-24T100201Z
 review_companions: null
-stage: implemented
+stage: dispatched
 claimed_at: 2026-10-24T100201Z
 base_sha: 6a70bfaac484039ebab2355adee2262c864eee2d
 base_blob: 2e6cb7c89a513e08be4b5e163319fbc34a35f854
@@ -90,6 +90,8 @@ submission_blob: 60abe04615110df3e4a9355a4b984b48b68f85e8
 lint_warnings: 2
 attempt_file: 2026-10-24T100611Z-check-experts-triton-w4a16-swapab-reglhs.md
 prepared_at: 2026-10-24T100611Z
+job: 00148fbedfb6414f
+dispatched_at: 2026-10-24T100619Z
 ---
 
 # experts-triton-w4a16-swapab-reglhs
