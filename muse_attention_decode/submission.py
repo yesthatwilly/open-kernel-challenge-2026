@@ -177,7 +177,9 @@ def kernel_fn(data: Inputs) -> torch.Tensor:
     # original grouping. The pre-attention kernel writes that padded query directly and a Triton
     # epilogue reads each head's half of FA3's output, so no pad/un-pad copies are launched. This
     # one config-only predicate selects both the query layout and the FA3/epilogue branch.
-    paired = window == 0 and hkv % 2 == 0
+    # Companion paired-heads-launch-cleanup-ab-tune-batch-gate: pair only at batch > 1 (batch 1
+    # keeps the unpaired path, where pairing lost 27-35%).
+    paired = window == 0 and hkv % 2 == 0 and batch > 1
     g = hq // hkv
     q = torch.empty((tokens, hq, 2 * d if paired else d), dtype=FP8, device=device)
     inv_freq = _inv_freq(theta, d, device) if theta else data["k_scale"]  # unused when ROPE is off
