@@ -85,13 +85,19 @@ review: proceed
 status: running
 review_at: 2026-10-24T172543Z
 review_companions: null
-stage: claimed
+stage: implemented
 claimed_at: 2026-10-24T172706Z
 base_sha: a449561e2d3c5c1910b17badcd989afdfcebd989
 base_blob: cc466fce207709c98ab0e78c2435c1c459890fdb
 branch: hyp/muse_decode_layer/moe-chain-cuda-swapab-expert-once-large-t
 worktree: .worktrees/muse_decode_layer/moe-chain-cuda-swapab-expert-once-large-t
 mode: null
+implemented_at: 2026-10-24T173736Z
+impl_commit: e65eda8e263ae1408bdb9e263068ca89a29ceb0d
+submission_sha256: 2f179228e60c6ace4d98de410580e5b5865f5d612ff771aa143fa2dda9fbff40
+norm_sha256: 9ad53f949e00fe36ca26685c8f5615cb250eecd7d87e3bb19065ac38c2cbb259
+submission_blob: 81d11fec488c02b0e7fe3a48f764aca20bb6a438
+lint_warnings: 10
 ---
 
 # moe-chain-cuda-swapab-expert-once-large-t
@@ -145,3 +151,71 @@ No companions. This is kind: rewrite, judged on the replaced kernels' own rows (
 - Under 'dist soft', how many distinct local experts are touched at T=128/256? If it is closer to 25-32 than ~17, the true MoE floor is ~150-190 us, and M2 (<=200 us at T=256) needs >4 TB/s rather than 2.6.
 - Rounding the e4m3*gs product to bf16 and multiplying by e2m1 in bf16x2 adds up to ~2^-9 relative error per element versus Marlin. That is expected to fit the 1e-2 per-row bound; confirm with the self-check's max row rel.
 
+
+## Implementation notes
+
+Worktree `.worktrees/muse_decode_layer/moe-chain-cuda-swapab-expert-once-large-t`, file `muse_decode_layer/submission.py` only. Uncommitted. Diff stat: 1 file, +787 / -3. It was built blind: nvcc is not available here. The CUDA source got a stubbed `g++ -fsyntax-only` pass, with CUDA builtins, torch and `<<<>>>` stubbed. That pass was clean. The PTX was not assembled.
+
+- **Gate.** `_experts` now dispatches. With `x.shape[0] > MOE_CUDA_LARGE_T_MIN` (32), a shape-only branch, and `state["moe_cuda_large_t"]` set, it calls `_lt_experts`. Otherwise it calls `_marlin_experts`, which is master's old `_experts` body unchanged except that it returns `(out, y, cache2, local_ids)` so the self-check can use it. T <= 32 runs master's launches byte for byte.
+- **The CUDA module** (`_LT_SRC`, `load_inline` name `muse_decode_moe_large_t_v1`, `-O3 -arch=sm_90a`, one TU) has three kernels. The names match the milestones:
+  - `moe_route_list`: one CTA, 1024 threads. It reads the local-start-shifted ids (0..255). Its first pass writes `local_ids` (-1 for ids >= 32), so it folds in master's `expert_map[topk_ids]` gather, and counts routes per expert in smem. Thread 0 then builds the exclusive prefix and a chunk list `(expert, start, n <= 64)`, with `n_chunks` on device. The second pass scatters `route_idx` (route = t*8+s), grouped by expert, through smem atomic cursors.
+  - `moe_w13_silu_swapab` / `moe_w2_swapab`: two `__global__` wrappers over one `swapab_body<GATED>`. The mainloop is ported from moe `cuda-nvfp4-swapab-mma-persistent-small-m` (f8b3f72) verbatim: the cp.async helpers, `ldmatrix` x4 with the c ^ (r & 7) swizzle, the e4m3x2 -> f16x2 scale conversion, the exact `dequant8` lop/fma.bf16x2 path, the mma.sync m16n8k16 bf16 form, and the 4-stage 256-k ring of 16 KB codes, 2 KB scales and a 64-row x 512 B B slab. `_tile_codes`, `_tile_scales` and `_code_dims`/`_scale_dims` are also copied verbatim, with lossless round-trip asserts. The global scale x 2^7 is applied in fp32 at the epilogue. Grid = SM count, 256 threads, 1 CTA/SM, dynamic smem 4 x 51200 + 16384 = 221184 B (<= 227 KB).
+- **REQUIRED review fix (n8-fragment bound).** Every item reads its chunk's route count `n` and sets `nf = ceil(n/8)`, which is uniform over the CTA. Three things are bounded by it:
+  - the cp.async B staging, `i < nf`. Rows n .. 8*nf-1 are zero-filled with src-size 0, and nothing past 8*nf is staged;
+  - the `ldmatrix` loop, `f < me_nf`;
+  - the `mma.sync` loop, `f < me_nf`.
+
+  To keep registers low, the A fragments for the four k16 steps of a 64-k sub-tile are dequantized once (16 regs). The loop then goes over fragments, and each fragment loads its own 8 B regs.
+- **act indexing (open question).** I chose t*8+s, Marlin's cache2 layout. w13 reads B rows `x[route >> 3]` and writes `act[route]`. w2 reads `act[route]` and writes `y[route]`. Both get the route from `route_idx[start + p]`, so they cannot disagree. Remote rows of act and y are never written or read, and `fused_post_expert_norm_weighted_sum(y.view(T,8,4096), slot_expert_ids=local_ids)` is unchanged.
+- **Epilogue staged through smem (open question, done).** The bf16 tile (64 routes x 64 cols for w13, x 128 for w2) goes into a dedicated 16 KB smem region. After one `__syncthreads`, it is stored as 16-byte row pieces to `out[route, j*TC + ...]`. The region is next reused at least KS = 16 loop-top barriers later. For w13, gate and up are rounded to bf16 before silu, to match SGLang's cache1 -> silu_and_mul.
+- **Self-check** (`_lt_self_check`, prepare only, fixed seed). It runs at T = 40, 128 and 256. Expert 5 takes 96 routes, so it spans 2 chunks. At T=256, expert 9 takes 150 routes (3 chunks, the last one partial). Experts 24..31 are empty, and remote slots are present. Act and y are prefilled with NaN. It checks only what the path consumes or produces:
+  - local_ids equal to master's;
+  - act and y per-row rel at local routes <= 1e-2;
+  - the combine output's global rel <= 5e-3, and finite;
+  - a second run identical at local rows;
+  - at T=128, hot expert 5 against a local fp32 dequant <= 1e-2.
+
+  There is no align or capacity comparison of any kind, following the moe sibling trap. Any failure or exception leaves `state["moe_cuda_large_t"] = False`, and Marlin is kept. The log lines are `[moe-cuda-large-t] load_inline compiled in Xs` (or FAILED), per-kernel numRegs/localSizeBytes/smem, retile time, per-T self-check lines, a print-only eager timing of CUDA vs Marlin at T=128/256, `[moe-cuda-large-t] ON/OFF: compile s, max row rel, reason`, and `PATH CHOSEN = CUDA|MARLIN`.
+- **Deviations from the spec:**
+  1. Items are walked statically (item bx + k*grid over n_chunks*n_tiles, read on device) instead of grabbed with an atomicAdd work counter. This is the reviewed sibling's flat-ring scheme: the producer has to know the next item 3 stages ahead. It also removes the counter-reset hazard. Kernel 1 therefore resets no counters.
+  2. There is one chunk list, shared by w13 (64 tiles) and w2 (32 tiles), instead of two work lists. `expert_off[33]` is not materialized because nothing consumes it.
+  3. Each scale is converted exactly (e4m3 -> f16 -> fp32 x 2^119 -> bf16), and gs is applied in fp32 at the epilogue, not folded into a bf16 scale. This is the sibling's exact scheme, and it removes the review's 2^-9 rounding concern.
+  4. B uses non-trans `ldmatrix`. Activations are stored [token][k], which already gives the col-major B fragment, as in the sibling.
+  5. The B stage is 64 x 256 k with 4 stages, not the optional 5-stage variant.
+- **Uncertainties:**
+  - The PTX was never assembled here. The forms are the sibling's (its forms are also untested on the judge).
+  - The 2-byte smem epilogue writes have 4-way bank conflicts (minor).
+  - The repeat-identical check assumes that tensor-core column results do not depend on column position. Route order within an expert is atomic-nondeterministic, and if that assumption were wrong the check would fail closed, to Marlin.
+  - Compile time of the TU is unknown (attention's took 41 s).
+  - A sticky CUDA fault inside the self-check would fail the whole run rather than fall back.
+
+## Rules check
+
+Every box was ticked after reading `git -C .worktrees/muse_decode_layer/moe-chain-cuda-swapab-expert-once-large-t diff`.
+
+- [x] CUDA-graph capturable. `_lt_experts` (reachable from kernel_fn) has no `.item()`, `.cpu()`, `synchronize()` or tensor prints. Every allocation is sized from T (shape) only. The CUDA branch is on `x.shape[0]` and a prepare-time flag. Data-dependent counts (`n_chunks`, chunk sizes, nf) stay on device, and the grid is fixed. All syncs and float()/bool() reads are in `_lt_self_check`, `_lt_timing` and `_lt_setup`, which only prepare() calls.
+- [x] Nothing derived from `data` is cached across calls. route_idx, chunks, n_chunks, local_ids, act and y are allocated fresh every call. The state holds only the weight retiling, the compiled module, the grid and the flag.
+- [x] Weights are repacked losslessly in prepare() only. `_lt_bank` permutes the same E2M1 nibbles and E4M3 scale bytes, asserting exact round trips. gs stays fp32 (x 128, exact). No dequantized weight is stored, and dequant is in registers.
+- [x] Activations stay BF16 where SGLang keeps BF16: x, act (cache2) and y are bf16. fp32 accumulation and silu are in fp32 over bf16-rounded gate/up, as SGLang does.
+- [x] n/a for attention: it is not touched by this diff. Every key is still attended (attention code unchanged).
+- [x] No timing patches, harness frames/I/O/secrets, module edits, reference import, subprocesses or network. `load_inline` compiles in-process, which matches the precedent already promoted (attention).
+- [x] All work happens inside the timed call, with no output caching or replay. The three launches run per call. The self-check and timing are synthetic and prepare-only.
+- [x] First-line marker `# okc: problem=muse_decode_layer` is kept. There is no triton.autotune, and T <= 32 keeps master's launches byte for byte.
+
+Lint (`python3 -I .claude/skills/churnsubs/bin/okc_lint.py <worktree>/muse_decode_layer/submission.py --problem muse_decode_layer`):
+
+```
+warn  dtype        L798: q13 = torch.empty((count, w13[0].numel()), dtype=torch.uint8, device=w13.device)  (allowed only where SGLang does the same)
+warn  dtype        L799: s13 = torch.empty((count, weights["w13_sf"][0].numel()), dtype=torch.uint8, device=w13.device)  (allowed only where SGLang does the same)
+warn  dtype        L800: q2 = torch.empty((count, w2[0].numel()), dtype=torch.uint8, device=w2.device)  (allowed only where SGLang does the same)
+warn  dtype        L801: s2 = torch.empty((count, weights["w2_sf"][0].numel()), dtype=torch.uint8, device=w2.device)  (allowed only where SGLang does the same)
+warn  host-sync    L899: torch.cuda.synchronize()  (outside kernel_fn's call graph; fine in prepare())
+warn  host-sync    L956: t1.synchronize()  (outside kernel_fn's call graph; fine in prepare())
+warn  host-sync    L985: torch.cuda.synchronize()  (outside kernel_fn's call graph; fine in prepare())
+warn  host-sync    L992: torch.cuda.synchronize()  (outside kernel_fn's call graph; fine in prepare())
+warn  host-sync    L1046: torch.cuda.synchronize()  (outside kernel_fn's call graph; fine in prepare())
+warn  host-sync    L1050: torch.cuda.synchronize()  (outside kernel_fn's call graph; fine in prepare())
+OK with warnings: submission.py
+```
+
+The uint8 warnings are the packed NVFP4 code and scale byte buffers (weights, not activations). The host-sync warnings are all in prepare-only code. `python3 -I -m py_compile` passed, and the `__pycache__` it left was removed.
