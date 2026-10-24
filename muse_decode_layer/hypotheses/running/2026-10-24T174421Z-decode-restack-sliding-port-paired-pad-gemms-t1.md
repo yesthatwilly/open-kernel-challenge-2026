@@ -31,9 +31,16 @@ priority: 1
 kind: primary
 controls_for: null
 review: proceed
-status: queued
+status: running
 review_at: 2026-10-24T174912Z
 review_companions: null
+stage: claimed
+claimed_at: 2026-10-24T174912Z
+base_sha: c8af06125b23fb943b7a8f7c26fc6b9a677dd1e0
+base_blob: cc466fce207709c98ab0e78c2435c1c459890fdb
+branch: hyp/muse_decode_layer/decode-restack-sliding-port-paired-pad-gemms-t1
+worktree: .worktrees/muse_decode_layer/decode-restack-sliding-port-paired-pad-gemms-t1
+mode: null
 ---
 
 # decode-restack-sliding-port-paired-pad-gemms-t1
