@@ -52,9 +52,16 @@ priority: 1
 kind: primary
 controls_for: null
 review: proceed
-status: queued
+status: running
 review_at: 2026-10-24T165146Z
 review_companions: null
+stage: claimed
+claimed_at: 2026-10-24T165146Z
+base_sha: 4a3b474ab343532548aeff7b0908beb14a4fae68
+base_blob: d9a9375ef4721ab9b28cc9d6364c92e67c7ccc59
+branch: hyp/muse_moe_w4a16/align-parallel-per-expert-verify
+worktree: .worktrees/muse_moe_w4a16/align-parallel-per-expert-verify
+mode: null
 ---
 
 # align-parallel-per-expert-verify
