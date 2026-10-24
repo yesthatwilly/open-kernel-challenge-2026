@@ -122,13 +122,15 @@ base_sha: b17562ed4f8acdd2a6e2e98f542acc2bba35a2b4
 base_blob: 108d36e9f2266fc88531dd6ff0329a847c882013
 branch: hyp/muse_moe_w4a16/cuda-dispatch-combine-pdl-verify
 worktree: .worktrees/muse_moe_w4a16/cuda-dispatch-combine-pdl-verify
-mode: null
+mode: submit
 implemented_at: 2026-10-24T184624Z
 impl_commit: 38270a8e28e9d5fe4920187220679aa4b35ab074
 submission_sha256: 7c7485b51531cb6fab31bedfb3970593214e591f0da8f35d9f6ca078199a504d
 norm_sha256: b26f9d20e2ac256a87e1d24b2de921b62310f7690a72d7f03c787fdd42a80a2e
 submission_blob: 005e9bed2e9971ae7413b3fe0c398f7241911804
 lint_warnings: 19
+attempt_file: 2026-10-24T184624Z-submit-cuda-dispatch-combine-pdl-verify.md
+prepared_at: 2026-10-24T184624Z
 ---
 
 # cuda-dispatch-combine-pdl-verify
