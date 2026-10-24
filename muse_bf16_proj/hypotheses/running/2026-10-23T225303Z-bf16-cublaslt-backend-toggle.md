@@ -36,9 +36,16 @@ priority: 5
 kind: primary
 controls_for: null
 review: proceed
-status: queued
+status: running
 review_at: 2026-10-24T071318Z
 review_companions: null
+stage: claimed
+claimed_at: 2026-10-24T071319Z
+base_sha: 036af8be03a756684fc9d199dd2f6b1f05eab3a4
+base_blob: da55301de1e911aeab09878b0873809f544f436c
+branch: hyp/muse_bf16_proj/bf16-cublaslt-backend-toggle
+worktree: .worktrees/muse_bf16_proj/bf16-cublaslt-backend-toggle
+mode: null
 ---
 
 # bf16-cublaslt-backend-toggle
