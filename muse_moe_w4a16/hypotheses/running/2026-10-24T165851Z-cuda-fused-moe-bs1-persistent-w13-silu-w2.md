@@ -98,12 +98,12 @@ base_blob: d9a9375ef4721ab9b28cc9d6364c92e67c7ccc59
 branch: hyp/muse_moe_w4a16/cuda-fused-moe-bs1-persistent-w13-silu-w2
 worktree: .worktrees/muse_moe_w4a16/cuda-fused-moe-bs1-persistent-w13-silu-w2
 mode: null
-implemented_at: 2026-10-24T171551Z
-impl_commit: bbdb9ab6af58a47b167646c67e34c79e5d25b66e
-submission_sha256: 5e4aed31aa378a5d0f01aa4938f4cc6a4d88061c7b2fc8dbfb9bcf5747a0dd03
-norm_sha256: 95a6db2c1b55e8ee5354aadf22467c47cae8fa3a765e6225bb4435766557078e
-submission_blob: f55fa4ce165901402ea5ccd076e8904c9dca9d0a
-lint_warnings: 16
+implemented_at: 2026-10-24T173021Z
+impl_commit: 0efab7bdfa79cfea6a430d51c5b7c038a7bd2af3
+submission_sha256: d29c7f2a65e49524517329ed777359b30007b5dd86e745280232009eae219ae7
+norm_sha256: 99d090b0bb9ae62e16da7aae7d6a411e5e99a196e3de960b43290684ff552f3d
+submission_blob: 62b00bb77cbc9e2fce8ed39dd25d87fb78503a5d
+lint_warnings: 18
 ---
 
 # cuda-fused-moe-bs1-persistent-w13-silu-w2
@@ -203,6 +203,11 @@ Sync and indexing were each reviewed twice:
 - Every `__syncthreads` is under a CTA-uniform condition (an smem broadcast).
 
 Uncertainties: none of this has been compiled or run (no GPU or nvcc on this node). Compile errors, if any, show up as the build-failure fallback, not as a crash. The ALU cost of dequant plus the scale conversion (~27 ops per k16 per lane) is close to the per-SM DRAM time per stage, so M3 may need stage 2. Watch localSizeBytes in the log.
+
+### Pre-flight fixes (2026-10-24, after an Opus audit)
+- R=0 self-check cases no longer call master: Marlin with zero blocks has never run here, and a fault would poison the context. They check for exact zeros.
+- Spin waits also poll the error flag every 1024 iterations, so one timeout stops every later wait. The self-check stops at the first failure, and checks the flag after the first eager launch so a broken kernel costs seconds, not minutes, of prepare.
+- `post_norm_w` is cloned so the uint4 loads are 16 B aligned.
 
 ## Rules check
 
