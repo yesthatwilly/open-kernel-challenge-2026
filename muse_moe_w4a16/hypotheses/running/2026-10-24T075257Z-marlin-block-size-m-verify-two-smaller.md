@@ -44,7 +44,7 @@ review: proceed
 status: running
 review_at: 2026-10-24T100034Z
 review_companions: null
-stage: implemented
+stage: dispatched
 claimed_at: 2026-10-24T100034Z
 base_sha: fc28840b9d1e2741aebe085a82c80e31c12ca710
 base_blob: 11fbc1957daf7294cd2810ff82a0aad2f25644bd
@@ -59,6 +59,8 @@ submission_blob: d046cd42e462a82dcefc683527d7d97f6953e470
 lint_warnings: 1
 attempt_file: 2026-10-24T100132Z-check-marlin-block-size-m-verify-two-smaller.md
 prepared_at: 2026-10-24T100133Z
+job: ed837a4a46d44a95
+dispatched_at: 2026-10-24T100141Z
 ---
 
 # marlin-block-size-m-verify-two-smaller
