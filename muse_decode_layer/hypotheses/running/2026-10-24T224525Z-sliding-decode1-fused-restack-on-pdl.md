@@ -37,7 +37,14 @@ priority: 3
 kind: primary
 controls_for: null
 review: required
-status: queued
+status: running
+stage: claimed
+claimed_at: 2026-10-24T231559Z
+base_sha: 2569d7e0d6f208921d432fd4237dc483601b39ca
+base_blob: e33a32aa5580fbd5b38764ea287a6364c865432e
+branch: hyp/muse_decode_layer/sliding-decode1-fused-restack-on-pdl
+worktree: .worktrees/muse_decode_layer/sliding-decode1-fused-restack-on-pdl
+mode: null
 ---
 
 # sliding-decode1-fused-restack-on-pdl
