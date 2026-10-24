@@ -102,13 +102,19 @@ review: proceed
 status: running
 review_at: 2026-10-24T172632Z
 review_companions: null
-stage: claimed
+stage: implemented
 claimed_at: 2026-10-24T172707Z
 base_sha: 18e37900783719c41373a7e04963ba5b66578579
 base_blob: a8bb42ac483318e9fbc84bc7826a27b7a704d1fb
 branch: hyp/muse_bf16_proj/bf16-verify-streamk-cutlass-wgmma-rewrite
 worktree: .worktrees/muse_bf16_proj/bf16-verify-streamk-cutlass-wgmma-rewrite
 mode: null
+implemented_at: 2026-10-24T173936Z
+impl_commit: d9d309e8bc053c2ce703d3b7cac4fecf16fadc1d
+submission_sha256: a4537e29d984f113ae9c830cb1c298a8fea07b2637dbfde47a6e9fc920f2d7a6
+norm_sha256: 8fa0b430c49425e2c0613a266c051ef0e7a02e24812d56d251176152139dbf5b
+submission_blob: 437a4112a0e4f1638464e1c81f39512689c9ffd4
+lint_warnings: 4
 ---
 
 # bf16-verify-streamk-cutlass-wgmma-rewrite
@@ -165,3 +171,71 @@ Nothing has landed on master's lineage beyond the base the hypothesis names (lan
 - Budget compile time: torch/extension.h plus a CUTLASS 3 sm90 collective is typically 60-150 s. If bf16-small-m-cuda-gemv-rewrite's load_inline later lands alongside, compile both in one load_inline module so the 10-minute run holds.
 - Does CUTLASS's StreamK tile scheduler accept a 2-CTA cluster in the installed version together with KernelTmaWarpSpecializedCooperative? If can_implement fails, the fallback to cluster 1x1x1 should be a second compiled instantiation only if compile time allows; otherwise log and keep master.
 
+
+## Implementation notes
+
+Built blind: nothing compiled here. The CUTLASS API was checked against a read-only shallow clone of NVIDIA/cutlass (v4.8.1, in /tmp, outside the repo). These were verified in that tree: the epilogue/mainloop CollectiveBuilder parameter order, the `void` C support, `TagToStride*` = `Stride<int64_t,_1,int64_t>`, the GemmUniversal `Arguments{mode, problem, mainloop, epilogue, hw_info, scheduler}`, the stream-K `Arguments` fields (`splits`, `raster_order`, `reduction_mode`, `decomposition_mode`), the `DecompositionMode`/`ReductionMode` enumerator names, the adapter's static `can_implement`/`get_workspace_size`/`run(Params&, stream)`, and the kernel's `initialize_workspace`/`to_underlying_arguments`/`get_grid_shape`/`SharedStorageSize`.
+
+Only `muse_bf16_proj/submission.py` in the worktree changed (+566 lines, nothing removed):
+- New imports: glob, importlib.util, os, re, time. A docstring paragraph was added.
+- New section (6), before `prepare()`:
+  - `_STREAMK_CPP`/`_STREAMK_CUDA` hold ONE instantiation: `GemmUniversal<Shape<int,int,int,int>, CollectiveBuilder<Sm90, OpClassTensorOp, bf16 RowMajor A align 8, bf16 ColumnMajor B align 8 (W [n,k] read in place, TN), float, 128x128x64, cluster 2x1x1, StageCountAutoCarveout, KernelTmaWarpSpecializedCooperative>, epilogue builder (void C, bf16 RowMajor D, TmaWarpSpecializedCooperative, default LinearCombination alpha 1 beta 0), StreamKScheduler>`.
+  - Strides are built with `cute::make_stride` and static_assert'ed to the kernel's stride types. Nothing from cutlass/util is used.
+  - Scheduler `decomposition_mode` and `reduction_mode` are set through detection traits (`if constexpr`), so a 3.x tree without one of the fields still compiles. Reduction is always Deterministic.
+  - Exposed functions:
+    - `streamk_gemm(x, w, out, ws, mode, sm_count)` checks dtype, contiguity and shape, then calls can_implement and checks the workspace size.
+    - `streamk_query(...)` returns {can_implement, workspace bytes, grid xyz, smem, threads, mode_set, sk_tiles_, sk_units_ (-1 if the members are absent), CUTLASS version}.
+    - `streamk_set_attr()` calls cudaFuncSetAttribute(MaxDynamicSharedMemorySize) on `cutlass::device_kernel<GemmKernel>`.
+  - `_find_cutlass_includes()` does what the review asked. It globs the importlib `find_spec` dirs of flashinfer, deep_gemm, sgl_kernel, tilelang and cutlass_library, plus /usr/local/cutlass and /usr/include, for `**/cutlass/gemm/collective/collective_builder.hpp`. A tree is kept only if it has a sibling `cute/`, `sm90_tile_scheduler_stream_k.hpp` and a version.h with major >= 3. Every hit is printed with its version.
+  - `_build_streamk()` runs at import, guarded by `torch.cuda.is_available()`, like the attention precedent. It tries the newest tree, then at most one other version if the first build fails and less than 150 s has passed. It prints `[streamk] build OK: load_inline compiled in Xs` or `build FAILED` with the last 3000 characters of the error, or `[streamk] no CUTLASS headers, master kept`.
+  - `_streamk_prepare(state)`:
+    - Calls set_attr once.
+    - Queries every m in 129..256 for every layer: can_implement must pass, and the workspace bytes are recorded. It prints grid, smem, workspace, sk_tiles and sk_units at m = 129/200/256 and the requested mode, so the log shows the scheduler's choice: sk_tiles == 0 means DataParallel.
+    - Allocates one int64 workspace (the max over layers and over all m) and asserts it covers every layer's max.
+    - Runs the SELF-CHECK per layer at m in {130, 200, 256}, twice each through the shared workspace: rel L2 <= 3e-3 vs x.double() @ W.double().T, a one-hot 2.0 probe row within 1e-4, finite output, and run 2 bit-identical to run 1. A failure prints `[streamk] <layer> DISABLED: <reason>`.
+    - Prints a warm-L2 cudaEvent diagnostic at m=256, CUTLASS vs master `_bf16_gemm_dispatch_impl`, in us and TFLOP/s. It is print-only and never routes.
+    - Prints `[streamk] PATH CHOSEN <layer>: ...` for each layer.
+- Mode constants: qkv_gate and pooler force StreamK; o and unpooler use Heuristic, per the review.
+- `prepare()` calls `_streamk_prepare(state)` last.
+- `kernel_fn` gets one new branch, just before master's cuBLAS fallback: `_streamk_route_ok` requires the extension, `streamk_ok[layer]` (a prepare constant), 129 <= cfg m <= 256, cfg n/k equal to the full weight, and x a contiguous bf16 [m, k]. m <= 128, m = 512/1000 and the router are unchanged.
+
+Deviations from the md:
+- ClusterShape is 2x1x1, not 1x2x1 (review: multicast W).
+- o and unpooler use the Heuristic decomposition, not forced StreamK (review).
+- `GemmUniversalAdapter::initialize()` + `run(stream)` is replaced by its parts: `GemmKernel::initialize_workspace(args, ws, stream)` (the stream-K barrier memset, one memset node under capture), `GemmKernel::to_underlying_arguments(args, ws)`, and the static `Gemm::run(params, stream)`. This way the timed path does not call cudaFuncSetAttribute on every call; prepare does it once (review).
+- `-std=c++17` is not passed. torch's cpp_extension appends `-std=c++17` when no `-std` flag is given, and a duplicate or conflicting one could break the torch headers.
+- Other flags: `-O3 -DNDEBUG --expt-relaxed-constexpr --expt-extended-lambda -gencode=arch=compute_90a,code=sm_90a`, the `-U__CUDA_NO_HALF*/BFLOAT16*` undefs (as sgl-kernel uses with CUTLASS), and `-DCUTLASS_DEBUG_TRACE_LEVEL=0`. The `arch` flag also stops torch adding its own non-`a` gencode flags.
+- No 1x1x1 cluster fallback instantiation, to keep one compile. If can_implement fails for the 2-CTA cluster, the layer logs DISABLED and keeps master.
+
+Uncertainties (things that can only be learned on the judge):
+- (a) Whether the image's CUTLASS tree is found, and whether its version builds with the image's nvcc and torch headers.
+- (b) Compile time, expected 60-150 s.
+- (c) The 132-CTA persistent stream-K grid assumes all 66 2-CTA clusters are co-resident. A deterministic turnstile wait with non-resident peers would hang, which would be charged as a timeout.
+- (d) A sticky CUDA error during the prepare self-check would poison the context and fail the run instead of falling back.
+- (e) The memset node from initialize_workspace adds about 1 us per forced stream-K call (qkv_gate, pooler).
+- Harvest note: read the `[streamk]` log lines first. `no CUTLASS headers`, `build FAILED` or `DISABLED` means the run measured master, not the kernel.
+
+## Rules check
+
+Checked against `git -C .worktrees/muse_bf16_proj/bf16-verify-streamk-cutlass-wgmma-rewrite diff`:
+
+- [x] CUDA-graph capturable. kernel_fn's new branch makes no `.item()`/`.cpu()`/`synchronize()` calls and prints no tensors. It allocates only `out` with `torch.empty`, sized from shapes, like master's paths. The workspace is preallocated in prepare. Routing depends on cfg m/n/k, the layer, x's shape, dtype and contiguity, and the prepare-time constant `streamk_ok`. The C++ launch builds params on the host from shapes and pointers only. The barrier memset is a stream op (memset node). There is no cudaFuncSetAttribute in the timed path. The host syncs (`.item()`, `end.synchronize()`) are only in `_streamk_prepare`/`_streamk_time_us` (prepare).
+- [x] Nothing derived from `data` is cached across calls. The state keys (`streamk_ok`, `streamk_ws`, `streamk_sms`) are written only in prepare, from the weights and synthetic x. The workspace holds stream-K partials and barriers within one call, and initialize_workspace re-zeroes the barriers each call.
+- [x] Weights: the bf16 weights are read in place (W [n,k] row-major as a column-major K x N B operand), with no repack and no precision change. The router is untouched.
+- [x] Activations: x is a bf16 A operand, accumulation is fp32, output is bf16 D, the same precision as SGLang's cuBLAS bf16 GEMM. KV cache / query: n/a, no attention in this problem.
+- [x] Attention sees every key: n/a, no attention in this problem. The GEMM covers the full K and N, and TMA zero-fills only the out-of-range M rows.
+- [x] No timing patches, harness frames, I/O or secrets, module edits, reference import, subprocesses or network. load_inline/nvcc is the documented path (technical rules; attention precedent). The header search only reads package dirs, /usr/local/cutlass and /usr/include. The cudaEvent timings are print-only diagnostics in prepare and are never used for routing.
+- [x] All work happens inside the timed call, with no output caching or replay: every call launches the GEMM on its own inputs into a fresh `out`.
+- [x] The first line is still `# okc: problem=muse_bf16_proj`. There is no triton.autotune, and nothing from inputs is kept in state.
+
+Lint (`python3 -I .claude/skills/churnsubs/bin/okc_lint.py <worktree>/muse_bf16_proj/submission.py --problem muse_bf16_proj`):
+
+```
+warn  host-sync    L1074: end.synchronize()  (outside kernel_fn's call graph; fine in prepare())
+warn  host-sync    L1164: err = ((o1 - ref).norm() / ref.norm().clamp_min(1e-30)).item()  (outside kernel_fn's call graph; fine in prepare())
+warn  host-sync    L1166: perr = ((o1[0] - pref).norm() / pref.norm().clamp_min(1e-30)).item()  (outside kernel_fn's call graph; fine in prepare())
+warn  host-sync    L1167: finite = bool(torch.isfinite(out1).all().item())  (outside kernel_fn's call graph; fine in prepare())
+OK with warnings: muse_bf16_proj/submission.py
+```
+
+`python3 -I -m py_compile`: OK. The __pycache__ it left was removed. The embedded CUDA source has balanced braces and parentheses (33/33, 158/158).
