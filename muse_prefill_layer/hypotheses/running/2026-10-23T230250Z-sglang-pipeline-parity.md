@@ -47,9 +47,16 @@ priority: 1
 kind: primary
 controls_for: null
 review: proceed
-status: queued
+status: running
 review_at: 2026-10-24T024401Z
 review_companions: null
+stage: claimed
+claimed_at: 2026-10-24T024401Z
+base_sha: 077528f1affb9d72e841d65b80b285e7f23a0184
+base_blob: 15e2cafa9040cfadc7045aca96417bbeb8707aa9
+branch: hyp/muse_prefill_layer/sglang-pipeline-parity
+worktree: .worktrees/muse_prefill_layer/sglang-pipeline-parity
+mode: null
 ---
 
 # sglang-pipeline-parity
