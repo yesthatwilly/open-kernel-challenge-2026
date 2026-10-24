@@ -28,13 +28,19 @@ review: proceed
 status: running
 review_at: 2026-10-24T184104Z
 review_companions: null
-stage: claimed
+stage: implemented
 claimed_at: 2026-10-24T184104Z
 base_sha: 7636e41481d93a8dc77886fc9674dcdb6c52067e
 base_blob: c6854f093588da524e63657576b27ed720756e32
 branch: hyp/muse_attention_decode/sliding-decode32-splits-8
 worktree: .worktrees/muse_attention_decode/sliding-decode32-splits-8
 mode: null
+implemented_at: 2026-10-24T184519Z
+impl_commit: fda25ba17eee225ce89bdd2ae2719e568fefd4c3
+submission_sha256: bfc76c4f3ba08f623cb653f4fc4a4231bcc354aa7b4509d11f0824cd56cc5cce
+norm_sha256: 4fa7683f0e207f9f8f4f0327c37ca81f73cac889c38a0e7115bdcf3da9fa0998
+submission_blob: ce1c20a9ca0ae2a965c1609faa65326c07177888
+lint_warnings: 0
 ---
 
 # sliding-decode32-splits-8
@@ -77,3 +83,34 @@ No companion is warranted. The change is one scalar on one shape's path, and eve
 - Moot-risk: sliding-cuda-cluster-dsmem-onelaunch is running and would replace this kernel on every sliding shape. If it lands as a gain before this is dispatched, hold this, as the hypothesis itself says.
 - Noise: sliding rows drift by 2-5% between runs with identical code. A kernel-row change under about 5% should be called flat, not a gain.
 
+
+## Implementation notes
+
+In `_sliding_forward` (worktree muse_attention_decode/submission.py, line 355) the decode split count is now `splits = (16 if batch <= 16 else 8) if length == 1 else _num_splits(batch, hkv)`, gated on cfg batch, with B<=16 kept at 16 as the review asks. The comment above it was updated. No deviation from the spec.
+
+- `ws_acc`, `ws_ml` and the launch grid `(batch, hkv, splits)` use `splits` directly, so at B=32 they are sized for S=8.
+- `S=splits` is the constexpr passed to the kernel.
+- Counters are keyed on (batch, hkv), not S.
+- There is no `prepare()` and no warm-up in this file that depends on S, so none needed changing.
+
+## Rules check
+
+- [x] CUDA-graph capturable: the diff is one scalar chosen from cfg; no syncs, no value-dependent control flow.
+- [x] Nothing derived from `data` is cached across calls: the diff adds no state.
+- [x] Weights: n/a, no weight change in the diff.
+- [x] Activations BF16, KV cache FP8, queries at most FP8: unchanged.
+- [x] Attention sees every key: S=8 chunk = 256, and 8*256 >= 2047, so the whole window is covered; no skipping.
+- [x] No timing patches, harness access, module edits, subprocesses or network: the diff is a split-count line only.
+- [x] All work happens inside the timed call; no output caching or replay.
+
+okc_lint: `CLEAN: submission.py`. py_compile passed and __pycache__ was removed.
+
+## Pre-flight audit
+
+Audited 2026-10-24 by an opus subagent (read-only; no GPU on this node).
+
+**Verdict: dispatch.** The diff is exactly the spec: in `_sliding_forward`, `splits = (16 if batch <= 16 else 8) if length == 1 else _num_splits(batch, hkv)` plus a comment. The predicate is config-only (cfg batch, q_len). No gate, no new path, no fallback surface. `ws_acc`, `ws_ml` and the grid all follow `splits`; `_counters` is keyed on (batch, hkv) and used only by this launch, and the last ticket compares against the constexpr `S - 1` and resets the counter, so S=8 at B=32 is consistent across replays. Coverage at S=8 with BLOCK_N=64: chunk = ceil(2047/8) rounded to 64 = 256, 8 x 256 >= 2047, every window key scored, split S-1 still holds the new keys so m_max stays finite. Only the scored sliding decode_32 shape takes S=8 (all sliding decode tests have batch <= 16 and stay at S=16, byte-identical to master), so B=32 is checked only on its timed calls; the kernel body is generic in S and that path reads correct. Rules unchanged. okc_lint CLEAN, py_compile OK, __pycache__ removed.
+
+Fixes: none.
+
+Residual risk: if 1024 CTAs already fit one wave, halving CTAs doubles the serial tiles and decode_32 reads flat or slower; the gain is inside the headline CI, so judge on the kernel row.
