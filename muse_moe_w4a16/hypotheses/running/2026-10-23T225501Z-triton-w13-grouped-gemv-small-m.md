@@ -49,7 +49,7 @@ review: proceed
 status: running
 review_at: 2026-10-24T024500Z
 review_companions: null
-stage: implemented
+stage: dispatched
 claimed_at: 2026-10-24T024500Z
 base_sha: 6b5469bd92f0a43ce5908912b02fb8dee425c3fa
 base_blob: 11fbc1957daf7294cd2810ff82a0aad2f25644bd
@@ -64,6 +64,8 @@ submission_blob: 09d727eae616e13de2636faa5071b006980144ee
 lint_warnings: 1
 attempt_file: 2026-10-24T024859Z-check-triton-w13-grouped-gemv-small-m.md
 prepared_at: 2026-10-24T024859Z
+job: f31a03eb9bc6410f
+dispatched_at: 2026-10-24T024907Z
 ---
 
 # triton-w13-grouped-gemv-small-m
