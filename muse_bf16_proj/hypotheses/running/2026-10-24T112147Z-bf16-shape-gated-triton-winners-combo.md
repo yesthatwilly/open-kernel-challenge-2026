@@ -94,13 +94,19 @@ status: running
 review_at: 2026-10-24T112458Z
 review_companions: null
 hold_reason: null
-stage: claimed
+stage: implemented
 claimed_at: 2026-10-24T124117Z
 base_sha: 16c093703ec548a902760680cda97f6018325276
 base_blob: da55301de1e911aeab09878b0873809f544f436c
 branch: hyp/muse_bf16_proj/bf16-shape-gated-triton-winners-combo
 worktree: .worktrees/muse_bf16_proj/bf16-shape-gated-triton-winners-combo
 mode: null
+implemented_at: 2026-10-24T124536Z
+impl_commit: 5aff36712dd78f4b86b766e87019257091cd2890
+submission_sha256: 1ba9047a9249eb6664f661f8a5902a0612eab412554adea2f43cd748a8c1b8b8
+norm_sha256: af614b532570ce0ec8a268d8245ef8dbaed17e0333ca7fd14474d1b81bf2d727
+submission_blob: 3f76eb805990314f5f7e6de6e9e184464edd6019
+lint_warnings: 0
 ---
 
 # bf16-shape-gated-triton-winners-combo
@@ -154,3 +160,68 @@ No companion is warranted. Each judge shape is timed as its own CUDA graph with 
 - If both in-flight pooler variants harvest, pick the one with the lower m<=16 pooler kernel time. If TMA wins only at m=32, which is excluded here, keep the split-K2 BLOCK_K=128 baseline.
 - Should the qkv_gate slot go in at all? A component expected at ~+0.3 us per shape adds a third semaphore kernel and more compile time for under 0.2% geomean. Keeping it is defensible because the per-shape rows will settle it, but a follow-up should drop it if any of its three rows reads below ~1.01.
 
+
+
+## Implementation notes
+
+Worktree `.worktrees/muse_bf16_proj/bf16-shape-gated-triton-winners-combo`, `muse_bf16_proj/submission.py` only (+372 lines, no deletions). The router code, the `_bf16_gemm_dispatch_impl` fallback and the first-line marker are untouched.
+
+**Pooler variant choice.** The review said to choose by the m<=16 pooler rows, not by "harvested as a gain". These are pooler m in {1, 8, 16} from the three done/neutral result.json files:
+
+| variant | ratio vs SGLang d1 / v1 / d16 | median_ns d1 / v1 / d16 (sum) | kernel us d1 / v1 / d16 (sum) |
+|---|---|---|---|
+| pooler-splitk2-tma-weight-stream | 1.1147 / 1.1079 / 1.1021 | 19148 / 19352 / 19483 (57983) | 18.7 / 20.4 / 20.1 (59.2) |
+| ...-control-blockk256 (BLOCK_K 256) | 1.1142 / 1.0972 / 1.0871 | 19229 / 19613 / 19649 (58491) | 18.8 / 19.5 / 19.6 (57.9) |
+| ...-semaphore (BLOCK_K 128, named in the spec) | 1.0712 / 1.0678 / 1.0590 | 20194 / 19868 / 20669 (60731) | 19.5 / 20.0 / 19.9 (59.4) |
+
+TMA leads BLOCK_K 256 by about 0.8% on ratio and 0.9% on median time, but its kernel time is higher (59.2 vs 57.9 us). That is within ~1%, so per the brief the non-TMA variant wins: **pooler slot (1) uses pooler-triton-splitk2-blockn64-semaphore-control-blockk256**. That means POOLER_BLOCK_K = 256, with the rest as the spec says: grid (64, 2), BLOCK_N 64, SPLIT_K 2, 4 warps, 4 stages, BLOCK_M 16. The blockk256 and TMA runs were on base cee590d; the BLOCK_K 128 run was on 3fe0dcc.
+
+**What was added.** Each part is copied from branch `hyp/muse_bf16_proj/<slug>`. AST comparison shows each matches its source apart from docstrings. The one exception is `_pooler_forward` (see deviations).
+- `_bf16_splitk_kernel`: one definition, used by both pooler and unpooler. The blockk256 and unpooler-slice branches have identical bodies for it.
+- (1) pooler:
+  - `POOLER_*` constants with `POOLER_MAX_M = 16`, plus `_pooler_block_m`, `_pooler_shape_ok` and `_pooler_forward`.
+  - ws fp32 [2, 16, 4096], cnt int32 [64]; warmed for m 1..16.
+- (2) qkv_gate:
+  - `_qkv_splitk_sem_kernel`, `_qkv_forward` and `_qkv_route_ok`, verbatim from qkv-gate-triton-splitk4-blockn64-semaphore, with `QKV_MAX_M = 16`. Using its own kernel body keeps the path byte-for-byte the measured one.
+  - ws fp32 [4, 16, 2304] (strides are launch args), cnt int32 [36].
+  - grid (36, 4), SPLIT_K 4, BLOCK_N 64, BLOCK_K 128, 4 warps, 4 stages; warmed on zeros for m 1..16.
+- (3) unpooler slice:
+  - `UNPOOL_*`, `_unpool_shape_ok` and `_unpool_forward`, verbatim.
+  - n == 1024 only. w is the full unpooler weight read in place (stride_wn 4096).
+  - grid (16, 8), SPLIT_K 8, BLOCK_K 128, 3 stages, BLOCK_M 16.
+  - ws fp32 [8, 16, 1024], cnt int32 [16]; warmed for m 1..8.
+- (4) o:
+  - `_pooler_skinny_kernel` (from pooler-triton-skinny-m32 via o-triton-skinny-m32), plus `_o_skinny_applies`, `_o_skinny_gemm` and `_o_skinny_warmup`, with `O_SKINNY_MAX_M = 16`.
+  - grid (128,), BLOCK_N 64, BLOCK_K 256, full K 1024, 4 warps, 4 stages; warmed on zeros for m 1..16.
+- `prepare()`: allocates the three ws/cnt pairs (separate per layer) and runs the four warm-ups after the router warm-up. It then calls `zero_()` on every cnt.
+- `kernel_fn()`: one shape gate placed before the existing cuBLAS fallback, in the order pooler -> qkv_gate -> unpooler(n==1024) -> o.
+  - Each branch is gated by cfg layer/m/n/k and by the x/weight shape, dtype and stride preconditions only.
+  - The 9 tests route as the spec says. m=1 qkv_gate, m=7 pooler and m=5 unpooler (n=1024) go to Triton. m=33 o, m=130 and m=1000 unpooler (n=8192), m=512 qkv_gate and the router tests are unchanged.
+- Module docstring: added one paragraph that lists the four routed paths.
+
+**Deviations:**
+- Pooler uses the BLOCK_K 256 control variant instead of the BLOCK_K 128 one the spec names. The spec allows the swap, the review asked for it, and the table above shows why.
+- The blockk256 branch's compile diagnostics were dropped: `_pooler_compile_diag`, the `diag=` return of the launch handle, and the print at m 16/32. That code ran only in prepare(), and the launch arguments are unchanged.
+- The unpooler warm set changed from (1, 5, 8) to 1..8, as the spec asks. M is not specialized, so the compiled binary is the same.
+- qkv_gate uses its own `_qkv_splitk_sem_kernel` instead of sharing `_bf16_splitk_kernel`; the spec accepts either. Its ws is [4, 16, 2304] instead of the branch's [4, 32, 2304]. Only the `stride_ws_s` launch argument changes.
+
+## Rules check
+
+Checked against `git -C .worktrees/muse_bf16_proj/bf16-shape-gated-triton-winners-combo diff`:
+
+- [x] CUDA-graph capturable: no `.item()`, `.cpu()`, `synchronize()` or tensor prints. The only allocations in kernel_fn are `torch.empty` outputs whose size comes from the shape, as in the existing paths. Every branch reads cfg, shape, dtype and stride only. The ticket counters reset themselves in-kernel, so each graph replay starts at 0. The diff adds no print.
+- [x] Nothing derived from `data` is cached across calls. ws holds per-call fp32 partials. Each launch fully rewrites them for rows < m and reads them back under the same mask. cnt holds only tickets. Neither is read as data across calls.
+- [x] Weights: no repack. All four paths read the original bf16 `state[layer]` tensors; the unpooler slice is read in place through its row stride. The router hi+lo split is unchanged from master.
+- [x] Activations BF16 where SGLang keeps BF16: x is bf16, accumulation is fp32, outputs are bf16. The KV-cache and FP8-query parts do not apply because this problem has no attention.
+- [x] n/a (no attention in this problem). Every path still computes the full K reduction over every weight row.
+- [x] No timing patches, harness frames/I/O/secrets, module edits, reference import, subprocesses or network. The only imports are the existing torch, triton and sglang ones.
+- [x] All work happens inside the timed call, with no output caching or replay. The prepare() warm-ups use synthetic randn/zeros x and drop their outputs.
+- [x] No `triton.autotune`. The first-line marker `# okc: problem=muse_bf16_proj` is kept.
+
+Lint (`okc_lint.py ... --problem muse_bf16_proj`):
+
+```
+CLEAN: /home/user/git/musespark/.worktrees/muse_bf16_proj/bf16-shape-gated-triton-winners-combo/muse_bf16_proj/submission.py
+```
+
+`python3 -I -m py_compile` passed, and the `__pycache__` it left in the worktree was removed.
