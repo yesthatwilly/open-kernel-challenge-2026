@@ -87,8 +87,10 @@ kind: rewrite
 controls_for: null
 rewrite_stage: 1
 replaces: Marlin w13+w2 (moe_wna16_marlin_gemm x2) at bs<=32
-review: required
+review: proceed
 status: queued
+review_at: 2026-10-24T170224Z
+review_companions: null
 ---
 
 # cuda-fused-moe-bs1-persistent-w13-silu-w2
@@ -127,3 +129,31 @@ shape (profile top_kernels) against the incumbent and the speed-of-light floor, 
 2. at or below the incumbent kernels' time on the target shapes;
 3. within ~1.5x of the floor on the target shapes, and the headline CI clears 1.0 (promotable).
 The next stage is minted with `--kind rewrite --depends-on <this slug> --stage N+1`.
+
+## Adversarial review
+
+Reviewed 2026-10-24T170224Z by an adversarial subagent (model opus).
+
+**Verdict: proceed.** Sound rewrite-stage-1 design for decode_1 (weight-stream bound, 5 launches -> 1, all other shapes byte-identical controls), but the epoch/flag protocol as written hangs whenever R grows between calls (including inside the prepare self-check, which would be a charged timeout, not a fallback); fix that and deepen phase-1 bytes in flight at build time, then run as a check after the reset.
+
+### Justification
+Mechanism is plausible: at bs=1 with ~2 local routes the MoE moves ~55 MB (w13 18 MB + w2 9 MB per expert incl. e4m3 scales), floor 11.4 us, and master spends 51.2 us profiled (Marlin pair 44.6 us = ~1.2 TB/s, plus align/silu/post-norm and inter-launch gaps). A persistent weight-streaming kernel at 3-3.5 TB/s lands at ~16-20 us, and the headline arithmetic checks out (decode_1 load ratio 77.8/48.4=1.61 -> ~3.5-3.9 is a ~2.2-2.4x factor on one of six equally weighted loads, i.e. +14-16% geomean; even a 27 us result gives ~+10%). Expected directions match TASK.md: only bs=1 changes, bs=8/16/32/128/256 run master byte for byte and are clean in-run controls. The dequant bit math is correct and exact: (q & 0x80008000) | ((q & 0x70007000) >> 6) places e2m1 sign at bit 15, the 2 exponent bits at bf16 exponent bits 8:7 and the mantissa bit at bit 6, giving e2m1 * 2^-126 (0.5 is a bf16 subnormal, which mul/fma.rn.bf16x2 keep); cvt.rn.f16x2.e4m3x2 is exact, sf*2^119 < 2^128 has <=4 significant bits so the bf16 cast is exact, the product e2m1*sf*2^-7 has <=6 significant bits (range 2^-17..21) and is exact in bf16, and gs*2^7 is an exact power-of-two fold. Bf16 h and bf16-rounded y match master's numerical path; fp32 split-K partials match Marlin's fp32 reduce. Co-residency (132 CTAs, launch_bounds(256,1), ~100 KB smem, grid == SM count asserted) plus 'all my phase-1 items before my first phase-2 wait' is a valid deadlock argument on a dedicated stream. WEAKEST LINK (performance): phase 1 carries 2/3 of the bytes but its stage is only 64 rows x BK 256 = 8 KB codes + 1 KB scales, so 3 stages ahead = ~27 KB per SM (~3.6 MB grid-wide), below the Little-law need of ~4.8 MB at 4.8 TB/s x ~1 us cold-DRAM latency; LESSONS shows 64 KB in flight per CTA reached only 3.3 TB/s and 128 KB 3.73 TB/s, so phase 1 likely runs ~2-2.5 TB/s and the <=18 us M3 target slips to ~22-26 us. Fix at build: make phase-1 stages BK=512 (18 KB, same slot size as phase 2) or 6-8 phase-1 stages in the same ring bytes. Secondary: phase 1 has 64 rows per item but 8 warps of m16 cover 128 rows, so the spec leaves 4 warps idle or needs an unspecified intra-CTA K split + smem reduce; per-SM dequant ALU (~2+ ops/weight over ~860K weights/SM ~ 6-9 us of issue) must overlap the stream, which needs all 8 warps busy. Also, phase-2 items for route 1 depend on the second phase-1 item of CTAs 0-123, so phase 2 is effectively behind a grid barrier with only ~54 KB/SM of prefetch overlap; budget the tail.
+
+### Confounders on the current kernel
+- post-expert-norm-triton-small-m: its _post_norm_combine_kernel (3.4 us at decode_1) is one of the 5 replaced launches and its fp32 formula (eps 1e-8, g * rmsnorm(y*(1+w))) is what phase 3 re-implements; no confound because bs=1 is replaced wholesale and other shapes keep it, but the self-check must compare against this master path, not SGLang's fused_post_expert_norm_weighted_sum.
+- triton-map-align-on-block-m-restack (and the triton-map-align-small-m-port it carries): _align_small (1.6 us at decode_1) is replaced at bs=1 by in-kernel routing; the gain attributed to the fused kernel includes removing this launch, which is intended and readable from the profile (one kernel row vs five). Its block_size_m >=128 part is shape-disjoint.
+- marlin-block-m-two-smaller-on-postnorm: bs>=128 only, disjoint from bs=1; no interaction.
+- sglang-marlin-path-parity: the base pipeline; the fused path's correctness target. No confound.
+
+### Interference and A/B needs
+No companion warranted. The change is gated on num_tokens == 1 and replaces every bs=1 kernel, so there is no landed bs=1 sub-path left whose revert or retune could change the result; bs=8/16/32/128/256 are byte-identical in-run controls that expose run drift. As a rewrite it is judged on the fused kernel's own profiled time against the 51.2 us it replaces and the 11.4 us floor, which one run reads directly from top_kernels plus the [cuda-moe-bs1] PATH CHOSEN line in the log (read the log tail first: a FAILED/fallback line means the run measured master). Judge against master, not stacked with the running w2-l2-prefetch-decode1 (same shape). The next stage, not a control, is the follow-up for any shortfall.
+
+### Open questions
+- BUILD BLOCKER: the epoch protocol hangs when R varies. Flags flag[r][c] are bumped only for routes r < R of the current call, but phase 2 waits for flag == 8*(epoch+1) with epoch counting all calls; after any call with R=1, flag[1][*] lags the epoch, so the next call with R>=2 spins forever. The self-check's case sequence R=0,1,2,3,8 triggers it in prepare. Fix: drop epochs (launches on one stream are already ordered) and have the last CTA by an all-CTA exit ticket reset flags[0..R), (r,n) tickets, the done counter and the exit ticket to 0 at the end of every launch; or bump all 8 routes' flags every call. Also run the self-check cases interleaved (e.g. R=2,1,8,0,3 repeated) and graph-replay with varying R, not 50 calls of a single R.
+- Release/acquire detail: h is written by many threads, so do __syncthreads(), then thread 0 issues fence/red.release.gpu.add on the flag (an st.release is not an increment). The waiter: thread 0 ld.acquire.gpu spin, then __syncthreads, then load the h slice with cp.async.cg / ld.global.cg (L2), never .ca/__ldg, since L1 is not coherent within the launch. Same for split-K partials and y (winner and phase-3 CTA read with .cg after an acquire on the ticket/done counter).
+- Phase-1 tile shape vs 8 warps: 64 weight rows is 4 m16 tiles; specify an intra-CTA K split across the two warp groups with an smem reduce, or use 128-row phase-1 tiles (64 gate + 64 up, 64 tiles per route: 128 items at R=2, still ~1 per CTA) which also doubles bytes per stage.
+- Prefer a cooperative launch (cudaLaunchCooperativeKernel, capturable in graphs on CUDA 12) over the occupancy assert alone, so co-residency is guaranteed by the driver; keep the device-properties assert (132 SMs on H200) as well.
+- The frontmatter says replaces 'Marlin w13+w2 at bs<=32' but the change is bs=1 only; judge milestones on decode_1 (and the bs=1 test) only: M2 fused row <= 46 us, M3 <= 18 us. Expect M2 easily and M3 only with the deeper phase-1 ring.
+- Add one fp32-dequant reference for a single expert (local e2m1/e4m3 decode, not the reference module) as the sibling cuda-nvfp4-swapab-mma-persistent-small-m does, so a nibble-order error cannot hide behind a master-vs-fused comparison that happens to be close.
+- Implementation order with cuda-nvfp4-swapab-mma-persistent-small-m: whichever runs first, keep the repack/dequant device functions shared verbatim so a mainloop bug is found once.
+
