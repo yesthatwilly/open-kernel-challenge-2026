@@ -48,13 +48,19 @@ status: running
 review_at: 2026-10-24T120721Z
 review_companions: null
 hold_reason: null
-stage: claimed
+stage: implemented
 claimed_at: 2026-10-24T124116Z
 base_sha: 4613c6fccb0ad0d891d7c837d1dc24c0465c5aff
 base_blob: efc544103e6d303d1f8602caa9439628043a17a7
 branch: hyp/muse_attention_decode/sliding-fused-triton-decode1-gate
 worktree: .worktrees/muse_attention_decode/sliding-fused-triton-decode1-gate
 mode: null
+implemented_at: 2026-10-24T124236Z
+impl_commit: 5e0c27cca32d3300b0653db04b25fe7a72fb03e1
+submission_sha256: 3178c8c418f2d89cbd468deeca07b683922af8f04f2945fbf7cf5e87f185dd2b
+norm_sha256: ff853cb8d70fa1861bfe365b397ad2db92085721e9e815e5c20e6057cc40571b
+submission_blob: 387dcb6a0e6137b74f7f65b048dce5a3fcbe2008
+lint_warnings: 0
 ---
 
 # sliding-fused-triton-decode1-gate
@@ -98,3 +104,34 @@ No companion is warranted. The change is a config-only early return that affects
 - If classify() calls it neutral only on CI overlap, the reviewer's acceptance rule is the per-shape test: sliding decode_1 at least about 10% faster with the other 11 rows within drift, the same reasoning used to merge batch-gate by hand.
 - With 5 attention checks left today, this costs one check at a single-shape prediction of about 18%. Decide whether it ranks above the pending reruns.
 
+
+## Implementation notes
+
+- Worktree file: `.worktrees/muse_attention_decode/sliding-fused-triton-decode1-gate/muse_attention_decode/submission.py` (base 4613c6f, blob efc5441). Diff: 1 file, 238 insertions, 0 deletions.
+- Ported verbatim from `db5fa4d:muse_attention_decode/submission.py`: `LOG2E`, `_COUNTERS`, `_counters`, `_num_splits`, `_norm_rope`, `_gpu_fence`, `_online_update`, `_gate_epilogue`, `_sliding_fused_kernel`, `_sliding_forward`. Inserted between `_pre_attention_kernel` and `_paired_norm_gate_kernel` (same relative place as db5fa4d). Checked mechanically: the text from `LOG2E = ...` to `_sliding_forward`'s `return out` matches the commit byte for byte.
+- `kernel_fn`: one early return right after `cfg = data["config"]`, before any paired logic: `if cfg["window"] and cfg["batch"] == 1 and cfg["q_len"] == 1: return _sliding_forward(data)`, plus a two-line comment. The predicate reads config only. Everything after it (pre-attention, FA3, paired gate `batch > 1`, `rms_norm_gate` / `_paired_norm_gate_kernel`) is byte-identical to master.
+- At B=1, Hkv=2, `_num_splits` gives S=16 (grid 1x2x16), M=16 (group 8 x L 1), the in-kernel ticket combine is used, `_COUNTERS[(1, 2, dev)]` is the only counter buffer created. It is zeroed once from config shape and reset to 0 by the last-ticket program every launch.
+- No deviation from the spec.
+- Open question 1 (sequencing): fa3-window-trimmed-page-table has harvested to `done/regression/`, so it did not land and master's sliding FA3 path is the one this gate compares against. The margin estimate stands.
+- Open questions 2-4 (evaluator sha match, per-shape acceptance rule, whether it is worth one of today's checks) are for the dispatcher/harvester, not the implementation.
+
+## Rules check
+
+Checked against `git -C .worktrees/muse_attention_decode/sliding-fused-triton-decode1-gate diff`:
+
+- [x] CUDA-graph capturable: no `.item()`/`.cpu()`/`synchronize()`/tensor prints in the added code. `torch.empty` workspaces and grid sizes come from config (batch, q_len, heads, head_dim) only. The gate and `splits > 1` branch on config only. The in-kernel ticket/fence is device-side.
+- [x] Nothing derived from `data` is cached across calls: `_COUNTERS` is keyed on (batch, hkv, device), zero-initialised, holds no data and is left at 0 by every launch. `_inv_freq` (unchanged master code) depends on theta/d only.
+- [x] n/a: no weights in this problem; nothing repacked.
+- [x] Activations BF16 where SGLang keeps BF16; KV cache stored as FP8 E4M3 (`k8`/`v8`, divided by the scales); queries kept bf16 (finer than FP8 E4M3, allowed); output bf16. Softmax/accumulation in fp32.
+- [x] Attention sees every key: old keys over `[max(0, seq-2047), seq-1]` split into S chunks that cover the range, plus the new key from registers; the mask only enforces the window edge and causality, no skipping by weight.
+- [x] No timing patches, harness frames/I/O/secrets, module edits, reference import, subprocesses or network (only triton/torch, the inline PTX fence is a memory fence).
+- [x] All work happens inside the timed call; no output caching or replay. The new cache rows are written every call.
+- [x] First line `# okc: problem=muse_attention_decode` kept; no `triton.autotune` added.
+
+Lint (`python3 -I .claude/skills/churnsubs/bin/okc_lint.py <worktree>/muse_attention_decode/submission.py --problem muse_attention_decode`):
+
+```
+CLEAN: .worktrees/muse_attention_decode/sliding-fused-triton-decode1-gate/muse_attention_decode/submission.py
+```
+
+`python3 -I -m py_compile`: OK (exit 0); `__pycache__` removed from the worktree.
