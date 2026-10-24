@@ -47,9 +47,16 @@ priority: 1
 kind: control
 controls_for: router-triton-hilo-fused
 review: proceed
-status: queued
+status: running
 review_at: 2026-10-24T024326Z
 review_companions: [router-triton-hilo-fused-control-hybrid-cublas-above-m32]
+stage: claimed
+claimed_at: 2026-10-24T024344Z
+base_sha: a392f0b6dcd3d6a023c67bc68ac2f22a8aeece5a
+base_blob: 3f59d3eeb5b8a1fe83df61cbea1c119b5926bc63
+branch: hyp/muse_bf16_proj/router-triton-hilo-fused-control-splitk-all-m
+worktree: .worktrees/muse_bf16_proj/router-triton-hilo-fused-control-splitk-all-m
+mode: null
 ---
 
 # router-triton-hilo-fused-control-splitk-all-m
