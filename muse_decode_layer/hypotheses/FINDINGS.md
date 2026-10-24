@@ -1,6 +1,6 @@
 # muse_decode_layer findings
 
-Regenerated 2026-10-24T165806Z by `churn.py index`. Read this before writing a hypothesis for muse_decode_layer.
+Regenerated 2026-10-24T173236Z by `churn.py index`. Read this before writing a hypothesis for muse_decode_layer.
 
 ## Current best
 
@@ -27,6 +27,7 @@ Where the time goes (per scored shape, top kernels):
 - **triton-flash-decode-full-paired-kv** → neutral (unproven-vs-best), 1.0702x — gained on sliding verify_16; full verify_16. On full-attention decode steps only (cfg['window'] == 0 and cfg['q_len'] == 1) replace flash_attn_with_kvcache with a two-launch Triton flash-decoding pair buil
 - **triton-flash-decode-full-oversub-kv-prefetch** → regression (regression), 1.0413x — lost on full decode_16, decode_32; sliding verify_16. Build on stage 1 (branch hyp/muse_decode_layer/triton-flash-decode-full-paired-kv, muse_decode_layer/submission.py) and change only _full_decode_splits and the 
 - **fa3-hdim128-head-pairing-batched** → neutral (unproven-vs-best), 1.0874x — gained on full decode_16, decode_32, verify_16, verify_32. Port muse_attention_decode's landed fa3-hdim128-head-pairing (1.171x) to the flash_attn_with_kvcache call in muse_decode_layer kernel_fn, gated to full-attentio
+- **sliding-fused-triton-decode1-port** → neutral (unproven-vs-best), 1.1690x — gained on sliding decode_1. Port muse_attention_decode's landed sliding-fused-triton-decode1-gate (1.293x there, sliding decode_1 16.56 -> 13.12 us) to muse_decode_layer kernel_fn. Copy ve
 
 ### MoE align/dispatch
 - **expert-id-map-single-kernel** → neutral (unproven-vs-best), 1.0374x — no shape moved outside noise. Replace the three small kernels that turn the routing output into Marlin's local expert ids with one Triton kernel. Today kernel_fn computes local_ids = (topk_i
@@ -35,8 +36,12 @@ Where the time goes (per scored shape, top kernels):
 ### cache store
 - **cache-store-fused-fp8-cast** → neutral (unproven-vs-best), 1.0303x — no shape moved outside noise. In kernel_fn, replace the four separate launches between FusedQKNorm and flash_attn_with_kvcache, namely k.to(FP8), v.to(FP8), store_cache(...) and q.view(token
 
+### output norm-gate
+- **paired-heads-pad-unpad-triton** → neutral (within-ci), 1.1654x — gained on full verify_16. Port the launch cleanup of muse_attention_decode's paired-heads-launch-cleanup (full layers there: decode_16 +6.4%, decode_32 +3.8%, verify_16 +5.9%) to master'
+
 ### pooler GEMM
 - **pooler-gemm-splitk-autotune** → neutral (within-ci), 1.0189x — no shape moved outside noise. For the pooler GEMM only (ffn_input [T, 8192] bf16 x pooler [4096, 8192] bf16, a 67 MB weight read whose floor is 14 us), pick the GEMM form per scored T in pre
+- **bf16-shape-gated-triton-gemms-small-t** → neutral (unproven-vs-best), 1.1688x — gained on sliding decode_1; full decode_1, decode_32, verify_16; lost on sliding decode_16, verify_1; full verify_1. Port muse_bf16_proj's landed bf16-shape-gated-triton-winners-combo (1.176x vs 1.151x there; code is muse_bf16_proj/submission.py on master: _bf16_splitk_kernel,
 
 ### post-expert norm+combine
 - **post-expert-norm-triton-small-t** → gain (gain), 1.1635x — gained on sliding decode_1, decode_16, verify_1; full decode_1, decode_16, verify_1. Port muse_moe_w4a16's landed post-expert-norm-triton-small-m (1.130x there, job bacd1f502f4e46fa; patch muse_moe_w4a16/hypotheses/done/gain/post-expert-norm-tri
@@ -59,6 +64,9 @@ Where the time goes (per scored shape, top kernels):
 - fused-preattention-triton: unproven-vs-best: the change is not proven either way; a stacked hypothesis (`depends_on: fused-preattention-triton`) that adds a further change in the same area is the only way to learn more (identical code is never re-
 - triton-flash-decode-full-paired-kv: rewrite stage 1 of `FA3 on full-attention decode (q_len=1): flash_fwd main + FlashAttnFwdCombine`: read the replaced kernels' own us per shape (profile top_kernels) against the incumbent and the floor, and check which Mi
 - fa3-hdim128-head-pairing-batched: unproven-vs-best: the change is not proven either way; a stacked hypothesis (`depends_on: fa3-hdim128-head-pairing-batched`) that adds a further change in the same area is the only way to learn more (identical code is ne
+- bf16-shape-gated-triton-gemms-small-t: unproven-vs-best: the change is not proven either way; a stacked hypothesis (`depends_on: bf16-shape-gated-triton-gemms-small-t`) that adds a further change in the same area is the only way to learn more (identical code 
+- sliding-fused-triton-decode1-port: unproven-vs-best: the change is not proven either way; a stacked hypothesis (`depends_on: sliding-fused-triton-decode1-port`) that adds a further change in the same area is the only way to learn more (identical code is n
+- paired-heads-pad-unpad-triton: within-ci: the change is not proven either way; a stacked hypothesis (`depends_on: paired-heads-pad-unpad-triton`) that adds a further change in the same area is the only way to learn more (identical code is never re-run
 
 ## Do not retry (rejected / duplicates)
 
@@ -78,7 +86,6 @@ Where the time goes (per scored shape, top kernels):
 - queue: bf16-m32-swapab-wgmma-port [pooler GEMM] p3 hold
 - queue: moe-align-small-t-restack-on-master [MoE align/dispatch] p4 queued
 - queue: fused-preattention-paired-pad-restack [pre-attention norm+rope] p5 queued
-- running: bf16-shape-gated-triton-gemms-small-t [pooler GEMM] p2 running
-- running: sliding-fused-triton-decode1-port [FA3 call] p3 running
-- running: paired-heads-pad-unpad-triton [output norm-gate] p3 running
 - running: full-decode-cuda-splitkv-port [FA3 call] p1 running
+- running: moe-chain-cuda-swapab-expert-once-large-t [w13 marlin + silu-mul + w2 marlin] p1 running
+- running: small-t-launch-minimal-dense-chain-pdl [whole-layer fusion] p2 running

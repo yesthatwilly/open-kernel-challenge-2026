@@ -1,6 +1,6 @@
 # muse_moe_w4a16 hypotheses
 
-Regenerated 2026-10-24T165806Z. Best: 1.3076x [1.2880,1.3272] job `3cabc739f1af493e` (submit)
+Regenerated 2026-10-24T173236Z. Best: 1.3076x [1.2880,1.3272] job `3cabc739f1af493e` (submit)
 
 | created | slug | kind | area | where | outcome | speedup | CI | job | mode | promotion | review | expected hit |
 |---|---|---|---|---|---|---|---|---|---|---|---|---|
@@ -14,7 +14,7 @@ Regenerated 2026-10-24T165806Z. Best: 1.3076x [1.2880,1.3272] job `3cabc739f1af4
 | 2026-10-23T225502Z | w13-marlin-atomic-add-small-m | primary | w13 marlin | done/neutral | neutral | 0.9869 | [0.972,1.002] | c8ea8e21eea447f9 | check |  | proceed | 1/4 |
 | 2026-10-23T225502Z | w13-marlin-bf16-reduce-verify | primary | w13 marlin | done/neutral | neutral | 0.9840 | [0.969,0.999] | 8d389f3d3e2d473f | check |  | proceed | 1/3 |
 | 2026-10-23T225502Z | marlin-block-size-m-next-larger | primary | MoE align/dispatch | done/regression | regression | 0.9178 | [0.904,0.932] | 2639e3ca7f5549de | check |  | proceed | 3/5 |
-| 2026-10-24T075126Z | post-expert-norm-triton-small-m | primary | post-expert norm+combine | done/gain | gain | 1.1297 | [1.113,1.147] | bacd1f502f4e46fa | check | merged | proceed | 6/6 |
+| 2026-10-24T075126Z | post-expert-norm-triton-small-m | primary | post-expert norm+combine | done/gain | gain | 1.1297 | [1.113,1.147] | bacd1f502f4e46fa | check | superseded | proceed | 6/6 |
 | 2026-10-24T075232Z | marlin-block-size-m-next-smaller | primary | w13 marlin | done/gain | gain | 1.0394 | [1.024,1.055] | 198f10f446a847cb | check | pending | proceed | 5/6 |
 | 2026-10-24T075232Z | align-256-experts-below-128 | primary | MoE align/dispatch | done/neutral | neutral | 0.9998 | [0.985,1.015] | e753d5b9df644ebb | check |  | proceed | 3/6 |
 | 2026-10-24T075257Z | align-remote-sentinel-ids | primary | MoE align/dispatch | queue | hold |  |  |  |  |  | hold |  |
@@ -30,9 +30,13 @@ Regenerated 2026-10-24T165806Z. Best: 1.3076x [1.2880,1.3272] job `3cabc739f1af4
 | 2026-10-24T140229Z | swapab-w13-silu-epilogue-verify | rewrite | silu-mul | queue | queued |  |  |  |  |  | required |  |
 | 2026-10-24T140229Z | triton-map-align-verify-chunked | primary | MoE align/dispatch | done/failed | failed |  |  | 3aa4d7e193244255 | check |  | proceed |  |
 | 2026-10-24T144931Z | triton-map-align-verify-chunked-pow2-fix | primary | MoE align/dispatch | done/neutral | neutral | 1.3107 | [1.291,1.330] | c1c72d5d19ea444f | check |  | proceed | 2/4 |
-| 2026-10-24T164817Z | align-parallel-per-expert-verify | primary | MoE align/dispatch | running | running |  |  | 45eacf4ca2e849d2 | check |  | proceed |  |
-| 2026-10-24T164836Z | w2-l2-prefetch-decode1 | primary | w2 marlin | running | running |  |  | ac6897f284934dad | check |  | proceed |  |
+| 2026-10-24T164817Z | align-parallel-per-expert-verify | primary | MoE align/dispatch | done/neutral | neutral | 1.3249 | [1.305,1.345] | 45eacf4ca2e849d2 | check |  | proceed | 4/4 |
+| 2026-10-24T164836Z | w2-l2-prefetch-decode1 | primary | w2 marlin | done/regression | regression | 1.2615 | [1.243,1.280] | ac6897f284934dad | check |  | proceed | 3/4 |
 | 2026-10-24T164857Z | marlin-two-stream-expert-halves-small-m | primary | launch overhead | running | running |  |  |  |  |  | proceed |  |
+| 2026-10-24T165851Z | cuda-fused-moe-bs1-persistent-w13-silu-w2 | rewrite | whole-layer fusion | running | running |  |  |  |  |  | proceed |  |
+| 2026-10-24T165851Z | cuda-nvfp4-swapab-mma-persistent-small-m | rewrite | w13 marlin + silu-mul + w2 marlin | running | running |  |  |  |  |  | proceed |  |
+| 2026-10-24T172038Z | cuda-nvfp4-wgmma-rega-grouped-verify | rewrite | w13 marlin + silu-mul + w2 marlin | running | running |  |  |  |  |  | proceed |  |
+| 2026-10-24T172123Z | cuda-fused-moe-midm-single-launch-routed | rewrite | whole-layer fusion | queue | queued |  |  |  |  |  | proceed |  |
 
 ## Held
 

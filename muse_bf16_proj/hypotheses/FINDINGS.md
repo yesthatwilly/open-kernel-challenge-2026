@@ -1,10 +1,10 @@
 # muse_bf16_proj findings
 
-Regenerated 2026-10-24T165806Z by `churn.py index`. Read this before writing a hypothesis for muse_bf16_proj.
+Regenerated 2026-10-24T173236Z by `churn.py index`. Read this before writing a hypothesis for muse_bf16_proj.
 
 ## Current best
 
-1.1984x [1.1805,1.2164] from job `1602a4e947e64090` (check), master commit `8b9ad430b2`, hypothesis bf16-m32-swapab-wgmma-triton
+1.1959x [1.1779,1.2138] from job `eeb9985396764ac2` (submit), master commit `8b9ad430b2`, hypothesis bf16-m32-swapab-wgmma-triton
 
 Where the time goes (per scored shape, top kernels):
 
@@ -45,6 +45,12 @@ Where the time goes (per scored shape, top kernels):
 - **sglang-gemm-dispatch-parity** → gain (gain), 1.0022x — gained on router decode_16, decode_32, verify_16, verify_32; o verify_32. Replace the starter's plain x @ W[:n].T with the exact dispatch SGLang's kernel uses: sglang.srt.layers.quantization.unquant._bf16_gemm_dispatch_impl(x, W[:n], 
 - **bf16-cublaslt-backend-toggle** → neutral (within-ci), 1.1505x — gained on qkv_gate decode_1, verify_16; pooler decode_32; lost on o decode_1, verify_1; unpooler decode_1, verify_1; router verify_1; qkv_gate verify_32. A dispatch probe, pure PyTorch, no kernel of ours: in kernel_fn, for the four bf16 layers only, call torch.backends.cuda.preferred_blas_library('cublaslt') imme
 
+### bf16 GEMM dispatch (m<=16, swap-AB Triton)
+- **bf16-m16-swapab-wgmma-extend** → neutral (unproven-vs-best), 1.2115x — gained on qkv_gate decode_1; o decode_1, decode_16, verify_1; pooler decode_1; unpooler decode_1, verify_1; lost on router decode_16. Built on master (8b9ad43, submission blob a8bb42a). Master's m<=16 Triton paths all put the tokens on tl.dot's M side with BLOCK_M=16 (pooler _bf16_splitk_kerne
+
+### bf16 GEMM dispatch (m=128/256, cuBLASLt algo selection)
+- **bf16-cublaslt-algo-pick-in-prepare-m128-m256** → neutral (within-ci), 1.1879x — lost on qkv_gate decode_1, decode_32, verify_1, verify_32; router verify_1. Built on master (658d63b). For the four bf16 layers at exactly cfg m == 128 and cfg m == 256 (loads verify_16 and verify_32; 8 shapes), replace _bf16_gemm_dispa
+
 ### bf16 GEMM dispatch (m=17..32, swap-AB Triton)
 - **bf16-m32-swapab-wgmma-triton** → neutral (unproven-vs-best), 1.1984x — gained on qkv_gate decode_1, decode_16, decode_32, verify_1; o decode_32, verify_1, verify_16; pooler decode_32, verify_1; router verify_1, verify_16. Built on master (658d63b, submission blob 3f76eb8: shape-gated Triton at m<=16 + unpooler slice + 3-D split-K router; cuBLAS everywhere else). Add ONE new swap-
 
@@ -78,6 +84,7 @@ Where the time goes (per scored shape, top kernels):
 - **router-splitk32-small-m-all-loads-in-flight** → neutral (within-ci), 1.1427x — gained on pooler verify_16; lost on router decode_1, decode_16, decode_32, verify_1. Built on master (dba4ffd). Change only the two small-m buckets of _router_config and the num_stages they launch with; the kernel body, the torch.zeros output + 
 - **router-splitk-semaphore-no-memset** → neutral (unproven-vs-best), 1.1516x — gained on qkv_gate decode_1, verify_1; pooler verify_16; lost on router decode_1, decode_16, decode_32, verify_16. Built on master (dba4ffd). For the router at m <= 32 only (buckets (16,32,16) and (32,32,16): grid (1, 8, 16) = 128 CTAs, unchanged tiles, BLOCK_K=128, num_stag
 - **router-splitk32-small-m-all-loads-in-flight-control-stages3** → neutral (unproven-vs-best), 1.1518x — gained on unpooler decode_1; router decode_1, decode_16, decode_32, verify_1; qkv_gate decode_16; lost on o verify_16; pooler verify_16; router verify_16. From the parent's branch (router-splitk32-small-m-all-loads-in-flight), keep everything exactly as the parent: the new m<=16 bucket (BLOCK_M=16, BLOCK_N=32, SPL
+- **router-swapab-wgmma-all-m** → neutral (within-ci), 1.1951x — gained on router decode_1, decode_16, decode_32, verify_1; lost on qkv_gate decode_1, decode_16, decode_32, verify_1; router verify_16. Built on master (8b9ad43). Master's router is _router_hilo_kernel with the tokens on tl.dot's M side: grid (cdiv(m, BLOCK_M), 256 // BLOCK_N, SPLIT_K), (BLOCK_M
 
 ### unpooler GEMM
 - **unpooler-slice-triton-gemv** → regression (regression), 0.8801x — gained on o verify_1; lost on unpooler decode_1, verify_1. For layer == 'unpooler' and m <= 8 only (the sliced case: n=1024, k=4096, an 8.4 MB weight read), replace the _bf16_gemm_dispatch_impl(x, W[:1024], None) call i
@@ -104,6 +111,9 @@ Where the time goes (per scored shape, top kernels):
 - bf16-shape-gated-triton-winners-combo: unproven-vs-best: the change is not proven either way; a stacked hypothesis (`depends_on: bf16-shape-gated-triton-winners-combo`) that adds a further change in the same area is the only way to learn more (identical code 
 - bf16-m128-nn-weight-layout-probe: unproven-vs-best: the change is not proven either way; a stacked hypothesis (`depends_on: bf16-m128-nn-weight-layout-probe`) that adds a further change in the same area is the only way to learn more (identical code is ne
 - bf16-m32-swapab-wgmma-triton: unproven-vs-best: the change is not proven either way; a stacked hypothesis (`depends_on: bf16-m32-swapab-wgmma-triton`) that adds a further change in the same area is the only way to learn more (identical code is never 
+- bf16-cublaslt-algo-pick-in-prepare-m128-m256: within-ci: the change is not proven either way; a stacked hypothesis (`depends_on: bf16-cublaslt-algo-pick-in-prepare-m128-m256`) that adds a further change in the same area is the only way to learn more (identical code 
+- bf16-m16-swapab-wgmma-extend: unproven-vs-best: the change is not proven either way; a stacked hypothesis (`depends_on: bf16-m16-swapab-wgmma-extend`) that adds a further change in the same area is the only way to learn more (identical code is never 
+- router-swapab-wgmma-all-m: within-ci: the change is not proven either way; a stacked hypothesis (`depends_on: router-swapab-wgmma-all-m`) that adds a further change in the same area is the only way to learn more (identical code is never re-run).
 
 ## Do not retry (rejected / duplicates)
 
@@ -116,8 +126,7 @@ Where the time goes (per scored shape, top kernels):
 - queue: router-hilo-addmm-epilogue-control-inplace-out [router GEMM] p1 hold
 - queue: qkv-gate-o-m128-wgmma-splitk-semaphore [qkv GEMM + o GEMM (m=128)] p2 hold
 - queue: pooler-m32-tma-splitk-extend [pooler GEMM (m=17..32)] p3 hold
-- running: bf16-cublaslt-algo-pick-in-prepare-m128-m256 [bf16 GEMM dispatch (m=128/256, cuBLASLt algo selection)] p2 running
 - running: pooler-unpooler-m128-tma-wspec-rewrite [pooler GEMM + unpooler GEMM (m=128)] p2 running
-- running: bf16-m16-swapab-wgmma-extend [bf16 GEMM dispatch (m<=16, swap-AB Triton)] p2 running
-- running: router-swapab-wgmma-all-m [router GEMM] p2 running
 - running: bf16-small-m-cuda-gemv-rewrite [bf16 GEMM dispatch (m<=8, hand-written CUDA weight stream)] p3 running
+- running: bf16-lossless-exp4-weight-stream-rewrite [bf16 GEMM dispatch (m<=32, lossless-compressed weight stream)] p1 running
+- running: bf16-verify-streamk-cutlass-wgmma-rewrite [bf16 GEMM dispatch (m=129..256, persistent stream-K TMA/wgmma)] p2 running

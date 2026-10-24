@@ -1,6 +1,6 @@
 # muse_moe_w4a16 findings
 
-Regenerated 2026-10-24T165806Z by `churn.py index`. Read this before writing a hypothesis for muse_moe_w4a16.
+Regenerated 2026-10-24T173236Z by `churn.py index`. Read this before writing a hypothesis for muse_moe_w4a16.
 
 ## Current best
 
@@ -25,6 +25,7 @@ Where the time goes (per scored shape, top kernels):
 - **triton-map-align-small-m-port** → neutral (beats-base-not-best), 1.1850x — gained on decode_1 decode_1; decode_16 decode_16; decode_32 decode_32; verify_1 verify_1. Port muse_decode_layer moe-align-single-kernel-small-t (patch: muse_decode_layer/hypotheses/done/neutral/moe-align-single-kernel-small-t.patch; its _align_small
 - **triton-map-align-verify-chunked** → failed (test:failed). Extend master's single-program map+align (_align_small_kernel, triton-map-align-small-m-port) to num_tokens > 32 (bs=128/256, and the bs=33/257/skewed-128 tests
 - **triton-map-align-verify-chunked-pow2-fix** → neutral (within-ci), 1.3107x — no shape moved outside noise. Re-run triton-map-align-verify-chunked (failed at compile: tl.arange(0, BSM) with BSM=48 in prepare's warm-up raised 'arange's range must be a power of 2') with
+- **align-parallel-per-expert-verify** → neutral (unproven-vs-best), 1.3249x — gained on verify_16 verify_16; verify_32 verify_32. For num_tokens > ALIGN_FUSED_MAX_TOKENS (bs=128, 256 and the bs=33/257/skewed-128 tests) when expert_map is not None, replace master's else-branch (topk_ids.to(
 
 ### MoE align/dispatch + block_size_m pick
 - **triton-map-align-on-block-m-restack** → gain (gain), 1.3117x — gained on decode_1 decode_1; decode_16 decode_16; decode_32 decode_32; verify_1 verify_1. Stack the two measured, shape-disjoint moe wins: start from master (marlin-block-m-two-smaller-on-postnorm, 1.254x: block_size_m two candidates down at num_toke
@@ -44,6 +45,9 @@ Where the time goes (per scored shape, top kernels):
 - **marlin-block-m-cap-16-port** → neutral (beats-base-not-best), 1.0950x — gained on verify_16 verify_16; verify_32 verify_32. Port muse_decode_layer marlin-block-m-cap-16 (landed gain 1.062x, job 0730135cdcac43b7; patch in muse_decode_layer/hypotheses/done/gain/marlin-block-m-cap-16.pa
 - **marlin-block-m-two-smaller-on-postnorm** → gain (gain), 1.2536x — gained on verify_16 verify_16; verify_32 verify_32. Restack the landed-but-unmerged marlin-block-size-m-verify-two-smaller (1.092x on the pre-post-norm base, job ed837a4a46d44a95; patch at muse_moe_w4a16/hypothes
 
+### w2 marlin
+- **w2-l2-prefetch-decode1** → regression (regression), 1.2615x — lost on decode_1 decode_1. At num_tokens == 1 only (decode_1; every other M runs master unchanged), warm L2 with the w2 weights of this token's local experts before the w13 Marlin call, s
+
 ## Open follow-ups
 
 - align-single-token-ep: unproven-vs-best: the change is not proven either way; a stacked hypothesis (`depends_on: align-single-token-ep`) that adds a further change in the same area is the only way to learn more (identical code is never re-run)
@@ -55,6 +59,7 @@ Where the time goes (per scored shape, top kernels):
 - triton-map-align-small-m-port: beats-base-not-best: the change is not proven either way; a stacked hypothesis (`depends_on: triton-map-align-small-m-port`) that adds a further change in the same area is the only way to learn more (identical code is ne
 - post-norm-triton-all-m: within-ci: the change is not proven either way; a stacked hypothesis (`depends_on: post-norm-triton-all-m`) that adds a further change in the same area is the only way to learn more (identical code is never re-run).
 - triton-map-align-verify-chunked-pow2-fix: within-ci: the change is not proven either way; a stacked hypothesis (`depends_on: triton-map-align-verify-chunked-pow2-fix`) that adds a further change in the same area is the only way to learn more (identical code is n
+- align-parallel-per-expert-verify: unproven-vs-best: the change is not proven either way; a stacked hypothesis (`depends_on: align-parallel-per-expert-verify`) that adds a further change in the same area is the only way to learn more (identical code is ne
 - triton-map-align-verify-chunked: none
 
 ## Do not retry (rejected / duplicates)
@@ -70,6 +75,8 @@ Where the time goes (per scored shape, top kernels):
 - queue: marlin-two-class-block-m-decode32 [MoE align/dispatch + block_size_m pick] p2 hold
 - queue: swapab-nvfp4-gemm-verify-rewrite [w13 marlin + w2 marlin] p1 hold
 - queue: swapab-w13-silu-epilogue-verify [silu-mul] p2 queued
-- running: align-parallel-per-expert-verify [MoE align/dispatch] p1 running
-- running: w2-l2-prefetch-decode1 [w2 marlin] p2 running
+- queue: cuda-fused-moe-midm-single-launch-routed [whole-layer fusion] p2 queued
 - running: marlin-two-stream-expert-halves-small-m [launch overhead] p3 running
+- running: cuda-fused-moe-bs1-persistent-w13-silu-w2 [whole-layer fusion] p2 running
+- running: cuda-nvfp4-swapab-mma-persistent-small-m [w13 marlin + silu-mul + w2 marlin] p1 running
+- running: cuda-nvfp4-wgmma-rega-grouped-verify [w13 marlin + silu-mul + w2 marlin] p1 running

@@ -1,6 +1,6 @@
 # muse_bf16_proj hypotheses
 
-Regenerated 2026-10-24T165806Z. Best: 1.1984x [1.1805,1.2164] job `1602a4e947e64090` (check)
+Regenerated 2026-10-24T173236Z. Best: 1.1959x [1.1779,1.2138] job `eeb9985396764ac2` (submit)
 
 | created | slug | kind | area | where | outcome | speedup | CI | job | mode | promotion | review | expected hit |
 |---|---|---|---|---|---|---|---|---|---|---|---|---|
@@ -31,13 +31,15 @@ Regenerated 2026-10-24T165806Z. Best: 1.1984x [1.1805,1.2164] job `1602a4e947e64
 | 2026-10-24T103959Z | router-splitk32-small-m-all-loads-in-flight-control-stages3 | control→router-splitk32-small-m-all-loads-in-flight | router GEMM | done/neutral | neutral | 1.1518 | [1.135,1.169] | 4685bac7a662454d | check |  | proceed | 4/6 |
 | 2026-10-24T112147Z | bf16-shape-gated-triton-winners-combo | primary | bf16 GEMM dispatch (shape-gated Triton routing, m<=16) | done/neutral | neutral | 1.1760 | [1.158,1.194] | 875f3e0172ee48a1 | check | merged | proceed | 14/16 |
 | 2026-10-24T112213Z | bf16-m128-nn-weight-layout-probe | primary | bf16 GEMM dispatch (m>=128, weight layout) | done/neutral | neutral | 1.1580 | [1.141,1.175] | 2dc5dce078be4a24 | check |  | proceed | 7/8 |
-| 2026-10-24T140147Z | bf16-m32-swapab-wgmma-triton | primary | bf16 GEMM dispatch (m=17..32, swap-AB Triton) | done/neutral | neutral | 1.1984 | [1.180,1.216] | 1602a4e947e64090 | check | submitted | proceed | 4/10 |
-| 2026-10-24T140216Z | bf16-cublaslt-algo-pick-in-prepare-m128-m256 | primary | bf16 GEMM dispatch (m=128/256, cuBLASLt algo selection) | running | running |  |  | 26a8be34a5eb4426 | submit |  | proceed |  |
+| 2026-10-24T140147Z | bf16-m32-swapab-wgmma-triton | primary | bf16 GEMM dispatch (m=17..32, swap-AB Triton) | done/neutral | neutral | 1.1984 | [1.180,1.216] | 1602a4e947e64090 | check | done | proceed | 4/10 |
+| 2026-10-24T140216Z | bf16-cublaslt-algo-pick-in-prepare-m128-m256 | primary | bf16 GEMM dispatch (m=128/256, cuBLASLt algo selection) | done/neutral | neutral | 1.1879 | [1.170,1.206] | 26a8be34a5eb4426 | submit |  | proceed | 7/10 |
 | 2026-10-24T140242Z | pooler-unpooler-m128-tma-wspec-rewrite | rewrite | pooler GEMM + unpooler GEMM (m=128) | running | running |  |  |  |  |  | proceed |  |
 | 2026-10-24T140257Z | pooler-m32-tma-splitk-extend | primary | pooler GEMM (m=17..32) | queue | hold |  |  |  |  |  | hold |  |
-| 2026-10-24T165012Z | bf16-m16-swapab-wgmma-extend | primary | bf16 GEMM dispatch (m<=16, swap-AB Triton) | running | running |  |  | 89fabef70bd745f7 | submit |  | proceed |  |
-| 2026-10-24T165036Z | router-swapab-wgmma-all-m | primary | router GEMM | running | running |  |  | 587e340476944b46 | submit |  | proceed |  |
+| 2026-10-24T165012Z | bf16-m16-swapab-wgmma-extend | primary | bf16 GEMM dispatch (m<=16, swap-AB Triton) | done/neutral | neutral | 1.2115 | [1.193,1.230] | 89fabef70bd745f7 | submit |  | proceed | 5/16 |
+| 2026-10-24T165036Z | router-swapab-wgmma-all-m | primary | router GEMM | done/neutral | neutral | 1.1951 | [1.177,1.213] | 587e340476944b46 | submit |  | proceed | 4/10 |
 | 2026-10-24T165102Z | bf16-small-m-cuda-gemv-rewrite | rewrite | bf16 GEMM dispatch (m<=8, hand-written CUDA weight stream) | running | running |  |  |  |  |  | proceed |  |
+| 2026-10-24T172152Z | bf16-lossless-exp4-weight-stream-rewrite | rewrite | bf16 GEMM dispatch (m<=32, lossless-compressed weight stream) | running | running |  |  |  |  |  | proceed |  |
+| 2026-10-24T172235Z | bf16-verify-streamk-cutlass-wgmma-rewrite | rewrite | bf16 GEMM dispatch (m=129..256, persistent stream-K TMA/wgmma) | running | running |  |  |  |  |  | proceed |  |
 
 ## Held
 

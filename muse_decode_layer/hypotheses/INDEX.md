@@ -1,6 +1,6 @@
 # muse_decode_layer hypotheses
 
-Regenerated 2026-10-24T165806Z. Best: 1.1665x [1.1490,1.1840] job `a017e10aec544c55` (submit)
+Regenerated 2026-10-24T173236Z. Best: 1.1665x [1.1490,1.1840] job `a017e10aec544c55` (submit)
 
 | created | slug | kind | area | where | outcome | speedup | CI | job | mode | promotion | review | expected hit |
 |---|---|---|---|---|---|---|---|---|---|---|---|---|
@@ -23,14 +23,16 @@ Regenerated 2026-10-24T165806Z. Best: 1.1665x [1.1490,1.1840] job `a017e10aec544
 | 2026-10-24T100416Z | triton-flash-decode-full-oversub-kv-prefetch | rewrite | FA3 call | done/regression | regression | 1.0413 | [1.026,1.057] | e55908a05eec4000 | check |  | proceed | 3/5 |
 | 2026-10-24T103909Z | fa3-hdim128-head-pairing-batched | primary | FA3 call | done/neutral | neutral | 1.0874 | [1.071,1.104] | fb07a3bd3aa54baf | check | merged | proceed | 7/7 |
 | 2026-10-24T140057Z | post-expert-norm-triton-small-t | primary | post-expert norm+combine | done/gain | gain | 1.1635 | [1.146,1.181] | 9dcaec316b3045a7 | check | done | proceed | 6/6 |
-| 2026-10-24T140116Z | bf16-shape-gated-triton-gemms-small-t | primary | pooler GEMM | running | running |  |  | 6076ae1f250143aa | submit |  | proceed |  |
-| 2026-10-24T140135Z | sliding-fused-triton-decode1-port | primary | FA3 call | running | running |  |  | 12198572363b49a4 | submit |  | proceed |  |
-| 2026-10-24T140156Z | paired-heads-pad-unpad-triton | primary | output norm-gate | running | running |  |  | a92b64be4c6547d3 | submit |  | proceed |  |
+| 2026-10-24T140116Z | bf16-shape-gated-triton-gemms-small-t | primary | pooler GEMM | done/neutral | neutral | 1.1688 | [1.151,1.186] | 6076ae1f250143aa | submit |  | proceed | 2/6 |
+| 2026-10-24T140135Z | sliding-fused-triton-decode1-port | primary | FA3 call | done/neutral | neutral | 1.1690 | [1.152,1.187] | 12198572363b49a4 | submit |  | proceed | 5/5 |
+| 2026-10-24T140156Z | paired-heads-pad-unpad-triton | primary | output norm-gate | done/neutral | neutral | 1.1654 | [1.148,1.183] | a92b64be4c6547d3 | submit |  | proceed | 4/7 |
 | 2026-10-24T165154Z | full-decode-cuda-splitkv-port | rewrite | FA3 call | running | running |  |  |  |  |  | proceed |  |
 | 2026-10-24T165224Z | full-verify-cuda-splitkv-stage2 | rewrite | FA3 call | queue | queued |  |  |  |  |  | proceed |  |
 | 2026-10-24T165242Z | bf16-m32-swapab-wgmma-port | primary | pooler GEMM | queue | hold |  |  |  |  |  | proceed |  |
 | 2026-10-24T165302Z | moe-align-small-t-restack-on-master | primary | MoE align/dispatch | queue | queued |  |  |  |  |  | proceed |  |
-| 2026-10-24T165619Z | fused-preattention-paired-pad-restack | primary | pre-attention norm+rope | queue | queued |  |  |  |  |  | required |  |
+| 2026-10-24T165619Z | fused-preattention-paired-pad-restack | primary | pre-attention norm+rope | queue | queued |  |  |  |  |  | proceed |  |
+| 2026-10-24T172107Z | moe-chain-cuda-swapab-expert-once-large-t | rewrite | w13 marlin + silu-mul + w2 marlin | running | running |  |  |  |  |  | proceed |  |
+| 2026-10-24T172138Z | small-t-launch-minimal-dense-chain-pdl | rewrite | whole-layer fusion | running | running |  |  |  |  |  | proceed |  |
 
 ## Held
 

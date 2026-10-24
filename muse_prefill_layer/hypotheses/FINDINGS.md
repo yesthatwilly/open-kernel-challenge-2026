@@ -1,10 +1,10 @@
 # muse_prefill_layer findings
 
-Regenerated 2026-10-24T165806Z by `churn.py index`. Read this before writing a hypothesis for muse_prefill_layer.
+Regenerated 2026-10-24T173236Z by `churn.py index`. Read this before writing a hypothesis for muse_prefill_layer.
 
 ## Current best
 
-1.0599x [1.0440,1.0758] from job `fb1e52d2119d4175` (check), master commit `b92a0f4719`, hypothesis experts-hybrid-marlin-turn-triton-first-turn
+1.0592x [1.0433,1.0751] from job `ba9c16b9cc6b4605` (submit), master commit `b92a0f4719`, hypothesis experts-hybrid-marlin-turn-triton-first-turn
 
 Where the time goes (per scored shape, top kernels):
 
@@ -27,6 +27,12 @@ Where the time goes (per scored shape, top kernels):
 
 ### pre-attention norm+rope + cache store
 - **qk-norm-fp8-cache-store-fusion** → neutral (unproven-vs-best), 1.0093x — no shape moved outside noise. One Triton kernel replaces five launches on the attention front: FusedQKNorm, k.to(FP8), v.to(FP8), store_cache and q.view(T, 16, 64).to(FP8). One program per t
+
+### silu-mul (fused into the w13 Triton NVFP4 GEMM epilogue, T > 4096)
+- **experts-triton-w13-fused-silu-epilogue** → neutral (within-ci), 1.0525x — lost on full first_turn. Fuse SGLang's silu_and_mul into the epilogue of the first (w13) Triton NVFP4 GEMM on the T > 4096 path (_experts_triton, first_turn only), built on master. (1) 
+
+### w13 marlin + w2 marlin (Triton NVFP4 engine, stage 5: packed inline-PTX dequant)
+- **experts-triton-nvfp4-packed-asm-dequant** → neutral (within-ci), 1.0556x — no shape moved outside noise. Stage 5 of the Triton NVFP4 expert rewrite, built on master (stage 4, experts-hybrid-marlin-turn-triton-first-turn). Only the dequant inside _moe_nvfp4_gemm_ker
 
 ### w13 marlin + w2 marlin (W4A16 Triton engine, stage 3: first_turn token tile 256)
 - **experts-triton-w4a16-first-turn-blockt256** → neutral (unproven-vs-best), 1.0229x — gained on full first_turn; sliding first_turn; lost on sliding turn_4. Stage 3 of the Triton NVFP4 grouped GEMM, built on stage 2 (branch hyp/muse_prefill_layer/experts-triton-w4a16-swapab-reglhs, _moe_nvfp4_gemm_kernel and EXPERT_
@@ -54,6 +60,8 @@ Where the time goes (per scored shape, top kernels):
 - experts-marlin-block-m-48-turn1: within-ci: the change is not proven either way; a stacked hypothesis (`depends_on: experts-marlin-block-m-48-turn1`) that adds a further change in the same area is the only way to learn more (identical code is never re-r
 - experts-triton-w4a16-swapab-reglhs: rewrite stage 2 of `Marlin w13+w2 (moe_wna16_marlin_gemm x2) at every prefill T`: read the replaced kernels' own us per shape (profile top_kernels) against the incumbent and the floor, and check which Milestone it reache
 - experts-triton-w4a16-first-turn-blockt256: rewrite stage 3 of `Marlin w13+w2 (moe_wna16_marlin_gemm x2) at every prefill T`: read the replaced kernels' own us per shape (profile top_kernels) against the incumbent and the floor, and check which Milestone it reache
+- experts-triton-nvfp4-packed-asm-dequant: rewrite stage 5 of `Marlin w13+w2 (moe_wna16_marlin_gemm x2) at every prefill T`: read the replaced kernels' own us per shape (profile top_kernels) against the incumbent and the floor, and check which Milestone it reache
+- experts-triton-w13-fused-silu-epilogue: within-ci: the change is not proven either way; a stacked hypothesis (`depends_on: experts-triton-w13-fused-silu-epilogue`) that adds a further change in the same area is the only way to learn more (identical code is nev
 
 ## Do not retry (rejected / duplicates)
 
@@ -61,9 +69,9 @@ Where the time goes (per scored shape, top kernels):
 
 ## Queue and in flight
 
-- queue: experts-dequant-grouped-mm-cutlass [w13 marlin + w2 marlin (GEMM engine: CUTLASS grouped GEMM instead of Triton)] p4 queued
-- queue: experts-dequant-overlap-attention [w13 marlin + w2 marlin (dequant placement on a side stream)] p3 queued
-- queue: experts-dequant-threshold-turn4 [w13 marlin + w2 marlin (Marlin vs dequant crossover)] p4 queued
+- queue: experts-dequant-grouped-mm-cutlass [w13 marlin + w2 marlin (GEMM engine: CUTLASS grouped GEMM instead of Triton)] p4 hold
+- queue: experts-dequant-overlap-attention [w13 marlin + w2 marlin (dequant placement on a side stream)] p3 hold
+- queue: experts-dequant-threshold-turn4 [w13 marlin + w2 marlin (Marlin vs dequant crossover)] p4 hold
 - queue: experts-dequant-triton-moe-16k [w13 marlin + w2 marlin (expert grouped GEMM engine at 16K tokens)] p2 hold
 - queue: fa3-batched-mode [FA3 call] p4 hold
 - queue: experts-marlin-block-m-48-turn4 [w13 marlin + w2 marlin (block_size_m pick)] p3 hold
@@ -74,5 +82,5 @@ Where the time goes (per scored shape, top kernels):
 - queue: dense-gemm-cublaslt-algo-pick-prefill-t [dense bf16 GEMM dispatch (qkv, o, pooler, unpooler; cuBLASLt algo selection)] p2 hold
 - queue: silu-mul-triton-local-rows-marlin-turn [silu-mul (Marlin path, T <= 4096)] p3 queued
 - queue: norm-residual-boundaries-triton-row-kernel [attention boundary + FFN boundary (FusedPostNormResidualPreNorm x2)] p4 hold
-- running: experts-triton-nvfp4-packed-asm-dequant [w13 marlin + w2 marlin (Triton NVFP4 engine, stage 5: packed inline-PTX dequant)] p1 running
-- running: experts-triton-w13-fused-silu-epilogue [silu-mul (fused into the w13 Triton NVFP4 GEMM epilogue, T > 4096)] p2 running
+- running: experts-cuda-wgmma-mixed-input-grouped-gemm [w13 marlin + w2 marlin (CUDA sm_90a warp-specialized wgmma W4A16 grouped GEMM, stage 1: first_turn)] p1 running
+- running: attn-full-prefill-cuda-fp8-exp-offload [FA3 call (CUDA sm_90a FP8 prefill flash attention with software-exp offload, stage 1: full layers, page size 1)] p2 running
