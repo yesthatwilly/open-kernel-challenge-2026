@@ -1,0 +1,175 @@
+diff --git a/muse_bf16_proj/submission.py b/muse_bf16_proj/submission.py
+index da55301..18566e9 100644
+--- a/muse_bf16_proj/submission.py
++++ b/muse_bf16_proj/submission.py
+@@ -14,6 +14,12 @@ at every m. Each program owns one (M-block, N-block, K-slice), never loops over
+ atomically adds its fp32 K-partial into an output zeroed right before the launch; there is no
+ plain-store path. Configs are static, chosen from m at launch; rows beyond m are masked, so any
+ m is valid.
++
++Router at m <= 32 (hypothesis router-splitk-semaphore-no-memset): same grid, tiles and K loop,
++but no zeroed output and no atomic_add. Each CTA stores its fp32 K-partial to a
++prepare()-allocated workspace (rows < m rewritten every call), takes one gpu-scope acq_rel
++ticket on a per-N-tile counter, and the CTA drawing the last ticket loads all SPLIT_K partials
++at once, sums them in a fixed order, stores the output and resets the counter.
+ """
+ 
+ from typing import TypedDict
+@@ -54,12 +60,19 @@ ROUTER_NUM_WARPS = 4
+ # the timed call never compiles (M is not specialized and the grid's M extent is a launch
+ # argument, so one compile serves a whole bucket).
+ ROUTER_WARM_MS = (1, 8, 16, 32, 64, 128, 256)
++# m <= ROUTER_SEM_MAX_M (hypothesis router-splitk-semaphore-no-memset): the split-K partials are
++# reduced inside the launch through a prepare()-allocated workspace and per-N-tile ticket
++# counters, so there is no torch.zeros fill and no atomic_add epilogue. Larger m keeps the
++# zeroed-output atomic kernel above unchanged.
++ROUTER_SEM_MAX_M = 32
+ 
+ 
+ def _router_config(m: int):
+     """Static launch config from m only: (BLOCK_M, BLOCK_N, SPLIT_K).
+ 
+-    grid = (cdiv(m, BLOCK_M), 256 // BLOCK_N, SPLIT_K), always atomic_add into a zeroed output:
++    grid = (cdiv(m, BLOCK_M), 256 // BLOCK_N, SPLIT_K); m <= 32 reduces in-kernel by ticket
++    (_router_hilo_sem_kernel, SPLIT_K must be a power of 2), m > 32 atomic_adds into a zeroed
++    output:
+       m <=  16: BLOCK_M=16, BLOCK_N=32, SPLIT_K=16 -> (1, 8, 16) = 128 CTAs, K-slice 512
+       m <=  32: BLOCK_M=32, BLOCK_N=32, SPLIT_K=16 -> (1, 8, 16) = 128 CTAs, K-slice 512
+       m <= 128: BLOCK_M=64, BLOCK_N=64, SPLIT_K=16 -> (2, 4, 16) = 128 CTAs at m=128, K-slice 512
+@@ -118,13 +131,88 @@ def _router_hilo_kernel(
+     tl.atomic_add(out_ptrs, acc, mask=m_mask[:, None], sem="relaxed")
+ 
+ 
+-def _router_forward(x: torch.Tensor, hi: torch.Tensor, lo: torch.Tensor) -> torch.Tensor:
+-    """x bf16 [m, 8192] @ (hi + lo).T with fp32 accumulation -> fp32 [m, 256]. One launch plus
+-    the memset of the zeroed output. Branches only on shapes."""
++@triton.jit(do_not_specialize=["M"])
++def _router_hilo_sem_kernel(
++    x_ptr, hi_ptr, lo_ptr, out_ptr, ws_ptr, cnt_ptr,
++    M,
++    stride_xm, stride_wn, stride_om,
++    N: tl.constexpr, WS_M: tl.constexpr, K_SLICE: tl.constexpr, SPLIT_K: tl.constexpr,
++    BLOCK_M: tl.constexpr, BLOCK_N: tl.constexpr, BLOCK_K: tl.constexpr,
++):
++    """out[M, N] fp32 = x[M, K] @ (hi + lo)[N, K]^T, split-K with an in-kernel semaphore reduce.
++
++    Same tiles and K loop as _router_hilo_kernel; only the epilogue differs. Grid
++    (1, N // BLOCK_N, SPLIT_K) with M <= BLOCK_M <= WS_M, so pid_m is always 0 and one ticket
++    counter per N-tile suffices. ws: fp32 [SPLIT_K, WS_M, N] scratch, rows < M fully rewritten
++    every call; cnt: int32 [N // BLOCK_N], 0 between launches. There is no early exit: every CTA
++    stores its partial and takes exactly one ticket, so the counter always returns to 0.
++    """
++    pid_m = tl.program_id(0)
++    pid_n = tl.program_id(1)
++    pid_k = tl.program_id(2)
++    k_start = pid_k * K_SLICE
++
++    offs_n = pid_n * BLOCK_N + tl.arange(0, BLOCK_N)
++    offs_k = k_start + tl.arange(0, BLOCK_K)
++    hi_ptrs = hi_ptr + offs_k[:, None] + offs_n[None, :] * stride_wn
++    lo_ptrs = lo_ptr + offs_k[:, None] + offs_n[None, :] * stride_wn
++
++    offs_m = pid_m * BLOCK_M + tl.arange(0, BLOCK_M)
++    m_mask = offs_m < M
++    x_ptrs = x_ptr + offs_m[:, None] * stride_xm + offs_k[None, :]
++    acc = tl.zeros((BLOCK_M, BLOCK_N), dtype=tl.float32)
++    for kk in range(0, K_SLICE // BLOCK_K):
++        x_tile = tl.load(x_ptrs, mask=m_mask[:, None], other=0.0)
++        hi_tile = tl.load(hi_ptrs)
++        lo_tile = tl.load(lo_ptrs)
++        acc = tl.dot(x_tile, hi_tile, acc)
++        acc = tl.dot(x_tile, lo_tile, acc)
++        x_ptrs += BLOCK_K
++        hi_ptrs += BLOCK_K
++        lo_ptrs += BLOCK_K
++
++    # fp32 partial -> workspace slice pid_k, rows < M only (the reducer reads the same mask).
++    ws_tile = offs_m[:, None] * N + offs_n[None, :]
++    tl.store(ws_ptr + pid_k * (WS_M * N) + ws_tile, acc, mask=m_mask[:, None])
++    # All threads' partial stores precede the (single, scalar) gpu-scope acq_rel ticket.
++    tl.debug_barrier()
++    ticket = tl.atomic_add(cnt_ptr + pid_n, 1, sem="acq_rel", scope="gpu")
++    # Order the other threads' reloads after the ticket's acquire.
++    tl.debug_barrier()
++    if ticket == SPLIT_K - 1:
++        # All SPLIT_K partials in ONE [SPLIT_K, BLOCK_M, BLOCK_N] load, so every reload is in
++        # flight before the first add; then a fixed-order (compile-time) sum over the splits.
++        offs_s = tl.arange(0, SPLIT_K)
++        parts = tl.load(ws_ptr + offs_s[:, None, None] * (WS_M * N) + ws_tile[None, :, :],
++                        mask=m_mask[None, :, None], other=0.0, cache_modifier=".cg")
++        total = tl.sum(parts, axis=0)
++        out_ptrs = out_ptr + offs_m[:, None] * stride_om + offs_n[None, :]
++        tl.store(out_ptrs, total, mask=m_mask[:, None])
++        # Self-reset so the next launch / graph replay starts from 0.
++        tl.atomic_xchg(cnt_ptr + pid_n, 0, sem="relaxed", scope="gpu")
++
++
++def _router_forward(x: torch.Tensor, hi: torch.Tensor, lo: torch.Tensor,
++                    ws: torch.Tensor, cnt: torch.Tensor) -> torch.Tensor:
++    """x bf16 [m, 8192] @ (hi + lo).T with fp32 accumulation -> fp32 [m, 256]. At m <= 32 one
++    launch (in-kernel semaphore reduce into ws/cnt); above, one launch plus the memset of the
++    zeroed output. Branches only on shapes."""
+     m, k = x.shape
+     n = hi.shape[0]
+     block_m, block_n, split_k = _router_config(m)
+     k_slice = k // split_k
++    if m <= ROUTER_SEM_MAX_M:
++        out = torch.empty((m, n), dtype=torch.float32, device=x.device)
++        grid = (triton.cdiv(m, block_m), n // block_n, split_k)
++        _router_hilo_sem_kernel[grid](
++            x, hi, lo, out, ws, cnt,
++            m,
++            x.stride(0), hi.stride(0), out.stride(0),
++            N=n, WS_M=ROUTER_SEM_MAX_M, K_SLICE=k_slice, SPLIT_K=split_k,
++            BLOCK_M=block_m, BLOCK_N=block_n, BLOCK_K=ROUTER_BLOCK_K,
++            num_warps=ROUTER_NUM_WARPS, num_stages=ROUTER_NUM_STAGES,
++        )
++        return out
+     # Zeroed right before the launch, every call: the K-partials are atomically added into it.
+     out = torch.zeros((m, n), dtype=torch.float32, device=x.device)
+     grid = (triton.cdiv(m, block_m), n // block_n, split_k)
+@@ -146,8 +234,12 @@ def _router_shape_ok(x: torch.Tensor, hi: torch.Tensor) -> bool:
+     m, k = x.shape
+     n = hi.shape[0]
+     block_m, block_n, split_k = _router_config(m)
+-    return (k == hi.shape[1] and k % (ROUTER_BLOCK_K * split_k) == 0 and n % block_n == 0
+-            and hi.stride(1) == 1)
++    ok = (k == hi.shape[1] and k % (ROUTER_BLOCK_K * split_k) == 0 and n % block_n == 0
++          and hi.stride(1) == 1)
++    if m <= ROUTER_SEM_MAX_M:
++        # Semaphore path: one M-block (pid_m == 0), and ws/cnt sized for N == ROUTER_N.
++        ok = ok and m <= block_m and n == ROUTER_N
++    return ok
+ 
+ 
+ def prepare(weights: Weights) -> dict:
+@@ -160,11 +252,20 @@ def prepare(weights: Weights) -> dict:
+     lo = (router - hi.float()).to(torch.bfloat16).contiguous()
+     state["router_hi"] = hi
+     state["router_lo"] = lo
++    # Router m <= 32 split-K scratch (fp32 partials, overwritten every call) and per-N-tile
++    # tickets, sized from the small-m buckets' config so SPLIT_K / BLOCK_N stay one-line edits.
++    sem_cfgs = [_router_config(m) for m in range(1, ROUTER_SEM_MAX_M + 1)]
++    state["router_ws"] = torch.empty((max(c[2] for c in sem_cfgs), ROUTER_SEM_MAX_M, ROUTER_N),
++                                     dtype=torch.float32, device=router.device)
++    state["router_cnt"] = torch.zeros(max(ROUTER_N // c[1] for c in sem_cfgs),
++                                      dtype=torch.int32, device=router.device)
+     # Warm-up on synthetic inputs (weights only; nothing from a later call is involved).
+     for m in ROUTER_WARM_MS:
+         x = torch.randn((m, router.shape[1]), device=router.device, dtype=torch.float32).to(torch.bfloat16)
+         if _router_shape_ok(x, hi):
+-            _router_forward(x, hi, lo)
++            _router_forward(x, hi, lo, state["router_ws"], state["router_cnt"])
++    # The kernel self-resets, but re-zero after the warm-up regardless (stream-ordered).
++    state["router_cnt"].zero_()
+     return state
+ 
+ 
+@@ -176,6 +277,6 @@ def kernel_fn(data: Inputs, state: dict) -> torch.Tensor:
+         return _bf16_gemm_dispatch_impl(x, state[layer][: cfg["n"]], None)
+     hi, lo = state["router_hi"], state["router_lo"]
+     if _router_shape_ok(x, hi) and cfg["n"] == hi.shape[0]:
+-        return _router_forward(x, hi, lo)
++        return _router_forward(x, hi, lo, state["router_ws"], state["router_cnt"])
+     # Shape outside the kernel's preconditions (never for this problem's router): exact fp32 path.
+     return F.linear(x.float(), state["router"][: cfg["n"]])

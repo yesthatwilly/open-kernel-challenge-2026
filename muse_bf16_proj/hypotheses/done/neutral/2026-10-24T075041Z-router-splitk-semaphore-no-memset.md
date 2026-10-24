@@ -46,11 +46,11 @@ priority: 4
 kind: primary
 controls_for: null
 review: proceed
-status: running
+status: done
 review_at: 2026-10-24T111911Z
 review_companions: null
 hold_reason: null
-stage: dispatched
+stage: harvested
 claimed_at: 2026-10-24T120042Z
 base_sha: caf555ec8435254c599ff4cf1e7741a96a88e5e1
 base_blob: da55301de1e911aeab09878b0873809f544f436c
@@ -67,6 +67,13 @@ attempt_file: 2026-10-24T120252Z-check-router-splitk-semaphore-no-memset.md
 prepared_at: 2026-10-24T120252Z
 job: cb76350d40ee4617
 dispatched_at: 2026-10-24T120300Z
+outcome: neutral
+verdict_detail: unproven-vs-best
+speedup: 1.1515574524208294
+speedup_ci: [1.1342840906345169, 1.1688308142071417]
+harvested_at: 2026-10-24T132211Z
+best_at_harvest: 1.1432568936693237
+promotion: null
 ---
 
 # router-splitk-semaphore-no-memset
@@ -144,3 +151,53 @@ CLEAN: muse_bf16_proj/submission.py
 ```
 
 `python3 -I -m py_compile` succeeded, and the `__pycache__` it left was removed.
+
+## Result
+
+- job `cb76350d40ee4617` (check), status done, passed True, tests 9/9
+- speedup 1.1516x, 95% CI [1.1343, 1.1688], score 4195.0143172141225 µs vs SGLang 4830.8 µs
+- best at harvest: {"speedup": 1.1432568936693237, "ci": [1.1261080402642838, 1.1604057470743634], "job": "240eb22ea0b6487e"}; base result: muse_bf16_proj/hypotheses/done/gain/router-triton-hilo-fused-control-splitk-all-m.result.json
+- **outcome: neutral** (unproven-vs-best)
+- files: `muse_bf16_proj/hypotheses/done/neutral/router-splitk-semaphore-no-memset.result.json`, `muse_bf16_proj/hypotheses/done/neutral/router-splitk-semaphore-no-memset.patch`; branch `hyp/muse_bf16_proj/router-splitk-semaphore-no-memset`
+
+## Attribution
+
+| shape | w | base µs | hyp µs | delta | verdict |
+|---|---|---|---|---|---|
+| layer=qkv_gate load=decode_1 m=1 | 62 | 14.4 | 13.57 | 1.0459 | gained |
+| layer=o load=decode_1 m=1 | 62 | 6.69 | 7.06 | 0.9793 | flat |
+| layer=pooler load=decode_1 m=1 | 62 | 21.21 | 21.83 | 0.9971 | flat |
+| layer=unpooler load=decode_1 m=1 | 62 | 7.07 | 6.82 | 1.0244 | flat |
+| layer=router load=decode_1 m=1 | 62 | 5.8 | 6.07 | 0.9686 | lost |
+| layer=qkv_gate load=decode_16 m=16 | 62 | 13.82 | 14.02 | 1.0215 | flat |
+| layer=o load=decode_16 m=16 | 62 | 6.78 | 6.82 | 1.0035 | flat |
+| layer=pooler load=decode_16 m=16 | 62 | 21.3 | 21.66 | 0.9878 | flat |
+| layer=unpooler load=decode_16 m=16 | 62 | 18.45 | 18.39 | 1.0077 | flat |
+| layer=router load=decode_16 m=16 | 62 | 6.2 | 6.77 | 0.9227 | lost |
+| layer=qkv_gate load=decode_32 m=32 | 62 | 14.27 | 14.36 | 0.9948 | flat |
+| layer=o load=decode_32 m=32 | 62 | 6.58 | 7.07 | 0.9869 | flat |
+| layer=pooler load=decode_32 m=32 | 62 | 21.95 | 22.13 | 0.9992 | flat |
+| layer=unpooler load=decode_32 m=32 | 62 | 18.71 | 19.06 | 0.9978 | flat |
+| layer=router load=decode_32 m=32 | 62 | 6.54 | 7.06 | 0.9273 | lost |
+| layer=qkv_gate load=verify_1 m=8 | 62 | 14.0 | 13.83 | 1.0373 | gained |
+| layer=o load=verify_1 m=8 | 62 | 6.28 | 6.6 | 1.0075 | flat |
+| layer=pooler load=verify_1 m=8 | 62 | 21.3 | 21.18 | 1.0083 | flat |
+| layer=unpooler load=verify_1 m=8 | 62 | 7.02 | 6.68 | 1.0139 | flat |
+| layer=router load=verify_1 m=8 | 62 | 5.67 | 5.79 | 0.9778 | flat |
+| layer=qkv_gate load=verify_16 m=128 | 62 | 16.96 | 16.68 | 1.0119 | flat |
+| layer=o load=verify_16 m=128 | 62 | 6.98 | 7.41 | 0.985 | flat |
+| layer=pooler load=verify_16 m=128 | 62 | 25.21 | 24.9 | 1.0376 | gained |
+| layer=unpooler load=verify_16 m=128 | 62 | 19.65 | 19.81 | 0.9929 | flat |
+| layer=router load=verify_16 m=128 | 62 | 7.04 | 7.57 | 0.9658 | lost |
+| layer=qkv_gate load=verify_32 m=256 | 62 | 19.47 | 19.74 | 1.01 | flat |
+| layer=o load=verify_32 m=256 | 62 | 9.51 | 9.06 | 0.9875 | flat |
+| layer=pooler load=verify_32 m=256 | 62 | 30.51 | 31.06 | 0.9759 | flat |
+| layer=unpooler load=verify_32 m=256 | 62 | 24.39 | 24.25 | 0.9973 | flat |
+| layer=router load=verify_32 m=256 | 62 | 9.27 | 9.7 | 0.9773 | flat |
+
+gained on qkv_gate decode_1, verify_1; pooler verify_16; lost on router decode_1, decode_16, decode_32, verify_16. Expected hit: 1/6. Noise ±1.5%.
+
+## Follow-ups
+
+- unproven-vs-best: the change is not proven either way; a stacked hypothesis (`depends_on: router-splitk-semaphore-no-memset`) that adds a further change in the same area is the only way to learn more (identical code is never re-run).
+
