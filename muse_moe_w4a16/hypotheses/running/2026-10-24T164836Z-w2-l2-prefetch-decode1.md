@@ -97,3 +97,45 @@ No companion is warranted if the prefetch sits right before the w2 Marlin call. 
 - Follow-up if it wins: fork the prefetch onto a side stream inside the graph so it overlaps the latency-bound w13 Marlin, which uses only about 1.2 TB/s of DRAM. That hides the prefetch's cost instead of paying it serially, and it is the larger lever.
 - Is the w2 share of the 44.6 us Marlin row known from any earlier per-launch profile? Without it, the attribution relies on the shape time minus the new kernel's row.
 
+
+## Implementation notes
+
+Worktree `.worktrees/muse_moe_w4a16/w2-l2-prefetch-decode1`, `muse_moe_w4a16/submission.py` only (82 insertions, 0 deletions).
+
+- New `@triton.jit(do_not_specialize=["local_start", "local_count"]) _l2_prefetch_w2_kernel(topk_ids_ptr, w2_ptr, w2s_ptr, sink_ptr, local_start, local_count, w2_expert_words, w2s_expert_words, TOP_K_C, BLOCK)` as specified: static_range over the 8 slots, local id = id - local_start in [0, local_count), dedupe against every earlier slot (nested static_range), then for each distinct local expert a grid-strided loop (`range(pid, cdiv(words, BLOCK), num_programs)`) over BLOCK=2048-word chunks of its w2 code slab and then its w2 scale slab, `tl.load(..., eviction_policy="evict_last")`, masked on the tail, int64 offsets, XOR into an int32 [BLOCK] vector; `tl.xor_sum` of it stored to `sink[pid]`.
+- `_l2_prefetch_state(bank, device)` (prepare only): asserts `bank["w2"]` and `bank["w2_s"]` are contiguous with leading dim == count (32) and per-expert bytes divisible by 4; builds the flat int32 views, per-expert word counts, P = 2 * SM count programs, and the `sink` (torch.empty(P, int32), never read). Stored as `bank["l2_prefetch"]`.
+- `_l2_prefetch_w2(topk_ids, pf, local_start, local_count)`: the launch, grid (P,), num_warps 4.
+- prepare(): after `_align_self_check`, builds the state and launches once on dummy ids `torch.full((1, 8), start)` to compile; the existing final `torch.cuda.synchronize()` follows.
+- kernel_fn: `if num_tokens == 1 and expert_map is not None:` launches the prefetch with `data["topk_ids"]` and the bank's prepare-time start/count. Branch is on shape only.
+- Deviation from the `change` paragraph (required by the adversarial review and the brief): the launch sits right after `silu_and_mul` and immediately before the w2 `moe_wna16_marlin_gemm`, not after `_align_small`/before w13. This rules out w13's stream evicting the lines, so a flat result reads as "w2 Marlin at M=1 is not B-load-latency bound". No other launch, flag, block_size_m or combine path changed; every M != 1 runs master byte for byte.
+- Module docstring gained one paragraph describing the change; two module constants (`L2_PREFETCH_W2_TOKENS = 1`, `L2_PREFETCH_BLOCK = 2048`).
+- Uncertainties (no GPU here, nothing was run): Triton must accept a runtime-start/step `range(pid, n, nprog)` inside a runtime `if` inside a static_range (standard scf.for/scf.if; expected fine); `tl.xor_sum` on int32 is assumed available in the judge's Triton; w2_s after the Marlin scale processing is assumed to have >= 4-byte-aligned per-expert slabs (asserted in prepare, so a violation fails loudly in prepare, not silently).
+
+## Rules check
+
+Checked against `git -C .worktrees/muse_moe_w4a16/w2-l2-prefetch-decode1 diff`.
+
+- [x] CUDA-graph capturable: the new kernel_fn code is one Triton launch with a fixed grid from prepare(); no `.item()`/`.cpu()`/`synchronize()`/tensor prints; no allocation (sink is a prepare()-time buffer); the branch is on `num_tokens` (shape) and `expert_map` (prepare state), never on input values. Expert selection happens on the GPU from `topk_ids`.
+- [x] Nothing derived from `data` is cached across calls: the sink receives an XOR of weight words only and is never read; nothing from `data` is stored in `state`.
+- [x] Weights: no repack or precision change; the prefetch reads int32 *views* of the existing Marlin banks (same bytes) and writes nothing to them.
+- [x] Activations BF16 where SGLang keeps BF16: no activation path touched. KV cache / queries: n/a (no attention in this problem).
+- [x] Attention sees every key: n/a: no attention in muse_moe_w4a16; no expert or weight skipping either (Marlin calls unchanged).
+- [x] No timing patches, harness frames/I/O/secrets, module edits, reference import, subprocesses or network: diff adds none (lint clean of these rules).
+- [x] All work happens inside the timed call; no output caching or replay: the prefetch runs inside kernel_fn after the judge's L2 flush and pays the full DRAM read each call; the prepare() launch is compile-only on dummy ids and its L2 contents are flushed by the judge before every timed replay.
+- [x] First line still `# okc: problem=muse_moe_w4a16`; no triton.autotune added.
+
+Lint (`python3 -I .claude/skills/churnsubs/bin/okc_lint.py <worktree>/muse_moe_w4a16/submission.py --problem muse_moe_w4a16`):
+
+```
+warn  host-sync    L279: "random": [torch.randperm(N_EXPERTS, generator=gen)[:TOP_K].tolist() for _ in range(tokens)],  (outside kernel_fn's call graph; fine in prepare())
+warn  host-sync    L281: [remote_set[i] for i in torch.randperm(len(remote_set), generator=gen)[:5].tolist()]  (outside kernel_fn's call graph; fine in prepare())
+warn  host-sync    L283: "all-remote": [[remote_set[i] for i in torch.randperm(len(remote_set), generator=gen)[:TOP_K].tolist()]  (outside kernel_fn's call graph; fine in prepare())
+warn  host-sync    L302: torch.cuda.synchronize()  (outside kernel_fn's call graph; fine in prepare())
+warn  host-sync    L307: s_ids, b_exp, n_pad = s_ids.tolist(), b_exp.tolist(), int(n_pad.item())  (outside kernel_fn's call graph; fine in prepare())
+warn  host-sync    L308: r_ids, r_exp, r_pad = r_ids.tolist(), r_exp.tolist(), int(r_pad.item())  (outside kernel_fn's call graph; fine in prepare())
+warn  host-sync    L392: torch.cuda.synchronize()  (outside kernel_fn's call graph; fine in prepare())
+warn  host-sync    L399: torch.cuda.synchronize()  (outside kernel_fn's call graph; fine in prepare())
+OK with warnings: muse_moe_w4a16/submission.py
+```
+
+All warnings are pre-existing prepare()-time syncs (none in kernel_fn's call graph). `python3 -I -m py_compile` OK; __pycache__ removed.

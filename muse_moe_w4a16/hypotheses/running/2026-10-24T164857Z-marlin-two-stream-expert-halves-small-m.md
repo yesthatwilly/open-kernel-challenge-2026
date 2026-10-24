@@ -50,9 +50,16 @@ priority: 3
 kind: primary
 controls_for: null
 review: proceed
-status: queued
+status: running
 review_at: 2026-10-24T165207Z
 review_companions: null
+stage: claimed
+claimed_at: 2026-10-24T165338Z
+base_sha: a928067ca1fead9b9f3da0998e11f654e387579f
+base_blob: d9a9375ef4721ab9b28cc9d6364c92e67c7ccc59
+branch: hyp/muse_moe_w4a16/marlin-two-stream-expert-halves-small-m
+worktree: .worktrees/muse_moe_w4a16/marlin-two-stream-expert-halves-small-m
+mode: null
 ---
 
 # marlin-two-stream-expert-halves-small-m
