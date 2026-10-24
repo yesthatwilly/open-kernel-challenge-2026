@@ -39,8 +39,10 @@ kind: rewrite
 controls_for: null
 rewrite_stage: 7
 replaces: Marlin w13+w2 (moe_wna16_marlin_gemm x2) at every prefill T
-review: required
+review: proceed
 status: queued
+review_at: 2026-10-24T165620Z
+review_companions: null
 ---
 
 # experts-triton-turn1-blockt32-stream
@@ -67,3 +69,28 @@ shape (profile top_kernels) against the incumbent and the speed-of-light floor, 
 2. at or below the incumbent kernels' time on the target shapes;
 3. within ~1.5x of the floor on the target shapes, and the headline CI clears 1.0 (promotable).
 The next stage is minted with `--kind rewrite --depends-on <this slug> --stage N+1`.
+
+## Adversarial review
+
+Reviewed 2026-10-24T165620Z by an adversarial subagent (model opus).
+
+**Verdict: proceed.** This is a sound, narrow stage-7 step. It moves turn_1 (T=753, both shapes of the turn_1 load) onto the packed-dequant Triton engine with a token tile matched to ~24 local rows per expert. turn_4 and first_turn run byte-identical stage-6 code, so the run reads cleanly from the turn_1 _moe_nvfp4_gemm_kernel rows against Marlin's 654/752 us. The bandwidth premise is overstated: the kernel is register-limited to 2 CTAs/SM, not 3, and the real ceiling is dequant ALU at ~200-300 us, not the 189 us HBM floor. The <500 us milestone is still plausible.
+
+### Justification
+Mechanism. At T=753 about 753 of 6024 routes are local, ~23.5 rows per expert. One 32-wide token tile per expert means each weight element is dequantized about once (twice only for the minority of experts above 32 rows), and wgmma n32 wastes ~25% of the N side instead of ~63% at BLOCK_T 64. The FLOPs are small (~76 GFLOP useful, ~100 GFLOP padded, ~100 us at peak), so the shape is weight-stream plus dequant work. FINDINGS profile: Marlin x2 is 752.4 us (67.4% of sliding turn_1, weight 46) and 653.9 us (45.0% of full turn_1, weight 16). The w13+w2 HBM floor is ~189 us (905 MB at 4.8 TB/s), so Marlin sits 3.5-4x off it. Stage 2/3's Triton engine with the old ~10-12-instruction dequant ran turn_1 at 728-847 us (archive swapab-reglhs 796/823, blockt256 847/728). Scaling that by stage 5's ~3-3.5 instructions per element puts the dequant portion at ~220-300 us, so the 300-400 us target and the <500 us milestone are plausible. The expected directions match TASK.md: turn_4 (T=3012, 4096 entry) and first_turn (None entry) are byte-identical to stage 6, so they are neutral against the parent. turn_1 is the only moving load, and Marlin is 45-67% of its shapes, so 20-35% on that load is arithmetically consistent if the kernel lands at 300-450 us. Weakest link: the occupancy and bytes-in-flight story. (a) Stage 2's log for the sibling BLOCK_T 64 / 4 warps / 3 stages variant shows n_regs=255 and shared=67584. At 128 threads and >170 regs, only 2 CTAs fit per SM by registers. Halving the accumulator to [128,32] frees ~32 regs/thread, but Triton will likely still sit above 170, so '3 CTAs per SM, ~200 KB in flight' is likely 2 CTAs. (b) The code and scale tiles feed inline asm, not tl.dot directly, so it is unverified that Triton's pipeliner multi-buffers them through smem with cp.async rather than prefetching one iteration into registers. The 67584 B at 3 stages fits 3 activation stages plus about 2 code buffers, not 3x(codes+scales+acts). (c) Even fully pipelined, the packed dequant (~26 instructions per 8 elements, plus scale broadcast and convert, over 1.6G weight elements at ~64 int ops/clk/SM) costs ~200-300 us on the ALU pipes. So the kernel is dequant-issue-bound near 1.2-1.6x the HBM floor, not HBM-bound. Read the prepare-log n_regs/n_spills/shared/local_alloc line for the BLOCK_T=32 variant to see which of these binds.
+
+### Confounders on the current kernel
+- experts-hybrid-marlin-turn-triton-first-turn (stage 4, the gate): this stage moves its gate to 0. Reverting it is meaningless (that is Marlin at turn_1, i.e. the incumbent the milestone already compares against). Not a confounder; the Marlin rows from stage 6's own run are the A side.
+- sglang-pipeline-parity: supplies moe_align_block_size, silu_and_mul and fused_post_expert_norm_weighted_sum around the GEMMs. At T=753 Marlin's pick is block_size_m=32 (23.5/32 < 0.9 breaks at 32), the same as the new BLOCK_T, so the align and silu costs are identical on both sides. One asymmetry: Triton's w2 call zero-stores the ~5271 non-local slots (ZERO_NONLOCAL_W2, ~43 MB, ~9-12 us plus ~5280 trivial CTAs at BLOCK_T 32). Marlin does not pay this. Count it as a fixed in-kernel cost, not an effect of the config.
+- experts-triton-w4a16-first-turn-blockt256: its BLOCK_T 256 entry is untouched and only reached at T>4096. No interaction with the turn_1 path.
+- Stage 5/6 (parents, not yet landed): the packed dequant is the main lever this stage relies on. Compare turn_1 rows against stage 6's run (same code everywhere else), not against BEST.json/master, which lack stages 5/6. Use turn_4/first_turn kernel rows (byte-identical to stage 6) as the drift control.
+
+### Interference and A/B needs
+No companions. This is a rewrite stage judged on the turn_1 _moe_nvfp4_gemm_kernel rows against Marlin's 654/752 us and the 189 us floor. A gain (kernel row below Marlin) is unambiguous, and Triton kernel times reproduce within ~1%. The two bundled edits (gate to 0, new BLOCK_T 32 config) cannot be separated without a check that runs the old BLOCK_T 64 / 3-stage entry with packed dequant at turn_1. That control would only matter if the stage loses to Marlin, and even then the prepare log (n_regs, n_spills, shared, local_alloc for the BLOCK_T=32 variant) tells whether occupancy or spills caused it. The hypothesis already names an ab-tune (num_stages 3/5, BLOCK_W 64) as the next step. That is next-stage material, and prefill checks are scarce. No landed hypothesis's revert or retune would change how this run reads.
+
+### Open questions
+- What do n_regs, n_spills, shared and the local_alloc count report for the BLOCK_T=32 / 4 warps / 4 stages variant? If n_regs > 168, the kernel runs 2 CTAs/SM (8 warps), and BLOCK_W 64 or a maxnreg cap is the next lever, not more stages.
+- Does Triton multi-buffer the code/scale tiles in smem (local_alloc count > activation buffers), or only the activations? If only the activations, num_stages=4 buys nothing for the weight stream.
+- Is ZERO_NONLOCAL_W2 still required? fused_post_expert_norm_weighted_sum receives slot_expert_ids and may already mask the -1 slots. Dropping the zero-store removes ~10-15 us at turn_1 and ~35 us at turn_4 (a separate, later change; verify the masking first).
+- Under dist=soft, how many of the 32 local experts exceed 32 rows at T=753? Each one dequantizes its weights twice. If it is many, BLOCK_T 48 is not a power of two for wgmma, but a 64-wide tile for the hottest experts is a future option.
+
