@@ -66,13 +66,19 @@ review: proceed
 status: running
 review_at: 2026-10-24T104027Z
 review_companions: null
-stage: claimed
+stage: implemented
 claimed_at: 2026-10-24T111708Z
 base_sha: bbbf3168de76ebc524cb23723b2ebf734b893072
 base_blob: cf09a9196c4d7a20540bb82c9d79bdebaeea2a43
 branch: hyp/muse_decode_layer/triton-flash-decode-full-oversub-kv-prefetch
 worktree: .worktrees/muse_decode_layer/triton-flash-decode-full-oversub-kv-prefetch
 mode: null
+implemented_at: 2026-10-24T111949Z
+impl_commit: 016401cf3d0a9d14701d0d446a92d9abf5295d8c
+submission_sha256: 7762f88206ce516615fe8c634e2788de8332f3d4621374649175e67f985ad713
+norm_sha256: 51d8b43b48cb8220aec01945da094a4de842e6a9da4b77df171eeaf54dcc0bbc
+submission_blob: 9edba2e3f2af4501a24fa85b5d87aef96700d4b9
+lint_warnings: 1
 ---
 
 # triton-flash-decode-full-oversub-kv-prefetch
@@ -125,3 +131,44 @@ No companions. This is a rewrite stage judged on its own kernel time against sta
 - Did stage 1's num_stages=3 actually pipeline the indirect K/V loads? If it did, switching to num_stages=1 plus manual prefetch adds little; compare kernel-1 bytes/time with stage 1's 1.63/1.66 TB/s to separate the oversubscription effect from the prefetch effect.
 - How long are the requests under spread=agentic at B=16/32? If most requests are near 80000 tokens, the 'short splits free their slots' argument is weak and the gain must come from residency alone.
 
+
+## Implementation notes
+
+Worktree `.worktrees/muse_decode_layer/triton-flash-decode-full-oversub-kv-prefetch`, on stage 1 (`bbbf316`). Diff: `muse_decode_layer/submission.py | 58 +++++----` (37+, 21-), all inside the full-decode path.
+
+- Constants: `FD_NUM_SMS = 132` became `FD_SPLIT_CTAS = 1024` (FD_NUM_SMS had no other user). Its comment line was updated. `FD_MAX_SPLITS = 128` and `FD_BLOCK_N = 64` are unchanged.
+- `_full_decode_splits(batch)` now returns `max(1, min(FD_MAX_SPLITS, FD_SPLIT_CTAS // batch))`. That gives B=1: 128, B=16: 64, B=32: 32 and B=33: 31, from B only. split_len is unchanged: ceil(max_pages*page / S), rounded up to BLOCK_N.
+- `_full_decode_split_kernel` loop:
+  - Before the loop it loads tile 0's indices, rows, K and V (`k_cur`, `v_cur`, `valid_cur`), plus tile 1's indices and rows (`rows_next`, `valid_next`).
+  - Each iteration does four things in order. (1) Issue tile i+1's K and V loads, masked by `valid_next`, other=0. (2) Load tile i+2's page-table indices and rows (`valid_next2`, `rows_next2`, masked, with the same `t // PAGE < max_pages` guard as before). (3) Run tile i's fp8->bf16, QK^T, -inf masking by `valid_cur`, exp2 online softmax and PV, on `k_cur`/`v_cur`. (4) Rotate `k_cur, v_cur, valid_cur <- k_next, v_next, valid_next` and `rows_next, valid_next <- rows_next2, valid_next2`.
+  - Valid moves with its tile. The loop bound `range(start, end, BLOCK_N)` and the masks are unchanged, so every key t < seqlen is still visited exactly once. A prefetch past end is fully masked, so no -1 page entry is read and no out-of-range row is dereferenced.
+  - The math body, Q2 construction, partial stores and combine kernel are byte-identical to stage 1.
+- Launch: `num_stages=3` became `num_stages=1`. num_warps=4 and BLOCK_N=64 are unchanged. Combine still uses BLOCK_S = next_pow2(S): 64 at B=16, 32 at B=32 and B=33, 128 at B=1. `_warm_full_decode` already compiles every BLOCK_S up to 128 and both PAGE variants. Its own split launch (B=1, S=128) compiles the new num_stages=1 variant.
+- Not touched: verify (q_len 8), sliding layers, FA3 calls, everything outside the full-decode path.
+- Deviations: none from the spec. The only extra edit is the stale constant comment.
+- Uncertainties (cannot run here):
+  - `k_cur`/`v_cur`/`k_next`/`v_next` are loop-carried uint8 [64,128] tensors. That should be about 32 extra regs/thread at 128 threads. If the compiler spills or residency drops below 4 CTAs/SM, the gain shrinks. Check kernel-1 bandwidth against stage 1's 1.63/1.66 TB/s.
+  - With num_stages=1, Triton's pipeliner should leave the explicit prefetch as written. Whether stage 1's num_stages=3 already pipelined the indirect loads stays open, per the review.
+  - For an empty split (start >= end), the pre-loop K/V loads are issued fully masked, as stage 1's pre-loop index load already was. That is harmless.
+
+## Rules check
+
+Checked against `git -C .worktrees/muse_decode_layer/triton-flash-decode-full-oversub-kv-prefetch diff`:
+
+- [x] CUDA-graph capturable: the diff adds no `.item()`/`.cpu()`/`synchronize()`/tensor prints. Grid (B, S) and split_len come from `q8.shape` and `page_table.shape` only. Kernel-side masking uses seqlens on device, with no host control flow on input values.
+- [x] Nothing derived from `data` is cached across calls: scratch (acc, m, l, out) is still allocated per call from shapes, and no new state was added.
+- [x] Weights: n/a. The diff touches no weight or prepare() repacking; prepare() is unchanged.
+- [x] Activations BF16 where SGLang keeps BF16; KV cache FP8; queries at most FP8 E4M3. Unchanged: K/V are read as FP8 and widened to bf16 in-kernel, q stays FP8, partials are fp32 and the output is bf16.
+- [x] Attention sees every key: the loop bound and masks are unchanged, and each tile in [start, end) is computed exactly once. No top-k, sparse, block-skip or weight-based skipping; prefetched tiles past end are masked and never computed as valid.
+- [x] No timing patches, harness frames/I/O/secrets, module edits, reference import, subprocesses or network: the diff adds none.
+- [x] All work happens inside the timed call, with no output caching or replay. Both kernels launch inside kernel_fn per call.
+- [x] First-line marker `# okc: problem=muse_decode_layer` kept; no `triton.autotune` added.
+
+Lint (`python3 -I .claude/skills/churnsubs/bin/okc_lint.py <worktree>/muse_decode_layer/submission.py --problem muse_decode_layer`):
+
+```
+warn  host-sync    L260: torch.cuda.synchronize()  (outside kernel_fn's call graph; fine in prepare())
+OK with warnings: muse_decode_layer/submission.py
+```
+
+The warning comes from the existing prepare() sync, which stage 1 already had. `python3 -I -m py_compile` passed, and the __pycache__ it left was removed.
