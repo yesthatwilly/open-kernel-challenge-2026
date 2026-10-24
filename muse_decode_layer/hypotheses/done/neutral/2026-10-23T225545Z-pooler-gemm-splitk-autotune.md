@@ -37,10 +37,10 @@ priority: 3
 kind: primary
 controls_for: null
 review: proceed
-status: running
+status: done
 review_at: 2026-10-24T044925Z
 review_companions: null
-stage: dispatched
+stage: harvested
 claimed_at: 2026-10-24T044925Z
 base_sha: 952188da0ff9551ff95f13844604e502f412b70f
 base_blob: 6884d26a928d1de1b07bf8d28e1be4e53dfdcfc5
@@ -57,6 +57,13 @@ attempt_file: 2026-10-24T045249Z-check-pooler-gemm-splitk-autotune.md
 prepared_at: 2026-10-24T045249Z
 job: 2e1a43ab85324776
 dispatched_at: 2026-10-24T045257Z
+outcome: neutral
+verdict_detail: within-ci
+speedup: 1.0189115578237602
+speedup_ci: [1.0036278844564037, 1.0341952311911164]
+harvested_at: 2026-10-24T070715Z
+best_at_harvest: 1.020038644953596
+promotion: null
 ---
 
 # pooler-gemm-splitk-autotune
@@ -135,3 +142,35 @@ OK with warnings: muse_decode_layer/submission.py
 ```
 
 The dtype warn is the prepare-only uint8 L2-flush buffer, not an activation. py_compile passed and the resulting __pycache__ was removed.
+
+## Result
+
+- job `2e1a43ab85324776` (check), status done, passed True, tests 13/13
+- speedup 1.0189x, 95% CI [1.0036, 1.0342], score 22200.45481505138 µs vs SGLang 22620.3 µs
+- best at harvest: {"speedup": 1.020038644953596, "ci": [1.004738065279292, 1.0353392246278998], "job": "5755a412dda244a1"}; base result: muse_decode_layer/hypotheses/done/gain/sglang-pipeline-parity-router-hilo-m8.result.json
+- **outcome: neutral** (within-ci)
+- files: `muse_decode_layer/hypotheses/done/neutral/pooler-gemm-splitk-autotune.result.json`, `muse_decode_layer/hypotheses/done/neutral/pooler-gemm-splitk-autotune.patch`; branch `hyp/muse_decode_layer/pooler-gemm-splitk-autotune`
+
+## Attribution
+
+| shape | w | base µs | hyp µs | delta | verdict |
+|---|---|---|---|---|---|
+| batch=1 ctx=80000 dist=soft layer=sliding load=decode_1 page=1 repeats=60 | 46 | 168.73 | 171.06 | 0.9847 | flat |
+| batch=1 ctx=80000 dist=soft layer=full load=decode_1 page=1 repeats=60 | 16 | 180.65 | 181.0 | 0.9809 | flat |
+| batch=16 ctx=80000 dist=soft layer=sliding load=decode_16 page=1 spread=agentic | 46 | 269.71 | 257.89 | 0.998 | flat |
+| batch=16 ctx=80000 dist=soft layer=full load=decode_16 page=1 spread=agentic | 16 | 440.57 | 429.53 | 0.9992 | flat |
+| batch=32 ctx=80000 dist=soft layer=sliding load=decode_32 page=1 spread=agentic | 46 | 265.68 | 259.97 | 0.9972 | flat |
+| batch=32 ctx=80000 dist=soft layer=full load=decode_32 page=1 spread=agentic | 16 | 614.9 | 614.62 | 0.9976 | flat |
+| batch=1 ctx=80000 dist=soft layer=sliding load=verify_1 page=1 q_len=8 | 46 | 233.99 | 229.86 | 1.0068 | flat |
+| batch=1 ctx=80000 dist=soft layer=full load=verify_1 page=1 q_len=8 | 16 | 250.89 | 246.87 | 1.0056 | flat |
+| batch=16 ctx=80000 dist=soft layer=sliding load=verify_16 page=1 q_len=8 spread=agentic | 46 | 521.15 | 500.6 | 1.0004 | flat |
+| batch=16 ctx=80000 dist=soft layer=full load=verify_16 page=1 q_len=8 spread=agentic | 16 | 714.3 | 713.96 | 0.9986 | flat |
+| batch=32 ctx=80000 dist=soft layer=sliding load=verify_32 page=1 q_len=8 spread=agentic | 46 | 713.04 | 718.87 | 0.9987 | flat |
+| batch=32 ctx=80000 dist=soft layer=full load=verify_32 page=1 q_len=8 spread=agentic | 16 | 1049.76 | 1072.34 | 0.9979 | flat |
+
+no shape moved outside noise. Expected hit: 2/4. Noise ±1.5%.
+
+## Follow-ups
+
+- within-ci: the change is not proven either way; a stacked hypothesis (`depends_on: pooler-gemm-splitk-autotune`) that adds a further change in the same area is the only way to learn more (identical code is never re-run).
+
