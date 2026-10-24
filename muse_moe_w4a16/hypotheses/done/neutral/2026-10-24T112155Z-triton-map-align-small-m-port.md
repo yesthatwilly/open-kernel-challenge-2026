@@ -56,10 +56,10 @@ priority: 2
 kind: primary
 controls_for: null
 review: proceed
-status: running
+status: done
 review_at: 2026-10-24T112524Z
 review_companions: null
-stage: dispatched
+stage: harvested
 claimed_at: 2026-10-24T112525Z
 base_sha: dd50db2750f6d64e57b62dd08f6867eefc3d5b3d
 base_blob: b81d47abe0c2e53a3ecc180884ae8d9671ba4e14
@@ -76,6 +76,13 @@ attempt_file: 2026-10-24T112901Z-check-triton-map-align-small-m-port.md
 prepared_at: 2026-10-24T112901Z
 job: c2feb68aafb44aeb
 dispatched_at: 2026-10-24T112910Z
+outcome: neutral
+verdict_detail: beats-base-not-best
+speedup: 1.1849842916584477
+speedup_ci: [1.167209527283571, 1.2027590560333243]
+harvested_at: 2026-10-24T132212Z
+best_at_harvest: 1.2535643764852882
+promotion: null
 ---
 
 # triton-map-align-small-m-port
@@ -159,3 +166,29 @@ OK with warnings: muse_moe_w4a16/submission.py
 ```
 
 `python3 -I -m py_compile`: OK (the __pycache__ it left in the worktree was removed).
+
+## Result
+
+- job `c2feb68aafb44aeb` (check), status done, passed True, tests 5/5
+- speedup 1.1850x, 95% CI [1.1672, 1.2028], score 11349.095591113803 µs vs SGLang 13448.5 µs
+- best at harvest: {"speedup": 1.2535643764852882, "ci": [1.2347609108380089, 1.2723678421325675], "job": "c00ef7295c154867"}; base result: muse_moe_w4a16/hypotheses/done/gain/post-expert-norm-triton-small-m.result.json
+- **outcome: neutral** (beats-base-not-best)
+- files: `muse_moe_w4a16/hypotheses/done/neutral/triton-map-align-small-m-port.result.json`, `muse_moe_w4a16/hypotheses/done/neutral/triton-map-align-small-m-port.patch`; branch `hyp/muse_moe_w4a16/triton-map-align-small-m-port`
+
+## Attribution
+
+| shape | w | base µs | hyp µs | delta | verdict |
+|---|---|---|---|---|---|
+| bs=1 load=decode_1 sharding=ep8 | 60 | 55.3 | 50.48 | 1.1264 | gained |
+| bs=16 load=decode_16 sharding=ep8 | 60 | 155.66 | 145.26 | 1.0612 | gained |
+| bs=32 load=decode_32 sharding=ep8 | 60 | 206.92 | 204.14 | 1.0453 | gained |
+| bs=8 load=verify_1 sharding=ep8 | 60 | 121.24 | 107.92 | 1.0652 | gained |
+| bs=128 load=verify_16 sharding=ep8 | 60 | 475.92 | 456.52 | 1.0002 | flat |
+| bs=256 load=verify_32 sharding=ep8 | 60 | 622.17 | 619.55 | 1.0004 | flat |
+
+gained on decode_1 decode_1; decode_16 decode_16; decode_32 decode_32; verify_1 verify_1. Expected hit: 6/6. Noise ±1.5%.
+
+## Follow-ups
+
+- beats-base-not-best: the change is not proven either way; a stacked hypothesis (`depends_on: triton-map-align-small-m-port`) that adds a further change in the same area is the only way to learn more (identical code is never re-run).
+
