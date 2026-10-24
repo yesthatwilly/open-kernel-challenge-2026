@@ -82,10 +82,10 @@ controls_for: null
 rewrite_stage: 1
 replaces: "T<=32 dense chain: stage 1 = pooler GEMM (nvjet + splitKreduce), router (fp32 dot gemv at T=1, bf16 hi/lo mm pair + add at T>=2) and its side-stream fork/join, FusedMuseSparkRouting, local-id modulo + expert_map gather + contiguous + topk_weights cast, moe align, pre-expert F.rms_norm; stage 2 = qkv GEMM + FusedQKNorm + k/v/q FP8 casts + store_cache + paired pad, o GEMM + FusedRMSNormGate + unpad; stage 3 = unpooler + F.pad and PDL across the chain"
 review: proceed
-status: running
+status: done
 review_at: 2026-10-24T172646Z
 review_companions: null
-stage: dispatched
+stage: harvested
 claimed_at: 2026-10-24T172706Z
 base_sha: 2b6cb6edd61405f6d01cf0aa39cd6e34d56fe812
 base_blob: cc466fce207709c98ab0e78c2435c1c459890fdb
@@ -102,6 +102,13 @@ attempt_file: 2026-10-24T181733Z-submit-small-t-launch-minimal-dense-chain-pdl.m
 prepared_at: 2026-10-24T181733Z
 job: 81ee6714b7614a99
 dispatched_at: 2026-10-24T181805Z
+outcome: gain
+verdict_detail: gain
+speedup: 1.228328123558382
+speedup_ci: [1.2099032017050062, 1.2467530454117577]
+harvested_at: 2026-10-24T184718Z
+best_at_harvest: 1.1664628806987323
+promotion: onboard
 ---
 
 # small-t-launch-minimal-dense-chain-pdl
@@ -245,3 +252,36 @@ exit=0
 ```
 
 `python3 -I -m py_compile`: OK (the __pycache__ it left in the worktree was deleted).
+
+## Result
+
+- job `81ee6714b7614a99` (submit), status done, passed True, tests 13/13
+- speedup 1.2283x, 95% CI [1.2099, 1.2468], score 18415.519083346026 µs vs SGLang 22620.3 µs
+- best at harvest: {"speedup": 1.1664628806987323, "ci": [1.1489659374882513, 1.183959823909213], "job": "a017e10aec544c55"}; base result: muse_decode_layer/hypotheses/done/gain/post-expert-norm-triton-small-t.result.json
+- **outcome: gain** (gain)
+- files: `muse_decode_layer/hypotheses/done/gain/small-t-launch-minimal-dense-chain-pdl.result.json`, `muse_decode_layer/hypotheses/done/gain/small-t-launch-minimal-dense-chain-pdl.patch`; branch `hyp/muse_decode_layer/small-t-launch-minimal-dense-chain-pdl`
+
+## Attribution
+
+| shape | w | base µs | hyp µs | delta | verdict |
+|---|---|---|---|---|---|
+| batch=1 ctx=80000 dist=soft layer=sliding load=decode_1 page=1 repeats=60 | 46 | 145.83 | 132.74 | 1.1081 | gained |
+| batch=1 ctx=80000 dist=soft layer=full load=decode_1 page=1 repeats=60 | 16 | 156.95 | 142.57 | 1.1013 | gained |
+| batch=16 ctx=80000 dist=soft layer=sliding load=decode_16 page=1 spread=agentic | 46 | 225.79 | 217.06 | 1.0721 | gained |
+| batch=16 ctx=80000 dist=soft layer=full load=decode_16 page=1 spread=agentic | 16 | 364.88 | 347.51 | 1.0504 | gained |
+| batch=32 ctx=80000 dist=soft layer=sliding load=decode_32 page=1 spread=agentic | 46 | 251.94 | 246.99 | 1.0719 | gained |
+| batch=32 ctx=80000 dist=soft layer=full load=decode_32 page=1 spread=agentic | 16 | 535.78 | 534.98 | 1.0288 | flat |
+| batch=1 ctx=80000 dist=soft layer=sliding load=verify_1 page=1 q_len=8 | 46 | 200.79 | 186.48 | 1.0906 | gained |
+| batch=1 ctx=80000 dist=soft layer=full load=verify_1 page=1 q_len=8 | 16 | 218.06 | 195.92 | 1.087 | gained |
+| batch=16 ctx=80000 dist=soft layer=sliding load=verify_16 page=1 q_len=8 spread=agentic | 46 | 462.37 | 447.55 | 1.0035 | flat |
+| batch=16 ctx=80000 dist=soft layer=full load=verify_16 page=1 q_len=8 spread=agentic | 16 | 603.87 | 599.37 | 1.0195 | flat |
+| batch=32 ctx=80000 dist=soft layer=sliding load=verify_32 page=1 q_len=8 spread=agentic | 46 | 639.36 | 626.79 | 1.0169 | flat |
+| batch=32 ctx=80000 dist=soft layer=full load=verify_32 page=1 q_len=8 spread=agentic | 16 | 932.92 | 910.91 | 1.0154 | flat |
+
+gained on sliding decode_1, decode_16, decode_32, verify_1; full decode_1, decode_16, verify_1. Expected hit: 6/6. Noise ±1.5%.
+
+## Follow-ups
+
+- rewrite stage 1 of `T<=32 dense chain: stage 1 = pooler GEMM (nvjet + splitKreduce), router (fp32 dot gemv at T=1, bf16 hi/lo mm pair + add at T>=2) and its side-stream fork/join, FusedMuseSparkRouting, local-id modulo + expert_map gather + contiguous + topk_weights cast, moe align, pre-expert F.rms_norm; stage 2 = qkv GEMM + FusedQKNorm + k/v/q FP8 casts + store_cache + paired pad, o GEMM + FusedRMSNormGate + unpad; stage 3 = unpooler + F.pad and PDL across the chain`: read the replaced kernels' own us per shape (profile top_kernels) against the incumbent and the floor, and check which Milestone it reached. The next stage is `/hypothesize muse_decode_layer "<what to fix or tune>" --kind rewrite --depends-on small-t-launch-minimal-dense-chain-pdl --stage 2`; a slow or failed first cut is the expected start, not a do-not-retry.
+- candidate for promotion; stack further changes with `depends_on` once it lands.
+
