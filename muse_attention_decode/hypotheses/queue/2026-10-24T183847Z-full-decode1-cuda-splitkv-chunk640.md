@@ -37,8 +37,10 @@ depends_on: null
 priority: 3
 kind: primary
 controls_for: null
-review: required
+review: proceed
 status: queued
+review_at: 2026-10-24T184117Z
+review_companions: null
 ---
 
 # full-decode1-cuda-splitkv-chunk640
@@ -57,3 +59,28 @@ Same mechanism as full-decode1-cuda-splitkv-chunk320, with fewer, longer items. 
 ## Risk
 
 A/B sibling of full-decode1-cuda-splitkv-chunk320: 320 maximizes CTAs (250, ~2 per SM) at the cost of 250 partials; 640 halves the partials and keeps ~1 CTA per SM. The two differ only in the chunk/NW constants, so comparing their kernel A and combine rows attributes the trade. Untouched by every rewrite in the judge.
+
+## Adversarial review
+
+Reviewed 2026-10-24T184117Z by an adversarial subagent (model opus).
+
+**Verdict: proceed.** Moving full decode_1 off FA3 (14.6 us attention + 7.1 us combine + 1.1 us norm-gate) onto the landed CUDA split-KV kernel is plausible and readable straight from the profile's per-kernel rows, and the sibling chunk320 is already the chunk-size A/B, so no companion is needed; the main implementation trap is the combine's four-warp reductions that are hardcoded for 4 warps and must become NW.
+
+### Justification
+Mechanism: full decode_1 is 27.3 us against a 4.3 us floor (80000 tokens x 256 B of K+V = 20.5 MB). 22.8 us of that is FA3 plus its combine plus rms_norm_gate. The landed split-KV kernel streams 2.94 TB/s at decode_16 (327 MB in 111.8 us), so a single-pass gather of 20.5 MB is physically 4-7 us, and the fused combine+norm-gate drops a launch. Shape math: 125 items of 640 tokens = 10 tiles of 64 tokens each, so SMEM_A is about 88 KB (a 64 KB ring, 5 KB idx, 16 KB acc), still 2 CTAs/SM; 125 CTAs cover 125 of 132 SMs in one wave. 640/256 is not an integer, which is why the strided issue_meta loop is required, and the hypothesis already says so. Expected directions match the gates: only full decode_1 changes. paired already excludes batch 1, so the q layout is unchanged; sliding, verify and batch>1 keep chunk 1024. Headline impact: the decode_1 load is about 46*13.2 + 16*27.3 = 1044 us. Saving 10-13 us x 16 gives a load ratio of about 1.18-1.25, which is about +2.8-3.8% on the 6-load geomean, just above the +/-1.5% CI. So judge it on the full decode_1 shape row and the kernel rows, not the headline. Weakest link: with one item per CTA there is no cross-item pipelining, so kernel A is latency-bound rather than bandwidth-bound. First the page-index meta (one dependent cold-L2 DRAM round trip) must land before any K/V address is known. Then 10 tiles stream with only 3 stages in flight (48 KB per SM), which is about 4 serialized DRAM latencies. 8-10 us for kernel A is plausible but could be optimistic; 10-12 us is a realistic downside that would still beat FA3+combine (21.7 us). The precedent loss (full-fused-triton-decode1-gate, -5% at 0.89 TB/s) was a different, Triton, kernel and is not a do-not-retry.
+
+### Confounders on the current kernel
+- full-decode-cuda-gather-splitkv: this change templates its kernels, so the batch>1 path (decode_16 111.8 us, decode_32 245.9 us, both weight 16) must be byte-identical as the <1024> / <1024,4> instantiations. Any register or occupancy shift from templating would show up as movement on full decode_16/32, which the expected list says is flat. Check those rows: movement there is an implementation artifact, not the batch-1 effect.
+- paired-heads-launch-cleanup-ab-tune-batch-gate: it is the reason batch 1 is currently unpaired FA3 with the judge's scheduler_metadata, i.e. the incumbent being replaced. This change bypasses it entirely at batch 1, so it confounds nothing beyond defining the baseline.
+- fused-preattention-triton / paired-heads-launch-cleanup: they produce the unpaired FP8 q and write the cache. That part is unchanged at batch 1 (PAIRED=False already), so the 1.3 us pre row should be flat.
+- sliding-deep-splits-on-cuda-splitkv / sliding-fused-triton-decode1-gate: no code interaction, but sliding decode_1 (weight 46) sits in the same load and has moved between runs before (full-decode-cuda-gather-splitkv 'lost on sliding decode_1' and fp8-qk-mma 'gained' on it with no sliding code change). Its noise can mask or inflate the load-level change, so attribute using the full decode_1 shape row.
+
+### Interference and A/B needs
+No companion is warranted. A gain or a loss on full decode_1 is attributable from the profile alone, because the change swaps the FA3 + FlashAttnFwdCombine + rms_norm_gate rows for splitkv_attn_kernel<640> + splitkv_combine_kernel<640,8> rows, each of which reads directly. No landed hypothesis acts on this shape's attention any more, so an ab-revert has nothing to isolate. The obvious ab-tune (chunk size, and with it CTA count versus partial count) is already queued as the sibling full-decode1-cuda-splitkv-chunk320, which differs only in the CHUNK/NW constants. A control that templates the code but keeps batch 1 on FA3 would only re-measure the batch>1 shapes, and those rows already show whether templating is neutral. Run order: 320 doubles the bytes in flight per SM (2 CTAs/SM x 3 stages) for a kernel that is ramp/latency-bound at one item per CTA, so it is the more likely winner on kernel A. 640 is the safer one on the combine. Either order works, and the second run settles the chunk trade.
+
+### Open questions
+- splitkv_combine_kernel hardcodes 4 warps in more places than the change lists: M = fmaxf(fmaxf(red_m[0], red_m[1]), fmaxf(red_m[2], red_m[3])), the first-pass stride c += 128, the c += 4 warp stride, and the warp-0 final loop for (w = 0; w < 4; ++w). All of these must become NW-generic. Missing the red_m reduction gives a too-small M and possible exp2 overflow (the self-check's finite/L2 test should catch it, but it would silently disable the whole split-KV path, batch>1 included, via the SELF-CHECK FAILED fallback, which would look like a big regression on decode_16/32).
+- If the self-check fails, _EXT = None also turns off the landed batch>1 path. Consider whether a batch-1-only failure should disable only the batch-1 gate, so one bad run does not cost the decode_16/32 gains and muddle attribution.
+- With only 125 CTAs on 132 SMs and one item each, does the block scheduler place one CTA per SM (as assumed), or does it pack 2 per SM on fewer SMs? The latter would halve per-SM bandwidth headroom; check splitkv_attn_kernel<640> duration against the ~8-10 us estimate.
+- Is the 7.1 us FA3 combine at batch 1 partly launch-gap/serialization that the new 2-kernel sequence also pays? The gap between kernel A's end and the combine's start at batch 1 is worth reading in the profile, as the follow-up (PDL attn->combine, already queued as splitkv-pdl-attn-to-combine) depends on it.
+
