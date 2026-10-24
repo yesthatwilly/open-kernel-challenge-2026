@@ -92,7 +92,7 @@ review: proceed
 status: running
 review_at: 2026-10-24T172607Z
 review_companions: null
-stage: implemented
+stage: dispatched
 claimed_at: 2026-10-24T172705Z
 base_sha: c0821b3a0b916336d23e7bbe2a454636be5b21cc
 base_blob: 1c0f5fa1bfc4e602b62e5e9edd9df6d5652b297b
@@ -107,6 +107,8 @@ submission_blob: 3f64b0622823eb70c127565c98aed1972953bf87
 lint_warnings: 3
 attempt_file: 2026-10-24T181732Z-submit-full-cuda-onelaunch-warpspec-bulk-gather.md
 prepared_at: 2026-10-24T181732Z
+job: 4994759f5b4b4278
+dispatched_at: 2026-10-24T181804Z
 ---
 
 # full-cuda-onelaunch-warpspec-bulk-gather
