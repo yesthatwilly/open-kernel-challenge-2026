@@ -36,9 +36,10 @@ priority: 4
 kind: primary
 controls_for: null
 review: proceed
-status: queued
+status: hold
 review_at: 2026-10-24T075337Z
 review_companions: null
+hold_reason: "weak: the identical one-argument change (align over 32 experts instead of 256) was already measured in muse_moe_w4a16 (sglang-marlin-path-parity): verify_16/32 flat, decode_1 about 4% slower. Under the landed block cap the verify effect is a ~2 us fill launch, below resolution; decode has few checks left today. The reviewer suggests at most a T>=128-only variant later."
 ---
 
 # moe-align-local-expert-count
