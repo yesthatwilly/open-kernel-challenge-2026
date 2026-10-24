@@ -36,13 +36,15 @@ base_sha: 58b624e7f1438bb67b466c3fa63d9278bcff3406
 base_blob: 11fbc1957daf7294cd2810ff82a0aad2f25644bd
 branch: hyp/muse_moe_w4a16/w13-marlin-bf16-reduce-verify
 worktree: .worktrees/muse_moe_w4a16/w13-marlin-bf16-reduce-verify
-mode: null
+mode: check
 implemented_at: 2026-10-24T040654Z
 impl_commit: 429b078d6423e2459c0baff41c6a22b04c35dfe2
 submission_sha256: 239d7ab9312acda47846988189792e3890c37b680815474a06f52f5c76c01c9f
 norm_sha256: 2d087ca6c5a748898c20fe9f4b4932dee3c9dcceda7d4b0cc3f5c3686d8db9ef
 submission_blob: 3253b43542c9a969bffb55cbbb9c3dd72d50ff11
 lint_warnings: 1
+attempt_file: 2026-10-24T040655Z-check-w13-marlin-bf16-reduce-verify.md
+prepared_at: 2026-10-24T040655Z
 ---
 
 # w13-marlin-bf16-reduce-verify
