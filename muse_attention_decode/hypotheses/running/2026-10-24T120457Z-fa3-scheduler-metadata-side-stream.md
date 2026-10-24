@@ -61,13 +61,15 @@ base_sha: 10d039a6478096a1360009f69d62cd7b1c17f800
 base_blob: efc544103e6d303d1f8602caa9439628043a17a7
 branch: hyp/muse_attention_decode/fa3-scheduler-metadata-side-stream
 worktree: .worktrees/muse_attention_decode/fa3-scheduler-metadata-side-stream
-mode: null
+mode: check
 implemented_at: 2026-10-24T124759Z
 impl_commit: 83e8e876b2b559d7cd2f185d528af527d4c32dd0
 submission_sha256: 965e87bd0e4400924d89aa7f49bb3079e4df0e0302effadd93d2d662a47cab4a
 norm_sha256: c57e179c589b5624b63de22d734c7222680687561b3371f17fbba433844bcf28
 submission_blob: 35854e68c3519cf7cd8e08030ed8c5f1af9983eb
 lint_warnings: 0
+attempt_file: 2026-10-24T124759Z-check-fa3-scheduler-metadata-side-stream.md
+prepared_at: 2026-10-24T124759Z
 ---
 
 # fa3-scheduler-metadata-side-stream
