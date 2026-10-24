@@ -1,0 +1,81 @@
+diff --git a/muse_bf16_proj/submission.py b/muse_bf16_proj/submission.py
+index 66ba1a3..8dbe147 100644
+--- a/muse_bf16_proj/submission.py
++++ b/muse_bf16_proj/submission.py
+@@ -17,7 +17,9 @@ m is valid.
+ 
+ Pooler at m <= 32 (hypothesis pooler-triton-splitk2-blockn64-semaphore): ONE Triton launch of
+ _bf16_splitk_kernel instead of cuBLAS splitK + splitKreduce. grid = (4096 // 64, 2) = 128 CTAs,
+-each streaming 64 weight rows over a 4096-wide K-slice. Each CTA stores its fp32 partial to a
++each streaming 64 weight rows over a 4096-wide K-slice in BLOCK_K=256 steps (control
++pooler-triton-splitk2-blockn64-semaphore-control-blockk256: 4 stages = 128 KB of weight in
++flight per CTA; smem 160 KB at BLOCK_M=16, 192 KB at BLOCK_M=32). Each CTA stores its fp32 partial to a
+ prepare()-allocated scratch workspace (fully rewritten, for rows < m, on every call), takes one
+ gpu-scope acq_rel ticket on a per-N-tile counter, and the CTA that draws the last ticket sums
+ the partials in fixed order 0..SPLIT_K-1, stores bf16 once and resets the counter to 0. Pooler
+@@ -162,7 +164,7 @@ POOLER_N = 4096
+ POOLER_K = 8192
+ POOLER_MAX_M = 32
+ POOLER_BLOCK_N = 64
+-POOLER_BLOCK_K = 128
++POOLER_BLOCK_K = 256  # control: 128 -> 256, 16 K-steps per 4096 K-slice, 128 KB of weight in flight
+ POOLER_SPLIT_K = 2
+ POOLER_NUM_WARPS = 4
+ POOLER_NUM_STAGES = 4
+@@ -233,12 +235,14 @@ def _pooler_shape_ok(x: torch.Tensor, w: torch.Tensor, cfg) -> bool:
+             and tuple(w.shape) == (POOLER_N, POOLER_K) and w.stride(1) == 1)
+ 
+ 
+-def _pooler_forward(x: torch.Tensor, w: torch.Tensor, ws: torch.Tensor, cnt: torch.Tensor) -> torch.Tensor:
+-    """x bf16 [m <= 32, 8192] @ w.T -> bf16 [m, 4096], one launch. Branches only on shapes."""
++def _pooler_forward(x: torch.Tensor, w: torch.Tensor, ws: torch.Tensor, cnt: torch.Tensor,
++                    diag: bool = False):
++    """x bf16 [m <= 32, 8192] @ w.T -> bf16 [m, 4096], one launch. Branches only on shapes.
++    diag=True (prepare() only) also returns the launch handle for the compile diagnostics."""
+     m, k = x.shape
+     out = torch.empty((m, POOLER_N), dtype=torch.bfloat16, device=x.device)
+     grid = (POOLER_N // POOLER_BLOCK_N, POOLER_SPLIT_K)
+-    _bf16_splitk_kernel[grid](
++    handle = _bf16_splitk_kernel[grid](
+         x, w, out, ws, cnt,
+         m,
+         x.stride(0), w.stride(0), out.stride(0),
+@@ -246,7 +250,26 @@ def _pooler_forward(x: torch.Tensor, w: torch.Tensor, ws: torch.Tensor, cnt: tor
+         BLOCK_M=_pooler_block_m(m), BLOCK_N=POOLER_BLOCK_N, BLOCK_K=POOLER_BLOCK_K,
+         num_warps=POOLER_NUM_WARPS, num_stages=POOLER_NUM_STAGES,
+     )
+-    return out
++    return (out, handle) if diag else out
++
++
++def _pooler_compile_diag(m: int, handle) -> None:
++    """prepare()-only: print regs, spills, shared bytes and PTX ldmatrix / cp.async counts of
++    one BLOCK_M specialization (adversarial-review request). Never fails prepare()."""
++    try:
++        md = getattr(handle, "metadata", None)
++        shared = getattr(md, "shared", None) if md is not None else None
++        ptx = handle.asm.get("ptx", "") if hasattr(handle, "asm") else ""
++        lines = ptx.splitlines()
++        ldm = [ln for ln in lines if "ldmatrix" in ln]
++        print(f"[pooler diag] m={m} BLOCK_M={_pooler_block_m(m)} BLOCK_K={POOLER_BLOCK_K} "
++              f"stages={POOLER_NUM_STAGES} n_regs={getattr(handle, 'n_regs', None)} "
++              f"n_spills={getattr(handle, 'n_spills', None)} shared={shared} "
++              f"ldmatrix={len(ldm)} ldmatrix_trans={sum('.trans' in ln for ln in ldm)} "
++              f"cp_async_cg={sum('cp.async.cg' in ln for ln in lines)} "
++              f"cp_async={sum('cp.async' in ln for ln in lines)}")
++    except Exception as e:  # diagnostics only
++        print(f"[pooler diag] m={m} unavailable: {type(e).__name__}: {e}")
+ 
+ 
+ def prepare(weights: Weights) -> dict:
+@@ -273,7 +296,9 @@ def prepare(weights: Weights) -> dict:
+     for m in range(1, POOLER_MAX_M + 1):
+         x = torch.randn((m, POOLER_K), device=pooler.device, dtype=torch.float32).to(torch.bfloat16)
+         if _pooler_shape_ok(x, pooler, dict(pcfg, m=m)):
+-            _pooler_forward(x, pooler, state["pooler_ws"], state["pooler_cnt"])
++            _, handle = _pooler_forward(x, pooler, state["pooler_ws"], state["pooler_cnt"], diag=True)
++            if m in (16, 32):
++                _pooler_compile_diag(m, handle)
+     # The kernel self-resets, but re-zero after the warm-up regardless (stream-ordered).
+     state["pooler_cnt"].zero_()
+     return state

@@ -43,11 +43,11 @@ priority: 1
 kind: control
 controls_for: pooler-triton-splitk2-blockn64-semaphore
 review: proceed
-status: running
+status: done
 hold_reason: null
 review_at: 2026-10-24T104248Z
 review_companions: null
-stage: dispatched
+stage: harvested
 claimed_at: 2026-10-24T104248Z
 base_sha: cee590d58c6c34ded84fdb734c38ca129e327fee
 base_blob: 66ba1a39e2aaa5cedb2ce3ddfb809f67f86b37f9
@@ -64,6 +64,13 @@ attempt_file: 2026-10-24T104504Z-check-pooler-triton-splitk2-blockn64-semaphore-
 prepared_at: 2026-10-24T104504Z
 job: 75d595a29a4c4b57
 dispatched_at: 2026-10-24T104514Z
+outcome: neutral
+verdict_detail: within-ci
+speedup: 1.1620235701501969
+speedup_ci: [1.144593216597944, 1.1794539237024497]
+harvested_at: 2026-10-24T124009Z
+best_at_harvest: 1.1432568936693237
+promotion: null
 ---
 
 # pooler-triton-splitk2-blockn64-semaphore-control-blockk256
@@ -141,3 +148,53 @@ CLEAN: /home/user/git/musespark/.worktrees/muse_bf16_proj/pooler-triton-splitk2-
 ```
 
 `python3 -I -m py_compile` passed. The `__pycache__` it left was removed.
+
+## Result
+
+- job `75d595a29a4c4b57` (check), status done, passed True, tests 9/9
+- speedup 1.1620x, 95% CI [1.1446, 1.1795], score 4157.2306484072415 µs vs SGLang 4830.8 µs
+- best at harvest: {"speedup": 1.1432568936693237, "ci": [1.1261080402642838, 1.1604057470743634], "job": "240eb22ea0b6487e"}; base result: muse_bf16_proj/hypotheses/done/neutral/pooler-triton-splitk2-blockn64-semaphore.result.json
+- **outcome: neutral** (within-ci)
+- files: `muse_bf16_proj/hypotheses/done/neutral/pooler-triton-splitk2-blockn64-semaphore-control-blockk256.result.json`, `muse_bf16_proj/hypotheses/done/neutral/pooler-triton-splitk2-blockn64-semaphore-control-blockk256.patch`; branch `hyp/muse_bf16_proj/pooler-triton-splitk2-blockn64-semaphore-control-blockk256`
+
+## Attribution
+
+| shape | w | base µs | hyp µs | delta | verdict |
+|---|---|---|---|---|---|
+| layer=qkv_gate load=decode_1 m=1 | 62 | 14.04 | 14.24 | 0.9898 | flat |
+| layer=o load=decode_1 m=1 | 62 | 6.83 | 6.81 | 0.9988 | flat |
+| layer=pooler load=decode_1 m=1 | 62 | 20.19 | 19.23 | 1.0401 | gained |
+| layer=unpooler load=decode_1 m=1 | 62 | 7.23 | 7.04 | 1.0042 | flat |
+| layer=router load=decode_1 m=1 | 62 | 5.88 | 5.94 | 0.9903 | flat |
+| layer=qkv_gate load=decode_16 m=16 | 62 | 13.91 | 13.98 | 0.9627 | lost |
+| layer=o load=decode_16 m=16 | 62 | 6.91 | 6.81 | 0.9915 | flat |
+| layer=pooler load=decode_16 m=16 | 62 | 20.67 | 19.65 | 1.0265 | flat |
+| layer=unpooler load=decode_16 m=16 | 62 | 18.28 | 18.6 | 1.0068 | flat |
+| layer=router load=decode_16 m=16 | 62 | 6.18 | 6.01 | 1.0197 | flat |
+| layer=qkv_gate load=decode_32 m=32 | 62 | 14.2 | 14.37 | 0.9707 | flat |
+| layer=o load=decode_32 m=32 | 62 | 6.81 | 6.86 | 0.9781 | flat |
+| layer=pooler load=decode_32 m=32 | 62 | 22.2 | 21.73 | 1.0203 | flat |
+| layer=unpooler load=decode_32 m=32 | 62 | 18.81 | 18.86 | 0.9881 | flat |
+| layer=router load=decode_32 m=32 | 62 | 6.49 | 6.6 | 0.983 | flat |
+| layer=qkv_gate load=verify_1 m=8 | 62 | 14.12 | 14.43 | 0.9606 | lost |
+| layer=o load=verify_1 m=8 | 62 | 6.69 | 6.85 | 0.9883 | flat |
+| layer=pooler load=verify_1 m=8 | 62 | 19.87 | 19.61 | 1.0275 | flat |
+| layer=unpooler load=verify_1 m=8 | 62 | 7.16 | 7.16 | 0.9908 | flat |
+| layer=router load=verify_1 m=8 | 62 | 5.93 | 6.15 | 0.9615 | lost |
+| layer=qkv_gate load=verify_16 m=128 | 62 | 17.02 | 17.09 | 0.9934 | flat |
+| layer=o load=verify_16 m=128 | 62 | 7.37 | 7.69 | 0.9952 | flat |
+| layer=pooler load=verify_16 m=128 | 62 | 24.6 | 24.94 | 1.0058 | flat |
+| layer=unpooler load=verify_16 m=128 | 62 | 19.99 | 20.2 | 0.9819 | flat |
+| layer=router load=verify_16 m=128 | 62 | 7.64 | 7.92 | 0.9675 | lost |
+| layer=qkv_gate load=verify_32 m=256 | 62 | 19.62 | 19.83 | 0.9807 | flat |
+| layer=o load=verify_32 m=256 | 62 | 9.53 | 9.5 | 0.9824 | flat |
+| layer=pooler load=verify_32 m=256 | 62 | 30.85 | 31.09 | 0.9881 | flat |
+| layer=unpooler load=verify_32 m=256 | 62 | 24.52 | 24.5 | 0.9937 | flat |
+| layer=router load=verify_32 m=256 | 62 | 9.43 | 9.89 | 0.9652 | lost |
+
+gained on pooler decode_1; lost on qkv_gate decode_16, verify_1; router verify_1, verify_16, verify_32. Expected hit: 5/7. Noise ±1.5%.
+
+## Follow-ups
+
+- within-ci: the change is not proven either way; a stacked hypothesis (`depends_on: pooler-triton-splitk2-blockn64-semaphore-control-blockk256`) that adds a further change in the same area is the only way to learn more (identical code is never re-run).
+

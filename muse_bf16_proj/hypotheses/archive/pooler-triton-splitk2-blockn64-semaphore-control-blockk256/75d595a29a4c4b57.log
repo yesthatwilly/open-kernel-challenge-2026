@@ -1,0 +1,2 @@
+[pooler diag] m=16 BLOCK_M=16 BLOCK_K=256 stages=4 n_regs=96 n_spills=0 shared=122880 ldmatrix=32 ldmatrix_trans=0 cp_async_cg=80 cp_async=90
+[pooler diag] m=32 BLOCK_M=32 BLOCK_K=256 stages=4 n_regs=96 n_spills=0 shared=147456 ldmatrix=48 ldmatrix_trans=0 cp_async_cg=96 cp_async=106
