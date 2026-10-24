@@ -1,0 +1,7 @@
+[splitkv] load_inline compiled in 41.6s
+[splitkv] self-check batch=5 kv_scale=1.0 grid=device: rel L2 1.69e-03, finite True
+[splitkv] self-check batch=5 kv_scale=0.25 grid=3: rel L2 1.66e-03, finite True
+[splitkv] self-check batch=5 kv_scale=1.0 grid=3: rel L2 1.62e-03, finite True
+[splitkv] self-check batch=32 kv_scale=1.0 grid=device: rel L2 1.67e-03, finite True
+[splitkv] self-check batch=32 kv_scale=0.25 grid=3: rel L2 1.68e-03, finite True
+[splitkv] PATH CHOSEN: CUDA split-KV, chunk 2048 at batch >= 32, 1024 below

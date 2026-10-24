@@ -1,0 +1,682 @@
+{
+ "schema": 1,
+ "problem": "muse_attention_decode",
+ "slug": "splitkv-chunk2048-batch32",
+ "job": "7cfc8c5be3a04369",
+ "mode": "check",
+ "duplicate_of": null,
+ "content_hash": "fc56849e29d46c4f8471f8cf11372e390e9dbbd03c2d5b60d115d9fc8845d05c",
+ "submission_sha256": "1d302ef19f450919f41d8c0f97fd93a1413ec096f427956a7d087893772f471e",
+ "submission_blob": "7126545f930e265cee442d55ccb0dca6ace5a96f",
+ "impl_commit": "9c8119bcecf16cbae4d8e5e0564d0e09e354cec4",
+ "base_sha": "a197891cde6faad1a1ff993579e6a598dc01e649",
+ "created_at": 1792867658.6529877,
+ "finished_at": 1792868009.996511,
+ "gpu": "H200",
+ "evaluator_sha256": "1d519ebf2014fef91b41ffea9bcd7e9c5066784ef5a2a5e2cf06a8cec554d188",
+ "status": "done",
+ "passed": true,
+ "error": null,
+ "returncode": 0,
+ "tests": {
+  "total": 16,
+  "passed": 16
+ },
+ "first_failing": null,
+ "speedup": 1.3838358642812059,
+ "speedup_ci": [
+  1.3630783263169877,
+  1.4045934022454238
+ ],
+ "score_us": 2721.637802006452,
+ "baseline_us": 3766.3,
+ "flags": [],
+ "checks": {
+  "flagged": [],
+  "ok": true,
+  "rejected": []
+ },
+ "shapes": [
+  {
+   "key": "batch=1 ctx=80000 dist=soft heads=tp8 layer=sliding load=decode_1 page=1",
+   "load": "decode 1",
+   "case": {
+    "batch": 1,
+    "ctx": 80000,
+    "dist": "soft",
+    "heads": "tp8",
+    "layer": "sliding",
+    "load": "decode 1",
+    "page": 1,
+    "seed": 8022625195583976740,
+    "weight": 46
+   },
+   "weight": 46,
+   "median_ns": 13312.452993981598,
+   "baseline_ns": 20560.00055745244,
+   "speedup": 1.5444186407078675,
+   "speedup_of_medians": 1.5444711591016473,
+   "err_ns": 37.73657114524715,
+   "speed_of_light_ns": 111.14666666666666,
+   "status": "pass",
+   "top_kernels": [
+    [
+     "_sliding_fused_kernel",
+     10.3,
+     100.0
+    ]
+   ]
+  },
+  {
+   "key": "batch=1 ctx=80000 dist=coherent heads=tp8 layer=full load=decode_1 page=1",
+   "load": "decode 1",
+   "case": {
+    "batch": 1,
+    "ctx": 80000,
+    "dist": "coherent",
+    "heads": "tp8",
+    "layer": "full",
+    "load": "decode 1",
+    "page": 1,
+    "seed": 8022829946805869965,
+    "weight": 16
+   },
+   "weight": 16,
+   "median_ns": 27631.112915507252,
+   "baseline_ns": 31807.99912661314,
+   "speedup": 1.1511660505271113,
+   "speedup_of_medians": 1.1504628906805934,
+   "err_ns": 53.93091650330249,
+   "speed_of_light_ns": 4268.586666666666,
+   "status": "pass",
+   "top_kernels": [
+    [
+     "void cutlass::device_kernel<flash::enable_sm90_or_later<f...",
+     14.7,
+     60.7
+    ],
+    [
+     "void cutlass::device_kernel<flash::FlashAttnFwdCombine<cu...",
+     7.0,
+     28.9
+    ],
+    [
+     "_pre_attention_kernel",
+     1.5,
+     6.1
+    ],
+    [
+     "void sglang::norm_gate_kernel<__nv_bfloat16, 64l, 8, 8, t...",
+     1.1,
+     4.4
+    ]
+   ]
+  },
+  {
+   "key": "batch=16 ctx=80000 dist=soft heads=tp8 layer=sliding load=decode_16 page=1 spread=agentic",
+   "load": "decode 16",
+   "case": {
+    "batch": 16,
+    "ctx": 80000,
+    "dist": "soft",
+    "heads": "tp8",
+    "layer": "sliding",
+    "load": "decode 16",
+    "page": 1,
+    "seed": 8023034698027763191,
+    "spread": "agentic",
+    "weight": 46
+   },
+   "weight": 46,
+   "median_ns": 14944.310615619968,
+   "baseline_ns": 26576.0007314384,
+   "speedup": 1.7783356766996565,
+   "speedup_of_medians": 1.7689031002087634,
+   "err_ns": 29.820388491837356,
+   "speed_of_light_ns": 1647.2746666666667,
+   "status": "pass",
+   "top_kernels": [
+    [
+     "_sliding_fused_kernel",
+     12.7,
+     100.0
+    ]
+   ]
+  },
+  {
+   "key": "batch=16 ctx=80000 dist=coherent heads=tp8 layer=full load=decode_16 page=1 spread=agentic",
+   "load": "decode 16",
+   "case": {
+    "batch": 16,
+    "ctx": 80000,
+    "dist": "coherent",
+    "heads": "tp8",
+    "layer": "full",
+    "load": "decode 16",
+    "page": 1,
+    "seed": 8023239449249656418,
+    "spread": "agentic",
+    "weight": 16
+   },
+   "weight": 16,
+   "median_ns": 126346.44237856565,
+   "baseline_ns": 201519.99639347196,
+   "speedup": 1.594979586284412,
+   "speedup_of_medians": 1.5965268220506281,
+   "err_ns": 89.617034257713,
+   "speed_of_light_ns": 63177.38666666667,
+   "status": "pass",
+   "top_kernels": [
+    [
+     "void (anonymous namespace)::splitkv_attn_kernel<1024>(uns...",
+     115.2,
+     91.7
+    ],
+    [
+     "void (anonymous namespace)::splitkv_combine_kernel<1024>(...",
+     8.2,
+     6.5
+    ],
+    [
+     "_pre_attention_kernel",
+     2.2,
+     1.7
+    ]
+   ]
+  },
+  {
+   "key": "batch=32 ctx=80000 dist=soft heads=tp8 layer=sliding load=decode_32 page=1 spread=agentic",
+   "load": "decode 32",
+   "case": {
+    "batch": 32,
+    "ctx": 80000,
+    "dist": "soft",
+    "heads": "tp8",
+    "layer": "sliding",
+    "load": "decode 32",
+    "page": 1,
+    "seed": 8023444200471549646,
+    "spread": "agentic",
+    "weight": 46
+   },
+   "weight": 46,
+   "median_ns": 23754.637770261186,
+   "baseline_ns": 30687.99991160631,
+   "speedup": 1.2918740419618233,
+   "speedup_of_medians": 1.2769640697123172,
+   "err_ns": 70.6650450092628,
+   "speed_of_light_ns": 3294.5493333333334,
+   "status": "pass",
+   "top_kernels": [
+    [
+     "_sliding_fused_kernel",
+     21.9,
+     100.0
+    ]
+   ]
+  },
+  {
+   "key": "batch=32 ctx=80000 dist=coherent heads=tp8 layer=full load=decode_32 page=1 spread=agentic",
+   "load": "decode 32",
+   "case": {
+    "batch": 32,
+    "ctx": 80000,
+    "dist": "coherent",
+    "heads": "tp8",
+    "layer": "full",
+    "load": "decode 32",
+    "page": 1,
+    "seed": 8023648951693442875,
+    "spread": "agentic",
+    "weight": 16
+   },
+   "weight": 16,
+   "median_ns": 244482.8114245589,
+   "baseline_ns": 383759.9982507527,
+   "speedup": 1.569680895007096,
+   "speedup_of_medians": 1.566520798328925,
+   "err_ns": 140.3345542698519,
+   "speed_of_light_ns": 126354.77333333335,
+   "status": "pass",
+   "top_kernels": [
+    [
+     "void (anonymous namespace)::splitkv_attn_kernel<2048>(uns...",
+     237.6,
+     96.5
+    ],
+    [
+     "void (anonymous namespace)::splitkv_combine_kernel<2048>(...",
+     6.4,
+     2.6
+    ],
+    [
+     "_pre_attention_kernel",
+     2.1,
+     0.8
+    ]
+   ]
+  },
+  {
+   "key": "batch=1 ctx=80000 dist=soft heads=tp8 layer=sliding load=verify_1 page=1 q_len=8",
+   "load": "verify 1",
+   "case": {
+    "batch": 1,
+    "ctx": 80000,
+    "dist": "soft",
+    "heads": "tp8",
+    "layer": "sliding",
+    "load": "verify 1",
+    "page": 1,
+    "q_len": 8,
+    "seed": 8023853702915336105,
+    "weight": 46
+   },
+   "weight": 46,
+   "median_ns": 16988.609448681887,
+   "baseline_ns": 22880.00099360943,
+   "speedup": 1.3467848008822547,
+   "speedup_of_medians": 1.347785108078071,
+   "err_ns": 51.64776070348613,
+   "speed_of_light_ns": 124.58666666666666,
+   "status": "pass",
+   "top_kernels": [
+    [
+     "void cutlass::device_kernel<flash::enable_sm90_or_later<f...",
+     7.4,
+     48.8
+    ],
+    [
+     "void cutlass::device_kernel<flash::FlashAttnFwdCombine<cu...",
+     3.1,
+     20.7
+    ],
+    [
+     "void flash::prepare_varlen_num_blocks_kernel<1, false>(in...",
+     1.8,
+     12.1
+    ],
+    [
+     "_pre_attention_kernel",
+     1.6,
+     10.8
+    ]
+   ]
+  },
+  {
+   "key": "batch=1 ctx=80000 dist=coherent heads=tp8 layer=full load=verify_1 page=1 q_len=8",
+   "load": "verify 1",
+   "case": {
+    "batch": 1,
+    "ctx": 80000,
+    "dist": "coherent",
+    "heads": "tp8",
+    "layer": "full",
+    "load": "verify 1",
+    "page": 1,
+    "q_len": 8,
+    "seed": 8024058454137229336,
+    "weight": 16
+   },
+   "weight": 16,
+   "median_ns": 30057.187033088765,
+   "baseline_ns": 35952.00041308999,
+   "speedup": 1.1961199287715067,
+   "speedup_of_medians": 1.1939426761220613,
+   "err_ns": 46.85901757418849,
+   "speed_of_light_ns": 4282.026666666667,
+   "status": "pass",
+   "top_kernels": [
+    [
+     "void cutlass::device_kernel<flash::enable_sm90_or_later<f...",
+     15.1,
+     53.1
+    ],
+    [
+     "void cutlass::device_kernel<flash::FlashAttnFwdCombine<cu...",
+     7.5,
+     26.5
+    ],
+    [
+     "void flash::prepare_varlen_num_blocks_kernel<1, true>(int...",
+     2.8,
+     9.7
+    ],
+    [
+     "_pre_attention_kernel",
+     1.9,
+     6.5
+    ]
+   ]
+  },
+  {
+   "key": "batch=16 ctx=80000 dist=soft heads=tp8 layer=sliding load=verify_16 page=1 q_len=8 spread=agentic",
+   "load": "verify 16",
+   "case": {
+    "batch": 16,
+    "ctx": 80000,
+    "dist": "soft",
+    "heads": "tp8",
+    "layer": "sliding",
+    "load": "verify 16",
+    "page": 1,
+    "q_len": 8,
+    "seed": 8024263205359122568,
+    "spread": "agentic",
+    "weight": 46
+   },
+   "weight": 46,
+   "median_ns": 22553.563886623055,
+   "baseline_ns": 28895.998373627663,
+   "speedup": 1.2812165083482183,
+   "speedup_of_medians": 1.2918453734779092,
+   "err_ns": 53.96489637630185,
+   "speed_of_light_ns": 1862.3146666666669,
+   "status": "pass",
+   "top_kernels": [
+    [
+     "void cutlass::device_kernel<flash::enable_sm90_or_later<f...",
+     10.8,
+     52.8
+    ],
+    [
+     "void cutlass::device_kernel<flash::FlashAttnFwdCombine<cu...",
+     3.9,
+     19.0
+    ],
+    [
+     "_pre_attention_kernel",
+     2.7,
+     13.0
+    ],
+    [
+     "void flash::prepare_varlen_num_blocks_kernel<1, false>(in...",
+     1.7,
+     8.5
+    ]
+   ]
+  },
+  {
+   "key": "batch=16 ctx=80000 dist=coherent heads=tp8 layer=full load=verify_16 page=1 q_len=8 spread=agentic",
+   "load": "verify 16",
+   "case": {
+    "batch": 16,
+    "ctx": 80000,
+    "dist": "coherent",
+    "heads": "tp8",
+    "layer": "full",
+    "load": "verify 16",
+    "page": 1,
+    "q_len": 8,
+    "seed": 8024467956581015801,
+    "spread": "agentic",
+    "weight": 16
+   },
+   "weight": 16,
+   "median_ns": 163226.77484366408,
+   "baseline_ns": 204511.9944959879,
+   "speedup": 1.2529316632756244,
+   "speedup_of_medians": 1.2567102170153965,
+   "err_ns": 230.7651375808703,
+   "speed_of_light_ns": 63392.42666666667,
+   "status": "pass",
+   "top_kernels": [
+    [
+     "void cutlass::device_kernel<flash::enable_sm90_or_later<f...",
+     152.6,
+     91.3
+    ],
+    [
+     "void cutlass::device_kernel<flash::FlashAttnFwdCombine<cu...",
+     6.2,
+     3.7
+    ],
+    [
+     "void flash::prepare_varlen_num_blocks_kernel<1, true>(int...",
+     3.2,
+     1.9
+    ],
+    [
+     "_pre_attention_kernel",
+     2.7,
+     1.6
+    ]
+   ]
+  },
+  {
+   "key": "batch=32 ctx=80000 dist=soft heads=tp8 layer=sliding load=verify_32 page=1 q_len=8 spread=agentic",
+   "load": "verify 32",
+   "case": {
+    "batch": 32,
+    "ctx": 80000,
+    "dist": "soft",
+    "heads": "tp8",
+    "layer": "sliding",
+    "load": "verify 32",
+    "page": 1,
+    "q_len": 8,
+    "seed": 8024672707802909035,
+    "spread": "agentic",
+    "weight": 46
+   },
+   "weight": 46,
+   "median_ns": 28771.537081400405,
+   "baseline_ns": 34223.99843111634,
+   "speedup": 1.1895088654558093,
+   "speedup_of_medians": 1.1889938372193796,
+   "err_ns": 57.57635776355541,
+   "speed_of_light_ns": 3724.6293333333338,
+   "status": "pass",
+   "top_kernels": [
+    [
+     "void cutlass::device_kernel<flash::enable_sm90_or_later<f...",
+     15.0,
+     56.0
+    ],
+    [
+     "void cutlass::device_kernel<flash::FlashAttnFwdCombine<cu...",
+     4.2,
+     15.8
+    ],
+    [
+     "_pre_attention_kernel",
+     4.1,
+     15.4
+    ],
+    [
+     "void flash::prepare_varlen_num_blocks_kernel<2, false>(in...",
+     1.8,
+     6.7
+    ]
+   ]
+  },
+  {
+   "key": "batch=32 ctx=80000 dist=coherent heads=tp8 layer=full load=verify_32 page=1 q_len=8 spread=agentic",
+   "load": "verify 32",
+   "case": {
+    "batch": 32,
+    "ctx": 80000,
+    "dist": "coherent",
+    "heads": "tp8",
+    "layer": "full",
+    "load": "verify 32",
+    "page": 1,
+    "q_len": 8,
+    "seed": 8024877459024802270,
+    "spread": "agentic",
+    "weight": 16
+   },
+   "weight": 16,
+   "median_ns": 302191.3440768297,
+   "baseline_ns": 388127.9989145696,
+   "speedup": 1.284378280589967,
+   "speedup_of_medians": 1.2865552866342413,
+   "err_ns": 325.8900338571032,
+   "speed_of_light_ns": 126784.85333333335,
+   "status": "pass",
+   "top_kernels": [
+    [
+     "void cutlass::device_kernel<flash::enable_sm90_or_later<f...",
+     290.2,
+     94.0
+    ],
+    [
+     "void cutlass::device_kernel<flash::FlashAttnFwdCombine<cu...",
+     7.1,
+     2.3
+    ],
+    [
+     "_pre_attention_kernel",
+     4.1,
+     1.3
+    ],
+    [
+     "_paired_norm_gate_kernel",
+     3.9,
+     1.3
+    ]
+   ]
+  }
+ ],
+ "loads": [
+  {
+   "load": "decode 1",
+   "sglang_ns": 1454688.0116686225,
+   "yours_ns": 1054470.6443712695,
+   "speedup": 1.3795433940562505
+  },
+  {
+   "load": "decode 16",
+   "sglang_ns": 4446815.975941718,
+   "yours_ns": 2708981.3663755693,
+   "speedup": 1.6415085135455367
+  },
+  {
+   "load": "decode 32",
+   "sglang_ns": 7551807.967945933,
+   "yours_ns": 5004438.320224957,
+   "speedup": 1.509022088937739
+  },
+  {
+   "load": "verify 1",
+   "sglang_ns": 1627712.0523154736,
+   "yours_ns": 1262391.027168787,
+   "speedup": 1.2893881668075589
+  },
+  {
+   "load": "verify 16",
+   "sglang_ns": 4601407.837122679,
+   "yours_ns": 3649092.336283286,
+   "speedup": 1.2609732539158918
+  },
+  {
+   "load": "verify 32",
+   "sglang_ns": 7784351.910464466,
+   "yours_ns": 6158552.210973693,
+   "speedup": 1.2639905685290482
+  }
+ ],
+ "attribution": {
+  "base_result": "muse_attention_decode/hypotheses/done/gain/sliding-deep-splits-on-cuda-splitkv.result.json",
+  "noise": 0.015,
+  "shapes": [
+   {
+    "key": "batch=1 ctx=80000 dist=soft heads=tp8 layer=sliding load=decode_1 page=1",
+    "weight": 46,
+    "base_us": 13.17,
+    "hyp_us": 13.31,
+    "delta": 0.9781,
+    "verdict": "flat"
+   },
+   {
+    "key": "batch=1 ctx=80000 dist=coherent heads=tp8 layer=full load=decode_1 page=1",
+    "weight": 16,
+    "base_us": 27.26,
+    "hyp_us": 27.63,
+    "delta": 1.007,
+    "verdict": "flat"
+   },
+   {
+    "key": "batch=16 ctx=80000 dist=soft heads=tp8 layer=sliding load=decode_16 page=1 spread=agentic",
+    "weight": 46,
+    "base_us": 15.34,
+    "hyp_us": 14.94,
+    "delta": 1.0215,
+    "verdict": "flat"
+   },
+   {
+    "key": "batch=16 ctx=80000 dist=coherent heads=tp8 layer=full load=decode_16 page=1 spread=agentic",
+    "weight": 16,
+    "base_us": 122.79,
+    "hyp_us": 126.35,
+    "delta": 0.9751,
+    "verdict": "flat"
+   },
+   {
+    "key": "batch=32 ctx=80000 dist=soft heads=tp8 layer=sliding load=decode_32 page=1 spread=agentic",
+    "weight": 46,
+    "base_us": 24.24,
+    "hyp_us": 23.75,
+    "delta": 1.0036,
+    "verdict": "flat"
+   },
+   {
+    "key": "batch=32 ctx=80000 dist=coherent heads=tp8 layer=full load=decode_32 page=1 spread=agentic",
+    "weight": 16,
+    "base_us": 241.9,
+    "hyp_us": 244.48,
+    "delta": 0.9889,
+    "verdict": "flat"
+   },
+   {
+    "key": "batch=1 ctx=80000 dist=soft heads=tp8 layer=sliding load=verify_1 page=1 q_len=8",
+    "weight": 46,
+    "base_us": 16.72,
+    "hyp_us": 16.99,
+    "delta": 0.9926,
+    "verdict": "flat"
+   },
+   {
+    "key": "batch=1 ctx=80000 dist=coherent heads=tp8 layer=full load=verify_1 page=1 q_len=8",
+    "weight": 16,
+    "base_us": 30.03,
+    "hyp_us": 30.06,
+    "delta": 0.9982,
+    "verdict": "flat"
+   },
+   {
+    "key": "batch=16 ctx=80000 dist=soft heads=tp8 layer=sliding load=verify_16 page=1 q_len=8 spread=agentic",
+    "weight": 46,
+    "base_us": 22.67,
+    "hyp_us": 22.55,
+    "delta": 1.0018,
+    "verdict": "flat"
+   },
+   {
+    "key": "batch=16 ctx=80000 dist=coherent heads=tp8 layer=full load=verify_16 page=1 q_len=8 spread=agentic",
+    "weight": 16,
+    "base_us": 161.98,
+    "hyp_us": 163.23,
+    "delta": 0.9922,
+    "verdict": "flat"
+   },
+   {
+    "key": "batch=32 ctx=80000 dist=soft heads=tp8 layer=sliding load=verify_32 page=1 q_len=8 spread=agentic",
+    "weight": 46,
+    "base_us": 28.7,
+    "hyp_us": 28.77,
+    "delta": 0.9966,
+    "verdict": "flat"
+   },
+   {
+    "key": "batch=32 ctx=80000 dist=coherent heads=tp8 layer=full load=verify_32 page=1 q_len=8 spread=agentic",
+    "weight": 16,
+    "base_us": 300.83,
+    "hyp_us": 302.19,
+    "delta": 0.995,
+    "verdict": "flat"
+   }
+  ],
+  "summary": "no shape moved outside noise",
+  "expected_hit": "1/3"
+ }
+}
