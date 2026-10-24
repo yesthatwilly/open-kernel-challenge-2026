@@ -39,13 +39,19 @@ review: proceed
 status: running
 review_at: 2026-10-23T230427Z
 review_companions: null
-stage: claimed
+stage: implemented
 claimed_at: 2026-10-23T230427Z
 base_sha: e64f27ef09b3512d26573dde4d35b8ec3ade1f63
 base_blob: 5a2064af06f442f01dff926cb4f1eca75f992a24
 branch: hyp/muse_bf16_proj/unpooler-slice-triton-gemv
 worktree: .worktrees/muse_bf16_proj/unpooler-slice-triton-gemv
 mode: null
+implemented_at: 2026-10-24T015218Z
+impl_commit: 7c05884905deaf8903e034a47905fe43b780ebc4
+submission_sha256: 65e133c4f7f9eb9b99ab1528e2bd5b61e9cb0d8ebed282785307cb19f07a68ba
+norm_sha256: 5b9dc0afdff281cdbecda8a1abaa1a2a80002ca2d464897fa502a784f2ab671f
+submission_blob: 8b4a1d5c203a5775cb41fad007ee95a18f9765a3
+lint_warnings: 0
 ---
 
 # unpooler-slice-triton-gemv
@@ -86,3 +92,41 @@ No companion is warranted. ab-revert: the only landed hypothesis is inert on the
 - Harvest criterion: the aggregate CI will likely straddle 1.0 even on success (~+1.5% geomean ceiling for a 2-of-30-shape change). The gain/flat call should rest on the unpooler decode_1/verify_1 per-shape rows (expect 6.5 -> 3-4 us) and the profile's kernel list collapsing from two entries to one.
 - Confirm the judge's evaluator does an eager warm-up before graph capture; if it captures on the first call, Triton's first-call module load happens under capture. Pre-warming in prepare() removes the question either way.
 
+
+## Implementation notes
+
+Changed only `muse_bf16_proj/submission.py` (+66 lines, nothing removed):
+
+- **Fast path in `kernel_fn`.** When `layer == "unpooler"` and `x.shape[0] <= 8` and `cfg["n"] == 1024` and `cfg["k"] == 4096`, the call goes to `_unpool_slice_gemv(x, state["unpooler"])`. Every other case falls through to the unchanged `_bf16_gemm_dispatch_impl` (cuBLAS) or router path. That includes unpooler at m >= 16 (n = 8192) and the m = 130 / m = 1000 tests.
+- **New kernel `_unpool_slice_gemv_kernel` (Triton).**
+  - Grid is `(1024 / BLOCK_N,)` = **128 programs**, with BLOCK_N = 8. There is one launch and no split-K reduce.
+  - Each program streams its 8 contiguous weight rows (64 KB) over the full K = 4096. It reads the full `[8192, 4096]` row-major weight through its first 1024 rows, so no slice copy or repack is made.
+  - Per step: `acc[BLOCK_M, 8] += tl.sum(x[:, None, :] * w[None, :, :], axis=2)`. Loads are bf16 and are upcast to fp32. Accumulation is fp32 and the store is bf16.
+  - x rows `>= m` are masked: loads return 0 and those rows are not stored.
+  - The output is `torch.empty((m, 1024), bf16)`.
+  - Launch settings: num_warps = 4, num_stages = 4. There is no autotune.
+- **Tile tune (inside the stated envelope, following the reviewer):**
+  - **BLOCK_M = `triton.next_power_of_2(m)`** (1, 2, 4 or 8) instead of the fixed 16. decode_1 therefore does no wasted rows, and the FMA form no longer materialises a `[16, 8, 512]` fp32 product.
+  - **BLOCK_K = `max(128, 512 // BLOCK_M)`**, which gives 512 at m = 1, 256 at m = 2 and 128 at m = 4..8. The per-CTA product stays at 4K-8K fp32 values (32-64 registers per thread at 4 warps), which avoids the spill the review warned about.
+  - The spec's BLOCK_K = 512 is therefore kept only at m = 1. At m = 8 the K loop runs as 32 x 128-wide chunks.
+  - BLOCK_N, the grid, num_stages and the no-split-K design are as specified.
+- **`prepare()`.** The weights are untouched. The only addition is a pre-warm: each m in 1..8 runs once on synthetic `torch.zeros((m, 4096), bf16)` against the real weight tensor, so that every BLOCK_M / BLOCK_K and `M == 1` specialization is compiled and loaded before any timed call or graph capture. The outputs are discarded and nothing input-derived is kept.
+- **Deviations.**
+  - BLOCK_M and BLOCK_K were tuned as described above.
+  - `x.contiguous()` was added, which is a no-op on judge inputs. The kernel assumes a unit k-stride, and this keeps any non-contiguous caller correct.
+  - Not done: the tl.dot alternative and BLOCK_N = 4 (256 programs). These are left as follow-up tunes if the result lands between cuBLAS and the floor.
+- **Not runnable here** (no GPU or Triton on this node). I checked the syntax with `ast.parse` and checked the logic by reading it. The first `okc check` is the real compile test.
+
+## Rules check
+
+Verified against `git diff` in the worktree (hyp/muse_bf16_proj/unpooler-slice-triton-gemv):
+
+- [x] CUDA-graph capturable: the new path has no `.item()`, `.cpu()`, sync or prints. Branching is only on `x.shape[0]`, `cfg["n"]`, `cfg["k"]` and `layer`. Tiles derive from m (a shape). The output is a fixed-shape `torch.empty`. The kernels are pre-compiled in `prepare()`, so nothing compiles under capture.
+- [x] Nothing derived from `data` is cached across calls: there are no module-level containers. The warm-up in `prepare()` uses synthetic zeros, and its outputs are discarded.
+- [x] Weights: the unpooler is read as stored (bf16, row-major, first 1024 rows, in place). There is no new repack or precision change, and the router hi/lo is unchanged.
+- [x] Activations stay BF16 where SGLang keeps them: x is read as bf16 and upcast in registers, with fp32 accumulation and bf16 output, the same contract as cuBLAS.
+- [x] Attention sees every key: N/A, since this problem has no attention.
+- [x] No timing patches, harness frames/I/O/secrets, module edits, reference import, subprocesses or network: the only new imports are `triton` and `triton.language`.
+- [x] All work happens inside the timed call, with no output caching or replay: every call launches the kernel on the fresh x and writes a fresh output.
+
+Lint: `python3 -I .claude/skills/churnsubs/bin/okc_lint.py muse_bf16_proj/submission.py --problem muse_bf16_proj` -> `CLEAN: submission.py`
