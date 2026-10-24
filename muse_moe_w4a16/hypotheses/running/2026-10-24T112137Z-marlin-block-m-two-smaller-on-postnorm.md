@@ -50,13 +50,19 @@ status: running
 review_at: 2026-10-24T112356Z
 review_companions: null
 hold_reason: null
-stage: claimed
+stage: implemented
 claimed_at: 2026-10-24T112420Z
 base_sha: 2a10183f4da4f215e94343a98324a39e52be5cb6
 base_blob: b81d47abe0c2e53a3ecc180884ae8d9671ba4e14
 branch: hyp/muse_moe_w4a16/marlin-block-m-two-smaller-on-postnorm
 worktree: .worktrees/muse_moe_w4a16/marlin-block-m-two-smaller-on-postnorm
 mode: null
+implemented_at: 2026-10-24T112434Z
+impl_commit: 954a81bbc3a7e99edc92ef0f8a158fc85485cf9f
+submission_sha256: aef6eb6a3d1c70bca1474c9d052fab0fb3f7b815048d9f8d58541638188cb38a
+norm_sha256: 31f36fd3f81ea51151244b03a4d50c0b42ab67f76c207852ed8f1d9702be3376
+submission_blob: c7bf9ffedc48b757f56765004e5d65f6ad5ba841
+lint_warnings: 1
 ---
 
 # marlin-block-m-two-smaller-on-postnorm
@@ -99,3 +105,26 @@ No companion is needed. A gain at bs=128/256 can only come from the block-m pick
 - The bs=257 test now picks 32 on master's lineage (it passed on the old base). Its post-norm path is SGLang's at bs>=32, which is unchanged, so correctness risk is minimal, but confirm the 5/5 tests pass.
 - For the implementer: use BLOCK_SIZE_M_CANDIDATES.index(block_size_m) after the loop, as in the landed patch, so the loop-exhausted case (64) maps to index 4. Do not track idx inside the loop in a way that misses the exhaust case.
 
+
+## Implementation notes
+
+Implemented inline by churnsubs on master (which has post-expert-norm-triton-small-m): the same 5-line hunk
+as marlin-block-size-m-verify-two-smaller, placed right after SGLang's unchanged block_size_m loop in
+kernel_fn: at num_tokens >= 128 the pick moves two candidates down (bs=128 48 -> 16, bs=256/257 64 -> 32).
+The bs=256 pick stays 32: marlin-block-m-cap-16-port's bs=256 row (1.329 vs SGLang) was within 3% of
+two-smaller's (1.320), the reviewer's threshold for switching to 16. The post-norm path (bs<32) is untouched.
+
+## Rules check
+
+Checked against `git -C .worktrees/muse_moe_w4a16/marlin-block-m-two-smaller-on-postnorm diff` (+5 lines in kernel_fn).
+
+- [x] CUDA-graph capturable: a Python index pick on `num_tokens` (a shape); no `.item()`/`.cpu()`/`synchronize()` added; no control flow on input values.
+- [x] Nothing derived from `data` is cached across calls: no state writes added.
+- [x] Weights: n/a: prepare() and the Marlin repack untouched; NVFP4 stays NVFP4.
+- [x] Activations BF16 where SGLang keeps BF16: unchanged; KV cache / query items n/a: no attention in this problem.
+- [x] Attention sees every key: n/a: no attention; alignment still covers every local route.
+- [x] No timing patches, harness frames/I/O/secrets, module edits, reference import, subprocesses or network: none added.
+- [x] All work happens inside the timed call; no output caching or replay: unchanged.
+- [x] First line `# okc: problem=muse_moe_w4a16` kept; no triton.autotune added.
+
+okc_lint: OK with warnings (only the existing `torch.cuda.synchronize()` in prepare()).
