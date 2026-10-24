@@ -78,10 +78,10 @@ controls_for: null
 rewrite_stage: 1
 replaces: "Triton m<=8 bf16 paths: pooler _bf16_splitk_kernel, qkv_gate _qkv_splitk_sem_kernel, o _pooler_skinny_kernel, unpooler-slice _bf16_splitk_kernel (decode_1 m=1 and verify_1 m=8)"
 review: proceed
-status: running
+status: done
 review_at: 2026-10-24T165448Z
 review_companions: null
-stage: dispatched
+stage: harvested
 claimed_at: 2026-10-24T165507Z
 base_sha: ec7244a1361d3e15e9b974bed90d02b05aa34980
 base_blob: a8bb42ac483318e9fbc84bc7826a27b7a704d1fb
@@ -98,6 +98,13 @@ attempt_file: 2026-10-24T181732Z-submit-bf16-small-m-cuda-gemv-rewrite.md
 prepared_at: 2026-10-24T181732Z
 job: b76aca7ec1a048e7
 dispatched_at: 2026-10-24T181804Z
+outcome: regression
+verdict_detail: regression
+speedup: 1.1666857140220752
+speedup_ci: [1.149185428311744, 1.1841859997324062]
+harvested_at: 2026-10-24T184716Z
+best_at_harvest: 1.1958517819004566
+promotion: null
 ---
 
 # bf16-small-m-cuda-gemv-rewrite
@@ -229,3 +236,53 @@ OK with warnings: muse_bf16_proj/submission.py
 ```
 
 `python3 -I -m py_compile` passed; the `__pycache__` it left was removed.
+
+## Result
+
+- job `b76aca7ec1a048e7` (submit), status done, passed True, tests 9/9
+- speedup 1.1667x, 95% CI [1.1492, 1.1842], score 4140.618113293016 µs vs SGLang 4830.8 µs
+- best at harvest: {"speedup": 1.1958517819004566, "ci": [1.1779140051719497, 1.2137895586289633], "job": "eeb9985396764ac2"}; base result: muse_bf16_proj/hypotheses/done/neutral/bf16-m32-swapab-wgmma-triton.result.json
+- **outcome: regression** (regression)
+- files: `muse_bf16_proj/hypotheses/done/regression/bf16-small-m-cuda-gemv-rewrite.result.json`, `muse_bf16_proj/hypotheses/done/regression/bf16-small-m-cuda-gemv-rewrite.patch`; branch `hyp/muse_bf16_proj/bf16-small-m-cuda-gemv-rewrite`
+
+## Attribution
+
+| shape | w | base µs | hyp µs | delta | verdict |
+|---|---|---|---|---|---|
+| layer=qkv_gate load=decode_1 m=1 | 62 | 12.91 | 12.83 | 1.0083 | flat |
+| layer=o load=decode_1 m=1 | 62 | 6.32 | 7.85 | 0.8067 | lost |
+| layer=pooler load=decode_1 m=1 | 62 | 19.0 | 19.29 | 0.9994 | flat |
+| layer=unpooler load=decode_1 m=1 | 62 | 5.94 | 6.2 | 0.9985 | flat |
+| layer=router load=decode_1 m=1 | 62 | 5.73 | 6.22 | 0.9508 | lost |
+| layer=qkv_gate load=decode_16 m=16 | 62 | 13.39 | 13.97 | 0.9789 | flat |
+| layer=o load=decode_16 m=16 | 62 | 6.66 | 6.72 | 0.9837 | flat |
+| layer=pooler load=decode_16 m=16 | 62 | 19.85 | 19.88 | 0.9954 | flat |
+| layer=unpooler load=decode_16 m=16 | 62 | 18.61 | 18.56 | 1.0119 | flat |
+| layer=router load=decode_16 m=16 | 62 | 6.03 | 6.01 | 1.0153 | flat |
+| layer=qkv_gate load=decode_32 m=32 | 62 | 13.69 | 13.97 | 0.9975 | flat |
+| layer=o load=decode_32 m=32 | 62 | 6.67 | 6.64 | 1.0186 | flat |
+| layer=pooler load=decode_32 m=32 | 62 | 20.0 | 19.83 | 1.0024 | flat |
+| layer=unpooler load=decode_32 m=32 | 62 | 18.48 | 18.3 | 1.0183 | flat |
+| layer=router load=decode_32 m=32 | 62 | 6.55 | 6.26 | 1.0272 | flat |
+| layer=qkv_gate load=verify_1 m=8 | 62 | 13.18 | 15.28 | 0.8377 | lost |
+| layer=o load=verify_1 m=8 | 62 | 6.32 | 9.52 | 0.7053 | lost |
+| layer=pooler load=verify_1 m=8 | 62 | 19.14 | 20.57 | 0.9439 | lost |
+| layer=unpooler load=verify_1 m=8 | 62 | 6.13 | 7.55 | 0.8476 | lost |
+| layer=router load=verify_1 m=8 | 62 | 5.91 | 5.89 | 1.0047 | flat |
+| layer=qkv_gate load=verify_16 m=128 | 62 | 16.81 | 17.07 | 0.9966 | flat |
+| layer=o load=verify_16 m=128 | 62 | 7.09 | 7.02 | 1.0046 | flat |
+| layer=pooler load=verify_16 m=128 | 62 | 25.55 | 24.66 | 1.0394 | gained |
+| layer=unpooler load=verify_16 m=128 | 62 | 19.79 | 19.79 | 1.0057 | flat |
+| layer=router load=verify_16 m=128 | 62 | 7.35 | 7.56 | 0.9853 | flat |
+| layer=qkv_gate load=verify_32 m=256 | 62 | 19.62 | 19.69 | 0.9951 | flat |
+| layer=o load=verify_32 m=256 | 62 | 9.01 | 9.42 | 0.9935 | flat |
+| layer=pooler load=verify_32 m=256 | 62 | 30.53 | 30.81 | 0.971 | flat |
+| layer=unpooler load=verify_32 m=256 | 62 | 24.5 | 23.89 | 1.01 | flat |
+| layer=router load=verify_32 m=256 | 62 | 9.3 | 9.26 | 1.0149 | flat |
+
+gained on pooler verify_16; lost on o decode_1, verify_1; router decode_1; qkv_gate verify_1; pooler verify_1; unpooler verify_1. Expected hit: 4/13. Noise ±1.5%.
+
+## Follow-ups
+
+- rewrite stage 1 of `Triton m<=8 bf16 paths: pooler _bf16_splitk_kernel, qkv_gate _qkv_splitk_sem_kernel, o _pooler_skinny_kernel, unpooler-slice _bf16_splitk_kernel (decode_1 m=1 and verify_1 m=8)`: read the replaced kernels' own us per shape (profile top_kernels) against the incumbent and the floor, and check which Milestone it reached. The next stage is `/hypothesize muse_bf16_proj "<what to fix or tune>" --kind rewrite --depends-on bf16-small-m-cuda-gemv-rewrite --stage 2`; a slow or failed first cut is the expected start, not a do-not-retry.
+

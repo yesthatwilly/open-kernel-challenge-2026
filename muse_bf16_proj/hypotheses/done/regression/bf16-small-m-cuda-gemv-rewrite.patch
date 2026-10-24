@@ -1,0 +1,437 @@
+diff --git a/muse_bf16_proj/submission.py b/muse_bf16_proj/submission.py
+index a8bb42a..4942302 100644
+--- a/muse_bf16_proj/submission.py
++++ b/muse_bf16_proj/submission.py
+@@ -35,8 +35,15 @@ Swap-AB at 17 <= m <= 32 (hypothesis bf16-m32-swapab-wgmma-triton): all four bf1
+ _bf16_swapab_kernel, 64 weight rows on tl.dot's M side and the (<= 32) tokens on N, so Triton
+ can emit wgmma m64n32k16; pooler split-K 2, qkv_gate split-K 4 (same ticket reduce, transposed
+ workspace), unpooler / o full K. Every other shape keeps its path above.
++
++CUDA swap-AB at 1 <= m <= 8 (hypothesis bf16-small-m-cuda-gemv-rewrite, rewrite stage 1):
++qkv_gate, o, pooler and the unpooler n == 1024 slice run one hand-written CUDA kernel
++(gemv_m8_kernel, built with load_inline at import; mma.sync m16n8k16 with the weight as A and
++the <= 8 tokens as B, a 6-stage cp.async ring, split-K with a ticket reduce). It is routed per
++layer only if that layer passed the prepare() self-check; otherwise the paths above are kept.
+ """
+ 
++import time
+ from typing import TypedDict
+ 
+ import torch
+@@ -651,6 +658,397 @@ def _swapab_prepare(state: dict) -> None:
+     state["swapab_cnt_qkv"].zero_()
+ 
+ 
++# --- (6) qkv_gate / o / pooler / unpooler slice, 1 <= m <= 8: hand-written CUDA swap-AB ------
++# (hypothesis bf16-small-m-cuda-gemv-rewrite, rewrite stage 1)
++#
++# One kernel (gemv_m8_kernel), one translation unit, built with load_inline at import. Each CTA
++# owns ONE work item = (64 weight rows, a contiguous K-chunk); 4 warps each own 16 weight rows.
++# mma.sync m16n8k16 bf16 -> fp32 with the WEIGHT as A (16 weight rows per MMA, row-major [N, K]
++# is exactly A .row) and the <= 8 tokens as B (x [m, K] row-major is exactly B .col; token rows
++# >= m are zero-filled by cp.async with src-size 0). Operands come from shared memory through
++# ldmatrix.x4 on XOR-swizzled tiles (16-byte chunk c of row r stored at c ^ (r & 7)).
++#
++# Shared memory (review fix 1: must fit 228 KB/SM with every resident CTA): BLOCK_K = 128, a
++# 6-stage cp.async.cg ring, each stage = weight 64 x 128 bf16 (16 KB) + x 8 x 128 bf16 (2 KB, x
++# staged per stage, not per K-range) = 18 KB; 6 x 18 KB = 108 KB (110592 B) dynamic smem per CTA,
++# 2 CTAs/SM = 216 KB + 2 x 1 KB reserved = 218 KB <= 228 KB. Up to 5 stages (80 KB of weight) in
++# flight per CTA, 160 KB per SM.
++#
++# Decomposition (review fix 2: items <= 264 = 2 CTAs x 132 SMs, one item per CTA, one wave):
++#   pooler   N 4096 / 64 = 64 n-tiles x SPLIT_K 4  = 256 items, K-chunk 2048 (16 steps)
++#   o        N 8192 / 64 = 128        x SPLIT_K 2  = 256 items, K-chunk  512 ( 4 steps)
++#   unpooler N 1024 / 64 = 16         x SPLIT_K 16 = 256 items, K-chunk  256 ( 2 steps)
++#   qkv_gate N 2304 / 64 = 36         x SPLIT_K 7  = 252 items, K-chunks of 9 or 10 x 128
++#            (uneven: chunk s covers K-blocks [s*64/7, (s+1)*64/7); was 36 x 8 = 288 > 264)
++# The reduce (review fix 3): fp32 partials of token rows < m only, into this path's own
++# prepare()-allocated ws [SPLIT_K, 8, N] (separate from the Triton paths' buffers); every thread
++# fences, one atomicAdd ticket per n-tile, the CTA drawing ticket SPLIT_K-1 sums the SPLIT_K
++# partials in fixed order 0..SPLIT_K-1 (L2 loads), stores bf16 once and resets its counter.
++GEMV_MAX_M = 8
++GEMV_BLOCK_N = 64
++GEMV_BLOCK_K = 128
++GEMV_STAGES = 6        # must match STAGES in the CUDA source
++# layer -> (N, K, SPLIT_K); static, from cfg layer only. The unpooler entry is the n == 1024 slice
++# (the first 1024 rows of the [8192, 4096] weight, read in place with its row stride).
++GEMV_CFG = {
++    "qkv_gate": (2304, 8192, 7),
++    "o":        (8192, 1024, 2),
++    "pooler":   (4096, 8192, 4),
++    "unpooler": (1024, 4096, 16),
++}
++
++_GEMV_CPP = r"""
++#include <torch/extension.h>
++void gemv_m8(torch::Tensor x, torch::Tensor w, torch::Tensor out, torch::Tensor ws, torch::Tensor cnt,
++             int64_t n, int64_t k, int64_t split);
++int64_t gemv_occupancy();
++int64_t gemv_smem_bytes();
++"""
++
++_GEMV_CUDA = r"""
++#include <torch/extension.h>
++#include <ATen/cuda/CUDAContext.h>
++#include <c10/cuda/CUDAException.h>
++#include <cuda_bf16.h>
++#include <cstdint>
++
++namespace {
++
++constexpr int BLOCK_N = 64;                       // weight rows per work item
++constexpr int BLOCK_K = 128;                      // K per pipeline stage
++constexpr int MAXM = 8;                           // tokens (mma n8)
++constexpr int STAGES = 6;
++constexpr int THREADS = 128;                      // 4 warps x 16 weight rows
++constexpr int ROW_BYTES = BLOCK_K * 2;            // 256 B = 16 chunks of 16 B
++constexpr int W_STAGE = BLOCK_N * ROW_BYTES;      // 16384
++constexpr int X_STAGE = MAXM * ROW_BYTES;         // 2048
++constexpr int STAGE_BYTES = W_STAGE + X_STAGE;    // 18432
++constexpr int SMEM = STAGES * STAGE_BYTES;        // 110592
++
++__device__ __forceinline__ uint32_t smem_u32(const void* p) {
++  return static_cast<uint32_t>(__cvta_generic_to_shared(p));
++}
++__device__ __forceinline__ void cp_async16(uint32_t dst, const void* src, int src_bytes) {
++  asm volatile("cp.async.cg.shared.global [%0], [%1], 16, %2;\n" :: "r"(dst), "l"(src), "r"(src_bytes) : "memory");
++}
++__device__ __forceinline__ void cp_commit() { asm volatile("cp.async.commit_group;\n" ::: "memory"); }
++template <int N>
++__device__ __forceinline__ void cp_wait() { asm volatile("cp.async.wait_group %0;\n" :: "n"(N) : "memory"); }
++__device__ __forceinline__ void ldsm_x4(uint32_t (&r)[4], uint32_t addr) {
++  asm volatile("ldmatrix.sync.aligned.m8n8.x4.shared.b16 {%0,%1,%2,%3}, [%4];\n"
++               : "=r"(r[0]), "=r"(r[1]), "=r"(r[2]), "=r"(r[3]) : "r"(addr));
++}
++// D = A B + D, m16n8k16, A row-major bf16 (4 regs), B col-major bf16 (2 regs), fp32 accumulate.
++__device__ __forceinline__ void mma_bf16(float (&c)[4], const uint32_t (&a)[4], uint32_t b0, uint32_t b1) {
++  asm volatile("mma.sync.aligned.m16n8k16.row.col.f32.bf16.bf16.f32 {%0,%1,%2,%3}, {%4,%5,%6,%7}, {%8,%9}, {%0,%1,%2,%3};\n"
++               : "+f"(c[0]), "+f"(c[1]), "+f"(c[2]), "+f"(c[3])
++               : "r"(a[0]), "r"(a[1]), "r"(a[2]), "r"(a[3]), "r"(b0), "r"(b1));
++}
++
++// out[m, n] bf16 = x[m, k] @ w[:n, k]^T for 1 <= m <= 8. Grid = (n / 64) * split CTAs, one work
++// item each: n-tile = blockIdx.x / split, K-chunk = blockIdx.x % split, covering K-blocks
++// [s * KB / split, (s + 1) * KB / split) of KB = k / 128. ws: fp32 [split, 8, n], only rows < m
++// written and read. cnt: int32 [n / 64], 0 between launches; every CTA takes exactly one ticket.
++__global__ void __launch_bounds__(THREADS, 2)
++gemv_m8_kernel(const __nv_bfloat16* __restrict__ x, int64_t stride_x,
++               const __nv_bfloat16* __restrict__ w, int64_t stride_w,
++               __nv_bfloat16* __restrict__ out, int64_t stride_o,
++               float* __restrict__ ws, int* __restrict__ cnt,
++               int m, int n, int k, int split) {
++  extern __shared__ __align__(128) uint8_t smem[];
++  __shared__ int s_last;
++  const int tid = threadIdx.x, lane = tid & 31, warp = tid >> 5;
++  const int ntile = blockIdx.x / split, sidx = blockIdx.x % split;
++  const int n0 = ntile * BLOCK_N;
++  const int KB = k / BLOCK_K;
++  const int kb0 = sidx * KB / split, kb1 = (sidx + 1) * KB / split;
++  const int nsteps = kb1 - kb0;
++  const __nv_bfloat16* wbase = w + (int64_t)n0 * stride_w;
++
++  // One stage: 64 weight rows x 16 chunks (8 per thread) + 8 token rows x 16 chunks (1 per thread).
++  auto issue = [&](int j) {
++    uint8_t* sw = smem + (j % STAGES) * STAGE_BYTES;
++    uint8_t* sx = sw + W_STAGE;
++    const int kel = (kb0 + j) * BLOCK_K;
++#pragma unroll
++    for (int u = 0; u < (BLOCK_N * 16) / THREADS; ++u) {
++      const int q = tid + u * THREADS;
++      const int row = q >> 4, c = q & 15;
++      cp_async16(smem_u32(sw + row * ROW_BYTES + ((c ^ (row & 7)) << 4)),
++                 wbase + (int64_t)row * stride_w + kel + c * 8, 16);
++    }
++    {
++      const int row = tid >> 4, c = tid & 15;
++      const bool ok = row < m;
++      const __nv_bfloat16* src = x + (ok ? (int64_t)row * stride_x : (int64_t)0) + kel + c * 8;
++      cp_async16(smem_u32(sx + row * ROW_BYTES + ((c ^ (row & 7)) << 4)), src, ok ? 16 : 0);
++    }
++  };
++
++#pragma unroll
++  for (int j = 0; j < STAGES - 1; ++j) {
++    if (j < nsteps) issue(j);
++    cp_commit();  // always, so the group count stays uniform
++  }
++
++  float acc[2][4] = {{0.f, 0.f, 0.f, 0.f}, {0.f, 0.f, 0.f, 0.f}};
++  const int arow = warp * 16 + (lane & 15);  // ldmatrix A row of this lane
++  const int asw = arow & 7;
++  const int ahalf = lane >> 4;                // A chunk offset (k 0-7 / 8-15)
++  const int xrow = lane & 7;                  // ldmatrix B row (token) of this lane
++  const int xq = lane >> 3;                   // B chunk offset within a k32 pair (0..3)
++
++  for (int i = 0; i < nsteps; ++i) {
++    cp_wait<STAGES - 2>();  // tile i (and everything issued before it) has landed
++    __syncthreads();        // visible to all; every warp is done with tile i - 1's stage
++    {
++      const int nx = i + STAGES - 1;
++      if (nx < nsteps) issue(nx);
++      cp_commit();
++    }
++    const uint8_t* sw = smem + (i % STAGES) * STAGE_BYTES;
++    const uint32_t a_base = smem_u32(sw) + arow * ROW_BYTES;
++    const uint32_t b_base = smem_u32(sw + W_STAGE) + xrow * ROW_BYTES;
++#pragma unroll
++    for (int kp = 0; kp < BLOCK_K / 32; ++kp) {
++      uint32_t b[4];  // b[0], b[1]: k-step 2kp; b[2], b[3]: k-step 2kp + 1
++      ldsm_x4(b, b_base + (((kp * 4 + xq) ^ xrow) << 4));
++#pragma unroll
++      for (int h = 0; h < 2; ++h) {
++        uint32_t a[4];
++        ldsm_x4(a, a_base + ((((kp * 2 + h) * 2 + ahalf) ^ asw) << 4));
++        mma_bf16(acc[h], a, b[2 * h], b[2 * h + 1]);
++      }
++    }
++  }
++
++  // C fragment: c0, c1 -> weight row lane/4, tokens 2*(lane%4) + {0, 1}; c2, c3 -> row + 8.
++  const int r0 = n0 + warp * 16 + (lane >> 2);
++  const int t0 = (lane & 3) * 2;
++  float* wsp = ws + (int64_t)sidx * MAXM * n;
++  if (t0 < m) {
++    wsp[(int64_t)t0 * n + r0] = acc[0][0] + acc[1][0];
++    wsp[(int64_t)t0 * n + r0 + 8] = acc[0][2] + acc[1][2];
++  }
++  if (t0 + 1 < m) {
++    wsp[(int64_t)(t0 + 1) * n + r0] = acc[0][1] + acc[1][1];
++    wsp[(int64_t)(t0 + 1) * n + r0 + 8] = acc[0][3] + acc[1][3];
++  }
++  __threadfence();   // each thread's partial stores are visible GPU-wide before the ticket
++  __syncthreads();
++  if (tid == 0) s_last = (atomicAdd(cnt + ntile, 1) == split - 1);
++  __syncthreads();
++  if (s_last) {
++    __threadfence();  // acquire side: the other CTAs' partials are read after their tickets
++    for (int e = tid; e < m * BLOCK_N; e += THREADS) {
++      const int t = e / BLOCK_N, r = n0 + (e % BLOCK_N);
++      float s = 0.f;
++      for (int p = 0; p < split; ++p) s += __ldcg(ws + ((int64_t)p * MAXM + t) * n + r);
++      out[(int64_t)t * stride_o + r] = __float2bfloat16_rn(s);
++    }
++    if (tid == 0) atomicExch(cnt + ntile, 0);  // self-reset for the next launch / replay
++  }
++}
++
++void ensure_attr() {
++  static bool done = false;
++  if (!done) {
++    C10_CUDA_CHECK(cudaFuncSetAttribute(gemv_m8_kernel, cudaFuncAttributeMaxDynamicSharedMemorySize, SMEM));
++    C10_CUDA_CHECK(cudaFuncSetAttribute(gemv_m8_kernel, cudaFuncAttributePreferredSharedMemoryCarveout,
++                                        cudaSharedmemCarveoutMaxShared));
++    done = true;
++  }
++}
++
++}  // namespace
++
++void gemv_m8(torch::Tensor x, torch::Tensor w, torch::Tensor out, torch::Tensor ws, torch::Tensor cnt,
++             int64_t n, int64_t k, int64_t split) {
++  const int64_t m = x.size(0);
++  TORCH_CHECK(m >= 1 && m <= MAXM, "gemv_m8: m out of range");
++  TORCH_CHECK(x.size(1) == k && w.size(1) == k && w.size(0) >= n, "gemv_m8: shapes");
++  TORCH_CHECK(n % BLOCK_N == 0 && k % BLOCK_K == 0 && split >= 1 && k / BLOCK_K >= split, "gemv_m8: tiling");
++  TORCH_CHECK(x.stride(1) == 1 && w.stride(1) == 1 && x.stride(0) % 8 == 0 && w.stride(0) % 8 == 0, "gemv_m8: strides");
++  TORCH_CHECK(out.size(0) == m && out.size(1) == n && out.stride(1) == 1, "gemv_m8: out");
++  TORCH_CHECK(ws.numel() >= split * MAXM * n && cnt.numel() >= n / BLOCK_N, "gemv_m8: workspace");
++  ensure_attr();
++  auto stream = at::cuda::getCurrentCUDAStream();
++  const unsigned grid = static_cast<unsigned>((n / BLOCK_N) * split);
++  gemv_m8_kernel<<<grid, THREADS, SMEM, stream>>>(
++      reinterpret_cast<const __nv_bfloat16*>(x.data_ptr()), x.stride(0),
++      reinterpret_cast<const __nv_bfloat16*>(w.data_ptr()), w.stride(0),
++      reinterpret_cast<__nv_bfloat16*>(out.data_ptr()), out.stride(0),
++      ws.data_ptr<float>(), cnt.data_ptr<int>(),
++      static_cast<int>(m), static_cast<int>(n), static_cast<int>(k), static_cast<int>(split));
++  C10_CUDA_KERNEL_LAUNCH_CHECK();
++}
++
++int64_t gemv_occupancy() {
++  ensure_attr();
++  int blocks = 0;
++  C10_CUDA_CHECK(cudaOccupancyMaxActiveBlocksPerMultiprocessor(&blocks, gemv_m8_kernel, THREADS, SMEM));
++  return blocks;
++}
++
++int64_t gemv_smem_bytes() { return SMEM; }
++"""
++
++
++def _build_gemv():
++    """Compile the CUDA module once per process, at import (never during graph capture). Any
++    failure keeps master's routing everywhere."""
++    t0 = time.perf_counter()
++    try:
++        from torch.utils.cpp_extension import load_inline
++        ext = load_inline(
++            name="muse_bf16_gemv_m8_v1",
++            cpp_sources=_GEMV_CPP,
++            cuda_sources=_GEMV_CUDA,
++            functions=["gemv_m8", "gemv_occupancy", "gemv_smem_bytes"],
++            extra_cuda_cflags=["-O3", "-arch=sm_90a"],
++            verbose=False,
++        )
++    except Exception as e:
++        print(f"[gemv] load_inline failed after {time.perf_counter() - t0:.1f}s, master path kept: {e!r}",
++              flush=True)
++        return None
++    print(f"[gemv] load_inline compiled in {time.perf_counter() - t0:.1f}s", flush=True)
++    return ext
++
++
++_GEMV_EXT = _build_gemv() if torch.cuda.is_available() else None
++
++
++def _gemv_route_ok(layer: str, x: torch.Tensor, w: torch.Tensor, cfg, state: dict) -> bool:
++    """CUDA m <= 8 path: the layer passed its prepare() self-check, 1 <= cfg m <= 8, the problem's
++    n / k for that layer (the unpooler only as its n == 1024 slice) and 16-byte-aligned bf16
++    rows. Branches on cfg, shapes, strides and the prepare() constant only."""
++    spec = GEMV_CFG.get(layer)
++    if spec is None or _GEMV_EXT is None or not state["gemv_ok"].get(layer, False):
++        return False
++    n, k, _split = spec
++    m = cfg["m"]
++    return (1 <= m <= GEMV_MAX_M and cfg["n"] == n and cfg["k"] == k
++            and x.dim() == 2 and x.shape[0] == m and x.shape[1] == k
++            and x.dtype == torch.bfloat16 and x.stride(1) == 1 and x.stride(0) % 8 == 0
++            and x.data_ptr() % 16 == 0
++            and w.dim() == 2 and w.dtype == torch.bfloat16 and w.shape[0] >= n and w.shape[1] == k
++            and w.stride(1) == 1 and w.stride(0) % 8 == 0 and w.data_ptr() % 16 == 0)
++
++
++def _gemv_forward(layer: str, x: torch.Tensor, w: torch.Tensor, state: dict) -> torch.Tensor:
++    """x bf16 [m <= 8, k] @ w[:n].T -> bf16 [m, n], ONE launch, w read in place."""
++    n, k, split = GEMV_CFG[layer]
++    out = torch.empty((x.shape[0], n), dtype=torch.bfloat16, device=x.device)
++    _GEMV_EXT.gemv_m8(x, w, out, state["gemv_ws_" + layer], state["gemv_cnt_" + layer], n, k, split)
++    return out
++
++
++def _gemv_check_layer(layer: str, state: dict) -> str:
++    """Self-check of one layer on synthetic x against an fp64 reference, every m in 1..8, each case
++    launched twice in a row (a counter-reset bug shows on the second launch). Returns "" if it
++    passes, else why. The 1e-3 rel-L2 bound is taken against the fp64 reference rounded to bf16:
++    the bf16 rounding of the output alone is ~1.5e-3 rel L2 against the unrounded one."""
++    n, k, _split = GEMV_CFG[layer]
++    w = state[layer]
++    dev = w.device
++    wd = w[:n].double()
++    g = torch.Generator(device=dev)
++    g.manual_seed(1234)
++    cases = [(m, m >= 2) for m in range(1, GEMV_MAX_M + 1)] + [(1, True)]
++    for m, onehot in cases:
++        x = torch.randn((m, k), device=dev, dtype=torch.float32, generator=g).to(torch.bfloat16)
++        if onehot:  # last row: a single power-of-two entry, its output is a weight column exactly
++            x[m - 1].zero_()
++            x[m - 1, (37 * m + 5) % k] = 2.0
++        ref = x.double() @ wd.T
++        ref_b = ref.to(torch.bfloat16).double()
++        out1 = _gemv_forward(layer, x, w, state)
++        out2 = _gemv_forward(layer, x, w, state)
++        torch.cuda.synchronize()
++        if not torch.equal(out1, out2):
++            return f"m={m}: second launch differs from the first"
++        o = out1.double()
++        if not bool(torch.isfinite(o).all()):
++            return f"m={m}: non-finite output"
++        err = float((o - ref_b).norm() / ref.norm().clamp_min(1e-30))
++        row_ref = ref.norm(dim=1)
++        row_den = torch.maximum(row_ref, 0.1 * row_ref.mean()).clamp_min(1e-30)
++        row_err = float(((o - ref_b).norm(dim=1) / row_den).max())
++        if not (err <= 1e-3 and row_err <= 5e-3):
++            return f"m={m}: rel L2 {err:.2e} (bound 1e-3), worst row {row_err:.2e} (bound 5e-3)"
++        if onehot and not torch.equal(o[m - 1], ref_b[m - 1]):
++            return f"m={m}: one-hot row is not exact"
++    if int(state["gemv_cnt_" + layer].abs().sum()) != 0:
++        return "ticket counters not reset to 0"
++    return ""
++
++
++def _gemv_time_layer(layer: str, state: dict) -> None:
++    """Diagnostic only (prepare): warm-L2 cudaEvent time per launch and effective TB/s at m = 1, 8."""
++    n, k, _split = GEMV_CFG[layer]
++    w = state[layer]
++    for m in (1, GEMV_MAX_M):
++        x = torch.randn((m, k), device=w.device, dtype=torch.float32).to(torch.bfloat16)
++        for _ in range(3):
++            _gemv_forward(layer, x, w, state)
++        e0 = torch.cuda.Event(enable_timing=True)
++        e1 = torch.cuda.Event(enable_timing=True)
++        reps = 20
++        e0.record()
++        for _ in range(reps):
++            _gemv_forward(layer, x, w, state)
++        e1.record()
++        e1.synchronize()
++        us = e0.elapsed_time(e1) * 1e3 / reps
++        tbs = (n * k * 2) / (us * 1e-6) / 1e12
++        print(f"[gemv] layer={layer} m={m}: {us:.2f} us/launch warm-L2 (eager, incl. launch), "
++              f"{tbs:.2f} TB/s effective", flush=True)
++
++
++def _gemv_prepare(state: dict) -> None:
++    """Allocate this path's own workspaces / zeroed tickets, self-check every (layer, m) it routes
++    and enable it per layer only on a pass (state["gemv_ok"], a constant fixed here)."""
++    state["gemv_ok"] = {}
++    if _GEMV_EXT is None:
++        print("[gemv] CUDA m<=8 path unavailable (no module), master routing kept", flush=True)
++        return
++    dev = state["pooler"].device
++    try:
++        occ = int(_GEMV_EXT.gemv_occupancy())
++        smem = int(_GEMV_EXT.gemv_smem_bytes())
++        print(f"[gemv] dynamic smem {smem} B/CTA ({GEMV_STAGES} stages x 18 KB), "
++              f"occupancy {occ} CTAs/SM, 128 threads/CTA", flush=True)
++    except Exception as e:
++        print(f"[gemv] occupancy query failed ({e!r}), master routing kept", flush=True)
++        return
++    for layer, (n, k, split) in GEMV_CFG.items():
++        w = state[layer]
++        state["gemv_ws_" + layer] = torch.empty((split, GEMV_MAX_M, n), dtype=torch.float32, device=dev)
++        state["gemv_cnt_" + layer] = torch.zeros(n // GEMV_BLOCK_N, dtype=torch.int32, device=dev)
++        if not (w.dim() == 2 and w.dtype == torch.bfloat16 and w.shape[0] >= n and w.shape[1] == k
++                and w.stride(1) == 1):
++            print(f"[gemv] layer={layer}: weight shape {tuple(w.shape)} unexpected, master kept", flush=True)
++            continue
++        try:
++            why = _gemv_check_layer(layer, state)
++        except Exception as e:
++            why = f"raised {e!r}"
++        state["gemv_cnt_" + layer].zero_()
++        if why:
++            print(f"[gemv] SELF-CHECK FAILED layer={layer}: {why}; master path kept for it", flush=True)
++            continue
++        state["gemv_ok"][layer] = True
++        print(f"[gemv] layer={layer}: self-check passed (m 1..8, grid {(n // GEMV_BLOCK_N) * split} "
++              f"= {n // GEMV_BLOCK_N} n-tiles x SPLIT_K {split})", flush=True)
++        try:
++            _gemv_time_layer(layer, state)
++        except Exception as e:
++            print(f"[gemv] layer={layer}: timing diagnostics failed ({e!r})", flush=True)
++        state["gemv_cnt_" + layer].zero_()
++    torch.cuda.synchronize()
++
++
+ def prepare(weights: Weights) -> dict:
+     """Called once, untimed. Keep the bf16 weights as they are (contiguous), build the router's
+     hi + lo bf16 split as [256, 8192] row-major (N x K), and pre-compile every m-bucket of the
+@@ -708,6 +1106,8 @@ def prepare(weights: Weights) -> dict:
+     state["unpool_cnt"].zero_()
+     # (5) Swap-AB at 17 <= m <= 32 for all four bf16 layers (own workspaces / tickets).
+     _swapab_prepare(state)
++    # (6) CUDA swap-AB at 1 <= m <= 8 (own workspaces / tickets, per-layer self-check).
++    _gemv_prepare(state)
+     return state
+ 
+ 
+@@ -715,6 +1115,9 @@ def kernel_fn(data: Inputs, state: dict) -> torch.Tensor:
+     x, cfg = data["x"], data["config"]
+     layer = cfg["layer"]
+     # Shape gate (cfg layer / m / n and shape preconditions only; never on input values).
++    # 1 <= m <= 8 on a self-checked layer: the CUDA path, ahead of every m <= 16 Triton gate.
++    if _gemv_route_ok(layer, x, state.get(layer), cfg, state):
++        return _gemv_forward(layer, x, state[layer], state)
+     if layer == "pooler" and _pooler_shape_ok(x, state["pooler"], cfg):
+         return _pooler_forward(x, state["pooler"], state["pooler_ws"], state["pooler_cnt"])
+     if (layer == "qkv_gate" and state["qkv_gate"].shape == (QKV_N, QKV_K)

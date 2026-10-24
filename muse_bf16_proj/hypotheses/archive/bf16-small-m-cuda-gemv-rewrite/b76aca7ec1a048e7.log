@@ -1,0 +1,18 @@
+[gemv] load_inline compiled in 39.9s
+[swapab] layer=pooler m=32 N=4096 K=8192 SPLIT_K=2 BLOCK_K=256 stages=4: n_regs=96 n_spills=0 wgmma=16 mma.sync=0 cp.async=106
+[swapab] layer=qkv_gate m=32 N=2304 K=8192 SPLIT_K=4 BLOCK_K=128 stages=4: n_regs=56 n_spills=0 wgmma=8 mma.sync=0 cp.async=58
+[swapab] layer=unpooler m=32 N=8192 K=4096 SPLIT_K=1 BLOCK_K=256 stages=4: n_regs=96 n_spills=0 wgmma=16 mma.sync=0 cp.async=106
+[swapab] layer=o m=32 N=8192 K=1024 SPLIT_K=1 BLOCK_K=256 stages=4: n_regs=96 n_spills=0 wgmma=16 mma.sync=0 cp.async=106
+[gemv] dynamic smem 110592 B/CTA (6 stages x 18 KB), occupancy 2 CTAs/SM, 128 threads/CTA
+[gemv] layer=qkv_gate: self-check passed (m 1..8, grid 252 = 36 n-tiles x SPLIT_K 7)
+[gemv] layer=qkv_gate m=1: 9.93 us/launch warm-L2 (eager, incl. launch), 3.80 TB/s effective
+[gemv] layer=qkv_gate m=8: 12.22 us/launch warm-L2 (eager, incl. launch), 3.09 TB/s effective
+[gemv] layer=o: self-check passed (m 1..8, grid 256 = 128 n-tiles x SPLIT_K 2)
+[gemv] layer=o m=1: 8.51 us/launch warm-L2 (eager, incl. launch), 1.97 TB/s effective
+[gemv] layer=o m=8: 8.57 us/launch warm-L2 (eager, incl. launch), 1.96 TB/s effective
+[gemv] layer=pooler: self-check passed (m 1..8, grid 256 = 64 n-tiles x SPLIT_K 4)
+[gemv] layer=pooler m=1: 21.40 us/launch warm-L2 (eager, incl. launch), 3.14 TB/s effective
+[gemv] layer=pooler m=8: 22.66 us/launch warm-L2 (eager, incl. launch), 2.96 TB/s effective
+[gemv] layer=unpooler: self-check passed (m 1..8, grid 256 = 16 n-tiles x SPLIT_K 16)
+[gemv] layer=unpooler m=1: 8.46 us/launch warm-L2 (eager, incl. launch), 0.99 TB/s effective
+[gemv] layer=unpooler m=8: 8.42 us/launch warm-L2 (eager, incl. launch), 1.00 TB/s effective
