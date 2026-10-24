@@ -108,13 +108,15 @@ base_sha: 2a1c23034c065ac604a00e741363c6bf9812e9de
 base_blob: 1c0f5fa1bfc4e602b62e5e9edd9df6d5652b297b
 branch: hyp/muse_attention_decode/sliding-cuda-cluster-dsmem-onelaunch
 worktree: .worktrees/muse_attention_decode/sliding-cuda-cluster-dsmem-onelaunch
-mode: null
+mode: submit
 implemented_at: 2026-10-24T175426Z
 impl_commit: 593859d3ce482d60c7bb0ec1fb4e4101e7b1ce31
 submission_sha256: f5c7fe82954b307189ff8d38afc62a1b8fabe2a962aed8fbd05cdd5e78d23b56
 norm_sha256: fde3b2ec6399e2de9350f962623f669f9851968aff48928a7b89a8bbe5f04be8
 submission_blob: bd96c94a12cf87fdcdac119d1e0508f009c4120c
 lint_warnings: 0
+attempt_file: 2026-10-24T181732Z-submit-sliding-cuda-cluster-dsmem-onelaunch.md
+prepared_at: 2026-10-24T181732Z
 ---
 
 # sliding-cuda-cluster-dsmem-onelaunch
