@@ -1,0 +1,60 @@
+diff --git a/muse_attention_decode/submission.py b/muse_attention_decode/submission.py
+index c6854f0..b7aab82 100644
+--- a/muse_attention_decode/submission.py
++++ b/muse_attention_decode/submission.py
+@@ -234,6 +234,24 @@ def _sliding_fused_kernel(
+     dsw = d ^ 1
+     freq = tl.load(inv_freq_ptr + d // 2) if ROPE else tl.zeros([D], dtype=tl.float32)
+ 
++    # Old keys: chunk s of [lo, seq - 1]; every key of every row's window is scored. The chunk
++    # bounds and the first tile's page-index + K/V gather are issued before the query work so
++    # the cache round trip overlaps the q load, RMSNorm and RoPE.
++    seq = tl.load(seq_ptr + b)
++    lo = tl.maximum(seq - (WINDOW - 1), 0)
++    count = seq - lo
++    chunk = ((count + S - 1) // S + BLOCK_N - 1) // BLOCK_N * BLOCK_N
++    start = lo + s * chunk
++    end = tl.minimum(start + chunk, seq)
++    n = tl.arange(0, BLOCK_N)
++    t0 = start + n
++    tmask0 = t0 < end
++    page0 = tl.load(pt_ptr + b.to(tl.int64) * pt_stride + t0 // PAGE, mask=tmask0, other=0)
++    row0 = page0.to(tl.int64) * PAGE + t0 % PAGE
++    kvoff0 = (row0[:, None] * HKV + g) * D + d[None, :]
++    kb0 = tl.load(k_cache_ptr + kvoff0, mask=tmask0[:, None], other=0)
++    vb0 = tl.load(v_cache_ptr + kvoff0, mask=tmask0[:, None], other=0)
++
+     # Query rows: token j = r // GROUP (clamped for padding rows, which stay finite), head h.
+     r = tl.arange(0, M)
+     rvalid = r < GROUP * L
+@@ -251,7 +269,6 @@ def _sliding_fused_kernel(
+     k_scale = tl.load(k_scale_ptr)
+     v_scale = tl.load(v_scale_ptr)
+     qk_scale = score_scale * k_scale  # sm_scale * log2(e) * k_scale
+-    seq = tl.load(seq_ptr + b)
+     p_row = seq + j  # each row's token position
+ 
+     m_i = tl.full([M], float("-inf"), dtype=tl.float32)
+@@ -280,14 +297,14 @@ def _sliding_fused_kernel(
+         valid = ivalid[None, :] & (i[None, :] <= j[:, None])
+         m_i, l_i, acc = _online_update(qk, valid, v8.to(tl.bfloat16), m_i, l_i, acc)
+ 
+-    # Old keys: chunk s of [lo, seq - 1]; every key of every row's window is scored.
+-    lo = tl.maximum(seq - (WINDOW - 1), 0)
+-    count = seq - lo
+-    chunk = ((count + S - 1) // S + BLOCK_N - 1) // BLOCK_N * BLOCK_N
+-    start = lo + s * chunk
+-    end = tl.minimum(start + chunk, seq)
+-    n = tl.arange(0, BLOCK_N)
+-    for n0 in range(start, end, BLOCK_N):
++    if start < end:
++        # Hoisted first tile: same qk, window mask and update as the loop body below.
++        kb = kb0.to(tl.float8e4nv, bitcast=True)
++        vb = vb0.to(tl.float8e4nv, bitcast=True)
++        qk = tl.dot(q, tl.trans(kb.to(tl.bfloat16))) * qk_scale
++        valid = tmask0[None, :] & (t0[None, :] >= p_row[:, None] - (WINDOW - 1))
++        m_i, l_i, acc = _online_update(qk, valid, vb.to(tl.bfloat16), m_i, l_i, acc)
++    for n0 in range(start + BLOCK_N, end, BLOCK_N):
+         t = n0 + n
+         tmask = t < end
+         page = tl.load(pt_ptr + b.to(tl.int64) * pt_stride + t // PAGE, mask=tmask, other=0)

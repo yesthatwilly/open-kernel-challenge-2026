@@ -32,10 +32,10 @@ priority: 4
 kind: primary
 controls_for: null
 review: proceed
-status: running
+status: done
 review_at: 2026-10-24T184058Z
 review_companions: null
-stage: dispatched
+stage: harvested
 claimed_at: 2026-10-24T184059Z
 base_sha: b0b3da52d52b15557f59e3c3631b16eb6fc5c2cd
 base_blob: c6854f093588da524e63657576b27ed720756e32
@@ -52,6 +52,13 @@ attempt_file: 2026-10-24T184626Z-check-sliding-fused-hoist-first-tile.md
 prepared_at: 2026-10-24T184626Z
 job: ead13d58c6c843e9
 dispatched_at: 2026-10-24T184641Z
+outcome: regression
+verdict_detail: regression
+speedup: 1.3449386390126326
+speedup_ci: [1.324764559427443, 1.365112718597822]
+harvested_at: 2026-10-24T232001Z
+best_at_harvest: 1.3948738389144513
+promotion: null
 ---
 
 # sliding-fused-hoist-first-tile
@@ -123,3 +130,35 @@ Audited 2026-10-24 (opus). **Verdict: dispatch.** No fixes.
 - Rules: unchanged from master (no syncs, allocation, caching or precision change; every window key scored). okc_lint CLEAN, py_compile OK.
 
 Residual risk: kb0/vb0 (2 x 64x64 uint8) live across the q norm/RoPE may raise registers/spills at num_warps=4 and eat the 1-2 us overlap; check n_spills and the _sliding_fused_kernel row.
+
+## Result
+
+- job `ead13d58c6c843e9` (check), status done, passed True, tests 16/16
+- speedup 1.3449x, 95% CI [1.3248, 1.3651], score 2800.3508046768407 µs vs SGLang 3766.3 µs
+- best at harvest: {"speedup": 1.3948738389144513, "ci": [1.3739507313307344, 1.415796946498168], "job": "698d4cd3838c4a63"}; base result: muse_attention_decode/hypotheses/done/gain/sliding-deep-splits-on-cuda-splitkv.result.json
+- **outcome: regression** (regression)
+- files: `muse_attention_decode/hypotheses/done/regression/sliding-fused-hoist-first-tile.result.json`, `muse_attention_decode/hypotheses/done/regression/sliding-fused-hoist-first-tile.patch`; branch `hyp/muse_attention_decode/sliding-fused-hoist-first-tile`
+
+## Attribution
+
+| shape | w | base µs | hyp µs | delta | verdict |
+|---|---|---|---|---|---|
+| batch=1 ctx=80000 dist=soft heads=tp8 layer=sliding load=decode_1 page=1 | 46 | 13.17 | 15.15 | 0.8663 | lost |
+| batch=1 ctx=80000 dist=coherent heads=tp8 layer=full load=decode_1 page=1 | 16 | 27.26 | 27.95 | 0.9914 | flat |
+| batch=16 ctx=80000 dist=soft heads=tp8 layer=sliding load=decode_16 page=1 spread=agentic | 46 | 15.34 | 16.95 | 0.8881 | lost |
+| batch=16 ctx=80000 dist=coherent heads=tp8 layer=full load=decode_16 page=1 spread=agentic | 16 | 122.79 | 122.59 | 1.0016 | flat |
+| batch=32 ctx=80000 dist=soft heads=tp8 layer=sliding load=decode_32 page=1 spread=agentic | 46 | 24.24 | 26.64 | 0.9102 | lost |
+| batch=32 ctx=80000 dist=coherent heads=tp8 layer=full load=decode_32 page=1 spread=agentic | 16 | 241.9 | 258.94 | 0.9329 | lost |
+| batch=1 ctx=80000 dist=soft heads=tp8 layer=sliding load=verify_1 page=1 q_len=8 | 46 | 16.72 | 17.2 | 0.9724 | flat |
+| batch=1 ctx=80000 dist=coherent heads=tp8 layer=full load=verify_1 page=1 q_len=8 | 16 | 30.03 | 30.24 | 0.9992 | flat |
+| batch=16 ctx=80000 dist=soft heads=tp8 layer=sliding load=verify_16 page=1 q_len=8 spread=agentic | 46 | 22.67 | 22.76 | 0.9987 | flat |
+| batch=16 ctx=80000 dist=coherent heads=tp8 layer=full load=verify_16 page=1 q_len=8 spread=agentic | 16 | 161.98 | 162.66 | 0.9992 | flat |
+| batch=32 ctx=80000 dist=soft heads=tp8 layer=sliding load=verify_32 page=1 q_len=8 spread=agentic | 46 | 28.7 | 29.24 | 0.9847 | flat |
+| batch=32 ctx=80000 dist=coherent heads=tp8 layer=full load=verify_32 page=1 q_len=8 spread=agentic | 16 | 300.83 | 302.35 | 1.0 | flat |
+
+lost on sliding decode_1, decode_16, decode_32; full decode_32. Expected hit: 1/3. Noise ±1.5%.
+
+## Follow-ups
+
+- record which shapes lost (Attribution) and do not retry this area in this form.
+
