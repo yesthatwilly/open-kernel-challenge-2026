@@ -34,13 +34,19 @@ review: proceed
 status: running
 review_at: 2026-10-24T164510Z
 review_companions: null
-stage: claimed
+stage: implemented
 claimed_at: 2026-10-24T164510Z
 base_sha: b1c16f8f1b1394bbe7c86189ca2cccf026a288d2
 base_blob: 1c0f5fa1bfc4e602b62e5e9edd9df6d5652b297b
 branch: hyp/muse_attention_decode/sliding-deep-splits-on-cuda-splitkv
 worktree: .worktrees/muse_attention_decode/sliding-deep-splits-on-cuda-splitkv
 mode: null
+implemented_at: 2026-10-24T164510Z
+impl_commit: 54501c287d8d9decabf616f35dc603dd7ea76c42
+submission_sha256: 0439afc99fcc468b7d31bc4f9929bab4b57d54cf90d77eb8027905939a72df92
+norm_sha256: 060b9a1bf0c60fea977edc418c77fcf0708231e3d4c4f2559b2b01c6372aa02f
+submission_blob: c6854f093588da524e63657576b27ed720756e32
+lint_warnings: 0
 ---
 
 # sliding-deep-splits-on-cuda-splitkv
@@ -83,3 +89,27 @@ No companion is needed. Each sub-change has already been isolated: the gate wide
 - Harvest: read the log tail for '[splitkv] load_inline compiled' and three self-check lines. A '[splitkv] SELF-CHECK FAILED' or load_inline failure would mean the full rows measured the FA3 fallback, which would muddle the headline but not the sliding rows.
 - Compile budget: CUDA load_inline (~41 s) plus the Triton fused-kernel variants (PAGE 1/64, ROPE on, S=16) are the same set as the two parents compiled separately, which should be well inside 15 minutes.
 
+
+## Implementation notes
+
+Built by churnsubs as a clean 3-way merge (`git merge-file`, no conflicts) of
+hyp/muse_attention_decode/sliding-fused-triton-decode-batched-deep-splits onto master
+(full-decode-cuda-gather-splitkv). The diff against master is exactly the parent's two sliding-only edits:
+the fused sliding gate widens from batch == 1 to every batch at q_len 1, and `_sliding_forward` uses 16
+splits for decode. The reviewer confirmed the merge. Runs as a scored submit (checks spent; the user's
+standing answer allows reviewed experiments on scored runs).
+
+## Rules check
+
+Checked against `git -C .worktrees/muse_attention_decode/sliding-deep-splits-on-cuda-splitkv diff` (two config-only edits).
+
+- [x] CUDA-graph capturable: both edits are on config values (window, q_len, length); no host syncs added.
+- [x] Nothing derived from `data` is cached across calls.
+- [x] Weights: n/a: no weights in this problem.
+- [x] FP8 KV cache and FP8 E4M3 queries: unchanged (the fused kernel's existing precision path).
+- [x] Attention sees every key: the fused kernel's splits cover the whole window, as in the parent run that passed 16/16.
+- [x] No timing patches, harness frames/I/O/secrets, module edits, reference import, subprocesses or network.
+- [x] All work happens inside the timed call; no output caching or replay.
+- [x] First line marker kept; no triton.autotune.
+
+okc_lint: CLEAN.
