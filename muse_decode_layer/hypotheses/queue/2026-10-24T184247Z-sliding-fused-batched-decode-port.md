@@ -49,8 +49,10 @@ depends_on: null
 priority: 1
 kind: primary
 controls_for: null
-review: required
+review: proceed
 status: queued
+review_at: 2026-10-24T185011Z
+review_companions: null
 ---
 
 # sliding-fused-batched-decode-port
@@ -70,3 +72,26 @@ Port muse_attention_decode master batched sliding-decode path (landed sliding-de
 ## Risk
 
 Proven kernel (attention 1.309x -> 1.395x lineage); the batch-1 port of the same kernel gave +3.4-4.3% on sliding decode_1 here, so the decode_layer glue it removes is real. Overlap: decode-restack-sliding-port-paired-pad-gemms-t1 (in judge) adds the same helpers for batch 1 only; shapes are disjoint, code overlaps (merge, do not duplicate). The fused kernel zeroes _counters once on first eager call and leaves them at 0 (no data carried). Risk: kernel never ran inside the whole layer at batch 16/32; the 13 tests include sliding decode at batch 8 (page 64) and batch 9 (page 1).
+
+## Adversarial review
+
+Reviewed 2026-10-24T185011Z by an adversarial subagent (model opus).
+
+**Verdict: proceed.** Shape-disjoint port of a proven fused sliding-decode kernel onto an attention chain that no landed hypothesis has touched; the sliding decode_16/32 per-shape readouts are cleanly attributable with full/verify/decode_1 shapes as in-run controls, so no companion is needed, though the headline effect (~0.6-1%) will sit inside the +/-1.5% CI.
+
+### Justification
+Plausible. Master's sliding attention chain for T=16/32 is still SGLang's (qkv GEMM -> FusedQKNorm -> k/v FP8 casts -> store_cache -> q cast -> FA3 main + combine -> FusedRMSNormGate -> o GEMM); small-t-launch-minimal-dense-chain-pdl only rewrote the post-attention chain, so the ~7 launches the fused kernel removes are all still there. FINDINGS profile for sliding decode_16 (217.1 us, floor 76.7) does not list FA3 among the top 3 (Marlin 126.1, nvjet 26.5, pooler_router 23.9), consistent with FA3 main ~13.6 us + combine 3.7 us + glue; same at decode_32 (247.0 us, floor 84.5). The same Triton kernel already ran inside this layer at batch 1 (sliding-fused-triton-decode1-port: 13/13 tests, sliding decode_1 gain) and in muse_attention_decode at every decode batch with 16 splits, so correctness and graph-safety are established; the 13 tests cover the new gate at batch 8 (ctx 2047) and batch 9 (page 1, mixed spread). Expected directions match the gate: only sliding decode_16/32 change; full, verify and sliding decode_1 are byte-identical controls. Magnitude: -10..-14 us on 217 us is +4.6-6.5% on sliding decode_16 and -6..-10 us on 247 us is +2.5-4% on sliding decode_32, but with weight 46 sliding + 16 full per load that is ~3.5% and ~1.8% of the two load times and ~0.9% on the 6-load geomean, i.e. inside the run's CI; judge it per shape (per-shape err is ~0.7 us). Weakest link: the savings are estimated from an older profile (a017e10aec544c55, 230 us) and from standalone muse_attention_decode timings; at decode_32 the 16-split choice (1024 CTAs, ~4 MB fp32 workspace write+reread) only beat 2 splits by 0.7 us there, so the decode_32 gain rests almost entirely on removed glue launches, not on a faster attention core, and could come in near flat.
+
+### Confounders on the current kernel
+- small-t-launch-minimal-dense-chain-pdl (on master, base): touches T<=32 but only after the o GEMM (P/R kernels, PDL on its own launches after attn_boundary); the attention chain the hypothesis replaces is untouched, so no mechanistic interaction; it only shrinks the denominator, making the same absolute saving a slightly larger ratio. Not a confounder for attribution.
+- fa3-hdim128-head-pairing-batched (on master): gated window == 0 and batch > 1; the new gate requires window != 0, so the code paths are disjoint. No confound.
+- post-expert-norm-triton-small-t, marlin-block-m-cap-16, sglang-pipeline-parity-router-hilo-m8: MoE/router only, downstream and unchanged by this hypothesis; the o GEMM input layout ([T, 1024] bf16) is identical, so nothing downstream sees a different operand. No confound.
+
+### Interference and A/B needs
+No companion warranted. The gate is config-only and shape-disjoint: within the same run, sliding decode_16 and decode_32 are the only shapes whose kernels change, while sliding decode_1, all full-layer shapes and all verify shapes are byte-identical to master and serve as in-run noise controls. No landed hypothesis shares the replaced kernels, so an ab-revert would measure the same thing. A split-count control (_num_splits(batch, hkv) = 4/2 instead of 16) would isolate a sub-choice but is not needed to interpret this run: a gain or a loss on the two target shapes is attributable to the fused path as a whole; if decode_32 comes in flat or slower while decode_16 gains, the natural follow-up is a stacked splits-tuning hypothesis, not a companion now.
+
+### Open questions
+- The hypothesis's conditional on decode-restack-sliding-port-paired-pad-gemms-t1 is moot: that run was harvested neutral (beats-base-not-best) and is not on master, so the helpers are added fresh; the implementer should not try to merge from the restack branch.
+- At decode_32 is 16 splits (1024 CTAs) better than _num_splits = 2 inside the layer, where the qkv GEMM leaves the L2 in a different state than the standalone attention benchmark? Read the fused kernel's own us from the profile against FA3 main + combine (18.3 + 3.7 us).
+- Does the fused kernel's split-combine workspace traffic (B*Hkv*16*16*64*4 B, ~4 MB at B=32) show up as extra latency in the following o GEMM's cold-L2 weight read? Check the o GEMM nvjet time on sliding decode_32 versus master.
+
