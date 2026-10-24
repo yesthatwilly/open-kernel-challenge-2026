@@ -75,6 +75,7 @@ harvested_at: 2026-10-24T124010Z
 best_at_harvest: 1.1297159216968498
 promotion: merged
 promotion_commit: cefc282ebdcb22f4a4e60d2acf151b862ee831ad
+promotion_attempt: 2026-10-24T124011Z-submit-marlin-block-m-two-smaller-on-postnorm.md
 ---
 
 # marlin-block-m-two-smaller-on-postnorm
