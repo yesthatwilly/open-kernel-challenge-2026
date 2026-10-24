@@ -1,6 +1,6 @@
 # muse_attention_decode hypotheses
 
-Regenerated 2026-10-24T145134Z. Best: 1.3468x [1.3266,1.3670] job `82085a4e82154393` (check)
+Regenerated 2026-10-24T164236Z. Best: 1.3468x [1.3266,1.3670] job `82085a4e82154393` (check)
 
 | created | slug | kind | area | where | outcome | speedup | CI | job | mode | promotion | review | expected hit |
 |---|---|---|---|---|---|---|---|---|---|---|---|---|
@@ -29,7 +29,7 @@ Regenerated 2026-10-24T145134Z. Best: 1.3468x [1.3266,1.3670] job `82085a4e82154
 | 2026-10-24T120440Z | sliding-fused-triton-decode1-gate | primary | sliding-layer attention (batch-1 decode gate) | done/neutral | neutral | 1.2931 | [1.274,1.321] | 295727fc68e14093 | check | merged | proceed | 1/5 |
 | 2026-10-24T120457Z | fa3-scheduler-metadata-side-stream | primary | FA3 call (schedule, off critical path) | done/regression | regression | 1.2245 | [1.206,1.247] | 42964d938c5842f4 | check |  | proceed | 0/5 |
 | 2026-10-24T120513Z | preattention-group-tiled-programs | primary | pre-attention norm+rope | done/neutral | neutral | 1.2614 | [1.242,1.280] | 877731a3b2214ddb | check |  | proceed | 1/5 |
-| 2026-10-24T140133Z | full-decode-cuda-gather-splitkv | rewrite | FA3 call (full-layer decode gather) | done/gain | gain | 1.3468 | [1.327,1.367] | 82085a4e82154393 | check | merged | proceed | 4/5 |
+| 2026-10-24T140133Z | full-decode-cuda-gather-splitkv | rewrite | FA3 call (full-layer decode gather) | done/gain | gain | 1.3468 | [1.327,1.367] | 82085a4e82154393 | check | submitted | proceed | 4/5 |
 | 2026-10-24T140200Z | sliding-fused-triton-decode-batched-deep-splits | primary | sliding-layer attention (batched decode, split depth) | done/neutral | neutral | 1.3087 | [1.289,1.328] | 179dd013d3a347e4 | check |  | proceed | 3/5 |
 | 2026-10-24T140225Z | full-fused-triton-decode1-gate | primary | full-layer attention (batch-1 decode gate) | queue | queued |  |  |  |  |  | required |  |
 | 2026-10-24T140241Z | sliding-fused-triton-decode1-splits-32 | primary | sliding-layer attention (batch-1 decode, split depth) | queue | queued |  |  |  |  |  | required |  |

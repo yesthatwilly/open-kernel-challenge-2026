@@ -1,6 +1,6 @@
 # muse_prefill_layer hypotheses
 
-Regenerated 2026-10-24T141733Z. Best: 1.0599x [1.0440,1.0758] job `fb1e52d2119d4175` (check)
+Regenerated 2026-10-24T164236Z. Best: 1.0599x [1.0440,1.0758] job `fb1e52d2119d4175` (check)
 
 | created | slug | kind | area | where | outcome | speedup | CI | job | mode | promotion | review | expected hit |
 |---|---|---|---|---|---|---|---|---|---|---|---|---|
@@ -21,7 +21,7 @@ Regenerated 2026-10-24T141733Z. Best: 1.0599x [1.0440,1.0758] job `fb1e52d2119d4
 | 2026-10-24T075513Z | router-pooler-concat-gemm-turn | primary | router GEMM + pooler GEMM (one concatenated GEMM, no side stream) | queue | hold |  |  |  |  |  | hold |  |
 | 2026-10-24T092506Z | experts-triton-w4a16-swapab-reglhs | rewrite | w13 marlin + w2 marlin (W4A16 engine with in-kernel NVFP4 dequant, stage 2: swap-AB register-LHS dot) | done/neutral | neutral | 1.0068 | [0.992,1.022] | 00148fbedfb6414f | check |  | proceed | 1/3 |
 | 2026-10-24T111900Z | experts-triton-w4a16-first-turn-blockt256 | rewrite | w13 marlin + w2 marlin (W4A16 Triton engine, stage 3: first_turn token tile 256) | done/neutral | neutral | 1.0229 | [1.008,1.038] | b33b87b5083b4d1c | check | merged | proceed | 2/2 |
-| 2026-10-24T124504Z | experts-hybrid-marlin-turn-triton-first-turn | rewrite | w13 marlin + w2 marlin (stage 4: hybrid shape gate, Marlin at T<=4096, Triton NVFP4 above) | done/gain | gain | 1.0599 | [1.044,1.076] | fb1e52d2119d4175 | check | merged | proceed | 2/3 |
+| 2026-10-24T124504Z | experts-hybrid-marlin-turn-triton-first-turn | rewrite | w13 marlin + w2 marlin (stage 4: hybrid shape gate, Marlin at T<=4096, Triton NVFP4 above) | done/gain | gain | 1.0599 | [1.044,1.076] | fb1e52d2119d4175 | check | submitted | proceed | 2/3 |
 | 2026-10-24T140058Z | experts-triton-nvfp4-packed-asm-dequant | rewrite | w13 marlin + w2 marlin (Triton NVFP4 engine, stage 5: packed inline-PTX dequant) | queue | queued |  |  |  |  |  | required |  |
 | 2026-10-24T140119Z | experts-triton-w13-fused-silu-epilogue | primary | silu-mul (fused into the w13 Triton NVFP4 GEMM epilogue, T > 4096) | queue | queued |  |  |  |  |  | required |  |
 | 2026-10-24T140133Z | experts-triton-packed-dequant-turn4 | rewrite | w13 marlin + w2 marlin (Triton NVFP4 engine, stage 6: take over turn_4) | queue | queued |  |  |  |  |  | required |  |

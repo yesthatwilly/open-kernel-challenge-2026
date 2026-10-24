@@ -1,6 +1,6 @@
 # muse_decode_layer hypotheses
 
-Regenerated 2026-10-24T144812Z. Best: 1.1635x [1.1461,1.1810] job `9dcaec316b3045a7` (check)
+Regenerated 2026-10-24T164236Z. Best: 1.1635x [1.1461,1.1810] job `9dcaec316b3045a7` (check)
 
 | created | slug | kind | area | where | outcome | speedup | CI | job | mode | promotion | review | expected hit |
 |---|---|---|---|---|---|---|---|---|---|---|---|---|
@@ -22,7 +22,7 @@ Regenerated 2026-10-24T144812Z. Best: 1.1635x [1.1461,1.1810] job `9dcaec316b304
 | 2026-10-24T075400Z | triton-flash-decode-full-paired-kv | rewrite | FA3 call | done/neutral | neutral | 1.0702 | [1.054,1.086] | e82b11f9d9f64b23 | check |  | proceed | 1/5 |
 | 2026-10-24T100416Z | triton-flash-decode-full-oversub-kv-prefetch | rewrite | FA3 call | done/regression | regression | 1.0413 | [1.026,1.057] | e55908a05eec4000 | check |  | proceed | 3/5 |
 | 2026-10-24T103909Z | fa3-hdim128-head-pairing-batched | primary | FA3 call | done/neutral | neutral | 1.0874 | [1.071,1.104] | fb07a3bd3aa54baf | check | merged | proceed | 7/7 |
-| 2026-10-24T140057Z | post-expert-norm-triton-small-t | primary | post-expert norm+combine | done/gain | gain | 1.1635 | [1.146,1.181] | 9dcaec316b3045a7 | check | merged | proceed | 6/6 |
+| 2026-10-24T140057Z | post-expert-norm-triton-small-t | primary | post-expert norm+combine | done/gain | gain | 1.1635 | [1.146,1.181] | 9dcaec316b3045a7 | check | submitted | proceed | 6/6 |
 | 2026-10-24T140116Z | bf16-shape-gated-triton-gemms-small-t | primary | pooler GEMM | queue | queued |  |  |  |  |  | required |  |
 | 2026-10-24T140135Z | sliding-fused-triton-decode1-port | primary | FA3 call | queue | queued |  |  |  |  |  | required |  |
 | 2026-10-24T140156Z | paired-heads-pad-unpad-triton | primary | output norm-gate | queue | queued |  |  |  |  |  | required |  |
