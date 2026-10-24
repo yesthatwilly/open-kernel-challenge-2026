@@ -90,11 +90,11 @@ priority: 1
 kind: primary
 controls_for: null
 review: proceed
-status: running
+status: done
 review_at: 2026-10-24T112458Z
 review_companions: null
 hold_reason: null
-stage: dispatched
+stage: harvested
 claimed_at: 2026-10-24T124117Z
 base_sha: 16c093703ec548a902760680cda97f6018325276
 base_blob: da55301de1e911aeab09878b0873809f544f436c
@@ -111,6 +111,13 @@ attempt_file: 2026-10-24T124537Z-check-bf16-shape-gated-triton-winners-combo.md
 prepared_at: 2026-10-24T124537Z
 job: 875f3e0172ee48a1
 dispatched_at: 2026-10-24T124546Z
+outcome: neutral
+verdict_detail: unproven-vs-best
+speedup: 1.1760470299345995
+speedup_ci: [1.1584063244855805, 1.1936877353836184]
+harvested_at: 2026-10-24T135613Z
+best_at_harvest: 1.1432568936693237
+promotion: null
 ---
 
 # bf16-shape-gated-triton-winners-combo
@@ -229,3 +236,53 @@ CLEAN: /home/user/git/musespark/.worktrees/muse_bf16_proj/bf16-shape-gated-trito
 ```
 
 `python3 -I -m py_compile` passed, and the `__pycache__` it left in the worktree was removed.
+
+## Result
+
+- job `875f3e0172ee48a1` (check), status done, passed True, tests 9/9
+- speedup 1.1760x, 95% CI [1.1584, 1.1937], score 4107.658858054889 µs vs SGLang 4830.8 µs
+- best at harvest: {"speedup": 1.1432568936693237, "ci": [1.1261080402642838, 1.1604057470743634], "job": "240eb22ea0b6487e"}; base result: muse_bf16_proj/hypotheses/done/gain/router-triton-hilo-fused-control-splitk-all-m.result.json
+- **outcome: neutral** (unproven-vs-best)
+- files: `muse_bf16_proj/hypotheses/done/neutral/bf16-shape-gated-triton-winners-combo.result.json`, `muse_bf16_proj/hypotheses/done/neutral/bf16-shape-gated-triton-winners-combo.patch`; branch `hyp/muse_bf16_proj/bf16-shape-gated-triton-winners-combo`
+
+## Attribution
+
+| shape | w | base µs | hyp µs | delta | verdict |
+|---|---|---|---|---|---|
+| layer=qkv_gate load=decode_1 m=1 | 62 | 14.4 | 13.24 | 1.0832 | gained |
+| layer=o load=decode_1 m=1 | 62 | 6.69 | 6.58 | 1.0571 | gained |
+| layer=pooler load=decode_1 m=1 | 62 | 21.21 | 19.2 | 1.078 | gained |
+| layer=unpooler load=decode_1 m=1 | 62 | 7.07 | 5.75 | 1.1742 | gained |
+| layer=router load=decode_1 m=1 | 62 | 5.8 | 5.74 | 1.0029 | flat |
+| layer=qkv_gate load=decode_16 m=16 | 62 | 13.82 | 14.01 | 1.0144 | flat |
+| layer=o load=decode_16 m=16 | 62 | 6.78 | 6.36 | 1.0568 | gained |
+| layer=pooler load=decode_16 m=16 | 62 | 21.3 | 19.51 | 1.0632 | gained |
+| layer=unpooler load=decode_16 m=16 | 62 | 18.45 | 18.52 | 1.0126 | flat |
+| layer=router load=decode_16 m=16 | 62 | 6.2 | 6.2 | 1.0084 | flat |
+| layer=qkv_gate load=decode_32 m=32 | 62 | 14.27 | 14.13 | 1.0114 | flat |
+| layer=o load=decode_32 m=32 | 62 | 6.58 | 7.04 | 0.9958 | flat |
+| layer=pooler load=decode_32 m=32 | 62 | 21.95 | 21.55 | 1.0051 | flat |
+| layer=unpooler load=decode_32 m=32 | 62 | 18.71 | 18.89 | 0.9991 | flat |
+| layer=router load=decode_32 m=32 | 62 | 6.54 | 6.37 | 1.0048 | flat |
+| layer=qkv_gate load=verify_1 m=8 | 62 | 14.0 | 13.53 | 1.012 | flat |
+| layer=o load=verify_1 m=8 | 62 | 6.28 | 6.75 | 0.9899 | flat |
+| layer=pooler load=verify_1 m=8 | 62 | 21.3 | 19.61 | 1.0562 | gained |
+| layer=unpooler load=verify_1 m=8 | 62 | 7.02 | 6.45 | 1.1128 | gained |
+| layer=router load=verify_1 m=8 | 62 | 5.67 | 6.2 | 0.9186 | lost |
+| layer=qkv_gate load=verify_16 m=128 | 62 | 16.96 | 17.1 | 0.9946 | flat |
+| layer=o load=verify_16 m=128 | 62 | 6.98 | 7.45 | 0.9712 | flat |
+| layer=pooler load=verify_16 m=128 | 62 | 25.21 | 25.95 | 0.9993 | flat |
+| layer=unpooler load=verify_16 m=128 | 62 | 19.65 | 20.27 | 0.9866 | flat |
+| layer=router load=verify_16 m=128 | 62 | 7.04 | 7.68 | 0.9443 | lost |
+| layer=qkv_gate load=verify_32 m=256 | 62 | 19.47 | 19.62 | 1.0057 | flat |
+| layer=o load=verify_32 m=256 | 62 | 9.51 | 9.7 | 0.9769 | flat |
+| layer=pooler load=verify_32 m=256 | 62 | 30.51 | 29.17 | 0.9989 | flat |
+| layer=unpooler load=verify_32 m=256 | 62 | 24.39 | 24.0 | 1.0083 | flat |
+| layer=router load=verify_32 m=256 | 62 | 9.27 | 9.37 | 0.9977 | flat |
+
+gained on qkv_gate decode_1; o decode_1, decode_16; pooler decode_1, decode_16, verify_1; unpooler decode_1, verify_1; lost on router verify_1, verify_16. Expected hit: 14/16. Noise ±1.5%.
+
+## Follow-ups
+
+- unproven-vs-best: the change is not proven either way; a stacked hypothesis (`depends_on: bf16-shape-gated-triton-winners-combo`) that adds a further change in the same area is the only way to learn more (identical code is never re-run).
+
