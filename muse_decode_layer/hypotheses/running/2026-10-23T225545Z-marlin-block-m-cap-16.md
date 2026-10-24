@@ -35,9 +35,16 @@ priority: 4
 kind: primary
 controls_for: null
 review: proceed
-status: queued
+status: running
 review_at: 2026-10-24T053040Z
 review_companions: null
+stage: claimed
+claimed_at: 2026-10-24T053040Z
+base_sha: 66e598a7966dd1ac8380100ad95bc3a0a4d21449
+base_blob: 6884d26a928d1de1b07bf8d28e1be4e53dfdcfc5
+branch: hyp/muse_decode_layer/marlin-block-m-cap-16
+worktree: .worktrees/muse_decode_layer/marlin-block-m-cap-16
+mode: null
 ---
 
 # marlin-block-m-cap-16
