@@ -71,8 +71,9 @@ speedup: 0.9887547325362586
 speedup_ci: [0.9739234115482147, 1.0035860535243024]
 harvested_at: 2026-10-24T021808Z
 best_at_harvest: 0.006105558011922052
-promotion: merged
+promotion: merged-unsubmitted
 promotion_commit: a646cb4151c0a45f926a49b68de21789e11a8102
+promotion_reason: ci.low 0.974 < submit floor 1.0
 ---
 
 # sglang-marlin-path-parity
