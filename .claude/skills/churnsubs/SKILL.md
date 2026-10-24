@@ -93,6 +93,12 @@ C="python3 -I $CLAUDE_PROJECT_DIR/.claude/skills/churnsubs/bin/churn.py"
 5. **Dispatch each pick** (parallel is fine: run the implementation step for several picks as
    parallel subagents, one per worktree; keep steps 5a and 5c–5e in this thread, in order):
    - 5a `$C claim <p> <slug>` → `worktree`, `branch`, `submission`, `spec`, `base_sha`.
+     A hypothesis whose `depends_on` parent finished without landing (neutral, regression, unmerged) is a
+     restack: claim bases it on current master and 3-way applies the parent's patch (`restack: applied`,
+     change already staged). On `restack: conflicts` the worktree is clean master and the implementer
+     must hand-merge the parent's patch (`restack_patch`) before the hypothesis's own change. Companions
+     and rewrite stages still build on the parent's commit; `stale_base: true` flags one whose parent
+     predates master's current submission.py.
    - 5b **Implement** (a subagent per pick, briefed with `IMPLEMENT_PROMPT.md`) the `change` in `<worktree>/<p>/submission.py` exactly as specified,
      modestly, touching only the named area; keep the first-line marker. Then edit the hypothesis
      file (its `md` path, on master) and write `## Implementation notes` (what you changed, where,

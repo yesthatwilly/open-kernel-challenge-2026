@@ -1329,14 +1329,36 @@ def cmd_claim(a):
         refuse(f"{slug} has not passed the adversarial review (review={h.get('review')}); run the review and "
                f"`churn.py review-record` first, or pass --skip-review deliberately", review=h.get("review"))
     base_ref = "master"
-    if h.get("depends_on"):
-        dp, _ = find_hyp(p, str(h["depends_on"]))
+    restack_patch = None  # a finished parent's patch to 3-way apply onto master after the worktree exists
+    stale_base = False
+    if h.get("base") and h["base"] != "master":
+        base_ref = str(h["base"])  # an explicit base always wins, depends_on or not
+    elif h.get("depends_on"):
+        dp, dwhere = find_hyp(p, str(h["depends_on"]))
         parent = read_hyp(dp) if dp else {}
-        # A parent already on master builds on master, so later landings are not lost.
-        if parent.get("promotion") not in ("merged", "merged-unsubmitted", "submitted", "done", "onboard"):
-            base_ref = parent.get("impl_commit") or f"hyp/{p}/{h['depends_on']}"
-    elif h.get("base") and h["base"] != "master":
-        base_ref = str(h["base"])
+        on_master = parent.get("promotion") in ("merged", "merged-unsubmitted", "submitted", "done", "onboard")
+        # Companions must share the parent's exact base, and a rewrite stage builds on the previous
+        # stage's code whatever its score: those keep the parent's commit.
+        builds_on_parent = (h.get("kind") in ("ab-revert", "ab-tune", "control")
+                            or (h.get("kind") == "rewrite" and parent.get("kind") == "rewrite"))
+        parent_ref = parent.get("impl_commit") or f"hyp/{p}/{h['depends_on']}"
+        if on_master:
+            pass  # a parent already on master builds on master, so later landings are not lost
+        elif builds_on_parent or not (dwhere or "").startswith("done/"):
+            # Companion, rewrite stage, or a parent still queued/running (a pending gain to stack on).
+            base_ref = parent_ref
+            if (dwhere or "").startswith("done/") and parent.get("base_blob"):
+                stale_base = git("rev-parse", f"master:{p}/submission.py").strip() != parent["base_blob"]
+        else:
+            # A finished parent that is not on master (neutral, regression, unmerged): a restack. Basing
+            # on the parent's commit would silently drop everything landed on master since, so base on
+            # master and carry the parent's change over as its patch.
+            cand = os.path.join(os.path.dirname(dp), f"{h['depends_on']}.patch")
+            if os.path.exists(cand):
+                restack_patch = cand
+            else:
+                base_ref = parent_ref
+                stale_base = True
     base_sha = git("rev-parse", base_ref).strip()
     base_blob = git("rev-parse", f"{base_sha}:{p}/submission.py").strip()
     br = f"hyp/{p}/{slug}"
@@ -1344,15 +1366,29 @@ def cmd_claim(a):
     new_md = os.path.join(hdir(p, "running"), os.path.basename(h["_path"]))
     git("mv", rel(h["_path"]), rel(new_md))
     fm_set(new_md, status="running", stage="claimed", claimed_at=ts(), base_sha=base_sha, base_blob=base_blob, branch=br,
-           worktree=rel(wt), mode=a.mode or None)
+           worktree=rel(wt), mode=a.mode or None, restack_of=h["depends_on"] if restack_patch else None,
+           stale_base=stale_base or None)
     git("add", "--", rel(hdir(p, "running")), rel(hdir(p, "queue")))
     git("commit", "-q", "-m", f"churn({p}): claim {slug} (base {base_sha[:10]})")
     if br in git("branch", "--list", br, "--format=%(refname:short)").split():
         git("worktree", "add", wt, br)
     else:
         git("worktree", "add", "-b", br, wt, base_sha)
+    restack = None
+    if restack_patch:
+        # 3-way apply leaves the parent's change staged (commit-impl commits it with the implementer's
+        # edits). On a conflict, reset to clean master: the implementer merges by hand, never on stale code.
+        r = subprocess.run(["git", "apply", "-3", f"--include={p}/submission.py", restack_patch], cwd=wt,
+                           capture_output=True, text=True)
+        if r.returncode == 0:
+            restack = "applied"
+        else:
+            subprocess.run(["git", "reset", "-q", "--hard"], cwd=wt)
+            restack = "conflicts"
+        log(f"restack of {h['depends_on']} onto master: {restack}")
     hh = read_hyp(new_md)
     out({"ok": True, "problem": p, "slug": slug, "md": rel(new_md), "worktree": wt, "branch": br, "base_sha": base_sha,
+         "restack_patch": rel(restack_patch) if restack_patch else None, "restack": restack, "stale_base": stale_base,
          "submission": os.path.join(wt, p, "submission.py"), "spec": {k: hh.get(k) for k in ("area", "change", "expected", "risk", "depends_on", "priority")},
          "findings": rel(hdir(p, "FINDINGS.md")), "best": load_best(p), "landed": landed(p),
          "review": hh.get("review"), "review_companions": hh.get("review_companions")})
