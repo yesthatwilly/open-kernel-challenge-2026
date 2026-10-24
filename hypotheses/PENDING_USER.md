@@ -20,6 +20,8 @@ All run `okc submit <p> <p>/submission.py --no-wait --json` on master, then `chu
 - 2026-10-24 bf16_proj: master is now **bf16-shape-gated-triton-winners-combo** (check 1.176x, CI 1.158-1.194; board 1.143x).
   `okc submit muse_bf16_proj /home/user/git/musespark/muse_bf16_proj/submission.py --no-wait --json`
 
+- 2026-10-24 rules heads-up (not blocking): bf16 **bf16-cublaslt-algo-pick-in-prepare-m128-m256** times cuBLASLt algorithm candidates on synthetic data inside the untimed prepare() and replays the winner in kernel_fn (no timing or autotune in kernel_fn). The Opus reviewer read the rules as allowing it, and decode's pooler-gemm-splitk-autotune used the same pattern. It runs on tomorrow's quota unless you say to hold it.
+
 ## Standing answers
 
 - Scored submits (promotions with CI low above 1.0): ask each time, but never hold the loop for
