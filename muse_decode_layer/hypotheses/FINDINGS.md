@@ -1,10 +1,10 @@
 # muse_decode_layer findings
 
-Regenerated 2026-10-24T144812Z by `churn.py index`. Read this before writing a hypothesis for muse_decode_layer.
+Regenerated 2026-10-24T165806Z by `churn.py index`. Read this before writing a hypothesis for muse_decode_layer.
 
 ## Current best
 
-1.1635x [1.1461,1.1810] from job `9dcaec316b3045a7` (check), master commit `ea89625442`, hypothesis post-expert-norm-triton-small-t
+1.1665x [1.1490,1.1840] from job `a017e10aec544c55` (submit), master commit `ea89625442`, hypothesis post-expert-norm-triton-small-t
 
 Where the time goes (per scored shape, top kernels):
 
@@ -74,6 +74,11 @@ Where the time goes (per scored shape, top kernels):
 - queue: fa3-full-single-split-probe [FA3 call] p2 hold
 - queue: router-triton-splitk-side-stream [router GEMM] p1 hold
 - queue: triton-flash-decode-full-verify-paired-kv [FA3 call] p5 hold
-- queue: bf16-shape-gated-triton-gemms-small-t [pooler GEMM] p2 queued
-- queue: sliding-fused-triton-decode1-port [FA3 call] p3 queued
-- queue: paired-heads-pad-unpad-triton [output norm-gate] p3 queued
+- queue: full-verify-cuda-splitkv-stage2 [FA3 call] p2 queued
+- queue: bf16-m32-swapab-wgmma-port [pooler GEMM] p3 hold
+- queue: moe-align-small-t-restack-on-master [MoE align/dispatch] p4 queued
+- queue: fused-preattention-paired-pad-restack [pre-attention norm+rope] p5 queued
+- running: bf16-shape-gated-triton-gemms-small-t [pooler GEMM] p2 running
+- running: sliding-fused-triton-decode1-port [FA3 call] p3 running
+- running: paired-heads-pad-unpad-triton [output norm-gate] p3 running
+- running: full-decode-cuda-splitkv-port [FA3 call] p1 running

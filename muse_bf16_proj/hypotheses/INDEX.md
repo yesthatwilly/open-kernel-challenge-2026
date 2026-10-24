@@ -1,6 +1,6 @@
 # muse_bf16_proj hypotheses
 
-Regenerated 2026-10-24T164236Z. Best: 1.1984x [1.1805,1.2164] job `1602a4e947e64090` (check)
+Regenerated 2026-10-24T165806Z. Best: 1.1984x [1.1805,1.2164] job `1602a4e947e64090` (check)
 
 | created | slug | kind | area | where | outcome | speedup | CI | job | mode | promotion | review | expected hit |
 |---|---|---|---|---|---|---|---|---|---|---|---|---|
@@ -32,9 +32,12 @@ Regenerated 2026-10-24T164236Z. Best: 1.1984x [1.1805,1.2164] job `1602a4e947e64
 | 2026-10-24T112147Z | bf16-shape-gated-triton-winners-combo | primary | bf16 GEMM dispatch (shape-gated Triton routing, m<=16) | done/neutral | neutral | 1.1760 | [1.158,1.194] | 875f3e0172ee48a1 | check | merged | proceed | 14/16 |
 | 2026-10-24T112213Z | bf16-m128-nn-weight-layout-probe | primary | bf16 GEMM dispatch (m>=128, weight layout) | done/neutral | neutral | 1.1580 | [1.141,1.175] | 2dc5dce078be4a24 | check |  | proceed | 7/8 |
 | 2026-10-24T140147Z | bf16-m32-swapab-wgmma-triton | primary | bf16 GEMM dispatch (m=17..32, swap-AB Triton) | done/neutral | neutral | 1.1984 | [1.180,1.216] | 1602a4e947e64090 | check | submitted | proceed | 4/10 |
-| 2026-10-24T140216Z | bf16-cublaslt-algo-pick-in-prepare-m128-m256 | primary | bf16 GEMM dispatch (m=128/256, cuBLASLt algo selection) | queue | queued |  |  |  |  |  | proceed |  |
-| 2026-10-24T140242Z | pooler-unpooler-m128-tma-wspec-rewrite | rewrite | pooler GEMM + unpooler GEMM (m=128) | queue | queued |  |  |  |  |  | required |  |
-| 2026-10-24T140257Z | pooler-m32-tma-splitk-extend | primary | pooler GEMM (m=17..32) | queue | queued |  |  |  |  |  | required |  |
+| 2026-10-24T140216Z | bf16-cublaslt-algo-pick-in-prepare-m128-m256 | primary | bf16 GEMM dispatch (m=128/256, cuBLASLt algo selection) | running | running |  |  | 26a8be34a5eb4426 | submit |  | proceed |  |
+| 2026-10-24T140242Z | pooler-unpooler-m128-tma-wspec-rewrite | rewrite | pooler GEMM + unpooler GEMM (m=128) | running | running |  |  |  |  |  | proceed |  |
+| 2026-10-24T140257Z | pooler-m32-tma-splitk-extend | primary | pooler GEMM (m=17..32) | queue | hold |  |  |  |  |  | hold |  |
+| 2026-10-24T165012Z | bf16-m16-swapab-wgmma-extend | primary | bf16 GEMM dispatch (m<=16, swap-AB Triton) | running | running |  |  | 89fabef70bd745f7 | submit |  | proceed |  |
+| 2026-10-24T165036Z | router-swapab-wgmma-all-m | primary | router GEMM | running | running |  |  | 587e340476944b46 | submit |  | proceed |  |
+| 2026-10-24T165102Z | bf16-small-m-cuda-gemv-rewrite | rewrite | bf16 GEMM dispatch (m<=8, hand-written CUDA weight stream) | running | running |  |  |  |  |  | proceed |  |
 
 ## Held
 
@@ -42,3 +45,4 @@ Regenerated 2026-10-24T164236Z. Best: 1.1984x [1.1805,1.2164] job `1602a4e947e64
 - router-triton-hilo-fused-control-hybrid-cublas-above-m32: superseded: router-triton-hilo-fused-control-splitk-all-m landed (1.151x); its 3-D Triton grid beats cuBLAS hi/lo at every m (5.7-9.3 us vs 10.5-17.7 us), so a hybrid using cuBLAS above m=32 can only be slower
 - router-hilo-addmm-epilogue-control-inplace-out: superseded: master's router no longer uses the cuBLAS hi/lo pair (Triton split-K landed, 1.151x), so the add node this control targets is gone; the primary read flat (1.026x, within CI)
 - qkv-gate-o-m128-wgmma-splitk-semaphore: same m=128 wgmma split-K design as pooler-unpooler-m128-wgmma-splitk-semaphore (dispatching now); its reviewer asked to wait for that harvest; re-queue by hand if that kernel reaches its target
+- pooler-m32-tma-splitk-extend: adversarial review: Moot under master 8b9ad43 (bf16-m32-swapab-wgmma-triton, 1.198x): pooler decode_32 m=32 already runs _bf16_swapab_kernel at 20.0 us row / 20.5 us kernel vs SGLa

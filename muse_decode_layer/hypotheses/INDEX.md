@@ -1,6 +1,6 @@
 # muse_decode_layer hypotheses
 
-Regenerated 2026-10-24T164236Z. Best: 1.1635x [1.1461,1.1810] job `9dcaec316b3045a7` (check)
+Regenerated 2026-10-24T165806Z. Best: 1.1665x [1.1490,1.1840] job `a017e10aec544c55` (submit)
 
 | created | slug | kind | area | where | outcome | speedup | CI | job | mode | promotion | review | expected hit |
 |---|---|---|---|---|---|---|---|---|---|---|---|---|
@@ -22,10 +22,15 @@ Regenerated 2026-10-24T164236Z. Best: 1.1635x [1.1461,1.1810] job `9dcaec316b304
 | 2026-10-24T075400Z | triton-flash-decode-full-paired-kv | rewrite | FA3 call | done/neutral | neutral | 1.0702 | [1.054,1.086] | e82b11f9d9f64b23 | check |  | proceed | 1/5 |
 | 2026-10-24T100416Z | triton-flash-decode-full-oversub-kv-prefetch | rewrite | FA3 call | done/regression | regression | 1.0413 | [1.026,1.057] | e55908a05eec4000 | check |  | proceed | 3/5 |
 | 2026-10-24T103909Z | fa3-hdim128-head-pairing-batched | primary | FA3 call | done/neutral | neutral | 1.0874 | [1.071,1.104] | fb07a3bd3aa54baf | check | merged | proceed | 7/7 |
-| 2026-10-24T140057Z | post-expert-norm-triton-small-t | primary | post-expert norm+combine | done/gain | gain | 1.1635 | [1.146,1.181] | 9dcaec316b3045a7 | check | submitted | proceed | 6/6 |
-| 2026-10-24T140116Z | bf16-shape-gated-triton-gemms-small-t | primary | pooler GEMM | queue | queued |  |  |  |  |  | required |  |
-| 2026-10-24T140135Z | sliding-fused-triton-decode1-port | primary | FA3 call | queue | queued |  |  |  |  |  | required |  |
-| 2026-10-24T140156Z | paired-heads-pad-unpad-triton | primary | output norm-gate | queue | queued |  |  |  |  |  | required |  |
+| 2026-10-24T140057Z | post-expert-norm-triton-small-t | primary | post-expert norm+combine | done/gain | gain | 1.1635 | [1.146,1.181] | 9dcaec316b3045a7 | check | done | proceed | 6/6 |
+| 2026-10-24T140116Z | bf16-shape-gated-triton-gemms-small-t | primary | pooler GEMM | running | running |  |  | 6076ae1f250143aa | submit |  | proceed |  |
+| 2026-10-24T140135Z | sliding-fused-triton-decode1-port | primary | FA3 call | running | running |  |  | 12198572363b49a4 | submit |  | proceed |  |
+| 2026-10-24T140156Z | paired-heads-pad-unpad-triton | primary | output norm-gate | running | running |  |  | a92b64be4c6547d3 | submit |  | proceed |  |
+| 2026-10-24T165154Z | full-decode-cuda-splitkv-port | rewrite | FA3 call | running | running |  |  |  |  |  | proceed |  |
+| 2026-10-24T165224Z | full-verify-cuda-splitkv-stage2 | rewrite | FA3 call | queue | queued |  |  |  |  |  | proceed |  |
+| 2026-10-24T165242Z | bf16-m32-swapab-wgmma-port | primary | pooler GEMM | queue | hold |  |  |  |  |  | proceed |  |
+| 2026-10-24T165302Z | moe-align-small-t-restack-on-master | primary | MoE align/dispatch | queue | queued |  |  |  |  |  | proceed |  |
+| 2026-10-24T165619Z | fused-preattention-paired-pad-restack | primary | pre-attention norm+rope | queue | queued |  |  |  |  |  | required |  |
 
 ## Held
 
@@ -37,3 +42,4 @@ Regenerated 2026-10-24T164236Z. Best: 1.1635x [1.1461,1.1810] job `9dcaec316b304
 - fa3-full-single-split-probe: adversarial review: The probe is sound and would give a clear reading, but neither reading can change a decision that is open right now. The rewrite it is meant to inform (triton-f
 - router-triton-splitk-side-stream: reviewer: the 9.2-9.5 us splitK row is 2 calls (~4.6 us each), so the side-stream router branch (~14-18 us) already finishes before the ~22-25 us pooler and is off the critical path; most likely flat, and decode has 4 checks left
 - triton-flash-decode-full-verify-paired-kv: adversarial review: Stage 1 measured the paired-KV kernel at about 1.63-1.66 TB/s, which is slower than FA3: 200.8 vs 188.8 us at decode_16 and 394.8 vs 374.4 us at decode_32. That
+- bf16-m32-swapab-wgmma-port: reviewer: ~0.15% headline (3-5 us at decode_32), inside drift; edits the same call sites as bf16-shape-gated-triton-gemms-small-t (in the judge). Revisit as part of a combined decode GEMM restack after that harvests (per-layer kernel names for attribution)

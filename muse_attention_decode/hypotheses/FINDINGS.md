@@ -1,10 +1,10 @@
 # muse_attention_decode findings
 
-Regenerated 2026-10-24T145134Z by `churn.py index`. Read this before writing a hypothesis for muse_attention_decode.
+Regenerated 2026-10-24T165806Z by `churn.py index`. Read this before writing a hypothesis for muse_attention_decode.
 
 ## Current best
 
-1.3468x [1.3266,1.3670] from job `82085a4e82154393` (check), master commit `3693fb89b6`, hypothesis full-decode-cuda-gather-splitkv
+1.3492x [1.3290,1.3730] from job `de486093311d4bb9` (submit), master commit `3693fb89b6`, hypothesis full-decode-cuda-gather-splitkv
 
 Where the time goes (per scored shape, top kernels):
 
@@ -83,6 +83,10 @@ Where the time goes (per scored shape, top kernels):
 - queue: stream-fork-preattention [launch overhead] p4 hold
 - queue: triton-flash-decode-deep-pipeline [FA3 call (Triton pipeline)] p4 hold
 - queue: triton-flash-decode-full-verify [FA3 call] p4 hold
-- queue: full-fused-triton-decode1-gate [full-layer attention (batch-1 decode gate)] p3 queued
-- queue: sliding-fused-triton-decode1-splits-32 [sliding-layer attention (batch-1 decode, split depth)] p4 queued
-- queue: sliding-deep-splits-on-cuda-splitkv [sliding attention, batched decode, split depth] p1 queued
+- queue: sliding-verify-cuda-streamk-window [sliding-layer attention (verify)] p2 queued
+- queue: full-verify1-cuda-streamk-batch1 [full-layer attention (batch-1 verify gate)] p2 queued
+- running: full-fused-triton-decode1-gate [full-layer attention (batch-1 decode gate)] p3 running
+- running: sliding-fused-triton-decode1-splits-32 [sliding-layer attention (batch-1 decode, split depth)] p4 running
+- running: sliding-deep-splits-on-cuda-splitkv [sliding attention, batched decode, split depth] p1 running
+- running: full-verify-cuda-streamk-splitkv [FA3 call (full-layer verify gather)] p1 running
+- running: full-decode-cuda-fp8-qk-mma [FA3 call (full-layer decode gather)] p3 running

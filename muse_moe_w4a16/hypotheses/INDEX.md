@@ -1,6 +1,6 @@
 # muse_moe_w4a16 hypotheses
 
-Regenerated 2026-10-24T164236Z. Best: 1.3117x [1.2920,1.3313] job `bc56182a80444d16` (check)
+Regenerated 2026-10-24T165806Z. Best: 1.3076x [1.2880,1.3272] job `3cabc739f1af493e` (submit)
 
 | created | slug | kind | area | where | outcome | speedup | CI | job | mode | promotion | review | expected hit |
 |---|---|---|---|---|---|---|---|---|---|---|---|---|
@@ -21,15 +21,18 @@ Regenerated 2026-10-24T164236Z. Best: 1.3117x [1.2920,1.3313] job `bc56182a80444
 | 2026-10-24T075257Z | marlin-block-size-m-verify-two-smaller | primary | w13 marlin | done/gain | gain | 1.0916 | [1.075,1.108] | ed837a4a46d44a95 | check | pending | proceed | 6/6 |
 | 2026-10-24T081339Z | small-m-grouped-gemv-splitk-rewrite | rewrite | w13 marlin | done/regression | regression | 0.6635 | [0.654,0.673] | 734a1159ff334c3d | check |  | proceed | 3/6 |
 | 2026-10-24T100217Z | marlin-block-m-cap-16-port | primary | w13 marlin | done/neutral | neutral | 1.0950 | [1.079,1.111] | 1c33392914594026 | check |  | proceed | 6/6 |
-| 2026-10-24T112137Z | marlin-block-m-two-smaller-on-postnorm | primary | w13 marlin | done/gain | gain | 1.2536 | [1.235,1.272] | c00ef7295c154867 | check | merged | proceed | 6/6 |
+| 2026-10-24T112137Z | marlin-block-m-two-smaller-on-postnorm | primary | w13 marlin | done/gain | gain | 1.2536 | [1.235,1.272] | c00ef7295c154867 | check | superseded | proceed | 6/6 |
 | 2026-10-24T112155Z | triton-map-align-small-m-port | primary | MoE align/dispatch | done/neutral | neutral | 1.1850 | [1.167,1.203] | c2feb68aafb44aeb | check |  | proceed | 6/6 |
 | 2026-10-24T112212Z | post-norm-triton-all-m | primary | post-expert norm+combine | done/neutral | neutral | 1.2483 | [1.230,1.267] | 2ec5387ffe8748c9 | check |  | proceed | 4/6 |
-| 2026-10-24T132314Z | triton-map-align-on-block-m-restack | primary | MoE align/dispatch + block_size_m pick | done/gain | gain | 1.3117 | [1.292,1.331] | bc56182a80444d16 | check | submitted | proceed | 6/6 |
+| 2026-10-24T132314Z | triton-map-align-on-block-m-restack | primary | MoE align/dispatch + block_size_m pick | done/gain | gain | 1.3117 | [1.292,1.331] | bc56182a80444d16 | check | done | proceed | 6/6 |
 | 2026-10-24T140229Z | marlin-two-class-block-m-decode32 | primary | MoE align/dispatch + block_size_m pick | queue | hold |  |  |  |  |  | proceed |  |
 | 2026-10-24T140229Z | swapab-nvfp4-gemm-verify-rewrite | rewrite | w13 marlin + w2 marlin | queue | hold |  |  |  |  |  | proceed |  |
 | 2026-10-24T140229Z | swapab-w13-silu-epilogue-verify | rewrite | silu-mul | queue | queued |  |  |  |  |  | required |  |
 | 2026-10-24T140229Z | triton-map-align-verify-chunked | primary | MoE align/dispatch | done/failed | failed |  |  | 3aa4d7e193244255 | check |  | proceed |  |
 | 2026-10-24T144931Z | triton-map-align-verify-chunked-pow2-fix | primary | MoE align/dispatch | done/neutral | neutral | 1.3107 | [1.291,1.330] | c1c72d5d19ea444f | check |  | proceed | 2/4 |
+| 2026-10-24T164817Z | align-parallel-per-expert-verify | primary | MoE align/dispatch | running | running |  |  | 45eacf4ca2e849d2 | check |  | proceed |  |
+| 2026-10-24T164836Z | w2-l2-prefetch-decode1 | primary | w2 marlin | running | running |  |  | ac6897f284934dad | check |  | proceed |  |
+| 2026-10-24T164857Z | marlin-two-stream-expert-halves-small-m | primary | launch overhead | running | running |  |  |  |  |  | proceed |  |
 
 ## Held
 

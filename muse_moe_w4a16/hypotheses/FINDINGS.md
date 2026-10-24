@@ -1,10 +1,10 @@
 # muse_moe_w4a16 findings
 
-Regenerated 2026-10-24T152211Z by `churn.py index`. Read this before writing a hypothesis for muse_moe_w4a16.
+Regenerated 2026-10-24T165806Z by `churn.py index`. Read this before writing a hypothesis for muse_moe_w4a16.
 
 ## Current best
 
-1.3117x [1.2920,1.3313] from job `bc56182a80444d16` (check), master commit `8440ae5baa`, hypothesis triton-map-align-on-block-m-restack
+1.3076x [1.2880,1.3272] from job `3cabc739f1af493e` (submit), master commit `8440ae5baa`, hypothesis triton-map-align-on-block-m-restack
 
 Where the time goes (per scored shape, top kernels):
 
@@ -70,3 +70,6 @@ Where the time goes (per scored shape, top kernels):
 - queue: marlin-two-class-block-m-decode32 [MoE align/dispatch + block_size_m pick] p2 hold
 - queue: swapab-nvfp4-gemm-verify-rewrite [w13 marlin + w2 marlin] p1 hold
 - queue: swapab-w13-silu-epilogue-verify [silu-mul] p2 queued
+- running: align-parallel-per-expert-verify [MoE align/dispatch] p1 running
+- running: w2-l2-prefetch-decode1 [w2 marlin] p2 running
+- running: marlin-two-stream-expert-halves-small-m [launch overhead] p3 running

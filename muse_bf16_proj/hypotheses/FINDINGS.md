@@ -1,6 +1,6 @@
 # muse_bf16_proj findings
 
-Regenerated 2026-10-24T145134Z by `churn.py index`. Read this before writing a hypothesis for muse_bf16_proj.
+Regenerated 2026-10-24T165806Z by `churn.py index`. Read this before writing a hypothesis for muse_bf16_proj.
 
 ## Current best
 
@@ -115,6 +115,9 @@ Where the time goes (per scored shape, top kernels):
 - queue: router-triton-hilo-fused-control-hybrid-cublas-above-m32 [router GEMM] p1 hold
 - queue: router-hilo-addmm-epilogue-control-inplace-out [router GEMM] p1 hold
 - queue: qkv-gate-o-m128-wgmma-splitk-semaphore [qkv GEMM + o GEMM (m=128)] p2 hold
-- queue: bf16-cublaslt-algo-pick-in-prepare-m128-m256 [bf16 GEMM dispatch (m=128/256, cuBLASLt algo selection)] p2 queued
-- queue: pooler-unpooler-m128-tma-wspec-rewrite [pooler GEMM + unpooler GEMM (m=128)] p2 queued
-- queue: pooler-m32-tma-splitk-extend [pooler GEMM (m=17..32)] p3 queued
+- queue: pooler-m32-tma-splitk-extend [pooler GEMM (m=17..32)] p3 hold
+- running: bf16-cublaslt-algo-pick-in-prepare-m128-m256 [bf16 GEMM dispatch (m=128/256, cuBLASLt algo selection)] p2 running
+- running: pooler-unpooler-m128-tma-wspec-rewrite [pooler GEMM + unpooler GEMM (m=128)] p2 running
+- running: bf16-m16-swapab-wgmma-extend [bf16 GEMM dispatch (m<=16, swap-AB Triton)] p2 running
+- running: router-swapab-wgmma-all-m [router GEMM] p2 running
+- running: bf16-small-m-cuda-gemv-rewrite [bf16 GEMM dispatch (m<=8, hand-written CUDA weight stream)] p3 running
