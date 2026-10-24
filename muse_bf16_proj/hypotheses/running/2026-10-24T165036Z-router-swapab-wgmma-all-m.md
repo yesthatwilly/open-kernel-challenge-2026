@@ -74,13 +74,15 @@ base_sha: 278c4441e3dddcc35e9478bc678c6d596a9d3428
 base_blob: a8bb42ac483318e9fbc84bc7826a27b7a704d1fb
 branch: hyp/muse_bf16_proj/router-swapab-wgmma-all-m
 worktree: .worktrees/muse_bf16_proj/router-swapab-wgmma-all-m
-mode: null
+mode: submit
 implemented_at: 2026-10-24T165659Z
 impl_commit: ced97b54f84e3741626523d62403533571bc07d1
 submission_sha256: 5641115910169a95c7acbd58a97dbfa93cc228419922b682b5341fc654b3f79f
 norm_sha256: e15e9553279faa9ddc18e38a36e72fe8814f7cb267be0b59932addc252b7e229
 submission_blob: 64894c9c770c26cbcf15bbfbb4b3e44e48bd4f3e
 lint_warnings: 0
+attempt_file: 2026-10-24T165700Z-submit-router-swapab-wgmma-all-m.md
+prepared_at: 2026-10-24T165700Z
 ---
 
 # router-swapab-wgmma-all-m
