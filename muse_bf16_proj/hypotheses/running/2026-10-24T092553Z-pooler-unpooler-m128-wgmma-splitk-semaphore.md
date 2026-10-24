@@ -55,9 +55,16 @@ priority: 2
 kind: primary
 controls_for: null
 review: proceed
-status: queued
+status: running
 review_at: 2026-10-24T100116Z
 review_companions: null
+stage: claimed
+claimed_at: 2026-10-24T100116Z
+base_sha: 93fae4dfde47a06219a581785dc8c4ff2e7dab3b
+base_blob: da55301de1e911aeab09878b0873809f544f436c
+branch: hyp/muse_bf16_proj/pooler-unpooler-m128-wgmma-splitk-semaphore
+worktree: .worktrees/muse_bf16_proj/pooler-unpooler-m128-wgmma-splitk-semaphore
+mode: null
 ---
 
 # pooler-unpooler-m128-wgmma-splitk-semaphore
