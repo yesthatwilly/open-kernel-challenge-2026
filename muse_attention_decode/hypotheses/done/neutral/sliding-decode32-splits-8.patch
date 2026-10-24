@@ -1,0 +1,15 @@
+diff --git a/muse_attention_decode/submission.py b/muse_attention_decode/submission.py
+index c6854f0..ce1c20a 100644
+--- a/muse_attention_decode/submission.py
++++ b/muse_attention_decode/submission.py
+@@ -351,8 +351,8 @@ def _sliding_forward(data: Inputs) -> torch.Tensor:
+     theta = cfg["rope_theta"]
+     group = hq // hkv
+     m = max(16, triton.next_power_of_2(group * length))
+-    # Decode (L = 1): 16 splits at every batch, 2 BLOCK_N tiles of the window per program.
+-    splits = 16 if length == 1 else _num_splits(batch, hkv)
++    # Decode (L = 1): 16 splits (2 BLOCK_N tiles per program) at batch <= 16, 8 splits (4 tiles) above.
++    splits = (16 if batch <= 16 else 8) if length == 1 else _num_splits(batch, hkv)
+     out = torch.empty((batch, length, hq * d), dtype=torch.bfloat16, device=device)
+     if splits > 1:
+         ws_acc = torch.empty((batch * hkv * splits, m, d), dtype=torch.float32, device=device)
