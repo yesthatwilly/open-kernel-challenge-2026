@@ -54,13 +54,15 @@ base_sha: 9f6e88b7296c037ca7b6ce685ffdaa4fa7303553
 base_blob: 3d70ae6e2de0d48c4a4f2a469ced8234f5348182
 branch: hyp/muse_decode_layer/moe-align-parallel-large-t-port
 worktree: .worktrees/muse_decode_layer/moe-align-parallel-large-t-port
-mode: null
+mode: check
 implemented_at: 2026-10-24T231252Z
 impl_commit: 18c7ee4a2a60eadad634cc9604c9f5d784a5d60e
 submission_sha256: 475c36ec4787179bcf460dc2d76121eab621ab0e609fd8529ff3b7cd4982d690
 norm_sha256: 76b07b1ceec1bed137f3127441c4067199d8eeef1404b97abc05c18f84b4f60f
 submission_blob: d2f6a92e8b7373cb05038d8797e96598f16d3cc8
 lint_warnings: 28
+attempt_file: 2026-10-24T231252Z-check-moe-align-parallel-large-t-port.md
+prepared_at: 2026-10-24T231252Z
 ---
 
 # moe-align-parallel-large-t-port
