@@ -78,6 +78,7 @@ harvested_at: 2026-10-24T083410Z
 best_at_harvest: 0.0023193044319036226
 promotion: merged
 promotion_commit: 3e98bd00dcb717e6e3670b7819e7d1c2331f52ba
+promotion_attempt: 2026-10-24T083412Z-submit-fused-preattention-triton.md
 ---
 
 # fused-preattention-triton
