@@ -72,13 +72,15 @@ base_sha: bbbf3168de76ebc524cb23723b2ebf734b893072
 base_blob: cf09a9196c4d7a20540bb82c9d79bdebaeea2a43
 branch: hyp/muse_decode_layer/triton-flash-decode-full-oversub-kv-prefetch
 worktree: .worktrees/muse_decode_layer/triton-flash-decode-full-oversub-kv-prefetch
-mode: null
+mode: check
 implemented_at: 2026-10-24T111949Z
 impl_commit: 016401cf3d0a9d14701d0d446a92d9abf5295d8c
 submission_sha256: 7762f88206ce516615fe8c634e2788de8332f3d4621374649175e67f985ad713
 norm_sha256: 51d8b43b48cb8220aec01945da094a4de842e6a9da4b77df171eeaf54dcc0bbc
 submission_blob: 9edba2e3f2af4501a24fa85b5d87aef96700d4b9
 lint_warnings: 1
+attempt_file: 2026-10-24T111950Z-check-triton-flash-decode-full-oversub-kv-prefetch.md
+prepared_at: 2026-10-24T111950Z
 ---
 
 # triton-flash-decode-full-oversub-kv-prefetch
