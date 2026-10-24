@@ -84,7 +84,7 @@ review: proceed
 status: running
 review_at: 2026-10-24T140632Z
 review_companions: null
-stage: implemented
+stage: dispatched
 claimed_at: 2026-10-24T164257Z
 base_sha: 13bdacf95cb5cf6521efd5d84b33f2580fb203f7
 base_blob: a8bb42ac483318e9fbc84bc7826a27b7a704d1fb
@@ -99,6 +99,8 @@ submission_blob: 944e64ec552e22118083c1b6febff93fff2de4e2
 lint_warnings: 12
 attempt_file: 2026-10-24T164831Z-submit-bf16-cublaslt-algo-pick-in-prepare-m128-m256.md
 prepared_at: 2026-10-24T164831Z
+job: 26a8be34a5eb4426
+dispatched_at: 2026-10-24T164845Z
 ---
 
 # bf16-cublaslt-algo-pick-in-prepare-m128-m256
