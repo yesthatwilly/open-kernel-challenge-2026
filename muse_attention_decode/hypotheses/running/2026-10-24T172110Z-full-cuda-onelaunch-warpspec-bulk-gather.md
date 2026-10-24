@@ -92,13 +92,19 @@ review: proceed
 status: running
 review_at: 2026-10-24T172607Z
 review_companions: null
-stage: claimed
+stage: implemented
 claimed_at: 2026-10-24T172705Z
 base_sha: c0821b3a0b916336d23e7bbe2a454636be5b21cc
 base_blob: 1c0f5fa1bfc4e602b62e5e9edd9df6d5652b297b
 branch: hyp/muse_attention_decode/full-cuda-onelaunch-warpspec-bulk-gather
 worktree: .worktrees/muse_attention_decode/full-cuda-onelaunch-warpspec-bulk-gather
 mode: null
+implemented_at: 2026-10-24T174229Z
+impl_commit: 05678049b6420111124c539774648b53afadf717
+submission_sha256: a26cc1d05710aff2905fe110ca960c9846f1f051f8fa01557abe2260d6ffb41a
+norm_sha256: 2919b38e1b96fdd084efbd4dd9051e3f5532851f7a40f4ddc7964bd898f14a92
+submission_blob: 93d9b895e0089458134461f5f7b0bef5a7217360
+lint_warnings: 3
 ---
 
 # full-cuda-onelaunch-warpspec-bulk-gather
@@ -154,3 +160,57 @@ With nothing landed there is no ab-revert target, and for a kind: rewrite the ne
 - Masked rows 'zeroed once' do not stay zero once the ring is reused, so stale rows from earlier tiles remain. That is harmless only because the scores are masked to -inf (P = 0) and stale V is finite. State that the -inf mask, not zeroing, is the correctness mechanism.
 - Combine tail: the winner merges ~5-10 slots of 16x64 fp32 from L2 with .cg plus the epilogue, ~1-3 us on the critical path after the last CTA. Report the kernel's own time minus a no-combine variant only if M2 is missed narrowly.
 
+
+## Implementation notes
+
+Worktree file `.worktrees/muse_attention_decode/full-cuda-onelaunch-warpspec-bulk-gather/muse_attention_decode/submission.py`, additions only (+850/-2; the -2 is the module docstring). Master's code (pre-attention, sliding, splitkv A/B, FA3, `_splitkv_self_check`) is unchanged byte for byte and stays the fallback.
+
+- **New module `muse_full_ws_v1`** (`_FULL_WS_CPP` / `_FULL_WS_CUDA`, `_build_full_ws`), built after master's splitkv module, with `-O3 -arch=sm_90a`. Its kernel is `template <int BULK> full_ws_kernel` and the host entry is `full_ws(..., bulk)`. Both instantiations are compiled into the one module. The log prints the build seconds.
+- **Gate** `_full_ws_gate(cfg)` (config only): module built, `_FULL_WS_OK`, window 0, q_len 1, 1 < batch <= 64, hq 16, hkv 2, d 64, page 1. In `kernel_fn` it is checked right after the sliding batch-1 branch and before `_pre_attention_kernel`, so on the gated path the one launch is the whole step. `_full_ws_forward` allocates `ws_acc [G+B,16,64]`, `ws_ml [G+B,2,16]` and `out [B,1,1024]` from shapes and the device. It uses persistent `_ws_counters(B)` int32 `[B+1]` (zeroed once, reset by the winners; `cnt[B]` is an error word).
+- **Kernel**, as specced: G = SM count, 1 CTA/SM, 288 threads (warp 0 producer, warps 1-8 consumers). 8-stage ring of 64 tokens x (K 128 B + V 128 B) at a 144 B smem row stride (bank analysis: K word reads are `quad*4+qi` distinct; 8-byte V reads are conflict-free per half-warp). full[s]/empty[s] mbarriers, ~170 KB smem in all. Stream-K over 64-token tiles with prefix TP in smem and int64 range math. The producer prefetches page indices PF=12 tiles ahead with 4-byte cp.async into a 16-slot smem block. BULK=1 issues one `cp.async.bulk...complete_tx::bytes` per valid 128 B K/V row (2 tokens/lane) after `arrive.expect_tx(nvalid*256)`. BULK=0 issues 16 B cp.async (lane -> token lane/8, chunk lane%8, zero-filled) plus `cp.async.mbarrier.arrive.noinc` (full count 32). Consumers use master's math with the FP8 `mma.sync m16n8k32 e4m3` QK, using the fragment mapping of the reviewed full-decode-cuda-fp8-qk-mma, then m16n8k16 f16 PV with exact V widening and exp2 online softmax. Each consumer warp arrives on empty[s] after its PV. At segment end it does master's 4-warp merge, then stores the slot at c + b.
+- **Review fixes (required):**
+  1. *Slot collision:* there are no new-token slots. The new token is folded into the first-tile CTA's slice-0 warp of each kv head (m = q8.k8*scale, l = 1 on the qi==0 lane only since l is quad-reduced later, acc = v8 in master's acc column layout).
+  2. *Ticket:* instead of a CTA count +1, each segment atomically adds its **tile count** (acq_rel, gpu) and the add that reaches tiles_b wins. This needs no counting of grazing or empty CTAs, so the off-by-one risk is gone. The winner reloads slots c+b for c in [cta_of(TP_b), cta_of(TP_{b+1}-1)], with `cta_of(t) = ((t+1)G-1)/T`, skipping empty-range CTAs.
+  3. *BULK template:* both are built. After the self-check, `_full_ws_diagnostics` checks BULK=0 once (grid 3, kv 0.25). It then times BULK=1, BULK=0 and master's path eagerly on B=16 x 80000 and prints us/call and achieved TB/s (sum(seq)*256 B / time). This is a diagnostic only and never selects the path.
+  4. *New token from rounded fp8:* the score uses the rounded e4m3 key times k_scale (inside `scale`), and acc uses the raw e4m3 value, with v_scale applied once in the combine.
+  5. *q rounding order:* the kernel rounds the normalized q to E4M3 **before** qk_scale_factor, which is folded into the score scale. This matches FA3, reference.py (`(q / qk_scale_factor).to(e4m3) * qk_scale_factor`) and master's `_splitkv_reference`, so the self-check reference matches the kernel.
+  6. *Zero-length requests:* tiles_b = max(1, ceil(seq/64)), so a zero-length request gets one fully masked tile (expect_tx 0) whose owner builds and folds its new token.
+  7. *Empty ranges never arrive:* a CTA with s_c == e_c returns before the role split and touches no slot or ticket. A segment's tile count is always >= 1. A zero add is skipped and sets `cnt[B] |= 1`, which the self-check requires to be 0.
+- **Self-check** `_full_ws_self_check` uses synthetic data from `_splitkv_synthetic` with lens [9000, 1025, 70, **0**, 4097, 1023, 1, 64] (0 added to exercise item 6) and (kv_scale, grid) in (1, device), (0.25, device), (0.25, 3), (1, 3). It requires: rel L2 < 2e-2 vs FP32, all finite, new cache rows vs master's `_pre_attention_kernel` on a cloned cache, and every counter, including the error word, back to 0. On failure it prints `[full_ws] SELF-CHECK FAILED`, `_FULL_WS_OK = False`, and master runs. The log also prints `[full_ws] PATH CHOSEN ...` at import, and once per config on first use after import (per-config lines are suppressed during the import checks so they don't mislead).
+- **Defensive:** mbarrier waits are bounded (2^31 cycles). A timeout sets `cnt[B] |= 2` and the thread stops waiting, so a pipeline bug fails the self-check instead of hanging the 15-minute run. An illegal address would still be a sticky CUDA error that fails the whole run (unavoidable).
+- **Deviations:**
+  - (a) q is rounded before qk_scale_factor, not after (item 5 above, to match the reference and the review).
+  - (b) The ticket counts tiles instead of CTAs (simpler and total; same release/acquire pattern).
+  - (c) "Zeroed once" covers only the V region of the ring, with a `fence.proxy.async` before any bulk write. Per the review, the -inf score mask is the correctness mechanism and the zeroing only keeps stale V finite (P = 0 times NaN would be NaN). K garbage is removed by select, not by multiplication.
+  - (d) Page-index prefetch is a 16-slot per-tile ring 12 tiles ahead, not a double-buffered 16-tile block (same effect, simpler group bookkeeping: wait_group PF for BULK=1, 2*PF for BULK=0).
+  - (e) New-row check is "≥ 99% of bytes identical and dequantized rel L2 < 1e-2", not exact equality. Triton's sqrt/div may differ from CUDA's IEEE ones by an ulp, which could flip a rare E4M3 rounding. The judge allows 8%.
+  - (f) The q for each segment is built at segment entry by the 256 consumer threads (a ~1 us stall per extra segment, 1-2 segments per CTA at B=16/32), not prefetched.
+- **Uncertainties (built blind, nothing compiled):**
+  - A host g++ `-fsyntax-only` pass over the CUDA source with stub headers is clean, with both instantiations parsed. The asm strings were checked by hand against the PTX ISA and CUTLASS usage only, and nvcc/ptxas has not seen them.
+  - The likeliest breakages are the PTX forms `mbarrier.arrive.shared::cta.b64 _`, `cp.async.mbarrier.arrive.noinc.shared::cta.b64` and `atom.acq_rel.gpu.add.s32`, and the byte order of `cvt.rn.satfinite.e4m3x2.f32` (first source = upper byte, so pairs are passed high first). A byte-order swap would show up as new-rows-equal ~0 and a large rel L2 in the self-check, which falls back to master.
+  - A build error also falls back cleanly to master.
+- **Harvest reading:** look for `[full_ws] load_inline compiled`, the four `self-check` lines, the `diag BULK=1/0` and `diag master` TB/s lines, and `PATH CHOSEN`. If you see `SELF-CHECK FAILED` or `load_inline failed`, the run measured master.
+
+## Rules check
+
+Checked against `git -C .worktrees/muse_attention_decode/full-cuda-onelaunch-warpspec-bulk-gather diff` (additions only, apart from the docstring):
+
+- [x] CUDA-graph capturable. The gated path is `_full_ws_gate` (config plus import-time flags) -> `_full_ws_forward`: `torch.empty` from shapes, a persistent counter buffer, one extension launch. It has no `.item()`/`.cpu()`/`synchronize()`/tensor prints. `_log_path` prints config ints only, host-side. The `torch.cuda.synchronize()` calls the lint warns about are in the import-time self-check and diagnostics only.
+- [x] Nothing derived from `data` is cached across calls. New state is `_WS_EXT` (the compiled module), the flags `_FULL_WS_OK/_BULK/_GRID`, `_ws_counters` (zeros, reset in-kernel, no data) and `_PATH_LOGGED` (config tuples). The workspace is fresh `torch.empty` per call.
+- [x] n/a for weights: this problem has no weights to repack, and no `prepare()` is added.
+- [x] Activations BF16 where SGLang keeps BF16; KV cache FP8; queries at most FP8 E4M3. qkv and gate are read as bf16 and the output is bf16. New K/V are stored as E4M3 at cache_loc. q is rounded to E4M3 after RMSNorm (FA3's rounding), with fp32 accumulation, and nothing coarser.
+- [x] Attention sees every key. Every position [0, seq_lens[b]) of every request is in exactly one tile of exactly one CTA, plus the new token folded in once. There is no top-k, skip, or weight-based pruning, and masked rows are only those past the length.
+- [x] No timing patches, harness frames/I/O/secrets, module edits, reference import, subprocesses or network. `load_inline` is the same mechanism master uses. The lint finding on the docstring word "requests" (a false positive in the network regex) was reworded.
+- [x] All work happens inside the timed call, with no output caching or replay. Pre-attention, the cache store, attention, combine and epilogue are all in the one launch per call. Import-time work is the build, the self-check and the timing diagnostics on synthetic data only.
+- [x] First-line marker `# okc: problem=muse_attention_decode` kept. No `triton.autotune` was added.
+
+Lint (`python3 -I .claude/skills/churnsubs/bin/okc_lint.py <worktree>/muse_attention_decode/submission.py --problem muse_attention_decode`):
+
+```
+warn  host-sync    L1832: torch.cuda.synchronize()  (outside kernel_fn's call graph; fine in prepare())
+warn  host-sync    L1869: torch.cuda.synchronize()  (outside kernel_fn's call graph; fine in prepare())
+warn  host-sync    L1888: torch.cuda.synchronize()  (outside kernel_fn's call graph; fine in prepare())
+OK with warnings: muse_attention_decode/submission.py
+```
+
+`python3 -I -m py_compile` passed, and the `__pycache__` it left in the worktree was removed.
