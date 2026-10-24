@@ -77,12 +77,18 @@ depends_on: fused-preattention-triton
 priority: 1
 kind: rewrite
 controls_for: null
-stage: 1
+stage: claimed
 replaces: "sliding-layer attention after the QKV projection: _pre_attention_kernel + FA3 (+combine/prepare) + rms_norm_gate"
 review: proceed
-status: queued
+status: running
 review_at: 2026-10-24T083713Z
 review_companions: null
+claimed_at: 2026-10-24T083713Z
+base_sha: 48b24f974a04559fb27967b595d013641507059c
+base_blob: f14211b4b0e88f8b3f683d9f9275b76a64b66e02
+branch: hyp/muse_attention_decode/sliding-single-launch-fused-attention
+worktree: .worktrees/muse_attention_decode/sliding-single-launch-fused-attention
+mode: null
 ---
 
 # sliding-single-launch-fused-attention
