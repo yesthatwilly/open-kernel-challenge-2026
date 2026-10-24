@@ -1,6 +1,6 @@
 # muse_attention_decode findings
 
-Regenerated 2026-10-24T125104Z by `churn.py index`. Read this before writing a hypothesis for muse_attention_decode.
+Regenerated 2026-10-24T132213Z by `churn.py index`. Read this before writing a hypothesis for muse_attention_decode.
 
 ## Current best
 
@@ -37,6 +37,10 @@ Where the time goes (per scored shape, top kernels):
 
 ### pre-attention norm+rope
 - **fused-preattention-triton** → gain (gain), 1.1274x — gained on sliding decode_1, decode_16, decode_32, verify_1, verify_16, verify_32; full decode_1, decode_16, decode_32, verify_1, verify_16, verify_32. Replace the five pre-attention launches of the parity pipeline (FusedQKNorm (+RoPE), k .to(FP8), v .to(FP8), store_cache, q .to(FP8)) with one Triton kernel, gr
+- **preattention-group-tiled-programs** → neutral (within-ci), 1.2614x — gained on sliding verify_32; lost on sliding decode_1. Regrid master _pre_attention_kernel from one 1-warp program per (token, head) ((tokens, Hq+Hkv) = 18 programs per token, 4608 at verify_32) to one program per (
+
+### sliding-layer attention (batch-1 decode gate)
+- **sliding-fused-triton-decode1-gate** → neutral (unproven-vs-best), 1.2931x — gained on sliding decode_1. Port _sliding_fused_kernel and its helpers (_counters, _num_splits, _norm_rope, _gpu_fence, _online_update, _gate_epilogue, LOG2E, _sliding_forward) verbatim fr
 
 ### sliding-layer attention (whole-path rewrite)
 - **sliding-single-launch-fused-attention** → regression (regression), 0.9452x — gained on sliding decode_1; lost on sliding decode_16, decode_32, verify_1, verify_16, verify_32. Stage 1 of a rewrite of the sliding-layer path. Built on hyp/muse_attention_decode/fused-preattention-triton (1.127x, job dfee6f2939974bad). On sliding layers (
@@ -44,6 +48,8 @@ Where the time goes (per scored shape, top kernels):
 ## Open follow-ups
 
 - paired-heads-launch-cleanup-ab-tune-batch-gate: unproven-vs-best: the change is not proven either way; a stacked hypothesis (`depends_on: paired-heads-launch-cleanup-ab-tune-batch-gate`) that adds a further change in the same area is the only way to learn more (identi
+- sliding-fused-triton-decode1-gate: unproven-vs-best: the change is not proven either way; a stacked hypothesis (`depends_on: sliding-fused-triton-decode1-gate`) that adds a further change in the same area is the only way to learn more (identical code is n
+- preattention-group-tiled-programs: within-ci: the change is not proven either way; a stacked hypothesis (`depends_on: preattention-group-tiled-programs`) that adds a further change in the same area is the only way to learn more (identical code is never re
 
 ## Do not retry (rejected / duplicates)
 
@@ -67,6 +73,4 @@ Where the time goes (per scored shape, top kernels):
 - queue: stream-fork-preattention [launch overhead] p4 hold
 - queue: triton-flash-decode-deep-pipeline [FA3 call (Triton pipeline)] p4 hold
 - queue: triton-flash-decode-full-verify [FA3 call] p4 hold
-- running: sliding-fused-triton-decode1-gate [sliding-layer attention (batch-1 decode gate)] p2 running
 - running: fa3-scheduler-metadata-side-stream [FA3 call (schedule, off critical path)] p2 running
-- running: preattention-group-tiled-programs [pre-attention norm+rope] p3 running

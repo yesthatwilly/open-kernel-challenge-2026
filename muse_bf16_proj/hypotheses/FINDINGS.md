@@ -1,6 +1,6 @@
 # muse_bf16_proj findings
 
-Regenerated 2026-10-24T125104Z by `churn.py index`. Read this before writing a hypothesis for muse_bf16_proj.
+Regenerated 2026-10-24T132213Z by `churn.py index`. Read this before writing a hypothesis for muse_bf16_proj.
 
 ## Current best
 
@@ -45,6 +45,9 @@ Where the time goes (per scored shape, top kernels):
 - **sglang-gemm-dispatch-parity** → gain (gain), 1.0022x — gained on router decode_16, decode_32, verify_16, verify_32; o verify_32. Replace the starter's plain x @ W[:n].T with the exact dispatch SGLang's kernel uses: sglang.srt.layers.quantization.unquant._bf16_gemm_dispatch_impl(x, W[:n], 
 - **bf16-cublaslt-backend-toggle** → neutral (within-ci), 1.1505x — gained on qkv_gate decode_1, verify_16; pooler decode_32; lost on o decode_1, verify_1; unpooler decode_1, verify_1; router verify_1; qkv_gate verify_32. A dispatch probe, pure PyTorch, no kernel of ours: in kernel_fn, for the four bf16 layers only, call torch.backends.cuda.preferred_blas_library('cublaslt') imme
 
+### bf16 GEMM dispatch (m>=128, weight layout)
+- **bf16-m128-nn-weight-layout-probe** → neutral (unproven-vs-best), 1.1580x — gained on pooler verify_16; unpooler verify_16; lost on o decode_1; router verify_1, verify_16; qkv_gate verify_32. Built on master (dba4ffd; router untouched; m <= 32 paths untouched). The m=128/256 shapes are where cuBLAS sits furthest from the floor (pooler verify_16 25.2 
+
 ### o GEMM
 - **o-triton-skinny-m32** → neutral (within-ci), 1.0057x — gained on qkv_gate decode_1, decode_16; o decode_1, decode_16, verify_1; unpooler decode_1; router decode_1; lost on o decode_32; pooler verify_16. Extend the skinny Triton GEMM from pooler-triton-skinny-m32 to layer == 'o' at m <= 32 (n=8192, k=1024, 16.8 MB): in kernel_fn route o at m <= 32 to the same ke
 
@@ -67,6 +70,7 @@ Where the time goes (per scored shape, top kernels):
 - **router-triton-hilo-fused** → regression (regression), 0.9402x — gained on router decode_1, decode_16, decode_32, verify_1; qkv_gate verify_1; o verify_1, verify_16; unpooler verify_1; lost on router verify_16, verify_32. Replace the whole router branch of kernel_fn (both the F.linear fp32 path at m<=8 and the two torch.mm hi/lo GEMMs + add above 8) with one Triton kernel launch 
 - **router-triton-hilo-fused-control-splitk-all-m** → gain (gain), 1.1510x — gained on router decode_1, decode_16, decode_32, verify_1, verify_16, verify_32; lost on qkv_gate decode_1. Built from hyp/muse_bf16_proj/sglang-gemm-dispatch-parity exactly as the primary (prepare() stores router_hi and router_lo as [256, 8192] bf16 row-major; one Tr
 - **router-splitk32-small-m-all-loads-in-flight** → neutral (within-ci), 1.1427x — gained on pooler verify_16; lost on router decode_1, decode_16, decode_32, verify_1. Built on master (dba4ffd). Change only the two small-m buckets of _router_config and the num_stages they launch with; the kernel body, the torch.zeros output + 
+- **router-splitk-semaphore-no-memset** → neutral (unproven-vs-best), 1.1516x — gained on qkv_gate decode_1, verify_1; pooler verify_16; lost on router decode_1, decode_16, decode_32, verify_16. Built on master (dba4ffd). For the router at m <= 32 only (buckets (16,32,16) and (32,32,16): grid (1, 8, 16) = 128 CTAs, unchanged tiles, BLOCK_K=128, num_stag
 - **router-splitk32-small-m-all-loads-in-flight-control-stages3** → neutral (unproven-vs-best), 1.1518x — gained on unpooler decode_1; router decode_1, decode_16, decode_32, verify_1; qkv_gate decode_16; lost on o verify_16; pooler verify_16; router verify_16. From the parent's branch (router-splitk32-small-m-all-loads-in-flight), keep everything exactly as the parent: the new m<=16 bucket (BLOCK_M=16, BLOCK_N=32, SPL
 
 ### unpooler GEMM
@@ -86,10 +90,12 @@ Where the time goes (per scored shape, top kernels):
 - pooler-triton-splitk2-blockn64-semaphore: unproven-vs-best: the change is not proven either way; a stacked hypothesis (`depends_on: pooler-triton-splitk2-blockn64-semaphore`) that adds a further change in the same area is the only way to learn more (identical co
 - qkv-gate-triton-splitk4-blockn64-semaphore: within-ci: the change is not proven either way; a stacked hypothesis (`depends_on: qkv-gate-triton-splitk4-blockn64-semaphore`) that adds a further change in the same area is the only way to learn more (identical code is
 - router-splitk32-small-m-all-loads-in-flight: within-ci: the change is not proven either way; a stacked hypothesis (`depends_on: router-splitk32-small-m-all-loads-in-flight`) that adds a further change in the same area is the only way to learn more (identical code i
+- router-splitk-semaphore-no-memset: unproven-vs-best: the change is not proven either way; a stacked hypothesis (`depends_on: router-splitk-semaphore-no-memset`) that adds a further change in the same area is the only way to learn more (identical code is n
 - unpooler-slice-triton-splitk8-semaphore: unproven-vs-best: the change is not proven either way; a stacked hypothesis (`depends_on: unpooler-slice-triton-splitk8-semaphore`) that adds a further change in the same area is the only way to learn more (identical cod
 - pooler-triton-splitk2-blockn64-semaphore-control-blockk256: within-ci: the change is not proven either way; a stacked hypothesis (`depends_on: pooler-triton-splitk2-blockn64-semaphore-control-blockk256`) that adds a further change in the same area is the only way to learn more (i
 - pooler-splitk2-tma-weight-stream: unproven-vs-best: the change is not proven either way; a stacked hypothesis (`depends_on: pooler-splitk2-tma-weight-stream`) that adds a further change in the same area is the only way to learn more (identical code is ne
 - router-splitk32-small-m-all-loads-in-flight-control-stages3: unproven-vs-best: the change is not proven either way; a stacked hypothesis (`depends_on: router-splitk32-small-m-all-loads-in-flight-control-stages3`) that adds a further change in the same area is the only way to learn
+- bf16-m128-nn-weight-layout-probe: unproven-vs-best: the change is not proven either way; a stacked hypothesis (`depends_on: bf16-m128-nn-weight-layout-probe`) that adds a further change in the same area is the only way to learn more (identical code is ne
 
 ## Do not retry (rejected / duplicates)
 
@@ -101,6 +107,4 @@ Where the time goes (per scored shape, top kernels):
 - queue: router-triton-hilo-fused-control-hybrid-cublas-above-m32 [router GEMM] p1 hold
 - queue: router-hilo-addmm-epilogue-control-inplace-out [router GEMM] p1 hold
 - queue: qkv-gate-o-m128-wgmma-splitk-semaphore [qkv GEMM + o GEMM (m=128)] p2 hold
-- running: router-splitk-semaphore-no-memset [router GEMM] p4 running
 - running: bf16-shape-gated-triton-winners-combo [bf16 GEMM dispatch (shape-gated Triton routing, m<=16)] p1 running
-- running: bf16-m128-nn-weight-layout-probe [bf16 GEMM dispatch (m>=128, weight layout)] p3 running

@@ -1,6 +1,6 @@
 # muse_moe_w4a16 hypotheses
 
-Regenerated 2026-10-24T125104Z. Best: 1.2536x [1.2348,1.2724] job `c00ef7295c154867` (check)
+Regenerated 2026-10-24T132213Z. Best: 1.2536x [1.2348,1.2724] job `c00ef7295c154867` (check)
 
 | created | slug | kind | area | where | outcome | speedup | CI | job | mode | promotion | review | expected hit |
 |---|---|---|---|---|---|---|---|---|---|---|---|---|
@@ -22,8 +22,8 @@ Regenerated 2026-10-24T125104Z. Best: 1.2536x [1.2348,1.2724] job `c00ef7295c154
 | 2026-10-24T081339Z | small-m-grouped-gemv-splitk-rewrite | rewrite | w13 marlin | done/regression | regression | 0.6635 | [0.654,0.673] | 734a1159ff334c3d | check |  | proceed | 3/6 |
 | 2026-10-24T100217Z | marlin-block-m-cap-16-port | primary | w13 marlin | done/neutral | neutral | 1.0950 | [1.079,1.111] | 1c33392914594026 | check |  | proceed | 6/6 |
 | 2026-10-24T112137Z | marlin-block-m-two-smaller-on-postnorm | primary | w13 marlin | done/gain | gain | 1.2536 | [1.235,1.272] | c00ef7295c154867 | check | merged | proceed | 6/6 |
-| 2026-10-24T112155Z | triton-map-align-small-m-port | primary | MoE align/dispatch | running | running |  |  | c2feb68aafb44aeb | check |  | proceed |  |
-| 2026-10-24T112212Z | post-norm-triton-all-m | primary | post-expert norm+combine | running | running |  |  | 2ec5387ffe8748c9 | check |  | proceed |  |
+| 2026-10-24T112155Z | triton-map-align-small-m-port | primary | MoE align/dispatch | done/neutral | neutral | 1.1850 | [1.167,1.203] | c2feb68aafb44aeb | check |  | proceed | 6/6 |
+| 2026-10-24T112212Z | post-norm-triton-all-m | primary | post-expert norm+combine | done/neutral | neutral | 1.2483 | [1.230,1.267] | 2ec5387ffe8748c9 | check |  | proceed | 4/6 |
 
 ## Held
 
