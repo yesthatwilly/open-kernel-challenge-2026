@@ -83,7 +83,7 @@ review: proceed
 status: running
 review_at: 2026-10-24T165728Z
 review_companions: null
-stage: implemented
+stage: dispatched
 claimed_at: 2026-10-24T165728Z
 base_sha: 27b43dcd8b752ab9c2454f7e20fb949c059b9213
 base_blob: 1c0f5fa1bfc4e602b62e5e9edd9df6d5652b297b
@@ -98,6 +98,8 @@ submission_blob: 2b7e5dbf0fde0ae0163e5ecaefd87a5f0848e6b0
 lint_warnings: 1
 attempt_file: 2026-10-24T181703Z-submit-full-verify-cuda-streamk-splitkv.md
 prepared_at: 2026-10-24T181703Z
+job: a43acd1ed9b24b4e
+dispatched_at: 2026-10-24T181732Z
 ---
 
 # full-verify-cuda-streamk-splitkv
