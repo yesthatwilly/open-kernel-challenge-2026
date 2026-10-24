@@ -57,7 +57,7 @@ review: proceed
 status: running
 review_at: 2026-10-24T164538Z
 review_companions: null
-stage: implemented
+stage: dispatched
 claimed_at: 2026-10-24T164752Z
 base_sha: c6b167670ed7835c8c0a38fc7064ea60ab8726dc
 base_blob: cc466fce207709c98ab0e78c2435c1c459890fdb
@@ -72,6 +72,8 @@ submission_blob: 408bdcbabc3deb4579e60bbdcd0a88e095a17b79
 lint_warnings: 1
 attempt_file: 2026-10-24T165043Z-submit-paired-heads-pad-unpad-triton.md
 prepared_at: 2026-10-24T165043Z
+job: a92b64be4c6547d3
+dispatched_at: 2026-10-24T165053Z
 ---
 
 # paired-heads-pad-unpad-triton
