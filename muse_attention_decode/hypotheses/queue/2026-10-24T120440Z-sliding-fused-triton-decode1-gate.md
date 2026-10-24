@@ -44,10 +44,10 @@ priority: 2
 kind: primary
 controls_for: null
 review: proceed
-status: hold
+status: queued
 review_at: 2026-10-24T120721Z
 review_companions: null
-hold_reason: "reviewer: dispatch after fa3-window-trimmed-page-table (1f63fcbbc0394bed) harvests, which may shrink the decode_1 margin; then unhold"
+hold_reason: null
 ---
 
 # sliding-fused-triton-decode1-gate
