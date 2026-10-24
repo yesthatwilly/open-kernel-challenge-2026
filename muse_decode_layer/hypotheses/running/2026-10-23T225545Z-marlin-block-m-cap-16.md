@@ -38,13 +38,19 @@ review: proceed
 status: running
 review_at: 2026-10-24T053040Z
 review_companions: null
-stage: claimed
+stage: implemented
 claimed_at: 2026-10-24T053040Z
 base_sha: 66e598a7966dd1ac8380100ad95bc3a0a4d21449
 base_blob: 6884d26a928d1de1b07bf8d28e1be4e53dfdcfc5
 branch: hyp/muse_decode_layer/marlin-block-m-cap-16
 worktree: .worktrees/muse_decode_layer/marlin-block-m-cap-16
 mode: null
+implemented_at: 2026-10-24T053147Z
+impl_commit: 9a0492ffc41d11d5f4dd958b1838e238df63cd49
+submission_sha256: 90ab84928d8ef488a0d6cfd3efb112d1d09ebec5cb93035bd1d55e6c7e33fc67
+norm_sha256: a0b7b726786a9cdcf0ceb09b25226d60ca943727f1bc26e5bab11fc8c6be3a11
+submission_blob: de98030423860cfc9507b61d19f82a416223a23d
+lint_warnings: 1
 ---
 
 # marlin-block-m-cap-16
@@ -85,3 +91,36 @@ Reverting the landed hypothesis is meaningless (master would be the 0.0045x star
 - Does the SGLang moe_align_block_size + Marlin m-block loop walk the device num_tokens_post_pad or the host-sized capacity (the question moe-align-local-expert-count raises)? If the latter, block 16 at T=256 walks 368 instead of 284 slots and part of any gain or loss belongs to that interaction; combined later with moe-align-local-expert-count the two gains will not simply add.
 - The hypothesis's own expected magnitudes are unstated; a useful falsification threshold is: Marlin at T=128 should drop by more than the ~18% the sister measured for 48->64 if per-block cost is the driver; a change inside +-5% would say the per-block cost model saturates at thread_m_blocks<=3 and SGLang's pick is already near-optimal.
 
+## Implementation notes
+
+- `muse_decode_layer/submission.py`: new module constant `MARLIN_BLOCK_SIZE_M_CAP = 16` beside `BLOCK_SIZE_M_CANDIDATES`, and in `_experts` one line after SGLang's unchanged selection loop: `block_size_m = min(block_size_m, MARLIN_BLOCK_SIZE_M_CAP)`. That single variable already feeds `moe_align_block_size(local_ids, block_size_m, N_EXPERTS)` and `common["moe_block_size"]`, which both `moe_wna16_marlin_gemm` calls (w13 and w2) take, so all three see the same capped size. Diff: 1 file, +3 lines.
+- Branches only on `num_tokens` (a shape) and constants; no input values, no syncs, nothing cached.
+- Picks per scored T (T*8/32/bsm < 0.9 rule, T/4 routes per local expert on average):
+  | T | before | after |
+  |---|---|---|
+  | T <= 28 (decode_1, decode_16, verify_1, ...) | 8 | 8 |
+  | 32 (decode_32) | 16 | 16 |
+  | 128 (verify_16) | 48 | 16 |
+  | 256 (verify_32; loop exhausts at 64) | 64 | 16 |
+- Mechanism caveat (from the adversarial review, recorded so the result is read correctly): the reason to expect a gain is the per-m-block cost of larger thread_m_blocks Marlin templates, not padding bytes or SM parallelism. Sister problem muse_moe_w4a16 (job 2639e3ca7f5549de) measured going *up* in thread_m_blocks costs +18-28% on Marlin (1->2 at T=32: 208 -> 261 us; 3->4 at T=128: 462 -> 545 us) with the m-block count essentially unchanged. Block 16 does add m-blocks for hot experts (more weight passes), so the net is that per-block saving minus the m-block growth; opposite signs on verify_16 vs verify_32 would point at the latter at T=256.
+- No deviation from the spec. The review's open question (log the launched thread_m_blocks) was not added: it would need a print/host-side side effect outside the one-knob change.
+- moe_align_block_size's host-sized capacity shrinks with block size (review: 18176 -> 5888 slots at T=256), a bundled ~1-2 us side effect.
+
+## Rules check
+
+Checked against `git -C .worktrees/muse_decode_layer/marlin-block-m-cap-16 diff` (+3 lines, constant + `min()` on a host int).
+- [x] CUDA-graph capturable: the cap is a Python `min` on a host int derived from `x.shape`; no `.item()`/`.cpu()`/sync/prints added; no allocation or control flow on input values.
+- [x] Nothing derived from `data` is cached across calls (no state writes added).
+- [x] Weights: n/a: weights and `prepare()` untouched; NVFP4 stays NVFP4.
+- [x] Activations BF16 where SGLang keeps BF16; KV cache FP8; queries at most FP8 E4M3: unchanged, same dtypes into Marlin, same fp32 reduce.
+- [x] Attention sees every key: n/a: attention path untouched.
+- [x] No timing patches, harness frames/I/O/secrets, module edits, reference import, subprocesses or network.
+- [x] All work happens inside the timed call; no output caching or replay.
+- [x] First-line marker `# okc: problem=muse_decode_layer` kept.
+
+okc_lint output:
+```
+warn  host-sync    L247: torch.cuda.synchronize()  (outside kernel_fn's call graph; fine in prepare())
+OK with warnings: /home/user/git/musespark/.worktrees/muse_decode_layer/marlin-block-m-cap-16/muse_decode_layer/submission.py
+```
+`python3 -I -m py_compile` passed; `__pycache__` removed.
