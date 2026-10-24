@@ -66,8 +66,8 @@ submission_sha256: b671bd387506452d90e24f197c10a969ff30824efd32c0dba3fd5db5bada9
 norm_sha256: 4df695a2d87724d8a398580b8b49d2f64f7e0d52e089e3ce56ee4adbf424af36
 submission_blob: f99bbe8e814e229a1d528bd8f951814baf1f0aaf
 lint_warnings: 20
-attempt_file: 2026-10-24T224624Z-check-sliding-fused-batched-decode-port.md
-prepared_at: 2026-10-24T224625Z
+attempt_file: 2026-10-24T231258Z-check-sliding-fused-batched-decode-port.md
+prepared_at: 2026-10-24T231258Z
 ---
 
 # sliding-fused-batched-decode-port
