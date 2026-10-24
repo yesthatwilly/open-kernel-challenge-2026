@@ -88,8 +88,10 @@ kind: rewrite
 controls_for: null
 rewrite_stage: 1
 replaces: "full layer at tp8/page 1: _pre_attention_kernel + splitkv_attn_kernel + splitkv_combine_kernel at decode 1<B<=64 (stage 1); verify A8/B8 or FA3 (stage 2); batch-1 FA3/Triton (stage 3)"
-review: required
+review: proceed
 status: queued
+review_at: 2026-10-24T172607Z
+review_companions: null
 ---
 
 # full-cuda-onelaunch-warpspec-bulk-gather
@@ -118,3 +120,30 @@ shape (profile top_kernels) against the incumbent and the speed-of-light floor, 
 2. at or below the incumbent kernels' time on the target shapes;
 3. within ~1.5x of the floor on the target shapes, and the headline CI clears 1.0 (promotable).
 The next stage is minted with `--kind rewrite --depends-on <this slug> --stage N+1`.
+
+## Adversarial review
+
+Reviewed 2026-10-24T172607Z by an adversarial subagent (model opus).
+
+**Verdict: proceed.** The rewrite targets the right place: full decode_16/32 are 92-96% one gather kernel running at 2.67-2.94 TB/s against a 4.8 TB/s floor. Fusing to one launch and using stream-K are sound and should be worth about 10-15 us on their own. The spec has one definite indexing bug (new-token slots collide with segment slots) that will trip the self-check and silently fall back to master, so fix it before dispatch. Ship both BULK variants in the module so a miss on the bandwidth milestones can be attributed from a single run.
+
+### Justification
+Mechanism: FINDINGS shows full decode_16 = splitkv_attn 111.4 + combine 7.9 + pre 2.1 us (123.0 total, floor 63.2) and decode_32 = 245.5 + 8.6 + 2.3 (257.7, floor 126.4). Removing the pre and combine launches and the gaps (~11-12 us at B=16, ~12.5 us at B=32) is close to certain if the fused combine tail stays short. Stream-K over 64-token tiles removes the 1024-chunk quantization: about 1250 chunks over 264 CTAs is 4.73 vs 5 items, ~5%, which is plausible. The expected directions match TASK.md: the full shapes have weight 16 and are 67-78% of the decode_16/32 loads, while sliding, decode_1 and verify sit outside the config-only gate and should be flat. Numeric nits: with G = SM count = 132 (not 264), each request at B=16 spans ~8-9 CTAs, so ~10 slots, and ~5 at B=32, not the 17/9 stated. That is fewer, so the winner's merge is cheaper than budgeted. reference.generate_input fully permutes the pages (randperm over the whole pool), so every token costs two independent random 128-B row reads (K and V are separate tensors). Bytes in flight are not the limit: 8 stages x 16 KB per SM is ~17 MB GPU-wide against a Little's-law need of ~5 MB, and master already holds ~96 KB/SM in flight. So the move from 2.94 to 3.5 TB/s has to come from issue efficiency, sync removal or DRAM behaviour, not depth. WEAKEST LINK: the consumer side, more than the producer. One CTA per SM leaves 8 math warps per SM (2 per SMSP), where master has 16 (2 CTAs x 8 warps). At 3.5 TB/s each SM must retire one 16 KB tile every ~1200 cycles. Each consumer warp spends roughly 16 mma plus ~150-250 ALU instructions per tile (cvt e4m3->f16, byte_perm, ex2, shuffles, masks), all latency-bound chains. At 2 warps/SMSP, achieved IPC can drop far enough to make math, not memory, the limiter. The FP8 m16n8k32 QK halves the QK mma and removes the K converts, which helps, but V widening stays. Second weakest: cp.async.bulk at 128 B per op. TMA small-copy throughput on Hopper is the usual reason FA3/FlashInfer use cp.async for page-1 gathers, and the BULK=0 fallback correctly exists for this. Third: random-row DRAM/TLB efficiency (the 2.94 -> 2.67 drop between B=16 and B=32 at equal per-CTA work). This may cap even a perfect kernel near ~3.3-3.6 TB/s, so M3 is a stretch but M2 is physically reachable. The design can approach its floor in principle, and the correctness plan (synthetic self-check with grid 3, mid-request range boundaries, kv_scale 0.25, cache-row equality, counters back to zero) is adequate apart from the slot bug below.
+
+### Confounders on the current kernel
+- The landed list for master's submission.py is empty, so no landed hypothesis confounds. The incumbent being replaced is master's own splitkv path (full-decode-cuda-gather-splitkv), and the milestones compare against its kernel times directly.
+- In flight, not landed: full-decode-cuda-fp8-qk-mma edits master's kernel A and uses the same FP8 QK math this rewrite adopts. If it lands before dispatch, the incumbent baseline shifts. Judge M1-M3 against whichever kernel A is master at dispatch (the hypothesis already says so), and read the rewrite's gain as structural (one launch, stream-K, producer), not as QK math.
+- In flight: sliding-deep-splits-on-cuda-splitkv may share or extend the splitkv module and its gating. The separate muse_full_ws_v1 module isolates the build, but the kernel_fn gate order (full_ws before splitkv) must be rechecked if that lands first.
+- Queued/held: fused-full-combine-normgate overlaps sub-change (4), the in-kernel combine plus epilogue. If this rewrite lands, that hypothesis is superseded for 1<B<=64 full decode and should be retired, not run on top.
+
+### Interference and A/B needs
+With nothing landed there is no ab-revert target, and for a kind: rewrite the next stage is the follow-up. The one real ambiguity in a single run is a miss on M1/M2: it could come from TMA small-copy issue (BULK=1) or from consumer latency at 1 CTA/SM. An extra check is not needed to resolve that. Instantiate the kernel as a template over BULK and build both into the one muse_full_ws_v1 module (one compile, ~same seconds). Gate on BULK=1 as planned. At import, after the self-check, run an eager synthetic timing of both instantiations (e.g. B=16 x 80K lens, cuda events, a few reps) and print the achieved TB/s for each, as a diagnostic only that does not select the path. That attributes the result from a single run, and stage 2 can flip BULK without a rebuild. A separate control companion would duplicate that information at the cost of a check, so none is proposed.
+
+### Open questions
+- SLOT COLLISION (fix before dispatch): segment slots are c + b for c in [0, G) and b in [0, B), so up to G + B - 2, and the new-token slots are 'grid + b', i.e. G .. G + B - 1. The last CTA always covers request B-1 at slot G + B - 2, which equals the new-token slot of request B-2. The same happens for other (c, b) near the end, so the self-check (grid 3, 7 requests) will fail and the run will silently measure master. Either offset the new-token slots to G + B - 1 + b, or, simpler and cheaper, fold the new token into the first-tile CTA's running state (initialize that warp's m = s_new, l = 1, acc = v_new), which removes the extra slot and the '+1' from the expected count.
+- Consumer occupancy: why 1 CTA/SM with 8 consumer warps rather than 2 CTAs/SM at ~100 KB each (e.g. 5-6 stages) or 12-16 consumer warps in one CTA? Master's 16 math warps per SM may be part of why it reaches 2.94 TB/s at all. If M1 fails, read the stall reasons (long scoreboard vs math pipe vs barrier) before changing the producer.
+- Slot counts per request: with G = 132 the stated ~17 (B=16) / ~9 (B=32) look like G = 264 numbers. Confirm the grid. If G = 264 (2 per SM) was intended, it contradicts '1 CTA per SM, ~147 KB'.
+- Zero-length requests: the judge's seq_lens are clamped to >= 1 (agentic) and >= 16 (mixed), but tiles_b = 0 leaves the new token with no owner. Define the owner as the CTA containing flat position TP_b (or the next nonempty one) so the kernel is total.
+- Masked rows 'zeroed once' do not stay zero once the ring is reused, so stale rows from earlier tiles remain. That is harmless only because the scores are masked to -inf (P = 0) and stale V is finite. State that the -inf mask, not zeroing, is the correctness mechanism.
+- Combine tail: the winner merges ~5-10 slots of 16x64 fp32 from L2 with .cg plus the epilogue, ~1-3 us on the critical path after the last CTA. Report the kernel's own time minus a no-combine variant only if M2 is missed narrowly.
+
