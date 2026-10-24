@@ -32,7 +32,7 @@ review: proceed
 status: running
 review_at: 2026-10-24T032411Z
 review_companions: null
-stage: implemented
+stage: dispatched
 claimed_at: 2026-10-24T032412Z
 base_sha: 7c54c225a5de1458c4cd57d1fea92d4b3895d9f5
 base_blob: 11fbc1957daf7294cd2810ff82a0aad2f25644bd
@@ -47,6 +47,8 @@ submission_blob: 6075ec2ba91b451ab6510be0763073337419e243
 lint_warnings: 1
 attempt_file: 2026-10-24T032534Z-check-align-single-token-ep.md
 prepared_at: 2026-10-24T032534Z
+job: a7bb0cecaf8d4de1
+dispatched_at: 2026-10-24T032541Z
 ---
 
 # align-single-token-ep
