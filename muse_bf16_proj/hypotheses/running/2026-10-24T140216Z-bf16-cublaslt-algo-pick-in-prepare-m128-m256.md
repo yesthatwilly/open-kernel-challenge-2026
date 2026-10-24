@@ -81,9 +81,16 @@ priority: 2
 kind: primary
 controls_for: null
 review: proceed
-status: queued
+status: running
 review_at: 2026-10-24T140632Z
 review_companions: null
+stage: claimed
+claimed_at: 2026-10-24T164257Z
+base_sha: 13bdacf95cb5cf6521efd5d84b33f2580fb203f7
+base_blob: a8bb42ac483318e9fbc84bc7826a27b7a704d1fb
+branch: hyp/muse_bf16_proj/bf16-cublaslt-algo-pick-in-prepare-m128-m256
+worktree: .worktrees/muse_bf16_proj/bf16-cublaslt-algo-pick-in-prepare-m128-m256
+mode: null
 ---
 
 # bf16-cublaslt-algo-pick-in-prepare-m128-m256
