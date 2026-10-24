@@ -56,13 +56,15 @@ base_sha: 2a10183f4da4f215e94343a98324a39e52be5cb6
 base_blob: b81d47abe0c2e53a3ecc180884ae8d9671ba4e14
 branch: hyp/muse_moe_w4a16/marlin-block-m-two-smaller-on-postnorm
 worktree: .worktrees/muse_moe_w4a16/marlin-block-m-two-smaller-on-postnorm
-mode: null
+mode: check
 implemented_at: 2026-10-24T112434Z
 impl_commit: 954a81bbc3a7e99edc92ef0f8a158fc85485cf9f
 submission_sha256: aef6eb6a3d1c70bca1474c9d052fab0fb3f7b815048d9f8d58541638188cb38a
 norm_sha256: 31f36fd3f81ea51151244b03a4d50c0b42ab67f76c207852ed8f1d9702be3376
 submission_blob: c7bf9ffedc48b757f56765004e5d65f6ad5ba841
 lint_warnings: 1
+attempt_file: 2026-10-24T112434Z-check-marlin-block-m-two-smaller-on-postnorm.md
+prepared_at: 2026-10-24T112434Z
 ---
 
 # marlin-block-m-two-smaller-on-postnorm
