@@ -55,13 +55,15 @@ base_sha: 6b5469bd92f0a43ce5908912b02fb8dee425c3fa
 base_blob: 11fbc1957daf7294cd2810ff82a0aad2f25644bd
 branch: hyp/muse_moe_w4a16/triton-w13-grouped-gemv-small-m
 worktree: .worktrees/muse_moe_w4a16/triton-w13-grouped-gemv-small-m
-mode: null
+mode: check
 implemented_at: 2026-10-24T024859Z
 impl_commit: 5e969da46ab87d84a299f2124a2f42cf9f5109cd
 submission_sha256: ea2dcd2ce23c11bd76a9270a774d295a6240ba2dde688e2b1b787007241be514
 norm_sha256: 5efcb7aca5a2623591faeda5c1df62dfcaf3e33e5a0af534c8d9600df9f1d46c
 submission_blob: 09d727eae616e13de2636faa5071b006980144ee
 lint_warnings: 1
+attempt_file: 2026-10-24T024859Z-check-triton-w13-grouped-gemv-small-m.md
+prepared_at: 2026-10-24T024859Z
 ---
 
 # triton-w13-grouped-gemv-small-m
