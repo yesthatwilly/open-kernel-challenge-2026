@@ -35,10 +35,10 @@ priority: 4
 kind: primary
 controls_for: null
 review: proceed
-status: running
+status: done
 review_at: 2026-10-24T053040Z
 review_companions: null
-stage: dispatched
+stage: harvested
 claimed_at: 2026-10-24T053040Z
 base_sha: 66e598a7966dd1ac8380100ad95bc3a0a4d21449
 base_blob: 6884d26a928d1de1b07bf8d28e1be4e53dfdcfc5
@@ -55,6 +55,13 @@ attempt_file: 2026-10-24T053147Z-check-marlin-block-m-cap-16.md
 prepared_at: 2026-10-24T053147Z
 job: 0730135cdcac43b7
 dispatched_at: 2026-10-24T053154Z
+outcome: gain
+verdict_detail: gain
+speedup: 1.0620874943175542
+speedup_ci: [1.046156181902791, 1.0780188067323175]
+harvested_at: 2026-10-24T075010Z
+best_at_harvest: 1.020038644953596
+promotion: pending
 ---
 
 # marlin-block-m-cap-16
@@ -128,3 +135,35 @@ warn  host-sync    L247: torch.cuda.synchronize()  (outside kernel_fn's call gra
 OK with warnings: /home/user/git/musespark/.worktrees/muse_decode_layer/marlin-block-m-cap-16/muse_decode_layer/submission.py
 ```
 `python3 -I -m py_compile` passed; `__pycache__` removed.
+
+## Result
+
+- job `0730135cdcac43b7` (check), status done, passed True, tests 13/13
+- speedup 1.0621x, 95% CI [1.0462, 1.0780], score 21297.962852424607 µs vs SGLang 22620.3 µs
+- best at harvest: {"speedup": 1.020038644953596, "ci": [1.004738065279292, 1.0353392246278998], "job": "5755a412dda244a1"}; base result: muse_decode_layer/hypotheses/done/gain/sglang-pipeline-parity-router-hilo-m8.result.json
+- **outcome: gain** (gain)
+- files: `muse_decode_layer/hypotheses/done/gain/marlin-block-m-cap-16.result.json`, `muse_decode_layer/hypotheses/done/gain/marlin-block-m-cap-16.patch`; branch `hyp/muse_decode_layer/marlin-block-m-cap-16`
+
+## Attribution
+
+| shape | w | base µs | hyp µs | delta | verdict |
+|---|---|---|---|---|---|
+| batch=1 ctx=80000 dist=soft layer=sliding load=decode_1 page=1 repeats=60 | 46 | 168.73 | 171.1 | 0.9892 | flat |
+| batch=1 ctx=80000 dist=soft layer=full load=decode_1 page=1 repeats=60 | 16 | 180.65 | 183.78 | 0.9879 | flat |
+| batch=16 ctx=80000 dist=soft layer=sliding load=decode_16 page=1 spread=agentic | 46 | 269.71 | 259.9 | 1.0003 | flat |
+| batch=16 ctx=80000 dist=soft layer=full load=decode_16 page=1 spread=agentic | 16 | 440.57 | 432.97 | 1.0021 | flat |
+| batch=32 ctx=80000 dist=soft layer=sliding load=decode_32 page=1 spread=agentic | 46 | 265.68 | 253.85 | 0.9979 | flat |
+| batch=32 ctx=80000 dist=soft layer=full load=decode_32 page=1 spread=agentic | 16 | 614.9 | 601.7 | 0.9997 | flat |
+| batch=1 ctx=80000 dist=soft layer=sliding load=verify_1 page=1 q_len=8 | 46 | 233.99 | 234.75 | 1.011 | flat |
+| batch=1 ctx=80000 dist=soft layer=full load=verify_1 page=1 q_len=8 | 16 | 250.89 | 240.09 | 1.0156 | flat |
+| batch=16 ctx=80000 dist=soft layer=sliding load=verify_16 page=1 q_len=8 spread=agentic | 46 | 521.15 | 436.67 | 1.154 | gained |
+| batch=16 ctx=80000 dist=soft layer=full load=verify_16 page=1 q_len=8 spread=agentic | 16 | 714.3 | 618.93 | 1.1023 | gained |
+| batch=32 ctx=80000 dist=soft layer=sliding load=verify_32 page=1 q_len=8 spread=agentic | 46 | 713.04 | 631.95 | 1.1274 | gained |
+| batch=32 ctx=80000 dist=soft layer=full load=verify_32 page=1 q_len=8 spread=agentic | 16 | 1049.76 | 969.88 | 1.0764 | gained |
+
+gained on sliding verify_16, verify_32; full verify_16, verify_32. Expected hit: 4/4. Noise ±1.5%.
+
+## Follow-ups
+
+- candidate for promotion; stack further changes with `depends_on` once it lands.
+
