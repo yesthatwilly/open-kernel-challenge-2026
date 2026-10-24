@@ -73,7 +73,8 @@ speedup: 1.1510295903072447
 speedup_ci: [1.133764146452636, 1.1682950341618532]
 harvested_at: 2026-10-24T035910Z
 best_at_harvest: 1.0307103903232853
-promotion: pending
+promotion: unmerged
+promotion_reason: master moved since base; merge by hand
 ---
 
 # router-triton-hilo-fused-control-splitk-all-m
