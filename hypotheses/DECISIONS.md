@@ -50,3 +50,4 @@ overrides of a reviewer) with the reason, newest last. Written by `churn.py note
 - 2026-10-24T112256Z `muse_moe_w4a16` **align-remote-sentinel-ids**: unhold:
 - 2026-10-24T112256Z `muse_moe_w4a16` **align-remote-sentinel-ids**: unheld: its hold condition (align-256-experts-below-128 harvested) is met; that run was neutral (1.000x)
 - 2026-10-24T112356Z `muse_moe_w4a16` **marlin-block-m-two-smaller-on-postnorm**: hold: reviewer: dispatch after marlin-block-m-cap-16-port (1c33392914594026) harvests; if its bs=256 row beats two-smaller's by >~3%, use block 16 at bs=256 (an ab-tune or edit before claim), then unhold
+- 2026-10-24T112420Z `muse_moe_w4a16` **marlin-block-m-two-smaller-on-postnorm**: cap-16-port harvested neutral 1.095x; its bs=256 row 1.329 vs two-smaller's 1.320 (<3%), so the spec's bs=256 pick of 32 stands per the reviewer's rule; unheld
