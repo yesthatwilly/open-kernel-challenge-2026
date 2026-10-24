@@ -68,9 +68,16 @@ controls_for: null
 rewrite_stage: 1
 replaces: cuBLAS nvjet at m=128 for pooler (nvjet_sm90_tst_64x64_64x13_2x1, 26.0 us) and unpooler (nvjet_sm90_tst_128x64_64x8_1x2, 20.3 us)
 review: proceed
-status: queued
+status: running
 review_at: 2026-10-24T164610Z
 review_companions: null
+stage: claimed
+claimed_at: 2026-10-24T164753Z
+base_sha: 1221521e184643a43f27ff79cef68b5fed5ad2b1
+base_blob: a8bb42ac483318e9fbc84bc7826a27b7a704d1fb
+branch: hyp/muse_bf16_proj/pooler-unpooler-m128-tma-wspec-rewrite
+worktree: .worktrees/muse_bf16_proj/pooler-unpooler-m128-tma-wspec-rewrite
+mode: null
 ---
 
 # pooler-unpooler-m128-tma-wspec-rewrite
