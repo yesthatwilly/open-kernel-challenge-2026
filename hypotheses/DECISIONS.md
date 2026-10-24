@@ -76,3 +76,4 @@ overrides of a reviewer) with the reason, newest last. Written by `churn.py note
 - 2026-10-24T124058Z `muse_attention_decode` **fa3-scheduler-metadata-side-stream**: unheld: fa3-window-trimmed-page-table regressed (1.141x vs 1.269x), so the untrimmed sliding call stays
 - 2026-10-24T124058Z `muse_bf16_proj` **bf16-shape-gated-triton-winners-combo**: unhold:
 - 2026-10-24T124058Z `muse_bf16_proj` **bf16-shape-gated-triton-winners-combo**: unheld: pooler TMA 1.169x and BLOCK_K=256 control 1.162x both harvested neutral; pick the pooler kernel per the reviewer by their m<=16 pooler rows
+- 2026-10-24T124059Z `muse_decode_layer` **triton-flash-decode-full-oversub-kv-prefetch**: rewrite paused: stage 2 slowed the kernel (245/478 us vs stage 1 200.8/394.8 at decode_16/32) and master's paired FA3 now runs ~165/307-class; no stage 3 unless a new design beats paired FA3
