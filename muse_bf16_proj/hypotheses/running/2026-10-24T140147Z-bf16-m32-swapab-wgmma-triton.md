@@ -80,9 +80,16 @@ priority: 1
 kind: primary
 controls_for: null
 review: proceed
-status: queued
+status: running
 review_at: 2026-10-24T140535Z
 review_companions: null
+stage: claimed
+claimed_at: 2026-10-24T140535Z
+base_sha: f19e0a9125db56de07444e6a99a642c35003206d
+base_blob: 3f76eb805990314f5f7e6de6e9e184464edd6019
+branch: hyp/muse_bf16_proj/bf16-m32-swapab-wgmma-triton
+worktree: .worktrees/muse_bf16_proj/bf16-m32-swapab-wgmma-triton
+mode: null
 ---
 
 # bf16-m32-swapab-wgmma-triton
