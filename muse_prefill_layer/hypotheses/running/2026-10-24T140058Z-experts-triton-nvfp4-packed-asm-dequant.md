@@ -54,7 +54,7 @@ review: proceed
 status: running
 review_at: 2026-10-24T164610Z
 review_companions: null
-stage: implemented
+stage: dispatched
 claimed_at: 2026-10-24T164610Z
 base_sha: 9b3df649d0389c5bd6c8e6885d9ab4d33f1e701d
 base_blob: 635cfee3ac2c3f7c66840b8c8a082cad2fa41a68
@@ -69,6 +69,8 @@ submission_blob: 526518b54879e7929be2f03a0c8084907596fa70
 lint_warnings: 7
 attempt_file: 2026-10-24T164945Z-submit-experts-triton-nvfp4-packed-asm-dequant.md
 prepared_at: 2026-10-24T164945Z
+job: 49ff8248b96547de
+dispatched_at: 2026-10-24T165008Z
 ---
 
 # experts-triton-nvfp4-packed-asm-dequant
