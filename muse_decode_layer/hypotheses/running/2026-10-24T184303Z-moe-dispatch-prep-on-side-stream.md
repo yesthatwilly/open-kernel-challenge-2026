@@ -50,9 +50,16 @@ priority: 2
 kind: primary
 controls_for: null
 review: proceed
-status: queued
+status: running
 review_at: 2026-10-24T185010Z
 review_companions: null
+stage: claimed
+claimed_at: 2026-10-24T185010Z
+base_sha: 6f8cac5640783bda29e10ba56c80ba50fc396141
+base_blob: 3d70ae6e2de0d48c4a4f2a469ced8234f5348182
+branch: hyp/muse_decode_layer/moe-dispatch-prep-on-side-stream
+worktree: .worktrees/muse_decode_layer/moe-dispatch-prep-on-side-stream
+mode: null
 ---
 
 # moe-dispatch-prep-on-side-stream
