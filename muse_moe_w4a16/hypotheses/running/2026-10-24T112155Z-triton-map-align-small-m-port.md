@@ -65,13 +65,15 @@ base_sha: dd50db2750f6d64e57b62dd08f6867eefc3d5b3d
 base_blob: b81d47abe0c2e53a3ecc180884ae8d9671ba4e14
 branch: hyp/muse_moe_w4a16/triton-map-align-small-m-port
 worktree: .worktrees/muse_moe_w4a16/triton-map-align-small-m-port
-mode: null
+mode: check
 implemented_at: 2026-10-24T112900Z
 impl_commit: 4adf4e177928a2756119f07238a9d0028780cfff
 submission_sha256: 39b3ae3ac2cc300a85ded74293a320ca7aa341a428f082ac4f071c1f9d8e0757
 norm_sha256: 0b6ed6a46a7a3ecd6effd95c17f531fde5761827b581d6d71395a90bd99c4388
 submission_blob: 55d57ae4bce945f45162af73ce6764ae5145c0df
 lint_warnings: 8
+attempt_file: 2026-10-24T112901Z-check-triton-map-align-small-m-port.md
+prepared_at: 2026-10-24T112901Z
 ---
 
 # triton-map-align-small-m-port
