@@ -46,9 +46,16 @@ priority: 2
 kind: primary
 controls_for: null
 review: proceed
-status: queued
+status: running
 review_at: 2026-10-24T024500Z
 review_companions: null
+stage: claimed
+claimed_at: 2026-10-24T024500Z
+base_sha: 6b5469bd92f0a43ce5908912b02fb8dee425c3fa
+base_blob: 11fbc1957daf7294cd2810ff82a0aad2f25644bd
+branch: hyp/muse_moe_w4a16/triton-w13-grouped-gemv-small-m
+worktree: .worktrees/muse_moe_w4a16/triton-w13-grouped-gemv-small-m
+mode: null
 ---
 
 # triton-w13-grouped-gemv-small-m
