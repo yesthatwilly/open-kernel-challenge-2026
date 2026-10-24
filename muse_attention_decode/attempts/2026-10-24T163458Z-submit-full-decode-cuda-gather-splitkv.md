@@ -2,7 +2,7 @@
 
 Hypothesis: `muse_attention_decode/hypotheses/done/gain/2026-10-24T140133Z-full-decode-cuda-gather-splitkv.md` (branch `hyp/muse_attention_decode/full-decode-cuda-gather-splitkv`).
 
-- **Job:** `<job id>` (`okc status <job>`)
+- **Job:** `de486093311d4bb9` (`okc status <job>`)
 - **File:** `muse_attention_decode/submission.py` at git `1615b27`
 
 ## Goal
