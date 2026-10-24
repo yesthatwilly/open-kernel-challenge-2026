@@ -27,7 +27,7 @@ base_sha: ba5ea90a00632b3485c30650134f0a6871ea09da
 base_blob: 3d70ae6e2de0d48c4a4f2a469ced8234f5348182
 branch: hyp/muse_decode_layer/stack-align-par-sliding1
 worktree: .worktrees/muse_decode_layer/stack-align-par-sliding1
-mode: null
+mode: check
 restack_of: null
 stale_base: null
 implemented_at: 2026-10-24T233559Z
@@ -36,6 +36,8 @@ submission_sha256: cddab79bb8be991e2a3292f88bbe122af05bc9b5440e6229aa82bc9ca530d
 norm_sha256: 103db1b5154243c5876497fe2a230f7f152a85e9c1fc6d6d01bd668f4f624235
 submission_blob: 17801ddbab54e8f62745dee42d9259604e89449f
 lint_warnings: 28
+attempt_file: 2026-10-24T233559Z-check-stack-align-par-sliding1.md
+prepared_at: 2026-10-24T233559Z
 ---
 
 # stack-align-par-sliding1
