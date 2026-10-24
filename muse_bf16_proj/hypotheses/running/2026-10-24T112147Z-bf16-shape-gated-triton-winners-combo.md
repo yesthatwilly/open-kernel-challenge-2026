@@ -100,13 +100,15 @@ base_sha: 16c093703ec548a902760680cda97f6018325276
 base_blob: da55301de1e911aeab09878b0873809f544f436c
 branch: hyp/muse_bf16_proj/bf16-shape-gated-triton-winners-combo
 worktree: .worktrees/muse_bf16_proj/bf16-shape-gated-triton-winners-combo
-mode: null
+mode: check
 implemented_at: 2026-10-24T124536Z
 impl_commit: 5aff36712dd78f4b86b766e87019257091cd2890
 submission_sha256: 1ba9047a9249eb6664f661f8a5902a0612eab412554adea2f43cd748a8c1b8b8
 norm_sha256: af614b532570ce0ec8a268d8245ef8dbaed17e0333ca7fd14474d1b81bf2d727
 submission_blob: 3f76eb805990314f5f7e6de6e9e184464edd6019
 lint_warnings: 0
+attempt_file: 2026-10-24T124537Z-check-bf16-shape-gated-triton-winners-combo.md
+prepared_at: 2026-10-24T124537Z
 ---
 
 # bf16-shape-gated-triton-winners-combo
