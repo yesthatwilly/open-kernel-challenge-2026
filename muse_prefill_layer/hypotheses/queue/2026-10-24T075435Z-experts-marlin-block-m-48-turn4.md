@@ -34,7 +34,8 @@ priority: 3
 kind: primary
 controls_for: null
 review: required
-status: queued
+status: hold
+hold_reason: block 48 at turn_1 was neutral (1.003x, 0606f849d2f441ad) and local-rows regressed (0.984x); block-m tuning on prefill is settled, and prefill has 3 checks for the rewrite
 ---
 
 # experts-marlin-block-m-48-turn4
