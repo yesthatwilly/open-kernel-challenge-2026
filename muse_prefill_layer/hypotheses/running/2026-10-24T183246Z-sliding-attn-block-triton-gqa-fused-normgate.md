@@ -147,3 +147,69 @@ No companion is warranted. No landed hypothesis touches the sliding-attention ba
 - Does the profile show master's FA3 launching with PDL? Replacing it with non-PDL Triton launches could lose a few us of overlap with the neighbouring qk_norm/store_cache and o GEMM, which would show up as noise in the per-kernel rows.
 - Budget: the T=16384 synthetic self-check plus graph timing with a 256 MiB flush x 20 replays for both paths, on top of master's existing expert checks. Confirm prepare() stays well under 300 s and the whole run under 15 min including the Triton compile.
 
+
+## Implementation notes
+
+All edits are in the worktree's `muse_prefill_layer/submission.py` (+570/-22, uncommitted). Imports added: `statistics`, `time`.
+
+- **Master's back end, moved as is.** Master's `q.to(FP8)` + `flash_attn_with_kvcache` + `o_norm_gate` lines now live in `_attn_fa3(q, gate, data, cfg, state)`. The ops and arguments are unchanged (`k_cache` is read as `data["k_cache"]`). kernel_fn uses it for full layers and for every fallback, and prepare() uses it as the self-check incumbent.
+- **New kernels:**
+  - `_sliding_prefill_attn_kernel`: grid (B*ceil(L/16), HKV, S). Each program has 128 rows (16 tokens x 8 q heads). q is rounded to E4M3 in registers. K/V are gathered through the page table (`PAGE` is a constexpr). The mask is per element (`kpos <= qpos`, `kpos >= qpos-2047`), with online softmax in exp2 and P in bf16. When S=1 the epilogue applies the norm-gate. When S>1 the program writes fp32 partials to a workspace.
+  - `_sliding_combine_kernel`: merges the S>1 partials and applies the norm-gate.
+  - Helpers: `_online_update`, `_norm_gate_store`, `_sliding_rows`.
+- **QK dot variant.** prepare() tries FP8xFP8 first (`QK_FP8=True`). If it raises or fails any self-check case, the bf16 dot is tried. If both fail, every shape runs master's path.
+- **Routing (`_sliding_route`, config only).** Sliding layers with heads (16,2,64) and T <= 4096 take the new path. T > 4096 takes it only if the prepare() graph-timing gate passes (new <= 0.92x incumbent at T=16384, ctx=32768). S=4 when B*ceil(L/16)*2 < 264, else S=1. The split workspace (1056 partials, about 35 MB) is allocated in prepare().
+- **kernel_fn fallbacks.** kernel_fn also falls back to `_attn_fa3` when the q rows are non-contiguous or when the launch raises on the host. Each case prints a `PATH CHOSEN` line once per shape (config key only).
+- **prepare() self-check** (`_prepare_sliding`, wrapped in try/except, never raises). Synthetic cases (soft FP8 keys, scattered pages): turn_1, turn_4, ctx0 L300, B2 ctx2500 L753, ctx4096 L4096, page-64 (B3 ctx5000 L200), kv_scale=1/64. The T=16384 case is added only if the gate routes it.
+  - Each case is compared with master's sequence and with an fp32 SDPA reference.
+  - The pass rule needs finite output and rel L2 vs incumbent <= max(2e-2, 2x the incumbent's own fp32 error). The worst row must be <= max(6e-2, 3x the incumbent's worst row). These bars follow the incumbent's own FP8 noise so they cannot trip every time; the margin is printed.
+  - On the two smallest cases the error vs the fp32 reference must also be <= 1.25x the incumbent's + 5e-4.
+  - The table prints eager us for both paths per case.
+- **Timing (reviewer's open question 1).** prepare() times both paths as CUDA graphs: cold L2 from a 256 MiB flush write, 20 replays, median. It prints both rows at turn_1 and turn_4, and the T=16384 gate row. The T=16384 gate is skipped (stays FA3) if prepare() has already taken 180 s.
+- **Deviations:**
+  - The tolerances are adaptive floors, as above, not fixed numbers.
+  - No in-prepare S sweep over {1,2,4} (reviewer's open question 3). The caller asked for fixed configs, so S follows the spec.
+  - PDL is not addressed.
+  - `pt_stride`, `L` and `NTB` are `do_not_specialize`, so the variants compiled in prepare() cover the judge's shapes.
+- **Uncertainties (nothing can run here):**
+  - Whether FP8 tl.dot with `tl.trans` compiles in the judge's Triton. The bf16 dot is the fallback.
+  - Register pressure with 4 warps on 128x64 tiles.
+  - How long prepare() takes in total.
+
+## Rules check
+
+Checked against `git -C .worktrees/muse_prefill_layer/sliding-attn-block-triton-gqa-fused-normgate diff`:
+
+- [x] CUDA-graph capturable. The new kernel_fn code branches only on config, tensor strides and host exceptions. It allocates only `torch.empty` sized from config. It has no `.item()`, `.cpu()` or synchronize, and the print is a config string, once per shape. All grids come from config.
+- [x] Nothing derived from `data` is cached. The module-level `_ANNOUNCED` set holds config tuples only. The `state["sliding"]` workspace is scratch that every call overwrites before reading.
+- [x] Weights are untouched. The sliding path reads no weights.
+- [x] Activations stay BF16, the KV cache stays FP8 and is read as FP8, and queries are rounded to E4M3 (RNE) exactly as `q.to(FP8)`, no coarser. P is bf16, which is finer than FA3's FP8.
+- [x] Every key is attended: the per-element window mask covers p-2047..p and every tile in the program's key range is visited. There is no top-k, sparse, block-skip or weight-based skipping.
+- [x] No timing patches, harness access, module edits, reference import, subprocesses or network. Synthetic cases are built in-file.
+- [x] All work happens inside the timed call. There is no output caching or replay; the prepare() timing and self-checks use synthetic data only.
+- [x] Full layers are byte-identical to master: `_attn_fa3` holds master's lines verbatim.
+
+Lint (`okc_lint.py ... --problem muse_prefill_layer`):
+```
+warn  host-sync    L465/L507/L909/L913/L937/L1093/L1099/L1106/L1115: torch.cuda.synchronize()  (outside kernel_fn's call graph; fine in prepare())
+warn  host-sync    L896/L921: end.synchronize()  (outside kernel_fn's call graph; fine in prepare())
+OK with warnings: muse_prefill_layer/submission.py
+```
+py_compile: OK (pycache removed).
+
+## Pre-flight audit
+
+Audited 2026-10-24 by an Opus subagent (read-only review, plus numpy emulation; no GPU here). **Verdict: dispatch.** No fixes were needed. Lint passes (only prepare()-side host-sync warnings) and py_compile is clean.
+
+- **Gates.** A numpy emulation of the synthetic case (soft keys, unit-RMS q, qk_scale 5.47) gives these errors:
+  - incumbent (FP8 q + FP8 P) vs fp32: ~6.8%;
+  - new kernel (FP8 q + bf16 P) vs fp32: ~6.7%;
+  - new kernel vs incumbent: ~1.5%, worst row ~2%.
+
+  The bars are max(2e-2, 2x the incumbent's error) for rel L2 and max(6e-2, 3x) for the worst row, so the margin is about 9x. The enforced fp32 ratio comes out ~0.98, against a bar of 1.25. Those two enforced cases (ctx0 L300 S=4, and the page-64 ctx5000 L200 case with the window edge) are tight enough to catch masking, gate-offset, head-map and k_scale bugs.
+- **Fallbacks.** The cascade is FP8 dot, then bf16 dot, then master. A compile error or a self-check miss lands on the next path. Anything in `_prepare_sliding` that raises is caught in prepare(), and kernel_fn falls back to master's verbatim `_attn_fa3` on a route miss or a host-side launch error. `PATH CHOSEN` lines print in both prepare() and kernel_fn.
+- **Correctness.** A numpy emulation of the program's row mapping, its lo/hi/chunk split arithmetic, the per-element window mask (`t >= qpos-2047`), online softmax with empty or -inf splits, and the S=4 combine matches direct windowed attention to 1e-15. Cases covered: ctx 0/100/2047/2500/5000; L 17/33/37/200/300/2100; S 1 and 4. Gate offset 1280, cache flat-row indexing, page-table gather and int64 offsets all check out. Loads are masked or clamped, so nothing reads out of bounds.
+- **Budget.** prepare() runs once per run (the master log prints once). The sliding work adds about 4 Triton variants (about 8 if FP8 fails), seven small synthetic cases, sub-second fp32 references and graph timings, and the T=16384 gate (skipped past 180 s). Estimate: ~30-100 s on top of master, well inside 300 s and 15 min.
+- **Rules.** kernel_fn branches only on config and strides. It allocates only a config-sized `torch.empty`; the workspace comes from prepare() and is overwritten every call. It has no syncs. KV is read as FP8, q is rounded to E4M3 (RNE), P is bf16, and every in-window key is visited.
+
+Residual risk: a hard device fault or compiler crash in the new kernel (not catchable) would fail the run instead of falling back. The judge's real FusedQKNorm q stride differs from the self-check's contiguous q, but the specialization is the same. Its correctness is checked only by the judge's tests.

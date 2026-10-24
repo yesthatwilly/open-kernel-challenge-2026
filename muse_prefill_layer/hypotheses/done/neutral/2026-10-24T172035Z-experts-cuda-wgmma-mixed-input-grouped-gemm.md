@@ -86,10 +86,10 @@ controls_for: null
 rewrite_stage: 1
 replaces: _moe_nvfp4_gemm_kernel x2 (w13, w2) at T > 4096 in stage 1; moe_wna16_marlin_gemm x2 at T <= 4096 in stages 2-3
 review: proceed
-status: running
+status: done
 review_at: 2026-10-24T172614Z
 review_companions: null
-stage: dispatched
+stage: harvested
 claimed_at: 2026-10-24T172706Z
 base_sha: da2ab55f3d3cd86efc0ec9a2708632b85a44ae0b
 base_blob: 635cfee3ac2c3f7c66840b8c8a082cad2fa41a68
@@ -106,6 +106,13 @@ attempt_file: 2026-10-24T181734Z-submit-experts-cuda-wgmma-mixed-input-grouped-g
 prepared_at: 2026-10-24T181734Z
 job: 1821bb0e1f7246e2
 dispatched_at: 2026-10-24T181917Z
+outcome: neutral
+verdict_detail: unproven-vs-best
+speedup: 1.0636862394815274
+speedup_ci: [1.0477309458893045, 1.07964153307375]
+harvested_at: 2026-10-24T184720Z
+best_at_harvest: 1.0591912383762452
+promotion: null
 ---
 
 # experts-cuda-wgmma-mixed-input-grouped-gemm
@@ -266,3 +273,32 @@ OK with warnings: .worktrees/muse_prefill_layer/experts-cuda-wgmma-mixed-input-g
 `python3 -I -m py_compile` passed; `__pycache__` removed.
 
 Harvest note: read the log tail first. `[cuda expert gemm] build FAILED` or `OFF: ...` means the run measured master's Triton kernel. `PATH CHOSEN T=16384: cuda` together with an `_nvfp4_wgmma_grouped_kernel` row (2 calls) in the profile means the kernel ran.
+
+## Result
+
+- job `1821bb0e1f7246e2` (submit), status done, passed True, tests 5/5
+- speedup 1.0637x, 95% CI [1.0477, 1.0796], score 364208.8104748185 µs vs SGLang 387403.9 µs
+- best at harvest: {"speedup": 1.0591912383762452, "ci": [1.0433033698006016, 1.0750791069518888], "job": "ba9c16b9cc6b4605"}; base result: muse_prefill_layer/hypotheses/done/gain/experts-hybrid-marlin-turn-triton-first-turn.result.json
+- **outcome: neutral** (unproven-vs-best)
+- files: `muse_prefill_layer/hypotheses/done/neutral/experts-cuda-wgmma-mixed-input-grouped-gemm.result.json`, `muse_prefill_layer/hypotheses/done/neutral/experts-cuda-wgmma-mixed-input-grouped-gemm.patch`; branch `hyp/muse_prefill_layer/experts-cuda-wgmma-mixed-input-grouped-gemm`
+
+## Attribution
+
+| shape | w | base µs | hyp µs | delta | verdict |
+|---|---|---|---|---|---|
+| batch=1 ctx=80000 dist=soft layer=sliding load=turn_1 page=1 q_len=753 repeats=6 | 46 | 1079.54 | 1031.99 | 1.0 | flat |
+| batch=1 ctx=80000 dist=soft layer=full load=turn_1 page=1 q_len=753 repeats=6 | 16 | 1419.09 | 1424.23 | 0.9987 | flat |
+| batch=4 ctx=80000 dist=soft layer=sliding load=turn_4 page=1 q_len=753 repeats=6 | 46 | 3334.9 | 3357.95 | 0.9986 | flat |
+| batch=4 ctx=80000 dist=soft layer=full load=turn_4 page=1 q_len=753 repeats=6 | 16 | 4937.98 | 4974.84 | 0.997 | flat |
+| batch=1 ctx=0 dist=soft layer=full load=first_turn page=1 q_len=16384 repeats=6 | 16 | 15386.32 | 15197.29 | 0.9993 | flat |
+| batch=1 ctx=32768 dist=soft layer=sliding load=first_turn page=1 q_len=16384 repeats=6 | 138 | 14275.3 | 14147.19 | 1.0138 | flat |
+| batch=1 ctx=32768 dist=soft layer=full load=first_turn page=1 q_len=16384 repeats=6 | 16 | 18165.94 | 18715.73 | 1.0172 | flat |
+| batch=1 ctx=65536 dist=soft layer=full load=first_turn page=1 q_len=16384 repeats=6 | 16 | 22332.92 | 22658.53 | 1.0175 | flat |
+
+no shape moved outside noise. Expected hit: 0/3. Noise ±1.5%.
+
+## Follow-ups
+
+- rewrite stage 1 of `_moe_nvfp4_gemm_kernel x2 (w13, w2) at T > 4096 in stage 1; moe_wna16_marlin_gemm x2 at T <= 4096 in stages 2-3`: read the replaced kernels' own us per shape (profile top_kernels) against the incumbent and the floor, and check which Milestone it reached. The next stage is `/hypothesize muse_prefill_layer "<what to fix or tune>" --kind rewrite --depends-on experts-cuda-wgmma-mixed-input-grouped-gemm --stage 2`; a slow or failed first cut is the expected start, not a do-not-retry.
+- unproven-vs-best: the change is not proven either way; a stacked hypothesis (`depends_on: experts-cuda-wgmma-mixed-input-grouped-gemm`) that adds a further change in the same area is the only way to learn more (identical code is never re-run).
+
