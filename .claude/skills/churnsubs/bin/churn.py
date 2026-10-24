@@ -1062,8 +1062,9 @@ def _job_from(s):
 def cmd_harvest_promotions(a):
     done = []
     for p in PROBLEMS:
-        for f in list_md(hdir(p, "done", "gain")):
-            path = os.path.join(hdir(p, "done", "gain"), f)
+        # neutral too: a gain merged by hand from a neutral result is promoted from done/neutral
+        for d, f in [(d, f) for d in ("gain", "neutral") for f in list_md(hdir(p, "done", d))]:
+            path = os.path.join(hdir(p, "done", d), f)
             h = read_hyp(path)
             if h.get("promotion") != "submitted" or not h.get("promotion_job"):
                 continue
@@ -1083,7 +1084,7 @@ def cmd_harvest_promotions(a):
             name = h.get("promotion_attempt")
             if st == "done" and r.get("passed"):
                 s, ci = r.get("speedup"), r.get("speedup_ci")
-                rj = rel(os.path.join(hdir(p, "done", "gain"), f"{h['slug']}.result.json"))
+                rj = rel(os.path.join(hdir(p, "done", d), f"{h['slug']}.result.json"))
                 save_best(p, {"problem": p, "job": job, "check_job": h.get("job"), "mode": "submit", "speedup": s, "ci": ci,
                               "score_us": r.get("score_us"), "commit": h.get("promotion_commit"), "submission_blob": _master_blob(p),
                               "slug": h["slug"], "result": rj, "updated_at": ts()})
