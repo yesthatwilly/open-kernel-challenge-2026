@@ -63,13 +63,19 @@ review: proceed
 status: running
 review_at: 2026-10-24T104215Z
 review_companions: null
-stage: claimed
+stage: implemented
 claimed_at: 2026-10-24T104215Z
 base_sha: ed35ab329cbc75571509536e87957f38db9f4df0
 base_blob: de98030423860cfc9507b61d19f82a416223a23d
 branch: hyp/muse_decode_layer/fa3-hdim128-head-pairing-batched
 worktree: .worktrees/muse_decode_layer/fa3-hdim128-head-pairing-batched
 mode: null
+implemented_at: 2026-10-24T104412Z
+impl_commit: b694721e6b806b8c1adb777acc826094f4d14c80
+submission_sha256: b9cb335fd586596582b1474c7bfc96325dd08028a2e5419643eb6ddff9f6350a
+norm_sha256: bbc12cdfdca98fd90e7da8b0d71baab360386430bdf34d9f06abc61045afd80d
+submission_blob: 3a358375a50dcc6e19437992f7c610431582ea72
+lint_warnings: 1
 ---
 
 # fa3-hdim128-head-pairing-batched
@@ -114,3 +120,41 @@ No companion is needed. If the run gains, the FA3 kernel row (cutlass flash_fwd)
 - Which tests exercise page_size 64 with the paired path? batch 3 ctx 6000 full q_len 8 and batch 1 ctx 3000 full use the default page size; batch 1 ctx 3000 full is gated off. Confirm that the paired hdim-128 FP8 kernel with page_size>1 (possibly the TMA paged path) passes here, as it did in attention_decode.
 - Will the harvester's verdict logic mark a confirmed FA3 gain of ~1.8% on the headline as within-ci/neutral? If so, promotion should be decided on the per-shape full rows.
 
+
+## Implementation notes
+
+All edits are in `muse_decode_layer/submission.py` `kernel_fn`, around the single `flash_attn_with_kvcache` call between `store_cache` and `state["o_norm_gate"]` (39 insertions, 6 deletions). This is a port of `muse_attention_decode/hypotheses/done/gain/fa3-hdim128-head-pairing.patch` with the batch gate added.
+
+- Gate, config only: `paired = window == 0 and batch > 1 and hkv % 2 == 0`, where `batch` is `cfg["batch"]` and `window` is `cfg["window"]`.
+- Paired path: `g, s = hq // hkv, hkv // 2`. K and V become in-place views of the FP8 cache, `k_cache.view(pages, page_size, s, 2*d)` and likewise for V. These are taken after `store_cache` and work for any page_size.
+  - `q_attn = torch.zeros((tokens, hq, 2*d), FP8, device=q.device)`, filled by two strided copies from the BF16 `q` view `(tokens, s, 2, g, d)`. These copies also do the BF16 to E4M3 cast, so there is no separate `.to(FP8)`.
+  - `attn_heads = s`, and `scheduler_metadata=None`.
+- Descale expands to `(batch, attn_heads)`. It is still `(batch, hkv)` on the unpaired path.
+- `softmax_scale` stays explicit as `cfg["sm_scale"] * cfg["qk_scale_factor"]`. page_table, cache_seqlens, cu_seqlens_q, max_seqlen_q, causal and window_size are unchanged.
+- Un-pad: `attn = torch.empty((tokens, hq, d), bf16)` is filled by two strided copies, each taking a query's own half of FA3's `(tokens, hq, 2d)` output. Then `out = attn` goes into the unchanged `state["o_norm_gate"](out.reshape(tokens, hq*d).to(torch.bfloat16), gate)`. The `.to(bf16)` is a no-op on the paired path.
+- Unpaired path (all sliding layers, full layers at B=1, odd hkv): the same ops with the same arguments. These are `q.view(tokens, hq, d).to(FP8)`, `k_cache`, `v_cache`, `data["scheduler_metadata"]` and descale `(batch, hkv)`.
+  - Deviation (textual only): the FP8 cast is now written in the `else` branch as `q_attn = ...` instead of inline in the call's argument list. It is the same single cast kernel and still the first launch after `store_cache`, because building the descale views launches nothing. The kernel sequence is the same as master.
+- The QKV GEMM, qk_norm/rope, store_cache, o GEMM, router and MoE are untouched. There are no new imports, no autotune, no host syncs, and nothing is cached in `state`. Local names `g`, `s`, `a`, `pages` and `page_size` do not collide with later code (`o` is reassigned by `o_norm_gate` afterwards, as before).
+- Could not be run here (no GPU). Unverified on this problem: the paired hdim-128 path with page_size > 1 at batch > 1. That combination is exercised by the test `batch 3, ctx 6000, layer full, q_len 8, dist outliers` (default page size). attention_decode passed the same geometry.
+
+## Rules check
+
+Checked against `git -C .worktrees/muse_decode_layer/fa3-hdim128-head-pairing-batched diff`:
+
+- [x] CUDA-graph capturable: the diff adds no `.item()`, `.cpu()`, `synchronize()` or tensor prints. The `paired` branch reads only `cfg` and tensor `.shape`, never tensor values. The `zeros`/`empty` allocations have shape-only sizes and are made in the caching allocator during capture, as master's `.to(FP8)` already does.
+- [x] Nothing derived from `data` is cached across calls: q_attn, attn and the cache views are per-call locals, and `state` is not written.
+- [x] Weights: n/a. prepare() and the weights are untouched.
+- [x] Activations BF16 where SGLang keeps BF16: the attention output is un-padded into BF16 as before. The KV cache stays FP8 and is read in place through a view. Queries are FP8 E4M3 with the same round-to-nearest values as `.to(FP8)`, and the zero pad is exact.
+- [x] Attention sees every key: still `causal=True`, `window_size=(-1, -1)` on full layers, and the full `cache_seqlens`/page_table. The sliding call is unchanged. There is no skipping.
+- [x] No timing patches, harness frames/I/O/secrets, module edits, reference import, subprocesses or network: the diff adds no imports and no such calls.
+- [x] All work happens inside the timed call: padding, FA3 and un-padding all run in kernel_fn, with no output caching or replay.
+- [x] First line is still `# okc: problem=muse_decode_layer`. There is no triton.autotune.
+
+okc_lint output:
+
+```
+warn  host-sync    L247: torch.cuda.synchronize()  (outside kernel_fn's call graph; fine in prepare())
+OK with warnings: /home/user/git/musespark/.worktrees/muse_decode_layer/fa3-hdim128-head-pairing-batched/muse_decode_layer/submission.py
+```
+
+The warning is the existing synchronize in prepare() and is not part of this diff. `python3 -I -m py_compile` passed, and the `__pycache__` it left was removed.
