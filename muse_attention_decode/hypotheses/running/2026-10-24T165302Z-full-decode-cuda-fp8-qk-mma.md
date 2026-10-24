@@ -42,13 +42,19 @@ review: proceed
 status: running
 review_at: 2026-10-24T165634Z
 review_companions: null
-stage: claimed
+stage: implemented
 claimed_at: 2026-10-24T165634Z
 base_sha: 700fed761b57b25cbae687d07371c4020bf38af9
 base_blob: 1c0f5fa1bfc4e602b62e5e9edd9df6d5652b297b
 branch: hyp/muse_attention_decode/full-decode-cuda-fp8-qk-mma
 worktree: .worktrees/muse_attention_decode/full-decode-cuda-fp8-qk-mma
 mode: null
+implemented_at: 2026-10-24T165945Z
+impl_commit: 3a7b503a24dd5f850b506b560784c7dac2db844e
+submission_sha256: 6b2885c6eef2261cfb2ebf17a3786cadd6c859db5b106c8a84e1e9db2a238dc4
+norm_sha256: 52d730f65a802a1c715435b6042d13b9b15c625560aa34484f993e18db2286af
+submission_blob: 2ee93584612efa3b3320db386889110c4f2c939b
+lint_warnings: 0
 ---
 
 # full-decode-cuda-fp8-qk-mma
@@ -90,3 +96,35 @@ No companion is warranted. The result can be read directly from kernel A's profi
 - Register count after the change (qa[4][2] -> 4 regs). If it drops well below the 128-reg cap of __launch_bounds__(256,2), would 3 CTAs/SM become possible? That is a separate follow-up, not part of this run.
 - Overlap with full-verify-cuda-streamk-splitkv (same FP8 op, same CUDA string). Whichever lands second rebases. This run's SASS and timing evidence on FP8 mma.sync should feed into that hypothesis's design.
 
+
+## Implementation notes
+
+Worktree: `.worktrees/muse_attention_decode/full-decode-cuda-fp8-qk-mma`, file `muse_attention_decode/submission.py` only (diff: 85 insertions, 15 deletions; uncommitted).
+
+- **Kernel A QK (`splitkv_attn_kernel`) under `#if SPLITKV_FP8QK`:** a new `mma16832_e4m3` helper wraps `mma.sync.aligned.m16n8k32.row.col.f32.e4m3.e4m3.f32`. `qa` is `uint32_t qa[2][2]` (4 regs). It is loaded at `t == 0` straight from `q_s` with no cvt: `qa[s][0]` = word at dims `s*32 + 4*qi`, `qa[s][1]` = word at `s*32 + 16 + 4*qi`, row = query `g*G + quad`, and a1 = a3 = 0. K B operand per k-step `ks` (2 of them): `b0` = word at chunk `(g*4 + ks*2) ^ (tt&7)`, `b1` = chunk `(g*4 + ks*2 + 1) ^ (tt&7)`, byte offset `4*qi`. That is 4 mma16832 per (warp, tile) and 0 K cvt. Natural dim order. Everything else in kernel A, kernel B, the grid, smem, the pipeline, the masking, the softmax and P@V is byte-identical.
+- **Fallback (REQUIRED by the review):** the same CUDA string is compiled with `#define SPLITKV_FP8QK 1` or `0` prepended. `0` reproduces master's f16 QK code exactly: the old `qa[4][2]`, the cvt and m16n8k16, with the k-permutation comment kept in the `#else` branch. At import the loop tries fp8 first (module `muse_full_decode_splitkv_v1fp8qk`). If the build or the unchanged self-check (`err < 2e-2`, finite, same 3 configs vs FP32 ref) fails, it builds and self-checks the f16 kernel (module `muse_full_decode_splitkv_v1`). Only if that also fails does it drop to FA3. It prints `[splitkv] active path: fp8 QK (mma.sync m16n8k32 e4m3)` or `... f16 QK fallback ...`, and `SELF-CHECK FAILED (fp8qk)` when the fp8 kernel builds but is wrong.
+- **Build evidence:** a new host function `splitkv_info()` (C++ `cudaFuncGetAttributes` on kernel A, in-process, no subprocess) is printed after each build. It shows SPLITKV_FP8QK, regs/thread, local (spill) bytes/thread, SASS binaryVersion and PTX version. **Deviation / limit:** native QMMA vs F2FP+HMMA emulation cannot be read in-process, because that needs `cuobjdump -sass`, which is a subprocess and a rules violation from submission.py. This node has no nvcc/cuobjdump either, so the offline SASS check was not done. Per the review, a flat kernel-A time must be recorded as "emulated-or-memory-bound (undetermined)". The regs/thread line gives a partial hint: emulation would likely raise register use relative to the f16 build (the f16 build prints its own count only when the fallback is taken).
+- Comments: the kernel-A header block and the mma comments are updated. The k-permutation comment survives only in the f16 `#else` branch.
+- The self-check thresholds and synthetic data are unchanged. In the fp8 build they now validate the fp8 QK path.
+- Compile-time cost: the fallback build runs only on failure. The worst case is two nvcc builds at import, well inside the 15-minute budget if master's single build was ~1 min.
+
+## Rules check
+
+Checked against `git -C .worktrees/muse_attention_decode/full-decode-cuda-fp8-qk-mma diff`:
+
+- [x] CUDA-graph capturable: the diff touches no host code in `kernel_fn` / `_full_decode_splitkv`. The new `splitkv_info()` and prints run only at import. No `.item()`/`.cpu()`/sync, no allocation or branching on input values. The fp8/f16 choice is an import-time build flag, not data.
+- [x] Nothing derived from `data` is cached across calls: no new state. `_EXT` is a compiled module, and the self-check uses synthetic data only.
+- [x] Weights: n/a: this problem has no weights; no prepare() repack.
+- [x] Activations BF16 where SGLang keeps BF16; KV cache FP8; queries at most FP8 E4M3. Q stays the same E4M3 bytes (now consumed natively, not widened). K and V stay FP8, accumulation is fp32 and the output is BF16. Nothing is coarser than E4M3.
+- [x] Attention sees every key: the tile/item loop, masking (`pos < cseq`) and grid are unchanged, and every token's full 64-dim dot product is computed (2 k-steps x 32 dims). No skipping.
+- [x] No timing patches, harness frames/I/O/secrets, module edits, reference import, subprocesses or network. `load_inline` (already on master) is the only build mechanism. The SASS check via cuobjdump was deliberately NOT added.
+- [x] All work happens inside the timed call; no output caching or replay. Only the build and self-check run at import, as on master.
+- [x] First line `# okc: problem=muse_attention_decode` kept; no triton.autotune added.
+
+okc_lint output:
+
+```
+CLEAN: /home/user/git/musespark/.worktrees/muse_attention_decode/full-decode-cuda-fp8-qk-mma/muse_attention_decode/submission.py
+```
+
+`python3 -I -m py_compile`: OK (its `__pycache__` was removed from the worktree).
