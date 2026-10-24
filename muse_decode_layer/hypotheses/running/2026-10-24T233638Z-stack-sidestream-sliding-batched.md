@@ -19,7 +19,16 @@ priority: 2
 kind: primary
 controls_for: null
 review: required
-status: queued
+status: running
+stage: claimed
+claimed_at: 2026-10-24T233638Z
+base_sha: fc2c96a83dc62731f5a5ebd4f4791da8fdeb14ed
+base_blob: 3d70ae6e2de0d48c4a4f2a469ced8234f5348182
+branch: hyp/muse_decode_layer/stack-sidestream-sliding-batched
+worktree: .worktrees/muse_decode_layer/stack-sidestream-sliding-batched
+mode: null
+restack_of: null
+stale_base: null
 ---
 
 # stack-sidestream-sliding-batched
