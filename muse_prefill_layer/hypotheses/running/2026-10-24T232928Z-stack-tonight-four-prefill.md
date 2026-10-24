@@ -42,6 +42,9 @@ attempt_file: 2026-10-24T232938Z-check-stack-tonight-four-prefill.md
 prepared_at: 2026-10-24T232938Z
 job: 7499d9c71acd4417
 dispatched_at: 2026-10-24T232955Z
+promotion: submitted
+promotion_job: 334e1798db4440da
+promotion_at: 2026-10-24T234001Z
 ---
 
 # stack-tonight-four-prefill
