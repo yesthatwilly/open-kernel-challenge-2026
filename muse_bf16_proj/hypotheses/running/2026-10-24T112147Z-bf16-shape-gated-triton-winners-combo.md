@@ -90,10 +90,17 @@ priority: 1
 kind: primary
 controls_for: null
 review: proceed
-status: queued
+status: running
 review_at: 2026-10-24T112458Z
 review_companions: null
 hold_reason: null
+stage: claimed
+claimed_at: 2026-10-24T124117Z
+base_sha: 16c093703ec548a902760680cda97f6018325276
+base_blob: da55301de1e911aeab09878b0873809f544f436c
+branch: hyp/muse_bf16_proj/bf16-shape-gated-triton-winners-combo
+worktree: .worktrees/muse_bf16_proj/bf16-shape-gated-triton-winners-combo
+mode: null
 ---
 
 # bf16-shape-gated-triton-winners-combo
