@@ -83,4 +83,4 @@ torch.cuda.synchronize() (outside kernel_fn's call graph; fine in prepare())`), 
 low
 
 ## Result (after the run)
-(pending)
+Promotion passed: 1.0200x [1.0047,1.0353], board: {"rank": 375, "team": "yesthatwilly", "speedup": 1.02, "first": false, "ahead": 374, "to_first": 2.0596}

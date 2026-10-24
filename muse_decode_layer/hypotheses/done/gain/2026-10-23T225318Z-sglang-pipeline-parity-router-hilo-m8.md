@@ -73,11 +73,12 @@ speedup: 1.021632132299037
 speedup_ci: [1.0063076503145514, 1.0369566142835225]
 harvested_at: 2026-10-24T021808Z
 best_at_harvest: 0.0045119870605644765
-promotion: submitted
+promotion: done
 promotion_commit: 164c1d27648cffdd4d7f5a04f0d6f582e1f9ac56
 promotion_attempt: 2026-10-24T021808Z-submit-sglang-pipeline-parity-router-hilo-m8.md
 promotion_job: 5755a412dda244a1
 promotion_at: 2026-10-24T023616Z
+board: "{\"rank\": 375, \"team\": \"yesthatwilly\", \"speedup\": 1.02, \"first\": false, \"ahead\": 374, \"to_first\": 2.0596}"
 ---
 
 # sglang-pipeline-parity-router-hilo-m8
