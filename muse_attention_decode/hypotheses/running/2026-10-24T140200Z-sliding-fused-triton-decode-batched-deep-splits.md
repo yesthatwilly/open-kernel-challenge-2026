@@ -44,13 +44,19 @@ review: proceed
 status: running
 review_at: 2026-10-24T140502Z
 review_companions: null
-stage: claimed
+stage: implemented
 claimed_at: 2026-10-24T140502Z
 base_sha: 4c53fa864c3e6f5d9693120cc5890d9a0bf15753
 base_blob: 387dcb6a0e6137b74f7f65b048dce5a3fcbe2008
 branch: hyp/muse_attention_decode/sliding-fused-triton-decode-batched-deep-splits
 worktree: .worktrees/muse_attention_decode/sliding-fused-triton-decode-batched-deep-splits
 mode: null
+implemented_at: 2026-10-24T140709Z
+impl_commit: f5cffd11a6757b3d8e7e38d257cf290306303e71
+submission_sha256: d285e4b08c7517d338c4120e9811874eaabde4fbbfcb426518ed57250fbf4708
+norm_sha256: 8e2acb87640ea56d475c4a9e51dd61618999a773a4dc4736c8ffdbcaff1ed8a8
+submission_blob: 9baa6cb5dafe3330ff14eac219f5b5a0fb90f127
+lint_warnings: 0
 ---
 
 # sliding-fused-triton-decode-batched-deep-splits
@@ -101,4 +107,26 @@ Worktree: `.worktrees/muse_attention_decode/sliding-fused-triton-decode-batched-
 - `kernel_fn`: gate widened from `cfg["window"] and cfg["batch"] == 1 and cfg["q_len"] == 1` to `cfg["window"] and cfg["q_len"] == 1`, so sliding decode at every batch takes `_sliding_forward` (one `_sliding_fused_kernel` launch). Comment updated. Sliding verify (q_len 8) and every full layer (window == 0) still take the FA3 path below, unchanged.
 - `_sliding_forward`: `splits = _num_splits(batch, hkv)` became `splits = 16 if length == 1 else _num_splits(batch, hkv)`, the form the review asked for so a 3-way merge with sliding-fused-triton-decode1-splits-32 stays clean. B=1 decode was already 16 (`_num_splits(1, 2) == 16`), so decode_1 behaves exactly as before. `_num_splits` itself is unchanged.
 - Workspace and counters are still sized from config (`batch * hkv * splits`): ws_acc is 32*2*16*16*64*4 B = 2 MB at B=32, and counters are `B*HKV` int32 through the existing `_counters` cache keyed on (batch, hkv, device). Kernel body, BLOCK_N=64, num_warps=4, num_stages=2 and the ticket combine are untouched.
-- No deviation from the spec. Review open question 3 does not apply yet: splits-32 has not landed on this base. If it lands first, the merge should keep the B=1 override from master and let this branchs
+- No deviation from the spec. Review open question 3 does not apply yet: splits-32 has not landed on this base. If it lands first, the merge should keep the B=1 override from master and let this branch's `16` cover only batch > 1.
+- Short windows (e.g. the test with batch 3, ctx 2047, page 64) leave the chunks for most s empty at S=16, because each chunk rounds up to 64. Those programs store m = -inf and l = 0, and the combine weights them 0. B=1 already runs this path with ctx 10. The kernel at B > 1 has run before (sliding-single-launch-fused-attention, at S=4 and S=2). S=16 at B > 1 has not run on GPU yet, so okc check is the first test of it.
+
+## Rules check
+
+Checked against `git -C .worktrees/muse_attention_decode/sliding-fused-triton-decode-batched-deep-splits diff` (1 file, +5 / -4).
+
+- [x] CUDA-graph capturable: the diff adds no `.item()`, `.cpu()`, sync or tensor print. Both edited predicates branch only on `config` (`window`, `q_len`, with `length = cfg["q_len"]`). Allocations depend on config shapes only.
+- [x] Nothing derived from `data` is cached across calls. The only cache is the existing `_COUNTERS`, keyed on config (batch, hkv, device) and holding no data. The diff adds no new state.
+- [x] n/a: weights. This problem has no weights or `prepare()`, and the diff touches none.
+- [x] Activations: the kernel body is unchanged. BF16 q/K/V dot operands, FP8 E4M3 cache stores and fp32 accumulation, as before. The split count does not change precision.
+- [x] Attention sees every key: the chunking covers [lo, seq - 1] across S splits, plus the new keys in split S - 1, for any S. No skipping is added.
+- [x] No timing patches, harness frames, I/O, secrets, module edits, reference import, subprocesses or network. The diff is two config expressions and comments.
+- [x] All work happens inside the timed call. No output caching or replay.
+- [x] First-line marker `# okc: problem=muse_attention_decode` kept. No `triton.autotune` added.
+
+Lint (`python3 -I .claude/skills/churnsubs/bin/okc_lint.py <worktree>/muse_attention_decode/submission.py --problem muse_attention_decode`, rc 0):
+
+```
+CLEAN: /home/user/git/musespark/.worktrees/muse_attention_decode/sliding-fused-triton-decode-batched-deep-splits/muse_attention_decode/submission.py
+```
+
+`python3 -I -m py_compile`: OK (rc 0). Removed `__pycache__` from the worktree.
