@@ -50,10 +50,10 @@ priority: 3
 kind: primary
 controls_for: null
 review: proceed
-status: running
+status: done
 review_at: 2026-10-24T165207Z
 review_companions: null
-stage: dispatched
+stage: harvested
 claimed_at: 2026-10-24T165338Z
 base_sha: a928067ca1fead9b9f3da0998e11f654e387579f
 base_blob: d9a9375ef4721ab9b28cc9d6364c92e67c7ccc59
@@ -70,6 +70,13 @@ attempt_file: 2026-10-24T181733Z-submit-marlin-two-stream-expert-halves-small-m.
 prepared_at: 2026-10-24T181733Z
 job: 5d630369b1634f77
 dispatched_at: 2026-10-24T181917Z
+outcome: neutral
+verdict_detail: within-ci
+speedup: 1.3024376800990412
+speedup_ci: [1.2829011148975555, 1.3219742453005265]
+harvested_at: 2026-10-24T184718Z
+best_at_harvest: 1.3249153782392282
+promotion: null
 ---
 
 # marlin-two-stream-expert-halves-small-m
@@ -161,3 +168,29 @@ OK with warnings: .worktrees/muse_moe_w4a16/marlin-two-stream-expert-halves-smal
 ```
 
 `python3 -I -m py_compile`: OK (worktree __pycache__ removed).
+
+## Result
+
+- job `5d630369b1634f77` (submit), status done, passed True, tests 5/5
+- speedup 1.3024x, 95% CI [1.2829, 1.3220], score 10325.63799826287 µs vs SGLang 13448.5 µs
+- best at harvest: {"speedup": 1.3249153782392282, "ci": [1.30504164756564, 1.3447891089128166], "job": "45eacf4ca2e849d2"}; base result: muse_moe_w4a16/hypotheses/done/gain/triton-map-align-on-block-m-restack.result.json
+- **outcome: neutral** (within-ci)
+- files: `muse_moe_w4a16/hypotheses/done/neutral/marlin-two-stream-expert-halves-small-m.result.json`, `muse_moe_w4a16/hypotheses/done/neutral/marlin-two-stream-expert-halves-small-m.patch`; branch `hyp/muse_moe_w4a16/marlin-two-stream-expert-halves-small-m`
+
+## Attribution
+
+| shape | w | base µs | hyp µs | delta | verdict |
+|---|---|---|---|---|---|
+| bs=1 load=decode_1 sharding=ep8 | 60 | 48.37 | 51.06 | 0.9728 | flat |
+| bs=16 load=decode_16 sharding=ep8 | 60 | 147.87 | 148.18 | 1.0027 | flat |
+| bs=32 load=decode_32 sharding=ep8 | 60 | 200.73 | 188.4 | 1.0086 | flat |
+| bs=8 load=verify_1 sharding=ep8 | 60 | 107.77 | 114.84 | 0.985 | flat |
+| bs=128 load=verify_16 sharding=ep8 | 60 | 333.39 | 337.55 | 0.9935 | flat |
+| bs=256 load=verify_32 sharding=ep8 | 60 | 469.91 | 477.57 | 0.9955 | flat |
+
+no shape moved outside noise. Expected hit: 2/5. Noise ±1.5%.
+
+## Follow-ups
+
+- within-ci: the change is not proven either way; a stacked hypothesis (`depends_on: marlin-two-stream-expert-halves-small-m`) that adds a further change in the same area is the only way to learn more (identical code is never re-run).
+

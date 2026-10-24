@@ -1,0 +1,82 @@
+[triton-map-align-small-m-port] self-check vs moe_align_block_size(ref_local, bsm, 32): 60 cases, 60 mismatches, 33 order-only differences, 48 cases n_pad != SGLang r_pad
+[triton-map-align-small-m-port]   T=1 local_start=0 random: capacity 232/29 vs SGLang 64/8
+[triton-map-align-small-m-port]   T=1 local_start=0 skewed: capacity 232/29 vs SGLang 64/8
+[triton-map-align-small-m-port]   T=1 local_start=0 all-remote: capacity 232/29 vs SGLang 64/8
+[triton-map-align-small-m-port]   T=1 local_start=0 all-one-expert: capacity 232/29 vs SGLang 64/8
+[triton-map-align-small-m-port]   T=1 local_start=0 all-local: capacity 232/29 vs SGLang 64/8
+[triton-map-align-small-m-port]   T=1 local_start=32 random: capacity 232/29 vs SGLang 64/8
+[triton-map-align-small-m-port]   T=1 local_start=32 skewed: capacity 232/29 vs SGLang 64/8
+[triton-map-align-small-m-port]   T=1 local_start=32 all-remote: capacity 232/29 vs SGLang 64/8
+[triton-map-align-small-m-port]   T=1 local_start=32 all-one-expert: capacity 232/29 vs SGLang 64/8
+[triton-map-align-small-m-port]   T=1 local_start=32 all-local: capacity 232/29 vs SGLang 64/8
+[triton-map-align-small-m-port]   T=1 local_start=224 random: capacity 232/29 vs SGLang 64/8
+[triton-map-align-small-m-port]   T=1 local_start=224 skewed: capacity 232/29 vs SGLang 64/8
+[triton-map-align-small-m-port]   T=1 local_start=224 all-remote: capacity 232/29 vs SGLang 64/8
+[triton-map-align-small-m-port]   T=1 local_start=224 all-one-expert: capacity 232/29 vs SGLang 64/8
+[triton-map-align-small-m-port]   T=1 local_start=224 all-local: capacity 232/29 vs SGLang 64/8
+[triton-map-align-small-m-port]   T=8 local_start=0 random: capacity 288/36 vs SGLang 296/37
+[triton-map-align-small-m-port]   T=8 local_start=0 skewed: capacity 288/36 vs SGLang 296/37
+[triton-map-align-small-m-port]   T=8 local_start=0 skewed: (info) within-expert order differs from SGLang's
+[triton-map-align-small-m-port]   T=8 local_start=0 all-remote: capacity 288/36 vs SGLang 296/37
+[triton-map-align-small-m-port]   T=8 local_start=0 all-one-expert: capacity 288/36 vs SGLang 296/37
+[triton-map-align-small-m-port]   pad T=1 local_start=0 random bsm=8: n_pad=8 r_pad=16 DIFF
+[triton-map-align-small-m-port]   pad T=1 local_start=0 skewed bsm=8: n_pad=24 r_pad=32 DIFF
+[triton-map-align-small-m-port]   pad T=1 local_start=0 all-remote bsm=8: n_pad=0 r_pad=8 DIFF
+[triton-map-align-small-m-port]   pad T=1 local_start=0 all-one-expert bsm=8: n_pad=8 r_pad=16 DIFF
+[triton-map-align-small-m-port]   pad T=1 local_start=0 all-local bsm=8: n_pad=64 r_pad=64
+[triton-map-align-small-m-port]   pad T=1 local_start=32 random bsm=8: n_pad=0 r_pad=8 DIFF
+[triton-map-align-small-m-port]   pad T=1 local_start=32 skewed bsm=8: n_pad=24 r_pad=32 DIFF
+[triton-map-align-small-m-port]   pad T=1 local_start=32 all-remote bsm=8: n_pad=0 r_pad=8 DIFF
+[triton-map-align-small-m-port]   pad T=1 local_start=32 all-one-expert bsm=8: n_pad=8 r_pad=16 DIFF
+[triton-map-align-small-m-port]   pad T=1 local_start=32 all-local bsm=8: n_pad=64 r_pad=64
+[triton-map-align-small-m-port]   pad T=1 local_start=224 random bsm=8: n_pad=0 r_pad=8 DIFF
+[triton-map-align-small-m-port]   pad T=1 local_start=224 skewed bsm=8: n_pad=24 r_pad=32 DIFF
+[triton-map-align-small-m-port]   pad T=1 local_start=224 all-remote bsm=8: n_pad=0 r_pad=8 DIFF
+[triton-map-align-small-m-port]   pad T=1 local_start=224 all-one-expert bsm=8: n_pad=8 r_pad=16 DIFF
+[triton-map-align-small-m-port]   pad T=1 local_start=224 all-local bsm=8: n_pad=64 r_pad=64
+[triton-map-align-small-m-port]   pad T=8 local_start=0 random bsm=8: n_pad=64 r_pad=120 DIFF
+[triton-map-align-small-m-port]   pad T=8 local_start=0 skewed bsm=8: n_pad=24 r_pad=64 DIFF
+[triton-map-align-small-m-port]   pad T=8 local_start=0 all-remote bsm=8: n_pad=0 r_pad=64 DIFF
+[triton-map-align-small-m-port]   pad T=8 local_start=0 all-one-expert bsm=8: n_pad=8 r_pad=64 DIFF
+[triton-map-align-small-m-port]   pad T=8 local_start=0 all-local bsm=8: n_pad=64 r_pad=64
+[triton-map-align-small-m-port]   pad T=8 local_start=32 random bsm=8: n_pad=48 r_pad=112 DIFF
+[triton-map-align-small-m-port]   pad T=8 local_start=32 skewed bsm=8: n_pad=24 r_pad=64 DIFF
+[triton-map-align-small-m-port]   pad T=8 local_start=32 all-remote bsm=8: n_pad=0 r_pad=64 DIFF
+[triton-map-align-small-m-port]   pad T=8 local_start=32 all-one-expert bsm=8: n_pad=8 r_pad=64 DIFF
+[triton-map-align-small-m-port]   pad T=8 local_start=32 all-local bsm=8: n_pad=64 r_pad=64
+[triton-map-align-small-m-port]   pad T=8 local_start=224 random bsm=8: n_pad=72 r_pad=128 DIFF
+[triton-map-align-small-m-port]   pad T=8 local_start=224 skewed bsm=8: n_pad=24 r_pad=64 DIFF
+[triton-map-align-small-m-port]   pad T=8 local_start=224 all-remote bsm=8: n_pad=0 r_pad=64 DIFF
+[triton-map-align-small-m-port]   pad T=8 local_start=224 all-one-expert bsm=8: n_pad=8 r_pad=64 DIFF
+[triton-map-align-small-m-port]   pad T=8 local_start=224 all-local bsm=8: n_pad=64 r_pad=64
+[triton-map-align-small-m-port]   pad T=16 local_start=0 random bsm=8: n_pad=120 r_pad=232 DIFF
+[triton-map-align-small-m-port]   pad T=16 local_start=0 skewed bsm=8: n_pad=48 r_pad=128 DIFF
+[triton-map-align-small-m-port]   pad T=16 local_start=0 all-remote bsm=8: n_pad=0 r_pad=128 DIFF
+[triton-map-align-small-m-port]   pad T=16 local_start=0 all-one-expert bsm=8: n_pad=16 r_pad=128 DIFF
+[triton-map-align-small-m-port]   pad T=16 local_start=0 all-local bsm=8: n_pad=128 r_pad=128
+[triton-map-align-small-m-port]   pad T=16 local_start=32 random bsm=8: n_pad=88 r_pad=208 DIFF
+[triton-map-align-small-m-port]   pad T=16 local_start=32 skewed bsm=8: n_pad=48 r_pad=128 DIFF
+[triton-map-align-small-m-port]   pad T=16 local_start=32 all-remote bsm=8: n_pad=0 r_pad=128 DIFF
+[triton-map-align-small-m-port]   pad T=16 local_start=32 all-one-expert bsm=8: n_pad=16 r_pad=128 DIFF
+[triton-map-align-small-m-port]   pad T=16 local_start=32 all-local bsm=8: n_pad=128 r_pad=128
+[triton-map-align-small-m-port]   pad T=16 local_start=224 random bsm=8: n_pad=96 r_pad=216 DIFF
+[triton-map-align-small-m-port]   pad T=16 local_start=224 skewed bsm=8: n_pad=48 r_pad=128 DIFF
+[triton-map-align-small-m-port]   pad T=16 local_start=224 all-remote bsm=8: n_pad=0 r_pad=128 DIFF
+[triton-map-align-small-m-port]   pad T=16 local_start=224 all-one-expert bsm=8: n_pad=16 r_pad=128 DIFF
+[triton-map-align-small-m-port]   pad T=16 local_start=224 all-local bsm=8: n_pad=128 r_pad=128
+[triton-map-align-small-m-port]   pad T=32 local_start=0 random bsm=16: n_pad=336 r_pad=560 DIFF
+[triton-map-align-small-m-port]   pad T=32 local_start=0 skewed bsm=16: n_pad=96 r_pad=256 DIFF
+[triton-map-align-small-m-port]   pad T=32 local_start=0 all-remote bsm=16: n_pad=0 r_pad=256 DIFF
+[triton-map-align-small-m-port]   pad T=32 local_start=0 all-one-expert bsm=16: n_pad=32 r_pad=256 DIFF
+[triton-map-align-small-m-port]   pad T=32 local_start=0 all-local bsm=16: n_pad=256 r_pad=256
+[triton-map-align-small-m-port]   pad T=32 local_start=32 random bsm=16: n_pad=288 r_pad=528 DIFF
+[triton-map-align-small-m-port]   pad T=32 local_start=32 skewed bsm=16: n_pad=96 r_pad=256 DIFF
+[triton-map-align-small-m-port]   pad T=32 local_start=32 all-remote bsm=16: n_pad=0 r_pad=256 DIFF
+[triton-map-align-small-m-port]   pad T=32 local_start=32 all-one-expert bsm=16: n_pad=32 r_pad=256 DIFF
+[triton-map-align-small-m-port]   pad T=32 local_start=32 all-local bsm=16: n_pad=256 r_pad=256
+[triton-map-align-small-m-port]   pad T=32 local_start=224 random bsm=16: n_pad=368 r_pad=592 DIFF
+[triton-map-align-small-m-port]   pad T=32 local_start=224 skewed bsm=16: n_pad=96 r_pad=256 DIFF
+[triton-map-align-small-m-port]   pad T=32 local_start=224 all-remote bsm=16: n_pad=0 r_pad=256 DIFF
+[triton-map-align-small-m-port]   pad T=32 local_start=224 all-one-expert bsm=16: n_pad=32 r_pad=256 DIFF
+[triton-map-align-small-m-port]   pad T=32 local_start=224 all-local bsm=16: n_pad=256 r_pad=256
+[marlin-two-stream-expert-halves-small-m] halves self-check vs moe_align_block_size(ref_local with the other half -1, bsm, 32): 72 cases, 0 mismatches
