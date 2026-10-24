@@ -53,9 +53,16 @@ controls_for: null
 rewrite_stage: 4
 replaces: Marlin w13+w2 (moe_wna16_marlin_gemm x2) at every prefill T
 review: proceed
-status: queued
+status: running
 review_at: 2026-10-24T124746Z
 review_companions: null
+stage: claimed
+claimed_at: 2026-10-24T124746Z
+base_sha: b1395799d690a0aa9053a787f98c98321be85724
+base_blob: f17d41c9a9b0696f20e6679a493da9d4aa6d2934
+branch: hyp/muse_prefill_layer/experts-hybrid-marlin-turn-triton-first-turn
+worktree: .worktrees/muse_prefill_layer/experts-hybrid-marlin-turn-triton-first-turn
+mode: null
 ---
 
 # experts-hybrid-marlin-turn-triton-first-turn
