@@ -53,13 +53,19 @@ review: proceed
 status: running
 review_at: 2026-10-24T185011Z
 review_companions: null
-stage: claimed
+stage: implemented
 claimed_at: 2026-10-24T185011Z
 base_sha: 90040c7132925d246133b05640f35bf2b6622eb8
 base_blob: 3d70ae6e2de0d48c4a4f2a469ced8234f5348182
 branch: hyp/muse_decode_layer/sliding-fused-batched-decode-port
 worktree: .worktrees/muse_decode_layer/sliding-fused-batched-decode-port
 mode: null
+implemented_at: 2026-10-24T224624Z
+impl_commit: 0a2ec0ae226bb4b8c8260db1ba7aa74832619632
+submission_sha256: b671bd387506452d90e24f197c10a969ff30824efd32c0dba3fd5db5bada9d99
+norm_sha256: 4df695a2d87724d8a398580b8b49d2f64f7e0d52e089e3ce56ee4adbf424af36
+submission_blob: f99bbe8e814e229a1d528bd8f951814baf1f0aaf
+lint_warnings: 20
 ---
 
 # sliding-fused-batched-decode-port
@@ -102,3 +108,39 @@ No companion warranted. The gate is config-only and shape-disjoint: within the s
 - At decode_32 is 16 splits (1024 CTAs) better than _num_splits = 2 inside the layer, where the qkv GEMM leaves the L2 in a different state than the standalone attention benchmark? Read the fused kernel's own us from the profile against FA3 main + combine (18.3 + 3.7 us).
 - Does the fused kernel's split-combine workspace traffic (B*Hkv*16*16*64*4 B, ~4 MB at B=32) show up as extra latency in the following o GEMM's cold-L2 weight read? Check the o GEMM nvjet time on sliding decode_32 versus master.
 
+
+## Implementation notes
+
+- Worktree muse_decode_layer/submission.py only. Inserted just before kernel_fn, copied verbatim from muse_attention_decode/submission.py (master): _INV_FREQ, _inv_freq, LOG2E, _COUNTERS, _counters, _num_splits, _norm_rope, _gpu_fence, _online_update, _gate_epilogue, _sliding_fused_kernel. (_num_splits is copied but unused: splits fixed at 16 for q_len 1.)
+- Added _sliding_forward_batched(data, qkv, cfg): attention's _sliding_forward with qkv = the qkv GEMM output (stride(0) passed), splits = 16, same workspaces/counters/launch args.
+- kernel_fn: `fused = window != 0 and q_len == 1 and batch > 1 and hq == 16 and hkv == 2 and d == 64` (config only). On it: o = out.reshape(tokens, hq*d) feeds the unchanged o GEMM. Else branch is the master attention code verbatim, only re-indented (diff shows it as changed lines). Everything after is untouched.
+- Deviation: none. Per review, no merge from the restack branch.
+
+## Rules check
+
+- [x] CUDA-graph capturable: new path has torch.empty + a Triton launch, no sync; _counters zeroed once on first eager call, branches on config only.
+- [x] Nothing derived from `data` cached: _counters/_inv_freq key on (batch, hkv, device) / (theta, d, device); inv_freq is a function of config, counters hold no data (reset to 0 by the kernel).
+- [x] Weights: n/a: no weight change; prepare() untouched.
+- [x] Activations BF16 where SGLang keeps BF16; KV cache FP8 (k/v stored E4M3 at cache_loc); queries bf16 (finer than FP8 cap).
+- [x] Attention sees every key: whole 2048-token window plus the new key; no skipping.
+- [x] No timing patches, harness access, module edits, reference import, subprocesses or network (checked in diff).
+- [x] All work inside the timed call; no output caching or replay.
+- [x] Gate shape-disjoint: full, verify (q_len 8) and batch 1 take the master branch.
+
+okc_lint: "OK with warnings" (only host-sync warnings outside kernel_fn's call graph, in prepare/self-check helpers that predate this change; no errors). py_compile OK, __pycache__ removed.
+
+## Pre-flight audit
+
+Audited 2026-10-24 by an opus subagent, by reading (no GPU on this node). **Verdict: dispatch-with-fixes.**
+
+Checked and found sound:
+- The port is verbatim. All eight helpers (_inv_freq, _counters, _num_splits, _norm_rope, _gpu_fence, _online_update, _gate_epilogue, _sliding_fused_kernel) diff identical to muse_attention_decode master, and nothing in the layer file is duplicated or shadowed.
+- Layout plumbing matches. The qkv GEMM output is [T, 2304] bf16 (q 16x64 | k 2x64 | v 2x64 | gate 16x64), the same layout as the attention problem's data["qkv"], and qkv.stride(0) is passed. The k/v cache layout [pages, page_size, 2, 64], positions, cache_loc, seq_lens (the block start), page_table and the k/v scales have the same meaning in both problems. The decode layer's QK-norm and output norm are scaleless (FusedQKNorm, FusedRMSNormGate has_weight=False), and the reference RoPE is interleaved with theta^(-2i/64), all as the kernel computes. The softmax scale sm_scale * qk_scale_factor splits into q_scale x score_scale. The output [B, 1, 1024] is reshaped to [T, 1024] and feeds the unchanged o GEMM.
+- The gate reads config only: sliding, q_len 1, batch > 1, 16/2/64 heads. It covers sliding decode_16/32 and the tests at batch 8 (page 64, ctx 2047) and batch 9 (page 1). Decode_1, every full layer and every verify shape stay on master byte for byte. There is no self-check gate that could always fail.
+- Window and every-key rule: old keys [seq - 2047, seq - 1] plus the new key make 2048 keys, which equals FA3 window_size=(window - 1, 0). The 16 splits cover the whole range, and an empty split gets weight 0. The new k/v are stored as E4M3 at cache_loc, and the queries are bf16, finer than FP8.
+- Capture: allocation depends on shape only. The ticket counters reset in-kernel and hold no data, and inv_freq comes from config.
+
+Fix:
+- The new path had no fallback and no PATH CHOSEN line, so a Triton build or launch error would have raised out of kernel_fn and failed the run. The fused call is now wrapped in try/except keyed on config (batch, page, window, rope, scaled). On failure it turns the key off for good, prints "PATH CHOSEN = MASTER (FA3)" and runs the master branch (else became `if not fused`). On first success it prints "PATH CHOSEN = FUSED". Lint OK (only host-sync warnings in prepare-only code). py_compile OK, and __pycache__ was removed.
+
+Residual risk: this kernel has never run inside the layer at batch 16/32. A wrong result would fail the run rather than fall back (there is no numeric self-check), and the decode_32 gain may come out flat if the 16-split workspace traffic cancels the launches saved.
