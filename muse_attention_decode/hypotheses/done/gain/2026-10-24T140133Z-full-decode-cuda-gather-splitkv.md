@@ -94,7 +94,7 @@ harvested_at: 2026-10-24T144809Z
 best_at_harvest: 1.2930643047593426
 promotion: merged
 promotion_commit: 3693fb89b6ce898de437c29d4859b90c33277309
-promotion_attempt: 2026-10-24T144811Z-submit-full-decode-cuda-gather-splitkv.md
+promotion_attempt: 2026-10-24T152210Z-submit-full-decode-cuda-gather-splitkv.md
 ---
 
 # full-decode-cuda-gather-splitkv
