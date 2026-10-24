@@ -151,6 +151,8 @@ SLICED_UNPOOL_MAX_TOKENS = 8
 UNPOOL_SLICE = HIDDEN // 8
 # MuseSpark1xFp4Experts' candidates, smallest first.
 BLOCK_SIZE_M_CANDIDATES = (8, 16, 32, 48, 64)
+# Cap on that pick for both Marlin MoE GEMMs (SGLang has none): 48/64 at T=128/256 become 16.
+MARLIN_BLOCK_SIZE_M_CAP = 16
 ROPE_POSITIONS = 1 << 21
 ROPE_THETA = 500_000.0
 
@@ -257,6 +259,7 @@ def _experts(x, topk_weights, topk_ids, state):
     for block_size_m in BLOCK_SIZE_M_CANDIDATES:
         if num_tokens * TOP_K / LOCAL_EXPERTS / block_size_m < 0.9:
             break
+    block_size_m = min(block_size_m, MARLIN_BLOCK_SIZE_M_CAP)
     sorted_ids, block_experts, n_padded = moe_align_block_size(local_ids, block_size_m, N_EXPERTS)
     cache2 = torch.empty((num_tokens * TOP_K, size_n), device=x.device, dtype=x.dtype)
     cache13 = torch.empty((num_tokens * TOP_K * max(gemm1_n, size_k),), device=x.device, dtype=x.dtype)
