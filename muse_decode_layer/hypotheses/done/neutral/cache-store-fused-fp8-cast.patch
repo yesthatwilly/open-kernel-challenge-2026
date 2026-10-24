@@ -1,0 +1,102 @@
+diff --git a/muse_decode_layer/submission.py b/muse_decode_layer/submission.py
+index 6884d26..03d45c7 100644
+--- a/muse_decode_layer/submission.py
++++ b/muse_decode_layer/submission.py
+@@ -16,8 +16,9 @@ Everything else is SGLang's pipeline as baseline.py composes it:
+   qkv_gate projection              bf16_gemm_dispatch (cuBLAS on H200)
+   FusedQKNorm (Triton)             per-head RMSNorm of q and k, read from the fused projection,
+                                    with the interleaved RoPE fused in on sliding layers
+-  cache store, q to FP8            as FlashAttentionBackend and set_kv_buffer do for an FP8 cache
+-                                   (cast, then the store_cache JIT kernel at the step's rows)
++  cache store, q to FP8            ONE Triton kernel (_cache_store_q_fp8_kernel, hypothesis
++                                   cache-store-fused-fp8-cast) in place of SGLang's k/v casts, the
++                                   store_cache JIT kernel and the q cast: same values, one launch
+   flash_attn_with_kvcache (FA3)    paged, causal, window (2047, 0) on sliding layers
+   FusedRMSNormGate (JIT)           per-head output norm x sigmoid(gate)
+   o projection                     bf16_gemm_dispatch; then the all-reduce (identity here)
+@@ -50,12 +51,13 @@ import types
+ 
+ import torch
+ import torch.nn.functional as F
++import triton
++import triton.language as tl
+ from sgl_kernel.flash_attn import flash_attn_with_kvcache
+ from sgl_kernel.scalar_type import scalar_types
+ from torch import nn
+ 
+ from sglang.kernels.ops.activation.activation import silu_and_mul
+-from sglang.kernels.ops.kvcache.kvcache import store_cache
+ from sglang.kernels.ops.moe.moe_wna16_marlin import moe_wna16_marlin_gemm
+ from sglang.kernels.ops.muse_spark_v12.fused_muse_spark_routing import FusedMuseSparkRouting
+ from sglang.kernels.ops.muse_spark_v12.fused_norm_gate import FusedRMSNormGate
+@@ -155,6 +157,35 @@ ROPE_POSITIONS = 1 << 21
+ ROPE_THETA = 500_000.0
+ 
+ 
++@triton.jit
++def _cache_store_q_fp8_kernel(
++    q_ptr, k_ptr, v_ptr, loc_ptr, k_scale_ptr, v_scale_ptr,
++    q_out_ptr, k_cache_ptr, v_cache_ptr,
++    q_s0, q_s1, q_s2, k_s0, k_s1, k_s2, v_s0, v_s1, cache_row_stride,
++    HQ: tl.constexpr, HKV: tl.constexpr, D: tl.constexpr, SCALED: tl.constexpr,
++):
++    """One program per token: the k row (normed, roped, bf16) and the v row (the strided slice
++    of the qkv GEMM output) go to FP8 at cache row cache_loc[t]; the q row goes to FP8 in a
++    contiguous [T, HQ, D] buffer for FA3. Every row is stored (reserved_skip_index=-1)."""
++    t = tl.program_id(0).to(tl.int64)
++    j = tl.arange(0, D)[None, :]
++
++    hq = tl.arange(0, HQ)[:, None]
++    q = tl.load(q_ptr + t * q_s0 + hq * q_s1 + j * q_s2)
++    tl.store(q_out_ptr + (t * HQ + hq) * D + j, q.to(tl.float32).to(tl.float8e4nv))
++
++    loc = tl.load(loc_ptr + t).to(tl.int64)
++    hk = tl.arange(0, HKV)[:, None]
++    k = tl.load(k_ptr + t * k_s0 + hk * k_s1 + j * k_s2).to(tl.float32)
++    v = tl.load(v_ptr + t * v_s0 + (hk * D + j) * v_s1).to(tl.float32)
++    if SCALED:
++        k = k / tl.load(k_scale_ptr)
++        v = v / tl.load(v_scale_ptr)
++    dst = loc * cache_row_stride + hk * D + j
++    tl.store(k_cache_ptr + dst, k.to(tl.float8e4nv))
++    tl.store(v_cache_ptr + dst, v.to(tl.float8e4nv))
++
++
+ def _gemm(x, w):
+     return _bf16_gemm_dispatch_impl(x, w, None)
+ 
+@@ -295,20 +326,26 @@ def kernel_fn(data, state):
+     gate = qkv[:, hq * d + 2 * hkv * d:]
+     k_cache, v_cache = data["k_cache"], data["v_cache"]
+     scaled = cfg["kv_scale"] != 1.0
+-    k = k.reshape(tokens, hkv * d)
+-    if scaled:
+-        k, v = k / data["k_scale"], v / data["v_scale"]
+-    # The pool keeps FP8 rows as bytes; slot 0 is a live row here (SGLang reserves it for padding).
+-    store_cache(k.to(FP8).view(torch.uint8), v.to(FP8).view(torch.uint8),
+-                k_cache.view(-1, hkv * d).view(torch.uint8), v_cache.view(-1, hkv * d).view(torch.uint8),
+-                data["cache_loc"], reserved_skip_index=-1)
++    q = q.view(tokens, hq, d)
++    k = k.reshape(tokens, hkv, d)
++    k_rows, v_rows = k_cache.view(-1, hkv * d), v_cache.view(-1, hkv * d)
++    assert k_rows.stride() == v_rows.stride() and k_rows.stride(1) == 1
++    # One launch for the k/v casts, the cache store and the q cast; slot 0 is a live row here.
++    q_fp8 = torch.empty((tokens, hq, d), dtype=FP8, device=q.device)
++    _cache_store_q_fp8_kernel[(tokens,)](
++        q, k, v, data["cache_loc"], data["k_scale"], data["v_scale"],
++        q_fp8, k_rows, v_rows,
++        *q.stride(), *k.stride(), *v.stride(), k_rows.stride(0),
++        HQ=hq, HKV=hkv, D=d, SCALED=scaled,
++        num_warps=4,
++    )
+     window = cfg["window"]
+     descale = {}
+     if scaled:
+         descale = dict(k_descale=data["k_scale"].reshape(1, 1).expand(batch, hkv),
+                        v_descale=data["v_scale"].reshape(1, 1).expand(batch, hkv))
+     out = flash_attn_with_kvcache(
+-        q=q.view(tokens, hq, d).to(FP8),
++        q=q_fp8,
+         k_cache=k_cache,
+         v_cache=v_cache,
+         page_table=data["page_table"],

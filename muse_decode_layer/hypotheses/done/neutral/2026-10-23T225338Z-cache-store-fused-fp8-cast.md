@@ -37,10 +37,10 @@ priority: 2
 kind: primary
 controls_for: null
 review: proceed
-status: running
+status: done
 review_at: 2026-10-24T024344Z
 review_companions: null
-stage: dispatched
+stage: harvested
 claimed_at: 2026-10-24T024344Z
 base_sha: 54112d428da559b67789e07fa8f2e586fe5fb45e
 base_blob: 6884d26a928d1de1b07bf8d28e1be4e53dfdcfc5
@@ -57,6 +57,13 @@ attempt_file: 2026-10-24T024848Z-check-cache-store-fused-fp8-cast.md
 prepared_at: 2026-10-24T024848Z
 job: 7264526cf9f94c37
 dispatched_at: 2026-10-24T024859Z
+outcome: neutral
+verdict_detail: unproven-vs-best
+speedup: 1.030334058472397
+speedup_ci: [1.0148790475953111, 1.045789069349483]
+harvested_at: 2026-10-24T044308Z
+best_at_harvest: 1.020038644953596
+promotion: null
 ---
 
 # cache-store-fused-fp8-cast
@@ -133,3 +140,35 @@ OK with warnings: submission.py
 ```
 
 The one warning is pre-existing (in `prepare()`), not from this diff. `python3 -m py_compile` passes.
+
+## Result
+
+- job `7264526cf9f94c37` (check), status done, passed True, tests 13/13
+- speedup 1.0303x, 95% CI [1.0149, 1.0458], score 21954.33589134917 µs vs SGLang 22620.3 µs
+- best at harvest: {"speedup": 1.020038644953596, "ci": [1.004738065279292, 1.0353392246278998], "job": "5755a412dda244a1"}; base result: muse_decode_layer/hypotheses/done/gain/sglang-pipeline-parity-router-hilo-m8.result.json
+- **outcome: neutral** (unproven-vs-best)
+- files: `muse_decode_layer/hypotheses/done/neutral/cache-store-fused-fp8-cast.result.json`, `muse_decode_layer/hypotheses/done/neutral/cache-store-fused-fp8-cast.patch`; branch `hyp/muse_decode_layer/cache-store-fused-fp8-cast`
+
+## Attribution
+
+| shape | w | base µs | hyp µs | delta | verdict |
+|---|---|---|---|---|---|
+| batch=1 ctx=80000 dist=soft layer=sliding load=decode_1 page=1 repeats=60 | 46 | 168.73 | 167.58 | 0.9962 | flat |
+| batch=1 ctx=80000 dist=soft layer=full load=decode_1 page=1 repeats=60 | 16 | 180.65 | 178.5 | 1.0 | flat |
+| batch=16 ctx=80000 dist=soft layer=sliding load=decode_16 page=1 spread=agentic | 46 | 269.71 | 258.84 | 1.0154 | flat |
+| batch=16 ctx=80000 dist=soft layer=full load=decode_16 page=1 spread=agentic | 16 | 440.57 | 428.73 | 1.0099 | flat |
+| batch=32 ctx=80000 dist=soft layer=sliding load=decode_32 page=1 spread=agentic | 46 | 265.68 | 261.97 | 1.0184 | flat |
+| batch=32 ctx=80000 dist=soft layer=full load=decode_32 page=1 spread=agentic | 16 | 614.9 | 614.4 | 1.003 | flat |
+| batch=1 ctx=80000 dist=soft layer=sliding load=verify_1 page=1 q_len=8 | 46 | 233.99 | 236.44 | 1.0117 | flat |
+| batch=1 ctx=80000 dist=soft layer=full load=verify_1 page=1 q_len=8 | 16 | 250.89 | 238.41 | 1.0192 | flat |
+| batch=16 ctx=80000 dist=soft layer=sliding load=verify_16 page=1 q_len=8 spread=agentic | 46 | 521.15 | 532.32 | 1.0102 | flat |
+| batch=16 ctx=80000 dist=soft layer=full load=verify_16 page=1 q_len=8 spread=agentic | 16 | 714.3 | 698.68 | 1.0058 | flat |
+| batch=32 ctx=80000 dist=soft layer=sliding load=verify_32 page=1 q_len=8 spread=agentic | 46 | 713.04 | 712.22 | 1.0089 | flat |
+| batch=32 ctx=80000 dist=soft layer=full load=verify_32 page=1 q_len=8 spread=agentic | 16 | 1049.76 | 1072.18 | 1.002 | flat |
+
+no shape moved outside noise. Expected hit: 2/4. Noise ±1.5%.
+
+## Follow-ups
+
+- unproven-vs-best: the change is not proven either way; a stacked hypothesis (`depends_on: cache-store-fused-fp8-cast`) that adds a further change in the same area is the only way to learn more (identical code is never re-run).
+
