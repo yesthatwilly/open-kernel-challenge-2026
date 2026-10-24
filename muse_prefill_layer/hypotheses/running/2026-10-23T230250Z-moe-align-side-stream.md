@@ -35,9 +35,16 @@ priority: 2
 kind: primary
 controls_for: null
 review: proceed
-status: queued
+status: running
 review_at: 2026-10-24T044735Z
 review_companions: null
+stage: claimed
+claimed_at: 2026-10-24T044735Z
+base_sha: a8970404e91613553aa3868dbafdca06fbc4b549
+base_blob: e4931f050c7fb99835fe116d25bb454a5ea731e9
+branch: hyp/muse_prefill_layer/moe-align-side-stream
+worktree: .worktrees/muse_prefill_layer/moe-align-side-stream
+mode: null
 ---
 
 # moe-align-side-stream
