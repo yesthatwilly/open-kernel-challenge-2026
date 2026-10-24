@@ -63,13 +63,19 @@ review: proceed
 status: running
 review_at: 2026-10-24T092245Z
 review_companions: null
-stage: claimed
+stage: implemented
 claimed_at: 2026-10-24T092246Z
 base_sha: e8c54b5ac52496d46ca232957689f65e6c729c2a
 base_blob: f14211b4b0e88f8b3f683d9f9275b76a64b66e02
 branch: hyp/muse_attention_decode/fa3-hdim128-head-pairing
 worktree: .worktrees/muse_attention_decode/fa3-hdim128-head-pairing
 mode: null
+implemented_at: 2026-10-24T092444Z
+impl_commit: aaa550bdabc89c81bbdaa382ce4bb68430021afc
+submission_sha256: eb6b0498ec6e6b03dbaee6c28df0f25db3807e50a13c3b103e6151ddd99a4eb2
+norm_sha256: 6bcb7977f4733b3f2b1e5d56ec31e4538e74e2d0507b7f84794a5715b24564ce
+submission_blob: bc007e643ac0b440147a732071f23d9b3563174c
+lint_warnings: 0
 ---
 
 # fa3-hdim128-head-pairing
@@ -114,3 +120,37 @@ No companion. A gain means the full-layer FA3 kernel row drops on decode/verify_
 - Is the ~1.7 TB/s really caused by double L2/DRAM fills of each 128-byte line (two heads read separately)? An ncu dram__bytes_read on full decode_32 before and after would confirm or refute the mechanism directly.
 - B=1 loads: is the loss about 12-15% as estimated, or does the paired FA3 at B=1 (one super-head, so all parallelism comes from splits) also slow down? Read the full decode_1 FA3 row on its own.
 
+
+## Implementation notes
+
+Worktree `.worktrees/muse_attention_decode/fa3-hdim128-head-pairing`. Only `kernel_fn` in `muse_attention_decode/submission.py` changed, and only the FA3 call region. The pre-attention Triton kernel, the cache store and `rms_norm_gate` are untouched. Diff stat: 1 file, +38/-6.
+
+- `paired = window == 0 and hkv % 2 == 0` is a config-only branch. Sliding layers and odd Hkv keep the original unpaired call byte for byte, and still pass the judge's `scheduler_metadata`.
+- Paired path: `k_cache` and `v_cache` are viewed as `[pages, page_size, S, 128]` (contiguous views of the same storage, read in place). `q_attn = torch.zeros((tokens, Hq, 128), FP8)` is allocated each call. The FP8 q from the pre-attention kernel, viewed as `[tokens, S, 2, G, 64]`, is copied into the low half (parity 0) and high half (parity 1) of `q_attn.view(tokens, S, 2, G, 128)`.
+- When kv_scale != 1, the descale expands to `(B, S)` instead of `(B, Hkv)`.
+- After FA3, `attn = torch.empty((tokens, Hq, 64), bf16)` gets each query's own half of `out.view(tokens, S, 2, G, 128)`. That feeds the same `rms_norm_gate` call as before. The existing `.to(torch.bfloat16)` is kept and does nothing here.
+- **Deviation (following the reviewer):** on full decode the spec rebuilds `scheduler_metadata` with `get_scheduler_metadata(...)`. The adversarial review recommends passing `None` on decode as on verify, because it is functionally the same: FA3 runs prepare_varlen_num_blocks internally with the same page-table-derived max_seqlen_k. I pass `metadata = None` on every paired call, so there is no rebuild code and no extra launch. The judge's metadata is never used with the paired geometry.
+- Not verified locally, since this node has no GPU, torch or sgl_kernel. Open items:
+  - whether FA3 in the image has e4m3 hdim-128 paged forward with pack_gqa at 16 q heads per kv head;
+  - whether `torch.zeros` and slice `copy_` on float8_e4m3fn CUDA tensors work in the image's torch (both are supported in recent PyTorch).
+
+## Rules check
+
+Checked against `git -C .worktrees/muse_attention_decode/fa3-hdim128-head-pairing diff`.
+
+- [x] CUDA-graph capturable: no `.item()`, `.cpu()`, `synchronize()` or tensor prints were added. The new `zeros`/`empty` have fixed shapes from config (tokens, hq, d). The branch is on `cfg["window"]` and `num_kv_heads` only. No `cache_seqlens.max()` is used.
+- [x] Nothing derived from `data` is cached across calls. `q_attn`, `attn` and the cache views are rebuilt every call, and no new module-level state was added.
+- [x] Weights: n/a. This problem has no weights, and nothing is repacked.
+- [x] Activations BF16 where SGLang keeps BF16; the KV cache stays FP8 and is read in place through views; queries stay FP8 E4M3 with the same values, zero-padded; the un-padded attention output is BF16 into the same norm-gate.
+- [x] Attention sees every key: causal, window_size=(-1,-1) on full layers and the same page_table/cache_seqlens, so the whole context is attended. There is no top-k, sparse, block-skip or weight-based skip. The discarded half is the other head's P@V, not skipped keys.
+- [x] No timing patches, harness frames/I/O/secrets, module edits, reference import, subprocesses or network. No new imports.
+- [x] All work happens inside the timed call (pad, FA3, un-pad, all in `kernel_fn`), with no output caching or replay.
+- [x] First-line marker `# okc: problem=muse_attention_decode` kept. No `triton.autotune` was added.
+
+okc_lint output:
+
+```
+CLEAN: muse_attention_decode/submission.py
+```
+
+`python3 -I -m py_compile` OK. The resulting `__pycache__` was removed from the worktree.
