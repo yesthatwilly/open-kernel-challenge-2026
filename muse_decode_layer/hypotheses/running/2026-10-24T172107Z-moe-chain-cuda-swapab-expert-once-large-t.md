@@ -85,7 +85,7 @@ review: proceed
 status: running
 review_at: 2026-10-24T172543Z
 review_companions: null
-stage: implemented
+stage: dispatched
 claimed_at: 2026-10-24T172706Z
 base_sha: a449561e2d3c5c1910b17badcd989afdfcebd989
 base_blob: cc466fce207709c98ab0e78c2435c1c459890fdb
@@ -100,6 +100,8 @@ submission_blob: 81d11fec488c02b0e7fe3a48f764aca20bb6a438
 lint_warnings: 10
 attempt_file: 2026-10-24T181733Z-submit-moe-chain-cuda-swapab-expert-once-large-t.md
 prepared_at: 2026-10-24T181733Z
+job: 1bba1bab70da4f61
+dispatched_at: 2026-10-24T181805Z
 ---
 
 # moe-chain-cuda-swapab-expert-once-large-t
