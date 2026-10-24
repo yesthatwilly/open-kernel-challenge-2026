@@ -88,10 +88,21 @@ def cmd_new(a):
     else:
         fm.append("expected: []")
     fm += [f"risk: {a.risk}", f"depends_on: {yaml_scalar(a.depends_on)}", f"priority: {a.priority}",
-           f"kind: {a.kind}", f"controls_for: {yaml_scalar(a.controls_for)}", "review: required", "status: queued", "---"]
+           f"kind: {a.kind}", f"controls_for: {yaml_scalar(a.controls_for)}"]
+    if a.kind == "rewrite":
+        fm += [f"stage: {a.stage}", f"replaces: {yaml_scalar(a.replaces or a.area)}"]
+    fm += ["review: required", "status: queued", "---"]
     body = [f"# {slug}", "", "## Change", "", a.change.strip(), "", "## Expected", ""]
     body += [f"- `{e.get('shapes', '*')}` {e.get('direction', 'faster')}: {e.get('why', '')}" for e in expected] or ["- (none stated)"]
     body += ["", "## Risk", "", (a.notes or f"{a.risk} risk.").strip(), ""]
+    if a.kind == "rewrite":
+        body += ["## Milestones", "",
+                 f"Rewrite stage {a.stage} of `{a.replaces or a.area}`. Judged on the replaced kernels' own time per",
+                 "shape (profile top_kernels) against the incumbent and the speed-of-light floor, not on the headline:",
+                 "1. correct: passes every test (a failure is a fix for the next stage, not a dead end);",
+                 "2. at or below the incumbent kernels' time on the target shapes;",
+                 "3. within ~1.5x of the floor on the target shapes, and the headline CI clears 1.0 (promotable).",
+                 "The next stage is minted with `--kind rewrite --depends-on <this slug> --stage N+1`.", ""]
     qdir = os.path.join(REPO, p, "hypotheses", "queue")
     os.makedirs(qdir, exist_ok=True)
     path = os.path.join(qdir, f"{created}-{slug}.md")
@@ -140,8 +151,11 @@ def main():
     x.add_argument("--problem", required=True); x.add_argument("--slug", required=True); x.add_argument("--area", required=True)
     x.add_argument("--change", required=True); x.add_argument("--expected"); x.add_argument("--risk", default="medium", choices=["low", "medium", "high"])
     x.add_argument("--depends-on"); x.add_argument("--priority", type=int, default=3); x.add_argument("--notes")
-    x.add_argument("--kind", default="primary", choices=["primary", "ab-revert", "ab-tune", "control"],
-                   help="primary = an idea of its own; ab-revert/ab-tune/control = an A/B companion queued by the adversarial review")
+    x.add_argument("--kind", default="primary", choices=["primary", "rewrite", "ab-revert", "ab-tune", "control"],
+                   help="primary = an idea of its own; rewrite = replace a whole subsystem over staged runs; "
+                        "ab-revert/ab-tune/control = an A/B companion queued by the adversarial review")
+    x.add_argument("--stage", type=int, default=1, help="rewrite only: stage number (1 = first cut)")
+    x.add_argument("--replaces", help="rewrite only: the kernels/subsystem being replaced, e.g. 'Marlin w13+w2 at bs<=8'")
     x.add_argument("--controls-for", help="slug of the hypothesis this companion is an A/B control for")
     x.set_defaults(fn=cmd_new)
     x = sp.add_parser("list"); x.add_argument("problem", nargs="?"); x.set_defaults(fn=cmd_list)

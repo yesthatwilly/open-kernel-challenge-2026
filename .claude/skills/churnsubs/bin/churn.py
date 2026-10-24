@@ -852,11 +852,16 @@ def _harvest_one(p, h, job, sj):
         extra = f"\n\n{at['summary']}." + (f" Expected hit: {at['expected_hit']}." if at.get("expected_hit") else "") + f" Noise ±{at['noise']*100:.1f}%."
         set_section(new_md, "Attribution", "\n".join(tbl) + extra)
     fu = []
+    if str(h.get("kind") or "") == "rewrite":
+        fu.append(f"- rewrite stage {h.get('stage') or 1} of `{h.get('replaces') or h.get('area')}`: read the replaced kernels' own us per shape "
+                  f"(profile top_kernels) against the incumbent and the floor, and check which Milestone it reached. The next stage is "
+                  f"`/hypothesize {p} \"<what to fix or tune>\" --kind rewrite --depends-on {slug} --stage {int(h.get('stage') or 1) + 1}`; "
+                  "a slow or failed first cut is the expected start, not a do-not-retry.")
     if outcome == "failed" and res.get("first_failing"):
         fu.append(f"- first failing case {json.dumps(res['first_failing'].get('case'))}: {res['first_failing'].get('message')}. Suggest `/hypothesize {p} \"fix {slug}: ...\"` with the fix as its own change.")
     elif outcome == "neutral":
         fu.append(f"- {detail}: the change is not proven either way; a stacked hypothesis (`depends_on: {slug}`) that adds a further change in the same area is the only way to learn more (identical code is never re-run).")
-    elif outcome == "regression":
+    elif outcome == "regression" and str(h.get("kind") or "") != "rewrite":
         fu.append("- record which shapes lost (Attribution) and do not retry this area in this form.")
     elif outcome == "gain":
         fu.append("- candidate for promotion; stack further changes with `depends_on` once it lands.")
@@ -1082,7 +1087,12 @@ def _eligible_queue(p):
             if not dp:
                 continue
             parent = read_hyp(dp)
-            if str(h.get("kind") or "").startswith("ab-"):
+            if str(h.get("kind") or "") == "rewrite" and str(parent.get("kind") or "") == "rewrite":
+                # a rewrite's next stage builds on the previous stage's code whatever its score:
+                # a slow or failing first cut is the expected start of a rewrite, not a dead end
+                if not parent.get("impl_commit") or where == "done/rejected" or not where.startswith("done/"):
+                    continue
+            elif str(h.get("kind") or "").startswith("ab-"):
                 # an A/B companion only needs its parent's code to exist; a regressed parent is
                 # exactly what it is there to explain
                 if not parent.get("impl_commit") or where in ("done/failed", "done/rejected"):
@@ -1091,7 +1101,8 @@ def _eligible_queue(p):
                 if not where.startswith("done/") or where in ("done/regression", "done/failed", "done/rejected"):
                     continue
         items.append(h)
-    items.sort(key=lambda h: (h.get("priority") or 3, h.get("created") or ""))
+    # rewrites are the bigger bets: they go ahead of primaries at the same priority or below
+    items.sort(key=lambda h: (0 if h.get("kind") == "rewrite" else 1, h.get("priority") or 3, h.get("created") or ""))
     return items
 
 

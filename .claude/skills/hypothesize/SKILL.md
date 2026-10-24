@@ -50,6 +50,14 @@ H="python3 -I $CLAUDE_PROJECT_DIR/.claude/skills/hypothesize/bin/hyp.py"
    `{shapes: glob over shape keys like "layer=sliding load=decode_*", direction, why}`),
    `--risk`, `--priority` (1 = first), `--depends-on` when stacking, `--notes` for the risk text.
    The command lints the file and prints its path; on an error, fix the arguments and retry.
+   **Rewrites.** When FINDINGS show a subsystem far from its floor (2x or more) and tuning the
+   incumbent has stopped paying, mint `--kind rewrite --replaces "<kernels replaced>" --stage 1`:
+   a new kernel that replaces the whole subsystem. Name the floor and the incumbent's per-shape
+   time in `expected`, and the design choices that should close the gap (parallelism, bytes in
+   flight, tensor-core path, dequant). A rewrite is judged on the replaced kernels' time against
+   its Milestones, not on the headline; later stages use `--depends-on <previous stage>
+   --stage N+1` and build on that code whatever its score. churnsubs runs rewrites ahead of
+   primaries.
 4. Every new file starts with `review: required`. Before /churnsubs claims it, a fresh Opus
    subagent reviews it adversarially (justification, confounding by landed hypotheses, whether
    an A/B companion with another hypothesis reverted or retuned is needed) and may queue

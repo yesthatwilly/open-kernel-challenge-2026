@@ -110,6 +110,15 @@ C="python3 -I $CLAUDE_PROJECT_DIR/.claude/skills/churnsubs/bin/churn.py"
    and a reason naming in-flight jobs and the next planned dispatch. Outside `/loop`, say when
    the next tick should run.
 
+## Rewrites
+
+`kind: rewrite` hypotheses replace a whole subsystem over staged runs. They are dispatched ahead of
+primaries, harvested like any run, and read on the replaced kernels' own time per shape against the
+incumbent and the floor (their `## Milestones`). A rewrite's next stage (`depends_on` a rewrite)
+is eligible once the previous stage has run, whatever its outcome, because it builds on that code; a
+regression is not a do-not-retry for a rewrite. Promotion is unchanged: only a stage whose headline
+CI clears the floor lands on master.
+
 ## What to tell the user each tick
 
 Three lines unless something needs them: what was harvested (outcome per slug), what the

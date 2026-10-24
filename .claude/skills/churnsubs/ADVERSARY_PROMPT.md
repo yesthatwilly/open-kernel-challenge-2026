@@ -34,6 +34,16 @@ C. **Interference and A/B.** Decide specifically whether an additional run is wa
 D. **Rules.** Flag anything in the change that could break the competition rules (precision,
    caching derived from inputs, every-key attention, host syncs, work outside the timed call).
 
+If the hypothesis has `kind: rewrite`, it replaces a whole subsystem over several staged runs and
+is judged on the replaced kernels' own time against the incumbent and the speed-of-light floor (its
+`## Milestones`), not on the headline. For a rewrite, weigh instead: is the design sound for this
+hardware and these shapes (parallelism, bytes in flight, dequant cost, tensor-core path), is the
+correctness plan adequate, is the stage's milestone readable from the profile, and what is the
+single biggest risk to fix in the next stage. Do not hold a rewrite because one run cannot
+attribute a headline change or because the first stage may be slower than the incumbent; hold it
+only for a rules problem or a design that cannot reach its floor. Companions are rarely useful for
+a rewrite: the next stage is the follow-up.
+
 Return ONLY a JSON object, no prose around it, with this schema:
 {
  "model": "opus",
