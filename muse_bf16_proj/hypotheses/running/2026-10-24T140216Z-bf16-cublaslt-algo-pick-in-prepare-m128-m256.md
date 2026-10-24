@@ -84,13 +84,19 @@ review: proceed
 status: running
 review_at: 2026-10-24T140632Z
 review_companions: null
-stage: claimed
+stage: implemented
 claimed_at: 2026-10-24T164257Z
 base_sha: 13bdacf95cb5cf6521efd5d84b33f2580fb203f7
 base_blob: a8bb42ac483318e9fbc84bc7826a27b7a704d1fb
 branch: hyp/muse_bf16_proj/bf16-cublaslt-algo-pick-in-prepare-m128-m256
 worktree: .worktrees/muse_bf16_proj/bf16-cublaslt-algo-pick-in-prepare-m128-m256
 mode: null
+implemented_at: 2026-10-24T164830Z
+impl_commit: a77cdec64609c037327ef9e9a511154dd9463de4
+submission_sha256: 64af013bdd366ad4e03a1a286a339a1fc999c34dca8128d117071d97fa0547cf
+norm_sha256: 6628c5ad469e8670e7fe761f21e7f008f8ce4b03cf9f692ae2b75ac51aeae7f0
+submission_blob: 944e64ec552e22118083c1b6febff93fff2de4e2
+lint_warnings: 12
 ---
 
 # bf16-cublaslt-algo-pick-in-prepare-m128-m256
@@ -139,3 +145,71 @@ C. No companion is warranted. No landed hypothesis touches the m=128/256 bf16 pa
 - Is prepare()'s single-kernel median (event pair per replay after a 256 MiB flush) close to the judge's per-shape median? The judge's reported time includes ~2-4 us per graph node for nvjet+splitKreduce pairs (LESSONS). A candidate that adds a separate reduce node can look better in prepare() than in the judge if the events bracket only the kernel. Bracket the whole graph replay, as specified, and prefer the 3% margin to be measured that way.
 - Could torch.cuda.tunable (TunableOp) with an offline-recorded result file loaded in prepare() achieve the same without load_inline on this image? Probably not worth it on CUDA, but it would remove the compile risk.
 
+
+## Implementation notes
+
+Worktree `.worktrees/muse_bf16_proj/bf16-cublaslt-algo-pick-in-prepare-m128-m256`, file `muse_bf16_proj/submission.py` only (+334 lines, 0 removed; uncommitted).
+
+- New section (6) after `_swapab_prepare`: constants `LT_*`, the C++ source `_LT_CPP`, and `_lt_build`, `_lt_route_ok`, `_lt_forward`, `_lt_graph_median_us`, `_lt_rel`, `_lt_prepare`, `_lt_pick`. Module docstring gains one paragraph.
+- `_LT_CPP` (cpp only, built with `load_inline(name="muse_bf16_lt_algo_v1", functions=["candidates","run"], with_cuda=True, extra_cflags=["-O2"], extra_ldflags=["-lcublasLt"])`):
+  - descriptors cached in a static map keyed by (n, k, m): CUBLAS_COMPUTE_32F / CUDA_R_32F scale, TRANSA=T, TRANSB=N; A = W as col-major k x n ld k, B = x as col-major k x m ld k, D = out as col-major n x m ld n, all CUDA_R_16BF. alpha 1, beta 0, C = D.
+  - `candidates(n, k, m, max_algos, ws_bytes)` sets PREF_MAX_WORKSPACE_BYTES = 32 MiB, calls cublasLtMatmulAlgoGetHeuristic, returns `[algos int64 [count, 8], info int64 [count, 8]]`. info = (CONFIG_ID, TILE_ID, STAGES_ID, SPLITK_NUM, REDUCTION_SCHEME, workspaceSize, wavesCount*1000, state), -1 for any attribute that cannot be read. A static_assert pins `sizeof(cublasLtMatmulAlgo_t) == 64`.
+  - `run(x, w, out, algo_row, ws)` checks dtype, contiguity and shape metadata, memcpys the CPU int64 [8] row into a cublasLtMatmulAlgo_t, and calls cublasLtMatmul with `at::cuda::getCurrentCUDABlasLtHandle()` on `at::cuda::getCurrentCUDAStream()` and the caller's workspace. No sync and no allocation, so it can be captured.
+- `_lt_prepare(state)` is called last in `prepare()`. It always sets `state["lt_algo"] = {}`, `state["lt_ws"] = {}` and `state["lt_ext"] = None` first. If the build fails, it prints `[lt] load_inline failed ... master path kept` and returns. For each (layer, m) in {qkv_gate, o, pooler, unpooler} x {128, 256} with n the full weight width, `_lt_pick` does the following:
+  - synthetic x: randn, seeded generator 1234, cast to bf16. fp64 reference `x.double() @ w.double().T`.
+  - incumbent = `_bf16_gemm_dispatch_impl(x, w, None)`: its rel err vs fp64 is recorded, and it is timed by graph replay.
+  - candidate exclusion, each printed with its reason:
+    - heuristic state != success
+    - **split-K with reduction scheme != COMPUTE_TYPE (2)**. This rejects INPLACE (1) and OUTPUT_TYPE (4), i.e. bf16 reductions, and also NONE or unreadable when splitK > 1.
+    - SPLITK_NUM unreadable
+    - workspace > 32 MiB
+    - raises
+    - non-finite output
+    - rel L2 vs torch's (incumbent) output > 1e-3
+    - **extra guard**: rel L2 vs fp64 > 1.10 x the incumbent's rel L2. This catches any reduced-precision reduction the attributes might not reveal, e.g. opaque nvjet configs.
+  - timing (`_lt_graph_median_us`): one CUDA graph per call, 30 replays, each preceded by `flush.zero_()` on a 256 MiB buffer. torch.cuda.Event records bracket the whole `g.replay()`, so split-K reduce nodes are included, as the review asked. The median is taken.
+  - a candidate is kept only if `best_median <= 0.97 * incumbent_median`. It is stored as `state["lt_algo"][(layer, m)] = row` (CPU int64 [8]) and `state["lt_ws"][(layer, m)]` (32 MiB uint8). The workspaces of keys that keep the incumbent are freed.
+  - a per-key exception prints `[lt] <layer> m=<m>: algo search failed, master path kept`. An exception outside the per-key loop clears all keys (`algo search aborted, master path kept everywhere`). The flush buffer and graphs are freed, then `empty_cache()` runs.
+  - printed: per key, the candidate count, the incumbent time and its fp64 error. Per candidate: algo id, tile, stages, splitK, reduction, workspace, waves, then the time or the exclusion reason. A final table has layer, m, cands, valid, incumbent_us, best_us and chosen (`cand i` / `incumbent`). This answers the review's open questions 1 and 2 from the log.
+- `kernel_fn`: in the `layer != "router"` branch, before master's `_bf16_gemm_dispatch_impl` line, `lt_key = (layer, cfg["m"])`. If `lt_key in state["lt_algo"]` and `_lt_route_ok`, it returns `_lt_forward(...)`, which does `torch.empty((m, n), bf16)` and then `ext.run`. `_lt_route_ok` checks that cfg n/k equal the weight's full shape and that x is a contiguous bf16 [cfg m, k] whose data_ptr is 256-byte aligned (pointer metadata, not values). Lookups use exact keys only: m=130, 512 and 1000 and every m <= 32 keep master's path unchanged.
+
+Deviations from the spec, and why:
+1. An extra precision guard, the fp64 error ratio of 1.10x the incumbent's. Correctness comes first on a scored submit, and the reduction-scheme attribute may not describe nvjet configs.
+2. `candidates` returns an info tensor alongside the [count, 8] algo tensor, for the printed attribute table (review open questions).
+3. An alignment guard in `_lt_route_ok` (the Lt heuristic's default 256-B alignment assumption). On a miss it falls back to master's path rather than issuing a possibly-invalid algo.
+4. Only chosen keys keep their workspace.
+
+The TMA/NN-layout probe and the enumeration of AlgoGetIds/ConfigSetAttribute (open question 1's follow-up) are not done: they are new ideas.
+
+## Rules check
+
+Checked against `git -C .worktrees/muse_bf16_proj/bf16-cublaslt-algo-pick-in-prepare-m128-m256 diff` (334 insertions, 0 deletions, submission.py only):
+
+- [x] CUDA-graph capturable. kernel_fn's new path is `_lt_route_ok`, which reads cfg, shape, dtype, contiguity and data_ptr alignment only, and `_lt_forward`: `torch.empty` and `ext.run`, which is one cublasLtMatmul on the current stream with a prepare()-allocated workspace and a host-side 64-byte memcpy of a CPU algo row. There is no `.item()`/`.cpu()`/sync/print in the timed path. Every sync, `.item()` and `.tolist()` in the diff is in `_lt_prepare`, `_lt_pick` or `_lt_graph_median_us`, all prepare()-only. Branching uses cfg and shapes only.
+- [x] Nothing derived from `data` is cached across calls. `state["lt_algo"]`, `lt_ws` and `lt_ext` are written only in prepare(), from the weights' shapes and synthetic randn x. kernel_fn only reads them. The C++ static descriptor map is keyed by (n, k, m) shapes only.
+- [x] Weights: unchanged. The bf16 weights are passed to cublasLtMatmul as stored (no repack, no precision change). The router path is untouched.
+- [x] Activations bf16 where SGLang keeps bf16: bf16 x in, CUBLAS_COMPUTE_32F accumulate, bf16 out, the same as SGLang's cuBLAS call. Split-K algos that reduce in bf16 (INPLACE / OUTPUT_TYPE) are excluded, and an fp64-error guard backs that up. The KV-cache and query items are n/a: this problem has no attention.
+- [x] n/a: no attention in muse_bf16_proj; every weight row is read (full K, full N).
+- [x] No timing patches, harness frames/I/O/secrets, module edits, reference import, subprocesses or network. torch.cuda.Event and CUDAGraph are used, not patched, only inside prepare() for the selection. `load_inline` runs the compiler toolchain, as the accepted muse_attention_decode submission does. Noted as a residual uncertainty in the report.
+- [x] All work happens inside the timed call; no output caching or replay. kernel_fn computes every output fresh with cublasLtMatmul. Only the *algorithm choice* (made from synthetic data in untimed prepare()) is reused.
+- [x] First line is still `# okc: problem=muse_bf16_proj`. No triton.autotune, and no timing or autotune in kernel_fn.
+
+Lint (`okc_lint.py ... --problem muse_bf16_proj`):
+
+```
+warn  host-sync    L845: torch.cuda.synchronize()  (outside kernel_fn's call graph; fine in prepare())
+warn  host-sync    L850: torch.cuda.synchronize()  (outside kernel_fn's call graph; fine in prepare())
+warn  host-sync    L858: torch.cuda.synchronize()  (outside kernel_fn's call graph; fine in prepare())
+warn  host-sync    L866: return ((a64 - b64).norm() / b64.norm().clamp_min(1e-300)).item()  (outside kernel_fn's call graph; fine in prepare())
+warn  dtype        L883: flush = torch.empty(LT_FLUSH_BYTES, dtype=torch.uint8, device=dev)  (allowed only where SGLang does the same)
+warn  host-sync    L899: torch.cuda.synchronize()  (outside kernel_fn's call graph; fine in prepare())
+warn  host-sync    L915: torch.cuda.synchronize()  (outside kernel_fn's call graph; fine in prepare())
+warn  dtype        L928: ws = torch.empty(LT_WS_BYTES, dtype=torch.uint8, device=w.device)  (allowed only where SGLang does the same)
+warn  host-sync    L936: algo_id, tile, stages, splitk, red, ws_need, waves, st = (int(v) for v in info[i].tolist())  (outside kernel_fn's call graph; fine in prepare())
+warn  host-sync    L951: finite = bool(torch.isfinite(out).all().item())  (outside kernel_fn's call graph; fine in prepare())
+warn  host-sync    L956: torch.cuda.synchronize()  (outside kernel_fn's call graph; fine in prepare())
+warn  host-sync    L966: torch.cuda.synchronize()  (outside kernel_fn's call graph; fine in prepare())
+OK with warnings: muse_bf16_proj/submission.py
+```
+
+None of the warnings needs a fix. Every host-sync warning is in prepare()-only helpers. The two uint8 dtype warnings are the L2 flush buffer and the cuBLASLt workspace byte buffers, not activations. `python3 -I -m py_compile` passed, and the `__pycache__` it left was removed.
