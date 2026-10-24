@@ -55,13 +55,15 @@ base_sha: 4463015ebd7f2b7014e5f694aa241cc9df7a78c1
 base_blob: da55301de1e911aeab09878b0873809f544f436c
 branch: hyp/muse_bf16_proj/unpooler-slice-triton-splitk8-semaphore
 worktree: .worktrees/muse_bf16_proj/unpooler-slice-triton-splitk8-semaphore
-mode: null
+mode: check
 implemented_at: 2026-10-24T092304Z
 impl_commit: 7268a14ec78030b9963963467a795338c9ec7991
 submission_sha256: 9c0712327475b27a716d7d7b4be5a0ec8c542b744f439962cf689c626c985201
 norm_sha256: 4ccacdc6bd1e81598f059527db394c7abdbe37b4d923db3acb09798c021c3097
 submission_blob: 624e853ce7ad81e7d9dbc088ddf90dc63639382a
 lint_warnings: 0
+attempt_file: 2026-10-24T092305Z-check-unpooler-slice-triton-splitk8-semaphore.md
+prepared_at: 2026-10-24T092305Z
 ---
 
 # unpooler-slice-triton-splitk8-semaphore
