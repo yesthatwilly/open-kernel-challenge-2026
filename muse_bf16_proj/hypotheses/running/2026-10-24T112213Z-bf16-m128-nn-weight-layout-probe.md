@@ -65,13 +65,15 @@ base_sha: d7e6aa9aa0faeb496ce10cb8bef5d8c21c203563
 base_blob: da55301de1e911aeab09878b0873809f544f436c
 branch: hyp/muse_bf16_proj/bf16-m128-nn-weight-layout-probe
 worktree: .worktrees/muse_bf16_proj/bf16-m128-nn-weight-layout-probe
-mode: null
+mode: check
 implemented_at: 2026-10-24T112600Z
 impl_commit: 9cc504ee118bf1676c8b8088112d9ce099409c97
 submission_sha256: aa17fdce397cf559fb58be2761bd3104a3f9868a3c534f72b9acbd819c9bf77a
 norm_sha256: 02569bb6114e44cb416765475308984d6c07f6fdb9a9090bd58bcacd7153e834
 submission_blob: 453ddb06377027a864a7611601f4317d21222ec7
 lint_warnings: 0
+attempt_file: 2026-10-24T112600Z-check-bf16-m128-nn-weight-layout-probe.md
+prepared_at: 2026-10-24T112600Z
 ---
 
 # bf16-m128-nn-weight-layout-probe
