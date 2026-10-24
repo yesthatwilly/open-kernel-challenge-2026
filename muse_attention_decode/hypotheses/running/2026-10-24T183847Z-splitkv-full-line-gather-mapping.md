@@ -39,13 +39,15 @@ base_sha: 4c028efec3a6ee2276ec49319d77241309209016
 base_blob: c6854f093588da524e63657576b27ed720756e32
 branch: hyp/muse_attention_decode/splitkv-full-line-gather-mapping
 worktree: .worktrees/muse_attention_decode/splitkv-full-line-gather-mapping
-mode: null
+mode: check
 implemented_at: 2026-10-24T184625Z
 impl_commit: 7dafeb48bc57fc18b4e72ce32e77d0a3e1551fb0
 submission_sha256: 8c2c608f4a035b5c6f4afd94d546358bc9b7d1a9648b8b2458caf75677fe9b64
 norm_sha256: 5b99a3f1858a7f3c021f1ce45cfee8f39caa2e5cfdaae946009de25b690db0a4
 submission_blob: 8baca1f0ee9cd9c5e15bb0a9829567ea6095fc91
 lint_warnings: 0
+attempt_file: 2026-10-24T184625Z-check-splitkv-full-line-gather-mapping.md
+prepared_at: 2026-10-24T184625Z
 ---
 
 # splitkv-full-line-gather-mapping
