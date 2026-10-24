@@ -38,9 +38,16 @@ priority: 3
 kind: control
 controls_for: router-splitk32-small-m-all-loads-in-flight
 review: proceed
-status: queued
+status: running
 review_at: 2026-10-24T104313Z
 review_companions: null
+stage: claimed
+claimed_at: 2026-10-24T104313Z
+base_sha: 60622cdebc40953738b4429ef80902673cd5f50f
+base_blob: a0fcbb70e25fa568ef94f81935748440798a1410
+branch: hyp/muse_bf16_proj/router-splitk32-small-m-all-loads-in-flight-control-stages3
+worktree: .worktrees/muse_bf16_proj/router-splitk32-small-m-all-loads-in-flight-control-stages3
+mode: null
 ---
 
 # router-splitk32-small-m-all-loads-in-flight-control-stages3
