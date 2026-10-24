@@ -1,0 +1,185 @@
+diff --git a/muse_attention_decode/submission.py b/muse_attention_decode/submission.py
+index 1c0f5fa..2ee9358 100644
+--- a/muse_attention_decode/submission.py
++++ b/muse_attention_decode/submission.py
+@@ -408,10 +408,13 @@ def _paired_norm_gate_kernel(
+ # (both KV heads), copied with 16-byte cp.async.cg into a 4-stage ring (16 KB per stage), whose
+ # 16-byte chunks are XOR-swizzled by token so the fragment reads are bank-conflict free. The
+ # tile sequence runs across items without draining. Warp w serves KV head w % 2 and tokens
+-# (w / 2) * 16 .. +16 of each tile with mma.sync m16n8k16 (f16 in, fp32 accumulate): S = Q K^T
+-# with the head's 8 queries as rows 0-7 (rows 8-15 zero), then O += P V. FP8 E4M3 is widened to
+-# f16 exactly (cvt.rn.f16x2.e4m3x2). The dot product's k order is permuted identically for Q
+-# and K so each lane reads 4 contiguous K bytes; P@V's output columns are permuted (column n of
++# (w / 2) * 16 .. +16 of each tile: S = Q K^T with the native FP8 tensor-core op mma.sync
++# m16n8k32 e4m3 x e4m3 (fp32 accumulate) on the raw query and K bytes (the head's 8 queries as
++# rows 0-7, rows 8-15 zero; natural dim order, each lane reads 4 contiguous K bytes per register),
++# then O += P V with m16n8k16 (f16 in, fp32 accumulate), V widened to f16 exactly
++# (cvt.rn.f16x2.e4m3x2). If the FP8 build or its self-check fails, the same source is rebuilt
++# with SPLITKV_FP8QK 0: master's f16 QK path (Q and K widened, m16n8k16, k order permuted
++# identically for both). P@V's output columns are permuted (column n of
+ # n-block nb is dim n * 8 + nb) so each lane reads 8 contiguous V bytes per token. Softmax is
+ # online in the exp2 domain (fp32 m, l; -inf safe). Positions >= cache_seqlens[b] are never
+ # dereferenced (zero-filled copies) and are masked to -inf. At item end the four warps of each
+@@ -431,6 +434,7 @@ void splitkv_attn(torch::Tensor q, torch::Tensor k_cache, torch::Tensor v_cache,
+                   double score_scale, int64_t max_chunks, int64_t grid);
+ void splitkv_combine(torch::Tensor ws_acc, torch::Tensor ws_ml, torch::Tensor cache_seqlens, torch::Tensor v_scale,
+                      torch::Tensor qkv, int64_t qkv_stride, torch::Tensor out, int64_t max_chunks, double eps);
++std::vector<int64_t> splitkv_info();
+ """
+ 
+ _SPLITKV_CUDA = r"""
+@@ -500,6 +504,18 @@ __device__ __forceinline__ void mma16816(float (&c)[4], uint32_t a0, uint32_t a1
+       : "+f"(c[0]), "+f"(c[1]), "+f"(c[2]), "+f"(c[3])
+       : "r"(a0), "r"(a1), "r"(a2), "r"(a3), "r"(b0), "r"(b1));
+ }
++#if SPLITKV_FP8QK
++// D = A B + D, m16n8k32, A row-major e4m3 (4 regs of 4 bytes), B col-major e4m3 (2 regs), fp32
++// accumulate (PTX sm_89+). A: a0 = row groupID, k 4*qi..+3; a1 = row +8; a2 = row groupID,
++// k 16+4*qi..+3; a3 = row +8. B: b0 = k 4*qi..+3, b1 = k 16+4*qi..+3, column groupID. The lowest
++// byte of each register is the lowest k. C has the same layout as m16n8k16's.
++__device__ __forceinline__ void mma16832_e4m3(float (&c)[4], uint32_t a0, uint32_t a1, uint32_t a2, uint32_t a3,
++                                              uint32_t b0, uint32_t b1) {
++  asm("mma.sync.aligned.m16n8k32.row.col.f32.e4m3.e4m3.f32 {%0,%1,%2,%3}, {%4,%5,%6,%7}, {%8,%9}, {%0,%1,%2,%3};\n"
++      : "+f"(c[0]), "+f"(c[1]), "+f"(c[2]), "+f"(c[3])
++      : "r"(a0), "r"(a1), "r"(a2), "r"(a3), "r"(b0), "r"(b1));
++}
++#endif
+ 
+ __global__ void __launch_bounds__(THREADS, 2)
+ splitkv_attn_kernel(const uint8_t* __restrict__ q,          // e4m3 [B, HQ, D]
+@@ -604,7 +620,11 @@ splitkv_attn_kernel(const uint8_t* __restrict__ q,          // e4m3 [B, HQ, D]
+   const int g = warp & 1;             // kv head
+   const int slice = (warp >> 1) * 16; // token slice of each tile
+   const int quad = lane >> 2, qi = lane & 3;
++#if SPLITKV_FP8QK
++  uint32_t qa[2][2];  // raw e4m3 query bytes: [k-step][a0, a2]
++#else
+   uint32_t qa[4][2];
++#endif
+   float m_i = NEG_INF, l_i = 0.f;
+   float acc[8][4];
+   int cb = 0, cchunk = 0, cseq = 0;
+@@ -623,6 +643,18 @@ splitkv_attn_kernel(const uint8_t* __restrict__ q,          // e4m3 [B, HQ, D]
+     const int k = n / TILES, t = n % TILES;
+     if (t == 0) {
+       item_of(k, cb, cchunk, cseq);
++#if SPLITKV_FP8QK
++      // A operand for k-step s (32 dims): row quad = query g * G + quad; a0 = dims s * 32 + 4 * qi
++      // + (0..3), a2 = dims s * 32 + 16 + 4 * qi + (0..3), raw e4m3 bytes; rows 8-15 (a1, a3) zero.
++      {
++        const uint8_t* qrow = q_s + (k & 1) * HQ * D + (g * G + quad) * D + qi * 4;
++#pragma unroll
++        for (int s = 0; s < 2; ++s) {
++          qa[s][0] = *reinterpret_cast<const uint32_t*>(qrow + s * 32);
++          qa[s][1] = *reinterpret_cast<const uint32_t*>(qrow + s * 32 + 16);
++        }
++      }
++#else
+       // A operand for kstep s: row quad = query g * G + quad; k index 2 * qi + {0, 1} holds dims
+       // s * 16 + 4 * qi + {0, 1}, k index 8 + 2 * qi + {0, 1} holds dims s * 16 + 4 * qi + {2, 3}
+       // (K uses the same permutation, so the dot product is unchanged).
+@@ -630,6 +662,7 @@ splitkv_attn_kernel(const uint8_t* __restrict__ q,          // e4m3 [B, HQ, D]
+ #pragma unroll
+       for (int s = 0; s < 4; ++s)
+         e4m3x4_to_f16x2x2(*reinterpret_cast<const uint32_t*>(qrow + s * 16), qa[s][0], qa[s][1]);
++#endif
+       m_i = NEG_INF;
+       l_i = 0.f;
+ #pragma unroll
+@@ -645,6 +678,16 @@ splitkv_attn_kernel(const uint8_t* __restrict__ q,          // e4m3 [B, HQ, D]
+       s[nb][0] = s[nb][1] = s[nb][2] = s[nb][3] = 0.f;
+       const int tt = slice + nb * 8 + quad;
+       const uint8_t* kr = Ks + tt * ROW + qi * 4;
++#if SPLITKV_FP8QK
++      // B operand for k-step ks: b0 = dims ks * 32 + 4 * qi + (0..3) (16-byte chunk g * 4 + ks * 2),
++      // b1 = dims ks * 32 + 16 + 4 * qi + (0..3) (chunk + 1), both at the token's swizzled chunk.
++#pragma unroll
++      for (int ks = 0; ks < 2; ++ks) {
++        const uint32_t b0 = *reinterpret_cast<const uint32_t*>(kr + (((g * 4 + ks * 2) ^ (tt & 7)) << 4));
++        const uint32_t b1 = *reinterpret_cast<const uint32_t*>(kr + (((g * 4 + ks * 2 + 1) ^ (tt & 7)) << 4));
++        mma16832_e4m3(s[nb], qa[ks][0], 0u, qa[ks][1], 0u, b0, b1);
++      }
++#else
+ #pragma unroll
+       for (int ks = 0; ks < 4; ++ks) {
+         const uint32_t w = *reinterpret_cast<const uint32_t*>(kr + (((g * 4 + ks) ^ (tt & 7)) << 4));
+@@ -652,6 +695,7 @@ splitkv_attn_kernel(const uint8_t* __restrict__ q,          // e4m3 [B, HQ, D]
+         e4m3x4_to_f16x2x2(w, b0, b1);
+         mma16816(s[nb], qa[ks][0], 0u, qa[ks][1], 0u, b0, b1);
+       }
++#endif
+     }
+     // Row quad's scores at tokens slice + 2 * qi + {0, 1} (nb 0) and + 8 (nb 1).
+     const int pos0 = cchunk * CHUNK + t * TILE + slice + qi * 2;
+@@ -826,26 +870,42 @@ void splitkv_combine(torch::Tensor ws_acc, torch::Tensor ws_ml, torch::Tensor ca
+       reinterpret_cast<__nv_bfloat16*>(out.data_ptr()), static_cast<int>(max_chunks), static_cast<float>(eps));
+   C10_CUDA_KERNEL_LAUNCH_CHECK();
+ }
++
++// Build evidence for kernel A, read from the loaded binary in-process: [fp8 QK path, registers per
++// thread, local (spill) bytes per thread, SASS arch (binaryVersion), PTX arch (ptxVersion)].
++std::vector<int64_t> splitkv_info() {
++  cudaFuncAttributes a;
++  C10_CUDA_CHECK(cudaFuncGetAttributes(&a, splitkv_attn_kernel));
++  return {SPLITKV_FP8QK, a.numRegs, static_cast<int64_t>(a.localSizeBytes), a.binaryVersion, a.ptxVersion};
++}
+ """
+ 
+ 
+-def _build_splitkv():
+-    """Compile the CUDA module once per process, at import (never during graph capture)."""
++def _build_splitkv(fp8qk: bool):
++    """Compile the CUDA module once per process, at import (never during graph capture). fp8qk
++    selects kernel A's QK op: native FP8 m16n8k32 e4m3 (True) or master's f16 m16n8k16 (False)."""
+     t0 = time.perf_counter()
++    tag = "fp8qk" if fp8qk else "f16qk"
+     try:
+         from torch.utils.cpp_extension import load_inline
+         ext = load_inline(
+-            name="muse_full_decode_splitkv_v1",
++            name="muse_full_decode_splitkv_v1fp8qk" if fp8qk else "muse_full_decode_splitkv_v1",
+             cpp_sources=_SPLITKV_CPP,
+-            cuda_sources=_SPLITKV_CUDA,
+-            functions=["splitkv_attn", "splitkv_combine"],
++            cuda_sources=f"#define SPLITKV_FP8QK {int(fp8qk)}\n" + _SPLITKV_CUDA,
++            functions=["splitkv_attn", "splitkv_combine", "splitkv_info"],
+             extra_cuda_cflags=["-O3", "-arch=sm_90a"],
+             verbose=False,
+         )
+-    except Exception as e:  # keep the master path if the build fails
+-        print(f"[splitkv] load_inline failed after {time.perf_counter() - t0:.1f}s, master path kept: {e!r}")
++    except Exception as e:  # fall back (f16 kernel, then the master FA3 path) if the build fails
++        print(f"[splitkv] {tag} load_inline failed after {time.perf_counter() - t0:.1f}s: {e!r}")
+         return None
+-    print(f"[splitkv] load_inline compiled in {time.perf_counter() - t0:.1f}s")
++    print(f"[splitkv] {tag} load_inline compiled in {time.perf_counter() - t0:.1f}s")
++    try:
++        fp8, regs, local, sass, ptx = ext.splitkv_info()
++        print(f"[splitkv] {tag} kernel A: SPLITKV_FP8QK={fp8}, {regs} regs/thread, {local} B local/thread, "
++              f"SASS sm_{sass}, PTX compute_{ptx}")
++    except Exception as e:
++        print(f"[splitkv] {tag} splitkv_info failed: {e!r}")
+     return ext
+ 
+ 
+@@ -1068,7 +1128,17 @@ def _splitkv_self_check() -> bool:
+ 
+ 
+ if torch.cuda.is_available():
+-    _EXT = _build_splitkv()
+-    if _EXT is not None and not _splitkv_self_check():
+-        print("[splitkv] SELF-CHECK FAILED: CUDA split-KV path disabled, master FA3 path kept")
++    # FP8 QK kernel first; if its build or self-check fails, master's f16 kernel (not FA3); if that
++    # fails too, the master FA3 path. Native FP8 MMA vs F2FP+HMMA emulation in the SASS cannot be
++    # read in-process (it needs cuobjdump, a subprocess); kernel A's registers/spills are printed.
++    for _fp8qk in (True, False):
++        _EXT = _build_splitkv(_fp8qk)
++        if _EXT is not None and _splitkv_self_check():
++            print("[splitkv] active path: " + ("fp8 QK (mma.sync m16n8k32 e4m3)" if _fp8qk
++                                               else "f16 QK fallback (mma.sync m16n8k16, master kernel)"))
++            break
++        if _EXT is not None:
++            print(f"[splitkv] SELF-CHECK FAILED ({'fp8qk' if _fp8qk else 'f16qk'})")
+         _EXT = None
++    if _EXT is None:
++        print("[splitkv] CUDA split-KV path disabled, master FA3 path kept")

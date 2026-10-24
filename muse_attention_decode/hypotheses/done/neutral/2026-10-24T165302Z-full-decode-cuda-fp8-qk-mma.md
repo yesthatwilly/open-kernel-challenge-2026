@@ -39,10 +39,10 @@ priority: 3
 kind: primary
 controls_for: null
 review: proceed
-status: running
+status: done
 review_at: 2026-10-24T165634Z
 review_companions: null
-stage: dispatched
+stage: harvested
 claimed_at: 2026-10-24T165634Z
 base_sha: 700fed761b57b25cbae687d07371c4020bf38af9
 base_blob: 1c0f5fa1bfc4e602b62e5e9edd9df6d5652b297b
@@ -59,6 +59,13 @@ attempt_file: 2026-10-24T165946Z-submit-full-decode-cuda-fp8-qk-mma.md
 prepared_at: 2026-10-24T165946Z
 job: b939681d3ab549d7
 dispatched_at: 2026-10-24T170002Z
+outcome: neutral
+verdict_detail: within-ci
+speedup: 1.3438993089368396
+speedup_ci: [1.323740819302787, 1.3640577985708922]
+harvested_at: 2026-10-24T173816Z
+best_at_harvest: 1.3948738389144513
+promotion: null
 ---
 
 # full-decode-cuda-fp8-qk-mma
@@ -132,3 +139,35 @@ CLEAN: /home/user/git/musespark/.worktrees/muse_attention_decode/full-decode-cud
 ```
 
 `python3 -I -m py_compile`: OK (its `__pycache__` was removed from the worktree).
+
+## Result
+
+- job `b939681d3ab549d7` (submit), status done, passed True, tests 16/16
+- speedup 1.3439x, 95% CI [1.3237, 1.3641], score 2802.516509201515 µs vs SGLang 3766.3 µs
+- best at harvest: {"speedup": 1.3948738389144513, "ci": [1.3739507313307344, 1.415796946498168], "job": "698d4cd3838c4a63"}; base result: muse_attention_decode/hypotheses/done/gain/full-decode-cuda-gather-splitkv.result.json
+- **outcome: neutral** (within-ci)
+- files: `muse_attention_decode/hypotheses/done/neutral/full-decode-cuda-fp8-qk-mma.result.json`, `muse_attention_decode/hypotheses/done/neutral/full-decode-cuda-fp8-qk-mma.patch`; branch `hyp/muse_attention_decode/full-decode-cuda-fp8-qk-mma`
+
+## Attribution
+
+| shape | w | base µs | hyp µs | delta | verdict |
+|---|---|---|---|---|---|
+| batch=1 ctx=80000 dist=soft heads=tp8 layer=sliding load=decode_1 page=1 | 46 | 13.88 | 13.04 | 1.0384 | gained |
+| batch=1 ctx=80000 dist=coherent heads=tp8 layer=full load=decode_1 page=1 | 16 | 27.93 | 28.06 | 1.0128 | flat |
+| batch=16 ctx=80000 dist=soft heads=tp8 layer=sliding load=decode_16 page=1 spread=agentic | 46 | 20.84 | 20.68 | 0.9986 | flat |
+| batch=16 ctx=80000 dist=coherent heads=tp8 layer=full load=decode_16 page=1 spread=agentic | 16 | 123.02 | 124.53 | 0.9899 | flat |
+| batch=32 ctx=80000 dist=soft heads=tp8 layer=sliding load=decode_32 page=1 spread=agentic | 46 | 25.2 | 24.89 | 1.0187 | flat |
+| batch=32 ctx=80000 dist=coherent heads=tp8 layer=full load=decode_32 page=1 spread=agentic | 16 | 257.75 | 261.16 | 0.986 | flat |
+| batch=1 ctx=80000 dist=soft heads=tp8 layer=sliding load=verify_1 page=1 q_len=8 | 46 | 17.63 | 17.74 | 0.9727 | flat |
+| batch=1 ctx=80000 dist=coherent heads=tp8 layer=full load=verify_1 page=1 q_len=8 | 16 | 30.29 | 30.3 | 0.9826 | flat |
+| batch=16 ctx=80000 dist=soft heads=tp8 layer=sliding load=verify_16 page=1 q_len=8 spread=agentic | 46 | 22.77 | 23.34 | 0.9907 | flat |
+| batch=16 ctx=80000 dist=coherent heads=tp8 layer=full load=verify_16 page=1 q_len=8 spread=agentic | 16 | 162.83 | 163.76 | 1.0014 | flat |
+| batch=32 ctx=80000 dist=soft heads=tp8 layer=sliding load=verify_32 page=1 q_len=8 spread=agentic | 46 | 29.35 | 29.27 | 1.0104 | flat |
+| batch=32 ctx=80000 dist=coherent heads=tp8 layer=full load=verify_32 page=1 q_len=8 spread=agentic | 16 | 301.91 | 302.06 | 1.0007 | flat |
+
+gained on sliding decode_1. Expected hit: 0/3. Noise ±1.5%.
+
+## Follow-ups
+
+- within-ci: the change is not proven either way; a stacked hypothesis (`depends_on: full-decode-cuda-fp8-qk-mma`) that adds a further change in the same area is the only way to learn more (identical code is never re-run).
+
