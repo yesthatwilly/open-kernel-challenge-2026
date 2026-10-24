@@ -34,6 +34,36 @@ Also pre-building nine newly reviewed stage-1 rewrites under the 40% rule; each 
 - prefill: wgmma experts, FP8 attention
 - bf16: lossless compression, CUTLASS stream-K
 
+## Final dispatch list at the reset (all built, all audited by Opus, 2026-10-24 ~18:20Z)
+
+16 high-risk checks, all with a fallback to master and loud PATH CHOSEN log lines. Read those lines before judging any shape.
+
+| problem | check | build | audit result |
+|---|---|---|---|
+| attention | full-verify-cuda-streamk-splitkv | ee7dd20 | as-is (emulated A8/B8) |
+| attention | sliding-cuda-cluster-dsmem-onelaunch | 593859d | fixed: cache byte-match gate always failed |
+| attention | full-cuda-onelaunch-warpspec-bulk-gather | fa289e5 | fixed: fail fast, cache byte-match gate |
+| bf16 | pooler-unpooler-m128-tma-wspec-rewrite | fd7d7ee | as-is (warp_specialize may hang) |
+| bf16 | bf16-small-m-cuda-gemv-rewrite | 6fa230c | as-is |
+| bf16 | bf16-lossless-exp4-weight-stream-rewrite | 7895e56 | as-is (codec bit-exact) |
+| bf16 | bf16-verify-streamk-cutlass-wgmma-rewrite | 08a0e62 | +16 B pointer guard |
+| decode | full-decode-cuda-splitkv-port | e75a020 | as-is (byte-identical port) |
+| decode | moe-chain-cuda-swapab-expert-once-large-t | e65eda8 | as-is |
+| decode | small-t-launch-minimal-dense-chain-pdl | d1f9835 | fixed: xn bound always failed |
+| moe | cuda-nvfp4-swapab-mma-persistent-small-m | f8b3f72 | fixed: align-capacity gate always failed |
+| moe | cuda-fused-moe-bs1-persistent-w13-silu-w2 | 0efab7b | fixed: R=0 Marlin, spins, alignment |
+| moe | cuda-nvfp4-wgmma-rega-grouped-verify | f50b333 | fixed: prepare overrun cascade, setmaxnreg |
+| moe | marlin-two-stream-expert-halves-small-m | (implemented) | not audited (Python streams) |
+| prefill | experts-cuda-wgmma-mixed-input-grouped-gemm | 746b976 | fixed: zero-store gate, producer drain |
+| prefill | attn-full-prefill-cuda-fp8-exp-offload | 5e83a89 | +abs cap on the pass rule |
+
+After these harvest:
+- attention: sliding-verify-cuda-streamk-window and full-verify1-cuda-streamk-batch1, only if the stream-K parent compiled and self-checked.
+- decode: full-verify-cuda-splitkv-stage2, only if the port compiled.
+- moe: cuda-fused-moe-midm-single-launch-routed, only after the swap-AB sibling harvests; it reuses its mainloop.
+
+Six audits found a gate that would have switched a correct kernel off, or a cascade that would have turned a fallback into a failed run. All were fixed before dispatch.
+
 ## Harvest results (2026-10-24 ~18:00Z, per-shape analysis by an Opus agent)
 - attention: no restack. Drop full-fused-decode1 (lost 5% on its target); fp8-qk-mma was flat. Go straight to item 2.
 - bf16: restack m16-swapab + router-swapab (router gated to m<=32), expected ~1.215-1.222. Drop cuBLASLt (it lost at m=256), and keep prefill's dense-gemm-cublaslt held.
