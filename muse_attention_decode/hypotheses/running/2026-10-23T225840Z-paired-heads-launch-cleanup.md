@@ -44,9 +44,16 @@ priority: 3
 kind: primary
 controls_for: null
 review: proceed
-status: queued
+status: running
 review_at: 2026-10-24T104027Z
 review_companions: [paired-heads-launch-cleanup-ab-tune-batch-gate]
+stage: claimed
+claimed_at: 2026-10-24T104027Z
+base_sha: 81028ae9b9d5098940f55070c9174a5674a3aaaf
+base_blob: bc007e643ac0b440147a732071f23d9b3563174c
+branch: hyp/muse_attention_decode/paired-heads-launch-cleanup
+worktree: .worktrees/muse_attention_decode/paired-heads-launch-cleanup
+mode: null
 ---
 
 # paired-heads-launch-cleanup
