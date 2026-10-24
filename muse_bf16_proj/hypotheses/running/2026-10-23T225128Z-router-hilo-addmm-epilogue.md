@@ -40,9 +40,16 @@ priority: 3
 kind: primary
 controls_for: null
 review: proceed
-status: queued
+status: running
 review_at: 2026-10-24T024434Z
 review_companions: [router-hilo-addmm-epilogue-control-inplace-out]
+stage: claimed
+claimed_at: 2026-10-24T024439Z
+base_sha: e64f27ef09b3512d26573dde4d35b8ec3ade1f63
+base_blob: 5a2064af06f442f01dff926cb4f1eca75f992a24
+branch: hyp/muse_bf16_proj/router-hilo-addmm-epilogue
+worktree: .worktrees/muse_bf16_proj/router-hilo-addmm-epilogue
+mode: null
 ---
 
 # router-hilo-addmm-epilogue
