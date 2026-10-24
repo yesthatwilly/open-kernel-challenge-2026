@@ -40,9 +40,16 @@ priority: 4
 kind: primary
 controls_for: null
 review: proceed
-status: queued
+status: running
 review_at: 2026-10-24T124248Z
 review_companions: null
+stage: claimed
+claimed_at: 2026-10-24T124248Z
+base_sha: a98ef454e7901f7ff47efb4c4c0e77e7261da827
+base_blob: c7bf9ffedc48b757f56765004e5d65f6ad5ba841
+branch: hyp/muse_moe_w4a16/post-norm-triton-all-m
+worktree: .worktrees/muse_moe_w4a16/post-norm-triton-all-m
+mode: null
 ---
 
 # post-norm-triton-all-m
