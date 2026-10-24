@@ -113,9 +113,16 @@ controls_for: null
 rewrite_stage: 1
 replaces: _align_parallel_kernel + fused_post_expert_norm_weighted_sum at num_tokens > 32
 review: proceed
-status: queued
+status: running
 review_at: 2026-10-24T183415Z
 review_companions: null
+stage: claimed
+claimed_at: 2026-10-24T183415Z
+base_sha: b17562ed4f8acdd2a6e2e98f542acc2bba35a2b4
+base_blob: 108d36e9f2266fc88531dd6ff0329a847c882013
+branch: hyp/muse_moe_w4a16/cuda-dispatch-combine-pdl-verify
+worktree: .worktrees/muse_moe_w4a16/cuda-dispatch-combine-pdl-verify
+mode: null
 ---
 
 # cuda-dispatch-combine-pdl-verify
