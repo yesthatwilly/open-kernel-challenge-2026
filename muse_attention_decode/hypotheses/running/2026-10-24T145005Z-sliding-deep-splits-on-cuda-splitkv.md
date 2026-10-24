@@ -31,9 +31,16 @@ priority: 1
 kind: primary
 controls_for: null
 review: proceed
-status: queued
+status: running
 review_at: 2026-10-24T164510Z
 review_companions: null
+stage: claimed
+claimed_at: 2026-10-24T164510Z
+base_sha: b1c16f8f1b1394bbe7c86189ca2cccf026a288d2
+base_blob: 1c0f5fa1bfc4e602b62e5e9edd9df6d5652b297b
+branch: hyp/muse_attention_decode/sliding-deep-splits-on-cuda-splitkv
+worktree: .worktrees/muse_attention_decode/sliding-deep-splits-on-cuda-splitkv
+mode: null
 ---
 
 # sliding-deep-splits-on-cuda-splitkv
