@@ -48,9 +48,10 @@ priority: 4
 kind: primary
 controls_for: null
 review: proceed
-status: queued
+status: hold
 review_at: 2026-10-24T165707Z
 review_companions: null
+hold_reason: projected +0.5-0.9% is below noise, and small-t-launch-minimal-dense-chain-pdl (built for the reset) replaces the same align at T<=32. Revisit only if that rewrite fails.
 ---
 
 # moe-align-small-t-restack-on-master
