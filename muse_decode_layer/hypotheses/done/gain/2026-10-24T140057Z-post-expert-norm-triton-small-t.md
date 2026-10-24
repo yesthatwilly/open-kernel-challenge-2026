@@ -80,9 +80,11 @@ speedup: 1.1635238875350442
 speedup_ci: [1.1460710292220184, 1.1809767458480698]
 harvested_at: 2026-10-24T144810Z
 best_at_harvest: 1.0873503247934666
-promotion: merged
+promotion: submitted
 promotion_commit: ea896254423db20bfb9c584010c4b8ca73228a23
 promotion_attempt: 2026-10-24T163458Z-submit-post-expert-norm-triton-small-t.md
+promotion_job: a017e10aec544c55
+promotion_at: 2026-10-24T163514Z
 ---
 
 # post-expert-norm-triton-small-t

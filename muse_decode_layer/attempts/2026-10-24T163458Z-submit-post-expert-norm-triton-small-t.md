@@ -2,7 +2,7 @@
 
 Hypothesis: `muse_decode_layer/hypotheses/done/gain/2026-10-24T140057Z-post-expert-norm-triton-small-t.md` (branch `hyp/muse_decode_layer/post-expert-norm-triton-small-t`).
 
-- **Job:** `<job id>` (`okc status <job>`)
+- **Job:** `a017e10aec544c55` (`okc status <job>`)
 - **File:** `muse_decode_layer/submission.py` at git `85caaf9`
 
 ## Goal
