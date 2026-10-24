@@ -34,7 +34,7 @@ review: proceed
 status: running
 review_at: 2026-10-24T164510Z
 review_companions: null
-stage: implemented
+stage: dispatched
 claimed_at: 2026-10-24T164510Z
 base_sha: b1c16f8f1b1394bbe7c86189ca2cccf026a288d2
 base_blob: 1c0f5fa1bfc4e602b62e5e9edd9df6d5652b297b
@@ -49,6 +49,8 @@ submission_blob: c6854f093588da524e63657576b27ed720756e32
 lint_warnings: 0
 attempt_file: 2026-10-24T164511Z-submit-sliding-deep-splits-on-cuda-splitkv.md
 prepared_at: 2026-10-24T164511Z
+job: 698d4cd3838c4a63
+dispatched_at: 2026-10-24T164523Z
 ---
 
 # sliding-deep-splits-on-cuda-splitkv
