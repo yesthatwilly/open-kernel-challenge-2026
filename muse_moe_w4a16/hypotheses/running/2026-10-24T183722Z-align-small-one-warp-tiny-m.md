@@ -45,7 +45,7 @@ review: proceed
 status: running
 review_at: 2026-10-24T183956Z
 review_companions: null
-stage: implemented
+stage: dispatched
 claimed_at: 2026-10-24T183957Z
 base_sha: 6ef6502619e893cbf1037aeccc0405617e73620d
 base_blob: 108d36e9f2266fc88531dd6ff0329a847c882013
@@ -60,6 +60,8 @@ submission_blob: 92f9e59575322a03267aab74308a495aeeaf19f1
 lint_warnings: 8
 attempt_file: 2026-10-24T184146Z-submit-align-small-one-warp-tiny-m.md
 prepared_at: 2026-10-24T184146Z
+job: 38532ba10e394e3c
+dispatched_at: 2026-10-24T184157Z
 ---
 
 # align-small-one-warp-tiny-m
