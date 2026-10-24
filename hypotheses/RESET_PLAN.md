@@ -47,7 +47,7 @@ Also pre-building nine newly reviewed stage-1 rewrites under the 40% rule; each 
 | bf16 | bf16-small-m-cuda-gemv-rewrite | 6fa230c | as-is |
 | bf16 | bf16-lossless-exp4-weight-stream-rewrite | 7895e56 | as-is (codec bit-exact) |
 | bf16 | bf16-verify-streamk-cutlass-wgmma-rewrite | 08a0e62 | +16 B pointer guard |
-| decode | full-decode-cuda-splitkv-port | e75a020 | as-is (byte-identical port) |
+| decode | full-decode-cuda-splitkv-port | f6cc145 | as-is (byte-identical port) |
 | decode | moe-chain-cuda-swapab-expert-once-large-t | e65eda8 | as-is |
 | decode | small-t-launch-minimal-dense-chain-pdl | d1f9835 | fixed: xn bound always failed |
 | moe | cuda-nvfp4-swapab-mma-persistent-small-m | f8b3f72 | fixed: align-capacity gate always failed |
