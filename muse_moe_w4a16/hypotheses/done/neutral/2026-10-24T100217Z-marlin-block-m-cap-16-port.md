@@ -52,10 +52,10 @@ priority: 1
 kind: primary
 controls_for: null
 review: proceed
-status: running
+status: done
 review_at: 2026-10-24T103919Z
 review_companions: null
-stage: dispatched
+stage: harvested
 claimed_at: 2026-10-24T103919Z
 base_sha: 150297e8627364911bee843d85d02b432ebf9b41
 base_blob: 11fbc1957daf7294cd2810ff82a0aad2f25644bd
@@ -72,6 +72,13 @@ attempt_file: 2026-10-24T103946Z-check-marlin-block-m-cap-16-port.md
 prepared_at: 2026-10-24T103946Z
 job: 1c33392914594026
 dispatched_at: 2026-10-24T103958Z
+outcome: neutral
+verdict_detail: beats-base-not-best
+speedup: 1.0950242298999575
+speedup_ci: [1.078598866451458, 1.1114495933484567]
+harvested_at: 2026-10-24T112411Z
+best_at_harvest: 1.1297159216968498
+promotion: null
 ---
 
 # marlin-block-m-cap-16-port
@@ -142,3 +149,29 @@ okc_lint output:
 warn  host-sync    L113: torch.cuda.synchronize()  (outside kernel_fn's call graph; fine in prepare())
 OK with warnings: .worktrees/muse_moe_w4a16/marlin-block-m-cap-16-port/muse_moe_w4a16/submission.py
 ```
+
+## Result
+
+- job `1c33392914594026` (check), status done, passed True, tests 5/5
+- speedup 1.0950x, 95% CI [1.0786, 1.1114], score 12281.463398511893 µs vs SGLang 13448.5 µs
+- best at harvest: {"speedup": 1.1297159216968498, "ci": [1.112770182871397, 1.1466616605223023], "job": "bacd1f502f4e46fa"}; base result: muse_moe_w4a16/hypotheses/done/gain/sglang-marlin-path-parity.result.json
+- **outcome: neutral** (beats-base-not-best)
+- files: `muse_moe_w4a16/hypotheses/done/neutral/marlin-block-m-cap-16-port.result.json`, `muse_moe_w4a16/hypotheses/done/neutral/marlin-block-m-cap-16-port.patch`; branch `hyp/muse_moe_w4a16/marlin-block-m-cap-16-port`
+
+## Attribution
+
+| shape | w | base µs | hyp µs | delta | verdict |
+|---|---|---|---|---|---|
+| bs=1 load=decode_1 sharding=ep8 | 60 | 80.23 | 83.02 | 1.0078 | flat |
+| bs=16 load=decode_16 sharding=ep8 | 60 | 191.41 | 188.81 | 0.9989 | flat |
+| bs=32 load=decode_32 sharding=ep8 | 60 | 208.15 | 207.13 | 0.9993 | flat |
+| bs=8 load=verify_1 sharding=ep8 | 60 | 152.04 | 144.91 | 0.9964 | flat |
+| bs=128 load=verify_16 sharding=ep8 | 60 | 462.46 | 337.83 | 1.3858 | gained |
+| bs=256 load=verify_32 sharding=ep8 | 60 | 621.28 | 465.34 | 1.3283 | gained |
+
+gained on verify_16 verify_16; verify_32 verify_32. Expected hit: 6/6. Noise ±1.5%.
+
+## Follow-ups
+
+- beats-base-not-best: the change is not proven either way; a stacked hypothesis (`depends_on: marlin-block-m-cap-16-port`) that adds a further change in the same area is the only way to learn more (identical code is never re-run).
+

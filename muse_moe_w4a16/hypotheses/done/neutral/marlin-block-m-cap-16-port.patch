@@ -1,0 +1,22 @@
+diff --git a/muse_moe_w4a16/submission.py b/muse_moe_w4a16/submission.py
+index 11fbc19..ba5f406 100644
+--- a/muse_moe_w4a16/submission.py
++++ b/muse_moe_w4a16/submission.py
+@@ -68,6 +68,9 @@ N_EXPERTS = 256
+ TOP_K = 8
+ # MuseSpark1xFp4Experts' candidates, smallest first.
+ BLOCK_SIZE_M_CANDIDATES = (8, 16, 32, 48, 64)
++# Hypothesis marlin-block-m-cap-16-port: cap Marlin's block_size_m at 16 (decode_layer's landed
++# cap; SGLang's T*8/count rule overcounts routes per local expert 8x under EP8).
++MARLIN_BLOCK_SIZE_M_CAP = 16
+ POST_NORM_EPS = 1e-8
+ 
+ 
+@@ -135,6 +138,7 @@ def kernel_fn(data: Inputs, state: dict) -> torch.Tensor:
+     for block_size_m in BLOCK_SIZE_M_CANDIDATES:
+         if num_tokens * TOP_K / bank["count"] / block_size_m < 0.9:
+             break
++    block_size_m = min(block_size_m, MARLIN_BLOCK_SIZE_M_CAP)
+     if num_tokens == 1 and expert_map is None:
+         from sglang.kernels.ops.moe.moe_align_single_token import moe_align_single_token
+ 
