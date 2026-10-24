@@ -72,9 +72,16 @@ controls_for: null
 rewrite_stage: 2
 replaces: Marlin w13+w2 (moe_wna16_marlin_gemm x2) at every prefill T
 review: proceed
-status: queued
+status: running
 review_at: 2026-10-24T100201Z
 review_companions: null
+stage: claimed
+claimed_at: 2026-10-24T100201Z
+base_sha: 6a70bfaac484039ebab2355adee2262c864eee2d
+base_blob: 2e6cb7c89a513e08be4b5e163319fbc34a35f854
+branch: hyp/muse_prefill_layer/experts-triton-w4a16-swapab-reglhs
+worktree: .worktrees/muse_prefill_layer/experts-triton-w4a16-swapab-reglhs
+mode: null
 ---
 
 # experts-triton-w4a16-swapab-reglhs
