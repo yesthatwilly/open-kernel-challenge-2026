@@ -1,6 +1,6 @@
 # muse_prefill_layer hypotheses
 
-Regenerated 2026-10-24T024944Z. Best: none yet
+Regenerated 2026-10-24T044311Z. Best: 1.0039x [0.9888,1.0189] job `62025c368c3c4e8e` (check)
 
 | created | slug | kind | area | where | outcome | speedup | CI | job | mode | promotion | review | expected hit |
 |---|---|---|---|---|---|---|---|---|---|---|---|---|
@@ -13,4 +13,4 @@ Regenerated 2026-10-24T024944Z. Best: none yet
 | 2026-10-23T230250Z | fa3-contiguous-kv-gather | primary | FA3 call | queue | queued |  |  |  |  |  | required |  |
 | 2026-10-23T230250Z | moe-align-side-stream | primary | MoE align/dispatch | queue | queued |  |  |  |  |  | required |  |
 | 2026-10-23T230250Z | qk-norm-fp8-cache-store-fusion | primary | pre-attention norm+rope + cache store | queue | queued |  |  |  |  |  | required |  |
-| 2026-10-23T230250Z | sglang-pipeline-parity | primary | whole-layer parity (SGLang pipeline) + routing remap | running | running |  |  | 62025c368c3c4e8e | check |  | proceed |  |
+| 2026-10-23T230250Z | sglang-pipeline-parity | primary | whole-layer parity (SGLang pipeline) + routing remap | done/gain | gain | 1.0039 | [0.989,1.019] | 62025c368c3c4e8e | check | merged-unsubmitted | proceed | 3/3 |

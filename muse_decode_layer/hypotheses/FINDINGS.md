@@ -1,6 +1,6 @@
 # muse_decode_layer findings
 
-Regenerated 2026-10-24T041234Z by `churn.py index`. Read this before writing a hypothesis for muse_decode_layer.
+Regenerated 2026-10-24T044311Z by `churn.py index`. Read this before writing a hypothesis for muse_decode_layer.
 
 ## Current best
 
@@ -23,12 +23,15 @@ Where the time goes (per scored shape, top kernels):
 
 ## By area
 
+### cache store
+- **cache-store-fused-fp8-cast** → neutral (unproven-vs-best), 1.0303x — no shape moved outside noise. In kernel_fn, replace the four separate launches between FusedQKNorm and flash_attn_with_kvcache, namely k.to(FP8), v.to(FP8), store_cache(...) and q.view(token
+
 ### router GEMM
 - **sglang-pipeline-parity-router-hilo-m8** → gain (gain), 1.0216x — gained on sliding decode_1, decode_16, decode_32, verify_1, verify_16, verify_32; full decode_1, decode_16, decode_32, verify_1, verify_16, verify_32. Replace the starter's plain-PyTorch layer with SGLang's own pipeline exactly as baseline.py composes it: prepare() builds the Marlin bank via prepare_moe_nvfp4_
 
 ## Open follow-ups
 
-- none
+- cache-store-fused-fp8-cast: unproven-vs-best: the change is not proven either way; a stacked hypothesis (`depends_on: cache-store-fused-fp8-cast`) that adds a further change in the same area is the only way to learn more (identical code is never re
 
 ## Do not retry (rejected / duplicates)
 
@@ -43,5 +46,4 @@ Where the time goes (per scored shape, top kernels):
 - queue: trtllm-decode-full-attention [FA3 call] p5 queued
 - queue: fa3-num-splits-sliding [FA3 call] p2 hold
 - queue: moe-align-single-kernel-small-t [MoE align/dispatch] p3 queued
-- running: cache-store-fused-fp8-cast [cache store] p2 running
 - running: expert-id-map-single-kernel [MoE align/dispatch] p2 running
