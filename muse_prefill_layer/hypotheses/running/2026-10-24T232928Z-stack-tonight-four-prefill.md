@@ -29,7 +29,7 @@ base_sha: eb35e7e2a89baeba03be2ed19b88daff5128f06a
 base_blob: 635cfee3ac2c3f7c66840b8c8a082cad2fa41a68
 branch: hyp/muse_prefill_layer/stack-tonight-four-prefill
 worktree: .worktrees/muse_prefill_layer/stack-tonight-four-prefill
-mode: null
+mode: check
 restack_of: null
 stale_base: null
 implemented_at: 2026-10-24T232938Z
@@ -38,6 +38,8 @@ submission_sha256: 66c638f476c307b916335c2ae5a65774d6a88d5d32de7feb8307f6e3f66da
 norm_sha256: 89579d09c3367258bc7ee538e4ed4b8a1d32d190e9191809c68b49a9956cc518
 submission_blob: b0ff525343837b435079497123fefed9afff961c
 lint_warnings: 13
+attempt_file: 2026-10-24T232938Z-check-stack-tonight-four-prefill.md
+prepared_at: 2026-10-24T232938Z
 ---
 
 # stack-tonight-four-prefill
