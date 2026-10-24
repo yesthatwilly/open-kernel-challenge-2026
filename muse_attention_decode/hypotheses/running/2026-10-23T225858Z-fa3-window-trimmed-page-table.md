@@ -55,13 +55,19 @@ review: proceed
 status: running
 review_at: 2026-10-24T111856Z
 review_companions: null
-stage: claimed
+stage: implemented
 claimed_at: 2026-10-24T111857Z
 base_sha: def56122736897df0372457a74ffefcdf4c21add
 base_blob: bc007e643ac0b440147a732071f23d9b3563174c
 branch: hyp/muse_attention_decode/fa3-window-trimmed-page-table
 worktree: .worktrees/muse_attention_decode/fa3-window-trimmed-page-table
 mode: null
+implemented_at: 2026-10-24T112037Z
+impl_commit: 4c6a0d6ab3393e81daec6ad7672e374b8896d33e
+submission_sha256: 4a79f6396ac39f305e0c5690c125cb11b4eb873b33e52646dbacd15cc99bd7ce
+norm_sha256: 8cdc88d2ac5dbe063d1717eba2875681fb99a7ad9b1d1d4b52db043d9903c8dc
+submission_blob: ac136b3a030593ae8650e0b5687f4e23d9caf2fc
+lint_warnings: 0
 ---
 
 # fa3-window-trimmed-page-table
@@ -105,3 +111,31 @@ No companion is warranted. The change has one effect (what FA3 sees on sliding l
 - Does the combine kernel's cost scale with the number of splits FA3 picks, or is it ~2.5-4 us fixed launch+latency? If fixed, only a 1-split schedule (fa3-single-split-sliding) removes it, and trimming helps only insofar as it makes FA3 choose num_splits=1.
 - Order relative to fa3-single-split-sliding (queued p4): both target the same combine/split overhead. Run this one first. If FA3's split count does not drop, single-split is the remaining probe of the same lever. If it does drop, single-split becomes largely redundant.
 
+
+## Implementation notes
+
+- Added `_window_trim_kernel` (Triton, grid `(B,)`, `num_warps=4`) after `_pre_attention_kernel` in `muse_attention_decode/submission.py`. Per request: `n = cache_seqlens[b]`, `first_page = max(n - W, 0) // P`, `pt_win[b, i] = page_table[b, first_page + i]` for `i < NP` (masked to -1 past the table width), `len_win[b] = n - first_page * P`. `tl.arange` needs a power of two, so it runs over `BLOCK = next_power_of_2(NP)` lanes with an `i < NP` mask on load and store (NP = 2049/2056 at page 1, 33 at page 64).
+- In `kernel_fn`, only when `window != 0`: `W = window - 1 + L`, `NP = ceil(W / P) + 1` with `P = cfg["page_size"]`; fresh `pt_win` int32 `[B, NP]` and `len_win` int32 `[B]` from `torch.empty` (shapes depend only on config), then the FA3 call takes `page_table=pt_win, cache_seqlens=len_win`. Everything else in the call (q, caches, cu_seqlens_q, max_seqlen_q=L, softmax scale, causal, window_size, scheduler_metadata (None on sliding), descale) is unchanged. Full layers (window == 0) keep the input page_table/cache_seqlens and the paired-head path, untouched.
+- The trim launch is enqueued after `_pre_attention_kernel` and reads only inputs (`page_table`, `cache_seqlens`), so its order relative to the cache store does not matter; the new rows are reached through the same page entries.
+- No deviation from the spec. Not done (review open questions, out of scope for the implementer): reading flash_prepare_scheduler.cu to predict whether prepare already clamps to the window; folding the trim into `_pre_attention_kernel` (a separate follow-up if the launch eats the gain).
+
+## Rules check
+
+Checked against `git -C .worktrees/muse_attention_decode/fa3-window-trimmed-page-table diff` (1 file, +40 -2).
+
+- [x] CUDA-graph capturable: no `.item()`/`.cpu()`/`synchronize()`/tensor prints; the trim reads `cache_seqlens` on device; `pt_win`/`len_win` shapes and the `if window:` branch depend only on `config` (window, q_len, page_size, batch) and `page_table.shape[1]`, not on values.
+- [x] Nothing derived from `data` is cached across calls: `pt_win`/`len_win` are fresh each call; no new module-level state (only the existing `_INV_FREQ`, keyed on config theta).
+- [x] Weights: n/a: this problem has no weights; the diff touches none.
+- [x] Activations BF16 where SGLang keeps BF16; KV cache FP8; queries FP8 E4M3: unchanged by the diff (only the page_table/cache_seqlens handed to FA3 differ).
+- [x] Attention sees every key: the trimmed table starts at `first_page*P <= max(len - W, 0)`, the first key of query 0 window, and ends at `len`, so every key of every query window (2,048 tokens) is in it; FA3 own window mask (unchanged `window_size=(window-1, 0)`, bottom-right aligned causal) is what excludes keys outside the window, exactly as before. Only keys the window already excludes are dropped from the table. No top-k/sparse/weight-based skipping.
+- [x] No timing patches, harness frames/I/O/secrets, module edits, reference import, subprocesses or network: the diff adds one Triton kernel and its launch; no new imports.
+- [x] All work happens inside the timed call; no output caching or replay: the trim kernel runs inside `kernel_fn` each call.
+- [x] First-line marker `# okc: problem=muse_attention_decode` kept; no `triton.autotune`.
+
+Lint (`okc_lint.py <worktree>/muse_attention_decode/submission.py --problem muse_attention_decode`):
+
+```
+CLEAN: muse_attention_decode/submission.py
+```
+
+`python3 -I -m py_compile`: OK; no `__pycache__` left in the worktree.
