@@ -36,8 +36,10 @@ depends_on: paired-heads-launch-cleanup
 priority: 2
 kind: ab-tune
 controls_for: paired-heads-launch-cleanup
-review: required
+review: proceed
 status: queued
+review_at: 2026-10-24T104320Z
+review_companions: null
 ---
 
 # paired-heads-launch-cleanup-ab-tune-batch-gate
@@ -57,3 +59,25 @@ From the parent's branch (paired-heads-launch-cleanup built on master), change o
 ## Risk
 
 Decides whether pairing must be gated to batch > 1 or whether the launch cleanup alone makes batch 1 acceptable; also the likely promotion candidate (~+4-5% geomean over the ungated cleanup if the estimates hold).
+
+## Adversarial review
+
+Reviewed 2026-10-24T104320Z by an adversarial subagent (model opus).
+
+**Verdict: proceed.** Implementable as written, as a one-predicate edit on the parent's worktree: add `and batch > 1` to `paired = window == 0 and hkv % 2 == 0`. The parent's else-branch already is master's pre-pairing path (64-wide q from the fused kernel, original cache views, descale expanded to (batch, hkv), judge scheduler_metadata, SGLang rms_norm_gate). It cleanly decides whether B=1 should be gated off the paired geometry.
+
+### Justification
+Mechanism is sound and well supported. On master the paired path costs B=1 full 38.7 us (decode_1) and 46.0 us (verify_1) against 27.9 / 30.0 us on the unpaired fused-preattention-triton lineage. The top kernels show the loss is mostly intrinsic to pairing at S=1: combine 7.1->10.3 us and 7.3->12.5 us, verify FA3 14.9->18.3 us, plus FA3's internal prepare launch because metadata=None. It is not only the pad/unpad launches, so the parent's cleanup cannot fully recover B=1, and LESSONS line 71 already says 'Gate it on batch'. The gated B=1 path is code that has already been measured (the fused-preattention-triton build), so the 'faster than parent at decode_1/verify_1' expectation is near-certain unless the parent's cleanup unexpectedly brings paired B=1 under ~28/30 us. B>=16 is byte-identical to the parent: predicate true, same constexprs and buffers. Shape weights: decode_1 and verify_1 are two of the twelve scored shapes, so restoring ~10-25% on each is a multi-percent geomean move. Weakest link: the companion's magnitude (and its value as the promotion candidate) rests on the parent's ungated B=1 estimate (~31-32 / ~39-40 us). That estimate is unmeasured. If the cleanup does better than estimated, the gate's margin shrinks toward flat. That result is still interpretable, because the parent and the companion differ only at B=1.
+
+### Confounders on the current kernel
+- fa3-hdim128-head-pairing: this is exactly the thing being gated. At B=1 the companion reverts to the pre-pairing path, so the B=1 delta between companion and parent is cleanly 'paired+cleanup vs unpaired'. That is the intended measurement, not a confound.
+- fused-preattention-triton: the gated B=1 path uses its PAIRED=False, 64-wide q layout, the same as master's pre-pairing build. The one predicate drives both the constexpr and the FA3 branch in the parent's code, so no layout mismatch is possible as long as the batch term is added to that single `paired` variable and not to a second copy.
+
+### Interference and A/B needs
+No further companions (as instructed), and none needed. The parent/companion pair is a clean A/B. The two are identical at B>=16, so any B>=16 difference measures run-to-run drift. They differ only on full decode_1/verify_1, where the companion runs the previously measured unpaired path. Whichever direction B=1 moves, the comparison reads directly: gate wins, a tie, or cleanup-everywhere wins.
+
+### Open questions
+- The expected directions are stated relative to the parent, not to master. Against master's BEST, B>=16 full shapes should be faster (the cleanup's gain), not flat. Make sure the harvester compares this run with the parent's run and not with BEST when it scores the expectations.
+- Implement it by editing only line 180 of the parent's submission.py (`paired = window == 0 and hkv % 2 == 0 and batch > 1`). Do not duplicate the predicate. Confirm the batch=1 correctness tests at page_size 64 and kv_scale != 1 now take the unpaired branch and still pass. They are master's validated path, but the tests are the check.
+- If the parent has not finished yet, check out its committed branch head (hyp/muse_attention_decode/paired-heads-launch-cleanup) before applying the one-line change, so that B>=16 really is byte-identical.
+
