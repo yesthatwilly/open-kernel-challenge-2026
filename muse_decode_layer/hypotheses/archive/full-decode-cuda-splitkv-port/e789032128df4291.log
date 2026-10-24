@@ -1,0 +1,6 @@
+[splitkv] load_inline compiled in 49.6s
+[splitkv] self-check B=5 kv_scale=1.0 grid=device: rel L2 1.67e-03, finite True
+[splitkv] self-check B=5 kv_scale=0.25 grid=3: rel L2 1.66e-03, finite True
+[splitkv] self-check B=5 kv_scale=1.0 grid=3: rel L2 1.69e-03, finite True
+[splitkv] self-check B=33 kv_scale=1.0 grid=device: rel L2 1.63e-03, finite True
+[splitkv] self-check passed: CUDA split-KV path on full decode, 1 < batch <= 64

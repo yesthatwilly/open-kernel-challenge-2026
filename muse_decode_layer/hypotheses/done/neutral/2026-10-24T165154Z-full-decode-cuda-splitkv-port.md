@@ -57,10 +57,10 @@ controls_for: null
 rewrite_stage: 1
 replaces: paired FA3 flash_fwd main + FlashAttnFwdCombine + pad/unpad copies + FusedRMSNormGate on full-layer decode, batch 16/32
 review: proceed
-status: running
+status: done
 review_at: 2026-10-24T165606Z
 review_companions: null
-stage: dispatched
+stage: harvested
 claimed_at: 2026-10-24T165606Z
 base_sha: f3620a153798c4af3feb47a7fc26977635b8a6f3
 base_blob: cc466fce207709c98ab0e78c2435c1c459890fdb
@@ -77,6 +77,13 @@ attempt_file: 2026-10-24T181733Z-submit-full-decode-cuda-splitkv-port.md
 prepared_at: 2026-10-24T181733Z
 job: e789032128df4291
 dispatched_at: 2026-10-24T181805Z
+outcome: neutral
+verdict_detail: unproven-vs-best
+speedup: 1.186218559298957
+speedup_ci: [1.1684252809094726, 1.2040118376884412]
+harvested_at: 2026-10-24T184717Z
+best_at_harvest: 1.1664628806987323
+promotion: null
 ---
 
 # full-decode-cuda-splitkv-port
@@ -171,3 +178,36 @@ OK with warnings: submission.py
 ```
 
 (The first lint pass flagged `error network` on the word "requests" in the self-check docstring; reworded to "sequences".) `python3 -I -m py_compile` OK; __pycache__ removed.
+
+## Result
+
+- job `e789032128df4291` (submit), status done, passed True, tests 13/13
+- speedup 1.1862x, 95% CI [1.1684, 1.2040], score 19069.251465234505 µs vs SGLang 22620.3 µs
+- best at harvest: {"speedup": 1.1664628806987323, "ci": [1.1489659374882513, 1.183959823909213], "job": "a017e10aec544c55"}; base result: muse_decode_layer/hypotheses/done/gain/post-expert-norm-triton-small-t.result.json
+- **outcome: neutral** (unproven-vs-best)
+- files: `muse_decode_layer/hypotheses/done/neutral/full-decode-cuda-splitkv-port.result.json`, `muse_decode_layer/hypotheses/done/neutral/full-decode-cuda-splitkv-port.patch`; branch `hyp/muse_decode_layer/full-decode-cuda-splitkv-port`
+
+## Attribution
+
+| shape | w | base µs | hyp µs | delta | verdict |
+|---|---|---|---|---|---|
+| batch=1 ctx=80000 dist=soft layer=sliding load=decode_1 page=1 repeats=60 | 46 | 145.83 | 144.97 | 1.0089 | flat |
+| batch=1 ctx=80000 dist=soft layer=full load=decode_1 page=1 repeats=60 | 16 | 156.95 | 156.49 | 1.0095 | flat |
+| batch=16 ctx=80000 dist=soft layer=sliding load=decode_16 page=1 spread=agentic | 46 | 225.79 | 230.07 | 0.9939 | flat |
+| batch=16 ctx=80000 dist=soft layer=full load=decode_16 page=1 spread=agentic | 16 | 364.88 | 329.13 | 1.1276 | gained |
+| batch=32 ctx=80000 dist=soft layer=sliding load=decode_32 page=1 spread=agentic | 46 | 251.94 | 260.43 | 0.9966 | flat |
+| batch=32 ctx=80000 dist=soft layer=full load=decode_32 page=1 spread=agentic | 16 | 535.78 | 490.19 | 1.1026 | gained |
+| batch=1 ctx=80000 dist=soft layer=sliding load=verify_1 page=1 q_len=8 | 46 | 200.79 | 202.99 | 1.0049 | flat |
+| batch=1 ctx=80000 dist=soft layer=full load=verify_1 page=1 q_len=8 | 16 | 218.06 | 220.46 | 0.9926 | flat |
+| batch=16 ctx=80000 dist=soft layer=sliding load=verify_16 page=1 q_len=8 spread=agentic | 46 | 462.37 | 435.66 | 1.0271 | flat |
+| batch=16 ctx=80000 dist=soft layer=full load=verify_16 page=1 q_len=8 spread=agentic | 16 | 603.87 | 590.55 | 1.0285 | flat |
+| batch=32 ctx=80000 dist=soft layer=sliding load=verify_32 page=1 q_len=8 spread=agentic | 46 | 639.36 | 643.87 | 1.0085 | flat |
+| batch=32 ctx=80000 dist=soft layer=full load=verify_32 page=1 q_len=8 spread=agentic | 16 | 932.92 | 909.53 | 0.9948 | flat |
+
+gained on full decode_16, decode_32. Expected hit: 5/5. Noise ±1.5%.
+
+## Follow-ups
+
+- rewrite stage 1 of `paired FA3 flash_fwd main + FlashAttnFwdCombine + pad/unpad copies + FusedRMSNormGate on full-layer decode, batch 16/32`: read the replaced kernels' own us per shape (profile top_kernels) against the incumbent and the floor, and check which Milestone it reached. The next stage is `/hypothesize muse_decode_layer "<what to fix or tune>" --kind rewrite --depends-on full-decode-cuda-splitkv-port --stage 2`; a slow or failed first cut is the expected start, not a do-not-retry.
+- unproven-vs-best: the change is not proven either way; a stacked hypothesis (`depends_on: full-decode-cuda-splitkv-port`) that adds a further change in the same area is the only way to learn more (identical code is never re-run).
+
