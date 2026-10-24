@@ -31,10 +31,10 @@ priority: 1
 kind: primary
 controls_for: null
 review: proceed
-status: running
+status: done
 review_at: 2026-10-24T164510Z
 review_companions: null
-stage: dispatched
+stage: harvested
 claimed_at: 2026-10-24T164510Z
 base_sha: b1c16f8f1b1394bbe7c86189ca2cccf026a288d2
 base_blob: 1c0f5fa1bfc4e602b62e5e9edd9df6d5652b297b
@@ -51,6 +51,13 @@ attempt_file: 2026-10-24T164511Z-submit-sliding-deep-splits-on-cuda-splitkv.md
 prepared_at: 2026-10-24T164511Z
 job: 698d4cd3838c4a63
 dispatched_at: 2026-10-24T164523Z
+outcome: gain
+verdict_detail: gain
+speedup: 1.3948738389144513
+speedup_ci: [1.3739507313307344, 1.415796946498168]
+harvested_at: 2026-10-24T173231Z
+best_at_harvest: 1.3492076314709118
+promotion: onboard
 ---
 
 # sliding-deep-splits-on-cuda-splitkv
@@ -117,3 +124,35 @@ Checked against `git -C .worktrees/muse_attention_decode/sliding-deep-splits-on-
 - [x] First line marker kept; no triton.autotune.
 
 okc_lint: CLEAN.
+
+## Result
+
+- job `698d4cd3838c4a63` (submit), status done, passed True, tests 16/16
+- speedup 1.3949x, 95% CI [1.3740, 1.4158], score 2700.100822688804 µs vs SGLang 3766.3 µs
+- best at harvest: {"speedup": 1.3492076314709118, "ci": [1.328969516998848, 1.3729544014677721], "job": "de486093311d4bb9"}; base result: muse_attention_decode/hypotheses/done/gain/full-decode-cuda-gather-splitkv.result.json
+- **outcome: gain** (gain)
+- files: `muse_attention_decode/hypotheses/done/gain/sliding-deep-splits-on-cuda-splitkv.result.json`, `muse_attention_decode/hypotheses/done/gain/sliding-deep-splits-on-cuda-splitkv.patch`; branch `hyp/muse_attention_decode/sliding-deep-splits-on-cuda-splitkv`
+
+## Attribution
+
+| shape | w | base µs | hyp µs | delta | verdict |
+|---|---|---|---|---|---|
+| batch=1 ctx=80000 dist=soft heads=tp8 layer=sliding load=decode_1 page=1 | 46 | 13.88 | 13.17 | 1.0483 | gained |
+| batch=1 ctx=80000 dist=coherent heads=tp8 layer=full load=decode_1 page=1 | 16 | 27.93 | 27.26 | 1.0182 | flat |
+| batch=16 ctx=80000 dist=soft heads=tp8 layer=sliding load=decode_16 page=1 spread=agentic | 46 | 20.84 | 15.34 | 1.3531 | gained |
+| batch=16 ctx=80000 dist=coherent heads=tp8 layer=full load=decode_16 page=1 spread=agentic | 16 | 123.02 | 122.79 | 1.0029 | flat |
+| batch=32 ctx=80000 dist=soft heads=tp8 layer=sliding load=decode_32 page=1 spread=agentic | 46 | 25.2 | 24.24 | 1.0462 | gained |
+| batch=32 ctx=80000 dist=coherent heads=tp8 layer=full load=decode_32 page=1 spread=agentic | 16 | 257.75 | 241.9 | 1.0653 | gained |
+| batch=1 ctx=80000 dist=soft heads=tp8 layer=sliding load=verify_1 page=1 q_len=8 | 46 | 17.63 | 16.72 | 1.032 | gained |
+| batch=1 ctx=80000 dist=coherent heads=tp8 layer=full load=verify_1 page=1 q_len=8 | 16 | 30.29 | 30.03 | 0.9955 | flat |
+| batch=16 ctx=80000 dist=soft heads=tp8 layer=sliding load=verify_16 page=1 q_len=8 spread=agentic | 46 | 22.77 | 22.67 | 1.0013 | flat |
+| batch=16 ctx=80000 dist=coherent heads=tp8 layer=full load=verify_16 page=1 q_len=8 spread=agentic | 16 | 162.83 | 161.98 | 1.0048 | flat |
+| batch=32 ctx=80000 dist=soft heads=tp8 layer=sliding load=verify_32 page=1 q_len=8 spread=agentic | 46 | 29.35 | 28.7 | 1.0144 | flat |
+| batch=32 ctx=80000 dist=coherent heads=tp8 layer=full load=verify_32 page=1 q_len=8 spread=agentic | 16 | 301.91 | 300.83 | 1.0006 | flat |
+
+gained on sliding decode_1, decode_16, decode_32, verify_1; full decode_32. Expected hit: 2/4. Noise ±1.5%.
+
+## Follow-ups
+
+- candidate for promotion; stack further changes with `depends_on` once it lands.
+
