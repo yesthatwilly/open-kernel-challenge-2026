@@ -111,7 +111,7 @@ review: proceed
 status: running
 review_at: 2026-10-24T170237Z
 review_companions: null
-stage: implemented
+stage: dispatched
 claimed_at: 2026-10-24T170237Z
 base_sha: 663f5edaa1c1e7a6a50c7a891240deafb601a765
 base_blob: d9a9375ef4721ab9b28cc9d6364c92e67c7ccc59
@@ -126,6 +126,8 @@ submission_blob: 7d31b758c60017e045f6e0f75d2e437931ea34b0
 lint_warnings: 20
 attempt_file: 2026-10-24T181733Z-submit-cuda-nvfp4-swapab-mma-persistent-small-m.md
 prepared_at: 2026-10-24T181733Z
+job: 8f198afc3bf14f6f
+dispatched_at: 2026-10-24T181805Z
 ---
 
 # cuda-nvfp4-swapab-mma-persistent-small-m
