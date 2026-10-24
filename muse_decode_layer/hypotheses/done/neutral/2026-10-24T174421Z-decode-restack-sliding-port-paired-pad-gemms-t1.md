@@ -37,10 +37,10 @@ priority: 1
 kind: primary
 controls_for: null
 review: proceed
-status: running
+status: done
 review_at: 2026-10-24T174912Z
 review_companions: null
-stage: dispatched
+stage: harvested
 claimed_at: 2026-10-24T174912Z
 base_sha: c8af06125b23fb943b7a8f7c26fc6b9a677dd1e0
 base_blob: cc466fce207709c98ab0e78c2435c1c459890fdb
@@ -57,6 +57,13 @@ attempt_file: 2026-10-24T175151Z-submit-decode-restack-sliding-port-paired-pad-g
 prepared_at: 2026-10-24T175151Z
 job: 4739dd4590524487
 dispatched_at: 2026-10-24T175201Z
+outcome: neutral
+verdict_detail: beats-base-not-best
+speedup: 1.1936609677153938
+speedup_ci: [1.175756053199663, 1.2115658822311246]
+harvested_at: 2026-10-24T184718Z
+best_at_harvest: 1.228328123558382
+promotion: null
 ---
 
 # decode-restack-sliding-port-paired-pad-gemms-t1
@@ -139,3 +146,35 @@ OK with warnings: /home/user/git/musespark/.worktrees/muse_decode_layer/decode-r
 ```
 
 `python3 -I -m py_compile`: OK; `__pycache__` removed.
+
+## Result
+
+- job `4739dd4590524487` (submit), status done, passed True, tests 13/13
+- speedup 1.1937x, 95% CI [1.1758, 1.2116], score 18950.355764161493 µs vs SGLang 22620.3 µs
+- best at harvest: {"speedup": 1.228328123558382, "ci": [1.2099032017050062, 1.2467530454117577], "job": "81ee6714b7614a99"}; base result: muse_decode_layer/hypotheses/done/gain/post-expert-norm-triton-small-t.result.json
+- **outcome: neutral** (beats-base-not-best)
+- files: `muse_decode_layer/hypotheses/done/neutral/decode-restack-sliding-port-paired-pad-gemms-t1.result.json`, `muse_decode_layer/hypotheses/done/neutral/decode-restack-sliding-port-paired-pad-gemms-t1.patch`; branch `hyp/muse_decode_layer/decode-restack-sliding-port-paired-pad-gemms-t1`
+
+## Attribution
+
+| shape | w | base µs | hyp µs | delta | verdict |
+|---|---|---|---|---|---|
+| batch=1 ctx=80000 dist=soft layer=sliding load=decode_1 page=1 repeats=60 | 46 | 145.83 | 133.47 | 1.0875 | gained |
+| batch=1 ctx=80000 dist=soft layer=full load=decode_1 page=1 repeats=60 | 16 | 156.95 | 150.93 | 1.0335 | gained |
+| batch=16 ctx=80000 dist=soft layer=sliding load=decode_16 page=1 spread=agentic | 46 | 225.79 | 221.47 | 0.9964 | flat |
+| batch=16 ctx=80000 dist=soft layer=full load=decode_16 page=1 spread=agentic | 16 | 364.88 | 366.1 | 1.0157 | flat |
+| batch=32 ctx=80000 dist=soft layer=sliding load=decode_32 page=1 spread=agentic | 46 | 251.94 | 260.11 | 0.9947 | flat |
+| batch=32 ctx=80000 dist=soft layer=full load=decode_32 page=1 spread=agentic | 16 | 535.78 | 535.89 | 1.0144 | flat |
+| batch=1 ctx=80000 dist=soft layer=sliding load=verify_1 page=1 q_len=8 | 46 | 200.79 | 196.93 | 1.0165 | flat |
+| batch=1 ctx=80000 dist=soft layer=full load=verify_1 page=1 q_len=8 | 16 | 218.06 | 212.7 | 1.0014 | flat |
+| batch=16 ctx=80000 dist=soft layer=sliding load=verify_16 page=1 q_len=8 spread=agentic | 46 | 462.37 | 449.64 | 1.0227 | flat |
+| batch=16 ctx=80000 dist=soft layer=full load=verify_16 page=1 q_len=8 spread=agentic | 16 | 603.87 | 594.36 | 1.0471 | gained |
+| batch=32 ctx=80000 dist=soft layer=sliding load=verify_32 page=1 q_len=8 spread=agentic | 46 | 639.36 | 632.63 | 1.0408 | gained |
+| batch=32 ctx=80000 dist=soft layer=full load=verify_32 page=1 q_len=8 spread=agentic | 16 | 932.92 | 907.66 | 1.0269 | flat |
+
+gained on sliding decode_1, verify_32; full decode_1, verify_16. Expected hit: 3/5. Noise ±1.5%.
+
+## Follow-ups
+
+- beats-base-not-best: the change is not proven either way; a stacked hypothesis (`depends_on: decode-restack-sliding-port-paired-pad-gemms-t1`) that adds a further change in the same area is the only way to learn more (identical code is never re-run).
+

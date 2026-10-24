@@ -1,0 +1,877 @@
+diff --git a/muse_decode_layer/submission.py b/muse_decode_layer/submission.py
+index cc466fc..a37cb6c 100644
+--- a/muse_decode_layer/submission.py
++++ b/muse_decode_layer/submission.py
+@@ -40,6 +40,17 @@ Everything else is SGLang's pipeline as baseline.py composes it:
+                                    norm (JIT)
+ 
+ Differs from SGLang:
++  * Sliding batch-1 decode (hypothesis sliding-fused-triton-decode1-port, config-only gate): after
++    the qkv projection, one _sliding_fused_kernel launch (ported from muse_attention_decode) does
++    the QK-norm + RoPE, the FP8 cache store, the 16-split window attention with an in-kernel
++    combine and the output norm x sigmoid(gate), replacing FusedQKNorm through FusedRMSNormGate.
++  * Full layers with batch > 1 (hypothesis paired-heads-pad-unpad-triton): the paired path's
++    zero-pad + FP8 cast of the query and its half-select + output norm x sigmoid(gate) are one
++    Triton launch each (_pair_pad_q_kernel, _paired_norm_gate_kernel).
++  * At T == 1 only the qkv_gate, o and pooler GEMMs and the unpooler slice run Triton kernels
++    ported from muse_bf16_proj (hypothesis bf16-shape-gated-triton-gemms-small-t, restacked with
++    the gate narrowed to T == 1); routed by token count and tensor shapes only. Every T > 1 keeps
++    bf16_gemm_dispatch exactly as before.
+   * The step's positions, cache rows, FA3 lengths and FA3 scheduler metadata come in with the
+     inputs; SGLang builds them once per step for all layers.
+   * All-reduces are the identity; the all-gather is a zero pad of the unpooler's output."""
+@@ -235,6 +246,645 @@ def _post_norm_combine_kernel(y_ptr, ids_ptr, tw_ptr, w_ptr, out_ptr, H, eps,
+     tl.store(out_ptr + t.to(tl.int64) * H + offs, acc.to(tl.bfloat16), mask=mask)
+ 
+ 
++# Sliding batch-1 decode: muse_attention_decode's _sliding_fused_kernel and its helpers,
++# ported verbatim (hypothesis sliding-fused-triton-decode1-port).
++_INV_FREQ = {}
++
++
++def _inv_freq(theta: float, d: int, device) -> torch.Tensor:
++    """[d/2] float32 theta^(-2i/d), built exactly as the reference builds it; cached per theta."""
++    key = (theta, d, str(device))
++    cache = _INV_FREQ.get(key)
++    if cache is None:
++        cache = _INV_FREQ[key] = 1.0 / (theta ** (torch.arange(0, d, 2, device=device).float() / d))
++    return cache
++
++
++LOG2E = 1.4426950408889634
++_COUNTERS = {}
++
++
++def _counters(batch: int, hkv: int, device) -> torch.Tensor:
++    """int32 [B*Hkv] ticket counters for the in-kernel split combine. Zeroed once per
++    (B, Hkv, device) on the first (eager) call; every launch leaves them at 0 again (the
++    program that draws the last ticket resets its counter), so they hold no data."""
++    key = (batch, hkv, str(device))
++    buf = _COUNTERS.get(key)
++    if buf is None:
++        buf = _COUNTERS[key] = torch.zeros(batch * hkv, dtype=torch.int32, device=device)
++    return buf
++
++
++def _num_splits(batch: int, hkv: int) -> int:
++    """Window splits per (request, kv head), from config only: the power of two that brings
++    the grid to ~128 CTAs, capped at 16 (B=1: 16, B=16: 4, B=32: 2, B>=64: 1)."""
++    s = 1
++    while s < 16 and batch * hkv * s * 2 <= 128:
++        s *= 2
++    return s
++
++
++@triton.jit
++def _norm_rope(x, xs, pos, freq, d, D: tl.constexpr, ROPE: tl.constexpr, EPS: tl.constexpr):
++    """Rows of x [R, D] (xs: the same rows with each pair swapped, xs[:, d] = x[:, d ^ 1]):
++    scaleless RMSNorm, then interleaved RoPE at pos [R] with freq [D] = inv_freq[d // 2].
++    Even d: x_e cos - x_o sin; odd d: x_o cos + x_e sin, as _pre_attention_kernel."""
++    r = 1.0 / tl.sqrt(tl.sum(x * x, axis=1) / D + EPS)
++    x = x * r[:, None]
++    if ROPE:
++        xs = xs * r[:, None]
++        ang = pos[:, None] * freq[None, :]
++        sign = tl.where(d % 2 == 0, -1.0, 1.0)
++        x = x * tl.cos(ang) + sign[None, :] * xs * tl.sin(ang)
++    return x
++
++
++@triton.jit
++def _gpu_fence(x):
++    """fence.acq_rel.gpu executed by every thread holding an element of x (int32)."""
++    return tl.inline_asm_elementwise("fence.acq_rel.gpu;\n\tmov.b32 $0, $1;", "=r,r", [x],
++                                     dtype=tl.int32, is_pure=False, pack=1)
++
++
++@triton.jit
++def _online_update(qk, valid, v, m_i, l_i, acc):
++    """One key block of the online softmax (base-2 logits qk [M, N], values v [N, D] bf16).
++    -inf safe: a row with no valid key so far keeps m = -inf, l = 0, acc = 0, never NaN."""
++    qk = tl.where(valid, qk, float("-inf"))
++    m_new = tl.maximum(m_i, tl.max(qk, axis=1))
++    m_use = tl.where(m_new == float("-inf"), 0.0, m_new)
++    alpha = tl.exp2(m_i - m_use)
++    p = tl.exp2(qk - m_use[:, None])
++    l_i = l_i * alpha + tl.sum(p, axis=1)
++    acc = acc * alpha[:, None] + tl.dot(p.to(tl.bfloat16), v)
++    return m_new, l_i, acc
++
++
++@triton.jit
++def _gate_epilogue(o, qkv_ptr, out_ptr, tok, head, rvalid, d, qkv_stride,
++                   HQ: tl.constexpr, HKV: tl.constexpr, D: tl.constexpr, EPS: tl.constexpr):
++    """out[tok, head] = rmsnorm(o) * sigmoid(gate), o [M, D] fp32 (no bf16 rounding before)."""
++    r = 1.0 / tl.sqrt(tl.sum(o * o, axis=1) / D + EPS)
++    gptr = qkv_ptr + tok.to(tl.int64)[:, None] * qkv_stride + (HQ + 2 * HKV) * D + head[:, None] * D + d[None, :]
++    gate = tl.load(gptr, mask=rvalid[:, None], other=0.0).to(tl.float32)
++    y = o * r[:, None] * tl.sigmoid(gate)
++    optr = out_ptr + (tok.to(tl.int64)[:, None] * HQ + head[:, None]) * D + d[None, :]
++    tl.store(optr, y.to(tl.bfloat16), mask=rvalid[:, None])
++
++
++@triton.jit
++def _sliding_fused_kernel(
++    qkv_ptr, pos_ptr, loc_ptr, seq_ptr, pt_ptr, inv_freq_ptr, k_scale_ptr, v_scale_ptr,
++    k_cache_ptr, v_cache_ptr, ws_acc_ptr, ws_ml_ptr, cnt_ptr, out_ptr,
++    qkv_stride, pt_stride, q_scale, score_scale,
++    HQ: tl.constexpr, HKV: tl.constexpr, D: tl.constexpr, L: tl.constexpr, M: tl.constexpr,
++    LN: tl.constexpr, WINDOW: tl.constexpr, PAGE: tl.constexpr, S: tl.constexpr,
++    BLOCK_N: tl.constexpr, ROPE: tl.constexpr, EPS: tl.constexpr,
++):
++    """Sliding-window layer, one launch: pre-attention, attention, output norm x gate.
++    Grid (B, HKV, S). Program (b, g, s) serves kv head g's GROUP query heads for the block's L
++    tokens as one M-row tile (row r = j * GROUP + hh; rows past GROUP * L are padding), over
++    chunk s of the old keys [lo, seq - 1], lo = max(0, seq - (WINDOW - 1)). Program S - 1 also
++    builds the L new keys/values, stores them (E4M3) at cache_loc and attends them from
++    registers (causal i <= j). Splits combine in-kernel through a ticket counter."""
++    b = tl.program_id(0)
++    g = tl.program_id(1)
++    s = tl.program_id(2)
++    GROUP: tl.constexpr = HQ // HKV
++    d = tl.arange(0, D)
++    dsw = d ^ 1
++    freq = tl.load(inv_freq_ptr + d // 2) if ROPE else tl.zeros([D], dtype=tl.float32)
++
++    # Query rows: token j = r // GROUP (clamped for padding rows, which stay finite), head h.
++    r = tl.arange(0, M)
++    rvalid = r < GROUP * L
++    j = tl.minimum(r // GROUP, L - 1)
++    head = g * GROUP + r % GROUP
++    tok = b * L + j
++    qrow = qkv_ptr + tok.to(tl.int64)[:, None] * qkv_stride + head[:, None] * D
++    xq = tl.load(qrow + d[None, :], mask=rvalid[:, None], other=0.0).to(tl.float32)
++    xqs = tl.load(qrow + dsw[None, :], mask=rvalid[:, None], other=0.0).to(tl.float32)
++    qpos = tl.load(pos_ptr + tok).to(tl.float32)
++    q = _norm_rope(xq, xqs, qpos, freq, d, D, ROPE, EPS)
++    # bf16 operands (finer than FA3's E4M3), rounded after qk_scale_factor as the reference.
++    q = (q * q_scale).to(tl.bfloat16)
++
++    k_scale = tl.load(k_scale_ptr)
++    v_scale = tl.load(v_scale_ptr)
++    qk_scale = score_scale * k_scale  # sm_scale * log2(e) * k_scale
++    seq = tl.load(seq_ptr + b)
++    p_row = seq + j  # each row's token position
++
++    m_i = tl.full([M], float("-inf"), dtype=tl.float32)
++    l_i = tl.zeros([M], dtype=tl.float32)
++    acc = tl.zeros([M, D], dtype=tl.float32)
++
++    if s == S - 1:
++        # The block's new keys/values for head g: never read back from the cache.
++        i = tl.arange(0, LN)
++        ivalid = i < L
++        ntok = b * L + tl.minimum(i, L - 1)
++        nrow = qkv_ptr + ntok.to(tl.int64)[:, None] * qkv_stride
++        xk = tl.load(nrow + (HQ + g) * D + d[None, :], mask=ivalid[:, None], other=0.0).to(tl.float32)
++        xks = tl.load(nrow + (HQ + g) * D + dsw[None, :], mask=ivalid[:, None], other=0.0).to(tl.float32)
++        kpos = tl.load(pos_ptr + ntok).to(tl.float32)
++        kn = _norm_rope(xk, xks, kpos, freq, d, D, ROPE, EPS)
++        k8 = (kn / k_scale).to(tl.float8e4nv)
++        vn = tl.load(nrow + (HQ + HKV + g) * D + d[None, :], mask=ivalid[:, None], other=0.0).to(tl.float32)
++        v8 = (vn / v_scale).to(tl.float8e4nv)
++        loc = tl.load(loc_ptr + ntok).to(tl.int64)
++        cptr = (loc[:, None] * HKV + g) * D + d[None, :]
++        tl.store(k_cache_ptr + cptr, k8.to(tl.uint8, bitcast=True), mask=ivalid[:, None])
++        tl.store(v_cache_ptr + cptr, v8.to(tl.uint8, bitcast=True), mask=ivalid[:, None])
++        # Attend the stored E4M3 values (dequantized via the scales), causal inside the block.
++        qk = tl.dot(q, tl.trans(k8.to(tl.bfloat16))) * qk_scale
++        valid = ivalid[None, :] & (i[None, :] <= j[:, None])
++        m_i, l_i, acc = _online_update(qk, valid, v8.to(tl.bfloat16), m_i, l_i, acc)
++
++    # Old keys: chunk s of [lo, seq - 1]; every key of every row's window is scored.
++    lo = tl.maximum(seq - (WINDOW - 1), 0)
++    count = seq - lo
++    chunk = ((count + S - 1) // S + BLOCK_N - 1) // BLOCK_N * BLOCK_N
++    start = lo + s * chunk
++    end = tl.minimum(start + chunk, seq)
++    n = tl.arange(0, BLOCK_N)
++    for n0 in range(start, end, BLOCK_N):
++        t = n0 + n
++        tmask = t < end
++        page = tl.load(pt_ptr + b.to(tl.int64) * pt_stride + t // PAGE, mask=tmask, other=0)
++        row = page.to(tl.int64) * PAGE + t % PAGE
++        kvoff = (row[:, None] * HKV + g) * D + d[None, :]
++        kb = tl.load(k_cache_ptr + kvoff, mask=tmask[:, None], other=0).to(tl.float8e4nv, bitcast=True)
++        vb = tl.load(v_cache_ptr + kvoff, mask=tmask[:, None], other=0).to(tl.float8e4nv, bitcast=True)
++        qk = tl.dot(q, tl.trans(kb.to(tl.bfloat16))) * qk_scale
++        # t <= p_j for every old key; the window's lower edge is per row.
++        valid = tmask[None, :] & (t[None, :] >= p_row[:, None] - (WINDOW - 1))
++        m_i, l_i, acc = _online_update(qk, valid, vb.to(tl.bfloat16), m_i, l_i, acc)
++
++    if S == 1:
++        # Program 0 holds the new keys, so l > 0 on every row.
++        o = acc / l_i[:, None] * v_scale
++        _gate_epilogue(o, qkv_ptr, out_ptr, tok, head, rvalid, d, qkv_stride, HQ, HKV, D, EPS)
++    else:
++        bg = b * HKV + g
++        part = (bg * S + s).to(tl.int64)
++        tl.store(ws_acc_ptr + (part * M + r[:, None]) * D + d[None, :], acc)
++        tl.store(ws_ml_ptr + part * 2 * M + r, m_i)
++        tl.store(ws_ml_ptr + part * 2 * M + M + r, l_i)
++        # Release: every thread fences its partial stores at gpu scope, the CTA syncs, then one
++        # acq_rel gpu-scope ticket. The program drawing the last ticket combines.
++        _gpu_fence(r)
++        tl.debug_barrier()
++        ticket = tl.atomic_add(cnt_ptr + bg, 1, sem="acq_rel", scope="gpu")
++        tl.debug_barrier()
++        if ticket == S - 1:
++            _gpu_fence(r)  # acquire side, every thread, before the L2 (.cg) reloads
++            base = (bg * S).to(tl.int64)
++            m_max = tl.full([M], float("-inf"), dtype=tl.float32)
++            for s2 in tl.static_range(S):
++                m_s = tl.load(ws_ml_ptr + (base + s2) * 2 * M + r, cache_modifier=".cg")
++                m_max = tl.maximum(m_max, m_s)
++            # Partial S - 1 holds the new keys and is finite on every row, so m_max is too;
++            # empty or fully masked partials (m = -inf) get weight 0, never exp2(-inf - -inf).
++            m_max = tl.where(m_max == float("-inf"), 0.0, m_max)
++            l_sum = tl.zeros([M], dtype=tl.float32)
++            o = tl.zeros([M, D], dtype=tl.float32)
++            for s2 in tl.static_range(S):
++                m_s = tl.load(ws_ml_ptr + (base + s2) * 2 * M + r, cache_modifier=".cg")
++                l_s = tl.load(ws_ml_ptr + (base + s2) * 2 * M + M + r, cache_modifier=".cg")
++                a_s = tl.load(ws_acc_ptr + ((base + s2) * M + r[:, None]) * D + d[None, :], cache_modifier=".cg")
++                w = tl.where(m_s == float("-inf"), 0.0, tl.exp2(m_s - m_max))
++                l_sum += l_s * w
++                o += a_s * w[:, None]
++            o = o / l_sum[:, None] * v_scale
++            _gate_epilogue(o, qkv_ptr, out_ptr, tok, head, rvalid, d, qkv_stride, HQ, HKV, D, EPS)
++            tl.store(cnt_ptr + bg, 0)  # ready for the next launch / graph replay
++
++
++def _sliding_forward(data, qkv):
++    """Sliding batch-1 decode: one launch of _sliding_fused_kernel on the qkv GEMM's [T, 2304]
++    output, returning the [T, 1024] bf16 normed-and-gated attention output (master's FusedQKNorm,
++    FP8 casts, store_cache, FA3 and FusedRMSNormGate at that shape). Branches on config only."""
++    cfg = data["config"]
++    batch, length = cfg["batch"], cfg["q_len"]
++    hq, hkv, d = cfg["num_q_heads"], cfg["num_kv_heads"], cfg["head_dim"]
++    tokens = batch * length
++    device = qkv.device
++    theta = cfg["rope_theta"]
++    group = hq // hkv
++    m = max(16, triton.next_power_of_2(group * length))
++    splits = _num_splits(batch, hkv)
++    out = torch.empty((tokens, hq * d), dtype=torch.bfloat16, device=device)
++    if splits > 1:
++        ws_acc = torch.empty((batch * hkv * splits, m, d), dtype=torch.float32, device=device)
++        ws_ml = torch.empty((batch * hkv * splits, 2, m), dtype=torch.float32, device=device)
++        counters = _counters(batch, hkv, device)
++    else:
++        ws_acc = ws_ml = counters = out  # unused when S == 1
++    inv_freq = _inv_freq(theta, d, device) if theta else data["k_scale"]  # unused when ROPE is off
++    page_table = data["page_table"]
++    _sliding_fused_kernel[(batch, hkv, splits)](
++        qkv, data["positions"], data["cache_loc"], data["seq_lens"], page_table, inv_freq,
++        data["k_scale"], data["v_scale"],
++        data["k_cache"].view(torch.uint8), data["v_cache"].view(torch.uint8), ws_acc, ws_ml, counters, out,
++        qkv.stride(0), page_table.stride(0), cfg["qk_scale_factor"], cfg["sm_scale"] * LOG2E,
++        HQ=hq, HKV=hkv, D=d, L=length, M=m, LN=max(16, triton.next_power_of_2(length)),
++        WINDOW=cfg["window"], PAGE=cfg["page_size"], S=splits, BLOCK_N=64, ROPE=bool(theta), EPS=RMS_EPS,
++        num_warps=4, num_stages=2,
++    )
++    return out
++
++
++@triton.jit
++def _pair_pad_q_kernel(
++    q_ptr, out_ptr, q_stride_t, q_stride_h,
++    HQ: tl.constexpr, D: tl.constexpr, G: tl.constexpr,
++):
++    """Paired-path FA3 query, one program per (token, query head): reads head h's D values of
++    FusedQKNorm's q through its strides, rounds them to FP8 E4M3 and writes them into the half
++    (h // G) % 2 of the [tokens, HQ, 2*D] FP8 query (its KV head's half of the paired 128-byte
++    row), and D FP8 zeros into the other half, so every byte of the buffer is written each call."""
++    t = tl.program_id(0)
++    h = tl.program_id(1)
++    j = tl.arange(0, D)
++    half = (h // G) % 2
++    x = tl.load(q_ptr + t.to(tl.int64) * q_stride_t + h * q_stride_h + j).to(tl.float32)
++    qrow = out_ptr + (t.to(tl.int64) * HQ + h) * (2 * D)
++    tl.store(qrow + half * D + j, x.to(tl.float8e4nv))
++    tl.store(qrow + (1 - half) * D + j, tl.zeros([D], dtype=tl.float32).to(tl.float8e4nv))
++
++
++@triton.jit
++def _paired_norm_gate_kernel(
++    attn_ptr, qkv_ptr, out_ptr,
++    attn_stride_t, attn_stride_h, qkv_stride,
++    HQ: tl.constexpr, HKV: tl.constexpr, D: tl.constexpr, G: tl.constexpr, EPS: tl.constexpr,
++):
++    """Full-layer epilogue for the paired path, one program per (token, query head): reads head
++    h's own half (h // G) % 2 of FA3's [tokens, HQ, 2*D] output (the other half is the other KV
++    head's P@V and is never read), applies the scaleless RMSNorm (eps inside the sqrt of the mean
++    of D squares, fp32) times sigmoid(gate) and stores bf16 into the [tokens, HQ*D] output."""
++    t = tl.program_id(0)
++    h = tl.program_id(1)
++    j = tl.arange(0, D)
++    half = (h // G) % 2
++    src = attn_ptr + t.to(tl.int64) * attn_stride_t + h * attn_stride_h + half * D
++    x = tl.load(src + j).to(tl.float32)
++    r = 1.0 / tl.sqrt(tl.sum(x * x, axis=0) / D + EPS)
++    gate = tl.load(qkv_ptr + t.to(tl.int64) * qkv_stride + (HQ + 2 * HKV) * D + h * D + j)
++    gate = gate.to(tl.float32)
++    y = x * r * tl.sigmoid(gate)
++    tl.store(out_ptr + (t.to(tl.int64) * HQ + h) * D + j, y.to(tl.bfloat16))
++
++
++# --- Shape-gated Triton dense GEMMs at T == 1 (hypothesis bf16-shape-gated-triton-gemms-small-t) --
++# Ported verbatim from muse_bf16_proj's bf16-shape-gated-triton-winners-combo (its m <= 16 paths
++# only; its 17 <= m <= 32 swap-AB code is not ported). muse_bf16_proj's guards read its Config's
++# m / n / k; this problem's Config has none, so the guards below read the tensors' shapes, and the
++# routing in kernel_fn is by the token count only. The kernels accept m <= 16, but only T == 1
++# routes to them (restack decode-restack-sliding-port-paired-pad-gemms-t1: at T = 8 / 16 they
++# lost wall time); every T > 1 keeps _bf16_gemm_dispatch_impl.
++#   qkv_gate, T == 1:       _qkv_splitk_sem_kernel, grid (36, 4), split-K 4 ticket reduce
++#   o,        T == 1:       _pooler_skinny_kernel, full K, grid (128,)
++#   pooler,   T == 1:       _bf16_splitk_kernel, grid (64, 2), BLOCK_K 256, split-K 2
++#   unpooler slice, T == 1: _bf16_splitk_kernel on rows 0-1023 read in place, grid (16, 8)
++SMALL_T_TRITON_GEMM = 1  # the only token count routed to the Triton GEMMs
++
++
++@triton.jit(do_not_specialize=["M"])
++def _bf16_splitk_kernel(
++    x_ptr, w_ptr, out_ptr, ws_ptr, cnt_ptr,
++    M,
++    stride_xm, stride_wn, stride_om,
++    N: tl.constexpr, WS_M: tl.constexpr, K_SLICE: tl.constexpr, SPLIT_K: tl.constexpr,
++    BLOCK_M: tl.constexpr, BLOCK_N: tl.constexpr, BLOCK_K: tl.constexpr,
++):
++    """out[M, N] bf16 = x[M, K] @ w[N, K]^T, split-K with an in-kernel semaphore reduce.
++
++    Program (pid_n, pid_k) covers rows of N [pid_n*BLOCK_N, +BLOCK_N), K [pid_k*K_SLICE,
++    +K_SLICE) and all M rows (M <= BLOCK_M <= WS_M; rows >= M masked). w may be the leading N
++    rows of a taller row-major weight (stride_wn is its row stride). ws: fp32 [SPLIT_K, WS_M, N]
++    scratch; cnt: int32 [N // BLOCK_N], 0 between launches. There is no early exit: every CTA
++    stores its partial and takes exactly one ticket, so the counter always returns to 0.
++    """
++    pid_n = tl.program_id(0)
++    pid_k = tl.program_id(1)
++    k_start = pid_k * K_SLICE
++
++    offs_n = pid_n * BLOCK_N + tl.arange(0, BLOCK_N)
++    offs_k = k_start + tl.arange(0, BLOCK_K)
++    offs_m = tl.arange(0, BLOCK_M)
++    m_mask = offs_m < M
++    # Weight tiles read directly as [BLOCK_K, BLOCK_N] from the row-major [N, K] weight.
++    w_ptrs = w_ptr + offs_k[:, None] + offs_n[None, :] * stride_wn
++    x_ptrs = x_ptr + offs_m[:, None] * stride_xm + offs_k[None, :]
++    acc = tl.zeros((BLOCK_M, BLOCK_N), dtype=tl.float32)
++    for kk in range(0, K_SLICE // BLOCK_K):
++        x_tile = tl.load(x_ptrs, mask=m_mask[:, None], other=0.0)
++        w_tile = tl.load(w_ptrs)
++        acc = tl.dot(x_tile, w_tile, acc)
++        x_ptrs += BLOCK_K
++        w_ptrs += BLOCK_K
++
++    # fp32 partial -> workspace slice pid_k, rows < M only (the reducer reads the same mask).
++    ws_tile = offs_m[:, None] * N + offs_n[None, :]
++    tl.store(ws_ptr + pid_k * (WS_M * N) + ws_tile, acc, mask=m_mask[:, None])
++    # All threads' partial stores precede the (single, scalar) gpu-scope acq_rel ticket.
++    tl.debug_barrier()
++    ticket = tl.atomic_add(cnt_ptr + pid_n, 1, sem="acq_rel", scope="gpu")
++    # Order the other threads' reloads after the ticket's acquire.
++    tl.debug_barrier()
++    if ticket == SPLIT_K - 1:
++        total = tl.load(ws_ptr + ws_tile, mask=m_mask[:, None], other=0.0, cache_modifier=".cg")
++        for s in tl.static_range(1, SPLIT_K):
++            total += tl.load(ws_ptr + s * (WS_M * N) + ws_tile, mask=m_mask[:, None], other=0.0,
++                             cache_modifier=".cg")
++        out_ptrs = out_ptr + offs_m[:, None] * stride_om + offs_n[None, :]
++        tl.store(out_ptrs, total.to(tl.bfloat16), mask=m_mask[:, None])
++        # Self-reset so the next launch / graph replay starts from 0.
++        tl.atomic_xchg(cnt_ptr + pid_n, 0, sem="relaxed", scope="gpu")
++
++
++def _bf16_x_ok(x, max_m, k):
++    """x is a bf16 [1..max_m, k] activation with unit inner stride (shapes only)."""
++    return (x.dim() == 2 and x.dtype == torch.bfloat16 and x.stride(1) == 1
++            and 1 <= x.shape[0] <= max_m and x.shape[1] == k)
++
++
++def _bf16_w_ok(w, n, k):
++    """w is the problem's bf16 [n, k] row-major weight (shapes only)."""
++    return w.dim() == 2 and w.dtype == torch.bfloat16 and tuple(w.shape) == (n, k) and w.stride(1) == 1
++
++
++# (1) pooler, T <= 16
++POOLER_N = 4096
++POOLER_K = 8192
++POOLER_MAX_M = 16
++POOLER_BLOCK_N = 64
++POOLER_BLOCK_K = 256  # 16 K-steps per 4096 K-slice
++POOLER_SPLIT_K = 2
++POOLER_NUM_WARPS = 4
++POOLER_NUM_STAGES = 4
++
++
++def _pooler_shape_ok(x, w):
++    return _bf16_x_ok(x, POOLER_MAX_M, POOLER_K) and _bf16_w_ok(w, POOLER_N, POOLER_K)
++
++
++def _pooler_forward(x, w, ws, cnt):
++    """x bf16 [m <= 16, 8192] @ w.T -> bf16 [m, 4096], one launch. Branches only on shapes."""
++    m, k = x.shape
++    out = torch.empty((m, POOLER_N), dtype=torch.bfloat16, device=x.device)
++    grid = (POOLER_N // POOLER_BLOCK_N, POOLER_SPLIT_K)
++    _bf16_splitk_kernel[grid](
++        x, w, out, ws, cnt,
++        m,
++        x.stride(0), w.stride(0), out.stride(0),
++        N=POOLER_N, WS_M=POOLER_MAX_M, K_SLICE=k // POOLER_SPLIT_K, SPLIT_K=POOLER_SPLIT_K,
++        BLOCK_M=16, BLOCK_N=POOLER_BLOCK_N, BLOCK_K=POOLER_BLOCK_K,
++        num_warps=POOLER_NUM_WARPS, num_stages=POOLER_NUM_STAGES,
++    )
++    return out
++
++
++# (2) qkv_gate, 1 <= T <= 16
++QKV_N = 2304
++QKV_K = 8192
++QKV_MAX_M = 16
++QKV_BLOCK_N = 64
++QKV_BLOCK_K = 128
++QKV_SPLIT_K = 4
++QKV_NUM_WARPS = 4
++QKV_NUM_STAGES = 4
++
++
++@triton.jit(do_not_specialize=["M"])
++def _qkv_splitk_sem_kernel(
++    x_ptr, w_ptr, ws_ptr, cnt_ptr, out_ptr,
++    M,
++    stride_xm, stride_wn, stride_ws_s, stride_ws_m, stride_om,
++    K_SLICE: tl.constexpr, SPLIT_K: tl.constexpr,
++    BLOCK_M: tl.constexpr, BLOCK_N: tl.constexpr, BLOCK_K: tl.constexpr,
++):
++    """out[M, N] = x[M, K] @ w[N, K]^T in one launch, split-K with a ticket-semaphore epilogue.
++
++    Grid (N // BLOCK_N, SPLIT_K). Program (pid_n, pid_k) streams w rows [pid_n*BLOCK_N, +BLOCK_N)
++    over K [pid_k*K_SLICE, +K_SLICE) with one M-block (M <= BLOCK_M, rows >= M masked), stores its
++    fp32 partial to ws[pid_k, :M, n-tile], then draws one ticket on cnt[pid_n]. The program that
++    draws ticket SPLIT_K-1 (all partials of this n-tile are written by then) reloads the SPLIT_K
++    partials (.cg, bypassing L1), sums them in fixed order 0..SPLIT_K-1, stores bf16 once and
++    resets cnt[pid_n] to 0 for the next launch. No program waits on another, so it cannot
++    deadlock whether or not the CTAs are co-resident.
++    """
++    pid_n = tl.program_id(0)
++    pid_k = tl.program_id(1)
++    k_start = pid_k * K_SLICE
++
++    offs_n = pid_n * BLOCK_N + tl.arange(0, BLOCK_N)
++    offs_k = k_start + tl.arange(0, BLOCK_K)
++    offs_m = tl.arange(0, BLOCK_M)
++    m_mask = offs_m < M
++    # Weight tiles read directly as [BLOCK_K, BLOCK_N] from the row-major [N, K] weight (K
++    # contiguous), i.e. w.T for this tile; no repack.
++    w_ptrs = w_ptr + offs_k[:, None] + offs_n[None, :] * stride_wn
++    x_ptrs = x_ptr + offs_m[:, None] * stride_xm + offs_k[None, :]
++    acc = tl.zeros((BLOCK_M, BLOCK_N), dtype=tl.float32)
++    for kk in range(0, K_SLICE // BLOCK_K):
++        x_tile = tl.load(x_ptrs, mask=m_mask[:, None], other=0.0)
++        w_tile = tl.load(w_ptrs)
++        acc = tl.dot(x_tile, w_tile, acc)
++        x_ptrs += BLOCK_K
++        w_ptrs += BLOCK_K
++
++    # fp32 partial for rows < M only; the reducer reads exactly the same (masked) rows, so every
++    # value it reads was written in this launch and nothing from an earlier call can reach out.
++    tile_off = offs_m[:, None] * stride_ws_m + offs_n[None, :]
++    tl.store(ws_ptr + pid_k * stride_ws_s + tile_off, acc, mask=m_mask[:, None])
++    # All threads' partial stores precede the (single, scalar) release atomic below.
++    tl.debug_barrier()
++    ticket = tl.atomic_add(cnt_ptr + pid_n, 1, sem="acq_rel", scope="gpu")
++    # The acquire done by the atomic's issuing thread is ordered before every thread's reloads.
++    tl.debug_barrier()
++    if ticket == SPLIT_K - 1:
++        total = tl.load(ws_ptr + tile_off, mask=m_mask[:, None], other=0.0, cache_modifier=".cg")
++        for s in tl.static_range(1, SPLIT_K):
++            part = tl.load(ws_ptr + s * stride_ws_s + tile_off, mask=m_mask[:, None], other=0.0,
++                           cache_modifier=".cg")
++            total += part
++        out_ptrs = out_ptr + offs_m[:, None] * stride_om + offs_n[None, :]
++        tl.store(out_ptrs, total.to(tl.bfloat16), mask=m_mask[:, None])
++        # Reset for the next launch (all SPLIT_K tickets of this n-tile are drawn).
++        tl.atomic_xchg(cnt_ptr + pid_n, 0, sem="relaxed", scope="gpu")
++
++
++def _qkv_shape_ok(x, w):
++    return _bf16_x_ok(x, QKV_MAX_M, QKV_K) and _bf16_w_ok(w, QKV_N, QKV_K)
++
++
++def _qkv_forward(x, w, ws, cnt):
++    """x bf16 [m, 8192] @ w[2304, 8192].T -> bf16 [m, 2304], m <= 16, ONE launch. Branches only on
++    shapes; ws (fp32 [SPLIT_K, 16, 2304]) and cnt (int32 [36], all zero between launches) come
++    from prepare()."""
++    m, k = x.shape
++    n = w.shape[0]
++    out = torch.empty((m, n), dtype=torch.bfloat16, device=x.device)
++    grid = (n // QKV_BLOCK_N, QKV_SPLIT_K)
++    _qkv_splitk_sem_kernel[grid](
++        x, w, ws, cnt, out,
++        m,
++        x.stride(0), w.stride(0), ws.stride(0), ws.stride(1), out.stride(0),
++        K_SLICE=k // QKV_SPLIT_K, SPLIT_K=QKV_SPLIT_K,
++        BLOCK_M=16, BLOCK_N=QKV_BLOCK_N, BLOCK_K=QKV_BLOCK_K,
++        num_warps=QKV_NUM_WARPS, num_stages=QKV_NUM_STAGES,
++    )
++    return out
++
++
++# (3) unpooler slice (rows 0-1023 of the [8192, 4096] weight, row stride 4096), T <= 8
++UNPOOL_N = 1024
++UNPOOL_K = 4096
++UNPOOL_MAX_M = 16    # one BLOCK_M=16 tile; rows >= m masked
++UNPOOL_BLOCK_N = 64
++UNPOOL_BLOCK_K = 128
++UNPOOL_SPLIT_K = 8   # K-slice 512, 4 K-steps
++UNPOOL_NUM_WARPS = 4
++UNPOOL_NUM_STAGES = 3
++
++
++def _unpool_shape_ok(x, w):
++    """x bf16 [1..16, 4096]; w the leading >= 1024 rows of a bf16 row-major [*, 4096] weight."""
++    return (_bf16_x_ok(x, UNPOOL_MAX_M, UNPOOL_K)
++            and w.dim() == 2 and w.dtype == torch.bfloat16 and w.shape[0] >= UNPOOL_N
++            and w.shape[1] == UNPOOL_K and w.stride(1) == 1)
++
++
++def _unpool_forward(x, w, ws, cnt):
++    """x bf16 [m <= 16, 4096] @ w[:1024].T -> bf16 [m, 1024], one launch, w read in place
++    (stride_wn = w.stride(0) = 4096, no slice copy). Branches only on shapes."""
++    m, k = x.shape
++    out = torch.empty((m, UNPOOL_N), dtype=torch.bfloat16, device=x.device)
++    grid = (UNPOOL_N // UNPOOL_BLOCK_N, UNPOOL_SPLIT_K)
++    _bf16_splitk_kernel[grid](
++        x, w, out, ws, cnt,
++        m,
++        x.stride(0), w.stride(0), out.stride(0),
++        N=UNPOOL_N, WS_M=UNPOOL_MAX_M, K_SLICE=k // UNPOOL_SPLIT_K, SPLIT_K=UNPOOL_SPLIT_K,
++        BLOCK_M=UNPOOL_MAX_M, BLOCK_N=UNPOOL_BLOCK_N, BLOCK_K=UNPOOL_BLOCK_K,
++        num_warps=UNPOOL_NUM_WARPS, num_stages=UNPOOL_NUM_STAGES,
++    )
++    return out
++
++
++# (4) o, T <= 16: full K, no reduce
++O_SKINNY_MAX_M = 16
++O_N = 8192
++O_K = 1024
++O_BLOCK_N = 64    # 8192 / 64 = 128 programs: one wave on 132 SMs
++O_BLOCK_K = 256   # 1024 / 256 = 4 K steps per program, all covered by the 4-stage pipeline
++O_NUM_WARPS = 4
++O_NUM_STAGES = 4  # 4 x (64 x 256 + BLOCK_M x 256) x 2 B: 160 KB at BLOCK_M 16
++
++
++@triton.jit(do_not_specialize=["M"])
++def _pooler_skinny_kernel(
++    x_ptr, w_ptr, out_ptr,
++    M,
++    stride_xm, stride_wn, stride_om,
++    K: tl.constexpr, BLOCK_M: tl.constexpr, BLOCK_N: tl.constexpr, BLOCK_K: tl.constexpr,
++):
++    """out[:M, n0:n0+BLOCK_N] = x[:M, :K] @ w[n0:n0+BLOCK_N, :K].T for program n0 = pid * BLOCK_N.
++
++    One program owns BLOCK_N rows of the row-major [N, K] weight and walks the whole K in
++    BLOCK_K steps, so each weight byte is read once and there is no split-K reduce. Rows of x
++    at or past M load as zero and are not stored, so M need not fill BLOCK_M. The dot is bf16 x
++    bf16 with an fp32 accumulator; the only bf16 rounding is at the store."""
++    pid = tl.program_id(0)
++    offs_m = tl.arange(0, BLOCK_M)
++    offs_n = pid * BLOCK_N + tl.arange(0, BLOCK_N)
++    offs_k = tl.arange(0, BLOCK_K)
++    row_ok = offs_m < M
++
++    x_ptrs = x_ptr + offs_m[:, None] * stride_xm + offs_k[None, :]   # [BLOCK_M, BLOCK_K]
++    w_ptrs = w_ptr + offs_n[:, None] * stride_wn + offs_k[None, :]   # [BLOCK_N, BLOCK_K], as stored
++    acc = tl.zeros((BLOCK_M, BLOCK_N), dtype=tl.float32)
++    for _ in range(0, K, BLOCK_K):
++        x_tile = tl.load(x_ptrs, mask=row_ok[:, None], other=0.0)
++        w_tile = tl.load(w_ptrs)
++        acc = tl.dot(x_tile, tl.trans(w_tile), acc)
++        x_ptrs += BLOCK_K
++        w_ptrs += BLOCK_K
++
++    out_ptrs = out_ptr + offs_m[:, None] * stride_om + offs_n[None, :]
++    tl.store(out_ptrs, acc.to(tl.bfloat16), mask=row_ok[:, None])
++
++
++def _o_shape_ok(x, w):
++    return _bf16_x_ok(x, O_SKINNY_MAX_M, O_K) and _bf16_w_ok(w, O_N, O_K)
++
++
++def _o_skinny_gemm(x, w):
++    """x [m, 1024] bf16 @ w [8192, 1024] bf16 .T -> [m, 8192] bf16, m <= 16."""
++    m = x.shape[0]
++    out = torch.empty((m, O_N), dtype=torch.bfloat16, device=x.device)
++    _pooler_skinny_kernel[(O_N // O_BLOCK_N,)](
++        x, w, out,
++        m,
++        x.stride(0), w.stride(0), out.stride(0),
++        K=O_K, BLOCK_M=16, BLOCK_N=O_BLOCK_N, BLOCK_K=O_BLOCK_K,
++        num_warps=O_NUM_WARPS, num_stages=O_NUM_STAGES,
++    )
++    return out
++
++
++_FALLBACK_SEEN = set()
++
++
++def _fallback(layer, x):
++    """A routed T whose tensors miss the Triton path's shape preconditions: say so once per
++    (layer, shape, stride) in the run log, then take cuBLAS. Shapes only, never values."""
++    key = (layer, tuple(x.shape), tuple(x.stride()), x.dtype)
++    if key not in _FALLBACK_SEEN:
++        _FALLBACK_SEEN.add(key)
++        print(f"[small-t-gemm] {layer}: x {tuple(x.shape)} stride {tuple(x.stride())} {x.dtype} "
++              f"misses the Triton preconditions; using _bf16_gemm_dispatch_impl", flush=True)
++
++
++def _prepare_small_t_gemms(state):
++    """Allocate each Triton path's own split-K workspace and ticket counters, warm every routed
++    specialization on synthetic bf16 inputs (T == 1, the only routed token count, for qkv / o /
++    pooler / unpooler slice), synchronise and zero every counter."""
++    dense = state["dense"]
++    device = dense["qkv_gate"].device
++    small = {
++        "pooler_ws": torch.empty((POOLER_SPLIT_K, POOLER_MAX_M, POOLER_N), dtype=torch.float32, device=device),
++        "pooler_cnt": torch.zeros(POOLER_N // POOLER_BLOCK_N, dtype=torch.int32, device=device),
++        "qkv_ws": torch.empty((QKV_SPLIT_K, QKV_MAX_M, QKV_N), dtype=torch.float32, device=device),
++        "qkv_cnt": torch.zeros(QKV_N // QKV_BLOCK_N, dtype=torch.int32, device=device),
++        "unpool_ws": torch.empty((UNPOOL_SPLIT_K, UNPOOL_MAX_M, UNPOOL_N), dtype=torch.float32, device=device),
++        "unpool_cnt": torch.zeros(UNPOOL_N // UNPOOL_BLOCK_N, dtype=torch.int32, device=device),
++    }
++    state["small_t"] = small
++    unpool_w = dense["unpooler"][:UNPOOL_SLICE]
++    for m in (SMALL_T_TRITON_GEMM,):
++        x = torch.randn((m, QKV_K), device=device, dtype=torch.float32).to(torch.bfloat16)
++        if _qkv_shape_ok(x, dense["qkv_gate"]):
++            _qkv_forward(x, dense["qkv_gate"], small["qkv_ws"], small["qkv_cnt"])
++        if _pooler_shape_ok(x, dense["pooler"]):
++            _pooler_forward(x, dense["pooler"], small["pooler_ws"], small["pooler_cnt"])
++        xo = torch.randn((m, O_K), device=device, dtype=torch.float32).to(torch.bfloat16)
++        if _o_shape_ok(xo, dense["o"]):
++            _o_skinny_gemm(xo, dense["o"])
++        if m <= SLICED_UNPOOL_MAX_TOKENS:  # always true at m == 1; kept as in the source branch
++            xu = torch.randn((m, UNPOOL_K), device=device, dtype=torch.float32).to(torch.bfloat16)
++            if _unpool_shape_ok(xu, unpool_w):
++                _unpool_forward(xu, unpool_w, small["unpool_ws"], small["unpool_cnt"])
++    torch.cuda.synchronize()
++    # The split-K kernels self-reset, but re-zero every counter after the warm-ups regardless.
++    for name in ("pooler_cnt", "qkv_cnt", "unpool_cnt"):
++        small[name].zero_()
++    torch.cuda.synchronize()
++
++
+ def prepare(weights):
+     device = weights["qkv_gate"].device
+     router = weights["router"]
+@@ -274,6 +924,7 @@ def prepare(weights):
+         "_modules": (pre_ffn, next_pre_attn, post_attn, post_ffn, post_expert),
+     }
+     del freqs
++    _prepare_small_t_gemms(state)
+     torch.cuda.synchronize()
+     return state
+ 
+@@ -325,79 +976,101 @@ def kernel_fn(data, state):
+     batch, length, tokens = cfg["batch"], cfg["q_len"], cfg["tokens"]
+     hq, hkv, d = cfg["num_q_heads"], cfg["num_kv_heads"], cfg["head_dim"]
+     dense = state["dense"]
++    small = state["small_t"]
++    small_t = tokens == SMALL_T_TRITON_GEMM  # T == 1 only; routing by token count only
+     # Attention: MuseSpark1xAttention.forward.
+-    qkv = _gemm(data["attn_input"], dense["qkv_gate"])
+-    if cfg["rope_theta"]:
+-        q, k = state["qk_norm"](qkv, data["positions"], state["cos_sin"])
++    x_attn = data["attn_input"]
++    if small_t and _qkv_shape_ok(x_attn, dense["qkv_gate"]):
++        qkv = _qkv_forward(x_attn, dense["qkv_gate"], small["qkv_ws"], small["qkv_cnt"])
+     else:
+-        q, k = state["qk_norm"](qkv)
+-    v = qkv[:, hq * d + hkv * d: hq * d + 2 * hkv * d]
+-    gate = qkv[:, hq * d + 2 * hkv * d:]
+-    k_cache, v_cache = data["k_cache"], data["v_cache"]
+-    scaled = cfg["kv_scale"] != 1.0
+-    k = k.reshape(tokens, hkv * d)
+-    if scaled:
+-        k, v = k / data["k_scale"], v / data["v_scale"]
+-    # The pool keeps FP8 rows as bytes; slot 0 is a live row here (SGLang reserves it for padding).
+-    store_cache(k.to(FP8).view(torch.uint8), v.to(FP8).view(torch.uint8),
+-                k_cache.view(-1, hkv * d).view(torch.uint8), v_cache.view(-1, hkv * d).view(torch.uint8),
+-                data["cache_loc"], reserved_skip_index=-1)
+-    window = cfg["window"]
+-    # Full layers with batch > 1: pair the two KV heads of each token into one 128-byte FP8 row
+-    # (heads 2s and 2s+1 are adjacent halves of it) so FA3 gathers one row per token instead of
+-    # two. Each query sits in its own head's half of a zero-padded 128-wide FP8 query (the pad
+-    # copy also does the BF16 -> E4M3 cast), so the zero half adds exactly 0 to every logit; FA3
+-    # maps query head h to super-head h // (2G), which keeps the original grouping. The judge's
+-    # scheduler_metadata was built for the unpaired geometry, so it is not passed. Batch 1 stays
+-    # unpaired (pairing lost there in muse_attention_decode). The gate reads config only.
+-    paired = window == 0 and batch > 1 and hkv % 2 == 0
+-    if paired:
+-        g, s = hq // hkv, hkv // 2
+-        pages, page_size = k_cache.shape[0], k_cache.shape[1]
+-        k_attn = k_cache.view(pages, page_size, s, 2 * d)
+-        v_attn = v_cache.view(pages, page_size, s, 2 * d)
+-        q_attn = torch.zeros((tokens, hq, 2 * d), dtype=FP8, device=q.device)
+-        qp = q_attn.view(tokens, s, 2, g, 2 * d)
+-        qv = q.view(tokens, s, 2, g, d)
+-        qp[:, :, 0, :, :d] = qv[:, :, 0]
+-        qp[:, :, 1, :, d:] = qv[:, :, 1]
+-        attn_heads = s
+-        metadata = None
++        if small_t:
++            _fallback("qkv_gate", x_attn)
++        qkv = _gemm(x_attn, dense["qkv_gate"])
++    # Sliding batch-1 decode only (config-only predicate): attention in one fused launch.
++    # Every other shape (sliding batch > 1, every verify block, every full layer) keeps the path below.
++    if cfg["window"] and batch == 1 and length == 1:
++        o = _sliding_forward(data, qkv)
+     else:
+-        k_attn, v_attn, q_attn = k_cache, v_cache, q.view(tokens, hq, d).to(FP8)
+-        attn_heads = hkv
+-        metadata = data["scheduler_metadata"]
+-    descale = {}
+-    if scaled:
+-        descale = dict(k_descale=data["k_scale"].reshape(1, 1).expand(batch, attn_heads),
+-                       v_descale=data["v_scale"].reshape(1, 1).expand(batch, attn_heads))
+-    out = flash_attn_with_kvcache(
+-        q=q_attn,
+-        k_cache=k_attn,
+-        v_cache=v_attn,
+-        page_table=data["page_table"],
+-        cache_seqlens=data["cache_seqlens"],
+-        cu_seqlens_q=data["cu_seqlens_q"],
+-        max_seqlen_q=length,
+-        softmax_scale=cfg["sm_scale"] * cfg["qk_scale_factor"],
+-        causal=True,
+-        window_size=(window - 1, 0) if window else (-1, -1),
+-        scheduler_metadata=metadata,
+-        **descale,
+-    )
+-    if isinstance(out, tuple):
+-        out = out[0]
+-    if paired:
+-        # Keep each query's own half of FA3's 128-wide output; the other half is the other
+-        # head's P@V and is discarded.
+-        attn = torch.empty((tokens, hq, d), dtype=torch.bfloat16, device=q.device)
+-        a = attn.view(tokens, s, 2, g, d)
+-        o = out.view(tokens, s, 2, g, 2 * d)
+-        a[:, :, 0] = o[:, :, 0, :, :d]
+-        a[:, :, 1] = o[:, :, 1, :, d:]
+-        out = attn
+-    o = state["o_norm_gate"](out.reshape(tokens, hq * d).to(torch.bfloat16), gate)
+-    attn_output = _gemm(o, dense["o"])  # all-reduce: identity
++        if cfg["rope_theta"]:
++            q, k = state["qk_norm"](qkv, data["positions"], state["cos_sin"])
++        else:
++            q, k = state["qk_norm"](qkv)
++        v = qkv[:, hq * d + hkv * d: hq * d + 2 * hkv * d]
++        gate = qkv[:, hq * d + 2 * hkv * d:]
++        k_cache, v_cache = data["k_cache"], data["v_cache"]
++        scaled = cfg["kv_scale"] != 1.0
++        k = k.reshape(tokens, hkv * d)
++        if scaled:
++            k, v = k / data["k_scale"], v / data["v_scale"]
++        # The pool keeps FP8 rows as bytes; slot 0 is a live row here (SGLang reserves it for padding).
++        store_cache(k.to(FP8).view(torch.uint8), v.to(FP8).view(torch.uint8),
++                    k_cache.view(-1, hkv * d).view(torch.uint8), v_cache.view(-1, hkv * d).view(torch.uint8),
++                    data["cache_loc"], reserved_skip_index=-1)
++        window = cfg["window"]
++        # Full layers with batch > 1: pair the two KV heads of each token into one 128-byte FP8 row
++        # (heads 2s and 2s+1 are adjacent halves of it) so FA3 gathers one row per token instead of
++        # two. Each query sits in its own head's half of a zero-padded 128-wide FP8 query (the pad
++        # copy also does the BF16 -> E4M3 cast), so the zero half adds exactly 0 to every logit; FA3
++        # maps query head h to super-head h // (2G), which keeps the original grouping. The judge's
++        # scheduler_metadata was built for the unpaired geometry, so it is not passed. Batch 1 stays
++        # unpaired (pairing lost there in muse_attention_decode). The gate reads config only.
++        paired = window == 0 and batch > 1 and hkv % 2 == 0
++        if paired:
++            g, s = hq // hkv, hkv // 2
++            pages, page_size = k_cache.shape[0], k_cache.shape[1]
++            k_attn = k_cache.view(pages, page_size, s, 2 * d)
++            v_attn = v_cache.view(pages, page_size, s, 2 * d)
++            # One launch: the E4M3 cast into the query's own half, FP8 zeros into the other half.
++            qh = q.view(tokens, hq, d)
++            assert qh.stride(2) == 1
++            q_attn = torch.empty((tokens, hq, 2 * d), dtype=FP8, device=q.device)
++            _pair_pad_q_kernel[(tokens, hq)](
++                qh, q_attn, qh.stride(0), qh.stride(1), HQ=hq, D=d, G=g, num_warps=1)
++            attn_heads = s
++            metadata = None
++        else:
++            k_attn, v_attn, q_attn = k_cache, v_cache, q.view(tokens, hq, d).to(FP8)
++            attn_heads = hkv
++            metadata = data["scheduler_metadata"]
++        descale = {}
++        if scaled:
++            descale = dict(k_descale=data["k_scale"].reshape(1, 1).expand(batch, attn_heads),
++                           v_descale=data["v_scale"].reshape(1, 1).expand(batch, attn_heads))
++        out = flash_attn_with_kvcache(
++            q=q_attn,
++            k_cache=k_attn,
++            v_cache=v_attn,
++            page_table=data["page_table"],
++            cache_seqlens=data["cache_seqlens"],
++            cu_seqlens_q=data["cu_seqlens_q"],
++            max_seqlen_q=length,
++            softmax_scale=cfg["sm_scale"] * cfg["qk_scale_factor"],
++            causal=True,
++            window_size=(window - 1, 0) if window else (-1, -1),
++            scheduler_metadata=metadata,
++            **descale,
++        )
++        if isinstance(out, tuple):
++            out = out[0]
++        if paired:
++            # Each query's own half of FA3's 128-wide output (the other half is the other head's
++            # P@V and is never read), normalized and gated in one launch.
++            attn = out.view(tokens, hq, 2 * d)
++            o = torch.empty((tokens, hq * d), dtype=torch.bfloat16, device=q.device)
++            _paired_norm_gate_kernel[(tokens, hq)](
++                attn, qkv, o,
++                attn.stride(0), attn.stride(1), qkv.stride(0),
++                HQ=hq, HKV=hkv, D=d, G=g, EPS=RMS_EPS,
++                num_warps=1,
++            )
++        else:
++            o = state["o_norm_gate"](out.reshape(tokens, hq * d).to(torch.bfloat16), gate)
++    if small_t and _o_shape_ok(o, dense["o"]):
++        attn_output = _o_skinny_gemm(o, dense["o"])  # all-reduce: identity
++    else:
++        if small_t:
++            _fallback("o", o)
++        attn_output = _gemm(o, dense["o"])  # all-reduce: identity
+ 
+     # Post-attention boundary, router and MoE block: MuseSpark1xMoE._forward_experts.
+     split_router = tokens > ROUTER_FP32_MAX_TOKENS
+@@ -406,7 +1079,12 @@ def kernel_fn(data, state):
+     # The router and routing run on a side stream, overlapping the pooler on the main one.
+     main_stream, side_stream = torch.cuda.current_stream(), state["side_stream"]
+     side_stream.wait_stream(main_stream)
+-    expert_input = _gemm(ffn_input, dense["pooler"])
++    if small_t and _pooler_shape_ok(ffn_input, dense["pooler"]):
++        expert_input = _pooler_forward(ffn_input, dense["pooler"], small["pooler_ws"], small["pooler_cnt"])
++    else:
++        if small_t:
++            _fallback("pooler", ffn_input)
++        expert_input = _gemm(ffn_input, dense["pooler"])
+     with torch.cuda.stream(side_stream):
+         if split_router:
+             logits = torch.mm(ffn_input, state["router_hi_t"], out_dtype=torch.float32)
+@@ -423,7 +1101,13 @@ def kernel_fn(data, state):
+     # all-reduce: identity
+     expert_output = _experts(state["pre_expert_norm"](expert_input), topk_weights, local_ids, state)
+     if tokens <= SLICED_UNPOOL_MAX_TOKENS:
+-        unpooled = _gemm(expert_output, dense["unpooler"][:UNPOOL_SLICE])
++        unpool_w = dense["unpooler"][:UNPOOL_SLICE]
++        if small_t and _unpool_shape_ok(expert_output, unpool_w):
++            unpooled = _unpool_forward(expert_output, unpool_w, small["unpool_ws"], small["unpool_cnt"])
++        else:
++            if small_t:
++                _fallback("unpooler", expert_output)
++            unpooled = _gemm(expert_output, unpool_w)
+         ffn_output = F.pad(unpooled, (0, HIDDEN - UNPOOL_SLICE))  # all-gather: identity
+     else:
+         ffn_output = _gemm(expert_output, dense["unpooler"])
