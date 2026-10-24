@@ -99,11 +99,11 @@ base_blob: 1c0f5fa1bfc4e602b62e5e9edd9df6d5652b297b
 branch: hyp/muse_attention_decode/full-cuda-onelaunch-warpspec-bulk-gather
 worktree: .worktrees/muse_attention_decode/full-cuda-onelaunch-warpspec-bulk-gather
 mode: null
-implemented_at: 2026-10-24T174229Z
-impl_commit: 05678049b6420111124c539774648b53afadf717
-submission_sha256: a26cc1d05710aff2905fe110ca960c9846f1f051f8fa01557abe2260d6ffb41a
-norm_sha256: 2919b38e1b96fdd084efbd4dd9051e3f5532851f7a40f4ddc7964bd898f14a92
-submission_blob: 93d9b895e0089458134461f5f7b0bef5a7217360
+implemented_at: 2026-10-24T175215Z
+impl_commit: 0785778cf4276e171a84f2a4c7d3ffc25893c346
+submission_sha256: 34c696904f50319c35239749cf44711e4f93131f11c63d5588ade541a9712916
+norm_sha256: c89f844774678ac0733b25b3098234d13b3e86133f22dd0501a3ea0aed197f80
+submission_blob: a5c7945998f7e658cae185cc448230a0eb6c9bed
 lint_warnings: 3
 ---
 
@@ -190,6 +190,9 @@ Worktree file `.worktrees/muse_attention_decode/full-cuda-onelaunch-warpspec-bul
   - The likeliest breakages are the PTX forms `mbarrier.arrive.shared::cta.b64 _`, `cp.async.mbarrier.arrive.noinc.shared::cta.b64` and `atom.acq_rel.gpu.add.s32`, and the byte order of `cvt.rn.satfinite.e4m3x2.f32` (first source = upper byte, so pairs are passed high first). A byte-order swap would show up as new-rows-equal ~0 and a large rel L2 in the self-check, which falls back to master.
   - A build error also falls back cleanly to master.
 - **Harvest reading:** look for `[full_ws] load_inline compiled`, the four `self-check` lines, the `diag BULK=1/0` and `diag master` TB/s lines, and `PATH CHOSEN`. If you see `SELF-CHECK FAILED` or `load_inline failed`, the run measured master.
+
+### Pre-flight fixes (2026-10-24, after an Opus audit)
+The audit verified every flagged PTX form (against CUTLASS) and emulated 3108 stream-K/ticket mixes. Two Python-only changes: the self-check stops at the first failure, and the diagnostics skip timing BULK=0 when its own check failed, so a broken variant costs ~1 s, not ~30-60 s. No kernel-side short-circuit was added; the audit explained why one would be unsafe here.
 
 ## Rules check
 
