@@ -1,10 +1,10 @@
 # muse_bf16_proj findings
 
-Regenerated 2026-10-24T080316Z by `churn.py index`. Read this before writing a hypothesis for muse_bf16_proj.
+Regenerated 2026-10-24T083412Z by `churn.py index`. Read this before writing a hypothesis for muse_bf16_proj.
 
 ## Current best
 
-1.1510x [1.1338,1.1683] from job `bd9fa14151644cee` (check), master commit `dba4ffd594`, hypothesis router-triton-hilo-fused-control-splitk-all-m
+1.1433x [1.1261,1.1604] from job `240eb22ea0b6487e` (submit), master commit `dba4ffd594`, hypothesis router-triton-hilo-fused-control-splitk-all-m
 
 Where the time goes (per scored shape, top kernels):
 

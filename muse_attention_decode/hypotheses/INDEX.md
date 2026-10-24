@@ -1,6 +1,6 @@
 # muse_attention_decode hypotheses
 
-Regenerated 2026-10-24T080316Z. Best: 0.0023x [0.0023,0.0024] job `a8d647772fa945e5` (check)
+Regenerated 2026-10-24T083412Z. Best: 1.1274x [1.1105,1.1444] job `9e8fcb3fe4b04458` (check)
 
 | created | slug | kind | area | where | outcome | speedup | CI | job | mode | promotion | review | expected hit |
 |---|---|---|---|---|---|---|---|---|---|---|---|---|
@@ -8,7 +8,7 @@ Regenerated 2026-10-24T080316Z. Best: 0.0023x [0.0023,0.0024] job `a8d647772fa94
 | 2026-10-23T223550Z | fa3-num-splits-full-decode | primary | FA3 call | queue | queued |  |  |  |  |  | required |  |
 | 2026-10-23T223550Z | fa3-num-splits-sliding | primary | FA3 call | queue | queued |  |  |  |  |  | required |  |
 | 2026-10-23T223550Z | triton-window-attention-sliding | primary | FA3 call | queue | queued |  |  |  |  |  | required |  |
-| 2026-10-23T223550Z | fused-preattention-triton | primary | pre-attention norm+rope | running | running |  |  | 9e8fcb3fe4b04458 | check |  | proceed |  |
+| 2026-10-23T223550Z | fused-preattention-triton | primary | pre-attention norm+rope | done/gain | gain | 1.1274 | [1.111,1.144] | 9e8fcb3fe4b04458 | check | merged | proceed | 6/8 |
 | 2026-10-23T223722Z | fa3-drop-cu-seqlens-decode | primary | FA3 call | queue | queued |  |  |  |  |  | required |  |
 | 2026-10-23T223722Z | fa3-scheduler-metadata-full-verify | primary | FA3 call | queue | queued |  |  |  |  |  | required |  |
 | 2026-10-23T223722Z | triton-flash-decode-full-both-heads | primary | FA3 call | queue | queued |  |  |  |  |  | required |  |
@@ -24,6 +24,7 @@ Regenerated 2026-10-24T080316Z. Best: 0.0023x [0.0023,0.0024] job `a8d647772fa94
 | 2026-10-23T225858Z | stream-fork-preattention | primary | launch overhead | queue | queued |  |  |  |  |  | required |  |
 | 2026-10-23T225858Z | triton-flash-decode-deep-pipeline | primary | FA3 call (Triton pipeline) | queue | queued |  |  |  |  |  | required |  |
 | 2026-10-23T225858Z | triton-flash-decode-full-verify | primary | FA3 call | queue | queued |  |  |  |  |  | required |  |
+| 2026-10-24T081233Z | sliding-single-launch-fused-attention | rewrite | sliding-layer attention (whole-path rewrite) | queue | queued |  |  |  |  |  | required |  |
 
 ## Held
 
