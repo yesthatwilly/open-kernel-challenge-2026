@@ -56,13 +56,19 @@ review: proceed
 status: running
 review_at: 2026-10-24T092219Z
 review_companions: null
-stage: claimed
+stage: implemented
 claimed_at: 2026-10-24T092224Z
 base_sha: 33ef80e4b77343ccd0fc4ec2b90a87eeb044bc95
 base_blob: 11fbc1957daf7294cd2810ff82a0aad2f25644bd
 branch: hyp/muse_moe_w4a16/post-expert-norm-triton-small-m
 worktree: .worktrees/muse_moe_w4a16/post-expert-norm-triton-small-m
 mode: null
+implemented_at: 2026-10-24T092453Z
+impl_commit: ca838d0e381ee2aca06d7d8bff28a9840f8012ef
+submission_sha256: 9deab074f199a27ffa6cd180ecef168cb4d082dc1b940d9a529c3351c07c3442
+norm_sha256: 49b1373f82a5ccfc7eb7acb86319048931fa7c63b746231632bc1f3bfe4a3603
+submission_blob: b81d47abe0c2e53a3ecc180884ae8d9671ba4e14
+lint_warnings: 1
 ---
 
 # post-expert-norm-triton-small-m
@@ -103,4 +109,38 @@ No companion warranted. A gain means the replaced call's eager glue is gone, and
 - Do the reduce_kernel<512,1>, reduce_kernel<128,4> and elementwise_kernel<128,2> launches vanish at bs=1/8/16 after the change? Record the full kernel list (including the '4 more') in the attempt file. That separates post-norm glue from block-size-8 Marlin/align wrapper glue.
 - If it gains: the same kernel could replace SGLang's Triton call at bs>=32 (4.1-6.5us), but only as a separate hypothesis, since the gain would be under 1.5% per shape and hard to resolve.
 - The bs=4 test exercises tokens that have no local slot, and bs=1 can have zero local slots. Confirm the zero row is written explicitly (acc is stored even when every slot is skipped), so torch.empty garbage never reaches the output.
+
+## Implementation notes
+
+Worktree `.worktrees/muse_moe_w4a16/post-expert-norm-triton-small-m`, file `muse_moe_w4a16/submission.py` only (+37 lines, 0 removed). Not run: there is no GPU, torch or Triton on this node.
+
+- Imports: `import triton`, `import triton.language as tl`.
+- New module constant `SMALL_M_POST_NORM = 32` and a new `@triton.jit _post_norm_combine_kernel(y_ptr, ids_ptr, tw_ptr, w_ptr, out_ptr, H, eps, TOP_K_C: constexpr, BLOCK_H: constexpr)`. One program per token. It loads `nw = 1 + post_norm_w` (the bf16 weight cast to fp32 in-kernel) and zeroes an fp32 `acc[BLOCK_H]`. It then loops over the 8 slots with `tl.static_range`: it loads the local id; under a scalar `if eid >= 0:` it loads g and the y row `t*8+s` as fp32 (int64 row offset), computes `v = y*nw` and `r = rsqrt(sum(v*v)/H + eps)`, and adds `acc += g*v*r`. Remote slots are never loaded. The kernel always stores `acc` as bf16, so a token with no local slot is written as an explicit zero row (this answers the review's third open question).
+- `prepare()`: adds `state["post_norm_w"] = weights["post_norm_w"].contiguous()`, the original BF16 tensor (same dtype, no new-precision copy). `state["norm_w"]` stays for the SGLang path.
+- `kernel_fn`: after the w2 Marlin call, the new branch runs `if num_tokens < 32` (a shape branch). It allocates `out = torch.empty((M, H), bf16)` and makes one launch with grid `(M,)`, `num_warps=8`, `BLOCK_H=triton.next_power_of_2(size_k)` (= 4096), and returns `out`. bs>=32 still returns SGLang's `fused_post_expert_norm_weighted_sum` unchanged, as the control. Align, both Marlin calls, silu_and_mul and the block_size_m pick are untouched.
+- Deviations from the spec, both minor: (1) `BLOCK_H` comes from `next_power_of_2(size_k)` with an `offs < H` mask instead of a hard-coded 4096. It equals 4096 at H=4096 (the mask is all-true and the mean still divides by the real H) and stays safe if H were ever not a power of two. (2) `y.contiguous()` is a no-op on the Marlin output (cache3 is contiguous). It guards the flat `row*H` addressing.
+- No triton.autotune, no host syncs, no atomics, no memset, nothing cached from `data`.
+- Still open, per the review: whether reduce_kernel<512,1>, reduce_kernel<128,4> and elementwise_kernel<128,2> disappear from the bs=1/8/16 profile. Record the full kernel list (including the "N more") in the attempt file.
+
+## Rules check
+
+Checked against `git -C .worktrees/muse_moe_w4a16/post-expert-norm-triton-small-m diff`:
+
+- [x] CUDA-graph capturable: the diff adds no `.item()`/`.cpu()`/`synchronize()`/tensor prints. The only new host control flow is `num_tokens < 32`, a shape branch. The per-slot `if eid >= 0` runs on the device inside the Triton kernel. The `torch.empty` output has a fixed shape (M, H).
+- [x] Nothing derived from `data` is cached across calls: `out` is allocated fresh on every call, and `state` gains only the weight tensor, set in `prepare()`.
+- [x] Weights: `state["post_norm_w"]` is the original BF16 tensor, unchanged. The 1+w is added in fp32 registers inside the kernel. No NVFP4 weight is touched.
+- [x] Activations BF16 where SGLang keeps BF16: y is read as the bf16 Marlin output, the math is fp32 (higher, not lower) and the output is bf16 as required. KV cache / FP8 queries: n/a, this is not an attention problem.
+- [x] n/a: no attention in this problem, so no key skipping is possible. The kernel reads every local slot's full H row; remote slots are not this GPU's work (the reference skips them too).
+- [x] No timing patches, harness frames/I/O/secrets, module edits, reference import, subprocesses or network: the diff adds only triton imports and the kernel.
+- [x] All work happens inside the timed call: the norm and combine run in kernel_fn on every call, with no output caching or replay.
+- [x] First-line marker `# okc: problem=muse_moe_w4a16` kept; no `triton.autotune`.
+
+okc_lint output:
+
+```
+warn  host-sync    L138: torch.cuda.synchronize()  (outside kernel_fn's call graph; fine in prepare())
+OK with warnings: muse_moe_w4a16/submission.py
+```
+
+(The warning is the existing `torch.cuda.synchronize()` in `prepare()`, untimed, which this change does not touch.) `python3 -I -m py_compile` passed, and the `__pycache__` it left was removed.
 
