@@ -60,7 +60,7 @@ review: proceed
 status: running
 review_at: 2026-10-24T165606Z
 review_companions: null
-stage: implemented
+stage: dispatched
 claimed_at: 2026-10-24T165606Z
 base_sha: f3620a153798c4af3feb47a7fc26977635b8a6f3
 base_blob: cc466fce207709c98ab0e78c2435c1c459890fdb
@@ -75,6 +75,8 @@ submission_blob: b83f5ec1976c82d5b45dcd92b6c0818ce04eda9f
 lint_warnings: 1
 attempt_file: 2026-10-24T181733Z-submit-full-decode-cuda-splitkv-port.md
 prepared_at: 2026-10-24T181733Z
+job: e789032128df4291
+dispatched_at: 2026-10-24T181805Z
 ---
 
 # full-decode-cuda-splitkv-port
