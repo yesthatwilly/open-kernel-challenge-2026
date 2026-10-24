@@ -29,7 +29,7 @@ base_sha: d4d4c077f75b6689b16c96c62fb5598b1756d3b5
 base_blob: 1a06deda403ddee4b4693b34127fd50b8bcb791c
 branch: hyp/muse_prefill_layer/silu-mul-sorted-first-turn
 worktree: .worktrees/muse_prefill_layer/silu-mul-sorted-first-turn
-mode: null
+mode: check
 restack_of: null
 stale_base: null
 implemented_at: 2026-10-24T233357Z
@@ -38,6 +38,8 @@ submission_sha256: 1c7c6b27c04f1afe3fee01ce659e9e3f56704866761be61a98e60a22eadf6
 norm_sha256: 15e47d79d157b9eebd87478eb8529df1ac369836121c3420d8915881b5c28ebe
 submission_blob: 9e85c24636d47e2cf91bb76ca793a5a9894ef683
 lint_warnings: 7
+attempt_file: 2026-10-24T233357Z-check-silu-mul-sorted-first-turn.md
+prepared_at: 2026-10-24T233357Z
 ---
 
 # silu-mul-sorted-first-turn
