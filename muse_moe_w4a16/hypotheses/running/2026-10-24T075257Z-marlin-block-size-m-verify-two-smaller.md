@@ -44,13 +44,19 @@ review: proceed
 status: running
 review_at: 2026-10-24T100034Z
 review_companions: null
-stage: claimed
+stage: implemented
 claimed_at: 2026-10-24T100034Z
 base_sha: fc28840b9d1e2741aebe085a82c80e31c12ca710
 base_blob: 11fbc1957daf7294cd2810ff82a0aad2f25644bd
 branch: hyp/muse_moe_w4a16/marlin-block-size-m-verify-two-smaller
 worktree: .worktrees/muse_moe_w4a16/marlin-block-size-m-verify-two-smaller
 mode: null
+implemented_at: 2026-10-24T100132Z
+impl_commit: 4df94f38320bc45c5ba2fd3dfc548dbfa35251d6
+submission_sha256: 53cecd0b198a0c4d1c6ed7271f683ce638be35f284ce62282dfb2c4e342ff066
+norm_sha256: fa21ef8fce76f481ec6846b6f730dabce03124ee72750f5713bba4892b4c7daa
+submission_blob: d046cd42e462a82dcefc683527d7d97f6953e470
+lint_warnings: 1
 ---
 
 # marlin-block-size-m-verify-two-smaller
@@ -92,3 +98,32 @@ No companions are warranted. The diff is one host-side pick on num_tokens, appli
 - Can the attempt file record, from the log or profile, the number of padded blocks (n_padded) at bs=128/256 under the old and new picks? That would confirm the m-block growth is small (the expected ~8-16 routes per local expert), not the ~32/64 the risk paragraph assumes.
 - If bs=128 gains and bs=256 is flat or loses, read it as the 64->32 step being too short or the thread_m_blocks=2 template not being cheaper at that M, not as hot-expert weight re-streaming. A loss from re-streaming would need far more routes per expert than EP8 skew gives.
 
+
+## Implementation notes
+
+- One edit in `kernel_fn` (worktree `muse_moe_w4a16/submission.py`), right after SGLang's candidate loop: `if num_tokens >= 128: block_size_m = BLOCK_SIZE_M_CANDIDATES[max(BLOCK_SIZE_M_CANDIDATES.index(block_size_m) - 2, 0)]`, with a 3-line comment. 5 insertions, nothing else touched.
+- The same `block_size_m` still feeds `moe_align_block_size(local_ids, block_size_m, bank["count"])` (count 32, as on master) and `moe_block_size` in `common`, so both Marlin calls get it.
+- Picks checked by evaluating the loop + new line in plain Python (SGLang -> new): bs 1/4/8/16 8->8, bs 32/33 16->16, bs 128 48->16, bs 256 64->32, bs 257 64->32 (256/257 never break the loop, so they end on 64, index 4 -> 32). Matches the spec.
+- No deviation from the spec. Per the review's open question, the attempt file should try to record n_padded at bs=128/256 from the profile/log if visible; no print was added to kernel_fn (it would sync), so this is left to the profile.
+
+## Rules check
+
+Checked against `git -C .worktrees/muse_moe_w4a16/marlin-block-size-m-verify-two-smaller diff` (one 5-line hunk in kernel_fn).
+
+- [x] CUDA-graph capturable: the new branch is on `num_tokens` (a shape) and a Python tuple index; no `.item()`/`.cpu()`/`synchronize()`/tensor prints added; no allocation or control flow on input values.
+- [x] Nothing derived from `data` is cached across calls: no state writes added.
+- [x] Weights: n/a: prepare() and the repack are untouched; NVFP4 stays NVFP4.
+- [x] Activations BF16 where SGLang keeps BF16: unchanged (only the tile size of the same Marlin W4A16 calls changes); KV cache / query items n/a: no attention in this problem.
+- [x] Attention sees every key: n/a: no attention in this problem; no routes are skipped (alignment still covers every local route).
+- [x] No timing patches, harness frames/I/O/secrets, module edits, reference import, subprocesses or network: diff adds none.
+- [x] All work happens inside the timed call; no output caching or replay: unchanged.
+- [x] First line `# okc: problem=muse_moe_w4a16` kept; no triton.autotune added.
+
+okc_lint output:
+
+```
+warn  host-sync    L110: torch.cuda.synchronize()  (outside kernel_fn's call graph; fine in prepare())
+OK with warnings: muse_moe_w4a16/submission.py
+```
+
+`python3 -I -m py_compile` passed; the `__pycache__` it left was removed. Not committed, staged or run.
