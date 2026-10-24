@@ -1,0 +1,456 @@
+{
+ "ok": true,
+ "promote": [],
+ "dispatch": [
+  {
+   "problem": "muse_attention_decode",
+   "picks": [
+    {
+     "slug": "fa3-num-splits-sliding",
+     "mode": "check",
+     "priority": 3,
+     "review": "required",
+     "kind": "primary",
+     "controls_for": null
+    }
+   ]
+  },
+  {
+   "problem": "muse_bf16_proj",
+   "picks": [
+    {
+     "slug": "pooler-unpooler-m128-wgmma-splitk-semaphore",
+     "mode": "check",
+     "priority": 2,
+     "review": "required",
+     "kind": "primary",
+     "controls_for": null
+    }
+   ]
+  },
+  {
+   "problem": "muse_decode_layer",
+   "picks": [
+    {
+     "slug": "triton-flash-decode-full-verify-paired-kv",
+     "mode": "check",
+     "priority": 5,
+     "review": "required",
+     "kind": "rewrite",
+     "controls_for": null
+    }
+   ]
+  },
+  {
+   "problem": "muse_moe_w4a16",
+   "picks": [
+    {
+     "slug": "marlin-block-size-m-next-smaller",
+     "mode": "check",
+     "priority": 2,
+     "review": "required",
+     "kind": "primary",
+     "controls_for": null
+    },
+    {
+     "slug": "align-remote-sentinel-ids",
+     "mode": "check",
+     "priority": 3,
+     "review": "required",
+     "kind": "primary",
+     "controls_for": null
+    }
+   ]
+  },
+  {
+   "problem": "muse_prefill_layer",
+   "picks": [
+    {
+     "slug": "experts-triton-w4a16-swapab-reglhs",
+     "mode": "check",
+     "priority": 1,
+     "review": "required",
+     "kind": "rewrite",
+     "controls_for": null
+    }
+   ]
+  }
+ ],
+ "wake_s": 2345,
+ "needs_human": [],
+ "report": {
+  "preflight": {
+   "ok": true,
+   "branch": "master",
+   "whoami": "yesthatwilly",
+   "quotas": {
+    "muse_bf16_proj": {
+     "scored": {
+      "per_day": 10,
+      "used": 2,
+      "left": 8
+     },
+     "checks": {
+      "per_day": 20,
+      "used": 11,
+      "left": 9
+     }
+    },
+    "muse_attention_decode": {
+     "scored": {
+      "per_day": 10,
+      "used": 1,
+      "left": 9
+     },
+     "checks": {
+      "per_day": 10,
+      "used": 2,
+      "left": 8
+     }
+    },
+    "muse_moe_w4a16": {
+     "scored": {
+      "per_day": 10,
+      "used": 0,
+      "left": 10
+     },
+     "checks": {
+      "per_day": 20,
+      "used": 9,
+      "left": 11
+     }
+    },
+    "muse_decode_layer": {
+     "scored": {
+      "per_day": 10,
+      "used": 2,
+      "left": 8
+     },
+     "checks": {
+      "per_day": 10,
+      "used": 6,
+      "left": 4
+     }
+    },
+    "muse_prefill_layer": {
+     "scored": {
+      "per_day": 10,
+      "used": 0,
+      "left": 10
+     },
+     "checks": {
+      "per_day": 10,
+      "used": 7,
+      "left": 3
+     }
+    }
+   },
+   "tracks": null,
+   "hours_to_reset": 14.03,
+   "lock": ".claude/churn.lock",
+   "_exit": 0
+  },
+  "intake": {
+   "ok": true,
+   "added": [
+    "muse_bf16_proj/hypotheses/queue/2026-10-24T092553Z-pooler-unpooler-m128-wgmma-splitk-semaphore.md",
+    "muse_bf16_proj/hypotheses/queue/2026-10-24T092629Z-qkv-gate-o-m128-wgmma-splitk-semaphore.md",
+    "muse_bf16_proj/hypotheses/queue/2026-10-24T092648Z-pooler-splitk2-tma-weight-stream.md",
+    "muse_prefill_layer/hypotheses/queue/2026-10-24T092506Z-experts-triton-w4a16-swapab-reglhs.md"
+   ],
+   "skipped": [],
+   "_exit": 0
+  },
+  "recover": {
+   "ok": true,
+   "actions": [],
+   "needs_human": [],
+   "_exit": 0
+  },
+  "harvest": {
+   "ok": true,
+   "harvested": [
+    {
+     "problem": "muse_decode_layer",
+     "slug": "triton-flash-decode-full-paired-kv",
+     "job": "e82b11f9d9f64b23",
+     "outcome": "neutral",
+     "detail": "unproven-vs-best",
+     "speedup": 1.0702026817152541,
+     "ci": [
+      1.0541496414895253,
+      1.0862557219409827
+     ],
+     "md": "muse_decode_layer/hypotheses/done/neutral/2026-10-24T075400Z-triton-flash-decode-full-paired-kv.md"
+    },
+    {
+     "problem": "muse_prefill_layer",
+     "slug": "experts-marlin-block-m-local-rows",
+     "job": "8e9943ec1b004b0f",
+     "outcome": "regression",
+     "detail": "regression",
+     "speedup": 0.9835519345256266,
+     "ci": [
+      0.9687986555077422,
+      0.9983052135435109
+     ],
+     "md": "muse_prefill_layer/hypotheses/done/regression/2026-10-24T075409Z-experts-marlin-block-m-local-rows.md"
+    },
+    {
+     "problem": "muse_prefill_layer",
+     "slug": "experts-marlin-block-m-48-turn1",
+     "job": "0606f849d2f441ad",
+     "outcome": "neutral",
+     "detail": "within-ci",
+     "speedup": 1.0030005750632152,
+     "ci": [
+      0.9879555664372669,
+      1.0180455836891633
+     ],
+     "md": "muse_prefill_layer/hypotheses/done/neutral/2026-10-24T075422Z-experts-marlin-block-m-48-turn1.md"
+    }
+   ],
+   "pending": [
+    {
+     "problem": "muse_attention_decode",
+     "slug": "fa3-hdim128-head-pairing",
+     "job": "facc479992e24a35",
+     "status": "queued",
+     "age_h": 0.6
+    },
+    {
+     "problem": "muse_attention_decode",
+     "slug": "sliding-single-launch-fused-attention",
+     "job": "f389af196ddf47b1",
+     "status": "running",
+     "age_h": 1.3
+    },
+    {
+     "problem": "muse_bf16_proj",
+     "slug": "unpooler-slice-triton-splitk8-semaphore",
+     "job": "bb31bb36545a47bb",
+     "status": "queued",
+     "age_h": 0.6
+    },
+    {
+     "problem": "muse_moe_w4a16",
+     "slug": "post-expert-norm-triton-small-m",
+     "job": "bacd1f502f4e46fa",
+     "status": "queued",
+     "age_h": 0.6
+    },
+    {
+     "problem": "muse_moe_w4a16",
+     "slug": "align-256-experts-below-128",
+     "job": "e753d5b9df644ebb",
+     "status": "queued",
+     "age_h": 0.6
+    },
+    {
+     "problem": "muse_moe_w4a16",
+     "slug": "small-m-grouped-gemv-splitk-rewrite",
+     "job": "734a1159ff334c3d",
+     "status": "queued",
+     "age_h": 1.2
+    }
+   ],
+   "_exit": 0
+  },
+  "harvest-promotions": {
+   "ok": true,
+   "promotions": [
+    {
+     "problem": "muse_attention_decode",
+     "slug": "fused-preattention-triton",
+     "job": "c297440e53334f34",
+     "promotion": "done",
+     "speedup": 1.1284429079326423,
+     "you": {
+      "rank": 451,
+      "team": "yesthatwilly",
+      "speedup": 1.1284,
+      "first": false,
+      "ahead": 450,
+      "to_first": 2.4155
+     }
+    }
+   ],
+   "_exit": 0
+  },
+  "promote": {
+   "ok": true,
+   "promote": [],
+   "skipped": [],
+   "_exit": 1
+  },
+  "budget": {
+   "ok": true,
+   "plans": [
+    {
+     "problem": "muse_attention_decode",
+     "checks_left": 8,
+     "scored_left": 9,
+     "hours_to_reset": 14.03,
+     "in_flight": 2,
+     "in_flight_checks": 2,
+     "gains_pending": 0,
+     "promotion_hold": 1,
+     "spendable": 16,
+     "queue": 11,
+     "need": 16,
+     "pace": 2,
+     "N": 1,
+     "picks": [
+      {
+       "slug": "fa3-num-splits-sliding",
+       "mode": "check",
+       "priority": 3,
+       "review": "required",
+       "kind": "primary",
+       "controls_for": null
+      }
+     ],
+     "shortfall": 5,
+     "reason": null,
+     "wake_s": 2931
+    },
+    {
+     "problem": "muse_bf16_proj",
+     "checks_left": 9,
+     "scored_left": 8,
+     "hours_to_reset": 14.03,
+     "in_flight": 1,
+     "in_flight_checks": 1,
+     "gains_pending": 0,
+     "promotion_hold": 1,
+     "spendable": 16,
+     "queue": 5,
+     "need": 16,
+     "pace": 2,
+     "N": 1,
+     "picks": [
+      {
+       "slug": "pooler-unpooler-m128-wgmma-splitk-semaphore",
+       "mode": "check",
+       "priority": 2,
+       "review": "required",
+       "kind": "primary",
+       "controls_for": null
+      }
+     ],
+     "shortfall": 11,
+     "reason": null,
+     "wake_s": 2931
+    },
+    {
+     "problem": "muse_decode_layer",
+     "checks_left": 4,
+     "scored_left": 8,
+     "hours_to_reset": 14.03,
+     "in_flight": 0,
+     "in_flight_checks": 0,
+     "gains_pending": 0,
+     "promotion_hold": 0,
+     "spendable": 12,
+     "queue": 4,
+     "need": 12,
+     "pace": 1,
+     "N": 1,
+     "picks": [
+      {
+       "slug": "triton-flash-decode-full-verify-paired-kv",
+       "mode": "check",
+       "priority": 5,
+       "review": "required",
+       "kind": "rewrite",
+       "controls_for": null
+      }
+     ],
+     "shortfall": 8,
+     "reason": null,
+     "wake_s": 3600
+    },
+    {
+     "problem": "muse_moe_w4a16",
+     "checks_left": 11,
+     "scored_left": 10,
+     "hours_to_reset": 14.03,
+     "in_flight": 3,
+     "in_flight_checks": 3,
+     "gains_pending": 0,
+     "promotion_hold": 1,
+     "spendable": 20,
+     "queue": 3,
+     "need": 20,
+     "pace": 2,
+     "N": 2,
+     "picks": [
+      {
+       "slug": "marlin-block-size-m-next-smaller",
+       "mode": "check",
+       "priority": 2,
+       "review": "required",
+       "kind": "primary",
+       "controls_for": null
+      },
+      {
+       "slug": "align-remote-sentinel-ids",
+       "mode": "check",
+       "priority": 3,
+       "review": "required",
+       "kind": "primary",
+       "controls_for": null
+      }
+     ],
+     "shortfall": 17,
+     "reason": null,
+     "wake_s": 2345
+    },
+    {
+     "problem": "muse_prefill_layer",
+     "checks_left": 3,
+     "scored_left": 10,
+     "hours_to_reset": 14.03,
+     "in_flight": 0,
+     "in_flight_checks": 0,
+     "gains_pending": 0,
+     "promotion_hold": 0,
+     "spendable": 13,
+     "queue": 4,
+     "need": 13,
+     "pace": 1,
+     "N": 1,
+     "picks": [
+      {
+       "slug": "experts-triton-w4a16-swapab-reglhs",
+       "mode": "check",
+       "priority": 1,
+       "review": "required",
+       "kind": "rewrite",
+       "controls_for": null
+      }
+     ],
+     "shortfall": 9,
+     "reason": null,
+     "wake_s": 3600
+    }
+   ],
+   "wake_s": 2345,
+   "dispatch_total": 6,
+   "_exit": 0
+  },
+  "index": {
+   "ok": true,
+   "changed": [
+    "muse_attention_decode/hypotheses/INDEX.md",
+    "muse_attention_decode/hypotheses/FINDINGS.md",
+    "muse_decode_layer/hypotheses/INDEX.md",
+    "muse_decode_layer/hypotheses/FINDINGS.md",
+    "muse_prefill_layer/hypotheses/INDEX.md",
+    "muse_prefill_layer/hypotheses/FINDINGS.md",
+    "hypotheses/INDEX.md"
+   ],
+   "_exit": 0
+  }
+ }
+}
