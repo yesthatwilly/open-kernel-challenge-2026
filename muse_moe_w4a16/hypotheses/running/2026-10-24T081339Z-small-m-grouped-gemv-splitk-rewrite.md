@@ -76,12 +76,18 @@ depends_on: null
 priority: 1
 kind: rewrite
 controls_for: null
-stage: 1
+stage: claimed
 replaces: Marlin w13 + silu + w2 at num_tokens <= 16
 review: proceed
-status: queued
+status: running
 review_at: 2026-10-24T083755Z
 review_companions: null
+claimed_at: 2026-10-24T083755Z
+base_sha: 713276ec0ed1f2c1c4e621ba4314e63f989307e4
+base_blob: 11fbc1957daf7294cd2810ff82a0aad2f25644bd
+branch: hyp/muse_moe_w4a16/small-m-grouped-gemv-splitk-rewrite
+worktree: .worktrees/muse_moe_w4a16/small-m-grouped-gemv-splitk-rewrite
+mode: null
 ---
 
 # small-m-grouped-gemv-splitk-rewrite
