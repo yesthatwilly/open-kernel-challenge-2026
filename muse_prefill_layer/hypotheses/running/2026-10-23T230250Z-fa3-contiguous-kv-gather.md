@@ -51,13 +51,19 @@ review: proceed
 status: running
 review_at: 2026-10-24T053108Z
 review_companions: null
-stage: claimed
+stage: implemented
 claimed_at: 2026-10-24T053109Z
 base_sha: 85d607280348efbd3eef09246edcdfa7132f09fe
 base_blob: e4931f050c7fb99835fe116d25bb454a5ea731e9
 branch: hyp/muse_prefill_layer/fa3-contiguous-kv-gather
 worktree: .worktrees/muse_prefill_layer/fa3-contiguous-kv-gather
 mode: null
+implemented_at: 2026-10-24T053303Z
+impl_commit: bf34ed281f7cb6c4d9425fcbabb532e6321f566e
+submission_sha256: fb3ee1bcd938c2c092d1909c93c139a120a5604a2b749a7529ed3a8ad304e0fb
+norm_sha256: 027ee9a916288967957fc1037dd7fb13d6b42e28bb1cd9474c5a352c0a05ddaa
+submission_blob: 01e9a2100d168ca5955d1465bb3308871c7d8847
+lint_warnings: 1
 ---
 
 # fa3-contiguous-kv-gather
@@ -102,3 +108,41 @@ No ab-revert: the only landed hypothesis is the parity port itself, which is the
 - The sliding first-turn gather is 2 x 18431 x 128 B = 4.7 MB per direction, not < 3 MB as the md says; immaterial against 17 ms, but the row should still read flat and a visible loss there would point at the index-kernel cost rather than attention.
 - If this lands, fa3-batched-mode stacked on it becomes pure non-varlen FA3 (static scheduler, static num_splits heuristic) rather than varlen-with-dynamic-split; that is a different regime from the one the batched-mode md argues, so re-review it against the merged base rather than running it as written.
 
+
+## Implementation notes
+
+Implemented 2026-10-24 in the worktree's `muse_prefill_layer/submission.py`, `kernel_fn` only (the FA3 call), plus the module docstring's FA3 line. Diff: 1 file, +58 / -15.
+
+- **Branch on config.** `if cfg["page_size"] == 1:` takes the contiguous path; `else:` is master's paged call verbatim (page_table, cache_seqlens, `scheduler_metadata=data["scheduler_metadata"]`). The page-size-64 test takes the parity path.
+- **Ordering.** The gather sits after `store_cache` on the same (current) stream, so the new tokens' rows are in the buffers.
+- **Gather on integer lanes (review requirement).** `k_cache.view(-1, hkv*d).view(torch.int64)` ([rows, 16] int64, 8-byte lanes) `.index_select(0, rows)`, then `.view(FP8).view(batch, span, hkv, d)`; same for v. No FP8 advanced indexing; the bytes are copied unchanged (the cache stays FP8). `rows` is int32 (index_select accepts int32 indices); it is `page_table` (or the gathered window slice), `.clamp(min=0).reshape(-1)`.
+- **Full layers (window == 0).** `span = max_pages`, `rows = page_table`, `cache_seqlens = data["cache_seqlens"]` unchanged, `window_size=(-1, -1)`. Buffer key j is page_table[b, j], i.e. absolute position j; the whole page table extent is in the buffer, so every key in [0, cache_seqlens) is present. Positions >= cache_seqlens (any -1 pages) read row 0 and are masked by cache_seqlens.
+- **Sliding layers (window = 2048).** `span = W = window - 1 + L`; `start = (seq_lens - (window-1)).clamp(min=0)` (int32 [B]); `pos = start.int64[:, None] + arange(W, int64)[None, :]` (int64 because torch.gather requires an int64 index); `rows = page_table.gather(1, pos.clamp(max=max_pages-1))`; `kv_seqlens = (cache_seqlens - start).to(int32)`; `window_size=(window-1, 0)`.
+- **Mask mapping over the trimmed buffer (verified).** Buffer key j is absolute position start + j. FA3 aligns causal masks bottom-right: query i of a request (absolute position seq_lens + i) maps to buffer index i + kv_seqlens - L = i + seq_lens + L - start - L = seq_lens + i - start, which is absolute seq_lens + i: the diagonal is the same key. Causal right edge (offset 0) and window left edge (offset window-1 = 2047) are offsets from that diagonal, so they select buffer keys [seq_lens+i-2047-start, seq_lens+i-start], i.e. absolute [seq_lens+i-2047, seq_lens+i], the same keys as the paged call; the lower bound clamps at buffer index 0 exactly when the absolute bound clamps at 0 (only if start = 0). Coverage: the smallest left edge any query needs is max(0, seq_lens-2047) = start (query 0) -> buffer index 0; the largest right edge is seq_lens + L - 1 (query L-1) -> buffer index kv_seqlens - 1. If start > 0, kv_seqlens = 2047 + L = W exactly and the largest gathered position is start + W - 1 = cache_seqlens - 1 <= max_pages - 1 (the clamp never fires); if start = 0, kv_seqlens = cache_seqlens <= W and positions beyond cache_seqlens are clamped/row-0 and masked by kv_seqlens. So every key the reference attends is in the buffer, and nothing the reference excludes is unmasked.
+- **Graph safety / no caching.** All index tensors are fixed-shape (B x max_pages or B x W, from config and tensor shapes); `torch.arange`, gather, clamp, index_select are device kernels; no `.item()`/`.cpu()`/sync, no branch on values. Buffers are allocated per call and nothing is put in `state`.
+- **scheduler_metadata.** The contiguous path passes `scheduler_metadata=None` (as the change specifies; a paged tile schedule would not apply, and the input is None on every prefill case). The fallback passes master's `data["scheduler_metadata"]`.
+- **Descale.** Unchanged (`k_descale`/`v_descale` [batch, hkv], only when kv_scale != 1).
+- **FA3 API assumption (unverified locally; no GPU here).** sgl_kernel `flash_attn_with_kvcache` with `page_table=None`, `cu_seqlens_q` set and no `cu_seqlens_k`/`k`/`v` new is FA3's `is_varlen_q && !is_varlen_k` mode: `k_cache` is [batch_k, seqlen_k, hkv, d] with `k_cache.size(0)` required to equal batch (B = len(cu_seqlens_q) - 1), and `cache_seqlens` (int32 [B]) acts as seqused_k. Our buffers are [B, max_pages or W, 2, 64] FP8, contiguous. If the wrapper rejects an unpaged FP8 cache or this combination, the first test fails fast.
+- **Deviations from the md:** none in substance. The md's `k_cache.view(-1, hkv, d)[idx]` FP8 advanced indexing is replaced by the int64-lane index_select the review asked for (same bytes).
+
+## Rules check
+
+Checked against `git -C .worktrees/muse_prefill_layer/fa3-contiguous-kv-gather diff`:
+
+- [x] CUDA-graph capturable: no `.item()`/`.cpu()`/`synchronize()`/tensor prints added in kernel_fn; allocations (arange, gather, index_select outputs) are fixed-shape from config/tensor shapes; the only new branches are on `cfg["page_size"]` and `cfg["window"]` (config).
+- [x] Nothing derived from `data` is cached across calls: the buffers and index tensors are locals of kernel_fn; `state` is not written.
+- [x] Weights: n/a: no weight handling touched; prepare() unchanged.
+- [x] Activations BF16 where SGLang keeps BF16; KV cache FP8; queries at most FP8 E4M3: the KV buffers are byte copies of the FP8 cache (int64 lanes, viewed back to float8_e4m3fn), q is still `.to(FP8)`, output path unchanged.
+- [x] Attention sees every key: full layers gather the whole page table extent; sliding layers gather the 2047 + L positions covering every query's window (mask mapping verified in Implementation notes); no top-k/sparse/skip.
+- [x] No timing patches, harness frames/I/O/secrets, module edits, reference import, subprocesses or network: the diff only touches the FA3 call and a docstring line.
+- [x] All work happens inside the timed call; no output caching or replay: the gather runs inside kernel_fn each call.
+- [x] First-line marker `# okc: problem=muse_prefill_layer` kept; no triton.autotune added.
+
+Lint (`okc_lint.py ... --problem muse_prefill_layer`):
+
+```
+warn  host-sync    L263: torch.cuda.synchronize()  (outside kernel_fn's call graph; fine in prepare())
+OK with warnings: muse_prefill_layer/submission.py
+```
+
+(The warning is the pre-existing synchronize in prepare(), unchanged by this diff.) `py_compile`: OK; `__pycache__` removed.
