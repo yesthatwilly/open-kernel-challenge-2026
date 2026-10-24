@@ -39,9 +39,16 @@ priority: 3
 kind: primary
 controls_for: null
 review: proceed
-status: queued
+status: running
 review_at: 2026-10-24T165634Z
 review_companions: null
+stage: claimed
+claimed_at: 2026-10-24T165634Z
+base_sha: 700fed761b57b25cbae687d07371c4020bf38af9
+base_blob: 1c0f5fa1bfc4e602b62e5e9edd9df6d5652b297b
+branch: hyp/muse_attention_decode/full-decode-cuda-fp8-qk-mma
+worktree: .worktrees/muse_attention_decode/full-decode-cuda-fp8-qk-mma
+mode: null
 ---
 
 # full-decode-cuda-fp8-qk-mma
