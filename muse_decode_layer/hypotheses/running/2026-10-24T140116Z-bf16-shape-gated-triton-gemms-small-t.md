@@ -53,13 +53,19 @@ review: proceed
 status: running
 review_at: 2026-10-24T164553Z
 review_companions: null
-stage: claimed
+stage: implemented
 claimed_at: 2026-10-24T164553Z
 base_sha: 1fd1f0ad0ecb64aecc30d851ca5c1c9149f46de0
 base_blob: cc466fce207709c98ab0e78c2435c1c459890fdb
 branch: hyp/muse_decode_layer/bf16-shape-gated-triton-gemms-small-t
 worktree: .worktrees/muse_decode_layer/bf16-shape-gated-triton-gemms-small-t
 mode: null
+implemented_at: 2026-10-24T164845Z
+impl_commit: 060c5bd147ca9c61a42f45940fed168db05affef
+submission_sha256: 57cf77d42680ebadde8963a382e902a9da9aef62cbd1e43c49316083d709d71e
+norm_sha256: 6b554775127b23873d9ab8f08bd2d1e80afac710c523d40cc752e631c5daf2b2
+submission_blob: 4ba81ce06744ae630e16d82a46eeb6bebf7de2ff
+lint_warnings: 3
 ---
 
 # bf16-shape-gated-triton-gemms-small-t
@@ -104,3 +110,44 @@ No companion is warranted. A gain is not ambiguous: the replaced kernels have th
 - The expected geomean gain (~+0.8%) is inside one run's CI. Is a scored attempt the right vehicle, or should bf16_proj's m=32 swap-AB wins (pooler +9.3%, o +4.1%, qkv +3.6% at m=32) be ported into this same run, so that decode_32 (T=32, both layers) also moves and the headline clears noise? That would drop decode_32 as a control. It is the caller's call: as written the hypothesis is clean but probably reads neutral.
 - Confirm that attn_input (a judge input), the o_norm_gate output and ffn_input from attn_boundary have stride(1)==1 and a 16-divisible stride(0) at every tested T. If any is a non-contiguous view, the asserting gate catches it in the tests rather than in a silent fallback.
 
+
+## Implementation notes
+
+Worktree `.worktrees/muse_decode_layer/bf16-shape-gated-triton-gemms-small-t`, `muse_decode_layer/submission.py` only (uncommitted; +377/-4).
+
+- **Kernels copied verbatim** from `muse_bf16_proj/submission.py` (master): `_bf16_splitk_kernel`, `_qkv_splitk_sem_kernel` and `_pooler_skinny_kernel`. Their constants are unchanged: POOLER_* (BLOCK_N 64, BLOCK_K 256, SPLIT_K 2, 4 warps, 4 stages), QKV_* (BLOCK_N 64, BLOCK_K 128, SPLIT_K 4, 4 stages), UNPOOL_* (BLOCK_N 64, BLOCK_K 128, SPLIT_K 8, 3 stages) and O_* (BLOCK_N 64, BLOCK_K 256, full K, 128 programs, 4 stages). The launch helpers `_pooler_forward`, `_qkv_forward`, `_unpool_forward` and `_o_skinny_gemm` are the combo's, with one change: BLOCK_M is the literal 16, because only m <= 16 is ever routed. bf16_proj's `16 if m <= 16 else 32` therefore always picked 16. The m = 32 swap-AB code (`_bf16_swapab_kernel`, `_swapab_*`) and the router kernel were **not** ported, as the review requires.
+- **Guards rewritten (review REQUIRED).** decode_layer's Config has no m/n/k keys, so the guards (`_bf16_x_ok`, `_bf16_w_ok`, then `_pooler_shape_ok(x, w)`, `_qkv_shape_ok(x, w)`, `_unpool_shape_ok(x, w)` and `_o_shape_ok(x, w)`) read only tensor shapes, dtype and inner stride. x must be bf16 2-D with stride(1) == 1 and 1 <= T <= 16 at the right K. w must be the exact [N, K] row-major weight; for the unpooler it is the leading >= 1024 rows of a [*, 4096] row-major weight.
+- **Routing in kernel_fn** uses token count only: `small_t = 1 <= tokens <= SMALL_T_TRITON_GEMM (16)`.
+  - qkv_gate: `_qkv_forward`
+  - o: `_o_skinny_gemm`
+  - pooler: `_pooler_forward` on the main stream. It is still launched after `side_stream.wait_stream(main_stream)`, and the side-stream router block is unchanged.
+  - unpooler slice: `_unpool_forward(expert_output, dense["unpooler"][:UNPOOL_SLICE])` inside the existing `tokens <= SLICED_UNPOOL_MAX_TOKENS` branch, followed by the unchanged `F.pad` all-gather.
+  - T >= 17 (decode_32, verify_16, verify_32 and the T = 24/33/40 tests) never enters these paths and keeps `_gemm`.
+- **Deviation: a logged fallback instead of a silent one or an assert.** The review's open question asked whether attn_input, the o_norm_gate output and ffn_input are contiguous at every tested T. I can't run anything here, so I took a middle path that favours correctness on a scored submit. If a routed T's tensor fails its precondition, `_fallback()` prints one line per (layer, shape, stride, dtype) and the call then takes `_gemm`. It keys only on shapes and strides, never on values, and the print is a Python string, not a tensor, so it is safe under capture. **Read the run log for `[small-t-gemm]` lines.** Any such line means that GEMM silently stayed on cuBLAS, so its expected gain is absent.
+- **prepare()** now calls `_prepare_small_t_gemms(state)` before the final synchronize. It allocates `state["small_t"]`, which holds a separate ws/cnt pair per path: pooler ws [2,16,4096] / cnt [64], qkv ws [4,16,2304] / cnt [36], unpool ws [8,16,1024] / cnt [16]. o has no workspace. It warms qkv, pooler and o at T 1..16 and the unpooler slice at T 1..8 on synthetic randn bf16 inputs against the real weights, then calls `torch.cuda.synchronize()`, `zero_()`s every cnt, and synchronises again. M is `do_not_specialize` and BLOCK_M is fixed, so in practice this is one compile per kernel variant.
+- The module docstring got one added bullet under "Differs from SGLang".
+
+## Rules check
+
+Checked against `git -C .worktrees/muse_decode_layer/bf16-shape-gated-triton-gemms-small-t diff`:
+
+- [x] CUDA-graph capturable. kernel_fn has no `.item()`, `.cpu()`, synchronize or tensor print. The only additions are `torch.empty` outputs, the same kind of allocation `_gemm` and the rest of kernel_fn already make. Branches read `tokens` (config), tensor shapes, strides and dtype; none reads a value. The ticket counters self-reset in-kernel, so graph replays start from 0. The synchronize calls are in prepare() only.
+- [x] Nothing derived from `data` is cached across calls. The ws/cnt buffers are allocated in prepare(), every partial a reducer reads is written in the same launch (masked rows), and the outputs are fresh. `_FALLBACK_SEEN` stores only (layer, shape, stride, dtype) tuples for a one-time log line, never values or tensors.
+- [x] Weights. The bf16 weights are used as stored (`dense[...]`, contiguous, unchanged); the unpooler slice is a view read in place. The NVFP4 experts and the router hi/lo split are untouched.
+- [x] Activations stay BF16 where SGLang keeps BF16. Each kernel is bf16 x bf16 with fp32 accumulation and stores bf16, like cuBLAS. The split-K partials are fp32 and are summed in a fixed order. The KV cache and FP8 query path are untouched.
+- [x] n/a: attention is untouched. FA3 still sees every key, with the same window and context.
+- [x] No timing patches, harness frames or I/O, module edits, reference import, subprocesses or network. The only new import-level code is `@triton.jit` functions and constants.
+- [x] All work happens inside the timed call. prepare() runs only warm-ups on synthetic inputs and discards their outputs. There is no output caching or replay.
+- [x] The first-line marker `# okc: problem=muse_decode_layer` is kept, and no `triton.autotune` is used.
+- [x] Only the named area changed: the four dense-GEMM call sites and their support code. The router side stream, routing, experts and norms are unchanged in the diff.
+
+okc_lint output:
+
+```
+warn  host-sync    L580: torch.cuda.synchronize()  (outside kernel_fn's call graph; fine in prepare())
+warn  host-sync    L584: torch.cuda.synchronize()  (outside kernel_fn's call graph; fine in prepare())
+warn  host-sync    L627: torch.cuda.synchronize()  (outside kernel_fn's call graph; fine in prepare())
+OK with warnings: .worktrees/muse_decode_layer/bf16-shape-gated-triton-gemms-small-t/muse_decode_layer/submission.py
+```
+
+`python3 -I -m py_compile` passed, and the `__pycache__` it left was removed.
