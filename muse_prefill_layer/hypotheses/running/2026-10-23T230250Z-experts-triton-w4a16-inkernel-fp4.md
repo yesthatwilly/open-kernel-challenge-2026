@@ -47,13 +47,15 @@ base_sha: 79a102b3fd18c6ab5fa1e8d8d7390e6645a26ec3
 base_blob: e4931f050c7fb99835fe116d25bb454a5ea731e9
 branch: hyp/muse_prefill_layer/experts-triton-w4a16-inkernel-fp4
 worktree: .worktrees/muse_prefill_layer/experts-triton-w4a16-inkernel-fp4
-mode: null
+mode: check
 implemented_at: 2026-10-24T080302Z
 impl_commit: 6a70bfaac484039ebab2355adee2262c864eee2d
 submission_sha256: b9321c229e90f61f2f88abeda1179554d0d1f875d99604908ea14bd343888af2
 norm_sha256: bd6263fe3e5ed19056cb8b1c22554076b1c79600f5588c0dc06b5d7c0365b668
 submission_blob: 2e6cb7c89a513e08be4b5e163319fbc34a35f854
 lint_warnings: 2
+attempt_file: 2026-10-24T080302Z-check-experts-triton-w4a16-inkernel-fp4.md
+prepared_at: 2026-10-24T080302Z
 ---
 
 # experts-triton-w4a16-inkernel-fp4
