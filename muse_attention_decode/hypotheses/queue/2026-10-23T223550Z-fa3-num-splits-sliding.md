@@ -36,7 +36,7 @@ expected:
     direction: flat
     why: "untouched: control that the gate on window is right"
 risk: medium
-depends_on: sglang-path-parity
+depends_on: fused-preattention-triton
 priority: 3
 kind: primary
 controls_for: null

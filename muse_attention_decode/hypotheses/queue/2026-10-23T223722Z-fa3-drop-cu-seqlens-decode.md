@@ -30,7 +30,7 @@ expected:
     direction: flat
     why: untouched
 risk: low
-depends_on: sglang-path-parity
+depends_on: fused-preattention-triton
 priority: 5
 kind: primary
 controls_for: null

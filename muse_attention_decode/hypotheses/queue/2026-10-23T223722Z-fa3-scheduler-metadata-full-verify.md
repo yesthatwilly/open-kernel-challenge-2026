@@ -36,7 +36,7 @@ expected:
     direction: flat
     why: untouched
 risk: medium
-depends_on: sglang-path-parity
+depends_on: fused-preattention-triton
 priority: 4
 kind: primary
 controls_for: null

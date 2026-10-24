@@ -45,7 +45,7 @@ expected:
     direction: flat
     why: 388 us, FA3-bound
 risk: low
-depends_on: sglang-path-parity
+depends_on: null
 priority: 2
 kind: primary
 controls_for: null
