@@ -47,13 +47,15 @@ base_sha: 73b4e99428db4a11b88721dc46a80f6e938f17e5
 base_blob: c6854f093588da524e63657576b27ed720756e32
 branch: hyp/muse_attention_decode/full-decode1-cuda-splitkv-chunk640
 worktree: .worktrees/muse_attention_decode/full-decode1-cuda-splitkv-chunk640
-mode: null
+mode: check
 implemented_at: 2026-10-24T184625Z
 impl_commit: 299b00d2433c741d41acc832edd2f24a7083a934
 submission_sha256: f717653baf663168198a63c36f520a0fd43865d488be444851b892a50fdf5ce9
 norm_sha256: d51a6f40c92eab33b483846edf12c405f4b2da2d3708bf4c7244ad7677b5e0f9
 submission_blob: edf00ade1e0a0382d6beb3fdefaff5afade611f1
 lint_warnings: 0
+attempt_file: 2026-10-24T184625Z-check-full-decode1-cuda-splitkv-chunk640.md
+prepared_at: 2026-10-24T184625Z
 ---
 
 # full-decode1-cuda-splitkv-chunk640
