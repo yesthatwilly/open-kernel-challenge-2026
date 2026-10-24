@@ -88,13 +88,15 @@ base_sha: 48b24f974a04559fb27967b595d013641507059c
 base_blob: f14211b4b0e88f8b3f683d9f9275b76a64b66e02
 branch: hyp/muse_attention_decode/sliding-single-launch-fused-attention
 worktree: .worktrees/muse_attention_decode/sliding-single-launch-fused-attention
-mode: null
+mode: check
 implemented_at: 2026-10-24T084220Z
 impl_commit: db5fa4d87590c050d3108322d81e5b226fdd427d
 submission_sha256: dcba0f814ecd82f4b07cf9ebdb1cf209a498adf98e6d5fe8685aca4247e9aa5d
 norm_sha256: f612c1ff67ac7b11c8d0882fbf0d6144cee4b75972c597aeea83ef4f7bb9202d
 submission_blob: ddc819f35e8b6aa78cd2ad84e3be00a879437e8e
 lint_warnings: 0
+attempt_file: 2026-10-24T084220Z-check-sliding-single-launch-fused-attention.md
+prepared_at: 2026-10-24T084220Z
 ---
 
 # sliding-single-launch-fused-attention
