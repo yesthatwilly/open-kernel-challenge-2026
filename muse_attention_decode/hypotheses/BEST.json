@@ -1,17 +1,17 @@
 {
  "problem": "muse_attention_decode",
- "job": "a8d647772fa945e5",
+ "job": "9e8fcb3fe4b04458",
+ "check_job": "9e8fcb3fe4b04458",
  "mode": "check",
- "speedup": 0.0023193044319036226,
+ "speedup": 1.1274459340435283,
  "ci": [
-  0.002284514865425068,
-  0.0023540939983821767
+  1.1105342450328755,
+  1.1443576230541812
  ],
- "score_us": 1623892.03771267,
- "commit": "ab21d70942315e8ad54b7981b399cee40c287eb3",
- "submission_blob": "7cafe07522219f5d70a1d23f29e3ee2fbdb497b7",
- "slug": null,
- "result": "muse_attention_decode/hypotheses/BEST.result.json",
- "updated_at": "2026-10-23T221827Z",
- "note": "seeded by best-init from local job records"
+ "score_us": 3340.5592998081547,
+ "commit": "3e98bd00dcb717e6e3670b7819e7d1c2331f52ba",
+ "submission_blob": "f14211b4b0e88f8b3f683d9f9275b76a64b66e02",
+ "slug": "fused-preattention-triton",
+ "result": "muse_attention_decode/hypotheses/done/gain/fused-preattention-triton.result.json",
+ "updated_at": "2026-10-24T083412Z"
 }
