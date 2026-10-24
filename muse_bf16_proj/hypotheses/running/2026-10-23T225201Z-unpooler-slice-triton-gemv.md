@@ -45,13 +45,15 @@ base_sha: e64f27ef09b3512d26573dde4d35b8ec3ade1f63
 base_blob: 5a2064af06f442f01dff926cb4f1eca75f992a24
 branch: hyp/muse_bf16_proj/unpooler-slice-triton-gemv
 worktree: .worktrees/muse_bf16_proj/unpooler-slice-triton-gemv
-mode: null
+mode: check
 implemented_at: 2026-10-24T015218Z
 impl_commit: 7c05884905deaf8903e034a47905fe43b780ebc4
 submission_sha256: 65e133c4f7f9eb9b99ab1528e2bd5b61e9cb0d8ebed282785307cb19f07a68ba
 norm_sha256: 5b9dc0afdff281cdbecda8a1abaa1a2a80002ca2d464897fa502a784f2ab671f
 submission_blob: 8b4a1d5c203a5775cb41fad007ee95a18f9765a3
 lint_warnings: 0
+attempt_file: 2026-10-24T015218Z-check-unpooler-slice-triton-gemv.md
+prepared_at: 2026-10-24T015218Z
 ---
 
 # unpooler-slice-triton-gemv
