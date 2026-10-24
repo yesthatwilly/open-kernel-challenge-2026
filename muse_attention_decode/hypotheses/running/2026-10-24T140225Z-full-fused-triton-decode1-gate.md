@@ -43,13 +43,19 @@ review: proceed
 status: running
 review_at: 2026-10-24T164553Z
 review_companions: null
-stage: claimed
+stage: implemented
 claimed_at: 2026-10-24T164553Z
 base_sha: bcc7ea4a50f9cbe47528f96e0ab15b661666ecdf
 base_blob: 1c0f5fa1bfc4e602b62e5e9edd9df6d5652b297b
 branch: hyp/muse_attention_decode/full-fused-triton-decode1-gate
 worktree: .worktrees/muse_attention_decode/full-fused-triton-decode1-gate
 mode: null
+implemented_at: 2026-10-24T164956Z
+impl_commit: 96908abef931000bcc9d79b0d10a47c895f466f4
+submission_sha256: dd8d09f5010575141d2e2b4a424688fd1bbd4c244f9c6e9cd2b79a67005ee9af
+norm_sha256: dc3f357b4467875a82260c8b98e78b3c66b06d2f13f8b70a001c39505c25f181
+submission_blob: dbe93e3308cb9143edde3f8784fbffce594bf70a
+lint_warnings: 0
 ---
 
 # full-fused-triton-decode1-gate
@@ -93,3 +99,39 @@ No companion is needed. The change touches one scored shape (full decode_1) thro
 - Is widening _splitkv_gate to batch >= 1 (a one-line change to a kernel that is already self-checked) a cheaper route to the same ~10 us? It would cost 3 launches, against the fused kernel's 1.
 - Expected 12-16 us versus a realistic 17-22 us: record the replaced kernel's own time and the achieved bandwidth (20.5 MB / kernel time) so a modest gain is not read as a failure.
 
+
+## Implementation notes
+
+Worktree `.worktrees/muse_attention_decode/full-fused-triton-decode1-gate`, file `muse_attention_decode/submission.py` only (uncommitted; +130/-33).
+
+- `_sliding_fused_kernel`: new constexpr `FULL`. When FULL, `lo = 0` (static branch) and the old-key validity is `tmask[None, :]` only; the sliding branch keeps `max(seq - (WINDOW - 1), 0)` and the per-row lower edge verbatim. New key/value build, cache store and in-register attend are untouched (ROPE is off because rope_theta is 0).
+- Combine, deviation from the md per the review's REQUIRED (2): no runtime `range(S)` loop. A static `if S > 16` branch loads all S (m, l) partials as one `[S, M]` tile (S=64, M=16 -> 4 KB each), computes m_max, the weights and l_sum vectorized, then streams acc as 8 unrolled, independent `[CS=8, M, D]` 3D loads (32 KB each) reduced over the split axis with `tl.sum(axis=0)`. `S <= 16` keeps the original `tl.static_range(S)` code (re-indented only), so sliding instantiations (FULL=False, S<=16, BLOCK_N=64, num_stages=2) compile the same. `CS: tl.constexpr = 8` declared at the kernel top (compile-time only).
+- `_sliding_forward`: `full = window == 0` -> S = `_FULL_SPLITS` (64), BLOCK_N=128, num_stages=3; else S = `_num_splits`, BLOCK_N=64, num_stages=2. num_warps=4 both. Workspace ws_acc [128, 16, 64] fp32 / ws_ml [128, 2, 16] and `_counters(1, 2)` as for sliding. scheduler_metadata not read.
+- New `_full_fused_gate(cfg)`: `_FULL_FUSED and window == 0 and batch == 1 and q_len == 1 and tp8 (16/2) and head_dim 64 and page_size 1` (narrowed to what the self-check covers). kernel_fn's first test is now `(sliding batch-1 decode) or _full_fused_gate(cfg)`, ahead of `_pre_attention_kernel`/FA3. Full batch>1 (splitkv / paired FA3), full verify and all sliding shapes unchanged.
+- REQUIRED (1): `_full_fused_self_check()` at import (eager, synthetic data via `_splitkv_synthetic([n])`, before `_build_splitkv`): n in {80000 (kv 1 and 1/4), 5000, 70 (kv 1/4), 1} — covers the scored length (split 63 holds only the new key), empty splits and a single old key. Runs the fused path and master's FA3 path (gate forced off, cloned caches) on the same inputs. Pass requires finite output, rel L2 < 2e-2 vs an FP32 reference with bf16-rounded queries (as the kernel), and new k/v cache rows within 2e-2 of FA3's path. Also prints FA3 vs an FP8-q FP32 reference and fused-vs-FA3 diff (informational: FP8 q vs bf16 q differ by several % on random data, so that diff is not gated). On failure or exception `_FULL_FUSED` stays False and the master FA3 path is kept; it prints `[fullfused] SELF-CHECK FAILED ...`.
+- `_splitkv_reference` gained `q_dtype=FP8` (default keeps the existing splitkv self-check bit-for-bit); `q_dtype=torch.bfloat16` rounds after qk_scale_factor.
+- Module docstring: one sentence on batch-1 decode.
+
+Uncertainties: (a) 3D `[8, 16, 64]` loads + axis-0 reduction in Triton need layout conversions; compile/regs unverified (no GPU here). (b) The self-check's 80000-length FP32 references allocate ~330 MB transient each and add a few seconds at import. (c) Open questions from the review (pipelining of the dependent page-table load at num_stages=3) untested; record kernel time and 20.5 MB / time bandwidth from the profile.
+
+## Rules check
+
+Checked against `git -C .worktrees/muse_attention_decode/full-fused-triton-decode1-gate diff`:
+
+- [x] CUDA-graph capturable: no `.item()`/`.cpu()`/`synchronize()`/tensor prints in kernel_fn's path; the new gate and launcher branch on `config` only; workspace sizes come from config. The `float(...)` syncs and prints are in the import-time self-check only.
+- [x] Nothing derived from `data` is cached across calls: `_FULL_FUSED` is a bool set from synthetic data at import; counters are the existing config-keyed, self-resetting buffer.
+- [x] Weights: n/a: this problem has no weights; nothing repacked.
+- [x] Activations BF16 where SGLang keeps BF16; KV cache FP8 (new rows stored E4M3); queries bf16 (finer than E4M3); output bf16.
+- [x] Attention sees every key: FULL attends old keys [0, seq-1] (lo = 0, mask tmask only) plus the new key; 64 splits cover the whole range; no skipping.
+- [x] No timing patches, harness frames/I/O/secrets, module edits, reference import, subprocesses or network: no new imports.
+- [x] All work happens inside the timed call; no output caching or replay.
+- [x] Marker line `# okc: problem=muse_attention_decode` kept; no `triton.autotune`.
+
+Lint:
+
+```
+$ python3 -I .claude/skills/churnsubs/bin/okc_lint.py <worktree>/muse_attention_decode/submission.py --problem muse_attention_decode
+CLEAN: submission.py
+```
+
+`python3 -I -m py_compile` OK; `__pycache__` removed.
