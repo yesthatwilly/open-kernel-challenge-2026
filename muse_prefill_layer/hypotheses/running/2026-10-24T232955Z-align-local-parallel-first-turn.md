@@ -24,7 +24,7 @@ kind: primary
 controls_for: null
 review: required
 status: running
-stage: implemented
+stage: dispatched
 claimed_at: 2026-10-24T232955Z
 base_sha: 67f7473c299ffe95b9bb8701cdaf2079f00e3cab
 base_blob: 8780061c8886bf3d70fe3c433fbbfade9bdf8507
@@ -41,6 +41,8 @@ submission_blob: 32d9f1e7e5c9c472ea3b8c05d97fa7de566e6135
 lint_warnings: 12
 attempt_file: 2026-10-24T233023Z-check-align-local-parallel-first-turn.md
 prepared_at: 2026-10-24T233023Z
+job: c2f3e9d8297f4a18
+dispatched_at: 2026-10-24T233033Z
 ---
 
 # align-local-parallel-first-turn
