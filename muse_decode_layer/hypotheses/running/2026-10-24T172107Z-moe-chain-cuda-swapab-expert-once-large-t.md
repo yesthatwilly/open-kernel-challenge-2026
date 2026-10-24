@@ -91,13 +91,15 @@ base_sha: a449561e2d3c5c1910b17badcd989afdfcebd989
 base_blob: cc466fce207709c98ab0e78c2435c1c459890fdb
 branch: hyp/muse_decode_layer/moe-chain-cuda-swapab-expert-once-large-t
 worktree: .worktrees/muse_decode_layer/moe-chain-cuda-swapab-expert-once-large-t
-mode: null
+mode: submit
 implemented_at: 2026-10-24T173736Z
 impl_commit: e65eda8e263ae1408bdb9e263068ca89a29ceb0d
 submission_sha256: 2f179228e60c6ace4d98de410580e5b5865f5d612ff771aa143fa2dda9fbff40
 norm_sha256: 9ad53f949e00fe36ca26685c8f5615cb250eecd7d87e3bb19065ac38c2cbb259
 submission_blob: 81d11fec488c02b0e7fe3a48f764aca20bb6a438
 lint_warnings: 10
+attempt_file: 2026-10-24T181733Z-submit-moe-chain-cuda-swapab-expert-once-large-t.md
+prepared_at: 2026-10-24T181733Z
 ---
 
 # moe-chain-cuda-swapab-expert-once-large-t
