@@ -54,7 +54,7 @@ review: proceed
 status: running
 review_at: 2026-10-24T185025Z
 review_companions: null
-stage: implemented
+stage: dispatched
 claimed_at: 2026-10-24T185025Z
 base_sha: 1659dce115b4c66c089ef675d5ac97c41f6798a1
 base_blob: 3d70ae6e2de0d48c4a4f2a469ced8234f5348182
@@ -69,6 +69,8 @@ submission_blob: 7377122bbca5108db2e61fbac020db0883b446cb
 lint_warnings: 19
 attempt_file: 2026-10-24T231259Z-check-l2-prefetch-o-pooler-during-sliding-attention.md
 prepared_at: 2026-10-24T231259Z
+job: 96ee63e15edb438c
+dispatched_at: 2026-10-24T231312Z
 ---
 
 # l2-prefetch-o-pooler-during-sliding-attention
