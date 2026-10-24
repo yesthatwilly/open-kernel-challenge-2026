@@ -6,6 +6,7 @@ items here and in each tick's summary. Resolved items move to the log at the bot
 ## Open
 
 - 2026-10-24 rules heads-up (not blocking): bf16 **bf16-cublaslt-algo-pick-in-prepare-m128-m256** times cuBLASLt algorithm candidates on synthetic data inside the untimed prepare() and replays the winner in kernel_fn (no timing or autotune in kernel_fn). The Opus reviewer read the rules as allowing it, and decode's pooler-gemm-splitk-autotune used the same pattern. It runs on tomorrow's quota unless you say to hold it.
+- 2026-10-24 rules heads-up (not blocking): bf16 **bf16-lossless-exp4-weight-stream-rewrite** stores the bf16 weights in a lossless compressed form, built once in prepare() (a shared exponent per 64-element group, one byte of sign and mantissa, a 4-bit exponent offset, and raw bf16 for groups out of range), and decompresses them bit-exactly in registers inside kernel_fn. That cuts weight bytes to about 0.77x. prepare() asserts a bit-exact round trip. The weights are fixed parameters, not inputs, and the math stays bf16. The minter read the rules as allowing it; the Opus review checks again. It runs at the reset unless you say to hold it.
 
 ## Standing answers
 
