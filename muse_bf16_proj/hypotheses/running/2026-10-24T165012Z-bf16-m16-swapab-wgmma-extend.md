@@ -88,7 +88,7 @@ review: proceed
 status: running
 review_at: 2026-10-24T165449Z
 review_companions: null
-stage: implemented
+stage: dispatched
 claimed_at: 2026-10-24T165449Z
 base_sha: e82b94f9414d0fe3381c39c7722efd47759f3360
 base_blob: a8bb42ac483318e9fbc84bc7826a27b7a704d1fb
@@ -103,6 +103,8 @@ submission_blob: bb41afb76ea0a0dea82ed0246aa441d6b3922a19
 lint_warnings: 0
 attempt_file: 2026-10-24T165742Z-submit-bf16-m16-swapab-wgmma-extend.md
 prepared_at: 2026-10-24T165742Z
+job: 89fabef70bd745f7
+dispatched_at: 2026-10-24T165751Z
 ---
 
 # bf16-m16-swapab-wgmma-extend
