@@ -36,13 +36,19 @@ review: proceed
 status: running
 review_at: 2026-10-24T174842Z
 review_companions: null
-stage: claimed
+stage: implemented
 claimed_at: 2026-10-24T174842Z
 base_sha: 4a04b3757546365d2227c1fc1762bc6c5072e92b
 base_blob: a8bb42ac483318e9fbc84bc7826a27b7a704d1fb
 branch: hyp/muse_bf16_proj/bf16-restack-m16-swapab-router-swapab-m32
 worktree: .worktrees/muse_bf16_proj/bf16-restack-m16-swapab-router-swapab-m32
 mode: null
+implemented_at: 2026-10-24T175227Z
+impl_commit: 8f97b729cc67149da5ac481e415f4402b9f1c88e
+submission_sha256: cda00e0118587bcdc1b3eed567f1677202b348f7cf16d9a96d931e0527e443cc
+norm_sha256: 5cf9fc70e2475e57ee93028771a3d36050cbb41a5e6635e39317bd202723a0e0
+submission_blob: 970b415b746fa03cb92e419d270be92588273178
+lint_warnings: 0
 ---
 
 # bf16-restack-m16-swapab-router-swapab-m32
@@ -87,3 +93,31 @@ No companion is warranted. Each sub-change was already measured alone on this ex
 - Consider dropping the prepare-only _router_hilo_report diagnostic and one of the duplicate PTX-count helpers. They are harmless, but prepare already went from 2.45 s to about 3.9 s in each component run.
 - Set the board expectation at about 1.21-1.22. Expect a submit that lands inside BEST's CI more often than clearly above it. If it reads between 1.205 and 1.214, it is still the best point estimate on master's lineage.
 
+
+## Implementation notes
+
+- Base: worktree submission.py at master blob a8bb42a. `git merge-file` of bb41afb (bf16-m16-swapab-wgmma-extend) and 64894c9 (router-swapab-wgmma-all-m) over a8bb42a exited 0 (clean); that result is the starting point. Outside the router region the file equals bb41afb: the diff vs bb41afb touches only the module docstring's router paragraph, the ROUTER_* constants and _router_* functions, the one `_router_prepare(state)` call in prepare() and the router tail of kernel_fn.
+- Gate (inclusive, `ROUTER_SWAPAB_MAX_M = 32`): new `_router_path(x, hi, n, stages)` (shapes only) returns "swapab" for m <= 32 (bucket present in state["router_stages"]), "hilo" for m > 32, "" otherwise. kernel_fn sends "swapab" to the swap-AB `_router_forward`, "hilo" to `_router_hilo_forward`, and only "" to the F.linear fp32 fallback.
+- `_router_hilo_forward` is master's `_router_forward` verbatim, with only its name and its config call renamed (`_router_config` -> `_router_hilo_config`). `_router_hilo_config` is master's `_router_config` logic verbatim (docstring changed only). `_router_hilo_kernel`, ROUTER_NUM_STAGES = 3 and ROUTER_NUM_WARPS = 4 are unchanged. Verified with an AST source diff against a8bb42a: forward and kernel identical modulo rename, config identical except the docstring. So for m > 32 the launched path (config, grid, kernel, stages, warps, zeroed output) is master's.
+- `_router_config` (swap-AB) trimmed to its two m <= 32 buckets: (16, 32) at m <= 16, (32, 32) at m <= 32. The patch's m > 32 rows were dropped since they are never used.
+- `_router_shape_ok` takes SPLIT_K (and the N tile) from the path actually used: swap-AB SPLIT_K 32 / BLOCK_W 64 at m <= 32; `_router_hilo_config` SPLIT_K 16/8 / BLOCK_N at m > 32 (exactly master's check).
+- `_router_prepare`: m in ROUTER_WARM_MS <= 32 (1, 8, 16, 32) choose stages per swap-AB bucket and warm as in the patch; m = 64/128/256 warm master's hilo forward. After warm-up, for the problem's [256, 8192] router, it asserts every ROUTER_WARM_MS m resolves to "swapab" or "hilo" (never the fallback) and prints `[router] m=<m>: <path>`.
+- Dropped `_router_hilo_report` (prepare-only diagnostic) and the duplicate `_ptx_counts` helper; the router report line now uses the m16 piece's `_print_ptx_counts(tag, compiled)` (loses red/atom counts in that log line; diagnostic only).
+- Deviation from spec: none in substance. Diff stat vs master: 1 file, +364 / -23.
+
+## Rules check
+
+- [x] CUDA-graph capturable: router routing in kernel_fn branches on x.shape / cfg["n"] / the prepare-time stage dict only; no .item()/.cpu()/synchronize()/prints in kernel_fn (prints and the assert are prepare-only). The m16 piece is unchanged from its measured patch (routes on cfg and shapes).
+- [x] Nothing derived from `data` is cached across calls: state only gains swapab16 workspaces/tickets/stages and router_stages, all built in prepare() from weights and synthetic x.
+- [x] Weights: router as bf16 hi + lo with fp32 accumulation (as master); bf16 weights read in place as bf16.
+- [x] Activations BF16 where SGLang keeps BF16 (bf16 x in, bf16 out for the four layers, fp32 router out). KV cache / queries: n/a, no attention in this problem.
+- [x] Attention sees every key: n/a, no attention in this problem (dense projections only).
+- [x] No timing patches, harness frames/I/O/secrets, module edits, reference import, subprocesses or network: the diff adds only Triton launches, torch allocations, prepare-time prints and an assert.
+- [x] All work happens inside the timed call; no output caching or replay (each call zeroes or allocates its output and launches).
+- [x] First line still `# okc: problem=muse_bf16_proj`; no triton.autotune.
+
+okc_lint output:
+```
+CLEAN: /home/user/git/musespark/.worktrees/muse_bf16_proj/bf16-restack-m16-swapab-router-swapab-m32/muse_bf16_proj/submission.py
+```
+`python3 -I -m py_compile` passed; __pycache__ removed from the worktree.
