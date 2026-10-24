@@ -54,13 +54,15 @@ base_sha: 52cd6c64bc16f41452b2a54313347fee80b36ffe
 base_blob: 108d36e9f2266fc88531dd6ff0329a847c882013
 branch: hyp/muse_moe_w4a16/align-parallel-from-17-tokens
 worktree: .worktrees/muse_moe_w4a16/align-parallel-from-17-tokens
-mode: null
+mode: submit
 implemented_at: 2026-10-24T184142Z
 impl_commit: c9c2db8910c72640ae840940ba5b1aa8b1d990ea
 submission_sha256: d2afd64da35c3aa435424ca897931a56fc95a5f2700e80c1dbd379a28c12f03b
 norm_sha256: 093861823c70c0d3f9345734853027090106d860ec4f44091652f707c1d52be0
 submission_blob: b91c76ef847585a79561eb75a6c240987c726531
 lint_warnings: 8
+attempt_file: 2026-10-24T184142Z-submit-align-parallel-from-17-tokens.md
+prepared_at: 2026-10-24T184142Z
 ---
 
 # align-parallel-from-17-tokens
