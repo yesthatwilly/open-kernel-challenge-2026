@@ -20,7 +20,7 @@ kind: primary
 controls_for: null
 review: required
 status: running
-stage: implemented
+stage: dispatched
 claimed_at: 2026-10-24T233638Z
 base_sha: fc2c96a83dc62731f5a5ebd4f4791da8fdeb14ed
 base_blob: 3d70ae6e2de0d48c4a4f2a469ced8234f5348182
@@ -37,6 +37,8 @@ submission_blob: ad7bee5bbcdcf3ad7d2f24aa5ab58e7ed67db773
 lint_warnings: 20
 attempt_file: 2026-10-24T233649Z-check-stack-sidestream-sliding-batched.md
 prepared_at: 2026-10-24T233649Z
+job: 2193fc0dc9be4b3c
+dispatched_at: 2026-10-24T233707Z
 ---
 
 # stack-sidestream-sliding-batched
