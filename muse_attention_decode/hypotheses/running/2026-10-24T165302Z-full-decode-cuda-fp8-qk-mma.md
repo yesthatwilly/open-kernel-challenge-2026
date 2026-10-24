@@ -48,13 +48,15 @@ base_sha: 700fed761b57b25cbae687d07371c4020bf38af9
 base_blob: 1c0f5fa1bfc4e602b62e5e9edd9df6d5652b297b
 branch: hyp/muse_attention_decode/full-decode-cuda-fp8-qk-mma
 worktree: .worktrees/muse_attention_decode/full-decode-cuda-fp8-qk-mma
-mode: null
+mode: submit
 implemented_at: 2026-10-24T165945Z
 impl_commit: 3a7b503a24dd5f850b506b560784c7dac2db844e
 submission_sha256: 6b2885c6eef2261cfb2ebf17a3786cadd6c859db5b106c8a84e1e9db2a238dc4
 norm_sha256: 52d730f65a802a1c715435b6042d13b9b15c625560aa34484f993e18db2286af
 submission_blob: 2ee93584612efa3b3320db386889110c4f2c939b
 lint_warnings: 0
+attempt_file: 2026-10-24T165946Z-submit-full-decode-cuda-fp8-qk-mma.md
+prepared_at: 2026-10-24T165946Z
 ---
 
 # full-decode-cuda-fp8-qk-mma
