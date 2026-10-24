@@ -1,0 +1,186 @@
+diff --git a/muse_bf16_proj/submission.py b/muse_bf16_proj/submission.py
+index da55301..0b01546 100644
+--- a/muse_bf16_proj/submission.py
++++ b/muse_bf16_proj/submission.py
+@@ -14,6 +14,15 @@ at every m. Each program owns one (M-block, N-block, K-slice), never loops over
+ atomically adds its fp32 K-partial into an output zeroed right before the launch; there is no
+ plain-store path. Configs are static, chosen from m at launch; rows beyond m are masked, so any
+ m is valid.
++
++Pooler and unpooler at 65 <= m <= 128 (hypothesis pooler-unpooler-m128-wgmma-splitk-semaphore):
++ONE Triton launch of _bf16_tc_splitk_kernel instead of the cuBLAS dispatch. Tile BLOCK_M=128 (all
++of m, rows >= m masked), BLOCK_N=128, BLOCK_K=64, 8 warps (two warpgroups), 4 stages; grid
++(N // 128, SPLIT_K) = 128 CTAs (pooler SPLIT_K=4, unpooler SPLIT_K=2, K-slice 2048 for both).
++Each CTA stores its fp32 partial to a prepare()-allocated workspace, takes one gpu-scope acq_rel
++ticket on a per-N-tile counter, and the CTA drawing the last ticket sums the partials in fixed
++order 0..SPLIT_K-1, stores bf16 once and resets the counter to 0. Every other m (m <= 64, which
++covers the scored 1/8/16/32, and m > 128, which covers 130/256/1000) keeps the cuBLAS dispatch.
+ """
+ 
+ from typing import TypedDict
+@@ -150,6 +159,137 @@ def _router_shape_ok(x: torch.Tensor, hi: torch.Tensor) -> bool:
+             and hi.stride(1) == 1)
+ 
+ 
++# Pooler / unpooler at 65 <= m <= 128: tensor-core split-K with an in-kernel semaphore reduce.
++TC_MIN_M = 65
++TC_MAX_M = 128
++TC_BLOCK_M = 128
++TC_BLOCK_N = 128
++TC_BLOCK_K = 64
++TC_NUM_WARPS = 8
++TC_NUM_STAGES = 4
++# layer -> (N, K, SPLIT_K); grid (N // 128, SPLIT_K) = 128 CTAs for both, K-slice 2048.
++TC_LAYERS = {"pooler": (4096, 8192, 4), "unpooler": (8192, 4096, 2)}
++
++
++@triton.jit(do_not_specialize=["M"])
++def _bf16_tc_splitk_kernel(
++    x_ptr, w_ptr, out_ptr, ws_ptr, cnt_ptr,
++    M,
++    stride_xm, stride_wn, stride_om,
++    N: tl.constexpr, WS_M: tl.constexpr, K_SLICE: tl.constexpr, SPLIT_K: tl.constexpr,
++    BLOCK_M: tl.constexpr, BLOCK_N: tl.constexpr, BLOCK_K: tl.constexpr,
++    REDUCE: tl.constexpr,
++):
++    """out[M, N] bf16 = x[M, K] @ w[N, K]^T, split-K with an in-kernel semaphore reduce.
++
++    Program (pid_n, pid_k) covers rows of N [pid_n*BLOCK_N, +BLOCK_N), K [pid_k*K_SLICE,
++    +K_SLICE) and all M rows (M <= BLOCK_M <= WS_M; rows >= M masked). ws: fp32 [SPLIT_K, WS_M, N]
++    scratch; cnt: int32 [N // BLOCK_N], 0 between launches. There is no early exit: every CTA
++    stores its partial and takes exactly one ticket, so the counter always returns to 0.
++    REDUCE=False (prepare()-only diagnostic) skips the winner's reload/sum/store but still resets.
++    """
++    pid_n = tl.program_id(0)
++    pid_k = tl.program_id(1)
++    k_start = pid_k * K_SLICE
++
++    offs_n = pid_n * BLOCK_N + tl.arange(0, BLOCK_N)
++    offs_k = k_start + tl.arange(0, BLOCK_K)
++    offs_m = tl.arange(0, BLOCK_M)
++    m_mask = offs_m < M
++    # Weight tiles read directly as [BLOCK_K, BLOCK_N] from the row-major [N, K] weight.
++    w_ptrs = w_ptr + offs_k[:, None] + offs_n[None, :] * stride_wn
++    x_ptrs = x_ptr + offs_m[:, None] * stride_xm + offs_k[None, :]
++    acc = tl.zeros((BLOCK_M, BLOCK_N), dtype=tl.float32)
++    for kk in range(0, K_SLICE // BLOCK_K):
++        x_tile = tl.load(x_ptrs, mask=m_mask[:, None], other=0.0)
++        w_tile = tl.load(w_ptrs)
++        acc = tl.dot(x_tile, w_tile, acc)
++        x_ptrs += BLOCK_K
++        w_ptrs += BLOCK_K
++
++    # fp32 partial -> workspace slice pid_k, rows < M only (the reducer reads the same mask).
++    ws_tile = offs_m[:, None] * N + offs_n[None, :]
++    tl.store(ws_ptr + pid_k * (WS_M * N) + ws_tile, acc, mask=m_mask[:, None])
++    # All threads' partial stores precede the (single, scalar) gpu-scope acq_rel ticket.
++    tl.debug_barrier()
++    ticket = tl.atomic_add(cnt_ptr + pid_n, 1, sem="acq_rel", scope="gpu")
++    # Order the other threads' reloads after the ticket's acquire.
++    tl.debug_barrier()
++    if ticket == SPLIT_K - 1:
++        if REDUCE:
++            total = tl.load(ws_ptr + ws_tile, mask=m_mask[:, None], other=0.0, cache_modifier=".cg")
++            for s in tl.static_range(1, SPLIT_K):
++                total += tl.load(ws_ptr + s * (WS_M * N) + ws_tile, mask=m_mask[:, None], other=0.0,
++                                 cache_modifier=".cg")
++            out_ptrs = out_ptr + offs_m[:, None] * stride_om + offs_n[None, :]
++            tl.store(out_ptrs, total.to(tl.bfloat16), mask=m_mask[:, None])
++        # Self-reset so the next launch / graph replay starts from 0.
++        tl.atomic_xchg(cnt_ptr + pid_n, 0, sem="relaxed", scope="gpu")
++
++
++def _tc_shape_ok(layer: str, x: torch.Tensor, w: torch.Tensor, cfg) -> bool:
++    """Preconditions of the tensor-core split-K path: pooler/unpooler, 65 <= m <= 128, full n."""
++    if layer not in TC_LAYERS:
++        return False
++    n, k, split_k = TC_LAYERS[layer]
++    return (TC_MIN_M <= cfg["m"] <= TC_MAX_M and cfg["n"] == n and cfg["k"] == k
++            and x.dim() == 2 and x.dtype == torch.bfloat16 and x.stride(1) == 1
++            and TC_MIN_M <= x.shape[0] <= TC_MAX_M and x.shape[1] == k
++            and tuple(w.shape) == (n, k) and w.stride(1) == 1
++            and k % (split_k * TC_BLOCK_K) == 0 and n % TC_BLOCK_N == 0)
++
++
++def _tc_forward(layer: str, x: torch.Tensor, w: torch.Tensor, ws: torch.Tensor, cnt: torch.Tensor,
++                reduce: bool = True):
++    """x bf16 [m in 65..128, k] @ w.T -> bf16 [m, n], one launch. Branches only on shapes.
++    Returns (out, compiled kernel handle)."""
++    n, k, split_k = TC_LAYERS[layer]
++    m = x.shape[0]
++    out = torch.empty((m, n), dtype=torch.bfloat16, device=x.device)
++    grid = (n // TC_BLOCK_N, split_k)
++    ck = _bf16_tc_splitk_kernel[grid](
++        x, w, out, ws, cnt,
++        m,
++        x.stride(0), w.stride(0), out.stride(0),
++        N=n, WS_M=TC_MAX_M, K_SLICE=k // split_k, SPLIT_K=split_k,
++        BLOCK_M=TC_BLOCK_M, BLOCK_N=TC_BLOCK_N, BLOCK_K=TC_BLOCK_K,
++        REDUCE=reduce,
++        num_warps=TC_NUM_WARPS, num_stages=TC_NUM_STAGES,
++    )
++    return out, ck
++
++
++def _tc_diagnostics(layer: str, w: torch.Tensor, ws: torch.Tensor, cnt: torch.Tensor) -> None:
++    """prepare()-only: print whether the compiled kernel uses wgmma, its registers/spills, and
++    event times of the full kernel vs a REDUCE=False variant (the difference is the reduce tail).
++    Synthetic x only; nothing here is used by kernel_fn."""
++    try:
++        n, k, _ = TC_LAYERS[layer]
++        x = torch.randn((TC_MAX_M, k), device=w.device, dtype=torch.float32).to(torch.bfloat16)
++        _, ck = _tc_forward(layer, x, w, ws, cnt, reduce=True)
++        _tc_forward(layer, x, w, ws, cnt, reduce=False)
++        ptx = ck.asm.get("ptx", "") if hasattr(ck, "asm") else ""
++        print(f"[tc_splitk {layer}] wgmma_in_ptx={'wgmma' in ptx} "
++              f"n_regs={getattr(ck, 'n_regs', '?')} n_spills={getattr(ck, 'n_spills', '?')}")
++        times = {}
++        for reduce in (True, False):
++            for _ in range(3):
++                _tc_forward(layer, x, w, ws, cnt, reduce=reduce)
++            start = torch.cuda.Event(enable_timing=True)
++            end = torch.cuda.Event(enable_timing=True)
++            reps = 20
++            start.record()
++            for _ in range(reps):
++                _tc_forward(layer, x, w, ws, cnt, reduce=reduce)
++            end.record()
++            end.synchronize()
++            times[reduce] = start.elapsed_time(end) * 1000.0 / reps
++        print(f"[tc_splitk {layer}] m=128 warm-L2 us: full={times[True]:.2f} "
++              f"no_reduce={times[False]:.2f} tail~{times[True] - times[False]:.2f}")
++    except Exception as exc:  # diagnostics must never break prepare()
++        print(f"[tc_splitk {layer}] diagnostics failed: {exc!r}")
++
++
+ def prepare(weights: Weights) -> dict:
+     """Called once, untimed. Keep the bf16 weights as they are (contiguous), build the router's
+     hi + lo bf16 split as [256, 8192] row-major (N x K), and pre-compile every m-bucket of the
+@@ -165,12 +305,27 @@ def prepare(weights: Weights) -> dict:
+         x = torch.randn((m, router.shape[1]), device=router.device, dtype=torch.float32).to(torch.bfloat16)
+         if _router_shape_ok(x, hi):
+             _router_forward(x, hi, lo)
++    # Pooler / unpooler tensor-core split-K scratch (fp32 partials, rewritten for rows < m on
++    # every call) and per-N-tile tickets; one compile per layer serves every m in 65..128.
++    for layer, (n, k, split_k) in TC_LAYERS.items():
++        w = state[layer]
++        state[layer + "_ws"] = torch.empty((split_k, TC_MAX_M, n), dtype=torch.float32, device=w.device)
++        state[layer + "_cnt"] = torch.zeros(n // TC_BLOCK_N, dtype=torch.int32, device=w.device)
++        for m in (TC_MIN_M, TC_MAX_M):
++            x = torch.randn((m, k), device=w.device, dtype=torch.float32).to(torch.bfloat16)
++            if _tc_shape_ok(layer, x, w, {"m": m, "n": n, "k": k}):
++                _tc_forward(layer, x, w, state[layer + "_ws"], state[layer + "_cnt"])
++        _tc_diagnostics(layer, w, state[layer + "_ws"], state[layer + "_cnt"])
++        # The kernel self-resets, but re-zero after the warm-up regardless (stream-ordered).
++        state[layer + "_cnt"].zero_()
+     return state
+ 
+ 
+ def kernel_fn(data: Inputs, state: dict) -> torch.Tensor:
+     x, cfg = data["x"], data["config"]
+     layer = cfg["layer"]
++    if layer in TC_LAYERS and _tc_shape_ok(layer, x, state[layer], cfg):
++        return _tc_forward(layer, x, state[layer], state[layer + "_ws"], state[layer + "_cnt"])[0]
+     if layer != "router":
+         # The unpooler's slice is its first n rows (all of them above 8 tokens).
+         return _bf16_gemm_dispatch_impl(x, state[layer][: cfg["n"]], None)

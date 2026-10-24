@@ -1,0 +1,4 @@
+[tc_splitk pooler] wgmma_in_ptx=True n_regs=154 n_spills=0
+[tc_splitk pooler] m=128 warm-L2 us: full=32.55 no_reduce=26.01 tail~6.54
+[tc_splitk unpooler] wgmma_in_ptx=True n_regs=140 n_spills=0
+[tc_splitk unpooler] m=128 warm-L2 us: full=30.26 no_reduce=25.98 tail~4.28

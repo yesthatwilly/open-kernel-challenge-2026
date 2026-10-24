@@ -55,10 +55,10 @@ priority: 2
 kind: primary
 controls_for: null
 review: proceed
-status: running
+status: done
 review_at: 2026-10-24T100116Z
 review_companions: null
-stage: dispatched
+stage: harvested
 claimed_at: 2026-10-24T100116Z
 base_sha: 93fae4dfde47a06219a581785dc8c4ff2e7dab3b
 base_blob: da55301de1e911aeab09878b0873809f544f436c
@@ -75,6 +75,13 @@ attempt_file: 2026-10-24T100317Z-check-pooler-unpooler-m128-wgmma-splitk-semapho
 prepared_at: 2026-10-24T100317Z
 job: d34fd76f9c444728
 dispatched_at: 2026-10-24T100325Z
+outcome: regression
+verdict_detail: regression
+speedup: 1.1158477978538692
+speedup_ci: [1.0991100808860612, 1.1325855148216772]
+harvested_at: 2026-10-24T111612Z
+best_at_harvest: 1.1432568936693237
+promotion: null
 ---
 
 # pooler-unpooler-m128-wgmma-splitk-semaphore
@@ -154,3 +161,53 @@ OK with warnings: submission.py
 ```
 
 `python3 -I -m py_compile` OK; __pycache__ removed.
+
+## Result
+
+- job `d34fd76f9c444728` (check), status done, passed True, tests 9/9
+- speedup 1.1158x, 95% CI [1.0991, 1.1326], score 4329.264268201423 µs vs SGLang 4830.8 µs
+- best at harvest: {"speedup": 1.1432568936693237, "ci": [1.1261080402642838, 1.1604057470743634], "job": "240eb22ea0b6487e"}; base result: muse_bf16_proj/hypotheses/done/gain/router-triton-hilo-fused-control-splitk-all-m.result.json
+- **outcome: regression** (regression)
+- files: `muse_bf16_proj/hypotheses/done/regression/pooler-unpooler-m128-wgmma-splitk-semaphore.result.json`, `muse_bf16_proj/hypotheses/done/regression/pooler-unpooler-m128-wgmma-splitk-semaphore.patch`; branch `hyp/muse_bf16_proj/pooler-unpooler-m128-wgmma-splitk-semaphore`
+
+## Attribution
+
+| shape | w | base µs | hyp µs | delta | verdict |
+|---|---|---|---|---|---|
+| layer=qkv_gate load=decode_1 m=1 | 62 | 14.4 | 14.22 | 0.9932 | flat |
+| layer=o load=decode_1 m=1 | 62 | 6.69 | 6.98 | 0.9702 | flat |
+| layer=pooler load=decode_1 m=1 | 62 | 21.21 | 21.59 | 0.9779 | flat |
+| layer=unpooler load=decode_1 m=1 | 62 | 7.07 | 7.18 | 0.9767 | flat |
+| layer=router load=decode_1 m=1 | 62 | 5.8 | 5.86 | 0.9842 | flat |
+| layer=qkv_gate load=decode_16 m=16 | 62 | 13.82 | 14.24 | 0.971 | flat |
+| layer=o load=decode_16 m=16 | 62 | 6.78 | 7.01 | 0.9899 | flat |
+| layer=pooler load=decode_16 m=16 | 62 | 21.3 | 21.54 | 0.9841 | flat |
+| layer=unpooler load=decode_16 m=16 | 62 | 18.45 | 18.61 | 1.0078 | flat |
+| layer=router load=decode_16 m=16 | 62 | 6.2 | 5.85 | 1.053 | gained |
+| layer=qkv_gate load=decode_32 m=32 | 62 | 14.27 | 14.5 | 0.9717 | flat |
+| layer=o load=decode_32 m=32 | 62 | 6.58 | 6.92 | 0.9811 | flat |
+| layer=pooler load=decode_32 m=32 | 62 | 21.95 | 21.9 | 1.001 | flat |
+| layer=unpooler load=decode_32 m=32 | 62 | 18.71 | 19.11 | 0.9916 | flat |
+| layer=router load=decode_32 m=32 | 62 | 6.54 | 6.65 | 0.9756 | flat |
+| layer=qkv_gate load=verify_1 m=8 | 62 | 14.0 | 14.09 | 0.9685 | lost |
+| layer=o load=verify_1 m=8 | 62 | 6.28 | 6.91 | 0.9579 | lost |
+| layer=pooler load=verify_1 m=8 | 62 | 21.3 | 21.51 | 0.9769 | flat |
+| layer=unpooler load=verify_1 m=8 | 62 | 7.02 | 7.27 | 0.9681 | lost |
+| layer=router load=verify_1 m=8 | 62 | 5.67 | 6.17 | 0.9211 | lost |
+| layer=qkv_gate load=verify_16 m=128 | 62 | 16.96 | 17.06 | 0.9871 | flat |
+| layer=o load=verify_16 m=128 | 62 | 6.98 | 7.5 | 0.9771 | flat |
+| layer=pooler load=verify_16 m=128 | 62 | 25.21 | 28.17 | 0.9242 | lost |
+| layer=unpooler load=verify_16 m=128 | 62 | 19.65 | 25.6 | 0.7588 | lost |
+| layer=router load=verify_16 m=128 | 62 | 7.04 | 7.49 | 0.9608 | lost |
+| layer=qkv_gate load=verify_32 m=256 | 62 | 19.47 | 19.49 | 1.0033 | flat |
+| layer=o load=verify_32 m=256 | 62 | 9.51 | 9.46 | 0.9884 | flat |
+| layer=pooler load=verify_32 m=256 | 62 | 30.51 | 30.02 | 0.9854 | flat |
+| layer=unpooler load=verify_32 m=256 | 62 | 24.39 | 24.48 | 0.9938 | flat |
+| layer=router load=verify_32 m=256 | 62 | 9.27 | 9.62 | 0.9965 | flat |
+
+gained on router decode_16; lost on qkv_gate verify_1; o verify_1; unpooler verify_1, verify_16; router verify_1, verify_16; pooler verify_16. Expected hit: 3/6. Noise ±1.5%.
+
+## Follow-ups
+
+- record which shapes lost (Attribution) and do not retry this area in this form.
+
