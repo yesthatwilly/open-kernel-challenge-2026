@@ -38,10 +38,10 @@ priority: 3
 kind: control
 controls_for: router-splitk32-small-m-all-loads-in-flight
 review: proceed
-status: running
+status: done
 review_at: 2026-10-24T104313Z
 review_companions: null
-stage: dispatched
+stage: harvested
 claimed_at: 2026-10-24T104313Z
 base_sha: 60622cdebc40953738b4429ef80902673cd5f50f
 base_blob: a0fcbb70e25fa568ef94f81935748440798a1410
@@ -58,6 +58,13 @@ attempt_file: 2026-10-24T104355Z-check-router-splitk32-small-m-all-loads-in-flig
 prepared_at: 2026-10-24T104355Z
 job: 4685bac7a662454d
 dispatched_at: 2026-10-24T104412Z
+outcome: neutral
+verdict_detail: unproven-vs-best
+speedup: 1.1518068196113151
+speedup_ci: [1.1345297173171454, 1.1690839219054847]
+harvested_at: 2026-10-24T115931Z
+best_at_harvest: 1.1432568936693237
+promotion: null
 ---
 
 # router-splitk32-small-m-all-loads-in-flight-control-stages3
@@ -125,3 +132,53 @@ okc_lint output:
 ```
 CLEAN: .worktrees/muse_bf16_proj/router-splitk32-small-m-all-loads-in-flight-control-stages3/muse_bf16_proj/submission.py
 ```
+
+## Result
+
+- job `4685bac7a662454d` (check), status done, passed True, tests 9/9
+- speedup 1.1518x, 95% CI [1.1345, 1.1691], score 4194.106092921194 µs vs SGLang 4830.8 µs
+- best at harvest: {"speedup": 1.1432568936693237, "ci": [1.1261080402642838, 1.1604057470743634], "job": "240eb22ea0b6487e"}; base result: muse_bf16_proj/hypotheses/done/neutral/router-splitk32-small-m-all-loads-in-flight.result.json
+- **outcome: neutral** (unproven-vs-best)
+- files: `muse_bf16_proj/hypotheses/done/neutral/router-splitk32-small-m-all-loads-in-flight-control-stages3.result.json`, `muse_bf16_proj/hypotheses/done/neutral/router-splitk32-small-m-all-loads-in-flight-control-stages3.patch`; branch `hyp/muse_bf16_proj/router-splitk32-small-m-all-loads-in-flight-control-stages3`
+
+## Attribution
+
+| shape | w | base µs | hyp µs | delta | verdict |
+|---|---|---|---|---|---|
+| layer=qkv_gate load=decode_1 m=1 | 62 | 14.24 | 13.74 | 1.017 | flat |
+| layer=o load=decode_1 m=1 | 62 | 6.81 | 6.67 | 1.0015 | flat |
+| layer=pooler load=decode_1 m=1 | 62 | 21.43 | 21.48 | 1.001 | flat |
+| layer=unpooler load=decode_1 m=1 | 62 | 7.06 | 6.88 | 1.044 | gained |
+| layer=router load=decode_1 m=1 | 62 | 6.28 | 5.78 | 1.0964 | gained |
+| layer=qkv_gate load=decode_16 m=16 | 62 | 14.29 | 14.01 | 1.0369 | gained |
+| layer=o load=decode_16 m=16 | 62 | 6.95 | 6.69 | 1.0247 | flat |
+| layer=pooler load=decode_16 m=16 | 62 | 21.58 | 21.11 | 1.0057 | flat |
+| layer=unpooler load=decode_16 m=16 | 62 | 18.42 | 18.47 | 1.0137 | flat |
+| layer=router load=decode_16 m=16 | 62 | 6.56 | 5.72 | 1.1336 | gained |
+| layer=qkv_gate load=decode_32 m=32 | 62 | 14.68 | 14.47 | 1.0196 | flat |
+| layer=o load=decode_32 m=32 | 62 | 6.89 | 7.04 | 1.0081 | flat |
+| layer=pooler load=decode_32 m=32 | 62 | 21.81 | 21.99 | 1.0036 | flat |
+| layer=unpooler load=decode_32 m=32 | 62 | 18.84 | 19.01 | 1.0182 | flat |
+| layer=router load=decode_32 m=32 | 62 | 7.4 | 6.55 | 1.1206 | gained |
+| layer=qkv_gate load=verify_1 m=8 | 62 | 14.21 | 14.56 | 1.0036 | flat |
+| layer=o load=verify_1 m=8 | 62 | 6.65 | 6.81 | 0.9812 | flat |
+| layer=pooler load=verify_1 m=8 | 62 | 21.32 | 21.53 | 0.9957 | flat |
+| layer=unpooler load=verify_1 m=8 | 62 | 6.9 | 7.06 | 0.9913 | flat |
+| layer=router load=verify_1 m=8 | 62 | 5.99 | 5.28 | 1.1158 | gained |
+| layer=qkv_gate load=verify_16 m=128 | 62 | 16.85 | 17.21 | 0.9714 | flat |
+| layer=o load=verify_16 m=128 | 62 | 7.49 | 7.22 | 0.9695 | lost |
+| layer=pooler load=verify_16 m=128 | 62 | 24.91 | 25.46 | 0.9459 | lost |
+| layer=unpooler load=verify_16 m=128 | 62 | 19.43 | 19.85 | 0.9854 | flat |
+| layer=router load=verify_16 m=128 | 62 | 7.15 | 7.65 | 0.9665 | lost |
+| layer=qkv_gate load=verify_32 m=256 | 62 | 19.69 | 19.71 | 0.9956 | flat |
+| layer=o load=verify_32 m=256 | 62 | 9.47 | 9.29 | 0.9989 | flat |
+| layer=pooler load=verify_32 m=256 | 62 | 31.02 | 30.47 | 1.0139 | flat |
+| layer=unpooler load=verify_32 m=256 | 62 | 24.99 | 24.3 | 1.015 | flat |
+| layer=router load=verify_32 m=256 | 62 | 9.49 | 9.25 | 1.0265 | flat |
+
+gained on unpooler decode_1; router decode_1, decode_16, decode_32, verify_1; qkv_gate decode_16; lost on o verify_16; pooler verify_16; router verify_16. Expected hit: 4/6. Noise ±1.5%.
+
+## Follow-ups
+
+- unproven-vs-best: the change is not proven either way; a stacked hypothesis (`depends_on: router-splitk32-small-m-all-loads-in-flight-control-stages3`) that adds a further change in the same area is the only way to learn more (identical code is never re-run).
+

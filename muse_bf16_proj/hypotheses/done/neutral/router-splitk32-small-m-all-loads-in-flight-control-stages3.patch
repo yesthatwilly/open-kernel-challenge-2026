@@ -1,0 +1,13 @@
+diff --git a/muse_bf16_proj/submission.py b/muse_bf16_proj/submission.py
+index a0fcbb7..efe5830 100644
+--- a/muse_bf16_proj/submission.py
++++ b/muse_bf16_proj/submission.py
+@@ -49,7 +49,7 @@ ROUTER_N = 256
+ ROUTER_K = 8192
+ ROUTER_BLOCK_K = 128
+ ROUTER_NUM_STAGES = 3  # m > 32 buckets
+-ROUTER_SMALL_M_NUM_STAGES = 2  # m <= 32 buckets (2 K-steps per CTA)
++ROUTER_SMALL_M_NUM_STAGES = 3  # m <= 32 buckets (2 K-steps per CTA); control-stages3 keeps master's 3
+ ROUTER_NUM_WARPS = 4
+ # m values pre-warmed in prepare(): one per config bucket plus the scored/tested ones, so that
+ # the timed call never compiles (M is not specialized and the grid's M extent is a launch
