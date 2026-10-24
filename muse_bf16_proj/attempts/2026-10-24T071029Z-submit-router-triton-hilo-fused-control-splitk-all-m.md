@@ -2,7 +2,7 @@
 
 Hypothesis: `muse_bf16_proj/hypotheses/done/gain/2026-10-23T230544Z-router-triton-hilo-fused-control-splitk-all-m.md` (branch `hyp/muse_bf16_proj/router-triton-hilo-fused-control-splitk-all-m`).
 
-- **Job:** `<job id>` (`okc status <job>`)
+- **Job:** `240eb22ea0b6487e` (`okc status <job>`)
 - **File:** `muse_bf16_proj/submission.py` at git `093cdbf`
 
 ## Goal

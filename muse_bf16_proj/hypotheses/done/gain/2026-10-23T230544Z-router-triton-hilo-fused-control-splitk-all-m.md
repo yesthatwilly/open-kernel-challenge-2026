@@ -73,10 +73,12 @@ speedup: 1.1510295903072447
 speedup_ci: [1.133764146452636, 1.1682950341618532]
 harvested_at: 2026-10-24T035910Z
 best_at_harvest: 1.0307103903232853
-promotion: merged
+promotion: submitted
 promotion_reason: "merged by hand: file identical to the checked one"
 promotion_commit: dba4ffd5945248c0299bb6953ab4b561d0b3eeeb
 promotion_attempt: 2026-10-24T071029Z-submit-router-triton-hilo-fused-control-splitk-all-m.md
+promotion_job: 240eb22ea0b6487e
+promotion_at: 2026-10-24T074212Z
 ---
 
 # router-triton-hilo-fused-control-splitk-all-m
