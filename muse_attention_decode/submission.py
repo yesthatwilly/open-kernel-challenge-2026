@@ -146,14 +146,37 @@ def kernel_fn(data: Inputs) -> torch.Tensor:
     )
 
     window = cfg["window"]
+    # Full layers: pair the two KV heads of each token into one 128-byte FP8 row (heads 2s and
+    # 2s+1 are adjacent halves of it) so FA3 gathers one row per token instead of two. Each
+    # query sits in its own head's half of a zero-padded 128-wide query, so the zero half adds
+    # exactly 0 to every logit; FA3 maps query head h to super-head h // (2G), which keeps the
+    # original grouping. The judge's scheduler_metadata was built for the unpaired geometry, so
+    # it is not passed (FA3 builds its own schedule from the paged lengths).
+    paired = window == 0 and hkv % 2 == 0
+    if paired:
+        g, s = hq // hkv, hkv // 2
+        pages, page_size = k_cache.shape[0], k_cache.shape[1]
+        k_attn = k_cache.view(pages, page_size, s, 2 * d)
+        v_attn = v_cache.view(pages, page_size, s, 2 * d)
+        q_attn = torch.zeros((tokens, hq, 2 * d), dtype=FP8, device=device)
+        qp = q_attn.view(tokens, s, 2, g, 2 * d)
+        qv = q.view(tokens, s, 2, g, d)
+        qp[:, :, 0, :, :d] = qv[:, :, 0]
+        qp[:, :, 1, :, d:] = qv[:, :, 1]
+        attn_heads = s
+        metadata = None
+    else:
+        k_attn, v_attn, q_attn = k_cache, v_cache, q
+        attn_heads = hkv
+        metadata = data["scheduler_metadata"]
     descale = {}
     if cfg["kv_scale"] != 1.0:
-        descale = dict(k_descale=data["k_scale"].reshape(1, 1).expand(batch, hkv),
-                       v_descale=data["v_scale"].reshape(1, 1).expand(batch, hkv))
+        descale = dict(k_descale=data["k_scale"].reshape(1, 1).expand(batch, attn_heads),
+                       v_descale=data["v_scale"].reshape(1, 1).expand(batch, attn_heads))
     out = flash_attn_with_kvcache(
-        q=q,
-        k_cache=k_cache,
-        v_cache=v_cache,
+        q=q_attn,
+        k_cache=k_attn,
+        v_cache=v_attn,
         page_table=data["page_table"],
         cache_seqlens=data["cache_seqlens"],
         cu_seqlens_q=data["cu_seqlens_q"],
@@ -161,11 +184,20 @@ def kernel_fn(data: Inputs) -> torch.Tensor:
         softmax_scale=cfg["sm_scale"] * cfg["qk_scale_factor"],
         causal=True,
         window_size=(window - 1, 0) if window else (-1, -1),
-        scheduler_metadata=data["scheduler_metadata"],
+        scheduler_metadata=metadata,
         **descale,
     )
     if isinstance(out, tuple):
         out = out[0]
+    if paired:
+        # Keep each query's own half of FA3's 128-wide output; the other half is the other
+        # head's P@V and is discarded.
+        attn = torch.empty((tokens, hq, d), dtype=torch.bfloat16, device=device)
+        a = attn.view(tokens, s, 2, g, d)
+        o = out.view(tokens, s, 2, g, 2 * d)
+        a[:, :, 0] = o[:, :, 0, :, :d]
+        a[:, :, 1] = o[:, :, 1, :, d:]
+        out = attn
     gate = qkv[:, (hq + 2 * hkv) * d:]
     o = rms_norm_gate(out.reshape(tokens, hq * d).to(torch.bfloat16), gate, None, head_dim=d, eps=RMS_EPS,
                       has_norm=True)
