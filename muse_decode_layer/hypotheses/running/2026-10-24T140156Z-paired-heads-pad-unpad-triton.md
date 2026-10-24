@@ -57,13 +57,19 @@ review: proceed
 status: running
 review_at: 2026-10-24T164538Z
 review_companions: null
-stage: claimed
+stage: implemented
 claimed_at: 2026-10-24T164752Z
 base_sha: c6b167670ed7835c8c0a38fc7064ea60ab8726dc
 base_blob: cc466fce207709c98ab0e78c2435c1c459890fdb
 branch: hyp/muse_decode_layer/paired-heads-pad-unpad-triton
 worktree: .worktrees/muse_decode_layer/paired-heads-pad-unpad-triton
 mode: null
+implemented_at: 2026-10-24T165043Z
+impl_commit: 77b5def59734f76b5e6958035565c4e3f8736610
+submission_sha256: 45278e3031121a7a145878e248deeda626966c7c20a4c70ce895bdc05d8a1775
+norm_sha256: a70d4776079015c5fc2f18777db97c197ab7ee66cbfd7f85750cadafd66ee575
+submission_blob: 408bdcbabc3deb4579e60bbdcd0a88e095a17b79
+lint_warnings: 1
 ---
 
 # paired-heads-pad-unpad-triton
@@ -108,4 +114,37 @@ No companion is warranted. An ab-revert of the pairing is meaningless because it
 - FA3's paired output is [tokens, hq, 128] bf16. Pass out.stride(0) and out.stride(1), as the sibling does, rather than assuming contiguity; on varlen verify the output can be [T, H, D] from a [B, L, ...] view.
 - Given about +0.4% expected geomean and a scored submit, does the operator accept that the classification will very likely be neutral/within-ci, so that promotion has to be by hand on per-shape evidence, as was done for paired-heads-launch-cleanup-ab-tune-batch-gate in DECISIONS?
 - Follow-up rather than blocker: the unpaired path's q.view(...).to(FP8) and the k/v FP8 casts are still separate launches on every shape. Folding the k/v casts into _pair_pad_q_kernel would stack on cache-store-fused-fp8-cast's open follow-up, but keep this run's scope as written for attribution.
+
+## Implementation notes
+
+Worktree `.worktrees/muse_decode_layer/paired-heads-pad-unpad-triton`, file `muse_decode_layer/submission.py` only (1 file, +60/-14).
+
+- Added `_pair_pad_q_kernel` (new Triton kernel, before `prepare`), grid `(tokens, hq)`, `num_warps=1`: loads head h's 64 values of FusedQKNorm's q at `t*q_stride_t + h*q_stride_h + j`, widens to fp32 (exact from bf16, so the E4M3 rounding matches torch's bf16 -> fp8 path), stores `float8e4nv` at column `((h // G) % 2) * 64` of the `[tokens, hq, 128]` FP8 row and 64 FP8 zeros in the other half. Every byte of the buffer is written, so it is allocated with `torch.empty`.
+- Added `_paired_norm_gate_kernel`, copied verbatim from `muse_attention_decode/submission.py` on master (same signature, body and docstring).
+- kernel_fn paired branch, pad: `torch.zeros` and the two `qp[...] = qv[...]` slice copies are replaced by `qh = q.view(tokens, hq, d)`, `assert qh.stride(2) == 1` (stride metadata only, no host sync), `torch.empty` and one `_pair_pad_q_kernel` launch that takes `qh.stride(0)` and `qh.stride(1)`. This follows the review's open question: FusedQKNorm's q is read through its real token and head strides, whether it is a fresh tensor or a strided view of qkv.
+- kernel_fn paired branch, epilogue: `torch.empty(attn)`, the two un-pad copies and `state["o_norm_gate"]` are replaced by `attn = out.view(tokens, hq, 2*d)`, a fresh bf16 `[tokens, hq*d]` output and one `_paired_norm_gate_kernel` launch with `attn.stride(0)`, `attn.stride(1)` and `qkv.stride(0)`, called as the sibling calls it (EPS=RMS_EPS=1e-5, num_warps=1). Its output goes straight to the o GEMM.
+- Unpaired path (batch 1, sliding layers) unchanged: it still calls `state["o_norm_gate"]`, now in an `else:`. Also unchanged: the FA3 call, the paired k/v views, `scheduler_metadata=None`, the cache store, and everything from the o GEMM on. `state` is unchanged (`o_norm_gate` is still used by the unpaired path).
+- Deviations: none in substance. Assumptions: the pad kernel assumes FusedQKNorm's q last-dim stride is 1 (asserted). The epilogue assumes FA3's output and qkv each have a last-dim stride of 1, as the sibling does. `out.view(tokens, hq, 2*d)` is the same reshape master's `out.view(tokens, s, 2, g, 2*d)` already relied on. Nothing could be run on this node (no GPU, torch or Triton), so correctness is unverified until okc check/submit.
+
+## Rules check
+
+Checked against `git -C .worktrees/muse_decode_layer/paired-heads-pad-unpad-triton diff`:
+
+- [x] CUDA-graph capturable: the diff adds no `.item()`/`.cpu()`/`synchronize()`/tensor prints. The two allocations are `torch.empty` sized by `tokens`/`hq`/`d` (config), the grids are `(tokens, hq)`, and the only branch is the existing config-only `paired` gate. The `assert` reads a stride (shape metadata), not a value.
+- [x] Nothing derived from `data` is cached across calls: no state writes, and both buffers are fresh every call.
+- [x] Weights: n/a: prepare() and the weights are untouched.
+- [x] Activations BF16 where SGLang keeps BF16: the epilogue reads FA3's bf16 output, computes in fp32 and stores bf16 for the o GEMM, as FusedRMSNormGate does. KV cache FP8 (store unchanged). Queries are E4M3 (`tl.float8e4nv` == `torch.float8_e4m3fn`), the same precision as master's cast copy and no coarser.
+- [x] Attention sees every key: the FA3 call, causal flag, window and lengths are unchanged. The zero half of the query adds exactly 0 to each logit, as on master.
+- [x] No timing patches, harness frames/I/O/secrets, module edits, reference import, subprocesses or network: the diff adds two `@triton.jit` kernels and their launches only.
+- [x] All work happens inside the timed call; no output caching or replay: both kernels launch inside kernel_fn on every paired call.
+- [x] First-line marker `# okc: problem=muse_decode_layer` kept; no `triton.autotune` added.
+
+okc_lint output:
+
+```
+warn  host-sync    L319: torch.cuda.synchronize()  (outside kernel_fn's call graph; fine in prepare())
+OK with warnings: muse_decode_layer/submission.py
+```
+
+`python3 -I -m py_compile` passed; its `__pycache__` was removed from the worktree.
 
