@@ -50,9 +50,16 @@ priority: 2
 kind: primary
 controls_for: null
 review: proceed
-status: queued
+status: running
 review_at: 2026-10-24T164553Z
 review_companions: null
+stage: claimed
+claimed_at: 2026-10-24T164553Z
+base_sha: 1fd1f0ad0ecb64aecc30d851ca5c1c9149f46de0
+base_blob: cc466fce207709c98ab0e78c2435c1c459890fdb
+branch: hyp/muse_decode_layer/bf16-shape-gated-triton-gemms-small-t
+worktree: .worktrees/muse_decode_layer/bf16-shape-gated-triton-gemms-small-t
+mode: null
 ---
 
 # bf16-shape-gated-triton-gemms-small-t
