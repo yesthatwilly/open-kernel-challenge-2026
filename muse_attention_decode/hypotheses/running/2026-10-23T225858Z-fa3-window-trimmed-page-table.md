@@ -55,7 +55,7 @@ review: proceed
 status: running
 review_at: 2026-10-24T111856Z
 review_companions: null
-stage: implemented
+stage: dispatched
 claimed_at: 2026-10-24T111857Z
 base_sha: def56122736897df0372457a74ffefcdf4c21add
 base_blob: bc007e643ac0b440147a732071f23d9b3563174c
@@ -70,6 +70,8 @@ submission_blob: ac136b3a030593ae8650e0b5687f4e23d9caf2fc
 lint_warnings: 0
 attempt_file: 2026-10-24T112038Z-check-fa3-window-trimmed-page-table.md
 prepared_at: 2026-10-24T112038Z
+job: 1f63fcbbc0394bed
+dispatched_at: 2026-10-24T112046Z
 ---
 
 # fa3-window-trimmed-page-table
