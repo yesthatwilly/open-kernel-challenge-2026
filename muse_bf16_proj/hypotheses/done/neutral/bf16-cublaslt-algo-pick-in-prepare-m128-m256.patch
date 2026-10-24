@@ -1,0 +1,366 @@
+diff --git a/muse_bf16_proj/submission.py b/muse_bf16_proj/submission.py
+index a8bb42a..944e64e 100644
+--- a/muse_bf16_proj/submission.py
++++ b/muse_bf16_proj/submission.py
+@@ -35,6 +35,13 @@ Swap-AB at 17 <= m <= 32 (hypothesis bf16-m32-swapab-wgmma-triton): all four bf1
+ _bf16_swapab_kernel, 64 weight rows on tl.dot's M side and the (<= 32) tokens on N, so Triton
+ can emit wgmma m64n32k16; pooler split-K 2, qkv_gate split-K 4 (same ticket reduce, transposed
+ workspace), unpooler / o full K. Every other shape keeps its path above.
++
++cuBLASLt algo pick at exactly m = 128 / 256 (hypothesis bf16-cublaslt-algo-pick-in-prepare-
++m128-m256): the four bf16 layers run cublasLtMatmul on the same TN problem with an algorithm
++chosen once in prepare() from cublasLtMatmulAlgoGetHeuristic's candidates by timing graph
++replays on synthetic x (kept only if >= 3% faster than master's dispatch; split-K candidates
++whose reduction is not in fp32 are excluded). Other m, and any build / search failure, keep
++master's path.
+ """
+ 
+ from typing import TypedDict
+@@ -651,6 +658,326 @@ def _swapab_prepare(state: dict) -> None:
+     state["swapab_cnt_qkv"].zero_()
+ 
+ 
++# --- (6) bf16 layers at exactly cfg m in {128, 256}: cuBLASLt algo picked in prepare() ---------
++# (hypothesis bf16-cublaslt-algo-pick-in-prepare-m128-m256). The same TN problem torch issues for
++# out = x @ W.T (column-major D[n, m] = op_T(W)[n, k] * x[k, m], bf16 in/out, fp32 compute and
++# scale), but the algorithm is one of cublasLtMatmulAlgoGetHeuristic's candidates, chosen once in
++# prepare() by timing CUDA-graph replays on synthetic x, and replayed unchanged in kernel_fn.
++# Split-K candidates whose reduction is not in the fp32 compute type are excluded.
++LT_LAYERS = ("qkv_gate", "o", "pooler", "unpooler")
++LT_MS = (128, 256)
++LT_WS_BYTES = 32 << 20        # per-key workspace, and the heuristic's workspace cap
++LT_MAX_ALGOS = 32
++LT_REPS = 30
++LT_FLUSH_BYTES = 256 << 20    # written before every timed replay: cold L2, as the judge
++LT_KEEP_RATIO = 0.97          # a candidate must beat the incumbent's median by >= 3%
++LT_MAX_REL_VS_TORCH = 1e-3    # rel L2 vs torch's (incumbent) bf16 output
++LT_MAX_ERR_VS_INCUMBENT = 1.10  # rel L2 vs the fp64 reference: at most 10% above the incumbent's
++LT_RED_COMPUTE_TYPE = 2       # CUBLASLT_REDUCTION_SCHEME_COMPUTE_TYPE (NONE 0, INPLACE 1, OUTPUT_TYPE 4)
++LT_ALIGN = 256                # cuBLASLt heuristics assume 256-byte aligned operands by default
++
++_LT_CPP = r"""
++#include <torch/extension.h>
++#include <ATen/cuda/CUDAContext.h>
++#include <cublasLt.h>
++#include <cstring>
++#include <map>
++#include <tuple>
++#include <vector>
++
++#define MUSE_LT_CHECK(expr)                                                              \
++  do {                                                                                   \
++    cublasStatus_t muse_s_ = (expr);                                                     \
++    TORCH_CHECK(muse_s_ == CUBLAS_STATUS_SUCCESS, #expr " -> cublasStatus ",             \
++                static_cast<int>(muse_s_));                                              \
++  } while (0)
++
++static_assert(sizeof(cublasLtMatmulAlgo_t) == 8 * sizeof(int64_t),
++              "cublasLtMatmulAlgo_t is expected to be uint64_t[8]");
++
++struct MuseLtDesc {
++  cublasLtMatmulDesc_t op;
++  cublasLtMatrixLayout_t a, b, d;
++};
++
++// Descriptors keyed by shape (n, k, m) only; built once, reused by every call.
++static std::map<std::tuple<int64_t, int64_t, int64_t>, MuseLtDesc>& muse_lt_cache() {
++  static std::map<std::tuple<int64_t, int64_t, int64_t>, MuseLtDesc> cache;
++  return cache;
++}
++
++static const MuseLtDesc& muse_lt_desc(int64_t n, int64_t k, int64_t m) {
++  auto& cache = muse_lt_cache();
++  const auto key = std::make_tuple(n, k, m);
++  auto it = cache.find(key);
++  if (it != cache.end()) return it->second;
++  MuseLtDesc d{};
++  MUSE_LT_CHECK(cublasLtMatmulDescCreate(&d.op, CUBLAS_COMPUTE_32F, CUDA_R_32F));
++  const cublasOperation_t ta = CUBLAS_OP_T, tb = CUBLAS_OP_N;
++  MUSE_LT_CHECK(cublasLtMatmulDescSetAttribute(d.op, CUBLASLT_MATMUL_DESC_TRANSA, &ta, sizeof(ta)));
++  MUSE_LT_CHECK(cublasLtMatmulDescSetAttribute(d.op, CUBLASLT_MATMUL_DESC_TRANSB, &tb, sizeof(tb)));
++  // A = W as stored: row-major [n, k] == column-major k x n, ld k (op T -> n x k).
++  MUSE_LT_CHECK(cublasLtMatrixLayoutCreate(&d.a, CUDA_R_16BF, k, n, k));
++  // B = x: row-major [m, k] == column-major k x m, ld k.
++  MUSE_LT_CHECK(cublasLtMatrixLayoutCreate(&d.b, CUDA_R_16BF, k, m, k));
++  // D = out: row-major [m, n] == column-major n x m, ld n.
++  MUSE_LT_CHECK(cublasLtMatrixLayoutCreate(&d.d, CUDA_R_16BF, n, m, n));
++  return cache.emplace(key, d).first->second;
++}
++
++template <typename T>
++static int64_t muse_lt_cfg(const cublasLtMatmulAlgo_t& algo, cublasLtMatmulAlgoConfigAttributes_t attr) {
++  T v{};
++  size_t written = 0;
++  if (cublasLtMatmulAlgoConfigGetAttribute(&algo, attr, &v, sizeof(v), &written) != CUBLAS_STATUS_SUCCESS ||
++      written != sizeof(v))
++    return -1;
++  return static_cast<int64_t>(v);
++}
++
++// Heuristic candidates for the shape: {algos int64 [count, 8] (the raw cublasLtMatmulAlgo_t),
++// info int64 [count, 8] = (algo_id, tile_id, stages_id, splitk_num, reduction_scheme,
++// workspace_bytes, waves_count * 1000, state)}; -1 where an attribute could not be read.
++std::vector<torch::Tensor> candidates(int64_t n, int64_t k, int64_t m, int64_t max_algos, int64_t ws_bytes) {
++  const MuseLtDesc& d = muse_lt_desc(n, k, m);
++  cublasLtHandle_t h = at::cuda::getCurrentCUDABlasLtHandle();
++  cublasLtMatmulPreference_t pref;
++  MUSE_LT_CHECK(cublasLtMatmulPreferenceCreate(&pref));
++  const uint64_t ws = static_cast<uint64_t>(ws_bytes);
++  cublasStatus_t st = cublasLtMatmulPreferenceSetAttribute(
++      pref, CUBLASLT_MATMUL_PREF_MAX_WORKSPACE_BYTES, &ws, sizeof(ws));
++  std::vector<cublasLtMatmulHeuristicResult_t> res(static_cast<size_t>(max_algos));
++  int returned = 0;
++  if (st == CUBLAS_STATUS_SUCCESS)
++    st = cublasLtMatmulAlgoGetHeuristic(h, d.op, d.a, d.b, d.d, d.d, pref, static_cast<int>(max_algos),
++                                        res.data(), &returned);
++  cublasLtMatmulPreferenceDestroy(pref);
++  MUSE_LT_CHECK(st);
++  auto algos = torch::zeros({returned, 8}, torch::kInt64);
++  auto info = torch::full({returned, 8}, -1, torch::kInt64);
++  int64_t* ap = algos.data_ptr<int64_t>();
++  int64_t* ip = info.data_ptr<int64_t>();
++  for (int i = 0; i < returned; ++i) {
++    const cublasLtMatmulAlgo_t& a = res[i].algo;
++    std::memcpy(ap + 8 * i, &a, sizeof(a));
++    ip[8 * i + 0] = muse_lt_cfg<int32_t>(a, CUBLASLT_ALGO_CONFIG_ID);
++    ip[8 * i + 1] = muse_lt_cfg<uint32_t>(a, CUBLASLT_ALGO_CONFIG_TILE_ID);
++    ip[8 * i + 2] = muse_lt_cfg<uint32_t>(a, CUBLASLT_ALGO_CONFIG_STAGES_ID);
++    ip[8 * i + 3] = muse_lt_cfg<uint32_t>(a, CUBLASLT_ALGO_CONFIG_SPLITK_NUM);
++    ip[8 * i + 4] = muse_lt_cfg<uint32_t>(a, CUBLASLT_ALGO_CONFIG_REDUCTION_SCHEME);
++    ip[8 * i + 5] = static_cast<int64_t>(res[i].workspaceSize);
++    ip[8 * i + 6] = static_cast<int64_t>(res[i].wavesCount * 1000.0f);
++    ip[8 * i + 7] = static_cast<int64_t>(res[i].state);
++  }
++  return {algos, info};
++}
++
++// out[m, n] = x[m, k] @ w[n, k]^T with the given algo, on the current stream (graph-capturable:
++// no host sync, no allocation; the workspace is the caller's prepare()-allocated tensor).
++void run(torch::Tensor x, torch::Tensor w, torch::Tensor out, torch::Tensor algo_row, torch::Tensor ws) {
++  TORCH_CHECK(x.is_cuda() && w.is_cuda() && out.is_cuda() && ws.is_cuda(), "cuda tensors expected");
++  TORCH_CHECK(x.scalar_type() == at::kBFloat16 && w.scalar_type() == at::kBFloat16 &&
++              out.scalar_type() == at::kBFloat16, "bf16 x / w / out expected");
++  TORCH_CHECK(x.dim() == 2 && w.dim() == 2 && out.dim() == 2, "2-D tensors expected");
++  TORCH_CHECK(x.is_contiguous() && w.is_contiguous() && out.is_contiguous() && ws.is_contiguous(),
++              "contiguous tensors expected");
++  const int64_t m = x.size(0), k = x.size(1), n = w.size(0);
++  TORCH_CHECK(w.size(1) == k && out.size(0) == m && out.size(1) == n, "shape mismatch");
++  TORCH_CHECK(!algo_row.is_cuda() && algo_row.scalar_type() == at::kLong && algo_row.numel() == 8 &&
++              algo_row.is_contiguous(), "algo_row must be a CPU int64 [8]");
++  const MuseLtDesc& d = muse_lt_desc(n, k, m);
++  cublasLtMatmulAlgo_t algo;
++  std::memcpy(&algo, algo_row.data_ptr<int64_t>(), sizeof(algo));
++  const float alpha = 1.0f, beta = 0.0f;
++  cublasLtHandle_t h = at::cuda::getCurrentCUDABlasLtHandle();
++  cudaStream_t stream = at::cuda::getCurrentCUDAStream();
++  MUSE_LT_CHECK(cublasLtMatmul(h, d.op, &alpha, w.data_ptr(), d.a, x.data_ptr(), d.b, &beta,
++                               out.data_ptr(), d.d, out.data_ptr(), d.d, &algo, ws.data_ptr(),
++                               static_cast<size_t>(ws.numel() * ws.element_size()), stream));
++}
++"""
++
++
++def _lt_build():
++    """Compile the cuBLASLt module (C++ only, with_cuda for the CUDA headers / libs). Returns None,
++    after printing why, if the build fails; the master path is then kept everywhere."""
++    import time
++    t0 = time.perf_counter()
++    try:
++        from torch.utils.cpp_extension import load_inline
++        ext = load_inline(
++            name="muse_bf16_lt_algo_v1",
++            cpp_sources=_LT_CPP,
++            functions=["candidates", "run"],
++            with_cuda=True,
++            extra_cflags=["-O2"],
++            extra_ldflags=["-lcublasLt"],
++            verbose=False,
++        )
++    except Exception as e:
++        print(f"[lt] load_inline failed after {time.perf_counter() - t0:.1f}s, master path kept: {e!r}",
++              flush=True)
++        return None
++    print(f"[lt] load_inline compiled in {time.perf_counter() - t0:.1f}s", flush=True)
++    return ext
++
++
++def _lt_route_ok(x: torch.Tensor, w: torch.Tensor, cfg) -> bool:
++    """cuBLASLt path preconditions: cfg n / k are the weight's full shape and x is a contiguous,
++    256-byte-aligned bf16 [cfg m, k]. Shapes, cfg and tensor metadata only."""
++    m = cfg["m"]
++    return (cfg["n"] == w.shape[0] and cfg["k"] == w.shape[1]
++            and x.dim() == 2 and x.shape[0] == m and x.shape[1] == w.shape[1]
++            and x.dtype == torch.bfloat16 and x.is_contiguous()
++            and x.data_ptr() % LT_ALIGN == 0)
++
++
++def _lt_forward(ext, x: torch.Tensor, w: torch.Tensor, algo_row: torch.Tensor, ws: torch.Tensor) -> torch.Tensor:
++    """x bf16 [m, k] @ w[n, k].T -> bf16 [m, n] with the prepare()-chosen cuBLASLt algo."""
++    out = torch.empty((x.shape[0], w.shape[0]), dtype=torch.bfloat16, device=x.device)
++    ext.run(x, w, out, algo_row, ws)
++    return out
++
++
++def _lt_graph_median_us(fn, flush: torch.Tensor, reps: int) -> float:
++    """Median of `reps` CUDA-graph replays of fn() (events bracket the whole replay), each after a
++    write of the flush buffer. prepare() only: host syncs are fine here."""
++    torch.cuda.synchronize()
++    g = torch.cuda.CUDAGraph()
++    with torch.cuda.graph(g):
++        fn()
++    g.replay()
++    torch.cuda.synchronize()
++    starts = [torch.cuda.Event(enable_timing=True) for _ in range(reps)]
++    ends = [torch.cuda.Event(enable_timing=True) for _ in range(reps)]
++    for i in range(reps):
++        flush.zero_()
++        starts[i].record()
++        g.replay()
++        ends[i].record()
++    torch.cuda.synchronize()
++    times = sorted(s.elapsed_time(e) * 1000.0 for s, e in zip(starts, ends))
++    del g
++    return times[len(times) // 2]
++
++
++def _lt_rel(a: torch.Tensor, b: torch.Tensor) -> float:
++    a64, b64 = a.double(), b.double()
++    return ((a64 - b64).norm() / b64.norm().clamp_min(1e-300)).item()
++
++
++def _lt_prepare(state: dict) -> None:
++    """Pick, per (layer, m) in LT_LAYERS x LT_MS, a cuBLASLt heuristic candidate that beats the
++    incumbent (_bf16_gemm_dispatch_impl, master's path) by >= 3% on graph replays of synthetic x,
++    and store its algo row and workspace. Any failure keeps the master path for that key (or for
++    all keys if the build fails). Weights' shapes and synthetic data only."""
++    state["lt_algo"] = {}
++    state["lt_ws"] = {}
++    state["lt_ext"] = None
++    ext = _lt_build()
++    if ext is None:
++        return
++    flush = None
++    try:
++        dev = state["pooler"].device
++        flush = torch.empty(LT_FLUSH_BYTES, dtype=torch.uint8, device=dev)
++        gen = torch.Generator(device=dev)
++        gen.manual_seed(1234)
++        summary = []
++        for layer in LT_LAYERS:
++            w = state[layer]
++            if not (w.dim() == 2 and w.dtype == torch.bfloat16 and w.is_contiguous()):
++                print(f"[lt] {layer}: weight not a contiguous 2-D bf16 tensor, master path kept", flush=True)
++                continue
++            n, k = w.shape
++            for m in LT_MS:
++                key = (layer, m)
++                try:
++                    chosen = _lt_pick(ext, layer, w, int(n), int(k), m, flush, gen, summary)
++                except Exception as e:
++                    print(f"[lt] {layer} m={m}: algo search failed, master path kept: {e!r}", flush=True)
++                    torch.cuda.synchronize()
++                    continue
++                if chosen is not None:
++                    state["lt_algo"][key], state["lt_ws"][key] = chosen
++        print("[lt] layer     m    cands valid  incumbent_us  best_us  chosen", flush=True)
++        for row in summary:
++            print("[lt] %-8s %4d %6d %5d %13.2f %8s  %s" % row, flush=True)
++        if state["lt_algo"]:
++            state["lt_ext"] = ext
++    except Exception as e:
++        print(f"[lt] algo search aborted, master path kept everywhere: {e!r}", flush=True)
++        state["lt_algo"] = {}
++        state["lt_ws"] = {}
++        state["lt_ext"] = None
++    finally:
++        del flush
++        torch.cuda.synchronize()
++        torch.cuda.empty_cache()
++
++
++def _lt_pick(ext, layer: str, w: torch.Tensor, n: int, k: int, m: int, flush: torch.Tensor, gen,
++             summary: list):
++    """One key's search. Returns (algo_row CPU int64 [8], workspace) or None (incumbent kept)."""
++    layer_tag = f"{layer} n={n} k={k} m={m}"
++    x = torch.randn((m, k), device=w.device, dtype=torch.float32, generator=gen).to(torch.bfloat16)
++    ref = x.double() @ w.double().T                     # fp64 reference
++    inc_out = _bf16_gemm_dispatch_impl(x, w, None)      # master's path for this shape
++    inc_err = _lt_rel(inc_out, ref)
++    inc_us = _lt_graph_median_us(lambda: _bf16_gemm_dispatch_impl(x, w, None), flush, LT_REPS)
++    ws = torch.empty(LT_WS_BYTES, dtype=torch.uint8, device=w.device)
++    algos, info = ext.candidates(n, k, m, LT_MAX_ALGOS, LT_WS_BYTES)
++    count = algos.shape[0]
++    print(f"[lt] {layer_tag}: {count} heuristic candidates; incumbent {inc_us:.2f} us, "
++          f"rel err vs fp64 {inc_err:.3e}", flush=True)
++    best = None  # (us, candidate index, algo row)
++    valid = 0
++    for i in range(count):
++        algo_id, tile, stages, splitk, red, ws_need, waves, st = (int(v) for v in info[i].tolist())
++        desc = (f"[lt]   cand {i:2d} algo={algo_id} tile={tile} stages={stages} splitK={splitk} "
++                f"red={red} ws={ws_need} waves={waves / 1000:.2f}")
++        if st != 0:
++            print(f"{desc}: skipped (heuristic state {st})", flush=True)
++            continue
++        if splitk < 1 or (splitk > 1 and red != LT_RED_COMPUTE_TYPE):
++            print(f"{desc}: excluded (split-K reduction not in fp32 compute type, or unreadable)", flush=True)
++            continue
++        if ws_need < 0 or ws_need > LT_WS_BYTES:
++            print(f"{desc}: excluded (workspace)", flush=True)
++            continue
++        row = algos[i].clone().contiguous()
++        try:
++            out = _lt_forward(ext, x, w, row, ws)
++            finite = bool(torch.isfinite(out).all().item())
++            rel_t = _lt_rel(out, inc_out)
++            err = _lt_rel(out, ref)
++        except Exception as e:
++            print(f"{desc}: excluded (raised {e!r})", flush=True)
++            torch.cuda.synchronize()
++            continue
++        if not finite or rel_t > LT_MAX_REL_VS_TORCH or err > LT_MAX_ERR_VS_INCUMBENT * inc_err:
++            print(f"{desc}: excluded (finite={finite} rel_vs_torch={rel_t:.3e} rel_vs_fp64={err:.3e})",
++                  flush=True)
++            continue
++        try:
++            us = _lt_graph_median_us(lambda: _lt_forward(ext, x, w, row, ws), flush, LT_REPS)
++        except Exception as e:
++            print(f"{desc}: excluded (graph capture/replay raised {e!r})", flush=True)
++            torch.cuda.synchronize()
++            continue
++        valid += 1
++        print(f"{desc}: {us:.2f} us (rel_vs_torch={rel_t:.3e} rel_vs_fp64={err:.3e})", flush=True)
++        if best is None or us < best[0]:
++            best = (us, i, row)
++    if best is not None and best[0] <= LT_KEEP_RATIO * inc_us:
++        summary.append((layer, m, count, valid, inc_us, f"{best[0]:.2f}", f"cand {best[1]}"))
++        return best[2], ws
++    summary.append((layer, m, count, valid, inc_us,
++                    f"{best[0]:.2f}" if best is not None else "-", "incumbent"))
++    del ws
++    return None
++
++
+ def prepare(weights: Weights) -> dict:
+     """Called once, untimed. Keep the bf16 weights as they are (contiguous), build the router's
+     hi + lo bf16 split as [256, 8192] row-major (N x K), and pre-compile every m-bucket of the
+@@ -708,6 +1035,8 @@ def prepare(weights: Weights) -> dict:
+     state["unpool_cnt"].zero_()
+     # (5) Swap-AB at 17 <= m <= 32 for all four bf16 layers (own workspaces / tickets).
+     _swapab_prepare(state)
++    # (6) cuBLASLt algo pick for the four bf16 layers at exactly m = 128 / 256 (own workspaces).
++    _lt_prepare(state)
+     return state
+ 
+ 
+@@ -729,6 +1058,11 @@ def kernel_fn(data: Inputs, state: dict) -> torch.Tensor:
+         ws, cnt = _swapab_buffers(state, layer)
+         return _swapab_forward(layer, x, state[layer], ws, cnt, state["swapab_stages"][layer])
+     if layer != "router":
++        # Exact (layer, cfg m) keys only (m = 128 / 256): the algo chosen in prepare().
++        lt_key = (layer, cfg["m"])
++        if lt_key in state["lt_algo"] and _lt_route_ok(x, state[layer], cfg):
++            return _lt_forward(state["lt_ext"], x, state[layer], state["lt_algo"][lt_key],
++                               state["lt_ws"][lt_key])
+         # The unpooler's slice is its first n rows (all of them above 8 tokens).
+         return _bf16_gemm_dispatch_impl(x, state[layer][: cfg["n"]], None)
+     hi, lo = state["router_hi"], state["router_lo"]

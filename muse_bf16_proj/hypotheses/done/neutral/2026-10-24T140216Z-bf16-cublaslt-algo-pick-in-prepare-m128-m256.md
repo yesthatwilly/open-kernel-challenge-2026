@@ -81,10 +81,10 @@ priority: 2
 kind: primary
 controls_for: null
 review: proceed
-status: running
+status: done
 review_at: 2026-10-24T140632Z
 review_companions: null
-stage: dispatched
+stage: harvested
 claimed_at: 2026-10-24T164257Z
 base_sha: 13bdacf95cb5cf6521efd5d84b33f2580fb203f7
 base_blob: a8bb42ac483318e9fbc84bc7826a27b7a704d1fb
@@ -101,6 +101,13 @@ attempt_file: 2026-10-24T164831Z-submit-bf16-cublaslt-algo-pick-in-prepare-m128-
 prepared_at: 2026-10-24T164831Z
 job: 26a8be34a5eb4426
 dispatched_at: 2026-10-24T164845Z
+outcome: neutral
+verdict_detail: within-ci
+speedup: 1.187872552625076
+speedup_ci: [1.1700544643356998, 1.2056906409144519]
+harvested_at: 2026-10-24T173232Z
+best_at_harvest: 1.1958517819004566
+promotion: null
 ---
 
 # bf16-cublaslt-algo-pick-in-prepare-m128-m256
@@ -217,3 +224,53 @@ OK with warnings: muse_bf16_proj/submission.py
 ```
 
 None of the warnings needs a fix. Every host-sync warning is in prepare()-only helpers. The two uint8 dtype warnings are the L2 flush buffer and the cuBLASLt workspace byte buffers, not activations. `python3 -I -m py_compile` passed, and the `__pycache__` it left was removed.
+
+## Result
+
+- job `26a8be34a5eb4426` (submit), status done, passed True, tests 9/9
+- speedup 1.1879x, 95% CI [1.1701, 1.2057], score 4066.766244682083 µs vs SGLang 4830.8 µs
+- best at harvest: {"speedup": 1.1958517819004566, "ci": [1.1779140051719497, 1.2137895586289633], "job": "eeb9985396764ac2"}; base result: muse_bf16_proj/hypotheses/done/neutral/bf16-m32-swapab-wgmma-triton.result.json
+- **outcome: neutral** (within-ci)
+- files: `muse_bf16_proj/hypotheses/done/neutral/bf16-cublaslt-algo-pick-in-prepare-m128-m256.result.json`, `muse_bf16_proj/hypotheses/done/neutral/bf16-cublaslt-algo-pick-in-prepare-m128-m256.patch`; branch `hyp/muse_bf16_proj/bf16-cublaslt-algo-pick-in-prepare-m128-m256`
+
+## Attribution
+
+| shape | w | base µs | hyp µs | delta | verdict |
+|---|---|---|---|---|---|
+| layer=qkv_gate load=decode_1 m=1 | 62 | 12.91 | 13.84 | 0.9544 | lost |
+| layer=o load=decode_1 m=1 | 62 | 6.32 | 6.44 | 1.0038 | flat |
+| layer=pooler load=decode_1 m=1 | 62 | 19.0 | 19.42 | 1.0017 | flat |
+| layer=unpooler load=decode_1 m=1 | 62 | 5.94 | 5.95 | 0.9933 | flat |
+| layer=router load=decode_1 m=1 | 62 | 5.73 | 6.0 | 0.9841 | flat |
+| layer=qkv_gate load=decode_16 m=16 | 62 | 13.39 | 14.2 | 0.9709 | flat |
+| layer=o load=decode_16 m=16 | 62 | 6.66 | 6.53 | 1.0103 | flat |
+| layer=pooler load=decode_16 m=16 | 62 | 19.85 | 19.6 | 1.0063 | flat |
+| layer=unpooler load=decode_16 m=16 | 62 | 18.61 | 18.58 | 1.0064 | flat |
+| layer=router load=decode_16 m=16 | 62 | 6.03 | 5.87 | 1.0186 | flat |
+| layer=qkv_gate load=decode_32 m=32 | 62 | 13.69 | 14.22 | 0.9641 | lost |
+| layer=o load=decode_32 m=32 | 62 | 6.67 | 6.47 | 0.9973 | flat |
+| layer=pooler load=decode_32 m=32 | 62 | 20.0 | 20.22 | 0.9876 | flat |
+| layer=unpooler load=decode_32 m=32 | 62 | 18.48 | 18.42 | 0.9978 | flat |
+| layer=router load=decode_32 m=32 | 62 | 6.55 | 6.82 | 0.9729 | flat |
+| layer=qkv_gate load=verify_1 m=8 | 62 | 13.18 | 13.59 | 0.9526 | lost |
+| layer=o load=verify_1 m=8 | 62 | 6.32 | 6.25 | 0.9791 | flat |
+| layer=pooler load=verify_1 m=8 | 62 | 19.14 | 19.38 | 0.9911 | flat |
+| layer=unpooler load=verify_1 m=8 | 62 | 6.13 | 6.2 | 1.0005 | flat |
+| layer=router load=verify_1 m=8 | 62 | 5.91 | 6.19 | 0.9642 | lost |
+| layer=qkv_gate load=verify_16 m=128 | 62 | 16.81 | 16.49 | 1.0095 | flat |
+| layer=o load=verify_16 m=128 | 62 | 7.09 | 7.33 | 0.9759 | flat |
+| layer=pooler load=verify_16 m=128 | 62 | 25.55 | 24.89 | 1.0134 | flat |
+| layer=unpooler load=verify_16 m=128 | 62 | 19.79 | 19.7 | 1.0052 | flat |
+| layer=router load=verify_16 m=128 | 62 | 7.35 | 7.15 | 1.008 | flat |
+| layer=qkv_gate load=verify_32 m=256 | 62 | 19.62 | 20.2 | 0.9623 | lost |
+| layer=o load=verify_32 m=256 | 62 | 9.01 | 9.16 | 1.0058 | flat |
+| layer=pooler load=verify_32 m=256 | 62 | 30.53 | 30.85 | 0.983 | flat |
+| layer=unpooler load=verify_32 m=256 | 62 | 24.5 | 24.37 | 1.0099 | flat |
+| layer=router load=verify_32 m=256 | 62 | 9.3 | 9.35 | 0.9967 | flat |
+
+lost on qkv_gate decode_1, decode_32, verify_1, verify_32; router verify_1. Expected hit: 7/10. Noise ±1.5%.
+
+## Follow-ups
+
+- within-ci: the change is not proven either way; a stacked hypothesis (`depends_on: bf16-cublaslt-algo-pick-in-prepare-m128-m256`) that adds a further change in the same area is the only way to learn more (identical code is never re-run).
+

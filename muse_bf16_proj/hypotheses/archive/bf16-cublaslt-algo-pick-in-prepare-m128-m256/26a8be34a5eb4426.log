@@ -1,0 +1,86 @@
+[swapab] layer=pooler m=32 N=4096 K=8192 SPLIT_K=2 BLOCK_K=256 stages=4: n_regs=96 n_spills=0 wgmma=16 mma.sync=0 cp.async=106
+[swapab] layer=qkv_gate m=32 N=2304 K=8192 SPLIT_K=4 BLOCK_K=128 stages=4: n_regs=56 n_spills=0 wgmma=8 mma.sync=0 cp.async=58
+[swapab] layer=unpooler m=32 N=8192 K=4096 SPLIT_K=1 BLOCK_K=256 stages=4: n_regs=96 n_spills=0 wgmma=16 mma.sync=0 cp.async=106
+[swapab] layer=o m=32 N=8192 K=1024 SPLIT_K=1 BLOCK_K=256 stages=4: n_regs=96 n_spills=0 wgmma=16 mma.sync=0 cp.async=106
+[lt] load_inline compiled in 15.0s
+[lt] qkv_gate n=2304 k=8192 m=128: 8 heuristic candidates; incumbent 24.06 us, rel err vs fp64 1.662e-03
+[lt]   cand  0 algo=66 tile=27 stages=35 splitK=2 red=2 ws=2359312 waves=0.36: 23.94 us (rel_vs_torch=0.000e+00 rel_vs_fp64=1.662e-03)
+[lt]   cand  1 algo=66 tile=18 stages=35 splitK=3 red=2 ws=3538960 waves=0.27: 23.62 us (rel_vs_torch=1.125e-04 rel_vs_fp64=1.662e-03)
+[lt]   cand  2 algo=66 tile=17 stages=35 splitK=3 red=2 ws=3538960 waves=0.27: 23.20 us (rel_vs_torch=1.125e-04 rel_vs_fp64=1.662e-03)
+[lt]   cand  3 algo=66 tile=28 stages=35 splitK=4 red=2 ws=4718608 waves=0.18: 23.17 us (rel_vs_torch=1.103e-04 rel_vs_fp64=1.662e-03)
+[lt]   cand  4 algo=66 tile=135 stages=35 splitK=4 red=2 ws=4718608 waves=0.22: 23.68 us (rel_vs_torch=1.103e-04 rel_vs_fp64=1.662e-03)
+[lt]   cand  5 algo=66 tile=15 stages=35 splitK=3 red=2 ws=3538960 waves=0.55: 24.74 us (rel_vs_torch=1.125e-04 rel_vs_fp64=1.662e-03)
+[lt]   cand  6 algo=66 tile=208 stages=35 splitK=4 red=2 ws=4718608 waves=0.18: 24.26 us (rel_vs_torch=1.103e-04 rel_vs_fp64=1.662e-03)
+[lt]   cand  7 algo=66 tile=165 stages=35 splitK=6 red=2 ws=7077904 waves=0.16: 25.09 us (rel_vs_torch=1.289e-04 rel_vs_fp64=1.662e-03)
+[lt] qkv_gate n=2304 k=8192 m=256: 8 heuristic candidates; incumbent 28.19 us, rel err vs fp64 1.659e-03
+[lt]   cand  0 algo=66 tile=27 stages=35 splitK=1 red=0 ws=0 waves=0.73: 28.29 us (rel_vs_torch=0.000e+00 rel_vs_fp64=1.659e-03)
+[lt]   cand  1 algo=66 tile=135 stages=35 splitK=2 red=2 ws=4718608 waves=0.44: 28.67 us (rel_vs_torch=1.604e-04 rel_vs_fp64=1.659e-03)
+[lt]   cand  2 algo=66 tile=165 stages=35 splitK=3 red=2 ws=7077904 waves=0.32: 27.23 us (rel_vs_torch=1.846e-04 rel_vs_fp64=1.659e-03)
+[lt]   cand  3 algo=66 tile=28 stages=35 splitK=2 red=2 ws=4718608 waves=0.36: 30.69 us (rel_vs_torch=1.604e-04 rel_vs_fp64=1.659e-03)
+[lt]   cand  4 algo=66 tile=184 stages=35 splitK=4 red=2 ws=9437200 waves=0.24: 26.27 us (rel_vs_torch=1.937e-04 rel_vs_fp64=1.659e-03)
+[lt]   cand  5 algo=66 tile=208 stages=35 splitK=2 red=2 ws=4718608 waves=0.36: 32.54 us (rel_vs_torch=1.604e-04 rel_vs_fp64=1.659e-03)
+[lt]   cand  6 algo=66 tile=20 stages=35 splitK=3 red=2 ws=7077904 waves=0.27: 28.93 us (rel_vs_torch=1.846e-04 rel_vs_fp64=1.659e-03)
+[lt]   cand  7 algo=66 tile=21 stages=35 splitK=3 red=2 ws=7077904 waves=0.27: 31.01 us (rel_vs_torch=1.846e-04 rel_vs_fp64=1.659e-03)
+[lt] o n=8192 k=1024 m=128: 8 heuristic candidates; incumbent 12.29 us, rel err vs fp64 1.662e-03
+[lt]   cand  0 algo=66 tile=18 stages=35 splitK=1 red=0 ws=0 waves=0.97: 12.32 us (rel_vs_torch=0.000e+00 rel_vs_fp64=1.662e-03)
+[lt]   cand  1 algo=66 tile=17 stages=35 splitK=1 red=0 ws=0 waves=0.97: 12.35 us (rel_vs_torch=0.000e+00 rel_vs_fp64=1.662e-03)
+[lt]   cand  2 algo=66 tile=183 stages=35 splitK=1 red=0 ws=0 waves=0.86: 12.45 us (rel_vs_torch=0.000e+00 rel_vs_fp64=1.662e-03)
+[lt]   cand  3 algo=66 tile=196 stages=35 splitK=1 red=0 ws=0 waves=0.74: 12.70 us (rel_vs_torch=0.000e+00 rel_vs_fp64=1.662e-03)
+[lt]   cand  4 algo=66 tile=135 stages=35 splitK=1 red=0 ws=0 waves=0.78: 12.42 us (rel_vs_torch=0.000e+00 rel_vs_fp64=1.662e-03)
+[lt]   cand  5 algo=66 tile=193 stages=35 splitK=1 red=0 ws=0 waves=0.79: 12.45 us (rel_vs_torch=0.000e+00 rel_vs_fp64=1.662e-03)
+[lt]   cand  6 algo=66 tile=200 stages=35 splitK=1 red=0 ws=0 waves=0.71: 12.58 us (rel_vs_torch=0.000e+00 rel_vs_fp64=1.662e-03)
+[lt]   cand  7 algo=66 tile=400 stages=35 splitK=1 red=0 ws=0 waves=0.97: 12.67 us (rel_vs_torch=0.000e+00 rel_vs_fp64=1.662e-03)
+[lt] o n=8192 k=1024 m=256: 8 heuristic candidates; incumbent 13.41 us, rel err vs fp64 1.661e-03
+[lt]   cand  0 algo=66 tile=20 stages=35 splitK=1 red=0 ws=0 waves=0.97: 13.44 us (rel_vs_torch=0.000e+00 rel_vs_fp64=1.661e-03)
+[lt]   cand  1 algo=66 tile=21 stages=35 splitK=1 red=0 ws=0 waves=0.97: 14.50 us (rel_vs_torch=0.000e+00 rel_vs_fp64=1.661e-03)
+[lt]   cand  2 algo=66 tile=184 stages=35 splitK=1 red=0 ws=0 waves=0.86: 13.89 us (rel_vs_torch=0.000e+00 rel_vs_fp64=1.661e-03)
+[lt]   cand  3 algo=66 tile=197 stages=35 splitK=1 red=0 ws=0 waves=0.74: 15.23 us (rel_vs_torch=0.000e+00 rel_vs_fp64=1.661e-03)
+[lt]   cand  4 algo=66 tile=458 stages=35 splitK=1 red=0 ws=0 waves=0.98: 14.37 us (rel_vs_torch=0.000e+00 rel_vs_fp64=1.661e-03)
+[lt]   cand  5 algo=66 tile=18 stages=35 splitK=1 red=0 ws=0 waves=1.94: 14.66 us (rel_vs_torch=0.000e+00 rel_vs_fp64=1.661e-03)
+[lt]   cand  6 algo=66 tile=17 stages=35 splitK=1 red=0 ws=0 waves=1.94: 14.08 us (rel_vs_torch=0.000e+00 rel_vs_fp64=1.661e-03)
+[lt]   cand  7 algo=66 tile=201 stages=35 splitK=1 red=0 ws=0 waves=0.71: 15.17 us (rel_vs_torch=0.000e+00 rel_vs_fp64=1.661e-03)
+[lt] pooler n=4096 k=8192 m=128: 8 heuristic candidates; incumbent 31.23 us, rel err vs fp64 1.663e-03
+[lt]   cand  0 algo=66 tile=15 stages=35 splitK=1 red=0 ws=0 waves=0.97: 31.14 us (rel_vs_torch=0.000e+00 rel_vs_fp64=1.663e-03)
+[lt]   cand  1 algo=66 tile=18 stages=35 splitK=2 red=2 ws=4194320 waves=0.48: 32.83 us (rel_vs_torch=1.574e-04 rel_vs_fp64=1.663e-03)
+[lt]   cand  2 algo=66 tile=17 stages=35 splitK=2 red=2 ws=4194320 waves=0.48: 33.34 us (rel_vs_torch=1.574e-04 rel_vs_fp64=1.663e-03)
+[lt]   cand  3 algo=66 tile=28 stages=35 splitK=3 red=2 ws=6291472 waves=0.33: 33.63 us (rel_vs_torch=1.719e-04 rel_vs_fp64=1.663e-03)
+[lt]   cand  4 algo=66 tile=208 stages=35 splitK=3 red=2 ws=6291472 waves=0.33: 32.96 us (rel_vs_torch=1.719e-04 rel_vs_fp64=1.663e-03)
+[lt]   cand  5 algo=66 tile=20 stages=35 splitK=4 red=2 ws=8388624 waves=0.24: 33.54 us (rel_vs_torch=1.789e-04 rel_vs_fp64=1.663e-03)
+[lt]   cand  6 algo=66 tile=21 stages=35 splitK=4 red=2 ws=8388624 waves=0.24: 32.96 us (rel_vs_torch=1.789e-04 rel_vs_fp64=1.663e-03)
+[lt]   cand  7 algo=66 tile=27 stages=35 splitK=3 red=2 ws=6291472 waves=0.65: 33.47 us (rel_vs_torch=1.719e-04 rel_vs_fp64=1.663e-03)
+[lt] pooler n=4096 k=8192 m=256: 8 heuristic candidates; incumbent 37.44 us, rel err vs fp64 1.660e-03
+[lt]   cand  0 algo=66 tile=18 stages=35 splitK=1 red=0 ws=0 waves=0.97: 37.54 us (rel_vs_torch=0.000e+00 rel_vs_fp64=1.660e-03)
+[lt]   cand  1 algo=66 tile=17 stages=35 splitK=1 red=0 ws=0 waves=0.97: 37.44 us (rel_vs_torch=0.000e+00 rel_vs_fp64=1.660e-03)
+[lt]   cand  2 algo=66 tile=20 stages=35 splitK=2 red=2 ws=8388624 waves=0.48: 37.70 us (rel_vs_torch=1.609e-04 rel_vs_fp64=1.660e-03)
+[lt]   cand  3 algo=66 tile=135 stages=35 splitK=1 red=0 ws=0 waves=0.79: 37.86 us (rel_vs_torch=0.000e+00 rel_vs_fp64=1.660e-03)
+[lt]   cand  4 algo=66 tile=21 stages=35 splitK=2 red=2 ws=8388624 waves=0.48: 41.15 us (rel_vs_torch=1.609e-04 rel_vs_fp64=1.660e-03)
+[lt]   cand  5 algo=66 tile=31 stages=35 splitK=3 red=2 ws=12582928 waves=0.33: 37.76 us (rel_vs_torch=1.780e-04 rel_vs_fp64=1.660e-03)
+[lt]   cand  6 algo=66 tile=184 stages=35 splitK=2 red=2 ws=8388624 waves=0.44: 38.46 us (rel_vs_torch=1.609e-04 rel_vs_fp64=1.660e-03)
+[lt]   cand  7 algo=66 tile=400 stages=35 splitK=1 red=0 ws=0 waves=0.97: 49.63 us (rel_vs_torch=0.000e+00 rel_vs_fp64=1.660e-03)
+[lt] unpooler n=8192 k=4096 m=128: 8 heuristic candidates; incumbent 29.31 us, rel err vs fp64 1.661e-03
+[lt]   cand  0 algo=66 tile=18 stages=35 splitK=1 red=0 ws=0 waves=0.97: 29.38 us (rel_vs_torch=0.000e+00 rel_vs_fp64=1.661e-03)
+[lt]   cand  1 algo=66 tile=17 stages=35 splitK=1 red=0 ws=0 waves=0.97: 29.86 us (rel_vs_torch=0.000e+00 rel_vs_fp64=1.661e-03)
+[lt]   cand  2 algo=66 tile=135 stages=35 splitK=1 red=0 ws=0 waves=0.78: 29.73 us (rel_vs_torch=0.000e+00 rel_vs_fp64=1.661e-03)
+[lt]   cand  3 algo=66 tile=400 stages=35 splitK=1 red=0 ws=0 waves=0.97: 29.70 us (rel_vs_torch=0.000e+00 rel_vs_fp64=1.661e-03)
+[lt]   cand  4 algo=66 tile=28 stages=35 splitK=1 red=0 ws=0 waves=0.65: 30.40 us (rel_vs_torch=0.000e+00 rel_vs_fp64=1.661e-03)
+[lt]   cand  5 algo=66 tile=15 stages=35 splitK=1 red=0 ws=0 waves=1.94: 30.75 us (rel_vs_torch=0.000e+00 rel_vs_fp64=1.661e-03)
+[lt]   cand  6 algo=66 tile=208 stages=35 splitK=1 red=0 ws=0 waves=0.65: 32.90 us (rel_vs_torch=0.000e+00 rel_vs_fp64=1.661e-03)
+[lt]   cand  7 algo=66 tile=20 stages=35 splitK=2 red=2 ws=8388624 waves=0.48: 34.75 us (rel_vs_torch=1.045e-04 rel_vs_fp64=1.661e-03)
+[lt] unpooler n=8192 k=4096 m=256: 8 heuristic candidates; incumbent 32.61 us, rel err vs fp64 1.662e-03
+[lt]   cand  0 algo=66 tile=20 stages=35 splitK=1 red=0 ws=0 waves=0.97: 32.61 us (rel_vs_torch=0.000e+00 rel_vs_fp64=1.662e-03)
+[lt]   cand  1 algo=66 tile=21 stages=35 splitK=1 red=0 ws=0 waves=0.97: 36.58 us (rel_vs_torch=0.000e+00 rel_vs_fp64=1.662e-03)
+[lt]   cand  2 algo=66 tile=184 stages=35 splitK=1 red=0 ws=0 waves=0.86: 33.60 us (rel_vs_torch=0.000e+00 rel_vs_fp64=1.662e-03)
+[lt]   cand  3 algo=66 tile=458 stages=35 splitK=1 red=0 ws=0 waves=0.98: 36.77 us (rel_vs_torch=0.000e+00 rel_vs_fp64=1.662e-03)
+[lt]   cand  4 algo=66 tile=197 stages=35 splitK=1 red=0 ws=0 waves=0.74: 38.11 us (rel_vs_torch=0.000e+00 rel_vs_fp64=1.662e-03)
+[lt]   cand  5 algo=66 tile=18 stages=35 splitK=1 red=0 ws=0 waves=1.94: 38.30 us (rel_vs_torch=0.000e+00 rel_vs_fp64=1.662e-03)
+[lt]   cand  6 algo=66 tile=17 stages=35 splitK=1 red=0 ws=0 waves=1.94: 37.28 us (rel_vs_torch=0.000e+00 rel_vs_fp64=1.662e-03)
+[lt]   cand  7 algo=66 tile=201 stages=35 splitK=1 red=0 ws=0 waves=0.71: 38.11 us (rel_vs_torch=0.000e+00 rel_vs_fp64=1.662e-03)
+[lt] layer     m    cands valid  incumbent_us  best_us  chosen
+[lt] qkv_gate  128      8     8         24.06    23.17  cand 3
+[lt] qkv_gate  256      8     8         28.19    26.27  cand 4
+[lt] o         128      8     8         12.29    12.32  incumbent
+[lt] o         256      8     8         13.41    13.44  incumbent
+[lt] pooler    128      8     8         31.23    31.14  incumbent
+[lt] pooler    256      8     8         37.44    37.44  incumbent
+[lt] unpooler  128      8     8         29.31    29.38  incumbent
+[lt] unpooler  256      8     8         32.61    32.61  incumbent
