@@ -46,13 +46,15 @@ base_sha: 12230f154820fa60ff8dc5f1e9efca0e1d05c4c9
 base_blob: 60fc66432a00f0c6a1e2228f6a0775cc08f492fc
 branch: hyp/muse_attention_decode/paired-heads-launch-cleanup-ab-tune-batch-gate
 worktree: .worktrees/muse_attention_decode/paired-heads-launch-cleanup-ab-tune-batch-gate
-mode: null
+mode: check
 implemented_at: 2026-10-24T104354Z
 impl_commit: f6513e3feb35334cdc64baa24953ca46621839de
 submission_sha256: c1520ef7b632076cf4a4f3e9b65ba5c859c2dd8802ddf7bbece8ab2230ba0c7d
 norm_sha256: 4535a46c53b9f66d462750c869d90bcae1dec2ef9af0856e2f8a0587fc648433
 submission_blob: efc544103e6d303d1f8602caa9439628043a17a7
 lint_warnings: 0
+attempt_file: 2026-10-24T104354Z-check-paired-heads-launch-cleanup-ab-tune-batch-gate.md
+prepared_at: 2026-10-24T104354Z
 ---
 
 # paired-heads-launch-cleanup-ab-tune-batch-gate
