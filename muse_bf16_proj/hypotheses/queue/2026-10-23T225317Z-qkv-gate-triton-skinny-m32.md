@@ -39,8 +39,10 @@ depends_on: pooler-triton-skinny-m32
 priority: 3
 kind: primary
 controls_for: null
-review: required
+review: proceed
 status: queued
+review_at: 2026-10-24T032407Z
+review_companions: null
 ---
 
 # qkv-gate-triton-skinny-m32
@@ -61,3 +63,28 @@ Extend the skinny Triton GEMM from pooler-triton-skinny-m32 to layer == 'qkv_gat
 ## Risk
 
 Only worth running if the parent is faster on pooler; it reuses the parent's kernel with one tile change so a loss here attributes to the 144-program/BLOCK_N=16 tiling of this layer, not to the kernel. 144 programs is 1.09 waves, so a tail of 12 programs runs alone; BLOCK_N=8 (288 programs, 2.2 waves) is the ab-tune if this is flat. Tests touched: m=1 qkv_gate and m=512 qkv_gate outliers (the latter stays on cuBLAS). Same correctness and graph properties as the parent.
+
+## Adversarial review
+
+Reviewed 2026-10-24T032407Z by an adversarial Fable subagent (model fable).
+
+**Verdict: proceed.** Interpretable in one run: the only rows that can move are the four qkv_gate m<=32 shapes, the stacked base is the parent's impl commit (d2840d0) and the harness compares against the parent's own result (job 9f0ad00bbc874d31), so per-shape attribution is clean. The stated mechanism ('match or beat 3.9 TB/s') is contradicted by the parent's own profile (3.3 TB/s at a bigger tile, 2.7 TB/s at BLOCK_M=32); the realistic win is dropping the splitKreduce node and the ~3 us gap, and decode_32 should be expected flat-to-slower, not faster.
+
+### Justification
+A. The shape is right for the idea: qkv_gate at m<=32 is a 37.7 MB bf16 stream (2304x8192), floor 7.9-8.0 us, reported 14.1-14.4 us on master (BEST job 9aa98e889be140eb: nvjet splitK 9.4/8.1/9.1/9.4 us at m=1/16/32/8 plus splitKreduce 1.6-1.8 us; kernel sum ~11 us, so ~3 us of the reported time is reduce+gap, the largest unexplained gap of any layer). All four target shapes weigh 62 and sit in four of the six loads, where qkv_gate is 23-27% of decode_1/16/32 and ~19% of verify_1; a full success (14.2 -> ~12 us) is ~+3.5% per load, ~+2.3% geomean, right at the judge's +-1.5% CI, so the readout is the per-shape rows and the Triton kernel's own us, not the headline. The direction list is consistent with TASK.md except decode_32. Weakest link: the bandwidth claim. The parent's kernel, the exact code this reuses, measured 20.2-20.5 us for 67.1 MB at BLOCK_M=16 (3.3 TB/s) and 25.2 us at BLOCK_M=32 (2.7 TB/s), i.e. slower than nvjet's own stream (18.6-19.2 us, 3.5-3.6 TB/s); the parent gained only because it dropped the 1.6-1.9 us reduce and the gap. On qkv_gate nvjet is markedly more efficient (9.4 us = 4.0 TB/s at m=1, 8.1 us = 4.66 TB/s at m=16), so the bar is higher, and this hypothesis halves the per-program in-flight bytes (BLOCK_N=16 x 256 x 2 B x 4 stages = 32 KB/SM vs the parent's 64 KB; ~4.6 MB fleet-wide in flight, marginal for Little's law at 4.8 TB/s) and runs 1.09 waves (144 programs; 12 SMs host 2 CTAs, which fits in smem but leaves the grid unbalanced). At the parent's demonstrated 3.3 TB/s the kernel takes ~11.4 us; it still beats 14.2 reported only if the Triton path's gap stays ~0.3 us as it did for the pooler (20.5 reported vs 20.2 kernel). So the plausible outcome is a modest 1-2 us gain at m=1/8/16 from node removal, not from bandwidth, and a loss at m=32 unless BLOCK_M=32 behaves differently on this shape. The hypothesis's named fallback tune, BLOCK_N=8, is not implementable with tl.dot (N>=16) and the FMA form was catastrophic in unpooler-slice-triton-gemv (70.8 us at m=8); the real retune axes are num_stages=8 at BLOCK_N=16 (restores 64 KB/SM) or BLOCK_N=32/72 programs.
+
+### Confounders on the current kernel
+- sglang-gemm-dispatch-parity (landed, 965b046): no confound. On qkv_gate m<=32 its path is _bf16_gemm_dispatch_impl -> the same nvjet splitK + splitKreduce pair the starter picked (qkv_gate rows flat in its attribution); this hypothesis removes that call for m<=32 and would behave identically with the parity change absent.
+- router-hilo-at-m8 (landed, f9dc05d): no mechanistic confound (router layer, its own CUDA graph), but a base confound for the headline: the stack builds on the parent's impl_commit d2840d0 whose base is e64f27e (parity, pre router-hilo-at-m8), so the run's speedup lacks the router verify_1 gain (26.1 -> 14.2 us, ~+2.2% geomean) and is not comparable to BEST 1.0307x; it is comparable to the parent's 0.998x (job 9f0ad00bbc874d31), which base_result_for selects by blob. Any promotion must rebase onto master and re-run.
+- pooler-triton-skinny-m32 (parent, not landed, neutral 0.998x): present in the stacked run. Its pooler decode_32 loss (24.5 vs 21.9 us, 0.887x) sits in the same decode_32 load as qkv_gate decode_32, so the load-level and headline numbers mix the two; the per-shape rows do not. The pooler rows should reproduce the parent (20.3-20.5 / 25.2 us); if they do not, run-to-run noise on this family is larger than the nominal +-1.5% (note qkv_gate decode_1 itself swung 13.96 -> 14.48 us between two runs with identical qkv_gate code).
+
+### Interference and A/B needs
+No companion. A gain on qkv_gate decode_1/16/verify_1 is unambiguous: the only code change on those shapes is one Triton launch replacing the nvjet+reduce pair, nothing landed touches them, and the parent's pooler rows act as a built-in reproducibility control. A loss is interpretable from the profile without another run: the Triton kernel's own us gives 37.7 MB / t directly (bandwidth vs nvjet's 9.4/8.1/9.1 us), and reported minus kernel gives the launch/gap cost; the residual question 'would a different tile fix it' is a follow-on retune (num_stages=8 or BLOCK_N=32), not a disambiguator, and the hypothesis already predicts a tile-attributable loss. ab-revert is inapplicable (neither landed item reaches this path mechanistically; reverting router-hilo-at-m8 is impossible on this base because it is not in it). ab-tune of the parent: its only pooler tunables do not touch qkv_gate. A control that isolates a sub-change is unnecessary because there is one sub-change (routing qkv_gate m<=32 to the kernel with BLOCK_N=16). Queued siblings o-triton-skinny-m32 and unpooler-full-triton-skinny-m32 are disjoint layers on the same parent; bf16-cublaslt-backend-toggle could change the cuBLAS kernel on these shapes if it lands first but builds on master, not this stack.
+
+### Open questions
+- The expected direction for decode_32 should be 'flat or slower': the parent's BLOCK_M=32 specialization ran at 2.7 TB/s (25.2 us for 67 MB) and lost 11%; there is no reason it is faster on a 37.7 MB weight. Consider BLOCK_M=16 with two dots (rows 0-15 and 16-31) or simply exclude m=32 from the route so decode_32 is a control; either is within the hypothesis's envelope.
+- The 3.9 TB/s target has no supporting measurement; the parent's plain tl.load stream reached 3.3 TB/s with twice the in-flight bytes per SM. State up front that the gain mechanism is node removal (reduce + ~3 us gap) and record the achieved TB/s from the profile (37.7 MB / kernel us) in FINDINGS beside the pooler's 3.3 TB/s.
+- BLOCK_N=8 named as the fallback tune is invalid for tl.dot (needs N>=16) and the FMA-broadcast alternative regressed 10x on unpooler; the honest retune axes are num_stages=8 at BLOCK_N=16 (64 KB/SM in flight, 144 programs) or BLOCK_N=32 with 72 programs. State which one is the follow-on so a loss can be retuned on one axis.
+- Why is qkv_gate's reported-minus-kernel gap ~3 us on master when pooler's is ~1 us and the Triton pooler path's is ~0.3 us? If the gap is a splitK workspace memset node or launch overhead specific to the cuBLAS pair, the hypothesis gains ~3 us even at parity bandwidth; if it is profiler-vs-graph skew, the gain is only the 1.7 us reduce. The run's reported-vs-kernel delta on the new path answers this.
+- The stacked base (e64f27e + parent) lacks router-hilo-at-m8; the harvest must compare against the parent's result (0.998x, job 9f0ad00bbc874d31), never against BEST 1.0307x, and a per-shape gain here only becomes promotable after rebasing both the parent and this change onto master and re-running.
+
