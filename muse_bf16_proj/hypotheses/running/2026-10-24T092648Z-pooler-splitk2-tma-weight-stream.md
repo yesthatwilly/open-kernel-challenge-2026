@@ -55,13 +55,19 @@ review: proceed
 status: running
 review_at: 2026-10-24T104016Z
 review_companions: null
-stage: claimed
+stage: implemented
 claimed_at: 2026-10-24T104051Z
 base_sha: cee590d58c6c34ded84fdb734c38ca129e327fee
 base_blob: 66ba1a39e2aaa5cedb2ce3ddfb809f67f86b37f9
 branch: hyp/muse_bf16_proj/pooler-splitk2-tma-weight-stream
 worktree: .worktrees/muse_bf16_proj/pooler-splitk2-tma-weight-stream
 mode: null
+implemented_at: 2026-10-24T104412Z
+impl_commit: 954d39338b5e6e0be9df9f550b6ba7ff10a7a6e7
+submission_sha256: 253d30c05c8eec77961865b4ee1be97c9705eac5c91fbb94e6b152a414c396b1
+norm_sha256: 1e415f07907b4d6c9b704d4cf61f58bd7d8e8528e2ede19f65fd7900bf5878bd
+submission_blob: c7d9d9d449e9412239f90ab6648b4d6f6bd658e7
+lint_warnings: 0
 ---
 
 # pooler-splitk2-tma-weight-stream
@@ -109,3 +115,37 @@ No landed hypothesis touches the pooler path, its traffic or its numerics, so ab
 - nvjet already uses TMA and reaches only 3.67 TB/s on this weight. If the TMA arm lands at 18 us rather than 17.5, the per-SM or HBM efficiency ceiling, not the copy mechanism, may be the limit for one 128-CTA wave plus the reduce tail.
 - churnsubs: the proposed cpasync-blockk256 companion duplicates the held pooler-triton-splitk2-blockn64-semaphore-control-blockk256, which was unheld instead of minting a new file
 
+
+## Implementation notes
+
+Worktree file: `.worktrees/muse_bf16_proj/pooler-splitk2-tma-weight-stream/muse_bf16_proj/submission.py` (base cee590d, the parent pooler-triton-splitk2-blockn64-semaphore). Diff: 1 file, +155/-8. Pooler path only; router, cuBLAS dispatch and routing (pooler m <= 32) untouched.
+
+- New `_bf16_splitk_tma_kernel`: a copy of `_bf16_splitk_kernel` in which only the weight load changed. `w_desc` replaces `w_ptr`/`stride_wn`; per K-step `w_tile = w_desc.load([n0, k])` (constexpr `NEW_DESC_API`) or `tl._experimental_descriptor_load(w_desc, [n0, k], [64, 256], tl.bfloat16)`; `acc = tl.dot(x_tile, tl.trans(w_tile), acc)`. x is still a masked `tl.load` of [BLOCK_M, 256]. Workspace store, debug_barrier, acq_rel gpu ticket, fixed-order last-CTA reduce, bf16 store and atomic_xchg reset are byte-for-byte the parent's. Grid (64, 2), SPLIT_K 2, BLOCK_N 64, num_warps 4, BLOCK_K 256 (`POOLER_TMA_BLOCK_K`), num_stages 4.
+- API selection by feature at import: `triton.tools.tensor_descriptor.TensorDescriptor` if importable (the >= 3.4 API, `from_tensor(W, [64, 256])`), else `triton.tools.experimental_descriptor.create_2d_tma_descriptor(W.data_ptr(), 4096, 8192, 64, 256, 2)`. The descriptor is built once in prepare() from the pooler weight alone and kept in `state["pooler_w_desc"]`. prepare() prints `triton.__version__` and the chosen API.
+- Deviation 1 (fallback): if neither API imports, `POOLER_TMA_API = None` and the parent's cp.async kernel (BLOCK_K 128) runs unchanged, so the run does not crash. The md says "no run" in that case, but this node has no Triton and the judge's Triton version is recorded nowhere in the repo (grep of attempts/hypotheses/logs found nothing), so it cannot be known before a run. SGLang on H200 needs torch >= 2.5 (Triton >= 3.1), where at least the experimental API exists, so the fallback should never trigger. If the prepare() log says `none (cp.async fallback)`, the run is the parent and must be read as "no TMA API", not as a TMA result.
+- Deviation 2 (stages at BLOCK_M=32, per the md's "only if it does not fit"): prepare() compiles BLOCK_M=16 and 32 first; if the BLOCK_M=32 launch raises `triton.runtime.errors.OutOfResources` at 4 stages, it retries at 3 and records that in `state["pooler_stages"]` (a constant from compile resources, not input-derived). The m=32 log line says which.
+- Diagnostics (from the review's open questions): prepare() prints per BLOCK_M `n_regs`, `n_spills` and PTX counts of `cp.async.bulk.tensor`, `ldmatrix`, `.trans`, `mbarrier.`, non-bulk `cp.async`, `wgmma.mma_async` and `mma.sync` from the launch handle's `asm['ptx']`. It is wrapped in try/except so it can never fail prepare().
+- `_pooler_forward` now returns `(out, handle)`; kernel_fn takes `[0]`. The warm-up over m = 1..32 and the counter re-zero are as in the parent.
+- Box [64, 256]: inner extent 512 B, more than the 128 B swizzle span. Triton's host fill for the experimental path clamps the box to 128 B and the codegen issues several copies. The new API's lowering splits it too. Not verifiable offline. The PTX `cp.async.bulk.tensor` count shows how many copies were issued per stage.
+
+## Rules check
+
+Checked against `git -C .worktrees/muse_bf16_proj/pooler-splitk2-tma-weight-stream diff`:
+
+- [x] CUDA-graph capturable: no `.item()`/`.cpu()`/`synchronize()`/tensor prints in kernel_fn. Prints happen only in prepare(), and they print strings and ints, never tensors. The output `torch.empty` is the parent's per-call allocation. The branches are on shapes (`_pooler_shape_ok`, `_pooler_block_m`) and on prepare()-fixed state (descriptor present, stages), never on input values. The TMA loads are device-side and the descriptor is a fixed host param.
+- [x] Nothing derived from `data` is cached across calls: the descriptor is built from the pooler weight only. `pooler_stages` comes from compile resources. The workspace is rewritten every call, and the counters self-reset as in the parent.
+- [x] Weights: the pooler weight is unchanged bf16. The descriptor is a view of it, not a copy. The router hi+lo split is unchanged.
+- [x] Activations BF16 where SGLang keeps BF16: x is bf16, the accumulation is fp32 and the output is bf16, as in the parent.
+- [x] n/a: attention. This problem has no attention, KV cache or queries.
+- [x] No timing patches, harness frames/I/O/secrets, module edits, reference import, subprocesses or network. The new imports are triton.tools.* only.
+- [x] All work happens inside the timed call; no output caching or replay. The warm-up runs on synthetic x in prepare() and its outputs are discarded.
+- [x] No triton.autotune. The configs are static constants.
+- [x] First line `# okc: problem=muse_bf16_proj` kept.
+
+okc_lint output:
+
+```
+CLEAN: submission.py
+```
+
+`python3 -I -m py_compile`: OK, and the `__pycache__` it created in the worktree was removed.
