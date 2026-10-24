@@ -79,7 +79,7 @@ kind: rewrite
 controls_for: null
 replaces: "sliding-layer attention after the QKV projection: _pre_attention_kernel + FA3 (+combine/prepare) + rms_norm_gate"
 review: proceed
-status: running
+status: done
 review_at: 2026-10-24T083713Z
 review_companions: null
 claimed_at: 2026-10-24T083713Z
@@ -98,8 +98,15 @@ attempt_file: 2026-10-24T084220Z-check-sliding-single-launch-fused-attention.md
 prepared_at: 2026-10-24T084220Z
 job: f389af196ddf47b1
 dispatched_at: 2026-10-24T084230Z
-stage: dispatched
+stage: harvested
 rewrite_stage: 1
+outcome: regression
+verdict_detail: regression
+speedup: 0.9452410112427269
+speedup_ci: [0.9310623960740859, 0.9594196264113677]
+harvested_at: 2026-10-24T103710Z
+best_at_harvest: 1.1284429079326423
+promotion: null
 ---
 
 # sliding-single-launch-fused-attention
@@ -208,3 +215,35 @@ Lint (`okc_lint.py ... --problem muse_attention_decode`):
 CLEAN: .worktrees/muse_attention_decode/sliding-single-launch-fused-attention/muse_attention_decode/submission.py
 ```
 `python3 -I -m py_compile` passed, and the `__pycache__` it left in the worktree was deleted.
+
+## Result
+
+- job `f389af196ddf47b1` (check), status done, passed True, tests 16/16
+- speedup 0.9452x, 95% CI [0.9311, 0.9594], score 3984.486448644851 µs vs SGLang 3766.3 µs
+- best at harvest: {"speedup": 1.1284429079326423, "ci": [1.1115162643136527, 1.1453695515516318], "job": "c297440e53334f34"}; base result: muse_attention_decode/hypotheses/done/gain/fused-preattention-triton.result.json
+- **outcome: regression** (regression)
+- files: `muse_attention_decode/hypotheses/done/regression/sliding-single-launch-fused-attention.result.json`, `muse_attention_decode/hypotheses/done/regression/sliding-single-launch-fused-attention.patch`; branch `hyp/muse_attention_decode/sliding-single-launch-fused-attention`
+
+## Attribution
+
+| shape | w | base µs | hyp µs | delta | verdict |
+|---|---|---|---|---|---|
+| batch=1 ctx=80000 dist=soft heads=tp8 layer=sliding load=decode_1 page=1 | 46 | 16.77 | 13.51 | 1.2371 | gained |
+| batch=1 ctx=80000 dist=coherent heads=tp8 layer=full load=decode_1 page=1 | 16 | 27.87 | 27.44 | 1.0164 | flat |
+| batch=16 ctx=80000 dist=soft heads=tp8 layer=sliding load=decode_16 page=1 spread=agentic | 46 | 20.8 | 23.87 | 0.8669 | lost |
+| batch=16 ctx=80000 dist=coherent heads=tp8 layer=full load=decode_16 page=1 spread=agentic | 16 | 194.45 | 195.49 | 1.0006 | flat |
+| batch=32 ctx=80000 dist=soft heads=tp8 layer=sliding load=decode_32 page=1 spread=agentic | 46 | 25.14 | 38.47 | 0.6496 | lost |
+| batch=32 ctx=80000 dist=coherent heads=tp8 layer=full load=decode_32 page=1 spread=agentic | 16 | 377.92 | 377.67 | 1.0023 | flat |
+| batch=1 ctx=80000 dist=soft heads=tp8 layer=sliding load=verify_1 page=1 q_len=8 | 46 | 17.12 | 42.34 | 0.4055 | lost |
+| batch=1 ctx=80000 dist=coherent heads=tp8 layer=full load=verify_1 page=1 q_len=8 | 16 | 30.02 | 29.79 | 0.9823 | flat |
+| batch=16 ctx=80000 dist=soft heads=tp8 layer=sliding load=verify_16 page=1 q_len=8 spread=agentic | 46 | 22.5 | 47.23 | 0.4761 | lost |
+| batch=16 ctx=80000 dist=coherent heads=tp8 layer=full load=verify_16 page=1 q_len=8 spread=agentic | 16 | 198.32 | 198.62 | 0.997 | flat |
+| batch=32 ctx=80000 dist=soft heads=tp8 layer=sliding load=verify_32 page=1 q_len=8 spread=agentic | 46 | 28.72 | 60.84 | 0.473 | lost |
+| batch=32 ctx=80000 dist=coherent heads=tp8 layer=full load=verify_32 page=1 q_len=8 spread=agentic | 16 | 383.11 | 383.98 | 0.9996 | flat |
+
+gained on sliding decode_1; lost on sliding decode_16, decode_32, verify_1, verify_16, verify_32. Expected hit: 2/7. Noise ±1.5%.
+
+## Follow-ups
+
+- rewrite stage 1 of `sliding-layer attention after the QKV projection: _pre_attention_kernel + FA3 (+combine/prepare) + rms_norm_gate`: read the replaced kernels' own us per shape (profile top_kernels) against the incumbent and the floor, and check which Milestone it reached. The next stage is `/hypothesize muse_attention_decode "<what to fix or tune>" --kind rewrite --depends-on sliding-single-launch-fused-attention --stage 2`; a slow or failed first cut is the expected start, not a do-not-retry.
+
