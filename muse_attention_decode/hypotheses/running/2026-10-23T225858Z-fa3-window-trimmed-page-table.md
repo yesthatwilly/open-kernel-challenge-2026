@@ -52,9 +52,16 @@ priority: 3
 kind: primary
 controls_for: null
 review: proceed
-status: queued
+status: running
 review_at: 2026-10-24T111856Z
 review_companions: null
+stage: claimed
+claimed_at: 2026-10-24T111857Z
+base_sha: def56122736897df0372457a74ffefcdf4c21add
+base_blob: bc007e643ac0b440147a732071f23d9b3563174c
+branch: hyp/muse_attention_decode/fa3-window-trimmed-page-table
+worktree: .worktrees/muse_attention_decode/fa3-window-trimmed-page-table
+mode: null
 ---
 
 # fa3-window-trimmed-page-table
