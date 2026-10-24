@@ -1,6 +1,6 @@
 # muse_bf16_proj hypotheses
 
-Regenerated 2026-10-24T071029Z. Best: 1.1510x [1.1338,1.1683] job `bd9fa14151644cee` (check)
+Regenerated 2026-10-24T071935Z. Best: 1.1510x [1.1338,1.1683] job `bd9fa14151644cee` (check)
 
 | created | slug | kind | area | where | outcome | speedup | CI | job | mode | promotion | review | expected hit |
 |---|---|---|---|---|---|---|---|---|---|---|---|---|
@@ -10,8 +10,8 @@ Regenerated 2026-10-24T071029Z. Best: 1.1510x [1.1338,1.1683] job `bd9fa14151644
 | 2026-10-23T225128Z | router-triton-hilo-fused | primary | router GEMM | done/regression | regression | 0.9402 | [0.926,0.954] | c2a8de5969374dff | check |  | proceed | 4/7 |
 | 2026-10-23T225201Z | pooler-triton-skinny-m32 | primary | pooler GEMM | done/neutral | neutral | 0.9983 | [0.983,1.013] | 9f0ad00bbc874d31 | check |  | proceed | 4/6 |
 | 2026-10-23T225201Z | unpooler-slice-triton-gemv | primary | unpooler GEMM | done/regression | regression | 0.8801 | [0.867,0.893] | 4c2b113f81434570 | check |  | proceed | 1/4 |
-| 2026-10-23T225303Z | bf16-cublaslt-backend-toggle | primary | bf16 GEMM dispatch | queue | queued |  |  |  |  |  | required |  |
-| 2026-10-23T225303Z | pooler-skinny-tiled-weight-layout | primary | pooler GEMM | queue | queued |  |  |  |  |  | proceed |  |
+| 2026-10-23T225303Z | pooler-skinny-tiled-weight-layout | primary | pooler GEMM | queue | hold |  |  |  |  |  | proceed |  |
+| 2026-10-23T225303Z | bf16-cublaslt-backend-toggle | primary | bf16 GEMM dispatch | running | running |  |  | 5ed9ace10d9a4f68 | check |  | proceed |  |
 | 2026-10-23T225303Z | o-triton-skinny-m32 | primary | o GEMM | done/neutral | neutral | 1.0057 | [0.991,1.021] | d75669d46acb42a5 | check |  | proceed | 4/5 |
 | 2026-10-23T225303Z | unpooler-full-triton-skinny-m32 | primary | unpooler GEMM | done/neutral | neutral | 1.0053 | [0.990,1.020] | 635c2693bd4147a4 | check |  | proceed | 3/4 |
 | 2026-10-23T225317Z | qkv-gate-triton-skinny-m32 | primary | qkv GEMM | done/regression | regression | 0.9238 | [0.910,0.938] | abcd45776f244c8c | check |  | proceed | 2/6 |
@@ -22,5 +22,6 @@ Regenerated 2026-10-24T071029Z. Best: 1.1510x [1.1338,1.1683] job `bd9fa14151644
 
 ## Held
 
+- pooler-skinny-tiled-weight-layout: skinny-Triton family settled: pooler neutral, qkv-gate regression, unpooler-full neutral, o neutral (1.006x), and the BLOCK_M=16 control showed the m=32 penalty is not the tile (20.8 us vs 18.4 us in-run at m=16). The reviewer expected both of this hypothesis's mechanisms to be ~zero, and it builds on the unpromoted pooler branch, so a gain could not be promoted without a rebase and rerun.
 - router-triton-hilo-fused-control-hybrid-cublas-above-m32: superseded: router-triton-hilo-fused-control-splitk-all-m landed (1.151x); its 3-D Triton grid beats cuBLAS hi/lo at every m (5.7-9.3 us vs 10.5-17.7 us), so a hybrid using cuBLAS above m=32 can only be slower
 - router-hilo-addmm-epilogue-control-inplace-out: superseded: master's router no longer uses the cuBLAS hi/lo pair (Triton split-K landed, 1.151x), so the add node this control targets is gone; the primary read flat (1.026x, within CI)
