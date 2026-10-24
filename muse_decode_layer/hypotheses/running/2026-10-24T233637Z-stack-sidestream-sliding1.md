@@ -27,7 +27,7 @@ base_sha: f7c9823e181e8f7f0fbb2200b2c38b4ad7be6085
 base_blob: 3d70ae6e2de0d48c4a4f2a469ced8234f5348182
 branch: hyp/muse_decode_layer/stack-sidestream-sliding1
 worktree: .worktrees/muse_decode_layer/stack-sidestream-sliding1
-mode: null
+mode: check
 restack_of: null
 stale_base: null
 implemented_at: 2026-10-24T233648Z
@@ -36,6 +36,8 @@ submission_sha256: 74132f4cca02bcd11713f11921cf212c5d391e975352a8b8712e19277c922
 norm_sha256: 3955572fa4dc489b250ad7f18329ced07f068aee16c4185da83caafc015ede01
 submission_blob: ad68c3962e7f16fbc2631e288222f7d026192eb0
 lint_warnings: 18
+attempt_file: 2026-10-24T233648Z-check-stack-sidestream-sliding1.md
+prepared_at: 2026-10-24T233648Z
 ---
 
 # stack-sidestream-sliding1
