@@ -55,7 +55,7 @@ review: proceed
 status: running
 review_at: 2026-10-24T104016Z
 review_companions: null
-stage: implemented
+stage: dispatched
 claimed_at: 2026-10-24T104051Z
 base_sha: cee590d58c6c34ded84fdb734c38ca129e327fee
 base_blob: 66ba1a39e2aaa5cedb2ce3ddfb809f67f86b37f9
@@ -70,6 +70,8 @@ submission_blob: c7d9d9d449e9412239f90ab6648b4d6f6bd658e7
 lint_warnings: 0
 attempt_file: 2026-10-24T104413Z-check-pooler-splitk2-tma-weight-stream.md
 prepared_at: 2026-10-24T104413Z
+job: 4e89311eefdc4bc3
+dispatched_at: 2026-10-24T104423Z
 ---
 
 # pooler-splitk2-tma-weight-stream
