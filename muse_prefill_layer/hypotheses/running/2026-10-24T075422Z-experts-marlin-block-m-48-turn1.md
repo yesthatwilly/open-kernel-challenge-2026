@@ -35,9 +35,16 @@ priority: 2
 kind: primary
 controls_for: null
 review: proceed
-status: queued
+status: running
 review_at: 2026-10-24T083825Z
 review_companions: null
+stage: claimed
+claimed_at: 2026-10-24T083826Z
+base_sha: 4735619dba9401926cf675fc366d56f69d945921
+base_blob: e4931f050c7fb99835fe116d25bb454a5ea731e9
+branch: hyp/muse_prefill_layer/experts-marlin-block-m-48-turn1
+worktree: .worktrees/muse_prefill_layer/experts-marlin-block-m-48-turn1
+mode: null
 ---
 
 # experts-marlin-block-m-48-turn1
