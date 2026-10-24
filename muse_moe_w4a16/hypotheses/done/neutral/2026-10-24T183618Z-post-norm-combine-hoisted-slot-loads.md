@@ -46,10 +46,10 @@ priority: 1
 kind: primary
 controls_for: null
 review: proceed
-status: running
+status: done
 review_at: 2026-10-24T183956Z
 review_companions: null
-stage: dispatched
+stage: harvested
 claimed_at: 2026-10-24T183956Z
 base_sha: 91975540841cb14ebba858121c83ff760c528591
 base_blob: 108d36e9f2266fc88531dd6ff0329a847c882013
@@ -66,6 +66,13 @@ attempt_file: 2026-10-24T184142Z-submit-post-norm-combine-hoisted-slot-loads.md
 prepared_at: 2026-10-24T184142Z
 job: d7501477ce2748d5
 dispatched_at: 2026-10-24T184157Z
+outcome: neutral
+verdict_detail: unproven-vs-best
+speedup: 1.3281974423789138
+speedup_ci: [1.30827448074323, 1.3481204040145973]
+harvested_at: 2026-10-24T184719Z
+best_at_harvest: 1.3249153782392282
+promotion: null
 ---
 
 # post-norm-combine-hoisted-slot-loads
@@ -139,3 +146,29 @@ Audited 2026-10-24 by an opus subagent (read-only; no GPU). **Verdict: dispatch*
 - Rules: no gates, no host syncs, no allocation or input-dependent host control flow added; graph-capturable; weights/activations unchanged.
 
 Residual risk: if ptxas lands just above 128 regs at 16 warps a small spill could eat the ~1 us gain; read the _post_norm_combine_kernel row, not the headline.
+
+## Result
+
+- job `d7501477ce2748d5` (submit), status done, passed True, tests 5/5
+- speedup 1.3282x, 95% CI [1.3083, 1.3481], score 10125.377124588194 µs vs SGLang 13448.5 µs
+- best at harvest: {"speedup": 1.3249153782392282, "ci": [1.30504164756564, 1.3447891089128166], "job": "45eacf4ca2e849d2"}; base result: muse_moe_w4a16/hypotheses/done/neutral/align-parallel-per-expert-verify.result.json
+- **outcome: neutral** (unproven-vs-best)
+- files: `muse_moe_w4a16/hypotheses/done/neutral/post-norm-combine-hoisted-slot-loads.result.json`, `muse_moe_w4a16/hypotheses/done/neutral/post-norm-combine-hoisted-slot-loads.patch`; branch `hyp/muse_moe_w4a16/post-norm-combine-hoisted-slot-loads`
+
+## Attribution
+
+| shape | w | base µs | hyp µs | delta | verdict |
+|---|---|---|---|---|---|
+| bs=1 load=decode_1 sharding=ep8 | 60 | 48.82 | 48.91 | 0.9993 | flat |
+| bs=16 load=decode_16 sharding=ep8 | 60 | 148.37 | 146.85 | 1.0026 | flat |
+| bs=32 load=decode_32 sharding=ep8 | 60 | 199.88 | 198.89 | 0.9976 | flat |
+| bs=8 load=verify_1 sharding=ep8 | 60 | 107.74 | 113.78 | 0.9865 | flat |
+| bs=128 load=verify_16 sharding=ep8 | 60 | 318.26 | 317.61 | 1.0173 | flat |
+| bs=256 load=verify_32 sharding=ep8 | 60 | 454.28 | 460.02 | 1.0119 | flat |
+
+no shape moved outside noise. Expected hit: 3/6. Noise ±1.5%.
+
+## Follow-ups
+
+- unproven-vs-best: the change is not proven either way; a stacked hypothesis (`depends_on: post-norm-combine-hoisted-slot-loads`) that adds a further change in the same area is the only way to learn more (identical code is never re-run).
+

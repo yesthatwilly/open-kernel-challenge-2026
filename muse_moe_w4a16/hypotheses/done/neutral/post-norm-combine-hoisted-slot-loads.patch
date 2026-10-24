@@ -1,0 +1,41 @@
+diff --git a/muse_moe_w4a16/submission.py b/muse_moe_w4a16/submission.py
+index 108d36e..1c0ea2b 100644
+--- a/muse_moe_w4a16/submission.py
++++ b/muse_moe_w4a16/submission.py
+@@ -104,15 +104,18 @@ def _post_norm_combine_kernel(y_ptr, ids_ptr, tw_ptr, w_ptr, out_ptr, H, eps,
+     offs = tl.arange(0, BLOCK_H)
+     mask = offs < H
+     nw = tl.load(w_ptr + offs, mask=mask, other=0.0).to(tl.float32) + 1.0
+-    acc = tl.zeros([BLOCK_H], dtype=tl.float32)
+-    for s in tl.static_range(TOP_K_C):
+-        eid = tl.load(ids_ptr + t * TOP_K_C + s)
+-        if eid >= 0:
+-            g = tl.load(tw_ptr + t * TOP_K_C + s)
+-            row = (t * TOP_K_C + s).to(tl.int64) * H
+-            v = tl.load(y_ptr + row + offs, mask=mask, other=0.0).to(tl.float32) * nw
+-            r = tl.rsqrt(tl.sum(v * v, axis=0) / H + eps)
+-            acc += g * v * r
++    slots = tl.arange(0, TOP_K_C)
++    ids = tl.load(ids_ptr + t * TOP_K_C + slots)
++    g = tl.load(tw_ptr + t * TOP_K_C + slots)
++    valid = ids >= 0
++    row = (t * TOP_K_C + slots).to(tl.int64) * H
++    # One [TOP_K_C, BLOCK_H] masked tile load issues every local row load before any reduction;
++    # remote rows are masked off and never read.
++    m2 = valid[:, None] & mask[None, :]
++    v = tl.load(y_ptr + row[:, None] + offs[None, :], mask=m2, other=0.0).to(tl.float32) * nw[None, :]
++    r = tl.rsqrt(tl.sum(v * v, axis=1) / H + eps)
++    coef = tl.where(valid, g, 0.0) * r
++    acc = tl.sum(coef[:, None] * v, axis=0)
+     tl.store(out_ptr + t.to(tl.int64) * H + offs, acc.to(tl.bfloat16), mask=mask)
+ 
+ 
+@@ -527,7 +530,7 @@ def kernel_fn(data: Inputs, state: dict) -> torch.Tensor:
+         out = torch.empty((num_tokens, size_k), device=x.device, dtype=torch.bfloat16)
+         _post_norm_combine_kernel[(num_tokens,)](
+             y, local_ids, topk_weights, state["post_norm_w"], out, size_k, POST_NORM_EPS,
+-            TOP_K_C=TOP_K, BLOCK_H=triton.next_power_of_2(size_k), num_warps=8)
++            TOP_K_C=TOP_K, BLOCK_H=triton.next_power_of_2(size_k), num_warps=16)
+         return out
+     return fused_post_expert_norm_weighted_sum(
+         y, topk_weights, norm_weight=state["norm_w"], eps=POST_NORM_EPS, weight_first=True,
