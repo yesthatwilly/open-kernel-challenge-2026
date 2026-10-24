@@ -40,10 +40,10 @@ priority: 3
 kind: primary
 controls_for: null
 review: proceed
-status: running
+status: done
 review_at: 2026-10-24T024434Z
 review_companions: [router-hilo-addmm-epilogue-control-inplace-out]
-stage: dispatched
+stage: harvested
 claimed_at: 2026-10-24T024439Z
 base_sha: fe9a5a37d2a2208f820e8c3696faae713a1bb583
 base_blob: 349be31cabc7d9b669b94032ae723c0b0a5e7f71
@@ -60,6 +60,13 @@ attempt_file: 2026-10-24T024717Z-check-router-hilo-addmm-epilogue.md
 prepared_at: 2026-10-24T024717Z
 job: 743020b6b43d458c
 dispatched_at: 2026-10-24T024725Z
+outcome: neutral
+verdict_detail: within-ci
+speedup: 1.0255787894210895
+speedup_ci: [1.010195107579773, 1.0409624712624057]
+harvested_at: 2026-10-24T035909Z
+best_at_harvest: 1.0307103903232853
+promotion: null
 ---
 
 # router-hilo-addmm-epilogue
@@ -142,3 +149,53 @@ Lint (`python3 -I .claude/skills/churnsubs/bin/okc_lint.py <worktree>/muse_bf16_
 CLEAN: submission.py
 ```
 (exit 0; no findings)
+
+## Result
+
+- job `743020b6b43d458c` (check), status done, passed True, tests 9/9
+- speedup 1.0256x, 95% CI [1.0102, 1.0410], score 4710.315823445268 µs vs SGLang 4830.8 µs
+- best at harvest: {"speedup": 1.0307103903232853, "ci": [1.015249734468436, 1.0461710461781344], "job": "9aa98e889be140eb"}; base result: muse_bf16_proj/hypotheses/done/gain/router-hilo-at-m8.result.json
+- **outcome: neutral** (within-ci)
+- files: `muse_bf16_proj/hypotheses/done/neutral/router-hilo-addmm-epilogue.result.json`, `muse_bf16_proj/hypotheses/done/neutral/router-hilo-addmm-epilogue.patch`; branch `hyp/muse_bf16_proj/router-hilo-addmm-epilogue`
+
+## Attribution
+
+| shape | w | base µs | hyp µs | delta | verdict |
+|---|---|---|---|---|---|
+| layer=qkv_gate load=decode_1 m=1 | 62 | 14.19 | 14.14 | 1.0033 | flat |
+| layer=o load=decode_1 m=1 | 62 | 6.64 | 6.74 | 1.005 | flat |
+| layer=pooler load=decode_1 m=1 | 62 | 21.55 | 21.55 | 1.0012 | flat |
+| layer=unpooler load=decode_1 m=1 | 62 | 7.01 | 7.19 | 1.0089 | flat |
+| layer=router load=decode_1 m=1 | 62 | 10.51 | 10.34 | 1.013 | flat |
+| layer=qkv_gate load=decode_16 m=16 | 62 | 14.03 | 14.13 | 0.9899 | flat |
+| layer=o load=decode_16 m=16 | 62 | 6.94 | 6.75 | 1.0186 | flat |
+| layer=pooler load=decode_16 m=16 | 62 | 21.62 | 21.44 | 1.0142 | flat |
+| layer=unpooler load=decode_16 m=16 | 62 | 18.62 | 18.87 | 0.9861 | flat |
+| layer=router load=decode_16 m=16 | 62 | 14.51 | 14.66 | 1.0032 | flat |
+| layer=qkv_gate load=decode_32 m=32 | 62 | 14.42 | 14.32 | 1.007 | flat |
+| layer=o load=decode_32 m=32 | 62 | 6.96 | 6.72 | 0.9933 | flat |
+| layer=pooler load=decode_32 m=32 | 62 | 21.9 | 22.14 | 0.9963 | flat |
+| layer=unpooler load=decode_32 m=32 | 62 | 18.57 | 18.73 | 0.9881 | flat |
+| layer=router load=decode_32 m=32 | 62 | 15.03 | 14.78 | 0.9986 | flat |
+| layer=qkv_gate load=verify_1 m=8 | 62 | 14.13 | 14.2 | 0.9827 | flat |
+| layer=o load=verify_1 m=8 | 62 | 6.43 | 6.67 | 0.9782 | flat |
+| layer=pooler load=verify_1 m=8 | 62 | 20.94 | 21.69 | 0.9888 | flat |
+| layer=unpooler load=verify_1 m=8 | 62 | 6.71 | 7.16 | 0.9749 | flat |
+| layer=router load=verify_1 m=8 | 62 | 14.15 | 14.08 | 1.0075 | flat |
+| layer=qkv_gate load=verify_16 m=128 | 62 | 17.27 | 17.23 | 1.0275 | flat |
+| layer=o load=verify_16 m=128 | 62 | 7.43 | 7.45 | 1.042 | gained |
+| layer=pooler load=verify_16 m=128 | 62 | 24.96 | 25.35 | 1.0174 | flat |
+| layer=unpooler load=verify_16 m=128 | 62 | 19.72 | 19.99 | 1.0125 | flat |
+| layer=router load=verify_16 m=128 | 62 | 16.21 | 16.48 | 0.999 | flat |
+| layer=qkv_gate load=verify_32 m=256 | 62 | 19.79 | 19.88 | 1.006 | flat |
+| layer=o load=verify_32 m=256 | 62 | 9.33 | 9.3 | 1.025 | flat |
+| layer=pooler load=verify_32 m=256 | 62 | 31.11 | 30.74 | 1.0355 | gained |
+| layer=unpooler load=verify_32 m=256 | 62 | 24.07 | 24.58 | 1.0053 | flat |
+| layer=router load=verify_32 m=256 | 62 | 17.66 | 17.55 | 0.9987 | flat |
+
+gained on o verify_16; pooler verify_32. Expected hit: 2/6. Noise ±1.5%.
+
+## Follow-ups
+
+- within-ci: the change is not proven either way; a stacked hypothesis (`depends_on: router-hilo-addmm-epilogue`) that adds a further change in the same area is the only way to learn more (identical code is never re-run).
+

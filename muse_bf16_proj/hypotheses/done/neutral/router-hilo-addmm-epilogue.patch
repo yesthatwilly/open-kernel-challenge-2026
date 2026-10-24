@@ -1,0 +1,14 @@
+diff --git a/muse_bf16_proj/submission.py b/muse_bf16_proj/submission.py
+index 349be31..b30f711 100644
+--- a/muse_bf16_proj/submission.py
++++ b/muse_bf16_proj/submission.py
+@@ -60,5 +60,8 @@ def kernel_fn(data: Inputs, state: dict) -> torch.Tensor:
+     if x.shape[0] <= ROUTER_FP32_MAX_TOKENS:
+         return F.linear(x.float(), state["router"])
+     acc = torch.mm(x, state["router_hi_t"], out_dtype=torch.float32)
+-    acc += torch.mm(x, state["router_lo_t"], out_dtype=torch.float32)
++    # Fold the hi accumulator into the lo GEMM's beta=1 epilogue instead of a separate add kernel.
++    acc = torch.addmm(
++        acc, x, state["router_lo_t"], beta=1.0, alpha=1.0, out_dtype=torch.float32
++    )
+     return acc
