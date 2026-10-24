@@ -60,13 +60,19 @@ review: proceed
 status: running
 review_at: 2026-10-24T165606Z
 review_companions: null
-stage: claimed
+stage: implemented
 claimed_at: 2026-10-24T165606Z
 base_sha: f3620a153798c4af3feb47a7fc26977635b8a6f3
 base_blob: cc466fce207709c98ab0e78c2435c1c459890fdb
 branch: hyp/muse_decode_layer/full-decode-cuda-splitkv-port
 worktree: .worktrees/muse_decode_layer/full-decode-cuda-splitkv-port
 mode: null
+implemented_at: 2026-10-24T165933Z
+impl_commit: f6cc1452343c4d93911ad7303c4a5d7878afd2fe
+submission_sha256: e75a020601d212ebaa00461ad6dc4445ca25ba188504358caf0c2bdf8c143999
+norm_sha256: ddd10ed8feb4284fb885cd0f51c6fa848a93f1de545aeda01bb91b67a228eca3
+submission_blob: b83f5ec1976c82d5b45dcd92b6c0818ce04eda9f
+lint_warnings: 1
 ---
 
 # full-decode-cuda-splitkv-port
@@ -119,3 +125,45 @@ No companions. This is kind: rewrite, and it is judged on the replaced kernels' 
 - The gated tests are 'batch 33, ctx 20000, full, spread mixed, page 1' and 'batch 16, ctx 20000, full, dist soft, page 1'. Both are within 1 < batch <= 64, and they are the correctness gate for this path. Should the self-check also cover batch 33 with a non-power-of-two chunk count?
 - If prepare() can be called more than once per process, is the self-check guarded so it runs once, and is _EXT set to None globally on failure before any graph capture?
 
+
+## Implementation notes
+
+Worktree `.worktrees/muse_decode_layer/full-decode-cuda-splitkv-port`, file `muse_decode_layer/submission.py` only (uncommitted; diff stat `1 file changed, 670 insertions(+), 54 deletions(-)`; with `-w` it is `618 insertions(+), 2 deletions(-)`, i.e. the 52 other "deleted" lines are the master FA3 block re-indented under `else:`, unchanged).
+
+- **Ported verbatim** from `git show HEAD:muse_attention_decode/submission.py` (lines 399-891 there; `diff` of the inserted block against that range is empty): the kernel A/B comment block, `_SPLITKV_CHUNK`, `_SPLITKV_CPP`, `_SPLITKV_CUDA` (splitkv_attn_kernel + splitkv_combine_kernel), `_build_splitkv` (load_inline, `-O3 -arch=sm_90a`, module `muse_full_decode_splitkv_v1`, `[splitkv] load_inline ...` log lines), `_EXT`, `_SPLITKV_GRID`, `_SMS`, `_sm_count`, `_splitkv_gate`, `_full_decode_splitkv`. Plus `LOG2E` and `import time`. Placed after `_post_norm_combine_kernel`, before `prepare`.
+- **Import-time compile**: `if torch.cuda.is_available(): _EXT = _build_splitkv()` right after the block, as attention does (on failure `_EXT` stays None and master runs everywhere).
+- **Decode-specific self-check (new code)**: `_splitkv_synthetic`, `_splitkv_reference`, `_splitkv_self_check(device)`, `_splitkv_prepare(device)`. Synthetic data only: FP8 q [B,16,64] (RMS-normalized randn then E4M3), randn FP8 k/v caches [pages,1,2,64] divided by kv_scale, shuffled page table with odd stride (max_pages = max(lens)+37), `cache_seqlens` = lens (int32), bf16 qkv [B,2304] supplying the gate, and a `config` dict with every field `_splitkv_gate` and `_full_decode_splitkv` read. Reference is FP32 per the spec (gather rows, softmax(q k^T * sm_scale * qk_scale_factor * k_scale), @ v * v_scale, scaleless RMSNorm over 64 eps 1e-5, x sigmoid(gate)). Cases: lens [9000, 1025, 70, 4097, 1023] at (kv 1.0, device grid), (kv 0.25, grid 3), (kv 1.0, grid 3), as attention did; pass = finite and rel L2 < 2e-2 on every case. `_SPLITKV_GRID` reset to None in `finally`. Each case prints `[splitkv] self-check B=.. kv_scale=.. grid=..: rel L2 .., finite ..`.
+- **Run once from prepare()**: `_splitkv_prepare(device)` is called just before prepare's final `torch.cuda.synchronize()`. A module global `_SPLITKV_CHECKED` makes it run once per process (open question 3); on failure it prints `[splitkv] SELF-CHECK FAILED: CUDA split-KV path disabled, master FA3 path kept` and sets the global `_EXT = None` before any graph capture; on success it prints `[splitkv] self-check passed ...`.
+- **kernel_fn**: after the unchanged qkv GEMM, FusedQKNorm, FP8 casts and store_cache, `splitkv = _splitkv_gate(cfg)` (config only). On `splitkv`: `q_fp8 = q.view(tokens, hq, d).to(FP8).contiguous()` and `o = _full_decode_splitkv(data, q_fp8, qkv).reshape(tokens, hq * d)`, which feeds the unchanged `_gemm(o, dense["o"])`. Else: the master code, byte for byte apart from indentation, with `paired = window == 0 and batch > 1 and hkv % 2 == 0 and not splitkv` (redundant inside the else, kept as the review asked so a merge with paired-heads-pad-unpad-triton keeps it). scheduler_metadata is not read on the splitkv path.
+- Module docstring: one bullet added under "Differs from SGLang".
+
+Deviations / additions, and why:
+- `.contiguous()` added after `.to(FP8)`: a no-op when `.to` already made a dense copy, and a guard for the kernel's `q.is_contiguous()` TORCH_CHECK if FusedQKNorm ever returns q as a strided view of qkv (open question 1). Layout facts checked: reference.py builds `k_cache`/`v_cache` with `torch.empty(shape)` (contiguous), and master's own `k_cache.view(-1, hkv * d)` in store_cache already requires that; the gate sits at qkv column (16+4)*64 = 1280 with `qkv.stride(0)` passed explicitly, which matches master's `gate = qkv[:, hq*d + 2*hkv*d:]`; kernel B writes [B, 1, 1024] bf16, and `.reshape(tokens, 1024)` is the same layout as FusedRMSNormGate's output.
+- A fourth self-check case was added (open question 2): batch 33, lens `1 + (i*977) % 5000` with lens[5]=1024 and lens[6]=2048 (exact chunk boundaries, a length-1 request), device grid, kv 1.0. This covers the gated test "batch 33, ctx 20000, full" shape class (B > 32, a non-power-of-two chunk total). It checks that inputs give the right output. It does not tune or change anything.
+- The synthetic data skips the qkv GEMM, FusedQKNorm and store_cache, because the self-check tests only `_full_decode_splitkv`. Those stages are master code on every path.
+
+Uncertainties: nothing was run here (no GPU). The compile cost (~41 s in attention) comes on top of the decode run (~412 s), still under 15 min. If kernel A hits an illegal address in the self-check, the CUDA context is poisoned and the run fails outright, not falling back. At harvest, read the log tail for `[splitkv]` lines before attributing the timing.
+
+## Rules check
+
+Checked against `git -C .worktrees/muse_decode_layer/full-decode-cuda-splitkv-port diff`:
+
+- [x] CUDA-graph capturable: the splitkv branch in kernel_fn has no `.item()`/`.cpu()`/`synchronize()`/tensor prints; `_full_decode_splitkv` allocates ws_acc/ws_ml/out from shapes (`page_table.shape[1]`, config batch) and the grid from the SM count; the branch is `_splitkv_gate(cfg)` on config plus the module flag `_EXT` fixed in prepare(). The `float(...)`/`bool(...)` host reads are only in `_splitkv_self_check`, called from prepare(), never from kernel_fn.
+- [x] Nothing derived from `data` is cached across calls: new module state is `_EXT` (the compiled module), `_SPLITKV_GRID` (None outside the self-check), `_SMS` (device SM count) and `_SPLITKV_CHECKED` (bool). None of them depends on inputs.
+- [x] Weights: n/a for this change. prepare()'s weight handling is untouched; the only addition is the synthetic self-check call.
+- [x] Activations BF16 where SGLang keeps BF16; KV cache FP8; queries at most FP8 E4M3: q goes to E4M3 exactly as master's unpaired FA3 path (`q.view(tokens, hq, d).to(FP8)`), and is widened exactly to f16 in the kernel. K/V stay FP8 in the cache (written by the unchanged store_cache), and are widened in registers. Softmax/accumulators are fp32. P is rounded to f16 for the PV mma (FA3 uses e4m3/bf16 here). The kernel B output is bf16, as FusedRMSNormGate's is.
+- [x] Attention sees every key: kernel A walks every 1024-token chunk of `cache_seqlens[b]` for every request. Only positions >= cache_seqlens are masked. There is no top-k, sparse, block-skip or weight-based skipping.
+- [x] No timing patches, harness frames/I/O/secrets, module edits, reference import, subprocesses or network: no new imports beyond `time` and `torch.utils.cpp_extension.load_inline` (the same build the judge accepted in muse_attention_decode job 82085a4e82154393; nvcc/ninja run inside torch's extension builder at import). The lint process/network/harness rules are clean.
+- [x] All work happens inside the timed call; no output caching or replay: the whole attention for the step runs in kernel_fn (kernels A and B) on the step's own q, cache and page table. The import-time compile and the prepare()-time self-check produce no output that is used later.
+- [x] First-line marker `# okc: problem=muse_decode_layer` kept.
+- [x] No `triton.autotune`. No new Triton kernels at all.
+- [x] Every non-gated shape (all sliding, full decode_1, every verify incl. paired full verify_16/32) runs the master code unchanged: `git diff -w` shows only two removed lines, the docstring's closing line (extended) and the `paired =` line (+ `and not splitkv`).
+
+Lint (`python3 -I .claude/skills/churnsubs/bin/okc_lint.py <worktree>/muse_decode_layer/submission.py --problem muse_decode_layer`):
+
+```
+warn  host-sync    L884: torch.cuda.synchronize()  (outside kernel_fn's call graph; fine in prepare())
+OK with warnings: submission.py
+```
+
+(The first lint pass flagged `error network` on the word "requests" in the self-check docstring; reworded to "sequences".) `python3 -I -m py_compile` OK; __pycache__ removed.
