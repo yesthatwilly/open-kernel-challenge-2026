@@ -51,10 +51,17 @@ priority: 2
 kind: primary
 controls_for: null
 review: proceed
-status: queued
+status: running
 review_at: 2026-10-24T120904Z
 review_companions: null
 hold_reason: null
+stage: claimed
+claimed_at: 2026-10-24T124117Z
+base_sha: 10d039a6478096a1360009f69d62cd7b1c17f800
+base_blob: efc544103e6d303d1f8602caa9439628043a17a7
+branch: hyp/muse_attention_decode/fa3-scheduler-metadata-side-stream
+worktree: .worktrees/muse_attention_decode/fa3-scheduler-metadata-side-stream
+mode: null
 ---
 
 # fa3-scheduler-metadata-side-stream
