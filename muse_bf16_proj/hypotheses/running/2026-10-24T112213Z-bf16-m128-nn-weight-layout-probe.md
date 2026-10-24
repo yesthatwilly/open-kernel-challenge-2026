@@ -59,13 +59,19 @@ review: proceed
 status: running
 review_at: 2026-10-24T112447Z
 review_companions: null
-stage: claimed
+stage: implemented
 claimed_at: 2026-10-24T112447Z
 base_sha: d7e6aa9aa0faeb496ce10cb8bef5d8c21c203563
 base_blob: da55301de1e911aeab09878b0873809f544f436c
 branch: hyp/muse_bf16_proj/bf16-m128-nn-weight-layout-probe
 worktree: .worktrees/muse_bf16_proj/bf16-m128-nn-weight-layout-probe
 mode: null
+implemented_at: 2026-10-24T112600Z
+impl_commit: 9cc504ee118bf1676c8b8088112d9ce099409c97
+submission_sha256: aa17fdce397cf559fb58be2761bd3104a3f9868a3c534f72b9acbd819c9bf77a
+norm_sha256: 02569bb6114e44cb416765475308984d6c07f6fdb9a9090bd58bcacd7153e834
+submission_blob: 453ddb06377027a864a7611601f4317d21222ec7
+lint_warnings: 0
 ---
 
 # bf16-m128-nn-weight-layout-probe
@@ -110,3 +116,34 @@ No companion is warranted. Each landed hypothesis touches only the router or the
 - If NN wins on qkv_gate m=128 by removing the 96-row pad and the splitKreduce, the held qkv-gate-o-m128-wgmma-splitk-semaphore loses most of its rationale. Decide that from this run's per-shape row.
 - Final review reruns nearby shapes (m=130 unpooler, m=512, m=1000 are already in the tests). If NN wins at m=128 but loses badly at a nearby m, gate tighter than m>=128 in the later combo.
 
+
+## Implementation notes
+
+Worktree `.worktrees/muse_bf16_proj/bf16-m128-nn-weight-layout-probe`, file `muse_bf16_proj/submission.py` only (14 insertions, 1 deletion, uncommitted).
+
+- New module constants `NN_LAYERS = ("qkv_gate", "o", "pooler", "unpooler")` and `NN_MIN_M = 128`.
+- `prepare()`: after the router hi/lo split, `state[name + "_t"] = state[name].t().contiguous()` for each of the four bf16 layers. This is a truly contiguous [K, N] bf16 row-major copy, not a `.t()` view, so cuBLAS sees ld=N and an NN problem. It is lossless and keeps the same precision. The original [N, K] weights stay in state for m < 128. Extra memory is about 189 MB.
+- `kernel_fn()`: for non-router layers with `cfg["m"] >= 128`, return `torch.mm(x, state[layer + "_t"][:, : cfg["n"]])`. Below 128 the `_bf16_gemm_dispatch_impl(x, state[layer][: cfg["n"]], None)` path is byte-identical to master. The router branch is unchanged. The gate reads only `cfg["layer"]` (non-router means one of the four) and `cfg["m"]`. Tests m=130 unpooler, m=512 qkv_gate and m=1000 unpooler take the NN path.
+- Module docstring updated to describe the m >= 128 path.
+- Deviations: none. The spec's "Print once in prepare()" sentence is garbled: it says the chosen kernel is not observable host-side and must be read from `top_kernels`. No print was added. The attempt file must record the nvjet names and times per m=128/256 shape under both layouts. If the names are unchanged from master's TN kernels, the run is void, not neutral.
+
+## Rules check
+
+Checked against `git -C .worktrees/muse_bf16_proj/bf16-m128-nn-weight-layout-probe diff`:
+
+- [x] CUDA-graph capturable: torch.mm on preallocated state tensors. No `.item()`, `.cpu()`, `synchronize()` or prints in kernel_fn. The branch is on `cfg["m"]` and `cfg["layer"]` (config) only.
+- [x] Nothing derived from `data` is cached across calls. The `_t` copies are built from the weights alone in prepare().
+- [x] Weights: a lossless repack in prepare() only. A transposed copy stays BF16, with no precision change. The router hi+lo split is unchanged.
+- [x] Activations stay BF16: x goes into torch.mm as bf16, and the output is bf16 [m, n] with fp32 accumulation inside cuBLAS.
+- [x] n/a: no attention in this problem. KV cache, queries and key windows do not apply.
+- [x] No timing patches, harness frames, I/O or secrets, module edits, reference import, subprocesses or network. Only `torch.mm` was added.
+- [x] All work happens inside the timed call, with no output caching or replay. The GEMM runs every call.
+- [x] First-line marker `# okc: problem=muse_bf16_proj` kept. No triton.autotune was added.
+
+okc_lint output:
+
+```
+CLEAN: muse_bf16_proj/submission.py
+```
+
+`python3 -I -m py_compile` OK. The `__pycache__` it left was removed from the worktree.
