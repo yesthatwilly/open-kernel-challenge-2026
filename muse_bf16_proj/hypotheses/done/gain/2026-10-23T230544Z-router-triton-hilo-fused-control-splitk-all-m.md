@@ -76,7 +76,7 @@ best_at_harvest: 1.0307103903232853
 promotion: merged
 promotion_reason: "merged by hand: file identical to the checked one"
 promotion_commit: dba4ffd5945248c0299bb6953ab4b561d0b3eeeb
-promotion_attempt: 2026-10-24T063614Z-submit-router-triton-hilo-fused-control-splitk-all-m.md
+promotion_attempt: 2026-10-24T070715Z-submit-router-triton-hilo-fused-control-splitk-all-m.md
 ---
 
 # router-triton-hilo-fused-control-splitk-all-m
