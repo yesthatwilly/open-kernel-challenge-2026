@@ -64,13 +64,15 @@ base_sha: 93fae4dfde47a06219a581785dc8c4ff2e7dab3b
 base_blob: da55301de1e911aeab09878b0873809f544f436c
 branch: hyp/muse_bf16_proj/pooler-unpooler-m128-wgmma-splitk-semaphore
 worktree: .worktrees/muse_bf16_proj/pooler-unpooler-m128-wgmma-splitk-semaphore
-mode: null
+mode: check
 implemented_at: 2026-10-24T100317Z
 impl_commit: 239347475304cfa19cb1e3c219132295d5b9a54c
 submission_sha256: ff8dec1b80cb0f2f7c3ad1a2b0b36b91d231a0ac4de5c86e8a88afc83e55acdd
 norm_sha256: 0953bd239fd01c8505ba6ace2691d2852a03ac8881b85a1a13946cf38cbeccf9
 submission_blob: 0b015466e5e9b9493bde1d3340bf405a837f8d4f
 lint_warnings: 1
+attempt_file: 2026-10-24T100317Z-check-pooler-unpooler-m128-wgmma-splitk-semaphore.md
+prepared_at: 2026-10-24T100317Z
 ---
 
 # pooler-unpooler-m128-wgmma-splitk-semaphore
