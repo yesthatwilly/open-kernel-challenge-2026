@@ -41,13 +41,15 @@ base_sha: b0b3da52d52b15557f59e3c3631b16eb6fc5c2cd
 base_blob: c6854f093588da524e63657576b27ed720756e32
 branch: hyp/muse_attention_decode/sliding-fused-hoist-first-tile
 worktree: .worktrees/muse_attention_decode/sliding-fused-hoist-first-tile
-mode: null
+mode: check
 implemented_at: 2026-10-24T184626Z
 impl_commit: 06db73a29a01daaea8c8a656b9816a345e566fca
 submission_sha256: 1a1712e56fdc8988cf9972cf01d60657386e64549a7fb68e61e6f9ab28a9a2bb
 norm_sha256: beef4e52de0acece11918f87e1b845ed85cd2a4d326b046264f3e4590c5d996e
 submission_blob: b7aab820247a0f90842e548756b6633dc3c7673d
 lint_warnings: 0
+attempt_file: 2026-10-24T184626Z-check-sliding-fused-hoist-first-tile.md
+prepared_at: 2026-10-24T184626Z
 ---
 
 # sliding-fused-hoist-first-tile
