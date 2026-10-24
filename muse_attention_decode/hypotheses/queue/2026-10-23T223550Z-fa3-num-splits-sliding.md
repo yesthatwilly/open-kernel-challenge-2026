@@ -41,7 +41,8 @@ priority: 3
 kind: primary
 controls_for: null
 review: required
-status: queued
+status: hold
+hold_reason: num_splits is only a cap under FA3's on-device split sizing (LESSONS; decode held the same idea), and sliding-single-launch-fused-attention, now running, replaces the sliding FA3 call outright
 ---
 
 # fa3-num-splits-sliding
