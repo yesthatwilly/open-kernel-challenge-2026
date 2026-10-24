@@ -28,7 +28,7 @@ review: proceed
 status: running
 review_at: 2026-10-24T184104Z
 review_companions: null
-stage: implemented
+stage: dispatched
 claimed_at: 2026-10-24T184104Z
 base_sha: 7636e41481d93a8dc77886fc9674dcdb6c52067e
 base_blob: c6854f093588da524e63657576b27ed720756e32
@@ -43,6 +43,8 @@ submission_blob: ce1c20a9ca0ae2a965c1609faa65326c07177888
 lint_warnings: 0
 attempt_file: 2026-10-24T184519Z-check-sliding-decode32-splits-8.md
 prepared_at: 2026-10-24T184519Z
+job: 16d3fb5cae3f4141
+dispatched_at: 2026-10-24T184530Z
 ---
 
 # sliding-decode32-splits-8
