@@ -113,10 +113,10 @@ controls_for: null
 rewrite_stage: 1
 replaces: _align_parallel_kernel + fused_post_expert_norm_weighted_sum at num_tokens > 32
 review: proceed
-status: running
+status: done
 review_at: 2026-10-24T183415Z
 review_companions: null
-stage: dispatched
+stage: harvested
 claimed_at: 2026-10-24T183415Z
 base_sha: b17562ed4f8acdd2a6e2e98f542acc2bba35a2b4
 base_blob: 108d36e9f2266fc88531dd6ff0329a847c882013
@@ -133,6 +133,13 @@ attempt_file: 2026-10-24T184624Z-submit-cuda-dispatch-combine-pdl-verify.md
 prepared_at: 2026-10-24T184624Z
 job: c41860068fe4432f
 dispatched_at: 2026-10-24T184641Z
+outcome: neutral
+verdict_detail: unproven-vs-best
+speedup: 1.3282656846073913
+speedup_ci: [1.3083416993382804, 1.348189669876502]
+harvested_at: 2026-10-24T232005Z
+best_at_harvest: 1.3278240305297715
+promotion: null
 ---
 
 # cuda-dispatch-combine-pdl-verify
@@ -254,3 +261,30 @@ Audited 2026-10-24 by an Opus subagent. I read the code and emulated parts of it
 - **PDL:** local_ids and tw are read before the wait. Both are produced by kernels that finished before Marlin w2 started, so this is safe. y is read only after `griddepcontrol.wait`. A capture failure at pdl=1 retries at pdl=0, and the result is logged.
 
 Residual risk: the CUDA has never been compiled, so a toolchain-specific compile error (e.g. cudaLaunchKernelEx template coercion or an asm constraint) would cost the run's gain, but it lands on master with a loud FAILED line rather than failing the run.
+
+## Result
+
+- job `c41860068fe4432f` (submit), status done, passed True, tests 5/5
+- speedup 1.3283x, 95% CI [1.3083, 1.3482], score 10124.856913679214 µs vs SGLang 13448.5 µs
+- best at harvest: {"speedup": 1.3278240305297715, "ci": [1.307906670071825, 1.3477413909877178], "job": "1947e3ec2abb4bdf"}; base result: muse_moe_w4a16/hypotheses/done/neutral/align-parallel-per-expert-verify.result.json
+- **outcome: neutral** (unproven-vs-best)
+- files: `muse_moe_w4a16/hypotheses/done/neutral/cuda-dispatch-combine-pdl-verify.result.json`, `muse_moe_w4a16/hypotheses/done/neutral/cuda-dispatch-combine-pdl-verify.patch`; branch `hyp/muse_moe_w4a16/cuda-dispatch-combine-pdl-verify`
+
+## Attribution
+
+| shape | w | base µs | hyp µs | delta | verdict |
+|---|---|---|---|---|---|
+| bs=1 load=decode_1 sharding=ep8 | 60 | 48.82 | 50.36 | 1.0045 | flat |
+| bs=16 load=decode_16 sharding=ep8 | 60 | 148.37 | 145.72 | 1.0005 | flat |
+| bs=32 load=decode_32 sharding=ep8 | 60 | 199.88 | 200.12 | 0.9987 | flat |
+| bs=8 load=verify_1 sharding=ep8 | 60 | 107.74 | 106.42 | 1.0007 | flat |
+| bs=128 load=verify_16 sharding=ep8 | 60 | 318.26 | 319.29 | 1.0101 | flat |
+| bs=256 load=verify_32 sharding=ep8 | 60 | 454.28 | 457.11 | 1.0007 | flat |
+
+no shape moved outside noise. Expected hit: 4/6. Noise ±1.5%.
+
+## Follow-ups
+
+- rewrite stage 1 of `_align_parallel_kernel + fused_post_expert_norm_weighted_sum at num_tokens > 32`: read the replaced kernels' own us per shape (profile top_kernels) against the incumbent and the floor, and check which Milestone it reached. The next stage is `/hypothesize muse_moe_w4a16 "<what to fix or tune>" --kind rewrite --depends-on cuda-dispatch-combine-pdl-verify --stage 2`; a slow or failed first cut is the expected start, not a do-not-retry.
+- unproven-vs-best: the change is not proven either way; a stacked hypothesis (`depends_on: cuda-dispatch-combine-pdl-verify`) that adds a further change in the same area is the only way to learn more (identical code is never re-run).
+
