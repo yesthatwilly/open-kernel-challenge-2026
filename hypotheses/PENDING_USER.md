@@ -5,7 +5,9 @@ items here and in each tick's summary. Resolved items move to the log at the bot
 
 ## Open
 
-- (none)
+- **Scored submit, attention_decode fused-preattention-triton** (check 1.127x [1.111, 1.144], merged on
+  master; not yet on the board). Run: `okc submit muse_attention_decode /home/user/git/musespark/muse_attention_decode/submission.py --no-wait --json`
+  then `churn.py record-submit muse_attention_decode fused-preattention-triton <job>`. (2026-10-24)
 
 ## Standing answers
 
