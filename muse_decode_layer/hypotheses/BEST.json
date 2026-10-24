@@ -1,17 +1,17 @@
 {
  "problem": "muse_decode_layer",
- "job": "0730135cdcac43b7",
+ "job": "2b1f82408ab64116",
  "check_job": "0730135cdcac43b7",
- "mode": "check",
- "speedup": 1.0620874943175542,
+ "mode": "submit",
+ "speedup": 1.0634521974439426,
  "ci": [
-  1.046156181902791,
-  1.0780188067323175
+  1.0475004144822835,
+  1.0794039804056017
  ],
- "score_us": 21297.962852424607,
+ "score_us": 21270.631678949892,
  "commit": "ef7dea6cac43678c09ae91b20ece2c40e0670c4b",
  "submission_blob": "de98030423860cfc9507b61d19f82a416223a23d",
  "slug": "marlin-block-m-cap-16",
  "result": "muse_decode_layer/hypotheses/done/gain/marlin-block-m-cap-16.result.json",
- "updated_at": "2026-10-24T075012Z"
+ "updated_at": "2026-10-24T091914Z"
 }

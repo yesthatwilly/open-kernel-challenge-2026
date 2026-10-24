@@ -46,4 +46,4 @@ OK with warnings: /home/user/git/musespark/.worktrees/muse_decode_layer/marlin-b
 low
 
 ## Result (after the run)
-(pending)
+Promotion passed: 1.0635x [1.0475,1.0794], board: {"rank": 412, "team": "yesthatwilly", "speedup": 1.0635, "first": false, "ahead": 411, "to_first": 1.9754}
