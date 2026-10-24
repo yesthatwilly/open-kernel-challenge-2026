@@ -48,7 +48,7 @@ review: proceed
 status: running
 review_at: 2026-10-24T183956Z
 review_companions: null
-stage: implemented
+stage: dispatched
 claimed_at: 2026-10-24T183957Z
 base_sha: 52cd6c64bc16f41452b2a54313347fee80b36ffe
 base_blob: 108d36e9f2266fc88531dd6ff0329a847c882013
@@ -63,6 +63,8 @@ submission_blob: b91c76ef847585a79561eb75a6c240987c726531
 lint_warnings: 8
 attempt_file: 2026-10-24T184142Z-submit-align-parallel-from-17-tokens.md
 prepared_at: 2026-10-24T184142Z
+job: ed6d884240084d9c
+dispatched_at: 2026-10-24T184157Z
 ---
 
 # align-parallel-from-17-tokens
