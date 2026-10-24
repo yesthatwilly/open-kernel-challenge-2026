@@ -45,8 +45,10 @@ depends_on: sglang-marlin-path-parity
 priority: 2
 kind: primary
 controls_for: null
-review: required
+review: proceed
 status: queued
+review_at: 2026-10-24T024500Z
+review_companions: null
 ---
 
 # triton-w13-grouped-gemv-small-m
@@ -65,3 +67,28 @@ For num_tokens <= 8 only (decode_1 and verify_1; all other shapes keep the parit
 ## Risk
 
 Risks: Triton compile time counts toward the 15 min run limit (two small kernels, two shapes: fine); the nibble/scale indexing must match nvfp4.py (low nibble = element 2i) or the bs=1 test fails immediately; the extra 'compact_routes' launch adds ~3 us, which the bs=1 gain must exceed; early-exit programs still cost grid scheduling for 32 x (8192/BLOCK_N) programs. Correctness: fp32 accumulation and exact bf16 dequant leave more margin than Marlin's path. Rules: the raw-layout copy is the same NVFP4 bytes, a lossless permutation at most; x stays bf16; no data-derived caching (slot_list/cnt are rebuilt each call inside the timed graph); branching on num_tokens is a shape branch. Nearby shapes (bs 4) take the same path, bs 33 the Marlin path, so final-review reruns see no cliff.
+
+## Adversarial review
+
+Reviewed 2026-10-24T024500Z by an adversarial Fable subagent (model fable).
+
+**Verdict: proceed.** The mechanism is plausible and the parity profile supports it (Marlin at bs=1 is 41 us for both GEMMs against an ~11 us floor, ~30% of HBM), the change is shape-gated to bs<=8 with four untouched control shapes, and the only landed hypothesis is the base pipeline itself, so there is nothing to revert or retune; the run's own per-kernel profile separates compact_routes from w13_gemv and exposes the w2 Marlin time alone. The real risks are implementation quality (Triton dequant ALU cost, early-exit grid, slot_list sizing) and geomean dilution, not interpretability.
+
+### Justification
+At bs=1 the parity result shows one Marlin line at 41.1 us (52.6% of 80.2 us), both GEMMs aggregated; w13 is ~27 us against a ~8 us w13-only floor (~30% of HBM), so a grouped GEMV reading each touched expert once has headroom; at bs=8 Marlin is 107.6 us, w13 share ~72 us against ~24 us. Expected shapes consistent with TASK.md (bs=1/8 faster, bs=16..256 untouched controls). cnt[e] <= M <= 8 fits BLOCK_M=16; cache1 row layout matches Marlin's so silu, w2 and post-norm are unaffected; e2m1 x e4m3 fits bf16 exactly. Weakest link: the Triton dequant speed (~15 ALU ops per weight with only ~256-512 live CTAs) could leave it slower than Marlin's lop3 tricks. At ~60% of HBM expect ~+6% geomean; at ~35-40% only 0.5-1%, inside the CI, so read per-shape medians. Second: +1 net launch and a mostly-empty grid cost a few us.
+
+### Confounders on the current kernel
+- sglang-marlin-path-parity (the base): cannot be absent; its 32-expert align knob no longer feeds w13. Parity's unexplained 3 us bs=1 deficit vs SGLang may be partly recovered here; bounded <=0.7% of geomean, cannot flip a gain's sign; the SGLang column is a second yardstick.
+- ~16 us of at::native glue at bs=1 of unknown origin: if part lives in the Marlin wrapper, dropping the w13 call removes it too and overstates the GEMV kernel's contribution; the profile shows this directly.
+
+### Interference and A/B needs
+No companion. ab-revert restores the 0.006x starter; ab-tune of the align knob resolves nothing; the per-kernel profile decomposes a loss (w13_gemv > ~27 us vs overhead) and a gain is unambiguous since bs=16..256 are untouched. Reading rule: judge on bs=1 and bs=8 medians against both parity (80.2 / 152.0 us) and SGLang (77.0 / 151.1 us); claim the mechanism only if the bs=1 gain exceeds ~5 us.
+
+### Open questions
+- Record the standalone w2 Marlin time after this run so the w13 Marlin cost is measured, not inferred.
+- Where do the at::native reduce/elementwise launches at bs=1 come from?
+- Why is parity's bs=1 3.2 us slower than SGLang?
+- slot_list is sized cnt[e] <= 8 but the GEMV loads BLOCK_M=16 slots: pad to 16 columns or mask by arange < cnt before the x gather.
+- If the run loses with w13_gemv dominating, the follow-up should change only the dequant.
+- If w13_gemv is well above ~12 us at bs=1, smaller BLOCK_N or split-K is the next lever.
+
