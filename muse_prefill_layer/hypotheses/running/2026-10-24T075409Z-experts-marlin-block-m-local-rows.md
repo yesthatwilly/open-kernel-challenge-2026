@@ -48,13 +48,15 @@ base_sha: 67649c559d5a07d10b659c84bf80c1b1ec29c879
 base_blob: e4931f050c7fb99835fe116d25bb454a5ea731e9
 branch: hyp/muse_prefill_layer/experts-marlin-block-m-local-rows
 worktree: .worktrees/muse_prefill_layer/experts-marlin-block-m-local-rows
-mode: null
+mode: check
 implemented_at: 2026-10-24T083755Z
 impl_commit: ed2a571cf7bccd94cf9148aed7baa997bbe73c57
 submission_sha256: 6d80a359d004ca1f07e7d4192af251108ed4a76502c1cb56ceb7b1df459c824e
 norm_sha256: 14334b52ebd2b5045e65bf21d09f43476099101511d70f70b31dc07d8fa4cf5f
 submission_blob: 3d09290ced5f8f540573ed73c5f64b3aaeb0cc99
 lint_warnings: 1
+attempt_file: 2026-10-24T083755Z-check-experts-marlin-block-m-local-rows.md
+prepared_at: 2026-10-24T083755Z
 ---
 
 # experts-marlin-block-m-local-rows
