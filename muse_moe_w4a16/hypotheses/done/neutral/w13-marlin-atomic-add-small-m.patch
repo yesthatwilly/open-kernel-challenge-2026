@@ -1,0 +1,32 @@
+diff --git a/muse_moe_w4a16/submission.py b/muse_moe_w4a16/submission.py
+index 11fbc19..c2c950b 100644
+--- a/muse_moe_w4a16/submission.py
++++ b/muse_moe_w4a16/submission.py
+@@ -69,6 +69,10 @@ TOP_K = 8
+ # MuseSpark1xFp4Experts' candidates, smallest first.
+ BLOCK_SIZE_M_CANDIDATES = (8, 16, 32, 48, 64)
+ POST_NORM_EPS = 1e-8
++# Hypothesis w13-marlin-atomic-add-small-m: at or below this many tokens the w13 Marlin call
++# reduces its k-slice partials with atomic adds into a zeroed output instead of the
++# lock-serialized FP32 workspace chain (use_fp32_reduce stays True, as vLLM's MoE runner passes).
++W13_ATOMIC_ADD_MAX_TOKENS = 32
+ 
+ 
+ def _marlin_layer(weights, start, count):
+@@ -153,10 +157,15 @@ def kernel_fn(data: Inputs, state: dict) -> torch.Tensor:
+                   b_q_type=scalar_types.float4_e2m1f, is_k_full=True, use_atomic_add=False,
+                   use_fp32_reduce=True, is_zp_float=False)
+     ws = state["workspace"]
++    w13_common = common
++    if num_tokens <= W13_ATOMIC_ADD_MAX_TOKENS:
++        # Atomic-add reduce accumulates into cache1, so it must start at zero.
++        cache1.zero_()
++        w13_common = dict(common, use_atomic_add=True)
+     cache1 = moe_wna16_marlin_gemm(
+         x, cache1, bank["w13"], None, bank["w13_s"], bank["w13_gs"], None, None, None, ws,
+         sorted_ids, block_experts, n_padded, topk_weights, top_k=TOP_K,
+-        size_m=num_tokens, size_n=gemm1_n, size_k=size_k, **common)
++        size_m=num_tokens, size_n=gemm1_n, size_k=size_k, **w13_common)
+     silu_and_mul(cache1.view(-1, gemm1_n), cache2, expert_ids=local_ids.view(-1), expert_step=1)
+     y = moe_wna16_marlin_gemm(
+         cache2, cache3, bank["w2"], None, bank["w2_s"], bank["w2_gs"], None, None, None, ws,

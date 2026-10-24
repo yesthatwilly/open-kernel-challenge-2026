@@ -32,10 +32,10 @@ priority: 4
 kind: primary
 controls_for: null
 review: proceed
-status: running
+status: done
 review_at: 2026-10-24T040704Z
 review_companions: null
-stage: dispatched
+stage: harvested
 claimed_at: 2026-10-24T040704Z
 base_sha: b0739163836e46200abd3b7d9a76de8b3467d783
 base_blob: 11fbc1957daf7294cd2810ff82a0aad2f25644bd
@@ -52,6 +52,13 @@ attempt_file: 2026-10-24T040816Z-check-w13-marlin-atomic-add-small-m.md
 prepared_at: 2026-10-24T040816Z
 job: c8ea8e21eea447f9
 dispatched_at: 2026-10-24T040823Z
+outcome: neutral
+verdict_detail: within-ci
+speedup: 0.9869258381381284
+speedup_ci: [0.9721219505660564, 1.0017297257102002]
+harvested_at: 2026-10-24T063613Z
+best_at_harvest: 0.9887547325362586
+promotion: null
 ---
 
 # w13-marlin-atomic-add-small-m
@@ -130,3 +137,29 @@ OK with warnings: /home/user/git/musespark/.worktrees/muse_moe_w4a16/w13-marlin-
 ```
 
 The L114 warning is pre-existing (in `prepare()`), not part of this diff. `python3 -I -m py_compile` passed, and its `__pycache__` was removed.
+
+## Result
+
+- job `c8ea8e21eea447f9` (check), status done, passed True, tests 5/5
+- speedup 0.9869x, 95% CI [0.9721, 1.0017], score 13626.657120834008 µs vs SGLang 13448.5 µs
+- best at harvest: {"speedup": 0.9887547325362586, "ci": [0.9739234115482147, 1.0035860535243024], "job": "fb2cc736613747df"}; base result: muse_moe_w4a16/hypotheses/done/gain/sglang-marlin-path-parity.result.json
+- **outcome: neutral** (within-ci)
+- files: `muse_moe_w4a16/hypotheses/done/neutral/w13-marlin-atomic-add-small-m.result.json`, `muse_moe_w4a16/hypotheses/done/neutral/w13-marlin-atomic-add-small-m.patch`; branch `hyp/muse_moe_w4a16/w13-marlin-atomic-add-small-m`
+
+## Attribution
+
+| shape | w | base µs | hyp µs | delta | verdict |
+|---|---|---|---|---|---|
+| bs=1 load=decode_1 sharding=ep8 | 60 | 80.23 | 79.64 | 1.0093 | flat |
+| bs=16 load=decode_16 sharding=ep8 | 60 | 191.41 | 190.97 | 0.9925 | flat |
+| bs=32 load=decode_32 sharding=ep8 | 60 | 208.15 | 210.38 | 0.9915 | flat |
+| bs=8 load=verify_1 sharding=ep8 | 60 | 152.04 | 145.13 | 0.9959 | flat |
+| bs=128 load=verify_16 sharding=ep8 | 60 | 462.46 | 457.89 | 0.9993 | flat |
+| bs=256 load=verify_32 sharding=ep8 | 60 | 621.28 | 628.47 | 1.0005 | flat |
+
+no shape moved outside noise. Expected hit: 1/4. Noise ±1.5%.
+
+## Follow-ups
+
+- within-ci: the change is not proven either way; a stacked hypothesis (`depends_on: w13-marlin-atomic-add-small-m`) that adds a further change in the same area is the only way to learn more (identical code is never re-run).
+
