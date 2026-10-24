@@ -59,7 +59,7 @@ review: proceed
 status: running
 review_at: 2026-10-24T112447Z
 review_companions: null
-stage: implemented
+stage: dispatched
 claimed_at: 2026-10-24T112447Z
 base_sha: d7e6aa9aa0faeb496ce10cb8bef5d8c21c203563
 base_blob: da55301de1e911aeab09878b0873809f544f436c
@@ -74,6 +74,8 @@ submission_blob: 453ddb06377027a864a7611601f4317d21222ec7
 lint_warnings: 0
 attempt_file: 2026-10-24T112600Z-check-bf16-m128-nn-weight-layout-probe.md
 prepared_at: 2026-10-24T112600Z
+job: 2dc5dce078be4a24
+dispatched_at: 2026-10-24T112608Z
 ---
 
 # bf16-m128-nn-weight-layout-probe
