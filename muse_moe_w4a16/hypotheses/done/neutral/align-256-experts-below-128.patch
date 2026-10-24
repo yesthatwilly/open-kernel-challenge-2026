@@ -1,0 +1,27 @@
+diff --git a/muse_moe_w4a16/submission.py b/muse_moe_w4a16/submission.py
+index 11fbc19..1a741a0 100644
+--- a/muse_moe_w4a16/submission.py
++++ b/muse_moe_w4a16/submission.py
+@@ -15,7 +15,8 @@ The one deliberate difference from baseline.py: moe_align_block_size is called w
+ bank's expert count (32) instead of N_EXPERTS (256). The ids it receives are already mapped by
+ expert_map to [-1] U [0, 32), so 32 is the true expert count; SGLang's wrapper then sizes
+ sorted_ids and block_experts from 32 experts (M*8 + 32*(block_size_m-1) entries instead of
+-M*8 + 256*(block_size_m-1)) and its per-expert cumsum runs over 32 counters.
++M*8 + 256*(block_size_m-1)) and its per-expert cumsum runs over 32 counters. Below 128 tokens
++(hypothesis align-256-experts-below-128) the call is baseline.py's again, over N_EXPERTS.
+ 
+ Differs from SGLang: the expert all-reduce is not run."""
+ 
+@@ -139,6 +140,12 @@ def kernel_fn(data: Inputs, state: dict) -> torch.Tensor:
+         from sglang.kernels.ops.moe.moe_align_single_token import moe_align_single_token
+ 
+         sorted_ids, block_experts, n_padded = moe_align_single_token(local_ids, block_size_m)
++    elif num_tokens < 128:
++        # Hypothesis align-256-experts-below-128: below 128 tokens align over N_EXPERTS (256)
++        # exactly as baseline.py does, which keeps sgl-kernel off its small-batch-expert align
++        # kernel (taken when numel < 1024 and num_experts <= 64).
++        sorted_ids, block_experts, n_padded = moe_align_block_size(
++            local_ids, block_size_m, N_EXPERTS if expert_map is not None else bank["count"])
+     else:
+         # The one change from baseline.py: the ids are already local ([-1] U [0, count)), so
+         # align over the bank's count (32) rather than N_EXPERTS (256). SGLang's wrapper sizes
