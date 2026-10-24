@@ -37,6 +37,9 @@ profile are in `<problem>/hypotheses/archive/<slug>/`.
   reached 3.73 TB/s at m=16 and beat nvjet. BLOCK_N=32 (64 KB in flight) did 3.3 TB/s, and
   BLOCK_N=16 regressed 1.6x (qkv-gate-triton-skinny-m32). At m=32 the penalty is not the 32-row tile:
   two 16-row tiles were worse (unpooler BLOCK_M=16 control).
+- Split-K ticket-semaphore reduce (masked partial store, debug_barrier, one gpu-scope acq_rel
+  atomic_add ticket, winner reloads .cg, fixed-order sum, atomic_xchg reset) passes correctness
+  (bf16 pooler 1.166x and qkv-gate 1.143x vs 1.151x master: both neutral, within drift).
 - cuBLAS vs cublasLt backend preference changes nothing on this image (bf16-cublaslt-backend-toggle).
 - FMA-broadcast (no tl.dot) GEMV was 10x slower (unpooler-slice-triton-gemv).
 
@@ -47,6 +50,10 @@ profile are in `<problem>/hypotheses/archive/<slug>/`.
   (decode marlin-block-m-cap-16, 1.062x). SGLang's T*8/32 rule overcounts rows per local expert
   8x under EP8.
 - Knobs that did nothing: workspace blocks per SM, use_fp32_reduce=False, use_atomic_add.
+- Prefill stage-1 Triton W4A16 grouped GEMM (in-register arithmetic NVFP4 dequant, 128x128x64 tiles,
+  SGLang fused_moe_kernel skeleton) is correct but ~2.0 ms for w13+w2 at turn_1 and 3.3 ms at turn_4,
+  0.689x overall (experts-triton-w4a16-inkernel-fp4, 218515e2d0b14ce7). Losses shrink with T (0.46x
+  turn_1 sliding to 0.90x first_turn), so the cost is per-tile dequant overhead, not the MMA.
 - A Triton W4A16 grouped GEMV with arithmetic FP4 dequant was 2-2.6x slower than Marlin at small M
   (triton-w13-grouped-gemv-small-m). It was dequant-ALU-bound with too few busy CTAs.
 
