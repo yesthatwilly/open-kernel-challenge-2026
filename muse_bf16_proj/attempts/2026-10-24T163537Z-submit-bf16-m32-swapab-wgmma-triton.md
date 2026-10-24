@@ -51,4 +51,4 @@ exit=0
 medium
 
 ## Result (after the run)
-(pending)
+Promotion passed: 1.1959x [1.1779,1.2138], board: {"rank": 349, "team": "yesthatwilly", "speedup": 1.1959, "first": false, "ahead": 348, "to_first": 1.3051}

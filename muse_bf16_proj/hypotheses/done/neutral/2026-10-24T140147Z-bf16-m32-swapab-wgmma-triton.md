@@ -106,11 +106,12 @@ speedup: 1.1984474737274622
 speedup_ci: [1.1804707616215502, 1.216424185833374]
 harvested_at: 2026-10-24T144810Z
 best_at_harvest: 1.1760470299345995
-promotion: submitted
+promotion: done
 promotion_commit: 8b9ad430b2ed965f732443cb8de2069b58f43366
 promotion_attempt: 2026-10-24T163537Z-submit-bf16-m32-swapab-wgmma-triton.md
 promotion_job: eeb9985396764ac2
 promotion_at: 2026-10-24T163551Z
+board: "{\"rank\": 349, \"team\": \"yesthatwilly\", \"speedup\": 1.1959, \"first\": false, \"ahead\": 348, \"to_first\": 1.3051}"
 ---
 
 # bf16-m32-swapab-wgmma-triton

@@ -1,17 +1,17 @@
 {
  "problem": "muse_bf16_proj",
- "job": "1602a4e947e64090",
+ "job": "eeb9985396764ac2",
  "check_job": "1602a4e947e64090",
- "mode": "check",
- "speedup": 1.1984474737274622,
+ "mode": "submit",
+ "speedup": 1.1958517819004566,
  "ci": [
-  1.1804707616215502,
-  1.216424185833374
+  1.1779140051719497,
+  1.2137895586289633
  ],
- "score_us": 4030.8817081278007,
+ "score_us": 4039.631058894988,
  "commit": "8b9ad430b2ed965f732443cb8de2069b58f43366",
  "submission_blob": "a8bb42ac483318e9fbc84bc7826a27b7a704d1fb",
  "slug": "bf16-m32-swapab-wgmma-triton",
  "result": "muse_bf16_proj/hypotheses/done/neutral/bf16-m32-swapab-wgmma-triton.result.json",
- "updated_at": "2026-10-24T144859Z"
+ "updated_at": "2026-10-24T170631Z"
 }
