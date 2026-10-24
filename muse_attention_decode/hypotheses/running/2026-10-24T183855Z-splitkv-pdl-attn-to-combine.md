@@ -34,7 +34,7 @@ review: proceed
 status: running
 review_at: 2026-10-24T184111Z
 review_companions: null
-stage: implemented
+stage: dispatched
 claimed_at: 2026-10-24T184125Z
 base_sha: f6e63f1cb26d879530432b8f29b2946a17411828
 base_blob: c6854f093588da524e63657576b27ed720756e32
@@ -49,6 +49,8 @@ submission_blob: 0850f42d4d30f72ada131ff2fc52603126c56cd1
 lint_warnings: 0
 attempt_file: 2026-10-24T184726Z-check-splitkv-pdl-attn-to-combine.md
 prepared_at: 2026-10-24T184726Z
+job: 113cbf3093dd40b9
+dispatched_at: 2026-10-24T184744Z
 ---
 
 # splitkv-pdl-attn-to-combine
