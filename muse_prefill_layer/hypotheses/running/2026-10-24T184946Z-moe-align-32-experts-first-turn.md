@@ -33,13 +33,19 @@ kind: primary
 controls_for: null
 review: required
 status: running
-stage: claimed
+stage: implemented
 claimed_at: 2026-10-24T231740Z
 base_sha: 32a19128ff06ed728e345e32098cd6f0a13cea32
 base_blob: 635cfee3ac2c3f7c66840b8c8a082cad2fa41a68
 branch: hyp/muse_prefill_layer/moe-align-32-experts-first-turn
 worktree: .worktrees/muse_prefill_layer/moe-align-32-experts-first-turn
 mode: null
+implemented_at: 2026-10-24T231833Z
+impl_commit: 1f58c81d8380134a4c855a96cc0db4966daaf34f
+submission_sha256: c841fab1d4e92edea4c0e1c3ecce5eb32c88740c605e8154a8839364643d84d5
+norm_sha256: 93c740ab7098bc4e2b58b618c5d2002f9364593414ecf53a4140f6c386224087
+submission_blob: 9316ae43a54ccbf24f65d14815c68fa6c81f557a
+lint_warnings: 5
 ---
 
 # moe-align-32-experts-first-turn
@@ -56,3 +62,18 @@ Built on master (635cfee). One argument in _experts_triton (T > 4096 only): moe_
 ## Risk
 
 One-argument probe of the dead-CTA mechanism behind experts-triton-persistent-grid-first-turn: if this row moves, the persistent grid should move ~3x as much. Subsumed by that hypothesis and by first-turn-moe-dead-work-stack; the reviewer may prefer to run only the larger ones. Overlap: experts-cuda-wgmma-mixed-input-grouped-gemm (in the judge) uses moe_align_block_size at 256 too, and the same one-argument change applies to it.
+
+## Implementation notes
+
+Built in the main thread 2026-10-24 ~23:35Z with self-review (user approved). _experts_triton only (T > 4096): moe_align_block_size(local_ids, BLOCK_T, N_EXPERTS) -> LOCAL_EXPERTS. The Marlin path at line 594 is untouched. Ids are already 0-31 or -1; muse_moe_w4a16 master uses the same call with 32 and passes; fused_post_expert_norm_weighted_sum skips remote slots via slot_expert_ids, so fewer -1 token tiles (and fewer ZERO_NONLOCAL_W2 zero stores) cannot change a read row.
+
+## Rules check
+
+- [x] CUDA-graph capturable: no host sync, allocation on input values or value-dependent control flow added to kernel_fn.
+- [x] Fresh inputs: nothing derived from `data` cached.
+- [x] Weights: NVFP4 and BF16 unchanged; the router hi/lo split is the one the rules allow (hi+lo, fp32 accumulate).
+- [x] Activations BF16 as in SGLang; KV FP8; queries unchanged.
+- [x] Every key attended (attention untouched).
+- [x] No timing/harness access, processes, network or module edits.
+- [x] No work outside timed calls added (prepare() only builds a weight repack).
+- [x] okc_lint: OK with warnings (pre-existing prepare-only host syncs).
