@@ -1,17 +1,17 @@
 {
  "problem": "muse_moe_w4a16",
- "job": "3cabc739f1af493e",
- "check_job": "bc56182a80444d16",
- "mode": "submit",
- "speedup": 1.3075759186466844,
+ "job": "45eacf4ca2e849d2",
+ "check_job": "45eacf4ca2e849d2",
+ "mode": "check",
+ "speedup": 1.3249153782392282,
  "ci": [
-  1.287962279866984,
-  1.3271895574263846
+  1.30504164756564,
+  1.3447891089128166
  ],
- "score_us": 10285.062464226885,
- "commit": "8440ae5baaeda52f365611b273035480a61b2325",
- "submission_blob": "d9a9375ef4721ab9b28cc9d6364c92e67c7ccc59",
- "slug": "triton-map-align-on-block-m-restack",
- "result": "muse_moe_w4a16/hypotheses/done/gain/triton-map-align-on-block-m-restack.result.json",
- "updated_at": "2026-10-24T165805Z"
+ "score_us": 10150.459584726568,
+ "commit": "1a5da3d22ce48904de76852a1d585563f4c53048",
+ "submission_blob": "108d36e9f2266fc88531dd6ff0329a847c882013",
+ "slug": "align-parallel-per-expert-verify",
+ "result": "muse_moe_w4a16/hypotheses/done/neutral/align-parallel-per-expert-verify.result.json",
+ "updated_at": "2026-10-24T174343Z"
 }

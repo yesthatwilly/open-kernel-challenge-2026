@@ -78,7 +78,9 @@ speedup: 1.3249153782392282
 speedup_ci: [1.30504164756564, 1.3447891089128166]
 harvested_at: 2026-10-24T173234Z
 best_at_harvest: 1.3075759186466844
-promotion: null
+promotion: merged
+hand_landed: true
+promotion_commit: 1a5da3d22ce48904de76852a1d585563f4c53048
 ---
 
 # align-parallel-per-expert-verify
