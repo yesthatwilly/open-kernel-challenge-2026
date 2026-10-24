@@ -91,13 +91,19 @@ review: proceed
 status: running
 review_at: 2026-10-24T170224Z
 review_companions: null
-stage: claimed
+stage: implemented
 claimed_at: 2026-10-24T170224Z
 base_sha: b9590f4d98a9e3d4afd62cdaab9dd4d48694655f
 base_blob: d9a9375ef4721ab9b28cc9d6364c92e67c7ccc59
 branch: hyp/muse_moe_w4a16/cuda-fused-moe-bs1-persistent-w13-silu-w2
 worktree: .worktrees/muse_moe_w4a16/cuda-fused-moe-bs1-persistent-w13-silu-w2
 mode: null
+implemented_at: 2026-10-24T171551Z
+impl_commit: bbdb9ab6af58a47b167646c67e34c79e5d25b66e
+submission_sha256: 5e4aed31aa378a5d0f01aa4938f4cc6a4d88061c7b2fc8dbfb9bcf5747a0dd03
+norm_sha256: 95a6db2c1b55e8ee5354aadf22467c47cae8fa3a765e6225bb4435766557078e
+submission_blob: f55fa4ce165901402ea5ccd076e8904c9dca9d0a
+lint_warnings: 16
 ---
 
 # cuda-fused-moe-bs1-persistent-w13-silu-w2
@@ -164,3 +170,63 @@ No companion warranted. The change is gated on num_tokens == 1 and replaces ever
 - Add one fp32-dequant reference for a single expert (local e2m1/e4m3 decode, not the reference module) as the sibling cuda-nvfp4-swapab-mma-persistent-small-m does, so a nibble-order error cannot hide behind a master-vs-fused comparison that happens to be close.
 - Implementation order with cuda-nvfp4-swapab-mma-persistent-small-m: whichever runs first, keep the repack/dequant device functions shared verbatim so a mainloop bug is found once.
 
+
+## Implementation notes
+
+All changes in `muse_moe_w4a16/submission.py` (worktree), 721+/2- lines; nothing else touched.
+
+- New `_FUSED_CPP` / `_FUSED_CUDA` (one TU, `load_inline` with `-O3 -arch=sm_90a`, built in `prepare()` by `_build_fused`, following muse_attention_decode `_build_splitkv`): `moe_bs1_kernel`, one persistent kernel for the whole bs=1 MoE, plus `moe_bs1_info()`. That function sets the dynamic-smem attribute once, before any launch or capture, and returns numRegs, localSizeBytes, the occupancy at SMEM, SMEM, STAGES and the ctrl layout.
+- In-kernel routing: thread 0 of every CTA compacts the local routes (`id - local_start` in `[0, local_count)`) in slot order into smem as R entries (local expert, weight).
+- Phase 1 (R*64 items): 128-row tiles (64 gate + 64 up columns). Warp w holds 8 gate rows and then the matching 8 up rows, so a `t == 0` lane has gate in c0 and up in c2 and does silu*up in registers. K = H in 16 stages. Epilogue: bf16 h to scratch, `__threadfence` + `__syncthreads`, then thread 0 fence + atomicAdd on `cnt[r][j/16]` (one counter per 1024-column chunk = 16 tiles).
+- Phase 2 (R*128 items, order r, split s, tile n): 128 w2 rows, k-split 4 x 1024. Weight stages are issued before the wait. Thread 0 spins with `ld.acquire.gpu` on `cnt[r][s] >= 16`, the h slice is loaded with `ld.global.cg`, and the fp32 partial goes to `part[s][r]`. The (r,n) ticket's last arriver sums the 4 splits in split order (`ld.cg`), multiplies by gs, writes bf16 y and bumps `done`.
+- Phase 3: the CTA whose `done` increment reaches R*32 runs `combine`, the `_post_norm_combine_kernel` formula in fp32 with eps 1e-8, and writes bf16 out.
+- Weights: `_fused_repack` does a lossless NVFP4 fragment repack of the 32-expert bank. Nibbles and e4m3 bytes are only moved, and every expert's codes and scales get a round-trip assert. gs becomes gs*2^7, which is exact. Dequant is `(q & 0x80008000) | ((q & 0x70007000) >> 6)`, then `fma.rn.bf16x2` with the e4m3 scale from `cvt.rn.f16x2.e4m3x2` x 2^119 and a -0 addend. MMA is m16n8k16 bf16, with the weight as A and the token in B column 0.
+- Offline check on this node: I re-implemented the repack permutation and the kernel's per-lane extraction (word s, nibbles 3-i/7-i, scale bytes 2s/2s+1) in numpy and compared them against the m16n8k16 A-fragment definition. There were 0 mismatches. A second numpy check confirmed that the bit trick gives e2m1 x 2^-126 for all 16 codes.
+- `kernel_fn` uses the fused path when `hidden_states.shape[0] == 1`, `state["fused"]` is set and the config's bank matches. Otherwise it runs `_master_kernel_fn`, which is master's kernel_fn body unchanged. So bs=1 falls back to master byte for byte, and every other M runs master byte for byte.
+
+Review REQUIRED items:
+1. **No epochs.** All 132 CTAs take an exit ticket. The last CTA writes the zero row when R == 0 and resets cnt, tickets, done and the exit ticket to 0 at the end of every launch, so R can change between calls. The only spin, the phase-2 wait, is capped at `SPIN_MAX = 2^22` polls with `__nanosleep(32)`. Past the cap it sets a sticky `ctrl[C_ERR]` and continues, so it cannot hang. The ticket, done and exit counters are last-arriver patterns and never spin.
+2. **More bytes in flight.** Phase-1 tiles went from 64 rows to 128 rows (the review's 128-row option), so a stage is 18 KB, the same size as phase 2. The ring is STAGES = 8, so 7 stages (~126 KB of weight) are in flight per SM. Spec and review both mentioned 4 stages / 27-54 KB; this is the "add ring stages" fix.
+3. **Co-residency.** grid = `multi_processor_count`, `launch_bounds(256, 1)`, ~155 KB dynamic smem, and prepare asserts `cudaOccupancyMaxActiveBlocksPerMultiprocessor >= 1` before any launch.
+4. **Self-check in prepare.** 10 rounds of R = (2, 1, 8, 0, 3) on fresh synthetic inputs give 50 back-to-back eager launches, each compared with `_master_kernel_fn` on the same input (rel L2 <= 1e-2; R = 0 must be exact zeros). Two cases (R = 1, 2) are compared against a local fp32 NVFP4 dequant of the raw weights (reference module not imported). One `torch.cuda.graph` capture is followed by 10 replays with R varying between replays. Then the error flag must be 0 and every counter must be 0. Any exception, mismatch, error flag, build failure or residency failure prints `[cuda-moe-bs1] SELF-CHECK FAILED ... PATH CHOSEN = master` and sets `state["fused"] = None`. On success it prints `SELF-CHECK PASSED ... PATH CHOSEN = fused`, plus regs, localSizeBytes, smem, stages and grid.
+
+Deviations:
+- No cooperative launch. The review suggested it ("prefer") as an open question. If cooperative launch could not be graph-captured, the fallback would turn off the whole path, and the occupancy assert with grid == SMs plus the bounded spin already covers co-residency. The launch is a plain `<<<>>>` on the current stream.
+- The hard 132-SM assert became grid = the device's SM count. The kernel is grid-agnostic; the count is printed.
+- Flags count per (route, 1024-column chunk), waited at >= 16, not `8*(epoch+1)` per 256-column chunk. Epochs were dropped as the review asked.
+- local_start != 0 is not self-checked, because prepare builds only bank (0, 32), as master does.
+
+Sync and indexing were each reviewed twice:
+- Ring: wait_group(STAGES-2) and then `__syncthreads` before refilling slot (step-1) % STAGES. The producer and consumer walk the same flat (item, k-stage) sequence, so no group is left outstanding.
+- Release: writers fence, then `__syncthreads`, then thread 0 fences and does the atomic. Acquire: thread 0 does acquire/atomic and a fence, then `__syncthreads`, then the readers use `.cg`.
+- Every CTA finishes all its phase-1 items before its first phase-2 wait, because items are taken in global index order and phase 1 comes first.
+- Every `__syncthreads` is under a CTA-uniform condition (an smem broadcast).
+
+Uncertainties: none of this has been compiled or run (no GPU or nvcc on this node). Compile errors, if any, show up as the build-failure fallback, not as a crash. The ALU cost of dequant plus the scale conversion (~27 ops per k16 per lane) is close to the per-SM DRAM time per stage, so M3 may need stage 2. Watch localSizeBytes in the log.
+
+## Rules check
+
+Checked against `git -C .worktrees/muse_moe_w4a16/cuda-fused-moe-bs1-persistent-w13-silu-w2 diff`:
+
+- [x] CUDA-graph capturable. kernel_fn -> `_fused_forward` contains no `.item()`, `.cpu()`, `synchronize()` or tensor prints. Its only host branches are on shape (`shape[0] == 1`), config, the prepare-time flag, and the pointer alignment `data_ptr() % 16`, which is an address, not a value. Data-dependent R is handled on device. A capture plus replays is tested in prepare.
+- [x] Nothing derived from `data` is cached across calls. The scratch (hbuf/part/ybuf) is overwritten every call before it is read. The counters are reset to 0 by the kernel itself at every exit. The fused state is built from weights only.
+- [x] Weights: repacked losslessly in `prepare()` only. The 4-bit codes and e4m3 bytes are permuted, with a round-trip `torch.equal` assert per expert. gs*2^7 is an exact power-of-two fold. NVFP4 stays NVFP4 and is dequantized in registers.
+- [x] Activations: x stays bf16 and so does h (master keeps silu_and_mul's output bf16). y is rounded to bf16 as master's Marlin output is. Only accumulators and the norm math are fp32, as in master. n/a: KV cache / queries (not in this problem).
+- [x] n/a: attention key coverage (MoE problem, no attention). Every local route is computed and none are skipped.
+- [x] No timing patches, harness frames/I/O/secrets, module edits or reference import. No network. The only extra processes are load_inline's compiler, the same mechanism as muse_attention_decode master. The lint shows no process or network finding.
+- [x] All work happens inside the timed call. The fused kernel computes routing, both GEMMs, silu and the combine on each call's inputs. There is no output caching or replay.
+- [x] Output shape/dtype: bf16 [1, H], written in full (combine or the zero row). `torch.empty` is allocated per call.
+
+Lint (`okc_lint.py ... --problem muse_moe_w4a16`): exit 0, "OK with warnings". All warnings are host-sync calls in prepare-only code, outside kernel_fn's call graph:
+
+```
+warn  host-sync    L212/L214/L216/L235/L240/L241 (master _align_self_check, prepare only)
+warn  host-sync    L837/L839/L841: _fused_case .tolist() (prepare only)
+warn  host-sync    L866: _fp32_moe .tolist() (prepare only)
+warn  host-sync    L940/L959: torch.cuda.synchronize() in _fused_setup (prepare only)
+warn  host-sync    L961: ctrl.tolist() in _fused_setup (prepare only)
+warn  host-sync    L1023/L1025/L1036: torch.cuda.synchronize() in prepare
+OK with warnings: .worktrees/muse_moe_w4a16/cuda-fused-moe-bs1-persistent-w13-silu-w2/muse_moe_w4a16/submission.py
+```
+
+`python3 -I -m py_compile`: OK, and the `__pycache__` it left was removed.
