@@ -116,13 +116,19 @@ review: proceed
 status: running
 review_at: 2026-10-24T183415Z
 review_companions: null
-stage: claimed
+stage: implemented
 claimed_at: 2026-10-24T183415Z
 base_sha: b17562ed4f8acdd2a6e2e98f542acc2bba35a2b4
 base_blob: 108d36e9f2266fc88531dd6ff0329a847c882013
 branch: hyp/muse_moe_w4a16/cuda-dispatch-combine-pdl-verify
 worktree: .worktrees/muse_moe_w4a16/cuda-dispatch-combine-pdl-verify
 mode: null
+implemented_at: 2026-10-24T184624Z
+impl_commit: 38270a8e28e9d5fe4920187220679aa4b35ab074
+submission_sha256: 7c7485b51531cb6fab31bedfb3970593214e591f0da8f35d9f6ca078199a504d
+norm_sha256: b26f9d20e2ac256a87e1d24b2de921b62310f7690a72d7f03c787fdd42a80a2e
+submission_blob: 005e9bed2e9971ae7413b3fe0c398f7241911804
+lint_warnings: 19
 ---
 
 # cuda-dispatch-combine-pdl-verify
@@ -177,3 +183,70 @@ No companion is warranted. The change replaces two specific kernels on two shape
 - Does the judge's torch 2.14.1+cu130 stream capture keep the programmatic-dependency edge from cudaLaunchKernelEx (it should on CUDA >= 12.3), or does it silently drop it to a full dependency? The capture test checks correctness only, not that overlap actually happens.
 - If the in-flight cuda-nvfp4-wgmma-rega-grouped-verify lands first, the kernel before kernel B changes. Re-check the PDL assumptions (trigger and number of launches) on restack.
 
+
+## Implementation notes
+
+Worktree `.worktrees/muse_moe_w4a16/cuda-dispatch-combine-pdl-verify`, file `muse_moe_w4a16/submission.py` only (+733/-2, uncommitted).
+
+- New block after `_align_self_check`: one load_inline TU (`muse_moe_cuda_dispatch_combine_v1`, `-O3 -arch=sm_90a`, no fast-math, build/fallback scaffolding copied from master's muse_attention_decode `_build_splitkv` and the PDL `cudaLaunchKernelEx` pattern from muse_decode_layer small-t-launch-minimal-dense-chain-pdl). It is built in prepare() and the build time is printed as `[cuda-dispatch-combine] build OK/FAILED (<s> s)`.
+  - `cdc_align_cuda_kernel<IdT>` (kernel A): grid (1,), 1024 threads, int32/int64 ids. The spec's pass 1 uses `__match_any_sync` ranks per 32-route tile and a `cnt[128][32]` table in shared memory. Deviation: the spec has warp 0 scan serially over 128 tiles. That is replaced by a 3-step parallel scan: 32 tile-groups of 4 tiles each, then a warp-per-expert `__shfl_up` scan over the groups, then per-tile bases. Same outputs, far fewer dependent shared-memory round trips. Warp 0 then scans the padded segments. Pass 2 writes the real routes, then the per-expert padding, the `[total, cap)` sentinel, `block_experts` (the expert is found by counting `seg_end <= b*bsm`), and `n_padded`.
+  - `cdc_postnorm_combine_cuda_kernel` (kernel B): grid M, 256 threads, 2 x 16 B vectors per thread at cols `[8t, 8t+8)` and `[2048+8t, ...)`. The prologue loads (1+w) fp32, the ids and the weights, then runs `griddepcontrol.wait`. After the wait, every local-slot load is issued with `ld.global.nc.L1::no_allocate.v4`. The 8-vector is reduced with warp shuffles, followed by one shared round and one `__syncthreads`. The kernel computes `rsqrtf(ss/H + 1e-8)` and does the fp32 accumulation. Remote slots are never loaded. A token with no local slot gets zeros. The host wrapper uses `cudaLaunchKernelEx` with programmatic stream serialization when `pdl=1`.
+  - Distinct kernel names (`cdc_align_cuda_kernel`, `cdc_postnorm_combine_cuda_kernel`) are used so the profile rows can be attributed (reviewer note).
+- `_cdc_align`: writes into prepare()-allocated scratch (`local_ids[4096]`, `sorted_ids[4096+32*63]`, `block_experts[764]`, `n_padded[1]`) and returns exact-size views `[:n]`, `[:cap]` and `[:n_blocks]`. Every element of each view is written by every launch.
+- kernel_fn: `use_cdc` is true when the expert_map exists, `state['cuda_glue_ok']` is set, 32 < M <= 512, H == 4096, count <= 32, and the topk_ids dtype is int32/int64 (shape, dtype and flags only). Under `use_cdc`, kernel A replaces `_align_parallel`, and kernel B with `pdl_ok` replaces `fused_post_expert_norm_weighted_sum`, writing into `torch.empty((M, H), bf16)`. Marlin w13, silu_and_mul and Marlin w2 are untouched. With `use_cdc` false the code is master's code, byte for byte, which covers M <= 32 and every fallback.
+- prepare(): master's state dict, then `_cdc_setup` (wrapped in try, never raises). The setup sequence is:
+  1. print numRegs/localSizeBytes/smem for both kernels;
+  2. (1) align: M in (33, 57, 120, 128, 256, 257, 512) x {SGLang bsm, two-smaller bsm at >= 128} x local_start (0, 32, 224) x 5 routings x ids {int32, int64}. Each case uses `torch.equal` of all four outputs against master's `_align_parallel`, with the scratch prefilled with -7 so stale data is caught;
+  3. (2) combine at pdl=0: M in (33, 128, 256, 257) x 5 routings, remote y rows NaN, compared against an fp32 torch reference (per-row 4e-3, global 2e-3, finite). It also prints the rel L2 against SGLang's fused combine as info;
+  4. (3) e2e eager: M in (128, 256, 257) x {random, skewed}, real weights, comparing the full new kernel_fn against master's kernel_fn (per-row 1e-2);
+  5. (4) graph: the combine check eagerly with PDL, then the e2e check captured in `torch.cuda.graph` and replayed 3x, all at pdl=1. If that fails or raises, the same graph e2e runs at pdl=0. The pdl=1 graph run is the one that sets `pdl_ok`.
+  
+  After the checks it prints `SELF-CHECK PASSED/FAILED: <case, rel L2>` and per-launch CUDA-event medians (graph of 20, warm L2) of A vs `_align_parallel` and B vs `fused_post_expert_norm_weighted_sum` at M=128/256. The reviewer asked for these so the rows stay readable even if they drop out of the top-N. The setup ends with loud `===== PATH CHOSEN: ... =====` lines: cuda align+combine (pdl on|off) for 32 < M <= 512, or master (reason), plus master for M <= 32 and M > 512.
+- Deviations: (a) the parallel 3-step scan described above, not the warp-0 serial scan; (b) step (4) captures the end-to-end path, which holds both new kernels after the real Marlin predecessor, rather than each check's launches separately; (c) kernel B reads (1+w) from the bf16 post_norm_w directly, as the spec says.
+- Uncertainties: nvcc is not on this node, so the CUDA was not compiled here. If the build fails, the run falls back to master with a loud FAILED line. Whether PDL forms a real programmatic edge after Marlin in capture is unverified, since the capture test checks correctness only.
+
+## Rules check
+
+- [x] CUDA-graph capturable: kernel_fn and `_cdc_align` have no `.item()`/`.cpu()`/`synchronize()`/tensor prints. Branches use only shape, dtype and prepare-time flags. The only allocation in the new path is `out`, which is master's own small-M pattern.
+- [x] Nothing derived from `data` is cached across calls: the scratch views are fully overwritten by every kernel A launch before they are read, so no earlier call's data is ever read. The self-check fills them with -7 to prove this.
+- [x] Weights: unchanged. Master's Marlin repack is kept. post_norm_w stays bf16 and is read as bf16 with +1 in fp32, as master's `_post_norm_combine_kernel` does.
+- [x] Activations BF16 where SGLang keeps BF16: y is read as bf16 and out is bf16. The fp32 math is internal, as in SGLang's combine.
+- [x] Attention sees every key: n/a, no attention in this problem.
+- [x] No timing patches, harness frames/I/O/secrets, module edits, reference import, subprocesses or network. load_inline is the same compile pattern as the landed CUDA builds, and the lint reports no process/network/harness findings.
+- [x] All work happens inside the timed call; no output caching or replay. prepare() runs only untimed synthetic self-checks and timing.
+
+Lint (`okc_lint.py --problem muse_moe_w4a16`): `OK with warnings`. There are 0 errors and 20 `host-sync` warns, all outside kernel_fn's call graph: master's `_align_self_check` (L338-366) and the new prepare()-only `_cdc_routings`/checks/timing (L834-1182). `py_compile` OK and `__pycache__` removed.
+
+## Pre-flight audit
+
+Audited 2026-10-24 by an Opus subagent. I read the code and emulated parts of it in numpy. There is no nvcc or GPU here, so nothing was compiled or run.
+
+**Verdict: dispatch.** No fixes were made, and the worktree file is unchanged.
+
+- **Compile:** I read the TU line by line. It includes torch/extension.h, ATen/cuda/CUDAContext.h, c10/cuda/CUDAException.h and cuda_bf16.h. It uses the following, all valid on sm_90a:
+  - `__match_any_sync`;
+  - `%lanemask_lt` inline PTX;
+  - `ld.global.nc.L1::no_allocate.v4.u32`;
+  - `griddepcontrol.wait`;
+  - the `cudaLaunchKernelEx` C++ template, whose argument coercion makes `int*` → `const int*` legal, with `attr.val.programmaticStreamSerializationAllowed`;
+  - `C10_CUDA_CHECK` / `C10_CUDA_KERNEL_LAUNCH_CHECK`.
+
+  The bf16 code uses intrinsics only (`__float2bfloat16_rn`, `__bfloat16_as_ushort`), so torch's `__CUDA_NO_BFLOAT16_*` flags do not bite. `-arch=sm_90a` in extra_cuda_cflags suppresses torch's own gencode list, the same as the splitkv build that compiled in the judge. The cpp declarations match the definitions, and the pybind arities match every Python call site: cdc_align takes 8 args and cdc_combine takes 7.
+- **Build failure path:** a `load_inline` exception is caught in `_cdc_build`. It prints `build FAILED (<s> s)` with the nvcc output in the repr, then `SELF-CHECK FAILED: build failed`, then `PATH CHOSEN: master (build failed)`, and kernel_fn runs master's code byte for byte. `_cdc_setup` is also wrapped in a try in prepare(), which has its own loud master line.
+- **Gates:**
+  - Kernel A: a numpy emulation of the match/scan/scatter algorithm (M 33-512, bsm 16/32/48/64, local_start 0/32/224, random/one-expert/all-local) is byte-identical to `_align_parallel` in every case. The torch.equal gate can pass.
+  - Combine gate: global ≤ 2e-3 vs fp32 ref. The only error source is the final bf16 RNE rounding, and the emulation gives a global rel L2 of 1.66e-3 and per-row ≤ 1.75e-3 (gate 4e-3) at every M and routing. It passes, though with only ~17% margin on the global bound.
+  - The e2e 1e-2 per-row bound vs master (bf16 1+w in SGLang's combine) is estimated at ~3-4e-3.
+  - All-remote rows give ref = 0 and out = 0, which is handled.
+- **Memory safety:** I checked indexing for every shape up to M = 512 (n ≤ 4096 = 128 tiles). The sorted_ids index stays below total ≤ cap, block_experts stays below n_blocks, and the y index stays below M·8·H. Scratch sizes are 4096 / 6112 / 764 / 1. I found no OOB, and an OOB would matter, because a sticky fault in the self-check would kill the run rather than fall back.
+- **Rules:**
+  - kernel_fn branches on shape, dtype and prepare-time flags only, with no syncs.
+  - The scratch views are fully rewritten before they are read on every call.
+  - out is master's allocation pattern.
+  - Weights are unchanged, and activations are bf16 with fp32 internals.
+  - Remote y rows are never loaded.
+
+  Lint is OK with warnings: host-sync warnings in prepare() only. py_compile is OK.
+- **PDL:** local_ids and tw are read before the wait. Both are produced by kernels that finished before Marlin w2 started, so this is safe. y is read only after `griddepcontrol.wait`. A capture failure at pdl=1 retries at pdl=0, and the result is logged.
+
+Residual risk: the CUDA has never been compiled, so a toolchain-specific compile error (e.g. cudaLaunchKernelEx template coercion or an asm constraint) would cost the run's gain, but it lands on master with a loud FAILED line rather than failing the run.
