@@ -1,0 +1,15 @@
+diff --git a/muse_prefill_layer/submission.py b/muse_prefill_layer/submission.py
+index 635cfee..9316ae4 100644
+--- a/muse_prefill_layer/submission.py
++++ b/muse_prefill_layer/submission.py
+@@ -625,7 +625,9 @@ def _experts_triton(x, topk_weights, local_ids, state):
+     num_slots = num_tokens * TOP_K
+     topk_weights = topk_weights.to(torch.float32).contiguous()
+     cfg = _expert_config(num_tokens)
+-    sorted_ids, block_experts, n_padded = moe_align_block_size(local_ids, cfg["BLOCK_T"], N_EXPERTS)
++    # moe-align-32-experts-first-turn: the ids are already 0-31 or -1, so align over the 32 local experts
++    # (muse_moe_w4a16 master does the same): 32 counters and numel + 33*(BLOCK_T-1) capacity, not 257.
++    sorted_ids, block_experts, n_padded = moe_align_block_size(local_ids, cfg["BLOCK_T"], LOCAL_EXPERTS)
+     cache2 = torch.empty((num_slots, size_n), device=x.device, dtype=x.dtype)
+     cache13 = torch.empty((num_slots * max(gemm1_n, size_k),), device=x.device, dtype=x.dtype)
+     cache1 = cache13[: num_slots * gemm1_n].view(-1, gemm1_n)
