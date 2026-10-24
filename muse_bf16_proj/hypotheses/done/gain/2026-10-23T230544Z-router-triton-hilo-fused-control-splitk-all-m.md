@@ -73,8 +73,8 @@ speedup: 1.1510295903072447
 speedup_ci: [1.133764146452636, 1.1682950341618532]
 harvested_at: 2026-10-24T035910Z
 best_at_harvest: 1.0307103903232853
-promotion: merged
-promotion_reason: "merged by hand: file identical to the checked one; router path replaces master's router-hilo-at-m8 change"
+promotion: superseded
+promotion_reason: best is now 1.1510295903072447
 promotion_commit: dba4ffd5945248c0299bb6953ab4b561d0b3eeeb
 ---
 
