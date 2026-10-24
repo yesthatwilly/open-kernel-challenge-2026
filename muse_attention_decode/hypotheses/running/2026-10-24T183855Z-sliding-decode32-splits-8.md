@@ -34,13 +34,15 @@ base_sha: 7636e41481d93a8dc77886fc9674dcdb6c52067e
 base_blob: c6854f093588da524e63657576b27ed720756e32
 branch: hyp/muse_attention_decode/sliding-decode32-splits-8
 worktree: .worktrees/muse_attention_decode/sliding-decode32-splits-8
-mode: null
+mode: check
 implemented_at: 2026-10-24T184519Z
 impl_commit: fda25ba17eee225ce89bdd2ae2719e568fefd4c3
 submission_sha256: bfc76c4f3ba08f623cb653f4fc4a4231bcc354aa7b4509d11f0824cd56cc5cce
 norm_sha256: 4fa7683f0e207f9f8f4f0327c37ca81f73cac889c38a0e7115bdcf3da9fa0998
 submission_blob: ce1c20a9ca0ae2a965c1609faa65326c07177888
 lint_warnings: 0
+attempt_file: 2026-10-24T184519Z-check-sliding-decode32-splits-8.md
+prepared_at: 2026-10-24T184519Z
 ---
 
 # sliding-decode32-splits-8
