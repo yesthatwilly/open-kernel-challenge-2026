@@ -46,10 +46,10 @@ priority: 3
 kind: primary
 controls_for: null
 review: proceed
-status: running
+status: done
 review_at: 2026-10-24T164533Z
 review_companions: null
-stage: dispatched
+stage: harvested
 claimed_at: 2026-10-24T164533Z
 base_sha: d170c1fd1af3e71b7de6f970d623da8b2a86af59
 base_blob: cc466fce207709c98ab0e78c2435c1c459890fdb
@@ -66,6 +66,13 @@ attempt_file: 2026-10-24T164838Z-submit-sliding-fused-triton-decode1-port.md
 prepared_at: 2026-10-24T164838Z
 job: 12198572363b49a4
 dispatched_at: 2026-10-24T164858Z
+outcome: neutral
+verdict_detail: unproven-vs-best
+speedup: 1.1690447456470285
+speedup_ci: [1.151509074462323, 1.1865804168317338]
+harvested_at: 2026-10-24T173233Z
+best_at_harvest: 1.1664628806987323
+promotion: null
 ---
 
 # sliding-fused-triton-decode1-port
@@ -197,3 +204,35 @@ OK with warnings: .worktrees/muse_decode_layer/sliding-fused-triton-decode1-port
 ```
 
 That warning is master's existing `torch.cuda.synchronize()` at the end of prepare(). `python3 -I -m py_compile` passed, and the `__pycache__` it left was removed.
+
+## Result
+
+- job `12198572363b49a4` (submit), status done, passed True, tests 13/13
+- speedup 1.1690x, 95% CI [1.1515, 1.1866], score 19349.38768103388 µs vs SGLang 22620.3 µs
+- best at harvest: {"speedup": 1.1664628806987323, "ci": [1.1489659374882513, 1.183959823909213], "job": "a017e10aec544c55"}; base result: muse_decode_layer/hypotheses/done/gain/post-expert-norm-triton-small-t.result.json
+- **outcome: neutral** (unproven-vs-best)
+- files: `muse_decode_layer/hypotheses/done/neutral/sliding-fused-triton-decode1-port.result.json`, `muse_decode_layer/hypotheses/done/neutral/sliding-fused-triton-decode1-port.patch`; branch `hyp/muse_decode_layer/sliding-fused-triton-decode1-port`
+
+## Attribution
+
+| shape | w | base µs | hyp µs | delta | verdict |
+|---|---|---|---|---|---|
+| batch=1 ctx=80000 dist=soft layer=sliding load=decode_1 page=1 repeats=60 | 46 | 145.83 | 139.39 | 1.0436 | gained |
+| batch=1 ctx=80000 dist=soft layer=full load=decode_1 page=1 repeats=60 | 16 | 156.95 | 156.81 | 0.9992 | flat |
+| batch=16 ctx=80000 dist=soft layer=sliding load=decode_16 page=1 spread=agentic | 46 | 225.79 | 223.79 | 0.9915 | flat |
+| batch=16 ctx=80000 dist=soft layer=full load=decode_16 page=1 spread=agentic | 16 | 364.88 | 364.77 | 0.9971 | flat |
+| batch=32 ctx=80000 dist=soft layer=sliding load=decode_32 page=1 spread=agentic | 46 | 251.94 | 255.26 | 0.9974 | flat |
+| batch=32 ctx=80000 dist=soft layer=full load=decode_32 page=1 spread=agentic | 16 | 535.78 | 542.94 | 0.9917 | flat |
+| batch=1 ctx=80000 dist=soft layer=sliding load=verify_1 page=1 q_len=8 | 46 | 200.79 | 197.56 | 1.0081 | flat |
+| batch=1 ctx=80000 dist=soft layer=full load=verify_1 page=1 q_len=8 | 16 | 218.06 | 213.42 | 0.9976 | flat |
+| batch=16 ctx=80000 dist=soft layer=sliding load=verify_16 page=1 q_len=8 spread=agentic | 46 | 462.37 | 467.52 | 0.9785 | flat |
+| batch=16 ctx=80000 dist=soft layer=full load=verify_16 page=1 q_len=8 spread=agentic | 16 | 603.87 | 593.54 | 1.0155 | flat |
+| batch=32 ctx=80000 dist=soft layer=sliding load=verify_32 page=1 q_len=8 spread=agentic | 46 | 639.36 | 618.95 | 1.0227 | flat |
+| batch=32 ctx=80000 dist=soft layer=full load=verify_32 page=1 q_len=8 spread=agentic | 16 | 932.92 | 897.56 | 0.9989 | flat |
+
+gained on sliding decode_1. Expected hit: 5/5. Noise ±1.5%.
+
+## Follow-ups
+
+- unproven-vs-best: the change is not proven either way; a stacked hypothesis (`depends_on: sliding-fused-triton-decode1-port`) that adds a further change in the same area is the only way to learn more (identical code is never re-run).
+
