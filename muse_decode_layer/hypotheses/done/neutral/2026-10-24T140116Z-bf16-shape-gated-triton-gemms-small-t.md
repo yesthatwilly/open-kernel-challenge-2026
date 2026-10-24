@@ -50,10 +50,10 @@ priority: 2
 kind: primary
 controls_for: null
 review: proceed
-status: running
+status: done
 review_at: 2026-10-24T164553Z
 review_companions: null
-stage: dispatched
+stage: harvested
 claimed_at: 2026-10-24T164553Z
 base_sha: 1fd1f0ad0ecb64aecc30d851ca5c1c9149f46de0
 base_blob: cc466fce207709c98ab0e78c2435c1c459890fdb
@@ -70,6 +70,13 @@ attempt_file: 2026-10-24T164845Z-submit-bf16-shape-gated-triton-gemms-small-t.md
 prepared_at: 2026-10-24T164845Z
 job: 6076ae1f250143aa
 dispatched_at: 2026-10-24T164859Z
+outcome: neutral
+verdict_detail: unproven-vs-best
+speedup: 1.1688022177648374
+speedup_ci: [1.1512701844983648, 1.1863342510313097]
+harvested_at: 2026-10-24T173233Z
+best_at_harvest: 1.1664628806987323
+promotion: null
 ---
 
 # bf16-shape-gated-triton-gemms-small-t
@@ -155,3 +162,35 @@ OK with warnings: .worktrees/muse_decode_layer/bf16-shape-gated-triton-gemms-sma
 ```
 
 `python3 -I -m py_compile` passed, and the `__pycache__` it left was removed.
+
+## Result
+
+- job `6076ae1f250143aa` (submit), status done, passed True, tests 13/13
+- speedup 1.1688x, 95% CI [1.1513, 1.1863], score 19353.402702518822 µs vs SGLang 22620.3 µs
+- best at harvest: {"speedup": 1.1664628806987323, "ci": [1.1489659374882513, 1.183959823909213], "job": "a017e10aec544c55"}; base result: muse_decode_layer/hypotheses/done/gain/post-expert-norm-triton-small-t.result.json
+- **outcome: neutral** (unproven-vs-best)
+- files: `muse_decode_layer/hypotheses/done/neutral/bf16-shape-gated-triton-gemms-small-t.result.json`, `muse_decode_layer/hypotheses/done/neutral/bf16-shape-gated-triton-gemms-small-t.patch`; branch `hyp/muse_decode_layer/bf16-shape-gated-triton-gemms-small-t`
+
+## Attribution
+
+| shape | w | base µs | hyp µs | delta | verdict |
+|---|---|---|---|---|---|
+| batch=1 ctx=80000 dist=soft layer=sliding load=decode_1 page=1 repeats=60 | 46 | 145.83 | 142.23 | 1.0413 | gained |
+| batch=1 ctx=80000 dist=soft layer=full load=decode_1 page=1 repeats=60 | 16 | 156.95 | 152.72 | 1.0418 | gained |
+| batch=16 ctx=80000 dist=soft layer=sliding load=decode_16 page=1 spread=agentic | 46 | 225.79 | 245.8 | 0.9555 | lost |
+| batch=16 ctx=80000 dist=soft layer=full load=decode_16 page=1 spread=agentic | 16 | 364.88 | 384.01 | 0.9719 | flat |
+| batch=32 ctx=80000 dist=soft layer=sliding load=decode_32 page=1 spread=agentic | 46 | 251.94 | 265.63 | 0.9946 | flat |
+| batch=32 ctx=80000 dist=soft layer=full load=decode_32 page=1 spread=agentic | 16 | 535.78 | 531.03 | 1.0795 | gained |
+| batch=1 ctx=80000 dist=soft layer=sliding load=verify_1 page=1 q_len=8 | 46 | 200.79 | 215.88 | 0.9644 | lost |
+| batch=1 ctx=80000 dist=soft layer=full load=verify_1 page=1 q_len=8 | 16 | 218.06 | 218.28 | 0.9669 | lost |
+| batch=16 ctx=80000 dist=soft layer=sliding load=verify_16 page=1 q_len=8 spread=agentic | 46 | 462.37 | 455.09 | 1.0176 | flat |
+| batch=16 ctx=80000 dist=soft layer=full load=verify_16 page=1 q_len=8 spread=agentic | 16 | 603.87 | 604.43 | 1.0392 | gained |
+| batch=32 ctx=80000 dist=soft layer=sliding load=verify_32 page=1 q_len=8 spread=agentic | 46 | 639.36 | 647.92 | 1.0097 | flat |
+| batch=32 ctx=80000 dist=soft layer=full load=verify_32 page=1 q_len=8 spread=agentic | 16 | 932.92 | 918.99 | 1.0052 | flat |
+
+gained on sliding decode_1; full decode_1, decode_32, verify_16; lost on sliding decode_16, verify_1; full verify_1. Expected hit: 2/6. Noise ±1.5%.
+
+## Follow-ups
+
+- unproven-vs-best: the change is not proven either way; a stacked hypothesis (`depends_on: bf16-shape-gated-triton-gemms-small-t`) that adds a further change in the same area is the only way to learn more (identical code is never re-run).
+

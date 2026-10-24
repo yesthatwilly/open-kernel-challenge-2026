@@ -1,0 +1,435 @@
+diff --git a/muse_decode_layer/submission.py b/muse_decode_layer/submission.py
+index cc466fc..4ba81ce 100644
+--- a/muse_decode_layer/submission.py
++++ b/muse_decode_layer/submission.py
+@@ -40,6 +40,9 @@ Everything else is SGLang's pipeline as baseline.py composes it:
+                                    norm (JIT)
+ 
+ Differs from SGLang:
++  * At 1 <= T <= 16 the qkv_gate, o and pooler GEMMs, and at T <= 8 the unpooler slice, run
++    Triton kernels ported from muse_bf16_proj (hypothesis bf16-shape-gated-triton-gemms-small-t);
++    routed by token count and tensor shapes only. T >= 17 keeps bf16_gemm_dispatch.
+   * The step's positions, cache rows, FA3 lengths and FA3 scheduler metadata come in with the
+     inputs; SGLang builds them once per step for all layers.
+   * All-reduces are the identity; the all-gather is a zero pad of the unpooler's output."""
+@@ -235,6 +238,352 @@ def _post_norm_combine_kernel(y_ptr, ids_ptr, tw_ptr, w_ptr, out_ptr, H, eps,
+     tl.store(out_ptr + t.to(tl.int64) * H + offs, acc.to(tl.bfloat16), mask=mask)
+ 
+ 
++# --- Shape-gated Triton dense GEMMs at T <= 16 (hypothesis bf16-shape-gated-triton-gemms-small-t) --
++# Ported verbatim from muse_bf16_proj's bf16-shape-gated-triton-winners-combo (its m <= 16 paths
++# only; its 17 <= m <= 32 swap-AB code is not ported). muse_bf16_proj's guards read its Config's
++# m / n / k; this problem's Config has none, so the guards below read the tensors' shapes, and the
++# routing in kernel_fn is by the token count only. Every other T keeps _bf16_gemm_dispatch_impl.
++#   qkv_gate, 1 <= T <= 16: _qkv_splitk_sem_kernel, grid (36, 4), split-K 4 ticket reduce
++#   o,        T <= 16:      _pooler_skinny_kernel, full K, grid (128,)
++#   pooler,   T <= 16:      _bf16_splitk_kernel, grid (64, 2), BLOCK_K 256, split-K 2
++#   unpooler slice, T <= 8: _bf16_splitk_kernel on rows 0-1023 read in place, grid (16, 8)
++SMALL_T_TRITON_GEMM = 16
++
++
++@triton.jit(do_not_specialize=["M"])
++def _bf16_splitk_kernel(
++    x_ptr, w_ptr, out_ptr, ws_ptr, cnt_ptr,
++    M,
++    stride_xm, stride_wn, stride_om,
++    N: tl.constexpr, WS_M: tl.constexpr, K_SLICE: tl.constexpr, SPLIT_K: tl.constexpr,
++    BLOCK_M: tl.constexpr, BLOCK_N: tl.constexpr, BLOCK_K: tl.constexpr,
++):
++    """out[M, N] bf16 = x[M, K] @ w[N, K]^T, split-K with an in-kernel semaphore reduce.
++
++    Program (pid_n, pid_k) covers rows of N [pid_n*BLOCK_N, +BLOCK_N), K [pid_k*K_SLICE,
++    +K_SLICE) and all M rows (M <= BLOCK_M <= WS_M; rows >= M masked). w may be the leading N
++    rows of a taller row-major weight (stride_wn is its row stride). ws: fp32 [SPLIT_K, WS_M, N]
++    scratch; cnt: int32 [N // BLOCK_N], 0 between launches. There is no early exit: every CTA
++    stores its partial and takes exactly one ticket, so the counter always returns to 0.
++    """
++    pid_n = tl.program_id(0)
++    pid_k = tl.program_id(1)
++    k_start = pid_k * K_SLICE
++
++    offs_n = pid_n * BLOCK_N + tl.arange(0, BLOCK_N)
++    offs_k = k_start + tl.arange(0, BLOCK_K)
++    offs_m = tl.arange(0, BLOCK_M)
++    m_mask = offs_m < M
++    # Weight tiles read directly as [BLOCK_K, BLOCK_N] from the row-major [N, K] weight.
++    w_ptrs = w_ptr + offs_k[:, None] + offs_n[None, :] * stride_wn
++    x_ptrs = x_ptr + offs_m[:, None] * stride_xm + offs_k[None, :]
++    acc = tl.zeros((BLOCK_M, BLOCK_N), dtype=tl.float32)
++    for kk in range(0, K_SLICE // BLOCK_K):
++        x_tile = tl.load(x_ptrs, mask=m_mask[:, None], other=0.0)
++        w_tile = tl.load(w_ptrs)
++        acc = tl.dot(x_tile, w_tile, acc)
++        x_ptrs += BLOCK_K
++        w_ptrs += BLOCK_K
++
++    # fp32 partial -> workspace slice pid_k, rows < M only (the reducer reads the same mask).
++    ws_tile = offs_m[:, None] * N + offs_n[None, :]
++    tl.store(ws_ptr + pid_k * (WS_M * N) + ws_tile, acc, mask=m_mask[:, None])
++    # All threads' partial stores precede the (single, scalar) gpu-scope acq_rel ticket.
++    tl.debug_barrier()
++    ticket = tl.atomic_add(cnt_ptr + pid_n, 1, sem="acq_rel", scope="gpu")
++    # Order the other threads' reloads after the ticket's acquire.
++    tl.debug_barrier()
++    if ticket == SPLIT_K - 1:
++        total = tl.load(ws_ptr + ws_tile, mask=m_mask[:, None], other=0.0, cache_modifier=".cg")
++        for s in tl.static_range(1, SPLIT_K):
++            total += tl.load(ws_ptr + s * (WS_M * N) + ws_tile, mask=m_mask[:, None], other=0.0,
++                             cache_modifier=".cg")
++        out_ptrs = out_ptr + offs_m[:, None] * stride_om + offs_n[None, :]
++        tl.store(out_ptrs, total.to(tl.bfloat16), mask=m_mask[:, None])
++        # Self-reset so the next launch / graph replay starts from 0.
++        tl.atomic_xchg(cnt_ptr + pid_n, 0, sem="relaxed", scope="gpu")
++
++
++def _bf16_x_ok(x, max_m, k):
++    """x is a bf16 [1..max_m, k] activation with unit inner stride (shapes only)."""
++    return (x.dim() == 2 and x.dtype == torch.bfloat16 and x.stride(1) == 1
++            and 1 <= x.shape[0] <= max_m and x.shape[1] == k)
++
++
++def _bf16_w_ok(w, n, k):
++    """w is the problem's bf16 [n, k] row-major weight (shapes only)."""
++    return w.dim() == 2 and w.dtype == torch.bfloat16 and tuple(w.shape) == (n, k) and w.stride(1) == 1
++
++
++# (1) pooler, T <= 16
++POOLER_N = 4096
++POOLER_K = 8192
++POOLER_MAX_M = 16
++POOLER_BLOCK_N = 64
++POOLER_BLOCK_K = 256  # 16 K-steps per 4096 K-slice
++POOLER_SPLIT_K = 2
++POOLER_NUM_WARPS = 4
++POOLER_NUM_STAGES = 4
++
++
++def _pooler_shape_ok(x, w):
++    return _bf16_x_ok(x, POOLER_MAX_M, POOLER_K) and _bf16_w_ok(w, POOLER_N, POOLER_K)
++
++
++def _pooler_forward(x, w, ws, cnt):
++    """x bf16 [m <= 16, 8192] @ w.T -> bf16 [m, 4096], one launch. Branches only on shapes."""
++    m, k = x.shape
++    out = torch.empty((m, POOLER_N), dtype=torch.bfloat16, device=x.device)
++    grid = (POOLER_N // POOLER_BLOCK_N, POOLER_SPLIT_K)
++    _bf16_splitk_kernel[grid](
++        x, w, out, ws, cnt,
++        m,
++        x.stride(0), w.stride(0), out.stride(0),
++        N=POOLER_N, WS_M=POOLER_MAX_M, K_SLICE=k // POOLER_SPLIT_K, SPLIT_K=POOLER_SPLIT_K,
++        BLOCK_M=16, BLOCK_N=POOLER_BLOCK_N, BLOCK_K=POOLER_BLOCK_K,
++        num_warps=POOLER_NUM_WARPS, num_stages=POOLER_NUM_STAGES,
++    )
++    return out
++
++
++# (2) qkv_gate, 1 <= T <= 16
++QKV_N = 2304
++QKV_K = 8192
++QKV_MAX_M = 16
++QKV_BLOCK_N = 64
++QKV_BLOCK_K = 128
++QKV_SPLIT_K = 4
++QKV_NUM_WARPS = 4
++QKV_NUM_STAGES = 4
++
++
++@triton.jit(do_not_specialize=["M"])
++def _qkv_splitk_sem_kernel(
++    x_ptr, w_ptr, ws_ptr, cnt_ptr, out_ptr,
++    M,
++    stride_xm, stride_wn, stride_ws_s, stride_ws_m, stride_om,
++    K_SLICE: tl.constexpr, SPLIT_K: tl.constexpr,
++    BLOCK_M: tl.constexpr, BLOCK_N: tl.constexpr, BLOCK_K: tl.constexpr,
++):
++    """out[M, N] = x[M, K] @ w[N, K]^T in one launch, split-K with a ticket-semaphore epilogue.
++
++    Grid (N // BLOCK_N, SPLIT_K). Program (pid_n, pid_k) streams w rows [pid_n*BLOCK_N, +BLOCK_N)
++    over K [pid_k*K_SLICE, +K_SLICE) with one M-block (M <= BLOCK_M, rows >= M masked), stores its
++    fp32 partial to ws[pid_k, :M, n-tile], then draws one ticket on cnt[pid_n]. The program that
++    draws ticket SPLIT_K-1 (all partials of this n-tile are written by then) reloads the SPLIT_K
++    partials (.cg, bypassing L1), sums them in fixed order 0..SPLIT_K-1, stores bf16 once and
++    resets cnt[pid_n] to 0 for the next launch. No program waits on another, so it cannot
++    deadlock whether or not the CTAs are co-resident.
++    """
++    pid_n = tl.program_id(0)
++    pid_k = tl.program_id(1)
++    k_start = pid_k * K_SLICE
++
++    offs_n = pid_n * BLOCK_N + tl.arange(0, BLOCK_N)
++    offs_k = k_start + tl.arange(0, BLOCK_K)
++    offs_m = tl.arange(0, BLOCK_M)
++    m_mask = offs_m < M
++    # Weight tiles read directly as [BLOCK_K, BLOCK_N] from the row-major [N, K] weight (K
++    # contiguous), i.e. w.T for this tile; no repack.
++    w_ptrs = w_ptr + offs_k[:, None] + offs_n[None, :] * stride_wn
++    x_ptrs = x_ptr + offs_m[:, None] * stride_xm + offs_k[None, :]
++    acc = tl.zeros((BLOCK_M, BLOCK_N), dtype=tl.float32)
++    for kk in range(0, K_SLICE // BLOCK_K):
++        x_tile = tl.load(x_ptrs, mask=m_mask[:, None], other=0.0)
++        w_tile = tl.load(w_ptrs)
++        acc = tl.dot(x_tile, w_tile, acc)
++        x_ptrs += BLOCK_K
++        w_ptrs += BLOCK_K
++
++    # fp32 partial for rows < M only; the reducer reads exactly the same (masked) rows, so every
++    # value it reads was written in this launch and nothing from an earlier call can reach out.
++    tile_off = offs_m[:, None] * stride_ws_m + offs_n[None, :]
++    tl.store(ws_ptr + pid_k * stride_ws_s + tile_off, acc, mask=m_mask[:, None])
++    # All threads' partial stores precede the (single, scalar) release atomic below.
++    tl.debug_barrier()
++    ticket = tl.atomic_add(cnt_ptr + pid_n, 1, sem="acq_rel", scope="gpu")
++    # The acquire done by the atomic's issuing thread is ordered before every thread's reloads.
++    tl.debug_barrier()
++    if ticket == SPLIT_K - 1:
++        total = tl.load(ws_ptr + tile_off, mask=m_mask[:, None], other=0.0, cache_modifier=".cg")
++        for s in tl.static_range(1, SPLIT_K):
++            part = tl.load(ws_ptr + s * stride_ws_s + tile_off, mask=m_mask[:, None], other=0.0,
++                           cache_modifier=".cg")
++            total += part
++        out_ptrs = out_ptr + offs_m[:, None] * stride_om + offs_n[None, :]
++        tl.store(out_ptrs, total.to(tl.bfloat16), mask=m_mask[:, None])
++        # Reset for the next launch (all SPLIT_K tickets of this n-tile are drawn).
++        tl.atomic_xchg(cnt_ptr + pid_n, 0, sem="relaxed", scope="gpu")
++
++
++def _qkv_shape_ok(x, w):
++    return _bf16_x_ok(x, QKV_MAX_M, QKV_K) and _bf16_w_ok(w, QKV_N, QKV_K)
++
++
++def _qkv_forward(x, w, ws, cnt):
++    """x bf16 [m, 8192] @ w[2304, 8192].T -> bf16 [m, 2304], m <= 16, ONE launch. Branches only on
++    shapes; ws (fp32 [SPLIT_K, 16, 2304]) and cnt (int32 [36], all zero between launches) come
++    from prepare()."""
++    m, k = x.shape
++    n = w.shape[0]
++    out = torch.empty((m, n), dtype=torch.bfloat16, device=x.device)
++    grid = (n // QKV_BLOCK_N, QKV_SPLIT_K)
++    _qkv_splitk_sem_kernel[grid](
++        x, w, ws, cnt, out,
++        m,
++        x.stride(0), w.stride(0), ws.stride(0), ws.stride(1), out.stride(0),
++        K_SLICE=k // QKV_SPLIT_K, SPLIT_K=QKV_SPLIT_K,
++        BLOCK_M=16, BLOCK_N=QKV_BLOCK_N, BLOCK_K=QKV_BLOCK_K,
++        num_warps=QKV_NUM_WARPS, num_stages=QKV_NUM_STAGES,
++    )
++    return out
++
++
++# (3) unpooler slice (rows 0-1023 of the [8192, 4096] weight, row stride 4096), T <= 8
++UNPOOL_N = 1024
++UNPOOL_K = 4096
++UNPOOL_MAX_M = 16    # one BLOCK_M=16 tile; rows >= m masked
++UNPOOL_BLOCK_N = 64
++UNPOOL_BLOCK_K = 128
++UNPOOL_SPLIT_K = 8   # K-slice 512, 4 K-steps
++UNPOOL_NUM_WARPS = 4
++UNPOOL_NUM_STAGES = 3
++
++
++def _unpool_shape_ok(x, w):
++    """x bf16 [1..16, 4096]; w the leading >= 1024 rows of a bf16 row-major [*, 4096] weight."""
++    return (_bf16_x_ok(x, UNPOOL_MAX_M, UNPOOL_K)
++            and w.dim() == 2 and w.dtype == torch.bfloat16 and w.shape[0] >= UNPOOL_N
++            and w.shape[1] == UNPOOL_K and w.stride(1) == 1)
++
++
++def _unpool_forward(x, w, ws, cnt):
++    """x bf16 [m <= 16, 4096] @ w[:1024].T -> bf16 [m, 1024], one launch, w read in place
++    (stride_wn = w.stride(0) = 4096, no slice copy). Branches only on shapes."""
++    m, k = x.shape
++    out = torch.empty((m, UNPOOL_N), dtype=torch.bfloat16, device=x.device)
++    grid = (UNPOOL_N // UNPOOL_BLOCK_N, UNPOOL_SPLIT_K)
++    _bf16_splitk_kernel[grid](
++        x, w, out, ws, cnt,
++        m,
++        x.stride(0), w.stride(0), out.stride(0),
++        N=UNPOOL_N, WS_M=UNPOOL_MAX_M, K_SLICE=k // UNPOOL_SPLIT_K, SPLIT_K=UNPOOL_SPLIT_K,
++        BLOCK_M=UNPOOL_MAX_M, BLOCK_N=UNPOOL_BLOCK_N, BLOCK_K=UNPOOL_BLOCK_K,
++        num_warps=UNPOOL_NUM_WARPS, num_stages=UNPOOL_NUM_STAGES,
++    )
++    return out
++
++
++# (4) o, T <= 16: full K, no reduce
++O_SKINNY_MAX_M = 16
++O_N = 8192
++O_K = 1024
++O_BLOCK_N = 64    # 8192 / 64 = 128 programs: one wave on 132 SMs
++O_BLOCK_K = 256   # 1024 / 256 = 4 K steps per program, all covered by the 4-stage pipeline
++O_NUM_WARPS = 4
++O_NUM_STAGES = 4  # 4 x (64 x 256 + BLOCK_M x 256) x 2 B: 160 KB at BLOCK_M 16
++
++
++@triton.jit(do_not_specialize=["M"])
++def _pooler_skinny_kernel(
++    x_ptr, w_ptr, out_ptr,
++    M,
++    stride_xm, stride_wn, stride_om,
++    K: tl.constexpr, BLOCK_M: tl.constexpr, BLOCK_N: tl.constexpr, BLOCK_K: tl.constexpr,
++):
++    """out[:M, n0:n0+BLOCK_N] = x[:M, :K] @ w[n0:n0+BLOCK_N, :K].T for program n0 = pid * BLOCK_N.
++
++    One program owns BLOCK_N rows of the row-major [N, K] weight and walks the whole K in
++    BLOCK_K steps, so each weight byte is read once and there is no split-K reduce. Rows of x
++    at or past M load as zero and are not stored, so M need not fill BLOCK_M. The dot is bf16 x
++    bf16 with an fp32 accumulator; the only bf16 rounding is at the store."""
++    pid = tl.program_id(0)
++    offs_m = tl.arange(0, BLOCK_M)
++    offs_n = pid * BLOCK_N + tl.arange(0, BLOCK_N)
++    offs_k = tl.arange(0, BLOCK_K)
++    row_ok = offs_m < M
++
++    x_ptrs = x_ptr + offs_m[:, None] * stride_xm + offs_k[None, :]   # [BLOCK_M, BLOCK_K]
++    w_ptrs = w_ptr + offs_n[:, None] * stride_wn + offs_k[None, :]   # [BLOCK_N, BLOCK_K], as stored
++    acc = tl.zeros((BLOCK_M, BLOCK_N), dtype=tl.float32)
++    for _ in range(0, K, BLOCK_K):
++        x_tile = tl.load(x_ptrs, mask=row_ok[:, None], other=0.0)
++        w_tile = tl.load(w_ptrs)
++        acc = tl.dot(x_tile, tl.trans(w_tile), acc)
++        x_ptrs += BLOCK_K
++        w_ptrs += BLOCK_K
++
++    out_ptrs = out_ptr + offs_m[:, None] * stride_om + offs_n[None, :]
++    tl.store(out_ptrs, acc.to(tl.bfloat16), mask=row_ok[:, None])
++
++
++def _o_shape_ok(x, w):
++    return _bf16_x_ok(x, O_SKINNY_MAX_M, O_K) and _bf16_w_ok(w, O_N, O_K)
++
++
++def _o_skinny_gemm(x, w):
++    """x [m, 1024] bf16 @ w [8192, 1024] bf16 .T -> [m, 8192] bf16, m <= 16."""
++    m = x.shape[0]
++    out = torch.empty((m, O_N), dtype=torch.bfloat16, device=x.device)
++    _pooler_skinny_kernel[(O_N // O_BLOCK_N,)](
++        x, w, out,
++        m,
++        x.stride(0), w.stride(0), out.stride(0),
++        K=O_K, BLOCK_M=16, BLOCK_N=O_BLOCK_N, BLOCK_K=O_BLOCK_K,
++        num_warps=O_NUM_WARPS, num_stages=O_NUM_STAGES,
++    )
++    return out
++
++
++_FALLBACK_SEEN = set()
++
++
++def _fallback(layer, x):
++    """A routed T whose tensors miss the Triton path's shape preconditions: say so once per
++    (layer, shape, stride) in the run log, then take cuBLAS. Shapes only, never values."""
++    key = (layer, tuple(x.shape), tuple(x.stride()), x.dtype)
++    if key not in _FALLBACK_SEEN:
++        _FALLBACK_SEEN.add(key)
++        print(f"[small-t-gemm] {layer}: x {tuple(x.shape)} stride {tuple(x.stride())} {x.dtype} "
++              f"misses the Triton preconditions; using _bf16_gemm_dispatch_impl", flush=True)
++
++
++def _prepare_small_t_gemms(state):
++    """Allocate each Triton path's own split-K workspace and ticket counters, warm every routed
++    specialization on synthetic bf16 inputs (T 1..16 for qkv / o / pooler, 1..8 for the
++    unpooler slice), synchronise and zero every counter."""
++    dense = state["dense"]
++    device = dense["qkv_gate"].device
++    small = {
++        "pooler_ws": torch.empty((POOLER_SPLIT_K, POOLER_MAX_M, POOLER_N), dtype=torch.float32, device=device),
++        "pooler_cnt": torch.zeros(POOLER_N // POOLER_BLOCK_N, dtype=torch.int32, device=device),
++        "qkv_ws": torch.empty((QKV_SPLIT_K, QKV_MAX_M, QKV_N), dtype=torch.float32, device=device),
++        "qkv_cnt": torch.zeros(QKV_N // QKV_BLOCK_N, dtype=torch.int32, device=device),
++        "unpool_ws": torch.empty((UNPOOL_SPLIT_K, UNPOOL_MAX_M, UNPOOL_N), dtype=torch.float32, device=device),
++        "unpool_cnt": torch.zeros(UNPOOL_N // UNPOOL_BLOCK_N, dtype=torch.int32, device=device),
++    }
++    state["small_t"] = small
++    unpool_w = dense["unpooler"][:UNPOOL_SLICE]
++    for m in range(1, SMALL_T_TRITON_GEMM + 1):
++        x = torch.randn((m, QKV_K), device=device, dtype=torch.float32).to(torch.bfloat16)
++        if _qkv_shape_ok(x, dense["qkv_gate"]):
++            _qkv_forward(x, dense["qkv_gate"], small["qkv_ws"], small["qkv_cnt"])
++        if _pooler_shape_ok(x, dense["pooler"]):
++            _pooler_forward(x, dense["pooler"], small["pooler_ws"], small["pooler_cnt"])
++        xo = torch.randn((m, O_K), device=device, dtype=torch.float32).to(torch.bfloat16)
++        if _o_shape_ok(xo, dense["o"]):
++            _o_skinny_gemm(xo, dense["o"])
++        if m <= SLICED_UNPOOL_MAX_TOKENS:
++            xu = torch.randn((m, UNPOOL_K), device=device, dtype=torch.float32).to(torch.bfloat16)
++            if _unpool_shape_ok(xu, unpool_w):
++                _unpool_forward(xu, unpool_w, small["unpool_ws"], small["unpool_cnt"])
++    torch.cuda.synchronize()
++    # The split-K kernels self-reset, but re-zero every counter after the warm-ups regardless.
++    for name in ("pooler_cnt", "qkv_cnt", "unpool_cnt"):
++        small[name].zero_()
++    torch.cuda.synchronize()
++
++
+ def prepare(weights):
+     device = weights["qkv_gate"].device
+     router = weights["router"]
+@@ -274,6 +623,7 @@ def prepare(weights):
+         "_modules": (pre_ffn, next_pre_attn, post_attn, post_ffn, post_expert),
+     }
+     del freqs
++    _prepare_small_t_gemms(state)
+     torch.cuda.synchronize()
+     return state
+ 
+@@ -325,8 +675,16 @@ def kernel_fn(data, state):
+     batch, length, tokens = cfg["batch"], cfg["q_len"], cfg["tokens"]
+     hq, hkv, d = cfg["num_q_heads"], cfg["num_kv_heads"], cfg["head_dim"]
+     dense = state["dense"]
++    small = state["small_t"]
++    small_t = 1 <= tokens <= SMALL_T_TRITON_GEMM  # routing by token count only
+     # Attention: MuseSpark1xAttention.forward.
+-    qkv = _gemm(data["attn_input"], dense["qkv_gate"])
++    x_attn = data["attn_input"]
++    if small_t and _qkv_shape_ok(x_attn, dense["qkv_gate"]):
++        qkv = _qkv_forward(x_attn, dense["qkv_gate"], small["qkv_ws"], small["qkv_cnt"])
++    else:
++        if small_t:
++            _fallback("qkv_gate", x_attn)
++        qkv = _gemm(x_attn, dense["qkv_gate"])
+     if cfg["rope_theta"]:
+         q, k = state["qk_norm"](qkv, data["positions"], state["cos_sin"])
+     else:
+@@ -397,7 +755,12 @@ def kernel_fn(data, state):
+         a[:, :, 1] = o[:, :, 1, :, d:]
+         out = attn
+     o = state["o_norm_gate"](out.reshape(tokens, hq * d).to(torch.bfloat16), gate)
+-    attn_output = _gemm(o, dense["o"])  # all-reduce: identity
++    if small_t and _o_shape_ok(o, dense["o"]):
++        attn_output = _o_skinny_gemm(o, dense["o"])  # all-reduce: identity
++    else:
++        if small_t:
++            _fallback("o", o)
++        attn_output = _gemm(o, dense["o"])  # all-reduce: identity
+ 
+     # Post-attention boundary, router and MoE block: MuseSpark1xMoE._forward_experts.
+     split_router = tokens > ROUTER_FP32_MAX_TOKENS
+@@ -406,7 +769,12 @@ def kernel_fn(data, state):
+     # The router and routing run on a side stream, overlapping the pooler on the main one.
+     main_stream, side_stream = torch.cuda.current_stream(), state["side_stream"]
+     side_stream.wait_stream(main_stream)
+-    expert_input = _gemm(ffn_input, dense["pooler"])
++    if small_t and _pooler_shape_ok(ffn_input, dense["pooler"]):
++        expert_input = _pooler_forward(ffn_input, dense["pooler"], small["pooler_ws"], small["pooler_cnt"])
++    else:
++        if small_t:
++            _fallback("pooler", ffn_input)
++        expert_input = _gemm(ffn_input, dense["pooler"])
+     with torch.cuda.stream(side_stream):
+         if split_router:
+             logits = torch.mm(ffn_input, state["router_hi_t"], out_dtype=torch.float32)
+@@ -423,7 +791,12 @@ def kernel_fn(data, state):
+     # all-reduce: identity
+     expert_output = _experts(state["pre_expert_norm"](expert_input), topk_weights, local_ids, state)
+     if tokens <= SLICED_UNPOOL_MAX_TOKENS:
+-        unpooled = _gemm(expert_output, dense["unpooler"][:UNPOOL_SLICE])
++        unpool_w = dense["unpooler"][:UNPOOL_SLICE]
++        if _unpool_shape_ok(expert_output, unpool_w):
++            unpooled = _unpool_forward(expert_output, unpool_w, small["unpool_ws"], small["unpool_cnt"])
++        else:
++            _fallback("unpooler", expert_output)
++            unpooled = _gemm(expert_output, unpool_w)
+         ffn_output = F.pad(unpooled, (0, HIDDEN - UNPOOL_SLICE))  # all-gather: identity
+     else:
+         ffn_output = _gemm(expert_output, dense["unpooler"])
