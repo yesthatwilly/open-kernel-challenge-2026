@@ -44,10 +44,10 @@ priority: 3
 kind: primary
 controls_for: null
 review: proceed
-status: running
+status: done
 review_at: 2026-10-24T071442Z
 review_companions: [moe-align-single-kernel-small-t-control-capacity-256]
-stage: dispatched
+stage: harvested
 claimed_at: 2026-10-24T071443Z
 base_sha: 08e8fcb6d37d8a5b6a21eda279552962cc244ea8
 base_blob: d3cbff5d9d9e6de23eb2f6770a99cd93eea093b7
@@ -64,6 +64,13 @@ attempt_file: 2026-10-24T071925Z-check-moe-align-single-kernel-small-t.md
 prepared_at: 2026-10-24T071925Z
 job: 0a0af8669ffe4cb0
 dispatched_at: 2026-10-24T071935Z
+outcome: neutral
+verdict_detail: within-ci
+speedup: 1.0431152427155919
+speedup_ci: [1.027468514074858, 1.0587619713563257]
+harvested_at: 2026-10-24T083410Z
+best_at_harvest: 1.0620874943175542
+promotion: null
 ---
 
 # moe-align-single-kernel-small-t
@@ -157,3 +164,35 @@ OK with warnings: /home/user/git/musespark/.worktrees/muse_decode_layer/moe-alig
 ```
 
 Every warning is in prepare()/_align_self_check (untimed). `py_compile` OK; __pycache__ removed.
+
+## Result
+
+- job `0a0af8669ffe4cb0` (check), status done, passed True, tests 13/13
+- speedup 1.0431x, 95% CI [1.0275, 1.0588], score 21685.33166202374 µs vs SGLang 22620.3 µs
+- best at harvest: {"speedup": 1.0620874943175542, "ci": [1.046156181902791, 1.0780188067323175], "job": "0730135cdcac43b7"}; base result: muse_decode_layer/hypotheses/done/neutral/expert-id-map-single-kernel.result.json
+- **outcome: neutral** (within-ci)
+- files: `muse_decode_layer/hypotheses/done/neutral/moe-align-single-kernel-small-t.result.json`, `muse_decode_layer/hypotheses/done/neutral/moe-align-single-kernel-small-t.patch`; branch `hyp/muse_decode_layer/moe-align-single-kernel-small-t`
+
+## Attribution
+
+| shape | w | base µs | hyp µs | delta | verdict |
+|---|---|---|---|---|---|
+| batch=1 ctx=80000 dist=soft layer=sliding load=decode_1 page=1 repeats=60 | 46 | 167.64 | 166.41 | 1.0022 | flat |
+| batch=1 ctx=80000 dist=soft layer=full load=decode_1 page=1 repeats=60 | 16 | 177.25 | 177.54 | 1.0186 | flat |
+| batch=16 ctx=80000 dist=soft layer=sliding load=decode_16 page=1 spread=agentic | 46 | 262.83 | 254.62 | 1.014 | flat |
+| batch=16 ctx=80000 dist=soft layer=full load=decode_16 page=1 spread=agentic | 16 | 430.18 | 423.0 | 1.013 | flat |
+| batch=32 ctx=80000 dist=soft layer=sliding load=decode_32 page=1 spread=agentic | 46 | 261.09 | 251.11 | 1.0117 | flat |
+| batch=32 ctx=80000 dist=soft layer=full load=decode_32 page=1 spread=agentic | 16 | 619.04 | 616.48 | 1.0038 | flat |
+| batch=1 ctx=80000 dist=soft layer=sliding load=verify_1 page=1 q_len=8 | 46 | 226.89 | 224.66 | 1.0055 | flat |
+| batch=1 ctx=80000 dist=soft layer=full load=verify_1 page=1 q_len=8 | 16 | 240.83 | 235.28 | 1.0131 | flat |
+| batch=16 ctx=80000 dist=soft layer=sliding load=verify_16 page=1 q_len=8 spread=agentic | 46 | 499.6 | 499.4 | 0.9986 | flat |
+| batch=16 ctx=80000 dist=soft layer=full load=verify_16 page=1 q_len=8 spread=agentic | 16 | 688.53 | 688.53 | 1.0 | flat |
+| batch=32 ctx=80000 dist=soft layer=sliding load=verify_32 page=1 q_len=8 spread=agentic | 46 | 671.67 | 724.82 | 0.9967 | flat |
+| batch=32 ctx=80000 dist=soft layer=full load=verify_32 page=1 q_len=8 spread=agentic | 16 | 1044.17 | 1090.94 | 1.0007 | flat |
+
+no shape moved outside noise. Expected hit: 2/6. Noise ±1.5%.
+
+## Follow-ups
+
+- within-ci: the change is not proven either way; a stacked hypothesis (`depends_on: moe-align-single-kernel-small-t`) that adds a further change in the same area is the only way to learn more (identical code is never re-run).
+

@@ -1,0 +1,19 @@
+[moe-align-single-kernel-small-t] self-check vs moe_align_block_size: 60 cases, 0 mismatches, 18 order-only differences
+[moe-align-single-kernel-small-t]   T=16 local_start=0 skewed: (info) within-expert order differs from SGLang's
+[moe-align-single-kernel-small-t]   T=16 local_start=0 all-one-expert: (info) within-expert order differs from SGLang's
+[moe-align-single-kernel-small-t]   T=16 local_start=0 all-local: (info) within-expert order differs from SGLang's
+[moe-align-single-kernel-small-t]   T=16 local_start=32 skewed: (info) within-expert order differs from SGLang's
+[moe-align-single-kernel-small-t]   T=16 local_start=32 all-one-expert: (info) within-expert order differs from SGLang's
+[moe-align-single-kernel-small-t]   T=16 local_start=32 all-local: (info) within-expert order differs from SGLang's
+[moe-align-single-kernel-small-t]   T=16 local_start=224 skewed: (info) within-expert order differs from SGLang's
+[moe-align-single-kernel-small-t]   T=16 local_start=224 all-one-expert: (info) within-expert order differs from SGLang's
+[moe-align-single-kernel-small-t]   T=16 local_start=224 all-local: (info) within-expert order differs from SGLang's
+[moe-align-single-kernel-small-t]   T=32 local_start=0 random: (info) within-expert order differs from SGLang's
+[moe-align-single-kernel-small-t]   T=32 local_start=0 skewed: (info) within-expert order differs from SGLang's
+[moe-align-single-kernel-small-t]   T=32 local_start=0 all-local: (info) within-expert order differs from SGLang's
+[moe-align-single-kernel-small-t]   T=32 local_start=32 random: (info) within-expert order differs from SGLang's
+[moe-align-single-kernel-small-t]   T=32 local_start=32 skewed: (info) within-expert order differs from SGLang's
+[moe-align-single-kernel-small-t]   T=32 local_start=32 all-local: (info) within-expert order differs from SGLang's
+[moe-align-single-kernel-small-t]   T=32 local_start=224 skewed: (info) within-expert order differs from SGLang's
+[moe-align-single-kernel-small-t]   T=32 local_start=224 all-one-expert: (info) within-expert order differs from SGLang's
+[moe-align-single-kernel-small-t]   T=32 local_start=224 all-local: (info) within-expert order differs from SGLang's
