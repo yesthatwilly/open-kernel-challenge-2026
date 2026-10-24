@@ -89,13 +89,15 @@ base_sha: f19e0a9125db56de07444e6a99a642c35003206d
 base_blob: 3f76eb805990314f5f7e6de6e9e184464edd6019
 branch: hyp/muse_bf16_proj/bf16-m32-swapab-wgmma-triton
 worktree: .worktrees/muse_bf16_proj/bf16-m32-swapab-wgmma-triton
-mode: null
+mode: check
 implemented_at: 2026-10-24T140833Z
 impl_commit: a2d2ac55d2c58a0bb3c4fe22aca6cd0a865348d2
 submission_sha256: 25743a32c3f31821799b83a7f01c26ffbd2b4dc176506448656f2f22ecafeddc
 norm_sha256: a5967dba7107295104e4765ff04ecf29a50657f2390c1346f64e9da131bfc0a9
 submission_blob: a8bb42ac483318e9fbc84bc7826a27b7a704d1fb
 lint_warnings: 0
+attempt_file: 2026-10-24T140833Z-check-bf16-m32-swapab-wgmma-triton.md
+prepared_at: 2026-10-24T140833Z
 ---
 
 # bf16-m32-swapab-wgmma-triton
