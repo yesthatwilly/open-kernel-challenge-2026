@@ -51,7 +51,7 @@ review: proceed
 status: running
 review_at: 2026-10-24T053108Z
 review_companions: null
-stage: implemented
+stage: dispatched
 claimed_at: 2026-10-24T053109Z
 base_sha: 85d607280348efbd3eef09246edcdfa7132f09fe
 base_blob: e4931f050c7fb99835fe116d25bb454a5ea731e9
@@ -66,6 +66,8 @@ submission_blob: 01e9a2100d168ca5955d1465bb3308871c7d8847
 lint_warnings: 1
 attempt_file: 2026-10-24T053303Z-check-fa3-contiguous-kv-gather.md
 prepared_at: 2026-10-24T053303Z
+job: 75bbf278dd9e430e
+dispatched_at: 2026-10-24T053311Z
 ---
 
 # fa3-contiguous-kv-gather
