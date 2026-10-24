@@ -56,7 +56,7 @@ review: proceed
 status: running
 review_at: 2026-10-24T092219Z
 review_companions: null
-stage: implemented
+stage: dispatched
 claimed_at: 2026-10-24T092224Z
 base_sha: 33ef80e4b77343ccd0fc4ec2b90a87eeb044bc95
 base_blob: 11fbc1957daf7294cd2810ff82a0aad2f25644bd
@@ -71,6 +71,8 @@ submission_blob: b81d47abe0c2e53a3ecc180884ae8d9671ba4e14
 lint_warnings: 1
 attempt_file: 2026-10-24T092454Z-check-post-expert-norm-triton-small-m.md
 prepared_at: 2026-10-24T092454Z
+job: bacd1f502f4e46fa
+dispatched_at: 2026-10-24T092502Z
 ---
 
 # post-expert-norm-triton-small-m
