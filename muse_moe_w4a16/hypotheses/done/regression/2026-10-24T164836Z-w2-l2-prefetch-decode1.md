@@ -48,10 +48,10 @@ priority: 2
 kind: primary
 controls_for: null
 review: proceed
-status: running
+status: done
 review_at: 2026-10-24T165124Z
 review_companions: null
-stage: dispatched
+stage: harvested
 claimed_at: 2026-10-24T165146Z
 base_sha: 6d0eb9a85a363fc7597458f944be4ea123bab837
 base_blob: d9a9375ef4721ab9b28cc9d6364c92e67c7ccc59
@@ -68,6 +68,13 @@ attempt_file: 2026-10-24T165402Z-check-w2-l2-prefetch-decode1.md
 prepared_at: 2026-10-24T165403Z
 job: ac6897f284934dad
 dispatched_at: 2026-10-24T165448Z
+outcome: regression
+verdict_detail: regression
+speedup: 1.2615310556954658
+speedup_ci: [1.2426080898600338, 1.2804540215308977]
+harvested_at: 2026-10-24T173234Z
+best_at_harvest: 1.3075759186466844
+promotion: null
 ---
 
 # w2-l2-prefetch-decode1
@@ -149,3 +156,29 @@ OK with warnings: muse_moe_w4a16/submission.py
 ```
 
 All warnings are pre-existing prepare()-time syncs (none in kernel_fn's call graph). `python3 -I -m py_compile` OK; __pycache__ removed.
+
+## Result
+
+- job `ac6897f284934dad` (check), status done, passed True, tests 5/5
+- speedup 1.2615x, 95% CI [1.2426, 1.2805], score 10660.458923530832 µs vs SGLang 13448.5 µs
+- best at harvest: {"speedup": 1.3075759186466844, "ci": [1.287962279866984, 1.3271895574263846], "job": "3cabc739f1af493e"}; base result: muse_moe_w4a16/hypotheses/done/gain/triton-map-align-on-block-m-restack.result.json
+- **outcome: regression** (regression)
+- files: `muse_moe_w4a16/hypotheses/done/regression/w2-l2-prefetch-decode1.result.json`, `muse_moe_w4a16/hypotheses/done/regression/w2-l2-prefetch-decode1.patch`; branch `hyp/muse_moe_w4a16/w2-l2-prefetch-decode1`
+
+## Attribution
+
+| shape | w | base µs | hyp µs | delta | verdict |
+|---|---|---|---|---|---|
+| bs=1 load=decode_1 sharding=ep8 | 60 | 48.37 | 60.88 | 0.7886 | lost |
+| bs=16 load=decode_16 sharding=ep8 | 60 | 147.87 | 153.81 | 0.9971 | flat |
+| bs=32 load=decode_32 sharding=ep8 | 60 | 200.73 | 196.65 | 0.9994 | flat |
+| bs=8 load=verify_1 sharding=ep8 | 60 | 107.77 | 108.09 | 0.9982 | flat |
+| bs=128 load=verify_16 sharding=ep8 | 60 | 333.39 | 342.24 | 1.0044 | flat |
+| bs=256 load=verify_32 sharding=ep8 | 60 | 469.91 | 469.95 | 1.0045 | flat |
+
+lost on decode_1 decode_1. Expected hit: 3/4. Noise ±1.5%.
+
+## Follow-ups
+
+- record which shapes lost (Attribution) and do not retry this area in this form.
+

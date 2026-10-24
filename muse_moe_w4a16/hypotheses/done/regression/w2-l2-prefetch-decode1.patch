@@ -1,0 +1,121 @@
+diff --git a/muse_moe_w4a16/submission.py b/muse_moe_w4a16/submission.py
+index d9a9375..56c4644 100644
+--- a/muse_moe_w4a16/submission.py
++++ b/muse_moe_w4a16/submission.py
+@@ -22,6 +22,10 @@ Up to 32 tokens (hypothesis triton-map-align-small-m-port), one single-program T
+ experts (capacity M*8 + 32*(block_size_m - 1), as the 32-expert align allocates; remote routes get
+ no bucket). Above 32 tokens the expert_map gather and moe_align_block_size(..., 32) run as before.
+ 
++At exactly one token (hypothesis w2-l2-prefetch-decode1), _l2_prefetch_w2_kernel reads that token's
++local experts' w2 codes and scales from DRAM into L2 (evict_last) right before the w2 Marlin call, inside
++the timed call; its XOR sink is never read.
++
+ Differs from SGLang: the expert all-reduce is not run."""
+ 
+ from typing import TypedDict
+@@ -82,6 +86,10 @@ SMALL_M_POST_NORM = 32
+ # Up to this many tokens _align_small_kernel does the expert_map gather and the align in one
+ # launch (hypothesis triton-map-align-small-m-port); above it, master's gather + moe_align_block_size.
+ ALIGN_FUSED_MAX_TOKENS = 32
++# Hypothesis w2-l2-prefetch-decode1: at exactly this many tokens, _l2_prefetch_w2_kernel reads the
++# token's local experts' w2 into L2 (evict_last) right before the w2 Marlin call.
++L2_PREFETCH_W2_TOKENS = 1
++L2_PREFETCH_BLOCK = 2048  # int32 words per chunk
+ 
+ 
+ @triton.jit
+@@ -107,6 +115,71 @@ def _post_norm_combine_kernel(y_ptr, ids_ptr, tw_ptr, w_ptr, out_ptr, H, eps,
+     tl.store(out_ptr + t.to(tl.int64) * H + offs, acc.to(tl.bfloat16), mask=mask)
+ 
+ 
++@triton.jit(do_not_specialize=["local_start", "local_count"])
++def _l2_prefetch_w2_kernel(topk_ids_ptr, w2_ptr, w2s_ptr, sink_ptr, local_start, local_count,
++                           w2_expert_words, w2s_expert_words, TOP_K_C: tl.constexpr,
++                           BLOCK: tl.constexpr):
++    """Hypothesis w2-l2-prefetch-decode1: read this token's local experts' w2 codes and scales
++    (int32 views of the prepare()-time Marlin banks) with evict_last, so the w2 Marlin call that
++    follows hits L2. One token (M == 1). Each program takes a grid-strided share of BLOCK-word
++    chunks of each distinct local expert's two slabs; remote slots and repeats of an earlier
++    slot's expert are skipped. The XOR of the words read goes to sink[pid], which nothing reads:
++    it only keeps the loads alive."""
++    pid = tl.program_id(0)
++    nprog = tl.num_programs(0)
++    offs = tl.arange(0, BLOCK)
++    acc = tl.zeros([BLOCK], dtype=tl.int32)
++    n_w = tl.cdiv(w2_expert_words, BLOCK)
++    n_s = tl.cdiv(w2s_expert_words, BLOCK)
++    for s in tl.static_range(TOP_K_C):
++        e = tl.load(topk_ids_ptr + s).to(tl.int32) - local_start
++        take = (e >= 0) & (e < local_count)
++        for j in tl.static_range(s):
++            ej = tl.load(topk_ids_ptr + j).to(tl.int32) - local_start
++            take = take & (ej != e)
++        if take:
++            base_w = e.to(tl.int64) * w2_expert_words
++            for c in range(pid, n_w, nprog):
++                o = c.to(tl.int64) * BLOCK + offs
++                acc ^= tl.load(w2_ptr + base_w + o, mask=o < w2_expert_words, other=0,
++                               eviction_policy="evict_last")
++            base_s = e.to(tl.int64) * w2s_expert_words
++            for c in range(pid, n_s, nprog):
++                o = c.to(tl.int64) * BLOCK + offs
++                acc ^= tl.load(w2s_ptr + base_s + o, mask=o < w2s_expert_words, other=0,
++                               eviction_policy="evict_last")
++    tl.store(sink_ptr + pid, tl.xor_sum(acc, axis=0))
++
++
++def _l2_prefetch_w2(topk_ids, pf, local_start, local_count):
++    """Launch _l2_prefetch_w2_kernel on the current stream (M == 1 only). pf holds the bank's
++    int32 views, per-expert word counts, sink and grid, all built in prepare()."""
++    _l2_prefetch_w2_kernel[(pf["programs"],)](
++        topk_ids.contiguous(), pf["w2_words"], pf["w2s_words"], pf["sink"], local_start, local_count,
++        pf["w2_expert_words"], pf["w2s_expert_words"], TOP_K_C=TOP_K, BLOCK=L2_PREFETCH_BLOCK,
++        num_warps=4)
++
++
++def _l2_prefetch_state(bank, device):
++    """Untimed, prepare() only: int32 views of the stacked [count, ...] w2 code and scale banks."""
++    count = bank["count"]
++    views = {}
++    for key in ("w2", "w2_s"):
++        t = bank[key]
++        assert t.shape[0] == count and t.is_contiguous(), (key, t.shape)
++        expert_bytes = t[0].numel() * t.element_size()
++        assert expert_bytes % 4 == 0, (key, expert_bytes)
++        views[key] = (t.reshape(-1).view(torch.int32), expert_bytes // 4)
++    programs = 2 * torch.cuda.get_device_properties(device).multi_processor_count
++    return {
++        "w2_words": views["w2"][0], "w2_expert_words": views["w2"][1],
++        "w2s_words": views["w2_s"][0], "w2s_expert_words": views["w2_s"][1],
++        "programs": programs,
++        # Written by every launch, never read.
++        "sink": torch.empty((programs,), dtype=torch.int32, device=device),
++    }
++
++
+ @triton.jit(do_not_specialize=["local_start", "local_count", "n", "cap", "n_blocks"])
+ def _align_small_kernel(topk_ids_ptr, local_ids_ptr, sorted_ids_ptr, block_experts_ptr, n_padded_ptr,
+                         local_start, local_count, n, cap, n_blocks, BLOCK_N: tl.constexpr,
+@@ -318,6 +391,11 @@ def prepare(weights: Weights) -> dict:
+                              start, count, _block_size_m(tokens, count))
+             torch.cuda.synchronize()
+             _align_self_check(device, count)
++            # w2-l2-prefetch-decode1: build the int32 views once and compile the prefetch kernel
++            # on dummy ids (untimed; no input is seen).
++            banks[(start, count)]["l2_prefetch"] = _l2_prefetch_state(banks[(start, count)], device)
++            _l2_prefetch_w2(torch.full((1, TOP_K), start, dtype=torch.int32, device=device),
++                            banks[(start, count)]["l2_prefetch"], start, count)
+     torch.cuda.synchronize()
+     return {
+         "banks": banks,
+@@ -380,6 +458,10 @@ def kernel_fn(data: Inputs, state: dict) -> torch.Tensor:
+         sorted_ids, block_experts, n_padded, topk_weights, top_k=TOP_K,
+         size_m=num_tokens, size_n=gemm1_n, size_k=size_k, **common)
+     silu_and_mul(cache1.view(-1, gemm1_n), cache2, expert_ids=local_ids.view(-1), expert_step=1)
++    if num_tokens == L2_PREFETCH_W2_TOKENS and expert_map is not None:
++        # Hypothesis w2-l2-prefetch-decode1 (branch on shape only): warm L2 with this token's
++        # local experts' w2 right before the w2 Marlin call; the reads come from DRAM in this call.
++        _l2_prefetch_w2(data["topk_ids"], bank["l2_prefetch"], bank["start"], bank["count"])
+     y = moe_wna16_marlin_gemm(
+         cache2, cache3, bank["w2"], None, bank["w2_s"], bank["w2_gs"], None, None, None, ws,
+         sorted_ids, block_experts, n_padded, topk_weights, top_k=1,
