@@ -89,13 +89,15 @@ base_sha: 27b43dcd8b752ab9c2454f7e20fb949c059b9213
 base_blob: 1c0f5fa1bfc4e602b62e5e9edd9df6d5652b297b
 branch: hyp/muse_attention_decode/full-verify-cuda-streamk-splitkv
 worktree: .worktrees/muse_attention_decode/full-verify-cuda-streamk-splitkv
-mode: null
+mode: submit
 implemented_at: 2026-10-24T170811Z
 impl_commit: ee7dd2035bcffc84a11faafb7b5574466ee3bcae
 submission_sha256: 973a5b33afa15091df69a32c232dd5ebffb8e54a79635158d4daf0aa5aa1581f
 norm_sha256: 1eae68bc16e4eacbe1bdff87763fd906eddaf7be52ec2e0c078bd252377fcf8a
 submission_blob: 2b7e5dbf0fde0ae0163e5ecaefd87a5f0848e6b0
 lint_warnings: 1
+attempt_file: 2026-10-24T181703Z-submit-full-verify-cuda-streamk-splitkv.md
+prepared_at: 2026-10-24T181703Z
 ---
 
 # full-verify-cuda-streamk-splitkv
