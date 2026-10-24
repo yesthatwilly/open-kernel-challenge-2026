@@ -58,7 +58,7 @@ review: proceed
 status: running
 review_at: 2026-10-24T075347Z
 review_companions: [pooler-triton-splitk2-blockn64-semaphore-control-blockk256]
-stage: implemented
+stage: dispatched
 claimed_at: 2026-10-24T075347Z
 base_sha: 3fe0dcca6e3cc2a8200f9881dba77770f6234d3e
 base_blob: da55301de1e911aeab09878b0873809f544f436c
@@ -73,6 +73,8 @@ submission_blob: 66ba1a39e2aaa5cedb2ce3ddfb809f67f86b37f9
 lint_warnings: 0
 attempt_file: 2026-10-24T075600Z-check-pooler-triton-splitk2-blockn64-semaphore.md
 prepared_at: 2026-10-24T075600Z
+job: 08ec203e5717406e
+dispatched_at: 2026-10-24T075610Z
 ---
 
 # pooler-triton-splitk2-blockn64-semaphore
