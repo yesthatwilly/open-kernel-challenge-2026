@@ -24,6 +24,8 @@ from typing import TypedDict
 import types
 
 import torch
+import triton
+import triton.language as tl
 from sgl_kernel.scalar_type import scalar_types
 
 from sglang.kernels.ops.activation.activation import silu_and_mul
@@ -69,6 +71,32 @@ TOP_K = 8
 # MuseSpark1xFp4Experts' candidates, smallest first.
 BLOCK_SIZE_M_CANDIDATES = (8, 16, 32, 48, 64)
 POST_NORM_EPS = 1e-8
+# Below this many tokens kernel_fn combines with _post_norm_combine_kernel instead of SGLang's
+# fused_post_expert_norm_weighted_sum (hypothesis post-expert-norm-triton-small-m).
+SMALL_M_POST_NORM = 32
+
+
+@triton.jit
+def _post_norm_combine_kernel(y_ptr, ids_ptr, tw_ptr, w_ptr, out_ptr, H, eps,
+                              TOP_K_C: tl.constexpr, BLOCK_H: tl.constexpr):
+    """out[t] = sum over local slots s of g[t, s] * rmsnorm(y[t, s] * (1 + w)), fp32 math.
+
+    One program per token. Remote slots (local id -1) are skipped and never loaded: their y rows
+    are uninitialised memory. A token with no local slot stores zeros."""
+    t = tl.program_id(0)
+    offs = tl.arange(0, BLOCK_H)
+    mask = offs < H
+    nw = tl.load(w_ptr + offs, mask=mask, other=0.0).to(tl.float32) + 1.0
+    acc = tl.zeros([BLOCK_H], dtype=tl.float32)
+    for s in tl.static_range(TOP_K_C):
+        eid = tl.load(ids_ptr + t * TOP_K_C + s)
+        if eid >= 0:
+            g = tl.load(tw_ptr + t * TOP_K_C + s)
+            row = (t * TOP_K_C + s).to(tl.int64) * H
+            v = tl.load(y_ptr + row + offs, mask=mask, other=0.0).to(tl.float32) * nw
+            r = tl.rsqrt(tl.sum(v * v, axis=0) / H + eps)
+            acc += g * v * r
+    tl.store(out_ptr + t.to(tl.int64) * H + offs, acc.to(tl.bfloat16), mask=mask)
 
 
 def _marlin_layer(weights, start, count):
@@ -113,6 +141,8 @@ def prepare(weights: Weights) -> dict:
         "workspace": marlin_make_workspace(device, max_blocks_per_sm=4),
         # MuseSpark1xFp4Experts binds the effective (1 + w) weight of the post-expert norm.
         "norm_w": (weights["post_norm_w"].float() + 1.0).to(torch.bfloat16),
+        # The original BF16 weight for _post_norm_combine_kernel, which adds the 1 in fp32.
+        "post_norm_w": weights["post_norm_w"].contiguous(),
     }
 
 
@@ -162,6 +192,13 @@ def kernel_fn(data: Inputs, state: dict) -> torch.Tensor:
         cache2, cache3, bank["w2"], None, bank["w2_s"], bank["w2_gs"], None, None, None, ws,
         sorted_ids, block_experts, n_padded, topk_weights, top_k=1,
         size_m=num_tokens * TOP_K, size_n=size_k, size_k=size_n, **common).view(num_tokens, TOP_K, size_k)
+    if num_tokens < SMALL_M_POST_NORM:
+        y = y.contiguous()
+        out = torch.empty((num_tokens, size_k), device=x.device, dtype=torch.bfloat16)
+        _post_norm_combine_kernel[(num_tokens,)](
+            y, local_ids, topk_weights, state["post_norm_w"], out, size_k, POST_NORM_EPS,
+            TOP_K_C=TOP_K, BLOCK_H=triton.next_power_of_2(size_k), num_warps=8)
+        return out
     return fused_post_expert_norm_weighted_sum(
         y, topk_weights, norm_weight=state["norm_w"], eps=POST_NORM_EPS, weight_first=True,
         slot_expert_ids=local_ids)
