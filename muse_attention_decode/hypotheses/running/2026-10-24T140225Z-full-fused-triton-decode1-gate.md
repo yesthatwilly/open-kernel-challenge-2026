@@ -43,7 +43,7 @@ review: proceed
 status: running
 review_at: 2026-10-24T164553Z
 review_companions: null
-stage: implemented
+stage: dispatched
 claimed_at: 2026-10-24T164553Z
 base_sha: bcc7ea4a50f9cbe47528f96e0ab15b661666ecdf
 base_blob: 1c0f5fa1bfc4e602b62e5e9edd9df6d5652b297b
@@ -58,6 +58,8 @@ submission_blob: dbe93e3308cb9143edde3f8784fbffce594bf70a
 lint_warnings: 0
 attempt_file: 2026-10-24T164956Z-submit-full-fused-triton-decode1-gate.md
 prepared_at: 2026-10-24T164956Z
+job: af3c6a46badf4e50
+dispatched_at: 2026-10-24T165008Z
 ---
 
 # full-fused-triton-decode1-gate
