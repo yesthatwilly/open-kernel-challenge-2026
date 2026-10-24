@@ -61,13 +61,15 @@ base_sha: def56122736897df0372457a74ffefcdf4c21add
 base_blob: bc007e643ac0b440147a732071f23d9b3563174c
 branch: hyp/muse_attention_decode/fa3-window-trimmed-page-table
 worktree: .worktrees/muse_attention_decode/fa3-window-trimmed-page-table
-mode: null
+mode: check
 implemented_at: 2026-10-24T112037Z
 impl_commit: 4c6a0d6ab3393e81daec6ad7672e374b8896d33e
 submission_sha256: 4a79f6396ac39f305e0c5690c125cb11b4eb873b33e52646dbacd15cc99bd7ce
 norm_sha256: 8cdc88d2ac5dbe063d1717eba2875681fb99a7ad9b1d1d4b52db043d9903c8dc
 submission_blob: ac136b3a030593ae8650e0b5687f4e23d9caf2fc
 lint_warnings: 0
+attempt_file: 2026-10-24T112038Z-check-fa3-window-trimmed-page-table.md
+prepared_at: 2026-10-24T112038Z
 ---
 
 # fa3-window-trimmed-page-table
