@@ -39,7 +39,8 @@ priority: 4
 kind: primary
 controls_for: null
 review: required
-status: queued
+status: hold
+hold_reason: num_splits is only a cap under FA3's on-device split sizing (LESSONS; the decode_layer equivalents were held for the same reason), and full layers are now paired, which changes FA3's split decision anyway
 ---
 
 # fa3-num-splits-full-decode
