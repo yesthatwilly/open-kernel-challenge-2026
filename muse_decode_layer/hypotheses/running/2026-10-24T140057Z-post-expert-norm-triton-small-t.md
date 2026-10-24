@@ -54,9 +54,16 @@ priority: 1
 kind: primary
 controls_for: null
 review: proceed
-status: queued
+status: running
 review_at: 2026-10-24T140432Z
 review_companions: null
+stage: claimed
+claimed_at: 2026-10-24T140432Z
+base_sha: 5f6055ebd1ea05b43c2b3a6e3a02c0f86b49ce62
+base_blob: 3a358375a50dcc6e19437992f7c610431582ea72
+branch: hyp/muse_decode_layer/post-expert-norm-triton-small-t
+worktree: .worktrees/muse_decode_layer/post-expert-norm-triton-small-t
+mode: null
 ---
 
 # post-expert-norm-triton-small-t
