@@ -49,13 +49,15 @@ base_sha: a98ef454e7901f7ff47efb4c4c0e77e7261da827
 base_blob: c7bf9ffedc48b757f56765004e5d65f6ad5ba841
 branch: hyp/muse_moe_w4a16/post-norm-triton-all-m
 worktree: .worktrees/muse_moe_w4a16/post-norm-triton-all-m
-mode: null
+mode: check
 implemented_at: 2026-10-24T124312Z
 impl_commit: 051681e95e3823c612c005d02947784ffa8cb571
 submission_sha256: 2d3d1695ec4120364f5b5731c0ff616cc12ff8208b446e91217ad2a64febaaef
 norm_sha256: bfc194196f18b1333b8ffa8706000a047c5a683a029a8f0ea364c9278bdc8379
 submission_blob: 5278292a55237533aacca2d10cb426a81f65fb9b
 lint_warnings: 1
+attempt_file: 2026-10-24T124312Z-check-post-norm-triton-all-m.md
+prepared_at: 2026-10-24T124312Z
 ---
 
 # post-norm-triton-all-m
