@@ -70,9 +70,10 @@ speedup: 1.2436140703098866
 speedup_ci: [1.2249598592552382, 1.2622682813645347]
 harvested_at: 2026-10-24T115929Z
 best_at_harvest: 1.1705932092473075
-promotion: merged
+promotion: superseded
 promotion_commit: fa95f6d9e5bbaa7ab5978727425c8247ebbaa5c1
 promotion_attempt: 2026-10-24T115932Z-submit-paired-heads-launch-cleanup.md
+promotion_reason: best is now 1.2686474414890054
 ---
 
 # paired-heads-launch-cleanup
