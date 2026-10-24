@@ -61,13 +61,15 @@ base_sha: 150297e8627364911bee843d85d02b432ebf9b41
 base_blob: 11fbc1957daf7294cd2810ff82a0aad2f25644bd
 branch: hyp/muse_moe_w4a16/marlin-block-m-cap-16-port
 worktree: .worktrees/muse_moe_w4a16/marlin-block-m-cap-16-port
-mode: null
+mode: check
 implemented_at: 2026-10-24T103946Z
 impl_commit: b8486202d1a2c8a04ae0062a6f40d7fd032a03b1
 submission_sha256: e669cc000af15e319b8e9074fca10237d3760e2a29bd9d651d67ea8ccd4d0247
 norm_sha256: c6510aeab6e5b2aef0281bf950133dd666e08f8d68aecedc112b8ba009ae051d
 submission_blob: ba5f406f1a775b1d0a7cc0c2a78d6ab844e2a298
 lint_warnings: 1
+attempt_file: 2026-10-24T103946Z-check-marlin-block-m-cap-16-port.md
+prepared_at: 2026-10-24T103946Z
 ---
 
 # marlin-block-m-cap-16-port
