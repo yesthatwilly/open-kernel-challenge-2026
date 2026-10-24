@@ -51,7 +51,7 @@ priority: 3
 kind: rewrite
 controls_for: null
 review: proceed
-status: running
+status: done
 replaces: "FA3 on full-attention decode (q_len=1): flash_fwd main + FlashAttnFwdCombine"
 review_at: 2026-10-24T083747Z
 review_companions: null
@@ -71,8 +71,15 @@ attempt_file: 2026-10-24T084126Z-check-triton-flash-decode-full-paired-kv.md
 prepared_at: 2026-10-24T084126Z
 job: e82b11f9d9f64b23
 dispatched_at: 2026-10-24T084136Z
-stage: dispatched
+stage: harvested
 rewrite_stage: 1
+outcome: neutral
+verdict_detail: unproven-vs-best
+speedup: 1.0702026817152541
+speedup_ci: [1.0541496414895253, 1.0862557219409827]
+harvested_at: 2026-10-24T095813Z
+best_at_harvest: 1.0634521974439426
+promotion: null
 ---
 
 # triton-flash-decode-full-paired-kv
@@ -166,3 +173,36 @@ warn  host-sync    L260: torch.cuda.synchronize()  (outside kernel_fn's call gra
 OK with warnings: muse_decode_layer/submission.py
 ```
 `python3 -I -m py_compile` passed. The `__pycache__` it left was removed.
+
+## Result
+
+- job `e82b11f9d9f64b23` (check), status done, passed True, tests 13/13
+- speedup 1.0702x, 95% CI [1.0541, 1.0863], score 21136.463575054393 µs vs SGLang 22620.3 µs
+- best at harvest: {"speedup": 1.0634521974439426, "ci": [1.0475004144822835, 1.0794039804056017], "job": "2b1f82408ab64116"}; base result: muse_decode_layer/hypotheses/done/gain/marlin-block-m-cap-16.result.json
+- **outcome: neutral** (unproven-vs-best)
+- files: `muse_decode_layer/hypotheses/done/neutral/triton-flash-decode-full-paired-kv.result.json`, `muse_decode_layer/hypotheses/done/neutral/triton-flash-decode-full-paired-kv.patch`; branch `hyp/muse_decode_layer/triton-flash-decode-full-paired-kv`
+
+## Attribution
+
+| shape | w | base µs | hyp µs | delta | verdict |
+|---|---|---|---|---|---|
+| batch=1 ctx=80000 dist=soft layer=sliding load=decode_1 page=1 repeats=60 | 46 | 171.1 | 170.36 | 0.9963 | flat |
+| batch=1 ctx=80000 dist=soft layer=full load=decode_1 page=1 repeats=60 | 16 | 183.78 | 183.03 | 0.9977 | flat |
+| batch=16 ctx=80000 dist=soft layer=sliding load=decode_16 page=1 spread=agentic | 46 | 259.9 | 265.6 | 0.9972 | flat |
+| batch=16 ctx=80000 dist=soft layer=full load=decode_16 page=1 spread=agentic | 16 | 432.97 | 442.4 | 0.9873 | flat |
+| batch=32 ctx=80000 dist=soft layer=sliding load=decode_32 page=1 spread=agentic | 46 | 253.85 | 271.79 | 1.0022 | flat |
+| batch=32 ctx=80000 dist=soft layer=full load=decode_32 page=1 spread=agentic | 16 | 601.7 | 637.39 | 0.9875 | flat |
+| batch=1 ctx=80000 dist=soft layer=sliding load=verify_1 page=1 q_len=8 | 46 | 234.75 | 229.64 | 0.9937 | flat |
+| batch=1 ctx=80000 dist=soft layer=full load=verify_1 page=1 q_len=8 | 16 | 240.09 | 244.92 | 0.9916 | flat |
+| batch=16 ctx=80000 dist=soft layer=sliding load=verify_16 page=1 q_len=8 spread=agentic | 46 | 436.67 | 443.55 | 1.0507 | gained |
+| batch=16 ctx=80000 dist=soft layer=full load=verify_16 page=1 q_len=8 spread=agentic | 16 | 618.93 | 620.55 | 1.0471 | gained |
+| batch=32 ctx=80000 dist=soft layer=sliding load=verify_32 page=1 q_len=8 spread=agentic | 46 | 631.95 | 627.32 | 1.02 | flat |
+| batch=32 ctx=80000 dist=soft layer=full load=verify_32 page=1 q_len=8 spread=agentic | 16 | 969.88 | 981.63 | 1.0162 | flat |
+
+gained on sliding verify_16; full verify_16. Expected hit: 1/5. Noise ±1.5%.
+
+## Follow-ups
+
+- rewrite stage 1 of `FA3 on full-attention decode (q_len=1): flash_fwd main + FlashAttnFwdCombine`: read the replaced kernels' own us per shape (profile top_kernels) against the incumbent and the floor, and check which Milestone it reached. The next stage is `/hypothesize muse_decode_layer "<what to fix or tune>" --kind rewrite --depends-on triton-flash-decode-full-paired-kv --stage 2`; a slow or failed first cut is the expected start, not a do-not-retry.
+- unproven-vs-best: the change is not proven either way; a stacked hypothesis (`depends_on: triton-flash-decode-full-paired-kv`) that adds a further change in the same area is the only way to learn more (identical code is never re-run).
+

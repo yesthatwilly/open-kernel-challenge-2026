@@ -1,0 +1,265 @@
+diff --git a/muse_decode_layer/submission.py b/muse_decode_layer/submission.py
+index de98030..cf09a91 100644
+--- a/muse_decode_layer/submission.py
++++ b/muse_decode_layer/submission.py
+@@ -18,7 +18,8 @@ Everything else is SGLang's pipeline as baseline.py composes it:
+                                    with the interleaved RoPE fused in on sliding layers
+   cache store, q to FP8            as FlashAttentionBackend and set_kv_buffer do for an FP8 cache
+                                    (cast, then the store_cache JIT kernel at the step's rows)
+-  flash_attn_with_kvcache (FA3)    paged, causal, window (2047, 0) on sliding layers
++  flash_attn_with_kvcache (FA3)    paged, causal, window (2047, 0) on sliding layers, and on
++                                   every verify block (q_len 8)
+   FusedRMSNormGate (JIT)           per-head output norm x sigmoid(gate)
+   o projection                     bf16_gemm_dispatch; then the all-reduce (identity here)
+   FusedPostNormResidualPreNorm     post-attention norm + residual gate + pre-FFN norm (JIT);
+@@ -40,6 +41,11 @@ Everything else is SGLang's pipeline as baseline.py composes it:
+                                    norm (JIT)
+ 
+ Differs from SGLang:
++  * Full-attention decode steps (window 0, q_len 1) replace FA3 with a two-launch Triton
++    flash-decoding pair (hypothesis triton-flash-decode-full-paired-kv): kernel 1 splits each
++    request's context into S contiguous ranges and reads each token's two FP8 KV heads as one
++    128-byte row through the page table, all 16 query heads at once via a block-diagonal query
++    tile; kernel 2 merges the S partials (log-sum-exp) into the bf16 attention output.
+   * The step's positions, cache rows, FA3 lengths and FA3 scheduler metadata come in with the
+     inputs; SGLang builds them once per step for all layers.
+   * All-reduces are the identity; the all-gather is a zero pad of the unpooler's output."""
+@@ -50,6 +56,8 @@ import types
+ 
+ import torch
+ import torch.nn.functional as F
++import triton
++import triton.language as tl
+ from sgl_kernel.flash_attn import flash_attn_with_kvcache
+ from sgl_kernel.scalar_type import scalar_types
+ from torch import nn
+@@ -154,6 +162,10 @@ BLOCK_SIZE_M_CANDIDATES = (8, 16, 32, 48, 64)
+ # Cap on that pick for both Marlin MoE GEMMs (SGLang has none): 48/64 at T=128/256 become 16.
+ MARLIN_BLOCK_SIZE_M_CAP = 16
+ ROPE_POSITIONS = 1 << 21
++# Full-attention decode (Triton flash-decoding): about two waves of CTAs on H200's 132 SMs.
++FD_NUM_SMS = 132
++FD_MAX_SPLITS = 128
++FD_BLOCK_N = 64
+ ROPE_THETA = 500_000.0
+ 
+ 
+@@ -244,6 +256,7 @@ def prepare(weights):
+         "_modules": (pre_ffn, next_pre_attn, post_attn, post_ffn, post_expert),
+     }
+     del freqs
++    _warm_full_decode(device)
+     torch.cuda.synchronize()
+     return state
+ 
+@@ -283,6 +296,157 @@ def _experts(x, topk_weights, topk_ids, state):
+         slot_expert_ids=local_ids)
+ 
+ 
++@triton.jit(do_not_specialize=["pt_stride", "max_pages", "split_len", "num_splits"])
++def _full_decode_split_kernel(
++    q_ptr, k_ptr, v_ptr, pt_ptr, seqlens_ptr, k_scale_ptr,
++    acc_ptr, m_ptr, l_ptr,
++    pt_stride, max_pages, split_len, num_splits, qk_scale,
++    HQ: tl.constexpr, HKV: tl.constexpr, D: tl.constexpr, PAGE: tl.constexpr, BLOCK_N: tl.constexpr,
++):
++    """Program (b, s): request b's keys [s * split_len, (s + 1) * split_len) clipped to its length.
++
++    A token's two KV heads are one contiguous HKV * D = 128-byte FP8 row (cache row page * PAGE +
++    offset). The queries are a block-diagonal [HQ, 128] tile: query head h keeps its D values in
++    the columns of its own kv head (h // (HQ / HKV)) and explicit zeros in the other kv head's, so
++    one Q2 @ K^T gives every head's scores against its own kv head, and of P @ V each head keeps
++    only its own kv head's columns. Writes the unnormalized fp32 accumulator and the (m, l) of the
++    online softmax (log2 domain); a split with no keys writes m = -inf, l = 0, acc = 0."""
++    W: tl.constexpr = HKV * D
++    G: tl.constexpr = HQ // HKV
++    LOG2E: tl.constexpr = 1.4426950408889634
++    b = tl.program_id(0)
++    s = tl.program_id(1)
++    seqlen = tl.load(seqlens_ptr + b)
++    start = s * split_len
++    end = tl.minimum(start + split_len, seqlen)
++
++    h = tl.arange(0, HQ)
++    c = tl.arange(0, W)
++    n = tl.arange(0, BLOCK_N)
++    own = (c[None, :] // D) == (h[:, None] // G)
++    q = tl.load(q_ptr + (b.to(tl.int64) * HQ + h[:, None]) * D + (c[None, :] % D))
++    q = q.to(tl.float8e4nv, bitcast=True).to(tl.float32)
++    q2 = tl.where(own, q, 0.0).to(tl.bfloat16)  # explicit zeros off the block diagonal
++    scale = qk_scale * tl.load(k_scale_ptr) * LOG2E
++
++    m_i = tl.full([HQ], float("-inf"), dtype=tl.float32)
++    l_i = tl.zeros([HQ], dtype=tl.float32)
++    acc = tl.zeros([HQ, W], dtype=tl.float32)
++    pt_row = pt_ptr + b.to(tl.int64) * pt_stride
++
++    # The first tile's cache rows; every later tile's rows are loaded one iteration ahead.
++    t = start + n
++    valid = (t < end) & (t // PAGE < max_pages)
++    page = tl.load(pt_row + t // PAGE, mask=valid, other=0)
++    rows = page.to(tl.int64) * PAGE + t % PAGE
++    for tile in range(start, end, BLOCK_N):
++        kv_off = rows[:, None] * W + c[None, :]
++        k = tl.load(k_ptr + kv_off, mask=valid[:, None], other=0)
++        v = tl.load(v_ptr + kv_off, mask=valid[:, None], other=0)
++        cur_valid = valid
++        # Prefetch the next tile's page-table indices before this tile's math.
++        t_next = tile + BLOCK_N + n
++        valid = (t_next < end) & (t_next // PAGE < max_pages)
++        page = tl.load(pt_row + t_next // PAGE, mask=valid, other=0)
++        rows = page.to(tl.int64) * PAGE + t_next % PAGE
++
++        k = k.to(tl.float8e4nv, bitcast=True).to(tl.bfloat16)
++        v = v.to(tl.float8e4nv, bitcast=True).to(tl.bfloat16)
++        qk = tl.dot(q2, tl.trans(k))  # [HQ, BLOCK_N] fp32
++        qk = tl.where(cur_valid[None, :], qk * scale, float("-inf"))
++        m_new = tl.maximum(m_i, tl.max(qk, 1))
++        m_use = tl.where(m_new == float("-inf"), 0.0, m_new)  # no -inf - -inf
++        alpha = tl.exp2(m_i - m_use)
++        p = tl.exp2(qk - m_use[:, None])
++        l_i = l_i * alpha + tl.sum(p, 1)
++        acc = acc * alpha[:, None] + tl.dot(p.to(tl.bfloat16), v)
++        m_i = m_new
++
++    part = b.to(tl.int64) * num_splits + s
++    tl.store(acc_ptr + (part * HQ + h[:, None]) * D + (c[None, :] % D), acc, mask=own)
++    tl.store(m_ptr + part * HQ + h, m_i)
++    tl.store(l_ptr + part * HQ + h, l_i)
++
++
++@triton.jit(do_not_specialize=["num_splits"])
++def _full_decode_combine_kernel(
++    acc_ptr, m_ptr, l_ptr, v_scale_ptr, out_ptr, num_splits,
++    HQ: tl.constexpr, D: tl.constexpr, BLOCK_S: tl.constexpr,
++):
++    """Program (b, h): log-sum-exp merge of the num_splits partials into bf16 out[b, h, :] * v_scale.
++    Empty splits (m = -inf, l = 0) get weight 0; the max is taken over finite partials only."""
++    b = tl.program_id(0)
++    h = tl.program_id(1)
++    si = tl.arange(0, BLOCK_S)
++    d = tl.arange(0, D)
++    smask = si < num_splits
++    part = (b.to(tl.int64) * num_splits + si) * HQ + h
++    m = tl.load(m_ptr + part, mask=smask, other=float("-inf"))
++    l = tl.load(l_ptr + part, mask=smask, other=0.0)
++    finite = m > float("-inf")
++    m_max = tl.max(tl.where(finite, m, float("-inf")), 0)
++    m_max = tl.where(m_max == float("-inf"), 0.0, m_max)
++    w = tl.where(finite, tl.exp2(tl.where(finite, m, 0.0) - m_max), 0.0)
++    denom = tl.sum(w * l, 0)
++    acc = tl.load(acc_ptr + part[:, None] * D + d[None, :], mask=(smask & finite)[:, None], other=0.0)
++    o = tl.sum(w[:, None] * acc, 0)
++    o = o * (tl.load(v_scale_ptr) / tl.where(denom > 0.0, denom, 1.0))
++    tl.store(out_ptr + (b.to(tl.int64) * HQ + h) * D + d, o.to(tl.bfloat16))
++
++
++def _full_decode_splits(batch):
++    """S from the batch only: about two waves of CTAs, 1..128."""
++    return max(1, min(FD_MAX_SPLITS, -(-2 * FD_NUM_SMS // batch)))
++
++
++def _full_decode_attention(q8, k_cache, v_cache, page_table, cache_seqlens, k_scale, v_scale, softmax_scale):
++    """Full-attention decode (q_len 1) for q8 FP8 [B, HQ, D]; bf16 [B, HQ, D]. Grid, split length
++    and scratch come from shapes only."""
++    batch, hq, d = q8.shape
++    page, hkv = k_cache.shape[1], k_cache.shape[2]
++    max_pages = page_table.shape[1]
++    num_splits = _full_decode_splits(batch)
++    split_len = -(-max_pages * page // num_splits)
++    split_len = -(-split_len // FD_BLOCK_N) * FD_BLOCK_N
++    device = q8.device
++    acc = torch.empty((batch, num_splits, hq, d), dtype=torch.float32, device=device)
++    m = torch.empty((batch, num_splits, hq), dtype=torch.float32, device=device)
++    l = torch.empty((batch, num_splits, hq), dtype=torch.float32, device=device)
++    out = torch.empty((batch, hq, d), dtype=torch.bfloat16, device=device)
++    _full_decode_split_kernel[(batch, num_splits)](
++        q8.view(torch.uint8), k_cache.view(torch.uint8), v_cache.view(torch.uint8), page_table, cache_seqlens,
++        k_scale, acc, m, l,
++        page_table.stride(0), max_pages, split_len, num_splits, softmax_scale,
++        HQ=hq, HKV=hkv, D=d, PAGE=page, BLOCK_N=FD_BLOCK_N,
++        num_warps=4, num_stages=3,
++    )
++    _full_decode_combine_kernel[(batch, hq)](
++        acc, m, l, v_scale, out, num_splits,
++        HQ=hq, D=d, BLOCK_S=triton.next_power_of_2(num_splits),
++        num_warps=4,
++    )
++    return out
++
++
++def _warm_full_decode(device):
++    """Compile every variant the full-decode path can launch (PAGE 1 and 64; every BLOCK_S)."""
++    seqlens = torch.ones((1,), dtype=torch.int32, device=device)
++    scale = torch.ones((), dtype=torch.float32, device=device)
++    for page in (1, 64):
++        cache = torch.zeros((2, page, 2, 64), dtype=FP8, device=device)
++        page_table = torch.zeros((1, 2), dtype=torch.int32, device=device)
++        q8 = torch.zeros((1, 16, 64), dtype=FP8, device=device)
++        _full_decode_attention(q8, cache, cache, page_table, seqlens, scale, scale, 1.0)
++    block_s = 1
++    while block_s <= FD_MAX_SPLITS:
++        acc = torch.zeros((1, block_s, 16, 64), dtype=torch.float32, device=device)
++        ml = torch.zeros((1, block_s, 16), dtype=torch.float32, device=device)
++        out = torch.empty((1, 16, 64), dtype=torch.bfloat16, device=device)
++        _full_decode_combine_kernel[(1, 16)](acc, ml, ml, scale, out, block_s, HQ=16, D=64, BLOCK_S=block_s,
++                                             num_warps=4)
++        block_s *= 2
++
++
+ def kernel_fn(data, state):
+     cfg = data["config"]
+     batch, length, tokens = cfg["batch"], cfg["q_len"], cfg["tokens"]
+@@ -306,26 +470,32 @@ def kernel_fn(data, state):
+                 k_cache.view(-1, hkv * d).view(torch.uint8), v_cache.view(-1, hkv * d).view(torch.uint8),
+                 data["cache_loc"], reserved_skip_index=-1)
+     window = cfg["window"]
+-    descale = {}
+-    if scaled:
+-        descale = dict(k_descale=data["k_scale"].reshape(1, 1).expand(batch, hkv),
+-                       v_descale=data["v_scale"].reshape(1, 1).expand(batch, hkv))
+-    out = flash_attn_with_kvcache(
+-        q=q.view(tokens, hq, d).to(FP8),
+-        k_cache=k_cache,
+-        v_cache=v_cache,
+-        page_table=data["page_table"],
+-        cache_seqlens=data["cache_seqlens"],
+-        cu_seqlens_q=data["cu_seqlens_q"],
+-        max_seqlen_q=length,
+-        softmax_scale=cfg["sm_scale"] * cfg["qk_scale_factor"],
+-        causal=True,
+-        window_size=(window - 1, 0) if window else (-1, -1),
+-        scheduler_metadata=data["scheduler_metadata"],
+-        **descale,
+-    )
+-    if isinstance(out, tuple):
+-        out = out[0]
++    if window == 0 and length == 1:
++        # Full-attention decode: Triton flash-decoding (scheduler_metadata is FA3's, unused here).
++        out = _full_decode_attention(
++            q.view(tokens, hq, d).to(FP8), k_cache, v_cache, data["page_table"], data["cache_seqlens"],
++            data["k_scale"], data["v_scale"], cfg["sm_scale"] * cfg["qk_scale_factor"])
++    else:
++        descale = {}
++        if scaled:
++            descale = dict(k_descale=data["k_scale"].reshape(1, 1).expand(batch, hkv),
++                           v_descale=data["v_scale"].reshape(1, 1).expand(batch, hkv))
++        out = flash_attn_with_kvcache(
++            q=q.view(tokens, hq, d).to(FP8),
++            k_cache=k_cache,
++            v_cache=v_cache,
++            page_table=data["page_table"],
++            cache_seqlens=data["cache_seqlens"],
++            cu_seqlens_q=data["cu_seqlens_q"],
++            max_seqlen_q=length,
++            softmax_scale=cfg["sm_scale"] * cfg["qk_scale_factor"],
++            causal=True,
++            window_size=(window - 1, 0) if window else (-1, -1),
++            scheduler_metadata=data["scheduler_metadata"],
++            **descale,
++        )
++        if isinstance(out, tuple):
++            out = out[0]
+     o = state["o_norm_gate"](out.reshape(tokens, hq * d).to(torch.bfloat16), gate)
+     attn_output = _gemm(o, dense["o"])  # all-reduce: identity
+ 
