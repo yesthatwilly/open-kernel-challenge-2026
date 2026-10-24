@@ -1,6 +1,6 @@
 # muse_bf16_proj findings
 
-Regenerated 2026-10-24T070716Z by `churn.py index`. Read this before writing a hypothesis for muse_bf16_proj.
+Regenerated 2026-10-24T071029Z by `churn.py index`. Read this before writing a hypothesis for muse_bf16_proj.
 
 ## Current best
 
@@ -62,6 +62,7 @@ Where the time goes (per scored shape, top kernels):
 ### unpooler GEMM
 - **unpooler-slice-triton-gemv** → regression (regression), 0.8801x — gained on o verify_1; lost on unpooler decode_1, verify_1. For layer == 'unpooler' and m <= 8 only (the sliced case: n=1024, k=4096, an 8.4 MB weight read), replace the _bf16_gemm_dispatch_impl(x, W[:1024], None) call i
 - **unpooler-full-triton-skinny-m32** → neutral (within-ci), 1.0053x — gained on qkv_gate decode_1, decode_16, verify_1; unpooler decode_16, verify_1; o verify_1; lost on unpooler decode_32; pooler verify_16. Extend the skinny Triton GEMM from pooler-triton-skinny-m32 to layer == 'unpooler' at m in {16, 32} (the full weight: n=8192, k=4096, 67 MB): in kernel_fn route
+- **unpooler-full-triton-skinny-m32-control-blockm16-all-m** → neutral (within-ci), 0.9990x — gained on o verify_16; lost on qkv_gate decode_16; unpooler decode_32. From the parent's branch (unpooler-full-triton-skinny-m32), keep the unpooler routing, grid (8192/64 = 128 programs), BLOCK_N=64, BLOCK_K=256, num_stages=4, num
 
 ## Open follow-ups
 
@@ -69,6 +70,7 @@ Where the time goes (per scored shape, top kernels):
 - pooler-triton-skinny-m32: within-ci: the change is not proven either way; a stacked hypothesis (`depends_on: pooler-triton-skinny-m32`) that adds a further change in the same area is the only way to learn more (identical code is never re-run).
 - o-triton-skinny-m32: within-ci: the change is not proven either way; a stacked hypothesis (`depends_on: o-triton-skinny-m32`) that adds a further change in the same area is the only way to learn more (identical code is never re-run).
 - unpooler-full-triton-skinny-m32: within-ci: the change is not proven either way; a stacked hypothesis (`depends_on: unpooler-full-triton-skinny-m32`) that adds a further change in the same area is the only way to learn more (identical code is never re-r
+- unpooler-full-triton-skinny-m32-control-blockm16-all-m: within-ci: the change is not proven either way; a stacked hypothesis (`depends_on: unpooler-full-triton-skinny-m32-control-blockm16-all-m`) that adds a further change in the same area is the only way to learn more (ident
 
 ## Do not retry (rejected / duplicates)
 
@@ -80,4 +82,3 @@ Where the time goes (per scored shape, top kernels):
 - queue: pooler-skinny-tiled-weight-layout [pooler GEMM] p4 queued
 - queue: router-triton-hilo-fused-control-hybrid-cublas-above-m32 [router GEMM] p1 hold
 - queue: router-hilo-addmm-epilogue-control-inplace-out [router GEMM] p1 hold
-- running: unpooler-full-triton-skinny-m32-control-blockm16-all-m [unpooler GEMM] p3 running

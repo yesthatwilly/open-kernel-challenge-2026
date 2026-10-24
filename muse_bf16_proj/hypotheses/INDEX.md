@@ -1,6 +1,6 @@
 # muse_bf16_proj hypotheses
 
-Regenerated 2026-10-24T070716Z. Best: 1.1510x [1.1338,1.1683] job `bd9fa14151644cee` (check)
+Regenerated 2026-10-24T071029Z. Best: 1.1510x [1.1338,1.1683] job `bd9fa14151644cee` (check)
 
 | created | slug | kind | area | where | outcome | speedup | CI | job | mode | promotion | review | expected hit |
 |---|---|---|---|---|---|---|---|---|---|---|---|---|
@@ -18,7 +18,7 @@ Regenerated 2026-10-24T070716Z. Best: 1.1510x [1.1338,1.1683] job `bd9fa14151644
 | 2026-10-23T230544Z | router-triton-hilo-fused-control-splitk-all-m | control→router-triton-hilo-fused | router GEMM | done/gain | gain | 1.1510 | [1.134,1.168] | bd9fa14151644cee | check | merged | proceed | 7/7 |
 | 2026-10-24T024326Z | router-triton-hilo-fused-control-hybrid-cublas-above-m32 | control→router-triton-hilo-fused-control-splitk-all-m | router GEMM | queue | hold |  |  |  |  |  | required |  |
 | 2026-10-24T024434Z | router-hilo-addmm-epilogue-control-inplace-out | control→router-hilo-addmm-epilogue | router GEMM | queue | hold |  |  |  |  |  | required |  |
-| 2026-10-24T032454Z | unpooler-full-triton-skinny-m32-control-blockm16-all-m | control→unpooler-full-triton-skinny-m32 | unpooler GEMM | running | running |  |  | 09abdd472faa4dce | check |  | proceed |  |
+| 2026-10-24T032454Z | unpooler-full-triton-skinny-m32-control-blockm16-all-m | control→unpooler-full-triton-skinny-m32 | unpooler GEMM | done/neutral | neutral | 0.9990 | [0.984,1.014] | 09abdd472faa4dce | check |  | proceed | 3/4 |
 
 ## Held
 
