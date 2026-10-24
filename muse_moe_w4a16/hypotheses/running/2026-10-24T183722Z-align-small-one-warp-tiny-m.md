@@ -42,9 +42,16 @@ priority: 3
 kind: primary
 controls_for: null
 review: proceed
-status: queued
+status: running
 review_at: 2026-10-24T183956Z
 review_companions: null
+stage: claimed
+claimed_at: 2026-10-24T183957Z
+base_sha: 6ef6502619e893cbf1037aeccc0405617e73620d
+base_blob: 108d36e9f2266fc88531dd6ff0329a847c882013
+branch: hyp/muse_moe_w4a16/align-small-one-warp-tiny-m
+worktree: .worktrees/muse_moe_w4a16/align-small-one-warp-tiny-m
+mode: null
 ---
 
 # align-small-one-warp-tiny-m
