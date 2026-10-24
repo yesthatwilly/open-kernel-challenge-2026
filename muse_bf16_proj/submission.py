@@ -2,7 +2,7 @@
 """Parity with SGLang's dispatch (hypothesis sglang-gemm-dispatch-parity).
 
 The four bf16 layers go through the same cuBLAS dispatch SGLang uses on H200
-(`_bf16_gemm_dispatch_impl`). The fp32 router runs F.linear in fp32 up to 8 tokens and, above
+(`_bf16_gemm_dispatch_impl`). The fp32 router runs F.linear in fp32 at 1 token and, above
 that, two bf16 GEMMs on a hi + lo split of the weight with fp32 accumulation, as the rules allow
 ("the router's FP32 weights may run as a BF16 hi + lo pair with FP32 accumulation"). The split is
 built once in prepare(); nothing derived from the inputs is kept between calls.
@@ -36,7 +36,7 @@ class Inputs(TypedDict):
 
 
 # Above this many tokens the router runs as the bf16 hi + lo pair instead of fp32 F.linear.
-ROUTER_FP32_MAX_TOKENS = 8
+ROUTER_FP32_MAX_TOKENS = 1
 
 
 def prepare(weights: Weights) -> dict:
