@@ -55,13 +55,15 @@ base_sha: 91975540841cb14ebba858121c83ff760c528591
 base_blob: 108d36e9f2266fc88531dd6ff0329a847c882013
 branch: hyp/muse_moe_w4a16/post-norm-combine-hoisted-slot-loads
 worktree: .worktrees/muse_moe_w4a16/post-norm-combine-hoisted-slot-loads
-mode: null
+mode: submit
 implemented_at: 2026-10-24T184142Z
 impl_commit: fcb99a3ef557c7d755cc8a578b65ed87e65ac699
 submission_sha256: 0bc685de0533009d8117e84ffef50ad46fa5b252cecf0f891123087c21014466
 norm_sha256: 756963f3e07935d7788af1319e6fc4aef0bb8c1acebc76e3f55059808ad09cc6
 submission_blob: 1c0ea2b5746442d53faef544107710c2d27b689b
 lint_warnings: 8
+attempt_file: 2026-10-24T184142Z-submit-post-norm-combine-hoisted-slot-loads.md
+prepared_at: 2026-10-24T184142Z
 ---
 
 # post-norm-combine-hoisted-slot-loads
