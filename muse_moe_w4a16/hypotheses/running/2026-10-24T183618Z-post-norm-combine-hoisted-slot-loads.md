@@ -49,13 +49,19 @@ review: proceed
 status: running
 review_at: 2026-10-24T183956Z
 review_companions: null
-stage: claimed
+stage: implemented
 claimed_at: 2026-10-24T183956Z
 base_sha: 91975540841cb14ebba858121c83ff760c528591
 base_blob: 108d36e9f2266fc88531dd6ff0329a847c882013
 branch: hyp/muse_moe_w4a16/post-norm-combine-hoisted-slot-loads
 worktree: .worktrees/muse_moe_w4a16/post-norm-combine-hoisted-slot-loads
 mode: null
+implemented_at: 2026-10-24T184142Z
+impl_commit: fcb99a3ef557c7d755cc8a578b65ed87e65ac699
+submission_sha256: 0bc685de0533009d8117e84ffef50ad46fa5b252cecf0f891123087c21014466
+norm_sha256: 756963f3e07935d7788af1319e6fc4aef0bb8c1acebc76e3f55059808ad09cc6
+submission_blob: 1c0ea2b5746442d53faef544107710c2d27b689b
+lint_warnings: 8
 ---
 
 # post-norm-combine-hoisted-slot-loads
@@ -101,3 +107,31 @@ No ab-revert is meaningful: the only overlapping landed item is the one that cre
 - Overlaps the same kernel and shapes as queued post-norm-pdl-launch-small-m; whichever lands second should be restacked on the first rather than both run against master (their gains should add: one hides launch/prologue, the other the body's latency).
 - If cuda-fused-moe-bs1-persistent-w13-silu-w2 or cuda-fused-moe-midm-single-launch-routed land, this kernel disappears at bs=1 or bs<=32, making this gain moot on those shapes.
 
+
+## Implementation notes
+
+Edited only `_post_norm_combine_kernel` body and its launch `num_warps` 8 -> 16 in the worktree submission.py. Deviation from the md's per-slot static_range form, following the adversarial review: a single [TOP_K_C, BLOCK_H] masked 2D tile load (mask = (ids>=0)[:,None] & mask[None,:]) issues all 8 row loads textually before any reduction; then ss = tl.sum(v*v, axis=1), r = rsqrt(ss/H+eps), acc = tl.sum((where(valid,g,0)*r)[:,None]*v, axis=0). This also removes the 16 scalar-extraction reductions. Remote rows stay masked (never read); fully masked row gives coef 0 so no NaN. fp32 math, nw = w+1, eps, bf16 output, grid and BLOCK_H unchanged. Not run locally (no GPU).
+
+## Rules check
+
+- [x] CUDA-graph capturable: diff touches only a Triton kernel body and a num_warps constant; no host syncs or input-dependent control flow.
+- [x] Nothing derived from `data` is cached across calls.
+- [x] Weights: untouched (prepare() not in diff).
+- [x] Activations BF16 where SGLang keeps BF16: unchanged; fp32 internal math, bf16 output as before.
+- [x] Attention: n/a, not touched.
+- [x] No timing patches, harness frames/I/O/secrets, module edits, reference import, subprocesses or network.
+- [x] All work inside the timed call; no output caching or replay.
+- [x] No triton.autotune added; first-line marker kept.
+
+Lint (okc_lint.py): `OK with warnings` — 8 host-sync warnings, all in prepare() outside kernel_fn's call graph, pre-existing, none in the diff. py_compile clean, __pycache__ removed.
+
+## Pre-flight audit
+
+Audited 2026-10-24 by an opus subagent (read-only; no GPU). **Verdict: dispatch** (no fixes).
+
+- Spec fidelity: the single masked [TOP_K_C=8, BLOCK_H=4096] tile load replaces the per-slot static_range form; it realises the `change` paragraph's goal (all local-slot loads issued before any reduction, remote rows never read, zero contribution for masked rows) and is the form the adversarial review recommended. num_warps 8 -> 16 is named in the spec. Diff touches only this kernel body and its launch; bs>=32 path untouched.
+- Correctness: H = 4096 on every TASK shape, so BLOCK_H = H and the H-mask is all-true; masked slots load 0, r = rsqrt(eps) is finite, coef = 0, no NaN. ids int32 / topk_weights fp32 contiguous [M, 8]; row offsets int64. Only fp32 summation order changes vs master.
+- Registers at 16 warps: default blocked layout is sizePerThread [1,8] (16 B bf16 vector), threadsPerWarp [1,32], warpsPerCTA [1,16], so each thread holds all 8 rows x 8 cols = 64 fp32 of v (live across the axis=1 reduction), 8 of nw, ~16 for 8 row addresses: ~90-110 regs against the 128/thread cap a 512-thread CTA imposes. No spill expected. The axis=0 combine is intra-thread (no shuffle); the axis=1 sum-of-squares is one cross-warp smem reduction for all 8 rows. 8 warps would also fit (128 live, cap 255) but is not needed; grid <= 16 CTAs, occupancy irrelevant.
+- Rules: no gates, no host syncs, no allocation or input-dependent host control flow added; graph-capturable; weights/activations unchanged.
+
+Residual risk: if ptxas lands just above 128 regs at 16 warps a small spill could eat the ~1 us gain; read the _post_norm_combine_kernel row, not the headline.
