@@ -46,7 +46,7 @@ review: proceed
 status: running
 review_at: 2026-10-24T120745Z
 review_companions: null
-stage: implemented
+stage: dispatched
 claimed_at: 2026-10-24T120745Z
 base_sha: f51cac06481cef9d3ac77248b4fec8d18a7cfb47
 base_blob: efc544103e6d303d1f8602caa9439628043a17a7
@@ -61,6 +61,8 @@ submission_blob: 27ab22aeaf1a6560ffa2596c7525b13b2cedc730
 lint_warnings: 0
 attempt_file: 2026-10-24T120945Z-check-preattention-group-tiled-programs.md
 prepared_at: 2026-10-24T120945Z
+job: 877731a3b2214ddb
+dispatched_at: 2026-10-24T120954Z
 ---
 
 # preattention-group-tiled-programs
