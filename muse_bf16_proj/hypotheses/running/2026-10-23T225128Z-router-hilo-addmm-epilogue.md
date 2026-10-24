@@ -43,7 +43,7 @@ review: proceed
 status: running
 review_at: 2026-10-24T024434Z
 review_companions: [router-hilo-addmm-epilogue-control-inplace-out]
-stage: implemented
+stage: dispatched
 claimed_at: 2026-10-24T024439Z
 base_sha: fe9a5a37d2a2208f820e8c3696faae713a1bb583
 base_blob: 349be31cabc7d9b669b94032ae723c0b0a5e7f71
@@ -58,6 +58,8 @@ submission_blob: b30f7112740b8be9d4d5d5e4f42ea46fa49771f1
 lint_warnings: 0
 attempt_file: 2026-10-24T024717Z-check-router-hilo-addmm-epilogue.md
 prepared_at: 2026-10-24T024717Z
+job: 743020b6b43d458c
+dispatched_at: 2026-10-24T024725Z
 ---
 
 # router-hilo-addmm-epilogue
