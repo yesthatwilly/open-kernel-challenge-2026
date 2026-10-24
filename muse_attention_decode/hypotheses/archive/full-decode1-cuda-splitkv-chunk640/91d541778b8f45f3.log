@@ -1,0 +1,12 @@
+[splitkv] load_inline compiled in 41.6s
+[splitkv] batch>1 self-check lens=ragged kv_scale=1.0 grid=device: rel L2 1.69e-03, finite True
+[splitkv] batch>1 self-check lens=ragged kv_scale=0.25 grid=3: rel L2 1.66e-03, finite True
+[splitkv] batch>1 self-check lens=ragged kv_scale=1.0 grid=3: rel L2 1.62e-03, finite True
+[splitkv] batch-1 self-check lens=[80000] kv_scale=1.0 grid=device: rel L2 1.74e-03, finite True
+[splitkv] batch-1 self-check lens=[80000] kv_scale=0.25 grid=3: rel L2 1.56e-03, finite True
+[splitkv] batch-1 self-check lens=[80000] kv_scale=1.0 grid=3: rel L2 1.73e-03, finite True
+[splitkv] batch-1 self-check lens=[5000] kv_scale=1.0 grid=device: rel L2 1.59e-03, finite True
+[splitkv] batch-1 self-check lens=[5000] kv_scale=0.25 grid=3: rel L2 1.63e-03, finite True
+[splitkv] batch-1 self-check lens=[5000] kv_scale=1.0 grid=3: rel L2 1.76e-03, finite True
+[splitkv] batch-1 chunk 640 path ON
+[splitkv] PATH CHOSEN: full decode batch>1 CUDA split-KV, batch 1 CUDA split-KV chunk 640
