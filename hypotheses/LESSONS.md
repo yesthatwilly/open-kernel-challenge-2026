@@ -125,3 +125,4 @@ profile are in `<problem>/hypotheses/archive/<slug>/`.
 ## Rules rulings (user)
 
 - No per-call BF16 copy of NVFP4 weights (dequant in registers inside the kernel only).
+- Never gate a new path on master's `_align_self_check` returning 0: it counts its 'capacity vs SGLang' line as a hard mismatch, and capacity always differs (master logs 60/60). The gate silently always chose the fallback, so the run would have measured master. Caught by a pre-flight audit before dispatch. A pre-flight audit of a CUDA build is worth one agent per check. (moe cuda-nvfp4-swapab-mma-persistent-small-m, 2026-10-24)
