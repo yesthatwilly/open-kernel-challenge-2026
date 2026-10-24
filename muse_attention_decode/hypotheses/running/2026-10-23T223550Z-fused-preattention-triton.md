@@ -59,13 +59,15 @@ base_sha: ee19eef05eb85988ab83008de621ef92e267203b
 base_blob: 7cafe07522219f5d70a1d23f29e3ee2fbdb497b7
 branch: hyp/muse_attention_decode/fused-preattention-triton
 worktree: .worktrees/muse_attention_decode/fused-preattention-triton
-mode: null
+mode: check
 implemented_at: 2026-10-24T075304Z
 impl_commit: 5b9490d351677736d89780f3e73b0f331a8332d4
 submission_sha256: fde179d5b9e42bf50f8403b1b014c9e5d15141e65445669a5bddfceb09b64f27
 norm_sha256: cf6d25c1a6f133b50185228070b3bdbd2052abf2bf501fb0bf38c080d06b32f8
 submission_blob: f14211b4b0e88f8b3f683d9f9275b76a64b66e02
 lint_warnings: 0
+attempt_file: 2026-10-24T075304Z-check-fused-preattention-triton.md
+prepared_at: 2026-10-24T075304Z
 ---
 
 # fused-preattention-triton
