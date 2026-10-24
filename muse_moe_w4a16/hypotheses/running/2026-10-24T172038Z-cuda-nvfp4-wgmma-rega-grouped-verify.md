@@ -133,12 +133,12 @@ base_blob: d9a9375ef4721ab9b28cc9d6364c92e67c7ccc59
 branch: hyp/muse_moe_w4a16/cuda-nvfp4-wgmma-rega-grouped-verify
 worktree: .worktrees/muse_moe_w4a16/cuda-nvfp4-wgmma-rega-grouped-verify
 mode: null
-implemented_at: 2026-10-24T174835Z
-impl_commit: c1de32e970df6ea8955a83e66c1eb649c1fb79f4
-submission_sha256: 670bb3e60156fff04919c6794cdfdf40125173b6bda0c0bc462233548cbc3b8c
-norm_sha256: 84aa62a89b2bf35279c80755e2cde9cf335072874bd5e100e4c36a6f4b6f5b83
-submission_blob: 1013fdf3a7a798c37169ad2cffbe041ea908b6e2
-lint_warnings: 21
+implemented_at: 2026-10-24T180001Z
+impl_commit: f50b333a602cc590f2785a1fdd2171af25fe94bb
+submission_sha256: a7fdef83dbf98e25a4d58f6e4e6cccf3a73c2b080e18267c4809f7bdb9c4264d
+norm_sha256: 1b43a3f3bea47906633c64e78cbada93a6b6003a3b8bdc838ce21a53b0f64595
+submission_blob: 5c34fabe0f05fb53014dd85b66864cd3b38bc673
+lint_warnings: 23
 ---
 
 # cuda-nvfp4-wgmma-rega-grouped-verify
@@ -233,6 +233,13 @@ Implemented 2026-10-24 in the worktree's muse_moe_w4a16/submission.py only. It i
 - Performance: the slab is re-read from L2 once per weight tile (the reviewer's note), there is no split-K, and weight in flight is 36 KB/SM. M2 is plausible, M3 is uncertain.
 
 **Harvest note.** Read the log tail first. `[cuda-wgmma-verify] PATH CHOSEN = MARLIN`, `SELF-CHECK FAILED` or `load_inline failed` means the run measured master at bs >= 128.
+
+### Pre-flight fixes (2026-10-24, after an Opus audit)
+The audit verified the wgmma RS form, the descriptor, the bulk/TMA copies, the mbarriers, stmatrix, createpolicy and the driver entry-point tensor-map encode. Exact-layout emulation passes. Fixes:
+- The self-check reads the device error word after each eager run and after each graph replay, and aborts at the first timeout. Before, 128 launches x ~1.1 s could overrun the 300 s prepare budget.
+- The wait bound is lowered from 2^31 to 2^26 cycles (~34 ms).
+- attrs_ok requires numRegs x 384 >= 40x128 + 232x256, so setmaxnreg.inc cannot block forever.
+Not applied: moving the compile to import time.
 
 ## Rules check
 
