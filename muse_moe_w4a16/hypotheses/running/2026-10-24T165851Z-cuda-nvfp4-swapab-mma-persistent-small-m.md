@@ -111,13 +111,19 @@ review: proceed
 status: running
 review_at: 2026-10-24T170237Z
 review_companions: null
-stage: claimed
+stage: implemented
 claimed_at: 2026-10-24T170237Z
 base_sha: 663f5edaa1c1e7a6a50c7a891240deafb601a765
 base_blob: d9a9375ef4721ab9b28cc9d6364c92e67c7ccc59
 branch: hyp/muse_moe_w4a16/cuda-nvfp4-swapab-mma-persistent-small-m
 worktree: .worktrees/muse_moe_w4a16/cuda-nvfp4-swapab-mma-persistent-small-m
 mode: null
+implemented_at: 2026-10-24T171427Z
+impl_commit: b65c9aabd73e6480ee59cd3164c307aece6e622d
+submission_sha256: e2f8b43f8127ffe67d6835f756cc5b03009f37f999d8f4737df0189a76fee325
+norm_sha256: 4d6c01495799a459fbab53472840a1cbe587cd119add48667a6d9b690d4afb5d
+submission_blob: 79debc5dc69cde3f15d3087b59ed8f063b9debd9
+lint_warnings: 20
 ---
 
 # cuda-nvfp4-swapab-mma-persistent-small-m
@@ -184,3 +190,57 @@ No companions. This is kind: rewrite, judged on its own kernel rows against the 
 - Self-check coverage: add M=2 and M=12/24 (non-power-of-two M inside an NT class) to exercise partially filled slabs, and one case with local_start != 0 if the judge's bank can start elsewhere (prepare hard-codes (0, 32), so that only matters if the config varies).
 - Harvest note (as for splitkv): read the log tail first. 'PATH CHOSEN = MARLIN' or 'SELF-CHECK FAILED' means the run measured master, not the kernel.
 
+
+## Implementation notes
+
+Implemented 2026-10-24 in the worktree's `muse_moe_w4a16/submission.py` only (uncommitted; diff stat `1 file changed, 763 insertions(+), 54 deletions(-)`).
+
+- **CUDA source** (`_CUDA_CPP` / `_CUDA_SRC`, built by `_build_cuda()` with `load_inline`, `-O3 -arch=sm_90a`, no fast-math, compile seconds printed). One TU, one template `w4a16_kernel<NT, GATED>` with 6 instantiations (NT 1/2/4 x w13+silu / w2). `w4a16_init()` runs `cudaFuncSetAttribute(MaxDynamicSharedMemorySize)` + `cudaFuncGetAttributes` for all 6 in prepare (before any capture) and returns ok / numRegs / localSizeBytes / smem. `w4a16_gemm()` is the launcher.
+- **Kernel** as specified: 256 threads, 8 warps x 16 weight rows, BN 128, BK 256, 4 stages, 1 CTA/SM, `launch_bounds(256, 1)`. Smem per stage is 16 KB codes + 2 KB scales + BSM x 512 B slab, so 88 / 104 / 136 KB for NT 1 / 2 / 4. Persistent grid = SM count. Items are (b, j, s) with b slowest. `n_items` comes from `n_padded` on device, clamped to `blocks_cap = 32`. One flat (item, stage) cp.async ring, issuing 3 stages ahead across item boundaries, with one `__syncthreads` per stage and `wait_group(2)`. The producer prefetches the next item's expert and route ids into registers one item early. Weights and scales use `cp.async.cg` 16 B with `L2::cache_hint` evict_first. Activations use `cp.async.ca` 16 B and zero-fill sentinel or e<0 rows. Dequant is the exact bit trick, then `fma.rn.bf16x2` with -0 (explicit, so subnormals are kept) by `bf16(e4m3 * 2^119)`. mma is `m16n8k16.row.col.f32.bf16.bf16.f32`. Split-K uses partials stored with `__stcg`, then `__threadfence`, then an `atomicAdd` ticket by thread 0. The last arriver resets the ticket to 0, sums the SK partials in fixed order with `__ldcg` and runs the epilogue. SK tables: w13 {1:4, 2:2, 4:1}, w2 {1:8, 2:4, 4:2}. Epilogues: w13 writes bf16(silu(gate*gs)*(up*gs)) to `cache2[route, n0]`; w2 writes bf16(acc*gs) to `cache3[route, o]`, at the flat route index. Remote and sentinel slots are never written.
+- **Review BUILD FIXES applied:** (1) XOR swizzle: slab chunk c of row r is stored at `c ^ (r & 7)`, and ldmatrix x4 reads logical chunks with the same XOR, so it is conflict-free. Shared-memory bandwidth at NT=4 (8 warps re-reading the slab) is NOT addressed; that is stage-2 material per the review. (2) The w13 rows are interleaved **per warp**: warp w row g is gate column 64j+8w+g and row g+8 is the matching up column. This replaces the spec's "gate rows then up rows per 128-row tile", so c0/c2 (and c1/c3) of one thread are a gate/up pair and need no exchange. (3) `_cuda_setup` warm-compiles `_align_small` for tokens 1..32 at BSM 8/16/32 and runs `_align_self_check(..., bsm_of=_cuda_bsm)`. Any hard mismatch disables the CUDA path. (4) All gathers and epilogues index by route id = `sorted_ids[b*BSM + p]`: x row = route >> 3, cache2/cache3 row = route, sentinel = route >= M*8. (5) A spill (`localSizeBytes > 0`) is printed, not fatal. (6) There are separate ticket buffers `cuda_tk13` [32*64] and `cuda_tk2` [32*32], both asserted zero after the self-check. One fp32 partial workspace (32 MiB, the max over NT/SK) is shared by the two stream-ordered launches. (7) The log prints `PATH CHOSEN = CUDA|MARLIN`, per-M self-check results, regs and spills per instantiation, smem, grid and the SK table.
+- **Weight retiling** (`_tile_codes` / `_tile_scales`, `_cuda_bank`): a pure view/permute/flip of the same nibbles and E4M3 bytes per expert. Global scales stay fp32 with gs x 128 folded in (exact). Each expert's round trip is asserted to equal the source bytes exactly. Extra bank memory is about 0.84 GiB; the Marlin bank is kept.
+- **Self-check** (`_cuda_self_check`) uses a fixed CPU generator and synthetic inputs only. M is in (1, 2, 4, 8, 12, 16, 24, 32), which adds the review's M=2/12/24 partial-slab cases. The cases are random, skewed, all-one-expert, all-remote and all-local. Each compares cache2 and y per local route, and out per row, against master's Marlin path, with a bound of 1e-2 per-row rel-L2, finite outputs and equal local_ids. At M in (1, 8, 16, 32) the all-one-expert case is also checked against a local fp32 NVFP4 decode (it does not import the reference).
+- **Refactor:** kernel_fn's body moved into `_moe(x, topk_ids, topk_weights, bank, state, use_cuda)` so the self-check can run both paths and see the intermediates. The `use_cuda=False` branch is master's code verbatim, the same launches in the same order, so num_tokens > 32 and the fallback are byte for byte. kernel_fn branches only on num_tokens <= 32 and the prepare-time `cuda_ok` flag (plus the bank key).
+- **Offline verification (no GPU here):** a numpy emulation ran the actual retiling ops, the kernel's per-lane word/nibble extraction with the bit trick, scale bytes, slab swizzle with ldmatrix x4 semantics, mma m16n8k16 fragment definitions, split-K summation and the epilogue row/token mapping. It covered w2 NT1 SK2, w13 NT1 SK1, w13 NT2 and w2 NT4 SK2 with partial m-blocks and sentinels, against a dense dequant matmul. Max rel err was about 1e-15 in every config, which confirms both the indexing and the exactness. Not verifiable offline: PTX syntax and compile, the `cvt.e4m3x2` byte order (taken from the muse_attention_decode precedent), and performance.
+- **Deviations:** the gate/up interleave is per warp, not per 128-row half, per review fix (2). The spill is non-fatal per the review. `blocks_cap = 32` local experts is safe because BSM >= M and topk ids are distinct, so each expert takes at most one m-block; the clamp is a guard. No other new ideas were added.
+
+## Rules check
+
+Checked against `git -C .worktrees/muse_moe_w4a16/cuda-nvfp4-swapab-mma-persistent-small-m diff`:
+
+- [x] CUDA-graph capturable: kernel_fn → `_moe` (CUDA branch) has no `.item()`/`.cpu()`/`synchronize()`/tensor prints. Allocations are `torch.empty` sized from shapes only. The two launches use the current stream. Item counts come from `n_padded` **on device**, with no host branch on values. `cudaFuncSetAttribute` runs only in prepare.
+- [x] Nothing derived from `data` is cached across calls. State holds only prepare-time weights, the workspace, tickets (reset to 0 by the kernel itself) and the flag. Partials and tickets are per-launch scratch.
+- [x] Weights are repacked losslessly in `prepare()` only. NVFP4 codes and E4M3 scales are the same bytes, permuted, with the round trip asserted exactly. Global scales stay fp32 (x 2^7, exact). Dequant happens in registers, exactly.
+- [x] Activations are BF16 where SGLang keeps BF16. x, cache2 and y are bf16 and the fp32 accumulate matches Marlin's fp32 reduce. KV cache / queries: n/a (not attention).
+- [x] Attention sees every key: n/a (MoE problem, no attention).
+- [x] No timing patches, harness frames/I/O/secrets, module edits, reference import, subprocesses (only torch's own `load_inline` build, as in the muse_attention_decode precedent) or network. The fp32 self-check decode is written locally.
+- [x] All work happens inside the timed call, with no output caching or replay. The self-check in prepare uses only synthetic inputs from a fixed seed.
+- [x] First line is still `# okc: problem=muse_moe_w4a16`. There is no `triton.autotune` and no host syncs in kernel_fn.
+
+okc_lint output:
+
+```
+warn  host-sync    L216: "random": [torch.randperm(N_EXPERTS, generator=gen)[:TOP_K].tolist() for _ in range(tokens)],  (outside kernel_fn's call graph; fine in prepare())
+warn  host-sync    L218: [remote_set[i] for i in torch.randperm(len(remote_set), generator=gen)[:5].tolist()]  (outside kernel_fn's call graph; fine in prepare())
+warn  host-sync    L220: "all-remote": [[remote_set[i] for i in torch.randperm(len(remote_set), generator=gen)[:TOP_K].tolist()]  (outside kernel_fn's call graph; fine in prepare())
+warn  host-sync    L239: torch.cuda.synchronize()  (outside kernel_fn's call graph; fine in prepare())
+warn  host-sync    L244: s_ids, b_exp, n_pad = s_ids.tolist(), b_exp.tolist(), int(n_pad.item())  (outside kernel_fn's call graph; fine in prepare())
+warn  host-sync    L245: r_ids, r_exp, r_pad = r_ids.tolist(), r_exp.tolist(), int(r_pad.item())  (outside kernel_fn's call graph; fine in prepare())
+warn  dtype        L781: q13 = torch.empty((count, w13[0].numel()), dtype=torch.uint8, device=w13.device)  (allowed only where SGLang does the same)
+warn  dtype        L782: s13 = torch.empty((count, weights["w13_sf"][0].numel()), dtype=torch.uint8, device=w13.device)  (allowed only where SGLang does the same)
+warn  dtype        L783: q2 = torch.empty((count, w2[0].numel()), dtype=torch.uint8, device=w2.device)  (allowed only where SGLang does the same)
+warn  dtype        L784: s2 = torch.empty((count, weights["w2_sf"][0].numel()), dtype=torch.uint8, device=w2.device)  (allowed only where SGLang does the same)
+warn  host-sync    L832: "random": [torch.randperm(N_EXPERTS, generator=gen)[:TOP_K].tolist() for _ in range(tokens)],  (outside kernel_fn's call graph; fine in prepare())
+warn  host-sync    L834: [remote_set[i] for i in torch.randperm(len(remote_set), generator=gen)[:5].tolist()]  (outside kernel_fn's call graph; fine in prepare())
+warn  host-sync    L837: "all-remote": [[remote_set[i] for i in torch.randperm(len(remote_set), generator=gen)[:TOP_K].tolist()]  (outside kernel_fn's call graph; fine in prepare())
+warn  host-sync    L849: torch.cuda.synchronize()  (outside kernel_fn's call graph; fine in prepare())
+warn  host-sync    L899: torch.cuda.synchronize()  (outside kernel_fn's call graph; fine in prepare())
+warn  host-sync    L917: torch.cuda.synchronize()  (outside kernel_fn's call graph; fine in prepare())
+warn  host-sync    L931: torch.cuda.synchronize()  (outside kernel_fn's call graph; fine in prepare())
+warn  host-sync    L991: torch.cuda.synchronize()  (outside kernel_fn's call graph; fine in prepare())
+warn  host-sync    L993: torch.cuda.synchronize()  (outside kernel_fn's call graph; fine in prepare())
+warn  host-sync    L1004: torch.cuda.synchronize()  (outside kernel_fn's call graph; fine in prepare())
+OK with warnings: .../cuda-nvfp4-swapab-mma-persistent-small-m/muse_moe_w4a16/submission.py
+```
+
+The dtype warnings are the uint8 byte buffers that hold the retiled NVFP4 codes and E4M3 scales (prepare, lossless); no activation is cast. `python3 -I -m py_compile` passed and the `__pycache__` was removed.
