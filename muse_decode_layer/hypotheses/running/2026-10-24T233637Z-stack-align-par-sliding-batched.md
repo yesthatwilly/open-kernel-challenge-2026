@@ -20,7 +20,7 @@ kind: primary
 controls_for: null
 review: required
 status: running
-stage: implemented
+stage: dispatched
 claimed_at: 2026-10-24T233638Z
 base_sha: 45997c629d0d2ab4312c7688acc660b9616ec817
 base_blob: 3d70ae6e2de0d48c4a4f2a469ced8234f5348182
@@ -37,6 +37,8 @@ submission_blob: f9fc0379411724907de05cd9cdb046eeaf5382e7
 lint_warnings: 30
 attempt_file: 2026-10-24T233649Z-check-stack-align-par-sliding-batched.md
 prepared_at: 2026-10-24T233649Z
+job: b94e797333fb4a27
+dispatched_at: 2026-10-24T233707Z
 ---
 
 # stack-align-par-sliding-batched
