@@ -47,7 +47,7 @@ status: running
 hold_reason: null
 review_at: 2026-10-24T104248Z
 review_companions: null
-stage: implemented
+stage: dispatched
 claimed_at: 2026-10-24T104248Z
 base_sha: cee590d58c6c34ded84fdb734c38ca129e327fee
 base_blob: 66ba1a39e2aaa5cedb2ce3ddfb809f67f86b37f9
@@ -62,6 +62,8 @@ submission_blob: 8dbe14762ff0b27944d7a0005836ea5c606cfb6c
 lint_warnings: 0
 attempt_file: 2026-10-24T104504Z-check-pooler-triton-splitk2-blockn64-semaphore-control-blockk256.md
 prepared_at: 2026-10-24T104504Z
+job: 75d595a29a4c4b57
+dispatched_at: 2026-10-24T104514Z
 ---
 
 # pooler-triton-splitk2-blockn64-semaphore-control-blockk256
