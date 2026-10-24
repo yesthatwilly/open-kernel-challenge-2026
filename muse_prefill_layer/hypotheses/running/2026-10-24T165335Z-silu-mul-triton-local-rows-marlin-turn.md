@@ -51,7 +51,7 @@ status: running
 review_at: 2026-10-24T165654Z
 review_companions: null
 hold_reason: null
-stage: implemented
+stage: dispatched
 claimed_at: 2026-10-24T233107Z
 base_sha: 8d596b6505434ea78352dd08f0494382c53bec54
 base_blob: 635cfee3ac2c3f7c66840b8c8a082cad2fa41a68
@@ -68,6 +68,8 @@ submission_blob: 1a06deda403ddee4b4693b34127fd50b8bcb791c
 lint_warnings: 7
 attempt_file: 2026-10-24T233142Z-check-silu-mul-triton-local-rows-marlin-turn.md
 prepared_at: 2026-10-24T233142Z
+job: b2259479e57e4196
+dispatched_at: 2026-10-24T233200Z
 ---
 
 # silu-mul-triton-local-rows-marlin-turn
