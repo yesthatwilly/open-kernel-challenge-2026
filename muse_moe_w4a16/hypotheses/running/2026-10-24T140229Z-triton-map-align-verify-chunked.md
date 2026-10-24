@@ -44,9 +44,16 @@ priority: 2
 kind: primary
 controls_for: null
 review: proceed
-status: queued
+status: running
 review_at: 2026-10-24T140447Z
 review_companions: null
+stage: claimed
+claimed_at: 2026-10-24T140447Z
+base_sha: 001aa1c251231981cfc4254d1cf8ce63b737a236
+base_blob: d9a9375ef4721ab9b28cc9d6364c92e67c7ccc59
+branch: hyp/muse_moe_w4a16/triton-map-align-verify-chunked
+worktree: .worktrees/muse_moe_w4a16/triton-map-align-verify-chunked
+mode: null
 ---
 
 # triton-map-align-verify-chunked
