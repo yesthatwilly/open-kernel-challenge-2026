@@ -24,7 +24,7 @@ kind: primary
 controls_for: null
 review: required
 status: running
-stage: implemented
+stage: dispatched
 claimed_at: 2026-10-24T232737Z
 base_sha: 40aa18e2a31c08252c27c88f94c261e2614a4998
 base_blob: 635cfee3ac2c3f7c66840b8c8a082cad2fa41a68
@@ -41,6 +41,8 @@ submission_blob: 191990ad36719ff9ae1c2c997b53a68fbd2933a8
 lint_warnings: 6
 attempt_file: 2026-10-24T232747Z-check-restack-router-hilo-align32-zerostore.md
 prepared_at: 2026-10-24T232747Z
+job: ead4bc2e7b364add
+dispatched_at: 2026-10-24T232756Z
 ---
 
 # restack-router-hilo-align32-zerostore
