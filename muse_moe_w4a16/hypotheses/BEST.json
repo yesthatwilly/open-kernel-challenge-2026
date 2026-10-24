@@ -1,17 +1,17 @@
 {
  "problem": "muse_moe_w4a16",
- "job": "5e7d55323d75425e",
+ "job": "fb2cc736613747df",
+ "check_job": "fb2cc736613747df",
  "mode": "check",
- "speedup": 0.006105558011922052,
+ "speedup": 0.9887547325362586,
  "ci": [
-  0.006013974641743221,
-  0.006197141382100883
+  0.9739234115482147,
+  1.0035860535243024
  ],
- "score_us": 2202665.173885779,
- "commit": "ab21d70942315e8ad54b7981b399cee40c287eb3",
- "submission_blob": "8eeb6a4778875e37a1d9c55a5e27ee6079999847",
- "slug": null,
- "result": "muse_moe_w4a16/hypotheses/BEST.result.json",
- "updated_at": "2026-10-23T221828Z",
- "note": "seeded by best-init from local job records"
+ "score_us": 13601.451965244405,
+ "commit": "a646cb4151c0a45f926a49b68de21789e11a8102",
+ "submission_blob": "11fbc1957daf7294cd2810ff82a0aad2f25644bd",
+ "slug": "sglang-marlin-path-parity",
+ "result": "muse_moe_w4a16/hypotheses/done/gain/sglang-marlin-path-parity.result.json",
+ "updated_at": "2026-10-24T023730Z"
 }
