@@ -47,13 +47,15 @@ base_sha: 60622cdebc40953738b4429ef80902673cd5f50f
 base_blob: a0fcbb70e25fa568ef94f81935748440798a1410
 branch: hyp/muse_bf16_proj/router-splitk32-small-m-all-loads-in-flight-control-stages3
 worktree: .worktrees/muse_bf16_proj/router-splitk32-small-m-all-loads-in-flight-control-stages3
-mode: null
+mode: check
 implemented_at: 2026-10-24T104354Z
 impl_commit: 3a8ae33a5a1e448fd4425cc85c9e4b571abde5c2
 submission_sha256: 338da3e88be1bc1d7f6d1f2aba8ba0d35ef91f148a12a23cc08dc930175dbce8
 norm_sha256: 69a8d95d184ceefb689de66ef3353b175b0d20bb85ec00666c814860044e215e
 submission_blob: efe58306beefac9bf49baced3db1ac91f79ac357
 lint_warnings: 0
+attempt_file: 2026-10-24T104355Z-check-router-splitk32-small-m-all-loads-in-flight-control-stages3.md
+prepared_at: 2026-10-24T104355Z
 ---
 
 # router-splitk32-small-m-all-loads-in-flight-control-stages3
