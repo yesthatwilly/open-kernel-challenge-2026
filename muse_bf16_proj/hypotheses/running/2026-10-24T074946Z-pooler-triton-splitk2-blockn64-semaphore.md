@@ -58,13 +58,19 @@ review: proceed
 status: running
 review_at: 2026-10-24T075347Z
 review_companions: [pooler-triton-splitk2-blockn64-semaphore-control-blockk256]
-stage: claimed
+stage: implemented
 claimed_at: 2026-10-24T075347Z
 base_sha: 3fe0dcca6e3cc2a8200f9881dba77770f6234d3e
 base_blob: da55301de1e911aeab09878b0873809f544f436c
 branch: hyp/muse_bf16_proj/pooler-triton-splitk2-blockn64-semaphore
 worktree: .worktrees/muse_bf16_proj/pooler-triton-splitk2-blockn64-semaphore
 mode: null
+implemented_at: 2026-10-24T075600Z
+impl_commit: cee590d58c6c34ded84fdb734c38ca129e327fee
+submission_sha256: 22ee139ee4a6828742e6007d116c9ee05b3f2d0b5d635ecd28f519edc860d5e4
+norm_sha256: 7a700bcc3c8849e9837636c4313ad6327417a3399a716308dfeedca8f2803ddc
+submission_blob: 66ba1a39e2aaa5cedb2ce3ddfb809f67f86b37f9
+lint_warnings: 0
 ---
 
 # pooler-triton-splitk2-blockn64-semaphore
@@ -113,3 +119,47 @@ No landed hypothesis touches the pooler path, the pooler's memory traffic or its
 - decode_32: given both earlier Triton m=32 pooler rows lost 11% and the unpooler m=32 rows lost 3-9%, should the promotable variant route only m<=16 (leaving decode_32 on cuBLAS) if decode_32 regresses? Per-shape rows from this run answer that without another companion.
 - Readout should use the Triton kernel's own us per row (top_kernels) and the paired ratios, calibrated against pooler-triton-skinny-m32's 20.27-20.51 us rows at m=1/8/16. Headline deltas vs 1.151x will be inside the CI (expected about +2-3% geomean).
 
+
+## Implementation notes
+
+All changes are in the worktree's `muse_bf16_proj/submission.py`. The diff adds 113 lines and removes none. The router kernel, `_router_forward` and the router warm-up are untouched.
+
+- **New `_bf16_splitk_kernel`** (`@triton.jit(do_not_specialize=["M"])`).
+  - Grid is `(4096 // 64, 2)`, which is 128 CTAs. BLOCK_N=64, BLOCK_K=128 (as specified; the BLOCK_K=256 control is a separate companion), SPLIT_K=2, K_SLICE=4096 (32 K-steps), num_warps=4, num_stages=4.
+  - BLOCK_M is 16 for m<=16 and 32 for 17..32. There is one M-block, and rows >= m are masked.
+  - The weight is read as `[BLOCK_K, BLOCK_N]` directly from the row-major `[N, K]` weight, using the router's addressing. The product is `acc = tl.dot(x_tile, w_tile, acc)` in fp32.
+- **Epilogue, in this order:**
+  1. Masked (`offs_m < M`) fp32 partial store to `ws[pid_k]`.
+  2. `tl.debug_barrier()`.
+  3. One scalar `tl.atomic_add(cnt_ptr + pid_n, 1, sem="acq_rel", scope="gpu")` per CTA.
+  4. `tl.debug_barrier()`, so the other threads' reloads are ordered after thread 0's acquire. This is the reviewer's open question, resolved by adding the barrier unconditionally.
+  5. `if ticket == SPLIT_K - 1`: reload slices 0..SPLIT_K-1 with `cache_modifier=".cg"` and the same `offs_m < M` mask, sum them in fixed order, cast to bf16 once, and do a masked store of `[m, 64]` into `out = torch.empty((m, 4096), bf16)`. Then `tl.atomic_xchg(cnt_ptr + pid_n, 0, sem="relaxed", scope="gpu")`.
+  - The kernel has no early return. Every CTA stores its partial and takes exactly one ticket on every path.
+- **Release side.** No separate fence instruction: Triton has no `tl` threadfence primitive, and `inline_asm_elementwise` with no tensor operand is untested here. The release comes from the acq_rel gpu-scope atomic, preceded by `bar.sync`. This matches the review's "release fence / acq_rel" alternative.
+- **State and prepare().** New state keys `pooler_ws` (fp32 `[2, 32, 4096]`, `torch.empty`, pure scratch; every row < m is rewritten each call before it is read) and `pooler_cnt` (int32 `[64]`, zeros). prepare() warms every m in 1..32 on synthetic x, which compiles both BLOCK_M specializations. It then calls `pooler_cnt.zero_()` (stream-ordered).
+- **Dispatch.** `kernel_fn` takes the new path only when `layer == "pooler"` and `_pooler_shape_ok` holds. That check requires cfg m <= 32, cfg n == 4096, cfg k == 8192, x 2-D bf16, x.stride(1) == 1, 1 <= x.shape[0] <= 32, x.shape[1] == 8192, and the weight to be `[4096, 8192]` with stride(1) == 1. Pooler at m >= 128 and every other bf16 layer fall through to the unchanged `_bf16_gemm_dispatch_impl`.
+- **Deviations.** None from the spec's `change` paragraph. Two items follow the review rather than adding to the spec: the post-ticket barrier, and warming every m in 1..32 rather than only 1/8/16/32.
+- **Uncertainties (cannot run on this node).**
+  - Whether Triton accepts the scalar `atomic_add` with `sem`/`scope` and the `atomic_xchg` keyword args on the judge's Triton version. Both are documented in Triton 3.x.
+  - Whether the scalar atomic is lowered to a single thread's predicated `atom`. Triton's usual lowering is a thread-0 predicate plus an smem broadcast.
+  - The shared workspace assumes pooler calls are not run concurrently on two streams. The judge runs them sequentially.
+
+## Rules check
+
+Each box was checked against `git -C .worktrees/muse_bf16_proj/pooler-triton-splitk2-blockn64-semaphore diff`.
+
+- [x] **CUDA-graph capturable.** The diff adds no `.item()`, `.cpu()`, `synchronize()` or tensor prints. It allocates nothing that depends on values: `out` and the grid depend only on x.shape. The branches are on shapes, `cfg` and dtype only. The counter is 0 at capture and self-resets on every replay.
+- [x] **Nothing derived from `data` is cached across calls.** `pooler_ws` is scratch, fully rewritten for rows < m before it is read in the same launch, and rows >= m are never read. `pooler_cnt` holds only ticket counts and returns to 0.
+- [x] **Weights.** The pooler bf16 weight is used as is: the same `state["pooler"]` tensor, with no repack and no precision change.
+- [x] **Activations are BF16 where SGLang keeps BF16.** x is bf16 and the output is bf16. Accumulation is fp32 with one bf16 rounding, the same as cuBLAS splitK.
+- [x] n/a: no KV cache or queries in this problem (dense projections).
+- [x] n/a: no attention in this problem.
+- [x] **No forbidden operations.** No timing patches, harness frames/I/O/secrets, module edits, reference import, subprocesses or network. The diff imports nothing new.
+- [x] **All work happens inside the timed call; no output caching or replay.** The prepare() warm-up uses synthetic x only, and its outputs are discarded.
+- [x] **No `triton.autotune`.** The configs are static constants chosen from m.
+
+okc_lint output:
+```
+CLEAN: /home/user/git/musespark/.worktrees/muse_bf16_proj/pooler-triton-splitk2-blockn64-semaphore/muse_bf16_proj/submission.py
+```
+`python3 -I -m py_compile` passed, and the `__pycache__` it left was removed.
