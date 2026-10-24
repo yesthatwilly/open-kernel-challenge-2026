@@ -40,7 +40,7 @@ kind: primary
 controls_for: null
 review: required
 status: running
-stage: implemented
+stage: dispatched
 claimed_at: 2026-10-24T231740Z
 base_sha: 10e97df213c296823faa2881225ed84509e1e385
 base_blob: 635cfee3ac2c3f7c66840b8c8a082cad2fa41a68
@@ -55,6 +55,8 @@ submission_blob: 1d99c85e29e4eea02f922f841550643a9f1a62f9
 lint_warnings: 5
 attempt_file: 2026-10-24T231833Z-check-router-hilo-one-gemm-n512.md
 prepared_at: 2026-10-24T231833Z
+job: f4e3c5f4c306427b
+dispatched_at: 2026-10-24T231843Z
 ---
 
 # router-hilo-one-gemm-n512
