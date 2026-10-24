@@ -1,6 +1,6 @@
 # muse_attention_decode hypotheses
 
-Regenerated 2026-10-24T173236Z. Best: 1.3949x [1.3740,1.4158] job `698d4cd3838c4a63` (submit)
+Regenerated 2026-10-24T173817Z. Best: 1.3949x [1.3740,1.4158] job `698d4cd3838c4a63` (submit)
 
 | created | slug | kind | area | where | outcome | speedup | CI | job | mode | promotion | review | expected hit |
 |---|---|---|---|---|---|---|---|---|---|---|---|---|
@@ -35,7 +35,7 @@ Regenerated 2026-10-24T173236Z. Best: 1.3949x [1.3740,1.4158] job `698d4cd3838c4
 | 2026-10-24T140241Z | sliding-fused-triton-decode1-splits-32 | primary | sliding-layer attention (batch-1 decode, split depth) | done/neutral | neutral | 1.3520 | [1.332,1.376] | f9ac830932cb4eb6 | submit |  | proceed | 1/3 |
 | 2026-10-24T145005Z | sliding-deep-splits-on-cuda-splitkv | primary | sliding attention, batched decode, split depth | done/gain | gain | 1.3949 | [1.374,1.416] | 698d4cd3838c4a63 | submit | done | proceed | 2/4 |
 | 2026-10-24T165242Z | full-verify-cuda-streamk-splitkv | rewrite | FA3 call (full-layer verify gather) | running | running |  |  |  |  |  | proceed |  |
-| 2026-10-24T165302Z | full-decode-cuda-fp8-qk-mma | primary | FA3 call (full-layer decode gather) | running | running |  |  | b939681d3ab549d7 | submit |  | proceed |  |
+| 2026-10-24T165302Z | full-decode-cuda-fp8-qk-mma | primary | FA3 call (full-layer decode gather) | done/neutral | neutral | 1.3439 | [1.324,1.364] | b939681d3ab549d7 | submit |  | proceed | 0/3 |
 | 2026-10-24T165325Z | sliding-verify-cuda-streamk-window | primary | sliding-layer attention (verify) | queue | queued |  |  |  |  |  | proceed |  |
 | 2026-10-24T165342Z | full-verify1-cuda-streamk-batch1 | primary | full-layer attention (batch-1 verify gate) | queue | queued |  |  |  |  |  | proceed |  |
 | 2026-10-24T172034Z | sliding-cuda-cluster-dsmem-onelaunch | rewrite | sliding-layer attention (whole-path rewrite, CUDA cluster) | running | running |  |  |  |  |  | proceed |  |

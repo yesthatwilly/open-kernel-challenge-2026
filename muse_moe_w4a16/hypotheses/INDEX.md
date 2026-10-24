@@ -1,6 +1,6 @@
 # muse_moe_w4a16 hypotheses
 
-Regenerated 2026-10-24T173236Z. Best: 1.3076x [1.2880,1.3272] job `3cabc739f1af493e` (submit)
+Regenerated 2026-10-24T173817Z. Best: 1.3076x [1.2880,1.3272] job `3cabc739f1af493e` (submit)
 
 | created | slug | kind | area | where | outcome | speedup | CI | job | mode | promotion | review | expected hit |
 |---|---|---|---|---|---|---|---|---|---|---|---|---|
@@ -18,7 +18,7 @@ Regenerated 2026-10-24T173236Z. Best: 1.3076x [1.2880,1.3272] job `3cabc739f1af4
 | 2026-10-24T075232Z | marlin-block-size-m-next-smaller | primary | w13 marlin | done/gain | gain | 1.0394 | [1.024,1.055] | 198f10f446a847cb | check | pending | proceed | 5/6 |
 | 2026-10-24T075232Z | align-256-experts-below-128 | primary | MoE align/dispatch | done/neutral | neutral | 0.9998 | [0.985,1.015] | e753d5b9df644ebb | check |  | proceed | 3/6 |
 | 2026-10-24T075257Z | align-remote-sentinel-ids | primary | MoE align/dispatch | queue | hold |  |  |  |  |  | hold |  |
-| 2026-10-24T075257Z | marlin-block-size-m-verify-two-smaller | primary | w13 marlin | done/gain | gain | 1.0916 | [1.075,1.108] | ed837a4a46d44a95 | check | pending | proceed | 6/6 |
+| 2026-10-24T075257Z | marlin-block-size-m-verify-two-smaller | primary | w13 marlin | done/gain | gain | 1.0916 | [1.075,1.108] | ed837a4a46d44a95 | check | superseded | proceed | 6/6 |
 | 2026-10-24T081339Z | small-m-grouped-gemv-splitk-rewrite | rewrite | w13 marlin | done/regression | regression | 0.6635 | [0.654,0.673] | 734a1159ff334c3d | check |  | proceed | 3/6 |
 | 2026-10-24T100217Z | marlin-block-m-cap-16-port | primary | w13 marlin | done/neutral | neutral | 1.0950 | [1.079,1.111] | 1c33392914594026 | check |  | proceed | 6/6 |
 | 2026-10-24T112137Z | marlin-block-m-two-smaller-on-postnorm | primary | w13 marlin | done/gain | gain | 1.2536 | [1.235,1.272] | c00ef7295c154867 | check | superseded | proceed | 6/6 |

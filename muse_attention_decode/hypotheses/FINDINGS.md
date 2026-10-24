@@ -1,6 +1,6 @@
 # muse_attention_decode findings
 
-Regenerated 2026-10-24T173236Z by `churn.py index`. Read this before writing a hypothesis for muse_attention_decode.
+Regenerated 2026-10-24T173817Z by `churn.py index`. Read this before writing a hypothesis for muse_attention_decode.
 
 ## Current best
 
@@ -25,6 +25,7 @@ Where the time goes (per scored shape, top kernels):
 
 ### FA3 call (full-layer decode gather)
 - **full-decode-cuda-gather-splitkv** → gain (gain), 1.3468x — gained on full decode_16, decode_32; lost on sliding decode_1. Stage 1 of a rewrite of full-attention decode, built on master (sliding-fused-triton-decode1-gate). Gate (config/shape only): cfg window == 0 and q_len == 1 and
+- **full-decode-cuda-fp8-qk-mma** → neutral (within-ci), 1.3439x — gained on sliding decode_1. Built on master (full-decode-cuda-gather-splitkv). One change inside splitkv_attn_kernel (full-layer decode at 1 < batch <= 64, the only kernel touched): comput
 
 ### FA3 call (head packing)
 - **fa3-hdim128-head-pairing** → gain (gain), 1.1706x — gained on full decode_16, decode_32, verify_16, verify_32; lost on full decode_1, verify_1. On full-attention layers only (config window == 0, decode and verify) call flash_attn_with_kvcache on a head-paired view of the cache so each token's two KV hea
@@ -71,6 +72,7 @@ Where the time goes (per scored shape, top kernels):
 - sliding-fused-triton-decode-batched-deep-splits: unproven-vs-best: the change is not proven either way; a stacked hypothesis (`depends_on: sliding-fused-triton-decode-batched-deep-splits`) that adds a further change in the same area is the only way to learn more (ident
 - full-fused-triton-decode1-gate: within-ci: the change is not proven either way; a stacked hypothesis (`depends_on: full-fused-triton-decode1-gate`) that adds a further change in the same area is the only way to learn more (identical code is never re-ru
 - sliding-fused-triton-decode1-splits-32: unproven-vs-best: the change is not proven either way; a stacked hypothesis (`depends_on: sliding-fused-triton-decode1-splits-32`) that adds a further change in the same area is the only way to learn more (identical code
+- full-decode-cuda-fp8-qk-mma: within-ci: the change is not proven either way; a stacked hypothesis (`depends_on: full-decode-cuda-fp8-qk-mma`) that adds a further change in the same area is the only way to learn more (identical code is never re-run).
 
 ## Do not retry (rejected / duplicates)
 
@@ -97,6 +99,5 @@ Where the time goes (per scored shape, top kernels):
 - queue: sliding-verify-cuda-streamk-window [sliding-layer attention (verify)] p2 queued
 - queue: full-verify1-cuda-streamk-batch1 [full-layer attention (batch-1 verify gate)] p2 queued
 - running: full-verify-cuda-streamk-splitkv [FA3 call (full-layer verify gather)] p1 running
-- running: full-decode-cuda-fp8-qk-mma [FA3 call (full-layer decode gather)] p3 running
 - running: sliding-cuda-cluster-dsmem-onelaunch [sliding-layer attention (whole-path rewrite, CUDA cluster)] p1 running
 - running: full-cuda-onelaunch-warpspec-bulk-gather [full-layer attention (whole-path rewrite, warp-specialized one launch)] p2 running
