@@ -38,7 +38,7 @@ priority: 5
 kind: rewrite
 controls_for: null
 review: proceed
-status: running
+status: done
 review_at: 2026-10-24T075347Z
 review_companions: null
 claimed_at: 2026-10-24T075347Z
@@ -58,8 +58,15 @@ prepared_at: 2026-10-24T080302Z
 job: 218515e2d0b14ce7
 dispatched_at: 2026-10-24T080316Z
 replaces: Marlin w13+w2 (moe_wna16_marlin_gemm x2) at every prefill T
-stage: dispatched
+stage: harvested
 rewrite_stage: 1
+outcome: regression
+verdict_detail: regression
+speedup: 0.6890832658827992
+speedup_ci: [0.6787470168945572, 0.6994195148710411]
+harvested_at: 2026-10-24T090910Z
+best_at_harvest: 1.0038664293875537
+promotion: null
 ---
 
 # experts-triton-w4a16-inkernel-fp4
@@ -142,3 +149,31 @@ OK with warnings: .worktrees/muse_prefill_layer/experts-triton-w4a16-inkernel-fp
 ```
 
 Both warnings are prepare()-time syncs (the existing one, and the one in the dequant check). `python3 -I -m py_compile` passes, and its `__pycache__` was removed.
+
+## Result
+
+- job `218515e2d0b14ce7` (check), status done, passed True, tests 5/5
+- speedup 0.6891x, 95% CI [0.6787, 0.6994], score 562201.8690349252 µs vs SGLang 387403.9 µs
+- best at harvest: {"speedup": 1.0038664293875537, "ci": [0.9888084329467404, 1.018924425828367], "job": "62025c368c3c4e8e"}; base result: muse_prefill_layer/hypotheses/done/gain/sglang-pipeline-parity.result.json
+- **outcome: regression** (regression)
+- files: `muse_prefill_layer/hypotheses/done/regression/experts-triton-w4a16-inkernel-fp4.result.json`, `muse_prefill_layer/hypotheses/done/regression/experts-triton-w4a16-inkernel-fp4.patch`; branch `hyp/muse_prefill_layer/experts-triton-w4a16-inkernel-fp4`
+
+## Attribution
+
+| shape | w | base µs | hyp µs | delta | verdict |
+|---|---|---|---|---|---|
+| batch=1 ctx=80000 dist=soft layer=sliding load=turn_1 page=1 q_len=753 repeats=6 | 46 | 1078.66 | 2369.48 | 0.4625 | lost |
+| batch=1 ctx=80000 dist=soft layer=full load=turn_1 page=1 q_len=753 repeats=6 | 16 | 1434.85 | 2807.86 | 0.529 | lost |
+| batch=4 ctx=80000 dist=soft layer=sliding load=turn_4 page=1 q_len=753 repeats=6 | 46 | 3367.03 | 4478.13 | 0.7551 | lost |
+| batch=4 ctx=80000 dist=soft layer=full load=turn_4 page=1 q_len=753 repeats=6 | 16 | 4949.82 | 6163.83 | 0.818 | lost |
+| batch=1 ctx=0 dist=soft layer=full load=first_turn page=1 q_len=16384 repeats=6 | 16 | 18279.1 | 21414.79 | 0.8606 | lost |
+| batch=1 ctx=32768 dist=soft layer=sliding load=first_turn page=1 q_len=16384 repeats=6 | 138 | 16995.2 | 19598.94 | 0.8555 | lost |
+| batch=1 ctx=32768 dist=soft layer=full load=first_turn page=1 q_len=16384 repeats=6 | 16 | 21535.66 | 23507.76 | 0.8981 | lost |
+| batch=1 ctx=65536 dist=soft layer=full load=first_turn page=1 q_len=16384 repeats=6 | 16 | 25286.61 | 27307.51 | 0.9029 | lost |
+
+lost on sliding first_turn, turn_1, turn_4; full first_turn, turn_1, turn_4. Expected hit: 0/3. Noise ±1.5%.
+
+## Follow-ups
+
+- rewrite stage 1 of `Marlin w13+w2 (moe_wna16_marlin_gemm x2) at every prefill T`: read the replaced kernels' own us per shape (profile top_kernels) against the incumbent and the floor, and check which Milestone it reached. The next stage is `/hypothesize muse_prefill_layer "<what to fix or tune>" --kind rewrite --depends-on experts-triton-w4a16-inkernel-fp4 --stage 2`; a slow or failed first cut is the expected start, not a do-not-retry.
+
