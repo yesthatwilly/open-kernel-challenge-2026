@@ -52,7 +52,7 @@ kind: rewrite
 controls_for: null
 review: proceed
 status: running
-stage: claimed
+stage: implemented
 replaces: "FA3 on full-attention decode (q_len=1): flash_fwd main + FlashAttnFwdCombine"
 review_at: 2026-10-24T083747Z
 review_companions: null
@@ -62,6 +62,12 @@ base_blob: de98030423860cfc9507b61d19f82a416223a23d
 branch: hyp/muse_decode_layer/triton-flash-decode-full-paired-kv
 worktree: .worktrees/muse_decode_layer/triton-flash-decode-full-paired-kv
 mode: null
+implemented_at: 2026-10-24T084126Z
+impl_commit: bbbf3168de76ebc524cb23723b2ebf734b893072
+submission_sha256: 25f223ef917c96cffb2a5965c921b85e5c5aa0ddd099b70cc4e00b9d30a62c7f
+norm_sha256: 17685f9ed93efa351a1232036b6b85bc10c7ec8db305f4d0668059c225536acc
+submission_blob: cf09a9196c4d7a20540bb82c9d79bdebaeea2a43
+lint_warnings: 1
 ---
 
 # triton-flash-decode-full-paired-kv
@@ -111,3 +117,47 @@ No companion is warranted. This is kind: rewrite and is judged on the replaced k
 - Tests with page 64 and full decode (e.g. batch 1 ctx 3000 full, if its default page is 64) exercise the t//P, t%P path. Confirm which full-decode tests use page 64.
 - If fa3-full-single-split-probe lands first and shows FA3 is grid- or occupancy-bound rather than gather-pattern-bound, the 128-byte-row framing in this hypothesis's justification should be revised, though the kernel design still stands.
 
+
+## Implementation notes
+
+Worktree `.worktrees/muse_decode_layer/triton-flash-decode-full-paired-kv`, file `muse_decode_layer/submission.py` only (191 insertions, 21 deletions; the deletions are the FA3 call re-indented into an `else:` branch, otherwise unchanged).
+
+- **Call site (`kernel_fn`).** `if window == 0 and length == 1:` calls the new `_full_decode_attention(q.view(T,16,64).to(FP8), k_cache, v_cache, page_table, cache_seqlens, k_scale, v_scale, sm_scale*qk_scale_factor)`. Otherwise it runs master's FA3 call byte for byte: sliding layers, every verify block including full verify, and both descale branches. `scheduler_metadata` is not read on the new path. The store_cache path, the FP8 q cast and `state['o_norm_gate']` are unchanged. The output is bf16 [B,16,64] and takes the same `.reshape(tokens, 1024).to(bf16)` (a no-op) as before.
+- **Kernel 1, `_full_decode_split_kernel`.** Grid (B, S) with S = clamp(ceil(264/B), 1, 128) (`_full_decode_splits`, so B=1: 128, B=16: 17, B=32: 9, B=33: 8). split_len = ceil(page_table.shape[1]*P / S) rounded up to BLOCK_N=64. Both come from shapes only. Each program handles keys [s*split_len, min((s+1)*split_len, cache_seqlens[b])). The loop bound is in-kernel from the loaded length: every key t < cache_seqlens[b] is visited exactly once across the splits, and only tiles beyond the length are not iterated. Each token's two KV heads are read as one 128-byte row: `row = page_table[b, t//P] * P + t%P`, at offset row*128 in the uint8 view of the cache. Both the page_table load and the K/V gathers are masked by `t < end` (end <= cache_seqlens[b]) and `t//P < page_table.shape[1]`, with other=0, so -1 entries are never dereferenced. The query tile is block-diagonal [16,128]: the FP8 q is loaded, upconverted, then `tl.where(own, q, 0.0)` writes explicit zeros (not a masked q load). K and V are converted fp8 to bf16 (exact). S = Q2 @ K^T in fp32, scaled by sm_scale*qk_scale_factor*k_scale*log2(e). The online softmax runs in the exp2 domain with fp32 m/l/acc, P goes to bf16 for P @ V, and a guard makes m_new == -inf use 0 (no -inf minus -inf). The masked store keeps only each head's own kv-head 64 columns of acc[16,128]. It writes unnormalized fp32 acc [B,S,16,64] and m, l [B,S,16] to fresh scratch sized from B, S and the head shape only. An empty split (spread=mixed short requests) runs zero iterations and writes m=-inf, l=0, acc=0. num_warps=4, num_stages=3.
+- **Explicit prefetch of the indirect indices (review requirement).** The first tile's page-table rows are loaded before the loop. Inside the loop, the current tile's K and V loads are issued first. The *next* tile's page_table indices and rows are loaded next, before the current tile's QK^T, softmax and PV, and are carried to the next iteration. The kernel does not rely on Triton's pipeliner for the doubly indirect load.
+- **Kernel 2, `_full_decode_combine_kernel`.** Grid (B, 16), BLOCK_S = next_pow2(S). m_max is the max over finite partials only (all -inf gives 0), and w_s = exp2(m_s - m_max) for finite m_s, 0 otherwise. out = sum(w*acc) / sum(w*l) * v_scale, with the denominator guarded > 0, stored as bf16. No NaN or Inf path exists.
+- **k_scale / v_scale.** Both 0-d device tensors are passed as pointers and loaded in-kernel (k_scale in kernel 1's score scale, v_scale in kernel 2's output). There is no `.item()` and no branch on them. The path is the same for kv_scale 1 and 1/64.
+- **Page size.** PAGE is a constexpr taken from k_cache.shape[1], so page 1 (scored) and page 64 (for example the `batch 1, ctx 3000, layer full` test, default page 64) both use the Triton kernel. There is no FA3 fallback.
+- **No autotune, no host syncs.** The runtime ints (pt_stride, max_pages, split_len, num_splits) are `do_not_specialize`, so there is one compile per constexpr set. `_warm_full_decode(device)` in `prepare()` compiles kernel 1 for PAGE in {1, 64} (through the host wrapper, which also compiles kernel 2 at BLOCK_S=128) and kernel 2 for every BLOCK_S in {1, 2, ..., 128}.
+- **Deviations from the spec.** (1) The K/V caches and q are passed as uint8 views and bitcast to fp8e4nv in-kernel, which keeps masked loads with other=0 well defined. (2) Tiles past a request's length are not iterated, instead of being iterated fully masked. This is not block skipping, because every key below the length is attended. (3) v_scale is applied in the combine, not on V in kernel 1, which is mathematically identical. (4) The SM count is a 132 constant (H200), not queried.
+
+### Incumbent and stage-1 pass bar (corrected numbers, master profile 0730135cdcac43b7)
+- Incumbent FA3 (flash_fwd main + FlashAttnFwdCombine) on full decode: **374.4 us of 601.7 us on decode_32 full**, **188.8 us of 433.0 us on decode_16 full**, and **18.4 + 6.8 = 25.2 us on decode_1 full**. Do not use the 491.6/623 us figures in the Change paragraph: those are from muse_attention_decode and overlap-inflated.
+- **Stage-1 pass bar:** the replaced kernels' own time (`_full_decode_split_kernel` + `_full_decode_combine_kernel`) must be <= 0.8x FA3: **<= 300 us on decode_32 full** and **<= 150 us on decode_16 full**. decode_1 full should stay at or below about 25 us; a few us worse is tolerable, at most about 0.7% on that load.
+- **Report achieved KV bandwidth** against the about 137 us KV-only floor on decode_32 (about 655 MB FP8 KV; about 328 MB on decode_16): bandwidth = KV bytes / kernel-1 time, alongside FA3's about 1.75 TB/s. Read kernel time, not only shape time: the plain Triton launches lose FA3's PDL overlap, which costs a few us.
+
+### Uncertainties (cannot run here)
+- Nothing has been compiled or run (no GPU, Triton or torch on this node). Triton API points to confirm on the judge: `do_not_specialize` by argument name, `tl.arange(0, 1)` for BLOCK_S=1 (used only for B >= 264; warmed anyway), and the dynamic `range(start, end, BLOCK_N)` with loop-carried `valid`/`rows` under num_stages=3.
+- P is rounded to bf16 for P @ V, which is finer than FA3's FP8 P, so error should be at or below master's.
+- Achieved bandwidth with one 64-row tile per iteration may still be latency-bound. A stage-2 follow-up is deeper K/V prefetch or a larger BLOCK_N.
+
+## Rules check
+
+Checked against `git -C .worktrees/muse_decode_layer/triton-flash-decode-full-paired-kv diff`:
+
+- [x] CUDA-graph capturable. The new path has no `.item()`, `.cpu()`, `synchronize()` or tensor prints. Grid, S, split_len, BLOCK_S and scratch sizes come from B, page_table.shape and k_cache.shape only. The branch is on `cfg['window']` and `cfg['q_len']` (config). Per-request lengths are read in-kernel. `torch.cuda.synchronize()` exists only in `prepare()` (lint warning, fine).
+- [x] Nothing derived from `data` is cached across calls. Scratch (acc, m, l, out) is allocated per call. `_warm_full_decode` uses dummy tensors in `prepare()` and keeps nothing in state.
+- [x] Weights: n/a: no weight handling changed. `prepare()` only adds the kernel warm-up.
+- [x] Activations: the attention output is bf16 as from FA3. The KV cache is read as FP8 and upconverted exactly. Queries are master's FP8 E4M3 cast (no coarser). Softmax statistics are fp32 and P is bf16 (finer than FA3's FP8 P).
+- [x] Attention sees every key: each key t < cache_seqlens[b] falls in exactly one split and is attended. There is no top-k, sparsity, block skipping or weight-based skipping. Only positions at or beyond the length (which FA3 also excludes) are not iterated.
+- [x] No timing patches, harness frames/I/O/secrets, module edits, reference import, subprocesses or network. The only new imports are `triton` and `triton.language`.
+- [x] All work happens inside the timed call. There is no output caching or replay. Warm-up compiles kernels on dummy data only.
+- [x] No `triton.autotune`. The configs are fixed (num_warps=4, num_stages=3, BLOCK_N=64).
+- [x] The first-line marker `# okc: problem=muse_decode_layer` is kept.
+
+Lint output (`okc_lint.py ... --problem muse_decode_layer`):
+```
+warn  host-sync    L260: torch.cuda.synchronize()  (outside kernel_fn's call graph; fine in prepare())
+OK with warnings: muse_decode_layer/submission.py
+```
+`python3 -I -m py_compile` passed. The `__pycache__` it left was removed.
