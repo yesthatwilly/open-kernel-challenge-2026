@@ -43,9 +43,10 @@ priority: 3
 kind: primary
 controls_for: null
 review: proceed
-status: queued
+status: hold
 review_at: 2026-10-24T165641Z
 review_companions: null
+hold_reason: "reviewer: ~0.15% headline (3-5 us at decode_32), inside drift; edits the same call sites as bf16-shape-gated-triton-gemms-small-t (in the judge). Revisit as part of a combined decode GEMM restack after that harvests (per-layer kernel names for attribution)"
 ---
 
 # bf16-m32-swapab-wgmma-port
