@@ -1,17 +1,17 @@
 {
  "problem": "muse_moe_w4a16",
- "job": "45eacf4ca2e849d2",
+ "job": "1947e3ec2abb4bdf",
  "check_job": "45eacf4ca2e849d2",
- "mode": "check",
- "speedup": 1.3249153782392282,
+ "mode": "submit",
+ "speedup": 1.3278240305297715,
  "ci": [
-  1.30504164756564,
-  1.3447891089128166
+  1.307906670071825,
+  1.3477413909877178
  ],
- "score_us": 10150.459584726568,
+ "score_us": 10128.224592105293,
  "commit": "1a5da3d22ce48904de76852a1d585563f4c53048",
  "submission_blob": "108d36e9f2266fc88531dd6ff0329a847c882013",
  "slug": "align-parallel-per-expert-verify",
  "result": "muse_moe_w4a16/hypotheses/done/neutral/align-parallel-per-expert-verify.result.json",
- "updated_at": "2026-10-24T174343Z"
+ "updated_at": "2026-10-24T184753Z"
 }

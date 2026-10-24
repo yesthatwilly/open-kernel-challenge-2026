@@ -62,4 +62,4 @@ OK with warnings: muse_moe_w4a16/submission.py
 medium
 
 ## Result (after the run)
-(pending)
+Promotion passed: 1.3278x [1.3079,1.3477], board: {"rank": 410, "team": "yesthatwilly", "speedup": 1.3287, "first": false, "ahead": 409, "to_first": 1.8986}
