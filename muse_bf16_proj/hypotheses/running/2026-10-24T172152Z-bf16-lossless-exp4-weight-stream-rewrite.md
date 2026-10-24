@@ -134,9 +134,16 @@ controls_for: null
 rewrite_stage: 1
 replaces: "m<=32 bf16 weight streams: pooler _bf16_splitk_kernel / _bf16_swapab_kernel, qkv_gate _qkv_splitk_sem_kernel / _bf16_swapab_kernel, o _pooler_skinny_kernel / _bf16_swapab_kernel, unpooler slice _bf16_splitk_kernel, unpooler-full nvjet_sm90_tst_64x16 / _bf16_swapab_kernel (decode_1, decode_16, decode_32, verify_1)"
 review: proceed
-status: queued
+status: running
 review_at: 2026-10-24T172632Z
 review_companions: null
+stage: claimed
+claimed_at: 2026-10-24T172707Z
+base_sha: 43ae369dae50af5a98bad52c50a5e7ba904c492f
+base_blob: a8bb42ac483318e9fbc84bc7826a27b7a704d1fb
+branch: hyp/muse_bf16_proj/bf16-lossless-exp4-weight-stream-rewrite
+worktree: .worktrees/muse_bf16_proj/bf16-lossless-exp4-weight-stream-rewrite
+mode: null
 ---
 
 # bf16-lossless-exp4-weight-stream-rewrite
