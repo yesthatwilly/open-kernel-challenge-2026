@@ -49,9 +49,18 @@ controls_for: null
 rewrite_stage: 3
 replaces: _align_small + Marlin w13+w2 + act_and_mul + _post_norm_combine at num_tokens == 1
 review: proceed
-status: queued
+status: running
 review_at: 2026-10-25T002107Z
 review_companions: null
+stage: claimed
+claimed_at: 2026-10-25T013639Z
+base_sha: ea3464f424a209eb0f46541178cd3dd11062426f
+base_blob: c80e3a831390ffb38cbcb7560231b59a64a2c6a0
+branch: hyp/muse_moe_w4a16/cuda-fused-moe-bs1-persistent-bandwidth-s3-inproc
+worktree: .worktrees/muse_moe_w4a16/cuda-fused-moe-bs1-persistent-bandwidth-s3-inproc
+mode: null
+restack_of: null
+stale_base: true
 ---
 
 # cuda-fused-moe-bs1-persistent-bandwidth-s3-inproc
