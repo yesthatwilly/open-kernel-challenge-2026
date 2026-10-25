@@ -69,7 +69,7 @@ review: proceed
 status: running
 review_at: 2026-10-25T012041Z
 review_companions: null
-stage: claimed
+stage: implemented
 claimed_at: 2026-10-25T012041Z
 base_sha: c89b01f6d4eeee26bad681a66af3e272ffc51f07
 base_blob: f09390b45e1e1af24f0ccc3645988b81f97b2bf8
@@ -78,6 +78,12 @@ worktree: .worktrees/muse_moe_w4a16/cuda-nvfp4-wgmma-rega-grouped-s2-finite-fix
 mode: null
 restack_of: null
 stale_base: true
+implemented_at: 2026-10-25T013639Z
+impl_commit: 570f5e4ac5465931183addaf7a472e01668ced15
+submission_sha256: 1ef5716e41db310ac8e17a509ee79b37b2393d829653dc2b6f99e82cb9abf814
+norm_sha256: e8ad77e26f3b65404fd680d2f487a15da5857aa59b2a866c9b6253a00c9db963
+submission_blob: 1ae7e9cac6dc078a0e71c7a6b0b77ec48b0ed01f
+lint_warnings: 42
 ---
 
 # cuda-nvfp4-wgmma-rega-grouped-s2-finite-fix
