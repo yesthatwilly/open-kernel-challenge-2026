@@ -74,8 +74,10 @@ depends_on: null
 priority: 2
 kind: primary
 controls_for: null
-review: required
+review: proceed
 status: queued
+review_at: 2026-10-25T203233Z
+review_companions: null
 ---
 
 # sliding-sk-window-port-decode32-verify1
@@ -96,3 +98,29 @@ Port muse_attention_decode master's windowed stream-K sliding routes (commit 7e1
 ## Risk
 
 Weakest links: (1) the extra load_inline build (~40 s) on top of four modules; print compile seconds and fall back if prepare is past its deadline. (2) Decode's attention input differs from attention's: here qkv comes out of a GEMM with the gate columns interleaved in decode's layout, so the norm-gate epilogue's gate stride must be asserted (dl3 piece A failed its own self-check on exactly this, 'gate stride 2304'). (3) The selector compares against a longer chain than attention did, so the margin should be larger here; if PATH CHOSEN keeps master for a band, that band is unmeasured.
+
+## Adversarial review
+
+Reviewed 2026-10-25T203233Z by an adversarial subagent (model opus).
+
+**Verdict: proceed.** Proceed, no companion: the sanctioned A1 split of the held combo-attn-master-sliding-race-skw-c16. On master both bands still run the FA3 chain (Sd32 FA3 18.6 us, Sv1 10.0 us). The risks are reading and safety: a scored submit returns no prepare log, and a sticky CUDA fault in an unchecked multi-thousand-line port cannot fall back.
+
+### Justification
+Collapsing each band to pre + one sk kernel could save ~8-14 us per row (weight 46 each; Sd32 is master's worst ratio 1.087x); headline ~1-1.5%, inside the CI, read per row. Weakest link: in-layer transfer on B=17..32 (sliding-cluster-c4-decode32-port and S1 class B both beat FA3 standalone and moved nothing in-layer; no griddepcontrol in the new kernels). Variant choice: attention's logs chose variant 4 at grid p8 for SV1, variant 6 at p4 for B=17..32. Prior missing: sliding-cluster-c4-decode32-port/-s2, sliding-fused-batched-decode-port, combo-attn-master-sliding-race-skw-c16 (A1).
+
+### Confounders on the current kernel
+- combo-measured-rows-slide-batched-preattn-t8-tail: the selector must time against _attn_core as each state routes it; route skw before S1/S3.
+- small-t-launch-minimal-dense-chain-pdl / dense-chain-s3: new kernels lack griddepcontrol; time qkv GEMM through o-GEMM input.
+- full-decode-sk-ticket-restack-b1-b64 / dl3-piece-a: per-state tickets; give the new kernels distinct symbol names.
+- stack-align-par-sidestream-sliding1: Sd1 is the drift control.
+
+### Interference and A/B needs
+No companion; attribution per row (only Sd32 and Sv1 can change). Distinct kernel symbols (skw_attn_kernel, skw_pre_kernel) and an in-prepare variant x grid sub-race replace a second run.
+
+### Open questions
+- SV1 variant/grid: sub-race {4,5} x {p4,p8,sm}; SB32 {6} x {p2,p4,p8}.
+- Selector graph must include qkv GEMM through o-GEMM input with PDL neighbours.
+- Distinct symbols so top_kernels shows which path ran.
+- Wait for checks, per its own text?
+- Serialize with sliding-cluster-c4-s3-satfinite-on-sk-ticket.
+
