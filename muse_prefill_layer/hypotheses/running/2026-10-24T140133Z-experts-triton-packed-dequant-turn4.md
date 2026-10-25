@@ -39,7 +39,7 @@ review: proceed
 status: running
 review_at: 2026-10-24T165620Z
 review_companions: null
-stage: implemented
+stage: dispatched
 claimed_at: 2026-10-25T003236Z
 base_sha: 3c444875aef3f2a85c86b412e22d10ce0a6290dc
 base_blob: 526518b54879e7929be2f03a0c8084907596fa70
@@ -56,6 +56,8 @@ submission_blob: 0910a52804bc45a2f5ace82707c915f4634d8add
 lint_warnings: 7
 attempt_file: 2026-10-25T003418Z-check-experts-triton-packed-dequant-turn4.md
 prepared_at: 2026-10-25T003418Z
+job: ce3cc1a22a244ec7
+dispatched_at: 2026-10-25T003428Z
 ---
 
 # experts-triton-packed-dequant-turn4
