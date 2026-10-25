@@ -122,7 +122,7 @@ base_sha: 405d804d6756dfee33cc29cbda79b8057d85fbe1
 base_blob: 593b238c16387c5ac3774424ee9557882b9fc46a
 branch: hyp/muse_moe_w4a16/combo-smallm-two-stream-halves-x-w13-splitk
 worktree: .worktrees/muse_moe_w4a16/combo-smallm-two-stream-halves-x-w13-splitk
-mode: null
+mode: submit
 restack_of: null
 stale_base: null
 implemented_at: 2026-10-25T185807Z
@@ -131,6 +131,8 @@ submission_sha256: c299a5c75fd2305ffa2161d743164ab7f3ad5e41cffd514d5e7f1d74a0d0a
 norm_sha256: 37fb180d9fb10fa8f5e71c51ddc3a6567965cda670c34db29e69dcb747c5402b
 submission_blob: c728d78fabda55f5f6ce3fab29e38c3b9f537be9
 lint_warnings: 106
+attempt_file: 2026-10-25T185808Z-submit-combo-smallm-two-stream-halves-x-w13-splitk.md
+prepared_at: 2026-10-25T185808Z
 ---
 
 # combo-smallm-two-stream-halves-x-w13-splitk
