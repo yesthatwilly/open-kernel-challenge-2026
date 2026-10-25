@@ -58,9 +58,18 @@ controls_for: null
 rewrite_stage: 1
 replaces: _router_hilo_kernel + torch.zeros memset at router m=65..256
 review: proceed
-status: queued
+status: running
 review_at: 2026-10-25T042454Z
 review_companions: null
+stage: claimed
+claimed_at: 2026-10-25T042454Z
+base_sha: c67ea8677fb5f5a23ea879170b1d782395102bf1
+base_blob: 970b415b746fa03cb92e419d270be92588273178
+branch: hyp/muse_bf16_proj/router-m128-m256-cluster-dsmem-tiled-rewrite
+worktree: .worktrees/muse_bf16_proj/router-m128-m256-cluster-dsmem-tiled-rewrite
+mode: null
+restack_of: null
+stale_base: null
 ---
 
 # router-m128-m256-cluster-dsmem-tiled-rewrite
