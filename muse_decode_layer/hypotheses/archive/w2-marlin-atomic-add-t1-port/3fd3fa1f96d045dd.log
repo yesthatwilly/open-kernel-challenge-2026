@@ -1,0 +1,96 @@
+[small-t-dense-chain] load_inline compiled in 49.2s
+[splitkv] load_inline compiled in 48.9s
+[small-t-dense-chain] P occupancy (CTAs/SM, NF=1/2/4): [3, 2, 2]; grid 216 CTAs
+[small-t-dense-chain] PDL probe: eager overlap False (-6.2 us), graph overlap True (49.7 us, secondary waited 50.3 us) -> pdl=1
+[small-t-dense-chain] P timing T=1 pdl=0 20.8 us (3.63 TB/s) pdl=1 20.5 us (3.68 TB/s)
+[small-t-dense-chain] P timing T=8 pdl=0 22.0 us (3.44 TB/s) pdl=1 21.7 us (3.48 TB/s)
+[small-t-dense-chain] P timing T=32 pdl=0 26.4 us (2.86 TB/s) pdl=1 26.1 us (2.89 TB/s)
+[small-t-dense-chain] ON pdl=1 compile 49.2s max errs ei 1.27e-04 logit 3.42e-06 xn 0.00e+00 w 0.00e+00 y 0.00e+00 graph 0.00e+00: PATH CHOSEN = DENSE-CHAIN at T <= 32, MASTER above
+[align-parallel-large-t] ON cases=18 mismatches=0
+[w2-atomic] trial 0: master w2 launch (local slots 2)
+[w2-atomic] trial 0: master w2 done
+[w2-atomic] trial 0: atomic w2 launch
+[w2-atomic] trial 0: atomic w2 done
+[w2-atomic] trial 0: atomic_zero w2 launch
+[w2-atomic] trial 0: atomic_zero w2 done
+[w2-atomic] trial 1: master w2 launch (local slots 3)
+[w2-atomic] trial 1: master w2 done
+[w2-atomic] trial 1: atomic w2 launch
+[w2-atomic] trial 1: atomic w2 done
+[w2-atomic] trial 1: atomic_zero w2 launch
+[w2-atomic] trial 1: atomic_zero w2 done
+[w2-atomic] trial 2: master w2 launch (local slots 4)
+[w2-atomic] trial 2: master w2 done
+[w2-atomic] trial 2: atomic w2 launch
+[w2-atomic] trial 2: atomic w2 done
+[w2-atomic] trial 2: atomic_zero w2 launch
+[w2-atomic] trial 2: atomic_zero w2 done
+[w2-atomic] trial 3: master w2 launch (local slots 4)
+[w2-atomic] trial 3: master w2 done
+[w2-atomic] trial 3: atomic w2 launch
+[w2-atomic] trial 3: atomic w2 done
+[w2-atomic] trial 3: atomic_zero w2 launch
+[w2-atomic] trial 3: atomic_zero w2 done
+[w2-atomic] trial 4: master w2 launch (local slots 1)
+[w2-atomic] trial 4: master w2 done
+[w2-atomic] trial 4: atomic w2 launch
+[w2-atomic] trial 4: atomic w2 done
+[w2-atomic] trial 4: atomic_zero w2 launch
+[w2-atomic] trial 4: atomic_zero w2 done
+[w2-atomic] trial 5: master w2 launch (local slots 4)
+[w2-atomic] trial 5: master w2 done
+[w2-atomic] trial 5: atomic w2 launch
+[w2-atomic] trial 5: atomic w2 done
+[w2-atomic] trial 5: atomic_zero w2 launch
+[w2-atomic] trial 5: atomic_zero w2 done
+[w2-atomic] trial 6: master w2 launch (local slots 4)
+[w2-atomic] trial 6: master w2 done
+[w2-atomic] trial 6: atomic w2 launch
+[w2-atomic] trial 6: atomic w2 done
+[w2-atomic] trial 6: atomic_zero w2 launch
+[w2-atomic] trial 6: atomic_zero w2 done
+[w2-atomic] trial 7: master w2 launch (local slots 4)
+[w2-atomic] trial 7: master w2 done
+[w2-atomic] trial 7: atomic w2 launch
+[w2-atomic] trial 7: atomic w2 done
+[w2-atomic] trial 7: atomic_zero w2 launch
+[w2-atomic] trial 7: atomic_zero w2 done
+[w2-atomic] trial 8: master w2 launch (local slots 1)
+[w2-atomic] trial 8: master w2 done
+[w2-atomic] trial 8: atomic w2 launch
+[w2-atomic] trial 8: atomic w2 done
+[w2-atomic] trial 8: atomic_zero w2 launch
+[w2-atomic] trial 8: atomic_zero w2 done
+[w2-atomic] trial 9: master w2 launch (local slots 3)
+[w2-atomic] trial 9: master w2 done
+[w2-atomic] trial 9: atomic w2 launch
+[w2-atomic] trial 9: atomic w2 done
+[w2-atomic] trial 9: atomic_zero w2 launch
+[w2-atomic] trial 9: atomic_zero w2 done
+[w2-atomic] trial 10: master w2 launch (local slots 3)
+[w2-atomic] trial 10: master w2 done
+[w2-atomic] trial 10: atomic w2 launch
+[w2-atomic] trial 10: atomic w2 done
+[w2-atomic] trial 10: atomic_zero w2 launch
+[w2-atomic] trial 10: atomic_zero w2 done
+[w2-atomic] trial 11: master w2 launch (local slots 4)
+[w2-atomic] trial 11: master w2 done
+[w2-atomic] trial 11: atomic w2 launch
+[w2-atomic] trial 11: atomic w2 done
+[w2-atomic] trial 11: atomic_zero w2 launch
+[w2-atomic] trial 11: atomic_zero w2 done
+[w2-atomic] self-check slots: local 37 remote 59
+[w2-atomic] PATH CHOSEN = ATOMIC w2 at T=1 (worst rel-L2 vs master 0.00583); use_atomic_add=True use_fp32_reduce=True memset in path: False; T>1 MASTER
+[splitkv] self-check kernel A (splitkv_attn) ok, B=5 grid=device
+[splitkv] self-check kernel B (splitkv_combine) ok, B=5
+[splitkv] self-check B=5 kv_scale=1.0 grid=device: rel L2 1.67e-03, finite True
+[splitkv] self-check kernel A (splitkv_attn) ok, B=5 grid=3
+[splitkv] self-check kernel B (splitkv_combine) ok, B=5
+[splitkv] self-check B=5 kv_scale=0.25 grid=3: rel L2 1.66e-03, finite True
+[splitkv] self-check kernel A (splitkv_attn) ok, B=5 grid=3
+[splitkv] self-check kernel B (splitkv_combine) ok, B=5
+[splitkv] self-check B=5 kv_scale=1.0 grid=3: rel L2 1.69e-03, finite True
+[splitkv] self-check kernel A (splitkv_attn) ok, B=33 grid=device
+[splitkv] self-check kernel B (splitkv_combine) ok, B=33
+[splitkv] self-check B=33 kv_scale=1.0 grid=device: rel L2 1.63e-03, finite True
+[splitkv] ON: self-check passed: CUDA split-KV path on full decode, 1 < batch <= 64

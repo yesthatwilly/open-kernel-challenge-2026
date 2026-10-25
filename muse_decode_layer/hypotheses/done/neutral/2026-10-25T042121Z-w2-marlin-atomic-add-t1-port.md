@@ -63,12 +63,13 @@ speedup: 1.2855726646854595
 speedup_ci: [1.2662890747151776, 1.3048562546557412]
 harvested_at: 2026-10-25T043619Z
 best_at_harvest: 1.2680313318618024
-promotion: submitted
+promotion: done
 hand_landed: true
 promotion_commit: 00e36e3a74224d6c0cc4f10708dfd9e759d8ee84
 promotion_attempt: 2026-10-25T045638Z-submit-w2-marlin-atomic-add-t1-port.md
 promotion_job: 3fd3fa1f96d045dd
 promotion_at: 2026-10-25T045646Z
+board: "{\"rank\": 396, \"team\": \"yesthatwilly\", \"speedup\": 1.2726, \"first\": false, \"ahead\": 395, \"to_first\": 1.7955}"
 ---
 
 # w2-marlin-atomic-add-t1-port

@@ -33,4 +33,4 @@ okc_lint: OK with warnings (only pre-existing and new prepare()-only host-sync w
 low
 
 ## Result (after the run)
-(pending)
+Promotion passed: 1.2726x [1.2535,1.2917], board: {"rank": 396, "team": "yesthatwilly", "speedup": 1.2726, "first": false, "ahead": 395, "to_first": 1.7955}

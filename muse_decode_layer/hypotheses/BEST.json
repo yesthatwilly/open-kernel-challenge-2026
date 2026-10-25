@@ -1,17 +1,17 @@
 {
  "problem": "muse_decode_layer",
- "job": "7edbcb33c98349cb",
- "check_job": "c243a29f26dc4725",
+ "job": "3fd3fa1f96d045dd",
+ "check_job": "7a9f5de5aecc4aba",
  "mode": "submit",
- "speedup": 1.2695013772983264,
+ "speedup": 1.2725637226942819,
  "ci": [
-  1.2504588566388515,
-  1.2885438979578012
+  1.2534752668538676,
+  1.291652178534696
  ],
- "score_us": 17818.255580107452,
- "commit": "b047510f64cf1919b8313cb88b2f6fe17c1c2305",
+ "score_us": 17775.37705703894,
+ "commit": "00e36e3a74224d6c0cc4f10708dfd9e759d8ee84",
  "submission_blob": "62c5a9413ba5710defea2ca3de14c1a1dc3b5a6d",
- "slug": "full-decode-splitkv-restack-on-pdl",
- "result": "muse_decode_layer/hypotheses/done/neutral/full-decode-splitkv-restack-on-pdl.result.json",
- "updated_at": "2026-10-25T053806Z"
+ "slug": "w2-marlin-atomic-add-t1-port",
+ "result": "muse_decode_layer/hypotheses/done/neutral/w2-marlin-atomic-add-t1-port.result.json",
+ "updated_at": "2026-10-25T053807Z"
 }
