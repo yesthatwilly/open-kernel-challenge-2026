@@ -116,7 +116,7 @@ base_sha: 0c4719336efd5dcbef40bf2e1bbbccad0ca34463
 base_blob: 4bb57fd292a7f0fd5a80bd88dc773008b490bf8c
 branch: hyp/muse_decode_layer/combo-measured-rows-slide-batched-preattn-t8-tail
 worktree: .worktrees/muse_decode_layer/combo-measured-rows-slide-batched-preattn-t8-tail
-mode: null
+mode: submit
 restack_of: null
 stale_base: null
 implemented_at: 2026-10-25T191043Z
@@ -125,6 +125,8 @@ submission_sha256: 56bed064ba73e4549099978a1dd05461d071cbf94032c3984f1da8cc58a29
 norm_sha256: b2394dd23614aa30635bb318b5cb32306e73ccbfce09cfac4da9071796e51f26
 submission_blob: 3fc72e97304e132db432fcc87872be997f842929
 lint_warnings: 71
+attempt_file: 2026-10-25T191044Z-submit-combo-measured-rows-slide-batched-preattn-t8-tail.md
+prepared_at: 2026-10-25T191044Z
 ---
 
 # combo-measured-rows-slide-batched-preattn-t8-tail
