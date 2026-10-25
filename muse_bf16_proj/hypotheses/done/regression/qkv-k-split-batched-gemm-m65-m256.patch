@@ -1,0 +1,280 @@
+diff --git a/muse_bf16_proj/submission.py b/muse_bf16_proj/submission.py
+index ad8d7254..76386bd8 100644
+--- a/muse_bf16_proj/submission.py
++++ b/muse_bf16_proj/submission.py
+@@ -119,7 +119,15 @@ AB_CASES = (
+     ("pooler", 4096, 8192, 256),
+     # combo-rowowner-reduce-free-m1-qkv-o-plus-naive: the new cells (pooler m=1 is above).
+     ("qkv_gate", 2304, 8192, 1), ("o", 8192, 1024, 1), ("qkv_gate", 2304, 8192, 128),
++    ("qkv_gate", 2304, 8192, 256),   # qkv K-split cell (own flag qkv_ksplit_ok)
+ )
++# qkv_gate K-split (own flag qkv_ksplit_ok): at these exact m the layer runs as S K-slices in one
++# cuBLAS strided-batched GEMM plus a bf16 reduce, chosen once on state A (after _lt_prepare) by a
++# cold-L2 graph-replay selector and passed to state B through _ab_flags. A miss falls back to master
++# (cuBLASLt cell B at m=128 / dispatch at m=256); LT_FLAG, nn_ok and nn_p256_ok are never touched.
++QKSPLIT_MS = (128, 256)
++QKSPLIT_CANDS = ((2, "T"), (2, "N"), (4, "T"), (4, "N"))
++QKSPLIT_MIN_WIN = 1.02
+ AB_ROUNDS = 2           # A, B, A, B
+ AB_BF16_REL_L2 = 6e-3   # bf16 output rounding is ~2e-3; the judge allows 1e-2
+ AB_ROUTER_REL_L2 = 5e-5  # the judge allows 1e-4
+@@ -2915,6 +2923,168 @@ def _lt_prepare(state: dict, flags=None) -> None:
+           + ("" if state[LT_FLAG] else f"; {why}"), flush=True)
+ 
+ 
++def _qk_forward(x: torch.Tensor, state: dict, choice) -> torch.Tensor:
++    """qkv_gate as S K-slices in one strided-batched cuBLAS GEMM plus one bf16 reduce. x [m, 8192]
++    contiguous. choice = (S, 'T' | 'N'). T: TN view of the weight [S, K/S, n] (strides K/S, 1,
++    K). N: view of the one NN repack state['qkv_t'] [K, n] as [S, K/S, n] (contiguous slices)."""
++    s, layout = choice
++    m = x.shape[0]
++    ks = QKV_K // s
++    xs = x.view(m, s, ks).permute(1, 0, 2)
++    if layout == "T":
++        ws = state["qkv_gate"].view(QKV_N, s, ks).permute(1, 2, 0)
++    else:
++        ws = state["qkv_t"].view(s, ks, QKV_N)
++    p = torch.bmm(xs, ws)
++    if s == 2:
++        return torch.add(p[0], p[1])
++    return p.sum(0)
++
++
++def _qk_kernel_names(fn) -> list:
++    """Names of the CUDA kernels one eager call of fn launches (torch.profiler)."""
++    from torch.profiler import ProfilerActivity, profile
++    fn()
++    torch.cuda.synchronize()
++    with profile(activities=[ProfilerActivity.CPU, ProfilerActivity.CUDA]) as prof:
++        fn()
++        torch.cuda.synchronize()
++    return [e.name for e in prof.events() if e.device_type == torch.autograd.DeviceType.CUDA]
++
++
++def _qk_names_ok(names: list) -> bool:
++    """Disqualify only a copy / contiguous kernel (torch copied a slice view) or a cuBLAS splitKreduce.
++    Counts are printed, not asserted (S=4's sum launches a reduce_kernel; CUPTI may return no events)."""
++    low = [n.lower() for n in names]
++    gemm = [n for n in low if ("nvjet" in n or "cutlass" in n or "gemm" in n or "sm90" in n)
++            and "reduce" not in n and "elementwise" not in n]
++    copies = [n for n in low if n not in gemm and ("memcpy" in n or "copy" in n or "contiguous" in n)]
++    reduce_k = [n for n in low if "splitkreduce" in n]
++    print(f"[qksplit] kernel name check: {len(low)} CUDA events, gemm {len(gemm)}, copies {len(copies)}, "
++          f"splitKreduce {len(reduce_k)}"
++          + ("; profiler saw no CUDA kernels, name check skipped" if not low else ""), flush=True)
++    return not copies and not reduce_k
++
++
++def _qk_select(state: dict) -> None:
++    """prepare()-only, state A only, AFTER _lt_prepare (so LT_FLAG is final and kernel_fn with the
++    new flag off is exactly what master runs per m). For m in QKSPLIT_MS: capture master's
++    kernel_fn and the four candidates (S 2/4 x TN/NN) as CUDA graphs on the same synthetic x, check
++    numerics against the fp32 reference and kernel names, replay interleaved with a 256 MB flush
++    before each replay (41 reps, empty-graph baseline subtracted), print medians, IQR and kernel
++    names for every candidate even when master is kept, and route the best only if master /
++    candidate >= QKSPLIT_MIN_WIN. Fixes state['qkv_ksplit'] ({m: (S, layout)}) and
++    state['qkv_ksplit_ok']. Never raises."""
++    state["qkv_ksplit"] = {}
++    state["qkv_ksplit_ok"] = False
++    chosen = {}
++    flush = scratch = None
++    try:
++        w = state["qkv_gate"]
++        wt = state["qkv_t"]
++        if not (w.dim() == 2 and tuple(w.shape) == (QKV_N, QKV_K) and w.dtype == torch.bfloat16
++                and w.is_contiguous() and wt.is_contiguous() and tuple(wt.shape) == (QKV_K, QKV_N)):
++            print(f"[qksplit] PATH CHOSEN: qkv_gate m={QKSPLIT_MS} -> master: weight layout unexpected", flush=True)
++            return
++        dev = w.device
++        flush = torch.empty(OUNS_FLUSH_BYTES, dtype=torch.uint8, device=dev)
++        scratch = torch.zeros(1, dtype=torch.float32, device=dev)
++        ev = [torch.cuda.Event(enable_timing=True) for _ in range(2)]
++
++        def replay_us(g) -> float:
++            flush.zero_()
++            ev[0].record()
++            g.replay()
++            ev[1].record()
++            ev[1].synchronize()
++            return ev[0].elapsed_time(ev[1]) * 1e3
++
++        def capture(fn):
++            for _ in range(3):
++                fn()
++            torch.cuda.synchronize()
++            g = torch.cuda.CUDAGraph()
++            with torch.cuda.graph(g):
++                fn()
++            torch.cuda.synchronize()
++            return g
++
++        g_base = capture(lambda: scratch.add_(1.0))
++        base = _ouns_median([replay_us(g_base) for _ in range(OUNS_GATE_REPS)])
++        wref = w.float()
++        for m in QKSPLIT_MS:
++            x = torch.randn((m, QKV_K), device=dev, dtype=torch.float32).to(torch.bfloat16)
++            cfg = {"m": m, "n": QKV_N, "k": QKV_K, "layer": "qkv_gate"}
++            data = {"x": x, "config": cfg}
++            fns = {"master": (lambda data=data: kernel_fn(data, state))}
++            for c in QKSPLIT_CANDS:
++                fns[c] = (lambda x=x, c=c: _qk_forward(x, state, c))
++            ref = x.float() @ wref.T
++            valid, names = {}, {}
++            for name, fn in fns.items():
++                ok = False
++                try:
++                    print(f"[qksplit] m={m}: checking {name} ...", flush=True)
++                    o = fn()
++                    torch.cuda.synchronize()
++                    err = float((o.float() - ref).norm() / ref.norm().clamp_min(1e-30))
++                    names[name] = _qk_kernel_names(fn)
++                    ok = bool(torch.isfinite(o).all()) and err <= AB_BF16_REL_L2
++                    if name != "master":
++                        ok = ok and _qk_names_ok(names[name])
++                    print(f"[qksplit] m={m}: {name} rel L2 {err:.2e} kernels {names[name]} valid={ok}", flush=True)
++                except Exception as e:
++                    print(f"[qksplit] m={m}: {name} check failed ({type(e).__name__}: {e}); invalid", flush=True)
++                valid[name] = ok
++            if not valid.get("master"):
++                print(f"[qksplit] m={m}: master reference invalid; master kept", flush=True)
++                continue
++            live = [n for n in fns if valid[n]]
++            graphs = {name: capture(fns[name]) for name in live}
++            times = {name: [] for name in live}
++            for rep in range(OUNS_GATE_REPS):
++                order = live if rep % 2 == 0 else live[::-1]
++                for name in order:
++                    times[name].append(replay_us(graphs[name]))
++            med, adj, iqr = {}, {}, {}
++            for name, v in times.items():
++                sv = sorted(v)
++                med[name] = sv[len(sv) // 2]
++                iqr[name] = sv[(3 * len(sv)) // 4] - sv[len(sv) // 4]
++                adj[name] = max(med[name] - base, 0.25)
++            best, best_ratio = None, 1.0
++            for c in QKSPLIT_CANDS:
++                if c in adj:
++                    ratio = adj["master"] / adj[c]
++                    print(f"[qksplit] m={m}: master median {med['master']:.2f} us (IQR {iqr['master']:.2f}), cand "
++                          f"S={c[0]} {c[1]} median {med[c]:.2f} us (IQR {iqr[c]:.2f}), empty-graph baseline "
++                          f"{base:.2f} us -> net {adj['master']:.2f} vs {adj[c]:.2f} us, master/cand {ratio:.3f}x "
++                          f"(need >= {QKSPLIT_MIN_WIN})", flush=True)
++                    if ratio > best_ratio:
++                        best, best_ratio = c, ratio
++                else:
++                    print(f"[qksplit] m={m}: cand S={c[0]} {c[1]} not timed (invalid)", flush=True)
++            if best is not None and best_ratio >= QKSPLIT_MIN_WIN:
++                chosen[m] = best
++            graphs.clear()
++    except Exception as e:
++        print(f"[qksplit] selector failed ({type(e).__name__}: {e}); master path kept", flush=True)
++        chosen = {}
++    finally:
++        flush = None
++        scratch = None
++        try:
++            torch.cuda.synchronize()
++        except Exception:
++            pass
++    state["qkv_ksplit"] = dict(chosen)
++    state["qkv_ksplit_ok"] = bool(chosen)
++    for m in QKSPLIT_MS:
++        print(f"[qksplit] PATH CHOSEN: qkv_gate m={m} -> "
++              + (f"K-split S={chosen[m][0]} {chosen[m][1]} bmm + reduce" if m in chosen else "master"),
++              flush=True)
++
++
+ def _prepare_state(weights: Weights, flags=None) -> dict:
+     """Build one state. flags None: run the router-cluster and unpooler-cluster self-checks and the
+     unpooler gate (the state the judge keeps). flags a dict: the second state of the prepare()-time
+@@ -2941,6 +3111,10 @@ def _prepare_state(weights: Weights, flags=None) -> dict:
+         state[name + "_t"] = state[name].t().contiguous()
+     state["nn_ok"] = True   # constant; the A/B self-check may turn it off for the run
+     state["nn_p256_ok"] = True   # pooler 129..256 only; own flag, own self-check cell
++    # qkv K-split: one lossless NN repack [8192, 2304] (S=2 / S=4 slices are views of it).
++    state["qkv_t"] = state["qkv_gate"].t().contiguous()
++    state["qkv_ksplit_ok"] = False
++    state["qkv_ksplit"] = {}
+     t = tick("weight splits + NN copies", t)
+     # Stage choice, side-by-side diagnostics and warm-up on synthetic inputs.
+     _router_prepare(state)
+@@ -3005,11 +3179,16 @@ def _prepare_state(weights: Weights, flags=None) -> dict:
+         t = tick("bulk cells A/A2/A3 (setup + repack + canary + gate + profile)", t)
+         _lt_prepare(state)
+         t = tick("lt cell B (heuristic + canary + gate + profile)", t)
++        # (10) qkv_gate K-split at m in QKSPLIT_MS: selector on state A only, after LT_FLAG is final.
++        _qk_select(state)
++        t = tick("qkv k-split selector", t)
+     else:
+         state["ouns_cl"] = flags["ouns_cl"]
+         state["router_cluster_ok"] = flags["router_cluster_ok"]
+         state["nn_ok"] = flags["nn_ok"]
+         state["nn_p256_ok"] = flags["nn_p256_ok"]
++        state["qkv_ksplit_ok"] = flags["qkv_ksplit_ok"]
++        state["qkv_ksplit"] = dict(flags["qkv_ksplit"])
+         # Second state: its own repacked weights / error word / Lt workspace; flags inherited.
+         _bulk_prepare(state, flags=flags)
+         _lt_prepare(state, flags=flags)
+@@ -3024,12 +3203,16 @@ def _ab_flags(state: dict) -> dict:
+              "nn_ok": state["nn_ok"], "nn_p256_ok": state["nn_p256_ok"]}
+     for name in NEW_CELL_FLAGS:
+         flags[name] = state[name]
++    flags["qkv_ksplit_ok"] = state["qkv_ksplit_ok"]
++    flags["qkv_ksplit"] = dict(state["qkv_ksplit"])
+     return flags
+ 
+ 
+-def _ab_component(layer: str, m: int) -> str:
++def _ab_component(layer: str, m: int, state: dict) -> str:
+     """Which stacked component serves this cell ("" = master's path, nothing to switch off). Each
+     new cell maps to its OWN flag, so a miss there cannot switch off nn_ok or any other cell."""
++    if layer == "qkv_gate" and state["qkv_ksplit_ok"] and m in state["qkv_ksplit"]:
++        return "qkv_ksplit_ok"   # BEFORE LT_FLAG: a miss falls back to cell B / master, not LT off
+     if layer in BULK_CELLS and m == BULK_M:
+         return BULK_CELLS[layer][7]
+     if layer == "qkv_gate" and m == LT_M:
+@@ -3067,6 +3250,7 @@ def _ab_selfcheck(weights: Weights, state_a: dict) -> None:
+             st["nn_p256_ok"] = False
+             for name in NEW_CELL_FLAGS:
+                 st[name] = False
++            st["qkv_ksplit_ok"] = False
+         return
+     states = {"A": state_a, "B": state_b}
+     dev = state_a["router"].device
+@@ -3075,7 +3259,7 @@ def _ab_selfcheck(weights: Weights, state_a: dict) -> None:
+     bad = {}
+     wf = {}
+     for layer, n, k, m in AB_CASES:
+-        comp = _ab_component(layer, m)
++        comp = _ab_component(layer, m, state_a)
+         graphs, xs, outs = {}, {}, {}
+         try:
+             cfg = {"m": m, "n": n, "k": k, "layer": layer}
+@@ -3155,9 +3339,15 @@ def prepare(weights: Weights) -> dict:
+                   f"max active clusters; needs 16)", flush=True)
+     except Exception as e:
+         print(f"[prepare] final occupancy query failed ({type(e).__name__}: {e})", flush=True)
++    for m in QKSPLIT_MS:
++        print(f"[prepare] FINAL PATH qkv_gate m={m}: "
++              + (f"K-split S={state['qkv_ksplit'][m][0]} {state['qkv_ksplit'][m][1]} bmm + reduce"
++                 if state["qkv_ksplit_ok"] and m in state["qkv_ksplit"] else
++                 ("master (cuBLASLt cell B)" if (m == LT_M and state[LT_FLAG]) else "master")), flush=True)
+     print(f"[prepare] FINAL FLAGS: ouns_cl={state['ouns_cl']} router_cluster_ok={state['router_cluster_ok']} "
+           f"nn_ok={state['nn_ok']} nn_p256_ok={state['nn_p256_ok']} "
+           + " ".join(f"{name}={state[name]}" for name in NEW_CELL_FLAGS)
++          + f" qkv_ksplit_ok={state['qkv_ksplit_ok']} qkv_ksplit={state['qkv_ksplit']}"
+           + f"; prepare total {time.perf_counter() - t0:.1f}s", flush=True)
+     return state
+ 
+@@ -3189,6 +3379,11 @@ def kernel_fn(data: Inputs, state: dict) -> torch.Tensor:
+             and _swapab_route_ok(layer, x, state[layer], cfg)):
+         ws, cnt = _swapab_buffers(state, layer)
+         return _swapab_forward(layer, x, state[layer], ws, cnt, state["swapab_stages"][layer])
++    if (layer == "qkv_gate" and state["qkv_ksplit_ok"] and cfg["m"] in QKSPLIT_MS
++            and cfg["n"] == QKV_N and cfg["k"] == QKV_K and x.dim() == 2
++            and x.shape[0] == cfg["m"] and x.shape[1] == QKV_K and x.dtype == torch.bfloat16
++            and x.is_contiguous() and cfg["m"] in state["qkv_ksplit"]):
++        return _qk_forward(x, state, state["qkv_ksplit"][cfg["m"]])
+     if layer != "router":
+         if (layer in NN_GATED_LAYERS and cfg["n"] == state[layer + "_t"].shape[1]
+                 and ((state["nn_ok"] and NN_GATED_MIN_M <= cfg["m"] <= NN_GATED_MAX_M)

@@ -43,10 +43,10 @@ priority: 2
 kind: primary
 controls_for: null
 review: proceed
-status: running
+status: done
 review_at: 2026-10-25T203645Z
 review_companions: null
-stage: dispatched
+stage: harvested
 claimed_at: 2026-10-25T203645Z
 base_sha: 752b3dcbd27a45849093c5387a4716ce9fca68ae
 base_blob: ad8d7254a64a52db2a8f56ec0ad262748153a2e8
@@ -65,6 +65,13 @@ attempt_file: 2026-10-25T204055Z-submit-qkv-k-split-batched-gemm-m65-m256.md
 prepared_at: 2026-10-25T204055Z
 job: 9d93c3d0cc184226
 dispatched_at: 2026-10-25T204106Z
+outcome: regression
+verdict_detail: regression
+speedup: 1.241048381722811
+speedup_ci: [1.222432655996969, 1.2596641074486532]
+harvested_at: 2026-10-25T204640Z
+best_at_harvest: 1.2566457115954903
+promotion: null
 ---
 
 # qkv-k-split-batched-gemm-m65-m256
@@ -144,3 +151,53 @@ Audited 2026-10-25 (model opus), by reading the code plus a numpy emulation of t
 - Minor deviation from the spec (accepted): kernel counts are printed, not asserted. The S=4 sum shows up as reduce_kernel.
 
 Residual risk: at m=128 the incumbent is cell B (~15.5 us, no splitKreduce), so the 1.02x gate may keep master there. The gain probably depends on m=256 alone.
+
+## Result
+
+- job `9d93c3d0cc184226` (submit), status done, passed True, tests 9/9
+- speedup 1.2410x, 95% CI [1.2224, 1.2597], score 3892.5154499568594 µs vs SGLang 4830.8 µs
+- best at harvest: {"speedup": 1.2566457115954903, "ci": [1.237796025921558, 1.2754953972694225], "job": "741072dca5fc4c9d"}; base result: muse_bf16_proj/hypotheses/done/neutral/combo-rowowner-reduce-free-m1-qkv-o-plus-naive.result.json
+- **outcome: regression** (regression)
+- files: `muse_bf16_proj/hypotheses/done/regression/qkv-k-split-batched-gemm-m65-m256.result.json`, `muse_bf16_proj/hypotheses/done/regression/qkv-k-split-batched-gemm-m65-m256.patch`; branch `hyp/muse_bf16_proj/qkv-k-split-batched-gemm-m65-m256`
+
+## Attribution
+
+| shape | w | base µs | hyp µs | delta | verdict |
+|---|---|---|---|---|---|
+| layer=qkv_gate load=decode_1 m=1 | 62 | 10.54 | 11.56 | 0.967 | lost |
+| layer=o load=decode_1 m=1 | 62 | 6.32 | 6.39 | 0.9721 | flat |
+| layer=pooler load=decode_1 m=1 | 62 | 17.72 | 17.79 | 0.9985 | flat |
+| layer=unpooler load=decode_1 m=1 | 62 | 5.01 | 5.14 | 0.998 | flat |
+| layer=router load=decode_1 m=1 | 62 | 5.17 | 5.24 | 0.9863 | flat |
+| layer=qkv_gate load=decode_16 m=16 | 62 | 12.64 | 12.82 | 0.9632 | lost |
+| layer=o load=decode_16 m=16 | 62 | 6.21 | 6.42 | 0.9639 | lost |
+| layer=pooler load=decode_16 m=16 | 62 | 19.46 | 19.5 | 0.9868 | flat |
+| layer=unpooler load=decode_16 m=16 | 62 | 18.82 | 18.54 | 0.9874 | flat |
+| layer=router load=decode_16 m=16 | 62 | 5.51 | 5.89 | 0.9272 | lost |
+| layer=qkv_gate load=decode_32 m=32 | 62 | 13.71 | 13.77 | 0.9918 | flat |
+| layer=o load=decode_32 m=32 | 62 | 6.47 | 6.57 | 0.9709 | flat |
+| layer=pooler load=decode_32 m=32 | 62 | 19.86 | 19.99 | 0.9867 | flat |
+| layer=unpooler load=decode_32 m=32 | 62 | 18.49 | 18.34 | 1.0014 | flat |
+| layer=router load=decode_32 m=32 | 62 | 5.95 | 6.29 | 0.9618 | lost |
+| layer=qkv_gate load=verify_1 m=8 | 62 | 12.35 | 12.35 | 0.9971 | flat |
+| layer=o load=verify_1 m=8 | 62 | 5.9 | 6.39 | 0.9946 | flat |
+| layer=pooler load=verify_1 m=8 | 62 | 19.31 | 18.93 | 1.0177 | flat |
+| layer=unpooler load=verify_1 m=8 | 62 | 5.54 | 5.09 | 1.0667 | gained |
+| layer=router load=verify_1 m=8 | 62 | 5.49 | 4.96 | 1.0948 | gained |
+| layer=qkv_gate load=verify_16 m=128 | 62 | 15.55 | 15.51 | 1.0148 | flat |
+| layer=o load=verify_16 m=128 | 62 | 7.68 | 7.46 | 1.0039 | flat |
+| layer=pooler load=verify_16 m=128 | 62 | 22.85 | 23.02 | 0.9704 | flat |
+| layer=unpooler load=verify_16 m=128 | 62 | 18.88 | 19.39 | 0.9861 | flat |
+| layer=router load=verify_16 m=128 | 62 | 7.61 | 7.67 | 1.001 | flat |
+| layer=qkv_gate load=verify_32 m=256 | 62 | 19.46 | 22.17 | 0.8935 | lost |
+| layer=o load=verify_32 m=256 | 62 | 9.44 | 9.63 | 0.9918 | flat |
+| layer=pooler load=verify_32 m=256 | 62 | 27.98 | 29.91 | 0.9687 | lost |
+| layer=unpooler load=verify_32 m=256 | 62 | 24.18 | 24.14 | 0.9964 | flat |
+| layer=router load=verify_32 m=256 | 62 | 9.72 | 9.65 | 1.014 | flat |
+
+gained on unpooler verify_1; router verify_1; lost on qkv_gate decode_1, decode_16, verify_32; o decode_16; router decode_16, decode_32; pooler verify_32. Expected hit: 0/3. Noise ±1.5%.
+
+## Follow-ups
+
+- record which shapes lost (Attribution) and do not retry this area in this form.
+
