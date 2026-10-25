@@ -66,7 +66,7 @@ base_sha: 459e84861e1a2c35ffa8148cd1fe09f5ead28416
 base_blob: 970b415b746fa03cb92e419d270be92588273178
 branch: hyp/muse_bf16_proj/restack-router-cluster-dsmem-m8
 worktree: .worktrees/muse_bf16_proj/restack-router-cluster-dsmem-m8
-mode: null
+mode: check
 restack_of: null
 stale_base: null
 implemented_at: 2026-10-25T042837Z
@@ -75,6 +75,8 @@ submission_sha256: 94473893a8f96855d29583bcb00d85036237fb6d9b0558d36352d5cdb2b39
 norm_sha256: 5516943688ba4ac5ae613c7840bd3c1e94ad07934c5fc33f5a5c31160314613b
 submission_blob: c857e5300e8435a8deb056ba49439d4d23ea126b
 lint_warnings: 1
+attempt_file: 2026-10-25T042837Z-check-restack-router-cluster-dsmem-m8.md
+prepared_at: 2026-10-25T042837Z
 ---
 
 # restack-router-cluster-dsmem-m8
