@@ -1,0 +1,73 @@
+diff --git a/muse_prefill_layer/submission.py b/muse_prefill_layer/submission.py
+index 526518b..0910a52 100644
+--- a/muse_prefill_layer/submission.py
++++ b/muse_prefill_layer/submission.py
+@@ -152,10 +152,11 @@ D_EXPERT = 4096
+ # case is above it, so only the above-8 paths are kept.
+ SMALL_BATCH_MAX_TOKENS = 8
+ # Expert path by shape (hypothesis experts-hybrid-marlin-turn-triton-first-turn): up to this many
+-# tokens (turn_1 753, turn_4 3012, every test) SGLang's two Marlin GEMMs; above it (the first turn's
+-# 16384) the Triton NVFP4 grouped GEMM. Not a measured crossover: T in (4096, 16384) is unscored and
+-# untuned.
+-MARLIN_MAX_TOKENS = 4096
++# tokens (turn_1 753, the T <= 1024 tests) SGLang's two Marlin GEMMs; above it (turn_4's 3012, the
++# T=1506 and 4096 tests, the first turn's 16384) the Triton NVFP4 grouped GEMM with the packed dequant
++# (hypothesis experts-triton-packed-dequant-turn4: the gate moves from 4096 down to 1024). Not a
++# measured crossover: T in (1024, 3012) and (3012, 16384) is unscored and untuned.
++MARLIN_MAX_TOKENS = 1024
+ # MuseSpark1xFp4Experts' candidates, smallest first.
+ BLOCK_SIZE_M_CANDIDATES = (8, 16, 32, 48, 64)
+ # Grouped NVFP4 GEMM (swap-AB) tile configs, chosen from the shape (tokens) only. About T of the
+@@ -551,23 +552,23 @@ def _check_expert_gemms(bank, weights, packed):
+             assert bool(past.isnan().all()), f"{name} BLOCK_T={bt}: block past n_padded was written"
+ 
+ 
+-# prepare()'s end-to-end expert check: a synthetic case above MARLIN_MAX_TOKENS (so _experts_triton
+-# runs the first turn's BLOCK_T 256 config and _experts_marlin its block_size_m 64), compared under the
++# prepare()'s end-to-end expert check: synthetic cases above MARLIN_MAX_TOKENS (8192 runs the first
++# turn's BLOCK_T 256 config, 3012 the BLOCK_T 128 config that now serves turn_4; _experts_marlin
++# picks its own block_size_m), compared under the
+ # judge's metric with a bound (1%) below the tightest reference tolerance (3%), and the judge's row
+ # rule (5x the bound, near-zero rows against a tenth of the average row).
+-E2E_CHECK_TOKENS = 8192
++E2E_CHECK_TOKENS = (8192, 3012)
+ E2E_CHECK_TOL = 2e-2  # under the judge's tightest 3%; Triton-vs-Marlin is two bf16 pipelines, not a reference
+ E2E_ROW_FACTOR = 5.0
+ 
+ 
+-def _check_experts_e2e(state, device):
++def _check_experts_e2e(state, device, t):
+     """Untimed. One call each of _experts_triton (state['bank']) and _experts_marlin (state['marlin'])
+     on synthetic data built here (random bf16 rows, random distinct top-8 experts of 256 mapped to this
+     GPU's 32 as kernel_fn maps them, random normalized weights): the same inputs through both banks
+     must agree. Covers both banks' wiring and any scale corruption between them."""
+     gen = torch.Generator(device=device)
+     gen.manual_seed(0)
+-    t = E2E_CHECK_TOKENS
+     x = torch.randn((t, D_EXPERT), generator=gen, device=device, dtype=torch.float32).to(torch.bfloat16)
+     ids = torch.rand((t, N_EXPERTS), generator=gen, device=device).topk(TOP_K, dim=1).indices.to(torch.int32)
+     local_ids = torch.where(ids < LOCAL_EXPERTS, ids, torch.full_like(ids, -1)).contiguous()
+@@ -652,8 +653,9 @@ def prepare(weights):
+     del scales_before
+     torch.cuda.empty_cache()
+     try:
+-        _check_experts_e2e(state, device)
+-        torch.cuda.synchronize()
++        for t in E2E_CHECK_TOKENS:
++            _check_experts_e2e(state, device, t)
++            torch.cuda.synchronize()
+     except Exception as exc:  # noqa: BLE001
+         if not state["packed"]:
+             raise
+@@ -661,8 +663,9 @@ def prepare(weights):
+         print(f"[expert e2e] packed dequant FAILED, falling back to the scalar dequant: "
+               f"{type(exc).__name__}: {str(exc)[:3000]}", flush=True)
+         state["packed"] = False
+-        _check_experts_e2e(state, device)
+-        torch.cuda.synchronize()
++        for t in E2E_CHECK_TOKENS:
++            _check_experts_e2e(state, device, t)
++            torch.cuda.synchronize()
+     print(f"[prepare] max_memory_allocated {torch.cuda.max_memory_allocated(device) / 2**30:.2f} GiB", flush=True)
+     return state
+ 
