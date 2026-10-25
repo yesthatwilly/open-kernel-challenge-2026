@@ -1138,6 +1138,13 @@ def cmd_promote(a):
                 skipped.append({"problem": p, "slug": h["slug"], "reason": read_hyp(h["_path"]).get("promotion_reason")})
                 continue
             h = read_hyp(h["_path"])
+        if best and best.get("mode") == "submit" and best.get("submission_blob") == _master_blob(p):
+            # master's file is the one already on the board: okc would dedup the scored run (run after run)
+            fm_set(h["_path"], promotion="superseded", promotion_reason=f"master already scored as {best.get('job')}")
+            git("add", "--", rel(h["_path"]))
+            git("commit", "-q", "-m", f"churn({p}): {h['slug']} not submitted (master already scored)", check=False)
+            skipped.append({"problem": p, "slug": h["slug"], "reason": "master file already scored"})
+            continue
         if ci[0] < SUBMIT_FLOOR:
             fm_set(h["_path"], promotion="merged-unsubmitted", promotion_reason=f"ci.low {ci[0]:.3f} < submit floor {SUBMIT_FLOOR}")
             git("add", "--", rel(h["_path"]))
