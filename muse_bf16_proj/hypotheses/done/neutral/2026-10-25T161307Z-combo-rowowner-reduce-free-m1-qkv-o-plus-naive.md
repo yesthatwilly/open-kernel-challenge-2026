@@ -83,10 +83,10 @@ priority: 1
 kind: primary
 controls_for: null
 review: proceed
-status: running
+status: done
 review_at: 2026-10-25T161800Z
 review_companions: null
-stage: dispatched
+stage: harvested
 claimed_at: 2026-10-25T161801Z
 base_sha: a2286ee3352c35c3e80062a62bc74df5393b1d95
 base_blob: f919748b5af6e815f319e5d2d828ed68e5b28a71
@@ -105,6 +105,13 @@ attempt_file: 2026-10-25T185059Z-submit-combo-rowowner-reduce-free-m1-qkv-o-plus
 prepared_at: 2026-10-25T185100Z
 job: 741072dca5fc4c9d
 dispatched_at: 2026-10-25T185253Z
+outcome: neutral
+verdict_detail: unproven-vs-best
+speedup: 1.2566457115954903
+speedup_ci: [1.237796025921558, 1.2754953972694225]
+harvested_at: 2026-10-25T185516Z
+best_at_harvest: 1.2490645809967658
+promotion: null
 ---
 
 # combo-rowowner-reduce-free-m1-qkv-o-plus-naive
@@ -257,3 +264,53 @@ Audited 2026-10-25 by an Opus subagent, by reading the code only (no GPU on this
 - **Sibling profiler exposure.** The sibling's `_cell_kernel_names` lacks fix 3's filter.
 
 **Residual risk:** The A2 gate most likely keeps master, and B may diverge from the sibling, so the two runs are not a clean "only A2/A3 differ" pair. Attribute each cell from its PATH CHOSEN line and profile row.
+
+## Result
+
+- job `741072dca5fc4c9d` (submit), status done, passed True, tests 9/9
+- speedup 1.2566x, 95% CI [1.2378, 1.2755], score 3844.2020335760453 µs vs SGLang 4830.8 µs
+- best at harvest: {"speedup": 1.2490645809967658, "ci": [1.2303286122818142, 1.267800549711717], "job": "ee4f89f2f62c42d3"}; base result: muse_bf16_proj/hypotheses/done/neutral/pooler-nn-layout-widen-m256.result.json
+- **outcome: neutral** (unproven-vs-best)
+- files: `muse_bf16_proj/hypotheses/done/neutral/combo-rowowner-reduce-free-m1-qkv-o-plus-naive.result.json`, `muse_bf16_proj/hypotheses/done/neutral/combo-rowowner-reduce-free-m1-qkv-o-plus-naive.patch`; branch `hyp/muse_bf16_proj/combo-rowowner-reduce-free-m1-qkv-o-plus-naive`
+
+## Attribution
+
+| shape | w | base µs | hyp µs | delta | verdict |
+|---|---|---|---|---|---|
+| layer=qkv_gate load=decode_1 m=1 | 62 | 12.67 | 10.54 | 1.1602 | gained |
+| layer=o load=decode_1 m=1 | 62 | 5.97 | 6.32 | 0.9882 | flat |
+| layer=pooler load=decode_1 m=1 | 62 | 18.93 | 17.72 | 1.0682 | gained |
+| layer=unpooler load=decode_1 m=1 | 62 | 4.88 | 5.01 | 0.9743 | flat |
+| layer=router load=decode_1 m=1 | 62 | 5.01 | 5.17 | 0.9769 | flat |
+| layer=qkv_gate load=decode_16 m=16 | 62 | 12.98 | 12.64 | 1.0269 | flat |
+| layer=o load=decode_16 m=16 | 62 | 6.04 | 6.21 | 0.9947 | flat |
+| layer=pooler load=decode_16 m=16 | 62 | 19.12 | 19.46 | 0.9938 | flat |
+| layer=unpooler load=decode_16 m=16 | 62 | 18.62 | 18.82 | 0.9881 | flat |
+| layer=router load=decode_16 m=16 | 62 | 5.53 | 5.51 | 1.0125 | flat |
+| layer=qkv_gate load=decode_32 m=32 | 62 | 13.76 | 13.71 | 0.9963 | flat |
+| layer=o load=decode_32 m=32 | 62 | 6.48 | 6.47 | 0.9876 | flat |
+| layer=pooler load=decode_32 m=32 | 62 | 19.93 | 19.86 | 0.9954 | flat |
+| layer=unpooler load=decode_32 m=32 | 62 | 17.96 | 18.49 | 0.9745 | flat |
+| layer=router load=decode_32 m=32 | 62 | 5.97 | 5.95 | 1.0048 | flat |
+| layer=qkv_gate load=verify_1 m=8 | 62 | 12.99 | 12.35 | 1.0119 | flat |
+| layer=o load=verify_1 m=8 | 62 | 5.8 | 5.9 | 1.018 | flat |
+| layer=pooler load=verify_1 m=8 | 62 | 18.86 | 19.31 | 0.9916 | flat |
+| layer=unpooler load=verify_1 m=8 | 62 | 5.34 | 5.54 | 0.9757 | flat |
+| layer=router load=verify_1 m=8 | 62 | 5.47 | 5.49 | 0.9906 | flat |
+| layer=qkv_gate load=verify_16 m=128 | 62 | 17.38 | 15.55 | 1.0908 | gained |
+| layer=o load=verify_16 m=128 | 62 | 7.36 | 7.68 | 0.9955 | flat |
+| layer=pooler load=verify_16 m=128 | 62 | 23.2 | 22.85 | 1.0301 | gained |
+| layer=unpooler load=verify_16 m=128 | 62 | 19.03 | 18.88 | 1.003 | flat |
+| layer=router load=verify_16 m=128 | 62 | 7.44 | 7.61 | 0.9807 | flat |
+| layer=qkv_gate load=verify_32 m=256 | 62 | 20.24 | 19.46 | 1.0274 | flat |
+| layer=o load=verify_32 m=256 | 62 | 9.47 | 9.44 | 0.9968 | flat |
+| layer=pooler load=verify_32 m=256 | 62 | 29.94 | 27.98 | 1.0258 | flat |
+| layer=unpooler load=verify_32 m=256 | 62 | 24.56 | 24.18 | 0.9938 | flat |
+| layer=router load=verify_32 m=256 | 62 | 9.72 | 9.72 | 0.9878 | flat |
+
+gained on qkv_gate decode_1, verify_16; pooler decode_1, verify_16. Expected hit: 3/4. Noise ±1.5%.
+
+## Follow-ups
+
+- unproven-vs-best: the change is not proven either way; a stacked hypothesis (`depends_on: combo-rowowner-reduce-free-m1-qkv-o-plus-naive`) that adds a further change in the same area is the only way to learn more (identical code is never re-run).
+
