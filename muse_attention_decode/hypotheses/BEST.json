@@ -1,17 +1,17 @@
 {
  "problem": "muse_attention_decode",
- "job": "252abb7f11ec48c3",
- "check_job": "252abb7f11ec48c3",
+ "job": "4b608df595b046fb",
+ "check_job": "4b608df595b046fb",
  "mode": "check",
- "speedup": 1.5016522435853301,
+ "speedup": 1.5119748206149146,
  "ci": [
-  1.47912745993155,
-  1.530423257736894
+  1.4892951983056908,
+  1.5346544429241382
  ],
- "score_us": 2508.1040008355194,
- "commit": "7e12891512c09b829cc4fb9ea07edbebc27ebe01",
- "submission_blob": "5cf8fae31e5b84c36efeeb4569763eb9b06e1c8a",
- "slug": "restack-sliding-decode-sk-window-on-cluster-master",
- "result": "muse_attention_decode/hypotheses/done/neutral/restack-sliding-decode-sk-window-on-cluster-master.result.json",
- "updated_at": "2026-10-25T150110Z"
+ "score_us": 2490.9806358205487,
+ "commit": "5d528bf313ed6deb0094c453214f1584fea0033b",
+ "submission_blob": "6d6afa4722731ceb9cb8216d0334a03f1a96ad2b",
+ "slug": "sliding-decode1-cluster-per-kvhead",
+ "result": "muse_attention_decode/hypotheses/done/neutral/sliding-decode1-cluster-per-kvhead.result.json",
+ "updated_at": "2026-10-25T185544Z"
 }
