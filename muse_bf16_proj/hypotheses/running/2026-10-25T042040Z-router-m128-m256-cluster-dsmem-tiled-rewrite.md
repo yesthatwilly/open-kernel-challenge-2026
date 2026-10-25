@@ -67,7 +67,7 @@ base_sha: c67ea8677fb5f5a23ea879170b1d782395102bf1
 base_blob: 970b415b746fa03cb92e419d270be92588273178
 branch: hyp/muse_bf16_proj/router-m128-m256-cluster-dsmem-tiled-rewrite
 worktree: .worktrees/muse_bf16_proj/router-m128-m256-cluster-dsmem-tiled-rewrite
-mode: null
+mode: check
 restack_of: null
 stale_base: null
 implemented_at: 2026-10-25T043257Z
@@ -76,6 +76,8 @@ submission_sha256: 804d25754399f0f05d71fda82aa30adb31c9223de3a0738e1795f9cd17435
 norm_sha256: 120c2f57279243cf3c1b03b0aadd5871a2ebca47ece4ba12cd968ac4616e655a
 submission_blob: 095978ec904ee937a4b5b039bf2b47b911801fa6
 lint_warnings: 3
+attempt_file: 2026-10-25T043258Z-check-router-m128-m256-cluster-dsmem-tiled-rewrite.md
+prepared_at: 2026-10-25T043258Z
 ---
 
 # router-m128-m256-cluster-dsmem-tiled-rewrite
