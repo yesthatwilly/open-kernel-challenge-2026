@@ -43,7 +43,7 @@ review: proceed
 status: running
 review_at: 2026-10-25T011846Z
 review_companions: null
-stage: implemented
+stage: dispatched
 claimed_at: 2026-10-25T011847Z
 base_sha: 41b1d0ab801c3b80cbb8f4ac832daa8d0cabfc3a
 base_blob: a8bb42ac483318e9fbc84bc7826a27b7a704d1fb
@@ -60,6 +60,8 @@ submission_blob: 11c9d817fdded87c2ece585de4a74a40df07155d
 lint_warnings: 13
 attempt_file: 2026-10-25T012237Z-check-bf16-lossless-exp4-decode-only-throughput-probe.md
 prepared_at: 2026-10-25T012237Z
+job: 9148142cee4441ad
+dispatched_at: 2026-10-25T012245Z
 ---
 
 # bf16-lossless-exp4-decode-only-throughput-probe
