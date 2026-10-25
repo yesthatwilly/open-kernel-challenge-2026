@@ -61,10 +61,10 @@ priority: 2
 kind: primary
 controls_for: null
 review: proceed
-status: running
+status: done
 review_at: 2026-10-25T162011Z
 review_companions: null
-stage: dispatched
+stage: harvested
 claimed_at: 2026-10-25T162011Z
 base_sha: 04b5d4ce29ff4cb29cbed7b24b63a5492c811e97
 base_blob: 593b238c16387c5ac3774424ee9557882b9fc46a
@@ -83,6 +83,13 @@ attempt_file: 2026-10-25T163022Z-submit-wg-pdl-gather-w13-w2-chain.md
 prepared_at: 2026-10-25T163022Z
 job: 667b64e3fb1343ec
 dispatched_at: 2026-10-25T163042Z
+outcome: neutral
+verdict_detail: unproven-vs-best
+speedup: 1.3752355517671193
+speedup_ci: [1.3546070184906125, 1.395864085043626]
+harvested_at: 2026-10-25T163338Z
+best_at_harvest: 1.3726662821010693
+promotion: null
 ---
 
 # wg-pdl-gather-w13-w2-chain
@@ -184,3 +191,29 @@ Findings (no change needed):
 okc_lint: OK with warnings (prepare-only host syncs, same class as master). py_compile ok; __pycache__ removed.
 
 Residual risk: the PDL module has never been through nvcc. If it still fails to build, master's module now ships, so the risk is a neutral run rather than a verify_32 regression. A PDL capture error on an old driver is caught in prepare and turns PDL off. A sticky device fault in the PDL stage would not be recoverable in-process (same class as master's canary).
+
+## Result
+
+- job `667b64e3fb1343ec` (submit), status done, passed True, tests 5/5
+- speedup 1.3752x, 95% CI [1.3546, 1.3959], score 9779.052019648014 µs vs SGLang 13448.5 µs
+- best at harvest: {"speedup": 1.3726662821010693, "ci": [1.3520762878695534, 1.3932562763325853], "job": "4e4a0e26c85944f2"}; base result: muse_moe_w4a16/hypotheses/done/neutral/align-two-phase-port-from17.result.json
+- **outcome: neutral** (unproven-vs-best)
+- files: `muse_moe_w4a16/hypotheses/done/neutral/wg-pdl-gather-w13-w2-chain.result.json`, `muse_moe_w4a16/hypotheses/done/neutral/wg-pdl-gather-w13-w2-chain.patch`; branch `hyp/muse_moe_w4a16/wg-pdl-gather-w13-w2-chain`
+
+## Attribution
+
+| shape | w | base µs | hyp µs | delta | verdict |
+|---|---|---|---|---|---|
+| bs=1 load=decode_1 sharding=ep8 | 60 | 46.77 | 45.09 | 1.0021 | flat |
+| bs=16 load=decode_16 sharding=ep8 | 60 | 145.99 | 145.64 | 0.9986 | flat |
+| bs=32 load=decode_32 sharding=ep8 | 60 | 203.75 | 198.1 | 0.9994 | flat |
+| bs=8 load=verify_1 sharding=ep8 | 60 | 111.85 | 106.53 | 1.0006 | flat |
+| bs=128 load=verify_16 sharding=ep8 | 60 | 319.08 | 315.4 | 1.0037 | flat |
+| bs=256 load=verify_32 sharding=ep8 | 60 | 404.89 | 400.26 | 1.0186 | flat |
+
+no shape moved outside noise. Expected hit: 3/4. Noise ±1.5%.
+
+## Follow-ups
+
+- unproven-vs-best: the change is not proven either way; a stacked hypothesis (`depends_on: wg-pdl-gather-w13-w2-chain`) that adds a further change in the same area is the only way to learn more (identical code is never re-run).
+

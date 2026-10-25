@@ -1,0 +1,606 @@
+diff --git a/muse_moe_w4a16/submission.py b/muse_moe_w4a16/submission.py
+index 593b238c..72de8f1e 100644
+--- a/muse_moe_w4a16/submission.py
++++ b/muse_moe_w4a16/submission.py
+@@ -844,7 +844,8 @@ void wg_gather(torch::Tensor x, torch::Tensor sorted_ids, torch::Tensor block_ex
+                int64_t num_routes, int64_t n_experts, torch::Tensor xs);
+ void wg_gemm(int64_t which, torch::Tensor bsrc, torch::Tensor wbank,
+              torch::Tensor gs, torch::Tensor sorted_ids, torch::Tensor block_experts, torch::Tensor n_padded,
+-             int64_t num_routes, int64_t n_tiles, int64_t K, torch::Tensor out, int64_t grid, torch::Tensor err);
++             int64_t num_routes, int64_t n_tiles, int64_t K, torch::Tensor out, int64_t grid, torch::Tensor err,
++             int64_t pdl);
+ """
+ 
+ _WG_SRC_HEAD = r"""
+@@ -955,6 +956,16 @@ __device__ __forceinline__ void fence_acc(float (&d)[NA]) {
+ __device__ __forceinline__ void named_bar(int id, int count) {
+   asm volatile("bar.sync %0, %1;\n" :: "r"(id), "r"(count) : "memory");
+ }
++// Programmatic dependent launch. griddepcontrol.wait returns at once when the grid was not launched with the
++// programmatic-stream-serialization attribute (or has no predecessor), otherwise it blocks until every
++// prerequisite grid has completed and its memory writes are visible. launch_dependents lets the next grid's
++// CTAs start; it is per CTA (all threads execute it or exit) and a no-op when nothing depends on this grid.
++__device__ __forceinline__ void griddep_wait() {
++  asm volatile("griddepcontrol.wait;\n" ::: "memory");
++}
++__device__ __forceinline__ void griddep_launch() {
++  asm volatile("griddepcontrol.launch_dependents;\n" ::: "memory");
++}
+ __device__ __forceinline__ void stsm_x2_t(uint32_t a, uint32_t r0, uint32_t r1) {
+   asm volatile("stmatrix.sync.aligned.m8n8.x2.trans.shared.b16 [%0], {%1, %2};\n" :: "r"(a), "r"(r0), "r"(r1) : "memory");
+ }
+@@ -1246,7 +1257,9 @@ wg_kernel(const __grid_constant__ Maps maps,
+           const uint32_t st = smem_u32(smem + s * STAGE_BYTES);
+           const uint32_t fb = full0 + 8 * s;
+           mbar_expect_tx(fb, tx);
+-          bulk_g2s(st, wsrc + static_cast<size_t>(kb) * WST, WST, fb);
++          bulk_g2s(st, wsrc + static_cast<size_t>(kb) * WST, WST, fb);  // weights: constant, no dependency
++          // PDL: the B slab (wg_xs / wg_hs) is the predecessor's output; nothing reads it before this wait.
++          if (n == 0) griddep_wait();
+           tma_2d(st + WST, map, kb * BK, m.slot0, fb);
+           tma_2d(st + WST + SLAB_HALF, map, kb * BK + 64, m.slot0, fb);
+         }
+@@ -1256,6 +1269,9 @@ wg_kernel(const __grid_constant__ Maps maps,
+     asm volatile("setmaxnreg.inc.sync.aligned.u32 232;\n" ::: "memory");
+     const int ctid = tid - 128, cw = ctid >> 5;
+     int n = 0;
++    // PDL: no consumer global store (the first epilogue) before the predecessor grid has completed. The
++    // consumers would idle on the full barriers until the producer's own wait returns anyway.
++    griddep_wait();
+     for (int it = blockIdx.x; it < total; it += gridDim.x) {
+       const Item m = decode_item(it, n_tiles, s_be, s_cblk, s_cnb, s_gf, s_gk);
+ #define WG_CONSUME(NB_)                                                                                      \
+@@ -1270,6 +1286,9 @@ wg_kernel(const __grid_constant__ Maps maps,
+ #undef WG_CONSUME
+     }
+   }
++  // PDL: this thread's item loop is over (the other threads of the producer warpgroup exited above): let the
++  // next grid's CTAs take the SMs freed in the tail. Every thread of the CTA executes it or has exited.
++  griddep_launch();
+ #else
+   // Not the sm_90a image: no wgmma here. Flag it (error word 2) and do nothing else.
+   if (threadIdx.x == 0) atomicExch(err, 2);
+@@ -1376,7 +1395,8 @@ void wg_gather(torch::Tensor x, torch::Tensor sorted_ids, torch::Tensor block_ex
+ 
+ void wg_gemm(int64_t which, torch::Tensor bsrc, torch::Tensor wbank,
+              torch::Tensor gs, torch::Tensor sorted_ids, torch::Tensor block_experts, torch::Tensor n_padded,
+-             int64_t num_routes, int64_t n_tiles, int64_t K, torch::Tensor out, int64_t grid, torch::Tensor err) {
++             int64_t num_routes, int64_t n_tiles, int64_t K, torch::Tensor out, int64_t grid, torch::Tensor err,
++             int64_t pdl) {
+   TORCH_CHECK(which == 0 || which == 1, "wg_gemm: which");
+   TORCH_CHECK(bsrc.is_cuda() && bsrc.is_contiguous() && bsrc.dim() == 2 && bsrc.scalar_type() == at::kBFloat16 &&
+               bsrc.size(0) > 0 && bsrc.size(1) > 0 && bsrc.size(1) == K,
+@@ -1417,14 +1437,36 @@ void wg_gemm(int64_t which, torch::Tensor bsrc, torch::Tensor wbank,
+     }
+   }
+ #define WG_LAUNCH(G_)                                                                                         \
+-  wg_kernel<G_><<<static_cast<unsigned>(grid), THREADS, Smem<G_>::BYTES, stream>>>(                          \
+-      mp, wbank.data_ptr<uint8_t>(), gs.data_ptr<float>(), sorted_ids.data_ptr<int>(),             \
+-      block_experts.data_ptr<int>(), n_padded.data_ptr<int>(), blocks_len, static_cast<int>(num_routes),      \
+-      static_cast<int>(n_tiles), static_cast<int>(K), static_cast<int>(gs.numel()),                           \
+-      reinterpret_cast<__nv_bfloat16*>(out.data_ptr()), static_cast<int>(out.size(1)), err.data_ptr<int>())
++  do { if (pdl == 0) {                                                                                             \
++    wg_kernel<G_><<<static_cast<unsigned>(grid), THREADS, Smem<G_>::BYTES, stream>>>(                        \
++        mp, wbank.data_ptr<uint8_t>(), gs.data_ptr<float>(), sorted_ids.data_ptr<int>(),           \
++        block_experts.data_ptr<int>(), n_padded.data_ptr<int>(), blocks_len, static_cast<int>(num_routes),    \
++        static_cast<int>(n_tiles), static_cast<int>(K), static_cast<int>(gs.numel()),                         \
++        reinterpret_cast<__nv_bfloat16*>(out.data_ptr()), static_cast<int>(out.size(1)), err.data_ptr<int>()); \
++    C10_CUDA_KERNEL_LAUNCH_CHECK();                                                                           \
++  } else {                                                                                                    \
++    cudaLaunchConfig_t cfg{};                                                                                 \
++    cfg.gridDim = dim3(static_cast<unsigned>(grid));                                                          \
++    cfg.blockDim = dim3(THREADS);                                                                             \
++    cfg.dynamicSmemBytes = Smem<G_>::BYTES;                                                                   \
++    cfg.stream = stream;                                                                                      \
++    cudaLaunchAttribute attr[1];                                                                              \
++    attr[0].id = cudaLaunchAttributeProgrammaticStreamSerialization;                                          \
++    attr[0].val.programmaticStreamSerializationAllowed = 1;                                                   \
++    cfg.attrs = attr;                                                                                         \
++    cfg.numAttrs = 1;                                                                                         \
++    const cudaError_t le_ = cudaLaunchKernelEx(                                                               \
++        &cfg, wg_kernel<G_>, mp, wbank.data_ptr<uint8_t>(), gs.data_ptr<float>(), sorted_ids.data_ptr<int>(),\
++        block_experts.data_ptr<int>(), n_padded.data_ptr<int>(), blocks_len, static_cast<int>(num_routes),    \
++        static_cast<int>(n_tiles), static_cast<int>(K), static_cast<int>(gs.numel()),                         \
++        reinterpret_cast<__nv_bfloat16*>(out.data_ptr()), static_cast<int>(out.size(1)), err.data_ptr<int>()); \
++    TORCH_CHECK(le_ == cudaSuccess, "wg_gemm: PDL launch: ", cudaGetErrorString(le_));                        \
++  } } while (0)
++  // do { } while (0): the macro is the body of if/else below; a bare if/else here left a dangling else.
++  // pdl != 0 (the w2 launch only; the gather and w13 are plain launches): the programmatic-stream-serialization
++  // attribute makes this grid a programmatic dependent of the previous kernel in the stream.
+   if (which == 0) WG_LAUNCH(true); else WG_LAUNCH(false);
+ #undef WG_LAUNCH
+-  C10_CUDA_KERNEL_LAUNCH_CHECK();
+ }
+ """
+ 
+@@ -1456,11 +1498,148 @@ def _wg_wgmma_src():
+     return "\n".join(out) + "\n"
+ 
+ 
+-def _wg_src():
++def _wg_src(pdl=True):
++    """pdl=False: MASTER's exact source text (the build fallback); see _WG_MASTER_REVERT."""
++    if not pdl:
++        return _wg_revert(_WG_SRC_HEAD, "head") + _wg_wgmma_src() + _wg_revert(_WG_SRC_BODY, "body")
+     return _WG_SRC_HEAD + _wg_wgmma_src() + _WG_SRC_BODY
+ 
+ 
+-WG_EXT_NAME = "muse_moe_w4a16_wgmma_rega_v5"
++WG_EXT_NAME = "muse_moe_w4a16_wgmma_rega_v6_pdl"
++
++
++# Build fallback (pre-flight audit): if the PDL module fails to build, prepare() builds MASTER's exact wgmma
++# module instead (same source text, same name) and runs with wg_pdl False. Master's text is derived from the
++# PDL text by reverting these (pdl text, master text) hunks; each must occur exactly once. The kernel hunks
++# are only the griddepcontrol helpers and their three call sites; the host hunks are the pdl argument and
++# the launch macro.
++WG_EXT_NAME_MASTER = "muse_moe_w4a16_wgmma_rega_v5"
++_WG_MASTER_REVERT = {
++    "cpp": [
++        (r'''             torch::Tensor gs, torch::Tensor sorted_ids, torch::Tensor block_experts, torch::Tensor n_padded,
++             int64_t num_routes, int64_t n_tiles, int64_t K, torch::Tensor out, int64_t grid, torch::Tensor err,
++             int64_t pdl);
++''',
++         r'''             torch::Tensor gs, torch::Tensor sorted_ids, torch::Tensor block_experts, torch::Tensor n_padded,
++             int64_t num_routes, int64_t n_tiles, int64_t K, torch::Tensor out, int64_t grid, torch::Tensor err);
++'''),
++    ],
++    "head": [
++        (r'''}
++// Programmatic dependent launch. griddepcontrol.wait returns at once when the grid was not launched with the
++// programmatic-stream-serialization attribute (or has no predecessor), otherwise it blocks until every
++// prerequisite grid has completed and its memory writes are visible. launch_dependents lets the next grid's
++// CTAs start; it is per CTA (all threads execute it or exit) and a no-op when nothing depends on this grid.
++__device__ __forceinline__ void griddep_wait() {
++  asm volatile("griddepcontrol.wait;\n" ::: "memory");
++}
++__device__ __forceinline__ void griddep_launch() {
++  asm volatile("griddepcontrol.launch_dependents;\n" ::: "memory");
++}
++__device__ __forceinline__ void stsm_x2_t(uint32_t a, uint32_t r0, uint32_t r1) {
++''',
++         r'''}
++__device__ __forceinline__ void stsm_x2_t(uint32_t a, uint32_t r0, uint32_t r1) {
++'''),
++    ],
++    "body": [
++        (r'''          mbar_expect_tx(fb, tx);
++          bulk_g2s(st, wsrc + static_cast<size_t>(kb) * WST, WST, fb);  // weights: constant, no dependency
++          // PDL: the B slab (wg_xs / wg_hs) is the predecessor's output; nothing reads it before this wait.
++          if (n == 0) griddep_wait();
++          tma_2d(st + WST, map, kb * BK, m.slot0, fb);
++''',
++         r'''          mbar_expect_tx(fb, tx);
++          bulk_g2s(st, wsrc + static_cast<size_t>(kb) * WST, WST, fb);
++          tma_2d(st + WST, map, kb * BK, m.slot0, fb);
++'''),
++        (r'''    int n = 0;
++    // PDL: no consumer global store (the first epilogue) before the predecessor grid has completed. The
++    // consumers would idle on the full barriers until the producer's own wait returns anyway.
++    griddep_wait();
++    for (int it = blockIdx.x; it < total; it += gridDim.x) {
++''',
++         r'''    int n = 0;
++    for (int it = blockIdx.x; it < total; it += gridDim.x) {
++'''),
++        (r'''  }
++  // PDL: this thread's item loop is over (the other threads of the producer warpgroup exited above): let the
++  // next grid's CTAs take the SMs freed in the tail. Every thread of the CTA executes it or has exited.
++  griddep_launch();
++#else
++''',
++         r'''  }
++#else
++'''),
++        (r'''             torch::Tensor gs, torch::Tensor sorted_ids, torch::Tensor block_experts, torch::Tensor n_padded,
++             int64_t num_routes, int64_t n_tiles, int64_t K, torch::Tensor out, int64_t grid, torch::Tensor err,
++             int64_t pdl) {
++  TORCH_CHECK(which == 0 || which == 1, "wg_gemm: which");
++''',
++         r'''             torch::Tensor gs, torch::Tensor sorted_ids, torch::Tensor block_experts, torch::Tensor n_padded,
++             int64_t num_routes, int64_t n_tiles, int64_t K, torch::Tensor out, int64_t grid, torch::Tensor err) {
++  TORCH_CHECK(which == 0 || which == 1, "wg_gemm: which");
++'''),
++        (r'''#define WG_LAUNCH(G_)                                                                                         \
++  do { if (pdl == 0) {                                                                                             \
++    wg_kernel<G_><<<static_cast<unsigned>(grid), THREADS, Smem<G_>::BYTES, stream>>>(                        \
++        mp, wbank.data_ptr<uint8_t>(), gs.data_ptr<float>(), sorted_ids.data_ptr<int>(),           \
++        block_experts.data_ptr<int>(), n_padded.data_ptr<int>(), blocks_len, static_cast<int>(num_routes),    \
++        static_cast<int>(n_tiles), static_cast<int>(K), static_cast<int>(gs.numel()),                         \
++        reinterpret_cast<__nv_bfloat16*>(out.data_ptr()), static_cast<int>(out.size(1)), err.data_ptr<int>()); \
++    C10_CUDA_KERNEL_LAUNCH_CHECK();                                                                           \
++  } else {                                                                                                    \
++    cudaLaunchConfig_t cfg{};                                                                                 \
++    cfg.gridDim = dim3(static_cast<unsigned>(grid));                                                          \
++    cfg.blockDim = dim3(THREADS);                                                                             \
++    cfg.dynamicSmemBytes = Smem<G_>::BYTES;                                                                   \
++    cfg.stream = stream;                                                                                      \
++    cudaLaunchAttribute attr[1];                                                                              \
++    attr[0].id = cudaLaunchAttributeProgrammaticStreamSerialization;                                          \
++    attr[0].val.programmaticStreamSerializationAllowed = 1;                                                   \
++    cfg.attrs = attr;                                                                                         \
++    cfg.numAttrs = 1;                                                                                         \
++    const cudaError_t le_ = cudaLaunchKernelEx(                                                               \
++        &cfg, wg_kernel<G_>, mp, wbank.data_ptr<uint8_t>(), gs.data_ptr<float>(), sorted_ids.data_ptr<int>(),\
++        block_experts.data_ptr<int>(), n_padded.data_ptr<int>(), blocks_len, static_cast<int>(num_routes),    \
++        static_cast<int>(n_tiles), static_cast<int>(K), static_cast<int>(gs.numel()),                         \
++        reinterpret_cast<__nv_bfloat16*>(out.data_ptr()), static_cast<int>(out.size(1)), err.data_ptr<int>()); \
++    TORCH_CHECK(le_ == cudaSuccess, "wg_gemm: PDL launch: ", cudaGetErrorString(le_));                        \
++  } } while (0)
++  // do { } while (0): the macro is the body of if/else below; a bare if/else here left a dangling else.
++  // pdl != 0 (the w2 launch only; the gather and w13 are plain launches): the programmatic-stream-serialization
++  // attribute makes this grid a programmatic dependent of the previous kernel in the stream.
++  if (which == 0) WG_LAUNCH(true); else WG_LAUNCH(false);
++''',
++         r'''#define WG_LAUNCH(G_)                                                                                         \
++  wg_kernel<G_><<<static_cast<unsigned>(grid), THREADS, Smem<G_>::BYTES, stream>>>(                          \
++      mp, wbank.data_ptr<uint8_t>(), gs.data_ptr<float>(), sorted_ids.data_ptr<int>(),             \
++      block_experts.data_ptr<int>(), n_padded.data_ptr<int>(), blocks_len, static_cast<int>(num_routes),      \
++      static_cast<int>(n_tiles), static_cast<int>(K), static_cast<int>(gs.numel()),                           \
++      reinterpret_cast<__nv_bfloat16*>(out.data_ptr()), static_cast<int>(out.size(1)), err.data_ptr<int>())
++  if (which == 0) WG_LAUNCH(true); else WG_LAUNCH(false);
++'''),
++        (r'''#undef WG_LAUNCH
++}
++''',
++         r'''#undef WG_LAUNCH
++  C10_CUDA_KERNEL_LAUNCH_CHECK();
++}
++'''),
++    ],
++}
++
++
++def _wg_revert(text, key):
++    """MASTER's text of one source part (cpp / head / body) from the PDL text."""
++    for new, old in _WG_MASTER_REVERT[key]:
++        assert text.count(new) == 1, f"master revert hunk not unique in {key}: {new[:60]!r}"
++        text = text.replace(new, old)
++    return text
++
++
++def _wg_cpp(pdl=True):
++    return _WG_CPP if pdl else _wg_revert(_WG_CPP, "cpp")
+ WG_GENCODE = "-gencode=arch=compute_90a,code=sm_90a"
+ WG_CUDA_CFLAGS = ["-O3", "-lineinfo", WG_GENCODE]
+ 
+@@ -1485,7 +1664,7 @@ def _wg_ptxas_warnings(text):
+     return out[:4]
+ 
+ 
+-def _wg_build(probe=False):
++def _wg_build(probe=False, pdl=True):
+     """Compile the wgmma module (prepare only, never during capture): (ext or None, error text).
+ 
+     sm_90a only (hypothesis cuda-nvfp4-wgmma-rega-grouped-sm90a-rebuild-inproc): cpp_extension's
+@@ -1501,7 +1680,8 @@ def _wg_build(probe=False):
+     t0 = time.perf_counter()
+     prev = os.environ.get("TORCH_CUDA_ARCH_LIST")
+     flags = list(WG_CUDA_CFLAGS) + (["-Xptxas", "-Werror"] if probe else [])
+-    name = WG_EXT_NAME + ("_probe" if probe else "")
++    # pdl=False: MASTER's module (same source text and name as master), the fallback when the PDL build fails.
++    name = (WG_EXT_NAME if pdl else WG_EXT_NAME_MASTER) + ("_probe" if probe else "")
+     ext, err_text = None, ""
+     try:
+         from torch.utils import cpp_extension
+@@ -1527,8 +1707,8 @@ def _wg_build(probe=False):
+               f"{arch_flags}; extra_cuda_cflags {flags}", flush=True)
+         ext = load_inline(
+             name=name,
+-            cpp_sources=_WG_CPP,
+-            cuda_sources=_wg_src(),
++            cpp_sources=_wg_cpp(pdl),
++            cuda_sources=_wg_src(pdl),
+             functions=["wg_init", "wg_gather", "wg_gemm"],
+             extra_cuda_cflags=flags,
+             verbose=False,
+@@ -1536,7 +1716,7 @@ def _wg_build(probe=False):
+     except Exception as e:  # keep the master path if the build fails
+         err_text = str(e)
+         ext = None
+-        print(f"{WG_TAG} load_inline{' probe' if probe else ''} failed after {time.perf_counter() - t0:.1f}s: "
++        print(f"{WG_TAG} load_inline {name} failed after {time.perf_counter() - t0:.1f}s: "
+               f"{err_text[:240]!r}", flush=True)
+     finally:
+         if prev is None:
+@@ -1544,7 +1724,7 @@ def _wg_build(probe=False):
+         else:
+             os.environ["TORCH_CUDA_ARCH_LIST"] = prev
+     if ext is not None:
+-        print(f"{WG_TAG} load_inline{' probe' if probe else ''} compiled in {time.perf_counter() - t0:.1f}s", flush=True)
++        print(f"{WG_TAG} load_inline {name} compiled in {time.perf_counter() - t0:.1f}s", flush=True)
+     return ext, err_text
+ 
+ 
+@@ -1681,8 +1861,15 @@ def _wg_gemm(state, which, wq, wgs, sorted_ids, block_experts, n_padded, routes,
+     B-source scratch (its tensor maps are encoded in C++ from THIS tensor on every call, into a
+     stack-local grid constant), the weights, the per-state error word. No module-level device pointer,
+     tensor map or tensor is involved."""
+-    state["wg_ext"].wg_gemm(which, state["wg_xs"] if which == 0 else state["wg_hs"], wq, wgs, sorted_ids,
+-                            block_experts, n_padded, routes, n_tiles, k, out, state["wg_grid"], state["wg_err"])
++    # PDL only on the w13 -> w2 boundary (which == 1); state['wg_pdl'] is set once in prepare, read-only here.
++    pdl = 1 if (which == 1 and state.get("wg_pdl", False)) else 0
++    args = (which, state["wg_xs"] if which == 0 else state["wg_hs"], wq, wgs, sorted_ids, block_experts, n_padded,
++            routes, n_tiles, k, out, state["wg_grid"], state["wg_err"])
++    # wg_ext_pdl (prepare-time bool): the PDL module takes the pdl argument; master's fallback module does not.
++    if state.get("wg_ext_pdl", False):
++        state["wg_ext"].wg_gemm(*args, pdl)
++    else:
++        state["wg_ext"].wg_gemm(*args)
+ 
+ 
+ WG_MAGIC = 0x57474d4d  # block 0 of wg_kernel writes it into wg_err[1] (the launch marker)
+@@ -2533,7 +2720,7 @@ def _wg_ref_fp32(bank, state, wref, x, topk_ids, tw):
+         eps=POST_NORM_EPS, weight_first=True, slot_expert_ids=local_ids)
+ 
+ 
+-def _wg_copy_check(weights, bank, state, device):
++def _wg_copy_check(weights, bank, state, device, pdl=False):
+     """MANDATORY (s5): the judge COPIES the prepared state, so graphs captured through kernel_fn on three
+     states must replay correctly: A = the prepared state, B = copy.deepcopy(state) with the ext module
+     shared via the memo, C = the recursive tensor-cloning walk after a ~2 MB pad allocation (the closest
+@@ -2541,7 +2728,9 @@ def _wg_copy_check(weights, bank, state, device):
+     replays A, B, C, A, B, each with that state's static inputs REFILLED, each compared with an fp32-dequant
+     reference (and Marlin's own error against it: the bound is 1.5x Marlin's), each also required to leave
+     the launch marker (wg_err[1] == WG_MAGIC, wg_err[0] == 0) that proves the wgmma kernel ran. A copy
+-    method that raises is skipped and named. Returns (ok, launched, failure lines, summary lines)."""
++    method that raises is skipped and named. pdl: every state's w2 launch carries the programmatic-
++    stream-serialization attribute (state['wg_pdl'] is set on A, B and C here). Returns (ok, launched,
++    failure lines, summary lines)."""
+     start, count = bank["start"], bank["count"]
+     hidden = weights["w2"].shape[1]
+     local_set = list(range(start, start + count))
+@@ -2574,6 +2763,7 @@ def _wg_copy_check(weights, bank, state, device):
+     for st in states.values():
+         # kernel_fn's gate reads the two bucket flags; the copy check exercises wgmma in both buckets
+         st["wgmma_ok"] = st["wg_on_128"] = st["wg_on_256"] = True
++        st["wg_pdl"] = bool(pdl)
+     wref = _wg_ref_weights(weights, bank)
+     seq = [n for n in ("A", "B", "C", "A", "B") if n in states]
+ 
+@@ -2630,7 +2820,7 @@ def _wg_copy_check(weights, bank, state, device):
+             stats["worst_w"], stats["worst_m"] = max(stats["worst_w"], worst_w), max(stats["worst_m"], worst_m)
+             group_all += 1
+             group_ok += int(bad == 0)
+-            print(f"{WG_TAG}   copy-check M={tokens} {kind} [{' '.join(seq)}]: worst wgmma-vs-fp32 {worst_w:.2e}, "
++            print(f"{WG_TAG}   copy-check{' PDL' if pdl else ''} M={tokens} {kind} [{' '.join(seq)}]: worst wgmma-vs-fp32 {worst_w:.2e}, "
+                   f"worst Marlin-vs-fp32 {worst_m:.2e} (bound 1.5x), {len(seq) - bad}/{len(seq)} ok", flush=True)
+         del graphs
+     torch.cuda.synchronize()
+@@ -2643,6 +2833,140 @@ def _wg_copy_check(weights, bank, state, device):
+             f"bound {WG_COPY_FACTOR}x Marlin" + (f"; {'; '.join(lines)}" if lines else ""))
+     return ok, launched_all, fails, line
+ 
++WG_PDL_TOKENS = (128, 256)    # T buckets the PDL A/B covers (B256 is the shape it targets)
++WG_PDL_DEADLINE_S = 225.0     # the PDL stage (~30-50 s with its copy check) must start before this many s into prepare()
++WG_PDL_REPS = 41              # interleaved A/B graph replays per timing
++WG_PDL_SLACK = 1.003          # PDL stays on only if its T=256 full-path median is <= this x the non-PDL median
++
++
++def _wg_pdl_stage(weights, bank, state, device, t_setup):
++    """prepare() only; never raises. Decides state['wg_pdl'] (the caller assigns the returned bool; this
++    function leaves state['wg_pdl'] False). PDL is only the programmatic-stream-serialization attribute on
++    the w2 launch (the w13 -> w2 boundary); the gather and w13 are plain launches.
++      1. bit identity: per T in WG_PDL_TOKENS the same _moe_wgmma path is captured twice (PDL off / on); for
++         each of four routings the inputs are refilled and replays off, on, on must agree bit for bit, with
++         error word 0 and the launch marker.
++      2. prepare-time event timings: w13 and w2 alone (cold L2, eager), the gather + w13 + w2 chain and the
++         full _moe_wgmma path as graphs, PDL off vs on, interleaved with a cold-L2 flush.
++      3. the three-state copy check (A, deepcopy B, judge-model clone C) with PDL on.
++    Any mismatch, error or exception: PDL off, master's launches. Returns (pdl_on, summary lines)."""
++    lines = []
++
++    def say(msg, summ=True):
++        print(f"{WG_TAG} PDL {msg}", flush=True)
++        if summ:
++            lines.append(f"PDL {msg}")
++
++    try:
++        if time.perf_counter() - t_setup > WG_PDL_DEADLINE_S:
++            say("OFF: prepare budget spent before the PDL stage")
++            return False, lines
++        start, count = bank["start"], bank["count"]
++        hidden = weights["w2"].shape[1]
++        local_set = list(range(start, start + count))
++        remote_set = [e for e in range(N_EXPERTS) if e not in local_set]
++        gen = torch.Generator().manual_seed(20261104)
++        flush = torch.empty(WG_SEL_FLUSH_BYTES, dtype=torch.uint8, device=device)
++        dummy = torch.zeros(1, dtype=torch.float32, device=device)
++        base_graph, _ = _wg_graph_of(lambda: dummy.add_(1.0))
++        identical = True
++        full_us = {}
++        for tokens in WG_PDL_TOKENS:
++            bufs = (torch.zeros((tokens, hidden), dtype=torch.bfloat16, device=device),
++                    torch.zeros((tokens, TOP_K), dtype=torch.int32, device=device),
++                    torch.full((tokens, TOP_K), 1.0 / TOP_K, dtype=torch.float32, device=device))
++            _wg_fill(bufs, "random", tokens, gen, hidden, local_set, remote_set)
++            pair = {}
++            for flag in (False, True):
++                state["wg_pdl"] = flag
++                print(f"{WG_TAG}     [pdl T={tokens}] capture of _moe_wgmma with PDL {'on' if flag else 'off'}",
++                      flush=True)
++                pair[flag] = _wg_graph_of(lambda: _moe_wgmma(bufs[0], bufs[1], bufs[2], bank, state)[0])
++            n_same = 0
++            for kind in WG_COPY_KINDS:
++                _wg_fill(bufs, kind, tokens, gen, hidden, local_set, remote_set)
++                res = []
++                for flag in (False, True, True):
++                    state["wg_err"].zero_()
++                    pair[flag][0].replay()
++                    torch.cuda.synchronize()
++                    err_word, marker = [int(v) for v in state["wg_err"].tolist()]
++                    res.append((pair[flag][1].clone().contiguous().view(torch.int16), err_word, marker,
++                                bool(torch.isfinite(pair[flag][1]).all())))
++                same = all(torch.equal(r[0], res[0][0]) for r in res[1:])
++                healthy = all(r[1] == 0 and r[2] == WG_MAGIC and r[3] for r in res)
++                n_same += int(same and healthy)
++                if not (same and healthy):
++                    identical = False
++                    say(f"MISMATCH T={tokens} {kind}: bit-identical {same}, error words/markers/finite "
++                        f"{[(r[1], hex(r[2] & 0xffffffff), r[3]) for r in res]}")
++            say(f"bit-identity T={tokens}: {n_same}/{len(WG_COPY_KINDS)} routings identical (PDL off vs on x2, "
++                f"refilled inputs, graph replays)")
++            if not identical:
++                break
++            med = _wg_ab_graphs(flush, {"off": pair[False][0], "on": pair[True][0], "base": base_graph},
++                                WG_PDL_REPS)
++            off_us, on_us = med["off"] - med["base"], med["on"] - med["base"]
++            full_us[tokens] = (off_us, on_us)
++            say(f"event timing, full wgmma path T={tokens} (random routing, align + gather + w13 + w2 + norm, "
++                f"graph replays, cold L2, median of {WG_PDL_REPS}, empty-graph {med['base']:.1f} us subtracted): "
++                f"PDL off {off_us:.1f} us, PDL on {on_us:.1f} us, delta {on_us - off_us:+.1f} us "
++                f"({100.0 * (on_us - off_us) / max(off_us, 1e-3):+.2f}%)")
++            # per-kernel and chain timings on a judge-like skewed routing
++            topk = _wg_zipf_ids(tokens, 0.9, gen, local_set).to(device)
++            fns, n_local, _ = _wg_time_fns(weights, bank, state, device, bufs[0], topk, bufs[2])
++
++            def chain():
++                fns["gather"]()
++                fns["w13"]()
++                fns["w2"]()
++
++            state["wg_pdl"] = False
++            t13 = _wg_med_cold(fns["w13"], flush, 9)
++            t2 = _wg_med_cold(fns["w2"], flush, 9)
++            gchain = {}
++            for flag in (False, True):
++                state["wg_pdl"] = flag
++                gchain[flag] = _wg_graph_of(chain)[0]
++            med2 = _wg_ab_graphs(flush, {"off": gchain[False], "on": gchain[True], "base": base_graph},
++                                 WG_PDL_REPS)
++            c_off, c_on = med2["off"] - med2["base"], med2["on"] - med2["base"]
++            say(f"event timing, kernels T={tokens} (zipf a=0.9, {n_local} local routes): w13+silu alone "
++                f"{t13:.1f} us, w2 alone {t2:.1f} us (eager, cold L2); gather+w13+w2 chain as a graph: PDL off "
++                f"{c_off:.1f} us, PDL on {c_on:.1f} us, delta {c_on - c_off:+.1f} us")
++            del fns, gchain, pair, bufs
++            torch.cuda.synchronize()
++        state["wg_pdl"] = False
++        del flush, base_graph
++        if not identical:
++            say("OFF: outputs are not bit-identical to the non-PDL launches")
++            return False, lines
++        off_us, on_us = full_us[256]
++        if on_us > off_us * WG_PDL_SLACK:
++            say(f"OFF: T=256 full path PDL on {on_us:.1f} us is not faster than off {off_us:.1f} us "
++                f"(slack {WG_PDL_SLACK})")
++            return False, lines
++        if time.perf_counter() - t_setup > WG_PDL_DEADLINE_S + 25.0:
++            say("OFF: prepare budget spent before the PDL copy check")
++            return False, lines
++        t_cc = time.perf_counter()
++        ok, launched, fails, rline = _wg_copy_check(weights, bank, state, device, pdl=True)
++        for f_ in fails[:6]:
++            print(f"{WG_TAG}   PDL COPY MISS {f_}"[:400], flush=True)
++        say(f"three-state copy check with PDL on: {'PASS' if ok and launched else 'FAIL'} "
++            f"({time.perf_counter() - t_cc:.1f}s): {rline}")
++        if not (ok and launched):
++            say("OFF: the PDL copy check failed")
++            return False, lines
++        say("on: the w13 -> w2 boundary launches with programmatic stream serialization (the gather and w13 are "
++            "plain launches)")
++        return True, lines
++    except Exception as e:
++        say(f"OFF: PDL stage raised {e!r}"[:300])
++        return False, lines
++    finally:
++        state["wg_pdl"] = False
++
+ 
+ def _wg_audit_cpp(src):
+     """Static scan of the CUDA/C++ source for state that outlives a call: mutable file / namespace
+@@ -2711,6 +3035,8 @@ def _wg_setup(weights, banks, state, device, t_start=None):
+     state["wgmma_ok"] = False
+     state["wg_on_128"] = False
+     state["wg_on_256"] = False
++    state["wg_pdl"] = False   # set once here (prepare); kernel_fn only reads it
++    state["wg_ext_pdl"] = False  # True only when the PDL module (not master's fallback module) was built
+     sel = {}
+     sel_s = 0.0
+     copy_s = 0.0
+@@ -2746,22 +3072,39 @@ def _wg_setup(weights, banks, state, device, t_start=None):
+         # it in-process), which is searched for the wgmma 'serialized' warning, then the real
+         # build runs without -Werror.
+         t_b = time.perf_counter()
+-        ext, btext = _wg_build(probe=True)
+-        warns = _wg_ptxas_warnings(btext)
+-        # A passing -Werror probe rules out a ptxas WARNING only: if this ptxas reports wgmma
+-        # serialization at info level (C75xx), load_inline discards it, so the answer is unknown.
+-        serialized = ("yes" if any("serialized" in w for w in warns)
+-                      else ("no warning (info-level note not visible)" if ext is not None else "unknown"))
++
++        def build_flow(pdl):
++            ext_, btext = _wg_build(probe=True, pdl=pdl)
++            warns_ = _wg_ptxas_warnings(btext)
++            # A passing -Werror probe rules out a ptxas WARNING only: if this ptxas reports wgmma
++            # serialization at info level (C75xx), load_inline discards it, so the answer is unknown.
++            ser_ = ("yes" if any("serialized" in w for w in warns_)
++                    else ("no warning (info-level note not visible)" if ext_ is not None else "unknown"))
++            if ext_ is None:
++                print(f"{WG_TAG} probe build (-Xptxas -Werror) failed; ptxas warning lines: {len(warns_)}; wgmma "
++                      f"'serialized' warning: {ser_}", flush=True)
++                for w in warns_:
++                    print(f"{WG_TAG}   ptxas: {w}", flush=True)
++                # PDL module: a failed probe with no ptxas line is a compile error the plain build would only
++                # repeat, so go straight to master's module. Master's module keeps master's exact sequence.
++                if (not pdl or warns_) and time.perf_counter() - t_setup < WG_SETUP_BUDGET_S - 60.0:
++                    ext_, _ = _wg_build(probe=False, pdl=pdl)
++            else:
++                print(f"{WG_TAG} probe build with -Xptxas -Werror passed: no ptxas warning (an info-level wgmma "
++                      f"serialization note would not fail it, so serialization is not ruled out)", flush=True)
++            return ext_, warns_, ser_
++
++        ext, warns, serialized = build_flow(True)
++        state["wg_ext_pdl"] = ext is not None
+         if ext is None:
+-            print(f"{WG_TAG} probe build (-Xptxas -Werror) failed; ptxas warning lines: {len(warns)}; wgmma "
+-                  f"'serialized' warning: {serialized}", flush=True)
+-            for w in warns:
+-                print(f"{WG_TAG}   ptxas: {w}", flush=True)
++            print(f"{WG_TAG} PDL module {WG_EXT_NAME} failed to build: building MASTER's wgmma module "
++                  f"{WG_EXT_NAME_MASTER} (master's source text); wg_pdl stays False", flush=True)
+             if time.perf_counter() - t_setup < WG_SETUP_BUDGET_S - 60.0:
+-                ext, _ = _wg_build(probe=False)
+-        else:
+-            print(f"{WG_TAG} probe build with -Xptxas -Werror passed: no ptxas warning (an info-level wgmma "
+-                  f"serialization note would not fail it, so serialization is not ruled out)", flush=True)
++                ext, warns, serialized = build_flow(False)
++        built = (WG_EXT_NAME if state["wg_ext_pdl"] else WG_EXT_NAME_MASTER) if ext is not None else "NONE"
++        print(f"{WG_TAG} WG MODULE BUILT = {built} ({'PDL-capable' if state['wg_ext_pdl'] else 'master module, no PDL'})",
++              flush=True)
++        summ.append(f"WG MODULE BUILT = {built}")
+         build_s = time.perf_counter() - t_b
+         summ.append(f"build: TORCH_CUDA_ARCH_LIST=9.0a -> {WG_BUILD_INFO.get('arch')}; cflags {WG_CUDA_CFLAGS}; "
+                     f"{build_s:.1f}s ({'ok' if ext is not None else 'FAILED'}); ptxas warnings {len(warns)}, wgmma "
+@@ -2887,6 +3230,13 @@ def _wg_setup(weights, banks, state, device, t_start=None):
+         if not (h_ok and w2_ok):
+             off.append("w13+silu or w2 failed rel-L2 vs Marlin")
+         ok = bool(canary_ok and h_ok and w2_ok and sc_ok and replay_ok and launched and err_word == 0)
++        # PDL on the w13 -> w2 boundary: decided before the selector so the selector times the shipped launches.
++        if ok and state.get("wg_ext_pdl", False):
++            pdl_on, pdl_lines = _wg_pdl_stage(weights, bank, state, device, t_setup)
++            state["wg_pdl"] = bool(pdl_on)
++            summ.extend(pdl_lines)
++        else:
++            summ.append("PDL OFF: " + ("the wgmma path is off" if not ok else "master's module was built (PDL build failed)"))
+         # s5 bucket gate: the path is a candidate only when correctness and the launch marker pass; each T
+         # bucket then ships only if the graph-timed A/B selector says wgmma wins it on the judge-like routing.
+         if ok and time.perf_counter() - t_setup < WG_TIMING_DEADLINE_S:
+@@ -2916,6 +3266,8 @@ def _wg_setup(weights, banks, state, device, t_start=None):
+     state["wgmma_ok"] = ok
+     state["wg_on_128"] = bool(ok and sel.get(128, False))
+     state["wg_on_256"] = bool(ok and sel.get(256, False))
++    if not (state["wg_on_128"] or state["wg_on_256"]):
++        state["wg_pdl"] = False  # no bucket runs wgmma: PDL is moot, keep master's launches
+     # Release every prepare-time graph, buffer and copied state before returning (they are locals of the
+     # checks above; a traceback from a failed check may still pin them).
+     gc.collect()
+@@ -2937,6 +3289,9 @@ def _wg_setup(weights, banks, state, device, t_start=None):
+         why_ = (" (wgmma path off)" if not ok else (" (selector skipped or raised)" if tokens not in sel
+                 else " (selector)"))
+         print(f"{WG_TAG} PATH CHOSEN {name} ({rng_text}) = {'WGMMA' if on else 'MARLIN'}{why_}", flush=True)
++    print(f"{WG_TAG} FINAL FLAGS wg_on_128={state['wg_on_128']} wg_on_256={state['wg_on_256']} "
++          f"wg_pdl={state['wg_pdl']}; B128 took {'WGMMA' if state['wg_on_128'] else 'MARLIN'}, B256 took "
++          f"{'WGMMA' if state['wg_on_256'] else 'MARLIN'}; PDL {'on' if state['wg_pdl'] else 'off'}", flush=True)
+     print(f"{WG_TAG} PATH CHOSEN = B128 {'WGMMA' if state['wg_on_128'] else 'MARLIN'}, B256 "
+           f"{'WGMMA' if state['wg_on_256'] else 'MARLIN'}; MARLIN for num_tokens < {WG_MIN_TOKENS} and > "
+           f"{WG_MAX_TOKENS}; kernel variant A (wgmma_wait<0>); per-bucket graph-timed selector; tensor maps "

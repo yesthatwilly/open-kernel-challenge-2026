@@ -1,0 +1,92 @@
+cuda-wgmma-verify]   copy-check M=256 all-one-expert [A B C A B]: worst wgmma-vs-fp32 4.11e-03, worst Marlin-vs-fp32 5.48e-03 (bound 1.5x), 5/5 ok
+[cuda-wgmma-verify]   copy-check M=256 mixed-local-remote [A B C A B]: worst wgmma-vs-fp32 4.31e-03, worst Marlin-vs-fp32 5.50e-03 (bound 1.5x), 5/5 ok
+[cuda-wgmma-verify]     [copy A M=257] eager warm-up + capture of kernel_fn
+[cuda-wgmma-verify]     [copy B M=257] eager warm-up + capture of kernel_fn
+[cuda-wgmma-verify]     [copy C M=257] eager warm-up + capture of kernel_fn
+[cuda-wgmma-verify]   copy-check M=257 random [A B C A B]: worst wgmma-vs-fp32 4.24e-03, worst Marlin-vs-fp32 5.50e-03 (bound 1.5x), 5/5 ok
+[cuda-wgmma-verify]   copy-check M=257 skewed-4hot [A B C A B]: worst wgmma-vs-fp32 4.39e-03, worst Marlin-vs-fp32 5.50e-03 (bound 1.5x), 5/5 ok
+[cuda-wgmma-verify]   copy-check M=257 all-one-expert [A B C A B]: worst wgmma-vs-fp32 4.12e-03, worst Marlin-vs-fp32 5.44e-03 (bound 1.5x), 5/5 ok
+[cuda-wgmma-verify]   copy-check M=257 mixed-local-remote [A B C A B]: worst wgmma-vs-fp32 4.32e-03, worst Marlin-vs-fp32 5.50e-03 (bound 1.5x), 5/5 ok
+[cuda-wgmma-verify] LAUNCHED = wgmma in the copy check (both bucket flags forced on there; device launch marker 0x57474d4d read back from every state's own wg_err after every graph replay); the judged path per bucket is the PATH CHOSEN B128 / B256 lines
+[cuda-wgmma-verify]     [pdl T=128] capture of _moe_wgmma with PDL off
+[cuda-wgmma-verify]     [pdl T=128] capture of _moe_wgmma with PDL on
+[cuda-wgmma-verify] PDL bit-identity T=128: 4/4 routings identical (PDL off vs on x2, refilled inputs, graph replays)
+[cuda-wgmma-verify] PDL event timing, full wgmma path T=128 (random routing, align + gather + w13 + w2 + norm, graph replays, cold L2, median of 41, empty-graph 5.4 us subtracted): PDL off 171.2 us, PDL on 169.9 us, delta -1.3 us (-0.75%)
+[cuda-wgmma-verify] PDL event timing, kernels T=128 (zipf a=0.9, 543 local routes): w13+silu alone 326.6 us, w2 alone 160.5 us (eager, cold L2); gather+w13+w2 chain as a graph: PDL off 478.7 us, PDL on 475.3 us, delta -3.4 us
+[cuda-wgmma-verify]     [pdl T=256] capture of _moe_wgmma with PDL off
+[cuda-wgmma-verify]     [pdl T=256] capture of _moe_wgmma with PDL on
+[cuda-wgmma-verify] PDL bit-identity T=256: 4/4 routings identical (PDL off vs on x2, refilled inputs, graph replays)
+[cuda-wgmma-verify] PDL event timing, full wgmma path T=256 (random routing, align + gather + w13 + w2 + norm, graph replays, cold L2, median of 41, empty-graph 5.4 us subtracted): PDL off 223.5 us, PDL on 218.6 us, delta -5.0 us (-2.22%)
+[cuda-wgmma-verify] PDL event timing, kernels T=256 (zipf a=0.9, 1140 local routes): w13+silu alone 367.2 us, w2 alone 183.4 us (eager, cold L2); gather+w13+w2 chain as a graph: PDL off 545.4 us, PDL on 541.1 us, delta -4.3 us
+[cuda-wgmma-verify]   copy B: copy.deepcopy(state) (ext module shared via memo): built; wg_xs 0xe8d2c000000 vs A 0xe8e14000000 (differ True)
+[cuda-wgmma-verify]   copy C: recursive tensor-cloning walk after a 2 MB pad allocation: built; wg_xs 0xe8df5000000 vs A 0xe8e14000000 (differ True)
+[cuda-wgmma-verify]     [copy A M=128] eager warm-up + capture of kernel_fn
+[cuda-wgmma-verify]     [copy B M=128] eager warm-up + capture of kernel_fn
+[cuda-wgmma-verify]     [copy C M=128] eager warm-up + capture of kernel_fn
+[cuda-wgmma-verify]   copy-check PDL M=128 random [A B C A B]: worst wgmma-vs-fp32 4.25e-03, worst Marlin-vs-fp32 5.49e-03 (bound 1.5x), 5/5 ok
+[cuda-wgmma-verify]   copy-check PDL M=128 skewed-4hot [A B C A B]: worst wgmma-vs-fp32 4.41e-03, worst Marlin-vs-fp32 5.51e-03 (bound 1.5x), 5/5 ok
+[cuda-wgmma-verify]   copy-check PDL M=128 all-one-expert [A B C A B]: worst wgmma-vs-fp32 4.13e-03, worst Marlin-vs-fp32 5.49e-03 (bound 1.5x), 5/5 ok
+[cuda-wgmma-verify]   copy-check PDL M=128 mixed-local-remote [A B C A B]: worst wgmma-vs-fp32 4.35e-03, worst Marlin-vs-fp32 5.52e-03 (bound 1.5x), 5/5 ok
+[cuda-wgmma-verify]     [copy A M=256] eager warm-up + capture of kernel_fn
+[cuda-wgmma-verify]     [copy B M=256] eager warm-up + capture of kernel_fn
+[cuda-wgmma-verify]     [copy C M=256] eager warm-up + capture of kernel_fn
+[cuda-wgmma-verify]   copy-check PDL M=256 random [A B C A B]: worst wgmma-vs-fp32 4.25e-03, worst Marlin-vs-fp32 5.49e-03 (bound 1.5x), 5/5 ok
+[cuda-wgmma-verify]   copy-check PDL M=256 skewed-4hot [A B C A B]: worst wgmma-vs-fp32 4.40e-03, worst Marlin-vs-fp32 5.49e-03 (bound 1.5x), 5/5 ok
+[cuda-wgmma-verify]   copy-check PDL M=256 all-one-expert [A B C A B]: worst wgmma-vs-fp32 4.11e-03, worst Marlin-vs-fp32 5.48e-03 (bound 1.5x), 5/5 ok
+[cuda-wgmma-verify]   copy-check PDL M=256 mixed-local-remote [A B C A B]: worst wgmma-vs-fp32 4.31e-03, worst Marlin-vs-fp32 5.50e-03 (bound 1.5x), 5/5 ok
+[cuda-wgmma-verify]     [copy A M=257] eager warm-up + capture of kernel_fn
+[cuda-wgmma-verify]     [copy B M=257] eager warm-up + capture of kernel_fn
+[cuda-wgmma-verify]     [copy C M=257] eager warm-up + capture of kernel_fn
+[cuda-wgmma-verify]   copy-check PDL M=257 random [A B C A B]: worst wgmma-vs-fp32 4.24e-03, worst Marlin-vs-fp32 5.50e-03 (bound 1.5x), 5/5 ok
+[cuda-wgmma-verify]   copy-check PDL M=257 skewed-4hot [A B C A B]: worst wgmma-vs-fp32 4.39e-03, worst Marlin-vs-fp32 5.50e-03 (bound 1.5x), 5/5 ok
+[cuda-wgmma-verify]   copy-check PDL M=257 all-one-expert [A B C A B]: worst wgmma-vs-fp32 4.12e-03, worst Marlin-vs-fp32 5.44e-03 (bound 1.5x), 5/5 ok
+[cuda-wgmma-verify]   copy-check PDL M=257 mixed-local-remote [A B C A B]: worst wgmma-vs-fp32 4.32e-03, worst Marlin-vs-fp32 5.50e-03 (bound 1.5x), 5/5 ok
+[cuda-wgmma-verify] PDL three-state copy check with PDL on: PASS (0.9s): 60 refilled graph replays over states ABC (A, B, C, A, B per M (128, 256, 257) x 4 routings), launch marker seen 60/60, worst wgmma-vs-fp32 4.41e-03, worst Marlin-vs-fp32 5.52e-03, bound 1.5x Marlin
+[cuda-wgmma-verify] PDL on: the w13 -> w2 boundary launches with programmatic stream serialization (the gather and w13 are plain launches)
+[cuda-wgmma-verify] select  B128 T=128 judge-like zipf a=0.3 (241 local routes, Marlin bsm 16): median of 41 cold graph replays minus empty-graph 5.5 us: Marlin full path 366.9 us, wgmma full path 458.9 us, Marlin/wgmma 0.800x (end-to-end rel-L2 6.05e-03)
+[cuda-wgmma-verify] select  B128 T=128 random (133 local routes, Marlin bsm 16): median of 41 cold graph replays minus empty-graph 5.5 us: Marlin full path 363.7 us, wgmma full path 460.0 us, Marlin/wgmma 0.791x (end-to-end rel-L2 6.09e-03)
+[cuda-wgmma-verify] select  B128 (128 <= T <= 255): wgmma DISABLED (Marlin): ratios 0.800x, 0.791x (judge-like, random) vs margin 1.02x on the judge-like routing (random printed, not gating); calibrated Marlin pair 378 us (judged s4 Marlin pair 306.2 us); 0.2s
+[cuda-wgmma-verify] select  B256 T=256 judge-like zipf a=0.3 (457 local routes, Marlin bsm 32): median of 41 cold graph replays minus empty-graph 5.5 us: Marlin full path 496.0 us, wgmma full path 470.3 us, Marlin/wgmma 1.055x (end-to-end rel-L2 6.08e-03)
+[cuda-wgmma-verify] select  B256 T=256 random (245 local routes, Marlin bsm 32): median of 41 cold graph replays minus empty-graph 5.5 us: Marlin full path 481.8 us, wgmma full path 460.1 us, Marlin/wgmma 1.047x (end-to-end rel-L2 6.07e-03)
+[cuda-wgmma-verify] select  B256 (256 <= T <= 512): wgmma ENABLED: ratios 1.055x, 1.047x (judge-like, random) vs margin 1.02x on the judge-like routing (random printed, not gating); calibrated Marlin pair 497 us (judged s4 Marlin pair 483.2 us); 0.2s
+[cuda-wgmma-verify] ===== STAGE 5 DIAGNOSTIC SUMMARY (last block of the log) =====
+[cuda-wgmma-verify] WG MODULE BUILT = muse_moe_w4a16_wgmma_rega_v6_pdl
+[cuda-wgmma-verify] build: TORCH_CUDA_ARCH_LIST=9.0a -> ['-gencode=arch=compute_90a,code=sm_90a']; cflags ['-O3', '-lineinfo', '-gencode=arch=compute_90a,code=sm_90a']; 37.2s (ok); ptxas warnings 0, wgmma 'serialized' warning: no warning (info-level note not visible)
+[cuda-wgmma-verify] kernel w13+silu: regs 168, local (spill) 0 B, smem 8192+187392 B, CTAs/SM 1
+[cuda-wgmma-verify] kernel w2: regs 168, local (spill) 0 B, smem 8192+203776 B, CTAs/SM 1
+[cuda-wgmma-verify] tensor maps encoded per call in C++ (no stored map, pointer record or gate); audit findings none
+[cuda-wgmma-verify] bucket canary (variant A = wgmma_wait<0> before dequant, the only variant): all four N buckets pass:
+[cuda-wgmma-verify]   A(wait0) N16 (c=16, 16 local routes, buckets [0]): w13 max-abs 9.375e-02 rel 6.43e-03 nonf rows 0 unw 0 | w2 max-abs 1.562e-02 rel 3.47e-03 nonf rows 0 unw 0 | out rel 6.10e-03 | ref non-finite 0/0 | err word 0 | PASS
+[cuda-wgmma-verify]   A(wait0) N32 (c=32, 32 local routes, buckets [1]): w13 max-abs 9.375e-02 rel 6.53e-03 nonf rows 0 unw 0 | w2 max-abs 1.562e-02 rel 3.46e-03 nonf rows 0 unw 0 | out rel 6.08e-03 | ref non-finite 0/0 | err word 0 | PASS
+[cuda-wgmma-verify]   A(wait0) N64 (c=64, 64 local routes, buckets [2]): w13 max-abs 1.250e-01 rel 6.53e-03 nonf rows 0 unw 0 | w2 max-abs 1.562e-02 rel 3.47e-03 nonf rows 0 unw 0 | out rel 6.08e-03 | ref non-finite 0/0 | err word 0 | PASS
+[cuda-wgmma-verify]   A(wait0) N128 (c=128, 128 local routes, buckets [3]): w13 max-abs 1.250e-01 rel 6.52e-03 nonf rows 0 unw 0 | w2 max-abs 1.562e-02 rel 3.47e-03 nonf rows 0 unw 0 | out rel 6.07e-03 | ref non-finite 0/0 | err word 0 | PASS
+[cuda-wgmma-verify] w13+silu: PASS; w2 (fed Marlin cache2): PASS; N buckets exercised [16, 32, 64, 128] multi-chunk True; fused norm skips remote rows: True
+[cuda-wgmma-verify]   canary M=128: w13 h unw 0 part 0 nonfin 0 rel 6.49e-03 | w2(Marlin cache2) unw 0 part 0 nonfin 0 rel 3.47e-03 | w2(own h) rel 8.48e-03 | out rel 6.04e-03 | gather bad 0/128 pad!=0 0/0 | ids True cov True | err word 0
+[cuda-wgmma-verify]   mixed M=128: w13 h unw 0 part 0 nonfin 0 rel 6.52e-03 | w2(Marlin cache2) unw 0 part 0 nonfin 0 rel 3.47e-03 | w2(own h) rel 8.48e-03 | out rel 6.06e-03 | gather bad 0/432 pad!=0 0/64 | ids True cov True | err word 0
+[cuda-wgmma-verify]   mixed M=256: w13 h unw 0 part 0 nonfin 0 rel 6.50e-03 | w2(Marlin cache2) unw 0 part 0 nonfin 0 rel 3.48e-03 | w2(own h) rel 8.47e-03 | out rel 6.06e-03 | gather bad 0/644 pad!=0 0/60 | ids True cov True | err word 0
+[cuda-wgmma-verify] copy check (graphs through kernel_fn; A, deepcopy B, judge-model clone C): PASS: 60 refilled graph replays over states ABC (A, B, C, A, B per M (128, 256, 257) x 4 routings), launch marker seen 60/60, worst wgmma-vs-fp32 4.41e-03, worst Marlin-vs-fp32 5.52e-03, bound 1.5x Marlin
+[cuda-wgmma-verify] self-check (4 M x 5 routings, eager + graph): PASS; worst rel-L2 vs Marlin h 6.54e-03 y2 3.48e-03 out 6.09e-03; device error word 0
+[cuda-wgmma-verify] PDL bit-identity T=128: 4/4 routings identical (PDL off vs on x2, refilled inputs, graph replays)
+[cuda-wgmma-verify] PDL event timing, full wgmma path T=128 (random routing, align + gather + w13 + w2 + norm, graph replays, cold L2, median of 41, empty-graph 5.4 us subtracted): PDL off 171.2 us, PDL on 169.9 us, delta -1.3 us (-0.75%)
+[cuda-wgmma-verify] PDL event timing, kernels T=128 (zipf a=0.9, 543 local routes): w13+silu alone 326.6 us, w2 alone 160.5 us (eager, cold L2); gather+w13+w2 chain as a graph: PDL off 478.7 us, PDL on 475.3 us, delta -3.4 us
+[cuda-wgmma-verify] PDL bit-identity T=256: 4/4 routings identical (PDL off vs on x2, refilled inputs, graph replays)
+[cuda-wgmma-verify] PDL event timing, full wgmma path T=256 (random routing, align + gather + w13 + w2 + norm, graph replays, cold L2, median of 41, empty-graph 5.4 us subtracted): PDL off 223.5 us, PDL on 218.6 us, delta -5.0 us (-2.22%)
+[cuda-wgmma-verify] PDL event timing, kernels T=256 (zipf a=0.9, 1140 local routes): w13+silu alone 367.2 us, w2 alone 183.4 us (eager, cold L2); gather+w13+w2 chain as a graph: PDL off 545.4 us, PDL on 541.1 us, delta -4.3 us
+[cuda-wgmma-verify] PDL three-state copy check with PDL on: PASS (0.9s): 60 refilled graph replays over states ABC (A, B, C, A, B per M (128, 256, 257) x 4 routings), launch marker seen 60/60, worst wgmma-vs-fp32 4.41e-03, worst Marlin-vs-fp32 5.52e-03, bound 1.5x Marlin
+[cuda-wgmma-verify] PDL on: the w13 -> w2 boundary launches with programmatic stream serialization (the gather and w13 are plain launches)
+[cuda-wgmma-verify] bucket selector (full kernel_fn graphs, cold L2, 41 interleaved reps, empty-graph baseline subtracted, margin 1.02x on the judge-like routing):
+[cuda-wgmma-verify]   B128 T=128 judge-like zipf a=0.3 (241 local routes, Marlin bsm 16): median of 41 cold graph replays minus empty-graph 5.5 us: Marlin full path 366.9 us, wgmma full path 458.9 us, Marlin/wgmma 0.800x (end-to-end rel-L2 6.05e-03)
+[cuda-wgmma-verify]   B128 T=128 random (133 local routes, Marlin bsm 16): median of 41 cold graph replays minus empty-graph 5.5 us: Marlin full path 363.7 us, wgmma full path 460.0 us, Marlin/wgmma 0.791x (end-to-end rel-L2 6.09e-03)
+[cuda-wgmma-verify]   B128 (128 <= T <= 255): wgmma DISABLED (Marlin): ratios 0.800x, 0.791x (judge-like, random) vs margin 1.02x on the judge-like routing (random printed, not gating); calibrated Marlin pair 378 us (judged s4 Marlin pair 306.2 us); 0.2s
+[cuda-wgmma-verify]   B256 T=256 judge-like zipf a=0.3 (457 local routes, Marlin bsm 32): median of 41 cold graph replays minus empty-graph 5.5 us: Marlin full path 496.0 us, wgmma full path 470.3 us, Marlin/wgmma 1.055x (end-to-end rel-L2 6.08e-03)
+[cuda-wgmma-verify]   B256 T=256 random (245 local routes, Marlin bsm 32): median of 41 cold graph replays minus empty-graph 5.5 us: Marlin full path 481.8 us, wgmma full path 460.1 us, Marlin/wgmma 1.047x (end-to-end rel-L2 6.07e-03)
+[cuda-wgmma-verify]   B256 (256 <= T <= 512): wgmma ENABLED: ratios 1.055x, 1.047x (judge-like, random) vs margin 1.02x on the judge-like routing (random printed, not gating); calibrated Marlin pair 497 us (judged s4 Marlin pair 483.2 us); 0.2s
+[cuda-wgmma-verify] verdicts: w13+silu PASS, w2 PASS, self-check PASS, copy check PASS; wgmma is enabled only if BOTH kernels pass rel-L2 <= 0.01 vs Marlin; setup 40.6s (prepare so far 59.8s; copy check 0.9s, selector 0.3s)
+[cuda-wgmma-verify] PATH CHOSEN B128 (128 <= T <= 255) = MARLIN (selector)
+[cuda-wgmma-verify] PATH CHOSEN B256 (256 <= T <= 512) = WGMMA (selector)
+[cuda-wgmma-verify] FINAL FLAGS wg_on_128=False wg_on_256=True wg_pdl=True; B128 took MARLIN, B256 took WGMMA; PDL on
+[cuda-wgmma-verify] PATH CHOSEN = B128 MARLIN, B256 WGMMA; MARLIN for num_tokens < 128 and > 512; kernel variant A (wgmma_wait<0>); per-bucket graph-timed selector; tensor maps encoded per call
+[align2] PATH CHOSEN class=d32 T=32 bsm=16 = master, incumbent 3.58 us, align2 3.74 us, ratio 0.957, equivalence 90 cases ok
+[align2] PATH CHOSEN class=v128 T=128 bsm=16 = master, incumbent 3.55 us, align2 4.35 us, ratio 0.816, equivalence 162 cases ok
+[align2] PATH CHOSEN class=v256 T=256 bsm=32 = align2 chunk 64, incumbent 6.40 us, align2 4.45 us, ratio 1.439, equivalence 72 cases ok
+[align2] final flags align2_ok={'d32': 0, 'v128': 0, 'v256': 64} (class: chunk, 0 = master)
