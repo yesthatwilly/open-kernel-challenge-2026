@@ -2,7 +2,7 @@
 
 Hypothesis: `muse_bf16_proj/hypotheses/done/neutral/2026-10-25T054102Z-restack-three-cell-wins-router-unpooler-cluster-m8-nn-m128.md` (branch `hyp/muse_bf16_proj/restack-three-cell-wins-router-unpooler-cluster-m8-nn-m128`).
 
-- **Job:** `<job id>` (`okc status <job>`)
+- **Job:** `ee4f89f2f62c42d3` (`okc status <job>`)
 - **File:** `muse_bf16_proj/submission.py` at git `9adc6715`
 
 ## Goal
