@@ -1,0 +1,905 @@
+diff --git a/muse_decode_layer/submission.py b/muse_decode_layer/submission.py
+index c9067b8..b47225b 100644
+--- a/muse_decode_layer/submission.py
++++ b/muse_decode_layer/submission.py
+@@ -60,6 +60,7 @@ Differs from SGLang:
+ 
+ from typing import TypedDict
+ 
++import os
+ import time
+ import types
+ 
+@@ -2237,6 +2238,868 @@ def _splitkv_prepare(device):
+         print("[splitkv] OFF: SELF-CHECK FAILED: CUDA split-KV path disabled, master FA3 path kept", flush=True)
+         _EXT = None
+ 
++
++# ---------------------------------------------------------------------------------------------
++# Full decode, batch 1 (hypothesis full-decode1-two-level-ticket-port): the stream-K split-KV
++# kernel with the two-level ticket ported from muse_attention_decode (c3c1b01, there 22.8 -> 18.6 us).
++# One launch, grid = SM count, 64-token tiles: groups of ceil(sqrt(nseg)) CTAs merge into a group
++# slot (gticket), the last group merges the group slots, applies v_scale + RMSNorm x sigmoid(gate)
++# and stores bf16; both ticket levels are reset to 0 for the next replay. It replaces, at full
++# decode_1 only, FA3 + FlashAttnFwdCombine + FusedRMSNormGate. The q/k/v FP8 casts and the cache
++# store stay. Module muse_decode_sk_ticket (shared with the sibling full-decode-streamk-ticket-port);
++# only the <4 stages, ticket, two-level> instantiation is built. _splitkv_gate is untouched, so
++# decode_16/32 keep the kernels A/B above.
++# ---------------------------------------------------------------------------------------------
++
++_SK_CPP = r"""
++#include <torch/extension.h>
++#include <vector>
++void sk_attn(torch::Tensor q, torch::Tensor k_cache, torch::Tensor v_cache, torch::Tensor page_table,
++             torch::Tensor cache_seqlens, torch::Tensor k_scale, torch::Tensor v_scale, torch::Tensor qkv,
++             int64_t qkv_stride, torch::Tensor out, torch::Tensor ws_acc, torch::Tensor ws_ml, torch::Tensor ticket,
++             torch::Tensor gticket, torch::Tensor gacc, torch::Tensor gml,
++             double score_scale, double eps, int64_t grid, int64_t variant);
++std::vector<int64_t> sk_attrs(int64_t variant);
++"""
++
++_SK_CUDA = r"""
++#include <torch/extension.h>
++#include <ATen/cuda/CUDAContext.h>
++#include <c10/cuda/CUDAException.h>
++#include <cuda_fp16.h>
++#include <cuda_bf16.h>
++#include <cstdint>
++#include <vector>
++
++namespace {
++
++constexpr int D = 64;              // head dim
++constexpr int HQ = 16;             // query heads
++constexpr int HKV = 2;             // kv heads
++constexpr int G = HQ / HKV;        // queries per kv head (8)
++constexpr int ROW = HKV * D;       // bytes per cache row (page 1: both kv heads, 128)
++constexpr int TILE = 64;           // tokens per tile (the stream-K unit)
++constexpr int MB_TILES = 16;       // tiles per page-index block
++constexpr int MB_TOK = MB_TILES * TILE;
++constexpr int THREADS = 256;
++constexpr int WARPS = THREADS / 32;
++constexpr int MAXB = 64;
++constexpr int STAGE_BYTES = 2 * TILE * ROW;  // K tile + V tile = 16 KB
++constexpr int QBYTES = HQ * D;               // one request's e4m3 query
++
++template <int STAGES>
++struct Lay {
++  static constexpr int RING = 0;
++  static constexpr int QR = RING + STAGES * STAGE_BYTES;      // e4m3 [STAGES][HQ][D]
++  static constexpr int IDX = QR + STAGES * QBYTES;            // int32 [2][MB_TOK]
++  static constexpr int ACC = IDX + 2 * MB_TOK * 4;            // f32 [WARPS][G][D]
++  static constexpr int ML = ACC + WARPS * G * D * 4;          // f32 [WARPS][G][2]
++  static constexpr int SEQ = ML + WARPS * G * 2 * 4;          // int32 [MAXB]
++  static constexpr int TP = SEQ + MAXB * 4;                   // int32 [MAXB + 1] (+pad)
++  static constexpr int FLAG = TP + (MAXB + 4) * 4;            // int32 [4]
++  static constexpr int BYTES = FLAG + 16;
++};
++
++__device__ __forceinline__ uint32_t smem_u32(const void* p) {
++  return static_cast<uint32_t>(__cvta_generic_to_shared(p));
++}
++__device__ __forceinline__ void cp_async16(uint32_t dst, const void* src, int src_bytes) {
++  asm volatile("cp.async.cg.shared.global [%0], [%1], 16, %2;\n" :: "r"(dst), "l"(src), "r"(src_bytes) : "memory");
++}
++__device__ __forceinline__ void cp_async4(uint32_t dst, const void* src, int src_bytes) {
++  asm volatile("cp.async.ca.shared.global [%0], [%1], 4, %2;\n" :: "r"(dst), "l"(src), "r"(src_bytes) : "memory");
++}
++__device__ __forceinline__ void cp_commit() { asm volatile("cp.async.commit_group;\n" ::: "memory"); }
++template <int N>
++__device__ __forceinline__ void cp_wait() { asm volatile("cp.async.wait_group %0;\n" :: "n"(N) : "memory"); }
++
++__device__ __forceinline__ void e4m3x4_to_f16x2x2(uint32_t w, uint32_t& lo, uint32_t& hi) {
++  asm("{\n\t.reg .b16 a, b;\n\tmov.b32 {a, b}, %2;\n\t"
++      "cvt.rn.f16x2.e4m3x2 %0, a;\n\tcvt.rn.f16x2.e4m3x2 %1, b;\n\t}\n"
++      : "=r"(lo), "=r"(hi) : "r"(w));
++}
++__device__ __forceinline__ uint32_t pack_f16x2(float lo, float hi) {
++  __half2 h = __floats2half2_rn(lo, hi);
++  return *reinterpret_cast<uint32_t*>(&h);
++}
++__device__ __forceinline__ float ex2(float x) {
++  float y;
++  asm("ex2.approx.ftz.f32 %0, %1;" : "=f"(y) : "f"(x));
++  return y;
++}
++__device__ __forceinline__ void mma16816(float (&c)[4], uint32_t a0, uint32_t a1, uint32_t a2, uint32_t a3,
++                                         uint32_t b0, uint32_t b1) {
++  asm("mma.sync.aligned.m16n8k16.row.col.f32.f16.f16.f32 {%0,%1,%2,%3}, {%4,%5,%6,%7}, {%8,%9}, {%0,%1,%2,%3};\n"
++      : "+f"(c[0]), "+f"(c[1]), "+f"(c[2]), "+f"(c[3])
++      : "r"(a0), "r"(a1), "r"(a2), "r"(a3), "r"(b0), "r"(b1));
++}
++
++// cache_seqlens -> seq_s, and the tile prefix tp_s[0..B] (tp_s[B] = Ttot). Ends with a barrier.
++__device__ __forceinline__ void load_prefix(const int* __restrict__ seqlens, int B, int* seq_s, int* tp_s) {
++  const int tid = threadIdx.x;
++  if (tid < B) { const int s = seqlens[tid]; seq_s[tid] = s > 0 ? s : 0; }
++  __syncthreads();
++  if (tid == 0) {
++    int run = 0;
++    tp_s[0] = 0;
++    for (int b = 0; b < B; ++b) {
++      run += (seq_s[b] + TILE - 1) / TILE;
++      tp_s[b + 1] = run;
++    }
++  }
++  __syncthreads();
++}
++// First tile of CTA c, and the CTA owning tile t (the exact inverse: s_c <= t < s_{c+1}).
++__device__ __forceinline__ int range_start(int c, int T, int gx) {
++  return static_cast<int>((static_cast<long long>(c) * T) / gx);
++}
++__device__ __forceinline__ int tile_owner(int t, int T, int gx) {
++  return static_cast<int>(((static_cast<long long>(t) + 1) * gx - 1) / T);
++}
++
++// LSE merge of the partials in slots s_lo..s_hi for head h, dims d0..d0+3 (M = the raw max, so the
++// result can itself be stored as a slot). L2 loads (__ldcg): the slots were written by other CTAs.
++// Stage-2 callers pass s = c + b (c = c_lo..c_hi); the two-level path passes group-slot indices.
++__device__ __forceinline__ void merge_range(const float* ws_acc, const float* ws_ml, int s_lo, int s_hi,
++                                            int h, int d0, float4& o, float& L, float& Mout) {
++  const float NEG_INF = __int_as_float(0xff800000u);
++  float M = NEG_INF;
++  for (int c = s_lo; c <= s_hi; ++c) M = fmaxf(M, __ldcg(ws_ml + (int64_t)c * 2 * HQ + h));
++  const float Mu = M == NEG_INF ? 0.f : M;
++  Mout = M;
++  o = make_float4(0.f, 0.f, 0.f, 0.f);
++  L = 0.f;
++  for (int c = s_lo; c <= s_hi; ++c) {
++    const int64_t sl = c;
++    const float m = __ldcg(ws_ml + sl * 2 * HQ + h);
++    const float wt = m == NEG_INF ? 0.f : ex2(m - Mu);
++    L += wt * __ldcg(ws_ml + sl * 2 * HQ + HQ + h);
++    const float4 a = __ldcg(reinterpret_cast<const float4*>(ws_acc + (sl * HQ + h) * D + d0));
++    o.x += wt * a.x; o.y += wt * a.y; o.z += wt * a.z; o.w += wt * a.w;
++  }
++}
++__device__ __forceinline__ void merge_slots(const float* ws_acc, const float* ws_ml, int b, int c_lo, int c_hi,
++                                            int h, int d0, float4& o, float& L) {
++  float M;
++  merge_range(ws_acc, ws_ml, c_lo + b, c_hi + b, h, d0, o, L, M);
++}
++
++// Release/acquire ticket draw (two-level path): the CTA's partial stores are ordered before the
++// increment (acq_rel at gpu scope, on top of the caller's __threadfence + __syncthreads), and the
++// returned count orders the winner after every earlier arrival's stores.
++__device__ __forceinline__ int ticket_arrive(int* p) {
++  int old;
++  asm volatile("atom.acq_rel.gpu.global.add.s32 %0, [%1], %2;" : "=r"(old) : "l"(p), "r"(1) : "memory");
++  return old;
++}
++
++// Stage-1 B epilogue for head h, dims d0..d0+3 (16 consecutive lanes hold one head): o / L *
++// v_scale, scaleless RMSNorm over 64 (eps inside the sqrt), times sigmoid(gate), bf16 out.
++// Every lane of the warp must call it (16-lane shuffles).
++__device__ __forceinline__ void finalize_store(float4 o, float L, float vs, int b, int h, int d0,
++                                               const __nv_bfloat16* __restrict__ qkv, int64_t qkv_stride,
++                                               __nv_bfloat16* __restrict__ out, float eps) {
++  o.x = o.x / L * vs; o.y = o.y / L * vs; o.z = o.z / L * vs; o.w = o.w / L * vs;
++  float ss = o.x * o.x + o.y * o.y + o.z * o.z + o.w * o.w;
++  ss += __shfl_xor_sync(0xffffffffu, ss, 1);
++  ss += __shfl_xor_sync(0xffffffffu, ss, 2);
++  ss += __shfl_xor_sync(0xffffffffu, ss, 4);
++  ss += __shfl_xor_sync(0xffffffffu, ss, 8);
++  const float r = 1.f / sqrtf(ss / D + eps);
++  const __nv_bfloat162* gp =
++      reinterpret_cast<const __nv_bfloat162*>(qkv + (int64_t)b * qkv_stride + (HQ + 2 * HKV) * D + h * D + d0);
++  const float2 g01 = __bfloat1622float2(gp[0]);
++  const float2 g23 = __bfloat1622float2(gp[1]);
++  const float y0 = o.x * r / (1.f + expf(-g01.x));
++  const float y1 = o.y * r / (1.f + expf(-g01.y));
++  const float y2 = o.z * r / (1.f + expf(-g23.x));
++  const float y3 = o.w * r / (1.f + expf(-g23.y));
++  __nv_bfloat162* op = reinterpret_cast<__nv_bfloat162*>(out + ((int64_t)b * HQ + h) * D + d0);
++  op[0] = __floats2bfloat162_rn(y0, y1);
++  op[1] = __floats2bfloat162_rn(y2, y3);
++}
++
++template <int STAGES, bool TICKET, bool TWO = false>
++__global__ void __launch_bounds__(THREADS, 2)
++splitkv_attn_sk_kernel(const uint8_t* __restrict__ q,          // e4m3 [B, HQ, D]
++                       const uint8_t* __restrict__ kc,         // e4m3 [rows, ROW]
++                       const uint8_t* __restrict__ vc,         // e4m3 [rows, ROW]
++                       const int* __restrict__ page_table, int64_t pt_stride,
++                       const int* __restrict__ seqlens, int B,
++                       const float* __restrict__ k_scale, const float* __restrict__ v_scale, float score_scale,
++                       const __nv_bfloat16* __restrict__ qkv, int64_t qkv_stride,
++                       __nv_bfloat16* __restrict__ out,        // bf16 [B, HQ * D]
++                       float* __restrict__ ws_acc,             // f32 [grid + B, HQ, D]
++                       float* __restrict__ ws_ml,              // f32 [grid + B, 2, HQ]
++                       int* __restrict__ ticket,               // int32 [>= B], 0 between launches
++                       int* __restrict__ gticket,              // int32 [>= B * 32], 0 between launches (TWO)
++                       float* __restrict__ gacc,               // f32 [B * 32, HQ, D] group slots (TWO)
++                       float* __restrict__ gml,                // f32 [B * 32, 2, HQ] (TWO)
++                       float eps) {
++  using S = Lay<STAGES>;
++  extern __shared__ __align__(128) uint8_t smem[];
++  uint8_t* ring = smem + S::RING;
++  uint8_t* qr = smem + S::QR;
++  int* idx_s = reinterpret_cast<int*>(smem + S::IDX);
++  float* acc_s = reinterpret_cast<float*>(smem + S::ACC);
++  float* ml_s = reinterpret_cast<float*>(smem + S::ML);
++  int* seq_s = reinterpret_cast<int*>(smem + S::SEQ);
++  int* tp_s = reinterpret_cast<int*>(smem + S::TP);
++  int* flag_s = reinterpret_cast<int*>(smem + S::FLAG);
++  const float NEG_INF = __int_as_float(0xff800000u);
++
++  const int tid = threadIdx.x, lane = tid & 31, warp = tid >> 5;
++  const int bx = blockIdx.x;
++  load_prefix(seqlens, B, seq_s, tp_s);
++  const int T = tp_s[B];
++  if (T <= 0) return;  // uniform
++  // Effective grid min(gridDim.x, T): below it every CTA owns >= 1 tile, so CTAs c_lo..c_hi of a
++  // request all hold a segment (the ticket count and the merge rely on it). CTAs above it exit.
++  const int gx = min(static_cast<int>(gridDim.x), T);
++  if (bx >= gx) return;  // uniform
++  const int t0 = range_start(bx, T, gx);
++  const int N = range_start(bx + 1, T, gx) - t0;  // tiles of this CTA, one flat pipeline
++  if (N <= 0) return;  // uniform
++  const int nblk = (N + MB_TILES - 1) / MB_TILES;
++  const float scale = score_scale * __ldg(k_scale);  // sm_scale * qk_scale_factor * log2(e) * k_scale
++  const float vs = __ldg(v_scale);
++
++  // Request holding global tile gt: the largest b with tp_s[b] <= gt (gt < Ttot).
++  auto find_req = [&](int gt) {
++    int lo = 0, hi = B - 1;
++    while (lo < hi) {
++      const int mid = (lo + hi + 1) >> 1;
++      if (tp_s[mid] <= gt) lo = mid; else hi = mid - 1;
++    }
++    return lo;
++  };
++  // Page indices of block k (flat tiles 16k .. 16k+15) into buffer k & 1: thread -> tile tid / 16,
++  // tokens (tid % 16) * 4 .. +4. Positions past the request end (or past the range) zero-filled.
++  auto issue_meta = [&](int k) {
++    const int buf = k & 1;
++    const int tl = tid >> 4;
++    const int e0 = (tid & 15) * 4;
++    const int n = k * MB_TILES + tl;
++    int b = 0, pos = 0, seq = 0;
++    if (n < N) {
++      const int gt = t0 + n;
++      b = find_req(gt);
++      pos = (gt - tp_s[b]) * TILE + e0;
++      seq = seq_s[b];
++    }
++    const int* prow = page_table + (int64_t)b * pt_stride;
++#pragma unroll
++    for (int j = 0; j < 4; ++j) {
++      const bool ok = pos + j < seq;
++      cp_async4(smem_u32(idx_s + buf * MB_TOK + tl * TILE + e0 + j), ok ? prow + pos + j : prow, ok ? 4 : 0);
++    }
++  };
++  // Tile nn (issued in order 0, 1, 2, ...) into ring stage nn % STAGES, as kernel A: thread ->
++  // token tid / 4, 16-byte chunks 2 * (tid % 4) + {0, 1} of its K row and V row, chunk c stored
++  // at c ^ (token % 8). A segment's first tile also brings the request's query into its q slot.
++  int p_b = find_req(t0);
++  auto issue_tile = [&](int nn) {
++    const int gt = t0 + nn;
++    while (gt >= tp_s[p_b + 1]) ++p_b;
++    const int lt = gt - tp_s[p_b];
++    const int st = nn % STAGES;
++    uint8_t* stp = ring + st * STAGE_BYTES;
++    const int tt = tid >> 2;
++    const bool ok = lt * TILE + tt < seq_s[p_b];
++    const int64_t row = ok ? (int64_t)idx_s[((nn / MB_TILES) & 1) * MB_TOK + (nn % MB_TILES) * TILE + tt] : 0;
++    const uint8_t* ks = kc + row * ROW;
++    const uint8_t* vsrc = vc + row * ROW;
++#pragma unroll
++    for (int j = 0; j < 2; ++j) {
++      const int c = (tid & 3) * 2 + j;
++      const int dst = tt * ROW + ((c ^ (tt & 7)) << 4);
++      cp_async16(smem_u32(stp + dst), ks + c * 16, ok ? 16 : 0);
++      cp_async16(smem_u32(stp + TILE * ROW + dst), vsrc + c * 16, ok ? 16 : 0);
++    }
++    if ((nn == 0 || lt == 0) && tid < QBYTES / 16)
++      cp_async16(smem_u32(qr + st * QBYTES + tid * 16), q + (int64_t)p_b * QBYTES + tid * 16, 16);
++  };
++
++  // Prologue: block 0's indices (waited), then tiles 0 .. STAGES-2; block 1 rides tile 0's group.
++  issue_meta(0);
++  cp_commit();
++  cp_wait<0>();
++  __syncthreads();
++#pragma unroll
++  for (int j = 0; j < STAGES - 1; ++j) {
++    if (j < N) {
++      issue_tile(j);
++      if (j % MB_TILES == 0 && j / MB_TILES + 1 < nblk) issue_meta(j / MB_TILES + 1);
++    }
++    cp_commit();
++  }
++
++  const int g = warp & 1;             // kv head
++  const int slice = (warp >> 1) * 16; // token slice of each tile
++  const int quad = lane >> 2, qi = lane & 3;
++  uint32_t qa[4][2];
++  float m_i = NEG_INF, l_i = 0.f;
++  float acc[8][4];
++  int c_b = find_req(t0);
++  bool seg_head = false;  // the current segment began at its request's first tile
++
++  for (int n = 0; n < N; ++n) {
++    cp_wait<STAGES - 2>();  // tile n (and everything issued before it) has landed
++    __syncthreads();        // visible to all; every warp is done with tile n - 1's stage
++    {
++      const int nn = n + STAGES - 1;
++      if (nn < N) {
++        issue_tile(nn);
++        if (nn % MB_TILES == 0 && nn / MB_TILES + 1 < nblk) issue_meta(nn / MB_TILES + 1);
++      }
++      cp_commit();  // always, so the group count stays uniform
++    }
++    const int gt = t0 + n;
++    while (gt >= tp_s[c_b + 1]) ++c_b;
++    const int lt = gt - tp_s[c_b];
++    const int nt_b = tp_s[c_b + 1] - tp_s[c_b];
++    const int cseq = seq_s[c_b];
++    const int st = n % STAGES;
++    if (n == 0 || lt == 0) {
++      seg_head = lt == 0;
++      const uint8_t* qrow = qr + st * QBYTES + (g * G + quad) * D + qi * 4;
++#pragma unroll
++      for (int s = 0; s < 4; ++s)
++        e4m3x4_to_f16x2x2(*reinterpret_cast<const uint32_t*>(qrow + s * 16), qa[s][0], qa[s][1]);
++      m_i = NEG_INF;
++      l_i = 0.f;
++#pragma unroll
++      for (int nb = 0; nb < 8; ++nb) acc[nb][0] = acc[nb][1] = acc[nb][2] = acc[nb][3] = 0.f;
++    }
++    const uint8_t* Ks = ring + st * STAGE_BYTES;
++    const uint8_t* Vs = Ks + TILE * ROW;
++
++    float s[2][4];
++#pragma unroll
++    for (int nb = 0; nb < 2; ++nb) {
++      s[nb][0] = s[nb][1] = s[nb][2] = s[nb][3] = 0.f;
++      const int tt = slice + nb * 8 + quad;
++      const uint8_t* kr = Ks + tt * ROW + qi * 4;
++#pragma unroll
++      for (int ks = 0; ks < 4; ++ks) {
++        const uint32_t w = *reinterpret_cast<const uint32_t*>(kr + (((g * 4 + ks) ^ (tt & 7)) << 4));
++        uint32_t b0, b1;
++        e4m3x4_to_f16x2x2(w, b0, b1);
++        mma16816(s[nb], qa[ks][0], 0u, qa[ks][1], 0u, b0, b1);
++      }
++    }
++    const int pos0 = lt * TILE + slice + qi * 2;
++    float x0 = pos0 < cseq ? s[0][0] * scale : NEG_INF;
++    float x1 = pos0 + 1 < cseq ? s[0][1] * scale : NEG_INF;
++    float x2 = pos0 + 8 < cseq ? s[1][0] * scale : NEG_INF;
++    float x3 = pos0 + 9 < cseq ? s[1][1] * scale : NEG_INF;
++    float mx = fmaxf(fmaxf(x0, x1), fmaxf(x2, x3));
++    mx = fmaxf(mx, __shfl_xor_sync(0xffffffffu, mx, 1));
++    mx = fmaxf(mx, __shfl_xor_sync(0xffffffffu, mx, 2));
++    const float m_new = fmaxf(m_i, mx);
++    const float m_use = m_new == NEG_INF ? 0.f : m_new;
++    const float alpha = ex2(m_i - m_use);
++    x0 = ex2(x0 - m_use);
++    x1 = ex2(x1 - m_use);
++    x2 = ex2(x2 - m_use);
++    x3 = ex2(x3 - m_use);
++    l_i = l_i * alpha + (x0 + x1) + (x2 + x3);
++    m_i = m_new;
++#pragma unroll
++    for (int nb = 0; nb < 8; ++nb) { acc[nb][0] *= alpha; acc[nb][1] *= alpha; }
++    const uint32_t pa0 = pack_f16x2(x0, x1), pa2 = pack_f16x2(x2, x3);
++
++    const int tv = slice + qi * 2;
++    const int vlc = g * 4 + (quad >> 1);
++    const int voff = (quad & 1) * 8;
++    const uint2 v0 = *reinterpret_cast<const uint2*>(Vs + tv * ROW + ((vlc ^ (tv & 7)) << 4) + voff);
++    const uint2 v1 = *reinterpret_cast<const uint2*>(Vs + (tv + 1) * ROW + ((vlc ^ ((tv + 1) & 7)) << 4) + voff);
++    const uint2 v8 = *reinterpret_cast<const uint2*>(Vs + (tv + 8) * ROW + ((vlc ^ ((tv + 8) & 7)) << 4) + voff);
++    const uint2 v9 = *reinterpret_cast<const uint2*>(Vs + (tv + 9) * ROW + ((vlc ^ ((tv + 9) & 7)) << 4) + voff);
++#pragma unroll
++    for (int hw = 0; hw < 2; ++hw) {
++      const uint32_t w0 = hw ? v0.y : v0.x, w1 = hw ? v1.y : v1.x;
++      const uint32_t w8 = hw ? v8.y : v8.x, w9 = hw ? v9.y : v9.x;
++      uint32_t r0[4], r1[4];
++      e4m3x4_to_f16x2x2(__byte_perm(w0, w1, 0x5140), r0[0], r0[1]);
++      e4m3x4_to_f16x2x2(__byte_perm(w0, w1, 0x7362), r0[2], r0[3]);
++      e4m3x4_to_f16x2x2(__byte_perm(w8, w9, 0x5140), r1[0], r1[1]);
++      e4m3x4_to_f16x2x2(__byte_perm(w8, w9, 0x7362), r1[2], r1[3]);
++#pragma unroll
++      for (int j = 0; j < 4; ++j) mma16816(acc[hw * 4 + j], pa0, 0u, pa2, 0u, r0[j], r1[j]);
++    }
++
++    if (n == N - 1 || lt == nt_b - 1) {
++      // Segment end (uniform over the CTA): merge the four warps of each kv head in smem.
++      l_i += __shfl_xor_sync(0xffffffffu, l_i, 1);
++      l_i += __shfl_xor_sync(0xffffffffu, l_i, 2);
++      const int rw = warp * G + quad;
++      if (qi == 0) { ml_s[rw * 2] = m_i; ml_s[rw * 2 + 1] = l_i; }
++      float* ar = acc_s + rw * D;
++#pragma unroll
++      for (int nb = 0; nb < 8; ++nb) {
++        ar[(qi * 2) * 8 + nb] = acc[nb][0];
++        ar[(qi * 2 + 1) * 8 + nb] = acc[nb][1];
++      }
++      __syncthreads();
++      const int h = tid >> 4, d0 = (tid & 15) * 4;
++      const int hg = h / G, r = h % G;
++      float mw[4];
++      float M = NEG_INF;
++#pragma unroll
++      for (int j = 0; j < 4; ++j) { mw[j] = ml_s[((hg + 2 * j) * G + r) * 2]; M = fmaxf(M, mw[j]); }
++      const float Mu = M == NEG_INF ? 0.f : M;
++      float4 o = make_float4(0.f, 0.f, 0.f, 0.f);
++      float L = 0.f;
++#pragma unroll
++      for (int j = 0; j < 4; ++j) {
++        const int wr = (hg + 2 * j) * G + r;
++        const float wt = mw[j] == NEG_INF ? 0.f : ex2(mw[j] - Mu);
++        L += wt * ml_s[wr * 2 + 1];
++        const float4 a = *reinterpret_cast<const float4*>(acc_s + wr * D + d0);
++        o.x += wt * a.x; o.y += wt * a.y; o.z += wt * a.z; o.w += wt * a.w;
++      }
++      const bool whole = seg_head && lt == nt_b - 1;  // this CTA is the request's only segment
++      if (TICKET && whole) {
++        finalize_store(o, L, vs, c_b, h, d0, qkv, qkv_stride, out, eps);
++      } else {
++        const int64_t slot = (int64_t)bx + c_b;
++        *reinterpret_cast<float4*>(ws_acc + (slot * HQ + h) * D + d0) = o;
++        if ((tid & 15) == 0) { ws_ml[slot * 2 * HQ + h] = M; ws_ml[slot * 2 * HQ + HQ + h] = L; }
++        if (TICKET && TWO) {
++          // Two-level ticket. CTAs c_lo..c_hi hold request c_b's segments (nseg of them); group
++          // size Gs = ceil(sqrt(nseg)), group gi = (c - c_lo) / Gs, ngrp = ceil(nseg / Gs) <= 32.
++          const int c_lo = tile_owner(tp_s[c_b], T, gx);
++          const int c_hi = tile_owner(tp_s[c_b + 1] - 1, T, gx);
++          const int nseg = c_hi - c_lo + 1;
++          int Gs = 1;
++          while (Gs * Gs < nseg) ++Gs;
++          const int gi = (bx - c_lo) / Gs;
++          const int ngrp = (nseg + Gs - 1) / Gs;
++          const int g_lo = c_lo + gi * Gs;
++          const int g_hi = min(c_hi, g_lo + Gs - 1);
++          __threadfence();  // release: this CTA's partial is visible device-wide before the ticket
++          __syncthreads();
++          if (tid == 0) flag_s[0] = ticket_arrive(gticket + c_b * 32 + gi) == g_hi - g_lo ? 1 : 0;
++          __syncthreads();
++          if (flag_s[0]) {  // uniform: the last arrival of group gi
++            __threadfence();  // acquire: every group member's partial is visible
++            float4 om;
++            float Lm, Mm;
++            merge_range(ws_acc, ws_ml, g_lo + c_b, g_hi + c_b, h, d0, om, Lm, Mm);
++            if (tid == 0) gticket[c_b * 32 + gi] = 0;  // all members arrived: clean for the next launch
++            if (ngrp == 1) {
++              finalize_store(om, Lm, vs, c_b, h, d0, qkv, qkv_stride, out, eps);
++            } else {
++              const int64_t gs = (int64_t)c_b * 32 + gi;
++              *reinterpret_cast<float4*>(gacc + (gs * HQ + h) * D + d0) = om;
++              if ((tid & 15) == 0) { gml[gs * 2 * HQ + h] = Mm; gml[gs * 2 * HQ + HQ + h] = Lm; }
++              __threadfence();  // release: the group slot is visible before the second-level ticket
++              __syncthreads();
++              if (tid == 0) flag_s[1] = ticket_arrive(ticket + c_b) == ngrp - 1 ? 1 : 0;
++              __syncthreads();
++              if (flag_s[1]) {  // uniform: the last group of request c_b
++                __threadfence();  // acquire
++                float4 of;
++                float Lf, Mf;
++                merge_range(gacc, gml, c_b * 32, c_b * 32 + ngrp - 1, h, d0, of, Lf, Mf);
++                finalize_store(of, Lf, vs, c_b, h, d0, qkv, qkv_stride, out, eps);
++                if (tid == 0) ticket[c_b] = 0;  // every group has arrived: clean for the next launch
++              }
++            }
++          }
++        } else if (TICKET) {
++          const int c_lo = tile_owner(tp_s[c_b], T, gx);
++          const int c_hi = tile_owner(tp_s[c_b + 1] - 1, T, gx);
++          __threadfence();  // this CTA's partial is visible device-wide before the ticket
++          __syncthreads();
++          if (tid == 0) flag_s[0] = atomicAdd(ticket + c_b, 1) == c_hi - c_lo ? 1 : 0;
++          __syncthreads();
++          if (flag_s[0]) {  // uniform: the last segment of request c_b to finish
++            __threadfence();
++            float4 om;
++            float Lm;
++            merge_slots(ws_acc, ws_ml, c_b, c_lo, c_hi, h, d0, om, Lm);
++            finalize_store(om, Lm, vs, c_b, h, d0, qkv, qkv_stride, out, eps);
++            if (tid == 0) ticket[c_b] = 0;  // every segment has arrived: clean for the next launch
++          }
++        }
++      }
++    }
++  }
++  cp_wait<0>();  // the trailing groups are empty; drain anyway
++}
++
++using SkFn = void (*)(const uint8_t*, const uint8_t*, const uint8_t*, const int*, int64_t, const int*, int,
++                      const float*, const float*, float, const __nv_bfloat16*, int64_t, __nv_bfloat16*,
++                      float*, float*, int*, int*, float*, float*, float);
++
++// The only instantiation built: <4 stages, ticket, two-level> (variant 3).
++SkFn sk_pick() { return splitkv_attn_sk_kernel<4, true, true>; }
++int sk_smem() { return Lay<4>::BYTES; }
++void sk_prepare() {
++  static bool done = false;
++  if (!done) {
++    C10_CUDA_CHECK(cudaFuncSetAttribute(reinterpret_cast<const void*>(sk_pick()),
++                                        cudaFuncAttributeMaxDynamicSharedMemorySize, sk_smem()));
++    done = true;
++  }
++}
++
++}  // namespace
++
++void sk_attn(torch::Tensor q, torch::Tensor k_cache, torch::Tensor v_cache, torch::Tensor page_table,
++             torch::Tensor cache_seqlens, torch::Tensor k_scale, torch::Tensor v_scale, torch::Tensor qkv,
++             int64_t qkv_stride, torch::Tensor out, torch::Tensor ws_acc, torch::Tensor ws_ml, torch::Tensor ticket,
++             torch::Tensor gticket, torch::Tensor gacc, torch::Tensor gml,
++             double score_scale, double eps, int64_t grid, int64_t variant) {
++  const int B = static_cast<int>(cache_seqlens.size(0));
++  TORCH_CHECK(B >= 1 && B <= MAXB, "sk_attn: batch out of range");
++  TORCH_CHECK(variant == 3, "sk_attn: only the <4, ticket, two-level> variant (3) is built");
++  TORCH_CHECK(grid <= 1024, "sk_attn: two-level ticket needs grid <= 1024 (<= 32 groups)");
++  TORCH_CHECK(gticket.numel() >= B * 32 && gticket.scalar_type() == at::kInt, "sk_attn: gticket");
++  TORCH_CHECK(gacc.size(0) >= B * 32 && gml.size(0) >= B * 32 && gacc.scalar_type() == at::kFloat
++              && gml.scalar_type() == at::kFloat, "sk_attn: group slots");
++  TORCH_CHECK(grid >= 1 && ws_acc.size(0) >= grid + B && ws_ml.size(0) >= grid + B, "sk_attn: workspace");
++  TORCH_CHECK(ticket.numel() >= B && ticket.scalar_type() == at::kInt, "sk_attn: ticket");
++  TORCH_CHECK(cache_seqlens.scalar_type() == at::kInt && page_table.scalar_type() == at::kInt, "sk_attn: dtypes");
++  TORCH_CHECK(page_table.stride(1) == 1 && q.is_contiguous() && k_cache.is_contiguous() && v_cache.is_contiguous()
++              && out.is_contiguous(), "sk_attn: layout");
++  sk_prepare();
++  auto stream = at::cuda::getCurrentCUDAStream();
++  SkFn fn = sk_pick();
++  fn<<<static_cast<unsigned>(grid), THREADS, sk_smem(), stream>>>(
++      reinterpret_cast<const uint8_t*>(q.data_ptr()), reinterpret_cast<const uint8_t*>(k_cache.data_ptr()),
++      reinterpret_cast<const uint8_t*>(v_cache.data_ptr()), page_table.data_ptr<int>(), page_table.stride(0),
++      cache_seqlens.data_ptr<int>(), B, k_scale.data_ptr<float>(), v_scale.data_ptr<float>(),
++      static_cast<float>(score_scale), reinterpret_cast<const __nv_bfloat16*>(qkv.data_ptr()), qkv_stride,
++      reinterpret_cast<__nv_bfloat16*>(out.data_ptr()), ws_acc.data_ptr<float>(), ws_ml.data_ptr<float>(),
++      ticket.data_ptr<int>(), gticket.data_ptr<int>(), gacc.data_ptr<float>(), gml.data_ptr<float>(),
++      static_cast<float>(eps));
++  C10_CUDA_KERNEL_LAUNCH_CHECK();
++}
++
++// {binaryVersion, ptxVersion, numRegs, localSizeBytes, maxThreadsPerBlock, dynamic smem, CTAs/SM}
++std::vector<int64_t> sk_attrs(int64_t variant) {
++  TORCH_CHECK(variant == 3, "sk_attrs: only variant 3 is built");
++  sk_prepare();
++  cudaFuncAttributes a;
++  C10_CUDA_CHECK(cudaFuncGetAttributes(&a, reinterpret_cast<const void*>(sk_pick())));
++  int occ = 0;
++  C10_CUDA_CHECK(cudaOccupancyMaxActiveBlocksPerMultiprocessor(&occ, sk_pick(), THREADS, sk_smem()));
++  return {static_cast<int64_t>(a.binaryVersion), static_cast<int64_t>(a.ptxVersion), static_cast<int64_t>(a.numRegs),
++          static_cast<int64_t>(a.localSizeBytes), static_cast<int64_t>(a.maxThreadsPerBlock),
++          static_cast<int64_t>(sk_smem()), static_cast<int64_t>(occ)};
++}
++"""
++
++
++_SK = None          # the compiled module; None keeps FA3 + combine + norm-gate at full decode_1
++_SK_CHECKED = False
++_SK_ON = False      # set only after the prepare() self-check and the timing selector passed
++_SK_ARCH_FLAGS = None
++_SK_TICKETS = {}
++_SK_GTICKETS = {}
++_SK_GRID = None     # grid override, set only by the prepare() self-check
++_SK_TAG = "[sk1]"
++
++
++def _build_sk():
++    """Compile the module at import (never during graph capture), sm_90a only: TORCH_CUDA_ARCH_LIST=9.0a
++    around load_inline, restored after. Same nvcc extras as the attention build that landed."""
++    global _SK_ARCH_FLAGS
++    t0 = time.perf_counter()
++    prev = os.environ.get("TORCH_CUDA_ARCH_LIST")
++    os.environ["TORCH_CUDA_ARCH_LIST"] = "9.0a"
++    try:
++        from torch.utils.cpp_extension import load_inline
++        try:
++            from torch.utils.cpp_extension import _get_cuda_arch_flags
++            _SK_ARCH_FLAGS = list(_get_cuda_arch_flags())
++        except Exception as e:  # private helper; the cubin check in the self-check is authoritative
++            print(f"{_SK_TAG} could not read torch's nvcc arch flags: {e!r}", flush=True)
++        print(f"{_SK_TAG} building muse_decode_sk_ticket: TORCH_CUDA_ARCH_LIST=9.0a, arch flags {_SK_ARCH_FLAGS}, "
++              f"extra -O3 -lineinfo, one instantiation <4, ticket, two-level>", flush=True)
++        ext = load_inline(
++            name="muse_decode_sk_ticket",
++            cpp_sources=_SK_CPP,
++            cuda_sources=_SK_CUDA,
++            functions=["sk_attn", "sk_attrs"],
++            extra_cuda_cflags=["-O3", "-lineinfo"],
++            verbose=False,
++        )
++    except Exception as e:
++        print(f"{_SK_TAG} load_inline failed after {time.perf_counter() - t0:.1f}s, FA3 kept at full decode_1: {e!r}",
++              flush=True)
++        return None
++    finally:
++        if prev is None:
++            os.environ.pop("TORCH_CUDA_ARCH_LIST", None)
++        else:
++            os.environ["TORCH_CUDA_ARCH_LIST"] = prev
++    print(f"{_SK_TAG} load_inline compiled in {time.perf_counter() - t0:.1f}s", flush=True)
++    return ext
++
++
++def _sk_ticket(device) -> torch.Tensor:
++    """int32 [64] per-request tickets (second level), zeroed when created (prepare(), outside capture);
++    every launch leaves them at 0. Allocated from the device alone, holds no input data."""
++    key = device.index if device.index is not None else torch.cuda.current_device()
++    t = _SK_TICKETS.get(key)
++    if t is None:
++        t = _SK_TICKETS[key] = torch.zeros(64, dtype=torch.int32, device=device)
++    return t
++
++
++def _sk_gticket(device) -> torch.Tensor:
++    """int32 [64 * 32] group-level tickets (first level), as _sk_ticket."""
++    key = device.index if device.index is not None else torch.cuda.current_device()
++    t = _SK_GTICKETS.get(key)
++    if t is None:
++        t = _SK_GTICKETS[key] = torch.zeros(64 * 32, dtype=torch.int32, device=device)
++    return t
++
++
++def _sk_shape_ok(cfg) -> bool:
++    """Config-only shape predicate: full-layer decode, batch == 1 ONLY, tp8 heads, head dim 64, page 1.
++    Separate from _splitkv_gate (1 < batch <= 64), which it never overlaps."""
++    return (cfg["window"] == 0 and cfg["q_len"] == 1 and cfg["batch"] == 1
++            and cfg["num_q_heads"] == 16 and cfg["num_kv_heads"] == 2 and cfg["head_dim"] == 64
++            and cfg["page_size"] == 1)
++
++
++def _sk_gate(cfg) -> bool:
++    """The kernel_fn predicate: the shape, and the module passed prepare()'s validation and selector."""
++    return _SK_ON and _SK is not None and _sk_shape_ok(cfg)
++
++
++def _full_decode_sk(data: Inputs, q: torch.Tensor, qkv: torch.Tensor) -> torch.Tensor:
++    """One launch: attention + two-level combine + v_scale + norm x sigmoid(gate); q is the unpaired
++    FP8 query [1, 16, 64]; returns [1, 1, Hq*D] bf16. Workspaces from shapes and the device only."""
++    cfg = data["config"]
++    batch, hq, d = cfg["batch"], cfg["num_q_heads"], cfg["head_dim"]
++    device = qkv.device
++    grid = _SK_GRID or _sm_count(device)
++    ws_acc = torch.empty((grid + batch, hq, d), dtype=torch.float32, device=device)
++    ws_ml = torch.empty((grid + batch, 2, hq), dtype=torch.float32, device=device)
++    out = torch.empty((batch, 1, hq * d), dtype=torch.bfloat16, device=device)
++    gacc = torch.empty((batch * 32, hq, d), dtype=torch.float32, device=device)
++    gml = torch.empty((batch * 32, 2, hq), dtype=torch.float32, device=device)
++    _SK.sk_attn(q, data["k_cache"], data["v_cache"], data["page_table"], data["cache_seqlens"], data["k_scale"],
++                data["v_scale"], qkv, qkv.stride(0), out, ws_acc, ws_ml, _sk_ticket(device), _sk_gticket(device),
++                gacc, gml, cfg["sm_scale"] * cfg["qk_scale_factor"] * LOG2E, RMS_EPS, grid, 3)
++    return out
++
++
++def _sk_case(tag, lens, kv_scale, grid, gen, device) -> bool:
++    """One synthetic batch-1 case against the FP32 reference; the launch is announced before and
++    synced + confirmed after, so a fault names its kernel."""
++    global _SK_GRID
++    data, q, qkv = _splitkv_synthetic(lens, kv_scale, gen, device)
++    assert _sk_shape_ok(data["config"])
++    _SK_GRID = grid
++    try:
++        print(f"{_SK_TAG} {tag}: launching splitkv_attn_sk_kernel<4,true,true> grid {grid}", flush=True)
++        out = _full_decode_sk(data, q, qkv)
++        torch.cuda.synchronize()
++        print(f"{_SK_TAG} {tag}: splitkv_attn_sk_kernel returned", flush=True)
++    finally:
++        _SK_GRID = None
++    ref = _splitkv_reference(data, q, qkv, lens)
++    out = out.reshape(len(lens), -1).float()
++    err = float((out - ref).norm() / ref.norm())
++    finite = bool(torch.isfinite(out).all())
++    ok = finite and err < 2e-2
++    print(f"{_SK_TAG} {tag}: rel L2 {err:.2e}, finite {finite} -> {'ok' if ok else 'FAIL'}", flush=True)
++    return ok
++
++
++def _sk_replay_check(gen, device, n, kv_scale) -> "str | None":
++    """The launch captured in a CUDA graph and replayed twice, the output poisoned with NaN before each
++    replay: the second replay is right only if the first left both ticket levels at 0."""
++    data, q, qkv = _splitkv_synthetic([n], kv_scale, gen, device)
++    ref = _splitkv_reference(data, q, qkv, [n])
++    print(f"{_SK_TAG} replay n={n}: eager warm-up on a side stream", flush=True)
++    side = torch.cuda.Stream(device)
++    side.wait_stream(torch.cuda.current_stream())
++    with torch.cuda.stream(side):
++        _full_decode_sk(data, q, qkv)
++    torch.cuda.current_stream().wait_stream(side)
++    torch.cuda.synchronize()
++    print(f"{_SK_TAG} replay n={n}: warm-up returned, capturing", flush=True)
++    graph = torch.cuda.CUDAGraph()
++    with torch.cuda.graph(graph):
++        out = _full_decode_sk(data, q, qkv)
++    torch.cuda.synchronize()
++    for i in (1, 2):
++        out.fill_(float("nan"))
++        print(f"{_SK_TAG} replay n={n} {i}: launching graph (splitkv_attn_sk_kernel)", flush=True)
++        graph.replay()
++        torch.cuda.synchronize()
++        print(f"{_SK_TAG} replay n={n} {i}: graph returned", flush=True)
++        o = out.reshape(1, -1).float()
++        err = float((o - ref).norm() / ref.norm())
++        finite = bool(torch.isfinite(o).all())
++        print(f"{_SK_TAG} replay n={n} {i}: rel L2 {err:.2e}, finite {finite}", flush=True)
++        if not (finite and err < 2e-2):
++            return f"graph replay n={n} #{i}"
++    del graph
++    return None
++
++
++def _sk_time_selector(state, device) -> "str | None":
++    """New vs incumbent at B=1 x 80000 keys, each as a CUDA graph, cold L2 per replay (CUDA events,
++    median of 15): the new launch against FA3 (+ its combine) + FusedRMSNormGate, the chain it
++    replaces. Returns None if the new path is faster, else the reason to keep FA3. Prepare timings
++    undercount the judge profile by 20-25% (LESSONS); a margin under ~2 us is flagged."""
++    gen = torch.Generator(device=device).manual_seed(77)
++    n = 80000
++    data, q, qkv = _splitkv_synthetic([n], 1.0, gen, device)
++    cfg = data["config"]
++    gate = qkv[:, (16 + 4) * 64:]
++    cu = torch.tensor([0, 1], dtype=torch.int32, device=device)
++    holder = {}
++
++    def new():
++        holder["n"] = _full_decode_sk(data, q, qkv)
++
++    def inc():
++        o = flash_attn_with_kvcache(
++            q=q, k_cache=data["k_cache"], v_cache=data["v_cache"], page_table=data["page_table"],
++            cache_seqlens=data["cache_seqlens"], cu_seqlens_q=cu, max_seqlen_q=1,
++            softmax_scale=cfg["sm_scale"] * cfg["qk_scale_factor"], causal=True, window_size=(-1, -1),
++            scheduler_metadata=None)
++        o = o[0] if isinstance(o, tuple) else o
++        holder["i"] = state["o_norm_gate"](o.reshape(1, 1024).to(torch.bfloat16), gate)
++
++    graphs = []
++    for name, fn in (("new", new), ("incumbent", inc)):
++        print(f"{_SK_TAG} selector: warming up {name}", flush=True)
++        side = torch.cuda.Stream(device)
++        side.wait_stream(torch.cuda.current_stream())
++        with torch.cuda.stream(side):
++            fn()
++        torch.cuda.current_stream().wait_stream(side)
++        torch.cuda.synchronize()
++        print(f"{_SK_TAG} selector: capturing {name}", flush=True)
++        g = torch.cuda.CUDAGraph()
++        with torch.cuda.graph(g):
++            fn()
++        torch.cuda.synchronize()
++        graphs.append(g)
++    flush_buf = torch.empty(64 << 20, dtype=torch.float32, device=device)  # 256 MB > L2
++    times = ([], [])
++    for it in range(3 + 15):
++        for i, g in enumerate(graphs):
++            flush_buf.zero_()
++            e0, e1 = torch.cuda.Event(enable_timing=True), torch.cuda.Event(enable_timing=True)
++            e0.record()
++            g.replay()
++            e1.record()
++            torch.cuda.synchronize()
++            if it >= 3:
++                times[i].append(e0.elapsed_time(e1) * 1e3)
++    t_new, t_inc = (sorted(t)[len(t) // 2] for t in times)
++    nbytes = (n + 1) * 256
++    print(f"{_SK_TAG} selector B=1 x {n}: new {t_new:.1f} us ({nbytes / (t_new * 1e-6) / 1e12:.2f} TB/s) vs "
++          f"incumbent FA3+combine+norm-gate {t_inc:.1f} us ({nbytes / (t_inc * 1e-6) / 1e12:.2f} TB/s); "
++          f"margin {t_inc - t_new:+.1f} us" + (" (under ~2 us: the judge undercounts prepare timings 20-25%)"
++                                                 if abs(t_inc - t_new) < 2.0 else ""), flush=True)
++    del graphs, flush_buf, holder
++    if not t_new < t_inc:
++        return f"selector: new {t_new:.1f} us is not faster than incumbent {t_inc:.1f} us"
++    return None
++
++
++def _sk_validate(state, device) -> "str | None":
++    """In-process gate (never a child process): image check, canary, self-check, graph replays,
++    ticket-reset check, then the timing selector. None on success, else the reason FA3 stays."""
++    sms = _sm_count(device)
++    cap = tuple(torch.cuda.get_device_capability(device))
++    print(f"{_SK_TAG} device capability {cap}, {torch.cuda.get_device_name(device)}, {sms} SMs", flush=True)
++    a = list(_SK.sk_attrs(3))
++    print(f"{_SK_TAG} splitkv_attn_sk_kernel<4,true,true>: binaryVersion {a[0]}, ptxVersion {a[1]}, regs {a[2]}, "
++          f"local {a[3]} B, dyn smem {a[5]} B, {a[6]} CTAs/SM", flush=True)
++    if cap != (9, 0):
++        return f"device capability {cap}"
++    if a[0] != 90:
++        return "cubin version is not 90 (sm_90a image not loaded)"
++    if a[6] < 1:
++        return "kernel cannot launch (0 CTAs/SM)"
++    if a[6] < 2:
++        print(f"{_SK_TAG} WARNING: the kernel does not reach 2 CTAs/SM (performance, not correctness)", flush=True)
++    if _SK_ARCH_FLAGS is not None:
++        bad = [f for f in _SK_ARCH_FLAGS if "arch=" in f and "90a" not in f]
++        if bad:
++            return f"nvcc arch flags beyond sm_90a: {bad}"
++    gen = torch.Generator(device=device).manual_seed(8642)
++    # Canary first: a tiny launch, synced and printed, so a fault is attributed before the big cases.
++    if not _sk_case("canary 63 keys grid 3", [63], 1.0, 3, gen, device):
++        return "canary"
++    cases = (
++        ("80000 keys grid SM", 80000, 1.0, sms),
++        ("80000 keys kv 0.25 grid SM", 80000, 0.25, sms),
++        ("80000 keys grid 7", 80000, 1.0, 7),
++        ("80000 keys kv 0.25 grid 3", 80000, 0.25, 3),
++        ("4097 keys grid SM", 4097, 1.0, sms),
++        ("4097 keys kv 0.25 grid 7", 4097, 0.25, 7),
++        ("63 keys grid SM", 63, 1.0, sms),
++        ("63 keys kv 0.25 grid 3", 63, 0.25, 3),
++        ("1 key grid SM", 1, 1.0, sms),
++        ("1 key kv 0.25 grid 3", 1, 0.25, 3),
++    )
++    for tag, n, kv_scale, grid in cases:
++        if not _sk_case(f"B=1 {tag}", [n], kv_scale, grid, gen, device):
++            return f"self-check B=1 {tag}"
++    for n, kv_scale in ((80000, 1.0), (4097, 0.25)):
++        reason = _sk_replay_check(gen, device, n, kv_scale)
++        if reason is not None:
++            return reason
++    left = int(_sk_ticket(device).abs().sum().item()) + int(_sk_gticket(device).abs().sum().item())
++    print(f"{_SK_TAG} tickets (both levels) after the self-check: sum {left}", flush=True)
++    if left:
++        return "two-level tickets not reset"
++    return _sk_time_selector(state, device)
++
++
++def _sk_prepare(state, device):
++    """Once per process, from prepare() (outside capture): tickets are created here, validated, and
++    zeroed again after the self-check whatever the outcome. Any failure keeps FA3 at full decode_1."""
++    global _SK, _SK_ON, _SK_CHECKED
++    if _SK_CHECKED:
++        return
++    _SK_CHECKED = True
++    if _SK is None:
++        print("PATH CHOSEN: full decode_1 FA3 + combine + norm-gate (fallback: module not built)", flush=True)
++        return
++    reason = None
++    try:
++        _sk_ticket(device), _sk_gticket(device)  # created (zeroed) here, outside capture
++        reason = _sk_validate(state, device)
++    except Exception as e:
++        reason = f"self-check raised {e!r}"
++    finally:
++        try:
++            _sk_ticket(device).zero_()
++            _sk_gticket(device).zero_()
++            torch.cuda.synchronize()
++        except Exception as e:
++            print(f"{_SK_TAG} ticket re-zero raised: {e!r}", flush=True)
++            reason = reason or f"ticket re-zero raised {e!r}"
++    if reason is None:
++        _SK_ON = True
++        print("PATH CHOSEN: full decode_1 streamk two-level ticket (batch 1, grid = SM count)", flush=True)
++    else:
++        _SK_ON = False
++        _SK = None
++        print(f"PATH CHOSEN: full decode_1 FA3 + combine + norm-gate (fallback: {reason})", flush=True)
++    print("PATH CHOSEN: full decode 1 < batch <= 64 split-KV A/B and every other shape: unchanged", flush=True)
++
++
++if torch.cuda.is_available():
++    _SK = _build_sk()  # at import, never during graph capture; None keeps FA3 at full decode_1
++
++
+ def prepare(weights):
+     device = weights["qkv_gate"].device
+     router = weights["router"]
+@@ -2281,6 +3144,8 @@ def prepare(weights):
+     _align_par_setup(state, device)
+     # Full decode at 1 < batch <= 64: split-KV self-check; failure keeps FA3 on every shape.
+     _splitkv_prepare(device)
++    # Full decode_1 (batch == 1): two-level ticket kernel; validated + timed against FA3, else FA3 stays.
++    _sk_prepare(state, device)
+     torch.cuda.synchronize()
+     return state
+ 
+@@ -2389,7 +3254,13 @@ def kernel_fn(data, state):
+         # FA3, the paired pad/unpad copies and FusedRMSNormGate; kernel B reads the gate from qkv and
+         # writes the normed, gated [T, Hq*D] bf16 input of the o GEMM. scheduler_metadata is unused.
+         splitkv = _splitkv_gate(cfg)
+-        if splitkv:
++        if _sk_gate(cfg):
++            # Full decode, batch 1 only (hypothesis full-decode1-two-level-ticket-port): one launch of the
++            # stream-K split-KV kernel (grid = SM count, two-level ticket) replaces FA3, its combine and
++            # FusedRMSNormGate; the q/k/v FP8 casts and the cache store above stay.
++            q_fp8 = q.view(tokens, hq, d).to(FP8).contiguous()
++            o = _full_decode_sk(data, q_fp8, qkv).reshape(tokens, hq * d)
++        elif splitkv:
+             q_fp8 = q.view(tokens, hq, d).to(FP8).contiguous()
+             o = _full_decode_splitkv(data, q_fp8, qkv).reshape(tokens, hq * d)
+         else:

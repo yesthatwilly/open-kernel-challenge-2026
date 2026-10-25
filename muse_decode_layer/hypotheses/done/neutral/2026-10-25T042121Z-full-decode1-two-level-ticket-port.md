@@ -53,10 +53,10 @@ controls_for: null
 rewrite_stage: 1
 replaces: FA3 main + FlashAttnFwdCombine + pad/unpad elementwise + FusedRMSNormGate on full decode batch 1
 review: proceed
-status: running
+status: done
 review_at: 2026-10-25T042454Z
 review_companions: null
-stage: dispatched
+stage: harvested
 claimed_at: 2026-10-25T042454Z
 base_sha: 08b1841a86f49e34227afd254a2476f445746929
 base_blob: c9067b8201f2480c64910c4a71098df7ce616f73
@@ -75,6 +75,13 @@ attempt_file: 2026-10-25T043231Z-check-full-decode1-two-level-ticket-port.md
 prepared_at: 2026-10-25T043231Z
 job: 5e44c7aedecd4cc1
 dispatched_at: 2026-10-25T043241Z
+outcome: neutral
+verdict_detail: within-ci
+speedup: 1.2746008008089489
+speedup_ci: [1.2554817887968146, 1.293719812821083]
+harvested_at: 2026-10-25T053801Z
+best_at_harvest: 1.2855726646854595
+promotion: null
 ---
 
 # full-decode1-two-level-ticket-port
@@ -171,3 +178,36 @@ Audited 2026-10-25 (opus, read-only emulation; no GPU on this node). **Verdict: 
 - Budget: one extra load_inline with a single instantiation (split-KV v1 took 41.5 s). Prepare adds 11 eager cases, 2 replays and an 18x2 selector, which fits easily within 300 s.
 
 Residual risk: an in-kernel fault on the first launch would poison the context (the canary is mitigation only, and the kernel already ran clean on the judge); in-layer L2/launch tax may leave the gain at -5..-8 us or let the selector keep FA3.
+
+## Result
+
+- job `5e44c7aedecd4cc1` (check), status done, passed True, tests 13/13
+- speedup 1.2746x, 95% CI [1.2555, 1.2937], score 17746.968294420974 µs vs SGLang 22620.3 µs
+- best at harvest: {"speedup": 1.2855726646854595, "ci": [1.2662890747151776, 1.3048562546557412], "job": "7a9f5de5aecc4aba"}; base result: muse_decode_layer/hypotheses/done/neutral/full-decode-splitkv-restack-on-pdl.result.json
+- **outcome: neutral** (within-ci)
+- files: `muse_decode_layer/hypotheses/done/neutral/full-decode1-two-level-ticket-port.result.json`, `muse_decode_layer/hypotheses/done/neutral/full-decode1-two-level-ticket-port.patch`; branch `hyp/muse_decode_layer/full-decode1-two-level-ticket-port`
+
+## Attribution
+
+| shape | w | base µs | hyp µs | delta | verdict |
+|---|---|---|---|---|---|
+| batch=1 ctx=80000 dist=soft layer=sliding load=decode_1 page=1 repeats=60 | 46 | 126.15 | 127.25 | 0.9845 | flat |
+| batch=1 ctx=80000 dist=soft layer=full load=decode_1 page=1 repeats=60 | 16 | 142.7 | 137.68 | 1.0262 | flat |
+| batch=16 ctx=80000 dist=soft layer=sliding load=decode_16 page=1 spread=agentic | 46 | 209.82 | 214.67 | 0.9913 | flat |
+| batch=16 ctx=80000 dist=soft layer=full load=decode_16 page=1 spread=agentic | 16 | 306.72 | 315.19 | 0.9905 | flat |
+| batch=32 ctx=80000 dist=soft layer=sliding load=decode_32 page=1 spread=agentic | 46 | 242.33 | 251.1 | 0.999 | flat |
+| batch=32 ctx=80000 dist=soft layer=full load=decode_32 page=1 spread=agentic | 16 | 479.6 | 477.17 | 1.0036 | flat |
+| batch=1 ctx=80000 dist=soft layer=sliding load=verify_1 page=1 q_len=8 | 46 | 187.97 | 183.96 | 0.9987 | flat |
+| batch=1 ctx=80000 dist=soft layer=full load=verify_1 page=1 q_len=8 | 16 | 201.51 | 199.52 | 0.9937 | flat |
+| batch=16 ctx=80000 dist=soft layer=sliding load=verify_16 page=1 q_len=8 spread=agentic | 46 | 420.42 | 426.89 | 1.0133 | flat |
+| batch=16 ctx=80000 dist=soft layer=full load=verify_16 page=1 q_len=8 spread=agentic | 16 | 564.2 | 555.84 | 1.0121 | flat |
+| batch=32 ctx=80000 dist=soft layer=sliding load=verify_32 page=1 q_len=8 spread=agentic | 46 | 600.82 | 581.94 | 1.0453 | gained |
+| batch=32 ctx=80000 dist=soft layer=full load=verify_32 page=1 q_len=8 spread=agentic | 16 | 864.67 | 867.05 | 1.0159 | flat |
+
+gained on sliding verify_32. Expected hit: 2/5. Noise ±1.5%.
+
+## Follow-ups
+
+- rewrite stage 1 of `FA3 main + FlashAttnFwdCombine + pad/unpad elementwise + FusedRMSNormGate on full decode batch 1`: read the replaced kernels' own us per shape (profile top_kernels) against the incumbent and the floor, and check which Milestone it reached. The next stage is `/hypothesize muse_decode_layer "<what to fix or tune>" --kind rewrite --depends-on full-decode1-two-level-ticket-port --stage 2`; a slow or failed first cut is the expected start, not a do-not-retry.
+- within-ci: the change is not proven either way; a stacked hypothesis (`depends_on: full-decode1-two-level-ticket-port`) that adds a further change in the same area is the only way to learn more (identical code is never re-run).
+
