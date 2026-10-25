@@ -69,7 +69,8 @@ controls_for: null
 rewrite_stage: 2
 replaces: _moe_nvfp4_gemm_kernel x2 (Triton w13 + w2) at T > 4096
 review: required
-status: queued
+status: hold
+hold_reason: "superseded: experts-turn-rega-s4-port-t4096 (gain 1.3275) beat ssdq 805 vs 1250 us at T=3012 and Marlin at T=753; rega owns 200<T<=4096 (first_turn rega extension in flight)"
 ---
 
 # experts-first-turn-ssdq-s2-large-m
