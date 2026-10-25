@@ -65,10 +65,10 @@ priority: 2
 kind: primary
 controls_for: null
 review: proceed
-status: running
+status: done
 review_at: 2026-10-25T153023Z
 review_companions: null
-stage: dispatched
+stage: harvested
 claimed_at: 2026-10-25T153023Z
 base_sha: 712ef67fb9abd8cc36abfcb14e6187d4f513303b
 base_blob: a2fe2a75893c60d4f68cf94fcce8ce8f9b708a71
@@ -87,6 +87,13 @@ attempt_file: 2026-10-25T153907Z-submit-qkv-gate-columns-side-stream-under-atten
 prepared_at: 2026-10-25T153907Z
 job: b8b8536c4ed74d78
 dispatched_at: 2026-10-25T153915Z
+outcome: neutral
+verdict_detail: within-ci
+speedup: 1.4511919983795623
+speedup_ci: [1.4294241184038687, 1.4729598783552555]
+harvested_at: 2026-10-25T154458Z
+best_at_harvest: 1.4586709689454935
+promotion: null
 ---
 
 # qkv-gate-columns-side-stream-under-attention
@@ -184,3 +191,31 @@ Fixes:
 okc_lint OK with warnings (prepare-only syncs); py_compile OK; __pycache__ removed.
 
 Residual risk: never run on a GPU; the split may gate OFF everywhere (the review expects ~0 at turn_1), and whether captured graphs keep stream priority is unknown (the gate times it).
+
+## Result
+
+- job `b8b8536c4ed74d78` (submit), status done, passed True, tests 5/5
+- speedup 1.4512x, 95% CI [1.4294, 1.4730], score 266955.64779338986 µs vs SGLang 387403.9 µs
+- best at harvest: {"speedup": 1.4586709689454935, "ci": [1.4367909044113112, 1.4805510334796759], "job": "1cc92a43b8be40f8"}; base result: muse_prefill_layer/hypotheses/done/neutral/align-two-phase-all-t-rega.result.json
+- **outcome: neutral** (within-ci)
+- files: `muse_prefill_layer/hypotheses/done/neutral/qkv-gate-columns-side-stream-under-attention.result.json`, `muse_prefill_layer/hypotheses/done/neutral/qkv-gate-columns-side-stream-under-attention.patch`; branch `hyp/muse_prefill_layer/qkv-gate-columns-side-stream-under-attention`
+
+## Attribution
+
+| shape | w | base µs | hyp µs | delta | verdict |
+|---|---|---|---|---|---|
+| batch=1 ctx=80000 dist=soft layer=sliding load=turn_1 page=1 q_len=753 repeats=6 | 46 | 704.38 | 754.36 | 0.9954 | flat |
+| batch=1 ctx=80000 dist=soft layer=full load=turn_1 page=1 q_len=753 repeats=6 | 16 | 1097.89 | 1118.55 | 0.9961 | flat |
+| batch=4 ctx=80000 dist=soft layer=sliding load=turn_4 page=1 q_len=753 repeats=6 | 46 | 2098.36 | 2151.29 | 0.99 | flat |
+| batch=4 ctx=80000 dist=soft layer=full load=turn_4 page=1 q_len=753 repeats=6 | 16 | 3644.6 | 3682.63 | 1.0173 | flat |
+| batch=1 ctx=0 dist=soft layer=full load=first_turn page=1 q_len=16384 repeats=6 | 16 | 12078.49 | 11285.61 | 0.998 | flat |
+| batch=1 ctx=32768 dist=soft layer=sliding load=first_turn page=1 q_len=16384 repeats=6 | 138 | 11285.6 | 11012.57 | 1.0161 | flat |
+| batch=1 ctx=32768 dist=soft layer=full load=first_turn page=1 q_len=16384 repeats=6 | 16 | 15310.56 | 14993.63 | 1.016 | flat |
+| batch=1 ctx=65536 dist=soft layer=full load=first_turn page=1 q_len=16384 repeats=6 | 16 | 18819.51 | 18787.98 | 1.0216 | flat |
+
+no shape moved outside noise. Expected hit: 1/4. Noise ±1.5%.
+
+## Follow-ups
+
+- within-ci: the change is not proven either way; a stacked hypothesis (`depends_on: qkv-gate-columns-side-stream-under-attention`) that adds a further change in the same area is the only way to learn more (identical code is never re-run).
+

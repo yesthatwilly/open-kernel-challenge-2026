@@ -1,0 +1,399 @@
+diff --git a/muse_prefill_layer/submission.py b/muse_prefill_layer/submission.py
+index a2fe2a75..19661e64 100644
+--- a/muse_prefill_layer/submission.py
++++ b/muse_prefill_layer/submission.py
+@@ -586,6 +586,8 @@ def prepare(weights):
+         # MuseSpark1xFp4Experts binds the post-expert norm's effective (1 + w) weight.
+         "post_expert_w": post_expert._get_effective_weight().detach().to(torch.bfloat16),
+         "side_stream": torch.cuda.Stream(device),
++        "qkv_split_ok": {},
++        "hp_stream": None,
+         "_modules": (pre_ffn, next_pre_attn, post_attn, post_ffn, post_expert),
+     }
+     del freqs
+@@ -623,6 +625,8 @@ def prepare(weights):
+     # The align2 lines again, after rega's PATH CHOSEN lines, so the archived log tail keeps them.
+     for line in align2_lines:
+         print(line, flush=True)
++    # Last of all (after master's whole setup): the qkv gate-columns split gate; prints its PATH CHOSEN last.
++    _qkv_split_setup(state, device, t_prepare0)
+     return state
+ 
+ 
+@@ -4087,21 +4091,39 @@ def _rega_setup(state, weights, device, t_start):
+               f"{'rega' if ok.get('ft', False) else 'triton'}; T > {REGA_FT_MAX}: triton", flush=True)
+ 
+ 
+-def kernel_fn(data, state):
++# ---------------------------------------------------------------------------------------------------
++# qkv output-gate columns on the side stream under the attention chain (hypothesis
++# qkv-gate-columns-side-stream-under-attention). The qkv_gate GEMM's last 1024 output columns (the gate)
++# are read only by o_norm_gate, after FA3. Split by weight rows: the q|k|v columns on the main stream,
++# the gate columns on the side stream, joined before o_norm_gate. prepare() gates it per (T class, layer).
++QKV_TAG = "[qkv-split]"
++QKV_GATE_RATIO = 0.98            # ON only if split <= this x master on the real attention-front subgraph
++QKV_ALTERNATIONS = 15
++QKV_BUDGET_S = 240.0             # skip the gate if prepare() already used this many seconds (limit 300)
++QKV_KV_REL_L2 = 1e-2             # dequantized K/V rows vs master: rel L2
++QKV_KV_WORST_ROW = 5e-2          # worst row (floored at a tenth of the mean row norm)
++QKV_OUT_REL_L2 = 1e-2            # o_norm_gate output vs master (bf16 accumulation-order noise passes; a race or
++                                 # wrong slice gives >> 1e-2; the judge allows 3-15% vs FP32)
++QKV_LOW_MAX, QKV_HIGH_MAX = 1024, 4096
++QKV_KEYS = (("low", 753, 1, 80000), ("high", 3012, 4, 80000), ("ft", 16384, 1, 32768))
++QKV_QK_SCALE_FACTOR = 5.4730064863875
++
++
++def _qkv_class(tokens):
++    return "low" if tokens <= QKV_LOW_MAX else ("high" if tokens <= QKV_HIGH_MAX else "ft")
++
++
++def _attn_chain(data, state, qkv, fork=None):
++    """Master's attention chain, FusedQKNorm through flash_attn_with_kvcache; reads only qkv columns
++    < hq*d + 2*hkv*d. fork (or None) is called right after store_cache. Returns FA3's output."""
+     cfg = data["config"]
+     batch, length, tokens = cfg["batch"], cfg["q_len"], cfg["tokens"]
+-    # The tokens <= 8 router and unpooler paths are not ported (prefill q_len is 200-16384).
+-    assert tokens > SMALL_BATCH_MAX_TOKENS, f"muse_prefill_layer port needs tokens > 8, got {tokens}"
+     hq, hkv, d = cfg["num_q_heads"], cfg["num_kv_heads"], cfg["head_dim"]
+-    dense = state["dense"]
+-    # Attention: MuseSpark1xAttention.forward.
+-    qkv = _gemm(data["attn_input"], dense["qkv_gate"])
+     if cfg["rope_theta"]:
+         q, k = state["qk_norm"](qkv, data["positions"], state["cos_sin"])
+     else:
+         q, k = state["qk_norm"](qkv)
+     v = qkv[:, hq * d + hkv * d: hq * d + 2 * hkv * d]
+-    gate = qkv[:, hq * d + 2 * hkv * d:]
+     k_cache, v_cache = data["k_cache"], data["v_cache"]
+     scaled = cfg["kv_scale"] != 1.0
+     k = k.reshape(tokens, hkv * d)
+@@ -4111,6 +4133,8 @@ def kernel_fn(data, state):
+     store_cache(k.to(FP8).view(torch.uint8), v.to(FP8).view(torch.uint8),
+                 k_cache.view(-1, hkv * d).view(torch.uint8), v_cache.view(-1, hkv * d).view(torch.uint8),
+                 data["cache_loc"], reserved_skip_index=-1)
++    if fork is not None:
++        fork()
+     window = cfg["window"]
+     descale = {}
+     if scaled:
+@@ -4132,7 +4156,319 @@ def kernel_fn(data, state):
+     )
+     if isinstance(out, tuple):
+         out = out[0]
+-    o = state["o_norm_gate"](out.reshape(tokens, hq * d).to(torch.bfloat16), gate)
++    return out
++
++
++def _attn_front(data, state, mode):
++    """qkv projection through o_norm_gate. mode None: master (one GEMM, one stream). mode (fork, prio):
++    q|k|v columns GEMM on the main stream; the gate-columns GEMM on state['side_stream'], forked from the
++    main stream right after the q|k|v GEMM (fork 'qkv') or from the chain stream right after store_cache
++    (fork 'store'); the attention chain on state['hp_stream'] (a priority -1 stream) when prio, else on
++    the main stream; every side stream joins the main stream before o_norm_gate. Event-based, so it
++    captures into a graph. All state is read from `state`."""
++    cfg = data["config"]
++    tokens = cfg["tokens"]
++    hq, hkv, d = cfg["num_q_heads"], cfg["num_kv_heads"], cfg["head_dim"]
++    n_main = hq * d + 2 * hkv * d
++    x = data["attn_input"]
++    if mode is None:
++        qkv = _gemm(x, state["dense"]["qkv_gate"])
++        out = _attn_chain(data, state, qkv)
++    else:
++        fork_point, prio = mode
++        main = torch.cuda.current_stream()
++        side = state["side_stream"]
++        chain = state["hp_stream"] if prio else main
++        qkv = torch.empty((tokens, n_main + hq * d), dtype=torch.bfloat16, device=x.device)
++        torch.mm(x, state["qkv_w_main"].t(), out=qkv[:, :n_main])
++
++        def fork_gate(src):
++            side.wait_stream(src)
++            with torch.cuda.stream(side):
++                torch.mm(x, state["qkv_w_gate"].t(), out=qkv[:, n_main:])
++
++        if fork_point == "qkv":
++            fork_gate(main)
++        if prio:
++            chain.wait_stream(main)
++        with torch.cuda.stream(chain):
++            out = _attn_chain(data, state, qkv, (lambda: fork_gate(chain)) if fork_point == "store" else None)
++        if prio:
++            main.wait_stream(chain)
++        main.wait_stream(side)
++    gate = qkv[:, n_main:]
++    return state["o_norm_gate"](out.reshape(tokens, hq * d).to(torch.bfloat16), gate)
++
++
++def _qkv_no_copy_proof(state, device):
++    """prepare() only: one eager call of the split GEMM pair under torch.profiler. The column-slice out=
++    targets (row stride 2304, unit column stride) must reach cuBLAS as ldc = 2304: no copy / elementwise /
++    memset kernel, only GEMM-class kernels (2..4: a split-K reduce is allowed), qkv.data_ptr() unchanged.
++    Returns (ok, why)."""
++    x = torch.randn((753, HIDDEN), dtype=torch.bfloat16, device=device)
++    qkv = torch.empty((753, 2304), dtype=torch.bfloat16, device=device)
++    ptr = qkv.data_ptr()
++
++    def pair():
++        torch.mm(x, state["qkv_w_main"].t(), out=qkv[:, :1280])
++        torch.mm(x, state["qkv_w_gate"].t(), out=qkv[:, 1280:])
++
++    # Correctness first (fatal on a miss): NaN-filled qkv, the pair must write every element in place and match
++    # the one-GEMM product within bf16 accumulation-order noise.
++    qkv.fill_(float("nan"))
++    pair()
++    torch.cuda.synchronize()
++    ref = _gemm(x, state["dense"]["qkv_gate"]).float()
++    got = qkv.float()
++    if qkv.data_ptr() != ptr:
++        return False, "qkv data_ptr changed"
++    if not bool(torch.isfinite(got).all()):
++        return False, "column-slice out= left unwritten elements"
++    rel = float((got - ref).norm() / ref.norm().clamp_min(1e-12))
++    if rel > 1e-3:
++        return False, f"split pair vs one GEMM rel L2 {rel:.2e} > 1e-3"
++    # The no-copy proof is a performance check only (the timing gate also sees a copy), so a profiler that is
++    # unavailable in this process (CUPTI busy, a profiler already running) does not turn the path off.
++    try:
++        with torch.profiler.profile(activities=[torch.profiler.ProfilerActivity.CUDA]) as prof:
++            pair()
++            torch.cuda.synchronize()
++        names = [e.name for e in prof.events() if e.device_type == torch.autograd.DeviceType.CUDA]
++    except Exception as e:
++        print(f"{QKV_TAG} profiler unavailable ({e!r}); correctness proven, the timing gate decides", flush=True)
++        return True, "ok (profiler unavailable)"
++    if not names:
++        print(f"{QKV_TAG} profiler recorded no CUDA kernels; correctness proven, the timing gate decides", flush=True)
++        return True, "ok (profiler recorded nothing)"
++    bad = ("copy", "elementwise", "memcpy", "memset", "fill", "vectorized")
++    gemm_like = ("gemm", "nvjet", "cutlass", "cublas", "gemv", "splitk", "sm90", "sm80")
++    print(f"{QKV_TAG} profiler proof kernels: {names}", flush=True)
++    if qkv.data_ptr() != ptr:
++        return False, "qkv data_ptr changed"
++    if not 2 <= len(names) <= 4:
++        return False, f"{len(names)} kernels (want 2..4)"
++    for n in names:
++        low = n.lower()
++        if any(b in low for b in bad) or not any(g in low for g in gemm_like):
++            return False, f"non-GEMM kernel {n[:80]}"
++    return True, "ok"
++
++
++def _qkv_case(batch, length, ctx, windowed, device):
++    """One synthetic scored-shape input for the attention front (page size 1, random FP8 K/V rows, kv_scale
++    1, no scheduler metadata, as at prefill)."""
++    gen = torch.Generator(device=device).manual_seed(20261025)
++    tokens = batch * length
++    n = ctx + length
++    total = batch * n
++    page_table = torch.randperm(total, generator=gen, device=device).to(torch.int32).view(batch, n).contiguous()
++    k_cache = torch.randn((total, 1, 2, 64), generator=gen, device=device, dtype=torch.bfloat16).to(FP8)
++    v_cache = torch.randn((total, 1, 2, 64), generator=gen, device=device, dtype=torch.bfloat16).to(FP8)
++    pos = (ctx + torch.arange(length, device=device, dtype=torch.int64)).view(1, length).repeat(batch, 1)
++    cache_loc = page_table.long().gather(1, pos).reshape(-1)
++    return {
++        "attn_input": torch.randn((tokens, HIDDEN), generator=gen, device=device, dtype=torch.float32).to(torch.bfloat16),
++        "positions": pos.reshape(-1).contiguous(),
++        "cache_loc": cache_loc,
++        "cache_seqlens": torch.full((batch,), n, dtype=torch.int32, device=device),
++        "cu_seqlens_q": torch.arange(0, tokens + 1, length, dtype=torch.int32, device=device),
++        "scheduler_metadata": None,
++        "k_cache": k_cache,
++        "v_cache": v_cache,
++        "k_scale": torch.tensor(1.0, dtype=torch.float32, device=device),
++        "v_scale": torch.tensor(1.0, dtype=torch.float32, device=device),
++        "page_table": page_table,
++        "config": {"batch": batch, "q_len": length, "tokens": tokens, "num_q_heads": 16, "num_kv_heads": 2,
++                   "head_dim": 64, "window": 2048 if windowed else 0, "rope_theta": ROPE_THETA if windowed else 0.0,
++                   "qk_scale_factor": QKV_QK_SCALE_FACTOR, "sm_scale": 64 ** -0.5, "kv_scale": 1.0},
++    }
++
++
++def _qkv_rows_err(a, b):
++    """(rel L2 over all rows, worst row rel error with the row norm floored at a tenth of the mean row norm)."""
++    diff = (a - b).float().norm(dim=1)
++    ref = b.float().norm(dim=1)
++    floor = 0.1 * ref.mean()
++    rel = float((a - b).float().norm() / b.float().norm().clamp_min(1e-12))
++    worst = float((diff / torch.maximum(ref, floor).clamp_min(1e-12)).max())
++    return rel, worst
++
++
++def _qkv_parity(data, state, mode):
++    """Eager run of master then the split mode on the same inputs (the K/V rows master wrote are zeroed
++    before the split run, so a missed write shows). Returns (ok, text)."""
++    rows = data["cache_loc"]
++    ku = data["k_cache"].view(torch.uint8).view(-1, 128)
++    vu = data["v_cache"].view(torch.uint8).view(-1, 128)
++    # Gather through the uint8 views (index on float8 is not guaranteed), then reinterpret as FP8.
++    def kc_rows():
++        return ku[rows].view(FP8).float()
++
++    def vc_rows():
++        return vu[rows].view(FP8).float()
++    o_ref = _attn_front(data, state, None).float().clone()
++    torch.cuda.synchronize()
++    k_ref, v_ref = kc_rows(), vc_rows()
++    ku[rows] = 0
++    vu[rows] = 0
++    o_new = _attn_front(data, state, mode).float()
++    torch.cuda.synchronize()
++    k_new, v_new = kc_rows(), vc_rows()
++    o_rel = float((o_new - o_ref).norm() / o_ref.norm().clamp_min(1e-12))
++    k_rel, k_worst = _qkv_rows_err(k_new, k_ref)
++    v_rel, v_worst = _qkv_rows_err(v_new, v_ref)
++    differ_k = float(((k_new != k_ref).any(dim=1)).float().mean())
++    differ_v = float(((v_new != v_ref).any(dim=1)).float().mean())
++    finite = bool(torch.isfinite(o_new).all())
++    ok = (finite and o_rel <= QKV_OUT_REL_L2 and k_rel <= QKV_KV_REL_L2 and v_rel <= QKV_KV_REL_L2
++          and k_worst <= QKV_KV_WORST_ROW and v_worst <= QKV_KV_WORST_ROW)
++    text = (f"out rel L2 {o_rel:.2e} (<= {QKV_OUT_REL_L2:.0e}); K rel L2 {k_rel:.2e} worst row {k_worst:.2e}; "
++            f"V rel L2 {v_rel:.2e} worst row {v_worst:.2e} (<= {QKV_KV_REL_L2:.0e} / {QKV_KV_WORST_ROW:.0e}); "
++            f"differing K/V rows {differ_k:.3f}/{differ_v:.3f} (information only)")
++    return ok, text
++
++
++def _qkv_time(graphs, device):
++    """Interleaved cold-L2 graph replays (256 MiB flush write before each), QKV_ALTERNATIONS alternations,
++    the order rotated and flipped, empty-graph baseline subtracted. Returns {name: median us}."""
++    tiny = torch.zeros(16, dtype=torch.float32, device=device)
++    graphs = dict(graphs)
++    graphs["empty"] = _ssdq_graph_time(lambda: tiny.zero_(), device)
++    flush = torch.empty(256 * 2 ** 20 // 4, dtype=torch.float32, device=device)  # > the 50 MB L2
++    ev = [torch.cuda.Event(enable_timing=True) for _ in range(2)]
++
++    def once(graph):
++        flush.zero_()
++        ev[0].record()
++        graph.replay()
++        ev[1].record()
++        torch.cuda.synchronize()
++        return ev[0].elapsed_time(ev[1]) * 1000.0
++
++    names = list(graphs)
++    samples = {name: [] for name in names}
++    for name in names:
++        once(graphs[name])
++    for i in range(QKV_ALTERNATIONS):
++        order = names[i % len(names):] + names[:i % len(names)]
++        if i % 2:
++            order = order[::-1]
++        for name in order:
++            samples[name].append(once(graphs[name]))
++    med = {name: sorted(v)[len(v) // 2] for name, v in samples.items()}
++    base = med.pop("empty")
++    return {name: max(v - base, 0.0) for name, v in med.items()}
++
++
++def _qkv_split_setup(state, device, t_start):
++    """prepare() only, after every other setup. Builds the row-split weights, proves the column-slice out=
++    makes no copy, then gates each (T class, layer) key on the real attention front: master vs four split
++    variants (fork after the q|k|v GEMM or after store_cache, attention chain on a priority -1 stream or
++    on main), cold-L2 graph replays; the fastest variant that is <= QKV_GATE_RATIO x master and passes the
++    parity check wins, else master. Sets state['qkv_split_ok'] = {(class, windowed): (fork, prio)}.
++    Never raises; prints GATE lines per key and PATH CHOSEN last."""
++    state["qkv_split_ok"] = {}
++    lines = []
++    chosen = {}
++    t0 = time.perf_counter()
++    try:
++        used = t0 - t_start
++        print(f"{QKV_TAG} prepare used {used:.1f}s before this setup (budget {QKV_BUDGET_S:.0f}s)", flush=True)
++        if used > QKV_BUDGET_S:
++            raise RuntimeError(f"prepare already used {used:.0f}s")
++        w = state["dense"]["qkv_gate"]
++        state["qkv_w_main"] = w[:1280].contiguous()
++        state["qkv_w_gate"] = w[1280:].contiguous()
++        hp = None
++        try:
++            hp = torch.cuda.Stream(device, priority=-1)
++            if hp.priority >= 0:
++                print(f"{QKV_TAG} priority stream reports priority {hp.priority} (not < 0): high-priority variants off",
++                      flush=True)
++                hp = None
++        except Exception as e:
++            print(f"{QKV_TAG} high-priority stream unsupported ({e!r}): high-priority variants off", flush=True)
++            hp = None
++        state["hp_stream"] = hp
++        print(f"{QKV_TAG} high-priority stream {'created (priority -1)' if hp is not None else 'unavailable'}; "
++              f"whether a captured graph keeps the kernel-node priority is not observable here: the gate decides",
++              flush=True)
++        ok, why = _qkv_no_copy_proof(state, device)
++        print(f"{QKV_TAG} column-slice out= no-copy proof (profiler, prepare only): {'ok' if ok else 'FAILED ' + why}",
++              flush=True)
++        if not ok:
++            raise RuntimeError(f"no-copy proof failed: {why}")
++        variants = {}
++        for fork_point in ("qkv", "store"):
++            if hp is not None:
++                variants[f"{fork_point}+hp"] = (fork_point, True)
++            variants[fork_point] = (fork_point, False)
++        for tclass, tokens, batch, ctx in QKV_KEYS:
++            for windowed in (True, False):
++                layer = "sliding" if windowed else "full"
++                key = (tclass, windowed)
++                if time.perf_counter() - t_start > QKV_BUDGET_S + 40.0:
++                    lines.append(f"{QKV_TAG} GATE T={tokens} {layer} skipped: prepare budget exhausted: OFF")
++                    chosen[key] = "master (budget)"
++                    continue
++                data = _qkv_case(batch, tokens // batch, ctx, windowed, device)
++                graphs = {"master": _ssdq_graph_time(lambda: _attn_front(data, state, None), device)}
++                for name, mode in variants.items():
++                    graphs[name] = _ssdq_graph_time(lambda m=mode: _attn_front(data, state, m), device)
++                meds = _qkv_time(graphs, device)
++                del graphs
++                master_us = meds.pop("master")
++                order = sorted(meds, key=meds.get)
++                best = order[0]
++                ratio = meds[best] / max(master_us, 1e-9)
++                verdict, parity_text = "OFF", "parity not run"
++                if ratio <= QKV_GATE_RATIO:
++                    for name in order:
++                        if meds[name] / max(master_us, 1e-9) > QKV_GATE_RATIO:
++                            break
++                        good, parity_text = _qkv_parity(data, state, variants[name])
++                        if good:
++                            best, ratio, verdict = name, meds[name] / max(master_us, 1e-9), "ON"
++                            break
++                        parity_text = f"{name}: parity FAILED: " + parity_text
++                if verdict == "ON":
++                    state["qkv_split_ok"][key] = variants[best]
++                    chosen[key] = best
++                else:
++                    chosen[key] = "master"
++                lines.append(
++                    f"{QKV_TAG} GATE T={tokens} {layer} master {master_us:.1f} split {meds[best]:.1f} ratio {ratio:.3f}: "
++                    f"{verdict} (ON at <= {QKV_GATE_RATIO}; best variant {best}; "
++                    + ", ".join(f"{n} {meds[n]:.1f} us" for n in order) + f"; {parity_text}; ctx {ctx} batch {batch})")
++                print(lines[-1], flush=True)
++                del data
++                torch.cuda.synchronize()
++                torch.cuda.empty_cache()
++    except Exception as e:  # never raises into prepare()
++        state["qkv_split_ok"] = {}
++        lines.append(f"{QKV_TAG} OFF: setup raised {e!r}"[:600])
++    torch.cuda.synchronize()
++    torch.cuda.empty_cache()
++    for line in lines:
++        print(line, flush=True)
++    print(f"{QKV_TAG} PATH CHOSEN (setup {time.perf_counter() - t0:.1f}s): "
++          + "; ".join(f"T class {c} {'sliding' if w_ else 'full'}: "
++                      f"{('split ' + str(state['qkv_split_ok'][(c, w_)])) if (c, w_) in state['qkv_split_ok'] else 'master'}"
++                      for c in ("low", "high", "ft") for w_ in (True, False))
++          + " (T <= 8 not ported)", flush=True)
++
++
++def kernel_fn(data, state):
++    cfg = data["config"]
++    batch, length, tokens = cfg["batch"], cfg["q_len"], cfg["tokens"]
++    # The tokens <= 8 router and unpooler paths are not ported (prefill q_len is 200-16384).
++    assert tokens > SMALL_BATCH_MAX_TOKENS, f"muse_prefill_layer port needs tokens > 8, got {tokens}"
++    hq, hkv, d = cfg["num_q_heads"], cfg["num_kv_heads"], cfg["head_dim"]
++    dense = state["dense"]
++    # Attention: MuseSpark1xAttention.forward. Where prepare()'s gate turned the qkv split ON for this
++    # (T class, layer) key, the output-gate columns run on the side stream under the attention chain.
++    mode = state["qkv_split_ok"].get((_qkv_class(tokens), cfg["window"] != 0))
++    o = _attn_front(data, state, mode)
+     attn_output = _gemm(o, dense["o"])  # all-reduce: identity
+ 
+     # Post-attention boundary, router and MoE block: MuseSpark1xMoE._forward_experts.
