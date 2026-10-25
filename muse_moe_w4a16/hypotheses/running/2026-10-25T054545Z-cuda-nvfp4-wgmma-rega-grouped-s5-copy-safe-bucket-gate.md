@@ -49,7 +49,7 @@ review: proceed
 status: running
 review_at: 2026-10-25T054944Z
 review_companions: null
-stage: implemented
+stage: dispatched
 claimed_at: 2026-10-25T110823Z
 base_sha: 928151c3ea4e903fc4a05ae7ac59672291b71d0d
 base_blob: a13d5fea2e79f85df573670cbd55a8a10fbc3d2c
@@ -66,6 +66,8 @@ submission_blob: 1774e42c833541afe7204a9d9cd3d6bb265be5b1
 lint_warnings: 66
 attempt_file: 2026-10-25T111451Z-check-cuda-nvfp4-wgmma-rega-grouped-s5-copy-safe-bucket-gate.md
 prepared_at: 2026-10-25T111451Z
+job: 7be125e9e1ea42e3
+dispatched_at: 2026-10-25T111459Z
 ---
 
 # cuda-nvfp4-wgmma-rega-grouped-s5-copy-safe-bucket-gate
