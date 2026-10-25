@@ -56,8 +56,10 @@ kind: rewrite
 controls_for: null
 rewrite_stage: 3
 replaces: Marlin w13+w2 (moe_wna16_marlin_gemm x2) + silu_and_mul at num_tokens >= 128
-review: required
+review: proceed
 status: queued
+review_at: 2026-10-25T040253Z
+review_companions: null
 ---
 
 # cuda-nvfp4-wgmma-rega-grouped-s3-wide-bucket-fix
@@ -84,3 +86,27 @@ shape (profile top_kernels) against the incumbent and the speed-of-light floor, 
 2. at or below the incumbent kernels' time on the target shapes;
 3. within ~1.5x of the floor on the target shapes, and the headline CI clears 1.0 (promotable).
 The next stage is minted with `--kind rewrite --depends-on <this slug> --stage N+1`.
+
+## Adversarial review
+
+Reviewed 2026-10-25T040253Z by an adversarial subagent (model opus).
+
+**Verdict: proceed.** Diagnosis is right at the bucket level and the upside is large (prepare 0.57x of Marlin at M=128/256). Reading the s2 kernel rules out two of the five listed suspects (expect_tx and smem carve-out are bucket-independent). It also adds a stronger one: register-A operands are overwritten by the next k-step's dequant while the previous wgmma group may still be reading them (wait_group 1), which is undefined behaviour that shows up per <NB,G> instantiation.
+
+### Justification
+Stage 2's per-bucket table localises the bug. N16/N32 are correct, w13 fails at N64 and N128, w2 only at N128, and whole rows go non-finite in every N-tile. That is a per-instantiation fault, and the hypothesis targets exactly the NB-dependent code. From the s2 source (consume_item<NB,G>, producer loop, wg_set_maps): suspect (3) is ruled out, because tx = WST + 2*(16<<bucket)*128 equals the two TMA boxes (64 bf16 x rows) plus the weight record exactly. Suspect (4) is ruled out too: the slab is a fixed 2 x SLAB_HALF (128 rows x 128 B) per stage for every bucket, there is no per-bucket carve-out, and the second consumer warpgroup's base is a weight-row offset (cw*512) independent of the bucket. Suspect (2) is unlikely, because make_desc is identical for every N (K-major SW128, SBO 1024) and is already proven at N16/N32. Suspect (1) reads correct: the asm is generated per NB with na = NB/2 operands, and the epilogue loops use NB/8. WEAKEST LINK, and a missing suspect: in consume_item the loop dequantizes the next stage into a[8][4], issues 8 RS wgmmas, commits, then wgmma_wait<1>. That leaves the just-issued group in flight while the next iteration's dequant8 rewrites a[] (the same physical registers, since the kb loop is not unrolled). The PTX ISA makes touching A-fragment registers of an in-flight wgmma undefined. Whether ptxas reuses those registers depends on allocation, which differs per <NB, G>; that would explain w13 failing at 64 while w2 passes at 64. Wider N also makes each wgmma longer, which widens the race window. A transient register holding bf16x2_bcast(scale * 2^119) read as A would give inf, which silu turns into whole-row NaN. The milestones are plausible if fixed: the floor is 101/109 us, and Marlin's pair is 911/1259 us warm.
+
+### Confounders on the current kernel
+- align-parallel-per-expert-verify (master, BEST): it produces the sorted_ids/expert blocks that wg_gather and the bucket split consume at T > 32. A gain at bs=128/256 includes its align, which stays master in both arms. No confound for the stage's own milestones (kernel rows vs the Marlin pair).
+- marlin-block-m-two-smaller-on-postnorm (master): it changes Marlin's block_size_m at T >= 128. The incumbent to beat is that tuned Marlin pair plus silu_and_mul, so compare to the profile Marlin rows of this batch, not to stage 2's prepare figures.
+- w2-marlin-atomic-add-small-m (land candidate): bs=1 only. Disjoint from the num_tokens >= 128 gate.
+
+### Interference and A/B needs
+No companion. This is a rewrite correctness stage, and the both-kernels-pass gate makes the fallback a free in-run control (PATH CHOSEN = MARLIN reproduces master). The per-bucket canary already forces every bucket via one-expert routings. The extra discriminator below belongs inside the canary, not in a second run.
+
+### Open questions
+- BUILDER (first fix to try, cheap and decisive): eliminate the register-A WAR hazard. Either wgmma_wait<0>() before writing a[] for the next k-step (a quick test), or double-buffer a as a[2][8][4] with the kb loop unrolled by 2 so the in-flight group's registers are never rewritten. Also grep the ptxas output for 'serialized' / C75xx. Re-run the per-bucket canary for both variants inside the same prepare so the log shows whether N64/N128 turn finite.
+- BUILDER: skip suspects (3) expect_tx and (4) slab overlap, or demote them to one print. The s2 code shows tx and the slab layout are identical across buckets. Print the instantiated NA and tx once per bucket as evidence.
+- The s2 log says 'the fp32-dequant reference also reads inf on those'. Confirm the reference itself is finite on the skewed/all-one-expert routings (Marlin passes the judge). If the reference is inf, the comparison metric is broken, not just the kernel.
+- When chosen, verify the cold-L2 time is plausible against bytes: a race that releases early would also look fast. The gate should also assert the profile kernel name in one probe call (LESSONS 164).
+
