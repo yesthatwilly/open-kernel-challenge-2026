@@ -77,7 +77,7 @@ review: proceed
 status: running
 review_at: 2026-10-25T004153Z
 review_companions: null
-stage: implemented
+stage: dispatched
 claimed_at: 2026-10-25T004153Z
 base_sha: dcd2ff817f67ee97bdc52e92ec44df3a3752ccf1
 base_blob: a8bb42ac483318e9fbc84bc7826a27b7a704d1fb
@@ -94,6 +94,8 @@ submission_blob: 3ba071c2ec0b65200650da8027388a0e73be5fb1
 lint_warnings: 6
 attempt_file: 2026-10-25T005050Z-check-o-unpooler-slice-cuda-cluster-dsmem-rewrite.md
 prepared_at: 2026-10-25T005050Z
+job: 3f3330f70b6e4cdc
+dispatched_at: 2026-10-25T005058Z
 ---
 
 # o-unpooler-slice-cuda-cluster-dsmem-rewrite
