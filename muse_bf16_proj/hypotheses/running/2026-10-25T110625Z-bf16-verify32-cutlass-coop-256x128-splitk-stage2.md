@@ -75,9 +75,18 @@ controls_for: null
 rewrite_stage: 2
 replaces: cuBLAS nvjet at m=129..256 (verify_32) for qkv_gate (nvjet 96x64 2x4 TNN 19.4 us), o (nvjet 128x128 TNT 8.1 us), pooler (nvjet 128x64 TNT 29.7 us) and unpooler (nvjet 128x128 TNT 24.8 us)
 review: proceed
-status: queued
+status: running
 review_at: 2026-10-25T212522Z
 review_companions: null
+stage: claimed
+claimed_at: 2026-10-25T212548Z
+base_sha: e4182610b1552724381a1f2451f6bcd56b7dc1ed
+base_blob: bcf8bff0b622eecf0d9dc9abecf9e4c7067df872
+branch: hyp/muse_bf16_proj/bf16-verify32-cutlass-coop-256x128-splitk-stage2
+worktree: .worktrees/muse_bf16_proj/bf16-verify32-cutlass-coop-256x128-splitk-stage2
+mode: check
+restack_of: null
+stale_base: true
 ---
 
 # bf16-verify32-cutlass-coop-256x128-splitk-stage2
