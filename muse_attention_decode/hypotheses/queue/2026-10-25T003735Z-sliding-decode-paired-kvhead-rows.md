@@ -40,8 +40,10 @@ depends_on: null
 priority: 2
 kind: primary
 controls_for: null
-review: required
+review: proceed
 status: queued
+review_at: 2026-10-25T004021Z
+review_companions: [sliding-decode-paired-kvhead-rows-control-unpaired-s8]
 ---
 
 # sliding-decode-paired-kvhead-rows
@@ -59,3 +61,32 @@ One change inside master _sliding_fused_kernel and its launch in _sliding_forwar
 ## Risk
 
 Risk: per-program work doubles while program count halves (B=16: 256 programs of 4 warps on 132 SMs, under one wave per 2 CTAs/SM); if occupancy hurts decode_16, an ab-tune with S=32 at batch 16 is the companion. The 128-wide dot doubles MMA work, but these shapes are gather/latency bound (the fp8-qk mma companion on the CUDA path was flat).
+
+## Adversarial review
+
+Reviewed 2026-10-25T004021Z by an adversarial subagent (model opus).
+
+**Verdict: proceed-with-companions.** Mechanism plausible, but most of the predicted decode_32 gain is already explained by the smaller grid: unpaired S=8 at B=32 (sliding-decode32-splits-8) reached 17.3 us, inside this hypothesis's 16-19 us target. Run it with an unpaired same-grid control, and only after sliding-cluster-s2-decode-c4-pdl-inproc reports: that check serves exactly these shapes, and if it meets its gate this Triton path stops running on any scored shape.
+
+### Justification
+_sliding_fused_kernel takes 12.9 us at decode_16 (floor 1.65) and 22.1 us at decode_32 (floor 3.29): latency/per-program-overhead bound. Pairing saves one page-table load per token, the 8 padding rows of M=16 (MMA, exp2, fp32 partials; half of 4 MB workspace at B=32), one new-key build and one combine per request, and halves the programs. Weakest link: 'half the gather instructions' is false in Triton (16 B per thread per load; same instruction count and DRAM sectors grid-wide), so the FA3 head-pairing precedent (issue-bound 80K gathers) does not carry over. Halving programs partly undoes deep-splits (which gained decode_16 by 128->512 programs), so decode_16 'faster' is the least supported prediction. Sliding is ~21-23% of the decode_16/32 loads; a 2-5 us kernel gain moves the headline ~0.5-0.8%, inside CI. Judge on _sliding_fused_kernel time per shape.
+
+### Confounders on the current kernel
+- sliding-deep-splits-on-cuda-splitkv (landed): pairing halves the grid, so program count and pairing are confounded at both shapes.
+- sliding-fused-triton-decode1-gate (landed): counter key changes (B,2)->(B,1) and the combine becomes per-b; recheck the zero-reset invariant.
+- fa3-hdim128-head-pairing / paired-heads-launch-cleanup: full layers only; their gain is not evidence for this regime.
+- full-decode-cuda-gather-splitkv: does not touch sliding shapes.
+
+### Interference and A/B needs
+One companion: an unpaired S=8 same-grid control (B x 2 x 8 programs, 16 KB each) so paired minus control isolates pairing. Interaction: sliding-cluster-s2-decode-c4-pdl-inproc (running) gates all sliding decode 1<=B<=32 onto a CUDA cluster kernel with better targets (decode_16 <=10, decode_32 <=12 us); mutually exclusive, not stackable. WAIT for that result before dispatching this pair. If it lands, drop both; if it fails, ties, or lands only at one batch, run this pair.
+
+### Companions queued
+- `sliding-decode-paired-kvhead-rows-control-unpaired-s8`: Separates pairing from the grid halving that pairing also brings; pairing's effect = paired minus control kernel time per shape.
+
+### Open questions
+- Does the cluster stage 2 meet its targets and land? If so drop this and its control.
+- If pairing beats the control, next step S=32 at B=16 or S=8 at B=32?
+- Print n_regs/n_spills of the paired kernel.
+- Row-half selection: reshape acc to [16,2,64] and masked-sum over axis 1; check no large smem shuffle.
+- Credit pairing at decode_32 only if clearly below 17.3 us.
+
