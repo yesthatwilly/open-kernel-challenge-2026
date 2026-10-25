@@ -47,11 +47,11 @@ priority: 3
 kind: primary
 controls_for: null
 review: proceed
-status: running
+status: done
 review_at: 2026-10-24T165654Z
 review_companions: null
 hold_reason: null
-stage: dispatched
+stage: harvested
 claimed_at: 2026-10-24T233107Z
 base_sha: 8d596b6505434ea78352dd08f0494382c53bec54
 base_blob: 635cfee3ac2c3f7c66840b8c8a082cad2fa41a68
@@ -70,6 +70,13 @@ attempt_file: 2026-10-24T233142Z-check-silu-mul-triton-local-rows-marlin-turn.md
 prepared_at: 2026-10-24T233142Z
 job: b2259479e57e4196
 dispatched_at: 2026-10-24T233200Z
+outcome: neutral
+verdict_detail: within-ci
+speedup: 1.0511592964880576
+speedup_ci: [1.0353919070407367, 1.0669266859353783]
+harvested_at: 2026-10-25T000221Z
+best_at_harvest: 1.0591912383762452
+promotion: null
 ---
 
 # silu-mul-triton-local-rows-marlin-turn
@@ -125,3 +132,31 @@ Built in the main thread 2026-10-24 ~23:31Z (user-approved; reviewed "proceed" e
 - [x] No timing/harness access, processes, network or module edits.
 - [x] No work outside timed calls added (self-check in prepare()).
 - [x] okc_lint: no errors.
+
+## Result
+
+- job `b2259479e57e4196` (check), status done, passed True, tests 5/5
+- speedup 1.0512x, 95% CI [1.0354, 1.0669], score 368549.1830727498 µs vs SGLang 387403.9 µs
+- best at harvest: {"speedup": 1.0591912383762452, "ci": [1.0433033698006016, 1.0750791069518888], "job": "ba9c16b9cc6b4605"}; base result: muse_prefill_layer/hypotheses/done/gain/experts-hybrid-marlin-turn-triton-first-turn.result.json
+- **outcome: neutral** (within-ci)
+- files: `muse_prefill_layer/hypotheses/done/neutral/silu-mul-triton-local-rows-marlin-turn.result.json`, `muse_prefill_layer/hypotheses/done/neutral/silu-mul-triton-local-rows-marlin-turn.patch`; branch `hyp/muse_prefill_layer/silu-mul-triton-local-rows-marlin-turn`
+
+## Attribution
+
+| shape | w | base µs | hyp µs | delta | verdict |
+|---|---|---|---|---|---|
+| batch=1 ctx=80000 dist=soft layer=sliding load=turn_1 page=1 q_len=753 repeats=6 | 46 | 1079.54 | 1106.48 | 0.9888 | flat |
+| batch=1 ctx=80000 dist=soft layer=full load=turn_1 page=1 q_len=753 repeats=6 | 16 | 1419.09 | 1479.05 | 0.9862 | flat |
+| batch=4 ctx=80000 dist=soft layer=sliding load=turn_4 page=1 q_len=753 repeats=6 | 46 | 3334.9 | 3382.03 | 0.9898 | flat |
+| batch=4 ctx=80000 dist=soft layer=full load=turn_4 page=1 q_len=753 repeats=6 | 16 | 4937.98 | 4959.85 | 0.99 | flat |
+| batch=1 ctx=0 dist=soft layer=full load=first_turn page=1 q_len=16384 repeats=6 | 16 | 15386.32 | 14266.02 | 0.9752 | flat |
+| batch=1 ctx=32768 dist=soft layer=sliding load=first_turn page=1 q_len=16384 repeats=6 | 138 | 14275.3 | 14467.12 | 1.0013 | flat |
+| batch=1 ctx=32768 dist=soft layer=full load=first_turn page=1 q_len=16384 repeats=6 | 16 | 18165.94 | 18155.75 | 0.9903 | flat |
+| batch=1 ctx=65536 dist=soft layer=full load=first_turn page=1 q_len=16384 repeats=6 | 16 | 22332.92 | 21590.97 | 0.9929 | flat |
+
+no shape moved outside noise. Expected hit: 1/3. Noise ±1.5%.
+
+## Follow-ups
+
+- within-ci: the change is not proven either way; a stacked hypothesis (`depends_on: silu-mul-triton-local-rows-marlin-turn`) that adds a further change in the same area is the only way to learn more (identical code is never re-run).
+

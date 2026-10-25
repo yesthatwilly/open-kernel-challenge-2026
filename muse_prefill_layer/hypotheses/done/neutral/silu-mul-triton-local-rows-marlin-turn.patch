@@ -1,0 +1,106 @@
+diff --git a/muse_prefill_layer/submission.py b/muse_prefill_layer/submission.py
+index 635cfee..1a06ded 100644
+--- a/muse_prefill_layer/submission.py
++++ b/muse_prefill_layer/submission.py
+@@ -566,6 +566,7 @@ def prepare(weights):
+         assert torch.equal(weights[name], scales_before[name]), f"weights[{name}] changed by the Marlin repack"
+     del scales_before
+     torch.cuda.empty_cache()
++    _silu_sorted_setup(state, device)
+     _check_experts_e2e(state, device)
+     torch.cuda.synchronize()
+     print(f"[prepare] max_memory_allocated {torch.cuda.max_memory_allocated(device) / 2**30:.2f} GiB", flush=True)
+@@ -580,6 +581,81 @@ def _experts(x, topk_weights, local_ids, state):
+     return _experts_triton(x, topk_weights, local_ids, state)
+ 
+ 
++# Marlin-path silu-mul over the aligned local rows only (hypothesis silu-mul-triton-local-rows-marlin-turn):
++# SGLang's act_and_mul_kernel launches over all T*8 slots; this walks moe_align_block_size's sorted_ids
++# up to n_padded and computes silu(gate) * up for slots whose local id is >= 0 (remote and padding rows
++# are skipped, as today their cache2 rows are left unwritten and never read).
++SILU_SORTED_BLOCK_R = 16
++SILU_SORTED_BLOCK_N = 512
++
++
++@triton.jit(do_not_specialize=["num_slots"])
++def _silu_mul_sorted_kernel(cache1_ptr, cache2_ptr, sorted_ptr, n_padded_ptr, local_ids_ptr, num_slots,
++                            SIZE_N: tl.constexpr, BLOCK_R: tl.constexpr, BLOCK_N: tl.constexpr):
++    n_padded = tl.load(n_padded_ptr)
++    r0 = tl.program_id(0) * BLOCK_R
++    if r0 < n_padded:
++        rows = r0 + tl.arange(0, BLOCK_R)
++        sid = tl.load(sorted_ptr + rows, mask=rows < n_padded, other=num_slots)
++        valid = sid < num_slots
++        lid = tl.load(local_ids_ptr + sid, mask=valid, other=-1)
++        valid = valid & (lid >= 0)
++        cols = tl.program_id(1) * BLOCK_N + tl.arange(0, BLOCK_N)
++        s64 = sid.to(tl.int64)
++        m = valid[:, None]
++        src = cache1_ptr + s64[:, None] * (2 * SIZE_N) + cols[None, :]
++        g = tl.load(src, mask=m, other=0.0).to(tl.float32)
++        u = tl.load(src + SIZE_N, mask=m, other=0.0).to(tl.float32)
++        y = g / (1.0 + tl.exp(-g)) * u
++        tl.store(cache2_ptr + s64[:, None] * SIZE_N + cols[None, :], y.to(tl.bfloat16), mask=m)
++
++
++def _silu_mul_sorted(cache1, cache2, sorted_ids, n_padded, local_ids, size_n):
++    num_slots = cache2.shape[0]
++    grid = (triton.cdiv(sorted_ids.shape[0], SILU_SORTED_BLOCK_R), size_n // SILU_SORTED_BLOCK_N)
++    _silu_mul_sorted_kernel[grid](cache1, cache2, sorted_ids, n_padded, local_ids, num_slots, SIZE_N=size_n,
++                                  BLOCK_R=SILU_SORTED_BLOCK_R, BLOCK_N=SILU_SORTED_BLOCK_N, num_warps=4)
++
++
++def _silu_sorted_setup(state, device):
++    """Untimed, prepare() only: compile _silu_mul_sorted_kernel and compare it with SGLang's
++    silu_and_mul on the local rows of synthetic caches at T=753 and T=3012 (Marlin block 64), within
++    one bf16 rounding (the exp may differ from SGLang's expf in the last fp32 bits). Sets
++    state["silu_sorted_ok"]; any failure keeps silu_and_mul."""
++    state["silu_sorted_ok"] = False
++    try:
++        size_n = state["marlin"]["size_n"]
++        if size_n % SILU_SORTED_BLOCK_N:
++            raise ValueError(f"size_n {size_n} not a multiple of {SILU_SORTED_BLOCK_N}")
++        gen = torch.Generator(device=device).manual_seed(20261024)
++        worst = 0.0
++        for tokens in (753, 3012):
++            ids = torch.randint(0, N_EXPERTS, (tokens, TOP_K), generator=gen, device=device, dtype=torch.int32)
++            local_ids = torch.where(ids < LOCAL_EXPERTS, ids, torch.full_like(ids, -1)).contiguous()
++            for bsm in BLOCK_SIZE_M_CANDIDATES:
++                if tokens * TOP_K / LOCAL_EXPERTS / bsm < 0.9:
++                    break
++            sorted_ids, _, n_padded = moe_align_block_size(local_ids, bsm, N_EXPERTS)
++            cache1 = (torch.randn((tokens * TOP_K, 2 * size_n), generator=gen, device=device) * 3).to(torch.bfloat16)
++            ref = torch.zeros((tokens * TOP_K, size_n), dtype=torch.bfloat16, device=device)
++            got = torch.zeros_like(ref)
++            silu_and_mul(cache1, ref, expert_ids=local_ids.view(-1), expert_step=1)
++            _silu_mul_sorted(cache1, got, sorted_ids, n_padded, local_ids.view(-1), size_n)
++            torch.cuda.synchronize()
++            loc = local_ids.view(-1) >= 0
++            r, g = ref[loc].float(), got[loc].float()
++            if not bool(torch.isfinite(g).all()):
++                raise AssertionError(f"non-finite output at T={tokens}")
++            err = ((g - r).abs() / (r.abs() + 1e-3)).max().item()
++            worst = max(worst, err)
++            if err > 2.0 ** -7:
++                raise AssertionError(f"T={tokens} max rel err {err:.3e} > 2^-7")
++        state["silu_sorted_ok"] = True
++        print(f"[silu-sorted] ON max rel err {worst:.2e} (PATH CHOSEN = sorted silu on the Marlin path)", flush=True)
++    except Exception as e:
++        print(f"[silu-sorted] OFF: {e!r} (PATH CHOSEN = MASTER silu_and_mul)", flush=True)
++
++
+ def _experts_marlin(x, topk_weights, local_ids, state):
+     """MuseSpark1xFp4Experts._marlin_expert_outputs and its post-expert-norm finalize, on ids
+     already mapped to this GPU's experts (0-31, -1 elsewhere)."""
+@@ -604,7 +680,10 @@ def _experts_marlin(x, topk_weights, local_ids, state):
+         x, cache1, bank["w13"], None, bank["w13_s"], bank["w13_gs"], None, None, None, ws,
+         sorted_ids, block_experts, n_padded, topk_weights, top_k=TOP_K,
+         size_m=num_tokens, size_n=gemm1_n, size_k=size_k, **common)
+-    silu_and_mul(cache1.view(-1, gemm1_n), cache2, expert_ids=local_ids.view(-1), expert_step=1)
++    if state.get("silu_sorted_ok", False):
++        _silu_mul_sorted(cache1.view(-1, gemm1_n), cache2, sorted_ids, n_padded, local_ids.view(-1), size_n)
++    else:
++        silu_and_mul(cache1.view(-1, gemm1_n), cache2, expert_ids=local_ids.view(-1), expert_step=1)
+     y = moe_wna16_marlin_gemm(
+         cache2, cache3, bank["w2"], None, bank["w2_s"], bank["w2_gs"], None, None, None, ws,
+         sorted_ids, block_experts, n_padded, topk_weights, top_k=1,
