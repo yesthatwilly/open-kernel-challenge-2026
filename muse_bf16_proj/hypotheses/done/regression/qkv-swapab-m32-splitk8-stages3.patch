@@ -1,0 +1,40 @@
+diff --git a/muse_bf16_proj/submission.py b/muse_bf16_proj/submission.py
+index a8bb42a..46e00b6 100644
+--- a/muse_bf16_proj/submission.py
++++ b/muse_bf16_proj/submission.py
+@@ -489,7 +489,7 @@ SWAPAB_NUM_WARPS = 4  # one warpgroup
+ # layer -> (N, K, SPLIT_K, BLOCK_K, num_stages); static, from cfg layer only.
+ SWAPAB_CFG = {
+     "pooler":   (4096, 8192, 2, 256, 4),  # grid (64, 2) = 128 CTAs, 48 KB/stage
+-    "qkv_gate": (2304, 8192, 4, 128, 4),  # grid (36, 4) = 144 CTAs, 24 KB/stage
++    "qkv_gate": (2304, 8192, 8, 128, 3),  # grid (36, 8) = 288 CTAs, 24 KB/stage, 3 CTAs/SM
+     "unpooler": (8192, 4096, 1, 256, 4),  # grid (128, 1), full width (m > 8)
+     "o":        (8192, 1024, 1, 256, 4),  # grid (128, 1), 4 K-steps, all in flight
+ }
+@@ -599,8 +599,16 @@ def _swapab_forward(layer: str, x: torch.Tensor, w: torch.Tensor, ws, cnt, num_s
+     if report:
+         try:
+             ptx = compiled.asm["ptx"]
++            smem = getattr(compiled, "shared", None)
++            if smem is None:
++                smem = getattr(getattr(compiled, "metadata", None), "shared", "?")
++            regs = getattr(compiled, "n_regs", "?")
++            fit = "?"
++            if isinstance(smem, int) and isinstance(regs, int) and smem > 0:
++                # H100: 227 KB usable smem/SM (+1 KB reserved per CTA), 64K regs/SM
++                fit = min(232448 // (smem + 1024), 65536 // max(1, regs * 32 * SWAPAB_NUM_WARPS))
+             print(f"[swapab] layer={layer} m={m} N={n} K={k} SPLIT_K={split_k} BLOCK_K={block_k} "
+-                  f"stages={num_stages}: n_regs={getattr(compiled, 'n_regs', '?')} "
++                  f"stages={num_stages}: shared={smem} B n_regs={regs} ctas_per_sm_fit={fit} "
+                   f"n_spills={getattr(compiled, 'n_spills', '?')} "
+                   f"wgmma={ptx.count('wgmma.mma_async')} mma.sync={ptx.count('mma.sync')} "
+                   f"cp.async={ptx.count('cp.async')}", flush=True)
+@@ -624,7 +632,7 @@ def _swapab_prepare(state: dict) -> None:
+     dev = state["pooler"].device
+     state["swapab_ws_pooler"] = torch.empty((2, SWAPAB_MAX_M, 4096), dtype=torch.float32, device=dev)
+     state["swapab_cnt_pooler"] = torch.zeros(4096 // SWAPAB_BLOCK_W, dtype=torch.int32, device=dev)
+-    state["swapab_ws_qkv"] = torch.empty((4, SWAPAB_MAX_M, 2304), dtype=torch.float32, device=dev)
++    state["swapab_ws_qkv"] = torch.empty((SWAPAB_CFG["qkv_gate"][2], SWAPAB_MAX_M, 2304), dtype=torch.float32, device=dev)
+     state["swapab_cnt_qkv"] = torch.zeros(2304 // SWAPAB_BLOCK_W, dtype=torch.int32, device=dev)
+     stages = {}
+     for layer, (n, k, _split, _bk, num_stages) in SWAPAB_CFG.items():
