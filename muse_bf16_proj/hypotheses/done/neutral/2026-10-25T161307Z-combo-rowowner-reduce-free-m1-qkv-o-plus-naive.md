@@ -111,7 +111,8 @@ speedup: 1.2566457115954903
 speedup_ci: [1.237796025921558, 1.2754953972694225]
 harvested_at: 2026-10-25T185516Z
 best_at_harvest: 1.2490645809967658
-promotion: merged
+promotion: done
+promotion_job: 741072dca5fc4c9d
 hand_landed: true
 promotion_commit: 36c26199f24a1b0d49cb3f63d518a67cfd388f04
 ---

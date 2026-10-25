@@ -106,9 +106,10 @@ speedup: 1.4677493909229
 speedup_ci: [1.4457331500590564, 1.4897656317867434]
 harvested_at: 2026-10-25T185517Z
 best_at_harvest: 1.4604901800994607
-promotion: unmerged
+promotion: done
+promotion_job: 73b40cd13fdf4bb0
 hand_landed: true
-promotion_reason: master moved since base; merge by hand
+promotion_reason: hand-landed: branch code verbatim (scored 1.4677 board entry; 3-way merge onto combo A conflicted where both carry their own norm-gather port)
 ---
 
 # combo-b-normgather-two-cta-low-regate

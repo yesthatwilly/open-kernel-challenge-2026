@@ -1,17 +1,16 @@
 {
-  "problem": "muse_prefill_layer",
-  "job": "9bfc488c36c84924",
-  "check_job": "9bfc488c36c84924",
-  "mode": "submit",
-  "speedup": 1.4604901800994607,
-  "ci": [
-    1.4385828273979688,
-    1.4823975328009524
-  ],
-  "score_us": 265256.0799646167,
-  "commit": "aab679312bea4f6d582b7edf39069ec495ff24f6",
-  "submission_blob": "6a16d158f6a6df0e484eb053e147a6fdae43b713",
-  "slug": "combo-a-master-normgather-naive-stack",
-  "result": "muse_prefill_layer/hypotheses/done/neutral/combo-a-master-normgather-naive-stack.result.json",
-  "updated_at": "2026-10-25T162149Z"
+ "problem": "muse_prefill_layer",
+ "job": "73b40cd13fdf4bb0",
+ "mode": "submit",
+ "speedup": 1.4677493909229,
+ "ci": [
+  1.4457331500590564,
+  1.4897656317867434
+ ],
+ "score_us": 263944.1735733959,
+ "commit": "aab679312bea4f6d582b7edf39069ec495ff24f6",
+ "submission_blob": "f4751fc054335a94d1b401af272e98a2d4760363",
+ "slug": "combo-b-normgather-two-cta-low-regate",
+ "result": "muse_prefill_layer/hypotheses/done/neutral/combo-b-normgather-two-cta-low-regate.result.json",
+ "updated_at": "2026-10-25T185633Z"
 }
