@@ -70,10 +70,10 @@ priority: 1
 kind: primary
 controls_for: null
 review: proceed
-status: running
+status: done
 review_at: 2026-10-25T161627Z
 review_companions: null
-stage: dispatched
+stage: harvested
 claimed_at: 2026-10-25T161628Z
 base_sha: 65440e974f1eccc4c5d39e2e004e0f64d2c9d806
 base_blob: f919748b5af6e815f319e5d2d828ed68e5b28a71
@@ -92,6 +92,13 @@ attempt_file: 2026-10-25T163321Z-submit-combo-naive-pooler-m1-rowowner-qkv-m128-
 prepared_at: 2026-10-25T163321Z
 job: 0ee2055590aa4e84
 dispatched_at: 2026-10-25T163329Z
+outcome: neutral
+verdict_detail: within-ci
+speedup: 1.2447549169315237
+speedup_ci: [1.226083593177551, 1.2634262406854964]
+harvested_at: 2026-10-25T185515Z
+best_at_harvest: 1.2490645809967658
+promotion: null
 ---
 
 # combo-naive-pooler-m1-rowowner-qkv-m128-cublaslt
@@ -218,3 +225,53 @@ Audited 2026-10-25 by reading the code (model opus). No GPU on this node, so not
 - **Budget:** import builds are about 37.7 + 36.8 (master) + ~37 (bulk) + ~15 (Lt) = ~127 s. Prepare is ~4 s for master plus an estimated ~10-30 s for the cells. Master-lineage runs took ~150 s end to end with 2 builds, so the estimate is ~4-5 min against the 10-minute limit and prepare well under 300 s.
 
 **Residual risk:** this is the first compile of the ported bulk TU, the new Lt C++ and the edits above (any failure lands on master for that cell only), and cell B may find no splitK=1 algo within 0.98x, in which case it prints PATH CHOSEN master.
+
+## Result
+
+- job `0ee2055590aa4e84` (submit), status done, passed True, tests 9/9
+- speedup 1.2448x, 95% CI [1.2261, 1.2634], score 3880.9246176014512 µs vs SGLang 4830.8 µs
+- best at harvest: {"speedup": 1.2490645809967658, "ci": [1.2303286122818142, 1.267800549711717], "job": "ee4f89f2f62c42d3"}; base result: muse_bf16_proj/hypotheses/done/neutral/pooler-nn-layout-widen-m256.result.json
+- **outcome: neutral** (within-ci)
+- files: `muse_bf16_proj/hypotheses/done/neutral/combo-naive-pooler-m1-rowowner-qkv-m128-cublaslt.result.json`, `muse_bf16_proj/hypotheses/done/neutral/combo-naive-pooler-m1-rowowner-qkv-m128-cublaslt.patch`; branch `hyp/muse_bf16_proj/combo-naive-pooler-m1-rowowner-qkv-m128-cublaslt`
+
+## Attribution
+
+| shape | w | base µs | hyp µs | delta | verdict |
+|---|---|---|---|---|---|
+| layer=qkv_gate load=decode_1 m=1 | 62 | 12.67 | 12.38 | 1.0082 | flat |
+| layer=o load=decode_1 m=1 | 62 | 5.97 | 6.18 | 0.974 | flat |
+| layer=pooler load=decode_1 m=1 | 62 | 18.93 | 17.76 | 1.0697 | gained |
+| layer=unpooler load=decode_1 m=1 | 62 | 4.88 | 5.19 | 0.9798 | flat |
+| layer=router load=decode_1 m=1 | 62 | 5.01 | 4.97 | 0.9894 | flat |
+| layer=qkv_gate load=decode_16 m=16 | 62 | 12.98 | 12.91 | 1.0042 | flat |
+| layer=o load=decode_16 m=16 | 62 | 6.04 | 6.01 | 0.9662 | lost |
+| layer=pooler load=decode_16 m=16 | 62 | 19.12 | 19.41 | 0.9898 | flat |
+| layer=unpooler load=decode_16 m=16 | 62 | 18.62 | 18.8 | 0.9857 | flat |
+| layer=router load=decode_16 m=16 | 62 | 5.53 | 5.26 | 1.0225 | flat |
+| layer=qkv_gate load=decode_32 m=32 | 62 | 13.76 | 13.83 | 0.9994 | flat |
+| layer=o load=decode_32 m=32 | 62 | 6.48 | 6.42 | 0.9761 | flat |
+| layer=pooler load=decode_32 m=32 | 62 | 19.93 | 19.93 | 0.9952 | flat |
+| layer=unpooler load=decode_32 m=32 | 62 | 17.96 | 18.31 | 0.9814 | flat |
+| layer=router load=decode_32 m=32 | 62 | 5.97 | 5.6 | 1.052 | gained |
+| layer=qkv_gate load=verify_1 m=8 | 62 | 12.99 | 12.61 | 1.0084 | flat |
+| layer=o load=verify_1 m=8 | 62 | 5.8 | 6.07 | 1.0158 | flat |
+| layer=pooler load=verify_1 m=8 | 62 | 18.86 | 19.15 | 0.9969 | flat |
+| layer=unpooler load=verify_1 m=8 | 62 | 5.34 | 5.54 | 0.9967 | flat |
+| layer=router load=verify_1 m=8 | 62 | 5.47 | 5.27 | 1.0296 | flat |
+| layer=qkv_gate load=verify_16 m=128 | 62 | 17.38 | 15.7 | 1.0698 | gained |
+| layer=o load=verify_16 m=128 | 62 | 7.36 | 7.14 | 1.0159 | flat |
+| layer=pooler load=verify_16 m=128 | 62 | 23.2 | 22.73 | 0.991 | flat |
+| layer=unpooler load=verify_16 m=128 | 62 | 19.03 | 18.91 | 0.996 | flat |
+| layer=router load=verify_16 m=128 | 62 | 7.44 | 7.47 | 0.9956 | flat |
+| layer=qkv_gate load=verify_32 m=256 | 62 | 20.24 | 19.68 | 1.0203 | flat |
+| layer=o load=verify_32 m=256 | 62 | 9.47 | 9.2 | 1.0228 | flat |
+| layer=pooler load=verify_32 m=256 | 62 | 29.94 | 29.91 | 0.9963 | flat |
+| layer=unpooler load=verify_32 m=256 | 62 | 24.56 | 23.99 | 0.9998 | flat |
+| layer=router load=verify_32 m=256 | 62 | 9.72 | 9.38 | 1.0091 | flat |
+
+gained on pooler decode_1; router decode_32; qkv_gate verify_16; lost on o decode_16. Expected hit: 2/3. Noise ±1.5%.
+
+## Follow-ups
+
+- within-ci: the change is not proven either way; a stacked hypothesis (`depends_on: combo-naive-pooler-m1-rowowner-qkv-m128-cublaslt`) that adds a further change in the same area is the only way to learn more (identical code is never re-run).
+
