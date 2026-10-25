@@ -52,7 +52,7 @@ review: proceed
 status: running
 review_at: 2026-10-25T002107Z
 review_companions: null
-stage: claimed
+stage: implemented
 claimed_at: 2026-10-25T013639Z
 base_sha: ea3464f424a209eb0f46541178cd3dd11062426f
 base_blob: c80e3a831390ffb38cbcb7560231b59a64a2c6a0
@@ -61,6 +61,12 @@ worktree: .worktrees/muse_moe_w4a16/cuda-fused-moe-bs1-persistent-bandwidth-s3-i
 mode: null
 restack_of: null
 stale_base: true
+implemented_at: 2026-10-25T013943Z
+impl_commit: e57158059b78f5d462b48ee8777908565e12d6f9
+submission_sha256: 90732fe8f23826a5671777d58d3ffb87beaf7ebee47c0dd006a458078fb7a991
+norm_sha256: defc07ea7f3644f7f79c1a1af7989069af8b2385e605e3705f2342648b6c2894
+submission_blob: a716550e4581bde58743d07845f5a7e77aec1aea
+lint_warnings: 33
 ---
 
 # cuda-fused-moe-bs1-persistent-bandwidth-s3-inproc
@@ -118,3 +124,28 @@ No companion is warranted. Every landed hypothesis that touches bs=1 is bypassed
 - What R values do the judge's bs=1 test and decode_1 seed actually produce? K-split only 'when R is 1-2' needs a branch on R that is data-dependent in-kernel (fine on device, but both code paths must be self-checked, including R=0 and R=8).
 - Does stage 2 actually produce a unimodal replay distribution? If not, this stage should not dispatch.
 
+
+## Implementation notes
+
+What stage 2's log (archive/cuda-fused-moe-bs1-persistent-nospin-bandwidth-inproc/7a6919420b724ee7.log) showed: the path RAN (arch gate OK, canaries and R in {0,1,2,3,8} passed, PATH CHOSEN = fused, no spin-bound hits). Replays are unimodal (R=2: p10 42.2, p50 42.7, p90 43.6 us; master 51.8). Scores 1.3257 vs best 1.3278, bs=1 row 47.7 us (1.61x). Per-CTA at R=2 (median replay 44.3 us): setup 1.8-1.9 us, phase 1 ends 20.6/21.1/22.6, first phase-2 wait 22.2-23.8 (median wait 1.25 us, spins med 1 / max 38), exit 27.5/33.4/38.8, span 38.9, time - span 5.4. Phase 1 is one 16-stage item per CTA (128 of 132 CTAs): ~19 us is 1.2 us per 18 KB stage, about 2 TB/s with ~7 stages already in flight (16 MB, well above Little's law), so it is dequant/issue-bound, as the review expected, not ring-depth-bound. Work is already balanced (3072 stages / 132 = 23.3; actual max 24). The spin is no longer a stall. Other sizes: R=1 33.9 us, R=3 66.2, R=8 141.6.
+
+Changes (muse_moe_w4a16/submission.py, CUDA source only; kept: arch gate, two explicit template launches, bounded spin, tight poll, one-wave sizing, plain cp.async.cg, -lineinfo, dequant, layout, routing, in-process self-check unchanged):
+1. Setup: thread 0 loads all 8 ids and weights up front (independent loads) before compacting, instead of a load-per-iteration loop (setup was 1.9 us; the log shows nothing else in it).
+2. Two MMA accumulators (even/odd k16 step; c and cb, summed in the item epilogue) to halve the dependent mma chain at 2 warps per scheduler. fp32 summation order changes (review noted this is within the 1.5% bound; weights and scale products are unchanged).
+3. STAGES 8 -> 10 (SMEM 158208 -> 195072 B, still 1 CTA/SM, under the 227 KB limit): the ring now holds a CTA's whole phase-2 share (8 stages at R=2), so after the phase-1 wait phase 2 is compute-only.
+
+Deviations from the spec / review: no cross-CTA K-split (review: contradicts one-wave sizing, reintroduces the stall; the log shows 128 items already fill the SMs at R=2, so it would not help). No intra-CTA K-split or 384-512 threads: not buildable blind (ROWS tile = 16 x WARPS fixes layout) and issue count per weight would not drop; left as the open question, to be answered by this run's phase times. Biggest uncertainty: dequant instruction count is unchanged, so the gain may be small (est. 1-4 us); the self-check prints per-phase times as in stage 2 for reading it.
+
+## Rules check
+
+- [x] CUDA-graph capturable: diff touches only the kernel body (device code); no host calls added in kernel_fn.
+- [x] No host syncs in kernel_fn: none added (lint warnings are prepare()-only).
+- [x] Nothing derived from `data` is cached across calls: routing still read on device every launch.
+- [x] Weights: repacked losslessly in prepare() only; NVFP4 stays NVFP4: layout and dequant unchanged.
+- [x] Activations BF16 where SGLang keeps BF16: unchanged.
+- [x] No child process/subprocess/multiprocessing: none added; self-check stays in-process.
+- [x] No timing patches, harness frames/IO/secrets, reference import: none in diff.
+- [x] All work inside the timed call; no output caching or replay: unchanged.
+- n/a: attention items (KV cache FP8, full window): MoE problem.
+
+okc_lint: `OK with warnings: submission.py` (only host-sync warnings, all "outside kernel_fn's call graph; fine in prepare()"). py_compile rc=0, __pycache__ removed.
