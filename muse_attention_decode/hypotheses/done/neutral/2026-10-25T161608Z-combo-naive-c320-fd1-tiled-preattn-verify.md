@@ -100,10 +100,10 @@ priority: 1
 kind: primary
 controls_for: null
 review: proceed
-status: running
+status: done
 review_at: 2026-10-25T162023Z
 review_companions: null
-stage: dispatched
+stage: harvested
 claimed_at: 2026-10-25T162023Z
 base_sha: 7b2fc03434e07e7c148cc064c8afa2187e4db00e
 base_blob: 5cf8fae31e5b84c36efeeb4569763eb9b06e1c8a
@@ -122,6 +122,13 @@ attempt_file: 2026-10-25T185337Z-submit-combo-naive-c320-fd1-tiled-preattn-verif
 prepared_at: 2026-10-25T185337Z
 job: b9d062aaa94c4cbf
 dispatched_at: 2026-10-25T185344Z
+outcome: neutral
+verdict_detail: within-ci
+speedup: 1.5093550396630429
+speedup_ci: [1.4867147140680972, 1.537896511814218]
+harvested_at: 2026-10-25T190510Z
+best_at_harvest: 1.5119748206149146
+promotion: null
 ---
 
 # combo-naive-c320-fd1-tiled-preattn-verify
@@ -273,3 +280,35 @@ Checked, no change needed:
 - okc_lint: OK with warnings (import-time syncs and the NaN poison buffer only). py_compile: OK. `__pycache__` removed.
 
 Residual risk: nothing compiled here, so the first proof of the c320 module is the judge's build. It uses the flags that built it there before, and a failure falls back to master.
+
+## Result
+
+- job `b9d062aaa94c4cbf` (submit), status done, passed True, tests 16/16
+- speedup 1.5094x, 95% CI [1.4867, 1.5379], score 2495.3042200334858 µs vs SGLang 3766.3 µs
+- best at harvest: {"speedup": 1.5119748206149146, "ci": [1.4892951983056908, 1.5346544429241382], "job": "4b608df595b046fb"}; base result: muse_attention_decode/hypotheses/done/neutral/restack-sliding-decode-sk-window-on-cluster-master.result.json
+- **outcome: neutral** (within-ci)
+- files: `muse_attention_decode/hypotheses/done/neutral/combo-naive-c320-fd1-tiled-preattn-verify.result.json`, `muse_attention_decode/hypotheses/done/neutral/combo-naive-c320-fd1-tiled-preattn-verify.patch`; branch `hyp/muse_attention_decode/combo-naive-c320-fd1-tiled-preattn-verify`
+
+## Attribution
+
+| shape | w | base µs | hyp µs | delta | verdict |
+|---|---|---|---|---|---|
+| batch=1 ctx=80000 dist=soft heads=tp8 layer=sliding load=decode_1 page=1 | 46 | 11.88 | 12.62 | 0.9512 | lost |
+| batch=1 ctx=80000 dist=coherent heads=tp8 layer=full load=decode_1 page=1 | 16 | 22.4 | 19.76 | 1.145 | gained |
+| batch=16 ctx=80000 dist=soft heads=tp8 layer=sliding load=decode_16 page=1 spread=agentic | 46 | 15.51 | 15.58 | 0.9991 | flat |
+| batch=16 ctx=80000 dist=coherent heads=tp8 layer=full load=decode_16 page=1 spread=agentic | 16 | 111.12 | 110.27 | 1.0018 | flat |
+| batch=32 ctx=80000 dist=soft heads=tp8 layer=sliding load=decode_32 page=1 spread=agentic | 46 | 17.68 | 17.63 | 0.9944 | flat |
+| batch=32 ctx=80000 dist=coherent heads=tp8 layer=full load=decode_32 page=1 spread=agentic | 16 | 227.87 | 227.24 | 1.002 | flat |
+| batch=1 ctx=80000 dist=soft heads=tp8 layer=sliding load=verify_1 page=1 q_len=8 | 46 | 13.17 | 13.36 | 0.9929 | flat |
+| batch=1 ctx=80000 dist=coherent heads=tp8 layer=full load=verify_1 page=1 q_len=8 | 16 | 30.48 | 30.45 | 0.997 | flat |
+| batch=16 ctx=80000 dist=soft heads=tp8 layer=sliding load=verify_16 page=1 q_len=8 spread=agentic | 46 | 22.83 | 22.74 | 1.0007 | flat |
+| batch=16 ctx=80000 dist=coherent heads=tp8 layer=full load=verify_16 page=1 q_len=8 spread=agentic | 16 | 163.0 | 162.59 | 1.0027 | flat |
+| batch=32 ctx=80000 dist=soft heads=tp8 layer=sliding load=verify_32 page=1 q_len=8 spread=agentic | 46 | 29.21 | 27.92 | 1.0456 | gained |
+| batch=32 ctx=80000 dist=coherent heads=tp8 layer=full load=verify_32 page=1 q_len=8 spread=agentic | 16 | 302.31 | 300.61 | 1.0032 | flat |
+
+gained on full decode_1; sliding verify_32; lost on sliding decode_1. Expected hit: 5/6. Noise ±1.7%.
+
+## Follow-ups
+
+- within-ci: the change is not proven either way; a stacked hypothesis (`depends_on: combo-naive-c320-fd1-tiled-preattn-verify`) that adds a further change in the same area is the only way to learn more (identical code is never re-run).
+
