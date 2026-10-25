@@ -38,9 +38,18 @@ priority: 2
 kind: primary
 controls_for: null
 review: proceed
-status: queued
+status: running
 review_at: 2026-10-25T054817Z
 review_companions: null
+stage: claimed
+claimed_at: 2026-10-25T054817Z
+base_sha: ea4c938779678da09fceb3d72b468aef6f3272d9
+base_blob: 60dfe35d5417d9c0f89067ff313efdc2c41d03a2
+branch: hyp/muse_moe_w4a16/w13-marlin-atomic-add-t1-only
+worktree: .worktrees/muse_moe_w4a16/w13-marlin-atomic-add-t1-only
+mode: null
+restack_of: w13-marlin-atomic-add-on-master-small-m
+stale_base: null
 ---
 
 # w13-marlin-atomic-add-t1-only
