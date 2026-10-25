@@ -1,0 +1,50 @@
+diff --git a/muse_bf16_proj/submission.py b/muse_bf16_proj/submission.py
+index a8bb42a..49c0a5c 100644
+--- a/muse_bf16_proj/submission.py
++++ b/muse_bf16_proj/submission.py
+@@ -3,7 +3,9 @@
+ router-triton-hilo-fused-control-splitk-all-m, the control for router-triton-hilo-fused).
+ 
+ The four bf16 layers go through the same cuBLAS dispatch SGLang uses on H200
+-(`_bf16_gemm_dispatch_impl`), untouched. The fp32 router runs, at every m, as ONE Triton kernel
++(`_bf16_gemm_dispatch_impl`), except the pooler and unpooler at 65 <= m <= 128, which run as
++torch.mm against a lossless transposed [K, N] bf16 copy made in prepare() (an NN cuBLAS GEMM
++instead of TN; hypothesis pooler-unpooler-m128-nn-layout-gated). The fp32 router runs, at every m, as ONE Triton kernel
+ over a bf16 hi + lo split of its weight with fp32 accumulation (allowed by the rules at any
+ batch size: "the router's FP32 weights may run as a BF16 hi + lo pair with FP32 accumulation").
+ The split is built once in prepare() from the weights alone and stored as two [256, 8192] bf16
+@@ -75,6 +77,12 @@ ROUTER_NUM_WARPS = 4
+ # the timed call never compiles (M is not specialized and the grid's M extent is a launch
+ # argument, so one compile serves a whole bucket).
+ ROUTER_WARM_MS = (1, 8, 16, 32, 64, 128, 256)
++# Gate for the pooler/unpooler NN path (own constants so it stacks cleanly with other routes
++# on the same rows): these layers run torch.mm(x, W_t) against a transposed [K, N] copy of the
++# weight made once in prepare() for NN_GATED_MIN_M <= m <= NN_GATED_MAX_M.
++NN_GATED_LAYERS = ("pooler", "unpooler")
++NN_GATED_MIN_M = 65
++NN_GATED_MAX_M = 128
+ 
+ 
+ def _router_config(m: int):
+@@ -661,6 +669,10 @@ def prepare(weights: Weights) -> dict:
+     lo = (router - hi.float()).to(torch.bfloat16).contiguous()
+     state["router_hi"] = hi
+     state["router_lo"] = lo
++    # Lossless transposed bf16 copies [K, N] row-major (truly contiguous, not a .t() view) for
++    # the gated pooler/unpooler NN path; the original [N, K] weights stay for every other path.
++    for name in NN_GATED_LAYERS:
++        state[name + "_t"] = state[name].t().contiguous()
+     # Warm-up on synthetic inputs (weights only; nothing from a later call is involved).
+     for m in ROUTER_WARM_MS:
+         x = torch.randn((m, router.shape[1]), device=router.device, dtype=torch.float32).to(torch.bfloat16)
+@@ -729,6 +741,10 @@ def kernel_fn(data: Inputs, state: dict) -> torch.Tensor:
+         ws, cnt = _swapab_buffers(state, layer)
+         return _swapab_forward(layer, x, state[layer], ws, cnt, state["swapab_stages"][layer])
+     if layer != "router":
++        if (layer in NN_GATED_LAYERS and NN_GATED_MIN_M <= cfg["m"] <= NN_GATED_MAX_M
++                and cfg["n"] == state[layer + "_t"].shape[1]):
++            # NN layout: x [m, k] @ W_t [k, n] at the full weight width (cfg-only gate).
++            return torch.mm(x, state[layer + "_t"])
+         # The unpooler's slice is its first n rows (all of them above 8 tokens).
+         return _bf16_gemm_dispatch_impl(x, state[layer][: cfg["n"]], None)
+     hi, lo = state["router_hi"], state["router_lo"]

@@ -57,10 +57,10 @@ priority: 1
 kind: primary
 controls_for: null
 review: proceed
-status: running
+status: done
 review_at: 2026-10-25T011846Z
 review_companions: null
-stage: dispatched
+stage: harvested
 claimed_at: 2026-10-25T011846Z
 base_sha: a9625932047aa6e3c155977025168939699cb9b2
 base_blob: a8bb42ac483318e9fbc84bc7826a27b7a704d1fb
@@ -79,6 +79,13 @@ attempt_file: 2026-10-25T012003Z-check-pooler-unpooler-m128-nn-layout-gated.md
 prepared_at: 2026-10-25T012003Z
 job: 0daf3faa83ab4e81
 dispatched_at: 2026-10-25T012031Z
+outcome: regression
+verdict_detail: regression
+speedup: 1.1953410330493355
+speedup_ci: [1.1774109175535954, 1.2132711485450753]
+harvested_at: 2026-10-25T034132Z
+best_at_harvest: 1.2215006063849365
+promotion: null
 ---
 
 # pooler-unpooler-m128-nn-layout-gated
@@ -150,3 +157,53 @@ okc_lint output:
 CLEAN: muse_bf16_proj/submission.py
 ```
 py_compile: OK; __pycache__ removed.
+
+## Result
+
+- job `0daf3faa83ab4e81` (check), status done, passed True, tests 9/9
+- speedup 1.1953x, 95% CI [1.1774, 1.2133], score 4041.3571243986717 µs vs SGLang 4830.8 µs
+- best at harvest: {"speedup": 1.2215006063849365, "ci": [1.2031780972891624, 1.2398231154807104], "job": "60b20fd0bf924267"}; base result: muse_bf16_proj/hypotheses/done/neutral/bf16-restack-m16-swapab-router-swapab-m32.result.json
+- **outcome: regression** (regression)
+- files: `muse_bf16_proj/hypotheses/done/regression/pooler-unpooler-m128-nn-layout-gated.result.json`, `muse_bf16_proj/hypotheses/done/regression/pooler-unpooler-m128-nn-layout-gated.patch`; branch `hyp/muse_bf16_proj/pooler-unpooler-m128-nn-layout-gated`
+
+## Attribution
+
+| shape | w | base µs | hyp µs | delta | verdict |
+|---|---|---|---|---|---|
+| layer=qkv_gate load=decode_1 m=1 | 62 | 12.18 | 13.41 | 0.9259 | lost |
+| layer=o load=decode_1 m=1 | 62 | 5.89 | 6.48 | 0.9261 | lost |
+| layer=pooler load=decode_1 m=1 | 62 | 18.84 | 19.56 | 0.9824 | flat |
+| layer=unpooler load=decode_1 m=1 | 62 | 6.15 | 6.13 | 0.9502 | lost |
+| layer=router load=decode_1 m=1 | 62 | 5.38 | 5.98 | 0.9088 | lost |
+| layer=qkv_gate load=decode_16 m=16 | 62 | 13.15 | 13.92 | 0.9336 | lost |
+| layer=o load=decode_16 m=16 | 62 | 6.23 | 6.64 | 0.9252 | lost |
+| layer=pooler load=decode_16 m=16 | 62 | 19.47 | 20.12 | 0.9698 | lost |
+| layer=unpooler load=decode_16 m=16 | 62 | 18.51 | 18.7 | 0.9886 | flat |
+| layer=router load=decode_16 m=16 | 62 | 5.47 | 6.07 | 0.8918 | lost |
+| layer=qkv_gate load=decode_32 m=32 | 62 | 14.19 | 14.19 | 0.9724 | flat |
+| layer=o load=decode_32 m=32 | 62 | 6.34 | 6.55 | 0.9568 | lost |
+| layer=pooler load=decode_32 m=32 | 62 | 19.73 | 20.24 | 0.9798 | flat |
+| layer=unpooler load=decode_32 m=32 | 62 | 18.08 | 18.15 | 0.986 | flat |
+| layer=router load=decode_32 m=32 | 62 | 6.2 | 6.7 | 0.9101 | lost |
+| layer=qkv_gate load=verify_1 m=8 | 62 | 12.5 | 13.17 | 0.944 | lost |
+| layer=o load=verify_1 m=8 | 62 | 6.13 | 6.22 | 0.9363 | lost |
+| layer=pooler load=verify_1 m=8 | 62 | 18.89 | 19.17 | 0.9795 | flat |
+| layer=unpooler load=verify_1 m=8 | 62 | 6.0 | 6.2 | 0.9674 | lost |
+| layer=router load=verify_1 m=8 | 62 | 5.47 | 6.17 | 0.8935 | lost |
+| layer=qkv_gate load=verify_16 m=128 | 62 | 17.05 | 16.74 | 0.9935 | flat |
+| layer=o load=verify_16 m=128 | 62 | 6.98 | 7.21 | 0.9905 | flat |
+| layer=pooler load=verify_16 m=128 | 62 | 25.0 | 22.98 | 1.103 | gained |
+| layer=unpooler load=verify_16 m=128 | 62 | 19.96 | 19.2 | 1.0464 | gained |
+| layer=router load=verify_16 m=128 | 62 | 7.28 | 7.37 | 0.9794 | flat |
+| layer=qkv_gate load=verify_32 m=256 | 62 | 19.69 | 19.58 | 1.0031 | flat |
+| layer=o load=verify_32 m=256 | 62 | 9.26 | 9.22 | 0.9892 | flat |
+| layer=pooler load=verify_32 m=256 | 62 | 31.19 | 31.25 | 0.9998 | flat |
+| layer=unpooler load=verify_32 m=256 | 62 | 24.42 | 24.09 | 1.0125 | flat |
+| layer=router load=verify_32 m=256 | 62 | 9.6 | 9.2 | 1.0314 | gained |
+
+gained on pooler verify_16; unpooler verify_16; router verify_32; lost on qkv_gate decode_1, decode_16, verify_1; o decode_1, decode_16, decode_32, verify_1; unpooler decode_1, verify_1; router decode_1, decode_16, decode_32, verify_1; pooler decode_16. Expected hit: 8/9. Noise ±1.5%.
+
+## Follow-ups
+
+- record which shapes lost (Attribution) and do not retry this area in this form.
+
