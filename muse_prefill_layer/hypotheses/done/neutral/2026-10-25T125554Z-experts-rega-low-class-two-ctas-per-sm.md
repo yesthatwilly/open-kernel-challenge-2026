@@ -74,10 +74,10 @@ controls_for: null
 rewrite_stage: 3
 replaces: rega_kernel<true,false> + rega_kernel<false,false> (NMAX 128, 4 stages, 1 CTA/SM) in the low class 200 < T <= 1024
 review: proceed
-status: running
+status: done
 review_at: 2026-10-25T130000Z
 review_companions: null
-stage: dispatched
+stage: harvested
 claimed_at: 2026-10-25T130000Z
 base_sha: 5ab477f4e13746722c0fdaef292988846cff3fa4
 base_blob: c2e3e595def2e6b5949e0fd350ce98ed59729147
@@ -96,6 +96,13 @@ attempt_file: 2026-10-25T131906Z-check-experts-rega-low-class-two-ctas-per-sm.md
 prepared_at: 2026-10-25T131906Z
 job: 1a77da43b3304b07
 dispatched_at: 2026-10-25T131915Z
+outcome: neutral
+verdict_detail: unproven-vs-best
+speedup: 1.4173433427501267
+speedup_ci: [1.3960831926088748, 1.4386034928913785]
+harvested_at: 2026-10-25T135011Z
+best_at_harvest: 1.4060131381907617
+promotion: null
 ---
 
 # experts-rega-low-class-two-ctas-per-sm
@@ -220,3 +227,32 @@ Fix:
 1. `master_match` (master's v2 attributes compared against the stage-1 record) is now print-only instead of gating every candidate. The first-turn class's local-bytes value for v2 was never archived (the 07a069bc log is tail-only), so a benign mismatch would have switched every candidate OFF for no safety reason. The candidates keep their own attribute gate. Re-ran undef.py ([]), py_compile (OK) and okc_lint (OK with warnings, prepare-only), and removed __pycache__.
 
 Residual risk: the uncompiled CUDA could fail the v3 build, which adds about 30 s for the v2 rebuild while ft's 150 s start deadline still has slack. Or ptxas could spill V64 at 104 registers, which only turns that candidate OFF.
+
+## Result
+
+- job `1a77da43b3304b07` (check), status done, passed True, tests 5/5
+- speedup 1.4173x, 95% CI [1.3961, 1.4386], score 273331.0188964553 µs vs SGLang 387403.9 µs
+- best at harvest: {"speedup": 1.4060131381907617, "ci": [1.3849229411179003, 1.4271033352636229], "job": "07a069bc69ba42a8"}; base result: muse_prefill_layer/hypotheses/done/gain/experts-turn-rega-s4-first-turn-n128.result.json
+- **outcome: neutral** (unproven-vs-best)
+- files: `muse_prefill_layer/hypotheses/done/neutral/experts-rega-low-class-two-ctas-per-sm.result.json`, `muse_prefill_layer/hypotheses/done/neutral/experts-rega-low-class-two-ctas-per-sm.patch`; branch `hyp/muse_prefill_layer/experts-rega-low-class-two-ctas-per-sm`
+
+## Attribution
+
+| shape | w | base µs | hyp µs | delta | verdict |
+|---|---|---|---|---|---|
+| batch=1 ctx=80000 dist=soft layer=sliding load=turn_1 page=1 q_len=753 repeats=6 | 46 | 777.02 | 738.17 | 1.0336 | gained |
+| batch=1 ctx=80000 dist=soft layer=full load=turn_1 page=1 q_len=753 repeats=6 | 16 | 1136.06 | 1124.97 | 1.0037 | flat |
+| batch=4 ctx=80000 dist=soft layer=sliding load=turn_4 page=1 q_len=753 repeats=6 | 46 | 2251.37 | 2221.92 | 0.998 | flat |
+| batch=4 ctx=80000 dist=soft layer=full load=turn_4 page=1 q_len=753 repeats=6 | 16 | 3785.25 | 3757.74 | 1.0134 | flat |
+| batch=1 ctx=0 dist=soft layer=full load=first_turn page=1 q_len=16384 repeats=6 | 16 | 12148.27 | 12559.49 | 1.0234 | flat |
+| batch=1 ctx=32768 dist=soft layer=sliding load=first_turn page=1 q_len=16384 repeats=6 | 138 | 11658.83 | 11489.5 | 0.9953 | flat |
+| batch=1 ctx=32768 dist=soft layer=full load=first_turn page=1 q_len=16384 repeats=6 | 16 | 15589.38 | 15438.86 | 1.0017 | flat |
+| batch=1 ctx=65536 dist=soft layer=full load=first_turn page=1 q_len=16384 repeats=6 | 16 | 19167.43 | 19075.57 | 0.9977 | flat |
+
+gained on sliding turn_1. Expected hit: 1/3. Noise ±1.5%.
+
+## Follow-ups
+
+- rewrite stage 3 of `rega_kernel<true,false> + rega_kernel<false,false> (NMAX 128, 4 stages, 1 CTA/SM) in the low class 200 < T <= 1024`: read the replaced kernels' own us per shape (profile top_kernels) against the incumbent and the floor, and check which Milestone it reached. The next stage is `/hypothesize muse_prefill_layer "<what to fix or tune>" --kind rewrite --depends-on experts-rega-low-class-two-ctas-per-sm --stage 4`; a slow or failed first cut is the expected start, not a do-not-retry.
+- unproven-vs-best: the change is not proven either way; a stacked hypothesis (`depends_on: experts-rega-low-class-two-ctas-per-sm`) that adds a further change in the same area is the only way to learn more (identical code is never re-run).
+
