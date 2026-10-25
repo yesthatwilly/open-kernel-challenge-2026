@@ -42,8 +42,10 @@ depends_on: null
 priority: 2
 kind: primary
 controls_for: null
-review: required
+review: proceed
 status: queued
+review_at: 2026-10-25T203645Z
+review_companions: null
 ---
 
 # qkv-k-split-batched-gemm-m65-m256
@@ -61,3 +63,29 @@ Built on current master (blob 353e3b19). For layer == 'qkv_gate' at 65 <= cfg m 
 ## Risk
 
 Same mechanism as pooler-k-halves-batched-gemm-m65-m256, on a separate layer and rows, so each is attributed per row. The prepare-time cublasLt algo pick on qkv m=256 did not carry over to the judge (LESSONS). This selector times graph replays with a cold L2, as the ouns selector did, which predicted the judge.
+
+## Adversarial review
+
+Reviewed 2026-10-25T203645Z by an adversarial subagent (model opus).
+
+**Verdict: proceed.** Fair transfer of pooler-k-halves (selector 1.069x/1.037x, judge 1.063x/1.123x on pooler verify_16/32) to qkv_gate; the m=128 rationale is stale: master 36c26199 already runs cuBLASLt cell B (nvjet 40x64 4x2 TNN ~15.5 us, no splitKreduce) at qkv m=128. Baseline against cell B, give the new path its own flag, expect a smaller m=128 gain; m=256 (~20 -> ~16-17 us) is the real bet.
+
+### Justification
+qkv_gate n 2304 k 8192 at m=256: nvjet 96x64 2x4 ~20.0 us vs 9.8 us floor, ~96 CTAs < 132 SMs over full K; K-split raises parallelism. pooler-k-halves (ce808e5a): strided bmm without copy, 128x128 tile at m=256, selector under-predicted judge. Weakest link: wave quantization for narrow N=2304 (72/144/192 CTAs depending on tile and S); no sibling layer predicts the tile cuBLAS picks; the selector contains it. Prior: pooler-k-halves (different layer); bf16-cublaslt-algo-pick-in-prepare-m128-m256 did not change problem shape.
+
+### Confounders on the current kernel
+- combo-rowowner-reduce-free-m1-qkv-o-plus-naive (landed): cell B (LT_FLAG) is the m=128 incumbent; time whatever master runs after _lt_prepare; own flag checked before _lt_route_ok; _ab_component returns it before LT_FLAG so a miss falls back to cell B.
+- sglang-gemm-dispatch-parity: m=256 incumbent and m=128 fallback.
+- pooler-nn-layout-widen-m256 / restack-three-cell-wins: keep the new flag separate from nn_ok/nn_p256_ok.
+- bf16-m32-swapab-wgmma-triton / bf16-restack-m16: gate at m<=32 first; no interaction.
+
+### Interference and A/B needs
+No companion: the prepare-time selector times master's actual path and the four candidates (S=2/4, TN/NN) in-process with cold L2 and prints medians, IQR and tile names.
+
+### Open questions
+- Print the tile cuBLAS picks for all four candidates.
+- At m=128 can any candidate beat cell B's 15.5 us by >= 1.02x after the add?
+- Run after _lt_prepare; choose once on state A; pass to state B via _ab_flags.
+- Credit per row against 20.0/15.5 us incumbents.
+- Stack later with unlanded pooler-k-halves?
+
