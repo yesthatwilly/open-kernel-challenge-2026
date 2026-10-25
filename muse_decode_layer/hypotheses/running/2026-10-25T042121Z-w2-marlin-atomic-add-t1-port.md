@@ -90,3 +90,24 @@ No companion is warranted. The change is one kwarg on one launch at one T, plus 
 - Does profile.txt split w13 and w2 Marlin launches? If so, read w2's own row at decode_1 (expect -3..4 us). If not, rely on per-shape medians.
 - Should the gate later widen to T=8 (verify_1)? moe saw bs=8 flat (1.0014), so no for now.
 
+
+## Implementation notes
+
+Edited only `muse_decode_layer/submission.py` in the worktree (+88/-3).
+- `_experts(..., w2_mode=None)`: w2_mode defaults to `state["w2_mode"]`. When it is not "master" AND `num_tokens == 1` AND `align is not None` (kernel R / dense-chain path) AND `dispatch is None`, the w2 `moe_wna16_marlin_gemm` call gets `dict(common, use_atomic_add=True)`. The w13 call, every T>1 call and the align=None path keep `common` unchanged.
+- Review corrections applied (review wins over the spec text): `use_fp32_reduce` stays True; `cache3` still aliases `cache13` (no dedicated zeroed slice); selector order "atomic" (no memset) -> "atomic_zero" (`cache3.zero_()` before w2) -> master, as moe.
+- `_w2_atomic_self_check(state, device)` runs in prepare() after `_dl_setup`/`_align_par_setup`. It drives kernel R (`_dl_route`) at T=1 with crafted logits (1-4 forced local experts, the rest remote, 6 local_start values, 12 trials), then compares the post-combine `_experts` output with `w2_mode="atomic"/"atomic_zero"` against `w2_mode="master"` on identical inputs and the same align (rel L2 <= 5e-3, moe's tolerance, finite). Requires both local and remote slots to have been exercised, else master. If `state["dl"]` is None (dense chain off) the mode is master. Every launch is announced with a flushed print and followed by `torch.cuda.synchronize()` plus a flushed print. Loud `[w2-atomic] PATH CHOSEN = ...` line (T=1 chosen mode, T>1 MASTER).
+- Deviation: the self-check compares to master's w2 numerics (as moe did), not to an fp32-dequant reference; the review sets the comparison target as master within moe's tolerance.
+- No GPU here: nothing was run.
+
+## Rules check
+
+- [x] CUDA-graph capturable: diff adds only a kwarg choice (config-only: num_tokens, align presence, prepare-time mode) and an optional `cache3.zero_()`; no sync/.item in kernel_fn; self-check is prepare()-only.
+- [x] Nothing derived from `data` is cached across calls: the mode is chosen from synthetic inputs in prepare().
+- [x] Weights: unchanged (n/a: no repacking touched).
+- [x] Activations BF16 / KV FP8: unchanged; w2 still bf16 output, fp32 reduce kept.
+- [x] Attention sees every key: n/a, attention untouched.
+- [x] No timing patches, harness, module edits, reference import, subprocess or child processes: none added.
+- [x] All work inside the timed call; no output caching or replay.
+
+okc_lint: OK with warnings (only pre-existing and new prepare()-only host-sync warnings, no errors). py_compile passed; __pycache__ removed.

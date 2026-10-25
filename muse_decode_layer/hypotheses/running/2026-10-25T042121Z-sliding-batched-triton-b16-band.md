@@ -36,9 +36,18 @@ priority: 2
 kind: primary
 controls_for: null
 review: proceed
-status: queued
+status: running
 review_at: 2026-10-25T042452Z
 review_companions: null
+stage: claimed
+claimed_at: 2026-10-25T042453Z
+base_sha: 94f52a0a74f65619042e18250fd7cb4a206cf66a
+base_blob: c9067b8201f2480c64910c4a71098df7ce616f73
+branch: hyp/muse_decode_layer/sliding-batched-triton-b16-band
+worktree: .worktrees/muse_decode_layer/sliding-batched-triton-b16-band
+mode: null
+restack_of: null
+stale_base: null
 ---
 
 # sliding-batched-triton-b16-band
