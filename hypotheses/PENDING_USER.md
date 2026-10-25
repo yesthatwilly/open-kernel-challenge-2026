@@ -5,6 +5,7 @@ items here and in each tick's summary. Resolved items move to the log at the bot
 
 ## Open
 
+- 2026-10-25 15:20Z moe (FYI, not blocking): the moe mint agent flagged the w13 Marlin atomic-add flag at T=1. Two done-neutral runs (w13-marlin-atomic-add-on-master-small-m 1.766x, w13-marlin-atomic-add-t1-only 1.754x on decode_1) beat master-equivalent runs (1.70-1.72x on that row). Landing one of them by hand would need a merge onto moe master; say if you want it.
 - 2026-10-24 rules heads-up (not blocking): bf16 **bf16-cublaslt-algo-pick-in-prepare-m128-m256** times cuBLASLt algorithm candidates on synthetic data inside the untimed prepare() and replays the winner in kernel_fn (no timing or autotune in kernel_fn). The Opus reviewer read the rules as allowing it, and decode's pooler-gemm-splitk-autotune used the same pattern. It runs on tomorrow's quota unless you say to hold it.
 
 ## Standing answers
