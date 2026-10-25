@@ -68,8 +68,10 @@ kind: rewrite
 controls_for: null
 rewrite_stage: 1
 replaces: "FusedPostNormResidualPreNorm (muse_spark_norm_residual_kernel) x2 on the critical path after the o and unpooler GEMMs at T > 4096 (stage 1: the FFN boundary)"
-review: required
+review: proceed
 status: queued
+review_at: 2026-10-25T212333Z
+review_companions: null
 ---
 
 # boundary-overlap-s1-slice-kernel-ffn-tail
@@ -95,3 +97,27 @@ shape (profile top_kernels) against the incumbent and the speed-of-light floor, 
 2. at or below the incumbent kernels' time on the target shapes;
 3. within ~1.5x of the floor on the target shapes, and the headline CI clears 1.0 (promotable).
 The next stage is minted with `--kind rewrite --depends-on <this slug> --stage N+1`.
+
+## Adversarial review
+
+Reviewed 2026-10-25T212333Z by an adversarial subagent (model opus).
+
+**Verdict: proceed.** Sound stage 1: moves the FFN boundary (399-402 us at T=16384, ~1.2x its byte floor) off the critical path rather than making it faster (unlike norm-boundaries-persistent-multirow). Its prepare gate is its own A/B, so no companion. Weakest link: whether a 512-thread boundary CTA can share an SM with nvjet 192x192 CTAs at all; if not, overlap is only SM-level interleaving and wave tails, and M2 may gate OFF.
+
+### Justification
+Boundary kernels 813 us at first_turn (~1.2x memory floor); ~1.54-1.61 GB per boundary checks out, so a faster rewrite cannot pay (norm-boundaries-persistent-multirow neutral, Do-not-try); hiding is a different mechanism. nvjet GEMMs ~78% of peak (compute-bound), a good pairing. Missing prior field: norm-boundaries-persistent-multirow, qkv-gate-columns-side-stream-under-attention (1.4512 flat), turn-align-remap-on-side-stream-under-pooler, moe-align-side-stream. WEAKEST LINK: nvjet 192x192x64 4-stage coop likely fills smem and registers, so a 512-thread bnd_rows CTA may not co-reside; overlap then relies on the block scheduler handing retiring SMs to boundary CTAs. NCH=2 leaves the last ~200 us chunk exposed; chunking adds wave tails and may change the cuBLAS tile at M=4096/8192. Realistic -100..-250 us per first_turn row (~0.3-0.7% headline), below the 1.24% margin: read on M1/M2 and replaced rows. Prepare budget is 300 s (not 200); base is now f4751fc0 (kernel_fn tail unchanged).
+
+### Confounders on the current kernel
+- sglang-pipeline-parity: defines state['ffn_boundary'] and the dispatch unpooler call replaced here; parity tolerances against that module.
+- experts-turn-rega-s4-first-turn-n128 / combo-a-master-normgather-naive-stack: rega's L2 footprint precedes the unpooler in the judge, not in the flushed prepare gate (M2 vs M3 may differ).
+- router side-stream overlap (stack-tonight-five-prefill lineage): only in-layer precedent for block-scheduler overlap; no direct interaction.
+
+### Interference and A/B needs
+No companion: in-process captured-graph A/B (master tail vs chunked tail at NCH 2/4, flushed, interleaved, empty-graph baseline subtracted), M1 print, PATH CHOSEN. Add inside the gate: two interleaved rounds with an IQR bound; a high-priority bnd_stream (torch.cuda.Stream(priority=-1)) and whether capture keeps priority; a capped-grid persistent bnd_rows variant (16-32 CTAs) vs one CTA per row.
+
+### Open questions
+- Print cudaOccupancy for bnd_rows and the nvjet kernel's smem/regs in prepare.
+- Log chunked GEMM kernel names (does the 192x192 tile survive at M=8192/4096?).
+- Add prior (norm-boundaries-persistent-multirow, qkv-gate-columns-side-stream-under-attention); fix base blob f4751fc0 and prepare budget 300 s.
+- Stage 2 (attention boundary under the pooler) competes with the router side stream; settle before minting it.
+
