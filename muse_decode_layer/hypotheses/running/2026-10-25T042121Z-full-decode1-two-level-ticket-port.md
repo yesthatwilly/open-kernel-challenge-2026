@@ -53,9 +53,18 @@ controls_for: null
 rewrite_stage: 1
 replaces: FA3 main + FlashAttnFwdCombine + pad/unpad elementwise + FusedRMSNormGate on full decode batch 1
 review: proceed
-status: queued
+status: running
 review_at: 2026-10-25T042454Z
 review_companions: null
+stage: claimed
+claimed_at: 2026-10-25T042454Z
+base_sha: 08b1841a86f49e34227afd254a2476f445746929
+base_blob: c9067b8201f2480c64910c4a71098df7ce616f73
+branch: hyp/muse_decode_layer/full-decode1-two-level-ticket-port
+worktree: .worktrees/muse_decode_layer/full-decode1-two-level-ticket-port
+mode: null
+restack_of: null
+stale_base: null
 ---
 
 # full-decode1-two-level-ticket-port
