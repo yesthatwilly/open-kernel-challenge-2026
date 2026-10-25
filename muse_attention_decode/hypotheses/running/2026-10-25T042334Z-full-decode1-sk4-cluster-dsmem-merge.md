@@ -47,7 +47,7 @@ review: proceed
 status: running
 review_at: 2026-10-25T043142Z
 review_companions: null
-stage: claimed
+stage: implemented
 claimed_at: 2026-10-25T043142Z
 base_sha: aafeb8f4d969d4a791dafeca1ad8dda986c3e7c1
 base_blob: d8769ef25caf845a0e207538ccc5c62394b6ee3b
@@ -56,6 +56,12 @@ worktree: .worktrees/muse_attention_decode/full-decode1-sk4-cluster-dsmem-merge
 mode: null
 restack_of: null
 stale_base: null
+implemented_at: 2026-10-25T044042Z
+impl_commit: 2c94c5c0f5309c4a67503f30d7fd3fa710407c06
+submission_sha256: cecebe4df2e9f4cc2e7fc66cb75c1d99810384377d749a5ba300f9015a3a1572
+norm_sha256: 405c2d4ba202c3a1ae83d31b590b4c9b52ec099ab2630ac9f3eb495dc5ff52c0
+submission_blob: 3dea00b0efb40e1019685585557f439ee4ccd0d6
+lint_warnings: 20
 ---
 
 # full-decode1-sk4-cluster-dsmem-merge
@@ -105,3 +111,48 @@ No companion. This is a rewrite stage, its prepare already times every C against
 - BUILDER: confirm that a cluster launch keeps 2 CTAs/SM at 95264 B smem. If clusters force 1 CTA/SM at grid 2xSM, print it and say so in PATH CHOSEN.
 - If no variant clears 3%, the kill note should record whether grid 2xSM + C=8 closed the gap. That tells whether stage 5 is bytes-in-flight (more stages or 2 CTAs/SM at B=1) rather than per-phase stamps.
 
+
+## Implementation notes
+
+Edited only `muse_attention_decode/submission.py` in the worktree (uncommitted, +474/-12). Review wins over the spec where they differ (stated below).
+
+- Kernel: `splitkv_attn_sk_kernel` gained two trailing template params `<..., int CL = 0, bool CGRP = false>`. Every landed instantiation (variants 0-3) has CL=0 and its code text is unchanged (the new branches are `if constexpr`); `sk_attn`, `sk_pick`, `sk_attrs` and variant 3 are untouched, so the landed two-level kernel is the byte-for-byte fallback.
+- New device code `cluster_finish<CL, CGRP>`: each CTA writes its 4-warp-merged (M, L, o[16x64]) to its own smem (the dead ring, 4.25 KB), `barrier.cluster.arrive.release` + `wait.acquire`, rank 0 reads the CL-1 peers with `mapa` + `ld.shared::cluster` and LSE-merges, writes ONE cluster partial to global slot `cid`, `__threadfence`, acq_rel ticket over `nclu` clusters; the last cluster merges, applies v_scale + the landed `finalize_store` norm-gate and resets the ticket. Peers wait on a second barrier phase that rank 0 arrives on right after its DSMEM reads, so they stay resident until read. CGRP: group ticket over cluster partials (Gs = ceil(sqrt(nclu))) then a second level, as the landed two-level path.
+- Empty CTAs: CTAs with no tile (bx >= min(grid, T)) inside a live cluster still run the cluster barriers with an empty partial (M=-inf, L=0, o=0); a cluster with no tile exits whole. This avoids exited-CTA barrier/DSMEM hazards.
+- Host: `sk_attn_cluster` (cudaLaunchKernelEx, cluster dim C, B==1 and grid % C == 0 checked) and `sk_cluster_attrs` (regs, local, CTAs/SM cluster-less, `cudaOccupancyMaxActiveClusters` for (grid, C)). C <= 8 only, so NonPortableClusterSizeAllowed is not needed (noted in `cv_prepare`).
+- Review fixes applied: (1) grid 2xSM cluster variants added: C=2/4/8 at grid ~SM (132/132/128) and 2xSM (264); (2) "cluster merge + group ticket over cluster partials" for C in {2,4} at both grids (10 candidates); (3) `cudaOccupancyMaxActiveClusters` printed per (C, grid) with resident CTAs per SM, plus a NOTE when 2 CTAs/SM does not hold (said in the [sk4] lines; the winner's line is in PATH CHOSEN); (4) the kill note data: a line compares grid 2xSM + C=8 with the landed kernel.
+- Prepare (`_sk_cluster_select`, only once the landed B=1 path validated, all in try/except): each candidate runs 8 self-check cases (80000/4097/201/63/1 keys, kv 1.0 and 0.25, grids C*3, 2C and its own) and 3 graph-replay checks of kernel_fn (two replays each, NaN-poisoned output) with ticket sums asserted 0. Survivors are timed with the landed two-level kernel (grid SM) in CUDA-graph replay, cold L2 (256 MB flush before EVERY replay, order rotated each rep), median of 10. Deviation from the stage-3 diag timer, which flushes once per rep and lets later kernels ride a warm L2. A cluster variant is used only if <= 0.97x of the landed time; else PATH CHOSEN names the fallback with timings.
+- `kernel_fn`: B=1 path reads the module constant `_B1_CL` (set at prepare) and calls `_sk_launch(variant 10+cvar, grid)`, else the landed variant 3. No per-call state, prints or try/except. B>1 untouched.
+- Module name bumped to `muse_full_decode_splitkv_v4` (arch flags unchanged: TORCH_CUDA_ARCH_LIST=9.0a around load_inline, restored; -O3 -lineinfo as landed; no wgmma/setmaxnreg here).
+- Uncompiled and unrun (no nvcc/GPU on this node). Five new kernel instantiations lengthen the build.
+
+## Rules check
+
+- [x] CUDA-graph capturable: kernel_fn only reads the `_B1_CL` constant; cudaLaunchKernelEx is capturable and the prepare replays prove it; no sync/.item() in kernel_fn (lint: those are prepare-only warnings).
+- [x] Nothing derived from `data` is cached across calls: `_B1_CL` is chosen on synthetic data from shapes/hardware; tickets are device-only counters reset by the last arrival.
+- [x] Weights: n/a: attention problem, no weights touched.
+- [x] Activations/KV/queries: unchanged (FP8 KV, FP8 E4M3 query, fp32 accumulation, partials fp32); only the merge location changed.
+- [x] Attention sees every key: the stream-K tile split is the landed one; the cluster merge combines all CTA partials (empty ones with weight 0).
+- [x] No timing patches, harness access, subprocess or network: checked `git diff` (lint reports none).
+- [x] All work inside the timed call; no output caching or replay (prepare-time timing uses synthetic inputs only).
+
+okc_lint: `OK with warnings: submission.py` (warnings are only prepare-time host-sync notes outside kernel_fn's call graph); `python3 -I -m py_compile` ok, `__pycache__` removed.
+
+## Pre-flight audit
+
+Audited 2026-10-25 by an opus subagent (read-only emulation; no GPU/nvcc on this node).
+
+**Verdict: dispatch-with-fixes.**
+
+Checked and found sound:
+- Landed variants 0-3 (CL=0): every new branch is `if constexpr` or folds on the constant CL (`nclu`, the `bx >= gx` exit, `t0`/`N`, the epilogue `else`). Same code text, so same codegen. `sk_pick`/`sk_smem`/`sk_prepare`/`sk_attrs` are unchanged and B>1 is untouched.
+- Cluster barriers: a cluster with no tile exits whole (`bx / CL >= nclu`). In a live cluster, rank 0 always owns >= 1 tile (`cid*CL < gx`, and `gx <= T` gives N >= 1). Empty peers call `cluster_finish` with M=-inf, L=0, o=0, which get weight 0. The arrive/wait sequence is matched (2 phases) on every rank and is CTA-uniform, so `.aligned` is valid. Rank 0 reads DSMEM only after the phase-1 `arrive.release`/`wait.acquire`, so every peer has started and written. Peers block on phase 2 until rank 0 arrives after its last `ld.shared::cluster`. `mapa.shared::cluster.u32` is applied to the CTA-local shared address.
+- Staging area: `part` (4.25 KB at RING offset 0) is dead when it is written. All non-empty cp.async groups have completed at n=N-1 (`wait_group<STAGES-2>`, and the last two groups are empty). All warps passed the epilogue `__syncthreads` after their last ring reads. ACC/ML/FLAG do not overlap it.
+- Tickets: the single level is reset by the last of `nclu` arrivals (`ticket[0]=0`). CGRP resets `gticket[gi]` per group and `ticket[0]` at the last group. ngrp <= 11 < 32 slots. Each candidate gets 3x2 graph replays plus a ticket-sum==0 assert, so it self-resets per call under replay with refilled inputs. Tickets are re-zeroed after any failed candidate and after the selection.
+- `kernel_fn` only reads the module constant `_B1_CL`. There is no per-call state, print or try/except in its call graph. cudaLaunchKernelEx with a cluster attribute is graph-capturable. C <= 8 is portable, so NonPortableClusterSizeAllowed is not needed. The cudaLaunchKernelEx template arguments match SkFn (20 params).
+- Compile: the sk module built in ~37 s with 4 instantiations. 5 more should add ~25-40 s, which fits in the 15 min run.
+
+Fixes:
+1. `_sk_cluster_select`: per-candidate try/except around `_sk_cl_validate`. Before, a TORCH_CHECK or launch-config error in one candidate (e.g. a refused C=8 grid-264 cluster launch) aborted the whole matrix to the landed path. Now only that candidate is dropped, with a loud `[sk4] ... FAILED (raised ...)` line, and the tickets are re-zeroed. okc_lint OK (prepare-only host-sync warnings); py_compile OK; `__pycache__` removed.
+
+Residual risk: the code has never been compiled. A ptxas error in the cluster PTX would fail the whole sk module build and lose stages 2-3 for this run (falling back to splitkv v1/FA3, loud), and a device fault in a cluster candidate is sticky and cannot be caught in process.
