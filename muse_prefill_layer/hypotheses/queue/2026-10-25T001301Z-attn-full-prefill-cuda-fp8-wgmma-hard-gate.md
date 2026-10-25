@@ -52,8 +52,11 @@ kind: rewrite
 controls_for: null
 rewrite_stage: 1
 replaces: "flash_attn_with_kvcache (FA3 cutlass::device_kernel<flash::...> + FlashAttnFwdCombine) on full-attention layers at page_size 1"
-review: required
-status: queued
+review: hold
+status: hold
+review_at: 2026-10-25T001525Z
+review_companions: null
+hold_reason: "adversarial review: The rewrite's target and gate are sound, but sub-change (4) runs the first launch in a multiprocessing-spawn child process, and TASK.md says a submission that '"
 ---
 
 # attn-full-prefill-cuda-fp8-wgmma-hard-gate
@@ -79,3 +82,25 @@ shape (profile top_kernels) against the incumbent and the speed-of-light floor, 
 2. at or below the incumbent kernels' time on the target shapes;
 3. within ~1.5x of the floor on the target shapes, and the headline CI clears 1.0 (promotable).
 The next stage is minted with `--kind rewrite --depends-on <this slug> --stage N+1`.
+
+## Adversarial review
+
+Reviewed 2026-10-25T001525Z by an adversarial subagent (model opus).
+
+**Verdict: hold.** The rewrite's target and gate are sound, but sub-change (4) runs the first launch in a multiprocessing-spawn child process, and TASK.md says a submission that 'starts processes' is rejected (DECISIONS 2026-10-24 already struck cuobjdump for this reason). Re-mint with (4) replaced by an in-process guarded first launch, and keep (1)-(3) and (5) as they are.
+
+### Justification
+A: The target is real. In FINDINGS, FA3's cutlass device_kernel is 415.4 us (26.8%) on turn_1 full, 1620.2 us (32.8%) on turn_4 full, and 4467/8017 us (22.9%/36.6%) on first_turn full ctx32768/65536. REWRITE_READ #3 puts FA3 at about 1.6x its exp floor (250/1000/555/2770/4990 us). So a wgmma FP8 core has physical room: M2 (0.75x FA3) is still above the floor. The stage-1 fixes match what REWRITE_READ #3 asked for: the sm_90a build fix plus the FEAT_SM90_ALL guard, mma.sync deleted, exp offload at 0/8, and a hard cold-L2 CUDA-graph gate at <=0.92x. The gate is keyed only on config/shape fields (batch, q_len, page_table width; reference.py sizes page_table as longest+q_len, so ctx0/32768/65536 do differ in width). It is decided in prepare() on synthetic inputs, which is legal. Expected directions agree with TASK.md: full classes faster or flat by construction, sliding flat. The headline stake is small. FA3 on full layers is about 8.8% of the turn_1 load (16x415 of ~75 ms), about 11% of turn_4, and about 7.5% of first_turn. A routed class at the gate threshold therefore moves its load by only ~0.6-0.9%, inside the +-1.5% CI, so this stage must be read from the GATE log lines and the profile's top_kernels, not the headline (correct for kind: rewrite). Weakest link: per the hypothesis's own risk note, the wgmma core is non-persistent and non-warp-specialized, and was written without ever being compiled or run on the judge. FA3 is a warp-specialized ping-pong kernel with intra-warpgroup softmax/MMA overlap. A non-WS core that serializes QK wgmma, softmax and PV wgmma will probably land at 0.95-1.4x FA3, so the most likely outcome is M0 plus every class gated to FA3. That is still a useful measurement, because the per-class ratios set stage 2's design (WS/ping-pong). Secondary risks: prepare() time (about 40 s build, then the self-checks, then 5 classes x 2 kernels x >=20 cold-L2 graph replays, with ctx65536 first_turn ~8 ms each) has to stay well inside 300 s and the 15-minute run, given master's existing prepare cost. The synthetic gate inputs should use dist=soft per-batch length spread at turn_4 so split/causal balance matches the judge.
+
+### Confounders on the current kernel
+- none material: all four landed hypotheses (stack-tonight-five-prefill, sglang-pipeline-parity, experts-triton-w4a16-first-turn-blockt256, experts-hybrid-marlin-turn-triton-first-turn) touch router/align/experts/silu-mul, which run after attention. Master's side stream starts after attn_boundary, so nothing overlaps the FA3 call. REWRITE_READ confirms master's attention code is unchanged.
+- sglang-pipeline-parity defines the incumbent FA3 call (paged page_size 1, scheduler_metadata None on prefill, FlashAttnFwdCombine). The new kernel and the gate must compare against exactly that call, including its combine, which the change already specifies.
+
+### Interference and A/B needs
+No companion is warranted. The change touches only the full-layer attention call, and the code it replaces is identical on master and on the old base. The hard gate makes each class's decision self-attributing: the log prints FA3 us, new us and the ratio per class, and the profile shows which kernel ran. The only internal sub-change worth isolating, exp offload, is already removed (0/8). No landed hypothesis shares this kernel's launch sequence, memory traffic or numerics, so an ab-revert or ab-tune would measure nothing new. For a rewrite, the next stage is the follow-up.
+
+### Open questions
+- Does the user want to confirm with the organizers whether a multiprocessing child used only inside prepare() counts as 'starts processes'? Until confirmed, treat it as forbidden. Record it in PENDING_USER.md rather than blocking.
+- What is master's current prepare() wall time? The gate's 5 classes x 2 kernels x >=20 cold-L2 replays plus a ~40 s nvcc build must fit inside 300 s, alongside the queued CUDA expert rewrite if the two are ever stacked.
+- Does the ported wgmma core use a 128-row Q tile per warpgroup with K/V double-buffered via cp.async or TMA? If K/V loads are synchronous with the wgmma, the ratio will be ~1.3x+ and stage 2 must go warp-specialized. Read the GATE ratios with that in mind.
+
