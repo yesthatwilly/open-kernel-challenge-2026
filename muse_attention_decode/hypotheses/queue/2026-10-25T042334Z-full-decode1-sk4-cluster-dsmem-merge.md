@@ -43,8 +43,10 @@ kind: rewrite
 controls_for: null
 rewrite_stage: 4
 replaces: "full decode batch 1: master splitkv_attn_sk_kernel two-level global ticket (grid SM)"
-review: required
+review: proceed
 status: queued
+review_at: 2026-10-25T043142Z
+review_companions: null
 ---
 
 # full-decode1-sk4-cluster-dsmem-merge
@@ -71,3 +73,26 @@ shape (profile top_kernels) against the incumbent and the speed-of-light floor, 
 2. at or below the incumbent kernels' time on the target shapes;
 3. within ~1.5x of the floor on the target shapes, and the headline CI clears 1.0 (promotable).
 The next stage is minted with `--kind rewrite --depends-on <this slug> --stage N+1`.
+
+## Adversarial review
+
+Reviewed 2026-10-25T043142Z by an adversarial subagent (model opus).
+
+**Verdict: proceed.** A sound stage 4 for the full decode_1 rewrite: replacing the first global ticket level with a DSMEM cluster merge is physically cheaper and has no rules risk. As written, though, it only times grid ~SM, and at C=2 and C=4 its single global level is longer than the landed second level. Add grid-2xSM cluster variants and a two-level-over-clusters option so the prepare can find the real win.
+
+### Justification
+Mechanism: the stage-3 diagnostic (REWRITE_READ 03:41Z) prices the merge structure directly. Single-level at grid SM ran 34.8 us and two-level 23.1 us, so serial slot reads cost ~0.1 us per 4.2 KB slot (11.7 us over ~109 fewer serial reads). The landed chain is ~12 group-slot reads plus ~11 final reads plus two fence/atomic rounds. The proposal is C-1 DSMEM peer reads plus grid/C global reads plus one fence/atomic. That gives C=8 -> 16 global reads (a clear cut), C=4 -> 33 (about equal to today's 23 plus one fence) and C=2 -> 66 (worse). So only C=8 shortens the chain, and the expected 18.6 -> 15.5 us (-3 us) is more than the whole merge chain is worth at 0.1 us/slot (~2.3 us plus two fences). WEAKEST LINK: the claim that the merge chain is the B=1 limiter. 20.5 MB in 18.6 us at grid SM means 1 CTA/SM with a 4-stage 16 KB ring, half the bytes in flight of the 2-CTA/SM B=16 config that reaches 3 TB/s. Bytes in flight at 1 CTA/SM explains most of the gap to the 4.3 us floor. grid 2xSM lost in stage 3 (24.7 vs 23.1) because it doubled the partials the global merge chain reads, and a cluster merge removes exactly that cost. The design's real upside is therefore cluster merge plus grid 2xSM (264 CTAs, C=8 -> 33 cluster partials), which the hypothesis does not time. Co-scheduling: tickets are last-arrival and never spin, so non-resident clusters cannot deadlock. barrier.cluster is intra-cluster and co-scheduled by hardware, so the design is safe at any grid. Milestones are readable from the profile row (sk kernel time on full decode_1). M3 (<=1.5x of 4.3 us) is not reachable this stage and needs the bytes-in-flight fix.
+
+### Confounders on the current kernel
+- full-decode1-streamk-s3-two-level-ticket (c3c1b01): this is the incumbent being replaced. B=1 grid and variant selection live in _full_decode_sk (variant 3, grid SM), and the change must leave B>1 (variant 0) byte-identical. Read the result only on the full decode_1 sk-kernel row.
+- full-decode-splitkv-s2-streamk-ticket-inproc (landed inside c3c1b01): it shares splitkv_attn_sk_kernel and its smem layout (95264 B, 2 CTAs/SM). A cluster launch attribute on the B=1 instantiation must not change B>1 regs/smem, so print attrs for every variant and compare with the landed log (ticket 119-121 regs).
+- In flight, not landed: full-decode-splitkv-s3-fused-preattn edits the same TU for B>1, and full-decode1-sk-pdl-from-preattn edits the same B=1 launch. Neither confounds a run against master, but sk4 + PDL must later share one cudaLaunchKernelEx (cluster dim + programmatic serialization attributes are compatible).
+
+### Interference and A/B needs
+No companion. This is a rewrite stage, its prepare already times every C against the landed two-level kernel on the same input, and PATH CHOSEN names what ran. A gain or flat on the full decode_1 row is attributable to the chosen variant. The grid/merge-shape ambiguity is better handled inside the prepare (extra variants) than with a second check.
+
+### Open questions
+- BUILDER: extend the prepare matrix to grid 2xSM (264 CTAs, C=4 and C=8, co-residency permitting; print cudaOccupancyMaxActiveClusters per C at 95 KB smem and 2 CTAs/SM). Also time, for C in {2,4}, a 'cluster merge + group ticket over cluster partials' variant (Gs = ceil(sqrt(grid/C))). A single global level over 33-66 cluster slots is no shorter than the landed 12+11 chain. Choose by the printed timings, with the 3% bar as written.
+- BUILDER: confirm that a cluster launch keeps 2 CTAs/SM at 95264 B smem. If clusters force 1 CTA/SM at grid 2xSM, print it and say so in PATH CHOSEN.
+- If no variant clears 3%, the kill note should record whether grid 2xSM + C=8 closed the gap. That tells whether stage 5 is bytes-in-flight (more stages or 2 CTAs/SM at B=1) rather than per-phase stamps.
+
