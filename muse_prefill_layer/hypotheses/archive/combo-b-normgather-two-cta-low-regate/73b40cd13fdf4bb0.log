@@ -1,0 +1,76 @@
+
+[rega] [V32 T=1024 local prenorm] rega_kernel<w2> done (1062 us eager)
+[rega-lo] V32 self-check T=1024 local prenorm (fused norm-gather): 8192 local routes, 32 experts (max 288 routes), 273 chunks (max 9 per expert); align2 chunk 512, tables == _align_parallel True, tiles equal True; rel L2 7.448e-04 worst row 2.742e-03; master rega 7.448e-04 (LO vs master 0.00e+00); marlin 5.619e-03; bound 1.124e-02; finite True; error word 0 (ok); markers w13 0x57474d4d w2 0x57474d4d
+[rega] copy B: bank 0x135d34000000 vs A 0x135ebc000000, err 0x13614bf38a00 vs A 0x13614bf07c00 (shared: False)
+[rega] copy C: bank 0x135d10000000 vs A 0x135ebc000000, err 0x13614bf3be00 vs A 0x13614bf07c00 (shared: False)
+[rega] replay T=300 random state A: rega rel L2 5.222e-04 worst row 1.458e-03; marlin 5.632e-03; bound 1.126e-02; error word 0; launch markers w13 yes w2 yes
+[rega] replay T=300 random state B: rega rel L2 5.521e-04 worst row 1.361e-03; marlin 5.634e-03; bound 1.127e-02; error word 0; launch markers w13 yes w2 yes
+[rega] replay T=300 random state C: rega rel L2 5.313e-04 worst row 1.973e-03; marlin 5.608e-03; bound 1.122e-02; error word 0; launch markers w13 yes w2 yes
+[rega] replay T=300 random state A: rega rel L2 5.300e-04 worst row 1.345e-03; marlin 5.594e-03; bound 1.119e-02; error word 0; launch markers w13 yes w2 yes
+[rega] replay T=300 random state B: rega rel L2 4.905e-04 worst row 1.681e-03; marlin 5.652e-03; bound 1.130e-02; error word 0; launch markers w13 yes w2 yes
+[rega] replay T=300 skewed state A: rega rel L2 6.363e-04 worst row 1.852e-03; marlin 5.645e-03; bound 1.129e-02; error word 0; launch markers w13 yes w2 yes
+[rega] replay T=300 skewed state B: rega rel L2 6.668e-04 worst row 1.781e-03; marlin 5.650e-03; bound 1.130e-02; error word 0; launch markers w13 yes w2 yes
+[rega] replay T=300 skewed state C: rega rel L2 6.577e-04 worst row 1.622e-03; marlin 5.639e-03; bound 1.128e-02; error word 0; launch markers w13 yes w2 yes
+[rega] replay T=300 skewed state A: rega rel L2 6.456e-04 worst row 1.316e-03; marlin 5.631e-03; bound 1.126e-02; error word 0; launch markers w13 yes w2 yes
+[rega] replay T=300 skewed state B: rega rel L2 6.988e-04 worst row 1.794e-03; marlin 5.646e-03; bound 1.129e-02; error word 0; launch markers w13 yes w2 yes
+[rega] replay T=300 one state A: rega rel L2 4.770e-04 worst row 1.800e-03; marlin 5.557e-03; bound 1.111e-02; error word 0; launch markers w13 yes w2 yes
+[rega] replay T=300 one state B: rega rel L2 4.665e-04 worst row 1.661e-03; marlin 5.571e-03; bound 1.114e-02; error word 0; launch markers w13 yes w2 yes
+[rega] replay T=300 one state C: rega rel L2 5.142e-04 worst row 2.321e-03; marlin 5.571e-03; bound 1.114e-02; error word 0; launch markers w13 yes w2 yes
+[rega] replay T=300 one state A: rega rel L2 4.551e-04 worst row 1.706e-03; marlin 5.581e-03; bound 1.116e-02; error word 0; launch markers w13 yes w2 yes
+[rega] replay T=300 one state B: rega rel L2 4.550e-04 worst row 1.878e-03; marlin 5.567e-03; bound 1.113e-02; error word 0; launch markers w13 yes w2 yes
+[rega] replay T=753 random state A: rega rel L2 5.076e-04 worst row 1.642e-03; marlin 5.626e-03; bound 1.125e-02; error word 0; launch markers w13 yes w2 yes
+[rega] replay T=753 random state B: rega rel L2 5.378e-04 worst row 1.825e-03; marlin 5.617e-03; bound 1.123e-02; error word 0; launch markers w13 yes w2 yes
+[rega] replay T=753 random state C: rega rel L2 5.669e-04 worst row 2.122e-03; marlin 5.626e-03; bound 1.125e-02; error word 0; launch markers w13 yes w2 yes
+[rega] replay T=753 random state A: rega rel L2 5.209e-04 worst row 1.712e-03; marlin 5.617e-03; bound 1.123e-02; error word 0; launch markers w13 yes w2 yes
+[rega] replay T=753 random state B: rega rel L2 5.507e-04 worst row 2.366e-03; marlin 5.628e-03; bound 1.126e-02; error word 0; launch markers w13 yes w2 yes
+[rega] replay T=753 skewed state A: rega rel L2 6.617e-04 worst row 1.627e-03; marlin 5.641e-03; bound 1.128e-02; error word 0; launch markers w13 yes w2 yes
+[rega] replay T=753 skewed state B: rega rel L2 6.646e-04 worst row 2.036e-03; marlin 5.641e-03; bound 1.128e-02; error word 0; launch markers w13 yes w2 yes
+[rega] replay T=753 skewed state C: rega rel L2 6.630e-04 worst row 1.743e-03; marlin 5.645e-03; bound 1.129e-02; error word 0; launch markers w13 yes w2 yes
+[rega] replay T=753 skewed state A: rega rel L2 6.716e-04 worst row 1.426e-03; marlin 5.645e-03; bound 1.129e-02; error word 0; launch markers w13 yes w2 yes
+[rega] replay T=753 skewed state B: rega rel L2 6.643e-04 worst row 1.562e-03; marlin 5.637e-03; bound 1.127e-02; error word 0; launch markers w13 yes w2 yes
+[rega] replay T=753 one state A: rega rel L2 4.732e-04 worst row 1.780e-03; marlin 5.557e-03; bound 1.111e-02; error word 0; launch markers w13 yes w2 yes
+[rega] replay T=753 one state B: rega rel L2 5.164e-04 worst row 1.828e-03; marlin 5.564e-03; bound 1.113e-02; error word 0; launch markers w13 yes w2 yes
+[rega] replay T=753 one state C: rega rel L2 5.222e-04 worst row 1.719e-03; marlin 5.568e-03; bound 1.114e-02; error word 0; launch markers w13 yes w2 yes
+[rega] replay T=753 one state A: rega rel L2 4.879e-04 worst row 1.775e-03; marlin 5.563e-03; bound 1.113e-02; error word 0; launch markers w13 yes w2 yes
+[rega] replay T=753 one state B: rega rel L2 5.004e-04 worst row 2.222e-03; marlin 5.563e-03; bound 1.113e-02; error word 0; launch markers w13 yes w2 yes
+[rega] replay T=753 pop:2.2 state A: rega rel L2 6.066e-04 worst row 1.548e-03; marlin 5.629e-03; bound 1.126e-02; error word 0; launch markers w13 yes w2 yes
+[rega] replay T=753 pop:2.2 state B: rega rel L2 5.790e-04 worst row 1.780e-03; marlin 5.630e-03; bound 1.126e-02; error word 0; launch markers w13 yes w2 yes
+[rega] replay T=753 pop:2.2 state C: rega rel L2 5.985e-04 worst row 1.671e-03; marlin 5.636e-03; bound 1.127e-02; error word 0; launch markers w13 yes w2 yes
+[rega] replay T=753 pop:2.2 state A: rega rel L2 5.963e-04 worst row 1.937e-03; marlin 5.626e-03; bound 1.125e-02; error word 0; launch markers w13 yes w2 yes
+[rega] replay T=753 pop:2.2 state B: rega rel L2 6.040e-04 worst row 1.717e-03; marlin 5.633e-03; bound 1.127e-02; error word 0; launch markers w13 yes w2 yes
+[rega-lo] LAUNCHED = V32: 35 refilled graph replays over states A, B (deepcopy), C (tensor clone) at [(300, ('random', 'skewed', 'one')), (753, ('random', 'skewed', 'one', 'pop:2.2'))]; LAUNCHED = rega on 35/35 (both launch markers); worst rel L2 6.99e-04 (incumbent 5.65e-03)
+[rega-lo] V32 two-state prenorm (fused norm-gather) replay check T=753: worst rel L2 vs the non-fused LO block 1.82e-04 (bound 1e-3)
+[rega-lo] checks done at prepare 139.7s; passed ['V64', 'V32']
+[rega-lo] LOW GATE random T=753 random (752 local routes = 1.01x random, 32 experts, max 33 routes/expert): master block 475.0 us (ratio vs master 1.000); KERNELS w13 303.4 us 1.99 TB/s, w2 148.7 us 2.03 TB/s; chunks 32 (max 1 per expert); grid 132
+[rega-lo] LOW GATE random T=753 random (752 local routes = 1.01x random, 32 experts, max 33 routes/expert): V64 block 417.0 us (ratio vs master 0.878); KERNELS w13 263.5 us 2.29 TB/s, w2 129.1 us 2.34 TB/s; chunks 32 (max 1 per expert); grid 264
+[rega-lo] LOW GATE random T=753 random (752 local routes = 1.01x random, 32 experts, max 33 routes/expert): V32 block 414.8 us (ratio vs master 0.873); KERNELS w13 260.5 us 2.32 TB/s, w2 131.3 us 2.30 TB/s; chunks 33 (max 2 per expert); grid 264
+[rega-lo] LOW GATE guard T=753 pop:2.2 (1380 local routes = 1.86x random, 32 experts, max 228 routes/expert): master block 543.4 us (ratio vs master 1.000); KERNELS w13 344.2 us 1.75 TB/s, w2 173.1 us 1.75 TB/s; chunks 33 (max 2 per expert); grid 132
+[rega-lo] LOW GATE guard T=753 pop:2.2 (1380 local routes = 1.86x random, 32 experts, max 228 routes/expert): V64 block 562.1 us (ratio vs master 1.035); KERNELS w13 355.8 us 1.70 TB/s, w2 178.0 us 1.70 TB/s; chunks 39 (max 4 per expert); grid 264
+[rega-lo] LOW GATE guard T=753 pop:2.2 (1380 local routes = 1.86x random, 32 experts, max 228 routes/expert): V32 block 718.0 us (ratio vs master 1.321); KERNELS w13 457.9 us 1.32 TB/s, w2 232.6 us 1.30 TB/s; chunks 58 (max 8 per expert); grid 264
+[rega-lo] LOW GATE verdict (norm-gather-ON block): no candidate at <= 0.95 random AND <= 1.0 guard (random, guard ratios {'V64': (0.878, 1.035), 'V32': (0.873, 1.321)}): master kept
+[rega-lo] LOW GATE diag 1.2x T=753 pop:1.2 (864 local routes = 1.16x random, 32 experts, max 152 routes/expert): master block 495.6 us (ratio vs master 1.000); KERNELS w13 317.2 us 1.90 TB/s, w2 154.8 us 1.95 TB/s; chunks 33 (max 2 per expert); grid 132
+[rega-lo] LOW GATE diag 1.2x T=753 pop:1.2 (864 local routes = 1.16x random, 32 experts, max 152 routes/expert): V64 block 491.1 us (ratio vs master 0.991); KERNELS w13 302.3 us 2.00 TB/s, w2 163.5 us 1.85 TB/s; chunks 36 (max 3 per expert); grid 264
+[rega-lo] LOW GATE diag 1.5x T=753 pop:1.6 (1080 local routes = 1.46x random, 32 experts, max 183 routes/expert): master block 530.0 us (ratio vs master 1.000); KERNELS w13 337.9 us 1.79 TB/s, w2 166.5 us 1.81 TB/s; chunks 33 (max 2 per expert); grid 132
+[rega-lo] LOW GATE diag 1.5x T=753 pop:1.6 (1080 local routes = 1.46x random, 32 experts, max 183 routes/expert): V64 block 512.6 us (ratio vs master 0.967); KERNELS w13 316.8 us 1.91 TB/s, w2 170.7 us 1.77 TB/s; chunks 37 (max 3 per expert); grid 264
+[rega-lo] SKEW CURVE 1.0x 0.878 1.2x 0.991 1.5x 0.967 1.8x 1.035 (V64 block / master block; 1.0x: 752 routes (1.01x), 32 experts, max 33 routes/expert, max 1 chunks/expert; 1.2x: 864 routes (1.16x), 32 experts, max 152 routes/expert, max 3 chunks/expert; 1.5x: 1080 routes (1.46x), 32 experts, max 183 routes/expert, max 3 chunks/expert; 1.8x: 1380 routes (1.86x), 32 experts, max 228 routes/expert, max 4 chunks/expert)
+[align2] GATE bsm 16 low T=753 cold-L2 graph medians over 15 alternations (empty-graph baseline subtracted): master 18.0 us; chunk 512 9.1 us; chunk 1024 21.7 us; chunk chosen 512 ratio 0.505 (ON at <= 0.98), fill dist: ON
+[align2] GATE bsm 16 high T=3012 cold-L2 graph medians over 15 alternations (empty-graph baseline subtracted): master 68.7 us; chunk 512 8.8 us; chunk 1024 21.7 us; chunk chosen 512 ratio 0.128 (ON at <= 0.98), fill dist: ON
+[align2] GATE bsm 16 ft T=16384 cold-L2 graph medians over 15 alternations (empty-graph baseline subtracted): master 392.2 us; chunk 512 26.7 us; chunk 1024 22.9 us; chunk chosen 1024 ratio 0.058 (ON at <= 0.98), fill dist: ON
+[align2] PATH CHOSEN: bsm:class 16:ft: two-phase chunk 1024, fill dist; bsm:class 16:high: two-phase chunk 512, fill dist; bsm:class 16:low: two-phase chunk 512, fill dist (every other (bsm, class): master _align_parallel; rega path only; Marlin / ssdq keep master's align)
+[fa3 contig] GATE first_turn b1 L16384 ctx65536: paged 8025.4 us, contig-varlen 7627.2 us, contig-batched n/a us (gather alone 16.7 us; bar 0.98 x paged, best/paged 0.950) -> B
+[fa3 contig] GATE first_turn b1 L16384 ctx32768: paged 4465.9 us, contig-varlen 4246.7 us, contig-batched n/a us (gather alone 12.5 us; bar 0.98 x paged, best/paged 0.951) -> B
+[fa3 contig] GATE first_turn b1 L16384 ctx0: paged 900.9 us, contig-varlen 862.4 us, contig-batched n/a us (gather alone 8.6 us; bar 0.98 x paged, best/paged 0.957) -> B
+[fa3 contig] GATE turn_4 b4 L753 ctx80000: paged 1631.9 us, contig-varlen 1589.9 us, contig-batched n/a us (gather alone 49.1 us; bar 0.97 x paged, best/paged 0.974) -> A
+[fa3 contig] GATE turn_1 b1 L753 ctx80000: paged 425.4 us, contig-varlen 418.8 us, contig-batched n/a us (gather alone 16.6 us; bar 0.97 x paged, best/paged 0.984) -> A
+[fa3 contig] PATH CHOSEN (full layers, page_size 1; sliding, page 64, scaled and untimed shapes run master's paged FA3): first_turn b1 L16384 ctx65536: B; first_turn b1 L16384 ctx32768: B; first_turn b1 L16384 ctx0: B; turn_4 b4 L753 ctx80000: A; turn_1 b1 L753 ctx80000: A; setup 1.0s, prepare total 106.1s
+[rega-lo] guard routing at T=753: alpha 2.2 -> 1356 local routes (target 1350, the TASK.md floor-implied judge turn_1 load) = 1.83x the uniform 742; calibration 1:725, 1.1:827, 1.2:891, 1.3:932, 1.4:987, 1.5:998, 1.6:1114, 1.7:1150, 1.8:1194, 1.9:1266, 2:1290, 2.1:1338, 2.2:1356, 2.3:1416, 2.4:1485, 2.5:1534, 2.6:1567, 2.7:1625, 2.8:1665, 2.9:1676, 3:1725
+[rega-lo] LOW GATE random T=753 random (752 local routes = 1.01x random, 32 experts, max 33 routes/expert): master block 475.0 us (ratio vs master 1.000); KERNELS w13 303.4 us 1.99 TB/s, w2 148.7 us 2.03 TB/s; chunks 32 (max 1 per expert); grid 132
+[rega-lo] LOW GATE random T=753 random (752 local routes = 1.01x random, 32 experts, max 33 routes/expert): V64 block 417.0 us (ratio vs master 0.878); KERNELS w13 263.5 us 2.29 TB/s, w2 129.1 us 2.34 TB/s; chunks 32 (max 1 per expert); grid 264
+[rega-lo] LOW GATE random T=753 random (752 local routes = 1.01x random, 32 experts, max 33 routes/expert): V32 block 414.8 us (ratio vs master 0.873); KERNELS w13 260.5 us 2.32 TB/s, w2 131.3 us 2.30 TB/s; chunks 33 (max 2 per expert); grid 264
+[rega-lo] LOW GATE guard T=753 pop:2.2 (1380 local routes = 1.86x random, 32 experts, max 228 routes/expert): master block 543.4 us (ratio vs master 1.000); KERNELS w13 344.2 us 1.75 TB/s, w2 173.1 us 1.75 TB/s; chunks 33 (max 2 per expert); grid 132
+[rega-lo] LOW GATE guard T=753 pop:2.2 (1380 local routes = 1.86x random, 32 experts, max 228 routes/expert): V64 block 562.1 us (ratio vs master 1.035); KERNELS w13 355.8 us 1.70 TB/s, w2 178.0 us 1.70 TB/s; chunks 39 (max 4 per expert); grid 264
+[rega-lo] LOW GATE guard T=753 pop:2.2 (1380 local routes = 1.86x random, 32 experts, max 228 routes/expert): V32 block 718.0 us (ratio vs master 1.321); KERNELS w13 457.9 us 1.32 TB/s, w2 232.6 us 1.30 TB/s; chunks 58 (max 8 per expert); grid 264
+[rega-lo] LOW GATE verdict (norm-gather-ON block): no candidate at <= 0.95 random AND <= 1.0 guard (random, guard ratios {'V64': (0.878, 1.035), 'V32': (0.873, 1.321)}): master kept
+[rega-lo] SKEW CURVE 1.0x 0.878 1.2x 0.991 1.5x 0.967 1.8x 1.035 (V64 block / master block; 1.0x: 752 routes (1.01x), 32 experts, max 33 routes/expert, max 1 chunks/expert; 1.2x: 864 routes (1.16x), 32 experts, max 152 routes/expert, max 3 chunks/expert; 1.5x: 1080 routes (1.46x), 32 experts, max 183 routes/expert, max 3 chunks/expert; 1.8x: 1380 routes (1.86x), 32 experts, max 228 routes/expert, max 4 chunks/expert)
+[rega-lo] phase took 33.2s; prepare total 139.9s; combination A's flags (echo for the log tail): rega_ok {'low': True, 'high': True, 'ft': True}, norm_gather_ok {'low': True, 'high': True, 'ft': True}, ssdq_ok True
+[rega-lo] PATH CHOSEN low: master (variant 0, grid 132; T in (200, 1024] where low-class rega is ON; every other T as combination A)

@@ -78,10 +78,10 @@ priority: 1
 kind: primary
 controls_for: null
 review: proceed
-status: running
+status: done
 review_at: 2026-10-25T161800Z
 review_companions: null
-stage: dispatched
+stage: harvested
 claimed_at: 2026-10-25T161800Z
 base_sha: 848b2c2e1405318d09d245e2d959487d1742f8c0
 base_blob: 9fb1f7c4b4282dd7461c6cdba926fe3ebf12128e
@@ -100,6 +100,13 @@ attempt_file: 2026-10-25T163415Z-submit-combo-b-normgather-two-cta-low-regate.md
 prepared_at: 2026-10-25T163415Z
 job: 73b40cd13fdf4bb0
 dispatched_at: 2026-10-25T163423Z
+outcome: neutral
+verdict_detail: unproven-vs-best
+speedup: 1.4677493909229
+speedup_ci: [1.4457331500590564, 1.4897656317867434]
+harvested_at: 2026-10-25T185517Z
+best_at_harvest: 1.4604901800994607
+promotion: null
 ---
 
 # combo-b-normgather-two-cta-low-regate
@@ -259,3 +266,31 @@ Audited 2026-10-25 by an Opus subagent, by reading the code and running offline 
 - **kernel_fn.** It only adds `state.get` of the two plain ints (`int(...)`) and a shape test. okc_lint reports OK with warnings (prepare-only syncs). py_compile OK; __pycache__ removed.
 
 **Residual risk:** the guard is likely near parity (around 1.00) at about 1350 routes, so the gate may keep master and make B identical to A. The new module's nvcc compile is unverified offline.
+
+## Result
+
+- job `73b40cd13fdf4bb0` (submit), status done, passed True, tests 5/5
+- speedup 1.4677x, 95% CI [1.4457, 1.4898], score 263944.1735733959 µs vs SGLang 387403.9 µs
+- best at harvest: {"speedup": 1.4604901800994607, "ci": [1.4385828273979688, 1.4823975328009524], "job": "9bfc488c36c84924"}; base result: muse_prefill_layer/hypotheses/done/neutral/fa3-full-contiguous-kv-triton-gather-gated.result.json
+- **outcome: neutral** (unproven-vs-best)
+- files: `muse_prefill_layer/hypotheses/done/neutral/combo-b-normgather-two-cta-low-regate.result.json`, `muse_prefill_layer/hypotheses/done/neutral/combo-b-normgather-two-cta-low-regate.patch`; branch `hyp/muse_prefill_layer/combo-b-normgather-two-cta-low-regate`
+
+## Attribution
+
+| shape | w | base µs | hyp µs | delta | verdict |
+|---|---|---|---|---|---|
+| batch=1 ctx=80000 dist=soft layer=sliding load=turn_1 page=1 q_len=753 repeats=6 | 46 | 720.18 | 756.7 | 0.9939 | flat |
+| batch=1 ctx=80000 dist=soft layer=full load=turn_1 page=1 q_len=753 repeats=6 | 16 | 1132.2 | 1150.28 | 1.0033 | flat |
+| batch=4 ctx=80000 dist=soft layer=sliding load=turn_4 page=1 q_len=753 repeats=6 | 46 | 2152.68 | 2197.82 | 1.017 | flat |
+| batch=4 ctx=80000 dist=soft layer=full load=turn_4 page=1 q_len=753 repeats=6 | 16 | 3701.15 | 3744.83 | 1.0093 | flat |
+| batch=1 ctx=0 dist=soft layer=full load=first_turn page=1 q_len=16384 repeats=6 | 16 | 11852.94 | 11889.83 | 1.0035 | flat |
+| batch=1 ctx=32768 dist=soft layer=sliding load=first_turn page=1 q_len=16384 repeats=6 | 138 | 10947.18 | 11119.71 | 1.0063 | flat |
+| batch=1 ctx=32768 dist=soft layer=full load=first_turn page=1 q_len=16384 repeats=6 | 16 | 15058.23 | 15073.37 | 1.0025 | flat |
+| batch=1 ctx=65536 dist=soft layer=full load=first_turn page=1 q_len=16384 repeats=6 | 16 | 18490.87 | 18589.69 | 1.0093 | flat |
+
+no shape moved outside noise. Expected hit: 0/4. Noise ±1.5%.
+
+## Follow-ups
+
+- unproven-vs-best: the change is not proven either way; a stacked hypothesis (`depends_on: combo-b-normgather-two-cta-low-regate`) that adds a further change in the same area is the only way to learn more (identical code is never re-run).
+
