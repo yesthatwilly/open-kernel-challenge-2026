@@ -39,7 +39,7 @@ review: proceed
 status: running
 review_at: 2026-10-25T003958Z
 review_companions: null
-stage: implemented
+stage: dispatched
 claimed_at: 2026-10-25T003958Z
 base_sha: 475f0ab5e572555bb2f4a4398a88bef1075a71ec
 base_blob: c6854f093588da524e63657576b27ed720756e32
@@ -56,6 +56,8 @@ submission_blob: 226b4fca72a4d3ae8e6959e40ed84c7eee7ba72f
 lint_warnings: 0
 attempt_file: 2026-10-25T004113Z-check-sliding-verify-fa3-head-pairing.md
 prepared_at: 2026-10-25T004113Z
+job: 031731b5db294a92
+dispatched_at: 2026-10-25T004152Z
 ---
 
 # sliding-verify-fa3-head-pairing
