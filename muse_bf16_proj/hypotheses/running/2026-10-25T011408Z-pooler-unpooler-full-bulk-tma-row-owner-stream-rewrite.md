@@ -112,7 +112,7 @@ base_sha: 0a2ef67eeb9be9dce45fed1c5dd5f4e4ba19537c
 base_blob: a8bb42ac483318e9fbc84bc7826a27b7a704d1fb
 branch: hyp/muse_bf16_proj/pooler-unpooler-full-bulk-tma-row-owner-stream-rewrite
 worktree: .worktrees/muse_bf16_proj/pooler-unpooler-full-bulk-tma-row-owner-stream-rewrite
-mode: null
+mode: check
 restack_of: null
 stale_base: null
 implemented_at: 2026-10-25T013044Z
@@ -121,6 +121,8 @@ submission_sha256: e3be58e99a878b9745064dffce48610469ac7a3514a4d4cb17fa29f220387
 norm_sha256: 8351dff8dad39fc74cd23459227806d7ffece8ede107bd30fd917439f39f7225
 submission_blob: d2ef0372de1f177e26ce1a1a4f578a993b4fa98c
 lint_warnings: 9
+attempt_file: 2026-10-25T013045Z-check-pooler-unpooler-full-bulk-tma-row-owner-stream-rewrite.md
+prepared_at: 2026-10-25T013045Z
 ---
 
 # pooler-unpooler-full-bulk-tma-row-owner-stream-rewrite
