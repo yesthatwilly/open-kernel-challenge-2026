@@ -56,9 +56,18 @@ priority: 1
 kind: primary
 controls_for: null
 review: proceed
-status: queued
+status: running
 review_at: 2026-10-25T111210Z
 review_companions: null
+stage: claimed
+claimed_at: 2026-10-25T111210Z
+base_sha: 848976650adeb8a2fc5263b71136dbf192bebf90
+base_blob: 353e3b19a7edd5cb879e202d78097f474bcce207
+branch: hyp/muse_bf16_proj/qkv-swapab-w128-splitk7-one-wave-m32
+worktree: .worktrees/muse_bf16_proj/qkv-swapab-w128-splitk7-one-wave-m32
+mode: null
+restack_of: null
+stale_base: null
 ---
 
 # qkv-swapab-w128-splitk7-one-wave-m32
