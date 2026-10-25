@@ -1,6 +1,6 @@
 # muse_bf16_proj hypotheses
 
-Regenerated 2026-10-25T151051Z. Best: 1.2491x [1.2303,1.2678] job `ee4f89f2f62c42d3` (submit)
+Regenerated 2026-10-25T154445Z. Best: 1.2394x [1.2208,1.2580] job `85c91578cc184287` (check)
 
 | created | slug | kind | area | where | outcome | speedup | CI | job | mode | promotion | review | expected hit |
 |---|---|---|---|---|---|---|---|---|---|---|---|---|
@@ -64,7 +64,13 @@ Regenerated 2026-10-25T151051Z. Best: 1.2491x [1.2303,1.2678] job `ee4f89f2f62c4
 | 2026-10-25T110547Z | qkv-swapab-w128-splitk7-one-wave-m32 | primary | qkv GEMM (m<=32, swap-AB) | done/neutral | neutral | 1.2229 | [1.205,1.241] | c7138fe05598428e | submit |  | proceed | 1/5 |
 | 2026-10-25T110625Z | bf16-verify32-cutlass-coop-256x128-splitk-stage2 | rewrite | bf16 GEMM dispatch (m=129..256, CUTLASS sm90 cooperative split-K) | queue | queued |  |  |  |  |  | required |  |
 | 2026-10-25T145403Z | unpooler-full-m16-swapab16-blockt16 | primary | unpooler GEMM (full width n=8192, m=9..16, swap-AB BLOCK_T 16) | queue | hold |  |  |  |  |  | proceed |  |
-| 2026-10-25T145403Z | pooler-nn-layout-widen-m256 | primary | pooler GEMM (m=129..256, cuBLAS NN layout) | running | running |  |  | 85c91578cc184287 | submit |  | proceed |  |
+| 2026-10-25T145403Z | pooler-nn-layout-widen-m256 | primary | pooler GEMM (m=129..256, cuBLAS NN layout) | done/neutral | neutral | 1.2394 | [1.221,1.258] | 85c91578cc184287 | submit | done | proceed | 5/6 |
+| 2026-10-25T153141Z | bf16-verify16-cutlass-m128-onetile-splitk-rewrite | rewrite | bf16 GEMM dispatch (m=65..128, CUTLASS sm90 one-M-tile split-K) | queue | queued |  |  |  |  |  | required |  |
+| 2026-10-25T153141Z | pooler-k-halves-batched-gemm-m65-m256 | primary | pooler GEMM (m=65..256, K-split as a 2-batch cuBLAS GEMM) | queue | queued |  |  |  |  |  | required |  |
+| 2026-10-25T153141Z | qkv-k-split-batched-gemm-m65-m256 | primary | qkv GEMM (m=65..256, K-split as a batched cuBLAS GEMM) | queue | queued |  |  |  |  |  | required |  |
+| 2026-10-25T153141Z | router-hilo-tall-tile-m65-m256 | primary | router GEMM (m=65..256, hilo tile config) | queue | queued |  |  |  |  |  | required |  |
+| 2026-10-25T153141Z | router-m128-m256-wgmma-swapab-tall-cluster-stage2 | rewrite | router GEMM (m=65..256, CUDA wgmma swap-AB cluster kernel) | queue | queued |  |  |  |  |  | required |  |
+| 2026-10-25T153141Z | unpooler-k-halves-batched-gemm-m65-m128 | primary | unpooler GEMM (full width, m=65..128, K-split as a 2-batch cuBLAS GEMM) | queue | queued |  |  |  |  |  | required |  |
 
 ## Held
 

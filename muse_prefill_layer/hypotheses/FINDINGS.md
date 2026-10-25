@@ -1,21 +1,21 @@
 # muse_prefill_layer findings
 
-Regenerated 2026-10-25T151051Z by `churn.py index`. Read this before writing a hypothesis for muse_prefill_layer.
+Regenerated 2026-10-25T154445Z by `churn.py index`. Read this before writing a hypothesis for muse_prefill_layer.
 
 ## Current best
 
-1.4480x [1.4263,1.4698] from job `bff8e36788a04917` (submit), master commit `1932a9c4fb`, hypothesis align-two-phase-all-t-rega
+1.4587x [1.4368,1.4806] from job `1cc92a43b8be40f8` (submit), master commit `97e792cd86`, hypothesis fa3-full-contiguous-kv-triton-gather-gated
 
 Where the time goes (per scored shape, top kernels):
 
-- batch=1 ctx=80000 dist=soft layer=sliding load=turn_1 page=1 q_len=753 repeats=6: yours 704.4µs vs SGLang 1035.6µs (SoL 257.0µs) · void (anonymous namespace)::rega_kernel<true, false>((ano... 259.3µs 36.1%, nvjet_sm90_tst_128x192_64x5_2x1_v_bz_coopB_TNN 152.3µs 21.2%, void (anonymous namespace)::rega_kernel<false, false>((an... 122.1µs 17.0%
-- batch=1 ctx=80000 dist=soft layer=full load=turn_1 page=1 q_len=753 repeats=6: yours 1097.9µs vs SGLang 1424.1µs (SoL 496.7µs) · void cutlass::device_kernel<flash::enable_sm90_or_later<f... 422.0µs 36.7%, void (anonymous namespace)::rega_kernel<true, false>((ano... 226.4µs 19.7%, nvjet_sm90_tst_128x192_64x5_2x1_v_bz_coopB_TNN 153.1µs 13.3%
-- batch=4 ctx=80000 dist=soft layer=sliding load=turn_4 page=1 q_len=753 repeats=6: yours 2098.4µs vs SGLang 3292.4µs (SoL 1036.3µs) · void (anonymous namespace)::rega_kernel<true, false>((ano... 710.0µs 32.9%, void (anonymous namespace)::rega_kernel<false, false>((an... 343.6µs 15.9%, nvjet_sm90_tst_256x152_64x4_1x2_h_bz_coopA_TNT 322.5µs 14.9%
-- batch=4 ctx=80000 dist=soft layer=full load=turn_4 page=1 q_len=753 repeats=6: yours 3644.6µs vs SGLang 4749.2µs (SoL 1992.4µs) · void cutlass::device_kernel<flash::enable_sm90_or_later<f... 1646.9µs 45.1%, void (anonymous namespace)::rega_kernel<true, false>((ano... 597.9µs 16.4%, nvjet_sm90_tst_256x152_64x4_1x2_h_bz_coopA_TNT 322.5µs 8.8%
-- batch=1 ctx=0 dist=soft layer=full load=first_turn page=1 q_len=16384 repeats=6: yours 12078.5µs vs SGLang 18050.7µs (SoL 5518.4µs) · void (anonymous namespace)::rega_kernel<true, true>((anon... 3850.9µs 31.4%, nvjet_sm90_tst_192x192_64x4_2x1_v_bz_coopB_TNN 2537.5µs 20.7%, void (anonymous namespace)::rega_kernel<false, true>((ano... 1925.1µs 15.7%
-- batch=1 ctx=32768 dist=soft layer=sliding load=first_turn page=1 q_len=16384 repeats=6: yours 11285.6µs vs SGLang 16993.5µs (SoL 5663.4µs) · void (anonymous namespace)::rega_kernel<true, true>((anon... 3734.0µs 32.6%, nvjet_sm90_tst_192x192_64x4_2x1_v_bz_coopB_TNN 2537.3µs 22.2%, void (anonymous namespace)::rega_kernel<false, true>((ano... 1847.8µs 16.1%
-- batch=1 ctx=32768 dist=soft layer=full load=first_turn page=1 q_len=16384 repeats=6: yours 15310.6µs vs SGLang 20851.5µs (SoL 7710.0µs) · void cutlass::device_kernel<flash::enable_sm90_or_later<f... 4524.6µs 28.8%, void (anonymous namespace)::rega_kernel<true, true>((anon... 3764.4µs 23.9%, nvjet_sm90_tst_192x192_64x4_2x1_v_bz_coopB_TNN 2534.6µs 16.1%
-- batch=1 ctx=65536 dist=soft layer=full load=first_turn page=1 q_len=16384 repeats=6: yours 18819.5µs vs SGLang 24072.9µs (SoL 9847.7µs) · void cutlass::device_kernel<flash::enable_sm90_or_later<f... 8004.1µs 42.4%, void (anonymous namespace)::rega_kernel<true, true>((anon... 3555.7µs 18.9%, nvjet_sm90_tst_192x192_64x4_2x1_v_bz_coopB_TNN 2526.3µs 13.4%
+- batch=1 ctx=80000 dist=soft layer=sliding load=turn_1 page=1 q_len=753 repeats=6: yours 720.2µs vs SGLang 1053.1µs (SoL 257.0µs) · void (anonymous namespace)::rega_kernel<true, false>((ano... 249.0µs 35.0%, nvjet_sm90_tst_128x192_64x5_2x1_v_bz_coopB_TNN 154.6µs 21.7%, void (anonymous namespace)::rega_kernel<false, false>((an... 122.9µs 17.3%
+- batch=1 ctx=80000 dist=soft layer=full load=turn_1 page=1 q_len=753 repeats=6: yours 1132.2µs vs SGLang 1476.6µs (SoL 496.7µs) · void cutlass::device_kernel<flash::enable_sm90_or_later<f... 419.5µs 35.4%, void (anonymous namespace)::rega_kernel<true, false>((ano... 259.5µs 21.9%, nvjet_sm90_tst_128x192_64x5_2x1_v_bz_coopB_TNN 163.8µs 13.8%
+- batch=4 ctx=80000 dist=soft layer=sliding load=turn_4 page=1 q_len=753 repeats=6: yours 2152.7µs vs SGLang 3345.8µs (SoL 1036.3µs) · void (anonymous namespace)::rega_kernel<true, false>((ano... 714.7µs 31.8%, void (anonymous namespace)::rega_kernel<false, false>((an... 346.8µs 15.4%, nvjet_sm90_tst_256x152_64x4_1x2_h_bz_coopA_TNT 324.4µs 14.4%
+- batch=4 ctx=80000 dist=soft layer=full load=turn_4 page=1 q_len=753 repeats=6: yours 3701.2µs vs SGLang 4915.1µs (SoL 1992.4µs) · void cutlass::device_kernel<flash::enable_sm90_or_later<f... 1633.5µs 42.3%, void (anonymous namespace)::rega_kernel<true, false>((ano... 735.5µs 19.1%, void (anonymous namespace)::rega_kernel<false, false>((an... 364.3µs 9.4%
+- batch=1 ctx=0 dist=soft layer=full load=first_turn page=1 q_len=16384 repeats=6: yours 11852.9µs vs SGLang 18318.6µs (SoL 5518.4µs) · void (anonymous namespace)::rega_kernel<true, true>((anon... 3756.8µs 31.4%, nvjet_sm90_tst_192x192_64x4_2x1_v_bz_coopB_TNN 2525.0µs 21.1%, void (anonymous namespace)::rega_kernel<false, true>((ano... 1823.2µs 15.2%
+- batch=1 ctx=32768 dist=soft layer=sliding load=first_turn page=1 q_len=16384 repeats=6: yours 10947.2µs vs SGLang 16869.7µs (SoL 5663.4µs) · void (anonymous namespace)::rega_kernel<true, true>((anon... 3515.4µs 31.6%, nvjet_sm90_tst_192x192_64x4_2x1_v_bz_coopB_TNN 2529.1µs 22.7%, void (anonymous namespace)::rega_kernel<false, true>((ano... 1728.0µs 15.5%
+- batch=1 ctx=32768 dist=soft layer=full load=first_turn page=1 q_len=16384 repeats=6: yours 15058.2µs vs SGLang 21376.2µs (SoL 7710.0µs) · void cutlass::device_kernel<flash::enable_sm90_or_later<f... 4265.4µs 28.3%, void (anonymous namespace)::rega_kernel<true, true>((anon... 3499.2µs 23.2%, nvjet_sm90_tst_192x192_64x4_2x1_v_bz_coopB_TNN 2529.9µs 16.8%
+- batch=1 ctx=65536 dist=soft layer=full load=first_turn page=1 q_len=16384 repeats=6: yours 18490.9µs vs SGLang 24765.6µs (SoL 9847.7µs) · void cutlass::device_kernel<flash::enable_sm90_or_later<f... 7669.5µs 41.7%, void (anonymous namespace)::rega_kernel<true, true>((anon... 3467.7µs 18.9%, nvjet_sm90_tst_192x192_64x4_2x1_v_bz_coopB_TNN 2528.8µs 13.8%
 
 ## By area
 
@@ -24,6 +24,9 @@ Where the time goes (per scored shape, top kernels):
 
 ### FA3 call (CUDA sm_90a FP8 prefill flash attention with software-exp offload, stage 1: full layers, page size 1)
 - **attn-full-prefill-cuda-fp8-exp-offload** → regression (regression), 0.8813x — lost on full first_turn, turn_1, turn_4. Replace FA3 (flash_attn_with_kvcache and its FlashAttnFwdCombine) on full-attention prefill layers with a hand-written sm_90a FP8 flash-attention forward kernel
+
+### FA3 call on full-attention layers (KV source: contiguous TMA copy of the paged page-size-1 rows, per-class timing gate)
+- **fa3-full-contiguous-kv-triton-gather-gated** → neutral (unproven-vs-best), 1.4587x — gained on full first_turn. Built on master (commit 1932a9c4, submission blob a2fe2a75). Only the FA3 call on full-attention layers (cfg['window'] == 0) at page_size 1 and kv_scale == 1 ch
 
 ### FA3 call on full-attention layers at page_size 1 (CUDA sm_90a FP8 wgmma flash attention, stage 1b: fix of attn-full-prefill-cuda-fp8-exp-offload with build fix, hard timing gate, no exp offload)
 - **attn-full-prefill-cuda-fp8-wgmma-hard-gate-inproc** → neutral (within-ci), 1.0679x — no shape moved outside noise. BUILDS ON THE CURRENT MASTER (stack-tonight-five-prefill, 1.0705 check / 1.0744 scored; its attention code is unchanged from the old base): start from master's 
@@ -189,6 +192,7 @@ Where the time goes (per scored shape, top kernels):
 - turn-align-two-phase-chunk-prefix: unproven-vs-best: the change is not proven either way; a stacked hypothesis (`depends_on: turn-align-two-phase-chunk-prefix`) that adds a further change in the same area is the only way to learn more (identical code is n
 - align-two-phase-all-t-rega: unproven-vs-best: the change is not proven either way; a stacked hypothesis (`depends_on: align-two-phase-all-t-rega`) that adds a further change in the same area is the only way to learn more (identical code is never re
 - experts-rega-low-class-two-ctas-per-sm: rewrite stage 3 of `rega_kernel<true,false> + rega_kernel<false,false> (NMAX 128, 4 stages, 1 CTA/SM) in the low class 200 < T <= 1024`: read the replaced kernels' own us per shape (profile top_kernels) against the incum
+- fa3-full-contiguous-kv-triton-gather-gated: unproven-vs-best: the change is not proven either way; a stacked hypothesis (`depends_on: fa3-full-contiguous-kv-triton-gather-gated`) that adds a further change in the same area is the only way to learn more (identical 
 
 ## Do not retry (rejected / duplicates)
 
@@ -218,3 +222,11 @@ Where the time goes (per scored shape, top kernels):
 - queue: experts-first-turn-ssdq-s2-large-m [w13 + w2 expert GEMMs at T > 4096 (first_turn T=16384): extend the ssdq dequant-producer + SS wgmma grouped GEMM to large M, replacing the Triton NVFP4 GEMM] p2 hold
 - queue: experts-turn-rega-s4-w2-only-t4096 [w2 expert GEMM only at T <= 4096 (turn_1, turn_4): s4 register-A swap-AB wgmma w2 fed by master's Marlin w13 + _silu_mul_sorted output] p2 hold
 - queue: experts-turn1-ssdq-s2-m64-tile [w13 + w2 expert GEMMs at T <= 1024 (turn_1 T=753): ssdq with a 64-route M tile, one consumer warpgroup per tile, dequant-once per weight stage] p3 hold
+- queue: experts-rega-s4-bm256-wide-tile-high-ft [w13 + w2 expert GEMMs at 1024 < T <= 16384 (rega high + ft classes): 256-weight-row CTA tile with in-warpgroup dequant/MMA overlap] p1 queued
+- queue: attn-full-prefill-wgmma-s2-warpspec-pingpong-expoffload [FA3 call on full-attention layers at page_size 1 (CUDA sm_90a FP8 wgmma flash attention, stage 2: warp-specialized producer, 128-key tiles, intra-WG overlap + ping-pong, gated exp offload)] p2 queued
+- queue: fa3-num-splits-cap-gated-turn [FA3 call (num_splits cap on the paged path at q_len <= 4096, per-class timing gate)] p3 hold
+- queue: boundary-overlap-s1-slice-kernel-ffn-tail [FFN boundary + unpooler GEMM (boundary chunks overlapped under unpooler chunks via a slice-writing boundary kernel)] p2 queued
+- running: experts-rega-pingpong-consumers-all-t [w13 + w2 expert GEMMs (rega_kernel consumer schedule: two-warpgroup ping-pong), every rega class] p1 running
+- running: experts-rega-producer-scale-expand-all-t [w13 + w2 expert GEMMs (rega_kernel dequant: E4M3 scale expansion moved to idle producer warps), every rega class] p2 running
+- running: pre-expert-norm-fused-rega-gather [pre-expert norm (MuseSpark1xRMSNorm) fused into the rega row gather] p1 running
+- running: qkv-gate-columns-side-stream-under-attention [qkv GEMM (output-gate columns split onto the side stream, overlapping qk_norm + cache store + FA3)] p2 running

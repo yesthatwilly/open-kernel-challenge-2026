@@ -1,6 +1,6 @@
 # muse_attention_decode findings
 
-Regenerated 2026-10-25T151051Z by `churn.py index`. Read this before writing a hypothesis for muse_attention_decode.
+Regenerated 2026-10-25T154445Z by `churn.py index`. Read this before writing a hypothesis for muse_attention_decode.
 
 ## Current best
 
@@ -100,6 +100,9 @@ Where the time goes (per scored shape, top kernels):
 ### output norm-gate
 - **paired-norm-gate-token-tiled** → neutral (within-ci), 1.3911x — lost on full decode_32. Regrid master _paired_norm_gate_kernel (the paired full-layer epilogue, which now runs only at full verify_16/32) from one 1-warp program per (token, query head
 
+### output norm-gate (gate operand prefetch in the CUDA epilogues)
+- **epilogue-gate-l2-prefetch-cuda** → neutral (unproven-vs-best), 1.5020x — no shape moved outside noise. Built on current master eb1b68b (no depends_on). Mechanism: both landed CUDA kernels read the output gate logits (qkv row r, bf16 columns (HQ + 2*HKV)*D .. +HQ*
+
 ### page table (sliding)
 - **fa3-window-trimmed-page-table** → regression (regression), 1.1411x — lost on sliding decode_1, decode_16, decode_32, verify_1, verify_16, verify_32. On sliding-window layers only (config window != 0) hand FA3 a window-trimmed view of each request instead of the whole 80K-token context. Let W = window - 1 + L
 
@@ -192,6 +195,7 @@ Where the time goes (per scored shape, top kernels):
 - full-verify1-sk-two-level-token-group: rewrite stage 3 of `full verify batch 1 (q_len 8): prepare_varlen_num_blocks + FA3 main + FlashAttnFwdCombine + norm-gate`: read the replaced kernels' own us per shape (profile top_kernels) against the incumbent and the 
 - sliding-decode-sk-window-route: rewrite stage 2 of `sliding decode (q_len 1, page 1, tp8, 2<=B<=32): master Triton _sliding_fused_kernel (16 splits, in-kernel pre-attention)`: read the replaced kernels' own us per shape (profile top_kernels) against th
 - restack-sliding-decode-sk-window-on-cluster-master: unproven-vs-best: the change is not proven either way; a stacked hypothesis (`depends_on: restack-sliding-decode-sk-window-on-cluster-master`) that adds a further change in the same area is the only way to learn more (id
+- epilogue-gate-l2-prefetch-cuda: unproven-vs-best: the change is not proven either way; a stacked hypothesis (`depends_on: epilogue-gate-l2-prefetch-cuda`) that adds a further change in the same area is the only way to learn more (identical code is neve
 - full-decode-sk-s4-deferred-ticket-arrive: rewrite stage 4 of `full decode 1<B<=64: master splitkv_attn_sk_kernel<4, ticket> single-level in-stream ticket epilogue`: read the replaced kernels' own us per shape (profile top_kernels) against the incumbent and the f
 
 ## Do not retry (rejected / duplicates)
@@ -230,4 +234,9 @@ Where the time goes (per scored shape, top kernels):
 - queue: full-verify1-sk-pseudo-decode [full-layer attention (batch-1 verify, stream-K pseudo-decode)] p3 hold
 - queue: sliding-decode-sk-s3-fused-preattn-rope [sliding-layer attention (decode, stream-K windowed kernel, pre-attention fold)] p2 queued
 - queue: preattention-tiled-every-verify-block [pre-attention norm+rope] p2 queued
-- running: epilogue-gate-l2-prefetch-cuda [output norm-gate (gate operand prefetch in the CUDA epilogues)] p2 running
+- queue: full-decode1-sk-two-level-deep-ring [full-layer attention (batch-1 decode, stream-K ring depth)] p2 queued
+- queue: full-verify-fa3-num-splits-band-gate [FA3 call (full verify split count)] p2 queued
+- queue: full-verify-wgmma-ws-s1-producer-split [full-layer attention (verify, wgmma stream-K kernel, warp-specialized pipeline)] p1 queued
+- queue: sliding-decode1-cluster-per-kvhead [sliding-layer attention (batch-1 decode, cluster kernel work split)] p2 queued
+- queue: sliding-verify-fa3-num-splits-band-gate [FA3 call (sliding verify split count)] p2 queued
+- queue: sliding-verify-wgmma-window-s1 [sliding-layer attention (verify, wgmma stream-K windowed kernel)] p1 queued

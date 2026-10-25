@@ -1,6 +1,6 @@
 # muse_moe_w4a16 hypotheses
 
-Regenerated 2026-10-25T151051Z. Best: 1.3727x [1.3521,1.3933] job `4e4a0e26c85944f2` (submit)
+Regenerated 2026-10-25T154445Z. Best: 1.3727x [1.3521,1.3933] job `4e4a0e26c85944f2` (submit)
 
 | created | slug | kind | area | where | outcome | speedup | CI | job | mode | promotion | review | expected hit |
 |---|---|---|---|---|---|---|---|---|---|---|---|---|
@@ -76,8 +76,14 @@ Regenerated 2026-10-25T151051Z. Best: 1.3727x [1.3521,1.3933] job `4e4a0e26c8594
 | 2026-10-25T125414Z | cuda-nvfp4-wgmma-rega-pingpong-consumers | rewrite | w13 marlin + silu-mul + w2 marlin | queue | queued |  |  |  |  |  | required |  |
 | 2026-10-25T125512Z | cuda-nvfp4-wgmma-rega-producer-scale-expand | rewrite | w13 marlin + silu-mul + w2 marlin | queue | queued |  |  |  |  |  | required |  |
 | 2026-10-25T145952Z | silu-mul-triton-row-tiled-gated | primary | silu-mul | queue | hold |  |  |  |  |  | proceed |  |
-| 2026-10-25T145952Z | align-two-phase-port-from17 | primary | MoE align/dispatch | running | running |  |  | c05a8f7326004be6 | submit |  | proceed |  |
+| 2026-10-25T145952Z | align-two-phase-port-from17 | primary | MoE align/dispatch | done/neutral | neutral | 1.3700 | [1.349,1.391] | c05a8f7326004be6 | submit | done | proceed | 4/6 |
 | 2026-10-25T150301Z | restack-bucket-gate-on-master-align-atomic | primary | expert GEMM path selection (wgmma vs Marlin) restack | queue | hold |  |  |  |  |  | hold |  |
+| 2026-10-25T153417Z | cuda-fused-split-i-moe-midt-cluster-reduce | rewrite | w13 marlin + silu-mul + w2 marlin | queue | queued |  |  |  |  |  | required |  |
+| 2026-10-25T153417Z | cuda-fused-split-i-moe-tiny-t | rewrite | w13 marlin + silu-mul + w2 marlin | queue | queued |  |  |  |  |  | required |  |
+| 2026-10-25T153417Z | wg-pdl-gather-w13-w2-chain | primary | launch overhead | queue | queued |  |  |  |  |  | required |  |
+| 2026-10-25T153417Z | wg-producer-direct-x-rows-no-gather | primary | MoE dispatch (wgmma x gather) | queue | queued |  |  |  |  |  | required |  |
+| 2026-10-25T153417Z | wg-stream-k-tail-split | primary | w13 marlin + silu-mul + w2 marlin | queue | queued |  |  |  |  |  | required |  |
+| 2026-10-25T153417Z | wg-two-ctas-per-sm-port-b128-n32 | primary | w13 marlin + silu-mul + w2 marlin | queue | queued |  |  |  |  |  | required |  |
 
 ## Held
 

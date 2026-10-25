@@ -1,43 +1,43 @@
 # muse_bf16_proj findings
 
-Regenerated 2026-10-25T151051Z by `churn.py index`. Read this before writing a hypothesis for muse_bf16_proj.
+Regenerated 2026-10-25T154445Z by `churn.py index`. Read this before writing a hypothesis for muse_bf16_proj.
 
 ## Current best
 
-1.2491x [1.2303,1.2678] from job `ee4f89f2f62c42d3` (submit), master commit `040fc7e18f`, hypothesis restack-three-cell-wins-router-unpooler-cluster-m8-nn-m128
+1.2394x [1.2208,1.2580] from job `85c91578cc184287` (check), master commit `67b46a57e6`, hypothesis pooler-nn-layout-widen-m256
 
 Where the time goes (per scored shape, top kernels):
 
-- layer=qkv_gate load=decode_1 m=1: yours 12.4µs vs SGLang 13.9µs (SoL 7.9µs) · _bf16_swapab_kernel 9.7µs 100.0%
-- layer=o load=decode_1 m=1: yours 5.9µs vs SGLang 6.7µs (SoL 3.5µs) · _bf16_swapab_kernel 3.9µs 100.0%
-- layer=pooler load=decode_1 m=1: yours 18.7µs vs SGLang 20.9µs (SoL 14.0µs) · _bf16_swapab_kernel 17.9µs 100.0%
-- layer=unpooler load=decode_1 m=1: yours 5.3µs vs SGLang 7.3µs (SoL 1.7µs) · void (anonymous namespace)::ouns_kernel<8, 64, 512, 8, 4>... 4.6µs 100.0%
-- layer=router load=decode_1 m=1: yours 5.1µs vs SGLang 10.5µs (SoL 1.8µs) · void (anonymous namespace)::router_kernel<8, 8>(__nv_bflo... 3.6µs 100.0%
-- layer=qkv_gate load=decode_16 m=16: yours 13.1µs vs SGLang 14.1µs (SoL 7.9µs) · _bf16_swapab_kernel 10.2µs 100.0%
-- layer=o load=decode_16 m=16: yours 6.3µs vs SGLang 6.8µs (SoL 3.6µs) · _bf16_swapab_kernel 4.4µs 100.0%
-- layer=pooler load=decode_16 m=16: yours 18.7µs vs SGLang 20.9µs (SoL 14.1µs) · _bf16_swapab_kernel 19.2µs 100.0%
-- layer=unpooler load=decode_16 m=16: yours 18.6µs vs SGLang 18.4µs (SoL 14.1µs) · nvjet_sm90_tst_64x16_64x16_2x1_v_bz_TNT 17.6µs 100.0%
-- layer=router load=decode_16 m=16: yours 5.6µs vs SGLang 14.8µs (SoL 1.8µs) · _router_swapab_kernel 3.4µs 82.7%, void at::native::vectorized_elementwise_kernel<4, at::nat... 0.7µs 17.3%
-- layer=qkv_gate load=decode_32 m=32: yours 13.9µs vs SGLang 14.3µs (SoL 8.0µs) · _bf16_swapab_kernel 11.5µs 100.0%
-- layer=o load=decode_32 m=32: yours 6.1µs vs SGLang 6.6µs (SoL 3.6µs) · _bf16_swapab_kernel 4.7µs 100.0%
-- layer=pooler load=decode_32 m=32: yours 19.8µs vs SGLang 21.8µs (SoL 14.1µs) · _bf16_swapab_kernel 19.8µs 100.0%
-- layer=unpooler load=decode_32 m=32: yours 18.0µs vs SGLang 18.0µs (SoL 14.1µs) · _bf16_swapab_kernel 18.1µs 100.0%
-- layer=router load=decode_32 m=32: yours 5.7µs vs SGLang 15.1µs (SoL 1.9µs) · _router_swapab_kernel 3.7µs 83.9%, void at::native::vectorized_elementwise_kernel<4, at::nat... 0.7µs 16.1%
-- layer=qkv_gate load=verify_1 m=8: yours 12.5µs vs SGLang 14.1µs (SoL 7.9µs) · _bf16_swapab_kernel 9.7µs 100.0%
-- layer=o load=verify_1 m=8: yours 6.1µs vs SGLang 6.7µs (SoL 3.5µs) · _bf16_swapab_kernel 4.3µs 100.0%
-- layer=pooler load=verify_1 m=8: yours 18.9µs vs SGLang 21.0µs (SoL 14.0µs) · _bf16_swapab_kernel 18.4µs 100.0%
-- layer=unpooler load=verify_1 m=8: yours 5.0µs vs SGLang 6.8µs (SoL 1.8µs) · void (anonymous namespace)::ouns_kernel<8, 64, 512, 8, 4>... 4.8µs 100.0%
-- layer=router load=verify_1 m=8: yours 5.0µs vs SGLang 26.4µs (SoL 1.8µs) · void (anonymous namespace)::router_kernel<8, 8>(__nv_bflo... 3.9µs 100.0%
-- layer=qkv_gate load=verify_16 m=128: yours 16.6µs vs SGLang 16.9µs (SoL 8.4µs) · nvjet_sm90_tst_96x64_64x10_4x2_h_bz_splitK_TNN 12.7µs 80.2%, void cublasLt::splitKreduce_kernel<32, 16, int, float, __... 3.1µs 19.8%
-- layer=o load=verify_16 m=128: yours 7.4µs vs SGLang 7.4µs (SoL 4.0µs) · nvjet_sm90_tst_128x64_64x8_1x2_h_bz_TNT 5.5µs 100.0%
-- layer=pooler load=verify_16 m=128: yours 22.9µs vs SGLang 25.5µs (SoL 14.6µs) · nvjet_sm90_tst_128x64_64x8_1x2_h_bz_splitK_NNT 20.2µs 87.2%, void cublasLt::splitKreduce_kernel<32, 16, int, float, __... 3.0µs 12.8%
-- layer=unpooler load=verify_16 m=128: yours 18.9µs vs SGLang 19.5µs (SoL 14.6µs) · nvjet_sm90_tst_128x64_64x8_1x2_h_bz_NNT 20.4µs 100.0%
-- layer=router load=verify_16 m=128: yours 7.4µs vs SGLang 16.3µs (SoL 2.2µs) · _router_hilo_kernel 5.0µs 86.6%, void at::native::vectorized_elementwise_kernel<4, at::nat... 0.8µs 13.4%
-- layer=qkv_gate load=verify_32 m=256: yours 19.7µs vs SGLang 19.5µs (SoL 9.8µs) · nvjet_sm90_tst_96x64_64x10_2x4_h_bz_TNN 19.9µs 100.0%
-- layer=o load=verify_32 m=256: yours 9.6µs vs SGLang 9.4µs (SoL 4.5µs) · nvjet_sm90_tst_128x128_64x6_2x1_v_bz_TNT 8.2µs 100.0%
-- layer=pooler load=verify_32 m=256: yours 31.3µs vs SGLang 30.9µs (SoL 17.4µs) · nvjet_sm90_tst_128x64_64x8_1x2_h_bz_TNT 30.4µs 100.0%
-- layer=unpooler load=verify_32 m=256: yours 24.5µs vs SGLang 24.2µs (SoL 17.4µs) · nvjet_sm90_tst_128x128_64x6_2x1_v_bz_TNT 24.8µs 100.0%
-- layer=router load=verify_32 m=256: yours 9.3µs vs SGLang 17.5µs (SoL 2.7µs) · _router_hilo_kernel 7.0µs 90.5%, void at::native::vectorized_elementwise_kernel<4, at::nat... 0.7µs 9.5%
+- layer=qkv_gate load=decode_1 m=1: yours 12.7µs vs SGLang 14.1µs (SoL 7.9µs) · _bf16_swapab_kernel 9.6µs 100.0%
+- layer=o load=decode_1 m=1: yours 6.0µs vs SGLang 6.8µs (SoL 3.5µs) · _bf16_swapab_kernel 3.9µs 100.0%
+- layer=pooler load=decode_1 m=1: yours 18.9µs vs SGLang 21.5µs (SoL 14.0µs) · _bf16_swapab_kernel 18.7µs 100.0%
+- layer=unpooler load=decode_1 m=1: yours 4.9µs vs SGLang 6.8µs (SoL 1.7µs) · void (anonymous namespace)::ouns_kernel<8, 64, 512, 8, 4>... 4.5µs 100.0%
+- layer=router load=decode_1 m=1: yours 5.0µs vs SGLang 10.3µs (SoL 1.8µs) · void (anonymous namespace)::router_kernel<8, 8>(__nv_bflo... 3.8µs 100.0%
+- layer=qkv_gate load=decode_16 m=16: yours 13.0µs vs SGLang 13.9µs (SoL 7.9µs) · _bf16_swapab_kernel 9.8µs 100.0%
+- layer=o load=decode_16 m=16: yours 6.0µs vs SGLang 6.7µs (SoL 3.6µs) · _bf16_swapab_kernel 4.2µs 100.0%
+- layer=pooler load=decode_16 m=16: yours 19.1µs vs SGLang 21.4µs (SoL 14.1µs) · _bf16_swapab_kernel 19.8µs 100.0%
+- layer=unpooler load=decode_16 m=16: yours 18.6µs vs SGLang 18.9µs (SoL 14.1µs) · nvjet_sm90_tst_64x16_64x16_2x1_v_bz_TNT 18.4µs 100.0%
+- layer=router load=decode_16 m=16: yours 5.5µs vs SGLang 15.0µs (SoL 1.8µs) · _router_swapab_kernel 3.3µs 82.4%, void at::native::vectorized_elementwise_kernel<4, at::nat... 0.7µs 17.6%
+- layer=qkv_gate load=decode_32 m=32: yours 13.8µs vs SGLang 14.3µs (SoL 8.0µs) · _bf16_swapab_kernel 11.6µs 100.0%
+- layer=o load=decode_32 m=32: yours 6.5µs vs SGLang 7.0µs (SoL 3.6µs) · _bf16_swapab_kernel 4.7µs 100.0%
+- layer=pooler load=decode_32 m=32: yours 19.9µs vs SGLang 22.1µs (SoL 14.1µs) · _bf16_swapab_kernel 20.5µs 100.0%
+- layer=unpooler load=decode_32 m=32: yours 18.0µs vs SGLang 18.7µs (SoL 14.1µs) · _bf16_swapab_kernel 18.8µs 100.0%
+- layer=router load=decode_32 m=32: yours 6.0µs vs SGLang 15.2µs (SoL 1.9µs) · _router_swapab_kernel 3.7µs 84.2%, void at::native::vectorized_elementwise_kernel<4, at::nat... 0.7µs 15.8%
+- layer=qkv_gate load=verify_1 m=8: yours 13.0µs vs SGLang 14.4µs (SoL 7.9µs) · _bf16_swapab_kernel 9.5µs 100.0%
+- layer=o load=verify_1 m=8: yours 5.8µs vs SGLang 6.3µs (SoL 3.5µs) · _bf16_swapab_kernel 4.1µs 100.0%
+- layer=pooler load=verify_1 m=8: yours 18.9µs vs SGLang 21.1µs (SoL 14.0µs) · _bf16_swapab_kernel 19.4µs 100.0%
+- layer=unpooler load=verify_1 m=8: yours 5.3µs vs SGLang 6.9µs (SoL 1.8µs) · void (anonymous namespace)::ouns_kernel<8, 64, 512, 8, 4>... 4.8µs 100.0%
+- layer=router load=verify_1 m=8: yours 5.5µs vs SGLang 26.5µs (SoL 1.8µs) · void (anonymous namespace)::router_kernel<8, 8>(__nv_bflo... 4.0µs 100.0%
+- layer=qkv_gate load=verify_16 m=128: yours 17.4µs vs SGLang 17.3µs (SoL 8.4µs) · nvjet_sm90_tst_96x64_64x10_4x2_h_bz_splitK_TNN 12.7µs 80.7%, void cublasLt::splitKreduce_kernel<32, 16, int, float, __... 3.0µs 19.3%
+- layer=o load=verify_16 m=128: yours 7.4µs vs SGLang 7.4µs (SoL 4.0µs) · nvjet_sm90_tst_128x64_64x8_1x2_h_bz_TNT 5.3µs 100.0%
+- layer=pooler load=verify_16 m=128: yours 23.2µs vs SGLang 25.3µs (SoL 14.6µs) · nvjet_sm90_tst_128x64_64x8_1x2_h_bz_splitK_NNT 20.9µs 87.1%, void cublasLt::splitKreduce_kernel<32, 16, int, float, __... 3.1µs 12.9%
+- layer=unpooler load=verify_16 m=128: yours 19.0µs vs SGLang 20.0µs (SoL 14.6µs) · nvjet_sm90_tst_128x64_64x8_1x2_h_bz_NNT 19.6µs 100.0%
+- layer=router load=verify_16 m=128: yours 7.4µs vs SGLang 16.3µs (SoL 2.2µs) · _router_hilo_kernel 5.0µs 86.2%, void at::native::vectorized_elementwise_kernel<4, at::nat... 0.8µs 13.8%
+- layer=qkv_gate load=verify_32 m=256: yours 20.2µs vs SGLang 19.9µs (SoL 9.8µs) · nvjet_sm90_tst_96x64_64x10_2x4_h_bz_TNN 20.0µs 100.0%
+- layer=o load=verify_32 m=256: yours 9.5µs vs SGLang 9.5µs (SoL 4.5µs) · nvjet_sm90_tst_128x128_64x6_2x1_v_bz_TNT 8.2µs 100.0%
+- layer=pooler load=verify_32 m=256: yours 29.9µs vs SGLang 30.9µs (SoL 17.4µs) · nvjet_sm90_tst_128x64_64x8_1x2_h_bz_NNT 29.5µs 100.0%
+- layer=unpooler load=verify_32 m=256: yours 24.6µs vs SGLang 24.7µs (SoL 17.4µs) · nvjet_sm90_tst_128x128_64x6_2x1_v_bz_TNT 25.1µs 100.0%
+- layer=router load=verify_32 m=256: yours 9.7µs vs SGLang 17.9µs (SoL 2.7µs) · _router_hilo_kernel 7.0µs 86.5%, void at::native::vectorized_elementwise_kernel<4, at::nat... 1.1µs 13.5%
 
 ## By area
 
@@ -96,6 +96,9 @@ Where the time goes (per scored shape, top kernels):
 - **pooler-triton-splitk2-blockn64-semaphore** → neutral (unproven-vs-best), 1.1664x — gained on pooler decode_1, decode_16, verify_1, verify_16; qkv_gate decode_32; lost on router verify_1, verify_16; o verify_16. Built on master (dba4ffd: parity dispatch + 3-D split-K Triton router; router untouched). For layer == 'pooler' and cfg m <= 32 only (n=4096, k=8192, 67.1 MB bf
 - **pooler-triton-splitk2-blockn64-semaphore-control-blockk256** → neutral (within-ci), 1.1620x — gained on pooler decode_1; lost on qkv_gate decode_16, verify_1; router verify_1, verify_16, verify_32. From the parent's branch (pooler-triton-splitk2-blockn64-semaphore), change exactly one constant: the pooler split-K kernel's BLOCK_K from 128 to 256, so each C
 - **pooler-splitk2-tma-weight-stream** → neutral (unproven-vs-best), 1.1693x — gained on pooler decode_1, decode_16, decode_32, verify_1; router decode_16; lost on qkv_gate verify_16. From branch hyp/muse_bf16_proj/pooler-triton-splitk2-blockn64-semaphore (pooler at m <= 32: _bf16_splitk_kernel, grid (64, 2) = 128 CTAs, BLOCK_N=64, SPLIT_K=2,
+
+### pooler GEMM (m=129..256, cuBLAS NN layout)
+- **pooler-nn-layout-widen-m256** → neutral (within-ci), 1.2394x — gained on unpooler decode_32; pooler verify_32; lost on router decode_32, verify_1; unpooler verify_1. Built on master (blob 353e3b19, restack-three-cell-wins-router-unpooler-cluster-m8-nn-m128, submit ee4f89f2 1.2491x). Master already builds state['pooler_t'] = 
 
 ### pooler GEMM + unpooler GEMM (m<=32 DRAM weight streams, bulk-TMA row-owner kernel)
 - **pooler-unpooler-full-bulk-tma-row-owner-stream-rewrite** → regression (regression), 1.1828x — lost on qkv_gate decode_1, decode_16, verify_1; o decode_1, decode_16; pooler decode_1, decode_16, verify_1; unpooler decode_1; router decode_1, decode_16, decode_32. Built on master (blob a8bb42a). WHY: pooler (n=4096, k=8192) and the full unpooler (n=8192, k=4096) are 67.1 MB pure weight streams at m<=32 with a 14.0-14.1 us
@@ -188,6 +191,7 @@ Where the time goes (per scored shape, top kernels):
 - router-m128-m256-cluster-dsmem-tiled-rewrite: rewrite stage 1 of `_router_hilo_kernel + torch.zeros memset at router m=65..256`: read the replaced kernels' own us per shape (profile top_kernels) against the incumbent and the floor, and check which Milestone it reach
 - restack-three-cell-wins-router-unpooler-cluster-m8-nn-m128: unproven-vs-best: the change is not proven either way; a stacked hypothesis (`depends_on: restack-three-cell-wins-router-unpooler-cluster-m8-nn-m128`) that adds a further change in the same area is the only way to learn 
 - qkv-swapab-w128-splitk7-one-wave-m32: within-ci: the change is not proven either way; a stacked hypothesis (`depends_on: qkv-swapab-w128-splitk7-one-wave-m32`) that adds a further change in the same area is the only way to learn more (identical code is never
+- pooler-nn-layout-widen-m256: within-ci: the change is not proven either way; a stacked hypothesis (`depends_on: pooler-nn-layout-widen-m256`) that adds a further change in the same area is the only way to learn more (identical code is never re-run).
 
 ## Do not retry (rejected / duplicates)
 
@@ -203,4 +207,9 @@ Where the time goes (per scored shape, top kernels):
 - queue: bf16-lossless-exp4-warpspec-persistent-stage3 [lossless exp4 compressed-weight stream kernel (_lossless_swapab_kernel)] p1 hold
 - queue: bf16-verify32-cutlass-coop-256x128-splitk-stage2 [bf16 GEMM dispatch (m=129..256, CUTLASS sm90 cooperative split-K)] p1 queued
 - queue: unpooler-full-m16-swapab16-blockt16 [unpooler GEMM (full width n=8192, m=9..16, swap-AB BLOCK_T 16)] p3 hold
-- running: pooler-nn-layout-widen-m256 [pooler GEMM (m=129..256, cuBLAS NN layout)] p2 running
+- queue: bf16-verify16-cutlass-m128-onetile-splitk-rewrite [bf16 GEMM dispatch (m=65..128, CUTLASS sm90 one-M-tile split-K)] p1 queued
+- queue: pooler-k-halves-batched-gemm-m65-m256 [pooler GEMM (m=65..256, K-split as a 2-batch cuBLAS GEMM)] p1 queued
+- queue: qkv-k-split-batched-gemm-m65-m256 [qkv GEMM (m=65..256, K-split as a batched cuBLAS GEMM)] p2 queued
+- queue: router-hilo-tall-tile-m65-m256 [router GEMM (m=65..256, hilo tile config)] p1 queued
+- queue: router-m128-m256-wgmma-swapab-tall-cluster-stage2 [router GEMM (m=65..256, CUDA wgmma swap-AB cluster kernel)] p2 queued
+- queue: unpooler-k-halves-batched-gemm-m65-m128 [unpooler GEMM (full width, m=65..128, K-split as a 2-batch cuBLAS GEMM)] p3 queued

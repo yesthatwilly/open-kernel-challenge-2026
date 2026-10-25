@@ -1,6 +1,6 @@
 # muse_prefill_layer hypotheses
 
-Regenerated 2026-10-25T151051Z. Best: 1.4480x [1.4263,1.4698] job `bff8e36788a04917` (submit)
+Regenerated 2026-10-25T154445Z. Best: 1.4587x [1.4368,1.4806] job `1cc92a43b8be40f8` (submit)
 
 | created | slug | kind | area | where | outcome | speedup | CI | job | mode | promotion | review | expected hit |
 |---|---|---|---|---|---|---|---|---|---|---|---|---|
@@ -71,6 +71,15 @@ Regenerated 2026-10-25T151051Z. Best: 1.4480x [1.4263,1.4698] job `bff8e36788a04
 | 2026-10-25T110643Z | turn-align-two-phase-chunk-prefix | primary | MoE align/dispatch on T <= 4096 (Marlin turn_1 + ssdq turn_4): _align_parallel replaced by a two-launch chunk-count + prefix-place align | done/neutral | neutral | 1.3369 | [1.317,1.357] | d792e5c9d6d94f02 | check |  | proceed | 1/3 |
 | 2026-10-25T125453Z | align-two-phase-all-t-rega | primary | MoE align/dispatch on the rega path (200 < T <= 16384): _align_parallel replaced by the two-phase chunk-count + prefix-place align, including the first_turn class | done/neutral | neutral | 1.4458 | [1.424,1.467] | 4e6f815a8dd945ba | check | done | proceed | 3/3 |
 | 2026-10-25T125554Z | experts-rega-low-class-two-ctas-per-sm | rewrite | w13 + w2 expert GEMMs at 200 < T <= 1024 (turn_1, rega low class): two resident CTAs per SM with a 64- or 32-route slab, to hide consumer dequant latency | done/neutral | neutral | 1.4173 | [1.396,1.439] | 1a77da43b3304b07 | check |  | proceed | 1/3 |
+| 2026-10-25T152138Z | experts-rega-s4-bm256-wide-tile-high-ft | rewrite | w13 + w2 expert GEMMs at 1024 < T <= 16384 (rega high + ft classes): 256-weight-row CTA tile with in-warpgroup dequant/MMA overlap | queue | queued |  |  |  |  |  | required |  |
+| 2026-10-25T152138Z | experts-rega-pingpong-consumers-all-t | primary | w13 + w2 expert GEMMs (rega_kernel consumer schedule: two-warpgroup ping-pong), every rega class | running | running |  |  | 5fbaec9a075543d4 | submit |  | proceed |  |
+| 2026-10-25T152138Z | experts-rega-producer-scale-expand-all-t | primary | w13 + w2 expert GEMMs (rega_kernel dequant: E4M3 scale expansion moved to idle producer warps), every rega class | running | running |  |  | 6be2a8d3cf7d489f | submit |  | proceed |  |
+| 2026-10-25T152235Z | attn-full-prefill-wgmma-s2-warpspec-pingpong-expoffload | rewrite | FA3 call on full-attention layers at page_size 1 (CUDA sm_90a FP8 wgmma flash attention, stage 2: warp-specialized producer, 128-key tiles, intra-WG overlap + ping-pong, gated exp offload) | queue | queued |  |  |  |  |  | required |  |
+| 2026-10-25T152235Z | fa3-num-splits-cap-gated-turn | primary | FA3 call (num_splits cap on the paged path at q_len <= 4096, per-class timing gate) | queue | hold |  |  |  |  |  | hold |  |
+| 2026-10-25T152235Z | fa3-full-contiguous-kv-triton-gather-gated | primary | FA3 call on full-attention layers (KV source: contiguous TMA copy of the paged page-size-1 rows, per-class timing gate) | done/neutral | neutral | 1.4587 | [1.437,1.481] | 1cc92a43b8be40f8 | submit | done | proceed | 5/6 |
+| 2026-10-25T152449Z | pre-expert-norm-fused-rega-gather | primary | pre-expert norm (MuseSpark1xRMSNorm) fused into the rega row gather | running | running |  |  | edf68fa3131c4bf8 | submit |  | proceed |  |
+| 2026-10-25T152519Z | qkv-gate-columns-side-stream-under-attention | primary | qkv GEMM (output-gate columns split onto the side stream, overlapping qk_norm + cache store + FA3) | running | running |  |  | b8b8536c4ed74d78 | submit |  | proceed |  |
+| 2026-10-25T152554Z | boundary-overlap-s1-slice-kernel-ffn-tail | rewrite | FFN boundary + unpooler GEMM (boundary chunks overlapped under unpooler chunks via a slice-writing boundary kernel) | queue | queued |  |  |  |  |  | required |  |
 
 ## Held
 
@@ -96,3 +105,4 @@ Regenerated 2026-10-25T151051Z. Best: 1.4480x [1.4263,1.4698] job `bff8e36788a04
 - experts-first-turn-ssdq-s2-large-m: superseded: experts-turn-rega-s4-port-t4096 (gain 1.3275) beat ssdq 805 vs 1250 us at T=3012 and Marlin at T=753; rega owns 200<T<=4096 (first_turn rega extension in flight)
 - experts-turn-rega-s4-w2-only-t4096: superseded: experts-turn-rega-s4-port-t4096 (gain 1.3275) beat ssdq 805 vs 1250 us at T=3012 and Marlin at T=753; rega owns 200<T<=4096 (first_turn rega extension in flight)
 - experts-turn1-ssdq-s2-m64-tile: superseded: experts-turn-rega-s4-port-t4096 (gain 1.3275) beat ssdq 805 vs 1250 us at T=3012 and Marlin at T=753; rega owns 200<T<=4096 (first_turn rega extension in flight)
+- fa3-num-splits-cap-gated-turn: adversarial review: Hold this as a scored submit; the cause is the budget, not the idea. The mechanism is plausible and rules-clean, but the best case is about +0.2% on a headline 

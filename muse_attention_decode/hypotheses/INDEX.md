@@ -1,6 +1,6 @@
 # muse_attention_decode hypotheses
 
-Regenerated 2026-10-25T151051Z. Best: 1.5017x [1.4791,1.5304] job `252abb7f11ec48c3` (check)
+Regenerated 2026-10-25T154445Z. Best: 1.5017x [1.4791,1.5304] job `252abb7f11ec48c3` (check)
 
 | created | slug | kind | area | where | outcome | speedup | CI | job | mode | promotion | review | expected hit |
 |---|---|---|---|---|---|---|---|---|---|---|---|---|
@@ -84,7 +84,13 @@ Regenerated 2026-10-25T151051Z. Best: 1.5017x [1.4791,1.5304] job `252abb7f11ec4
 | 2026-10-25T110636Z | restack-sliding-decode-sk-window-on-cluster-master | primary | sliding-layer attention (decode, stream-K windowed kernel) restack | done/neutral | neutral | 1.5017 | [1.479,1.530] | 252abb7f11ec48c3 | submit | merged | proceed | 5/5 |
 | 2026-10-25T110716Z | sliding-decode-sk-s3-fused-preattn-rope | rewrite | sliding-layer attention (decode, stream-K windowed kernel, pre-attention fold) | queue | queued |  |  |  |  |  | required |  |
 | 2026-10-25T150036Z | preattention-tiled-every-verify-block | primary | pre-attention norm+rope | queue | queued |  |  |  |  |  | required |  |
-| 2026-10-25T150036Z | epilogue-gate-l2-prefetch-cuda | primary | output norm-gate (gate operand prefetch in the CUDA epilogues) | running | running |  |  | 917a9689ba4645bd | submit |  | proceed |  |
+| 2026-10-25T150036Z | epilogue-gate-l2-prefetch-cuda | primary | output norm-gate (gate operand prefetch in the CUDA epilogues) | done/neutral | neutral | 1.5020 | [1.479,1.525] | 917a9689ba4645bd | submit |  | proceed | 0/6 |
+| 2026-10-25T153027Z | full-decode1-sk-two-level-deep-ring | primary | full-layer attention (batch-1 decode, stream-K ring depth) | queue | queued |  |  |  |  |  | required |  |
+| 2026-10-25T153027Z | full-verify-fa3-num-splits-band-gate | primary | FA3 call (full verify split count) | queue | queued |  |  |  |  |  | required |  |
+| 2026-10-25T153027Z | full-verify-wgmma-ws-s1-producer-split | rewrite | full-layer attention (verify, wgmma stream-K kernel, warp-specialized pipeline) | queue | queued |  |  |  |  |  | required |  |
+| 2026-10-25T153027Z | sliding-decode1-cluster-per-kvhead | primary | sliding-layer attention (batch-1 decode, cluster kernel work split) | queue | queued |  |  |  |  |  | required |  |
+| 2026-10-25T153027Z | sliding-verify-fa3-num-splits-band-gate | primary | FA3 call (sliding verify split count) | queue | queued |  |  |  |  |  | required |  |
+| 2026-10-25T153027Z | sliding-verify-wgmma-window-s1 | rewrite | sliding-layer attention (verify, wgmma stream-K windowed kernel) | queue | queued |  |  |  |  |  | required |  |
 
 ## Held
 

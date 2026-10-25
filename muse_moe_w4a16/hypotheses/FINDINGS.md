@@ -1,6 +1,6 @@
 # muse_moe_w4a16 findings
 
-Regenerated 2026-10-25T151051Z by `churn.py index`. Read this before writing a hypothesis for muse_moe_w4a16.
+Regenerated 2026-10-25T154445Z by `churn.py index`. Read this before writing a hypothesis for muse_moe_w4a16.
 
 ## Current best
 
@@ -34,6 +34,7 @@ Where the time goes (per scored shape, top kernels):
 - **align-parallel-per-expert-verify** → neutral (unproven-vs-best), 1.3249x — gained on verify_16 verify_16; verify_32 verify_32. For num_tokens > ALIGN_FUSED_MAX_TOKENS (bs=128, 256 and the bs=33/257/skewed-128 tests) when expert_map is not None, replace master's else-branch (topk_ids.to(
 - **align-parallel-from-17-tokens** → neutral (unproven-vs-best), 1.3250x — no shape moved outside noise. One constant plus its warm-up: lower ALIGN_FUSED_MAX_TOKENS from 32 to 16, so 17 <= num_tokens <= 32 (decode_32 bs=32) runs master's existing 33-program _align_
 - **align-small-one-warp-tiny-m** → neutral (unproven-vs-best), 1.3287x — no shape moved outside noise. num_tokens <= 8 only (decode_1 bs=1, verify_1 bs=8, the bs=1/bs=4 tests); bs=16 and above keep master's launches exactly. In _align_small (host wrapper), replac
+- **align-two-phase-port-from17** → neutral (beats-base-not-best), 1.3700x — gained on verify_32 verify_32. Built on master (9080a71, submission_blob 60dfe35d); MoE align only, at 17 <= num_tokens <= 512 (decode_32 bs=32, verify_16 bs=128, verify_32 bs=256, and the bs
 
 ### MoE align/dispatch + block_size_m pick
 - **triton-map-align-on-block-m-restack** → gain (gain), 1.3117x — gained on decode_1 decode_1; decode_16 decode_16; decode_32 decode_32; verify_1 verify_1. Stack the two measured, shape-disjoint moe wins: start from master (marlin-block-m-two-smaller-on-postnorm, 1.254x: block_size_m two candidates down at num_toke
@@ -126,6 +127,7 @@ Where the time goes (per scored shape, top kernels):
 - cuda-nvfp4-wgmma-rega-grouped-s5-copy-safe-forced: rewrite stage 5 of `Marlin w13+silu+w2 (moe_wna16_marlin_gemm x2 + act_and_mul) at 128<=T<=512`: read the replaced kernels' own us per shape (profile top_kernels) against the incumbent and the floor, and check which Mile
 - w13-marlin-atomic-add-t1-only: unproven-vs-best: the change is not proven either way; a stacked hypothesis (`depends_on: w13-marlin-atomic-add-t1-only`) that adds a further change in the same area is the only way to learn more (identical code is never
 - cuda-nvfp4-wgmma-rega-b128-n32-deep-ring: rewrite stage 6 of `Marlin w13+silu+w2 (moe_wna16_marlin_gemm x2 + act_and_mul) at 128<=T<=255`: read the replaced kernels' own us per shape (profile top_kernels) against the incumbent and the floor, and check which Mile
+- align-two-phase-port-from17: beats-base-not-best: the change is not proven either way; a stacked hypothesis (`depends_on: align-two-phase-port-from17`) that adds a further change in the same area is the only way to learn more (identical code is neve
 - triton-map-align-verify-chunked: none
 - cuda-nvfp4-swapab-mma-persistent-small-m: rewrite stage 1 of `Marlin w13+w2 (moe_wna16_marlin_gemm x2) at bs<=32`: read the replaced kernels' own us per shape (profile top_kernels) against the incumbent and the floor, and check which Milestone it reached. The ne
 - cuda-nvfp4-wgmma-rega-grouped-s3-wide-bucket-fix: rewrite stage 3 of `Marlin w13+w2 (moe_wna16_marlin_gemm x2) + silu_and_mul at num_tokens >= 128`: read the replaced kernels' own us per shape (profile top_kernels) against the incumbent and the floor, and check which Mi
@@ -160,4 +162,9 @@ Where the time goes (per scored shape, top kernels):
 - queue: cuda-nvfp4-wgmma-rega-producer-scale-expand [w13 marlin + silu-mul + w2 marlin] p2 queued
 - queue: silu-mul-triton-row-tiled-gated [silu-mul] p2 hold
 - queue: restack-bucket-gate-on-master-align-atomic [expert GEMM path selection (wgmma vs Marlin) restack] p1 hold
-- running: align-two-phase-port-from17 [MoE align/dispatch] p1 running
+- queue: cuda-fused-split-i-moe-midt-cluster-reduce [w13 marlin + silu-mul + w2 marlin] p2 queued
+- queue: cuda-fused-split-i-moe-tiny-t [w13 marlin + silu-mul + w2 marlin] p1 queued
+- queue: wg-pdl-gather-w13-w2-chain [launch overhead] p2 queued
+- queue: wg-producer-direct-x-rows-no-gather [MoE dispatch (wgmma x gather)] p3 queued
+- queue: wg-stream-k-tail-split [w13 marlin + silu-mul + w2 marlin] p3 queued
+- queue: wg-two-ctas-per-sm-port-b128-n32 [w13 marlin + silu-mul + w2 marlin] p2 queued
