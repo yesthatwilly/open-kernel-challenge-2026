@@ -1,0 +1,141 @@
+data/to accessor; smem w13 187392 B, w2 203776 B dynamic (+ <= 16384 B static) <= 232448 B
+[rega] phase audit: 0.0s; prepare total 36.5s; budget remaining 163.5s of 200s
+[rega] torch 2.14.1+cu130 cuda 13.0; device capability (9, 0)
+[rega] build arch flags: TORCH_CUDA_ARCH_LIST='9.0a' -> ['-gencode=arch=compute_90a,code=sm_90a']; extra_cuda_cflags ['-O3', '-std=c++20', '-lineinfo', '-gencode=arch=compute_90a,code=sm_90a']
+[rega] load_inline compiled in 31.4s
+[rega] phase build: 31.4s; prepare total 67.9s; budget remaining 132.1s of 200s
+[rega] kernel w13+silu: attrs ok True (SetAttribute rc 0), regs 168, local bytes 0, static smem 14336 B, dynamic smem 187392 B, CTAs/SM 1, binaryVersion 90, ptxVersion 90
+[rega] kernel w2: attrs ok True (SetAttribute rc 0), regs 168, local bytes 0, static smem 14336 B, dynamic smem 203776 B, CTAs/SM 1, binaryVersion 90, ptxVersion 90
+[rega] global/static audit: CUDA/C++ source 0 mutable file-scope / static / device globals, Python module 0 tensor-holding globals; findings none; per-state data: rega_bank, rega_err; per call: xs, hs, tensor maps
+[rega] retiled 32 experts losslessly (round trips exact) in 0.0s; grid 132 persistent CTAs x 384 threads, BK 128, 4 stages, N buckets (16, 32, 64, 128)
+[rega] phase retile: 0.1s; prepare total 68.0s; budget remaining 132.0s of 200s
+[rega] [canary] launching align
+[rega] [canary] align done
+[rega] [canary] launching rega_gather
+[rega] [canary] rega_gather done
+[rega] [canary] launching rega_kernel<w13+silu>
+[rega] [canary] rega_kernel<w13+silu> done
+[rega] [canary] launching rega_kernel<w2>
+[rega] [canary] rega_kernel<w2> done
+[rega] canary: error word 0 (ok), launch markers w13 0x57474d4d w2 0x57474d4d
+[rega] phase canary: 0.0s; prepare total 68.0s; budget remaining 132.0s of 200s
+[rega] [T=300 random] launching align
+[rega] [T=300 random] align done
+[rega] [T=300 random] launching rega_gather
+[rega] [T=300 random] rega_gather done
+[rega] [T=300 random] launching rega_kernel<w13+silu>
+[rega] [T=300 random] rega_kernel<w13+silu> done
+[rega] [T=300 random] launching rega_kernel<w2>
+[rega] [T=300 random] rega_kernel<w2> done
+[rega] self-check T=300 random: rega rel L2 5.500e-04 worst row 1.578e-03; marlin 5.640e-03 / 6.269e-03; bound 1.128e-02; error word 0; 300 local routes; launch markers w13 0x57474d4d w2 0x57474d4d
+[rega] [T=753 random] launching align
+[rega] [T=753 random] align done
+[rega] [T=753 random] launching rega_gather
+[rega] [T=753 random] rega_gather done
+[rega] [T=753 random] launching rega_kernel<w13+silu>
+[rega] [T=753 random] rega_kernel<w13+silu> done
+[rega] [T=753 random] launching rega_kernel<w2>
+[rega] [T=753 random] rega_kernel<w2> done
+[rega] self-check T=753 random: rega rel L2 5.404e-04 worst row 1.511e-03; marlin 5.657e-03 / 6.180e-03; bound 1.131e-02; error word 0; 777 local routes; launch markers w13 0x57474d4d w2 0x57474d4d
+[rega] [T=1506 random] launching align
+[rega] [T=1506 random] align done
+[rega] [T=1506 random] launching rega_gather
+[rega] [T=1506 random] rega_gather done
+[rega] [T=1506 random] launching rega_kernel<w13+silu>
+[rega] [T=1506 random] rega_kernel<w13+silu> done
+[rega] [T=1506 random] launching rega_kernel<w2>
+[rega] [T=1506 random] rega_kernel<w2> done
+[rega] self-check T=1506 random: rega rel L2 5.762e-04 worst row 1.771e-03; marlin 5.658e-03 / 6.347e-03; bound 1.132e-02; error word 0; 1480 local routes; launch markers w13 0x57474d4d w2 0x57474d4d
+[rega] [T=3012 random] launching align
+[rega] [T=3012 random] align done
+[rega] [T=3012 random] launching rega_gather
+[rega] [T=3012 random] rega_gather done
+[rega] [T=3012 random] launching rega_kernel<w13+silu>
+[rega] [T=3012 random] rega_kernel<w13+silu> done
+[rega] [T=3012 random] launching rega_kernel<w2>
+[rega] [T=3012 random] rega_kernel<w2> done
+[rega] self-check T=3012 random: rega rel L2 5.520e-04 worst row 2.466e-03; marlin 5.667e-03 / 6.463e-03; bound 1.133e-02; error word 0; 2972 local routes; launch markers w13 0x57474d4d w2 0x57474d4d
+[rega] [T=1100 one] launching align
+[rega] [T=1100 one] align done
+[rega] [T=1100 one] launching rega_gather
+[rega] [T=1100 one] rega_gather done
+[rega] [T=1100 one] launching rega_kernel<w13+silu>
+[rega] [T=1100 one] rega_kernel<w13+silu> done
+[rega] [T=1100 one] launching rega_kernel<w2>
+[rega] [T=1100 one] rega_kernel<w2> done
+[rega] self-check T=1100 one: rega rel L2 5.197e-04 worst row 1.720e-03; marlin 5.746e-03 / 6.476e-03; bound 1.149e-02; error word 0; 1100 local routes; launch markers w13 0x57474d4d w2 0x57474d4d
+[rega] [T=4096 skewed] launching align
+[rega] [T=4096 skewed] align done
+[rega] [T=4096 skewed] launching rega_gather
+[rega] [T=4096 skewed] rega_gather done
+[rega] [T=4096 skewed] launching rega_kernel<w13+silu>
+[rega] [T=4096 skewed] rega_kernel<w13+silu> done
+[rega] [T=4096 skewed] launching rega_kernel<w2>
+[rega] [T=4096 skewed] rega_kernel<w2> done
+[rega] self-check T=4096 skewed: rega rel L2 6.900e-04 worst row 2.014e-03; marlin 5.684e-03 / 6.212e-03; bound 1.137e-02; error word 0; 18435 local routes; launch markers w13 0x57474d4d w2 0x57474d4d
+[rega] [T=4096 random] launching align
+[rega] [T=4096 random] align done
+[rega] [T=4096 random] launching rega_gather
+[rega] [T=4096 random] rega_gather done
+[rega] [T=4096 random] launching rega_kernel<w13+silu>
+[rega] [T=4096 random] rega_kernel<w13+silu> done
+[rega] [T=4096 random] launching rega_kernel<w2>
+[rega] [T=4096 random] rega_kernel<w2> done
+[rega] self-check T=4096 random: rega rel L2 5.523e-04 worst row 2.400e-03; marlin 5.667e-03 / 6.451e-03; bound 1.133e-02; error word 0; 4080 local routes; launch markers w13 0x57474d4d w2 0x57474d4d
+[rega] phase self-check: 0.2s; prepare total 68.2s; budget remaining 131.8s of 200s
+[rega] copy B: bank 0x12bfbc000000 vs A 0x12c1fc000000, err 0x12c497eec600 vs A 0x12c497ebb800 (shared: False)
+[rega] copy C: bank 0x12bf98000000 vs A 0x12c1fc000000, err 0x12c497eefa00 vs A 0x12c497ebb800 (shared: False)
+[rega] replay T=753 random state A: rega rel L2 5.767e-04 worst row 2.369e-03; marlin 5.664e-03; bound 1.133e-02; error word 0; launch markers w13 yes w2 yes
+[rega] replay T=753 random state B: rega rel L2 5.409e-04 worst row 1.849e-03; marlin 5.645e-03; bound 1.129e-02; error word 0; launch markers w13 yes w2 yes
+[rega] replay T=753 random state C: rega rel L2 5.218e-04 worst row 1.708e-03; marlin 5.658e-03; bound 1.132e-02; error word 0; launch markers w13 yes w2 yes
+[rega] replay T=753 random state A: rega rel L2 5.426e-04 worst row 1.298e-03; marlin 5.662e-03; bound 1.132e-02; error word 0; launch markers w13 yes w2 yes
+[rega] replay T=753 random state B: rega rel L2 5.077e-04 worst row 1.783e-03; marlin 5.653e-03; bound 1.131e-02; error word 0; launch markers w13 yes w2 yes
+[rega] replay T=753 skewed state A: rega rel L2 6.637e-04 worst row 1.505e-03; marlin 5.698e-03; bound 1.140e-02; error word 0; launch markers w13 yes w2 yes
+[rega] replay T=753 skewed state B: rega rel L2 6.720e-04 worst row 1.847e-03; marlin 5.691e-03; bound 1.138e-02; error word 0; launch markers w13 yes w2 yes
+[rega] replay T=753 skewed state C: rega rel L2 6.774e-04 worst row 1.708e-03; marlin 5.687e-03; bound 1.137e-02; error word 0; launch markers w13 yes w2 yes
+[rega] replay T=753 skewed state A: rega rel L2 6.663e-04 worst row 2.218e-03; marlin 5.687e-03; bound 1.137e-02; error word 0; launch markers w13 yes w2 yes
+[rega] replay T=753 skewed state B: rega rel L2 6.721e-04 worst row 1.557e-03; marlin 5.686e-03; bound 1.137e-02; error word 0; launch markers w13 yes w2 yes
+[rega] replay T=753 one state A: rega rel L2 5.185e-04 worst row 1.818e-03; marlin 5.758e-03; bound 1.152e-02; error word 0; launch markers w13 yes w2 yes
+[rega] replay T=753 one state B: rega rel L2 5.109e-04 worst row 2.031e-03; marlin 5.751e-03; bound 1.150e-02; error word 0; launch markers w13 yes w2 yes
+[rega] replay T=753 one state C: rega rel L2 5.131e-04 worst row 1.894e-03; marlin 5.747e-03; bound 1.149e-02; error word 0; launch markers w13 yes w2 yes
+[rega] replay T=753 one state A: rega rel L2 4.818e-04 worst row 1.935e-03; marlin 5.741e-03; bound 1.148e-02; error word 0; launch markers w13 yes w2 yes
+[rega] replay T=753 one state B: rega rel L2 4.975e-04 worst row 1.927e-03; marlin 5.750e-03; bound 1.150e-02; error word 0; launch markers w13 yes w2 yes
+[rega] replay T=3012 random state A: rega rel L2 5.544e-04 worst row 2.424e-03; marlin 5.661e-03; bound 1.132e-02; error word 0; launch markers w13 yes w2 yes
+[rega] replay T=3012 random state B: rega rel L2 5.653e-04 worst row 2.039e-03; marlin 5.663e-03; bound 1.133e-02; error word 0; launch markers w13 yes w2 yes
+[rega] replay T=3012 random state C: rega rel L2 5.562e-04 worst row 1.881e-03; marlin 5.662e-03; bound 1.132e-02; error word 0; launch markers w13 yes w2 yes
+[rega] replay T=3012 random state A: rega rel L2 5.557e-04 worst row 2.407e-03; marlin 5.652e-03; bound 1.130e-02; error word 0; launch markers w13 yes w2 yes
+[rega] replay T=3012 random state B: rega rel L2 5.663e-04 worst row 2.261e-03; marlin 5.657e-03; bound 1.131e-02; error word 0; launch markers w13 yes w2 yes
+[rega] replay T=3012 skewed state A: rega rel L2 6.845e-04 worst row 1.775e-03; marlin 5.687e-03; bound 1.137e-02; error word 0; launch markers w13 yes w2 yes
+[rega] replay T=3012 skewed state B: rega rel L2 6.890e-04 worst row 1.802e-03; marlin 5.685e-03; bound 1.137e-02; error word 0; launch markers w13 yes w2 yes
+[rega] replay T=3012 skewed state C: rega rel L2 6.868e-04 worst row 1.817e-03; marlin 5.686e-03; bound 1.137e-02; error word 0; launch markers w13 yes w2 yes
+[rega] replay T=3012 skewed state A: rega rel L2 6.792e-04 worst row 2.001e-03; marlin 5.682e-03; bound 1.136e-02; error word 0; launch markers w13 yes w2 yes
+[rega] replay T=3012 skewed state B: rega rel L2 6.953e-04 worst row 1.900e-03; marlin 5.691e-03; bound 1.138e-02; error word 0; launch markers w13 yes w2 yes
+[rega] replay T=3012 one state A: rega rel L2 5.080e-04 worst row 1.990e-03; marlin 5.748e-03; bound 1.150e-02; error word 0; launch markers w13 yes w2 yes
+[rega] replay T=3012 one state B: rega rel L2 4.981e-04 worst row 1.976e-03; marlin 5.741e-03; bound 1.148e-02; error word 0; launch markers w13 yes w2 yes
+[rega] replay T=3012 one state C: rega rel L2 4.982e-04 worst row 1.990e-03; marlin 5.750e-03; bound 1.150e-02; error word 0; launch markers w13 yes w2 yes
+[rega] replay T=3012 one state A: rega rel L2 5.191e-04 worst row 2.859e-03; marlin 5.743e-03; bound 1.149e-02; error word 0; launch markers w13 yes w2 yes
+[rega] replay T=3012 one state B: rega rel L2 5.087e-04 worst row 2.705e-03; marlin 5.747e-03; bound 1.149e-02; error word 0; launch markers w13 yes w2 yes
+[rega] replay T=4096 random state A: rega rel L2 5.647e-04 worst row 1.899e-03; marlin 5.666e-03; bound 1.133e-02; error word 0; launch markers w13 yes w2 yes
+[rega] replay T=4096 random state B: rega rel L2 5.552e-04 worst row 2.221e-03; marlin 5.665e-03; bound 1.133e-02; error word 0; launch markers w13 yes w2 yes
+[rega] replay T=4096 random state C: rega rel L2 5.499e-04 worst row 1.818e-03; marlin 5.654e-03; bound 1.131e-02; error word 0; launch markers w13 yes w2 yes
+[rega] replay T=4096 random state A: rega rel L2 5.677e-04 worst row 1.943e-03; marlin 5.662e-03; bound 1.132e-02; error word 0; launch markers w13 yes w2 yes
+[rega] replay T=4096 random state B: rega rel L2 5.524e-04 worst row 2.185e-03; marlin 5.652e-03; bound 1.130e-02; error word 0; launch markers w13 yes w2 yes
+[rega] replay T=4096 skewed state A: rega rel L2 6.905e-04 worst row 2.577e-03; marlin 5.687e-03; bound 1.137e-02; error word 0; launch markers w13 yes w2 yes
+[rega] replay T=4096 skewed state B: rega rel L2 6.876e-04 worst row 1.959e-03; marlin 5.686e-03; bound 1.137e-02; error word 0; launch markers w13 yes w2 yes
+[rega] replay T=4096 skewed state C: rega rel L2 6.869e-04 worst row 2.183e-03; marlin 5.688e-03; bound 1.138e-02; error word 0; launch markers w13 yes w2 yes
+[rega] replay T=4096 skewed state A: rega rel L2 6.835e-04 worst row 2.558e-03; marlin 5.688e-03; bound 1.138e-02; error word 0; launch markers w13 yes w2 yes
+[rega] replay T=4096 skewed state B: rega rel L2 6.894e-04 worst row 1.758e-03; marlin 5.688e-03; bound 1.138e-02; error word 0; launch markers w13 yes w2 yes
+[rega] replay T=4096 one state A: rega rel L2 5.237e-04 worst row 2.052e-03; marlin 5.742e-03; bound 1.148e-02; error word 0; launch markers w13 yes w2 yes
+[rega] replay T=4096 one state B: rega rel L2 5.152e-04 worst row 1.992e-03; marlin 5.743e-03; bound 1.149e-02; error word 0; launch markers w13 yes w2 yes
+[rega] replay T=4096 one state C: rega rel L2 5.173e-04 worst row 2.003e-03; marlin 5.744e-03; bound 1.149e-02; error word 0; launch markers w13 yes w2 yes
+[rega] replay T=4096 one state A: rega rel L2 5.081e-04 worst row 2.186e-03; marlin 5.746e-03; bound 1.149e-02; error word 0; launch markers w13 yes w2 yes
+[rega] replay T=4096 one state B: rega rel L2 5.228e-04 worst row 2.791e-03; marlin 5.750e-03; bound 1.150e-02; error word 0; launch markers w13 yes w2 yes
+[rega] LAUNCHED = rega: 45 refilled graph replays over states A, B (deepcopy), C (tensor clone) at T (753, 3012, 4096) x ('random', 'skewed', 'one'); LAUNCHED = rega on 45/45 (both launch markers); worst rel L2 6.95e-04 (marlin 5.76e-03)
+[rega] phase copy-check: 1.0s; prepare total 69.2s; budget remaining 130.8s of 200s
+[rega] GATE low T=753 cold-L2 graph medians over 9 alternations (empty-graph baseline subtracted): rega 489.9 us; dispatch 757.5 us; marlin 756.4 us; fastest alternative marlin; ratio rega/marlin 0.648 (ON at <= 0.95): ON
+[rega] GATE high T=3012 cold-L2 graph medians over 9 alternations (empty-graph baseline subtracted): rega 804.6 us; dispatch 1250.8 us; ssdq 1249.7 us; marlin 1544.8 us; fastest alternative ssdq; ratio rega/ssdq 0.644 (ON at <= 0.95): ON
+[rega] phase gate: 0.1s; prepare total 69.3s; budget remaining 130.7s of 200s
+[rega] prepare per-phase seconds: before-rega 36.5, audit 0.0, build 31.4, retile 0.1, canary 0.0, self-check 0.2, copy-check 1.0, gate 0.1; total 69.3s; budget 200s
+[rega] GATE low T=753 cold-L2 graph medians over 9 alternations (empty-graph baseline subtracted): rega 489.9 us; dispatch 757.5 us; marlin 756.4 us; fastest alternative marlin; ratio rega/marlin 0.648 (ON at <= 0.95): ON
+[rega] GATE high T=3012 cold-L2 graph medians over 9 alternations (empty-graph baseline subtracted): rega 804.6 us; dispatch 1250.8 us; ssdq 1249.7 us; marlin 1544.8 us; fastest alternative ssdq; ratio rega/ssdq 0.644 (ON at <= 0.95): ON
+[rega] PATH CHOSEN T in (200, 1024]: rega; T in (1024, 4096]: rega (dispatch order: rega if ON, else ssdq if ON, else marlin; ssdq ON); T <= 200: marlin; T > 4096: triton/unchanged

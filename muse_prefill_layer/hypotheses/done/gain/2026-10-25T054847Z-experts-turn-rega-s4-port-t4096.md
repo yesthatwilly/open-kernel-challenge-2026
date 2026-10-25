@@ -81,10 +81,10 @@ controls_for: null
 rewrite_stage: 1
 replaces: moe_wna16_marlin_gemm x2 (Marlin w13 + w2) and _silu_mul_sorted at 200 < T <= 4096
 review: proceed
-status: running
+status: done
 review_at: 2026-10-25T111120Z
 review_companions: null
-stage: dispatched
+stage: harvested
 claimed_at: 2026-10-25T111120Z
 base_sha: c6fe58c3ab272abce5f98a2a19f884600fd2f6a8
 base_blob: f2d91dd181aeb44de20d2eed62ab7e564f2b181f
@@ -103,6 +103,13 @@ attempt_file: 2026-10-25T112615Z-check-experts-turn-rega-s4-port-t4096.md
 prepared_at: 2026-10-25T112615Z
 job: 2910b2fb4b744865
 dispatched_at: 2026-10-25T112626Z
+outcome: gain
+verdict_detail: gain
+speedup: 1.3274587526558561
+speedup_ci: [1.3075468713660183, 1.347370633945694]
+harvested_at: 2026-10-25T115711Z
+best_at_harvest: 1.1075501334948785
+promotion: pending
 ---
 
 # experts-turn-rega-s4-port-t4096
@@ -206,3 +213,32 @@ Fix:
 1. `rega_kernel`: added a shared `s_bad` flag that is set together with error word 4 (an expert with two block runs). When it is set, `total = 0`. Without this, decode_item's group arithmetic could index outside s_cblk and then produce a wild weight or output address, and the resulting illegal address would poison the CUDA context and kill master's fallback. With the sorted align this cannot happen, so the change is defensive only. undef.py `[]`, py_compile ok, okc_lint OK with warnings (prepare-only syncs), __pycache__ removed.
 
 Residual risk: the code has never been compiled (build errors or regs < 168 turn the path OFF cleanly). A device fault in the first canary launch would still poison the context. The prepare budget is tight only if the build takes more than ~150 s.
+
+## Result
+
+- job `2910b2fb4b744865` (check), status done, passed True, tests 5/5
+- speedup 1.3275x, 95% CI [1.3075, 1.3474], score 291838.7477011382 µs vs SGLang 387403.9 µs
+- best at harvest: {"speedup": 1.1075501334948785, "ci": [1.0909368814924554, 1.1241633854973017], "job": "810b5f7decc84206"}; base result: muse_prefill_layer/hypotheses/done/neutral/experts-turn4-ssdq-s1b-dataptr-symbol-fix.result.json
+- **outcome: gain** (gain)
+- files: `muse_prefill_layer/hypotheses/done/gain/experts-turn-rega-s4-port-t4096.result.json`, `muse_prefill_layer/hypotheses/done/gain/experts-turn-rega-s4-port-t4096.patch`; branch `hyp/muse_prefill_layer/experts-turn-rega-s4-port-t4096`
+
+## Attribution
+
+| shape | w | base µs | hyp µs | delta | verdict |
+|---|---|---|---|---|---|
+| batch=1 ctx=80000 dist=soft layer=sliding load=turn_1 page=1 q_len=753 repeats=6 | 46 | 1081.49 | 730.17 | 1.4116 | gained |
+| batch=1 ctx=80000 dist=soft layer=full load=turn_1 page=1 q_len=753 repeats=6 | 16 | 1460.63 | 1105.64 | 1.2731 | gained |
+| batch=4 ctx=80000 dist=soft layer=sliding load=turn_4 page=1 q_len=753 repeats=6 | 46 | 3012.25 | 2167.2 | 1.3305 | gained |
+| batch=4 ctx=80000 dist=soft layer=full load=turn_4 page=1 q_len=753 repeats=6 | 16 | 4686.3 | 3748.07 | 1.2089 | gained |
+| batch=1 ctx=0 dist=soft layer=full load=first_turn page=1 q_len=16384 repeats=6 | 16 | 14970.94 | 14585.46 | 1.0034 | flat |
+| batch=1 ctx=32768 dist=soft layer=sliding load=first_turn page=1 q_len=16384 repeats=6 | 138 | 14118.46 | 14010.59 | 1.0055 | flat |
+| batch=1 ctx=32768 dist=soft layer=full load=first_turn page=1 q_len=16384 repeats=6 | 16 | 18379.93 | 17741.73 | 0.9943 | flat |
+| batch=1 ctx=65536 dist=soft layer=full load=first_turn page=1 q_len=16384 repeats=6 | 16 | 22181.89 | 21874.7 | 0.9855 | flat |
+
+gained on sliding turn_1, turn_4; full turn_1, turn_4. Expected hit: 2/3. Noise ±1.5%.
+
+## Follow-ups
+
+- rewrite stage 1 of `moe_wna16_marlin_gemm x2 (Marlin w13 + w2) and _silu_mul_sorted at 200 < T <= 4096`: read the replaced kernels' own us per shape (profile top_kernels) against the incumbent and the floor, and check which Milestone it reached. The next stage is `/hypothesize muse_prefill_layer "<what to fix or tune>" --kind rewrite --depends-on experts-turn-rega-s4-port-t4096 --stage 2`; a slow or failed first cut is the expected start, not a do-not-retry.
+- candidate for promotion; stack further changes with `depends_on` once it lands.
+
