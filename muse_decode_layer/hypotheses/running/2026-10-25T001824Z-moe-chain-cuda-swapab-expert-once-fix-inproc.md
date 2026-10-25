@@ -64,7 +64,7 @@ base_sha: e65eda8e263ae1408bdb9e263068ca89a29ceb0d
 base_blob: 81d11fec488c02b0e7fe3a48f764aca20bb6a438
 branch: hyp/muse_decode_layer/moe-chain-cuda-swapab-expert-once-fix-inproc
 worktree: .worktrees/muse_decode_layer/moe-chain-cuda-swapab-expert-once-fix-inproc
-mode: null
+mode: check
 restack_of: null
 stale_base: true
 implemented_at: 2026-10-25T003525Z
@@ -73,6 +73,8 @@ submission_sha256: 6d41970e84202091134a0a93b2751855d8c308929f1f67bbae40ff4ec9ee1
 norm_sha256: abc0472c2583c0b8bd66ea59c18519191a43b73fac1b73155b7bfea42c41cd10
 submission_blob: 451c3c09efdc6fc55db461ae20f27cd8e1cd4e9c
 lint_warnings: 25
+attempt_file: 2026-10-25T003526Z-check-moe-chain-cuda-swapab-expert-once-fix-inproc.md
+prepared_at: 2026-10-25T003526Z
 ---
 
 # moe-chain-cuda-swapab-expert-once-fix-inproc
