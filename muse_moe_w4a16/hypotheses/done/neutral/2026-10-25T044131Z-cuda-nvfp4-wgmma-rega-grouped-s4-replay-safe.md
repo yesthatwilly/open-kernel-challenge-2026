@@ -57,10 +57,10 @@ controls_for: null
 rewrite_stage: 4
 replaces: Marlin w13+silu+w2 at 128<=T<=512
 review: proceed
-status: running
+status: done
 review_at: 2026-10-25T044714Z
 review_companions: null
-stage: dispatched
+stage: harvested
 claimed_at: 2026-10-25T050458Z
 base_sha: 8261c0480931bf1fdcb44c0d04d1dbf675b0c06a
 base_blob: bf65a3afdf6ebe0d9b73a817ffd2be1240f91870
@@ -79,6 +79,13 @@ attempt_file: 2026-10-25T051658Z-check-cuda-nvfp4-wgmma-rega-grouped-s4-replay-s
 prepared_at: 2026-10-25T051658Z
 job: 4e7f8be895a145ba
 dispatched_at: 2026-10-25T051707Z
+outcome: neutral
+verdict_detail: within-ci
+speedup: 1.343894238357063
+speedup_ci: [1.323735824781707, 1.3640526519324188]
+harvested_at: 2026-10-25T053803Z
+best_at_harvest: 1.3438953504561806
+promotion: null
 ---
 
 # cuda-nvfp4-wgmma-rega-grouped-s4-replay-safe
@@ -190,3 +197,30 @@ Audited 2026-10-24 by an opus subagent (read-only review plus offline emulation;
 - Prepare time: s3 setup took 38 s per prepare (judge prepare_s 38.4). The replay check adds about 12 captures and 36 replays per prepare, far inside the 300 s budget and the 15 min run.
 
 Residual risk: the new C++ (wg_make_maps, the blob-based wg_gemm) is uncompiled, and a build error silently lands on Marlin (neutral run, OFF line printed).
+
+## Result
+
+- job `4e7f8be895a145ba` (check), status done, passed True, tests 5/5
+- speedup 1.3439x, 95% CI [1.3237, 1.3641], score 10007.111881394072 µs vs SGLang 13448.5 µs
+- best at harvest: {"speedup": 1.3438953504561806, "ci": [1.3237369201993379, 1.364053780713023], "job": "7a0d900a1dd34666"}; base result: SGLang (no base result)
+- **outcome: neutral** (within-ci)
+- files: `muse_moe_w4a16/hypotheses/done/neutral/cuda-nvfp4-wgmma-rega-grouped-s4-replay-safe.result.json`, `muse_moe_w4a16/hypotheses/done/neutral/cuda-nvfp4-wgmma-rega-grouped-s4-replay-safe.patch`; branch `hyp/muse_moe_w4a16/cuda-nvfp4-wgmma-rega-grouped-s4-replay-safe`
+
+## Attribution
+
+| shape | w | base µs | hyp µs | delta | verdict |
+|---|---|---|---|---|---|
+| bs=1 load=decode_1 sharding=ep8 | 60 | 79.71 | 46.89 | 1.6999 | gained |
+| bs=16 load=decode_16 sharding=ep8 | 60 | 186.48 | 145.58 | 1.2809 | gained |
+| bs=32 load=decode_32 sharding=ep8 | 60 | 203.62 | 197.23 | 1.0324 | gained |
+| bs=8 load=verify_1 sharding=ep8 | 60 | 150.94 | 113.34 | 1.3318 | gained |
+| bs=128 load=verify_16 sharding=ep8 | 60 | 476.74 | 349.79 | 1.3629 | gained |
+| bs=256 load=verify_32 sharding=ep8 | 60 | 619.14 | 428.84 | 1.4437 | gained |
+
+gained on decode_1 decode_1; decode_16 decode_16; decode_32 decode_32; verify_1 verify_1; verify_16 verify_16; verify_32 verify_32. Expected hit: 0/3. Noise ±1.5%.
+
+## Follow-ups
+
+- rewrite stage 4 of `Marlin w13+silu+w2 at 128<=T<=512`: read the replaced kernels' own us per shape (profile top_kernels) against the incumbent and the floor, and check which Milestone it reached. The next stage is `/hypothesize muse_moe_w4a16 "<what to fix or tune>" --kind rewrite --depends-on cuda-nvfp4-wgmma-rega-grouped-s4-replay-safe --stage 5`; a slow or failed first cut is the expected start, not a do-not-retry.
+- within-ci: the change is not proven either way; a stacked hypothesis (`depends_on: cuda-nvfp4-wgmma-rega-grouped-s4-replay-safe`) that adds a further change in the same area is the only way to learn more (identical code is never re-run).
+

@@ -1,0 +1,110 @@
+k: worst rel-L2 vs Marlin h 6.53e-03 w2(fed Marlin cache2) 3.48e-03 out 6.10e-03; 0 failing cases
+[cuda-wgmma-verify]     [refill M=128] capturing once
+[cuda-wgmma-verify]     [refill M=128] captured
+[cuda-wgmma-verify]     [A-refill M=128 random] launching graph replay
+[cuda-wgmma-verify]   replay A-refill M=128 random: rel-L2 6.02e-03 row 6.40e-03 err 0 | maps scratch xs 0x6d600000000/buf 0x6d600000000 hs 0x6d606000000/buf 0x6d606000000 | ok
+[cuda-wgmma-verify]     [A-refill M=128 skewed-4hot] launching graph replay
+[cuda-wgmma-verify]   replay A-refill M=128 skewed-4hot: rel-L2 6.05e-03 row 6.38e-03 err 0 | maps scratch xs 0x6d600000000/buf 0x6d600000000 hs 0x6d606000000/buf 0x6d606000000 | ok
+[cuda-wgmma-verify]     [A-refill M=128 all-one-expert] launching graph replay
+[cuda-wgmma-verify]   replay A-refill M=128 all-one-expert: rel-L2 5.99e-03 row 6.64e-03 err 0 | maps scratch xs 0x6d600000000/buf 0x6d600000000 hs 0x6d606000000/buf 0x6d606000000 | ok
+[cuda-wgmma-verify]     [A-refill M=128 mixed-local-remote] launching graph replay
+[cuda-wgmma-verify]   replay A-refill M=128 mixed-local-remote: rel-L2 6.07e-03 row 6.54e-03 err 0 | maps scratch xs 0x6d600000000/buf 0x6d600000000 hs 0x6d606000000/buf 0x6d606000000 | ok
+[cuda-wgmma-verify]     [A-refill M=128 random] launching graph replay
+[cuda-wgmma-verify]   replay A-refill M=128 random: rel-L2 6.04e-03 row 6.47e-03 err 0 | maps scratch xs 0x6d600000000/buf 0x6d600000000 hs 0x6d606000000/buf 0x6d606000000 | ok
+[cuda-wgmma-verify]     [refill M=256] capturing once
+[cuda-wgmma-verify]     [refill M=256] captured
+[cuda-wgmma-verify]     [A-refill M=256 random] launching graph replay
+[cuda-wgmma-verify]   replay A-refill M=256 random: rel-L2 6.06e-03 row 6.71e-03 err 0 | maps scratch xs 0x6d600000000/buf 0x6d600000000 hs 0x6d606000000/buf 0x6d606000000 | ok
+[cuda-wgmma-verify]     [A-refill M=256 skewed-4hot] launching graph replay
+[cuda-wgmma-verify]   replay A-refill M=256 skewed-4hot: rel-L2 6.08e-03 row 6.52e-03 err 0 | maps scratch xs 0x6d600000000/buf 0x6d600000000 hs 0x6d606000000/buf 0x6d606000000 | ok
+[cuda-wgmma-verify]     [A-refill M=256 all-one-expert] launching graph replay
+[cuda-wgmma-verify]   replay A-refill M=256 all-one-expert: rel-L2 6.05e-03 row 6.63e-03 err 0 | maps scratch xs 0x6d600000000/buf 0x6d600000000 hs 0x6d606000000/buf 0x6d606000000 | ok
+[cuda-wgmma-verify]     [A-refill M=256 mixed-local-remote] launching graph replay
+[cuda-wgmma-verify]   replay A-refill M=256 mixed-local-remote: rel-L2 6.08e-03 row 6.75e-03 err 0 | maps scratch xs 0x6d600000000/buf 0x6d600000000 hs 0x6d606000000/buf 0x6d606000000 | ok
+[cuda-wgmma-verify]     [A-refill M=256 random] launching graph replay
+[cuda-wgmma-verify]   replay A-refill M=256 random: rel-L2 6.06e-03 row 6.50e-03 err 0 | maps scratch xs 0x6d600000000/buf 0x6d600000000 hs 0x6d606000000/buf 0x6d606000000 | ok
+[cuda-wgmma-verify]     [refill M=257] capturing once
+[cuda-wgmma-verify]     [refill M=257] captured
+[cuda-wgmma-verify]     [A-refill M=257 random] launching graph replay
+[cuda-wgmma-verify]   replay A-refill M=257 random: rel-L2 6.08e-03 row 6.63e-03 err 0 | maps scratch xs 0x6d600000000/buf 0x6d600000000 hs 0x6d606000000/buf 0x6d606000000 | ok
+[cuda-wgmma-verify]     [A-refill M=257 skewed-4hot] launching graph replay
+[cuda-wgmma-verify]   replay A-refill M=257 skewed-4hot: rel-L2 6.11e-03 row 6.52e-03 err 0 | maps scratch xs 0x6d600000000/buf 0x6d600000000 hs 0x6d606000000/buf 0x6d606000000 | ok
+[cuda-wgmma-verify]     [A-refill M=257 all-one-expert] launching graph replay
+[cuda-wgmma-verify]   replay A-refill M=257 all-one-expert: rel-L2 6.05e-03 row 6.93e-03 err 0 | maps scratch xs 0x6d600000000/buf 0x6d600000000 hs 0x6d606000000/buf 0x6d606000000 | ok
+[cuda-wgmma-verify]     [A-refill M=257 mixed-local-remote] launching graph replay
+[cuda-wgmma-verify]   replay A-refill M=257 mixed-local-remote: rel-L2 6.07e-03 row 6.50e-03 err 0 | maps scratch xs 0x6d600000000/buf 0x6d600000000 hs 0x6d606000000/buf 0x6d606000000 | ok
+[cuda-wgmma-verify]     [A-refill M=257 random] launching graph replay
+[cuda-wgmma-verify]   replay A-refill M=257 random: rel-L2 6.06e-03 row 6.81e-03 err 0 | maps scratch xs 0x6d600000000/buf 0x6d600000000 hs 0x6d606000000/buf 0x6d606000000 | ok
+[cuda-wgmma-verify]   refill-replay check: 15/15 replays ok
+[cuda-wgmma-verify]     [cross-copy] state A graphs captured before B exists; building state B
+[cuda-wgmma-verify]   state A scratch xs 0x6d600000000 hs 0x6d606000000; state B scratch xs 0x6d65a000000 hs 0x6d650000000; maps blobs differ True
+[cuda-wgmma-verify]     [GA M=128 random] launching graph replay
+[cuda-wgmma-verify]   replay GA M=128 random: rel-L2 6.05e-03 row 6.58e-03 err 0 | maps scratch xs 0x6d600000000/buf 0x6d600000000 hs 0x6d606000000/buf 0x6d606000000 | ok
+[cuda-wgmma-verify]     [GB M=128 skewed-4hot] launching graph replay
+[cuda-wgmma-verify]   replay GB M=128 skewed-4hot: rel-L2 6.07e-03 row 6.86e-03 err 0 | maps scratch xs 0x6d65a000000/buf 0x6d65a000000 hs 0x6d650000000/buf 0x6d650000000 | ok
+[cuda-wgmma-verify]     [GA M=128 all-one-expert] launching graph replay
+[cuda-wgmma-verify]   replay GA M=128 all-one-expert: rel-L2 6.09e-03 row 6.74e-03 err 0 | maps scratch xs 0x6d600000000/buf 0x6d600000000 hs 0x6d606000000/buf 0x6d606000000 | ok
+[cuda-wgmma-verify]     [GB M=128 mixed-local-remote] launching graph replay
+[cuda-wgmma-verify]   replay GB M=128 mixed-local-remote: rel-L2 6.06e-03 row 6.42e-03 err 0 | maps scratch xs 0x6d65a000000/buf 0x6d65a000000 hs 0x6d650000000/buf 0x6d650000000 | ok
+[cuda-wgmma-verify]     [GA M=128 random] launching graph replay
+[cuda-wgmma-verify]   replay GA M=128 random: rel-L2 6.09e-03 row 6.67e-03 err 0 | maps scratch xs 0x6d600000000/buf 0x6d600000000 hs 0x6d606000000/buf 0x6d606000000 | ok
+[cuda-wgmma-verify]     [GA2 M=128 skewed-4hot] launching graph replay
+[cuda-wgmma-verify]   replay GA2 M=128 skewed-4hot: rel-L2 6.10e-03 row 6.82e-03 err 0 | maps scratch xs 0x6d600000000/buf 0x6d600000000 hs 0x6d606000000/buf 0x6d606000000 | ok
+[cuda-wgmma-verify]     [GB M=128 all-one-expert] launching graph replay
+[cuda-wgmma-verify]   replay GB M=128 all-one-expert: rel-L2 6.05e-03 row 6.57e-03 err 0 | maps scratch xs 0x6d65a000000/buf 0x6d65a000000 hs 0x6d650000000/buf 0x6d650000000 | ok
+[cuda-wgmma-verify]     [GA M=256 random] launching graph replay
+[cuda-wgmma-verify]   replay GA M=256 random: rel-L2 6.07e-03 row 6.65e-03 err 0 | maps scratch xs 0x6d600000000/buf 0x6d600000000 hs 0x6d606000000/buf 0x6d606000000 | ok
+[cuda-wgmma-verify]     [GB M=256 skewed-4hot] launching graph replay
+[cuda-wgmma-verify]   replay GB M=256 skewed-4hot: rel-L2 6.08e-03 row 6.76e-03 err 0 | maps scratch xs 0x6d65a000000/buf 0x6d65a000000 hs 0x6d650000000/buf 0x6d650000000 | ok
+[cuda-wgmma-verify]     [GA M=256 all-one-expert] launching graph replay
+[cuda-wgmma-verify]   replay GA M=256 all-one-expert: rel-L2 6.01e-03 row 6.51e-03 err 0 | maps scratch xs 0x6d600000000/buf 0x6d600000000 hs 0x6d606000000/buf 0x6d606000000 | ok
+[cuda-wgmma-verify]     [GB M=256 mixed-local-remote] launching graph replay
+[cuda-wgmma-verify]   replay GB M=256 mixed-local-remote: rel-L2 6.08e-03 row 6.89e-03 err 0 | maps scratch xs 0x6d65a000000/buf 0x6d65a000000 hs 0x6d650000000/buf 0x6d650000000 | ok
+[cuda-wgmma-verify]     [GA M=256 random] launching graph replay
+[cuda-wgmma-verify]   replay GA M=256 random: rel-L2 6.06e-03 row 6.83e-03 err 0 | maps scratch xs 0x6d600000000/buf 0x6d600000000 hs 0x6d606000000/buf 0x6d606000000 | ok
+[cuda-wgmma-verify]     [GA2 M=256 skewed-4hot] launching graph replay
+[cuda-wgmma-verify]   replay GA2 M=256 skewed-4hot: rel-L2 6.06e-03 row 6.50e-03 err 0 | maps scratch xs 0x6d600000000/buf 0x6d600000000 hs 0x6d606000000/buf 0x6d606000000 | ok
+[cuda-wgmma-verify]     [GB M=256 all-one-expert] launching graph replay
+[cuda-wgmma-verify]   replay GB M=256 all-one-expert: rel-L2 6.06e-03 row 6.72e-03 err 0 | maps scratch xs 0x6d65a000000/buf 0x6d65a000000 hs 0x6d650000000/buf 0x6d650000000 | ok
+[cuda-wgmma-verify]     [GA M=257 skewed-4hot] launching graph replay
+[cuda-wgmma-verify]   replay GA M=257 skewed-4hot: rel-L2 6.08e-03 row 6.48e-03 err 0 | maps scratch xs 0x6d600000000/buf 0x6d600000000 hs 0x6d606000000/buf 0x6d606000000 | ok
+[cuda-wgmma-verify]     [GB M=257 all-one-expert] launching graph replay
+[cuda-wgmma-verify]   replay GB M=257 all-one-expert: rel-L2 6.04e-03 row 6.67e-03 err 0 | maps scratch xs 0x6d65a000000/buf 0x6d65a000000 hs 0x6d650000000/buf 0x6d650000000 | ok
+[cuda-wgmma-verify]     [GA M=257 mixed-local-remote] launching graph replay
+[cuda-wgmma-verify]   replay GA M=257 mixed-local-remote: rel-L2 6.07e-03 row 6.60e-03 err 0 | maps scratch xs 0x6d600000000/buf 0x6d600000000 hs 0x6d606000000/buf 0x6d606000000 | ok
+[cuda-wgmma-verify]     [GB M=257 random] launching graph replay
+[cuda-wgmma-verify]   replay GB M=257 random: rel-L2 6.04e-03 row 6.65e-03 err 0 | maps scratch xs 0x6d65a000000/buf 0x6d65a000000 hs 0x6d650000000/buf 0x6d650000000 | ok
+[cuda-wgmma-verify]     [GA M=257 skewed-4hot] launching graph replay
+[cuda-wgmma-verify]   replay GA M=257 skewed-4hot: rel-L2 6.07e-03 row 6.60e-03 err 0 | maps scratch xs 0x6d600000000/buf 0x6d600000000 hs 0x6d606000000/buf 0x6d606000000 | ok
+[cuda-wgmma-verify]     [GA2 M=257 all-one-expert] launching graph replay
+[cuda-wgmma-verify]   replay GA2 M=257 all-one-expert: rel-L2 6.05e-03 row 6.67e-03 err 0 | maps scratch xs 0x6d600000000/buf 0x6d600000000 hs 0x6d606000000/buf 0x6d606000000 | ok
+[cuda-wgmma-verify]     [GB M=257 mixed-local-remote] launching graph replay
+[cuda-wgmma-verify]   replay GB M=257 mixed-local-remote: rel-L2 6.09e-03 row 6.62e-03 err 0 | maps scratch xs 0x6d65a000000/buf 0x6d65a000000 hs 0x6d650000000/buf 0x6d650000000 | ok
+[cuda-wgmma-verify]   cross-copy check (GA, GB, GA, GB, GA, GA2, GB per M, fresh routing each): 21/21 replays ok
+[cuda-wgmma-verify] timing  M=128: warm wgmma gather 6.6 + w13+silu 363.2 + w2 173.2 = 543.0 us | Marlin w13 586.8 + silu 11.2 + w2 308.7 = 906.7 us (block_size_m 16; 1024 local routes)
+[cuda-wgmma-verify] timing  M=128: COLD-L2 wgmma 9.8 + 385.6 + 185.4 = 580.8 us | Marlin 598.4 + 13.2 + 310.0 = 921.6 us (stage 2 warm eager: 515.9 vs 911.3 us at M=128, 728.0 vs 1258.5 at M=256)
+[cuda-wgmma-verify] timing  M=256: warm wgmma gather 8.7 + w13+silu 456.5 + w2 234.8 = 700.0 us | Marlin w13 845.1 + silu 14.8 + w2 424.6 = 1284.5 us (block_size_m 32; 2048 local routes)
+[cuda-wgmma-verify] timing  M=256: COLD-L2 wgmma 12.3 + 457.2 + 230.2 = 699.7 us | Marlin 832.4 + 19.6 + 425.9 = 1278.0 us (stage 2 warm eager: 515.9 vs 911.3 us at M=128, 728.0 vs 1258.5 at M=256)
+[cuda-wgmma-verify] ===== STAGE 4 DIAGNOSTIC SUMMARY (last block of the log) =====
+[cuda-wgmma-verify] build: TORCH_CUDA_ARCH_LIST=9.0a -> ['-gencode=arch=compute_90a,code=sm_90a']; cflags ['-O3', '-lineinfo', '-gencode=arch=compute_90a,code=sm_90a']; 34.4s (ok); ptxas warnings 0, wgmma 'serialized' warning: no warning (info-level note not visible)
+[cuda-wgmma-verify] kernel w13+silu: regs 168, local (spill) 0 B, smem 8192+187392 B, CTAs/SM 1
+[cuda-wgmma-verify] kernel w2: regs 168, local (spill) 0 B, smem 8192+203776 B, CTAs/SM 1
+[cuda-wgmma-verify] cuTensorMapEncodeTiled x8 per state: CPU blob (2, 512); audit findings none
+[cuda-wgmma-verify] bucket canary (variant A = wgmma_wait<0> before dequant, the only variant): all four N buckets pass:
+[cuda-wgmma-verify]   A(wait0) N16 (c=16, 16 local routes, buckets [0]): w13 max-abs 9.375e-02 rel 6.42e-03 nonf rows 0 unw 0 | w2 max-abs 1.562e-02 rel 3.43e-03 nonf rows 0 unw 0 | out rel 5.92e-03 | ref non-finite 0/0 | err word 0 | PASS
+[cuda-wgmma-verify]   A(wait0) N32 (c=32, 32 local routes, buckets [1]): w13 max-abs 9.375e-02 rel 6.42e-03 nonf rows 0 unw 0 | w2 max-abs 1.562e-02 rel 3.45e-03 nonf rows 0 unw 0 | out rel 6.02e-03 | ref non-finite 0/0 | err word 0 | PASS
+[cuda-wgmma-verify]   A(wait0) N64 (c=64, 64 local routes, buckets [2]): w13 max-abs 1.250e-01 rel 6.45e-03 nonf rows 0 unw 0 | w2 max-abs 1.562e-02 rel 3.47e-03 nonf rows 0 unw 0 | out rel 6.04e-03 | ref non-finite 0/0 | err word 0 | PASS
+[cuda-wgmma-verify]   A(wait0) N128 (c=128, 128 local routes, buckets [3]): w13 max-abs 1.250e-01 rel 6.47e-03 nonf rows 0 unw 0 | w2 max-abs 1.562e-02 rel 3.47e-03 nonf rows 0 unw 0 | out rel 6.02e-03 | ref non-finite 0/0 | err word 0 | PASS
+[cuda-wgmma-verify] w13+silu: PASS; w2 (fed Marlin cache2): PASS; N buckets exercised [16, 32, 64, 128] multi-chunk True; fused norm skips remote rows: True
+[cuda-wgmma-verify]   canary M=128: w13 h unw 0 part 0 nonfin 0 rel 6.51e-03 | w2(Marlin cache2) unw 0 part 0 nonfin 0 rel 3.47e-03 | w2(own h) rel 8.49e-03 | out rel 5.98e-03 | gather bad 0/128 pad!=0 0/0 | ids True cov True | err word 0
+[cuda-wgmma-verify]   mixed M=128: w13 h unw 0 part 0 nonfin 0 rel 6.50e-03 | w2(Marlin cache2) unw 0 part 0 nonfin 0 rel 3.48e-03 | w2(own h) rel 8.48e-03 | out rel 6.07e-03 | gather bad 0/432 pad!=0 0/64 | ids True cov True | err word 0
+[cuda-wgmma-verify]   mixed M=256: w13 h unw 0 part 0 nonfin 0 rel 6.48e-03 | w2(Marlin cache2) unw 0 part 0 nonfin 0 rel 3.48e-03 | w2(own h) rel 8.47e-03 | out rel 6.05e-03 | gather bad 0/644 pad!=0 0/60 | ids True cov True | err word 0
+[cuda-wgmma-verify] replay safety (refill replay + cross-copy GA/GB/GA/GB/GA on two states, M (128, 256, 257)): PASS: 36 replays (refill 15/15, cross-copy 21/21), worst rel-L2 vs Marlin 6.11e-03, worst row 6.93e-03 (bounds 0.01 / 0.05), map scratch ptr == state buffer ptr on every replay: True
+[cuda-wgmma-verify] self-check (4 M x 5 routings, eager + graph): PASS; worst rel-L2 vs Marlin h 6.53e-03 y2 3.48e-03 out 6.10e-03; device error word 0
+[cuda-wgmma-verify] prepare timing (warm: eager events, median of 20; cold: L2 flushed, 1 launch, median of 20; the judge profile reads 20-25% higher; optimistic if a kernel releases early):
+[cuda-wgmma-verify]   M=128: warm wgmma gather 6.6 + w13+silu 363.2 + w2 173.2 = 543.0 us | Marlin w13 586.8 + silu 11.2 + w2 308.7 = 906.7 us (block_size_m 16; 1024 local routes)
+[cuda-wgmma-verify]   M=128: COLD-L2 wgmma 9.8 + 385.6 + 185.4 = 580.8 us | Marlin 598.4 + 13.2 + 310.0 = 921.6 us (stage 2 warm eager: 515.9 vs 911.3 us at M=128, 728.0 vs 1258.5 at M=256)
+[cuda-wgmma-verify]   M=256: warm wgmma gather 8.7 + w13+silu 456.5 + w2 234.8 = 700.0 us | Marlin w13 845.1 + silu 14.8 + w2 424.6 = 1284.5 us (block_size_m 32; 2048 local routes)
+[cuda-wgmma-verify]   M=256: COLD-L2 wgmma 12.3 + 457.2 + 230.2 = 699.7 us | Marlin 832.4 + 19.6 + 425.9 = 1278.0 us (stage 2 warm eager: 515.9 vs 911.3 us at M=128, 728.0 vs 1258.5 at M=256)
+[cuda-wgmma-verify] verdicts: w13+silu PASS, w2 PASS, self-check PASS, replay safety PASS; wgmma is enabled only if BOTH kernels pass rel-L2 <= 0.01 vs Marlin; setup 35.7s (prepare so far 39.3s)
+[cuda-wgmma-verify] PATH CHOSEN = WGMMA for 128 <= num_tokens <= 512; MARLIN for num_tokens < 128 and > 512; kernel variant A (wgmma_wait<0>) in every bucket; maps per state (CPU blob)
