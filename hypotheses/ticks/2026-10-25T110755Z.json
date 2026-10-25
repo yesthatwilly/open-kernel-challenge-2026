@@ -1,0 +1,425 @@
+{
+ "ok": true,
+ "promote": [],
+ "dispatch": [
+  {
+   "problem": "muse_attention_decode",
+   "picks": [
+    {
+     "slug": "restack-sliding-decode-sk-window-on-cluster-master",
+     "mode": "submit",
+     "priority": 1,
+     "review": "required",
+     "kind": "primary",
+     "controls_for": null
+    }
+   ]
+  },
+  {
+   "problem": "muse_bf16_proj",
+   "picks": [
+    {
+     "slug": "qkv-swapab-w128-splitk7-one-wave-m32",
+     "mode": "submit",
+     "priority": 1,
+     "review": "required",
+     "kind": "primary",
+     "controls_for": null
+    }
+   ]
+  },
+  {
+   "problem": "muse_decode_layer",
+   "picks": [
+    {
+     "slug": "qkv-o-swapab16-t2-t16-no-fork",
+     "mode": "submit",
+     "priority": 2,
+     "review": "required",
+     "kind": "primary",
+     "controls_for": null
+    }
+   ]
+  },
+  {
+   "problem": "muse_moe_w4a16",
+   "picks": [
+    {
+     "slug": "cuda-nvfp4-wgmma-rega-grouped-s5-copy-safe-bucket-gate",
+     "mode": "check",
+     "priority": 2,
+     "review": "proceed",
+     "kind": "rewrite",
+     "controls_for": null
+    }
+   ]
+  },
+  {
+   "problem": "muse_prefill_layer",
+   "picks": [
+    {
+     "slug": "experts-turn-rega-s4-port-t4096",
+     "mode": "check",
+     "priority": 1,
+     "review": "required",
+     "kind": "rewrite",
+     "controls_for": null
+    },
+    {
+     "slug": "experts-turn4-ssdq-s2-tma-raw-weight-ring",
+     "mode": "check",
+     "priority": 1,
+     "review": "required",
+     "kind": "rewrite",
+     "controls_for": null
+    }
+   ]
+  }
+ ],
+ "wake_s": 2848,
+ "needs_human": [],
+ "report": {
+  "preflight": {
+   "ok": true,
+   "branch": "master",
+   "whoami": "yesthatwilly",
+   "quotas": {
+    "muse_bf16_proj": {
+     "scored": {
+      "per_day": 10,
+      "used": 1,
+      "left": 9
+     },
+     "checks": {
+      "per_day": 20,
+      "used": 20,
+      "left": 0
+     }
+    },
+    "muse_attention_decode": {
+     "scored": {
+      "per_day": 10,
+      "used": 2,
+      "left": 8
+     },
+     "checks": {
+      "per_day": 20,
+      "used": 20,
+      "left": 0
+     }
+    },
+    "muse_moe_w4a16": {
+     "scored": {
+      "per_day": 10,
+      "used": 1,
+      "left": 9
+     },
+     "checks": {
+      "per_day": 20,
+      "used": 18,
+      "left": 2
+     }
+    },
+    "muse_decode_layer": {
+     "scored": {
+      "per_day": 10,
+      "used": 3,
+      "left": 7
+     },
+     "checks": {
+      "per_day": 20,
+      "used": 20,
+      "left": 0
+     }
+    },
+    "muse_prefill_layer": {
+     "scored": {
+      "per_day": 10,
+      "used": 1,
+      "left": 9
+     },
+     "checks": {
+      "per_day": 20,
+      "used": 14,
+      "left": 6
+     }
+    }
+   },
+   "tracks": null,
+   "hours_to_reset": 12.87,
+   "lock": ".claude/churn.lock",
+   "_exit": 0
+  },
+  "intake": {
+   "ok": true,
+   "added": [
+    "muse_attention_decode/hypotheses/queue/2026-10-25T110636Z-restack-sliding-decode-sk-window-on-cluster-master.md",
+    "muse_attention_decode/hypotheses/queue/2026-10-25T110716Z-sliding-decode-sk-s3-fused-preattn-rope.md",
+    "muse_bf16_proj/hypotheses/queue/2026-10-25T110547Z-qkv-swapab-w128-splitk7-one-wave-m32.md",
+    "muse_bf16_proj/hypotheses/queue/2026-10-25T110625Z-bf16-verify32-cutlass-coop-256x128-splitk-stage2.md",
+    "muse_decode_layer/hypotheses/queue/2026-10-25T110639Z-sliding-cluster-c4-s3-satfinite-on-sk-ticket.md",
+    "muse_decode_layer/hypotheses/queue/2026-10-25T110701Z-qkv-o-swapab16-t2-t16-no-fork.md",
+    "muse_moe_w4a16/hypotheses/queue/2026-10-25T110521Z-cuda-nvfp4-wgmma-rega-b128-n32-deep-ring.md",
+    "muse_moe_w4a16/hypotheses/queue/2026-10-25T110544Z-cuda-nvfp4-wgmma-rega-b256-n64-deep-ring.md",
+    "muse_prefill_layer/hypotheses/queue/2026-10-25T110612Z-experts-turn4-ssdq-s2-tma-raw-weight-ring.md",
+    "muse_prefill_layer/hypotheses/queue/2026-10-25T110643Z-turn-align-two-phase-chunk-prefix.md"
+   ],
+   "skipped": [],
+   "_exit": 0
+  },
+  "recover": {
+   "ok": true,
+   "actions": [],
+   "needs_human": [],
+   "_exit": 0
+  },
+  "harvest": {
+   "ok": true,
+   "harvested": [
+    {
+     "problem": "muse_attention_decode",
+     "slug": "full-verify1-sk-two-level-token-group",
+     "job": "7d23e8776c194344",
+     "outcome": "neutral",
+     "detail": "beats-base-not-best",
+     "speedup": 1.471441356010769,
+     "ci": [
+      1.4493697356706075,
+      1.4935129763509305
+     ],
+     "md": "muse_attention_decode/hypotheses/done/neutral/2026-10-25T054449Z-full-verify1-sk-two-level-token-group.md"
+    },
+    {
+     "problem": "muse_decode_layer",
+     "slug": "dense-chain-s3-t1-q-sk2-o-route-unpool",
+     "job": "34a9be06918d448b",
+     "outcome": "neutral",
+     "detail": "unproven-vs-best",
+     "speedup": 1.3017519911209459,
+     "ci": [
+      1.2822257112541318,
+      1.32127827098776
+     ],
+     "md": "muse_decode_layer/hypotheses/done/neutral/2026-10-25T054152Z-dense-chain-s3-t1-q-sk2-o-route-unpool.md"
+    }
+   ],
+   "pending": [],
+   "_exit": 0
+  },
+  "harvest-promotions": {
+   "ok": true,
+   "promotions": [
+    {
+     "problem": "muse_bf16_proj",
+     "slug": "restack-three-cell-wins-router-unpooler-cluster-m8-nn-m128",
+     "job": "ee4f89f2f62c42d3",
+     "promotion": "done",
+     "speedup": 1.2490645809967658,
+     "you": {
+      "rank": 276,
+      "team": "yesthatwilly",
+      "speedup": 1.2491,
+      "first": false,
+      "ahead": 275,
+      "to_first": 1.2888
+     }
+    },
+    {
+     "problem": "muse_prefill_layer",
+     "slug": "experts-turn4-ssdq-s1b-dataptr-symbol-fix",
+     "job": "810b5f7decc84206",
+     "promotion": "done",
+     "speedup": 1.1075501334948785,
+     "you": {
+      "rank": 293,
+      "team": "yesthatwilly",
+      "speedup": 1.1076,
+      "first": false,
+      "ahead": 292,
+      "to_first": 1.7386
+     }
+    }
+   ],
+   "_exit": 0
+  },
+  "promote": {
+   "ok": true,
+   "promote": [],
+   "skipped": [],
+   "_exit": 1
+  },
+  "budget": {
+   "ok": true,
+   "plans": [
+    {
+     "problem": "muse_attention_decode",
+     "checks_left": 0,
+     "scored_left": 8,
+     "hours_to_reset": 12.87,
+     "in_flight": 0,
+     "in_flight_checks": 0,
+     "gains_pending": 0,
+     "promotion_hold": 0,
+     "spendable": 8,
+     "queue": 1,
+     "need": 8,
+     "pace": 1,
+     "N": 1,
+     "picks": [
+      {
+       "slug": "restack-sliding-decode-sk-window-on-cluster-master",
+       "mode": "submit",
+       "priority": 1,
+       "review": "required",
+       "kind": "primary",
+       "controls_for": null
+      }
+     ],
+     "shortfall": 7,
+     "reason": null,
+     "wake_s": 3600
+    },
+    {
+     "problem": "muse_bf16_proj",
+     "checks_left": 0,
+     "scored_left": 9,
+     "hours_to_reset": 12.87,
+     "in_flight": 0,
+     "in_flight_checks": 0,
+     "gains_pending": 0,
+     "promotion_hold": 0,
+     "spendable": 9,
+     "queue": 2,
+     "need": 9,
+     "pace": 1,
+     "N": 1,
+     "picks": [
+      {
+       "slug": "qkv-swapab-w128-splitk7-one-wave-m32",
+       "mode": "submit",
+       "priority": 1,
+       "review": "required",
+       "kind": "primary",
+       "controls_for": null
+      }
+     ],
+     "shortfall": 7,
+     "reason": null,
+     "wake_s": 3600
+    },
+    {
+     "problem": "muse_decode_layer",
+     "checks_left": 0,
+     "scored_left": 7,
+     "hours_to_reset": 12.87,
+     "in_flight": 0,
+     "in_flight_checks": 0,
+     "gains_pending": 0,
+     "promotion_hold": 0,
+     "spendable": 7,
+     "queue": 2,
+     "need": 7,
+     "pace": 1,
+     "N": 1,
+     "picks": [
+      {
+       "slug": "qkv-o-swapab16-t2-t16-no-fork",
+       "mode": "submit",
+       "priority": 2,
+       "review": "required",
+       "kind": "primary",
+       "controls_for": null
+      }
+     ],
+     "shortfall": 5,
+     "reason": null,
+     "wake_s": 3600
+    },
+    {
+     "problem": "muse_moe_w4a16",
+     "checks_left": 2,
+     "scored_left": 9,
+     "hours_to_reset": 12.87,
+     "in_flight": 0,
+     "in_flight_checks": 0,
+     "gains_pending": 0,
+     "promotion_hold": 0,
+     "spendable": 11,
+     "queue": 4,
+     "need": 11,
+     "pace": 1,
+     "N": 1,
+     "picks": [
+      {
+       "slug": "cuda-nvfp4-wgmma-rega-grouped-s5-copy-safe-bucket-gate",
+       "mode": "check",
+       "priority": 2,
+       "review": "proceed",
+       "kind": "rewrite",
+       "controls_for": null
+      }
+     ],
+     "shortfall": 7,
+     "reason": null,
+     "wake_s": 3600
+    },
+    {
+     "problem": "muse_prefill_layer",
+     "checks_left": 6,
+     "scored_left": 9,
+     "hours_to_reset": 12.87,
+     "in_flight": 0,
+     "in_flight_checks": 0,
+     "gains_pending": 0,
+     "promotion_hold": 0,
+     "spendable": 15,
+     "queue": 6,
+     "need": 15,
+     "pace": 2,
+     "N": 2,
+     "picks": [
+      {
+       "slug": "experts-turn-rega-s4-port-t4096",
+       "mode": "check",
+       "priority": 1,
+       "review": "required",
+       "kind": "rewrite",
+       "controls_for": null
+      },
+      {
+       "slug": "experts-turn4-ssdq-s2-tma-raw-weight-ring",
+       "mode": "check",
+       "priority": 1,
+       "review": "required",
+       "kind": "rewrite",
+       "controls_for": null
+      }
+     ],
+     "shortfall": 9,
+     "reason": null,
+     "wake_s": 2848
+    }
+   ],
+   "wake_s": 2848,
+   "dispatch_total": 6,
+   "_exit": 0
+  },
+  "index": {
+   "ok": true,
+   "changed": [
+    "muse_attention_decode/hypotheses/INDEX.md",
+    "muse_attention_decode/hypotheses/FINDINGS.md",
+    "muse_bf16_proj/hypotheses/INDEX.md",
+    "muse_bf16_proj/hypotheses/FINDINGS.md",
+    "muse_decode_layer/hypotheses/INDEX.md",
+    "muse_decode_layer/hypotheses/FINDINGS.md",
+    "muse_moe_w4a16/hypotheses/INDEX.md",
+    "muse_moe_w4a16/hypotheses/FINDINGS.md",
+    "muse_prefill_layer/hypotheses/INDEX.md",
+    "muse_prefill_layer/hypotheses/FINDINGS.md",
+    "hypotheses/INDEX.md"
+   ],
+   "_exit": 0
+  }
+ }
+}
