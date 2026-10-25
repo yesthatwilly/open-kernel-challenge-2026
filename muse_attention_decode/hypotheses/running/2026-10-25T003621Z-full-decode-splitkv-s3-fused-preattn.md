@@ -52,9 +52,18 @@ controls_for: null
 rewrite_stage: 3
 replaces: _pre_attention_kernel launch on full decode 1<B<=64 (folded into splitkv_attn_sk_kernel)
 review: proceed
-status: queued
+status: running
 review_at: 2026-10-25T014055Z
 review_companions: null
+stage: claimed
+claimed_at: 2026-10-25T014055Z
+base_sha: f291b49c49670595d0615e749294f69bc15de1a4
+base_blob: 695c97d2e9fef8f806ec02d2fe14a02668989e3f
+branch: hyp/muse_attention_decode/full-decode-splitkv-s3-fused-preattn
+worktree: .worktrees/muse_attention_decode/full-decode-splitkv-s3-fused-preattn
+mode: null
+restack_of: null
+stale_base: null
 ---
 
 # full-decode-splitkv-s3-fused-preattn
