@@ -41,7 +41,7 @@ review: proceed
 status: running
 review_at: 2026-10-25T203723Z
 review_companions: null
-stage: claimed
+stage: implemented
 claimed_at: 2026-10-25T203723Z
 base_sha: 2178a1d62536d4e2c94af82772ab6316f61d8598
 base_blob: ad8d7254a64a52db2a8f56ec0ad262748153a2e8
@@ -50,6 +50,12 @@ worktree: .worktrees/muse_bf16_proj/unpooler-k-halves-batched-gemm-m65-m128
 mode: submit
 restack_of: null
 stale_base: null
+implemented_at: 2026-10-25T204107Z
+impl_commit: 03252b00cd6f9077e723eff868944d344746d121
+submission_sha256: 893edf99de9bc7dceb9a5198428741f4a5b81449e347e4a3e7e270e0feee4d17
+norm_sha256: 1ddd2b82957d3794fddce4dd750dbca0debc391cc7e4274f303c0e1330218ffb
+submission_blob: 572599cf4876a6353e8acc95486e0bb0be34586c
+lint_warnings: 39
 ---
 
 # unpooler-k-halves-batched-gemm-m65-m128
@@ -93,3 +99,33 @@ No companion: the selector times master's exact path vs both candidates (N view,
 - Add prior: pooler-k-halves-batched-gemm-m65-m256.
 - Overlaps queued bf16-verify16-cutlass-m128-onetile-splitk-rewrite (re-baseline).
 
+
+## Implementation notes
+
+Only `muse_bf16_proj/submission.py` in the worktree changed (+197/-4). Ported `_khalf_forward`, `_khalf_kernel_names`, relaxed `_khalf_names_ok` and `_khalf_select` from the sibling pooler patch, retargeted at the unpooler (n 8192, k 4096, halves of 2048; candidate N = `unpooler_t.view(2, 2048, 8192)`, candidate T = TN view of `state['unpooler']`, strides (2048, 1, 4096)).
+- Own flag `unpooler_khalf_ok` (+ per-m dict `state['unpooler_khalf']`) added to NEW_CELL_FLAGS; `_ab_flags` also carries the dict; state B inherits both; `_ab_component` gained a `state` arg and checks the flag BEFORE the nn_ok range, so a miss falls back to master's NN `torch.mm` and never turns nn_ok off. nn_p256_ok condition untouched.
+- Selector runs once on state A (step 10 in `_prepare_state`, after `_lt_prepare`): master exact path vs N vs T, synthetic x, 256 MB flush, 41 interleaved reps, empty-graph baseline, >= 1.02x to switch, reject > 6e-3 rel L2. Prints medians+IQR, bmm-only medians, kernel names, xh.stride(), PATH CHOSEN; FINAL FLAGS line also prints unpooler_khalf. Any exception keeps master. No exact kernel count; only copy/contiguous kernels or splitKreduce disqualify; empty events print "name check skipped".
+- Scope: exact m == 128 only (UNPOOLER_KHALF_MS = (128,)), per the task, narrower than the md's 65..128.
+- Deviation: kernel_fn also checks cheap host-side shape preconditions (x.dim()==2, shape[0]==cfg m, shape[1]==4096, is_contiguous) so the `view` can never raise; no print/try/state mutation there. Profiler failure inside the selector returns [] (check skipped) instead of aborting.
+
+## Rules check
+
+- [x] CUDA-graph capturable: kernel_fn path is view/permute/bmm/add only, no sync or value-dependent control flow (checked in diff).
+- [x] Nothing derived from `data` is cached across calls: the selector uses synthetic x in prepare(); state holds only weight views/choice.
+- [x] Weights: no new repack; reuses the existing lossless unpooler_t and views of the original weight, BF16 stays BF16.
+- [x] Activations BF16: bmm outputs bf16, add in bf16 (two roundings, as the pooler halves; verified at prepare vs 6e-3 rel L2).
+- [x] Attention sees every key: n/a: projection problem, no attention.
+- [x] No timing patches, harness access, module edits, reference import, subprocesses or network (diff adds only torch calls and torch.profiler).
+- [x] All work inside the timed call; no output caching or replay.
+- [x] Marker `# okc: problem=muse_bf16_proj` kept; no triton.autotune added; no host syncs in kernel_fn.
+
+Lint (`okc_lint.py`): `OK with warnings` (0 errors; warnings are the existing and new prepare()-only synchronize/torch.empty uint8 flush buffers, outside kernel_fn). `py_compile` clean, __pycache__ removed.
+
+## Pre-flight audit
+
+Audited 2026-10-25 by an opus subagent (read-only; no GPU). **Verdict: dispatch** (no fixes).
+- Gates: the selector compares master NN mm vs N/T bmm+add on synthetic x with the A/B self-check bound (6e-3; two bf16 roundings is about 2-3e-3). The relaxed name check rejects only copy/contiguous or splitKreduce kernels, and an empty profile skips the check. It cannot always fail. The A/B unpooler m=128 cell (n=8192) exercises kernel_fn on the new path in states A and B, and B inherits the flag and the per-m dict.
+- Fallback: in _ab_component, unpooler_khalf_ok is checked before the nn_ok range, so a miss switches off only that flag. kernel_fn then falls through to master NN torch.mm, and nn_ok (pooler m=128) is untouched. A selector exception, an invalid candidate, or a ratio below 1.02x keeps master and prints PATH CHOSEN. A failure building state B turns off every NEW_CELL_FLAGS entry, including this one.
+- kernel_fn: the added checks (x.dim, x.shape, is_contiguous, a cfg m dict lookup) read only metadata and are constant per config. They do no sync or allocation, and graph capture is not affected. The path is view/permute/bmm/add. No earlier route (ouns m<=8, bulk m=1, swapab16 n=1024, unpool m<=16, swapab 17..32) catches unpooler m=128 n=8192. m=130 and m=1000 stay on master. The judge x is contiguous.
+- Correctness and rules: single-nonzero probe rows are exact (the other half is exactly 0). The weights are views of the existing BF16 unpooler/unpooler_t with no new repack, and nothing derived from data is cached. Lint is OK with warnings (prepare-only syncs) and py_compile is clean.
+- Residual risk: cuBLAS may keep 128x64 tiles for the halves (as the pooler sibling saw at m=128). The selector then keeps master and the row is neutral (refuted at prepare time).
