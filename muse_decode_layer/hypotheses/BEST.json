@@ -1,17 +1,17 @@
 {
  "problem": "muse_decode_layer",
- "job": "cc92097b64784c0f",
+ "job": "39bcf05afc4e4dd3",
  "check_job": "cc92097b64784c0f",
- "mode": "check",
- "speedup": 1.2495238726339006,
+ "mode": "submit",
+ "speedup": 1.2521147631671776,
  "ci": [
-  1.230781014544392,
-  1.268266730723409
+  1.23333304171967,
+  1.270896484614685
  ],
- "score_us": 18103.13551858608,
+ "score_us": 18065.676298538958,
  "commit": "8fa8fbf0c89a2b6323c511c25b8616c0290dde23",
  "submission_blob": "4da94677234faaa06b42b5ced541db8961fd6f34",
  "slug": "stack-align-par-sidestream-sliding1",
  "result": "muse_decode_layer/hypotheses/done/neutral/stack-align-par-sidestream-sliding1.result.json",
- "updated_at": "2026-10-25T001048Z"
+ "updated_at": "2026-10-25T003214Z"
 }

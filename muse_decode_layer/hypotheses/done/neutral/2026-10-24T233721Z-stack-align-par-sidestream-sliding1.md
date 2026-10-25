@@ -48,11 +48,12 @@ speedup: 1.2495238726339006
 speedup_ci: [1.230781014544392, 1.268266730723409]
 harvested_at: 2026-10-25T000221Z
 best_at_harvest: 1.228328123558382
-promotion: submitted
+promotion: done
 promotion_job: 39bcf05afc4e4dd3
 promotion_at: 2026-10-25T001048Z
 hand_landed: true
 promotion_commit: 8fa8fbf0c89a2b6323c511c25b8616c0290dde23
+board: "{\"rank\": 384, \"team\": \"yesthatwilly\", \"speedup\": 1.2521, \"first\": false, \"ahead\": 383, \"to_first\": 1.8249}"
 ---
 
 # stack-align-par-sidestream-sliding1
