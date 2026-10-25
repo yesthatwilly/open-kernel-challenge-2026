@@ -50,7 +50,7 @@ base_sha: e6cf5ce8f79493b9904b7c6d74e6a6c25f14f820
 base_blob: db8a3344398bca79ea5cafeb580f701c055fd475
 branch: hyp/muse_prefill_layer/turn-align-sglang32-prenorm-triton-restack
 worktree: .worktrees/muse_prefill_layer/turn-align-sglang32-prenorm-triton-restack
-mode: null
+mode: check
 restack_of: null
 stale_base: null
 implemented_at: 2026-10-25T085911Z
@@ -59,6 +59,8 @@ submission_sha256: 7c16998b2c1a958d783f2bb1bdbc6e90cc9931d22b61989a27a6b9c4b5301
 norm_sha256: 33b2313415f5a9bfdfed0b6118ab1539bda1a5900b29c07c2b4e5120e1293589
 submission_blob: 8507f9e93acf5b0c3acb3b0dd45789b556d1344a
 lint_warnings: 31
+attempt_file: 2026-10-25T085911Z-check-turn-align-sglang32-prenorm-triton-restack.md
+prepared_at: 2026-10-25T085911Z
 ---
 
 # turn-align-sglang32-prenorm-triton-restack
