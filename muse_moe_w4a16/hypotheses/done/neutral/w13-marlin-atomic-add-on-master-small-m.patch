@@ -1,0 +1,317 @@
+diff --git a/muse_moe_w4a16/submission.py b/muse_moe_w4a16/submission.py
+index 60dfe35..4ee9fda 100644
+--- a/muse_moe_w4a16/submission.py
++++ b/muse_moe_w4a16/submission.py
+@@ -29,6 +29,8 @@ Differs from SGLang: the expert all-reduce is not run."""
+ 
+ from typing import TypedDict
+ 
++import inspect
++import time
+ import types
+ 
+ import torch
+@@ -463,9 +465,20 @@ def prepare(weights: Weights) -> dict:
+         # The original BF16 weight for _post_norm_combine_kernel, which adds the 1 in fp32.
+         "post_norm_w": weights["post_norm_w"].contiguous(),
+         "w2_mode": "master",
++        "w13_modes": {},
+     }
+     if (0, 32) in banks and banks[(0, 32)]["expert_map"] is not None:
+         state["w2_mode"] = _w2_atomic_self_check(weights, state, device)
++        try:
++            state["w13_modes"] = _w13_atomic_self_check(weights, state, device)
++        except Exception as e:  # never raises: master path
++            state["w13_modes"] = {}
++            print("[w13-atomic] PATH CHOSEN = master for every T band (self-check error %s: %s)"
++                  % (type(e).__name__, str(e)[:200]), flush=True)
++        try:
++            _marlin_exec_config_probe(state, device)  # print-only, no effect on routing
++        except Exception as e:
++            print("[marlin-exec-probe] aborted: %s: %s" % (type(e).__name__, str(e)[:200]), flush=True)
+     return state
+ 
+ 
+@@ -529,12 +542,260 @@ def _w2_atomic_self_check(weights, state, device):
+     return mode
+ 
+ 
++# Hypothesis w13-marlin-atomic-add-on-master-small-m: up to this many tokens the w13 Marlin call may
++# use use_atomic_add=True (use_fp32_reduce stays True); prepare()'s self-check picks the mode per T band.
++W13_ATOMIC_MAX_TOKENS = 32
++W13_POISON = 3.0e4
++# Pre-flight audit: 5e-3 is about the noise floor here. Landed w2 atomic alone is 4.79e-3 vs non-atomic, and
++# the w13 delta changes w2's input by ~1 bf16 ulp, which decorrelates w2's atomic rounding between ref and
++# candidate, so a correct candidate can read 6-8e-3 at T=1. A missing zero or a wrong write reads >> 1e-1.
++# Candidate vs FP32 stays well inside the judge's 1.5%.
++W13_ATOMIC_TOL = 1e-2
++W13_CHECK_TOKENS = (1, 4, 8, 16, 32)
++
++
++def _w13_band(tokens):
++    """The self-check T each token count is served by (None above W13_ATOMIC_MAX_TOKENS)."""
++    for t in W13_CHECK_TOKENS:
++        if tokens <= t:
++            return t
++    return None
++
++
++def _rel_l2(a, b):
++    return ((a.float() - b.float()).norm() / b.float().norm().clamp_min(1e-12)).item()
++
++
++def _synthetic_decode_data(bank, gen, device, tokens, pool=None):
++    ids = torch.randint(0, N_EXPERTS, (tokens, TOP_K), generator=gen, device=device, dtype=torch.int32)
++    lo = bank["start"]
++    hi = bank["start"] + (bank["count"] if pool is None else pool)
++    ids[:, :3] = torch.randint(lo, hi, (tokens, 3), generator=gen, device=device, dtype=torch.int32)
++    return {
++        "hidden_states": torch.randn((tokens, 4096), generator=gen, device=device, dtype=torch.bfloat16),
++        "topk_ids": ids,
++        "topk_weights": torch.rand((tokens, TOP_K), generator=gen, device=device, dtype=torch.float32),
++        "config": {"bs": tokens, "d_hidden": 4096, "d_expert": 4096, "n_experts": N_EXPERTS,
++                   "local_start": bank["start"], "local_count": bank["count"], "top_k": TOP_K,
++                   "sharding": "ep8"},
++    }
++
++
++def _print_slice_estimate(state, device, gen):
++    """Print-only. Marlin's real thread_k/thread_n and grid are not readable here, so these are
++    ESTIMATES assuming a 128x128 tile, 4 CTAs/SM (the workspace's max_blocks_per_sm) and an even
++    stripe of (m-block, n-tile, k-tile) work over the grid; m-blocks come from the real align."""
++    bank = state["banks"][(0, 32)]
++    sms = torch.cuda.get_device_properties(device).multi_processor_count
++    grid = sms * 4
++    for tokens in (1, 8):
++        data = _synthetic_decode_data(bank, gen, device, tokens)
++        bsm = _block_size_m(tokens, bank["count"])
++        _, (_, _, n_padded) = _align_small(data["topk_ids"], bank["start"], bank["count"], bsm)
++        torch.cuda.synchronize()
++        m_blocks = max(1, int(n_padded.item()) // bsm)
++        for name, n, k in (("w13", 2 * bank["size_n"], 4096), ("w2", 4096, bank["size_n"])):
++            n_tiles, k_tiles = n // 128, k // 128
++            per_cta = -(-(m_blocks * n_tiles * k_tiles) // grid)
++            slices = max(1, -(-k_tiles // max(per_cta, 1)))
++            print("[w13-atomic] slice estimate T=%d %s: block_size_m=%d n_padded/bsm=%d m_blocks=%d n_tiles=%d "
++                  "k_tiles=%d grid~%d work/CTA~%d k-tiles => split-K slices ~%d (ESTIMATE, 128x128 tile)"
++                  % (tokens, name, bsm, int(n_padded.item()), m_blocks, n_tiles, k_tiles, grid, per_cta, slices),
++                  flush=True)
++
++
++def _w13_atomic_self_check(weights, state, device):
++    """Untimed, synthetic inputs only. Per T band in W13_CHECK_TOKENS pick the w13 mode: "atomic"
++    (use_atomic_add, no memset, output buffer pre-filled with junk), "atomic_zero" (cache1.zero_()
++    first) or "master". The gate compares against CURRENT master (w2 mode as chosen, w13 non-atomic):
++    rel-L2 <= W13_ATOMIC_TOL (1e-2) for the w13 delta alone. The rel-L2 against a fully non-atomic path is printed only."""
++    bank = state["banks"][(0, 32)]
++    w2_mode = state["w2_mode"]
++    modes = {}
++    gen = torch.Generator(device=device)
++    gen.manual_seed(4321)
++    try:
++        _print_slice_estimate(state, device, gen)
++    except Exception as e:
++        print("[w13-atomic] slice estimate failed: %s: %s" % (type(e).__name__, str(e)[:200]), flush=True)
++    for tokens in W13_CHECK_TOKENS:
++        mode, reason = "master", "no candidate passed"
++        try:
++            data = _synthetic_decode_data(bank, gen, device, tokens)
++            print("[w13-atomic] launching master ref T=%d" % tokens, flush=True)
++            ref = _forward(data, state, w2_mode, "master").float()
++            torch.cuda.synchronize()
++            print("[w13-atomic] done master ref T=%d" % tokens, flush=True)
++            full = _forward(data, state, "master", "master").float()
++            torch.cuda.synchronize()
++            print("[w13-atomic] T=%d current master (w2=%s) vs fully non-atomic: rel-L2 %.3g"
++                  % (tokens, w2_mode, _rel_l2(ref, full)), flush=True)
++            err = {}
++            for cand in ("atomic", "atomic_zero"):
++                try:
++                    print("[w13-atomic] launching %s T=%d" % (cand, tokens), flush=True)
++                    out = _forward(data, state, w2_mode, cand, poison=True).float()
++                    torch.cuda.synchronize()
++                    print("[w13-atomic] done %s T=%d" % (cand, tokens), flush=True)
++                    rel = _rel_l2(out, ref)
++                    rel_full = _rel_l2(out, full)
++                    finite = bool(torch.isfinite(out).all().item())
++                    print("[w13-atomic] T=%d %s: rel-L2 vs master %.3g, vs fully non-atomic %.3g, finite %s"
++                          % (tokens, cand, rel, rel_full, finite), flush=True)
++                    if finite and rel <= W13_ATOMIC_TOL:
++                        mode, reason = cand, "rel-L2 vs current master %.3g" % rel
++                        break
++                    err[cand] = "rel-L2 %.3g finite %s" % (rel, finite)
++                except Exception as e:  # binding rejected the combination
++                    err[cand] = "%s: %s" % (type(e).__name__, str(e)[:200])
++            if mode == "master":
++                reason = "; ".join("%s failed (%s)" % (k, v) for k, v in err.items())
++        except Exception as e:
++            mode, reason = "master", "self-check error %s: %s" % (type(e).__name__, str(e)[:200])
++        modes[tokens] = mode
++        print("[w13-atomic] PATH CHOSEN T<=%d = %s (%s); memset in path: %s"
++              % (tokens, mode, reason, mode == "atomic_zero"), flush=True)
++    if all(m == "master" for m in modes.values()):
++        print("[w13-atomic] PATH CHOSEN = master for every band: this run measured nothing (harvest as VOID)",
++              flush=True)
++    print("[w13-atomic] w13 atomic add bound T<=%d; use_fp32_reduce=True; modes by band %s"
++          % (W13_ATOMIC_MAX_TOKENS, modes), flush=True)
++    return modes
++
++
++# Print-only probe (hypothesis marlin-exec-config-autotune-mid-m): does the binding take
++# thread_k / thread_n / blocks_per_sm, and what does each config time at T=8/16/32? Affects nothing.
++PROBE_BUDGET_S = 13.0
++PROBE_REPS = 15
++PROBE_FLUSH_BYTES = 320 * 2**20
++
++
++def _marlin_exec_config_probe(state, device):
++    tag = "[marlin-exec-probe]"
++    t0 = time.perf_counter()
++    try:
++        print(tag, "module", getattr(moe_wna16_marlin_gemm, "__module__", "?"),
++              "signature", inspect.signature(moe_wna16_marlin_gemm), flush=True)
++    except Exception as e:
++        print(tag, "signature unavailable: %s: %s" % (type(e).__name__, str(e)[:150]), flush=True)
++    doc = getattr(moe_wna16_marlin_gemm, "__doc__", None)
++    print(tag, "__doc__:", (doc or "none")[:600].replace("\n", " "), flush=True)
++    bank = state["banks"][(0, 32)]
++    ws = state["workspace"]
++    w2_mode = state.get("w2_mode", "master")
++    flush_buf = torch.empty(PROBE_FLUSH_BYTES, dtype=torch.uint8, device=device)
++    configs = [("binding-default", {})]
++    for tk, tn in ((-1, -1), (128, 128), (64, 256), (128, 64)):
++        for bpsm in (-1, 1, 2):
++            configs.append(("tk%d_tn%d_b%d" % (tk, tn, bpsm),
++                            dict(thread_k=tk, thread_n=tn, blocks_per_sm=bpsm)))
++    gen = torch.Generator(device=device)
++    gen.manual_seed(777)
++    seen_err = {}
++    for kernel in ("w13", "w2"):
++        for tokens in (8, 16, 32):
++            for seed_i, pool in enumerate((10, 13)):
++                if time.perf_counter() - t0 > PROBE_BUDGET_S:
++                    print(tag, "time budget reached, table truncated", flush=True)
++                    return _probe_cleanup(flush_buf)
++                data = _synthetic_decode_data(bank, gen, device, tokens, pool)
++                bsm = _block_size_m(tokens, bank["count"])
++                _, (sorted_ids, block_experts, n_padded) = _align_small(
++                    data["topk_ids"], bank["start"], bank["count"], bsm)
++                tw = data["topk_weights"]
++                base = dict(moe_block_size=bsm, mul_topk_weights=False, is_ep=True,
++                            b_q_type=scalar_types.float4_e2m1f, is_k_full=True, use_atomic_add=False,
++                            use_fp32_reduce=True, is_zp_float=False)
++                if kernel == "w13":
++                    a = data["hidden_states"]
++                    out = torch.zeros((tokens * TOP_K, 2 * bank["size_n"]), device=device, dtype=torch.bfloat16)
++                    args = (a, out, bank["w13"], None, bank["w13_s"], bank["w13_gs"], None, None, None, ws,
++                            sorted_ids, block_experts, n_padded, tw)
++                    kw0 = dict(base, top_k=TOP_K, size_m=tokens, size_n=2 * bank["size_n"], size_k=4096)
++                    pre = None
++                else:
++                    a = (torch.randn((tokens * TOP_K, bank["size_n"]), generator=gen, device=device,
++                                     dtype=torch.bfloat16) * 0.5)
++                    out = torch.zeros((tokens * TOP_K, 4096), device=device, dtype=torch.bfloat16)
++                    args = (a, out, bank["w2"], None, bank["w2_s"], bank["w2_gs"], None, None, None, ws,
++                            sorted_ids, block_experts, n_padded, tw)
++                    kw0 = dict(base, top_k=1, size_m=tokens * TOP_K, size_n=4096, size_k=bank["size_n"])
++                    pre = None
++                    if w2_mode != "master":  # master's own w2 mode
++                        kw0["use_atomic_add"] = True
++                        pre = out.zero_ if w2_mode == "atomic_zero" else None
++
++                def run(kw, args=args, kw0=kw0, pre=pre):
++                    if pre is not None:
++                        pre()
++                    return moe_wna16_marlin_gemm(*args, **dict(kw0, **kw))
++
++                graphs, rels, ref_out = {}, {}, None
++                for name, kw in configs:
++                    try:
++                        res = run(kw)
++                        torch.cuda.synchronize()
++                        cur = res.clone()
++                        if ref_out is None:
++                            ref_out = cur
++                        rels[name] = _rel_l2(cur, ref_out)
++                        g = torch.cuda.CUDAGraph()
++                        with torch.cuda.graph(g):
++                            run(kw)
++                        graphs[name] = g
++                    except Exception as e:
++                        msg = "%s: %s" % (type(e).__name__, str(e).strip().split("\n")[0][:140])
++                        if seen_err.get(name) != msg:
++                            seen_err[name] = msg
++                            print(tag, "config %s REJECTED: %s" % (name, msg), flush=True)
++                        # A device-side fault (not an argument check) or a capture left open: stop the probe
++                        # at once rather than launch more; the routing state is unaffected.
++                        low = str(e).lower()
++                        if torch.cuda.is_current_stream_capturing() or "illegal" in low or "misaligned" in low \
++                                or "unspecified launch" in low or "device-side" in low:
++                            print(tag, "ABORT: device fault or open capture after config %s" % name, flush=True)
++                            return _probe_cleanup(flush_buf)
++                if "binding-default" not in graphs:
++                    print(tag, "%s T=%d: no default graph, skipping" % (kernel, tokens), flush=True)
++                    continue
++                evs = {n: [] for n in graphs}
++                for _ in range(PROBE_REPS):
++                    for n, g in graphs.items():
++                        flush_buf.zero_()
++                        s, e = torch.cuda.Event(enable_timing=True), torch.cuda.Event(enable_timing=True)
++                        s.record()
++                        g.replay()
++                        e.record()
++                        evs[n].append((s, e))
++                torch.cuda.synchronize()
++                med = {n: sorted(s.elapsed_time(e) for s, e in v)[len(v) // 2] * 1000.0 for n, v in evs.items()}
++                base_us = med["binding-default"]
++                rows = sorted(med.items(), key=lambda kv: kv[1])
++                print(tag, "%s T=%d bsm=%d routing%d (pool %d experts, cold L2 %d MB, %d reps, w2_mode=%s): %s"
++                      % (kernel, tokens, bsm, seed_i, pool, PROBE_FLUSH_BYTES >> 20, PROBE_REPS, w2_mode,
++                         "; ".join("%s %.1fus x%.3f rel%.1e" % (n, us, us / base_us, rels.get(n, 0.0))
++                                   for n, us in rows)), flush=True)
++                del graphs
++    print(tag, "done in %.1f s; accepted kwargs configs: %s"
++          % (time.perf_counter() - t0, sorted(set(n for n, _ in configs) - set(seen_err))), flush=True)
++    _probe_cleanup(flush_buf)
++
++
++def _probe_cleanup(flush_buf):
++    del flush_buf
++    torch.cuda.synchronize()
++    torch.cuda.empty_cache()
++
++
+ def kernel_fn(data: Inputs, state: dict) -> torch.Tensor:
+     """This GPU's share of the MoE output, bfloat16 [M, H]."""
+-    return _forward(data, state, state.get("w2_mode", "master"))
++    # w13 mode is chosen per T band in prepare (a shape, not a value); anything unlisted is master.
++    w13_mode = state.get("w13_modes", {}).get(_w13_band(data["hidden_states"].shape[0]), "master")
++    return _forward(data, state, state.get("w2_mode", "master"), w13_mode)
+ 
+ 
+-def _forward(data: Inputs, state: dict, w2_mode: str) -> torch.Tensor:
++def _forward(data: Inputs, state: dict, w2_mode: str, w13_mode: str = "master",
++             poison: bool = False) -> torch.Tensor:
+     cfg = data["config"]
+     bank = state["banks"][(cfg["local_start"], cfg["local_count"])]
+     x = data["hidden_states"].contiguous()
+@@ -581,10 +842,18 @@ def _forward(data: Inputs, state: dict, w2_mode: str) -> torch.Tensor:
+                   b_q_type=scalar_types.float4_e2m1f, is_k_full=True, use_atomic_add=False,
+                   use_fp32_reduce=True, is_zp_float=False)
+     ws = state["workspace"]
++    w13_common = common
++    if poison:
++        # Self-check only: junk in the w13 output buffer so a missing zero-fill is caught.
++        cache13.fill_(W13_POISON)
++    if w13_mode != "master" and num_tokens <= W13_ATOMIC_MAX_TOKENS:
++        w13_common = dict(common, use_atomic_add=True)
++        if w13_mode == "atomic_zero":
++            cache1.zero_()
+     cache1 = moe_wna16_marlin_gemm(
+         x, cache1, bank["w13"], None, bank["w13_s"], bank["w13_gs"], None, None, None, ws,
+         sorted_ids, block_experts, n_padded, topk_weights, top_k=TOP_K,
+-        size_m=num_tokens, size_n=gemm1_n, size_k=size_k, **common)
++        size_m=num_tokens, size_n=gemm1_n, size_k=size_k, **w13_common)
+     silu_and_mul(cache1.view(-1, gemm1_n), cache2, expert_ids=local_ids.view(-1), expert_step=1)
+     w2_common = common
+     if w2_mode != "master" and num_tokens <= W2_ATOMIC_MAX_TOKENS:

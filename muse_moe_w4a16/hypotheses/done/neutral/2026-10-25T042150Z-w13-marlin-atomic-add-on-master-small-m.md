@@ -42,10 +42,10 @@ priority: 1
 kind: primary
 controls_for: null
 review: proceed
-status: running
+status: done
 review_at: 2026-10-25T042601Z
 review_companions: null
-stage: dispatched
+stage: harvested
 claimed_at: 2026-10-25T042601Z
 base_sha: 001ddce7af3678bd9f650680c4da3a693cea5170
 base_blob: 60dfe35d5417d9c0f89067ff313efdc2c41d03a2
@@ -64,6 +64,13 @@ attempt_file: 2026-10-25T043232Z-check-w13-marlin-atomic-add-on-master-small-m.m
 prepared_at: 2026-10-25T043232Z
 job: 171684977ec1470f
 dispatched_at: 2026-10-25T043241Z
+outcome: neutral
+verdict_detail: unproven-vs-best
+speedup: 1.3557914855465807
+speedup_ci: [1.335454613263382, 1.3761283578297792]
+harvested_at: 2026-10-25T053803Z
+best_at_harvest: 1.3438953504561806
+promotion: null
 ---
 
 # w13-marlin-atomic-add-on-master-small-m
@@ -155,3 +162,29 @@ Checked and fine:
 okc_lint after the fixes: `OK with warnings` (the same prepare-only warnings). `py_compile` OK, and `__pycache__` was removed.
 
 Residual risk: a sticky CUDA fault cannot be ruled out without the GPU. That would need an explicit `thread_k`/`thread_n` config that Marlin accepts but mis-executes, in a prepare-time probe that prints only. The T=1 gate also still depends on my rounding estimate of 6-8e-3, which comes from reasoning about rounding, not from a measurement.
+
+## Result
+
+- job `171684977ec1470f` (check), status done, passed True, tests 5/5
+- speedup 1.3558x, 95% CI [1.3355, 1.3761], score 9919.2981689056 µs vs SGLang 13448.5 µs
+- best at harvest: {"speedup": 1.3438953504561806, "ci": [1.3237369201993379, 1.364053780713023], "job": "7a0d900a1dd34666"}; base result: muse_moe_w4a16/hypotheses/done/neutral/w2-marlin-atomic-add-small-m.result.json
+- **outcome: neutral** (unproven-vs-best)
+- files: `muse_moe_w4a16/hypotheses/done/neutral/w13-marlin-atomic-add-on-master-small-m.result.json`, `muse_moe_w4a16/hypotheses/done/neutral/w13-marlin-atomic-add-on-master-small-m.patch`; branch `hyp/muse_moe_w4a16/w13-marlin-atomic-add-on-master-small-m`
+
+## Attribution
+
+| shape | w | base µs | hyp µs | delta | verdict |
+|---|---|---|---|---|---|
+| bs=1 load=decode_1 sharding=ep8 | 60 | 44.88 | 44.02 | 1.026 | flat |
+| bs=16 load=decode_16 sharding=ep8 | 60 | 147.71 | 147.88 | 1.0009 | flat |
+| bs=32 load=decode_32 sharding=ep8 | 60 | 198.72 | 201.12 | 1.0013 | flat |
+| bs=8 load=verify_1 sharding=ep8 | 60 | 106.03 | 107.82 | 1.0082 | flat |
+| bs=128 load=verify_16 sharding=ep8 | 60 | 317.77 | 320.5 | 1.0045 | flat |
+| bs=256 load=verify_32 sharding=ep8 | 60 | 467.8 | 452.82 | 1.0096 | flat |
+
+no shape moved outside noise. Expected hit: 4/6. Noise ±1.5%.
+
+## Follow-ups
+
+- unproven-vs-best: the change is not proven either way; a stacked hypothesis (`depends_on: w13-marlin-atomic-add-on-master-small-m`) that adds a further change in the same area is the only way to learn more (identical code is never re-run).
+
