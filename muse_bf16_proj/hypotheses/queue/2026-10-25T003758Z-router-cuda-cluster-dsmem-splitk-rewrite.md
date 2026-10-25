@@ -78,8 +78,10 @@ kind: rewrite
 controls_for: null
 rewrite_stage: 1
 replaces: "router at m<=32: torch.zeros memset node (vectorized_elementwise 0.7-0.8 us) + _router_hilo_kernel 3-D split-K with fp32 atomic_add (3.0-3.6 us)"
-review: required
+review: proceed
 status: queued
+review_at: 2026-10-25T004221Z
+review_companions: null
 ---
 
 # router-cuda-cluster-dsmem-splitk-rewrite
@@ -113,3 +115,29 @@ shape (profile top_kernels) against the incumbent and the speed-of-light floor, 
 2. at or below the incumbent kernels' time on the target shapes;
 3. within ~1.5x of the floor on the target shapes, and the headline CI clears 1.0 (promotable).
 The next stage is minted with `--kind rewrite --depends-on <this slug> --stage N+1`.
+
+## Adversarial review
+
+Reviewed 2026-10-25T004221Z by an adversarial subagent (model opus).
+
+**Verdict: proceed.** Design fits sm_90 and the correctness plan is sound, but the quoted incumbent numbers are the restack's, not master's, and M3 (row <=4.0 us) is very unlikely because a graph node still costs ~1.9 us on top of the kernel. Run as a check, judge against master's router rows, and confirm from the log that the cluster path ran.
+
+### Justification
+Removes the torch.zeros memset node and fp32 atomics, reducing split-K through cluster DSMEM in one launch; plain sm_90 (mma.sync, cp.async.cg, cluster launch, mapa, barrier.cluster), no wgmma. Problem 1: master's base run 1602a4e947e64090 has _router_hilo_kernel 3.2/3.5/4.1/3.2 us plus 0.7 us memset, rows 5.73/6.03/6.55/5.91 for m=1/16/32/8; the quoted 5.4/5.5/6.2/5.5 are the restack's. Problem 2: row ~= kernel + 1.9 us, so M3 needs a ~2.1 us kernel (4 TB/s cold), above anything measured here (~3.5 TB/s); realistic stage 1 is kernel 2.7-3.2, rows 4.7-5.1, saving 0.7-1.2 us/shape. Recalibrate M3. Problem 3: at NT=32 x is 64 KB/CTA plus 64 KB weight plus partials, >128 KB, so 1 CTA/SM and an explicit MaxDynamicSharedMemorySize; 16 clusters of 8 co-residency depends on GPCs. m=32 re-reads x 16x (~8 MB L2->SM), most likely to lag.
+
+### Confounders on the current kernel
+- router-triton-hilo-fused-control-splitk-all-m: the incumbent at m<=32; judge vs _router_hilo_kernel 3.2/3.5/4.1/3.2 us.
+- bf16-restack-m16-swapab-router-swapab-m32 (pending): would make the incumbent _router_swapab_kernel 3.1/3.4/3.6/3.0; a master-relative gain at m=32 overstates the restack-relative gain by ~0.5 us; compare vs both (job 1e90292c7b954d96).
+- bf16-m32-swapab-wgmma-triton, bf16-shape-gated-triton-winners-combo: other layers; ~40-50 s more load_inline in prepare, within budget.
+- router-hilo-at-m8, sglang-gemm-dispatch-parity: superseded.
+
+### Interference and A/B needs
+No companions. Clean shape gate; the profile names the new kernel on the four rows; in-process warm/cold-L2 event times vs _router_forward give a same-run A/B.
+
+### Open questions
+- Does cudaOccupancyMaxActiveClusters(cluster=8) report >=16 at the NT=32 footprint? Also compile a cluster-4 variant, or load each warp's x quarter into registers so NT=32 fits 2 CTAs/SM; print which path ran per m.
+- Recalibrate milestones against master (rows 5.73/6.03/6.55/5.91, kernels 3.2/3.5/4.1/3.2), M3 as kernel + 1.9 us.
+- Print kernel time with and without the DSMEM reduce to split mainloop from tail.
+- Stage 2 (m=128/256) needs a K-tiled x pipeline.
+- At harvest confirm the build line, occupancy print, PATH CHOSEN, and no memset node before reading numbers.
+
