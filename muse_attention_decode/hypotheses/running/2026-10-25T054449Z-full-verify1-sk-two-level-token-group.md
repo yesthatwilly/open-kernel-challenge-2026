@@ -52,7 +52,7 @@ review: proceed
 status: running
 review_at: 2026-10-25T054747Z
 review_companions: null
-stage: implemented
+stage: dispatched
 claimed_at: 2026-10-25T084919Z
 base_sha: 39fb54fe3f47f42f763160b2e09426e294bdbe7a
 base_blob: 7fd30a78be18303b7c935dc944c31ff33649bed0
@@ -69,6 +69,8 @@ submission_blob: 2a3da06aac723bdc92ec4648642f25ec1c2ccc2c
 lint_warnings: 41
 attempt_file: 2026-10-25T090903Z-check-full-verify1-sk-two-level-token-group.md
 prepared_at: 2026-10-25T090903Z
+job: 7d23e8776c194344
+dispatched_at: 2026-10-25T090912Z
 ---
 
 # full-verify1-sk-two-level-token-group
