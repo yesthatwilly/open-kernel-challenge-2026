@@ -71,7 +71,7 @@ review: proceed
 status: running
 review_at: 2026-10-25T054930Z
 review_companions: null
-stage: claimed
+stage: implemented
 claimed_at: 2026-10-25T084302Z
 base_sha: 928151c3ea4e903fc4a05ae7ac59672291b71d0d
 base_blob: a13d5fea2e79f85df573670cbd55a8a10fbc3d2c
@@ -80,6 +80,12 @@ worktree: .worktrees/muse_moe_w4a16/cuda-nvfp4-wgmma-rega-grouped-s5-copy-safe-f
 mode: null
 restack_of: null
 stale_base: true
+implemented_at: 2026-10-25T085424Z
+impl_commit: 57e77548ba31c2145d575df62752f62684b2f6ad
+submission_sha256: a7d57b4914045a9b48dc6be15fde917e51501da41cc9ddcfc64374e081a2372c
+norm_sha256: 8f75ca09f7dfc58a2923d73cd265e34e0cf7c6219191de179cf77970f91ea9df
+submission_blob: 77f34503659c90a5953f91a93ba6e1a2b02e4613
+lint_warnings: 60
 ---
 
 # cuda-nvfp4-wgmma-rega-grouped-s5-copy-safe-forced
@@ -133,3 +139,50 @@ No companion. This is a rewrite stage judged on its own kernel rows, and forcing
 - What does the judge's copy actually do? Is it a recursive clone with a pad between copies, and does it clone CPU tensors (wg_maps blob, wg_mptr)? The per-call encode works under every plausible variant, but a log line in kernel_fn is impossible. The judged profile kernel names are the only confirmation.
 - Does the wgmma grouped kernel's time scale down with route count at judge-like skew (around 300-400 local routes at bs=128)? The calibrated prepare print in item (6) should give the answer before the profile does.
 
+
+## Implementation notes
+
+Built on the s4 worktree (928151c3). stale_base: s4's file already contains master 9080a71 (diff vs master is only the wgmma section and the kernel_fn gate; master's submission.py last changed at 9080a71e), so no 3-way merge was needed. Only `muse_moe_w4a16/submission.py` changed (about +350/-320 lines).
+
+What changed:
+- C++: `wg_make_maps` deleted; `wg_gemm` lost its `maps`/`mptr` args and now encodes the four `cuTensorMapEncodeTiled` descriptors (N boxes 16/32/64/128) on EVERY call from the `bsrc` tensor passed in that call (xs for w13, hs for w2) into a stack-local `Maps`, passed by value as the `__grid_constant__` kernel parameter. The only file-scope variable is `static EncodeTiledFn g_encode_pfn` (host driver entry point, resolved in `wg_init` during prepare, outside capture; lazy re-resolve if null). C++ `TORCH_CHECK` on bsrc: cuda, contiguous, 2-D bf16, non-empty, width == K; plus `err.numel() >= 2`. Untyped `data_ptr()` for bsrc; the old `data_ptr<int64_t>` pointer-equality check is gone.
+- Python: `_wg_state_live`, `wg_maps`, `wg_mptr`, `wg_mptr_py`, `_wg_clone_state`, `_wg_replay_once`, `_wg_replay_check`, `_wg_capture` deleted. kernel_fn gate = `state.get("wgmma_ok") and 128<=T<=512 and expert_map is not None`. Ext name bumped to `..._v5`. The C++ audit now allows exactly that one PFN.
+- Launch marker instead of torch.profiler: `wg_err` is int32[2] per state; block 0 thread 0 of wg_kernel writes `0x57474d4d` into `err[1]` inside the `__CUDA_ARCH_FEAT_SM90_ALL` branch (the #else branch still sets error word 2). `err[0]` stays the error word; all `.item()` reads became `[0].item()`.
+- New `_wg_copy_check` (replaces s4's replay check): state A (prepared), B = `copy.deepcopy(state, memo={id(ext): ext})`, C = `_wg_copy_tree` (recursive dict/list/tuple walk cloning every tensor, sharing non-tensors) built after a 2 MB pad allocation each; each build in its own try/except, a raising method is skipped and named (a missing C fails the check). Graphs are captured THROUGH kernel_fn (flag forced True on the three states) per state at M=128/256/257; then for each of random / skewed-4hot / all-one-expert / mixed-local-remote the replays A,B,C,A,B with that state's inputs refilled in place before each. Every replay must be finite, err word 0, marker == magic (this is the LAUNCHED = wgmma proof, printed), and its error vs an fp32-dequant reference (exact bf16 val*E4M3 scale per expert, fp32 matmul, global scale in fp32, same fused post-norm) must be <= 1.5x Marlin's own error vs that reference (+1e-5 floor); both are printed per group (worst of 5).
+- No timing gate: path is on whenever the self-checks, copy check and marker pass. `_wg_time_vs_marlin` now prints only: Zipf popularity routing over 256 experts with this GPU's 32 the busiest, alpha picked from (0.3..1.5) so the cold-L2 Marlin pair lands nearest 245 us (T=128) / 370 us (T=256), local route count, and cold-L2 wgmma gather+w13+w2 vs Marlin w13+silu+w2 at that routing. These lines are in the final summary block (last in the log).
+- Release: `gc.collect()`, `synchronize`, `empty_cache` before the summary; the copy check deletes its graphs, reference weights, states and pads.
+
+Adversarial-review items:
+- Per-call encode from the state's own bsrc, no pointer gate: done. Judge-copy model (clone tree, shared ext): state C; deepcopy B as the second method.
+- LAUNCHED check: review rules_flags/the brief said no torch.profiler; replaced by the device marker (spec item 5 overridden).
+- Open question M2 restated (below). Open questions on what the judge copy does and scaling with route count are answered by C and by the Zipf print, but the judged profile kernel names remain the only confirmation.
+- M2 restated: wgmma rows in this job's profile (gather + w13+silu + w2 per call) at bs=128 / bs=256 are compared with s4 job 4e7f8be895a145ba's Marlin pair rows (306.2 / 483.2 us) and master 7a0d900a1dd34666, allowing cross-run noise; M2 holds if the wgmma pair (+ gather, minus act_and_mul) is <= 0.9x those. If the profile again shows only Marlin, the copy hypothesis is wrong.
+
+Uncertainties: nothing was compiled or run (no GPU/torch on this node). Prepare time grows (three states, 12 reference groups, reference weights cached in bf16 ~3 GB transient, Zipf calibration of 5 alphas x 2 shapes); the replay check starts only before 235 s and timing before 255 s, as in s4.
+
+## Rules check
+
+- [x] CUDA-graph capturable: kernel_fn path unchanged except the gate; per-call descriptor encode is host-only (no sync, no allocation); no `.item()`/prints/try in kernel_fn or `_moe_wgmma` (diff checked).
+- [x] Nothing derived from `data` cached across calls: maps are rebuilt per call from state scratch tensors; no stored pointer, map or blob remains.
+- [x] Weights repacked losslessly in prepare() only; NVFP4 stays NVFP4 (dequant in registers); reference dequant is prepare-only.
+- [x] Activations BF16 where SGLang keeps BF16; unchanged.
+- [x] Attention: n/a, MoE problem.
+- [x] No timing patches, harness frames, module edits, reference import, child processes: none added (no subprocess; `copy`/`gc` imports only).
+- [x] All work inside the timed call; no output caching or replay; prepare-time graphs are released.
+- [x] sm_90a: TORCH_CUDA_ARCH_LIST handling and the SM90_ALL guards unchanged; marker is inside the guard.
+
+okc_lint: `OK with warnings: muse_moe_w4a16/submission.py` (only host-sync/dtype warnings outside kernel_fn's call graph). py_compile OK, __pycache__ removed.
+
+## Pre-flight audit
+
+Audited 2026-10-25 (opus) by reading the code and emulating parts offline. No GPU was available. **Verdict: dispatch.** No fixes were needed.
+
+- Master parity: `_moe_marlin` is master's `_forward` body verbatim, including `w2_mode` and the atomic w2 at T<=32. kernel_fn routes T<128 and T>512 there with `state.get("w2_mode")`. The w2 self-check order in prepare() is unchanged.
+- TMA maps: `wg_gemm` encodes all 4 maps into a stack-local `Maps` from the `bsrc` of each call and passes them by value as a `__grid_constant__`. Nothing is stored. The only file-scope variable is the `g_encode_pfn` host driver function pointer. Running `_wg_audit_cpp` offline on the real source returns [] (no findings), so the audit gate does not switch the path off. No `data_ptr<long long>` or `data_ptr<int64_t>`.
+- Copy check: deepcopy B is built inside its own try/except with the ext shared through the memo. A raise is only named in the summary, never added to `fails`. Only a missing state C fails the check. Graphs are captured through kernel_fn per state. Each replay zeroes `wg_err` first, and the marker sits inside the SM90_ALL branch at kernel entry, so a Marlin fallback or a non-sm_90a image cannot leave it.
+- The 1.5x-Marlin bound is reachable. In the s4 log, wgmma against the fp32 dequant is h 3.1e-3 and y 1.66e-3, while wgmma against Marlin is h 6.5e-3 and w2 3.5e-3. So Marlin is the less accurate one (its global scale is rounded to bf16), and e_w should come in around 0.6x e_m.
+- Fallback: build failure, audit, canary, self-check, copy check, marker and budget each set off/ok=False inside `_wg_setup`'s try, then PATH CHOSEN = MARLIN. kernel_fn has no syncs, prints or try. It branches only on shape and the flag.
+- Release and time: graphs, states, pads and wref are deleted, then gc, sync and empty_cache run. s4 prepare took 39 s. The added copy check (9 captures, 60 replays) and the Zipf timing should add well under 60 s. The deadlines (235/255 s) still hold.
+- okc_lint passes (prepare-only warnings). py_compile passes. __pycache__ was removed.
+
+Residual risk: the judge's copy mechanism is still inferred. If the judged bs=128/256 profile again shows only Marlin, then the copy hypothesis is wrong, not this code.
