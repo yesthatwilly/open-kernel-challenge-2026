@@ -81,9 +81,18 @@ controls_for: null
 rewrite_stage: 1
 replaces: moe_wna16_marlin_gemm x2 (Marlin w13 + w2) and _silu_mul_sorted at 200 < T <= 4096
 review: proceed
-status: queued
+status: running
 review_at: 2026-10-25T111120Z
 review_companions: null
+stage: claimed
+claimed_at: 2026-10-25T111120Z
+base_sha: c6fe58c3ab272abce5f98a2a19f884600fd2f6a8
+base_blob: f2d91dd181aeb44de20d2eed62ab7e564f2b181f
+branch: hyp/muse_prefill_layer/experts-turn-rega-s4-port-t4096
+worktree: .worktrees/muse_prefill_layer/experts-turn-rega-s4-port-t4096
+mode: null
+restack_of: null
+stale_base: null
 ---
 
 # experts-turn-rega-s4-port-t4096
