@@ -1,0 +1,535 @@
+diff --git a/muse_attention_decode/submission.py b/muse_attention_decode/submission.py
+index 136874e..9bcf522 100644
+--- a/muse_attention_decode/submission.py
++++ b/muse_attention_decode/submission.py
+@@ -897,7 +897,7 @@ def _full_decode_splitkv(data: Inputs, q: torch.Tensor, qkv: torch.Tensor) -> to
+ 
+ # ---------------------------------------------------------------------------------------------
+ # Full-layer VERIFY (q_len 8, causal inside the block) at 1 < batch <= 64 (tp8, page 1): rewrite
+-# stage 3, in its OWN load_inline module (muse_full_verify_wgmma_v1) so a build or self-check
++# stage 4 (stage 3 + bisecting self-check, SYNC A/B variant), in its OWN load_inline module (muse_full_verify_wgmma_v2) so a build or self-check
+ # failure here never touches the decode module above. Any failure leaves full verify on master's
+ # PAIRED FA3 path (the `paired` predicate in kernel_fn is true again once the gate is off).
+ #
+@@ -944,7 +944,7 @@ void wg_verify_attn(torch::Tensor q, torch::Tensor k_cache, torch::Tensor v_cach
+                     torch::Tensor cache_seqlens, torch::Tensor k_scale, torch::Tensor v_scale, torch::Tensor qkv,
+                     int64_t qkv_stride, torch::Tensor out, torch::Tensor ws_acc, torch::Tensor ws_ml,
+                     torch::Tensor ticket, torch::Tensor err, double score_scale, double eps, int64_t grid,
+-                    int64_t use_ticket);
++                    int64_t use_ticket, int64_t use_sync);
+ void wg_verify_combine(torch::Tensor ws_acc, torch::Tensor ws_ml, torch::Tensor cache_seqlens,
+                        torch::Tensor v_scale, torch::Tensor qkv, int64_t qkv_stride, torch::Tensor out,
+                        int64_t grid, double eps);
+@@ -1164,7 +1164,7 @@ __device__ __forceinline__ uint32_t pack_e4m3x4(float a, float b, float c, float
+ }
+ #endif
+ 
+-template <bool TICKET>
++template <bool TICKET, bool SYNC>
+ __global__ void __launch_bounds__(THREADS, 2)
+ splitkv_verify_wgmma_kernel(const uint8_t* __restrict__ q,          // e4m3 [B * QL, HQ, D]
+                             const uint8_t* __restrict__ kc,         // e4m3 [rows, ROW]
+@@ -1352,6 +1352,10 @@ splitkv_verify_wgmma_kernel(const uint8_t* __restrict__ q,          // e4m3 [B *
+     }
+ 
+     wait_bar(full_bar(st), (n / STAGES) & 1);
++    // SYNC (A/B only): also the canonical writer-side ordering for the ring: every thread drains
++    // its own cp.async writes, proxy-fences them, then a CTA barrier, so a stale async-proxy view of
++    // a reused stage (n >= STAGES) or a cross-warpgroup ring race cannot survive in this variant.
++    if constexpr (SYNC) { cp_wait_all(); fence_proxy_async(); __syncthreads(); }
+     fence_proxy_async();  // the cp.async (generic proxy) writes -> wgmma (async proxy) reads
+     __syncwarp();
+     const uint32_t kst = ring_u + st * STAGE_BYTES;
+@@ -1517,6 +1521,10 @@ splitkv_verify_wgmma_kernel(const uint8_t* __restrict__ q,          // e4m3 [B *
+         }
+       }
+     }
++    // SYNC (A/B diagnostic variant only): a CTA barrier closes every tile, so the two warpgroups and
++    // the producer side run in lockstep. If a case that fails without it passes with it, the fault
++    // is a pipeline race (ring / index buffers), not the softmax or accumulator arithmetic.
++    if constexpr (SYNC) __syncthreads();
+   }
+   cp_wait_all();  // every issued tile was consumed; drain anyway
+ #else
+@@ -1604,22 +1612,24 @@ splitkv_verify_combine_kernel(const float* __restrict__ ws_acc, const float* __r
+ void set_attrs_once() {
+   static bool done = false;
+   if (!done) {
+-    C10_CUDA_CHECK(cudaFuncSetAttribute(splitkv_verify_wgmma_kernel<true>,
++    C10_CUDA_CHECK(cudaFuncSetAttribute(splitkv_verify_wgmma_kernel<true, false>,
+                                         cudaFuncAttributeMaxDynamicSharedMemorySize, SMEM_A));
+-    C10_CUDA_CHECK(cudaFuncSetAttribute(splitkv_verify_wgmma_kernel<false>,
++    C10_CUDA_CHECK(cudaFuncSetAttribute(splitkv_verify_wgmma_kernel<false, false>,
++                                        cudaFuncAttributeMaxDynamicSharedMemorySize, SMEM_A));
++    C10_CUDA_CHECK(cudaFuncSetAttribute(splitkv_verify_wgmma_kernel<true, true>,
+                                         cudaFuncAttributeMaxDynamicSharedMemorySize, SMEM_A));
+     done = true;
+   }
+ }
+ 
+-template <bool TICKET>
++template <bool TICKET, bool SYNC>
+ void launch_wg(torch::Tensor& q, torch::Tensor& k_cache, torch::Tensor& v_cache, torch::Tensor& page_table,
+                torch::Tensor& cache_seqlens, torch::Tensor& k_scale, torch::Tensor& v_scale, torch::Tensor& qkv,
+                int64_t qkv_stride, torch::Tensor& out, torch::Tensor& ws_acc, torch::Tensor& ws_ml,
+                torch::Tensor& ticket, torch::Tensor& err, double score_scale, double eps, int64_t grid, int B,
+                int64_t rows) {
+   auto stream = at::cuda::getCurrentCUDAStream();
+-  splitkv_verify_wgmma_kernel<TICKET><<<static_cast<unsigned>(grid), THREADS, SMEM_A, stream>>>(
++  splitkv_verify_wgmma_kernel<TICKET, SYNC><<<static_cast<unsigned>(grid), THREADS, SMEM_A, stream>>>(
+       reinterpret_cast<const uint8_t*>(q.data_ptr()), reinterpret_cast<const uint8_t*>(k_cache.data_ptr()),
+       reinterpret_cast<const uint8_t*>(v_cache.data_ptr()), rows, page_table.data_ptr<int>(), page_table.stride(0),
+       cache_seqlens.data_ptr<int>(), B, k_scale.data_ptr<float>(), v_scale.data_ptr<float>(),
+@@ -1634,7 +1644,7 @@ void wg_verify_attn(torch::Tensor q, torch::Tensor k_cache, torch::Tensor v_cach
+                     torch::Tensor cache_seqlens, torch::Tensor k_scale, torch::Tensor v_scale, torch::Tensor qkv,
+                     int64_t qkv_stride, torch::Tensor out, torch::Tensor ws_acc, torch::Tensor ws_ml,
+                     torch::Tensor ticket, torch::Tensor err, double score_scale, double eps, int64_t grid,
+-                    int64_t use_ticket) {
++                    int64_t use_ticket, int64_t use_sync) {
+   const int B = static_cast<int>(cache_seqlens.size(0));
+   TORCH_CHECK(B >= 1 && B <= MAXB, "wg_verify_attn: batch out of range");
+   TORCH_CHECK(q.size(0) == static_cast<int64_t>(B) * QL && q.size(1) == HQ && q.size(2) == D, "wg_verify_attn: q shape");
+@@ -1645,9 +1655,11 @@ void wg_verify_attn(torch::Tensor q, torch::Tensor k_cache, torch::Tensor v_cach
+               && ws_acc.is_contiguous() && ws_ml.is_contiguous() && out.is_contiguous(), "wg_verify_attn: layout");
+   set_attrs_once();
+   const int64_t rows = k_cache.numel() / ROW;
+-  if (use_ticket) launch_wg<true>(q, k_cache, v_cache, page_table, cache_seqlens, k_scale, v_scale, qkv, qkv_stride,
+-                                 out, ws_acc, ws_ml, ticket, err, score_scale, eps, grid, B, rows);
+-  else launch_wg<false>(q, k_cache, v_cache, page_table, cache_seqlens, k_scale, v_scale, qkv, qkv_stride,
++  if (use_ticket && use_sync) launch_wg<true, true>(q, k_cache, v_cache, page_table, cache_seqlens, k_scale, v_scale,
++                                 qkv, qkv_stride, out, ws_acc, ws_ml, ticket, err, score_scale, eps, grid, B, rows);
++  else if (use_ticket) launch_wg<true, false>(q, k_cache, v_cache, page_table, cache_seqlens, k_scale, v_scale, qkv,
++                                 qkv_stride, out, ws_acc, ws_ml, ticket, err, score_scale, eps, grid, B, rows);
++  else launch_wg<false, false>(q, k_cache, v_cache, page_table, cache_seqlens, k_scale, v_scale, qkv, qkv_stride,
+                         out, ws_acc, ws_ml, ticket, err, score_scale, eps, grid, B, rows);
+   C10_CUDA_KERNEL_LAUNCH_CHECK();
+ }
+@@ -1673,12 +1685,12 @@ torch::Tensor wg_verify_attrs() {
+   int64_t* p = t.data_ptr<int64_t>();
+   cudaFuncAttributes a;
+   int occ = 0;
+-  C10_CUDA_CHECK(cudaFuncGetAttributes(&a, splitkv_verify_wgmma_kernel<true>));
+-  C10_CUDA_CHECK(cudaOccupancyMaxActiveBlocksPerMultiprocessor(&occ, splitkv_verify_wgmma_kernel<true>, THREADS, SMEM_A));
++  C10_CUDA_CHECK(cudaFuncGetAttributes(&a, splitkv_verify_wgmma_kernel<true, false>));
++  C10_CUDA_CHECK(cudaOccupancyMaxActiveBlocksPerMultiprocessor(&occ, splitkv_verify_wgmma_kernel<true, false>, THREADS, SMEM_A));
+   p[0] = a.numRegs; p[1] = static_cast<int64_t>(a.localSizeBytes); p[2] = a.binaryVersion; p[3] = a.ptxVersion; p[4] = occ;
+   p[13] = static_cast<int64_t>(a.sharedSizeBytes); p[14] = a.maxDynamicSharedSizeBytes;
+-  C10_CUDA_CHECK(cudaFuncGetAttributes(&a, splitkv_verify_wgmma_kernel<false>));
+-  C10_CUDA_CHECK(cudaOccupancyMaxActiveBlocksPerMultiprocessor(&occ, splitkv_verify_wgmma_kernel<false>, THREADS, SMEM_A));
++  C10_CUDA_CHECK(cudaFuncGetAttributes(&a, splitkv_verify_wgmma_kernel<false, false>));
++  C10_CUDA_CHECK(cudaOccupancyMaxActiveBlocksPerMultiprocessor(&occ, splitkv_verify_wgmma_kernel<false, false>, THREADS, SMEM_A));
+   p[5] = a.numRegs; p[6] = static_cast<int64_t>(a.localSizeBytes); p[7] = a.binaryVersion; p[8] = a.ptxVersion; p[9] = occ;
+   C10_CUDA_CHECK(cudaFuncGetAttributes(&a, splitkv_verify_combine_kernel));
+   p[10] = a.numRegs; p[11] = static_cast<int64_t>(a.localSizeBytes); p[12] = SMEM_A;
+@@ -1700,7 +1712,7 @@ def _build_wg_verify():
+     try:
+         from torch.utils.cpp_extension import load_inline
+         ext = load_inline(
+-            name="muse_full_verify_wgmma_v1",
++            name="muse_full_verify_wgmma_v2",
+             cpp_sources=_WG_CPP,
+             cuda_sources=_WG_CUDA,
+             functions=["wg_verify_attn", "wg_verify_combine", "wg_verify_attrs"],
+@@ -1727,6 +1739,8 @@ _WG_MODE = None       # "ticket" or "b8" once that variant's self-check passed;
+ _WG_GRID = None       # grid override, set only by the self-check
+ _WG_HOOK = None       # self-check only: called between launches (sync + print); None when timed
+ _WG_ERR = None        # int32 [1] device error flag (1: not the sm_90a image, 2: mbarrier timeout, 4: launch shape)
++_WG_ANYB = False      # self-check only: let the gate accept batch 1 (the single-request bisect cases)
++_WG_KEEP = None       # self-check only: dict the launch fills with its workspaces (per-slot partials)
+ _WG_TICKETS = {}
+ 
+ 
+@@ -1746,7 +1760,7 @@ def _splitkv_verify_gate(cfg) -> bool:
+     tp8 heads, head dim 64, page 1, and a variant's self-check passed. When it is False, kernel_fn's
+     `paired` predicate is True for these shapes: master's paired FA3 path."""
+     return (_WEXT is not None and _WG_MODE is not None and cfg["window"] == 0 and cfg["q_len"] == 8
+-            and 1 < cfg["batch"] <= 64 and cfg["num_q_heads"] == 16 and cfg["num_kv_heads"] == 2
++            and (1 < cfg["batch"] or _WG_ANYB) and cfg["batch"] <= 64 and cfg["num_q_heads"] == 16 and cfg["num_kv_heads"] == 2
+             and cfg["head_dim"] == 64 and cfg["page_size"] == 1)
+ 
+ 
+@@ -1762,15 +1776,18 @@ def _full_verify_wgmma(data: Inputs, q: torch.Tensor, qkv: torch.Tensor) -> torc
+     ws_acc = torch.empty((slots, length, hq, d), dtype=torch.float32, device=device)
+     ws_ml = torch.empty((slots, 2, length * hq), dtype=torch.float32, device=device)
+     out = torch.empty((batch, length, hq * d), dtype=torch.bfloat16, device=device)
+-    ticket = _WG_MODE == "ticket"
++    ticket = _WG_MODE in ("ticket", "ticket_sync")
++    sync = _WG_MODE == "ticket_sync"
++    if _WG_KEEP is not None:
++        _WG_KEEP.update(ws_acc=ws_acc, ws_ml=ws_ml, grid=grid)
+     hook = _WG_HOOK
+     if hook is not None:
+-        hook(f"pre-attention (Triton) done; launching splitkv_verify_wgmma_kernel<{'ticket' if ticket else 'B8'}> "
++        hook(f"pre-attention (Triton) done; launching splitkv_verify_wgmma_kernel<{_WG_MODE}> "
+              f"grid {grid}")
+     _WEXT.wg_verify_attn(q, data["k_cache"], data["v_cache"], data["page_table"], data["cache_seqlens"],
+                          data["k_scale"], data["v_scale"], qkv, qkv.stride(0), out, ws_acc, ws_ml,
+                          _wg_tickets(device), _WG_ERR, cfg["sm_scale"] * cfg["qk_scale_factor"] * LOG2E, RMS_EPS,
+-                         grid, 1 if ticket else 0)
++                         grid, 1 if ticket else 0, 1 if sync else 0)
+     if hook is not None:
+         hook("splitkv_verify_wgmma_kernel done")
+     if not ticket:
+@@ -1965,7 +1982,7 @@ def _splitkv_self_check() -> bool:
+     return ok
+ 
+ 
+-def _verify_synthetic(lens, kv_scale, gen, device):
++def _verify_synthetic(lens, kv_scale, gen, device, coherent=False):
+     """Gated verify inputs (full layer, q_len 8, tp8, page 1). lens are cache_seqlens (seq_lens +
+     8): a request of length 8 has seq_lens 0. Built as reference.generate_input builds them
+     (scattered pages, odd page-table stride, 8 positions / cache rows per request)."""
+@@ -1983,6 +2000,18 @@ def _verify_synthetic(lens, kv_scale, gen, device):
+     k_cache = (torch.randn((total, 1, hkv, d), generator=gen, device=device) / kv_scale).to(FP8)
+     v_cache = (torch.randn((total, 1, hkv, d), generator=gen, device=device) / kv_scale).to(FP8)
+     qkv = (2 * torch.randn((batch, length, (2 * hq + 2 * hkv) * d), generator=gen, device=device)).to(torch.bfloat16)
++    if coherent:
++        # Coherent long-context keys: low-norm noise keys plus a few planted keys per request and kv
++        # head along the block's last query, so the softmax is peaked with a long low-weight tail
++        # (the regime that exercises the FP8 P operand's Max_offset 8 range).
++        kf = k_cache.float() * 0.3
++        qn = qkv[..., :hq * d].float().reshape(batch, length, hq, d)
++        qn = qn * torch.rsqrt(qn.pow(2).mean(-1, keepdim=True) + RMS_EPS)
++        for b, n in enumerate(lens):
++            rows = page_table[b, torch.randperm(n, generator=gen, device=device)[:4]].long()
++            for g in range(hkv):
++                kf[rows, 0, g] = qn[b, length - 1, g * (hq // hkv)] * (0.35 / kv_scale)
++        k_cache = kf.to(FP8)
+     return {
+         "qkv": qkv,
+         "positions": pos.reshape(-1).clone(),
+@@ -2058,52 +2087,220 @@ def _wg_image_check():
+     return None
+ 
+ 
++def _wg_segments(lens, grid):
++    """The kernel's work split, on the host: request prefix of 64-token tiles and every (CTA, request)
++    segment (CTA c owns flat tiles [floor(c T / grid), floor((c + 1) T / grid)), slot c + b)."""
++    pre = [0]
++    for n in lens:
++        pre.append(pre[-1] + (n + 63) // 64)
++    total = pre[-1]
++    segs = []
++    for c in range(grid):
++        s0, s1 = c * total // grid, (c + 1) * total // grid
++        if s0 >= s1:
++            continue
++        for b in range(len(lens)):
++            lo, hi = max(s0, pre[b]), min(s1, pre[b + 1])
++            if lo < hi:
++                segs.append((c, b, lo, hi, s0, s1))
++    return pre, segs
++
++
++def _wg_diagnose(data, lens, keep, tag):
++    """For a failing case: compare every per-slot partial the kernel wrote (O, m, l) with an fp32
++    reference of that exact (CTA range, request) segment and print where it first goes wrong, plus
++    bad/good counts by tiles per segment, request crossing and CTA-relative tile index >= 16
++    (page-index block rotation). O and l carry the kernel's 2^8 (FA3 Max_offset); m is the raw
++    log2-domain row max."""
++    cfg = data["config"]
++    batch, length = cfg["batch"], cfg["q_len"]
++    hq, hkv, d = cfg["num_q_heads"], cfg["num_kv_heads"], cfg["head_dim"]
++    gq = hq // hkv
++    grid = int(keep["grid"])
++    ws_acc = keep["ws_acc"].view(-1, length, hq, d)
++    ws_ml = keep["ws_ml"].view(-1, 2, length * hq)
++    pre, segs = _wg_segments(lens, grid)
++    qkv = data["qkv"].reshape(batch, length, -1).float()
++    q = qkv[..., :hq * d].reshape(batch, length, hq, d)
++    q = (q * torch.rsqrt(q.pow(2).mean(-1, keepdim=True) + RMS_EPS)).to(FP8).float()  # raw FP8 query
++    scale = cfg["sm_scale"] * cfg["qk_scale_factor"] * LOG2E * float(data["k_scale"])
++    kf = data["k_cache"].view(-1, hkv, d)
++    vf = data["v_cache"].view(-1, hkv, d)
++    bad, good, rows_out = [], [], []
++    ninf = float("-inf")
++    for (c, b, lo, hi, s0, s1) in segs:
++        t0, t1 = (lo - pre[b]) * 64, min((hi - pre[b]) * 64, lens[b])
++        idx = data["page_table"][b, t0:t1].long()
++        keys = kf[idx].float().repeat_interleave(gq, dim=1)
++        vals = vf[idx].float().repeat_interleave(gq, dim=1)
++        sc = torch.einsum("lhd,nhd->lhn", q[b], keys) * scale
++        tt = torch.arange(t0, t1, device=sc.device)
++        lim = lens[b] - length + torch.arange(length, device=sc.device)
++        sc = sc.masked_fill((tt[None, :] > lim[:, None])[:, None, :], ninf)
++        m = sc.amax(-1)
++        mu = torch.where(torch.isfinite(m), m, torch.zeros_like(m))
++        p = torch.exp2(sc - mu[..., None] + 8.0)
++        l_ref = p.sum(-1)
++        o_ref = torch.einsum("lhn,nhd->lhd", p, vals)
++        slot = c + b
++        gm = ws_ml[slot, 0].view(length, hq)
++        gl = ws_ml[slot, 1].view(length, hq)
++        go = ws_acc[slot]
++        fin = torch.isfinite(m)
++        m_bad = (fin != torch.isfinite(gm)) | (fin & ((m - gm).abs() > 0.1 + 0.01 * m.abs()))
++        l_err = torch.where(fin, (l_ref - gl).abs() / l_ref.clamp_min(1e-6), torch.zeros_like(l_ref))
++        l_err = torch.where(torch.isfinite(l_err), l_err, torch.full_like(l_err, 1e9))
++        on_ref = o_ref / l_ref.clamp_min(1e-6)[..., None]
++        on_got = go / gl.clamp_min(1e-6)[..., None]
++        o_err_row = (on_ref - on_got).norm(dim=-1) / on_ref.norm(dim=-1).clamp_min(1e-6)  # [length, hq]
++        o_err_row = torch.where(fin & torch.isfinite(o_err_row), o_err_row, torch.zeros_like(o_err_row))
++        e_m, e_l, e_o = int(m_bad.sum()), float(l_err.max()), float(o_err_row.max())
++        seg_bad = e_m > 0 or e_l > 0.05 or e_o > 0.15
++        nt = hi - lo
++        info = dict(cta=c, req=b, tiles=nt, lt_first=lo - pre[b], cta_first_tile=lo - s0, cta_last_tile=hi - 1 - s0,
++                    crossed=b != _wg_req_first(pre, s0), n_cta_tiles=s1 - s0,
++                    m_bad_rows=e_m, l_err=e_l, o_err=e_o, seq=lens[b])
++        if seg_bad:
++            w = int(o_err_row.argmax())
++            info["worst_row"] = (w // hq, w % hq)
++            info["o_err_by_kv_head"] = [float(o_err_row[:, g * gq:(g + 1) * gq].max()) for g in range(hkv)]
++            bad.append(info)
++        else:
++            good.append(info)
++    print(f"[wgmma-verify]   DIAG {tag}: {len(segs)} segments, {len(bad)} bad, {len(good)} good "
++          f"(bad = m row mismatch, l rel > 5%, or O/l row rel L2 > 15% vs the fp32 segment reference)", flush=True)
++    def bucket(i):
++        return "1" if i["tiles"] == 1 else "2" if i["tiles"] == 2 else "3-4" if i["tiles"] <= 4 else "5-16" if i["tiles"] <= 16 else ">16"
++    for name, f in (("tiles/segment", bucket), ("after request crossing", lambda i: "yes" if i["crossed"] else "no"),
++                    ("segment reaches CTA tile >= 16", lambda i: "yes" if i["cta_last_tile"] >= 16 else "no"),
++                    ("segment starts at CTA tile > 0", lambda i: "yes" if i["cta_first_tile"] > 0 else "no")):
++        keys = sorted({f(i) for i in bad + good})
++        print(f"[wgmma-verify]   DIAG {tag}: by {name}: "
++              + ", ".join(f"{k}: {sum(1 for i in bad if f(i) == k)} bad / {sum(1 for i in good if f(i) == k)} good" for k in keys),
++              flush=True)
++    if bad:
++        bad.sort(key=lambda i: (i["cta"], i["req"]))
++        for i in bad[:4]:
++            print(f"[wgmma-verify]   DIAG {tag}: BAD segment {i}", flush=True)
++    return len(bad), len(segs)
++
++
++def _wg_req_first(pre, s0):
++    """Request of flat tile s0 (the largest b with pre[b] <= s0)."""
++    b = 0
++    while b + 1 < len(pre) - 1 and pre[b + 1] <= s0:
++        b += 1
++    return b
++
++
++def _wg_verdict(results):
++    """Name the variable the bisect cases implicate. results: {case name: passed}."""
++    def failed(prefix):
++        return [k for k, v in results.items() if k.startswith(prefix) and not v]
++    lines = []
++    one = failed("B1-")
++    if failed("single-tile"):
++        lines.append("single-tile cases fail: the per-tile math / V^T / descriptors, not multi-tile state")
++    if one:
++        lines.append(f"single-request multi-tile cases fail ({', '.join(one)}): multi-tile loop state (n >= 1), "
++                     "no request crossing involved")
++        if all(k in one for k in ("B1-34t",)) and not any(k in one for k in ("B1-2t", "B1-4t")):
++            lines.append("  only the long cases fail: page-index block rotation or ring wrap")
++    elif failed("cross") or failed("lens_a-grid3-kv1"):
++        lines.append(f"single-request multi-tile cases pass but {failed('cross') + failed('lens_a-grid3-kv1')} fail: "
++                     "request crossing / slot bookkeeping")
++    if failed("kv0.25-grid264"):
++        lines.append("kv_scale 0.25 fails at <= 1 tile per CTA: kv_scale handling")
++    if not lines:
++        lines.append("no bisect case failed")
++    return lines
++
++
+ def _wg_verify_self_check(mode: str):
+     """One-time eager check at import, in-process, on synthetic data only (never in the timed path):
+     the gated verify path through kernel_fn against an FP32 causal reference, every launch traced
+-    (sync + print) and the device error flag read after each case. Case 0 is the canary (B = 2,
+-    short lengths). Then stage 2's cases (lengths 9000, 1025 (% 64 == 1), 70, 4097, 1023, 8; kv scale
+-    1 and 1/4; grids device, 3, 7 and 61), a ragged set with seq % 64 in 1..7 and seq_lens < 8, and
+-    for the ticket mode a second eager call plus a CUDA graph replayed twice (tickets must be back
+-    at 0 each time: identical outputs). Returns (ok, reason)."""
+-    global _WG_GRID, _WG_MODE, _WG_HOOK
++    (sync + print), and the device ERROR WORD printed for every case (bounded-wait abort = 2). Every
++    case runs even after a failure, so one check bisects the failing variable: the canary (B = 2),
++    case 1 (device grid, <= 1 tile per CTA), lens_a at grid 3 with kv 1.0 (multi-tile + request
++    crossing), lens_a at kv 0.25 on grid 264 (kv_scale alone) and grid 3 (the stage-3 failure), single
++    request (B = 1) cases of 2, 4, 17 and 34 tiles on one CTA (no crossing; 17 / 34 rotate the
++    page-index blocks), a B = 1 kv 0.25 case, a two-request crossing case, then stage 2's remaining
++    cases, two coherent-key cases (peaked softmax, long tail), and for the ticket modes a second
++    eager call plus a CUDA graph replayed twice. A failing case in the first mode of each kind gets a
++    per-slot partial diagnosis (first bad segment). Returns (ok, reason)."""
++    global _WG_GRID, _WG_MODE, _WG_HOOK, _WG_ANYB, _WG_KEEP
+     lens_a = [9000, 1025, 70, 4097, 1023, 8]
+     lens_b = [129, 66, 195, 260, 69, 70, 71, 9, 15, 8, 64, 65, 3000]
+-    cases = [([70, 13], 1.0, 4), (lens_a, 1.0, None), (lens_a, 0.25, 3), (lens_a, 1.0, 7), (lens_a, 0.25, 61),
+-             (lens_b, 1.0, None), (lens_b, 0.25, 7)]
++    # (name, lens, kv_scale, grid, coherent, second eager call)
++    cases = [("canary", [70, 13], 1.0, 4, False, False),
++             ("single-tile-lens_a-device", lens_a, 1.0, None, False, True),
++             ("lens_a-grid3-kv1", lens_a, 1.0, 3, False, False),
++             ("kv0.25-grid264", lens_a, 0.25, 264, False, False),
++             ("B1-2t", [128], 1.0, 1, False, False),
++             ("B1-4t", [256], 1.0, 1, False, False),
++             ("B1-17t", [1088], 1.0, 1, False, False),
++             ("B1-34t", [2176], 1.0, 1, False, False),
++             ("B1-4t-kv0.25", [256], 0.25, 1, False, False),
++             ("cross-2req-4t", [128, 128], 1.0, 1, False, False),
++             ("lens_a-grid3-kv0.25", lens_a, 0.25, 3, False, False),
++             ("lens_a-grid7-kv1", lens_a, 1.0, 7, False, False),
++             ("lens_a-grid61-kv0.25", lens_a, 0.25, 61, False, False),
++             ("lens_b-device", lens_b, 1.0, None, False, True),
++             ("lens_b-grid7-kv0.25", lens_b, 0.25, 7, False, False),
++             ("coherent-lens_a-grid3", lens_a, 1.0, 3, True, False),
++             ("coherent-lens_a-device", lens_a, 1.0, None, True, False)]
+     gen = torch.Generator(device="cuda").manual_seed(4321)
+     dev = torch.device("cuda")
+     _WG_MODE = mode
++    _WG_ANYB = True
++    results, fails = {}, []
+     try:
+-        for i, (lens, kv_scale, grid) in enumerate(cases):
+-            data = _verify_synthetic(lens, kv_scale, gen, dev)
++        for name, lens, kv_scale, grid, coherent, second in cases:
++            data = _verify_synthetic(lens, kv_scale, gen, dev, coherent)
+             assert _splitkv_verify_gate(data["config"])
+             _WG_GRID = grid
+             _WG_ERR.zero_()
+-            name = "canary" if i == 0 else f"case {i}"
+-            print(f"[wgmma-verify] {mode} {name}: B={len(lens)} kv_scale={kv_scale} grid={grid or 'device'}; "
+-                  f"launching kernel_fn (pre-attention first)", flush=True)
++            keep = {}
++            _WG_KEEP = keep
++            print(f"[wgmma-verify] {mode} {name}: B={len(lens)} kv_scale={kv_scale} grid={grid or 'device'} "
++                  f"coherent={coherent}; launching kernel_fn (pre-attention first)", flush=True)
+             _WG_HOOK = _wg_trace
+             out = kernel_fn(data)
+             _WG_HOOK = None
++            _WG_KEEP = None
+             torch.cuda.synchronize()
+             flag = int(_WG_ERR.item())
+-            if flag:
+-                return False, f"device error flag {flag} in {name} (1: not sm_90a, 2: mbarrier timeout, 4: shape)"
+             ref = _verify_reference(data, lens)
+             err = float((out.float() - ref).norm() / ref.norm())
+             finite = bool(torch.isfinite(out).all())
+-            print(f"[wgmma-verify] {mode} {name}: rel L2 {err:.2e}, finite {finite}", flush=True)
+-            if not (finite and err < 3e-2):
+-                return False, f"{name} rel L2 {err:.2e} finite {finite}"
+-            if mode == "ticket" and i in (1, 5):
++            passed = finite and err < 3e-2 and not flag
++            results[name] = passed
++            print(f"[wgmma-verify] {mode} {name}: rel L2 {err:.2e}, finite {finite}, ERROR WORD {flag} "
++                  f"(1: not sm_90a, 2: mbarrier wait timeout, 4: shape) -> {'PASS' if passed else 'FAIL'}", flush=True)
++            if not passed:
++                fails.append((name, err, finite, flag))
++                if mode != "b8" and len([1 for f in fails if f[0] != name]) < 4 and "ws_acc" in keep:
++                    try:
++                        _wg_diagnose(data, lens, keep, f"{mode} {name}")
++                    except Exception as e:  # diagnosis must never take the check down
++                        print(f"[wgmma-verify]   DIAG {mode} {name} raised {e!r}", flush=True)
++                continue
++            if mode != "b8" and second:
+                 again = kernel_fn(data)
+                 torch.cuda.synchronize()
+                 same = bool(torch.equal(again, out))
+                 print(f"[wgmma-verify] {mode} {name}: second eager call identical {same}", flush=True)
+                 if not same or int(_WG_ERR.item()):
+-                    return False, f"{name}: second call differs (ticket reset?)"
++                    fails.append((name + " (second call)", float("nan"), True, int(_WG_ERR.item())))
++        for line in _wg_verdict(results):
++            print(f"[wgmma-verify] {mode} BISECT: {line}", flush=True)
++        print(f"[wgmma-verify] {mode} BISECT table: " + ", ".join(f"{k}={'ok' if v else 'FAIL'}" for k, v in results.items()),
++              flush=True)
++        if fails:
++            n, e, f, w = fails[0]
++            return False, f"{n}, rel L2 {e:.2e}, finite {f}, error word {w}"
+         # CUDA graph capture + two replays at the device grid (the judge's timing mode).
++        _WG_ANYB = False
+         data = _verify_synthetic(lens_a, 1.0, gen, dev)
+         _WG_GRID = None
+         _WG_ERR.zero_()
+@@ -2124,7 +2321,7 @@ def _wg_verify_self_check(mode: str):
+         flag = int(_WG_ERR.item())
+         print(f"[wgmma-verify] {mode} graph replays identical to eager: {same}, error flag {flag}", flush=True)
+         if not all(same) or flag:
+-            return False, f"graph replay mismatch {same} / error flag {flag}"
++            return False, f"graph replay mismatch {same}, error word {flag}"
+         del graph
+     except Exception as e:
+         print(f"[wgmma-verify] {mode} self-check raised: {e!r}", flush=True)
+@@ -2132,14 +2329,50 @@ def _wg_verify_self_check(mode: str):
+     finally:
+         _WG_GRID = None
+         _WG_HOOK = None
++        _WG_KEEP = None
++        _WG_ANYB = False
+         _WG_MODE = None
+     return True, None
+ 
+ 
++def _wg_time(mode: str) -> None:
++    """Prepare-time CUDA-event timing, information only (the choice never depends on it): kernel_fn
++    on gated verify inputs at B = 16 and 32, the wgmma path against master's paired FA3 path (gate
++    off). Both include the shared pre-attention Triton kernel; the judge's profile has the per-kernel
++    rows. Eager launches, so absolute numbers read high; prepare under-reads the judge by 20-25%."""
++    global _WG_MODE
++    dev = torch.device("cuda")
++    gen = torch.Generator(device="cuda").manual_seed(99)
++    for B in (16, 32):
++        try:
++            lens = [2048 + 311 * ((i * 7) % 13) for i in range(B)]
++            data = _verify_synthetic(lens, 1.0, gen, dev)
++            res = {}
++            for label, m in (("wgmma", mode), ("master FA3 paired", None)):
++                _WG_MODE = m
++                for _ in range(3):
++                    kernel_fn(data)
++                torch.cuda.synchronize()
++                ev0, ev1 = torch.cuda.Event(enable_timing=True), torch.cuda.Event(enable_timing=True)
++                ev0.record()
++                for _ in range(20):
++                    kernel_fn(data)
++                ev1.record()
++                torch.cuda.synchronize()
++                res[label] = 1000.0 * ev0.elapsed_time(ev1) / 20
++            print(f"[wgmma-verify] TIMING B={B} (full kernel_fn, eager, CUDA events): "
++                  + ", ".join(f"{k} {v:.1f} us" for k, v in res.items()), flush=True)
++        except Exception as e:
++            print(f"[wgmma-verify] TIMING B={B} raised {e!r}", flush=True)
++        finally:
++            _WG_MODE = mode
++
++
+ def _wg_verify_setup() -> None:
+-    """Build, image check, canary + self-check (ticket first, then the stage-2 B8 combine), all
+-    in-process. Leaves _WEXT/_WG_MODE set only if a variant passed; otherwise full verify stays on
+-    master's paired FA3 path."""
++    """Build, image check, then the bisecting self-check per mode (ticket, stage 2's B8 combine, and
++    ticket with the per-tile CTA barrier), all in-process; the first mode that passes is chosen,
++    whatever the timing says (printed, never gating). Leaves _WEXT/_WG_MODE set only if a mode
++    passed; otherwise full verify stays on master's paired FA3 path."""
+     global _WEXT, _WG_MODE, _WG_ERR
+     reason = None
+     cap = torch.cuda.get_device_capability()
+@@ -2153,21 +2386,23 @@ def _wg_verify_setup() -> None:
+             reason = _wg_image_check()
+         except Exception as e:
+             reason = f"image check raised {e!r}"
++    reasons = []
+     if _WEXT is not None and reason is None:
+-        for mode in ("ticket", "b8"):
++        for mode in ("ticket", "b8", "ticket_sync"):
+             ok, why = _wg_verify_self_check(mode)
+             if ok:
+                 _WG_MODE = mode
+                 break
+-            print(f"[wgmma-verify] {mode} SELF-CHECK FAILED: {why}"
+-                  + ("; retrying with stage 2's B8 combine" if mode == "ticket" else ""), flush=True)
+-            reason = f"self-check failed ({mode}: {why})"
++            print(f"[wgmma-verify] {mode} SELF-CHECK FAILED: {why}", flush=True)
++            reasons.append(f"{mode}: {why}")
++        reason = "; ".join(reasons) if reasons else reason
+     if _WG_MODE is None:
+         _WEXT = None
+-        print(f"PATH CHOSEN: full verify master FA3, paired heads (fallback: {reason})", flush=True)
++        print(f"PATH CHOSEN: full verify master FA3, paired heads vs wgmma v2 (fallback: {reason})", flush=True)
+     else:
+-        print(f"PATH CHOSEN: full verify wgmma stream-K v1 ({'ticket' if _WG_MODE == 'ticket' else 'B8'})",
+-              flush=True)
++        print(f"PATH CHOSEN: full verify wgmma stream-K v2 ({_WG_MODE}) vs master FA3 (self-check passed; chosen "
++              f"regardless of the timing below)", flush=True)
++        _wg_time(_WG_MODE)
+ 
+ 
+ if torch.cuda.is_available():

@@ -59,10 +59,10 @@ controls_for: null
 rewrite_stage: 4
 replaces: "full-layer verify at 1<batch<=64: FA3 main + prepare_varlen_num_blocks + FlashAttnFwdCombine + norm-gate (master paired FA3)"
 review: proceed
-status: running
+status: done
 review_at: 2026-10-25T040253Z
 review_companions: null
-stage: dispatched
+stage: harvested
 claimed_at: 2026-10-25T040258Z
 base_sha: ff9bf1e4fbe38f9f847a906f5135ecaf60604668
 base_blob: 136874e0158f8b76208c4130e523bc91b84160ad
@@ -81,6 +81,13 @@ attempt_file: 2026-10-25T041932Z-check-full-verify-wgmma-s4-multitile-fix.md
 prepared_at: 2026-10-25T041932Z
 job: 51b0d5c110f3459c
 dispatched_at: 2026-10-25T042009Z
+outcome: neutral
+verdict_detail: within-ci
+speedup: 1.3757685809606255
+speedup_ci: [1.355132052246216, 1.3964051096750347]
+harvested_at: 2026-10-25T043354Z
+best_at_harvest: 1.4321773019894537
+promotion: null
 ---
 
 # full-verify-wgmma-s4-multitile-fix
@@ -178,3 +185,36 @@ Fix:
 1. `SYNC` variant (ticket_sync, A/B only): added `cp_wait_all(); fence_proxy_async(); __syncthreads();` right after the FULL wait. Reason: the only s3 hazard I could not rule out by reading is the ring's cross-thread cp.async (generic proxy) -> wgmma (async proxy) visibility on a REUSED stage. s3 fences that on the consumer side only. The end-of-tile `__syncthreads` alone would not separate that hypothesis from a warpgroup race. Now ticket_sync covers both with the canonical writer-side fence, so "ticket FAIL / ticket_sync PASS" names a pipeline/proxy fault and still leaves a working kernel chosen. The default `<*, false>` path is unchanged. Lint OK (host-sync warnings only, all outside kernel_fn), py_compile OK, __pycache__ removed.
 
 Residual risk: if the fault is a stage/buffer layout error for n >= 1, all three modes fail and the run falls back to master FA3 with a DIAG-localized cause (neutral run, stage 5 needed).
+
+## Result
+
+- job `51b0d5c110f3459c` (check), status done, passed True, tests 16/16
+- speedup 1.3758x, 95% CI [1.3551, 1.3964], score 2737.597043661365 µs vs SGLang 3766.3 µs
+- best at harvest: {"speedup": 1.4321773019894537, "ci": [1.4106946424596118, 1.4554282820505813], "job": "2a3241780c7b4c46"}; base result: muse_attention_decode/hypotheses/done/neutral/full-verify-wgmma-s3-warpgroup-per-kvhead-inproc.result.json
+- **outcome: neutral** (within-ci)
+- files: `muse_attention_decode/hypotheses/done/neutral/full-verify-wgmma-s4-multitile-fix.result.json`, `muse_attention_decode/hypotheses/done/neutral/full-verify-wgmma-s4-multitile-fix.patch`; branch `hyp/muse_attention_decode/full-verify-wgmma-s4-multitile-fix`
+
+## Attribution
+
+| shape | w | base µs | hyp µs | delta | verdict |
+|---|---|---|---|---|---|
+| batch=1 ctx=80000 dist=soft heads=tp8 layer=sliding load=decode_1 page=1 | 46 | 13.01 | 13.27 | 0.9987 | flat |
+| batch=1 ctx=80000 dist=coherent heads=tp8 layer=full load=decode_1 page=1 | 16 | 27.82 | 27.06 | 1.0029 | flat |
+| batch=16 ctx=80000 dist=soft heads=tp8 layer=sliding load=decode_16 page=1 spread=agentic | 46 | 15.61 | 15.99 | 0.9805 | flat |
+| batch=16 ctx=80000 dist=coherent heads=tp8 layer=full load=decode_16 page=1 spread=agentic | 16 | 122.48 | 122.76 | 0.9984 | flat |
+| batch=32 ctx=80000 dist=soft heads=tp8 layer=sliding load=decode_32 page=1 spread=agentic | 46 | 24.2 | 24.71 | 0.9769 | flat |
+| batch=32 ctx=80000 dist=coherent heads=tp8 layer=full load=decode_32 page=1 spread=agentic | 16 | 259.2 | 258.18 | 0.9992 | flat |
+| batch=1 ctx=80000 dist=soft heads=tp8 layer=sliding load=verify_1 page=1 q_len=8 | 46 | 17.44 | 17.14 | 1.0111 | flat |
+| batch=1 ctx=80000 dist=coherent heads=tp8 layer=full load=verify_1 page=1 q_len=8 | 16 | 30.2 | 30.35 | 0.9839 | flat |
+| batch=16 ctx=80000 dist=soft heads=tp8 layer=sliding load=verify_16 page=1 q_len=8 spread=agentic | 46 | 22.44 | 22.86 | 0.9913 | flat |
+| batch=16 ctx=80000 dist=coherent heads=tp8 layer=full load=verify_16 page=1 q_len=8 spread=agentic | 16 | 162.61 | 163.63 | 0.9933 | flat |
+| batch=32 ctx=80000 dist=soft heads=tp8 layer=sliding load=verify_32 page=1 q_len=8 spread=agentic | 46 | 28.67 | 29.03 | 0.9903 | flat |
+| batch=32 ctx=80000 dist=coherent heads=tp8 layer=full load=verify_32 page=1 q_len=8 spread=agentic | 16 | 301.91 | 301.66 | 0.9973 | flat |
+
+no shape moved outside noise. Expected hit: 0/3. Noise ±1.5%.
+
+## Follow-ups
+
+- rewrite stage 4 of `full-layer verify at 1<batch<=64: FA3 main + prepare_varlen_num_blocks + FlashAttnFwdCombine + norm-gate (master paired FA3)`: read the replaced kernels' own us per shape (profile top_kernels) against the incumbent and the floor, and check which Milestone it reached. The next stage is `/hypothesize muse_attention_decode "<what to fix or tune>" --kind rewrite --depends-on full-verify-wgmma-s4-multitile-fix --stage 5`; a slow or failed first cut is the expected start, not a do-not-retry.
+- within-ci: the change is not proven either way; a stacked hypothesis (`depends_on: full-verify-wgmma-s4-multitile-fix`) that adds a further change in the same area is the only way to learn more (identical code is never re-run).
+

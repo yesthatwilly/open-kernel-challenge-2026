@@ -1,0 +1,106 @@
+ma-verify] b8 coherent-lens_a-device: rel L2 9.27e-03, finite True, ERROR WORD 0 (1: not sm_90a, 2: mbarrier wait timeout, 4: shape) -> PASS
+[wgmma-verify] b8 BISECT: single-request multi-tile cases fail (B1-2t, B1-4t, B1-17t, B1-34t, B1-4t-kv0.25): multi-tile loop state (n >= 1), no request crossing involved
+[wgmma-verify] b8 BISECT table: canary=ok, single-tile-lens_a-device=ok, lens_a-grid3-kv1=FAIL, kv0.25-grid264=ok, B1-2t=FAIL, B1-4t=FAIL, B1-17t=FAIL, B1-34t=FAIL, B1-4t-kv0.25=FAIL, cross-2req-4t=FAIL, lens_a-grid3-kv0.25=FAIL, lens_a-grid7-kv1=FAIL, lens_a-grid61-kv0.25=FAIL, lens_b-device=ok, lens_b-grid7-kv0.25=FAIL, coherent-lens_a-grid3=FAIL, coherent-lens_a-device=ok
+[wgmma-verify] b8 SELF-CHECK FAILED: lens_a-grid3-kv1, rel L2 1.23e+00, finite True, error word 0
+[wgmma-verify] ticket_sync canary: B=2 kv_scale=1.0 grid=4 coherent=False; launching kernel_fn (pre-attention first)
+[wgmma-verify]   pre-attention (Triton) done; launching splitkv_verify_wgmma_kernel<ticket_sync> grid 4
+[wgmma-verify]   splitkv_verify_wgmma_kernel done
+[wgmma-verify] ticket_sync canary: rel L2 7.86e-03, finite True, ERROR WORD 0 (1: not sm_90a, 2: mbarrier wait timeout, 4: shape) -> PASS
+[wgmma-verify] ticket_sync single-tile-lens_a-device: B=6 kv_scale=1.0 grid=device coherent=False; launching kernel_fn (pre-attention first)
+[wgmma-verify]   pre-attention (Triton) done; launching splitkv_verify_wgmma_kernel<ticket_sync> grid 264
+[wgmma-verify]   splitkv_verify_wgmma_kernel done
+[wgmma-verify] ticket_sync single-tile-lens_a-device: rel L2 4.79e-03, finite True, ERROR WORD 0 (1: not sm_90a, 2: mbarrier wait timeout, 4: shape) -> PASS
+[wgmma-verify] ticket_sync single-tile-lens_a-device: second eager call identical True
+[wgmma-verify] ticket_sync lens_a-grid3-kv1: B=6 kv_scale=1.0 grid=3 coherent=False; launching kernel_fn (pre-attention first)
+[wgmma-verify]   pre-attention (Triton) done; launching splitkv_verify_wgmma_kernel<ticket_sync> grid 3
+[wgmma-verify]   splitkv_verify_wgmma_kernel done
+[wgmma-verify] ticket_sync lens_a-grid3-kv1: rel L2 1.23e+00, finite True, ERROR WORD 0 (1: not sm_90a, 2: mbarrier wait timeout, 4: shape) -> FAIL
+[wgmma-verify]   DIAG ticket_sync lens_a-grid3-kv1: 8 segments, 6 bad, 2 good (bad = m row mismatch, l rel > 5%, or O/l row rel L2 > 15% vs the fp32 segment reference)
+[wgmma-verify]   DIAG ticket_sync lens_a-grid3-kv1: by tiles/segment: 1: 0 bad / 2 good, 2: 1 bad / 0 good, 5-16: 1 bad / 0 good, >16: 4 bad / 0 good
+[wgmma-verify]   DIAG ticket_sync lens_a-grid3-kv1: by after request crossing: no: 3 bad / 0 good, yes: 3 bad / 2 good
+[wgmma-verify]   DIAG ticket_sync lens_a-grid3-kv1: by segment reaches CTA tile >= 16: yes: 6 bad / 2 good
+[wgmma-verify]   DIAG ticket_sync lens_a-grid3-kv1: by segment starts at CTA tile > 0: no: 3 bad / 0 good, yes: 3 bad / 2 good
+[wgmma-verify]   DIAG ticket_sync lens_a-grid3-kv1: BAD segment {'cta': 0, 'req': 0, 'tiles': 80, 'lt_first': 0, 'cta_first_tile': 0, 'cta_last_tile': 79, 'crossed': False, 'n_cta_tiles': 80, 'm_bad_rows': 128, 'l_err': 0.9755827784538269, 'o_err': 5.094061374664307, 'seq': 9000, 'worst_row': (7, 10), 'o_err_by_kv_head': [3.9546515941619873, 5.094061374664307]}
+[wgmma-verify]   DIAG ticket_sync lens_a-grid3-kv1: BAD segment {'cta': 1, 'req': 0, 'tiles': 61, 'lt_first': 80, 'cta_first_tile': 0, 'cta_last_tile': 60, 'crossed': False, 'n_cta_tiles': 81, 'm_bad_rows': 128, 'l_err': 0.9308655858039856, 'o_err': 4.1075029373168945, 'seq': 9000, 'worst_row': (2, 10), 'o_err_by_kv_head': [3.611006736755371, 4.1075029373168945]}
+[wgmma-verify]   DIAG ticket_sync lens_a-grid3-kv1: BAD segment {'cta': 1, 'req': 1, 'tiles': 17, 'lt_first': 0, 'cta_first_tile': 61, 'cta_last_tile': 77, 'crossed': True, 'n_cta_tiles': 81, 'm_bad_rows': 128, 'l_err': 0.8736597895622253, 'o_err': 3.202094793319702, 'seq': 1025, 'worst_row': (7, 4), 'o_err_by_kv_head': [3.202094793319702, 3.044297933578491]}
+[wgmma-verify]   DIAG ticket_sync lens_a-grid3-kv1: BAD segment {'cta': 1, 'req': 2, 'tiles': 2, 'lt_first': 0, 'cta_first_tile': 78, 'cta_last_tile': 79, 'crossed': True, 'n_cta_tiles': 81, 'm_bad_rows': 72, 'l_err': 0.773213267326355, 'o_err': 5.759731769561768, 'seq': 70, 'worst_row': (4, 3), 'o_err_by_kv_head': [5.759731769561768, 4.164317607879639]}
+[wgmma-verify] ticket_sync kv0.25-grid264: B=6 kv_scale=0.25 grid=264 coherent=False; launching kernel_fn (pre-attention first)
+[wgmma-verify]   pre-attention (Triton) done; launching splitkv_verify_wgmma_kernel<ticket_sync> grid 264
+[wgmma-verify]   splitkv_verify_wgmma_kernel done
+[wgmma-verify] ticket_sync kv0.25-grid264: rel L2 4.93e-03, finite True, ERROR WORD 0 (1: not sm_90a, 2: mbarrier wait timeout, 4: shape) -> PASS
+[wgmma-verify] ticket_sync B1-2t: B=1 kv_scale=1.0 grid=1 coherent=False; launching kernel_fn (pre-attention first)
+[wgmma-verify]   pre-attention (Triton) done; launching splitkv_verify_wgmma_kernel<ticket_sync> grid 1
+[wgmma-verify]   splitkv_verify_wgmma_kernel done
+[wgmma-verify] ticket_sync B1-2t: rel L2 1.40e+00, finite True, ERROR WORD 0 (1: not sm_90a, 2: mbarrier wait timeout, 4: shape) -> FAIL
+[wgmma-verify]   DIAG ticket_sync B1-2t: 1 segments, 1 bad, 0 good (bad = m row mismatch, l rel > 5%, or O/l row rel L2 > 15% vs the fp32 segment reference)
+[wgmma-verify]   DIAG ticket_sync B1-2t: by tiles/segment: 2: 1 bad / 0 good
+[wgmma-verify]   DIAG ticket_sync B1-2t: by after request crossing: no: 1 bad / 0 good
+[wgmma-verify]   DIAG ticket_sync B1-2t: by segment reaches CTA tile >= 16: no: 1 bad / 0 good
+[wgmma-verify]   DIAG ticket_sync B1-2t: by segment starts at CTA tile > 0: no: 1 bad / 0 good
+[wgmma-verify]   DIAG ticket_sync B1-2t: BAD segment {'cta': 0, 'req': 0, 'tiles': 2, 'lt_first': 0, 'cta_first_tile': 0, 'cta_last_tile': 1, 'crossed': False, 'n_cta_tiles': 2, 'm_bad_rows': 128, 'l_err': 0.8039300441741943, 'o_err': 4.375657558441162, 'seq': 128, 'worst_row': (2, 0), 'o_err_by_kv_head': [4.375657558441162, 3.9994418621063232]}
+[wgmma-verify] ticket_sync B1-4t: B=1 kv_scale=1.0 grid=1 coherent=False; launching kernel_fn (pre-attention first)
+[wgmma-verify]   pre-attention (Triton) done; launching splitkv_verify_wgmma_kernel<ticket_sync> grid 1
+[wgmma-verify]   splitkv_verify_wgmma_kernel done
+[wgmma-verify] ticket_sync B1-4t: rel L2 1.40e+00, finite True, ERROR WORD 0 (1: not sm_90a, 2: mbarrier wait timeout, 4: shape) -> FAIL
+[wgmma-verify]   DIAG ticket_sync B1-4t: 1 segments, 1 bad, 0 good (bad = m row mismatch, l rel > 5%, or O/l row rel L2 > 15% vs the fp32 segment reference)
+[wgmma-verify]   DIAG ticket_sync B1-4t: by tiles/segment: 3-4: 1 bad / 0 good
+[wgmma-verify]   DIAG ticket_sync B1-4t: by after request crossing: no: 1 bad / 0 good
+[wgmma-verify]   DIAG ticket_sync B1-4t: by segment reaches CTA tile >= 16: no: 1 bad / 0 good
+[wgmma-verify]   DIAG ticket_sync B1-4t: by segment starts at CTA tile > 0: no: 1 bad / 0 good
+[wgmma-verify]   DIAG ticket_sync B1-4t: BAD segment {'cta': 0, 'req': 0, 'tiles': 4, 'lt_first': 0, 'cta_first_tile': 0, 'cta_last_tile': 3, 'crossed': False, 'n_cta_tiles': 4, 'm_bad_rows': 128, 'l_err': 1.226857304573059, 'o_err': 3.415576696395874, 'seq': 256, 'worst_row': (0, 15), 'o_err_by_kv_head': [3.267425537109375, 3.415576696395874]}
+[wgmma-verify] ticket_sync B1-17t: B=1 kv_scale=1.0 grid=1 coherent=False; launching kernel_fn (pre-attention first)
+[wgmma-verify]   pre-attention (Triton) done; launching splitkv_verify_wgmma_kernel<ticket_sync> grid 1
+[wgmma-verify]   splitkv_verify_wgmma_kernel done
+[wgmma-verify] ticket_sync B1-17t: rel L2 1.42e+00, finite True, ERROR WORD 0 (1: not sm_90a, 2: mbarrier wait timeout, 4: shape) -> FAIL
+[wgmma-verify]   DIAG ticket_sync B1-17t: 1 segments, 1 bad, 0 good (bad = m row mismatch, l rel > 5%, or O/l row rel L2 > 15% vs the fp32 segment reference)
+[wgmma-verify]   DIAG ticket_sync B1-17t: by tiles/segment: >16: 1 bad / 0 good
+[wgmma-verify]   DIAG ticket_sync B1-17t: by after request crossing: no: 1 bad / 0 good
+[wgmma-verify]   DIAG ticket_sync B1-17t: by segment reaches CTA tile >= 16: yes: 1 bad / 0 good
+[wgmma-verify]   DIAG ticket_sync B1-17t: by segment starts at CTA tile > 0: no: 1 bad / 0 good
+[wgmma-verify]   DIAG ticket_sync B1-17t: BAD segment {'cta': 0, 'req': 0, 'tiles': 17, 'lt_first': 0, 'cta_first_tile': 0, 'cta_last_tile': 16, 'crossed': False, 'n_cta_tiles': 17, 'm_bad_rows': 128, 'l_err': 0.8562620282173157, 'o_err': 4.928647518157959, 'seq': 1088, 'worst_row': (0, 15), 'o_err_by_kv_head': [4.097705364227295, 4.928647518157959]}
+[wgmma-verify] ticket_sync B1-34t: B=1 kv_scale=1.0 grid=1 coherent=False; launching kernel_fn (pre-attention first)
+[wgmma-verify]   pre-attention (Triton) done; launching splitkv_verify_wgmma_kernel<ticket_sync> grid 1
+[wgmma-verify]   splitkv_verify_wgmma_kernel done
+[wgmma-verify] ticket_sync B1-34t: rel L2 1.40e+00, finite True, ERROR WORD 0 (1: not sm_90a, 2: mbarrier wait timeout, 4: shape) -> FAIL
+[wgmma-verify] ticket_sync B1-4t-kv0.25: B=1 kv_scale=0.25 grid=1 coherent=False; launching kernel_fn (pre-attention first)
+[wgmma-verify]   pre-attention (Triton) done; launching splitkv_verify_wgmma_kernel<ticket_sync> grid 1
+[wgmma-verify]   splitkv_verify_wgmma_kernel done
+[wgmma-verify] ticket_sync B1-4t-kv0.25: rel L2 1.40e+00, finite True, ERROR WORD 0 (1: not sm_90a, 2: mbarrier wait timeout, 4: shape) -> FAIL
+[wgmma-verify] ticket_sync cross-2req-4t: B=2 kv_scale=1.0 grid=1 coherent=False; launching kernel_fn (pre-attention first)
+[wgmma-verify]   pre-attention (Triton) done; launching splitkv_verify_wgmma_kernel<ticket_sync> grid 1
+[wgmma-verify]   splitkv_verify_wgmma_kernel done
+[wgmma-verify] ticket_sync cross-2req-4t: rel L2 1.40e+00, finite True, ERROR WORD 0 (1: not sm_90a, 2: mbarrier wait timeout, 4: shape) -> FAIL
+[wgmma-verify] ticket_sync lens_a-grid3-kv0.25: B=6 kv_scale=0.25 grid=3 coherent=False; launching kernel_fn (pre-attention first)
+[wgmma-verify]   pre-attention (Triton) done; launching splitkv_verify_wgmma_kernel<ticket_sync> grid 3
+[wgmma-verify]   splitkv_verify_wgmma_kernel done
+[wgmma-verify] ticket_sync lens_a-grid3-kv0.25: rel L2 1.24e+00, finite True, ERROR WORD 0 (1: not sm_90a, 2: mbarrier wait timeout, 4: shape) -> FAIL
+[wgmma-verify] ticket_sync lens_a-grid7-kv1: B=6 kv_scale=1.0 grid=7 coherent=False; launching kernel_fn (pre-attention first)
+[wgmma-verify]   pre-attention (Triton) done; launching splitkv_verify_wgmma_kernel<ticket_sync> grid 7
+[wgmma-verify]   splitkv_verify_wgmma_kernel done
+[wgmma-verify] ticket_sync lens_a-grid7-kv1: rel L2 1.25e+00, finite True, ERROR WORD 0 (1: not sm_90a, 2: mbarrier wait timeout, 4: shape) -> FAIL
+[wgmma-verify] ticket_sync lens_a-grid61-kv0.25: B=6 kv_scale=0.25 grid=61 coherent=False; launching kernel_fn (pre-attention first)
+[wgmma-verify]   pre-attention (Triton) done; launching splitkv_verify_wgmma_kernel<ticket_sync> grid 61
+[wgmma-verify]   splitkv_verify_wgmma_kernel done
+[wgmma-verify] ticket_sync lens_a-grid61-kv0.25: rel L2 1.24e+00, finite True, ERROR WORD 0 (1: not sm_90a, 2: mbarrier wait timeout, 4: shape) -> FAIL
+[wgmma-verify] ticket_sync lens_b-device: B=13 kv_scale=1.0 grid=device coherent=False; launching kernel_fn (pre-attention first)
+[wgmma-verify]   pre-attention (Triton) done; launching splitkv_verify_wgmma_kernel<ticket_sync> grid 264
+[wgmma-verify]   splitkv_verify_wgmma_kernel done
+[wgmma-verify] ticket_sync lens_b-device: rel L2 7.54e-03, finite True, ERROR WORD 0 (1: not sm_90a, 2: mbarrier wait timeout, 4: shape) -> PASS
+[wgmma-verify] ticket_sync lens_b-device: second eager call identical True
+[wgmma-verify] ticket_sync lens_b-grid7-kv0.25: B=13 kv_scale=0.25 grid=7 coherent=False; launching kernel_fn (pre-attention first)
+[wgmma-verify]   pre-attention (Triton) done; launching splitkv_verify_wgmma_kernel<ticket_sync> grid 7
+[wgmma-verify]   splitkv_verify_wgmma_kernel done
+[wgmma-verify] ticket_sync lens_b-grid7-kv0.25: rel L2 9.68e-01, finite True, ERROR WORD 0 (1: not sm_90a, 2: mbarrier wait timeout, 4: shape) -> FAIL
+[wgmma-verify] ticket_sync coherent-lens_a-grid3: B=6 kv_scale=1.0 grid=3 coherent=True; launching kernel_fn (pre-attention first)
+[wgmma-verify]   pre-attention (Triton) done; launching splitkv_verify_wgmma_kernel<ticket_sync> grid 3
+[wgmma-verify]   splitkv_verify_wgmma_kernel done
+[wgmma-verify] ticket_sync coherent-lens_a-grid3: rel L2 1.24e+00, finite True, ERROR WORD 0 (1: not sm_90a, 2: mbarrier wait timeout, 4: shape) -> FAIL
+[wgmma-verify] ticket_sync coherent-lens_a-device: B=6 kv_scale=1.0 grid=device coherent=True; launching kernel_fn (pre-attention first)
+[wgmma-verify]   pre-attention (Triton) done; launching splitkv_verify_wgmma_kernel<ticket_sync> grid 264
+[wgmma-verify]   splitkv_verify_wgmma_kernel done
+[wgmma-verify] ticket_sync coherent-lens_a-device: rel L2 9.27e-03, finite True, ERROR WORD 0 (1: not sm_90a, 2: mbarrier wait timeout, 4: shape) -> PASS
+[wgmma-verify] ticket_sync BISECT: single-request multi-tile cases fail (B1-2t, B1-4t, B1-17t, B1-34t, B1-4t-kv0.25): multi-tile loop state (n >= 1), no request crossing involved
+[wgmma-verify] ticket_sync BISECT table: canary=ok, single-tile-lens_a-device=ok, lens_a-grid3-kv1=FAIL, kv0.25-grid264=ok, B1-2t=FAIL, B1-4t=FAIL, B1-17t=FAIL, B1-34t=FAIL, B1-4t-kv0.25=FAIL, cross-2req-4t=FAIL, lens_a-grid3-kv0.25=FAIL, lens_a-grid7-kv1=FAIL, lens_a-grid61-kv0.25=FAIL, lens_b-device=ok, lens_b-grid7-kv0.25=FAIL, coherent-lens_a-grid3=FAIL, coherent-lens_a-device=ok
+[wgmma-verify] ticket_sync SELF-CHECK FAILED: lens_a-grid3-kv1, rel L2 1.23e+00, finite True, error word 0
+PATH CHOSEN: full verify master FA3, paired heads vs wgmma v2 (fallback: ticket: lens_a-grid3-kv1, rel L2 1.23e+00, finite True, error word 0; b8: lens_a-grid3-kv1, rel L2 1.23e+00, finite True, error word 0; ticket_sync: lens_a-grid3-kv1, rel L2 1.23e+00, finite True, error word 0)
+PATH CHOSEN: full decode 1<B<=64 page 1: CUDA split-KV v1; full B=1: FA3 unpaired; sliding decode: Triton fused; sliding verify: FA3 unpaired; other full B>1: FA3 paired
