@@ -77,7 +77,7 @@ base_sha: e15152e9078a60b4c86e9eaf4e8b71da18b05e66
 base_blob: a2fe2a75893c60d4f68cf94fcce8ce8f9b708a71
 branch: hyp/muse_prefill_layer/pre-expert-norm-fused-rega-gather
 worktree: .worktrees/muse_prefill_layer/pre-expert-norm-fused-rega-gather
-mode: null
+mode: submit
 restack_of: null
 stale_base: null
 implemented_at: 2026-10-25T153857Z
@@ -86,6 +86,8 @@ submission_sha256: 3327ab76d29b974b079737dc1ea161430a51f90ff93f06cb901b7b98a18c3
 norm_sha256: 806ff3e3439f1273369ccc64ddaec6ad3349770f8354b7ed5101d9ac190875b3
 submission_blob: 4aee2710f852edb7d5dadc94735d121c48385cab
 lint_warnings: 73
+attempt_file: 2026-10-25T153857Z-submit-pre-expert-norm-fused-rega-gather.md
+prepared_at: 2026-10-25T153857Z
 ---
 
 # pre-expert-norm-fused-rega-gather
