@@ -60,7 +60,7 @@ review: proceed
 status: running
 review_at: 2026-10-25T043142Z
 review_companions: null
-stage: claimed
+stage: implemented
 claimed_at: 2026-10-25T043142Z
 base_sha: 4488c6a7868d7d953811b7b93ec0403d0f8bfde8
 base_blob: d8769ef25caf845a0e207538ccc5c62394b6ee3b
@@ -69,6 +69,12 @@ worktree: .worktrees/muse_attention_decode/sliding-verify-sk-pseudo-decode-s1
 mode: null
 restack_of: null
 stale_base: null
+implemented_at: 2026-10-25T044314Z
+impl_commit: 6f95ce71ba21682ba9cbb6d346abb2a93a862b2f
+submission_sha256: e1e1054ff99e9be0e1cb0f44d06c07cc54de33d08197c48e72668db0f6b93a40
+norm_sha256: a37cfcac0e6a83aff97b999dbdbbd7e7c7676af1abccc429ae2d61b928d3e156
+submission_blob: 76492911dfd6685139a2ffac06c1d27083ecdb0a
+lint_warnings: 27
 ---
 
 # sliding-verify-sk-pseudo-decode-s1
@@ -119,3 +125,42 @@ No companion. Each band is routed only if its printed best variant beats the pri
 - BUILDER: order tiles so that pseudo-requests of the same b and the same key offset are co-resident (the request-major prefix already does this when P per request is ~equal). Print L2 hit rate or DRAM bytes for B=16 in the prepare if cheap, to confirm the ~1x DRAM assumption.
 - If B=1 routes and wins, the held sliding-verify1-triton-pseudo-decode is redundant. If B=1 falls back to FA3, that Triton variant is the next thing to try on this row.
 
+
+## Implementation notes
+
+All edits in `muse_attention_decode/submission.py` (worktree; +591/-39). Nothing could be run on the build node (no GPU, torch or nvcc), so the CUDA is uncompiled.
+
+- Kernel: `splitkv_attn_sk_kernel<STAGES, TICKET, TWO, PSEUDO=false>`. PSEUDO runs over R = 8B pseudo-rows r = 8b+j. A new `load_prefix_pseudo` (block-wide shuffle scan, one thread per row, so no 256-iteration serial prefix) fills cnt_s[r] = sp - lo (sp = cache_seqlens[b]-7+j, lo = max(0, sp-2048)), lo_s[r] and the tile prefix. The rest of the kernel treats cnt_s as the request length, so masks, tile counts and zero-fill are unchanged. `lo_s` is added only to the page-table offset in `issue_meta`, and the page-table row is r>>3. q, qkv (gate) and out rows are r, so `finalize_store` is untouched. find_req and T use R. The ticket, workspace and group slots are sized for R (ws grid+R, tickets 256 / 256*32 in separate `_ps_*` buffers).
+- Review fix (landed layout): `Lay<STAGES, MAXR=64, WITH_LO=false>` reproduces the landed offsets exactly (BYTES unchanged); PSEUDO instantiations use `Lay<STAGES, 256, true>` (97824 B at 4 stages), so tp_s growth is not in the shared layout. The module is built with `-DSK_PSEUDO=1` first; if that build fails it is rebuilt without it (the landed kernels only) and sliding verify stays on FA3. `_sk_validate` prints the variant-0 regs/local/smem/CTAs against 121 / 0 / 95264 B / 2 and says IDENTICAL or DIFFERS; PSEUDO attrs are printed too. SASS identity for PSEUDO=false cannot be proven offline: the kernel signature is unchanged (window is the constant 2048, so the gate requires window == 2048) and the PSEUDO code is under `if constexpr`.
+- Review fix (variants): single-level (4) and two-level (5) tickets x grid 4R, 8R, SM, 2xSM (all capped at 2xSM, deduplicated per band). At B=1 that is 32/64/132/264 CTAs (4-8 slots per merge at 4R/8R); the tiles-per-CTA and slots-per-pseudo-row layout is printed. DRAM bytes are printed analytically (no counter in prepare).
+- Gate (`_ps_setup`, after stage-2/3 validation, before the diagnostics): canary + 18 self-check cases against the fp32 windowed causal reference (B=1/3/16/32; seq_lens 0, 3, 7, 1500, 2045, 2047, 2055, 80000; kv_scale 1/0.25; grids 3/7/4P/8P/SM/2xSM; both variants; every launch announced and synced). Per band B=1 / 16 / 32 x 80000 it re-checks each candidate against the reference, times candidates and the master FA3 path (prepare + main + combine + norm-gate, pre-attention excluded from both) as cold-L2 CUDA-graph replays (256 MB read before each, median of 10), prints every number, and routes a band (B=1, 2..16 from the B=16 timing, 17..32 from the B=32 timing) only if FA3/pseudo >= 1.05. Routed bands are then replay-checked through `kernel_fn` in a graph (NaN poison, two replays, tickets zero). `PATH CHOSEN` is printed per band.
+- Deviations: no `-std=c++20` flag (the landed build does not pass one and passes no -gencode, so torch's default applies; adding it would change the landed build line). Sliding decode, full layers, page 64 and the FA3 call are untouched.
+- Biggest risk: compile errors in the uncompiled CUDA (the retry without SK_PSEUDO bounds the damage to the landed kernels), then B=1 merge latency, which the 4R/8R grids target.
+
+## Rules check
+
+- [x] CUDA-graph capturable: `kernel_fn` adds only `_ps_launch` (torch.empty by shape, one extension launch); all `.item()`/synchronize calls are in import-time prepare code (lint: warnings only, outside kernel_fn).
+- [x] Nothing derived from `data` is cached across calls: tickets and flush buffers are device-only allocations, zeroed once at import; every launch leaves tickets at 0.
+- [x] Weights: n/a: no weights in this problem.
+- [x] Activations BF16 where SGLang keeps BF16; KV cache FP8; queries at most FP8 E4M3: the pre-attention kernel's e4m3 q is used, output bf16, fp32 softmax and merges.
+- [x] Attention sees every key: each pseudo-row attends all keys max(0, p-2047)..p, causal per query; no skipping (checked against reference.py's `start = max(0, p - window + 1)`, `keys[start:p+1]`).
+- [x] No timing patches, harness frames/I/O/secrets, module edits, reference import, subprocesses or network (grep: no subprocess/fork/multiprocessing; lint network errors were the word "requests" in comments and were reworded).
+- [x] All work inside the timed call; no output caching or replay.
+
+okc_lint output: `OK with warnings: submission.py` (host-sync warnings only, all in prepare-time code, outside kernel_fn). `python3 -I -m py_compile` passes; `__pycache__` deleted.
+
+## Pre-flight audit
+
+Audited 2026-10-25 by an opus subagent (read-only reasoning; no GPU on the build node). **Verdict: dispatch-with-fixes.**
+
+Checked and found sound:
+- Window/causal algebra: cache_seqlens = seq_lens + 8 (reference.generate_input), so sp = cache_seqlens - 7 + j = seq_lens + j + 1 = p + 1 is the EXCLUSIVE end; keys [lo, sp) with lo = max(0, sp - 2048) = max(0, p - 2047) are exactly reference.py `keys[max(0, p - W + 1) : p + 1]`. No off-by-one; sp >= 1 always (cache_seqlens >= 8), so every pseudo-row has >= 1 tile and find_req/ticket invariants hold. Masks (`pos < cnt`) and page lookup (`page_table[b, lo + pos]`, page 1) are relative to lo consistently in issue_meta, issue_tile and the score mask.
+- Rows: q token r = 8b + j matches the pre-attention [B*8, 16, 64] unpaired e4m3 query; qkv gate row r via the reshaped (tokens, -1) qkv stride; out [B, 8, 1024] row r; ws slot bx + r < grid + R; tickets 256 / 256*32 cover R <= 256, two-level groups <= 32. KV stays FP8, q is e4m3 (= FA3), fp32 softmax/merges, bf16 out.
+- PSEUDO=false: Lay<STAGES, 64, false> reproduces the landed offsets and BYTES (95264 at 4 stages); R, prb/plo and the prefix are `if constexpr`/constant-folded, lo_s is never odr-used, so the landed variants 0-3 should compile to the same code; _sk_validate prints regs/local/smem/CTAs vs 121/0/95264/2.
+- Build fallback: success compiles one module once (6 instantiations instead of 4, ~+30-50% of the ~40 s landed compile); only a failed -DSK_PSEUDO build triggers the landed-only rebuild. Within the 15 min budget.
+- kernel_fn: config-only `_ps_gate`, shape-only torch.empty, one extension launch, no prints/try/except/host syncs; _PS_ROUTE is set once at import. Self-check reference matches reference.py (interleaved RoPE, FP8 rounding before qk_scale_factor, per-head output RMSNorm * sigmoid(gate)). Every failure path (build, self-check, gate, replay, raise) lands on byte-identical FA3 with a PATH CHOSEN line.
+
+Fixes:
+- `_ps_replay_check` now also REFILLS the captured inputs in place with different seq lens (same shapes; `_ps_synthetic(max_pages=...)`), replays the graph and checks against the reference of the refilled data, as the judge recheck does. The kernel reads cache_seqlens on device and sizes everything from config, so this should pass; it guards the routed band against a refill-only failure.
+
+Residual risk: uncompiled CUDA (a compile error costs one extra landed-only build and leaves sliding verify on FA3; an in-kernel fault at import would poison the context for the whole run, as with the landed kernels).
