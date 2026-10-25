@@ -83,7 +83,7 @@ base_sha: 5ab477f4e13746722c0fdaef292988846cff3fa4
 base_blob: c2e3e595def2e6b5949e0fd350ce98ed59729147
 branch: hyp/muse_prefill_layer/experts-rega-low-class-two-ctas-per-sm
 worktree: .worktrees/muse_prefill_layer/experts-rega-low-class-two-ctas-per-sm
-mode: null
+mode: check
 restack_of: null
 stale_base: null
 implemented_at: 2026-10-25T131906Z
@@ -92,6 +92,8 @@ submission_sha256: 378d4efcbb7c655bdca6ecb9ec53f73f541784c84fa4fab891bfbcc53837e
 norm_sha256: 5920cd1698c7708035447be7e829b4f7860f32d474a3ae9108fa7d453fcadbda
 submission_blob: 865772d507eb49c474c09586ab81d66fd7379c15
 lint_warnings: 67
+attempt_file: 2026-10-25T131906Z-check-experts-rega-low-class-two-ctas-per-sm.md
+prepared_at: 2026-10-25T131906Z
 ---
 
 # experts-rega-low-class-two-ctas-per-sm
