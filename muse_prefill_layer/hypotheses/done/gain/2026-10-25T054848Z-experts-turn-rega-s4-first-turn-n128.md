@@ -101,7 +101,7 @@ harvested_at: 2026-10-25T124810Z
 best_at_harvest: 1.3274587526558561
 promotion: merged
 promotion_commit: a1a5497d7a46aeb3c1aa4a18e70871a23c1b6be3
-promotion_attempt: 2026-10-25T124812Z-submit-experts-turn-rega-s4-first-turn-n128.md
+promotion_attempt: 2026-10-25T125628Z-submit-experts-turn-rega-s4-first-turn-n128.md
 ---
 
 # experts-turn-rega-s4-first-turn-n128
