@@ -71,7 +71,7 @@ review: proceed
 status: running
 review_at: 2026-10-25T034534Z
 review_companions: null
-stage: implemented
+stage: dispatched
 claimed_at: 2026-10-25T034535Z
 base_sha: 1177e314e5b0c1b2d21bb03967270350659d0f15
 base_blob: 451c3c09efdc6fc55db461ae20f27cd8e1cd4e9c
@@ -88,6 +88,8 @@ submission_blob: aa4d099296999ecc3e96238423bded7c90dd656e
 lint_warnings: 52
 attempt_file: 2026-10-25T035159Z-check-moe-chain-cuda-swapab-expert-once-s3-rebase-fp32ref-bound.md
 prepared_at: 2026-10-25T035159Z
+job: 51d047cbc5ff450a
+dispatched_at: 2026-10-25T035207Z
 ---
 
 # moe-chain-cuda-swapab-expert-once-s3-rebase-fp32ref-bound
