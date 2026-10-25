@@ -57,10 +57,10 @@ priority: 1
 kind: primary
 controls_for: null
 review: proceed
-status: running
+status: done
 review_at: 2026-10-25T042320Z
 review_companions: null
-stage: dispatched
+stage: harvested
 claimed_at: 2026-10-25T042320Z
 base_sha: 459e84861e1a2c35ffa8148cd1fe09f5ead28416
 base_blob: 970b415b746fa03cb92e419d270be92588273178
@@ -79,6 +79,13 @@ attempt_file: 2026-10-25T042837Z-check-restack-router-cluster-dsmem-m8.md
 prepared_at: 2026-10-25T042837Z
 job: d323ce8ef6a54fde
 dispatched_at: 2026-10-25T042850Z
+outcome: neutral
+verdict_detail: within-ci
+speedup: 1.2198658542111795
+speedup_ci: [1.2015678663980118, 1.238163842024347]
+harvested_at: 2026-10-25T043356Z
+best_at_harvest: 1.2215006063849365
+promotion: null
 ---
 
 # restack-router-cluster-dsmem-m8
@@ -185,3 +192,53 @@ Audited 2026-10-24 by an opus subagent, by reading and numpy emulation; there is
 - Rules: rules line 96 explicitly allows `load_inline`/nvcc, and the file has no subprocess, multiprocessing or os.fork. There are no host syncs, data-dependent branches or cached data in kernel_fn, and the only `synchronize` is in prepare(). hi/lo is unchanged from the restack. okc_lint gives OK with one warning (the prepare() synchronize), and py_compile passes.
 
 Residual risk: a device fault during the prepare() self-check would poison the CUDA context and fail the run instead of falling back (the same kernel already ran clean on the judge in dc5d03c4), and the m=1 win (about -2.6% against the restack) may land inside noise.
+
+## Result
+
+- job `d323ce8ef6a54fde` (check), status done, passed True, tests 9/9
+- speedup 1.2199x, 95% CI [1.2016, 1.2382], score 3960.107567010976 µs vs SGLang 4830.8 µs
+- best at harvest: {"speedup": 1.2215006063849365, "ci": [1.2031780972891624, 1.2398231154807104], "job": "1e90292c7b954d96"}; base result: muse_bf16_proj/hypotheses/done/neutral/bf16-restack-m16-swapab-router-swapab-m32.result.json
+- **outcome: neutral** (within-ci)
+- files: `muse_bf16_proj/hypotheses/done/neutral/restack-router-cluster-dsmem-m8.result.json`, `muse_bf16_proj/hypotheses/done/neutral/restack-router-cluster-dsmem-m8.patch`; branch `hyp/muse_bf16_proj/restack-router-cluster-dsmem-m8`
+
+## Attribution
+
+| shape | w | base µs | hyp µs | delta | verdict |
+|---|---|---|---|---|---|
+| layer=qkv_gate load=decode_1 m=1 | 62 | 12.18 | 12.36 | 1.012 | flat |
+| layer=o load=decode_1 m=1 | 62 | 5.89 | 5.95 | 0.9904 | flat |
+| layer=pooler load=decode_1 m=1 | 62 | 18.84 | 18.85 | 1.009 | flat |
+| layer=unpooler load=decode_1 m=1 | 62 | 6.15 | 5.92 | 1.0113 | flat |
+| layer=router load=decode_1 m=1 | 62 | 5.38 | 4.98 | 1.0782 | gained |
+| layer=qkv_gate load=decode_16 m=16 | 62 | 13.15 | 12.76 | 1.0325 | gained |
+| layer=o load=decode_16 m=16 | 62 | 6.23 | 6.16 | 0.9873 | flat |
+| layer=pooler load=decode_16 m=16 | 62 | 19.47 | 19.31 | 1.0083 | flat |
+| layer=unpooler load=decode_16 m=16 | 62 | 18.51 | 18.73 | 0.9818 | flat |
+| layer=router load=decode_16 m=16 | 62 | 5.47 | 5.63 | 0.9717 | flat |
+| layer=qkv_gate load=decode_32 m=32 | 62 | 14.19 | 14.0 | 0.9931 | flat |
+| layer=o load=decode_32 m=32 | 62 | 6.34 | 6.44 | 0.9666 | lost |
+| layer=pooler load=decode_32 m=32 | 62 | 19.73 | 19.83 | 0.9966 | flat |
+| layer=unpooler load=decode_32 m=32 | 62 | 18.08 | 18.14 | 0.9832 | flat |
+| layer=router load=decode_32 m=32 | 62 | 6.2 | 6.12 | 0.9985 | flat |
+| layer=qkv_gate load=verify_1 m=8 | 62 | 12.5 | 12.53 | 1.0162 | flat |
+| layer=o load=verify_1 m=8 | 62 | 6.13 | 6.49 | 0.9947 | flat |
+| layer=pooler load=verify_1 m=8 | 62 | 18.89 | 18.95 | 1.0027 | flat |
+| layer=unpooler load=verify_1 m=8 | 62 | 6.0 | 5.72 | 0.9922 | flat |
+| layer=router load=verify_1 m=8 | 62 | 5.47 | 4.93 | 1.0994 | gained |
+| layer=qkv_gate load=verify_16 m=128 | 62 | 17.05 | 16.92 | 0.9879 | flat |
+| layer=o load=verify_16 m=128 | 62 | 6.98 | 7.51 | 0.9566 | lost |
+| layer=pooler load=verify_16 m=128 | 62 | 25.0 | 25.21 | 1.0074 | flat |
+| layer=unpooler load=verify_16 m=128 | 62 | 19.96 | 20.16 | 0.9885 | flat |
+| layer=router load=verify_16 m=128 | 62 | 7.28 | 7.48 | 0.9631 | lost |
+| layer=qkv_gate load=verify_32 m=256 | 62 | 19.69 | 19.95 | 0.9931 | flat |
+| layer=o load=verify_32 m=256 | 62 | 9.26 | 9.24 | 0.9823 | flat |
+| layer=pooler load=verify_32 m=256 | 62 | 31.19 | 31.43 | 0.9797 | flat |
+| layer=unpooler load=verify_32 m=256 | 62 | 24.42 | 24.26 | 1.0019 | flat |
+| layer=router load=verify_32 m=256 | 62 | 9.6 | 9.32 | 1.016 | flat |
+
+gained on router decode_1, verify_1; qkv_gate decode_16; lost on o decode_32, verify_16; router verify_16. Expected hit: 8/10. Noise ±1.5%.
+
+## Follow-ups
+
+- within-ci: the change is not proven either way; a stacked hypothesis (`depends_on: restack-router-cluster-dsmem-m8`) that adds a further change in the same area is the only way to learn more (identical code is never re-run).
+

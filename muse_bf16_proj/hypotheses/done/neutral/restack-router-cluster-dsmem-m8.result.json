@@ -1,0 +1,1132 @@
+{
+ "schema": 1,
+ "problem": "muse_bf16_proj",
+ "slug": "restack-router-cluster-dsmem-m8",
+ "job": "d323ce8ef6a54fde",
+ "mode": "check",
+ "duplicate_of": null,
+ "content_hash": "0a41a89b3890de217ffede73ce2836205cff54ab8c7bd6cc0d4501f16fd463d0",
+ "submission_sha256": "94473893a8f96855d29583bcb00d85036237fb6d9b0558d36352d5cdb2b395e6",
+ "submission_blob": "c857e5300e8435a8deb056ba49439d4d23ea126b",
+ "impl_commit": "041d99b4bbca8464d43501a630a399e2afc877a6",
+ "base_sha": "459e84861e1a2c35ffa8148cd1fe09f5ead28416",
+ "created_at": 1792902527.0627942,
+ "finished_at": 1792902755.984649,
+ "gpu": "H200",
+ "evaluator_sha256": "986ed3ebb096eab83d16797609f4c0e7895248d6bce33252d25dd306cbe5d018",
+ "status": "done",
+ "passed": true,
+ "error": null,
+ "returncode": 0,
+ "tests": {
+  "total": 9,
+  "passed": 9
+ },
+ "first_failing": null,
+ "speedup": 1.2198658542111795,
+ "speedup_ci": [
+  1.2015678663980118,
+  1.238163842024347
+ ],
+ "score_us": 3960.107567010976,
+ "baseline_us": 4830.8,
+ "flags": [],
+ "checks": {
+  "flagged": [],
+  "ok": true,
+  "rejected": []
+ },
+ "shapes": [
+  {
+   "key": "layer=qkv_gate load=decode_1 m=1",
+   "load": "decode 1",
+   "case": {
+    "layer": "qkv_gate",
+    "load": "decode 1",
+    "m": 1,
+    "seed": 7384302516256772415,
+    "weight": 62
+   },
+   "weight": 62,
+   "median_ns": 12356.595990934124,
+   "baseline_ns": 14160.000253468752,
+   "speedup": 1.1459466882188074,
+   "speedup_of_medians": 1.1434108945415915,
+   "err_ns": 47.259009948186666,
+   "speed_of_light_ns": 7868.693333333334,
+   "status": "pass",
+   "top_kernels": [
+    [
+     "_bf16_swapab_kernel",
+     9.6,
+     100.0
+    ]
+   ]
+  },
+  {
+   "key": "layer=o load=decode_1 m=1",
+   "load": "decode 1",
+   "case": {
+    "layer": "o",
+    "load": "decode 1",
+    "m": 1,
+    "seed": 7384582470340763259,
+    "weight": 62
+   },
+   "weight": 62,
+   "median_ns": 5948.454997894734,
+   "baseline_ns": 6688.000168651342,
+   "speedup": 1.124325588916508,
+   "speedup_of_medians": 1.1236559135578703,
+   "err_ns": 17.64377269657711,
+   "speed_of_light_ns": 3499.0933333333332,
+   "status": "pass",
+   "top_kernels": [
+    [
+     "_bf16_swapab_kernel",
+     4.0,
+     100.0
+    ]
+   ]
+  },
+  {
+   "key": "layer=pooler load=decode_1 m=1",
+   "load": "decode 1",
+   "case": {
+    "layer": "pooler",
+    "load": "decode 1",
+    "m": 1,
+    "seed": 7384862424424754104,
+    "weight": 62
+   },
+   "weight": 62,
+   "median_ns": 18845.017089643017,
+   "baseline_ns": 21312.00022995472,
+   "speedup": 1.1309090423519714,
+   "speedup_of_medians": 1.1336170498613272,
+   "err_ns": 63.60420937379017,
+   "speed_of_light_ns": 13986.133333333333,
+   "status": "pass",
+   "top_kernels": [
+    [
+     "_bf16_swapab_kernel",
+     18.4,
+     100.0
+    ]
+   ]
+  },
+  {
+   "key": "layer=unpooler load=decode_1 m=1",
+   "load": "decode 1",
+   "case": {
+    "layer": "unpooler",
+    "load": "decode 1",
+    "m": 1,
+    "seed": 7385142378508744950,
+    "weight": 62
+   },
+   "weight": 62,
+   "median_ns": 5922.176634273998,
+   "baseline_ns": 7136.000320315361,
+   "speedup": 1.204962425304318,
+   "speedup_of_medians": 1.2054053832958498,
+   "err_ns": 20.669444719715884,
+   "speed_of_light_ns": 1749.76,
+   "status": "pass",
+   "top_kernels": [
+    [
+     "_bf16_swapab_kernel",
+     4.0,
+     100.0
+    ]
+   ]
+  },
+  {
+   "key": "layer=router load=decode_1 m=1",
+   "load": "decode 1",
+   "case": {
+    "layer": "router",
+    "load": "decode 1",
+    "m": 1,
+    "seed": 7385422332592735797,
+    "weight": 62
+   },
+   "weight": 62,
+   "median_ns": 4978.663699010938,
+   "baseline_ns": 10336.000006645918,
+   "speedup": 2.0760590856336147,
+   "speedup_of_medians": 2.083870948359572,
+   "err_ns": 23.93321734741261,
+   "speed_of_light_ns": 1751.2533333333333,
+   "status": "pass",
+   "top_kernels": [
+    [
+     "void (anonymous namespace)::router_kernel<8, 8>(__nv_bflo...",
+     3.6,
+     100.0
+    ]
+   ]
+  },
+  {
+   "key": "layer=qkv_gate load=decode_16 m=16",
+   "load": "decode 16",
+   "case": {
+    "layer": "qkv_gate",
+    "load": "decode 16",
+    "m": 16,
+    "seed": 7385702286676726645,
+    "weight": 62
+   },
+   "weight": 62,
+   "median_ns": 12764.575821980692,
+   "baseline_ns": 14112.000353634357,
+   "speedup": 1.1055596794163258,
+   "speedup_of_medians": 1.1025000554791782,
+   "err_ns": 35.826920940591634,
+   "speed_of_light_ns": 7934.293333333334,
+   "status": "pass",
+   "top_kernels": [
+    [
+     "_bf16_swapab_kernel",
+     10.3,
+     100.0
+    ]
+   ]
+  },
+  {
+   "key": "layer=o load=decode_16 m=16",
+   "load": "decode 16",
+   "case": {
+    "layer": "o",
+    "load": "decode 16",
+    "m": 16,
+    "seed": 7385982240760717494,
+    "weight": 62
+   },
+   "weight": 62,
+   "median_ns": 6163.854485785891,
+   "baseline_ns": 6752.000190317631,
+   "speedup": 1.0954184927447637,
+   "speedup_of_medians": 1.0989583254384143,
+   "err_ns": 22.62698869690222,
+   "speed_of_light_ns": 3556.693333333333,
+   "status": "pass",
+   "top_kernels": [
+    [
+     "_bf16_swapab_kernel",
+     4.5,
+     100.0
+    ]
+   ]
+  },
+  {
+   "key": "layer=pooler load=decode_16 m=16",
+   "load": "decode 16",
+   "case": {
+    "layer": "pooler",
+    "load": "decode 16",
+    "m": 16,
+    "seed": 7386262194844708344,
+    "weight": 62
+   },
+   "weight": 62,
+   "median_ns": 19307.918972337644,
+   "baseline_ns": 21551.99972912669,
+   "speedup": 1.116225925746018,
+   "speedup_of_medians": 1.1169153946108925,
+   "err_ns": 50.545473652333186,
+   "speed_of_light_ns": 14062.933333333334,
+   "status": "pass",
+   "top_kernels": [
+    [
+     "_bf16_swapab_kernel",
+     19.7,
+     100.0
+    ]
+   ]
+  },
+  {
+   "key": "layer=unpooler load=decode_16 m=16",
+   "load": "decode 16",
+   "case": {
+    "layer": "unpooler",
+    "load": "decode 16",
+    "m": 16,
+    "seed": 7386542148928699195,
+    "weight": 62
+   },
+   "weight": 62,
+   "median_ns": 18728.45574758172,
+   "baseline_ns": 18560.00069528818,
+   "speedup": 0.9910053955027611,
+   "speedup_of_medians": 0.9940017181983178,
+   "err_ns": 52.10846554554141,
+   "speed_of_light_ns": 14062.933333333334,
+   "status": "pass",
+   "top_kernels": [
+    [
+     "nvjet_sm90_tst_64x16_64x16_2x1_v_bz_TNT",
+     19.3,
+     100.0
+    ]
+   ]
+  },
+  {
+   "key": "layer=router load=decode_16 m=16",
+   "load": "decode 16",
+   "case": {
+    "layer": "router",
+    "load": "decode 16",
+    "m": 16,
+    "seed": 7386822103012690047,
+    "weight": 62
+   },
+   "weight": 62,
+   "median_ns": 5626.935100594257,
+   "baseline_ns": 14815.999660640955,
+   "speedup": 2.6330496790475237,
+   "speedup_of_medians": 2.630681519871341,
+   "err_ns": 27.039732329430322,
+   "speed_of_light_ns": 1805.6533333333332,
+   "status": "pass",
+   "top_kernels": [
+    [
+     "_router_swapab_kernel",
+     3.3,
+     82.5
+    ],
+    [
+     "void at::native::vectorized_elementwise_kernel<4, at::nat...",
+     0.7,
+     17.5
+    ]
+   ]
+  },
+  {
+   "key": "layer=qkv_gate load=decode_32 m=32",
+   "load": "decode 32",
+   "case": {
+    "layer": "qkv_gate",
+    "load": "decode 32",
+    "m": 32,
+    "seed": 7387102057096680900,
+    "weight": 62
+   },
+   "weight": 62,
+   "median_ns": 14004.934194874264,
+   "baseline_ns": 14336.000196635723,
+   "speedup": 1.0236392400817298,
+   "speedup_of_medians": 1.0275228763767497,
+   "err_ns": 43.32685797178269,
+   "speed_of_light_ns": 8004.266666666667,
+   "status": "pass",
+   "top_kernels": [
+    [
+     "_bf16_swapab_kernel",
+     11.9,
+     100.0
+    ]
+   ]
+  },
+  {
+   "key": "layer=o load=decode_32 m=32",
+   "load": "decode 32",
+   "case": {
+    "layer": "o",
+    "load": "decode 32",
+    "m": 32,
+    "seed": 7387382011180671754,
+    "weight": 62
+   },
+   "weight": 62,
+   "median_ns": 6438.504746203975,
+   "baseline_ns": 6767.999846488237,
+   "speedup": 1.0511757175419536,
+   "speedup_of_medians": 1.0522387686907946,
+   "err_ns": 24.22483653730164,
+   "speed_of_light_ns": 3618.1333333333337,
+   "status": "pass",
+   "top_kernels": [
+    [
+     "_bf16_swapab_kernel",
+     4.8,
+     100.0
+    ]
+   ]
+  },
+  {
+   "key": "layer=pooler load=decode_32 m=32",
+   "load": "decode 32",
+   "case": {
+    "layer": "pooler",
+    "load": "decode 32",
+    "m": 32,
+    "seed": 7387661965264662609,
+    "weight": 62
+   },
+   "weight": 62,
+   "median_ns": 19825.401378183695,
+   "baseline_ns": 21808.000281453133,
+   "speedup": 1.1000029641493732,
+   "speedup_of_medians": 1.100080720260372,
+   "err_ns": 61.02366981112967,
+   "speed_of_light_ns": 14144.853333333334,
+   "status": "pass",
+   "top_kernels": [
+    [
+     "_bf16_swapab_kernel",
+     20.0,
+     100.0
+    ]
+   ]
+  },
+  {
+   "key": "layer=unpooler load=decode_32 m=32",
+   "load": "decode 32",
+   "case": {
+    "layer": "unpooler",
+    "load": "decode 32",
+    "m": 32,
+    "seed": 7387941919348653465,
+    "weight": 62
+   },
+   "weight": 62,
+   "median_ns": 18136.781241883244,
+   "baseline_ns": 18367.999233305454,
+   "speedup": 1.0127485681355775,
+   "speedup_of_medians": 1.0114537294469899,
+   "err_ns": 53.01037158670815,
+   "speed_of_light_ns": 14144.853333333334,
+   "status": "pass",
+   "top_kernels": [
+    [
+     "_bf16_swapab_kernel",
+     18.6,
+     100.0
+    ]
+   ]
+  },
+  {
+   "key": "layer=router load=decode_32 m=32",
+   "load": "decode 32",
+   "case": {
+    "layer": "router",
+    "load": "decode 32",
+    "m": 32,
+    "seed": 7388221873432644322,
+    "weight": 62
+   },
+   "weight": 62,
+   "median_ns": 6116.882072995304,
+   "baseline_ns": 15327.999833971262,
+   "speedup": 2.5058517805404534,
+   "speedup_of_medians": 2.494791362317562,
+   "err_ns": 16.8145143687472,
+   "speed_of_light_ns": 1863.6799999999998,
+   "status": "pass",
+   "top_kernels": [
+    [
+     "_router_swapab_kernel",
+     3.8,
+     84.3
+    ],
+    [
+     "void at::native::vectorized_elementwise_kernel<4, at::nat...",
+     0.7,
+     15.7
+    ]
+   ]
+  },
+  {
+   "key": "layer=qkv_gate load=verify_1 m=8",
+   "load": "verify 1",
+   "case": {
+    "layer": "qkv_gate",
+    "load": "verify 1",
+    "m": 8,
+    "seed": 7388501827516635180,
+    "weight": 62
+   },
+   "weight": 62,
+   "median_ns": 12529.413238796611,
+   "baseline_ns": 14207.999221980572,
+   "speedup": 1.1339716354782134,
+   "speedup_of_medians": 1.1312101550941307,
+   "err_ns": 54.986538694047574,
+   "speed_of_light_ns": 7899.306666666666,
+   "status": "pass",
+   "top_kernels": [
+    [
+     "_bf16_swapab_kernel",
+     10.0,
+     100.0
+    ]
+   ]
+  },
+  {
+   "key": "layer=o load=verify_1 m=8",
+   "load": "verify 1",
+   "case": {
+    "layer": "o",
+    "load": "verify 1",
+    "m": 8,
+    "seed": 7388781781600626039,
+    "weight": 62
+   },
+   "weight": 62,
+   "median_ns": 6490.115742992327,
+   "baseline_ns": 7071.999367326498,
+   "speedup": 1.0896568947884262,
+   "speedup_of_medians": 1.0940594105767796,
+   "err_ns": 24.671186123618888,
+   "speed_of_light_ns": 3525.9733333333334,
+   "status": "pass",
+   "top_kernels": [
+    [
+     "_bf16_swapab_kernel",
+     4.6,
+     100.0
+    ]
+   ]
+  },
+  {
+   "key": "layer=pooler load=verify_1 m=8",
+   "load": "verify 1",
+   "case": {
+    "layer": "pooler",
+    "load": "verify 1",
+    "m": 8,
+    "seed": 7389061735684616899,
+    "weight": 62
+   },
+   "weight": 62,
+   "median_ns": 18951.453661418727,
+   "baseline_ns": 21247.999742627144,
+   "speedup": 1.1211804710202107,
+   "speedup_of_medians": 1.1225697931054572,
+   "err_ns": 56.82792900497242,
+   "speed_of_light_ns": 14021.973333333333,
+   "status": "pass",
+   "top_kernels": [
+    [
+     "_bf16_swapab_kernel",
+     19.7,
+     100.0
+    ]
+   ]
+  },
+  {
+   "key": "layer=unpooler load=verify_1 m=8",
+   "load": "verify 1",
+   "case": {
+    "layer": "unpooler",
+    "load": "verify 1",
+    "m": 8,
+    "seed": 7389341689768607760,
+    "weight": 62
+   },
+   "weight": 62,
+   "median_ns": 5719.573134017678,
+   "baseline_ns": 6687.999237328768,
+   "speedup": 1.1693178984898869,
+   "speedup_of_medians": 1.1675977590048114,
+   "err_ns": 23.326028579553622,
+   "speed_of_light_ns": 1764.6933333333334,
+   "status": "pass",
+   "top_kernels": [
+    [
+     "_bf16_swapab_kernel",
+     4.3,
+     100.0
+    ]
+   ]
+  },
+  {
+   "key": "layer=router load=verify_1 m=8",
+   "load": "verify 1",
+   "case": {
+    "layer": "router",
+    "load": "verify 1",
+    "m": 8,
+    "seed": 7389621643852598622,
+    "weight": 62
+   },
+   "weight": 62,
+   "median_ns": 4931.415988483987,
+   "baseline_ns": 26031.999848783016,
+   "speedup": 5.278808340155006,
+   "speedup_of_medians": 5.282467210946064,
+   "err_ns": 14.279811723176064,
+   "speed_of_light_ns": 1776.6399999999999,
+   "status": "pass",
+   "top_kernels": [
+    [
+     "void (anonymous namespace)::router_kernel<8, 8>(__nv_bflo...",
+     3.9,
+     100.0
+    ]
+   ]
+  },
+  {
+   "key": "layer=qkv_gate load=verify_16 m=128",
+   "load": "verify 16",
+   "case": {
+    "layer": "qkv_gate",
+    "load": "verify 16",
+    "m": 128,
+    "seed": 7389901597936589485,
+    "weight": 62
+   },
+   "weight": 62,
+   "median_ns": 16918.96766505456,
+   "baseline_ns": 16848.000697791576,
+   "speedup": 0.9958054788762578,
+   "speedup_of_medians": 0.9887324180757248,
+   "err_ns": 44.24231494581461,
+   "speed_of_light_ns": 8424.106666666667,
+   "status": "pass",
+   "top_kernels": [
+    [
+     "nvjet_sm90_tst_96x64_64x10_4x2_h_bz_splitK_TNN",
+     12.4,
+     80.5
+    ],
+    [
+     "void cublasLt::splitKreduce_kernel<32, 16, int, float, __...",
+     3.0,
+     19.5
+    ]
+   ]
+  },
+  {
+   "key": "layer=o load=verify_16 m=128",
+   "load": "verify 16",
+   "case": {
+    "layer": "o",
+    "load": "verify 16",
+    "m": 128,
+    "seed": 7390181552020580349,
+    "weight": 62
+   },
+   "weight": 62,
+   "median_ns": 7513.006904072734,
+   "baseline_ns": 7360.000163316727,
+   "speedup": 0.9796344203180403,
+   "speedup_of_medians": 0.9787233673649975,
+   "err_ns": 33.072428616697884,
+   "speed_of_light_ns": 3986.773333333333,
+   "status": "pass",
+   "top_kernels": [
+    [
+     "nvjet_sm90_tst_128x64_64x8_1x2_h_bz_TNT",
+     5.3,
+     100.0
+    ]
+   ]
+  },
+  {
+   "key": "layer=pooler load=verify_16 m=128",
+   "load": "verify 16",
+   "case": {
+    "layer": "pooler",
+    "load": "verify 16",
+    "m": 128,
+    "seed": 7390461506104571214,
+    "weight": 62
+   },
+   "weight": 62,
+   "median_ns": 25210.743433680367,
+   "baseline_ns": 25264.000985771418,
+   "speedup": 1.002112494311449,
+   "speedup_of_medians": 1.0025397018278444,
+   "err_ns": 75.66455264652973,
+   "speed_of_light_ns": 14636.373333333333,
+   "status": "pass",
+   "top_kernels": [
+    [
+     "nvjet_sm90_tst_64x64_64x13_2x1_v_bz_TNT",
+     24.8,
+     100.0
+    ]
+   ]
+  },
+  {
+   "key": "layer=unpooler load=verify_16 m=128",
+   "load": "verify 16",
+   "case": {
+    "layer": "unpooler",
+    "load": "verify 16",
+    "m": 128,
+    "seed": 7390741460188562080,
+    "weight": 62
+   },
+   "weight": 62,
+   "median_ns": 20159.825751766835,
+   "baseline_ns": 19935.999996960163,
+   "speedup": 0.9888974360412289,
+   "speedup_of_medians": 0.9920382483664432,
+   "err_ns": 58.88285086211733,
+   "speed_of_light_ns": 14636.373333333333,
+   "status": "pass",
+   "top_kernels": [
+    [
+     "nvjet_sm90_tst_128x64_64x8_1x2_h_bz_TNT",
+     20.5,
+     100.0
+    ]
+   ]
+  },
+  {
+   "key": "layer=router load=verify_16 m=128",
+   "load": "verify 16",
+   "case": {
+    "layer": "router",
+    "load": "verify 16",
+    "m": 128,
+    "seed": 7391021414272552947,
+    "weight": 62
+   },
+   "weight": 62,
+   "median_ns": 7483.927109242729,
+   "baseline_ns": 16128.00033763051,
+   "speedup": 2.1550183616449523,
+   "speedup_of_medians": 2.153846005552488,
+   "err_ns": 20.618415391015052,
+   "speed_of_light_ns": 2211.84,
+   "status": "pass",
+   "top_kernels": [
+    [
+     "_router_hilo_kernel",
+     5.0,
+     86.7
+    ],
+    [
+     "void at::native::vectorized_elementwise_kernel<4, at::nat...",
+     0.8,
+     13.3
+    ]
+   ]
+  },
+  {
+   "key": "layer=qkv_gate load=verify_32 m=256",
+   "load": "verify 32",
+   "case": {
+    "layer": "qkv_gate",
+    "load": "verify 32",
+    "m": 256,
+    "seed": 7391301368356543815,
+    "weight": 62
+   },
+   "weight": 62,
+   "median_ns": 19953.307827724082,
+   "baseline_ns": 19808.00088495016,
+   "speedup": 0.9927176514275982,
+   "speedup_of_medians": 0.9975826700075332,
+   "err_ns": 56.98689902643409,
+   "speed_of_light_ns": 9771.159166835187,
+   "status": "pass",
+   "top_kernels": [
+    [
+     "nvjet_sm90_tst_96x64_64x10_2x4_h_bz_TNN",
+     19.2,
+     100.0
+    ]
+   ]
+  },
+  {
+   "key": "layer=o load=verify_32 m=256",
+   "load": "verify 32",
+   "case": {
+    "layer": "o",
+    "load": "verify 32",
+    "m": 256,
+    "seed": 7391581322440534684,
+    "weight": 62
+   },
+   "weight": 62,
+   "median_ns": 9238.916113148822,
+   "baseline_ns": 9215.999394655228,
+   "speedup": 0.9975195446941033,
+   "speedup_of_medians": 1,
+   "err_ns": 18.59797907519296,
+   "speed_of_light_ns": 4478.293333333333,
+   "status": "pass",
+   "top_kernels": [
+    [
+     "nvjet_sm90_tst_128x128_64x6_2x1_v_bz_TNT",
+     8.1,
+     100.0
+    ]
+   ]
+  },
+  {
+   "key": "layer=pooler load=verify_32 m=256",
+   "load": "verify 32",
+   "case": {
+    "layer": "pooler",
+    "load": "verify 32",
+    "m": 256,
+    "seed": 7391861276524525554,
+    "weight": 62
+   },
+   "weight": 62,
+   "median_ns": 31431.432845393745,
+   "baseline_ns": 30799.999833106995,
+   "speedup": 0.9799107786338386,
+   "speedup_of_medians": 0.9811416675942709,
+   "err_ns": 98.20825308205062,
+   "speed_of_light_ns": 17370.949629929222,
+   "status": "pass",
+   "top_kernels": [
+    [
+     "nvjet_sm90_tst_128x64_64x8_1x2_h_bz_TNT",
+     30.5,
+     100.0
+    ]
+   ]
+  },
+  {
+   "key": "layer=unpooler load=verify_32 m=256",
+   "load": "verify 32",
+   "case": {
+    "layer": "unpooler",
+    "load": "verify 32",
+    "m": 256,
+    "seed": 7392141230608516425,
+    "weight": 62
+   },
+   "weight": 62,
+   "median_ns": 24264.170384108136,
+   "baseline_ns": 24303.999729454517,
+   "speedup": 1.0016414880342444,
+   "speedup_of_medians": 1.0006587281848773,
+   "err_ns": 36.8570739167762,
+   "speed_of_light_ns": 17370.949629929222,
+   "status": "pass",
+   "top_kernels": [
+    [
+     "nvjet_sm90_tst_128x128_64x6_2x1_v_bz_TNT",
+     25.4,
+     100.0
+    ]
+   ]
+  },
+  {
+   "key": "layer=router load=verify_32 m=256",
+   "load": "verify 32",
+   "case": {
+    "layer": "router",
+    "load": "verify 32",
+    "m": 256,
+    "seed": 7392421184692507297,
+    "weight": 62
+   },
+   "weight": 62,
+   "median_ns": 9324.502932092671,
+   "baseline_ns": 17455.999739468098,
+   "speedup": 1.8720568663653685,
+   "speedup_of_medians": 1.8681505832128316,
+   "err_ns": 24.156681215960866,
+   "speed_of_light_ns": 2676.0533333333333,
+   "status": "pass",
+   "top_kernels": [
+    [
+     "_router_hilo_kernel",
+     7.0,
+     90.1
+    ],
+    [
+     "void at::native::vectorized_elementwise_kernel<4, at::nat...",
+     0.8,
+     9.9
+    ]
+   ]
+  }
+ ],
+ "loads": [
+  {
+   "load": "decode 1",
+   "sglang_ns": 3697184.0607002378,
+   "yours_ns": 2979156.3215289223,
+   "speedup": 1.2410171409880295
+  },
+  {
+   "load": "decode 16",
+   "sglang_ns": 4699104.038998485,
+   "yours_ns": 3880687.887953372,
+   "speedup": 1.2108946080373229
+  },
+  {
+   "load": "decode 32",
+   "sglang_ns": 4749695.962294936,
+   "yours_ns": 4000395.2253167094,
+   "speedup": 1.1873066771593561
+  },
+  {
+   "load": "verify 1",
+   "sglang_ns": 4665375.839918852,
+   "yours_ns": 3014562.2494739783,
+   "speedup": 1.547613037592085
+  },
+  {
+   "load": "verify 16",
+   "sglang_ns": 5303232.135251164,
+   "yours_ns": 4791761.193556668,
+   "speedup": 1.1067396560542824
+  },
+  {
+   "load": "verify 32",
+   "sglang_ns": 6298207.97406137,
+   "yours_ns": 5841164.466352982,
+   "speedup": 1.0782452728974004
+  }
+ ],
+ "attribution": {
+  "base_result": "muse_bf16_proj/hypotheses/done/neutral/bf16-restack-m16-swapab-router-swapab-m32.result.json",
+  "noise": 0.015,
+  "shapes": [
+   {
+    "key": "layer=qkv_gate load=decode_1 m=1",
+    "weight": 62,
+    "base_us": 12.18,
+    "hyp_us": 12.36,
+    "delta": 1.012,
+    "verdict": "flat"
+   },
+   {
+    "key": "layer=o load=decode_1 m=1",
+    "weight": 62,
+    "base_us": 5.89,
+    "hyp_us": 5.95,
+    "delta": 0.9904,
+    "verdict": "flat"
+   },
+   {
+    "key": "layer=pooler load=decode_1 m=1",
+    "weight": 62,
+    "base_us": 18.84,
+    "hyp_us": 18.85,
+    "delta": 1.009,
+    "verdict": "flat"
+   },
+   {
+    "key": "layer=unpooler load=decode_1 m=1",
+    "weight": 62,
+    "base_us": 6.15,
+    "hyp_us": 5.92,
+    "delta": 1.0113,
+    "verdict": "flat"
+   },
+   {
+    "key": "layer=router load=decode_1 m=1",
+    "weight": 62,
+    "base_us": 5.38,
+    "hyp_us": 4.98,
+    "delta": 1.0782,
+    "verdict": "gained"
+   },
+   {
+    "key": "layer=qkv_gate load=decode_16 m=16",
+    "weight": 62,
+    "base_us": 13.15,
+    "hyp_us": 12.76,
+    "delta": 1.0325,
+    "verdict": "gained"
+   },
+   {
+    "key": "layer=o load=decode_16 m=16",
+    "weight": 62,
+    "base_us": 6.23,
+    "hyp_us": 6.16,
+    "delta": 0.9873,
+    "verdict": "flat"
+   },
+   {
+    "key": "layer=pooler load=decode_16 m=16",
+    "weight": 62,
+    "base_us": 19.47,
+    "hyp_us": 19.31,
+    "delta": 1.0083,
+    "verdict": "flat"
+   },
+   {
+    "key": "layer=unpooler load=decode_16 m=16",
+    "weight": 62,
+    "base_us": 18.51,
+    "hyp_us": 18.73,
+    "delta": 0.9818,
+    "verdict": "flat"
+   },
+   {
+    "key": "layer=router load=decode_16 m=16",
+    "weight": 62,
+    "base_us": 5.47,
+    "hyp_us": 5.63,
+    "delta": 0.9717,
+    "verdict": "flat"
+   },
+   {
+    "key": "layer=qkv_gate load=decode_32 m=32",
+    "weight": 62,
+    "base_us": 14.19,
+    "hyp_us": 14.0,
+    "delta": 0.9931,
+    "verdict": "flat"
+   },
+   {
+    "key": "layer=o load=decode_32 m=32",
+    "weight": 62,
+    "base_us": 6.34,
+    "hyp_us": 6.44,
+    "delta": 0.9666,
+    "verdict": "lost"
+   },
+   {
+    "key": "layer=pooler load=decode_32 m=32",
+    "weight": 62,
+    "base_us": 19.73,
+    "hyp_us": 19.83,
+    "delta": 0.9966,
+    "verdict": "flat"
+   },
+   {
+    "key": "layer=unpooler load=decode_32 m=32",
+    "weight": 62,
+    "base_us": 18.08,
+    "hyp_us": 18.14,
+    "delta": 0.9832,
+    "verdict": "flat"
+   },
+   {
+    "key": "layer=router load=decode_32 m=32",
+    "weight": 62,
+    "base_us": 6.2,
+    "hyp_us": 6.12,
+    "delta": 0.9985,
+    "verdict": "flat"
+   },
+   {
+    "key": "layer=qkv_gate load=verify_1 m=8",
+    "weight": 62,
+    "base_us": 12.5,
+    "hyp_us": 12.53,
+    "delta": 1.0162,
+    "verdict": "flat"
+   },
+   {
+    "key": "layer=o load=verify_1 m=8",
+    "weight": 62,
+    "base_us": 6.13,
+    "hyp_us": 6.49,
+    "delta": 0.9947,
+    "verdict": "flat"
+   },
+   {
+    "key": "layer=pooler load=verify_1 m=8",
+    "weight": 62,
+    "base_us": 18.89,
+    "hyp_us": 18.95,
+    "delta": 1.0027,
+    "verdict": "flat"
+   },
+   {
+    "key": "layer=unpooler load=verify_1 m=8",
+    "weight": 62,
+    "base_us": 6.0,
+    "hyp_us": 5.72,
+    "delta": 0.9922,
+    "verdict": "flat"
+   },
+   {
+    "key": "layer=router load=verify_1 m=8",
+    "weight": 62,
+    "base_us": 5.47,
+    "hyp_us": 4.93,
+    "delta": 1.0994,
+    "verdict": "gained"
+   },
+   {
+    "key": "layer=qkv_gate load=verify_16 m=128",
+    "weight": 62,
+    "base_us": 17.05,
+    "hyp_us": 16.92,
+    "delta": 0.9879,
+    "verdict": "flat"
+   },
+   {
+    "key": "layer=o load=verify_16 m=128",
+    "weight": 62,
+    "base_us": 6.98,
+    "hyp_us": 7.51,
+    "delta": 0.9566,
+    "verdict": "lost"
+   },
+   {
+    "key": "layer=pooler load=verify_16 m=128",
+    "weight": 62,
+    "base_us": 25.0,
+    "hyp_us": 25.21,
+    "delta": 1.0074,
+    "verdict": "flat"
+   },
+   {
+    "key": "layer=unpooler load=verify_16 m=128",
+    "weight": 62,
+    "base_us": 19.96,
+    "hyp_us": 20.16,
+    "delta": 0.9885,
+    "verdict": "flat"
+   },
+   {
+    "key": "layer=router load=verify_16 m=128",
+    "weight": 62,
+    "base_us": 7.28,
+    "hyp_us": 7.48,
+    "delta": 0.9631,
+    "verdict": "lost"
+   },
+   {
+    "key": "layer=qkv_gate load=verify_32 m=256",
+    "weight": 62,
+    "base_us": 19.69,
+    "hyp_us": 19.95,
+    "delta": 0.9931,
+    "verdict": "flat"
+   },
+   {
+    "key": "layer=o load=verify_32 m=256",
+    "weight": 62,
+    "base_us": 9.26,
+    "hyp_us": 9.24,
+    "delta": 0.9823,
+    "verdict": "flat"
+   },
+   {
+    "key": "layer=pooler load=verify_32 m=256",
+    "weight": 62,
+    "base_us": 31.19,
+    "hyp_us": 31.43,
+    "delta": 0.9797,
+    "verdict": "flat"
+   },
+   {
+    "key": "layer=unpooler load=verify_32 m=256",
+    "weight": 62,
+    "base_us": 24.42,
+    "hyp_us": 24.26,
+    "delta": 1.0019,
+    "verdict": "flat"
+   },
+   {
+    "key": "layer=router load=verify_32 m=256",
+    "weight": 62,
+    "base_us": 9.6,
+    "hyp_us": 9.32,
+    "delta": 1.016,
+    "verdict": "flat"
+   }
+  ],
+  "summary": "gained on router decode_1, verify_1; qkv_gate decode_16; lost on o decode_32, verify_16; router verify_16",
+  "expected_hit": "8/10"
+ }
+}
