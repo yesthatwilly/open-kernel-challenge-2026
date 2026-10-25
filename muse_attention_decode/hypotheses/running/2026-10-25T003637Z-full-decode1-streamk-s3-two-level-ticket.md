@@ -51,7 +51,7 @@ review: proceed
 status: running
 review_at: 2026-10-25T014055Z
 review_companions: null
-stage: claimed
+stage: implemented
 claimed_at: 2026-10-25T014056Z
 base_sha: f291b49c49670595d0615e749294f69bc15de1a4
 base_blob: 695c97d2e9fef8f806ec02d2fe14a02668989e3f
@@ -60,6 +60,12 @@ worktree: .worktrees/muse_attention_decode/full-decode1-streamk-s3-two-level-tic
 mode: null
 restack_of: null
 stale_base: null
+implemented_at: 2026-10-25T014724Z
+impl_commit: 47f0b132ce44ef1abe3c08993414df386327d33a
+submission_sha256: 1d33819472efb0da5bd5f4f8f44536ac210807337e7989cb15ceaa9a873403b7
+norm_sha256: ade28e32d49b1eccb1dcbf82f145d75155772bb1b14dacea06cf396daa644120
+submission_blob: d8769ef25caf845a0e207538ccc5c62394b6ee3b
+lint_warnings: 13
 ---
 
 # full-decode1-streamk-s3-two-level-ticket
@@ -112,3 +118,39 @@ No okc companion is warranted. Both sub-decisions (grid SM vs 2xSM, single- vs t
 - Will the fused pre-attn of the sibling stage 3 (full-decode-splitkv-s3-fused-preattn) be extended to batch 1 when the two stage-3 branches are merged? 1.4 us is ~10% of the target decode_1 shape.
 - Block-scheduler placement: with grid == SM count and 2 CTAs/SM residency, check that the CTAs actually spread 1 per SM (it is usually breadth-first, but not guaranteed); the eager diagnostic's grid-SM bandwidth will show it.
 
+
+## Implementation notes
+
+All in `<worktree>/muse_attention_decode/submission.py` (stage 2 base f291b49; nothing could be compiled or run on this node).
+
+- Gate: new shape-only `_shape_gate` (1 <= batch <= 64); `_splitkv_gate` = `_EXT` and shape and (batch > 1 or `_B1_PATH`). `_B1_PATH` is set only after the batch-1 validation passes, so a failure sends batch 1 to master FA3 (FA3 + norm-gate, unpaired as before; pairing still needs batch > 1, so the q layout and branch agree).
+- Kernel: `splitkv_attn_sk_kernel<STAGES, TICKET, TWO>`; new variant 3 = `<4, true, true>`. Args added: `gticket` (int32[B*32]), `gacc`/`gml` (group slots). Variants 0-2 are unchanged in behaviour (batch > 1 keeps the stage-2 single-level ticket, grid 2xSM). `merge_slots` now wraps a generic `merge_range` that also returns the raw max.
+- Two-level ticket (effective gx = min(gridDim.x, T) as in stage 2; CTAs above gx exit): for a non-whole segment, nseg = c_hi - c_lo + 1, Gs = ceil(sqrt(nseg)) (integer loop, from TP and grid only), group gi = (c - c_lo) / Gs (relative to c_lo rather than the spec's absolute c // G: same size bound, groups stay full-aligned), ngrp = ceil(nseg / Gs) <= 32. Each CTA stores its partial, `__threadfence`, `__syncthreads`, tid 0 `atom.add.acq_rel.gpu` on `gticket[b*32+gi]`. The group's last arrival (all threads `__threadfence` = acquire) LSE-merges its slots into group slot b*32+gi, resets its group ticket to 0, `__threadfence` + `__syncthreads`, tid 0 `atom.add.acq_rel.gpu` on `ticket[b]`; the last group merges the ngrp group slots, runs the stage-2 `finalize_store` (v_scale, norm-gate, bf16) and resets `ticket[b]` to 0. If ngrp == 1 the group merger finalizes directly. No CTA waits on another. `gticket` is a module-level zero buffer made at import (`_sk_gticket`, per device).
+- Config at batch 1 (fixed by shape, not by timing): variant 3, grid = SM count; batch > 1 unchanged.
+- Review fixes applied: (1) in-process eager cold-L2 timing of the four variants at B=1 x 80000 printed at import (`_sk_b1_diagnostics`, `[sk3-diag]`): (a) single-level grid 2xSM (control), (b) single-level grid SM, (c) two-level grid SM (timed), (d) two-level grid 2xSM, with rel L2 vs the FP32 reference, TB/s, a WARNING line if (c) is not fastest (path stays shape-fixed), master FA3 main+combine and norm-gate at the same input, and the two-level vs single-level kernel at B=16 as diagnostic only. (2) The review's open question on a parallel single-level merge was not pursued (the spec fixes the two-level design). Where review and spec differ nothing conflicts; the review's "rank by prepare timings only" is followed.
+- Safety: module renamed `muse_full_decode_splitkv_v3` (TORCH_CUDA_ARCH_LIST=9.0a, -O3 -lineinfo, arch flags printed, binaryVersion == 90 gate, same plain cp.async.cg). Batch-1 validation `_sk_validate_b1` (after stage-2 validation, each kernel announced before and synced + printed after): 12 cases, B=1 at 80000, 4097, 63 and 1 keys, kv scale 1 and 0.25, grids 3/7/SM/2xSM, plus B=16 two-level; then two consecutive CUDA-graph replays (output NaN-poisoned) at 80000 and 4097 keys, and a check that both ticket levels sum to 0. Failure leaves batch 1 on FA3.
+- PATH CHOSEN lines: `full decode_1 streamk two-level` or `full decode_1 FA3 (fallback: <reason>)`; the stage-2 lines for batch > 1 are kept.
+
+## Rules check
+
+- [x] CUDA-graph capturable: kernel_fn has no sync/.item()/prints; the new allocations (group slots) are shape-only; the tickets reset in-kernel and the graph replays are verified in the import self-check.
+- [x] Nothing derived from `data` is cached: only the zero ticket buffers (device-only) persist.
+- [x] n/a: no weights in this problem.
+- [x] Activations BF16 as before; KV FP8; queries FP8 E4M3 (unchanged from stage 2).
+- [x] Attention sees every key: tile ranges cover all keys of the request, no skipping (the git diff only changes the merge tree and the gate).
+- [x] No timing patches, harness access, module edits, reference import, subprocesses or network (no subprocess/multiprocessing/os.fork anywhere; diff checked).
+- [x] All work in the timed call; no output caching or replay.
+- [x] Effective grid gx = min(gridDim.x, tiles) used by the group arithmetic; CTAs without work exit cleanly.
+
+okc_lint: `OK with warnings: submission.py` (only host-sync warnings, all in import/prepare-time self-check code outside kernel_fn). `python3 -I -m py_compile` ok, __pycache__ removed. Not compiled or run (no nvcc/GPU here).
+
+## Pre-flight audit
+
+Audited 2026-10-25 by an opus subagent (read-only review plus a Python emulation; nothing compiled).
+
+**Verdict: dispatch-with-fixes.**
+
+- Fix: `ticket_arrive` inline PTX rewritten from `atom.add.acq_rel.gpu.global.s32 %0, [%1], 1;` to the documented qualifier order `atom.acq_rel.gpu.global.add.s32 %0, [%1], %2;` with the increment in a register. Reason: the variant-3 template lives in the same module as stage 2, so a ptxas rejection of the non-canonical form would fail the whole v3 build and drop batch > 1 back to stage 1 too. Semantics unchanged.
+- Checked, no change needed: the group arithmetic relative to c_lo. A Python emulation (20k random cases, B=1 and B=2..64, grids 1..1024, shuffled arrival order, plus B=1 at 1/63/4097/80001/1048577 keys over grids 1/3/7/132/264/1024) confirms every partial is merged exactly once, each group and the request finalize exactly once, ngrp <= 32, leaders are well defined for nseg < Gs, and both ticket levels end at 0. Release/acquire: the writer does fence, sync, then an acq_rel atomic, and the reader syncs, fences, then does __ldcg loads at both levels, the standard threadFenceReduction pattern. Both levels are reset in-kernel by their last arrival. The routing for batch > 1 is identical to stage 2, because _splitkv_gate is unchanged when batch > 1 and pairing still needs batch > 1. Batch 1 stays on FA3 unless _sk_validate_b1 passes. The diagnostics re-zero both ticket levels in finally. The gate checks binaryVersion == 90, not ptxVersion. kernel_fn has no host sync, no data caching and no child process, and its allocations depend only on shapes. Every key is attended, KV stays FP8, and ROPE is off on full layers.
+
+Residual risk: variant 3 is untested on hardware. A ptxas or register-allocation problem in the shared v3 module would also cost stage 2 for batch > 1, though it falls back cleanly to v1 with a PATH CHOSEN line. Import time grows with 12 extra cases, 2 replays and the B=16x80000 diagnostics.
