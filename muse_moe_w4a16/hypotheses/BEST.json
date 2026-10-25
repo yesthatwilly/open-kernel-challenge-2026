@@ -1,19 +1,19 @@
 {
  "problem": "muse_moe_w4a16",
- "job": "9a455a2aae7842cb",
+ "job": "31c27e4b8fc84bd2",
  "mode": "submit",
- "speedup": 1.3886517158680607,
+ "speedup": 1.4020871870995952,
  "ci": [
-  1.3678219401300398,
-  1.4094814916060814
+  1.3810558792931014,
+  1.423118494906089
  ],
- "score_us": 9684.573782125924,
+ "score_us": 9591.77155581888,
  "commit": "64f18b03974a1a85ca81cac2e0f7e45d5d8bfbbc",
  "submission_blob": "35b8a851e4ef5fa8fd66b12d09caac88b7ea7615",
- "slug": "combo-smallm-two-stream-halves-x-w13-splitk",
- "result": "muse_moe_w4a16/hypotheses/done/neutral/combo-smallm-two-stream-halves-x-w13-splitk.result.json",
- "updated_at": "2026-10-25T190615Z",
+ "slug": "combo-wg-occ2-v64-hot-interleave-align2",
+ "result": "muse_moe_w4a16/hypotheses/done/neutral/combo-wg-occ2-v64-hot-interleave-align2.result.json",
+ "updated_at": "2026-10-25T192100Z",
  "master_slug": "combo-toprow-w13t1-d32-alignpar-postnorm-wg-align2",
  "master_job": "b395f5b6097348c7",
- "note": "board entry is branch code hyp/muse_moe_w4a16/combo-smallm-two-stream-halves-x-w13-splitk (not on master: 3-way merge onto master conflicts); master is combo-toprow-w13t1-d32-alignpar-postnorm-wg-align2"
+ "note": "board entry is branch code hyp/muse_moe_w4a16/combo-wg-occ2-v64-hot-interleave-align2 (not on master; built on an older master); master is combo-toprow-w13t1-d32-alignpar-postnorm-wg-align2"
 }

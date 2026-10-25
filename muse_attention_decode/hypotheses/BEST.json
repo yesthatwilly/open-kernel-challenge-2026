@@ -1,20 +1,19 @@
 {
  "problem": "muse_attention_decode",
- "job": "52cbfaebab9646f2",
- "check_job": "4b608df595b046fb",
+ "job": "8713665f3064462c",
  "mode": "submit",
- "speedup": 1.5199437286563244,
+ "speedup": 1.5295495462227864,
  "ci": [
-  1.4971445727264796,
-  1.5427428845861693
+  1.5066063030294445,
+  1.552492789416128
  ],
- "score_us": 2477.9206815304415,
+ "score_us": 2462.358940448092,
  "commit": "5d528bf313ed6deb0094c453214f1584fea0033b",
  "submission_blob": "6d6afa4722731ceb9cb8216d0334a03f1a96ad2b",
- "slug": "combo-tiled-preattn-neighbour-regate-c320",
- "result": "muse_attention_decode/hypotheses/done/neutral/combo-tiled-preattn-neighbour-regate-c320.result.json",
- "updated_at": "2026-10-25T190615Z",
+ "slug": "combo-b1-chain-c320-fused-pre-pdl",
+ "result": "muse_attention_decode/hypotheses/done/neutral/combo-b1-chain-c320-fused-pre-pdl.result.json",
+ "updated_at": "2026-10-25T192100Z",
  "master_slug": "sliding-decode1-cluster-per-kvhead",
  "master_job": "4b608df595b046fb",
- "note": "board entry is branch code hyp/muse_attention_decode/combo-tiled-preattn-neighbour-regate-c320 (not on master: 3-way merge onto master conflicts); master is sliding-decode1-cluster-per-kvhead"
+ "note": "board entry is branch code hyp/muse_attention_decode/combo-b1-chain-c320-fused-pre-pdl (not on master; built on an older master); master is sliding-decode1-cluster-per-kvhead"
 }
