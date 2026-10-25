@@ -72,7 +72,7 @@ review: proceed
 status: running
 review_at: 2026-10-25T002131Z
 review_companions: null
-stage: claimed
+stage: implemented
 claimed_at: 2026-10-25T002131Z
 base_sha: d7ccd530009419f0e32f5bd4bdae7f0fdad273a3
 base_blob: db8a3344398bca79ea5cafeb580f701c055fd475
@@ -81,6 +81,12 @@ worktree: .worktrees/muse_prefill_layer/experts-cuda-wgmma-grouped-gemm-remeasur
 mode: null
 restack_of: null
 stale_base: null
+implemented_at: 2026-10-25T003406Z
+impl_commit: 0ca54a36be47eb3c075d62faf9b4ff7369491667
+submission_sha256: 29e30e2184a52c4c93a1a68b2b4c701d393ee221d0b9145a1ec9ac62d5941110
+norm_sha256: 59a1e5f9157ec54310476843316c32370929dd2005a745307aa00f1ff6822b1a
+submission_blob: 113e7ac977c8ebb579d91c34400f9530c4ae6881
+lint_warnings: 24
 ---
 
 # experts-cuda-wgmma-grouped-gemm-remeasure-sm90a-inproc
@@ -177,3 +183,33 @@ okc_lint (`python3 -I .claude/skills/churnsubs/bin/okc_lint.py <worktree>/muse_p
 OK with warnings: muse_prefill_layer/submission.py
 ```
 `python3 -I -m py_compile`: ok; __pycache__ removed. The CUDA source's `#if`/`#else`/`#endif` nesting and brace count were checked as balanced by extracting the string. nvcc is not available on this node, so the source is not compiled here.
+
+## Pre-flight audit
+
+Audited 2026-10-24 by an opus subagent, by reading the code and running a numpy emulation. **Verdict: dispatch** (no fixes).
+
+- **Dequant and A fragments.** A bitwise numpy emulation took random codes and e4m3 scales through `_cuda_fragment_maps` and `_cuda_bank_one`. It then decoded them as each consumer thread does: the LDS.128/LDS.64 offsets, `e2m1_pair`, `scale_pair` and the bf16 multiply. The values were placed by the m64k16 RS A-fragment layout. The result equals E2M1 x e4m3 x 2^-7 on every element of a 256x128 expert (max abs diff 0).
+- **Descriptor, swizzle and accumulator layout.**
+  - The B descriptor is start>>4, LBO 1, SBO 1024 (8-row groups) and layout 1 (SW128). The k16 step advances it by +32 B.
+  - The producer writes 16-B chunk `j ^ (n & 7)` at `n * 128`. This matches the hardware's XOR of address bits 4-6 with bits 7-9, because the stages are 1024-aligned (37888 = 37 x 1024).
+  - The RS wgmma operand order is d, a, desc, p, 1, 1, tnspB=0.
+  - The epilogue's `d[4b+2h+u]` maps to (row + 8h, token 8b+2t+u), which is correct.
+- **Pipeline.**
+  - The full barrier counts 33 (32 noinc cp.async arrivals plus 1 expect_tx), and the empty barrier counts 8 (one per consumer warp).
+  - The producer waits on the empty barrier starting at parity 1.
+  - Every chunk's stage is released exactly once.
+  - kc is even for K=4096 and for the canary's 128.
+  - The producer and the consumers skip -1 items in the same way.
+- **Gates.**
+  - With `TORCH_CUDA_ARCH_LIST=9.0a`, torch's JIT `_get_cuda_arch_flags()` yields only `-gencode=arch=compute_90a,code=sm_90a`, so the build.ninja arch gate can pass.
+  - The sass == 90, max_threads >= 288 and occupancy >= 1 gates fit 190.6 KB of smem and at most 224 regs at `__launch_bounds__(288, 1)`.
+  - The canary, one-hot and e2e checks use the same 32-expert align and `state["zero_nonlocal_w2"]` as kernel_fn.
+- **Fallback.** The build, arch gate, attrs, bank, canary, one-hot and e2e steps are all inside try blocks. Any failure prints exactly one OFF line, and master's Triton path runs.
+- **Rules.**
+  - The kernel_fn path branches only on the shape and the prepare() flag. It adds no allocations and no syncs, and it launches on the current stream.
+  - Nothing derived from `data` is cached.
+  - The bank repack is lossless, and both permutations are asserted to invert exactly.
+  - No child process is started.
+  - `open()` and `os.environ` were already used by the bf16-verify-streamk check run (job f5b1361a), and the judge's checks did not flag it.
+
+Residual risk: the kernel has never been compiled or run. A hard fault in the canary, such as an illegal instruction or address from the wgmma or bulk-copy PTX, would poison the CUDA context and fail the whole run instead of falling back. The first measurement must therefore be an `okc check`.
