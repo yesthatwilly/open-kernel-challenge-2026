@@ -77,7 +77,7 @@ review: proceed
 status: running
 review_at: 2026-10-25T130000Z
 review_companions: null
-stage: implemented
+stage: dispatched
 claimed_at: 2026-10-25T130000Z
 base_sha: 5ab477f4e13746722c0fdaef292988846cff3fa4
 base_blob: c2e3e595def2e6b5949e0fd350ce98ed59729147
@@ -94,6 +94,8 @@ submission_blob: 865772d507eb49c474c09586ab81d66fd7379c15
 lint_warnings: 67
 attempt_file: 2026-10-25T131906Z-check-experts-rega-low-class-two-ctas-per-sm.md
 prepared_at: 2026-10-25T131906Z
+job: 1a77da43b3304b07
+dispatched_at: 2026-10-25T131915Z
 ---
 
 # experts-rega-low-class-two-ctas-per-sm
