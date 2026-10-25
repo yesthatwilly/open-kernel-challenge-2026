@@ -62,7 +62,7 @@ base_sha: 982cc0e7665f7a510a5b0128e83949922fd6b456
 base_blob: 9fb1f7c4b4282dd7461c6cdba926fe3ebf12128e
 branch: hyp/muse_prefill_layer/combo-a-master-normgather-naive-stack
 worktree: .worktrees/muse_prefill_layer/combo-a-master-normgather-naive-stack
-mode: null
+mode: submit
 restack_of: null
 stale_base: null
 implemented_at: 2026-10-25T161534Z
@@ -71,6 +71,8 @@ submission_sha256: 2011088dc8016a4e808bc761f3dc17f7b4c90d5ca41bc87a7b4c55605dc2c
 norm_sha256: bcf02317ab3d760b41cb135c6b7607a38e1f682c4c3384fc26205c933f00e6f8
 submission_blob: 6a16d158f6a6df0e484eb053e147a6fdae43b713
 lint_warnings: 82
+attempt_file: 2026-10-25T161534Z-submit-combo-a-master-normgather-naive-stack.md
+prepared_at: 2026-10-25T161534Z
 ---
 
 # combo-a-master-normgather-naive-stack
