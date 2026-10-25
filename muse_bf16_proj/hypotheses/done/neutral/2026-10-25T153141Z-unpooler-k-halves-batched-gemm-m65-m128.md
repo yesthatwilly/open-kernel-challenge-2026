@@ -38,10 +38,10 @@ priority: 3
 kind: primary
 controls_for: null
 review: proceed
-status: running
+status: done
 review_at: 2026-10-25T203723Z
 review_companions: null
-stage: dispatched
+stage: harvested
 claimed_at: 2026-10-25T203723Z
 base_sha: 2178a1d62536d4e2c94af82772ab6316f61d8598
 base_blob: ad8d7254a64a52db2a8f56ec0ad262748153a2e8
@@ -60,6 +60,13 @@ attempt_file: 2026-10-25T204107Z-submit-unpooler-k-halves-batched-gemm-m65-m128.
 prepared_at: 2026-10-25T204107Z
 job: e82feba3dd8d4efb
 dispatched_at: 2026-10-25T204115Z
+outcome: neutral
+verdict_detail: within-ci
+speedup: 1.245209797855405
+speedup_ci: [1.226531650887574, 1.263887944823236]
+harvested_at: 2026-10-25T204640Z
+best_at_harvest: 1.2566457115954903
+promotion: null
 ---
 
 # unpooler-k-halves-batched-gemm-m65-m128
@@ -133,3 +140,53 @@ Audited 2026-10-25 by an opus subagent (read-only; no GPU). **Verdict: dispatch*
 - kernel_fn: the added checks (x.dim, x.shape, is_contiguous, a cfg m dict lookup) read only metadata and are constant per config. They do no sync or allocation, and graph capture is not affected. The path is view/permute/bmm/add. No earlier route (ouns m<=8, bulk m=1, swapab16 n=1024, unpool m<=16, swapab 17..32) catches unpooler m=128 n=8192. m=130 and m=1000 stay on master. The judge x is contiguous.
 - Correctness and rules: single-nonzero probe rows are exact (the other half is exactly 0). The weights are views of the existing BF16 unpooler/unpooler_t with no new repack, and nothing derived from data is cached. Lint is OK with warnings (prepare-only syncs) and py_compile is clean.
 - Residual risk: cuBLAS may keep 128x64 tiles for the halves (as the pooler sibling saw at m=128). The selector then keeps master and the row is neutral (refuted at prepare time).
+
+## Result
+
+- job `e82feba3dd8d4efb` (submit), status done, passed True, tests 9/9
+- speedup 1.2452x, 95% CI [1.2265, 1.2639], score 3879.5068978094864 µs vs SGLang 4830.8 µs
+- best at harvest: {"speedup": 1.2566457115954903, "ci": [1.237796025921558, 1.2754953972694225], "job": "741072dca5fc4c9d"}; base result: muse_bf16_proj/hypotheses/done/neutral/combo-rowowner-reduce-free-m1-qkv-o-plus-naive.result.json
+- **outcome: neutral** (within-ci)
+- files: `muse_bf16_proj/hypotheses/done/neutral/unpooler-k-halves-batched-gemm-m65-m128.result.json`, `muse_bf16_proj/hypotheses/done/neutral/unpooler-k-halves-batched-gemm-m65-m128.patch`; branch `hyp/muse_bf16_proj/unpooler-k-halves-batched-gemm-m65-m128`
+
+## Attribution
+
+| shape | w | base µs | hyp µs | delta | verdict |
+|---|---|---|---|---|---|
+| layer=qkv_gate load=decode_1 m=1 | 62 | 10.54 | 11.16 | 0.9612 | lost |
+| layer=o load=decode_1 m=1 | 62 | 6.32 | 5.76 | 1.0037 | flat |
+| layer=pooler load=decode_1 m=1 | 62 | 17.72 | 17.88 | 1.0007 | flat |
+| layer=unpooler load=decode_1 m=1 | 62 | 5.01 | 4.94 | 1.024 | flat |
+| layer=router load=decode_1 m=1 | 62 | 5.17 | 5.03 | 1.0235 | flat |
+| layer=qkv_gate load=decode_16 m=16 | 62 | 12.64 | 13.3 | 0.9574 | lost |
+| layer=o load=decode_16 m=16 | 62 | 6.21 | 6.19 | 0.9847 | flat |
+| layer=pooler load=decode_16 m=16 | 62 | 19.46 | 19.44 | 1.0037 | flat |
+| layer=unpooler load=decode_16 m=16 | 62 | 18.82 | 18.49 | 1.0004 | flat |
+| layer=router load=decode_16 m=16 | 62 | 5.51 | 5.61 | 0.9599 | lost |
+| layer=qkv_gate load=decode_32 m=32 | 62 | 13.71 | 14.34 | 0.9613 | lost |
+| layer=o load=decode_32 m=32 | 62 | 6.47 | 6.76 | 0.9828 | flat |
+| layer=pooler load=decode_32 m=32 | 62 | 19.86 | 20.15 | 0.9946 | flat |
+| layer=unpooler load=decode_32 m=32 | 62 | 18.49 | 18.53 | 1.0108 | flat |
+| layer=router load=decode_32 m=32 | 62 | 5.95 | 6.15 | 0.9797 | flat |
+| layer=qkv_gate load=verify_1 m=8 | 62 | 12.35 | 13.14 | 0.965 | lost |
+| layer=o load=verify_1 m=8 | 62 | 5.9 | 6.31 | 0.9711 | flat |
+| layer=pooler load=verify_1 m=8 | 62 | 19.31 | 19.15 | 1.0123 | flat |
+| layer=unpooler load=verify_1 m=8 | 62 | 5.54 | 5.38 | 1.0327 | gained |
+| layer=router load=verify_1 m=8 | 62 | 5.49 | 5.2 | 1.0507 | gained |
+| layer=qkv_gate load=verify_16 m=128 | 62 | 15.55 | 16.14 | 0.9853 | flat |
+| layer=o load=verify_16 m=128 | 62 | 7.68 | 7.32 | 1.0059 | flat |
+| layer=pooler load=verify_16 m=128 | 62 | 22.85 | 22.97 | 0.954 | lost |
+| layer=unpooler load=verify_16 m=128 | 62 | 18.88 | 18.81 | 0.9893 | flat |
+| layer=router load=verify_16 m=128 | 62 | 7.61 | 7.56 | 1.0088 | flat |
+| layer=qkv_gate load=verify_32 m=256 | 62 | 19.46 | 19.54 | 0.9849 | flat |
+| layer=o load=verify_32 m=256 | 62 | 9.44 | 9.42 | 1.0153 | flat |
+| layer=pooler load=verify_32 m=256 | 62 | 27.98 | 30.05 | 0.9704 | flat |
+| layer=unpooler load=verify_32 m=256 | 62 | 24.18 | 24.4 | 1.0128 | flat |
+| layer=router load=verify_32 m=256 | 62 | 9.72 | 9.43 | 1.0292 | flat |
+
+gained on unpooler verify_1; router verify_1; lost on qkv_gate decode_1, decode_16, decode_32, verify_1; router decode_16; pooler verify_16. Expected hit: 0/2. Noise ±1.5%.
+
+## Follow-ups
+
+- within-ci: the change is not proven either way; a stacked hypothesis (`depends_on: unpooler-k-halves-batched-gemm-m65-m128`) that adds a further change in the same area is the only way to learn more.
+
