@@ -49,9 +49,18 @@ controls_for: null
 rewrite_stage: 3
 replaces: "full verify batch 1 (q_len 8): prepare_varlen_num_blocks + FA3 main + FlashAttnFwdCombine + norm-gate"
 review: proceed
-status: queued
+status: running
 review_at: 2026-10-25T054747Z
 review_companions: null
+stage: claimed
+claimed_at: 2026-10-25T084919Z
+base_sha: 39fb54fe3f47f42f763160b2e09426e294bdbe7a
+base_blob: 7fd30a78be18303b7c935dc944c31ff33649bed0
+branch: hyp/muse_attention_decode/full-verify1-sk-two-level-token-group
+worktree: .worktrees/muse_attention_decode/full-verify1-sk-two-level-token-group
+mode: null
+restack_of: null
+stale_base: null
 ---
 
 # full-verify1-sk-two-level-token-group
