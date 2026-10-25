@@ -58,7 +58,7 @@ base_sha: ea3464f424a209eb0f46541178cd3dd11062426f
 base_blob: c80e3a831390ffb38cbcb7560231b59a64a2c6a0
 branch: hyp/muse_moe_w4a16/cuda-fused-moe-bs1-persistent-bandwidth-s3-inproc
 worktree: .worktrees/muse_moe_w4a16/cuda-fused-moe-bs1-persistent-bandwidth-s3-inproc
-mode: null
+mode: check
 restack_of: null
 stale_base: true
 implemented_at: 2026-10-25T013943Z
@@ -67,6 +67,8 @@ submission_sha256: 90732fe8f23826a5671777d58d3ffb87beaf7ebee47c0dd006a458078fb7a
 norm_sha256: defc07ea7f3644f7f79c1a1af7989069af8b2385e605e3705f2342648b6c2894
 submission_blob: a716550e4581bde58743d07845f5a7e77aec1aea
 lint_warnings: 33
+attempt_file: 2026-10-25T013943Z-check-cuda-fused-moe-bs1-persistent-bandwidth-s3-inproc.md
+prepared_at: 2026-10-25T013943Z
 ---
 
 # cuda-fused-moe-bs1-persistent-bandwidth-s3-inproc
