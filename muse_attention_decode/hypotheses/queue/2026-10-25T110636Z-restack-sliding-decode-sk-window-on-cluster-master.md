@@ -70,8 +70,10 @@ depends_on: sliding-decode-sk-window-route
 priority: 1
 kind: primary
 controls_for: null
-review: required
+review: proceed
 status: queued
+review_at: 2026-10-25T111218Z
+review_companions: null
 ---
 
 # restack-sliding-decode-sk-window-on-cluster-master
@@ -91,3 +93,30 @@ Restack sliding-decode-sk-window-route (done/neutral 1.4973x [1.475,1.520], job 
 ## Risk
 
 Approved by the user as a scored submit (attention has no checks left today). The CUDA is the parent's, already run on the judge (16/16, no fault); the merge is Python routing and setup order. Main risk: the gate against cluster C=4 lands under 1.03x in prepare and B=17..32 stays on cluster, so the run measures master (neutral). Read the B=32 [sd-gate] lines (pair vs cluster vs Triton) and the decode_32 kernel rows, not the headline alone. Confirm the skF PATH CHOSEN line so full decode rows are not on the v2 fallback.
+
+## Adversarial review
+
+Reviewed 2026-10-25T111218Z by an adversarial subagent (model opus).
+
+**Verdict: proceed.** Safe as a scored submit. It reuses the parent's judge-proven CUDA (16/16 tests, no fault) and changes only Python routing, with one hard per-band gate whose result is printed. The win is real but small: about -3 us on the weight-46 sliding decode_32 row, worth about +0.5% headline (not the +2% claimed). That is inside the ±1.5% CI, so judge the run on the decode_32 sliding row and the [sd-gate] B=32 lines, never on the headline.
+
+### Justification
+Mechanism is plausible and already measured. On the judge (job 118c6de9704146f3) the pair [pre-attn + sk TOK=1, ticket, grid p4=128] ran sliding decode_32 at 17.38 us shape (sk 13.9 + pre-attn 1.9 us kernels). Master's cluster C=4 runs it at 20.64 us shape (kernel 18.1 us) in cbd49dc94be548e7 and 20.40 us in restack-sk-pseudo-b1-cluster-c16-c4, so the expected row gain is about 1.17-1.19x. The floor is 3.3 us, so the pair (16.8 MB in a 13.9 us kernel, about 1.2 TB/s) is still about 5x off SoL; there is headroom but no physics problem. The other expected directions are consistent: decode_16 stays on Triton (parent's gate measured 1.006x < 1.05x), decode_1 is record-only (cluster C=16 kept), sliding verify keeps TOK=8 variants 4/5 (they constant-fold to master), and full rows are untouched. ERROR IN THE HYPOTHESIS: the '~+2% headline' figure is wrong. Master's decode_32 load is 46*20.64 + 16*227.88 = 4595 us. With 17.38 us it becomes 4446 us, which is 1.034x on one of six loads, so the geomean moves by 1.034^(1/6) = +0.55% (about 1.492 -> 1.500). That is inside the ±1.5% CI. WEAKEST LINK: the in-prepare 1.03x gate against cluster C=4. The parent's gate measured the pair at 19.3 us net (first pass) and 18.8 us (second pass), about 1.5-2 us above its judge shape time, because the gate charges the two-node boundary and launch differently from the judge. Cluster C=4 has never been timed in this gate harness. If it is inflated less than the pair (it is one node), the gate ratio may come in nearer 1.05-1.10x than the judge's 1.18x. It should still clear 1.03x. The risk is that it lands below 1.03x and the scored run silently measures master. A secondary weakness: the parent picks the best of 12 candidates from one noisy pass (winner's curse) and computes its ratio from that same pass. Routing on that against a thin 1.03x margin is biased toward routing.
+
+### Confounders on the current kernel
+- restack-sk-pseudo-cluster-plus-v3-fused-preattn (master eb1b68b): its cluster C=4 is now the incumbent this route must beat at B=17..32. The parent only ever gated against Triton (25.4 us net), so the parent's 1.313x does not carry over. Expect about 1.1-1.2x against cluster.
+- restack-sk-pseudo-cluster-plus-v3-fused-preattn (FUSED_PRE skF gate): on master's own job the skF gate REJECTED FUSED_PRE at B=16 (0.996x) and B=32 (1.015x vs the 1.02x gate). The full decode rows on master therefore ran pre-attn + v2, not skF. The hypothesis's instruction to 'confirm full decode rows are not on the v2 fallback' is misinformed: v2 is master's normal outcome. B=32 sits 0.5% under its gate, so it can flip between runs and move full decode_32 (weight 16, 228 us) by about 1.5% with no connection to this change.
+- full decode_32 row noise (independent of any landed change): the same kernel measured 212.8 us in the parent's job and 227.9 us on master. That swing is about 3.3% of the decode_32 load, about 0.55% headline, the same size as this hypothesis's whole expected gain. The parent's 1.4973 headline was partly this noise.
+- restack-sk-pseudo-cluster-plus-v3-fused-preattn (sliding verify B=1 pseudo route, variants 4/5): it shares _ps_ticket/_ps_gticket and load_prefix_pseudo with the new TOK=1 variants 6/7. Templating must leave TOK=8 byte-identical, so print the regs/smem line for variants 4/5 and compare it with master's. A sliding verify_1 move would come from the template, not from the route.
+- fused-preattention-triton (landed): now runs as a separate node on sliding decode B=17..32 (PAIRED=False, ROPE on), and it alone must store the new K/V row before the sk window reads it. Stream order guarantees this, and the parent passed. The pre-attn node costs about 1.9 us on the profile and 3.8 us net in the gate, which is part of why the gate ratio is thinner than the kernel ratio.
+
+### Interference and A/B needs
+No companion is warranted, and none is affordable (0 attention checks today). Each sliding decode band runs either the routed pair, named in PATH CHOSEN with pair, cluster and Triton numbers, or byte-identical master code. A gain or a neutral result is therefore read directly from the decode_32 sliding row's top_kernels (splitkv_attn_sk_kernel<4,tru...> + _pre_attention_kernel vs sliding_cluster_kernel) and from the [sd-gate] B=32 lines. An ab-revert of the cluster restack would only re-measure the parent's run vs Triton, which already exists. The confounders that matter (full decode_32 noise, the skF gate flip) are headline-level. They are resolved by reading the rows and the skF PATH CHOSEN lines, not by another run.
+
+### Open questions
+- BUILDER: make the routing decision on a head-to-head interleaved pass (best pair vs cluster C=4 vs Triton, re-timed after the candidate is picked), not on the first-pass minimum of 12 candidates. Print both passes. The 1.03x margin is too thin to absorb winner's-curse bias.
+- BUILDER: consider skipping the B=1 (record-only) and B=16 (1.006x last time) gate bands in this restack. That trims prepare time on a run that already took about 458 s wall on master, plus the extra variant-6/7 nvcc work against the 15-minute cap. It also removes a small chance of a noisy B=16 flip that would confound decode_16. If they are kept, they must stay record-only or keep the 1.05x margin as specified.
+- BUILDER: confirm that _SKF_HEAD (sliced before 'template <int STAGES, bool TICKET') still compiles once load_prefix_pseudo becomes template<int TOK>. Without SK_PSEUDO its body is empty, so an uninstantiated template is fine. Confirm the [skF] and skF-gate lines appear as on master.
+- HARVEST: compare the sliding decode_32 row with 20.4-20.6 us (master's two cluster C=4 runs). A pass is <= about 18 us with the sk + pre-attn kernels in top_kernels. Ignore the headline unless it is outside the noise of full decode_32. Record the skF PATH CHOSEN outcome alongside the result.
+- Is a scored submit of eb1b68b's lineage already on the board? BEST.json is a check run. If no scored run carries master's 1.492x, this submit also posts master's gains, so a 'neutral' outcome still has board value.
+
