@@ -38,7 +38,7 @@ review: proceed
 status: running
 review_at: 2026-10-25T042335Z
 review_companions: null
-stage: claimed
+stage: implemented
 claimed_at: 2026-10-25T042335Z
 base_sha: 4086e385d4c82ab39da7076fd7a040127403956c
 base_blob: c9067b8201f2480c64910c4a71098df7ce616f73
@@ -47,6 +47,12 @@ worktree: .worktrees/muse_decode_layer/w2-marlin-atomic-add-t1-port
 mode: null
 restack_of: null
 stale_base: null
+implemented_at: 2026-10-25T042854Z
+impl_commit: 1e70f0cb3fdfaae3151262adec6153b5a06d3e88
+submission_sha256: 83a46d0d62743469dfe7967584070fac1d6422217328efeef980b774ce3c838f
+norm_sha256: d27fda6c4a9e3625660f6deabea785f8b8cdc1eb05deb5ab7db0d66b7e5b6a83
+submission_blob: 62c5a9413ba5710defea2ca3de14c1a1dc3b5a6d
+lint_warnings: 34
 ---
 
 # w2-marlin-atomic-add-t1-port
@@ -111,3 +117,15 @@ Edited only `muse_decode_layer/submission.py` in the worktree (+88/-3).
 - [x] All work inside the timed call; no output caching or replay.
 
 okc_lint: OK with warnings (only pre-existing and new prepare()-only host-sync warnings, no errors). py_compile passed; __pycache__ removed.
+
+## Pre-flight audit
+
+Audited 2026-10-25 by an opus subagent. This was a read-only audit: there is no GPU here, so nothing was run. **Verdict: dispatch-with-fixes.**
+
+- Path reach: kernel_fn's MoE block does not depend on the layer type. At T=1, both the sliding and the full decode_1 shapes take `use_dl` -> `_experts(..., align=align)` with dispatch=None. So the atomic gate (mode != master, T==1, align passed, no dispatch) is live on both shapes whenever the dense-chain self-check passes, which its own `[dl] PATH CHOSEN` line reports. If dl is OFF, both shapes fall to the dispatch path, the run is a no-op, and the `[w2-atomic]` line says so.
+- Fix 1 (a gate that could fail on noise): `W2_ATOMIC_TOL` goes from 5e-3 to 2e-2. moe measured atomic vs non-atomic at 4.79e-3 worst. This check also takes the max over 12 trials, so at 5e-3 it could fall back to master on bf16 rounding alone. 2e-2 is still far below the judge's 3-15% bound, and far below the O(1) error a missing zero produces (see fix 2).
+- Fix 2 (detecting stale C): the self-check now fills cache3 with 100.0 right before w2, through `w2_fill=W2_JUNK`. That is a prepare()-only kwarg of `_experts` with default None, so kernel_fn is unchanged. It applies to both the master reference and the candidates. Before this fix, C could hold w13's output, the previous call's y or zeros, depending on the caching allocator, so a non-zeroing atomic path could pass on zeroed memory. Now "atomic" (no memset) passes only if Marlin's first k-slice stores rather than adds, as on moe 9080a71. The master reference with junk also checks that the combine never reads remote rows.
+- Fix 3 (hygiene): `dl["cnt_r"].zero_()` after the w2 self-check, as `_dl_setup` does after its own self-check. The w2 check launches kernel R 12 more times, and an exception partway through must not leave the counter dirty.
+- Rules: OK. The only changes on kernel_fn's path are a kwarg choice made from config and prepare-time state, plus an optional `cache3.zero_()`. No sync, allocation or branch on input values was added. okc_lint is OK; its warnings are all prepare()-only syncs. py_compile is OK, and __pycache__ was removed.
+
+Residual risk: the gain may be smaller in decode than in moe, because kernel R's align and the in-layer cold-L2 and launch context differ. If Marlin's atomic path does accumulate onto C, the self-check now picks atomic_zero, and its ~1 us memset eats part of the gain.
