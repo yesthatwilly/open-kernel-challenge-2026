@@ -1,6 +1,6 @@
 # muse_attention_decode findings
 
-Regenerated 2026-10-25T204227Z by `churn.py index`. Read this before writing a hypothesis for muse_attention_decode.
+Regenerated 2026-10-25T204823Z by `churn.py index`. Read this before writing a hypothesis for muse_attention_decode.
 
 ## Current best
 
@@ -77,6 +77,9 @@ Today's clean-context diagnosis: `muse_attention_decode/hypotheses/DIAGNOSIS.md`
 
 ### full-layer attention (batch-1 decode, stream-K prologue fusion)
 - **full-decode1-sk-two-level-fused-preattn** → neutral (within-ci), 1.4411x — gained on full decode_1. Full decode_1 is 22.6 us shape for 18.6 us of stream-K kernel + 1.4 us _pre_attention_kernel: ~2.6 us of the row is the second graph node and its launch gap. PD
+
+### full-layer attention (batch-1 decode, stream-K ring depth)
+- **full-decode1-sk-two-level-deep-ring** → neutral (within-ci), 1.5109x — gained on sliding decode_1; lost on full decode_1. Built on current master (no depends_on). Full decode_1 runs splitkv_attn_sk_kernel<4 stages, two-level ticket> at grid = SM count: 19.0 us kernel + pre-attn 1.4
 
 ### full-layer attention (batch-1 verify, stream-K two-level kernel, token grouping)
 - **full-verify1-sk-two-level-token-group** → neutral (beats-base-not-best), 1.4714x — gained on sliding decode_1, verify_1. On the token-group branch (sliding-verify-sk-pseudo-s2-token-group). Full verify_1 is 30.5 us shape: FA3 15.4 + combine 7.0 + prepare 2.8 + pre-attn 1.5 + norm-
@@ -207,6 +210,7 @@ Rewrite stages are exempt: a slow early stage is not a dead end.
 - **sliding-decode-blockn128-single-tile** [sliding-layer attention (batched decode, tile size)] neutral, within-ci: Config-only change in _sliding_forward (master sliding decode at every batch, 16 splits): 
 - **splitkv-chunk2048-batch32** [FA3 call (full-layer decode gather)] neutral, within-ci: Shape-gated chunk size for master's CUDA split-KV path: at batch >= 32 use 2048-token work
 - **splitkv-pdl-attn-to-combine** [launch overhead] neutral, within-ci: Programmatic dependent launch between master's kernel A (splitkv_attn_kernel) and kernel B
+- **full-decode1-sk-two-level-deep-ring** [full-layer attention (batch-1 decode, stream-K ring depth)] neutral, within-ci: Built on current master (no depends_on). Full decode_1 runs splitkv_attn_sk_kernel<4 stage
 - **combo-naive-c320-fd1-tiled-preattn-verify** [combination (naive top-row stack: full decode_1 chunk320 + verify tiled pre-attention)] neutral, within-ci: COMBINATION 1 of 3, the naive top-row stack. Built on current master 7e12891 (blob 5cf8fae
 - **fa3-window-trimmed-page-table** [page table (sliding)] regression, regression: On sliding-window layers only (config window != 0) hand FA3 a window-trimmed view of each 
 - **fa3-scheduler-metadata-side-stream** [FA3 call (schedule, off critical path)] regression, regression: Wherever master calls flash_attn_with_kvcache with scheduler_metadata=None (every sliding 
@@ -250,4 +254,3 @@ Rewrite stages are exempt: a slow early stage is not a dead end.
 - queue: full-verify-wgmma-ws-s1-producer-split [full-layer attention (verify, wgmma stream-K kernel, warp-specialized pipeline)] p1 queued
 - queue: sliding-verify-fa3-num-splits-band-gate [FA3 call (sliding verify split count)] p2 queued
 - queue: sliding-verify-wgmma-window-s1 [sliding-layer attention (verify, wgmma stream-K windowed kernel)] p1 queued
-- running: full-decode1-sk-two-level-deep-ring [full-layer attention (batch-1 decode, stream-K ring depth)] p2 running
