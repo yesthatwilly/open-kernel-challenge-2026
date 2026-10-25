@@ -107,9 +107,18 @@ priority: 1
 kind: primary
 controls_for: null
 review: proceed
-status: queued
+status: running
 review_at: 2026-10-25T054315Z
 review_companions: null
+stage: claimed
+claimed_at: 2026-10-25T054315Z
+base_sha: 84c6b217af909ca0534b49bdd5a8072e10b692c5
+base_blob: 970b415b746fa03cb92e419d270be92588273178
+branch: hyp/muse_bf16_proj/restack-three-cell-wins-router-unpooler-cluster-m8-nn-m128
+worktree: .worktrees/muse_bf16_proj/restack-three-cell-wins-router-unpooler-cluster-m8-nn-m128
+mode: null
+restack_of: restack-unpooler-slice-cluster-dsmem-m8
+stale_base: null
 ---
 
 # restack-three-cell-wins-router-unpooler-cluster-m8-nn-m128
