@@ -46,9 +46,18 @@ priority: 2
 kind: primary
 controls_for: null
 review: proceed
-status: queued
+status: running
 review_at: 2026-10-24T183956Z
 review_companions: null
+stage: claimed
+claimed_at: 2026-10-25T003236Z
+base_sha: 1d31a26689bb109c514db2e2c51c7167dbbb76f0
+base_blob: 108d36e9f2266fc88531dd6ff0329a847c882013
+branch: hyp/muse_moe_w4a16/post-norm-pdl-launch-small-m
+worktree: .worktrees/muse_moe_w4a16/post-norm-pdl-launch-small-m
+mode: null
+restack_of: null
+stale_base: null
 ---
 
 # post-norm-pdl-launch-small-m
