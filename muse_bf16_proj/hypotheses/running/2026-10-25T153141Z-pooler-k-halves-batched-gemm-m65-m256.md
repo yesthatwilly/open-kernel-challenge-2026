@@ -56,7 +56,7 @@ base_sha: e2a24e6c8d5b0c6b1ec53f88d2d22e18c50aa1ae
 base_blob: f919748b5af6e815f319e5d2d828ed68e5b28a71
 branch: hyp/muse_bf16_proj/pooler-k-halves-batched-gemm-m65-m256
 worktree: .worktrees/muse_bf16_proj/pooler-k-halves-batched-gemm-m65-m256
-mode: null
+mode: submit
 restack_of: null
 stale_base: null
 implemented_at: 2026-10-25T162132Z
@@ -65,6 +65,8 @@ submission_sha256: 8757f255f0ba42c534b903ef01b065cf9196e6e4ef7260c29232479980140
 norm_sha256: 09e289eec8075e0271d86f9b68fb56431f86d1fcaa7ae97f4e290f45d87042e8
 submission_blob: 37b0e68c31722a46fd7377aaca28eba9d5955c68
 lint_warnings: 21
+attempt_file: 2026-10-25T162132Z-submit-pooler-k-halves-batched-gemm-m65-m256.md
+prepared_at: 2026-10-25T162132Z
 ---
 
 # pooler-k-halves-batched-gemm-m65-m256
