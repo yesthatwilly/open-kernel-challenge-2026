@@ -83,7 +83,7 @@ base_sha: dcd2ff817f67ee97bdc52e92ec44df3a3752ccf1
 base_blob: a8bb42ac483318e9fbc84bc7826a27b7a704d1fb
 branch: hyp/muse_bf16_proj/o-unpooler-slice-cuda-cluster-dsmem-rewrite
 worktree: .worktrees/muse_bf16_proj/o-unpooler-slice-cuda-cluster-dsmem-rewrite
-mode: null
+mode: check
 restack_of: null
 stale_base: null
 implemented_at: 2026-10-25T005050Z
@@ -92,6 +92,8 @@ submission_sha256: 86f5e904f75d000bb58ee88f983282cc49c71e46bd9eee996ddc2f0bb0ac9
 norm_sha256: bf100462c0369acafb87e40b68b6f33c1bb7d039aef602e76a0863d1e420c812
 submission_blob: 3ba071c2ec0b65200650da8027388a0e73be5fb1
 lint_warnings: 6
+attempt_file: 2026-10-25T005050Z-check-o-unpooler-slice-cuda-cluster-dsmem-rewrite.md
+prepared_at: 2026-10-25T005050Z
 ---
 
 # o-unpooler-slice-cuda-cluster-dsmem-rewrite
