@@ -110,7 +110,7 @@ branch: hyp/muse_bf16_proj/bf16-verify-streamk-cutlass-wgmma-rewrite
 worktree: .worktrees/muse_bf16_proj/bf16-verify-streamk-cutlass-wgmma-rewrite
 mode: null
 implemented_at: 2026-10-24T175038Z
-impl_commit: 08a0e62cc3362766ca2ccbf300325a40d50aff53
+impl_commit: e4182610b1552724381a1f2451f6bcd56b7dc1ed
 submission_sha256: 5977ea3f9abd58bf0a4c738dbb70ea598a145f6f80aef68c6f21db4e819ad6a0
 norm_sha256: a5bc01680872a0370a392f6e64cbbc8158eed8bed14f3d2d96ed82f8d3ee7d98
 submission_blob: 7161897671cd56878ce6338f47c57b9b0dd9b63c
@@ -242,3 +242,7 @@ OK with warnings: muse_bf16_proj/submission.py
 ```
 
 `python3 -I -m py_compile`: OK. The __pycache__ it left was removed. The embedded CUDA source has balanced braces and parentheses (33/33, 158/158).
+
+## Build fix (2026-10-25 ~00:30Z)
+
+Per the bf16 per-shape read and LESSONS 2026-10-25: torch's cpp_extension adds its own compute_90 -gencode beside the explicit sm_90a one, and that pass cannot assemble wgmma (both prefill CUDA rewrites failed to build this way). The build now sets TORCH_CUDA_ARCH_LIST=9.0a around load_inline and restores the previous value after it. CUTLASS's SM90 kernels already guard on the arch feature. 12 lines, prepare-time only; no change to kernel_fn. Rules check above unchanged; lint no errors.
