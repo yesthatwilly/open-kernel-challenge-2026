@@ -40,10 +40,10 @@ controls_for: null
 rewrite_stage: 7
 replaces: Marlin w13+w2 (moe_wna16_marlin_gemm x2) at every prefill T
 review: proceed
-status: running
+status: done
 review_at: 2026-10-24T165620Z
 review_companions: null
-stage: dispatched
+stage: harvested
 claimed_at: 2026-10-25T010440Z
 base_sha: de7af5e266755a23304676ec04c4526206066029
 base_blob: 0910a52804bc45a2f5ace82707c915f4634d8add
@@ -62,6 +62,13 @@ attempt_file: 2026-10-25T010622Z-check-experts-triton-turn1-blockt32-stream.md
 prepared_at: 2026-10-25T010622Z
 job: 8d1a2efec67b4758
 dispatched_at: 2026-10-25T010629Z
+outcome: regression
+verdict_detail: regression
+speedup: 0.9424860738930744
+speedup_ci: [0.9283487827846783, 0.9566233650014704]
+harvested_at: 2026-10-25T034138Z
+best_at_harvest: 1.074386115190733
+promotion: null
 ---
 
 # experts-triton-turn1-blockt32-stream
@@ -139,3 +146,31 @@ warn  host-sync    L540, L582, L636, L641, L652, L661, L671: torch.cuda.synchron
 OK with warnings: muse_prefill_layer/submission.py
 ```
 py_compile passed; __pycache__ removed.
+
+## Result
+
+- job `8d1a2efec67b4758` (check), status done, passed True, tests 5/5
+- speedup 0.9425x, 95% CI [0.9283, 0.9566], score 411044.6941669625 µs vs SGLang 387403.9 µs
+- best at harvest: {"speedup": 1.074386115190733, "ci": [1.058270323462872, 1.090501906918594], "job": "502f2eab95164781"}; base result: muse_prefill_layer/hypotheses/done/neutral/experts-triton-packed-dequant-turn4.result.json
+- **outcome: regression** (regression)
+- files: `muse_prefill_layer/hypotheses/done/regression/experts-triton-turn1-blockt32-stream.result.json`, `muse_prefill_layer/hypotheses/done/regression/experts-triton-turn1-blockt32-stream.patch`; branch `hyp/muse_prefill_layer/experts-triton-turn1-blockt32-stream`
+
+## Attribution
+
+| shape | w | base µs | hyp µs | delta | verdict |
+|---|---|---|---|---|---|
+| batch=1 ctx=80000 dist=soft layer=sliding load=turn_1 page=1 q_len=753 repeats=6 | 46 | 1094.63 | 1589.82 | 0.6861 | lost |
+| batch=1 ctx=80000 dist=soft layer=full load=turn_1 page=1 q_len=753 repeats=6 | 16 | 1506.69 | 1914.81 | 0.7603 | lost |
+| batch=4 ctx=80000 dist=soft layer=sliding load=turn_4 page=1 q_len=753 repeats=6 | 46 | 3300.33 | 3216.42 | 1.0249 | flat |
+| batch=4 ctx=80000 dist=soft layer=full load=turn_4 page=1 q_len=753 repeats=6 | 16 | 4965.18 | 4813.7 | 1.0078 | flat |
+| batch=1 ctx=0 dist=soft layer=full load=first_turn page=1 q_len=16384 repeats=6 | 16 | 15535.54 | 14698.84 | 0.9932 | flat |
+| batch=1 ctx=32768 dist=soft layer=sliding load=first_turn page=1 q_len=16384 repeats=6 | 138 | 14568.17 | 14965.16 | 0.9958 | flat |
+| batch=1 ctx=32768 dist=soft layer=full load=first_turn page=1 q_len=16384 repeats=6 | 16 | 19226.29 | 18899.26 | 0.99 | flat |
+| batch=1 ctx=65536 dist=soft layer=full load=first_turn page=1 q_len=16384 repeats=6 | 16 | 22281.58 | 22037.42 | 1.0038 | flat |
+
+lost on sliding turn_1; full turn_1. Expected hit: 0/3. Noise ±1.5%.
+
+## Follow-ups
+
+- rewrite stage 7 of `Marlin w13+w2 (moe_wna16_marlin_gemm x2) at every prefill T`: read the replaced kernels' own us per shape (profile top_kernels) against the incumbent and the floor, and check which Milestone it reached. The next stage is `/hypothesize muse_prefill_layer "<what to fix or tune>" --kind rewrite --depends-on experts-triton-turn1-blockt32-stream --stage 8`; a slow or failed first cut is the expected start, not a do-not-retry.
+

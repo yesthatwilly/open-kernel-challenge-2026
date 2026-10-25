@@ -1,0 +1,25 @@
+diff --git a/muse_prefill_layer/submission.py b/muse_prefill_layer/submission.py
+index 0910a52..8b309ee 100644
+--- a/muse_prefill_layer/submission.py
++++ b/muse_prefill_layer/submission.py
+@@ -156,7 +156,9 @@ SMALL_BATCH_MAX_TOKENS = 8
+ # T=1506 and 4096 tests, the first turn's 16384) the Triton NVFP4 grouped GEMM with the packed dequant
+ # (hypothesis experts-triton-packed-dequant-turn4: the gate moves from 4096 down to 1024). Not a
+ # measured crossover: T in (1024, 3012) and (3012, 16384) is unscored and untuned.
+-MARLIN_MAX_TOKENS = 1024
++# Stage 7 (experts-triton-turn1-blockt32-stream): 0, so every prefill T runs the Triton engine; the
++# gate stays so a control can restore Marlin (and Marlin stays as the e2e check's reference).
++MARLIN_MAX_TOKENS = 0
+ # MuseSpark1xFp4Experts' candidates, smallest first.
+ BLOCK_SIZE_M_CANDIDATES = (8, 16, 32, 48, 64)
+ # Grouped NVFP4 GEMM (swap-AB) tile configs, chosen from the shape (tokens) only. About T of the
+@@ -171,7 +173,8 @@ BLOCK_SIZE_M_CANDIDATES = (8, 16, 32, 48, 64)
+ # holds k0 + i (low nibble) and k0 + 64 + i (high nibble).
+ EXPERT_BLOCK_K = 128
+ EXPERT_CONFIGS = (
+-    (1024, dict(BLOCK_T=64, BLOCK_W=128, BLOCK_K=EXPERT_BLOCK_K, GROUP_SIZE_T=8, num_warps=4, num_stages=3)),
++    # turn_1 (~24 rows per expert): one 32-wide token tile, 4 stages of weight bytes in flight.
++    (1024, dict(BLOCK_T=32, BLOCK_W=128, BLOCK_K=EXPERT_BLOCK_K, GROUP_SIZE_T=8, num_warps=4, num_stages=4)),
+     (4096, dict(BLOCK_T=128, BLOCK_W=128, BLOCK_K=EXPERT_BLOCK_K, GROUP_SIZE_T=8, num_warps=8, num_stages=3)),
+     (None, dict(BLOCK_T=256, BLOCK_W=128, BLOCK_K=EXPERT_BLOCK_K, GROUP_SIZE_T=4, num_warps=8, num_stages=2)),
+ )
