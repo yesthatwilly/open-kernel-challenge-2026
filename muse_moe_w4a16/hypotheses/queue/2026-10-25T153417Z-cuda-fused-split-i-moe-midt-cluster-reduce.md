@@ -87,8 +87,10 @@ kind: rewrite
 controls_for: null
 rewrite_stage: 1
 replaces: Marlin w13 + act_and_mul + Marlin w2 (moe_wna16_marlin_gemm x2 + silu_and_mul) and the post-norm tail at 9 <= num_tokens <= 32
-review: required
+review: proceed
 status: queued
+review_at: 2026-10-25T212522Z
+review_companions: null
 ---
 
 # cuda-fused-split-i-moe-midt-cluster-reduce
@@ -118,3 +120,57 @@ shape (profile top_kernels) against the incumbent and the speed-of-light floor, 
 2. at or below the incumbent kernels' time on the target shapes;
 3. within ~1.5x of the floor on the target shapes, and the headline CI clears 1.0 (promotable).
 The next stage is minted with `--kind rewrite --depends-on <this slug> --stage N+1`.
+
+## Adversarial review
+
+Reviewed 2026-10-25T212522Z by an adversarial subagent (model opus).
+
+**Verdict: proceed.** This is a sound stage-1 rewrite that targets the two weakest small-M loads, it breaks no rule, and the in-run gate plus untouched control shapes make one check readable without companions. The headline milestones are optimistic, though. It inherits the wgmma rega consumer (about 2 TB/s), and its KC=256 unit counts quantize badly on 132 SMs. A cluster.sync on every 128-row H tile may also cost more than the work between syncs. Expect decode_16 to go live and decode_32 to be a coin flip.
+
+### Justification
+MECHANISM. The structure is plausible: each expert's weights are read once whatever the routing, there is no w13->w2 boundary, and hs never round-trips. FINDINGS supports the target: decode_32 Marlin runs at 176.8 us on ~340 MB (about 1.9 TB/s) against a 70.8 us floor, and decode_16 at 156.4 us on ~252 MB (about 1.6 TB/s) against a 52.5 us floor. The unit counts also check out: about 28.3 MB of NVFP4 bytes per expert gives ~12 active experts at T=32 and ~9 at T=16, matching the stated 144-384 units.
+
+WEAKEST LINK: the consumer's TB/s. The M3 milestones (fsi <= 115 us at T=32, ~3 TB/s; <= 85 us at T=16) assume a consumer this repo has never measured. LESSONS line 73, b128-n32-deep-ring and the tiny-m-bucket16 result (N16 rega tied Marlin at T=1, 46.0 vs 45.5 us) put the rega consumer at ~1.6-2.1 TB/s. Dequant cost is per weight element, so N32 does not help it. At 1.8-2.0 TB/s:
+- decode_32: fsi is ~170-189 us against Marlin's 176.8. M2 (<= 170 us) is a coin flip and the gate may leave T=17..32 on MASTER.
+- decode_16: fsi is ~126-140 us against 156.4. That beats the incumbent but misses M2's ~110 us.
+DIAGNOSIS action 3 explicitly sequences this file after the consumer fix (pingpong-consumers / producer-scale-expand). Also note LESSONS line 182: the prefill pingpong and scale-expand variants never went live, so that fix may never arrive. That is a scheduling concern, not grounds for hold; a bandwidth result at N32 is useful either way.
+
+SECOND WEAKNESS: wave quantization. Per-unit cost is set by weight bytes, so units are uniform, and the waves fall as follows:
+- KC=256: 144 units (T=16) and 192 units (T=32) on 132 SMs are 1.09 and 1.45 waves, i.e. ~55% and ~73% tail efficiency.
+- KC=128: 288 and 384 units are 2.18 and 2.91 waves, i.e. ~73% and ~97%.
+KC=256 at T=16 is close to self-defeating. The selector must see both KC values, and the log should print units, waves and clusters actually co-resident per class.
+
+THIRD WEAKNESS: cluster.sync granularity. Each unit walks 32 H tiles with two cluster.syncs per tile, so 64 syncs per unit. The W2 work between syncs is only 128 x KC/2 bytes: 8 KB at KC=128, which is ~0.2 us of an SM's DRAM share, and 16 KB at KC=256. Cluster-barrier latency (hundreds of ns) is about the same as that work. The four ranks are also locked together, so any skew between them stalls all four. The Risk section names this, but stage 1 has no in-run way to separate sync cost from consumer cost.
+
+PRIOR. The 'prior' is effectively given in the Risk section: midm-bucket-cap32, w2-only-midm and fused-moe-midm-single-launch-routed, all held. The difference is real. Those keep the w13->w2 boundary and the hs round trip, or use the swap-AB mma.sync mainloop, which ran 1.7-2x slower. Nothing on the Do-not-try list covers a split-I fused design, and the Marlin knobs at small M are confirmed exhausted. This is not a re-run.
+
+EXPECTED. The directions are consistent with TASK weights (each load counts equally; decode_16 and decode_32 are 2 of the 6). Expect the bs=1/8/128/256 rows flat within row noise of +-3-4% (LESSONS 182).
+
+STALE BASE. The change says 'current master (40e2e860)'. Master is now bdbbc97b (combo-toprow), and the incumbent at T=32 is gated by C1a (_align_parallel) and C1b (post-norm). Build on bdbbc97b and keep those flags' paths intact for T outside 9..32.
+
+### Confounders on the current kernel
+- w2-marlin-atomic-add-small-m (landed, T<=32): it defines the incumbent Marlin pair that the FSI gate competes against at T=9..32. A tuned-differently w2 (fp32 reduce) would make the incumbent slower and inflate the FSI ratio. This is part of the baseline, not an interaction, so no revert run is needed.
+- post-expert-norm-triton-small-m (landed, T<32): FSI replaces this combine at T=9..16 with its own fp32-y32 Triton combine, and at T=32 it replaces SGLang's fused_post_expert_norm_weighted_sum. The combine is about 3.5 us, so roughly 2% of a decode_16 or decode_32 row difference could be the combine swap rather than the fused GEMM. Print combine time separately in the gate.
+- triton-map-align-on-block-m-restack / align-two-phase-port-from17 (landed) plus master's C1a d32_align: FSI calls _align_small at block_size_m 32, while the incumbent at T=32 runs align2 or _align_parallel. The align kernels are 2.7-4.5 us, so a difference of 1-2 us is below resolution but can tilt a near-1.0 gate at decode_32.
+- combo-toprow (master bdbbc97b, not in the landed list): its C1b hoisted post-norm and C1a flags at T==32 decide which incumbent FSI is gated against. If C1b is ON on the judge, the post-norm comparison above changes.
+- Queued restack-occ2-wg2-b256-two-stream-halves-on-master: it adds two-stream Marlin halves at 8<=T<=32, exactly this file's band. If it lands first, the incumbent becomes 2-3% faster at decode_16 and decode_32. FSI's gate must then compare against that path, and its gain shrinks by the same amount. Re-base and gate against whichever is on master when claimed.
+- marlin-block-m-two-smaller-on-postnorm, wg-pdl-gather-w13-w2-chain, align-parallel-per-expert-verify, sglang-marlin-path-parity: T>=128 or the base only. No interaction with T=9..32, and they keep the bs=128/256 control rows honest.
+
+### Interference and A/B needs
+No companion check is warranted. This is a rewrite stage judged on its own kernel rows, and the design already carries an in-run A/B. The prepare gate times FSI against the exact incumbent path per T class under cold-L2 graph replay and prints PATH CHOSEN with both timings. bs=1/8/128/256 run master byte for byte as controls. The open questions (consumer TB/s, cluster-sync cost, wave tail, combine swap) are cheaper and cleaner to settle inside the same prepare than with extra okc checks.
+
+Add them as prepare-time diagnostic variants of the same module, each timed and printed per class, which s2 can then pick from:
+- (a) CL=1 with plain red.global.add.v4.f32, no cluster. This isolates the cluster-reduce cost and is the stated fallback anyway.
+- (b) KC=128 and KC=256, with units, waves and co-resident clusters printed.
+- (c) the fsi kernel alone, with combine time printed separately.
+- (d) kernel-only TB/s for each.
+
+Align the gate with today's lesson. Require >= 1.03x over the incumbent on the WORSE of a judge-like (zipf / _wg_judge_ids) routing and a random-local routing, in two interleaved 41-rep rounds with an IQR bound. The file's single-round >= 1.02x p50 on skewed routing only is the selector that mis-routed bf16 cells today. Without these, a stage-1 loss would be ambiguous: you could not tell consumer, sync, tail and combine apart. With them, the single check is fully interpretable.
+
+### Open questions
+- Has the consumer fix (pingpong-consumers / producer-scale-expand, or wg2-pingpong-consumers-occ2-b256) harvested by claim time? DIAGNOSIS action 3/4 sequences this file after it. If not, should stage 1 still run as a bandwidth probe of N32 rega? The reviewer's view is yes, but M3 should be expected to miss.
+- Has cuda-fused-split-i-moe-tiny-t landed, or will this stage implement the shared fsi_kernel, combine and gate from scratch? A from-scratch build of both the shared and the new parts on a GPU-less node is a larger compile-risk surface.
+- Will restack-occ2-wg2-b256-two-stream-halves-on-master land before this is claimed? It changes the T=8..32 incumbent this gate competes against.
+- How many CL=4 clusters does cudaOccupancyMaxActiveClusters actually report on the judge's H100 (GPC SM counts are not all multiples of 4)? Is the effective grid 128 or 132 CTAs, and how does that change the KC wave arithmetic?
+- Would double-buffering the 16 KB partial tile (two buffers, one cluster.sync per tile instead of two), or a once-per-unit DSMEM reduction, fit the smem budget alongside the ring and h? If so, consider it for stage 1, since sync cost is the likeliest stage-1 failure after consumer TB/s.
+
