@@ -1,0 +1,83 @@
+diff --git a/muse_prefill_layer/submission.py b/muse_prefill_layer/submission.py
+index db8a334..116f43f 100644
+--- a/muse_prefill_layer/submission.py
++++ b/muse_prefill_layer/submission.py
+@@ -608,11 +608,12 @@ def prepare(weights):
+     return state
+ 
+ 
+-def _experts(x, topk_weights, local_ids, state):
++def _experts(x, topk_weights, local_ids, state, align=None):
+     """Shape gate: Marlin up to MARLIN_MAX_TOKENS tokens, the Triton NVFP4 GEMM above. Reads the
+-    token count (a shape), never tensor values."""
++    token count (a shape), never tensor values. align: the Marlin path's precomputed
++    (sorted_ids, block_experts, n_padded) from the side stream, or None."""
+     if x.shape[0] <= MARLIN_MAX_TOKENS:
+-        return _experts_marlin(x, topk_weights, local_ids, state)
++        return _experts_marlin(x, topk_weights, local_ids, state, align)
+     return _experts_triton(x, topk_weights, local_ids, state)
+ 
+ 
+@@ -860,7 +861,15 @@ def _silu_sorted_setup(state, device):
+         print(f"[silu-sorted] OFF: {e!r} (PATH CHOSEN = MASTER silu_and_mul)", flush=True)
+ 
+ 
+-def _experts_marlin(x, topk_weights, local_ids, state):
++def _marlin_block_size_m(num_tokens):
++    """Shape-only Marlin block_size_m pick (shared by the side-stream align and _experts_marlin)."""
++    for block_size_m in BLOCK_SIZE_M_CANDIDATES:
++        if num_tokens * TOP_K / LOCAL_EXPERTS / block_size_m < 0.9:
++            break
++    return block_size_m
++
++
++def _experts_marlin(x, topk_weights, local_ids, state, align=None):
+     """MuseSpark1xFp4Experts._marlin_expert_outputs and its post-expert-norm finalize, on ids
+     already mapped to this GPU's experts (0-31, -1 elsewhere)."""
+     bank = state["marlin"]
+@@ -868,10 +877,11 @@ def _experts_marlin(x, topk_weights, local_ids, state):
+     size_n = bank["size_n"]
+     gemm1_n = 2 * size_n
+     topk_weights = topk_weights.to(torch.float32).contiguous()
+-    for block_size_m in BLOCK_SIZE_M_CANDIDATES:
+-        if num_tokens * TOP_K / LOCAL_EXPERTS / block_size_m < 0.9:
+-            break
+-    if state.get("align_par_ok", False):
++    block_size_m = _marlin_block_size_m(num_tokens)
++    if align is not None:
++        # turn-align-remap-on-side-stream-under-pooler: align already ran on the side stream.
++        sorted_ids, block_experts, n_padded = align
++    elif state.get("align_par_ok", False):
+         # moe-align-local-routes-parallel-port: local routes only, one launch (prepare() self-checked).
+         _, (sorted_ids, block_experts, n_padded) = _align_parallel(local_ids, 0, LOCAL_EXPERTS, block_size_m)
+     else:
+@@ -988,14 +998,25 @@ def kernel_fn(data, state):
+         both = torch.mm(ffn_input, state["router_hilo_t"], out_dtype=torch.float32)
+         logits = both[:, :N_EXPERTS] + both[:, N_EXPERTS:]
+         topk_weights, topk_ids = state["routing"](None, logits, TOP_K, True)
++        # This GPU's experts start at local_start: SGLang's expert_map on that EP rank, in one kernel
++        # (local_start stays a device tensor; no .item()).
++        local_ids = _local_expert_ids(topk_ids, data["local_start"])
++        align = None
++        cross = [topk_weights, topk_ids, local_ids]
++        num_tokens = ffn_input.shape[0]
++        if num_tokens <= MARLIN_MAX_TOKENS and state.get("align_par_ok", False):
++            # Turn shapes: the Marlin align runs here too, under the pooler. local_ids are already
++            # mapped, so local_start is the Python scalar 0 (same call _experts_marlin made).
++            _, align = _align_parallel(local_ids, 0, LOCAL_EXPERTS, _marlin_block_size_m(num_tokens))
++            cross += list(align)
++    # Join: the main stream waits for the side stream's whole branch (an event edge under capture)
++    # before anything consumes topk_weights, local_ids or the align outputs.
+     main_stream.wait_stream(side_stream)
+     if not torch.cuda.is_current_stream_capturing():
+-        for tensor in (topk_weights, topk_ids):
++        for tensor in cross:
+             tensor.record_stream(main_stream)
+-    # This GPU's experts start at local_start: SGLang's expert_map on that EP rank, in one kernel.
+-    local_ids = _local_expert_ids(topk_ids, data["local_start"])
+     # all-reduce: identity
+-    expert_output = _experts(state["pre_expert_norm"](expert_input), topk_weights, local_ids, state)
++    expert_output = _experts(state["pre_expert_norm"](expert_input), topk_weights, local_ids, state, align)
+     ffn_output = _gemm(expert_output, dense["unpooler"])
+ 
+     # Post-FFN boundary, with the next layer's pre-attention norm.

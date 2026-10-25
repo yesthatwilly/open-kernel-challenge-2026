@@ -36,10 +36,10 @@ priority: 3
 kind: primary
 controls_for: null
 review: proceed
-status: running
+status: done
 review_at: 2026-10-25T043310Z
 review_companions: null
-stage: dispatched
+stage: harvested
 claimed_at: 2026-10-25T043310Z
 base_sha: 1a306457948093d586d8985f430235643dff1d1c
 base_blob: db8a3344398bca79ea5cafeb580f701c055fd475
@@ -58,6 +58,13 @@ attempt_file: 2026-10-25T043641Z-check-turn-align-remap-on-side-stream-under-poo
 prepared_at: 2026-10-25T043641Z
 job: 40f21883155b47eb
 dispatched_at: 2026-10-25T043648Z
+outcome: neutral
+verdict_detail: within-ci
+speedup: 1.0683305718124712
+speedup_ci: [1.0523056132352842, 1.0843555303896582]
+harvested_at: 2026-10-25T053805Z
+best_at_harvest: 1.074386115190733
+promotion: null
 ---
 
 # turn-align-remap-on-side-stream-under-pooler
@@ -133,3 +140,31 @@ Audited 2026-10-25 by an opus subagent (read-only; no GPU). **Verdict: dispatch*
 - okc_lint: OK with warnings (the warnings are pre-existing and in prepare()-side code only); py_compile OK.
 
 Residual risk: performance only. The longer side branch may not hide under the pooler at turn_1, or may contend with it for SMs at turn_4.
+
+## Result
+
+- job `40f21883155b47eb` (check), status done, passed True, tests 5/5
+- speedup 1.0683x, 95% CI [1.0523, 1.0844], score 362625.49272810924 µs vs SGLang 387403.9 µs
+- best at harvest: {"speedup": 1.074386115190733, "ci": [1.058270323462872, 1.090501906918594], "job": "502f2eab95164781"}; base result: muse_prefill_layer/hypotheses/done/neutral/stack-tonight-five-prefill.result.json
+- **outcome: neutral** (within-ci)
+- files: `muse_prefill_layer/hypotheses/done/neutral/turn-align-remap-on-side-stream-under-pooler.result.json`, `muse_prefill_layer/hypotheses/done/neutral/turn-align-remap-on-side-stream-under-pooler.patch`; branch `hyp/muse_prefill_layer/turn-align-remap-on-side-stream-under-pooler`
+
+## Attribution
+
+| shape | w | base µs | hyp µs | delta | verdict |
+|---|---|---|---|---|---|
+| batch=1 ctx=80000 dist=soft layer=sliding load=turn_1 page=1 q_len=753 repeats=6 | 46 | 1101.29 | 1132.75 | 1.0025 | flat |
+| batch=1 ctx=80000 dist=soft layer=full load=turn_1 page=1 q_len=753 repeats=6 | 16 | 1529.55 | 1474.68 | 1.0029 | flat |
+| batch=4 ctx=80000 dist=soft layer=sliding load=turn_4 page=1 q_len=753 repeats=6 | 46 | 3318.71 | 3313.08 | 1.0048 | flat |
+| batch=4 ctx=80000 dist=soft layer=full load=turn_4 page=1 q_len=753 repeats=6 | 16 | 4849.27 | 4872.53 | 1.0033 | flat |
+| batch=1 ctx=0 dist=soft layer=full load=first_turn page=1 q_len=16384 repeats=6 | 16 | 14705.32 | 14696.13 | 0.9993 | flat |
+| batch=1 ctx=32768 dist=soft layer=sliding load=first_turn page=1 q_len=16384 repeats=6 | 138 | 14264.64 | 14452.32 | 0.9845 | flat |
+| batch=1 ctx=32768 dist=soft layer=full load=first_turn page=1 q_len=16384 repeats=6 | 16 | 17746.69 | 18224.34 | 1.0034 | flat |
+| batch=1 ctx=65536 dist=soft layer=full load=first_turn page=1 q_len=16384 repeats=6 | 16 | 21733.75 | 22386.31 | 0.9808 | flat |
+
+no shape moved outside noise. Expected hit: 0/3. Noise ±1.5%.
+
+## Follow-ups
+
+- within-ci: the change is not proven either way; a stacked hypothesis (`depends_on: turn-align-remap-on-side-stream-under-pooler`) that adds a further change in the same area is the only way to learn more (identical code is never re-run).
+
