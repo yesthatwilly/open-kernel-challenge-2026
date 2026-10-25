@@ -60,7 +60,7 @@ review: proceed
 status: running
 review_at: 2026-10-25T043142Z
 review_companions: null
-stage: implemented
+stage: dispatched
 claimed_at: 2026-10-25T043142Z
 base_sha: 4488c6a7868d7d953811b7b93ec0403d0f8bfde8
 base_blob: d8769ef25caf845a0e207538ccc5c62394b6ee3b
@@ -77,6 +77,8 @@ submission_blob: 76492911dfd6685139a2ffac06c1d27083ecdb0a
 lint_warnings: 27
 attempt_file: 2026-10-25T044314Z-check-sliding-verify-sk-pseudo-decode-s1.md
 prepared_at: 2026-10-25T044314Z
+job: 94523c3313444fd8
+dispatched_at: 2026-10-25T044328Z
 ---
 
 # sliding-verify-sk-pseudo-decode-s1
