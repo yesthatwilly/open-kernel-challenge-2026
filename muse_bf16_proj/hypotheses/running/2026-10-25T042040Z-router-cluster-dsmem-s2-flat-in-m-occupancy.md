@@ -61,7 +61,7 @@ review: proceed
 status: running
 review_at: 2026-10-25T042412Z
 review_companions: null
-stage: implemented
+stage: dispatched
 claimed_at: 2026-10-25T042413Z
 base_sha: 0dea576ae73cfb9d114326146a90d40766b24f0e
 base_blob: 441dcedb5cd6286e6851afb629598d27c30f6c82
@@ -78,6 +78,8 @@ submission_blob: 9f00e0ed1a2bbb4ff08465385f6c583d07c83efa
 lint_warnings: 3
 attempt_file: 2026-10-25T043058Z-check-router-cluster-dsmem-s2-flat-in-m-occupancy.md
 prepared_at: 2026-10-25T043058Z
+job: ef8a8bca31ef420e
+dispatched_at: 2026-10-25T043105Z
 ---
 
 # router-cluster-dsmem-s2-flat-in-m-occupancy
