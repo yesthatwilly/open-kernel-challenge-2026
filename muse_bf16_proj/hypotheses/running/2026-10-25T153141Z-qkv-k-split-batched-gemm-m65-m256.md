@@ -43,9 +43,18 @@ priority: 2
 kind: primary
 controls_for: null
 review: proceed
-status: queued
+status: running
 review_at: 2026-10-25T203645Z
 review_companions: null
+stage: claimed
+claimed_at: 2026-10-25T203645Z
+base_sha: 752b3dcbd27a45849093c5387a4716ce9fca68ae
+base_blob: ad8d7254a64a52db2a8f56ec0ad262748153a2e8
+branch: hyp/muse_bf16_proj/qkv-k-split-batched-gemm-m65-m256
+worktree: .worktrees/muse_bf16_proj/qkv-k-split-batched-gemm-m65-m256
+mode: submit
+restack_of: null
+stale_base: null
 ---
 
 # qkv-k-split-batched-gemm-m65-m256
