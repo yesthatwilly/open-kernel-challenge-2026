@@ -58,10 +58,10 @@ priority: 2
 kind: primary
 controls_for: null
 review: proceed
-status: running
+status: done
 review_at: 2026-10-25T111209Z
 review_companions: null
-stage: dispatched
+stage: harvested
 claimed_at: 2026-10-25T111210Z
 base_sha: 54d3a9ce8a155b629ac50f80222a1bf0dec23a79
 base_blob: 62c5a9413ba5710defea2ca3de14c1a1dc3b5a6d
@@ -80,6 +80,13 @@ attempt_file: 2026-10-25T111944Z-submit-qkv-o-swapab16-t2-t16-no-fork.md
 prepared_at: 2026-10-25T111944Z
 job: b0057d2e6cef4d5a
 dispatched_at: 2026-10-25T111956Z
+outcome: neutral
+verdict_detail: unproven-vs-best
+speedup: 1.3055763257962147
+speedup_ci: [1.2859926809092714, 1.3251599706831578]
+harvested_at: 2026-10-25T115710Z
+best_at_harvest: 1.2725637226942819
+promotion: null
 ---
 
 # qkv-o-swapab16-t2-t16-no-fork
@@ -183,3 +190,35 @@ Audited 2026-10-25 (opus) against the s3 tip file (hyp/muse_decode_layer/dense-c
 - undef.py: none; py_compile ok; __pycache__ removed.
 
 Residual risk: first-time Triton wgmma compile or an OFF from the 1.05x selector leaves the run a re-measure of s3; no crash path found in kernel_fn.
+
+## Result
+
+- job `b0057d2e6cef4d5a` (submit), status done, passed True, tests 13/13
+- speedup 1.3056x, 95% CI [1.2860, 1.3252], score 17325.911594027148 µs vs SGLang 22620.3 µs
+- best at harvest: {"speedup": 1.2725637226942819, "ci": [1.2534752668538676, 1.291652178534696], "job": "3fd3fa1f96d045dd"}; base result: muse_decode_layer/hypotheses/done/neutral/w2-marlin-atomic-add-t1-port.result.json
+- **outcome: neutral** (unproven-vs-best)
+- files: `muse_decode_layer/hypotheses/done/neutral/qkv-o-swapab16-t2-t16-no-fork.result.json`, `muse_decode_layer/hypotheses/done/neutral/qkv-o-swapab16-t2-t16-no-fork.patch`; branch `hyp/muse_decode_layer/qkv-o-swapab16-t2-t16-no-fork`
+
+## Attribution
+
+| shape | w | base µs | hyp µs | delta | verdict |
+|---|---|---|---|---|---|
+| batch=1 ctx=80000 dist=soft layer=sliding load=decode_1 page=1 repeats=60 | 46 | 123.88 | 119.9 | 1.0404 | gained |
+| batch=1 ctx=80000 dist=soft layer=full load=decode_1 page=1 repeats=60 | 16 | 139.18 | 130.71 | 1.0793 | gained |
+| batch=16 ctx=80000 dist=soft layer=sliding load=decode_16 page=1 spread=agentic | 46 | 204.68 | 204.72 | 1.005 | flat |
+| batch=16 ctx=80000 dist=soft layer=full load=decode_16 page=1 spread=agentic | 16 | 308.69 | 296.65 | 1.0504 | gained |
+| batch=32 ctx=80000 dist=soft layer=sliding load=decode_32 page=1 spread=agentic | 46 | 240.67 | 238.79 | 1.0005 | flat |
+| batch=32 ctx=80000 dist=soft layer=full load=decode_32 page=1 spread=agentic | 16 | 473.31 | 440.03 | 1.0864 | gained |
+| batch=1 ctx=80000 dist=soft layer=sliding load=verify_1 page=1 q_len=8 | 46 | 191.42 | 191.58 | 1.0033 | flat |
+| batch=1 ctx=80000 dist=soft layer=full load=verify_1 page=1 q_len=8 | 16 | 201.63 | 194.62 | 1.01 | flat |
+| batch=16 ctx=80000 dist=soft layer=sliding load=verify_16 page=1 q_len=8 spread=agentic | 46 | 414.6 | 438.17 | 1.0125 | flat |
+| batch=16 ctx=80000 dist=soft layer=full load=verify_16 page=1 q_len=8 spread=agentic | 16 | 565.16 | 576.69 | 1.0114 | flat |
+| batch=32 ctx=80000 dist=soft layer=sliding load=verify_32 page=1 q_len=8 spread=agentic | 46 | 600.78 | 604.04 | 0.9691 | lost |
+| batch=32 ctx=80000 dist=soft layer=full load=verify_32 page=1 q_len=8 spread=agentic | 16 | 880.71 | 883.3 | 0.9767 | flat |
+
+gained on sliding decode_1; full decode_1, decode_16, decode_32; lost on sliding verify_32. Expected hit: 3/6. Noise ±1.5%.
+
+## Follow-ups
+
+- unproven-vs-best: the change is not proven either way; a stacked hypothesis (`depends_on: qkv-o-swapab16-t2-t16-no-fork`) that adds a further change in the same area is the only way to learn more (identical code is never re-run).
+

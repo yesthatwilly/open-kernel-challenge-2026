@@ -1,0 +1,183 @@
+rologue-0 T=1 kv_scale=0.25 rep1
+[dl3] O kv_scale=0.25: rel L2 4.86e-05
+[dl3] launching sk two-level, gate in qkv (n=4097)
+[dl3] ok        sk two-level, gate in qkv (n=4097)
+[dl3] launching sk two-level, separate gate stride 2304 (n=4097)
+[dl3] ok        sk two-level, separate gate stride 2304 (n=4097)
+[dl3] sk gate plumbing n=4097: separate-gate output identical to qkv-gate output: True
+[dl3] launching sk two-level, gate in qkv (n=30000)
+[dl3] ok        sk two-level, gate in qkv (n=30000)
+[dl3] launching sk two-level, separate gate stride 2304 (n=30000)
+[dl3] ok        sk two-level, separate gate stride 2304 (n=30000)
+[dl3] sk gate plumbing n=30000: separate-gate output identical to qkv-gate output: True
+[dl3] piece A kernel-level worst: {'q': 0, 'k': 0, 'v': 0, 'gate': 3.825240819682792e-06, 'o': 4.86455896623046e-05}
+[dl3] launching layer full kv_scale=0.25 parent
+[dl3] ok        layer full kv_scale=0.25 parent
+[dl3] launching layer full kv_scale=0.25 pieces A=0 B=1 C=1
+[dl3] ok        layer full kv_scale=0.25 pieces A=0 B=1 C=1
+[dl3] eager layer full kv_scale=0.25 A=0 B=1 C=1: hidden 1.67e-03 stream 1.51e-03 ids_ok True cache_ok True finite True -> ok
+[dl3] launching layer full kv_scale=1 parent
+[dl3] ok        layer full kv_scale=1 parent
+[dl3] launching layer full kv_scale=1 pieces A=0 B=1 C=1
+[dl3] ok        layer full kv_scale=1 pieces A=0 B=1 C=1
+[dl3] eager layer full kv_scale=1 A=0 B=1 C=1: hidden 1.67e-03 stream 1.45e-03 ids_ok True cache_ok True finite True -> ok
+[dl3] launching layer sliding parent
+[dl3] ok        layer sliding parent
+[dl3] launching layer sliding pieces A=0 B=1 C=1
+[dl3] ok        layer sliding pieces A=0 B=1 C=1
+[dl3] eager layer sliding A=0 B=1 C=1: hidden 0.00e+00 stream 0.00e+00 ids_ok True cache_ok True finite True -> ok
+[dl3] launching alt full kv_scale=0.25 eager warm-up state 0
+[dl3] ok        alt full kv_scale=0.25 eager warm-up state 0
+[dl3] alt full kv_scale=0.25: capturing state 0
+[dl3] launching alt full kv_scale=0.25 eager warm-up state 1
+[dl3] ok        alt full kv_scale=0.25 eager warm-up state 1
+[dl3] alt full kv_scale=0.25: capturing state 1
+[dl3] alt full kv_scale=0.25: replay 0 on state 0: launching graph
+[dl3] alt full kv_scale=0.25: replay 0 state 0: hidden 1.36e-03 stream 1.17e-03 ids_ok True cache_ok True finite True, tickets 0 -> ok
+[dl3] alt full kv_scale=0.25: replay 1 on state 1: launching graph
+[dl3] alt full kv_scale=0.25: replay 1 state 1: hidden 1.74e-03 stream 1.58e-03 ids_ok True cache_ok True finite True, tickets 0 -> ok
+[dl3] alt full kv_scale=0.25: replay 2 on state 0: launching graph
+[dl3] alt full kv_scale=0.25: replay 2 state 0: hidden 0.00e+00 stream 0.00e+00 ids_ok True cache_ok True finite True, tickets 0 -> ok
+[dl3] alt full kv_scale=0.25: replay 3 on state 1: launching graph
+[dl3] alt full kv_scale=0.25: replay 3 state 1: hidden 1.73e-03 stream 1.58e-03 ids_ok True cache_ok True finite True, tickets 0 -> ok
+[dl3] alt full kv_scale=0.25: replay 4 on state 0: launching graph
+[dl3] alt full kv_scale=0.25: replay 4 state 0: hidden 1.36e-03 stream 1.17e-03 ids_ok True cache_ok True finite True, tickets 0 -> ok
+[dl3] alt full kv_scale=0.25: replay 5 on state 1: launching graph
+[dl3] alt full kv_scale=0.25: replay 5 state 1: hidden 1.90e-03 stream 1.61e-03 ids_ok True cache_ok True finite True, tickets 0 -> ok
+[dl3] launching alt sliding eager warm-up state 0
+[dl3] ok        alt sliding eager warm-up state 0
+[dl3] alt sliding: capturing state 0
+[dl3] launching alt sliding eager warm-up state 1
+[dl3] ok        alt sliding eager warm-up state 1
+[dl3] alt sliding: capturing state 1
+[dl3] alt sliding: replay 0 on state 0: launching graph
+[dl3] alt sliding: replay 0 state 0: hidden 0.00e+00 stream 0.00e+00 ids_ok True cache_ok True finite True, tickets 0 -> ok
+[dl3] alt sliding: replay 1 on state 1: launching graph
+[dl3] alt sliding: replay 1 state 1: hidden 1.73e-03 stream 1.55e-03 ids_ok True cache_ok True finite True, tickets 0 -> ok
+[dl3] alt sliding: replay 2 on state 0: launching graph
+[dl3] alt sliding: replay 2 state 0: hidden 1.61e-03 stream 1.48e-03 ids_ok True cache_ok True finite True, tickets 0 -> ok
+[dl3] alt sliding: replay 3 on state 1: launching graph
+[dl3] alt sliding: replay 3 state 1: hidden 1.75e-03 stream 1.60e-03 ids_ok True cache_ok True finite True, tickets 0 -> ok
+[dl3] alt sliding: replay 4 on state 0: launching graph
+[dl3] alt sliding: replay 4 state 0: hidden 0.00e+00 stream 0.00e+00 ids_ok True cache_ok True finite True, tickets 0 -> ok
+[dl3] alt sliding: replay 5 on state 1: launching graph
+[dl3] alt sliding: replay 5 state 1: hidden 0.00e+00 stream 0.00e+00 ids_ok True cache_ok True finite True, tickets 0 -> ok
+[dl3] layer-level check of pieces ['B', 'C']: eager + two-state alternating graph replays passed
+[dl3] tickets of this state after the stage-3 checks: sum 0
+[dl3] PATH CHOSEN: dl3 piece A (full decode_1 attention side): parent chain (nvjet qkv + FusedQKNorm + casts + store_cache + sk two-level + nvjet o) (fallback: self-check: sk gate plumbing n=4097: outputs differ (or gate stride 2304); sk gate plumbing n=30000: outputs differ (or gate stride 2304)) w2_mode=atomic
+[dl3] PATH CHOSEN: dl3 piece B (routing kernel R at T=1, both layers): per-warp top-8 R with PDL after P [P->R pair T=1 (R pdl=1): new 37.09 us vs incumbent 38.37 us, ratio old/new 1.035, need >= 1.02] w2_mode=atomic
+[dl3] PATH CHOSEN: dl3 piece C (unpooler at T=1, both layers): dl_unpool_kernel NF=1 [unpooler T=1 (kernel vs _gemm + F.pad): new 10.59 us vs incumbent 13.44 us, ratio old/new 1.269, need >= 1.02] w2_mode=atomic
+[dl3] PATH CHOSEN: dl3 T > 1 (decode_16/32, verify): parent path, all pieces gated to tokens == 1 w2_mode=atomic
+[swapab16-dl] launching qkv first compile at T=16, 4 stages
+[swapab16-dl] ok        qkv first compile
+[swapab16-dl] launching qkv warm-up T=2..16
+[swapab16-dl] ok        qkv warm-up; compiled specializations -1 -> -1 (M is do_not_specialize, so every T and layout shares them)
+[swapab16-dl] launching qkv T=2 [attn_input] self-check
+[swapab16-dl] ok        qkv T=2 [attn_input] self-check
+[swapab16-dl] layer=qkv T=2 [attn_input] err_swapab=1.696e-03 err_cublas=1.696e-03 tol=4.000e-03 finite=True
+[swapab16-dl] launching qkv T=8 [attn_input] self-check
+[swapab16-dl] ok        qkv T=8 [attn_input] self-check
+[swapab16-dl] layer=qkv T=8 [attn_input] err_swapab=1.661e-03 err_cublas=1.661e-03 tol=4.000e-03 finite=True
+[swapab16-dl] launching qkv T=9 [attn_input] self-check
+[swapab16-dl] ok        qkv T=9 [attn_input] self-check
+[swapab16-dl] layer=qkv T=9 [attn_input] err_swapab=1.655e-03 err_cublas=1.655e-03 tol=4.000e-03 finite=True
+[swapab16-dl] launching qkv T=16 [attn_input] self-check
+[swapab16-dl] ok        qkv T=16 [attn_input] self-check
+[swapab16-dl] layer=qkv T=16 [attn_input] err_swapab=1.650e-03 err_cublas=1.650e-03 tol=4.000e-03 finite=True
+[swapab16-dl] capturing qkv T=9 graph on set 0
+[swapab16-dl] ok        capture qkv T=9 set 0
+[swapab16-dl] capturing qkv T=9 graph on set 1
+[swapab16-dl] ok        capture qkv T=9 set 1
+[swapab16-dl] replaying qkv T=9 set 0 iteration 0
+[swapab16-dl] ok        replay qkv T=9 set 0 it=0 err_swapab=1.660e-03 err_cublas=1.660e-03
+[swapab16-dl] replaying qkv T=9 set 1 iteration 1
+[swapab16-dl] ok        replay qkv T=9 set 1 it=1 err_swapab=1.657e-03 err_cublas=1.657e-03
+[swapab16-dl] replaying qkv T=9 set 0 iteration 2
+[swapab16-dl] ok        replay qkv T=9 set 0 it=2 err_swapab=1.669e-03 err_cublas=1.669e-03
+[swapab16-dl] replaying qkv T=9 set 1 iteration 3
+[swapab16-dl] ok        replay qkv T=9 set 1 it=3 err_swapab=1.663e-03 err_cublas=1.663e-03
+[swapab16-dl] replaying qkv T=9 set 0 iteration 4
+[swapab16-dl] ok        replay qkv T=9 set 0 it=4 err_swapab=1.649e-03 err_cublas=1.649e-03
+[swapab16-dl] replaying qkv T=9 set 1 iteration 5
+[swapab16-dl] ok        replay qkv T=9 set 1 it=5 err_swapab=1.665e-03 err_cublas=1.665e-03
+[swapab16-dl] capturing qkv T=16 graph on set 0
+[swapab16-dl] ok        capture qkv T=16 set 0
+[swapab16-dl] capturing qkv T=16 graph on set 1
+[swapab16-dl] ok        capture qkv T=16 set 1
+[swapab16-dl] replaying qkv T=16 set 0 iteration 0
+[swapab16-dl] ok        replay qkv T=16 set 0 it=0 err_swapab=1.664e-03 err_cublas=1.664e-03
+[swapab16-dl] replaying qkv T=16 set 1 iteration 1
+[swapab16-dl] ok        replay qkv T=16 set 1 it=1 err_swapab=1.661e-03 err_cublas=1.661e-03
+[swapab16-dl] replaying qkv T=16 set 0 iteration 2
+[swapab16-dl] ok        replay qkv T=16 set 0 it=2 err_swapab=1.669e-03 err_cublas=1.669e-03
+[swapab16-dl] replaying qkv T=16 set 1 iteration 3
+[swapab16-dl] ok        replay qkv T=16 set 1 it=3 err_swapab=1.662e-03 err_cublas=1.662e-03
+[swapab16-dl] replaying qkv T=16 set 0 iteration 4
+[swapab16-dl] ok        replay qkv T=16 set 0 it=4 err_swapab=1.669e-03 err_cublas=1.669e-03
+[swapab16-dl] replaying qkv T=16 set 1 iteration 5
+[swapab16-dl] ok        replay qkv T=16 set 1 it=5 err_swapab=1.653e-03 err_cublas=1.653e-03
+[swapab16-dl] layer=qkv T=2..16 stages=4 n_regs=48 n_spills=0 wgmma=8 mma.sync=0 [err_swapab=1.70e-03 err_cublas=1.70e-03 graph t(T=8)+t(T=16): swapab 40.6 us vs cuBLAS 43.3 us] ON
+[swapab16-dl] launching o first compile at T=16, 4 stages
+[swapab16-dl] ok        o first compile
+[swapab16-dl] launching o warm-up T=2..16
+[swapab16-dl] ok        o warm-up; compiled specializations -1 -> -1 (M is do_not_specialize, so every T and layout shares them)
+[swapab16-dl] launching o T=2 [o=reshape(T,hq*d) of [T,16,64]] self-check
+[swapab16-dl] ok        o T=2 [o=reshape(T,hq*d) of [T,16,64]] self-check
+[swapab16-dl] layer=o T=2 [o=reshape(T,hq*d) of [T,16,64]] err_swapab=1.669e-03 err_cublas=1.669e-03 tol=4.000e-03 finite=True
+[swapab16-dl] launching o T=2 [o=FusedRMSNormGate output] self-check
+[swapab16-dl] ok        o T=2 [o=FusedRMSNormGate output] self-check
+[swapab16-dl] layer=o T=2 [o=FusedRMSNormGate output] err_swapab=1.679e-03 err_cublas=1.679e-03 tol=4.000e-03 finite=True
+[swapab16-dl] launching o T=8 [o=reshape(T,hq*d) of [T,16,64]] self-check
+[swapab16-dl] ok        o T=8 [o=reshape(T,hq*d) of [T,16,64]] self-check
+[swapab16-dl] layer=o T=8 [o=reshape(T,hq*d) of [T,16,64]] err_swapab=1.670e-03 err_cublas=1.670e-03 tol=4.000e-03 finite=True
+[swapab16-dl] launching o T=8 [o=FusedRMSNormGate output] self-check
+[swapab16-dl] ok        o T=8 [o=FusedRMSNormGate output] self-check
+[swapab16-dl] layer=o T=8 [o=FusedRMSNormGate output] err_swapab=1.661e-03 err_cublas=1.661e-03 tol=4.000e-03 finite=True
+[swapab16-dl] launching o T=9 [o=reshape(T,hq*d) of [T,16,64]] self-check
+[swapab16-dl] ok        o T=9 [o=reshape(T,hq*d) of [T,16,64]] self-check
+[swapab16-dl] layer=o T=9 [o=reshape(T,hq*d) of [T,16,64]] err_swapab=1.659e-03 err_cublas=1.659e-03 tol=4.000e-03 finite=True
+[swapab16-dl] launching o T=9 [o=FusedRMSNormGate output] self-check
+[swapab16-dl] ok        o T=9 [o=FusedRMSNormGate output] self-check
+[swapab16-dl] layer=o T=9 [o=FusedRMSNormGate output] err_swapab=1.658e-03 err_cublas=1.658e-03 tol=4.000e-03 finite=True
+[swapab16-dl] launching o T=16 [o=reshape(T,hq*d) of [T,16,64]] self-check
+[swapab16-dl] ok        o T=16 [o=reshape(T,hq*d) of [T,16,64]] self-check
+[swapab16-dl] layer=o T=16 [o=reshape(T,hq*d) of [T,16,64]] err_swapab=1.660e-03 err_cublas=1.660e-03 tol=4.000e-03 finite=True
+[swapab16-dl] launching o T=16 [o=FusedRMSNormGate output] self-check
+[swapab16-dl] ok        o T=16 [o=FusedRMSNormGate output] self-check
+[swapab16-dl] layer=o T=16 [o=FusedRMSNormGate output] err_swapab=1.672e-03 err_cublas=1.672e-03 tol=4.000e-03 finite=True
+[swapab16-dl] capturing o T=9 graph on set 0
+[swapab16-dl] ok        capture o T=9 set 0
+[swapab16-dl] capturing o T=9 graph on set 1
+[swapab16-dl] ok        capture o T=9 set 1
+[swapab16-dl] replaying o T=9 set 0 iteration 0
+[swapab16-dl] ok        replay o T=9 set 0 it=0 err_swapab=1.666e-03 err_cublas=1.666e-03
+[swapab16-dl] replaying o T=9 set 1 iteration 1
+[swapab16-dl] ok        replay o T=9 set 1 it=1 err_swapab=1.662e-03 err_cublas=1.662e-03
+[swapab16-dl] replaying o T=9 set 0 iteration 2
+[swapab16-dl] ok        replay o T=9 set 0 it=2 err_swapab=1.667e-03 err_cublas=1.667e-03
+[swapab16-dl] replaying o T=9 set 1 iteration 3
+[swapab16-dl] ok        replay o T=9 set 1 it=3 err_swapab=1.658e-03 err_cublas=1.658e-03
+[swapab16-dl] replaying o T=9 set 0 iteration 4
+[swapab16-dl] ok        replay o T=9 set 0 it=4 err_swapab=1.653e-03 err_cublas=1.653e-03
+[swapab16-dl] replaying o T=9 set 1 iteration 5
+[swapab16-dl] ok        replay o T=9 set 1 it=5 err_swapab=1.661e-03 err_cublas=1.661e-03
+[swapab16-dl] capturing o T=16 graph on set 0
+[swapab16-dl] ok        capture o T=16 set 0
+[swapab16-dl] capturing o T=16 graph on set 1
+[swapab16-dl] ok        capture o T=16 set 1
+[swapab16-dl] replaying o T=16 set 0 iteration 0
+[swapab16-dl] ok        replay o T=16 set 0 it=0 err_swapab=1.655e-03 err_cublas=1.655e-03
+[swapab16-dl] replaying o T=16 set 1 iteration 1
+[swapab16-dl] ok        replay o T=16 set 1 it=1 err_swapab=1.664e-03 err_cublas=1.664e-03
+[swapab16-dl] replaying o T=16 set 0 iteration 2
+[swapab16-dl] ok        replay o T=16 set 0 it=2 err_swapab=1.659e-03 err_cublas=1.659e-03
+[swapab16-dl] replaying o T=16 set 1 iteration 3
+[swapab16-dl] ok        replay o T=16 set 1 it=3 err_swapab=1.663e-03 err_cublas=1.663e-03
+[swapab16-dl] replaying o T=16 set 0 iteration 4
+[swapab16-dl] ok        replay o T=16 set 0 it=4 err_swapab=1.660e-03 err_cublas=1.660e-03
+[swapab16-dl] replaying o T=16 set 1 iteration 5
+[swapab16-dl] ok        replay o T=16 set 1 it=5 err_swapab=1.654e-03 err_cublas=1.654e-03
+[swapab16-dl] layer=o T=2..16 stages=4 n_regs=72 n_spills=0 wgmma=16 mma.sync=0 [err_swapab=1.68e-03 err_cublas=1.68e-03 graph t(T=8)+t(T=16): swapab 24.7 us vs cuBLAS 24.8 us] ON
+[swapab16-dl] tickets of this state after the swapab16 checks: sum 0
+[swapab16-dl] PATH CHOSEN: qkv T=2..16: swap-AB wgmma _swapab_qkv_kernel; o T=2..16 (full and sliding): swap-AB wgmma _swapab_o_kernel; T == 1 and T >= 17: unchanged
+[prepare] this call 5.8s, cumulative 5.8s
