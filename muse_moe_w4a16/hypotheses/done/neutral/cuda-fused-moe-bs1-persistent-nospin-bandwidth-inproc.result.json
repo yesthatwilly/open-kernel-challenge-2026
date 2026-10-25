@@ -1,0 +1,366 @@
+{
+ "schema": 1,
+ "problem": "muse_moe_w4a16",
+ "slug": "cuda-fused-moe-bs1-persistent-nospin-bandwidth-inproc",
+ "job": "7a6919420b724ee7",
+ "mode": "check",
+ "duplicate_of": null,
+ "content_hash": "6b9492fae223c526bcaad16a51358e1faf1806a9a207268a007c1ec05f57843e",
+ "submission_sha256": "8483d78ed40c60aa5c92c13671a1ce2654db503d1d85dd90b05105278a285344",
+ "submission_blob": "c80e3a831390ffb38cbcb7560231b59a64a2c6a0",
+ "impl_commit": "ea3464f424a209eb0f46541178cd3dd11062426f",
+ "base_sha": "0efab7bdfa79cfea6a430d51c5b7c038a7bd2af3",
+ "created_at": 1792888497.2498105,
+ "finished_at": 1792890852.5049276,
+ "gpu": "H200",
+ "evaluator_sha256": "afcead6a6ff090aa50fe9bc907f0fa8f4ba73d95fa92af93ec260b5e8ff00f00",
+ "status": "done",
+ "passed": true,
+ "error": null,
+ "returncode": 0,
+ "tests": {
+  "total": 5,
+  "passed": 5
+ },
+ "first_failing": null,
+ "speedup": 1.3256680378665346,
+ "speedup_ci": [
+  1.3057830172985365,
+  1.3683051976855192
+ ],
+ "score_us": 10144.69657248685,
+ "baseline_us": 13448.5,
+ "flags": [],
+ "checks": {
+  "flagged": [],
+  "ok": true,
+  "rejected": []
+ },
+ "shapes": [
+  {
+   "key": "bs=1 load=decode_1 sharding=ep8",
+   "load": "decode 1",
+   "case": {
+    "bs": 1,
+    "load": "decode 1",
+    "seed": 6092335259559123244,
+    "sharding": "ep8",
+    "weight": 60
+   },
+   "weight": 60,
+   "median_ns": 47670.0375260575,
+   "baseline_ns": 76912.0017066598,
+   "speedup": 1.6134244002769662,
+   "speedup_of_medians": 1.9668576206580604,
+   "err_ns": 1317.1822955316861,
+   "speed_of_light_ns": 11416.507733333334,
+   "status": "pass",
+   "top_kernels": [
+    [
+     "void (anonymous namespace)::moe_bs1_kernel<false>(__nv_bf...",
+     61.6,
+     100.0
+    ]
+   ]
+  },
+  {
+   "key": "bs=16 load=decode_16 sharding=ep8",
+   "load": "decode 16",
+   "case": {
+    "bs": 16,
+    "load": "decode 16",
+    "seed": 6092339148299599050,
+    "sharding": "ep8",
+    "weight": 60
+   },
+   "weight": 60,
+   "median_ns": 146765.710274542,
+   "baseline_ns": 186560.00075861812,
+   "speedup": 1.2711416066439247,
+   "speedup_of_medians": 1.267666899323284,
+   "err_ns": 2315.5367202224347,
+   "speed_of_light_ns": 52519.458133333326,
+   "status": "pass",
+   "top_kernels": [
+    [
+     "void sglang::device::marlin_moe::Marlin<__nv_bfloat16, 56...",
+     113.6,
+     93.1
+    ],
+    [
+     "_post_norm_combine_kernel",
+     3.7,
+     3.0
+    ],
+    [
+     "_align_small_kernel",
+     2.7,
+     2.2
+    ],
+    [
+     "void sglang::act_and_mul_kernel<__nv_bfloat16, (sglang::A...",
+     2.0,
+     1.7
+    ]
+   ]
+  },
+  {
+   "key": "bs=32 load=decode_32 sharding=ep8",
+   "load": "decode 32",
+   "case": {
+    "bs": 32,
+    "load": "decode 32",
+    "seed": 6092343037040074857,
+    "sharding": "ep8",
+    "weight": 60
+   },
+   "weight": 60,
+   "median_ns": 199561.0955885029,
+   "baseline_ns": 205200.00159740448,
+   "speedup": 1.0282565396440249,
+   "speedup_of_medians": 1.026985906661313,
+   "err_ns": 2952.9943490428145,
+   "speed_of_light_ns": 70755.39626666668,
+   "status": "pass",
+   "top_kernels": [
+    [
+     "void sglang::device::marlin_moe::Marlin<__nv_bfloat16, 56...",
+     219.2,
+     95.2
+    ],
+    [
+     "_post_expert_norm_weighted_sum_kernel",
+     4.5,
+     2.0
+    ],
+    [
+     "_align_small_kernel",
+     4.1,
+     1.8
+    ],
+    [
+     "void sglang::act_and_mul_kernel<__nv_bfloat16, (sglang::A...",
+     2.5,
+     1.1
+    ]
+   ]
+  },
+  {
+   "key": "bs=8 load=verify_1 sharding=ep8",
+   "load": "verify 1",
+   "case": {
+    "bs": 8,
+    "load": "verify 1",
+    "seed": 6092346925780550665,
+    "sharding": "ep8",
+    "weight": 60
+   },
+   "weight": 60,
+   "median_ns": 107970.71117142233,
+   "baseline_ns": 143632.001709193,
+   "speedup": 1.3302867060044843,
+   "speedup_of_medians": 1.3342746931564933,
+   "err_ns": 1972.5307222443985,
+   "speed_of_light_ns": 37318.92906666667,
+   "status": "pass",
+   "top_kernels": [
+    [
+     "void sglang::device::marlin_moe::Marlin<__nv_bfloat16, 56...",
+     114.1,
+     93.5
+    ],
+    [
+     "_post_norm_combine_kernel",
+     3.3,
+     2.7
+    ],
+    [
+     "_align_small_kernel",
+     2.6,
+     2.1
+    ],
+    [
+     "void sglang::act_and_mul_kernel<__nv_bfloat16, (sglang::A...",
+     2.1,
+     1.7
+    ]
+   ]
+  },
+  {
+   "key": "bs=128 load=verify_16 sharding=ep8",
+   "load": "verify 16",
+   "case": {
+    "bs": 128,
+    "load": "verify 16",
+    "seed": 6092350814521026474,
+    "sharding": "ep8",
+    "weight": 60
+   },
+   "weight": 60,
+   "median_ns": 327287.36092103354,
+   "baseline_ns": 470832.0051431656,
+   "speedup": 1.4385890240862858,
+   "speedup_of_medians": 1.4474668323409992,
+   "err_ns": 2554.3529208969667,
+   "speed_of_light_ns": 101341.04746666664,
+   "status": "pass",
+   "top_kernels": [
+    [
+     "void sglang::device::marlin_moe::Marlin<__nv_bfloat16, 56...",
+     336.3,
+     96.3
+    ],
+    [
+     "_post_expert_norm_weighted_sum_kernel",
+     5.1,
+     1.4
+    ],
+    [
+     "void sglang::act_and_mul_kernel<__nv_bfloat16, (sglang::A...",
+     3.9,
+     1.1
+    ],
+    [
+     "_align_parallel_kernel",
+     3.9,
+     1.1
+    ]
+   ]
+  },
+  {
+   "key": "bs=256 load=verify_32 sharding=ep8",
+   "load": "verify 32",
+   "case": {
+    "bs": 256,
+    "load": "verify 32",
+    "seed": 6092354703261502284,
+    "sharding": "ep8",
+    "weight": 60
+   },
+   "weight": 60,
+   "median_ns": 467206.89809160045,
+   "baseline_ns": 628335.9820954502,
+   "speedup": 1.3448773651716477,
+   "speedup_of_medians": 1.3438846894658627,
+   "err_ns": 4175.372730965919,
+   "speed_of_light_ns": 108944.31573333332,
+   "status": "pass",
+   "top_kernels": [
+    [
+     "void sglang::device::marlin_moe::Marlin<__nv_bfloat16, 56...",
+     449.6,
+     96.1
+    ],
+    [
+     "_align_parallel_kernel",
+     6.8,
+     1.4
+    ],
+    [
+     "_post_expert_norm_weighted_sum_kernel",
+     6.0,
+     1.3
+    ],
+    [
+     "void sglang::act_and_mul_kernel<__nv_bfloat16, (sglang::A...",
+     5.7,
+     1.2
+    ]
+   ]
+  }
+ ],
+ "loads": [
+  {
+   "load": "decode 1",
+   "sglang_ns": 4614720.102399588,
+   "yours_ns": 2860202.2515634503,
+   "speedup": 1.613424400276966
+  },
+  {
+   "load": "decode 16",
+   "sglang_ns": 11193600.045517087,
+   "yours_ns": 8805942.61647252,
+   "speedup": 1.271141606643925
+  },
+  {
+   "load": "decode 32",
+   "sglang_ns": 12312000.095844269,
+   "yours_ns": 11973665.735310175,
+   "speedup": 1.0282565396440249
+  },
+  {
+   "load": "verify 1",
+   "sglang_ns": 8617920.10255158,
+   "yours_ns": 6478242.6702853395,
+   "speedup": 1.3302867060044845
+  },
+  {
+   "load": "verify 16",
+   "sglang_ns": 28249920.308589935,
+   "yours_ns": 19637241.655262012,
+   "speedup": 1.4385890240862858
+  },
+  {
+   "load": "verify 32",
+   "sglang_ns": 37700158.92572701,
+   "yours_ns": 28032413.885496028,
+   "speedup": 1.3448773651716477
+  }
+ ],
+ "attribution": {
+  "base_result": "muse_moe_w4a16/hypotheses/done/neutral/cuda-fused-moe-bs1-persistent-w13-silu-w2.result.json",
+  "noise": 0.0236,
+  "shapes": [
+   {
+    "key": "bs=1 load=decode_1 sharding=ep8",
+    "weight": 60,
+    "base_us": 50.93,
+    "hyp_us": 47.67,
+    "delta": 1.0289,
+    "verdict": "flat"
+   },
+   {
+    "key": "bs=16 load=decode_16 sharding=ep8",
+    "weight": 60,
+    "base_us": 145.32,
+    "hyp_us": 146.77,
+    "delta": 0.9936,
+    "verdict": "flat"
+   },
+   {
+    "key": "bs=32 load=decode_32 sharding=ep8",
+    "weight": 60,
+    "base_us": 200.28,
+    "hyp_us": 199.56,
+    "delta": 0.9951,
+    "verdict": "flat"
+   },
+   {
+    "key": "bs=8 load=verify_1 sharding=ep8",
+    "weight": 60,
+    "base_us": 104.72,
+    "hyp_us": 107.97,
+    "delta": 0.985,
+    "verdict": "flat"
+   },
+   {
+    "key": "bs=128 load=verify_16 sharding=ep8",
+    "weight": 60,
+    "base_us": 336.48,
+    "hyp_us": 327.29,
+    "delta": 1.0547,
+    "verdict": "gained"
+   },
+   {
+    "key": "bs=256 load=verify_32 sharding=ep8",
+    "weight": 60,
+    "base_us": 471.59,
+    "hyp_us": 467.21,
+    "delta": 1.0286,
+    "verdict": "flat"
+   }
+  ],
+  "summary": "gained on verify_16 verify_16",
+  "expected_hit": "4/6"
+ }
+}

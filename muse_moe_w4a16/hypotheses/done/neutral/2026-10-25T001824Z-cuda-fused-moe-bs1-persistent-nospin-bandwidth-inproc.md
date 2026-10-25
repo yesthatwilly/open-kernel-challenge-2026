@@ -58,10 +58,10 @@ controls_for: null
 rewrite_stage: 2
 replaces: _align_small + Marlin w13+w2 + act_and_mul + _post_norm_combine at num_tokens == 1
 review: proceed
-status: running
+status: done
 review_at: 2026-10-25T002132Z
 review_companions: null
-stage: dispatched
+stage: harvested
 claimed_at: 2026-10-25T002132Z
 base_sha: 0efab7bdfa79cfea6a430d51c5b7c038a7bd2af3
 base_blob: 62b00bb77cbc9e2fce8ed39dd25d87fb78503a5d
@@ -80,6 +80,13 @@ attempt_file: 2026-10-25T003453Z-check-cuda-fused-moe-bs1-persistent-nospin-band
 prepared_at: 2026-10-25T003453Z
 job: 7a6919420b724ee7
 dispatched_at: 2026-10-25T003500Z
+outcome: neutral
+verdict_detail: within-ci
+speedup: 1.3256680378665346
+speedup_ci: [1.3057830172985365, 1.3683051976855192]
+harvested_at: 2026-10-25T013619Z
+best_at_harvest: 1.3278240305297715
+promotion: null
 ---
 
 # cuda-fused-moe-bs1-persistent-nospin-bandwidth-inproc
@@ -202,3 +209,30 @@ Audited 2026-10-25 (opus). **Verdict: dispatch-with-fixes.**
 - Lint: OK with warnings (host syncs outside kernel_fn only). py_compile OK. __pycache__ removed.
 
 Residual risk: never compiled here (nvcc, torch accepting `9.0a`), and a sticky device fault in the in-process canary cannot fall back, so the first measurement must be `okc check`.
+
+## Result
+
+- job `7a6919420b724ee7` (check), status done, passed True, tests 5/5
+- speedup 1.3257x, 95% CI [1.3058, 1.3683], score 10144.69657248685 µs vs SGLang 13448.5 µs
+- best at harvest: {"speedup": 1.3278240305297715, "ci": [1.307906670071825, 1.3477413909877178], "job": "1947e3ec2abb4bdf"}; base result: muse_moe_w4a16/hypotheses/done/neutral/cuda-fused-moe-bs1-persistent-w13-silu-w2.result.json
+- **outcome: neutral** (within-ci)
+- files: `muse_moe_w4a16/hypotheses/done/neutral/cuda-fused-moe-bs1-persistent-nospin-bandwidth-inproc.result.json`, `muse_moe_w4a16/hypotheses/done/neutral/cuda-fused-moe-bs1-persistent-nospin-bandwidth-inproc.patch`; branch `hyp/muse_moe_w4a16/cuda-fused-moe-bs1-persistent-nospin-bandwidth-inproc`
+
+## Attribution
+
+| shape | w | base µs | hyp µs | delta | verdict |
+|---|---|---|---|---|---|
+| bs=1 load=decode_1 sharding=ep8 | 60 | 50.93 | 47.67 | 1.0289 | flat |
+| bs=16 load=decode_16 sharding=ep8 | 60 | 145.32 | 146.77 | 0.9936 | flat |
+| bs=32 load=decode_32 sharding=ep8 | 60 | 200.28 | 199.56 | 0.9951 | flat |
+| bs=8 load=verify_1 sharding=ep8 | 60 | 104.72 | 107.97 | 0.985 | flat |
+| bs=128 load=verify_16 sharding=ep8 | 60 | 336.48 | 327.29 | 1.0547 | gained |
+| bs=256 load=verify_32 sharding=ep8 | 60 | 471.59 | 467.21 | 1.0286 | flat |
+
+gained on verify_16 verify_16. Expected hit: 4/6. Noise ±2.4%.
+
+## Follow-ups
+
+- rewrite stage 2 of `_align_small + Marlin w13+w2 + act_and_mul + _post_norm_combine at num_tokens == 1`: read the replaced kernels' own us per shape (profile top_kernels) against the incumbent and the floor, and check which Milestone it reached. The next stage is `/hypothesize muse_moe_w4a16 "<what to fix or tune>" --kind rewrite --depends-on cuda-fused-moe-bs1-persistent-nospin-bandwidth-inproc --stage 3`; a slow or failed first cut is the expected start, not a do-not-retry.
+- within-ci: the change is not proven either way; a stacked hypothesis (`depends_on: cuda-fused-moe-bs1-persistent-nospin-bandwidth-inproc`) that adds a further change in the same area is the only way to learn more (identical code is never re-run).
+
