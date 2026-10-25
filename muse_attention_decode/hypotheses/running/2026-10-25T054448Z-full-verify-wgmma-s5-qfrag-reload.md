@@ -58,9 +58,18 @@ controls_for: null
 rewrite_stage: 5
 replaces: "full-layer verify at 1<batch<=64: FA3 main + prepare_varlen_num_blocks + FlashAttnFwdCombine + norm-gate (master paired FA3)"
 review: proceed
-status: queued
+status: running
 review_at: 2026-10-25T054737Z
 review_companions: null
+stage: claimed
+claimed_at: 2026-10-25T054738Z
+base_sha: 3ee2b893476879190a690392a3295a35afed11bf
+base_blob: 9bcf522b0dd23a0a8173046d2150473827122206
+branch: hyp/muse_attention_decode/full-verify-wgmma-s5-qfrag-reload
+worktree: .worktrees/muse_attention_decode/full-verify-wgmma-s5-qfrag-reload
+mode: null
+restack_of: null
+stale_base: true
 ---
 
 # full-verify-wgmma-s5-qfrag-reload
