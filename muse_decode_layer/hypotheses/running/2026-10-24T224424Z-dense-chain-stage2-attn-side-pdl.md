@@ -70,9 +70,18 @@ controls_for: null
 rewrite_stage: 2
 replaces: "T<=32 attention side: qkv nvjet GEMM + splitKreduce, FusedQKNorm, k/v divide + FP8 casts, store_cache, q FP8 cast or paired pad copies, paired unpad copies, FusedRMSNormGate, o nvjet GEMM"
 review: proceed
-status: queued
+status: running
 review_at: 2026-10-25T003616Z
 review_companions: null
+stage: claimed
+claimed_at: 2026-10-25T003624Z
+base_sha: 6a839f514cc7024729ac75ac28402e894091c0bd
+base_blob: 4da94677234faaa06b42b5ced541db8961fd6f34
+branch: hyp/muse_decode_layer/dense-chain-stage2-attn-side-pdl
+worktree: .worktrees/muse_decode_layer/dense-chain-stage2-attn-side-pdl
+mode: null
+restack_of: null
+stale_base: null
 ---
 
 # dense-chain-stage2-attn-side-pdl
