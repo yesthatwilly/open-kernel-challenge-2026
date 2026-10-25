@@ -108,13 +108,15 @@ base_sha: 18e37900783719c41373a7e04963ba5b66578579
 base_blob: a8bb42ac483318e9fbc84bc7826a27b7a704d1fb
 branch: hyp/muse_bf16_proj/bf16-verify-streamk-cutlass-wgmma-rewrite
 worktree: .worktrees/muse_bf16_proj/bf16-verify-streamk-cutlass-wgmma-rewrite
-mode: null
+mode: check
 implemented_at: 2026-10-24T175038Z
 impl_commit: e4182610b1552724381a1f2451f6bcd56b7dc1ed
 submission_sha256: 5977ea3f9abd58bf0a4c738dbb70ea598a145f6f80aef68c6f21db4e819ad6a0
 norm_sha256: a5bc01680872a0370a392f6e64cbbc8158eed8bed14f3d2d96ed82f8d3ee7d98
 submission_blob: 7161897671cd56878ce6338f47c57b9b0dd9b63c
 lint_warnings: 4
+attempt_file: 2026-10-25T001016Z-check-bf16-verify-streamk-cutlass-wgmma-rewrite.md
+prepared_at: 2026-10-25T001016Z
 ---
 
 # bf16-verify-streamk-cutlass-wgmma-rewrite
