@@ -54,9 +54,18 @@ priority: 1
 kind: primary
 controls_for: null
 review: proceed
-status: queued
+status: running
 review_at: 2026-10-25T150343Z
 review_companions: null
+stage: claimed
+claimed_at: 2026-10-25T150343Z
+base_sha: 2f268b5931c7c758c5178f3bb152d80688ca9d95
+base_blob: 07cda658e21f2eb25a9dd1f50ac5202ad5985831
+branch: hyp/muse_decode_layer/dl3-piece-a-gate-stride-check-fix
+worktree: .worktrees/muse_decode_layer/dl3-piece-a-gate-stride-check-fix
+mode: null
+restack_of: null
+stale_base: null
 ---
 
 # dl3-piece-a-gate-stride-check-fix
