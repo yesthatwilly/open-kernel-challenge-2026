@@ -53,8 +53,10 @@ kind: rewrite
 controls_for: null
 rewrite_stage: 1
 replaces: Marlin w13+w2 (moe_wna16_marlin_gemm x2) at bs<=32
-review: required
+review: proceed
 status: queued
+review_at: 2026-10-25T002203Z
+review_companions: null
 ---
 
 # cuda-nvfp4-swapab-mma-persistent-small-m-inproc
@@ -85,3 +87,36 @@ shape (profile top_kernels) against the incumbent and the speed-of-light floor, 
 2. at or below the incumbent kernels' time on the target shapes;
 3. within ~1.5x of the floor on the target shapes, and the headline CI clears 1.0 (promotable).
 The next stage is minted with `--kind rewrite --depends-on <this slug> --stage N+1`.
+
+## Adversarial review
+
+Reviewed 2026-10-25T002203Z by an adversarial subagent (model opus).
+
+**Verdict: proceed.** Proceed as an okc check. This is a sound stage-1b make-it-run step for a rewrite whose design was already reviewed and emulated exactly offline. Its real value is localizing the sticky 715 trap, and it has no rules problem, but the removal of createpolicy is a guess, not a diagnosed cause.
+
+### Justification
+The design is unchanged from the reviewed stage 1. The target is the Marlin pair, which takes 88-95% of every bs<=32 shape at roughly 1.2-2.2 TB/s against floors of 11.4, 37.3, 52.5 and 70.8 us, so the headroom is real and the floors are physically reachable. The weight is dequantized in registers with an exact bit trick feeding mma.sync m16n8k16 (swap-AB). A persistent grid of 132 runs a flat cp.async ring with about 54 KB in flight per SM, and split-K uses tickets that never spin. The offline numpy emulation confirmed the fragment, nibble, swizzle and split-K mapping to about 1e-15. The archived log shows the build is healthy: 51.2 s compile, 80-128 regs, no local memory, smem 88-136 KB with attributes set. It also shows the H200 (sm_90) trapped with CUDA_ERROR_ILLEGAL_INSTRUCTION on the first launch, and the sticky error killed prepare.
+
+I re-read the archived kernel for the usual causes of 715. Every .aligned instruction (ldmatrix.sync.aligned, mma.sync.aligned, bar.sync) sits under CTA-uniform control flow: the bx>=total return, the loop over N, the uniform e<0 and last_s continues, and `if (tid < S_BYTES/16)` guards only a cp.async, which is not .aligned. So warp divergence is not an obvious culprit. cvt.rn.f16x2.e4m3x2 (sm_89+), fma.rn.bf16x2, cp.async.ca with src_bytes and createpolicy.fractional are all legal on sm_90.
+
+WEAKEST LINK: change (2), replacing the cache_hint and createpolicy pair with plain cp.async.cg, is a plausible but undiagnosed guess. If it is not the cause, the run traps again and costs a check. Its outcome is still readable, though. The synchronize+print canaries separate an earlier async error from a trap in w13+silu or in w2, and -lineinfo is in place for any later in-process diagnosis.
+
+The expected directions agree with TASK: four faster small-M loads and bs=128/256 untouched as in-run controls. The incumbent figures in the spec (44.6/105.8/116.0/187.6 us) are stale against the current FINDINGS profile, where the Marlin rows are 44.7, 114.0, 176.1 and 207.5 us at bs 1, 8, 16 and 32. Note that the bs=16 Marlin row (176.1 us) is larger than that shape's scored time (148.4 us), so profile rows are not on the scored-time scale. Judge M2 kernel row against kernel row from master's profile (job 1947e3ec2abb4bdf), never against the headline or the spec's numbers.
+
+### Confounders on the current kernel
+- align-parallel-per-expert-verify (current master): it touches only num_tokens > 32, which this rewrite leaves to Marlin byte for byte. There is no interaction on the target shapes, but the rebase must keep master's restructured _align_self_check (two-smaller bsm list at >=128) and add the patch's bsm_of=_cuda_bsm warm-up and check at BSM 16/32 on top without dropping either. A merge slip here would show up as an align failure or as JIT on capture, not as a kernel effect.
+- triton-map-align-on-block-m-restack / triton-map-align-small-m-port: _align_small gets new BSM values (16 at M 9-16, 32 at M 17-32), which changes its Triton specialization and its 2.7-4.4 us row. The effect is small and attributable; read the _align_small row separately from the replaced-kernel rows.
+- post-expert-norm-triton-small-m: it consumes cache3 unchanged, and the w2 epilogue writes y at the flat route index with remote and sentinel rows unwritten, exactly as Marlin is_ep does. This is not a confound unless the epilogue indexing is wrong, and the self-check against Marlin would catch that.
+- marlin-block-m-two-smaller-on-postnorm: affects only bs>=128, which acts as the in-run control here. No interaction.
+- sglang-marlin-path-parity: this is the incumbent being replaced and the self-check's reference. The Marlin bank is kept for M>32 and for the fallback, so it is not a confound.
+
+### Interference and A/B needs
+No companions. This is kind: rewrite, and its outcome is a correctness and runs-at-all milestone (M1), judged on its own kernel rows in top_kernels. No landed hypothesis shares the replaced launches in a way a revert or tune would isolate, and bs>=128 is the built-in control. The one tempting companion is a parallel bisect variant (for example also swapping the cp.async.ca src_bytes zero-fill for explicit zero stores, or ldmatrix.x4 for x2), which would halve the round trips if this run traps again. It is not warranted yet, for two reasons: the canary logging in this run already says which kernel traps, and the next suspect is better chosen from that evidence. If it traps again, mint stage 1c from the log rather than guessing two suspects at once now.
+
+### Open questions
+- Gating-criterion false negative: torch's cpp_extension drops its own -gencode flags when any user cflag contains 'arch', so with -arch=sm_90a only sm_90a is built. However, cudaFuncGetAttributes binaryVersion reports 90 for both sm_90 and sm_90a, and the nvcc flag list is not observable at run time beyond what the code passes. Implement the 'anything else turns the path OFF' check as capability == (9,0) plus binaryVersion == 90 only. Do not gate on something you cannot observe, or a correct kernel gets disabled and the run measures master.
+- The sticky-error reality: a second 715 still crashes prepare whatever the 'PASSED else MARLIN' logic says. The fallback only helps for non-sticky failures, such as a numerical self-check mismatch. Make sure every print is flushed (print(..., flush=True)) before each canary launch, so the log tail shows exactly which launch died.
+- If it traps again, the next suspects in order are: (a) cp.async.ca with src_bytes=0 on the sentinel path (replace with st.shared zeros, or point it at a valid row and multiply by zero); (b) the ldmatrix.x4 address or swizzle (check 16 B alignment of slab rows and SLAB_ROW); (c) the e4m3x2 cvt inline asm with .reg .b16 declared inside a braces scope that ptxas might duplicate; (d) a mismatch between the dynamic smem request and the cudaFuncSetAttribute call for the instantiation actually launched (set and launch must use the same NT and GATED template). A W-only canary (GATED=false, NT=1, SK=1, one item) would be the minimal repro to mint as stage 1c.
+- Harvest: read the log tail first. 'PATH CHOSEN = MARLIN' or a missing 'SELF-CHECK PASSED' means the run measured master. Compare replaced-kernel rows with master's profile (job 1947e3ec2abb4bdf) Marlin and act_and_mul rows per shape, not with the stale figures in the spec.
+- Base drift: two in-flight hypotheses (stack-onewarp-hoisted-dispatchcombine and -from17) change _align_small at bs<=8 and the small-M post-norm combine. If either is promoted before this is built, re-run the rebase so the CUDA path's align warm-up and self-check cover whichever align kernel master uses at BSM 8/16/32.
+
