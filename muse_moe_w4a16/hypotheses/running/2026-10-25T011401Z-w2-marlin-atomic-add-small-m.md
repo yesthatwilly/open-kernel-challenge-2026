@@ -52,7 +52,7 @@ base_sha: 0ad8ffa797c1d65f94a31d3ee5951c1a36987746
 base_blob: 108d36e9f2266fc88531dd6ff0329a847c882013
 branch: hyp/muse_moe_w4a16/w2-marlin-atomic-add-small-m
 worktree: .worktrees/muse_moe_w4a16/w2-marlin-atomic-add-small-m
-mode: null
+mode: check
 restack_of: null
 stale_base: null
 implemented_at: 2026-10-25T012018Z
@@ -61,6 +61,8 @@ submission_sha256: 121fdb1d41669ab68551399843439d591ec20709eec731ca8288e779cf6fc
 norm_sha256: cdac564d58950b4c0c15329c436088da4fcf19ae5c8ed13f972448ba0b7f5630
 submission_blob: 60dfe35d5417d9c0f89067ff313efdc2c41d03a2
 lint_warnings: 11
+attempt_file: 2026-10-25T012018Z-check-w2-marlin-atomic-add-small-m.md
+prepared_at: 2026-10-25T012018Z
 ---
 
 # w2-marlin-atomic-add-small-m
