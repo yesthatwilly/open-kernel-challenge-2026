@@ -66,10 +66,10 @@ controls_for: null
 rewrite_stage: 2
 replaces: Marlin w13+w2 (moe_wna16_marlin_gemm x2) + silu_and_mul at num_tokens >= 128
 review: proceed
-status: running
+status: done
 review_at: 2026-10-25T012041Z
 review_companions: null
-stage: dispatched
+stage: harvested
 claimed_at: 2026-10-25T012041Z
 base_sha: c89b01f6d4eeee26bad681a66af3e272ffc51f07
 base_blob: f09390b45e1e1af24f0ccc3645988b81f97b2bf8
@@ -88,6 +88,13 @@ attempt_file: 2026-10-25T013639Z-check-cuda-nvfp4-wgmma-rega-grouped-s2-finite-f
 prepared_at: 2026-10-25T013639Z
 job: 583a73418fbf4d01
 dispatched_at: 2026-10-25T013719Z
+outcome: neutral
+verdict_detail: unproven-vs-best
+speedup: 1.3307318785737954
+speedup_ci: [1.3107709003951884, 1.3506928567524021]
+harvested_at: 2026-10-25T034137Z
+best_at_harvest: 1.3278240305297715
+promotion: null
 ---
 
 # cuda-nvfp4-wgmma-rega-grouped-s2-finite-fix
@@ -201,3 +208,30 @@ Fixes applied (submission.py only):
 okc_lint: OK with warnings (prepare()-time host syncs only). py_compile ok. __pycache__ removed.
 
 Residual risk: a sticky device fault in any diagnostic launch still kills prepare, as in stage 1b. Serialization can only be confirmed if ptxas reports it as a warning or error.
+
+## Result
+
+- job `583a73418fbf4d01` (check), status done, passed True, tests 5/5
+- speedup 1.3307x, 95% CI [1.3108, 1.3507], score 10106.092907621149 µs vs SGLang 13448.5 µs
+- best at harvest: {"speedup": 1.3278240305297715, "ci": [1.307906670071825, 1.3477413909877178], "job": "1947e3ec2abb4bdf"}; base result: muse_moe_w4a16/hypotheses/done/neutral/cuda-nvfp4-wgmma-rega-grouped-sm90a-rebuild-inproc.result.json
+- **outcome: neutral** (unproven-vs-best)
+- files: `muse_moe_w4a16/hypotheses/done/neutral/cuda-nvfp4-wgmma-rega-grouped-s2-finite-fix.result.json`, `muse_moe_w4a16/hypotheses/done/neutral/cuda-nvfp4-wgmma-rega-grouped-s2-finite-fix.patch`; branch `hyp/muse_moe_w4a16/cuda-nvfp4-wgmma-rega-grouped-s2-finite-fix`
+
+## Attribution
+
+| shape | w | base µs | hyp µs | delta | verdict |
+|---|---|---|---|---|---|
+| bs=1 load=decode_1 sharding=ep8 | 60 | 48.69 | 49.19 | 1.0008 | flat |
+| bs=16 load=decode_16 sharding=ep8 | 60 | 146.95 | 152.25 | 0.9951 | flat |
+| bs=32 load=decode_32 sharding=ep8 | 60 | 207.02 | 198.22 | 0.9998 | flat |
+| bs=8 load=verify_1 sharding=ep8 | 60 | 114.26 | 107.39 | 1.0047 | flat |
+| bs=128 load=verify_16 sharding=ep8 | 60 | 322.42 | 323.73 | 1.0048 | flat |
+| bs=256 load=verify_32 sharding=ep8 | 60 | 463.3 | 463.57 | 0.9971 | flat |
+
+no shape moved outside noise. Expected hit: 4/6. Noise ±1.5%.
+
+## Follow-ups
+
+- rewrite stage 2 of `Marlin w13+w2 (moe_wna16_marlin_gemm x2) + silu_and_mul at num_tokens >= 128`: read the replaced kernels' own us per shape (profile top_kernels) against the incumbent and the floor, and check which Milestone it reached. The next stage is `/hypothesize muse_moe_w4a16 "<what to fix or tune>" --kind rewrite --depends-on cuda-nvfp4-wgmma-rega-grouped-s2-finite-fix --stage 3`; a slow or failed first cut is the expected start, not a do-not-retry.
+- unproven-vs-best: the change is not proven either way; a stacked hypothesis (`depends_on: cuda-nvfp4-wgmma-rega-grouped-s2-finite-fix`) that adds a further change in the same area is the only way to learn more (identical code is never re-run).
+

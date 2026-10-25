@@ -1,0 +1,837 @@
+diff --git a/muse_moe_w4a16/submission.py b/muse_moe_w4a16/submission.py
+index f09390b..1ae7e9c 100644
+--- a/muse_moe_w4a16/submission.py
++++ b/muse_moe_w4a16/submission.py
+@@ -40,6 +40,14 @@ every wgmma / setmaxnreg body is guarded by __CUDA_ARCH_FEAT_SM90_ALL (else erro
+ weight bulk copy carries no createpolicy / L2::cache_hint operand, and prepare() runs an in-process
+ traced canary launch before the full self-check.
+ 
++Stage 2 (hypothesis cuda-nvfp4-wgmma-rega-grouped-s2-finite-fix, diagnostic first): the canary is a
++non-faulting diagnostic. Buffers are pre-filled with a bf16 sentinel (-12288), gather, w13+silu and
++w2 (also fed Marlin's cache2) are judged separately against Marlin per launch, N bucket and row, and
++the path is enabled only if BOTH kernels pass rel-L2, never on finiteness. prepare() also builds a
++-Xptxas -Werror probe to surface ptxas warnings, times each kernel against Marlin, and prints one
++compact summary block last. The kernel itself is unchanged (an offline numpy emulation confirmed the
++retile, A fragment, scale, expect_tx and stmatrix epilogue mappings).
++
+ Differs from SGLang: the expert all-reduce is not run."""
+ 
+ from typing import TypedDict
+@@ -1097,17 +1105,44 @@ WG_GENCODE = "-gencode=arch=compute_90a,code=sm_90a"
+ WG_CUDA_CFLAGS = ["-O3", "-lineinfo", WG_GENCODE]
+ 
+ 
+-def _wg_build():
+-    """Compile the wgmma module once (prepare only, never during capture); None on failure.
++WG_BUILD_INFO = {}  # filled by _wg_build, read by the summary block
++
++
++def _wg_ptxas_warnings(text):
++    """Unique ptxas diagnostic lines (function names cut) in a build's captured output, at most 4,
++    'serialized' ones first. Under -Werror ptxas may print a promoted warning as 'ptxas error', and
++    the wgmma serialization note can be info-level (C75xx), so all three forms are matched."""
++    seen, out = set(), []
++    for line in (text or "").splitlines():
++        s = line.strip()
++        if "ptxas" in s and ("arning" in s or "rror" in s or "serialized" in s or "Performance" in s) \
++                and "aborted" not in s and "fatal" not in s:
++            key = s.split(" in function")[0].split(" in the function")[0]
++            if key not in seen:
++                seen.add(key)
++                out.append(key[:220])
++    out.sort(key=lambda w: "serialized" not in w)
++    return out[:4]
++
++
++def _wg_build(probe=False):
++    """Compile the wgmma module (prepare only, never during capture): (ext or None, error text).
+ 
+     sm_90a only (hypothesis cuda-nvfp4-wgmma-rega-grouped-sm90a-rebuild-inproc): cpp_extension's
+     JIT path appends -gencode flags from TORCH_CUDA_ARCH_LIST (else from the device, i.e. a plain
+     compute_90 pass that cannot assemble wgmma / setmaxnreg), so the list is set to 9.0a for the
+     build and restored after. If this torch rejects '9.0a', the build runs with the default list:
+     the __CUDA_ARCH_FEAT_SM90_ALL guards keep the compute_90 pass assembling, and error word 2 after
+-    the canary turns the path off if that image is the one that loads."""
++    the diagnostic turns the path off if that image is the one that loads.
++
++    probe=True adds -Xptxas -Werror under a separate extension name: load_inline discards a
++    successful build's stderr, but a failed build's exception carries it, so a ptxas warning (the
++    wgmma 'serialized' one) becomes visible in-process. A passing probe build is used as is."""
+     t0 = time.perf_counter()
+     prev = os.environ.get("TORCH_CUDA_ARCH_LIST")
++    flags = list(WG_CUDA_CFLAGS) + (["-Xptxas", "-Werror"] if probe else [])
++    name = WG_EXT_NAME + ("_probe" if probe else "")
++    ext, err_text = None, ""
+     try:
+         from torch.utils import cpp_extension
+         from torch.utils.cpp_extension import load_inline
+@@ -1127,26 +1162,30 @@ def _wg_build():
+                 arch_flags = cpp_extension._get_cuda_arch_flags()
+             except Exception as e2:
+                 arch_flags = [f"<unknown: {e2!r}>"]
++        WG_BUILD_INFO["arch"] = arch_flags
+         print(f"{WG_TAG} build arch flags: TORCH_CUDA_ARCH_LIST={os.environ.get('TORCH_CUDA_ARCH_LIST')!r} -> "
+-              f"{arch_flags}; extra_cuda_cflags {WG_CUDA_CFLAGS}", flush=True)
++              f"{arch_flags}; extra_cuda_cflags {flags}", flush=True)
+         ext = load_inline(
+-            name=WG_EXT_NAME,
++            name=name,
+             cpp_sources=_WG_CPP,
+             cuda_sources=_wg_src(),
+             functions=["wg_init", "wg_set_maps", "wg_gather", "wg_gemm"],
+-            extra_cuda_cflags=WG_CUDA_CFLAGS,
++            extra_cuda_cflags=flags,
+             verbose=False,
+         )
+     except Exception as e:  # keep the master path if the build fails
+-        print(f"{WG_TAG} load_inline failed after {time.perf_counter() - t0:.1f}s, Marlin kept: {e!r}", flush=True)
+-        return None
++        err_text = str(e)
++        ext = None
++        print(f"{WG_TAG} load_inline{' probe' if probe else ''} failed after {time.perf_counter() - t0:.1f}s: "
++              f"{err_text[:240]!r}", flush=True)
+     finally:
+         if prev is None:
+             os.environ.pop("TORCH_CUDA_ARCH_LIST", None)
+         else:
+             os.environ["TORCH_CUDA_ARCH_LIST"] = prev
+-    print(f"{WG_TAG} load_inline compiled in {time.perf_counter() - t0:.1f}s", flush=True)
+-    return ext
++    if ext is not None:
++        print(f"{WG_TAG} load_inline{' probe' if probe else ''} compiled in {time.perf_counter() - t0:.1f}s", flush=True)
++    return ext, err_text
+ 
+ 
+ def _wg_nibbles(packed):
+@@ -1316,19 +1355,329 @@ def _moe_wgmma(x, topk_ids, topk_weights, bank, state, trace=None):
+     return out, local_ids, sorted_ids, block_experts, n_padded, y
+ 
+ 
++WG_SENTINEL = -12288.0  # bf16-exact (-3 * 2^12): "row never written" must differ from "computed non-finite"
++WG_TOL = 1e-2           # per-kernel rel-L2 against Marlin (pass/fail is this, never finiteness)
++WG_TIMING_DEADLINE_S = 255.0  # skip the per-kernel timing past this many seconds into prepare()
++
++
++def _wg_rel(a, b):
++    """Aggregate rel-L2 |a - b| / |b| over all rows (inf if a has a non-finite entry)."""
++    a, b = a.float().double(), b.float().double()
++    if not bool(torch.isfinite(a).all()):
++        return float("inf")
++    return float((a - b).norm() / b.norm().clamp_min(1e-300))
++
++
++def _wg_bucket_of_blocks(nb):
++    return min(3, max(0, (nb - 1).bit_length()))
++
++
++def _wg_cmp(new, ref, loc, bn, bucket_of):
++    """Judge one tensor against Marlin on the local routes `loc` (long [n]). new / ref are [routes,
++    W] bf16 indexed by route; new was pre-filled with WG_SENTINEL, so a row still equal to it was
++    never written. bucket_of [n]: the N bucket (0..3) of each route's chunk, -1 if it has no slot.
++    Pass/fail is rel_all (all rows; a sentinel or non-finite row makes it large or inf)."""
++    n = int(loc.numel())
++    res = {"n": n, "unw": 0, "part": 0, "nonf": 0, "nonf_elems": 0, "rel_all": 0.0, "rel_fin": float("nan"),
++           "max_row": float("nan"), "tiles": [], "first": None, "bad_rows": [], "by_bucket": {}, "ref_bad": 0}
++    if n == 0:
++        return res
++    a = new[loc]
++    af = a.float()
++    b = ref[loc].float().double()
++    fin = torch.isfinite(af)
++    sent = a == WG_SENTINEL
++    unw = sent.all(-1)
++    part = sent.any(-1) & ~unw
++    nonf = ~fin.all(-1) & ~unw
++    bad = unw | part | nonf
++    good = ~bad
++    d2 = (af.double() - b).pow(2)
++    d2 = torch.where(fin, d2, torch.full_like(d2, float("inf")))
++    b2 = b.pow(2)
++    rn, rd = d2.sum(-1), b2.sum(-1)
++    res.update(unw=int(unw.sum()), part=int(part.sum()), nonf=int(nonf.sum()), nonf_elems=int((~fin).sum()),
++               ref_bad=int((~torch.isfinite(b)).sum()))
++    res["rel_all"] = float((rn.sum() / rd.sum().clamp_min(1e-300)).sqrt())
++    if bool(good.any()):
++        res["rel_fin"] = float((rn[good].sum() / rd[good].sum().clamp_min(1e-300)).sqrt())
++        res["max_row"] = float((rn[good].sqrt() / rd[good].sqrt().clamp_min(1e-30)).max())
++    t = af.shape[1] // bn
++    tn, td = d2.view(n, t, bn).sum(-1), b2.view(n, t, bn).sum(-1)
++    gm, zt = good[:, None], torch.zeros_like(tn)
++    t_rel = torch.where(gm, tn, zt).sum(0).sqrt() / torch.where(gm, td, zt).sum(0).sqrt().clamp_min(1e-30)
++    t_nf = (~fin.view(n, t, bn).all(-1) & ~unw[:, None]).sum(0)
++    score = t_nf.double() * 1e9 + torch.nan_to_num(t_rel, nan=0.0, posinf=1e18)
++    res["tiles"] = [(i, int(t_nf[i]), float(t_rel[i])) for i in torch.topk(score, min(3, t)).indices.tolist()]
++    if bool(bad.any()):
++        idx = bad.nonzero().flatten()[:4].tolist()
++        for k, i in enumerate(idx):
++            row = a[i]
++            cm = (~torch.isfinite(row.float())) | (row == WG_SENTINEL)
++            col = int(cm.nonzero()[0]) if bool(cm.any()) else -1
++            kind = "unwritten" if bool(unw[i]) else ("partial" if bool(part[i]) else "nonfinite")
++            route = int(loc[i])
++            item = (route, route // TOP_K, col, col // bn if col >= 0 else -1, kind, int(bucket_of[i]))
++            if k == 0:
++                res["first"] = item
++            res["bad_rows"].append(item)
++    for bk in (-1, 0, 1, 2, 3):
++        m = bucket_of == bk
++        c = int(m.sum())
++        if c:
++            res["by_bucket"][bk] = (c, int((unw & m).sum()), int(((part | nonf) & m).sum()),
++                                    float((rn[m].sum() / rd[m].sum().clamp_min(1e-300)).sqrt()))
++    return res
++
++
++def _wg_pass(r):
++    return r["n"] == 0 or (r["rel_all"] <= WG_TOL and r["ref_bad"] == 0)
++
++
++def _wg_fmt(r):
++    s = (f"n {r['n']} unwritten {r['unw']} partial {r['part']} nonfinite-rows {r['nonf']} "
++         f"(elems {r['nonf_elems']}) rel-L2 {r['rel_all']:.2e} [finite rows {r['rel_fin']:.2e}, "
++         f"max row {r['max_row']:.2e}]")
++    return s
++
++
++def _wg_buckets_text(r):
++    names = {-1: "noslot", 0: "N16", 1: "N32", 2: "N64", 3: "N128"}
++    return " ".join(f"{names[b]}:n{v[0]}/unw{v[1]}/nf{v[2]}/rel{v[3]:.1e}" for b, v in sorted(r["by_bucket"].items()))
++
++
++def _wg_print_cmp(tag, what, r):
++    print(f"{WG_TAG}   [{tag}] {what}: {'PASS' if _wg_pass(r) else 'FAIL'} {_wg_fmt(r)}", flush=True)
++    if r["by_bucket"]:
++        print(f"{WG_TAG}   [{tag}] {what} per N bucket: {_wg_buckets_text(r)}", flush=True)
++    if r["first"] is not None:
++        print(f"{WG_TAG}   [{tag}] {what} first bad (route, token, col, N-tile, kind, bucket) {r['first']}; "
++              f"bad rows {r['bad_rows']}", flush=True)
++    if r["tiles"]:
++        print(f"{WG_TAG}   [{tag}] {what} worst N-tiles (tile, nonfinite rows, rel-L2) {r['tiles']}", flush=True)
++
++
++def _wg_eval_case(weights, bank, state, device, x, topk_ids, tw, tag, verbose):
++    """One routing, judged kernel by kernel against Marlin, never stopping at the first bad value
++    (prepare() only). Buffers are pre-filled with WG_SENTINEL. Steps, each synced:
++      gather -> xs rows exact vs x; w13+silu -> h per local route vs Marlin cache2;
++      w2 fed its OWN h -> y; w2 fed MARLIN's cache2 (so w2 is judged independently of w13) -> y vs
++      Marlin y; the fused norm with sentinel vs NaN remote rows (does it skip them?); finally the
++      production _moe_wgmma output vs Marlin's out. Returns a dict of verdicts and tensors."""
++    ext, grid, err = state["wg_ext"], state["wg_grid"], state["wg_err"]
++    count = bank["count"]
++    wb = state["wg_banks"][(bank["start"], count)]
++    tokens, hidden = x.shape
++    inter = bank["size_n"]
++    routes = tokens * TOP_K
++    sent = WG_SENTINEL
++    err.zero_()
++    ev = {"tag": tag, "tokens": tokens}
++
++    def step(what, fn):
++        if verbose:
++            print(f"{WG_TAG}     [{tag}] launching {what}", flush=True)
++        fn()
++        torch.cuda.synchronize()
++        if verbose:
++            print(f"{WG_TAG}     [{tag}] done {what}; device error word {int(err.item())}", flush=True)
++
++    if verbose:
++        print(f"{WG_TAG}     [{tag}] launching Marlin reference + expert_map gather + moe_align_block_size",
++              flush=True)
++    r_out, r_local, r_c2, r_y = _moe_marlin(x, topk_ids, tw, bank, state)
++    r_y = r_y.reshape(-1, hidden)
++    tw32 = tw.to(torch.float32).contiguous()
++    local_ids = bank["expert_map"][topk_ids.to(torch.int32)].contiguous()
++    sorted_ids, block_experts, n_padded = moe_align_block_size(local_ids, WG_BSM, count)
++    torch.cuda.synchronize()
++    if verbose:
++        print(f"{WG_TAG}     [{tag}] done Marlin reference + align", flush=True)
++    used = int(n_padded.item())
++    sid = sorted_ids[:used].long()
++    blk_e = block_experts[torch.arange(used, device=device) // WG_BSM]
++    blk_valid = (blk_e >= 0) & (blk_e < count)
++    real = (sid < routes) & blk_valid
++    slots = torch.arange(used, device=device)
++    slot_of = torch.full((routes,), -1, dtype=torch.long, device=device)
++    slot_of[sid[real]] = slots[real]
++    chunks = _wg_chunks(block_experts[:used // WG_BSM].tolist(), count)
++    blk_bucket = torch.full((used // WG_BSM + 1,), -1, dtype=torch.long, device=device)
++    for fb, nbk, _e in chunks:
++        blk_bucket[fb:fb + nbk] = _wg_bucket_of_blocks(nbk)
++    loc = (r_local.reshape(-1) >= 0).nonzero().flatten()
++    so = slot_of[loc]
++    bucket_of = torch.where(so >= 0, blk_bucket[so.clamp_min(0) // WG_BSM], torch.full_like(so, -1))
++    ev["n_local"] = int(loc.numel())
++    ev["same_ids"] = bool(torch.equal(local_ids, r_local))
++    ev["covered"] = int(real.sum()) == ev["n_local"]
++    ev["chunks"] = len(chunks)
++    ev["hist"] = {nb: sum(1 for c in chunks if WG_BUCKETS[_wg_bucket_of_blocks(c[1])] == nb) for nb in WG_BUCKETS}
++    ev["multi_chunk"] = len(chunks) > len({c[2] for c in chunks})
++    ev["buckets_seen"] = set(int(v) for v in bucket_of.unique().tolist() if v >= 0)
++    ev["used"] = used
++
++    xs_buf, hs_buf = state["wg_xs"], state["wg_hs"]
++    xs_buf.fill_(sent)
++    hs_buf.fill_(sent)
++    cache3a = torch.full((routes, hidden), sent, dtype=torch.bfloat16, device=device)
++    step("wg_gather_kernel", lambda: ext.wg_gather(x, sorted_ids, block_experts, n_padded, routes, count, xs_buf))
++    xs = xs_buf[:used]
++    exp_rows = x[(sid.clamp(0, routes - 1) >> 3)]
++    pad_rows = blk_valid & ~real
++    ev["gather"] = (int((~(xs[real] == exp_rows[real]).all(-1)).sum()), int(real.sum()),
++                    int((xs[pad_rows] != 0).any(-1).sum()), int(pad_rows.sum()),
++                    int((xs[~blk_valid] != sent).any(-1).sum()), int((~blk_valid).sum()))
++    del exp_rows, xs
++    step("wg_kernel<w13+silu>", lambda: ext.wg_gemm(0, wb["q13"], wb["gs13"], sorted_ids, block_experts, n_padded,
++                                                    routes, inter // 64, hidden, hs_buf, grid, err))
++    h_new = torch.full((routes, inter), sent, dtype=torch.bfloat16, device=device)
++    h_new[sid[real]] = hs_buf[:used][real]
++    ev["h"] = _wg_cmp(h_new, r_c2, loc, 64, bucket_of)
++    step("wg_kernel<w2> on its own h", lambda: ext.wg_gemm(1, wb["q2"], wb["gs2"], sorted_ids, block_experts, n_padded,
++                                                            routes, hidden // 128, inter, cache3a, grid, err))
++    ev["y_own"] = _wg_cmp(cache3a, r_y, loc, 128, bucket_of)
++    # w2 judged alone: its h input is Marlin's cache2 at the sorted slots (pad slots of local blocks: 0).
++    hs_buf.fill_(sent)
++    hs_buf[:used][real] = r_c2[sid[real]]
++    hs_buf[:used][pad_rows] = 0
++    cache3b = torch.full((routes, hidden), sent, dtype=torch.bfloat16, device=device)
++    step("wg_kernel<w2> fed Marlin cache2", lambda: ext.wg_gemm(1, wb["q2"], wb["gs2"], sorted_ids, block_experts,
++                                                                n_padded, routes, hidden // 128, inter, cache3b, grid,
++                                                                err))
++    ev["y2"] = _wg_cmp(cache3b, r_y, loc, 128, bucket_of)
++    # Does the fused norm skip remote slots? NaN them and compare with the sentinel-filled run.
++    if verbose:
++        print(f"{WG_TAG}     [{tag}] launching fused post-expert norm x2 (sentinel / NaN remote rows)", flush=True)
++    out_b = fused_post_expert_norm_weighted_sum(
++        cache3b.view(tokens, TOP_K, hidden), tw32, norm_weight=state["norm_w"], eps=POST_NORM_EPS,
++        weight_first=True, slot_expert_ids=local_ids)
++    c_nan = cache3b.clone()
++    c_nan[(r_local.reshape(-1) < 0).nonzero().flatten()] = float("nan")
++    out_nan = fused_post_expert_norm_weighted_sum(
++        c_nan.view(tokens, TOP_K, hidden), tw32, norm_weight=state["norm_w"], eps=POST_NORM_EPS,
++        weight_first=True, slot_expert_ids=local_ids)
++    torch.cuda.synchronize()
++    ev["skips_remote"] = bool(torch.isfinite(out_nan).all()) and bool(torch.equal(out_nan, out_b))
++    ev["out_y2"] = _wg_rel(out_b, r_out)
++    del c_nan, out_nan, out_b, cache3b
++    # The production path end to end (what kernel_fn runs), against Marlin's out.
++    n_out = _moe_wgmma(x, topk_ids, tw, bank, state, trace=_wg_tracer(f"{tag} production") if verbose else None)[0]
++    torch.cuda.synchronize()
++    ev["out_finite"] = bool(torch.isfinite(n_out).all())
++    ev["out_rel"] = _wg_rel(n_out, r_out)
++    ev["out_prod"] = n_out
++    ev["h_new"], ev["y_own_t"], ev["local_ids"] = h_new, cache3a, local_ids
++    ev["err_word"] = int(err.item())
++    ev["h_ok"], ev["w2_ok"] = _wg_pass(ev["h"]), _wg_pass(ev["y2"])
++    ev["out_ok"] = ev["out_finite"] and ev["out_rel"] <= WG_TOL
++    ev["ok"] = (ev["h_ok"] and ev["w2_ok"] and ev["out_ok"] and ev["same_ids"] and ev["covered"]
++                and ev["err_word"] == 0)
++    if verbose:
++        g = ev["gather"]
++        print(f"{WG_TAG}   [{tag}] M={tokens}: {ev['n_local']} local routes, n_padded {used}, {ev['chunks']} chunks "
++              f"(N buckets {ev['hist']}, multi-chunk expert {ev['multi_chunk']}), local_ids equal {ev['same_ids']}, "
++              f"all local routes have a slot {ev['covered']}", flush=True)
++        print(f"{WG_TAG}   [{tag}] gather: real rows bad {g[0]}/{g[1]}, pad rows not zero {g[2]}/{g[3]}, "
++              f"remote-block slots written {g[4]}/{g[5]} (expected 0)", flush=True)
++        _wg_print_cmp(tag, "w13+silu h vs Marlin cache2", ev["h"])
++        _wg_print_cmp(tag, "w2 (fed Marlin cache2) y vs Marlin y", ev["y2"])
++        _wg_print_cmp(tag, "w2 (own h) y vs Marlin y", ev["y_own"])
++        print(f"{WG_TAG}   [{tag}] fused norm skips remote rows (NaN-filled run equals sentinel run): "
++              f"{ev['skips_remote']}; out rel-L2 via Marlin-cache2 y {ev['out_y2']:.2e}; production out rel-L2 "
++              f"{ev['out_rel']:.2e} finite {ev['out_finite']}; device error word {ev['err_word']}", flush=True)
++    return ev
++
++
++def _wg_mixed_ids(tokens, counts, local_set, remote_set, gen):
++    """Routing with controlled local loads: local expert i gets counts[i] routes from distinct
++    tokens (so every N bucket and, at counts > 128, multi-chunk experts occur); the rest of each
++    token's 8 routes go to random distinct remote experts."""
++    per_tok = [[] for _ in range(tokens)]
++    for i, c in enumerate(counts):
++        for t in torch.randperm(tokens, generator=gen)[:c].tolist():
++            per_tok[t].append(local_set[i])
++    ids = []
++    for t in range(tokens):
++        need = TOP_K - len(per_tok[t])
++        row = per_tok[t] + [remote_set[i] for i in torch.randperm(len(remote_set), generator=gen)[:need].tolist()]
++        ids.append([row[i] for i in torch.randperm(TOP_K, generator=gen).tolist()])
++    return ids
++
++
++def _wg_diag(weights, bank, state, device):
++    """Diagnostic canary (prepare() only): never raises on a bad value, never stops at the first.
++    Cases: the stage-1b canary (M=128, one local route per token), and two mixed routings that
++    exercise N buckets 16/32/64/128 and multi-chunk experts. Returns (h_ok, w2_ok, skips, text lines,
++    all-bucket coverage)."""
++    gen = torch.Generator().manual_seed(20261025)
++    start, count = bank["start"], bank["count"]
++    hidden = weights["w2"].shape[1]
++    local_set = list(range(start, start + count))
++    remote = [e for e in range(N_EXPERTS) if e not in local_set]
++    cases = {
++        "canary M=128": (128, [[start] + [remote[i] for i in torch.randperm(len(remote), generator=gen)[:TOP_K - 1].tolist()]
++                                for _ in range(128)]),
++        "mixed M=128": (128, _wg_mixed_ids(128, [5, 20, 40, 70, 128, 9, 33, 127], local_set, remote, gen)),
++        "mixed M=256": (256, _wg_mixed_ids(256, [10, 30, 60, 100, 250, 17, 48, 129], local_set, remote, gen)),
++    }
++    h_ok = w2_ok = True
++    skips = True
++    lines = []
++    seen = set()
++    multi = False
++    for name, (tokens, ids) in cases.items():
++        topk_ids = torch.tensor(ids, dtype=torch.int32, device=device)
++        x = torch.randn((tokens, hidden), generator=gen).to(torch.bfloat16).to(device)
++        tw = torch.rand((tokens, TOP_K), generator=gen)
++        tw = (tw / tw.sum(-1, keepdim=True)).to(device)
++        print(f"{WG_TAG} diagnostic case '{name}' (first launches of this routing)", flush=True)
++        try:
++            ev = _wg_eval_case(weights, bank, state, device, x, topk_ids, tw, name, True)
++        except Exception as e:  # a Python error in one case must not lose the others or the summary
++            print(f"{WG_TAG}   [{name}] diagnostic case raised: {e!r}", flush=True)
++            lines.append(f"  {name}: case raised {e!r}"[:300])
++            h_ok = w2_ok = False
++            continue
++        h_ok, w2_ok, skips = h_ok and ev["h_ok"], w2_ok and ev["w2_ok"], skips and ev["skips_remote"]
++        seen |= ev["buckets_seen"]
++        multi = multi or ev["multi_chunk"]
++        h, y2, yo = ev["h"], ev["y2"], ev["y_own"]
++        g = ev["gather"]
++        lines.append(f"  {name}: w13 h unw {h['unw']} part {h['part']} nonfin {h['nonf']} rel {h['rel_all']:.2e} | "
++                     f"w2(Marlin cache2) unw {y2['unw']} part {y2['part']} nonfin {y2['nonf']} rel {y2['rel_all']:.2e} | "
++                     f"w2(own h) rel {yo['rel_all']:.2e} | out rel {ev['out_rel']:.2e} | gather bad {g[0]}/{g[1]} pad!=0 "
++                     f"{g[2]}/{g[3]} | ids {ev['same_ids']} cov {ev['covered']} | err word {ev['err_word']}")
++        # Localisation kept in the summary (the verbose per-launch lines may fall out of the log tail).
++        for kn, r in (("h", h), ("y2", y2)):
++            if not _wg_pass(r):
++                lines.append(f"    {kn} buckets {_wg_buckets_text(r)}; first bad (route,tok,col,tile,kind,bkt) "
++                             f"{r['first']}; worst tiles {[(t, nf, round(v, 4)) for t, nf, v in r['tiles']]}"[:420])
++        if ev["err_word"]:
++            lines.append(f"  device error word {ev['err_word']}: {WG_ERR_TEXT.get(ev['err_word'], '?')}")
++        del ev
++        torch.cuda.synchronize()
++    cover = f"N buckets exercised {sorted(WG_BUCKETS[b] for b in seen)} multi-chunk {multi}"
++    print(f"{WG_TAG} diagnostic: w13+silu {'PASS' if h_ok else 'FAIL'}, w2 {'PASS' if w2_ok else 'FAIL'} "
++          f"(rel-L2 <= {WG_TOL:g} vs Marlin each); {cover}; fused norm skips remote rows: {skips}", flush=True)
++    return h_ok, w2_ok, skips, lines, cover
++
++
+ def _wg_self_check(weights, bank, state, device):
+-    """Untimed, prepare() only, synthetic inputs (fixed seed): the wgmma path against master's
+-    Marlin path for M in (128, 192, 256, 257) x 5 routings (h per local route via the sorted-slot
+-    permutation, y per local route, out per row), one expert against a local fp32 dequant, and
+-    every case again under CUDA graph capture + 3 replays. Returns (ok, max rel-L2)."""
++    """Untimed, prepare() only, synthetic inputs (fixed seed), diagnostic mode: for M in (128, 192,
++    256, 257) x 5 routings, one summary line per case: h and w2 (fed Marlin's cache2) judged
++    separately by rel-L2 against Marlin, the production out, and the same case under CUDA graph
++    capture + 3 replays; one expert against a local fp32 dequant. Never stops at the first failure
++    (except a device error word). Returns (ok, worst dict)."""
+     gen = torch.Generator().manual_seed(20261026)
+     start, count = bank["start"], bank["count"]
+     hidden, inter = weights["w2"].shape[1], bank["size_n"]
+     local_set = list(range(start, start + count))
+     remote_set = [e for e in range(N_EXPERTS) if e not in local_set]
+     others = [e for e in range(N_EXPERTS) if e not in local_set[:4]]
+-    worst = 0.0
++    worst = {"h": 0.0, "y2": 0.0, "out": 0.0}
+     ok = True
++    n_fail = 0
+     for tokens in (128, 192, 256, 257):
+         cases = {
+             "random": [torch.randperm(N_EXPERTS, generator=gen)[:TOP_K].tolist() for _ in range(tokens)],
+@@ -1341,125 +1690,167 @@ def _wg_self_check(weights, bank, state, device):
+                            for _ in range(tokens)],
+             "all-local": [local_set[8:16] for _ in range(tokens)],
+         }
+-        m_worst = 0.0
+         for name, ids in cases.items():
+             topk_ids = torch.tensor(ids, dtype=torch.int32, device=device)
+             x = torch.randn((tokens, hidden), generator=gen).to(torch.bfloat16).to(device)
+             tw = torch.rand((tokens, TOP_K), generator=gen)
+             tw = (tw / tw.sum(-1, keepdim=True)).to(device)
+-            r_out, r_local, r_c2, r_y = _moe_marlin(x, topk_ids, tw, bank, state)
+-            n_out, n_local, s_ids, b_exp, n_pad, n_y = _moe_wgmma(x, topk_ids, tw, bank, state,
+-                                                                 trace=_wg_tracer(f"M={tokens} {name} eager"))
+-            torch.cuda.synchronize()
+-            if int(state["wg_err"].item()):
+-                print(f"{WG_TAG}   device error word {int(state['wg_err'].item())} (M={tokens} {name}); "
+-                      f"aborting self-check", flush=True)
+-                return False, float("inf")
+-            routes = tokens * TOP_K
+-            used = int(n_pad.item())
+-            sid = s_ids[:used].long()
+-            blk_e = b_exp[torch.arange(used, device=device) // WG_BSM]
+-            blk_ok = (blk_e >= 0) & (blk_e < count)
+-            real = (sid < routes) & blk_ok
+-            h_new = torch.zeros((routes, inter), dtype=torch.bfloat16, device=device)
+-            h_new[sid[real]] = state["wg_hs"][:used][real]
+-            local = r_local.reshape(-1) >= 0
+-            errs = (_wg_row_rel(h_new[local], r_c2[local]),
+-                    _wg_row_rel(n_y.reshape(-1, hidden)[local], r_y.reshape(-1, hidden)[local]),
+-                    _wg_row_rel(n_out, r_out))
+-            finite = bool(torch.isfinite(n_out).all())
+-            same_ids = torch.equal(n_local, r_local)
+-            covered = int(real.sum()) == int(local.sum())
+-            chunks = _wg_chunks(b_exp[:used // WG_BSM].tolist(), count)
+-            hist = {nb: sum(1 for c in chunks if WG_BUCKETS[min(3, max(0, (c[1] - 1).bit_length()))] == nb)
+-                    for nb in WG_BUCKETS}
+-            # Graph capture + 3 replays of the same inputs: must reproduce the eager output.
+-            h_keep = h_new
+-            graph = torch.cuda.CUDAGraph()
+-            print(f"{WG_TAG}     [M={tokens} {name} graph] before capture", flush=True)
+-            with torch.cuda.graph(graph):
+-                g_out = _moe_wgmma(x, topk_ids, tw, bank, state)[0]
+-            print(f"{WG_TAG}     [M={tokens} {name} graph] after capture", flush=True)
+-            for i in range(3):
+-                print(f"{WG_TAG}     [M={tokens} {name} graph] before replay {i}", flush=True)
+-                graph.replay()
++            try:
++                print(f"{WG_TAG}     [M={tokens} {name}] eval + graph capture/3 replays", flush=True)
++                ev = _wg_eval_case(weights, bank, state, device, x, topk_ids, tw, f"M={tokens} {name}", False)
++                if ev["err_word"]:
++                    print(f"{WG_TAG}   device error word {ev['err_word']} (M={tokens} {name}); aborting self-check",
++                          flush=True)
++                    return False, worst
++                graph = torch.cuda.CUDAGraph()
++                with torch.cuda.graph(graph):
++                    g_out = _moe_wgmma(x, topk_ids, tw, bank, state)[0]
++                for _ in range(3):
++                    graph.replay()
+                 torch.cuda.synchronize()
+-                print(f"{WG_TAG}     [M={tokens} {name} graph] after replay {i}", flush=True)
+-            if int(state["wg_err"].item()):
+-                print(f"{WG_TAG}   device error word {int(state['wg_err'].item())} (M={tokens} {name}); "
+-                      f"aborting self-check", flush=True)
+-                return False, float("inf")
+-            g_err = _wg_row_rel(g_out, n_out)
+-            del graph, g_out
+-            err = max(errs)
+-            m_worst = max(m_worst, err)
+-            print(f"{WG_TAG}   M={tokens} {name}: {int(local.sum())} local routes, n_padded {used}, "
+-                  f"{len(chunks)} chunks (N buckets {hist}), items w13 {len(chunks) * (inter // 64)} "
+-                  f"w2 {len(chunks) * (hidden // 128)}; rel-L2 h {errs[0]:.2e} y {errs[1]:.2e} out {errs[2]:.2e}, "
+-                  f"graph replay {g_err:.1e}")
+-            if not (finite and same_ids and covered and err <= 1e-2 and g_err <= 1e-3):
+-                ok = False
+-                print(f"{WG_TAG}   FAIL M={tokens} {name}: finite {finite} local_ids equal {same_ids} "
+-                      f"routes covered {covered} graph replay {g_err:.2e}")
+-            if name == "all-one-expert" and tokens in (128, 257):
+-                # One expert against a local fp32 dequant (catches an error Marlin would share).
+-                e = local_set[3]
+-                rts = (n_local.reshape(-1) == 3).nonzero().flatten()
+-                w13f = _wg_decode_nvfp4(weights["w13"][e], weights["w13_sf"][e], weights["w13_gs"][e])
+-                h = x[rts // TOP_K].float() @ w13f.T
+-                ref_h = torch.nn.functional.silu(h[:, :inter]) * h[:, inter:]
+-                del w13f, h
+-                w2f = _wg_decode_nvfp4(weights["w2"][e], weights["w2_sf"][e], weights["w2_gs"][e])
+-                y_ref = h_keep[rts].float() @ w2f.T
+-                del w2f
+-                f_errs = (_wg_row_rel(h_keep[rts], ref_h), _wg_row_rel(n_y.reshape(-1, hidden)[rts], y_ref))
+-                print(f"{WG_TAG}   fp32-dequant M={tokens} expert {e}: {rts.numel()} routes, "
+-                      f"h {f_errs[0]:.2e} y {f_errs[1]:.2e}")
+-                m_worst = max(m_worst, *f_errs)
+-                if max(f_errs) > 1e-2:
++                if int(state["wg_err"].item()):
++                    print(f"{WG_TAG}   device error word {int(state['wg_err'].item())} in graph replay "
++                          f"(M={tokens} {name}); aborting self-check", flush=True)
++                    return False, worst
++                g_err = _wg_row_rel(g_out, ev["out_prod"])
++                del graph, g_out
++                h, y2, yo = ev["h"], ev["y2"], ev["y_own"]
++                worst["h"] = max(worst["h"], h["rel_all"] if h["rel_all"] == h["rel_all"] else float("inf"))
++                worst["y2"] = max(worst["y2"], y2["rel_all"] if y2["rel_all"] == y2["rel_all"] else float("inf"))
++                worst["out"] = max(worst["out"], ev["out_rel"])
++                case_ok = ev["ok"] and g_err <= 1e-3
++                print(f"{WG_TAG}   M={tokens} {name}: {ev['n_local']} local, n_padded {ev['used']}, {ev['chunks']} chunks "
++                      f"{ev['hist']}; h rel {h['rel_all']:.2e} (unw {h['unw']} nf {h['nonf']}) | w2 fed Marlin cache2 rel "
++                      f"{y2['rel_all']:.2e} (unw {y2['unw']} nf {y2['nonf']}) | w2 own-h rel {yo['rel_all']:.2e} | out rel "
++                      f"{ev['out_rel']:.2e} | graph {g_err:.1e} | "
++                      + ("ok" if case_ok else f"FAIL (ids {ev['same_ids']} cov {ev['covered']} out finite "
++                                              f"{ev['out_finite']})"), flush=True)
++                if not case_ok:  # one line per case (log tail budget): the FAIL detail is folded in above
+                     ok = False
+-        print(f"{WG_TAG}   self-check M={tokens}: max per-row rel-L2 vs Marlin {m_worst:.2e}")
+-        worst = max(worst, m_worst)
++                    n_fail += 1
++                if name == "all-one-expert" and tokens in (128, 257):
++                    # One expert against a local fp32 dequant (catches an error Marlin would share).
++                    e = local_set[3]
++                    rts = (ev["local_ids"].reshape(-1) == 3).nonzero().flatten()
++                    w13f = _wg_decode_nvfp4(weights["w13"][e], weights["w13_sf"][e], weights["w13_gs"][e])
++                    hh = x[rts // TOP_K].float() @ w13f.T
++                    ref_h = torch.nn.functional.silu(hh[:, :inter]) * hh[:, inter:]
++                    del w13f, hh
++                    w2f = _wg_decode_nvfp4(weights["w2"][e], weights["w2_sf"][e], weights["w2_gs"][e])
++                    y_ref = ev["h_new"][rts].float() @ w2f.T
++                    del w2f
++                    f_errs = (_wg_rel(ev["h_new"][rts], ref_h), _wg_rel(ev["y_own_t"][rts], y_ref))
++                    print(f"{WG_TAG}   fp32-dequant M={tokens} expert {e}: {rts.numel()} routes, "
++                          f"h {f_errs[0]:.2e} y {f_errs[1]:.2e}", flush=True)
++                    if not max(f_errs) <= WG_TOL:
++                        ok = False
++                del ev
++            except Exception as ex:  # one case raising must not lose the rest or the summary
++                ok = False
++                n_fail += 1
++                print(f"{WG_TAG}   M={tokens} {name}: case raised {ex!r}"[:300], flush=True)
++    print(f"{WG_TAG}   self-check: worst rel-L2 vs Marlin h {worst['h']:.2e} w2(fed Marlin cache2) {worst['y2']:.2e} "
++          f"out {worst['out']:.2e}; {n_fail} failing cases", flush=True)
+     return ok, worst
+ 
+ 
+-def _wg_canary(weights, bank, state, device):
+-    """Untimed, prepare() only, in-process guarded first launch: the smallest gated M (128 tokens)
+-    with one local route per token (slot 0 on local expert 0, the other 7 remote), synthetic
+-    activations (fixed seed) on the retiled bank. Each launch (align, gather, w13, w2, norm) is
+-    announced, synced and logged, so a fault names its kernel; then the device error word is read
+-    (2 = the non-sm_90a image ran, 1 = a wait timed out). True only if the word is 0 and the output
+-    is finite."""
+-    gen = torch.Generator().manual_seed(20261025)
++def _wg_time_vs_marlin(weights, bank, state, device):
++    """prepare() only, print only: each wgmma launch against its Marlin counterpart at M=128 and 256
++    on an all-local routing (every one of the 32 local experts hit, as the busiest GPU sees), CUDA
++    events, median of 20 samples of 5 back-to-back eager launches, warm L2. Returns summary lines."""
++    ext, grid, err = state["wg_ext"], state["wg_grid"], state["wg_err"]
+     start, count = bank["start"], bank["count"]
+-    hidden = weights["w2"].shape[1]
+-    tokens = WG_MIN_TOKENS
+-    remote = [e for e in range(N_EXPERTS) if not start <= e < start + count]
+-    ids = [[start] + [remote[i] for i in torch.randperm(len(remote), generator=gen)[:TOP_K - 1].tolist()]
+-           for _ in range(tokens)]
+-    topk_ids = torch.tensor(ids, dtype=torch.int32, device=device)
+-    x = torch.randn((tokens, hidden), generator=gen).to(torch.bfloat16).to(device)
+-    tw = torch.full((tokens, TOP_K), 1.0 / TOP_K, dtype=torch.float32, device=device)
+-    state["wg_err"].zero_()
+-    torch.cuda.synchronize()
+-    print(f"{WG_TAG} canary: M={tokens}, 1 local route per token (expert {start}), first launch of each kernel",
+-          flush=True)
+-    out = _moe_wgmma(x, topk_ids, tw, bank, state, trace=_wg_tracer(f"canary M={tokens}"))[0]
+-    torch.cuda.synchronize()
+-    word = int(state["wg_err"].item())
+-    finite = bool(torch.isfinite(out).all())
+-    print(f"{WG_TAG} canary done: device error word {word} ({WG_ERR_TEXT.get(word, '?')}), output finite {finite}",
+-          flush=True)
+-    return word == 0 and finite
++    wb = state["wg_banks"][(start, count)]
++    hidden, inter = weights["w2"].shape[1], bank["size_n"]
++    gen = torch.Generator().manual_seed(20261027)
++    local_set = list(range(start, start + count))
++    lines = []
++
++    def med(fn):
++        for _ in range(3):
++            fn()
++        torch.cuda.synchronize()
++        ts = []
++        for _ in range(20):
++            s, e = torch.cuda.Event(enable_timing=True), torch.cuda.Event(enable_timing=True)
++            s.record()
++            for _ in range(5):
++                fn()
++            e.record()
++            e.synchronize()
++            ts.append(s.elapsed_time(e) * 1000.0 / 5)
++        ts.sort()
++        return ts[len(ts) // 2]
++
++    for tokens in (128, 256):
++        ids = [[local_set[i] for i in torch.randperm(count, generator=gen)[:TOP_K].tolist()] for _ in range(tokens)]
++        topk_ids = torch.tensor(ids, dtype=torch.int32, device=device)
++        x = torch.randn((tokens, hidden), generator=gen).to(torch.bfloat16).to(device)
++        tw = torch.full((tokens, TOP_K), 1.0 / TOP_K, dtype=torch.float32, device=device)
++        routes = tokens * TOP_K
++        local_ids = bank["expert_map"][topk_ids]
++        sorted_ids, block_experts, n_padded = moe_align_block_size(local_ids, WG_BSM, count)
++        cache3 = torch.zeros((routes, hidden), dtype=torch.bfloat16, device=device)
++
++        def f_gather():
++            ext.wg_gather(x, sorted_ids, block_experts, n_padded, routes, count, state["wg_xs"])
++
++        def f_w13():
++            ext.wg_gemm(0, wb["q13"], wb["gs13"], sorted_ids, block_experts, n_padded, routes, inter // 64, hidden,
++                        state["wg_hs"], grid, err)
++
++        def f_w2():
++            ext.wg_gemm(1, wb["q2"], wb["gs2"], sorted_ids, block_experts, n_padded, routes, hidden // 128, inter,
++                        cache3, grid, err)
++
++        bsm = _block_size_m(tokens, count)
++        bsm = BLOCK_SIZE_M_CANDIDATES[max(BLOCK_SIZE_M_CANDIDATES.index(bsm) - 2, 0)]
++        m_local, (m_sorted, m_blocks, m_npad) = _align_parallel(topk_ids, start, count, bsm)
++        cache2 = torch.empty((routes, inter), device=device, dtype=torch.bfloat16)
++        cache1 = torch.empty((routes, 2 * inter), device=device, dtype=torch.bfloat16)
++        cache3m = torch.empty((routes, hidden), device=device, dtype=torch.bfloat16)
++        common = dict(moe_block_size=bsm, mul_topk_weights=False, is_ep=True, b_q_type=scalar_types.float4_e2m1f,
++                      is_k_full=True, use_atomic_add=False, use_fp32_reduce=True, is_zp_float=False)
++        ws = state["workspace"]
++
++        def f_m13():
++            moe_wna16_marlin_gemm(x, cache1, bank["w13"], None, bank["w13_s"], bank["w13_gs"], None, None, None, ws,
++                                  m_sorted, m_blocks, m_npad, tw, top_k=TOP_K, size_m=tokens, size_n=2 * inter,
++                                  size_k=hidden, **common)
++
++        def f_silu():
++            silu_and_mul(cache1.view(-1, 2 * inter), cache2, expert_ids=m_local.view(-1), expert_step=1)
++
++        def f_m2():
++            moe_wna16_marlin_gemm(cache2, cache3m, bank["w2"], None, bank["w2_s"], bank["w2_gs"], None, None, None, ws,
++                                  m_sorted, m_blocks, m_npad, tw, top_k=1, size_m=routes, size_n=hidden,
++                                  size_k=inter, **common)
++
++        f_gather()
++        t_g, t_w13, t_w2 = med(f_gather), med(f_w13), med(f_w2)
++        f_m13()
++        f_silu()
++        t_m13, t_silu, t_m2 = med(f_m13), med(f_silu), med(f_m2)
++        line = (f"  M={tokens}: wgmma gather {t_g:.1f} + w13+silu {t_w13:.1f} + w2 {t_w2:.1f} = "
++                f"{t_g + t_w13 + t_w2:.1f} us | Marlin w13 {t_m13:.1f} + silu {t_silu:.1f} + w2 {t_m2:.1f} = "
++                f"{t_m13 + t_silu + t_m2:.1f} us (block_size_m {bsm}; {int((m_local >= 0).sum())} local routes)")
++        print(f"{WG_TAG} timing{line}", flush=True)
++        lines.append(line)
++        torch.cuda.synchronize()
++    return lines
+ 
+ 
+ def _wg_setup(weights, banks, state, device, t_start=None):
+-    """Build, retile, warm and self-check the wgmma verify path. Sets state['wgmma_ok']; on any
+-    failure every M keeps master's path. Nothing here sees any input. t_start: prepare()'s start,
+-    so the budget covers master's prepare work too (pre-flight audit fix)."""
++    """Build, retile, diagnose, self-check and time the wgmma verify path. Sets state['wgmma_ok'];
++    on any failure every M keeps master's path. Nothing here sees any input. t_start: prepare()'s
++    start, so the budget covers master's prepare work too. The one compact summary block and the
++    PATH CHOSEN line are printed LAST (the archived log keeps only its final ~15 KB)."""
+     state["wgmma_ok"] = False
+     ok = False
+     t_setup = time.perf_counter() if t_start is None else t_start
++    t_begin = time.perf_counter()
++    summ = []
++    verdict = {"h": "not run", "w2": "not run", "skips": "not run", "self": "not run"}
+     try:
+         cap = torch.cuda.get_device_capability(device)
+         print(f"{WG_TAG} device capability {cap} (sm_90a path needs (9, 0))", flush=True)
+@@ -1479,10 +1870,31 @@ def _wg_setup(weights, banks, state, device, t_start=None):
+             assert need <= WG_SMEM_LIMIT, f"smem {need} B > {WG_SMEM_LIMIT} B"
+             print(f"{WG_TAG} smem {'w13' if gated else 'w2'}: dynamic {WG_SMEM[gated]} B (+ <= "
+                   f"{WG_STATIC_SMEM_BOUND} B static) <= {WG_SMEM_LIMIT} B")
+-        for nb in WG_BUCKETS:
+-            print(f"{WG_TAG} smem N={nb}: stage = {2 * WG_REC} B weight + 2 x {nb * 128} B slab used of "
+-                  f"{WG_STAGE_BYTES} B, {WG_STAGES} stages, {WG_STAGES * 2 * WG_REC // 1024} KB weight in flight per SM")
+-        ext = _wg_build()
++        # Build. Probe first with ptxas warnings as errors: a build that passes has no ptxas
++        # warning; a failing one carries ptxas's stderr in the exception text (the only way to see
++        # it in-process), which is searched for the wgmma 'serialized' warning, then the real
++        # build runs without -Werror.
++        t_b = time.perf_counter()
++        ext, btext = _wg_build(probe=True)
++        warns = _wg_ptxas_warnings(btext)
++        # A passing -Werror probe rules out a ptxas WARNING only: if this ptxas reports wgmma
++        # serialization at info level (C75xx), load_inline discards it, so the answer is unknown.
++        serialized = ("yes" if any("serialized" in w for w in warns)
++                      else ("no warning (info-level note not visible)" if ext is not None else "unknown"))
++        if ext is None:
++            print(f"{WG_TAG} probe build (-Xptxas -Werror) failed; ptxas warning lines: {len(warns)}; wgmma "
++                  f"'serialized' warning: {serialized}", flush=True)
++            for w in warns:
++                print(f"{WG_TAG}   ptxas: {w}", flush=True)
++            if time.perf_counter() - t_setup < WG_SETUP_BUDGET_S - 60.0:
++                ext, _ = _wg_build(probe=False)
++        else:
++            print(f"{WG_TAG} probe build with -Xptxas -Werror passed: no ptxas warning (an info-level wgmma "
++                  f"serialization note would not fail it, so serialization is not ruled out)", flush=True)
++        build_s = time.perf_counter() - t_b
++        summ.append(f"build: TORCH_CUDA_ARCH_LIST=9.0a -> {WG_BUILD_INFO.get('arch')}; cflags {WG_CUDA_CFLAGS}; "
++                    f"{build_s:.1f}s ({'ok' if ext is not None else 'FAILED'}); ptxas warnings {len(warns)}, wgmma "
++                    f"'serialized' warning: {serialized}" + (f" [{warns[0][:160]}]" if warns else ""))
+         if ext is None:
+             raise RuntimeError("load_inline failed")
+         if time.perf_counter() - t_setup > WG_SETUP_BUDGET_S:
+@@ -1495,6 +1907,8 @@ def _wg_setup(weights, banks, state, device, t_start=None):
+                   f"numRegs {regs}, localSizeBytes {local_bytes}{' (SPILL, not fatal)' if local_bytes > 0 else ''}, "
+                   f"static smem {static_smem} B, dynamic smem {dyn_smem} B, CTAs/SM {occ}, binaryVersion {bin_v}, "
+                   f"ptxVersion {ptx_v} (90 for sm_90 and sm_90a alike: error word 2 decides)", flush=True)
++            summ.append(f"kernel {'w13+silu' if gated else 'w2'}: regs {regs}, local (spill) {local_bytes} B, smem "
++                        f"{static_smem}+{dyn_smem} B, CTAs/SM {occ}")
+             # setmaxnreg.inc blocks forever unless the CTA's register pool covers 40x128 + 232x256
+             attrs_ok = (attrs_ok and bool(a_ok) and occ >= 1 and static_smem + dyn_smem <= WG_SMEM_LIMIT
+                         and regs * WG_THREADS >= 40 * 128 + 232 * 256 and bin_v == 90)
+@@ -1504,6 +1918,7 @@ def _wg_setup(weights, banks, state, device, t_start=None):
+         state["wg_hs"] = torch.zeros((WG_CAP_ROWS, inter), dtype=torch.bfloat16, device=device)
+         rc = ext.wg_set_maps(state["wg_xs"], state["wg_hs"])
+         print(f"{WG_TAG} cuTensorMapEncodeTiled (driver entry point via the runtime) x 8: rc {rc}")
++        summ.append(f"cuTensorMapEncodeTiled x8 rc {rc}")
+         if rc != 0:
+             raise RuntimeError(f"tensor-map encode failed: {rc}")
+         t0 = time.perf_counter()
+@@ -1515,22 +1930,66 @@ def _wg_setup(weights, banks, state, device, t_start=None):
+         state["wg_err"] = torch.zeros((1,), dtype=torch.int32, device=device)
+         print(f"{WG_TAG} grid {state['wg_grid']} persistent CTAs x {WG_THREADS} threads, BK {WG_BK}, "
+               f"{WG_STAGES} stages, N buckets {WG_BUCKETS}, split-K none", flush=True)
+-        if not _wg_canary(weights, bank, state, device):
+-            raise RuntimeError("canary failed")
+         if time.perf_counter() - t_setup > WG_SETUP_BUDGET_S:
+-            raise RuntimeError(f"setup budget {WG_SETUP_BUDGET_S:.0f}s spent before the self-check")
+-        ok, worst = _wg_self_check(weights, bank, state, device)
++            raise RuntimeError(f"setup budget {WG_SETUP_BUDGET_S:.0f}s spent before the diagnostic")
++        # Diagnostic canary: judges w13+silu and w2 separately, never stops at the first bad value.
++        try:
++            h_ok, w2_ok, skips, dlines, cover = _wg_diag(weights, bank, state, device)
++        except Exception as e:  # keep going: the self-check and timing still carry evidence
++            print(f"{WG_TAG} diagnostic raised: {e!r}", flush=True)
++            h_ok, w2_ok, skips, dlines, cover = False, False, "unknown", [f"  diagnostic raised {e!r}"[:300]], "?"
++        verdict["h"], verdict["w2"] = ("PASS" if h_ok else "FAIL"), ("PASS" if w2_ok else "FAIL")
++        verdict["skips"] = str(skips)
++        summ.append(f"w13+silu: {verdict['h']}; w2 (fed Marlin cache2): {verdict['w2']}; {cover}; fused norm skips "
++                    f"remote rows: {skips}")
++        summ.extend(dlines)
++        sc_ok = False
++        worst = {}
++        if time.perf_counter() - t_setup > WG_SETUP_BUDGET_S:
++            print(f"{WG_TAG} setup budget {WG_SETUP_BUDGET_S:.0f}s spent before the self-check: skipped", flush=True)
++            verdict["self"] = "skipped (budget)"
++        else:
++            try:
++                sc_ok, worst = _wg_self_check(weights, bank, state, device)
++                verdict["self"] = "PASS" if sc_ok else "FAIL"
++            except Exception as e:
++                print(f"{WG_TAG} self-check raised: {e!r}", flush=True)
++                sc_ok, verdict["self"] = False, f"raised {e!r}"[:200]
+         torch.cuda.synchronize()
+         err_word = int(state["wg_err"].item())
+         if err_word:
+             print(f"{WG_TAG} device error word {err_word}: {WG_ERR_TEXT.get(err_word, '?')}", flush=True)
+-            ok = False
+-        print(f"{WG_TAG} SELF-CHECK {'PASSED' if ok else 'FAILED'}: max rel-L2 {worst:.3e} (bound 1e-2), "
+-              f"device error word {err_word}, setup {time.perf_counter() - t_setup:.1f}s", flush=True)
++        worst_s = " ".join(f"{k} {v:.2e}" for k, v in worst.items()) or "n/a"
++        summ.append(f"self-check (4 M x 5 routings, eager + graph): {verdict['self']}; worst rel-L2 vs Marlin "
++                    f"{worst_s}; device error word {err_word}")
++        ok = bool(h_ok and w2_ok and sc_ok and err_word == 0)
++        # Timing is evidence for M2 whether or not the numbers are right (a NaN does not change speed).
++        if err_word == 0 and time.perf_counter() - t_setup < WG_TIMING_DEADLINE_S:
++            try:
++                tl_ = _wg_time_vs_marlin(weights, bank, state, device)
++                summ.append("prepare timing, warm L2, eager events, median of 20 (judge cold-L2 profile reads 20-25% "
++                            "higher; optimistic if the kernel has an early-release race):")
++                summ.extend(tl_)
++            except Exception as e:
++                print(f"{WG_TAG} timing raised: {e!r}", flush=True)
++                summ.append(f"prepare timing raised {e!r}")
++        else:
++            summ.append("prepare timing skipped (error word or budget)")
++        # Leave the persistent scratches as stage 1b had them (zeros), not as the sentinel.
++        state["wg_xs"].zero_()
++        state["wg_hs"].zero_()
++        torch.cuda.synchronize()
+     except Exception as e:
+         print(f"{WG_TAG} wgmma path setup raised: {e!r}", flush=True)
++        summ.append(f"setup raised {e!r}")
+         ok = False
+     state["wgmma_ok"] = ok
++    print(f"{WG_TAG} ===== STAGE 2 DIAGNOSTIC SUMMARY (last block of the log) =====", flush=True)
++    for line in summ:
++        print(f"{WG_TAG} {line}", flush=True)
++    print(f"{WG_TAG} verdicts: w13+silu {verdict['h']}, w2 {verdict['w2']}, self-check {verdict['self']}; wgmma is "
++          f"enabled only if BOTH kernels pass rel-L2 <= {WG_TOL:g} vs Marlin; setup "
++          f"{time.perf_counter() - t_begin:.1f}s (prepare so far {time.perf_counter() - t_setup:.1f}s)", flush=True)
+     print(f"{WG_TAG} PATH CHOSEN = {'WGMMA' if ok else 'MARLIN'} for {WG_MIN_TOKENS} <= num_tokens <= "
+           f"{WG_MAX_TOKENS}; MARLIN for num_tokens < {WG_MIN_TOKENS} and > {WG_MAX_TOKENS}", flush=True)
+ 
