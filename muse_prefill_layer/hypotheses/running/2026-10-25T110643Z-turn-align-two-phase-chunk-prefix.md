@@ -60,7 +60,7 @@ review: proceed
 status: running
 review_at: 2026-10-25T115947Z
 review_companions: null
-stage: claimed
+stage: implemented
 claimed_at: 2026-10-25T115947Z
 base_sha: f896dc264c4b4ee1df6c4b33556b50f2d4282f9c
 base_blob: 712edc5ea5be2dde8f558a016d0877b285340ee4
@@ -69,6 +69,12 @@ worktree: .worktrees/muse_prefill_layer/turn-align-two-phase-chunk-prefix
 mode: null
 restack_of: null
 stale_base: null
+implemented_at: 2026-10-25T120316Z
+impl_commit: 44addb9dba1b899d033143151cf1ea30b4fa0431
+submission_sha256: 310aa880f5b7dfee7103747c2cb5e48debf1ed514003e3c8c00fb7903dfd3b8c
+norm_sha256: 4f74716bf86c95b37ed9ab8f12ca34fca862d6d8e4a6730232089dc80471e569
+submission_blob: dab438b9e49302463ff706a54540d8782b47aae5
+lint_warnings: 56
 ---
 
 # turn-align-two-phase-chunk-prefix
@@ -111,3 +117,34 @@ No companion is warranted. The outputs are bit-identical to master's align, so d
 - At T=753 there are only 6 chunks of 1024. Would CHUNK_A=512 (12 programs) beat 1024 for turn_1? The gate will decide, but the builder could time both.
 - Should first_turn's moe_align_block_size (~50 us, 0.3%) also be swapped? No. Out of scope, and align-local-parallel-first-turn was already neutral.
 
+
+## Implementation notes
+
+Base: worktree base f896dc26 had the same muse_prefill_layer/submission.py as master 3707e7b0 (no diff), so no merge was needed. Edited only the worktree's muse_prefill_layer/submission.py (+259/-4). No GPU here: nothing was compiled or run; every check below runs in prepare().
+
+What changed:
+- New Triton kernels `_align2_count_kernel` (launch A, grid nchunks: per-chunk, per-local-expert counts into a shape-sized `torch.empty((nchunks, 32))` scratch) and `_align2_place_kernel` (launch B, grid nchunks+1: each program loads the count table; chunk programs write local_ids and place routes at seg_start + earlier-chunk counts + in-chunk rank (2-D cumsum); the tail program writes per-expert padding slots, the sentinel n in [total, cap), block_experts, n_padded). block_experts is computed per block as "number of experts whose segment ends at or before slot b*BSM", -1 at or past total, which equals master's e / -1 contract. `_align_two_phase(topk_ids, local_start, local_count, bsm, chunk)` is the wrapper. `_align_parallel` is untouched.
+- `_align_dispatch(local_ids, bsm, state)` is now called by `_experts_rega` (bsm 16, the live caller), `_experts_ssdq` (128) and `_experts_marlin` (64, inside the align_par_ok branch). `_experts_triton` is unchanged.
+- `_align2_setup(state, device)` runs right after `_align_par_setup`, before `_silu_sorted_setup`, `_ssdq_setup` and `_rega_setup`. It compiles bsm 16/64/128 x chunk 512/1024, checks torch.equal on all four outputs against `_align_parallel` for T = 9, 200, 300, 753, 1100, 1506, 3012, 4096 x {random mapped, random raw ids, skewed, one-expert, all-remote, local_start 8} for every combo, and gates cold-L2 graph medians (15 interleaved alternations, empty-graph baseline subtracted, rotated and flipped order) at (16, T753, low), (16, T3012, high), (64, T753, low), (128, T3012, high). ON only if best chunk <= 0.98x master. It prints per-gate lines and one `[align2] PATH CHOSEN` line, then returns before the ssdq and rega setups, whose PATH CHOSEN lines remain last.
+
+Adversarial-review items:
+1. Live caller: `_experts_rega` now goes through `_align_dispatch` (applied; it ignores align_par_ok as before, and align2 is only decided ON when align_par_ok is on).
+2. Validate at bsm 16: compile, bit-identity and gates at bsm 16 for T=753 and T=3012 (applied; bsm 64/128 fallback sites also covered and consistent).
+3. Setup order: next to `_align_par_setup`, before `_ssdq_setup`/`_rega_setup` (applied), so rega's gate, canary and replay check see the timed align. `[rega]` ON is not forced by me; it appears in the run log to verify.
+4. State: decision is `state["align2_ok"]`, a dict with string keys "bsm:class" -> chunk size (0/absent = master). It is added to REGA_STATE_KEYS so rega's copied states carry it. No module-global decision, no tensors in globals.
+5. Chunk size: both 512 and 1024 are compiled, checked and timed per gate class; the faster one is stored (512 gives 12 programs at T=753, 1024 gives 6).
+Spec corrections applied: re-target to bsm 16 (review overrides the stale marlin/ssdq targeting); dispatch is restricted to T > 200 (the equivalence suite's lower bound); Marlin/ssdq retained as gated fallbacks.
+Deviations: block_experts uses the segment-end count formula instead of per-expert loops (same values); the pointer-equality gate is not used anywhere.
+Risks: Triton compile of the 2-D axis-0 cumsum on a [512|1024, 32] tile with 8 warps (register pressure); any compile error or mismatch just turns align2 OFF (master's align stays). The serial tail program (padding, sentinel over cap ~24.6k slots at bsm 16, 1536 blocks) could eat the gain at T=753, which the gate decides.
+
+## Rules check
+
+- [x] CUDA-graph capturable: kernel_fn path adds only two Triton launches and torch.empty scratch of shape-derived size; no .item()/.cpu()/sync/prints in it (the .item() calls are in prepare()-only helpers).
+- [x] Nothing derived from `data` is cached across calls: cnt is allocated per call; the ON/OFF decision is shape-class state set in prepare().
+- [x] Weights: n/a: untouched.
+- [x] Activations/KV/queries: n/a: only int32 routing indices change, with bit-identical outputs to master's align.
+- [x] Attention sees every key: n/a: no attention change.
+- [x] No timing patches, harness frames/I/O/secrets, module edits, reference import, subprocess or fork: checked in the diff, none.
+- [x] All work inside the timed call; no output caching or replay.
+
+okc_lint output: "OK with warnings: muse_prefill_layer/submission.py". The warnings are host-sync/dtype notes, all in prepare() (including the new .item() at the first-mismatch helper) or pre-existing. undef.py reported []; py_compile passed; __pycache__ removed.
