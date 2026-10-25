@@ -60,7 +60,7 @@ review: proceed
 status: running
 review_at: 2026-10-25T011846Z
 review_companions: null
-stage: implemented
+stage: dispatched
 claimed_at: 2026-10-25T011846Z
 base_sha: a9625932047aa6e3c155977025168939699cb9b2
 base_blob: a8bb42ac483318e9fbc84bc7826a27b7a704d1fb
@@ -77,6 +77,8 @@ submission_blob: 49c0a5c0d548f29014363a027a990ff274abd5de
 lint_warnings: 0
 attempt_file: 2026-10-25T012003Z-check-pooler-unpooler-m128-nn-layout-gated.md
 prepared_at: 2026-10-25T012003Z
+job: 0daf3faa83ab4e81
+dispatched_at: 2026-10-25T012031Z
 ---
 
 # pooler-unpooler-m128-nn-layout-gated
