@@ -1,17 +1,17 @@
 {
  "problem": "muse_prefill_layer",
- "job": "2910b2fb4b744865",
- "check_job": "2910b2fb4b744865",
+ "job": "07a069bc69ba42a8",
+ "check_job": "07a069bc69ba42a8",
  "mode": "check",
- "speedup": 1.3274587526558561,
+ "speedup": 1.4060131381907617,
  "ci": [
-  1.3075468713660183,
-  1.347370633945694
+  1.3849229411179003,
+  1.4271033352636229
  ],
- "score_us": 291838.7477011382,
- "commit": "23c1d5fa90e63b93b142d0f2461c4647a1e9d68c",
- "submission_blob": "712edc5ea5be2dde8f558a016d0877b285340ee4",
- "slug": "experts-turn-rega-s4-port-t4096",
- "result": "muse_prefill_layer/hypotheses/done/gain/experts-turn-rega-s4-port-t4096.result.json",
- "updated_at": "2026-10-25T115714Z"
+ "score_us": 275533.62730202224,
+ "commit": "a1a5497d7a46aeb3c1aa4a18e70871a23c1b6be3",
+ "submission_blob": "c2e3e595def2e6b5949e0fd350ce98ed59729147",
+ "slug": "experts-turn-rega-s4-first-turn-n128",
+ "result": "muse_prefill_layer/hypotheses/done/gain/experts-turn-rega-s4-first-turn-n128.result.json",
+ "updated_at": "2026-10-25T124812Z"
 }

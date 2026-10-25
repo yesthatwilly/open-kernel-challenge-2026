@@ -99,7 +99,8 @@ speedup: 1.4060131381907617
 speedup_ci: [1.3849229411179003, 1.4271033352636229]
 harvested_at: 2026-10-25T124810Z
 best_at_harvest: 1.3274587526558561
-promotion: pending
+promotion: merged
+promotion_commit: a1a5497d7a46aeb3c1aa4a18e70871a23c1b6be3
 ---
 
 # experts-turn-rega-s4-first-turn-n128
