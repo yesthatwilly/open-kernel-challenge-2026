@@ -71,7 +71,7 @@ review: proceed
 status: running
 review_at: 2026-10-25T002143Z
 review_companions: null
-stage: claimed
+stage: implemented
 claimed_at: 2026-10-25T002143Z
 base_sha: 593859d3ce482d60c7bb0ec1fb4e4101e7b1ce31
 base_blob: bd96c94a12cf87fdcdac119d1e0508f009c4120c
@@ -80,6 +80,12 @@ worktree: .worktrees/muse_attention_decode/sliding-cluster-s2-decode-c4-pdl-inpr
 mode: null
 restack_of: null
 stale_base: true
+implemented_at: 2026-10-25T003616Z
+impl_commit: 938dfebce29caa2acd412dd8ae1f27f930042496
+submission_sha256: 50aaf8535c92809fb540f38da73f9dbdb68e5909b91acb8569a383a0e99b879e
+norm_sha256: 51e427419bb99b1fec184ef72795f13ffdf01d534fdc62af30f34b12b84c8017
+submission_blob: 01024fb7e27a1343414dfbd5fca8c0e5f5449225
+lint_warnings: 3
 ---
 
 # sliding-cluster-s2-decode-c4-pdl-inproc
@@ -140,3 +146,80 @@ No companion is warranted. This is kind: rewrite, judged on the replaced kernel'
 - At C=4, does one CTA per 528-key chunk issue enough bytes in flight (about 135 KB per SM) to approach per-SM bandwidth, or is a deeper cp.async pipeline (more than 2 groups) needed in stage 3?
 - decode_1 at C=16 stays chain-bound at ~10 us. Which phase (page-table index load, gather, DSMEM merge, epilogue) dominates? Add clock64 per-phase stamps in the self-check so stage 3 can target it.
 
+
+## Implementation notes
+
+Built on the stage-1 worktree (593859d). Only `muse_attention_decode/submission.py` was edited.
+
+- **Base drift (stale_base).** The worktree predates master's `sliding-deep-splits-on-cuda-splitkv` (0a56d22). I hand-applied master's two hunks so every fallback is master byte for byte: `kernel_fn` sends all sliding decode to `_sliding_forward`, and `_sliding_forward` uses `splits = 16 if length == 1`. Rebasing the branch is still a churnsubs step.
+- **(1) Verify off.** `_slide_gate` now requires `q_len == 1`. The kernel is no longer a template: L = 8 is removed, so there are no L = 8 instantiations, and verify keeps master FA3.
+- **(2) Cluster size.** `_slide_clusters(B)` is 16 at B = 1 (8 if C = 16 is off), 8 at 2..16, 4 at 17..32, and 0 (master Triton) above 32. Module renamed `muse_sliding_cluster_v2`.
+- **Review fix: smem sized for 2 CTAs/SM.** The review's 66 KB figure counts K only. A 512-key C = 4 chunk needs K + V = 512 x 256 B = 128 KB, which cannot fit 2 CTAs/SM, so I did not use two half-buffers. The gather goes through a ring instead:
+  - 3 slots of SK = 128 keys, K + V = 96 KB, plus a separate 16-row new-key tile (4 KB) and q (1 KB).
+  - Total 103,424 B dynamic smem, with `static_assert <= 113 KB`, `__launch_bounds__(256, 2)` and the smem carveout set to max shared.
+  - Each 128-key sub-chunk is one cp.async group. The first 3 are issued at once. The 4th (C = 4 only) goes into slot 0 right after slot 0 is computed; its page indices are prefetched into registers.
+  - Compute runs per sub-chunk after `cp.async.wait_group 2`.
+  - The spec's "two halves" is the C = 8 case (2 x 128 keys). C = 4 has 4 sub-chunks and C = 16 has 1.
+  - Partials alias the consumed ring, as in stage 1.
+- **Occupancy guard.** At import, `cudaOccupancyMaxActiveClusters` is printed for C = 4/8/16. A C below what its largest batch needs (C=4 >= 32, C=8 >= 16, C=16 >= 1) is disabled with a printed reason, and its batches run master.
+- **PDL: off (review fix).** There is no programmatic-serialization attribute and no griddepcontrol, because the cluster kernel is the only node in the sliding graph. Any decode_16 or decode_1 change should be credited to the split gather and the C choice.
+- **Build and safety.**
+  - `TORCH_CUDA_ARCH_LIST=9.0a` is set around `load_inline` and restored afterwards, with `-O3 -lineinfo`. `-arch` was dropped so torch emits only the compute_90a/sm_90a gencode, and the arch flags are printed.
+  - The kernel uses no sm_90a-only PTX (it uses mma.sync, cluster/DSMEM and plain `cp.async.cg`), so the `__CUDA_ARCH_FEAT_SM90_ALL` guard does not apply.
+  - The path turns off unless capability == (9, 0) and `cudaFuncGetAttributes` binaryVersion == 90. Regs, local bytes, smem, binaryVersion and ptxVersion are printed.
+  - There are no mbarrier or spin waits, so no wait bounds were needed.
+- **Import-time checks, in-process, per C.**
+  1. A canary launch (B = 1, 40 keys).
+  2. The self-check against the FP32 reference at B = 1 (C16), B = 2 and 16 (C8), B = 17 and 32 (C4). Lengths are below, at and past the window (1 ... 5007), with planted window-edge keys and kv_scale 1 and 0.25.
+  3. New cache rows compared with master `_pre_attention_kernel` on cloned caches.
+  4. Graph capture plus replay.
+
+  Every launch is preceded by a flushed print and followed by `torch.cuda.synchronize()` and a print.
+- **Fallback.** A failed canary or self-check retries that C with the f16-QK build. Failed occupancy does not retry. Any failure leaves master for that C's batches. `_slide_init` is wrapped so it never raises.
+- **Log lines.** `[slide] PATH CHOSEN: sliding cluster v2 C=<C> <range>` or `PATH CHOSEN: sliding master (fallback: <reason>) <range>` per batch class.
+- **Not done.** The clock64 per-phase stamps from the review's open question.
+
+## Rules check
+
+- [x] CUDA-graph capturable: `kernel_fn` adds only `torch.empty` and one `cudaLaunchKernelEx` (cluster attribute only). The C choice comes from `config["batch"]` and import-time flags. `synchronize` appears only in the import-time canary and self-check.
+- [x] Nothing derived from `data` is cached across calls. `_SLIDE_NOTED` holds config keys only, and `_inv_freq` is keyed on theta.
+- [x] Weights: n/a. This problem has no weights, and the cache store convention is unchanged.
+- [x] Activations BF16 out, KV cache FP8 E4M3 (new rows / k_scale, v_scale, satfinite), queries rounded once to E4M3, fp32 softmax and accumulation.
+- [x] Attention sees every key in the window. Each rank's chunk is gathered whole and every tile is masked only by window and causal position. No skipping.
+- [x] No timing patches, harness access, reference import, network or process creation (no subprocess, multiprocessing, fork or spawn). `os` is used only for `TORCH_CUDA_ARCH_LIST`.
+- [x] All work happens inside the timed call, with no output caching or replay. The self-check runs on synthetic data at import.
+- [x] First line `# okc: problem=muse_attention_decode` kept. Diff checked with `git diff`: only `submission.py` changed.
+
+okc_lint:
+```
+warn  host-sync    L1890: torch.cuda.synchronize()  (outside kernel_fn's call graph; fine in prepare())
+warn  host-sync    L1931: torch.cuda.synchronize()  (outside kernel_fn's call graph; fine in prepare())
+warn  host-sync    L1958: torch.cuda.synchronize()  (outside kernel_fn's call graph; fine in prepare())
+OK with warnings: submission.py
+```
+py_compile OK; __pycache__ removed. Not committed; no okc run. The first measurement must be an `okc check`.
+
+## Pre-flight audit
+
+Audited 2026-10-24 (opus), by reading plus a Python emulation of the rank partition and the cp.async ring schedule.
+
+**Verdict: dispatch-with-fixes.** The first measurement must still be an `okc check`.
+
+Fix:
+- `kernel_fn`: `_slide_forward` is wrapped in `try/except RuntimeError`. A host-side launch error (C10_CUDA_CHECK on cudaLaunchKernelEx) now prints a `PATH CHOSEN: sliding master (fallback: C=<c> launch raised ...)` line once per config and falls through to master `_sliding_forward`, instead of failing the run. The fallback is stateless: no module state is written from kernel_fn. okc_lint OK (only the 3 known prepare-time synchronize warnings), py_compile OK, __pycache__ removed.
+
+Verified with no change needed:
+- **Fallbacks match master byte for byte.** `diff` against master's submission.py shows only the docstring, `import os`, the kernel_fn dispatch hunk and the appended sliding block. `_sliding_forward` (splits = 16 at L = 1) and the FA3 and split-KV paths are identical.
+- **Every key is attended.** Emulated over C in {4, 8, 16} and seq in 0..90000: the C ranks cover [lo, seq) exactly once. The new key at position seq is attended once, on the last rank, by both kv-head warps of one slice. The mask is `low = seq - 2047 <= kp <= seq`, which matches reference.py (`start = p - window + 1`, `p = seq_lens`, positions = seq_lens).
+- **Ring.** ck <= 512, so nsub <= 4/2/1 at C = 4/8/16. Group accounting: 3 prologue commits plus one commit per iteration, so `wait_group 2` at iteration s guarantees groups 0..s. The late sub-chunk 3 is in group 3. The WAR on slot 0 is covered by `__syncthreads` before reissue. Pad rows are zeroed with generic stores before the next barrier. Partials alias the ring only after `wait_group 0` and `__syncthreads`.
+- **DSMEM.** One `cluster.sync` after the partials are written and before any remote read, and one before exit.
+- **Fragments.** m16n8k32 e4m3 A/B, the C layout, the P->A f16 layout, the V `byte_perm` widening and the staging dim mapping all check out by hand. Ls > 0 always (the own key).
+- **Precision.** KV stays FP8. q is rounded once to E4M3 after `qk_scale_factor` (|q| <= ~44, normal range, so it is the same precision class as the reference's rounding before the scale). P and V are f16, with fp32 softmax and accumulation. Output is BF16.
+- **Rules.** No child process, subprocess or multiprocessing. Nothing derived from data is cached (`_SLIDE_NOTED` is config keys, `_inv_freq` is keyed by theta, same as master). kernel_fn does `torch.empty` plus one cluster `cudaLaunchKernelEx` on the current stream, with no syncs, so it is graph-capturable and the self-check captures and replays it.
+- **Gates.** The self-check's `_pre_attention_kernel` call matches master's signature. Its synthetic shapes (B in {1, 2, 16, 17, 32}, lens up to 5007, edge keys, kv_scale 1 and 0.25) match the gated scored shapes. The 2e-2 tolerance is realistic. 103,424 B smem with `launch_bounds(256, 2)` fits 2 CTAs/SM.
+
+Interpretation:
+- PDL is off, as the review advised: the cluster kernel is the only node in the sliding graph. The slug's "pdl" is a misnomer. Credit any decode_16 or decode_1 change to the split gather and the choice of C, not to PDL.
+- Before reading decode_32, read the printed `cudaOccupancyMaxActiveClusters C=4` value and the PATH CHOSEN lines. If C = 4 was disabled, decode_32 ran master.
+
+Residual risk: never compiled. A ptxas or `TORCH_CUDA_ARCH_LIST=9.0a` failure, or a C=4 occupancy below 32, silently lands those batches on master. Only the log lines distinguish that from "no gain".
