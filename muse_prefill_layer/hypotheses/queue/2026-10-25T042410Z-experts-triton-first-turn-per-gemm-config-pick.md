@@ -37,8 +37,11 @@ depends_on: null
 priority: 3
 kind: primary
 controls_for: null
-review: required
-status: queued
+review: hold
+status: hold
+review_at: 2026-10-25T043311Z
+review_companions: null
+hold_reason: "adversarial review: Weak mechanism and a candidate list made mostly of known losers or configs that will not compile; the likely outcome is PATH CHOSEN = master for both GEMMs, i.e"
 ---
 
 # experts-triton-first-turn-per-gemm-config-pick
@@ -56,3 +59,23 @@ Built on master (a81d19c). Today both _nvfp4_moe_gemm calls in _experts_triton u
 ## Risk
 
 Kill: PATH CHOSEN keeps master's config for both GEMMs (then the shipped code is master and the run is a re-measure; read the table only). Prepare timings undercount the judge by 20-25% (LESSONS), so rank, do not predict. Does not touch the K-loop (the running unmasked-loads hypothesis does).
+
+## Adversarial review
+
+Reviewed 2026-10-25T043311Z by an adversarial subagent (model opus).
+
+**Verdict: hold.** Weak mechanism and a candidate list made mostly of known losers or configs that will not compile; the likely outcome is PATH CHOSEN = master for both GEMMs, i.e. a check that re-measures master. Fold it into the next first_turn Triton check as a prepare-only table instead of spending a check on it.
+
+### Justification
+Profile: first_turn _moe_nvfp4_gemm_kernel 8.08-9.17 ms, w13 3059 / w2 1580 us in the persistent A/B. Knobs: (a) GROUP_SIZE_T 4/8/16 - with ~512 routes per expert there are only ~2 token tiles of 256 per expert, so the weight tile of an expert is reused by at most 2 adjacent token tiles regardless of group size; groups >2 only change which experts share the L2 window, a ~1% effect. (b) BLOCK_T 256/BLOCK_W 64/4 warps/3 stages - the master comment says BLOCK_T 256 leaves room for 2 smem stages not 3 (two [64,256] bf16 activation slabs = 64 KB/stage), and a [64,256] fp32 accumulator over 128 threads is 128 regs + dequant temporaries, so it either fails to compile (OutOfResources) or spills >4 and is rejected. (c) BLOCK_T 128/BLOCK_W 128/3 stages is effectively stage 2's first_turn config, measured 13-18% slower than BLOCK_T 256 (REWRITE_READ #5). REWRITE_READ also concluded the Triton tuning line is done ('Further gains on this kernel need the CUDA wgmma engine') and the persistent-grid scheduling A/B lost 3-5%. Weakest link: no candidate has a mechanism that plausibly clears the 0.97x pick threshold, and even a 5% w2 win is ~80 us on a 14-22 ms shape (<0.6%), unreadable at the shape level.
+
+### Confounders on the current kernel
+- experts-triton-w4a16-first-turn-blockt256: established the current single config; candidate (c) re-tests its predecessor.
+- In flight experts-triton-first-turn-unmasked-loads-l2-hints (aeda8b5a523642b1) edits the same K-loop and adds L2 eviction hints, which directly change what GROUP_SIZE_T and num_stages trade off; a config ranking taken on master's K-loop may invert on that one.
+
+### Interference and A/B needs
+If revived, no companion is needed (prepare A/B per GEMM is self-attributing), but it should be built on top of the unmasked-loads result, not beside it.
+
+### Open questions
+- If revived after unmasked-loads is harvested: replace the list with configs that can win - w2-only GROUP_SIZE_T 1/2 (match the ~2 token tiles per expert), num_warps 4 vs 8 at BLOCK_T 256/BLOCK_W 128/2 stages, and catch compile OutOfResources as a rejection; drive the synthetic routing with the judge's soft distribution (prepare totals 4.6 ms vs 8.1 ms judged suggest the synthetic case is not representative).
+
