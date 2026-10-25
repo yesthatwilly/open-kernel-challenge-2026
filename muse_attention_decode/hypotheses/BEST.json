@@ -5,10 +5,10 @@
  "mode": "submit",
  "speedup": 1.5199437286563244,
  "ci": [
-  1.4892951983056908,
-  1.5346544429241382
+  1.4971445727264796,
+  1.5427428845861693
  ],
- "score_us": 2490.9806358205487,
+ "score_us": 2477.9206815304415,
  "commit": "5d528bf313ed6deb0094c453214f1584fea0033b",
  "submission_blob": "6d6afa4722731ceb9cb8216d0334a03f1a96ad2b",
  "slug": "combo-tiled-preattn-neighbour-regate-c320",
