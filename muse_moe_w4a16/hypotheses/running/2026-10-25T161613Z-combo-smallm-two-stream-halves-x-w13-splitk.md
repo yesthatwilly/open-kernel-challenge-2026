@@ -116,7 +116,7 @@ review: proceed
 status: running
 review_at: 2026-10-25T162149Z
 review_companions: null
-stage: implemented
+stage: dispatched
 claimed_at: 2026-10-25T162149Z
 base_sha: 405d804d6756dfee33cc29cbda79b8057d85fbe1
 base_blob: 593b238c16387c5ac3774424ee9557882b9fc46a
@@ -133,6 +133,8 @@ submission_blob: c728d78fabda55f5f6ce3fab29e38c3b9f537be9
 lint_warnings: 106
 attempt_file: 2026-10-25T185808Z-submit-combo-smallm-two-stream-halves-x-w13-splitk.md
 prepared_at: 2026-10-25T185808Z
+job: 9a455a2aae7842cb
+dispatched_at: 2026-10-25T185817Z
 ---
 
 # combo-smallm-two-stream-halves-x-w13-splitk
