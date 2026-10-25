@@ -65,7 +65,7 @@ base_sha: 63b7f3a3bc19c847c204f5d5298872f66d86505a
 base_blob: 4da94677234faaa06b42b5ced541db8961fd6f34
 branch: hyp/muse_decode_layer/boundaries-unpooler-pdl-small-t
 worktree: .worktrees/muse_decode_layer/boundaries-unpooler-pdl-small-t
-mode: null
+mode: check
 restack_of: null
 stale_base: null
 implemented_at: 2026-10-25T011821Z
@@ -74,6 +74,8 @@ submission_sha256: ed0b3be71ffdce937b892bcf4d72b3fc8a43a56f873535f170c9ade758ff6
 norm_sha256: 49f6255c1af271dde88fdaeb641cab353db592d2757d4e4cb9de0aa7e2b5de0f
 submission_blob: 7781304a6fb5d86a719e72d889f8db724b7f310f
 lint_warnings: 33
+attempt_file: 2026-10-25T011821Z-check-boundaries-unpooler-pdl-small-t.md
+prepared_at: 2026-10-25T011821Z
 ---
 
 # boundaries-unpooler-pdl-small-t
