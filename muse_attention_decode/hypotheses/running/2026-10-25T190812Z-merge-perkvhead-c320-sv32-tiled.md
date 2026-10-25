@@ -38,7 +38,7 @@ review: proceed
 status: running
 review_at: 2026-10-25T191118Z
 review_companions: null
-stage: implemented
+stage: dispatched
 claimed_at: 2026-10-25T191118Z
 base_sha: 8eca21f5b391cbe0335e7b32676b0f35d9c5ff9e
 base_blob: 6d6afa4722731ceb9cb8216d0334a03f1a96ad2b
@@ -55,6 +55,8 @@ submission_blob: 6d947fb9ae48e4542cacddb80b8c7506fcc3e42a
 lint_warnings: 69
 attempt_file: 2026-10-25T192000Z-submit-merge-perkvhead-c320-sv32-tiled.md
 prepared_at: 2026-10-25T192000Z
+job: a78f29aeab9b47cb
+dispatched_at: 2026-10-25T192013Z
 ---
 
 # merge-perkvhead-c320-sv32-tiled
