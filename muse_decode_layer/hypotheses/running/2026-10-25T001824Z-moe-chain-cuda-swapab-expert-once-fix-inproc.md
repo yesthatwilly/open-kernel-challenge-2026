@@ -58,7 +58,7 @@ review: proceed
 status: running
 review_at: 2026-10-25T002143Z
 review_companions: null
-stage: implemented
+stage: dispatched
 claimed_at: 2026-10-25T002143Z
 base_sha: e65eda8e263ae1408bdb9e263068ca89a29ceb0d
 base_blob: 81d11fec488c02b0e7fe3a48f764aca20bb6a438
@@ -75,6 +75,8 @@ submission_blob: 451c3c09efdc6fc55db461ae20f27cd8e1cd4e9c
 lint_warnings: 25
 attempt_file: 2026-10-25T003526Z-check-moe-chain-cuda-swapab-expert-once-fix-inproc.md
 prepared_at: 2026-10-25T003526Z
+job: 4ebd055adab34ecd
+dispatched_at: 2026-10-25T003532Z
 ---
 
 # moe-chain-cuda-swapab-expert-once-fix-inproc
