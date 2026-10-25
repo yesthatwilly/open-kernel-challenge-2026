@@ -47,8 +47,10 @@ depends_on: null
 priority: 2
 kind: primary
 controls_for: null
-review: required
+review: proceed
 status: queued
+review_at: 2026-10-25T004113Z
+review_companions: null
 ---
 
 # unpooler-full-m16-swapab-route
@@ -71,3 +73,25 @@ Built on master (8b9ad43, blob a8bb42a). On master the full-weight unpooler (n=8
 ## Risk
 
 Small, one-shape change (~0.5-1 us on one 62-weight shape, ~+1% on decode_16); attributable from the unpooler decode_16 row alone. Risk: swap-AB at m=16 wastes half the wgmma n32 columns, but the kernel is weight-stream-bound so that is free; if the row is not below 18.5 the gate goes back.
+
+## Adversarial review
+
+Reviewed 2026-10-25T004113Z by an adversarial subagent (model opus).
+
+**Verdict: proceed.** One-gate change moving the full-width unpooler at m=9..16 from cuBLAS nvjet 64x16 onto master's existing swap-AB kernel. Plausible and attributable from the unpooler decode_16 row and its profile, but small (~0.2-0.6 us on one row, <0.2% headline). No overlap with the pending restack, which leaves the full unpooler at m=16 on cuBLAS; they touch different shapes and code and would stack cleanly.
+
+### Justification
+On master the unpooler n=8192 at m=16 fails _unpool_shape_ok (needs n==1024) and _swapab_route_ok (needs m>=17), so it falls to _bf16_gemm_dispatch_impl: nvjet_sm90_tst_64x16 at 19.3 us against a 14.1 us floor (pure 67 MB weight stream). The m=32 swap-AB config (128 CTAs, BLOCK_K 256, 4 stages, wgmma m64n32) with token columns masked should cost about its m=32 time; M is do_not_specialize, so no new compile. Evidence: swap-AB unpooler at m=32 18.48 us vs SGLang 18.66 (job 1602a4e), 18.08 in the restack job; the older mma.sync skinny kernel ran decode_16 at 17.97 vs 18.56. Weakest link: swap-AB beat cuBLAS by only 1-3% at m=32, and at m=16 cuBLAS already uses its tight 64x16 tile. Judge against master's own row, 18.61 us (job 1602a4e), not the restack's numbers.
+
+### Confounders on the current kernel
+- bf16-m32-swapab-wgmma-triton (landed): the dependency, supplies the kernel and gate; not a confounder.
+- bf16-shape-gated-triton-winners-combo (landed): _unpool_shape_ok needs n==1024, separate UNPOOL_MAX_M constant; not a confounder.
+- router-triton-hilo-fused-control-splitk-all-m / router-hilo-at-m8 / sglang-gemm-dispatch-parity: other layers; not confounders.
+
+### Interference and A/B needs
+No companion. Read the unpooler decode_16 row (err ~50 ns, a 300-600 ns change is resolvable) and the profile's kernel name (nvjet -> _bf16_swapab_kernel). The headline will read unproven-vs-best (base is master ~1.198, BEST is the restack 1.2215); grade on the row against master job 1602a4e. Restack overlap: none in shapes or logic, text hunks disjoint; a 3-way merge should be clean and the gains add.
+
+### Open questions
+- Will BLOCK_T 32 at m=16 match the m=32 time? If it lands ~18.4 us, a follow-up on top of the restack is a SWAPAB16_CFG['unpooler'] full-width entry (8192, 4096, 1, 256, 4) with wgmma m64n16.
+- If the restack is promoted first, rebase onto it and re-judge decode_16 against its job 60b20fd0 unpooler row (18.51 us).
+
