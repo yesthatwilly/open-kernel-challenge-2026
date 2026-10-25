@@ -61,7 +61,7 @@ review: proceed
 status: running
 review_at: 2026-10-25T002132Z
 review_companions: null
-stage: implemented
+stage: dispatched
 claimed_at: 2026-10-25T002132Z
 base_sha: 0efab7bdfa79cfea6a430d51c5b7c038a7bd2af3
 base_blob: 62b00bb77cbc9e2fce8ed39dd25d87fb78503a5d
@@ -78,6 +78,8 @@ submission_blob: c80e3a831390ffb38cbcb7560231b59a64a2c6a0
 lint_warnings: 33
 attempt_file: 2026-10-25T003453Z-check-cuda-fused-moe-bs1-persistent-nospin-bandwidth-inproc.md
 prepared_at: 2026-10-25T003453Z
+job: 7a6919420b724ee7
+dispatched_at: 2026-10-25T003500Z
 ---
 
 # cuda-fused-moe-bs1-persistent-nospin-bandwidth-inproc
