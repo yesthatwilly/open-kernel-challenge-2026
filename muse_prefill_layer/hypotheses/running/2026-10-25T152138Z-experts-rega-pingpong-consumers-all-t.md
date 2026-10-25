@@ -89,7 +89,7 @@ review: proceed
 status: running
 review_at: 2026-10-25T152526Z
 review_companions: null
-stage: claimed
+stage: implemented
 claimed_at: 2026-10-25T152526Z
 base_sha: f4ace8661739740d326729699aeb3d2f785ae596
 base_blob: a2fe2a75893c60d4f68cf94fcce8ce8f9b708a71
@@ -98,6 +98,12 @@ worktree: .worktrees/muse_prefill_layer/experts-rega-pingpong-consumers-all-t
 mode: null
 restack_of: null
 stale_base: null
+implemented_at: 2026-10-25T154139Z
+impl_commit: ffe531f6cdb87040edc100c7d0eab62f28bbdf33
+submission_sha256: 1133f5f6fc4f9ab1c355909cee138d98b39e7f6294f22a9ef56accf377d8cd67
+norm_sha256: fb27e2247d1d41bfe5e2d6d91ba782778f8daf7ac947a3d54ec11eb6c77b05b7
+submission_blob: d3e7b75d044c8d3262672f0fb473e87a4f68f7af
+lint_warnings: 83
 ---
 
 # experts-rega-pingpong-consumers-all-t
@@ -198,3 +204,23 @@ warn  dtype        L3427/L3428 (master's rega bank), L3686 (master's pad), L4364
 OK with warnings: muse_prefill_layer/submission.py
 ```
 `python3 -I -m py_compile` ok; `__pycache__` removed. A CPU dry run of `_rega_pp_setup` exercised these branches: master all OFF, start deadline, v1 fallback, and build failure. Each printed per-class OFF reasons and `PATH CHOSEN ... master`.
+
+## Pre-flight audit
+
+Audited 2026-10-25 by an Opus subagent. **Verdict: dispatch (no fixes).** The focus was hang safety.
+
+- **Derived source.** The derivation was re-run on CPU by AST-extracting master's strings. All 7 anchors and 14 substitutions match exactly once. `diff` of master's `_rega_src()` against the derived PP source shows only these changes: the PP barrier helpers; `consume_item_pp` (its signature, the pre-`mbar_wait` sync block and the post-commit `pp_arrive`); the kernel name, launch marker, `wg2`/`started` declarations, the call site and the post-loop final sync; `info_one_pp`/`rega_pp_init`/`rega_gemm_pp` renames; and the gather kernel and entry dropped. `_rega_src_v1()` still hashes to `REGA_V1_SHA256`. Master's `_rega_src()` is byte-identical to master (blob a2fe2a75). Nothing was compiled: there is no nvcc here.
+- **Barrier counts, re-derived independently.**
+  - The layout gives exactly 128 threads on each side of every PP bar op: WG1 = CTA warps 4-7, WG2 = warps 8-11, and the producer branch (`warp < 4`) contains no bar 1/2/3 op.
+  - Both warpgroups see the same item sequence, KS and bucket: `total` and KS come from shared memory after `__syncthreads`, `decode_item` is deterministic, and the bucket only changes NB.
+  - For S = 32·items stages: WG1 does S-1 in-loop syncs on A plus 1 final sync, matching WG2's S arrives on A; WG1's S arrives on B match WG2's S syncs on B. With S = 0 neither warpgroup does any PP op.
+  - `dead` never gates a PP op, and every `mbar_wait` is bounded, so the timeout path ends instead of hanging. The kernel has no early return.
+  - `wg2` and `started` are uniform within each warp, and `__syncwarp` precedes every bar op. Lane 0's `mbar_arrive` sits after the op.
+  - Epilogue bar 1: WG2's last sync on B is satisfied before WG1 reaches bar 1, so the two cannot deadlock.
+- **Simulation.** A random-schedule simulation with hardware barrier semantics (count 256, release and reset, double-arrive detection) covered items 0-5 × KS {1, 2, 3, 32} × 300 schedules and found 0 faults. Negative controls confirm the simulation can fail: removing the `started` guard deadlocks it, and removing the final sync leaves 128 arrivals pending.
+- **Ring.** WG1 runs at most one stage ahead of WG2, so there is no parity aliasing on the 4-stage ring.
+- **Rules.** kernel_fn adds only a dict lookup on prepare-time bools keyed by `_rega_class(T)`. That class matches master's kernel_fn class split (low ≤ 1024 < high ≤ 4096 < ft ≤ 16384). There are no prints, try/except, syncs or allocations. TMA maps are encoded per call (the code is master's). There are no module or C++ globals, and the PP Python constants are never mutated. Master's checks run before `state['rega_pp']` exists, so they exercise master's kernel.
+- **Gates.** The register-pool, attribute and smem check is master's, plus local bytes == 0 (master logs 0 B). Exactness uses bit-equality on rows the kernels write, which is sound because each output is owned by one CTA with a fixed accumulation order and no atomics. Prepare budget: master ends at ~124 s; PP starts by 180 s, takes no new step after 240 s, and each step runs in seconds, so prepare stays well under its 300 s limit.
+- **Lint and compile.** `okc_lint` gives OK with warnings (all pre-existing kinds). `py_compile` passes; `__pycache__` removed.
+
+Residual risk: nvcc has not been run on the derived source (the edits are syntactically trivial; a build failure or spill leaves every class on master's rega and prints PATH CHOSEN master).
