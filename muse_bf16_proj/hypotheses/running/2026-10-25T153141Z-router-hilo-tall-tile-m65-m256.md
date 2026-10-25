@@ -49,7 +49,7 @@ review: proceed
 status: running
 review_at: 2026-10-25T203138Z
 review_companions: null
-stage: implemented
+stage: dispatched
 claimed_at: 2026-10-25T203138Z
 base_sha: 72279d8be856d60ae496236e976e81549d53cc2d
 base_blob: ad8d7254a64a52db2a8f56ec0ad262748153a2e8
@@ -66,6 +66,8 @@ submission_blob: 07996bb0a21bf7d1b490334998bdc0f7517aa5f0
 lint_warnings: 37
 attempt_file: 2026-10-25T203553Z-submit-router-hilo-tall-tile-m65-m256.md
 prepared_at: 2026-10-25T203553Z
+job: 864e8094b5bc4c1b
+dispatched_at: 2026-10-25T203601Z
 ---
 
 # router-hilo-tall-tile-m65-m256
