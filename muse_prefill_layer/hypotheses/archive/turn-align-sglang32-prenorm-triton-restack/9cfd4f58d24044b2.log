@@ -1,0 +1,67 @@
+[w2 zero-store] OFF (weighted sum skips remote slots)
+[expert gemm] w13 BLOCK_T=64 BLOCK_W=128 warps=4 stages=3: n_regs=255 n_spills=0 shared=67584
+[expert gemm] w13 BLOCK_T=128 BLOCK_W=128 warps=8 stages=3: n_regs=176 n_spills=0 shared=116736
+[expert gemm] w13 BLOCK_T=256 BLOCK_W=128 warps=8 stages=2: n_regs=254 n_spills=4 shared=140288
+[expert gemm] w2 BLOCK_T=64 BLOCK_W=128 warps=4 stages=3: n_regs=255 n_spills=0 shared=67584
+[expert gemm] w2 BLOCK_T=128 BLOCK_W=128 warps=8 stages=3: n_regs=176 n_spills=0 shared=116736
+[expert gemm] w2 BLOCK_T=256 BLOCK_W=128 warps=8 stages=2: n_regs=254 n_spills=4 shared=140288
+[align-local] ON cases=15 mismatches=0 (PATH CHOSEN = parallel align on the Marlin path)
+[silu-sorted] ON max rel err 0.00e+00 (PATH CHOSEN = sorted silu on the Marlin path)
+[turn-align] fix-up probe: -1 blocks are NOT last at T=753 random
+[turn-align] launching base par T=753 random
+[turn-align] done base par T=753 random
+[turn-align] launching sgl32 T=753 random
+[turn-align] done sgl32 T=753 random
+[turn-align] check T=753 random sgl32 vs par: relL2 0.00e+00 bitwise equal ok
+[turn-align] launching base par T=753 skewed
+[turn-align] done base par T=753 skewed
+[turn-align] launching sgl32 T=753 skewed
+[turn-align] done sgl32 T=753 skewed
+[turn-align] check T=753 skewed sgl32 vs par: relL2 1.36e-04 bitwise differs ok
+[turn-align] T=753 end-to-end _experts_marlin: par 759.5 us (+-2.7) sgl32 781.1 us (+-3.1) ratio 1.028 gain -21.6 us noise 3.1 us -> no gain
+[turn-align] T=753 align-only: par 23.1 us, sgl32 15.4 us
+[turn-align] PATH CHOSEN align T=753: par
+[turn-align] launching base par T=3012 random
+[turn-align] done base par T=3012 random
+[turn-align] launching sgl32 T=3012 random
+[turn-align] done sgl32 T=3012 random
+[turn-align] check T=3012 random sgl32 vs par: relL2 5.52e-05 bitwise differs ok
+[turn-align] launching base par T=3012 skewed
+[turn-align] done base par T=3012 skewed
+[turn-align] launching sgl32 T=3012 skewed
+[turn-align] done sgl32 T=3012 skewed
+[turn-align] check T=3012 skewed sgl32 vs par: relL2 6.62e-05 bitwise differs ok
+[turn-align] T=3012 end-to-end _experts_marlin: par 1543.4 us (+-4.9) sgl32 1616.9 us (+-3.8) ratio 1.048 gain -73.5 us noise 4.9 us -> no gain
+[turn-align] T=3012 align-only: par 74.3 us, sgl32 34.8 us
+[turn-align] PATH CHOSEN align T=3012: par
+[turn-align] summary align {753: 'par', 3012: 'par'}
+[turn-align] launching master pre-norm T=753
+[turn-align] done master pre-norm T=753
+[turn-align] launching pre-norm T=753 nw=4
+[turn-align] done pre-norm T=753 nw=4
+[turn-align] pre-norm T=753 nw=4: master 12.9 us triton 10.2 us ratio 0.792; err vs fp32 ref triton 1.66e-03 master 2.44e-03; vs master relL2 2.90e-03; check ok
+[turn-align] launching pre-norm T=753 nw=8
+[turn-align] done pre-norm T=753 nw=8
+[turn-align] pre-norm T=753 nw=8: master 13.1 us triton 10.1 us ratio 0.770; err vs fp32 ref triton 1.66e-03 master 2.44e-03; vs master relL2 2.90e-03; check ok
+[turn-align] PATH CHOSEN pre-norm T=753: triton nw=8 (ratio 0.770)
+[turn-align] launching master pre-norm T=3012
+[turn-align] done master pre-norm T=3012
+[turn-align] launching pre-norm T=3012 nw=4
+[turn-align] done pre-norm T=3012 nw=4
+[turn-align] pre-norm T=3012 nw=4: master 24.8 us triton 20.3 us ratio 0.819; err vs fp32 ref triton 1.66e-03 master 2.44e-03; vs master relL2 2.90e-03; check ok
+[turn-align] launching pre-norm T=3012 nw=8
+[turn-align] done pre-norm T=3012 nw=8
+[turn-align] pre-norm T=3012 nw=8: master 24.8 us triton 20.1 us ratio 0.810; err vs fp32 ref triton 1.66e-03 master 2.44e-03; vs master relL2 2.90e-03; check ok
+[turn-align] PATH CHOSEN pre-norm T=3012: triton nw=8 (ratio 0.810)
+[turn-align] launching master pre-norm T=16384
+[turn-align] done master pre-norm T=16384
+[turn-align] launching pre-norm T=16384 nw=4
+[turn-align] done pre-norm T=16384 nw=4
+[turn-align] pre-norm T=16384 nw=4: master 84.4 us triton 76.7 us ratio 0.908; err vs fp32 ref triton 1.66e-03 master 2.44e-03; vs master relL2 2.90e-03; check ok
+[turn-align] launching pre-norm T=16384 nw=8
+[turn-align] done pre-norm T=16384 nw=8
+[turn-align] pre-norm T=16384 nw=8: master 84.5 us triton 76.4 us ratio 0.903; err vs fp32 ref triton 1.66e-03 master 2.44e-03; vs master relL2 2.90e-03; check ok
+[turn-align] PATH CHOSEN pre-norm T=16384: triton nw=8 (ratio 0.903)
+[turn-align] summary pre-norm {753: 8, 3012: 8, 16384: 8}
+[expert e2e] T=8192 triton vs marlin: rel L2 5.868e-03, worst row 7.039e-03 (8341 local routes)
+[prepare] max_memory_allocated 4.90 GiB

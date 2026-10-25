@@ -41,10 +41,10 @@ priority: 4
 kind: primary
 controls_for: null
 review: proceed
-status: running
+status: done
 review_at: 2026-10-25T085209Z
 review_companions: null
-stage: dispatched
+stage: harvested
 claimed_at: 2026-10-25T085209Z
 base_sha: e6cf5ce8f79493b9904b7c6d74e6a6c25f14f820
 base_blob: db8a3344398bca79ea5cafeb580f701c055fd475
@@ -63,6 +63,13 @@ attempt_file: 2026-10-25T085911Z-check-turn-align-sglang32-prenorm-triton-restac
 prepared_at: 2026-10-25T085911Z
 job: 9cfd4f58d24044b2
 dispatched_at: 2026-10-25T085923Z
+outcome: neutral
+verdict_detail: within-ci
+speedup: 1.069365828013475
+speedup_ci: [1.053325340593273, 1.085406315433677]
+harvested_at: 2026-10-25T091110Z
+best_at_harvest: 1.074386115190733
+promotion: null
 ---
 
 # turn-align-sglang32-prenorm-triton-restack
@@ -159,3 +166,31 @@ Checked and fine:
 - Expectation. sgl_kernel's moe_align_block_size likely shifts ids by +1, which would put the -1 bucket first, not last. Then the probe disables sgl32fix, and only plain sgl32 is timed. It walks the remote -1 blocks, so the extra Marlin and silu work may eat the align saving. The end-to-end gate handles that by staying on par.
 
 Residual risk: the align half may stay OFF at both classes (sgl32fix disabled by the probe, plain sgl32 not beating par end to end), which would leave only the pre-norm row gain. Compile and runtime are untested on a GPU.
+
+## Result
+
+- job `9cfd4f58d24044b2` (check), status done, passed True, tests 5/5
+- speedup 1.0694x, 95% CI [1.0533, 1.0854], score 362274.43392283 µs vs SGLang 387403.9 µs
+- best at harvest: {"speedup": 1.074386115190733, "ci": [1.058270323462872, 1.090501906918594], "job": "502f2eab95164781"}; base result: muse_prefill_layer/hypotheses/done/neutral/stack-tonight-five-prefill.result.json
+- **outcome: neutral** (within-ci)
+- files: `muse_prefill_layer/hypotheses/done/neutral/turn-align-sglang32-prenorm-triton-restack.result.json`, `muse_prefill_layer/hypotheses/done/neutral/turn-align-sglang32-prenorm-triton-restack.patch`; branch `hyp/muse_prefill_layer/turn-align-sglang32-prenorm-triton-restack`
+
+## Attribution
+
+| shape | w | base µs | hyp µs | delta | verdict |
+|---|---|---|---|---|---|
+| batch=1 ctx=80000 dist=soft layer=sliding load=turn_1 page=1 q_len=753 repeats=6 | 46 | 1101.29 | 1046.14 | 1.0052 | flat |
+| batch=1 ctx=80000 dist=soft layer=full load=turn_1 page=1 q_len=753 repeats=6 | 16 | 1529.55 | 1406.91 | 1.0036 | flat |
+| batch=4 ctx=80000 dist=soft layer=sliding load=turn_4 page=1 q_len=753 repeats=6 | 46 | 3318.71 | 3362.75 | 1.0009 | flat |
+| batch=4 ctx=80000 dist=soft layer=full load=turn_4 page=1 q_len=753 repeats=6 | 16 | 4849.27 | 4920.09 | 0.9993 | flat |
+| batch=1 ctx=0 dist=soft layer=full load=first_turn page=1 q_len=16384 repeats=6 | 16 | 14705.32 | 14917.48 | 0.9953 | flat |
+| batch=1 ctx=32768 dist=soft layer=sliding load=first_turn page=1 q_len=16384 repeats=6 | 138 | 14264.64 | 14039.6 | 0.9906 | flat |
+| batch=1 ctx=32768 dist=soft layer=full load=first_turn page=1 q_len=16384 repeats=6 | 16 | 17746.69 | 18558.1 | 1.0014 | flat |
+| batch=1 ctx=65536 dist=soft layer=full load=first_turn page=1 q_len=16384 repeats=6 | 16 | 21733.75 | 21667.63 | 0.989 | flat |
+
+no shape moved outside noise. Expected hit: 0/3. Noise ±1.5%.
+
+## Follow-ups
+
+- within-ci: the change is not proven either way; a stacked hypothesis (`depends_on: turn-align-sglang32-prenorm-triton-restack`) that adds a further change in the same area is the only way to learn more (identical code is never re-run).
+

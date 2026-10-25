@@ -1,0 +1,360 @@
+diff --git a/muse_prefill_layer/submission.py b/muse_prefill_layer/submission.py
+index db8a3344..8507f9e9 100644
+--- a/muse_prefill_layer/submission.py
++++ b/muse_prefill_layer/submission.py
+@@ -602,6 +602,8 @@ def prepare(weights):
+     torch.cuda.empty_cache()
+     _align_par_setup(state, device)
+     _silu_sorted_setup(state, device)
++    _align_gate_setup(state, device)
++    _pre_norm_setup(state, weights, device)
+     _check_experts_e2e(state, device)
+     torch.cuda.synchronize()
+     print(f"[prepare] max_memory_allocated {torch.cuda.max_memory_allocated(device) / 2**30:.2f} GiB", flush=True)
+@@ -860,7 +862,318 @@ def _silu_sorted_setup(state, device):
+         print(f"[silu-sorted] OFF: {e!r} (PATH CHOSEN = MASTER silu_and_mul)", flush=True)
+ 
+ 
+-def _experts_marlin(x, topk_weights, local_ids, state):
++# ---------------------------------------------------------------------------------------------
++# hypothesis turn-align-sglang32-prenorm-triton-restack.
++# (1) Marlin-path align: SGLang's moe_align_block_size over the 32 local experts (optionally with a
++#     one-program n_padded fix-up that drops the -1 blocks) against master's _align_parallel, chosen per
++#     T class in prepare() on the END-TO-END _experts_marlin time (align + w13 + silu + w2 + combine) in a
++#     CUDA graph with a cold-L2 flush. Static per class; nothing is decided at run time.
++# (2) Pre-expert RMSNorm as a persistent Triton row kernel (bf16 w, +1 added in fp32 in-kernel).
++# ---------------------------------------------------------------------------------------------
++GATE_TAG = "[turn-align]"
++GATE_CLASS_T = (753, 3012, 16384)
++GATE_RATIO = 0.99
++GATE_NORM_RATIO = 0.98
++GATE_FLUSH_BYTES = 288 * 2**20
++GATE_REPS = 31
++GATE_MIN_NOISE_US = 1.0
++GATE_REL_L2_MAX = 1e-3
++NORM_REL_VS_MASTER_MAX = 5e-3
++NORM_ERR_FACTOR = 1.25
++NORM_VARIANTS = (4, 8)  # num_warps
++FIX_BLOCK = 1024
++
++
++def _gate_class(tokens):
++    """Token-count class from the shape only: 753 up to 1024, 3012 up to MARLIN_MAX_TOKENS, else 16384."""
++    if tokens <= 1024:
++        return GATE_CLASS_T[0]
++    return GATE_CLASS_T[1] if tokens <= MARLIN_MAX_TOKENS else GATE_CLASS_T[2]
++
++
++def _align_mode(state, tokens):
++    """Static per-class align choice for the Marlin path (a dict lookup on a shape)."""
++    mode = state["align_mode"].get(_gate_class(tokens))
++    if mode is None:
++        mode = state["align_base"]
++    return mode
++
++
++@triton.jit(do_not_specialize=["n_blocks"])
++def _align_fix_npad_kernel(block_experts_ptr, n_padded_ptr, n_blocks, BSM: tl.constexpr, BLOCK: tl.constexpr):
++    """One program: n_padded = BSM * (number of local (>= 0) entries among the first n_padded / BSM
++    block_experts). Valid when the -1 blocks come after every local block (checked in prepare())."""
++    used = tl.minimum(tl.load(n_padded_ptr) // BSM, n_blocks)
++    offs0 = tl.arange(0, BLOCK)
++    acc = tl.zeros([BLOCK], dtype=tl.int32)
++    for c in range(0, used, BLOCK):
++        offs = c + offs0
++        be = tl.load(block_experts_ptr + offs, mask=offs < used, other=-1)
++        acc += (be >= 0).to(tl.int32)
++    tl.store(n_padded_ptr, tl.sum(acc, axis=0) * BSM)
++
++
++def _align_fix_npad(block_experts, n_padded, bsm):
++    _align_fix_npad_kernel[(1,)](block_experts, n_padded, block_experts.shape[0], BSM=bsm, BLOCK=FIX_BLOCK,
++                                 num_warps=4)
++
++
++def _gate_graph(fn):
++    fn()
++    torch.cuda.synchronize()
++    side = torch.cuda.Stream()
++    side.wait_stream(torch.cuda.current_stream())
++    with torch.cuda.stream(side):
++        fn()
++    torch.cuda.current_stream().wait_stream(side)
++    torch.cuda.synchronize()
++    graph = torch.cuda.CUDAGraph()
++    with torch.cuda.graph(graph):
++        fn()
++    torch.cuda.synchronize()
++    return graph
++
++
++def _gate_time(fns, flush):
++    """CUDA-graph replays with a cold L2 (a >= 256 MB write just before each replay), the candidates
++    interleaved with a rotating order, GATE_REPS each. Returns per candidate (median us, half-IQR us)."""
++    graphs = [_gate_graph(fn) for fn in fns]
++    times = [[] for _ in fns]
++    n = len(fns)
++    for rep in range(GATE_REPS):
++        for j in range(n):
++            which = (j + rep) % n
++            flush.zero_()
++            start, end = torch.cuda.Event(enable_timing=True), torch.cuda.Event(enable_timing=True)
++            start.record()
++            graphs[which].replay()
++            end.record()
++            end.synchronize()
++            times[which].append(start.elapsed_time(end) * 1000.0)
++    out = []
++    for t in times:
++        t = sorted(t)
++        out.append((t[len(t) // 2], (t[(3 * len(t)) // 4] - t[len(t) // 4]) / 2.0))
++    del graphs
++    return out
++
++
++def _gate_routing(gen, device, tokens, kind):
++    ids = torch.rand((tokens, N_EXPERTS), generator=gen, device=device).topk(TOP_K, dim=1).indices.to(torch.int32)
++    if kind == "skewed":
++        ids[:, 0] = 0
++        ids[:, 1] = 31
++        ids[:, 2] = torch.where(ids[:, 2] == 0, ids[:, 3], ids[:, 2])
++    local_ids = torch.where(ids < LOCAL_EXPERTS, ids, torch.full_like(ids, -1)).contiguous()
++    tw = torch.rand((tokens, TOP_K), generator=gen, device=device, dtype=torch.float32) + 0.1
++    return local_ids, (tw / tw.sum(dim=1, keepdim=True)).contiguous()
++
++
++def _gate_bsm(tokens):
++    for bsm in BLOCK_SIZE_M_CANDIDATES:
++        if tokens * TOP_K / LOCAL_EXPERTS / bsm < 0.9:
++            break
++    return bsm
++
++
++def _align_fix_probe(device, gen):
++    """True when, on synthetic routings at both Marlin classes, SGLang's 32-expert align puts every local
++    block before every -1 block, and the fixed n_padded then gives the same per-expert route sets as
++    master's local-only align."""
++    for tokens in GATE_CLASS_T[:2]:
++        bsm = _gate_bsm(tokens)
++        for kind in ("random", "skewed", "all_remote"):
++            local_ids, _ = _gate_routing(gen, device, tokens, "random" if kind == "all_remote" else kind)
++            if kind == "all_remote":
++                local_ids = torch.full_like(local_ids, -1)
++            sorted_ids, block_experts, n_padded = moe_align_block_size(local_ids, bsm, LOCAL_EXPERTS)
++            torch.cuda.synchronize()
++            used = int(n_padded.cpu()[0]) // bsm
++            flags = (block_experts.cpu()[:used] >= 0).tolist()
++            if any((not a) and b for a, b in zip(flags, flags[1:])):
++                print(f"{GATE_TAG} fix-up probe: -1 blocks are NOT last at T={tokens} {kind}", flush=True)
++                return False
++            _align_fix_npad(block_experts, n_padded, bsm)
++            torch.cuda.synchronize()
++            _, par = _align_parallel(local_ids, 0, LOCAL_EXPERTS, bsm)
++            n = local_ids.numel()
++            if (_align_par_ref_view(sorted_ids, block_experts, n_padded, n, bsm)
++                    != _align_par_ref_view(par[0], par[1], par[2], n, bsm)):
++                print(f"{GATE_TAG} fix-up probe: fixed align differs from local-only align at T={tokens} {kind}",
++                      flush=True)
++                return False
++    print(f"{GATE_TAG} fix-up probe: -1 bucket is last, fixed n_padded matches local-only align", flush=True)
++    return True
++
++
++def _align_gate_setup(state, device):
++    """prepare() only, never raises. Per Marlin T class (753, 3012) picks master's align or SGLang's
++    32-expert align (with or without the n_padded fix-up) on the end-to-end _experts_marlin graph time with
++    a cold L2, and only when the result matches (local rows only: the output rows are all local-derived)."""
++    base = "par" if state.get("align_par_ok", False) else "n256"
++    state["align_base"] = base
++    state["align_mode"] = {t: base for t in GATE_CLASS_T[:2]}
++    try:
++        gen = torch.Generator(device=device).manual_seed(20261025)
++        fix_ok = False
++        try:
++            fix_ok = _align_fix_probe(device, gen)
++        except Exception as e:
++            print(f"{GATE_TAG} fix-up probe raised {e!r}", flush=True)
++        cands = ["sgl32"] + (["sgl32fix"] if fix_ok else [])
++        flush = torch.empty(GATE_FLUSH_BYTES, dtype=torch.uint8, device=device)
++        for tokens in GATE_CLASS_T[:2]:
++            try:
++                x = torch.randn((tokens, D_EXPERT), generator=gen, device=device, dtype=torch.float32).to(torch.bfloat16)
++                good = []
++                for kind in ("random", "skewed"):
++                    local_ids, tw = _gate_routing(gen, device, tokens, kind)
++                    print(f"{GATE_TAG} launching base {base} T={tokens} {kind}", flush=True)
++                    ref = _experts_marlin(x, tw, local_ids, state, base).float()
++                    torch.cuda.synchronize()
++                    print(f"{GATE_TAG} done base {base} T={tokens} {kind}", flush=True)
++                    for c in cands:
++                        print(f"{GATE_TAG} launching {c} T={tokens} {kind}", flush=True)
++                        got = _experts_marlin(x, tw, local_ids, state, c).float()
++                        torch.cuda.synchronize()
++                        print(f"{GATE_TAG} done {c} T={tokens} {kind}", flush=True)
++                        rel = float((got - ref).norm() / ref.norm().clamp_min(1e-30))
++                        ok = bool(torch.isfinite(got).all()) and rel <= GATE_REL_L2_MAX
++                        print(f"{GATE_TAG} check T={tokens} {kind} {c} vs {base}: relL2 {rel:.2e} "
++                              f"bitwise {'equal' if torch.equal(got, ref) else 'differs'} {'ok' if ok else 'FAIL'}",
++                              flush=True)
++                        good.append((c, ok))
++                    del ref, got
++                passing = [c for c in cands if all(ok for n, ok in good if n == c)]
++                local_ids, tw = _gate_routing(gen, device, tokens, "random")
++                names = [base] + passing
++                fns = [(lambda m=m: _experts_marlin(x, tw, local_ids, state, m)) for m in names]
++                stats = _gate_time(fns, flush)
++                (t0, n0) = stats[0]
++                best, best_gain = base, 0.0
++                for name, (t1, n1) in zip(names[1:], stats[1:]):
++                    gain, noise = t0 - t1, max(n0, n1, GATE_MIN_NOISE_US)
++                    use = gain > noise and t1 / t0 <= GATE_RATIO
++                    print(f"{GATE_TAG} T={tokens} end-to-end _experts_marlin: {base} {t0:.1f} us (+-{n0:.1f}) "
++                          f"{name} {t1:.1f} us (+-{n1:.1f}) ratio {t1 / t0:.3f} gain {gain:.1f} us noise {noise:.1f} us "
++                          f"-> {'beats' if use else 'no gain'}", flush=True)
++                    if use and gain > best_gain:
++                        best, best_gain = name, gain
++                # align-only numbers, for the log (eager-in-graph, cold L2)
++                bsm = _gate_bsm(tokens)
++                afns = [lambda: _align_parallel(local_ids, 0, LOCAL_EXPERTS, bsm),
++                        lambda: moe_align_block_size(local_ids, bsm, LOCAL_EXPERTS)]
++                if fix_ok:
++                    def _sgl_fix():
++                        r = moe_align_block_size(local_ids, bsm, LOCAL_EXPERTS)
++                        _align_fix_npad(r[1], r[2], bsm)
++                    afns.append(_sgl_fix)
++                astats = _gate_time(afns, flush)
++                print(f"{GATE_TAG} T={tokens} align-only: " + ", ".join(
++                    f"{n} {t:.1f} us" for n, (t, _) in zip(("par", "sgl32", "sgl32fix"), astats)), flush=True)
++                state["align_mode"][tokens] = best
++                print(f"{GATE_TAG} PATH CHOSEN align T={tokens}: {best}", flush=True)
++                del x
++            except Exception as e:
++                state["align_mode"][tokens] = base
++                print(f"{GATE_TAG} T={tokens} OFF: {e!r} (PATH CHOSEN align = {base})", flush=True)
++            torch.cuda.empty_cache()
++        del flush
++    except Exception as e:
++        state["align_mode"] = {t: base for t in GATE_CLASS_T[:2]}
++        print(f"{GATE_TAG} OFF: {e!r} (PATH CHOSEN align = {base} for every class)", flush=True)
++    print(f"{GATE_TAG} summary align {state['align_mode']}", flush=True)
++    torch.cuda.synchronize()
++
++
++@triton.jit(do_not_specialize=["T"])
++def _pre_expert_rmsnorm_kernel(x_ptr, w_ptr, out_ptr, T, eps, H: tl.constexpr):
++    """out[r] = bf16(x[r] * rsqrt(mean(x[r]^2) + eps) * (1 + w)), fp32 math, w the bf16 checkpoint weight
++    (the +1 is added in fp32 here, no widened copy is stored). Persistent: program p takes rows p, p + P, ..."""
++    pid = tl.program_id(0)
++    nprog = tl.num_programs(0)
++    offs = tl.arange(0, H)
++    w = tl.load(w_ptr + offs).to(tl.float32) + 1.0
++    for r in range(pid, T, nprog):
++        base = r.to(tl.int64) * H
++        x = tl.load(x_ptr + base + offs).to(tl.float32)
++        rs = tl.rsqrt(tl.sum(x * x, axis=0) / H + eps)
++        tl.store(out_ptr + base + offs, (x * rs * w).to(tl.bfloat16))
++
++
++def _pre_norm_triton(x, state, num_warps):
++    x = x if x.is_contiguous() else x.contiguous()
++    tokens = x.shape[0]
++    out = torch.empty_like(x)
++    _pre_expert_rmsnorm_kernel[(min(state["norm_grid"], tokens),)](
++        x, state["pre_w"], out, tokens, RMS_EPS, H=D_EXPERT, num_warps=num_warps)
++    return out
++
++
++def _pre_norm(x, state):
++    """state['pre_expert_norm'](x), or the Triton row kernel where prepare() enabled it for this T class."""
++    variant = state["pre_norm_nw"].get(_gate_class(x.shape[0]))
++    if variant is None:
++        return state["pre_expert_norm"](x)
++    return _pre_norm_triton(x, state, variant)
++
++
++def _pre_norm_setup(state, weights, device):
++    """prepare() only, never raises: per T class, the Triton pre-norm if it passes its check and is
++    <= GATE_NORM_RATIO x the module's call in a cold-L2 CUDA graph; else the module's call."""
++    state["pre_norm_nw"] = {t: None for t in GATE_CLASS_T}
++    try:
++        state["norm_grid"] = torch.cuda.get_device_properties(device).multi_processor_count * 4
++        state["pre_w"] = weights["pre_expert_norm"].to(torch.bfloat16).contiguous().clone()
++        assert state["pre_w"].shape == (D_EXPERT,)
++        norm = state["pre_expert_norm"]
++        w1 = state["pre_w"].float() + 1.0
++        flush = torch.empty(GATE_FLUSH_BYTES, dtype=torch.uint8, device=device)
++        gen = torch.Generator(device=device).manual_seed(20261026)
++        for tokens in GATE_CLASS_T:
++            try:
++                x = torch.randn((tokens, D_EXPERT), generator=gen, device=device, dtype=torch.float32).to(torch.bfloat16)
++                ref32 = x.float() * torch.rsqrt(x.float().pow(2).mean(dim=-1, keepdim=True) + RMS_EPS) * w1
++                print(f"{GATE_TAG} launching master pre-norm T={tokens}", flush=True)
++                master_out = norm(x)
++                torch.cuda.synchronize()
++                print(f"{GATE_TAG} done master pre-norm T={tokens}", flush=True)
++                err_master = float((master_out.float() - ref32).norm() / ref32.norm())
++                best = None
++                for nw in NORM_VARIANTS:
++                    print(f"{GATE_TAG} launching pre-norm T={tokens} nw={nw}", flush=True)
++                    out = _pre_norm_triton(x, state, nw)
++                    torch.cuda.synchronize()
++                    print(f"{GATE_TAG} done pre-norm T={tokens} nw={nw}", flush=True)
++                    err = float((out.float() - ref32).norm() / ref32.norm())
++                    rel = float((out.float() - master_out.float()).norm() / master_out.float().norm())
++                    ok = (bool(torch.isfinite(out.float()).all()) and err <= NORM_ERR_FACTOR * err_master + 1e-4
++                          and rel <= NORM_REL_VS_MASTER_MAX)
++                    (t_m, _), (t_n, _) = _gate_time([lambda: norm(x), lambda nw=nw: _pre_norm_triton(x, state, nw)], flush)
++                    print(f"{GATE_TAG} pre-norm T={tokens} nw={nw}: master {t_m:.1f} us triton {t_n:.1f} us ratio "
++                          f"{t_n / t_m:.3f}; err vs fp32 ref triton {err:.2e} master {err_master:.2e}; vs master relL2 "
++                          f"{rel:.2e}; check {'ok' if ok else 'FAIL'}", flush=True)
++                    if ok and (best is None or t_n / t_m < best[0]):
++                        best = (t_n / t_m, nw)
++                if best is not None and best[0] <= GATE_NORM_RATIO:
++                    state["pre_norm_nw"][tokens] = best[1]
++                print(f"{GATE_TAG} PATH CHOSEN pre-norm T={tokens}: "
++                      f"{'triton nw=%d (ratio %.3f)' % (best[1], best[0]) if state['pre_norm_nw'][tokens] else 'MASTER module'}",
++                      flush=True)
++                del x, ref32, master_out
++            except Exception as e:
++                state["pre_norm_nw"][tokens] = None
++                print(f"{GATE_TAG} pre-norm T={tokens} OFF: {e!r} (PATH CHOSEN = MASTER module)", flush=True)
++            torch.cuda.empty_cache()
++        del flush
++    except Exception as e:
++        state["pre_norm_nw"] = {t: None for t in GATE_CLASS_T}
++        print(f"{GATE_TAG} pre-norm OFF: {e!r} (PATH CHOSEN = MASTER module for every class)", flush=True)
++    print(f"{GATE_TAG} summary pre-norm {state['pre_norm_nw']}", flush=True)
++    torch.cuda.synchronize()
++
++
++def _experts_marlin(x, topk_weights, local_ids, state, align_mode=None):
+     """MuseSpark1xFp4Experts._marlin_expert_outputs and its post-expert-norm finalize, on ids
+     already mapped to this GPU's experts (0-31, -1 elsewhere)."""
+     bank = state["marlin"]
+@@ -871,9 +1184,16 @@ def _experts_marlin(x, topk_weights, local_ids, state):
+     for block_size_m in BLOCK_SIZE_M_CANDIDATES:
+         if num_tokens * TOP_K / LOCAL_EXPERTS / block_size_m < 0.9:
+             break
+-    if state.get("align_par_ok", False):
++    mode = align_mode if align_mode is not None else _align_mode(state, num_tokens)
++    if mode == "par":
+         # moe-align-local-routes-parallel-port: local routes only, one launch (prepare() self-checked).
+         _, (sorted_ids, block_experts, n_padded) = _align_parallel(local_ids, 0, LOCAL_EXPERTS, block_size_m)
++    elif mode == "sgl32" or mode == "sgl32fix":
++        # turn-align-sglang32: SGLang's align over the 32 local experts (remote routes in -1 blocks);
++        # "sgl32fix" then trims n_padded back to the local blocks (prepare() proved the -1 bucket is last).
++        sorted_ids, block_experts, n_padded = moe_align_block_size(local_ids, block_size_m, LOCAL_EXPERTS)
++        if mode == "sgl32fix":
++            _align_fix_npad(block_experts, n_padded, block_size_m)
+     else:
+         sorted_ids, block_experts, n_padded = moe_align_block_size(local_ids, block_size_m, N_EXPERTS)
+     cache2 = torch.empty((num_tokens * TOP_K, size_n), device=x.device, dtype=x.dtype)
+@@ -995,7 +1315,7 @@ def kernel_fn(data, state):
+     # This GPU's experts start at local_start: SGLang's expert_map on that EP rank, in one kernel.
+     local_ids = _local_expert_ids(topk_ids, data["local_start"])
+     # all-reduce: identity
+-    expert_output = _experts(state["pre_expert_norm"](expert_input), topk_weights, local_ids, state)
++    expert_output = _experts(_pre_norm(expert_input, state), topk_weights, local_ids, state)
+     ffn_output = _gemm(expert_output, dense["unpooler"])
+ 
+     # Post-FFN boundary, with the next layer's pre-attention norm.
