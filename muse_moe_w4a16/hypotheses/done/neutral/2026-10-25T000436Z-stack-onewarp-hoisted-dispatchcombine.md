@@ -23,8 +23,8 @@ priority: 1
 kind: primary
 controls_for: null
 review: required
-status: running
-stage: dispatched
+status: done
+stage: harvested
 claimed_at: 2026-10-25T000436Z
 base_sha: f540d1c19b5798a2bd1f0421964922a582602231
 base_blob: 108d36e9f2266fc88531dd6ff0329a847c882013
@@ -43,6 +43,13 @@ attempt_file: 2026-10-25T000449Z-check-stack-onewarp-hoisted-dispatchcombine.md
 prepared_at: 2026-10-25T000449Z
 job: 7e5ab95a413f4ebe
 dispatched_at: 2026-10-25T000511Z
+outcome: neutral
+verdict_detail: within-ci
+speedup: 1.3176353096598319
+speedup_ci: [1.2978707800149345, 1.3373998393047293]
+harvested_at: 2026-10-25T003211Z
+best_at_harvest: 1.3278240305297715
+promotion: null
 ---
 
 # stack-onewarp-hoisted-dispatchcombine
@@ -73,3 +80,29 @@ Built in the main thread 2026-10-25 ~00:10Z (reset priority 4, user-specified st
 - [x] No timing/harness access, processes, network or module edits.
 - [x] No work outside timed calls added.
 - [x] okc_lint: no errors.
+
+## Result
+
+- job `7e5ab95a413f4ebe` (check), status done, passed True, tests 5/5
+- speedup 1.3176x, 95% CI [1.2979, 1.3374], score 10206.541902305229 µs vs SGLang 13448.5 µs
+- best at harvest: {"speedup": 1.3278240305297715, "ci": [1.307906670071825, 1.3477413909877178], "job": "1947e3ec2abb4bdf"}; base result: muse_moe_w4a16/hypotheses/done/neutral/align-parallel-per-expert-verify.result.json
+- **outcome: neutral** (within-ci)
+- files: `muse_moe_w4a16/hypotheses/done/neutral/stack-onewarp-hoisted-dispatchcombine.result.json`, `muse_moe_w4a16/hypotheses/done/neutral/stack-onewarp-hoisted-dispatchcombine.patch`; branch `hyp/muse_moe_w4a16/stack-onewarp-hoisted-dispatchcombine`
+
+## Attribution
+
+| shape | w | base µs | hyp µs | delta | verdict |
+|---|---|---|---|---|---|
+| bs=1 load=decode_1 sharding=ep8 | 60 | 48.82 | 51.94 | 0.9763 | flat |
+| bs=16 load=decode_16 sharding=ep8 | 60 | 148.37 | 145.07 | 1.0064 | flat |
+| bs=32 load=decode_32 sharding=ep8 | 60 | 199.88 | 203.01 | 0.9987 | flat |
+| bs=8 load=verify_1 sharding=ep8 | 60 | 107.74 | 115.61 | 0.9783 | flat |
+| bs=128 load=verify_16 sharding=ep8 | 60 | 318.26 | 321.8 | 1.0038 | flat |
+| bs=256 load=verify_32 sharding=ep8 | 60 | 454.28 | 458.69 | 1.004 | flat |
+
+no shape moved outside noise. Expected hit: 0/1. Noise ±1.5%.
+
+## Follow-ups
+
+- within-ci: the change is not proven either way; a stacked hypothesis (`depends_on: stack-onewarp-hoisted-dispatchcombine`) that adds a further change in the same area is the only way to learn more (identical code is never re-run).
+

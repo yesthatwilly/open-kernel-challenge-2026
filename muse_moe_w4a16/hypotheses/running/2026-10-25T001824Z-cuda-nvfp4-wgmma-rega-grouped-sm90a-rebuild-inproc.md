@@ -123,3 +123,68 @@ No companions. This is a rewrite judged on its own replaced-kernel rows (gather 
 - Compile time of 8 wgmma instantiations on the judge: does it fit inside the 15-minute run with prepare's self-check?
 - Since binaryVersion is 90 for both sm_90 and sm_90a, the image check should key on the device error flag after the canary (set in the #else branch) rather than cudaFuncGetAttributes.
 
+
+## Implementation notes
+
+Worktree file: `.worktrees/muse_moe_w4a16/cuda-nvfp4-wgmma-rega-grouped-sm90a-rebuild-inproc/muse_moe_w4a16/submission.py` (uncommitted; diff vs HEAD f50b333 +331/-51).
+
+- **Rebase onto current master.** The worktree was at the archived stage-1 impl (f50b333, base 8440ae5). Ported master's
+  align-parallel-per-expert-verify delta (8440ae5..1a5da3d): `_align_parallel_kernel`/`_align_parallel`, its
+  prepare warm-up, the extended `_align_self_check`, and `_moe_marlin` now uses `_align_parallel` above 32 tokens. The
+  Marlin path (all M < 128, M > 512, and fallback) is master's code; `git diff 1a5da3d` shows only the wgmma additions
+  and the kernel_fn -> `_moe_marlin` split.
+- **Build fix (spec 1, 3).** `_wg_build`: TORCH_CUDA_ARCH_LIST set to `9.0a` around load_inline and restored in
+  `finally`; `extra_cuda_cflags = ["-O3", "-lineinfo", "-gencode=arch=compute_90a,code=sm_90a"]` (the old
+  `-arch=sm_90a` dropped); new module name `muse_moe_w4a16_wgmma_rega_v2`. Logs torch/CUDA version, the device
+  capability, and the arch flags from `cpp_extension._get_cuda_arch_flags()` under that env. Review open question
+  ("does this torch accept 9.0a?"): if `_get_cuda_arch_flags` raises, the list is restored to its default, the
+  build proceeds with the guards, and error word 2 decides (logged).
+- **Guards (spec 2).** `wgmma_fence/commit/wait`, each generated `Wg<N>::mma`, and the whole `wg_kernel` body
+  (which holds both setmaxnreg) are under `#if defined(__CUDA_ARCH_FEAT_SM90_ALL)`; the `#else` of the kernel sets
+  error word 2 (`atomicExch(err, 2)`) and returns. mbarrier waits were already bounded (2^26 cycles -> error word 1);
+  only the comment was fixed (it said 2^31).
+- **Review fix applied (review overrides the spec's "ONLY the build fix"):** dropped the never-run createpolicy /
+  L2::cache_hint path. `bulk_g2s` is now plain `cp.async.bulk.shared::cluster.global.mbarrier::complete_tx::bytes`
+  (no policy operand); both `createpolicy.fractional` instructions and the per-item policy pick are gone
+  (`Item.multi` is still computed, now unused). No tiling, pipeline, dequant, gate or layout change.
+- **Image check (review fix):** `wg_init` also returns `binaryVersion`/`ptxVersion`; they are logged and gated only
+  on binaryVersion == 90 because, as the review says, they cannot tell sm_90 from sm_90a. Error word 2 after the canary
+  is the real proof. Device capability != (9, 0) turns the path off before the build.
+- **In-process guarded first launch:** new `_wg_canary` runs before the full self-check: M = 128 (smallest gated M),
+  slot 0 of every token on local expert 0 and 7 remote routes, synthetic seeded activations. Deviation: it uses the
+  real retiled bank (no separate synthetic weight bank, which would add ~0.9 GiB or a second bank layout); the inputs
+  are synthetic. Each launch (align, gather, w13, w2, norm) is preceded/followed by a sync + flushed print through
+  `_wg_tracer` (a closure passed only from prepare; kernel_fn passes nothing). Then error word and finiteness are
+  checked; anything nonzero -> path off. The full self-check's eager calls use the same tracer, and the graph
+  capture and each of the 3 replays are bracketed by flushed prints with a sync after each replay.
+- **Compile-time budget (review fix):** `WG_SETUP_BUDGET_S = 200`; if the build (or build + canary) has used more
+  than that, the path stays off. Build seconds and total setup seconds are logged.
+- Logs: `PATH CHOSEN = WGMMA|MARLIN for 128 <= num_tokens <= 512; MARLIN for num_tokens < 128 and > 512` (flushed).
+- Not fixable in-process: a sticky fault (715/700) in the canary still kills the run (prepare's next sync re-raises),
+  but the log will name the kernel. The first measurement must be an `okc check`.
+
+## Rules check
+
+Checked against `git -C .worktrees/muse_moe_w4a16/cuda-nvfp4-wgmma-rega-grouped-sm90a-rebuild-inproc diff`:
+- [x] CUDA-graph capturable: kernel_fn branches only on shape, the prepare-time `wgmma_ok` flag and the bank key; no
+      `.item()/.cpu()/synchronize()` reachable from kernel_fn (the tracer that syncs is never passed from kernel_fn,
+      and okc_lint's call graph confirms no host-sync error); the error word is read only in prepare.
+- [x] Nothing derived from `data` is cached: the state scratches (wg_xs, wg_hs, wg_err) and tensor maps are made in
+      prepare; per call they are overwritten, nothing is read across calls.
+- [x] Weights: the wgmma bank is the same lossless NVFP4 retiling as stage 1 (round trips asserted); E4M3 scales
+      unchanged, global scales fp32 (x 2^7, exact). No precision change in this diff.
+- [x] Activations BF16 where SGLang keeps BF16 (gathered x, h_sorted, cache3 all bf16; fp32 accumulate).
+- [x] n/a: attention (MoE problem, no attention or key skipping).
+- [x] No timing patches, harness frames/I/O, module edits, reference import, subprocesses or network: no
+      subprocess/multiprocessing/fork anywhere (lint PROCESS rule clean); the only environment touch is
+      TORCH_CUDA_ARCH_LIST around load_inline, restored after.
+- [x] All work happens inside the timed call; no output caching or replay.
+- [x] First line marker `# okc: problem=muse_moe_w4a16` kept.
+
+okc_lint (28 host-sync warnings, all outside kernel_fn's call graph, omitted):
+```
+warn  dtype        L1220: q13 = torch.empty((count, rec13), dtype=torch.uint8, device=w13.device)  (allowed only where SGLang does the same)
+warn  dtype        L1221: q2 = torch.empty((count, rec2), dtype=torch.uint8, device=w2.device)  (allowed only where SGLang does the same)
+OK with warnings: .worktrees/muse_moe_w4a16/cuda-nvfp4-wgmma-rega-grouped-sm90a-rebuild-inproc/muse_moe_w4a16/submission.py
+```
+py_compile: OK; __pycache__ removed.

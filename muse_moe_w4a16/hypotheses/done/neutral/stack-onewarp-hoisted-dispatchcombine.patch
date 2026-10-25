@@ -1,0 +1,825 @@
+diff --git a/muse_moe_w4a16/submission.py b/muse_moe_w4a16/submission.py
+index 108d36e..e947886 100644
+--- a/muse_moe_w4a16/submission.py
++++ b/muse_moe_w4a16/submission.py
+@@ -25,10 +25,19 @@ no bucket). Above 32 tokens (hypothesis align-parallel-per-expert-verify) one la
+ expert e's routes, padding and block_experts entries; the last program writes local_ids and the
+ tail past the used length.
+ 
++Above 32 tokens and up to 512 (hypothesis cuda-dispatch-combine-pdl-verify, rewrite stage 1), two
++hand-written CUDA kernels from one load_inline TU built in prepare() replace _align_parallel_kernel
++(cdc_align_cuda_kernel: one 1024-thread CTA, __match_any_sync ranks per 32-route tile, byte-identical
++outputs) and fused_post_expert_norm_weighted_sum (cdc_postnorm_combine_cuda_kernel: one CTA per token,
++every local y load issued before the math, fp32 (1 + w) as _post_norm_combine_kernel, launched with PDL
++after Marlin w2 when the prepare() capture test passes). Both Marlin GEMMs and silu_and_mul are
++unchanged. A build error, self-check miss or capture error keeps master's path at every M.
++
+ Differs from SGLang: the expert all-reduce is not run."""
+ 
+ from typing import TypedDict
+ 
++import time
+ import types
+ 
+ import torch
+@@ -104,15 +113,18 @@ def _post_norm_combine_kernel(y_ptr, ids_ptr, tw_ptr, w_ptr, out_ptr, H, eps,
+     offs = tl.arange(0, BLOCK_H)
+     mask = offs < H
+     nw = tl.load(w_ptr + offs, mask=mask, other=0.0).to(tl.float32) + 1.0
+-    acc = tl.zeros([BLOCK_H], dtype=tl.float32)
+-    for s in tl.static_range(TOP_K_C):
+-        eid = tl.load(ids_ptr + t * TOP_K_C + s)
+-        if eid >= 0:
+-            g = tl.load(tw_ptr + t * TOP_K_C + s)
+-            row = (t * TOP_K_C + s).to(tl.int64) * H
+-            v = tl.load(y_ptr + row + offs, mask=mask, other=0.0).to(tl.float32) * nw
+-            r = tl.rsqrt(tl.sum(v * v, axis=0) / H + eps)
+-            acc += g * v * r
++    slots = tl.arange(0, TOP_K_C)
++    ids = tl.load(ids_ptr + t * TOP_K_C + slots)
++    g = tl.load(tw_ptr + t * TOP_K_C + slots)
++    valid = ids >= 0
++    row = (t * TOP_K_C + slots).to(tl.int64) * H
++    # One [TOP_K_C, BLOCK_H] masked tile load issues every local row load before any reduction;
++    # remote rows are masked off and never read.
++    m2 = valid[:, None] & mask[None, :]
++    v = tl.load(y_ptr + row[:, None] + offs[None, :], mask=m2, other=0.0).to(tl.float32) * nw[None, :]
++    r = tl.rsqrt(tl.sum(v * v, axis=1) / H + eps)
++    coef = tl.where(valid, g, 0.0) * r
++    acc = tl.sum(coef[:, None] * v, axis=0)
+     tl.store(out_ptr + t.to(tl.int64) * H + offs, acc.to(tl.bfloat16), mask=mask)
+ 
+ 
+@@ -274,7 +286,8 @@ def _align_small(topk_ids, local_start, local_count, block_size_m):
+         topk_ids, local_ids, sorted_ids, block_experts, n_padded, local_start, local_count, n, cap,
+         n_blocks, BLOCK_N=triton.next_power_of_2(n), CAP_BLOCK=triton.next_power_of_2(cap),
+         MB_BLOCK=triton.next_power_of_2(n_blocks), BSM=block_size_m,
+-        NUM_E=triton.next_power_of_2(local_count), num_warps=4)
++        NUM_E=triton.next_power_of_2(local_count),
++        num_warps=1 if n <= 64 else 4)
+     return local_ids, (sorted_ids, block_experts, n_padded)
+ 
+ 
+@@ -403,6 +416,703 @@ def _align_self_check(device, count):
+         print(f"{tag1}   {message}")
+ 
+ 
++# --- CUDA dispatch + combine above 32 tokens (hypothesis cuda-dispatch-combine-pdl-verify, rewrite
++# stage 1). Two hand-written kernels in one load_inline TU, compiled in prepare():
++#   cdc_align_cuda_kernel             replaces _align_parallel_kernel (same outputs, byte for byte)
++#   cdc_postnorm_combine_cuda_kernel  replaces fused_post_expert_norm_weighted_sum (PDL after Marlin w2)
++# Distinct kernel names so the profile rows of the replaced kernels can be read directly. Any build
++# error, self-check miss or capture error keeps master's path at every M; num_tokens <= 32 and
++# num_tokens > CDC_MAX_TOKENS always run master's path. ---
++CDC_TAG = "[cuda-dispatch-combine]"
++CDC_MAX_TOKENS = 512          # kernel A: n = M*8 <= 32 * MAX_TILES (128 tiles of 32 routes)
++CDC_H = 4096                  # kernel B: H is a compile-time constant (host assert)
++CDC_MAX_COUNT = 32            # one warp lane per local expert
++
++_CDC_CPP = r"""
++#include <torch/extension.h>
++#include <vector>
++void cdc_align(torch::Tensor topk_ids, torch::Tensor local_ids, torch::Tensor sorted_ids,
++               torch::Tensor block_experts, torch::Tensor n_padded, int64_t local_start,
++               int64_t local_count, int64_t bsm);
++void cdc_combine(torch::Tensor y, torch::Tensor local_ids, torch::Tensor tw, torch::Tensor post_norm_w,
++                 torch::Tensor out, double eps, int64_t pdl);
++std::vector<int64_t> cdc_func_attrs();
++"""
++
++_CDC_CUDA = r"""
++#include <torch/extension.h>
++#include <ATen/cuda/CUDAContext.h>
++#include <c10/cuda/CUDAException.h>
++#include <cuda_runtime.h>
++#include <cuda_bf16.h>
++#include <cstdint>
++#include <vector>
++
++namespace {
++
++constexpr int A_THREADS = 1024;
++constexpr int A_WARPS = A_THREADS / 32;            // 32
++constexpr int MAX_TILES = 128;                     // n <= 4096 routes (M <= 512)
++constexpr int TILES_PER_WARP = MAX_TILES / A_WARPS; // 4
++constexpr int NE = 32;                             // local experts, one lane each
++constexpr int H = 4096;
++constexpr int B_THREADS = 256;
++constexpr int B_WARPS = B_THREADS / 32;
++constexpr int TOPK = 8;
++constexpr unsigned FULL = 0xffffffffu;
++
++__device__ __forceinline__ unsigned lanemask_lt() {
++  unsigned m;
++  asm("mov.u32 %0, %%lanemask_lt;" : "=r"(m));
++  return m;
++}
++
++// Kernel A: the expert_map gather plus moe_align_block_size over the bank's local experts, one CTA.
++// Outputs are exactly _align_parallel_kernel's: local_ids (id - local_start in [0, count) else -1),
++// sorted_ids grouped by ascending local expert with ascending route index inside an expert, each
++// expert padded to a multiple of bsm with the sentinel n, every slot in [total, cap) = n;
++// block_experts[b] = the expert owning block b for b < total/bsm, -1 up to n_blocks; n_padded = total.
++template <typename IdT>
++__global__ void __launch_bounds__(A_THREADS, 1)
++cdc_align_cuda_kernel(const IdT* __restrict__ topk_ids, int* __restrict__ local_ids,
++                      int* __restrict__ sorted_ids, int* __restrict__ block_experts,
++                      int* __restrict__ n_padded, int n, int local_start, int local_count, int bsm,
++                      int cap, int n_blocks) {
++  __shared__ int cnt[MAX_TILES][NE];        // per-tile count, then per-tile exclusive base
++  __shared__ int psum[A_WARPS][NE + 1];     // per tile-group partial, then its exclusive base
++  __shared__ int count_s[NE], padded_s[NE], seg_start_s[NE], seg_end_s[NE];
++  __shared__ int total_s;
++  const int tid = threadIdx.x, lane = tid & 31, warp = tid >> 5;
++  const int n_tiles = (n + 31) >> 5;
++
++  for (int i = tid; i < MAX_TILES * NE; i += A_THREADS) (&cnt[0][0])[i] = 0;
++  __syncthreads();
++
++  // Pass 1: tile w = routes [32w, 32w+32); warp handles tiles warp, warp+32, ...
++  int my_local[TILES_PER_WARP], my_rank[TILES_PER_WARP];
++#pragma unroll
++  for (int k = 0; k < TILES_PER_WARP; ++k) {
++    const int w = warp + k * A_WARPS;
++    my_local[k] = -1;
++    my_rank[k] = 0;
++    if (w < n_tiles) {  // warp-uniform
++      const int i = (w << 5) + lane;
++      int loc = -1;
++      if (i < n) {
++        const int d = static_cast<int>(topk_ids[i]) - local_start;
++        loc = (d >= 0 && d < local_count) ? d : -1;
++        local_ids[i] = loc;
++      }
++      const unsigned peers = __match_any_sync(FULL, loc);
++      const int rank = __popc(peers & lanemask_lt());
++      if (loc >= 0 && rank == 0) cnt[w][loc] = __popc(peers);
++      my_local[k] = loc;
++      my_rank[k] = rank;
++    }
++  }
++  __syncthreads();
++
++  // Scan step 1: tile group j = warp owns tiles [4j, 4j+4); lane = expert.
++  {
++    int s = 0;
++#pragma unroll
++    for (int k = 0; k < TILES_PER_WARP; ++k) s += cnt[warp * TILES_PER_WARP + k][lane];
++    psum[warp][lane] = s;
++  }
++  __syncthreads();
++  // Scan step 2: warp e scans the group partials of expert e (lane = group).
++  {
++    const int e = warp;
++    const int v = psum[lane][e];
++    int inc = v;
++#pragma unroll
++    for (int off = 1; off < 32; off <<= 1) {
++      const int t = __shfl_up_sync(FULL, inc, off);
++      if (lane >= off) inc += t;
++    }
++    psum[lane][e] = inc - v;
++    if (lane == 31) count_s[e] = inc;
++  }
++  __syncthreads();
++  // Scan step 3: per-tile exclusive base within the expert; warp 0 also scans the padded segments.
++  {
++    int b = psum[warp][lane];
++#pragma unroll
++    for (int k = 0; k < TILES_PER_WARP; ++k) {
++      const int t = warp * TILES_PER_WARP + k;
++      const int c = cnt[t][lane];
++      cnt[t][lane] = b;
++      b += c;
++    }
++  }
++  if (warp == 0) {
++    const int c = count_s[lane];  // lanes >= local_count count 0
++    const int p = (c + bsm - 1) / bsm * bsm;
++    int inc = p;
++#pragma unroll
++    for (int off = 1; off < 32; off <<= 1) {
++      const int t = __shfl_up_sync(FULL, inc, off);
++      if (lane >= off) inc += t;
++    }
++    padded_s[lane] = p;
++    seg_start_s[lane] = inc - p;
++    seg_end_s[lane] = inc;
++    if (lane == 31) total_s = inc;
++  }
++  __syncthreads();
++
++  // Pass 2: real routes.
++#pragma unroll
++  for (int k = 0; k < TILES_PER_WARP; ++k) {
++    const int w = warp + k * A_WARPS;
++    const int loc = my_local[k];
++    if (w < n_tiles && loc >= 0) sorted_ids[seg_start_s[loc] + cnt[w][loc] + my_rank[k]] = (w << 5) + lane;
++  }
++  // Each expert's padding slots (fewer than bsm), lane = expert.
++  {
++    const int c = count_s[lane];
++    const int pad = padded_s[lane] - c;
++    const int base = seg_start_s[lane] + c;
++    for (int p = warp; p < pad; p += A_WARPS) sorted_ids[base + p] = n;
++  }
++  const int total = total_s;
++  for (int s = total + tid; s < cap; s += A_THREADS) sorted_ids[s] = n;
++  const int used_blocks = total / bsm;
++  for (int b = tid; b < n_blocks; b += A_THREADS) {
++    int e = -1;
++    if (b < used_blocks) {
++      const int start = b * bsm;
++      e = 0;
++#pragma unroll
++      for (int x = 0; x < NE; ++x) e += (seg_end_s[x] <= start) ? 1 : 0;
++    }
++    block_experts[b] = e;
++  }
++  if (tid == 0) n_padded[0] = total;
++}
++
++__device__ __forceinline__ uint4 ld_nc_na_v4(const void* p) {
++  uint4 r;
++  asm volatile("ld.global.nc.L1::no_allocate.v4.u32 {%0, %1, %2, %3}, [%4];"
++               : "=r"(r.x), "=r"(r.y), "=r"(r.z), "=r"(r.w) : "l"(p));
++  return r;
++}
++
++__device__ __forceinline__ float bf_lo(uint32_t w) { return __uint_as_float(w << 16); }
++__device__ __forceinline__ float bf_hi(uint32_t w) { return __uint_as_float(w & 0xffff0000u); }
++
++__device__ __forceinline__ void unpack8(const uint4& v, float* f) {
++  f[0] = bf_lo(v.x); f[1] = bf_hi(v.x); f[2] = bf_lo(v.y); f[3] = bf_hi(v.y);
++  f[4] = bf_lo(v.z); f[5] = bf_hi(v.z); f[6] = bf_lo(v.w); f[7] = bf_hi(v.w);
++}
++
++__device__ __forceinline__ uint32_t pack2(float a, float b) {
++  const uint32_t lo = static_cast<uint32_t>(__bfloat16_as_ushort(__float2bfloat16_rn(a)));
++  const uint32_t hi = static_cast<uint32_t>(__bfloat16_as_ushort(__float2bfloat16_rn(b)));
++  return lo | (hi << 16);
++}
++
++// Kernel B: out[t] = sum over local slots s of g[t,s] * rmsnorm(y[t,s] * (1 + w)), fp32 math, the
++// same formula and eps as _post_norm_combine_kernel. One CTA per token, 256 threads, 16 columns per
++// thread as two 16-byte vectors at [8 tid, 8 tid + 8) and [2048 + 8 tid, ...). Remote slots (local
++// id -1) are never loaded. Prologue (constants, ids, weights) runs before griddepcontrol.wait, so
++// under PDL it overlaps the previous kernel's tail; every y load is issued before any math.
++__global__ void __launch_bounds__(B_THREADS)
++cdc_postnorm_combine_cuda_kernel(const __nv_bfloat16* __restrict__ y, const int* __restrict__ local_ids,
++                                 const float* __restrict__ tw, const __nv_bfloat16* __restrict__ pnw,
++                                 __nv_bfloat16* __restrict__ out, float eps) {
++  __shared__ float red[B_WARPS][TOPK];
++  const int t = blockIdx.x;
++  const int tid = threadIdx.x, lane = tid & 31, warp = tid >> 5;
++  const int c0 = tid * 8, c1 = H / 2 + tid * 8;
++
++  float nw[16];
++  {
++    const uint4 a = *reinterpret_cast<const uint4*>(pnw + c0);
++    const uint4 b = *reinterpret_cast<const uint4*>(pnw + c1);
++    unpack8(a, nw);
++    unpack8(b, nw + 8);
++#pragma unroll
++    for (int i = 0; i < 16; ++i) nw[i] += 1.0f;
++  }
++  int lid[TOPK];
++  float g[TOPK];
++#pragma unroll
++  for (int s = 0; s < TOPK; ++s) {
++    lid[s] = local_ids[t * TOPK + s];
++    g[s] = tw[t * TOPK + s];
++  }
++
++  asm volatile("griddepcontrol.wait;" ::: "memory");
++
++  const __nv_bfloat16* yt = y + static_cast<size_t>(t) * TOPK * H;
++  uint4 v[TOPK][2];
++#pragma unroll
++  for (int s = 0; s < TOPK; ++s) {
++    if (lid[s] >= 0) {
++      v[s][0] = ld_nc_na_v4(yt + static_cast<size_t>(s) * H + c0);
++      v[s][1] = ld_nc_na_v4(yt + static_cast<size_t>(s) * H + c1);
++    } else {
++      v[s][0] = make_uint4(0u, 0u, 0u, 0u);
++      v[s][1] = make_uint4(0u, 0u, 0u, 0u);
++    }
++  }
++
++  float ss[TOPK];
++#pragma unroll
++  for (int s = 0; s < TOPK; ++s) {
++    float f[16];
++    unpack8(v[s][0], f);
++    unpack8(v[s][1], f + 8);
++    float a = 0.0f;
++#pragma unroll
++    for (int i = 0; i < 16; ++i) {
++      const float q = f[i] * nw[i];
++      a = fmaf(q, q, a);
++    }
++    ss[s] = a;
++  }
++#pragma unroll
++  for (int off = 16; off > 0; off >>= 1) {
++#pragma unroll
++    for (int s = 0; s < TOPK; ++s) ss[s] += __shfl_xor_sync(FULL, ss[s], off);
++  }
++  if (lane == 0) {
++#pragma unroll
++    for (int s = 0; s < TOPK; ++s) red[warp][s] = ss[s];
++  }
++  __syncthreads();
++
++  float acc[16];
++#pragma unroll
++  for (int i = 0; i < 16; ++i) acc[i] = 0.0f;
++#pragma unroll
++  for (int s = 0; s < TOPK; ++s) {
++    if (lid[s] >= 0) {  // CTA-uniform
++      float tot = 0.0f;
++#pragma unroll
++      for (int w = 0; w < B_WARPS; ++w) tot += red[w][s];
++      const float r = rsqrtf(tot / static_cast<float>(H) + eps);
++      float f[16];
++      unpack8(v[s][0], f);
++      unpack8(v[s][1], f + 8);
++#pragma unroll
++      for (int i = 0; i < 16; ++i) acc[i] += g[s] * (f[i] * nw[i]) * r;
++    }
++  }
++  uint4 o0, o1;
++  o0.x = pack2(acc[0], acc[1]);   o0.y = pack2(acc[2], acc[3]);
++  o0.z = pack2(acc[4], acc[5]);   o0.w = pack2(acc[6], acc[7]);
++  o1.x = pack2(acc[8], acc[9]);   o1.y = pack2(acc[10], acc[11]);
++  o1.z = pack2(acc[12], acc[13]); o1.w = pack2(acc[14], acc[15]);
++  __nv_bfloat16* ot = out + static_cast<size_t>(t) * H;
++  *reinterpret_cast<uint4*>(ot + c0) = o0;
++  *reinterpret_cast<uint4*>(ot + c1) = o1;
++}
++
++bool aligned16(const void* p) { return (reinterpret_cast<uintptr_t>(p) & 15u) == 0; }
++
++}  // namespace
++
++void cdc_align(torch::Tensor topk_ids, torch::Tensor local_ids, torch::Tensor sorted_ids,
++               torch::Tensor block_experts, torch::Tensor n_padded, int64_t local_start,
++               int64_t local_count, int64_t bsm) {
++  TORCH_CHECK(topk_ids.is_cuda() && topk_ids.is_contiguous(), "cdc_align: topk_ids");
++  const int64_t n = topk_ids.numel();
++  TORCH_CHECK(n >= 1 && n <= static_cast<int64_t>(MAX_TILES) * 32, "cdc_align: n out of range");
++  TORCH_CHECK(local_count >= 1 && local_count <= NE && bsm >= 1, "cdc_align: count/bsm");
++  const int64_t cap = n + local_count * (bsm - 1);
++  const int64_t n_blocks = (cap + bsm - 1) / bsm;
++  auto ok32 = [](const torch::Tensor& x, int64_t need) {
++    return x.is_cuda() && x.scalar_type() == at::kInt && x.is_contiguous() && x.numel() >= need;
++  };
++  TORCH_CHECK(ok32(local_ids, n) && ok32(sorted_ids, cap) && ok32(block_experts, n_blocks) && ok32(n_padded, 1),
++              "cdc_align: output buffers");
++  auto stream = at::cuda::getCurrentCUDAStream().stream();
++  if (topk_ids.scalar_type() == at::kInt) {
++    cdc_align_cuda_kernel<int32_t><<<1, A_THREADS, 0, stream>>>(
++        topk_ids.data_ptr<int32_t>(), local_ids.data_ptr<int>(), sorted_ids.data_ptr<int>(),
++        block_experts.data_ptr<int>(), n_padded.data_ptr<int>(), static_cast<int>(n),
++        static_cast<int>(local_start), static_cast<int>(local_count), static_cast<int>(bsm),
++        static_cast<int>(cap), static_cast<int>(n_blocks));
++  } else if (topk_ids.scalar_type() == at::kLong) {
++    cdc_align_cuda_kernel<int64_t><<<1, A_THREADS, 0, stream>>>(
++        topk_ids.data_ptr<int64_t>(), local_ids.data_ptr<int>(), sorted_ids.data_ptr<int>(),
++        block_experts.data_ptr<int>(), n_padded.data_ptr<int>(), static_cast<int>(n),
++        static_cast<int>(local_start), static_cast<int>(local_count), static_cast<int>(bsm),
++        static_cast<int>(cap), static_cast<int>(n_blocks));
++  } else {
++    TORCH_CHECK(false, "cdc_align: topk_ids must be int32 or int64");
++  }
++  C10_CUDA_KERNEL_LAUNCH_CHECK();
++}
++
++void cdc_combine(torch::Tensor y, torch::Tensor local_ids, torch::Tensor tw, torch::Tensor post_norm_w,
++                 torch::Tensor out, double eps, int64_t pdl) {
++  TORCH_CHECK(out.is_cuda() && out.dim() == 2 && out.size(1) == H && out.scalar_type() == at::kBFloat16 &&
++              out.is_contiguous(), "cdc_combine: out");
++  const int64_t m = out.size(0);
++  TORCH_CHECK(y.is_cuda() && y.scalar_type() == at::kBFloat16 && y.is_contiguous() && y.numel() == m * TOPK * H,
++              "cdc_combine: y");
++  TORCH_CHECK(local_ids.is_cuda() && local_ids.scalar_type() == at::kInt && local_ids.is_contiguous() &&
++              local_ids.numel() == m * TOPK, "cdc_combine: local_ids");
++  TORCH_CHECK(tw.is_cuda() && tw.scalar_type() == at::kFloat && tw.is_contiguous() && tw.numel() == m * TOPK,
++              "cdc_combine: topk_weights");
++  TORCH_CHECK(post_norm_w.is_cuda() && post_norm_w.scalar_type() == at::kBFloat16 && post_norm_w.is_contiguous() &&
++              post_norm_w.numel() == H, "cdc_combine: post_norm_w");
++  TORCH_CHECK(aligned16(y.data_ptr()) && aligned16(out.data_ptr()) && aligned16(post_norm_w.data_ptr()),
++              "cdc_combine: 16-byte alignment");
++  if (m == 0) return;
++  cudaLaunchConfig_t cfg = {};
++  cfg.gridDim = dim3(static_cast<unsigned>(m));
++  cfg.blockDim = dim3(B_THREADS);
++  cfg.dynamicSmemBytes = 0;
++  cfg.stream = at::cuda::getCurrentCUDAStream().stream();
++  cudaLaunchAttribute attr[1];
++  attr[0].id = cudaLaunchAttributeProgrammaticStreamSerialization;
++  attr[0].val.programmaticStreamSerializationAllowed = 1;
++  cfg.attrs = attr;
++  cfg.numAttrs = pdl ? 1 : 0;
++  C10_CUDA_CHECK(cudaLaunchKernelEx(
++      &cfg, cdc_postnorm_combine_cuda_kernel,
++      reinterpret_cast<const __nv_bfloat16*>(y.data_ptr()), local_ids.data_ptr<int>(), tw.data_ptr<float>(),
++      reinterpret_cast<const __nv_bfloat16*>(post_norm_w.data_ptr()),
++      reinterpret_cast<__nv_bfloat16*>(out.data_ptr()), static_cast<float>(eps)));
++}
++
++std::vector<int64_t> cdc_func_attrs() {
++  cudaFuncAttributes a{}, b{};
++  C10_CUDA_CHECK(cudaFuncGetAttributes(&a, reinterpret_cast<const void*>(&cdc_align_cuda_kernel<int32_t>)));
++  C10_CUDA_CHECK(cudaFuncGetAttributes(&b, reinterpret_cast<const void*>(&cdc_postnorm_combine_cuda_kernel)));
++  return {a.numRegs, static_cast<int64_t>(a.localSizeBytes), static_cast<int64_t>(a.sharedSizeBytes),
++          b.numRegs, static_cast<int64_t>(b.localSizeBytes), static_cast<int64_t>(b.sharedSizeBytes)};
++}
++"""
++
++
++def _cdc_build():
++    """Compile the CUDA TU (prepare() only, never during capture). (ext or None, seconds)."""
++    t0 = time.perf_counter()
++    try:
++        from torch.utils.cpp_extension import load_inline
++        ext = load_inline(
++            name="muse_moe_cuda_dispatch_combine_v1",
++            cpp_sources=_CDC_CPP,
++            cuda_sources=_CDC_CUDA,
++            functions=["cdc_align", "cdc_combine", "cdc_func_attrs"],
++            extra_cuda_cflags=["-O3", "-arch=sm_90a"],
++            verbose=False,
++        )
++    except Exception as e:  # keep master's path if the build fails
++        dt = time.perf_counter() - t0
++        print(f"{CDC_TAG} build FAILED ({dt:.1f} s), master path kept: {e!r}", flush=True)
++        return None, dt
++    dt = time.perf_counter() - t0
++    print(f"{CDC_TAG} build OK ({dt:.1f} s)", flush=True)
++    return ext, dt
++
++
++def _cdc_align(state, topk_ids, local_start, local_count, block_size_m):
++    """Kernel A: _align_parallel's outputs, written into prepare()-allocated scratch and returned
++    as exact-size views (capacity M*8 + count*(bsm - 1), as master allocates). Every element of
++    each view is written by the launch, so nothing from an earlier call is read."""
++    topk_ids = topk_ids.contiguous()
++    n = topk_ids.numel()
++    cap = n + local_count * (block_size_m - 1)
++    n_blocks = triton.cdiv(cap, block_size_m)
++    sc = state["cdc_scratch"]
++    local_ids = sc["local_ids"][:n].view(topk_ids.shape)
++    sorted_ids = sc["sorted_ids"][:cap]
++    block_experts = sc["block_experts"][:n_blocks]
++    n_padded = sc["n_padded"]
++    state["cdc_ext"].cdc_align(topk_ids, local_ids, sorted_ids, block_experts, n_padded,
++                               local_start, local_count, block_size_m)
++    return local_ids, (sorted_ids, block_experts, n_padded)
++
++
++def _cdc_routings(gen, tokens, start, count):
++    """Master _align_self_check's synthetic routings (global ids), by name."""
++    local_set = list(range(start, start + count))
++    remote_set = [e for e in range(N_EXPERTS) if e not in local_set]
++    return {
++        "random": [torch.randperm(N_EXPERTS, generator=gen)[:TOP_K].tolist() for _ in range(tokens)],
++        "skewed": [[local_set[0], local_set[count - 1], local_set[5]] +
++                   [remote_set[i] for i in torch.randperm(len(remote_set), generator=gen)[:5].tolist()]
++                   for _ in range(tokens)],
++        "all-remote": [[remote_set[i] for i in torch.randperm(len(remote_set), generator=gen)[:TOP_K].tolist()]
++                       for _ in range(tokens)],
++        "all-one-expert": [[local_set[3]] + remote_set[7 * t % 200: 7 * t % 200 + 7] for t in range(tokens)],
++        "all-local": [local_set[8:16] for _ in range(tokens)],
++    }
++
++
++def _cdc_bsm_picks(tokens, count):
++    """SGLang's block_size_m and, at >= 128 tokens, kernel_fn's two-smaller pick."""
++    bsm0 = _block_size_m(tokens, count)
++    picks = [bsm0]
++    if tokens >= 128:
++        bsm1 = BLOCK_SIZE_M_CANDIDATES[max(BLOCK_SIZE_M_CANDIDATES.index(bsm0) - 2, 0)]
++        if bsm1 != bsm0:
++            picks.append(bsm1)
++    return picks
++
++
++def _cdc_check_align(state, device, count):
++    """(1) kernel A vs master's _align_parallel, torch.equal on every output, scratch pre-filled
++    with garbage. Returns (failure or None, cases)."""
++    gen = torch.Generator().manual_seed(20261024)
++    sc = state["cdc_scratch"]
++    cases = 0
++    for tokens in (33, 57, 120, 128, 256, 257, 512):
++        for bsm in _cdc_bsm_picks(tokens, count):
++            for start in (0, 32, N_EXPERTS - count):
++                for name, ids in _cdc_routings(gen, tokens, start, count).items():
++                    topk_ids = torch.tensor(ids, dtype=torch.int32, device=device)
++                    r_local, (r_ids, r_exp, r_pad) = _align_parallel(topk_ids, start, count, bsm)
++                    for dt in (torch.int32, torch.int64):
++                        cases += 1
++                        for buf in sc.values():
++                            buf.fill_(-7)
++                        c_local, (c_ids, c_exp, c_pad) = _cdc_align(state, topk_ids.to(dt), start, count, bsm)
++                        tag = f"align T={tokens} bsm={bsm} local_start={start} {name} ids={dt}"
++                        for what, a, b in (("local_ids", c_local, r_local), ("sorted_ids", c_ids, r_ids),
++                                           ("block_experts", c_exp, r_exp), ("n_padded", c_pad, r_pad)):
++                            if a.shape != b.shape or not torch.equal(a, b):
++                                return f"{tag}: {what} differ", cases
++    return None, cases
++
++
++def _cdc_rel_rows(out, ref):
++    """(max per-row rel L2, global rel L2, finite) with near-zero rows against a tenth of the mean."""
++    out = out.float()
++    ref = ref.float()
++    finite = bool(torch.isfinite(out).all())
++    den = ref.norm(dim=1)
++    mean = float(den.mean())
++    if mean == 0.0:
++        return (0.0 if float(out.abs().max()) == 0.0 else float("inf")), 0.0, finite
++    rows = (out - ref).norm(dim=1) / torch.clamp(den, min=0.1 * mean)
++    glob = float((out - ref).norm() / ref.norm())
++    return float(rows.max()), glob, finite
++
++
++def _cdc_check_combine(state, device, count, pdl):
++    """(2) kernel B vs an fp32 torch reference, remote y rows NaN; info vs SGLang's combine.
++    Returns (failure or None, summary)."""
++    ext = state["cdc_ext"]
++    gen = torch.Generator().manual_seed(20261025)
++    pnw = state["post_norm_w"]
++    nwf = pnw.float() + 1.0
++    ref_map = torch.full((N_EXPERTS,), -1, dtype=torch.int32, device=device)
++    ref_map[:count] = torch.arange(count, dtype=torch.int32, device=device)
++    worst_row = worst_glob = worst_sgl = 0.0
++    for tokens in (33, 128, 256, 257):
++        for name, ids in _cdc_routings(gen, tokens, 0, count).items():
++            local_ids = ref_map[torch.tensor(ids, dtype=torch.int64, device=device)].contiguous()
++            tw = torch.rand((tokens, TOP_K), generator=gen).to(device)
++            tw = (tw / tw.sum(dim=1, keepdim=True)).contiguous()
++            y = torch.randn((tokens, TOP_K, CDC_H), generator=gen).to(device=device, dtype=torch.bfloat16)
++            remote = local_ids < 0
++            y_nan = y.clone()
++            y_nan[remote] = float("nan")
++            out = torch.empty((tokens, CDC_H), dtype=torch.bfloat16, device=device)
++            ext.cdc_combine(y_nan, local_ids, tw, pnw, out, POST_NORM_EPS, pdl)
++            v = y.float() * nwf
++            r = torch.rsqrt(v.pow(2).mean(dim=-1, keepdim=True) + POST_NORM_EPS)
++            ref = (tw.unsqueeze(-1) * (~remote).float().unsqueeze(-1) * v * r).sum(dim=1)
++            row, glob, finite = _cdc_rel_rows(out, ref)
++            worst_row, worst_glob = max(worst_row, row), max(worst_glob, glob)
++            tag = f"combine T={tokens} {name} pdl={pdl}"
++            if not finite or row > 8e-3 or glob > 4e-3:
++                return f"{tag}: finite={finite} row rel L2 {row:.2e} global {glob:.2e}", ""
++            y0 = y.clone()
++            y0[remote] = 0
++            sgl = fused_post_expert_norm_weighted_sum(
++                y0, tw, norm_weight=state["norm_w"], eps=POST_NORM_EPS, weight_first=True,
++                slot_expert_ids=local_ids)
++            worst_sgl = max(worst_sgl, _cdc_rel_rows(out, sgl)[1])
++    return None, (f"combine max row rel L2 {worst_row:.2e}, max global {worst_glob:.2e} vs fp32 ref; "
++                  f"(info) max global rel L2 vs SGLang fused_post_expert_norm_weighted_sum {worst_sgl:.2e}")
++
++
++def _cdc_e2e_data(gen, device, tokens, ids, count):
++    x = (torch.randn((tokens, CDC_H), generator=gen) * 0.5).to(device=device, dtype=torch.bfloat16)
++    tw = torch.rand((tokens, TOP_K), generator=gen)
++    tw = (tw / tw.sum(dim=1, keepdim=True)).to(device)
++    return {"hidden_states": x, "topk_ids": torch.tensor(ids, dtype=torch.int32, device=device),
++            "topk_weights": tw,
++            "config": {"bs": tokens, "d_hidden": CDC_H, "d_expert": CDC_H, "n_experts": N_EXPERTS,
++                       "local_start": 0, "local_count": count, "top_k": TOP_K, "sharding": "ep8"}}
++
++
++def _cdc_check_e2e(state, device, count, pdl, graph):
++    """(3)/(4) the full new kernel_fn path vs master's path (real weights, synthetic x), eager or
++    captured in a CUDA graph and replayed 3 times. Returns (failure or None, summary)."""
++    gen = torch.Generator().manual_seed(20261026)
++    master = dict(state, cuda_glue_ok=False, pdl_ok=False)
++    new = dict(state, cuda_glue_ok=True, pdl_ok=bool(pdl))
++    worst = 0.0
++    for tokens in (128, 256, 257):
++        rows = _cdc_routings(gen, tokens, 0, count)
++        for name in ("random", "skewed"):
++            data = _cdc_e2e_data(gen, device, tokens, rows[name], count)
++            ref = kernel_fn(data, master)
++            tag = f"e2e T={tokens} {name} pdl={pdl} graph={graph}"
++            if graph:
++                kernel_fn(data, new)  # warm up outside capture
++                torch.cuda.synchronize()
++                g = torch.cuda.CUDAGraph()
++                with torch.cuda.graph(g):
++                    out = kernel_fn(data, new)
++                outs = []
++                for _ in range(3):
++                    g.replay()
++                    torch.cuda.synchronize()
++                    outs.append(out.clone())
++                del g
++            else:
++                outs = [kernel_fn(data, new)]
++            torch.cuda.synchronize()
++            for o in outs:
++                row, glob, finite = _cdc_rel_rows(o, ref)
++                worst = max(worst, row)
++                if not finite or row > 1e-2:
++                    return f"{tag}: finite={finite} row rel L2 {row:.2e} global {glob:.2e}", ""
++    return None, f"e2e (graph={graph}, pdl={pdl}) max row rel L2 vs master {worst:.2e}"
++
++
++def _cdc_time(state, device, count):
++    """Print-only: CUDA-event time per launch (graph of 20 launches, median of 5 replays) of kernel
++    A vs _align_parallel and kernel B vs fused_post_expert_norm_weighted_sum at M = 128 / 256 with
++    kernel_fn's block_size_m, so the replaced rows can be read even if they leave the profile's
++    top-N. Warm L2, synthetic inputs; informational only."""
++    gen = torch.Generator().manual_seed(20261027)
++    ext = state["cdc_ext"]
++    ref_map = torch.full((N_EXPERTS,), -1, dtype=torch.int32, device=device)
++    ref_map[:count] = torch.arange(count, dtype=torch.int32, device=device)
++
++    def time_graph(fn):
++        fn()
++        torch.cuda.synchronize()
++        g = torch.cuda.CUDAGraph()
++        with torch.cuda.graph(g):
++            for _ in range(20):
++                fn()
++        g.replay()
++        torch.cuda.synchronize()
++        times = []
++        for _ in range(5):
++            s, e = torch.cuda.Event(enable_timing=True), torch.cuda.Event(enable_timing=True)
++            s.record()
++            g.replay()
++            e.record()
++            torch.cuda.synchronize()
++            times.append(s.elapsed_time(e) * 1e3 / 20)
++        del g
++        return sorted(times)[2]
++
++    for tokens in (128, 256):
++        bsm = _cdc_bsm_picks(tokens, count)[-1]
++        ids = torch.tensor(_cdc_routings(gen, tokens, 0, count)["random"], dtype=torch.int32, device=device)
++        local_ids = ref_map[ids.long()].contiguous()
++        tw = torch.rand((tokens, TOP_K), generator=gen).to(device)
++        y = torch.randn((tokens, TOP_K, CDC_H), generator=gen).to(device=device, dtype=torch.bfloat16)
++        out = torch.empty((tokens, CDC_H), dtype=torch.bfloat16, device=device)
++        try:
++            t_ref_a = time_graph(lambda: _align_parallel(ids, 0, count, bsm))
++            t_new_a = time_graph(lambda: _cdc_align(state, ids, 0, count, bsm))
++            t_ref_b = time_graph(lambda: fused_post_expert_norm_weighted_sum(
++                y, tw, norm_weight=state["norm_w"], eps=POST_NORM_EPS, weight_first=True,
++                slot_expert_ids=local_ids))
++            t_new_b = time_graph(lambda: ext.cdc_combine(y, local_ids, tw, state["post_norm_w"], out,
++                                                         POST_NORM_EPS, 0))
++            print(f"{CDC_TAG} timing M={tokens} bsm={bsm} (warm L2, per launch): "
++                  f"cdc_align_cuda_kernel {t_new_a:.2f} us vs _align_parallel_kernel {t_ref_a:.2f} us; "
++                  f"cdc_postnorm_combine_cuda_kernel {t_new_b:.2f} us vs "
++                  f"fused_post_expert_norm_weighted_sum {t_ref_b:.2f} us", flush=True)
++        except Exception as e:
++            print(f"{CDC_TAG} timing M={tokens} raised {e!r} (info only)", flush=True)
++
++
++def _cdc_setup(state, device, count):
++    """Build, self-check and pick the path; sets state['cuda_glue_ok'] / state['pdl_ok']. Never
++    raises: any failure keeps master's path at every M. Prints the verdict loudly."""
++    state["cuda_glue_ok"] = False
++    state["pdl_ok"] = False
++    reason = None
++    if count > CDC_MAX_COUNT or state["post_norm_w"].numel() != CDC_H:
++        reason = f"unsupported bank (count {count}, H {state['post_norm_w'].numel()})"
++    ext = None
++    if reason is None:
++        ext, _ = _cdc_build()
++        if ext is None:
++            reason = "build failed"
++    if reason is None:
++        state["cdc_ext"] = ext
++        n_max = CDC_MAX_TOKENS * TOP_K
++        cap_max = n_max + CDC_MAX_COUNT * (max(BLOCK_SIZE_M_CANDIDATES) - 1)
++        state["cdc_scratch"] = {
++            "local_ids": torch.empty((n_max,), dtype=torch.int32, device=device),
++            "sorted_ids": torch.empty((cap_max,), dtype=torch.int32, device=device),
++            "block_experts": torch.empty((triton.cdiv(cap_max, min(BLOCK_SIZE_M_CANDIDATES)),),
++                                         dtype=torch.int32, device=device),
++            "n_padded": torch.empty((1,), dtype=torch.int32, device=device),
++        }
++        try:
++            a = ext.cdc_func_attrs()
++            print(f"{CDC_TAG} cdc_align_cuda_kernel numRegs={a[0]} localSizeBytes={a[1]} smem={a[2]}; "
++                  f"cdc_postnorm_combine_cuda_kernel numRegs={a[3]} localSizeBytes={a[4]} smem={a[5]}", flush=True)
++            fail, cases = _cdc_check_align(state, device, count)
++            if fail is None:
++                print(f"{CDC_TAG} align: {cases} cases byte-identical to _align_parallel", flush=True)
++                fail, msg = _cdc_check_combine(state, device, count, 0)
++            if fail is None:
++                print(f"{CDC_TAG} {msg}", flush=True)
++                fail, msg = _cdc_check_e2e(state, device, count, 0, False)
++            if fail is None:
++                print(f"{CDC_TAG} {msg}", flush=True)
++            else:
++                reason = f"self-check: {fail}"
++        except Exception as e:
++            reason = f"self-check raised {e!r}"
++    if reason is None:
++        # (4) CUDA-graph capture + 3 replays, PDL first; without PDL if that fails.
++        graph_fail = []
++        for pdl in (1, 0):
++            try:
++                fail, msg = _cdc_check_combine(state, device, count, pdl) if pdl else (None, "")
++                if fail is None:
++                    fail, msg = _cdc_check_e2e(state, device, count, pdl, True)
++            except Exception as e:
++                fail = f"pdl={pdl} capture/replay raised {e!r}"
++            if fail is None:
++                print(f"{CDC_TAG} {msg}", flush=True)
++                state["cuda_glue_ok"] = True
++                state["pdl_ok"] = bool(pdl)
++                break
++            graph_fail.append(fail)
++            print(f"{CDC_TAG} graph check failed: {fail}", flush=True)
++            try:
++                torch.cuda.synchronize()
++            except Exception:
++                pass
++        if not state["cuda_glue_ok"]:
++            reason = "graph capture: " + " | ".join(graph_fail)
++    if state["cuda_glue_ok"]:
++        print(f"{CDC_TAG} SELF-CHECK PASSED", flush=True)
++        _cdc_time(state, device, count)
++        pdl = "on" if state["pdl_ok"] else "off"
++        print(f"{CDC_TAG} ===== PATH CHOSEN: cuda align+combine (pdl {pdl}) for "
++              f"{ALIGN_FUSED_MAX_TOKENS} < num_tokens <= {CDC_MAX_TOKENS} (bs=33, 128, 128-skewed, 256, 257) =====",
++              flush=True)
++    else:
++        print(f"{CDC_TAG} SELF-CHECK FAILED: {reason}", flush=True)
++        print(f"{CDC_TAG} ===== PATH CHOSEN: master ({reason}) for {ALIGN_FUSED_MAX_TOKENS} < num_tokens "
++              f"<= {CDC_MAX_TOKENS} =====", flush=True)
++    print(f"{CDC_TAG} ===== PATH CHOSEN: master for num_tokens <= {ALIGN_FUSED_MAX_TOKENS} (bs=1, 4, 8, 16, 32) "
++          f"and num_tokens > {CDC_MAX_TOKENS} =====", flush=True)
++
++
+ def _marlin_layer(weights, start, count):
+     """The parameters prepare_moe_nvfp4_layer_for_marlin reads, for experts [start, start+count)."""
+     sl = slice(start, start + count)
+@@ -455,7 +1165,7 @@ def prepare(weights: Weights) -> dict:
+             torch.cuda.synchronize()
+             _align_self_check(device, count)
+     torch.cuda.synchronize()
+-    return {
++    state = {
+         "banks": banks,
+         "workspace": marlin_make_workspace(device, max_blocks_per_sm=4),
+         # MuseSpark1xFp4Experts binds the effective (1 + w) weight of the post-expert norm.
+@@ -463,6 +1173,18 @@ def prepare(weights: Weights) -> dict:
+         # The original BF16 weight for _post_norm_combine_kernel, which adds the 1 in fp32.
+         "post_norm_w": weights["post_norm_w"].contiguous(),
+     }
++    # Hypothesis cuda-dispatch-combine-pdl-verify: build + self-check the CUDA align/combine; sets
++    # state["cuda_glue_ok"] / state["pdl_ok"] (False on any failure: master's path everywhere).
++    try:
++        start, count = next(iter(banks))
++        _cdc_setup(state, device, count)
++    except Exception as e:
++        state["cuda_glue_ok"] = False
++        state["pdl_ok"] = False
++        print(f"{CDC_TAG} SELF-CHECK FAILED: setup raised {e!r}", flush=True)
++        print(f"{CDC_TAG} ===== PATH CHOSEN: master (setup raised) for every num_tokens =====", flush=True)
++    torch.cuda.synchronize()
++    return state
+ 
+ 
+ def kernel_fn(data: Inputs, state: dict) -> torch.Tensor:
+@@ -483,7 +1205,15 @@ def kernel_fn(data: Inputs, state: dict) -> torch.Tensor:
+         # at the verify shapes (bs=128: 48 -> 16, bs=256/257: 64 -> 32). A host-side pick on the
+         # shape only; num_tokens < 128 keeps SGLang's pick.
+         block_size_m = BLOCK_SIZE_M_CANDIDATES[max(BLOCK_SIZE_M_CANDIDATES.index(block_size_m) - 2, 0)]
+-    if expert_map is not None:
++    # Hypothesis cuda-dispatch-combine-pdl-verify: CUDA align + combine for 32 < M <= 512, on the
++    # shape, dtype and prepare-time flags only.
++    use_cdc = (expert_map is not None and state.get("cuda_glue_ok", False)
++               and ALIGN_FUSED_MAX_TOKENS < num_tokens <= CDC_MAX_TOKENS and size_k == CDC_H
++               and bank["count"] <= CDC_MAX_COUNT and data["topk_ids"].dtype in (torch.int32, torch.int64))
++    if use_cdc:
++        local_ids, (sorted_ids, block_experts, n_padded) = _cdc_align(
++            state, data["topk_ids"], bank["start"], bank["count"], block_size_m)
++    elif expert_map is not None:
+         # One launch does the expert_map gather and the align, with the bank's prepare-time
+         # start/count: up to 32 tokens _align_small (hypothesis triton-map-align-small-m-port), above
+         # it _align_parallel (hypothesis align-parallel-per-expert-verify). Branch on shape only.
+@@ -527,7 +1257,12 @@ def kernel_fn(data: Inputs, state: dict) -> torch.Tensor:
+         out = torch.empty((num_tokens, size_k), device=x.device, dtype=torch.bfloat16)
+         _post_norm_combine_kernel[(num_tokens,)](
+             y, local_ids, topk_weights, state["post_norm_w"], out, size_k, POST_NORM_EPS,
+-            TOP_K_C=TOP_K, BLOCK_H=triton.next_power_of_2(size_k), num_warps=8)
++            TOP_K_C=TOP_K, BLOCK_H=triton.next_power_of_2(size_k), num_warps=16)
++        return out
++    if use_cdc:
++        out = torch.empty((num_tokens, size_k), device=x.device, dtype=torch.bfloat16)
++        state["cdc_ext"].cdc_combine(y, local_ids, topk_weights, state["post_norm_w"], out, POST_NORM_EPS,
++                                     1 if state["pdl_ok"] else 0)
+         return out
+     return fused_post_expert_norm_weighted_sum(
+         y, topk_weights, norm_weight=state["norm_w"], eps=POST_NORM_EPS, weight_first=True,
