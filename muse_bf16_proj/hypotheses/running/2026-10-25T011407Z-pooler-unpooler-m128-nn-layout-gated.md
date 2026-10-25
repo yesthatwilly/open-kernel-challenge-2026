@@ -60,7 +60,7 @@ review: proceed
 status: running
 review_at: 2026-10-25T011846Z
 review_companions: null
-stage: claimed
+stage: implemented
 claimed_at: 2026-10-25T011846Z
 base_sha: a9625932047aa6e3c155977025168939699cb9b2
 base_blob: a8bb42ac483318e9fbc84bc7826a27b7a704d1fb
@@ -69,6 +69,12 @@ worktree: .worktrees/muse_bf16_proj/pooler-unpooler-m128-nn-layout-gated
 mode: null
 restack_of: bf16-m128-nn-weight-layout-probe
 stale_base: null
+implemented_at: 2026-10-25T012003Z
+impl_commit: 41146e726d7a3aa358d2ac097456e5d0182ed4c5
+submission_sha256: 566e5e253ab0b470b429aaf95ad685a511645d457ab3f3f810b4238bcb010738
+norm_sha256: 93c247c9b41768654a72c651c30e754e3d5accf1671e44ac6f9345621bb56e1e
+submission_blob: 49c0a5c0d548f29014363a027a990ff274abd5de
+lint_warnings: 0
 ---
 
 # pooler-unpooler-m128-nn-layout-gated
@@ -114,3 +120,29 @@ No companion. A gain or a loss on the two m=128 rows is unambiguous: the only ch
 - Pooler m=256 was 1.034x paired in the probe. If this lands, a follow-up should widen the pooler gate to 129..256 (unpooler m=256 was 1.012x, about noise; qkv_gate m=256 lost at 0.941x, so keep it excluded).
 - Do the m=130 and m=1000 unpooler tests and any 65..127 test m stay on paths whose correctness was already exercised? NN at m in 65..127 is new for unpooler/pooler. The judge's checks cover correctness, but list the test m values in the gate's range in the attempt file.
 
+
+## Implementation notes
+
+Restack of bf16-m128-nn-weight-layout-probe: the staged 3-way-applied patch applied the NN path to all four bf16 layers at m >= 128. Narrowed in `muse_bf16_proj/submission.py` (worktree) only:
+- Constants `NN_GATED_LAYERS = ("pooler", "unpooler")`, `NN_GATED_MIN_M = 65`, `NN_GATED_MAX_M = 128` replace the probe's `NN_LAYERS`/`NN_MIN_M` (own gate, so it stacks cleanly with bf16-verify-deepgemm-bf16-gemm-nt-route).
+- `prepare()`: lossless `state["pooler_t"]` and `state["unpooler_t"]` = `W.t().contiguous()` ([K, N] bf16); qkv_gate and o copies from the probe removed (no +memory for them).
+- `kernel_fn`: inside the `layer != "router"` fallback, before master's cuBLAS call: if layer in the gated set and 65 <= cfg m <= 128 and cfg n == transposed weight's N, return `torch.mm(x, state[layer + "_t"])`. Gate reads only layer and cfg m/n.
+- Module docstring updated. Everything else equals master: m <= 32 Triton paths, router, qkv_gate and o at all m, pooler/unpooler at m >= 129 (TN).
+- Deviation: none. Note the earlier Triton routes (pooler/unpooler shape gates, swap-AB) still take precedence where they apply, as on master.
+- Not run (no GPU). For the attempt file: record NN nvjet kernel names/us for the two m=128 rows and list the test m values in 65..128.
+
+## Rules check
+
+- [x] CUDA-graph capturable: diff adds only a cfg-gated torch.mm; no .item()/.cpu()/sync, no input-value control flow.
+- [x] Nothing derived from `data` is cached across calls: the only new state is weight transposes made in prepare().
+- [x] Weights: repacked losslessly in prepare() only; BF16 stays BF16 (transpose copy, same values/dtype).
+- [x] Activations BF16 where SGLang keeps BF16: x passed unchanged to torch.mm, bf16 output with fp32 accumulation inside cuBLAS.
+- [x] n/a: attention not touched.
+- [x] No timing patches, harness edits, reference import, subprocesses or network in the diff.
+- [x] All work happens inside the timed call; no output caching or replay.
+
+okc_lint output:
+```
+CLEAN: muse_bf16_proj/submission.py
+```
+py_compile: OK; __pycache__ removed.
