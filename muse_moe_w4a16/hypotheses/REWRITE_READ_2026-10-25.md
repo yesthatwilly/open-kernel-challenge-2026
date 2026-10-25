@@ -362,3 +362,19 @@ Reference: BEST `align-parallel-per-expert-verify`, using the result file named 
 - **The judge's timed loop was bimodal again, and worse.** 53/100 replays were in the slow mode (~66 µs; p50 65.6, p10 41.9). nospin had 41/100.
 - Adjusted median 50.41 vs BEST 48.82 (+3.3%, z+1.2). The profile kernel row reads 62.5 µs vs Marlin pair 44.7.
 - Two stages have failed on the same mode, which the prepare instrumentation cannot reproduce. The atomic-add Marlin change now takes bs=1 to 44.9 with a 10% slow mode. Stop here.
+
+## 04:36Z harvest
+
+### w2-marlin-atomic-add-verify: job ccbcda65da584be0, check 1.3407 [1.321, 1.361], on master `w2-marlin-atomic-add-small-m` (1.3445 check / 1.3439 scored). DEAD.
+
+- Per-class PATH CHOSEN:
+  - `class T>=33 = atomic (atomic passed)`
+  - `class T>=128 = atomic (atomic passed and not >2% slower than master (239.3 vs 238.7 us))`
+  - `class T>=256 = atomic (... 347.6 vs 346.1 us)`
+- Correctness was fine: worst rel L2 against master was 3.2e-3 at T=33, 2.4e-3 at T=128 and 2.1e-3 at T=256, under a 5e-3 gate.
+- The w2-alone prepare A/B (cold L2, median of 50):
+  - T=128: master 238.7, atomic 239.3 (+0.25%), atomic_zero including memset 243.9 µs.
+  - T=256: master 346.1, atomic 347.6 (+0.43%), atomic_zero 354.8 µs.
+  - Atomic is no faster at large M. The gate was written as "not >2% slower", so it shipped a path that its own A/B showed slightly slower.
+- Judge rows against master: verify_16 (bs=128) 326.6 vs 317.8 (+2.8%, z +2.0). verify_32 (bs=256) is flat at +0.2%, and decode_32 is +4.2% (z +2.1) on the unchanged T≤32 path, which is drift. The `runs_ns` modes are unchanged; the counts above median×1.08 were 19 vs 21 at bs=128 and 20 vs 10 at bs=256.
+- The atomic win is a small-M effect: it removed the bs=1 slow mode. It does not carry to T≥33. Keep master's T≤32 gate.

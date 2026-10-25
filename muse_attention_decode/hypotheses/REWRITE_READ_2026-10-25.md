@@ -359,3 +359,47 @@ Notation:
 - sliding verify_16 rose 22.67 → 29.43 (+29.8%) and verify_32 28.70 → 33.71 (+17.4%).
 - In the profile, FA3 main went 10.7 → 13.2 and combine 4.1 → 7.6 µs, plus a `_paired_norm_gate_kernel` (2.3 µs).
 - Pairing two heads per FA3 call doubles the rows per kv head and the split-combine work. FA3 is already efficient per head on verify.
+
+## 04:36Z harvest
+
+References: new master `full-decode1-streamk-s3-two-level-ticket` (check 2a3241780c7b4c46, 1.4322). All three runs below were built on older bases. None of them has the two-level ticket, so their full decode_1 row reads 27.1-27.6 µs against master's 22.6 µs (+20%, weight 16). That alone explains why their headlines sit below master. Read the changed rows only. Shape err is about 50 ns, but sliding rows drift 2-3% between batches (LESSONS), so a move under ~3% on an untouched row is drift, whatever its z.
+
+### stack-streamk-ticket-cluster-c16-c4: job 195dcc1209b6457b, check 1.4266 [1.405, 1.454], base sliding-deep-splits (1.3949). LAND-CANDIDATE once rebased onto master.
+
+- PATH CHOSEN: full decode uses streamk+ticket v2. The sliding paths are cluster v2 C=16 at B=1 (fp8qk), the master Triton deep-splits at B=2..16 (C=8 is gated off) and cluster v2 C=4 at B=17..32. Every verify stays on FA3.
+- Build: sm_90a only, `sliding_cluster_kernel` 124 regs, 32 B local, max active clusters C4=62, C8=30, C16=14. All self-checks passed: rel L2 about 1.6e-3, cache k and v match 1.0000, graph replay matches.
+- Rows against the new master:
+
+| row | hyp µs | master µs | change |
+|---|---|---|---|
+| sliding decode_32 (`sliding_cluster_kernel` 18.0) | 20.05 | 24.33 | −17.6%, z −49, pr 1.180 |
+| sliding decode_1 (C=16, 10.6) | 12.57 | 13.15 | −4.4%, z −11, pr 1.024 |
+| full decode_16 | 111.64 | 111.14 | +0.4% (flat) |
+| full decode_32 | 226.98 | 226.42 | +0.2% (flat) |
+
+  Every other row except full decode_1 is within ±1.3%.
+- The targeted rows moved, and the decode_32 gain is the largest single-row gain on this problem today. Substituting the two sliding rows into master's result gives an estimated headline of 1.449-1.476. My two estimates bracket it because I could not recover the judge's exact aggregation.
+- Next: one restack on master that adds the sliding cluster C=16 (B=1) and C=4 (B=17..32) routes and keeps the two-level ticket at full B=1. Then a scored submit.
+
+### full-decode-splitkv-s3-fused-preattn: job 825baa03798f431a, check 1.4283 [1.407, 1.450], base stage 2 (e592b1f5, 1.4171). STACK-INTO-NEXT.
+
+- `PATH CHOSEN: full decode streamk fused-preattn v3` and `every other shape: master path`. The v3 kernel has 125 regs, 0 local and 2 CTAs/SM. The new k/v cache rows match bit for bit (rel L2 0.00e+00), other rows are unchanged, and the ticket sum is 0.
+- Diagnostic: `[sk3-diag]` at B=16 gives pre-attn 6.2 + v2 111.9 = 118.2 µs vs fused v3 115.1 µs. The in-kernel q/kv build costs +3.1 µs and saves 3.1. At B=32, 227.7 vs 220.5 µs: the build costs −0.8 µs and saves 7.2.
+- Rows vs stage 2: full decode_16 110.91 → 109.55 (−1.2%, z −4.5) and full decode_32 226.81 → 223.11 (−1.6%, z −8.8). Against the new master the figures are −1.4% and −1.5%. The kernel profiles show 107.4 µs (decode_16) and 227.4 µs (decode_32), and `_pre_attention_kernel` is gone from both rows.
+- That is a small real gain of about 1.4-3.7 µs on two weight-16 rows, about +0.2% on the headline. It is too small to land alone. Fold it into the next attention restack together with the two-level ticket at B=1. Both modify `splitkv_attn_sk_kernel`, so v3 has to be gated to 1 < B ≤ 64.
+
+### full-verify-wgmma-s4-multitile-fix: job 51b0d5c110f3459c, check 1.3758 (diagnosis build). FIX-AND-RERUN.
+
+- PATH CHOSEN: full verify stays on master FA3 paired. All three variants (ticket, b8, ticket_sync) fell back on `lens_a-grid3-kv1` at rel L2 1.23e+00, finite, error word 0. No mbarrier timeout and no shape error occurred, so the wgmma kernel was never timed. The verify rows are master FA3 at ±0.6%.
+- BISECT, identical for b8 and ticket_sync: `single-request multi-tile cases fail (B1-2t, B1-4t, B1-17t, B1-34t, B1-4t-kv0.25): multi-tile loop state (n >= 1), no request crossing involved`.
+  - Passing cases: canary, single-tile-lens_a-device, kv0.25-grid264, lens_b-device and coherent-lens_a-device. Every one of them gives each CTA at most one tile per segment.
+- DIAG (ticket_sync lens_a-grid3): the 1-tile segments inside multi-tile CTAs are GOOD (2/2), and every segment of 2 or more tiles is BAD. A bad segment has `m_bad_rows 128` (every row's running max is wrong), l_err 0.8-1.2 and o_err 3-5. B1-2t (one request, 2 tiles, no crossing, no index rotation) already fails.
+- **The bug: per-segment state carried from tile lt=0 into tile lt≥1 inside the same segment.** The SYNC variant (cp_wait_all + proxy fence + `__syncthreads` around every tile) fails identically, so the bug is not a ring or mbarrier race. A 1-tile segment that starts at stage ≥1 passes, so the stage, ring and descriptor addressing are not the cause either. kv_scale, request crossing and the IDX_TILES>16 rotation are ruled out by the table.
+- The row max is wrong on every row, so the error already shows up in S or its max at tile lt≥1, not only in the O/l rescale.
+- Reading the s4 kernel, the only per-segment state that is NOT reloaded right before the S wgmma of a later tile is the register-sourced Q A-fragment `qa[2][4]`. It is loaded once at `n == 0 || lt == 0` and reused across loop iterations as the `wgmma ... {a regs}, desc` operand. A 1-tile segment always loads it in the same iteration, which matches the good/bad split exactly.
+- Stage 5 should test that first:
+  - (a) Reload `qa` every tile, unconditionally. It is 2 KB from L1/L2.
+  - (b) Alternatively, stage Q in smem and use a smem-descriptor A operand.
+  - (c) Add a DIAG that dumps S (pre-max) for tile 1 of B1-2t against the fp32 reference. That separates "S wrong" from "carry wrong".
+  - If (a) still fails, the next suspects are the `mA`/`lA` carry (`ex2(mA - uA)`, with the Max_offset folded) and `oacc` across the `fence_acc` / `wg_fence` pairs.
+  - Keep SYNC off; it is ruled out.

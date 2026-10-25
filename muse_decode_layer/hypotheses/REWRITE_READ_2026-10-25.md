@@ -390,3 +390,66 @@ decode_1 rows across today's runs (µs):
 - **The selector picked WIDE at T=9..32 although its own CUDA-event timing said it was slower**: T=16 old 23.4 vs wide 24.9 µs, T=32 old 26.4 vs wide 28.9.
 - Shapes at T=16/32 are within err: sliding decode_16 +1.2%, sliding decode_32 −2.2% (z−1.0), full rows ≤0.3%.
 - More resident warps did not raise P's bandwidth: 3.0 TB/s at T=16 vs 3.2. Dead.
+
+## 04:36Z harvest
+
+References: new master `full-decode-splitkv-restack-on-pdl` (check c243a29f26dc4725, 1.2680). Four of the six runs were built on the OLD base `stack-align-par-sidestream-sliding1`, which lacks the CUDA split-KV. Their full decode_16/32 rows read +7-15% against master, and their headlines (1.267-1.275) are inflated by SGLang-baseline drift: verify_32 paired ratios run 1.02-1.07 on untouched rows. Ignore those headlines. The decode_1 rows (err 0.4-0.7 µs) are the only rows that resolve a 2% move. Batched rows (err 3-8 µs) need more than 4% and a kernel change before I read them.
+
+decode_1 rows (µs; master = 126.15 sliding / 142.70 full):
+
+| run | base | sliding decode_1 | full decode_1 |
+|---|---|---|---|
+| master c243a29 | – | 126.15 | 142.70 |
+| sliding-batched-triton-b16-band (control: T=1 untouched) | master | 126.22 | 143.06 |
+| **w2-marlin-atomic-add-t1-port** | master | **123.88 (−1.8%, z −2.5)** | **139.18 (−2.5%, z −4.0)** |
+| **stack-route-topk-pdl-unpool-nf1** | old | **122.44 (−2.9%, z −4.3)** | **136.93 (−4.0%, z −7.3)** |
+| dense-chain-stage2-attn-side-pdl-t1-gate | old | 125.21 (−0.7%, flat by design) | **137.98 (−3.3%, z −5.8)** |
+| fused-preattention-paired-pad-restack | old | 125.43 (−0.6%) | **138.37 (−3.0%, z −6.5)** |
+| moe-chain s3 | old | 127.64 (+1.2%) | 142.74 (0.0%) |
+
+### w2-marlin-atomic-add-t1-port: job 7a9f5de5aecc4aba, check 1.2856 [1.266, 1.305]. LAND-CANDIDATE.
+
+- `[w2-atomic] PATH CHOSEN = ATOMIC w2 at T=1 (worst rel-L2 vs master 0.00556); use_atomic_add=True use_fp32_reduce=True memset in path: False; T>1 MASTER`.
+- Built on master, and both decode_1 rows moved: −2.3 and −3.5 µs. In `runs_ns` the medians were 130.8 vs 134.1 (sliding) and 144.3 vs 150.0 (full). Both distributions are unimodal; the count of runs above median×1.08 was 3 vs 4 and 2 vs 2. Unlike moe, this is a shift of the whole distribution, not a removed slow mode.
+- Marlin's summed kernel time on the full decode_1 row went from 40.3 to 35.8 µs. On sliding decode_1 the profile reads 42.3 vs 40.9 (+1.4, profile noise). The shape median still fell.
+- Every other row is within err. Sliding verify_32 has pr 1.054 at a flat median, which is baseline drift.
+- The headline CI overlaps master's [1.249, 1.287]. Substituting only the decode_1 rows gives about 1.272-1.276. Promotion should rest on the two decode_1 rows; a scored submit is fine because the change has no failure mode beyond the moe-proven flag.
+
+### stack-route-topk-pdl-unpool-nf1: job 87211e1362b64c4c, check 1.2671 (old base). STACK-INTO-NEXT (rebase onto master).
+
+- R selector: `new R pdl=1 87.31 us vs master R 92.96 us ... WINNER = NEW R`.
+- Unpool selector: `custom 13.8 us vs master 19.8 us (T=1+8): WINNER = CUSTOM dl_unpool_kernel`. The resulting path: `CUSTOM dl_unpool_kernel at T <= 8 (NF=1) ... boundaries stay SGLang`. Both selectors now assert the timed winner, so the 03:41Z bad-selector lesson was applied.
+- Both decode_1 rows had the largest moves of the batch: sliding −3.7 µs and full −5.8 µs against master. Sliding verify_1 −5.9% is within err (2.5 µs).
+- The run lacks the split-KV, so full decode_16/32 read +15% and +10%. It cannot land as is.
+
+### dense-chain-stage2-attn-side-pdl-t1-gate: job c6cb53d8ebc2478a, check 1.2717 (old base). STACK-INTO-NEXT, full decode_1 only.
+
+- `[dense-chain-s2] compare T=1 full: custom Q+O 18.6 us vs master attention side (sans FA3) 27.3 us -> custom wins`. Q 8.3 µs (4.54 TB/s) and O 6.5 µs with pdl.
+- PATH CHOSEN: full decode_1 runs Q, then FA3 over every key, then O. Sliding decode_1 stays on master (the drift control), and T>1 stays on master.
+- The judged full decode_1 row moved 142.70 → 137.98 (−3.3%, z −5.8), and the sliding control is flat (−0.7%). That is a clean attribution. The T>1 losses from the 03:41Z run are gone: full decode_32 −6.5% vs its base, and every T>1 row is within err of master except full decode_16/32, which lack the split-KV.
+- **Conflict:** master's full decode_1 path is FA3, and so is this one, so there is no clash with the split-KV gate (B>1). It does overlap fused-preattention below: both replace pre-attention at T=1. Pick dense-chain-s2: it has the larger measured margin (−8.7 µs in the side-by-side), and fused-preattention moved no other row beyond err.
+
+### fused-preattention-paired-pad-restack: job 5e9b5464d1444708, check 1.2745 (old base). DEAD as a separate line; superseded by dense-chain-s2 at T=1.
+
+- `PATH CHOSEN = DENSE-CHAIN at T <= 32, MASTER above`. The archived log tail does not contain the pre-attention path line.
+- full decode_1 −3.0% (z −6.5) is the only row that moved and resolves. Sliding decode_32 −5.2% (z −3.2; err 3.2 µs) is inside the batched rows' resolution and could be drift. The batched paired rows (the reason for the paired pad) did not move beyond err: sliding decode_16 +0.7% and the full rows are confounded by the missing split-KV.
+- Keep its patch on file. If a later stage needs the paired pad for full verify, rebase it there.
+
+### moe-chain-cuda-swapab-expert-once-s3-rebase-fp32ref-bound: job 51d047cbc5ff450a, check 1.064, regression. DEAD (design).
+
+- The fp32-reference bound fix worked: `worst out error ratio new/marlin vs fp32 0.82 (bound 1.5)`, all checks passed, `PATH CHOSEN = CUDA for tokens > 32; MARLIN at tokens <= 32`.
+- **Why it was slow:** the path printed its own timing as "print only" and shipped anyway.
+  - T=128: `moe_w13_silu_swapab 421.8 + moe_w2_swapab 240.0 ... route+w13+w2 670.3 us; marlin path total 319.5 us`.
+  - T=256: 868.9 vs 442.4 µs.
+  - The CUDA path was 2.0-2.1x slower than Marlin and was chosen on correctness alone.
+- On the judge, verify_16 and verify_32 regressed +37% to +77% against master (sliding verify_16 743.6 vs 420.4 µs; `moe_w13_silu_swap` alone 405-590 µs). The T≤32 rows equal master because Marlin ran there.
+- Together with the 01:36Z small-T result (1.7-2x slower than Marlin), the mma.sync swap-AB expert kernel loses at every T. Close the line.
+
+### sliding-batched-triton-b16-band: job 02bf417257e14a3d, check 1.2743, on master. DEAD.
+
+- Built on master. `_sliding_fused_kernel` ran on sliding decode_16 at 14.6 µs, against master FA3's 13.7 µs.
+- The targeted row went 209.82 → 215.34 µs (+2.6%, z +1.4). It did not improve, and the kernel itself is 0.9 µs slower.
+- Full decode_32 −7.0% (446.0 vs 479.6) is drift: its `splitkv_attn_kernel` time is identical (248.3 vs 248.1 µs) and the change does not touch that row. The verify rows at +3-5% are drift too.
+- Sliding decode_16 should stay on FA3. The attention problem's C=8 cluster at B=16 also lost (+7%, 01:36Z), so no tested kernel beats FA3 in the B=2..16 sliding band.
+
+**Recommended next decode stack (one check):** master + w2-atomic T=1 + route-topk R + unpool NF=1 + dense-chain-s2 at full decode_1. The changes touch disjoint kernels: Marlin w2 flags, the route/align kernel, the unpool GEMM and the T=1 full attention side. Stack w2-atomic first, because it alone is a land candidate today. Expect sliding decode_1 at about 120-122 µs and full decode_1 at about 131-134 µs. Judge on the two decode_1 rows against this control (126.2 / 143.1).

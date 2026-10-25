@@ -236,3 +236,21 @@ Reference: master `stack-tonight-five-prefill`, check c4d14d62f11e4aaf, 1.0705x.
 - BLOCK_T=32 kernels: 168 regs (199 packed), 0 spills. e2e rel L2 5.9e-3. The run took the Triton path at turn_1.
 - turn_1: sliding 1590 vs master 1101 µs (+44%, z+31) with `_moe_nvfp4_gemm_kernel` 1206 vs Marlin 769. Full 1915 vs 1530 (+25%). The turn 1 load fell to 0.713.
 - At T=753 the Triton NVFP4 GEMM is 1.6x slower than Marlin even at BLOCK_T=32. Keep Marlin at turn 1.
+
+## 04:36Z harvest
+
+Master: `stack-tonight-five-prefill` (submit 502f2eab, 1.0744; check c4d14d62, 1.0705). Both runs below turned their own paths OFF, so every row is master re-measured. Their turn_1 rows (−6% to −8.5%) and first_turn rows (−3.8% to +3.1%) are the known prefill drift (LESSONS 03:41Z: turn_1 drifts −7% to −10% without any kernel change).
+
+### norm-boundaries-persistent-multirow: job 46afe489e2754c83, check 1.0716. DEAD.
+
+- `[boundary] OFF: no variant beat master by 2%; PATH CHOSEN per T class: {753: 'master', 3012: 'master', 16384: 'master'}`. The coefficient probes matched the formula (attn 0.0, ffn max diff 1.9e-3).
+- No row moved because of the change. Turn_1 sliding −6.0% and full −8.5% are drift on unchanged Marlin and FA3 kernels; Marlin itself fell 734 → 693 µs. SGLang's fused boundary kernels are already within 2% of a persistent multi-row variant at prefill sizes.
+
+### experts-triton-first-turn-unmasked-loads-l2-hints: job aeda8b5a523642b1, check 1.0677. DEAD.
+
+- The A/B over 7 alternations at T=16384 measured:
+  - w13: master 3297 µs, unmasked 3867 µs (1.173x slower), unmasked plus hints 3886 µs (1.179x slower).
+  - w2: master 1725 µs, unmasked 2041 µs (1.183x slower), unmasked plus hints 2043 µs (1.185x slower).
+  - Every variant had 254 regs and 4 spills.
+  - The gate (≤0.98x) printed `PATH CHOSEN = w13 master, w2 master`.
+- Removing the load masks made the Triton NVFP4 expert GEMM 17-18% slower. The L2 eviction hints added nothing. The masks are not the bottleneck, and the unmasked form probably changed the pipelining or vectorisation Triton emits at 254 regs. Close the masks/hints knob.

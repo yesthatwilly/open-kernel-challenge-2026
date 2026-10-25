@@ -285,3 +285,50 @@ The same three on master give 1.208. **Next:** after the restack lands, run one 
   - `#error C++20 or later compatible compiler is required to use PyTorch`, then `[bulk] DISABLED: no extension; master paths`. The 1.183 is master plus batch drift.
   - The host `main.o` compile in the tail does carry `-std=c++20`. The failing step is therefore the nvcc compile of the .cu, which was given only `-gencode=arch=compute_90a,code=sm_90a`.
   - Next: add `-std=c++20` to that TU's `extra_cuda_cflags`, then rerun as a check. The design is unmeasured, not dead.
+
+## 04:36Z harvest
+
+References: master `bf16-restack-m16-swapab-router-swapab-m32` (check 1e90292c7b954d96, 1.2215). Shape err is 20-60 ns. Untouched small-m rows drift by ±3-8% in this batch (o verify_16 +5.8-7.9% in three runs on master's own nvjet kernel), so I judge each run on the paired ratio of its targeted rows plus the kernel name in the profile. Three of the four runs were really built on the restack: `_bf16_swapab_kernel` and `_router_swapab_kernel` appear on the untouched rows.
+
+### restack-router-cluster-dsmem-m8: job d323ce8ef6a54fde, check 1.2199 [1.202, 1.238]. LAND-CANDIDATE (stack with the two below).
+
+- `[router_cluster] PATH CHOSEN router m=1..8: CUDA cluster kernel router_kernel<8,8>, no memset`. m 9..32 stays on the swap-AB Triton kernel and m > 32 on hilo. Build: TORCH_CUDA_ARCH_LIST=9.0a, 162 regs, 0 spill, max active clusters 30. The self-check passed at m 1/5/8.
+- Profile: router decode_1 and verify_1 show `router_kernel<8, 8>` as the only kernel. The `vectorized_elementwise` memset node is gone.
+- Router decode_1 went from 5.38 to 4.98 µs (−7.5%, z −13, pr 1.078). Its per-shape speedup is 2.076, above the 1.954 bar.
+- Router verify_1 went from 5.47 to 4.93 µs (−9.8%, z −19, pr 1.099).
+- The other router rows are flat or within this batch's drift (decode_16 +2.8%, verify_16 +2.8%, both on unchanged kernels).
+- The two targeted rows moved by more than the predicted −2.6% and −14%. Headline estimate +0.15-0.4% alone.
+
+### restack-unpooler-slice-cluster-dsmem-m8: job e557d92969864449, check 1.2260 [1.208, 1.244]. LAND-CANDIDATE.
+
+- The gate printed WIN at both sizes:
+  - `gate m=1: cluster 10.21 vs swapab16 10.75 us, net 5.22 vs 5.76, 1.104x (need >= 1.02) -> WIN`
+  - `gate m=8: 1.093x -> WIN`
+- `PATH CHOSEN: unpooler slice m<=8 (n=1024) -> CUDA cluster/DSMEM split-K, cluster dim 8`. `ouns_kernel` has 56 regs, 0 spill and 72 KB dynamic smem.
+- Unpooler decode_1 went from 6.15 to 5.34 µs (−13.2%, z −24, pr 1.136). Unpooler verify_1 went from 6.00 to 5.41 µs (−9.8%, z −20, pr 1.124). Both rows run `ouns_kernel`.
+- The other rows are within the batch drift: o decode_32 +4.5% and o verify_16 +6.5%, both on unchanged kernels.
+- This gate is a model selector: it printed both medians, used graph replay with a cold flush, and demanded a ≥1.02 margin. Headline estimate +0.3-0.8% alone.
+
+### restack-pooler-unpooler-nn-layout-m128: job 92cd4e758a924ca0, check 1.2282 [1.210, 1.247]. LAND-CANDIDATE.
+
+- Pooler verify_16 (m=128) went from 25.00 to 22.59 µs (−9.6%, z −25), **pr 1.117 ≥ 1.06**. The kernel is `nvjet_sm90_tst_128x64_64x8_1x2_h_bz_splitK_NNT` plus splitKreduce.
+- Unpooler verify_16 (m=128) went from 19.96 to 18.99 µs (−4.9%, z −13.5), **pr 1.047 ≥ 1.02**. The kernel is `nvjet_..._h_bz_NNT`.
+- Both bars are met, with the NN layout confirmed by kernel name. The archived log tail holds no PATH CHOSEN line for the layout, so the kernel names are the evidence.
+- m=256 rows are flat (pooler −0.1%, unpooler −0.5%), as expected.
+- Unpooler decode_1 −11.5% is not this change: it runs the same `_bf16_swapab_kernel`, and master's 6.15 is the high reading among four runs (5.34-6.15). o verify_16 +5.8% is the batch-wide drift.
+- Headline estimate +0.5-0.9% alone.
+
+**Restack proposal (one check, then submit):** router cluster at m≤8, unpooler-slice cluster at m≤8 and the NN layout at m=128, all on master. They touch disjoint (layer, m) cells, and none of the three edits the others' gate constants. The substituted estimate is about 1.238-1.243. The CIs are ±1.5%, so promotion must rest on the six rows: router decode_1/verify_1, unpooler decode_1/verify_1, pooler/unpooler verify_16.
+
+### pooler-unpooler-bulk-tma-row-owner-s2-cxx20-rebuild: job 571ea532ad7a410d, check 1.033, regression. DEAD (the line's own kill gate says so); one cell is worth salvaging.
+
+- **It compiled:** `extra_cuda_cflags: ['-O3', '-lineinfo', '-std=c++20']`, gencode sm_90a only, load_inline in 37.3 s. The weight repack is bit-exact, and the self-checks passed at m 1..32 (rel L2 1.65e-3, error word 0).
+- **Path that ran:** `PATH CHOSEN layer=pooler m 1..32: bulk-TMA row-owner stream` and `layer=unpooler m 9..32 (n=8192): bulk-TMA row-owner stream`. The profile confirms `bulk_kernel<32, 8192, NT>` and `bulk_kernel<64, 4096, NT>`.
+- The base was OLD master (`_pooler_skinny`, `_router_hilo`, `_qkv_splitk_sem`). That is why qkv, o and router read +5-11% against the new master. Ignore those rows.
+- **Why it was slow:**
+  - The kernel's time grows linearly with m. Prepare measured pooler at 27.1, 28.1, 32.5 and 51.9 µs for m=1, 8, 16 and 32, against a pure-read time of 26.5 µs. The compute gap was +0.6, +1.6, +6.1 and +25.5 µs.
+  - Unpooler showed the same pattern: +6.1 µs at m=16 and +28.2 µs at m=32.
+  - The design runs one CTA per SM (160 threads, 128 CTAs, 124-200 KB smem), so per-token FMA work in the row-owner epilogue cannot be hidden behind the stream.
+  - Even the pure stream reached only 2.54 TB/s cold, against the 3.8 TB/s kill gate: `KILL-GATE ... MISS -> line DEAD; route kept on`. The judge then saw pooler m=16/32 at +43% and +145%, and unpooler m=16/32 at +49% and +180%.
+- **The one positive cell:** pooler decode_1 (m=1) went from 18.84 (master swapab) to 17.28 µs (−8.3%, z −24, pr 1.094), on `bulk_kernel<32,8192,8>` at 17.0 µs. Verify_1 (m=8) already loses (+5.1%).
+- Optional single-cell follow-up: bulk-TMA pooler at m=1 only, on the restack. It is worth about +0.1-0.2% headline. Run it as a STACK-INTO-NEXT add-on only if the restack above has room in its check; it does not need its own check.
