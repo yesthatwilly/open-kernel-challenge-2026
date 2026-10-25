@@ -45,7 +45,7 @@ review: proceed
 status: running
 review_at: 2026-10-25T042601Z
 review_companions: null
-stage: claimed
+stage: implemented
 claimed_at: 2026-10-25T042601Z
 base_sha: 001ddce7af3678bd9f650680c4da3a693cea5170
 base_blob: 60dfe35d5417d9c0f89067ff313efdc2c41d03a2
@@ -54,6 +54,12 @@ worktree: .worktrees/muse_moe_w4a16/w13-marlin-atomic-add-on-master-small-m
 mode: null
 restack_of: null
 stale_base: null
+implemented_at: 2026-10-25T043232Z
+impl_commit: c3a8442027474995381e941c6d3a09c4275823d2
+submission_sha256: dba4831298c15e97cf3482be3f7ad594d858704769341f7ed01d10a2985f48af
+norm_sha256: 1e8f2379b57178ccc0a805301a252b44b53a86d314f514cd8eecb00631742124
+submission_blob: 4ee9fda80c96b0149edd61482cbab157c48d39d8
+lint_warnings: 23
 ---
 
 # w13-marlin-atomic-add-on-master-small-m
@@ -101,3 +107,47 @@ No companion. The change is one kwarg on one call at T<=32, plus at most one mem
 - Is the residual 10/100 slow mode tied to Marlin at all? The fused bs=1 kernel showed the same +23 us mode with no Marlin lock, so it may be judge-side (clock, cold-L2 flush interaction). If this run leaves it at ~10/100, stop attributing it to lock chains.
 - Correct the expected rows before harvest: bs=8 should be 'flat', not 'faster', and the kill criterion should read the raw slow-mode count and p10, not only the median, because a median metric cannot see a 10% tail.
 
+
+## Implementation notes
+
+Edited only `muse_moe_w4a16/submission.py` in the worktree (+260/-3). Nothing could be run (no GPU).
+
+- `_forward(data, state, w2_mode, w13_mode="master", poison=False)`: for `num_tokens <= W13_ATOMIC_MAX_TOKENS (32)` and `w13_mode != "master"` the w13 Marlin call gets `use_atomic_add=True` (`use_fp32_reduce=True` kept); `atomic_zero` does `cache1.zero_()` first. `poison=True` (self-check only) fills `cache13` with 3e4 before the w13 call. `kernel_fn` picks `w13_mode` from `state["w13_modes"][_w13_band(T)]` (shape-only host dict lookup; unlisted T -> master).
+- `_w13_atomic_self_check` (prepare, never raises): per T in (1,4,8,16,32), reference = CURRENT master (`state["w2_mode"]` as chosen, w13 non-atomic), candidates `atomic` (poisoned buffer) then `atomic_zero`, gate rel-L2 <= 5e-3 and finite. Selector atomic -> atomic_zero -> master, PATH CHOSEN printed per T band with memset flag. Also prints rel-L2 of current master vs a fully non-atomic path and of each candidate vs both. Prints "harvest as VOID" if every band is master. Each launch is announced with a flushed print before and after (synchronize).
+- Slice-count print at T=1 and T=8 for w13 and w2: m_blocks from the real align, n/k tiles and split-K slices are ESTIMATES (128x128 tile, 4 CTAs/SM), labelled as such, since Marlin's real tile pick is not readable.
+- `_marlin_exec_config_probe` (print-only, prepare only, try/except, 13 s budget): prints `inspect.signature`, module and `__doc__` of `moe_wna16_marlin_gemm`; for w13 and w2 at T=8/16/32, two skewed routings (10 and 13 local experts), master's block_size_m per T, w2 in master's own w2 mode, builds a CUDA graph per config (binding default, then (thread_k, thread_n) in {(-1,-1),(128,128),(64,256),(128,64)} x blocks_per_sm in {-1,1,2}), >=320 MB flush before each of 15 interleaved replays, prints the sorted median-us table with ratio to binding default and rel-L2 vs default, and each rejected config's first error line once. Affects no state.
+- Deviations: fp32-dequant reference not added (not cheap). Review corrections applied (override the spec): gate vs current master not fully non-atomic; junk-filled buffer for `atomic`; per-T-band selection; slice print; probe. The expected rows should be corrected at harvest (bs=8 flat); read raw bs=1 slow-mode count and p10, and a PATH CHOSEN = master means VOID.
+
+## Rules check
+
+- [x] CUDA-graph capturable: kernel_fn adds only a shape-keyed dict lookup and (in atomic_zero) a `zero_()` memset; all syncs/`.item()` are in prepare helpers (lint: warnings only, "outside kernel_fn's call graph").
+- [x] Nothing derived from `data` is cached across calls: `state["w13_modes"]` is built from synthetic prepare-time inputs.
+- [x] Weights repacked losslessly in prepare only (unchanged); NVFP4 stays NVFP4.
+- [x] Activations BF16 as before; the probe's flush buffer is a uint8 scratch, not an activation (lint dtype warning noted).
+- [x] n/a: attention checklist item, this is MoE.
+- [x] No timing patches, harness frames/IO/secrets, module edits, reference import, subprocess, processes or network (only `inspect`, `time` added).
+- [x] All work happens inside the timed call; no output caching or replay.
+- [x] Only `submission.py` changed, first-line marker kept; no triton.autotune.
+
+okc_lint: `OK with warnings: submission.py` (host-sync warnings in prepare helpers only, one dtype warning for the uint8 flush buffer). `py_compile` ok, __pycache__ removed.
+
+## Pre-flight audit
+
+Audited 2026-10-25 by an Opus subagent. The audit was done by reading the code; this node has no GPU. **Verdict: dispatch-with-fixes.** Rules OK.
+
+Fixes, in the worktree's `submission.py`:
+- **The w13 self-check gate was at the noise floor (category 1).** The w13 gate used `rel <= 5e-3` against current master. The landed w2 atomic alone reads 4.79e-3 against non-atomic, and the worst T is probably T=1. The w13 delta moves w2's input by about one bf16 ulp. That decorrelates w2's own atomic rounding between the reference and the candidate, so a correct candidate can read about 6-8e-3 at T=1. That would put the target band on master and void the run. The fix adds `W13_ATOMIC_TOL = 1e-2`. A missing zero, i.e. the 3e4 poison left in place, or a wrong write still reads far above 1e-1. The candidate's error against FP32 also stays well inside the judge's 1.5%: the earlier w13-only atomic passed 5/5.
+- **The probe now stops on the first device-side fault or open capture.** If a config's exception names a device-side fault (illegal or misaligned address, unspecified launch failure, device-side assert), or `torch.cuda.is_current_stream_capturing()` is still true, the probe prints ABORT and returns. It no longer goes on launching more configs.
+
+Checked and fine:
+- **Probe launch order.** Each config runs eagerly and synchronizes before it is captured. A capture runs only when the eager call succeeded, inside the same try. `torch.cuda.graph.__exit__` always ends the capture, and a failed graph is never stored.
+- **Unknown kwargs.** `thread_k`, `thread_n` and `blocks_per_sm` are rejected at the binding or with a TORCH_CHECK before any launch.
+- **Budget.** The 13 s budget is checked before each of the 12 (kernel, T, routing) units.
+- **Flush buffer.** The 320 MB buffer is allocated once and reused. Each flush is a memset of about 0.1 ms, and there are about 2.3k of them.
+- **Memory.** Up to 13 graphs are live per unit, then freed. Headroom on 80 GB is ample.
+- **Poison.** It fills the `cache13`/`cache1` that `_forward` allocates, which is the same buffer the timed path writes w13 into.
+- **`kernel_fn`.** It adds only a host-side dict lookup on the shape. There are no prints, no try/except and no state.
+
+okc_lint after the fixes: `OK with warnings` (the same prepare-only warnings). `py_compile` OK, and `__pycache__` was removed.
+
+Residual risk: a sticky CUDA fault cannot be ruled out without the GPU. That would need an explicit `thread_k`/`thread_n` config that Marlin accepts but mis-executes, in a prepare-time probe that prints only. The T=1 gate also still depends on my rounding estimate of 6-8e-3, which comes from reasoning about rounding, not from a measurement.
