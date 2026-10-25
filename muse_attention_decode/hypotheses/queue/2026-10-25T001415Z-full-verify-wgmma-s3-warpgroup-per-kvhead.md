@@ -65,7 +65,8 @@ controls_for: null
 rewrite_stage: 3
 replaces: "full-layer verify at 1<batch<=64: FA3 main + prepare_varlen_num_blocks + FlashAttnFwdCombine + norm-gate (master); stage-2 splitkv_verify_kernel A8 + splitkv_verify_combine B8"
 review: required
-status: queued
+status: hold
+hold_reason: "superseded by full-verify-wgmma-s3-warpgroup-per-kvhead-inproc: the original spec runs a self-check in a child process, which the rules reject (starting processes)"
 ---
 
 # full-verify-wgmma-s3-warpgroup-per-kvhead
