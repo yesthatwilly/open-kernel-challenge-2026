@@ -47,9 +47,18 @@ priority: 2
 kind: primary
 controls_for: null
 review: proceed
-status: queued
+status: running
 review_at: 2026-10-25T004153Z
 review_companions: null
+stage: claimed
+claimed_at: 2026-10-25T004153Z
+base_sha: eaddbb705ebf231e1f6510a66f7051d716c65fdd
+base_blob: a8bb42ac483318e9fbc84bc7826a27b7a704d1fb
+branch: hyp/muse_bf16_proj/qkv-swapab-m32-splitk8-stages3
+worktree: .worktrees/muse_bf16_proj/qkv-swapab-m32-splitk8-stages3
+mode: null
+restack_of: null
+stale_base: null
 ---
 
 # qkv-swapab-m32-splitk8-stages3
