@@ -55,9 +55,18 @@ controls_for: null
 rewrite_stage: 2
 replaces: moe_align + Marlin w13 + act_and_mul + Marlin w2 at tokens > 32
 review: proceed
-status: queued
+status: running
 review_at: 2026-10-25T002143Z
 review_companions: null
+stage: claimed
+claimed_at: 2026-10-25T002143Z
+base_sha: e65eda8e263ae1408bdb9e263068ca89a29ceb0d
+base_blob: 81d11fec488c02b0e7fe3a48f764aca20bb6a438
+branch: hyp/muse_decode_layer/moe-chain-cuda-swapab-expert-once-fix-inproc
+worktree: .worktrees/muse_decode_layer/moe-chain-cuda-swapab-expert-once-fix-inproc
+mode: null
+restack_of: null
+stale_base: true
 ---
 
 # moe-chain-cuda-swapab-expert-once-fix-inproc
