@@ -49,7 +49,7 @@ review: proceed
 status: running
 review_at: 2026-10-25T010823Z
 review_companions: null
-stage: claimed
+stage: implemented
 claimed_at: 2026-10-25T010823Z
 base_sha: 9d09de0cc3ef315d6ef3aab918058321b698da3f
 base_blob: 4da94677234faaa06b42b5ced541db8961fd6f34
@@ -58,6 +58,12 @@ worktree: .worktrees/muse_decode_layer/dl-route-warp-topk-pdl
 mode: null
 restack_of: null
 stale_base: null
+implemented_at: 2026-10-25T011431Z
+impl_commit: 91e7a28f9d1bf45c1ddf0a814defd1063e119621
+submission_sha256: 5819b26d5299dc4d105a4a32a9136c7f40e03d54b23d5321a56a4aeb0c1c4144
+norm_sha256: ef1a8d1fbe8dafaf1cc746358fc23e1ff311698753ea211e78c54ce0ea3e75d8
+submission_blob: 1dc2735e85cedd0e25f03663f989c4330ac8d50a
+lint_warnings: 33
 ---
 
 # dl-route-warp-topk-pdl
@@ -103,3 +109,45 @@ No companion. Build requirements in prepare(): (1) keep master's R as dl_route_n
 - Bigger cut: move the last-block align off the serial tail (per-block slots from a shared histogram)?
 - If dense-chain stage 2 lands first, restack onto the v2 module; do not reuse DL2_MAX_TOKENS.
 
+
+## Implementation notes
+
+All edits in the worktree's muse_decode_layer/submission.py (`_DL_CUDA`, `_build_dense_chain`, `_dl_route*`, `_dl_self_check`, `_dl_setup`). Not compiled or run (no GPU/nvcc on this node).
+
+- Kernel P: `griddep_launch()` after the main K loop of every CTA, before the split-K partial store. Always executed; harmless without the attribute.
+- Kernel R: master's kernel kept verbatim as `dl_route_norm_align_v1_kernel` (variant 2, prepare() timing and comparison only; kernel_fn never launches it). New `dl_route_norm_align_kernel<BSEARCH>`: per-warp top-8 (lane-local taken flag, lane r keeps round-r winner in s_cand[warp*8+r]), one barrier, warp 0 takes the top-8 of 64 candidates (2 per lane), one barrier. route_key, score, tie order, weights, topk_ids/topk_w/local_ids writes, NaN handling (same keys, same `taken ? 0 : key` rule) unchanged.
+- Review fix 4: before `griddepcontrol.wait` only norm_w (16 floats/thread as 4 float4) and bias[e] are read; logits, ei and local_start come after it.
+- PDL launch of R via `cudaLaunchKernelEx` + programmatic serialization when `pdl` (a prepare() decision, `dl["pdl"]`); the wrapper takes `pdl` and `variant` (0 new/binary-search pad, 1 new/linear pad, 2 v1; v1 is never launched with the attribute).
+- Binary-search pad (5 steps over s_seg0) for padding slots and block_experts; the linear scan stays as BSEARCH=false for the A/B.
+- Review fix 1-3 (prepare() prints, CUDA-event, 20 launches per graph): `R T=1/8/32 bsm=.. old(v1) / new / new-linear-pad`, and `P->R pair T=1/8/32 new pdl=0 / new pdl=1 / old-R pdl=0` (10 pairs per graph). bsm is printed.
+- Review fix 6: the self-check adds a bit-exact comparison of both new variants against v1 (xn, topk_ids, topk_w, local_ids, sorted_ids, block_experts, n_padded) at T=1/8/32; a mismatch fails the self-check, so the run falls to master's path.
+- Review fix 7: `-lineinfo` added; self-check prints before and sync+print after P, R (via `_dl_forward_traced`, self-check only), R alone and each R variant. Module name unchanged. No sm_90a-only PTX beyond griddepcontrol (existing -arch=sm_90a), so no TORCH_CUDA_ARCH_LIST change.
+- Review fix 5: DL_MAX_TOKENS and every bound constant untouched. The review wins over the spec on: keeping the old R for timing, the P->R graph A/B, and norm_w/bias-only pre-wait reads (same as the spec's intent). No new mbarrier/spin waits.
+- Deviation: trace syncs live in `_dl_forward_traced` (not `_dl_forward`) because okc_lint flagged syncs in a function reachable from kernel_fn.
+
+## Rules check
+
+- [x] CUDA-graph capturable: kernel_fn path is `_dl_forward` (P launch + R launch, no sync/.item/.cpu); verified in `git diff` that syncs only appear in prepare()-only functions.
+- [x] Nothing derived from `data` is cached across calls (only prepare constants norm_w/bias/ws/cnt).
+- [x] Weights: no change to weight repacking.
+- [x] Activations: BF16 xn as before, same arithmetic as v1; KV/query paths untouched.
+- [x] Attention: n/a: not touched.
+- [x] No timing patches, harness access, module edits, reference import, subprocesses or network (no subprocess/fork anywhere in the diff).
+- [x] All work inside the timed call; no output caching or replay (v1 R and timing run only in prepare()).
+- [x] Gate: DL_MAX_TOKENS unchanged; build/self-check failure falls back to master, never raises.
+
+okc_lint: `OK with warnings` (only prepare()-scope host-sync warnings); py_compile ok; __pycache__ removed.
+
+## Pre-flight audit
+
+Audited 2026-10-25 by an opus subagent, by reading the code and emulating it in Python. **Verdict: dispatch-with-fixes.**
+
+- Top-8: a Python emulation of v1 against the per-warp + warp-0 merge found 0 mismatches over 3000 cases (random scores, many exact ties, +/-NaN). route_key, the order of the weight sum, norm_w indexing (float4 [8 tid, 8 tid + 8) and 2048 + that) and the score and bias match v1, so the bit-exact self-check can pass.
+- PDL: only norm_w and bias are read before griddepcontrol.wait. local_start, logits, ei and cnt are read and every write happens after it. P triggers after its K loop and has no early return. R's wait covers P's completion and memory flush, and P waits on its own predecessor, so the chain holds transitively.
+- Binary-search pad: emulation at bsm 1/8/16/64 with empty segments and the all-no-local case matched the linear scan for every slot and block_experts (0 mismatches).
+- Gates and rules: DL_MAX_TOKENS is unchanged. There is no ptxVersion gate. kernel_fn calls `_dl_forward` (no syncs; the traced variant is reached only from prepare()). Build failure, self-check failure and setup exceptions all land on MASTER with a PATH CHOSEN line, and _dl_time_r is wrapped in try.
+- Fix 1: replaced `auto fn = variant == 0 ? launch_r<true> : launch_r<false>;` with an explicit if/else. A conditional over template-ids may be rejected by nvcc's front end, and a compile error would drop all of stage 1 to master.
+- Fix 2: added a 16-byte alignment TORCH_CHECK on norm_w, which the new R reads as float4. A misaligned pointer now raises (self-check fails, so the run goes to master) instead of a sticky misaligned-address fault.
+- okc_lint: OK with warnings (prepare()-only syncs). py_compile: ok. __pycache__: removed.
+
+Residual risk: the code was never compiled, so an nvcc error in the shared TU would put all of stage 1 on master. The eager self-check syncs between P and R, so only the graph-replay case exercises the real PDL overlap.
