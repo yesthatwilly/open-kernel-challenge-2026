@@ -1,0 +1,118 @@
+diff --git a/muse_moe_w4a16/submission.py b/muse_moe_w4a16/submission.py
+index 108d36e..062a127 100644
+--- a/muse_moe_w4a16/submission.py
++++ b/muse_moe_w4a16/submission.py
+@@ -95,7 +95,7 @@ ALIGN_PAR_BLK = 64
+ 
+ @triton.jit
+ def _post_norm_combine_kernel(y_ptr, ids_ptr, tw_ptr, w_ptr, out_ptr, H, eps,
+-                              TOP_K_C: tl.constexpr, BLOCK_H: tl.constexpr):
++                              TOP_K_C: tl.constexpr, BLOCK_H: tl.constexpr, USE_PDL: tl.constexpr = False):
+     """out[t] = sum over local slots s of g[t, s] * rmsnorm(y[t, s] * (1 + w)), fp32 math.
+ 
+     One program per token. Remote slots (local id -1) are skipped and never loaded: their y rows
+@@ -104,6 +104,10 @@ def _post_norm_combine_kernel(y_ptr, ids_ptr, tw_ptr, w_ptr, out_ptr, H, eps,
+     offs = tl.arange(0, BLOCK_H)
+     mask = offs < H
+     nw = tl.load(w_ptr + offs, mask=mask, other=0.0).to(tl.float32) + 1.0
++    if USE_PDL:
++        # Programmatic dependent launch (hypothesis post-norm-pdl-launch-small-m): everything above
++        # is independent of the primary grid; every load of ids / topk_weights / y comes after.
++        tl.extra.cuda.gdc_wait()
+     acc = tl.zeros([BLOCK_H], dtype=tl.float32)
+     for s in tl.static_range(TOP_K_C):
+         eid = tl.load(ids_ptr + t * TOP_K_C + s)
+@@ -423,6 +427,48 @@ def _marlin_layer(weights, start, count):
+     return layer
+ 
+ 
++def _launch_post_norm(y, ids, tw, w, out, H, tokens, use_pdl):
++    """Launch _post_norm_combine_kernel; with use_pdl as a programmatic dependent launch."""
++    extra = {"launch_pdl": True} if use_pdl else {}
++    _post_norm_combine_kernel[(tokens,)](
++        y, ids, tw, w, out, H, POST_NORM_EPS,
++        TOP_K_C=TOP_K, BLOCK_H=triton.next_power_of_2(H), USE_PDL=use_pdl, num_warps=8, **extra)
++
++
++def _pdl_self_test(device, post_norm_w):
++    """In-process (no child process) check that the PDL launch compiles, captures into a CUDA graph
++    and matches the plain launch. Never raises: any exception or mismatch returns (False, reason)."""
++    try:
++        H = post_norm_w.numel()
++        tokens = 2
++        g = torch.Generator(device=device)
++        g.manual_seed(0)
++        src = torch.randn((tokens, TOP_K, H), generator=g, device=device, dtype=torch.float32).to(torch.bfloat16)
++        ids = torch.randint(-1, 32, (tokens, TOP_K), generator=g, device=device, dtype=torch.int32)
++        tw = torch.rand((tokens, TOP_K), generator=g, device=device, dtype=torch.float32)
++        y = torch.zeros_like(src)
++        ref = torch.empty((tokens, H), device=device, dtype=torch.bfloat16)
++        out = torch.zeros_like(ref)
++        y.copy_(src)
++        _launch_post_norm(y, ids, tw, post_norm_w, ref, H, tokens, False)
++        # Warm up (compile) the PDL variant outside capture.
++        _launch_post_norm(y, ids, tw, post_norm_w, out, H, tokens, True)
++        torch.cuda.synchronize()
++        graph = torch.cuda.CUDAGraph()
++        with torch.cuda.graph(graph):
++            y.copy_(src)  # plain elementwise primary, then the dependent PDL launch
++            _launch_post_norm(y, ids, tw, post_norm_w, out, H, tokens, True)
++        for _ in range(3):
++            out.zero_()
++            graph.replay()
++            torch.cuda.synchronize()
++            if not torch.equal(out, ref):
++                return False, "graph replay mismatch vs plain launch"
++        return True, "self-test passed"
++    except Exception as e:  # any failure turns PDL off, never raises
++        return False, "self-test exception %s: %s" % (type(e).__name__, str(e)[:120].replace("\n", " "))
++
++
+ def prepare(weights: Weights) -> dict:
+     """Called once, untimed. Repack this GPU's experts into Marlin's layout as SGLang does at load."""
+     device = weights["w13"].device
+@@ -455,13 +501,31 @@ def prepare(weights: Weights) -> dict:
+             torch.cuda.synchronize()
+             _align_self_check(device, count)
+     torch.cuda.synchronize()
++    post_norm_w = weights["post_norm_w"].contiguous()
++    pdl_ok, pdl_reason = _pdl_self_test(device, post_norm_w)
++    if pdl_ok:
++        try:
++            # Compile both variants for every num_tokens the Triton combine serves (untimed).
++            H = post_norm_w.numel()
++            for tokens in range(1, SMALL_M_POST_NORM):
++                yy = torch.zeros((tokens, TOP_K, H), device=device, dtype=torch.bfloat16)
++                ii = torch.full((tokens, TOP_K), -1, device=device, dtype=torch.int32)
++                tt = torch.zeros((tokens, TOP_K), device=device, dtype=torch.float32)
++                oo = torch.empty((tokens, H), device=device, dtype=torch.bfloat16)
++                for flag in (False, True):
++                    _launch_post_norm(yy, ii, tt, post_norm_w, oo, H, tokens, flag)
++            torch.cuda.synchronize()
++        except Exception as e:
++            pdl_ok, pdl_reason = False, "warmup exception %s" % type(e).__name__
++    print("[post-norm-pdl] PATH CHOSEN: pdl %s (%s)" % ("on" if pdl_ok else "off", pdl_reason))
+     return {
++        "pdl_ok": bool(pdl_ok),
+         "banks": banks,
+         "workspace": marlin_make_workspace(device, max_blocks_per_sm=4),
+         # MuseSpark1xFp4Experts binds the effective (1 + w) weight of the post-expert norm.
+         "norm_w": (weights["post_norm_w"].float() + 1.0).to(torch.bfloat16),
+         # The original BF16 weight for _post_norm_combine_kernel, which adds the 1 in fp32.
+-        "post_norm_w": weights["post_norm_w"].contiguous(),
++        "post_norm_w": post_norm_w,
+     }
+ 
+ 
+@@ -525,9 +589,8 @@ def kernel_fn(data: Inputs, state: dict) -> torch.Tensor:
+     if num_tokens < SMALL_M_POST_NORM:
+         y = y.contiguous()
+         out = torch.empty((num_tokens, size_k), device=x.device, dtype=torch.bfloat16)
+-        _post_norm_combine_kernel[(num_tokens,)](
+-            y, local_ids, topk_weights, state["post_norm_w"], out, size_k, POST_NORM_EPS,
+-            TOP_K_C=TOP_K, BLOCK_H=triton.next_power_of_2(size_k), num_warps=8)
++        _launch_post_norm(y, local_ids, topk_weights, state["post_norm_w"], out, size_k, num_tokens,
++                          state["pdl_ok"])
+         return out
+     return fused_post_expert_norm_weighted_sum(
+         y, topk_weights, norm_weight=state["norm_w"], eps=POST_NORM_EPS, weight_first=True,

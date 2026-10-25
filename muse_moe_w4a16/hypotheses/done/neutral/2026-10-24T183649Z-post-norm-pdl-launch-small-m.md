@@ -46,10 +46,10 @@ priority: 2
 kind: primary
 controls_for: null
 review: proceed
-status: running
+status: done
 review_at: 2026-10-24T183956Z
 review_companions: null
-stage: dispatched
+stage: harvested
 claimed_at: 2026-10-25T003236Z
 base_sha: 1d31a26689bb109c514db2e2c51c7167dbbb76f0
 base_blob: 108d36e9f2266fc88531dd6ff0329a847c882013
@@ -68,6 +68,13 @@ attempt_file: 2026-10-25T003435Z-check-post-norm-pdl-launch-small-m.md
 prepared_at: 2026-10-25T003435Z
 job: 5202cf15936c4492
 dispatched_at: 2026-10-25T003443Z
+outcome: neutral
+verdict_detail: within-ci
+speedup: 1.322241353738435
+speedup_ci: [1.3024077334323585, 1.3420749740445115]
+harvested_at: 2026-10-25T013619Z
+best_at_harvest: 1.3278240305297715
+promotion: null
 ---
 
 # post-norm-pdl-launch-small-m
@@ -133,3 +140,29 @@ Only muse_moe_w4a16/submission.py changed (+68/-5).
 - [x] All work happens inside the timed call; no output caching or replay.
 
 okc_lint: "OK with warnings" (only host-sync warnings in prepare()/self-check code, outside kernel_fn's call graph). py_compile passed; __pycache__ removed.
+
+## Result
+
+- job `5202cf15936c4492` (check), status done, passed True, tests 5/5
+- speedup 1.3222x, 95% CI [1.3024, 1.3421], score 10170.987287590442 µs vs SGLang 13448.5 µs
+- best at harvest: {"speedup": 1.3278240305297715, "ci": [1.307906670071825, 1.3477413909877178], "job": "1947e3ec2abb4bdf"}; base result: muse_moe_w4a16/hypotheses/done/neutral/align-parallel-per-expert-verify.result.json
+- **outcome: neutral** (within-ci)
+- files: `muse_moe_w4a16/hypotheses/done/neutral/post-norm-pdl-launch-small-m.result.json`, `muse_moe_w4a16/hypotheses/done/neutral/post-norm-pdl-launch-small-m.patch`; branch `hyp/muse_moe_w4a16/post-norm-pdl-launch-small-m`
+
+## Attribution
+
+| shape | w | base µs | hyp µs | delta | verdict |
+|---|---|---|---|---|---|
+| bs=1 load=decode_1 sharding=ep8 | 60 | 48.82 | 48.74 | 0.9953 | flat |
+| bs=16 load=decode_16 sharding=ep8 | 60 | 148.37 | 148.17 | 0.994 | flat |
+| bs=32 load=decode_32 sharding=ep8 | 60 | 199.88 | 199.94 | 0.9982 | flat |
+| bs=8 load=verify_1 sharding=ep8 | 60 | 107.74 | 112.82 | 0.9913 | flat |
+| bs=128 load=verify_16 sharding=ep8 | 60 | 318.26 | 318.43 | 1.0091 | flat |
+| bs=256 load=verify_32 sharding=ep8 | 60 | 454.28 | 451.13 | 1.0001 | flat |
+
+no shape moved outside noise. Expected hit: 3/6. Noise ±1.5%.
+
+## Follow-ups
+
+- within-ci: the change is not proven either way; a stacked hypothesis (`depends_on: post-norm-pdl-launch-small-m`) that adds a further change in the same area is the only way to learn more (identical code is never re-run).
+
