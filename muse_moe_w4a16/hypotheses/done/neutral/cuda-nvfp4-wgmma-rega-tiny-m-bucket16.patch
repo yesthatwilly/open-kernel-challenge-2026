@@ -1,0 +1,1224 @@
+diff --git a/muse_moe_w4a16/submission.py b/muse_moe_w4a16/submission.py
+index 1ae7e9c..12ff8a5 100644
+--- a/muse_moe_w4a16/submission.py
++++ b/muse_moe_w4a16/submission.py
+@@ -48,6 +48,12 @@ the path is enabled only if BOTH kernels pass rel-L2, never on finiteness. prepa
+ compact summary block last. The kernel itself is unchanged (an offline numpy emulation confirmed the
+ retile, A fragment, scale, expect_tx and stmatrix epilogue mappings).
+ 
++Stage 3 (hypothesis cuda-nvfp4-wgmma-rega-tiny-m-bucket16): for 1 <= num_tokens <= 7, per T bucket, when the
++prepare-time build, fp32-reference self-check and cold-L2 gate against master (with its w2 atomic add) pass,
++the two Marlin calls and silu_and_mul are replaced by a gather and two launches of a separate N16-only
++wgmma kernel (16 stages, device-chosen K split with a last-CTA ticket reduction); see the block comment
++above WG_S2_ENABLED. Stage 2's 128..512 path is dormant; bs >= 8 is master.
++
+ Differs from SGLang: the expert all-reduce is not run."""
+ 
+ from typing import TypedDict
+@@ -1994,6 +2000,1046 @@ def _wg_setup(weights, banks, state, device, t_start=None):
+           f"{WG_MAX_TOKENS}; MARLIN for num_tokens < {WG_MIN_TOKENS} and > {WG_MAX_TOKENS}", flush=True)
+ 
+ 
++# ---------------------------------------------------------------------------------------------
++# Tiny-M wgmma path (hypothesis cuda-nvfp4-wgmma-rega-tiny-m-bucket16, rewrite stage 3): 1 <= num_tokens
++# <= WGT_MAX_TOKENS (7). A SEPARATE module (own load_inline name) with its own N16-only kernel
++# wgt_kernel<GATED>, so the K-split code stays out of stage 2's shared wg_kernel (stage 3 of the
++# sibling hypothesis edits that one). It reuses stage 2's PTX helper head (_WG_SRC_HEAD), the wgmma
++# N16 wrapper, the lossless weight retiling (_wg_bank, identical record layout) and nothing else.
++#
++# Launches per call: FIVE, as master's: _align_small (BSM 16, Triton) + wgt_gather + wgt_kernel<w13+
++# silu> + wgt_kernel<w2> + _post_norm_combine_kernel. (The change text said "two launches": those are
++# the two GEMM launches; the gather and align are still separate.)
++#
++# At 1..7 tokens an expert has at most 7 routes, so every local expert is exactly ONE 16-slot block and
++# an item is (block, 128-row tile, K slice). Review fixes applied (they override the spec):
++#  - 16 pipeline stages (13312 B each, ~213 KB) instead of stage 2's 4, N16-only slab (4 KB/stage);
++#  - register-A rule: wgmma_wait<0> after every stage's wgmmas, before the next dequant overwrites the
++#    A registers, plus register fences on A (stage 2's wait<1> + overwrite is PTX UB). The real
++#    register cap is 168 under __launch_bounds__(384, 1);
++#  - the K split S in {1, 2, 4, 8} is picked ON THE DEVICE from n_padded (the number of local experts
++#    is a routing value), minimising ceil(groups * S / grid) * (100 + 3 log2 S) * 8 / S. Partials go to
++#    an fp32 workspace; the last-arriving CTA of a (block, tile) group (per-group ticket, no spins)
++#    sums them in K-slice order and runs the epilogue. wgt_gather zeroes every ticket at the start of
++#    each call, so an aborted launch cannot poison the next replay; the last CTA also resets its ticket;
++#  - _align_small is called with BSM = 16 (master's bs <= 7 pick is 8), warmed for every T in prepare;
++#  - the prepare gate times this path against master's own path (_forward with w2_mode, i.e. WITH the
++#    w2 atomic add) as CUDA-graph replays with a >= 256 MB cold-L2 flush, interleaved A/B, and prints
++#    per-bucket p10/p50/p90 and one PATH CHOSEN line per bucket.
++# Stage 2's own 128..512-token path is dormant here (WG_S2_ENABLED): bs >= 8 is master byte for byte.
++# ---------------------------------------------------------------------------------------------
++
++WG_S2_ENABLED = False
++WGT_TAG = "[cuda-wgmma-tiny]"
++WGT_MAX_TOKENS = 7
++WGT_BSM = 16
++WGT_STAGES = 16
++WGT_CAP_ROWS = 640            # xs / h_sorted scratch rows (sorted_ids has at most 7 * 8 + 32 * 15 = 536 slots)
++WGT_MAXG = 2304
++WGT_WS_ITEMS = 2048
++WGT_KS = 32                   # K / 128 stages for both GEMMs (K = 4096)
++WGT_STAGE_BYTES = 2 * WG_REC + 2 * 16 * 128
++WGT_SMEM = 1024 + WGT_STAGES * WGT_STAGE_BYTES + 16 * (128 * 2 + 16)
++WGT_EXT_NAME = "muse_moe_w4a16_wgmma_tiny_v1"
++WGT_SETUP_BUDGET_S = 230.0    # from prepare()'s start: past it the remaining phases are skipped (path off)
++WGT_GATE_MARGIN = 0.97        # enable a bucket only if its p50 <= 97% of master's (>= 3% faster)
++WGT_GATE_REPS = 80
++WGT_FLUSH_BYTES = 320 << 20   # > L2 (50 MB) by far; the judge reads a buffer larger than L2 before each replay
++# bucket name -> (timed T values, T values it enables)
++WGT_BUCKETS = {"T=1": ((1,), (1,)), "T=2-7": ((4, 7), (2, 3, 4, 5, 6, 7))}
++WGT_CHECK_TOKENS = (1, 2, 4, 7)
++
++_WGT_CPP = r"""
++#include <torch/extension.h>
++#include <vector>
++std::vector<int64_t> wgt_init();
++int64_t wgt_set_maps(torch::Tensor xs, torch::Tensor hs, torch::Tensor maps);
++void wgt_gather(torch::Tensor x, torch::Tensor sorted_ids, torch::Tensor block_experts, torch::Tensor n_padded,
++                int64_t num_routes, int64_t n_experts, int64_t grid, torch::Tensor xs, torch::Tensor tickets);
++void wgt_gemm(int64_t which, torch::Tensor maps, torch::Tensor wbank, torch::Tensor gs, torch::Tensor sorted_ids,
++              torch::Tensor block_experts, torch::Tensor n_padded, int64_t num_routes, int64_t n_tiles, int64_t K,
++              torch::Tensor out, torch::Tensor ws, torch::Tensor tickets, int64_t grid, int64_t force_split,
++              torch::Tensor err);
++"""
++
++_WGT_SRC_BODY = r"""
++// ---- tiny-M (1..7 tokens) N16-only path: own kernel, own module. One block of 16 slots per local
++// expert (<= 7 routes each), so an item is (block, 128-row tile, K split); no chunking, no buckets.
++constexpr int TS = 16;                         // pipeline stages (weights in flight per SM ~ (TS - 1) * 9216 B)
++constexpr int TSLAB = 16 * 128;                // one SWIZZLE_128B box: 16 token rows x 64 bf16 = 2048 B
++constexpr int TSTAGE = WST + 2 * TSLAB;        // 13312 = 13 * 1024
++constexpr int TEPI = 16 * PITCH2;              // staging tile (w2 pitch is the larger)
++constexpr int TSMEM = 1024 + TS * TSTAGE + TEPI;
++constexpr int KSPLIT_MAX = 8;
++constexpr int WS_ITEMS = 2048;                 // fp32 partial tiles (256 thr x 8 floats = 8 KB each)
++constexpr int MAXG = 2304;                     // (block, tile) groups: 34 blocks x 64 tiles = 2176 at most
++constexpr int NTICK = 2 * MAXG;                // one ticket row per GEMM (w13, w2)
++static_assert(TSTAGE % 1024 == 0, "stage alignment");
++static_assert(TSMEM + 4096 <= 227 * 1024, "shared memory budget");
++
++struct __align__(64) TMaps { CUtensorMap m[2]; };
++
++// K-split chosen ON THE DEVICE from the routing (the number of local experts is a device value):
++// minimise rounds * (100 + 3 log2 S) * (8 / S), where rounds = ceil(groups * S / grid). Integer
++// arithmetic, mirrored exactly by _wgt_pick_split on the host (prepare-time logging).
++__device__ __forceinline__ int pick_split(int groups, int grid, int KS, int force) {
++  if (force > 0) {
++    int s = force > KSPLIT_MAX ? KSPLIT_MAX : force;
++    while (s > 1 && ((s & (s - 1)) != 0 || KS % s != 0 || groups * s > WS_ITEMS)) s >>= 1;
++    return s;
++  }
++  int best = 1, bc = 0x7fffffff;
++  for (int s = 1; s <= KSPLIT_MAX; s <<= 1) {
++    if (KS % s != 0 || (s > 1 && groups * s > WS_ITEMS)) continue;
++    const int rounds = (groups * s + grid - 1) / grid;
++    const int k = s == 1 ? 0 : (s == 2 ? 1 : (s == 4 ? 2 : 3));
++    const int c = rounds * (100 + 3 * k) * (KSPLIT_MAX / s);
++    if (c < bc) { bc = c; best = s; }
++  }
++  return best;
++}
++
++// Keep the A registers live across the asynchronous wgmma that reads them.
++__device__ __forceinline__ void fence_a(uint32_t (&a)[8][4]) {
++#pragma unroll
++  for (int i = 0; i < 8; ++i) {
++#pragma unroll
++    for (int k = 0; k < 4; ++k) asm volatile("" : "+r"(a[i][k]) :: "memory");
++  }
++}
++
++template <bool G>
++__device__ __forceinline__ void tiny_consume(int j, int ks, int S, int KSP, int e, int gidx, uint8_t* smem,
++                                             uint8_t* ep, uint32_t full0, uint32_t empty0, int& n, int cw, int lane,
++                                             int ctid, int slot0, const float* __restrict__ gs,
++                                             const int* __restrict__ sorted_ids, int num_routes,
++                                             __nv_bfloat16* __restrict__ out, int out_ld, float* __restrict__ ws,
++                                             int* __restrict__ tick, int* s_last, int* err, bool& dead) {
++  const float P119 = __int_as_float(0x7B000000);  // 2^119
++  const int g = lane >> 2;
++  float acc[8];
++#pragma unroll
++  for (int i = 0; i < 8; ++i) acc[i] = 0.f;
++  for (int kb = 0; kb < KSP; ++kb, ++n) {
++    const int s = n % TS;
++    mbar_wait(full0 + 8 * s, (n / TS) & 1, err, dead);
++    const uint8_t* st = smem + s * TSTAGE;
++    uint32_t a[8][4];
++#pragma unroll
++    for (int r = 0; r < 2; ++r) {
++      const uint4 q = *reinterpret_cast<const uint4*>(st + r * REC + cw * 512 + lane * 16);
++      const uint2 sc = *reinterpret_cast<const uint2*>(st + r * REC + REC_CODES + cw * 64 + g * 8);
++      uint32_t hs[4];
++      e4m3x4_to_f16x2x2(sc.x, hs[0], hs[1]);
++      e4m3x4_to_f16x2x2(sc.y, hs[2], hs[3]);
++      const uint32_t qw[4] = {q.x, q.y, q.z, q.w};
++#pragma unroll
++      for (int k = 0; k < 4; ++k) {
++        const float2 fs = __half22float2(*reinterpret_cast<const __half2*>(&hs[k]));
++        dequant8(qw[k], bf16x2_bcast(fs.x * P119), bf16x2_bcast(fs.y * P119), a[r * 4 + k]);
++      }
++    }
++    const uint32_t slab = smem_u32(st + WST);
++    fence_acc<8>(acc);
++    fence_a(a);
++    wgmma_fence();
++#pragma unroll
++    for (int r = 0; r < 2; ++r) {
++#pragma unroll
++      for (int k = 0; k < 4; ++k) Wg<16>::mma(acc, a[r * 4 + k], make_desc(slab + r * TSLAB + k * 32));
++    }
++    wgmma_commit();
++    // Register-A rule: the A registers are overwritten by the next stage's dequant, so the group
++    // that reads them must be fully retired first (wait<0>, never wait<1>). The stage is released
++    // only after that, which also covers the shared-memory B operand.
++    wgmma_wait<0>();
++    fence_acc<8>(acc);
++    fence_a(a);
++    if (lane == 0) mbar_arrive(empty0 + 8 * s);
++  }
++
++  if (S > 1) {
++    // K split: publish this item's fp32 partial, take a ticket; the LAST arriving CTA of the group
++    // sums all S partials in K-slice order (own slice from registers) and runs the epilogue. No
++    // CTA ever waits for another. The last CTA resets the ticket; the gather kernel also zeroes
++    // every ticket at the start of each call, so an aborted launch cannot poison the next one.
++    float* mine = ws + (static_cast<size_t>(gidx * S + ks) * 256 + ctid) * 8;
++    *reinterpret_cast<float4*>(mine) = make_float4(acc[0], acc[1], acc[2], acc[3]);
++    *reinterpret_cast<float4*>(mine + 4) = make_float4(acc[4], acc[5], acc[6], acc[7]);
++    __threadfence();
++    named_bar(1, 256);
++    if (ctid == 0) *s_last = (atomicAdd(tick + gidx, 1) == S - 1) ? 1 : 0;
++    named_bar(1, 256);
++    if (*s_last == 0) return;
++    __threadfence();
++    float tot[8];
++#pragma unroll
++    for (int i = 0; i < 8; ++i) tot[i] = 0.f;
++    for (int k2 = 0; k2 < S; ++k2) {
++      float v[8];
++      if (k2 == ks) {
++#pragma unroll
++        for (int i = 0; i < 8; ++i) v[i] = acc[i];
++      } else {
++        const float4* p = reinterpret_cast<const float4*>(ws + (static_cast<size_t>(gidx * S + k2) * 256 + ctid) * 8);
++        const float4 p0 = __ldcg(p), p1 = __ldcg(p + 1);
++        v[0] = p0.x; v[1] = p0.y; v[2] = p0.z; v[3] = p0.w;
++        v[4] = p1.x; v[5] = p1.y; v[6] = p1.z; v[7] = p1.w;
++      }
++#pragma unroll
++      for (int i = 0; i < 8; ++i) tot[i] += v[i];
++    }
++#pragma unroll
++    for (int i = 0; i < 8; ++i) acc[i] = tot[i];
++    if (ctid == 0) tick[gidx] = 0;
++  }
++
++  // Epilogue (stage 2's N16 mapping, i = 0): stage the bf16 tile through shared memory
++  // (stmatrix .trans: token rows), then coalesced 16-byte row stores. Barrier 1 = the 256 consumers.
++  const float gsc = __ldg(gs + e);
++  named_bar(1, 256);  // every consumer is done reading the previous item's staging tile
++  if (G) {
++    const uint32_t r0 = pack_bf16(silu_mul(acc[0] * gsc, acc[2] * gsc), silu_mul(acc[1] * gsc, acc[3] * gsc));
++    const uint32_t r1 = pack_bf16(silu_mul(acc[4] * gsc, acc[6] * gsc), silu_mul(acc[5] * gsc, acc[7] * gsc));
++    const int mi = (lane >> 3) & 1, rr = lane & 7;
++    const int tok = 8 * mi + rr;
++    stsm_x2_t(smem_u32(ep + tok * PITCH13 + cw * 16), r0, r1);
++  } else {
++    const uint32_t r0 = pack_bf16(acc[0] * gsc, acc[1] * gsc);
++    const uint32_t r1 = pack_bf16(acc[2] * gsc, acc[3] * gsc);
++    const uint32_t r2 = pack_bf16(acc[4] * gsc, acc[5] * gsc);
++    const uint32_t r3 = pack_bf16(acc[6] * gsc, acc[7] * gsc);
++    const int mi = lane >> 3, rr = lane & 7;
++    const int tok = 8 * (mi >> 1) + rr;
++    const int col = 16 * cw + 8 * (mi & 1);
++    stsm_x4_t(smem_u32(ep + tok * PITCH2 + col * 2), r0, r1, r2, r3);
++  }
++  named_bar(1, 256);
++  if (G) {
++    for (int v = ctid; v < 16 * 8; v += 256) {
++      const int t = v >> 3, c = v & 7;
++      const uint4 val = *reinterpret_cast<const uint4*>(ep + t * PITCH13 + c * 16);
++      *reinterpret_cast<uint4*>(out + static_cast<size_t>(slot0 + t) * out_ld + j * 64 + c * 8) = val;
++    }
++  } else {
++    for (int v = ctid; v < 16 * 16; v += 256) {
++      const int t = v >> 4, c = v & 15;
++      const int sid = __ldg(sorted_ids + slot0 + t);
++      if (sid >= 0 && sid < num_routes) {
++        const uint4 val = *reinterpret_cast<const uint4*>(ep + t * PITCH2 + c * 16);
++        *reinterpret_cast<uint4*>(out + static_cast<size_t>(sid) * out_ld + j * 128 + c * 8) = val;
++      }
++    }
++  }
++}
++
++template <bool G>
++__global__ void __launch_bounds__(THREADS, 1)
++wgt_kernel(const __grid_constant__ TMaps maps,
++           const uint8_t* __restrict__ wbank,        // [E][T][K/64][REC]
++           const float* __restrict__ gs,             // fp32 [E] global scale * 2^7
++           const int* __restrict__ sorted_ids,       // block-16 align of the local ids
++           const int* __restrict__ block_experts,
++           const int* __restrict__ n_padded,
++           int blocks_len, int num_routes, int n_tiles, int K, int n_experts,
++           __nv_bfloat16* __restrict__ out, int out_ld, float* __restrict__ ws, int* __restrict__ tick,
++           int force_split, int* __restrict__ err) {
++#if defined(__CUDA_ARCH_FEAT_SM90_ALL)
++  extern __shared__ __align__(1024) uint8_t smem_raw[];
++  __shared__ __align__(8) uint64_t bars[2 * TS];
++  __shared__ int s_last;
++  const int tid = threadIdx.x, lane = tid & 31, warp = tid >> 5;
++  const uint32_t raw = smem_u32(smem_raw);
++  uint8_t* smem = smem_raw + ((1024u - (raw & 1023u)) & 1023u);
++  uint8_t* ep = smem + TS * TSTAGE;
++  const uint32_t full0 = smem_u32(&bars[0]), empty0 = smem_u32(&bars[TS]);
++
++  int nb = __ldg(n_padded) / 16;
++  nb = nb < blocks_len ? nb : blocks_len;
++  const int nbcap = MAXG / n_tiles;
++  nb = nb < nbcap ? nb : nbcap;
++  if (tid == 0) {
++#pragma unroll
++    for (int s = 0; s < TS; ++s) {
++      mbar_init(full0 + 8 * s, 1);
++      mbar_init(empty0 + 8 * s, 8);  // one arrive per consumer warp
++    }
++    fence_barrier_init();
++  }
++  __syncthreads();
++
++  const int KS = K / BK;
++  const int groups = nb * n_tiles;
++  const int S = pick_split(groups, gridDim.x, KS, force_split);
++  const int KSP = KS / S;
++  const int total = groups * S;
++  if (blockIdx.x == 0 && tid == 0) err[G ? 1 : 2] = S;  // diagnostic: the split this launch used
++  bool dead = false;
++  if (warp < 4) {
++    asm volatile("setmaxnreg.dec.sync.aligned.u32 40;\n" ::: "memory");
++    if (tid == 0) {
++      const int KC = K / 64;
++      const uint64_t map = reinterpret_cast<uint64_t>(&maps.m[0]);
++      int n = 0;
++      for (int it = blockIdx.x; it < total; it += gridDim.x) {
++        const int gidx = it / S, ks = it - gidx * S;
++        const int b = gidx / n_tiles, j = gidx - b * n_tiles;
++        const int e = __ldg(block_experts + b);
++        if (e < 0 || e >= n_experts) continue;
++        const uint8_t* wsrc = wbank + (static_cast<size_t>(e) * n_tiles + j) * static_cast<size_t>(KC) * REC;
++        for (int kb = ks * KSP; kb < (ks + 1) * KSP; ++kb, ++n) {
++          const int s = n % TS;
++          mbar_wait(empty0 + 8 * s, ((n / TS) & 1) ^ 1, err, dead);
++          const uint32_t st = smem_u32(smem + s * TSTAGE);
++          const uint32_t fb = full0 + 8 * s;
++          mbar_expect_tx(fb, WST + 2 * TSLAB);
++          bulk_g2s(st, wsrc + static_cast<size_t>(kb) * WST, WST, fb);
++          tma_2d(st + WST, map, kb * BK, b * 16, fb);
++          tma_2d(st + WST + TSLAB, map, kb * BK + 64, b * 16, fb);
++        }
++      }
++    }
++  } else {
++    asm volatile("setmaxnreg.inc.sync.aligned.u32 232;\n" ::: "memory");
++    const int ctid = tid - 128, cw = ctid >> 5;
++    int n = 0;
++    for (int it = blockIdx.x; it < total; it += gridDim.x) {
++      const int gidx = it / S, ks = it - gidx * S;
++      const int b = gidx / n_tiles, j = gidx - b * n_tiles;
++      const int e = __ldg(block_experts + b);
++      if (e < 0 || e >= n_experts) continue;
++      tiny_consume<G>(j, ks, S, KSP, e, gidx, smem, ep, full0, empty0, n, cw, lane, ctid, b * 16, gs, sorted_ids,
++                      num_routes, out, out_ld, ws, tick, &s_last, err, dead);
++    }
++  }
++#else
++  if (threadIdx.x == 0) atomicExch(err, 2);
++#endif
++}
++
++// xs[slot] = x[sorted_ids[slot] / 8] for the slots of the local blocks (sentinel slots: zeros).
++// Block 0 also zeroes every ticket, so each call starts from clean tickets.
++__global__ void __launch_bounds__(256)
++wgt_gather_kernel(const __nv_bfloat16* __restrict__ x, const int* __restrict__ sorted_ids,
++                  const int* __restrict__ block_experts, const int* __restrict__ n_padded, int num_routes, int H,
++                  int n_experts, __nv_bfloat16* __restrict__ xs, int* __restrict__ tickets) {
++  if (blockIdx.x == 0) {
++    for (int i = threadIdx.x; i < NTICK; i += blockDim.x) tickets[i] = 0;
++  }
++  const int slot = blockIdx.x;
++  if (slot >= __ldg(n_padded)) return;
++  const int be = __ldg(block_experts + slot / 16);
++  if (be < 0 || be >= n_experts) return;
++  const int sid = __ldg(sorted_ids + slot);
++  uint4* dst = reinterpret_cast<uint4*>(xs + static_cast<size_t>(slot) * H);
++  const int nv = H / 8;
++  if (sid >= 0 && sid < num_routes) {
++    const uint4* src = reinterpret_cast<const uint4*>(x + static_cast<size_t>(sid >> 3) * H);
++    for (int v = threadIdx.x; v < nv; v += blockDim.x) dst[v] = __ldg(src + v);
++  } else {
++    const uint4 z = make_uint4(0u, 0u, 0u, 0u);
++    for (int v = threadIdx.x; v < nv; v += blockDim.x) dst[v] = z;
++  }
++}
++
++typedef CUresult (*EncodeTiledFn)(CUtensorMap*, CUtensorMapDataType, cuuint32_t, void*, const cuuint64_t*,
++                                  const cuuint64_t*, const cuuint32_t*, const cuuint32_t*, CUtensorMapInterleave,
++                                  CUtensorMapSwizzle, CUtensorMapL2promotion, CUtensorMapFloatOOBfill);
++
++// NO module globals: the judge prepares two states in one process and rotates them, and a captured
++// launch freezes the tensor-map addresses it was given. The encoded maps live in a per-state CPU
++// uint8 tensor (2 x TMaps, then the 2 row counts as int64) and are passed to every launch by value.
++constexpr int64_t MAPS_BYTES = 2 * static_cast<int64_t>(sizeof(TMaps)) + 2 * static_cast<int64_t>(sizeof(int64_t));
++
++EncodeTiledFn get_encode() {
++  void* fn = nullptr;
++  cudaDriverEntryPointQueryResult q = cudaDriverEntryPointSymbolNotFound;
++#if CUDART_VERSION >= 12050
++  const cudaError_t e = cudaGetDriverEntryPointByVersion("cuTensorMapEncodeTiled", &fn, 12000, cudaEnableDefault, &q);
++#else
++  const cudaError_t e = cudaGetDriverEntryPoint("cuTensorMapEncodeTiled", &fn, cudaEnableDefault, &q);
++#endif
++  if (e != cudaSuccess || q != cudaDriverEntryPointSuccess || fn == nullptr) {
++    (void)cudaGetLastError();
++    return nullptr;
++  }
++  return reinterpret_cast<EncodeTiledFn>(fn);
++}
++
++template <bool G>
++void info_one(std::vector<int64_t>& r) {
++  const void* fn = reinterpret_cast<const void*>(wgt_kernel<G>);
++  const cudaError_t e1 = cudaFuncSetAttribute(fn, cudaFuncAttributeMaxDynamicSharedMemorySize, TSMEM);
++  cudaFuncAttributes a{};
++  const cudaError_t e2 = cudaFuncGetAttributes(&a, fn);
++  int occ = 0;
++  const cudaError_t e3 = cudaOccupancyMaxActiveBlocksPerMultiprocessor(&occ, fn, THREADS, TSMEM);
++  if (e1 != cudaSuccess || e2 != cudaSuccess || e3 != cudaSuccess) (void)cudaGetLastError();
++  r.push_back(G ? 1 : 0);
++  r.push_back(e1 == cudaSuccess && e2 == cudaSuccess && e3 == cudaSuccess ? 1 : 0);
++  r.push_back(a.numRegs);
++  r.push_back(static_cast<int64_t>(a.localSizeBytes));
++  r.push_back(static_cast<int64_t>(a.sharedSizeBytes));
++  r.push_back(TSMEM);
++  r.push_back(occ);
++  r.push_back(static_cast<int64_t>(e1));
++  r.push_back(a.binaryVersion);
++  r.push_back(a.ptxVersion);
++}
++
++}  // namespace
++
++// Per instantiation (w13 then w2): gated, attribute calls ok, numRegs, localSizeBytes, static smem,
++// dynamic smem, occupancy (CTAs per SM), cudaFuncSetAttribute's error code, binaryVersion, ptxVersion.
++std::vector<int64_t> wgt_init() {
++  std::vector<int64_t> r;
++  info_one<true>(r);
++  info_one<false>(r);
++  return r;
++}
++
++// Encode the 2 tensor maps (xs, h_sorted; box 64 x 16, SWIZZLE_128B) over the persistent scratches.
++// Returns 0, or 1 when the driver entry point is missing, or 100 * (map + 1) + CUresult.
++int64_t wgt_set_maps(torch::Tensor xs, torch::Tensor hs, torch::Tensor maps) {
++  TORCH_CHECK(xs.is_cuda() && hs.is_cuda() && xs.dim() == 2 && hs.dim() == 2 && xs.is_contiguous() &&
++              hs.is_contiguous() && xs.scalar_type() == at::kBFloat16 && hs.scalar_type() == at::kBFloat16,
++              "wgt_set_maps: scratch layout");
++  TORCH_CHECK(!maps.is_cuda() && maps.is_contiguous() && maps.scalar_type() == at::kByte && maps.numel() == MAPS_BYTES,
++              "wgt_set_maps: maps must be a contiguous CPU uint8 tensor of MAPS_BYTES");
++  uint8_t* mp = maps.data_ptr<uint8_t>();
++  __builtin_memset(mp, 0, static_cast<size_t>(MAPS_BYTES));
++  EncodeTiledFn enc = get_encode();
++  if (enc == nullptr) return 1;
++  torch::Tensor src[2] = {xs, hs};
++  for (int w = 0; w < 2; ++w) {
++    const cuuint64_t dims[2] = {static_cast<cuuint64_t>(src[w].size(1)), static_cast<cuuint64_t>(src[w].size(0))};
++    const cuuint64_t strides[1] = {static_cast<cuuint64_t>(src[w].size(1)) * 2};
++    const cuuint32_t es[2] = {1, 1};
++    const cuuint32_t box[2] = {64, 16};
++    TMaps tm{};
++    const CUresult rc = enc(&tm.m[0], CU_TENSOR_MAP_DATA_TYPE_BFLOAT16, 2, src[w].data_ptr(), dims, strides,
++                            box, es, CU_TENSOR_MAP_INTERLEAVE_NONE, CU_TENSOR_MAP_SWIZZLE_128B,
++                            CU_TENSOR_MAP_L2_PROMOTION_L2_256B, CU_TENSOR_MAP_FLOAT_OOB_FILL_NONE);
++    if (rc != CUDA_SUCCESS) return 100 * (w + 1) + static_cast<int64_t>(rc);
++    __builtin_memcpy(mp + w * sizeof(TMaps), &tm, sizeof(TMaps));
++    const int64_t rows = src[w].size(0);
++    __builtin_memcpy(mp + 2 * sizeof(TMaps) + w * sizeof(int64_t), &rows, sizeof(int64_t));
++  }
++  return 0;
++}
++
++void wgt_gather(torch::Tensor x, torch::Tensor sorted_ids, torch::Tensor block_experts, torch::Tensor n_padded,
++                int64_t num_routes, int64_t n_experts, int64_t grid, torch::Tensor xs, torch::Tensor tickets) {
++  TORCH_CHECK(x.is_contiguous() && xs.is_contiguous() && sorted_ids.is_contiguous() && block_experts.is_contiguous() &&
++              x.scalar_type() == at::kBFloat16 && xs.scalar_type() == at::kBFloat16 &&
++              sorted_ids.scalar_type() == at::kInt && block_experts.scalar_type() == at::kInt &&
++              n_padded.scalar_type() == at::kInt && tickets.scalar_type() == at::kInt, "wgt_gather: layout");
++  TORCH_CHECK(x.size(1) == xs.size(1) && x.size(1) % 8 == 0 && sorted_ids.numel() <= xs.size(0) &&
++              block_experts.numel() * 16 >= sorted_ids.numel() && tickets.numel() >= NTICK, "wgt_gather: sizes");
++  const int64_t slots = sorted_ids.numel();
++  int64_t g = grid < slots ? grid : slots;
++  if (g < 1) g = 1;
++  auto stream = at::cuda::getCurrentCUDAStream();
++  wgt_gather_kernel<<<static_cast<unsigned>(g), 256, 0, stream>>>(
++      reinterpret_cast<const __nv_bfloat16*>(x.data_ptr()), sorted_ids.data_ptr<int>(), block_experts.data_ptr<int>(),
++      n_padded.data_ptr<int>(), static_cast<int>(num_routes), static_cast<int>(x.size(1)),
++      static_cast<int>(n_experts), reinterpret_cast<__nv_bfloat16*>(xs.data_ptr()), tickets.data_ptr<int>());
++  C10_CUDA_KERNEL_LAUNCH_CHECK();
++}
++
++void wgt_gemm(int64_t which, torch::Tensor maps, torch::Tensor wbank, torch::Tensor gs, torch::Tensor sorted_ids,
++              torch::Tensor block_experts, torch::Tensor n_padded, int64_t num_routes, int64_t n_tiles, int64_t K,
++              torch::Tensor out, torch::Tensor ws, torch::Tensor tickets, int64_t grid, int64_t force_split,
++              torch::Tensor err) {
++  TORCH_CHECK(which == 0 || which == 1, "wgt_gemm: which");
++  TORCH_CHECK(!maps.is_cuda() && maps.is_contiguous() && maps.scalar_type() == at::kByte && maps.numel() == MAPS_BYTES,
++              "wgt_gemm: maps must be this state's CPU uint8 tensor from wgt_set_maps");
++  const uint8_t* mp = maps.data_ptr<uint8_t>();
++  TMaps tm;
++  __builtin_memcpy(&tm, mp + which * sizeof(TMaps), sizeof(TMaps));
++  int64_t map_rows = 0;
++  __builtin_memcpy(&map_rows, mp + 2 * sizeof(TMaps) + which * sizeof(int64_t), sizeof(int64_t));
++  TORCH_CHECK(map_rows > 0, "wgt_gemm: tensor maps not encoded");
++  TORCH_CHECK(wbank.is_contiguous() && gs.is_contiguous() && sorted_ids.is_contiguous() &&
++              block_experts.is_contiguous() && out.is_contiguous() && ws.is_contiguous() && tickets.is_contiguous() &&
++              wbank.scalar_type() == at::kByte && gs.scalar_type() == at::kFloat &&
++              sorted_ids.scalar_type() == at::kInt && block_experts.scalar_type() == at::kInt &&
++              n_padded.scalar_type() == at::kInt && out.scalar_type() == at::kBFloat16 &&
++              ws.scalar_type() == at::kFloat && tickets.scalar_type() == at::kInt && err.scalar_type() == at::kInt,
++              "wgt_gemm: layout");
++  TORCH_CHECK(K % BK == 0 && block_experts.numel() * n_tiles <= MAXG && sorted_ids.numel() <= map_rows &&
++              ws.numel() >= static_cast<int64_t>(WS_ITEMS) * 2048 && tickets.numel() >= NTICK && err.numel() >= 4,
++              "wgt_gemm: sizes");
++  TORCH_CHECK(wbank.numel() == gs.numel() * n_tiles * (K / 64) * REC, "wgt_gemm: weight bank size");
++  TORCH_CHECK(out.size(1) == (which == 0 ? n_tiles * 64 : n_tiles * 128), "wgt_gemm: output width");
++  auto stream = at::cuda::getCurrentCUDAStream();
++  const int blocks_len = static_cast<int>(block_experts.numel());
++  int* tick = tickets.data_ptr<int>() + which * MAXG;
++#define WGT_LAUNCH(G_)                                                                                        \
++  wgt_kernel<G_><<<static_cast<unsigned>(grid), THREADS, TSMEM, stream>>>(                                   \
++      tm, wbank.data_ptr<uint8_t>(), gs.data_ptr<float>(), sorted_ids.data_ptr<int>(),            \
++      block_experts.data_ptr<int>(), n_padded.data_ptr<int>(), blocks_len, static_cast<int>(num_routes),      \
++      static_cast<int>(n_tiles), static_cast<int>(K), static_cast<int>(gs.numel()),                           \
++      reinterpret_cast<__nv_bfloat16*>(out.data_ptr()), static_cast<int>(out.size(1)), ws.data_ptr<float>(),  \
++      tick, static_cast<int>(force_split), err.data_ptr<int>())
++  if (which == 0) WGT_LAUNCH(true); else WGT_LAUNCH(false);
++#undef WGT_LAUNCH
++  C10_CUDA_KERNEL_LAUNCH_CHECK();
++}
++"""
++
++
++def _wgt_src():
++    return _WG_SRC_HEAD + _wg_wgmma_src() + _WGT_SRC_BODY
++
++
++def _wgt_build():
++    """Compile the tiny module (prepare only, never during capture): (ext or None, error text).
++    sm_90a only, exactly as _wg_build: TORCH_CUDA_ARCH_LIST=9.0a around load_inline, restored after;
++    -std=c++20 -O3 -lineinfo and only -gencode compute_90a/sm_90a."""
++    t0 = time.perf_counter()
++    prev = os.environ.get("TORCH_CUDA_ARCH_LIST")
++    flags = ["-std=c++20"] + list(WG_CUDA_CFLAGS)
++    ext, err_text = None, ""
++    try:
++        from torch.utils import cpp_extension
++        from torch.utils.cpp_extension import load_inline
++        os.environ["TORCH_CUDA_ARCH_LIST"] = "9.0a"
++        try:
++            arch_flags = cpp_extension._get_cuda_arch_flags()
++        except Exception as e:  # this torch does not know the 'a' suffix: default list + guards
++            print(f"{WGT_TAG} TORCH_CUDA_ARCH_LIST=9.0a rejected ({e!r}); default list (error word 2 decides)",
++                  flush=True)
++            if prev is None:
++                os.environ.pop("TORCH_CUDA_ARCH_LIST", None)
++            else:
++                os.environ["TORCH_CUDA_ARCH_LIST"] = prev
++            try:
++                arch_flags = cpp_extension._get_cuda_arch_flags()
++            except Exception as e2:
++                arch_flags = [f"<unknown: {e2!r}>"]
++        print(f"{WGT_TAG} build arch flags: TORCH_CUDA_ARCH_LIST={os.environ.get('TORCH_CUDA_ARCH_LIST')!r} -> "
++              f"{arch_flags}; extra_cuda_cflags {flags}", flush=True)
++        ext = load_inline(
++            name=WGT_EXT_NAME,
++            cpp_sources=_WGT_CPP,
++            cuda_sources=_wgt_src(),
++            functions=["wgt_init", "wgt_set_maps", "wgt_gather", "wgt_gemm"],
++            extra_cuda_cflags=flags,
++            verbose=False,
++        )
++    except Exception as e:  # keep master's path if the build fails
++        err_text = str(e)
++        ext = None
++        print(f"{WGT_TAG} load_inline failed after {time.perf_counter() - t0:.1f}s: {err_text[:300]!r}", flush=True)
++    finally:
++        if prev is None:
++            os.environ.pop("TORCH_CUDA_ARCH_LIST", None)
++        else:
++            os.environ["TORCH_CUDA_ARCH_LIST"] = prev
++    if ext is not None:
++        print(f"{WGT_TAG} load_inline compiled in {time.perf_counter() - t0:.1f}s", flush=True)
++    return ext, err_text
++
++
++WGT_MAPS_BYTES = 2 * 256 + 2 * 8  # 2 x TMaps (each 2 x 128-B CUtensorMap, m[0] used) + 2 int64 row counts; C++ checks it
++
++
++def _wgt_scratch(ext, wb, hidden, inter, device):
++    """One state's tiny-path scratch: xs, h_sorted, fp32 split workspace, tickets, error words and the
++    tensor maps over THIS state's xs/hs (a CPU uint8 tensor passed by value at every launch, never a
++    module global: the judge prepares two states in one process and rotates them). Raises on an
++    encode failure."""
++    xs = torch.zeros((WGT_CAP_ROWS, hidden), dtype=torch.bfloat16, device=device)
++    hs = torch.zeros((WGT_CAP_ROWS, inter), dtype=torch.bfloat16, device=device)
++    maps = torch.zeros((WGT_MAPS_BYTES,), dtype=torch.uint8)
++    rc = ext.wgt_set_maps(xs, hs, maps)
++    if rc != 0:
++        raise RuntimeError(f"tensor-map encode failed: {rc}")
++    return {
++        "ext": ext, "bank": wb, "xs": xs, "hs": hs, "maps": maps,
++        "ws": torch.zeros((WGT_WS_ITEMS * 2048,), dtype=torch.float32, device=device),
++        "tick": torch.zeros((2 * WGT_MAXG,), dtype=torch.int32, device=device),
++        "err": torch.zeros((4,), dtype=torch.int32, device=device),
++        "grid": torch.cuda.get_device_properties(device).multi_processor_count,
++    }
++
++
++def _wgt_pick_split(groups, grid, ks, force=0):
++    """Host mirror of the device's pick_split (prepare-time logging and checks only)."""
++    if force > 0:
++        s = min(force, 8)
++        while s > 1 and ((s & (s - 1)) != 0 or ks % s != 0 or groups * s > WGT_WS_ITEMS):
++            s >>= 1
++        return s
++    best, bc = 1, 1 << 30
++    for s in (1, 2, 4, 8):
++        if ks % s != 0 or (s > 1 and groups * s > WGT_WS_ITEMS):
++            continue
++        rounds = (groups * s + grid - 1) // grid
++        k = {1: 0, 2: 1, 4: 2, 8: 3}[s]
++        c = rounds * (100 + 3 * k) * (8 // s)
++        if c < bc:
++            bc, best = c, s
++    return best
++
++
++def _moe_tiny(x, topk_ids, topk_weights, bank, state, force=0):
++    """out [M, H] for 1 <= M <= 7 on the tiny wgmma path: align (BSM 16), gather (+ ticket zeroing),
++    w13 + silu, w2, master's combine. Shape-only host logic; capturable. force: a K split for tests
++    (0 = the device's choice)."""
++    num_tokens, size_k = x.shape
++    size_n = bank["size_n"]
++    t = state["wgt"]
++    ext, wb = t["ext"], t["bank"]
++    topk_weights = topk_weights.to(torch.float32).contiguous()
++    local_ids, (sorted_ids, block_experts, n_padded) = _align_small(topk_ids, bank["start"], bank["count"], WGT_BSM)
++    routes = num_tokens * TOP_K
++    # at most min(routes, count) blocks are used (one per local expert): the gather grid covers them
++    ext.wgt_gather(x, sorted_ids, block_experts, n_padded, routes, bank["count"],
++                   WGT_BSM * min(routes, bank["count"]), t["xs"], t["tick"])
++    ext.wgt_gemm(0, t["maps"], wb["q13"], wb["gs13"], sorted_ids, block_experts, n_padded, routes, size_n // 64, size_k,
++                 t["hs"], t["ws"], t["tick"], t["grid"], force, t["err"])
++    cache3 = torch.empty((routes, size_k), device=x.device, dtype=x.dtype)
++    ext.wgt_gemm(1, t["maps"], wb["q2"], wb["gs2"], sorted_ids, block_experts, n_padded, routes, size_k // 128, size_n,
++                 cache3, t["ws"], t["tick"], t["grid"], force, t["err"])
++    y = cache3.view(num_tokens, TOP_K, size_k)
++    out = torch.empty((num_tokens, size_k), device=x.device, dtype=torch.bfloat16)
++    _post_norm_combine_kernel[(num_tokens,)](
++        y, local_ids, topk_weights, state["post_norm_w"], out, size_k, POST_NORM_EPS,
++        TOP_K_C=TOP_K, BLOCK_H=triton.next_power_of_2(size_k), num_warps=8)
++    return out
++
++
++def _wgt_data(bank, tokens, ids, gen, device):
++    """A synthetic Inputs dict (fixed generator) for the master path and the tiny path."""
++    hidden = 4096
++    tw = torch.rand((tokens, TOP_K), generator=gen)
++    return {
++        "hidden_states": torch.randn((tokens, hidden), generator=gen).to(torch.bfloat16).to(device),
++        "topk_ids": torch.tensor(ids, dtype=torch.int32, device=device),
++        "topk_weights": (tw / tw.sum(-1, keepdim=True)).to(device),
++        "config": {"bs": tokens, "d_hidden": hidden, "d_expert": hidden, "n_experts": N_EXPERTS,
++                   "local_start": bank["start"], "local_count": bank["count"], "top_k": TOP_K, "sharding": "ep8"},
++    }
++
++
++def _wgt_routings(tokens, local_set, remote_set, gen):
++    """name -> topk ids [tokens][8] (global ids; every id within a token distinct)."""
++    def remote(n):
++        return [remote_set[i] for i in torch.randperm(len(remote_set), generator=gen)[:n].tolist()]
++
++    def shuf(row):
++        return [row[i] for i in torch.randperm(len(row), generator=gen).tolist()]
++
++    hot = local_set[:12]
++    r_hot = min(8, 1 + tokens)
++    return {
++        "one-expert": [shuf([local_set[3]] + remote(7)) for _ in range(tokens)],
++        "skewed": [shuf(local_set[:r_hot] + remote(8 - r_hot)) for _ in range(tokens)],
++        "all-local": [shuf(local_set[:8]) for _ in range(tokens)],
++        "rand-local": [[hot[i] for i in torch.randperm(len(hot), generator=gen)[:8].tolist()] for _ in range(tokens)],
++        "random": [torch.randperm(N_EXPERTS, generator=gen)[:TOP_K].tolist() for _ in range(tokens)],
++        "all-remote": [remote(8) for _ in range(tokens)],
++    }
++
++
++def _wgt_reference(weights, bank, x, ids, tw, post_w, cache):
++    """fp32 reference of the whole op from the dequantised NVFP4 weights (no Marlin, no kernel)."""
++    start, count = bank["start"], bank["count"]
++    tokens, hidden = x.shape
++    inter = bank["size_n"]
++    ids_l = ids.tolist()
++    nw = post_w.float() + 1.0
++    out = torch.zeros((tokens, hidden), dtype=torch.float32, device=x.device)
++    for t in range(tokens):
++        for s in range(TOP_K):
++            e = ids_l[t][s]
++            if not (start <= e < start + count):
++                continue
++            if e not in cache:
++                cache[e] = (_wg_decode_nvfp4(weights["w13"][e], weights["w13_sf"][e], weights["w13_gs"][e]),
++                            _wg_decode_nvfp4(weights["w2"][e], weights["w2_sf"][e], weights["w2_gs"][e]))
++            w13f, w2f = cache[e]
++            h = w13f @ x[t].float()
++            hh = torch.nn.functional.silu(h[:inter]) * h[inter:]
++            v = (w2f @ hh) * nw
++            r = torch.rsqrt(v.pow(2).mean() + POST_NORM_EPS)
++            out[t] += tw[t, s].float() * v * r
++    return out
++
++
++def _wgt_err(out, ref):
++    """(aggregate rel-L2, worst per-token rel-L2) of out against ref; a token whose ref is 0 must be
++    exactly 0 (its error is then the absolute max); inf if out has a non-finite entry."""
++    out = out.float()
++    if not bool(torch.isfinite(out).all()):
++        return float("inf"), float("inf")
++    d = (out - ref).norm(dim=-1)
++    r = ref.norm(dim=-1)
++    rows = torch.where(r > 0, d / r.clamp_min(1e-30), (out - ref).abs().amax(dim=-1))
++    rn = float(ref.norm())
++    tot = float((out - ref).norm()) / rn if rn > 0 else float((out - ref).abs().max())
++    return tot, float(rows.max())
++
++
++def _wgt_self_check(weights, bank, state, device):
++    """Untimed, prepare() only, synthetic inputs. For T in (1, 2, 4, 7) x 6 routings (one expert, skewed,
++    all eight local, random among 12 local, uniform random, all remote) x forced K split (device's
++    choice, 1, 2, 4, 8): the tiny path's output against an fp32 dequant reference, with master's own
++    error against the same reference printed beside it; bound = max(2 x master's, 1e-2) in aggregate
++    and max(2 x master's, 4e-2) for the worst token. The device's choice and split 4 are also
++    captured as CUDA graphs and replayed 3x (tickets must come back clean); finally TWO states (own scratch + tensor maps)
++    each capture one graph per T, replayed alternately A/B with 6 routings refilled in place. Returns {T: ok}."""
++    gen = torch.Generator().manual_seed(20261031)
++    start, count = bank["start"], bank["count"]
++    local_set = list(range(start, start + count))
++    remote_set = [e for e in range(N_EXPERTS) if e not in local_set]
++    t = state["wgt"]
++    err = t["err"]
++    ok = {tk: True for tk in WGT_CHECK_TOKENS}
++    n_fail = 0
++    worst_ratio = 0.0
++    cache = {}
++    for tokens in WGT_CHECK_TOKENS:
++        for name, ids in _wgt_routings(tokens, local_set, remote_set, gen).items():
++            data = _wgt_data(bank, tokens, ids, gen, device)
++            x, topk_ids, tw = data["hidden_states"], data["topk_ids"], data["topk_weights"]
++            tag = f"T={tokens} {name}"
++            try:
++                ref = _wgt_reference(weights, bank, x, topk_ids, tw, state["post_norm_w"], cache)
++                m_out = _forward(data, state, state.get("w2_mode", "master"))
++                torch.cuda.synchronize()
++                m_tot, m_row = _wgt_err(m_out, ref)
++                b_tot, b_row = max(2 * m_tot, 1e-2), max(2 * m_row, 4e-2)
++                parts = []
++                case_ok = True
++                for force in (0, 1, 2, 4, 8):
++                    err.zero_()
++                    print(f"{WGT_TAG}     [{tag}] launching tiny path split={force or 'auto'}", flush=True)
++                    out = _moe_tiny(x, topk_ids, tw, bank, state, force)
++                    torch.cuda.synchronize()
++                    print(f"{WGT_TAG}     [{tag}] done split={force or 'auto'}", flush=True)
++                    ev = err.tolist()
++                    if ev[0]:
++                        state["wgt"]["tick"].zero_()
++                        print(f"{WGT_TAG}   device error word {ev[0]} ({WG_ERR_TEXT.get(ev[0], '?')}) at {tag}; "
++                              f"aborting self-check", flush=True)
++                        return {tk: False for tk in WGT_CHECK_TOKENS}
++                    n_tot, n_row = _wgt_err(out, ref)
++                    if ref.norm() == 0:
++                        good = bool(torch.isfinite(out.float()).all()) and float(out.float().abs().max()) == 0.0
++                    else:
++                        good = n_tot <= b_tot and n_row <= b_row
++                    worst_ratio = max(worst_ratio, n_tot / max(m_tot, 1e-6)) if ref.norm() > 0 else worst_ratio
++                    s_used = "w13 S=%d w2 S=%d" % (ev[1], ev[2])
++                    parts.append(f"{force or 'auto'}[{s_used}] {n_tot:.1e}/{n_row:.1e}{'' if good else ' FAIL'}")
++                    case_ok = case_ok and good
++                # graphs: the device's choice and a forced split of 4
++                for force in (0, 4):
++                    err.zero_()
++                    g, g_out = _wgt_capture(lambda f=force: _moe_tiny(x, topk_ids, tw, bank, state, f))
++                    for _ in range(3):
++                        g.replay()
++                    torch.cuda.synchronize()
++                    ev = err.tolist()
++                    eager = _moe_tiny(x, topk_ids, tw, bank, state, force)
++                    torch.cuda.synchronize()
++                    g_diff = float((g_out.float() - eager.float()).abs().max())
++                    if ev[0] or g_diff != 0.0:
++                        case_ok = False
++                        parts.append(f"graph{force or 'auto'} FAIL (err {ev[0]}, max|graph-eager| {g_diff:.2e})")
++                        state["wgt"]["tick"].zero_()
++                    del g, g_out
++                print(f"{WGT_TAG}   {tag}: master {m_tot:.1e}/{m_row:.1e} (agg/token vs fp32; tiny bound "
++                      f"{b_tot:.1e}/{b_row:.1e}) | tiny " + " | ".join(parts) + f" | {'ok' if case_ok else 'FAIL'}",
++                      flush=True)
++                if not case_ok:
++                    ok[tokens] = False
++                    n_fail += 1
++            except Exception as ex:  # one case raising must not lose the rest
++                ok[tokens] = False
++                n_fail += 1
++                print(f"{WGT_TAG}   {tag}: case raised {ex!r}"[:300], flush=True)
++        torch.cuda.synchronize()
++    rep = _wgt_replay_check(weights, bank, state, device, cache)
++    for tk, v in rep.items():
++        if not v:
++            ok[tk] = False
++            n_fail += 1
++    cache.clear()
++    print(f"{WGT_TAG}   self-check: {n_fail} failing (T, routing) cases; worst tiny/master aggregate-error ratio "
++          f"{worst_ratio:.2f}; per-T ok {ok}", flush=True)
++    return ok
++
++
++def _wgt_replay_check(weights, bank, state, device, cache):
++    """Coordinator findings from s3 (job 3bdec0e58d684c17), where the self-checks passed and the judge's later
++    replays with new inputs gave garbage. Root cause: module-global tensor maps were re-pointed by the
++    judge's SECOND prepare(), and the judge rotates two states. This check mirrors that: it builds a second
++    state's scratch (own xs/hs/ws/tickets/err and own tensor maps, as a second prepare() would), captures
++    ONE graph per T per state over static input buffers (state A first, then B), then alternates replays
++    A, B, A, B, ... with a fresh routing refilled in place before each replay (as the judge does). It
++    judges every replay against the fp32 reference with master's error beside it. Everything routing-
++    dependent (n_padded, the K split, the used blocks, the tickets) is computed on the device inside
++    the graph. Returns {T: ok}."""
++    gen = torch.Generator().manual_seed(20261102)
++    start, count = bank["start"], bank["count"]
++    local_set = list(range(start, start + count))
++    remote_set = [e for e in range(N_EXPERTS) if e not in local_set]
++    ta = state["wgt"]
++    res = {tk: False for tk in WGT_CHECK_TOKENS}
++    try:
++        state_b = dict(state)
++        state_b["wgt"] = _wgt_scratch(ta["ext"], ta["bank"], ta["xs"].shape[1], ta["hs"].shape[1], device)
++    except Exception as ex:
++        print(f"{WGT_TAG}   replay-two-states: second state's scratch failed {ex!r}"[:300], flush=True)
++        return res
++    states = (("A", state), ("B", state_b))
++    names = ("skewed", "one-expert", "all-local", "random", "rand-local", "all-remote")
++    for tokens in WGT_CHECK_TOKENS:
++        ok = True
++        try:
++            graphs = []
++            for label, st in states:
++                base = _wgt_routings(tokens, local_set, remote_set, gen)
++                data = _wgt_data(bank, tokens, base["skewed"], gen, device)
++                x, ids, tw = data["hidden_states"], data["topk_ids"], data["topk_weights"]
++                g, g_out = _wgt_capture(lambda x=x, ids=ids, tw=tw, st=st: _moe_tiny(x, ids, tw, bank, st))
++                graphs.append((label, st, g, g_out, x, ids, tw, data))
++            seq = [names[(tokens + i) % 6] for i in range(3)] + ["all-local", "one-expert", "random"]
++            k = 0
++            for name in seq:
++                for label, st, g, g_out, x, ids, tw, data in graphs:  # A, B, A, B, ...
++                    r = _wgt_routings(tokens, local_set, remote_set, gen)
++                    d2 = _wgt_data(bank, tokens, r[name], gen, device)
++                    x.copy_(d2["hidden_states"])
++                    ids.copy_(d2["topk_ids"])
++                    tw.copy_(d2["topk_weights"])
++                    st["wgt"]["err"].zero_()
++                    g.replay()
++                    torch.cuda.synchronize()
++                    ref = _wgt_reference(weights, bank, x, ids, tw, state["post_norm_w"], cache)
++                    m_tot, m_row = _wgt_err(_forward(d2 | {"hidden_states": x, "topk_ids": ids, "topk_weights": tw},
++                                                     state, state.get("w2_mode", "master")), ref)
++                    n_tot, n_row = _wgt_err(g_out, ref)
++                    if ref.norm() == 0:
++                        good = float(g_out.float().abs().max()) == 0.0
++                    else:
++                        good = n_tot <= max(2 * m_tot, 1e-2) and n_row <= max(2 * m_row, 4e-2)
++                    if st["wgt"]["err"][0].item():
++                        good = False
++                        st["wgt"]["tick"].zero_()
++                    print(f"{WGT_TAG}   replay-two-states T={tokens} #{k} state {label} {name}: tiny "
++                          f"{n_tot:.1e}/{n_row:.1e} master {m_tot:.1e}/{m_row:.1e} {'ok' if good else 'FAIL'}",
++                          flush=True)
++                    ok = ok and good
++                    k += 1
++            del graphs
++        except Exception as ex:
++            ok = False
++            print(f"{WGT_TAG}   replay-two-states T={tokens} raised {ex!r}"[:300], flush=True)
++        res[tokens] = ok
++    del state_b
++    torch.cuda.synchronize()
++    return res
++
++
++def _wgt_capture(fn):
++    """Eager once (kernels compiled), then capture fn's launches: (graph, output)."""
++    fn()
++    torch.cuda.synchronize()
++    g = torch.cuda.CUDAGraph()
++    with torch.cuda.graph(g):
++        out = fn()
++    return g, out
++
++
++def _wgt_pct(v, q):
++    v = sorted(v)
++    return v[min(len(v) - 1, int(q * (len(v) - 1) + 0.5))]
++
++
++def _wgt_time_pair(graph_a, graph_b, flush, reps):
++    """Cold-L2 interleaved A/B of two graphs: every replay is preceded by a read of a >= 256 MB buffer;
++    the order alternates per repetition. Returns (us list of a, us list of b)."""
++    evs = []
++    for rep in range(reps):
++        order = ((0, graph_a), (1, graph_b)) if rep % 2 == 0 else ((1, graph_b), (0, graph_a))
++        for which, g in order:
++            flush.sum()
++            s, e = torch.cuda.Event(enable_timing=True), torch.cuda.Event(enable_timing=True)
++            s.record()
++            g.replay()
++            e.record()
++            evs.append((which, s, e))
++    torch.cuda.synchronize()
++    ta, tb = [], []
++    for which, s, e in evs:
++        (ta if which == 0 else tb).append(s.elapsed_time(e) * 1000.0)
++    return ta, tb
++
++
++def _wgt_gate(weights, bank, state, device, check_ok):
++    """Per bucket: time the tiny path against master's path (_forward with the w2 mode prepare chose,
++    i.e. WITH the atomic add) on skewed and local-random routings, CUDA-graph replays, cold L2.
++    A bucket is enabled only if its self-check passed and the tiny path's p50 is <= 97% of master's on
++    EVERY timed routing. Returns ({T: enabled}, summary lines, PATH CHOSEN lines); the printed winner
++    and the enabled flag come from the same decision (asserted)."""
++    gen = torch.Generator().manual_seed(20261101)
++    start, count = bank["start"], bank["count"]
++    local_set = list(range(start, start + count))
++    remote_set = [e for e in range(N_EXPERTS) if e not in local_set]
++    flush = torch.empty(WGT_FLUSH_BYTES // 4, dtype=torch.float32, device=device)
++    w2m = state.get("w2_mode", "master")
++    enabled, lines, chosen = {}, [], []
++    t = state["wgt"]
++    for bname, (timed, covers) in WGT_BUCKETS.items():
++        rows = []
++        for tokens in timed:
++            routs = _wgt_routings(tokens, local_set, remote_set, gen)
++            for kind in ("skewed", "rand-local"):
++                data = _wgt_data(bank, tokens, routs[kind], gen, device)
++                x, ids, tw = data["hidden_states"], data["topk_ids"], data["topk_weights"]
++                gm, om = _wgt_capture(lambda d=data: _forward(d, state, w2m))
++                gn, on = _wgt_capture(lambda: _moe_tiny(x, ids, tw, bank, state))
++                t["err"].zero_()
++                tm, tn = _wgt_time_pair(gm, gn, flush, WGT_GATE_REPS)
++                if int(t["err"][0].item()):
++                    raise RuntimeError(f"device error word in the timing replays ({tokens} {kind})")
++                row = {"T": tokens, "kind": kind,
++                       "master": [_wgt_pct(tm, q) for q in (0.1, 0.5, 0.9)],
++                       "new": [_wgt_pct(tn, q) for q in (0.1, 0.5, 0.9)]}
++                if tokens == 1 and kind == "skewed":  # ablation: same binary, K split forced to 1
++                    g1, _o1 = _wgt_capture(lambda: _moe_tiny(x, ids, tw, bank, state, 1))
++                    ta, t1 = _wgt_time_pair(gn, g1, flush, WGT_GATE_REPS)
++                    row["split1_p50"] = _wgt_pct(t1, 0.5)
++                    row["auto_p50"] = _wgt_pct(ta, 0.5)
++                    del g1, _o1
++                rows.append(row)
++                line = (f"  gate {bname} T={tokens} {kind}: tiny p10/p50/p90 "
++                        f"{row['new'][0]:.1f}/{row['new'][1]:.1f}/{row['new'][2]:.1f} us | master (w2 mode "
++                        f"{w2m}) {row['master'][0]:.1f}/{row['master'][1]:.1f}/{row['master'][2]:.1f} us | ratio "
++                        f"{row['new'][1] / row['master'][1]:.3f}")
++                if "split1_p50" in row:
++                    line += f" | ablation: K split auto p50 {row['auto_p50']:.1f} vs forced 1 {row['split1_p50']:.1f} us"
++                print(f"{WGT_TAG}{line}", flush=True)
++                lines.append(line)
++                del gm, gn, om, on
++                torch.cuda.synchronize()
++        wins = all(r["new"][1] <= WGT_GATE_MARGIN * r["master"][1] for r in rows)
++        passed = all(check_ok.get(tk, False) for tk in covers if tk in check_ok) and all(
++            check_ok.get(tk, False) for tk in timed)
++        win = bool(wins and passed)
++        for tk in covers:
++            enabled[tk] = win
++        tm_ = " ; ".join(f"T={r['T']} {r['kind']} {r['new'][1]:.1f} vs {r['master'][1]:.1f}" for r in rows)
++        text = (f"{WGT_TAG} PATH CHOSEN = {'WGMMA-TINY' if win else 'MASTER'} for {bname} (tokens {list(covers)}): "
++                f"self-check {'pass' if passed else 'FAIL'}, p50 tiny vs master us: {tm_}; needs p50 <= "
++                f"{WGT_GATE_MARGIN:.2f} x master on every routing")
++        chosen.append(text)
++        assert enabled[covers[0]] == ("WGMMA-TINY" in text), "PATH CHOSEN line disagrees with the enabled flag"
++    del flush
++    return enabled, lines, chosen
++
++
++def _wgt_setup(weights, banks, state, device, t_start):
++    """Build, retile, self-check and time the tiny path. Sets state["wgt_ok"] ({T: bool}); on any failure
++    every T keeps master's path. Nothing here sees any input. The summary and PATH CHOSEN lines are
++    printed last (the archived log keeps only its final ~15 KB)."""
++    state["wgt_ok"] = {}
++    summ = []
++    enabled, chosen = {}, []
++    t_begin = time.perf_counter()
++    try:
++        cap = torch.cuda.get_device_capability(device)
++        print(f"{WGT_TAG} device capability {cap} (sm_90a path needs (9, 0))", flush=True)
++        if tuple(cap) != (9, 0):
++            raise RuntimeError(f"device capability {cap} is not (9, 0)")
++        bank = banks[(0, 32)]
++        start, count = bank["start"], bank["count"]
++        if bank["expert_map"] is None:
++            raise RuntimeError("the tiny path needs the EP bank (expert_map)")
++        hidden, inter = weights["w2"].shape[1], bank["size_n"]
++        if hidden != 4096 or inter != 4096 or count != 32:
++            raise RuntimeError(f"unsupported sizes H={hidden} I={inter} count={count}")
++        assert WGT_SMEM + 4096 <= WG_SMEM_LIMIT, f"smem {WGT_SMEM} B too large"
++        print(f"{WGT_TAG} {WGT_STAGES} stages x {WGT_STAGE_BYTES} B, dynamic smem {WGT_SMEM} B (+ small static) <= "
++              f"{WG_SMEM_LIMIT} B; weights in flight per SM ~ {(WGT_STAGES - 1) * 2 * WG_REC} B", flush=True)
++        # _align_small at BSM = 16 is a new Triton specialisation per T (BLOCK_N, CAP_BLOCK, MB_BLOCK):
++        # compile every one now, never inside the timed or captured calls.
++        for tokens in range(1, WGT_MAX_TOKENS + 1):
++            _align_small(torch.full((tokens, TOP_K), start, dtype=torch.int32, device=device), start, count, WGT_BSM)
++        torch.cuda.synchronize()
++        print(f"{WGT_TAG} _align_small warmed at BSM={WGT_BSM} for T=1..{WGT_MAX_TOKENS}", flush=True)
++        ext, _btext = _wgt_build()
++        summ.append(f"build: TORCH_CUDA_ARCH_LIST=9.0a -> sm_90a only, cflags {['-std=c++20'] + WG_CUDA_CFLAGS}: "
++                    f"{'ok' if ext is not None else 'FAILED'}")
++        if ext is None:
++            raise RuntimeError("load_inline failed")
++        if time.perf_counter() - t_start > WGT_SETUP_BUDGET_S:
++            raise RuntimeError(f"setup budget {WGT_SETUP_BUDGET_S:.0f}s spent by the build")
++        info = ext.wgt_init()
++        attrs_ok = True
++        for i in range(0, len(info), 10):
++            gated, a_ok, regs, local_bytes, static_smem, dyn_smem, occ, e1, bin_v, ptx_v = info[i:i + 10]
++            msg = (f"kernel {'w13+silu' if gated else 'w2'}: attrs ok {bool(a_ok)} (SetAttribute rc {e1}), numRegs "
++                   f"{regs} (cap 168), localSizeBytes {local_bytes}{' (SPILL, not fatal)' if local_bytes > 0 else ''}, "
++                   f"static smem {static_smem} B, dynamic smem {dyn_smem} B, CTAs/SM {occ}, binaryVersion {bin_v}")
++            print(f"{WGT_TAG} {msg}", flush=True)
++            summ.append(msg)
++            # setmaxnreg.inc blocks forever unless the CTA's register pool covers 40x128 + 232x256
++            attrs_ok = (attrs_ok and bool(a_ok) and occ >= 1 and static_smem + dyn_smem <= WG_SMEM_LIMIT
++                        and regs * WG_THREADS >= 40 * 128 + 232 * 256 and bin_v == 90)
++        if not attrs_ok:
++            raise RuntimeError("cudaFuncSetAttribute / cudaFuncGetAttributes / occupancy check failed")
++        t0 = time.perf_counter()
++        wb = _wg_bank(weights, start, count)
++        torch.cuda.synchronize()
++        print(f"{WGT_TAG} retiled {count} experts losslessly (round trips exact) in {time.perf_counter() - t0:.1f}s",
++              flush=True)
++        state["wgt"] = _wgt_scratch(ext, wb, hidden, inter, device)
++        print(f"{WGT_TAG} cuTensorMapEncodeTiled x 2 over this state's scratch: ok (per-state maps, no globals)",
++              flush=True)
++        summ.append("cuTensorMapEncodeTiled x2 ok (per-state CPU map tensor)")
++        print(f"{WGT_TAG} grid {state['wgt']['grid']} persistent CTAs x {WG_THREADS} threads, BK {WG_BK}, "
++              f"{WGT_STAGES} stages, N16 only, K split on device (S in 1,2,4,8; workspace {WGT_WS_ITEMS} tiles)",
++              flush=True)
++        picks = "; ".join(f"{'w13' if n_tiles == 64 else 'w2'} experts={nbk}: S={_wgt_pick_split(nbk * n_tiles, state['wgt']['grid'], WGT_KS)}"
++                          for n_tiles in (64, 32) for nbk in (1, 2, 3, 4, 8))
++        print(f"{WGT_TAG} split choice (host mirror of the device rule): {picks}", flush=True)
++        if time.perf_counter() - t_start > WGT_SETUP_BUDGET_S - 30.0:
++            raise RuntimeError("setup budget spent before the self-check")
++        check_ok = _wgt_self_check(weights, bank, state, device)
++        summ.append(f"self-check (T {list(WGT_CHECK_TOKENS)} x 6 routings x splits auto/1/2/4/8, graph replays of auto and 4, two-state alternating replays) "
++                    f"vs fp32 dequant, master error beside it: {check_ok}")
++        err_word = int(state["wgt"]["err"][0].item())
++        if err_word or not any(check_ok.values()):
++            raise RuntimeError(f"self-check failed (device error word {err_word}, per-T {check_ok})")
++        if time.perf_counter() - t_start > WGT_SETUP_BUDGET_S:
++            raise RuntimeError("setup budget spent before the gate")
++        enabled, glines, chosen = _wgt_gate(weights, bank, state, device, check_ok)
++        summ.append(f"gate (cold L2 >= 256 MB flush, CUDA-graph replays, interleaved A/B, {WGT_GATE_REPS} reps each, vs master "
++                    f"with w2 mode {state.get('w2_mode', 'master')}; raw replay times incl. ~4 us graph overhead):")
++        summ.extend(glines)
++        state["wgt"]["xs"].zero_()
++        state["wgt"]["hs"].zero_()
++        torch.cuda.synchronize()
++    except Exception as e:
++        print(f"{WGT_TAG} tiny path setup raised: {e!r}", flush=True)
++        summ.append(f"setup raised {e!r}")
++        enabled = {}
++        chosen = [f"{WGT_TAG} PATH CHOSEN = MASTER for all T in 1..{WGT_MAX_TOKENS} (setup did not complete)"]
++    state["wgt_ok"] = {tk: bool(v) for tk, v in enabled.items()}
++    print(f"{WGT_TAG} ===== STAGE 3 TINY-M SUMMARY (last block of the log) =====", flush=True)
++    for line in summ:
++        print(f"{WGT_TAG} {line}", flush=True)
++    for text in chosen:
++        print(text, flush=True)
++    print(f"{WGT_TAG} enabled per T: {state['wgt_ok']}; MASTER (stage-2 path dormant) for num_tokens > {WGT_MAX_TOKENS}; "
++          f"setup {time.perf_counter() - t_begin:.1f}s", flush=True)
++
++
+ def _marlin_layer(weights, start, count):
+     """The parameters prepare_moe_nvfp4_layer_for_marlin reads, for experts [start, start+count)."""
+     sl = slice(start, start + count)
+@@ -2054,21 +3100,100 @@ def prepare(weights: Weights) -> dict:
+         "norm_w": (weights["post_norm_w"].float() + 1.0).to(torch.bfloat16),
+         # The original BF16 weight for _post_norm_combine_kernel, which adds the 1 in fp32.
+         "post_norm_w": weights["post_norm_w"].contiguous(),
++        "w2_mode": "master",
+     }
+-    # The wgmma verify path: built, retiled and self-checked here; state["wgmma_ok"] gates it.
+-    _wg_setup(weights, banks, state, device, t_prepare)
++    if (0, 32) in banks and banks[(0, 32)]["expert_map"] is not None:
++        state["w2_mode"] = _w2_atomic_self_check(weights, state, device)
++    # The tiny-M wgmma path (1..7 tokens): built, retiled, self-checked and timed against the path
++    # above; state["wgt_ok"] ({T: bool}) gates it per T. Never raises.
++    _wgt_setup(weights, banks, state, device, t_prepare)
+     torch.cuda.synchronize()
+     return state
+ 
+ 
+-def _moe_marlin(x, topk_ids, topk_weights, bank, state):
+-    """(out, local_ids, cache2, y) for x [M, H]: master's launches, unchanged."""
++# Hypothesis w2-marlin-atomic-add-small-m: up to this many tokens the w2 Marlin call may use
++# use_atomic_add=True (use_fp32_reduce stays True); prepare()'s self-check picks the mode.
++W2_ATOMIC_MAX_TOKENS = 32
++
++
++def _w2_atomic_self_check(weights, state, device):
++    """Untimed, synthetic inputs only. Pick the w2 mode for num_tokens <= 32: "atomic" (atomic add,
++    no memset), "atomic_zero" (atomic add after cache3.zero_()) or "master". cache3 aliases cache13,
++    which holds w13's output when w2 runs, so a non-zeroing atomic path that needs a zeroed C fails
++    the comparison here."""
++    count = 32
++    bank = state["banks"][(0, count)]
++    mode, reason = "master", "no candidate passed"
++    try:
++        gen = torch.Generator(device=device)
++        gen.manual_seed(1234)
++        worst = {"atomic": 0.0, "atomic_zero": 0.0}
++        ok = {"atomic": True, "atomic_zero": True}
++        err = {}
++        for tokens in (1, 4, 8, 16, 32):
++            ids = torch.randint(0, N_EXPERTS, (tokens, TOP_K), generator=gen, device=device, dtype=torch.int32)
++            ids[:, :3] = torch.randint(bank["start"], bank["start"] + count, (tokens, 3), generator=gen,
++                                       device=device, dtype=torch.int32)
++            data = {
++                "hidden_states": torch.randn((tokens, 4096), generator=gen, device=device, dtype=torch.bfloat16),
++                "topk_ids": ids,
++                "topk_weights": torch.rand((tokens, TOP_K), generator=gen, device=device, dtype=torch.float32),
++                "config": {"bs": tokens, "d_hidden": 4096, "d_expert": 4096, "n_experts": N_EXPERTS,
++                           "local_start": bank["start"], "local_count": count, "top_k": TOP_K,
++                           "sharding": "ep8"},
++            }
++            ref = _forward(data, state, "master").float()
++            for cand in ("atomic", "atomic_zero"):
++                if not ok[cand]:
++                    continue
++                try:
++                    out = _forward(data, state, cand).float()
++                    torch.cuda.synchronize()
++                    rel = ((out - ref).norm() / ref.norm().clamp_min(1e-12)).item()
++                    if not (torch.isfinite(out).all().item() and rel <= 5e-3):
++                        ok[cand] = False
++                        err[cand] = "T=%d rel-L2 %.3g" % (tokens, rel)
++                    worst[cand] = max(worst[cand], rel)
++                except Exception as e:  # binding rejected the combination
++                    ok[cand] = False
++                    err[cand] = "T=%d %s: %s" % (tokens, type(e).__name__, str(e)[:200])
++        for cand in ("atomic", "atomic_zero"):
++            if ok[cand]:
++                mode, reason = cand, "worst rel-L2 vs master %.3g" % worst[cand]
++                break
++        else:
++            reason = "; ".join("%s failed (%s)" % (k, v) for k, v in err.items())
++    except Exception as e:
++        mode, reason = "master", "self-check error %s: %s" % (type(e).__name__, str(e)[:200])
++    print("[w2-atomic] PATH CHOSEN = %s (%s)" % ("master" if mode == "master" else "atomic", reason))
++    print("[w2-atomic] atomic add enabled for w2 at T<=%d: %s; use_fp32_reduce=True; zeroing memset in path: %s"
++          % (W2_ATOMIC_MAX_TOKENS, mode != "master", mode == "atomic_zero"))
++    return mode
++
++
++def kernel_fn(data: Inputs, state: dict) -> torch.Tensor:
++    """This GPU's share of the MoE output, bfloat16 [M, H]."""
++    num_tokens = data["hidden_states"].shape[0]
++    # Branch on the shape and the prepare-time flags only: the tiny wgmma path for the T values whose
++    # bucket passed its self-check and its gate; every other shape is master byte for byte.
++    if num_tokens <= WGT_MAX_TOKENS and state.get("wgt_ok", {}).get(num_tokens, False):
++        cfg = data["config"]
++        bank = state["banks"].get((cfg["local_start"], cfg["local_count"]))
++        if bank is not None and bank["expert_map"] is not None and (bank["start"], bank["count"]) == (0, 32):
++            return _moe_tiny(data["hidden_states"].contiguous(), data["topk_ids"], data["topk_weights"], bank, state)
++    return _forward(data, state, state.get("w2_mode", "master"))
++
++
++def _forward(data: Inputs, state: dict, w2_mode: str) -> torch.Tensor:
++    cfg = data["config"]
++    bank = state["banks"][(cfg["local_start"], cfg["local_count"])]
++    x = data["hidden_states"].contiguous()
+     num_tokens, size_k = x.shape
+     size_n = bank["size_n"]
+     gemm1_n = 2 * size_n
+     expert_map = bank["expert_map"]
+ 
+-    topk_weights = topk_weights.to(torch.float32).contiguous()
++    topk_weights = data["topk_weights"].to(torch.float32).contiguous()
+     block_size_m = _block_size_m(num_tokens, bank["count"])
+ 
+     if num_tokens >= 128:
+@@ -2082,9 +3207,9 @@ def _moe_marlin(x, topk_ids, topk_weights, bank, state):
+         # it _align_parallel (hypothesis align-parallel-per-expert-verify). Branch on shape only.
+         align = _align_small if num_tokens <= ALIGN_FUSED_MAX_TOKENS else _align_parallel
+         local_ids, (sorted_ids, block_experts, n_padded) = align(
+-            topk_ids, bank["start"], bank["count"], block_size_m)
++            data["topk_ids"], bank["start"], bank["count"], block_size_m)
+     else:
+-        local_ids = topk_ids.to(torch.int32)
++        local_ids = data["topk_ids"].to(torch.int32)
+         if expert_map is not None:
+             local_ids = expert_map[local_ids]
+         local_ids = local_ids.contiguous()
+@@ -2111,33 +3236,22 @@ def _moe_marlin(x, topk_ids, topk_weights, bank, state):
+         sorted_ids, block_experts, n_padded, topk_weights, top_k=TOP_K,
+         size_m=num_tokens, size_n=gemm1_n, size_k=size_k, **common)
+     silu_and_mul(cache1.view(-1, gemm1_n), cache2, expert_ids=local_ids.view(-1), expert_step=1)
++    w2_common = common
++    if w2_mode != "master" and num_tokens <= W2_ATOMIC_MAX_TOKENS:
++        w2_common = dict(common, use_atomic_add=True)
++        if w2_mode == "atomic_zero":
++            cache3.zero_()
+     y = moe_wna16_marlin_gemm(
+         cache2, cache3, bank["w2"], None, bank["w2_s"], bank["w2_gs"], None, None, None, ws,
+         sorted_ids, block_experts, n_padded, topk_weights, top_k=1,
+-        size_m=num_tokens * TOP_K, size_n=size_k, size_k=size_n, **common).view(num_tokens, TOP_K, size_k)
++        size_m=num_tokens * TOP_K, size_n=size_k, size_k=size_n, **w2_common).view(num_tokens, TOP_K, size_k)
+     if num_tokens < SMALL_M_POST_NORM:
+         y = y.contiguous()
+         out = torch.empty((num_tokens, size_k), device=x.device, dtype=torch.bfloat16)
+         _post_norm_combine_kernel[(num_tokens,)](
+             y, local_ids, topk_weights, state["post_norm_w"], out, size_k, POST_NORM_EPS,
+             TOP_K_C=TOP_K, BLOCK_H=triton.next_power_of_2(size_k), num_warps=8)
+-        return out, local_ids, cache2, y
+-    out = fused_post_expert_norm_weighted_sum(
++        return out
++    return fused_post_expert_norm_weighted_sum(
+         y, topk_weights, norm_weight=state["norm_w"], eps=POST_NORM_EPS, weight_first=True,
+         slot_expert_ids=local_ids)
+-    return out, local_ids, cache2, y
+-
+-
+-def kernel_fn(data: Inputs, state: dict) -> torch.Tensor:
+-    """This GPU's share of the MoE output, bfloat16 [M, H]."""
+-    cfg = data["config"]
+-    key = (cfg["local_start"], cfg["local_count"])
+-    bank = state["banks"][key]
+-    x = data["hidden_states"].contiguous()
+-    num_tokens = x.shape[0]
+-    # Branch on the shape and the prepare-time flag only (hypothesis
+-    # cuda-nvfp4-wgmma-rega-grouped-verify): the wgmma launches for 128 <= num_tokens <= 512.
+-    if (state.get("wgmma_ok", False) and WG_MIN_TOKENS <= num_tokens <= WG_MAX_TOKENS
+-            and bank["expert_map"] is not None and key in state.get("wg_banks", {})):
+-        return _moe_wgmma(x, data["topk_ids"], data["topk_weights"], bank, state)[0]
+-    return _moe_marlin(x, data["topk_ids"], data["topk_weights"], bank, state)[0]

@@ -60,10 +60,10 @@ controls_for: null
 rewrite_stage: 3
 replaces: Marlin w13+w2 (moe_wna16_marlin_gemm x2) + silu_and_mul at 1 <= num_tokens <= 7
 review: proceed
-status: running
+status: done
 review_at: 2026-10-25T042648Z
 review_companions: null
-stage: dispatched
+stage: harvested
 claimed_at: 2026-10-25T042648Z
 base_sha: 570f5e4ac5465931183addaf7a472e01668ced15
 base_blob: 1ae7e9cac6dc078a0e71c7a6b0b77ec48b0ed01f
@@ -82,6 +82,13 @@ attempt_file: 2026-10-25T044530Z-check-cuda-nvfp4-wgmma-rega-tiny-m-bucket16.md
 prepared_at: 2026-10-25T044530Z
 job: 3df5c69750884600
 dispatched_at: 2026-10-25T044538Z
+outcome: neutral
+verdict_detail: unproven-vs-best
+speedup: 1.3453214815954964
+speedup_ci: [1.325141659371564, 1.3655013038194286]
+harvested_at: 2026-10-25T053802Z
+best_at_harvest: 1.3438953504561806
+promotion: null
 ---
 
 # cuda-nvfp4-wgmma-rega-tiny-m-bucket16
@@ -185,3 +192,30 @@ Verified, no change needed:
 - **kernel_fn stays clean.** kernel_fn and `_moe_tiny` contain no sync, print, try/except or per-call host state.
 
 Residual risk: the first nvcc/ptxas build of the new 16-stage N16 kernel and its TMA/mbarrier behaviour are unproven on hardware. A device fault would be sticky and fail the run rather than fall back. T=3, 5 and 6 are enabled without their own self-check.
+
+## Result
+
+- job `3df5c69750884600` (check), status done, passed True, tests 5/5
+- speedup 1.3453x, 95% CI [1.3251, 1.3655], score 9996.495398297386 µs vs SGLang 13448.5 µs
+- best at harvest: {"speedup": 1.3438953504561806, "ci": [1.3237369201993379, 1.364053780713023], "job": "7a0d900a1dd34666"}; base result: muse_moe_w4a16/hypotheses/done/neutral/cuda-nvfp4-wgmma-rega-grouped-s2-finite-fix.result.json
+- **outcome: neutral** (unproven-vs-best)
+- files: `muse_moe_w4a16/hypotheses/done/neutral/cuda-nvfp4-wgmma-rega-tiny-m-bucket16.result.json`, `muse_moe_w4a16/hypotheses/done/neutral/cuda-nvfp4-wgmma-rega-tiny-m-bucket16.patch`; branch `hyp/muse_moe_w4a16/cuda-nvfp4-wgmma-rega-tiny-m-bucket16`
+
+## Attribution
+
+| shape | w | base µs | hyp µs | delta | verdict |
+|---|---|---|---|---|---|
+| bs=1 load=decode_1 sharding=ep8 | 60 | 49.19 | 45.17 | 1.0692 | gained |
+| bs=16 load=decode_16 sharding=ep8 | 60 | 152.25 | 146.81 | 1.0032 | flat |
+| bs=32 load=decode_32 sharding=ep8 | 60 | 198.22 | 200.9 | 1.0032 | flat |
+| bs=8 load=verify_1 sharding=ep8 | 60 | 107.39 | 109.92 | 1.0093 | flat |
+| bs=128 load=verify_16 sharding=ep8 | 60 | 323.73 | 318.38 | 0.9809 | flat |
+| bs=256 load=verify_32 sharding=ep8 | 60 | 463.57 | 451.18 | 1.0021 | flat |
+
+gained on decode_1 decode_1. Expected hit: 6/6. Noise ±1.5%.
+
+## Follow-ups
+
+- rewrite stage 3 of `Marlin w13+w2 (moe_wna16_marlin_gemm x2) + silu_and_mul at 1 <= num_tokens <= 7`: read the replaced kernels' own us per shape (profile top_kernels) against the incumbent and the floor, and check which Milestone it reached. The next stage is `/hypothesize muse_moe_w4a16 "<what to fix or tune>" --kind rewrite --depends-on cuda-nvfp4-wgmma-rega-tiny-m-bucket16 --stage 4`; a slow or failed first cut is the expected start, not a do-not-retry.
+- unproven-vs-best: the change is not proven either way; a stacked hypothesis (`depends_on: cuda-nvfp4-wgmma-rega-tiny-m-bucket16`) that adds a further change in the same area is the only way to learn more (identical code is never re-run).
+
