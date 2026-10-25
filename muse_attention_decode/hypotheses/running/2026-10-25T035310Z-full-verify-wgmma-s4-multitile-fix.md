@@ -62,7 +62,7 @@ review: proceed
 status: running
 review_at: 2026-10-25T040253Z
 review_companions: null
-stage: implemented
+stage: dispatched
 claimed_at: 2026-10-25T040258Z
 base_sha: ff9bf1e4fbe38f9f847a906f5135ecaf60604668
 base_blob: 136874e0158f8b76208c4130e523bc91b84160ad
@@ -79,6 +79,8 @@ submission_blob: 9bcf522b0dd23a0a8173046d2150473827122206
 lint_warnings: 11
 attempt_file: 2026-10-25T041932Z-check-full-verify-wgmma-s4-multitile-fix.md
 prepared_at: 2026-10-25T041932Z
+job: 51b0d5c110f3459c
+dispatched_at: 2026-10-25T042009Z
 ---
 
 # full-verify-wgmma-s4-multitile-fix
