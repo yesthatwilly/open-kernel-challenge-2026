@@ -77,9 +77,18 @@ controls_for: null
 rewrite_stage: 1
 replaces: moe_wna16_marlin_gemm x2 (Marlin w13 + w2) at 1024 < T <= 4096 (turn_4, T=3012)
 review: proceed
-status: queued
+status: running
 review_at: 2026-10-25T085139Z
 review_companions: null
+stage: claimed
+claimed_at: 2026-10-25T085139Z
+base_sha: de61d5aeb2cabe210254a89cbdd05b3f99ff7b1c
+base_blob: db8a3344398bca79ea5cafeb580f701c055fd475
+branch: hyp/muse_prefill_layer/experts-turn4-ssdq-s1b-dataptr-symbol-fix
+worktree: .worktrees/muse_prefill_layer/experts-turn4-ssdq-s1b-dataptr-symbol-fix
+mode: null
+restack_of: null
+stale_base: null
 ---
 
 # experts-turn4-ssdq-s1b-dataptr-symbol-fix
