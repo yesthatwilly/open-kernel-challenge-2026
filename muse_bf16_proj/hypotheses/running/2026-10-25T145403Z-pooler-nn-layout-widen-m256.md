@@ -53,7 +53,7 @@ review: proceed
 status: running
 review_at: 2026-10-25T150319Z
 review_companions: null
-stage: claimed
+stage: implemented
 claimed_at: 2026-10-25T150319Z
 base_sha: b7d110b74193aba420325d572c4db747ff74118c
 base_blob: 353e3b19a7edd5cb879e202d78097f474bcce207
@@ -62,6 +62,12 @@ worktree: .worktrees/muse_bf16_proj/pooler-nn-layout-widen-m256
 mode: null
 restack_of: null
 stale_base: null
+implemented_at: 2026-10-25T150550Z
+impl_commit: d0b968c8f37916db5be7e466e719494e2070b6a1
+submission_sha256: d76c6769e15a27a138a8b27e9fc3e8f38ee472bd6fb164c1f7ba250efb30267f
+norm_sha256: 7ae22de521611d601a47e25be7fe8e91498fd9120955e687f02dfc6cf1962904
+submission_blob: f919748b5af6e815f319e5d2d828ed68e5b28a71
+lint_warnings: 13
 ---
 
 # pooler-nn-layout-widen-m256
@@ -105,3 +111,36 @@ No companion. An ab-revert of the restack would remove pooler_t itself, so the c
 - Does nvjet pick a different algorithm for NN at m=256 on the current driver/master than in the probe (128x64_64x8_1x2 NNT)? Record the exact kernel name and us. If it is the same tile as the TNT incumbent, any gain is weakly explained.
 - Ordering with the queued bf16-verify32-cutlass-coop-256x128-splitk-stage2, which also targets pooler m=256: whichever lands second must re-baseline this row against the other, not against the current master.
 
+
+## Implementation notes
+
+Base: worktree base b7d110b7; master e21fdc47 differs only by the claim commit (submission.py identical), so no merge was needed. Edited only muse_bf16_proj/submission.py (+15/-4).
+- Added NN_POOLER_MAX_M = 256 (NN_GATED_MAX_M stays 128 for the unpooler).
+- kernel_fn: NN branch is now cfg n == pooler_t/unpooler_t width AND ((nn_ok and 65 <= m <= 128) OR (layer == pooler and nn_p256_ok and 128 < m <= 256)). Every m <= 128 path is unchanged.
+- Review fix (open question 1, own flag): new state flag nn_p256_ok (default True), inherited by state B, included in _ab_flags, switched off in the second-state-build-failure path, and printed in FINAL FLAGS (nn_ok and nn_p256_ok). _ab_component maps pooler 129..256 to nn_p256_ok, so a miss at the new self-check cell (pooler, 4096, 8192, 256 added to AB_CASES, captured on two states and replayed A,B,A,B) turns off only the m=256 widening and never nn_ok.
+- Review: log final flags (printed: "nn_ok=... nn_p256_ok=..."); the attempt must record nn_ok=True, nn_p256_ok=True and the pooler verify_32 kernel name (must be *_NNT) and us. Confounder (dispatch impl vs torch.mm) and the ordering with bf16-verify32-cutlass-coop-256x128-splitk-stage2 are judging notes, not build items; not credited to layout alone.
+- Deviation: none.
+
+## Rules check
+
+- [x] CUDA-graph capturable: gate reads cfg and state flags only; torch.mm, no sync/alloc on values.
+- [x] Nothing derived from data cached: no new state besides a constant bool.
+- [x] Weights: reuses existing lossless pooler_t; no new copy.
+- [x] Activations BF16 unchanged; KV/queries n/a (projection problem).
+- [x] Attention: n/a, GEMM only.
+- [x] No timing patches, harness access, subprocesses or network added.
+- [x] All work inside the timed call; no output caching.
+- [x] No device pointers or tensors in module globals added; flag lives in state.
+
+okc_lint: "OK with warnings: muse_bf16_proj/submission.py" (only pre-existing host-sync/dtype warnings in prepare-time code); py_compile clean; __pycache__ removed.
+
+## Pre-flight audit
+
+Audited 2026-10-25 by an opus subagent before a SCORED submit. **Verdict: dispatch** (no fixes).
+- Base verified: worktree HEAD blob equals master 353e3b19; diff is submission.py only (+15/-4), within the spec area.
+- Gate: pooler m=256 (n=4096, k=8192) falls through swapab16 (m<=16), pooler split-K (m<=16) and swap-AB (17..32) to the NN branch; nn_p256_ok defaults True and the new AB cell uses the same fp32 reference and 6e-3 bound the m=128 NN cell already passes, so it is not an always-fail gate. Unpooler m=256/130/1000 and every m<=128 cell resolve exactly as on master.
+- Isolation: _ab_component maps pooler 129..256 to nn_p256_ok only (checked after the nn_ok range), so a miss or exception in the new cell switches off only the widening and lands on _bf16_gemm_dispatch_impl; nn_ok (m=128) is untouched. Flag is inherited by state B, set False on second-state-build failure, and printed in FINAL FLAGS.
+- Rules: kernel_fn gate reads cfg and state bools only; torch.mm on the prepare()-built lossless pooler_t, no sync, no compile, graph-capturable (same call master captures at m=128); nothing derived from data cached. okc_lint OK (pre-existing prepare-time warnings only); py_compile clean; __pycache__ removed.
+- Cosmetic only (not changed): _ab_selfcheck docstring and the kernel_fn comment still list m in {1,8,128} / nn_ok only.
+
+Residual risk: performance only; the NN gain at m=256 rests on one probe run, so the pooler verify_32 row may read neutral (must show an *_NNT kernel and nn_ok=True nn_p256_ok=True).
