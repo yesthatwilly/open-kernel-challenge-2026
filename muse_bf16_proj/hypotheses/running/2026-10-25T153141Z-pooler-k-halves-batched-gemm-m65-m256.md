@@ -50,7 +50,7 @@ review: proceed
 status: running
 review_at: 2026-10-25T161612Z
 review_companions: null
-stage: claimed
+stage: implemented
 claimed_at: 2026-10-25T161612Z
 base_sha: e2a24e6c8d5b0c6b1ec53f88d2d22e18c50aa1ae
 base_blob: f919748b5af6e815f319e5d2d828ed68e5b28a71
@@ -59,6 +59,12 @@ worktree: .worktrees/muse_bf16_proj/pooler-k-halves-batched-gemm-m65-m256
 mode: null
 restack_of: null
 stale_base: null
+implemented_at: 2026-10-25T162132Z
+impl_commit: e5de059ed5d1ec059df17caeab66fcd66e95804f
+submission_sha256: 8757f255f0ba42c534b903ef01b065cf9196e6e4ef7260c292324799801405d0
+norm_sha256: 09e289eec8075e0271d86f9b68fb56431f86d1fcaa7ae97f4e290f45d87042e8
+submission_blob: 37b0e68c31722a46fd7377aaca28eba9d5955c68
+lint_warnings: 21
 ---
 
 # pooler-k-halves-batched-gemm-m65-m256
@@ -130,3 +136,13 @@ Base: worktree submission.py blob equals master's f919748b, so no merge was need
 - [x] First-line marker kept; not committed, okc not run.
 
 okc_lint: OK with warnings (only existing prepare()-side host-sync and flush-dtype warnings); py_compile OK; __pycache__ removed.
+
+## Pre-flight audit
+
+Audited 2026-10-25 (model opus, scored submit). **Verdict: dispatch-with-fixes.**
+
+- Fix: `_khalf_names_ok` no longer asserts an exact kernel count (`len(gemm)==1 and len(elem)==1 and len(low)==2`) or rejects memsets. It now disqualifies only a copy kernel (memcpy/copy/contiguous on a non-GEMM name) or a cuBLAS splitKreduce, and prints the counts. Reason: nothing in this repo shows torch.profiler returning CUDA events inside the judge image. If CUPTI is unavailable, or the GEMM name matches none of nvjet/cutlass/gemm/sm90, or cuBLAS adds a memset, the exact count rejects both candidates, so the path never runs and the scored run is wasted (category 1). Numerics (rel L2 <= 6e-3) and the graph-replay selector still decide the path. An empty event list prints "name check skipped".
+- Checked, no change needed. kernel_fn adds only a cfg/shape gate and a dict lookup on cfg m. `_khalf_forward` makes views, then bmm into [2, m, 4096] and add into [m, 4096], both sized by shape only. No prints, try/except or state mutation. Earlier routes (swapab16 m<=16, pooler split-K m<=16, swapab 17..32) cannot catch m=128/256, so the selector's master baseline (torch.mm on pooler_t) is master's actual path at both m. The T/N view math was verified in numpy against x @ W.T. `_ab_flags` carries pooler_khalf_ok and a copy of the pooler_khalf dict; B never re-runs the selector. `_ab_component` returns pooler_khalf_ok before the NN ranges, so an A/B miss turns off only that flag and kernel_fn falls through to master's NN torch.mm with nn_ok and nn_p256_ok untouched. A selector exception keeps master and never raises. Only a failed B-state build turns the NN flags off, which is master's existing behaviour.
+- okc_lint OK (only pre-existing prepare-side warnings); py_compile OK; __pycache__ removed.
+
+Residual risk: cuBLAS may pick a 128x64 or split-K tile for the strided bmm, so the selector keeps master and the run only measures master. The prints make that readable as "refuted at prepare-time".
