@@ -56,7 +56,7 @@ review: proceed
 status: running
 review_at: 2026-10-25T161512Z
 review_companions: null
-stage: implemented
+stage: dispatched
 claimed_at: 2026-10-25T161512Z
 base_sha: 982cc0e7665f7a510a5b0128e83949922fd6b456
 base_blob: 9fb1f7c4b4282dd7461c6cdba926fe3ebf12128e
@@ -73,6 +73,8 @@ submission_blob: 6a16d158f6a6df0e484eb053e147a6fdae43b713
 lint_warnings: 82
 attempt_file: 2026-10-25T161534Z-submit-combo-a-master-normgather-naive-stack.md
 prepared_at: 2026-10-25T161534Z
+job: 9bfc488c36c84924
+dispatched_at: 2026-10-25T161541Z
 ---
 
 # combo-a-master-normgather-naive-stack
