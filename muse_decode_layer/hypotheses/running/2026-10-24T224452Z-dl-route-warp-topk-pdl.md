@@ -55,7 +55,7 @@ base_sha: 9d09de0cc3ef315d6ef3aab918058321b698da3f
 base_blob: 4da94677234faaa06b42b5ced541db8961fd6f34
 branch: hyp/muse_decode_layer/dl-route-warp-topk-pdl
 worktree: .worktrees/muse_decode_layer/dl-route-warp-topk-pdl
-mode: null
+mode: check
 restack_of: null
 stale_base: null
 implemented_at: 2026-10-25T011431Z
@@ -64,6 +64,8 @@ submission_sha256: 5819b26d5299dc4d105a4a32a9136c7f40e03d54b23d5321a56a4aeb0c1c4
 norm_sha256: ef1a8d1fbe8dafaf1cc746358fc23e1ff311698753ea211e78c54ce0ea3e75d8
 submission_blob: 1dc2735e85cedd0e25f03663f989c4330ac8d50a
 lint_warnings: 33
+attempt_file: 2026-10-25T011431Z-check-dl-route-warp-topk-pdl.md
+prepared_at: 2026-10-25T011431Z
 ---
 
 # dl-route-warp-topk-pdl
