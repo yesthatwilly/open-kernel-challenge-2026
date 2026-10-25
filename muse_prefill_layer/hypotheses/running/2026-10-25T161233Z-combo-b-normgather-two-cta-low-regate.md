@@ -78,9 +78,18 @@ priority: 1
 kind: primary
 controls_for: null
 review: proceed
-status: queued
+status: running
 review_at: 2026-10-25T161800Z
 review_companions: null
+stage: claimed
+claimed_at: 2026-10-25T161800Z
+base_sha: 848b2c2e1405318d09d245e2d959487d1742f8c0
+base_blob: 9fb1f7c4b4282dd7461c6cdba926fe3ebf12128e
+branch: hyp/muse_prefill_layer/combo-b-normgather-two-cta-low-regate
+worktree: .worktrees/muse_prefill_layer/combo-b-normgather-two-cta-low-regate
+mode: null
+restack_of: null
+stale_base: null
 ---
 
 # combo-b-normgather-two-cta-low-regate
