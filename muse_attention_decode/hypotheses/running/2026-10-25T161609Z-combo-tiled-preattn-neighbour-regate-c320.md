@@ -116,7 +116,7 @@ base_sha: 1e8d6d6adbaadd4ecaf72ebd01c75f24004e81bc
 base_blob: 5cf8fae31e5b84c36efeeb4569763eb9b06e1c8a
 branch: hyp/muse_attention_decode/combo-tiled-preattn-neighbour-regate-c320
 worktree: .worktrees/muse_attention_decode/combo-tiled-preattn-neighbour-regate-c320
-mode: null
+mode: submit
 restack_of: null
 stale_base: null
 implemented_at: 2026-10-25T185648Z
@@ -125,6 +125,8 @@ submission_sha256: 44401237b2b4e359add3d7a8babe17e1de4beebc62b314d9279a3690948fa
 norm_sha256: 1f9d236445727a1acee7fb5ca70104cb8f25ef9f29463416708d8efd45393133
 submission_blob: 21b3e1e32dfdd66befa9a3f5bb59050edac082d2
 lint_warnings: 72
+attempt_file: 2026-10-25T185648Z-submit-combo-tiled-preattn-neighbour-regate-c320.md
+prepared_at: 2026-10-25T185648Z
 ---
 
 # combo-tiled-preattn-neighbour-regate-c320
