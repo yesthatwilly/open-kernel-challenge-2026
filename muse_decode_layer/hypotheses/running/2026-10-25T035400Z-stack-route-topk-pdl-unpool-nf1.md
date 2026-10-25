@@ -49,7 +49,7 @@ review: proceed
 status: running
 review_at: 2026-10-25T040253Z
 review_companions: null
-stage: claimed
+stage: implemented
 claimed_at: 2026-10-25T040259Z
 base_sha: cd742704c601ae9e373cdd9ab7989a60db8c599d
 base_blob: 4da94677234faaa06b42b5ced541db8961fd6f34
@@ -58,6 +58,12 @@ worktree: .worktrees/muse_decode_layer/stack-route-topk-pdl-unpool-nf1
 mode: null
 restack_of: dl-route-warp-topk-pdl
 stale_base: null
+implemented_at: 2026-10-25T040848Z
+impl_commit: 2fe4d35e13bc66b3ed8647e8e4562c8ea5c52d8a
+submission_sha256: d37307fd15dc525cab5140acaf91fbf9aa26cb6d0ab095d479527758d2f9c404
+norm_sha256: 1956daa6ab32d3359b743675dc8fa77d42bcd09bc7dd5a9d4af9250fc55728b8
+submission_blob: 20289b4cab2e4420c35ffabe8e4610f511fc0929
+lint_warnings: 38
 ---
 
 # stack-route-topk-pdl-unpool-nf1
@@ -99,3 +105,36 @@ No companion. The two pieces are in separate kernels whose profile rows (dl_rout
 - Make the NF=1 unpool selector compare the printed timings (custom vs master slice+pad) and assert the winner (LESSONS 163), and do the same for the R pdl 0/1 choice.
 - Read decode_1 rows against the earlier control run (p-wide-tile: 126.5 / 144.1) as well as BEST, because the 03:41Z batch drifted about 1 us at decode_1.
 
+
+## Implementation notes
+
+- Worktree state: claim had already restacked dl-route-warp-topk-pdl.patch (staged, 390+/22-). Applied boundaries-unpooler-pdl-small-t.patch on top with `git apply -3`; clean, no hand-port (separate _DLB_CUDA TU, as the review said; the review wins over the spec's "same TU" warning).
+- kernel_fn: both boundaries are SGLang again (attn_boundary / ffn_boundary; no _dlb_attn/_dlb_ffn/use_dlb early return). `_dlb_unpool` (dl_unpool_kernel, PDL launch) runs only when `tokens <= SLICED_UNPOOL_MAX_TOKENS` (8) and `dlb["unpool"][1]`; T 9..32 and T>32 stay on master _gemm, T>32 untouched.
+- `_dlb_setup` rewritten unpool-only: per-piece flag `dlb["unpool"][1]` (route keeps state["dl"]); self-check = unpool at T=1,4,8 (poisoned output, twice, rel L2 <= 2e-3, zero columns exactly 0), then chain graph replay (SGLang boundary -> P -> R -> experts -> unpool -> SGLang boundary) vs eager vs master at T=1,8,16,31,32. Failure turns off only the unpool (dl route untouched).
+- Timing selectors assert the winner and print `WINNER = ...` / `PATH CHOSEN = ...`: unpool NF=1 custom vs master slice+pad (memset-subtracted, summed T=1+8) must win else master; R selector (`_dl_time_r` now returns a winner): new R at the chosen pdl vs master R (variant 2, no PDL) on summed P->R graph pairs T=1/8/32 must win, else `dl["r_variant"]=2` and `_dl_forward` launches master's R.
+- Dead code left: dl_boundary kernel still compiles in the _DLB TU (adds compile time) and the _dlb_attn/_dlb_ffn/_dlb_coeffs/_dlb_pick_round helpers are unused; boundary build/self-check/timing is no longer run.
+- Not run (no GPU on this node).
+
+## Rules check
+
+- [x] CUDA-graph capturable: kernel_fn has no sync/.item(); selectors run in prepare() only (checked diff).
+- [x] Nothing derived from `data` is cached: dlb holds only weight-derived/ws buffers; r_variant is a prepare-time choice.
+- [x] Weights: unchanged (unpooler used in place; no repack added).
+- [x] Activations BF16/FP8 as before: n/a, no precision change; boundaries are SGLang.
+- [x] Attention untouched: n/a.
+- [x] No timing patches/harness/module edits/subprocess/fork (grep clean).
+- [x] All work inside the timed call; no output caching.
+- lint: `OK with warnings` (only host-sync warnings in prepare()); py_compile OK; __pycache__ removed.
+
+## Pre-flight audit
+
+Audited 2026-10-25 (opus), by reading. **Verdict: dispatch-with-fixes.**
+
+- Selector independence: confirmed. R choice lives in `dl["r_variant"]` (0 new / 2 master v1; `_dl_forward` drops R PDL for variant 2). Unpool lives in `state["dlb"]`, and `_dlb_setup` returns None unless the NF=1 self-check, the A/B and the chain replay all pass. Every dlb failure path only resets dl counters, so dl/R stay untouched. The dlb chain check runs after `r_variant` is set, so it validates the R that kernel_fn actually runs. The only coupling: an R fault that shows only in the dlb chain replay turns off the unpool, not R.
+- PDL: dl_unpool_kernel is launched with the attribute after the Triton `_post_norm_combine_kernel` (T<8), which never triggers. So the unpool starts at the implicit end-of-block trigger. Before `griddepcontrol.wait` it only cp.asyncs constant weight rows into smem (no global writes), and the zero columns, the x loads and the ws/out stores all come after the wait. The unpool never calls launch_dependents, and the SGLang FFN boundary after it is a normal launch, so there is no trigger/wait mismatch and no hang. P now triggers before its split-K stores. R (PDL) reads only norm_w/bias before its wait. v1 R is never launched with the attribute.
+- Graph replay covers chain T=1/8/16/31/32 (the unpool is custom only at 1/8; 16/31/32 are master unpool plus the new R), plus the master dl replay at 8/32. Gates are reachable: rel L2 2e-3 vs cuBLAS is bf16-rounding level, and both source runs passed the same checks.
+- Fix 1 (`_dl_time_r`): the master-R P->R pair timed P with pdl=0, but kernel_fn runs P with `dl["pdl"]` even when variant 2 is chosen. That biased the R selector toward the new R by P's own PDL overlap. The old pair now uses P pdl=chosen_pdl (v1 R still has no PDL).
+- Notes (no change): the dense-chain module keeps the master name `muse_decode_dense_chain_v1` (harmless: the torch JIT versioner rehashes the sources). The dead dl_boundary kernel still compiles in the _DLB TU (compile time only). If the new R fails the dl self-check, the whole dense chain goes off (master path) rather than falling back to v1 R, the same as the passing source run b471a950.
+- lint OK with warnings (prepare()-only syncs); py_compile OK; __pycache__ removed.
+
+Residual risk: never compiled together on GPU here. A new-R self-check failure drops the whole dense chain, not just R, and the unpool A/B depends on a memset-subtracted timing of about 3 us.
