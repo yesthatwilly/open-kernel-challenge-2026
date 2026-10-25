@@ -55,7 +55,7 @@ review: proceed
 status: running
 review_at: 2026-10-25T054716Z
 review_companions: null
-stage: implemented
+stage: dispatched
 claimed_at: 2026-10-25T054717Z
 base_sha: dbb845684aa94ad1867281815e42f53464870f19
 base_blob: 50274a3d8678d5656197b8e401ca411d4f08a6e2
@@ -72,6 +72,8 @@ submission_blob: fd1c193f0c8d523702cf3687711a06c01db9bce5
 lint_warnings: 27
 attempt_file: 2026-10-25T084648Z-check-full-decode1-sk-two-level-fused-preattn.md
 prepared_at: 2026-10-25T084648Z
+job: 2038a530edd04309
+dispatched_at: 2026-10-25T084656Z
 ---
 
 # full-decode1-sk-two-level-fused-preattn
