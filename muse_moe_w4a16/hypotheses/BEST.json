@@ -1,17 +1,17 @@
 {
  "problem": "muse_moe_w4a16",
- "job": "1947e3ec2abb4bdf",
- "check_job": "45eacf4ca2e849d2",
- "mode": "submit",
- "speedup": 1.3278240305297715,
+ "job": "a2744bc496b84790",
+ "check_job": "a2744bc496b84790",
+ "mode": "check",
+ "speedup": 1.344525539017997,
  "ci": [
-  1.307906670071825,
-  1.3477413909877178
+  1.324357655932727,
+  1.364693422103267
  ],
- "score_us": 10128.224592105293,
- "commit": "1a5da3d22ce48904de76852a1d585563f4c53048",
- "submission_blob": "108d36e9f2266fc88531dd6ff0329a847c882013",
- "slug": "align-parallel-per-expert-verify",
- "result": "muse_moe_w4a16/hypotheses/done/neutral/align-parallel-per-expert-verify.result.json",
- "updated_at": "2026-10-24T184753Z"
+ "score_us": 10002.413200587025,
+ "commit": "9080a71e9183df77bc71f28ecfa0f635b7d0aff0",
+ "submission_blob": "60dfe35d5417d9c0f89067ff313efdc2c41d03a2",
+ "slug": "w2-marlin-atomic-add-small-m",
+ "result": "muse_moe_w4a16/hypotheses/done/neutral/w2-marlin-atomic-add-small-m.result.json",
+ "updated_at": "2026-10-25T041905Z"
 }

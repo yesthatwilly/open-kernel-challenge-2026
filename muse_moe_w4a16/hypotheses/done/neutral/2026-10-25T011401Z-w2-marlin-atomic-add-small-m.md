@@ -71,7 +71,9 @@ speedup: 1.344525539017997
 speedup_ci: [1.324357655932727, 1.364693422103267]
 harvested_at: 2026-10-25T034137Z
 best_at_harvest: 1.3278240305297715
-promotion: null
+promotion: merged
+hand_landed: true
+promotion_commit: 9080a71e9183df77bc71f28ecfa0f635b7d0aff0
 ---
 
 # w2-marlin-atomic-add-small-m
