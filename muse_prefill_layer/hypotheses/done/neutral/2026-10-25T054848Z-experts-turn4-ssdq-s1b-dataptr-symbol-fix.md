@@ -108,6 +108,7 @@ best_at_harvest: 1.074386115190733
 promotion: merged
 hand_landed: true
 promotion_commit: ca1d41b1dc9f1cca7f8d13c3e0e5b2027055e6fa
+promotion_attempt: 2026-10-25T110032Z-submit-experts-turn4-ssdq-s1b-dataptr-symbol-fix.md
 ---
 
 # experts-turn4-ssdq-s1b-dataptr-symbol-fix
