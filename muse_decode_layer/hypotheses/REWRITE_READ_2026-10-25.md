@@ -340,3 +340,53 @@ Stage 3:
 2. Gate against an fp32-dequant reference rather than Marlin, as the moe bs1 kernel does: fused 2.9e-3 vs master 4.9e-3. Use a bound derived from Marlin's own error against that reference (e.g. ≤ 1.5× Marlin's).
 3. Print the T=128/256 CUDA-event timings before the decision.
 4. Keep `okc check` only.
+
+## 03:41Z harvest
+
+References:
+- BEST `stack-align-par-sidestream-sliding1`. The result file is check cc92097b64784c0f, 1.2495x; the submit 39bcf05afc4e4dd3 gave 1.2521x.
+- Control: `dl-p-wide-tile-t16-t32`. It leaves T≤8 on master P (PATH CHOSEN), so its decode_1 rows show this batch's drift.
+- decode err is 0.5-8 µs, so only the decode_1 rows (err ~0.6) resolve 2% moves.
+
+decode_1 rows across today's runs (µs):
+
+| run | sliding decode_1 | full decode_1 |
+|---|---|---|
+| BEST submit 39bcf05 / check cc92097 | 127.1 / 127.5 | 145.9 / 142.9 |
+| p-wide-tile (control: T=1 untouched) | 126.5 | 144.1 |
+| **route-warp-topk-pdl** | **124.1** | 141.2 |
+| **boundaries-unpooler-pdl** | **123.9** | 140.5 |
+| dense-chain-stage2 | 125.8 | **139.3** |
+
+### dl-route-warp-topk-pdl — job b471a950805c4053, check 1.2599x [1.241, 1.279]: RAN. Small real gain at T=1; NOT a candidate alone; STACK.
+
+- Self-checks passed: P/R at T=1/4/8/9/16/32, R alone on no-local / one-hot-local / near-tie, and R variants 0/1/2. PDL probe → pdl=1. `PATH CHOSEN = DENSE-CHAIN at T <= 32, MASTER above`.
+- Prepare: R at T=1 went from 7.01 to 5.79 µs. The P→R pair with pdl went from 27.87 to 26.73 µs (−1.1). T=8 and T=32 were similar (−1.0 to −1.5 µs).
+- Shapes vs BEST: sliding decode_1 −3.4 µs (−2.6%, z−3.3) and full decode_1 −1.8 (−1.2%, z−2.0). Against the control that is −2.4 and −2.9 µs. Every other shape is within err (z ≤ 2.7). full verify_1 at +6.8% (z+2.7) has err 3.3 µs; its Marlin row is lower (74.6 vs 86.2), so that is noise.
+- Substituting the decode_1 rows into BEST gives 1.2548 (+0.005), below one check's resolution.
+
+### boundaries-unpooler-pdl-small-t — job 1dfe83fdbeea458a, check 1.2559x [1.237, 1.275]: RAN. Small gain at T=1; the selector shipped a slower kernel; STACK the good half.
+
+- Build: `-arch=sm_90a`; the log notes griddepcontrol, mma.sync and cp.async only. Residual-coefficient probes matched the reference formula exactly. Post-norm rounding probe: attn bf16, ffn fp32. Max errors were 1e-5 to 2.6e-3, and the chain graph matched.
+- `PATH CHOSEN = boundaries CUSTOM at T <= 32; unpooler CUSTOM per NF {1: True, 2: False, 4: False}`.
+- **The boundary kernel lost its own timing and was chosen anyway.** `dl_boundary_kernel` ran 3.91/4.09/4.20 µs vs SGLang `FusedPostNormResidualPreNorm` 2.79/2.92/3.07 µs at T=1/8/32. The unpool kernel wins only at NF=1: 6.5 vs 9.2 µs.
+- Shapes vs BEST: sliding decode_1 −3.6 µs (z−3.6) and full decode_1 −2.5 (z−2.8). sliding verify_1 −9.2 µs (−4.8%, z−2.2; err 2.8). Others within err.
+- Substituted headline 1.2542 (+0.005).
+- Next: keep `dl_unpool_kernel` at NF=1 only, and put the boundaries back on SGLang's fused kernel. Each boundary costs +1.1 µs and there are two per layer.
+
+**Stack proposal (one check):** route-topk (R) + unpool NF=1 only, on BEST. The prepare figures add up to −1.1 (R) −2.7 (unpool) ≈ −3.8 µs per T=1 shape. The two runs measured −2.4 to −3.6 µs each against the control. Expect ≈ +0.008-0.010 headline. That needs a submit-grade A/B, not a check headline.
+
+### dense-chain-stage2-attn-side-pdl — job b31b8453208a471c, check 1.2253x: RAN. Won at T=1 full, LOST at T=16/32. Gate to T=1 or DEAD.
+
+- FP8 encode uses `__nv_cvt_float2_to_fp8x2` SATFINITE through bf16. Max errs: q 1.2e-2, k 1.3e-2 (FP8), o 3e-4. Graph replay matched.
+- `PATH CHOSEN`: sliding decode_1 = Q raw + `_sliding_forward` + O raw. Every other T≤32 shape = Q + FA3 + O. Above T=32, master.
+- Prepare: Q at T=1 8.4 µs (4.5 TB/s) and O at T=1 6.4 µs. **O at T=32 takes 40.8 µs (0.41 TB/s).**
+- Shapes vs BEST: full decode_1 −3.7 µs (−2.6%, z−3.9) is a gain. Losses: sliding decode_16 **+9.2%** (z+4.4; `dl_o_kernel` 26.8 µs), sliding decode_32 **+13.5%** (z+6.5; `dl_o_kernel` 46.0 µs) and full decode_32 +6.0% (z+2.6; `dl_o_kernel` 53.1).
+- The O kernel does not scale past T=1. Next: gate stage 2 to T=1 (full only; sliding decode_1 was flat at −1.4%), or drop it. Do not spend more on the T>1 O kernel without a new tile design.
+
+### dl-p-wide-tile-t16-t32 — job 9ad8e2cf869c4b4f, check 1.2457x: RAN, flat. DEAD.
+
+- Wide P: 80/106 regs at NF=2/4, 0 spill, 3/2 CTAs/SM (more warps resident). The full self-check passed.
+- **The selector picked WIDE at T=9..32 although its own CUDA-event timing said it was slower**: T=16 old 23.4 vs wide 24.9 µs, T=32 old 26.4 vs wide 28.9.
+- Shapes at T=16/32 are within err: sliding decode_16 +1.2%, sliding decode_32 −2.2% (z−1.0), full rows ≤0.3%.
+- More resident warps did not raise P's bandwidth: 3.0 TB/s at T=16 vs 3.2. Dead.

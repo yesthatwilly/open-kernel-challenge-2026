@@ -296,3 +296,69 @@ This is Triton only, with no CUDA build. The log is the 15 KB tail of the align 
 | verify_16 / verify_32 | 318.3 / 454.3 | 318.4 / 451.1 | +0.1 / −0.7% | ≤0.6 |
 
 The `_post_norm_combine_kernel` row moved 3.1 → 2.8 µs at bs=1, with no shape-level effect. PDL on a ~3 µs tail kernel after Marlin buys nothing measurable.
+
+## 03:41Z harvest
+
+Reference: BEST `align-parallel-per-expert-verify`, using the result file named in BEST.json (check 45eacf4ca2e849d2, 1.3249x; the submit 1947e3ec2abb4bdf gave 1.3278x). z is Δ / √(err²+err²). moe err is 0.4-4 µs.
+
+### w2-marlin-atomic-add-small-m — job a2744bc496b84790, check 1.3445x [1.324, 1.365]: RAN. LAND CANDIDATE (bs=1 only moves).
+
+**What ran (log, 15 KB tail):**
+- `[w2-atomic] PATH CHOSEN = atomic (worst rel-L2 vs master 0.00479)`.
+- `atomic add enabled for w2 at T<=32: True; use_fp32_reduce=True; zeroing memset in path: False`.
+- Note: `use_fp32_reduce=True` differs from the spec ("False, Marlin requires the pair"). Marlin accepted it, and the judge's 5/5 tests passed at rel L2 ≤ 6e-3.
+- Pure Python kwargs change, so there is no CUDA build. No fault.
+
+**Per-shape vs BEST (45eacf4c):**
+
+| shape | BEST µs | new µs | Δ | z | Marlin pair (profile) |
+|---|---|---|---|---|---|
+| **bs=1 (decode_1)** | 48.82±0.6 | **44.88±0.65** | **−8.1%** | **−4.9** | 44.7 → 42.1 µs |
+| bs=8 (verify_1) | 107.74 | 106.03 | −1.6% | −0.6 | — |
+| bs=16 (decode_16) | 148.37 | 147.71 | −0.4% | −0.2 | — |
+| bs=32 (decode_32) | 199.88 | 198.72 | −0.6% | −0.3 | — |
+| bs=128 / 256 (control, T>32 untouched) | 318.26 / 454.28 | 317.77 / 467.80 | −0.2 / +3.0% | −0.1 / +2.5 | bs=256 Marlin 451 vs 391: that Marlin row varies 391-451 across today's runs (drift) |
+
+- The raw timed distribution at bs=1 confirms it beyond the adjusted median. raw p50 is 47.3 µs vs 51.4-51.8 in both BEST runs, and p10 46.1 vs 50.0-50.4. The +23 µs slow mode hit 10/100 replays vs 44-45/100 in BEST.
+- Every other run today sits at 48.5-49.2 µs at bs=1, so 44.9 is outside that spread.
+- decode 1 load: 1.578 → 1.721. Substituting the bs=1 row alone into BEST gives **≈1.344x**; adding the flat bs≤32 rows gives 1.346.
+- The headline CI lower bound (1.324) is just under BEST's submit point (1.3278), so a scored submit is the test.
+
+**Verdict: LAND CANDIDATE** (scored submit, needs the user's approval). The predicted gains at bs=8/16/32 did not appear; only bs=1 moved.
+
+### cuda-nvfp4-wgmma-rega-grouped-s2-finite-fix — job 583a73418fbf4d01, check 1.3307x: BUILT, DIAGNOSED, FELL BACK TO MARLIN. FIXABLE, high value.
+
+**What ran:**
+- Build: sm_90a only, 37.6 s, 0 ptxas warnings, no wgmma serialization warning.
+- w13+silu kernel: 168 regs, 0 B spill. w2 kernel: 168 regs, **8 B spill**. 1 CTA/SM each.
+- `cuTensorMapEncodeTiled` ×8 returned rc 0. The device error word was 0 everywhere.
+- `PATH CHOSEN = MARLIN` for every num_tokens, so the 1.3307 is master re-measured: every shape is within ±1-4% at z ≤ 2.5.
+
+**Diagnostic summary block: which kernel, which bucket.** The bug is in the token-bucket (M-tile) instantiations of 64 and 128 rows. The weights, scales, gather and N-tiling are correct.
+
+| kernel | N16 bucket | N32 | N64 | N128 |
+|---|---|---|---|---|
+| w13+silu (h vs Marlin cache2) | ok, rel 6.3e-3 | ok, 6.5e-3 | **every row non-finite** | **every row non-finite** |
+| w2 fed Marlin's h (y vs Marlin) | ok, 3.4e-3 | ok, 3.5e-3 | ok, 3.5e-3 | **every row non-finite** |
+
+- The gather is clean: 0/644 bad real rows, pad rows zero, 0 remote-slot writes. ids and coverage are True everywhere.
+- In failing buckets the whole row is non-finite. The first bad element is (route 3, token 0, col 9, N-tile 0), and the "worst N-tiles" list contains every tile with the same row count. A per-N-tile or per-K error would not look like that; a per-M-tile (bucket) error would.
+- The routings that put every chunk into the 16-bucket pass at every M: `random` at M=128/192/256/257, with h 6.4e-3, y 3.5e-3 and out 6.0e-3, plus the graph replay. `skewed`, `all-local` and `all-one-expert` pull in 64/128 buckets and fail. The fp32-dequant reference also reads inf on those.
+- w13 breaks from 64 rows and w2 only at 128. Suspects are whatever differs between the 64/128-row instantiations and the 16/32 ones: the register-A fragment row offset past row 32/64, the second consumer warpgroup's row base, or a per-bucket smem carve-out overlapping a B stage. The smem sizes are w13 8192+187392 B and w2 8192+203776 B. This is inference: the log names the buckets, not the line.
+- `fused norm skips remote rows: False` is probably downstream of the NaN rows. Re-test it after the fix.
+- **Upside if fixed** (prepare, warm L2, eager): M=128 gives wgmma 7.0 + 346.3 + 162.6 = **515.9 µs vs Marlin 911.3** (0.57x). M=256 gives 728.0 vs 1258.5 (0.58x). The judge reads cold-L2 profiles 20-25% higher, and the log itself warns the time is optimistic if a race releases early.
+
+**Verdict: FIXABLE.** Stage 3 should:
+1. Run one-expert M=64 and M=128 cases per bucket, for w13 and w2 separately.
+2. Dump h for the first bad row (all NaN vs a scattered inf).
+3. Diff the w13 N64 instantiation against w2 N64, which passes.
+4. Keep the both-kernels-pass gate.
+
+### cuda-fused-moe-bs1-persistent-bandwidth-s3-inproc — job cd0f6b08a6dd4165, check 1.3295x: RAN at bs=1, LOST to bimodality. DEAD as a path.
+
+- ARCH GATE ok (sm_90a, binary and ptx 90). The canaries, 50 eager + 10 graph replays and the fp32 check all passed: fused 2.8e-3 vs master 5.1e-3 against fp32 dequant.
+- `PATH CHOSEN = fused for num_tokens == 1`.
+- The prepare DIAG was again unimodal: fused p50 42.0 µs (p90/p10 1.03) vs master 50.7 µs, interleaved, cold L2.
+- **The judge's timed loop was bimodal again, and worse.** 53/100 replays were in the slow mode (~66 µs; p50 65.6, p10 41.9). nospin had 41/100.
+- Adjusted median 50.41 vs BEST 48.82 (+3.3%, z+1.2). The profile kernel row reads 62.5 µs vs Marlin pair 44.7.
+- Two stages have failed on the same mode, which the prepare instrumentation cannot reproduce. The atomic-add Marlin change now takes bs=1 to 44.9 with a 10% slow mode. Stop here.

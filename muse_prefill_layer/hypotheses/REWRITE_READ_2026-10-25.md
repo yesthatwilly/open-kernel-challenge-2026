@@ -207,3 +207,32 @@ The master expert GEMM at first_turn is Triton `_moe_nvfp4_gemm_kernel` at 8.08-
 | turn_1 / turn_4 (Marlin, control) | — | — | −1.5% to +1.7% | flat |
 
 **Verdict: DEAD as is.** The sm_90a build is now proven to run, so the wgmma path really executed. It is 1.8-1.9x slower than the Triton GEMM, with a 680 B spill at 1 CTA/SM. Only a redesign is worth another check: fix the register pressure (setmaxnreg producer/consumer split) and use 2 consumer warpgroups.
+
+## 03:41Z harvest
+
+Reference: master `stack-tonight-five-prefill`, check c4d14d62f11e4aaf, 1.0705x. (BEST.json's submit 502f2eab gave 1.0744.) z is Δ / √(err²+err²).
+
+**Drift warning:** turn_1 rows on the untouched Marlin path moved −7% to −10% in the persistent run (Marlin profile 644 vs 769 µs, same kernel). turn_1 and first_turn rows must be confirmed by a kernel change in the log, never by z alone.
+
+### experts-triton-persistent-grid-first-turn — job 5d9ddbbaaffd4599, check 1.0726x [1.057, 1.089]: RAN the A/B, GATED OFF. DEAD (persistent is slower).
+
+- Persistent kernels compiled at grid=132: 249/210/255 regs at BLOCK_T 64/128/256, 0 spills. The non-persistent BLOCK_T=256 has 4 spills.
+- **[persistent A/B] ratio lines** (T=16384, BLOCK_T=256, 74 live blocks, 7 alternations):
+  - w13: non-persistent 3059.2 µs vs persistent 3148.7 → **ratio 1.0292 (persistent 2.9% slower)**
+  - w2: 1579.7 vs 1654.0 → **ratio 1.0470 (4.7% slower)**
+  - `PATH CHOSEN: w13 non-persistent, w2 non-persistent (gate ratio <= 0.98)`
+- So the scored path is master's. The headline 1.0726 is master (1.0705) re-measured.
+- The shape moves vs master are drift on unchanged code: sliding turn_1 −7.3% (z−5.4), full turn_1 −10.3%, first_turn ctx0 −3.5%, sliding first_turn −2.5%. The `_moe_nvfp4_gemm_kernel` first-turn row is 8082 vs 8209 µs, the same kernel.
+- **Not a landing candidate.** With 74 live blocks on 132 SMs a persistent grid has no tail to recover. Grid-stride scheduling only adds loop overhead at this occupancy.
+
+### experts-triton-turn4-persistent-local-align-control-no-persi — job 374efc72c4d14856, check 1.0557x: RAN (Triton at turn 4 with local align). DEAD.
+
+- `[turn4-triton] ON`. The local-parallel align cut n_padded from 25216 to 4096 (bsm 128) and from 29440 to 8192 (bsm 256). align ok with 0/12 mismatches; e2e rel L2 5.9e-3.
+- turn_4 still loses to Marlin even with the padding gone. Sliding: 3376 vs master 3319 µs (+1.7%), Triton 2193 vs Marlin 2148. Full: 4967 vs 4849 (+2.4%, z+2.6), 2254 vs 2115.
+- The first_turn rows (+1.4-1.8%) are on the same path as master: drift.
+
+### experts-triton-turn1-blockt32-stream — job 8d1a2efec67b4758, 0.9425x: RAN, LOST at turn 1. DEAD.
+
+- BLOCK_T=32 kernels: 168 regs (199 packed), 0 spills. e2e rel L2 5.9e-3. The run took the Triton path at turn_1.
+- turn_1: sliding 1590 vs master 1101 µs (+44%, z+31) with `_moe_nvfp4_gemm_kernel` 1206 vs Marlin 769. Full 1915 vs 1530 (+25%). The turn 1 load fell to 0.713.
+- At T=753 the Triton NVFP4 GEMM is 1.6x slower than Marlin even at BLOCK_T=32. Keep Marlin at turn 1.

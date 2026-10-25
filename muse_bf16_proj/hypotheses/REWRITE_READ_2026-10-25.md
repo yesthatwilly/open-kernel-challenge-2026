@@ -208,3 +208,80 @@ Master for comparison is BEST `bf16-restack-m16-swapab-router-swapab-m32` (check
 - The headline therefore mixes two losses: the lossless kernel and a stale base.
 
 **Verdict: DEAD.** The kill gate missed by 2.1x, and the kernel moves 1.4-1.6 TB/s of compressed bytes against master's ~3.6 TB/s raw. Entropy decode at 1 CTA/SM cannot make up the 24% byte saving. Do not mint stage 3.
+
+## 03:41Z harvest
+
+References:
+- **Master run 1602a4e947e64090** (`bf16-m32-swapab-wgmma-triton`, 1.1984x) is the baseline.
+- BEST.json's 1.2215 is the unlanded restack (`bf16-restack-m16-swapab-router-swapab-m32`, 1e90292c). That is used only for stacking estimates.
+- The attribution files say base = restack, but the profiles show master's kernels: `_pooler_skinny_kernel` on o and `_router_hilo_kernel` on router, where the restack has `_bf16_swapab_kernel` and `_router_swapab_kernel`. **All nine runs were on master.**
+- **Batch drift:** untouched small-m rows read +2% to +6% slow in every run, on identical kernels. qkv_gate decode_1 read 13.2-13.6 vs 12.91 in all nine. So the 1.17-1.20 headlines are master-level, and only a target row whose kernel changed counts.
+
+### Wins worth stacking (per target row vs master, kernel changed)
+
+| run | shape | master µs | new µs | Δ | z | kernel |
+|---|---|---|---|---|---|---|
+| router-cuda-cluster-dsmem | router decode_1 (m=1) | 5.73 | **5.24** | −8.7% | −16.3 | cluster 3.6 vs hilo 3.2 + elementwise 0.7 (one kernel instead of two) |
+| | router verify_1 (m=8) | 5.91 | **5.08** | −14.1% | −30.7 | 4.3 vs 3.2 + 0.7 |
+| | router decode_16 (m=16) | 6.03 | 5.87 | −2.8% | −6.0 | 4.6 vs 3.5 + 0.7; **but restack's swapab reads 5.47 here** |
+| o-unpooler-slice-cluster | unpooler decode_1 (m=1) | 5.94 | **5.02** | −15.5% | −32.7 | `oun_kernel` 4.4 vs splitk 4.5 |
+| | unpooler verify_1 (m=8) | 6.13 | **5.56** | −9.4% | −20.9 | 4.8 vs 4.6 |
+| pooler-unpooler-m128-nn-layout | pooler verify_16 (m=128) | 25.55 | **22.98** | −10.1% | −29.3 | nvjet NN splitK 20.4 + reduce 3.0 vs TN 25.7 |
+| | unpooler verify_16 (m=128) | 19.79 | 19.20 | −3.0% | −9.0 | NN 19.2 vs TN 20.4 |
+
+The router-cluster and oun kernels also beat the restack rows at m=1 and m=8 (router 5.38/5.47 and unpooler 6.15/6.00).
+
+Substitutions into the restack rows:
+
+| stack | estimated headline |
+|---|---|
+| restack (base) | 1.2215 |
+| + router cluster at m=1, 8 | 1.2242 |
+| + oun unpooler at m=1, 8 | 1.2270 |
+| + NN layout at m=128 | 1.2302 |
+| **all three** | **≈1.238** |
+
+The same three on master give 1.208. **Next:** after the restack lands, run one check of the three gated pieces: router cluster m≤8, oun on the unpooler only at m≤8, NN at m=128 only.
+
+### Per-slug verdicts
+
+- **router-cuda-cluster-dsmem-splitk-rewrite** (dc5d03c4, 1.1897):
+  - Ran: cs=8 NT 8/16 at m≤16, 162-168 regs, 0 spill. Master Triton above m=16.
+  - Won at m=1/8 (table) and lost to the restack's swapab at m=16 (+7.1%).
+  - The m=32 row (6.85) fell back to master hilo, not the restack's m=32 swapab.
+  - **STACK at m≤8 only.**
+- **o-unpooler-slice-cuda-cluster-dsmem-rewrite** (3f3330f7, 1.1710):
+  - Ran on both layers: cl=8, 68/56 regs, 0 spill.
+  - The prepare gate appears to have used warm eager times (o m=1: cluster 8.1 vs master 14.8 µs). Cold, the cluster was slower on o (13.1 vs 12.2) and only slightly faster on the unpooler (10.3 vs 11.1).
+  - The judge: O lost at m=1/8/16 (+14% / +34% / +48%; `oun_kernel` 5.2/6.0/7.6 vs `_pooler_skinny` 4.6/5.2/4.8). The unpooler won at m=1/8.
+  - **STACK the unpooler half only.** Gate on cold-L2 timings.
+- **o-swapab-m32-splitk2-two-ctas-per-sm** (75f09fa6, 1.1860):
+  - Ran: o m=32 `_bf16_swapab_kernel` 7.3 vs 4.5 µs, shape +40.8% (z+69).
+  - Split-K=2 at two CTAs/SM doubles the reduction and halves the per-CTA stream for a K=1024 GEMM that is already tiny.
+  - **DEAD.**
+- **qkv-swapab-m32-splitk8-stages3** (a61778a0, 1.1963):
+  - Ran: qkv_gate m=32 rose 13.69 → 15.64 (+14.2%, z+27). The kernel row is flat (12.4 vs 12.1), so the loss sits outside the GEMM, in the split-K=8 reduce/semaphore tail.
+  - **DEAD.**
+- **unpooler-full-m16-swapab-route** (05782267, 1.1885):
+  - Ran: unpooler m=16 is on `_bf16_swapab_kernel` (18.4 µs) vs master nvjet (18.5). Shape 18.48 vs 18.61 (−0.7%, z−1.9).
+  - The m=16 unpooler is bandwidth-bound and cuBLAS is already at that bound.
+  - **DEAD** (neutral).
+- **pooler-unpooler-m128-nn-layout-gated** (0daf3faa, 1.1953):
+  - Ran at m=128 (table). At m=256 the pooler stayed on the TN kernel: 31.0 vs 29.5 µs profile, +2.4%, drift.
+  - **STACK at m=128.**
+- **bf16-lossless-exp4-decode-only-throughput-probe** (9148142c, 1.1904): **DEAD.** The verbatim line:
+  > `DEAD: best decode-only cold 29.41 us (W16xC2, 64 regs, 16 B spills; 1.74 TB/s compressed) = 1.021x yardstick 28.80 us (REVIVE needs <= 0.85)`
+
+  - The copy-only kernel reaches 0.770x of the yardstick, so the bytes are cheap; the entropy decode alone eats the whole 24% saving.
+  - Scored rows are master's (probe only).
+  - Close the lossless line.
+- **bf16-verify-deepgemm-bf16-gemm-nt-route** (2d522d47, 1.2027): **DeepGEMM LOADED but did NOT run in the timed path.**
+  - `deep_gemm 0.2.1.post1+muse.cbe1727` imported and `bf16_gemm_nt` was found.
+  - Every layer at m=128/130/200/256 passed (rel L2 1.66e-3, graph ok), and the log printed `PATH CHOSEN ... deepgemm` for all 16 (layer, m) pairs.
+  - However, every m=128/256 profile row is an nvjet cuBLAS kernel with master's tile names and times: pooler 24.5 / 29.5, unpooler 20.1 / 24.5, qkv 13.5+3.0 / 19.4, o 5.6 / 8.2. No DeepGEMM kernel appears.
+  - So either the route never reached the timed `kernel_fn`, or this build's `bf16_gemm_nt` dispatches to cuBLASLt. The pooler verify_32 −5.1% is the same nvjet kernel (29.5 = 29.5), i.e. drift.
+  - **UNMEASURED.** Next: print the profiler kernel name from a one-call probe in prepare, and assert it is not `nvjet`, before spending a check.
+- **pooler-unpooler-full-bulk-tma-row-owner-stream-rewrite** (cd39d36e, 1.1828): **BUILD FAILED.**
+  - `#error C++20 or later compatible compiler is required to use PyTorch`, then `[bulk] DISABLED: no extension; master paths`. The 1.183 is master plus batch drift.
+  - The host `main.o` compile in the tail does carry `-std=c++20`. The failing step is therefore the nvcc compile of the .cu, which was given only `-gencode=arch=compute_90a,code=sm_90a`.
+  - Next: add `-std=c++20` to that TU's `extra_cuda_cflags`, then rerun as a check. The design is unmeasured, not dead.

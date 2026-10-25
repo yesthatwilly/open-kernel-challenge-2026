@@ -287,3 +287,75 @@ The cluster path **ran at every B** (C=16 / C=8 / C=4, confirmed by PATH CHOSEN,
 The pair targets B>1:
 - decode_16: Triton master 12.9 µs, cluster 13.8. The cluster loses here, so the pair has the shape to itself.
 - decode_32: cluster 18.3 µs vs the earlier unpaired S=8 Triton 17.3 µs. The pair and its control must beat 18.3 there to displace the cluster.
+
+## 03:41Z harvest
+
+References:
+- BEST `sliding-deep-splits-on-cuda-splitkv`: submit 698d4cd3838c4a63, 1.3949x.
+- The unlanded stream-K s2 `full-decode-splitkv-s2-streamk-ticket-inproc`: check e592b1f5d3db4f83, 1.4171x.
+
+Notation:
+- z is Δ / √(err_new² + err_ref²).
+- Benchmark err here is 0.04-0.3 µs, so any |Δ| under ~2% is read against the profile kernel rows, not z.
+
+### full-decode1-streamk-s3-two-level-ticket — job 2a3241780c7b4c46, check 1.4322x [1.411, 1.455]: RAN. LAND CANDIDATE (it carries s2).
+
+**What ran (log):**
+- Build: the `muse_full_decode_splitkv_v3` TU, sm_90a only, `-O3 -lineinfo`. The s2 kernels match the last run (ticket 119 regs, no-ticket 113, 5-stage 119). The new `<4 stages, two-level ticket>` kernel uses 121 regs, 0 B local, 95264 B smem and runs 2 CTAs/SM.
+- Self-check: the canary and every s2 case passed. The B=1 two-level cases also passed: 80000 / 4097 / 63 / 1 keys, kv 1.0 and 0.25, grids 3 / 7 / SM / 2xSM, all at rel L2 ≈1.7e-3 and finite. Tickets at both levels summed to 0 afterwards. No fault.
+- `PATH CHOSEN: full decode streamk+ticket v2` (1<B≤64, as in s2) + `PATH CHOSEN: full decode_1 streamk two-level`; every other shape is on master's path.
+- B=1 diagnostic, cold L2:
+
+| variant | time |
+|---|---|
+| single-level grid 2xSM (stage 2) | 53.9 µs |
+| single-level grid SM | 34.8 µs |
+| **two-level grid SM (timed)** | **23.1 µs (0.89 TB/s)** |
+| two-level grid 2xSM | 24.7 µs |
+| master FA3 main+combine + norm-gate | 33.2 + 5.5 = 38.7 µs |
+
+  At B=16 the two-level kernel is slower than s2 (115.8 vs 107.0 µs), so gating it to B=1 is correct.
+
+**Per-shape** (µs; Δ vs s2 / vs BEST):
+
+| shape | BEST | s2 | new | vs s2 | vs BEST | kernel rows |
+|---|---|---|---|---|---|---|
+| **full decode_1** | 27.26 | 27.19 | **22.60** | **−16.9% z−67** | **−17.1% z−67** | FA3 14.6 + combine 7.1 + norm-gate 1.1 → sk3 18.6 (+pre 1.4) |
+| **full decode_16** | 122.79 | 110.91 | 111.14 | +0.2% z+0.8 | **−9.5% z−53** | sk 110.1 (s2 108.9) |
+| **full decode_32** | 241.90 | 226.81 | 226.42 | −0.2% z−1.0 | **−6.4% z−54** | sk 225.6 (s2 226.8) |
+| sliding decode_1/16/32 | 13.17/15.34/24.24 | 13.09/15.19/24.29 | 13.15/15.33/24.33 | ≤+0.9% | ≤+0.4% | Triton, same |
+| sliding verify_1 (untouched) | 16.72 | 16.83 | 17.78 | +5.6% z+14 | +6.3% z+16 | FA3 7.9+3.9 vs 7.6+3.9: batch drift (every attention run in this harvest reads 17.4-17.8 here) |
+| full verify_1 (untouched) | 30.03 | 29.84 | 30.51 | +2.2% | +1.6% | FA3 15.4 vs 15.0: drift |
+| verify_16/32 both layers | — | — | — | ≤±1.8% | ≤±1.2% | same kernels |
+
+- Loads: decode 1 rose 1.381 → 1.513 vs s2 (1.397 vs BEST). decode 16 is 1.784 and decode 32 1.596 (s2 levels). verify 1 fell to 1.239 on untouched-FA3 drift alone.
+- The headline CI lower bound (1.411) is above BEST's point (1.3949), and above s2's point (1.4171).
+- Substituting this run's three full-decode rows into BEST's rows gives **≈1.440x**. The run's own 1.432 is held down by the verify_1 drift.
+
+**Verdict: LAND CANDIDATE.** It needs a scored submit with the user's approval. It contains s2 (full decode 1<B≤64) plus the B=1 two-level ticket. Next:
+- Restack the sliding cluster kernel with the C=8 band gated off (B=1 and B=32 only) on top. The earlier estimate was +0.016.
+- A cheaper ticket epilogue at B=16 is still open: the no-ticket kernel A ran at 3.06 TB/s.
+
+### full-verify-wgmma-s3-warpgroup-per-kvhead-inproc — job 2c3f7fff72bb4e1d, check 1.3801x: BUILT, FAILED SELF-CHECK, FELL BACK. FIXABLE.
+
+- Build: sm_90a only. `splitkv_verify_wgmma_kernel<ticket>` 128 regs and `<B8>` 120 regs, both 0 B local, 2 CTAs/SM, 91744 B dyn smem.
+- Canary (B=2, grid 4) and case 1 (B=6, kv 1.0, grid=device) passed at rel L2 7.9e-3 and 4.8e-3. **Case 2 (B=6, kv_scale 0.25, grid=3) failed at rel L2 1.23, finite, with both the ticket and the B8 combine.** The bug is therefore in the main wgmma kernel, not the combine.
+- `PATH CHOSEN: full verify master FA3 (fallback: self-check failed)`. Every scored full verify row is FA3: verify_16 162.6 vs 162.0 and verify_32 301.9 vs 300.8. The wgmma kernel was never timed.
+- Case 2 confounds two triggers: kv_scale≠1 and grid=3, where each CTA loops over several work items. Next stage: split it into (kv 0.25, grid=device) and (kv 1.0, grid=3) and print the per-item loop state.
+- Other rows (sliding Triton, full decode s1) are master's. The full decode_32 +7% is the known bimodality.
+
+### sliding-decode-paired-kvhead-rows — job 48ffbe5690cc4ab4, 1.2865x: RAN (Triton), LOST BADLY. DEAD.
+
+| shape | BEST | new | Δ | kernel |
+|---|---|---|---|---|
+| sliding decode_16 | 15.34 | 30.58 | +99% z+201 | `_sliding_paired_kernel` 16.8 vs `_sliding_fused_kernel` 12.9 |
+| sliding decode_32 | 24.24 | 43.15 | +78% z+146 | 28.1 vs 22.1 |
+
+- The paired kernel itself is 1.3x slower than the fused kernel. It also adds ~11 µs per shape outside any profiled kernel (shape 30.6 vs kernel 16.8; master's gap is 2.4), which looks like host or launch overhead in the timed path.
+- It also loses to the cluster kernel at B=32 (18.3 µs). This closes the paired-row line.
+
+### sliding-verify-fa3-head-pairing — job 031731b5db294a92, 1.3475x: RAN (Python routing), LOST. DEAD.
+
+- sliding verify_16 rose 22.67 → 29.43 (+29.8%) and verify_32 28.70 → 33.71 (+17.4%).
+- In the profile, FA3 main went 10.7 → 13.2 and combine 4.1 → 7.6 µs, plus a `_paired_norm_gate_kernel` (2.3 µs).
+- Pairing two heads per FA3 call doubles the rows per kv head and the split-combine work. FA3 is already efficient per head on verify.
