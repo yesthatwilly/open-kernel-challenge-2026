@@ -59,7 +59,7 @@ review: proceed
 status: running
 review_at: 2026-10-25T054723Z
 review_companions: null
-stage: claimed
+stage: implemented
 claimed_at: 2026-10-25T054723Z
 base_sha: 6f1f3a99d4b2849b4e653b5b3b88ff6f21aefaab
 base_blob: d8769ef25caf845a0e207538ccc5c62394b6ee3b
@@ -68,6 +68,12 @@ worktree: .worktrees/muse_attention_decode/restack-sk-pseudo-cluster-plus-v3-fus
 mode: null
 restack_of: null
 stale_base: null
+implemented_at: 2026-10-25T084824Z
+impl_commit: 7028a6bb7cc8dd826e6e3e0b26f5bf99614fe803
+submission_sha256: 5589f1c4b89b8129c4d3f69d494c90f83ef283186028446d936efec0b2669ae1
+norm_sha256: a0ca656e3fb25b2fa0a62203136188fdcdc618a45219b4d6c1429c2f670d2a1b
+submission_blob: 84b54ae2c9800a7b9bf96692557dd390904ed09b
+lint_warnings: 40
 ---
 
 # restack-sk-pseudo-cluster-plus-v3-fused-preattn
@@ -113,3 +119,43 @@ No companion. The A/B partner (restack-sk-pseudo-b1-cluster-c16-c4) is already t
 - If both runs pass, which one to submit should be decided by the in-process gate numbers and the full-row kernel µs, not by the two headlines, which differ by ~0.35% expected.
 - The larger remaining tail on this kernel is the ~6 us serialized ticket merge (s2 diag), not pre-attn. A fused-pre + two-level merge at B=16 (nseg ~17) is the natural next stage.
 
+
+## Implementation notes
+
+Built standalone on master (c3c1b01 submission blob d8769ef) in the worktree's submission.py (no GPU/nvcc here: nothing compiled or run).
+- (A) PSEUDO: s1's whole change (6f95ce7, whose base blob is master's) taken verbatim, including the -DSK_PSEUDO build with the landed-only rebuild fallback and its 1.05x gate. Its `_ps_replay_check` now goes through the new two-state `_alt_check`.
+- (B) Cluster: `sliding_cluster_kernel` TU (module muse_sliding_cluster_v2, C=16 at B=1, C=4 at B=17..32, C=8 off) ported from stack-streamk-ticket-cluster-c16-c4; its v2 stream-K not taken. Audit: no module global holds a device pointer or buffer (only module handles and tags). Removed from kernel_fn the try/except and the `_slide_note` prints (spec rules); hook is `if _slide_gate(cfg): return _slide_forward(...)`. Added `_slide_route_checks`: two-state alternating graph replay through kernel_fn, then an interleaved cold-L2 timing gate [master Triton] vs [cluster] (routed if master/cluster >= 1.00x; the spec states no margin). Own bound constants (`_SLIDE_*`), nothing shared with PSEUDO.
+- (C) FUSED_PRE: s3's measured fused kernel ported as its OWN module (muse_decode_skf_v1, kernel splitkv_attn_sk_fused_kernel, tag [skF], functions skf_*), built from this file's helper head. DEVIATION from the spec's template flag: this answers the review's open question in favour of the measured module; variants 0-5 are untouched by construction (so no 'IDENTICAL' risk beyond the existing print) and fallbacks are independent (FUSED_PRE module off first; PSEUDO has its own landed-only rebuild).
+- Review fixes applied: distinct names/tags ([skF], not variant 4 since 4-5 are PSEUDO; not [sk3]); regs/local printed next to s3's [sk3] line (125 regs, 0 B local, 99360 B, 2 CTAs/SM) with IDENTICAL/DIFFERS; gate prints interleaved [pre-attn + v2] vs [FUSED_PRE] (and v2 alone) per band, B=16 -> B=2..16, B=32 -> B=17..64, margin 1.02x kept (open question on 1.01x not changed); shared tickets re-zeroed (`_rezero_tickets`) in a finally after the self-check and after diagnostics; ownership assertion cache_loc[b] == page_table[b, seq_b-1] plus one-owner-CTA check kept in `_skf_case`; full decode B=1 keeps the two-level path.
+- Two-state check: `_alt_check` builds states A and B, captures a graph on each, alternates replays with in-place refills, compares each against the fp32 reference; used for PSEUDO, FUSED_PRE (B=16, B=32) and cluster (C=16, C=4). Gates use `_interleaved_us` (256 MB flush, empty-graph baseline subtracted if capturable).
+- Small helper edits: `max_pages` kwarg on `_splitkv_synthetic` and `_slide_synthetic`.
+
+## Rules check
+
+- [x] CUDA-graph capturable: kernel_fn additions are launches only (`_slide_forward`, `_full_decode_skf`); syncs/.item() only in import-time checks (lint warns, outside kernel_fn).
+- [x] Nothing derived from data cached across calls: tickets are self-resetting and data-free; `_SLIDE_MOD`/`_EXTF` are module handles.
+- [x] n/a: weights (attention problem, no weights).
+- [x] KV FP8, queries at most e4m3, fp32 softmax/merges, bf16 out (diff checked).
+- [x] Every key attended in each window; fused kernel and cluster tile all keys.
+- [x] No timing patches, harness access or reference import in the diff.
+- [x] All work in the timed call; no output caching or replay; no child processes (grep: 0 matches).
+- [x] sm_90a: TORCH_CUDA_ARCH_LIST=9.0a around each load_inline and restored, -lineinfo, arch flags printed, cubin version check.
+
+okc_lint: OK with warnings (only host-sync warnings, all outside kernel_fn: prepare-time synchronize()/item()). py_compile OK, __pycache__ deleted.
+
+
+## Pre-flight audit
+
+Audited 2026-10-25 by an opus subagent, by reading and by emulating in Python. No GPU was used, nothing was compiled, and the file was not edited.
+
+**Verdict: dispatch.** No fixes were needed. okc_lint reports OK with warnings: every host sync it flags is import-time, outside kernel_fn. py_compile passes, and the __pycache__ it left was deleted.
+
+What I checked:
+- FUSED_PRE kernel. Its body is byte-identical to s3 825baa03 (`splitkv_attn_sk_fused_kernel`). Only the host-side names changed, sk3_* to skf_*. The helper head it is built on differs from s3 in one way: merge_slots now calls merge_range with the same arithmetic, plus the inert PSEUDO additions. Every symbol it uses (finalize_store, merge_slots, range_start, tile_owner, load_prefix, cp_async*, mma16816) is defined before the `template <int STAGES, bool TICKET` cut point. Its q math (scaleless RMSNorm, then e4m3, with 5.473 folded into the score scale) and its k/v stores (rms/k_scale, v/v_scale, both e4m3) match master's `_pre_attention_kernel` with ROPE=False. Every tile of every request is attended.
+- Gates that can never pass. reference.generate_input sets cache_loc = page_table[b, seq_lens[b]] = page_table[b, cache_seqlens - 1], so the ownership assertion holds on the judge's data. `_skf_owner_check` was emulated on 80k random cases (B=2..64; grids 3, 7, 264 and random) with 0 failures: it is the exact inverse of range_start/tile_owner. The tolerances (out vs fp32 < 2e-2, vs v2 < 5e-3, new rows < 2e-2) are the ones s3 passed. Every synthetic builder returns all of `_ALT_KEYS`, and `_alt_sets` keeps the shapes fixed through max_pages.
+- Fallbacks. The build, validate, per-band gate, per-band two-state replay and the whole `_skf_setup` are each wrapped. Every miss prints a PATH CHOSEN line and lands on pre-attn + v2. The shared tickets are re-zeroed in a finally block. PSEUDO and the cluster route fall back independently.
+- Rules. The kernel_fn additions are config-only predicates plus launches (`_fused_gate`, `_slide_gate`/`_slide_clusters`, `_ps_gate`). kernel_fn has no sync, print or try, and allocates only from shapes. No module global or C++ static holds a device pointer, tensor map or state buffer: only module handles, route dicts, the theta-keyed `_inv_freq`, and the self-resetting int32 tickets. Outside the gated shapes, kernel_fn is master's code path unchanged.
+- Budget. There are four nvcc TUs (splitkv v1, stage-2 + PSEUDO, skF, sliding fp8qk), at about 30-45 s each in recent logs, so about 3 min of compiles. The checks and interleaved timings take seconds each. This fits the 15-min run.
+- Fidelity. Two deviations, both noted but not changed. (1) FUSED_PRE was built as its own module, not as a template flag; the review's open question allowed this. (2) The sliding cluster's Python glue comes from stack-streamk-ticket-cluster-c16-c4, not from the partner, and adds a >= 1.00x interleaved timing gate. The partner routes config-only. Its _SLIDE_CUDA text is identical to the partner's. The partner's `_phase` timing prints and its sk_attrs re-check with both TUs loaded were dropped.
+
+Residual risk: the 1.02x FUSED gate (s3 measured 1.027x at B=16) and the 1.00x cluster gate can flip on prepare-time noise. If either does, this run's sliding or full rows stop pairing cleanly with the partner's, so grep the PATH CHOSEN lines before comparing the two runs.
