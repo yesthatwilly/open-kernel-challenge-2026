@@ -41,7 +41,7 @@ review: proceed
 status: running
 review_at: 2026-10-25T203723Z
 review_companions: null
-stage: implemented
+stage: dispatched
 claimed_at: 2026-10-25T203723Z
 base_sha: 2178a1d62536d4e2c94af82772ab6316f61d8598
 base_blob: ad8d7254a64a52db2a8f56ec0ad262748153a2e8
@@ -58,6 +58,8 @@ submission_blob: 572599cf4876a6353e8acc95486e0bb0be34586c
 lint_warnings: 39
 attempt_file: 2026-10-25T204107Z-submit-unpooler-k-halves-batched-gemm-m65-m128.md
 prepared_at: 2026-10-25T204107Z
+job: e82feba3dd8d4efb
+dispatched_at: 2026-10-25T204115Z
 ---
 
 # unpooler-k-halves-batched-gemm-m65-m128
