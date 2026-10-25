@@ -63,10 +63,10 @@ controls_for: null
 rewrite_stage: 3
 replaces: "T=1 dense chain: nvjet qkv + FusedQKNorm/rope + FP8 casts + store_cache + nvjet o (full decode_1), routing kernel R and unpooler GEMM+pad at NF=1 (both decode_1 rows)"
 review: proceed
-status: running
+status: done
 review_at: 2026-10-25T054418Z
 review_companions: null
-stage: dispatched
+stage: harvested
 claimed_at: 2026-10-25T054418Z
 base_sha: 06cbcc08c8e651f4bb7e2791d8b1321bdb54ee3e
 base_blob: 62c5a9413ba5710defea2ca3de14c1a1dc3b5a6d
@@ -85,6 +85,13 @@ attempt_file: 2026-10-25T091047Z-check-dense-chain-s3-t1-q-sk2-o-route-unpool.md
 prepared_at: 2026-10-25T091047Z
 job: 34a9be06918d448b
 dispatched_at: 2026-10-25T091101Z
+outcome: neutral
+verdict_detail: unproven-vs-best
+speedup: 1.3017519911209459
+speedup_ci: [1.2822257112541318, 1.32127827098776]
+harvested_at: 2026-10-25T110750Z
+best_at_harvest: 1.2725637226942819
+promotion: null
 ---
 
 # dense-chain-s3-t1-q-sk2-o-route-unpool
@@ -204,3 +211,36 @@ Checked with no change needed:
 - No undefined names in any f-string or except branch.
 
 Residual risk: piece A's composition (dl_qkv's q / FP8 KV versus FusedQKNorm + store_cache, then PDL into dl_o) has never run on hardware. A self-check miss there only turns A off, but a device fault in a new kernel during prepare would still poison the context.
+
+## Result
+
+- job `34a9be06918d448b` (check), status done, passed True, tests 13/13
+- speedup 1.3018x, 95% CI [1.2822, 1.3213], score 17376.81229165744 µs vs SGLang 22620.3 µs
+- best at harvest: {"speedup": 1.2725637226942819, "ci": [1.2534752668538676, 1.291652178534696], "job": "3fd3fa1f96d045dd"}; base result: muse_decode_layer/hypotheses/done/neutral/w2-marlin-atomic-add-t1-port.result.json
+- **outcome: neutral** (unproven-vs-best)
+- files: `muse_decode_layer/hypotheses/done/neutral/dense-chain-s3-t1-q-sk2-o-route-unpool.result.json`, `muse_decode_layer/hypotheses/done/neutral/dense-chain-s3-t1-q-sk2-o-route-unpool.patch`; branch `hyp/muse_decode_layer/dense-chain-s3-t1-q-sk2-o-route-unpool`
+
+## Attribution
+
+| shape | w | base µs | hyp µs | delta | verdict |
+|---|---|---|---|---|---|
+| batch=1 ctx=80000 dist=soft layer=sliding load=decode_1 page=1 repeats=60 | 46 | 123.88 | 117.81 | 1.0583 | gained |
+| batch=1 ctx=80000 dist=soft layer=full load=decode_1 page=1 repeats=60 | 16 | 139.18 | 130.03 | 1.0882 | gained |
+| batch=16 ctx=80000 dist=soft layer=sliding load=decode_16 page=1 spread=agentic | 46 | 204.68 | 209.22 | 1.0046 | flat |
+| batch=16 ctx=80000 dist=soft layer=full load=decode_16 page=1 spread=agentic | 16 | 308.69 | 298.39 | 1.0358 | gained |
+| batch=32 ctx=80000 dist=soft layer=sliding load=decode_32 page=1 spread=agentic | 46 | 240.67 | 236.43 | 0.9927 | flat |
+| batch=32 ctx=80000 dist=soft layer=full load=decode_32 page=1 spread=agentic | 16 | 473.31 | 441.9 | 1.0694 | gained |
+| batch=1 ctx=80000 dist=soft layer=sliding load=verify_1 page=1 q_len=8 | 46 | 191.42 | 189.87 | 1.012 | flat |
+| batch=1 ctx=80000 dist=soft layer=full load=verify_1 page=1 q_len=8 | 16 | 201.63 | 199.07 | 1.005 | flat |
+| batch=16 ctx=80000 dist=soft layer=sliding load=verify_16 page=1 q_len=8 spread=agentic | 46 | 414.6 | 427.37 | 0.9819 | flat |
+| batch=16 ctx=80000 dist=soft layer=full load=verify_16 page=1 q_len=8 spread=agentic | 16 | 565.16 | 571.83 | 0.9815 | flat |
+| batch=32 ctx=80000 dist=soft layer=sliding load=verify_32 page=1 q_len=8 spread=agentic | 46 | 600.78 | 600.4 | 0.9788 | flat |
+| batch=32 ctx=80000 dist=soft layer=full load=verify_32 page=1 q_len=8 spread=agentic | 16 | 880.71 | 881.43 | 0.9861 | flat |
+
+gained on sliding decode_1; full decode_1, decode_16, decode_32. Expected hit: 3/5. Noise ±1.5%.
+
+## Follow-ups
+
+- rewrite stage 3 of `T=1 dense chain: nvjet qkv + FusedQKNorm/rope + FP8 casts + store_cache + nvjet o (full decode_1), routing kernel R and unpooler GEMM+pad at NF=1 (both decode_1 rows)`: read the replaced kernels' own us per shape (profile top_kernels) against the incumbent and the floor, and check which Milestone it reached. The next stage is `/hypothesize muse_decode_layer "<what to fix or tune>" --kind rewrite --depends-on dense-chain-s3-t1-q-sk2-o-route-unpool --stage 4`; a slow or failed first cut is the expected start, not a do-not-retry.
+- unproven-vs-best: the change is not proven either way; a stacked hypothesis (`depends_on: dense-chain-s3-t1-q-sk2-o-route-unpool`) that adds a further change in the same area is the only way to learn more (identical code is never re-run).
+
