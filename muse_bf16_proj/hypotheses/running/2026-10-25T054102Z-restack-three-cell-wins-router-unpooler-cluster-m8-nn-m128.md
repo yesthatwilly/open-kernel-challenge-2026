@@ -116,7 +116,7 @@ base_sha: 84c6b217af909ca0534b49bdd5a8072e10b692c5
 base_blob: 970b415b746fa03cb92e419d270be92588273178
 branch: hyp/muse_bf16_proj/restack-three-cell-wins-router-unpooler-cluster-m8-nn-m128
 worktree: .worktrees/muse_bf16_proj/restack-three-cell-wins-router-unpooler-cluster-m8-nn-m128
-mode: null
+mode: check
 restack_of: restack-unpooler-slice-cluster-dsmem-m8
 stale_base: null
 implemented_at: 2026-10-25T054957Z
@@ -125,6 +125,8 @@ submission_sha256: 2992aaa93918145ccaf9fc61b4d483791a6ced5868af9fc95a60e7a7b198c
 norm_sha256: 106a7bd065a4fafa020632207718ac6db927671a1993641c51e86bc123a48c70
 submission_blob: 353e3b19a7edd5cb879e202d78097f474bcce207
 lint_warnings: 13
+attempt_file: 2026-10-25T054957Z-check-restack-three-cell-wins-router-unpooler-cluster-m8-nn-m128.md
+prepared_at: 2026-10-25T054957Z
 ---
 
 # restack-three-cell-wins-router-unpooler-cluster-m8-nn-m128
