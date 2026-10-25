@@ -88,9 +88,18 @@ controls_for: null
 rewrite_stage: 1
 replaces: Marlin w13 + act_and_mul + Marlin w2 (moe_wna16_marlin_gemm x2 + silu_and_mul) and the post-norm tail at 9 <= num_tokens <= 32
 review: proceed
-status: queued
+status: running
 review_at: 2026-10-25T212522Z
 review_companions: null
+stage: claimed
+claimed_at: 2026-10-25T212550Z
+base_sha: ce2461b1ea24995a3c81d11487611f052d8ecc35
+base_blob: 35b8a851e4ef5fa8fd66b12d09caac88b7ea7615
+branch: hyp/muse_moe_w4a16/cuda-fused-split-i-moe-midt-cluster-reduce
+worktree: .worktrees/muse_moe_w4a16/cuda-fused-split-i-moe-midt-cluster-reduce
+mode: check
+restack_of: null
+stale_base: null
 ---
 
 # cuda-fused-split-i-moe-midt-cluster-reduce
