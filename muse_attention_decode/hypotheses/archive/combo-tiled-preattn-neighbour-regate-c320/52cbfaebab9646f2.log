@@ -1,0 +1,135 @@
+12/site-packages/torch/cuda/graphs.py:630: UserWarning: The CUDA Graph is empty. This usually means that the graph was attempted to be captured on wrong device or stream. (Triggered internally at /__w/pytorch/pytorch/aten/src/ATen/cuda/CUDAGraph.cpp:249.)
+  super().capture_end_pre()
+[c320] c320 21.4 us vs master two-level 23.9 us, ratio 0.894; pre-attention alone 3.2 us; empty graph 3.1 us -> ROUTE
+[nb] IMPORT_T0 +188.4 s: phase P3b c320 GATE A ended after 0.1 s (deadline 35 s)
+PATH CHOSEN: full decode_1 [A chunk320]: route (c320 21.4 us vs master two-level 23.9 us, ratio 0.894; pre-attention alone 3.2 us; empty graph 3.1 us)
+[nb] IMPORT_T0 +188.4 s: phase P4 sliding decode band 3 (B=32) re-time (deadline 40 s) -> START
+[nb-sd] B=32: launching _pre_attention_kernel
+[nb-sd] B=32: pre-attention returned (new rows stored)
+[nb-sd] B=32: launching <4 stages, ticket, PSEUDO TOK=1> grid 64 (p2) (eager correctness run)
+[nb-sd] B=32: <4 stages, ticket, PSEUDO TOK=1> grid 64 (p2) returned, rel L2 1.66e-03, finite True
+[nb-sd] B=32: launching <4 stages, two-level ticket, PSEUDO TOK=1> grid 64 (p2) (eager correctness run)
+[nb-sd] B=32: <4 stages, two-level ticket, PSEUDO TOK=1> grid 64 (p2) returned, rel L2 1.66e-03, finite True
+[nb-sd] B=32: launching <4 stages, ticket, PSEUDO TOK=1> grid 96 (p3) (eager correctness run)
+[nb-sd] B=32: <4 stages, ticket, PSEUDO TOK=1> grid 96 (p3) returned, rel L2 1.66e-03, finite True
+[nb-sd] B=32: launching <4 stages, two-level ticket, PSEUDO TOK=1> grid 96 (p3) (eager correctness run)
+[nb-sd] B=32: <4 stages, two-level ticket, PSEUDO TOK=1> grid 96 (p3) returned, rel L2 1.66e-03, finite True
+[nb-sd] B=32: launching <4 stages, ticket, PSEUDO TOK=1> grid 128 (p4) (eager correctness run)
+[nb-sd] B=32: <4 stages, ticket, PSEUDO TOK=1> grid 128 (p4) returned, rel L2 1.66e-03, finite True
+[nb-sd] B=32: launching <4 stages, two-level ticket, PSEUDO TOK=1> grid 128 (p4) (eager correctness run)
+[nb-sd] B=32: <4 stages, two-level ticket, PSEUDO TOK=1> grid 128 (p4) returned, rel L2 1.66e-03, finite True
+[nb-sd] B=32: launching <4 stages, ticket, PSEUDO TOK=1> grid 256 (p8) (eager correctness run)
+[nb-sd] B=32: <4 stages, ticket, PSEUDO TOK=1> grid 256 (p8) returned, rel L2 1.66e-03, finite True
+[nb-sd] B=32: launching <4 stages, two-level ticket, PSEUDO TOK=1> grid 256 (p8) (eager correctness run)
+[nb-sd] B=32: <4 stages, two-level ticket, PSEUDO TOK=1> grid 256 (p8) returned, rel L2 1.66e-03, finite True
+[nb-sd] B=32: launching <4 stages, ticket, PSEUDO TOK=1> grid 132 (sm) (eager correctness run)
+[nb-sd] B=32: <4 stages, ticket, PSEUDO TOK=1> grid 132 (sm) returned, rel L2 1.66e-03, finite True
+[nb-sd] B=32: launching <4 stages, two-level ticket, PSEUDO TOK=1> grid 132 (sm) (eager correctness run)
+[nb-sd] B=32: <4 stages, two-level ticket, PSEUDO TOK=1> grid 132 (sm) returned, rel L2 1.66e-03, finite True
+[nb-sd] B=32: launching <4 stages, ticket, PSEUDO TOK=1> grid 264 (2sm) (eager correctness run)
+[nb-sd] B=32: <4 stages, ticket, PSEUDO TOK=1> grid 264 (2sm) returned, rel L2 1.66e-03, finite True
+[nb-sd] B=32: launching <4 stages, two-level ticket, PSEUDO TOK=1> grid 264 (2sm) (eager correctness run)
+[nb-sd] B=32: <4 stages, two-level ticket, PSEUDO TOK=1> grid 264 (2sm) returned, rel L2 1.66e-03, finite True
+[nb-sd] B=32: incumbent = master cluster C=4; a route needs incumbent / chosen pair >= 1.03x in pass 2
+[nb-sd] B=32: pass 1: timing 14 graphs interleaved (+ empty), cold L2, median of 21
+[nb-sd] B=32: pass 1 [master pre + sk] <4 stages, ticket, PSEUDO TOK=1> grid 64 (p2):    24.9 us net
+[nb-sd] B=32: pass 1 [master pre + sk] <4 stages, two-level ticket, PSEUDO TOK=1> grid 64 (p2):    25.0 us net
+[nb-sd] B=32: pass 1 [master pre + sk] <4 stages, ticket, PSEUDO TOK=1> grid 96 (p3):    22.0 us net
+[nb-sd] B=32: pass 1 [master pre + sk] <4 stages, two-level ticket, PSEUDO TOK=1> grid 96 (p3):    24.2 us net
+[nb-sd] B=32: pass 1 [master pre + sk] <4 stages, ticket, PSEUDO TOK=1> grid 128 (p4):    19.5 us net
+[nb-sd] B=32: pass 1 [master pre + sk] <4 stages, two-level ticket, PSEUDO TOK=1> grid 128 (p4):    22.2 us net
+[nb-sd] B=32: pass 1 [master pre + sk] <4 stages, ticket, PSEUDO TOK=1> grid 256 (p8):    22.1 us net
+[nb-sd] B=32: pass 1 [master pre + sk] <4 stages, two-level ticket, PSEUDO TOK=1> grid 256 (p8):    25.2 us net
+[nb-sd] B=32: pass 1 [master pre + sk] <4 stages, ticket, PSEUDO TOK=1> grid 132 (sm):    21.6 us net
+[nb-sd] B=32: pass 1 [master pre + sk] <4 stages, two-level ticket, PSEUDO TOK=1> grid 132 (sm):    24.6 us net
+[nb-sd] B=32: pass 1 [master pre + sk] <4 stages, ticket, PSEUDO TOK=1> grid 264 (2sm):    24.4 us net
+[nb-sd] B=32: pass 1 [master pre + sk] <4 stages, two-level ticket, PSEUDO TOK=1> grid 264 (2sm):    27.3 us net
+[nb-sd] B=32: pass 1 Triton 26.0 us net, cluster C=4 22.0 us net
+[nb-sd] B=32: pass 1 picked <4 stages, ticket, PSEUDO TOK=1> grid 128 (p4) at 19.5 us net (first-pass minimum: biased, NOT the routing number)
+[nb-sd] B=32: launching [tiled pre + sk] <4 stages, ticket, PSEUDO TOK=1> grid 128 (eager correctness run)
+[nb-sd] B=32: [tiled pre + sk] returned, rel L2 1.66e-03, finite True
+[nb-sd] B=32: pass 2: triton, pair_m, pre_m, sk, pair_t, pre_t, cluster in ONE interleaved set (+ empty), cold L2, median of 31
+[nb-sd] B=32: pass 2 (empty 3.1 us): Triton 25.9 us, cluster C=4 21.9 us, [master pre + sk] 19.6 us, master pre alone 3.8 us, sk alone 16.2 us (1.03 TB/s of window bytes), [tiled pre + sk] 19.4 us, tiled pre alone 3.9 us
+[nb-sd] B=32: master-pre pair: Triton / pair 1.322x, cluster C=4 / pair 1.116x; tiled-pre pair: Triton / pair 1.337x, cluster C=4 / pair 1.129x; GATE B [tiled + sk] / [master + sk] 0.989 (master first node)
+[nb-sd] B=32: chosen pair (master pre + <4 stages, ticket, PSEUDO TOK=1> grid p4) cluster C=4 / pair 1.116x vs need 1.03x -> ROUTE; the master-pre pair also clears 1.03x
+[nb] IMPORT_T0 +188.5 s: phase P4 sliding decode band 3 (B=32) re-time ended after 0.1 s (deadline 40 s)
+[nb] IMPORT_T0 +188.5 s: phase P5 GATE B SV1 / SV16 / SV32 / FD1 (deadline 60 s) -> START
+[nb-gateB] SV1: B=1 x 80000, 8 tokens: timing the step with each first node (interleaved, cold L2, median of 41)
+[nb-gateB] SV1: step with master pre 15.0 us, with tiled pre 15.2 us -> tiled / master 1.013 (gate <= 0.98); pre-attention alone: master 3.8 us, tiled 3.8 us; exact True -> master first node
+[nb-gateB] SV16: B=16 x 80000, 128 tokens: timing the step with each first node (interleaved, cold L2, median of 41)
+[nb-gateB] SV16: step with master pre 24.2 us, with tiled pre 24.4 us -> tiled / master 1.009 (gate <= 0.98); pre-attention alone: master 4.4 us, tiled 4.1 us; exact True -> master first node
+[nb-gateB] SV32: B=32 x 80000, 256 tokens: timing the step with each first node (interleaved, cold L2, median of 41)
+[nb-gateB] SV32: step with master pre 30.8 us, with tiled pre 30.0 us -> tiled / master 0.972 (gate <= 0.98); pre-attention alone: master 5.8 us, tiled 4.4 us; exact True -> ROUTE tiled
+[nb-gateB] replay SV32 state A: eager warm-up on a side stream
+[nb-gateB] replay SV32 state B: eager warm-up on a side stream
+[nb-gateB] replay SV32 state A: capturing
+[nb-gateB] replay SV32 state B: capturing
+[nb-gateB] replay SV32 step 0: launching state A graph
+[nb-gateB] replay SV32 step 0: state A returned, rel L2 8.14e-03, finite True -> ok
+[nb-gateB] replay SV32 step 1: launching state B graph
+[nb-gateB] replay SV32 step 1: state B returned, rel L2 7.77e-03, finite True -> ok
+[nb-gateB] replay SV32 step 2: launching state B graph (refilled)
+[nb-gateB] replay SV32 step 2: state B returned, rel L2 7.82e-03, finite True -> ok
+[nb-gateB] replay SV32 step 3: launching state A graph (refilled)
+[nb-gateB] replay SV32 step 3: state A returned, rel L2 8.06e-03, finite True -> ok
+[nb-gateB] replay SV32 step 4: launching state A graph (refilled)
+[nb-gateB] replay SV32 step 4: state A returned, rel L2 8.11e-03, finite True -> ok
+[nb-gateB] replay SV32 step 5: launching state B graph (refilled)
+[nb-gateB] replay SV32 step 5: state B returned, rel L2 8.01e-03, finite True -> ok
+[nb-gateB] FD1: B=1 x 80000, 1 tokens: timing the step with each first node (interleaved, cold L2, median of 41)
+[nb-gateB] FD1: step with master pre 21.5 us, with tiled pre 21.7 us -> tiled / master 1.012 (gate <= 0.98); pre-attention alone: master 3.4 us, tiled 3.4 us; exact True -> master first node
+[nb] IMPORT_T0 +188.8 s: phase P5 GATE B SV1 / SV16 / SV32 / FD1 ended after 0.3 s (deadline 60 s)
+[nb] IMPORT_T0 +188.8 s: phase P6 GATE B print-only FD16 / FD32 / FV1 / FV16 / FV32 (deadline 30 s) -> START
+[nb-exact] FD16: launching _pre_attention_kernel (16 tokens, paired False)
+[nb-exact] FD16: _pre_attention_kernel returned
+[nb-exact] FD16: launching _pre_attention_tiled_kernel (16 tokens, paired False)
+[nb-exact] FD16: _pre_attention_tiled_kernel returned
+[nb-exact] FD16: tiled vs master first node: q 0 bytes differ, 0 beyond 1 ulp or NaN; k_cache 0 bytes differ, 0 beyond 1 ulp or NaN; v_cache 0 bytes differ, 0 beyond 1 ulp or NaN -> EXACT (<= 1 ulp)
+[nb-gateB] FD16: B=16 x 80000, 16 tokens: timing the step with each first node (interleaved, cold L2, median of 41)
+[nb-gateB] FD16: step with master pre 107.4 us, with tiled pre 107.5 us -> tiled / master 1.001 (gate <= 0.98); pre-attention alone: master 3.6 us, tiled 3.8 us; exact True -> print-only diagnostic (not routable)
+[nb-exact] FD32: launching _pre_attention_kernel (32 tokens, paired False)
+[nb-exact] FD32: _pre_attention_kernel returned
+[nb-exact] FD32: launching _pre_attention_tiled_kernel (32 tokens, paired False)
+[nb-exact] FD32: _pre_attention_tiled_kernel returned
+[nb-exact] FD32: tiled vs master first node: q 0 bytes differ, 0 beyond 1 ulp or NaN; k_cache 0 bytes differ, 0 beyond 1 ulp or NaN; v_cache 0 bytes differ, 0 beyond 1 ulp or NaN -> EXACT (<= 1 ulp)
+[nb-gateB] FD32: B=32 x 80000, 32 tokens: timing the step with each first node (interleaved, cold L2, median of 41)
+[nb-gateB] FD32: step with master pre 218.5 us, with tiled pre 218.3 us -> tiled / master 0.999 (gate <= 0.98); pre-attention alone: master 3.8 us, tiled 4.0 us; exact True -> print-only diagnostic (not routable)
+[nb-exact] FV1: launching _pre_attention_kernel (8 tokens, paired False)
+[nb-exact] FV1: _pre_attention_kernel returned
+[nb-exact] FV1: launching _pre_attention_tiled_kernel (8 tokens, paired False)
+[nb-exact] FV1: _pre_attention_tiled_kernel returned
+[nb-exact] FV1: tiled vs master first node: q 0 bytes differ, 0 beyond 1 ulp or NaN; k_cache 0 bytes differ, 0 beyond 1 ulp or NaN; v_cache 0 bytes differ, 0 beyond 1 ulp or NaN -> EXACT (<= 1 ulp)
+[nb-gateB] FV1: B=1 x 80000, 8 tokens: timing the step with each first node (interleaved, cold L2, median of 41)
+[nb-gateB] FV1: step with master pre 32.5 us, with tiled pre 32.7 us -> tiled / master 1.005 (gate <= 0.98); pre-attention alone: master 3.6 us, tiled 3.8 us; exact True -> print-only diagnostic (not routable)
+[nb-exact] FV16: launching _pre_attention_kernel (128 tokens, paired True)
+[nb-exact] FV16: _pre_attention_kernel returned
+[nb-exact] FV16: launching _pre_attention_tiled_kernel (128 tokens, paired True)
+[nb-exact] FV16: _pre_attention_tiled_kernel returned
+[nb-exact] FV16: tiled vs master first node: q 0 bytes differ, 0 beyond 1 ulp or NaN; k_cache 0 bytes differ, 0 beyond 1 ulp or NaN; v_cache 0 bytes differ, 0 beyond 1 ulp or NaN -> EXACT (<= 1 ulp)
+[nb-gateB] FV16: B=16 x 80000, 128 tokens: timing the step with each first node (interleaved, cold L2, median of 41)
+[nb-gateB] FV16: step with master pre 154.6 us, with tiled pre 155.1 us -> tiled / master 1.003 (gate <= 0.98); pre-attention alone: master 4.3 us, tiled 4.3 us; exact True -> print-only diagnostic (not routable)
+[nb-exact] FV32: launching _pre_attention_kernel (256 tokens, paired True)
+[nb-exact] FV32: _pre_attention_kernel returned
+[nb-exact] FV32: launching _pre_attention_tiled_kernel (256 tokens, paired True)
+[nb-exact] FV32: _pre_attention_tiled_kernel returned
+[nb-exact] FV32: tiled vs master first node: q 0 bytes differ, 0 beyond 1 ulp or NaN; k_cache 0 bytes differ, 0 beyond 1 ulp or NaN; v_cache 0 bytes differ, 0 beyond 1 ulp or NaN -> EXACT (<= 1 ulp)
+[nb-gateB] FV32: B=32 x 80000, 256 tokens: timing the step with each first node (interleaved, cold L2, median of 41)
+[nb-gateB] FV32: step with master pre 285.7 us, with tiled pre 284.8 us -> tiled / master 0.997 (gate <= 0.98); pre-attention alone: master 5.6 us, tiled 4.3 us; exact True -> print-only diagnostic (not routable)
+[nb] IMPORT_T0 +189.2 s: phase P6 GATE B print-only FD16 / FD32 / FV1 / FV16 / FV32 ended after 0.4 s (deadline 30 s)
+[nb] IMPORT_T0 +189.2 s: route tables published: _SD_ROUTE bands [3], tiled first node ['SV32'], c320 True; changed classes ['SV32', 'FD1']
+[nb-post] SV32: launching kernel_fn (published tables)
+[nb-post] SV32: kernel_fn returned, rel L2 8.27e-03, finite True -> ok
+[nb-post] FD1: launching kernel_fn (published tables)
+[nb-post] FD1: kernel_fn returned, rel L2 1.72e-03, finite True -> ok
+PATH CHOSEN: sliding decode B=2..16: master incumbent (master-pre pair: Triton / pair 1.000x, Triton / pair 1.000x; tiled-pre pair: Triton / pair 1.016x, Triton / pair 1.016x; GATE B [tiled + sk] / [master + sk] 0.984 (master first node))
+PATH CHOSEN: sliding decode B=17..32: [master pre-attn + sk window] <4 stages, ticket, PSEUDO TOK=1> grid p4 (master-pre pair: Triton / pair 1.322x, cluster C=4 / pair 1.116x; tiled-pre pair: Triton / pair 1.337x, cluster C=4 / pair 1.129x; GATE B [tiled + sk] / [master + sk] 0.989 (master first node))
+PATH CHOSEN: GATE B SD16: master first node
+PATH CHOSEN: GATE B SD32: master first node
+PATH CHOSEN: GATE B SV1: master first node
+PATH CHOSEN: GATE B SV16: master first node
+PATH CHOSEN: GATE B SV32: tiled first node
+PATH CHOSEN: GATE B FD1: master first node
+PATH CHOSEN: full decode_1: [pre-attn + c320]
+PATH CHOSEN: skF re-gate dropped (review); FD16 / FD32 / FV1 / FV16 / FV32 GATE B lines are print-only
+[nb] IMPORT_T0 +189.3 s: combination phases done
+[nb] IMPORT_T0 +189.3 s: import done

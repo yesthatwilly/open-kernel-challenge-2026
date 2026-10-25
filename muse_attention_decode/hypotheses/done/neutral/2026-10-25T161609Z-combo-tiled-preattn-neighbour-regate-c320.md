@@ -107,10 +107,10 @@ priority: 1
 kind: primary
 controls_for: null
 review: proceed
-status: running
+status: done
 review_at: 2026-10-25T162052Z
 review_companions: null
-stage: dispatched
+stage: harvested
 claimed_at: 2026-10-25T162052Z
 base_sha: 1e8d6d6adbaadd4ecaf72ebd01c75f24004e81bc
 base_blob: 5cf8fae31e5b84c36efeeb4569763eb9b06e1c8a
@@ -129,6 +129,13 @@ attempt_file: 2026-10-25T185648Z-submit-combo-tiled-preattn-neighbour-regate-c32
 prepared_at: 2026-10-25T185648Z
 job: 52cbfaebab9646f2
 dispatched_at: 2026-10-25T185655Z
+outcome: neutral
+verdict_detail: unproven-vs-best
+speedup: 1.5199437286563244
+speedup_ci: [1.4971445727264796, 1.5427428845861693]
+harvested_at: 2026-10-25T190510Z
+best_at_harvest: 1.5119748206149146
+promotion: null
 ---
 
 # combo-tiled-preattn-neighbour-regate-c320
@@ -284,3 +291,35 @@ Checked, no change needed:
 okc_lint: OK with warnings (host-sync only, in import-time checks). py_compile: OK.
 
 Residual risk: if master's import already runs past about 390 s, P3a is skipped and the headline c320 lift is lost (a clean fallback to master), because the sequential build no longer hides its 40-50 s behind master's builds.
+
+## Result
+
+- job `52cbfaebab9646f2` (submit), status done, passed True, tests 16/16
+- speedup 1.5199x, 95% CI [1.4971, 1.5427], score 2477.9206815304415 µs vs SGLang 3766.3 µs
+- best at harvest: {"speedup": 1.5119748206149146, "ci": [1.4892951983056908, 1.5346544429241382], "job": "4b608df595b046fb"}; base result: muse_attention_decode/hypotheses/done/neutral/restack-sliding-decode-sk-window-on-cluster-master.result.json
+- **outcome: neutral** (unproven-vs-best)
+- files: `muse_attention_decode/hypotheses/done/neutral/combo-tiled-preattn-neighbour-regate-c320.result.json`, `muse_attention_decode/hypotheses/done/neutral/combo-tiled-preattn-neighbour-regate-c320.patch`; branch `hyp/muse_attention_decode/combo-tiled-preattn-neighbour-regate-c320`
+
+## Attribution
+
+| shape | w | base µs | hyp µs | delta | verdict |
+|---|---|---|---|---|---|
+| batch=1 ctx=80000 dist=soft heads=tp8 layer=sliding load=decode_1 page=1 | 46 | 11.88 | 12.04 | 1.006 | flat |
+| batch=1 ctx=80000 dist=coherent heads=tp8 layer=full load=decode_1 page=1 | 16 | 22.4 | 19.0 | 1.1696 | gained |
+| batch=16 ctx=80000 dist=soft heads=tp8 layer=sliding load=decode_16 page=1 spread=agentic | 46 | 15.51 | 15.73 | 0.9905 | flat |
+| batch=16 ctx=80000 dist=coherent heads=tp8 layer=full load=decode_16 page=1 spread=agentic | 16 | 111.12 | 111.79 | 0.9926 | flat |
+| batch=32 ctx=80000 dist=soft heads=tp8 layer=sliding load=decode_32 page=1 spread=agentic | 46 | 17.68 | 17.67 | 1.0075 | flat |
+| batch=32 ctx=80000 dist=coherent heads=tp8 layer=full load=decode_32 page=1 spread=agentic | 16 | 227.87 | 227.89 | 1.0012 | flat |
+| batch=1 ctx=80000 dist=soft heads=tp8 layer=sliding load=verify_1 page=1 q_len=8 | 46 | 13.17 | 13.03 | 1.0016 | flat |
+| batch=1 ctx=80000 dist=coherent heads=tp8 layer=full load=verify_1 page=1 q_len=8 | 16 | 30.48 | 29.77 | 1.011 | flat |
+| batch=16 ctx=80000 dist=soft heads=tp8 layer=sliding load=verify_16 page=1 q_len=8 spread=agentic | 46 | 22.83 | 22.93 | 0.9955 | flat |
+| batch=16 ctx=80000 dist=coherent heads=tp8 layer=full load=verify_16 page=1 q_len=8 spread=agentic | 16 | 163.0 | 163.62 | 0.9986 | flat |
+| batch=32 ctx=80000 dist=soft heads=tp8 layer=sliding load=verify_32 page=1 q_len=8 spread=agentic | 46 | 29.21 | 27.42 | 1.0416 | gained |
+| batch=32 ctx=80000 dist=coherent heads=tp8 layer=full load=verify_32 page=1 q_len=8 spread=agentic | 16 | 302.31 | 301.5 | 1.0031 | flat |
+
+gained on full decode_1; sliding verify_32. Expected hit: 3/7. Noise ±1.5%.
+
+## Follow-ups
+
+- unproven-vs-best: the change is not proven either way; a stacked hypothesis (`depends_on: combo-tiled-preattn-neighbour-regate-c320`) that adds a further change in the same area is the only way to learn more (identical code is never re-run).
+

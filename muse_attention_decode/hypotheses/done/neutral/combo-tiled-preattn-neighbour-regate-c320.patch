@@ -1,0 +1,1635 @@
+diff --git a/muse_attention_decode/submission.py b/muse_attention_decode/submission.py
+index 5cf8fae3..21b3e1e3 100644
+--- a/muse_attention_decode/submission.py
++++ b/muse_attention_decode/submission.py
+@@ -12,9 +12,12 @@ an in-kernel ticket combine and epilogue, stage 2; see below) replaces FA3 and t
+ stage 1's two kernels kept as its fallback.
+ """
+ 
++import time
++
++IMPORT_T0 = time.perf_counter()  # combination 3's import clock, started before any other import
++
+ import os
+ import random
+-import time
+ from types import MappingProxyType
+ from typing import TypedDict
+ 
+@@ -143,6 +146,90 @@ def _pre_attention_kernel(
+         tl.store(vout + j, (v / v_scale).to(tl.float8e4nv))
+ 
+ 
++# SOURCE B (preattention-tiled-gate-large-tokens, impl 880b01b), verbatim. Used only on the classes its
++# GATE B routes (frozen in _NB_TILED at import).
++@triton.jit
++def _pre_attention_tiled_kernel(
++    qkv_ptr, pos_ptr, loc_ptr, inv_freq_ptr, k_scale_ptr, v_scale_ptr,
++    q_out_ptr, k_cache_ptr, v_cache_ptr,
++    qkv_stride,
++    HQ: tl.constexpr, HKV: tl.constexpr, D: tl.constexpr, ROPE: tl.constexpr, EPS: tl.constexpr,
++    PAIRED: tl.constexpr, G: tl.constexpr,
++):
++    """One program per (token, KV group g). It owns the G query heads g*G .. g*G+G-1 as one
++    [G, D] tile, plus new key head g and value head g. Same arithmetic and rounding points as
++    _pre_attention_kernel. When PAIRED, query h writes its D values into the half g % 2 of its
++    zero-padded 2*D row and D FP8 zeros into the other half, so every byte is written on every
++    call. G must be a power of two (8 under both tp8 and dp)."""
++    t = tl.program_id(0)
++    g = tl.program_id(1)
++    HALF: tl.constexpr = D // 2
++    i = tl.arange(0, HALF)
++    even = 2 * i
++    odd = 2 * i + 1
++    heads = g * G + tl.arange(0, G)         # [G] query heads of this group
++
++    row = qkv_ptr + t.to(tl.int64) * qkv_stride
++    qbase = row + heads[:, None] * D        # [G, 1]
++    qe = tl.load(qbase + even[None, :]).to(tl.float32)   # [G, HALF]
++    qo = tl.load(qbase + odd[None, :]).to(tl.float32)
++    kbase = row + (HQ + g) * D
++    ke = tl.load(kbase + even).to(tl.float32)             # [HALF]
++    ko = tl.load(kbase + odd).to(tl.float32)
++
++    # Scaleless RMSNorm over each head's D entries.
++    qss = tl.sum(qe * qe, axis=1) + tl.sum(qo * qo, axis=1)
++    qr = 1.0 / tl.sqrt(qss / D + EPS)
++    qe = qe * qr[:, None]
++    qo = qo * qr[:, None]
++    kss = tl.sum(ke * ke, axis=0) + tl.sum(ko * ko, axis=0)
++    kr = 1.0 / tl.sqrt(kss / D + EPS)
++    ke = ke * kr
++    ko = ko * kr
++
++    if ROPE:
++        # Interleaved (GPT-J) RoPE: pair (2i, 2i+1) rotates by pos * theta^(-2i/d).
++        p = tl.load(pos_ptr + t).to(tl.float32)
++        ang = p * tl.load(inv_freq_ptr + i)
++        c = tl.cos(ang)
++        s = tl.sin(ang)
++        qye = qe * c[None, :] - qo * s[None, :]
++        qyo = qe * s[None, :] + qo * c[None, :]
++        qe = qye
++        qo = qyo
++        kye = ke * c - ko * s
++        kyo = ke * s + ko * c
++        ke = kye
++        ko = kyo
++
++    # Queries, rounded to FP8 E4M3 for FA3 (the 5.473 factor is folded into the softmax scale).
++    if PAIRED:
++        half = g % 2
++        qrow = q_out_ptr + (t.to(tl.int64) * HQ + heads[:, None]) * (2 * D)   # [G, 1]
++        out = qrow + half * D
++        zj = tl.arange(0, D)
++        tl.store(qrow + (1 - half) * D + zj[None, :],
++                 tl.zeros([G, D], dtype=tl.float32).to(tl.float8e4nv))
++    else:
++        out = q_out_ptr + (t.to(tl.int64) * HQ + heads[:, None]) * D
++    tl.store(out + even[None, :], qe.to(tl.float8e4nv))
++    tl.store(out + odd[None, :], qo.to(tl.float8e4nv))
++
++    # The new key and value rows of KV head g at cache_loc[t].
++    loc = tl.load(loc_ptr + t).to(tl.int64)
++    k_scale = tl.load(k_scale_ptr)
++    v_scale = tl.load(v_scale_ptr)
++    kout = k_cache_ptr + (loc * HKV + g) * D
++    tl.store(kout + even, (ke / k_scale).to(tl.float8e4nv))
++    tl.store(kout + odd, (ko / k_scale).to(tl.float8e4nv))
++    # The value head: no norm, no RoPE, just the scale and the FP8 cast.
++    j = tl.arange(0, D)
++    v = tl.load(row + (HQ + HKV + g) * D + j).to(tl.float32)
++    vout = v_cache_ptr + (loc * HKV + g) * D
++    tl.store(vout + j, (v / v_scale).to(tl.float8e4nv))
++
++
++
+ LOG2E = 1.4426950408889634
+ _COUNTERS = {}
+ 
+@@ -1716,6 +1803,15 @@ def kernel_fn(data: Inputs) -> torch.Tensor:
+         if _slide_gate(cfg):  # sliding cluster kernel at B=1 (C=16) and B=17..32 (C=4), config-only
+             return _slide_forward(data, _slide_clusters(cfg))
+         return _sliding_forward(data)
++    cls = _nb_class(cfg)  # config only; the tables below are frozen at import
++    return _nb_step(data, cls in _NB_TILED, cls == "FD1" and _NB_C320)
++
++
++def _nb_step(data: Inputs, tiled: bool, c320: bool) -> torch.Tensor:
++    """Every step except sliding decode: master's kernel_fn body, with the first node SOURCE B's tiled kernel
++    when `tiled` and full decode_1 on SOURCE A's c320 kernels when `c320` (both config-derived by the caller).
++    tiled = c320 = False is master's path, launch for launch. The import-time gates call it directly."""
++    cfg = data["config"]
+     batch, length = cfg["batch"], cfg["q_len"]
+     hq, hkv, d = cfg["num_q_heads"], cfg["num_kv_heads"], cfg["head_dim"]
+     tokens = batch * length
+@@ -1742,14 +1838,9 @@ def kernel_fn(data: Inputs) -> torch.Tensor:
+     paired = window == 0 and hkv % 2 == 0 and batch > 1 and not splitkv
+     g = hq // hkv
+     q = torch.empty((tokens, hq, 2 * d if paired else d), dtype=FP8, device=device)
+-    inv_freq = _inv_freq(theta, d, device) if theta else data["k_scale"]  # unused when ROPE is off
+-    _pre_attention_kernel[(tokens, hq + hkv)](
+-        qkv, data["positions"], data["cache_loc"], inv_freq, data["k_scale"], data["v_scale"],
+-        q, k_cache, v_cache,
+-        qkv.stride(0),
+-        HQ=hq, HKV=hkv, D=d, ROPE=bool(theta), EPS=RMS_EPS, PAIRED=paired, G=g,
+-        num_warps=1,
+-    )
++    _nb_pre(data, qkv, q, tokens, paired, tiled)  # master's _pre_attention_kernel unless the class routed tiled
++    if c320:
++        return _c320_forward(data, q, qkv)
+     if splitkv:
+         return _full_decode_splitkv(data, q, qkv)
+     if pseudo:
+@@ -4633,27 +4724,31 @@ def _sd_sk_launch(data: Inputs, q: torch.Tensor, qkv: torch.Tensor, variant: int
+     return out
+ 
+ 
+-def _sd_run(data: Inputs, variant: int, grid: int) -> torch.Tensor:
+-    """The routed sliding decode step: _pre_attention_kernel (stores the new K/V row the window includes) then
+-    the sk kernel. kernel_fn and the gate both call exactly this."""
+-    q, qkv = _ps_prepare_q(data)
++def _sd_run(data: Inputs, variant: int, grid: int, tiled: bool = False) -> torch.Tensor:
++    """The routed sliding decode step: _pre_attention_kernel (or SOURCE B's tiled kernel when the band's GATE B
++    routed it; stores the new K/V row the window includes) then the sk kernel. kernel_fn and the gates call
++    exactly this."""
++    q, qkv = _ps_prepare_q_tiled(data) if tiled else _ps_prepare_q(data)
+     return _sd_sk_launch(data, q, qkv, variant, grid)
+ 
+ 
+ def _sliding_decode_sk(data: Inputs) -> torch.Tensor:
+     batch = data["config"]["batch"]
+-    variant, spec = _SD_ROUTE[_ps_band(batch)]
+-    return _sd_run(data, variant, _sd_grid(spec, batch, _sm_count(data["qkv"].device)))
++    band = _ps_band(batch)
++    variant, spec = _SD_ROUTE[band]
++    return _sd_run(data, variant, _sd_grid(spec, batch, _sm_count(data["qkv"].device)),
++                   ("SD16" if band == 2 else "SD32") in _NB_TILED)
+ 
+ 
+-def _sd_case(tag, lens, kv_scale, variant, grid, gen) -> bool:
++def _sd_case(tag, lens, kv_scale, variant, grid, gen, tiled=False) -> bool:
+     """One synthetic sliding-decode case, each launch announced before and synced + confirmed after (a fault
+-    names its kernel), against the FP32 windowed reference."""
++    names its kernel), against the FP32 windowed reference. tiled: SOURCE B's first node instead of master's."""
+     data = _ps_synthetic(lens, kv_scale, gen, torch.device("cuda"), L=1)
+-    _say(f"[sd] {tag}: launching _pre_attention_kernel")
+-    q, qkv = _ps_prepare_q(data)
++    pre = "_pre_attention_tiled_kernel" if tiled else "_pre_attention_kernel"
++    _say(f"[sd] {tag}: launching {pre}")
++    q, qkv = _ps_prepare_q_tiled(data) if tiled else _ps_prepare_q(data)
+     torch.cuda.synchronize()
+-    _say(f"[sd] {tag}: _pre_attention_kernel returned; launching splitkv_attn_sk_kernel{_SK_LABELS[variant]} "
++    _say(f"[sd] {tag}: {pre} returned; launching splitkv_attn_sk_kernel{_SK_LABELS[variant]} "
+          f"grid {grid}")
+     out = _sd_sk_launch(data, q, qkv, variant, grid)
+     torch.cuda.synchronize()
+@@ -4664,7 +4759,7 @@ def _sd_case(tag, lens, kv_scale, variant, grid, gen) -> bool:
+     return ok
+ 
+ 
+-def _sd_validate() -> "str | None":
++def _sd_validate(tiled=False) -> "str | None":
+     """Canary + self-check of the TOK = 1 kernels against the FP32 windowed reference: lens 0, 1, 63, 2047, 2048,
+     2049, 80000, ragged B = 16 / 32, kv scale 1 and 0.25, grids 3 / 7 / 2R / 3R / SM / 2xSM. None on success,
+     else the reason sliding decode stays on Triton. Also prints the TOK = 8 variants' attributes (byte-identical
+@@ -4713,7 +4808,7 @@ def _sd_validate() -> "str | None":
+         ("B=32 ragged two-level grid device", lens32, 1.0, 7, two),
+     )
+     for tag, lens, kv_scale, variant, grid in cases:
+-        if not _sd_case(tag, lens, kv_scale, variant, grid, gen):
++        if not _sd_case(("tiled pre, " if tiled else "") + tag, lens, kv_scale, variant, grid, gen, tiled):
+             return f"self-check {tag}"
+     left = int(_ps_ticket(dev).abs().sum().item()) + int(_ps_gticket(dev).abs().sum().item())
+     _say(f"[sd] tickets (both levels) after the self-check: sum {left}")
+@@ -4960,8 +5055,11 @@ def _sd_setup() -> None:
+             _say(f"[sd] ticket re-zero raised: {e!r}")
+ 
+ 
++_SD_VALID = False  # master's _sd_validate passed (the combination's band gates need it)
++
++
+ def _sd_setup_body() -> None:
+-    global _SD_ROUTE
++    global _SD_ROUTE, _SD_VALID
+     dev = torch.device("cuda")
+     _ps_ticket(dev)
+     _ps_gticket(dev)
+@@ -4975,6 +5073,7 @@ def _sd_setup_body() -> None:
+     if reason is not None:
+         _say(f"PATH CHOSEN: sliding decode master (fallback: {reason})")
+         return
++    _SD_VALID = True
+     sms = _sm_count(dev)
+     gen = torch.Generator(device="cuda").manual_seed(9753)
+     flush = torch.empty(64 << 20, dtype=torch.float32, device=dev)  # 256 MB > L2
+@@ -5030,75 +5129,1337 @@ def _sd_setup_body() -> None:
+              f"head-to-head timings, or failed a check){timing}")
+ 
+ 
+-if torch.cuda.is_available():
+-    _EXT = _build_splitkv()
+-    if _EXT is not None and not _splitkv_self_check():
+-        print("[splitkv] SELF-CHECK FAILED: CUDA split-KV path disabled, master FA3 path kept")
+-        _EXT = None
+-    if _EXT is None:
+-        _say("PATH CHOSEN: full decode 1<B<=64 tp8 page 1: master FA3 (splitkv v1 unavailable; v2 not tried)")
+-    else:
+-        _sk_ticket(torch.device("cuda", torch.cuda.current_device()))  # zeroed once, here
+-        _sk_gticket(torch.device("cuda", torch.cuda.current_device()))  # zeroed once, here
+-        _EXT2 = _build_sk()
+-        _sk_reason = "build failed" if _EXT2 is None else None
+-        if _EXT2 is not None:
+-            try:
+-                _sk_reason = _sk_validate()
+-            except Exception as e:
+-                _sk_reason = f"self-check raised {e!r}"
+-        _b1_reason = "stage 2 unavailable"
+-        if _sk_reason is not None:
+-            _EXT2 = None
+-            _say(f"PATH CHOSEN: full decode splitkv v1 (fallback: {_sk_reason})")
+-        else:
+-            _say("PATH CHOSEN: full decode streamk+ticket v2")
+-            try:
+-                _b1_reason = _sk_validate_b1()
+-            except Exception as e:
+-                _b1_reason = f"batch-1 self-check raised {e!r}"
+-            if _b1_reason is None:
+-                _B1_PATH = True
+-            try:
+-                _ps_setup()
+-            except Exception as e:
+-                _PS_ROUTE.clear()
+-                _say(f"PATH CHOSEN: sliding verify FA3 (fallback: setup raised {e!r})")
+-            try:
+-                _skf_setup()
+-            except Exception as e:
+-                _FUSED_ROUTE.clear()
+-                _EXTF = None
+-                _say(f"PATH CHOSEN: full decode fused pre-attention [skF]: pre-attn + v2 (fallback: setup raised {e!r})")
+-            try:
+-                _sk_diagnostics()
+-                if _b1_reason is None:
+-                    _sk_b1_diagnostics()
+-            except Exception as e:
+-                _say(f"[sk-diag] diagnostics raised (path unaffected): {e!r}")
+-            finally:  # a diagnostic variant must not leave the shared tickets dirty for the timed path
+-                try:
+-                    _rezero_tickets()
+-                except Exception as e:
+-                    _say(f"[sk-diag] ticket re-zero raised: {e!r}")
+-        if _B1_PATH:
+-            _say("PATH CHOSEN: full decode_1 streamk two-level")
+-        else:
+-            _say(f"PATH CHOSEN: full decode_1 FA3 (fallback: {_b1_reason})")
+-    if _EXT is None:
+-        _say("PATH CHOSEN: full decode_1 FA3 (fallback: splitkv v1 unavailable)")
+-    if _PS_ROUTE == {} and (_EXT is None or _EXT2 is None):
+-        _say("PATH CHOSEN: sliding verify FA3 (fallback: stage-2 module unavailable)")
+-    _say("PATH CHOSEN: every other shape (sliding decode bands not named above, other verify bands, page 64, dp): master path, unchanged")
+-    try:
+-        _slide_init()
+-    except Exception as _e:  # never raise at import: every sliding shape keeps master
+-        for _c in _SLIDE_MOD:
+-            _SLIDE_MOD[_c] = None
+-        print(f"[slide] PATH CHOSEN: sliding master (fallback: init raised {_e!r})", flush=True)
+-    # Last: _SLIDE_MOD is final, so the gate times the real incumbent and the replay check captures the final kernel_fn.
+-    try:
+-        _sd_setup()
+-    except Exception as _e:  # never raise at import: sliding decode keeps master exactly
+-        _SD_ROUTE = MappingProxyType({})
+-        _say(f"PATH CHOSEN: sliding decode master (fallback: setup raised {_e!r})")
++# ---------------------------------------------------------------------------------------------
++# Combination 3 (combo-tiled-preattn-neighbour-regate-c320): the pre-attention kernel as the shared first
++# node of every two-node pair, plus chunk320 at full decode_1.
++#
++# SOURCE A (full-decode1-cuda-splitkv-chunk320, impl 183eb55): splitkv_attn_kernel<320> +
++# splitkv_combine_kernel<320, 16> in a NEW module muse_full_decode_c320 (master's v1 module and its <1024>
++# code untouched). Full decode_1 (class FD1) = [_pre_attention_kernel + c320 A + combine], max_chunks =
++# ceil(page_table.shape[1] / 320), grid 2 x SM, workspaces torch.empty per call; the module holds no static
++# state and no device pointer (the dynamic-smem opt-in is set once at import by c320_init). Its nvcc build
++# runs sequentially on the main thread after master's whole import sequence (no thread); GATE A
++# (correctness vs FP32 and vs master's B=1 output, two-state A B B A A B replay, interleaved cold-L2 graph
++# timing vs master's B=1 step, route at <= 0.98) decides.
++# SOURCE B (preattention-tiled-gate-large-tokens, impl 880b01b): _pre_attention_tiled_kernel, one program
++# per (token, kv group). GATE B per class (byte/ulp exactness vs _pre_attention_kernel, then the whole step
++# kernel_fn would run timed with either first node, interleaved cold-L2 graph replays, route at <= 0.98):
++# routable SV1 / SV16 / SV32 (sliding verify), FD1 (inside whatever full decode_1 pair is chosen), SD16 /
++# SD32 (inside the sk-window pair, decided in the band gate's pass 2); print-only FD16 / FD32 / FV1 / FV16 /
++# FV32 (their whole steps are too long for the 0.98 rule).
++# SOURCE E (sliding-decode-sk-window-route, impl 376be02): band 2 (B=2..16) of the sk-window gate, timed at
++# B=16 x 80000 against master's Triton _sliding_fused_kernel; pass 2 times Triton, [master pre + sk],
++# [tiled pre + sk] and the pre nodes alone in ONE interleaved set and prints both ratios; master's 1.05x rule
++# vs a Triton incumbent decides. Band 3 (B=17..32) is re-timed the same way; its route changes only if GATE
++# B picks the tiled node there and that pair clears master's 1.03x vs the cluster incumbent.
++# Every phase runs after master's import sequence, prints elapsed IMPORT_T0 at its boundaries, starts only
++# if elapsed + its deadline <= 480 s, and loses its decisions if it ends past its deadline. Route tables
++# are published once, together, after the last phase; kernel_fn only reads them.
++# ---------------------------------------------------------------------------------------------
++
++_NB_LIMIT = 480.0          # a phase starts only if elapsed IMPORT_T0 + its deadline <= this
++_NB_GATE = 0.98            # GATE A / GATE B: new step time / master step time must be <= this
++_NB_TILED = frozenset()    # classes whose first node is _pre_attention_tiled_kernel (published once)
++_NB_C320 = False           # full decode_1 on [pre-attn + c320] (published once)
++_NB_SNAP = None            # master's tables before the combination phases (restored on any late failure)
++_C320_CHUNK = 320
++_C320_EXT = None           # the c320 module; kept only if full decode_1 routes to it
++_NB_BATCH = {"1": 1, "16": 16, "32": 32}
++
++_C320_CPP = r"""
++#include <torch/extension.h>
++#include <vector>
++std::vector<int64_t> c320_init();
++void c320_attn(torch::Tensor q, torch::Tensor k_cache, torch::Tensor v_cache, torch::Tensor page_table,
++               torch::Tensor cache_seqlens, torch::Tensor k_scale, torch::Tensor ws_acc, torch::Tensor ws_ml,
++               double score_scale, int64_t max_chunks, int64_t grid);
++void c320_combine(torch::Tensor ws_acc, torch::Tensor ws_ml, torch::Tensor cache_seqlens, torch::Tensor v_scale,
++                  torch::Tensor qkv, int64_t qkv_stride, torch::Tensor out, int64_t max_chunks, double eps);
++"""
++
++_C320_CUDA = r"""
++#include <torch/extension.h>
++#include <ATen/cuda/CUDAContext.h>
++#include <c10/cuda/CUDAException.h>
++#include <cuda_fp16.h>
++#include <cuda_bf16.h>
++#include <cstdint>
++#include <vector>
++
++namespace {
++
++constexpr int D = 64;              // head dim
++constexpr int HQ = 16;             // query heads
++constexpr int HKV = 2;             // kv heads
++constexpr int G = HQ / HKV;        // queries per kv head (8)
++constexpr int ROW = HKV * D;       // bytes per cache row (page 1: both kv heads, 128)
++constexpr int TILE = 64;           // tokens per pipeline tile
++constexpr int STAGES = 4;
++constexpr int THREADS = 256;
++constexpr int WARPS = THREADS / 32;
++constexpr int MAXB = 64;
++constexpr int STAGE_BYTES = 2 * TILE * ROW;                  // K tile + V tile = 16 KB
++constexpr int RING_OFF = 0;
++constexpr int IDX_OFF = RING_OFF + STAGES * STAGE_BYTES;     // int32 [2][CHUNK]
++// Shared-memory layout as constexpr functions of the work-item size CHUNK (tokens per item).
++__host__ __device__ constexpr int q_off(int chunk) { return IDX_OFF + 2 * chunk * 4; }                // e4m3 [2][HQ][D]
++__host__ __device__ constexpr int acc_off(int chunk) { return q_off(chunk) + 2 * HQ * D; }            // f32 [WARPS][G][D]
++__host__ __device__ constexpr int ml_off(int chunk) { return acc_off(chunk) + WARPS * G * D * 4; }    // f32 [WARPS][G][2]
++__host__ __device__ constexpr int seq_off(int chunk) { return ml_off(chunk) + WARPS * G * 2 * 4; }    // int32 [MAXB]
++__host__ __device__ constexpr int pre_off(int chunk) { return seq_off(chunk) + MAXB * 4; }            // int32 [MAXB + 1]
++__host__ __device__ constexpr int smem_a(int chunk) { return pre_off(chunk) + (MAXB + 4) * 4; }
++
++__device__ __forceinline__ uint32_t smem_u32(const void* p) {
++  return static_cast<uint32_t>(__cvta_generic_to_shared(p));
++}
++__device__ __forceinline__ void cp_async16(uint32_t dst, const void* src, int src_bytes) {
++  asm volatile("cp.async.cg.shared.global [%0], [%1], 16, %2;\n" :: "r"(dst), "l"(src), "r"(src_bytes) : "memory");
++}
++__device__ __forceinline__ void cp_async4(uint32_t dst, const void* src, int src_bytes) {
++  asm volatile("cp.async.ca.shared.global [%0], [%1], 4, %2;\n" :: "r"(dst), "l"(src), "r"(src_bytes) : "memory");
++}
++__device__ __forceinline__ void cp_commit() { asm volatile("cp.async.commit_group;\n" ::: "memory"); }
++template <int N>
++__device__ __forceinline__ void cp_wait() { asm volatile("cp.async.wait_group %0;\n" :: "n"(N) : "memory"); }
++
++// Four E4M3 bytes -> two f16x2: lo from bytes 0,1 (byte 0 in the low half), hi from bytes 2,3.
++__device__ __forceinline__ void e4m3x4_to_f16x2x2(uint32_t w, uint32_t& lo, uint32_t& hi) {
++  asm("{\n\t.reg .b16 a, b;\n\tmov.b32 {a, b}, %2;\n\t"
++      "cvt.rn.f16x2.e4m3x2 %0, a;\n\tcvt.rn.f16x2.e4m3x2 %1, b;\n\t}\n"
++      : "=r"(lo), "=r"(hi) : "r"(w));
++}
++__device__ __forceinline__ uint32_t pack_f16x2(float lo, float hi) {
++  __half2 h = __floats2half2_rn(lo, hi);  // .x (low half) = lo
++  return *reinterpret_cast<uint32_t*>(&h);
++}
++__device__ __forceinline__ float ex2(float x) {
++  float y;
++  asm("ex2.approx.ftz.f32 %0, %1;" : "=f"(y) : "f"(x));
++  return y;
++}
++// D = A B + D, m16n8k16, A row-major f16 (4 regs), B col-major f16 (2 regs), fp32 accumulate.
++__device__ __forceinline__ void mma16816(float (&c)[4], uint32_t a0, uint32_t a1, uint32_t a2, uint32_t a3,
++                                         uint32_t b0, uint32_t b1) {
++  asm("mma.sync.aligned.m16n8k16.row.col.f32.f16.f16.f32 {%0,%1,%2,%3}, {%4,%5,%6,%7}, {%8,%9}, {%0,%1,%2,%3};\n"
++      : "+f"(c[0]), "+f"(c[1]), "+f"(c[2]), "+f"(c[3])
++      : "r"(a0), "r"(a1), "r"(a2), "r"(a3), "r"(b0), "r"(b1));
++}
++
++template <int CHUNK>
++__global__ void __launch_bounds__(THREADS, 2)
++splitkv_attn_kernel(const uint8_t* __restrict__ q,          // e4m3 [B, HQ, D]
++                    const uint8_t* __restrict__ kc,         // e4m3 [rows, ROW]
++                    const uint8_t* __restrict__ vc,         // e4m3 [rows, ROW]
++                    const int* __restrict__ page_table, int64_t pt_stride,
++                    const int* __restrict__ seqlens, int B,
++                    const float* __restrict__ k_scale, float score_scale,
++                    float* __restrict__ ws_acc,             // f32 [B * max_chunks, HQ, D]
++                    float* __restrict__ ws_ml,              // f32 [B * max_chunks, 2, HQ]
++                    int max_chunks) {
++  static_assert(CHUNK % TILE == 0, "CHUNK must be a whole number of tiles");
++  static_assert(CHUNK / TILE >= STAGES - 1, "cross-item meta prefetch needs TILES >= STAGES - 1");
++  constexpr int TILES = CHUNK / TILE;
++  extern __shared__ __align__(128) uint8_t smem[];
++  uint8_t* ring = smem + RING_OFF;
++  int* idx_s = reinterpret_cast<int*>(smem + IDX_OFF);
++  uint8_t* q_s = smem + q_off(CHUNK);
++  float* acc_s = reinterpret_cast<float*>(smem + acc_off(CHUNK));
++  float* ml_s = reinterpret_cast<float*>(smem + ml_off(CHUNK));
++  int* seq_s = reinterpret_cast<int*>(smem + seq_off(CHUNK));
++  int* pre_s = reinterpret_cast<int*>(smem + pre_off(CHUNK));
++  const float NEG_INF = __int_as_float(0xff800000u);
++
++  const int tid = threadIdx.x, lane = tid & 31, warp = tid >> 5;
++  const int bx = blockIdx.x, gx = gridDim.x;
++  if (tid < B) seq_s[tid] = seqlens[tid];
++  __syncthreads();
++  if (tid == 0) {
++    int run = 0;
++    pre_s[0] = 0;
++    for (int b = 0; b < B; ++b) {
++      run += (seq_s[b] + CHUNK - 1) / CHUNK;
++      pre_s[b + 1] = run;
++    }
++  }
++  __syncthreads();
++  const int total = pre_s[B];
++  if (bx >= total) return;  // uniform over the CTA
++  const int nk = (total - bx + gx - 1) / gx;  // items of this CTA
++  const int N = nk * TILES;                   // tiles of this CTA, one flat pipeline
++  const float scale = score_scale * __ldg(k_scale);  // sm_scale * qk_scale_factor * log2(e) * k_scale
++
++  // Item k of this CTA -> (request, chunk, cache length).
++  auto item_of = [&](int k, int& b, int& chunk, int& seq) {
++    const int i = bx + k * gx;
++    int lo = 0;
++    while (lo + 1 < B && pre_s[lo + 1] <= i) ++lo;
++    b = lo;
++    chunk = i - pre_s[lo];
++    seq = seq_s[lo];
++  };
++  // Page indices and query of item k into buffer k & 1 (positions past the length zero-filled).
++  auto issue_meta = [&](int k) {
++    int b, chunk, seq;
++    item_of(k, b, chunk, seq);
++    const int buf = k & 1;
++    const int* prow = page_table + (int64_t)b * pt_stride;
++    for (int e = tid; e < CHUNK; e += THREADS) {
++      const int pos = chunk * CHUNK + e;
++      const bool ok = pos < seq;
++      cp_async4(smem_u32(idx_s + buf * CHUNK + e), ok ? prow + pos : prow, ok ? 4 : 0);
++    }
++    if (tid < HQ * D / 16)
++      cp_async16(smem_u32(q_s + buf * HQ * D + tid * 16), q + (int64_t)b * HQ * D + tid * 16, 16);
++  };
++  // Tile nn of the flat sequence into ring stage nn % STAGES: thread -> token tid / 4, 16-byte
++  // chunks 2 * (tid % 4) + {0, 1} of its K row and its V row, chunk c stored at c ^ (token % 8).
++  int ik = -1, ib = 0, ichunk = 0, iseq = 0;
++  auto issue_tile = [&](int nn) {
++    const int k = nn / TILES, t = nn % TILES;
++    if (k != ik) { ik = k; item_of(k, ib, ichunk, iseq); }
++    uint8_t* st = ring + (nn % STAGES) * STAGE_BYTES;
++    const int tt = tid >> 2;
++    const int e = t * TILE + tt;
++    const bool ok = ichunk * CHUNK + e < iseq;
++    const int64_t row = ok ? (int64_t)idx_s[(k & 1) * CHUNK + e] : 0;
++    const uint8_t* ks = kc + row * ROW;
++    const uint8_t* vs = vc + row * ROW;
++#pragma unroll
++    for (int j = 0; j < 2; ++j) {
++      const int c = (tid & 3) * 2 + j;
++      const int dst = tt * ROW + ((c ^ (tt & 7)) << 4);
++      cp_async16(smem_u32(st + dst), ks + c * 16, ok ? 16 : 0);
++      cp_async16(smem_u32(st + TILE * ROW + dst), vs + c * 16, ok ? 16 : 0);
++    }
++  };
++
++  // Prologue: item 0's meta (waited), then tiles 0 .. STAGES-2; item 1's meta rides tile 0's group.
++  issue_meta(0);
++  cp_commit();
++  cp_wait<0>();
++  __syncthreads();
++#pragma unroll
++  for (int j = 0; j < STAGES - 1; ++j) {
++    if (j < N) {
++      issue_tile(j);
++      if (j % TILES == 0 && j / TILES + 1 < nk) issue_meta(j / TILES + 1);
++    }
++    cp_commit();
++  }
++
++  const int g = warp & 1;             // kv head
++  const int slice = (warp >> 1) * 16; // token slice of each tile
++  const int quad = lane >> 2, qi = lane & 3;
++  uint32_t qa[4][2];
++  float m_i = NEG_INF, l_i = 0.f;
++  float acc[8][4];
++  int cb = 0, cchunk = 0, cseq = 0;
++
++  for (int n = 0; n < N; ++n) {
++    cp_wait<STAGES - 2>();  // tile n (and everything issued before it) has landed
++    __syncthreads();        // visible to all; every warp is done with tile n - 1's stage
++    {
++      const int nn = n + STAGES - 1;
++      if (nn < N) {
++        issue_tile(nn);
++        if (nn % TILES == 0 && nn / TILES + 1 < nk) issue_meta(nn / TILES + 1);
++      }
++      cp_commit();  // always, so the group count stays uniform
++    }
++    const int k = n / TILES, t = n % TILES;
++    if (t == 0) {
++      item_of(k, cb, cchunk, cseq);
++      // A operand for kstep s: row quad = query g * G + quad; k index 2 * qi + {0, 1} holds dims
++      // s * 16 + 4 * qi + {0, 1}, k index 8 + 2 * qi + {0, 1} holds dims s * 16 + 4 * qi + {2, 3}
++      // (K uses the same permutation, so the dot product is unchanged).
++      const uint8_t* qrow = q_s + (k & 1) * HQ * D + (g * G + quad) * D + qi * 4;
++#pragma unroll
++      for (int s = 0; s < 4; ++s)
++        e4m3x4_to_f16x2x2(*reinterpret_cast<const uint32_t*>(qrow + s * 16), qa[s][0], qa[s][1]);
++      m_i = NEG_INF;
++      l_i = 0.f;
++#pragma unroll
++      for (int nb = 0; nb < 8; ++nb) acc[nb][0] = acc[nb][1] = acc[nb][2] = acc[nb][3] = 0.f;
++    }
++    const uint8_t* Ks = ring + (n % STAGES) * STAGE_BYTES;
++    const uint8_t* Vs = Ks + TILE * ROW;
++
++    // S = Q K^T over the warp's 16 tokens: n-block nb holds tokens slice + nb * 8 + (0..7).
++    float s[2][4];
++#pragma unroll
++    for (int nb = 0; nb < 2; ++nb) {
++      s[nb][0] = s[nb][1] = s[nb][2] = s[nb][3] = 0.f;
++      const int tt = slice + nb * 8 + quad;
++      const uint8_t* kr = Ks + tt * ROW + qi * 4;
++#pragma unroll
++      for (int ks = 0; ks < 4; ++ks) {
++        const uint32_t w = *reinterpret_cast<const uint32_t*>(kr + (((g * 4 + ks) ^ (tt & 7)) << 4));
++        uint32_t b0, b1;
++        e4m3x4_to_f16x2x2(w, b0, b1);
++        mma16816(s[nb], qa[ks][0], 0u, qa[ks][1], 0u, b0, b1);
++      }
++    }
++    // Row quad's scores at tokens slice + 2 * qi + {0, 1} (nb 0) and + 8 (nb 1).
++    const int pos0 = cchunk * CHUNK + t * TILE + slice + qi * 2;
++    float x0 = pos0 < cseq ? s[0][0] * scale : NEG_INF;
++    float x1 = pos0 + 1 < cseq ? s[0][1] * scale : NEG_INF;
++    float x2 = pos0 + 8 < cseq ? s[1][0] * scale : NEG_INF;
++    float x3 = pos0 + 9 < cseq ? s[1][1] * scale : NEG_INF;
++    float mx = fmaxf(fmaxf(x0, x1), fmaxf(x2, x3));
++    mx = fmaxf(mx, __shfl_xor_sync(0xffffffffu, mx, 1));
++    mx = fmaxf(mx, __shfl_xor_sync(0xffffffffu, mx, 2));
++    const float m_new = fmaxf(m_i, mx);
++    const float m_use = m_new == NEG_INF ? 0.f : m_new;
++    const float alpha = ex2(m_i - m_use);
++    x0 = ex2(x0 - m_use);
++    x1 = ex2(x1 - m_use);
++    x2 = ex2(x2 - m_use);
++    x3 = ex2(x3 - m_use);
++    l_i = l_i * alpha + (x0 + x1) + (x2 + x3);  // this lane's columns; quad-reduced at item end
++    m_i = m_new;
++#pragma unroll
++    for (int nb = 0; nb < 8; ++nb) { acc[nb][0] *= alpha; acc[nb][1] *= alpha; }
++    const uint32_t pa0 = pack_f16x2(x0, x1), pa2 = pack_f16x2(x2, x3);
++
++    // O += P V. B operand of dim-block nb: k = token slice + 2 * qi + {0, 1} (reg 0) and + 8
++    // (reg 1), column quad = dim quad * 8 + nb. Each lane reads 8 contiguous bytes per token.
++    const int tv = slice + qi * 2;
++    const int vlc = g * 4 + (quad >> 1);
++    const int voff = (quad & 1) * 8;
++    const uint2 v0 = *reinterpret_cast<const uint2*>(Vs + tv * ROW + ((vlc ^ (tv & 7)) << 4) + voff);
++    const uint2 v1 = *reinterpret_cast<const uint2*>(Vs + (tv + 1) * ROW + ((vlc ^ ((tv + 1) & 7)) << 4) + voff);
++    const uint2 v8 = *reinterpret_cast<const uint2*>(Vs + (tv + 8) * ROW + ((vlc ^ ((tv + 8) & 7)) << 4) + voff);
++    const uint2 v9 = *reinterpret_cast<const uint2*>(Vs + (tv + 9) * ROW + ((vlc ^ ((tv + 9) & 7)) << 4) + voff);
++#pragma unroll
++    for (int hw = 0; hw < 2; ++hw) {
++      const uint32_t w0 = hw ? v0.y : v0.x, w1 = hw ? v1.y : v1.x;
++      const uint32_t w8 = hw ? v8.y : v8.x, w9 = hw ? v9.y : v9.x;
++      // Interleave the two tokens' bytes: byte 2j = token a dim j, byte 2j + 1 = token b dim j.
++      uint32_t r0[4], r1[4];
++      e4m3x4_to_f16x2x2(__byte_perm(w0, w1, 0x5140), r0[0], r0[1]);
++      e4m3x4_to_f16x2x2(__byte_perm(w0, w1, 0x7362), r0[2], r0[3]);
++      e4m3x4_to_f16x2x2(__byte_perm(w8, w9, 0x5140), r1[0], r1[1]);
++      e4m3x4_to_f16x2x2(__byte_perm(w8, w9, 0x7362), r1[2], r1[3]);
++#pragma unroll
++      for (int j = 0; j < 4; ++j) mma16816(acc[hw * 4 + j], pa0, 0u, pa2, 0u, r0[j], r1[j]);
++    }
++
++    if (t == TILES - 1) {
++      // Item end: merge the four warps of each kv head, store the item's partial.
++      l_i += __shfl_xor_sync(0xffffffffu, l_i, 1);
++      l_i += __shfl_xor_sync(0xffffffffu, l_i, 2);
++      const int rw = warp * G + quad;
++      if (qi == 0) { ml_s[rw * 2] = m_i; ml_s[rw * 2 + 1] = l_i; }
++      float* ar = acc_s + rw * D;
++#pragma unroll
++      for (int nb = 0; nb < 8; ++nb) {
++        ar[(qi * 2) * 8 + nb] = acc[nb][0];
++        ar[(qi * 2 + 1) * 8 + nb] = acc[nb][1];
++      }
++      __syncthreads();
++      const int h = tid >> 4, d0 = (tid & 15) * 4;
++      const int hg = h / G, r = h % G;
++      float mw[4];
++      float M = NEG_INF;
++#pragma unroll
++      for (int j = 0; j < 4; ++j) { mw[j] = ml_s[((hg + 2 * j) * G + r) * 2]; M = fmaxf(M, mw[j]); }
++      const float Mu = M == NEG_INF ? 0.f : M;
++      float4 o = make_float4(0.f, 0.f, 0.f, 0.f);
++      float L = 0.f;
++#pragma unroll
++      for (int j = 0; j < 4; ++j) {
++        const int wr = (hg + 2 * j) * G + r;
++        const float wt = mw[j] == NEG_INF ? 0.f : ex2(mw[j] - Mu);
++        L += wt * ml_s[wr * 2 + 1];
++        const float4 a = *reinterpret_cast<const float4*>(acc_s + wr * D + d0);
++        o.x += wt * a.x; o.y += wt * a.y; o.z += wt * a.z; o.w += wt * a.w;
++      }
++      const int64_t slot = (int64_t)cb * max_chunks + cchunk;
++      *reinterpret_cast<float4*>(ws_acc + (slot * HQ + h) * D + d0) = o;
++      if ((tid & 15) == 0) { ws_ml[slot * 2 * HQ + h] = M; ws_ml[slot * 2 * HQ + HQ + h] = L; }
++    }
++  }
++  cp_wait<0>();  // the trailing groups are empty; drain anyway
++}
++
++template <int CHUNK, int NW>
++__global__ void __launch_bounds__(NW * 32)
++splitkv_combine_kernel(const float* __restrict__ ws_acc, const float* __restrict__ ws_ml,
++                       const int* __restrict__ seqlens, const float* __restrict__ v_scale,
++                       const __nv_bfloat16* __restrict__ qkv, int64_t qkv_stride,
++                       __nv_bfloat16* __restrict__ out, int max_chunks, float eps) {
++  __shared__ float red_m[NW];
++  __shared__ float red_l[NW];
++  __shared__ float red_acc[NW][D];
++  const float NEG_INF = __int_as_float(0xff800000u);
++  const int b = blockIdx.x, h = blockIdx.y;
++  const int tid = threadIdx.x, lane = tid & 31, warp = tid >> 5;
++  const int n = (seqlens[b] + CHUNK - 1) / CHUNK;
++  const int64_t base = (int64_t)b * max_chunks;
++
++  float M = NEG_INF;
++  for (int c = tid; c < n; c += NW * 32) M = fmaxf(M, ws_ml[(base + c) * 2 * HQ + h]);
++#pragma unroll
++  for (int o = 16; o > 0; o >>= 1) M = fmaxf(M, __shfl_xor_sync(0xffffffffu, M, o));
++  if (lane == 0) red_m[warp] = M;
++  __syncthreads();
++  M = red_m[0];
++#pragma unroll
++  for (int w = 1; w < NW; ++w) M = fmaxf(M, red_m[w]);
++  const float Mu = M == NEG_INF ? 0.f : M;
++
++  float a0 = 0.f, a1 = 0.f, L = 0.f;
++#pragma unroll 4
++  for (int c = warp; c < n; c += NW) {
++    const int64_t sl = base + c;
++    const float m = ws_ml[sl * 2 * HQ + h];
++    const float wt = m == NEG_INF ? 0.f : ex2(m - Mu);  // empty partials weigh 0
++    L += wt * ws_ml[sl * 2 * HQ + HQ + h];
++    const float2 a = *reinterpret_cast<const float2*>(ws_acc + (sl * HQ + h) * D + lane * 2);
++    a0 += wt * a.x;
++    a1 += wt * a.y;
++  }
++  red_acc[warp][lane * 2] = a0;
++  red_acc[warp][lane * 2 + 1] = a1;
++  if (lane == 0) red_l[warp] = L;
++  __syncthreads();
++  if (warp == 0) {
++    float o0 = 0.f, o1 = 0.f, Ls = 0.f;
++#pragma unroll
++    for (int w = 0; w < NW; ++w) { o0 += red_acc[w][lane * 2]; o1 += red_acc[w][lane * 2 + 1]; Ls += red_l[w]; }
++    const float vs = __ldg(v_scale);
++    o0 = o0 / Ls * vs;
++    o1 = o1 / Ls * vs;
++    float ss = o0 * o0 + o1 * o1;
++#pragma unroll
++    for (int o = 16; o > 0; o >>= 1) ss += __shfl_xor_sync(0xffffffffu, ss, o);
++    const float r = 1.f / sqrtf(ss / D + eps);
++    const __nv_bfloat16* gp = qkv + (int64_t)b * qkv_stride + (HQ + 2 * HKV) * D + h * D + lane * 2;
++    const float g0 = __bfloat162float(gp[0]), g1 = __bfloat162float(gp[1]);
++    const float y0 = o0 * r / (1.f + expf(-g0));
++    const float y1 = o1 * r / (1.f + expf(-g1));
++    *reinterpret_cast<__nv_bfloat162*>(out + ((int64_t)b * HQ + h) * D + lane * 2) = __floats2bfloat162_rn(y0, y1);
++  }
++}
++
++constexpr int C320 = 320;   // the only work-item size of this module
++constexpr int C320_NW = 16;  // combine warps (512 threads)
++constexpr int C320_SMEM = smem_a(C320);
++
++}  // namespace
++
++// Import-time setup (called once, before any launch and never during capture): the dynamic shared-memory
++// opt-in of splitkv_attn_kernel<320>, then its attributes and the combine kernel's. No static state.
++std::vector<int64_t> c320_init() {
++  C10_CUDA_CHECK(cudaFuncSetAttribute(splitkv_attn_kernel<C320>, cudaFuncAttributeMaxDynamicSharedMemorySize,
++                                      C320_SMEM));
++  cudaFuncAttributes fa, fc;
++  C10_CUDA_CHECK(cudaFuncGetAttributes(&fa, splitkv_attn_kernel<C320>));
++  C10_CUDA_CHECK(cudaFuncGetAttributes(&fc, splitkv_combine_kernel<C320, C320_NW>));
++  int occ = 0;
++  C10_CUDA_CHECK(cudaOccupancyMaxActiveBlocksPerMultiprocessor(&occ, splitkv_attn_kernel<C320>, THREADS, C320_SMEM));
++  return {fa.binaryVersion, fa.ptxVersion, fa.numRegs, static_cast<int64_t>(fa.localSizeBytes), C320_SMEM, occ,
++          fc.binaryVersion, fc.numRegs, static_cast<int64_t>(fc.localSizeBytes),
++          static_cast<int64_t>(fc.sharedSizeBytes)};
++}
++
++void c320_attn(torch::Tensor q, torch::Tensor k_cache, torch::Tensor v_cache, torch::Tensor page_table,
++               torch::Tensor cache_seqlens, torch::Tensor k_scale, torch::Tensor ws_acc, torch::Tensor ws_ml,
++               double score_scale, int64_t max_chunks, int64_t grid) {
++  const int B = static_cast<int>(cache_seqlens.size(0));
++  TORCH_CHECK(B >= 1 && B <= MAXB, "c320_attn: batch out of range");
++  TORCH_CHECK(page_table.stride(1) == 1 && q.is_contiguous() && k_cache.is_contiguous() && v_cache.is_contiguous(),
++              "c320_attn: layout");
++  auto stream = at::cuda::getCurrentCUDAStream();
++  splitkv_attn_kernel<C320><<<static_cast<unsigned>(grid), THREADS, C320_SMEM, stream>>>(
++      reinterpret_cast<const uint8_t*>(q.data_ptr()), reinterpret_cast<const uint8_t*>(k_cache.data_ptr()),
++      reinterpret_cast<const uint8_t*>(v_cache.data_ptr()), page_table.data_ptr<int>(), page_table.stride(0),
++      cache_seqlens.data_ptr<int>(), B, k_scale.data_ptr<float>(), static_cast<float>(score_scale),
++      ws_acc.data_ptr<float>(), ws_ml.data_ptr<float>(), static_cast<int>(max_chunks));
++  C10_CUDA_KERNEL_LAUNCH_CHECK();
++}
++
++void c320_combine(torch::Tensor ws_acc, torch::Tensor ws_ml, torch::Tensor cache_seqlens, torch::Tensor v_scale,
++                  torch::Tensor qkv, int64_t qkv_stride, torch::Tensor out, int64_t max_chunks, double eps) {
++  const int B = static_cast<int>(cache_seqlens.size(0));
++  auto stream = at::cuda::getCurrentCUDAStream();
++  splitkv_combine_kernel<C320, C320_NW><<<dim3(B, HQ), C320_NW * 32, 0, stream>>>(
++      ws_acc.data_ptr<float>(), ws_ml.data_ptr<float>(), cache_seqlens.data_ptr<int>(), v_scale.data_ptr<float>(),
++      reinterpret_cast<const __nv_bfloat16*>(qkv.data_ptr()), qkv_stride,
++      reinterpret_cast<__nv_bfloat16*>(out.data_ptr()), static_cast<int>(max_chunks), static_cast<float>(eps));
++  C10_CUDA_KERNEL_LAUNCH_CHECK();
++}
++"""
++
++
++def _nb_elapsed() -> float:
++    return time.perf_counter() - IMPORT_T0
++
++
++def _nb_mark(what: str) -> None:
++    _say(f"[nb] IMPORT_T0 +{_nb_elapsed():.1f} s: {what}")
++
++
++def _nb_can_start(name: str, deadline: float) -> bool:
++    now = _nb_elapsed()
++    ok = now + deadline <= _NB_LIMIT
++    _say(f"[nb] IMPORT_T0 +{now:.1f} s: phase {name} (deadline {deadline:.0f} s) -> "
++         + ("START" if ok else f"SKIPPED ({now:.1f} + {deadline:.0f} > {_NB_LIMIT:.0f} s): its classes stay on master"))
++    return ok
++
++
++def _nb_in_time(name: str, t0: float, deadline: float) -> bool:
++    took = time.perf_counter() - t0
++    ok = took <= deadline
++    _say(f"[nb] IMPORT_T0 +{_nb_elapsed():.1f} s: phase {name} ended after {took:.1f} s (deadline {deadline:.0f} s)"
++         + ("" if ok else " -> PAST ITS DEADLINE: its decisions are discarded, its classes stay on master"))
++    return ok
++
++
++# --- the timed path's helpers (config-only; no prints, no state) -------------------------------------------
++
++def _nb_class(cfg):
++    """Config-only class of a step whose first node is a separate pre-attention kernel (tp8, d 64, page 1):
++    SD / SV / FD / FV (sliding decode, sliding verify, full decode, full verify) x 1 / 16 / 32 (B = 1, 2..16,
++    17..32 sliding or 17..64 full); None for every other shape (master's first node, unchanged)."""
++    if not (cfg["num_q_heads"] == 16 and cfg["num_kv_heads"] == 2 and cfg["head_dim"] == 64
++            and cfg["page_size"] == 1):
++        return None
++    b = cfg["batch"]
++    size = "1" if b == 1 else ("16" if b <= 16 else "32")
++    if cfg["window"]:
++        if cfg["window"] != _PS_WINDOW or not cfg["rope_theta"] or b > 32:
++            return None
++        kind = "SD" if cfg["q_len"] == 1 else ("SV" if cfg["q_len"] == 8 else None)
++    else:
++        if cfg["rope_theta"] or b > 64:
++            return None
++        kind = "FD" if cfg["q_len"] == 1 else ("FV" if cfg["q_len"] == 8 else None)
++    return None if kind is None else kind + size
++
++
++def _nb_paired(cfg) -> bool:
++    """Master's paired-query predicate (full layers at batch > 1 off the split-KV path), config only."""
++    return cfg["window"] == 0 and cfg["num_kv_heads"] % 2 == 0 and cfg["batch"] > 1 and not _splitkv_gate(cfg)
++
++
++def _nb_pre(data: Inputs, qkv: torch.Tensor, q: torch.Tensor, tokens: int, paired: bool, tiled: bool) -> None:
++    """The step's first node: master's _pre_attention_kernel (one 1-warp program per (token, head)) or SOURCE B's
++    _pre_attention_tiled_kernel (one 4-warp program per (token, kv group)); same arguments, same outputs."""
++    cfg = data["config"]
++    hq, hkv, d = cfg["num_q_heads"], cfg["num_kv_heads"], cfg["head_dim"]
++    theta = cfg["rope_theta"]
++    inv_freq = _inv_freq(theta, d, qkv.device) if theta else data["k_scale"]  # unused when ROPE is off
++    args = (qkv, data["positions"], data["cache_loc"], inv_freq, data["k_scale"], data["v_scale"],
++            q, data["k_cache"], data["v_cache"], qkv.stride(0))
++    if tiled:
++        _pre_attention_tiled_kernel[(tokens, hkv)](
++            *args, HQ=hq, HKV=hkv, D=d, ROPE=bool(theta), EPS=RMS_EPS, PAIRED=paired, G=hq // hkv, num_warps=4)
++    else:
++        _pre_attention_kernel[(tokens, hq + hkv)](
++            *args, HQ=hq, HKV=hkv, D=d, ROPE=bool(theta), EPS=RMS_EPS, PAIRED=paired, G=hq // hkv, num_warps=1)
++
++
++def _ps_prepare_q_tiled(data: Inputs):
++    """_ps_prepare_q with SOURCE B's tiled first node (sliding: RoPE on, unpaired e4m3 query, new rows stored)."""
++    cfg = data["config"]
++    tokens = cfg["batch"] * cfg["q_len"]
++    qkv = data["qkv"].reshape(tokens, -1)
++    q = torch.empty((tokens, cfg["num_q_heads"], cfg["head_dim"]), dtype=FP8, device=qkv.device)
++    _nb_pre(data, qkv, q, tokens, False, True)
++    return q, qkv
++
++
++def _c320_forward(data: Inputs, q: torch.Tensor, qkv: torch.Tensor, grid=None) -> torch.Tensor:
++    """SOURCE A after the first node: splitkv_attn_kernel<320> + splitkv_combine_kernel<320, 16>; q is the unpaired
++    e4m3 query [B, 16, 64]. Workspaces from page_table.shape[1] and batch only; grid 2 x SM (grid is a
++    self-check override, None on the timed path)."""
++    cfg = data["config"]
++    batch, hq, d = cfg["batch"], cfg["num_q_heads"], cfg["head_dim"]
++    device = qkv.device
++    page_table = data["page_table"]
++    max_chunks = -(-page_table.shape[1] // _C320_CHUNK)  # page 1: one page per token
++    ws_acc = torch.empty((batch * max_chunks, hq, d), dtype=torch.float32, device=device)
++    ws_ml = torch.empty((batch * max_chunks, 2, hq), dtype=torch.float32, device=device)
++    g = grid or 2 * _sm_count(device)
++    _C320_EXT.c320_attn(q, data["k_cache"], data["v_cache"], page_table, data["cache_seqlens"], data["k_scale"],
++                        ws_acc, ws_ml, cfg["sm_scale"] * cfg["qk_scale_factor"] * LOG2E, max_chunks, g)
++    out = torch.empty((batch, 1, hq * d), dtype=torch.bfloat16, device=device)
++    _C320_EXT.c320_combine(ws_acc, ws_ml, data["cache_seqlens"], data["v_scale"], qkv, qkv.stride(0), out,
++                           max_chunks, RMS_EPS)
++    return out
++
++
++# --- c320 build (sequential, at import, after master's whole import sequence) -------------------------------
++
++def _c320_build():
++    """(module, None) or (None, reason). load_inline of muse_full_decode_c320 on the main thread, after every one of
++    master's builds and gates, with exactly the judged chunk320 build (impl 183eb55, job 8d4771fe) and the sibling
++    combination's: extra_cuda_cflags -O3 -arch=sm_90a, TORCH_CUDA_ARCH_LIST left as the environment has it. No
++    thread: concurrent load_inline could race torch's build directory, lock files, ninja and the env var."""
++    t0 = time.perf_counter()
++    flags = ["-O3", "-arch=sm_90a"]
++    try:
++        from torch.utils.cpp_extension import load_inline
++        try:
++            from torch.utils.cpp_extension import _get_cuda_arch_flags
++            arch = list(_get_cuda_arch_flags())
++        except Exception as e:  # private helper; the cubin check in GATE A is authoritative
++            arch = f"unavailable: {e!r}"
++        _say(f"[c320] building muse_full_decode_c320: torch arch flags {arch}, extra {flags} (as chunk320's judged build)")
++        ext = load_inline(
++            name="muse_full_decode_c320",
++            cpp_sources=_C320_CPP,
++            cuda_sources=_C320_CUDA,
++            functions=["c320_init", "c320_attn", "c320_combine"],
++            extra_cuda_cflags=flags,
++            verbose=False,
++        )
++    except Exception as e:
++        _say(f"[c320] load_inline failed after {time.perf_counter() - t0:.1f} s: {str(e)[-1500:]!r}")
++        return None, "build failed"
++    _say(f"[c320] load_inline compiled in {time.perf_counter() - t0:.1f} s")
++    return ext, None
++
++
++# --- shared prepare-time helpers ---------------------------------------------------------------------------
++
++def _nb_alt_check(tag, synth, ref_fn, sets, fn, order="ABBAAB", tol=2e-2) -> "str | None":
++    """Two states (synth(sets[0]), synth(sets[1]); identical shapes), fn(data) warmed up on a side stream and
++    CAPTURED once per state, then replayed in `order` (A B B A A B); from the third replay on, the state is
++    refilled in place with sets[step] first. Every replay's output is poisoned with NaN before it and compared
++    with ref_fn(data, lens) after it. Each launch is announced before and synced + confirmed after."""
++    states = {who: {"data": synth(sets[i]), "lens": sets[i]} for i, who in enumerate("AB")}
++    side = torch.cuda.Stream()
++    side.wait_stream(torch.cuda.current_stream())
++    for who, st in states.items():
++        _say(f"{tag} state {who}: eager warm-up on a side stream")
++        with torch.cuda.stream(side):
++            fn(st["data"])
++    torch.cuda.current_stream().wait_stream(side)
++    torch.cuda.synchronize()
++    for who, st in states.items():
++        graph = torch.cuda.CUDAGraph()
++        _say(f"{tag} state {who}: capturing")
++        with torch.cuda.graph(graph):
++            st["out"] = fn(st["data"])
++        st["graph"] = graph
++    torch.cuda.synchronize()
++    for step, who in enumerate(order):
++        st = states[who]
++        refill = step >= 2
++        if refill:
++            lens = sets[step % len(sets)]
++            new = synth(lens)
++            for key in _ALT_KEYS:
++                st["data"][key].copy_(new[key])
++            del new
++            st["lens"] = lens
++            torch.cuda.synchronize()
++        st["out"].fill_(float("nan"))
++        _say(f"{tag} step {step}: launching state {who} graph" + (" (refilled)" if refill else ""))
++        st["graph"].replay()
++        torch.cuda.synchronize()
++        err, finite = _rel_l2(st["out"], ref_fn(st["data"], st["lens"]))
++        ok = finite and err < tol
++        _say(f"{tag} step {step}: state {who} returned, rel L2 {err:.2e}, finite {finite} -> {'ok' if ok else 'FAIL'}")
++        if not ok:
++            return f"{tag} two-state replay step {step} (state {who})"
++    for st in states.values():
++        del st["graph"]
++    return None
++
++
++def _nb_tickets_left(dev) -> int:
++    return (int(_sk_ticket(dev).abs().sum().item()) + int(_sk_gticket(dev).abs().sum().item())
++            + int(_ps_ticket(dev).abs().sum().item()) + int(_ps_gticket(dev).abs().sum().item()))
++
++
++def _nb_synth(cls: str, lens, kv_scale: float, gen, max_pages=None):
++    """Synthetic inputs of a class: full decode (_splitkv_synthetic), sliding decode / verify (_ps_synthetic,
++    L = 1 / 8), full verify (_ps_synthetic L = 8 with window 0 and no RoPE)."""
++    dev = torch.device("cuda")
++    kind = cls[:2]
++    if kind == "FD":
++        return _splitkv_synthetic(lens, kv_scale, gen, dev, max_pages=max_pages)
++    data = _ps_synthetic(lens, kv_scale, gen, dev, max_pages=max_pages, L=1 if kind == "SD" else 8)
++    if kind == "FV":
++        data["config"] = dict(data["config"], window=0, rope_theta=0.0)
++    return data
++
++
++def _nb_codes_close(a: torch.Tensor, b: torch.Tensor):
++    """(bytes that differ, bytes more than one e4m3 ulp apart or NaN) between two e4m3 tensors of one shape."""
++    x = a.reshape(-1).view(torch.uint8).int()
++    y = b.reshape(-1).view(torch.uint8).int()
++    nan = int(((x & 127) == 127).sum()) + int(((y & 127) == 127).sum())
++    diff = x != y
++    n = int(diff.sum())
++    if n == 0:
++        return 0, nan
++    xs, ys = x[diff], y[diff]
++    mx, my = xs & 127, ys & 127
++    near = (((xs >> 7) == (ys >> 7)) & ((mx - my).abs() <= 1)) | ((mx <= 1) & (my <= 1))
++    return n, int((~near).sum()) + nan
++
++
++def _nb_exact(cls: str, gen) -> bool:
++    """GATE B exactness: both first nodes on the same small inputs of the class (cloned caches, query buffers
++    poisoned with NaN codes): the e4m3 query and both whole caches must match byte for byte or within one e4m3
++    ulp on at most 1% of bytes, with no NaN and no unwritten byte."""
++    batch = _NB_BATCH[cls[2:]]
++    data = _nb_synth(cls, [37 + 101 * i for i in range(batch)], 1.0, gen)
++    cfg = data["config"]
++    tokens = batch * cfg["q_len"]
++    hq, d = cfg["num_q_heads"], cfg["head_dim"]
++    qkv = data["qkv"].reshape(tokens, -1)
++    paired = _nb_paired(cfg)
++    res = {}
++    for tiled in (False, True):
++        kc, vc = data["k_cache"].clone(), data["v_cache"].clone()
++        d2 = dict(data, k_cache=kc, v_cache=vc)
++        q = torch.empty((tokens, hq, 2 * d if paired else d), dtype=FP8, device=qkv.device)
++        q.view(torch.uint8).fill_(0x7F)
++        name = "_pre_attention_tiled_kernel" if tiled else "_pre_attention_kernel"
++        _say(f"[nb-exact] {cls}: launching {name} ({tokens} tokens, paired {paired})")
++        _nb_pre(d2, qkv, q, tokens, paired, tiled)
++        torch.cuda.synchronize()
++        _say(f"[nb-exact] {cls}: {name} returned")
++        res[tiled] = (q, kc, vc)
++    ok, parts = True, []
++    for i, nm in enumerate(("q", "k_cache", "v_cache")):
++        n, far = _nb_codes_close(res[False][i], res[True][i])
++        good = far == 0 and n <= max(16, res[False][i].numel() // 100)
++        parts.append(f"{nm} {n} bytes differ, {far} beyond 1 ulp or NaN")
++        ok = ok and good
++    _say(f"[nb-exact] {cls}: tiled vs master first node: {'; '.join(parts)} -> {'EXACT (<= 1 ulp)' if ok else 'FAIL'}")
++    return ok
++
++
++def _nb_compile_tiled(gen) -> None:
++    """Compile (Triton JIT) every _pre_attention_tiled_kernel variant before any gate uses it: RoPE + unpaired
++    (sliding decode / verify), no RoPE + unpaired (full decode, full verify B=1), no RoPE + paired (full verify
++    B>1, print-only). Each launch announced before and synced + confirmed after."""
++    t0 = time.perf_counter()
++    for cls, what in (("SD16", "ROPE=True, PAIRED=False"), ("FD16", "ROPE=False, PAIRED=False"),
++                      ("FV16", "ROPE=False, PAIRED=True")):
++        data = _nb_synth(cls, [5, 9], 1.0, gen)
++        cfg = data["config"]
++        tokens = 2 * cfg["q_len"]
++        qkv = data["qkv"].reshape(tokens, -1)
++        paired = _nb_paired(cfg)
++        q = torch.empty((tokens, 16, 128 if paired else 64), dtype=FP8, device=qkv.device)
++        _say(f"[nb] compiling _pre_attention_tiled_kernel {what} (launch on {tokens} tokens)")
++        _nb_pre(data, qkv, q, tokens, paired, True)
++        torch.cuda.synchronize()
++        _say(f"[nb] _pre_attention_tiled_kernel {what} returned")
++    _say(f"[nb] tiled pre-attention variants compiled in {time.perf_counter() - t0:.1f} s")
++
++
++# --- GATE A: chunk320 at full decode_1 -----------------------------------------------------------------------
++
++def _nb_c320_gate(ext, gen, flush) -> "tuple[bool, str]":
++    """GATE A. (i) correctness, (ii) two-state replay, (iii) interleaved cold-L2 graph timing of
++    [pre-attn + c320 A + combine] vs master's B=1 step; route only if c320 / master <= 0.98."""
++    dev = torch.device("cuda")
++    cap = tuple(torch.cuda.get_device_capability())
++    a = [int(x) for x in ext.c320_init()]
++    _say(f"[c320] splitkv_attn_kernel<320>: binaryVersion {a[0]}, ptxVersion {a[1]}, regs {a[2]}, local {a[3]} B, "
++         f"dyn smem {a[4]} B (opt-in set at import), {a[5]} CTAs/SM; splitkv_combine_kernel<320,16>: binaryVersion "
++         f"{a[6]}, regs {a[7]}, local {a[8]} B, static smem {a[9]} B")
++    if cap != (9, 0):
++        return False, f"device capability {cap}"
++    if a[0] != 90 or a[6] != 90:
++        return False, "cubin version is not 90"
++    if a[5] < 1:
++        return False, "c320 kernel cannot launch (0 CTAs/SM)"
++    if a[5] < 2:
++        _say("[c320] WARNING: splitkv_attn_kernel<320> does not reach 2 CTAs/SM (performance, not correctness)")
++    two_level = _B1_PATH and _EXT is not None and _EXT2 is not None
++    inc = "master two-level" if two_level else "master FA3"
++    sms = _sm_count(dev)
++    cases = [("canary 1 key kv 0.25 grid 3", [0], 0.25, 3)]
++    for lens in ([80000], [5000]):
++        for kv in (1.0, 0.25):
++            for grid in (None, 3):
++                cases.append((f"{lens[0] + 1} keys kv {kv} grid {grid or 'device'}", lens, kv, grid))
++    for keys in (1, 63, 64, 4097):
++        cases.append((f"{keys} keys grid device", [keys - 1], 1.0, None))
++        cases.append((f"{keys} keys kv 0.25 grid 3", [keys - 1], 0.25, 3))
++    for tag, lens, kv, grid in cases:
++        data = _splitkv_synthetic(lens, kv, gen, dev)
++        dm = dict(data, k_cache=data["k_cache"].clone(), v_cache=data["v_cache"].clone())
++        _say(f"[c320] {tag}: launching {inc} B=1 step (reference, cloned caches)")
++        out_m = _nb_step(dm, False, False)
++        torch.cuda.synchronize()
++        _say(f"[c320] {tag}: {inc} returned; launching _pre_attention_kernel")
++        qkv = data["qkv"].reshape(1, -1)
++        q = torch.empty((1, 16, 64), dtype=FP8, device=dev)
++        _nb_pre(data, qkv, q, 1, False, False)
++        torch.cuda.synchronize()
++        g = grid or 2 * sms
++        _say(f"[c320] {tag}: launching splitkv_attn_kernel<320> grid {g} + splitkv_combine_kernel<320,16>")
++        out_c = _c320_forward(data, q, qkv, grid)
++        torch.cuda.synchronize()
++        _say(f"[c320] {tag}: c320 returned")
++        e_ref, fin = _rel_l2(out_c, _splitkv_reference(data, lens))
++        e_m, fin_m = _rel_l2(out_c, out_m.float())
++        rows = (torch.equal(data["k_cache"].view(torch.uint8), dm["k_cache"].view(torch.uint8))
++                and torch.equal(data["v_cache"].view(torch.uint8), dm["v_cache"].view(torch.uint8)))
++        ok = fin and fin_m and e_ref < 2e-2 and e_m < 5e-3 and rows
++        _say(f"[c320] {tag}: rel L2 vs fp32 ref {e_ref:.2e}, vs {inc} {e_m:.2e}, finite {fin and fin_m}, cache rows "
++             f"equal to master's {rows} -> {'ok' if ok else 'FAIL'}")
++        if not ok:
++            return False, f"self-check {tag}"
++        del data, dm, out_m, out_c
++    for lens, kv in (([80000], 1.0), ([4096], 0.25)):
++        sets = _alt_sets(lens)
++        mp = max(max(s) for s in sets) + 1 + 37
++        why = _nb_alt_check(f"[c320] replay {lens[0] + 1} keys",
++                            lambda l, kv=kv, mp=mp: _splitkv_synthetic(l, kv, gen, dev, max_pages=mp),
++                            _splitkv_reference, sets, lambda d: _nb_step(d, False, True))
++        if why is not None:
++            return False, why
++    left = _nb_tickets_left(dev)
++    _say(f"[c320] tickets after the replay checks: sum {left}")
++    if left:
++        return False, "tickets not reset"
++    data = _splitkv_synthetic([80000], 1.0, gen, dev)
++    qkv = data["qkv"].reshape(1, -1)
++    qb = torch.empty((1, 16, 64), dtype=FP8, device=dev)
++    fns = {"master": (lambda: _nb_step(data, False, False)), "c320": (lambda: _nb_step(data, False, True)),
++           "pre": (lambda: _nb_pre(data, qkv, qb, 1, False, False))}
++    _say(f"[c320] timing [pre-attn + c320 A + combine] vs {inc} step at B=1 x 80000: interleaved graph replays, "
++         f"cold L2 (256 MB), empty graph subtracted, median of 41")
++    t = _sd_interleaved(fns, flush, reps=41)
++    b = t["empty"]
++    tm, tc, tp = max(t["master"] - b, 0.5), max(t["c320"] - b, 0.5), max(t["pre"] - b, 0.5)
++    ratio = tc / tm
++    route = ratio <= _NB_GATE
++    line = (f"c320 {tc:.1f} us vs {inc} {tm:.1f} us, ratio {ratio:.3f}; pre-attention alone {tp:.1f} us; empty "
++            f"graph {b:.1f} us")
++    _say(f"[c320] {line} -> {'ROUTE' if route else f'not <= {_NB_GATE:.2f}: master'}")
++    del data, fns
++    torch.cuda.empty_cache()
++    return route, line
++
++
++# --- GATE B: the tiled first node per class -------------------------------------------------------------------
++
++def _nb_gate_b(cls: str, gen, flush, c320_on: bool, routable: bool, exact: bool) -> bool:
++    """Time the whole step kernel_fn would run for the class at its batch x 80000 with master's first node and
++    with the tiled one (the downstream held fixed), plus both first nodes alone: interleaved cold-L2 graph
++    replays, empty graph subtracted, median of 41. True if exact and tiled step / master step <= 0.98."""
++    batch = _NB_BATCH[cls[2:]]
++    data = _nb_synth(cls, [80000] * batch, 1.0, gen)
++    cfg = data["config"]
++    if cls[:2] == "FD" and _splitkv_gate(cfg) and _fused_gate(cfg):
++        _say(f"[nb-gateB] {cls}: FUSED_PRE is routed here (no separate first node): n/a")
++        return False
++    tokens = batch * cfg["q_len"]
++    qkv = data["qkv"].reshape(tokens, -1)
++    paired = _nb_paired(cfg)
++    qb = torch.empty((tokens, 16, 128 if paired else 64), dtype=FP8, device=qkv.device)
++    fns = {"step_m": (lambda: _nb_step(data, False, c320_on)), "step_t": (lambda: _nb_step(data, True, c320_on)),
++           "pre_m": (lambda: _nb_pre(data, qkv, qb, tokens, paired, False)),
++           "pre_t": (lambda: _nb_pre(data, qkv, qb, tokens, paired, True))}
++    _say(f"[nb-gateB] {cls}: B={batch} x 80000, {tokens} tokens: timing the step with each first node "
++         f"(interleaved, cold L2, median of 41)")
++    t = _sd_interleaved(fns, flush, reps=41)
++    b = t["empty"]
++    sm, st = max(t["step_m"] - b, 0.5), max(t["step_t"] - b, 0.5)
++    pm, pt = max(t["pre_m"] - b, 0.5), max(t["pre_t"] - b, 0.5)
++    ratio = st / sm
++    win = exact and ratio <= _NB_GATE
++    verdict = ("ROUTE tiled" if win else "master first node") if routable else "print-only diagnostic (not routable)"
++    _say(f"[nb-gateB] {cls}: step with master pre {sm:.1f} us, with tiled pre {st:.1f} us -> tiled / master "
++         f"{ratio:.3f} (gate <= {_NB_GATE:.2f}); pre-attention alone: master {pm:.1f} us, tiled {pt:.1f} us; exact "
++         f"{exact} -> {verdict}")
++    del data, fns, qb
++    torch.cuda.empty_cache()
++    return win and routable
++
++
++def _nb_replay_cls(cls: str, c320_on: bool, gen) -> "str | None":
++    """Two-state A B B A A B replay of the routed class's step with the tiled first node."""
++    dev = torch.device("cuda")
++    if cls == "FD1":
++        lens, kv = [80000], 1.0
++    elif cls == "SV1":
++        lens, kv = [80000], 1.0
++    elif cls == "SV16":
++        lens, kv = [80000] + _SK_LENS16[1:], 0.25
++    else:
++        rng = random.Random(77)
++        lens = [rng.randint(1, 12000) for _ in range(32)]
++        lens[0], lens[1] = 80000, 2047
++        kv = 1.0
++    sets = _alt_sets(lens)
++    mp = max(max(s) for s in sets) + 8 + 37
++    ref = _splitkv_reference if cls[:2] == "FD" else _ps_reference
++    why = _nb_alt_check(f"[nb-gateB] replay {cls}", lambda l: _nb_synth(cls, l, kv, gen, max_pages=mp), ref, sets,
++                        lambda d: _nb_step(d, True, c320_on))
++    if why is None and _nb_tickets_left(dev):
++        why = "tickets not reset"
++    return why
++
++
++# --- SOURCE E: the sk-window band gate with both first nodes in pass 2 -----------------------------------
++
++def _nb_sd_band(batch: int, gen, flush, sms: int, tiled_ok: bool) -> dict:
++    """Master's _sd_gate_band (pass 1: every TOK = 1 variant x grid with master's first node, interleaved with
++    Triton and the cluster incumbent) with pass 2 widened as the review asks: Triton, [master pre + sk],
++    [tiled pre + sk], both pre nodes alone, the sk kernel alone (and the cluster incumbent) in ONE interleaved
++    set, median of 31, both ratios printed. GATE B for the band = [tiled + sk] / [master + sk] <= 0.98; the
++    chosen pair routes only at incumbent / pair >= 1.05 (Triton) or 1.03 (cluster), master's rule."""
++    dev = torch.device("cuda")
++    lens = [80000] * batch
++    data = _ps_synthetic(lens, 1.0, gen, dev, L=1)
++    nbytes = batch * (_PS_WINDOW + 1) * 256
++    cands, seen = [], set()
++    for spec in _SD_SPECS:
++        g = _sd_grid(spec, batch, sms)
++        for v in (6, 7):
++            if (v, g) not in seen:
++                seen.add((v, g))
++                cands.append((v, spec, g))
++    _say(f"[nb-sd] B={batch}: launching _pre_attention_kernel")
++    q, qkv = _ps_prepare_q(data)
++    torch.cuda.synchronize()
++    _say(f"[nb-sd] B={batch}: pre-attention returned (new rows stored)")
++    ref = _ps_reference(data, lens)
++    ok_cands = []
++    for v, spec, g in cands:
++        label = f"{_SK_LABELS[v]} grid {g} ({spec})"
++        _say(f"[nb-sd] B={batch}: launching {label} (eager correctness run)")
++        out = _sd_sk_launch(data, q, qkv, v, g)
++        torch.cuda.synchronize()
++        err, finite = _rel_l2(out, ref)
++        _say(f"[nb-sd] B={batch}: {label} returned, rel L2 {err:.2e}, finite {finite}")
++        if finite and err < 2e-2:
++            ok_cands.append((v, spec, g))
++    cfg = data["config"]
++    cc = _slide_clusters(cfg) if _slide_gate(cfg) else 0
++    inc_name, need = (f"cluster C={cc}", 1.03) if cc else ("Triton", 1.05)
++    info = {"route": False, "tiled": False, "pick": None, "inc_name": inc_name, "need": need}
++    _say(f"[nb-sd] B={batch}: incumbent = master {inc_name}; a route needs incumbent / chosen pair >= {need:.2f}x "
++         f"in pass 2")
++    if not ok_cands:
++        _say(f"[nb-sd] B={batch}: no decode variant passed its correctness check")
++        return info
++    fns = {"triton": (lambda: _sliding_forward(data))}
++    if cc:
++        fns["cluster"] = (lambda: _slide_forward(data, cc))
++    for v, spec, g in ok_cands:
++        fns[f"pair {v} {spec} {g}"] = (lambda v=v, g=g: _sd_run(data, v, g))
++    _say(f"[nb-sd] B={batch}: pass 1: timing {len(fns)} graphs interleaved (+ empty), cold L2, median of 21")
++    t = _sd_interleaved(fns, flush)
++    base = t["empty"]
++    results = []
++    for v, spec, g in ok_cands:
++        net = max(t[f"pair {v} {spec} {g}"] - base, 0.5)
++        _say(f"[nb-sd] B={batch}: pass 1 [master pre + sk] {_SK_LABELS[v]} grid {g} ({spec}): {net:7.1f} us net")
++        results.append((net, v, spec, g))
++    _say(f"[nb-sd] B={batch}: pass 1 Triton {max(t['triton'] - base, 0.5):.1f} us net"
++         + (f", cluster C={cc} {max(t['cluster'] - base, 0.5):.1f} us net" if cc else ""))
++    net1, v, spec, g = min(results)
++    info["pick"] = (v, spec, g)
++    _say(f"[nb-sd] B={batch}: pass 1 picked {_SK_LABELS[v]} grid {g} ({spec}) at {net1:.1f} us net (first-pass "
++         f"minimum: biased, NOT the routing number)")
++    if tiled_ok:
++        _say(f"[nb-sd] B={batch}: launching [tiled pre + sk] {_SK_LABELS[v]} grid {g} (eager correctness run)")
++        out = _sd_run(data, v, g, True)
++        torch.cuda.synchronize()
++        err, finite = _rel_l2(out, _ps_reference(data, lens))
++        _say(f"[nb-sd] B={batch}: [tiled pre + sk] returned, rel L2 {err:.2e}, finite {finite}")
++        tiled_ok = finite and err < 2e-2
++    sub = {"triton": (lambda: _sliding_forward(data)), "pair_m": (lambda: _sd_run(data, v, g, False)),
++           "pre_m": (lambda: _ps_prepare_q(data)), "sk": (lambda: _sd_sk_launch(data, q, qkv, v, g))}
++    if tiled_ok:
++        sub["pair_t"] = (lambda: _sd_run(data, v, g, True))
++        sub["pre_t"] = (lambda: _ps_prepare_q_tiled(data))
++    if cc:
++        sub["cluster"] = (lambda: _slide_forward(data, cc))
++    _say(f"[nb-sd] B={batch}: pass 2: {', '.join(sub)} in ONE interleaved set (+ empty), cold L2, median of 31")
++    t2 = _sd_interleaved(sub, flush, reps=31)
++    b2 = t2["empty"]
++    n2 = {k: max(t2[k] - b2, 0.5) for k in sub}
++    tri, pm = n2["triton"], n2["pair_m"]
++    inc = n2["cluster"] if cc else tri
++    _say(f"[nb-sd] B={batch}: pass 2 (empty {b2:.1f} us): Triton {tri:.1f} us"
++         + (f", cluster C={cc} {inc:.1f} us" if cc else "")
++         + f", [master pre + sk] {pm:.1f} us, master pre alone {n2['pre_m']:.1f} us, sk alone {n2['sk']:.1f} us "
++           f"({nbytes / n2['sk'] / 1e6:.2f} TB/s of window bytes)"
++         + (f", [tiled pre + sk] {n2['pair_t']:.1f} us, tiled pre alone {n2['pre_t']:.1f} us" if tiled_ok else ""))
++    line = f"master-pre pair: Triton / pair {tri / pm:.3f}x, {inc_name} / pair {inc / pm:.3f}x"
++    gate_b = False
++    if tiled_ok:
++        pt = n2["pair_t"]
++        gate_b = pt / pm <= _NB_GATE
++        line += (f"; tiled-pre pair: Triton / pair {tri / pt:.3f}x, {inc_name} / pair {inc / pt:.3f}x; GATE B "
++                 f"[tiled + sk] / [master + sk] {pt / pm:.3f} ({'tiled' if gate_b else 'master'} first node)")
++    else:
++        line += "; tiled-pre pair not timed (tiled first node unavailable or failed a check)"
++    chosen = n2["pair_t"] if gate_b else pm
++    ratio = inc / chosen
++    info.update(route=ratio >= need, tiled=gate_b, line=line, ratio=ratio, m_cleared=inc / pm >= need)
++    _say(f"[nb-sd] B={batch}: {line}")
++    _say(f"[nb-sd] B={batch}: chosen pair ({'tiled' if gate_b else 'master'} pre + {_SK_LABELS[v]} grid {spec}) "
++         f"{inc_name} / pair {ratio:.3f}x vs need {need:.2f}x -> {'ROUTE' if info['route'] else 'master incumbent'}; "
++         f"the master-pre pair {'also clears' if info['m_cleared'] else 'does not clear'} {need:.2f}x")
++    del data, q, qkv, ref, fns, sub
++    torch.cuda.empty_cache()
++    return info
++
++
++def _nb_sd_replay(batch: int, lens, kv_scale: float, v: int, spec: str, tiled: bool, gen, sms: int) -> "str | None":
++    """Two-state A B B A A B replay of [pre (tiled or master) + sk] for a new band route (refilled ragged lens)."""
++    dev = torch.device("cuda")
++    g = _sd_grid(spec, batch, sms)
++    sets = _alt_sets(lens)
++    mp = max(max(s) for s in sets) + 1 + 37
++    why = _nb_alt_check(f"[nb-sd] replay B={batch} ({'tiled' if tiled else 'master'} pre)",
++                        lambda l: _ps_synthetic(l, kv_scale, gen, dev, max_pages=mp, L=1), _ps_reference, sets,
++                        lambda d: _sd_run(d, v, g, tiled))
++    if why is None and _nb_tickets_left(dev):
++        why = "tickets not reset"
++    return why
++
++
++def _nb_post_check(classes, gen) -> "str | None":
++    """After publishing: one eager kernel_fn per changed class through the real dispatch (its predicate
++    asserted), against the FP32 reference."""
++    dev = torch.device("cuda")
++    for cls in classes:
++        batch = _NB_BATCH[cls[2:]]
++        lens = [80000] if batch == 1 else ([80000] + _SK_LENS16[1:] if batch == 16 else
++                                          [80000, 2047] + [300 + 371 * i for i in range(30)])
++        data = _nb_synth(cls, lens, 1.0, gen)
++        cfg = data["config"]
++        if _nb_class(cfg) != cls:
++            return f"{cls}: class predicate does not match"
++        if cls[:2] == "SD" and not _sd_gate(cfg):
++            return f"{cls}: sliding decode route not active"
++        if cls[:2] != "SD" and not (cls in _NB_TILED or (cls == "FD1" and _NB_C320)):
++            return f"{cls}: route not active"
++        _say(f"[nb-post] {cls}: launching kernel_fn (published tables)")
++        out = kernel_fn(data)
++        torch.cuda.synchronize()
++        ref = _splitkv_reference(data, lens) if cls[:2] == "FD" else _ps_reference(data, lens)
++        err, finite = _rel_l2(out, ref)
++        ok = finite and err < 2e-2
++        _say(f"[nb-post] {cls}: kernel_fn returned, rel L2 {err:.2e}, finite {finite} -> {'ok' if ok else 'FAIL'}")
++        if not ok:
++            return f"{cls}: post-publish kernel_fn check"
++    return None
++
++
++# --- orchestration ------------------------------------------------------------------------------------------
++
++def _nb_setup() -> None:
++    """The combination's phases after master's import sequence, then ONE atomic publish of _SD_ROUTE, _NB_TILED
++    and _NB_C320, then a post-publish kernel_fn check per changed class (any failure restores master's tables)."""
++    global _SD_ROUTE, _NB_TILED, _NB_C320, _C320_EXT, _NB_SNAP
++    dev = torch.device("cuda")
++    _NB_SNAP = (_SD_ROUTE, _NB_TILED, _NB_C320, _C320_EXT)
++    _nb_mark("master's import sequence done: combination phases begin")
++    new_sd = dict(_SD_ROUTE)
++    tiled = set()
++    c320_on = False
++    sk_ok = _EXT2 is not None and _PS_BUILT and _SD_VALID
++    sms = _sm_count(dev)
++    gen = torch.Generator(device="cuda").manual_seed(13579)
++    flush = torch.empty(64 << 20, dtype=torch.float32, device=dev)  # 256 MB > L2
++    exact = {}
++    sd_tiled_ok = False
++    tiled_ok = False
++    why = {}
++
++    # P1: compile every tiled variant, exactness per routable class, master's _sd_validate cases with the tiled node.
++    name, dl = "P1 tiled compile + exactness + tiled-pre _sd_validate", 60.0
++    if _nb_can_start(name, dl):
++        t0 = time.perf_counter()
++        try:
++            _nb_compile_tiled(gen)
++            for cls in ("SD16", "SD32", "SV1", "SV16", "SV32", "FD1"):
++                exact[cls] = _nb_exact(cls, gen)
++            tiled_ok = True
++            if sk_ok:
++                r = _sd_validate(tiled=True)
++                sd_tiled_ok = r is None
++                _say(f"[nb] master's _sd_validate cases with the tiled first node: "
++                     f"{'all ok' if sd_tiled_ok else f'FAILED ({r})'}")
++        except Exception as e:
++            _say(f"[nb] {name} raised (no class takes the tiled node): {e!r}")
++            tiled_ok = sd_tiled_ok = False
++        if not _nb_in_time(name, t0, dl):
++            tiled_ok = sd_tiled_ok = False
++        _rezero_tickets()
++    elif sk_ok:
++        _say("[nb] P1 skipped: the tiled first node is offered to no class")
++
++    # P2: sliding decode band 2 (B=2..16), early.
++    band2 = None
++    name, dl = "P2 sliding decode band 2 (B=16) sk-window gate + replay", 40.0
++    if not sk_ok:
++        why[2] = "sk window unavailable (PSEUDO build, stage-2 module or master's _sd_validate)"
++    elif _nb_can_start(name, dl):
++        t0 = time.perf_counter()
++        try:
++            info = _nb_sd_band(16, gen, flush, sms, sd_tiled_ok and exact.get("SD16", False))
++            why[2] = info.get("line", "no candidate")
++            if info["route"]:
++                v, spec, _ = info["pick"]
++                r = _nb_sd_replay(16, [80000] + _SK_LENS16[1:], 0.25, v, spec, info["tiled"], gen, sms)
++                if r is None:
++                    band2 = (v, spec, info["tiled"], info["ratio"], info["m_cleared"])
++                else:
++                    why[2] += f"; replay FAILED ({r})"
++        except Exception as e:
++            why[2] = f"raised {e!r}"
++        _rezero_tickets()
++        if not _nb_in_time(name, t0, dl):
++            band2 = None
++            why[2] = "past its deadline"
++        if band2 is not None:
++            new_sd[2] = band2[:2]
++            if band2[2]:
++                tiled.add("SD16")
++    else:
++        why[2] = "phase skipped by the IMPORT_T0 clock"
++
++    # P3: c320 build (sequential, main thread), then GATE A, each under the IMPORT_T0 clock.
++    c320_on = False
++    c320_line = "build phase skipped by the IMPORT_T0 clock"
++    ext = None
++    name, dl = "P3a c320 build (load_inline, sequential)", 90.0
++    if _nb_can_start(name, dl):
++        t0 = time.perf_counter()
++        try:
++            ext, r = _c320_build()
++            if ext is None:
++                c320_line = r
++        except Exception as e:
++            ext, c320_line = None, f"build raised {e!r}"
++        if not _nb_in_time(name, t0, dl):
++            ext, c320_line = None, "build past its deadline"
++    name, dl = "P3b c320 GATE A", 35.0
++    if ext is not None:
++        if _nb_can_start(name, dl):
++            t0 = time.perf_counter()
++            try:
++                _C320_EXT = ext  # read only by _c320_forward; kernel_fn takes it only once _NB_C320 is published
++                c320_on, c320_line = _nb_c320_gate(ext, gen, flush)
++            except Exception as e:
++                c320_on, c320_line = False, f"GATE A raised {e!r}"
++            _rezero_tickets()
++            if not _nb_in_time(name, t0, dl):
++                c320_on, c320_line = False, "GATE A past its deadline"
++        else:
++            c320_line = "GATE A skipped by the IMPORT_T0 clock"
++    _say(f"PATH CHOSEN: full decode_1 [A chunk320]: {'route' if c320_on else 'master two-level'} ({c320_line})")
++
++    # P4: sliding decode band 3 (B=17..32) re-timed with both first nodes.
++    name, dl = "P4 sliding decode band 3 (B=32) re-time", 40.0
++    if not sk_ok:
++        why[3] = "sk window unavailable"
++    elif _nb_can_start(name, dl):
++        t0 = time.perf_counter()
++        band3 = None
++        try:
++            info = _nb_sd_band(32, gen, flush, sms, sd_tiled_ok and exact.get("SD32", False))
++            why[3] = info.get("line", "no candidate")
++            if info["tiled"] and info["route"]:
++                v, spec, _ = info["pick"]
++                rng = random.Random(78)
++                lens32 = [rng.randint(1, 12000) for _ in range(32)]
++                lens32[0], lens32[1] = 80000, 2047
++                r = _nb_sd_replay(32, lens32, 1.0, v, spec, True, gen, sms)
++                if r is None:
++                    band3 = (v, spec)
++                else:
++                    why[3] += f"; replay FAILED ({r})"
++        except Exception as e:
++            why[3] = f"raised {e!r}"
++        _rezero_tickets()
++        if not _nb_in_time(name, t0, dl):
++            band3 = None
++            why[3] = "past its deadline"
++        if band3 is not None:
++            new_sd[3] = band3
++            tiled.add("SD32")
++    else:
++        why[3] = "phase skipped by the IMPORT_T0 clock"
++
++    # P5: GATE B on the routable non-pair-gate classes (FD1 inside whichever full decode_1 pair was chosen).
++    gb = {}
++    name, dl = "P5 GATE B SV1 / SV16 / SV32 / FD1", 60.0
++    if tiled_ok and _nb_can_start(name, dl):
++        t0 = time.perf_counter()
++        wins = []
++        for cls in ("SV1", "SV16", "SV32", "FD1"):
++            try:
++                c_on = c320_on and cls == "FD1"
++                if _nb_gate_b(cls, gen, flush, c_on, True, exact.get(cls, False)):
++                    r = _nb_replay_cls(cls, c_on, gen)
++                    if r is None:
++                        wins.append(cls)
++                    else:
++                        gb[cls] = f"replay FAILED ({r})"
++            except Exception as e:
++                gb[cls] = f"raised {e!r}"
++            _rezero_tickets()
++        if _nb_in_time(name, t0, dl):
++            tiled.update(wins)
++        else:
++            for cls in wins:
++                gb[cls] = "past the phase deadline"
++
++    # P6: print-only GATE B lines (cannot route under the 0.98 whole-step rule).
++    name, dl = "P6 GATE B print-only FD16 / FD32 / FV1 / FV16 / FV32", 30.0
++    if tiled_ok and _nb_can_start(name, dl):
++        t0 = time.perf_counter()
++        for cls in ("FD16", "FD32", "FV1", "FV16", "FV32"):
++            try:
++                _nb_gate_b(cls, gen, flush, False, False, _nb_exact(cls, gen))
++            except Exception as e:
++                _say(f"[nb-gateB] {cls} (print-only) raised: {e!r}")
++            _rezero_tickets()
++        _nb_in_time(name, t0, dl)
++    del flush
++    torch.cuda.empty_cache()
++
++    # Publish once, together.
++    _rezero_tickets()
++    left = _nb_tickets_left(dev)
++    if left:
++        _say(f"[nb] tickets not zero before publishing (sum {left}): master's tables kept")
++        return
++    changed = [c for b, c in ((2, "SD16"), (3, "SD32"))
++               if b in new_sd and (new_sd.get(b) != _NB_SNAP[0].get(b) or c in tiled)]
++    changed += [c for c in ("SV1", "SV16", "SV32") if c in tiled]
++    if c320_on or "FD1" in tiled:
++        changed.append("FD1")
++    _SD_ROUTE, _NB_TILED, _NB_C320 = MappingProxyType(new_sd), frozenset(tiled), c320_on
++    if not c320_on:
++        _C320_EXT = None
++    _nb_mark(f"route tables published: _SD_ROUTE bands {sorted(_SD_ROUTE)}, tiled first node {sorted(_NB_TILED)}, "
++             f"c320 {_NB_C320}; changed classes {changed}")
++    try:
++        r = _nb_post_check(changed, gen)
++    except Exception as e:
++        r = f"raised {e!r}"
++    _rezero_tickets()
++    if r is not None or _nb_tickets_left(dev):
++        _SD_ROUTE, _NB_TILED, _NB_C320, _C320_EXT = _NB_SNAP
++        _say(f"[nb] post-publish check FAILED ({r or 'tickets not reset'}): master's tables restored")
++        c320_on, tiled = False, set()
++    for b, cls in ((2, "B=2..16"), (3, "B=17..32")):
++        if b in _SD_ROUTE:
++            v, spec = _SD_ROUTE[b]
++            pre = "tiled" if ("SD16" if b == 2 else "SD32") in _NB_TILED else "master"
++            _say(f"PATH CHOSEN: sliding decode {cls}: [{pre} pre-attn + sk window] {_SK_LABELS[v]} grid {spec} "
++                 f"({why.get(b, 'master decision')})")
++        else:
++            _say(f"PATH CHOSEN: sliding decode {cls}: master incumbent ({why.get(b, 'master decision')})")
++    for cls in ("SD16", "SD32", "SV1", "SV16", "SV32", "FD1"):
++        _say(f"PATH CHOSEN: GATE B {cls}: {'tiled' if cls in _NB_TILED else 'master'} first node"
++             + (f" ({gb[cls]})" if cls in gb else ""))
++    _say(f"PATH CHOSEN: full decode_1: {'[pre-attn + c320]' if _NB_C320 else 'master'}"
++         f"{' with the tiled first node' if 'FD1' in _NB_TILED else ''}")
++    _say("PATH CHOSEN: skF re-gate dropped (review); FD16 / FD32 / FV1 / FV16 / FV32 GATE B lines are print-only")
++    _nb_mark("combination phases done")
++
++
++if torch.cuda.is_available():
++    _nb_mark("import-time sequence starts")
++    _EXT = _build_splitkv()
++    if _EXT is not None and not _splitkv_self_check():
++        print("[splitkv] SELF-CHECK FAILED: CUDA split-KV path disabled, master FA3 path kept")
++        _EXT = None
++    _nb_mark("master: splitkv v1 build + self-check done")
++    if _EXT is None:
++        _say("PATH CHOSEN: full decode 1<B<=64 tp8 page 1: master FA3 (splitkv v1 unavailable; v2 not tried)")
++    else:
++        _sk_ticket(torch.device("cuda", torch.cuda.current_device()))  # zeroed once, here
++        _sk_gticket(torch.device("cuda", torch.cuda.current_device()))  # zeroed once, here
++        _EXT2 = _build_sk()
++        _sk_reason = "build failed" if _EXT2 is None else None
++        if _EXT2 is not None:
++            try:
++                _sk_reason = _sk_validate()
++            except Exception as e:
++                _sk_reason = f"self-check raised {e!r}"
++        _b1_reason = "stage 2 unavailable"
++        if _sk_reason is not None:
++            _EXT2 = None
++            _say(f"PATH CHOSEN: full decode splitkv v1 (fallback: {_sk_reason})")
++        else:
++            _say("PATH CHOSEN: full decode streamk+ticket v2")
++            try:
++                _b1_reason = _sk_validate_b1()
++            except Exception as e:
++                _b1_reason = f"batch-1 self-check raised {e!r}"
++            if _b1_reason is None:
++                _B1_PATH = True
++            _nb_mark("master: stage-2 build + validation + batch-1 validation done")
++            try:
++                _ps_setup()
++            except Exception as e:
++                _PS_ROUTE.clear()
++                _say(f"PATH CHOSEN: sliding verify FA3 (fallback: setup raised {e!r})")
++            _nb_mark("master: sliding verify pseudo setup done")
++            try:
++                _skf_setup()
++            except Exception as e:
++                _FUSED_ROUTE.clear()
++                _EXTF = None
++                _say(f"PATH CHOSEN: full decode fused pre-attention [skF]: pre-attn + v2 (fallback: setup raised {e!r})")
++            _nb_mark("master: FUSED_PRE setup done")
++            try:
++                _sk_diagnostics()
++                if _b1_reason is None:
++                    _sk_b1_diagnostics()
++            except Exception as e:
++                _say(f"[sk-diag] diagnostics raised (path unaffected): {e!r}")
++            finally:  # a diagnostic variant must not leave the shared tickets dirty for the timed path
++                try:
++                    _rezero_tickets()
++                except Exception as e:
++                    _say(f"[sk-diag] ticket re-zero raised: {e!r}")
++        if _B1_PATH:
++            _say("PATH CHOSEN: full decode_1 streamk two-level")
++        else:
++            _say(f"PATH CHOSEN: full decode_1 FA3 (fallback: {_b1_reason})")
++    if _EXT is None:
++        _say("PATH CHOSEN: full decode_1 FA3 (fallback: splitkv v1 unavailable)")
++    if _PS_ROUTE == {} and (_EXT is None or _EXT2 is None):
++        _say("PATH CHOSEN: sliding verify FA3 (fallback: stage-2 module unavailable)")
++    _say("PATH CHOSEN: every other shape (sliding decode bands not named above, other verify bands, page 64, dp): master path, unchanged")
++    _nb_mark("master: full decode setup + diagnostics done")
++    try:
++        _slide_init()
++    except Exception as _e:  # never raise at import: every sliding shape keeps master
++        for _c in _SLIDE_MOD:
++            _SLIDE_MOD[_c] = None
++        print(f"[slide] PATH CHOSEN: sliding master (fallback: init raised {_e!r})", flush=True)
++    _nb_mark("master: sliding cluster init done")
++    # Last: _SLIDE_MOD is final, so the gate times the real incumbent and the replay check captures the final kernel_fn.
++    try:
++        _sd_setup()
++    except Exception as _e:  # never raise at import: sliding decode keeps master exactly
++        _SD_ROUTE = MappingProxyType({})
++        _say(f"PATH CHOSEN: sliding decode master (fallback: setup raised {_e!r})")
++    _nb_mark("master: sliding decode setup done")
++    # The combination's phases (clocked, deadline-bounded), then one atomic publish of the route tables.
++    try:
++        _nb_setup()
++    except Exception as _e:  # never raise at import: master's tables
++        if _NB_SNAP is not None:
++            _SD_ROUTE, _NB_TILED, _NB_C320, _C320_EXT = _NB_SNAP
++        _say(f"PATH CHOSEN: combination phases raised ({_e!r}): master's route tables kept")
++        try:
++            _rezero_tickets()
++        except Exception as _e2:
++            _say(f"[nb] ticket re-zero raised: {_e2!r}")
++    _nb_mark("import done")
