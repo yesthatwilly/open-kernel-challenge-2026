@@ -62,10 +62,10 @@ controls_for: null
 rewrite_stage: 2
 replaces: "sliding verify (q_len 8, page 1, tp8, 2<=B<=32): prepare_varlen_num_blocks + FA3 main + FlashAttnFwdCombine + sglang rms_norm_gate"
 review: proceed
-status: running
+status: done
 review_at: 2026-10-25T054704Z
 review_companions: null
-stage: dispatched
+stage: harvested
 claimed_at: 2026-10-25T054704Z
 base_sha: 6f95ce71ba21682ba9cbb6d346abb2a93a862b2f
 base_blob: 76492911dfd6685139a2ffac06c1d27083ecdb0a
@@ -84,6 +84,13 @@ attempt_file: 2026-10-25T084910Z-check-sliding-verify-sk-pseudo-s2-token-group.m
 prepared_at: 2026-10-25T084910Z
 job: bd0ddd413f7f4a94
 dispatched_at: 2026-10-25T084919Z
+outcome: regression
+verdict_detail: regression
+speedup: 1.4250766878672403
+speedup_ci: [1.4037005375492317, 1.451856608658083]
+harvested_at: 2026-10-25T091106Z
+best_at_harvest: 1.444132502888963
+promotion: null
 ---
 
 # sliding-verify-sk-pseudo-s2-token-group
@@ -180,3 +187,35 @@ Fix:
 okc_lint: OK with warnings (prepare-time host syncs only). py_compile: OK. __pycache__ removed.
 
 Residual risk: the CUDA has never been compiled. A compile error in the TG>1 branch would drop full decode to a landed rebuild, which doubles compile time. A spill at TG=4 under the 128-reg cap refuses that variant loudly. About 59 self-check cases plus about 4 new instantiations push prepare above the 380 s that s1 took, though it should stay under 900 s. A device fault in a new variant would poison the context, which is the same exposure as s1.
+
+## Result
+
+- job `bd0ddd413f7f4a94` (check), status done, passed True, tests 16/16
+- speedup 1.4251x, 95% CI [1.4037, 1.4519], score 2642.8753147570033 µs vs SGLang 3766.3 µs
+- best at harvest: {"speedup": 1.444132502888963, "ci": [1.4224705153456287, 1.4657944904322975], "job": "341623fa53d94cef"}; base result: muse_attention_decode/hypotheses/done/neutral/sliding-verify-sk-pseudo-decode-s1.result.json
+- **outcome: regression** (regression)
+- files: `muse_attention_decode/hypotheses/done/regression/sliding-verify-sk-pseudo-s2-token-group.result.json`, `muse_attention_decode/hypotheses/done/regression/sliding-verify-sk-pseudo-s2-token-group.patch`; branch `hyp/muse_attention_decode/sliding-verify-sk-pseudo-s2-token-group`
+
+## Attribution
+
+| shape | w | base µs | hyp µs | delta | verdict |
+|---|---|---|---|---|---|
+| batch=1 ctx=80000 dist=soft heads=tp8 layer=sliding load=decode_1 page=1 | 46 | 13.33 | 13.5 | 0.9808 | flat |
+| batch=1 ctx=80000 dist=coherent heads=tp8 layer=full load=decode_1 page=1 | 16 | 22.73 | 23.13 | 1.0004 | flat |
+| batch=16 ctx=80000 dist=soft heads=tp8 layer=sliding load=decode_16 page=1 spread=agentic | 46 | 15.72 | 15.16 | 1.0091 | flat |
+| batch=16 ctx=80000 dist=coherent heads=tp8 layer=full load=decode_16 page=1 spread=agentic | 16 | 110.4 | 111.73 | 0.9852 | flat |
+| batch=32 ctx=80000 dist=soft heads=tp8 layer=sliding load=decode_32 page=1 spread=agentic | 46 | 23.85 | 24.31 | 0.9809 | flat |
+| batch=32 ctx=80000 dist=coherent heads=tp8 layer=full load=decode_32 page=1 spread=agentic | 16 | 226.28 | 227.53 | 0.9935 | flat |
+| batch=1 ctx=80000 dist=soft heads=tp8 layer=sliding load=verify_1 page=1 q_len=8 | 46 | 13.44 | 17.49 | 0.7635 | lost |
+| batch=1 ctx=80000 dist=coherent heads=tp8 layer=full load=verify_1 page=1 q_len=8 | 16 | 30.1 | 30.0 | 0.9996 | flat |
+| batch=16 ctx=80000 dist=soft heads=tp8 layer=sliding load=verify_16 page=1 q_len=8 spread=agentic | 46 | 22.39 | 22.12 | 1.0077 | flat |
+| batch=16 ctx=80000 dist=coherent heads=tp8 layer=full load=verify_16 page=1 q_len=8 spread=agentic | 16 | 162.76 | 162.91 | 0.9978 | flat |
+| batch=32 ctx=80000 dist=soft heads=tp8 layer=sliding load=verify_32 page=1 q_len=8 spread=agentic | 46 | 28.49 | 28.72 | 1.0067 | flat |
+| batch=32 ctx=80000 dist=coherent heads=tp8 layer=full load=verify_32 page=1 q_len=8 spread=agentic | 16 | 302.78 | 300.48 | 1.0008 | flat |
+
+lost on sliding verify_1. Expected hit: 1/4. Noise ±1.7%.
+
+## Follow-ups
+
+- rewrite stage 2 of `sliding verify (q_len 8, page 1, tp8, 2<=B<=32): prepare_varlen_num_blocks + FA3 main + FlashAttnFwdCombine + sglang rms_norm_gate`: read the replaced kernels' own us per shape (profile top_kernels) against the incumbent and the floor, and check which Milestone it reached. The next stage is `/hypothesize muse_attention_decode "<what to fix or tune>" --kind rewrite --depends-on sliding-verify-sk-pseudo-s2-token-group --stage 3`; a slow or failed first cut is the expected start, not a do-not-retry.
+

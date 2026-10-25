@@ -1,0 +1,143 @@
+ 8) grid 128 (p4) (eager correctness run)
+[ps-gate] B=16: TG=4 single-level ticket (variant 8) grid 128 (p4) returned, rel L2 1.68e-03, finite True
+[ps-gate] B=16: TG=4 single-level ticket (variant 8) grid 128 (p4):    28.8 us
+[ps-gate] B=16: launching TG=4 single-level ticket (variant 8) grid 256 (p8) (eager correctness run)
+[ps-gate] B=16: TG=4 single-level ticket (variant 8) grid 256 (p8) returned, rel L2 1.68e-03, finite True
+[ps-gate] B=16: TG=4 single-level ticket (variant 8) grid 256 (p8):    33.4 us
+[ps-gate] B=16: launching TG=4 single-level ticket (variant 8) grid 132 (sm) (eager correctness run)
+[ps-gate] B=16: TG=4 single-level ticket (variant 8) grid 132 (sm) returned, rel L2 1.68e-03, finite True
+[ps-gate] B=16: TG=4 single-level ticket (variant 8) grid 132 (sm):    33.9 us
+[ps-gate] B=16: launching TG=4 single-level ticket (variant 8) grid 264 (2sm) (eager correctness run)
+[ps-gate] B=16: TG=4 single-level ticket (variant 8) grid 264 (2sm) returned, rel L2 1.68e-03, finite True
+[ps-gate] B=16: TG=4 single-level ticket (variant 8) grid 264 (2sm):    40.3 us
+[ps-gate] B=16: launching TG=4 two-level ticket (variant 9) grid 128 (p4) (eager correctness run)
+[ps-gate] B=16: TG=4 two-level ticket (variant 9) grid 128 (p4) returned, rel L2 1.68e-03, finite True
+[ps-gate] B=16: TG=4 two-level ticket (variant 9) grid 128 (p4):    39.0 us
+[ps-gate] B=16: launching TG=4 two-level ticket (variant 9) grid 256 (p8) (eager correctness run)
+[ps-gate] B=16: TG=4 two-level ticket (variant 9) grid 256 (p8) returned, rel L2 1.68e-03, finite True
+[ps-gate] B=16: TG=4 two-level ticket (variant 9) grid 256 (p8):    40.3 us
+[ps-gate] B=16: launching TG=4 two-level ticket (variant 9) grid 132 (sm) (eager correctness run)
+[ps-gate] B=16: TG=4 two-level ticket (variant 9) grid 132 (sm) returned, rel L2 1.68e-03, finite True
+[ps-gate] B=16: TG=4 two-level ticket (variant 9) grid 132 (sm):    40.1 us
+[ps-gate] B=16: launching TG=4 two-level ticket (variant 9) grid 264 (2sm) (eager correctness run)
+[ps-gate] B=16: TG=4 two-level ticket (variant 9) grid 264 (2sm) returned, rel L2 1.68e-03, finite True
+[ps-gate] B=16: TG=4 two-level ticket (variant 9) grid 264 (2sm):    50.7 us
+[ps-gate] B=16: master FA3 (prepare + main + combine + norm-gate):    23.6 us, rel L2 6.59e-03, finite True (pre-attention excluded from both sides; graph replay, cold L2, median of 10)
+[ps-gate] B=16 SUMMARY (uniform): s1 TG=1 best 36.9 us (TG=1 single-level ticket (variant 4) grid 264) | TG=2 best 32.1 us (TG=2 single-level ticket (variant 6) grid 256) | TG=4 best 28.8 us (TG=4 single-level ticket (variant 8) grid 128) | FA3 23.6 us | TG1/TG4 1.280x (L2-amplification diagnosis)
+[ps-gate] B=16 agentic: launching TG=1 single-level ticket (variant 4) grid 264 (p4) (eager correctness run)
+[ps-gate] B=16 agentic: TG=1 single-level ticket (variant 4) grid 264 (p4) returned, rel L2 1.65e-03, finite True
+[ps-gate] B=16 agentic: TG=1 single-level ticket (variant 4) grid 264 (p4):    37.1 us
+[ps-gate] B=16 agentic: launching TG=2 single-level ticket (variant 6) grid 256 (p4) (eager correctness run)
+[ps-gate] B=16 agentic: TG=2 single-level ticket (variant 6) grid 256 (p4) returned, rel L2 1.65e-03, finite True
+[ps-gate] B=16 agentic: TG=2 single-level ticket (variant 6) grid 256 (p4):    32.1 us
+[ps-gate] B=16 agentic: launching TG=4 single-level ticket (variant 8) grid 128 (p4) (eager correctness run)
+[ps-gate] B=16 agentic: TG=4 single-level ticket (variant 8) grid 128 (p4) returned, rel L2 1.65e-03, finite True
+[ps-gate] B=16 agentic: TG=4 single-level ticket (variant 8) grid 128 (p4):    28.7 us
+[ps-gate] B=16 agentic: master FA3 (prepare + main + combine + norm-gate):    23.3 us, rel L2 6.33e-03, finite True (pre-attention excluded from both sides; graph replay, cold L2, median of 10)
+[ps-gate] B=16 SUMMARY (agentic): TG=4 single-level ticket (variant 8) grid 128 28.7 us | TG=2 single-level ticket (variant 6) grid 256 32.1 us | TG=1 single-level ticket (variant 4) grid 264 37.1 us | FA3 23.3 us
+[ps-gate] B=16: best TG=4 single-level ticket (variant 8) grid 128 (p4): uniform 28.8 us vs FA3 23.6 us (0.820x); agentic 28.7 us vs FA3 23.3 us (0.812x) -> below the 1.05x gate: FA3
+[ps-gate] B=32: launching _pre_attention_kernel
+[ps-gate] B=32: 9 candidates (pruned grids); unique K+V 16.8 MB; L2-served reads ~135 / 67 / 34 MB at TG 1 / 2 / 4
+[ps-gate] B=32: launching TG=1 single-level ticket (variant 4) grid 264 (p4) (eager correctness run)
+[ps-gate] B=32: TG=1 single-level ticket (variant 4) grid 264 (p4) returned, rel L2 1.66e-03, finite True
+[ps-gate] B=32: TG=1 single-level ticket (variant 4) grid 264 (p4):    61.7 us
+[ps-gate] B=32: launching TG=1 single-level ticket (variant 4) grid 132 (sm) (eager correctness run)
+[ps-gate] B=32: TG=1 single-level ticket (variant 4) grid 132 (sm) returned, rel L2 1.66e-03, finite True
+[ps-gate] B=32: TG=1 single-level ticket (variant 4) grid 132 (sm):    64.4 us
+[ps-gate] B=32: launching TG=2 single-level ticket (variant 6) grid 264 (p4) (eager correctness run)
+[ps-gate] B=32: TG=2 single-level ticket (variant 6) grid 264 (p4) returned, rel L2 1.66e-03, finite True
+[ps-gate] B=32: TG=2 single-level ticket (variant 6) grid 264 (p4):    51.5 us
+[ps-gate] B=32: launching TG=2 single-level ticket (variant 6) grid 132 (sm) (eager correctness run)
+[ps-gate] B=32: TG=2 single-level ticket (variant 6) grid 132 (sm) returned, rel L2 1.66e-03, finite True
+[ps-gate] B=32: TG=2 single-level ticket (variant 6) grid 132 (sm):    48.0 us
+[ps-gate] B=32: launching TG=4 single-level ticket (variant 8) grid 256 (p4) (eager correctness run)
+[ps-gate] B=32: TG=4 single-level ticket (variant 8) grid 256 (p4) returned, rel L2 1.66e-03, finite True
+[ps-gate] B=32: TG=4 single-level ticket (variant 8) grid 256 (p4):    42.0 us
+[ps-gate] B=32: launching TG=4 single-level ticket (variant 8) grid 264 (p8) (eager correctness run)
+[ps-gate] B=32: TG=4 single-level ticket (variant 8) grid 264 (p8) returned, rel L2 1.66e-03, finite True
+[ps-gate] B=32: TG=4 single-level ticket (variant 8) grid 264 (p8):    48.2 us
+[ps-gate] B=32: launching TG=4 single-level ticket (variant 8) grid 132 (sm) (eager correctness run)
+[ps-gate] B=32: TG=4 single-level ticket (variant 8) grid 132 (sm) returned, rel L2 1.66e-03, finite True
+[ps-gate] B=32: TG=4 single-level ticket (variant 8) grid 132 (sm):    43.7 us
+[ps-gate] B=32: launching TG=4 two-level ticket (variant 9) grid 256 (p4) (eager correctness run)
+[ps-gate] B=32: TG=4 two-level ticket (variant 9) grid 256 (p4) returned, rel L2 1.66e-03, finite True
+[ps-gate] B=32: TG=4 two-level ticket (variant 9) grid 256 (p4):    48.0 us
+[ps-gate] B=32: launching TG=4 two-level ticket (variant 9) grid 264 (p8) (eager correctness run)
+[ps-gate] B=32: TG=4 two-level ticket (variant 9) grid 264 (p8) returned, rel L2 1.66e-03, finite True
+[ps-gate] B=32: TG=4 two-level ticket (variant 9) grid 264 (p8):    59.0 us
+[ps-gate] B=32: master FA3 (prepare + main + combine + norm-gate):    29.7 us, rel L2 7.56e-03, finite True (pre-attention excluded from both sides; graph replay, cold L2, median of 10)
+[ps-gate] B=32 SUMMARY (uniform): s1 TG=1 best 61.7 us (TG=1 single-level ticket (variant 4) grid 264) | TG=2 best 48.0 us (TG=2 single-level ticket (variant 6) grid 132) | TG=4 best 42.0 us (TG=4 single-level ticket (variant 8) grid 256) | FA3 29.7 us | TG1/TG4 1.471x (L2-amplification diagnosis)
+[ps-gate] B=32 agentic: launching TG=1 single-level ticket (variant 4) grid 264 (p4) (eager correctness run)
+[ps-gate] B=32 agentic: TG=1 single-level ticket (variant 4) grid 264 (p4) returned, rel L2 1.66e-03, finite True
+[ps-gate] B=32 agentic: TG=1 single-level ticket (variant 4) grid 264 (p4):    61.9 us
+[ps-gate] B=32 agentic: launching TG=2 single-level ticket (variant 6) grid 132 (sm) (eager correctness run)
+[ps-gate] B=32 agentic: TG=2 single-level ticket (variant 6) grid 132 (sm) returned, rel L2 1.66e-03, finite True
+[ps-gate] B=32 agentic: TG=2 single-level ticket (variant 6) grid 132 (sm):    47.2 us
+[ps-gate] B=32 agentic: launching TG=4 single-level ticket (variant 8) grid 256 (p4) (eager correctness run)
+[ps-gate] B=32 agentic: TG=4 single-level ticket (variant 8) grid 256 (p4) returned, rel L2 1.66e-03, finite True
+[ps-gate] B=32 agentic: TG=4 single-level ticket (variant 8) grid 256 (p4):    42.0 us
+[ps-gate] B=32 agentic: master FA3 (prepare + main + combine + norm-gate):    29.3 us, rel L2 7.52e-03, finite True (pre-attention excluded from both sides; graph replay, cold L2, median of 10)
+[ps-gate] B=32 SUMMARY (agentic): TG=4 single-level ticket (variant 8) grid 256 42.0 us | TG=2 single-level ticket (variant 6) grid 132 47.2 us | TG=1 single-level ticket (variant 4) grid 264 61.9 us | FA3 29.3 us
+[ps-gate] B=32: best TG=4 single-level ticket (variant 8) grid 256 (p4): uniform 42.0 us vs FA3 29.7 us (0.708x); agentic 42.0 us vs FA3 29.3 us (0.696x) -> below the 1.05x gate: FA3
+[ps] two-state B=1: state A eager warm-up of kernel_fn on a side stream
+[ps] two-state B=1: state A capturing kernel_fn
+[ps] two-state B=1: state B eager warm-up of kernel_fn on a side stream
+[ps] two-state B=1: state B capturing kernel_fn
+[ps] two-state B=1 round 0: refilled state A, launching its graph
+[ps] two-state B=1 round 0: state A rel L2 1.60e-03, finite True -> ok
+[ps] two-state B=1 round 1: refilled state B, launching its graph
+[ps] two-state B=1 round 1: state B rel L2 1.64e-03, finite True -> ok
+[ps] two-state B=1 round 2: refilled state A, launching its graph
+[ps] two-state B=1 round 2: state A rel L2 1.73e-03, finite True -> ok
+[ps] two-state B=1 round 3: refilled state B, launching its graph
+[ps] two-state B=1 round 3: state B rel L2 1.66e-03, finite True -> ok
+[ps] tickets (both levels) after the replay checks: sum 0
+PATH CHOSEN: sliding verify B=1: stream-K pseudo-decode TG=1 single-level ticket (variant 4) grid p8 (uniform 15.4 vs FA3 19.3 us; >= 1.05x gate)
+PATH CHOSEN: sliding verify FA3 (fallback: setup raised NameError("name 'tgs' is not defined"))
+[sk] diag variant check B=16 ragged: launching _pre_attention_kernel
+[sk] diag variant check B=16 ragged: launching splitkv_attn_sk_kernel<4 stages, no ticket> grid 264
+[sk] diag variant check B=16 ragged: splitkv_attn_sk_kernel returned
+[sk] diag variant check B=16 ragged: launching splitkv_sk_combine_kernel
+[sk] diag variant check B=16 ragged: splitkv_sk_combine_kernel returned
+[sk] diag variant check B=16 ragged: rel L2 1.66e-03, finite True -> ok
+[sk] diag variant check B=16 ragged: launching _pre_attention_kernel
+[sk] diag variant check B=16 ragged: launching splitkv_attn_sk_kernel<5 stages, ticket> grid 264
+[sk] diag variant check B=16 ragged: splitkv_attn_sk_kernel returned
+[sk] diag variant check B=16 ragged: rel L2 1.66e-03, finite True -> ok
+[sk-diag] B=16: launching _pre_attention_kernel
+[sk-diag] B=16: timing stage-1 A + B
+[sk-diag] B=16 x 80000: 328 MB of K+V rows, grid 264, eager, cold L2, median of 10
+[sk-diag]   stage-1 A splitkv_attn_kernel            117.3 us  2.79 TB/s
+[sk-diag]   stage-1 B splitkv_combine_kernel          12.1 us  -> A+B   129.4 us
+[sk-diag]   stream-K + ticket, 4 st (timed path)     112.3 us  2.92 TB/s  (vs stage-1 out rel 2.4e-04)
+[sk-diag] B=16: timing stream-K no ticket + combine
+[sk-diag]   stream-K no ticket, 4 st             106.3 us  3.08 TB/s  + combine 11.5 us -> 117.8 us  (rel 2.4e-04)
+[sk-diag] B=16: timing stream-K + ticket, 5 stages
+[sk-diag]   stream-K + ticket, 5 st              115.4 us  2.84 TB/s  (rel 2.4e-04)
+[sk-diag] B=16 ratios (>1 = first is slower): stage-1 A+B / v2 1.153x; split/locality: stage-1 A / stream-K no-ticket A 1.104x; ticket fold: (no-ticket A + combine) / ticket 1.049x; stages: 4 st / 5 st 0.973x
+[sk-diag] B=32: launching _pre_attention_kernel
+[sk-diag] B=32: timing stage-1 A + B
+[sk-diag] B=32 x 80000: 655 MB of K+V rows, grid 264, eager, cold L2, median of 10
+[sk-diag]   stage-1 A splitkv_attn_kernel            246.6 us  2.66 TB/s
+[sk-diag]   stage-1 B splitkv_combine_kernel          12.5 us  -> A+B   259.1 us
+[sk-diag]   stream-K + ticket, 4 st (timed path)     221.0 us  2.97 TB/s  (vs stage-1 out rel 1.9e-04)
+[sk-diag] B=32: timing stream-K no ticket + combine
+[sk-diag]   stream-K no ticket, 4 st             215.6 us  3.04 TB/s  + combine 11.6 us -> 227.2 us  (rel 1.9e-04)
+[sk-diag] B=32: timing stream-K + ticket, 5 stages
+[sk-diag]   stream-K + ticket, 5 st              222.9 us  2.94 TB/s  (rel 1.9e-04)
+[sk-diag] B=32 ratios (>1 = first is slower): stage-1 A+B / v2 1.172x; split/locality: stage-1 A / stream-K no-ticket A 1.144x; ticket fold: (no-ticket A + combine) / ticket 1.028x; stages: 4 st / 5 st 0.991x
+[sk3-diag] B=1: launching _pre_attention_kernel
+[sk3-diag] B=1 x 80000: 20 MB of K+V rows, eager, cold L2, median of 10
+[sk3-diag]   (a) single-level grid 2xSM (stage 2 as is)        53.9 us  0.38 TB/s  (rel L2 1.7e-03, finite True)
+[sk3-diag]   (b) single-level grid SM                          34.2 us  0.60 TB/s  (rel L2 1.7e-03, finite True)
+[sk3-diag]   (c) two-level grid SM (timed path)                22.6 us  0.91 TB/s  (rel L2 1.7e-03, finite True)
+[sk3-diag]   (d) two-level grid 2xSM                           24.2 us  0.85 TB/s  (rel L2 1.7e-03, finite True)
+[sk3-diag] fastest of the four: (c) two-level grid SM (timed path); timed path (c) is 22.6 us, (a) control 53.9 us, (c)/(a) 0.419x
+[sk3-diag] B=1: timing master FA3 (main + combine) and norm-gate
+[sk3-diag]   master FA3 main+combine    32.7 us + norm-gate 5.1 us = 37.8 us (pre-attention kernel excluded from both sides)
+[sk3-diag] B=16: launching _pre_attention_kernel
+[sk3-diag] B=16 x 80000: 328 MB of K+V rows, eager, cold L2, median of 10
+[sk3-diag]   two-level grid 2xSM at B=16 (diagnostic)         114.7 us  2.86 TB/s  (rel L2 1.6e-03, finite True)
+[sk3-diag]   single-level grid 2xSM at B=16 (stage 2)         106.3 us  3.08 TB/s  (rel L2 1.6e-03, finite True)
+PATH CHOSEN: full decode_1 streamk two-level
+PATH CHOSEN: every other shape (sliding decode, other verify bands, page 64, dp): master path, unchanged
