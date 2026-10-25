@@ -94,18 +94,19 @@ priority: 1
 kind: primary
 controls_for: null
 review: proceed
-status: running
+status: hold
 review_at: 2026-10-25T162310Z
 review_companions: null
-stage: claimed
-claimed_at: 2026-10-25T202838Z
-base_sha: 49aaf9da8622506d0d6ee1cee80083c4503514f4
-base_blob: 3fc72e97304e132db432fcc87872be997f842929
-branch: hyp/muse_decode_layer/combo-attn-master-sliding-race-skw-c16
-worktree: .worktrees/muse_decode_layer/combo-attn-master-sliding-race-skw-c16
-mode: submit
+stage: null
+claimed_at: null
+base_sha: null
+base_blob: null
+branch: null
+worktree: null
+mode: null
 restack_of: null
 stale_base: null
+hold_reason: "builder found D1-D3 and C1 already on master (ec89382b); what remains is A1+A2, a multi-thousand-line CUDA port from muse_attention_decode with two new load_inline builds: not buildable here and unsafe as an unchecked scored submit; run it as a check once checks reset, or split A1 and A2"
 ---
 
 # combo-attn-master-sliding-race-skw-c16
@@ -161,3 +162,13 @@ No companion is warranted. The run is self-attributing on its four bands: every 
 - prepare() is called per state copy: can the race choose different winners for the two states? Print the decisions of both calls. If they differ, the profile rows mix paths, so report both rather than reading a single row.
 - SB1's expected gain of about 1.7% of the row is at the 1.02 threshold. Report the race margin even when master is kept, so a near-miss is not read as a refutation.
 
+
+## Implementation notes
+
+NO EDIT MADE (worktree submission.py untouched, base 49aaf9da). Reconciliation against current master:
+- D1 (sliding batched Triton S=16), D2 (R variant 0 / unpool NF=1) and D3 (fused pre-attention FA3 feed) are all already on master via ec89382b (combo-measured-rows-slide-batched-preattn-t8-tail, 1.3142x), which also carries C1's S3 c1-c4 that this md says are missing. Master has the per-source/per-class gate and 'PATH CHOSEN: <source> <class>' machinery (submission.py ~L5973-6908).
+- What remains is only A1 (new muse_decode_sk_window_v1 CUDA module, pre-attention kernel, variant table, PSEUDO prefix loader, variants 4/5/6 x grids) and A2 (muse_decode_slide_c16_v1 cluster-C16 module) plus a per-band race over them. Neither exists in decode master (no PSEUDO / sk_window / slide_c16 symbols).
+- Not implemented: a faithful port is a multi-thousand-line CUDA translation unit (muse_attention_decode/submission.py sk TU ~L1600-3350, cluster TU ~L3600-4900) with per-state tickets, two new load_inline builds, variant x grid sub-race and a qkv-through-o-GEMM race graph (adversarial review's binding notes). It cannot be compiled or run on this node and goes out as an unchecked scored submit; a blind port risks an illegal-address/hang that no prepare-time fallback can catch. Orchestrator should hold; if wanted, run it as an okc check first or split A1 / A2 into separate smaller ports.
+
+## Rules check
+- [x] n/a: no diff produced (git diff empty), nothing to violate; lint not run since file unchanged.
