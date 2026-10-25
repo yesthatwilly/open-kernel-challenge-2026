@@ -70,7 +70,7 @@ base_sha: a3136ce5805b8fcc8f1c58fdd3500b1d54aeb06e
 base_blob: e7b58542dc954a2a306648904dbd486bda0c417b
 branch: hyp/muse_decode_layer/sliding-cluster-c4-decode32-s2-k-encode-match
 worktree: .worktrees/muse_decode_layer/sliding-cluster-c4-decode32-s2-k-encode-match
-mode: null
+mode: check
 restack_of: null
 stale_base: true
 implemented_at: 2026-10-25T084640Z
@@ -79,6 +79,8 @@ submission_sha256: 01bcb4e8a0a511883ccd10a5a8e8abff605396e76baf5c3c0e19110f073ce
 norm_sha256: be67125f36401efa5b437f04a77c424668cebb2de8c13fadcd20ca51cfa2206f
 submission_blob: f8b86798e27c264fb4b8a7bea2e7c97d8c086d8f
 lint_warnings: 44
+attempt_file: 2026-10-25T084641Z-check-sliding-cluster-c4-decode32-s2-k-encode-match.md
+prepared_at: 2026-10-25T084641Z
 ---
 
 # sliding-cluster-c4-decode32-s2-k-encode-match
