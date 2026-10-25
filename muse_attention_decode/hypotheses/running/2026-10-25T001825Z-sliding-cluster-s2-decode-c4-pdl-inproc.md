@@ -71,7 +71,7 @@ review: proceed
 status: running
 review_at: 2026-10-25T002143Z
 review_companions: null
-stage: implemented
+stage: dispatched
 claimed_at: 2026-10-25T002143Z
 base_sha: 593859d3ce482d60c7bb0ec1fb4e4101e7b1ce31
 base_blob: bd96c94a12cf87fdcdac119d1e0508f009c4120c
@@ -88,6 +88,8 @@ submission_blob: 01024fb7e27a1343414dfbd5fca8c0e5f5449225
 lint_warnings: 3
 attempt_file: 2026-10-25T003616Z-check-sliding-cluster-s2-decode-c4-pdl-inproc.md
 prepared_at: 2026-10-25T003616Z
+job: 1990ce53e9d34073
+dispatched_at: 2026-10-25T003624Z
 ---
 
 # sliding-cluster-s2-decode-c4-pdl-inproc
