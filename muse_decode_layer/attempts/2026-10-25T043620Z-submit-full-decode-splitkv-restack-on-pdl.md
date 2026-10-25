@@ -48,4 +48,4 @@ py_compile: OK. The __pycache__ was removed. Diff: 1 file, +692 / -54 (the 54 ar
 low
 
 ## Result (after the run)
-(pending)
+Promotion passed: 1.2695x [1.2505,1.2885], board: {"rank": 396, "team": "yesthatwilly", "speedup": 1.2726, "first": false, "ahead": 395, "to_first": 1.7955}

@@ -1,0 +1,22 @@
+[small-t-dense-chain] load_inline compiled in 41.2s
+[splitkv] load_inline compiled in 40.8s
+[small-t-dense-chain] P occupancy (CTAs/SM, NF=1/2/4): [3, 2, 2]; grid 216 CTAs
+[small-t-dense-chain] PDL probe: eager overlap False (-6.3 us), graph overlap True (49.7 us, secondary waited 50.2 us) -> pdl=1
+[small-t-dense-chain] P timing T=1 pdl=0 21.0 us (3.60 TB/s) pdl=1 20.7 us (3.64 TB/s)
+[small-t-dense-chain] P timing T=8 pdl=0 22.1 us (3.42 TB/s) pdl=1 21.9 us (3.45 TB/s)
+[small-t-dense-chain] P timing T=32 pdl=0 26.2 us (2.88 TB/s) pdl=1 26.0 us (2.91 TB/s)
+[small-t-dense-chain] ON pdl=1 compile 41.2s max errs ei 1.52e-04 logit 3.30e-06 xn 2.08e-05 w 0.00e+00 y 0.00e+00 graph 0.00e+00: PATH CHOSEN = DENSE-CHAIN at T <= 32, MASTER above
+[align-parallel-large-t] ON cases=18 mismatches=0
+[splitkv] self-check kernel A (splitkv_attn) ok, B=5 grid=device
+[splitkv] self-check kernel B (splitkv_combine) ok, B=5
+[splitkv] self-check B=5 kv_scale=1.0 grid=device: rel L2 1.67e-03, finite True
+[splitkv] self-check kernel A (splitkv_attn) ok, B=5 grid=3
+[splitkv] self-check kernel B (splitkv_combine) ok, B=5
+[splitkv] self-check B=5 kv_scale=0.25 grid=3: rel L2 1.66e-03, finite True
+[splitkv] self-check kernel A (splitkv_attn) ok, B=5 grid=3
+[splitkv] self-check kernel B (splitkv_combine) ok, B=5
+[splitkv] self-check B=5 kv_scale=1.0 grid=3: rel L2 1.69e-03, finite True
+[splitkv] self-check kernel A (splitkv_attn) ok, B=33 grid=device
+[splitkv] self-check kernel B (splitkv_combine) ok, B=33
+[splitkv] self-check B=33 kv_scale=1.0 grid=device: rel L2 1.63e-03, finite True
+[splitkv] ON: self-check passed: CUDA split-KV path on full decode, 1 < batch <= 64
