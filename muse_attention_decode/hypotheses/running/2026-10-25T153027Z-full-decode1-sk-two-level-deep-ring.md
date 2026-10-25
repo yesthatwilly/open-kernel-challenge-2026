@@ -53,7 +53,7 @@ review: proceed
 status: running
 review_at: 2026-10-25T203307Z
 review_companions: null
-stage: claimed
+stage: implemented
 claimed_at: 2026-10-25T203307Z
 base_sha: 6d8fce0bdeed57b76fcd060aaec81554c9798b15
 base_blob: 6d6afa4722731ceb9cb8216d0334a03f1a96ad2b
@@ -62,6 +62,12 @@ worktree: .worktrees/muse_attention_decode/full-decode1-sk-two-level-deep-ring
 mode: submit
 restack_of: null
 stale_base: null
+implemented_at: 2026-10-25T203814Z
+impl_commit: 8945b6ab3c60b478f652f6bbb24ac98d3abc5eae
+submission_sha256: b769d39e3819acc9f5bf7b89c4011b04922a2d57f97460aa24293485263dccc8
+norm_sha256: b4054cd3ff8db0745897065c1643d86de8b908ee5371aba2f5e34ff527c79aec
+submission_blob: 246f5494a75eb62a330900ae938f598bee8341b8
+lint_warnings: 64
 ---
 
 # full-decode1-sk-two-level-deep-ring
@@ -104,3 +110,35 @@ No companion: prepare times <4,two-level> vs 8/10 stages under the same cold-L2 
 - Was STAGES=5 or deeper timed at B=1 grid SM in any [sk3-diag] log?
 - Phase split of the 19.0 us (merge/tail vs streaming) via clock64 in prepare.
 
+
+## Implementation notes
+
+Edited only the worktree's muse_attention_decode/submission.py (+157/-11).
+- CUDA: new variants 8 = splitkv_attn_sk_kernel<8, true, true> and 9 = <10, true, true> (non-PSEUDO, two-level), present in both the SK_PSEUDO and landed builds. SK_MAX_VARIANT = 9 in both; sk_smem(8) = Lay<8>, sk_smem(9) = Lay<10> with static_asserts <= 232,448 B; sk_prepare done[] grown to 16; sk_attn/sk_attrs: `pseudo` is now variants 4-7 only, two-level checks include >= 8, and the landed (non-pseudo) build still rejects 4-7. PSEUDO variants 4-7, Lay<4,PS_MAXR,true> and their sk_smem/sk_prepare behaviour are unchanged.
+- Python: `_B1_VARIANT` (default 3) used by `_full_decode_sk` at B=1; `_sk_launch` allocates group slots for 3/8/9; `_SK_LABELS` extended; `_deep_ring_setup()` runs in prepare after `_sk_validate_b1` passes: per-variant attrs print, 10 B=1 self-check cases and ticket sum, eager rel L2 vs master variant 3, interleaved cold-L2 graph-replay timing of [pre-attn + kernel] (empty graph subtracted, median of 31, lens 80000), routes the fastest only at >= 1.03x and rel L2 < 1e-2, then runs a two-state alternating replay (`_alt_check`); any miss/exception resets `_B1_VARIANT = 3`. Prints per-variant us and PATH CHOSEN.
+- Deviation (review wins): 12 stages dropped (Lay<12> = 234,528 B > limit); 8 and 10 stages used. Variants numbered 8/9, not remapped.
+- Not run (no GPU): compile and smem sizes unverified beyond static_assert.
+
+## Rules check
+
+- [x] CUDA-graph capturable: kernel_fn change is a module-global int read selecting a launch; no sync/.item()/prints added to kernel_fn; all syncs are in prepare-time `_deep_ring_setup`.
+- [x] Nothing derived from `data` is cached across calls: `_B1_VARIANT` is chosen from synthetic lens in prepare only; tickets are self-resetting int32 arrays.
+- [x] n/a: no weights touched.
+- [x] KV cache FP8, q FP8 E4M3, fp32 softmax/merges unchanged (same kernel template).
+- [x] Attention sees every key: same kernel, only ring depth differs; self-checks include 80000/4097/63/1 keys.
+- [x] No timing patches, harness access, subprocess or child processes added.
+- [x] All work inside the timed call; no output caching or replay.
+
+okc_lint: OK with warnings (only host-sync warnings outside kernel_fn's call graph, prepare-time). py_compile clean, __pycache__ removed.
+
+## Pre-flight audit
+
+Audited 2026-10-25 by an opus subagent (read-only emulation; no GPU). **Verdict: dispatch-with-fixes.**
+
+Fixes (worktree submission.py only):
+1. **Gate that always failed (two-state replay).** `_deep_ring_setup` built the `_alt_check` states with `_splitkv_synthetic(l, 1.0, gen, dev)` without `max_pages`, so each length set got its own page-table width (80038 for [80000], 1988 for the refill [1950]); the in-place `copy_` refill at step 2 raises on the shape mismatch, so the routed variant was always reset to 3 and the deep ring could never run. Now `mp = max(max(s) for s in sets) + 1 + 37` is passed as `max_pages`, as master's `_skf_setup` replay does.
+2. **Fallback cascade on a deep-ring compile failure.** Variants 8/9 were instantiated in both the PSEUDO and the landed builds, so a compile error in `<8|10, true, true>` would fail both and drop `_EXT2` (stage 2/3 lost at every full-decode batch). The deep variants are now guarded by `#ifndef SK_NO_DEEP` (SK_MAX_VARIANT 9 / 7 / 3); `_build_sk` tries PSEUDO+deep (`muse_decode_sk_v4pd`), then PSEUDO without deep (`muse_decode_sk_v4p`, master's source behaviour), then landed without deep. `_DEEP_BUILT` records it, and `_deep_ring_setup` prints PATH CHOSEN master when it is false.
+
+Checked and fine: Lay<8> 164,896 B, Lay<10> 199,712 B <= 232,448 B; `cudaFuncSetAttribute` runs in `sk_prepare` before every launch/attr query; the ring math (`nn % STAGES`, `cp_wait<STAGES-2>`, meta double buffer, prologue meta refills) is valid for STAGES 8 and 10 (meta block k+1 lands by tile 16k+16-STAGES+1 >= 16k); no co-residency needed (last-arriver tickets, no spin); tickets reset by the last arriver at both levels and re-zeroed in `finally`; `_B1_VARIANT` is set only after build/attrs/10 self-checks/ticket sum 0/rel L2/1.03x gate and reset to 3 on any replay miss or exception; kernel_fn reads only the module int (graph-capturable, no sync/alloc by values). FUSED_PRE routes only B >= 2, so the B=1 path is the one selected. okc_lint OK (prepare-time host-sync warnings only), py_compile clean.
+
+Residual risk: compile of the new instantiations unverified (now isolated), +~20 s compile and ~20-30 s setup against ~470 s of a 900 s budget; likely gain small (within CI).
