@@ -1,0 +1,47 @@
+[splitkv] building with nvcc flags ['-O3', '-arch=sm_90a', '-lineinfo'], TORCH_CUDA_ARCH_LIST=None
+[splitkv] load_inline compiled in 41.6s
+[splitkv] launching splitkv_attn_kernel grid=264
+[splitkv] splitkv_attn_kernel done
+[splitkv] launching splitkv_combine_kernel
+[splitkv] splitkv_combine_kernel done
+[splitkv] self-check B=5 kv_scale=1.0 grid=device: rel L2 1.67e-03, finite True
+[splitkv] launching splitkv_attn_kernel grid=3
+[splitkv] splitkv_attn_kernel done
+[splitkv] launching splitkv_combine_kernel
+[splitkv] splitkv_combine_kernel done
+[splitkv] self-check B=5 kv_scale=0.25 grid=3: rel L2 1.66e-03, finite True
+[splitkv] launching splitkv_attn_kernel grid=3
+[splitkv] splitkv_attn_kernel done
+[splitkv] launching splitkv_combine_kernel
+[splitkv] splitkv_combine_kernel done
+[splitkv] self-check B=5 kv_scale=1.0 grid=3: rel L2 1.69e-03, finite True
+[splitkv] launching splitkv_attn_kernel grid=264
+[splitkv] splitkv_attn_kernel done
+[splitkv] launching splitkv_combine_kernel
+[splitkv] splitkv_combine_kernel done
+[splitkv] self-check B=33 kv_scale=1.0 grid=device: rel L2 1.63e-03, finite True
+[splitkv] self-check passed: CUDA split-KV path on full decode, 1 < batch <= 64
+[splitkv] PATH CHOSEN: full decode CUDA split-KV (stage 1)
+[splitkv] launching splitkv_attn_verify_kernel B=5 grid=264
+[splitkv] verify kernel: regs=124 localBytes=0 staticSmem=0 dynSmem=90640 maxThreads=256
+[splitkv] splitkv_attn_verify_kernel done
+[splitkv] launching splitkv_combine_verify_kernel
+[splitkv] splitkv_combine_verify_kernel done
+[splitkv] verify self-check B=5 kv_scale=1.0 grid=device: rel L2 1.67e-03, finite True
+[splitkv] launching splitkv_attn_verify_kernel B=5 grid=3
+[splitkv] splitkv_attn_verify_kernel done
+[splitkv] launching splitkv_combine_verify_kernel
+[splitkv] splitkv_combine_verify_kernel done
+[splitkv] verify self-check B=5 kv_scale=0.25 grid=3: rel L2 1.64e-03, finite True
+[splitkv] launching splitkv_attn_verify_kernel B=5 grid=3
+[splitkv] splitkv_attn_verify_kernel done
+[splitkv] launching splitkv_combine_verify_kernel
+[splitkv] splitkv_combine_verify_kernel done
+[splitkv] verify self-check B=5 kv_scale=1.0 grid=3: rel L2 1.65e-03, finite True
+[splitkv] launching splitkv_attn_verify_kernel B=33 grid=264
+[splitkv] splitkv_attn_verify_kernel done
+[splitkv] launching splitkv_combine_verify_kernel
+[splitkv] splitkv_combine_verify_kernel done
+[splitkv] verify self-check B=33 kv_scale=1.0 grid=device: rel L2 1.66e-03, finite True
+[splitkv] verify self-check passed: CUDA split-KV path on full verify q_len 8, 1 < batch <= 64
+[splitkv] PATH CHOSEN: full verify CUDA split-KV (stage 2)

@@ -52,10 +52,10 @@ controls_for: null
 rewrite_stage: 2
 replaces: paired FA3 flash_fwd main + FlashAttnFwdCombine + pad/unpad copies + FusedRMSNormGate on full-layer verify (q_len 8), batch 16/32
 review: proceed
-status: running
+status: done
 review_at: 2026-10-24T165634Z
 review_companions: null
-stage: dispatched
+stage: harvested
 claimed_at: 2026-10-25T003235Z
 base_sha: f6cc1452343c4d93911ad7303c4a5d7878afd2fe
 base_blob: b83f5ec1976c82d5b45dcd92b6c0818ce04eda9f
@@ -74,6 +74,13 @@ attempt_file: 2026-10-25T004030Z-check-full-verify-cuda-splitkv-stage2.md
 prepared_at: 2026-10-25T004030Z
 job: e9d5eeffddef4f70
 dispatched_at: 2026-10-25T004037Z
+outcome: regression
+verdict_detail: regression
+speedup: 1.1558993345373498
+speedup_ci: [1.1385608445192896, 1.17323782455541]
+harvested_at: 2026-10-25T013616Z
+best_at_harvest: 1.2521147631671776
+promotion: null
 ---
 
 # full-verify-cuda-splitkv-stage2
@@ -178,3 +185,35 @@ Fixes:
 - `_splitkv_prepare`: a second prepare() call in the same process used to print "PATH CHOSEN: ... MASTER FA3 (no CUDA module)" while the CUDA path stayed live. That misleads the harvest. It now reports the path already chosen.
 
 Residual risk: register pressure under __launch_bounds__(256,2) (about 100-120 live regs) may spill, which costs perf only. A device fault inside the verify self-check would poison the CUDA context and fail the run instead of falling back. Combine latency over about 85 chunks per warp is unmeasured.
+
+## Result
+
+- job `e9d5eeffddef4f70` (check), status done, passed True, tests 13/13
+- speedup 1.1559x, 95% CI [1.1386, 1.1732], score 19569.43768728252 µs vs SGLang 22620.3 µs
+- best at harvest: {"speedup": 1.2521147631671776, "ci": [1.23333304171967, 1.270896484614685], "job": "39bcf05afc4e4dd3"}; base result: muse_decode_layer/hypotheses/done/neutral/full-decode-cuda-splitkv-port.result.json
+- **outcome: regression** (regression)
+- files: `muse_decode_layer/hypotheses/done/regression/full-verify-cuda-splitkv-stage2.result.json`, `muse_decode_layer/hypotheses/done/regression/full-verify-cuda-splitkv-stage2.patch`; branch `hyp/muse_decode_layer/full-verify-cuda-splitkv-stage2`
+
+## Attribution
+
+| shape | w | base µs | hyp µs | delta | verdict |
+|---|---|---|---|---|---|
+| batch=1 ctx=80000 dist=soft layer=sliding load=decode_1 page=1 repeats=60 | 46 | 144.97 | 146.13 | 0.9941 | flat |
+| batch=1 ctx=80000 dist=soft layer=full load=decode_1 page=1 repeats=60 | 16 | 156.49 | 155.79 | 0.999 | flat |
+| batch=16 ctx=80000 dist=soft layer=sliding load=decode_16 page=1 spread=agentic | 46 | 230.07 | 227.07 | 0.9963 | flat |
+| batch=16 ctx=80000 dist=soft layer=full load=decode_16 page=1 spread=agentic | 16 | 329.13 | 327.75 | 0.9965 | flat |
+| batch=32 ctx=80000 dist=soft layer=sliding load=decode_32 page=1 spread=agentic | 46 | 260.43 | 281.46 | 0.9961 | flat |
+| batch=32 ctx=80000 dist=soft layer=full load=decode_32 page=1 spread=agentic | 16 | 490.19 | 509.44 | 0.9923 | flat |
+| batch=1 ctx=80000 dist=soft layer=sliding load=verify_1 page=1 q_len=8 | 46 | 202.99 | 198.11 | 1.0007 | flat |
+| batch=1 ctx=80000 dist=soft layer=full load=verify_1 page=1 q_len=8 | 16 | 220.46 | 216.07 | 1.0004 | flat |
+| batch=16 ctx=80000 dist=soft layer=sliding load=verify_16 page=1 q_len=8 spread=agentic | 46 | 435.66 | 437.82 | 0.9887 | flat |
+| batch=16 ctx=80000 dist=soft layer=full load=verify_16 page=1 q_len=8 spread=agentic | 16 | 590.55 | 682.67 | 0.8466 | lost |
+| batch=32 ctx=80000 dist=soft layer=sliding load=verify_32 page=1 q_len=8 spread=agentic | 46 | 643.87 | 604.63 | 1.0087 | flat |
+| batch=32 ctx=80000 dist=soft layer=full load=verify_32 page=1 q_len=8 spread=agentic | 16 | 909.53 | 1126.71 | 0.7973 | lost |
+
+lost on full verify_16, verify_32. Expected hit: 3/5. Noise ±1.5%.
+
+## Follow-ups
+
+- rewrite stage 2 of `paired FA3 flash_fwd main + FlashAttnFwdCombine + pad/unpad copies + FusedRMSNormGate on full-layer verify (q_len 8), batch 16/32`: read the replaced kernels' own us per shape (profile top_kernels) against the incumbent and the floor, and check which Milestone it reached. The next stage is `/hypothesize muse_decode_layer "<what to fix or tune>" --kind rewrite --depends-on full-verify-cuda-splitkv-stage2 --stage 3`; a slow or failed first cut is the expected start, not a do-not-retry.
+
