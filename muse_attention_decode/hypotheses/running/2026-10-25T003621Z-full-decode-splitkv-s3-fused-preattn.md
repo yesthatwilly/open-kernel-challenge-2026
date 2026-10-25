@@ -55,7 +55,7 @@ review: proceed
 status: running
 review_at: 2026-10-25T014055Z
 review_companions: null
-stage: claimed
+stage: implemented
 claimed_at: 2026-10-25T014055Z
 base_sha: f291b49c49670595d0615e749294f69bc15de1a4
 base_blob: 695c97d2e9fef8f806ec02d2fe14a02668989e3f
@@ -64,6 +64,12 @@ worktree: .worktrees/muse_attention_decode/full-decode-splitkv-s3-fused-preattn
 mode: null
 restack_of: null
 stale_base: null
+implemented_at: 2026-10-25T034225Z
+impl_commit: dbb845684aa94ad1867281815e42f53464870f19
+submission_sha256: b3dc55fa26451719bee99e40ab0f68e21f31286baad2e829ac91327bf871ef2f
+norm_sha256: 1fd1af6913adfa2d5c5eeb7bcd11699de723fcbfda56d510f875849fb74daeba
+submission_blob: 50274a3d8678d5656197b8e401ca411d4f08a6e2
+lint_warnings: 16
 ---
 
 # full-decode-splitkv-s3-fused-preattn
@@ -143,3 +149,20 @@ Edited only `muse_attention_decode/submission.py` in the worktree (+643/-10 line
 - [x] No triton.autotune; first-line marker `# okc: problem=muse_attention_decode` kept.
 
 okc_lint output (`python3 -I okc_lint.py submission.py --problem muse_attention_decode`): `OK with warnings: submission.py`; 16 `warn host-sync` lines, all `torch.cuda.synchronize()` / `.item()` in prepare-time self-check code, "outside kernel_fn's call graph; fine in prepare()". No errors. `py_compile` passed; `__pycache__` removed.
+
+## Pre-flight audit
+
+Audited 2026-10-25 (model opus), by reading only (no nvcc or GPU on the audit node). **Verdict: dispatch-with-fixes.**
+
+Checked and found sound:
+- Pre-attention parity with master `_pre_attention_kernel` (ROPE=False). Same q/k head offsets in qkv and the same scaleless RMSNorm (eps inside the sqrt). Values go fp32 to e4m3 with RN satfinite and no bf16 step, which matches Triton's `.to(float8e4nv)`. k is stored as `(x*r)/k_scale` and v as `v/v_scale`, and q carries no scale, because 5.473 and k_scale are folded into `scale` as in v2. The row address is `(cache_loc*HKV+kh)*D`. Exactly one CTA stores each request's row, the one that owns its last tile. reference.py has `cache_loc = page_table[b, seq_b-1]`, so that CTA is the only reader of the row. Its stores, then `__threadfence`, then `__syncthreads` all come before its first ring cp.async.cg, so the new key is attended.
+- The q slot follows v2's per-stage slot discipline. The slot is written by `issue_tile(n+3)` after the top-of-loop barrier of iteration n, and it was last read at iteration n-1. The q slice is cp.async'd in the tile's own group and read only after `cp_wait<STAGES-2>` plus a barrier. The 16-byte alignment holds (row stride 4608 B, data_ptr is checked).
+- The ticket protocol, slot indexing, `gx = min(grid, T)` and the re-zero in `finally` are byte-identical to stage 2. A v3 failure still re-zeroes the tickets before the v2 timed path runs.
+- Shared memory is 99,360 B per CTA, so 2 CTAs fit per SM.
+- kernel_fn's v3 path makes only shape-derived `torch.empty` calls and one launch. There is no sync, no value branching, no child process and nothing cached from `data`. Every v3 failure falls back to v2 and prints `PATH CHOSEN`.
+
+Fixes applied:
+1. The q build in `splitkv_attn_sk_fused_kernel` now makes two passes over the smem q slot (sum of squares, then scale and cast). Before, it kept `xv[4][4]` live in registers. Stage 2 already uses 121 of the 128 registers allowed at `__launch_bounds__(256, 2)`, and 16 more live floats next to acc/qa risked spills. The math is unchanged.
+2. The self-check tolerance on the new k/v rows is now rel L2 < 2e-2, up from 5e-3. Triton's approximate sqrt and division versus CUDA's IEEE ones can flip a single e4m3 ulp, which is about 8e-3 of a B=2 row set. That would silently drop the run to v2. A real indexing or scale bug shows up as O(1).
+
+Residual risk: the CUDA has never been compiled. The build adds about 40 s to import, and spills are only logged (`local` in the `[sk3]` attrs line), never gated. Check `PATH CHOSEN` and the `[sk3]` regs/local line before reading any timing.
