@@ -2,7 +2,7 @@
 
 Hypothesis: `muse_decode_layer/hypotheses/done/neutral/2026-10-24T224525Z-full-decode-splitkv-restack-on-pdl.md` (branch `hyp/muse_decode_layer/full-decode-splitkv-restack-on-pdl`).
 
-- **Job:** `<job id>` (`okc status <job>`)
+- **Job:** `7edbcb33c98349cb` (`okc status <job>`)
 - **File:** `muse_decode_layer/submission.py` at git `b31cc98`
 
 ## Goal
