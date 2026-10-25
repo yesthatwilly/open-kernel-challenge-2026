@@ -66,7 +66,7 @@ review: proceed
 status: running
 review_at: 2026-10-25T054418Z
 review_companions: null
-stage: implemented
+stage: dispatched
 claimed_at: 2026-10-25T054418Z
 base_sha: 06cbcc08c8e651f4bb7e2791d8b1321bdb54ee3e
 base_blob: 62c5a9413ba5710defea2ca3de14c1a1dc3b5a6d
@@ -83,6 +83,8 @@ submission_blob: 07cda658e21f2eb25a9dd1f50ac5202ad5985831
 lint_warnings: 57
 attempt_file: 2026-10-25T091047Z-check-dense-chain-s3-t1-q-sk2-o-route-unpool.md
 prepared_at: 2026-10-25T091047Z
+job: 34a9be06918d448b
+dispatched_at: 2026-10-25T091101Z
 ---
 
 # dense-chain-s3-t1-q-sk2-o-route-unpool
