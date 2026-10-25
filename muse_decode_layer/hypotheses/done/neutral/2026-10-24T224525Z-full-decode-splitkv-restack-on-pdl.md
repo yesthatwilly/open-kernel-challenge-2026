@@ -71,7 +71,7 @@ best_at_harvest: 1.2521147631671776
 promotion: merged
 hand_landed: true
 promotion_commit: b047510f64cf1919b8313cb88b2f6fe17c1c2305
-promotion_attempt: 2026-10-25T041933Z-submit-full-decode-splitkv-restack-on-pdl.md
+promotion_attempt: 2026-10-25T043405Z-submit-full-decode-splitkv-restack-on-pdl.md
 ---
 
 # full-decode-splitkv-restack-on-pdl
