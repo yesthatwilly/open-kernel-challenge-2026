@@ -49,7 +49,7 @@ review: proceed
 status: running
 review_at: 2026-10-25T040253Z
 review_companions: null
-stage: implemented
+stage: dispatched
 claimed_at: 2026-10-25T040259Z
 base_sha: cd742704c601ae9e373cdd9ab7989a60db8c599d
 base_blob: 4da94677234faaa06b42b5ced541db8961fd6f34
@@ -66,6 +66,8 @@ submission_blob: 20289b4cab2e4420c35ffabe8e4610f511fc0929
 lint_warnings: 38
 attempt_file: 2026-10-25T040848Z-check-stack-route-topk-pdl-unpool-nf1.md
 prepared_at: 2026-10-25T040848Z
+job: 87211e1362b64c4c
+dispatched_at: 2026-10-25T040855Z
 ---
 
 # stack-route-topk-pdl-unpool-nf1
