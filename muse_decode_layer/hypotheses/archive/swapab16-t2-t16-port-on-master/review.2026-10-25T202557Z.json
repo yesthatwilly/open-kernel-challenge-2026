@@ -1,0 +1,22 @@
+{
+ "model": "opus",
+ "verdict": "hold",
+ "summary": "Hold. The swap-AB in-gate effect (T=8/16) was already measured kernel-by-kernel in the parent's profile b0057d2e6cef4d5a: ~1.5-2 us per in-gate shape, ~+0.3% headline, which one scored run cannot resolve against +-1.5% per-shape noise; the expected full decode_16 +5% belongs to the s3/sk-ticket lineage already on master (296.7 us there without swap-AB).",
+ "justification": "Parent profile rows: verify_1 _swapab_qkv 12.7-13.0 us vs nvjet 128x8 splitK 12.0-12.2 + splitKreduce 1.8 (~1-1.5 us saved); _swapab_o 6.2-6.5 vs nvjet 64x8 6.6-7.0 (~0.5 us); decode_16 ~1 us each for qkv and o. Prepare-time selector qkv 1.066x, o 1.004x. In-gate shapes measured flat (sliding verify_1 191.42->191.58, sliding decode_16 204.68->204.72, full verify_1 +1%). The parent's decode_16 +5% compares against base w2-marlin-atomic-add-t1-port, not s3: s3 alone (34a9be06) shows 298.4 us and master's dl3-piece-a run (933d3f82) 296.7 us with the nvjet row still present. The sibling dense-qkv-o-unpool-swapab-bf16-master-port-t1-t32 is held for the same reason; this is its T=2..16 subset.",
+ "confounders": [
+  "dense-chain-s3-t1-q-sk2-o-route-unpool (landed d5595769): source of the parent's decode_16/decode_1/decode_32 gains credited to swap-AB.",
+  "small-t-launch-minimal-dense-chain-pdl (landed f1f2f35): PDL chain after the attention boundary at T<=32; a non-PDL Triton o kernel may lose overlap (candidate for the ~3 us in-context penalty vs bf16_proj standalone).",
+  "combo-measured-rows-slide-batched-preattn-t8-tail (landed ec89382b): new o-input producers and layouts at sliding decode_16; per-shape drift there (+-7% between identical-path runs) exceeds the effect.",
+  "dl3-piece-a-gate-stride-check-fix (landed 6773ec5c): disjoint gate; read full decode_1 with its PATH CHOSEN line."
+ ],
+ "interference": "No companion makes this interpretable: the effect is below noise. If the line is worth more spend, time swap-AB vs cuBLAS in prepare on a captured _parent_attention+boundary segment (enable at >=1.02x), explain the ~3 us in-context penalty first, and fold surviving cells into a combination submit.",
+ "rules_flags": [
+  "None as specified. When building: ticket split-K reduce must self-reset in-kernel; check stride/alignment at every o producer on master."
+ ],
+ "companions": [],
+ "open_questions": [
+  "Why does the identical _bf16_swapab_kernel run ~3 us (qkv) / ~2.3 us (o) slower in decode than in muse_bf16_proj while nvjet does not?",
+  "Is the scored slot better spent on a queued p1/p2 item with a resolvable effect?",
+  "Re-mint as an in-context-selector variant folded into a combination submit?"
+ ]
+}
