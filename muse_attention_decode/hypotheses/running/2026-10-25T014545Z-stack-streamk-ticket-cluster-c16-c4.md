@@ -59,7 +59,7 @@ review: proceed
 status: running
 review_at: 2026-10-25T034534Z
 review_companions: null
-stage: implemented
+stage: dispatched
 claimed_at: 2026-10-25T034535Z
 base_sha: 63995118a6d87d5714181d318458a7595fe4bbac
 base_blob: c6854f093588da524e63657576b27ed720756e32
@@ -76,6 +76,8 @@ submission_blob: edf13326bb5bcdae8c345dd5a780fcb948cb78d6
 lint_warnings: 13
 attempt_file: 2026-10-25T034707Z-check-stack-streamk-ticket-cluster-c16-c4.md
 prepared_at: 2026-10-25T034707Z
+job: 195dcc1209b6457b
+dispatched_at: 2026-10-25T034716Z
 ---
 
 # stack-streamk-ticket-cluster-c16-c4
