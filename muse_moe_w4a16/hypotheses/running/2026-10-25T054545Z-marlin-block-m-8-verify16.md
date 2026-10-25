@@ -44,7 +44,7 @@ review: proceed
 status: running
 review_at: 2026-10-25T054818Z
 review_companions: null
-stage: implemented
+stage: dispatched
 claimed_at: 2026-10-25T054818Z
 base_sha: 1f8d1d245fbad53f62cd763917484822e82cb0ff
 base_blob: 60dfe35d5417d9c0f89067ff313efdc2c41d03a2
@@ -61,6 +61,8 @@ submission_blob: 5ce6af6b334300197dd14ec64f045cf23f54566c
 lint_warnings: 11
 attempt_file: 2026-10-25T054935Z-check-marlin-block-m-8-verify16.md
 prepared_at: 2026-10-25T054935Z
+job: d0811c27500c416a
+dispatched_at: 2026-10-25T054944Z
 ---
 
 # marlin-block-m-8-verify16
