@@ -1,0 +1,837 @@
+diff --git a/muse_bf16_proj/submission.py b/muse_bf16_proj/submission.py
+index 970b415..a2fcfaa 100644
+--- a/muse_bf16_proj/submission.py
++++ b/muse_bf16_proj/submission.py
+@@ -45,8 +45,16 @@ unpooler's n == 1024 slice run the same _bf16_swapab_kernel with BLOCK_T = WS_M
+ m64n16k16) and their own 16-row workspaces / tickets, routed BEFORE the m <= 16 kernels above
+ (which stay in the file, no longer routed for these shapes). The unpooler full width at m = 16
+ keeps cuBLAS; every m >= 17 shape keeps its path.
++
++m = 65..256 (hypothesis bf16-verify-swapab-wgmma-cluster-dsmem-rewrite): qkv_gate and pooler at
++65 <= m <= 256 and the unpooler at 65 <= m <= 128 may run one hand-written CUDA kernel (swap-AB
++wgmma, TMA with x multicast over a cluster pair, split-K reduced through cluster DSMEM; section
++(8)). prepare() self-checks it and times it cold-L2 against master's cuBLAS per (layer, token tile)
++and routes it only where it wins; every other shape, and every miss, keeps master's path.
+ """
+ 
++import os
++import time
+ from typing import TypedDict
+ 
+ import torch
+@@ -985,6 +993,795 @@ def _swapab16_prepare(state: dict) -> None:
+             state[f"swapab16_cnt_{key}"].zero_()
+ 
+ 
++# --- (8) m = 65..256 qkv_gate / pooler / unpooler: swap-AB wgmma + TMA multicast + cluster DSMEM ----
++# (hypothesis bf16-verify-swapab-wgmma-cluster-dsmem-rewrite, rewrite stage 1)
++#
++# One hand-written CUDA kernel (load_inline at import, sm_90a only). CTA = 3 warpgroups: WG0 is the
++# producer (setmaxnreg.dec 40, one thread issues TMA), WG1-2 are consumers (setmaxnreg.inc 232),
++# each issuing wgmma m64nTk16 bf16 -> fp32 with A = 64 weight rows and B = the T-token x tile, both
++# K-major 128B-swizzled in smem, so a CTA tile is 128 weight rows x T tokens (T = 128 for
++# 65 <= m <= 128, T = 256 for 129 <= m <= 256, tokens >= m zero-filled by TMA). BLOCK_K 64.
++# Grid = (n / 128 weight tiles, S K-splits), cluster (CX, S): CX = 2 pairs adjacent weight tiles
++# that share the SAME x K-block, each CTA TMA-loads half of the x tile and multicasts it to both
++# (weights are unique per CTA, never multicast); CX = 1 is the same kernel without multicast.
++# Multicast protocol: every consumer warp arrives on the EMPTY mbarrier of BOTH CTAs of its pair
++# (mapa + mbarrier.arrive.release.cluster) and each EMPTY barrier counts 8 warps x CX arrivals, so
++# a producer reuses a stage only after both CTAs' consumers released it; the FULL barrier of each
++# CTA expects its own 16 KB of weights plus the T x 128 B x tile (own half + the peer's multicast
++# half). After the mainloop each consumer writes its fp32 accumulator to its CTA's smem (aliasing
++# the stage ring, padded token stride so the stores are conflict-free), a cluster barrier, then the
++# CTA with K-split index r sums its integer share of 4-row groups (32 groups split floor(r*32/S)..
++# floor((r+1)*32/S)) over the S peers in fixed order 0..S-1 through mapa + ld.shared::cluster v4,
++# converts to bf16 and stores out[token, n] 8 B per thread; a final cluster barrier keeps every CTA's
++# smem alive. K-blocks per split are the integer split floor(r*nkb/S)..floor((r+1)*nkb/S).
++# Review fixes applied (adversarial review, proceed): (1) prepare prints max-active clusters next to
++# needed clusters (tiles / CX) for every candidate and a candidate whose cluster does not fit in ONE
++# wave is dropped, then the fitting candidates are timed cold-L2 and the fastest is kept; (2) a
++# print-only no-reduce variant (mode 0: mainloop + own-tile bf16 store, no peer reads; the two
++# cluster barriers stay, so its tail is just the barrier cost) is timed beside the full kernel; (3) integer row-group and K-block partitions for S that
++# do not divide 128 / 32 / nkb; (4) the remote empty-barrier protocol above. Gate: per (layer,
++# T class) the kernel is routed only when its cold-L2 CUDA-graph time beats master's cuBLAS (the
++# same x, flush between replays) by SWCL_WIN_RATIO, else master's path for that class. Bound
++# constants are this section's own (SWCL_*), independent of every other path's.
++SWCL_TAG = "[swapab-cl]"
++SWCL_LAYERS = {"pooler": (4096, 8192), "qkv_gate": (2304, 8192), "unpooler": (8192, 4096)}  # (n, k)
++SWCL_MIN_M = 65
++SWCL_MAX_M = {"pooler": 256, "qkv_gate": 256, "unpooler": 128}
++SWCL_T_SPLIT_M = 128   # m <= this: T = 128 (one 128-token tile); above: T = 256
++# (CX, S) candidates per layer, preferred first. Cluster size CX * S; CTAs = n / 128 * S.
++SWCL_CANDS = {
++    "pooler": ((2, 4), (1, 4), (2, 2)),
++    "unpooler": ((2, 2), (1, 2)),
++    "qkv_gate": ((2, 7), (1, 7), (2, 6), (1, 6), (2, 4), (1, 4)),
++}
++SWCL_CHECK_MS = {128: (65, 128), 256: (130, 200, 256)}
++SWCL_WIN_RATIO = 0.98            # kernel cold time must be <= this x master's cuBLAS time
++SWCL_FLUSH_BYTES = 256 * 1024 * 1024
++SWCL_PREP_BUDGET_S = 120.0       # wall budget for candidate checks + timings in prepare
++SWCL_GENCODE = "-gencode=arch=compute_90a,code=sm_90a"
++SWCL_CUDA_CFLAGS = ["-O3", "-lineinfo", "-std=c++20", SWCL_GENCODE]
++SWCL_ERR_TEXT = {0: "ok", 1: "mbarrier wait timed out", 2: "non-sm_90a image ran (wgmma compiled out)",
++                 3: "cluster rank mismatch"}
++
++_SWCL_CPP = r"""
++#include <torch/extension.h>
++#include <vector>
++torch::Tensor swcl_make_wmap(torch::Tensor w);
++void swcl_run(torch::Tensor x, torch::Tensor wmap, torch::Tensor out, torch::Tensor err,
++              int64_t T, int64_t mc, int64_t S, int64_t mode);
++std::vector<int64_t> swcl_info(int64_t T, int64_t mc, int64_t S, int64_t tiles);
++"""
++
++_SWCL_HEAD = r"""
++#include <torch/extension.h>
++#include <ATen/cuda/CUDAContext.h>
++#include <c10/cuda/CUDAException.h>
++#include <cuda.h>
++#include <cuda_runtime.h>
++#include <cuda_bf16.h>
++#include <cstdint>
++#include <cstring>
++#include <vector>
++
++namespace {
++
++constexpr int THREADS = 384;
++constexpr int BK = 64;                 // K per pipeline stage: one 128 B swizzled row
++constexpr int TILE_ROWS = 128;         // weight rows per CTA
++constexpr int A_BYTES = TILE_ROWS * 128;
++constexpr int TP = 132;                // padded fp32 per-token row of the epilogue tile (floats)
++
++template <int T>
++struct Cfg {
++  static constexpr int STAGES = (T == 128) ? 6 : 4;
++  static constexpr int B_BYTES = T * 128;
++  static constexpr int STAGE_BYTES = A_BYTES + B_BYTES;
++  static constexpr int RING = STAGES * STAGE_BYTES;
++  static constexpr int EPI = T * TP * 4;
++  static constexpr int SMEM = 1024 + RING;   // + 1 KB so the ring base can be aligned to 1024
++  static_assert(STAGE_BYTES % 1024 == 0 && A_BYTES % 1024 == 0, "swizzle alignment");
++  static_assert(EPI <= RING, "the fp32 epilogue tile aliases the stage ring");
++  static_assert(SMEM + 1024 <= 227 * 1024, "shared memory budget");
++};
++
++__device__ __forceinline__ uint32_t smem_u32(const void* p) {
++  return static_cast<uint32_t>(__cvta_generic_to_shared(p));
++}
++__device__ __forceinline__ void mbar_init(uint32_t a, uint32_t count) {
++  asm volatile("mbarrier.init.shared::cta.b64 [%0], %1;\n" :: "r"(a), "r"(count) : "memory");
++}
++__device__ __forceinline__ void fence_barrier_init() {
++  asm volatile("fence.mbarrier_init.release.cluster;\n" ::: "memory");
++}
++__device__ __forceinline__ void mbar_expect_tx(uint32_t a, uint32_t tx) {
++  asm volatile("mbarrier.arrive.expect_tx.shared::cta.b64 _, [%0], %1;\n" :: "r"(a), "r"(tx) : "memory");
++}
++// Arrive on the barrier at the same CTA-relative address in cluster CTA `rank` (own rank allowed).
++__device__ __forceinline__ void mbar_arrive_rank(uint32_t a, uint32_t rank) {
++  asm volatile("{\n\t.reg .b32 ra;\n\t"
++               "mapa.shared::cluster.u32 ra, %0, %1;\n\t"
++               "mbarrier.arrive.release.cluster.shared::cluster.b64 _, [ra];\n\t}\n"
++               :: "r"(a), "r"(rank) : "memory");
++}
++__device__ __forceinline__ bool mbar_try(uint32_t a, uint32_t parity) {
++  uint32_t ok;
++  asm volatile("{\n\t.reg .pred P;\n\t"
++               "mbarrier.try_wait.parity.shared::cta.b64 P, [%1], %2;\n\t"
++               "selp.u32 %0, 1, 0, P;\n\t}\n"
++               : "=r"(ok) : "r"(a), "r"(parity) : "memory");
++  return ok != 0;
++}
++// Bounded wait: after ~2^26 cycles without the phase, record error word 1 and stop waiting.
++__device__ __forceinline__ void mbar_wait(uint32_t a, uint32_t parity, int* err, bool& dead) {
++  if (dead || mbar_try(a, parity)) return;
++  const long long t0 = clock64();
++  while (!mbar_try(a, parity)) {
++    if (clock64() - t0 > (1ll << 26)) {
++      dead = true;
++      atomicExch(err, 1);
++      return;
++    }
++  }
++}
++__device__ __forceinline__ void tma_2d(uint32_t dst, uint64_t map, int c0, int c1, uint32_t bar) {
++  asm volatile("cp.async.bulk.tensor.2d.shared::cluster.global.mbarrier::complete_tx::bytes [%0], [%1, {%3, %4}], [%2];\n"
++               :: "r"(dst), "l"(map), "r"(bar), "r"(c0), "r"(c1) : "memory");
++}
++__device__ __forceinline__ void tma_2d_mc(uint32_t dst, uint64_t map, int c0, int c1, uint32_t bar,
++                                          unsigned short mask) {
++  asm volatile("cp.async.bulk.tensor.2d.shared::cluster.global.mbarrier::complete_tx::bytes.multicast::cluster [%0], [%1, {%3, %4}], [%2], %5;\n"
++               :: "r"(dst), "l"(map), "r"(bar), "r"(c0), "r"(c1), "h"(mask) : "memory");
++}
++__device__ __forceinline__ void wgmma_fence() {
++#if defined(__CUDA_ARCH_FEAT_SM90_ALL)
++  asm volatile("wgmma.fence.sync.aligned;\n" ::: "memory");
++#endif
++}
++__device__ __forceinline__ void wgmma_commit() {
++#if defined(__CUDA_ARCH_FEAT_SM90_ALL)
++  asm volatile("wgmma.commit_group.sync.aligned;\n" ::: "memory");
++#endif
++}
++template <int N>
++__device__ __forceinline__ void wgmma_wait() {
++#if defined(__CUDA_ARCH_FEAT_SM90_ALL)
++  asm volatile("wgmma.wait_group.sync.aligned %0;\n" :: "n"(N) : "memory");
++#endif
++}
++template <int NA>
++__device__ __forceinline__ void fence_acc(float (&d)[NA]) {
++#pragma unroll
++  for (int i = 0; i < NA; ++i) asm volatile("" : "+f"(d[i]) :: "memory");
++}
++__device__ __forceinline__ void named_bar(int id, int count) {
++  asm volatile("bar.sync %0, %1;\n" :: "r"(id), "r"(count) : "memory");
++}
++__device__ __forceinline__ void cluster_sync() {
++  asm volatile("barrier.cluster.arrive.release.aligned;\n" ::: "memory");
++  asm volatile("barrier.cluster.wait.acquire.aligned;\n" ::: "memory");
++}
++__device__ __forceinline__ uint32_t map_rank(uint32_t addr, uint32_t rank) {
++  uint32_t r;
++  asm volatile("mapa.shared::cluster.u32 %0, %1, %2;\n" : "=r"(r) : "r"(addr), "r"(rank));
++  return r;
++}
++__device__ __forceinline__ float4 ld_cluster_v4(uint32_t addr) {
++  float4 v;
++  asm volatile("ld.shared::cluster.v4.f32 {%0, %1, %2, %3}, [%4];\n"
++               : "=f"(v.x), "=f"(v.y), "=f"(v.z), "=f"(v.w) : "r"(addr) : "memory");
++  return v;
++}
++// K-major SWIZZLE_128B shared-memory matrix descriptor (same form the sm_90a moe build ran):
++// start address >> 4 (bits 0-13), LBO 1 (unused for swizzled K-major), SBO 1024 B between 8-row
++// groups (bits 32-45), layout type 1 = 128B swizzle (bits 62-63). Every tile base is 1024-aligned
++// and the k16 advance of +32 B stays inside the first 128 B.
++__device__ __forceinline__ uint64_t make_desc(uint32_t saddr) {
++  return static_cast<uint64_t>((saddr & 0x3FFFFu) >> 4) | (static_cast<uint64_t>(1) << 16) |
++         (static_cast<uint64_t>(1024 >> 4) << 32) | (static_cast<uint64_t>(1) << 62);
++}
++
++template <int N>
++struct Wg;
++"""
++
++_SWCL_BODY = r"""
++template <int T, bool MC>
++__global__ void __launch_bounds__(THREADS, 1)
++swcl_kernel(const __grid_constant__ CUtensorMap mapW, const __grid_constant__ CUtensorMap mapX,
++            __nv_bfloat16* __restrict__ out, int m, int n, int nkb, int S, int mode,
++            int* __restrict__ err) {
++#if defined(__CUDA_ARCH_FEAT_SM90_ALL)
++  using C = Cfg<T>;
++  constexpr int CX = MC ? 2 : 1;
++  constexpr int STAGES = C::STAGES;
++  extern __shared__ __align__(1024) uint8_t smem_raw[];
++  __shared__ __align__(8) uint64_t bars[2 * STAGES];
++  const int tid = threadIdx.x, warp = tid >> 5, lane = tid & 31;
++  const uint32_t raw_u = smem_u32(smem_raw);
++  const uint32_t base_u = (raw_u + 1023u) & ~1023u;
++  uint8_t* ring = smem_raw + (base_u - raw_u);
++  const int cx = MC ? static_cast<int>(blockIdx.x & 1) : 0;   // position in the multicast pair
++  const int cy = static_cast<int>(blockIdx.y);                 // K-split index
++  const int tile = static_cast<int>(blockIdx.x);               // 128-row weight tile
++  const uint32_t full0 = smem_u32(&bars[0]);
++  const uint32_t empty0 = smem_u32(&bars[STAGES]);
++  const int kb0 = static_cast<int>((static_cast<long long>(cy) * nkb) / S);
++  const int kb1 = static_cast<int>((static_cast<long long>(cy + 1) * nkb) / S);
++  const int nk = kb1 - kb0;
++
++  if (tid == 0) {
++    uint32_t hw;
++    asm volatile("mov.u32 %0, %%cluster_ctarank;\n" : "=r"(hw));
++    if (static_cast<int>(hw) != cx + CX * cy) atomicExch(err, 3);
++#pragma unroll
++    for (int s = 0; s < STAGES; ++s) {
++      mbar_init(full0 + 8 * s, 1);
++      mbar_init(empty0 + 8 * s, 8 * CX);   // 8 consumer warps of each of the CX CTAs
++    }
++    fence_barrier_init();
++  }
++  __syncwarp();     // warp 0 reconverged before the .aligned cluster barrier
++  cluster_sync();   // barriers of every CTA are initialised before any remote arrive / multicast
++
++  if (warp < 4) {
++    // ---------------- producer warpgroup ----------------
++    asm volatile("setmaxnreg.dec.sync.aligned.u32 40;\n" ::: "memory");
++    if (tid == 0) {
++      bool dead = false;
++      const uint64_t mw = reinterpret_cast<uint64_t>(&mapW);
++      const uint64_t mx = reinterpret_cast<uint64_t>(&mapX);
++      const unsigned short mask = MC ? static_cast<unsigned short>(3u << (2 * cy)) : 0;
++      for (int i = 0; i < nk; ++i) {
++        const int s = i % STAGES;
++        const uint32_t ph = (i / STAGES) & 1;
++        mbar_wait(empty0 + 8 * s, ph ^ 1, err, dead);   // both CTAs' consumers released stage s
++        const uint32_t fb = full0 + 8 * s;
++        const uint32_t st = base_u + s * C::STAGE_BYTES;
++        mbar_expect_tx(fb, A_BYTES + C::B_BYTES);
++        const int kc = (kb0 + i) * BK;
++        tma_2d(st, mw, kc, tile * TILE_ROWS, fb);
++        if (MC) tma_2d_mc(st + A_BYTES + cx * (T / 2) * 128, mx, kc, cx * (T / 2), fb, mask);
++        else tma_2d(st + A_BYTES, mx, kc, 0, fb);
++      }
++    }
++    __syncwarp();
++    cluster_sync();   // every CTA's epilogue tile is complete
++    cluster_sync();   // every peer is done reading this CTA's smem
++  } else {
++    // ---------------- consumer warpgroups ----------------
++    asm volatile("setmaxnreg.inc.sync.aligned.u32 232;\n" ::: "memory");
++    const int cw = warp - 4;       // 0..7
++    const int wg = cw >> 2;        // which 64 weight rows
++    const int wl = cw & 3;         // warp within the warpgroup (16 rows each)
++    float acc[T / 2];
++#pragma unroll
++    for (int i = 0; i < T / 2; ++i) acc[i] = 0.f;
++    bool dead = false;
++    int prev = -1;
++    for (int i = 0; i < nk; ++i) {
++      const int s = i % STAGES;
++      const uint32_t ph = (i / STAGES) & 1;
++      mbar_wait(full0 + 8 * s, ph, err, dead);
++      const uint32_t st = base_u + s * C::STAGE_BYTES;
++      fence_acc<T / 2>(acc);
++      wgmma_fence();
++#pragma unroll
++      for (int k = 0; k < 4; ++k)
++        Wg<T>::mma(acc, make_desc(st + wg * 8192 + k * 32), make_desc(st + A_BYTES + k * 32));
++      wgmma_commit();
++      wgmma_wait<1>();   // the previous block's group has retired: release its stage
++      fence_acc<T / 2>(acc);
++      if (prev >= 0) {
++        __syncwarp();
++        if (lane == 0) {
++#pragma unroll
++          for (int q = 0; q < CX; ++q) mbar_arrive_rank(empty0 + 8 * prev, q + CX * cy);
++        }
++      }
++      prev = s;
++    }
++    wgmma_wait<0>();
++    fence_acc<T / 2>(acc);
++    if (prev >= 0) {
++      __syncwarp();
++      if (lane == 0) {
++#pragma unroll
++        for (int q = 0; q < CX; ++q) mbar_arrive_rank(empty0 + 8 * prev, q + CX * cy);
++      }
++    }
++    named_bar(1, 256);   // both consumer warpgroups are done reading the stage ring
++
++    // fp32 accumulator -> this CTA's smem tile [token][weight row], token stride TP floats
++    float* tile_f = reinterpret_cast<float*>(ring);
++    const int wrow = wg * 64 + wl * 16 + (lane >> 2);
++    const int tq = 2 * (lane & 3);
++#pragma unroll
++    for (int j = 0; j < T / 8; ++j) {
++      const int tok = 8 * j + tq;
++      tile_f[tok * TP + wrow] = acc[4 * j];
++      tile_f[(tok + 1) * TP + wrow] = acc[4 * j + 1];
++      tile_f[tok * TP + wrow + 8] = acc[4 * j + 2];
++      tile_f[(tok + 1) * TP + wrow + 8] = acc[4 * j + 3];
++    }
++    __syncwarp();
++    cluster_sync();   // every CTA's tile is complete and visible cluster-wide (mode 0 keeps it too)
++
++    const int ct = tid - 128;        // 0..255
++    const int g0 = (cy * 32) / S, g1 = ((cy + 1) * 32) / S, ng = g1 - g0;   // 4-row groups
++    const int items = ng * m;
++    for (int it = ct; it < items; it += 256) {
++      const int g = g0 + it % ng, tok = it / ng;
++      const uint32_t loc = base_u + static_cast<uint32_t>((tok * TP + 4 * g) * 4);
++      float4 sum;
++      if (mode != 0) {
++        float4 v[8];
++#pragma unroll
++        for (int s = 0; s < 8; ++s)
++          if (s < S) v[s] = ld_cluster_v4(map_rank(loc, cx + CX * s));
++        sum = v[0];
++#pragma unroll
++        for (int s = 1; s < 8; ++s)
++          if (s < S) { sum.x += v[s].x; sum.y += v[s].y; sum.z += v[s].z; sum.w += v[s].w; }
++      } else {
++        sum = *reinterpret_cast<const float4*>(tile_f + tok * TP + 4 * g);
++      }
++      const __nv_bfloat162 p0 = __floats2bfloat162_rn(sum.x, sum.y);
++      const __nv_bfloat162 p1 = __floats2bfloat162_rn(sum.z, sum.w);
++      uint2 pk;
++      pk.x = *reinterpret_cast<const uint32_t*>(&p0);
++      pk.y = *reinterpret_cast<const uint32_t*>(&p1);
++      *reinterpret_cast<uint2*>(out + static_cast<size_t>(tok) * n + tile * TILE_ROWS + 4 * g) = pk;
++    }
++    __syncwarp();
++    cluster_sync();   // peers are done reading this CTA's smem before it exits
++  }
++#else
++  // Not the sm_90a image: no wgmma here. Flag it (error word 2) and do nothing else.
++  if (threadIdx.x == 0) atomicExch(err, 2);
++#endif
++}
++
++typedef CUresult (*EncodeTiledFn)(CUtensorMap*, CUtensorMapDataType, cuuint32_t, void*, const cuuint64_t*,
++                                  const cuuint64_t*, const cuuint32_t*, const cuuint32_t*, CUtensorMapInterleave,
++                                  CUtensorMapSwizzle, CUtensorMapL2promotion, CUtensorMapFloatOOBfill);
++
++EncodeTiledFn get_encode() {
++  static EncodeTiledFn cached = nullptr;
++  if (cached) return cached;
++  void* fn = nullptr;
++  cudaDriverEntryPointQueryResult q = cudaDriverEntryPointSymbolNotFound;
++#if CUDART_VERSION >= 12050
++  const cudaError_t e = cudaGetDriverEntryPointByVersion("cuTensorMapEncodeTiled", &fn, 12000, cudaEnableDefault, &q);
++#else
++  const cudaError_t e = cudaGetDriverEntryPoint("cuTensorMapEncodeTiled", &fn, cudaEnableDefault, &q);
++#endif
++  if (e != cudaSuccess || q != cudaDriverEntryPointSuccess || fn == nullptr) {
++    (void)cudaGetLastError();
++    TORCH_CHECK(false, "swcl: cuTensorMapEncodeTiled entry point not found");
++  }
++  cached = reinterpret_cast<EncodeTiledFn>(fn);
++  return cached;
++}
++
++// bf16 [outer, inner] row-major (row pitch row_bytes), box {64 inner, box_outer rows}, 128B swizzle.
++CUtensorMap encode_2d(const void* ptr, uint64_t inner, uint64_t outer, uint64_t row_bytes, uint32_t box_outer) {
++  CUtensorMap map;
++  std::memset(&map, 0, sizeof(map));
++  const cuuint64_t dims[2] = {inner, outer};
++  const cuuint64_t strides[1] = {row_bytes};
++  const cuuint32_t box[2] = {64, box_outer};
++  const cuuint32_t es[2] = {1, 1};
++  const CUresult r = get_encode()(&map, CU_TENSOR_MAP_DATA_TYPE_BFLOAT16, 2, const_cast<void*>(ptr), dims,
++                                  strides, box, es, CU_TENSOR_MAP_INTERLEAVE_NONE, CU_TENSOR_MAP_SWIZZLE_128B,
++                                  CU_TENSOR_MAP_L2_PROMOTION_L2_128B, CU_TENSOR_MAP_FLOAT_OOB_FILL_NONE);
++  TORCH_CHECK(r == CUDA_SUCCESS, "swcl: cuTensorMapEncodeTiled failed, rc ", static_cast<int>(r));
++  return map;
++}
++
++template <int T, bool MC>
++void set_attr() {
++  static bool done = false;
++  if (!done) {
++    C10_CUDA_CHECK(cudaFuncSetAttribute(swcl_kernel<T, MC>, cudaFuncAttributeMaxDynamicSharedMemorySize,
++                                        Cfg<T>::SMEM));
++    C10_CUDA_CHECK(cudaFuncSetAttribute(swcl_kernel<T, MC>, cudaFuncAttributeNonPortableClusterSizeAllowed, 1));
++    done = true;
++  }
++}
++
++template <int T, bool MC>
++void launch(const CUtensorMap& mw, const CUtensorMap& mx, torch::Tensor out, torch::Tensor err, int m, int n,
++            int nkb, int S, int mode) {
++  constexpr int CX = MC ? 2 : 1;
++  set_attr<T, MC>();
++  cudaLaunchConfig_t cfg = {};
++  cfg.gridDim = dim3(n / TILE_ROWS, S, 1);
++  cfg.blockDim = dim3(THREADS);
++  cfg.dynamicSmemBytes = Cfg<T>::SMEM;
++  cfg.stream = at::cuda::getCurrentCUDAStream();
++  cudaLaunchAttribute attr[1];
++  attr[0].id = cudaLaunchAttributeClusterDimension;
++  attr[0].val.clusterDim.x = CX;
++  attr[0].val.clusterDim.y = S;
++  attr[0].val.clusterDim.z = 1;
++  cfg.attrs = attr;
++  cfg.numAttrs = 1;
++  C10_CUDA_CHECK(cudaLaunchKernelEx(&cfg, swcl_kernel<T, MC>, mw, mx,
++                                    reinterpret_cast<__nv_bfloat16*>(out.data_ptr()), m, n, nkb, S, mode,
++                                    err.data_ptr<int>()));
++  C10_CUDA_KERNEL_LAUNCH_CHECK();
++}
++
++template <int T, bool MC>
++std::vector<int64_t> info(int S, int tiles) {
++  constexpr int CX = MC ? 2 : 1;
++  set_attr<T, MC>();
++  cudaFuncAttributes fa;
++  C10_CUDA_CHECK(cudaFuncGetAttributes(&fa, swcl_kernel<T, MC>));
++  cudaLaunchConfig_t cfg = {};
++  cfg.gridDim = dim3(tiles, S, 1);
++  cfg.blockDim = dim3(THREADS);
++  cfg.dynamicSmemBytes = Cfg<T>::SMEM;
++  cudaLaunchAttribute attr[1];
++  attr[0].id = cudaLaunchAttributeClusterDimension;
++  attr[0].val.clusterDim.x = CX;
++  attr[0].val.clusterDim.y = S;
++  attr[0].val.clusterDim.z = 1;
++  cfg.attrs = attr;
++  cfg.numAttrs = 1;
++  int ncl = -1;
++  if (tiles % CX != 0 || cudaOccupancyMaxActiveClusters(&ncl, swcl_kernel<T, MC>, &cfg) != cudaSuccess) {
++    (void)cudaGetLastError();
++    ncl = -1;
++  }
++  return {fa.numRegs, static_cast<int64_t>(fa.localSizeBytes), static_cast<int64_t>(fa.sharedSizeBytes),
++          static_cast<int64_t>(Cfg<T>::SMEM), ncl, tiles / CX, fa.binaryVersion};
++}
++
++}  // namespace
++
++// CPU uint8 [128]: the CUtensorMap of a bf16 weight [N, K] (box 64 x 128), built once in prepare.
++torch::Tensor swcl_make_wmap(torch::Tensor w) {
++  TORCH_CHECK(w.is_cuda() && w.dim() == 2 && w.scalar_type() == at::kBFloat16 && w.is_contiguous(),
++              "swcl_make_wmap: weight must be a contiguous bf16 CUDA matrix");
++  TORCH_CHECK(w.size(1) % 64 == 0 && w.size(0) % TILE_ROWS == 0 &&
++              reinterpret_cast<uintptr_t>(w.data_ptr()) % 16 == 0, "swcl_make_wmap: weight shape / alignment");
++  const CUtensorMap map = encode_2d(w.data_ptr(), w.size(1), w.size(0), w.size(1) * 2, TILE_ROWS);
++  torch::Tensor t = torch::empty({static_cast<int64_t>(sizeof(CUtensorMap))}, torch::dtype(torch::kUInt8));
++  std::memcpy(t.data_ptr(), &map, sizeof(CUtensorMap));
++  return t;
++}
++
++void swcl_run(torch::Tensor x, torch::Tensor wmap, torch::Tensor out, torch::Tensor err, int64_t T, int64_t mc,
++              int64_t S, int64_t mode) {
++  TORCH_CHECK(x.is_cuda() && x.dim() == 2 && x.scalar_type() == at::kBFloat16, "swcl_run: x");
++  const int64_t m = x.size(0), k = x.size(1);
++  TORCH_CHECK(m >= 1 && m <= T && (T == 128 || T == 256), "swcl_run: m / T");
++  TORCH_CHECK(k % BK == 0 && x.stride(1) == 1 && x.stride(0) % 8 == 0 &&
++              reinterpret_cast<uintptr_t>(x.data_ptr()) % 16 == 0, "swcl_run: x strides / alignment");
++  TORCH_CHECK(out.is_cuda() && out.scalar_type() == at::kBFloat16 && out.is_contiguous() && out.dim() == 2 &&
++              out.size(0) == m && out.size(1) % TILE_ROWS == 0 &&
++              reinterpret_cast<uintptr_t>(out.data_ptr()) % 16 == 0, "swcl_run: out");
++  TORCH_CHECK(err.is_cuda() && err.scalar_type() == at::kInt && err.numel() >= 1, "swcl_run: err");
++  TORCH_CHECK(wmap.device().is_cpu() && wmap.scalar_type() == at::kByte &&
++              wmap.numel() == static_cast<int64_t>(sizeof(CUtensorMap)), "swcl_run: wmap");
++  TORCH_CHECK(S >= 1 && S <= 8 && (mc == 0 || mc == 1), "swcl_run: S / mc");
++  const int n = static_cast<int>(out.size(1));
++  TORCH_CHECK(!mc || ((n / TILE_ROWS) % 2 == 0), "swcl_run: multicast needs an even tile count");
++  const int nkb = static_cast<int>(k / BK);
++  TORCH_CHECK(nkb >= S, "swcl_run: fewer K blocks than splits");
++  CUtensorMap mw;
++  std::memcpy(&mw, wmap.data_ptr(), sizeof(CUtensorMap));
++  const uint32_t box_rows = mc ? static_cast<uint32_t>(T / 2) : static_cast<uint32_t>(T);
++  const CUtensorMap mx = encode_2d(x.data_ptr(), k, m, x.stride(0) * 2, box_rows);
++  const int mi = static_cast<int>(m), s = static_cast<int>(S), md = static_cast<int>(mode);
++  if (T == 128 && !mc) launch<128, false>(mw, mx, out, err, mi, n, nkb, s, md);
++  else if (T == 128 && mc) launch<128, true>(mw, mx, out, err, mi, n, nkb, s, md);
++  else if (T == 256 && !mc) launch<256, false>(mw, mx, out, err, mi, n, nkb, s, md);
++  else launch<256, true>(mw, mx, out, err, mi, n, nkb, s, md);
++}
++
++// {regs, local (spill) bytes, static smem, dynamic smem, max active clusters (-1: query failed),
++//  needed clusters, binaryVersion}
++std::vector<int64_t> swcl_info(int64_t T, int64_t mc, int64_t S, int64_t tiles) {
++  const int s = static_cast<int>(S), t = static_cast<int>(tiles);
++  if (T == 128 && !mc) return info<128, false>(s, t);
++  if (T == 128 && mc) return info<128, true>(s, t);
++  if (T == 256 && !mc) return info<256, false>(s, t);
++  if (T == 256 && mc) return info<256, true>(s, t);
++  TORCH_CHECK(false, "swcl_info: unsupported T");
++  return {};
++}
++"""
++
++
++def _swcl_wgmma_src() -> str:
++    """The two wgmma m64nTk16 SS wrappers (A, B = smem descriptors, fp32 D, scale-d 1, scales 1,
++    both operands K-major), T = 128 and 256, generated per N."""
++    out = []
++    for nb in (128, 256):
++        na = nb // 2
++        regs = ", ".join(f"%{i}" for i in range(na))
++        out.append("\n".join([
++            "template <>",
++            f"struct Wg<{nb}> {{",
++            f"  static __device__ __forceinline__ void mma(float (&d)[{na}], uint64_t da, uint64_t db) {{",
++            "#if defined(__CUDA_ARCH_FEAT_SM90_ALL)",
++            '    asm volatile("{\\n\\t.reg .pred p;\\n\\t"',
++            f'                 "setp.ne.b32 p, %{na + 2}, 0;\\n\\t"',
++            f'                 "wgmma.mma_async.sync.aligned.m64n{nb}k16.f32.bf16.bf16 "',
++            f'                 "{{{regs}}}, %{na}, %{na + 1}, p, 1, 1, 0, 0;\\n\\t}}\\n"',
++            "                 : " + ", ".join(f'"+f"(d[{i}])' for i in range(na)),
++            '                 : "l"(da), "l"(db), "r"(1));',
++            "#endif",
++            "  }",
++            "};",
++        ]))
++    return "\n".join(out) + "\n"
++
++
++def _swcl_build():
++    """Compile the CUDA module once per process, at import (never during graph capture), sm_90a
++    only: TORCH_CUDA_ARCH_LIST=9.0a around the build (restored after) and an explicit
++    -gencode=arch=compute_90a,code=sm_90a, -lineinfo, -std=c++20 (no -std=c++17 beside it). Any
++    failure keeps master's paths."""
++    t0 = time.perf_counter()
++    prev = os.environ.get("TORCH_CUDA_ARCH_LIST")
++    os.environ["TORCH_CUDA_ARCH_LIST"] = "9.0a"
++    print(f"{SWCL_TAG} building: TORCH_CUDA_ARCH_LIST={os.environ['TORCH_CUDA_ARCH_LIST']} "
++          f"extra_cuda_cflags={SWCL_CUDA_CFLAGS}", flush=True)
++    try:
++        from torch.utils.cpp_extension import load_inline
++        ext = load_inline(
++            name="muse_bf16_swapab_cl_v1",
++            cpp_sources=_SWCL_CPP,
++            cuda_sources=_SWCL_HEAD + _swcl_wgmma_src() + _SWCL_BODY,
++            functions=["swcl_make_wmap", "swcl_run", "swcl_info"],
++            extra_cuda_cflags=SWCL_CUDA_CFLAGS,
++            verbose=False,
++        )
++    except Exception as e:
++        print(f"{SWCL_TAG} load_inline failed after {time.perf_counter() - t0:.1f}s, master paths kept: "
++              + repr(e)[-1500:], flush=True)
++        return None
++    finally:
++        if prev is None:
++            os.environ.pop("TORCH_CUDA_ARCH_LIST", None)
++        else:
++            os.environ["TORCH_CUDA_ARCH_LIST"] = prev
++    print(f"{SWCL_TAG} load_inline compiled in {time.perf_counter() - t0:.1f}s", flush=True)
++    return ext
++
++
++_SWCL_EXT = _swcl_build() if torch.cuda.is_available() else None
++
++
++def _swcl_t(m: int) -> int:
++    """Token tile (compiled instance) for m tokens."""
++    return 128 if m <= SWCL_T_SPLIT_M else 256
++
++
++def _swcl_forward(x: torch.Tensor, wmap: torch.Tensor, n: int, err: torch.Tensor, t: int, cand,
++                  mode: int = 1) -> torch.Tensor:
++    """x bf16 [m, k] @ W[n, k].T -> bf16 [m, n]: ONE cluster launch, no workspace, no memset."""
++    cx, s = cand
++    out = torch.empty((x.shape[0], n), dtype=torch.bfloat16, device=x.device)
++    _SWCL_EXT.swcl_run(x, wmap, out, err, t, 1 if cx == 2 else 0, s, mode)
++    return out
++
++
++def _swcl_route(layer: str, x: torch.Tensor, cfg, state: dict):
++    """(T, (CX, S)) the swap-AB cluster kernel runs at for this call, None for master's path.
++    Branches on cfg, shapes, strides, alignment and the prepare() constants only."""
++    spec = SWCL_LAYERS.get(layer)
++    choice = state.get("swcl_choice")
++    if spec is None or not choice or x.dim() != 2:
++        return None
++    n, k = spec
++    m = x.shape[0]
++    if not SWCL_MIN_M <= m <= SWCL_MAX_M[layer]:
++        return None
++    t = _swcl_t(m)
++    cand = choice.get((layer, t))
++    if (cand and cfg["m"] == m and cfg["n"] == n and cfg["k"] == k and x.shape[1] == k
++            and x.dtype == torch.bfloat16 and x.is_cuda and x.stride(1) == 1 and x.stride(0) == k
++            and x.data_ptr() % 16 == 0):
++        return t, cand
++    return None
++
++
++def _swcl_check(state: dict, layer: str, cand, t: int, ms) -> str:
++    """In-process self-check of one candidate at the token counts ms, each launched twice, with a
++    flushed print before and a synchronize + flushed print after EVERY launch so a fault names its
++    kernel. Returns "" if it passes, else why. Bounds: rel L2 <= 3e-3 vs x.double() @ W.double().T
++    (bf16 output rounding is ~1.1e-3), worst row <= 5x that, a one-hot power-of-two probe row
++    within 1e-4, finite, run 2 bit-identical to run 1, device error word 0."""
++    w, wmap, err = state[layer], state["swcl_wmap"][layer], state["swcl_err"]
++    n, k = SWCL_LAYERS[layer]
++    dev = w.device
++    wd = w.double()
++    g = torch.Generator(device=dev)
++    g.manual_seed(1357 + t)
++    try:
++        for m in ms:
++            x = torch.randn((m, k), device=dev, dtype=torch.float32, generator=g).to(torch.bfloat16)
++            x[m - 1].zero_()
++            x[m - 1, (37 * m + 5) % k] = 2.0 ** ((m % 5) - 2)
++            ref = x.double() @ wd.T
++            outs = []
++            for run in (1, 2):
++                print(f"{SWCL_TAG} launching {layer} cand={cand} T={t} m={m} run {run}", flush=True)
++                o = _swcl_forward(x, wmap, n, err, t, cand)
++                torch.cuda.synchronize()
++                print(f"{SWCL_TAG} {layer} cand={cand} T={t} m={m} run {run} finished OK", flush=True)
++                code = int(err.item())
++                if code:
++                    err.zero_()
++                    return f"m={m}: device error word {code} ({SWCL_ERR_TEXT.get(code, '?')})"
++                outs.append(o)
++            if not torch.equal(outs[0], outs[1]):
++                return f"m={m}: second launch differs from the first"
++            o = outs[0].double()
++            if not bool(torch.isfinite(o).all()):
++                return f"m={m}: non-finite output"
++            den = ref.norm().clamp_min(1e-30)
++            e_all = float((o - ref).norm() / den)
++            row_ref = ref.norm(dim=1)
++            row_den = torch.maximum(row_ref, 0.1 * row_ref.mean()).clamp_min(1e-30)
++            e_row = float(((o - ref).norm(dim=1) / row_den).max())
++            e_hot = float((o[m - 1] - ref[m - 1]).norm() / ref[m - 1].norm().clamp_min(1e-30))
++            if not (e_all <= 3e-3 and e_row <= 1.5e-2 and e_hot <= 1e-4):
++                return (f"m={m}: rel L2 {e_all:.2e} (bound 3e-3), worst row {e_row:.2e} (bound 1.5e-2), "
++                        f"one-hot row {e_hot:.2e} (bound 1e-4)")
++    finally:
++        del wd
++    return ""
++
++
++def _swcl_graph_us(fn, flush: torch.Tensor, reps: int = 25):
++    """Median microseconds of one CUDA-graph replay of fn with the L2 flushed (written) before
++    each replay, like the judge. None if capture fails. Diagnostic and selector only."""
++    try:
++        side = torch.cuda.Stream()
++        side.wait_stream(torch.cuda.current_stream())
++        with torch.cuda.stream(side):
++            for _ in range(3):
++                fn()
++        torch.cuda.current_stream().wait_stream(side)
++        torch.cuda.synchronize()
++        graph = torch.cuda.CUDAGraph()
++        with torch.cuda.graph(graph):
++            fn()
++        for _ in range(3):
++            graph.replay()
++        torch.cuda.synchronize()
++        evs = []
++        for _ in range(reps):
++            flush.zero_()
++            a = torch.cuda.Event(enable_timing=True)
++            b = torch.cuda.Event(enable_timing=True)
++            a.record()
++            graph.replay()
++            b.record()
++            evs.append((a, b))
++        torch.cuda.synchronize()
++        ts = sorted(a.elapsed_time(b) * 1e3 for a, b in evs)
++        return ts[len(ts) // 2]
++    except Exception as e:
++        print(f"{SWCL_TAG} graph timing failed: {e!r}", flush=True)
++        return None
++
++
++def _swcl_prepare(state: dict) -> None:
++    """Per (layer, T class): print every candidate's regs / spills / max-active vs needed clusters,
++    drop the ones that do not fit in one wave or do not pass the self-check, time the survivors
++    (full and no-reduce) cold-L2 next to master's cuBLAS at m = 128 / 256, keep the fastest if it
++    beats master by SWCL_WIN_RATIO. The result is state["swcl_choice"], a constant derived from
++    synthetic data and the weights only; this function never raises."""
++    choice = {(layer, t): None for layer in SWCL_LAYERS for t in (128, 256)
++              if not (layer == "unpooler" and t == 256)}
++    state["swcl_choice"] = choice
++    t_start = time.perf_counter()
++    try:
++        if _SWCL_EXT is None:
++            raise RuntimeError("extension missing (build failed)")
++        for layer, (n, k) in SWCL_LAYERS.items():
++            w = state[layer]
++            if tuple(w.shape) != (n, k) or w.dtype != torch.bfloat16 or not w.is_cuda or not w.is_contiguous():
++                raise RuntimeError(f"{layer} weight shape/dtype unexpected: {tuple(w.shape)} {w.dtype}")
++        dev = state["pooler"].device
++        state["swcl_err"] = torch.zeros((1,), dtype=torch.int32, device=dev)
++        state["swcl_wmap"] = {layer: _SWCL_EXT.swcl_make_wmap(state[layer]) for layer in SWCL_LAYERS}
++        flush = torch.empty(SWCL_FLUSH_BYTES, dtype=torch.uint8, device=dev)
++        g = torch.Generator(device=dev)
++        g.manual_seed(97)
++        for (layer, t) in list(choice):
++            n, k = SWCL_LAYERS[layer]
++            w, wmap, err = state[layer], state["swcl_wmap"][layer], state["swcl_err"]
++            m_time = 128 if t == 128 else 256
++            x = torch.randn((m_time, k), device=dev, dtype=torch.float32, generator=g).to(torch.bfloat16)
++            t_master = _swcl_graph_us(lambda: _bf16_gemm_dispatch_impl(x, w[:n], None), flush)
++            best = None
++            for cand in SWCL_CANDS[layer]:
++                cx, s = cand
++                if time.perf_counter() - t_start > SWCL_PREP_BUDGET_S:
++                    print(f"{SWCL_TAG} {layer} T={t} cand={cand}: skipped, prepare budget "
++                          f"{SWCL_PREP_BUDGET_S:.0f}s used", flush=True)
++                    continue
++                regs, spill, ssmem, dsmem, ncl, need, binv = _SWCL_EXT.swcl_info(t, 1 if cx == 2 else 0, s, n // 128)
++                print(f"{SWCL_TAG} {layer} T={t} CX={cx} S={s}: cluster size {cx * s}, CTAs {n // 128 * s}, "
++                      f"regs={regs} local(spill)={spill} B static smem={ssmem} B dynamic smem={dsmem} B "
++                      f"max active clusters={ncl} needed clusters={need} binaryVersion={binv}", flush=True)
++                if ncl < need:
++                    print(f"{SWCL_TAG} {layer} T={t} cand={cand}: DISABLED, does not fit in one wave "
++                          f"(max active {ncl} < needed {need})", flush=True)
++                    continue
++                if regs * 384 < 40 * 128 + 232 * 256:
++                    print(f"{SWCL_TAG} {layer} T={t} cand={cand}: DISABLED, {regs} regs x 384 does not "
++                          f"cover the setmaxnreg pool", flush=True)
++                    continue
++                if spill > 0:
++                    print(f"{SWCL_TAG} {layer} T={t} cand={cand}: WARNING {spill} B local (spill)", flush=True)
++                try:
++                    why = _swcl_check(state, layer, cand, t, SWCL_CHECK_MS[t])
++                except Exception as e:   # e.g. a cluster launch the driver refuses: this candidate only
++                    why = f"raised {e!r}"[:600]
++                    err.zero_()   # never let this candidate's error word reach the next one
++                if why:
++                    print(f"{SWCL_TAG} {layer} T={t} cand={cand}: DISABLED: {why}", flush=True)
++                    continue
++                print(f"{SWCL_TAG} {layer} T={t} cand={cand}: self-check passed (m in {SWCL_CHECK_MS[t]})",
++                      flush=True)
++                t_full = _swcl_graph_us(lambda: _swcl_forward(x, wmap, n, err, t, cand, 1), flush)
++                code = int(err.item())
++                if code:   # a bounded wait expired during the timed replays: never route it
++                    print(f"{SWCL_TAG} {layer} T={t} cand={cand}: DISABLED, device error word {code} "
++                          f"({SWCL_ERR_TEXT.get(code, '?')}) during timing", flush=True)
++                    err.zero_()
++                    continue
++                t_nored = _swcl_graph_us(lambda: _swcl_forward(x, wmap, n, err, t, cand, 0), flush)
++                err.zero_()   # mode 0 is a wrong-result diagnostic; its error word is cleared
++                print(f"{SWCL_TAG} {layer} m={m_time} cand={cand} cold-L2 graph replay us: full "
++                      f"{t_full if t_full is None else round(t_full, 2)} | no-reduce "
++                      f"{t_nored if t_nored is None else round(t_nored, 2)} | master cuBLAS "
++                      f"{t_master if t_master is None else round(t_master, 2)}", flush=True)
++                if t_full is not None and (best is None or t_full < best[1]):
++                    best = (cand, t_full)
++            if best is not None and t_master is not None and best[1] <= SWCL_WIN_RATIO * t_master:
++                choice[(layer, t)] = best[0]
++            how = (f"swapab-cl CX={best[0][0]} S={best[0][1]} ({best[1]:.2f} us vs master {t_master:.2f} us)"
++                   if choice[(layer, t)] else
++                   "master cuBLAS ("
++                   + ("no passing candidate" if best is None else
++                      f"best {best[0]} {best[1]:.2f} us vs master "
++                      f"{'n/a' if t_master is None else format(t_master, '.2f')} us, needs <= "
++                      f"{SWCL_WIN_RATIO} x master") + ")")
++            lo, hi = (SWCL_MIN_M, 128) if t == 128 else (129, SWCL_MAX_M[layer])
++            print(f"{SWCL_TAG} PATH CHOSEN {layer} m={lo}..{hi} (T={t}; timed at m={m_time}): {how}",
++                  flush=True)
++            del x
++        del flush
++    except Exception as e:
++        print(f"{SWCL_TAG} prepare failed ({e!r}); master paths for every swap-AB cluster shape", flush=True)
++        for key in choice:
++            choice[key] = None
++    for layer in SWCL_LAYERS:
++        for m in sorted({SWCL_MIN_M, 96, 128, 129, 130, 200, 256}):
++            if m > SWCL_MAX_M[layer]:
++                print(f"{SWCL_TAG} PATH CHOSEN {layer} m={m}: master cuBLAS (above the routed range)", flush=True)
++                continue
++            c = choice.get((layer, _swcl_t(m)))
++            print(f"{SWCL_TAG} PATH CHOSEN {layer} m={m}: "
++                  + (f"swapab-cl CX={c[0]} S={c[1]} T={_swcl_t(m)}" if c else "master cuBLAS"), flush=True)
++    print(f"{SWCL_TAG} PATH CHOSEN o, router, m<{SWCL_MIN_M}, m>256 and unpooler m>128: master paths",
++          flush=True)
++    if any(choice.values()):
++        state["swcl_choice"] = choice
++    else:
++        state["swcl_choice"] = {}
++
++
++
+ def prepare(weights: Weights) -> dict:
+     """Called once, untimed. Keep the bf16 weights as they are (contiguous), build the router's
+     hi + lo bf16 split as [256, 8192] row-major (N x K), and pre-compile every m-bucket of the
+@@ -1041,6 +1838,8 @@ def prepare(weights: Weights) -> dict:
+     _swapab_prepare(state)
+     # (6) Swap-AB, BLOCK_T 16, at m <= 16 for pooler / qkv_gate / o and the unpooler slice.
+     _swapab16_prepare(state)
++    # (7) m = 65..256 swap-AB wgmma cluster kernel: own constants, never raises, per-class gate.
++    _swcl_prepare(state)
+     return state
+ 
+ 
+@@ -1066,6 +1865,10 @@ def kernel_fn(data: Inputs, state: dict) -> torch.Tensor:
+             and _swapab_route_ok(layer, x, state[layer], cfg)):
+         ws, cnt = _swapab_buffers(state, layer)
+         return _swapab_forward(layer, x, state[layer], ws, cnt, state["swapab_stages"][layer])
++    sw = _swcl_route(layer, x, cfg, state)
++    if sw is not None:
++        return _swcl_forward(x, state["swcl_wmap"][layer], SWCL_LAYERS[layer][0], state["swcl_err"],
++                             sw[0], sw[1])
+     if layer != "router":
+         # The unpooler's slice is its first n rows (all of them above 8 tokens).
+         return _bf16_gemm_dispatch_impl(x, state[layer][: cfg["n"]], None)

@@ -1,0 +1,127 @@
+ cuBLAS (best (2, 2) 91.07 us vs master 30.94 us, needs <= 0.98 x master)
+[swapab-cl] pooler T=256 CX=2 S=4: cluster size 8, CTAs 128, regs=168 local(spill)=0 B static smem=1024 B dynamic smem=197632 B max active clusters=15 needed clusters=16 binaryVersion=90
+[swapab-cl] pooler T=256 cand=(2, 4): DISABLED, does not fit in one wave (max active 15 < needed 16)
+[swapab-cl] pooler T=256 CX=1 S=4: cluster size 4, CTAs 128, regs=168 local(spill)=0 B static smem=1024 B dynamic smem=197632 B max active clusters=30 needed clusters=32 binaryVersion=90
+[swapab-cl] pooler T=256 cand=(1, 4): DISABLED, does not fit in one wave (max active 30 < needed 32)
+[swapab-cl] pooler T=256 CX=2 S=2: cluster size 4, CTAs 64, regs=168 local(spill)=0 B static smem=1024 B dynamic smem=197632 B max active clusters=30 needed clusters=16 binaryVersion=90
+[swapab-cl] launching pooler cand=(2, 2) T=256 m=130 run 1
+[swapab-cl] pooler cand=(2, 2) T=256 m=130 run 1 finished OK
+[swapab-cl] launching pooler cand=(2, 2) T=256 m=130 run 2
+[swapab-cl] pooler cand=(2, 2) T=256 m=130 run 2 finished OK
+[swapab-cl] launching pooler cand=(2, 2) T=256 m=200 run 1
+[swapab-cl] pooler cand=(2, 2) T=256 m=200 run 1 finished OK
+[swapab-cl] launching pooler cand=(2, 2) T=256 m=200 run 2
+[swapab-cl] pooler cand=(2, 2) T=256 m=200 run 2 finished OK
+[swapab-cl] launching pooler cand=(2, 2) T=256 m=256 run 1
+[swapab-cl] pooler cand=(2, 2) T=256 m=256 run 1 finished OK
+[swapab-cl] launching pooler cand=(2, 2) T=256 m=256 run 2
+[swapab-cl] pooler cand=(2, 2) T=256 m=256 run 2 finished OK
+[swapab-cl] pooler T=256 cand=(2, 2): self-check passed (m in (130, 200, 256))
+[swapab-cl] pooler m=256 cand=(2, 2) cold-L2 graph replay us: full 96.8 | no-reduce 93.57 | master cuBLAS 37.73
+[swapab-cl] PATH CHOSEN pooler m=129..256 (T=256; timed at m=256): master cuBLAS (best (2, 2) 96.80 us vs master 37.73 us, needs <= 0.98 x master)
+[swapab-cl] qkv_gate T=128 CX=2 S=7: cluster size 14, CTAs 126, regs=168 local(spill)=0 B static smem=1024 B dynamic smem=197632 B max active clusters=7 needed clusters=9 binaryVersion=90
+[swapab-cl] qkv_gate T=128 cand=(2, 7): DISABLED, does not fit in one wave (max active 7 < needed 9)
+[swapab-cl] qkv_gate T=128 CX=1 S=7: cluster size 7, CTAs 126, regs=168 local(spill)=0 B static smem=1024 B dynamic smem=197632 B max active clusters=15 needed clusters=18 binaryVersion=90
+[swapab-cl] qkv_gate T=128 cand=(1, 7): DISABLED, does not fit in one wave (max active 15 < needed 18)
+[swapab-cl] qkv_gate T=128 CX=2 S=6: cluster size 12, CTAs 108, regs=168 local(spill)=0 B static smem=1024 B dynamic smem=197632 B max active clusters=7 needed clusters=9 binaryVersion=90
+[swapab-cl] qkv_gate T=128 cand=(2, 6): DISABLED, does not fit in one wave (max active 7 < needed 9)
+[swapab-cl] qkv_gate T=128 CX=1 S=6: cluster size 6, CTAs 108, regs=168 local(spill)=0 B static smem=1024 B dynamic smem=197632 B max active clusters=17 needed clusters=18 binaryVersion=90
+[swapab-cl] qkv_gate T=128 cand=(1, 6): DISABLED, does not fit in one wave (max active 17 < needed 18)
+[swapab-cl] qkv_gate T=128 CX=2 S=4: cluster size 8, CTAs 72, regs=168 local(spill)=0 B static smem=1024 B dynamic smem=197632 B max active clusters=15 needed clusters=9 binaryVersion=90
+[swapab-cl] launching qkv_gate cand=(2, 4) T=128 m=65 run 1
+[swapab-cl] qkv_gate cand=(2, 4) T=128 m=65 run 1 finished OK
+[swapab-cl] launching qkv_gate cand=(2, 4) T=128 m=65 run 2
+[swapab-cl] qkv_gate cand=(2, 4) T=128 m=65 run 2 finished OK
+[swapab-cl] launching qkv_gate cand=(2, 4) T=128 m=128 run 1
+[swapab-cl] qkv_gate cand=(2, 4) T=128 m=128 run 1 finished OK
+[swapab-cl] launching qkv_gate cand=(2, 4) T=128 m=128 run 2
+[swapab-cl] qkv_gate cand=(2, 4) T=128 m=128 run 2 finished OK
+[swapab-cl] qkv_gate T=128 cand=(2, 4): self-check passed (m in (65, 128))
+[swapab-cl] qkv_gate m=128 cand=(2, 4) cold-L2 graph replay us: full 52.03 | no-reduce 49.82 | master cuBLAS 24.64
+[swapab-cl] qkv_gate T=128 CX=1 S=4: cluster size 4, CTAs 72, regs=168 local(spill)=0 B static smem=1024 B dynamic smem=197632 B max active clusters=30 needed clusters=18 binaryVersion=90
+[swapab-cl] launching qkv_gate cand=(1, 4) T=128 m=65 run 1
+[swapab-cl] qkv_gate cand=(1, 4) T=128 m=65 run 1 finished OK
+[swapab-cl] launching qkv_gate cand=(1, 4) T=128 m=65 run 2
+[swapab-cl] qkv_gate cand=(1, 4) T=128 m=65 run 2 finished OK
+[swapab-cl] launching qkv_gate cand=(1, 4) T=128 m=128 run 1
+[swapab-cl] qkv_gate cand=(1, 4) T=128 m=128 run 1 finished OK
+[swapab-cl] launching qkv_gate cand=(1, 4) T=128 m=128 run 2
+[swapab-cl] qkv_gate cand=(1, 4) T=128 m=128 run 2 finished OK
+[swapab-cl] qkv_gate T=128 cand=(1, 4): self-check passed (m in (65, 128))
+[swapab-cl] qkv_gate m=128 cand=(1, 4) cold-L2 graph replay us: full 44.06 | no-reduce 42.24 | master cuBLAS 24.64
+[swapab-cl] PATH CHOSEN qkv_gate m=65..128 (T=128; timed at m=128): master cuBLAS (best (1, 4) 44.06 us vs master 24.64 us, needs <= 0.98 x master)
+[swapab-cl] qkv_gate T=256 CX=2 S=7: cluster size 14, CTAs 126, regs=168 local(spill)=0 B static smem=1024 B dynamic smem=197632 B max active clusters=7 needed clusters=9 binaryVersion=90
+[swapab-cl] qkv_gate T=256 cand=(2, 7): DISABLED, does not fit in one wave (max active 7 < needed 9)
+[swapab-cl] qkv_gate T=256 CX=1 S=7: cluster size 7, CTAs 126, regs=168 local(spill)=0 B static smem=1024 B dynamic smem=197632 B max active clusters=15 needed clusters=18 binaryVersion=90
+[swapab-cl] qkv_gate T=256 cand=(1, 7): DISABLED, does not fit in one wave (max active 15 < needed 18)
+[swapab-cl] qkv_gate T=256 CX=2 S=6: cluster size 12, CTAs 108, regs=168 local(spill)=0 B static smem=1024 B dynamic smem=197632 B max active clusters=7 needed clusters=9 binaryVersion=90
+[swapab-cl] qkv_gate T=256 cand=(2, 6): DISABLED, does not fit in one wave (max active 7 < needed 9)
+[swapab-cl] qkv_gate T=256 CX=1 S=6: cluster size 6, CTAs 108, regs=168 local(spill)=0 B static smem=1024 B dynamic smem=197632 B max active clusters=17 needed clusters=18 binaryVersion=90
+[swapab-cl] qkv_gate T=256 cand=(1, 6): DISABLED, does not fit in one wave (max active 17 < needed 18)
+[swapab-cl] qkv_gate T=256 CX=2 S=4: cluster size 8, CTAs 72, regs=168 local(spill)=0 B static smem=1024 B dynamic smem=197632 B max active clusters=15 needed clusters=9 binaryVersion=90
+[swapab-cl] launching qkv_gate cand=(2, 4) T=256 m=130 run 1
+[swapab-cl] qkv_gate cand=(2, 4) T=256 m=130 run 1 finished OK
+[swapab-cl] launching qkv_gate cand=(2, 4) T=256 m=130 run 2
+[swapab-cl] qkv_gate cand=(2, 4) T=256 m=130 run 2 finished OK
+[swapab-cl] launching qkv_gate cand=(2, 4) T=256 m=200 run 1
+[swapab-cl] qkv_gate cand=(2, 4) T=256 m=200 run 1 finished OK
+[swapab-cl] launching qkv_gate cand=(2, 4) T=256 m=200 run 2
+[swapab-cl] qkv_gate cand=(2, 4) T=256 m=200 run 2 finished OK
+[swapab-cl] launching qkv_gate cand=(2, 4) T=256 m=256 run 1
+[swapab-cl] qkv_gate cand=(2, 4) T=256 m=256 run 1 finished OK
+[swapab-cl] launching qkv_gate cand=(2, 4) T=256 m=256 run 2
+[swapab-cl] qkv_gate cand=(2, 4) T=256 m=256 run 2 finished OK
+[swapab-cl] qkv_gate T=256 cand=(2, 4): self-check passed (m in (130, 200, 256))
+[swapab-cl] qkv_gate m=256 cand=(2, 4) cold-L2 graph replay us: full 57.6 | no-reduce 53.47 | master cuBLAS 28.7
+[swapab-cl] qkv_gate T=256 CX=1 S=4: cluster size 4, CTAs 72, regs=168 local(spill)=0 B static smem=1024 B dynamic smem=197632 B max active clusters=30 needed clusters=18 binaryVersion=90
+[swapab-cl] launching qkv_gate cand=(1, 4) T=256 m=130 run 1
+[swapab-cl] qkv_gate cand=(1, 4) T=256 m=130 run 1 finished OK
+[swapab-cl] launching qkv_gate cand=(1, 4) T=256 m=130 run 2
+[swapab-cl] qkv_gate cand=(1, 4) T=256 m=130 run 2 finished OK
+[swapab-cl] launching qkv_gate cand=(1, 4) T=256 m=200 run 1
+[swapab-cl] qkv_gate cand=(1, 4) T=256 m=200 run 1 finished OK
+[swapab-cl] launching qkv_gate cand=(1, 4) T=256 m=200 run 2
+[swapab-cl] qkv_gate cand=(1, 4) T=256 m=200 run 2 finished OK
+[swapab-cl] launching qkv_gate cand=(1, 4) T=256 m=256 run 1
+[swapab-cl] qkv_gate cand=(1, 4) T=256 m=256 run 1 finished OK
+[swapab-cl] launching qkv_gate cand=(1, 4) T=256 m=256 run 2
+[swapab-cl] qkv_gate cand=(1, 4) T=256 m=256 run 2 finished OK
+[swapab-cl] qkv_gate T=256 cand=(1, 4): self-check passed (m in (130, 200, 256))
+[swapab-cl] qkv_gate m=256 cand=(1, 4) cold-L2 graph replay us: full 52.51 | no-reduce 49.25 | master cuBLAS 28.7
+[swapab-cl] PATH CHOSEN qkv_gate m=129..256 (T=256; timed at m=256): master cuBLAS (best (1, 4) 52.51 us vs master 28.70 us, needs <= 0.98 x master)
+[swapab-cl] unpooler T=128 CX=2 S=2: cluster size 4, CTAs 128, regs=168 local(spill)=0 B static smem=1024 B dynamic smem=197632 B max active clusters=30 needed clusters=32 binaryVersion=90
+[swapab-cl] unpooler T=128 cand=(2, 2): DISABLED, does not fit in one wave (max active 30 < needed 32)
+[swapab-cl] unpooler T=128 CX=1 S=2: cluster size 2, CTAs 128, regs=168 local(spill)=0 B static smem=1024 B dynamic smem=197632 B max active clusters=66 needed clusters=64 binaryVersion=90
+[swapab-cl] launching unpooler cand=(1, 2) T=128 m=65 run 1
+[swapab-cl] unpooler cand=(1, 2) T=128 m=65 run 1 finished OK
+[swapab-cl] launching unpooler cand=(1, 2) T=128 m=65 run 2
+[swapab-cl] unpooler cand=(1, 2) T=128 m=65 run 2 finished OK
+[swapab-cl] launching unpooler cand=(1, 2) T=128 m=128 run 1
+[swapab-cl] unpooler cand=(1, 2) T=128 m=128 run 1 finished OK
+[swapab-cl] launching unpooler cand=(1, 2) T=128 m=128 run 2
+[swapab-cl] unpooler cand=(1, 2) T=128 m=128 run 2 finished OK
+[swapab-cl] unpooler T=128 cand=(1, 2): self-check passed (m in (65, 128))
+[swapab-cl] unpooler m=128 cand=(1, 2) cold-L2 graph replay us: full 48.8 | no-reduce 46.98 | master cuBLAS 29.06
+[swapab-cl] PATH CHOSEN unpooler m=65..128 (T=128; timed at m=128): master cuBLAS (best (1, 2) 48.80 us vs master 29.06 us, needs <= 0.98 x master)
+[swapab-cl] PATH CHOSEN pooler m=65: master cuBLAS
+[swapab-cl] PATH CHOSEN pooler m=96: master cuBLAS
+[swapab-cl] PATH CHOSEN pooler m=128: master cuBLAS
+[swapab-cl] PATH CHOSEN pooler m=129: master cuBLAS
+[swapab-cl] PATH CHOSEN pooler m=130: master cuBLAS
+[swapab-cl] PATH CHOSEN pooler m=200: master cuBLAS
+[swapab-cl] PATH CHOSEN pooler m=256: master cuBLAS
+[swapab-cl] PATH CHOSEN qkv_gate m=65: master cuBLAS
+[swapab-cl] PATH CHOSEN qkv_gate m=96: master cuBLAS
+[swapab-cl] PATH CHOSEN qkv_gate m=128: master cuBLAS
+[swapab-cl] PATH CHOSEN qkv_gate m=129: master cuBLAS
+[swapab-cl] PATH CHOSEN qkv_gate m=130: master cuBLAS
+[swapab-cl] PATH CHOSEN qkv_gate m=200: master cuBLAS
+[swapab-cl] PATH CHOSEN qkv_gate m=256: master cuBLAS
+[swapab-cl] PATH CHOSEN unpooler m=65: master cuBLAS
+[swapab-cl] PATH CHOSEN unpooler m=96: master cuBLAS
+[swapab-cl] PATH CHOSEN unpooler m=128: master cuBLAS
+[swapab-cl] PATH CHOSEN unpooler m=129: master cuBLAS (above the routed range)
+[swapab-cl] PATH CHOSEN unpooler m=130: master cuBLAS (above the routed range)
+[swapab-cl] PATH CHOSEN unpooler m=200: master cuBLAS (above the routed range)
+[swapab-cl] PATH CHOSEN unpooler m=256: master cuBLAS (above the routed range)
+[swapab-cl] PATH CHOSEN o, router, m<65, m>256 and unpooler m>128: master paths
