@@ -35,10 +35,10 @@ priority: 2
 kind: primary
 controls_for: null
 review: proceed
-status: running
+status: done
 review_at: 2026-10-25T042335Z
 review_companions: null
-stage: dispatched
+stage: harvested
 claimed_at: 2026-10-25T042335Z
 base_sha: 4086e385d4c82ab39da7076fd7a040127403956c
 base_blob: c9067b8201f2480c64910c4a71098df7ce616f73
@@ -57,6 +57,13 @@ attempt_file: 2026-10-25T042854Z-check-w2-marlin-atomic-add-t1-port.md
 prepared_at: 2026-10-25T042854Z
 job: 7a9f5de5aecc4aba
 dispatched_at: 2026-10-25T042908Z
+outcome: neutral
+verdict_detail: unproven-vs-best
+speedup: 1.2855726646854595
+speedup_ci: [1.2662890747151776, 1.3048562546557412]
+harvested_at: 2026-10-25T043619Z
+best_at_harvest: 1.2680313318618024
+promotion: null
 ---
 
 # w2-marlin-atomic-add-t1-port
@@ -133,3 +140,35 @@ Audited 2026-10-25 by an opus subagent. This was a read-only audit: there is no 
 - Rules: OK. The only changes on kernel_fn's path are a kwarg choice made from config and prepare-time state, plus an optional `cache3.zero_()`. No sync, allocation or branch on input values was added. okc_lint is OK; its warnings are all prepare()-only syncs. py_compile is OK, and __pycache__ was removed.
 
 Residual risk: the gain may be smaller in decode than in moe, because kernel R's align and the in-layer cold-L2 and launch context differ. If Marlin's atomic path does accumulate onto C, the self-check now picks atomic_zero, and its ~1 us memset eats part of the gain.
+
+## Result
+
+- job `7a9f5de5aecc4aba` (check), status done, passed True, tests 13/13
+- speedup 1.2856x, 95% CI [1.2663, 1.3049], score 17595.504806050383 µs vs SGLang 22620.3 µs
+- best at harvest: {"speedup": 1.2680313318618024, "ci": [1.2490108618838753, 1.2870518018397292], "job": "c243a29f26dc4725"}; base result: muse_decode_layer/hypotheses/done/neutral/full-decode-splitkv-restack-on-pdl.result.json
+- **outcome: neutral** (unproven-vs-best)
+- files: `muse_decode_layer/hypotheses/done/neutral/w2-marlin-atomic-add-t1-port.result.json`, `muse_decode_layer/hypotheses/done/neutral/w2-marlin-atomic-add-t1-port.patch`; branch `hyp/muse_decode_layer/w2-marlin-atomic-add-t1-port`
+
+## Attribution
+
+| shape | w | base µs | hyp µs | delta | verdict |
+|---|---|---|---|---|---|
+| batch=1 ctx=80000 dist=soft layer=sliding load=decode_1 page=1 repeats=60 | 46 | 126.15 | 123.88 | 1.0215 | flat |
+| batch=1 ctx=80000 dist=soft layer=full load=decode_1 page=1 repeats=60 | 16 | 142.7 | 139.18 | 1.0241 | flat |
+| batch=16 ctx=80000 dist=soft layer=sliding load=decode_16 page=1 spread=agentic | 46 | 209.82 | 204.68 | 0.998 | flat |
+| batch=16 ctx=80000 dist=soft layer=full load=decode_16 page=1 spread=agentic | 16 | 306.72 | 308.69 | 0.9975 | flat |
+| batch=32 ctx=80000 dist=soft layer=sliding load=decode_32 page=1 spread=agentic | 46 | 242.33 | 240.67 | 1.0066 | flat |
+| batch=32 ctx=80000 dist=soft layer=full load=decode_32 page=1 spread=agentic | 16 | 479.6 | 473.31 | 0.9983 | flat |
+| batch=1 ctx=80000 dist=soft layer=sliding load=verify_1 page=1 q_len=8 | 46 | 187.97 | 191.42 | 0.9998 | flat |
+| batch=1 ctx=80000 dist=soft layer=full load=verify_1 page=1 q_len=8 | 16 | 201.51 | 201.63 | 1.0044 | flat |
+| batch=16 ctx=80000 dist=soft layer=sliding load=verify_16 page=1 q_len=8 spread=agentic | 46 | 420.42 | 414.6 | 1.0147 | flat |
+| batch=16 ctx=80000 dist=soft layer=full load=verify_16 page=1 q_len=8 spread=agentic | 16 | 564.2 | 565.16 | 1.0122 | flat |
+| batch=32 ctx=80000 dist=soft layer=sliding load=verify_32 page=1 q_len=8 spread=agentic | 46 | 600.82 | 600.78 | 1.0541 | gained |
+| batch=32 ctx=80000 dist=soft layer=full load=verify_32 page=1 q_len=8 spread=agentic | 16 | 864.67 | 880.71 | 1.0286 | flat |
+
+gained on sliding verify_32. Expected hit: 2/4. Noise ±1.5%.
+
+## Follow-ups
+
+- unproven-vs-best: the change is not proven either way; a stacked hypothesis (`depends_on: w2-marlin-atomic-add-t1-port`) that adds a further change in the same area is the only way to learn more (identical code is never re-run).
+
