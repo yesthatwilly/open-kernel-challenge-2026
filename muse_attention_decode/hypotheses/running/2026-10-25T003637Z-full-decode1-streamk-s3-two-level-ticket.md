@@ -48,9 +48,18 @@ controls_for: null
 rewrite_stage: 3
 replaces: FA3 main + FlashAttnFwdCombine + sglang rms_norm_gate on full decode batch 1
 review: proceed
-status: queued
+status: running
 review_at: 2026-10-25T014055Z
 review_companions: null
+stage: claimed
+claimed_at: 2026-10-25T014056Z
+base_sha: f291b49c49670595d0615e749294f69bc15de1a4
+base_blob: 695c97d2e9fef8f806ec02d2fe14a02668989e3f
+branch: hyp/muse_attention_decode/full-decode1-streamk-s3-two-level-ticket
+worktree: .worktrees/muse_attention_decode/full-decode1-streamk-s3-two-level-ticket
+mode: null
+restack_of: null
+stale_base: null
 ---
 
 # full-decode1-streamk-s3-two-level-ticket
