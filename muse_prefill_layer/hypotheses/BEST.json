@@ -1,17 +1,17 @@
 {
  "problem": "muse_prefill_layer",
- "job": "810b5f7decc84206",
- "check_job": "ef281fb8b7304240",
- "mode": "submit",
- "speedup": 1.1075501334948785,
+ "job": "2910b2fb4b744865",
+ "check_job": "2910b2fb4b744865",
+ "mode": "check",
+ "speedup": 1.3274587526558561,
  "ci": [
-  1.0909368814924554,
-  1.1241633854973017
+  1.3075468713660183,
+  1.347370633945694
  ],
- "score_us": 349784.5273852711,
- "commit": "ca1d41b1dc9f1cca7f8d13c3e0e5b2027055e6fa",
- "submission_blob": "f2d91dd181aeb44de20d2eed62ab7e564f2b181f",
- "slug": "experts-turn4-ssdq-s1b-dataptr-symbol-fix",
- "result": "muse_prefill_layer/hypotheses/done/neutral/experts-turn4-ssdq-s1b-dataptr-symbol-fix.result.json",
- "updated_at": "2026-10-25T110752Z"
+ "score_us": 291838.7477011382,
+ "commit": "23c1d5fa90e63b93b142d0f2461c4647a1e9d68c",
+ "submission_blob": "712edc5ea5be2dde8f558a016d0877b285340ee4",
+ "slug": "experts-turn-rega-s4-port-t4096",
+ "result": "muse_prefill_layer/hypotheses/done/gain/experts-turn-rega-s4-port-t4096.result.json",
+ "updated_at": "2026-10-25T115714Z"
 }
