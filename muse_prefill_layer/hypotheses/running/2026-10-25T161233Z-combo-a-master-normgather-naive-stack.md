@@ -53,9 +53,18 @@ priority: 1
 kind: primary
 controls_for: null
 review: proceed
-status: queued
+status: running
 review_at: 2026-10-25T161512Z
 review_companions: null
+stage: claimed
+claimed_at: 2026-10-25T161512Z
+base_sha: 982cc0e7665f7a510a5b0128e83949922fd6b456
+base_blob: 9fb1f7c4b4282dd7461c6cdba926fe3ebf12128e
+branch: hyp/muse_prefill_layer/combo-a-master-normgather-naive-stack
+worktree: .worktrees/muse_prefill_layer/combo-a-master-normgather-naive-stack
+mode: null
+restack_of: null
+stale_base: null
 ---
 
 # combo-a-master-normgather-naive-stack
