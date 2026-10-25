@@ -41,9 +41,10 @@ priority: 2
 kind: primary
 controls_for: null
 review: proceed
-status: queued
+status: hold
 review_at: 2026-10-25T004021Z
 review_companions: [sliding-decode-paired-kvhead-rows-control-unpaired-s8]
+hold_reason: "Reviewer: wait for sliding-cluster-s2-decode-c4-pdl-inproc (job 1990ce53e9d34073). If it lands on all batches, drop this and its control; otherwise unhold."
 ---
 
 # sliding-decode-paired-kvhead-rows
