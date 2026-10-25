@@ -1,0 +1,160 @@
+2 1.68e-03 vs FP32 ref (master 1.68e-03, finite True), 0.00e+00 vs master output (bound 5e-3), finite True -> ok
+[c320] B=1 80000 keys kv 0.25 grid device: launching kernel_fn (FD1 route off: master batch-1 path)
+[c320] B=1 80000 keys kv 0.25 grid device: master kernel_fn returned
+[c320] B=1 80000 keys kv 0.25 grid device: launching _pre_attention_kernel
+[c320] B=1 80000 keys kv 0.25 grid device: _pre_attention_kernel returned (new cache rows equal master's: True); launching splitkv_attn_kernel<320> grid 264 + splitkv_combine_kernel<320,16>
+[c320] B=1 80000 keys kv 0.25 grid device: chunk320 kernels returned
+[c320] B=1 80000 keys kv 0.25 grid device: rel L2 1.73e-03 vs FP32 ref (master 1.73e-03, finite True), 6.63e-06 vs master output (bound 5e-3), finite True -> ok
+[c320] B=1 80000 keys grid 3: launching kernel_fn (FD1 route off: master batch-1 path)
+[c320] B=1 80000 keys grid 3: master kernel_fn returned
+[c320] B=1 80000 keys grid 3: launching _pre_attention_kernel
+[c320] B=1 80000 keys grid 3: _pre_attention_kernel returned (new cache rows equal master's: True); launching splitkv_attn_kernel<320> grid 3 + splitkv_combine_kernel<320,16>
+[c320] B=1 80000 keys grid 3: chunk320 kernels returned
+[c320] B=1 80000 keys grid 3: rel L2 1.79e-03 vs FP32 ref (master 1.79e-03, finite True), 3.97e-07 vs master output (bound 5e-3), finite True -> ok
+[c320] B=1 80000 keys kv 0.25 grid 3: launching kernel_fn (FD1 route off: master batch-1 path)
+[c320] B=1 80000 keys kv 0.25 grid 3: master kernel_fn returned
+[c320] B=1 80000 keys kv 0.25 grid 3: launching _pre_attention_kernel
+[c320] B=1 80000 keys kv 0.25 grid 3: _pre_attention_kernel returned (new cache rows equal master's: True); launching splitkv_attn_kernel<320> grid 3 + splitkv_combine_kernel<320,16>
+[c320] B=1 80000 keys kv 0.25 grid 3: chunk320 kernels returned
+[c320] B=1 80000 keys kv 0.25 grid 3: rel L2 1.59e-03 vs FP32 ref (master 1.59e-03, finite True), 1.04e-04 vs master output (bound 5e-3), finite True -> ok
+[c320] B=1 5000 keys grid device: launching kernel_fn (FD1 route off: master batch-1 path)
+[c320] B=1 5000 keys grid device: master kernel_fn returned
+[c320] B=1 5000 keys grid device: launching _pre_attention_kernel
+[c320] B=1 5000 keys grid device: _pre_attention_kernel returned (new cache rows equal master's: True); launching splitkv_attn_kernel<320> grid 264 + splitkv_combine_kernel<320,16>
+[c320] B=1 5000 keys grid device: chunk320 kernels returned
+[c320] B=1 5000 keys grid device: rel L2 1.77e-03 vs FP32 ref (master 1.77e-03, finite True), 3.26e-06 vs master output (bound 5e-3), finite True -> ok
+[c320] B=1 5000 keys kv 0.25 grid device: launching kernel_fn (FD1 route off: master batch-1 path)
+[c320] B=1 5000 keys kv 0.25 grid device: master kernel_fn returned
+[c320] B=1 5000 keys kv 0.25 grid device: launching _pre_attention_kernel
+[c320] B=1 5000 keys kv 0.25 grid device: _pre_attention_kernel returned (new cache rows equal master's: True); launching splitkv_attn_kernel<320> grid 264 + splitkv_combine_kernel<320,16>
+[c320] B=1 5000 keys kv 0.25 grid device: chunk320 kernels returned
+[c320] B=1 5000 keys kv 0.25 grid device: rel L2 1.62e-03 vs FP32 ref (master 1.62e-03, finite True), 1.56e-06 vs master output (bound 5e-3), finite True -> ok
+[c320] B=1 5000 keys grid 3: launching kernel_fn (FD1 route off: master batch-1 path)
+[c320] B=1 5000 keys grid 3: master kernel_fn returned
+[c320] B=1 5000 keys grid 3: launching _pre_attention_kernel
+[c320] B=1 5000 keys grid 3: _pre_attention_kernel returned (new cache rows equal master's: True); launching splitkv_attn_kernel<320> grid 3 + splitkv_combine_kernel<320,16>
+[c320] B=1 5000 keys grid 3: chunk320 kernels returned
+[c320] B=1 5000 keys grid 3: rel L2 1.57e-03 vs FP32 ref (master 1.57e-03, finite True), 1.82e-05 vs master output (bound 5e-3), finite True -> ok
+[c320] B=1 5000 keys kv 0.25 grid 3: launching kernel_fn (FD1 route off: master batch-1 path)
+[c320] B=1 5000 keys kv 0.25 grid 3: master kernel_fn returned
+[c320] B=1 5000 keys kv 0.25 grid 3: launching _pre_attention_kernel
+[c320] B=1 5000 keys kv 0.25 grid 3: _pre_attention_kernel returned (new cache rows equal master's: True); launching splitkv_attn_kernel<320> grid 3 + splitkv_combine_kernel<320,16>
+[c320] B=1 5000 keys kv 0.25 grid 3: chunk320 kernels returned
+[c320] B=1 5000 keys kv 0.25 grid 3: rel L2 1.71e-03 vs FP32 ref (master 1.71e-03, finite True), 2.68e-05 vs master output (bound 5e-3), finite True -> ok
+[c320] B=1 1 key grid device: launching kernel_fn (FD1 route off: master batch-1 path)
+[c320] B=1 1 key grid device: master kernel_fn returned
+[c320] B=1 1 key grid device: launching _pre_attention_kernel
+[c320] B=1 1 key grid device: _pre_attention_kernel returned (new cache rows equal master's: True); launching splitkv_attn_kernel<320> grid 264 + splitkv_combine_kernel<320,16>
+[c320] B=1 1 key grid device: chunk320 kernels returned
+[c320] B=1 1 key grid device: rel L2 1.77e-03 vs FP32 ref (master 1.77e-03, finite True), 0.00e+00 vs master output (bound 5e-3), finite True -> ok
+[c320] B=1 1 key kv 0.25 grid 3: launching kernel_fn (FD1 route off: master batch-1 path)
+[c320] B=1 1 key kv 0.25 grid 3: master kernel_fn returned
+[c320] B=1 1 key kv 0.25 grid 3: launching _pre_attention_kernel
+[c320] B=1 1 key kv 0.25 grid 3: _pre_attention_kernel returned (new cache rows equal master's: True); launching splitkv_attn_kernel<320> grid 3 + splitkv_combine_kernel<320,16>
+[c320] B=1 1 key kv 0.25 grid 3: chunk320 kernels returned
+[c320] B=1 1 key kv 0.25 grid 3: rel L2 1.67e-03 vs FP32 ref (master 1.67e-03, finite True), 0.00e+00 vs master output (bound 5e-3), finite True -> ok
+[c320] B=1 63 keys grid device: launching kernel_fn (FD1 route off: master batch-1 path)
+[c320] B=1 63 keys grid device: master kernel_fn returned
+[c320] B=1 63 keys grid device: launching _pre_attention_kernel
+[c320] B=1 63 keys grid device: _pre_attention_kernel returned (new cache rows equal master's: True); launching splitkv_attn_kernel<320> grid 264 + splitkv_combine_kernel<320,16>
+[c320] B=1 63 keys grid device: chunk320 kernels returned
+[c320] B=1 63 keys grid device: rel L2 1.53e-03 vs FP32 ref (master 1.53e-03, finite True), 0.00e+00 vs master output (bound 5e-3), finite True -> ok
+[c320] B=1 64 keys kv 0.25 grid 3: launching kernel_fn (FD1 route off: master batch-1 path)
+[c320] B=1 64 keys kv 0.25 grid 3: master kernel_fn returned
+[c320] B=1 64 keys kv 0.25 grid 3: launching _pre_attention_kernel
+[c320] B=1 64 keys kv 0.25 grid 3: _pre_attention_kernel returned (new cache rows equal master's: True); launching splitkv_attn_kernel<320> grid 3 + splitkv_combine_kernel<320,16>
+[c320] B=1 64 keys kv 0.25 grid 3: chunk320 kernels returned
+[c320] B=1 64 keys kv 0.25 grid 3: rel L2 1.66e-03 vs FP32 ref (master 1.66e-03, finite True), 0.00e+00 vs master output (bound 5e-3), finite True -> ok
+[c320] B=1 4097 keys grid device: launching kernel_fn (FD1 route off: master batch-1 path)
+[c320] B=1 4097 keys grid device: master kernel_fn returned
+[c320] B=1 4097 keys grid device: launching _pre_attention_kernel
+[c320] B=1 4097 keys grid device: _pre_attention_kernel returned (new cache rows equal master's: True); launching splitkv_attn_kernel<320> grid 264 + splitkv_combine_kernel<320,16>
+[c320] B=1 4097 keys grid device: chunk320 kernels returned
+[c320] B=1 4097 keys grid device: rel L2 1.69e-03 vs FP32 ref (master 1.69e-03, finite True), 4.08e-04 vs master output (bound 5e-3), finite True -> ok
+[c320] B=1 4097 keys kv 0.25 grid 3: launching kernel_fn (FD1 route off: master batch-1 path)
+[c320] B=1 4097 keys kv 0.25 grid 3: master kernel_fn returned
+[c320] B=1 4097 keys kv 0.25 grid 3: launching _pre_attention_kernel
+[c320] B=1 4097 keys kv 0.25 grid 3: _pre_attention_kernel returned (new cache rows equal master's: True); launching splitkv_attn_kernel<320> grid 3 + splitkv_combine_kernel<320,16>
+[c320] B=1 4097 keys kv 0.25 grid 3: chunk320 kernels returned
+[c320] B=1 4097 keys kv 0.25 grid 3: rel L2 1.61e-03 vs FP32 ref (master 1.61e-03, finite True), 6.51e-06 vs master output (bound 5e-3), finite True -> ok
+[c320] replay 80000 keys state A: eager warm-up on a side stream
+[c320] replay 80000 keys state B: eager warm-up on a side stream
+[c320] replay 80000 keys: warm-ups returned
+[c320] replay 80000 keys state A: capturing
+[c320] replay 80000 keys state B: capturing
+[c320] replay 80000 keys step 0: launching state A graph
+[c320] replay 80000 keys step 0: state A rel L2 1.64e-03, finite True -> ok
+[c320] replay 80000 keys step 1: launching state B graph
+[c320] replay 80000 keys step 1: state B rel L2 1.63e-03, finite True -> ok
+[c320] replay 80000 keys step 2: launching state A graph (refilled)
+[c320] replay 80000 keys step 2: state A rel L2 1.59e-03, finite True -> ok
+[c320] replay 80000 keys step 3: launching state B graph (refilled)
+[c320] replay 80000 keys step 3: state B rel L2 1.63e-03, finite True -> ok
+[c320] replay 80000 keys step 4: launching state A graph (refilled)
+[c320] replay 80000 keys step 4: state A rel L2 1.63e-03, finite True -> ok
+[c320] replay 80000 keys step 5: launching state B graph (refilled)
+[c320] replay 80000 keys step 5: state B rel L2 1.69e-03, finite True -> ok
+[c320] replay 4096 keys state A: eager warm-up on a side stream
+[c320] replay 4096 keys state B: eager warm-up on a side stream
+[c320] replay 4096 keys: warm-ups returned
+[c320] replay 4096 keys state A: capturing
+[c320] replay 4096 keys state B: capturing
+[c320] replay 4096 keys step 0: launching state A graph
+[c320] replay 4096 keys step 0: state A rel L2 1.75e-03, finite True -> ok
+[c320] replay 4096 keys step 1: launching state B graph
+[c320] replay 4096 keys step 1: state B rel L2 1.71e-03, finite True -> ok
+[c320] replay 4096 keys step 2: launching state A graph (refilled)
+[c320] replay 4096 keys step 2: state A rel L2 1.68e-03, finite True -> ok
+[c320] replay 4096 keys step 3: launching state B graph (refilled)
+[c320] replay 4096 keys step 3: state B rel L2 1.64e-03, finite True -> ok
+[c320] replay 4096 keys step 4: launching state A graph (refilled)
+[c320] replay 4096 keys step 4: state A rel L2 1.74e-03, finite True -> ok
+[c320] replay 4096 keys step 5: launching state B graph (refilled)
+[c320] replay 4096 keys step 5: state B rel L2 1.80e-03, finite True -> ok
+[c320-gate] B=1 x 80000: capturing kernel_fn with the FD1 route OFF (master two-level)
+[c320-gate] B=1 x 80000: capturing kernel_fn with the FD1 route ON (pre-attn + chunk320)
+[c320-gate] B=1 x 80000: interleaved cold-L2 graph replays, empty subtracted, median of 41
+/opt/sglang/lib/python3.12/site-packages/torch/cuda/graphs.py:630: UserWarning: The CUDA Graph is empty. This usually means that the graph was attempted to be captured on wrong device or stream. (Triggered internally at /__w/pytorch/pytorch/aten/src/ATen/cuda/CUDAGraph.cpp:249.)
+  super().capture_end_pre()
+[c320-gate] empty 3.0 us; kernel_fn route on 21.6 us net vs route off 24.0 us net -> ratio 0.900 (ROUTE)
+PATH CHOSEN: full decode_1 [A chunk320]: route (c320 21.6 us vs two-level 24.0 us, ratio 0.900)
+[combo] import clock 222.4s at the start of piece B (budget 480s)
+[combo] import clock 222.4s: phase GATE B (SV32) (deadline 40s) starts (222.4 + 40 <= 480s)
+[tiled] SV32 B=32 ragged: launching _pre_attention_kernel (PAIRED False, ROPE True)
+[tiled] SV32 B=32 ragged: _pre_attention_kernel returned
+[tiled] SV32 B=32 ragged: launching _pre_attention_tiled_kernel (PAIRED False, ROPE True)
+[tiled] SV32 B=32 ragged: _pre_attention_tiled_kernel returned
+[tiled] SV32 B=32 ragged: q: 0/262144 bytes differ (0 by > 1 ulp, 0 NaN), dequantized rel L2 0.00e+00
+[tiled] SV32 B=32 ragged: new k rows: 0/32768 bytes differ (0 by > 1 ulp, 0 NaN), dequantized rel L2 0.00e+00
+[tiled] SV32 B=32 ragged: new v rows: 0/32768 bytes differ (0 by > 1 ulp, 0 NaN), dequantized rel L2 0.00e+00
+[tiled] SV32 B=32 ragged: exactness ok
+[tiled] SV32 B=32 ragged kv 0.25: launching _pre_attention_kernel (PAIRED False, ROPE True)
+[tiled] SV32 B=32 ragged kv 0.25: _pre_attention_kernel returned
+[tiled] SV32 B=32 ragged kv 0.25: launching _pre_attention_tiled_kernel (PAIRED False, ROPE True)
+[tiled] SV32 B=32 ragged kv 0.25: _pre_attention_tiled_kernel returned
+[tiled] SV32 B=32 ragged kv 0.25: q: 0/262144 bytes differ (0 by > 1 ulp, 0 NaN), dequantized rel L2 0.00e+00
+[tiled] SV32 B=32 ragged kv 0.25: new k rows: 0/32768 bytes differ (0 by > 1 ulp, 0 NaN), dequantized rel L2 0.00e+00
+[tiled] SV32 B=32 ragged kv 0.25: new v rows: 0/32768 bytes differ (0 by > 1 ulp, 0 NaN), dequantized rel L2 0.00e+00
+[tiled] SV32 B=32 ragged kv 0.25: exactness ok
+[tiled-gate] SV32 B=32 x 80000: capturing the pre-attention launches and kernel_fn route off / on
+[tiled-gate] SV32: empty 3.0 us; pre tiled 4.4 vs master 5.7 us net; step on 30.1 vs off 30.9 us net -> step ratio 0.975
+[tiled] replay SV32 state A: eager warm-up on a side stream
+[tiled] replay SV32 state B: eager warm-up on a side stream
+[tiled] replay SV32: warm-ups returned
+[tiled] replay SV32 state A: capturing
+[tiled] replay SV32 state B: capturing
+[tiled] replay SV32 step 0: launching state A graph
+[tiled] replay SV32 step 0: state A rel L2 8.10e-03, finite True -> ok
+[tiled] replay SV32 step 1: launching state B graph
+[tiled] replay SV32 step 1: state B rel L2 8.07e-03, finite True -> ok
+[tiled] replay SV32 step 2: launching state A graph (refilled)
+[tiled] replay SV32 step 2: state A rel L2 7.84e-03, finite True -> ok
+[tiled] replay SV32 step 3: launching state B graph (refilled)
+[tiled] replay SV32 step 3: state B rel L2 7.99e-03, finite True -> ok
+[tiled] replay SV32 step 4: launching state A graph (refilled)
+[tiled] replay SV32 step 4: state A rel L2 8.01e-03, finite True -> ok
+[tiled] replay SV32 step 5: launching state B graph (refilled)
+[tiled] replay SV32 step 5: state B rel L2 8.09e-03, finite True -> ok
+[combo] GATE B took 0.4s
+PATH CHOSEN: sliding verify_32 pre-attention SV32 [B tiled]: route (pre 4.4 vs 5.7 us, step 30.1 vs 30.9 us, ratio 0.975)
+[combo] import clock 222.8s at the end of the merge phases

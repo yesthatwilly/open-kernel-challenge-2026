@@ -35,10 +35,10 @@ priority: 1
 kind: primary
 controls_for: null
 review: proceed
-status: running
+status: done
 review_at: 2026-10-25T191118Z
 review_companions: null
-stage: dispatched
+stage: harvested
 claimed_at: 2026-10-25T191118Z
 base_sha: 8eca21f5b391cbe0335e7b32676b0f35d9c5ff9e
 base_blob: 6d6afa4722731ceb9cb8216d0334a03f1a96ad2b
@@ -57,6 +57,13 @@ attempt_file: 2026-10-25T192000Z-submit-merge-perkvhead-c320-sv32-tiled.md
 prepared_at: 2026-10-25T192000Z
 job: a78f29aeab9b47cb
 dispatched_at: 2026-10-25T192013Z
+outcome: neutral
+verdict_detail: unproven-vs-best
+speedup: 1.5347009051646734
+speedup_ci: [1.5116803915872032, 1.5577214187421433]
+harvested_at: 2026-10-25T202703Z
+best_at_harvest: 1.5295495462227864
+promotion: null
 ---
 
 # merge-perkvhead-c320-sv32-tiled
@@ -153,3 +160,35 @@ Audited 2026-10-25 by an opus subagent, by reading the code (no GPU on this node
 - **Rules.** kernel_fn adds only config predicates on frozen import-time values. The c320 workspaces and q are `torch.empty` sized from shapes (`page_table.shape[1]`, batch). The c320 module holds only a host bool, with no per-state device pointers. Precision is unchanged: FP8 KV, e4m3 queries, BF16 output. Lint: OK with warnings (all host syncs at import, plus GATE B's uint8 poison buffer). py_compile: OK.
 
 Residual risk: c320 has no test coverage at FD1 (B=1 full decode page 1), so a regression would surface only at the scored shape's per-call check; the same code passed there in b9d062aa and 52cbfaeb.
+
+## Result
+
+- job `a78f29aeab9b47cb` (submit), status done, passed True, tests 16/16
+- speedup 1.5347x, 95% CI [1.5117, 1.5577], score 2454.0938154955193 µs vs SGLang 3766.3 µs
+- best at harvest: {"speedup": 1.5295495462227864, "ci": [1.5066063030294445, 1.552492789416128], "job": "8713665f3064462c"}; base result: muse_attention_decode/hypotheses/done/neutral/combo-b1-chain-c320-fused-pre-pdl.result.json
+- **outcome: neutral** (unproven-vs-best)
+- files: `muse_attention_decode/hypotheses/done/neutral/merge-perkvhead-c320-sv32-tiled.result.json`, `muse_attention_decode/hypotheses/done/neutral/merge-perkvhead-c320-sv32-tiled.patch`; branch `hyp/muse_attention_decode/merge-perkvhead-c320-sv32-tiled`
+
+## Attribution
+
+| shape | w | base µs | hyp µs | delta | verdict |
+|---|---|---|---|---|---|
+| batch=1 ctx=80000 dist=soft heads=tp8 layer=sliding load=decode_1 page=1 | 46 | 12.1 | 11.05 | 1.1125 | gained |
+| batch=1 ctx=80000 dist=coherent heads=tp8 layer=full load=decode_1 page=1 | 16 | 17.39 | 19.71 | 0.8699 | lost |
+| batch=16 ctx=80000 dist=soft heads=tp8 layer=sliding load=decode_16 page=1 spread=agentic | 46 | 15.46 | 15.1 | 1.0042 | flat |
+| batch=16 ctx=80000 dist=coherent heads=tp8 layer=full load=decode_16 page=1 spread=agentic | 16 | 110.77 | 111.13 | 0.9966 | flat |
+| batch=32 ctx=80000 dist=soft heads=tp8 layer=sliding load=decode_32 page=1 spread=agentic | 46 | 17.46 | 17.56 | 0.992 | flat |
+| batch=32 ctx=80000 dist=coherent heads=tp8 layer=full load=decode_32 page=1 spread=agentic | 16 | 226.89 | 228.06 | 0.9972 | flat |
+| batch=1 ctx=80000 dist=soft heads=tp8 layer=sliding load=verify_1 page=1 q_len=8 | 46 | 13.23 | 13.43 | 1.0015 | flat |
+| batch=1 ctx=80000 dist=coherent heads=tp8 layer=full load=verify_1 page=1 q_len=8 | 16 | 30.27 | 29.96 | 0.9989 | flat |
+| batch=16 ctx=80000 dist=soft heads=tp8 layer=sliding load=verify_16 page=1 q_len=8 spread=agentic | 46 | 22.62 | 22.46 | 1.0107 | flat |
+| batch=16 ctx=80000 dist=coherent heads=tp8 layer=full load=verify_16 page=1 q_len=8 spread=agentic | 16 | 162.46 | 163.14 | 0.9914 | flat |
+| batch=32 ctx=80000 dist=soft heads=tp8 layer=sliding load=verify_32 page=1 q_len=8 spread=agentic | 46 | 29.01 | 28.02 | 1.0425 | gained |
+| batch=32 ctx=80000 dist=coherent heads=tp8 layer=full load=verify_32 page=1 q_len=8 spread=agentic | 16 | 301.99 | 302.4 | 0.9968 | flat |
+
+gained on sliding decode_1, verify_32; lost on full decode_1. Expected hit: 2/3. Noise ±1.5%.
+
+## Follow-ups
+
+- unproven-vs-best: faster than the best but inside the drift margin; churn queues one confirm rerun when the margin allows (CONFIRM_MIN), and pools the two runs.
+
