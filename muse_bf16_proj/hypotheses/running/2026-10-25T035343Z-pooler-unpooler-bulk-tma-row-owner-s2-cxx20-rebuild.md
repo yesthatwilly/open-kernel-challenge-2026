@@ -60,7 +60,7 @@ base_sha: 8ba8624df9248fb986052e4a67ab8e9a96a9770d
 base_blob: d2ef0372de1f177e26ce1a1a4f578a993b4fa98c
 branch: hyp/muse_bf16_proj/pooler-unpooler-bulk-tma-row-owner-s2-cxx20-rebuild
 worktree: .worktrees/muse_bf16_proj/pooler-unpooler-bulk-tma-row-owner-s2-cxx20-rebuild
-mode: null
+mode: check
 restack_of: null
 stale_base: null
 implemented_at: 2026-10-25T040754Z
@@ -69,6 +69,8 @@ submission_sha256: 399d29b58238eb4e5ab5800bcfd66fb62401347a0bc5ac740f757558233d8
 norm_sha256: 10962952539a6deb4eaeb60f91383cab497206cad634271f6a26e62555b5b2a2
 submission_blob: 624198bade1b9eb179d6baa90e3125ca2378f3e7
 lint_warnings: 10
+attempt_file: 2026-10-25T040754Z-check-pooler-unpooler-bulk-tma-row-owner-s2-cxx20-rebuild.md
+prepared_at: 2026-10-25T040754Z
 ---
 
 # pooler-unpooler-bulk-tma-row-owner-s2-cxx20-rebuild
