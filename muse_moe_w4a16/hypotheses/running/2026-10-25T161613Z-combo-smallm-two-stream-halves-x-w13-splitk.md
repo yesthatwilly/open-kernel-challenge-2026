@@ -113,9 +113,18 @@ priority: 2
 kind: primary
 controls_for: null
 review: proceed
-status: queued
+status: running
 review_at: 2026-10-25T162149Z
 review_companions: null
+stage: claimed
+claimed_at: 2026-10-25T162149Z
+base_sha: 405d804d6756dfee33cc29cbda79b8057d85fbe1
+base_blob: 593b238c16387c5ac3774424ee9557882b9fc46a
+branch: hyp/muse_moe_w4a16/combo-smallm-two-stream-halves-x-w13-splitk
+worktree: .worktrees/muse_moe_w4a16/combo-smallm-two-stream-halves-x-w13-splitk
+mode: null
+restack_of: null
+stale_base: null
 ---
 
 # combo-smallm-two-stream-halves-x-w13-splitk
