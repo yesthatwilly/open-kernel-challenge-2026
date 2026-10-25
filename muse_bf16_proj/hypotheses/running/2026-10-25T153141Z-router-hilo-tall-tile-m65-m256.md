@@ -64,6 +64,8 @@ submission_sha256: 1af8e420904350eba5ffc36d54e97d46abd170e2573a0e9dcdfeeb41708dd
 norm_sha256: 50c0204c429a714c8c74cdeed192fa0c0515eacb68f40f5f8b804e0a5ad393a0
 submission_blob: 07996bb0a21bf7d1b490334998bdc0f7517aa5f0
 lint_warnings: 37
+attempt_file: 2026-10-25T203553Z-submit-router-hilo-tall-tile-m65-m256.md
+prepared_at: 2026-10-25T203553Z
 ---
 
 # router-hilo-tall-tile-m65-m256
