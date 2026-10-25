@@ -79,7 +79,7 @@ base_sha: 6a839f514cc7024729ac75ac28402e894091c0bd
 base_blob: 4da94677234faaa06b42b5ced541db8961fd6f34
 branch: hyp/muse_decode_layer/dense-chain-stage2-attn-side-pdl
 worktree: .worktrees/muse_decode_layer/dense-chain-stage2-attn-side-pdl
-mode: null
+mode: check
 restack_of: null
 stale_base: null
 implemented_at: 2026-10-25T004858Z
@@ -88,6 +88,8 @@ submission_sha256: 783ad43899b0d22545f0d6798b67695ef9946e8eb9c58bb884a0939ac0f3e
 norm_sha256: c4f2d6012193c3d0e7de0a42d10bab87fe52833b3fd4f5684ed007e1c529729b
 submission_blob: b4771cc5ac7c69bf030cba94a480f3ae96f5d06c
 lint_warnings: 33
+attempt_file: 2026-10-25T004858Z-check-dense-chain-stage2-attn-side-pdl.md
+prepared_at: 2026-10-25T004858Z
 ---
 
 # dense-chain-stage2-attn-side-pdl
