@@ -88,7 +88,7 @@ review: proceed
 status: running
 review_at: 2026-10-25T150410Z
 review_companions: null
-stage: implemented
+stage: dispatched
 claimed_at: 2026-10-25T150410Z
 base_sha: ab49fef4d76d7a9d84457f2dc039617f1620cf0c
 base_blob: 60dfe35d5417d9c0f89067ff313efdc2c41d03a2
@@ -105,6 +105,8 @@ submission_blob: 593b238c16387c5ac3774424ee9557882b9fc46a
 lint_warnings: 73
 attempt_file: 2026-10-25T151035Z-submit-align-two-phase-port-from17.md
 prepared_at: 2026-10-25T151035Z
+job: c05a8f7326004be6
+dispatched_at: 2026-10-25T151043Z
 ---
 
 # align-two-phase-port-from17
