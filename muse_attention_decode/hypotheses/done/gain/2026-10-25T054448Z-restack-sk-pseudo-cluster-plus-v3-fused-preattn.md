@@ -86,6 +86,7 @@ harvested_at: 2026-10-25T091106Z
 best_at_harvest: 1.444132502888963
 promotion: merged
 promotion_commit: eb1b68bad24c7457aaa0606c1df0fa7733c03365
+promotion_attempt: 2026-10-25T091112Z-submit-restack-sk-pseudo-cluster-plus-v3-fused-preattn.md
 ---
 
 # restack-sk-pseudo-cluster-plus-v3-fused-preattn
