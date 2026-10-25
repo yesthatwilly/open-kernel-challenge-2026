@@ -115,7 +115,7 @@ base_sha: 1a68e94c6b2606b0ecd994ea29ea38fc22e70f0e
 base_blob: 593b238c16387c5ac3774424ee9557882b9fc46a
 branch: hyp/muse_moe_w4a16/combo-toprow-w13t1-d32-alignpar-postnorm-wg-align2
 worktree: .worktrees/muse_moe_w4a16/combo-toprow-w13t1-d32-alignpar-postnorm-wg-align2
-mode: null
+mode: submit
 restack_of: null
 stale_base: null
 implemented_at: 2026-10-25T185454Z
@@ -124,6 +124,8 @@ submission_sha256: b0ccbf2dc82119f0256fe668d52740e1a4512efc58046e1e340e28411f75f
 norm_sha256: 8548183c300cf00a3ce39123c167dc1f4cdc314775965375e1f0f6c0cfb91a1b
 submission_blob: 35b8a851e4ef5fa8fd66b12d09caac88b7ea7615
 lint_warnings: 96
+attempt_file: 2026-10-25T185454Z-submit-combo-toprow-w13t1-d32-alignpar-postnorm-wg-align2.md
+prepared_at: 2026-10-25T185454Z
 ---
 
 # combo-toprow-w13t1-d32-alignpar-postnorm-wg-align2
