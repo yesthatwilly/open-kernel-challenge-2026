@@ -1,0 +1,132 @@
+# muse_decode_layer · 2026-10-25T003526Z · check · moe-chain-cuda-swapab-expert-once-fix-inproc
+
+Hypothesis: `muse_decode_layer/hypotheses/running/2026-10-25T001824Z-moe-chain-cuda-swapab-expert-once-fix-inproc.md` (branch `hyp/muse_decode_layer/moe-chain-cuda-swapab-expert-once-fix-inproc`).
+
+- **Job:** `4ebd055adab34ecd` (`okc status <job>`)
+- **File:** `muse_decode_layer/submission.py` at git `1177e31`
+
+## Goal
+Stage 1b FIX (numbered stage 2 only because stage is an int; the original stage plan's stage 2 still comes after this) of failed moe-chain-cuda-swapab-expert-once-large-t (job 1bba1bab70da4f61: built, then a sticky 715 CUDA_ERROR_ILLEGAL_INSTRUCTION in the first prepare self-check launch killed the worker, 0/0 tests; REWRITE_READ_2026-10-25 section 5, LESSONS 2026-10-25). Take its patch (done/failed/moe-chain-cuda-swapab-expert-once-large-t.patch) re-applied on current master (stack-align-par-sidestream-sliding1: parallel align at T>32 and MoE dispatch on the side stream; keep the same gate tokens > 32 with its OWN bound constant, LESSONS stack note, and launch the three new kernels on the same side stream master uses for MoE dispatch). Design unchanged; only these fixes: (1) IN-PROCESS GUARDED FIRST LAUNCH (never in a child process: the rules statically reject submissions that start processes and okc_lint flags multiprocessing (LESSONS 2026-10-25, corrected)): in prepare(), after the build, confirm the sm_90a image actually loaded (log torch.cuda.get_device_capability() == (9, 0), the nvcc -gencode flags showing only compute_90a/sm_90a, and cudaFuncGetAttributes binaryVersion/ptxVersion for moe_route_list, moe_w13_silu_swapab and moe_w2_swapab; anything else turns the path OFF); then a 1-CTA micro canary of dequant8 + one mma tile on synthetic weights, then a tiny synthetic canary launch of moe_route_list, moe_w13_silu_swapab and moe_w2_swapab (separate launches, smallest T above the gate), each followed by torch.cuda.synchronize() and a print so a fault names its kernel; only then the whole T=40/128/256 self-check in-process, enabling the path only if everything passes and otherwise keeping master Marlin. (2) Replace createpolicy.fractional.L2::evict_first + cp.async.cg...L2::cache_hint with plain cp.async.cg.shared.global [d],[s],16 (the form dense-chain and splitkv run on the judge). (3) In dequant8 replace the inline fma.rn.bf16x2 with a -0 addend by __hmul2 on __nv_bfloat162 (scale fold unchanged). (4) Build flags: add -lineinfo; set TORCH_CUDA_ARCH_LIST=9.0a / only -gencode arch=compute_90a,code=sm_90a so a single sm_90a cubin is built (hygiene; no wgmma). Keep 221 KB dyn smem at 256 threads but print cudaFuncGetAttributes and the max-dynamic-smem attribute result before the canary. Print [moe-cuda-large-t] ON|OFF with self-check status, faulting kernel name if any, max row rel, and per-kernel CUDA-event times at T=128/256. The first measurement of this hypothesis must be an `okc check`, never a scored submit (a sticky fault cannot be recovered in-process).
+
+## What changed, and where
+Worktree: `.worktrees/muse_decode_layer/moe-chain-cuda-swapab-expert-once-fix-inproc`, edited on top of stage 1's implementation (HEAD e65eda8). Only `muse_decode_layer/submission.py` changed.
+
+**Deviation: not re-stacked onto today's master.** The coordinator dispatched this build on stage 1's base (stale_base: true). The stage-1 patch does not apply to current master: 4 of its 5 hunks reject, because master's _experts / align / dense-chain regions differ. Because the review frames this run as a diagnostic check whose job is to name the faulting kernel, the build stays on stage 1's base. As a result:
+- The new kernels run where stage 1 ran them. On this base that is the main stream; only the router is on the side stream.
+- The gate keeps its own constant, `MOE_CUDA_LARGE_T_MIN = 32`, i.e. tokens > 32.
+- Kernel times from this run should be read against Marlin within this same run (the timing line below), not against master's headline.
+- If this run passes, the restack onto master (parallel align plus side-stream MoE dispatch) is a separate step.
+
+**CUDA (_LT_SRC):**
+- (2) `cp_async16_ef` (createpolicy.fractional.L2::evict_first plus cp.async.cg...L2::cache_hint with a 64-bit policy) is replaced by `cp_async16_cg`, i.e. plain `cp.async.cg.shared.global [d],[s],16`. The `createpolicy` asm in swapab_body is removed.
+- (3) `mul_bf16x2` in dequant8 now uses `__hmul2` on `__nv_bfloat162`. Per the review, cuda_bf16.hpp may lower this to the same `fma.rn.bf16x2` with a -0 addend on sm_90. No nvcc is available on this node, so there is no cuobjdump/SASS diff. **Do not count this as an eliminated suspect** unless the dequant canary isolates it.
+- New canary kernels, with `lt_init` and `lt_canary(which, a, b, c, out)` host entries:
+  - `lt_arch_probe` reports `__CUDA_ARCH__` and the `__CUDA_ARCH_FEAT_SM90_ALL` flag; 0 is the error flag.
+  - `lt_canary_cvt` (cvt e4m3x2 alone)
+  - `lt_canary_dequant` (dequant8 alone)
+  - `lt_canary_mma` (scale cvt plus dequant8 plus the swizzled slab plus ldmatrix.x4 plus 4x mma.sync, one warp, one tile)
+  - `lt_canary_cpasync` (cp.async.cg, cp.async.ca 16, and cp.async.ca src-size 0 at 221184 B dynamic smem x 256 threads, 1 CTA)
+- `lt_init` now also returns:
+  - the device opt-in max smem
+  - for each of 8 kernels: maxDynamicSharedSizeBytes, binaryVersion, ptxVersion and static smem
+- The kernel design (tiling, chunking, epilogue, route list) is unchanged.
+
+**Build:**
+- `extra_cuda_cflags = -O3 -lineinfo -gencode=arch=compute_90a,code=sm_90a`. This builds a single sm_90a cubin with no PTX and no plain sm_90.
+- `TORCH_CUDA_ARCH_LIST=9.0a` is set around load_inline and restored in a `finally`.
+- The flags are printed.
+- The module name is bumped to `muse_decode_moe_large_t_v2`.
+- There is no wgmma or setmaxnreg, so there is no sm_90a-only PTX to guard. The feature macro is still read by the probe, and the gate requires it.
+
+**Python, prepare() only:**
+- `_lt_log` prints with flush=True.
+- `_lt_step(cur, name, fn)` prints `launching <name>`, runs the launch, calls `torch.cuda.synchronize()`, then prints `ok <name>`. `cur['stage']` keeps the last launch that was announced.
+- `_lt_experts` gained `hook=None`, which wraps each of moe_route_list, w13, w2 and the post-norm combine. kernel_fn passes None, so its behaviour and launches are unchanged.
+
+The ladder in `_lt_setup` runs in this order. Any miss turns the path OFF and stops further launches.
+1. **_lt_arch_check:**
+   - log the capability, which must be (9, 0)
+   - log the flags
+   - log binaryVersion and ptxVersion for all 8 kernels; each must be 90/90
+   - check that maxDynamicSharedSizeBytes is at least the requested smem
+   - launch the probe, which must report 900 / 1
+2. **Canaries, in the order the review suggested.** Each step adds one suspect form, and each is checked bitwise or against a float64 reference:
+   - cvt over every non-NaN E4M3 byte
+   - dequant8 over 256 random words, exact bf16
+   - the mma tile, row rel <= 1e-4
+   - cp.async, bytewise reversed plus zero-fill
+3. **Retile.**
+4. **Smallest T above the gate (T=33), synthetic.** moe_route_list, moe_w13_silu_swapab and moe_w2_swapab run as separate announced launches, followed by a finiteness check.
+5. **The full T=40/128/256 self-check.** Every Marlin and CUDA launch is announced and synchronized. The self-check now stops at the first failing T.
+6. **If everything passes, per-kernel CUDA-event timing at T=128/256** for route_list, w13, w2 and the combine, plus route+w13+w2 and the Marlin path total, print only.
+7. **Final lines:**
+   - `[moe-cuda-large-t] ON|OFF: compile, max row rel, last launch / stage <name>, reason`
+   - `PATH CHOSEN = CUDA|MARLIN for tokens > 32`
+
+**Review fixes applied:**
+- All prints are flushed.
+- Each launch gets a 'launching' line before it and an 'ok' line after its synchronize.
+- The canary ordering follows the review's open question.
+- No child process is used anywhere.
+- -lineinfo is added.
+- The __hmul2 change is flagged as possibly not changing the SASS.
+
+**Not addressed in this stage:**
+- Testing 2 stages at about 120 KB smem. That is for the next stage if the canaries pass and the full launch faults.
+- Bounded spin waits are n/a: the code has no mbarrier and no spin loops.
+
+The sticky-fault caveat still applies. If any launch hits a 715, the worker dies at the next CUDA call; nothing in-process can recover it. The value of this run is that the last `launching <name>` line in the log names the kernel and instruction form. **The first measurement must be `okc check`, never a scored submit.**
+
+## Rules check (each must be true before the run)
+Checked against `git -C .worktrees/muse_decode_layer/moe-chain-cuda-swapab-expert-once-fix-inproc diff`:
+- [x] CUDA-graph capturable. kernel_fn's path only gained a Python `hook=None` lambda wrapper. Every synchronize, .cpu() and print is in prepare() (_lt_setup and its helpers). There is no allocation or branching on input values; the gate branches on the shape and a host flag.
+- [x] Nothing derived from `data` is cached. prepare() uses only synthetic inputs.
+- [x] Weights: the same lossless NVFP4 retiling as stage 1, with the round trip asserted. The global scales are fp32 with an exact 2^7 fold.
+- [x] Activations stay BF16. act is rounded to bf16 as Marlin's w13 output is. The KV cache and queries are untouched.
+- [x] Attention: n/a, attention is untouched.
+- [x] No subprocess, multiprocessing, fork or spawn (grep of the diff is empty). No timing patches, harness I/O, module edits, reference import or network. `os.environ` is touched only for TORCH_CUDA_ARCH_LIST around the build, and it is restored.
+- [x] All work happens inside the timed call; there is no output caching or replay.
+- [x] An unsupported device or image, a build failure or a canary miss lands on Marlin with loud OFF and PATH CHOSEN lines and does not raise. A sticky 715 is the one exception: it is unrecoverable in-process by nature.
+- [x] Bounded waits: n/a, there are no mbarrier or spin waits.
+
+okc_lint output:
+```
+warn  host-sync    L885: torch.cuda.synchronize()  (outside kernel_fn's call graph; fine in prepare())
+warn  dtype        L990: q13 = torch.empty((count, w13[0].numel()), dtype=torch.uint8, device=w13.device)  (allowed only where SGLang does the same)
+warn  dtype        L991: s13 = torch.empty((count, weights["w13_sf"][0].numel()), dtype=torch.uint8, device=w13.device)  (allowed only where SGLang does the same)
+warn  dtype        L992: q2 = torch.empty((count, w2[0].numel()), dtype=torch.uint8, device=w2.device)  (allowed only where SGLang does the same)
+warn  dtype        L993: s2 = torch.empty((count, weights["w2_sf"][0].numel()), dtype=torch.uint8, device=w2.device)  (allowed only where SGLang does the same)
+warn  host-sync    L1102: torch.cuda.synchronize()  (outside kernel_fn's call graph; fine in prepare())
+warn  host-sync    L1176: torch.cuda.synchronize()  (outside kernel_fn's call graph; fine in prepare())
+warn  dtype        L1191: dummy = torch.zeros((16,), dtype=torch.uint8, device=device)  (allowed only where SGLang does the same)
+warn  dtype        L1202: src = torch.tensor(vals, dtype=torch.uint8)  (allowed only where SGLang does the same)
+warn  dtype        L1203: ref = src.view(torch.float8_e4m3fn).float().to(torch.float16)  (allowed only where SGLang does the same)
+warn  dtype        L1204: out = torch.zeros((256,), dtype=torch.float16, device=device)  (allowed only where SGLang does the same)
+warn  host-sync    L1207: if not torch.equal(out.cpu().view(torch.int16), ref.view(torch.int16)):  (outside kernel_fn's call graph; fine in prepare())
+warn  dtype        L1213: s = torch.randint(0x20, 0x58, (2 * n,), generator=gen, dtype=torch.int64).to(torch.uint8) \  (allowed only where SGLang does the same)
+warn  host-sync    L1225: got = out.cpu().view(torch.bfloat16).float()  (outside kernel_fn's call graph; fine in prepare())
+warn  dtype        L1233: s_val = s_bytes.to(torch.uint8).view(torch.float8_e4m3fn).double()  (allowed only where SGLang does the same)
+warn  dtype        L1238: sc = torch.zeros((32, 8), dtype=torch.uint8)  (allowed only where SGLang does the same)
+warn  host-sync    L1254: e_mma = _row_rel(out.cpu().double().view(16, 8), ref)  (outside kernel_fn's call graph; fine in prepare())
+warn  dtype        L1260: src = torch.randint(0, 256, (LT_SMEM_BYTES,), generator=gen, dtype=torch.int64).to(torch.uint8)  (allowed only where SGLang does the same)
+warn  dtype        L1265: out = torch.zeros((LT_SMEM_BYTES,), dtype=torch.uint8, device=device)  (allowed only where SGLang does the same)
+warn  host-sync    L1268: if not torch.equal(out.cpu(), exp):  (outside kernel_fn's call graph; fine in prepare())
+warn  dtype        L1300: dummy = torch.zeros((16,), dtype=torch.uint8, device=device)  (allowed only where SGLang does the same)
+warn  host-sync    L1302: arch, feat = (int(v) for v in probe.cpu())  (outside kernel_fn's call graph; fine in prepare())
+warn  host-sync    L1331: torch.cuda.synchronize()  (outside kernel_fn's call graph; fine in prepare())
+warn  host-sync    L1410: torch.cuda.synchronize()  (outside kernel_fn's call graph; fine in prepare())
+warn  host-sync    L1414: torch.cuda.synchronize()  (outside kernel_fn's call graph; fine in prepare())
+OK with warnings: .worktrees/muse_decode_layer/moe-chain-cuda-swapab-expert-once-fix-inproc/muse_decode_layer/submission.py
+```
+py_compile: OK; __pycache__ removed.
+
+## Risks / what could fail
+high
+supersedes moe-chain-cuda-swapab-expert-once-fix, held for a child-process self-check
+
+## Result (after the run)
+- job `4ebd055adab34ecd` (check), status done, passed True, tests 13/13
+- speedup 1.1651x, 95% CI [1.1476, 1.1825], score 19415.556491744137 µs vs SGLang 22620.3 µs
+- best at harvest: {"speedup": 1.2521147631671776, "ci": [1.23333304171967, 1.270896484614685], "job": "39bcf05afc4e4dd3"}; base result: SGLang (no base result)
+- **outcome: regression** (regression)
+- files: `muse_decode_layer/hypotheses/done/regression/moe-chain-cuda-swapab-expert-once-fix-inproc.result.json`, `muse_decode_layer/hypotheses/done/regression/moe-chain-cuda-swapab-expert-once-fix-inproc.patch`; branch `hyp/muse_decode_layer/moe-chain-cuda-swapab-expert-once-fix-inproc`

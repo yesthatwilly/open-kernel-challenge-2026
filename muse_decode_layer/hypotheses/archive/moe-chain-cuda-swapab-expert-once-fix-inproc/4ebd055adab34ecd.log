@@ -1,0 +1,56 @@
+[moe-cuda-large-t] building with TORCH_CUDA_ARCH_LIST=9.0a (was None), extra_cuda_cflags ['-O3', '-lineinfo', '-gencode=arch=compute_90a,code=sm_90a']
+[moe-cuda-large-t] load_inline compiled in 30.8s
+[moe-cuda-large-t] device capability (9, 0), torch 2.14.1+cu130, cuda 13.0, build flags ['-O3', '-lineinfo', '-gencode=arch=compute_90a,code=sm_90a']
+[moe-cuda-large-t] device max dynamic smem per block (opt-in) 232448 B; GEMMs request 221184 B
+[moe-cuda-large-t] kernel moe_route_list: attrs ok True, binaryVersion 90, ptxVersion 90, numRegs 22, localSizeBytes 0, static smem 256 B, dyn smem requested 0 B, maxDynamicSharedSizeBytes 48896 B
+[moe-cuda-large-t] kernel moe_w13_silu_swapab: attrs ok True, binaryVersion 90, ptxVersion 90, numRegs 148, localSizeBytes 0, static smem 0 B, dyn smem requested 221184 B, maxDynamicSharedSizeBytes 221184 B
+[moe-cuda-large-t] kernel moe_w2_swapab: attrs ok True, binaryVersion 90, ptxVersion 90, numRegs 148, localSizeBytes 0, static smem 0 B, dyn smem requested 221184 B, maxDynamicSharedSizeBytes 221184 B
+[moe-cuda-large-t] kernel lt_arch_probe: attrs ok True, binaryVersion 90, ptxVersion 90, numRegs 10, localSizeBytes 0, static smem 0 B, dyn smem requested 0 B, maxDynamicSharedSizeBytes 49152 B
+[moe-cuda-large-t] kernel lt_canary_cvt: attrs ok True, binaryVersion 90, ptxVersion 90, numRegs 12, localSizeBytes 0, static smem 0 B, dyn smem requested 0 B, maxDynamicSharedSizeBytes 49152 B
+[moe-cuda-large-t] kernel lt_canary_dequant: attrs ok True, binaryVersion 90, ptxVersion 90, numRegs 20, localSizeBytes 0, static smem 0 B, dyn smem requested 0 B, maxDynamicSharedSizeBytes 49152 B
+[moe-cuda-large-t] kernel lt_canary_mma: attrs ok True, binaryVersion 90, ptxVersion 90, numRegs 32, localSizeBytes 0, static smem 4096 B, dyn smem requested 0 B, maxDynamicSharedSizeBytes 45056 B
+[moe-cuda-large-t] kernel lt_canary_cpasync: attrs ok True, binaryVersion 90, ptxVersion 90, numRegs 71, localSizeBytes 0, static smem 0 B, dyn smem requested 221184 B, maxDynamicSharedSizeBytes 221184 B
+[moe-cuda-large-t] launching lt_arch_probe
+[moe-cuda-large-t] ok lt_arch_probe
+[moe-cuda-large-t] arch probe: __CUDA_ARCH__ 900, __CUDA_ARCH_FEAT_SM90_ALL 1
+[moe-cuda-large-t] launching canary cvt.rn.f16x2.e4m3x2 (lt_canary_cvt)
+[moe-cuda-large-t] ok canary cvt.rn.f16x2.e4m3x2 (lt_canary_cvt)
+[moe-cuda-large-t] launching canary dequant8 bf16x2 multiply (lt_canary_dequant)
+[moe-cuda-large-t] ok canary dequant8 bf16x2 multiply (lt_canary_dequant)
+[moe-cuda-large-t] launching canary ldmatrix.x4 + mma.sync m16n8k16 tile (lt_canary_mma)
+[moe-cuda-large-t] ok canary ldmatrix.x4 + mma.sync m16n8k16 tile (lt_canary_mma)
+[moe-cuda-large-t]   canary mma tile row rel 3.01e-08 (bound 1e-4)
+[moe-cuda-large-t] launching canary cp.async at 221184 B dyn smem x 256 threads (lt_canary_cpasync)
+[moe-cuda-large-t] ok canary cp.async at 221184 B dyn smem x 256 threads (lt_canary_cpasync)
+[moe-cuda-large-t] retiled 32 experts losslessly (round trips exact) in 0.1s
+[moe-cuda-large-t] grid 132 persistent CTAs x 256 threads, chunk 64 routes
+[moe-cuda-large-t] launching moe_route_list T=33
+[moe-cuda-large-t] ok moe_route_list T=33
+[moe-cuda-large-t] launching moe_w13_silu_swapab T=33
+[moe-cuda-large-t] ok moe_w13_silu_swapab T=33
+[moe-cuda-large-t] launching moe_w2_swapab T=33
+[moe-cuda-large-t] ok moe_w2_swapab T=33
+[moe-cuda-large-t] launching post_expert_norm_weighted_sum T=33
+[moe-cuda-large-t] ok post_expert_norm_weighted_sum T=33
+[moe-cuda-large-t]   canary T=33: 62 local routes, finite True
+[moe-cuda-large-t] launching marlin reference T=40
+[moe-cuda-large-t] ok marlin reference T=40
+[moe-cuda-large-t] launching moe_route_list T=40
+[moe-cuda-large-t] ok moe_route_list T=40
+[moe-cuda-large-t] launching moe_w13_silu_swapab T=40
+[moe-cuda-large-t] ok moe_w13_silu_swapab T=40
+[moe-cuda-large-t] launching moe_w2_swapab T=40
+[moe-cuda-large-t] ok moe_w2_swapab T=40
+[moe-cuda-large-t] launching post_expert_norm_weighted_sum T=40
+[moe-cuda-large-t] ok post_expert_norm_weighted_sum T=40
+[moe-cuda-large-t] launching moe_route_list T=40
+[moe-cuda-large-t] ok moe_route_list T=40
+[moe-cuda-large-t] launching moe_w13_silu_swapab T=40
+[moe-cuda-large-t] ok moe_w13_silu_swapab T=40
+[moe-cuda-large-t] launching moe_w2_swapab T=40
+[moe-cuda-large-t] ok moe_w2_swapab T=40
+[moe-cuda-large-t] launching post_expert_norm_weighted_sum T=40
+[moe-cuda-large-t] ok post_expert_norm_weighted_sum T=40
+[moe-cuda-large-t]   self-check T=40: 62 local routes, act row rel 8.79e-03, y row rel 1.07e-02, out global rel 6.00e-03, finite True, local ids equal True, repeat identical True
+[moe-cuda-large-t] OFF: compile 30.8s, max row rel 1.075e-02 (bound 1e-2), last launch / stage none, T=40: act 8.79e-03 y 1.07e-02 out 6.00e-03 finite True ids True repeat True
+[moe-cuda-large-t] PATH CHOSEN = MARLIN for tokens > 32; MARLIN at tokens <= 32

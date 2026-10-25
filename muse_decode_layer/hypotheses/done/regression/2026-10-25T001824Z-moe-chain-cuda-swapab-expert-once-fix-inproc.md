@@ -55,10 +55,10 @@ controls_for: null
 rewrite_stage: 2
 replaces: moe_align + Marlin w13 + act_and_mul + Marlin w2 at tokens > 32
 review: proceed
-status: running
+status: done
 review_at: 2026-10-25T002143Z
 review_companions: null
-stage: dispatched
+stage: harvested
 claimed_at: 2026-10-25T002143Z
 base_sha: e65eda8e263ae1408bdb9e263068ca89a29ceb0d
 base_blob: 81d11fec488c02b0e7fe3a48f764aca20bb6a438
@@ -77,6 +77,13 @@ attempt_file: 2026-10-25T003526Z-check-moe-chain-cuda-swapab-expert-once-fix-inp
 prepared_at: 2026-10-25T003526Z
 job: 4ebd055adab34ecd
 dispatched_at: 2026-10-25T003532Z
+outcome: regression
+verdict_detail: regression
+speedup: 1.1650606053768575
+speedup_ci: [1.1475846962962046, 1.1825365144575102]
+harvested_at: 2026-10-25T013618Z
+best_at_harvest: 1.2521147631671776
+promotion: null
 ---
 
 # moe-chain-cuda-swapab-expert-once-fix-inproc
@@ -278,3 +285,35 @@ Audited 2026-10-24 by an opus subagent, read-only (no GPU or nvcc on this node).
 - Promotion requires the restack onto master as a separate stage.
 
 **Residual risk.** The underlying 715 was not root-caused. The likeliest outcome is that it faults again, with the last `launching <name>` line naming the kernel and form. A minor risk is that the ptxVersion==90 gate turns the path OFF if the driver reports a different value for a cubin-only sm_90a build. That would be logged loudly, and the arch probe is the stronger check.
+
+## Result
+
+- job `4ebd055adab34ecd` (check), status done, passed True, tests 13/13
+- speedup 1.1651x, 95% CI [1.1476, 1.1825], score 19415.556491744137 µs vs SGLang 22620.3 µs
+- best at harvest: {"speedup": 1.2521147631671776, "ci": [1.23333304171967, 1.270896484614685], "job": "39bcf05afc4e4dd3"}; base result: SGLang (no base result)
+- **outcome: regression** (regression)
+- files: `muse_decode_layer/hypotheses/done/regression/moe-chain-cuda-swapab-expert-once-fix-inproc.result.json`, `muse_decode_layer/hypotheses/done/regression/moe-chain-cuda-swapab-expert-once-fix-inproc.patch`; branch `hyp/muse_decode_layer/moe-chain-cuda-swapab-expert-once-fix-inproc`
+
+## Attribution
+
+| shape | w | base µs | hyp µs | delta | verdict |
+|---|---|---|---|---|---|
+| batch=1 ctx=80000 dist=soft layer=sliding load=decode_1 page=1 repeats=60 | 46 | 171.09 | 144.87 | 1.181 | gained |
+| batch=1 ctx=80000 dist=soft layer=full load=decode_1 page=1 repeats=60 | 16 | 180.46 | 154.93 | 1.1648 | gained |
+| batch=16 ctx=80000 dist=soft layer=sliding load=decode_16 page=1 spread=agentic | 46 | 265.98 | 232.64 | 1.1433 | gained |
+| batch=16 ctx=80000 dist=soft layer=full load=decode_16 page=1 spread=agentic | 16 | 436.94 | 371.92 | 1.1748 | gained |
+| batch=32 ctx=80000 dist=soft layer=sliding load=decode_32 page=1 spread=agentic | 46 | 260.69 | 261.06 | 0.9986 | flat |
+| batch=32 ctx=80000 dist=soft layer=full load=decode_32 page=1 spread=agentic | 16 | 616.03 | 546.21 | 1.1278 | gained |
+| batch=1 ctx=80000 dist=soft layer=sliding load=verify_1 page=1 q_len=8 | 46 | 263.87 | 202.38 | 1.3038 | gained |
+| batch=1 ctx=80000 dist=soft layer=full load=verify_1 page=1 q_len=8 | 16 | 271.28 | 211.61 | 1.282 | gained |
+| batch=16 ctx=80000 dist=soft layer=sliding load=verify_16 page=1 q_len=8 spread=agentic | 46 | 523.63 | 446.97 | 1.1715 | gained |
+| batch=16 ctx=80000 dist=soft layer=full load=verify_16 page=1 q_len=8 spread=agentic | 16 | 700.62 | 589.42 | 1.1887 | gained |
+| batch=32 ctx=80000 dist=soft layer=sliding load=verify_32 page=1 q_len=8 spread=agentic | 46 | 702.46 | 621.68 | 1.1299 | gained |
+| batch=32 ctx=80000 dist=soft layer=full load=verify_32 page=1 q_len=8 spread=agentic | 16 | 1055.38 | 899.65 | 1.1731 | gained |
+
+gained on sliding decode_1, decode_16, verify_1, verify_16, verify_32; full decode_1, decode_16, decode_32, verify_1, verify_16, verify_32. Expected hit: 2/4. Noise ±1.5%.
+
+## Follow-ups
+
+- rewrite stage 2 of `moe_align + Marlin w13 + act_and_mul + Marlin w2 at tokens > 32`: read the replaced kernels' own us per shape (profile top_kernels) against the incumbent and the floor, and check which Milestone it reached. The next stage is `/hypothesize muse_decode_layer "<what to fix or tune>" --kind rewrite --depends-on moe-chain-cuda-swapab-expert-once-fix-inproc --stage 3`; a slow or failed first cut is the expected start, not a do-not-retry.
+

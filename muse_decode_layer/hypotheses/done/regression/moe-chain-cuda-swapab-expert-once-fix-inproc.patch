@@ -1,0 +1,717 @@
+diff --git a/muse_decode_layer/submission.py b/muse_decode_layer/submission.py
+index 81d11fe..451c3c0 100644
+--- a/muse_decode_layer/submission.py
++++ b/muse_decode_layer/submission.py
+@@ -54,6 +54,7 @@ Differs from SGLang:
+ 
+ from typing import TypedDict
+ 
++import os
+ import time
+ import types
+ 
+@@ -245,7 +246,11 @@ def _post_norm_combine_kernel(y_ptr, ids_ptr, tw_ptr, w_ptr, out_ptr, H, eps,
+ 
+ 
+ # ---------------------------------------------------------------------------------------------
+-# CUDA large-T MoE path (hypothesis moe-chain-cuda-swapab-expert-once-large-t, rewrite stage 1).
++# CUDA large-T MoE path (hypothesis moe-chain-cuda-swapab-expert-once-large-t, rewrite stage 1;
++# stage 2 moe-chain-cuda-swapab-expert-once-fix-inproc: a diagnostic of stage 1's sticky 715 fault.
++# Plain cp.async.cg, __hmul2 in dequant8, a single sm_90a cubin with -lineinfo, and an in-process
++# canary ladder in prepare() whose every launch is announced (flushed) before it starts and
++# synchronized after, so a fault names its kernel and instruction form; design unchanged.)
+ #
+ # Above MOE_CUDA_LARGE_T_MIN tokens, three launches of one load_inline module replace master's
+ # expert_map gather + moe_align_block_size + Marlin w13 + silu_and_mul + Marlin w2:
+@@ -287,6 +292,7 @@ _LT_CPP = r"""
+ #include <torch/extension.h>
+ #include <vector>
+ std::vector<int64_t> lt_init();
++void lt_canary(int64_t which, torch::Tensor a, torch::Tensor b, torch::Tensor c, torch::Tensor out);
+ void lt_route_list(torch::Tensor ids, torch::Tensor local_out, torch::Tensor route_idx, torch::Tensor chunks,
+                    torch::Tensor n_chunks, int64_t n_local);
+ void lt_gemm(torch::Tensor wq, torch::Tensor wsf, torch::Tensor gs, torch::Tensor act, int64_t a_shift,
+@@ -322,9 +328,10 @@ constexpr int MAX_LOCAL = 32;
+ __device__ __forceinline__ uint32_t smem_u32(const void* p) {
+   return static_cast<uint32_t>(__cvta_generic_to_shared(p));
+ }
+-__device__ __forceinline__ void cp_async16_ef(uint32_t dst, const void* src, uint64_t policy) {
+-  asm volatile("cp.async.cg.shared.global.L2::cache_hint [%0], [%1], 16, %2;\n"
+-               :: "r"(dst), "l"(src), "l"(policy) : "memory");
++// Plain cp.async.cg, 16 bytes (stage 2 fix: the createpolicy / L2::cache_hint form never ran on
++// the judge; this is the form dense-chain and splitkv run there).
++__device__ __forceinline__ void cp_async16_cg(uint32_t dst, const void* src) {
++  asm volatile("cp.async.cg.shared.global [%0], [%1], 16;\n" :: "r"(dst), "l"(src) : "memory");
+ }
+ __device__ __forceinline__ void cp_async16_ca(uint32_t dst, const void* src, int src_bytes) {
+   asm volatile("cp.async.ca.shared.global [%0], [%1], 16, %2;\n" :: "r"(dst), "l"(src), "r"(src_bytes) : "memory");
+@@ -347,11 +354,13 @@ __device__ __forceinline__ uint32_t bf16x2_bcast(float v) {
+   __nv_bfloat162 b = __float2bfloat162_rn(v);
+   return *reinterpret_cast<uint32_t*>(&b);
+ }
+-// a * b (+ -0), bf16x2, round to nearest; subnormal inputs are kept.
++// a * b, bf16x2, round to nearest; subnormal inputs are kept. Stage 2 fix: the intrinsic __hmul2
++// instead of inline fma.rn.bf16x2 with a -0 addend (cuda_bf16.hpp may lower it to the same
++// instruction on sm_90, so this is not necessarily an eliminated suspect).
+ __device__ __forceinline__ uint32_t mul_bf16x2(uint32_t a, uint32_t b) {
+-  uint32_t d;
+-  asm("fma.rn.bf16x2 %0, %1, %2, %3;\n" : "=r"(d) : "r"(a), "r"(b), "r"(0x80008000u));
+-  return d;
++  const __nv_bfloat162 r = __hmul2(*reinterpret_cast<const __nv_bfloat162*>(&a),
++                                   *reinterpret_cast<const __nv_bfloat162*>(&b));
++  return *reinterpret_cast<const uint32_t*>(&r);
+ }
+ // 8 E2M1 codes -> the 4 bf16x2 A registers, exact: (q & 0x80008000) | ((q & 0x70007000) >> 6) is
+ // e2m1 * 2^-126 in each half (nibbles 3 - i and 7 - i); sg / sg8 are the row g / g + 8 scales
+@@ -445,9 +454,6 @@ __device__ __forceinline__ void swapab_body(uint8_t* smem,
+   const int KS = K / BK;                      // stages per item
+   const int N = nk * KS;                      // stages of this CTA, one flat pipeline
+ 
+-  uint64_t policy;
+-  asm volatile("createpolicy.fractional.L2::evict_first.b64 %0, 1.0;\n" : "=l"(policy));
+-
+   // Producer-side meta: the item being issued (ce, cn, crow) and the next one, prefetched.
+   int ik = -1, ce = 0, cn = 0, ne = 0, nn_n = 0;
+   int crow[NF_MAX], nrow[NF_MAX];
+@@ -488,9 +494,9 @@ __device__ __forceinline__ void swapab_body(uint8_t* smem,
+ #pragma unroll
+     for (int i = 0; i < W_BYTES / 16 / THREADS; ++i) {
+       const int c = tid + i * THREADS;
+-      cp_async16_ef(smem_u32(st + c * 16), wsrc + c * 16, policy);
++      cp_async16_cg(smem_u32(st + c * 16), wsrc + c * 16);
+     }
+-    if (tid < S_BYTES / 16) cp_async16_ef(smem_u32(st + W_BYTES + tid * 16), wsf + tile * S_BYTES + tid * 16, policy);
++    if (tid < S_BYTES / 16) cp_async16_cg(smem_u32(st + W_BYTES + tid * 16), wsf + tile * S_BYTES + tid * 16);
+     // B rows: only the chunk's ceil(n / 8) fragments; rows n .. 8 * nf - 1 are zero-filled.
+     const int nf = (cn + 7) >> 3;
+     const int ch = tid & 31;
+@@ -628,6 +634,103 @@ __global__ void __launch_bounds__(THREADS, 1) moe_w2_swapab(LT_GEMM_PARAMS) {
+   swapab_body<false>(smem, LT_GEMM_ARGS);
+ }
+ 
++// ---- Stage 2 canary ladder (prepare() only): each kernel adds ONE suspect form to what the
++// previous ones proved, so a sticky fault names a form, not just a kernel.
++// 3: arch probe (no suspect form): __CUDA_ARCH__ and whether the sm_90a feature macro is set.
++__global__ void lt_arch_probe(int* __restrict__ out) {
++  if (threadIdx.x == 0 && blockIdx.x == 0) {
++#if defined(__CUDA_ARCH__)
++    out[0] = __CUDA_ARCH__;
++#else
++    out[0] = -1;
++#endif
++#if defined(__CUDA_ARCH_FEAT_SM90_ALL)
++    out[1] = 1;
++#else
++    out[1] = 0;  // error flag: not the sm_90a image
++#endif
++  }
++}
++// 4: cvt.rn.f16x2.e4m3x2 alone: word i -> two f16x2 words (bytes 0..3 in order).
++__global__ void lt_canary_cvt(const uint32_t* __restrict__ in, uint32_t* __restrict__ out, int n) {
++  const int i = blockIdx.x * blockDim.x + threadIdx.x;
++  if (i < n) {
++    uint32_t lo, hi;
++    e4m3x4_to_f16x2x2(in[i], lo, hi);
++    out[2 * i] = lo;
++    out[2 * i + 1] = hi;
++  }
++}
++// 5: dequant8 (bf16x2 multiply) alone: out[4i .. 4i+3] = dequant8(q[i], sg[2i], sg[2i+1]).
++__global__ void lt_canary_dequant(const uint32_t* __restrict__ q, const uint32_t* __restrict__ sg,
++                                  uint32_t* __restrict__ out, int n) {
++  const int i = blockIdx.x * blockDim.x + threadIdx.x;
++  if (i < n) {
++    uint32_t a[4];
++    dequant8(q[i], sg[2 * i], sg[2 * i + 1], a);
++#pragma unroll
++    for (int j = 0; j < 4; ++j) out[4 * i + j] = a[j];
++  }
++}
++// 6: one warp, one tile: the main loop's scale cvt + dequant8 for A (16 rows x 64 k), B (8 rows x
++// 64 k bf16) through the swizzled slab and ldmatrix.x4, 4 x mma.sync m16n8k16. out [16][8] fp32.
++__global__ void lt_canary_mma(const uint4* __restrict__ q, const uint2* __restrict__ sc,
++                              const uint4* __restrict__ bt, float* __restrict__ out) {
++  __shared__ __align__(128) uint8_t slab[8 * SLAB_ROW];
++  const int lane = threadIdx.x & 31, g = lane >> 2, t4 = lane & 3;
++  for (int idx = lane; idx < 64; idx += 32) {
++    const int r = idx >> 3, c = idx & 7;
++    *reinterpret_cast<uint4*>(slab + r * SLAB_ROW + ((c ^ (r & 7)) << 4)) = bt[r * 8 + c];
++  }
++  __syncwarp();
++  const uint4 qq = q[lane];
++  const uint2 s = sc[lane];
++  uint32_t hs[4];
++  e4m3x4_to_f16x2x2(s.x, hs[0], hs[1]);
++  e4m3x4_to_f16x2x2(s.y, hs[2], hs[3]);
++  const float P119 = __int_as_float(0x7B000000);
++  const uint32_t qw[4] = {qq.x, qq.y, qq.z, qq.w};
++  uint32_t a[4][4];
++#pragma unroll
++  for (int st = 0; st < 4; ++st) {
++    const float2 fs = __half22float2(*reinterpret_cast<const __half2*>(&hs[st]));
++    dequant8(qw[st], bf16x2_bcast(fs.x * P119), bf16x2_bcast(fs.y * P119), a[st]);
++  }
++  uint32_t b[8];
++  const uint32_t base = smem_u32(slab);
++#pragma unroll
++  for (int h = 0; h < 2; ++h) {
++    const int row = lane & 7, c = h * 4 + (lane >> 3);
++    ldsm_x4(base + row * SLAB_ROW + ((c ^ (lane & 7)) << 4), b[4 * h], b[4 * h + 1], b[4 * h + 2], b[4 * h + 3]);
++  }
++  float acc[4] = {0.f, 0.f, 0.f, 0.f};
++#pragma unroll
++  for (int st = 0; st < 4; ++st) mma_bf16(acc, a[st], b[2 * st], b[2 * st + 1]);
++  out[g * 8 + 2 * t4] = acc[0];
++  out[g * 8 + 2 * t4 + 1] = acc[1];
++  out[(g + 8) * 8 + 2 * t4] = acc[2];
++  out[(g + 8) * 8 + 2 * t4 + 1] = acc[3];
++}
++// 7: cp.async at the GEMMs' launch configuration (256 threads, SMEM dynamic bytes): fill all of
++// smem with plain cp.async.cg, chunk 62 of every 64 with cp.async.ca (16 bytes) and chunk 63 with
++// cp.async.ca src-size 0 (zero fill), then write the chunks back reversed.
++__global__ void __launch_bounds__(THREADS, 1) lt_canary_cpasync(const uint8_t* __restrict__ src,
++                                                                uint8_t* __restrict__ dst) {
++  extern __shared__ __align__(128) uint8_t smem[];
++  constexpr int NCH = SMEM / 16;
++  for (int c = threadIdx.x; c < NCH; c += THREADS) {
++    const uint32_t d = smem_u32(smem + c * 16);
++    if ((c & 63) == 62) cp_async16_ca(d, src + (size_t)c * 16, 16);
++    else if ((c & 63) == 63) cp_async16_ca(d, src, 0);
++    else cp_async16_cg(d, src + (size_t)c * 16);
++  }
++  cp_commit();
++  cp_wait<0>();
++  __syncthreads();
++  for (int c = threadIdx.x; c < NCH; c += THREADS)
++    reinterpret_cast<uint4*>(dst)[c] = reinterpret_cast<const uint4*>(smem)[NCH - 1 - c];
++}
++
+ void info_one(const void* fn, int which, int smem, std::vector<int64_t>& r) {
+   cudaError_t e1 = cudaSuccess;
+   if (smem > 0) e1 = cudaFuncSetAttribute(fn, cudaFuncAttributeMaxDynamicSharedMemorySize, smem);
+@@ -639,19 +742,75 @@ void info_one(const void* fn, int which, int smem, std::vector<int64_t>& r) {
+   r.push_back(a.numRegs);
+   r.push_back(static_cast<int64_t>(a.localSizeBytes));
+   r.push_back(smem);
++  r.push_back(a.maxDynamicSharedSizeBytes);
++  r.push_back(a.binaryVersion);
++  r.push_back(a.ptxVersion);
++  r.push_back(static_cast<int64_t>(a.sharedSizeBytes));
+ }
+ 
+ }  // namespace
+ 
+-// Per kernel (0 route_list, 1 w13+silu, 2 w2): attribute calls ok, numRegs, localSizeBytes, dynamic smem.
++// r[0] = the device's opt-in max smem per block; then per kernel (0 route_list, 1 w13+silu, 2 w2,
++// 3 arch probe, 4 cvt, 5 dequant, 6 mma, 7 cp.async canary) 9 values: which, attribute calls ok,
++// numRegs, localSizeBytes, requested dynamic smem, maxDynamicSharedSizeBytes, binaryVersion,
++// ptxVersion, static smem.
+ std::vector<int64_t> lt_init() {
+   std::vector<int64_t> r;
++  int dev = 0, optin = 0;
++  if (cudaGetDevice(&dev) != cudaSuccess ||
++      cudaDeviceGetAttribute(&optin, cudaDevAttrMaxSharedMemoryPerBlockOptin, dev) != cudaSuccess) {
++    (void)cudaGetLastError();
++    optin = -1;
++  }
++  r.push_back(optin);
+   info_one(reinterpret_cast<const void*>(moe_route_list), 0, 0, r);
+   info_one(reinterpret_cast<const void*>(moe_w13_silu_swapab), 1, SMEM, r);
+   info_one(reinterpret_cast<const void*>(moe_w2_swapab), 2, SMEM, r);
++  info_one(reinterpret_cast<const void*>(lt_arch_probe), 3, 0, r);
++  info_one(reinterpret_cast<const void*>(lt_canary_cvt), 4, 0, r);
++  info_one(reinterpret_cast<const void*>(lt_canary_dequant), 5, 0, r);
++  info_one(reinterpret_cast<const void*>(lt_canary_mma), 6, 0, r);
++  info_one(reinterpret_cast<const void*>(lt_canary_cpasync), 7, SMEM, r);
+   return r;
+ }
+ 
++// One canary launch (prepare() only); the caller synchronizes and checks the output.
++void lt_canary(int64_t which, torch::Tensor a, torch::Tensor b, torch::Tensor c, torch::Tensor out) {
++  TORCH_CHECK(a.is_cuda() && b.is_cuda() && c.is_cuda() && out.is_cuda(), "lt_canary: device");
++  TORCH_CHECK(a.is_contiguous() && b.is_contiguous() && c.is_contiguous() && out.is_contiguous(), "lt_canary: layout");
++  auto stream = at::cuda::getCurrentCUDAStream();
++  const int64_t na = a.numel() * a.element_size(), nb = b.numel() * b.element_size();
++  const int64_t nc = c.numel() * c.element_size(), no = out.numel() * out.element_size();
++  if (which == 3) {
++    TORCH_CHECK(no >= 8, "lt_canary: probe out");
++    lt_arch_probe<<<1, 32, 0, stream>>>(reinterpret_cast<int*>(out.data_ptr()));
++  } else if (which == 4) {
++    const int n = static_cast<int>(na / 4);
++    TORCH_CHECK(n >= 1 && no >= 8 * n, "lt_canary: cvt sizes");
++    lt_canary_cvt<<<(n + 255) / 256, 256, 0, stream>>>(reinterpret_cast<const uint32_t*>(a.data_ptr()),
++                                                       reinterpret_cast<uint32_t*>(out.data_ptr()), n);
++  } else if (which == 5) {
++    const int n = static_cast<int>(na / 4);
++    TORCH_CHECK(n >= 1 && nb >= 8 * n && no >= 16 * n, "lt_canary: dequant sizes");
++    lt_canary_dequant<<<(n + 255) / 256, 256, 0, stream>>>(reinterpret_cast<const uint32_t*>(a.data_ptr()),
++                                                           reinterpret_cast<const uint32_t*>(b.data_ptr()),
++                                                           reinterpret_cast<uint32_t*>(out.data_ptr()), n);
++  } else if (which == 6) {
++    TORCH_CHECK(na == 32 * 16 && nb == 32 * 8 && nc == 8 * 64 * 2 && no == 16 * 8 * 4, "lt_canary: mma sizes");
++    lt_canary_mma<<<1, 32, 0, stream>>>(reinterpret_cast<const uint4*>(a.data_ptr()),
++                                        reinterpret_cast<const uint2*>(b.data_ptr()),
++                                        reinterpret_cast<const uint4*>(c.data_ptr()),
++                                        reinterpret_cast<float*>(out.data_ptr()));
++  } else if (which == 7) {
++    TORCH_CHECK(na == SMEM && no == SMEM, "lt_canary: cp.async sizes");
++    lt_canary_cpasync<<<1, THREADS, SMEM, stream>>>(reinterpret_cast<const uint8_t*>(a.data_ptr()),
++                                                    reinterpret_cast<uint8_t*>(out.data_ptr()));
++  } else {
++    TORCH_CHECK(false, "lt_canary: which");
++  }
++  C10_CUDA_KERNEL_LAUNCH_CHECK();
++}
++
+ void lt_route_list(torch::Tensor ids, torch::Tensor local_out, torch::Tensor route_idx, torch::Tensor chunks,
+                    torch::Tensor n_chunks, int64_t n_local) {
+   TORCH_CHECK(ids.is_contiguous() && local_out.is_contiguous() && route_idx.is_contiguous() &&
+@@ -703,26 +862,59 @@ void lt_gemm(torch::Tensor wq, torch::Tensor wsf, torch::Tensor gs, torch::Tenso
+ """
+ 
+ 
++# Stage 2 build flags: one sm_90a cubin only (no plain sm_90 / PTX pass), -lineinfo for attribution.
++# cpp_extension adds no arch flags of its own when extra_cuda_cflags already name one.
++LT_CUDA_FLAGS = ["-O3", "-lineinfo", "-gencode=arch=compute_90a,code=sm_90a"]
++LT_SMEM_BYTES = 4 * 51200 + 16384  # the GEMMs' dynamic smem (SMEM in _LT_SRC): 221184
++LT_KERNELS = ("moe_route_list", "moe_w13_silu_swapab", "moe_w2_swapab", "lt_arch_probe", "lt_canary_cvt",
++              "lt_canary_dequant", "lt_canary_mma", "lt_canary_cpasync")
++
++
++def _lt_log(msg):
++    """Unbuffered: a sticky CUDA fault kills the worker, and buffered stdout would lose the line
++    that names the faulting launch."""
++    print(f"{LT_TAG} {msg}", flush=True)
++
++
++def _lt_step(cur, name, fn):
++    """Announce a launch, run it, synchronize, announce success (prepare() only). cur['stage']
++    keeps the last launch announced, so an exception names it."""
++    cur["stage"] = name
++    _lt_log(f"launching {name}")
++    out = fn()
++    torch.cuda.synchronize()
++    _lt_log(f"ok {name}")
++    return out
++
++
+ def _lt_build():
+     """Compile the CUDA module once (prepare only, never during capture); (ext, seconds), ext None
+-    on failure."""
++    on failure. TORCH_CUDA_ARCH_LIST is set to 9.0a around the build and restored after."""
+     t0 = time.perf_counter()
++    prev = os.environ.get("TORCH_CUDA_ARCH_LIST")
++    os.environ["TORCH_CUDA_ARCH_LIST"] = "9.0a"
++    _lt_log(f"building with TORCH_CUDA_ARCH_LIST=9.0a (was {prev!r}), extra_cuda_cflags {LT_CUDA_FLAGS}")
+     try:
+         from torch.utils.cpp_extension import load_inline
+         ext = load_inline(
+-            name="muse_decode_moe_large_t_v1",
++            name="muse_decode_moe_large_t_v2",
+             cpp_sources=_LT_CPP,
+             cuda_sources=_LT_SRC,
+-            functions=["lt_init", "lt_route_list", "lt_gemm"],
+-            extra_cuda_cflags=["-O3", "-arch=sm_90a"],
++            functions=["lt_init", "lt_canary", "lt_route_list", "lt_gemm"],
++            extra_cuda_cflags=list(LT_CUDA_FLAGS),
+             verbose=False,
+         )
+     except Exception as e:  # keep the master path if the build fails
+         secs = time.perf_counter() - t0
+-        print(f"{LT_TAG} load_inline FAILED after {secs:.1f}s, Marlin kept: {e!r}"[-4000:])
++        _lt_log(f"load_inline FAILED after {secs:.1f}s, Marlin kept: {e!r}"[-4000:])
+         return None, secs
++    finally:
++        if prev is None:
++            os.environ.pop("TORCH_CUDA_ARCH_LIST", None)
++        else:
++            os.environ["TORCH_CUDA_ARCH_LIST"] = prev
+     secs = time.perf_counter() - t0
+-    print(f"{LT_TAG} load_inline compiled in {secs:.1f}s")
++    _lt_log(f"load_inline compiled in {secs:.1f}s")
+     return ext, secs
+ 
+ 
+@@ -810,11 +1002,14 @@ def _lt_bank(weights):
+     }
+ 
+ 
+-def _lt_experts(x, topk_weights, topk_ids, state, prefill_nan=False):
++def _lt_experts(x, topk_weights, topk_ids, state, prefill_nan=False, hook=None):
+     """(out, y, act, local_ids) of the CUDA large-T path. topk_ids are already shifted by
+     local_start (0..255); route_list maps ids >= 32 to -1 itself (master's expert_map gather).
+     prefill_nan (self-check only) fills act and y with NaN first, so a read of a row the kernels
+-    never wrote shows up as a non-finite output."""
++    never wrote shows up as a non-finite output. hook(name, fn) (prepare() only) wraps each launch:
++    the self-check synchronizes and logs around it, the timing records CUDA events; None in
++    kernel_fn."""
++    run = hook if hook is not None else (lambda name, fn: fn())
+     ext, cb, grid = state["lt_ext"], state["lt_bank"], state["lt_grid"]
+     num_tokens, size_k = x.shape
+     size_n = state["bank"]["size_n"]
+@@ -825,7 +1020,7 @@ def _lt_experts(x, topk_weights, topk_ids, state, prefill_nan=False):
+     route_idx = torch.empty((routes,), dtype=torch.int32, device=x.device)
+     chunks = torch.empty((routes // LT_CHUNK + LOCAL_EXPERTS + 1, 4), dtype=torch.int32, device=x.device)
+     n_chunks = torch.empty((1,), dtype=torch.int32, device=x.device)
+-    ext.lt_route_list(ids, local_ids, route_idx, chunks, n_chunks, LOCAL_EXPERTS)
++    run("moe_route_list", lambda: ext.lt_route_list(ids, local_ids, route_idx, chunks, n_chunks, LOCAL_EXPERTS))
+     if prefill_nan:
+         act = torch.full((routes, size_n), float("nan"), dtype=torch.bfloat16, device=x.device)
+         y = torch.full((routes, size_k), float("nan"), dtype=torch.bfloat16, device=x.device)
+@@ -833,14 +1028,14 @@ def _lt_experts(x, topk_weights, topk_ids, state, prefill_nan=False):
+         act = torch.empty((routes, size_n), dtype=torch.bfloat16, device=x.device)
+         y = torch.empty((routes, size_k), dtype=torch.bfloat16, device=x.device)
+     # w13 + silu(gate) * up: B row = x[route >> 3], act[route] written for local routes only.
+-    ext.lt_gemm(cb["q13"], cb["s13"], cb["gs13"], x, 3, route_idx, chunks, n_chunks,
+-                size_n // 64, size_k, 1, act, grid)
++    run("moe_w13_silu_swapab", lambda: ext.lt_gemm(cb["q13"], cb["s13"], cb["gs13"], x, 3, route_idx, chunks,
++                                                   n_chunks, size_n // 64, size_k, 1, act, grid))
+     # w2: B row = act[route], y[route] written for local routes only (remote rows never read).
+-    ext.lt_gemm(cb["q2"], cb["s2"], cb["gs2"], act, 0, route_idx, chunks, n_chunks,
+-                size_k // 128, size_n, 0, y, grid)
+-    out = fused_post_expert_norm_weighted_sum(
++    run("moe_w2_swapab", lambda: ext.lt_gemm(cb["q2"], cb["s2"], cb["gs2"], act, 0, route_idx, chunks,
++                                             n_chunks, size_k // 128, size_n, 0, y, grid))
++    out = run("post_expert_norm_weighted_sum", lambda: fused_post_expert_norm_weighted_sum(
+         y.view(num_tokens, TOP_K, size_k), topk_weights.to(torch.float32).contiguous(),
+-        norm_weight=state["post_expert_w"], eps=POST_NORM_EPS, weight_first=True, slot_expert_ids=local_ids)
++        norm_weight=state["post_expert_w"], eps=POST_NORM_EPS, weight_first=True, slot_expert_ids=local_ids))
+     return out, y, act, local_ids
+ 
+ 
+@@ -879,12 +1074,18 @@ def _lt_routing(tokens, gen):
+     return torch.tensor(rows, dtype=torch.int32)
+ 
+ 
+-def _lt_self_check(weights, state, device):
++def _lt_tracer(cur, tokens):
++    """Self-check hook: every launch of _lt_experts announced, synchronized and confirmed."""
++    return lambda name, fn: _lt_step(cur, f"{name} T={tokens}", fn)
++
++
++def _lt_self_check(weights, state, device, cur):
+     """Untimed, prepare() only, synthetic inputs (fixed seed): the CUDA path (act and y prefilled
+     with NaN) against master's Marlin path at T = 40, 128, 256 with skewed routing. Checks only
+     what the path consumes or produces: local ids, act and y at local routes (per row <= 1e-2),
+     the combine output (global <= 5e-3, finite), a repeat run (identical at local rows), and one
+-    hot expert against a local fp32 dequant. Returns (ok, worst per-row rel, reason)."""
++    hot expert against a local fp32 dequant. Every launch is announced and synchronized.
++    Returns (ok, worst per-row rel, reason)."""
+     gen = torch.Generator().manual_seed(20261024)
+     hidden = state["bank"]["size_n"]
+     worst, ok, reason = 0.0, True, "all checks passed"
+@@ -893,10 +1094,13 @@ def _lt_self_check(weights, state, device):
+         x = torch.randn((tokens, weights["w2"].shape[1]), generator=gen).to(torch.bfloat16).to(device)
+         tw = torch.rand((tokens, TOP_K), generator=gen)
+         tw = (tw / tw.sum(-1, keepdim=True)).to(device)
+-        r_out, r_y, r_c2, r_local = _marlin_experts(x, tw, ids, state)
+-        n_out, n_y, n_act, n_local = _lt_experts(x, tw, ids, state, prefill_nan=True)
+-        m_out, m_y, m_act, _ = _lt_experts(x, tw, ids, state, prefill_nan=True)
++        trace = _lt_tracer(cur, tokens)
++        r_out, r_y, r_c2, r_local = _lt_step(cur, f"marlin reference T={tokens}",
++                                             lambda: _marlin_experts(x, tw, ids, state))
++        n_out, n_y, n_act, n_local = _lt_experts(x, tw, ids, state, prefill_nan=True, hook=trace)
++        m_out, m_y, m_act, _ = _lt_experts(x, tw, ids, state, prefill_nan=True, hook=trace)
+         torch.cuda.synchronize()
++        cur["stage"] = f"self-check compare T={tokens}"
+         local = r_local.reshape(-1) >= 0
+         size_k = n_y.shape[-1]
+         e_act = _row_rel(n_act[local], r_c2[local])
+@@ -909,9 +1113,9 @@ def _lt_self_check(weights, state, device):
+             and torch.equal(m_out, n_out)
+         worst = max(worst, e_act, e_y)
+         n_local_routes = int(local.sum())
+-        print(f"{LT_TAG}   self-check T={tokens}: {n_local_routes} local routes, act row rel {e_act:.2e}, "
+-              f"y row rel {e_y:.2e}, out global rel {e_out:.2e}, finite {finite}, local ids equal {same_ids}, "
+-              f"repeat identical {repeat}")
++        _lt_log(f"  self-check T={tokens}: {n_local_routes} local routes, act row rel {e_act:.2e}, "
++                f"y row rel {e_y:.2e}, out global rel {e_out:.2e}, finite {finite}, local ids equal {same_ids}, "
++                f"repeat identical {repeat}")
+         if not (finite and same_ids and repeat and e_act <= 1e-2 and e_y <= 1e-2 and e_out <= 5e-3):
+             ok = False
+             reason = (f"T={tokens}: act {e_act:.2e} y {e_y:.2e} out {e_out:.2e} finite {finite} "
+@@ -928,80 +1132,242 @@ def _lt_self_check(weights, state, device):
+             y_ref = n_act[rts].float() @ w2f.T
+             del w2f
+             f_act, f_y = _row_rel(n_act[rts], inter), _row_rel(n_y[rts], y_ref)
+-            print(f"{LT_TAG}   fp32-dequant T={tokens} expert {e}: {rts.numel()} routes, act {f_act:.2e} y {f_y:.2e}")
++            _lt_log(f"  fp32-dequant T={tokens} expert {e}: {rts.numel()} routes, act {f_act:.2e} y {f_y:.2e}")
+             worst = max(worst, f_act, f_y)
+             if max(f_act, f_y) > 1e-2:
+                 ok = False
+                 reason = f"fp32-dequant expert {e}: act {f_act:.2e} y {f_y:.2e}"
++        if not ok:
++            break  # do not launch more of a path that already failed
+     return ok, worst, reason
+ 
+ 
+ def _lt_timing(state, device):
+-    """Print-only eager timing of the expert block, CUDA path vs Marlin path (never routes)."""
++    """Print-only eager timing (warm L2) at T = 128 / 256: CUDA events around each launch of the CUDA
++    path, and the whole Marlin path for comparison (never routes)."""
+     gen = torch.Generator().manual_seed(7)
++    names = ("moe_route_list", "moe_w13_silu_swapab", "moe_w2_swapab", "post_expert_norm_weighted_sum")
++    iters = 20
+     for tokens in (128, 256):
+         ids = _lt_routing(tokens, gen).to(device)
+         x = torch.randn((tokens, D_EXPERT), generator=gen).to(torch.bfloat16).to(device)
+         tw = torch.full((tokens, TOP_K), 1.0 / TOP_K, device=device)
+-        res = {}
+-        for name, fn in (("cuda", lambda: _lt_experts(x, tw, ids, state)),
+-                         ("marlin", lambda: _marlin_experts(x, tw, ids, state))):
+-            for _ in range(3):
+-                fn()
+-            t0, t1 = torch.cuda.Event(enable_timing=True), torch.cuda.Event(enable_timing=True)
+-            t0.record()
+-            for _ in range(20):
+-                fn()
+-            t1.record()
+-            t1.synchronize()
+-            res[name] = t0.elapsed_time(t1) * 1000.0 / 20
+-        print(f"{LT_TAG} eager timing T={tokens} (synthetic routing, warm L2, print only): "
+-              f"cuda {res['cuda']:.1f} us, marlin {res['marlin']:.1f} us")
++        recs = []
++
++        def hook(name, fn):
++            e0, e1 = torch.cuda.Event(enable_timing=True), torch.cuda.Event(enable_timing=True)
++            e0.record()
++            out = fn()
++            e1.record()
++            recs.append((name, e0, e1))
++            return out
++
++        for _ in range(3):
++            _lt_experts(x, tw, ids, state)
++        for _ in range(iters):
++            _lt_experts(x, tw, ids, state, hook=hook)
++        for _ in range(3):
++            _marlin_experts(x, tw, ids, state)
++        m0, m1 = torch.cuda.Event(enable_timing=True), torch.cuda.Event(enable_timing=True)
++        m0.record()
++        for _ in range(iters):
++            _marlin_experts(x, tw, ids, state)
++        m1.record()
++        torch.cuda.synchronize()
++        per = dict.fromkeys(names, 0.0)
++        for name, e0, e1 in recs:
++            per[name] += e0.elapsed_time(e1) * 1000.0 / iters
++        replaced = per["moe_route_list"] + per["moe_w13_silu_swapab"] + per["moe_w2_swapab"]
++        _lt_log(f"eager event timing T={tokens} (synthetic routing, warm L2, print only): "
++                + ", ".join(f"{n} {per[n]:.1f} us" for n in names)
++                + f"; route+w13+w2 {replaced:.1f} us; marlin path total {m0.elapsed_time(m1) * 1000.0 / iters:.1f} us")
++
++
++def _lt_canaries(ext, device, cur):
++    """The canary ladder after the arch check: each launch adds one suspect form (cvt e4m3x2 ->
++    dequant8 bf16x2 multiply -> ldmatrix.x4 + mma.sync -> cp.async at 221 KB dyn smem / 256
++    threads), each checked bitwise or against a float64 reference. Returns (ok, reason)."""
++    gen = torch.Generator().manual_seed(20261025)
++    dummy = torch.zeros((16,), dtype=torch.uint8, device=device)
++    e2m1 = torch.tensor(_E2M1_GRID, dtype=torch.float64)
++
++    def to_i32(v):  # int64 values in [0, 2^32) -> int32 bit patterns
++        return ((v + 2 ** 31) % 2 ** 32 - 2 ** 31).to(torch.int32)
++
++    def nib_value(nib):
++        return torch.where((nib & 8) != 0, -1.0, 1.0).double() * e2m1[nib & 7]
++
++    # 4: cvt.rn.f16x2.e4m3x2, every non-NaN E4M3 byte (0x7F / 0xFF replaced by 0x00 / 0x80).
++    vals = [v for v in range(256) if v not in (0x7F, 0xFF)] + [0x00, 0x80]
++    src = torch.tensor(vals, dtype=torch.uint8)
++    ref = src.view(torch.float8_e4m3fn).float().to(torch.float16)
++    out = torch.zeros((256,), dtype=torch.float16, device=device)
++    a = src.to(device)
++    _lt_step(cur, "canary cvt.rn.f16x2.e4m3x2 (lt_canary_cvt)", lambda: ext.lt_canary(4, a, dummy, dummy, out))
++    if not torch.equal(out.cpu().view(torch.int16), ref.view(torch.int16)):
++        return False, "canary cvt.rn.f16x2.e4m3x2 mismatch"
++
++    # 5: dequant8 alone: exact bf16 products e2m1 * s * 2^-7 (s E4M3 normal, folded as s * 2^119).
++    n = 256
++    q = torch.randint(0, 2 ** 32, (n,), generator=gen, dtype=torch.int64)
++    s = torch.randint(0x20, 0x58, (2 * n,), generator=gen, dtype=torch.int64).to(torch.uint8) \
++        .view(torch.float8_e4m3fn).double()
++    sg_bits = (s * 2.0 ** 119).to(torch.bfloat16).view(torch.int16).to(torch.int64) & 0xFFFF
++    sg = to_i32(sg_bits | (sg_bits << 16))
++    ref = torch.empty((n, 4, 2), dtype=torch.float64)
++    for j in range(4):
++        for h in range(2):
++            nib = (q >> (4 * ((3 - j) + 4 * h))) & 0xF
++            ref[:, j, h] = nib_value(nib) * s.view(n, 2)[:, j & 1] * 2.0 ** -7
++    out = torch.zeros((4 * n,), dtype=torch.int32, device=device)
++    qd, sgd = to_i32(q).to(device), sg.to(device)
++    _lt_step(cur, "canary dequant8 bf16x2 multiply (lt_canary_dequant)", lambda: ext.lt_canary(5, qd, sgd, dummy, out))
++    got = out.cpu().view(torch.bfloat16).float()
++    if not torch.equal(got, ref.reshape(-1).to(torch.bfloat16).float()):
++        bad = int((got != ref.reshape(-1).to(torch.bfloat16).float()).sum())
++        return False, f"canary dequant8 mismatch ({bad} of {got.numel()} values)"
++
++    # 6: one 16x8x64 tile: scale cvt + dequant8 for A, ldmatrix.x4 from the swizzled slab for B, mma.sync.
++    a_nib = torch.randint(0, 16, (16, 64), generator=gen, dtype=torch.int64)
++    s_bytes = torch.randint(0x30, 0x48, (16, 4), generator=gen, dtype=torch.int64)
++    s_val = s_bytes.to(torch.uint8).view(torch.float8_e4m3fn).double()
++    a_val = nib_value(a_nib) * s_val.repeat_interleave(16, dim=1) * 2.0 ** -7
++    b_bf = torch.randn((8, 64), generator=gen).to(torch.bfloat16)
++    ref = a_val @ b_bf.double().T  # [16 rows][8 tokens]
++    qw = torch.zeros((32, 4), dtype=torch.int64)
++    sc = torch.zeros((32, 8), dtype=torch.uint8)
++    for lane in range(32):
++        g, t4 = lane >> 2, lane & 3
++        for st in range(4):
++            w = 0
++            for i in range(4):
++                for h in range(2):
++                    row, k = g + 8 * (i & 1), 16 * st + 2 * t4 + 8 * (i >> 1) + h
++                    w |= int(a_nib[row, k]) << (4 * ((3 - i) + 4 * h))
++            qw[lane, st] = w
++            for rh in range(2):
++                sc[lane, 2 * st + rh] = int(s_bytes[g + 8 * rh, st])
++    out = torch.zeros((16 * 8,), dtype=torch.float32, device=device)
++    qd, scd, bd = to_i32(qw.reshape(-1)).to(device), sc.reshape(-1).to(device), b_bf.reshape(-1).to(device)
++    _lt_step(cur, "canary ldmatrix.x4 + mma.sync m16n8k16 tile (lt_canary_mma)",
++             lambda: ext.lt_canary(6, qd, scd, bd, out))
++    e_mma = _row_rel(out.cpu().double().view(16, 8), ref)
++    _lt_log(f"  canary mma tile row rel {e_mma:.2e} (bound 1e-4)")
++    if not e_mma <= 1e-4:
++        return False, f"canary mma tile row rel {e_mma:.2e}"
++
++    # 7: cp.async.cg / .ca / .ca zero-fill at 221184 B dynamic smem, 256 threads, 1 CTA.
++    src = torch.randint(0, 256, (LT_SMEM_BYTES,), generator=gen, dtype=torch.int64).to(torch.uint8)
++    exp = src.view(-1, 16).clone()
++    exp[63::64] = 0
++    exp = exp.flip(0).reshape(-1)
++    srcd = src.to(device)
++    out = torch.zeros((LT_SMEM_BYTES,), dtype=torch.uint8, device=device)
++    _lt_step(cur, f"canary cp.async at {LT_SMEM_BYTES} B dyn smem x {LT_THREADS} threads (lt_canary_cpasync)",
++             lambda: ext.lt_canary(7, srcd, dummy, dummy, out))
++    if not torch.equal(out.cpu(), exp):
++        return False, "canary cp.async mismatch"
++    return True, "canaries passed"
++
++
++def _lt_arch_check(ext, device, cur):
++    """Confirm the sm_90a image loaded: device capability, the build flags, every kernel's
++    binaryVersion / ptxVersion and the dynamic smem attribute, then the arch probe launch
++    (__CUDA_ARCH__ == 900 and the sm_90a feature macro set). Returns (ok, reason)."""
++    cap = tuple(torch.cuda.get_device_capability(device))
++    _lt_log(f"device capability {cap}, torch {torch.__version__}, cuda {torch.version.cuda}, "
++            f"build flags {LT_CUDA_FLAGS}")
++    cur["stage"] = "lt_init (cudaFuncSetAttribute / cudaFuncGetAttributes)"
++    info = ext.lt_init()
++    optin = info[0]
++    _lt_log(f"device max dynamic smem per block (opt-in) {optin} B; GEMMs request {LT_SMEM_BYTES} B")
++    ok, reason = cap == (9, 0), "" if cap == (9, 0) else f"capability {cap} != (9, 0)"
++    for i in range(1, len(info), 9):
++        which, a_ok, regs, local_bytes, smem, max_dyn, bin_v, ptx_v, static_smem = info[i:i + 9]
++        name = LT_KERNELS[which]
++        _lt_log(f"kernel {name}: attrs ok {bool(a_ok)}, binaryVersion {bin_v}, ptxVersion {ptx_v}, numRegs {regs}, "
++                f"localSizeBytes {local_bytes}{' (SPILL, not fatal)' if local_bytes > 0 else ''}, "
++                f"static smem {static_smem} B, dyn smem requested {smem} B, maxDynamicSharedSizeBytes {max_dyn} B")
++        if not a_ok:
++            ok, reason = False, reason or f"{name}: cudaFuncSetAttribute / cudaFuncGetAttributes failed"
++        # ptxVersion is logged only: its value for a PTX-less sm_90a cubin is not documented, and
++        # the arch probe below proves the image anyway.
++        if bin_v != 90:
++            ok, reason = False, reason or f"{name}: binaryVersion {bin_v} (ptxVersion {ptx_v}), not the sm_90a image"
++        if smem > 0 and max_dyn < smem:
++            ok, reason = False, reason or f"{name}: maxDynamicSharedSizeBytes {max_dyn} < {smem}"
++    if not ok:
++        return False, reason
++    probe = torch.zeros((2,), dtype=torch.int32, device=device)
++    dummy = torch.zeros((16,), dtype=torch.uint8, device=device)
++    _lt_step(cur, "lt_arch_probe", lambda: ext.lt_canary(3, dummy, dummy, dummy, probe))
++    arch, feat = (int(v) for v in probe.cpu())
++    _lt_log(f"arch probe: __CUDA_ARCH__ {arch}, __CUDA_ARCH_FEAT_SM90_ALL {feat}")
++    if arch != 900 or feat != 1:
++        return False, f"arch probe {arch} / feat {feat}: not the sm_90a image"
++    return True, "sm_90a image"
+ 
+ 
+ def _lt_setup(weights, state, device):
+-    """Build, retile and self-check the CUDA large-T path; sets state['moe_cuda_large_t']. On any
+-    failure every T keeps master's Marlin path. Nothing here sees any input."""
++    """Build, check the loaded image, run the canary ladder, retile and self-check the CUDA
++    large-T path; sets state['moe_cuda_large_t']. On any failure every T keeps master's Marlin
++    path. Nothing here sees any input. Each launch is announced (flushed) before it starts and
++    synchronized and confirmed after, so a sticky fault (which no except can recover) still names
++    its launch in the log."""
+     state["moe_cuda_large_t"] = False
+     ok, secs, worst, reason = False, 0.0, float("nan"), ""
++    cur = {"stage": "build"}
+     try:
+         if weights["w13"].shape[0] != LOCAL_EXPERTS or weights["w13"].shape[1] % 128 or weights["w2"].shape[1] % 128:
+             raise RuntimeError(f"unexpected expert shapes {tuple(weights['w13'].shape)} / {tuple(weights['w2'].shape)}")
+         ext, secs = _lt_build()
+         if ext is None:
+             raise RuntimeError("load_inline failed")
+-        info = ext.lt_init()
+-        names = ("moe_route_list", "moe_w13_silu_swapab", "moe_w2_swapab")
+-        attrs_ok = True
+-        for i in range(0, len(info), 5):
+-            which, a_ok, regs, local_bytes, smem = info[i:i + 5]
+-            print(f"{LT_TAG} kernel {names[which]}: attrs ok {bool(a_ok)}, numRegs {regs}, localSizeBytes "
+-                  f"{local_bytes}{' (SPILL, not fatal)' if local_bytes > 0 else ''}, dynamic smem {smem} B")
+-            attrs_ok = attrs_ok and bool(a_ok)
+-        if not attrs_ok:
+-            raise RuntimeError("cudaFuncSetAttribute / cudaFuncGetAttributes failed")
+-        t0 = time.perf_counter()
+-        state["lt_bank"] = _lt_bank(weights)
+-        torch.cuda.synchronize()
+-        print(f"{LT_TAG} retiled {LOCAL_EXPERTS} experts losslessly (round trips exact) in "
+-              f"{time.perf_counter() - t0:.1f}s")
+-        state["lt_ext"] = ext
+-        state["lt_grid"] = torch.cuda.get_device_properties(device).multi_processor_count
+-        print(f"{LT_TAG} grid {state['lt_grid']} persistent CTAs x {LT_THREADS} threads, chunk {LT_CHUNK} routes")
+-        ok, worst, reason = _lt_self_check(weights, state, device)
+-        torch.cuda.synchronize()
++        ok, reason = _lt_arch_check(ext, device, cur)
++        if ok:
++            ok, reason = _lt_canaries(ext, device, cur)
++        if ok:
++            cur["stage"] = "retile"
++            t0 = time.perf_counter()
++            state["lt_bank"] = _lt_bank(weights)
++            torch.cuda.synchronize()
++            _lt_log(f"retiled {LOCAL_EXPERTS} experts losslessly (round trips exact) in "
++                    f"{time.perf_counter() - t0:.1f}s")
++            state["lt_ext"] = ext
++            state["lt_grid"] = torch.cuda.get_device_properties(device).multi_processor_count
++            _lt_log(f"grid {state['lt_grid']} persistent CTAs x {LT_THREADS} threads, chunk {LT_CHUNK} routes")
++            # Smallest T above the gate: the three kernels as separate announced launches.
++            tokens = MOE_CUDA_LARGE_T_MIN + 1
++            gen = torch.Generator().manual_seed(33)
++            ids = _lt_routing(tokens, gen).to(device)
++            x = torch.randn((tokens, weights["w2"].shape[1]), generator=gen).to(torch.bfloat16).to(device)
++            tw = torch.full((tokens, TOP_K), 1.0 / TOP_K, device=device)
++            c_out, c_y, c_act, c_local = _lt_experts(x, tw, ids, state, prefill_nan=True,
++                                                     hook=_lt_tracer(cur, tokens))
++            loc = c_local.reshape(-1) >= 0
++            fin = bool(torch.isfinite(c_act[loc]).all()) and bool(torch.isfinite(c_y[loc]).all()) \
++                and bool(torch.isfinite(c_out).all())
++            _lt_log(f"  canary T={tokens}: {int(loc.sum())} local routes, finite {fin}")
++            if not fin:
++                ok, reason = False, f"canary T={tokens}: non-finite act / y / out"
++        if ok:
++            ok, worst, reason = _lt_self_check(weights, state, device, cur)
+         if ok:
++            cur["stage"] = "timing"
+             try:
+                 _lt_timing(state, device)
+             except Exception as e:  # print-only
+-                print(f"{LT_TAG} timing skipped: {e!r}")
++                _lt_log(f"timing skipped: {e!r}")
++        cur["stage"] = "done"
+     except Exception as e:
+         reason = f"setup raised {e!r}"
+         ok = False
+     state["moe_cuda_large_t"] = ok
+-    print(f"{LT_TAG} {'ON' if ok else 'OFF'}: compile {secs:.1f}s, max row rel {worst:.3e} (bound 1e-2), {reason}")
+-    print(f"{LT_TAG} PATH CHOSEN = {'CUDA' if ok else 'MARLIN'} for tokens > {MOE_CUDA_LARGE_T_MIN}; "
+-          f"MARLIN at tokens <= {MOE_CUDA_LARGE_T_MIN}")
++    fault = "none" if ok or cur["stage"] == "done" else cur["stage"]
++    _lt_log(f"{'ON' if ok else 'OFF'}: compile {secs:.1f}s, max row rel {worst:.3e} (bound 1e-2), "
++            f"last launch / stage {fault}, {reason}")
++    _lt_log(f"PATH CHOSEN = {'CUDA' if ok else 'MARLIN'} for tokens > {MOE_CUDA_LARGE_T_MIN}; "
++            f"MARLIN at tokens <= {MOE_CUDA_LARGE_T_MIN}")
+ 
+ 
+ def prepare(weights):
