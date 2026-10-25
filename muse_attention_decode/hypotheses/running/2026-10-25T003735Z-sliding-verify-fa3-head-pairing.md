@@ -39,7 +39,7 @@ review: proceed
 status: running
 review_at: 2026-10-25T003958Z
 review_companions: null
-stage: claimed
+stage: implemented
 claimed_at: 2026-10-25T003958Z
 base_sha: 475f0ab5e572555bb2f4a4398a88bef1075a71ec
 base_blob: c6854f093588da524e63657576b27ed720756e32
@@ -48,6 +48,12 @@ worktree: .worktrees/muse_attention_decode/sliding-verify-fa3-head-pairing
 mode: null
 restack_of: null
 stale_base: null
+implemented_at: 2026-10-25T004113Z
+impl_commit: caf807d5b965848dcb78405a81d3ca6c7ac23eeb
+submission_sha256: ef69412772ca9c6b109cb296da04e0a07d074c41f0933529d9c4b6346289c89a
+norm_sha256: 806493371ac7e553b1bc582cb6c50993cc10af38ac4309ce25ec7ccdcd887bad
+submission_blob: 226b4fca72a4d3ae8e6959e40ed84c7eee7ba72f
+lint_warnings: 0
 ---
 
 # sliding-verify-fa3-head-pairing
@@ -91,3 +97,20 @@ No companion warranted. Harvest on sliding verify_16/32 per-shape ratios and FA3
 - The kv_scale 1/64 sliding verify test exercises descale (B,1) under a local window; a failure there points at descale.
 - LESSONS 103-105 attributes the batch-1 pairing loss to launches, but post-cleanup rows show FA3 main +21% and combine +70%; consider correcting that lesson.
 
+
+## Implementation notes
+
+In the worktree's muse_attention_decode/submission.py, `kernel_fn` now sets `paired = hkv % 2 == 0 and batch > 1 and not splitkv`. The `window == 0` term is gone, and a 2-line comment was added. That is the whole diff (+3/-1). There is no deviation from the spec. Sliding decode still returns through `_sliding_forward` before reaching this line. `_splitkv_gate` covers full decode only. The paired branch is master code. The sliding `window_size=(window - 1, 0)` and `scheduler_metadata=None` handling were not touched.
+
+## Rules check
+
+- [x] CUDA-graph capturable: the diff changes one shape/config predicate only. No syncs, no input-value control flow.
+- [x] Nothing derived from `data` is cached across calls: the diff adds no state.
+- [x] Weights: n/a, no weight change.
+- [x] KV cache stays FP8, queries stay FP8 (E4M3): the pre-attention kernel and `FP8` dtype are unchanged.
+- [x] Attention sees every key: the window is the same per-position `(window - 1, 0)`, and the zero query half adds exactly 0 to each logit.
+- [x] No timing patches, harness access, subprocesses or network: none added.
+- [x] All work inside the timed call, no output caching or replay.
+- [x] No child process, no triton.autotune.
+
+okc_lint output: `CLEAN: muse_attention_decode/submission.py`. py_compile passed and __pycache__ was removed.
