@@ -60,10 +60,10 @@ controls_for: null
 rewrite_stage: 1
 replaces: "flash_attn_with_kvcache (FA3 cutlass::device_kernel<flash::...> + FlashAttnFwdCombine) on full-attention layers at page_size 1"
 review: proceed
-status: running
+status: done
 review_at: 2026-10-25T002053Z
 review_companions: null
-stage: dispatched
+stage: harvested
 claimed_at: 2026-10-25T002053Z
 base_sha: 87125eea89ead0362371bb80cf6433cc316b0496
 base_blob: db8a3344398bca79ea5cafeb580f701c055fd475
@@ -82,6 +82,13 @@ attempt_file: 2026-10-25T003224Z-check-attn-full-prefill-cuda-fp8-wgmma-hard-gat
 prepared_at: 2026-10-25T003224Z
 job: 306cbde58aff4fa4
 dispatched_at: 2026-10-25T003235Z
+outcome: neutral
+verdict_detail: within-ci
+speedup: 1.067909586990599
+speedup_ci: [1.05189094318574, 1.0839282307954579]
+harvested_at: 2026-10-25T010420Z
+best_at_harvest: 1.074386115190733
+promotion: null
 ---
 
 # attn-full-prefill-cuda-fp8-wgmma-hard-gate-inproc
@@ -190,3 +197,32 @@ Checked and found OK:
 - **Fallbacks and capture.** Build, image, canary, self-check and per-class gate failures each land on FA3 and print OFF or PATH CHOSEN. No process is started (load_inline's nvcc is the sanctioned build). kernel_fn adds only torch.empty and two launches on the current stream, so it is graph-capturable.
 
 Residual risk: a sticky illegal-instruction or async fault in the first wgmma canary launch cannot be recovered in-process and would fail the run. This is bounded by running it as an okc check.
+
+## Result
+
+- job `306cbde58aff4fa4` (check), status done, passed True, tests 5/5
+- speedup 1.0679x, 95% CI [1.0519, 1.0839], score 362768.4447441995 µs vs SGLang 387403.9 µs
+- best at harvest: {"speedup": 1.074386115190733, "ci": [1.058270323462872, 1.090501906918594], "job": "502f2eab95164781"}; base result: muse_prefill_layer/hypotheses/done/neutral/stack-tonight-five-prefill.result.json
+- **outcome: neutral** (within-ci)
+- files: `muse_prefill_layer/hypotheses/done/neutral/attn-full-prefill-cuda-fp8-wgmma-hard-gate-inproc.result.json`, `muse_prefill_layer/hypotheses/done/neutral/attn-full-prefill-cuda-fp8-wgmma-hard-gate-inproc.patch`; branch `hyp/muse_prefill_layer/attn-full-prefill-cuda-fp8-wgmma-hard-gate-inproc`
+
+## Attribution
+
+| shape | w | base µs | hyp µs | delta | verdict |
+|---|---|---|---|---|---|
+| batch=1 ctx=80000 dist=soft layer=sliding load=turn_1 page=1 q_len=753 repeats=6 | 46 | 1101.29 | 1086.96 | 0.999 | flat |
+| batch=1 ctx=80000 dist=soft layer=full load=turn_1 page=1 q_len=753 repeats=6 | 16 | 1529.55 | 1495.7 | 0.9956 | flat |
+| batch=4 ctx=80000 dist=soft layer=sliding load=turn_4 page=1 q_len=753 repeats=6 | 46 | 3318.71 | 3440.54 | 0.9985 | flat |
+| batch=4 ctx=80000 dist=soft layer=full load=turn_4 page=1 q_len=753 repeats=6 | 16 | 4849.27 | 4899.93 | 0.9988 | flat |
+| batch=1 ctx=0 dist=soft layer=full load=first_turn page=1 q_len=16384 repeats=6 | 16 | 14705.32 | 14324.85 | 0.9966 | flat |
+| batch=1 ctx=32768 dist=soft layer=sliding load=first_turn page=1 q_len=16384 repeats=6 | 138 | 14264.64 | 14079.68 | 1.001 | flat |
+| batch=1 ctx=32768 dist=soft layer=full load=first_turn page=1 q_len=16384 repeats=6 | 16 | 17746.69 | 17910.85 | 0.9805 | flat |
+| batch=1 ctx=65536 dist=soft layer=full load=first_turn page=1 q_len=16384 repeats=6 | 16 | 21733.75 | 21410.67 | 0.9805 | flat |
+
+no shape moved outside noise. Expected hit: 0/2. Noise ±1.5%.
+
+## Follow-ups
+
+- rewrite stage 1 of `flash_attn_with_kvcache (FA3 cutlass::device_kernel<flash::...> + FlashAttnFwdCombine) on full-attention layers at page_size 1`: read the replaced kernels' own us per shape (profile top_kernels) against the incumbent and the floor, and check which Milestone it reached. The next stage is `/hypothesize muse_prefill_layer "<what to fix or tune>" --kind rewrite --depends-on attn-full-prefill-cuda-fp8-wgmma-hard-gate-inproc --stage 2`; a slow or failed first cut is the expected start, not a do-not-retry.
+- within-ci: the change is not proven either way; a stacked hypothesis (`depends_on: attn-full-prefill-cuda-fp8-wgmma-hard-gate-inproc`) that adds a further change in the same area is the only way to learn more (identical code is never re-run).
+

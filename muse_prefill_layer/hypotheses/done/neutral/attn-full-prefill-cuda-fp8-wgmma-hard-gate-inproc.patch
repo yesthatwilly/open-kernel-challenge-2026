@@ -1,0 +1,1088 @@
+diff --git a/muse_prefill_layer/submission.py b/muse_prefill_layer/submission.py
+index db8a334..f3e8bf0 100644
+--- a/muse_prefill_layer/submission.py
++++ b/muse_prefill_layer/submission.py
+@@ -19,7 +19,12 @@ Everything else is SGLang's pipeline as baseline.py composes it:
+                                    with the interleaved RoPE fused in on sliding layers
+   cache store, q to FP8            as FlashAttentionBackend and set_kv_buffer do for an FP8 cache
+                                    (cast, then the store_cache JIT kernel at the step's rows)
+-  flash_attn_with_kvcache (FA3)    paged, causal, window (2047, 0) on sliding layers
++  flash_attn_with_kvcache (FA3)    paged, causal, window (2047, 0) on sliding layers; on full
++                                   layers at page size 1 and kv_scale 1 a hand-written CUDA FP8
++                                   wgmma flash-attention kernel with split-KV instead, only on the
++                                   shape classes where prepare()'s cold-L2 graph timing measured it
++                                   at <= 0.92x FA3 (hypothesis
++                                   attn-full-prefill-cuda-fp8-wgmma-hard-gate-inproc)
+   FusedRMSNormGate (JIT)           per-head output norm x sigmoid(gate)
+   o projection                     bf16_gemm_dispatch; then the all-reduce (identity here)
+   FusedPostNormResidualPreNorm     post-attention norm + residual gate + pre-FFN norm (JIT)
+@@ -48,6 +53,9 @@ Differs from SGLang (as baseline.py does):
+ 
+ from typing import TypedDict
+ 
++import os
++import statistics
++import time
+ import types
+ 
+ import nvfp4
+@@ -546,7 +554,997 @@ def _weighted_sum_skips_remote(state, device):
+         return False
+ 
+ 
++# ---------------------------------------------------------------------------------------------
++# Full-attention prefill in CUDA (hypothesis attn-full-prefill-cuda-fp8-wgmma-hard-gate-inproc,
++# rewrite stage 1b: the wgmma kernel of attn-full-prefill-cuda-fp8-exp-offload with the sm_90a build
++# fix, no mma.sync backend, no software exp, an in-process guarded first launch and a hard per-shape
++# timing gate). Replaces flash_attn_with_kvcache (FA3 + its combine) on full layers at page size 1
++# and kv_scale 1, and only on the shape classes where prepare()'s cold-L2 CUDA-graph timing measured
++# it at <= ATTN_GATE_RATIO x FA3; every other case keeps FA3 exactly as master calls it.
++#
++# attn_fwd_kernel: one CTA (256 threads, 8 warps = 2 warpgroups) per work item x KV split. An item is
++# 16 consecutive query tokens of one request x the 8 query heads that share one KV head (128 query
++# rows, GQA-packed: every gathered 64-byte K/V row feeds 8 heads). Warp w owns rows 16w .. 16w+15 =
++# tokens 2w (rows g = head g) and 2w + 1 (rows g + 8), so the causal mask is per token. The grid is
++# ordered longest token block first, so the causal tail packs in behind the long items. Keys stream
++# in 64-key tiles through a 4-stage cp.async ring (16-byte gathers of page-size-1 rows; the
++# page-table entry of the next tile is prefetched into a register one tile ahead): K lands in the
++# MMA core-matrix layout (8 keys x 16 bytes contiguous), V lands row-major and is transposed once
++# per tile into Vt (dims x keys, the same core-matrix layout) with the keys permuted so that the S
++# accumulator fragment of Q K^T is directly the A fragment of P V. S = Q K^T and O += P V run on FP8
++# E4M3 wgmma m64n64k32 (A from registers, B from a no-swizzle smem descriptor). Queries are the E4M3
++# rounding of the normalized query, as master feeds FA3. Softmax is online in the exp2 domain with
++# FA3's FP8 max offset (P = 2^(x - max + 8), so P in [0, 256] uses the E4M3 range; O and l carry the
++# same 256 and it cancels); every exponential is on MUFU (ex2.approx); P is rounded to E4M3 for the
++# PV MMA (FA3's own P precision) and l is summed in FP32. Every key in [0, position] is attended.
++# The wgmma code exists only in the sm_90a image (__CUDA_ARCH_FEAT_SM90_ALL); any other image's
++# kernel writes 1 to an error word and returns, and prepare() turns the path OFF when it sees it.
++# attn_combine_kernel (split items only): log-sum-exp merge of an item's split partials, bf16 out.
++# ---------------------------------------------------------------------------------------------
++
++LOG2E = 1.4426950408889634
++ATTN_TOK = 16          # query tokens per item (must match TOK in the CUDA source)
++ATTN_ROWS = 128        # query rows per item (TOK x 8 heads)
++ATTN_WAVES = 8         # split-KV target: about this many CTAs per SM (config + device only)
++ATTN_MAX_SPLITS = 16
++ATTN_MIN_SPLIT_KEYS = 256
++ATTN_ARCH_LIST = "9.0a"          # TORCH_CUDA_ARCH_LIST around load_inline: only compute_90a / sm_90a
++ATTN_EXT_NAME = "muse_prefill_full_attn_wgmma_sm90a_v2"
++ATTN_GATE_RATIO = 0.92           # route a shape class to CUDA only at <= this x FA3 (graph, cold L2)
++ATTN_GATE_REPS = 25              # timed replays per path per class (median)
++ATTN_CTX_BUCKET = 16384          # page-table width bucket: round((width - q_len) / this)
++
++_ATTN_CPP = r"""
++#include <torch/extension.h>
++#include <vector>
++void attn_fwd(torch::Tensor q, torch::Tensor k_cache, torch::Tensor v_cache, torch::Tensor page_table,
++              torch::Tensor cache_seqlens, torch::Tensor cu_seqlens_q, torch::Tensor out,
++              torch::Tensor ws_o, torch::Tensor ws_ml, torch::Tensor err, int64_t ntb, int64_t nsplit,
++              double scale_log2, int64_t desc_swap);
++void attn_combine(torch::Tensor ws_o, torch::Tensor ws_ml, torch::Tensor cu_seqlens_q, torch::Tensor out,
++                  int64_t batch, int64_t ntb, int64_t nsplit);
++std::vector<int64_t> kernel_info();
++"""
++
++_ATTN_CUDA = r"""
++#include <torch/extension.h>
++#include <ATen/cuda/CUDAContext.h>
++#include <c10/cuda/CUDAException.h>
++#include <cuda_bf16.h>
++#include <cuda_fp8.h>
++#include <cstdint>
++#include <vector>
++
++// wgmma is arch-specific: it exists only in the sm_90a device pass. Any other pass (a stray plain
++// sm_90 gencode, or the host pass) compiles the error-flag stub of attn_fwd_kernel instead.
++#if defined(__CUDA_ARCH_FEAT_SM90_ALL)
++#define ATTN_SM90A 1
++#else
++#define ATTN_SM90A 0
++#endif
++
++namespace {
++
++constexpr int D = 64;                    // head dim
++constexpr int HQ = 16;                   // query heads
++constexpr int HKV = 2;                   // kv heads
++constexpr int G = HQ / HKV;              // query heads per kv head (8)
++constexpr int ROW = HKV * D;             // bytes per cache row (page size 1: both kv heads)
++constexpr int TOK = 16;                  // query tokens per item
++constexpr int ROWS = TOK * G;            // query rows per item (128)
++constexpr int KT = 64;                   // keys per tile
++constexpr int STAGES = 4;
++constexpr int THREADS = 256;
++constexpr int TILE_BYTES = KT * D;       // one head's K (or V) tile: 4 KB
++constexpr int K_OFF = 0;
++constexpr int V_OFF = STAGES * TILE_BYTES;
++constexpr int VT_OFF = 2 * STAGES * TILE_BYTES;
++constexpr int SMEM = VT_OFF + TILE_BYTES;  // 36 KB (no opt-in attribute needed)
++constexpr float P_OFFSET = 8.0f;          // FA3's FP8 max offset: P = 2^(x - max + 8)
++
++__device__ __forceinline__ uint32_t smem_u32(const void* p) {
++  return static_cast<uint32_t>(__cvta_generic_to_shared(p));
++}
++__device__ __forceinline__ void cp_async16(uint32_t dst, const void* src, int src_bytes) {
++  asm volatile("cp.async.cg.shared.global [%0], [%1], 16, %2;\n" :: "r"(dst), "l"(src), "r"(src_bytes) : "memory");
++}
++__device__ __forceinline__ void cp_commit() { asm volatile("cp.async.commit_group;\n" ::: "memory"); }
++template <int N>
++__device__ __forceinline__ void cp_wait() { asm volatile("cp.async.wait_group %0;\n" :: "n"(N) : "memory"); }
++__device__ __forceinline__ uint32_t lds32(const uint8_t* p) { return *reinterpret_cast<const uint32_t*>(p); }
++__device__ __forceinline__ void sts32(uint8_t* p, uint32_t v) { *reinterpret_cast<uint32_t*>(p) = v; }
++
++// Core-matrix layout of a [64 rows][64 bytes] tile (rows = keys of K, or dims of Vt): the 8-row x
++// 16-byte core matrices are contiguous; K-adjacent ones (next 16 bytes) are 128 bytes apart (the
++// descriptor's LBO), row-adjacent ones (next 8 rows) 512 bytes apart (SBO). No swizzle.
++__device__ __forceinline__ int cm_off(int row, int byte) {
++  return (row >> 3) * 512 + (byte >> 4) * 128 + (row & 7) * 16 + (byte & 15);
++}
++
++__device__ __forceinline__ float ex2_hw(float x) {
++  float y;
++  asm("ex2.approx.ftz.f32 %0, %1;" : "=f"(y) : "f"(x));
++  return y;
++}
++
++// Four floats -> four E4M3 bytes, a in byte 0 .. d in byte 3 (satfinite; P <= 256 < 448).
++__device__ __forceinline__ uint32_t pack_e4m3x4(float a, float b, float c, float d) {
++  const uint32_t lo = __nv_cvt_float2_to_fp8x2(make_float2(a, b), __NV_SATFINITE, __NV_E4M3);
++  const uint32_t hi = __nv_cvt_float2_to_fp8x2(make_float2(c, d), __NV_SATFINITE, __NV_E4M3);
++  return (lo & 0xffffu) | (hi << 16);
++}
++
++#if ATTN_SM90A
++__device__ __forceinline__ void wg_fence() { asm volatile("wgmma.fence.sync.aligned;\n" ::: "memory"); }
++__device__ __forceinline__ void wg_commit() { asm volatile("wgmma.commit_group.sync.aligned;\n" ::: "memory"); }
++__device__ __forceinline__ void wg_wait0() { asm volatile("wgmma.wait_group.sync.aligned 0;\n" ::: "memory"); }
++__device__ __forceinline__ void fence_async_smem() { asm volatile("fence.proxy.async.shared::cta;\n" ::: "memory"); }
++__device__ __forceinline__ void reg_fence(float (&d)[32]) {
++#pragma unroll
++  for (int i = 0; i < 32; ++i) asm volatile("" : "+f"(d[i]) :: "memory");
++}
++// Shared-memory matrix descriptor: start >> 4 (bits 0-13), LBO >> 4 (16-29), SBO >> 4 (32-45),
++// base offset 0, layout type 0 (no swizzle / interleave). For a K-major no-swizzle operand LBO is
++// the K-direction core-matrix stride (128 here) and SBO the M/N-direction one (512). desc_swap = 1
++// swaps the two fields: a runtime hedge, tried by prepare() only if the documented order fails.
++__device__ __forceinline__ uint64_t desc_strides(int desc_swap) {
++  const uint64_t lbo = desc_swap ? 512 : 128, sbo = desc_swap ? 128 : 512;
++  return ((lbo >> 4) << 16) | ((sbo >> 4) << 32);
++}
++__device__ __forceinline__ uint64_t cm_desc(uint32_t saddr, uint64_t strides) {
++  return static_cast<uint64_t>((saddr & 0x3FFFF) >> 4) | strides;
++}
++// D[64 x 64] (+)= A[64 x 32] B[32 x 64]: A E4M3 from registers (per warp the m16n8k32 A fragment of
++// its 16 rows), B E4M3 K-major from shared memory, FP32 accumulate. scale_d = 0 overwrites D.
++__device__ __forceinline__ void wgmma_rs(float (&d)[32], const uint32_t (&a)[4], uint64_t desc, int scale_d) {
++  asm volatile(
++      "{\n"
++      ".reg .pred p;\n"
++      "setp.ne.b32 p, %37, 0;\n"
++      "wgmma.mma_async.sync.aligned.m64n64k32.f32.e4m3.e4m3 "
++      "{%0, %1, %2, %3, %4, %5, %6, %7, %8, %9, %10, %11, %12, %13, %14, %15, "
++      "%16, %17, %18, %19, %20, %21, %22, %23, %24, %25, %26, %27, %28, %29, %30, %31}, "
++      "{%32, %33, %34, %35}, %36, p, 1, 1;\n"
++      "}\n"
++      : "+f"(d[0]), "+f"(d[1]), "+f"(d[2]), "+f"(d[3]), "+f"(d[4]), "+f"(d[5]), "+f"(d[6]), "+f"(d[7]),
++        "+f"(d[8]), "+f"(d[9]), "+f"(d[10]), "+f"(d[11]), "+f"(d[12]), "+f"(d[13]), "+f"(d[14]), "+f"(d[15]),
++        "+f"(d[16]), "+f"(d[17]), "+f"(d[18]), "+f"(d[19]), "+f"(d[20]), "+f"(d[21]), "+f"(d[22]), "+f"(d[23]),
++        "+f"(d[24]), "+f"(d[25]), "+f"(d[26]), "+f"(d[27]), "+f"(d[28]), "+f"(d[29]), "+f"(d[30]), "+f"(d[31])
++      : "r"(a[0]), "r"(a[1]), "r"(a[2]), "r"(a[3]), "l"(desc), "r"(scale_d));
++}
++#endif  // ATTN_SM90A
++
++__global__ void __launch_bounds__(THREADS, 2)
++attn_fwd_kernel(const uint8_t* __restrict__ q,           // e4m3 [T, HQ, D]
++                const uint8_t* __restrict__ kc,          // e4m3 [rows, HKV, D]
++                const uint8_t* __restrict__ vc,          // e4m3 [rows, HKV, D]
++                const int* __restrict__ page_table, int64_t pt_stride,
++                const int* __restrict__ seqlens,         // [B] cached + new keys
++                const int* __restrict__ cu_q,            // [B + 1]
++                int B, int ntb, int nsplit, float scale_log2, int desc_swap,
++                __nv_bfloat16* __restrict__ out,         // [T, HQ, D]
++                float* __restrict__ ws_o,                // [items * nsplit * ROWS, D] (split only)
++                float* __restrict__ ws_ml,               // [items * nsplit * ROWS, 2]
++                int* __restrict__ err) {                 // [1]: set to 1 by a non-sm_90a image
++#if ATTN_SM90A
++  extern __shared__ __align__(128) uint8_t smem[];
++  const uint32_t sbase = smem_u32(smem);
++  const float NEG_INF = __int_as_float(0xff800000u);
++  const int tid = threadIdx.x, lane = tid & 31, warp = tid >> 5;
++  const int g = lane >> 2, t = lane & 3;
++
++  // CTA -> (split, kv head, request, token block); the last token block first.
++  int x = blockIdx.x;
++  const int split = x % nsplit; x /= nsplit;
++  const int hk = x % HKV; x /= HKV;
++  const int b = x % B; x /= B;
++  const int tb = ntb - 1 - x;
++  const uint64_t dstr = desc_strides(desc_swap);
++
++  const int q0 = cu_q[b];
++  const int qlen = cu_q[b + 1] - q0;
++  const int past = seqlens[b] - qlen;               // cached keys before the block
++  const int tok0 = tb * TOK;
++  const int last = min(tok0 + TOK, qlen) - 1;       // last valid token of the item
++  const int nk = last >= tok0 ? past + last + 1 : 0;  // keys the item can see (causal)
++  int chunk = (nk + nsplit - 1) / nsplit;
++  chunk = (chunk + KT - 1) / KT * KT;
++  const int k_lo = split * chunk;
++  const int k_hi = min(nk, k_lo + chunk);
++  const int ntiles = k_hi > k_lo ? (k_hi - k_lo + KT - 1) / KT : 0;
++
++  // This thread's two query rows: token tA (head g) and token tB = tA + 1 (head g).
++  const int tA = tok0 + 2 * warp, tB = tA + 1;
++  const int posA = past + tA, posB = past + tB;     // a key at position <= pos is visible
++  const bool vA = tA < qlen, vB = tB < qlen;
++
++  // Q fragments (m16n8k32 A layout): [ks][0] row g dims 32ks + 4t..+3, [1] row g+8, [2]/[3] + 16.
++  uint32_t qa[2][4];
++  {
++    const uint8_t* ra = q + ((int64_t)(q0 + (vA ? tA : 0)) * HQ + hk * G + g) * D + 4 * t;
++    const uint8_t* rb = q + ((int64_t)(q0 + (vB ? tB : 0)) * HQ + hk * G + g) * D + 4 * t;
++#pragma unroll
++    for (int ks = 0; ks < 2; ++ks) {
++      qa[ks][0] = vA ? __ldg(reinterpret_cast<const unsigned int*>(ra + ks * 32)) : 0u;
++      qa[ks][1] = vB ? __ldg(reinterpret_cast<const unsigned int*>(rb + ks * 32)) : 0u;
++      qa[ks][2] = vA ? __ldg(reinterpret_cast<const unsigned int*>(ra + ks * 32 + 16)) : 0u;
++      qa[ks][3] = vB ? __ldg(reinterpret_cast<const unsigned int*>(rb + ks * 32 + 16)) : 0u;
++    }
++  }
++
++  // Loader: thread -> key tid / 4 of the tile, 16-byte chunk tid % 4 of its K row and its V row.
++  const int lkey = tid >> 2, lc = tid & 3;
++  const int* pt_row = page_table + (int64_t)b * pt_stride;
++  auto page_of = [&](int tile) -> int {
++    const int kk = k_lo + tile * KT + lkey;
++    return (tile < ntiles && kk < k_hi) ? __ldg(pt_row + kk) : -1;
++  };
++  auto issue = [&](int tile, int row) {
++    const int st = tile % STAGES;
++    const bool ok = row >= 0;
++    const int64_t off = ok ? (int64_t)row * ROW + hk * D + lc * 16 : 0;
++    cp_async16(sbase + K_OFF + st * TILE_BYTES + cm_off(lkey, lc * 16), kc + off, ok ? 16 : 0);
++    cp_async16(sbase + V_OFF + st * TILE_BYTES + lkey * D + lc * 16, vc + off, ok ? 16 : 0);
++  };
++
++#pragma unroll
++  for (int j = 0; j < STAGES - 1; ++j) {
++    if (j < ntiles) issue(j, page_of(j));
++    cp_commit();
++  }
++  int pref = page_of(STAGES - 1);
++
++  // V transpose: thread -> dims 4dg .. 4dg+3, keys of kappa quad kg (kappa = permuted key order).
++  const int dg = tid & 15, kg = tid >> 4;
++  const int tkey = 32 * (kg >> 3) + 16 * ((kg >> 2) & 1) + 2 * (kg & 3);  // keys tkey, +1, +8, +9
++  const int rot = (dg >> 1) & 3;  // store order rotation (bank spread)
++  const uint32_t rsel = (uint32_t)((rot & 3) | (((rot + 1) & 3) << 4) | (((rot + 2) & 3) << 8) | (((rot + 3) & 3) << 12));
++
++  float m0 = NEG_INF, m1 = NEG_INF, l0 = 0.f, l1 = 0.f;
++  float o[32], s[32];
++#pragma unroll
++  for (int i = 0; i < 32; ++i) { o[i] = 0.f; s[i] = 0.f; }
++
++  for (int n = 0; n < ntiles; ++n) {
++    cp_wait<STAGES - 2>();  // tile n (and all before it) landed for this thread
++    fence_async_smem();
++    __syncthreads();        // tile n visible to all; everyone is done with tile n - 1 (stage and Vt)
++    {
++      const int nn = n + STAGES - 1;
++      if (nn < ntiles) issue(nn, pref);
++      cp_commit();          // always, so the group count stays uniform
++      pref = page_of(nn + 1);
++    }
++    const int st = n % STAGES;
++    // Vt[dim][kappa] = V[key(kappa)][dim], kappa = 32kb + 16h + 4t' + i <- key 32kb + 16h + 8(i>>1) + 2t' + (i&1).
++    {
++      const uint8_t* Vs = smem + V_OFF + st * TILE_BYTES + 4 * dg;
++      const uint32_t a = __byte_perm(lds32(Vs + tkey * D), 0u, rsel);
++      const uint32_t bb = __byte_perm(lds32(Vs + (tkey + 1) * D), 0u, rsel);
++      const uint32_t c = __byte_perm(lds32(Vs + (tkey + 8) * D), 0u, rsel);
++      const uint32_t d = __byte_perm(lds32(Vs + (tkey + 9) * D), 0u, rsel);
++      const uint32_t ab_lo = __byte_perm(a, bb, 0x5140), ab_hi = __byte_perm(a, bb, 0x7362);
++      const uint32_t cd_lo = __byte_perm(c, d, 0x5140), cd_hi = __byte_perm(c, d, 0x7362);
++      uint32_t w[4];
++      w[0] = __byte_perm(ab_lo, cd_lo, 0x5410);
++      w[1] = __byte_perm(ab_lo, cd_lo, 0x7632);
++      w[2] = __byte_perm(ab_hi, cd_hi, 0x5410);
++      w[3] = __byte_perm(ab_hi, cd_hi, 0x7632);
++      uint8_t* Vt = smem + VT_OFF;
++#pragma unroll
++      for (int e = 0; e < 4; ++e) sts32(Vt + cm_off(4 * dg + ((e + rot) & 3), 4 * kg), w[e]);
++    }
++    fence_async_smem();
++    __syncthreads();        // Vt complete
++
++    // S = Q K^T over the tile: s[4j + {0,1}] row g keys 8j + 2t + {0,1}, s[4j + {2,3}] row g + 8.
++    {
++      const uint32_t ka = smem_u32(smem + K_OFF + st * TILE_BYTES);
++      reg_fence(s);
++      wg_fence();
++      wgmma_rs(s, qa[0], cm_desc(ka, dstr), 0);
++      wgmma_rs(s, qa[1], cm_desc(ka + 256, dstr), 1);
++      wg_commit();
++      wg_wait0();
++      reg_fence(s);
++    }
++
++    // Causal / range mask, only on tiles that reach past the item's first position or k_hi.
++    const int k0 = k_lo + n * KT;
++    if (k0 + KT > k_hi || k0 + KT - 1 > past + tok0) {
++#pragma unroll
++      for (int j = 0; j < 8; ++j) {
++#pragma unroll
++        for (int e = 0; e < 2; ++e) {
++          const int kp = k0 + 8 * j + 2 * t + e;
++          if (kp >= k_hi || kp > posA) s[4 * j + e] = NEG_INF;
++          if (kp >= k_hi || kp > posB) s[4 * j + 2 + e] = NEG_INF;
++        }
++      }
++    }
++
++    // Online softmax (exp2 domain, raw-score max, scale folded into one FFMA per element); every
++    // exponential on MUFU.
++    float mx0 = NEG_INF, mx1 = NEG_INF;
++#pragma unroll
++    for (int j = 0; j < 8; ++j) {
++      mx0 = fmaxf(mx0, fmaxf(s[4 * j], s[4 * j + 1]));
++      mx1 = fmaxf(mx1, fmaxf(s[4 * j + 2], s[4 * j + 3]));
++    }
++    mx0 = fmaxf(mx0, __shfl_xor_sync(0xffffffffu, mx0, 1));
++    mx0 = fmaxf(mx0, __shfl_xor_sync(0xffffffffu, mx0, 2));
++    mx1 = fmaxf(mx1, __shfl_xor_sync(0xffffffffu, mx1, 1));
++    mx1 = fmaxf(mx1, __shfl_xor_sync(0xffffffffu, mx1, 2));
++    const float mn0 = fmaxf(m0, mx0 * scale_log2), mn1 = fmaxf(m1, mx1 * scale_log2);
++    const float mu0 = mn0 == NEG_INF ? 0.f : mn0, mu1 = mn1 == NEG_INF ? 0.f : mn1;
++    const float al0 = ex2_hw(m0 - mu0), al1 = ex2_hw(m1 - mu1);
++    m0 = mn0;
++    m1 = mn1;
++    const float bh0 = P_OFFSET - mu0, bh1 = P_OFFSET - mu1;  // 2^(x - m + 8) directly
++    float rs0 = 0.f, rs1 = 0.f;
++#pragma unroll
++    for (int j = 0; j < 8; ++j) {
++      s[4 * j] = ex2_hw(__fmaf_rn(s[4 * j], scale_log2, bh0));
++      s[4 * j + 1] = ex2_hw(__fmaf_rn(s[4 * j + 1], scale_log2, bh0));
++      s[4 * j + 2] = ex2_hw(__fmaf_rn(s[4 * j + 2], scale_log2, bh1));
++      s[4 * j + 3] = ex2_hw(__fmaf_rn(s[4 * j + 3], scale_log2, bh1));
++      rs0 += s[4 * j] + s[4 * j + 1];
++      rs1 += s[4 * j + 2] + s[4 * j + 3];
++    }
++    l0 = l0 * al0 + rs0;
++    l1 = l1 * al1 + rs1;
++#pragma unroll
++    for (int j = 0; j < 8; ++j) {
++      o[4 * j] *= al0;
++      o[4 * j + 1] *= al0;
++      o[4 * j + 2] *= al1;
++      o[4 * j + 3] *= al1;
++    }
++    // P as the PV A fragment, by construction of Vt's key order: k-step kb, [0] row g kappa 4t..+3
++    // = keys 32kb + {2t, 2t+1, 8+2t, 9+2t} = n-blocks 4kb (regs 0,1) and 4kb+1; [1] row g + 8
++    // (regs 2,3); [2]/[3] the same from n-blocks 4kb+2, 4kb+3.
++    uint32_t pa[2][4];
++#pragma unroll
++    for (int kb = 0; kb < 2; ++kb) {
++      const int a = 16 * kb, c = 16 * kb + 8;  // s index of n-block 4kb and 4kb + 2
++      pa[kb][0] = pack_e4m3x4(s[a], s[a + 1], s[a + 4], s[a + 5]);
++      pa[kb][1] = pack_e4m3x4(s[a + 2], s[a + 3], s[a + 6], s[a + 7]);
++      pa[kb][2] = pack_e4m3x4(s[c], s[c + 1], s[c + 4], s[c + 5]);
++      pa[kb][3] = pack_e4m3x4(s[c + 2], s[c + 3], s[c + 6], s[c + 7]);
++    }
++
++    // O += P V: o[4j + {0,1}] row g dims 8j + 2t + {0,1}, o[4j + {2,3}] row g + 8.
++    {
++      const uint32_t va = smem_u32(smem + VT_OFF);
++      reg_fence(o);
++      wg_fence();
++      wgmma_rs(o, pa[0], cm_desc(va, dstr), 1);
++      wgmma_rs(o, pa[1], cm_desc(va + 256, dstr), 1);
++      wg_commit();
++      wg_wait0();
++      reg_fence(o);
++    }
++  }
++  cp_wait<0>();
++
++  l0 += __shfl_xor_sync(0xffffffffu, l0, 1);
++  l0 += __shfl_xor_sync(0xffffffffu, l0, 2);
++  l1 += __shfl_xor_sync(0xffffffffu, l1, 1);
++  l1 += __shfl_xor_sync(0xffffffffu, l1, 2);
++
++  if (nsplit == 1) {
++    if (vA) {
++      const float inv = 1.f / l0;
++      __nv_bfloat16* dst = out + ((int64_t)(q0 + tA) * HQ + hk * G + g) * D + 2 * t;
++#pragma unroll
++      for (int j = 0; j < 8; ++j)
++        *reinterpret_cast<__nv_bfloat162*>(dst + 8 * j) = __floats2bfloat162_rn(o[4 * j] * inv, o[4 * j + 1] * inv);
++    }
++    if (vB) {
++      const float inv = 1.f / l1;
++      __nv_bfloat16* dst = out + ((int64_t)(q0 + tB) * HQ + hk * G + g) * D + 2 * t;
++#pragma unroll
++      for (int j = 0; j < 8; ++j)
++        *reinterpret_cast<__nv_bfloat162*>(dst + 8 * j) = __floats2bfloat162_rn(o[4 * j + 2] * inv, o[4 * j + 3] * inv);
++    }
++  } else {
++    // Unnormalized partial of this split (m in the scaled log2 domain, -inf when nothing was seen).
++    const int64_t r0 = (int64_t)blockIdx.x * ROWS + warp * 16 + g;
++    float* wa = ws_o + r0 * D + 2 * t;
++    float* wb = wa + 8 * D;
++#pragma unroll
++    for (int j = 0; j < 8; ++j) {
++      *reinterpret_cast<float2*>(wa + 8 * j) = make_float2(o[4 * j], o[4 * j + 1]);
++      *reinterpret_cast<float2*>(wb + 8 * j) = make_float2(o[4 * j + 2], o[4 * j + 3]);
++    }
++    if (t == 0) {
++      ws_ml[r0 * 2] = m0;
++      ws_ml[r0 * 2 + 1] = l0;
++      ws_ml[(r0 + 8) * 2] = m1;
++      ws_ml[(r0 + 8) * 2 + 1] = l1;
++    }
++  }
++#else
++  // Not the sm_90a image (no wgmma here): flag it and do nothing. prepare() reads the flag after
++  // the canary and turns the path OFF.
++  if (threadIdx.x == 0) atomicExch(err, 1);
++#endif
++}
++
++// One CTA per item: thread -> row tid / 2, dims 32 (tid % 2) .. +31.
++__global__ void __launch_bounds__(256)
++attn_combine_kernel(const float* __restrict__ ws_o, const float* __restrict__ ws_ml, const int* __restrict__ cu_q,
++                    int B, int ntb, int nsplit, __nv_bfloat16* __restrict__ out) {
++  const float NEG_INF = __int_as_float(0xff800000u);
++  const int item = blockIdx.x;
++  int x = item;
++  const int hk = x % HKV; x /= HKV;
++  const int b = x % B; x /= B;
++  const int tb = ntb - 1 - x;
++  const int R = threadIdx.x >> 1, half = threadIdx.x & 1;
++  const int q0 = cu_q[b], qlen = cu_q[b + 1] - q0;
++  const int tok = tb * TOK + (R >> 3), head = hk * G + (R & 7);
++  if (tok >= qlen) return;
++  const int64_t base = (int64_t)item * nsplit * ROWS + R;
++  float M = NEG_INF;
++  for (int j = 0; j < nsplit; ++j) M = fmaxf(M, ws_ml[(base + (int64_t)j * ROWS) * 2]);
++  float acc[32];
++#pragma unroll
++  for (int i = 0; i < 32; ++i) acc[i] = 0.f;
++  float L = 0.f;
++  for (int j = 0; j < nsplit; ++j) {
++    const int64_t r = base + (int64_t)j * ROWS;
++    const float m = ws_ml[r * 2];
++    const float w = m == NEG_INF ? 0.f : ex2_hw(m - M);  // empty partials weigh 0
++    L += w * ws_ml[r * 2 + 1];
++    const float4* src = reinterpret_cast<const float4*>(ws_o + r * D + half * 32);
++#pragma unroll
++    for (int i = 0; i < 8; ++i) {
++      const float4 v = src[i];
++      acc[4 * i] += w * v.x;
++      acc[4 * i + 1] += w * v.y;
++      acc[4 * i + 2] += w * v.z;
++      acc[4 * i + 3] += w * v.w;
++    }
++  }
++  const float inv = L > 0.f ? 1.f / L : 0.f;
++  __nv_bfloat162* dst = reinterpret_cast<__nv_bfloat162*>(out + ((int64_t)(q0 + tok) * HQ + head) * D + half * 32);
++#pragma unroll
++  for (int i = 0; i < 16; ++i) dst[i] = __floats2bfloat162_rn(acc[2 * i] * inv, acc[2 * i + 1] * inv);
++}
++
++}  // namespace
++
++void attn_fwd(torch::Tensor q, torch::Tensor k_cache, torch::Tensor v_cache, torch::Tensor page_table,
++              torch::Tensor cache_seqlens, torch::Tensor cu_seqlens_q, torch::Tensor out,
++              torch::Tensor ws_o, torch::Tensor ws_ml, torch::Tensor err, int64_t ntb, int64_t nsplit,
++              double scale_log2, int64_t desc_swap) {
++  const int B = static_cast<int>(cache_seqlens.size(0));
++  TORCH_CHECK(q.is_cuda() && q.element_size() == 1 && q.is_contiguous() && q.dim() == 3 && q.size(1) == HQ &&
++              q.size(2) == D, "attn_fwd: q must be contiguous e4m3 [T, 16, 64]");
++  TORCH_CHECK(k_cache.element_size() == 1 && v_cache.element_size() == 1 && k_cache.is_contiguous() &&
++              v_cache.is_contiguous() && k_cache.numel() % ROW == 0 && v_cache.numel() == k_cache.numel(),
++              "attn_fwd: caches must be contiguous e4m3 [rows, 1, 2, 64]");
++  TORCH_CHECK(page_table.scalar_type() == at::kInt && page_table.stride(1) == 1 && page_table.size(0) == B,
++              "attn_fwd: page_table");
++  TORCH_CHECK(cache_seqlens.scalar_type() == at::kInt && cu_seqlens_q.scalar_type() == at::kInt &&
++              cu_seqlens_q.numel() == B + 1, "attn_fwd: lengths");
++  TORCH_CHECK(out.scalar_type() == at::kBFloat16 && out.is_contiguous() && out.sizes() == q.sizes(), "attn_fwd: out");
++  TORCH_CHECK(err.is_cuda() && err.scalar_type() == at::kInt && err.numel() >= 1, "attn_fwd: err");
++  TORCH_CHECK(ntb >= 1 && nsplit >= 1, "attn_fwd: ntb / nsplit");
++  const int64_t items = ntb * B * HKV;
++  if (nsplit > 1) {
++    TORCH_CHECK(ws_o.scalar_type() == at::kFloat && ws_o.is_contiguous() && ws_o.numel() >= items * nsplit * ROWS * D,
++                "attn_fwd: ws_o");
++    TORCH_CHECK(ws_ml.scalar_type() == at::kFloat && ws_ml.is_contiguous() && ws_ml.numel() >= items * nsplit * ROWS * 2,
++                "attn_fwd: ws_ml");
++  }
++  const int64_t grid = items * nsplit;
++  auto stream = at::cuda::getCurrentCUDAStream();
++  attn_fwd_kernel<<<static_cast<unsigned>(grid), THREADS, SMEM, stream>>>(
++      reinterpret_cast<const uint8_t*>(q.data_ptr()), reinterpret_cast<const uint8_t*>(k_cache.data_ptr()),
++      reinterpret_cast<const uint8_t*>(v_cache.data_ptr()), page_table.data_ptr<int>(), page_table.stride(0),
++      cache_seqlens.data_ptr<int>(), cu_seqlens_q.data_ptr<int>(), B, static_cast<int>(ntb),
++      static_cast<int>(nsplit), static_cast<float>(scale_log2), static_cast<int>(desc_swap != 0),
++      reinterpret_cast<__nv_bfloat16*>(out.data_ptr()),
++      nsplit > 1 ? ws_o.data_ptr<float>() : nullptr, nsplit > 1 ? ws_ml.data_ptr<float>() : nullptr,
++      err.data_ptr<int>());
++  C10_CUDA_KERNEL_LAUNCH_CHECK();
++}
++
++void attn_combine(torch::Tensor ws_o, torch::Tensor ws_ml, torch::Tensor cu_seqlens_q, torch::Tensor out,
++                  int64_t batch, int64_t ntb, int64_t nsplit) {
++  const int64_t items = ntb * batch * HKV;
++  TORCH_CHECK(cu_seqlens_q.numel() == batch + 1 && out.scalar_type() == at::kBFloat16 && out.is_contiguous(),
++              "attn_combine: args");
++  TORCH_CHECK(ws_o.numel() >= items * nsplit * ROWS * D && ws_ml.numel() >= items * nsplit * ROWS * 2,
++              "attn_combine: workspace");
++  auto stream = at::cuda::getCurrentCUDAStream();
++  attn_combine_kernel<<<static_cast<unsigned>(items), 256, 0, stream>>>(
++      ws_o.data_ptr<float>(), ws_ml.data_ptr<float>(), cu_seqlens_q.data_ptr<int>(), static_cast<int>(batch),
++      static_cast<int>(ntb), static_cast<int>(nsplit), reinterpret_cast<__nv_bfloat16*>(out.data_ptr()));
++  C10_CUDA_KERNEL_LAUNCH_CHECK();
++}
++
++// Per kernel {regs, local bytes, static smem, CTAs/SM, binaryVersion, ptxVersion}: attn_fwd_kernel,
++// then attn_combine_kernel; then attn_fwd_kernel's dynamic SMEM.
++std::vector<int64_t> kernel_info() {
++  std::vector<int64_t> r;
++  auto add = [&](auto kernel, int threads, int smem) {
++    cudaFuncAttributes a;
++    C10_CUDA_CHECK(cudaFuncGetAttributes(&a, kernel));
++    int blocks = 0;
++    C10_CUDA_CHECK(cudaOccupancyMaxActiveBlocksPerMultiprocessor(&blocks, kernel, threads, smem));
++    r.push_back(a.numRegs);
++    r.push_back(static_cast<int64_t>(a.localSizeBytes));
++    r.push_back(static_cast<int64_t>(a.sharedSizeBytes));
++    r.push_back(blocks);
++    r.push_back(a.binaryVersion);
++    r.push_back(a.ptxVersion);
++  };
++  add(attn_fwd_kernel, THREADS, SMEM);
++  add(attn_combine_kernel, 256, 0);
++  r.push_back(SMEM);
++  return r;
++}
++"""
++
++_ATTN_BUILD = {"status": "not built (no CUDA at import)", "arch_flags": None, "seconds": 0.0}
++
++
++def _build_attn():
++    """Compile the wgmma module at import (never during capture), for sm_90a only: torch's JIT build
++    adds its own -gencode from TORCH_CUDA_ARCH_LIST (or the detected 9.0) whatever the cflags say,
++    and a plain sm_90 pass cannot assemble wgmma, so the list is set to 9.0a around load_inline and
++    restored after. Logs the arch flags nvcc gets and the compile seconds. None if the build fails."""
++    t0 = time.perf_counter()
++    old = os.environ.get("TORCH_CUDA_ARCH_LIST")
++    os.environ["TORCH_CUDA_ARCH_LIST"] = ATTN_ARCH_LIST
++    try:
++        try:
++            from torch.utils.cpp_extension import _get_cuda_arch_flags
++            _ATTN_BUILD["arch_flags"] = list(_get_cuda_arch_flags())
++        except Exception as e:  # logged; prepare() treats unknown flags as unverified (OFF)
++            print(f"[cuda full attn] build: could not read torch's nvcc arch flags: {type(e).__name__}: {e}",
++                  flush=True)
++        print(f"[cuda full attn] build: TORCH_CUDA_ARCH_LIST={ATTN_ARCH_LIST}, nvcc arch flags "
++              f"{_ATTN_BUILD['arch_flags']}", flush=True)
++        from torch.utils.cpp_extension import load_inline
++        ext = load_inline(
++            name=ATTN_EXT_NAME,
++            cpp_sources=_ATTN_CPP,
++            cuda_sources=_ATTN_CUDA,
++            functions=["attn_fwd", "attn_combine", "kernel_info"],
++            extra_cuda_cflags=["-O3", "-lineinfo"],
++            verbose=False,
++        )
++    except Exception as e:  # FA3 everywhere
++        msg = str(e)
++        _ATTN_BUILD["status"] = f"build FAILED after {time.perf_counter() - t0:.1f}s"
++        print(f"[cuda full attn] wgmma: load_inline FAILED after {time.perf_counter() - t0:.1f}s: "
++              f"{type(e).__name__}: ...{msg[-3000:]}", flush=True)
++        return None
++    finally:
++        if old is None:
++            os.environ.pop("TORCH_CUDA_ARCH_LIST", None)
++        else:
++            os.environ["TORCH_CUDA_ARCH_LIST"] = old
++    _ATTN_BUILD["seconds"] = time.perf_counter() - t0
++    _ATTN_BUILD["status"] = f"compiled in {_ATTN_BUILD['seconds']:.1f}s"
++    print(f"[cuda full attn] build OK: wgmma module compiled in {_ATTN_BUILD['seconds']:.1f}s "
++          f"(arch flags {_ATTN_BUILD['arch_flags']})", flush=True)
++    return ext
++
++
++_ATTN_EXT = _build_attn() if torch.cuda.is_available() else None
++
++
++def _attn_arch_flags_ok(flags):
++    """True when torch handed nvcc only compute_90a / sm_90a gencodes."""
++    if not flags:
++        return False
++    gencodes = [f for f in flags if "arch=" in f or "code=" in f]
++    return bool(gencodes) and all("compute_90a" in f and "sm_90a" in f and "compute_90," not in f
++                                  for f in gencodes)
++
++
++def _attn_splits(items, max_pages, sm_count):
++    """KV splits per item, from shapes and the device only: enough CTAs for ~ATTN_WAVES per SM
++    (turn_1 full: 96 items -> 11 splits; turn_4: 384 -> 3; first turn: 2048 -> 1), capped so a
++    split keeps at least ATTN_MIN_SPLIT_KEYS of the page table's key capacity."""
++    want = -(-ATTN_WAVES * sm_count // items)
++    return max(1, min(want, ATTN_MAX_SPLITS, max(1, max_pages // ATTN_MIN_SPLIT_KEYS)))
++
++
++def _attn_class_key(batch, q_len, width):
++    """Config-only key of a full-layer shape class: (batch, q_len, page-table width bucket). The
++    bucket is the context the width leaves room for, in ATTN_CTX_BUCKET units, rounded (turn shapes
++    at ctx ~80000 -> 5; first turn ctx 0 / 32768 / 65536 -> 0 / 2 / 4)."""
++    return (batch, q_len, int(round(max(0, width - q_len) / ATTN_CTX_BUCKET)))
++
++
++_ATTN_ROUTE_LOGGED = set()  # shape keys whose route was printed (log de-dup only; never read for routing)
++
++
++def _full_attn_route(cfg, width, state):
++    """The routed class name for this call, or None for FA3. Config and shapes only: full layers,
++    page size 1, unscaled cache, tp8 heads, and a (batch, q_len, width bucket) class that prepare()'s
++    timing gate routed to CUDA. Prints one PATH CHOSEN line per full-layer shape the first time."""
++    if not (state.get("full_attn") is not None and cfg["window"] == 0 and cfg["page_size"] == 1
++            and cfg["kv_scale"] == 1.0 and cfg["num_q_heads"] == 16 and cfg["num_kv_heads"] == 2
++            and cfg["head_dim"] == 64):
++        return None
++    key = _attn_class_key(cfg["batch"], cfg["q_len"], width)
++    cls = state["attn_route"].get(key)
++    if key not in _ATTN_ROUTE_LOGGED:
++        _ATTN_ROUTE_LOGGED.add(key)
++        print(f"[cuda full attn] PATH CHOSEN batch={cfg['batch']} q_len={cfg['q_len']} page_table width={width} "
++              f"(class key {key}): {'CUDA wgmma (' + cls + ')' if cls else 'FA3 (master)'}", flush=True)
++    return cls
++
++
++def _attn_launch(ext, q8, data, cfg, sm_count, err, desc_swap, nsplit=None, combine=True):
++    """Launch attn_fwd_kernel (and attn_combine_kernel when split and combine). Returns (out, ws_o,
++    ws_ml, ntb, nsplit). Workspace and grid come from shapes, config and the device only."""
++    batch, length = cfg["batch"], cfg["q_len"]
++    device = q8.device
++    ntb = -(-length // ATTN_TOK)
++    items = ntb * batch * cfg["num_kv_heads"]
++    page_table = data["page_table"]
++    if nsplit is None:
++        nsplit = _attn_splits(items, page_table.shape[1], sm_count)
++    out = torch.empty((batch * length, cfg["num_q_heads"], cfg["head_dim"]), dtype=torch.bfloat16, device=device)
++    if nsplit > 1:
++        ws_o = torch.empty((items * nsplit * ATTN_ROWS, cfg["head_dim"]), dtype=torch.float32, device=device)
++        ws_ml = torch.empty((items * nsplit * ATTN_ROWS, 2), dtype=torch.float32, device=device)
++    else:
++        ws_o = ws_ml = torch.empty((0,), dtype=torch.float32, device=device)
++    scale_log2 = cfg["sm_scale"] * cfg["qk_scale_factor"] * LOG2E
++    ext.attn_fwd(q8, data["k_cache"], data["v_cache"], page_table, data["cache_seqlens"], data["cu_seqlens_q"],
++                 out, ws_o, ws_ml, err, ntb, nsplit, scale_log2, desc_swap)
++    if nsplit > 1 and combine:
++        ext.attn_combine(ws_o, ws_ml, data["cu_seqlens_q"], out, batch, ntb, nsplit)
++    return out, ws_o, ws_ml, ntb, nsplit
++
++
++def _full_attn(ext, q8, data, cfg, sm_count, err, desc_swap=0, nsplit=None):
++    """bf16 [T, 16, 64] attention output (the tensor FA3 returns) for an FP8 query [T, 16, 64]."""
++    return _attn_launch(ext, q8, data, cfg, sm_count, err, desc_swap, nsplit)[0]
++
++
++def _fa3_attn(q8, data, cfg):
++    """Master's FA3 call on a full layer at page size 1 and kv_scale 1 (prefill: scheduler_metadata None)."""
++    out = flash_attn_with_kvcache(
++        q=q8, k_cache=data["k_cache"], v_cache=data["v_cache"], page_table=data["page_table"],
++        cache_seqlens=data["cache_seqlens"], cu_seqlens_q=data["cu_seqlens_q"], max_seqlen_q=cfg["q_len"],
++        softmax_scale=cfg["sm_scale"] * cfg["qk_scale_factor"], causal=True, window_size=(-1, -1),
++        scheduler_metadata=None)
++    return out[0] if isinstance(out, tuple) else out
++
++
++# prepare()'s self-check cases: (name, past lengths, q_len, key distribution). The judge's two
++# full-layer tests (batch 1 ctx 3000 L 753; batch 3 ctx 5000 L 200 with outliers), ragged batch 4
++# with an empty and an 80K context (split items with empty splits), the first turn's ctx 0 L 16384
++# (unsplit, causal), and a short ragged case with lengths that are not multiples of 16 or 64.
++ATTN_CHECK_CASES = (
++    ("b1_ctx3000_L753", (3000,), 753, "normal"),
++    ("b3_ctx5000_L200_outliers", (5000, 5000, 5000), 200, "outliers"),
++    ("b4_ragged_L753", (0, 777, 5000, 80000), 753, "soft"),
++    ("b1_ctx0_L16384", (0,), 16384, "soft"),
++    ("b2_ragged_L211", (37, 1000), 211, "normal"),
++)
++ATTN_CHECK_TOL = 1e-2      # rel L2 vs FA3
++ATTN_CHECK_ROW_TOL = 5e-2  # worst row vs FA3
++
++# The timing gate's shape classes: the full-layer loads the judge scores (dist soft). turn_4 gets a
++# mild per-request spread of the cached lengths (+-7.5% around 80000), so split balance, the causal
++# tail and the combine see ragged requests; its width bucket is the same as at fixed 80000.
++ATTN_GATE_CLASSES = (
++    ("turn_1", (80000,), 753),
++    ("turn_4", (74000, 78500, 81500, 86000), 753),
++    ("first_turn_ctx0", (0,), 16384),
++    ("first_turn_ctx32768", (32768,), 16384),
++    ("first_turn_ctx65536", (65536,), 16384),
++)
++
++
++def _attn_case(pasts, length, dist, gen, device):
++    """Synthetic full-layer prefill inputs as reference.generate_input lays them out (scattered
++    page-size-1 rows, a padded page table), with unit-RMS FP8 keys and values and an FP8
++    normalized query. "soft": keys share a direction per head; "outliers": 2 of 64 channels 10x
++    larger in both queries and keys (large, peaked scores)."""
++    batch, hq, hkv, d = len(pasts), 16, 2, 64
++    tokens = batch * length
++    max_pages = max(pasts) + length + 13
++    total = batch * max_pages
++    perm = torch.randperm(total, generator=gen, device=device).to(torch.int32)
++    page_table = torch.full((batch, max_pages), -1, dtype=torch.int32, device=device)
++    for b, p in enumerate(pasts):
++        page_table[b, :p + length] = perm[b * max_pages:b * max_pages + p + length]
++    k = torch.randn((total, 1, hkv, d), generator=gen, device=device)
++    v = torch.randn((total, 1, hkv, d), generator=gen, device=device)
++    q = torch.randn((tokens, hq, d), generator=gen, device=device)
++    if dist == "soft":
++        u = torch.randn((hkv, d), generator=gen, device=device)
++        u = u * torch.rsqrt(u.pow(2).mean(-1, keepdim=True))
++        k = 0.75 * u + 0.66 * k
++    elif dist == "outliers":
++        idx = torch.randperm(d, generator=gen, device=device)[:2]
++        k[..., idx] *= 10
++        q[..., idx] *= 10
++    k = k * torch.rsqrt(k.pow(2).mean(-1, keepdim=True))
++    q = q * torch.rsqrt(q.pow(2).mean(-1, keepdim=True))
++    seq = torch.tensor(pasts, dtype=torch.int32, device=device)
++    data = {
++        "k_cache": k.to(FP8), "v_cache": v.to(FP8), "page_table": page_table,
++        "cache_seqlens": (seq + length).to(torch.int32),
++        "cu_seqlens_q": torch.arange(0, tokens + 1, length, dtype=torch.int32, device=device),
++    }
++    cfg = {"batch": batch, "q_len": length, "tokens": tokens, "num_q_heads": hq, "num_kv_heads": hkv,
++           "head_dim": d, "page_size": 1, "window": 0, "kv_scale": 1.0, "sm_scale": d ** -0.5,
++           "qk_scale_factor": 5.4730064863875}
++    return data, cfg, q.to(FP8).contiguous()
++
++
++def _attn_reference(q8, data, cfg, pasts):
++    """FP64 causal attention on the FP8 values (queries already rounded, as the kernel sees them)."""
++    length, d = cfg["q_len"], cfg["head_dim"]
++    g = cfg["num_q_heads"] // cfg["num_kv_heads"]
++    scale = cfg["sm_scale"] * cfg["qk_scale_factor"]
++    kf = data["k_cache"].view(-1, cfg["num_kv_heads"], d)
++    vf = data["v_cache"].view(-1, cfg["num_kv_heads"], d)
++    out = torch.empty((q8.shape[0], cfg["num_q_heads"], d), dtype=torch.float64, device=q8.device)
++    for b, past in enumerate(pasts):
++        n = past + length
++        rows = data["page_table"][b, :n].long()
++        key_pos = torch.arange(n, device=q8.device)
++        chunk = max(1, (1 << 23) // (g * n))
++        for h in range(cfg["num_kv_heads"]):
++            keys = kf[rows, h].double()
++            vals = vf[rows, h].double()
++            for c in range(0, length, chunk):
++                e = min(length, c + chunk)
++                qq = q8[b * length + c:b * length + e, h * g:(h + 1) * g].double().reshape(-1, d)
++                sc = (qq @ keys.T) * scale
++                pos = (past + torch.arange(c, e, device=q8.device)).repeat_interleave(g)
++                sc = sc.masked_fill(key_pos[None, :] > pos[:, None], float("-inf"))
++                out[b * length + c:b * length + e, h * g:(h + 1) * g] = (sc.softmax(-1) @ vals).view(e - c, g, d)
++    return out
++
++
++def _attn_errs(got, ref):
++    """(rel L2, worst row as the judge measures rows, finite)."""
++    o = got.double().reshape(-1, ref.shape[-1])
++    r = ref.double().reshape(-1, ref.shape[-1])
++    diff = (o - r).norm(dim=1)
++    rn = r.norm(dim=1)
++    worst = diff / torch.maximum(rn, 0.1 * rn.mean()).clamp_min(1e-30)
++    return (float((o - r).norm() / r.norm().clamp_min(1e-30)), float(worst.max()), bool(torch.isfinite(got).all()))
++
++
++def _attn_image_check(ext, device):
++    """The sm_90a image proof, before any launch: an sm_90 device, torch's nvcc arch flags only
++    compute_90a / sm_90a, and binaryVersion 90 for both kernels (binaryVersion alone cannot tell
++    sm_90 from sm_90a; the build flags and the kernel's error word do). Returns a reason or None."""
++    cap = torch.cuda.get_device_capability(device)
++    info = list(ext.kernel_info())
++    print(f"[cuda full attn] image: device capability {cap}; nvcc arch flags {_ATTN_BUILD['arch_flags']}; "
++          f"attn_fwd_kernel regs {info[0]} local {info[1]} B static smem {info[2]} B CTAs/SM {info[3]} "
++          f"binaryVersion {info[4]} ptxVersion {info[5]}; attn_combine_kernel regs {info[6]} local {info[7]} B "
++          f"CTAs/SM {info[9]} binaryVersion {info[10]} ptxVersion {info[11]}; dynamic smem {info[12]} B", flush=True)
++    if tuple(cap) != (9, 0):
++        return f"device capability {tuple(cap)} != (9, 0)"
++    if not _attn_arch_flags_ok(_ATTN_BUILD["arch_flags"]):
++        return f"nvcc arch flags {_ATTN_BUILD['arch_flags']} are not only compute_90a/sm_90a"
++    if info[4] != 90 or info[10] != 90:
++        return f"binaryVersion {info[4]} / {info[10]} != 90"
++    if info[1] != 0:
++        print(f"[cuda full attn] image: WARNING attn_fwd_kernel spills ({info[1]} B local)", flush=True)
++    return None
++
++
++def _attn_canary(ext, err, sm_count, device):
++    """The first launches, in-process, on a tiny synthetic case (b1, ctx 100, L 40): attn_fwd_kernel
++    unsplit at both descriptor orders, then split in 2 and attn_combine_kernel, each followed by a
++    device sync and a print, so a fault names its kernel. Then the error word. Returns a reason or None.
++    (A sticky fault here cannot be recovered in-process: run this hypothesis as an okc check first.)"""
++    gen = torch.Generator(device=device).manual_seed(7)
++    data, cfg, q8 = _attn_case((100,), 40, "normal", gen, device)
++    for desc_swap in (0, 1):
++        print(f"[cuda full attn] canary: launching attn_fwd_kernel desc_swap={desc_swap} nsplit=1", flush=True)
++        out = _attn_launch(ext, q8, data, cfg, sm_count, err, desc_swap, nsplit=1)[0]
++        torch.cuda.synchronize()
++        print(f"[cuda full attn] canary: attn_fwd_kernel desc_swap={desc_swap} nsplit=1 OK "
++              f"(finite {bool(torch.isfinite(out.float()).all())})", flush=True)
++    print("[cuda full attn] canary: launching attn_fwd_kernel desc_swap=0 nsplit=2", flush=True)
++    out, ws_o, ws_ml, ntb, nsplit = _attn_launch(ext, q8, data, cfg, sm_count, err, 0, nsplit=2, combine=False)
++    torch.cuda.synchronize()
++    print("[cuda full attn] canary: attn_fwd_kernel desc_swap=0 nsplit=2 OK; launching attn_combine_kernel",
++          flush=True)
++    ext.attn_combine(ws_o, ws_ml, data["cu_seqlens_q"], out, cfg["batch"], ntb, nsplit)
++    torch.cuda.synchronize()
++    print(f"[cuda full attn] canary: attn_combine_kernel OK (finite {bool(torch.isfinite(out.float()).all())})",
++          flush=True)
++    flag = int(err.item())
++    print(f"[cuda full attn] canary: error word {flag}", flush=True)
++    if flag != 0:
++        return f"error word {flag}: the loaded attn_fwd_kernel is not the sm_90a (wgmma) image"
++    return None
++
++
++def _attn_check_data(device):
++    """ATTN_CHECK_CASES built once (inputs, FP64 reference, FA3's output and FA3's own error)."""
++    gen = torch.Generator(device=device).manual_seed(4321)
++    cases = []
++    for name, pasts, length, dist in ATTN_CHECK_CASES:
++        data, cfg, q8 = _attn_case(pasts, length, dist, gen, device)
++        ref = _attn_reference(q8, data, cfg, pasts)
++        fa3 = _fa3_attn(q8, data, cfg).float()
++        fa3_err, fa3_row, _ = _attn_errs(fa3, ref)
++        cases.append((name, data, cfg, q8, ref, fa3, fa3_err, fa3_row))
++    torch.cuda.synchronize()
++    return cases
++
++
++def _attn_self_check(ext, err, desc_swap, cases, sm_count):
++    """Untimed. The kernel against FA3 and the FP64 reference on every check case. Pass per case:
++    finite, and either within ATTN_CHECK_TOL / ATTN_CHECK_ROW_TOL of FA3, or no worse than FA3
++    against the FP64 reference (1.25x + 2e-3 rel L2, 1.25x + 1e-2 worst row)."""
++    ok = True
++    for name, data, cfg, q8, ref, fa3, fa3_err, fa3_row in cases:
++        nsplit = _attn_splits(-(-cfg["q_len"] // ATTN_TOK) * cfg["batch"] * cfg["num_kv_heads"],
++                              data["page_table"].shape[1], sm_count)
++        got = _full_attn(ext, q8, data, cfg, sm_count, err, desc_swap=desc_swap).float()
++        torch.cuda.synchronize()
++        err_l2, row, finite = _attn_errs(got, ref)
++        vs_err, vs_row, _ = _attn_errs(got, fa3)
++        passed = finite and ((vs_err <= ATTN_CHECK_TOL and vs_row <= ATTN_CHECK_ROW_TOL)
++                             or (err_l2 <= 1.25 * fa3_err + 2e-3 and row <= 1.25 * fa3_row + 1e-2
++                                 and err_l2 <= 0.1 and row <= 0.5))  # absolute cap: a broken FA3 run must not pass garbage
++        print(f"[cuda full attn] wgmma desc_swap={desc_swap} self-check {name} splits={nsplit}: "
++              f"vs FA3 rel L2 {vs_err:.2e} worst row {vs_row:.2e}; vs fp64 ref {err_l2:.2e} / {row:.2e} "
++              f"(FA3 {fa3_err:.2e} / {fa3_row:.2e}); finite {finite}: {'PASS' if passed else 'FAIL'}", flush=True)
++        ok = ok and passed
++    return ok
++
++
++def _attn_graph(fn):
++    """fn captured as a CUDA graph (after one eager warm call)."""
++    fn()
++    torch.cuda.synchronize()
++    graph = torch.cuda.CUDAGraph()
++    with torch.cuda.graph(graph):
++        fn()
++    torch.cuda.synchronize()
++    return graph
++
++
++def _attn_gate_times(graphs, flush, reps):
++    """Median us per graph over reps cold-L2 replays (flush buffer rewritten before every replay),
++    the graphs taking turns, the order swapped every repetition."""
++    events = [[(torch.cuda.Event(enable_timing=True), torch.cuda.Event(enable_timing=True)) for _ in range(reps)]
++              for _ in graphs]
++    for i in range(reps):
++        order = range(len(graphs)) if i % 2 == 0 else reversed(range(len(graphs)))
++        for gi in order:
++            flush.zero_()
++            start, end = events[gi][i]
++            start.record()
++            graphs[gi].replay()
++            end.record()
++    torch.cuda.synchronize()
++    return [statistics.median(s.elapsed_time(e) * 1000.0 for s, e in ev) for ev in events]
++
++
++def _attn_gate(ext, err, desc_swap, sm_count, device):
++    """The hard timing gate: per full-layer shape class, CUDA-graph FA3 (+ its combine) and the new
++    kernel (+ attn_combine_kernel when split) on the same synthetic inputs (q already FP8 on both
++    sides), cold L2, median of ATTN_GATE_REPS replays each; the class routes to CUDA only at
++    new <= ATTN_GATE_RATIO x FA3. Returns {class key: class name} of the routed classes."""
++    props = torch.cuda.get_device_properties(device)
++    l2 = int(getattr(props, "L2_cache_size", 0) or 0) or (50 << 20)
++    flush = torch.empty((max(2 * l2, 128 << 20) // 4,), dtype=torch.float32, device=device)
++    gen = torch.Generator(device=device).manual_seed(99)
++    route, summary = {}, []
++    for name, pasts, length in ATTN_GATE_CLASSES:
++        try:
++            data, cfg, q8 = _attn_case(pasts, length, "soft", gen, device)
++            key = _attn_class_key(cfg["batch"], length, data["page_table"].shape[1])
++            graphs = [_attn_graph(lambda: _fa3_attn(q8, data, cfg)),
++                      _attn_graph(lambda: _full_attn(ext, q8, data, cfg, sm_count, err, desc_swap=desc_swap))]
++            fa3_us, new_us = _attn_gate_times(graphs, flush, ATTN_GATE_REPS)
++            ratio = new_us / fa3_us
++            path = "CUDA" if ratio <= ATTN_GATE_RATIO else "FA3"
++            if path == "CUDA":
++                route[key] = name
++            nsplit = _attn_splits(-(-length // ATTN_TOK) * cfg["batch"] * cfg["num_kv_heads"],
++                                  data["page_table"].shape[1], sm_count)
++            print(f"[cuda full attn] GATE {name} (key {key}, splits {nsplit}): FA3 {fa3_us:.1f} us, new {new_us:.1f} us, "
++                  f"ratio {ratio:.3f} -> {path}", flush=True)
++            summary.append(f"{name} {path} ({ratio:.3f})")
++            del graphs, data, q8
++        except Exception as e:  # this class keeps FA3
++            print(f"[cuda full attn] GATE {name}: timing raised {type(e).__name__}: {e} -> FA3", flush=True)
++            summary.append(f"{name} FA3 (timing raised)")
++        torch.cuda.synchronize()
++        torch.cuda.empty_cache()
++    del flush
++    return route, summary
++
++
++def _attn_prepare(device):
++    """The CUDA full-attention path for the state: image proof, canary, self-check (descriptor order
++    0, then 1), then the hard per-class timing gate. Returns (module or None, desc_swap, SM count,
++    {class key: class name}, error word). Any failure prints '[cuda full attn] OFF: <reason>' and FA3 runs."""
++    t_all = time.perf_counter()
++    sm_count = torch.cuda.get_device_properties(device).multi_processor_count
++    err = torch.zeros((1,), dtype=torch.int32, device=device)
++    ext = _ATTN_EXT
++    print(f"[cuda full attn] wgmma {_ATTN_BUILD['status']}", flush=True)
++
++    def off(reason):
++        print(f"[cuda full attn] OFF: {reason}. PATH CHOSEN: FA3 (master) on every layer "
++              f"(attention prepare {time.perf_counter() - t_all:.1f}s)", flush=True)
++        return None, 0, sm_count, {}, err
++
++    if ext is None:
++        return off(f"wgmma {_ATTN_BUILD['status']}")
++    try:
++        reason = _attn_image_check(ext, device)
++    except Exception as e:
++        reason = f"image check raised {type(e).__name__}: {e}"
++    if reason is not None:
++        return off(reason)
++    t0 = time.perf_counter()
++    try:
++        reason = _attn_canary(ext, err, sm_count, device)
++    except Exception as e:
++        reason = f"canary raised {type(e).__name__}: {e}"
++    print(f"[cuda full attn] canary {time.perf_counter() - t0:.1f}s", flush=True)
++    if reason is not None:
++        return off(reason)
++    t0 = time.perf_counter()
++    chosen = None
++    try:
++        cases = _attn_check_data(device)
++        for desc_swap in (0, 1):
++            if _attn_self_check(ext, err, desc_swap, cases, sm_count):
++                chosen = desc_swap
++                break
++            print(f"[cuda full attn] wgmma desc_swap={desc_swap} self-check FAILED", flush=True)
++        del cases
++        flag = int(err.item())
++        if flag != 0:
++            chosen = None
++            print(f"[cuda full attn] error word {flag} after the self-check", flush=True)
++    except Exception as e:  # a raising self-check disables the path, never the run
++        print(f"[cuda full attn] self-check raised: {type(e).__name__}: {e}", flush=True)
++        chosen = None
++    torch.cuda.synchronize()
++    torch.cuda.empty_cache()
++    print(f"[cuda full attn] self-check {time.perf_counter() - t0:.1f}s", flush=True)
++    if chosen is None:
++        return off("self-check failed at both descriptor orders (or raised)")
++    t0 = time.perf_counter()
++    try:  # a raise outside the per-class handler (flush buffer, error word read) keeps FA3, never fails prepare
++        route, summary = _attn_gate(ext, err, chosen, sm_count, device)
++        flag = int(err.item())
++    except Exception as e:
++        return off(f"timing gate raised {type(e).__name__}: {e}")
++    print(f"[cuda full attn] gate {time.perf_counter() - t0:.1f}s", flush=True)
++    if flag != 0:
++        return off("error word set during the timing gate")
++    print(f"[cuda full attn] PATH CHOSEN (desc_swap={chosen}, threshold {ATTN_GATE_RATIO} x FA3): "
++          + "; ".join(summary)
++          + ". Every other full shape, and every sliding / page-64 / kv-scaled case: FA3 (master). "
++          f"(attention prepare {time.perf_counter() - t_all:.1f}s)", flush=True)
++    if not route:
++        return None, 0, sm_count, {}, err
++    return ext, chosen, sm_count, route, err
++
++
+ def prepare(weights):
++    t_prepare = time.perf_counter()
+     device = weights["qkv_gate"].device
+     router = weights["router"]
+     hi = router.to(torch.bfloat16)
+@@ -604,7 +1602,14 @@ def prepare(weights):
+     _silu_sorted_setup(state, device)
+     _check_experts_e2e(state, device)
+     torch.cuda.synchronize()
+-    print(f"[prepare] max_memory_allocated {torch.cuda.max_memory_allocated(device) / 2**30:.2f} GiB", flush=True)
++    # Full-attention CUDA path: image proof, canary, self-check and the hard per-class timing gate.
++    # None (or an empty route) keeps FA3 on every layer, as master.
++    (state["full_attn"], state["attn_desc_swap"], state["attn_sm_count"], state["attn_route"],
++     state["attn_err"]) = _attn_prepare(device)
++    torch.cuda.synchronize()
++    print(f"[prepare] max_memory_allocated {torch.cuda.max_memory_allocated(device) / 2**30:.2f} GiB; "
++          f"prepare {time.perf_counter() - t_prepare:.1f}s (+ {_ATTN_BUILD['seconds']:.1f}s attention build at import)",
++          flush=True)
+     return state
+ 
+ 
+@@ -958,22 +1963,29 @@ def kernel_fn(data, state):
+     if scaled:
+         descale = dict(k_descale=data["k_scale"].reshape(1, 1).expand(batch, hkv),
+                        v_descale=data["v_scale"].reshape(1, 1).expand(batch, hkv))
+-    out = flash_attn_with_kvcache(
+-        q=q.view(tokens, hq, d).to(FP8),
+-        k_cache=k_cache,
+-        v_cache=v_cache,
+-        page_table=data["page_table"],
+-        cache_seqlens=data["cache_seqlens"],
+-        cu_seqlens_q=data["cu_seqlens_q"],
+-        max_seqlen_q=length,
+-        softmax_scale=cfg["sm_scale"] * cfg["qk_scale_factor"],
+-        causal=True,
+-        window_size=(window - 1, 0) if window else (-1, -1),
+-        scheduler_metadata=data["scheduler_metadata"],
+-        **descale,
+-    )
+-    if isinstance(out, tuple):
+-        out = out[0]
++    q8 = q.view(tokens, hq, d).to(FP8)
++    if _full_attn_route(cfg, data["page_table"].shape[1], state) is not None:
++        # Full layer, page size 1, unscaled cache, a shape class the prepare() timing gate routed
++        # (config and shapes only): the CUDA wgmma kernel.
++        out = _full_attn(state["full_attn"], q8.contiguous(), data, cfg, state["attn_sm_count"], state["attn_err"],
++                         desc_swap=state["attn_desc_swap"])
++    else:
++        out = flash_attn_with_kvcache(
++            q=q8,
++            k_cache=k_cache,
++            v_cache=v_cache,
++            page_table=data["page_table"],
++            cache_seqlens=data["cache_seqlens"],
++            cu_seqlens_q=data["cu_seqlens_q"],
++            max_seqlen_q=length,
++            softmax_scale=cfg["sm_scale"] * cfg["qk_scale_factor"],
++            causal=True,
++            window_size=(window - 1, 0) if window else (-1, -1),
++            scheduler_metadata=data["scheduler_metadata"],
++            **descale,
++        )
++        if isinstance(out, tuple):
++            out = out[0]
+     o = state["o_norm_gate"](out.reshape(tokens, hq * d).to(torch.bfloat16), gate)
+     attn_output = _gemm(o, dense["o"])  # all-reduce: identity
+ 

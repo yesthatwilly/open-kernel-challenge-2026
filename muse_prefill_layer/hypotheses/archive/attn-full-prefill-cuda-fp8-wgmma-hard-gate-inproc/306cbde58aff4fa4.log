@@ -1,0 +1,37 @@
+[cuda full attn] build: TORCH_CUDA_ARCH_LIST=9.0a, nvcc arch flags ['-gencode=arch=compute_90a,code=sm_90a']
+[cuda full attn] build OK: wgmma module compiled in 31.0s (arch flags ['-gencode=arch=compute_90a,code=sm_90a'])
+[w2 zero-store] OFF (weighted sum skips remote slots)
+[expert gemm] w13 BLOCK_T=64 BLOCK_W=128 warps=4 stages=3: n_regs=255 n_spills=0 shared=67584
+[expert gemm] w13 BLOCK_T=128 BLOCK_W=128 warps=8 stages=3: n_regs=176 n_spills=0 shared=116736
+[expert gemm] w13 BLOCK_T=256 BLOCK_W=128 warps=8 stages=2: n_regs=254 n_spills=4 shared=140288
+[expert gemm] w2 BLOCK_T=64 BLOCK_W=128 warps=4 stages=3: n_regs=255 n_spills=0 shared=67584
+[expert gemm] w2 BLOCK_T=128 BLOCK_W=128 warps=8 stages=3: n_regs=176 n_spills=0 shared=116736
+[expert gemm] w2 BLOCK_T=256 BLOCK_W=128 warps=8 stages=2: n_regs=254 n_spills=4 shared=140288
+[align-local] ON cases=15 mismatches=0 (PATH CHOSEN = parallel align on the Marlin path)
+[silu-sorted] ON max rel err 0.00e+00 (PATH CHOSEN = sorted silu on the Marlin path)
+[expert e2e] T=8192 triton vs marlin: rel L2 5.865e-03, worst row 7.104e-03 (8341 local routes)
+[cuda full attn] wgmma compiled in 31.0s
+[cuda full attn] image: device capability (9, 0); nvcc arch flags ['-gencode=arch=compute_90a,code=sm_90a']; attn_fwd_kernel regs 116 local 0 B static smem 0 B CTAs/SM 2 binaryVersion 90 ptxVersion 90; attn_combine_kernel regs 72 local 0 B CTAs/SM 3 binaryVersion 90 ptxVersion 90; dynamic smem 36864 B
+[cuda full attn] canary: launching attn_fwd_kernel desc_swap=0 nsplit=1
+[cuda full attn] canary: attn_fwd_kernel desc_swap=0 nsplit=1 OK (finite True)
+[cuda full attn] canary: launching attn_fwd_kernel desc_swap=1 nsplit=1
+[cuda full attn] canary: attn_fwd_kernel desc_swap=1 nsplit=1 OK (finite True)
+[cuda full attn] canary: launching attn_fwd_kernel desc_swap=0 nsplit=2
+[cuda full attn] canary: attn_fwd_kernel desc_swap=0 nsplit=2 OK; launching attn_combine_kernel
+[cuda full attn] canary: attn_combine_kernel OK (finite True)
+[cuda full attn] canary: error word 0
+[cuda full attn] canary 0.0s
+[cuda full attn] wgmma desc_swap=0 self-check b1_ctx3000_L753 splits=11: vs FA3 rel L2 6.32e-03 worst row 3.93e-02; vs fp64 ref 3.57e-03 / 3.56e-02 (FA3 6.18e-03 / 3.50e-02); finite True: PASS
+[cuda full attn] wgmma desc_swap=0 self-check b3_ctx5000_L200_outliers splits=14: vs FA3 rel L2 1.35e-02 worst row 3.86e-02; vs fp64 ref 8.67e-03 / 2.94e-02 (FA3 1.25e-02 / 3.86e-02); finite True: PASS
+[cuda full attn] wgmma desc_swap=0 self-check b4_ragged_L753 splits=3: vs FA3 rel L2 9.61e-03 worst row 5.14e-02; vs fp64 ref 6.97e-03 / 3.68e-02 (FA3 9.32e-03 / 4.00e-02); finite True: PASS
+[cuda full attn] wgmma desc_swap=0 self-check b1_ctx0_L16384 splits=1: vs FA3 rel L2 1.25e-02 worst row 5.85e-02; vs fp64 ref 9.28e-03 / 4.24e-02 (FA3 9.35e-03 / 4.55e-02); finite True: PASS
+[cuda full attn] wgmma desc_swap=0 self-check b2_ragged_L211 splits=4: vs FA3 rel L2 5.74e-03 worst row 3.63e-02; vs fp64 ref 5.60e-03 / 3.39e-02 (FA3 7.02e-03 / 3.39e-02); finite True: PASS
+[cuda full attn] self-check 0.3s
+[cuda full attn] GATE turn_1 (key (1, 753, 5), splits 11): FA3 425.3 us, new 675.3 us, ratio 1.588 -> FA3
+[cuda full attn] GATE turn_4 (key (4, 753, 5), splits 3): FA3 1632.7 us, new 2725.2 us, ratio 1.669 -> FA3
+[cuda full attn] GATE first_turn_ctx0 (key (1, 16384, 0), splits 1): FA3 906.0 us, new 1383.2 us, ratio 1.527 -> FA3
+[cuda full attn] GATE first_turn_ctx32768 (key (1, 16384, 2), splits 1): FA3 4496.3 us, new 6990.1 us, ratio 1.555 -> FA3
+[cuda full attn] GATE first_turn_ctx65536 (key (1, 16384, 4), splits 1): FA3 8076.0 us, new 12602.5 us, ratio 1.560 -> FA3
+[cuda full attn] gate 1.1s
+[cuda full attn] PATH CHOSEN (desc_swap=0, threshold 0.92 x FA3): turn_1 FA3 (1.588); turn_4 FA3 (1.669); first_turn_ctx0 FA3 (1.527); first_turn_ctx32768 FA3 (1.555); first_turn_ctx65536 FA3 (1.560). Every other full shape, and every sliding / page-64 / kv-scaled case: FA3 (master). (attention prepare 1.4s)
+[prepare] max_memory_allocated 4.91 GiB; prepare 5.9s (+ 31.0s attention build at import)
