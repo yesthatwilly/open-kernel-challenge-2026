@@ -50,7 +50,7 @@ review: proceed
 status: running
 review_at: 2026-10-25T004153Z
 review_companions: null
-stage: implemented
+stage: dispatched
 claimed_at: 2026-10-25T004153Z
 base_sha: eaddbb705ebf231e1f6510a66f7051d716c65fdd
 base_blob: a8bb42ac483318e9fbc84bc7826a27b7a704d1fb
@@ -67,6 +67,8 @@ submission_blob: 46e00b642357edc983496010f4eef95573178aa2
 lint_warnings: 0
 attempt_file: 2026-10-25T004328Z-check-qkv-swapab-m32-splitk8-stages3.md
 prepared_at: 2026-10-25T004328Z
+job: a61778a08ec04ea6
+dispatched_at: 2026-10-25T004351Z
 ---
 
 # qkv-swapab-m32-splitk8-stages3
