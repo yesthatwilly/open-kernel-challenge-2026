@@ -1,17 +1,17 @@
 {
  "problem": "muse_decode_layer",
- "job": "933d3f825a044d36",
- "check_job": "933d3f825a044d36",
+ "job": "a903b9d004d2452d",
+ "check_job": "a903b9d004d2452d",
  "mode": "check",
- "speedup": 1.3079569800910293,
+ "speedup": 1.3142361220457452,
  "ci": [
-  1.288337625389664,
-  1.3275763347923946
+  1.294522580215059,
+  1.3339496638764312
  ],
- "score_us": 17294.37614869084,
- "commit": "6773ec5cf56207a62cd84d77607d9c11cabca6f9",
- "submission_blob": "4bb57fd292a7f0fd5a80bd88dc773008b490bf8c",
- "slug": "dl3-piece-a-gate-stride-check-fix",
- "result": "muse_decode_layer/hypotheses/done/neutral/dl3-piece-a-gate-stride-check-fix.result.json",
- "updated_at": "2026-10-25T153311Z"
+ "score_us": 17211.74728083805,
+ "commit": "ec89382beb4990b340cef17f37a963295ee61c0f",
+ "submission_blob": "3fc72e97304e132db432fcc87872be997f842929",
+ "slug": "combo-measured-rows-slide-batched-preattn-t8-tail",
+ "result": "muse_decode_layer/hypotheses/done/neutral/combo-measured-rows-slide-batched-preattn-t8-tail.result.json",
+ "updated_at": "2026-10-25T192046Z"
 }
