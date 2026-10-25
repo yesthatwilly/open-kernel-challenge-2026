@@ -67,10 +67,10 @@ controls_for: null
 rewrite_stage: 2
 replaces: "full-layer decode at 1<batch<=64: splitkv_attn_kernel A + splitkv_combine_kernel B (stage 1, master)"
 review: proceed
-status: running
+status: done
 review_at: 2026-10-25T002131Z
 review_companions: null
-stage: dispatched
+stage: harvested
 claimed_at: 2026-10-25T002131Z
 base_sha: eacc593b09a9f93781b074c1c92079abb1a0756e
 base_blob: c6854f093588da524e63657576b27ed720756e32
@@ -89,6 +89,13 @@ attempt_file: 2026-10-25T003701Z-check-full-decode-splitkv-s2-streamk-ticket-inp
 prepared_at: 2026-10-25T003701Z
 job: e592b1f5d3db4f83
 dispatched_at: 2026-10-25T003708Z
+outcome: neutral
+verdict_detail: unproven-vs-best
+speedup: 1.4170903504971584
+speedup_ci: [1.395833995239701, 1.4425582674953836]
+harvested_at: 2026-10-25T013610Z
+best_at_harvest: 1.3948738389144513
+promotion: null
 ---
 
 # full-decode-splitkv-s2-streamk-ticket-inproc
@@ -195,3 +202,36 @@ Fixes applied in the worktree `submission.py`:
 Checked and found sound: the ticket protocol (every thread runs `__threadfence` after writing its partial, then a barrier, then the atomic; the last arriver fences and reads with `__ldcg`). The reset needs no protection: it happens after every increment for that request, and no PDL attribute is used, so consecutive launches and graph replays are stream-ordered. The per-stage query slot has no RAW hazard (same cp.async group as its tile, then wait and barrier) and no WAR hazard (the slot is rewritten only after the next iteration's barrier, and its contents are already in registers). Slots `c + b` are unique and fit in `grid + B`. The tile-owner inverse is exact. Every key is attended once and masking happens only past the length. The FP8 query and KV and the bf16 output are unchanged. Nothing runs as a child process, and kernel_fn is capturable. okc_lint: OK with warnings (host syncs at import only); py_compile: OK.
 
 Residual risk: never compiled. Register pressure under the 128-register cap (`__launch_bounds__(256, 2)`) and spills are unverified (the import log prints regs and local bytes), and the ptxVersion==90 gate relies on cubin-only images reporting the virtual arch.
+
+## Result
+
+- job `e592b1f5d3db4f83` (check), status done, passed True, tests 16/16
+- speedup 1.4171x, 95% CI [1.3958, 1.4426], score 2657.769844158961 µs vs SGLang 3766.3 µs
+- best at harvest: {"speedup": 1.3948738389144513, "ci": [1.3739507313307344, 1.415796946498168], "job": "698d4cd3838c4a63"}; base result: muse_attention_decode/hypotheses/done/gain/sliding-deep-splits-on-cuda-splitkv.result.json
+- **outcome: neutral** (unproven-vs-best)
+- files: `muse_attention_decode/hypotheses/done/neutral/full-decode-splitkv-s2-streamk-ticket-inproc.result.json`, `muse_attention_decode/hypotheses/done/neutral/full-decode-splitkv-s2-streamk-ticket-inproc.patch`; branch `hyp/muse_attention_decode/full-decode-splitkv-s2-streamk-ticket-inproc`
+
+## Attribution
+
+| shape | w | base µs | hyp µs | delta | verdict |
+|---|---|---|---|---|---|
+| batch=1 ctx=80000 dist=soft heads=tp8 layer=sliding load=decode_1 page=1 | 46 | 13.17 | 13.09 | 0.9799 | flat |
+| batch=1 ctx=80000 dist=coherent heads=tp8 layer=full load=decode_1 page=1 | 16 | 27.26 | 27.19 | 1.0058 | flat |
+| batch=16 ctx=80000 dist=soft heads=tp8 layer=sliding load=decode_16 page=1 spread=agentic | 46 | 15.34 | 15.19 | 1.0046 | flat |
+| batch=16 ctx=80000 dist=coherent heads=tp8 layer=full load=decode_16 page=1 spread=agentic | 16 | 122.79 | 110.91 | 1.1047 | gained |
+| batch=32 ctx=80000 dist=soft heads=tp8 layer=sliding load=decode_32 page=1 spread=agentic | 46 | 24.24 | 24.29 | 0.9878 | flat |
+| batch=32 ctx=80000 dist=coherent heads=tp8 layer=full load=decode_32 page=1 spread=agentic | 16 | 241.9 | 226.81 | 1.0661 | gained |
+| batch=1 ctx=80000 dist=soft heads=tp8 layer=sliding load=verify_1 page=1 q_len=8 | 46 | 16.72 | 16.83 | 0.9979 | flat |
+| batch=1 ctx=80000 dist=coherent heads=tp8 layer=full load=verify_1 page=1 q_len=8 | 16 | 30.03 | 29.84 | 1.0004 | flat |
+| batch=16 ctx=80000 dist=soft heads=tp8 layer=sliding load=verify_16 page=1 q_len=8 spread=agentic | 46 | 22.67 | 22.72 | 0.9978 | flat |
+| batch=16 ctx=80000 dist=coherent heads=tp8 layer=full load=verify_16 page=1 q_len=8 spread=agentic | 16 | 161.98 | 163.42 | 0.9897 | flat |
+| batch=32 ctx=80000 dist=soft heads=tp8 layer=sliding load=verify_32 page=1 q_len=8 spread=agentic | 46 | 28.7 | 28.87 | 0.9911 | flat |
+| batch=32 ctx=80000 dist=coherent heads=tp8 layer=full load=verify_32 page=1 q_len=8 spread=agentic | 16 | 300.83 | 302.06 | 0.9956 | flat |
+
+gained on full decode_16, decode_32. Expected hit: 2/3. Noise ±1.7%.
+
+## Follow-ups
+
+- rewrite stage 2 of `full-layer decode at 1<batch<=64: splitkv_attn_kernel A + splitkv_combine_kernel B (stage 1, master)`: read the replaced kernels' own us per shape (profile top_kernels) against the incumbent and the floor, and check which Milestone it reached. The next stage is `/hypothesize muse_attention_decode "<what to fix or tune>" --kind rewrite --depends-on full-decode-splitkv-s2-streamk-ticket-inproc --stage 3`; a slow or failed first cut is the expected start, not a do-not-retry.
+- unproven-vs-best: the change is not proven either way; a stacked hypothesis (`depends_on: full-decode-splitkv-s2-streamk-ticket-inproc`) that adds a further change in the same area is the only way to learn more (identical code is never re-run).
+
