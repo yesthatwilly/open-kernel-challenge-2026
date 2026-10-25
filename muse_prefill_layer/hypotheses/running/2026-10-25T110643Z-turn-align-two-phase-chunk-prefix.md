@@ -57,9 +57,18 @@ priority: 2
 kind: primary
 controls_for: null
 review: proceed
-status: queued
+status: running
 review_at: 2026-10-25T115947Z
 review_companions: null
+stage: claimed
+claimed_at: 2026-10-25T115947Z
+base_sha: f896dc264c4b4ee1df6c4b33556b50f2d4282f9c
+base_blob: 712edc5ea5be2dde8f558a016d0877b285340ee4
+branch: hyp/muse_prefill_layer/turn-align-two-phase-chunk-prefix
+worktree: .worktrees/muse_prefill_layer/turn-align-two-phase-chunk-prefix
+mode: null
+restack_of: null
+stale_base: null
 ---
 
 # turn-align-two-phase-chunk-prefix
