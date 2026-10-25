@@ -59,8 +59,10 @@ kind: rewrite
 controls_for: null
 rewrite_stage: 1
 replaces: moe_wna16_marlin_gemm x2 (Marlin w13 + w2) at 1024 < T <= 4096 (turn_4, T=3012)
-review: required
+review: proceed
 status: queued
+review_at: 2026-10-25T043310Z
+review_companions: null
 ---
 
 # experts-turn4-cuda-dequant-producer-ss-wgmma
@@ -87,3 +89,26 @@ shape (profile top_kernels) against the incumbent and the speed-of-light floor, 
 2. at or below the incumbent kernels' time on the target shapes;
 3. within ~1.5x of the floor on the target shapes, and the headline CI clears 1.0 (promotable).
 The next stage is minted with `--kind rewrite --depends-on <this slug> --stage N+1`.
+
+## Adversarial review
+
+Reviewed 2026-10-25T043310Z by an adversarial subagent (model opus).
+
+**Verdict: proceed.** Sound new decomposition for the turn_4 Marlin pair (2148/2115 us vs 306 us floor; a <=1400 us pair is ~1.25x on the turn_4 load, ~+7% headline) and compliant with the in-kernel-dequant-only rule (bf16 lives only in smem). Independent of the RS register-A hazard, so it need not wait for moe s3, but the stated setmaxnreg budget is invalid and the producer is overloaded; fix both before building.
+
+### Justification
+Mechanism plausible: at T=3012 ~94 local routes per expert, a 128-route M tile wastes ~1.36x MMA but dequantizes each weight ~1.3x total, vs Triton register-LHS which re-dequantizes per token tile and per warp, and Marlin's mma.sync. Per K step (64) a CTA does 128x256x64 MACs (~1000 tensor clocks on two consumer warpgroups) and the producer dequantizes 256x64 = 16K elements (~400-600 issue clocks at 128 threads plus 32 KB of st.shared, ~256 clocks of smem bandwidth) - feasible but tight. Weakest link 1 (hard bug): setmaxnreg 232 for 2 consumer warpgroups + 160 for the producer = 2*128*232 + 128*160 = 79,872 registers > 65,536 per SM; setmaxnreg.inc would stall forever. Valid splits are e.g. 232/40 (no room to dequantize), 200/104, or no setmaxnreg at all (all at the 168 compile cap, which SS consumers at ~140-150 regs fit). Weakest link 2: the producer warpgroup is asked to do the bulk weight copy, a cp.async row-gather of 128x64 bf16 activations, AND the dequant + swizzled st.shared - three jobs on one warpgroup is the likeliest bottleneck. Weakest link 3 (correctness): B stages written by st.shared (generic proxy) and A stages written by cp.async are read by wgmma through the async proxy; a fence.proxy.async.shared::cta after the producer's writes and before the mbarrier arrive is mandatory, otherwise stale/torn tiles appear nondeterministically.
+
+### Confounders on the current kernel
+- stack-tonight-five-prefill: provides _align_parallel (used here at bsm 128) and _silu_mul_sorted (kept between the GEMMs). The incumbent the gate times is Marlin with bsm 64 and the same align/silu, so no confound.
+- experts-hybrid-marlin-turn-triton-first-turn: MARLIN_MAX_TOKENS gate; the test case q_len 4096 (T=4096) falls in 1024<T<=4096 and will exercise the new path in the judge's tests - good coverage, but the self-check must include T=4096.
+- Queued turn-align-remap-on-side-stream-under-pooler moves the same align call at T<=4096 to the side stream with Marlin's bsm; not a measurement confound (separate base), but a merge conflict if both land: this path needs bsm 128.
+
+### Interference and A/B needs
+No companion: rewrite stage 1 with a hard prepare gate and printed producer-wait/consumer-wait counters; a gated-off run is master and the counters say which side binds for stage 2.
+
+### Open questions
+- Does the producer-wait counter dominate at T=3012? If so stage 2 splits dequant across two producer warpgroups (then setmaxnreg can't be used at all at 384+ threads unless consumers drop).
+- Is the w2 GEMM (K=4096 over the silu output) better served by having _silu_mul_sorted write cache2 directly in sorted-row order, so w2's A is a plain TMA tile with no gather?
+- Per-expert route counts under the soft distribution at T=3012: how many experts exceed 128 (second token tile => second dequant of all its weights)?
+
