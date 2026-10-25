@@ -50,7 +50,7 @@ review: proceed
 status: running
 review_at: 2026-10-25T004153Z
 review_companions: null
-stage: claimed
+stage: implemented
 claimed_at: 2026-10-25T004153Z
 base_sha: eaddbb705ebf231e1f6510a66f7051d716c65fdd
 base_blob: a8bb42ac483318e9fbc84bc7826a27b7a704d1fb
@@ -59,6 +59,12 @@ worktree: .worktrees/muse_bf16_proj/qkv-swapab-m32-splitk8-stages3
 mode: null
 restack_of: null
 stale_base: null
+implemented_at: 2026-10-25T004327Z
+impl_commit: e9ec7d9b3f0860d811500ab7e61813883b89a8bf
+submission_sha256: 128cc19c4135b2d8eb3e87ede2b12983edaacf8cc12b4ca3f1b5ad0d79f20e7d
+norm_sha256: 3640abea7b64eccffd761e873abdb0974b9806e370121a5cc2f1c4e586ab0f1a
+submission_blob: 46e00b642357edc983496010f4eef95573178aa2
+lint_warnings: 0
 ---
 
 # qkv-swapab-m32-splitk8-stages3
@@ -103,3 +109,23 @@ No companion. A control splitting SPLIT_K 8 from stages 3 (e.g. (8,128,4) at 2 C
 - BEST.json lists blob a8bb42a for the restack slug but its blob is 970b415: bookkeeping inconsistency; this builds on master a8bb42a.
 - Judge on the qkv_gate decode_32 row and kernel time only.
 
+
+## Implementation notes
+
+- SWAPAB_CFG qkv_gate (2304, 8192, 4, 128, 4) -> (2304, 8192, 8, 128, 3): grid (36, 8) = 288 CTAs, K_SLICE 1024.
+- _swapab_prepare: swapab_ws_qkv is sized from SWAPAB_CFG["qkv_gate"][2] (constant, = 8) -> (8, 32, 2304) fp32; swapab_cnt_qkv unchanged (36).
+- Counters: prepare() already zeroes swapab_cnt_pooler / swapab_cnt_qkv after all warm-ups; kept as is.
+- Per the review, the prepare()-time report in _swapab_forward now also prints compiled shared bytes, n_regs and ctas_per_sm_fit (min of 227 KB smem incl. 1 KB/CTA reserve, and 64K regs / (regs*128 threads)); ctas_per_sm_fit >= 3 means 3 CTAs/SM fit. Not runnable here (no GPU): the expected value is 3 (72 KB + pipeline, ~219 KB), unverified.
+- No other deviation. Reduce kernel code untouched (loops over SPLIT_K).
+
+## Rules check
+
+- [x] CUDA-graph capturable: diff has no .item/.cpu/sync in kernel_fn; the diagnostic print is in prepare() only (report=True), no tensor prints.
+- [x] Nothing derived from data cached: ws/cnt sized from constants; synthetic warm-up inputs only.
+- [x] Weights: unchanged, BF16 stays BF16; fp32 partials are workspace only.
+- [x] Activations BF16: n/a, unchanged.
+- [x] Attention: n/a, no attention touched.
+- [x] No timing patches, harness access, subprocesses or network in the diff.
+- [x] All work inside the timed call; no output caching or replay.
+
+okc_lint: `CLEAN: submission.py`; py_compile OK; __pycache__ removed.
