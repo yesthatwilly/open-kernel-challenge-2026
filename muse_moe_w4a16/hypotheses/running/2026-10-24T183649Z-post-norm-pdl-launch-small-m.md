@@ -55,7 +55,7 @@ base_sha: 1d31a26689bb109c514db2e2c51c7167dbbb76f0
 base_blob: 108d36e9f2266fc88531dd6ff0329a847c882013
 branch: hyp/muse_moe_w4a16/post-norm-pdl-launch-small-m
 worktree: .worktrees/muse_moe_w4a16/post-norm-pdl-launch-small-m
-mode: null
+mode: check
 restack_of: null
 stale_base: null
 implemented_at: 2026-10-25T003435Z
@@ -64,6 +64,8 @@ submission_sha256: b36882b3db228eecd9823634c8ebb8fd331be66cbfc8b74ce0cda067d2a10
 norm_sha256: c4785bcb2d2ed9891903ba93a91cf3e246ef2d7a38356d7083a55ad42e2169db
 submission_blob: 062a12799f5d0eb53f65704727c665e6976fc6db
 lint_warnings: 11
+attempt_file: 2026-10-25T003435Z-check-post-norm-pdl-launch-small-m.md
+prepared_at: 2026-10-25T003435Z
 ---
 
 # post-norm-pdl-launch-small-m
