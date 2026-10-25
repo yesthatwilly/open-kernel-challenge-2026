@@ -80,8 +80,10 @@ kind: rewrite
 controls_for: null
 rewrite_stage: 1
 replaces: moe_wna16_marlin_gemm x2 (Marlin w13 + w2) and _silu_mul_sorted at 200 < T <= 4096
-review: required
+review: proceed
 status: queued
+review_at: 2026-10-25T111120Z
+review_companions: null
 ---
 
 # experts-turn-rega-s4-port-t4096
@@ -108,3 +110,27 @@ shape (profile top_kernels) against the incumbent and the speed-of-light floor, 
 2. at or below the incumbent kernels' time on the target shapes;
 3. within ~1.5x of the floor on the target shapes, and the headline CI clears 1.0 (promotable).
 The next stage is minted with `--kind rewrite --depends-on <this slug> --stage N+1`.
+
+## Adversarial review
+
+Reviewed 2026-10-25T111120Z by an adversarial subagent (model opus).
+
+**Verdict: proceed.** Proceed as a rewrite stage, but re-base the spec on today's master (ca1d41b): at turn_1 the incumbent is still Marlin (693/733 us), and that is where the unique value is. At turn_4 the incumbent is now ssdq (1878/1865 us, not Marlin 2148/2115), so the T in (1024,4096] class needs a three-way gate (rega vs ssdq vs Marlin) and an explicit dispatch order. The port must come from the s5 copy-safe code, not s4.
+
+### Justification
+A. The mechanism is plausible: same expert dimensions (K=4096, w13 N=8192, w2 N=4096, 32 local experts), and swap-AB register-A wgmma dequantizes each weight tile once per <=128-route bucket. That is the right shape for ~24 routes/expert at turn_1 (bucket 32) and ~94 at turn_4 (bucket 128). The floors check out: ~905 MB of NVFP4 weights + scales is about 189 us at H200 bandwidth, and 2*3012*4096*12288 FLOP is about 306 us. Both incumbents are far off: Marlin at turn_1 is 3.7x its floor, ssdq at turn_4 is 6.1x its floor and, by master's own counters, producer-bound (consumers wait 84%). Shape weights: turn_1 sliding 46 + full 16, turn_4 sliding 46 + full 16, against first_turn 138+48. The turn rows are about a third of the score, so a real expert win there moves the headline. WEAKEST LINK: the speed evidence. The 0.63x/0.55x figures are muse_moe_w4a16 prepare-time timings on synthetic all-local routings. The only JUDGED wgmma rows that exist (muse_moe s5 copy-safe-forced, job d4ad4f31d2764050) show wg_kernel w13+w2 = 238+111 = 349 us vs Marlin 306 us at bs=128 (a LOSS, 1.14x) and 271+126 = 397 vs 483 us at bs=256 (0.82x). That is about 2.3 TB/s of weight stream at small M, not 0.55x Marlin. Extrapolated to turn_1 (~753 routes), 0.8x Marlin (~560 us vs 693) is a more honest expectation than ~450-500 us. Against ssdq at turn_4 (already 0.87x Marlin), rega must reach <=0.83x Marlin just to clear a 0.95 gate vs ssdq; the prepare-time number says yes, the judged number says it is a coin flip. Stale facts in the change paragraph: base 'a81d19c', 'turn loads at 1.01x SGLang' (turn_4 is now 1.12x/1.07x), and a turn_4 gate 'vs master's Marlin pair'. The incumbent and the floor gap at turn_4 must be restated against ssdq.
+
+### Confounders on the current kernel
+- experts-turn4-ssdq-s1b-dataptr-symbol-fix (landed today, master ca1d41b): it owns T in (1024,4096] when state['ssdq_ok']. _experts checks ssdq first, so a naive port into _experts_marlin never runs at turn_4 (ssdq intercepts). Conversely, if the port puts rega ahead of ssdq and gates only against Marlin, a turn_4 row can regress vs the ssdq incumbent while 'passing' its gate. The turn_4 row is interpretable only if the gate compares rega against what master actually runs at T=3012 (ssdq when ON, else Marlin) and the PATH CHOSEN line names all three. Its scratch (xs/hs per state) also coexists with ssdq's: about 1 GB more device memory across two states. Harmless on H200, but check that both fit before the timing gate runs.
+- experts-hybrid-marlin-turn-triton-first-turn (landed): it set MARLIN_MAX_TOKENS=4096, which bounds this change at T<=4096. first_turn must stay byte-identical, so any first_turn row movement is noise or a scratch/allocator side effect, not the change.
+- stack-tonight-five-prefill (landed): _align_parallel and _silu_mul_sorted on the Marlin path are part of the turn_1 incumbent block. rega replaces align (moe_align_block_size with BSM=16) + silu (fused epilogue) + both GEMMs, so the turn_1 gate must time the whole incumbent block (align+Marlin+silu+Marlin) against the whole new block, as the spec says. Read the top-kernel rows, not just the headline: turn_1 drifts 7-10% on unchanged code.
+
+### Interference and A/B needs
+No companion. This is a rewrite stage, and the readout is the replaced kernels' own us in profile top_kernels at T=753 and T=3012, compared against the incumbent each T class actually runs. The ssdq interaction is a dispatch/gate design issue, not something an A/B run fixes: an ab-revert of ssdq would only re-measure the stale Marlin comparison. Required spec changes instead. (1) Build on master ca1d41b. (2) _experts order for T<=4096: rega if state['rega_ok'][class], else ssdq if T>1024 and ssdq_ok, else Marlin. (3) The T in (1024,4096] gate at T=3012 times all three in the same interleaved cold-L2 loop (>=7 alternations). rega ON only if <=0.95x min(ssdq, Marlin), and all three medians are printed in the last lines regardless of outcome, so the turn_4 comparison is read even when rega loses its gate. (4) The T<=1024 gate at T=753 is rega vs master's Marlin block, unchanged. (5) Port from muse_moe_w4a16 s5 (cuda-nvfp4-wgmma-rega-grouped-s5-copy-safe-forced.patch: per-call TMA encode as __grid_constant__, no wg_mptr_py/_wg_state_live, deepcopy + clone states in the replay check, and a torch.profiler LAUNCHED=wgmma assertion in prepare). Do not port s4, whose judged run never launched the kernel. Overlap with the queued experts-turn4-ssdq-s2-tma-raw-weight-ring: both target T=3012 and they do not stack. Running both today is a fair race, because each is gated against the incumbent at prepare time. If s2-tma lands first, this hypothesis's three-way gate automatically compares against the improved ssdq, as long as the gate times whatever _experts would dispatch rather than a hard-coded ssdq_kernel. experts-turn-rega-s4-w2-only-t4096 is now incoherent at turn_4, because ssdq replaces w13 too. Restrict it to T<=1024 or retire it if this lands. The held experts-turn1-cuda-wgmma-rega-port-bucket32 is superseded by this one.
+
+### Open questions
+- At turn_4, does rega beat the CURRENT ssdq (1870 us) or only Marlin? The judged muse_moe rows (0.82x Marlin at bs=256, 1.14x at bs=128) suggest the margin over ssdq may be thin. The three-way prepare print answers this even if rega is gated off.
+- Which s-stage is the port source? s5-copy-safe-forced is the only rega build with judged kernel rows. muse_moe's in-flight s5-copy-safe-bucket-gate may change the bucket policy. Pin the source patch path in the build.
+- Does the turn_1 gain survive judge-like soft routing? At ~24 routes/expert with skew, some experts hit bucket 64/128 and many hit bucket 16. s5's loss at bs=128 (~same per-expert counts as turn_1's low end) is the warning sign.
+- If both this and experts-turn4-ssdq-s2-tma-raw-weight-ring pass, which lands first? The second must be re-gated against the first's master, not merged blind.
+
