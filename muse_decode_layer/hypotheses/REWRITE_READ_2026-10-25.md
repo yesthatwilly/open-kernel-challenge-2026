@@ -217,3 +217,67 @@ The concern: `cpp_extension` adds a plain `compute_90` gencode next to `-arch=sm
 None of the three uses wgmma or setmaxnreg; they are mma.sync / ldmatrix / cp.async code, which is valid for plain sm_90. So none is "UNMEASURED (build)", and the gencode issue does not explain the moe fault.
 
 The prefill fix (`TORCH_CUDA_ARCH_LIST=9.0a` + an `__CUDA_ARCH_FEAT_SM90_ALL` guard) is still worth adding to the moe stage-2 TU as hygiene. It ensures only one sm_90a cubin is built and loaded. Any later wgmma stage (for example `bf16-m32-swapab-wgmma-port`) needs it.
+
+---
+
+## 01:04Z harvest (2026-10-25)
+
+Master for comparison is BEST `stack-align-par-sidestream-sliding1`:
+- submit 39bcf05afc4e4dd3: 1.2521x
+- check cc92097b64784c0f: 1.2495x [1.231, 1.268]. This is the result file named in BEST.json. `BEST.result.json` holds a stale baseline job (3c3181b1fce24b9a).
+
+Per-shape figures are benchmark medians ± err. z is Δ / √(err_new² + err_ref²). The paired per-shape speedup is quoted alongside because raw medians drift between runs.
+
+### full-decode-splitkv-restack-on-pdl — job c243a29f26dc4725, neutral 1.268x [1.249, 1.287]: RAN, WON on its two target shapes. LAND CANDIDATE.
+
+**What ran (log):**
+- Both TUs built: `[small-t-dense-chain] load_inline compiled in 50.0s` and `[splitkv] load_inline compiled in 49.0s`. There is no arch line; this is mma.sync/cp.async code with no wgmma, so plain sm_90 is fine.
+- Dense chain: `PATH CHOSEN = DENSE-CHAIN at T <= 32, MASTER above`, pdl=1. P timing: 20.6 µs (3.67 TB/s) at T=1 and 25.9 µs (2.92 TB/s) at T=32. Align-parallel ON with 0/18 mismatches.
+- Split-KV self-check: kernel A and kernel B ok on all 4 cases (B=5 and B=33, kv_scale 1.0 and 0.25). rel L2 1.63-1.69e-3, finite.
+- `[splitkv] ON: self-check passed: CUDA split-KV path on full decode, 1 < batch <= 64`. No fault. This build prints no timing or gate lines.
+
+**Per-shape against master's best run (check cc92097b):**
+
+| shape | new µs | master µs | Δ | z | paired speedup new / master |
+|---|---|---|---|---|---|
+| **full decode_16** | 306.7±4.0 | 349.5±3.4 | **−42.7 (−12.2%)** | **−8.1** | **1.407 / 1.229** |
+| **full decode_32** | 479.6±3.1 | 529.7±9.5 | **−50.1 (−9.5%)** | **−5.0** | **1.301 / 1.178** |
+| full decode_1 (B=1, not routed) | 142.7 | 142.9 | −0.2% | −0.2 | 1.271 / 1.266 |
+| sliding decode_1/16/32 | 126.1 / 209.8 / 242.3 | 127.5 / 205.0 / 245.8 | −1.0 / +2.4 / −1.4% | ≤1.3 | flat |
+| verify, all 6 shapes (not routed) | — | — | −2.1% to +4.7% | ≤1.8 | flat (±0.03) |
+
+- Kernels in the profile:
+  - decode_16: `splitkv_attn_kernel` 112.7 µs + `splitkv_combine_kernel` 8.4 µs, replacing FA3 main 151.0 µs + combine
+  - decode_32: 248.5 + 8.6 µs, replacing FA3 287.7 µs
+- These match the stage-1 port (112.0 / 249.5 µs). The kernel time carried over unchanged onto the PDL master.
+- **Only the two full-decode B>1 shapes beat master, and both are well beyond noise (z −8.1 and −5.0).** No other shape moved outside noise. The worst control was full verify_1 at +4.7%, z 1.7; that path is untouched.
+- The headline gain (+0.016 to +0.019) is inside the overlapping CIs only because the two winning shapes carry weight 16 each.
+
+**Verdict: LAND CANDIDATE** (a scored submit, which needs the user's approval). It is the cleanest way to bank 43-50 µs per full decode_16/32 call. Kernel A is still ~1.8-2.0x the KV floor, so further stages build on this.
+
+### full-decode-splitkv-kv-bw-3p5 — job 6af3b0e3311943ee, neutral 1.266x [1.247, 1.285]: RAN. The variant sweep did not raise bandwidth, and the static chooser picked a slower variant at B=16. DEAD as a knob.
+
+**What ran (log):**
+- Both TUs built: 50.2s and 51.2s. The dense chain and align are the same as above.
+- Six kernel-A variants were self-checked. All of them pass all 4 cases with the same rel L2 1.63-1.69e-3, and none faulted.
+- Variants: stages 4/5, chunk 1024/512, ahead 1/2. smem ranges from 89 to 115 KB, and **every variant runs at 2 CTAs/SM**.
+- `PATH CHOSEN = full decode batch 2..23: S5/C512/A2; batch 24..64: S5/C1024/A2`. This choice is a **hard-coded `_SPLITKV_SEL`**; the timing pass "ranks the variants for the log, it does not choose them".
+- Prepare-time kernel-A timing (CUDA events, warm L2, synthetic agentic lengths, ~74K-token mean):
+
+| B | S4/C1024/A1 (stage 1) | S5/C1024/A1 | S5/C1024/A2 | S4/C512/A1 | S5/C512/A1 | S5/C512/A2 | combine C1024 / C512 |
+|---|---|---|---|---|---|---|---|
+| 16 | 94.0 µs, 3.04 TB/s | 93.9, 3.04 | 93.8, 3.04 | 104.0, 2.74 | 104.2, 2.74 | **104.5, 2.73 ← CHOSEN** | 11.2 / 11.1 |
+| 32 | 215.1, 2.81 | 214.9, 2.81 | **215.2, 2.80 ← CHOSEN** | 239.4, 2.52 | 238.8, 2.53 | 239.0, 2.53 | 11.3 / 11.2 |
+
+- A 5th stage and 2-ahead prefetch changed nothing (±0.3 µs). Chunk 512 cost 10-11%. **No variant reached 3.5 TB/s.** The ceiling is ~3.0 TB/s at B=16 and ~2.8 at B=32, at 2 CTAs/SM.
+- So the ring depth is not the limiter. Occupancy and page-gather latency are the likely limits, along with the B=32 tail.
+
+**Per-shape against master (check cc92097b), and against the restack:**
+
+| shape | new µs | master | Δ vs master (z) | restack | kernel A (profile) |
+|---|---|---|---|---|---|
+| full decode_16 | 334.9±3.5 | 349.5 | −14.6 (−4.2%, z −3.0) | 306.7 | **131.1 µs (C512) vs 112.7 restack: +18 µs lost to the chooser** |
+| full decode_32 | 473.3±2.9 | 529.7 | −56.4 (−10.6%, z −5.7) | 479.6 | 250.6 vs 248.5: flat |
+| sliding verify_32 (untouched) | 634.8 | 592.5 | +7.1% (z 6.7) | 600.8 | paired 1.175 vs 1.176: run drift, not the change |
+
+**Verdict: DEAD** as a config knob. Do not land it, because it is worse than the restack at decode_16. A further kernel-A stage needs a structural change, such as more warps or bytes in flight per SM at higher occupancy, or a different gather. It also needs a timing-driven or corrected variant choice, keeping C1024 at every batch.

@@ -137,3 +137,73 @@ It does not interact with the new master: attention code is unchanged there.
 - **#4-#6.** These are dead or absorbed. #4 would rebase cleanly but has nothing to stack.
 
 The common lesson: both CUDA rewrites died on the same `load_inline` arch bug (an sm_90 gencode alongside `-arch=sm_90a`). Every future `load_inline` wgmma or setmaxnreg kernel should carry the `TORCH_CUDA_ARCH_LIST=9.0a` fix plus the arch-feature guard, and needs a hard timing gate before any non-preferred backend is routed.
+
+---
+
+## 01:04Z harvest (2026-10-25)
+
+Master for comparison is BEST `stack-tonight-five-prefill`:
+- check c4d14d62f11e4aaf: 1.0705x [1.054, 1.087]
+- submit 502f2eab95164781: 1.0744x
+
+The master expert GEMM at first_turn is Triton `_moe_nvfp4_gemm_kernel` at 8.08-9.17 ms. turn_1/turn_4 run Marlin.
+
+### experts-triton-packed-dequant-turn4 — job ce3cc1a22a244ec7, neutral 1.052x [1.036, 1.068]: RAN (Triton, not CUDA). Flat to a loss. DEAD.
+
+**What ran (log):**
+- Triton expert GEMM configs. Packed=False: 176-255 regs, local_alloc 4. Packed=True: 207-255 regs, local_alloc 5. BLOCK_T=256 spills 4 in both.
+- `packed dequant ON`. e2e vs Marlin rel L2 5.86e-3 at T=8192 and T=3012.
+- No gate line. The base is stale (3c444875, pre-`stack-tonight-five`), so turn_4 (T=3012) runs the Triton GEMM where master runs Marlin.
+
+**Per-shape against master:**
+- turn_4: Triton 2149 µs vs Marlin 2148 µs sliding (tie), and 2306 vs 2115 µs full (+9%). The shape went from 4849 to 4965 µs (+2.4%, z 2.1).
+- first_turn: expert kernel 8.65-8.98 ms vs master's 8.08-9.17 ms. The shapes were +2.1% to +8.3% slower (z 2.5-9.6). The paired speedups were 1.096-1.167 vs master's 1.136-1.209.
+- turn_1: flat.
+
+**Verdict: DEAD.** This is the second run confirming that the packed asm dequant does not pay (see experts-triton-nvfp4-packed-asm-dequant above). It also confirms that Marlin should keep turn_4.
+
+### attn-full-prefill-cuda-fp8-wgmma-hard-gate-inproc — job 306cbde58aff4fa4, neutral 1.068x [1.052, 1.084]: built, passed the canary and self-check, gated OFF everywhere. NEVER RAN in the judged path.
+
+**What ran (log):**
+- Build: `TORCH_CUDA_ARCH_LIST=9.0a, nvcc arch flags ['-gencode=arch=compute_90a,code=sm_90a']`, `build OK: wgmma module compiled in 31.0s`.
+- Kernels:
+  - `attn_fwd_kernel`: 116 regs, 0 B local, 2 CTAs/SM, 36 KB dynamic smem
+  - `attn_combine_kernel`: 72 regs, 3 CTAs/SM
+  - binaryVersion 90
+- Canary: desc_swap 0/1, nsplit 1/2 and combine all OK and finite, error word 0.
+- Self-check: all 5 cases PASS. vs fp64, rel L2 is 3.6e-3 to 9.3e-3, equal to or better than FA3's 6.2e-3 to 1.25e-2.
+- GATE, prepare timing:
+
+| shape | FA3 µs | new µs | new / FA3 |
+|---|---|---|---|
+| turn_1 | 425.3 | 675.3 | 1.588 |
+| turn_4 | 1632.7 | 2725.2 | 1.669 |
+| first_turn ctx0 | 906.0 | 1383.2 | 1.527 |
+| first_turn ctx32768 | 4496.3 | 6990.1 | 1.555 |
+| first_turn ctx65536 | 8076.0 | 12602.5 | 1.560 |
+
+  The threshold is 0.92x, so the result is `PATH CHOSEN ... FA3` on every shape.
+- **Per-shape:** this is master's path. The FA3 rows are identical (e.g. 415→420, 1620→1655, 4467→4456, 8017→8012 µs). Every shape is within ±2.6% of master. The two |z|>2 rows (first_turn ctx0 −2.6%, sliding turn_4 +3.7%) come from untouched Marlin and Triton expert rows, so they are run drift.
+
+**Verdict: DEAD as designed.** The FP8 wgmma kernel is correct but 1.53-1.67x slower than FA3 on every full shape, so it needs a new design (warp specialisation and a TMA pipeline at FA3's level) before another check. The hard gate worked as intended: a slow kernel cost nothing.
+
+### experts-cuda-wgmma-grouped-gemm-remeasure-sm90a-inproc — job 6d047cdeefd94357, regression 0.940x [0.926, 0.954]: RAN at T=16384 only, LOST ~1.8x. DEAD as is.
+
+**What ran (log):**
+- Build: `TORCH_CUDA_ARCH_LIST=9.0a ... ['-gencode=arch=compute_90a,code=sm_90a'] (sm_90a only)`, `load_inline compiled in 31.4s`.
+- `_nvfp4_wgmma_grouped_kernel`: regs 168, **local_bytes 680 (spill)**, dynamic smem 190.6 KB, 1 CTA/SM, grid 132.
+- Canary w13+w2: ok, error word 0. One-hot w13/w2: ok.
+- e2e at T=16384: w13 and w2 vs Triton rel L2 **0.000e+00**; full experts vs Marlin 5.9e-3. Bit-identical to the Triton GEMM is surprising for a different MMA order. It is worth checking that the e2e really compared the CUDA output.
+- `PATH CHOSEN T=300/753/1506/600/4096/3012: marlin; T=16384: cuda`.
+
+**Per-shape against master.** Kernel ms are the wgmma grouped kernel vs master's Triton `_moe_nvfp4_gemm_kernel`:
+
+| shape | new µs | master µs | Δ | kernel |
+|---|---|---|---|---|
+| first_turn ctx0 full | 22028.7 | 14705.3 | +49.8% (z 77) | 15.24 vs 8.08 ms |
+| first_turn ctx32768 sliding (w 138) | 21471.3 | 14264.6 | +50.5% (z 72) | 15.67 vs 8.21 ms |
+| first_turn ctx32768 full | 25236.5 | 17746.7 | +42.2% (z 20) | 16.22 vs 9.17 ms |
+| first_turn ctx65536 full | 29244.7 | 21733.7 | +34.6% (z 15) | 14.66 vs 8.11 ms |
+| turn_1 / turn_4 (Marlin, control) | — | — | −1.5% to +1.7% | flat |
+
+**Verdict: DEAD as is.** The sm_90a build is now proven to run, so the wgmma path really executed. It is 1.8-1.9x slower than the Triton GEMM, with a 680 B spill at 1 CTA/SM. Only a redesign is worth another check: fix the register pressure (setmaxnreg producer/consumer split) and use 2 consumer warpgroups.

@@ -174,3 +174,37 @@ The worktree `submission.py` (L1007-1023) calls `load_inline` with `extra_cuda_c
 4. At harvest, grep the log for `build OK`/`build FAILED`, ptxas `.target 'sm_90'`, `DISABLED` and `PATH CHOSEN`, and check that the profile has a `cutlass::device_kernel<...>` row on the m=256 rows before reading any number.
 
 With the fix applied, the section 4 conclusion stands: worth its check.
+
+---
+
+## 01:04Z harvest (2026-10-25)
+
+Master for comparison is BEST `bf16-restack-m16-swapab-router-swapab-m32` (check job 1e90292c7b954d96, 1.2215x). Note that `hypotheses/BEST.result.json` holds a different, stale job (366189f0f1114da1, 0.902x), so read the file named in BEST.json `result`.
+
+### bf16-lossless-exp4-occupancy-dequant-once-stage2 — job f1024212dd2f49f3, neutral 0.887x [0.874, 0.900]: RAN, LOST. DEAD.
+
+**What ran (log):**
+- Build OK: `[lossless] load_inline compiled in 44.5s`. There is no arch line. The master swapab kernels report wgmma=8-16, mma.sync=0, no spills.
+- `_lossless_swapab_kernel<8/16/32>`: 99-117 regs, 0 B local, 115-165 KB dynamic smem (8 stages), 8 warps/CTA, **occupancy 1 CTA/SM**. The grid is 108 CTAs (qkv_gate) or 128 (pooler, unpooler), which gives 6.55-7.76 warps/SM achieved.
+- Encode: 12.17 bits/element (ratio 0.761, 0.28-0.31% escape groups). The round trip through the kernel decoder is bit-exact for all three layers.
+- Self-check: every launch is ok. `PATH CHOSEN route=qkv_gate|pooler|unpooler: lossless (m 1..32)`. No fault.
+- Prepare timing, eager and including launch:
+  - qkv m=1: 20.6 µs warm (1.40 TB/s compressed, 1.84 raw-equivalent), 30.1 µs cold
+  - pooler m=1: 33.1 µs warm (1.54 TB/s), 40.3 µs cold
+  - unpooler m=1: 31.3 µs warm (1.63 TB/s), 38.6 µs cold
+- **`KILL-GATE pooler m=1 cold-L2 40.32 us vs gate 19.0 us: MISS`**.
+
+**Per-shape against master.** These are profile kernel µs, lossless vs master `_bf16_swapab_kernel`:
+
+| layer | decode_1 (m=1) | verify_1 (m=8) | decode_16 | decode_32 | shape Δ vs master |
+|---|---|---|---|---|---|
+| qkv_gate | 18.9 vs 9.5 | 19.2 vs 9.9 | 22.2 vs 10.1 | 25.7 vs 11.8 | +85% to +103% |
+| pooler | 30.8 vs 18.6 | 31.0 vs 19.7 | 34.7 vs 19.6 | 39.6 vs 20.7 | +65% to +94% |
+| unpooler | (not routed: splitk 4.4) | (splitk 4.5) | 32.7 vs 19.3 (nvjet) | 34.3 vs 18.7 | +74% / +90% |
+
+- Stage 2 did improve on stage 1 (job 542f2b169c934706): qkv went 22.5→18.9 µs and pooler 40.6→30.8 µs at m=1. It is still 1.7-2.1x master on every routed shape.
+- The m≥128 shapes are flat, within ±1%.
+- **The branch is not on current master.** The o and small-m unpooler rows run `_pooler_skinny_kernel` / `_bf16_splitk_kernel`, not master's `_bf16_swapab_kernel`, so even untouched rows are 4-10% slower (o decode_1 6.5 vs 5.9 µs, router +4-10%).
+- The headline therefore mixes two losses: the lossless kernel and a stale base.
+
+**Verdict: DEAD.** The kill gate missed by 2.1x, and the kernel moves 1.4-1.6 TB/s of compressed bytes against master's ~3.6 TB/s raw. Entropy decode at 1 CTA/SM cannot make up the 24% byte saving. Do not mint stage 3.

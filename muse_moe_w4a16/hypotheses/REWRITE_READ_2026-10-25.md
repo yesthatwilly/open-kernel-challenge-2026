@@ -183,3 +183,55 @@ fp32 split-K partial and reduce plus the at::native glue (about 25 µs at bs=1) 
 **Verdict: DEAD.** This was the second Triton small-M W4A16 GEMV to lose about 2x or worse to Marlin, after
 triton-w13-grouped-gemv-small-m at 0.751x. The cross-item cp.async ring and the ~1.5 op/weight dequant this needs
 are exactly what the CUDA swap-AB and fused-bs1 kernels were built for. Do not mint a Triton stage 2.
+
+---
+
+## 01:04Z harvest (2026-10-25)
+
+Master for comparison is BEST `align-parallel-per-expert-verify`:
+- submit 1947e3ec2abb4bdf: 1.3278x
+- check 45eacf4ca2e849d2: 1.3249x [1.305, 1.345]. This is the result file named in BEST.json. `BEST.result.json` is a stale reference job (5e7d55323d75425e, 0.006x).
+
+Both archived `.log` files are exactly 15022 B and start mid-line. They are the tail of the run output, and the top of the align dump is cut off.
+
+### cuda-nvfp4-swapab-mma-persistent-small-m-inproc — job fecc63ef567b4dc2, regression 0.925x [0.911, 0.939]: RAN at T≤32, LOST 1.7-2x to Marlin. DEAD.
+
+**What ran (log):**
+- Build: `nvcc flags ['-O3', '-arch=sm_90a', '-lineinfo']`, `load_inline compiled in 42.8s`, device H200 (9, 0).
+- Kernels w13+silu and w2 at NT=1/2/4: 80-128 regs, 0 B local, 90-139 KB dynamic smem.
+- Grid 132. Split-K: w13 {1:4, 2:2, 4:1}, w2 {1:8, 2:4, 4:2}.
+- Probes 0-3 (cp.async.cg/ca, ldmatrix.x4, cvt e4m3x2 + fma bf16x2 + mma.sync m16n8k16) all ok with the expected values.
+- Canary w13/w2 ok and finite. **The illegal-instruction fault of the earlier version is gone.**
+- `SELF-CHECK PASSED: max rel-L2 9.244e-03 (bound 1e-2), tickets zero True`. This is close to the bound: 8.8-9.2e-3 at every M.
+- `PATH CHOSEN = CUDA for num_tokens <= 32; MARLIN above`. No gate or timing lines.
+
+**Per-shape against master (check 45eacf4c).** Kernel µs are new `w4a16_kernel` w13 + w2 vs master Marlin:
+
+| shape (T) | new µs | master µs | Δ | kernels new vs Marlin |
+|---|---|---|---|---|
+| decode_1 (1) | 68.6 | 48.8 | +40.6% (z 11) | 44.7 + 31.2 = 75.9 vs 44.7 |
+| verify_1 (8) | 218.0 | 107.7 | +102% (z 25) | 130.7 + 88.4 = 219.1 vs 114.0 |
+| decode_16 (16) | 267.1 | 148.4 | +80% (z 23) | 150.9 + 90.7 = 241.6 vs 176.1 |
+| decode_32 (32) | 368.8 | 199.9 | +85% (z 25) | 255.2 + 160.3 = 415.5 vs 207.5 |
+| verify_16/32 (Marlin) | 324.6 / 460.7 | 318.3 / 454.3 | +2.0 / +1.4% | control, flat |
+
+The kernel lost on every shape it ran. It is slowest relative to Marlin at T=8-32 (2x). A likely cause, not verified from the profile, is that the m16 tiles are mostly padding and the weights are re-streamed per split. Its "1.143x on decode_1" in the attribution is against an old baseline, not master.
+
+**Verdict: DEAD.** This line (with the decode-side `moe-chain-cuda-swapab-expert-once-*`) now runs correctly and is 1.7-2x slower than Marlin. Correctness is fixed; the design is the problem.
+
+### cuda-nvfp4-wgmma-rega-grouped-sm90a-rebuild-inproc — job b56d17fda2d54be2, neutral 1.330x [1.310, 1.350]: NEVER RAN (canary non-finite). Master was re-measured.
+
+**What ran (log):**
+- Build: `TORCH_CUDA_ARCH_LIST='9.0a' -> ['-gencode=arch=compute_90a,code=sm_90a']`, `load_inline compiled in 32.8s`. The sm_90a-only fix worked.
+- Kernels:
+  - w13+silu: 168 regs, 0 B local
+  - w2: 168 regs, **8 B local (spill)**
+  - both: 187/204 KB dynamic smem + 8 KB static, 1 CTA/SM
+- `cuTensorMapEncodeTiled x 8: rc 0`. Grid 132 persistent × 384 threads, BK 128, 4 stages, N buckets 16-128.
+- Canary at M=128 (1 local route per token): every stage of gather, w13, w2 and norm returned, with **`device error word 0 (ok), output finite False`**. Then `wgmma path setup raised: RuntimeError('canary failed')`.
+- `PATH CHOSEN = MARLIN` for every T. So this is a numerical bug, not a fault or a build failure. Likely sites are the register-A fragment layout, the TMA descriptor or swizzle, the scale application, or an uninitialised accumulator or epilogue.
+- The log does not say which output went non-finite, w13's cache or y.
+
+**Per-shape:** this is master's path. Every shape is within noise of check 45eacf4c (decode_1 −0.3%, decode_16 −1.0%, decode_32 +3.6% z 1.9, verify_1 +6.0% z 2.4, verify_16/32 +1.3/+2.0%). The 1.330 is not a gain over the 1.3287 best.
+
+**Verdict: FIXABLE (bug).** It was never timed. Stage-next should make the canary name the first non-finite tensor (w13 output vs w2 output, and the first bad row/col), and compare one tile against the fp32 dequant reference. Remove the w2 spill (8 B local at 168 regs) too. It is worth one more check only if the per-kernel bar (≤ Marlin at T=128-512) still looks reachable.
