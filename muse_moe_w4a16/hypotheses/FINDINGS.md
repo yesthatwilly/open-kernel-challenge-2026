@@ -1,19 +1,19 @@
 # muse_moe_w4a16 findings
 
-Regenerated 2026-10-25T125629Z by `churn.py index`. Read this before writing a hypothesis for muse_moe_w4a16.
+Regenerated 2026-10-25T150117Z by `churn.py index`. Read this before writing a hypothesis for muse_moe_w4a16.
 
 ## Current best
 
-1.3439x [1.3237,1.3641] from job `7a0d900a1dd34666` (submit), master commit `9080a71e91`, hypothesis w2-marlin-atomic-add-small-m
+1.3727x [1.3521,1.3933] from job `4e4a0e26c85944f2` (submit), master commit ``, hypothesis cuda-nvfp4-wgmma-rega-grouped-s5-copy-safe-bucket-gate
 
 Where the time goes (per scored shape, top kernels):
 
-- bs=1 load=decode_1 sharding=ep8: yours 44.9µs vs SGLang 77.2µs (SoL 11.4µs) · void sglang::device::marlin_moe::Marlin<__nv_bfloat16, 56... 42.1µs 87.1%, _post_norm_combine_kernel 3.3µs 6.9%, void sglang::act_and_mul_kernel<__nv_bfloat16, (sglang::A... 1.5µs 3.0%
-- bs=16 load=decode_16 sharding=ep8: yours 147.7µs vs SGLang 189.0µs (SoL 52.5µs) · void sglang::device::marlin_moe::Marlin<__nv_bfloat16, 56... 176.6µs 95.6%, _post_norm_combine_kernel 3.2µs 1.7%, _align_small_kernel 2.7µs 1.4%
-- bs=32 load=decode_32 sharding=ep8: yours 198.7µs vs SGLang 205.4µs (SoL 70.8µs) · void sglang::device::marlin_moe::Marlin<__nv_bfloat16, 56... 121.5µs 92.3%, _align_small_kernel 4.3µs 3.2%, _post_expert_norm_weighted_sum_kernel 3.5µs 2.7%
-- bs=8 load=verify_1 sharding=ep8: yours 106.0µs vs SGLang 142.3µs (SoL 37.3µs) · void sglang::device::marlin_moe::Marlin<__nv_bfloat16, 56... 94.4µs 92.6%, _post_norm_combine_kernel 3.0µs 3.0%, _align_small_kernel 2.5µs 2.5%
-- bs=128 load=verify_16 sharding=ep8: yours 317.8µs vs SGLang 456.7µs (SoL 101.3µs) · void sglang::device::marlin_moe::Marlin<__nv_bfloat16, 56... 305.9µs 95.7%, _post_expert_norm_weighted_sum_kernel 5.7µs 1.8%, void sglang::act_and_mul_kernel<__nv_bfloat16, (sglang::A... 4.0µs 1.3%
-- bs=256 load=verify_32 sharding=ep8: yours 467.8µs vs SGLang 629.5µs (SoL 108.9µs) · void sglang::device::marlin_moe::Marlin<__nv_bfloat16, 56... 451.5µs 96.1%, _align_parallel_kernel 7.0µs 1.5%, _post_expert_norm_weighted_sum_kernel 5.8µs 1.2%
+- bs=1 load=decode_1 sharding=ep8: yours 45.8µs vs SGLang 77.7µs (SoL 11.4µs) · void sglang::device::marlin_moe::Marlin<__nv_bfloat16, 56... 36.7µs 85.7%, _post_norm_combine_kernel 2.9µs 6.8%, void sglang::act_and_mul_kernel<__nv_bfloat16, (sglang::A... 1.8µs 4.1%
+- bs=16 load=decode_16 sharding=ep8: yours 144.8µs vs SGLang 186.0µs (SoL 52.5µs) · void sglang::device::marlin_moe::Marlin<__nv_bfloat16, 56... 165.9µs 95.2%, _post_norm_combine_kernel 3.2µs 1.8%, _align_small_kernel 2.7µs 1.6%
+- bs=32 load=decode_32 sharding=ep8: yours 204.6µs vs SGLang 211.2µs (SoL 70.8µs) · void sglang::device::marlin_moe::Marlin<__nv_bfloat16, 56... 175.3µs 94.4%, _align_small_kernel 4.3µs 2.3%, _post_expert_norm_weighted_sum_kernel 3.6µs 1.9%
+- bs=8 load=verify_1 sharding=ep8: yours 104.5µs vs SGLang 141.3µs (SoL 37.3µs) · void sglang::device::marlin_moe::Marlin<__nv_bfloat16, 56... 105.3µs 92.5%, _post_norm_combine_kernel 3.7µs 3.2%, _align_small_kernel 2.8µs 2.4%
+- bs=128 load=verify_16 sharding=ep8: yours 314.3µs vs SGLang 454.1µs (SoL 101.3µs) · void sglang::device::marlin_moe::Marlin<__nv_bfloat16, 56... 419.7µs 96.7%, _post_expert_norm_weighted_sum_kernel 6.2µs 1.4%, _align_parallel_kernel 4.0µs 0.9%
+- bs=256 load=verify_32 sharding=ep8: yours 404.9µs vs SGLang 620.6µs (SoL 108.9µs) · void (anonymous namespace)::wg_kernel<true>((anonymous na... 239.2µs 62.9%, void (anonymous namespace)::wg_kernel<false>((anonymous n... 119.0µs 31.3%, _post_expert_norm_weighted_sum_kernel 5.8µs 1.5%
 
 ## By area
 
@@ -158,3 +158,5 @@ Where the time goes (per scored shape, top kernels):
 - queue: cuda-nvfp4-wgmma-rega-b256-n64-deep-ring [w13 marlin + silu-mul + w2 marlin] p3 queued
 - queue: cuda-nvfp4-wgmma-rega-pingpong-consumers [w13 marlin + silu-mul + w2 marlin] p1 queued
 - queue: cuda-nvfp4-wgmma-rega-producer-scale-expand [w13 marlin + silu-mul + w2 marlin] p2 queued
+- queue: align-two-phase-port-from17 [MoE align/dispatch] p1 queued
+- queue: silu-mul-triton-row-tiled-gated [silu-mul] p2 queued

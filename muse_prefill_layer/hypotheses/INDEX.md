@@ -1,6 +1,6 @@
 # muse_prefill_layer hypotheses
 
-Regenerated 2026-10-25T135013Z. Best: 1.4060x [1.3849,1.4271] job `07a069bc69ba42a8` (check)
+Regenerated 2026-10-25T150117Z. Best: 1.4458x [1.4241,1.4674] job `4e6f815a8dd945ba` (check)
 
 | created | slug | kind | area | where | outcome | speedup | CI | job | mode | promotion | review | expected hit |
 |---|---|---|---|---|---|---|---|---|---|---|---|---|
@@ -64,12 +64,12 @@ Regenerated 2026-10-25T135013Z. Best: 1.4060x [1.3849,1.4271] job `07a069bc69ba4
 | 2026-10-25T054848Z | experts-first-turn-ssdq-s2-large-m | rewrite | w13 + w2 expert GEMMs at T > 4096 (first_turn T=16384): extend the ssdq dequant-producer + SS wgmma grouped GEMM to large M, replacing the Triton NVFP4 GEMM | queue | hold |  |  |  |  |  | required |  |
 | 2026-10-25T054848Z | experts-turn-rega-s4-w2-only-t4096 | rewrite | w2 expert GEMM only at T <= 4096 (turn_1, turn_4): s4 register-A swap-AB wgmma w2 fed by master's Marlin w13 + _silu_mul_sorted output | queue | hold |  |  |  |  |  | required |  |
 | 2026-10-25T054848Z | experts-turn1-ssdq-s2-m64-tile | rewrite | w13 + w2 expert GEMMs at T <= 1024 (turn_1 T=753): ssdq with a 64-route M tile, one consumer warpgroup per tile, dequant-once per weight stage | queue | hold |  |  |  |  |  | required |  |
-| 2026-10-25T054848Z | experts-turn-rega-s4-first-turn-n128 | rewrite | w13 + w2 expert GEMMs at T > 4096 (first_turn T=16384): extend the ported s4 register-A wgmma engine past Marlin's range, replacing the Triton NVFP4 GEMM | done/gain | gain | 1.4060 | [1.385,1.427] | 07a069bc69ba42a8 | check | merged | proceed | 1/2 |
+| 2026-10-25T054848Z | experts-turn-rega-s4-first-turn-n128 | rewrite | w13 + w2 expert GEMMs at T > 4096 (first_turn T=16384): extend the ported s4 register-A wgmma engine past Marlin's range, replacing the Triton NVFP4 GEMM | done/gain | gain | 1.4060 | [1.385,1.427] | 07a069bc69ba42a8 | check | superseded | proceed | 1/2 |
 | 2026-10-25T054848Z | experts-turn4-ssdq-s1b-dataptr-symbol-fix | rewrite | w13 + w2 expert GEMMs at 1024 < T <= 4096 (turn_4): CUDA sm_90a dequant-producer warpgroup + SS wgmma grouped GEMM, stage 1b: rebuild with the undefined-symbol fix | done/neutral | neutral | 1.1004 | [1.084,1.117] | ef281fb8b7304240 | check | done | proceed | 1/3 |
 | 2026-10-25T054848Z | turn-align-sglang32-prenorm-triton-restack | primary | MoE align on the Marlin path (T <= 4096) + pre-expert norm: restack of two measured row wins | done/neutral | neutral | 1.0694 | [1.053,1.085] | 9cfd4f58d24044b2 | check |  | proceed | 0/3 |
 | 2026-10-25T110612Z | experts-turn4-ssdq-s2-tma-raw-weight-ring | rewrite | w13 + w2 expert GEMMs at 1024 < T <= 4096 (turn_4): ssdq producer weight feed, TMA raw-code smem ring instead of register __ldg prefetch | done/neutral | neutral | 1.1293 | [1.112,1.146] | 05dbf2d59a874444 | check |  | proceed | 1/3 |
 | 2026-10-25T110643Z | turn-align-two-phase-chunk-prefix | primary | MoE align/dispatch on T <= 4096 (Marlin turn_1 + ssdq turn_4): _align_parallel replaced by a two-launch chunk-count + prefix-place align | done/neutral | neutral | 1.3369 | [1.317,1.357] | d792e5c9d6d94f02 | check |  | proceed | 1/3 |
-| 2026-10-25T125453Z | align-two-phase-all-t-rega | primary | MoE align/dispatch on the rega path (200 < T <= 16384): _align_parallel replaced by the two-phase chunk-count + prefix-place align, including the first_turn class | done/neutral | neutral | 1.4458 | [1.424,1.467] | 4e6f815a8dd945ba | check |  | proceed | 3/3 |
+| 2026-10-25T125453Z | align-two-phase-all-t-rega | primary | MoE align/dispatch on the rega path (200 < T <= 16384): _align_parallel replaced by the two-phase chunk-count + prefix-place align, including the first_turn class | done/neutral | neutral | 1.4458 | [1.424,1.467] | 4e6f815a8dd945ba | check | submitted | proceed | 3/3 |
 | 2026-10-25T125554Z | experts-rega-low-class-two-ctas-per-sm | rewrite | w13 + w2 expert GEMMs at 200 < T <= 1024 (turn_1, rega low class): two resident CTAs per SM with a 64- or 32-route slab, to hide consumer dequant latency | done/neutral | neutral | 1.4173 | [1.396,1.439] | 1a77da43b3304b07 | check |  | proceed | 1/3 |
 
 ## Held

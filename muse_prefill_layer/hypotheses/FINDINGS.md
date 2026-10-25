@@ -1,21 +1,21 @@
 # muse_prefill_layer findings
 
-Regenerated 2026-10-25T135013Z by `churn.py index`. Read this before writing a hypothesis for muse_prefill_layer.
+Regenerated 2026-10-25T150117Z by `churn.py index`. Read this before writing a hypothesis for muse_prefill_layer.
 
 ## Current best
 
-1.4060x [1.3849,1.4271] from job `07a069bc69ba42a8` (check), master commit `a1a5497d7a`, hypothesis experts-turn-rega-s4-first-turn-n128
+1.4458x [1.4241,1.4674] from job `4e6f815a8dd945ba` (check), master commit `1932a9c4fb`, hypothesis align-two-phase-all-t-rega
 
 Where the time goes (per scored shape, top kernels):
 
-- batch=1 ctx=80000 dist=soft layer=sliding load=turn_1 page=1 q_len=753 repeats=6: yours 777.0µs vs SGLang 1074.7µs (SoL 257.0µs) · void (anonymous namespace)::rega_kernel<true, false>((ano... 282.4µs 35.5%, nvjet_sm90_tst_128x192_64x5_2x1_v_bz_coopB_TNN 157.4µs 19.8%, void (anonymous namespace)::rega_kernel<false, false>((an... 146.0µs 18.4%
-- batch=1 ctx=80000 dist=soft layer=full load=turn_1 page=1 q_len=753 repeats=6: yours 1136.1µs vs SGLang 1451.7µs (SoL 496.7µs) · void cutlass::device_kernel<flash::enable_sm90_or_later<f... 418.9µs 35.2%, void (anonymous namespace)::rega_kernel<true, false>((ano... 257.8µs 21.6%, nvjet_sm90_tst_128x192_64x5_2x1_v_bz_coopB_TNN 154.0µs 12.9%
-- batch=4 ctx=80000 dist=soft layer=sliding load=turn_4 page=1 q_len=753 repeats=6: yours 2251.4µs vs SGLang 3405.1µs (SoL 1036.3µs) · void (anonymous namespace)::rega_kernel<true, false>((ano... 731.8µs 32.2%, void (anonymous namespace)::rega_kernel<false, false>((an... 356.8µs 15.7%, nvjet_sm90_tst_256x152_64x4_1x2_h_bz_coopA_TNT 331.0µs 14.6%
-- batch=4 ctx=80000 dist=soft layer=full load=turn_4 page=1 q_len=753 repeats=6: yours 3785.2µs vs SGLang 4862.3µs (SoL 1992.4µs) · void cutlass::device_kernel<flash::enable_sm90_or_later<f... 1638.1µs 43.0%, void (anonymous namespace)::rega_kernel<true, false>((ano... 713.0µs 18.7%, void (anonymous namespace)::rega_kernel<false, false>((an... 346.9µs 9.1%
-- batch=1 ctx=0 dist=soft layer=full load=first_turn page=1 q_len=16384 repeats=6: yours 12148.3µs vs SGLang 17549.5µs (SoL 5518.4µs) · void (anonymous namespace)::rega_kernel<true, true>((anon... 3514.4µs 29.0%, nvjet_sm90_tst_192x192_64x4_2x1_v_bz_coopB_TNN 2583.6µs 21.3%, void (anonymous namespace)::rega_kernel<false, true>((ano... 1724.5µs 14.2%
-- batch=1 ctx=32768 dist=soft layer=sliding load=first_turn page=1 q_len=16384 repeats=6: yours 11658.8µs vs SGLang 17356.5µs (SoL 5663.4µs) · void (anonymous namespace)::rega_kernel<true, true>((anon... 3743.9µs 31.4%, nvjet_sm90_tst_192x192_64x4_2x1_v_bz_coopB_TNN 2581.8µs 21.6%, void (anonymous namespace)::rega_kernel<false, true>((ano... 1849.2µs 15.5%
-- batch=1 ctx=32768 dist=soft layer=full load=first_turn page=1 q_len=16384 repeats=6: yours 15589.4µs vs SGLang 20949.2µs (SoL 7710.0µs) · void cutlass::device_kernel<flash::enable_sm90_or_later<f... 4501.4µs 29.8%, void (anonymous namespace)::rega_kernel<true, true>((anon... 3086.6µs 20.5%, nvjet_sm90_tst_192x192_64x4_2x1_v_bz_coopB_TNN 2576.2µs 17.1%
-- batch=1 ctx=65536 dist=soft layer=full load=first_turn page=1 q_len=16384 repeats=6: yours 19167.4µs vs SGLang 24730.3µs (SoL 9847.7µs) · void cutlass::device_kernel<flash::enable_sm90_or_later<f... 8516.6µs 42.4%, void (anonymous namespace)::rega_kernel<true, true>((anon... 3688.7µs 18.4%, nvjet_sm90_tst_192x192_64x4_2x1_v_bz_coopB_TNN 2615.8µs 13.0%
+- batch=1 ctx=80000 dist=soft layer=sliding load=turn_1 page=1 q_len=753 repeats=6: yours 704.4µs vs SGLang 1035.6µs (SoL 257.0µs) · void (anonymous namespace)::rega_kernel<true, false>((ano... 259.3µs 36.1%, nvjet_sm90_tst_128x192_64x5_2x1_v_bz_coopB_TNN 152.3µs 21.2%, void (anonymous namespace)::rega_kernel<false, false>((an... 122.1µs 17.0%
+- batch=1 ctx=80000 dist=soft layer=full load=turn_1 page=1 q_len=753 repeats=6: yours 1097.9µs vs SGLang 1424.1µs (SoL 496.7µs) · void cutlass::device_kernel<flash::enable_sm90_or_later<f... 422.0µs 36.7%, void (anonymous namespace)::rega_kernel<true, false>((ano... 226.4µs 19.7%, nvjet_sm90_tst_128x192_64x5_2x1_v_bz_coopB_TNN 153.1µs 13.3%
+- batch=4 ctx=80000 dist=soft layer=sliding load=turn_4 page=1 q_len=753 repeats=6: yours 2098.4µs vs SGLang 3292.4µs (SoL 1036.3µs) · void (anonymous namespace)::rega_kernel<true, false>((ano... 710.0µs 32.9%, void (anonymous namespace)::rega_kernel<false, false>((an... 343.6µs 15.9%, nvjet_sm90_tst_256x152_64x4_1x2_h_bz_coopA_TNT 322.5µs 14.9%
+- batch=4 ctx=80000 dist=soft layer=full load=turn_4 page=1 q_len=753 repeats=6: yours 3644.6µs vs SGLang 4749.2µs (SoL 1992.4µs) · void cutlass::device_kernel<flash::enable_sm90_or_later<f... 1646.9µs 45.1%, void (anonymous namespace)::rega_kernel<true, false>((ano... 597.9µs 16.4%, nvjet_sm90_tst_256x152_64x4_1x2_h_bz_coopA_TNT 322.5µs 8.8%
+- batch=1 ctx=0 dist=soft layer=full load=first_turn page=1 q_len=16384 repeats=6: yours 12078.5µs vs SGLang 18050.7µs (SoL 5518.4µs) · void (anonymous namespace)::rega_kernel<true, true>((anon... 3850.9µs 31.4%, nvjet_sm90_tst_192x192_64x4_2x1_v_bz_coopB_TNN 2537.5µs 20.7%, void (anonymous namespace)::rega_kernel<false, true>((ano... 1925.1µs 15.7%
+- batch=1 ctx=32768 dist=soft layer=sliding load=first_turn page=1 q_len=16384 repeats=6: yours 11285.6µs vs SGLang 16993.5µs (SoL 5663.4µs) · void (anonymous namespace)::rega_kernel<true, true>((anon... 3734.0µs 32.6%, nvjet_sm90_tst_192x192_64x4_2x1_v_bz_coopB_TNN 2537.3µs 22.2%, void (anonymous namespace)::rega_kernel<false, true>((ano... 1847.8µs 16.1%
+- batch=1 ctx=32768 dist=soft layer=full load=first_turn page=1 q_len=16384 repeats=6: yours 15310.6µs vs SGLang 20851.5µs (SoL 7710.0µs) · void cutlass::device_kernel<flash::enable_sm90_or_later<f... 4524.6µs 28.8%, void (anonymous namespace)::rega_kernel<true, true>((anon... 3764.4µs 23.9%, nvjet_sm90_tst_192x192_64x4_2x1_v_bz_coopB_TNN 2534.6µs 16.1%
+- batch=1 ctx=65536 dist=soft layer=full load=first_turn page=1 q_len=16384 repeats=6: yours 18819.5µs vs SGLang 24072.9µs (SoL 9847.7µs) · void cutlass::device_kernel<flash::enable_sm90_or_later<f... 8004.1µs 42.4%, void (anonymous namespace)::rega_kernel<true, true>((anon... 3555.7µs 18.9%, nvjet_sm90_tst_192x192_64x4_2x1_v_bz_coopB_TNN 2526.3µs 13.4%
 
 ## By area
 

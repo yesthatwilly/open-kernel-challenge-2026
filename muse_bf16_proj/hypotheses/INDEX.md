@@ -1,6 +1,6 @@
 # muse_bf16_proj hypotheses
 
-Regenerated 2026-10-25T115715Z. Best: 1.2491x [1.2303,1.2678] job `ee4f89f2f62c42d3` (submit)
+Regenerated 2026-10-25T150117Z. Best: 1.2491x [1.2303,1.2678] job `ee4f89f2f62c42d3` (submit)
 
 | created | slug | kind | area | where | outcome | speedup | CI | job | mode | promotion | review | expected hit |
 |---|---|---|---|---|---|---|---|---|---|---|---|---|
@@ -63,6 +63,8 @@ Regenerated 2026-10-25T115715Z. Best: 1.2491x [1.2303,1.2678] job `ee4f89f2f62c4
 | 2026-10-25T054102Z | restack-three-cell-wins-router-unpooler-cluster-m8-nn-m128 | primary | shape-gated restack: router GEMM m<=8 + unpooler-slice GEMM m<=8 + pooler/unpooler GEMM m=65..128 | done/neutral | neutral | 1.2366 | [1.218,1.255] | 84f17adc3f074a33 | check | done | proceed | 15/17 |
 | 2026-10-25T110547Z | qkv-swapab-w128-splitk7-one-wave-m32 | primary | qkv GEMM (m<=32, swap-AB) | done/neutral | neutral | 1.2229 | [1.205,1.241] | c7138fe05598428e | submit |  | proceed | 1/5 |
 | 2026-10-25T110625Z | bf16-verify32-cutlass-coop-256x128-splitk-stage2 | rewrite | bf16 GEMM dispatch (m=129..256, CUTLASS sm90 cooperative split-K) | queue | queued |  |  |  |  |  | required |  |
+| 2026-10-25T145403Z | pooler-nn-layout-widen-m256 | primary | pooler GEMM (m=129..256, cuBLAS NN layout) | queue | queued |  |  |  |  |  | required |  |
+| 2026-10-25T145403Z | unpooler-full-m16-swapab16-blockt16 | primary | unpooler GEMM (full width n=8192, m=9..16, swap-AB BLOCK_T 16) | queue | queued |  |  |  |  |  | required |  |
 
 ## Held
 

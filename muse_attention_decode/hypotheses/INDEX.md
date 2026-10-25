@@ -1,6 +1,6 @@
 # muse_attention_decode hypotheses
 
-Regenerated 2026-10-25T115715Z. Best: 1.4825x [1.4602,1.5047] job `d672f69ea69b4396` (submit)
+Regenerated 2026-10-25T150117Z. Best: 1.5017x [1.4791,1.5304] job `252abb7f11ec48c3` (check)
 
 | created | slug | kind | area | where | outcome | speedup | CI | job | mode | promotion | review | expected hit |
 |---|---|---|---|---|---|---|---|---|---|---|---|---|
@@ -81,8 +81,10 @@ Regenerated 2026-10-25T115715Z. Best: 1.4825x [1.4602,1.5047] job `d672f69ea69b4
 | 2026-10-25T054448Z | full-decode-sk-s4-deferred-ticket-arrive | rewrite | full-layer attention (decode 1<B<=64, stream-K ticket epilogue) | done/failed | failed |  |  | 7f10d2d820cd49ee | check |  | proceed |  |
 | 2026-10-25T054449Z | full-verify1-sk-two-level-token-group | rewrite | full-layer attention (batch-1 verify, stream-K two-level kernel, token grouping) | done/neutral | neutral | 1.4714 | [1.449,1.494] | 7d23e8776c194344 | check |  | proceed | 1/3 |
 | 2026-10-25T054449Z | sliding-decode-sk-window-route | rewrite | sliding-layer attention (decode, stream-K windowed kernel) | done/neutral | neutral | 1.4973 | [1.475,1.520] | 118c6de9704146f3 | check |  | proceed | 2/4 |
-| 2026-10-25T110636Z | restack-sliding-decode-sk-window-on-cluster-master | primary | sliding-layer attention (decode, stream-K windowed kernel) restack | done/neutral | neutral | 1.5017 | [1.479,1.530] | 252abb7f11ec48c3 | submit |  | proceed | 5/5 |
+| 2026-10-25T110636Z | restack-sliding-decode-sk-window-on-cluster-master | primary | sliding-layer attention (decode, stream-K windowed kernel) restack | done/neutral | neutral | 1.5017 | [1.479,1.530] | 252abb7f11ec48c3 | submit | merged | proceed | 5/5 |
 | 2026-10-25T110716Z | sliding-decode-sk-s3-fused-preattn-rope | rewrite | sliding-layer attention (decode, stream-K windowed kernel, pre-attention fold) | queue | queued |  |  |  |  |  | required |  |
+| 2026-10-25T150036Z | epilogue-gate-l2-prefetch-cuda | primary | output norm-gate (gate operand prefetch in the CUDA epilogues) | queue | queued |  |  |  |  |  | required |  |
+| 2026-10-25T150036Z | preattention-tiled-every-verify-block | primary | pre-attention norm+rope | queue | queued |  |  |  |  |  | required |  |
 
 ## Held
 
