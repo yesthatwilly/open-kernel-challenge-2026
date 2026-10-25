@@ -1,0 +1,348 @@
+diff --git a/muse_prefill_layer/submission.py b/muse_prefill_layer/submission.py
+index db8a334..cab1f9a 100644
+--- a/muse_prefill_layer/submission.py
++++ b/muse_prefill_layer/submission.py
+@@ -546,6 +546,304 @@ def _weighted_sum_skips_remote(state, device):
+         return False
+ 
+ 
++# ---------------------------------------------------------------------------------------------
++# hypothesis moe-pre-post-norm-triton-multitoken: the two elementwise ends of the MoE block as
++# persistent Triton kernels, each enabled per token-count class only when prepare()'s cold-L2
++# CUDA-graph timing shows it <= ENDS_GATE_RATIO x master's call (adversarial review fix 1) AND its
++# self-check passes (rel L2 and float-spacing, review fix 3). Anything else keeps master's call.
++# ---------------------------------------------------------------------------------------------
++ENDS_TAG = "[moe-ends]"
++ENDS_CLASS_T = (753, 3012, 16384)
++ENDS_GATE_RATIO = 0.98
++ENDS_FLUSH_BYTES = 288 * 2**20
++ENDS_REPS = 25
++ENDS_REL_L2_MAX = 2e-3
++ENDS_SPACING_MAX = 2.0
++ENDS_ERR_FACTOR = 1.25
++ENDS_PRE_VARIANTS = (4, 8)                           # num_warps
++ENDS_POST_VARIANTS = ((True, 16), (False, 8), (True, 8))  # (hoist all 8 slot loads, num_warps)
++
++
++def _ends_class(tokens):
++    """Token-count class (a shape, never values): 753 up to 1024, 3012 up to MARLIN_MAX_TOKENS, else 16384."""
++    if tokens <= 1024:
++        return ENDS_CLASS_T[0]
++    return ENDS_CLASS_T[1] if tokens <= MARLIN_MAX_TOKENS else ENDS_CLASS_T[2]
++
++
++@triton.jit(do_not_specialize=["T"])
++def _pre_expert_rmsnorm_kernel(x_ptr, w_ptr, out_ptr, T, eps, H: tl.constexpr):
++    """out[r] = bf16(x[r] * rsqrt(mean(x[r]^2) + eps) * w_eff), fp32 math; w_eff is the module's
++    effective (1 + w) weight, so nothing is added here. Persistent: program p takes rows p, p + P, ..."""
++    pid = tl.program_id(0)
++    nprog = tl.num_programs(0)
++    offs = tl.arange(0, H)
++    w = tl.load(w_ptr + offs).to(tl.float32)
++    for r in range(pid, T, nprog):
++        base = r.to(tl.int64) * H
++        x = tl.load(x_ptr + base + offs).to(tl.float32)
++        rs = tl.rsqrt(tl.sum(x * x, axis=0) / H + eps)
++        tl.store(out_ptr + base + offs, (x * rs * w).to(tl.bfloat16))
++
++
++@triton.jit(do_not_specialize=["T"])
++def _post_combine_kernel(y_ptr, ids_ptr, tw_ptr, w_ptr, out_ptr, T, eps,
++                         TOP_K_C: tl.constexpr, H: tl.constexpr, HOIST: tl.constexpr):
++    """out[t] = bf16(sum over local slots s of g[t, s] * rmsnorm(y[t, s] * w_eff)), fp32 math, w_eff the
++    EFFECTIVE (1 + w) post-expert weight (state['post_expert_w']): the +1 of muse_moe_w4a16's kernel is
++    dropped (review fix 2; copying it verbatim would give 2 + w). Remote slots (id -1) are never loaded
++    (masked loads issue no memory access), so their y rows may hold anything. A token with no local
++    slot stores zeros. HOIST: one [8, H] masked load of every local slot's row before the 8 reductions."""
++    pid = tl.program_id(0)
++    nprog = tl.num_programs(0)
++    offs = tl.arange(0, H)
++    nw = tl.load(w_ptr + offs).to(tl.float32)
++    slots = tl.arange(0, TOP_K_C)
++    for t in range(pid, T, nprog):
++        if HOIST:
++            eid = tl.load(ids_ptr + t * TOP_K_C + slots)
++            g = tl.load(tw_ptr + t * TOP_K_C + slots)
++            live = eid >= 0
++            rows = (t * TOP_K_C + slots).to(tl.int64) * H
++            v = tl.load(y_ptr + rows[:, None] + offs[None, :], mask=live[:, None], other=0.0).to(tl.float32)
++            v = v * nw[None, :]
++            r = tl.rsqrt(tl.sum(v * v, axis=1) / H + eps)
++            coef = tl.where(live, g * r, 0.0)
++            acc = tl.sum(v * coef[:, None], axis=0)
++        else:
++            acc = tl.zeros([H], dtype=tl.float32)
++            for s in tl.static_range(TOP_K_C):
++                eid = tl.load(ids_ptr + t * TOP_K_C + s)
++                if eid >= 0:
++                    g = tl.load(tw_ptr + t * TOP_K_C + s)
++                    row = (t * TOP_K_C + s).to(tl.int64) * H
++                    v = tl.load(y_ptr + row + offs).to(tl.float32) * nw
++                    r = tl.rsqrt(tl.sum(v * v, axis=0) / H + eps)
++                    acc += g * v * r
++        tl.store(out_ptr + t.to(tl.int64) * H + offs, acc.to(tl.bfloat16))
++
++
++def _pre_norm_triton(x, state, num_warps):
++    x = x if x.is_contiguous() else x.contiguous()
++    tokens = x.shape[0]
++    out = torch.empty_like(x)
++    _pre_expert_rmsnorm_kernel[(min(state["ends_grid"], tokens),)](
++        x, state["pre_w_eff"], out, tokens, RMS_EPS, H=D_EXPERT, num_warps=num_warps)
++    return out
++
++
++def _post_combine_triton(y, topk_weights, local_ids, state, variant):
++    hoist, num_warps = variant
++    y = y if y.is_contiguous() else y.contiguous()
++    tokens = local_ids.shape[0]
++    out = torch.empty((tokens, D_EXPERT), device=y.device, dtype=torch.bfloat16)
++    _post_combine_kernel[(min(state["ends_grid"], tokens),)](
++        y, local_ids, topk_weights, state["post_expert_w"], out, tokens, POST_NORM_EPS,
++        TOP_K_C=TOP_K, H=D_EXPERT, HOIST=hoist, num_warps=num_warps)
++    return out
++
++
++def _pre_norm(x, state):
++    """state['pre_expert_norm'](x), or the Triton row kernel where prepare() enabled it for this class."""
++    variant = state["ends"]["pre"].get(_ends_class(x.shape[0]))
++    if variant is None:
++        return state["pre_expert_norm"](x)
++    return _pre_norm_triton(x, state, variant)
++
++
++def _post_combine(y, topk_weights, local_ids, state):
++    """fused_post_expert_norm_weighted_sum, or the persistent Triton combine where enabled for this class."""
++    variant = state["ends"]["post"].get(_ends_class(local_ids.shape[0]))
++    if variant is None:
++        return fused_post_expert_norm_weighted_sum(
++            y, topk_weights, norm_weight=state["post_expert_w"], eps=POST_NORM_EPS, weight_first=True,
++            slot_expert_ids=local_ids)
++    return _post_combine_triton(y, topk_weights, local_ids, state, variant)
++
++
++def _ends_rel_l2(a, ref):
++    a, ref = a.float(), ref.float()
++    return float((a - ref).norm() / ref.norm().clamp_min(1e-30))
++
++
++def _ends_spacing(a, ref):
++    """Max |a - ref| in bf16 spacings (2^(floor(log2 m) - 7)) of m = max(|ref|, 2^-8 * the row's max |ref|):
++    the floor keeps near-zero elements from reading as millions of ulps (the old ulp gate's failure)."""
++    r = ref.float()
++    mag = torch.maximum(r.abs(), r.abs().amax(dim=-1, keepdim=True) * 2.0 ** -8).clamp_min(1e-30)
++    spacing = torch.exp2(torch.floor(torch.log2(mag)) - 7)
++    return float(((a.float() - r).abs() / spacing).max())
++
++
++def _ends_graph(fn):
++    fn()
++    torch.cuda.synchronize()
++    side = torch.cuda.Stream()
++    side.wait_stream(torch.cuda.current_stream())
++    with torch.cuda.stream(side):
++        fn()
++    torch.cuda.current_stream().wait_stream(side)
++    torch.cuda.synchronize()
++    graph = torch.cuda.CUDAGraph()
++    with torch.cuda.graph(graph):
++        fn()
++    torch.cuda.synchronize()
++    return graph
++
++
++def _ends_time(master_fn, new_fn, flush):
++    """CUDA-graph replays, cold L2 (a >= 256 MB write just before each replay), master and new
++    interleaved, median of ENDS_REPS. Returns (master us, new us)."""
++    graphs = (_ends_graph(master_fn), _ends_graph(new_fn))
++    times = ([], [])
++    for _ in range(ENDS_REPS):
++        for which in (0, 1):
++            flush.zero_()
++            start, end = torch.cuda.Event(enable_timing=True), torch.cuda.Event(enable_timing=True)
++            start.record()
++            graphs[which].replay()
++            end.record()
++            end.synchronize()
++            times[which].append(start.elapsed_time(end) * 1000.0)
++    med = [sorted(t)[len(t) // 2] for t in times]
++    return med[0], med[1]
++
++
++def _ends_logged(name, fn):
++    print(f"{ENDS_TAG} launching {name}", flush=True)
++    out = fn()
++    torch.cuda.synchronize()
++    print(f"{ENDS_TAG} done {name}", flush=True)
++    return out
++
++
++def _ends_remote_probe(fn, y, ids):
++    """True when fn(y) is finite and bitwise equal whether the remote slots' y rows hold NaN or zero:
++    the new combine never reads them (review fix 4; master's _weighted_sum_skips_remote probes only
++    SGLang's kernel)."""
++    remote = ids < 0
++    outs = []
++    for fill in (float("nan"), 0.0):
++        yy = y.clone()
++        yy[remote] = fill
++        outs.append(fn(yy))
++    torch.cuda.synchronize()
++    return bool(torch.isfinite(outs[0].float()).all()) and torch.equal(outs[0], outs[1])
++
++
++def _moe_ends_setup(state, device):
++    """prepare(): choose, per kernel and token class, master's call or the Triton kernel. Never raises."""
++    ends = {"pre": {t: None for t in ENDS_CLASS_T}, "post": {t: None for t in ENDS_CLASS_T}}
++    state["ends"] = ends
++    try:
++        state["ends_grid"] = torch.cuda.get_device_properties(device).multi_processor_count * 4
++        norm = state["pre_expert_norm"]
++        try:
++            eff = norm._get_effective_weight().detach()
++            eff_src = "module._get_effective_weight()"
++        except Exception:
++            eff = None
++        if eff is None:
++            raise RuntimeError("pre_expert_norm has no _get_effective_weight()")
++        state["pre_w_eff"] = eff.to(torch.float32).contiguous()
++        print(f"{ENDS_TAG} pre w_eff from {eff_src}: dtype {eff.dtype} shape {tuple(eff.shape)}", flush=True)
++        assert state["pre_w_eff"].shape == (D_EXPERT,)
++        flush = torch.empty(ENDS_FLUSH_BYTES, dtype=torch.uint8, device=device)
++        gen = torch.Generator(device=device).manual_seed(20261025)
++        post_w = state["post_expert_w"]
++        for tokens in ENDS_CLASS_T:
++            x = torch.randn((tokens, D_EXPERT), generator=gen, device=device, dtype=torch.float32).to(torch.bfloat16)
++            # --- pre-expert norm
++            try:
++                ref32 = x.float() * torch.rsqrt(x.float().pow(2).mean(dim=-1, keepdim=True) + RMS_EPS) * state["pre_w_eff"]
++                master_out = _ends_logged(f"master pre-norm T={tokens}", lambda: norm(x))
++                err_master = _ends_rel_l2(master_out, ref32)
++                best = None
++                for nw in ENDS_PRE_VARIANTS:
++                    out = _ends_logged(f"pre-norm T={tokens} nw={nw}", lambda: _pre_norm_triton(x, state, nw))
++                    rel, spc, err = _ends_rel_l2(out, master_out), _ends_spacing(out, master_out), _ends_rel_l2(out, ref32)
++                    ok = (bool(torch.isfinite(out.float()).all()) and rel <= ENDS_REL_L2_MAX
++                          and spc <= ENDS_SPACING_MAX and err <= ENDS_ERR_FACTOR * err_master + 1e-4)
++                    t_master, t_new = _ends_time(lambda: norm(x), lambda: _pre_norm_triton(x, state, nw), flush)
++                    print(f"{ENDS_TAG} pre T={tokens} nw={nw}: master {t_master:.1f} us new {t_new:.1f} us "
++                          f"ratio {t_new / t_master:.3f}; vs master relL2 {rel:.2e} spacing {spc:.2f}; "
++                          f"err vs fp32 ref new {err:.2e} master {err_master:.2e}; check {'ok' if ok else 'FAIL'}", flush=True)
++                    if ok and (best is None or t_new / t_master < best[0]):
++                        best = (t_new / t_master, nw)
++                if best is not None and best[0] <= ENDS_GATE_RATIO:
++                    ends["pre"][tokens] = best[1]
++                print(f"{ENDS_TAG} PATH CHOSEN pre T={tokens}: "
++                      f"{'triton nw=%d (ratio %.3f)' % (best[1], best[0]) if ends['pre'][tokens] else 'MASTER pre_expert_norm'}",
++                      flush=True)
++            except Exception as e:
++                ends["pre"][tokens] = None
++                print(f"{ENDS_TAG} pre T={tokens} OFF: {e!r} (PATH CHOSEN = MASTER pre_expert_norm)", flush=True)
++            del x
++            # --- post-expert combine
++            try:
++                ids = torch.randint(0, N_EXPERTS, (tokens, TOP_K), generator=gen, device=device, dtype=torch.int32)
++                local_ids = torch.where(ids < LOCAL_EXPERTS, ids, torch.full_like(ids, -1)).contiguous()
++                tw = torch.rand((tokens, TOP_K), generator=gen, device=device, dtype=torch.float32)
++                tw = (tw / tw.sum(dim=1, keepdim=True)).contiguous()
++                y = torch.randn((tokens, TOP_K, D_EXPERT), generator=gen, device=device,
++                                dtype=torch.float32).to(torch.bfloat16)
++                live = (local_ids >= 0)
++                acc = torch.zeros((tokens, D_EXPERT), device=device, dtype=torch.float32)
++                for k in range(TOP_K):
++                    z = y[:, k].float() * post_w.float()
++                    z = z * torch.rsqrt(z.pow(2).mean(dim=-1, keepdim=True) + POST_NORM_EPS)
++                    acc += torch.where(live[:, k:k + 1], tw[:, k:k + 1] * z, torch.zeros_like(z))
++                ref32 = acc
++                del acc, z
++
++                def master_call(yy):
++                    return fused_post_expert_norm_weighted_sum(
++                        yy, tw, norm_weight=post_w, eps=POST_NORM_EPS, weight_first=True, slot_expert_ids=local_ids)
++
++                master_out = _ends_logged(f"master combine T={tokens}", lambda: master_call(y))
++                err_master = _ends_rel_l2(master_out, ref32)
++                best = None
++                for variant in ENDS_POST_VARIANTS:
++                    out = _ends_logged(f"combine T={tokens} variant={variant}",
++                                       lambda: _post_combine_triton(y, tw, local_ids, state, variant))
++                    rel, spc, err = _ends_rel_l2(out, master_out), _ends_spacing(out, master_out), _ends_rel_l2(out, ref32)
++                    ok = (bool(torch.isfinite(out.float()).all()) and rel <= ENDS_REL_L2_MAX
++                          and spc <= ENDS_SPACING_MAX and err <= ENDS_ERR_FACTOR * err_master + 1e-4)
++                    probe = ok and _ends_remote_probe(
++                        lambda yy: _post_combine_triton(yy, tw, local_ids, state, variant), y, local_ids)
++                    t_master, t_new = _ends_time(lambda: master_call(y),
++                                                 lambda: _post_combine_triton(y, tw, local_ids, state, variant), flush)
++                    print(f"{ENDS_TAG} post T={tokens} variant={variant}: master {t_master:.1f} us new {t_new:.1f} us "
++                          f"ratio {t_new / t_master:.3f}; vs master relL2 {rel:.2e} spacing {spc:.2f}; "
++                          f"err vs fp32 ref new {err:.2e} master {err_master:.2e}; check {'ok' if ok else 'FAIL'}; "
++                          f"remote-row probe (NaN vs 0) {'ok' if probe else 'FAIL/skipped'}", flush=True)
++                    if ok and probe and (best is None or t_new / t_master < best[0]):
++                        best = (t_new / t_master, variant)
++                if best is not None and best[0] <= ENDS_GATE_RATIO:
++                    ends["post"][tokens] = best[1]
++                print(f"{ENDS_TAG} PATH CHOSEN post T={tokens}: "
++                      f"{'triton %s (ratio %.3f)' % (best[1], best[0]) if ends['post'][tokens] else 'MASTER fused_post_expert_norm_weighted_sum'}",
++                      flush=True)
++                del y, ref32, master_out
++            except Exception as e:
++                ends["post"][tokens] = None
++                print(f"{ENDS_TAG} post T={tokens} OFF: {e!r} (PATH CHOSEN = MASTER fused_post_expert_norm_weighted_sum)",
++                      flush=True)
++            torch.cuda.empty_cache()
++        del flush
++    except Exception as e:
++        ends["pre"] = {t: None for t in ENDS_CLASS_T}
++        ends["post"] = {t: None for t in ENDS_CLASS_T}
++        print(f"{ENDS_TAG} OFF: {e!r} (PATH CHOSEN = MASTER for every class)", flush=True)
++    # The w2 zero-store is needed only if the combine reads remote y rows. Where the new combine is ON
++    # at the first-turn class, its own NaN-vs-zero probe passed above, so master's probe no longer decides.
++    if ends["post"][ENDS_CLASS_T[2]] is not None and state["zero_nonlocal_w2"]:
++        state["zero_nonlocal_w2"] = False
++        print(f"{ENDS_TAG} w2 zero-store OFF: the new combine skips remote rows (probed)", flush=True)
++    print(f"{ENDS_TAG} summary pre {ends['pre']} post {ends['post']}", flush=True)
++    torch.cuda.synchronize()
++
++
+ def prepare(weights):
+     device = weights["qkv_gate"].device
+     router = weights["router"]
+@@ -587,6 +885,7 @@ def prepare(weights):
+     # expert-GEMM variant and checks its dequant against nvfp4.dequantize.
+     state["bank"] = _expert_bank(weights)
+     state["zero_nonlocal_w2"] = not _weighted_sum_skips_remote(state, device)
++    _moe_ends_setup(state, device)
+     _check_expert_gemms(state["bank"], weights, state["zero_nonlocal_w2"])
+     torch.cuda.synchronize()
+     scale_names = ("w13_sf", "w13_gs", "w2_sf", "w2_gs")
+@@ -896,9 +1195,7 @@ def _experts_marlin(x, topk_weights, local_ids, state):
+         cache2, cache3, bank["w2"], None, bank["w2_s"], bank["w2_gs"], None, None, None, ws,
+         sorted_ids, block_experts, n_padded, topk_weights, top_k=1,
+         size_m=num_tokens * TOP_K, size_n=size_k, size_k=size_n, **common).view(num_tokens, TOP_K, size_k)
+-    return fused_post_expert_norm_weighted_sum(
+-        y, topk_weights, norm_weight=state["post_expert_w"], eps=POST_NORM_EPS, weight_first=True,
+-        slot_expert_ids=local_ids)
++    return _post_combine(y, topk_weights, local_ids, state)
+ 
+ 
+ def _experts_triton(x, topk_weights, local_ids, state):
+@@ -924,9 +1221,7 @@ def _experts_triton(x, topk_weights, local_ids, state):
+     silu_and_mul(cache1, cache2, expert_ids=local_ids.view(-1), expert_step=1)
+     y = _nvfp4_moe_gemm(cache2, bank["w2"], bank["w2_sf"], bank["w2_gs"], cache3, sorted_ids, block_experts,
+                         n_padded, 1, num_slots, cfg, state["zero_nonlocal_w2"]).view(num_tokens, TOP_K, size_k)
+-    return fused_post_expert_norm_weighted_sum(
+-        y, topk_weights, norm_weight=state["post_expert_w"], eps=POST_NORM_EPS, weight_first=True,
+-        slot_expert_ids=local_ids)
++    return _post_combine(y, topk_weights, local_ids, state)
+ 
+ 
+ def kernel_fn(data, state):
+@@ -995,7 +1290,7 @@ def kernel_fn(data, state):
+     # This GPU's experts start at local_start: SGLang's expert_map on that EP rank, in one kernel.
+     local_ids = _local_expert_ids(topk_ids, data["local_start"])
+     # all-reduce: identity
+-    expert_output = _experts(state["pre_expert_norm"](expert_input), topk_weights, local_ids, state)
++    expert_output = _experts(_pre_norm(expert_input, state), topk_weights, local_ids, state)
+     ffn_output = _gemm(expert_output, dense["unpooler"])
+ 
+     # Post-FFN boundary, with the next layer's pre-attention norm.

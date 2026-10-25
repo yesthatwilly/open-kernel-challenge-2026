@@ -41,10 +41,10 @@ priority: 5
 kind: primary
 controls_for: null
 review: proceed
-status: running
+status: done
 review_at: 2026-10-25T043904Z
 review_companions: null
-stage: dispatched
+stage: harvested
 claimed_at: 2026-10-25T043904Z
 base_sha: 7e9d65cd4721de1932a376a8f32f7db7343f97ef
 base_blob: db8a3344398bca79ea5cafeb580f701c055fd475
@@ -63,6 +63,13 @@ attempt_file: 2026-10-25T044421Z-check-moe-pre-post-norm-triton-multitoken.md
 prepared_at: 2026-10-25T044421Z
 job: 3fb4e7237a604fa3
 dispatched_at: 2026-10-25T044428Z
+outcome: neutral
+verdict_detail: within-ci
+speedup: 1.0713898804326296
+speedup_ci: [1.05531903222614, 1.087460728639119]
+harvested_at: 2026-10-25T053804Z
+best_at_harvest: 1.074386115190733
+promotion: null
 ---
 
 # moe-pre-post-norm-triton-multitoken
@@ -128,3 +135,31 @@ Built on the worktree HEAD 7e9d65c, which already contains a81d19c (stack-tonigh
 - [x] All work happens inside the timed call; no output caching or replay.
 
 okc_lint: `OK with warnings: muse_prefill_layer/submission.py` (host-sync warnings only, all in prepare(); one dtype warning for the uint8 prepare-time flush buffer). `python3 -I -m py_compile` passed; __pycache__ deleted.
+
+## Result
+
+- job `3fb4e7237a604fa3` (check), status done, passed True, tests 5/5
+- speedup 1.0714x, 95% CI [1.0553, 1.0875], score 361590.0309265246 µs vs SGLang 387403.9 µs
+- best at harvest: {"speedup": 1.074386115190733, "ci": [1.058270323462872, 1.090501906918594], "job": "502f2eab95164781"}; base result: muse_prefill_layer/hypotheses/done/neutral/stack-tonight-five-prefill.result.json
+- **outcome: neutral** (within-ci)
+- files: `muse_prefill_layer/hypotheses/done/neutral/moe-pre-post-norm-triton-multitoken.result.json`, `muse_prefill_layer/hypotheses/done/neutral/moe-pre-post-norm-triton-multitoken.patch`; branch `hyp/muse_prefill_layer/moe-pre-post-norm-triton-multitoken`
+
+## Attribution
+
+| shape | w | base µs | hyp µs | delta | verdict |
+|---|---|---|---|---|---|
+| batch=1 ctx=80000 dist=soft layer=sliding load=turn_1 page=1 q_len=753 repeats=6 | 46 | 1101.29 | 1070.82 | 1.0059 | flat |
+| batch=1 ctx=80000 dist=soft layer=full load=turn_1 page=1 q_len=753 repeats=6 | 16 | 1529.55 | 1445.41 | 1.0014 | flat |
+| batch=4 ctx=80000 dist=soft layer=sliding load=turn_4 page=1 q_len=753 repeats=6 | 46 | 3318.71 | 3324.65 | 0.9995 | flat |
+| batch=4 ctx=80000 dist=soft layer=full load=turn_4 page=1 q_len=753 repeats=6 | 16 | 4849.27 | 4828.32 | 0.9982 | flat |
+| batch=1 ctx=0 dist=soft layer=full load=first_turn page=1 q_len=16384 repeats=6 | 16 | 14705.32 | 13735.33 | 1.0018 | flat |
+| batch=1 ctx=32768 dist=soft layer=sliding load=first_turn page=1 q_len=16384 repeats=6 | 138 | 14264.64 | 14067.42 | 0.9997 | flat |
+| batch=1 ctx=32768 dist=soft layer=full load=first_turn page=1 q_len=16384 repeats=6 | 16 | 17746.69 | 18116.0 | 0.997 | flat |
+| batch=1 ctx=65536 dist=soft layer=full load=first_turn page=1 q_len=16384 repeats=6 | 16 | 21733.75 | 21509.79 | 0.9957 | flat |
+
+no shape moved outside noise. Expected hit: 0/3. Noise ±1.5%.
+
+## Follow-ups
+
+- within-ci: the change is not proven either way; a stacked hypothesis (`depends_on: moe-pre-post-norm-triton-multitoken`) that adds a further change in the same area is the only way to learn more (identical code is never re-run).
+

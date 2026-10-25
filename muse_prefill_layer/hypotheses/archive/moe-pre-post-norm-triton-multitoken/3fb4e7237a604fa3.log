@@ -1,0 +1,76 @@
+[w2 zero-store] OFF (weighted sum skips remote slots)
+[moe-ends] pre w_eff from module._get_effective_weight(): dtype torch.bfloat16 shape (4096,)
+[moe-ends] launching master pre-norm T=753
+[moe-ends] done master pre-norm T=753
+[moe-ends] launching pre-norm T=753 nw=4
+[moe-ends] done pre-norm T=753 nw=4
+[moe-ends] pre T=753 nw=4: master 13.0 us new 9.8 us ratio 0.756; vs master relL2 6.53e-06 spacing 1.00; err vs fp32 ref new 1.66e-03 master 1.66e-03; check ok
+[moe-ends] launching pre-norm T=753 nw=8
+[moe-ends] done pre-norm T=753 nw=8
+[moe-ends] pre T=753 nw=8: master 13.1 us new 9.7 us ratio 0.737; vs master relL2 7.05e-06 spacing 1.00; err vs fp32 ref new 1.66e-03 master 1.66e-03; check ok
+[moe-ends] PATH CHOSEN pre T=753: triton nw=8 (ratio 0.737)
+[moe-ends] launching master combine T=753
+[moe-ends] done master combine T=753
+[moe-ends] launching combine T=753 variant=(True, 16)
+[moe-ends] done combine T=753 variant=(True, 16)
+[moe-ends] post T=753 variant=(True, 16): master 12.0 us new 22.7 us ratio 1.893; vs master relL2 1.33e-05 spacing 1.00; err vs fp32 ref new 1.66e-03 master 1.66e-03; check ok; remote-row probe (NaN vs 0) ok
+[moe-ends] launching combine T=753 variant=(False, 8)
+[moe-ends] done combine T=753 variant=(False, 8)
+[moe-ends] post T=753 variant=(False, 8): master 12.4 us new 14.1 us ratio 1.140; vs master relL2 5.43e-06 spacing 1.00; err vs fp32 ref new 1.66e-03 master 1.66e-03; check ok; remote-row probe (NaN vs 0) ok
+[moe-ends] launching combine T=753 variant=(True, 8)
+[moe-ends] done combine T=753 variant=(True, 8)
+[moe-ends] post T=753 variant=(True, 8): master 12.2 us new 20.8 us ratio 1.704; vs master relL2 4.64e-06 spacing 1.00; err vs fp32 ref new 1.66e-03 master 1.66e-03; check ok; remote-row probe (NaN vs 0) ok
+[moe-ends] PATH CHOSEN post T=753: MASTER fused_post_expert_norm_weighted_sum
+[moe-ends] launching master pre-norm T=3012
+[moe-ends] done master pre-norm T=3012
+[moe-ends] launching pre-norm T=3012 nw=4
+[moe-ends] done pre-norm T=3012 nw=4
+[moe-ends] pre T=3012 nw=4: master 24.8 us new 20.1 us ratio 0.808; vs master relL2 1.19e-05 spacing 1.00; err vs fp32 ref new 1.66e-03 master 1.66e-03; check ok
+[moe-ends] launching pre-norm T=3012 nw=8
+[moe-ends] done pre-norm T=3012 nw=8
+[moe-ends] pre T=3012 nw=8: master 24.9 us new 20.1 us ratio 0.807; vs master relL2 1.20e-05 spacing 1.00; err vs fp32 ref new 1.66e-03 master 1.66e-03; check ok
+[moe-ends] PATH CHOSEN pre T=3012: triton nw=8 (ratio 0.807)
+[moe-ends] launching master combine T=3012
+[moe-ends] done master combine T=3012
+[moe-ends] launching combine T=3012 variant=(True, 16)
+[moe-ends] done combine T=3012 variant=(True, 16)
+[moe-ends] post T=3012 variant=(True, 16): master 25.8 us new 67.1 us ratio 2.605; vs master relL2 1.20e-05 spacing 1.00; err vs fp32 ref new 1.66e-03 master 1.66e-03; check ok; remote-row probe (NaN vs 0) ok
+[moe-ends] launching combine T=3012 variant=(False, 8)
+[moe-ends] done combine T=3012 variant=(False, 8)
+[moe-ends] post T=3012 variant=(False, 8): master 26.0 us new 26.2 us ratio 1.007; vs master relL2 1.05e-05 spacing 1.00; err vs fp32 ref new 1.66e-03 master 1.66e-03; check ok; remote-row probe (NaN vs 0) ok
+[moe-ends] launching combine T=3012 variant=(True, 8)
+[moe-ends] done combine T=3012 variant=(True, 8)
+[moe-ends] post T=3012 variant=(True, 8): master 25.9 us new 60.4 us ratio 2.333; vs master relL2 1.17e-05 spacing 1.00; err vs fp32 ref new 1.66e-03 master 1.66e-03; check ok; remote-row probe (NaN vs 0) ok
+[moe-ends] PATH CHOSEN post T=3012: MASTER fused_post_expert_norm_weighted_sum
+[moe-ends] launching master pre-norm T=16384
+[moe-ends] done master pre-norm T=16384
+[moe-ends] launching pre-norm T=16384 nw=4
+[moe-ends] done pre-norm T=16384 nw=4
+[moe-ends] pre T=16384 nw=4: master 84.3 us new 76.3 us ratio 0.904; vs master relL2 9.44e-06 spacing 1.00; err vs fp32 ref new 1.66e-03 master 1.66e-03; check ok
+[moe-ends] launching pre-norm T=16384 nw=8
+[moe-ends] done pre-norm T=16384 nw=8
+[moe-ends] pre T=16384 nw=8: master 84.4 us new 76.3 us ratio 0.903; vs master relL2 9.95e-06 spacing 1.00; err vs fp32 ref new 1.66e-03 master 1.66e-03; check ok
+[moe-ends] PATH CHOSEN pre T=16384: triton nw=8 (ratio 0.903)
+[moe-ends] launching master combine T=16384
+[moe-ends] done master combine T=16384
+[moe-ends] launching combine T=16384 variant=(True, 16)
+[moe-ends] done combine T=16384 variant=(True, 16)
+[moe-ends] post T=16384 variant=(True, 16): master 94.3 us new 328.1 us ratio 3.481; vs master relL2 1.42e-05 spacing 1.00; err vs fp32 ref new 1.66e-03 master 1.66e-03; check ok; remote-row probe (NaN vs 0) ok
+[moe-ends] launching combine T=16384 variant=(False, 8)
+[moe-ends] done combine T=16384 variant=(False, 8)
+[moe-ends] post T=16384 variant=(False, 8): master 93.4 us new 97.1 us ratio 1.039; vs master relL2 1.24e-05 spacing 1.00; err vs fp32 ref new 1.66e-03 master 1.66e-03; check ok; remote-row probe (NaN vs 0) ok
+[moe-ends] launching combine T=16384 variant=(True, 8)
+[moe-ends] done combine T=16384 variant=(True, 8)
+[moe-ends] post T=16384 variant=(True, 8): master 94.2 us new 290.5 us ratio 3.084; vs master relL2 1.34e-05 spacing 1.00; err vs fp32 ref new 1.66e-03 master 1.66e-03; check ok; remote-row probe (NaN vs 0) ok
+[moe-ends] PATH CHOSEN post T=16384: MASTER fused_post_expert_norm_weighted_sum
+[moe-ends] summary pre {753: 8, 3012: 8, 16384: 8} post {753: None, 3012: None, 16384: None}
+[expert gemm] w13 BLOCK_T=64 BLOCK_W=128 warps=4 stages=3: n_regs=255 n_spills=0 shared=67584
+[expert gemm] w13 BLOCK_T=128 BLOCK_W=128 warps=8 stages=3: n_regs=176 n_spills=0 shared=116736
+[expert gemm] w13 BLOCK_T=256 BLOCK_W=128 warps=8 stages=2: n_regs=254 n_spills=4 shared=140288
+[expert gemm] w2 BLOCK_T=64 BLOCK_W=128 warps=4 stages=3: n_regs=255 n_spills=0 shared=67584
+[expert gemm] w2 BLOCK_T=128 BLOCK_W=128 warps=8 stages=3: n_regs=176 n_spills=0 shared=116736
+[expert gemm] w2 BLOCK_T=256 BLOCK_W=128 warps=8 stages=2: n_regs=254 n_spills=4 shared=140288
+[align-local] ON cases=15 mismatches=0 (PATH CHOSEN = parallel align on the Marlin path)
+[silu-sorted] ON max rel err 0.00e+00 (PATH CHOSEN = sorted silu on the Marlin path)
+[expert e2e] T=8192 triton vs marlin: rel L2 5.888e-03, worst row 7.178e-03 (8341 local routes)
+[prepare] max_memory_allocated 6.22 GiB
