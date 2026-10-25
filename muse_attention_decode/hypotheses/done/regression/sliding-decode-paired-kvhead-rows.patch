@@ -1,0 +1,182 @@
+diff --git a/muse_attention_decode/submission.py b/muse_attention_decode/submission.py
+index c6854f0..af33f95 100644
+--- a/muse_attention_decode/submission.py
++++ b/muse_attention_decode/submission.py
+@@ -340,6 +340,154 @@ def _sliding_fused_kernel(
+             tl.store(cnt_ptr + bg, 0)  # ready for the next launch / graph replay
+ 
+ 
++@triton.jit
++def _norm_rope_halves(x, xs, pos, freq, hlo, HD: tl.constexpr, ROPE: tl.constexpr, EPS: tl.constexpr,
++                      d):
++    """_norm_rope for rows of x [R, 2*HD] holding two heads side by side: the scaleless RMSNorm is
++    taken per HD-wide half (never across both), then interleaved RoPE with freq [2*HD] =
++    inv_freq[(d % HD) // 2] (xs: pair-swapped rows, d ^ 1 stays inside each half). hlo: d < HD."""
++    x2 = x * x
++    s0 = tl.sum(tl.where(hlo[None, :], x2, 0.0), axis=1)
++    s1 = tl.sum(tl.where(hlo[None, :], 0.0, x2), axis=1)
++    r0 = 1.0 / tl.sqrt(s0 / HD + EPS)
++    r1 = 1.0 / tl.sqrt(s1 / HD + EPS)
++    r = tl.where(hlo[None, :], r0[:, None], r1[:, None])
++    x = x * r
++    if ROPE:
++        xs = xs * r
++        ang = pos[:, None] * freq[None, :]
++        sign = tl.where(d % 2 == 0, -1.0, 1.0)
++        x = x * tl.cos(ang) + sign[None, :] * xs * tl.sin(ang)
++    return x
++
++
++@triton.jit
++def _own_half(acc, kvh, M: tl.constexpr, D: tl.constexpr):
++    """acc [M, 2*D] -> [M, D]: row r keeps its own kv-head half kvh[r] (masked sum over the pair
++    axis of the [M, 2, D] view); the other half is discarded."""
++    a3 = tl.reshape(acc, [M, 2, D])
++    hsel = tl.arange(0, 2)
++    return tl.sum(tl.where(hsel[None, :, None] == kvh[:, None, None], a3, 0.0), axis=1)
++
++
++@triton.jit
++def _sliding_paired_kernel(
++    qkv_ptr, pos_ptr, loc_ptr, seq_ptr, pt_ptr, inv_freq_ptr, k_scale_ptr, v_scale_ptr,
++    k_cache_ptr, v_cache_ptr, ws_acc_ptr, ws_ml_ptr, cnt_ptr, out_ptr,
++    qkv_stride, pt_stride, q_scale, score_scale,
++    D: tl.constexpr, M: tl.constexpr, LN: tl.constexpr, WINDOW: tl.constexpr, PAGE: tl.constexpr,
++    S: tl.constexpr, BLOCK_N: tl.constexpr, ROPE: tl.constexpr, EPS: tl.constexpr,
++):
++    """Sliding decode (L = 1, HKV = 2, HQ = M = 16), both kv heads in one program. Grid (B, S).
++    Row r is query head r (kv head r // 8, no padding rows). The query is 128 wide: row r holds
++    its values in its own head's half and exact zeros in the other, so every logit equals the
++    unpaired one. Each key/value token is one contiguous 128-byte row (heads 0|1). The program
++    S - 1 builds both heads' new key/value (per-half norm), stores them and attends them from
++    registers. Each row's output is its own half of acc; splits combine per request (one ticket
++    counter per b) as _sliding_fused_kernel does per (b, g)."""
++    HQ: tl.constexpr = M
++    HKV: tl.constexpr = 2
++    GROUP: tl.constexpr = HQ // HKV
++    D2: tl.constexpr = 2 * D
++    b = tl.program_id(0)
++    s = tl.program_id(1)
++    d2 = tl.arange(0, D2)
++    dd = d2 % D
++    hlo = d2 < D
++    dsw = d2 ^ 1
++    freq = tl.load(inv_freq_ptr + dd // 2) if ROPE else tl.zeros([D2], dtype=tl.float32)
++
++    r = tl.arange(0, M)
++    kvh = r // GROUP
++    tok = b + r * 0
++    qrow = qkv_ptr + b.to(tl.int64) * qkv_stride + r[:, None] * D
++    xq = tl.load(qrow + dd[None, :]).to(tl.float32)  # the head's 64 values, twice
++    xqs = tl.load(qrow + (dd ^ 1)[None, :]).to(tl.float32)
++    qpos = tl.load(pos_ptr + tok).to(tl.float32)
++    q = _norm_rope_halves(xq, xqs, qpos, freq, hlo, D, ROPE, EPS, d2)
++    q = (q * q_scale).to(tl.bfloat16)
++    q = tl.where((d2 // D)[None, :] == kvh[:, None], q, 0.0).to(tl.bfloat16)
++
++    k_scale = tl.load(k_scale_ptr)
++    v_scale = tl.load(v_scale_ptr)
++    qk_scale = score_scale * k_scale
++    seq = tl.load(seq_ptr + b)
++
++    m_i = tl.full([M], float("-inf"), dtype=tl.float32)
++    l_i = tl.zeros([M], dtype=tl.float32)
++    acc = tl.zeros([M, D2], dtype=tl.float32)
++
++    if s == S - 1:
++        i = tl.arange(0, LN)
++        ivalid = i < 1
++        ntok = b + i * 0
++        nrow = qkv_ptr + ntok.to(tl.int64)[:, None] * qkv_stride
++        xk = tl.load(nrow + HQ * D + d2[None, :], mask=ivalid[:, None], other=0.0).to(tl.float32)
++        xks = tl.load(nrow + HQ * D + dsw[None, :], mask=ivalid[:, None], other=0.0).to(tl.float32)
++        kpos = tl.load(pos_ptr + ntok).to(tl.float32)
++        kn = _norm_rope_halves(xk, xks, kpos, freq, hlo, D, ROPE, EPS, d2)
++        k8 = (kn / k_scale).to(tl.float8e4nv)
++        vn = tl.load(nrow + (HQ + HKV) * D + d2[None, :], mask=ivalid[:, None], other=0.0).to(tl.float32)
++        v8 = (vn / v_scale).to(tl.float8e4nv)
++        loc = tl.load(loc_ptr + ntok).to(tl.int64)
++        cptr = loc[:, None] * D2 + d2[None, :]  # (loc * HKV + g) * D + d for g = 0, 1
++        tl.store(k_cache_ptr + cptr, k8.to(tl.uint8, bitcast=True), mask=ivalid[:, None])
++        tl.store(v_cache_ptr + cptr, v8.to(tl.uint8, bitcast=True), mask=ivalid[:, None])
++        qk = tl.dot(q, tl.trans(k8.to(tl.bfloat16))) * qk_scale
++        valid = ivalid[None, :] & (r[:, None] >= 0)
++        m_i, l_i, acc = _online_update(qk, valid, v8.to(tl.bfloat16), m_i, l_i, acc)
++
++    lo = tl.maximum(seq - (WINDOW - 1), 0)
++    count = seq - lo
++    chunk = ((count + S - 1) // S + BLOCK_N - 1) // BLOCK_N * BLOCK_N
++    start = lo + s * chunk
++    end = tl.minimum(start + chunk, seq)
++    n = tl.arange(0, BLOCK_N)
++    for n0 in range(start, end, BLOCK_N):
++        t = n0 + n
++        tmask = t < end
++        page = tl.load(pt_ptr + b.to(tl.int64) * pt_stride + t // PAGE, mask=tmask, other=0)
++        row = page.to(tl.int64) * PAGE + t % PAGE
++        kvoff = row[:, None] * D2 + d2[None, :]  # one contiguous 128-byte row, both heads
++        kb = tl.load(k_cache_ptr + kvoff, mask=tmask[:, None], other=0).to(tl.float8e4nv, bitcast=True)
++        vb = tl.load(v_cache_ptr + kvoff, mask=tmask[:, None], other=0).to(tl.float8e4nv, bitcast=True)
++        qk = tl.dot(q, tl.trans(kb.to(tl.bfloat16))) * qk_scale
++        valid = tmask[None, :] & (t[None, :] >= seq - (WINDOW - 1)) & (r[:, None] >= 0)
++        m_i, l_i, acc = _online_update(qk, valid, vb.to(tl.bfloat16), m_i, l_i, acc)
++
++    d = tl.arange(0, D)
++    rvalid = r >= 0
++    acc_o = _own_half(acc, kvh, M, D)  # [M, D]: each row's own kv-head half
++    part = (b * S + s).to(tl.int64)
++    tl.store(ws_acc_ptr + (part * M + r[:, None]) * D + d[None, :], acc_o)
++    tl.store(ws_ml_ptr + part * 2 * M + r, m_i)
++    tl.store(ws_ml_ptr + part * 2 * M + M + r, l_i)
++    _gpu_fence(r)
++    tl.debug_barrier()
++    ticket = tl.atomic_add(cnt_ptr + b, 1, sem="acq_rel", scope="gpu")
++    tl.debug_barrier()
++    if ticket == S - 1:
++        _gpu_fence(r)
++        base = (b * S).to(tl.int64)
++        m_max = tl.full([M], float("-inf"), dtype=tl.float32)
++        for s2 in tl.static_range(S):
++            m_s = tl.load(ws_ml_ptr + (base + s2) * 2 * M + r, cache_modifier=".cg")
++            m_max = tl.maximum(m_max, m_s)
++        m_max = tl.where(m_max == float("-inf"), 0.0, m_max)
++        l_sum = tl.zeros([M], dtype=tl.float32)
++        o = tl.zeros([M, D], dtype=tl.float32)
++        for s2 in tl.static_range(S):
++            m_s = tl.load(ws_ml_ptr + (base + s2) * 2 * M + r, cache_modifier=".cg")
++            l_s = tl.load(ws_ml_ptr + (base + s2) * 2 * M + M + r, cache_modifier=".cg")
++            a_s = tl.load(ws_acc_ptr + ((base + s2) * M + r[:, None]) * D + d[None, :], cache_modifier=".cg")
++            w = tl.where(m_s == float("-inf"), 0.0, tl.exp2(m_s - m_max))
++            l_sum += l_s * w
++            o += a_s * w[:, None]
++        o = o / l_sum[:, None] * v_scale
++        _gate_epilogue(o, qkv_ptr, out_ptr, tok, r, rvalid, d, qkv_stride, HQ, HKV, D, EPS)
++        tl.store(cnt_ptr + b, 0)  # per-request counter back to 0 for the next launch / replay
++
++
+ def _sliding_forward(data: Inputs) -> torch.Tensor:
+     """Sliding-window layers: one launch of _sliding_fused_kernel. Branches on config only."""
+     cfg = data["config"]
+@@ -354,6 +502,22 @@ def _sliding_forward(data: Inputs) -> torch.Tensor:
+     # Decode (L = 1): 16 splits at every batch, 2 BLOCK_N tiles of the window per program.
+     splits = 16 if length == 1 else _num_splits(batch, hkv)
+     out = torch.empty((batch, length, hq * d), dtype=torch.bfloat16, device=device)
++    if length == 1 and batch > 1 and hkv == 2 and hq == 16 and d == 64:
++        # Batched decode: one program per (request, split) serves both kv heads (config-only gate).
++        ws_acc = torch.empty((batch * splits, m, d), dtype=torch.float32, device=device)
++        ws_ml = torch.empty((batch * splits, 2, m), dtype=torch.float32, device=device)
++        counters = _counters(batch, 1, device)
++        inv_freq = _inv_freq(theta, d, device) if theta else data["k_scale"]
++        page_table = data["page_table"]
++        _sliding_paired_kernel[(batch, splits)](
++            qkv, data["positions"], data["cache_loc"], data["seq_lens"], page_table, inv_freq,
++            data["k_scale"], data["v_scale"],
++            data["k_cache"].view(torch.uint8), data["v_cache"].view(torch.uint8), ws_acc, ws_ml, counters, out,
++            qkv.stride(0), page_table.stride(0), cfg["qk_scale_factor"], cfg["sm_scale"] * LOG2E,
++            D=d, M=m, LN=16, WINDOW=cfg["window"], PAGE=cfg["page_size"], S=splits, BLOCK_N=64,
++            ROPE=bool(theta), EPS=RMS_EPS, num_warps=4, num_stages=2,
++        )
++        return out
+     if splits > 1:
+         ws_acc = torch.empty((batch * hkv * splits, m, d), dtype=torch.float32, device=device)
+         ws_ml = torch.empty((batch * hkv * splits, 2, m), dtype=torch.float32, device=device)
