@@ -55,7 +55,7 @@ review: proceed
 status: running
 review_at: 2026-10-25T054716Z
 review_companions: null
-stage: claimed
+stage: implemented
 claimed_at: 2026-10-25T054717Z
 base_sha: dbb845684aa94ad1867281815e42f53464870f19
 base_blob: 50274a3d8678d5656197b8e401ca411d4f08a6e2
@@ -64,6 +64,12 @@ worktree: .worktrees/muse_attention_decode/full-decode1-sk-two-level-fused-preat
 mode: null
 restack_of: null
 stale_base: true
+implemented_at: 2026-10-25T084647Z
+impl_commit: 2236339719c79707da71c91fd7a40228da43bdc9
+submission_sha256: 39a86a5c348bd983ff953edfbfb59a9216acd0b46cc7a708005325af6f88e777
+norm_sha256: e4d308f3c69ff0019f3a0d59da2a94f4268593f73e3bd84e11a63aa8f08162cb
+submission_blob: fd1c193f0c8d523702cf3687711a06c01db9bce5
+lint_warnings: 27
 ---
 
 # full-decode1-sk-two-level-fused-preattn
@@ -114,3 +120,66 @@ No companions. This is a rewrite stage gated by an in-process interleaved graph-
 - Does the q build overlap the first tiles' cp.async prologue? Print the eager per-kernel time of the fused kernel vs <4,true,true> in prepare, so the q-build cost can be separated from the node removal.
 - When the gate does not route, does the run still record the fused kernel's correctness, so that stage 5 can build on it?
 
+
+## Implementation notes
+
+Base: the claim was stale (worktree base dbb8456 = s2 + the unlanded s3-fused-preattn sibling; master bfd621c has s2 + the two-level ticket). I started from master's submission.py (the s3 separate-TU kernel is not carried: it is a sibling hypothesis and not on master) and ported the fused prologue into master's `splitkv_attn_sk_kernel` as a new template flag, `<4, true, true, FUSED=true>` = sk_attn variant 4. Non-fused instantiations compile to the same code (flag is constexpr); kc/vc became non-const pointers, `cache_loc` was added to `sk_attn` (all call sites updated). All edits are in muse_attention_decode/submission.py only.
+
+What the fused kernel does (batch 1 only, TORCH_CHECK B == 1):
+- The request's raw bf16 q row (2 KB) rides block 0's page-index cp.async group; the last CTA of the effective grid (it owns tile T-1, hence key seq-1) also brings the raw new k/v heads (512 B) and cache_loc[0].
+- After tiles 0..2 are issued, every CTA builds its q MMA fragments in registers (scaleless RMSNorm eps 1e-5, then e4m3 cast, NO RoPE, no 5.473 factor), overlapping the first tiles' loads.
+- The last CTA's warps 0-3 build the new row's e4m3 bytes (k: norm / k_scale, v: / v_scale) into smem during the same window.
+- In the last tile's iteration (after the landing wait + barrier) the new bytes are written over that key's slot in the ring stage in smem, and stored to k/v cache at cache_loc; one extra __syncthreads once per launch. The cp.async read of the old row is discarded, so nothing reads the new row back through cp.async.
+- Python: `_FUSED_B1` flag (set only by the import-time gate), `_full_decode_sk_fused`, `_sk_fused_case` / `_sk_fused_replay_check` / `_sk_fused_gate` / `_sk_validate_fused` / `_sk_fused_diagnostics`, kernel_fn routing (config-only plus qkv 16 B alignment, host metadata), PATH CHOSEN lines.
+
+Review items:
+- SPEC ERROR (no RoPE on full layers): applied; mirrors ROPE=False.
+- Issue first KV tiles' cp.async before the q build: applied; q build is after the prologue tile issue (q even rides the index group, earlier than "with the first tile").
+- Last-tile owner must not read the new row back via cp.async: applied (smem overwrite after the landed tile, global store after that read).
+- Print eager per-kernel time of fused vs <4,true,true>: `_sk_fused_diagnostics` prints pre-attn, two-level and fused times and the differences.
+- Gain is overstated (~1.4 us ceiling): gate demands >= 1.03x in interleaved graph replay (45 reps, cold L2, empty-graph baseline subtracted), both numbers printed.
+- Bit-exact cache rows: not achievable (Triton approx sqrt/div vs IEEE); check allows <= 3 of 128 bytes to differ, rel L2 < 2e-2, other rows unchanged, cache_loc == page_table[seq-1] asserted. Documented deviation.
+- q smem layout/scale vs what <4,true,true> consumes: fragments built with the identical column mapping; self-check compares output with the two-level kernel (< 5e-3).
+- Open question 3 (record correctness when gate declines): case results and the gate timing are printed before the route decision, so stage 5 can build on it.
+- Self-check: 80000/4097/64/63/1 keys, kv 1.0/0.25, grids 3/7/SM, canary; two states with separate graphs replayed alternately (0 1 1 0 0 1) with refilled inputs; ticket sums checked. Not run: no GPU/nvcc on this node.
+
+## Rules check
+
+- [x] CUDA-graph capturable: kernel_fn has no sync/.item(); allocations are shape-only (zero-element q placeholder); branch is config + qkv.data_ptr() alignment (host metadata), no input values.
+- [x] Nothing derived from `data` cached: only zero-reset int32 ticket arrays (master's) stay global; no pointer/TMA/workspace globals.
+- [x] n/a: no weights in this problem.
+- [x] Activations/KV/q: KV FP8, q e4m3 only, fp32 softmax/merges, bf16 out.
+- [x] Every key attended (stream-K covers all tiles; new key included from the smem copy).
+- [x] No timing patches, harness access, subprocess or network (load_inline in-process, as master).
+- [x] All work inside the timed call.
+- [x] sm_90a: TORCH_CUDA_ARCH_LIST=9.0a around the build (master's _build_sk), no wgmma/setmaxnreg added, -lineinfo kept; per-launch prints in self-check; no spin waits added.
+
+okc_lint: "OK with warnings" (only host-sync warnings in prepare-time code, outside kernel_fn). py_compile OK, __pycache__ removed.
+
+## Pre-flight audit
+
+Audited 2026-10-25 (opus), against `master:muse_attention_decode/submission.py`. **Verdict: dispatch.** I made no edits.
+
+- **No RoPE on full layers.** The fused route requires `not theta`. reference.py sets rope_theta 0.0 on full layers, and master already uses `ROPE=bool(theta)`, so the predicate matches. The kernel does a scaleless RMSNorm (with eps), then the e4m3 cast, and folds 5.473 into score_scale. That is exactly what `_pre_attention_kernel` does with ROPE=False.
+- **Cache-row tolerance.** The self-check passes a new row only when at most 3 of its 128 bytes differ AND its rel L2 against master's row is below 2e-2. The rules' bound is CACHE_TOL = 8e-2 rel L2 against the reference, so the check sits well inside it. Bytes only differ at e4m3 rounding ties (Triton's approximate sqrt/div against IEEE), so this gate is not one that always fails.
+- **New-row ownership is race-free.**
+  - gx = min(grid, T), and CTAs at or above gx exit. So CTA gx-1 always ends at tile T-1 with N >= 1 and holds key seq-1.
+  - The order is: the old row's cp.async lands, then a wait and a barrier, then the smem overwrite, then the global store at cache_loc, then one more barrier.
+  - The swizzle `(kh*4+dd/16) ^ (tt&7)` matches issue_tile.
+  - No other CTA reads row loc, and no pending cp.async targets that stage.
+  - The k/v offsets in the qkv row (k at HQ*D, v at (HQ+HKV)*D) and the cache layout `(loc*HKV+kh)*D` match master.
+- **q 16 B routing.** `qkv.data_ptr() % 16` reads pointer metadata that is fixed at capture. It is not a branch on tensor values. A misaligned pointer takes the pre-attention + two-level path.
+- **Globals.** There are two: the import-time `_FUSED_B1` bool and master's self-resetting ticket arrays. No device pointer, TMA map or state-sized buffer is cached. The C++ `static bool done[5]` holds attribute flags only.
+- **Two-state self-check.**
+  - Two states with separate graphs, replayed 0 1 1 0 0 1 after a refill, with NaN-poisoned outputs and a ticket-sum check.
+  - The canary and each case are synced and announced.
+  - Any miss or raise keeps pre-attention + two-level, and PATH CHOSEN gives the reason.
+- **kernel_fn.**
+  - Branches only on config plus the alignment predicate.
+  - Allocations depend on shape only (the q placeholder has zero elements).
+  - No sync, print or try.
+  - okc_lint: OK, with host-sync warnings only in prepare-time code.
+  - py_compile: OK.
+- **Call sites and q layout.** Every sk_attn call site was updated for the new cache_loc argument. The q fragment's column and byte mapping matches master's `qr` read.
+
+Residual risk: nobody has compiled the CUDA yet, since this node has no nvcc. A compile error in the shared `_SK_CUDA` TU would also drop B>1 from v2 to v1. The run would print that loudly, but it would look like a regression. Beyond that, the gate may simply not reach 1.03x.
