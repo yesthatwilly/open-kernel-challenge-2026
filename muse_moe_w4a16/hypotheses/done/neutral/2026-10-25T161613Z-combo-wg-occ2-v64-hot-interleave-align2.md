@@ -118,10 +118,10 @@ priority: 2
 kind: primary
 controls_for: null
 review: proceed
-status: running
+status: done
 review_at: 2026-10-25T162203Z
 review_companions: null
-stage: dispatched
+stage: harvested
 claimed_at: 2026-10-25T162203Z
 base_sha: 757927698c5069efecc0af3dde3ee3553dc1971f
 base_blob: 593b238c16387c5ac3774424ee9557882b9fc46a
@@ -140,6 +140,13 @@ attempt_file: 2026-10-25T190500Z-submit-combo-wg-occ2-v64-hot-interleave-align2.
 prepared_at: 2026-10-25T190500Z
 job: 31c27e4b8fc84bd2
 dispatched_at: 2026-10-25T190508Z
+outcome: neutral
+verdict_detail: unproven-vs-best
+speedup: 1.4020871870995952
+speedup_ci: [1.3810558792931014, 1.423118494906089]
+harvested_at: 2026-10-25T192027Z
+best_at_harvest: 1.3886517158680607
+promotion: null
 ---
 
 # combo-wg-occ2-v64-hot-interleave-align2
@@ -236,3 +243,29 @@ Audited 2026-10-25 (opus). Read only: no GPU, nvcc or torch on this node. **Verd
 - Rules: kernel_fn branches only on shape and prepare-set ints and strings. `_wg_front` / `_align_two_phase` allocate shape-sized buffers only, with no sync or print. Weights stay NVFP4 (register dequant only). Tensor maps are encoded per call. The judge's state copy shares `wg2_ext` like `wg_ext`. okc_lint: OK with warnings (prepare-side only). py_compile OK, the AST undefined-name scan found 0, and __pycache__ was removed.
 
 Residual risk: the wg2 module has never been compiled. If ptxas does not land exactly on 80 registers, or spills, C2 turns itself off and the run reads as F1 + F2 only. A device fault inside a wg2 launch (as opposed to a hang) would still be sticky and would fail the run.
+
+## Result
+
+- job `31c27e4b8fc84bd2` (submit), status done, passed True, tests 5/5
+- speedup 1.4021x, 95% CI [1.3811, 1.4231], score 9591.77155581888 µs vs SGLang 13448.5 µs
+- best at harvest: {"speedup": 1.3886517158680607, "ci": [1.3678219401300398, 1.4094814916060814], "job": "9a455a2aae7842cb"}; base result: muse_moe_w4a16/hypotheses/done/neutral/align-two-phase-port-from17.result.json
+- **outcome: neutral** (unproven-vs-best)
+- files: `muse_moe_w4a16/hypotheses/done/neutral/combo-wg-occ2-v64-hot-interleave-align2.result.json`, `muse_moe_w4a16/hypotheses/done/neutral/combo-wg-occ2-v64-hot-interleave-align2.patch`; branch `hyp/muse_moe_w4a16/combo-wg-occ2-v64-hot-interleave-align2`
+
+## Attribution
+
+| shape | w | base µs | hyp µs | delta | verdict |
+|---|---|---|---|---|---|
+| bs=1 load=decode_1 sharding=ep8 | 60 | 46.77 | 46.35 | 1.0067 | flat |
+| bs=16 load=decode_16 sharding=ep8 | 60 | 145.99 | 150.9 | 0.9952 | flat |
+| bs=32 load=decode_32 sharding=ep8 | 60 | 203.75 | 199.12 | 0.9994 | flat |
+| bs=8 load=verify_1 sharding=ep8 | 60 | 111.85 | 104.51 | 1.0195 | flat |
+| bs=128 load=verify_16 sharding=ep8 | 60 | 319.08 | 323.16 | 1.0137 | flat |
+| bs=256 load=verify_32 sharding=ep8 | 60 | 404.89 | 358.12 | 1.1102 | gained |
+
+gained on verify_32 verify_32. Expected hit: 4/5. Noise ±1.5%.
+
+## Follow-ups
+
+- unproven-vs-best: the change is not proven either way; a stacked hypothesis (`depends_on: combo-wg-occ2-v64-hot-interleave-align2`) that adds a further change in the same area is the only way to learn more (identical code is never re-run).
+
