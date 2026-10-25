@@ -1,0 +1,22 @@
+[w2 zero-store] OFF (weighted sum skips remote slots)
+[expert gemm] w13 loads=master BLOCK_T=64 BLOCK_W=128 warps=4 stages=3: n_regs=255 n_spills=0 shared=67584
+[expert gemm] w13 loads=master BLOCK_T=128 BLOCK_W=128 warps=8 stages=3: n_regs=176 n_spills=0 shared=116736
+[expert gemm] w13 loads=master BLOCK_T=256 BLOCK_W=128 warps=8 stages=2: n_regs=254 n_spills=4 shared=140288
+[expert gemm] w13 loads=unmasked BLOCK_T=256 BLOCK_W=128 warps=8 stages=2: n_regs=254 n_spills=4 shared=140288
+[expert gemm] w13 loads=unmasked+hints BLOCK_T=256 BLOCK_W=128 warps=8 stages=2: n_regs=254 n_spills=4 shared=140288
+[expert gemm] w2 loads=master BLOCK_T=64 BLOCK_W=128 warps=4 stages=3: n_regs=255 n_spills=0 shared=67584
+[expert gemm] w2 loads=master BLOCK_T=128 BLOCK_W=128 warps=8 stages=3: n_regs=176 n_spills=0 shared=116736
+[expert gemm] w2 loads=master BLOCK_T=256 BLOCK_W=128 warps=8 stages=2: n_regs=254 n_spills=4 shared=140288
+[expert gemm] w2 loads=unmasked BLOCK_T=256 BLOCK_W=128 warps=8 stages=2: n_regs=254 n_spills=4 shared=140288
+[expert gemm] w2 loads=unmasked+hints BLOCK_T=256 BLOCK_W=128 warps=8 stages=2: n_regs=254 n_spills=4 shared=140288
+[align-local] ON cases=15 mismatches=0 (PATH CHOSEN = parallel align on the Marlin path)
+[silu-sorted] ON max rel err 0.00e+00 (PATH CHOSEN = sorted silu on the Marlin path)
+[loads A/B] w13 T=16384 master: median 3297 us over 7 alternations, ratio 1.0000, n_regs=254 n_spills=4
+[loads A/B] w13 T=16384 unmasked: median 3867 us over 7 alternations, ratio 1.1730, n_regs=254 n_spills=4
+[loads A/B] w13 T=16384 unmasked+hints: median 3886 us over 7 alternations, ratio 1.1789, n_regs=254 n_spills=4
+[loads A/B] w2 T=16384 master: median 1725 us over 7 alternations, ratio 1.0000, n_regs=254 n_spills=4
+[loads A/B] w2 T=16384 unmasked: median 2041 us over 7 alternations, ratio 1.1833, n_regs=254 n_spills=4
+[loads A/B] w2 T=16384 unmasked+hints: median 2043 us over 7 alternations, ratio 1.1846, n_regs=254 n_spills=4
+[loads A/B] PATH CHOSEN = w13 master, w2 master (gate: <= 0.98x master)
+[expert e2e] T=8192 triton vs marlin: rel L2 5.937e-03, worst row 6.948e-03 (8341 local routes)
+[prepare] max_memory_allocated 7.53 GiB

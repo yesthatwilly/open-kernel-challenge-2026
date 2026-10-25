@@ -33,10 +33,10 @@ priority: 4
 kind: primary
 controls_for: null
 review: proceed
-status: running
+status: done
 review_at: 2026-10-25T034754Z
 review_companions: null
-stage: dispatched
+stage: harvested
 claimed_at: 2026-10-25T034755Z
 base_sha: 62d28685d7829e2134746918148e95305d852b47
 base_blob: db8a3344398bca79ea5cafeb580f701c055fd475
@@ -55,6 +55,13 @@ attempt_file: 2026-10-25T034946Z-check-experts-triton-first-turn-unmasked-loads-
 prepared_at: 2026-10-25T034946Z
 job: aeda8b5a523642b1
 dispatched_at: 2026-10-25T034953Z
+outcome: neutral
+verdict_detail: within-ci
+speedup: 1.0677050569173394
+speedup_ci: [1.0516894810635793, 1.0837206327710993]
+harvested_at: 2026-10-25T043404Z
+best_at_harvest: 1.074386115190733
+promotion: null
 ---
 
 # experts-triton-first-turn-unmasked-loads-l2-hints
@@ -122,3 +129,31 @@ okc_lint (host-sync warnings in prepare() filtered; all are outside kernel_fn's 
 OK with warnings: .../experts-triton-first-turn-unmasked-loads-l2-hints/muse_prefill_layer/submission.py
 ```
 py_compile OK; __pycache__ removed.
+
+## Result
+
+- job `aeda8b5a523642b1` (check), status done, passed True, tests 5/5
+- speedup 1.0677x, 95% CI [1.0517, 1.0837], score 362837.936834828 µs vs SGLang 387403.9 µs
+- best at harvest: {"speedup": 1.074386115190733, "ci": [1.058270323462872, 1.090501906918594], "job": "502f2eab95164781"}; base result: muse_prefill_layer/hypotheses/done/neutral/stack-tonight-five-prefill.result.json
+- **outcome: neutral** (within-ci)
+- files: `muse_prefill_layer/hypotheses/done/neutral/experts-triton-first-turn-unmasked-loads-l2-hints.result.json`, `muse_prefill_layer/hypotheses/done/neutral/experts-triton-first-turn-unmasked-loads-l2-hints.patch`; branch `hyp/muse_prefill_layer/experts-triton-first-turn-unmasked-loads-l2-hints`
+
+## Attribution
+
+| shape | w | base µs | hyp µs | delta | verdict |
+|---|---|---|---|---|---|
+| batch=1 ctx=80000 dist=soft layer=sliding load=turn_1 page=1 q_len=753 repeats=6 | 46 | 1101.29 | 1094.9 | 1.0016 | flat |
+| batch=1 ctx=80000 dist=soft layer=full load=turn_1 page=1 q_len=753 repeats=6 | 16 | 1529.55 | 1407.88 | 1.0018 | flat |
+| batch=4 ctx=80000 dist=soft layer=sliding load=turn_4 page=1 q_len=753 repeats=6 | 46 | 3318.71 | 3351.89 | 0.9991 | flat |
+| batch=4 ctx=80000 dist=soft layer=full load=turn_4 page=1 q_len=753 repeats=6 | 16 | 4849.27 | 4828.84 | 0.9981 | flat |
+| batch=1 ctx=0 dist=soft layer=full load=first_turn page=1 q_len=16384 repeats=6 | 16 | 14705.32 | 14224.95 | 1.0013 | flat |
+| batch=1 ctx=32768 dist=soft layer=sliding load=first_turn page=1 q_len=16384 repeats=6 | 138 | 14264.64 | 14583.1 | 0.9902 | flat |
+| batch=1 ctx=32768 dist=soft layer=full load=first_turn page=1 q_len=16384 repeats=6 | 16 | 17746.69 | 18299.63 | 0.9892 | flat |
+| batch=1 ctx=65536 dist=soft layer=full load=first_turn page=1 q_len=16384 repeats=6 | 16 | 21733.75 | 21712.71 | 0.9952 | flat |
+
+no shape moved outside noise. Expected hit: 0/2. Noise ±1.5%.
+
+## Follow-ups
+
+- within-ci: the change is not proven either way; a stacked hypothesis (`depends_on: experts-triton-first-turn-unmasked-loads-l2-hints`) that adds a further change in the same area is the only way to learn more (identical code is never re-run).
+
