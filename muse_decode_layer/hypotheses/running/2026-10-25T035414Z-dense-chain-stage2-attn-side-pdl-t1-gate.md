@@ -34,9 +34,18 @@ priority: 2
 kind: primary
 controls_for: null
 review: proceed
-status: queued
+status: running
 review_at: 2026-10-25T040253Z
 review_companions: null
+stage: claimed
+claimed_at: 2026-10-25T040300Z
+base_sha: 6fbe7b720d0d1b0ee3aa210d94a1e35d73a2a554
+base_blob: 4da94677234faaa06b42b5ced541db8961fd6f34
+branch: hyp/muse_decode_layer/dense-chain-stage2-attn-side-pdl-t1-gate
+worktree: .worktrees/muse_decode_layer/dense-chain-stage2-attn-side-pdl-t1-gate
+mode: null
+restack_of: dense-chain-stage2-attn-side-pdl
+stale_base: null
 ---
 
 # dense-chain-stage2-attn-side-pdl-t1-gate
