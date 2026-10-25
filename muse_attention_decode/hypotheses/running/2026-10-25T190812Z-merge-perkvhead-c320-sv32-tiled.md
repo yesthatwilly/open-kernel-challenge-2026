@@ -44,7 +44,7 @@ base_sha: 8eca21f5b391cbe0335e7b32676b0f35d9c5ff9e
 base_blob: 6d6afa4722731ceb9cb8216d0334a03f1a96ad2b
 branch: hyp/muse_attention_decode/merge-perkvhead-c320-sv32-tiled
 worktree: .worktrees/muse_attention_decode/merge-perkvhead-c320-sv32-tiled
-mode: null
+mode: submit
 restack_of: null
 stale_base: null
 implemented_at: 2026-10-25T192000Z
@@ -53,6 +53,8 @@ submission_sha256: fda9e34878124d04a923f6208991ed54de5e6408f6db77365e2ebb79b5067
 norm_sha256: 46c431d8045ec39e8735bd5f4e362ba4e3bf1ee016aaafbc820eef67df25aca7
 submission_blob: 6d947fb9ae48e4542cacddb80b8c7506fcc3e42a
 lint_warnings: 69
+attempt_file: 2026-10-25T192000Z-submit-merge-perkvhead-c320-sv32-tiled.md
+prepared_at: 2026-10-25T192000Z
 ---
 
 # merge-perkvhead-c320-sv32-tiled
