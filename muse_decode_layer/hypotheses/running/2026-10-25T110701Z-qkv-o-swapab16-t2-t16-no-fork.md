@@ -58,9 +58,18 @@ priority: 2
 kind: primary
 controls_for: null
 review: proceed
-status: queued
+status: running
 review_at: 2026-10-25T111209Z
 review_companions: null
+stage: claimed
+claimed_at: 2026-10-25T111210Z
+base_sha: 54d3a9ce8a155b629ac50f80222a1bf0dec23a79
+base_blob: 62c5a9413ba5710defea2ca3de14c1a1dc3b5a6d
+branch: hyp/muse_decode_layer/qkv-o-swapab16-t2-t16-no-fork
+worktree: .worktrees/muse_decode_layer/qkv-o-swapab16-t2-t16-no-fork
+mode: null
+restack_of: null
+stale_base: null
 ---
 
 # qkv-o-swapab16-t2-t16-no-fork
