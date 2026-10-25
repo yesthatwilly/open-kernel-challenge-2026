@@ -60,10 +60,10 @@ priority: 1
 kind: primary
 controls_for: null
 review: proceed
-status: running
+status: done
 review_at: 2026-10-25T054818Z
 review_companions: null
-stage: dispatched
+stage: harvested
 claimed_at: 2026-10-25T054819Z
 base_sha: edf4bf29fe8d509a2574c0becee65138cb7705f2
 base_blob: d8769ef25caf845a0e207538ccc5c62394b6ee3b
@@ -82,6 +82,13 @@ attempt_file: 2026-10-25T084553Z-check-restack-sk-pseudo-b1-cluster-c16-c4.md
 prepared_at: 2026-10-25T084553Z
 job: eb6ff0cb701d4def
 dispatched_at: 2026-10-25T084601Z
+outcome: neutral
+verdict_detail: unproven-vs-best
+speedup: 1.4870403803793002
+speedup_ci: [1.4647347746736106, 1.5093459860849896]
+harvested_at: 2026-10-25T091105Z
+best_at_harvest: 1.444132502888963
+promotion: null
 ---
 
 # restack-sk-pseudo-b1-cluster-c16-c4
@@ -172,3 +179,35 @@ Audited 2026-10-25 by an opus subagent (read-only emulation; no GPU). **Verdict:
 - Budget: about 49 s splitkv + about 40 s sk(PSEUDO) + about 41 s slide fp8qk compiles, plus checks and gating, which is roughly 3-4 min cold, well inside the 15 min limit.
 
 Residual risk: a sticky CUDA fault in a canary or self-check launch would poison the context, as in every landed TU. The sliding decode_1 C=16 gain (0.58 us) sits within drift, and the 16 KB log tail may cut off the earlier [ps] PATH CHOSEN lines; the phase and [slide] lines print last.
+
+## Result
+
+- job `eb6ff0cb701d4def` (check), status done, passed True, tests 16/16
+- speedup 1.4870x, 95% CI [1.4647, 1.5093], score 2532.748975545189 µs vs SGLang 3766.3 µs
+- best at harvest: {"speedup": 1.444132502888963, "ci": [1.4224705153456287, 1.4657944904322975], "job": "341623fa53d94cef"}; base result: muse_attention_decode/hypotheses/done/neutral/full-decode1-streamk-s3-two-level-ticket.result.json
+- **outcome: neutral** (unproven-vs-best)
+- files: `muse_attention_decode/hypotheses/done/neutral/restack-sk-pseudo-b1-cluster-c16-c4.result.json`, `muse_attention_decode/hypotheses/done/neutral/restack-sk-pseudo-b1-cluster-c16-c4.patch`; branch `hyp/muse_attention_decode/restack-sk-pseudo-b1-cluster-c16-c4`
+
+## Attribution
+
+| shape | w | base µs | hyp µs | delta | verdict |
+|---|---|---|---|---|---|
+| batch=1 ctx=80000 dist=soft heads=tp8 layer=sliding load=decode_1 page=1 | 46 | 13.15 | 12.38 | 1.0496 | gained |
+| batch=1 ctx=80000 dist=coherent heads=tp8 layer=full load=decode_1 page=1 | 16 | 22.6 | 22.64 | 0.9772 | flat |
+| batch=16 ctx=80000 dist=soft heads=tp8 layer=sliding load=decode_16 page=1 spread=agentic | 46 | 15.33 | 15.83 | 0.9757 | flat |
+| batch=16 ctx=80000 dist=coherent heads=tp8 layer=full load=decode_16 page=1 spread=agentic | 16 | 111.14 | 111.38 | 1.0011 | flat |
+| batch=32 ctx=80000 dist=soft heads=tp8 layer=sliding load=decode_32 page=1 spread=agentic | 46 | 24.33 | 20.4 | 1.183 | gained |
+| batch=32 ctx=80000 dist=coherent heads=tp8 layer=full load=decode_32 page=1 spread=agentic | 16 | 226.42 | 227.92 | 0.9965 | flat |
+| batch=1 ctx=80000 dist=soft heads=tp8 layer=sliding load=verify_1 page=1 q_len=8 | 46 | 17.78 | 13.29 | 1.3423 | gained |
+| batch=1 ctx=80000 dist=coherent heads=tp8 layer=full load=verify_1 page=1 q_len=8 | 16 | 30.51 | 29.63 | 1.0089 | flat |
+| batch=16 ctx=80000 dist=soft heads=tp8 layer=sliding load=verify_16 page=1 q_len=8 spread=agentic | 46 | 22.68 | 22.76 | 0.9991 | flat |
+| batch=16 ctx=80000 dist=coherent heads=tp8 layer=full load=verify_16 page=1 q_len=8 spread=agentic | 16 | 162.8 | 162.81 | 0.9984 | flat |
+| batch=32 ctx=80000 dist=soft heads=tp8 layer=sliding load=verify_32 page=1 q_len=8 spread=agentic | 46 | 28.34 | 28.95 | 0.9928 | flat |
+| batch=32 ctx=80000 dist=coherent heads=tp8 layer=full load=verify_32 page=1 q_len=8 spread=agentic | 16 | 302.2 | 301.42 | 0.9985 | flat |
+
+gained on sliding decode_1, decode_32, verify_1. Expected hit: 5/5. Noise ±1.5%.
+
+## Follow-ups
+
+- unproven-vs-best: the change is not proven either way; a stacked hypothesis (`depends_on: restack-sk-pseudo-b1-cluster-c16-c4`) that adds a further change in the same area is the only way to learn more (identical code is never re-run).
+
