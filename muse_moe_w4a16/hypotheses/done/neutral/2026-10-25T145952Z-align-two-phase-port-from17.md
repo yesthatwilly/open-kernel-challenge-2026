@@ -113,7 +113,9 @@ speedup: 1.3700229697096111
 speedup_ci: [1.349472625163967, 1.3905733142552552]
 harvested_at: 2026-10-25T153251Z
 best_at_harvest: 1.3726662821010693
-promotion: null
+promotion: unmerged
+hand_landed: true
+promotion_reason: master moved since base; merge by hand
 ---
 
 # align-two-phase-port-from17
