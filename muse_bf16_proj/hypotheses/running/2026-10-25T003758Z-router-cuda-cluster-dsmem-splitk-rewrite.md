@@ -79,9 +79,18 @@ controls_for: null
 rewrite_stage: 1
 replaces: "router at m<=32: torch.zeros memset node (vectorized_elementwise 0.7-0.8 us) + _router_hilo_kernel 3-D split-K with fp32 atomic_add (3.0-3.6 us)"
 review: proceed
-status: queued
+status: running
 review_at: 2026-10-25T004221Z
 review_companions: null
+stage: claimed
+claimed_at: 2026-10-25T004221Z
+base_sha: 97cde2a7e308e68b1ea49821182fcf5267f527bd
+base_blob: a8bb42ac483318e9fbc84bc7826a27b7a704d1fb
+branch: hyp/muse_bf16_proj/router-cuda-cluster-dsmem-splitk-rewrite
+worktree: .worktrees/muse_bf16_proj/router-cuda-cluster-dsmem-splitk-rewrite
+mode: null
+restack_of: null
+stale_base: null
 ---
 
 # router-cuda-cluster-dsmem-splitk-rewrite
