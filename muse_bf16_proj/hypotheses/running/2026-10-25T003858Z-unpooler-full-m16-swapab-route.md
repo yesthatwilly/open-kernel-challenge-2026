@@ -51,7 +51,7 @@ review: proceed
 status: running
 review_at: 2026-10-25T004113Z
 review_companions: null
-stage: claimed
+stage: implemented
 claimed_at: 2026-10-25T004113Z
 base_sha: e024827fbfe10f55e792e5540c00390bc0df3798
 base_blob: a8bb42ac483318e9fbc84bc7826a27b7a704d1fb
@@ -60,6 +60,12 @@ worktree: .worktrees/muse_bf16_proj/unpooler-full-m16-swapab-route
 mode: null
 restack_of: null
 stale_base: null
+implemented_at: 2026-10-25T004327Z
+impl_commit: 9e2225c62f8220226eaabc2502e317e51f0157b5
+submission_sha256: 29fe6c94af0f444942b0674b9b8fa5946e611c9251162a858682a42a4e6e4739
+norm_sha256: 4cb5554e9610443db7e595eb3b753beb986976d2fbbff54f40ef25a08d6896b7
+submission_blob: fa481a079056997fb3dc6ae5746193edccdcb297
+lint_warnings: 0
 ---
 
 # unpooler-full-m16-swapab-route
@@ -104,3 +110,22 @@ No companion. Read the unpooler decode_16 row (err ~50 ns, a 300-600 ns change i
 - Will BLOCK_T 32 at m=16 match the m=32 time? If it lands ~18.4 us, a follow-up on top of the restack is a SWAPAB16_CFG['unpooler'] full-width entry (8192, 4096, 1, 256, 4) with wgmma m64n16.
 - If the restack is promoted first, rebase onto it and re-judge decode_16 against its job 60b20fd0 unpooler row (18.51 us).
 
+
+## Implementation notes
+
+Edited only muse_bf16_proj/submission.py in the worktree (+7/-3). Added SWAPAB_MIN_M_BY_LAYER = {"unpooler": 9}; _swapab_route_ok uses SWAPAB_MIN_M_BY_LAYER.get(layer, SWAPAB_MIN_M) as its lower bound; _swapab_prepare's warm loop now uses the same per-layer minimum, so the unpooler is warmed at m 9..31 (m=32 by the first warm call), others stay 17..31. Per the review, the minimum drives the warm loop rather than a hardcoded 9..32. No deviation from the spec. The slice (_unpool_shape_ok, n=1024) is checked earlier in kernel_fn and is unaffected.
+
+## Rules check
+
+- [x] CUDA-graph capturable: diff only changes a constant lookup on cfg["m"]/layer; no sync, allocation or value-dependent control flow in kernel_fn.
+- [x] Nothing derived from data is cached across calls: warm-up uses synthetic randn x in prepare only.
+- [x] Weights: unchanged; BF16 stays BF16, no repack.
+- [x] Activations BF16: unchanged (route requires x bf16).
+- [x] Attention: n/a, no attention in this problem.
+- [x] No timing patches, harness access, subprocesses or network added.
+- [x] All work inside the timed call; no output caching or replay.
+
+okc_lint output:
+```
+CLEAN: muse_bf16_proj/submission.py
+```
