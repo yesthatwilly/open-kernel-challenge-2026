@@ -56,8 +56,10 @@ kind: rewrite
 controls_for: null
 rewrite_stage: 1
 replaces: "sliding verify (q_len 8, page 1, tp8, 1<=B<=32): prepare_varlen_num_blocks + FA3 main + FlashAttnFwdCombine + sglang rms_norm_gate"
-review: required
+review: proceed
 status: queued
+review_at: 2026-10-25T043142Z
+review_companions: null
 ---
 
 # sliding-verify-sk-pseudo-decode-s1
@@ -85,3 +87,26 @@ shape (profile top_kernels) against the incumbent and the speed-of-light floor, 
 2. at or below the incumbent kernels' time on the target shapes;
 3. within ~1.5x of the floor on the target shapes, and the headline CI clears 1.0 (promotable).
 The next stage is minted with `--kind rewrite --depends-on <this slug> --stage N+1`.
+
+## Adversarial review
+
+Reviewed 2026-10-25T043142Z by an adversarial subagent (model opus).
+
+**Verdict: proceed.** The causal and window algebra is correct: seq_p = cache_seqlens[b]-7+j = p+1 and lo_p = seq_p-W reproduce the reference's keys[max(0,p-W+1):p+1] exactly. The per-band >=5% gate keeps every result attributable. Expect the win, if any, only at B=1, since 8x L2 read amplification makes B=16/32 unlikely. Add small-grid variants so the per-pseudo-request merge is a few slots, not ~32.
+
+### Justification
+Mechanism: treating each verify token as a decode query keeps the gather-bound 16-row (2 kv heads x 8 q heads) mma.sync tile, instead of the 64-row verify tiles that lost 1.6-2.1x on mma.sync (REWRITE_READ sections 2-4). At B=1 the target (sliding verify_1, 16.7 us shape, ~14.3 us replaced) is latency-bound: 4 MB of L2 reads over 0.5 MB of DRAM, 256 tiles. WEAKEST LINK: the B=1 merge. At grid 2xSM each pseudo-request's 32 tiles land on ~32 CTAs, so the last arrival reads ~32 x 4.2 KB slots serially. Stage 3's own diagnostic priced that at ~0.1 us/slot (single-level grid SM over 132 slots = 34.8 us vs two-level 23.1), so ~3-4 us of serial merge is on top of one gather round trip. The proposed variants (grid SM / 2xSM, single / two-level) all keep ~16-32 partials per pseudo-request. A grid of 4*P or 8*P CTAs (32/64 at B=1, so 4-8 tiles per CTA and 4-8 slots per merge) is the variant most likely to clear 13 us, and it is config-derived. B=16/32: 67/134 MB of L2-served cp.async. The landed kernel moves ~3 TB/s from DRAM, and even at 2x that from L2, 67 MB is ~11 us of kernel, against FA3 main 10.7 + combine 4.1. B=16 is a coin flip and B=32 likely gated to FA3, as the hypothesis anticipates. Milestones are readable: the sk kernel row replaces prepare_varlen + FA3 + combine + norm-gate on each sliding verify row.
+
+### Confounders on the current kernel
+- full-decode1-streamk-s3-two-level-ticket / full-decode-splitkv-s2 (c3c1b01): this is the kernel being templated. PSEUDO=false must be byte-identical. Print sk_attrs for every landed variant (regs/local/smem/CTAs per SM) and compare with the landed log (121 regs, 0 local, 95264 B, 2 CTAs/SM). tp_s growing to 257 ints adds ~1 KB smem, and if it is in the shared Lay<> it changes the landed instantiations' smem too. Size it per PSEUDO instantiation or show the landed numbers unchanged.
+- fused-preattention-triton (landed): the q (PAIRED=False, ROPE on, FP8) and the 8 new cache rows come from it. Excluding pre-attn from both sides of the prepare timing is correct.
+- sliding-verify1-triton-pseudo-decode and sliding-cluster-s3-verify-attn-only-phase-timed (queued, same rows): three implementations target sliding verify_1. This one is the most general (all bands, internal FA3 gate). Run it first. Each competitor is attributable only if it runs against a base where sliding verify is FA3, so never stack them; the comparison is by printed kernel timings.
+
+### Interference and A/B needs
+No companion. Each band is routed only if its printed best variant beats the printed FA3 time by >=5%, so every sliding verify row is either this kernel (named in PATH CHOSEN with its variant and grid) or byte-identical FA3. Sliding decode and full rows are untouched code. A gain or loss on any row is therefore attributable without an A/B run.
+
+### Open questions
+- BUILDER: add grid = 4*P and 8*P (config-derived: 32/64 CTAs at B=1, 512/1024 capped at 2xSM for B>=16) to the variant matrix, so a pseudo-request's merge is 4-8 slots. Print each variant's time, and the tile-to-CTA layout at B=1.
+- BUILDER: order tiles so that pseudo-requests of the same b and the same key offset are co-resident (the request-major prefix already does this when P per request is ~equal). Print L2 hit rate or DRAM bytes for B=16 in the prepare if cheap, to confirm the ~1x DRAM assumption.
+- If B=1 routes and wins, the held sliding-verify1-triton-pseudo-decode is redundant. If B=1 falls back to FA3, that Triton variant is the next thing to try on this row.
+
