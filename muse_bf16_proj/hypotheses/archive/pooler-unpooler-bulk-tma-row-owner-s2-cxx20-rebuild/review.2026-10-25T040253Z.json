@@ -1,0 +1,21 @@
+{
+ "model": "opus",
+ "verdict": "proceed",
+ "summary": "Rerunning the unmeasured design is the right call, but the stated cause of the build failure is wrong. Stage 1 explicitly passed -std=c++17 in extra_cuda_cflags; the -gencode flag the harvest saw came from torch's arch-flag diagnostic line. Torch then omits its own C++20 default, and the torch headers reject C++17. The builder must REPLACE (or drop) -std=c++17, not add -std=c++20 next to it.",
+ "justification": "Evidence: on the stage-1 commit 8ba8624, _bulk build calls load_inline(..., extra_cuda_cflags=['-O3', '-lineinfo', '-std=c++17']), and the attempt file records the same flags. Log line 5, '[bulk] arch flags passed to nvcc: [-gencode=arch=compute_90a,code=sm_90a]', is the code's own print of torch's arch flags, not the full nvcc command. The host main.o got -std=c++20 because torch adds its default -std only when the caller gives none. For the .cu the caller gave c++17, and this image's torch requires C++20, hence the #error. So the 03:41Z harvest note and LESSONS 165 ('nvcc flags were only -gencode') misdiagnose the cause, even though the remedy 'pass -std=c++20' is close. Appending -std=c++20 while leaving -std=c++17 risks nvcc rejecting a redefined -std or keeping the wrong one. Delete the c++17 entry and either pass only -std=c++20 or pass no -std and let torch choose; the main.o line proves torch's choice is c++20. Base: 8ba8624^ has submission blob a8bb42a, identical to master's (8b9ad43), so the stage runs on current master as claimed. Design weakest link (unchanged from stage 1): every earlier stream stopped near 3.5 TB/s. pooler m<=16 at 19.0 us is already 67.1 MB / 19 us = 3.5 TB/s, and the 14.0 us floor implies ~4.8 TB/s, so M3 (16.5 us = 4.1 TB/s) needs ~85% of peak from a row-owner bulk stream. M1 (builds, PATH CHOSEN = bulk) and M2 are readable from one check; M3 is a stretch.",
+ "confounders": [
+  "bf16-m32-swapab-wgmma-triton (master): the m=32 pooler/unpooler incumbent is _bf16_swapab_kernel. Read those rows against this batch's swapab rows, since batch drift moved untouched small-m rows +2-6% together at 03:41Z.",
+  "router-triton-hilo-fused-control-splitk-all-m / bf16-shape-gated-triton-winners-combo (master): they own the m<=16 pooler path (_bf16_splitk_kernel / _pooler_skinny) the bulk kernel replaces. Untouched layers (qkv_gate, o, router) are the in-run drift control.",
+  "bf16-restack-m16-swapab-router-swapab-m32 (BEST.json, unlanded): not this run's base. Identify the base from the kernel names in the profile (LESSONS 166), never from attribution base_result."
+ ],
+ "interference": "No companion. The untouched layers in the same check are the drift control, and the replaced kernels are judged on their own profile rows. A second build-only run would duplicate the prepare print.",
+ "rules_flags": [
+  "No rules concerns: same in-process load_inline, a lossless weight repack in prepare, and self-check against master with fallback unchanged."
+ ],
+ "companions": [],
+ "open_questions": [
+  "BUILDER: remove '-std=c++17' from extra_cuda_cflags and use ['-O3', '-lineinfo', '-std=c++20'] (or omit -std entirely). Do not append c++20 beside c++17. Keep TORCH_CUDA_ARCH_LIST=9.0a, and do not add a second -gencode since torch already emits it. Print the full nvcc command or flags list, and the last ~60 lines of the build log on failure (the current except keeps only str(e)[-600:]).",
+  "After it builds, assert in a one-call profiler probe that the launched kernel name is the bulk kernel for each gated (layer, m) (LESSONS 164), not just the PATH CHOSEN line.",
+  "Correct LESSONS 165 and the 03:41Z harvest note after the run: the cause was an explicit -std=c++17 override, not a missing flag."
+ ]
+}
