@@ -140,3 +140,56 @@ No companions. This is a rewrite stage judged on the replaced kernels' own profi
 - If M2 is missed with no spills, can the next stage get per-phase clock64 timings (gather wait, QK, softmax, P permute, V transpose, PV) in the self-check, so stage 4 is not built on another inferred bottleneck?
 - Should the fallback be master's paired FA3 path (correct) rather than the 'unpaired FA3 path' the spec names? Confirm the implementer gates pairing on the new module's success flag.
 
+
+## Implementation notes
+
+Built 2026-10-25 (Opus build agent, no GPU / nvcc on this node: nothing compiled or run).
+
+**Rebase.** The worktree sat at stage 2's impl commit ee7dd20 (merge-base 27b43dc, `stale_base: true`). The file was rebuilt from **current master's** submission.py (so it carries `sliding-deep-splits-on-cuda-splitkv`: splits = 16 at L = 1 and the sliding-decode gate) plus the new section. Against master the diff is +1104/-2; the only master lines changed are the module docstring sentence and kernel_fn's `paired` predicate (now `... and not splitkv and not splitkv_verify`). Decode (muse_full_decode_splitkv_v1, untouched) and all sliding code are byte-for-byte master's. Stage 2's module (muse_full_verify_splitkv_v1, A8 mma.sync) is dropped; its B8 kernel, stream-K helpers (start_of/owner_of/req_of/tile_prefix), synthetic inputs and FP32 reference are carried over.
+
+**What was added** (submission.py, section "Full-layer VERIFY ... stage 3"):
+- Module `muse_full_verify_wgmma_v1` (own load_inline, own flags): `splitkv_verify_wgmma_kernel<TICKET>` (256 thr = 2 warpgroups, `__launch_bounds__(256, 2)`, grid 2 x SM), stage 2's B8 `splitkv_verify_combine_kernel` copied in, and `wg_verify_attrs` (regs, local bytes, binaryVersion, ptxVersion, CTAs/SM for both variants, B8 regs).
+- Stream-K, TP prefix, 16-tile page-index prefetch, slot layout `[grid+B, 8, 16, 64]` and the causal mask math are stage 2's. The ring layout is unchanged (per stage: 64 x 128 B K sub-tile, then 64 x 128 B V sub-tile, chunk ^ (token & 7)), which answers the review's open question: K rows ARE contiguous at a 128-B pitch, so with the smem base rounded up to 1024 B it is a valid K-major SW128 B operand (SBO 1024, start offset 64 g + 32 k).
+- FULL[4] mbarriers (256 `cp.async.mbarrier.arrive.noinc` per phase) and EMPTY[4] (256 arrivals); the thread refilling stage (n+3)%4 waits EMPTY of tile n-1. The page-index block issued with tile 16k is covered by that tile's FULL arrival (its consumers waited FULL(16k) before issuing tile 16k+16); WAR on the index buffer is covered by the EMPTY(16k-4) wait. No __syncthreads in the tile loop (only in the prologue).
+- QK: 2 x `wgmma m64n64k32 f32.e4m3.e4m3` per tile per warpgroup, PV: 2 more. Rows m = 8 hh + j (both rows of a thread share block token r, so stage 2's masking/softmax code carries over unchanged on the accumulator layout).
+- P -> E4M3 packed directly from the C fragment into the A-register fragment: instead of a byte prmt shuffle, the token order within each 32-token k-step is permuted (k' = 16h + 4t + e <-> token 16h + 8(e>>1) + 2t + (e&1)) and V^T is written in that order, so no cross-lane movement is needed (`__nv_cvt_float2_to_fp8x2`, satfinite, RN).
+- V^T: each warpgroup transposes its own head's 64x64 V half into a private double-buffered 4 KB buffer (K-major SW64, SBO 512): 4 x 32-bit loads, 6 prmt, 4 x 32-bit stores per 16-byte unit, 2 units per thread; odd dim groups store rows in 1,0,3,2 order so the two half-warps hit opposite bank halves. Then `fence.proxy.async.shared::cta` + `bar.sync 1+g, 128`.
+- TICKET=true: in-kernel combine per (request, **kv head**) rather than per request: each warpgroup adds its segment's tile count to `ticket[b*2+g]`; the one completing `tiles_b` LSE-merges the slots for its 8 q heads (__ldcg), x v_scale, RMSNorm + sigmoid(gate), bf16 out, resets the ticket. Per-kv-head tickets keep the two warpgroups independent (named barriers only, no CTA barrier). Ticket buffer: int32[128] per device, zeroed on first (import-time, eager) use.
+- `_splitkv_verify_gate` keeps its name and shape conditions and additionally requires `_WG_MODE` (set only by a passing self-check).
+
+**Review fixes applied.**
+1. Fallback = master's PAIRED FA3 path (the review corrects the spec's "unpaired"): `_splitkv_verify_gate` is False unless `_WEXT is not None and _WG_MODE is not None`, and kernel_fn's `paired = ... and not splitkv and not splitkv_verify` is then True for full verify_16/32, i.e. master's path exactly. The fallback line reads `PATH CHOSEN: full verify master FA3, paired heads (fallback: <reason>)`.
+2. Every mbarrier wait is bounded: `mbarrier.try_wait.parity` loop with a clock64 limit (~1 s); on timeout the thread sets a per-CTA abort flag and `err |= 2`, and every later wait in that CTA returns at once, so the CTA runs to the end (the named barriers stay matched because control flow is unchanged) instead of hanging to the 15-minute limit. Page indices read from smem are clamped into the cache so a garbage index after an abort cannot fault.
+3. Secondary review points: K/V ring confirmed as separate 128-B-pitch sub-tiles; the K (SW128) and V^T (SW64) descriptors are built independently; B8 is compiled into the new module, not the decode module; occupancy and local bytes are printed (a warning if < 2 CTAs/SM).
+
+**Deviations from the spec.** (a) Q is the wgmma A operand from registers (loaded once per segment in the m16n8k32 A layout, as stage 2 already did), not from a 64B-swizzled smem tile: one fewer descriptor layout to get wrong, 8 regs. (b) P C->A uses the token permutation above instead of prmt (FA3 permutes V for the same reason). (c) V^T uses the 64B swizzle (a 64-token row is 64 B; a 128B swizzle needs 128-B rows). (d) Tickets per (request, kv head). (e) Self-check threshold rel L2 < 3e-2 (P is now E4M3; stage 2 used 2e-2 with f16 P).
+
+**Build/safety.** `TORCH_CUDA_ARCH_LIST=9.0a` set around load_inline and restored; cflags `-O3 -gencode=arch=compute_90a,code=sm_90a -lineinfo` (the -gencode makes torch add no other arch); all wgmma/mbarrier PTX under `#if defined(__CUDA_ARCH_FEAT_SM90_ALL)`, `#else` sets `err |= 1` and returns (no __trap). In-process setup (`_wg_verify_setup`): capability must be (9, 0); attrs must show binaryVersion 90 and ptxVersion >= 90 for both variants; then canary (B=2, lengths 70/13, grid 4) and 6 more cases (stage 2's four incl. grids 3/7/61 and kv_scale 0.25; a ragged set with seq % 64 in 1..7 and seq_lens < 8 at device grid and grid 7), each launched through kernel_fn with a `_WG_HOOK` that syncs + prints before/after the wgmma kernel and B8 (pre-attention is synced first), the error flag read after every case, a second eager call checked identical (ticket reset), and a CUDA graph captured and replayed twice, compared bitwise to eager. Ticket variant first; if it fails, the B8 variant; if both fail, master paired FA3. No subprocess/fork anywhere. First measurement must be an `okc check`.
+
+**Risks (unverified, no GPU here):** the wgmma register-A layout for e4m3 (assumed identical to mma.m16n8k32's per warp), the SW64 V^T descriptor (LBO=1, SBO=512, layout 2), and the proxy fence for cp.async-written ring data read by wgmma. A wrong descriptor is a wrong answer (self-check -> fallback), but an illegal-instruction class fault would still poison the context (0/0) — hence check-first. Register pressure (sacc 32 + oacc 32 + Q 8 + P 8) vs the 128 cap: local bytes are printed.
+
+## Rules check
+
+Checked against `git -C <worktree> diff master -- muse_attention_decode/submission.py` (+1104/-2).
+
+- [x] CUDA-graph capturable: no `.item()`/`.cpu()`/`synchronize()`/tensor prints reachable from kernel_fn (lint: 0 errors; the syncs are in `_wg_trace`/self-check, only reachable via the `_WG_HOOK` variable, which is None outside the import-time check); no allocation or control flow on input values (grid/workspace from shapes + SM count; gate on config only). The self-check captures and replays a graph of the path.
+- [x] Nothing derived from `data` is cached across calls (tickets are zeroed scratch reset by every launch; error flag is a constant buffer).
+- [x] Weights: n/a: this problem has no weights.
+- [x] Activations BF16 where SGLang keeps BF16 (output bf16, gate read as bf16); KV cache FP8; queries E4M3 (as FA3); P rounded to E4M3 exactly as FA3's FP8 path does; m/l/O/combine in fp32.
+- [x] Attention sees every key: every tile of every request's full context is scored, the mask only removes keys after each block token (causal) and past cache_seqlens.
+- [x] No timing patches, harness frames/I/O/secrets, module edits, reference import, subprocesses/multiprocessing/fork or network (`os` is used only for `os.environ` TORCH_CUDA_ARCH_LIST, restored after the build).
+- [x] All work happens inside the timed call; no output caching or replay (the self-check runs at import on synthetic data only).
+
+okc_lint (`python3 -I .claude/skills/churnsubs/bin/okc_lint.py <worktree>/muse_attention_decode/submission.py --problem muse_attention_decode`):
+```
+warn  host-sync    L2032: torch.cuda.synchronize()  (outside kernel_fn's call graph; fine in prepare())
+warn  host-sync    L2040: a = _WEXT.wg_verify_attrs().tolist()  (outside kernel_fn's call graph; fine in prepare())
+warn  host-sync    L2082: torch.cuda.synchronize()  (outside kernel_fn's call graph; fine in prepare())
+warn  host-sync    L2083: flag = int(_WG_ERR.item())  (outside kernel_fn's call graph; fine in prepare())
+warn  host-sync    L2094: torch.cuda.synchronize()  (outside kernel_fn's call graph; fine in prepare())
+warn  host-sync    L2097: if not same or int(_WG_ERR.item()):  (outside kernel_fn's call graph; fine in prepare())
+warn  host-sync    L2115: torch.cuda.synchronize()  (outside kernel_fn's call graph; fine in prepare())
+warn  host-sync    L2117: flag = int(_WG_ERR.item())  (outside kernel_fn's call graph; fine in prepare())
+OK with warnings: muse_attention_decode/submission.py
+```
+`python3 -I -m py_compile`: OK; __pycache__ removed.

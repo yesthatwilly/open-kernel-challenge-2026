@@ -36,9 +36,18 @@ priority: 3
 kind: primary
 controls_for: null
 review: proceed
-status: queued
+status: running
 review_at: 2026-10-25T003958Z
 review_companions: null
+stage: claimed
+claimed_at: 2026-10-25T003958Z
+base_sha: 475f0ab5e572555bb2f4a4398a88bef1075a71ec
+base_blob: c6854f093588da524e63657576b27ed720756e32
+branch: hyp/muse_attention_decode/sliding-verify-fa3-head-pairing
+worktree: .worktrees/muse_attention_decode/sliding-verify-fa3-head-pairing
+mode: null
+restack_of: null
+stale_base: null
 ---
 
 # sliding-verify-fa3-head-pairing
