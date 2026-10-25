@@ -1,6 +1,6 @@
 # muse_moe_w4a16 hypotheses
 
-Regenerated 2026-10-25T121703Z. Best: 1.3439x [1.3237,1.3641] job `7a0d900a1dd34666` (submit)
+Regenerated 2026-10-25T124813Z. Best: 1.3439x [1.3237,1.3641] job `7a0d900a1dd34666` (submit)
 
 | created | slug | kind | area | where | outcome | speedup | CI | job | mode | promotion | review | expected hit |
 |---|---|---|---|---|---|---|---|---|---|---|---|---|
@@ -71,7 +71,7 @@ Regenerated 2026-10-25T121703Z. Best: 1.3439x [1.3237,1.3641] job `7a0d900a1dd34
 | 2026-10-25T054545Z | cuda-nvfp4-wgmma-rega-grouped-s5-copy-safe-forced | rewrite | w13 marlin + silu-mul + w2 marlin | done/neutral | neutral | 1.3490 | [1.329,1.369] | d4ad4f31d2764050 | check |  | proceed | 5/6 |
 | 2026-10-25T054545Z | w13-marlin-atomic-add-t1-only | primary | w13 marlin | done/neutral | neutral | 1.3461 | [1.326,1.366] | 1048c6edf3e54892 | check |  | proceed | 3/4 |
 | 2026-10-25T054545Z | marlin-block-m-8-verify16 | primary | MoE align/dispatch + block_size_m pick | done/regression | regression | 1.2992 | [1.280,1.319] | d0811c27500c416a | check |  | proceed | 3/4 |
-| 2026-10-25T110521Z | cuda-nvfp4-wgmma-rega-b128-n32-deep-ring | rewrite | w13 marlin + silu-mul + w2 marlin | running | running |  |  | 6759e36bbd4648fc | check |  | proceed |  |
+| 2026-10-25T110521Z | cuda-nvfp4-wgmma-rega-b128-n32-deep-ring | rewrite | w13 marlin + silu-mul + w2 marlin | done/neutral | neutral | 1.3690 | [1.348,1.389] | 6759e36bbd4648fc | check |  | proceed | 3/3 |
 | 2026-10-25T110544Z | cuda-nvfp4-wgmma-rega-b256-n64-deep-ring | rewrite | w13 marlin + silu-mul + w2 marlin | queue | queued |  |  |  |  |  | required |  |
 
 ## Held
