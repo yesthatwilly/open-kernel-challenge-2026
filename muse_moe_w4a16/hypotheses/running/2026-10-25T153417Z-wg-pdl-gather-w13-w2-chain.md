@@ -61,9 +61,18 @@ priority: 2
 kind: primary
 controls_for: null
 review: proceed
-status: queued
+status: running
 review_at: 2026-10-25T162011Z
 review_companions: null
+stage: claimed
+claimed_at: 2026-10-25T162011Z
+base_sha: 04b5d4ce29ff4cb29cbed7b24b63a5492c811e97
+base_blob: 593b238c16387c5ac3774424ee9557882b9fc46a
+branch: hyp/muse_moe_w4a16/wg-pdl-gather-w13-w2-chain
+worktree: .worktrees/muse_moe_w4a16/wg-pdl-gather-w13-w2-chain
+mode: null
+restack_of: null
+stale_base: null
 ---
 
 # wg-pdl-gather-w13-w2-chain
