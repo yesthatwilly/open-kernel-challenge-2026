@@ -41,9 +41,18 @@ priority: 5
 kind: primary
 controls_for: null
 review: proceed
-status: queued
+status: running
 review_at: 2026-10-25T043904Z
 review_companions: null
+stage: claimed
+claimed_at: 2026-10-25T043904Z
+base_sha: 7e9d65cd4721de1932a376a8f32f7db7343f97ef
+base_blob: db8a3344398bca79ea5cafeb580f701c055fd475
+branch: hyp/muse_prefill_layer/moe-pre-post-norm-triton-multitoken
+worktree: .worktrees/muse_prefill_layer/moe-pre-post-norm-triton-multitoken
+mode: null
+restack_of: null
+stale_base: null
 ---
 
 # moe-pre-post-norm-triton-multitoken
