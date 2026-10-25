@@ -61,7 +61,7 @@ review: proceed
 status: running
 review_at: 2026-10-25T054737Z
 review_companions: null
-stage: implemented
+stage: dispatched
 claimed_at: 2026-10-25T054738Z
 base_sha: 3ee2b893476879190a690392a3295a35afed11bf
 base_blob: 9bcf522b0dd23a0a8173046d2150473827122206
@@ -78,6 +78,8 @@ submission_blob: 8e5ec0c7813b95db7011d9fe859f3835673f935c
 lint_warnings: 35
 attempt_file: 2026-10-25T084811Z-check-full-verify-wgmma-s5-qfrag-reload.md
 prepared_at: 2026-10-25T084811Z
+job: 71e40388a1904937
+dispatched_at: 2026-10-25T084834Z
 ---
 
 # full-verify-wgmma-s5-qfrag-reload
