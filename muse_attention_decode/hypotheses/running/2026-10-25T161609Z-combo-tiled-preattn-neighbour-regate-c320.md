@@ -107,9 +107,18 @@ priority: 1
 kind: primary
 controls_for: null
 review: proceed
-status: queued
+status: running
 review_at: 2026-10-25T162052Z
 review_companions: null
+stage: claimed
+claimed_at: 2026-10-25T162052Z
+base_sha: 1e8d6d6adbaadd4ecaf72ebd01c75f24004e81bc
+base_blob: 5cf8fae31e5b84c36efeeb4569763eb9b06e1c8a
+branch: hyp/muse_attention_decode/combo-tiled-preattn-neighbour-regate-c320
+worktree: .worktrees/muse_attention_decode/combo-tiled-preattn-neighbour-regate-c320
+mode: null
+restack_of: null
+stale_base: null
 ---
 
 # combo-tiled-preattn-neighbour-regate-c320
