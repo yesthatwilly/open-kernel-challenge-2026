@@ -1,6 +1,6 @@
 # muse_moe_w4a16 findings
 
-Regenerated 2026-10-25T000226Z by `churn.py index`. Read this before writing a hypothesis for muse_moe_w4a16.
+Regenerated 2026-10-25T000558Z by `churn.py index`. Read this before writing a hypothesis for muse_moe_w4a16.
 
 ## Current best
 
@@ -102,3 +102,5 @@ Where the time goes (per scored shape, top kernels):
 - queue: cuda-fused-moe-midm-single-launch-routed [whole-layer fusion] p2 queued
 - queue: post-norm-triton-hoisted-decode32 [post-expert norm+combine] p2 queued
 - queue: post-norm-pdl-launch-small-m [launch overhead] p2 queued
+- running: stack-onewarp-hoisted-dispatchcombine [MoE align (bs<=8 one warp; bs>=128 CUDA) + post-expert combine (bs<32 hoisted; bs>=128 CUDA)] p1 running
+- running: stack-onewarp-hoisted-dispatchcombine-from17 [MoE align (bs<=8 one warp; 17..32 parallel; bs>=128 CUDA) + post-expert combine] p1 running

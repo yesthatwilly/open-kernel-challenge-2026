@@ -1,6 +1,6 @@
 # muse_moe_w4a16 hypotheses
 
-Regenerated 2026-10-25T000226Z. Best: 1.3278x [1.3079,1.3477] job `1947e3ec2abb4bdf` (submit)
+Regenerated 2026-10-25T000558Z. Best: 1.3278x [1.3079,1.3477] job `1947e3ec2abb4bdf` (submit)
 
 | created | slug | kind | area | where | outcome | speedup | CI | job | mode | promotion | review | expected hit |
 |---|---|---|---|---|---|---|---|---|---|---|---|---|
@@ -43,6 +43,8 @@ Regenerated 2026-10-25T000226Z. Best: 1.3278x [1.3079,1.3477] job `1947e3ec2abb4
 | 2026-10-24T183649Z | post-norm-pdl-launch-small-m | primary | launch overhead | queue | queued |  |  |  |  |  | proceed |  |
 | 2026-10-24T183702Z | align-parallel-from-17-tokens | primary | MoE align/dispatch | done/neutral | neutral | 1.3250 | [1.305,1.345] | ed6d884240084d9c | submit |  | proceed | 5/6 |
 | 2026-10-24T183722Z | align-small-one-warp-tiny-m | primary | MoE align/dispatch | done/neutral | neutral | 1.3287 | [1.309,1.349] | 38532ba10e394e3c | submit |  | proceed | 4/6 |
+| 2026-10-25T000436Z | stack-onewarp-hoisted-dispatchcombine | primary | MoE align (bs<=8 one warp; bs>=128 CUDA) + post-expert combine (bs<32 hoisted; bs>=128 CUDA) | running | running |  |  | 7e5ab95a413f4ebe | check |  | required |  |
+| 2026-10-25T000511Z | stack-onewarp-hoisted-dispatchcombine-from17 | primary | MoE align (bs<=8 one warp; 17..32 parallel; bs>=128 CUDA) + post-expert combine | running | running |  |  | 0fde9013de97404d | check |  | required |  |
 
 ## Held
 

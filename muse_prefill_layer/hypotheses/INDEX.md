@@ -1,6 +1,6 @@
 # muse_prefill_layer hypotheses
 
-Regenerated 2026-10-25T000226Z. Best: 1.0592x [1.0433,1.0751] job `ba9c16b9cc6b4605` (submit)
+Regenerated 2026-10-25T000558Z. Best: 1.0705x [1.0545,1.0866] job `c4d14d62f11e4aaf` (check)
 
 | created | slug | kind | area | where | outcome | speedup | CI | job | mode | promotion | review | expected hit |
 |---|---|---|---|---|---|---|---|---|---|---|---|---|
@@ -46,9 +46,9 @@ Regenerated 2026-10-25T000226Z. Best: 1.0592x [1.0433,1.0751] job `ba9c16b9cc6b4
 | 2026-10-24T232728Z | restack-router-hilo-align32-zerostore | primary | router GEMM + MoE align (T>4096) + w2 zero-store (T>4096) | done/neutral | neutral | 1.0608 | [1.045,1.077] | ead4bc2e7b364add | check |  | required | 0/1 |
 | 2026-10-24T232928Z | stack-tonight-four-prefill | primary | router GEMM + MoE align (both paths) + w2 zero-store | done/neutral | neutral | 1.0675 | [1.052,1.084] | 7499d9c71acd4417 | check |  | required | 0/1 |
 | 2026-10-24T232955Z | align-local-parallel-first-turn | primary | MoE align on the Triton path (T > 4096, first_turn) | done/neutral | neutral | 1.0626 | [1.047,1.079] | c2f3e9d8297f4a18 | check |  | required | 0/1 |
-| 2026-10-24T233200Z | stack-tonight-five-prefill | primary | router GEMM + MoE align (both paths) + w2 zero-store + Marlin silu-mul | done/neutral | neutral | 1.0705 | [1.054,1.087] | c4d14d62f11e4aaf | check |  | required | 0/1 |
+| 2026-10-24T233200Z | stack-tonight-five-prefill | primary | router GEMM + MoE align (both paths) + w2 zero-store + Marlin silu-mul | done/neutral | neutral | 1.0705 | [1.054,1.087] | c4d14d62f11e4aaf | check | submitted | required | 0/1 |
 | 2026-10-24T233245Z | stack-tonight-six-prefill | primary | router GEMM + MoE align (both paths, parallel) + w2 zero-store + Marlin silu-mul | done/neutral | neutral | 1.0642 | [1.048,1.080] | 5cb6e68a86ec48f0 | check |  | required | 0/1 |
-| 2026-10-24T233334Z | silu-mul-sorted-first-turn | primary | silu-mul on the Triton path (T > 4096, first_turn) | running | running |  |  |  | check |  | required |  |
+| 2026-10-24T233334Z | silu-mul-sorted-first-turn | primary | silu-mul on the Triton path (T > 4096, first_turn) | running | running |  |  | 9528eed511b04f33 | check |  | required |  |
 
 ## Held
 

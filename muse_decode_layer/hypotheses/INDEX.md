@@ -1,6 +1,6 @@
 # muse_decode_layer hypotheses
 
-Regenerated 2026-10-25T000226Z. Best: 1.2283x [1.2099,1.2468] job `81ee6714b7614a99` (submit)
+Regenerated 2026-10-25T000558Z. Best: 1.2283x [1.2099,1.2468] job `81ee6714b7614a99` (submit)
 
 | created | slug | kind | area | where | outcome | speedup | CI | job | mode | promotion | review | expected hit |
 |---|---|---|---|---|---|---|---|---|---|---|---|---|
@@ -53,7 +53,7 @@ Regenerated 2026-10-25T000226Z. Best: 1.2283x [1.2099,1.2468] job `81ee6714b7614
 | 2026-10-24T233637Z | stack-sidestream-sliding1 | primary | T>32 MoE dispatch on the side stream + sliding batch-1 fused attention | done/neutral | neutral | 1.2352 | [1.217,1.254] | 158fed699fdb4d0e | check |  | required | 1/1 |
 | 2026-10-24T233637Z | stack-align-par-sliding-batched | primary | T>32 parallel align + sliding batch>1 fused attention | done/failed | failed |  |  | b94e797333fb4a27 | check |  | required | 0/1 |
 | 2026-10-24T233638Z | stack-sidestream-sliding-batched | primary | T>32 MoE dispatch on the side stream + sliding batch>1 fused attention | done/neutral | neutral | 1.2443 | [1.226,1.263] | 2193fc0dc9be4b3c | check |  | required | 1/1 |
-| 2026-10-24T233721Z | stack-align-par-sidestream-sliding1 | primary | T>32 MoE dispatch (parallel align on the side stream) + sliding batch-1 attention | done/neutral | neutral | 1.2495 | [1.231,1.268] | cc92097b64784c0f | check |  | required | 1/1 |
+| 2026-10-24T233721Z | stack-align-par-sidestream-sliding1 | primary | T>32 MoE dispatch (parallel align on the side stream) + sliding batch-1 attention | done/neutral | neutral | 1.2495 | [1.231,1.268] | cc92097b64784c0f | check | submitted | required | 1/1 |
 
 ## Held
 

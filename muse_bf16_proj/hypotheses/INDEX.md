@@ -1,6 +1,6 @@
 # muse_bf16_proj hypotheses
 
-Regenerated 2026-10-24T184810Z. Best: 1.1959x [1.1779,1.2138] job `eeb9985396764ac2` (submit)
+Regenerated 2026-10-25T000558Z. Best: 1.1959x [1.1779,1.2138] job `eeb9985396764ac2` (submit)
 
 | created | slug | kind | area | where | outcome | speedup | CI | job | mode | promotion | review | expected hit |
 |---|---|---|---|---|---|---|---|---|---|---|---|---|
@@ -40,7 +40,7 @@ Regenerated 2026-10-24T184810Z. Best: 1.1959x [1.1779,1.2138] job `eeb9985396764
 | 2026-10-24T165102Z | bf16-small-m-cuda-gemv-rewrite | rewrite | bf16 GEMM dispatch (m<=8, hand-written CUDA weight stream) | done/regression | regression | 1.1667 | [1.149,1.184] | b76aca7ec1a048e7 | submit |  | proceed | 4/13 |
 | 2026-10-24T172152Z | bf16-lossless-exp4-weight-stream-rewrite | rewrite | bf16 GEMM dispatch (m<=32, lossless-compressed weight stream) | done/regression | regression | 0.7071 | [0.697,0.718] | 542f2b169c934706 | submit |  | proceed | 2/17 |
 | 2026-10-24T172235Z | bf16-verify-streamk-cutlass-wgmma-rewrite | rewrite | bf16 GEMM dispatch (m=129..256, persistent stream-K TMA/wgmma) | running | running |  |  |  |  |  | proceed |  |
-| 2026-10-24T174421Z | bf16-restack-m16-swapab-router-swapab-m32 | primary | restack (m<=16 swap-AB GEMMs + router swap-AB) | done/neutral | neutral | 1.2215 | [1.203,1.240] | 1e90292c7b954d96 | submit |  | proceed | 3/4 |
+| 2026-10-24T174421Z | bf16-restack-m16-swapab-router-swapab-m32 | primary | restack (m<=16 swap-AB GEMMs + router swap-AB) | done/neutral | neutral | 1.2215 | [1.203,1.240] | 1e90292c7b954d96 | submit | submitted | proceed | 3/4 |
 
 ## Held
 
