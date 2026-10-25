@@ -74,9 +74,18 @@ controls_for: null
 rewrite_stage: 1
 replaces: o at m<=16 (_pooler_skinny_kernel, 4.1-4.4 us kernel, rows 5.9-6.3) and the unpooler slice at m<=8 (_bf16_splitk_kernel/ticket split-K 8, 4.3-4.4 us kernel, rows 5.9-6.1)
 review: proceed
-status: queued
+status: running
 review_at: 2026-10-25T004153Z
 review_companions: null
+stage: claimed
+claimed_at: 2026-10-25T004153Z
+base_sha: dcd2ff817f67ee97bdc52e92ec44df3a3752ccf1
+base_blob: a8bb42ac483318e9fbc84bc7826a27b7a704d1fb
+branch: hyp/muse_bf16_proj/o-unpooler-slice-cuda-cluster-dsmem-rewrite
+worktree: .worktrees/muse_bf16_proj/o-unpooler-slice-cuda-cluster-dsmem-rewrite
+mode: null
+restack_of: null
+stale_base: null
 ---
 
 # o-unpooler-slice-cuda-cluster-dsmem-rewrite
