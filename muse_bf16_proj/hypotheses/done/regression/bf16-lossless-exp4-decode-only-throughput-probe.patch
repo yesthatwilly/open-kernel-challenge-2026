@@ -1,0 +1,568 @@
+diff --git a/muse_bf16_proj/submission.py b/muse_bf16_proj/submission.py
+index a8bb42a..11c9d81 100644
+--- a/muse_bf16_proj/submission.py
++++ b/muse_bf16_proj/submission.py
+@@ -37,6 +37,8 @@ can emit wgmma m64n32k16; pooler split-K 2, qkv_gate split-K 4 (same ticket redu
+ workspace), unpooler / o full K. Every other shape keeps its path above.
+ """
+ 
++import os
++import time
+ from typing import TypedDict
+ 
+ import torch
+@@ -651,6 +653,545 @@ def _swapab_prepare(state: dict) -> None:
+     state["swapab_cnt_qkv"].zero_()
+ 
+ 
++# --- (6) lossless exp4 decode-only throughput probe (hypothesis
++# bf16-lossless-exp4-decode-only-throughput-probe). prepare()-only, print-only, routes NOTHING:
++# kernel_fn is master's. The exp4 codec and decoder are copied from stage 2
++# (bf16-lossless-exp4-occupancy-dequant-once-stage2); the probe kernel streams the compressed
++# weight through the same cp.async ring, decodes every element to bf16 registers, XOR-folds the
++# bits (no mma, no x, no output tile) and also runs a copy-only twin (ring, no decode). The yardstick
++# is master's own pooler m=1 kernel timed with the same cold-L2 event method in the same loop.
++LP_GROUP_K = 64
++LP_CHUNK = 1536
++LP_HDR = 16
++LP_FLUSH_BYTES = 256 << 20   # > H200 L2 (50 MB)
++LP_REPS = 15                 # cold samples (median); warm = median of 3 x 5 back-to-back launches
++LP_REVIVE_RATIO = 0.85       # best cold decode-only time / yardstick time (review condition 1)
++LP_CONFIGS = [(w, c) for c in (1, 2) for w in (4, 8, 16)]   # (warps per CTA, CTAs per SM)
++
++_LP_CPP = r"""
++#include <torch/extension.h>
++void probe_launch(torch::Tensor payload, torch::Tensor hdr, torch::Tensor side, torch::Tensor dummy,
++                  int64_t n, int64_t k, int64_t split, int64_t warps, int64_t ctas, int64_t decode);
++torch::Tensor probe_attrs();
++"""
++
++_LP_CUDA = r"""
++#include <torch/extension.h>
++#include <ATen/cuda/CUDAContext.h>
++#include <c10/cuda/CUDAException.h>
++#include <cstdint>
++
++namespace {
++
++constexpr int GROUP_K = 64;
++constexpr int CHUNK = 1536;   // compressed bytes per (16-row tile, group)
++constexpr int HDR = 16;       // header bytes per (16-row tile, group)
++
++__device__ __forceinline__ uint32_t smem_u32(const void* p) {
++  return static_cast<uint32_t>(__cvta_generic_to_shared(p));
++}
++__device__ __forceinline__ void cp_async16(uint32_t dst, const void* src, int src_bytes) {
++  asm volatile("cp.async.cg.shared.global [%0], [%1], 16, %2;\n" :: "r"(dst), "l"(src), "r"(src_bytes) : "memory");
++}
++__device__ __forceinline__ void cp_commit() { asm volatile("cp.async.commit_group;\n" ::: "memory"); }
++template <int N>
++__device__ __forceinline__ void cp_wait() { asm volatile("cp.async.wait_group %0;\n" :: "n"(N) : "memory"); }
++
++// ---- stage 2's decoder, verbatim ----
++struct Grp {
++  uint32_t sm[8];
++  uint32_t nib[4];
++  uint32_t e2[2];
++  uint32_t slot[2];
++  bool esc[2];
++};
++
++__device__ __forceinline__ void load_grp(Grp& G, const uint8_t* chunk, const uint8_t* hdr, int lane) {
++  const uint4 v0 = reinterpret_cast<const uint4*>(chunk)[lane];
++  const uint4 v1 = reinterpret_cast<const uint4*>(chunk)[32 + lane];
++  const uint4 v2 = reinterpret_cast<const uint4*>(chunk)[64 + lane];
++  G.sm[0] = v0.x; G.sm[1] = v0.y; G.sm[2] = v0.z; G.sm[3] = v0.w;
++  G.sm[4] = v1.x; G.sm[5] = v1.y; G.sm[6] = v1.z; G.sm[7] = v1.w;
++  G.nib[0] = v2.x; G.nib[1] = v2.y; G.nib[2] = v2.z; G.nib[3] = v2.w;
++  const int g = lane >> 2;
++  const uint32_t e0 = hdr[g], e1 = hdr[g + 8];
++  G.e2[0] = e0 * 0x00800080u;
++  G.e2[1] = e1 * 0x00800080u;
++  G.esc[0] = (e0 == 255u);
++  G.esc[1] = (e1 == 255u);
++  G.slot[0] = G.sm[0] & 0xFFFFu;
++  G.slot[1] = G.sm[0] >> 16;
++}
++
++__device__ __forceinline__ void decode_step(const Grp& G, int s, int tig, const uint32_t* __restrict__ side,
++                                            uint32_t (&a)[4]) {
++#pragma unroll
++  for (int r = 0; r < 4; ++r) {
++    const int rh = r & 1;
++    const uint32_t smw = G.sm[s * 2 + (r >> 1)];
++    const uint32_t sp = __byte_perm(smw, 0u, rh ? 0x3322u : 0x1100u);
++    const uint32_t cc = ((G.nib[s] >> (4 * r)) & 0x000F000Fu) << 7;
++    a[r] = (sp & 0x807F807Fu) | (G.e2[rh] - cc);
++  }
++  if (G.esc[0] | G.esc[1]) {
++#pragma unroll
++    for (int r = 0; r < 4; ++r) {
++      const int rh = r & 1;
++      if (G.esc[rh]) a[r] = __ldg(side + G.slot[rh] * 32u + (uint32_t)(s * 8 + (r >> 1) * 4 + tig));
++    }
++  }
++}
++
++// W warps per CTA: 4 row tiles x GPS = W / 4 groups per stage. Ring: STAGES stages of
++// (4 * GPS chunks + 4 * GPS headers), sized to ~160 KB (1 CTA/SM) or ~96 KB (2 CTAs/SM).
++template <int W, int C>
++struct PCfg {
++  static constexpr int THREADS = W * 32;
++  static constexpr int GPS = W / 4;
++  static constexpr int PAY = 4 * GPS * CHUNK;
++  static constexpr int HDRB = 4 * GPS * HDR;
++  static constexpr int STAGE = PAY + HDRB;
++  static constexpr int RAW = (C == 1 ? 163840 : 96000) / STAGE;
++  static constexpr int STAGES = RAW < 3 ? 3 : (RAW > 16 ? 16 : RAW);
++  static constexpr int SMEM = STAGES * STAGE;
++};
++
++// Each CTA: n-tile blockIdx.x / split (64 weight rows), stage range blockIdx.x % split of the
++// k / (64 GPS) stages. DEC: decode every group (4 k16 steps) and XOR-fold the bf16 words;
++// !DEC: XOR-fold the raw smem words (ring only). One word per thread to dummy.
++template <int W, int C, bool DEC>
++__global__ void __launch_bounds__(W * 32, C)
++probe_kernel(const uint8_t* __restrict__ payload, const uint8_t* __restrict__ hdr,
++             const uint32_t* __restrict__ side, uint32_t* __restrict__ dummy, int k, int split) {
++  using P = PCfg<W, C>;
++  constexpr int THREADS = P::THREADS, GPS = P::GPS, STAGES = P::STAGES, STAGE = P::STAGE;
++  static_assert(STAGES >= 3, "the next-stage register prefetch needs stage i + 1 landed");
++  extern __shared__ __align__(128) uint8_t smem[];
++  const int tid = threadIdx.x, lane = tid & 31, warp = tid >> 5;
++  const int wt = warp / GPS, hk = warp % GPS;
++  const int ntile = blockIdx.x / split, sidx = blockIdx.x % split;
++  const int KG = k / GROUP_K;
++  const int KS = KG / GPS;
++  const int ks0 = sidx * KS / split, ks1 = (sidx + 1) * KS / split;
++  const int nsteps = ks1 - ks0;
++  const int rt0 = ntile * 4;
++
++  auto issue = [&](int j) {
++    uint8_t* sw = smem + (j % STAGES) * STAGE;
++    uint8_t* sh = sw + P::PAY;
++    const int g0 = (ks0 + j) * GPS;
++#pragma unroll
++    for (int u = 0; u < 3; ++u) {   // 4 * GPS * 96 chunks of 16 B = 3 per thread
++      const int q = tid + u * THREADS;
++      const int w = q / (GPS * 96), off = q % (GPS * 96);
++      cp_async16(smem_u32(sw + w * GPS * CHUNK + off * 16),
++                 payload + ((int64_t)(rt0 + w) * KG + g0) * CHUNK + off * 16, 16);
++    }
++    if (tid < 4 * GPS) {
++      const int w = tid / GPS, h = tid % GPS;
++      cp_async16(smem_u32(sh + tid * 16), hdr + ((int64_t)(rt0 + w) * KG + g0 + h) * HDR, 16);
++    }
++  };
++
++#pragma unroll
++  for (int j = 0; j < STAGES - 1; ++j) {
++    if (j < nsteps) issue(j);
++    cp_commit();
++  }
++
++  uint32_t acc = 0u;
++  const int tig = lane & 3;
++  const int w_off = wt * GPS * CHUNK + hk * CHUNK;
++  const int h_off = P::PAY + (wt * GPS + hk) * HDR;
++
++  Grp Gn;
++  cp_wait<STAGES - 2>();
++  __syncthreads();
++  load_grp(Gn, smem + w_off, smem + h_off, lane);
++
++  for (int i = 0; i < nsteps; ++i) {
++    const Grp G = Gn;
++    cp_wait<STAGES - 3>();
++    __syncthreads();
++    {
++      const int nx = i + STAGES - 1;
++      if (nx < nsteps) issue(nx);
++      cp_commit();
++    }
++    if (i + 1 < nsteps) {
++      const uint8_t* sw1 = smem + ((i + 1) % STAGES) * STAGE;
++      load_grp(Gn, sw1 + w_off, sw1 + h_off, lane);
++    }
++    if (DEC) {
++#pragma unroll
++      for (int s = 0; s < 4; ++s) {
++        uint32_t a[4];
++        decode_step(G, s, tig, side, a);
++        acc ^= a[0] ^ a[1] ^ a[2] ^ a[3];
++      }
++    } else {
++#pragma unroll
++      for (int q = 0; q < 8; ++q) acc ^= G.sm[q];
++#pragma unroll
++      for (int q = 0; q < 4; ++q) acc ^= G.nib[q];
++      acc ^= G.e2[0] ^ G.e2[1];
++    }
++  }
++  cp_wait<0>();
++  dummy[(int64_t)blockIdx.x * THREADS + tid] = acc;
++}
++
++template <int W, int C, bool DEC>
++void run(const torch::Tensor& payload, const torch::Tensor& hdr, const torch::Tensor& side,
++         torch::Tensor& dummy, int64_t n, int64_t k, int64_t split) {
++  using P = PCfg<W, C>;
++  static bool attr_done = false;
++  if (!attr_done) {
++    C10_CUDA_CHECK(cudaFuncSetAttribute(probe_kernel<W, C, DEC>, cudaFuncAttributeMaxDynamicSharedMemorySize, P::SMEM));
++    C10_CUDA_CHECK(cudaFuncSetAttribute(probe_kernel<W, C, DEC>, cudaFuncAttributePreferredSharedMemoryCarveout,
++                                        cudaSharedmemCarveoutMaxShared));
++    attr_done = true;
++  }
++  auto stream = at::cuda::getCurrentCUDAStream();
++  const unsigned grid = static_cast<unsigned>((n / 64) * split);
++  probe_kernel<W, C, DEC><<<grid, P::THREADS, P::SMEM, stream>>>(
++      payload.data_ptr<uint8_t>(), hdr.data_ptr<uint8_t>(), reinterpret_cast<const uint32_t*>(side.data_ptr()),
++      reinterpret_cast<uint32_t*>(dummy.data_ptr()), static_cast<int>(k), static_cast<int>(split));
++  C10_CUDA_KERNEL_LAUNCH_CHECK();
++}
++
++template <int W, int C>
++void run2(bool dec, const torch::Tensor& payload, const torch::Tensor& hdr, const torch::Tensor& side,
++          torch::Tensor& dummy, int64_t n, int64_t k, int64_t split) {
++  if (dec) run<W, C, true>(payload, hdr, side, dummy, n, k, split);
++  else run<W, C, false>(payload, hdr, side, dummy, n, k, split);
++}
++
++template <int W, int C, bool DEC>
++void fill_attr(int64_t* p) {
++  using P = PCfg<W, C>;
++  static bool attr_done = false;
++  if (!attr_done) {
++    C10_CUDA_CHECK(cudaFuncSetAttribute(probe_kernel<W, C, DEC>, cudaFuncAttributeMaxDynamicSharedMemorySize, P::SMEM));
++    attr_done = true;
++  }
++  cudaFuncAttributes fa;
++  C10_CUDA_CHECK(cudaFuncGetAttributes(&fa, probe_kernel<W, C, DEC>));
++  int occ = 0;
++  C10_CUDA_CHECK(cudaOccupancyMaxActiveBlocksPerMultiprocessor(&occ, probe_kernel<W, C, DEC>, P::THREADS, P::SMEM));
++  p[0] = W; p[1] = C; p[2] = DEC ? 1 : 0; p[3] = fa.numRegs; p[4] = (int64_t)fa.localSizeBytes;
++  p[5] = P::SMEM; p[6] = P::STAGES; p[7] = occ;
++}
++
++}  // namespace
++
++void probe_launch(torch::Tensor payload, torch::Tensor hdr, torch::Tensor side, torch::Tensor dummy,
++                  int64_t n, int64_t k, int64_t split, int64_t warps, int64_t ctas, int64_t decode) {
++  TORCH_CHECK(n % 64 == 0 && k % (GROUP_K * 4) == 0 && split >= 1, "probe_launch: tiling");
++  TORCH_CHECK(k / (GROUP_K * (warps / 4)) >= split, "probe_launch: split exceeds stages");
++  TORCH_CHECK(payload.scalar_type() == torch::kUInt8 && payload.numel() >= (n / 16) * (k / GROUP_K) * CHUNK
++              && reinterpret_cast<uintptr_t>(payload.data_ptr()) % 16 == 0, "probe_launch: payload");
++  TORCH_CHECK(hdr.scalar_type() == torch::kUInt8 && hdr.numel() >= (n / 16) * (k / GROUP_K) * HDR
++              && reinterpret_cast<uintptr_t>(hdr.data_ptr()) % 16 == 0, "probe_launch: hdr");
++  TORCH_CHECK(side.scalar_type() == torch::kBFloat16 && side.numel() >= GROUP_K, "probe_launch: side");
++  TORCH_CHECK(dummy.scalar_type() == torch::kInt32 && dummy.numel() >= (n / 64) * split * warps * 32,
++              "probe_launch: dummy");
++  const bool dec = decode != 0;
++  if (warps == 4 && ctas == 1) run2<4, 1>(dec, payload, hdr, side, dummy, n, k, split);
++  else if (warps == 8 && ctas == 1) run2<8, 1>(dec, payload, hdr, side, dummy, n, k, split);
++  else if (warps == 16 && ctas == 1) run2<16, 1>(dec, payload, hdr, side, dummy, n, k, split);
++  else if (warps == 4 && ctas == 2) run2<4, 2>(dec, payload, hdr, side, dummy, n, k, split);
++  else if (warps == 8 && ctas == 2) run2<8, 2>(dec, payload, hdr, side, dummy, n, k, split);
++  else if (warps == 16 && ctas == 2) run2<16, 2>(dec, payload, hdr, side, dummy, n, k, split);
++  else TORCH_CHECK(false, "probe_launch: unsupported config");
++}
++
++// 12 rows: [warps, ctas, decode, regs, local (spill) bytes, dynamic smem, stages, CTAs/SM].
++torch::Tensor probe_attrs() {
++  auto t = torch::zeros({12, 8}, torch::kInt64);
++  int64_t* p = t.data_ptr<int64_t>();
++  fill_attr<4, 1, true>(p + 0);   fill_attr<4, 1, false>(p + 8);
++  fill_attr<8, 1, true>(p + 16);  fill_attr<8, 1, false>(p + 24);
++  fill_attr<16, 1, true>(p + 32); fill_attr<16, 1, false>(p + 40);
++  fill_attr<4, 2, true>(p + 48);  fill_attr<4, 2, false>(p + 56);
++  fill_attr<8, 2, true>(p + 64);  fill_attr<8, 2, false>(p + 72);
++  fill_attr<16, 2, true>(p + 80); fill_attr<16, 2, false>(p + 88);
++  return t;
++}
++"""
++
++
++def _lp_build():
++    """Compile the probe module inside prepare() (never raises). TORCH_CUDA_ARCH_LIST is set to 9.0a
++    around load_inline and restored (the code is mma/wgmma-free; sm_90a keeps the stage-2 target)."""
++    t0 = time.perf_counter()
++    prev = os.environ.get("TORCH_CUDA_ARCH_LIST")
++    flags = ["-O3", "-lineinfo"]
++    os.environ["TORCH_CUDA_ARCH_LIST"] = "9.0a"
++    print(f"[lossless-probe] building: TORCH_CUDA_ARCH_LIST=9.0a (was {prev!r}), extra_cuda_cflags={flags}",
++          flush=True)
++    try:
++        from torch.utils.cpp_extension import load_inline
++        ext = load_inline(
++            name="muse_bf16_lossless_probe_v1",
++            cpp_sources=_LP_CPP,
++            cuda_sources=_LP_CUDA,
++            functions=["probe_launch", "probe_attrs"],
++            extra_cuda_cflags=flags,
++            verbose=False,
++        )
++    except Exception as e:
++        print(f"[lossless-probe] load_inline failed after {time.perf_counter() - t0:.1f}s: {e!r}", flush=True)
++        return None
++    finally:
++        if prev is None:
++            os.environ.pop("TORCH_CUDA_ARCH_LIST", None)
++        else:
++            os.environ["TORCH_CUDA_ARCH_LIST"] = prev
++    print(f"[lossless-probe] load_inline compiled in {time.perf_counter() - t0:.1f}s", flush=True)
++    return ext
++
++
++def _lp_encode(w: torch.Tensor) -> dict:
++    """Stage 2's lossless exp4 encoder, verbatim (prepare() only, from the weight alone)."""
++    n, k = w.shape
++    kg = k // LP_GROUP_K
++    rt = n // 16
++    dev = w.device
++    wc = w.contiguous()
++    bits = (wc.view(torch.int16).to(torch.int32) & 0xFFFF).view(n, kg, LP_GROUP_K)
++    e = (bits >> 7) & 0xFF
++    sm = ((bits >> 8) & 0x80) | (bits & 0x7F)          # sign << 7 | mantissa7
++    eref = e.amax(dim=2)                                # [n, kg]
++    c = eref.unsqueeze(2) - e                           # >= 0
++    ok = ((e >= 1) & (e <= 254) & (c <= 15)).all(dim=2)
++    esc = ~ok
++    n_esc = int(esc.sum())
++    slot = (torch.cumsum(esc.reshape(-1).to(torch.int32), 0, dtype=torch.int32) - 1).view(n, kg)
++    slot = torch.where(esc, slot, torch.zeros_like(slot))
++    shift = (torch.arange(LP_GROUP_K, device=dev, dtype=torch.int32) & 1) * 8
++    sm = torch.where(esc.unsqueeze(2), (slot.unsqueeze(2) >> shift) & 0xFF, sm)
++    c = torch.where(ok.unsqueeze(2), c, torch.zeros_like(c))
++    hdr = torch.where(ok, eref, torch.full_like(eref, 255))
++    sm8 = sm.to(torch.uint8)
++    c8 = c.to(torch.uint8)
++
++    def frag(t):
++        t = t.reshape(rt, 2, 8, kg, 4, 2, 4, 2).permute(0, 3, 2, 6, 4, 5, 1, 7)
++        return t.reshape(rt, kg, 32, 32)
++
++    smf = frag(sm8).reshape(rt, kg, 32, 2, 16).permute(0, 1, 3, 2, 4)
++    cf = frag(c8).reshape(rt, kg, 32, 4, 2, 2, 2).permute(0, 1, 2, 3, 6, 4, 5)
++    nib = (cf[..., 0] | (cf[..., 1] << 4)).reshape(rt, kg, 1, 32, 16)
++    payload = torch.cat((smf, nib), dim=2).contiguous().view(-1)
++    hdr_t = hdr.view(rt, 16, kg).permute(0, 2, 1).to(torch.uint8).contiguous().view(-1)
++    if n_esc:
++        side = wc.view(n, kg, LP_GROUP_K)[esc].contiguous()
++    else:
++        side = torch.zeros((1, LP_GROUP_K), dtype=torch.bfloat16, device=dev)
++    nbytes = payload.numel() + hdr_t.numel() + n_esc * LP_GROUP_K * 2
++    return {"payload": payload, "hdr": hdr_t, "side": side, "n_esc": n_esc,
++            "bytes": nbytes, "ratio": nbytes / float(n * k * 2)}
++
++
++def _lp_xor_words(t: torch.Tensor) -> int:
++    """XOR of all 32-bit words of a contiguous tensor (halving fold; order does not matter)."""
++    v = t.contiguous().reshape(-1).view(torch.int32)
++    while v.numel() > 1:
++        if v.numel() & 1:
++            v = torch.cat((v, v.new_zeros(1)))
++        h = v.numel() // 2
++        v = v[:h] ^ v[h:]
++    return int(v[0])
++
++
++def _lp_cold_us(fn, flush: torch.Tensor, reps: int = LP_REPS) -> float:
++    """Median cold-L2 event time of one launch (a > L2 buffer is written before each timed launch)."""
++    ts = []
++    for _ in range(reps):
++        c0 = torch.cuda.Event(enable_timing=True)
++        c1 = torch.cuda.Event(enable_timing=True)
++        flush.add_(1)
++        c0.record()
++        fn()
++        c1.record()
++        c1.synchronize()
++        ts.append(c0.elapsed_time(c1) * 1e3)
++    return sorted(ts)[len(ts) // 2]
++
++
++def _lp_warm_us(fn, reps: int = 5, rounds: int = 3) -> float:
++    """Median over rounds of the mean per-launch time of `reps` back-to-back launches."""
++    ts = []
++    for _ in range(rounds):
++        e0 = torch.cuda.Event(enable_timing=True)
++        e1 = torch.cuda.Event(enable_timing=True)
++        e0.record()
++        for _ in range(reps):
++            fn()
++        e1.record()
++        e1.synchronize()
++        ts.append(e0.elapsed_time(e1) * 1e3 / reps)
++    return sorted(ts)[len(ts) // 2]
++
++
++def _lossless_probe_body(state: dict) -> None:
++    """Print-only decode-only throughput probe body. Every probe buffer is a local, so it is released
++    when this returns (or raises); _lossless_probe then empties the cache."""
++    try:
++        if not torch.cuda.is_available():
++            print("[lossless-probe] no CUDA device; NO VERDICT", flush=True)
++            return
++        ext = _lp_build()
++        if ext is None:
++            print("[lossless-probe] NO VERDICT (build failed)", flush=True)
++            return
++        pooler, qkv = state["pooler"], state["qkv_gate"]
++        dev = pooler.device
++        if tuple(pooler.shape) != (4096, 8192) or tuple(qkv.shape) != (2304, 8192) or pooler.dtype != torch.bfloat16:
++            print(f"[lossless-probe] NO VERDICT (unexpected weights {tuple(pooler.shape)} {tuple(qkv.shape)})",
++                  flush=True)
++            return
++        sms = torch.cuda.get_device_properties(dev).multi_processor_count
++        attrs = {}
++        for row in ext.probe_attrs().tolist():
++            attrs[(row[0], row[1], row[2])] = row
++        torch.cuda.synchronize()
++        # Encode (untimed): pooler (cold target) and qkv_gate (L2-resident warm diagnostic).
++        enc = {}
++        for name, w in (("pooler", pooler), ("qkv_gate", qkv)):
++            t0 = time.perf_counter()
++            e = _lp_encode(w)
++            enc[name] = e
++            print(f"[lossless-probe] {name}: {e['bytes'] * 8 / w.numel():.3f} bits/element, ratio {e['ratio']:.4f}, "
++                  f"escape groups {e['n_esc']}, {e['bytes'] / 1e6:.1f} MB compressed vs {w.numel() * 2 / 1e6:.1f} MB raw, "
++                  f"encode {time.perf_counter() - t0:.2f}s", flush=True)
++        dummy = torch.zeros(512 * 512, dtype=torch.int32, device=dev)
++        flush = torch.zeros(LP_FLUSH_BYTES // 4, dtype=torch.float32, device=dev)
++        expect = _lp_xor_words(pooler)
++        raw_p = pooler.numel() * 2.0
++        raw_q = qkv.numel() * 2.0
++        comp_p = float(enc["pooler"]["bytes"])
++        comp_q = float(enc["qkv_gate"]["bytes"])
++
++        # Yardstick: master's own pooler m=1 kernel, same flush + event method, same loop.
++        x1 = torch.randn((1, POOLER_K), device=dev, dtype=torch.float32).to(torch.bfloat16)
++
++        def yard():
++            _pooler_forward(x1, state["pooler"], state["pooler_ws"], state["pooler_cnt"])
++
++        for _ in range(5):
++            yard()
++        torch.cuda.synchronize()
++        y_cold = _lp_cold_us(yard, flush)
++        y_warm = _lp_warm_us(yard)
++        state["pooler_cnt"].zero_()
++        torch.cuda.synchronize()
++        print(f"[lossless-probe] YARDSTICK master pooler m=1 (_pooler_forward, 67.1 MB raw): cold {y_cold:.2f} us "
++              f"({raw_p / (y_cold * 1e-6) / 1e12:.2f} TB/s raw), warm {y_warm:.2f} us "
++              f"(eager events incl. launch; same method as every probe line below)", flush=True)
++
++        results = []
++        for warps, ctas in LP_CONFIGS:
++            tag = f"W{warps}xC{ctas}"
++            ad, ac = attrs[(warps, ctas, 1)], attrs[(warps, ctas, 0)]
++            try:
++                sp = max(1, round(sms * ctas / 64.0))
++                sq = max(1, round(sms * ctas / 36.0))
++                pp, ph, ps = enc["pooler"]["payload"], enc["pooler"]["hdr"], enc["pooler"]["side"]
++                qp, qh, qs = enc["qkv_gate"]["payload"], enc["qkv_gate"]["hdr"], enc["qkv_gate"]["side"]
++
++                def dec_p():
++                    ext.probe_launch(pp, ph, ps, dummy, 4096, 8192, sp, warps, ctas, 1)
++
++                def dec_q():
++                    ext.probe_launch(qp, qh, qs, dummy, 2304, 8192, sq, warps, ctas, 1)
++
++                def cpy_p():
++                    ext.probe_launch(pp, ph, ps, dummy, 4096, 8192, sp, warps, ctas, 0)
++
++                def cpy_q():
++                    ext.probe_launch(qp, qh, qs, dummy, 2304, 8192, sq, warps, ctas, 0)
++
++                # Verify once: XOR of decoded bf16 words == XOR of the original weight words.
++                dummy.zero_()
++                print(f"[lossless-probe] {tag}: launching decode-only (pooler, verify), grid {64 * sp} CTAs", flush=True)
++                dec_p()
++                torch.cuda.synchronize()
++                print(f"[lossless-probe] {tag}: decode-only launch done", flush=True)
++                got = _lp_xor_words(dummy[: 64 * sp * warps * 32])
++                verified = got == expect
++                for nm, f in (("decode-only qkv", dec_q), ("copy-only pooler", cpy_p), ("copy-only qkv", cpy_q)):
++                    print(f"[lossless-probe] {tag}: launching {nm}", flush=True)
++                    f()
++                    torch.cuda.synchronize()
++                    print(f"[lossless-probe] {tag}: {nm} launch done", flush=True)
++                d_cold = _lp_cold_us(dec_p, flush)
++                d_warm = _lp_warm_us(dec_q)
++                c_cold = _lp_cold_us(cpy_p, flush)
++                c_warm = _lp_warm_us(cpy_q)
++                tb = lambda b, us: b / (us * 1e-6) / 1e12
++                print(f"[lossless-probe] cfg={tag} (grid pooler {64 * sp}, qkv {36 * sq}) decode-only: "
++                      f"warm {tb(comp_q, d_warm):.2f} TB/s cold {tb(comp_p, d_cold):.2f} TB/s "
++                      f"(raw-equivalent {tb(raw_p, d_cold):.2f} TB/s, cold {d_cold:.2f} us = {d_cold / y_cold:.3f}x "
++                      f"yardstick time, i.e. {y_cold / d_cold:.2f}x its speed) | copy-only: "
++                      f"warm {tb(comp_q, c_warm):.2f} TB/s cold {tb(comp_p, c_cold):.2f} TB/s "
++                      f"(cold {c_cold:.2f} us = {c_cold / y_cold:.3f}x yardstick time) | "
++                      f"decode kernel {ad[3]} regs, {ad[4]} B local (spills), {ad[5]} B smem, {ad[6]} stages, "
++                      f"occupancy {ad[7]} CTAs/SM | copy kernel {ac[3]} regs, {ac[4]} B local | "
++                      f"XOR check {'OK' if verified else 'MISMATCH (excluded)'}", flush=True)
++                results.append({"tag": tag, "d_cold": d_cold, "c_cold": c_cold, "ok": verified,
++                                "regs": ad[3], "spills": ad[4]})
++            except Exception as e:
++                print(f"[lossless-probe] cfg={tag} failed: {e!r}", flush=True)
++                try:
++                    torch.cuda.synchronize()
++                except Exception:
++                    pass
++        good = [r for r in results if r["ok"]]
++        if not good:
++            print(f"[lossless-probe] NO VERDICT: no config completed with a verified decode "
++                  f"({len(results)} ran, yardstick {y_cold:.2f} us)", flush=True)
++            return
++        best = min(good, key=lambda r: r["d_cold"])
++        cbest = min(good, key=lambda r: r["c_cold"])
++        r_dec = best["d_cold"] / y_cold
++        r_cpy = cbest["c_cold"] / y_cold
++        nums = (f"best decode-only cold {best['d_cold']:.2f} us ({best['tag']}, {best['regs']} regs, "
++                f"{best['spills']} B spills; {comp_p / (best['d_cold'] * 1e-6) / 1e12:.2f} TB/s compressed) = "
++                f"{r_dec:.3f}x yardstick {y_cold:.2f} us (REVIVE needs <= {LP_REVIVE_RATIO}); "
++                f"best copy-only cold {cbest['c_cold']:.2f} us ({cbest['tag']}) = {r_cpy:.3f}x yardstick")
++        if r_dec <= LP_REVIVE_RATIO and r_cpy <= 1.0:
++            print(f"[lossless-probe] REVIVE: {nums}: room left for MMA + x", flush=True)
++        else:
++            why = ("the ring alone is slower than the yardstick" if r_cpy > 1.0
++                   else "decode alone is slower than the yardstick" if r_dec > 1.0
++                   else "dead for mma.sync (0.85 < ratio <= 1.0, no room for MMA + x)")
++            print(f"[lossless-probe] DEAD: {nums}: {why}", flush=True)
++    except Exception as e:
++        print(f"[lossless-probe] NO VERDICT (probe raised {e!r})", flush=True)
++
++
++def _lossless_probe(state: dict) -> None:
++    """Never raises, routes nothing, adds no state keys. Frees all probe buffers (and the CUDA cache)
++    before returning so prepare()'s memory footprint is master's."""
++    t_start = time.perf_counter()
++    try:
++        _lossless_probe_body(state)
++    except BaseException as e:   # the body already catches Exception; this is the last line of defense
++        print(f"[lossless-probe] NO VERDICT (probe raised {e!r})", flush=True)
++    try:
++        import gc
++        gc.collect()
++        torch.cuda.synchronize()
++        torch.cuda.empty_cache()
++        print(f"[lossless-probe] probe buffers freed, empty_cache done, "
++              f"{time.perf_counter() - t_start:.1f}s total, "
++              f"{torch.cuda.memory_allocated() / 1e6:.0f} MB still allocated", flush=True)
++    except Exception as e:
++        print(f"[lossless-probe] cleanup raised {e!r}", flush=True)
++
++
+ def prepare(weights: Weights) -> dict:
+     """Called once, untimed. Keep the bf16 weights as they are (contiguous), build the router's
+     hi + lo bf16 split as [256, 8192] row-major (N x K), and pre-compile every m-bucket of the
+@@ -708,6 +1249,8 @@ def prepare(weights: Weights) -> dict:
+     state["unpool_cnt"].zero_()
+     # (5) Swap-AB at 17 <= m <= 32 for all four bf16 layers (own workspaces / tickets).
+     _swapab_prepare(state)
++    # (6) print-only lossless decode-only probe: routes nothing, never raises, frees its buffers.
++    _lossless_probe(state)
+     return state
+ 
+ 

@@ -1,0 +1,65 @@
+[swapab] layer=pooler m=32 N=4096 K=8192 SPLIT_K=2 BLOCK_K=256 stages=4: n_regs=96 n_spills=0 wgmma=16 mma.sync=0 cp.async=106
+[swapab] layer=qkv_gate m=32 N=2304 K=8192 SPLIT_K=4 BLOCK_K=128 stages=4: n_regs=56 n_spills=0 wgmma=8 mma.sync=0 cp.async=58
+[swapab] layer=unpooler m=32 N=8192 K=4096 SPLIT_K=1 BLOCK_K=256 stages=4: n_regs=96 n_spills=0 wgmma=16 mma.sync=0 cp.async=106
+[swapab] layer=o m=32 N=8192 K=1024 SPLIT_K=1 BLOCK_K=256 stages=4: n_regs=96 n_spills=0 wgmma=16 mma.sync=0 cp.async=106
+[lossless-probe] building: TORCH_CUDA_ARCH_LIST=9.0a (was None), extra_cuda_cflags=['-O3', '-lineinfo']
+[lossless-probe] load_inline compiled in 34.6s
+[lossless-probe] pooler: 12.167 bits/element, ratio 0.7604, escape groups 1380, 51.0 MB compressed vs 67.1 MB raw, encode 0.10s
+[lossless-probe] qkv_gate: 12.169 bits/element, ratio 0.7606, escape groups 812, 28.7 MB compressed vs 37.7 MB raw, encode 0.00s
+[lossless-probe] YARDSTICK master pooler m=1 (_pooler_forward, 67.1 MB raw): cold 28.80 us (2.33 TB/s raw), warm 23.91 us (eager events incl. launch; same method as every probe line below)
+[lossless-probe] W4xC1: launching decode-only (pooler, verify), grid 128 CTAs
+[lossless-probe] W4xC1: decode-only launch done
+[lossless-probe] W4xC1: launching decode-only qkv
+[lossless-probe] W4xC1: decode-only qkv launch done
+[lossless-probe] W4xC1: launching copy-only pooler
+[lossless-probe] W4xC1: copy-only pooler launch done
+[lossless-probe] W4xC1: launching copy-only qkv
+[lossless-probe] W4xC1: copy-only qkv launch done
+[lossless-probe] cfg=W4xC1 (grid pooler 128, qkv 144) decode-only: warm 1.36 TB/s cold 1.02 TB/s (raw-equivalent 1.34 TB/s, cold 50.05 us = 1.738x yardstick time, i.e. 0.58x its speed) | copy-only: warm 2.77 TB/s cold 2.22 TB/s (cold 22.94 us = 0.797x yardstick time) | decode kernel 96 regs, 0 B local (spills), 99328 B smem, 16 stages, occupancy 2 CTAs/SM | copy kernel 64 regs, 0 B local | XOR check OK
+[lossless-probe] W8xC1: launching decode-only (pooler, verify), grid 128 CTAs
+[lossless-probe] W8xC1: decode-only launch done
+[lossless-probe] W8xC1: launching decode-only qkv
+[lossless-probe] W8xC1: decode-only qkv launch done
+[lossless-probe] W8xC1: launching copy-only pooler
+[lossless-probe] W8xC1: copy-only pooler launch done
+[lossless-probe] W8xC1: launching copy-only qkv
+[lossless-probe] W8xC1: copy-only qkv launch done
+[lossless-probe] cfg=W8xC1 (grid pooler 128, qkv 144) decode-only: warm 1.20 TB/s cold 1.18 TB/s (raw-equivalent 1.55 TB/s, cold 43.33 us = 1.504x yardstick time, i.e. 0.66x its speed) | copy-only: warm 2.44 TB/s cold 2.28 TB/s (cold 22.40 us = 0.778x yardstick time) | decode kernel 91 regs, 0 B local (spills), 161408 B smem, 13 stages, occupancy 1 CTAs/SM | copy kernel 60 regs, 0 B local | XOR check OK
+[lossless-probe] W16xC1: launching decode-only (pooler, verify), grid 128 CTAs
+[lossless-probe] W16xC1: decode-only launch done
+[lossless-probe] W16xC1: launching decode-only qkv
+[lossless-probe] W16xC1: decode-only qkv launch done
+[lossless-probe] W16xC1: launching copy-only pooler
+[lossless-probe] W16xC1: copy-only pooler launch done
+[lossless-probe] W16xC1: launching copy-only qkv
+[lossless-probe] W16xC1: copy-only qkv launch done
+[lossless-probe] cfg=W16xC1 (grid pooler 128, qkv 144) decode-only: warm 1.52 TB/s cold 1.42 TB/s (raw-equivalent 1.87 TB/s, cold 35.94 us = 1.248x yardstick time, i.e. 0.80x its speed) | copy-only: warm 2.68 TB/s cold 2.28 TB/s (cold 22.34 us = 0.776x yardstick time) | decode kernel 96 regs, 0 B local (spills), 148992 B smem, 6 stages, occupancy 1 CTAs/SM | copy kernel 63 regs, 0 B local | XOR check OK
+[lossless-probe] W4xC2: launching decode-only (pooler, verify), grid 256 CTAs
+[lossless-probe] W4xC2: decode-only launch done
+[lossless-probe] W4xC2: launching decode-only qkv
+[lossless-probe] W4xC2: decode-only qkv launch done
+[lossless-probe] W4xC2: launching copy-only pooler
+[lossless-probe] W4xC2: copy-only pooler launch done
+[lossless-probe] W4xC2: launching copy-only qkv
+[lossless-probe] W4xC2: copy-only qkv launch done
+[lossless-probe] cfg=W4xC2 (grid pooler 256, qkv 252) decode-only: warm 1.79 TB/s cold 1.29 TB/s (raw-equivalent 1.70 TB/s, cold 39.55 us = 1.373x yardstick time, i.e. 0.73x its speed) | copy-only: warm 3.69 TB/s cold 2.24 TB/s (cold 22.82 us = 0.792x yardstick time) | decode kernel 94 regs, 0 B local (spills), 93120 B smem, 15 stages, occupancy 2 CTAs/SM | copy kernel 62 regs, 0 B local | XOR check OK
+[lossless-probe] W8xC2: launching decode-only (pooler, verify), grid 256 CTAs
+[lossless-probe] W8xC2: decode-only launch done
+[lossless-probe] W8xC2: launching decode-only qkv
+[lossless-probe] W8xC2: decode-only qkv launch done
+[lossless-probe] W8xC2: launching copy-only pooler
+[lossless-probe] W8xC2: copy-only pooler launch done
+[lossless-probe] W8xC2: launching copy-only qkv
+[lossless-probe] W8xC2: copy-only qkv launch done
+[lossless-probe] cfg=W8xC2 (grid pooler 256, qkv 252) decode-only: warm 2.21 TB/s cold 1.47 TB/s (raw-equivalent 1.93 TB/s, cold 34.75 us = 1.207x yardstick time, i.e. 0.83x its speed) | copy-only: warm 3.86 TB/s cold 2.30 TB/s (cold 22.18 us = 0.770x yardstick time) | decode kernel 96 regs, 0 B local (spills), 86912 B smem, 7 stages, occupancy 2 CTAs/SM | copy kernel 63 regs, 0 B local | XOR check OK
+[lossless-probe] W16xC2: launching decode-only (pooler, verify), grid 256 CTAs
+[lossless-probe] W16xC2: decode-only launch done
+[lossless-probe] W16xC2: launching decode-only qkv
+[lossless-probe] W16xC2: decode-only qkv launch done
+[lossless-probe] W16xC2: launching copy-only pooler
+[lossless-probe] W16xC2: copy-only pooler launch done
+[lossless-probe] W16xC2: launching copy-only qkv
+[lossless-probe] W16xC2: copy-only qkv launch done
+[lossless-probe] cfg=W16xC2 (grid pooler 256, qkv 252) decode-only: warm 2.34 TB/s cold 1.74 TB/s (raw-equivalent 2.28 TB/s, cold 29.41 us = 1.021x yardstick time, i.e. 0.98x its speed) | copy-only: warm 3.67 TB/s cold 2.22 TB/s (cold 23.01 us = 0.799x yardstick time) | decode kernel 64 regs, 16 B local (spills), 74496 B smem, 3 stages, occupancy 2 CTAs/SM | copy kernel 64 regs, 0 B local | XOR check OK
+[lossless-probe] DEAD: best decode-only cold 29.41 us (W16xC2, 64 regs, 16 B spills; 1.74 TB/s compressed) = 1.021x yardstick 28.80 us (REVIVE needs <= 0.85); best copy-only cold 22.18 us (W8xC2) = 0.770x yardstick: decode alone is slower than the yardstick
+[lossless-probe] probe buffers freed, empty_cache done, 35.0s total, 222 MB still allocated

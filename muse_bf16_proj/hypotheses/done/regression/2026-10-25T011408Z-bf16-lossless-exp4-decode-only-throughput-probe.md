@@ -40,10 +40,10 @@ priority: 4
 kind: primary
 controls_for: null
 review: proceed
-status: running
+status: done
 review_at: 2026-10-25T011846Z
 review_companions: null
-stage: dispatched
+stage: harvested
 claimed_at: 2026-10-25T011847Z
 base_sha: 41b1d0ab801c3b80cbb8f4ac832daa8d0cabfc3a
 base_blob: a8bb42ac483318e9fbc84bc7826a27b7a704d1fb
@@ -62,6 +62,13 @@ attempt_file: 2026-10-25T012237Z-check-bf16-lossless-exp4-decode-only-throughput
 prepared_at: 2026-10-25T012237Z
 job: 9148142cee4441ad
 dispatched_at: 2026-10-25T012245Z
+outcome: regression
+verdict_detail: regression
+speedup: 1.1904127474039752
+speedup_ci: [1.1725565561929154, 1.2082689386150347]
+harvested_at: 2026-10-25T034132Z
+best_at_harvest: 1.2215006063849365
+promotion: null
 ---
 
 # bf16-lossless-exp4-decode-only-throughput-probe
@@ -128,3 +135,53 @@ Not done by the build agent (no GPU here): nothing was compiled or run. Biggest 
 - [x] Brief: self-check launches announced with flushed prints before and synchronize plus print after; plain cp.async.cg; `-lineinfo`; no mbarrier/spin waits; any failure prints and never raises; no wgmma/setmaxnreg (arch list still set to 9.0a and printed).
 
 okc_lint (`python3 -I okc_lint.py submission.py --problem muse_bf16_proj`): "OK with warnings": 3 dtype warns (uint8 casts in the encoder, prepare-only), 10 host-sync warns (all in prepare, "fine in prepare()"). `python3 -I -m py_compile` passed; `__pycache__` removed.
+
+## Result
+
+- job `9148142cee4441ad` (check), status done, passed True, tests 9/9
+- speedup 1.1904x, 95% CI [1.1726, 1.2083], score 4058.088264372923 µs vs SGLang 4830.8 µs
+- best at harvest: {"speedup": 1.2215006063849365, "ci": [1.2031780972891624, 1.2398231154807104], "job": "60b20fd0bf924267"}; base result: muse_bf16_proj/hypotheses/done/neutral/bf16-restack-m16-swapab-router-swapab-m32.result.json
+- **outcome: regression** (regression)
+- files: `muse_bf16_proj/hypotheses/done/regression/bf16-lossless-exp4-decode-only-throughput-probe.result.json`, `muse_bf16_proj/hypotheses/done/regression/bf16-lossless-exp4-decode-only-throughput-probe.patch`; branch `hyp/muse_bf16_proj/bf16-lossless-exp4-decode-only-throughput-probe`
+
+## Attribution
+
+| shape | w | base µs | hyp µs | delta | verdict |
+|---|---|---|---|---|---|
+| layer=qkv_gate load=decode_1 m=1 | 62 | 12.18 | 13.2 | 0.939 | lost |
+| layer=o load=decode_1 m=1 | 62 | 5.89 | 6.29 | 0.9431 | lost |
+| layer=pooler load=decode_1 m=1 | 62 | 18.84 | 19.51 | 0.9917 | flat |
+| layer=unpooler load=decode_1 m=1 | 62 | 6.15 | 6.03 | 0.9667 | lost |
+| layer=router load=decode_1 m=1 | 62 | 5.38 | 5.75 | 0.9241 | lost |
+| layer=qkv_gate load=decode_16 m=16 | 62 | 13.15 | 13.83 | 0.9369 | lost |
+| layer=o load=decode_16 m=16 | 62 | 6.23 | 6.7 | 0.9252 | lost |
+| layer=pooler load=decode_16 m=16 | 62 | 19.47 | 20.08 | 0.9799 | flat |
+| layer=unpooler load=decode_16 m=16 | 62 | 18.51 | 18.66 | 0.9813 | flat |
+| layer=router load=decode_16 m=16 | 62 | 5.47 | 6.33 | 0.8782 | lost |
+| layer=qkv_gate load=decode_32 m=32 | 62 | 14.19 | 14.1 | 0.9712 | flat |
+| layer=o load=decode_32 m=32 | 62 | 6.34 | 6.6 | 0.9586 | lost |
+| layer=pooler load=decode_32 m=32 | 62 | 19.73 | 20.29 | 0.9862 | flat |
+| layer=unpooler load=decode_32 m=32 | 62 | 18.08 | 18.65 | 0.9786 | flat |
+| layer=router load=decode_32 m=32 | 62 | 6.2 | 6.78 | 0.9081 | lost |
+| layer=qkv_gate load=verify_1 m=8 | 62 | 12.5 | 13.93 | 0.9328 | lost |
+| layer=o load=verify_1 m=8 | 62 | 6.13 | 6.85 | 0.9362 | lost |
+| layer=pooler load=verify_1 m=8 | 62 | 18.89 | 19.49 | 0.9825 | flat |
+| layer=unpooler load=verify_1 m=8 | 62 | 6.0 | 6.25 | 0.9603 | lost |
+| layer=router load=verify_1 m=8 | 62 | 5.47 | 5.86 | 0.9273 | lost |
+| layer=qkv_gate load=verify_16 m=128 | 62 | 17.05 | 17.09 | 1.0069 | flat |
+| layer=o load=verify_16 m=128 | 62 | 6.98 | 7.52 | 0.9765 | flat |
+| layer=pooler load=verify_16 m=128 | 62 | 25.0 | 24.7 | 1.0238 | flat |
+| layer=unpooler load=verify_16 m=128 | 62 | 19.96 | 19.8 | 1.0063 | flat |
+| layer=router load=verify_16 m=128 | 62 | 7.28 | 7.58 | 0.9721 | flat |
+| layer=qkv_gate load=verify_32 m=256 | 62 | 19.69 | 19.84 | 1.0214 | flat |
+| layer=o load=verify_32 m=256 | 62 | 9.26 | 9.4 | 0.9954 | flat |
+| layer=pooler load=verify_32 m=256 | 62 | 31.19 | 30.7 | 1.0039 | flat |
+| layer=unpooler load=verify_32 m=256 | 62 | 24.42 | 24.19 | 1.0081 | flat |
+| layer=router load=verify_32 m=256 | 62 | 9.6 | 9.4 | 1.0123 | flat |
+
+lost on qkv_gate decode_1, decode_16, verify_1; o decode_1, decode_16, decode_32, verify_1; unpooler decode_1, verify_1; router decode_1, decode_16, decode_32, verify_1. Expected hit: 1/1. Noise ±1.5%.
+
+## Follow-ups
+
+- record which shapes lost (Attribution) and do not retry this area in this form.
+
