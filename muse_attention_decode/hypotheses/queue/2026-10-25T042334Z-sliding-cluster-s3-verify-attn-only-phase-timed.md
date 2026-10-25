@@ -47,9 +47,10 @@ controls_for: null
 rewrite_stage: 3
 replaces: "sliding verify (q_len 8, page 1, B<=32): prepare_varlen_num_blocks + FA3 main + FlashAttnFwdCombine + sglang rms_norm_gate"
 review: proceed
-status: queued
+status: hold
 review_at: 2026-10-25T043143Z
 review_companions: null
+hold_reason: "Reviewer: proceed but wait for stack-streamk-ticket-cluster-c16-c4 (195dcc1209b6457b) and build on its branch (raw s2 carries the C=8 band, +5.7% on sliding decode_16). Port setup_one<8>/launch<8> back from stage 1 593859d; mask rows to p-(W-1)<=t<=p; phase timing in prepare only."
 ---
 
 # sliding-cluster-s3-verify-attn-only-phase-timed
