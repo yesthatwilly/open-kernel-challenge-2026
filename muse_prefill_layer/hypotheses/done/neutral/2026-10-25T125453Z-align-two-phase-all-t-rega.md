@@ -89,7 +89,9 @@ speedup: 1.4457544543391616
 speedup_ci: [1.4240681375240742, 1.467440771154249]
 harvested_at: 2026-10-25T135010Z
 best_at_harvest: 1.4060131381907617
-promotion: null
+promotion: merged
+hand_landed: true
+promotion_commit: 1932a9c4fb3d8dc735bb1a513853637c0ada892c
 ---
 
 # align-two-phase-all-t-rega

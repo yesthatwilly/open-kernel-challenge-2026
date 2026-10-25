@@ -1,17 +1,17 @@
 {
  "problem": "muse_prefill_layer",
- "job": "07a069bc69ba42a8",
- "check_job": "07a069bc69ba42a8",
+ "job": "4e6f815a8dd945ba",
+ "check_job": "4e6f815a8dd945ba",
  "mode": "check",
- "speedup": 1.4060131381907617,
+ "speedup": 1.4457544543391616,
  "ci": [
-  1.3849229411179003,
-  1.4271033352636229
+  1.4240681375240742,
+  1.467440771154249
  ],
- "score_us": 275533.62730202224,
- "commit": "a1a5497d7a46aeb3c1aa4a18e70871a23c1b6be3",
- "submission_blob": "c2e3e595def2e6b5949e0fd350ce98ed59729147",
- "slug": "experts-turn-rega-s4-first-turn-n128",
- "result": "muse_prefill_layer/hypotheses/done/gain/experts-turn-rega-s4-first-turn-n128.result.json",
- "updated_at": "2026-10-25T124812Z"
+ "score_us": 267959.6793475404,
+ "commit": "1932a9c4fb3d8dc735bb1a513853637c0ada892c",
+ "submission_blob": "a2fe2a75893c60d4f68cf94fcce8ce8f9b708a71",
+ "slug": "align-two-phase-all-t-rega",
+ "result": "muse_prefill_layer/hypotheses/done/neutral/align-two-phase-all-t-rega.result.json",
+ "updated_at": "2026-10-25T145718Z"
 }
