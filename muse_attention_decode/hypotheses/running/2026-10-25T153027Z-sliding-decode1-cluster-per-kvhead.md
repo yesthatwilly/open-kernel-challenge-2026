@@ -51,9 +51,18 @@ priority: 2
 kind: primary
 controls_for: null
 review: proceed
-status: queued
+status: running
 review_at: 2026-10-25T161935Z
 review_companions: null
+stage: claimed
+claimed_at: 2026-10-25T161936Z
+base_sha: a5f0c41fcf6d081ab9a5f2262b3505c796565fea
+base_blob: 5cf8fae31e5b84c36efeeb4569763eb9b06e1c8a
+branch: hyp/muse_attention_decode/sliding-decode1-cluster-per-kvhead
+worktree: .worktrees/muse_attention_decode/sliding-decode1-cluster-per-kvhead
+mode: null
+restack_of: null
+stale_base: null
 ---
 
 # sliding-decode1-cluster-per-kvhead
