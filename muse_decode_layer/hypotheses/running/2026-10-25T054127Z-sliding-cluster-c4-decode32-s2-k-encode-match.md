@@ -64,7 +64,7 @@ review: proceed
 status: running
 review_at: 2026-10-25T054427Z
 review_companions: null
-stage: implemented
+stage: dispatched
 claimed_at: 2026-10-25T054427Z
 base_sha: a3136ce5805b8fcc8f1c58fdd3500b1d54aeb06e
 base_blob: e7b58542dc954a2a306648904dbd486bda0c417b
@@ -81,6 +81,8 @@ submission_blob: f8b86798e27c264fb4b8a7bea2e7c97d8c086d8f
 lint_warnings: 44
 attempt_file: 2026-10-25T084641Z-check-sliding-cluster-c4-decode32-s2-k-encode-match.md
 prepared_at: 2026-10-25T084641Z
+job: 7c04214e90354dfa
+dispatched_at: 2026-10-25T084656Z
 ---
 
 # sliding-cluster-c4-decode32-s2-k-encode-match
