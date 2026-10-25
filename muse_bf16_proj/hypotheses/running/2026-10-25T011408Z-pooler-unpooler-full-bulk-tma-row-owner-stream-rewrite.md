@@ -106,7 +106,7 @@ review: proceed
 status: running
 review_at: 2026-10-25T012031Z
 review_companions: null
-stage: claimed
+stage: implemented
 claimed_at: 2026-10-25T012032Z
 base_sha: 0a2ef67eeb9be9dce45fed1c5dd5f4e4ba19537c
 base_blob: a8bb42ac483318e9fbc84bc7826a27b7a704d1fb
@@ -115,6 +115,12 @@ worktree: .worktrees/muse_bf16_proj/pooler-unpooler-full-bulk-tma-row-owner-stre
 mode: null
 restack_of: null
 stale_base: null
+implemented_at: 2026-10-25T013044Z
+impl_commit: 8ba8624df9248fb986052e4a67ab8e9a96a9770d
+submission_sha256: e3be58e99a878b9745064dffce48610469ac7a3514a4d4cb17fa29f220387e98
+norm_sha256: 8351dff8dad39fc74cd23459227806d7ffece8ede107bd30fd917439f39f7225
+submission_blob: d2ef0372de1f177e26ce1a1a4f578a993b4fa98c
+lint_warnings: 9
 ---
 
 # pooler-unpooler-full-bulk-tma-row-owner-stream-rewrite
@@ -177,3 +183,68 @@ No companion is needed, and none would be readable sooner than the in-run diagno
 - Is m=32 L2->SM bound by the full-x re-read? Compare full-kernel cold times at m=1/16/32 against pure-read. A widening gap with m confirms it and makes x multicast (cluster of 2-4 sharing x) the stage-2 lever.
 - Does one producer lane issuing 1 weight copy + m x-row copies per slot keep up at m=32 (33 bulk ops per 16 KB of weight)? If the full kernel lags pure-read even at m=8, split x issue across a second producer lane.
 
+
+## Implementation notes
+
+Edited only `muse_bf16_proj/submission.py` in the worktree (+568 lines, nothing removed): one new block before `prepare()`, a `_bulk_prepare(state)` call at the end of `prepare()`, and a route at the top of `kernel_fn`'s shape gate. No GPU or nvcc on this node, so none of it has been compiled or run.
+
+**Kernel** (`load_inline`, name `okc_bf16_bulk_rowown_s1`, `-O3 -lineinfo -std=c++17`; plain sm_90 instructions only: mma.sync, ldmatrix, cp.async.bulk, mbarrier, so no 90a-only PTX and no `__CUDA_ARCH_FEAT_SM90_ALL` guard; an `#else` sets error word 3):
+- Grid 128 CTAs, 1 CTA/SM, 160 threads. Pooler R=32 rows/CTA (K=8192), unpooler R=64 rows/CTA (K=4096); both stream 512 KB/CTA as 32 chunks of 16 KB.
+- Warp 0 is the producer: lane 0 waits on the empty barrier and arms `expect_tx`; one lane issues the 16 KB weight copy and lanes 0..m-1 each issue one x-row copy (512 B pooler / 256 B unpooler). The x issue is spread across lanes already (the review's open question on a second producer lane). 6-stage ring, slot = 16 KB + NT x (CKK*2+16) B; max 199,936 B dynamic smem (pooler NT=32).
+- Warps 1-4 are consumers, each owning a quarter of every chunk's K (k16 steps), `mma.sync.m16n8k16` with weight as A (ldmatrix x4, swizzled) and x as B (ldmatrix x2/x4 from the 16 B-padded row stride). Final: the four partials are summed in fixed order via smem (aliasing the quiescent ring) and stored once as bf16. No split-K, workspace, ticket, memset: one graph node.
+- NT = 8/16/32 for pooler, 16/32 for unpooler (m <= 8 unpooler is the n=1024 slice and is not routed).
+- Every mbarrier wait is bounded (globaltimer, 0.5 s) and sets error word 1 (producer) or 2 (consumer), then the warp leaves its loop; no hang.
+- Copies are plain `cp.async.bulk...mbarrier::complete_tx::bytes`; no createpolicy / L2::cache_hint.
+
+**Repack** (prepare): `Wt[cta][kblock][row][64 k]`, 16 B segments swizzled `seg ^ (row & 7)`. A pure permutation of bf16 values; prepare verifies the inverse is bit-exact (`torch.equal` on int16 views) and raises (route off) otherwise.
+
+**Review fixes applied (the review wins over the spec):**
+- Incumbents restated to master run 1602a4e947e64090: pooler m=1/8/16 splitk kernel 19.0/19.3/19.5 us, pooler m=32 swapab 20.5, unpooler m=16 nvjet 18.5, unpooler m=32 swapab 18.9 (the spec's 19.3 / 18.7 / 20.7 are the restack's). **M2 restated: pooler m=1 <= 18.5 us and unpooler m=16 <= 18.0 us** (spec said <= 18.3 against 19.3). M3 (pooler m=1/8/16 <= 16.5) unchanged.
+- In-run pure-read kill gate kept: `BULK_READ_GATE_TBS = 3.8`, cold-L2, per layer; below it that layer's route is DISABLED and prints `KILL-GATE ... MISS`.
+- Added the strided pure-read diagnostic: MODE 2 reads the ORIGINAL `[N][K]` weight as R row segments of CKK*2 B at stride K*2 B per chunk (512 B at 16 KB pooler, 256 B at 8 KB unpooler), same ring and bulk issue. The log line prints both rates and "repack is the lever" vs "repack is NOT the lever".
+- m=32 expected to lag (each CTA reads all of x from L2). prepare() prints, per shape, bulk cold time, pure-read time, the gap (a gap widening with m confirms the x re-read), master's path time on the same cold-L2 harness, and the run-1602 kernel time. Pooler m in 1/8/16/32; unpooler m in 16/32.
+- x chunk is not contiguous in global: done as m row copies per slot (not a 2-D tensor map). Columns >= m in the slot are never written; commented in the code as harmless because MMA columns are independent and never stored.
+- Own extension name, own gate constants (`BULK_POOLER_MIN_M/MAX_M = 1/32`, `BULK_UNPOOLER_MIN_M/MAX_M = 9/32`), not derived from the combo's or swap-AB's bounds.
+- `TORCH_CUDA_ARCH_LIST=9.0a` set around `load_inline` in try/finally and restored (popped if it was unset); the arch flags torch passes are printed.
+- Self-check launches announced (`LAUNCH ... about to run`) before, `torch.cuda.synchronize()` + `DONE ... error word` after, for each of a random launch and a probe launch per m (pooler m in 1,7,8,16,32; unpooler 9,16,32). Probe: x row 0 one-hot 0.5, row must equal the weight column within 1e-4; random rel L2 <= 3e-3 vs `x.double() @ W.double().T`; finite; error word 0.
+
+**Deviations / choices:** (1) The kill gate is on each layer's own pure-read rate; there is no extra gate against master's time, so a slower-than-master kernel still routes (keeps the result readable; the printed TIME lines show it). (2) Prepare timings are eager cold-L2 events (flush enqueued before start event) and undercount the judge profile by ~20-25% (LESSONS); read them to rank, not as the judged number. (3) The pure-read modes use the NT=8 instance (x unused).
+
+**Biggest risks:** first-ever compile of this kernel (not compiled here: template/PTX typos are possible, which lands on master via `_bulk_build` -> DISABLED); mbarrier/bulk-copy semantics faulting in the self-check (a fault poisons the context, so run as `okc check`); x L2 re-read at m=32; contiguity may not be the lever (the strided pure-read says).
+
+## Rules check
+
+Checked against `git -C .worktrees/muse_bf16_proj/pooler-unpooler-full-bulk-tma-row-owner-stream-rewrite diff` (additions only, +568 lines in muse_bf16_proj/submission.py):
+
+- [x] CUDA-graph capturable: `kernel_fn` reaches only `_bulk_route_ok` (cfg/shape/alignment checks) and `_bulk_forward` (one `torch.empty` for the output and one launch on the current stream); all sync, `.item()`, events and prints are in `_bulk_prepare` / `_bulk_median_us`, which `kernel_fn` cannot reach. The kernel's error flag is written on device, never read in the timed call. No allocation or control flow on input values.
+- [x] Nothing derived from `data` is cached across calls: state holds only weight-derived tensors (repack), a device error word and a dummy buffer; `prepare()` self-check inputs are synthetic.
+- [x] Weights: repacked losslessly in `prepare()` only; the bf16 permutation is verified bit-exact in `_bulk_repack`; no precision change (BF16 stays BF16, fp32 accumulation inside the kernel).
+- [x] Activations BF16 where SGLang keeps BF16: x and output bf16, fp32 accumulate.
+- [x] n/a: attention rule; this problem is dense projections and every key/row is computed (no skipping).
+- [x] No timing patches, harness frames/I/O/secrets, module edits, reference import, subprocess calls or network: only `load_inline` build code; the source text avoids the lint's process/network words; `TORCH_CUDA_ARCH_LIST` is set and restored around the build.
+- [x] All work happens inside the timed call (one kernel launch computes the full GEMM); no output caching or replay.
+- [x] First line marker `# okc: problem=muse_bf16_proj` kept; no triton.autotune added.
+- [x] Fallback: any build error, self-check miss, kill-gate miss or unsupported shape leaves `state["bulk_*"]` False and master's paths run; loud `PATH CHOSEN` lines per layer.
+
+okc_lint output (`python3 -I .claude/skills/churnsubs/bin/okc_lint.py muse_bf16_proj/submission.py --problem muse_bf16_proj`): `OK with warnings`, 0 errors; the warnings are 8 `host-sync` lines (torch.cuda.synchronize / .item() in `_bulk_prepare` and `_bulk_median_us`, "outside kernel_fn's call graph; fine in prepare()"). `py_compile` clean, `__pycache__` removed.
+
+## Pre-flight audit
+
+Audited 2026-10-25 (model opus) by reading only; this node has no GPU or nvcc. **Verdict: dispatch-with-fixes.**
+
+Checked and found sound:
+- mbarrier protocol: the full barrier's count is 1, armed by lane 0's `arrive.expect_tx` before any copy is issued. tx = 16384 + m*CKK*2 matches exactly the bytes MODE 0 issues, and 16384 matches MODE 1/2. The empty barrier's count is 4, one arrive per consumer warp. The producer starts at parity 1 and the consumers at 0, flipping every 6 chunks. Consumers wait on every full phase before `__syncthreads`, so the ring is quiescent before the scratch alias reuses it. Read-then-bulk-overwrite needs no `fence.proxy.async`. Every wait is bounded.
+- Alignment: every slot stride is a multiple of 128 B and the x row stride is 528/272 B. Every bulk size and offset is a multiple of 16. Max smem is 199,936 B, under 227 KB.
+- Fragments: the A ldmatrix.x4 matrix order and the `seg ^ (row&7)` swizzle match the repack, whose inverse prepare verifies bit-exact. The B ldmatrix x2/x4 and the C accumulator mapping match m16n8k16 row.col.
+- Routing: bulk runs ahead of master's paths (pooler split-K and swap-AB; unpooler swap-AB and cuBLAS), as the spec says. The unpooler slice (n=1024, m<=8, so the m=5 test), m>=33, and the m=130 and m=1000 tests keep master.
+- kernel_fn: one `torch.empty` and one launch, no sync, nothing cached from `data`. The arch list is restored in `finally`. There is no ptxVersion gate.
+
+Fixes:
+1. Changed `mov.u64 %0, %globaltimer;` to `%%globaltimer`. In operand-form inline asm a lone `%` is an operand escape, so nvcc would reject it. The whole extension would fail to build, and the route would be DISABLED for a wasted run.
+2. Made the kill gate print-only. The spec calls the pure-read a print-only diagnostic, and the milestones are judged on the profile. Disabling a self-checked route because of a marginal eager cold-L2 event time would leave the run with no kernel in the profile. That event time includes event overhead and is ~20-25% off the judge. The KILL-GATE PASS/MISS line with its line-DEAD verdict still prints.
+3. Widened the self-check to an interior m in every routed NT bucket (pooler 12 and 24, unpooler 24). Every m in 1..32 (pooler) and 9..32 (unpooler) routes, not only the ones that were self-checked.
+4. Pure-read timings now print and reset the device error word, so a pure-read timeout is visible and does not read as a slow rate.
+
+okc_lint: OK with warnings (prepare-only host syncs). py_compile clean, __pycache__ removed.
+
+Residual risk: this is the extension's first-ever nvcc compile, so a template or PTX typo would leave master's paths running via DISABLED. Pooler m=32 will likely lag because each CTA re-reads all of x from L2.
