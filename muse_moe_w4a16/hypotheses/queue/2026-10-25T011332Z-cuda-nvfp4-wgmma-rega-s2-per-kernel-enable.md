@@ -52,8 +52,11 @@ kind: rewrite
 controls_for: null
 rewrite_stage: 2
 replaces: Marlin w13+w2 (moe_wna16_marlin_gemm x2) + silu_and_mul at num_tokens >= 128
-review: required
-status: queued
+review: hold
+status: hold
+review_at: 2026-10-25T012041Z
+review_companions: null
+hold_reason: "adversarial review: Hold, and set depends_on to cuda-nvfp4-wgmma-rega-grouped-s2-finite-fix. Its valuable part, judging w13+silu and w2 independently with their own verdict lines, "
 ---
 
 # cuda-nvfp4-wgmma-rega-s2-per-kernel-enable
@@ -83,3 +86,24 @@ shape (profile top_kernels) against the incumbent and the speed-of-light floor, 
 2. at or below the incumbent kernels' time on the target shapes;
 3. within ~1.5x of the floor on the target shapes, and the headline CI clears 1.0 (promotable).
 The next stage is minted with `--kind rewrite --depends-on <this slug> --stage N+1`.
+
+## Adversarial review
+
+Reviewed 2026-10-25T012041Z by an adversarial subagent (model opus).
+
+**Verdict: hold.** Hold, and set depends_on to cuda-nvfp4-wgmma-rega-grouped-s2-finite-fix. Its valuable part, judging w13+silu and w2 independently with their own verdict lines, is merged into the finite-fix run. Its mixed Marlin/wgmma production path (bridge plus mismatched align blocks) should be minted as stage 3 only if that check shows exactly one kernel correct.
+
+### Justification
+The diagnostic idea is right. The stage 1b canary only checked `out`, so nobody knows whether w13+silu, w2, an unwritten cache3 row (torch.empty) or the norm produced the non-finite value. Judging each kernel against Marlin with Marlin-fed inputs answers that. As a separate run in parallel with finite-fix, though, it spends a second check on the same unfixed bug. Its own fix (3), smem zeroing and padding-row zero-fill, is a subset of finite-fix's. It explicitly excludes the descriptor/fragment/expect_tx fixes, so if the bug is in either GEMM's shared machinery (B descriptor, TMA swizzle, pipeline), both kernels fail here and the run measures nothing. WEAKEST LINK: the mixed production path. The wgmma path aligns at block 16 into sorted-slot h_sorted, while master's Marlin uses block_size_m 16 at bs=128 and 32 at bs=256 with route-indexed cache2. Mixing them needs either a second align or running Marlin at block 16, which detunes the incumbent row at bs=256 and confounds the M2 comparison. It also needs a gather/scatter bridge launch (2-4 us), and each mixed combination needs its own end-to-end self-check. That is a lot of new surface to build before we know which kernel is broken. Prepare-time per-kernel CUDA-event timing (now in the finite-fix review) gives the same 'time the healthy kernel' evidence without touching kernel_fn.
+
+### Confounders on the current kernel
+- marlin-block-m-two-smaller-on-postnorm: the mixed path cannot share master's block_size_m=32 align at bs=256 with the wgmma block-16 layout without a second align or a detuned Marlin. Any mixed-path timing therefore changes the incumbent Marlin row it is compared against.
+- align-parallel-per-expert-verify: same align-bypass accounting as the sibling. With two aligns in a mixed path it doubles.
+
+### Interference and A/B needs
+No ab companion. The interference is with the sibling, which shares the bug: running both in parallel duplicates the localisation. Merge step (1) (independent per-kernel verdicts and PATH CHOSEN lines, with w2 fed Marlin's cache2) into finite-fix. Re-mint step (2) (per-kernel enable in kernel_fn with a bridge) as a stage-3 hypothesis only if finite-fix's compact summary shows one kernel at rel-L2 <= 1e-2 and the other not. At that point the bridge direction is known: gather cache2 into h_sorted if only w2 passes, scatter h_sorted into cache2 if only w13 passes.
+
+### Open questions
+- If finite-fix shows both kernels correct, this hypothesis is obsolete. Archive it instead of running it.
+- If finite-fix shows exactly one kernel correct, is the healthy kernel's prepare-time speed against Marlin (discounted 20-25%) good enough to justify the bridge cost? Decide that before minting stage 3.
+
