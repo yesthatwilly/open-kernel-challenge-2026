@@ -69,10 +69,10 @@ controls_for: null
 rewrite_stage: 1
 replaces: _moe_nvfp4_gemm_kernel x2 (w13, w2) at T > 4096 (first_turn)
 review: proceed
-status: running
+status: done
 review_at: 2026-10-25T002131Z
 review_companions: null
-stage: dispatched
+stage: harvested
 claimed_at: 2026-10-25T002131Z
 base_sha: d7ccd530009419f0e32f5bd4bdae7f0fdad273a3
 base_blob: db8a3344398bca79ea5cafeb580f701c055fd475
@@ -91,6 +91,13 @@ attempt_file: 2026-10-25T003406Z-check-experts-cuda-wgmma-grouped-gemm-remeasure
 prepared_at: 2026-10-25T003406Z
 job: 6d047cdeefd94357
 dispatched_at: 2026-10-25T003418Z
+outcome: regression
+verdict_detail: regression
+speedup: 0.9400661628181909
+speedup_ci: [0.925965170375918, 0.9541671552604637]
+harvested_at: 2026-10-25T010420Z
+best_at_harvest: 1.074386115190733
+promotion: null
 ---
 
 # experts-cuda-wgmma-grouped-gemm-remeasure-sm90a-inproc
@@ -217,3 +224,31 @@ Audited 2026-10-24 by an opus subagent, by reading the code and running a numpy 
   - `open()` and `os.environ` were already used by the bf16-verify-streamk check run (job f5b1361a), and the judge's checks did not flag it.
 
 Residual risk: the kernel has never been compiled or run. A hard fault in the canary, such as an illegal instruction or address from the wgmma or bulk-copy PTX, would poison the CUDA context and fail the whole run instead of falling back. The first measurement must therefore be an `okc check`.
+
+## Result
+
+- job `6d047cdeefd94357` (check), status done, passed True, tests 5/5
+- speedup 0.9401x, 95% CI [0.9260, 0.9542], score 412102.80225236027 µs vs SGLang 387403.9 µs
+- best at harvest: {"speedup": 1.074386115190733, "ci": [1.058270323462872, 1.090501906918594], "job": "502f2eab95164781"}; base result: muse_prefill_layer/hypotheses/done/neutral/stack-tonight-five-prefill.result.json
+- **outcome: regression** (regression)
+- files: `muse_prefill_layer/hypotheses/done/regression/experts-cuda-wgmma-grouped-gemm-remeasure-sm90a-inproc.result.json`, `muse_prefill_layer/hypotheses/done/regression/experts-cuda-wgmma-grouped-gemm-remeasure-sm90a-inproc.patch`; branch `hyp/muse_prefill_layer/experts-cuda-wgmma-grouped-gemm-remeasure-sm90a-inproc`
+
+## Attribution
+
+| shape | w | base µs | hyp µs | delta | verdict |
+|---|---|---|---|---|---|
+| batch=1 ctx=80000 dist=soft layer=sliding load=turn_1 page=1 q_len=753 repeats=6 | 46 | 1101.29 | 1116.84 | 1.0006 | flat |
+| batch=1 ctx=80000 dist=soft layer=full load=turn_1 page=1 q_len=753 repeats=6 | 16 | 1529.55 | 1507.16 | 0.9983 | flat |
+| batch=4 ctx=80000 dist=soft layer=sliding load=turn_4 page=1 q_len=753 repeats=6 | 46 | 3318.71 | 3302.86 | 0.999 | flat |
+| batch=4 ctx=80000 dist=soft layer=full load=turn_4 page=1 q_len=753 repeats=6 | 16 | 4849.27 | 4931.99 | 0.9982 | flat |
+| batch=1 ctx=0 dist=soft layer=full load=first_turn page=1 q_len=16384 repeats=6 | 16 | 14705.32 | 22028.66 | 0.6746 | lost |
+| batch=1 ctx=32768 dist=soft layer=sliding load=first_turn page=1 q_len=16384 repeats=6 | 138 | 14264.64 | 21471.35 | 0.6604 | lost |
+| batch=1 ctx=32768 dist=soft layer=full load=first_turn page=1 q_len=16384 repeats=6 | 16 | 17746.69 | 25236.53 | 0.7256 | lost |
+| batch=1 ctx=65536 dist=soft layer=full load=first_turn page=1 q_len=16384 repeats=6 | 16 | 21733.75 | 29244.66 | 0.7534 | lost |
+
+lost on full first_turn; sliding first_turn. Expected hit: 0/3. Noise ±1.5%.
+
+## Follow-ups
+
+- rewrite stage 1 of `_moe_nvfp4_gemm_kernel x2 (w13, w2) at T > 4096 (first_turn)`: read the replaced kernels' own us per shape (profile top_kernels) against the incumbent and the floor, and check which Milestone it reached. The next stage is `/hypothesize muse_prefill_layer "<what to fix or tune>" --kind rewrite --depends-on experts-cuda-wgmma-grouped-gemm-remeasure-sm90a-inproc --stage 2`; a slow or failed first cut is the expected start, not a do-not-retry.
+

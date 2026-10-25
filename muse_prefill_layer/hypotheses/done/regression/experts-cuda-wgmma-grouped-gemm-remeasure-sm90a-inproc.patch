@@ -1,0 +1,993 @@
+diff --git a/muse_prefill_layer/submission.py b/muse_prefill_layer/submission.py
+index db8a334..113e7ac 100644
+--- a/muse_prefill_layer/submission.py
++++ b/muse_prefill_layer/submission.py
+@@ -35,7 +35,12 @@ Everything else is SGLang's pipeline as baseline.py composes it:
+                                    experts-triton-w4a16-inkernel-fp4 and -swapab-reglhs) a Triton
+                                    fused_moe_kernel, computed swap-AB, that dequantizes the
+                                    NVFP4 tiles (nibble-reordered in prepare) in registers as the
+-                                   dot's LHS, in place of moe_wna16_marlin_gemm), silu_and_mul, Triton
++                                   dot's LHS, in place of moe_wna16_marlin_gemm; above 4096 tokens, when
++                                   prepare()'s self-check passes, a CUDA sm_90a wgmma kernel with the
++                                   same contract instead, hypothesis
++                                   experts-cuda-wgmma-mixed-input-grouped-gemm, re-measured on this master
++                                   with an sm_90a-only build as -grouped-gemm-remeasure-sm90a-inproc),
++                                   silu_and_mul, Triton
+                                    post-expert norm weighted sum; then the all-reduce (identity)
+   unpooler                         the whole weight (bf16_gemm_dispatch)
+   FusedPostNormResidualPreNorm     post-FFN norm + residual gate + the next layer's pre-attention
+@@ -48,6 +53,8 @@ Differs from SGLang (as baseline.py does):
+ 
+ from typing import TypedDict
+ 
++import os
++import time
+ import types
+ 
+ import nvfp4
+@@ -364,6 +371,552 @@ def _nvfp4_moe_gemm(a, w, sf, gs, out, sorted_ids, expert_ids, n_padded, top_k,
+     return out
+ 
+ 
++# --- CUDA sm_90a mixed-input grouped GEMM (hypothesis experts-cuda-wgmma-mixed-input-grouped-gemm, stage 1;
++# ported onto master as experts-cuda-wgmma-grouped-gemm-remeasure-sm90a-inproc: sm_90a-only build, guarded
++# wgmma, in-process canary, master's 32-local-expert align and its w2 zero-store flag) ---
++# Above MARLIN_MAX_TOKENS (the first turn) both expert GEMMs run a hand-written Hopper kernel in place of
++# _moe_nvfp4_gemm_kernel, with the same contract as _nvfp4_moe_gemm (out[sorted id] = a[sorted id // top_k] @
++# dequant(w[block expert]).T, -1 blocks zero-stored only when asked, blocks past n_padded untouched).
++#   * Persistent: one CTA per SM, 288 threads. Warps 0-3 and 4-7 are two COOPERATIVE consumer warpgroups:
++#     both read the same 256-token activation tile and take rows 0-63 / 64-127 of a 128-row weight tile
++#     (wgmma m64n256k16 each, fp32 accumulators in registers). Warp 8 is the producer.
++#   * Work item = (256-token block, 128-row weight tile); the order is a static function of the item index
++#     computed on the device (master's GROUP_SIZE_T grouping, token blocks fastest), bounded by the device
++#     n_padded. Items whose block expert is -1 never touch the pipeline.
++#   * Weights: prepare() lays every (expert, 128-row tile, 64-k chunk) block out contiguously, 4096 code bytes
++#     in each consumer thread's wgmma A-fragment order (16 bytes = its 32 nibbles) then 512 e4m3 scale bytes
++#     (8 per 4-thread quad), and the producer fetches it with ONE 1-D cp.async.bulk (4608 B, mbarrier tx).
++#     Activation rows are gathered by cp.async 16 B (zero-fill for padding slots) into the canonical
++#     128B-swizzled K-major wgmma B layout. 5 stages, full / empty mbarriers.
++#   * Consumers: per 64-k chunk one LDS.128 of codes and one LDS.64 of scales per thread, E2M1 -> BF16 by
++#     master's bit placement (E2M1 * 2^-126), times the e4m3 block scale * 2^119 by fma.rn.bf16x2 (no ftz:
++#     the +-0.5 codes are bf16 subnormals; no fast-math anywhere in this build), then 4 RS wgmma
++#     (A = the dequantized registers). Double-buffered A fragments: chunk c is dequantized and issued while
++#     chunk c-1's wgmma group is in flight, and a buffer is rewritten only after wgmma.wait_group 1 has
++#     retired the group that read it. Epilogue: acc * global scale * 2^7 -> bf16, stored by sorted id.
++#   * Every mbarrier wait is bounded (~2 s of clock64); a timeout sets an error bit that prepare()'s
++#     self-check reads, and the CTA drains instead of hanging the run.
++CUDA_BLOCK_T = 256        # token tile (wgmma N); moe_align_block_size pads to it, as the Triton config does
++CUDA_TILE_N = 128         # weight rows per work item (64 per consumer warpgroup)
++CUDA_CHUNK_K = 64         # k per pipeline stage (4 wgmma k16 steps)
++CUDA_CODE_BYTES = CUDA_TILE_N * CUDA_CHUNK_K // 2       # 4096
++CUDA_SCALE_BYTES = CUDA_TILE_N * CUDA_CHUNK_K // 16     # 512
++CUDA_WBLK_BYTES = CUDA_CODE_BYTES + CUDA_SCALE_BYTES    # 4608
++
++_WGMMA_SRC = (
++    "__device__ __forceinline__ void wgmma_m64n256k16_rs(float (&d)[128], uint32_t a0, uint32_t a1,\n"
++    "                                                    uint32_t a2, uint32_t a3, uint64_t desc) {\n"
++    "#if defined(__CUDA_ARCH_FEAT_SM90_ALL)\n"
++    "  asm volatile(\n"
++    "    \"{\\n\"\n"
++    "    \".reg .pred p;\\n\"\n"
++    "    \"setp.ne.b32 p, %133, 0;\\n\"\n"
++    "    \"wgmma.mma_async.sync.aligned.m64n256k16.f32.bf16.bf16 \"\n"
++    "    \"{" + ", ".join(f"%{i}" for i in range(128)) + "}, \"\n"
++    "    \"{%128, %129, %130, %131}, \"\n"
++    "    \"%132, p, 1, 1, 0;\\n\"\n"
++    "    \"}\\n\"\n"
++    "    : " + ", ".join(f"\"+f\"(d[{i}])" for i in range(128)) + "\n"
++    "    : \"r\"(a0), \"r\"(a1), \"r\"(a2), \"r\"(a3), \"l\"(desc), \"r\"(1)\n"
++    "    : \"memory\");\n"
++    "#endif\n"
++    "}\n"
++)
++
++_CUDA_EXPERTS_CPP = r"""
++#include <torch/extension.h>
++#include <vector>
++void nvfp4_wgmma_gemm(torch::Tensor a, torch::Tensor wblk, torch::Tensor gs, torch::Tensor out,
++                      torch::Tensor sorted_ids, torch::Tensor expert_ids, torch::Tensor n_padded, torch::Tensor err,
++                      int64_t top_k, int64_t num_valid, int64_t zero_nonlocal, int64_t grid);
++std::vector<int64_t> nvfp4_wgmma_attrs();
++"""
++
++_CUDA_EXPERTS_CUDA = r"""
++#include <torch/extension.h>
++#include <ATen/cuda/CUDAContext.h>
++#include <c10/cuda/CUDAException.h>
++#include <cuda_runtime.h>
++#include <stdint.h>
++#include <vector>
++
++#define TILE_N 128
++#define TILE_T 256
++#define CHUNK_K 64
++#define STAGES 5
++#define B_BYTES (TILE_T * CHUNK_K * 2)          /* 32768: [256 tokens][64 k] bf16, 128B-swizzled */
++#define CODE_BYTES (TILE_N * CHUNK_K / 2)       /* 4096 */
++#define SCALE_BYTES (TILE_N * CHUNK_K / 16)     /* 512 */
++#define WBLK_BYTES (CODE_BYTES + SCALE_BYTES)   /* 4608 */
++#define STAGE_BYTES 37888                       /* B + weights, rounded up to 1024 (swizzle atom alignment) */
++#define BAR_OFFSET (STAGES * STAGE_BYTES)
++#define SMEM_BYTES (BAR_OFFSET + 128 + 1024)    /* + barriers/abort flag + alignment slack */
++#define GROUP_T 4
++#define N_THREADS 288
++#define PRODUCER_WARP 8
++#define FULL_COUNT 33                           /* 32 producer lanes (cp.async noinc) + 1 expect_tx arrive */
++#define EMPTY_COUNT 8                           /* one arrive per consumer warp */
++#define WAIT_TIMEOUT_CYCLES 4000000000ll
++
++static_assert(STAGE_BYTES >= B_BYTES + WBLK_BYTES, "stage too small");
++static_assert(STAGE_BYTES % 1024 == 0, "stage must keep the 1024 B swizzle alignment");
++static_assert(SMEM_BYTES <= 232448, "over the 227 KB dynamic shared memory limit");
++
++__device__ __forceinline__ uint32_t smem_u32(const void* p) {
++  return static_cast<uint32_t>(__cvta_generic_to_shared(p));
++}
++__device__ __forceinline__ void mbar_init(uint32_t bar, uint32_t count) {
++  asm volatile("mbarrier.init.shared::cta.b64 [%0], %1;" :: "r"(bar), "r"(count) : "memory");
++}
++__device__ __forceinline__ bool mbar_try_wait(uint32_t bar, uint32_t parity) {
++  uint32_t ok;
++  asm volatile(
++      "{\n"
++      ".reg .pred p;\n"
++      "mbarrier.try_wait.parity.shared::cta.b64 p, [%1], %2;\n"
++      "selp.u32 %0, 1, 0, p;\n"
++      "}\n"
++      : "=r"(ok) : "r"(bar), "r"(parity) : "memory");
++  return ok != 0;
++}
++// Bounded wait: false after a timeout (error bit set, abort flag raised) or once another role aborted.
++__device__ __forceinline__ bool mbar_wait(uint32_t bar, uint32_t parity, volatile int* abort_flag, int* err, int code) {
++  if (mbar_try_wait(bar, parity)) return true;
++  const long long t0 = clock64();
++  while (true) {
++    if (mbar_try_wait(bar, parity)) return true;
++    if (*abort_flag) return false;
++    if (clock64() - t0 > WAIT_TIMEOUT_CYCLES) {
++      *abort_flag = 1;
++      atomicOr(err, code);
++      return false;
++    }
++  }
++}
++__device__ __forceinline__ void mbar_arrive(uint32_t bar) {
++  asm volatile(
++      "{\n"
++      ".reg .b64 state;\n"
++      "mbarrier.arrive.shared::cta.b64 state, [%0];\n"
++      "}\n"
++      :: "r"(bar) : "memory");
++}
++__device__ __forceinline__ void mbar_arrive_expect_tx(uint32_t bar, uint32_t bytes) {
++  asm volatile("mbarrier.arrive.expect_tx.shared::cta.b64 _, [%0], %1;" :: "r"(bar), "r"(bytes) : "memory");
++}
++__device__ __forceinline__ void bulk_g2s(uint32_t dst, const void* src, uint32_t bytes, uint32_t bar) {
++  asm volatile("cp.async.bulk.shared::cluster.global.mbarrier::complete_tx::bytes [%0], [%1], %2, [%3];"
++               :: "r"(dst), "l"(src), "r"(bytes), "r"(bar) : "memory");
++}
++__device__ __forceinline__ void cp_async16(uint32_t dst, const void* src, uint32_t src_bytes) {
++  asm volatile("cp.async.cg.shared.global [%0], [%1], 16, %2;" :: "r"(dst), "l"(src), "r"(src_bytes) : "memory");
++}
++__device__ __forceinline__ void cp_async_arrive_noinc(uint32_t bar) {
++  asm volatile("cp.async.mbarrier.arrive.noinc.shared::cta.b64 [%0];" :: "r"(bar) : "memory");
++}
++__device__ __forceinline__ void fence_proxy_async() {
++  asm volatile("fence.proxy.async.shared::cta;" ::: "memory");
++}
++__device__ __forceinline__ uint4 lds128(uint32_t addr) {
++  uint4 v;
++  asm volatile("ld.shared.v4.u32 {%0, %1, %2, %3}, [%4];" : "=r"(v.x), "=r"(v.y), "=r"(v.z), "=r"(v.w) : "r"(addr));
++  return v;
++}
++__device__ __forceinline__ uint2 lds64(uint32_t addr) {
++  uint2 v;
++  asm volatile("ld.shared.v2.u32 {%0, %1}, [%2];" : "=r"(v.x), "=r"(v.y) : "r"(addr));
++  return v;
++}
++// sm_90a-only PTX (wgmma) sits under __CUDA_ARCH_FEAT_SM90_ALL: a stray plain compute_90 pass still compiles,
++// and its kernel only raises error bit 4 (see _nvfp4_wgmma_grouped_kernel), which the self-check reads.
++#if defined(__CUDA_ARCH_FEAT_SM90_ALL)
++__device__ __forceinline__ void wg_fence() { asm volatile("wgmma.fence.sync.aligned;" ::: "memory"); }
++__device__ __forceinline__ void wg_commit() { asm volatile("wgmma.commit_group.sync.aligned;" ::: "memory"); }
++template <int N>
++__device__ __forceinline__ void wg_wait() { asm volatile("wgmma.wait_group.sync.aligned %0;" :: "n"(N) : "memory"); }
++#else
++__device__ __forceinline__ void wg_fence() {}
++__device__ __forceinline__ void wg_commit() {}
++template <int N>
++__device__ __forceinline__ void wg_wait() {}
++#endif
++__device__ __forceinline__ void fence_acc(float (&d)[128]) {
++#pragma unroll
++  for (int i = 0; i < 128; ++i) asm volatile("" : "+f"(d[i]) :: "memory");
++}
++__device__ __forceinline__ void fence_a(uint32_t (&a)[16]) {
++#pragma unroll
++  for (int i = 0; i < 16; ++i) asm volatile("" : "+r"(a[i]) :: "memory");
++}
++
++@@WGMMA@@
++
++// E2M1 codes at bits 0-3 (low half) and 16-19 (high half) -> two BF16 = E2M1 * 2^-126 (master's placement:
++// magnitude bits to bf16 bits 8..6, sign to 15; e = 0 codes are bf16 subnormals).
++__device__ __forceinline__ uint32_t e2m1_pair(uint32_t x) {
++  return ((x & 0x00070007u) << 6) | ((x & 0x00080008u) << 12);
++}
++// a * b exactly (both factors carry <= 4 significant bits), subnormals kept: plain fma.rn, no .ftz.
++__device__ __forceinline__ uint32_t bf16x2_mul(uint32_t a, uint32_t b) {
++  uint32_t d;
++  asm("fma.rn.bf16x2 %0, %1, %2, %3;" : "=r"(d) : "r"(a), "r"(b), "r"(0x80008000u));
++  return d;
++}
++// e4m3 byte -> (scale * 2^119) as BF16 in both halves. Exact: 4 significant bits; 448 * 2^119 < bf16 max.
++__device__ __forceinline__ uint32_t scale_pair(uint32_t byte) {
++  const uint32_t e = (byte >> 3) & 0xFu, m = byte & 7u;
++  const float sub = static_cast<float>(m) * __uint_as_float((110u + 127u) << 23);   // m * 2^-9 * 2^119
++  uint32_t bits = e ? (((e + 239u) << 23) | (m << 20)) : __float_as_uint(sub);     // 2^(e-7)(1+m/8) * 2^119
++  bits = (bits >> 16) | ((byte & 0x80u) << 8);
++  return bits | (bits << 16);
++}
++// One thread's A fragments for one 64-k chunk (4 k16 steps x 4 registers) from its 16 code bytes and its
++// quad's 8 scale bytes. Word s = k16 step s; register j of step s holds nibbles j (low) and j + 4 (high):
++// j = 0: row r, k 2t,2t+1; j = 1: row r+8, same k; j = 2: row r, k 2t+8,2t+9; j = 3: row r+8, same k.
++// Scale byte 2s + h = row r + 8h, step s.
++__device__ __forceinline__ void dequant_chunk(uint32_t (&A)[16], uint4 q, uint2 sc) {
++  const uint32_t w[4] = {q.x, q.y, q.z, q.w};
++  const uint32_t sw[2] = {sc.x, sc.y};
++#pragma unroll
++  for (int s = 0; s < 4; ++s) {
++    const uint32_t word = sw[s >> 1] >> ((s & 1) * 16);
++    const uint32_t s_lo = scale_pair(word & 0xFFu);
++    const uint32_t s_hi = scale_pair((word >> 8) & 0xFFu);
++    A[4 * s + 0] = bf16x2_mul(e2m1_pair(w[s]), s_lo);
++    A[4 * s + 1] = bf16x2_mul(e2m1_pair(w[s] >> 4), s_hi);
++    A[4 * s + 2] = bf16x2_mul(e2m1_pair(w[s] >> 8), s_lo);
++    A[4 * s + 3] = bf16x2_mul(e2m1_pair(w[s] >> 12), s_hi);
++  }
++}
++__device__ __forceinline__ uint16_t f32_to_bf16(float x) {
++  uint16_t h;
++  asm("cvt.rn.bf16.f32 %0, %1;" : "=h"(h) : "f"(x));
++  return h;
++}
++// Static work order (master's GROUP_SIZE_T grouping): token blocks fastest within a group of GROUP_T, so
++// neighbouring CTAs share a weight tile through L2.
++__device__ __forceinline__ void item_coords(int item, int num_t, int nt, int& pid_t, int& pid_w) {
++  const int per_group = GROUP_T * nt;
++  const int group = item / per_group;
++  const int first_t = group * GROUP_T;
++  const int gsz = min(num_t - first_t, GROUP_T);
++  const int r = item - group * per_group;
++  pid_t = first_t + r % gsz;
++  pid_w = r / gsz;
++}
++
++// Wait for a stage, dequantize this thread's fragments into A, issue the chunk's 4 wgmma and commit.
++__device__ __forceinline__ bool issue_chunk(float (&acc)[128], uint32_t (&A)[16], uint32_t base, int stage,
++                                            uint32_t phase, uint32_t bar_full, int wg, int wtid,
++                                            volatile int* abort_flag, int* err) {
++  if (!mbar_wait(bar_full + 8 * stage, phase, abort_flag, err, 1)) return false;
++  fence_proxy_async();  // cp.async (generic proxy) writes -> wgmma (async proxy) reads
++  const uint32_t sb = base + stage * STAGE_BYTES;
++  const uint4 q = lds128(sb + B_BYTES + wg * (CODE_BYTES / 2) + wtid * 16);
++  const uint2 sc = lds64(sb + B_BYTES + CODE_BYTES + wg * (SCALE_BYTES / 2) + (wtid >> 2) * 8);
++  dequant_chunk(A, q, sc);
++  // K-major B, 128B swizzle: start address >> 4, LBO 1 (unused), SBO 1024 B (8-row groups), layout 1 (B128).
++  const uint64_t desc = (static_cast<uint64_t>(1024 >> 4) << 32) | (1ull << 62) | (1ull << 16) |
++                        static_cast<uint64_t>((sb >> 4) & 0x3FFFu);
++  wg_fence();
++  wgmma_m64n256k16_rs(acc, A[0], A[1], A[2], A[3], desc);
++  wgmma_m64n256k16_rs(acc, A[4], A[5], A[6], A[7], desc + 2);     // + 32 B = k + 16
++  wgmma_m64n256k16_rs(acc, A[8], A[9], A[10], A[11], desc + 4);
++  wgmma_m64n256k16_rs(acc, A[12], A[13], A[14], A[15], desc + 6);
++  wg_commit();
++  return true;
++}
++__device__ __forceinline__ void release_stage(uint32_t bar_empty, int stage, int lane) {
++  __syncwarp();
++  if (lane == 0) mbar_arrive(bar_empty + 8 * stage);
++}
++__device__ __forceinline__ void advance(int& stage, uint32_t& phase) {
++  if (++stage == STAGES) { stage = 0; phase ^= 1u; }
++}
++
++// extern "C": the profile row reads the bare name _nvfp4_wgmma_grouped_kernel (no C++ mangling).
++extern "C" __global__ void __launch_bounds__(N_THREADS, 1)
++_nvfp4_wgmma_grouped_kernel(const uint16_t* __restrict__ a, const uint8_t* __restrict__ wblk,
++                            const float* __restrict__ gsv, uint16_t* __restrict__ out,
++                            const int* __restrict__ sorted_ids, const int* __restrict__ expert_ids,
++                            const int* __restrict__ n_padded_ptr, int* __restrict__ err,
++                            int N, int K, int top_k, int num_valid, int em_blocks, int zero_nonlocal) {
++#if !defined(__CUDA_ARCH_FEAT_SM90_ALL)
++  // Not the sm_90a image: no wgmma here. Flag it (bit 4) and do nothing; prepare() turns the path OFF.
++  if (threadIdx.x == 0 && blockIdx.x == 0) atomicOr(err, 4);
++#else
++  extern __shared__ uint8_t smem_raw[];
++  const uint32_t raw = smem_u32(smem_raw);
++  const uint32_t base = (raw + 1023u) & ~1023u;
++  uint8_t* base_ptr = smem_raw + (base - raw);
++  const uint32_t bar_full = base + BAR_OFFSET;
++  const uint32_t bar_empty = base + BAR_OFFSET + 8 * STAGES;
++  volatile int* abort_flag = reinterpret_cast<volatile int*>(base_ptr + BAR_OFFSET + 16 * STAGES);
++  const int tid = threadIdx.x, warp = tid >> 5, lane = tid & 31;
++  if (tid == 0) {
++    for (int s = 0; s < STAGES; ++s) {
++      mbar_init(bar_full + 8 * s, FULL_COUNT);
++      mbar_init(bar_empty + 8 * s, EMPTY_COUNT);
++    }
++    *abort_flag = 0;
++    asm volatile("fence.mbarrier_init.release.cluster;" ::: "memory");
++  }
++  __syncthreads();
++
++  const int nt = N / TILE_N, kc = K / CHUNK_K;
++  int num_t = n_padded_ptr[0] / TILE_T;
++  num_t = max(0, min(num_t, em_blocks));
++  const int total = num_t * nt;
++
++  if (warp == PRODUCER_WARP) {
++    int stage = 0;
++    uint32_t phase = 0;
++    const int j = lane & 7;
++    for (int item = blockIdx.x; item < total; item += gridDim.x) {
++      int pid_t, pid_w;
++      item_coords(item, num_t, nt, pid_t, pid_w);
++      const int e = expert_ids[pid_t];
++      if (e < 0) continue;  // consumers skip the pipeline for this item too
++      int src_row[TILE_T / 4];
++#pragma unroll
++      for (int i = 0; i < TILE_T / 4; ++i) {
++        const int slot = sorted_ids[pid_t * TILE_T + (lane >> 3) + 4 * i];
++        src_row[i] = slot < num_valid ? slot / top_k : -1;
++      }
++      const uint8_t* wsrc = wblk + (static_cast<size_t>(e) * nt + pid_w) * static_cast<size_t>(kc) * WBLK_BYTES;
++#pragma unroll 1
++      for (int c = 0; c < kc; ++c) {
++        if (!mbar_wait(bar_empty + 8 * stage, phase ^ 1u, abort_flag, err, 2)) return;
++        const uint32_t sb = base + stage * STAGE_BYTES;
++        if (lane == 0) {
++          mbar_arrive_expect_tx(bar_full + 8 * stage, WBLK_BYTES);
++          bulk_g2s(sb + B_BYTES, wsrc + static_cast<size_t>(c) * WBLK_BYTES, WBLK_BYTES, bar_full + 8 * stage);
++        }
++#pragma unroll
++        for (int i = 0; i < TILE_T / 4; ++i) {
++          const int n = (lane >> 3) + 4 * i;   // token row of the tile; 8 lanes cover its 128 B
++          const int r = src_row[i];
++          const uint16_t* src = a + static_cast<size_t>(r < 0 ? 0 : r) * K + c * CHUNK_K + j * 8;
++          cp_async16(sb + n * 128 + ((j ^ (n & 7)) << 4), src, r < 0 ? 0u : 16u);
++        }
++        cp_async_arrive_noinc(bar_full + 8 * stage);
++        advance(stage, phase);
++      }
++    }
++    // drain before exiting: pending cp.async noinc arrivals must not depend on a live thread
++    asm volatile("cp.async.wait_all;" ::: "memory");
++    return;
++  }
++
++  // Consumers: warpgroup wg takes weight rows wg*64 .. wg*64+63 of the item's 128-row tile.
++  const int wg = warp >> 2, wtid = tid & 127, wwarp = warp & 3;
++  const int g = lane >> 2, t = lane & 3;
++  int stage = 0;
++  uint32_t phase = 0;
++  float acc[128];
++  uint32_t A0[16], A1[16];
++  for (int item = blockIdx.x; item < total; item += gridDim.x) {
++    int pid_t, pid_w;
++    item_coords(item, num_t, nt, pid_t, pid_w);
++    const int e = expert_ids[pid_t];
++    const int t0 = pid_t * TILE_T;
++    const int row = pid_w * TILE_N + wg * 64 + wwarp * 16 + g;   // accumulator rows row and row + 8
++    if (e < 0) {
++      if (zero_nonlocal) {
++#pragma unroll 4
++        for (int b = 0; b < TILE_T / 8; ++b) {
++#pragma unroll
++          for (int u = 0; u < 2; ++u) {
++            const int slot = sorted_ids[t0 + 8 * b + 2 * t + u];
++            if (slot < num_valid) {
++              uint16_t* o = out + static_cast<size_t>(slot) * N + row;
++              o[0] = 0;
++              o[8] = 0;
++            }
++          }
++        }
++      }
++      continue;
++    }
++#pragma unroll
++    for (int i = 0; i < 128; ++i) acc[i] = 0.f;
++    fence_acc(acc);
++    if (!issue_chunk(acc, A0, base, stage, phase, bar_full, wg, wtid, abort_flag, err)) { wg_wait<0>(); return; }
++    int prev = stage;
++    advance(stage, phase);
++#pragma unroll 1
++    for (int c = 1; c < kc; c += 2) {
++      // chunk c into A1 while chunk c-1 (A0) is in flight; then retire c-1 and free its stage.
++      if (!issue_chunk(acc, A1, base, stage, phase, bar_full, wg, wtid, abort_flag, err)) { wg_wait<0>(); return; }
++      wg_wait<1>();
++      fence_a(A0);
++      release_stage(bar_empty, prev, lane);
++      prev = stage;
++      advance(stage, phase);
++      if (c + 1 < kc) {
++        // chunk c+1 into A0 (its last reader, chunk c-1, has retired) while chunk c (A1) is in flight.
++        if (!issue_chunk(acc, A0, base, stage, phase, bar_full, wg, wtid, abort_flag, err)) { wg_wait<0>(); return; }
++        wg_wait<1>();
++        fence_a(A1);
++        release_stage(bar_empty, prev, lane);
++        prev = stage;
++        advance(stage, phase);
++      }
++    }
++    wg_wait<0>();
++    fence_acc(acc);
++    fence_a(A0);
++    fence_a(A1);
++    release_stage(bar_empty, prev, lane);
++    // Epilogue: d[4b + 2h + u] is (row + 8h, token 8b + 2t + u).
++    const float scale = gsv[e] * 128.0f;   // global scale * 2^7 (the W tile carried 2^-7)
++#pragma unroll
++    for (int b = 0; b < TILE_T / 8; ++b) {
++#pragma unroll
++      for (int u = 0; u < 2; ++u) {
++        const int slot = sorted_ids[t0 + 8 * b + 2 * t + u];
++        if (slot < num_valid) {
++          uint16_t* o = out + static_cast<size_t>(slot) * N + row;
++          o[0] = f32_to_bf16(acc[4 * b + u] * scale);
++          o[8] = f32_to_bf16(acc[4 * b + 2 + u] * scale);
++        }
++      }
++    }
++  }
++#endif  // __CUDA_ARCH_FEAT_SM90_ALL
++}
++
++static bool g_smem_attr_set = false;
++
++static void set_smem_attr() {
++  if (!g_smem_attr_set) {
++    C10_CUDA_CHECK(cudaFuncSetAttribute(_nvfp4_wgmma_grouped_kernel, cudaFuncAttributeMaxDynamicSharedMemorySize,
++                                        SMEM_BYTES));
++    g_smem_attr_set = true;
++  }
++}
++
++void nvfp4_wgmma_gemm(torch::Tensor a, torch::Tensor wblk, torch::Tensor gs, torch::Tensor out,
++                      torch::Tensor sorted_ids, torch::Tensor expert_ids, torch::Tensor n_padded, torch::Tensor err,
++                      int64_t top_k, int64_t num_valid, int64_t zero_nonlocal, int64_t grid) {
++  TORCH_CHECK(a.is_cuda() && a.scalar_type() == at::kBFloat16 && a.is_contiguous() && a.dim() == 2, "a: bf16 [M, K]");
++  TORCH_CHECK(wblk.scalar_type() == at::kByte && wblk.dim() == 4 && wblk.size(3) == WBLK_BYTES && wblk.is_contiguous(),
++              "wblk: uint8 [E, N/128, K/64, 4608]");
++  const int64_t nt = wblk.size(1), kc = wblk.size(2);
++  const int64_t N = nt * TILE_N, K = kc * CHUNK_K;
++  TORCH_CHECK(kc >= 2 && kc % 2 == 0, "K / 64 must be even");
++  TORCH_CHECK(a.size(1) == K, "a has K columns");
++  TORCH_CHECK(out.scalar_type() == at::kBFloat16 && out.is_contiguous() && out.dim() == 2 && out.size(1) == N &&
++              out.size(0) >= num_valid, "out: bf16 [>= num_valid, N]");
++  TORCH_CHECK(gs.scalar_type() == at::kFloat && gs.is_contiguous() && gs.numel() >= wblk.size(0), "gs: fp32 [E]");
++  TORCH_CHECK(sorted_ids.scalar_type() == at::kInt && sorted_ids.is_contiguous(), "sorted_ids int32");
++  TORCH_CHECK(expert_ids.scalar_type() == at::kInt && expert_ids.is_contiguous(), "expert_ids int32");
++  TORCH_CHECK(n_padded.scalar_type() == at::kInt && n_padded.numel() >= 1, "n_padded int32");
++  TORCH_CHECK(err.scalar_type() == at::kInt && err.numel() >= 1, "err int32");
++  const int64_t em_blocks = sorted_ids.numel() / TILE_T;
++  TORCH_CHECK(expert_ids.numel() >= em_blocks, "expert_ids covers every token block");
++  TORCH_CHECK(N * (out.size(0) + 1) < (int64_t(1) << 62) && num_valid < (int64_t(1) << 31), "sizes");
++  TORCH_CHECK(top_k >= 1 && grid >= 1, "top_k, grid");
++  set_smem_attr();
++  auto stream = at::cuda::getCurrentCUDAStream();
++  _nvfp4_wgmma_grouped_kernel<<<static_cast<unsigned>(grid), N_THREADS, SMEM_BYTES, stream>>>(
++      reinterpret_cast<const uint16_t*>(a.data_ptr()), wblk.data_ptr<uint8_t>(), gs.data_ptr<float>(),
++      reinterpret_cast<uint16_t*>(out.data_ptr()), sorted_ids.data_ptr<int>(), expert_ids.data_ptr<int>(),
++      n_padded.data_ptr<int>(), err.data_ptr<int>(), static_cast<int>(N), static_cast<int>(K),
++      static_cast<int>(top_k), static_cast<int>(num_valid), static_cast<int>(em_blocks),
++      static_cast<int>(zero_nonlocal));
++  C10_CUDA_KERNEL_LAUNCH_CHECK();
++}
++
++// [regs, local bytes, static smem, max threads/block, dynamic smem, ptx version, binary version, CTAs/SM]
++std::vector<int64_t> nvfp4_wgmma_attrs() {
++  set_smem_attr();
++  cudaFuncAttributes at;
++  C10_CUDA_CHECK(cudaFuncGetAttributes(&at, _nvfp4_wgmma_grouped_kernel));
++  int blocks = 0;
++  C10_CUDA_CHECK(cudaOccupancyMaxActiveBlocksPerMultiprocessor(&blocks, _nvfp4_wgmma_grouped_kernel, N_THREADS,
++                                                               SMEM_BYTES));
++  return {at.numRegs, static_cast<int64_t>(at.localSizeBytes), static_cast<int64_t>(at.sharedSizeBytes),
++          at.maxThreadsPerBlock, SMEM_BYTES, at.ptxVersion, at.binaryVersion, blocks};
++}
++""".replace("@@WGMMA@@", _WGMMA_SRC)
++
++
++# The build targets sm_90a ONLY (hypothesis experts-cuda-wgmma-grouped-gemm-remeasure-sm90a-inproc): job
++# 1821bb0e died in ptxas because torch's JIT build adds its own -gencode from TORCH_CUDA_ARCH_LIST (or the
++# detected 9.0) beside any user -arch, and a plain compute_90 pass cannot assemble wgmma. So the arch list
++# is set to 9.0a around load_inline (restored after); only if torch still yields a non-90a flag is our own
++# -gencode added (that stray image is the guarded one that only raises error bit 4, and prepare() turns
++# the path OFF when build.ninja shows any arch flag that is not 90a).
++CUDA_ARCH_LIST = "9.0a"
++CUDA_GENCODE = "-gencode=arch=compute_90a,code=sm_90a"
++CUDA_EXT_NAME = "muse_prefill_nvfp4_wgmma_sm90a_v2"
++
++
++def _cuda_build_flags_seen():
++    """The -gencode / -arch tokens in the build.ninja load_inline wrote (what nvcc received), or a note."""
++    try:
++        from torch.utils import cpp_extension
++        path = os.path.join(cpp_extension._get_build_directory(CUDA_EXT_NAME, False), "build.ninja")
++        with open(path) as f:
++            toks = f.read().split()
++        return sorted({t for t in toks if t.startswith(("-gencode", "--generate-code", "-arch", "--gpu-architecture"))
++                       or t.startswith("arch=")})
++    except Exception as e:
++        return [f"<unread: {e!r}>"]
++
++
++def _build_cuda_experts():
++    """Compile the CUDA expert GEMM in prepare() (never during capture). No fast-math: the bf16 dequant
++    relies on subnormals. Returns (ext, error, arch flags nvcc received); any failure keeps master's path."""
++    t0 = time.perf_counter()
++    prev = os.environ.get("TORCH_CUDA_ARCH_LIST")
++    cflags = ["-O3", "-lineinfo"]
++    try:
++        from torch.utils import cpp_extension
++        os.environ["TORCH_CUDA_ARCH_LIST"] = CUDA_ARCH_LIST
++        torch_arch = list(cpp_extension._get_cuda_arch_flags())  # raises if this torch rejects 9.0a: OFF
++        stray = [f for f in torch_arch if "90a" not in f]
++        if stray or not torch_arch:
++            cflags.append(CUDA_GENCODE)
++        print(f"[cuda expert gemm] build: TORCH_CUDA_ARCH_LIST={os.environ['TORCH_CUDA_ARCH_LIST']} torch arch flags "
++              f"{torch_arch} extra_cuda_cflags {cflags}"
++              + (f" (non-90a flags {stray}: that image only sets error bit 4)" if stray else " (sm_90a only)"),
++              flush=True)
++        ext = cpp_extension.load_inline(
++            name=CUDA_EXT_NAME,
++            cpp_sources=_CUDA_EXPERTS_CPP,
++            cuda_sources=_CUDA_EXPERTS_CUDA,
++            functions=["nvfp4_wgmma_gemm", "nvfp4_wgmma_attrs"],
++            extra_cuda_cflags=cflags,
++            verbose=False,
++        )
++    except Exception as e:  # keep master's path if the build fails
++        msg = repr(e)
++        print(f"[cuda expert gemm] build FAILED after {time.perf_counter() - t0:.1f}s: {msg[-3000:]}", flush=True)
++        return None, f"build failed: {msg[:200]}", []
++    finally:
++        if prev is None:
++            os.environ.pop("TORCH_CUDA_ARCH_LIST", None)
++        else:
++            os.environ["TORCH_CUDA_ARCH_LIST"] = prev
++    seen = _cuda_build_flags_seen()
++    print(f"[cuda expert gemm] build ok: load_inline compiled in {time.perf_counter() - t0:.1f}s; "
++          f"nvcc arch flags (build.ninja): {seen}", flush=True)
++    return ext, "", seen
++
++
++_CUDA_EXT = None          # set by prepare()'s _setup_cuda_experts once the build succeeds
++CUDA_EXPERTS_OK = False   # prepare()'s self-check result (also state["cuda_experts"])
++
++
++def _cuda_moe_gemm(a, wblk, gs, out, sorted_ids, expert_ids, n_padded, top_k, num_valid, zero_nonlocal, state):
++    """_nvfp4_moe_gemm's contract on the CUDA bank (BLOCK_T 256 token blocks from moe_align_block_size)."""
++    _CUDA_EXT.nvfp4_wgmma_gemm(a, wblk, gs, out, sorted_ids, expert_ids, n_padded, state["cuda_err"],
++                               top_k, num_valid, int(bool(zero_nonlocal)), state["cuda_grid"])
++    return out
++
++
+ def _marlin_bank(weights):
+     """The local experts in Marlin's layout, via SGLang's own loader step."""
+     device = weights["w13"].device
+@@ -546,6 +1099,324 @@ def _weighted_sum_skips_remote(state, device):
+         return False
+ 
+ 
++def _cuda_fragment_maps(device):
++    """The CUDA kernel's per-block permutations (stage-1 layout, see the kernel's comment). Each
++    (128-row tile, 64-k chunk) block holds 8192 nibbles in the order [warpgroup 2][thread 128][k16 step 4]
++    [nibble 8] and 512 scales in the order [warpgroup 2][warp 4][quad 8][k16 step 4][row half 2]. Returns
++    flat (row * 64 + k) and (row * 4 + k16 step) source indices; both are asserted to be permutations."""
++    wg = torch.arange(2, device=device).view(2, 1, 1, 1)
++    tid = torch.arange(128, device=device).view(1, 128, 1, 1)
++    step = torch.arange(4, device=device).view(1, 1, 4, 1)
++    nib = torch.arange(8, device=device).view(1, 1, 1, 8)
++    warp, g, t = tid // 32, (tid % 32) // 4, tid % 4
++    j, hi = nib % 4, nib // 4                     # register j of the step; low / high bf16 half
++    row = wg * 64 + warp * 16 + g + 8 * (j % 2)
++    k = 16 * step + 2 * t + 8 * (j // 2) + hi
++    code_idx = (row * CUDA_CHUNK_K + k).reshape(-1)
++    swg = torch.arange(2, device=device).view(2, 1, 1, 1, 1)
++    swarp = torch.arange(4, device=device).view(1, 4, 1, 1, 1)
++    sg = torch.arange(8, device=device).view(1, 1, 8, 1, 1)
++    sstep = torch.arange(4, device=device).view(1, 1, 1, 4, 1)
++    sh = torch.arange(2, device=device).view(1, 1, 1, 1, 2)
++    srow = swg * 64 + swarp * 16 + sg + 8 * sh
++    scale_idx = (srow * (CUDA_CHUNK_K // nvfp4.BLOCK) + sstep).reshape(-1)
++    assert torch.equal(code_idx.sort().values, torch.arange(CUDA_CODE_BYTES * 2, device=device)), "code map is not a permutation"
++    assert torch.equal(scale_idx.sort().values, torch.arange(CUDA_SCALE_BYTES, device=device)), "scale map is not a permutation"
++    return code_idx, scale_idx
++
++
++def _cuda_bank_one(packed, sf, code_idx, scale_idx):
++    """Lossless repack of one expert's uint8 [N, K/2] E2M1 codes (element 2i low nibble) and e4m3 [N, K/16]
++    scales into uint8 [N/128, K/64, 4608] blocks, then the exact inverse, asserted to give back both."""
++    n, kh = packed.shape
++    k = kh * 2
++    nt, kc = n // CUDA_TILE_N, k // CUDA_CHUNK_K
++    codes = torch.stack((packed & 0x0F, packed >> 4), dim=-1).reshape(n, k)
++    blocks = codes.reshape(nt, CUDA_TILE_N, kc, CUDA_CHUNK_K).permute(0, 2, 1, 3).reshape(nt, kc, -1)
++    nibs = blocks[:, :, code_idx]
++    code_bytes = nibs[..., 0::2] | (nibs[..., 1::2] << 4)
++    sf8 = sf.view(torch.uint8)
++    groups = CUDA_CHUNK_K // nvfp4.BLOCK
++    sblocks = sf8.reshape(nt, CUDA_TILE_N, kc, groups).permute(0, 2, 1, 3).reshape(nt, kc, -1)
++    out = torch.cat((code_bytes, sblocks[:, :, scale_idx]), dim=-1).contiguous()
++    # The exact inverse.
++    cb = out[..., :CUDA_CODE_BYTES]
++    nibs2 = torch.stack((cb & 0x0F, cb >> 4), dim=-1).reshape(nt, kc, -1)
++    blocks2 = torch.empty_like(nibs2)
++    blocks2[:, :, code_idx] = nibs2
++    codes2 = blocks2.reshape(nt, kc, CUDA_TILE_N, CUDA_CHUNK_K).permute(0, 2, 1, 3).reshape(n, k)
++    assert torch.equal(codes2[:, 0::2] | (codes2[:, 1::2] << 4), packed), "CUDA code permutation does not invert"
++    s2 = torch.empty_like(sblocks)
++    s2[:, :, scale_idx] = out[..., CUDA_CODE_BYTES:]
++    s2 = s2.reshape(nt, kc, CUDA_TILE_N, groups).permute(0, 2, 1, 3).reshape(n, k // nvfp4.BLOCK)
++    assert torch.equal(s2, sf8), "CUDA scale permutation does not invert"
++    return out
++
++
++def _cuda_bank(weights):
++    """The local experts for the CUDA kernel: uint8 [E, N/128, K/64, 4608] per GEMM, codes and e4m3 scales
++    permuted losslessly (new tensors; the weights are untouched). Global scales are the Triton bank's."""
++    device = weights["w13"].device
++    code_idx, scale_idx = _cuda_fragment_maps(device)
++    bank = {}
++    for name in ("w13", "w2"):
++        w, sf = weights[name], weights[name + "_sf"]
++        e, n, kh = w.shape
++        assert n % CUDA_TILE_N == 0 and (kh * 2) % (2 * CUDA_CHUNK_K) == 0 and sf.shape == (e, n, kh * 2 // nvfp4.BLOCK)
++        out = torch.empty((e, n // CUDA_TILE_N, kh * 2 // CUDA_CHUNK_K, CUDA_WBLK_BYTES),
++                          dtype=w.dtype, device=device)
++        for i in range(e):
++            out[i] = _cuda_bank_one(w[i].contiguous(), sf[i].contiguous(), code_idx, scale_idx)
++        bank[name] = out
++    return bank
++
++
++def _cuda_err_word(state):
++    return int(state["cuda_err"][0])
++
++
++def _cuda_checked_launch(tag, state, *args):
++    """prepare() only: one _cuda_moe_gemm call announced before, synchronized and announced after, so a
++    fault names its kernel and call. Returns the error word (1 = full-barrier timeout, 2 = empty-barrier
++    timeout, 4 = the loaded image is not sm_90a)."""
++    print(f"[cuda expert gemm] launch {tag}: _nvfp4_wgmma_grouped_kernel ...", flush=True)
++    _cuda_moe_gemm(*args, state)
++    torch.cuda.synchronize()
++    err = _cuda_err_word(state)
++    print(f"[cuda expert gemm] launch {tag}: returned, error word {err}", flush=True)
++    return err
++
++
++def _check_cuda_canary(state):
++    """Untimed, before any real-size launch: one 256-token tile of expert 0's first 128 rows and first two
++    64-k chunks (w13 with top_k 8, then w2 with top_k 1), on a contiguous slice of the CUDA bank. Only the
++    error word and finiteness are checked here (the one-hot check covers values)."""
++    cb, bank = state["cuda_bank"], state["bank"]
++    device = cb["w13"].device
++    for name, top_k in (("w13", TOP_K), ("w2", 1)):
++        wblk = cb[name][:1, :1, :2].contiguous()           # [1 expert, 1 row tile, 2 chunks, 4608]
++        k = 2 * CUDA_CHUNK_K
++        x = (torch.arange(CUDA_BLOCK_T * k, device=device, dtype=torch.float32).view(CUDA_BLOCK_T, k) % 7 - 3) \
++            .to(torch.bfloat16) / 4
++        sorted_ids = (torch.arange(CUDA_BLOCK_T, device=device, dtype=torch.int32) * top_k).contiguous()
++        expert_ids = torch.zeros((1,), dtype=torch.int32, device=device)
++        n_padded = torch.tensor([CUDA_BLOCK_T], dtype=torch.int32, device=device)
++        out = torch.full((CUDA_BLOCK_T * top_k, CUDA_TILE_N), float("nan"), dtype=torch.bfloat16, device=device)
++        state["cuda_err"].zero_()
++        err = _cuda_checked_launch(f"canary {name}", state, x, wblk, bank[name + "_gs"], out, sorted_ids, expert_ids,
++                                   n_padded, top_k, CUDA_BLOCK_T * top_k, False)
++        assert err == 0, (f"canary {name}: error word {err}"
++                          + (" (bit 4: the loaded image is not sm_90a)" if err & 4 else " (barrier timeout)"))
++        assert bool(torch.isfinite(out[::top_k].float()).all()), f"canary {name}: rows unwritten or non-finite"
++    print("[cuda expert gemm] canary w13 + w2: ok (sm_90a image ran, error word 0)", flush=True)
++
++
++def _check_cuda_onehot(state, weights):
++    """Untimed. _check_expert_gemms' one-hot case through the CUDA kernel on the CUDA bank: output row r is
++    column k0 + r % 128 of the dequantized expert (every N row, two whole 64-k chunks, all four k16 steps,
++    all scale groups), plus one -1 block and one block past n_padded. On a mismatch it says which part is
++    wrong: dequant values, the A-fragment (weight row) placement, or the token / scatter side."""
++    bank, cb = state["bank"], state["cuda_bank"]
++    device = cb["w13"].device
++    e = LOCAL_EXPERTS - 1
++    bt = CUDA_BLOCK_T
++    # master's w2 zero-store flag, exactly as _experts_triton passes it
++    for name, top_k, zero_nonlocal in (("w13", TOP_K, False), ("w2", 1, state["zero_nonlocal_w2"])):
++        orig, sf, gs = weights[name], weights[name + "_sf"], bank[name + "_gs"]
++        n, k = orig.shape[1], orig.shape[2] * 2
++        k0 = k // 2 + CHECK_K
++        ref = nvfp4.dequantize(orig[e, :, k0 // 2:(k0 + CHECK_K) // 2], sf[e, :, k0 // 16:(k0 + CHECK_K) // 16], gs[e])
++        codes = nvfp4.unpack_e2m1(orig[e, :, k0 // 2:(k0 + CHECK_K) // 2])
++        rows = torch.arange(bt, device=device)
++        want = ref[:, rows % CHECK_K].t().float()          # [bt, n]
++        want_codes = codes[:, rows % CHECK_K].t()
++        total = 3 * bt                                     # valid block, -1 block, block past n_padded
++        x = torch.zeros((total, k), dtype=torch.bfloat16, device=device)
++        x[rows, k0 + rows % CHECK_K] = 1.0
++        sorted_ids = (torch.arange(total, device=device, dtype=torch.int32) * top_k).contiguous()
++        expert_ids = torch.tensor([e, -1, 0], dtype=torch.int32, device=device)
++        n_padded = torch.tensor([2 * bt], dtype=torch.int32, device=device)
++        out = torch.full((total * top_k, n), float("nan"), dtype=torch.bfloat16, device=device)
++        state["cuda_err"].zero_()
++        err = _cuda_checked_launch(f"one-hot {name}", state, x, cb[name], gs, out, sorted_ids, expert_ids, n_padded,
++                                   top_k, total * top_k, zero_nonlocal)
++        assert err == 0, f"one-hot {name}: pipeline wait timed out (error word {err}: 1 = full barrier, 2 = empty)"
++        got = out[0:bt * top_k:top_k].float()
++        bad = ((got - want).abs() > want.abs() * 2.0 ** -7) | got.isnan()
++        if bool(bad.any()):
++            nbad = int(bad.sum())
++            if bool(got.isnan().all()):
++                part = "nothing written (kernel skipped the block)"
++            elif bool((want_codes[bad].abs() == 0.5).all()):
++                part = "dequant: only E2M1 +-0.5 codes wrong (bf16 subnormals flushed)"
++            elif bool(torch.equal(got.sort(dim=1).values, want.sort(dim=1).values)):
++                part = "A-fragment / weight-row placement (each token row has the right values, permuted over N)"
++            else:
++                # Does each output row equal some other expected row? Then the token side (B layout/scatter).
++                d = torch.cdist(torch.nan_to_num(got), want)
++                match = bool((d.min(dim=1).values <= want.norm(dim=1) * 1e-2).all())
++                part = ("token side: B smem layout / swizzle or scatter (rows permuted)" if match
++                        else "dequant values / scales / k-order")
++            idx = bad.nonzero()[0].tolist()
++            raise AssertionError(
++                f"one-hot {name}: {part}; {nbad} of {bad.numel()} bad, first at (row {idx[0]}, n {idx[1]}): "
++                f"got {float(got[idx[0], idx[1]])} want {float(want[idx[0], idx[1]])}")
++        nonlocal_rows = out[bt * top_k:2 * bt * top_k:top_k].float()
++        if zero_nonlocal:
++            assert bool((nonlocal_rows == 0).all()), f"one-hot {name}: -1 block not zeroed"
++        else:
++            assert bool(nonlocal_rows.isnan().all()), f"one-hot {name}: -1 block was written"
++        assert bool(out[2 * bt * top_k::top_k].float().isnan().all()), f"one-hot {name}: block past n_padded was written"
++        print(f"[cuda expert gemm] one-hot {name}: ok (dequant, fragments, -1 block, past n_padded)", flush=True)
++
++
++def _rel_err(got, want):
++    """The judge's metric: relative L2, and the worst row against max(its norm, a tenth of the mean row)."""
++    err = float((got - want).norm() / want.norm().clamp_min(1e-30))
++    row_ref = want.norm(dim=-1)
++    row_err = (got - want).norm(dim=-1) / torch.maximum(row_ref, 0.1 * row_ref.mean()).clamp_min(1e-30)
++    return err, float(row_err.max())
++
++
++CUDA_E2E_TOKENS = 16384   # the first turn's T: ~512 local rows per expert, 2-3 token blocks each
++
++
++def _check_cuda_e2e(state, device):
++    """Untimed. At T = 16384 with random routing (as _check_experts_e2e builds it): (1) the w13 GEMM, CUDA vs
++    the Triton kernel, on the local slots; (2) the w2 GEMM on the same silu-mul input, local slots, and the
++    zero-stored non-local slots; (3) the whole expert block, _experts_triton on the CUDA engine vs
++    _experts_marlin. Each part names itself when it fails."""
++    gen = torch.Generator(device=device)
++    gen.manual_seed(1)
++    t = CUDA_E2E_TOKENS
++    bank, cb = state["bank"], state["cuda_bank"]
++    x = torch.randn((t, D_EXPERT), generator=gen, device=device, dtype=torch.float32).to(torch.bfloat16)
++    ids = torch.rand((t, N_EXPERTS), generator=gen, device=device).topk(TOP_K, dim=1).indices.to(torch.int32)
++    local_ids = torch.where(ids < LOCAL_EXPERTS, ids, torch.full_like(ids, -1)).contiguous()
++    topk_weights = torch.rand((t, TOP_K), generator=gen, device=device, dtype=torch.float32) + 0.1
++    topk_weights = (topk_weights / topk_weights.sum(dim=1, keepdim=True)).contiguous()
++    cfg = _expert_config(t)
++    assert cfg["BLOCK_T"] == CUDA_BLOCK_T, f"T={t} config has BLOCK_T {cfg['BLOCK_T']}"
++    # master's first-turn align: over the 32 local experts (ids 0-31 or -1), as _experts_triton calls it
++    sorted_ids, block_experts, n_padded = moe_align_block_size(local_ids, CUDA_BLOCK_T, LOCAL_EXPERTS)
++    zero_w2 = state["zero_nonlocal_w2"]
++    slots = t * TOP_K
++    local = local_ids.view(-1) >= 0
++    gemm1_n = bank["w13"].shape[1]
++    size_n = gemm1_n // 2
++    state["cuda_err"].zero_()
++    # (1) w13
++    c1_ref = torch.empty((slots, gemm1_n), dtype=torch.bfloat16, device=device)
++    c1 = torch.full((slots, gemm1_n), float("nan"), dtype=torch.bfloat16, device=device)
++    _nvfp4_moe_gemm(x, bank["w13"], bank["w13_sf"], bank["w13_gs"], c1_ref, sorted_ids, block_experts, n_padded,
++                    TOP_K, slots, cfg, False)
++    torch.cuda.synchronize()
++    errw = _cuda_checked_launch(f"e2e w13 T={t}", state, x, cb["w13"], bank["w13_gs"], c1, sorted_ids, block_experts,
++                                n_padded, TOP_K, slots, False)
++    assert errw == 0, f"e2e w13: pipeline wait timed out (error word {errw})"
++    got, want = c1[local].float(), c1_ref[local].float()
++    assert bool(torch.isfinite(got).all()), f"e2e w13 gemm: {int((~torch.isfinite(got)).any(dim=1).sum())} local rows NaN/unwritten"
++    err, worst = _rel_err(got, want)
++    print(f"[cuda expert gemm] e2e T={t} w13 gemm vs triton: rel L2 {err:.3e}, worst row {worst:.3e} "
++          f"({int(local.sum())} local routes, {int(n_padded[0]) // CUDA_BLOCK_T} blocks)", flush=True)
++    assert err <= E2E_CHECK_TOL and worst <= E2E_ROW_FACTOR * E2E_CHECK_TOL, (
++        f"e2e w13 gemm: rel L2 {err:.3e} / worst row {worst:.3e} (multi-block schedule or k loop)")
++    del c1, got, want
++    # (2) w2, on the Triton w13 output's silu-mul
++    cache2 = torch.empty((slots, size_n), dtype=torch.bfloat16, device=device)
++    silu_and_mul(c1_ref, cache2, expert_ids=local_ids.view(-1), expert_step=1)
++    del c1_ref
++    c3_ref = torch.full((slots, D_EXPERT), float("nan"), dtype=torch.bfloat16, device=device)
++    c3 = torch.full((slots, D_EXPERT), float("nan"), dtype=torch.bfloat16, device=device)
++    _nvfp4_moe_gemm(cache2, bank["w2"], bank["w2_sf"], bank["w2_gs"], c3_ref, sorted_ids, block_experts, n_padded,
++                    1, slots, cfg, zero_w2)
++    torch.cuda.synchronize()
++    errw = _cuda_checked_launch(f"e2e w2 T={t} zero_nonlocal={zero_w2}", state, cache2, cb["w2"], bank["w2_gs"], c3,
++                                sorted_ids, block_experts, n_padded, 1, slots, zero_w2)
++    assert errw == 0, f"e2e w2: pipeline wait timed out (error word {errw})"
++    got, want = c3[local].float(), c3_ref[local].float()
++    assert bool(torch.isfinite(got).all()), "e2e w2 gemm: local rows NaN/unwritten"
++    err, worst = _rel_err(got, want)
++    print(f"[cuda expert gemm] e2e T={t} w2 gemm vs triton: rel L2 {err:.3e}, worst row {worst:.3e}", flush=True)
++    assert err <= E2E_CHECK_TOL and worst <= E2E_ROW_FACTOR * E2E_CHECK_TOL, (
++        f"e2e w2 gemm: rel L2 {err:.3e} / worst row {worst:.3e}")
++    if zero_w2:
++        # match the incumbent's contract on non-local slots, whatever moe_align does with them
++        nl = torch.nan_to_num(c3[~local], nan=7.0)
++        nl_ref = torch.nan_to_num(c3_ref[~local], nan=7.0)
++        assert torch.equal(nl, nl_ref), (
++            f"e2e w2 zero-store differs from triton on {int((nl != nl_ref).any(dim=1).sum())} of {nl.shape[0]} non-local slots")
++    del c3, c3_ref, cache2, got, want
++    # (3) the whole expert block vs Marlin
++    print(f"[cuda expert gemm] launch e2e full T={t}: _experts_triton on the CUDA engine ...", flush=True)
++    got = _experts_triton(x, topk_weights, local_ids, state, use_cuda=True).float()
++    torch.cuda.synchronize()
++    print(f"[cuda expert gemm] launch e2e full T={t}: returned", flush=True)
++    want = _experts_marlin(x, topk_weights, local_ids, state).float()
++    torch.cuda.synchronize()
++    errw = _cuda_err_word(state)
++    assert errw == 0, f"e2e full: pipeline wait timed out (error word {errw})"
++    assert bool(torch.isfinite(got).all()), "e2e full: NaN/Inf"
++    err, worst = _rel_err(got, want)
++    print(f"[cuda expert gemm] e2e T={t} experts cuda vs marlin: rel L2 {err:.3e}, worst row {worst:.3e}", flush=True)
++    assert err <= E2E_CHECK_TOL and worst <= E2E_ROW_FACTOR * E2E_CHECK_TOL, (
++        f"e2e full (cuda vs marlin): rel L2 {err:.3e} / worst row {worst:.3e}")
++
++
++def _setup_cuda_experts(state, weights, device):
++    """Build the extension (sm_90a only), confirm the sm_90a image, build the CUDA bank, then the canary,
++    one-hot and T=16384 checks, in process and in that order; True only if every step passed. Prints
++    exactly one '[cuda expert gemm] ON' or '[cuda expert gemm] OFF: <reason>' line."""
++    global CUDA_EXPERTS_OK, _CUDA_EXT
++    reason = None
++    cap = torch.cuda.get_device_capability(device)
++    print(f"[cuda expert gemm] device capability {cap}", flush=True)
++    if cap != (9, 0):
++        reason = f"needs sm_90 (H100/H200), device is {cap}"
++    else:
++        ext, build_error, seen = _build_cuda_experts()
++        if ext is None:
++            reason = build_error or "build failed"
++        else:
++            arch = [f for f in seen if not f.startswith("<")]
++            if any("90a" not in f for f in arch):
++                reason = f"nvcc arch flags are not sm_90a only: {seen}"
++            else:
++                _CUDA_EXT = ext
++    if reason is None:
++        try:
++            t0 = time.perf_counter()
++            state["cuda_err"] = torch.zeros(1, dtype=torch.int32, device=device)
++            state["cuda_grid"] = torch.cuda.get_device_properties(device).multi_processor_count
++            attrs = list(_CUDA_EXT.nvfp4_wgmma_attrs())
++            # Diagnostic only (binaryVersion / ptxVersion read 90 for sm_90 and sm_90a alike); the canary's
++            # error word (bit 4) is what proves the sm_90a image is the one that runs.
++            print(f"[cuda expert gemm] kernel _nvfp4_wgmma_grouped_kernel: regs={attrs[0]} local_bytes={attrs[1]} "
++                  f"static_smem={attrs[2]} max_threads={attrs[3]} dyn_smem={attrs[4]} ptx={attrs[5]} sass={attrs[6]} "
++                  f"ctas_per_sm={attrs[7]} grid={state['cuda_grid']}", flush=True)
++            assert attrs[6] == 90, f"kernel binary version {attrs[6]}, not 90"
++            assert attrs[7] >= 1, "kernel cannot be resident (occupancy 0)"
++            assert attrs[3] >= 288, f"max threads per block {attrs[3]} < 288 (registers)"
++            state["cuda_bank"] = _cuda_bank(weights)
++            torch.cuda.synchronize()
++            print(f"[cuda expert gemm] bank built and inverted exactly in {time.perf_counter() - t0:.1f}s", flush=True)
++            _check_cuda_canary(state)
++            _check_cuda_onehot(state, weights)
++            _check_cuda_e2e(state, device)
++            torch.cuda.synchronize()
++        except Exception as e:  # any failure: master's Triton path for the run
++            reason = f"self-check: {e!r}"[:600]
++    if reason is None:
++        print(f"[cuda expert gemm] ON (w2 zero_nonlocal={state['zero_nonlocal_w2']}, align over {LOCAL_EXPERTS} "
++              f"local experts)", flush=True)
++    else:
++        state.pop("cuda_bank", None)
++        print(f"[cuda expert gemm] OFF: {reason}", flush=True)
++    CUDA_EXPERTS_OK = reason is None
++    torch.cuda.empty_cache()
++    return reason is None
++
++
+ def prepare(weights):
+     device = weights["qkv_gate"].device
+     router = weights["router"]
+@@ -604,18 +1475,40 @@ def prepare(weights):
+     _silu_sorted_setup(state, device)
+     _check_experts_e2e(state, device)
+     torch.cuda.synchronize()
++    # The CUDA wgmma engine for the first turn (above MARLIN_MAX_TOKENS): bank, one-hot and T=16384 checks;
++    # any failure leaves state["cuda_experts"] False and the Triton kernel in place.
++    state["cuda_experts"] = _setup_cuda_experts(state, weights, device)
++    torch.cuda.synchronize()
+     print(f"[prepare] max_memory_allocated {torch.cuda.max_memory_allocated(device) / 2**30:.2f} GiB", flush=True)
+     return state
+ 
+ 
+ def _experts(x, topk_weights, local_ids, state):
+-    """Shape gate: Marlin up to MARLIN_MAX_TOKENS tokens, the Triton NVFP4 GEMM above. Reads the
+-    token count (a shape), never tensor values."""
+-    if x.shape[0] <= MARLIN_MAX_TOKENS:
++    """Shape gate: Marlin up to MARLIN_MAX_TOKENS tokens; above it the CUDA wgmma GEMM when prepare()'s
++    self-check turned it on, else the Triton NVFP4 GEMM. Reads the token count (a shape) and a prepare()
++    flag, never tensor values."""
++    tokens = x.shape[0]
++    if tokens <= MARLIN_MAX_TOKENS:
++        path = "marlin"
++    else:
++        path = "cuda" if _use_cuda_experts(tokens, state) else "triton"
++    if tokens not in _PATH_LOGGED:  # once per token count (a shape), at the first eager call
++        _PATH_LOGGED.add(tokens)
++        print(f"[cuda expert gemm] PATH CHOSEN T={tokens}: {path}", flush=True)
++    if path == "marlin":
+         return _experts_marlin(x, topk_weights, local_ids, state)
+     return _experts_triton(x, topk_weights, local_ids, state)
+ 
+ 
++_PATH_LOGGED = set()
++
++
++def _use_cuda_experts(tokens, state):
++    """The CUDA engine only where the Triton config is BLOCK_T 256 (the first turn), and only if
++    prepare()'s self-check turned it on. A shape and a prepare() flag, never tensor values."""
++    return bool(state.get("cuda_experts")) and _expert_config(tokens)["BLOCK_T"] == CUDA_BLOCK_T
++
++
+ # On the Marlin path (T <= MARLIN_MAX_TOKENS) _experts_marlin replaces moe_align_block_size with
+ # _align_parallel_kernel, ported from muse_moe_w4a16 master via the decode layer (hypothesis
+ # moe-align-local-routes-parallel-port): one launch, and Marlin's block list holds the 32 local
+@@ -901,11 +1794,15 @@ def _experts_marlin(x, topk_weights, local_ids, state):
+         slot_expert_ids=local_ids)
+ 
+ 
+-def _experts_triton(x, topk_weights, local_ids, state):
++def _experts_triton(x, topk_weights, local_ids, state, use_cuda=None):
+     """MuseSpark1xFp4Experts' expert outputs and post-expert-norm finalize, on ids already mapped
+     to this GPU's experts (0-31, -1 elsewhere), with the two Marlin GEMMs replaced by the Triton
+-    grouped GEMM that dequantizes the stored NVFP4 weights in registers."""
++    grouped GEMM that dequantizes the stored NVFP4 weights in registers, or (use_cuda, BLOCK_T 256
++    only) by the CUDA wgmma kernel on the CUDA bank. Same 32-expert align, buffers, w2 zero-store flag
++    and contract."""
+     bank = state["bank"]
++    if use_cuda is None:
++        use_cuda = _use_cuda_experts(x.shape[0], state)
+     num_tokens, size_k = x.shape
+     gemm1_n = bank["w13"].shape[1]
+     size_n = gemm1_n // 2
+@@ -919,11 +1816,20 @@ def _experts_triton(x, topk_weights, local_ids, state):
+     cache13 = torch.empty((num_slots * max(gemm1_n, size_k),), device=x.device, dtype=x.dtype)
+     cache1 = cache13[: num_slots * gemm1_n].view(-1, gemm1_n)
+     cache3 = cache13[: num_slots * size_k].view(-1, size_k)
+-    _nvfp4_moe_gemm(x.contiguous(), bank["w13"], bank["w13_sf"], bank["w13_gs"], cache1, sorted_ids, block_experts,
+-                    n_padded, TOP_K, num_slots, cfg, False)
+-    silu_and_mul(cache1, cache2, expert_ids=local_ids.view(-1), expert_step=1)
+-    y = _nvfp4_moe_gemm(cache2, bank["w2"], bank["w2_sf"], bank["w2_gs"], cache3, sorted_ids, block_experts,
+-                        n_padded, 1, num_slots, cfg, state["zero_nonlocal_w2"]).view(num_tokens, TOP_K, size_k)
++    if use_cuda:
++        assert cfg["BLOCK_T"] == CUDA_BLOCK_T, "the CUDA engine runs on 256-token blocks"
++        cb = state["cuda_bank"]
++        _cuda_moe_gemm(x.contiguous(), cb["w13"], bank["w13_gs"], cache1, sorted_ids, block_experts, n_padded,
++                       TOP_K, num_slots, False, state)
++        silu_and_mul(cache1, cache2, expert_ids=local_ids.view(-1), expert_step=1)
++        y = _cuda_moe_gemm(cache2, cb["w2"], bank["w2_gs"], cache3, sorted_ids, block_experts, n_padded,
++                           1, num_slots, state["zero_nonlocal_w2"], state).view(num_tokens, TOP_K, size_k)
++    else:
++        _nvfp4_moe_gemm(x.contiguous(), bank["w13"], bank["w13_sf"], bank["w13_gs"], cache1, sorted_ids,
++                        block_experts, n_padded, TOP_K, num_slots, cfg, False)
++        silu_and_mul(cache1, cache2, expert_ids=local_ids.view(-1), expert_step=1)
++        y = _nvfp4_moe_gemm(cache2, bank["w2"], bank["w2_sf"], bank["w2_gs"], cache3, sorted_ids, block_experts,
++                            n_padded, 1, num_slots, cfg, state["zero_nonlocal_w2"]).view(num_tokens, TOP_K, size_k)
+     return fused_post_expert_norm_weighted_sum(
+         y, topk_weights, norm_weight=state["post_expert_w"], eps=POST_NORM_EPS, weight_first=True,
+         slot_expert_ids=local_ids)

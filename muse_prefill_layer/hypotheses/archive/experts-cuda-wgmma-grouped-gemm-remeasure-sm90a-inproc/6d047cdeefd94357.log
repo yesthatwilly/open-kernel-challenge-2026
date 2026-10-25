@@ -1,0 +1,44 @@
+[w2 zero-store] OFF (weighted sum skips remote slots)
+[expert gemm] w13 BLOCK_T=64 BLOCK_W=128 warps=4 stages=3: n_regs=255 n_spills=0 shared=67584
+[expert gemm] w13 BLOCK_T=128 BLOCK_W=128 warps=8 stages=3: n_regs=176 n_spills=0 shared=116736
+[expert gemm] w13 BLOCK_T=256 BLOCK_W=128 warps=8 stages=2: n_regs=254 n_spills=4 shared=140288
+[expert gemm] w2 BLOCK_T=64 BLOCK_W=128 warps=4 stages=3: n_regs=255 n_spills=0 shared=67584
+[expert gemm] w2 BLOCK_T=128 BLOCK_W=128 warps=8 stages=3: n_regs=176 n_spills=0 shared=116736
+[expert gemm] w2 BLOCK_T=256 BLOCK_W=128 warps=8 stages=2: n_regs=254 n_spills=4 shared=140288
+[align-local] ON cases=15 mismatches=0 (PATH CHOSEN = parallel align on the Marlin path)
+[silu-sorted] ON max rel err 0.00e+00 (PATH CHOSEN = sorted silu on the Marlin path)
+[expert e2e] T=8192 triton vs marlin: rel L2 5.916e-03, worst row 7.537e-03 (8341 local routes)
+[cuda expert gemm] device capability (9, 0)
+[cuda expert gemm] build: TORCH_CUDA_ARCH_LIST=9.0a torch arch flags ['-gencode=arch=compute_90a,code=sm_90a'] extra_cuda_cflags ['-O3', '-lineinfo'] (sm_90a only)
+[cuda expert gemm] build ok: load_inline compiled in 31.4s; nvcc arch flags (build.ninja): ['-gencode=arch=compute_90a,code=sm_90a']
+[cuda expert gemm] kernel _nvfp4_wgmma_grouped_kernel: regs=168 local_bytes=680 static_smem=0 max_threads=288 dyn_smem=190592 ptx=90 sass=90 ctas_per_sm=1 grid=132
+[cuda expert gemm] bank built and inverted exactly in 0.1s
+[cuda expert gemm] launch canary w13: _nvfp4_wgmma_grouped_kernel ...
+[cuda expert gemm] launch canary w13: returned, error word 0
+[cuda expert gemm] launch canary w2: _nvfp4_wgmma_grouped_kernel ...
+[cuda expert gemm] launch canary w2: returned, error word 0
+[cuda expert gemm] canary w13 + w2: ok (sm_90a image ran, error word 0)
+[cuda expert gemm] launch one-hot w13: _nvfp4_wgmma_grouped_kernel ...
+[cuda expert gemm] launch one-hot w13: returned, error word 0
+[cuda expert gemm] one-hot w13: ok (dequant, fragments, -1 block, past n_padded)
+[cuda expert gemm] launch one-hot w2: _nvfp4_wgmma_grouped_kernel ...
+[cuda expert gemm] launch one-hot w2: returned, error word 0
+[cuda expert gemm] one-hot w2: ok (dequant, fragments, -1 block, past n_padded)
+[cuda expert gemm] launch e2e w13 T=16384: _nvfp4_wgmma_grouped_kernel ...
+[cuda expert gemm] launch e2e w13 T=16384: returned, error word 0
+[cuda expert gemm] e2e T=16384 w13 gemm vs triton: rel L2 0.000e+00, worst row 0.000e+00 (16283 local routes, 528 blocks)
+[cuda expert gemm] launch e2e w2 T=16384 zero_nonlocal=False: _nvfp4_wgmma_grouped_kernel ...
+[cuda expert gemm] launch e2e w2 T=16384 zero_nonlocal=False: returned, error word 0
+[cuda expert gemm] e2e T=16384 w2 gemm vs triton: rel L2 0.000e+00, worst row 0.000e+00
+[cuda expert gemm] launch e2e full T=16384: _experts_triton on the CUDA engine ...
+[cuda expert gemm] launch e2e full T=16384: returned
+[cuda expert gemm] e2e T=16384 experts cuda vs marlin: rel L2 5.916e-03, worst row 7.234e-03
+[cuda expert gemm] ON (w2 zero_nonlocal=False, align over 32 local experts)
+[prepare] max_memory_allocated 9.99 GiB
+[cuda expert gemm] PATH CHOSEN T=300: marlin
+[cuda expert gemm] PATH CHOSEN T=753: marlin
+[cuda expert gemm] PATH CHOSEN T=1506: marlin
+[cuda expert gemm] PATH CHOSEN T=600: marlin
+[cuda expert gemm] PATH CHOSEN T=4096: marlin
+[cuda expert gemm] PATH CHOSEN T=3012: marlin
+[cuda expert gemm] PATH CHOSEN T=16384: cuda
