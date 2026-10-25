@@ -38,9 +38,18 @@ priority: 3
 kind: primary
 controls_for: null
 review: proceed
-status: queued
+status: running
 review_at: 2026-10-25T203723Z
 review_companions: null
+stage: claimed
+claimed_at: 2026-10-25T203723Z
+base_sha: 2178a1d62536d4e2c94af82772ab6316f61d8598
+base_blob: ad8d7254a64a52db2a8f56ec0ad262748153a2e8
+branch: hyp/muse_bf16_proj/unpooler-k-halves-batched-gemm-m65-m128
+worktree: .worktrees/muse_bf16_proj/unpooler-k-halves-batched-gemm-m65-m128
+mode: submit
+restack_of: null
+stale_base: null
 ---
 
 # unpooler-k-halves-batched-gemm-m65-m128
