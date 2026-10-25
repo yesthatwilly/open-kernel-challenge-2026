@@ -46,9 +46,18 @@ priority: 3
 kind: primary
 controls_for: null
 review: proceed
-status: queued
+status: running
 review_at: 2026-10-25T010823Z
 review_companions: null
+stage: claimed
+claimed_at: 2026-10-25T010823Z
+base_sha: 9d09de0cc3ef315d6ef3aab918058321b698da3f
+base_blob: 4da94677234faaa06b42b5ced541db8961fd6f34
+branch: hyp/muse_decode_layer/dl-route-warp-topk-pdl
+worktree: .worktrees/muse_decode_layer/dl-route-warp-topk-pdl
+mode: null
+restack_of: null
+stale_base: null
 ---
 
 # dl-route-warp-topk-pdl
