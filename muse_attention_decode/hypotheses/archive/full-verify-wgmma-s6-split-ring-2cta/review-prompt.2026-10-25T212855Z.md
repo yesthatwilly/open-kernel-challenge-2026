@@ -1,0 +1,187 @@
+You are the adversarial reviewer for one kernel-optimization hypothesis in the Muse Spark Open
+Kernel Challenge workspace at /home/user/git/musespark. You are a fresh pair of eyes; nobody has told you the
+hypothesis is good. Your job is to find out whether running it once would produce a result that
+can be interpreted, and if not, what extra run(s) would make it interpretable.
+
+Read, in this order (all paths relative to /home/user/git/musespark; read-only, change nothing):
+1. muse_attention_decode/hypotheses/queue/2026-10-25T212048Z-full-verify-wgmma-s6-split-ring-2cta.md — the hypothesis (frontmatter + body). The `change` paragraph is what will be built.
+2. muse_attention_decode/hypotheses/FINDINGS.md — learnings by area, where the current best spends its time, do-not-retry list.
+3. muse_attention_decode/hypotheses/BEST.json — the current best result on master's lineage (job, speedup, CI).
+4. The hypotheses already landed on master's submission.py, oldest first, with their patches:
+   {
+ "ok": true,
+ "problem": "muse_attention_decode",
+ "landed": [
+  {
+   "slug": "sliding-deep-splits-on-cuda-splitkv",
+   "area": "sliding attention, batched decode, split depth",
+   "outcome": "gain",
+   "speedup": 1.3948738389144513,
+   "promotion_commit": "0a56d22c1f1e824cf006d1c3c939fb7fa0d0e962",
+   "patch": "muse_attention_decode/hypotheses/done/gain/sliding-deep-splits-on-cuda-splitkv.patch",
+   "md": "muse_attention_decode/hypotheses/done/gain/2026-10-24T145005Z-sliding-deep-splits-on-cuda-splitkv.md",
+   "change": "Stack sliding-fused-triton-decode-batched-deep-splits (1.309x on the pre-CUDA master; sliding decode_16 gained 33%, decode_32 +3%, every other shape flat) onto master full-decode-cuda-gather-splitkv (1.347x). The result is a clean 3-way merge (git merge-file, no conflicts): the fused sliding kernel'"
+  },
+  {
+   "slug": "full-decode1-streamk-s3-two-level-ticket",
+   "area": "full-layer attention (batch-1 decode, splitkv stream-K kernel)",
+   "outcome": "neutral",
+   "speedup": 1.4321773019894537,
+   "promotion_commit": "c3c1b01b18837f889ac11a15d8f0daf06d356d98",
+   "patch": "muse_attention_decode/hypotheses/done/neutral/full-decode1-streamk-s3-two-level-ticket.patch",
+   "md": "muse_attention_decode/hypotheses/done/neutral/2026-10-25T003637Z-full-decode1-streamk-s3-two-level-ticket.md",
+   "change": "Stage 3 of the full-decode rewrite, built on the stage-2 branch hyp/muse_attention_decode/full-decode-splitkv-s2-streamk-ticket-inproc (splitkv_attn_sk_kernel: stream-K over 64-token tiles with an in-kernel per-request ticket combine + norm-gate), whatever its score. Full decode_1 is 27.3 us (FA3 ma"
+  },
+  {
+   "slug": "restack-sk-pseudo-cluster-plus-v3-fused-preattn",
+   "area": "full-layer attention (decode 1<B<=64 prologue) on top of the sliding restack",
+   "outcome": "gain",
+   "speedup": 1.4919706177473366,
+   "promotion_commit": "eb1b68bad24c7457aaa0606c1df0fa7733c03365",
+   "patch": "muse_attention_decode/hypotheses/done/gain/restack-sk-pseudo-cluster-plus-v3-fused-preattn.patch",
+   "md": "muse_attention_decode/hypotheses/done/gain/2026-10-25T054448Z-restack-sk-pseudo-cluster-plus-v3-fused-preattn.md",
+   "change": "Exactly restack-sk-pseudo-b1-cluster-c16-c4 (pseudo-decode sliding verify B=1 + sliding cluster C=16 at B=1 and C=4 at B=17..32, on master c3c1b01), PLUS the stage-3 fused pre-attention prologue from branch hyp/muse_attention_decode/full-decode-splitkv-s3-fused-preattn (job 825baa03798f431a): the v3"
+  },
+  {
+   "slug": "restack-sliding-decode-sk-window-on-cluster-master",
+   "area": "sliding-layer attention (decode, stream-K windowed kernel) restack",
+   "outcome": "neutral",
+   "speedup": 1.5016522435853301,
+   "promotion_commit": "7e12891512c09b829cc4fb9ea07edbebc27ebe01",
+   "patch": "muse_attention_decode/hypotheses/done/neutral/restack-sliding-decode-sk-window-on-cluster-master.patch",
+   "md": "muse_attention_decode/hypotheses/done/neutral/2026-10-25T110636Z-restack-sliding-decode-sk-window-on-cluster-master.md",
+   "change": "Restack sliding-decode-sk-window-route (done/neutral 1.4973x [1.475,1.520], job 118c6de9704146f3; built on the unlanded s1 branch, base blob 76492911) onto current master eb1b68b (restack-sk-pseudo-cluster-plus-v3-fused-preattn: sliding verify B=1 pseudo-decode, sliding cluster C=16 at decode B=1 an"
+  },
+  {
+   "slug": "sliding-decode1-cluster-per-kvhead",
+   "area": "sliding-layer attention (batch-1 decode, cluster kernel work split)",
+   "outcome": "neutral",
+   "speedup": 1.5119748206149146,
+   "promotion_commit": "5d528bf313ed6deb0094c453214f1584fea0033b",
+   "patch": "muse_attention_decode/hypotheses/done/neutral/sliding-decode1-cluster-per-kvhead.patch",
+   "md": "muse_attention_decode/hypotheses/done/neutral/2026-10-25T153027Z-sliding-decode1-cluster-per-kvhead.md",
+   "change": "Built on current master (no depends_on). Sliding decode_1 (weight 46, 60% of the decode_1 load) runs sliding_cluster_kernel at C=16: ONE cluster of 16 CTAs for the whole step, 10.8 us kernel / 11.9 us shape, floor 0.1 us. Each CTA owns 128 old keys of BOTH kv heads and, before it can compute, builds"
+  },
+  {
+   "slug": "fused-preattention-triton",
+   "area": "pre-attention norm+rope",
+   "outcome": "gain",
+   "speedup": 1.1274459340435283,
+   "promotion_commit": "3e98bd00dcb717e6e3670b7819e7d1c2331f52ba",
+   "patch": "muse_attention_decode/hypotheses/done/gain/fused-preattention-triton.patch",
+   "md": "muse_attention_decode/hypotheses/done/gain/2026-10-23T223550Z-fused-preattention-triton.md",
+   "change": "Replace the five pre-attention launches of the parity pipeline (FusedQKNorm (+RoPE), k .to(FP8), v .to(FP8), store_cache, q .to(FP8)) with one Triton kernel, grid (B*L, Hq+Hkv), one program per (token, head), num_warps=1. Programs h < Hq load the head's 64 bf16 entries from qkv row t at offset h*64 "
+  },
+  {
+   "slug": "fa3-hdim128-head-pairing",
+   "area": "FA3 call (head packing)",
+   "outcome": "gain",
+   "speedup": 1.1705932092473075,
+   "promotion_commit": "86dc7133cb6594c6738fddf31911079e71700bfc",
+   "patch": "muse_attention_decode/hypotheses/done/gain/fa3-hdim128-head-pairing.patch",
+   "md": "muse_attention_decode/hypotheses/done/gain/2026-10-23T225840Z-fa3-hdim128-head-pairing.md",
+   "change": "On full-attention layers only (config window == 0, decode and verify) call flash_attn_with_kvcache on a head-paired view of the cache so each token's two KV heads are fetched as ONE 128-byte row instead of two 64-byte rows. With G = Hq // Hkv and S = Hkv // 2 (Hkv is even: 2 under tp8, 16 under dp; "
+  },
+  {
+   "slug": "paired-heads-launch-cleanup",
+   "area": "attention boundary",
+   "outcome": "gain",
+   "speedup": 1.2436140703098866,
+   "promotion_commit": "fa95f6d9e5bbaa7ab5978727425c8247ebbaa5c1",
+   "patch": "muse_attention_decode/hypotheses/done/gain/paired-heads-launch-cleanup.patch",
+   "md": "muse_attention_decode/hypotheses/done/gain/2026-10-23T225840Z-paired-heads-launch-cleanup.md",
+   "change": "Stacked on fa3-hdim128-head-pairing (and using fused-preattention-triton's kernel, which must have landed too): remove the five pad/un-pad launches the pairing added on full layers. (1) Pad at the source: the fused pre-attention Triton kernel's query programs (one per (token, head)) write their 64 n"
+  },
+  {
+   "slug": "paired-heads-launch-cleanup-ab-tune-batch-gate",
+   "area": "FA3 call (head packing) gate",
+   "outcome": "neutral",
+   "speedup": 1.2686474414890054,
+   "promotion_commit": "bfb7bac32c93cb1602f4273c5d2c65f69e1c7d6f",
+   "patch": "muse_attention_decode/hypotheses/done/neutral/paired-heads-launch-cleanup-ab-tune-batch-gate.patch",
+   "md": "muse_attention_decode/hypotheses/done/neutral/2026-10-24T104027Z-paired-heads-launch-cleanup-ab-tune-batch-gate.md",
+   "change": "From the parent's branch (paired-heads-launch-cleanup built on master), change only the pairing predicate to paired = (window == 0 and hkv % 2 == 0 and batch > 1), where batch = cfg['batch'], and use this single predicate both for the pre-attention kernel's q layout (pass it as a constexpr, e.g. PAI"
+  },
+  {
+   "slug": "sliding-fused-triton-decode1-gate",
+   "area": "sliding-layer attention (batch-1 decode gate)",
+   "outcome": "neutral",
+   "speedup": 1.2930643047593426,
+   "promotion_commit": "b8a0e4db5c9dfb55e627e0feb577fbd51ca8959d",
+   "patch": "muse_attention_decode/hypotheses/done/neutral/sliding-fused-triton-decode1-gate.patch",
+   "md": "muse_attention_decode/hypotheses/done/neutral/2026-10-24T120440Z-sliding-fused-triton-decode1-gate.md",
+   "change": "Port _sliding_fused_kernel and its helpers (_counters, _num_splits, _norm_rope, _gpu_fence, _online_update, _gate_epilogue, LOG2E, _sliding_forward) verbatim from muse_attention_decode/hypotheses/done/regression/sliding-single-launch-fused-attention.patch (impl commit db5fa4d87590) onto current mast"
+  },
+  {
+   "slug": "full-decode-cuda-gather-splitkv",
+   "area": "FA3 call (full-layer decode gather)",
+   "outcome": "gain",
+   "speedup": 1.3467624733171553,
+   "promotion_commit": "3693fb89b6ce898de437c29d4859b90c33277309",
+   "patch": "muse_attention_decode/hypotheses/done/gain/full-decode-cuda-gather-splitkv.patch",
+   "md": "muse_attention_decode/hypotheses/done/gain/2026-10-24T140133Z-full-decode-cuda-gather-splitkv.md",
+   "change": "Stage 1 of a rewrite of full-attention decode, built on master (sliding-fused-triton-decode1-gate). Gate (config/shape only): cfg window == 0 and q_len == 1 and batch > 1 and num_q_heads == 16 and num_kv_heads == 2 and head_dim == 64 and page_size == 1; every other shape (all sliding, full decode_1,"
+  }
+ ]
+}
+5. muse_attention_decode/submission.py (master) — the kernel the hypothesis will be built on (its base).
+6. muse_attention_decode/baseline.py — SGLang's own pipeline (the named parts), muse_attention_decode/TASK.md — shapes,
+   weights, floors, correctness bounds, timing method, rules.
+7. Other hypotheses in flight or queued for this problem (slugs; do not duplicate them): a3-drop-cu-seqlens-decode, erge-perkvhead-v3chain-sv32-tiled, liding-cluster-s2-decode-c4-pdl, liding-cluster-s3-verify-attn-only-phase-timed, liding-decode-sk-s3-fused-preattn-rope, liding-verify-fa3-num-splits-band-gate, liding-verify-wgmma-window-s1, liding-verify1-pseudo-fused-preattn-rope, liding-verify1-triton-pseudo-decode, reattention-tiled-every-verify-block, riton-window-attention-sliding, ull-decode-sk-s5-deferred-ticket-fault-fix, ull-decode-splitkv-s2-streamk-ticket, ull-verify-fa3-num-splits-band-gate, ull-verify-wgmma-s3-warpgroup-per-kvhead, ull-verify-wgmma-s4-sliding-window, ull-verify-wgmma-s6-split-ring-2cta, ull-verify-wgmma-ws-s1-producer-split, ull-verify1-sk-pseudo-decode, ull-verify1-wgmma-s4-batch1-grid-sm, ull-verify1-wgmma-s7-grid-sm-two-level, used-full-combine-normgate
+
+Answer these, adversarially:
+A. **Justification.** Is the stated mechanism plausible on this hardware for these shapes? Does
+   the profile data in FINDINGS support it (which kernels, how many µs, how far from the
+   speed-of-light floor)? Are the `expected` shapes and directions consistent with the shape
+   weights and floors in TASK.md? Name the weakest link in the argument. Check the `prior`
+   field (the closest earlier attempt and what differs) against that slug's file and outcome,
+   and FINDINGS' "Do not try" list: is the difference real, or is this the same mechanism again?
+   A `prior: none` that has an obvious earlier attempt is grounds for hold.
+B. **Confounding by what already landed.** For each landed hypothesis that touches the same
+   area, the same launch sequence, the same memory traffic, or the same numerical path: could a
+   gain or loss measured for this hypothesis be caused by the interaction rather than by the
+   change itself? Would the change behave differently if that landed hypothesis were absent or
+   tuned differently?
+C. **Interference and A/B.** Decide specifically whether an additional run is warranted to make
+   *this* hypothesis's single result meaningful: (i) this change with landed hypothesis X
+   reverted (`ab-revert`), (ii) this change with X tuned differently (`ab-tune`), or (iii) a
+   control that isolates one of the hypothesis's own sub-changes (`control`). A companion is
+   warranted only when, without it, both a gain and a loss would be ambiguous. At most two.
+   Each must be implementable from the parent's branch: say exactly what to revert (the patch
+   path from the landed list, applied in reverse) or what to tune, and what stays.
+D. **Rules.** Flag anything in the change that could break the competition rules (precision,
+   caching derived from inputs, every-key attention, host syncs, work outside the timed call).
+
+If the hypothesis has `kind: rewrite`, it replaces a whole subsystem over several staged runs and
+is judged on the replaced kernels' own time against the incumbent and the speed-of-light floor (its
+`## Milestones`), not on the headline. For a rewrite, weigh instead: is the design sound for this
+hardware and these shapes (parallelism, bytes in flight, dequant cost, tensor-core path), is the
+correctness plan adequate, is the stage's milestone readable from the profile, and what is the
+single biggest risk to fix in the next stage. Do not hold a rewrite because one run cannot
+attribute a headline change or because the first stage may be slower than the incumbent; hold it
+only for a rules problem or a design that cannot reach its floor. Ambition is not a defect: the
+user keeps 40% of the day's checks for rewrites, so a large overhaul is judged on whether its
+target is physically reachable and its plan sound, not on how much it changes. Companions are rarely useful for
+a rewrite: the next stage is the follow-up.
+
+Return ONLY a JSON object, no prose around it, with this schema:
+{
+ "model": "opus",
+ "verdict": "proceed" | "hold" | "proceed-with-companions",
+ "summary": "one or two sentences",
+ "justification": "your assessment of A, including the weakest link",
+ "confounders": ["one line per landed hypothesis that confounds, with why", ...],
+ "interference": "your reasoning for C: why companions are or are not needed",
+ "rules_flags": ["...", ...],
+ "companions": [
+   {"slug": "<parent-slug>-ab-revert-<x>", "kind": "ab-revert" | "ab-tune" | "control",
+    "area": "...", "change": "a paragraph implementable from the parent's branch without asking",
+    "expected": [{"shapes": "<glob over shape keys>", "direction": "faster|slower|flat", "why": "..."}],
+    "reason": "what this companion disambiguates", "priority": 1-5, "risk": "low|medium|high"}
+ ],
+ "open_questions": ["...", ...]
+}
+`hold` only when the hypothesis is unjustifiable, duplicates a landed/do-not-retry item, or would
+break a rule. Prefer `proceed` with sharp notes over a timid `hold`.
+
+Context (orchestrator, facts only): this review is for TOMORROW, 2026-10-26 from 00:00Z, when this problem gets 20 fresh okc checks (40% for rewrites) and 10 scored submits; the first run of this hypothesis will be an okc check (not a scored submit) unless it says otherwise. Builds happen tonight on a GPU-less node against current master. Today's DIAGNOSIS.md for the problem and the just-updated hypotheses/LESSONS.md are authoritative context; read both. One new lesson: single-round 1.02x prepare-time selectors mis-routed bf16 cells today (judge disagreed); prefer two interleaved rounds >= 1.03 with an IQR bound.
