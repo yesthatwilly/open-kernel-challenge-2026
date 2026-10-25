@@ -5,7 +5,6 @@ items here and in each tick's summary. Resolved items move to the log at the bot
 
 ## Open
 
-- 2026-10-25 04:36Z bf16: three independent row wins, each checked alone on master b99b1dd: router cluster m<=8 (d323ce8ef6a54fde, router decode_1 5.38 -> 4.98, verify_1 5.47 -> 4.93), unpooler-slice cluster m<=8 (e557d92969864449, unpooler decode_1 6.15 -> 5.34, verify_1 6.00 -> 5.41), NN layout m=128 (92cd4e758a924ca0, pooler verify_16 paired 1.117, unpooler 1.047). Headlines 1.220/1.226/1.228 are inside the CI of 1.2215, so none clears the bar alone; estimated combined ~1.24. Plan: churn mints one restack of all three and checks it (bf16 has 1 check left today, else tomorrow); landing still needs your approval. Default: not landed.
 - 2026-10-24 rules heads-up (not blocking): bf16 **bf16-cublaslt-algo-pick-in-prepare-m128-m256** times cuBLASLt algorithm candidates on synthetic data inside the untimed prepare() and replays the winner in kernel_fn (no timing or autotune in kernel_fn). The Opus reviewer read the rules as allowing it, and decode's pooler-gemm-splitk-autotune used the same pattern. It runs on tomorrow's quota unless you say to hold it.
 
 ## Standing answers
@@ -41,3 +40,4 @@ items here and in each tick's summary. Resolved items move to the log at the bot
 - 2026-10-25: the user said "land the decode w2 atomic port"; landed w2-marlin-atomic-add-t1-port on decode master (00e36e3). No scored submit sent (not requested).
 - 2026-10-25: the user said "send the decode scored submit too"; Claude ran it for decode master with w2-marlin-atomic-add-t1-port, job 3fd3fa1f96d045dd.
 - 2026-10-25 ~05:40Z: the user said "lift the pause and mint for the remaining checks". Pause lifted; minting 25 (attention 8, decode 3, moe 5, prefill 8, bf16 1 = the three-row restack). Board after harvest: attention scored 1.4441 (341623fa), decode 1.2726 (3fd3fa1f).
+- 2026-10-25 ~11:00Z: the user approved: (1) attention scored submit of master (restack-sk-pseudo-cluster-plus-v3-fused-preattn, check 1.4920) sent, job d672f69ea69b4396; (2) prefill experts-turn4-ssdq-s1b-dataptr-symbol-fix landed on master + scored submit 810b5f7decc84206; (3) sliding-decode-sk-window-route restack onto attention master, to run as a scored submit (minting); (4) bf16 restack-three-cell-wins landed on master + scored submit ee4f89f2f62c42d3. Then /hypothesize all -n 2.
