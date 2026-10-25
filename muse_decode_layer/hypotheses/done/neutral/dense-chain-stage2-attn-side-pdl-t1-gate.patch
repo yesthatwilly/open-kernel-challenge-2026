@@ -1,0 +1,1083 @@
+diff --git a/muse_decode_layer/submission.py b/muse_decode_layer/submission.py
+index 4da9467..c5a4cb4 100644
+--- a/muse_decode_layer/submission.py
++++ b/muse_decode_layer/submission.py
+@@ -295,6 +295,13 @@ void dl_route_norm_align(torch::Tensor ei, torch::Tensor norm_w, torch::Tensor x
+                          torch::Tensor block_experts, torch::Tensor n_padded, torch::Tensor cnt, int64_t bsm);
+ int64_t dl_occupancy(int64_t nf);
+ void dl_pdl_probe(torch::Tensor times, int64_t spin_ns, int64_t pdl);
++void dl2_qkv(torch::Tensor x, torch::Tensor w, torch::Tensor ws, torch::Tensor cnt, torch::Tensor raw,
++             torch::Tensor q_attn, torch::Tensor gate, torch::Tensor kc, torch::Tensor vc, torch::Tensor loc,
++             torch::Tensor pos, torch::Tensor cs, torch::Tensor ks, torch::Tensor vs, int64_t pdl, int64_t mode,
++             int64_t paired, int64_t rope, int64_t scaled);
++void dl2_o(torch::Tensor fa, torch::Tensor gate, torch::Tensor w, torch::Tensor ws, torch::Tensor cnt,
++           torch::Tensor out, int64_t pdl, int64_t prologue, int64_t paired);
++int64_t dl2_occupancy(int64_t which, int64_t nf);
+ """
+ 
+ _DL_CUDA = r"""
+@@ -303,6 +310,7 @@ _DL_CUDA = r"""
+ #include <c10/cuda/CUDAException.h>
+ #include <cuda_runtime.h>
+ #include <cuda_bf16.h>
++#include <cuda_fp8.h>
+ #include <cstdint>
+ 
+ namespace {
+@@ -709,6 +717,413 @@ void launch_p(const __nv_bfloat16* x, const __nv_bfloat16* w, __nv_bfloat16* ei,
+   C10_CUDA_CHECK(cudaLaunchKernelEx(&cfg, dl_pooler_router_kernel<NF>, x, w, ei, logits, ws, cnt, m));
+ }
+ 
++
++// ---------------------------------------------------------------------------------------------
++// Stage 2 (dense-chain-stage2-attn-side-pdl): attention-side kernels Q and O, built from the P body.
++// ---------------------------------------------------------------------------------------------
++constexpr int Q_ROWS = 2304;                      // qkv_gate rows: q 1024, k 128, v 128, gate 1024
++constexpr int Q_SPLIT = 6;                        // K-chunks of 10 / 11 K-blocks
++constexpr int Q_NTILES = Q_ROWS / BLOCK_N;        // 36 head tiles
++constexpr int O_ROWS = 8192;
++constexpr int O_KDIM = 1024;
++constexpr int O_SPLIT = 2;                        // K halves of 512 = 8 heads
++constexpr int O_NTILES = O_ROWS / BLOCK_N;        // 128
++constexpr int O_KHALF = O_KDIM / O_SPLIT;         // 512
++constexpr int O_KBS = O_KHALF / BLOCK_K;          // 4 K-blocks per CTA, all resident in smem
++template <int NF> struct OSmem {
++  static constexpr int X_KB = NF * 8 * ROW_BYTES;              // one K-block of the x tile
++  static constexpr int BYTES = O_KBS * W_STAGE + O_KBS * X_KB; // 72 KB / 80 KB / 96 KB
++};
++
++__device__ __forceinline__ float warp_sum(float v) {
++#pragma unroll
++  for (int o = 16; o > 0; o >>= 1) v += __shfl_xor_sync(0xffffffffu, v, o);
++  return v;
++}
++__device__ __forceinline__ float bf16r(float v) { return __bfloat162float(__float2bfloat16_rn(v)); }
++// Two floats -> two E4M3 bytes (first value in the low byte), saturating to +-448 (satfinite).
++__device__ __forceinline__ void store_fp8x2(uint8_t* dst, float a, float b) {
++  const __nv_fp8x2_storage_t p = __nv_cvt_float2_to_fp8x2(make_float2(a, b), __NV_SATFINITE, __NV_E4M3);
++  *reinterpret_cast<unsigned short*>(dst) = static_cast<unsigned short>(p);
++}
++
++// KERNEL Q: [m, 2304] = x @ qkv_gate^T, split-K swap-AB GEMV (the P body, 36 head tiles x 6 = 216 CTAs).
++// The CTA drawing a tile's last ticket owns that head's 64 fp32 outputs of every token. mode 1 (raw):
++// it writes the bf16 [m, 2304] projection (for _sliding_forward). mode 0: tiles 0-15 (q) RMSNorm
++// (scaleless, eps) + interleaved RoPE (cos_sin at positions) -> bf16 -> E4M3 into q_attn (unpaired
++// [m,16,64], or paired [m,16,128]: own half + zeros in the other); tiles 16-17 (k) the same, divided
++// by k_scale when scaled, E4M3 into k_cache row cache_loc[t]; tiles 18-19 (v) divided by v_scale when
++// scaled, E4M3 into v_cache; tiles 20-35 bf16 gate [m, 1024]. Every value goes through bf16 before
++// the E4M3 cast, as the master path's bf16 tensors do.
++template <int NF>
++__global__ void __launch_bounds__(THREADS, 2)
++dl_qkv_kernel(const __nv_bfloat16* __restrict__ x, const __nv_bfloat16* __restrict__ w,
++              float* __restrict__ ws, int* __restrict__ cnt, __nv_bfloat16* __restrict__ raw,
++              uint8_t* __restrict__ q_attn, __nv_bfloat16* __restrict__ gate_out,
++              uint8_t* __restrict__ kc, uint8_t* __restrict__ vc, const int64_t* __restrict__ loc,
++              const int64_t* __restrict__ pos, const float* __restrict__ cs,
++              const float* __restrict__ ks, const float* __restrict__ vs,
++              int m, int mode, int paired, int rope, int scaled) {
++  using S = Smem<NF>;
++  extern __shared__ __align__(128) uint8_t smem[];
++  __shared__ int s_last;
++  const int tid = threadIdx.x, lane = tid & 31, warp = tid >> 5;
++  const int ntile = blockIdx.x / Q_SPLIT, sidx = blockIdx.x % Q_SPLIT;
++  const int n0 = ntile * BLOCK_N;
++  const int kb0 = sidx * KB / Q_SPLIT, kb1 = (sidx + 1) * KB / Q_SPLIT;
++  const int nsteps = kb1 - kb0;
++  const __nv_bfloat16* wbase = w + (int64_t)n0 * KDIM;
++
++  auto issue_w = [&](int j) {
++    uint8_t* sw = smem + (j % STAGES) * S::STAGE_BYTES;
++    const int kel = (kb0 + j) * BLOCK_K;
++#pragma unroll
++    for (int u = 0; u < (BLOCK_N * 16) / THREADS; ++u) {
++      const int q = tid + u * THREADS;
++      const int row = q >> 4, c = q & 15;
++      cp_async16(smem_u32(sw + row * ROW_BYTES + ((c ^ (row & 7)) << 4)),
++                 wbase + (int64_t)row * KDIM + kel + c * 8, 16);
++    }
++  };
++  auto issue_x = [&](int j) {
++    uint8_t* sx = smem + (j % STAGES) * S::STAGE_BYTES + W_STAGE;
++    const int kel = (kb0 + j) * BLOCK_K;
++#pragma unroll
++    for (int u = 0; u < NF; ++u) {
++      const int q = tid + u * THREADS;
++      const int row = q >> 4, c = q & 15;
++      const bool ok = row < m;
++      const __nv_bfloat16* src = x + (ok ? (int64_t)row * KDIM : (int64_t)0) + kel + c * 8;
++      cp_async16(smem_u32(sx + row * ROW_BYTES + ((c ^ (row & 7)) << 4)), src, ok ? 16 : 0);
++    }
++  };
++
++  // Weight copies of stages 0..2 before the PDL wait; x and every global write after it.
++#pragma unroll
++  for (int j = 0; j < STAGES - 1; ++j)
++    if (j < nsteps) issue_w(j);
++  griddep_wait();
++#pragma unroll
++  for (int j = 0; j < STAGES - 1; ++j) {
++    if (j < nsteps) issue_x(j);
++    cp_commit();
++  }
++
++  float acc[2][NF][4];
++#pragma unroll
++  for (int h = 0; h < 2; ++h)
++#pragma unroll
++    for (int f = 0; f < NF; ++f)
++#pragma unroll
++      for (int r = 0; r < 4; ++r) acc[h][f][r] = 0.f;
++  const int arow = warp * 16 + (lane & 15);
++  const int asw = arow & 7;
++  const int ahalf = lane >> 4;
++  const int xrow = lane & 7;
++  const int xq = lane >> 3;
++
++  for (int i = 0; i < nsteps; ++i) {
++    cp_wait<STAGES - 2>();
++    __syncthreads();
++    {
++      const int nx = i + STAGES - 1;
++      if (nx < nsteps) { issue_w(nx); issue_x(nx); }
++      cp_commit();
++    }
++    const uint8_t* sw = smem + (i % STAGES) * S::STAGE_BYTES;
++    const uint32_t a_base = smem_u32(sw) + arow * ROW_BYTES;
++    const uint32_t b_base = smem_u32(sw + W_STAGE) + xrow * ROW_BYTES;
++#pragma unroll
++    for (int kp = 0; kp < BLOCK_K / 32; ++kp) {
++      uint32_t a0[4], a1[4];
++      ldsm_x4(a0, a_base + ((((kp * 2 + 0) * 2 + ahalf) ^ asw) << 4));
++      ldsm_x4(a1, a_base + ((((kp * 2 + 1) * 2 + ahalf) ^ asw) << 4));
++#pragma unroll
++      for (int f = 0; f < NF; ++f) {
++        uint32_t b[4];
++        ldsm_x4(b, b_base + f * 8 * ROW_BYTES + (((kp * 4 + xq) ^ xrow) << 4));
++        mma_bf16(acc[0][f], a0, b[0], b[1]);
++        mma_bf16(acc[1][f], a1, b[2], b[3]);
++      }
++    }
++  }
++
++  const int r0 = n0 + warp * 16 + (lane >> 2);
++  float* wsp = ws + (int64_t)sidx * MAXT * Q_ROWS;
++#pragma unroll
++  for (int f = 0; f < NF; ++f) {
++    const int t0 = f * 8 + (lane & 3) * 2;
++    if (t0 < m) {
++      wsp[(int64_t)t0 * Q_ROWS + r0] = acc[0][f][0] + acc[1][f][0];
++      wsp[(int64_t)t0 * Q_ROWS + r0 + 8] = acc[0][f][2] + acc[1][f][2];
++    }
++    if (t0 + 1 < m) {
++      wsp[(int64_t)(t0 + 1) * Q_ROWS + r0] = acc[0][f][1] + acc[1][f][1];
++      wsp[(int64_t)(t0 + 1) * Q_ROWS + r0 + 8] = acc[0][f][3] + acc[1][f][3];
++    }
++  }
++  __threadfence();
++  __syncthreads();
++  if (tid == 0) s_last = (atomicAdd(cnt + ntile, 1) == Q_SPLIT - 1);
++  __syncthreads();
++  if (s_last) {
++    __threadfence();
++    // One warp per token, lane = element pair (2 lane, 2 lane + 1): an interleaved RoPE pair.
++    for (int t = warp; t < m; t += THREADS / 32) {
++      float v0 = 0.f, v1 = 0.f;
++#pragma unroll
++      for (int p = 0; p < Q_SPLIT; ++p) {
++        const float2 s2 = __ldcg(reinterpret_cast<const float2*>(ws + ((int64_t)p * MAXT + t) * Q_ROWS + n0) + lane);
++        v0 += s2.x;
++        v1 += s2.y;
++      }
++      v0 = bf16r(v0);  // the projection's bf16 output
++      v1 = bf16r(v1);
++      if (mode == 1) {
++        *reinterpret_cast<__nv_bfloat162*>(raw + (int64_t)t * Q_ROWS + n0 + 2 * lane) = __floats2bfloat162_rn(v0, v1);
++        continue;
++      }
++      if (ntile >= 20) {  // gate
++        *reinterpret_cast<__nv_bfloat162*>(gate_out + (int64_t)t * 1024 + (ntile - 20) * 64 + 2 * lane) =
++            __floats2bfloat162_rn(v0, v1);
++        continue;
++      }
++      float y0 = v0, y1 = v1;
++      if (ntile < 18) {  // q or k head: scaleless RMSNorm, then RoPE
++        const float ss = warp_sum(v0 * v0 + v1 * v1);
++        const float r = 1.0f / sqrtf(ss / 64.0f + 1e-5f);
++        const float x0 = v0 * r, x1 = v1 * r;
++        if (rope) {
++          const float* c = cs + pos[t] * 64;
++          const float cc = __ldg(c + lane), sn = __ldg(c + 32 + lane);
++          y0 = x0 * cc - x1 * sn;
++          y1 = x0 * sn + x1 * cc;
++        } else {
++          y0 = x0;
++          y1 = x1;
++        }
++        y0 = bf16r(y0);
++        y1 = bf16r(y1);
++      }
++      if (ntile < 16) {  // q head ntile
++        if (paired) {
++          const int half = (ntile >> 3) & 1;
++          uint8_t* base = q_attn + ((int64_t)t * 16 + ntile) * 128;
++          store_fp8x2(base + half * 64 + 2 * lane, y0, y1);
++          *reinterpret_cast<unsigned short*>(base + (1 - half) * 64 + 2 * lane) = 0;
++        } else {
++          store_fp8x2(q_attn + ((int64_t)t * 16 + ntile) * 64 + 2 * lane, y0, y1);
++        }
++      } else if (ntile < 18) {  // k head
++        if (scaled) {
++          const float sc = __ldg(ks);
++          y0 = bf16r(y0 / sc);
++          y1 = bf16r(y1 / sc);
++        }
++        store_fp8x2(kc + (loc[t] * 2 + (ntile - 16)) * 64 + 2 * lane, y0, y1);
++      } else {  // v head
++        if (scaled) {
++          const float sc = __ldg(vs);
++          y0 = bf16r(y0 / sc);
++          y1 = bf16r(y1 / sc);
++        }
++        store_fp8x2(vc + (loc[t] * 2 + (ntile - 18)) * 64 + 2 * lane, y0, y1);
++      }
++    }
++    if (tid == 0) atomicExch(cnt + ntile, 0);
++  }
++}
++
++// KERNEL O: attn_output bf16 [m, 8192] = o @ W_o^T over K = 1024. 128 row tiles x 2 K-halves (8
++// heads each) = 256 CTAs. Every K-block of the CTA's 64 x 512 weight slab is resident in smem (64 KB,
++// cp.async issued BEFORE griddepcontrol.wait). prologue 1: after the wait the CTA builds its x tile
++// itself from FA3's output (bf16 [m,16,64], or paired [m,16,128] taking head h's own half (h>>3)&1)
++// and the gate bf16 [m,1024]: per-head scaleless RMSNorm (eps 1e-5) x sigmoid(gate) in fp32, one bf16
++// rounding, as FusedRMSNormGate. prologue 0: x = fa (bf16 [m,1024], already normed and gated).
++template <int NF>
++__global__ void __launch_bounds__(THREADS, 2)
++dl_o_kernel(const __nv_bfloat16* __restrict__ fa, const __nv_bfloat16* __restrict__ gate,
++            const __nv_bfloat16* __restrict__ w, __nv_bfloat16* __restrict__ out,
++            float* __restrict__ ws, int* __restrict__ cnt, int m, int prologue, int paired) {
++  using S = OSmem<NF>;
++  extern __shared__ __align__(128) uint8_t smem[];
++  __shared__ int s_last;
++  const int tid = threadIdx.x, lane = tid & 31, warp = tid >> 5;
++  const int ntile = blockIdx.x / O_SPLIT, half = blockIdx.x % O_SPLIT;
++  const int n0 = ntile * BLOCK_N;
++  const int k0 = half * O_KHALF;
++  uint8_t* xs = smem + O_KBS * W_STAGE;
++
++  // Weights first (no dependence on the predecessor): 4 K-blocks x (64 rows x 16 chunks).
++#pragma unroll
++  for (int kb = 0; kb < O_KBS; ++kb) {
++    uint8_t* sw = smem + kb * W_STAGE;
++#pragma unroll
++    for (int u = 0; u < (BLOCK_N * 16) / THREADS; ++u) {
++      const int q = tid + u * THREADS;
++      const int row = q >> 4, c = q & 15;
++      cp_async16(smem_u32(sw + row * ROW_BYTES + ((c ^ (row & 7)) << 4)),
++                 w + (int64_t)(n0 + row) * O_KDIM + k0 + kb * BLOCK_K + c * 8, 16);
++    }
++  }
++  cp_commit();
++  if (prologue) {  // zero the whole x tile (rows >= m stay 0), also before the wait
++    uint4* xz = reinterpret_cast<uint4*>(xs);
++    for (int i = tid; i < (O_KBS * S::X_KB) / 16; i += THREADS) xz[i] = make_uint4(0u, 0u, 0u, 0u);
++    __syncthreads();  // the zero fill is complete before any prologue store
++  }
++  griddep_wait();
++  if (prologue) {
++    for (int pr = warp; pr < m * 8; pr += THREADS / 32) {
++      const int t = pr >> 3, j = pr & 7, h = half * 8 + j;
++      const __nv_bfloat16* src = fa + ((int64_t)t * 16 + h) * (paired ? 128 : 64) + (paired ? ((h >> 3) & 1) * 64 : 0);
++      const float2 a = __bfloat1622float2(reinterpret_cast<const __nv_bfloat162*>(src)[lane]);
++      const float2 g = __bfloat1622float2(reinterpret_cast<const __nv_bfloat162*>(gate + (int64_t)t * 1024 + h * 64)[lane]);
++      const float ss = warp_sum(a.x * a.x + a.y * a.y);
++      const float r = 1.0f / sqrtf(ss / 64.0f + 1e-5f);
++      const float y0 = a.x * r * (1.0f / (1.0f + expf(-g.x)));
++      const float y1 = a.y * r * (1.0f / (1.0f + expf(-g.y)));
++      const int kb = j >> 1, col = (j & 1) * 64 + 2 * lane, c = col >> 3;
++      uint8_t* dst = xs + kb * S::X_KB + t * ROW_BYTES + ((c ^ (t & 7)) << 4) + (col & 7) * 2;
++      *reinterpret_cast<__nv_bfloat162*>(dst) = __floats2bfloat162_rn(y0, y1);
++    }
++  } else {
++#pragma unroll
++    for (int kb = 0; kb < O_KBS; ++kb) {
++#pragma unroll
++      for (int u = 0; u < NF; ++u) {
++        const int q = tid + u * THREADS;
++        const int row = q >> 4, c = q & 15;
++        const bool ok = row < m;
++        const __nv_bfloat16* src = fa + (ok ? (int64_t)row * O_KDIM : (int64_t)0) + k0 + kb * BLOCK_K + c * 8;
++        cp_async16(smem_u32(xs + kb * S::X_KB + row * ROW_BYTES + ((c ^ (row & 7)) << 4)), src, ok ? 16 : 0);
++      }
++    }
++    cp_commit();
++  }
++  cp_wait<0>();
++  __syncthreads();
++
++  float acc[2][NF][4];
++#pragma unroll
++  for (int h = 0; h < 2; ++h)
++#pragma unroll
++    for (int f = 0; f < NF; ++f)
++#pragma unroll
++      for (int r = 0; r < 4; ++r) acc[h][f][r] = 0.f;
++  const int arow = warp * 16 + (lane & 15);
++  const int asw = arow & 7;
++  const int ahalf = lane >> 4;
++  const int xrow = lane & 7;
++  const int xq = lane >> 3;
++#pragma unroll
++  for (int kb = 0; kb < O_KBS; ++kb) {
++    const uint32_t a_base = smem_u32(smem + kb * W_STAGE) + arow * ROW_BYTES;
++    const uint32_t b_base = smem_u32(xs + kb * S::X_KB) + xrow * ROW_BYTES;
++#pragma unroll
++    for (int kp = 0; kp < BLOCK_K / 32; ++kp) {
++      uint32_t a0[4], a1[4];
++      ldsm_x4(a0, a_base + ((((kp * 2 + 0) * 2 + ahalf) ^ asw) << 4));
++      ldsm_x4(a1, a_base + ((((kp * 2 + 1) * 2 + ahalf) ^ asw) << 4));
++#pragma unroll
++      for (int f = 0; f < NF; ++f) {
++        uint32_t b[4];
++        ldsm_x4(b, b_base + f * 8 * ROW_BYTES + (((kp * 4 + xq) ^ xrow) << 4));
++        mma_bf16(acc[0][f], a0, b[0], b[1]);
++        mma_bf16(acc[1][f], a1, b[2], b[3]);
++      }
++    }
++  }
++
++  const int r0 = n0 + warp * 16 + (lane >> 2);
++  float* wsp = ws + (int64_t)half * MAXT * O_ROWS;
++#pragma unroll
++  for (int f = 0; f < NF; ++f) {
++    const int t0 = f * 8 + (lane & 3) * 2;
++    if (t0 < m) {
++      wsp[(int64_t)t0 * O_ROWS + r0] = acc[0][f][0] + acc[1][f][0];
++      wsp[(int64_t)t0 * O_ROWS + r0 + 8] = acc[0][f][2] + acc[1][f][2];
++    }
++    if (t0 + 1 < m) {
++      wsp[(int64_t)(t0 + 1) * O_ROWS + r0] = acc[0][f][1] + acc[1][f][1];
++      wsp[(int64_t)(t0 + 1) * O_ROWS + r0 + 8] = acc[0][f][3] + acc[1][f][3];
++    }
++  }
++  __threadfence();
++  __syncthreads();
++  if (tid == 0) s_last = (atomicAdd(cnt + ntile, 1) == O_SPLIT - 1);
++  __syncthreads();
++  if (s_last) {
++    __threadfence();
++    for (int e = tid; e < m * BLOCK_N; e += THREADS) {
++      const int t = e / BLOCK_N, r = n0 + (e % BLOCK_N);
++      float s = 0.f;
++#pragma unroll
++      for (int p = 0; p < O_SPLIT; ++p) s += __ldcg(ws + ((int64_t)p * MAXT + t) * O_ROWS + r);
++      out[(int64_t)t * O_ROWS + r] = __float2bfloat16_rn(s);
++    }
++    if (tid == 0) atomicExch(cnt + ntile, 0);
++  }
++}
++
++template <int NF>
++void set_attrs_q() {
++  static bool done = false;
++  if (!done) {
++    C10_CUDA_CHECK(cudaFuncSetAttribute(dl_qkv_kernel<NF>, cudaFuncAttributeMaxDynamicSharedMemorySize, Smem<NF>::BYTES));
++    C10_CUDA_CHECK(cudaFuncSetAttribute(dl_qkv_kernel<NF>, cudaFuncAttributePreferredSharedMemoryCarveout,
++                                        cudaSharedmemCarveoutMaxShared));
++    done = true;
++  }
++}
++template <int NF>
++void set_attrs_o() {
++  static bool done = false;
++  if (!done) {
++    C10_CUDA_CHECK(cudaFuncSetAttribute(dl_o_kernel<NF>, cudaFuncAttributeMaxDynamicSharedMemorySize, OSmem<NF>::BYTES));
++    C10_CUDA_CHECK(cudaFuncSetAttribute(dl_o_kernel<NF>, cudaFuncAttributePreferredSharedMemoryCarveout,
++                                        cudaSharedmemCarveoutMaxShared));
++    done = true;
++  }
++}
++
++template <int NF>
++void launch_q(const __nv_bfloat16* x, const __nv_bfloat16* w, float* ws, int* cnt, __nv_bfloat16* raw,
++              uint8_t* q_attn, __nv_bfloat16* gate, uint8_t* kc, uint8_t* vc, const int64_t* loc,
++              const int64_t* pos, const float* cs, const float* ks, const float* vs, int m, int mode,
++              int paired, int rope, int scaled, bool pdl, cudaStream_t stream) {
++  set_attrs_q<NF>();
++  cudaLaunchConfig_t cfg = {};
++  cfg.gridDim = dim3(Q_NTILES * Q_SPLIT);
++  cfg.blockDim = dim3(THREADS);
++  cfg.dynamicSmemBytes = Smem<NF>::BYTES;
++  cfg.stream = stream;
++  cudaLaunchAttribute attr[1];
++  attr[0].id = cudaLaunchAttributeProgrammaticStreamSerialization;
++  attr[0].val.programmaticStreamSerializationAllowed = 1;
++  cfg.attrs = attr;
++  cfg.numAttrs = pdl ? 1 : 0;
++  C10_CUDA_CHECK(cudaLaunchKernelEx(&cfg, dl_qkv_kernel<NF>, x, w, ws, cnt, raw, q_attn, gate, kc, vc, loc, pos, cs,
++                                    ks, vs, m, mode, paired, rope, scaled));
++}
++
++template <int NF>
++void launch_o(const __nv_bfloat16* fa, const __nv_bfloat16* gate, const __nv_bfloat16* w, __nv_bfloat16* out,
++              float* ws, int* cnt, int m, int prologue, int paired, bool pdl, cudaStream_t stream) {
++  set_attrs_o<NF>();
++  cudaLaunchConfig_t cfg = {};
++  cfg.gridDim = dim3(O_NTILES * O_SPLIT);
++  cfg.blockDim = dim3(THREADS);
++  cfg.dynamicSmemBytes = OSmem<NF>::BYTES;
++  cfg.stream = stream;
++  cudaLaunchAttribute attr[1];
++  attr[0].id = cudaLaunchAttributeProgrammaticStreamSerialization;
++  attr[0].val.programmaticStreamSerializationAllowed = 1;
++  cfg.attrs = attr;
++  cfg.numAttrs = pdl ? 1 : 0;
++  C10_CUDA_CHECK(cudaLaunchKernelEx(&cfg, dl_o_kernel<NF>, fa, gate, w, out, ws, cnt, m, prologue, paired));
++}
++
+ }  // namespace
+ 
+ void dl_pooler_router(torch::Tensor x, torch::Tensor w, torch::Tensor ei, torch::Tensor logits,
+@@ -808,9 +1223,107 @@ void dl_pdl_probe(torch::Tensor times, int64_t spin_ns, int64_t pdl) {
+   cfg.numAttrs = pdl ? 1 : 0;
+   C10_CUDA_CHECK(cudaLaunchKernelEx(&cfg, dl_probe_secondary, tp));
+ }
++
++void dl2_qkv(torch::Tensor x, torch::Tensor w, torch::Tensor ws, torch::Tensor cnt, torch::Tensor raw,
++             torch::Tensor q_attn, torch::Tensor gate, torch::Tensor kc, torch::Tensor vc, torch::Tensor loc,
++             torch::Tensor pos, torch::Tensor cs, torch::Tensor ks, torch::Tensor vs, int64_t pdl, int64_t mode,
++             int64_t paired, int64_t rope, int64_t scaled) {
++  const int64_t m = x.size(0);
++  TORCH_CHECK(m >= 1 && m <= MAXT, "dl2_qkv: tokens out of range");
++  TORCH_CHECK(x.scalar_type() == at::kBFloat16 && x.is_contiguous() && x.size(1) == KDIM, "dl2_qkv: x");
++  TORCH_CHECK(w.scalar_type() == at::kBFloat16 && w.is_contiguous() && w.size(0) == Q_ROWS && w.size(1) == KDIM,
++              "dl2_qkv: w");
++  TORCH_CHECK(ws.scalar_type() == at::kFloat && ws.numel() >= (int64_t)Q_SPLIT * MAXT * Q_ROWS, "dl2_qkv: ws");
++  TORCH_CHECK(cnt.scalar_type() == at::kInt && cnt.numel() >= Q_NTILES, "dl2_qkv: cnt");
++  TORCH_CHECK(mode == 0 || mode == 1, "dl2_qkv: mode");
++  if (mode == 1) {
++    TORCH_CHECK(raw.scalar_type() == at::kBFloat16 && raw.is_contiguous() && raw.size(0) == m &&
++                raw.size(1) == Q_ROWS, "dl2_qkv: raw");
++  } else {
++    TORCH_CHECK(q_attn.scalar_type() == at::kByte && q_attn.is_contiguous() &&
++                q_attn.numel() == m * 16 * (paired ? 128 : 64), "dl2_qkv: q_attn");
++    TORCH_CHECK(gate.scalar_type() == at::kBFloat16 && gate.is_contiguous() && gate.numel() == m * 1024,
++                "dl2_qkv: gate");
++    TORCH_CHECK(kc.scalar_type() == at::kByte && kc.is_contiguous() && vc.scalar_type() == at::kByte &&
++                vc.is_contiguous(), "dl2_qkv: caches");
++    TORCH_CHECK(loc.scalar_type() == at::kLong && loc.numel() >= m, "dl2_qkv: cache_loc");
++    TORCH_CHECK(!rope || (pos.scalar_type() == at::kLong && pos.numel() >= m && cs.scalar_type() == at::kFloat &&
++                          cs.is_contiguous() && cs.dim() == 2 && cs.size(1) == 64), "dl2_qkv: positions / cos_sin");
++    TORCH_CHECK(!scaled || (ks.scalar_type() == at::kFloat && ks.numel() == 1 && vs.scalar_type() == at::kFloat &&
++                            vs.numel() == 1), "dl2_qkv: scales");
++  }
++  auto stream = at::cuda::getCurrentCUDAStream().stream();
++  const auto* xp = reinterpret_cast<const __nv_bfloat16*>(x.data_ptr());
++  const auto* wp = reinterpret_cast<const __nv_bfloat16*>(w.data_ptr());
++  auto* rp = reinterpret_cast<__nv_bfloat16*>(raw.data_ptr());
++  auto* qp = reinterpret_cast<uint8_t*>(q_attn.data_ptr());
++  auto* gp = reinterpret_cast<__nv_bfloat16*>(gate.data_ptr());
++  auto* kp = reinterpret_cast<uint8_t*>(kc.data_ptr());
++  auto* vp = reinterpret_cast<uint8_t*>(vc.data_ptr());
++  const auto* lp = reinterpret_cast<const int64_t*>(loc.data_ptr());
++  const auto* pp = reinterpret_cast<const int64_t*>(pos.data_ptr());
++  const auto* cp = reinterpret_cast<const float*>(cs.data_ptr());
++  const auto* kkp = reinterpret_cast<const float*>(ks.data_ptr());
++  const auto* vvp = reinterpret_cast<const float*>(vs.data_ptr());
++  float* wsp = ws.data_ptr<float>();
++  int* cntp = cnt.data_ptr<int>();
++  const int mi = static_cast<int>(m);
++  const bool p = pdl != 0;
++  if (m <= 8) launch_q<1>(xp, wp, wsp, cntp, rp, qp, gp, kp, vp, lp, pp, cp, kkp, vvp, mi, (int)mode, (int)paired, (int)rope, (int)scaled, p, stream);
++  else if (m <= 16) launch_q<2>(xp, wp, wsp, cntp, rp, qp, gp, kp, vp, lp, pp, cp, kkp, vvp, mi, (int)mode, (int)paired, (int)rope, (int)scaled, p, stream);
++  else launch_q<4>(xp, wp, wsp, cntp, rp, qp, gp, kp, vp, lp, pp, cp, kkp, vvp, mi, (int)mode, (int)paired, (int)rope, (int)scaled, p, stream);
++}
++
++void dl2_o(torch::Tensor fa, torch::Tensor gate, torch::Tensor w, torch::Tensor ws, torch::Tensor cnt,
++           torch::Tensor out, int64_t pdl, int64_t prologue, int64_t paired) {
++  const int64_t m = out.size(0);
++  TORCH_CHECK(m >= 1 && m <= MAXT, "dl2_o: tokens out of range");
++  TORCH_CHECK(out.scalar_type() == at::kBFloat16 && out.is_contiguous() && out.size(1) == O_ROWS, "dl2_o: out");
++  TORCH_CHECK(fa.scalar_type() == at::kBFloat16 && fa.is_contiguous() &&
++              fa.numel() == m * (prologue ? 16 * (paired ? 128 : 64) : O_KDIM), "dl2_o: fa");
++  TORCH_CHECK(!prologue || (gate.scalar_type() == at::kBFloat16 && gate.is_contiguous() && gate.numel() == m * 1024),
++              "dl2_o: gate");
++  TORCH_CHECK(w.scalar_type() == at::kBFloat16 && w.is_contiguous() && w.size(0) == O_ROWS && w.size(1) == O_KDIM,
++              "dl2_o: w");
++  TORCH_CHECK(ws.scalar_type() == at::kFloat && ws.numel() >= (int64_t)O_SPLIT * MAXT * O_ROWS, "dl2_o: ws");
++  TORCH_CHECK(cnt.scalar_type() == at::kInt && cnt.numel() >= O_NTILES, "dl2_o: cnt");
++  auto stream = at::cuda::getCurrentCUDAStream().stream();
++  const auto* fp = reinterpret_cast<const __nv_bfloat16*>(fa.data_ptr());
++  const auto* gp = reinterpret_cast<const __nv_bfloat16*>(gate.data_ptr());
++  const auto* wp = reinterpret_cast<const __nv_bfloat16*>(w.data_ptr());
++  auto* op = reinterpret_cast<__nv_bfloat16*>(out.data_ptr());
++  float* wsp = ws.data_ptr<float>();
++  int* cp = cnt.data_ptr<int>();
++  const int mi = static_cast<int>(m);
++  const bool p = pdl != 0;
++  if (m <= 8) launch_o<1>(fp, gp, wp, op, wsp, cp, mi, (int)prologue, (int)paired, p, stream);
++  else if (m <= 16) launch_o<2>(fp, gp, wp, op, wsp, cp, mi, (int)prologue, (int)paired, p, stream);
++  else launch_o<4>(fp, gp, wp, op, wsp, cp, mi, (int)prologue, (int)paired, p, stream);
++}
++
++// Resident CTAs per SM of kernel Q (which = 0) or O (which = 1) at NF = 1 / 2 / 4.
++int64_t dl2_occupancy(int64_t which, int64_t nf) {
++  int blocks = 0;
++#define DL2_OCC(NFV)                                                                                             \
++  if (which == 0) {                                                                                              \
++    set_attrs_q<NFV>();                                                                                          \
++    C10_CUDA_CHECK(cudaOccupancyMaxActiveBlocksPerMultiprocessor(&blocks, dl_qkv_kernel<NFV>, THREADS, Smem<NFV>::BYTES)); \
++  } else {                                                                                                       \
++    set_attrs_o<NFV>();                                                                                          \
++    C10_CUDA_CHECK(cudaOccupancyMaxActiveBlocksPerMultiprocessor(&blocks, dl_o_kernel<NFV>, THREADS, OSmem<NFV>::BYTES)); \
++  }
++  if (nf == 1) { DL2_OCC(1) }
++  else if (nf == 2) { DL2_OCC(2) }
++  else { DL2_OCC(4) }
++#undef DL2_OCC
++  return blocks;
++}
+ """
+ 
+ 
++_DL_CFLAGS = ["-O3", "-arch=sm_90a", "-lineinfo"]  # no wgmma / setmaxnreg: plain sm_90a, as stage 1 ran on the judge
++
++
+ def _build_dense_chain():
+     """Compile the CUDA module once per process, at import (never during graph capture). Any
+     failure keeps master's path at every T."""
+@@ -818,11 +1331,12 @@ def _build_dense_chain():
+     try:
+         from torch.utils.cpp_extension import load_inline
+         ext = load_inline(
+-            name="muse_decode_dense_chain_v1",
++            name="muse_decode_dense_chain_v2",
+             cpp_sources=_DL_CPP,
+             cuda_sources=_DL_CUDA,
+-            functions=["dl_pooler_router", "dl_route_norm_align", "dl_occupancy", "dl_pdl_probe"],
+-            extra_cuda_cflags=["-O3", "-arch=sm_90a"],
++            functions=["dl_pooler_router", "dl_route_norm_align", "dl_occupancy", "dl_pdl_probe", "dl2_qkv", "dl2_o",
++                       "dl2_occupancy"],
++            extra_cuda_cflags=_DL_CFLAGS,
+             verbose=False,
+         )
+     except Exception as e:  # keep the master path if the build fails
+@@ -830,7 +1344,7 @@ def _build_dense_chain():
+         print(f"{DL_TAG} load_inline FAILED after {dt:.1f}s, master path kept: {e!r}", flush=True)
+         return None, dt
+     dt = time.perf_counter() - t0
+-    print(f"{DL_TAG} load_inline compiled in {dt:.1f}s", flush=True)
++    print(f"{DL_TAG} load_inline compiled in {dt:.1f}s, nvcc flags {_DL_CFLAGS}", flush=True)
+     return ext, dt
+ 
+ 
+@@ -1361,6 +1875,468 @@ def _dl_setup(weights, state):
+         return None
+ 
+ 
++# --- Stage 2: attention-side kernels Q and O (hypothesis dense-chain-stage2-attn-side-pdl, rewrite stage 2) ---
++#
++# At T <= DL2_MAX_TOKENS (config only; its own bound, not DL_MAX_TOKENS), with the stage-1 chain ON and
++# the prepare() self-check passed (state["dl2_ok"]), two more kernels from the P body replace the
++# attention side's nvjet GEMMs and small nodes:
++#   Q dl_qkv_kernel: qkv_gate GEMV (36 head tiles x 6 K-splits = 216 CTAs) whose last-ticket CTA per tile
++#     does FusedQKNorm (scaleless RMSNorm eps RMS_EPS, interleaved RoPE from state["cos_sin"]), the k/v
++#     divide when kv_scale != 1, the E4M3 casts (via bf16), the cache store at cache_loc and the q cast /
++#     paired zero-padded [T,16,128] write. Replaces the qkv GEMM + splitK reduce, qk_norm, k/v divide, both
++#     .to(FP8), store_cache and the q cast or pad copies.
++#   O dl_o_kernel: o GEMV (128 row tiles x 2 K-halves = 256 CTAs, the weight slab resident in smem) whose
++#     prologue does the per-head RMSNorm x sigmoid(gate) of FA3's output (unpaired or paired, taking each
++#     head's own half), replacing the unpad copies, o_norm_gate and the o GEMM. FA3 is unchanged and
++#     attends every key.
++# Adversarial-review carve-out (a): at sliding decode_1 (window, B=1, L=1) master's _sliding_forward owns
++# the attention chain, so DL2_SLIDING1 = "raw" runs Q in raw mode (bf16 qkv [T, 2304] for _sliding_forward)
++# and O without the prologue (its input is already normed and gated); "nvjet" keeps master's GEMMs there.
++# Both are config-only and logged.
++# dense-chain-stage2-attn-side-pdl-t1-gate: the gate is narrowed to T == 1 and, with DL2_SLIDING1 = "nvjet",
++# to full-attention decode_1 only. dl_o_kernel does not scale past T = 1 (0.41 TB/s at T = 32: sliding
++# decode_16/32 +9..13%, full decode_32 +6%), and sliding decode_1 stays on master code as the in-run drift
++# control. Every other shape runs master's attention side unchanged.
++DL2_MAX_TOKENS = 1
++DL2_SLIDING1 = "nvjet"     # "raw" | "nvjet"
++DL2_WS_TOKENS = 32         # must match MAXT in the CUDA source: the kernels stride ws by MAXT and TORCH_CHECK its size
++DL2_TAG = "[dense-chain-s2]"
++DL2_Q_ROWS = 2304
++DL2_Q_SPLIT = 6            # must match Q_SPLIT in the CUDA source
++DL2_Q_NTILES = DL2_Q_ROWS // 64
++DL2_O_SPLIT = 2            # must match O_SPLIT
++DL2_O_NTILES = HIDDEN // 64
++
++
++def _dl2_say(message):
++    print(f"{DL2_TAG} {message}", flush=True)
++
++
++def _dl2_paired(cfg):
++    """Master's paired-pad predicate (config only)."""
++    return int(cfg["window"] == 0 and cfg["batch"] > 1 and cfg["num_kv_heads"] % 2 == 0)
++
++
++def _dl2_applies(cfg):
++    """Config-only gate of the stage-2 attention side (shapes the kernels are written for)."""
++    if (cfg["num_q_heads"], cfg["num_kv_heads"], cfg["head_dim"], cfg["hidden"]) != (16, 2, 64, HIDDEN):
++        return False
++    if cfg["tokens"] > DL2_MAX_TOKENS:
++        return False
++    if cfg["window"] and cfg["batch"] == 1 and cfg["q_len"] == 1 and DL2_SLIDING1 != "raw":
++        return False  # sliding decode_1 stays on master's nvjet + _sliding_forward
++    return True
++
++
++def _dl2_q(data, x, state, pdl, raw):
++    """Kernel Q. raw: bf16 qkv [T, 2304] (for _sliding_forward). Else (q_attn FP8 [T,16,64|128], gate
++    bf16 [T,1024]) with the k/v rows already stored in the cache."""
++    cfg, dl2, dev = data["config"], state["dl2"], x.device
++    tokens = x.shape[0]
++    x = x.contiguous()
++    common = (data["cache_loc"], data["positions"], state["cos_sin"], data["k_scale"], data["v_scale"])
++    if raw:
++        out = torch.empty((tokens, DL2_Q_ROWS), dtype=torch.bfloat16, device=dev)
++        _DL_EXT.dl2_qkv(x, state["dense"]["qkv_gate"], dl2["ws_q"], dl2["cnt_q"], out, out, out, out, out,
++                        *common, pdl, 1, 0, 0, 0)
++        return out
++    paired = _dl2_paired(cfg)
++    q_attn = torch.empty((tokens, 16, 128 if paired else 64), dtype=FP8, device=dev)
++    gate = torch.empty((tokens, 1024), dtype=torch.bfloat16, device=dev)
++    _DL_EXT.dl2_qkv(x, state["dense"]["qkv_gate"], dl2["ws_q"], dl2["cnt_q"], gate, q_attn.view(torch.uint8), gate,
++                    data["k_cache"].view(torch.uint8), data["v_cache"].view(torch.uint8), *common,
++                    pdl, 0, paired, int(bool(cfg["rope_theta"])), int(cfg["kv_scale"] != 1.0))
++    return q_attn, gate
++
++
++def _dl2_o(fa, gate, state, pdl, paired, prologue):
++    """Kernel O -> attn_output bf16 [T, 8192]. prologue 1: fa is FA3's output [T,16,64|128] and gate the
++    bf16 gate [T,1024]; prologue 0: fa is the normed-and-gated o [T,1024] (gate unused)."""
++    dl2 = state["dl2"]
++    out = torch.empty((fa.shape[0], HIDDEN), dtype=torch.bfloat16, device=fa.device)
++    _DL_EXT.dl2_o(fa.contiguous(), gate, state["dense"]["o"], dl2["ws_o"], dl2["cnt_o"], out, pdl, prologue, paired)
++    return out
++
++
++def _dl2_attention(data, state, dl2):
++    """MuseSpark1xAttention.forward for T <= DL2_MAX_TOKENS on kernels Q and O. Returns attn_output."""
++    cfg = data["config"]
++    batch, length, tokens = cfg["batch"], cfg["q_len"], cfg["tokens"]
++    hq, hkv, d = cfg["num_q_heads"], cfg["num_kv_heads"], cfg["head_dim"]
++    pdl = dl2["pdl"]
++    if cfg["window"] and batch == 1 and length == 1:  # carve-out (a): _sliding_forward owns this shape
++        qkv = _dl2_q(data, data["attn_input"], state, pdl, True)
++        o = _sliding_forward(data, qkv)
++        return _dl2_o(o, o, state, pdl, 0, 0)
++    q_attn, gate = _dl2_q(data, data["attn_input"], state, pdl, False)
++    k_cache, v_cache = data["k_cache"], data["v_cache"]
++    window = cfg["window"]
++    paired = _dl2_paired(cfg)
++    if paired:
++        s = hkv // 2
++        pages, page_size = k_cache.shape[0], k_cache.shape[1]
++        k_attn = k_cache.view(pages, page_size, s, 2 * d)
++        v_attn = v_cache.view(pages, page_size, s, 2 * d)
++        attn_heads = s
++        metadata = None
++    else:
++        k_attn, v_attn = k_cache, v_cache
++        attn_heads = hkv
++        metadata = data["scheduler_metadata"]
++    descale = {}
++    if cfg["kv_scale"] != 1.0:
++        descale = dict(k_descale=data["k_scale"].reshape(1, 1).expand(batch, attn_heads),
++                       v_descale=data["v_scale"].reshape(1, 1).expand(batch, attn_heads))
++    out = flash_attn_with_kvcache(
++        q=q_attn,
++        k_cache=k_attn,
++        v_cache=v_attn,
++        page_table=data["page_table"],
++        cache_seqlens=data["cache_seqlens"],
++        cu_seqlens_q=data["cu_seqlens_q"],
++        max_seqlen_q=length,
++        softmax_scale=cfg["sm_scale"] * cfg["qk_scale_factor"],
++        causal=True,
++        window_size=(window - 1, 0) if window else (-1, -1),
++        scheduler_metadata=metadata,
++        **descale,
++    )
++    if isinstance(out, tuple):
++        out = out[0]
++    if out.dtype != torch.bfloat16:
++        out = out.to(torch.bfloat16)
++    return _dl2_o(out, gate, state, pdl, paired, 1)
++
++
++def _dl2_ref_q(data, x, state, kc, vc):
++    """Master's attention front half on (x, data), writing kc / vc: (q_attn FP8, gate bf16, qkv bf16)."""
++    cfg = data["config"]
++    tokens = x.shape[0]
++    hq, hkv, d = 16, 2, 64
++    qkv = _gemm(x, state["dense"]["qkv_gate"])
++    qkv_raw = qkv.clone()  # audit fix: the raw reference must not see an in-place FusedQKNorm
++    if cfg["rope_theta"]:
++        q, k = state["qk_norm"](qkv, data["positions"], state["cos_sin"])
++    else:
++        q, k = state["qk_norm"](qkv)
++    v = qkv[:, hq * d + hkv * d: hq * d + 2 * hkv * d]
++    gate = qkv[:, hq * d + 2 * hkv * d:]
++    k = k.reshape(tokens, hkv * d)
++    if cfg["kv_scale"] != 1.0:
++        k, v = k / data["k_scale"], v / data["v_scale"]
++    store_cache(k.to(FP8).view(torch.uint8), v.to(FP8).view(torch.uint8),
++                kc.view(-1, hkv * d).view(torch.uint8), vc.view(-1, hkv * d).view(torch.uint8),
++                data["cache_loc"], reserved_skip_index=-1)
++    if _dl2_paired(cfg):
++        g, s = hq // hkv, hkv // 2
++        q_attn = torch.zeros((tokens, hq, 2 * d), dtype=FP8, device=x.device)
++        qp = q_attn.view(tokens, s, 2, g, 2 * d)
++        qv = q.view(tokens, s, 2, g, d)
++        qp[:, :, 0, :, :d] = qv[:, :, 0]
++        qp[:, :, 1, :, d:] = qv[:, :, 1]
++    else:
++        q_attn = q.view(tokens, hq, d).to(FP8)
++    return q_attn, gate.contiguous(), qkv_raw
++
++
++def _dl2_ref_o(fa, gate, state, paired):
++    """Master's unpad copies, o_norm_gate and o GEMM on FA3's output fa."""
++    tokens = fa.shape[0]
++    hq, d = 16, 64
++    if paired:
++        g, s = hq // 2, 1
++        attn = torch.empty((tokens, hq, d), dtype=torch.bfloat16, device=fa.device)
++        a = attn.view(tokens, s, 2, g, d)
++        o = fa.view(tokens, s, 2, g, 2 * d)
++        a[:, :, 0] = o[:, :, 0, :, :d]
++        a[:, :, 1] = o[:, :, 1, :, d:]
++        fa = attn
++    o = state["o_norm_gate"](fa.reshape(tokens, hq * d).to(torch.bfloat16), gate)
++    return _gemm(o, state["dense"]["o"])
++
++
++def _dl2_make_data(dev, gen, batch, qlen, window, kv_scale):
++    """Synthetic step inputs for the kernels' own fields (caches, positions, rows, scales, config)."""
++    tokens = batch * qlen
++    rows = 1024
++    cfg = {"batch": batch, "q_len": qlen, "tokens": tokens, "hidden": HIDDEN, "num_q_heads": 16, "num_kv_heads": 2,
++           "head_dim": 64, "window": window, "rope_theta": ROPE_THETA if window else 0.0, "kv_scale": kv_scale,
++           "page_size": 1}
++    kc = torch.randint(0, 256, (rows, 1, 2, 64), device=dev, generator=gen, dtype=torch.uint8).view(FP8)
++    vc = torch.randint(0, 256, (rows, 1, 2, 64), device=dev, generator=gen, dtype=torch.uint8).view(FP8)
++    return {
++        "config": cfg, "k_cache": kc, "v_cache": vc,
++        "positions": torch.randint(0, 1 << 20, (tokens,), device=dev, generator=gen, dtype=torch.int64),
++        "cache_loc": torch.randperm(rows, device=dev, generator=gen)[:tokens].to(torch.int64),
++        "k_scale": torch.tensor(kv_scale, dtype=torch.float32, device=dev),
++        "v_scale": torch.tensor(kv_scale, dtype=torch.float32, device=dev),
++    }
++
++
++def _dl2_launch(label, fn):
++    """Announce a launch, run it, synchronize, report: a fault names its kernel."""
++    _dl2_say(f"launch {label}")
++    result = fn()
++    torch.cuda.synchronize()
++    _dl2_say(f"done   {label}")
++    return result
++
++
++def _dl2_self_check(state, pdl):
++    """Untimed, prepare() only. Returns (ok, summary, problems). Synthetic inputs, real prepared weights;
++    the references are master's own attention-side ops on the same inputs."""
++    dev = state["dense"]["qkv_gate"].device
++    gen = torch.Generator(device=dev)
++    gen.manual_seed(20261025)
++    problems = []
++    worst = {"q": 0.0, "k": 0.0, "v": 0.0, "gate": 0.0, "raw": 0.0, "o": 0.0, "o_raw": 0.0, "graph": 0.0}
++    # (batch, q_len, window, kv_scale): T = 1 only (the gate), sliding + rope and full, kv_scale 1 and 0.25.
++    cases = ((1, 1, 2048, 1.0), (1, 1, 0, 1.0), (1, 1, 0, 0.25))
++    for batch, qlen, window, kvs in cases:
++        tokens = batch * qlen
++        tag = f"T={tokens} B={batch} L={qlen} {'sliding' if window else 'full'} kv_scale={kvs} pdl={pdl}"
++        data = _dl2_make_data(dev, gen, batch, qlen, window, kvs)
++        paired = _dl2_paired(data["config"])
++        x = torch.randn((tokens, HIDDEN), device=dev, generator=gen).to(torch.bfloat16)
++        vmax = float(_gemm(x, state["dense"]["qkv_gate"])[:, 1152:1280].abs().max())
++        lim = 200.0 * kvs  # keep v / scale inside E4M3 (torch's cast does not saturate, ours does)
++        if vmax > lim:
++            x = (x.float() * (lim / vmax)).to(torch.bfloat16)
++        kc_ref, vc_ref = data["k_cache"].clone(), data["v_cache"].clone()
++        kc_init, vc_init = data["k_cache"].view(torch.uint8).clone(), data["v_cache"].view(torch.uint8).clone()
++        q_ref, gate_ref, qkv_ref = _dl2_ref_q(data, x, state, kc_ref, vc_ref)
++        torch.cuda.synchronize()
++        loc = data["cache_loc"]
++        for rep in range(2):  # twice: a ticket that fails to reset shows on the second launch
++            q_attn, gate = _dl2_launch(f"Q {tag} rep{rep}", lambda: _dl2_q(data, x, state, pdl, False))
++        finite = bool(torch.isfinite(gate.float()).all())
++        e_q = _rel_l2(q_attn.float(), q_ref.float())
++        e_g = _rel_l2(gate, gate_ref)
++        kn, vn = data["k_cache"].view(torch.uint8).view(-1, 128), data["v_cache"].view(torch.uint8).view(-1, 128)
++        kr, vr = kc_ref.view(torch.uint8).view(-1, 128), vc_ref.view(torch.uint8).view(-1, 128)
++        e_k = _rel_l2(kn[loc].view(FP8).float(), kr[loc].view(FP8).float())
++        e_v = _rel_l2(vn[loc].view(FP8).float(), vr[loc].view(FP8).float())
++        untouched = True
++        for new, init in ((kn, kc_init.view(-1, 128)), (vn, vc_init.view(-1, 128))):
++            want = init.clone()
++            want[loc] = new[loc]
++            untouched = untouched and torch.equal(new, want)
++        pad_ok = True
++        if paired:
++            hh = torch.arange(16, device=dev)
++            pad = q_attn.view(torch.uint8).view(tokens, 16, 2, 64)[:, hh, 1 - ((hh >> 3) & 1)]
++            pad_ok = not bool((pad != 0).any())
++        worst["q"], worst["k"], worst["v"], worst["gate"] = (
++            max(worst["q"], e_q), max(worst["k"], e_k), max(worst["v"], e_v), max(worst["gate"], e_g))
++        # audit fix: E4M3 boundary crossings from one extra bf16 rounding inside FusedQKNorm alone give
++        # ~1.05e-2 rel L2 (numpy emulation), so 1e-2 on the FP8 bytes could never pass; a wrong RoPE or
++        # layout gives O(1). FP8 q/k/v at 4e-2 (judge cache tolerance 8%), bf16 gate kept at 1e-2.
++        if not finite or not untouched or not pad_ok or max(e_q, e_k, e_v) > 4e-2 or e_g > 1e-2:
++            problems.append(f"Q {tag}: finite {finite} untouched-rows {untouched} pad-zero {pad_ok} "
++                            f"q {e_q:.2e} k {e_k:.2e} v {e_v:.2e} gate {e_g:.2e}")
++        # Raw mode (the sliding decode_1 feed): the bf16 projection itself.
++        raw = _dl2_launch(f"Q-raw {tag}", lambda: _dl2_q(data, x, state, pdl, True))
++        e_raw = _rel_l2(raw, qkv_ref)
++        worst["raw"] = max(worst["raw"], e_raw)
++        if e_raw > 1e-2 or not bool(torch.isfinite(raw.float()).all()):
++            problems.append(f"Q-raw {tag}: rel L2 {e_raw:.2e}")
++        # Kernel O with the norm-gate prologue on a synthetic FA3 output, then without it.
++        fa = torch.randn((tokens, 16, 128 if paired else 64), device=dev, generator=gen).to(torch.bfloat16)
++        gate_o = torch.randn((tokens, 1024), device=dev, generator=gen).to(torch.bfloat16)
++        y_ref = _dl2_ref_o(fa, gate_o, state, paired)
++        for rep in range(2):
++            y = _dl2_launch(f"O {tag} rep{rep}", lambda: _dl2_o(fa, gate_o, state, pdl, paired, 1))
++        e_o = _rel_l2(y, y_ref)
++        o_in = torch.randn((tokens, 1024), device=dev, generator=gen).to(torch.bfloat16)
++        y2 = _dl2_launch(f"O-raw {tag}", lambda: _dl2_o(o_in, o_in, state, pdl, 0, 0))
++        e_or = _rel_l2(y2, _gemm(o_in, state["dense"]["o"]))
++        worst["o"], worst["o_raw"] = max(worst["o"], e_o), max(worst["o_raw"], e_or)
++        if e_o > 5e-3 or e_or > 5e-3 or not bool(torch.isfinite(y.float()).all()):
++            problems.append(f"O {tag}: prologue rel L2 {e_o:.2e}, raw rel L2 {e_or:.2e}")
++    # Q -> O chain (raw and fused) captured in a CUDA graph and replayed, against the same chain eager.
++    for batch, qlen, window in ((1, 1, 0), (1, 1, 2048)):
++        tokens = batch * qlen
++        data = _dl2_make_data(dev, gen, batch, qlen, window, 1.0)
++        paired = _dl2_paired(data["config"])
++        x = torch.randn((tokens, HIDDEN), device=dev, generator=gen).to(torch.bfloat16)
++        fa = torch.randn((tokens, 16, 128 if paired else 64), device=dev, generator=gen).to(torch.bfloat16)
++        o_in = torch.randn((tokens, 1024), device=dev, generator=gen).to(torch.bfloat16)
++
++        def chain():
++            q_attn, gate = _dl2_q(data, x, state, pdl, False)
++            y = _dl2_o(fa, gate, state, pdl, paired, 1)
++            raw = _dl2_q(data, x, state, pdl, True)
++            y2 = _dl2_o(o_in, o_in, state, pdl, 0, 0)
++            return q_attn, y, raw, y2
++
++        eager = _dl2_launch(f"chain eager T={tokens} paired={paired}", chain)
++        graph = torch.cuda.CUDAGraph()
++        _dl2_say(f"capture chain T={tokens}")
++        with torch.cuda.graph(graph):
++            got = chain()
++        _dl2_launch(f"chain graph replay T={tokens}", graph.replay)
++        e_g = max(_rel_l2(got[1], eager[1]), _rel_l2(got[3], eager[3]), _rel_l2(got[2], eager[2]))
++        worst["graph"] = max(worst["graph"], e_g)
++        if (not torch.equal(got[0].view(torch.uint8), eager[0].view(torch.uint8))) or e_g > 1e-3:
++            problems.append(f"graph T={tokens} pdl={pdl}: replay differs from eager (rel {e_g:.2e})")
++        del graph
++    dl2 = state["dl2"]
++    if int(dl2["cnt_q"].abs().sum()) != 0 or int(dl2["cnt_o"].abs().sum()) != 0:
++        problems.append("ticket counters not back at 0 after the self-check")
++    summary = " ".join(f"{k} {v:.2e}" for k, v in worst.items())
++    return not problems, summary, problems
++
++
++def _dl2_time(state):
++    """Print-only: Q's and O's own stream time per launch at T = 1, PDL off and on (20 launches
++    in a graph, CUDA events), so the milestones read the rows, not a profiler row that includes a wait."""
++    dev = state["dense"]["qkv_gate"].device
++    gen = torch.Generator(device=dev)
++    gen.manual_seed(7)
++    rows = []
++    for tokens in (1,):
++        data = _dl2_make_data(dev, gen, tokens, 1, 2048, 1.0)
++        x = torch.randn((tokens, HIDDEN), device=dev, generator=gen).to(torch.bfloat16)
++        fa = torch.randn((tokens, 16, 64), device=dev, generator=gen).to(torch.bfloat16)
++        gate = torch.randn((tokens, 1024), device=dev, generator=gen).to(torch.bfloat16)
++        for name, nbytes, run in (
++                ("Q", DL2_Q_ROWS * HIDDEN * 2, lambda p: _dl2_q(data, x, state, p, False)),
++                ("O", HIDDEN * 1024 * 2, lambda p: _dl2_o(fa, gate, state, p, 0, 1))):
++            row = [f"{name} T={tokens}"]
++            for pdl in (0, 1):
++                try:
++                    graph = torch.cuda.CUDAGraph()
++                    with torch.cuda.graph(graph):
++                        for _ in range(20):
++                            run(pdl)
++                    _dl2_launch(f"time {name} T={tokens} pdl={pdl} warm replay", graph.replay)
++                    start, end = torch.cuda.Event(enable_timing=True), torch.cuda.Event(enable_timing=True)
++                    start.record()
++                    for _ in range(5):
++                        graph.replay()
++                    end.record()
++                    torch.cuda.synchronize()
++                    us = start.elapsed_time(end) * 1e3 / 100
++                    row.append(f"pdl={pdl} {us:.1f} us ({nbytes / us / 1e6:.2f} TB/s)")
++                    del graph
++                except Exception as e:
++                    row.append(f"pdl={pdl} timing raised {e!r}")
++            rows.append(" ".join(row))
++    return rows
++
++
++def _dl2_compare(state):
++    """Print + decide (LESSONS 163): at full decode_1 (T = 1), graph-timed Q + O against master's qkv GEMM +
++    FusedQKNorm + casts + store_cache + unpad + o_norm_gate + o GEMM on the same inputs (FA3 is identical on
++    both paths, so it is left out). Returns True when the custom path is faster."""
++    dev = state["dense"]["qkv_gate"].device
++    gen = torch.Generator(device=dev)
++    gen.manual_seed(11)
++    data = _dl2_make_data(dev, gen, 1, 1, 0, 1.0)
++    x = torch.randn((1, HIDDEN), device=dev, generator=gen).to(torch.bfloat16)
++    fa = torch.randn((1, 16, 64), device=dev, generator=gen).to(torch.bfloat16)
++    pdl = state["dl2"]["pdl"]
++    kc, vc = data["k_cache"].clone(), data["v_cache"].clone()
++
++    def custom():
++        _, gate = _dl2_q(data, x, state, pdl, False)
++        return _dl2_o(fa, gate, state, pdl, 0, 1)
++
++    def master():
++        _, gate, _ = _dl2_ref_q(data, x, state, kc, vc)
++        return _dl2_ref_o(fa, gate, state, 0)
++
++    us = {}
++    for name, run in (("custom Q+O", custom), ("master qkv+norm+casts+store+norm_gate+o", master)):
++        best = None
++        for rep in range(3):
++            graph = torch.cuda.CUDAGraph()
++            with torch.cuda.graph(graph):
++                for _ in range(20):
++                    run()
++            _dl2_launch(f"compare {name} rep{rep} warm replay", graph.replay)
++            start, end = torch.cuda.Event(enable_timing=True), torch.cuda.Event(enable_timing=True)
++            start.record()
++            for _ in range(5):
++                graph.replay()
++            end.record()
++            torch.cuda.synchronize()
++            t = start.elapsed_time(end) * 1e3 / 100
++            best = t if best is None else min(best, t)
++            del graph
++        us[name] = best
++    custom_us, master_us = us["custom Q+O"], us["master qkv+norm+casts+store+norm_gate+o"]
++    state["dl2"]["cnt_q"].zero_()
++    state["dl2"]["cnt_o"].zero_()
++    _dl2_say(f"compare T=1 full: custom Q+O {custom_us:.1f} us vs master attention side (sans FA3) {master_us:.1f} us "
++             f"-> {'custom wins' if custom_us < master_us else 'MASTER wins'}")
++    return custom_us < master_us
++
++
++def _dl2_setup(state):
++    """Stage 2's prepare() constants and self-check (pdl as stage 1 chose it, then 0). Returns the dict,
++    or None to keep master's attention side (stage-1 FFN kept). Prints the verdict loudly."""
++    dl = state.get("dl")
++    if _DL_EXT is None or dl is None:
++        _dl2_say(f"OFF pdl=0 (stage-1 chain or build unavailable): PATH CHOSEN = MASTER attention side at every T")
++        return None
++    try:
++        dev = state["dense"]["qkv_gate"].device
++        state["dl2"] = {
++            "ws_q": torch.zeros((DL2_Q_SPLIT * DL2_WS_TOKENS * DL2_Q_ROWS,), dtype=torch.float32, device=dev),
++            "cnt_q": torch.zeros((DL2_Q_NTILES,), dtype=torch.int32, device=dev),
++            "ws_o": torch.zeros((DL2_O_SPLIT * DL2_WS_TOKENS * HIDDEN,), dtype=torch.float32, device=dev),
++            "cnt_o": torch.zeros((DL2_O_NTILES,), dtype=torch.int32, device=dev),
++            "pdl": 0,
++        }
++        occ_q = [int(_DL_EXT.dl2_occupancy(0, nf)) for nf in (1, 2, 4)]
++        occ_o = [int(_DL_EXT.dl2_occupancy(1, nf)) for nf in (1, 2, 4)]
++        _dl2_say(f"occupancy (CTAs/SM, NF=1/2/4): Q {occ_q} grid {DL2_Q_NTILES * DL2_Q_SPLIT}; "
++                 f"O {occ_o} grid {DL2_O_NTILES * DL2_O_SPLIT} (one wave needs >= 2/SM)")
++        _dl2_say(f"FP8 encode: __nv_cvt_float2_to_fp8x2 with __NV_SATFINITE (clamps |x| > 448 to +-448 where "
++                 f"torch's e4m3fn cast gives NaN), every value rounded through bf16 first; nvcc flags {_DL_CFLAGS}")
++        _dl2_say(f"sliding decode_1 carve-out: DL2_SLIDING1={DL2_SLIDING1!r} "
++                 f"({'Q raw + _sliding_forward + O raw' if DL2_SLIDING1 == 'raw' else 'master nvjet + _sliding_forward'})")
++        ok, summary, problems = False, "", []
++        for try_pdl in ((dl["pdl"], 0) if dl["pdl"] else (0,)):
++            state["dl2"]["pdl"] = try_pdl
++            try:
++                ok, summary, problems = _dl2_self_check(state, try_pdl)
++            except Exception as e:
++                ok, summary, problems = False, "", [f"self-check raised {e!r}"]
++            state["dl2"]["cnt_q"].zero_()
++            state["dl2"]["cnt_o"].zero_()
++            if ok:
++                break
++            _dl2_say(f"SELF-CHECK FAILED with pdl={try_pdl}: {len(problems)} problems")
++            for message in problems[:12]:
++                _dl2_say(f"  {message}")
++        if not ok:
++            _dl2_say(f"OFF pdl=0 max errs {summary}: PATH CHOSEN = MASTER attention side at every T")
++            state.pop("dl2", None)
++            return None
++        for line in _dl2_time(state):
++            _dl2_say(f"timing {line}")
++        state["dl2"]["cnt_q"].zero_()
++        state["dl2"]["cnt_o"].zero_()
++        if not _dl2_compare(state):
++            _dl2_say("OFF: custom Q+O not faster than master at T=1: PATH CHOSEN = MASTER attention side at every T")
++            state.pop("dl2", None)
++            return None
++        pdl = state["dl2"]["pdl"]
++        _dl2_say(f"ON pdl={pdl} max errs {summary}")
++        _dl2_say(f"PATH CHOSEN full decode_1 (B=1, L=1, T=1): Q (norm/RoPE/FP8/cache store) + FA3 over every key + "
++                 f"O (norm-gate prologue)")
++        _dl2_say(f"PATH CHOSEN sliding decode_1 (B=1, L=1, window): "
++                 f"{'Q raw + _sliding_forward + O raw' if DL2_SLIDING1 == 'raw' else 'MASTER nvjet + _sliding_forward (drift control)'}")
++        _dl2_say(f"PATH CHOSEN T > {DL2_MAX_TOKENS} (decode_16/32, verify, every other shape): MASTER attention side")
++        return state["dl2"]
++    except Exception as e:
++        _dl2_say(f"OFF pdl=0 setup raised {e!r}: PATH CHOSEN = MASTER attention side at every T")
++        state.pop("dl2", None)
++        return None
++
++
+ # Sliding batch-1 decode: muse_attention_decode's _sliding_fused_kernel and its helpers,
+ # ported verbatim (hypothesis sliding-fused-triton-decode1-port).
+ _INV_FREQ = {}
+@@ -1651,6 +2627,9 @@ def prepare(weights):
+     del freqs
+     # Small-T dense chain (T <= DL_MAX_TOKENS): constants, PDL probe and self-check; None keeps master.
+     state["dl"] = _dl_setup(weights, state)
++    # Stage 2 (attention side, T <= DL2_MAX_TOKENS): kernels Q and O; None / False keeps master's attention.
++    state["dl2"] = _dl2_setup(state)
++    state["dl2_ok"] = state["dl2"] is not None
+     _align_par_setup(state, device)
+     torch.cuda.synchronize()
+     return state
+@@ -1727,7 +2706,8 @@ def _experts(x, topk_weights, topk_ids, state, align=None, dispatch=None):
+         slot_expert_ids=local_ids)
+ 
+ 
+-def kernel_fn(data, state):
++def _master_attention(data, state):
++    """Master's attention side, unchanged: qkv GEMM, QK-norm, cache store, FA3, norm-gate, o GEMM."""
+     cfg = data["config"]
+     batch, length, tokens = cfg["batch"], cfg["q_len"], cfg["tokens"]
+     hq, hkv, d = cfg["num_q_heads"], cfg["num_kv_heads"], cfg["head_dim"]
+@@ -1810,6 +2790,20 @@ def kernel_fn(data, state):
+             out = attn
+         o = state["o_norm_gate"](out.reshape(tokens, hq * d).to(torch.bfloat16), gate)
+     attn_output = _gemm(o, dense["o"])  # all-reduce: identity
++    return attn_output
++
++
++def kernel_fn(data, state):
++    cfg = data["config"]
++    tokens = cfg["tokens"]
++    dense = state["dense"]
++    # Attention: MuseSpark1xAttention.forward. T <= DL2_MAX_TOKENS (config only) once stage 2's prepare()
++    # self-check passed: kernels Q and O around FA3 (dense-chain-stage2-attn-side-pdl); else master's.
++    dl2 = state.get("dl2")
++    if dl2 is not None and state.get("dl2_ok", False) and state.get("dl") is not None and _dl2_applies(cfg):
++        attn_output = _dl2_attention(data, state, dl2)
++    else:
++        attn_output = _master_attention(data, state)
+ 
+     # Post-attention boundary, router and MoE block: MuseSpark1xMoE._forward_experts.
+     # T <= DL_MAX_TOKENS (config only) once the prepare() self-check passed: kernels P and R

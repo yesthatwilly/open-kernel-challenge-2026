@@ -1,0 +1,84 @@
+[small-t-dense-chain] load_inline compiled in 52.3s, nvcc flags ['-O3', '-arch=sm_90a', '-lineinfo']
+[small-t-dense-chain] P occupancy (CTAs/SM, NF=1/2/4): [3, 2, 2]; grid 216 CTAs
+[small-t-dense-chain] PDL probe: eager overlap False (-6.3 us), graph overlap True (49.7 us, secondary waited 50.4 us) -> pdl=1
+[small-t-dense-chain] P timing T=1 pdl=0 20.9 us (3.62 TB/s) pdl=1 20.5 us (3.68 TB/s)
+[small-t-dense-chain] P timing T=8 pdl=0 22.0 us (3.43 TB/s) pdl=1 21.7 us (3.48 TB/s)
+[small-t-dense-chain] P timing T=32 pdl=0 26.6 us (2.84 TB/s) pdl=1 26.3 us (2.87 TB/s)
+[small-t-dense-chain] ON pdl=1 compile 52.3s max errs ei 1.18e-04 logit 3.04e-06 xn 0.00e+00 w 0.00e+00 y 0.00e+00 graph 0.00e+00: PATH CHOSEN = DENSE-CHAIN at T <= 32, MASTER above
+[dense-chain-s2] occupancy (CTAs/SM, NF=1/2/4): Q [3, 2, 2] grid 216; O [3, 2, 2] grid 256 (one wave needs >= 2/SM)
+[dense-chain-s2] FP8 encode: __nv_cvt_float2_to_fp8x2 with __NV_SATFINITE (clamps |x| > 448 to +-448 where torch's e4m3fn cast gives NaN), every value rounded through bf16 first; nvcc flags ['-O3', '-arch=sm_90a', '-lineinfo']
+[dense-chain-s2] sliding decode_1 carve-out: DL2_SLIDING1='nvjet' (master nvjet + _sliding_forward)
+[dense-chain-s2] launch Q T=1 B=1 L=1 sliding kv_scale=1.0 pdl=1 rep0
+[dense-chain-s2] done   Q T=1 B=1 L=1 sliding kv_scale=1.0 pdl=1 rep0
+[dense-chain-s2] launch Q T=1 B=1 L=1 sliding kv_scale=1.0 pdl=1 rep1
+[dense-chain-s2] done   Q T=1 B=1 L=1 sliding kv_scale=1.0 pdl=1 rep1
+[dense-chain-s2] launch Q-raw T=1 B=1 L=1 sliding kv_scale=1.0 pdl=1
+[dense-chain-s2] done   Q-raw T=1 B=1 L=1 sliding kv_scale=1.0 pdl=1
+[dense-chain-s2] launch O T=1 B=1 L=1 sliding kv_scale=1.0 pdl=1 rep0
+[dense-chain-s2] done   O T=1 B=1 L=1 sliding kv_scale=1.0 pdl=1 rep0
+[dense-chain-s2] launch O T=1 B=1 L=1 sliding kv_scale=1.0 pdl=1 rep1
+[dense-chain-s2] done   O T=1 B=1 L=1 sliding kv_scale=1.0 pdl=1 rep1
+[dense-chain-s2] launch O-raw T=1 B=1 L=1 sliding kv_scale=1.0 pdl=1
+[dense-chain-s2] done   O-raw T=1 B=1 L=1 sliding kv_scale=1.0 pdl=1
+[dense-chain-s2] launch Q T=1 B=1 L=1 full kv_scale=1.0 pdl=1 rep0
+[dense-chain-s2] done   Q T=1 B=1 L=1 full kv_scale=1.0 pdl=1 rep0
+[dense-chain-s2] launch Q T=1 B=1 L=1 full kv_scale=1.0 pdl=1 rep1
+[dense-chain-s2] done   Q T=1 B=1 L=1 full kv_scale=1.0 pdl=1 rep1
+[dense-chain-s2] launch Q-raw T=1 B=1 L=1 full kv_scale=1.0 pdl=1
+[dense-chain-s2] done   Q-raw T=1 B=1 L=1 full kv_scale=1.0 pdl=1
+[dense-chain-s2] launch O T=1 B=1 L=1 full kv_scale=1.0 pdl=1 rep0
+[dense-chain-s2] done   O T=1 B=1 L=1 full kv_scale=1.0 pdl=1 rep0
+[dense-chain-s2] launch O T=1 B=1 L=1 full kv_scale=1.0 pdl=1 rep1
+[dense-chain-s2] done   O T=1 B=1 L=1 full kv_scale=1.0 pdl=1 rep1
+[dense-chain-s2] launch O-raw T=1 B=1 L=1 full kv_scale=1.0 pdl=1
+[dense-chain-s2] done   O-raw T=1 B=1 L=1 full kv_scale=1.0 pdl=1
+[dense-chain-s2] launch Q T=1 B=1 L=1 full kv_scale=0.25 pdl=1 rep0
+[dense-chain-s2] done   Q T=1 B=1 L=1 full kv_scale=0.25 pdl=1 rep0
+[dense-chain-s2] launch Q T=1 B=1 L=1 full kv_scale=0.25 pdl=1 rep1
+[dense-chain-s2] done   Q T=1 B=1 L=1 full kv_scale=0.25 pdl=1 rep1
+[dense-chain-s2] launch Q-raw T=1 B=1 L=1 full kv_scale=0.25 pdl=1
+[dense-chain-s2] done   Q-raw T=1 B=1 L=1 full kv_scale=0.25 pdl=1
+[dense-chain-s2] launch O T=1 B=1 L=1 full kv_scale=0.25 pdl=1 rep0
+[dense-chain-s2] done   O T=1 B=1 L=1 full kv_scale=0.25 pdl=1 rep0
+[dense-chain-s2] launch O T=1 B=1 L=1 full kv_scale=0.25 pdl=1 rep1
+[dense-chain-s2] done   O T=1 B=1 L=1 full kv_scale=0.25 pdl=1 rep1
+[dense-chain-s2] launch O-raw T=1 B=1 L=1 full kv_scale=0.25 pdl=1
+[dense-chain-s2] done   O-raw T=1 B=1 L=1 full kv_scale=0.25 pdl=1
+[dense-chain-s2] launch chain eager T=1 paired=0
+[dense-chain-s2] done   chain eager T=1 paired=0
+[dense-chain-s2] capture chain T=1
+[dense-chain-s2] launch chain graph replay T=1
+[dense-chain-s2] done   chain graph replay T=1
+[dense-chain-s2] launch chain eager T=1 paired=0
+[dense-chain-s2] done   chain eager T=1 paired=0
+[dense-chain-s2] capture chain T=1
+[dense-chain-s2] launch chain graph replay T=1
+[dense-chain-s2] done   chain graph replay T=1
+[dense-chain-s2] launch time Q T=1 pdl=0 warm replay
+[dense-chain-s2] done   time Q T=1 pdl=0 warm replay
+[dense-chain-s2] launch time Q T=1 pdl=1 warm replay
+[dense-chain-s2] done   time Q T=1 pdl=1 warm replay
+[dense-chain-s2] launch time O T=1 pdl=0 warm replay
+[dense-chain-s2] done   time O T=1 pdl=0 warm replay
+[dense-chain-s2] launch time O T=1 pdl=1 warm replay
+[dense-chain-s2] done   time O T=1 pdl=1 warm replay
+[dense-chain-s2] timing Q T=1 pdl=0 8.5 us (4.42 TB/s) pdl=1 8.3 us (4.54 TB/s)
+[dense-chain-s2] timing O T=1 pdl=0 6.7 us (2.51 TB/s) pdl=1 6.5 us (2.60 TB/s)
+[dense-chain-s2] launch compare custom Q+O rep0 warm replay
+[dense-chain-s2] done   compare custom Q+O rep0 warm replay
+[dense-chain-s2] launch compare custom Q+O rep1 warm replay
+[dense-chain-s2] done   compare custom Q+O rep1 warm replay
+[dense-chain-s2] launch compare custom Q+O rep2 warm replay
+[dense-chain-s2] done   compare custom Q+O rep2 warm replay
+[dense-chain-s2] launch compare master qkv+norm+casts+store+norm_gate+o rep0 warm replay
+[dense-chain-s2] done   compare master qkv+norm+casts+store+norm_gate+o rep0 warm replay
+[dense-chain-s2] launch compare master qkv+norm+casts+store+norm_gate+o rep1 warm replay
+[dense-chain-s2] done   compare master qkv+norm+casts+store+norm_gate+o rep1 warm replay
+[dense-chain-s2] launch compare master qkv+norm+casts+store+norm_gate+o rep2 warm replay
+[dense-chain-s2] done   compare master qkv+norm+casts+store+norm_gate+o rep2 warm replay
+[dense-chain-s2] compare T=1 full: custom Q+O 18.6 us vs master attention side (sans FA3) 27.3 us -> custom wins
+[dense-chain-s2] ON pdl=1 max errs q 1.24e-02 k 1.65e-02 v 0.00e+00 gate 2.44e-04 raw 1.61e-04 o 8.45e-05 o_raw 9.39e-05 graph 0.00e+00
+[dense-chain-s2] PATH CHOSEN full decode_1 (B=1, L=1, T=1): Q (norm/RoPE/FP8/cache store) + FA3 over every key + O (norm-gate prologue)
+[dense-chain-s2] PATH CHOSEN sliding decode_1 (B=1, L=1, window): MASTER nvjet + _sliding_forward (drift control)
+[dense-chain-s2] PATH CHOSEN T > 1 (decode_16/32, verify, every other shape): MASTER attention side
+[align-parallel-large-t] ON cases=18 mismatches=0

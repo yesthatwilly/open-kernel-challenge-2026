@@ -34,10 +34,10 @@ priority: 2
 kind: primary
 controls_for: null
 review: proceed
-status: running
+status: done
 review_at: 2026-10-25T040253Z
 review_companions: null
-stage: dispatched
+stage: harvested
 claimed_at: 2026-10-25T040300Z
 base_sha: 6fbe7b720d0d1b0ee3aa210d94a1e35d73a2a554
 base_blob: 4da94677234faaa06b42b5ced541db8961fd6f34
@@ -56,6 +56,13 @@ attempt_file: 2026-10-25T040652Z-check-dense-chain-stage2-attn-side-pdl-t1-gate.
 prepared_at: 2026-10-25T040652Z
 job: c6cb53d8ebc2478a
 dispatched_at: 2026-10-25T040659Z
+outcome: neutral
+verdict_detail: unproven-vs-best
+speedup: 1.2716873487088036
+speedup_ci: [1.2526120384781716, 1.2907626589394356]
+harvested_at: 2026-10-25T043359Z
+best_at_harvest: 1.2680313318618024
+promotion: null
 ---
 
 # dense-chain-stage2-attn-side-pdl-t1-gate
@@ -135,3 +142,35 @@ Audited 2026-10-25 by an opus subagent (read-only, no GPU). **Verdict: dispatch*
 - Rules: no change to kernel_fn's call graph beyond constants. The compare, its captures and syncs are prepare()-only (lint OK with warnings, all pre-existing or prepare-side). Nothing data-derived is cached, and precision is unchanged. Scope matches the change paragraph; NF=2/4 kept unused, as the spec allows.
 
 Residual risk: the win is one shape at about 2.6%, near check resolution, and the standalone compare does not model the stage-1 PDL overlap; read the full decode_1 row and the `compare T=1 full` log line.
+
+## Result
+
+- job `c6cb53d8ebc2478a` (check), status done, passed True, tests 13/13
+- speedup 1.2717x, 95% CI [1.2526, 1.2908], score 17787.62682743311 µs vs SGLang 22620.3 µs
+- best at harvest: {"speedup": 1.2680313318618024, "ci": [1.2490108618838753, 1.2870518018397292], "job": "c243a29f26dc4725"}; base result: muse_decode_layer/hypotheses/done/neutral/stack-align-par-sidestream-sliding1.result.json
+- **outcome: neutral** (unproven-vs-best)
+- files: `muse_decode_layer/hypotheses/done/neutral/dense-chain-stage2-attn-side-pdl-t1-gate.result.json`, `muse_decode_layer/hypotheses/done/neutral/dense-chain-stage2-attn-side-pdl-t1-gate.patch`; branch `hyp/muse_decode_layer/dense-chain-stage2-attn-side-pdl-t1-gate`
+
+## Attribution
+
+| shape | w | base µs | hyp µs | delta | verdict |
+|---|---|---|---|---|---|
+| batch=1 ctx=80000 dist=soft layer=sliding load=decode_1 page=1 repeats=60 | 46 | 127.48 | 125.21 | 1.0171 | flat |
+| batch=1 ctx=80000 dist=soft layer=full load=decode_1 page=1 repeats=60 | 16 | 142.93 | 137.98 | 1.0465 | gained |
+| batch=16 ctx=80000 dist=soft layer=sliding load=decode_16 page=1 spread=agentic | 46 | 204.98 | 207.57 | 0.9949 | flat |
+| batch=16 ctx=80000 dist=soft layer=full load=decode_16 page=1 spread=agentic | 16 | 349.47 | 349.17 | 1.0051 | flat |
+| batch=32 ctx=80000 dist=soft layer=sliding load=decode_32 page=1 spread=agentic | 46 | 245.77 | 242.57 | 1.0015 | flat |
+| batch=32 ctx=80000 dist=soft layer=full load=decode_32 page=1 spread=agentic | 16 | 529.71 | 495.45 | 1.0491 | gained |
+| batch=1 ctx=80000 dist=soft layer=sliding load=verify_1 page=1 q_len=8 | 46 | 190.8 | 181.85 | 1.0061 | flat |
+| batch=1 ctx=80000 dist=soft layer=full load=verify_1 page=1 q_len=8 | 16 | 192.44 | 196.52 | 0.9781 | flat |
+| batch=16 ctx=80000 dist=soft layer=sliding load=verify_16 page=1 q_len=8 spread=agentic | 46 | 429.61 | 435.7 | 1.0078 | flat |
+| batch=16 ctx=80000 dist=soft layer=full load=verify_16 page=1 q_len=8 spread=agentic | 16 | 563.65 | 563.13 | 1.0061 | flat |
+| batch=32 ctx=80000 dist=soft layer=sliding load=verify_32 page=1 q_len=8 spread=agentic | 46 | 592.52 | 588.05 | 1.0632 | gained |
+| batch=32 ctx=80000 dist=soft layer=full load=verify_32 page=1 q_len=8 spread=agentic | 16 | 861.3 | 870.25 | 1.0451 | gained |
+
+gained on full decode_1, decode_32, verify_32; sliding verify_32. Expected hit: 2/3. Noise ±1.5%.
+
+## Follow-ups
+
+- unproven-vs-best: the change is not proven either way; a stacked hypothesis (`depends_on: dense-chain-stage2-attn-side-pdl-t1-gate`) that adds a further change in the same area is the only way to learn more (identical code is never re-run).
+
