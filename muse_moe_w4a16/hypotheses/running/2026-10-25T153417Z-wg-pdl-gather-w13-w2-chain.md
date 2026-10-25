@@ -70,7 +70,7 @@ base_sha: 04b5d4ce29ff4cb29cbed7b24b63a5492c811e97
 base_blob: 593b238c16387c5ac3774424ee9557882b9fc46a
 branch: hyp/muse_moe_w4a16/wg-pdl-gather-w13-w2-chain
 worktree: .worktrees/muse_moe_w4a16/wg-pdl-gather-w13-w2-chain
-mode: null
+mode: submit
 restack_of: null
 stale_base: null
 implemented_at: 2026-10-25T163022Z
@@ -79,6 +79,8 @@ submission_sha256: 17fdbbfb215a068e7ce0327d5db9e64496aecc8fa3c04031b7f669e7c81f5
 norm_sha256: 378b54dd908fe4c7ae5e77214d510feea756a9a1a6f084188d4cd1ca528c42c3
 submission_blob: 72de8f1edeaa3215bb806cdc5ae13791f54cebd2
 lint_warnings: 77
+attempt_file: 2026-10-25T163022Z-submit-wg-pdl-gather-w13-w2-chain.md
+prepared_at: 2026-10-25T163022Z
 ---
 
 # wg-pdl-gather-w13-w2-chain
