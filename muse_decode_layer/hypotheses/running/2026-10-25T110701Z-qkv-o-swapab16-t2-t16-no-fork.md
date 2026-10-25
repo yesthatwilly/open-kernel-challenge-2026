@@ -67,7 +67,7 @@ base_sha: 54d3a9ce8a155b629ac50f80222a1bf0dec23a79
 base_blob: 62c5a9413ba5710defea2ca3de14c1a1dc3b5a6d
 branch: hyp/muse_decode_layer/qkv-o-swapab16-t2-t16-no-fork
 worktree: .worktrees/muse_decode_layer/qkv-o-swapab16-t2-t16-no-fork
-mode: null
+mode: submit
 restack_of: null
 stale_base: null
 implemented_at: 2026-10-25T111944Z
@@ -76,6 +76,8 @@ submission_sha256: 5e6ac7de07ee52f358844299a63c7f903e4e68a21e91353d68d004228e6d2
 norm_sha256: e8a071fda51b137637fe6c923240d329818d7883d7dcd5258504670ebec58af4
 submission_blob: 188072e2b5c7c7dd0b9b98d87989424d120d5b77
 lint_warnings: 66
+attempt_file: 2026-10-25T111944Z-submit-qkv-o-swapab16-t2-t16-no-fork.md
+prepared_at: 2026-10-25T111944Z
 ---
 
 # qkv-o-swapab16-t2-t16-no-fork
