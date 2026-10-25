@@ -76,9 +76,18 @@ priority: 1
 kind: primary
 controls_for: null
 review: proceed
-status: queued
+status: running
 review_at: 2026-10-25T152551Z
 review_companions: null
+stage: claimed
+claimed_at: 2026-10-25T152552Z
+base_sha: 7faa35ba9069ec4a6c1942887916e7e77d381e1c
+base_blob: a2fe2a75893c60d4f68cf94fcce8ce8f9b708a71
+branch: hyp/muse_prefill_layer/fa3-full-contiguous-kv-triton-gather-gated
+worktree: .worktrees/muse_prefill_layer/fa3-full-contiguous-kv-triton-gather-gated
+mode: null
+restack_of: null
+stale_base: null
 ---
 
 # fa3-full-contiguous-kv-triton-gather-gated
