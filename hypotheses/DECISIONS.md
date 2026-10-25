@@ -261,3 +261,4 @@ overrides of a reviewer) with the reason, newest last. Written by `churn.py note
 - 2026-10-25T204434Z `muse_moe_w4a16` **diagnosis**: LESSONS: added rega-tiny-m-bucket16 never-live line next to 202
 - 2026-10-25T204434Z `muse_moe_w4a16` **diagnosis**: LESSONS: merged small-M NVFP4 losers (GEMV, swap-AB mma.sync, wgmma tiny, fused bs1) into one line
 - 2026-10-25T204434Z `muse_moe_w4a16` **diagnosis**: LESSONS: added moe vs bf16 small-M TB/s line (dequant/consumer limit, not DRAM)
+- 2026-10-25T204434Z `muse_prefill_layer` **diagnosis**: LESSONS: retired obsolete 'keep Marlin below first-turn sizes' harvest line (rega beats Marlin at T=753/3012)
