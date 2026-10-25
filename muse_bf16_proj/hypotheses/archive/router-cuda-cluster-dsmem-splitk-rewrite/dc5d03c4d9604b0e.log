@@ -1,0 +1,68 @@
+[router_cluster] building: TORCH_CUDA_ARCH_LIST=9.0a extra_cuda_cflags=['-O3', '-lineinfo']
+[router_cluster] load_inline compiled in 38.1s
+[router_cluster] cs=8 nt=8: regs=162 local(spill)=0 B static smem=0 B dynamic smem=82432 B max active clusters=30
+[router_cluster] cs=8 nt=16: regs=168 local(spill)=0 B static smem=0 B dynamic smem=99328 B max active clusters=30
+[router_cluster] cs=8 nt=32: regs=198 local(spill)=0 B static smem=0 B dynamic smem=133120 B max active clusters=15
+[router_cluster] cs=4 nt=8: regs=166 local(spill)=0 B static smem=0 B dynamic smem=98560 B max active clusters=62
+[router_cluster] cs=4 nt=16: regs=226 local(spill)=0 B static smem=0 B dynamic smem=131584 B max active clusters=30
+[router_cluster] cs=4 nt=32: regs=254 local(spill)=0 B static smem=0 B dynamic smem=197632 B max active clusters=30
+[router_cluster] launching cs=8 m=1 run 1
+[router_cluster] cs=8 m=1 run 1 finished OK
+[router_cluster] launching cs=8 m=1 run 2
+[router_cluster] cs=8 m=1 run 2 finished OK
+[router_cluster] launching cs=8 m=8 run 1
+[router_cluster] cs=8 m=8 run 1 finished OK
+[router_cluster] launching cs=8 m=8 run 2
+[router_cluster] cs=8 m=8 run 2 finished OK
+[router_cluster] nt=8: cs=8 self-check passed (m in [1, 8])
+[router_cluster] launching cs=8 m=9 run 1
+[router_cluster] cs=8 m=9 run 1 finished OK
+[router_cluster] launching cs=8 m=9 run 2
+[router_cluster] cs=8 m=9 run 2 finished OK
+[router_cluster] launching cs=8 m=16 run 1
+[router_cluster] cs=8 m=16 run 1 finished OK
+[router_cluster] launching cs=8 m=16 run 2
+[router_cluster] cs=8 m=16 run 2 finished OK
+[router_cluster] nt=16: cs=8 self-check passed (m in [9, 16])
+[router_cluster] nt=32: cs=8 skipped, max active clusters 15 < 16
+[router_cluster] nt=32: cs=4 skipped, max active clusters 30 < 32
+[router_cluster] PATH CHOSEN router m=1: CUDA cluster kernel, cluster size 8, NT 8
+[router_cluster] PATH CHOSEN router m=2: CUDA cluster kernel, cluster size 8, NT 8
+[router_cluster] PATH CHOSEN router m=3: CUDA cluster kernel, cluster size 8, NT 8
+[router_cluster] PATH CHOSEN router m=4: CUDA cluster kernel, cluster size 8, NT 8
+[router_cluster] PATH CHOSEN router m=5: CUDA cluster kernel, cluster size 8, NT 8
+[router_cluster] PATH CHOSEN router m=6: CUDA cluster kernel, cluster size 8, NT 8
+[router_cluster] PATH CHOSEN router m=7: CUDA cluster kernel, cluster size 8, NT 8
+[router_cluster] PATH CHOSEN router m=8: CUDA cluster kernel, cluster size 8, NT 8
+[router_cluster] PATH CHOSEN router m=9: CUDA cluster kernel, cluster size 8, NT 16
+[router_cluster] PATH CHOSEN router m=10: CUDA cluster kernel, cluster size 8, NT 16
+[router_cluster] PATH CHOSEN router m=11: CUDA cluster kernel, cluster size 8, NT 16
+[router_cluster] PATH CHOSEN router m=12: CUDA cluster kernel, cluster size 8, NT 16
+[router_cluster] PATH CHOSEN router m=13: CUDA cluster kernel, cluster size 8, NT 16
+[router_cluster] PATH CHOSEN router m=14: CUDA cluster kernel, cluster size 8, NT 16
+[router_cluster] PATH CHOSEN router m=15: CUDA cluster kernel, cluster size 8, NT 16
+[router_cluster] PATH CHOSEN router m=16: CUDA cluster kernel, cluster size 8, NT 16
+[router_cluster] PATH CHOSEN router m=17: master Triton router
+[router_cluster] PATH CHOSEN router m=18: master Triton router
+[router_cluster] PATH CHOSEN router m=19: master Triton router
+[router_cluster] PATH CHOSEN router m=20: master Triton router
+[router_cluster] PATH CHOSEN router m=21: master Triton router
+[router_cluster] PATH CHOSEN router m=22: master Triton router
+[router_cluster] PATH CHOSEN router m=23: master Triton router
+[router_cluster] PATH CHOSEN router m=24: master Triton router
+[router_cluster] PATH CHOSEN router m=25: master Triton router
+[router_cluster] PATH CHOSEN router m=26: master Triton router
+[router_cluster] PATH CHOSEN router m=27: master Triton router
+[router_cluster] PATH CHOSEN router m=28: master Triton router
+[router_cluster] PATH CHOSEN router m=29: master Triton router
+[router_cluster] PATH CHOSEN router m=30: master Triton router
+[router_cluster] PATH CHOSEN router m=31: master Triton router
+[router_cluster] PATH CHOSEN router m=32: master Triton router
+[router_cluster] PATH CHOSEN router m>32: master Triton router
+[router_cluster] m=1 cs=8 median us/launch (eager, incl. launch): warm-L2 cluster 17.60 | no-DSMEM-reduce 17.12 | master 37.22; cold-L2 cluster 10.08 | no-DSMEM-reduce 9.02 | master 11.39
+[router_cluster] m=8 cs=8 median us/launch (eager, incl. launch): warm-L2 cluster 17.31 | no-DSMEM-reduce 17.22 | master 37.34; cold-L2 cluster 10.21 | no-DSMEM-reduce 8.96 | master 11.26
+[router_cluster] m=16 cs=8 median us/launch (eager, incl. launch): warm-L2 cluster 17.31 | no-DSMEM-reduce 17.25 | master 37.28; cold-L2 cluster 10.82 | no-DSMEM-reduce 9.60 | master 11.39
+[swapab] layer=pooler m=32 N=4096 K=8192 SPLIT_K=2 BLOCK_K=256 stages=4: n_regs=96 n_spills=0 wgmma=16 mma.sync=0 cp.async=106
+[swapab] layer=qkv_gate m=32 N=2304 K=8192 SPLIT_K=4 BLOCK_K=128 stages=4: n_regs=56 n_spills=0 wgmma=8 mma.sync=0 cp.async=58
+[swapab] layer=unpooler m=32 N=8192 K=4096 SPLIT_K=1 BLOCK_K=256 stages=4: n_regs=96 n_spills=0 wgmma=16 mma.sync=0 cp.async=106
+[swapab] layer=o m=32 N=8192 K=1024 SPLIT_K=1 BLOCK_K=256 stages=4: n_regs=96 n_spills=0 wgmma=16 mma.sync=0 cp.async=106

@@ -79,10 +79,10 @@ controls_for: null
 rewrite_stage: 1
 replaces: "router at m<=32: torch.zeros memset node (vectorized_elementwise 0.7-0.8 us) + _router_hilo_kernel 3-D split-K with fp32 atomic_add (3.0-3.6 us)"
 review: proceed
-status: running
+status: done
 review_at: 2026-10-25T004221Z
 review_companions: null
-stage: dispatched
+stage: harvested
 claimed_at: 2026-10-25T004221Z
 base_sha: 97cde2a7e308e68b1ea49821182fcf5267f527bd
 base_blob: a8bb42ac483318e9fbc84bc7826a27b7a704d1fb
@@ -101,6 +101,13 @@ attempt_file: 2026-10-25T005026Z-check-router-cuda-cluster-dsmem-splitk-rewrite.
 prepared_at: 2026-10-25T005026Z
 job: dc5d03c4d9604b0e
 dispatched_at: 2026-10-25T005033Z
+outcome: regression
+verdict_detail: regression
+speedup: 1.189728823612248
+speedup_ci: [1.1718828912580643, 1.2075747559664316]
+harvested_at: 2026-10-25T034129Z
+best_at_harvest: 1.2215006063849365
+promotion: null
 ---
 
 # router-cuda-cluster-dsmem-splitk-rewrite
@@ -209,3 +216,53 @@ Audited 2026-10-24 by an opus subagent, by reading (no GPU here). **Verdict: dis
 - Rules: kernel_fn branches only on cfg, shape, stride and alignment plus a prepare() constant; it has no sync and caches nothing from data. Lint passes with warnings, all in prepare(). py_compile passes.
 
 Residual risk: the CUDA has never been compiled (template or asm build errors fall back to master), and a first-launch fault in the self-check would poison the context and fail the run instead of falling back.
+
+## Result
+
+- job `dc5d03c4d9604b0e` (check), status done, passed True, tests 9/9
+- speedup 1.1897x, 95% CI [1.1719, 1.2076], score 4060.4210843045325 µs vs SGLang 4830.8 µs
+- best at harvest: {"speedup": 1.2215006063849365, "ci": [1.2031780972891624, 1.2398231154807104], "job": "60b20fd0bf924267"}; base result: muse_bf16_proj/hypotheses/done/neutral/bf16-restack-m16-swapab-router-swapab-m32.result.json
+- **outcome: regression** (regression)
+- files: `muse_bf16_proj/hypotheses/done/regression/router-cuda-cluster-dsmem-splitk-rewrite.result.json`, `muse_bf16_proj/hypotheses/done/regression/router-cuda-cluster-dsmem-splitk-rewrite.patch`; branch `hyp/muse_bf16_proj/router-cuda-cluster-dsmem-splitk-rewrite`
+
+## Attribution
+
+| shape | w | base µs | hyp µs | delta | verdict |
+|---|---|---|---|---|---|
+| layer=qkv_gate load=decode_1 m=1 | 62 | 12.18 | 13.56 | 0.9188 | lost |
+| layer=o load=decode_1 m=1 | 62 | 5.89 | 6.26 | 0.925 | lost |
+| layer=pooler load=decode_1 m=1 | 62 | 18.84 | 19.58 | 0.98 | flat |
+| layer=unpooler load=decode_1 m=1 | 62 | 6.15 | 6.55 | 0.9313 | lost |
+| layer=router load=decode_1 m=1 | 62 | 5.38 | 5.24 | 1.0348 | gained |
+| layer=qkv_gate load=decode_16 m=16 | 62 | 13.15 | 14.07 | 0.942 | lost |
+| layer=o load=decode_16 m=16 | 62 | 6.23 | 6.67 | 0.912 | lost |
+| layer=pooler load=decode_16 m=16 | 62 | 19.47 | 19.69 | 0.9793 | flat |
+| layer=unpooler load=decode_16 m=16 | 62 | 18.51 | 18.63 | 0.9937 | flat |
+| layer=router load=decode_16 m=16 | 62 | 5.47 | 5.87 | 0.9383 | lost |
+| layer=qkv_gate load=decode_32 m=32 | 62 | 14.19 | 13.93 | 0.9917 | flat |
+| layer=o load=decode_32 m=32 | 62 | 6.34 | 6.45 | 0.9802 | flat |
+| layer=pooler load=decode_32 m=32 | 62 | 19.73 | 20.03 | 0.9925 | flat |
+| layer=unpooler load=decode_32 m=32 | 62 | 18.08 | 18.54 | 0.9872 | flat |
+| layer=router load=decode_32 m=32 | 62 | 6.2 | 6.85 | 0.9027 | lost |
+| layer=qkv_gate load=verify_1 m=8 | 62 | 12.5 | 13.68 | 0.9275 | lost |
+| layer=o load=verify_1 m=8 | 62 | 6.13 | 6.53 | 0.9481 | lost |
+| layer=pooler load=verify_1 m=8 | 62 | 18.89 | 19.33 | 0.9838 | flat |
+| layer=unpooler load=verify_1 m=8 | 62 | 6.0 | 6.29 | 0.9564 | lost |
+| layer=router load=verify_1 m=8 | 62 | 5.47 | 5.08 | 1.0791 | gained |
+| layer=qkv_gate load=verify_16 m=128 | 62 | 17.05 | 16.59 | 0.9883 | flat |
+| layer=o load=verify_16 m=128 | 62 | 6.98 | 7.69 | 0.9551 | lost |
+| layer=pooler load=verify_16 m=128 | 62 | 25.0 | 24.81 | 1.016 | flat |
+| layer=unpooler load=verify_16 m=128 | 62 | 19.96 | 20.0 | 0.9996 | flat |
+| layer=router load=verify_16 m=128 | 62 | 7.28 | 7.54 | 0.9533 | lost |
+| layer=qkv_gate load=verify_32 m=256 | 62 | 19.69 | 19.83 | 0.9824 | flat |
+| layer=o load=verify_32 m=256 | 62 | 9.26 | 9.83 | 0.9586 | lost |
+| layer=pooler load=verify_32 m=256 | 62 | 31.19 | 31.82 | 0.9773 | flat |
+| layer=unpooler load=verify_32 m=256 | 62 | 24.42 | 24.75 | 0.9964 | flat |
+| layer=router load=verify_32 m=256 | 62 | 9.6 | 9.63 | 0.9862 | flat |
+
+gained on router decode_1, verify_1; lost on qkv_gate decode_1, decode_16, verify_1; o decode_1, decode_16, verify_1, verify_16, verify_32; unpooler decode_1, verify_1; router decode_16, decode_32, verify_16. Expected hit: 7/10. Noise ±1.5%.
+
+## Follow-ups
+
+- rewrite stage 1 of `router at m<=32: torch.zeros memset node (vectorized_elementwise 0.7-0.8 us) + _router_hilo_kernel 3-D split-K with fp32 atomic_add (3.0-3.6 us)`: read the replaced kernels' own us per shape (profile top_kernels) against the incumbent and the floor, and check which Milestone it reached. The next stage is `/hypothesize muse_bf16_proj "<what to fix or tune>" --kind rewrite --depends-on router-cuda-cluster-dsmem-splitk-rewrite --stage 2`; a slow or failed first cut is the expected start, not a do-not-retry.
+
