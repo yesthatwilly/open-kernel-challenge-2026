@@ -109,7 +109,7 @@ review: proceed
 status: running
 review_at: 2026-10-25T162036Z
 review_companions: null
-stage: claimed
+stage: implemented
 claimed_at: 2026-10-25T162036Z
 base_sha: 1a68e94c6b2606b0ecd994ea29ea38fc22e70f0e
 base_blob: 593b238c16387c5ac3774424ee9557882b9fc46a
@@ -118,6 +118,12 @@ worktree: .worktrees/muse_moe_w4a16/combo-toprow-w13t1-d32-alignpar-postnorm-wg-
 mode: null
 restack_of: null
 stale_base: null
+implemented_at: 2026-10-25T185454Z
+impl_commit: bf06a8c6d5516b96ed4c92c1807e5a5f2a69d9fe
+submission_sha256: b0ccbf2dc82119f0256fe668d52740e1a4512efc58046e1e340e28411f75f865
+norm_sha256: 8548183c300cf00a3ce39123c167dc1f4cdc314775965375e1f0f6c0cfb91a1b
+submission_blob: 35b8a851e4ef5fa8fd66b12d09caac88b7ea7615
+lint_warnings: 96
 ---
 
 # combo-toprow-w13t1-d32-alignpar-postnorm-wg-align2
@@ -199,3 +205,18 @@ Checked against `git -C .worktrees/muse_moe_w4a16/combo-toprow-w13t1-d32-alignpa
 
 okc_lint output: `OK with warnings: muse_moe_w4a16/submission.py`. All the warnings are `host-sync ... (outside kernel_fn's call graph; fine in prepare())` or prepare-time uint8 `dtype` notes; there are no errors. `python3 -I -m py_compile` passed and `__pycache__` was removed. An AST scan found no undefined names, and no f-string in the diff nests same-type quotes.
 
+
+## Pre-flight audit
+
+Audited 2026-10-25 (opus). Read only: there is no GPU here. **Verdict: dispatch-with-fixes.**
+
+- **Merge (coordinator):** master moved to f7eac2c3 (wg-pdl-gather-w13-w2-chain: PDL on the wgmma w13 -> w2 boundary, the v6_pdl module with a fallback to v5, `wg_pdl`/`wg_ext_pdl`, `_wg_pdl_stage`). Ran a 3-way `git merge-file` with base 1a68e94c's submission.py, master's as theirs and the combo as ours. It merged with no conflicts. The merged file differs from master by exactly the combo's +734/-8 and from the pre-merge combo by exactly PDL's +391/-36. F2 composes with PDL. The front-end swap is before the gather and w13, which are plain stream-ordered launches. Only the w2 launch carries PDL, and its prologue reads block_experts/n_padded from the align, which finished before w13 began. `dict(state, ...)` in F2's bitwise check and the copy-check clone carry `wg_pdl`/`wg_ext_pdl`. The PDL run (667b64e3) logged master's prepare at about 60 s, so the combo deadlines (F1 120 s ... copy 255 s) keep about 60 s of slack.
+- **Fix (gate that would always fail): F1 tolerances raised from 1e-2 to 1.25e-2** (`W13_ATOMIC_TOL`, `W13_FP32_TOL`). The source's own log (w13-marlin-atomic-add-t1-only) has w13 atomic vs fully non-atomic at 8.1e-3, vs master at 8.4e-3 on ONE routing, and master's w2 atomic vs non-atomic at 4.7e-3. Stacked in quadrature with Marlin's base error, the vs-fp32 figure is about 1.0e-2, and the gate takes the worst of 3 routings, so 1e-2 would almost always keep master. 1.25e-2 still sits inside the judge's 1.5e-2, and this exact path passed the judge twice.
+- F2 (bitwise achievable): yes. wg_gather and wg_kernel depend only on the chunk structure: per-expert runs of block_experts, cut every 8 blocks relative to the run start, with N picked from the chunk's block count. They also depend on n_padded and on sorted_ids per slot. Remote (-1) blocks are skipped, and the w2 epilogue scatters by route id. align2/_align_parallel give the same per-expert block counts as SGLang, so every chunk and N bucket is the same. Only column positions within a chunk change, and a swap-AB wgmma column is an independent K-ordered dot product. The table check is per expert, not torch.equal against SGLang, as the review asked.
+- F1: cache13 is allocated per call, `atomic_zero` zeroes cache1 per call inside the graph, and nothing is cached. The poison-buffer self-check decides atomic vs atomic_zero; the source run on the judge chose `atomic` with no memset, so Marlin zeroes internally.
+- C1a/C1b are consistent with current master. On master, d32 align2 is OFF (ratio 0.957), so master's d32 pick is _align_small, and C1a takes priority over the chunk branch. T=32 does not satisfy `< SMALL_M_POST_NORM`, so C1b replaces exactly SGLang's fused norm at T=32. No Triton compile can happen in kernel_fn. _align_parallel is warmed at bsm 8/16 (C1a) and bsm 16 (master + F2), align2 at bsm 16 for every T 128..512 x chunk (NCH_P2 varies), and the hoisted post-norm at T=32. Every runtime int is in do_not_specialize.
+- Memory: a state is about 1.9 GB (Marlin bank about 0.86 GB, wgmma bank about 0.86 GB, 2 x 64 MB scratch), so the copy check's clone is about 1.9 GB. With the judge's 256-expert weights (about 6.9 GB) and two states, that is under 15 GB of 141 GB on the H200.
+- kernel_fn purity: it branches only on the shape and on prepare-set ints and strings. Every allocation is shape-sized, and there is no sync, print or try/except on the path. `poison` is never passed from kernel_fn.
+- okc_lint: OK with warnings (prepare-time host syncs only). py_compile passed, and __pycache__ was removed.
+
+Residual risk: F2's bitwise gate relies on wgmma columns being position- and N-invariant. If they are not, B256 keeps master's front end, which is safe but leaves verify_32 flat.
