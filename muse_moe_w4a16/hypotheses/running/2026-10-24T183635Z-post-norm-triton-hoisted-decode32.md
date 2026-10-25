@@ -53,7 +53,7 @@ base_sha: 5415d32531be94c6b20cde97470e8c1127019215
 base_blob: 108d36e9f2266fc88531dd6ff0329a847c882013
 branch: hyp/muse_moe_w4a16/post-norm-triton-hoisted-decode32
 worktree: .worktrees/muse_moe_w4a16/post-norm-triton-hoisted-decode32
-mode: null
+mode: check
 restack_of: null
 stale_base: null
 implemented_at: 2026-10-25T003435Z
@@ -62,6 +62,8 @@ submission_sha256: 86ca6990350fc0868f434d66b4933726088c8a1036036c1e5718767152590
 norm_sha256: cb9fa6ca167a3a4b8966539b72b6c469811707de0924c2b2d4efd373495b0fae
 submission_blob: c54141f38978ee496a8ff7b2a4384572342d4585
 lint_warnings: 8
+attempt_file: 2026-10-25T003435Z-check-post-norm-triton-hoisted-decode32.md
+prepared_at: 2026-10-25T003435Z
 ---
 
 # post-norm-triton-hoisted-decode32
