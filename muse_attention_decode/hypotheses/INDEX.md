@@ -1,6 +1,6 @@
 # muse_attention_decode hypotheses
 
-Regenerated 2026-10-25T043406Z. Best: 1.4322x [1.4107,1.4554] job `2a3241780c7b4c46` (check)
+Regenerated 2026-10-25T051708Z. Best: 1.4322x [1.4107,1.4554] job `2a3241780c7b4c46` (check)
 
 | created | slug | kind | area | where | outcome | speedup | CI | job | mode | promotion | review | expected hit |
 |---|---|---|---|---|---|---|---|---|---|---|---|---|
@@ -59,7 +59,7 @@ Regenerated 2026-10-25T043406Z. Best: 1.4322x [1.4107,1.4554] job `2a3241780c7b4
 | 2026-10-25T001825Z | full-verify-wgmma-s3-warpgroup-per-kvhead-inproc | rewrite | full-layer attention (verify, splitkv A8/B8) | done/neutral | neutral | 1.3801 | [1.359,1.401] | 2c3f7fff72bb4e1d | check |  | proceed | 2/3 |
 | 2026-10-25T001825Z | sliding-cluster-s2-decode-c4-pdl-inproc | rewrite | sliding-layer attention (decode, cluster kernel) | done/neutral | neutral | 1.4001 | [1.379,1.426] | 1990ce53e9d34073 | check |  | proceed | 2/5 |
 | 2026-10-25T003621Z | full-decode-splitkv-s3-fused-preattn | rewrite | full-layer attention (decode, splitkv stream-K kernel prologue) | done/neutral | neutral | 1.4283 | [1.407,1.450] | 825baa03798f431a | check |  | proceed | 0/3 |
-| 2026-10-25T003637Z | full-decode1-streamk-s3-two-level-ticket | rewrite | full-layer attention (batch-1 decode, splitkv stream-K kernel) | done/neutral | neutral | 1.4322 | [1.411,1.455] | 2a3241780c7b4c46 | check | merged | proceed | 2/3 |
+| 2026-10-25T003637Z | full-decode1-streamk-s3-two-level-ticket | rewrite | full-layer attention (batch-1 decode, splitkv stream-K kernel) | done/neutral | neutral | 1.4322 | [1.411,1.455] | 2a3241780c7b4c46 | check | submitted | proceed | 2/3 |
 | 2026-10-25T003705Z | full-verify-wgmma-s4-sliding-window | rewrite | sliding-layer attention (verify, wgmma stream-K kernel) | queue | hold |  |  |  |  |  | hold |  |
 | 2026-10-25T003705Z | full-verify1-wgmma-s4-batch1-grid-sm | rewrite | full-layer attention (batch-1 verify, wgmma stream-K kernel) | queue | hold |  |  |  |  |  | hold |  |
 | 2026-10-25T003735Z | sliding-decode-paired-kvhead-rows | primary | sliding-layer attention (batched decode, KV row gather) | done/regression | regression | 1.2865 | [1.267,1.306] | 48ffbe5690cc4ab4 | check |  | proceed | 0/3 |
@@ -69,10 +69,10 @@ Regenerated 2026-10-25T043406Z. Best: 1.4322x [1.4107,1.4554] job `2a3241780c7b4
 | 2026-10-25T035310Z | full-verify-wgmma-s4-multitile-fix | rewrite | full-layer attention (verify, wgmma stream-K kernel, multi-tile correctness) | done/neutral | neutral | 1.3758 | [1.355,1.396] | 51b0d5c110f3459c | check |  | proceed | 0/3 |
 | 2026-10-25T042334Z | sliding-cluster-s3-verify-attn-only-phase-timed | rewrite | sliding-layer attention (verify, cluster kernel) | queue | hold |  |  |  |  |  | proceed |  |
 | 2026-10-25T042334Z | sliding-verify1-triton-pseudo-decode | primary | sliding-layer attention (batch-1 verify, Triton fused decode kernel) | queue | hold |  |  |  |  |  | hold |  |
-| 2026-10-25T042334Z | full-decode1-sk4-cluster-dsmem-merge | rewrite | full-layer attention (batch-1 decode, stream-K kernel merge) | running | running |  |  |  |  |  | proceed |  |
-| 2026-10-25T042334Z | sliding-verify-sk-pseudo-decode-s1 | rewrite | sliding-layer attention (verify, stream-K pseudo-decode kernel) | running | running |  |  |  |  |  | proceed |  |
+| 2026-10-25T042334Z | full-decode1-sk4-cluster-dsmem-merge | rewrite | full-layer attention (batch-1 decode, stream-K kernel merge) | running | running |  |  | f519261b7c2b435f | check |  | proceed |  |
+| 2026-10-25T042334Z | sliding-verify-sk-pseudo-decode-s1 | rewrite | sliding-layer attention (verify, stream-K pseudo-decode kernel) | running | running |  |  | 94523c3313444fd8 | check |  | proceed |  |
 | 2026-10-25T042335Z | full-verify1-sk-pseudo-decode | primary | full-layer attention (batch-1 verify, stream-K pseudo-decode) | queue | hold |  |  |  |  |  | proceed |  |
-| 2026-10-25T042335Z | full-decode1-sk-pdl-from-preattn | primary | launch overhead (full decode_1, pre-attention -> stream-K kernel) | running | running |  |  |  |  |  | proceed |  |
+| 2026-10-25T042335Z | full-decode1-sk-pdl-from-preattn | primary | launch overhead (full decode_1, pre-attention -> stream-K kernel) | running | running |  |  | c0f1945a108c4aa2 | check |  | proceed |  |
 
 ## Held
 

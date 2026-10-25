@@ -1,6 +1,6 @@
 # muse_bf16_proj hypotheses
 
-Regenerated 2026-10-25T043621Z. Best: 1.2215x [1.2032,1.2398] job `1e90292c7b954d96` (check)
+Regenerated 2026-10-25T051708Z. Best: 1.2215x [1.2032,1.2398] job `1e90292c7b954d96` (check)
 
 | created | slug | kind | area | where | outcome | speedup | CI | job | mode | promotion | review | expected hit |
 |---|---|---|---|---|---|---|---|---|---|---|---|---|
@@ -54,7 +54,7 @@ Regenerated 2026-10-25T043621Z. Best: 1.2215x [1.2032,1.2398] job `1e90292c7b954
 | 2026-10-25T011408Z | bf16-verify-deepgemm-bf16-gemm-nt-route | primary | bf16 GEMM dispatch (m=65..256, DeepGEMM bf16) | done/regression | regression | 1.2027 | [1.185,1.221] | 2d522d47ca5c4fc9 | check |  | proceed | 5/8 |
 | 2026-10-25T011408Z | pooler-unpooler-full-bulk-tma-row-owner-stream-rewrite | rewrite | pooler GEMM + unpooler GEMM (m<=32 DRAM weight streams, bulk-TMA row-owner kernel) | done/regression | regression | 1.1828 | [1.165,1.201] | cd39d36e31814087 | check |  | proceed | 8/15 |
 | 2026-10-25T035343Z | pooler-unpooler-bulk-tma-row-owner-s2-cxx20-rebuild | rewrite | pooler GEMM + unpooler GEMM (m<=32 DRAM weight streams, bulk-TMA row-owner kernel) | done/regression | regression | 1.0331 | [1.018,1.049] | 571ea532ad7a410d | check |  | proceed | 1/7 |
-| 2026-10-25T042040Z | bf16-verify-deepgemm-sm90-kernel-asserted-rewrite | rewrite | bf16 GEMM dispatch (m=65..256, DeepGEMM sm90 BF16 kernel) | running | running |  |  |  |  |  | proceed |  |
+| 2026-10-25T042040Z | bf16-verify-deepgemm-sm90-kernel-asserted-rewrite | rewrite | bf16 GEMM dispatch (m=65..256, DeepGEMM sm90 BF16 kernel) | running | running |  |  | 4c224bebdd384541 | check |  | proceed |  |
 | 2026-10-25T042040Z | router-cluster-dsmem-s2-flat-in-m-occupancy | rewrite | router GEMM (m<=32, cluster DSMEM kernel) | running | running |  |  | ef8a8bca31ef420e | check |  | proceed |  |
 | 2026-10-25T042040Z | router-m128-m256-cluster-dsmem-tiled-rewrite | rewrite | router GEMM (m=65..256) | running | running |  |  | b7b2b55d04544660 | check |  | proceed |  |
 | 2026-10-25T042040Z | restack-pooler-unpooler-nn-layout-m128 | primary | pooler GEMM + unpooler GEMM (m=65..128, cuBLAS NN layout) | done/neutral | neutral | 1.2282 | [1.210,1.247] | 92cd4e758a924ca0 | check |  | proceed | 6/8 |
