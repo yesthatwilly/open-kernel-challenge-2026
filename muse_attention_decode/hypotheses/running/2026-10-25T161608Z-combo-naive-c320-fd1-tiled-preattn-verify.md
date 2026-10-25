@@ -109,7 +109,7 @@ base_sha: 7b2fc03434e07e7c148cc064c8afa2187e4db00e
 base_blob: 5cf8fae31e5b84c36efeeb4569763eb9b06e1c8a
 branch: hyp/muse_attention_decode/combo-naive-c320-fd1-tiled-preattn-verify
 worktree: .worktrees/muse_attention_decode/combo-naive-c320-fd1-tiled-preattn-verify
-mode: null
+mode: submit
 restack_of: null
 stale_base: null
 implemented_at: 2026-10-25T185336Z
@@ -118,6 +118,8 @@ submission_sha256: 53bf046ada4571ae47197c6c8cc29c1dd54bd5bfb7bcc2156854ca72bb286
 norm_sha256: 966836550be15eae168cdce3d9a660ad4abfea230e8973c5aab4e6713267f247
 submission_blob: a1f1eed68dfdbcd4b1a5ff79aa303747f35aa47c
 lint_warnings: 66
+attempt_file: 2026-10-25T185337Z-submit-combo-naive-c320-fd1-tiled-preattn-verify.md
+prepared_at: 2026-10-25T185337Z
 ---
 
 # combo-naive-c320-fd1-tiled-preattn-verify
