@@ -53,7 +53,7 @@ review: hold
 status: hold
 review_at: 2026-10-25T001517Z
 review_companions: null
-hold_reason: "adversarial review: Hold for a rules problem only: fix (1), the central fix, runs the self-check in a torch.multiprocessing spawn child or subprocess, and TASK.md says a submission"
+hold_reason: "Retired: its design runs the self-check in a child process, which the rules statically reject; superseded by the -inproc line (LESSONS 2026-10-25)."
 ---
 
 # moe-chain-cuda-swapab-expert-once-fix
