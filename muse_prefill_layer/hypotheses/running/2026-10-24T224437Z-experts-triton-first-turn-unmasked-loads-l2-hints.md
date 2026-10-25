@@ -36,7 +36,7 @@ review: proceed
 status: running
 review_at: 2026-10-25T034754Z
 review_companions: null
-stage: implemented
+stage: dispatched
 claimed_at: 2026-10-25T034755Z
 base_sha: 62d28685d7829e2134746918148e95305d852b47
 base_blob: db8a3344398bca79ea5cafeb580f701c055fd475
@@ -53,6 +53,8 @@ submission_blob: 92d0b57884af6ce9d3a9770fd7e4f65fb49a7fd1
 lint_warnings: 18
 attempt_file: 2026-10-25T034946Z-check-experts-triton-first-turn-unmasked-loads-l2-hints.md
 prepared_at: 2026-10-25T034946Z
+job: aeda8b5a523642b1
+dispatched_at: 2026-10-25T034953Z
 ---
 
 # experts-triton-first-turn-unmasked-loads-l2-hints
