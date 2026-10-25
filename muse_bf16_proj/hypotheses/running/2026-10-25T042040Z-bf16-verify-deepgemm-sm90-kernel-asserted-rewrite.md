@@ -75,7 +75,7 @@ base_sha: e5548a78a3d321973c377dc21431b085c324a412
 base_blob: 970b415b746fa03cb92e419d270be92588273178
 branch: hyp/muse_bf16_proj/bf16-verify-deepgemm-sm90-kernel-asserted-rewrite
 worktree: .worktrees/muse_bf16_proj/bf16-verify-deepgemm-sm90-kernel-asserted-rewrite
-mode: null
+mode: check
 restack_of: null
 stale_base: null
 implemented_at: 2026-10-25T043743Z
@@ -84,6 +84,8 @@ submission_sha256: ced06516176770328f48f0f642a6f99890f4bb650b70fa73832190a8e600d
 norm_sha256: e8032bf830f649f5d8fa85f5cdfd059b29fdc58378a4c6665c936dffaea770e4
 submission_blob: 489174846c51a034e3c119f0f67cec9c213404f5
 lint_warnings: 4
+attempt_file: 2026-10-25T043744Z-check-bf16-verify-deepgemm-sm90-kernel-asserted-rewrite.md
+prepared_at: 2026-10-25T043744Z
 ---
 
 # bf16-verify-deepgemm-sm90-kernel-asserted-rewrite
