@@ -134,3 +134,37 @@ No companion. This is a rewrite stage, and every target row is self-attributing 
 - Build time: one TU with all instantiations (3 layers x the chosen tile configs, runtime M), with a prepare-elapsed guard that skips the build if more than ~150 s have elapsed. A cute c++20 TU with 6+ instantiations can exceed the 60-150 s estimate.
 - If STEP A shows the API does launch a genuine DeepGEMM kernel (source has no cuBLAS, outputs not bit-identical) yet the judge profile again shows nvjet, the fault is in the route, not the library. The ROUTE TAKEN flag discriminates that case.
 
+
+## Implementation notes
+
+Built blind (no GPU/torch here); only the Python parse/codegen/config helpers were exercised against a mock header. All edits are in the worktree `muse_bf16_proj/submission.py` (+739 lines, nothing removed): new imports (hashlib, os, re, time), a `[dg]` block before `prepare()`, one call at the end of `prepare()`, and one branch in `kernel_fn` just before the cuBLAS fallback.
+
+Where the adversarial review overrides the spec (review wins):
+- NO torch.profiler anywhere. STEP A is `_dg2_step_a`: prints `inspect.getsource` (or docstring, module, version, getters, DG_* env) of `deep_gemm.bf16_gemm_nt`, greps it for cublas/cublaslt/nvjet/gemmSN, and compares `torch.equal(bf16_gemm_nt(x,W,out), _bf16_gemm_dispatch_impl(x,W,None))` for every layer at m=128 and 256. The API route (`deepgemm-api`) is used only if no cuBLAS word AND no pair is bit-identical; otherwise STEP B.
+- STEP B is the deliverable (`_dg2_build`): locates `deep_gemm/include/deep_gemm/impls/sm90_bf16_gemm.cuh` (or an `*sm90*bf16*gemm*.cuh` sibling), prints the impls listing and the parsed template and kernel parameter lists. If the header is absent it prints `[dg] header absent ... VOID RUN` and master runs (this run then measures master). The kernel's template list and argument list are parsed from the header and filled by name; any name the port does not know prints `signature mismatch ... VOID RUN` instead of guessing.
+- Build: `TORCH_CUDA_ARCH_LIST=9.0a` set around `load_inline` and restored in `finally`; nvcc flags `-std=c++20 -O3 -DNDEBUG --expt-relaxed-constexpr --expt-extended-lambda -lineinfo -gencode=arch=compute_90a,code=sm_90a` plus the `-U__CUDA_NO_*` undefs, `-std=c++20` also in extra_cflags, `-I<deep_gemm include>` (CUTLASS 4.2.1/cute ship there); torch.utils.cpp_extension is never patched. A `#error` guard rejects any non-sm_90a device pass. Flags and arch are printed. Build is skipped if prepare() is already past 110 s.
+- M bug fixed both ways: SHAPE_M = 0 (runtime M, TMA OOB zero-fill on A, clipped TMA stores on D) AND routing only the exact (layer, m) pairs built and verified, m in {128, 130, 200, 256} (the m=130 unpooler test included). m=512/1000 and everything else stay on master. Two instantiations per layer: group {128} and group {130,200,256} (no B-multicast, since m % 128 != 0 for 130/200); 6 in one TU.
+- Heuristic port (`_dg2_pick_cfg`): BLOCK_K 64; BLOCK_M 64/128; BLOCK_N a divisor of n in 32..256 step 16; multicast 1 or 2 on A (even N-blocks) or on B (even M-blocks for every m in the group); stages from the 232448 B cap; chosen by a bytes/flops per-wave cost model. Each variant's choice and modeled time is printed.
+- Launcher is ours: `cuTensorMapEncodeTiled` via `cudaGetDriverEntryPoint` (no -lcuda), weight (B) descriptors encoded once in `dg2_set_weight`, x and out descriptors encoded per call from `data_ptr()` and shape only, `cudaLaunchKernelEx` with a cluster attribute, `cudaFuncSetAttribute` for max dynamic smem, `cudaFuncGetAttributes` printed (regs, local bytes, static smem, max dyn smem, SASS arch, ptx). A variant is rejected if SASS arch != 90 or local bytes > 512 (not 0: printf frames can show as local bytes; the spill number is printed regardless).
+- Self-check per (layer, m): flushed print before and after each launch with `torch.cuda.synchronize()`, finite, rel L2 <= 3e-3 vs fp64, one-hot probe <= 1e-4, CUDA graph capture + replay, and a printed `bitwise_equal_to_cuBLAS` (a header kernel should print False). Any failure disables that pair only.
+- Proof lines: `[dg] PATH CHOSEN <layer> m=<m>: deepgemm-api|deepgemm-header|master KERNEL=<name>` for all 12 pairs, and `[dg] ROUTE TAKEN <layer> m=<m> path=<api|header>` printed once per pair from kernel_fn (host-side set, shape-only; fires at graph capture). Tag `[dg]` and kernel symbol `sm90_bf16_gemm_impl` are distinct from the swap-AB cluster rewrite.
+
+Deviations / risks:
+- "Bound every mbarrier wait" cannot be met: the waits live in DeepGEMM's shipped header, which is not edited. Mitigation: arch guard, signature-name gate, local-bytes/arch rejection, eager per-launch prints, and this must run as `okc check`. A genuine hang would reach the 10-minute limit.
+- BLOCK_N=48 (qkv_gate, swizzle-D 32 B) is a legal-looking but untested DeepGEMM tile; if its static_asserts reject it the whole TU fails to build and the run is VOID (the build log tail is printed). Next stage: restrict BLOCK_N to multiples of 32/64.
+- kNumLastStages = (K/64) % stages and `deep_gemm::EpilogueIdentity` / `GemmType::Normal` are from memory; `_dg2_build` greps the tree for the real epilogue and enum names and prints them.
+- Compile time of 6 cute instantiations may exceed 150 s; prepare's 270 s check cutoff leaves pairs on master if reached.
+- qkv_gate m=128 has no split-K (96 tiles of 64x48), the review's weakest link; do not read a qkv loss as a design kill if pooler/unpooler win.
+
+## Rules check
+
+- [x] CUDA-graph capturable: kernel_fn adds only shape gating, a host-side print-once set, `torch.empty` and a launcher call (descriptor encode + cudaLaunchKernelEx, no sync); the graph capture + replay is self-tested per pair in prepare().
+- [x] Nothing derived from `data` is cached: `dg2_seen` holds (layer, cfg m) keys only; descriptors for x/out are re-encoded each call.
+- [x] Weights: unchanged bf16, read in place; the B descriptor points at the prepared weight, no repack or precision change.
+- [x] Activations BF16 where SGLang keeps BF16 (bf16 in, fp32 accumulate in the wgmma mainloop, bf16 out).
+- [x] Attention: n/a (dense projections).
+- [x] No timing patches, harness frames/I/O/secrets, module edits, reference import, subprocesses or network (load_inline compiles in-process via the torch extension API; no subprocess/os.system in the file; no profiler).
+- [x] All work happens inside the timed call; no output caching or replay.
+- [x] Branches in kernel_fn are on cfg and shapes only, never on input values; `o`, router, m<=32 and m outside the verified set are untouched.
+
+okc_lint: `OK with warnings` (6 host-sync warnings, all `torch.cuda.synchronize()` in prepare()-only helpers, flagged by the linter as outside kernel_fn's call graph). py_compile clean, __pycache__ removed.

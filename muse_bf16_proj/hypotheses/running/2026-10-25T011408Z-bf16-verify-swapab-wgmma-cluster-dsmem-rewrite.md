@@ -171,3 +171,32 @@ No companion. This is stage 1 of a rewrite, judged on the replaced kernels' own 
 - Is the DSMEM epilogue bandwidth-bound? Compare full vs no_reduce per layer, and if it exceeds ~1.5 us, consider in stage 2 a smaller S, or 64-row weight tiles with T=256 and no split.
 - Is the T=256 consumer (m64n256 per warpgroup, 128 fp32 accumulator regs/thread at setmaxnreg 232) spill-free? Print the spill line and do not trust a run that spills (LESSONS 2026-10-25: 'a wgmma build that runs is not a fast one').
 
+
+## Implementation notes
+
+Edited only `muse_bf16_proj/submission.py` in the worktree (base = master 2de39fe, the landed restack 1.2215; master's paths untouched). New section (8) before `prepare`, +792 lines, plus `import os, time`, a prepare call `_swcl_prepare(state)` after `_swapab16_prepare`, and a route in `kernel_fn` just before master's cuBLAS fallback.
+
+- Kernel (load_inline at import, `TORCH_CUDA_ARCH_LIST=9.0a` set and restored, `-gencode=arch=compute_90a,code=sm_90a -O3 -lineinfo -std=c++20`, arch flags printed). Hand-written PTX, no cute/cuda:: headers. CTA = 384 threads: WG0 producer (setmaxnreg.dec 40, one thread issues TMA with mbarrier complete_tx), WG1-2 consumers (setmaxnreg.inc 232) issuing wgmma m64nTk16 SS (A = 64 weight rows, B = T x tile, 128B swizzle, descriptor form copied from the sm_90a moe build that ran), T = 128 (65..128, 6 stages) or 256 (129..256, 4 stages), BLOCK_K 64. All wgmma/setmaxnreg bodies are under `__CUDA_ARCH_FEAT_SM90_ALL`; the `#else` sets device error word 2 which the self-check reads (the brief's form; the spec's `#error` was not used).
+- Cluster (CX, S): grid (n/128, S). CX = 2 multicasts the x tile (each CTA loads half the rows, `.multicast::cluster`, mask 3 << 2*cy); CX = 1 is the same kernel without multicast. Epilogue: fp32 accumulator to the CTA's smem (aliasing the ring, token stride 132 floats, conflict-free), cluster barrier, rank cy sums its share of 4-row groups over the S peers in fixed order via mapa + `ld.shared::cluster.v4`, bf16 8 B stores, final cluster barrier. Bounded mbarrier waits (clock64, error word 1). Cluster-rank check (error word 3). TMA descriptors via the driver entry point (as the moe build); weight maps built once in prepare, x map per call from pointer and m (host only, graph-safe).
+- Review fixes applied (the review wins over the spec): (1) every candidate prints max-active vs needed clusters (tiles/CX) and is dropped if it does not fit one wave; qkv candidates (2,7),(1,7),(2,6),(1,6),(2,4),(1,4), pooler (2,4),(1,4),(2,2), unpooler (2,2),(1,2); survivors are timed cold-L2 and the fastest kept (so the spec's single 2x7 qkv launch and its "== 0" fallback test are replaced). (2) print-only no-reduce variant (mode 0: own-tile store, no peer reads; the two cluster barriers stay) timed beside the full kernel. (3) integer partitions: K-blocks floor(r*nkb/S), row groups of 4 (32 groups, floor(r*32/S)) instead of a 19/19/18 row split, so the v4 loads stay 16 B aligned. (4) remote empty-barrier protocol: each consumer warp arrives on the EMPTY barrier of both CTAs of its pair (8 warps x CX arrivals), FULL expects 16 KB + T*128 B.
+- Task requirements: gate in prepare per (layer, T class) on cold-L2 CUDA-graph time (L2 flushed before every replay) at m = 128 and m = 256 vs master's cuBLAS on the same x, routed only if <= 0.98 x master, else master for that class; PATH CHOSEN printed per range and per representative m. Self-check m in {65,128} (T=128) and {130,200,256} (T=256): rel L2 <= 3e-3 vs fp64, one-hot probe row <= 1e-4, finite, run 2 bit-identical, flushed print before and sync + print after each launch, error word read. Route: qkv_gate/pooler 65..256, unpooler 65..128, cfg n/k = full widths, x contiguous (stride k), 16 B aligned; everything else (o, router, m < 65, m > 256, unpooler m >= 129, tests m=130 unpooler/m=512/1000) stays on master. Own constants (SWCL_*), no shared bound with other paths.
+- No process/subprocess code anywhere. Not compiled or run here (no GPU, nvcc or torch on this node).
+
+Biggest risks: (1) a blind first compile of ~400 lines of PTX-level CUDA (wgmma operand lists, TMA multicast, mapa forms): a build error just falls back to master and prints the nvcc tail; (2) a first-launch fault in the self-check poisons the context (every launch is bracketed by prints); (3) `regs * 384 >= 64512` must hold or setmaxnreg.inc would block, it is gated on cudaFuncGetAttributes.
+
+## Rules check
+
+- [x] CUDA-graph capturable: kernel_fn only reads shapes/cfg, builds the x TMA map on the host from the pointer and m, one cudaLaunchKernelEx on the current stream, torch.empty output; no sync, no value-dependent control (diff: `_swcl_route`, `_swcl_forward`). Syncs/.item() exist only in prepare-time self-check/timing.
+- [x] Nothing derived from `data` is cached across calls: state holds only weight TMA maps, the error word and the per-class choice from synthetic data.
+- [x] Weights: bf16 weights untouched (only a TMA descriptor over the originals); no repack, no precision change.
+- [x] Activations BF16: x bf16 in, bf16 out, fp32 accumulation (cuBLAS class); FP32 router untouched.
+- [x] n/a: attention rule (this is a GEMM, every output computed over all of K).
+- [x] No timing patches, harness frames/I/O/secrets, module edits, reference import, subprocesses or network (grep for subprocess/multiprocessing/fork/spawn clean; lint clean).
+- [x] All work inside the timed call; no output caching or replay; the prepare timing/self-check is diagnostic and selector only.
+
+okc_lint output:
+```
+warn  host-sync  torch.cuda.synchronize() / err.item()  (outside kernel_fn's call graph; fine in prepare())  x5
+warn  dtype      flush = torch.empty(SWCL_FLUSH_BYTES, dtype=torch.uint8, ...)  (L2 flush buffer in prepare, not an activation)
+OK with warnings
+```

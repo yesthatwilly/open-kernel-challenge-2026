@@ -51,10 +51,10 @@ controls_for: null
 rewrite_stage: 2
 replaces: pooler m<=32 (_bf16_splitk_kernel m<=16, _bf16_swapab_kernel m=32) and unpooler-full m=16/32 (nvjet 64x16, _bf16_swapab_kernel)
 review: proceed
-status: running
+status: done
 review_at: 2026-10-25T040253Z
 review_companions: null
-stage: dispatched
+stage: harvested
 claimed_at: 2026-10-25T040259Z
 base_sha: 8ba8624df9248fb986052e4a67ab8e9a96a9770d
 base_blob: d2ef0372de1f177e26ce1a1a4f578a993b4fa98c
@@ -73,6 +73,13 @@ attempt_file: 2026-10-25T040754Z-check-pooler-unpooler-bulk-tma-row-owner-s2-cxx
 prepared_at: 2026-10-25T040754Z
 job: 571ea532ad7a410d
 dispatched_at: 2026-10-25T040801Z
+outcome: regression
+verdict_detail: regression
+speedup: 1.0330747408154506
+speedup_ci: [1.0175786197032188, 1.0485708619276823]
+harvested_at: 2026-10-25T043355Z
+best_at_harvest: 1.2215006063849365
+promotion: null
 ---
 
 # pooler-unpooler-bulk-tma-row-owner-s2-cxx20-rebuild
@@ -171,3 +178,53 @@ Checks that passed:
 - Rules: timed path unchanged apart from the shape-only flag write; no host sync, alloc on values or data caching; BF16 weights repacked losslessly (bit-exact verified); no processes/network/harness access. okc_lint OK with warnings (prepare-only host syncs); py_compile clean.
 
 Residual risk: no compile error is visible on reading, but stage 1 never compiled. The first build, mbarrier/bulk-copy runtime behaviour and the 0.5 s bounded waits are still unexercised on hardware.
+
+## Result
+
+- job `571ea532ad7a410d` (check), status done, passed True, tests 9/9
+- speedup 1.0331x, 95% CI [1.0176, 1.0486], score 4676.137949309303 µs vs SGLang 4830.8 µs
+- best at harvest: {"speedup": 1.2215006063849365, "ci": [1.2031780972891624, 1.2398231154807104], "job": "1e90292c7b954d96"}; base result: muse_bf16_proj/hypotheses/done/regression/pooler-unpooler-full-bulk-tma-row-owner-stream-rewrite.result.json
+- **outcome: regression** (regression)
+- files: `muse_bf16_proj/hypotheses/done/regression/pooler-unpooler-bulk-tma-row-owner-s2-cxx20-rebuild.result.json`, `muse_bf16_proj/hypotheses/done/regression/pooler-unpooler-bulk-tma-row-owner-s2-cxx20-rebuild.patch`; branch `hyp/muse_bf16_proj/pooler-unpooler-bulk-tma-row-owner-s2-cxx20-rebuild`
+
+## Attribution
+
+| shape | w | base µs | hyp µs | delta | verdict |
+|---|---|---|---|---|---|
+| layer=qkv_gate load=decode_1 m=1 | 62 | 13.62 | 13.36 | 1.042 | gained |
+| layer=o load=decode_1 m=1 | 62 | 6.62 | 6.48 | 1.043 | gained |
+| layer=pooler load=decode_1 m=1 | 62 | 19.71 | 17.28 | 1.1602 | gained |
+| layer=unpooler load=decode_1 m=1 | 62 | 6.39 | 6.09 | 1.0135 | flat |
+| layer=router load=decode_1 m=1 | 62 | 5.99 | 5.87 | 1.0118 | flat |
+| layer=qkv_gate load=decode_16 m=16 | 62 | 13.97 | 13.85 | 1.0144 | flat |
+| layer=o load=decode_16 m=16 | 62 | 6.86 | 6.39 | 1.0049 | flat |
+| layer=pooler load=decode_16 m=16 | 62 | 19.94 | 27.82 | 0.7373 | lost |
+| layer=unpooler load=decode_16 m=16 | 62 | 18.72 | 27.55 | 0.6714 | lost |
+| layer=router load=decode_16 m=16 | 62 | 5.97 | 5.81 | 1.0101 | flat |
+| layer=qkv_gate load=decode_32 m=32 | 62 | 14.21 | 13.86 | 1.0049 | flat |
+| layer=o load=decode_32 m=32 | 62 | 6.74 | 6.15 | 1.0278 | flat |
+| layer=pooler load=decode_32 m=32 | 62 | 19.85 | 48.42 | 0.4246 | lost |
+| layer=unpooler load=decode_32 m=32 | 62 | 18.84 | 50.59 | 0.3653 | lost |
+| layer=router load=decode_32 m=32 | 62 | 6.5 | 6.39 | 0.9983 | flat |
+| layer=qkv_gate load=verify_1 m=8 | 62 | 13.36 | 13.88 | 1.013 | flat |
+| layer=o load=verify_1 m=8 | 62 | 6.41 | 6.17 | 0.9804 | flat |
+| layer=pooler load=verify_1 m=8 | 62 | 19.19 | 19.84 | 1.0086 | flat |
+| layer=unpooler load=verify_1 m=8 | 62 | 5.98 | 6.18 | 0.9482 | lost |
+| layer=router load=verify_1 m=8 | 62 | 5.48 | 5.91 | 0.9356 | lost |
+| layer=qkv_gate load=verify_16 m=128 | 62 | 16.85 | 17.36 | 0.9819 | flat |
+| layer=o load=verify_16 m=128 | 62 | 7.31 | 7.54 | 0.9581 | lost |
+| layer=pooler load=verify_16 m=128 | 62 | 25.55 | 24.95 | 1.0061 | flat |
+| layer=unpooler load=verify_16 m=128 | 62 | 19.73 | 19.79 | 1.0091 | flat |
+| layer=router load=verify_16 m=128 | 62 | 7.11 | 7.63 | 0.9433 | lost |
+| layer=qkv_gate load=verify_32 m=256 | 62 | 20.28 | 19.91 | 1.0228 | flat |
+| layer=o load=verify_32 m=256 | 62 | 9.49 | 9.31 | 0.9712 | flat |
+| layer=pooler load=verify_32 m=256 | 62 | 29.83 | 31.21 | 1.0169 | flat |
+| layer=unpooler load=verify_32 m=256 | 62 | 24.53 | 24.38 | 1.0118 | flat |
+| layer=router load=verify_32 m=256 | 62 | 9.37 | 9.39 | 0.9858 | flat |
+
+gained on qkv_gate decode_1; o decode_1; pooler decode_1; lost on pooler decode_16, decode_32; unpooler decode_16, decode_32, verify_1; router verify_1, verify_16; o verify_16. Expected hit: 1/7. Noise ±1.5%.
+
+## Follow-ups
+
+- rewrite stage 2 of `pooler m<=32 (_bf16_splitk_kernel m<=16, _bf16_swapab_kernel m=32) and unpooler-full m=16/32 (nvjet 64x16, _bf16_swapab_kernel)`: read the replaced kernels' own us per shape (profile top_kernels) against the incumbent and the floor, and check which Milestone it reached. The next stage is `/hypothesize muse_bf16_proj "<what to fix or tune>" --kind rewrite --depends-on pooler-unpooler-bulk-tma-row-owner-s2-cxx20-rebuild --stage 3`; a slow or failed first cut is the expected start, not a do-not-retry.
+

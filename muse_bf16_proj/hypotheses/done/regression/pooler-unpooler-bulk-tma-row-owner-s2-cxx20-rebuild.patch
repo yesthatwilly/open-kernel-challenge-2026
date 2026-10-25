@@ -1,0 +1,102 @@
+diff --git a/muse_bf16_proj/submission.py b/muse_bf16_proj/submission.py
+index d2ef037..624198b 100644
+--- a/muse_bf16_proj/submission.py
++++ b/muse_bf16_proj/submission.py
+@@ -672,7 +672,8 @@ def _swapab_prepare(state: dict) -> None:
+ # row stride padded by 16 B in smem). Slot columns >= m are never written: MMA columns are
+ # independent and those accumulators are never stored, so stale smem there is harmless.
+ # ---------------------------------------------------------------------------------------------
+-BULK_EXT_NAME = "okc_bf16_bulk_rowown_s1"
++BULK_EXT_NAME = "okc_bf16_bulk_rowown_s2"
++BULK_NVCC_FLAGS = ["-O3", "-lineinfo", "-std=c++20"]  # replaces stage 1's explicit -std=c++17
+ BULK_POOLER_N, BULK_POOLER_K = 4096, 8192
+ BULK_UNPOOLER_N, BULK_UNPOOLER_K = 8192, 4096
+ # This hypothesis's OWN gate constants (never derived from the other paths' bounds).
+@@ -988,16 +989,20 @@ def _bulk_build():
+             print(f"[bulk] arch flags passed to nvcc: {cpp_extension._get_cuda_arch_flags()}", flush=True)
+         except Exception as e:  # diagnostic only
+             print(f"[bulk] arch flags unavailable ({type(e).__name__}: {e})", flush=True)
++        print(f"[bulk] extra_cuda_cflags: {BULK_NVCC_FLAGS} (host cflags: torch default, no extra_cflags)",
++              flush=True)
+         t0 = time.time()
+         mod = cpp_extension.load_inline(
+             name=BULK_EXT_NAME, cpp_sources=_BULK_CPP, cuda_sources=_BULK_CUDA,
+             functions=["bulk_run", "bulk_info"],
+-            extra_cuda_cflags=["-O3", "-lineinfo", "-std=c++17"], verbose=False)
++            extra_cuda_cflags=list(BULK_NVCC_FLAGS), verbose=False)
+         print(f"[bulk] load_inline compiled in {time.time() - t0:.1f}s (TORCH_CUDA_ARCH_LIST=9.0a)",
+               flush=True)
+         return mod
+     except Exception as e:
+-        print(f"[bulk] build FAILED ({type(e).__name__}: {str(e)[-600:]})", flush=True)
++        tail = "\n".join(str(e).splitlines()[-60:])
++        print(f"[bulk] build FAILED ({type(e).__name__}); last 60 lines of the build log:\n{tail}\n"
++              "[bulk] end of build log", flush=True)
+         return None
+     finally:
+         if prev is None:
+@@ -1044,6 +1049,7 @@ def _bulk_forward(layer: str, x: torch.Tensor, state: dict) -> torch.Tensor:
+                       dtype=torch.bfloat16, device=x.device)
+     state["bulk_ext"].bulk_run(state["bulk_wt_pooler" if pooler else "bulk_wt_unpooler"], x, out,
+                                state["bulk_err"], state["bulk_dummy"], 0 if pooler else 1, m, 0)
++    state["bulk_route_hit"] = (layer, m)  # host-side route flag (shape only) for prepare()'s probe
+     return out
+ 
+ 
+@@ -1087,6 +1093,11 @@ def _bulk_prepare(state: dict) -> None:
+             print("[bulk] DISABLED: no extension; master paths", flush=True)
+             return
+         state["bulk_ext"] = ext
++        # Per-kernel regs / local (spill) / smem straight after the build, before any other work.
++        for lid, nts in ((0, (8, 16, 32)), (1, (16, 32))):
++            for nt in nts:
++                print(f"[bulk] ptxas-equivalent layer={'pooler' if lid == 0 else 'unpooler'} NT={nt}: "
++                      f"{ext.bulk_info(lid, nt)}", flush=True)
+         state["bulk_err"] = torch.zeros(1, dtype=torch.int32, device=dev)
+         state["bulk_dummy"] = torch.zeros(128 * 160, dtype=torch.int32, device=dev)
+         state["bulk_wt_pooler"] = _bulk_repack(state["pooler"], 32)
+@@ -1094,10 +1105,6 @@ def _bulk_prepare(state: dict) -> None:
+         print("[bulk] weight repack: lossless bf16 permutation, bit-exact round trip verified; "
+               f"pooler Wt{tuple(state['bulk_wt_pooler'].shape)} unpooler Wt{tuple(state['bulk_wt_unpooler'].shape)}",
+               flush=True)
+-        for lid, nts in ((0, (8, 16, 32)), (1, (16, 32))):
+-            for nt in nts:
+-                print(f"[bulk] geometry layer={'pooler' if lid == 0 else 'unpooler'} NT={nt}: "
+-                      f"{ext.bulk_info(lid, nt)}", flush=True)
+ 
+         def launch_checked(layer, tag, x, out):
+             lid = 0 if layer == "pooler" else 1
+@@ -1205,6 +1212,33 @@ def _bulk_prepare(state: dict) -> None:
+             # event time near the gate must not silently drop a self-checked route from the run.
+             state["bulk_" + layer] = True
+         del flush
++        # Route probe through kernel_fn itself: each gated (layer, m) must take _bulk_forward, which
++        # sets a plain host-side flag (no profiler / CUPTI, so a tracer failure cannot drop the route).
++        for layer in ("pooler", "unpooler"):
++            if not state["bulk_" + layer]:
++                continue
++            nn_, kk_ = state[layer].shape
++            lo_, hi_ = ((BULK_POOLER_MIN_M, BULK_POOLER_MAX_M) if layer == "pooler"
++                        else (BULK_UNPOOLER_MIN_M, BULK_UNPOOLER_MAX_M))
++            bad = []
++            for m in sorted({lo_, 8, 9, 16, 17, hi_} & set(range(lo_, hi_ + 1))):
++                xq = torch.randn((m, kk_), device=dev, dtype=torch.float32).to(torch.bfloat16)
++                dq = {"x": xq, "config": {"layer": layer, "m": m, "n": nn_, "k": kk_}}
++                state["bulk_route_hit"] = None
++                try:
++                    kernel_fn(dq, state)
++                    torch.cuda.synchronize()
++                    hit = state["bulk_route_hit"] == (layer, m)
++                except Exception as e:  # the routed call itself failed: that route must not run
++                    print(f"[bulk] ROUTE PROBE layer={layer} m={m} raised {type(e).__name__}: {str(e)[-200:]}",
++                          flush=True)
++                    hit = False
++                print(f"[bulk] ROUTE PROBE layer={layer} m={m}: bulk_kernel path taken={hit}", flush=True)
++                if not hit:
++                    bad.append(m)
++            if bad:
++                state["bulk_" + layer] = False
++                print(f"[bulk] DISABLED layer={layer}: bulk kernel not launched at m={bad}; master path", flush=True)
+     except Exception as e:
+         state["bulk_pooler"] = False
+         state["bulk_unpooler"] = False
