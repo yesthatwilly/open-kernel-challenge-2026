@@ -103,7 +103,7 @@ review: proceed
 status: running
 review_at: 2026-10-25T162023Z
 review_companions: null
-stage: implemented
+stage: dispatched
 claimed_at: 2026-10-25T162023Z
 base_sha: 7b2fc03434e07e7c148cc064c8afa2187e4db00e
 base_blob: 5cf8fae31e5b84c36efeeb4569763eb9b06e1c8a
@@ -120,6 +120,8 @@ submission_blob: a1f1eed68dfdbcd4b1a5ff79aa303747f35aa47c
 lint_warnings: 66
 attempt_file: 2026-10-25T185337Z-submit-combo-naive-c320-fd1-tiled-preattn-verify.md
 prepared_at: 2026-10-25T185337Z
+job: b9d062aaa94c4cbf
+dispatched_at: 2026-10-25T185344Z
 ---
 
 # combo-naive-c320-fd1-tiled-preattn-verify
