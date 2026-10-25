@@ -69,9 +69,18 @@ controls_for: null
 rewrite_stage: 2
 replaces: ssdq_kernel x2 (w13, w2) at 1024 < T <= 4096 (turn_4, T=3012)
 review: proceed
-status: queued
+status: running
 review_at: 2026-10-25T111131Z
 review_companions: null
+stage: claimed
+claimed_at: 2026-10-25T111131Z
+base_sha: b427e7bfe8620ee6bea6bcd1c992aa9f6eef1acb
+base_blob: f2d91dd181aeb44de20d2eed62ab7e564f2b181f
+branch: hyp/muse_prefill_layer/experts-turn4-ssdq-s2-tma-raw-weight-ring
+worktree: .worktrees/muse_prefill_layer/experts-turn4-ssdq-s2-tma-raw-weight-ring
+mode: null
+restack_of: null
+stale_base: null
 ---
 
 # experts-turn4-ssdq-s2-tma-raw-weight-ring
