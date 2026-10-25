@@ -60,9 +60,18 @@ controls_for: null
 rewrite_stage: 1
 replaces: "flash_attn_with_kvcache (FA3 cutlass::device_kernel<flash::...> + FlashAttnFwdCombine) on full-attention layers at page_size 1"
 review: proceed
-status: queued
+status: running
 review_at: 2026-10-25T002053Z
 review_companions: null
+stage: claimed
+claimed_at: 2026-10-25T002053Z
+base_sha: 87125eea89ead0362371bb80cf6433cc316b0496
+base_blob: db8a3344398bca79ea5cafeb580f701c055fd475
+branch: hyp/muse_prefill_layer/attn-full-prefill-cuda-fp8-wgmma-hard-gate-inproc
+worktree: .worktrees/muse_prefill_layer/attn-full-prefill-cuda-fp8-wgmma-hard-gate-inproc
+mode: null
+restack_of: null
+stale_base: null
 ---
 
 # attn-full-prefill-cuda-fp8-wgmma-hard-gate-inproc
