@@ -55,7 +55,7 @@ review: proceed
 status: running
 review_at: 2026-10-24T165634Z
 review_companions: null
-stage: claimed
+stage: implemented
 claimed_at: 2026-10-25T003235Z
 base_sha: f6cc1452343c4d93911ad7303c4a5d7878afd2fe
 base_blob: b83f5ec1976c82d5b45dcd92b6c0818ce04eda9f
@@ -64,6 +64,12 @@ worktree: .worktrees/muse_decode_layer/full-verify-cuda-splitkv-stage2
 mode: null
 restack_of: null
 stale_base: true
+implemented_at: 2026-10-25T004030Z
+impl_commit: bed733be97f69ef7521118b8e47a44e5217070e9
+submission_sha256: 56c1f88fd29a6cac1750a3f0f41a07be6fbde8e132bb0aa98a85a627d20fed20
+norm_sha256: 6e636153b847e455107219497b47d258e56ae512d612318674a29737b9f16dd5
+submission_blob: dd79676b5f7daeef54fdcbbc6044e5e09beae843
+lint_warnings: 2
 ---
 
 # full-verify-cuda-splitkv-stage2
@@ -118,3 +124,53 @@ No companion is warranted. This is a rewrite stage judged on the replaced kernel
 - Which incumbent glue is on the base master: does paired-heads-pad-unpad-triton land first? The expected verify savings should be restated against that base.
 - Is the verify_16/32 'agentic' spread's max page_table width large enough that the workspace (B*max_chunks*8*16*64*4 bytes) inside graph capture is a concern? At verify_32 it is roughly 32*max_chunks*32 KB.
 
+
+## Implementation notes
+
+Edited only `.worktrees/muse_decode_layer/full-verify-cuda-splitkv-stage2/muse_decode_layer/submission.py` (+498/-30). **Base is stale** (claim reported `stale_base: true`): the worktree sits on stage 1's commit f6cc145, which predates master's current submission.py (stack-align-par-sidestream-sliding1, 1.2521). As instructed, stage 2 is built on stage 1 and NOT rebased; a merge to master will need a restack.
+
+What changed:
+- `splitkv_attn_verify_kernel` (new, stage 1 decode kernel byte-identical): same persistent 2xSM grid, 1024-token (b, chunk) items, smem page-index prefetch, 4-stage cp.async.cg ring (plain cp.async, no cache hints). Q for the item (8 tokens x 16 x 64 e4m3) is cp.async'd into a double-buffered smem tile with the indices and read into f16 A fragments at item start. Warp w = kv head w%2, query rows (w/2)*16..+16 (2 tokens x 8 heads) over the whole 64-token tile, so no intra-CTA merge. Per 64-token tile the warp runs two 32-token halves (S is 16 fp32 regs, to ease register pressure vs the 128-reg cap): S = QK^T with mma.sync m16n8k16 (K e4m3 -> f16 per warp in registers), causal mask `pos < cache_seqlens - 7 + i`, online exp2 softmax with -inf-safe m per row, P@V with mma.sync, fp32 acc 16x64 per warp. Masked/out-of-range tokens are zero-filled via cp.async src-size 0 and never dereferenced. Item end: each warp stores its two rows' fp32 acc as float4 and m, l to the workspace `[B*max_chunks, 8, 16, 64]` / `[B*max_chunks, 2, 8, 16]`.
+- `splitkv_combine_verify_kernel`: grid (B*8, 16), one warp per (token, head): LSE merge (-inf partials weigh 0), x v_scale, scaleless RMSNorm eps 1e-5, x sigmoid(gate) from qkv row b*8+i, bf16 into [T, 1024].
+- `_splitkv_gate` admits q_len 8 once `_VERIFY_OK`; decode keeps q_len 1. `kernel_fn` dispatches q_len 1 to stage 1 and q_len 8 to `_full_verify_splitkv` (workspace from `page_table.shape[1]`, grid from SM count, no input values). Batch 1, sliding, page 64 unchanged.
+- Self-check: the decode check is unchanged but now traced; a new verify check (lens 9000/1025/70/4097/1023, kv scale 1 and 0.25, device grid and 3 CTAs, plus a batch-33 case) against an FP32 causal reference (`_splitkv_reference` generalised over q_len). A verify-check failure disables only the verify path (`_VERIFY_OK=False`, master paired FA3 on verify, decode keeps stage 1); a decode-check failure still disables everything. Loud `PATH CHOSEN` lines per shape class.
+- Build-brief items: `-lineinfo` added, module renamed `..._v2`, nvcc flags and TORCH_CUDA_ARCH_LIST printed (no wgmma/setmaxnreg/sm_90a-only PTX is used, so the arch list is left alone); every self-check launch prints before it and synchronizes plus prints after it (via a hook defined outside kernel_fn's call graph, so okc_lint sees no sync there); no spin waits exist (cp.async only), loops are bounded by B/n; no child process.
+- Review fixes applied: the review is "proceed" with no required fix. Applied its guidance: print `cudaFuncGetAttributes` regs/localBytes/smem for the verify kernel to the log (open question 1). Not applied (stage 3 levers per the review): e4m3 m16n8k32 QK^T, larger verify chunk, f16 smem K tile. The review's sequencing advice (dispatch only after stage 1 harvests, on a check not a scored submit) is for the dispatcher; stage 1 has not been confirmed here.
+
+Deviations: none from the spec except the 32-token sub-tile split inside the 64-token tile (same ring, same math) and Q fetched through smem alongside the indices rather than straight from global.
+
+Uncertainties: register count / spills of the verify kernel under `__launch_bounds__(256,2)` (unmeasured, no GPU); the workspace is B*max_chunks*32 KB (about 100 MB at verify_32 with a wide agentic page table) allocated inside graph capture; the first launch cannot be exercised here.
+
+## Rules check
+
+- [x] CUDA-graph capturable: no `.item()`/`.cpu()`/synchronize/tensor prints in the kernel_fn path (the only synchronize calls are in prepare() and the self-check hook); workspace and grid come from shapes and device properties; the gate reads config only (checked in `git diff`).
+- [x] Nothing derived from `data` is cached across calls: workspaces are fresh per call, `_EXT`/`_VERIFY_OK` are set only by the synthetic-data self-check.
+- [x] Weights: n/a: no weight is touched or stored by this change.
+- [x] Activations BF16 where SGLang keeps BF16; KV cache FP8; query FP8 E4M3 at most (unpaired cast as master; K/V widened to f16 exactly, fp32 accumulate, bf16 output).
+- [x] Attention sees every key: all keys of every request in 1024-token chunks, causal inside the verify block; no skipping by weight (fully masked tokens are exactly the causal mask).
+- [x] No timing patches, harness frames/I/O/secrets, module edits, reference import, subprocesses or network (grep for subprocess/multiprocessing/fork/spawn: none; load_inline is the same build as stage 1).
+- [x] All work happens inside the timed call; no output caching or replay.
+- [x] No triton.autotune, no host syncs in kernel_fn; first line `# okc: problem=muse_decode_layer` kept.
+
+okc_lint output:
+
+```
+warn  host-sync    L1102: torch.cuda.synchronize()  (outside kernel_fn's call graph; fine in prepare())
+warn  host-sync    L1348: torch.cuda.synchronize()  (outside kernel_fn's call graph; fine in prepare())
+OK with warnings: muse_decode_layer/submission.py
+```
+
+`python3 -I -m py_compile` passed; `__pycache__` removed from the worktree.
+
+## Pre-flight audit
+
+Audited 2026-10-24 (model opus), by reading the worktree diff; no GPU here.
+
+**Verdict: dispatch-with-fixes.** Rules OK.
+
+Checked and found correct: the m16n8k16 A/B/C fragment layouts (Q rows A = token 2rg, rows B = token 2rg+1, the same k permutation for Q and K, the V byte_perm interleave, and the output store dims 16qi+nb / 16qi+8+nb); the causal mask `p < cache_seqlens - 7 + i`, where positions >= cache_seqlens are zero-filled through cp.async src-size 0 and never dereferenced, and fully masked rows give m=-inf, l=0, acc=0 and weigh 0 in the combine; that every (token, head) row of every chunk slot is written before the combine reads it; the WAR safety of the double-buffered idx/Q meta; SMEM_V of about 88.5 KB (x2 fits in 227 KB); score_scale and k_scale/v_scale; the gate (q_len 8 only after its own self-check, page 1, batch 2..64); and that each self-check is in prepare() only. The workspace is torch.empty from shapes only, per call, as in stage 1 (allowed, and capturable). It is about 87 MB at verify_32, since the judge sizes max_pages as ceil(80000*1.075)+8. That fits H200 memory easily. There is no ptxVersion gate, no added subprocess (beyond load_inline nvcc, which the rules allow), and nothing cached from inputs.
+
+Fixes:
+- `_splitkv_prepare`: a second prepare() call in the same process used to print "PATH CHOSEN: ... MASTER FA3 (no CUDA module)" while the CUDA path stayed live. That misleads the harvest. It now reports the path already chosen.
+
+Residual risk: register pressure under __launch_bounds__(256,2) (about 100-120 live regs) may spill, which costs perf only. A device fault inside the verify self-check would poison the CUDA context and fail the run instead of falling back. Combine latency over about 85 chunks per warp is unmeasured.
