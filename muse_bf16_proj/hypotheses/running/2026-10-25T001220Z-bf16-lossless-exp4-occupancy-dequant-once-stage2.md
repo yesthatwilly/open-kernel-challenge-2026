@@ -84,7 +84,7 @@ base_sha: 7895e56373c79d74ba78b7c0e7146755b118ce2c
 base_blob: a34e409b452e9a6e5f7ee3612486d30a989832f2
 branch: hyp/muse_bf16_proj/bf16-lossless-exp4-occupancy-dequant-once-stage2
 worktree: .worktrees/muse_bf16_proj/bf16-lossless-exp4-occupancy-dequant-once-stage2
-mode: null
+mode: check
 restack_of: null
 stale_base: null
 implemented_at: 2026-10-25T002149Z
@@ -93,6 +93,8 @@ submission_sha256: d11133a85dae43fccde181ba07ec3cf62693e14085f3ae9d1ee3f44ab6524
 norm_sha256: ee2393a43ede21faa24e34a23cdd9e03ec8dabb7460fe48bc478ace3e2395f3e
 submission_blob: 12be4cd61f2a429f08b6a1d38499e6af8845bf86
 lint_warnings: 11
+attempt_file: 2026-10-25T002149Z-check-bf16-lossless-exp4-occupancy-dequant-once-stage2.md
+prepared_at: 2026-10-25T002150Z
 ---
 
 # bf16-lossless-exp4-occupancy-dequant-once-stage2
