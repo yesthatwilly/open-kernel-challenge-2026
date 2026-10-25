@@ -132,3 +132,62 @@ No ab-revert or ab-tune companion is needed: it is a rewrite, and the fallback k
 - FINDINGS line 66 says stage 1b 'gained on verify_16; verify_32'. That is wrong: it was a Marlin rerun, and it should be corrected so later hypothesis minting does not cite it.
 - Prepare budget: build 32.8 s, plus diagnostic canary, full self-check (20-60 s) and per-kernel timing. Keep WG_SETUP_BUDGET_S and log the total seconds.
 
+
+## Implementation notes
+
+Only `muse_moe_w4a16/submission.py` in the worktree changed; the CUDA kernel source is untouched. Nothing could be run (no GPU, no torch here). The review wins over the spec wherever they differ: the spec's fix (2), zeroing the smem ring and the cache2/y rows, was NOT applied in production because it can turn a NaN into a finite wrong answer. This is a diagnostic-first stage.
+
+What changed (all in prepare()-time Python):
+- `_wg_canary` is replaced by `_wg_diag` + `_wg_eval_case`: a non-faulting diagnostic that never raises on a bad value. `wg_xs`, `wg_hs` and cache3 are pre-filled with a bf16 sentinel (-12288.0), so "row never written" (unwritten) differs from "computed non-finite". Per case, each launch is announced with a flushed print and synced after: gather (xs rows exact vs x, pad rows zero), w13+silu (h at sorted slots vs Marlin cache2), w2 fed its OWN h, w2 fed MARLIN's cache2 (judged independently of w13) vs Marlin y, then the fused norm with sentinel vs NaN remote rows (answers open question 1: does it skip slot id -1), then the production `_moe_wgmma` out vs Marlin out. Reported per launch, per N bucket (16/32/64/128, plus "noslot"), per row (first bad route/token/col/N-tile/kind/bucket, up to 4 bad rows, 3 worst N-tiles), with unwritten / partial / non-finite counts and rel-L2 over all rows and over finite rows. Pass/fail is rel-L2 <= 1e-2 against Marlin per kernel (a sentinel or NaN row makes it large or inf), never finiteness. Cases: stage-1b canary (M=128, 1 local route/token), mixed M=128 and mixed M=256 (local loads chosen to hit buckets 16/32/64/128, and multi-chunk experts of 16 and 9 blocks).
+- cache3 coverage (review point 4): the sentinel fill reports any local route whose w2 row is unwritten (and any local route without a sorted slot). No kernel fix was made because the cause is unknown until the check shows which rows.
+- `_wg_self_check` runs in the same diagnostic mode: per case one line (h rel-L2, w2-fed-Marlin-cache2 rel-L2, own-h w2, out, graph replay), no per-launch or per-replay lines, no early stop on a failed case (only on a device error word). Graph replay and the fp32-dequant expert check are kept.
+- Build stderr (review point 6): a probe build with `-Xptxas -Werror` under a separate extension name runs first. load_inline discards a good build's stderr but a failed build's exception carries it, so ptxas warnings (the wgmma 'serialized' one, C7510) are extracted in-process, with no fd redirection and no child process of ours. A passing probe is used as the extension; otherwise the normal build runs (about +33 s, still inside WG_SETUP_BUDGET_S, skipped if under 60 s of budget remain).
+- Timing (point 5): `_wg_time_vs_marlin` times wg_gather, w13+silu, w2 against Marlin w13, silu_and_mul, w2 at M=128 and 256 (all 32 local experts hit, uniform), CUDA events, median of 20 samples of 5 eager launches, warm L2. Print only; also runs if correctness failed (skipped on a device error word or past 255 s).
+- Summary (point 7): one compact block printed LAST from `_wg_setup` (build flags, ptxas warning, regs/spill/smem, per-kernel verdicts and counts, self-check, timing, total seconds), then the `PATH CHOSEN` line. Enable rule (point 8): WGMMA only if the h kernel and the w2 kernel (fed Marlin's cache2) both pass in every diagnostic case, the self-check passes, and the error word is 0; otherwise Marlin. Scratches are zeroed again at the end (as in stage 1b).
+
+The spec's fix (3), the offline numpy emulation (scratchpad emu/emu.py), found NO mismatch: the retile followed by the lane's A fragment reads (register i = row g + 8 (i&1), k16 half i>>1, nibbles 3-i / 7-i, warp w owns rows 16w..16w+15, same as mma.m16n8k16) reproduces the source codes and the E4M3 scale bytes with 0 mismatches for w13 and w2 shapes; expect_tx = 9216 + 2 * rows * 128 equals the bulk copy plus the two TMA boxes for all four buckets (13312/17408/25600/41984 B); the descriptor (start >> 4, LBO 1, SBO 1024, 128B swizzle, +32 B per k16, 1024-aligned boxes) matches the TMA swizzle; the w13 and w2 stmatrix .trans epilogue mappings are exact. So the NaN is not in those three; the check will say which kernel and tensor. Not done: fix (1)-(2) zeroing (masking, see above), fix (4) the w2 8-byte spill (not trivial, not a correctness suspect), and the open question on the fused norm's source (answered at run time by the NaN-remote test instead). FINDINGS line 66 correction is not in this file's scope.
+
+## Rules check
+
+- [x] CUDA-graph capturable: kernel_fn / _moe_wgmma are unchanged; all new code (diagnostics, sync, .item(), timing) is in prepare()-time functions, never in kernel_fn's call graph (checked against `git diff`).
+- [x] Nothing derived from `data` is cached across calls: the diagnostic inputs are synthetic and seeded; the persistent scratches are zeroed after the diagnostic.
+- [x] Weights: no change to the lossless retiling or the Marlin repack; NVFP4 stays NVFP4.
+- [x] Activations BF16 where SGLang keeps BF16: unchanged.
+- [x] Attention: n/a, this is a MoE problem.
+- [x] No timing patches, harness frames/I/O/secrets, module edits, reference import, subprocesses or network: no subprocess/fork/Popen/multiprocessing in the file (grep clean); the -Xptxas -Werror probe is an extra load_inline flag only, no fd redirection, no monkeypatching of torch.
+- [x] All work happens inside the timed call; no output caching or replay: kernel_fn's two paths are unchanged.
+- [x] sm_90a: TORCH_CUDA_ARCH_LIST=9.0a set and restored around load_inline (both builds); unchanged guards and error word 2; every wait is bounded; any failure lands on Marlin without raising.
+- okc_lint: OK with warnings: muse_moe_w4a16/submission.py; py_compile ok; __pycache__ removed. Full lint output has only prepare()-time host-sync warnings (outside kernel_fn's call graph) and two dtype warnings for the uint8 retile buffers (unchanged from stage 1b).
+
+## Pre-flight audit
+
+Audited 2026-10-25 (opus), by reading only (no GPU here). **Verdict: dispatch-with-fixes.**
+
+Checked and found sound:
+- The per-kernel gate is rel-L2 <= 1e-2 against Marlin on local routes. A sentinel or non-finite row makes it inf, so it is not a finiteness gate. It is reachable: bf16-rounding differences are about 3e-3.
+- The Marlin calls in `_wg_time_vs_marlin` match master's `_moe_marlin`: the same argument order, the two-smaller block_size_m pick, `_align_parallel`, and silu_and_mul's expert_ids.
+- The sentinel bookkeeping has no out-of-bounds index: slot_of, blk_bucket, `x[sid>>3]`, `r_c2[sid[real]]`, and the `hs_buf[:used][mask]` writes through the view.
+- The all-remote cases (n_padded 0) take the empty paths cleanly.
+- kernel_fn and `_moe_wgmma` are unchanged. All new syncs and `.item()` calls are in prepare().
+- The only child process is load_inline's own library build.
+- There is no ptxVersion==90 gate. The gate is binaryVersion==90, and ptxVersion is only logged.
+
+Budget: stage 1b's whole run took 101.6 s from start to finish. This run's prepare() should take about 110-135 s:
+- master prepare: about 20-25 s
+- the -Werror probe, if ptxas warns: about 33 s
+- the main build: about 33 s
+- the diagnostic and the 20-case self-check: 20-40 s
+- timing: under 3 s
+
+The second build is gated at under 140 s elapsed, the self-check at 200 s and the timing at 255 s. That keeps prepare() under 300 s even if the builds are slow, so no budget fix was needed.
+
+Fixes applied (submission.py only):
+1. `_wg_ptxas_warnings` now also matches `ptxas error` lines, because under -Werror a promoted warning can print that way. It also matches info lines that mention `serialized` or `Performance`, and lists any `serialized` line first. Before this, a failed probe could report 0 warnings and serialization "unknown".
+2. A passing -Werror probe no longer claims "no wgmma serialization". The C75xx serialization note can be info-level, which -Werror does not fail and load_inline discards. The summary now says "no warning (info-level note not visible)".
+3. Every section now catches, prints and continues: each diagnostic case, the `_wg_diag` call, the `_wg_self_check` call and each self-check case. A Python error marks only that section FAIL. Before, it skipped the self-check and the timing too. The summary still prints last, and wgmma stays off.
+4. Log tail: the self-check's separate per-case FAIL line is now part of the case line, saving about 3.6 KB over 20 cases. The verbose per-launch diagnostic (about 9 KB) would otherwise fall out of the ~15 KB tail behind the self-check, so the summary now carries per-case gather, ids and coverage, and part counts. For a failing kernel it also carries the per-N-bucket breakdown, the first bad (route, tok, col, tile, kind, bucket) and the worst tiles. The worst dict is formatted compactly.
+5. Every diagnostic launch is now announced and synced: the Marlin reference plus align, the fused-norm pair, and the production `_moe_wgmma` call, which is now traced in the verbose diagnostic.
+
+okc_lint: OK with warnings (prepare()-time host syncs only). py_compile ok. __pycache__ removed.
+
+Residual risk: a sticky device fault in any diagnostic launch still kills prepare, as in stage 1b. Serialization can only be confirmed if ptxas reports it as a warning or error.

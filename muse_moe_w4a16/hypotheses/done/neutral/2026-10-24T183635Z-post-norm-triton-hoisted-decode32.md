@@ -44,10 +44,10 @@ priority: 2
 kind: primary
 controls_for: null
 review: proceed
-status: running
+status: done
 review_at: 2026-10-24T183956Z
 review_companions: null
-stage: dispatched
+stage: harvested
 claimed_at: 2026-10-25T003236Z
 base_sha: 5415d32531be94c6b20cde97470e8c1127019215
 base_blob: 108d36e9f2266fc88531dd6ff0329a847c882013
@@ -66,6 +66,13 @@ attempt_file: 2026-10-25T003435Z-check-post-norm-triton-hoisted-decode32.md
 prepared_at: 2026-10-25T003435Z
 job: 47d186dd91974d84
 dispatched_at: 2026-10-25T003443Z
+outcome: neutral
+verdict_detail: within-ci
+speedup: 1.324847658508576
+speedup_ci: [1.3049749436309472, 1.3447203733862045]
+harvested_at: 2026-10-25T013618Z
+best_at_harvest: 1.3278240305297715
+promotion: null
 ---
 
 # post-norm-triton-hoisted-decode32
@@ -129,3 +136,29 @@ No companion is warranted. The change is a separate kernel used only at bs=32, s
 - [x] All work happens inside the timed call; no output caching or replay.
 
 okc_lint: `OK with warnings` (only host-sync warnings in pre-existing prepare()-only code, lines 355-491); py_compile OK, __pycache__ removed.
+
+## Result
+
+- job `47d186dd91974d84` (check), status done, passed True, tests 5/5
+- speedup 1.3248x, 95% CI [1.3050, 1.3447], score 10150.97842656069 µs vs SGLang 13448.5 µs
+- best at harvest: {"speedup": 1.3278240305297715, "ci": [1.307906670071825, 1.3477413909877178], "job": "1947e3ec2abb4bdf"}; base result: muse_moe_w4a16/hypotheses/done/neutral/align-parallel-per-expert-verify.result.json
+- **outcome: neutral** (within-ci)
+- files: `muse_moe_w4a16/hypotheses/done/neutral/post-norm-triton-hoisted-decode32.result.json`, `muse_moe_w4a16/hypotheses/done/neutral/post-norm-triton-hoisted-decode32.patch`; branch `hyp/muse_moe_w4a16/post-norm-triton-hoisted-decode32`
+
+## Attribution
+
+| shape | w | base µs | hyp µs | delta | verdict |
+|---|---|---|---|---|---|
+| bs=1 load=decode_1 sharding=ep8 | 60 | 48.82 | 49.59 | 0.9997 | flat |
+| bs=16 load=decode_16 sharding=ep8 | 60 | 148.37 | 146.98 | 1.0007 | flat |
+| bs=32 load=decode_32 sharding=ep8 | 60 | 199.88 | 201.51 | 1.0039 | flat |
+| bs=8 load=verify_1 sharding=ep8 | 60 | 107.74 | 106.82 | 0.9965 | flat |
+| bs=128 load=verify_16 sharding=ep8 | 60 | 318.26 | 324.36 | 1.0115 | flat |
+| bs=256 load=verify_32 sharding=ep8 | 60 | 454.28 | 462.09 | 0.9876 | flat |
+
+no shape moved outside noise. Expected hit: 5/6. Noise ±1.5%.
+
+## Follow-ups
+
+- within-ci: the change is not proven either way; a stacked hypothesis (`depends_on: post-norm-triton-hoisted-decode32`) that adds a further change in the same area is the only way to learn more (identical code is never re-run).
+
