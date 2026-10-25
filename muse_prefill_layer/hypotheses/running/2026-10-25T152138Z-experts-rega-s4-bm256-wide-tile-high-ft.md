@@ -85,9 +85,18 @@ controls_for: null
 rewrite_stage: 4
 replaces: rega_kernel<true,*> + rega_kernel<false,*> (128-row tile) in the high (T=3012) and ft (T=16384) classes
 review: proceed
-status: queued
+status: running
 review_at: 2026-10-25T212524Z
 review_companions: null
+stage: claimed
+claimed_at: 2026-10-25T212551Z
+base_sha: d375dd60d9615046903966bfa1143a876e566b8a
+base_blob: c2e3e595def2e6b5949e0fd350ce98ed59729147
+branch: hyp/muse_prefill_layer/experts-rega-s4-bm256-wide-tile-high-ft
+worktree: .worktrees/muse_prefill_layer/experts-rega-s4-bm256-wide-tile-high-ft
+mode: check
+restack_of: null
+stale_base: true
 ---
 
 # experts-rega-s4-bm256-wide-tile-high-ft
