@@ -1,6 +1,6 @@
 # muse_decode_layer findings
 
-Regenerated 2026-10-25T053809Z by `churn.py index`. Read this before writing a hypothesis for muse_decode_layer.
+Regenerated 2026-10-25T084200Z by `churn.py index`. Read this before writing a hypothesis for muse_decode_layer.
 
 ## Current best
 
@@ -200,3 +200,6 @@ Where the time goes (per scored shape, top kernels):
 - queue: prefork-qkv-o-swapab-t16-t32 [qkv GEMM + o GEMM (before the router fork)] p4 hold
 - queue: marlin-two-stream-halves-port [w13 marlin + silu-mul + w2 marlin (8<=T<=32, stream overlap)] p5 hold
 - queue: moe-chain-cuda-swapab-expert-once-fix [w13 marlin + silu-mul + w2 marlin (T>32)] p2 hold
+- running: full-decode-sk-ticket-restack-b1-b64 [FA3 call (full decode, all batches): split-KV A/B at 1<B<=64 and FA3 chain at B=1] p1 running
+- running: sliding-cluster-c4-decode32-s2-k-encode-match [FA3 call (sliding decode, batch 17..32)] p1 running
+- running: dense-chain-s3-t1-q-sk2-o-route-unpool [whole-layer fusion (T=1 dense chain: qkv/o GEMM side + routing R + unpooler)] p2 running

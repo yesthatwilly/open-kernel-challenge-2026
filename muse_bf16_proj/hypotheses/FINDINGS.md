@@ -1,6 +1,6 @@
 # muse_bf16_proj findings
 
-Regenerated 2026-10-25T053809Z by `churn.py index`. Read this before writing a hypothesis for muse_bf16_proj.
+Regenerated 2026-10-25T084200Z by `churn.py index`. Read this before writing a hypothesis for muse_bf16_proj.
 
 ## Current best
 
@@ -139,6 +139,9 @@ Where the time goes (per scored shape, top kernels):
 ### router GEMM (m=65..256)
 - **router-m128-m256-cluster-dsmem-tiled-rewrite** → neutral (within-ci), 1.2189x — gained on unpooler verify_1; lost on o decode_32. Built on master (the router at m > 32 is identical on master and the restack). Router rows at m=128/256 are 7.3/9.6 us against floors of 2.2/2.7 (3.3-3.6x, the 
 
+### shape-gated restack: router GEMM m<=8 + unpooler-slice GEMM m<=8 + pooler/unpooler GEMM m=65..128
+- **restack-three-cell-wins-router-unpooler-cluster-m8-nn-m128** → neutral (unproven-vs-best), 1.2366x — gained on unpooler decode_1, verify_1; router decode_1, decode_32, verify_1; pooler verify_16; lost on o verify_32. Built on current master (b99b1dd, bf16-restack-m16-swapab-router-swapab-m32, check 1e90292c7b954d96, 1.2215). Stack the three row wins that were each checked al
+
 ### unpooler GEMM
 - **unpooler-slice-triton-gemv** → regression (regression), 0.8801x — gained on o verify_1; lost on unpooler decode_1, verify_1. For layer == 'unpooler' and m <= 8 only (the sliced case: n=1024, k=4096, an 8.4 MB weight read), replace the _bf16_gemm_dispatch_impl(x, W[:1024], None) call i
 - **unpooler-full-triton-skinny-m32** → neutral (within-ci), 1.0053x — gained on qkv_gate decode_1, decode_16, verify_1; unpooler decode_16, verify_1; o verify_1; lost on unpooler decode_32; pooler verify_16. Extend the skinny Triton GEMM from pooler-triton-skinny-m32 to layer == 'unpooler' at m in {16, 32} (the full weight: n=8192, k=4096, 67 MB): in kernel_fn route
@@ -180,6 +183,7 @@ Where the time goes (per scored shape, top kernels):
 - restack-unpooler-slice-cluster-dsmem-m8: unproven-vs-best: the change is not proven either way; a stacked hypothesis (`depends_on: restack-unpooler-slice-cluster-dsmem-m8`) that adds a further change in the same area is the only way to learn more (identical cod
 - router-cluster-dsmem-s2-flat-in-m-occupancy: rewrite stage 2 of `_router_swapab_kernel + memset at router m<=32 (restack) / _router_hilo_kernel + memset (master)`: read the replaced kernels' own us per shape (profile top_kernels) against the incumbent and the floor
 - router-m128-m256-cluster-dsmem-tiled-rewrite: rewrite stage 1 of `_router_hilo_kernel + torch.zeros memset at router m=65..256`: read the replaced kernels' own us per shape (profile top_kernels) against the incumbent and the floor, and check which Milestone it reach
+- restack-three-cell-wins-router-unpooler-cluster-m8-nn-m128: unproven-vs-best: the change is not proven either way; a stacked hypothesis (`depends_on: restack-three-cell-wins-router-unpooler-cluster-m8-nn-m128`) that adds a further change in the same area is the only way to learn 
 
 ## Do not retry (rejected / duplicates)
 

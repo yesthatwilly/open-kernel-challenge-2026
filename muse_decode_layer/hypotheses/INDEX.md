@@ -1,6 +1,6 @@
 # muse_decode_layer hypotheses
 
-Regenerated 2026-10-25T053809Z. Best: 1.2726x [1.2535,1.2917] job `3fd3fa1f96d045dd` (submit)
+Regenerated 2026-10-25T084200Z. Best: 1.2726x [1.2535,1.2917] job `3fd3fa1f96d045dd` (submit)
 
 | created | slug | kind | area | where | outcome | speedup | CI | job | mode | promotion | review | expected hit |
 |---|---|---|---|---|---|---|---|---|---|---|---|---|
@@ -65,6 +65,9 @@ Regenerated 2026-10-25T053809Z. Best: 1.2726x [1.2535,1.2917] job `3fd3fa1f96d04
 | 2026-10-25T042121Z | sliding-batched-triton-b16-band | primary | FA3 call (sliding decode, batch 2..16) | done/neutral | neutral | 1.2743 | [1.255,1.293] | 02bf417257e14a3d | check |  | proceed | 3/5 |
 | 2026-10-25T042121Z | sliding-cluster-c4-decode32-port | rewrite | FA3 call (sliding decode, batch 17..32) | done/neutral | neutral | 1.2693 | [1.250,1.288] | 0fb2c9451c5d4283 | check |  | proceed | 4/5 |
 | 2026-10-25T042121Z | w2-marlin-atomic-add-t1-port | primary | w2 marlin (T=1) | done/neutral | neutral | 1.2856 | [1.266,1.305] | 7a9f5de5aecc4aba | check | done | proceed | 2/4 |
+| 2026-10-25T054108Z | full-decode-sk-ticket-restack-b1-b64 | primary | FA3 call (full decode, all batches): split-KV A/B at 1<B<=64 and FA3 chain at B=1 | running | running |  |  |  |  |  | proceed |  |
+| 2026-10-25T054127Z | sliding-cluster-c4-decode32-s2-k-encode-match | rewrite | FA3 call (sliding decode, batch 17..32) | running | running |  |  |  |  |  | proceed |  |
+| 2026-10-25T054152Z | dense-chain-s3-t1-q-sk2-o-route-unpool | rewrite | whole-layer fusion (T=1 dense chain: qkv/o GEMM side + routing R + unpooler) | running | running |  |  |  |  |  | proceed |  |
 
 ## Held
 

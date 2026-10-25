@@ -1,6 +1,6 @@
 # muse_attention_decode findings
 
-Regenerated 2026-10-25T053809Z by `churn.py index`. Read this before writing a hypothesis for muse_attention_decode.
+Regenerated 2026-10-25T084200Z by `churn.py index`. Read this before writing a hypothesis for muse_attention_decode.
 
 ## Current best
 
@@ -194,3 +194,11 @@ Where the time goes (per scored shape, top kernels):
 - queue: sliding-cluster-s3-verify-attn-only-phase-timed [sliding-layer attention (verify, cluster kernel)] p2 hold
 - queue: sliding-verify1-triton-pseudo-decode [sliding-layer attention (batch-1 verify, Triton fused decode kernel)] p2 hold
 - queue: full-verify1-sk-pseudo-decode [full-layer attention (batch-1 verify, stream-K pseudo-decode)] p3 hold
+- queue: full-verify1-sk-two-level-token-group [full-layer attention (batch-1 verify, stream-K two-level kernel, token grouping)] p3 queued
+- running: full-decode-sk-s4-deferred-ticket-arrive [full-layer attention (decode 1<B<=64, stream-K ticket epilogue)] p2 running
+- running: full-decode1-sk-two-level-fused-preattn [full-layer attention (batch-1 decode, stream-K prologue fusion)] p2 running
+- running: full-verify-wgmma-s5-qfrag-reload [full-layer attention (verify, wgmma stream-K kernel, multi-tile Q-fragment fix)] p1 running
+- running: restack-sk-pseudo-b1-cluster-c16-c4 [sliding-layer attention (restack of two measured row wins: verify B=1 pseudo-decode + decode cluster C=16/C=4)] p1 running
+- running: restack-sk-pseudo-cluster-plus-v3-fused-preattn [full-layer attention (decode 1<B<=64 prologue) on top of the sliding restack] p1 running
+- running: sliding-verify-sk-pseudo-s2-token-group [sliding-layer attention (verify, stream-K pseudo-decode kernel, token grouping)] p1 running
+- running: sliding-decode-sk-window-route [sliding-layer attention (decode, stream-K windowed kernel)] p2 running

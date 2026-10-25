@@ -1,6 +1,6 @@
 # muse_bf16_proj hypotheses
 
-Regenerated 2026-10-25T053809Z. Best: 1.2215x [1.2032,1.2398] job `1e90292c7b954d96` (check)
+Regenerated 2026-10-25T084200Z. Best: 1.2215x [1.2032,1.2398] job `1e90292c7b954d96` (check)
 
 | created | slug | kind | area | where | outcome | speedup | CI | job | mode | promotion | review | expected hit |
 |---|---|---|---|---|---|---|---|---|---|---|---|---|
@@ -60,6 +60,7 @@ Regenerated 2026-10-25T053809Z. Best: 1.2215x [1.2032,1.2398] job `1e90292c7b954
 | 2026-10-25T042040Z | restack-unpooler-slice-cluster-dsmem-m8 | primary | unpooler GEMM (sliced n=1024, m<=8) | done/neutral | neutral | 1.2260 | [1.208,1.244] | e557d92969864449 | check |  | proceed | 7/9 |
 | 2026-10-25T042040Z | router-cluster-dsmem-s2-flat-in-m-occupancy | rewrite | router GEMM (m<=32, cluster DSMEM kernel) | done/neutral | neutral | 1.2058 | [1.188,1.224] | ef8a8bca31ef420e | check |  | proceed | 4/10 |
 | 2026-10-25T042040Z | router-m128-m256-cluster-dsmem-tiled-rewrite | rewrite | router GEMM (m=65..256) | done/neutral | neutral | 1.2189 | [1.201,1.237] | b7b2b55d04544660 | check |  | proceed | 5/8 |
+| 2026-10-25T054102Z | restack-three-cell-wins-router-unpooler-cluster-m8-nn-m128 | primary | shape-gated restack: router GEMM m<=8 + unpooler-slice GEMM m<=8 + pooler/unpooler GEMM m=65..128 | done/neutral | neutral | 1.2366 | [1.218,1.255] | 84f17adc3f074a33 | check |  | proceed | 15/17 |
 
 ## Held
 

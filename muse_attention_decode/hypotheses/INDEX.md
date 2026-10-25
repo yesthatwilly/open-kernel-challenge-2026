@@ -1,6 +1,6 @@
 # muse_attention_decode hypotheses
 
-Regenerated 2026-10-25T053809Z. Best: 1.4441x [1.4225,1.4658] job `341623fa53d94cef` (submit)
+Regenerated 2026-10-25T084200Z. Best: 1.4441x [1.4225,1.4658] job `341623fa53d94cef` (submit)
 
 | created | slug | kind | area | where | outcome | speedup | CI | job | mode | promotion | review | expected hit |
 |---|---|---|---|---|---|---|---|---|---|---|---|---|
@@ -73,6 +73,14 @@ Regenerated 2026-10-25T053809Z. Best: 1.4441x [1.4225,1.4658] job `341623fa53d94
 | 2026-10-25T042334Z | sliding-verify-sk-pseudo-decode-s1 | rewrite | sliding-layer attention (verify, stream-K pseudo-decode kernel) | done/neutral | neutral | 1.4705 | [1.448,1.493] | 94523c3313444fd8 | check |  | proceed | 1/4 |
 | 2026-10-25T042335Z | full-verify1-sk-pseudo-decode | primary | full-layer attention (batch-1 verify, stream-K pseudo-decode) | queue | hold |  |  |  |  |  | proceed |  |
 | 2026-10-25T042335Z | full-decode1-sk-pdl-from-preattn | primary | launch overhead (full decode_1, pre-attention -> stream-K kernel) | done/neutral | neutral | 1.4571 | [1.432,1.479] | c0f1945a108c4aa2 | check |  | proceed | 0/2 |
+| 2026-10-25T054448Z | full-decode-sk-s4-deferred-ticket-arrive | rewrite | full-layer attention (decode 1<B<=64, stream-K ticket epilogue) | running | running |  |  |  |  |  | proceed |  |
+| 2026-10-25T054448Z | full-decode1-sk-two-level-fused-preattn | rewrite | full-layer attention (batch-1 decode, stream-K prologue fusion) | running | running |  |  |  |  |  | proceed |  |
+| 2026-10-25T054448Z | full-verify-wgmma-s5-qfrag-reload | rewrite | full-layer attention (verify, wgmma stream-K kernel, multi-tile Q-fragment fix) | running | running |  |  |  |  |  | proceed |  |
+| 2026-10-25T054448Z | restack-sk-pseudo-b1-cluster-c16-c4 | primary | sliding-layer attention (restack of two measured row wins: verify B=1 pseudo-decode + decode cluster C=16/C=4) | running | running |  |  |  |  |  | proceed |  |
+| 2026-10-25T054448Z | restack-sk-pseudo-cluster-plus-v3-fused-preattn | primary | full-layer attention (decode 1<B<=64 prologue) on top of the sliding restack | running | running |  |  |  |  |  | proceed |  |
+| 2026-10-25T054448Z | sliding-verify-sk-pseudo-s2-token-group | rewrite | sliding-layer attention (verify, stream-K pseudo-decode kernel, token grouping) | running | running |  |  |  |  |  | proceed |  |
+| 2026-10-25T054449Z | full-verify1-sk-two-level-token-group | rewrite | full-layer attention (batch-1 verify, stream-K two-level kernel, token grouping) | queue | queued |  |  |  |  |  | proceed |  |
+| 2026-10-25T054449Z | sliding-decode-sk-window-route | rewrite | sliding-layer attention (decode, stream-K windowed kernel) | running | running |  |  |  |  |  | proceed |  |
 
 ## Held
 
