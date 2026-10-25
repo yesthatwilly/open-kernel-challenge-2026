@@ -60,7 +60,7 @@ base_sha: a5f0c41fcf6d081ab9a5f2262b3505c796565fea
 base_blob: 5cf8fae31e5b84c36efeeb4569763eb9b06e1c8a
 branch: hyp/muse_attention_decode/sliding-decode1-cluster-per-kvhead
 worktree: .worktrees/muse_attention_decode/sliding-decode1-cluster-per-kvhead
-mode: null
+mode: submit
 restack_of: null
 stale_base: null
 implemented_at: 2026-10-25T162957Z
@@ -69,6 +69,8 @@ submission_sha256: 5875b86506261122bba2f7c47dd333ab98d9b2163b230ecc341e5d52b0aac
 norm_sha256: 7b5894f405355819a421a39d1af1293dd5826a93e7c0949ab330f60db4497c5a
 submission_blob: 6d6afa4722731ceb9cb8216d0334a03f1a96ad2b
 lint_warnings: 60
+attempt_file: 2026-10-25T162957Z-submit-sliding-decode1-cluster-per-kvhead.md
+prepared_at: 2026-10-25T162957Z
 ---
 
 # sliding-decode1-cluster-per-kvhead
