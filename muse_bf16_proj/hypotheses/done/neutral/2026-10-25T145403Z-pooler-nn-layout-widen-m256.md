@@ -50,10 +50,10 @@ priority: 2
 kind: primary
 controls_for: null
 review: proceed
-status: running
+status: done
 review_at: 2026-10-25T150319Z
 review_companions: null
-stage: dispatched
+stage: harvested
 claimed_at: 2026-10-25T150319Z
 base_sha: b7d110b74193aba420325d572c4db747ff74118c
 base_blob: 353e3b19a7edd5cb879e202d78097f474bcce207
@@ -72,6 +72,13 @@ attempt_file: 2026-10-25T150550Z-submit-pooler-nn-layout-widen-m256.md
 prepared_at: 2026-10-25T150550Z
 job: 85c91578cc184287
 dispatched_at: 2026-10-25T150558Z
+outcome: neutral
+verdict_detail: within-ci
+speedup: 1.2393674362823563
+speedup_ci: [1.220776924738121, 1.2579579478265916]
+harvested_at: 2026-10-25T153250Z
+best_at_harvest: 1.2490645809967658
+promotion: null
 ---
 
 # pooler-nn-layout-widen-m256
@@ -148,3 +155,53 @@ Audited 2026-10-25 by an opus subagent before a SCORED submit. **Verdict: dispat
 - Cosmetic only (not changed): _ab_selfcheck docstring and the kernel_fn comment still list m in {1,8,128} / nn_ok only.
 
 Residual risk: performance only; the NN gain at m=256 rests on one probe run, so the pooler verify_32 row may read neutral (must show an *_NNT kernel and nn_ok=True nn_p256_ok=True).
+
+## Result
+
+- job `85c91578cc184287` (submit), status done, passed True, tests 9/9
+- speedup 1.2394x, 95% CI [1.2208, 1.2580], score 3897.794841609372 µs vs SGLang 4830.8 µs
+- best at harvest: {"speedup": 1.2490645809967658, "ci": [1.2303286122818142, 1.267800549711717], "job": "ee4f89f2f62c42d3"}; base result: muse_bf16_proj/hypotheses/done/neutral/restack-three-cell-wins-router-unpooler-cluster-m8-nn-m128.result.json
+- **outcome: neutral** (within-ci)
+- files: `muse_bf16_proj/hypotheses/done/neutral/pooler-nn-layout-widen-m256.result.json`, `muse_bf16_proj/hypotheses/done/neutral/pooler-nn-layout-widen-m256.patch`; branch `hyp/muse_bf16_proj/pooler-nn-layout-widen-m256`
+
+## Attribution
+
+| shape | w | base µs | hyp µs | delta | verdict |
+|---|---|---|---|---|---|
+| layer=qkv_gate load=decode_1 m=1 | 62 | 12.38 | 12.67 | 0.9894 | flat |
+| layer=o load=decode_1 m=1 | 62 | 5.89 | 5.97 | 0.9994 | flat |
+| layer=pooler load=decode_1 m=1 | 62 | 18.74 | 18.93 | 1.0171 | flat |
+| layer=unpooler load=decode_1 m=1 | 62 | 5.27 | 4.88 | 1.0096 | flat |
+| layer=router load=decode_1 m=1 | 62 | 5.1 | 5.01 | 0.9987 | flat |
+| layer=qkv_gate load=decode_16 m=16 | 62 | 13.14 | 12.98 | 0.997 | flat |
+| layer=o load=decode_16 m=16 | 62 | 6.27 | 6.04 | 1.0233 | flat |
+| layer=pooler load=decode_16 m=16 | 62 | 18.72 | 19.12 | 1.0008 | flat |
+| layer=unpooler load=decode_16 m=16 | 62 | 18.57 | 18.62 | 1.0235 | flat |
+| layer=router load=decode_16 m=16 | 62 | 5.58 | 5.53 | 1.019 | flat |
+| layer=qkv_gate load=decode_32 m=32 | 62 | 13.93 | 13.76 | 1.0089 | flat |
+| layer=o load=decode_32 m=32 | 62 | 6.07 | 6.48 | 0.9961 | flat |
+| layer=pooler load=decode_32 m=32 | 62 | 19.84 | 19.93 | 1.0093 | flat |
+| layer=unpooler load=decode_32 m=32 | 62 | 17.99 | 17.96 | 1.0373 | gained |
+| layer=router load=decode_32 m=32 | 62 | 5.73 | 5.97 | 0.9645 | lost |
+| layer=qkv_gate load=verify_1 m=8 | 62 | 12.45 | 12.99 | 0.9771 | flat |
+| layer=o load=verify_1 m=8 | 62 | 6.13 | 5.8 | 0.9914 | flat |
+| layer=pooler load=verify_1 m=8 | 62 | 18.91 | 18.86 | 1.007 | flat |
+| layer=unpooler load=verify_1 m=8 | 62 | 4.99 | 5.34 | 0.9546 | lost |
+| layer=router load=verify_1 m=8 | 62 | 4.97 | 5.47 | 0.9121 | lost |
+| layer=qkv_gate load=verify_16 m=128 | 62 | 16.58 | 17.38 | 0.9804 | flat |
+| layer=o load=verify_16 m=128 | 62 | 7.35 | 7.36 | 0.9988 | flat |
+| layer=pooler load=verify_16 m=128 | 62 | 22.94 | 23.2 | 0.9806 | flat |
+| layer=unpooler load=verify_16 m=128 | 62 | 18.95 | 19.03 | 1.0229 | flat |
+| layer=router load=verify_16 m=128 | 62 | 7.38 | 7.44 | 0.9903 | flat |
+| layer=qkv_gate load=verify_32 m=256 | 62 | 19.71 | 20.24 | 0.9935 | flat |
+| layer=o load=verify_32 m=256 | 62 | 9.61 | 9.47 | 1.0218 | flat |
+| layer=pooler load=verify_32 m=256 | 62 | 31.33 | 29.94 | 1.0473 | gained |
+| layer=unpooler load=verify_32 m=256 | 62 | 24.55 | 24.56 | 1.0181 | flat |
+| layer=router load=verify_32 m=256 | 62 | 9.31 | 9.72 | 0.9773 | flat |
+
+gained on unpooler decode_32; pooler verify_32; lost on router decode_32, verify_1; unpooler verify_1. Expected hit: 5/6. Noise ±1.5%.
+
+## Follow-ups
+
+- within-ci: the change is not proven either way; a stacked hypothesis (`depends_on: pooler-nn-layout-widen-m256`) that adds a further change in the same area is the only way to learn more (identical code is never re-run).
+

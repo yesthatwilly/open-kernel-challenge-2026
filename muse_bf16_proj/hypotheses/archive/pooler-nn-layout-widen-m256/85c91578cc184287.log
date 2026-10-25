@@ -1,0 +1,131 @@
+[ouns] building muse_bf16_unpool_slice_cluster_v3: TORCH_CUDA_ARCH_LIST='9.0a' (was None), device cc (9, 0), extra nvcc flags ['-O3', '-lineinfo']
+[ouns] load_inline compiled in 37.1s
+[router_cluster] building: TORCH_CUDA_ARCH_LIST=9.0a extra_cuda_cflags=['-O3', '-lineinfo']
+[router_cluster] load_inline compiled in 36.5s
+[prepare-time] weight splits + NN copies: 0.01s
+[router] swapab m=1 BLOCK_T=16 SPLIT_K=32 grid=(1, 4, 32) stages=3: n_regs=64 n_spills=0 wgmma=16 mma.sync=0 cp.async=65
+[router] swapab m=32 BLOCK_T=32 SPLIT_K=32 grid=(1, 4, 32) stages=3: n_regs=80 n_spills=0 wgmma=16 mma.sync=0 cp.async=71
+[router] m=1: swapab
+[router] m=8: swapab
+[router] m=16: swapab
+[router] m=32: swapab
+[router] m=64: hilo
+[router] m=128: hilo
+[router] m=256: hilo
+[prepare-time] router triton warm-up: 1.30s
+[prepare-time] pooler / qkv / unpooler / o triton warm-up: 0.84s
+[swapab] layer=pooler m=32 N=4096 K=8192 SPLIT_K=2 BLOCK_K=256 stages=4: n_regs=96 n_spills=0 wgmma=16 mma.sync=0 cp.async=106
+[swapab] layer=qkv_gate m=32 N=2304 K=8192 SPLIT_K=4 BLOCK_K=128 stages=4: n_regs=56 n_spills=0 wgmma=8 mma.sync=0 cp.async=58
+[swapab] layer=unpooler m=32 N=8192 K=4096 SPLIT_K=1 BLOCK_K=256 stages=4: n_regs=96 n_spills=0 wgmma=16 mma.sync=0 cp.async=106
+[swapab] layer=o m=32 N=8192 K=1024 SPLIT_K=1 BLOCK_K=256 stages=4: n_regs=96 n_spills=0 wgmma=16 mma.sync=0 cp.async=106
+[prepare-time] swapab m17-32 warm-up: 0.96s
+[swapab16] pooler m=16 N=4096 K=8192 SPLIT_K=2 BLOCK_K=256 stages=4: n_regs=72 n_spills=0 wgmma=16 mma.sync=0 cp.async=90
+[swapab16] qkv_gate m=16 N=2304 K=8192 SPLIT_K=4 BLOCK_K=128 stages=4: n_regs=48 n_spills=0 wgmma=8 mma.sync=0 cp.async=50
+[swapab16] o m=16 N=8192 K=1024 SPLIT_K=1 BLOCK_K=256 stages=4: n_regs=72 n_spills=0 wgmma=16 mma.sync=0 cp.async=90
+[swapab16] unpooler_slice m=8 N=1024 K=4096 SPLIT_K=8 BLOCK_K=128 stages=3: n_regs=56 n_spills=0 wgmma=8 mma.sync=0 cp.async=38
+[incumbent16] pooler _bf16_splitk_kernel m=16: n_regs=96 n_spills=0 wgmma=0 mma.sync=32 cp.async=90
+[incumbent16] qkv_gate _qkv_splitk_sem_kernel m=16: n_regs=64 n_spills=0 wgmma=0 mma.sync=16 cp.async=50
+[incumbent16] o _pooler_skinny_kernel m=16: n_regs=90 n_spills=0 wgmma=0 mma.sync=32 cp.async=90
+[incumbent16] unpooler_slice _bf16_splitk_kernel m=16: n_regs=72 n_spills=0 wgmma=0 mma.sync=16 cp.async=38
+[prepare-time] swapab16 warm-up: 0.79s
+[ouns] cl=8 NT=8 ROWS=64 CL=8 regs=56 local(spill)=0 static_smem=0 dyn_smem=73728 max_threads=256
+[ouns] cl=8: cudaOccupancyMaxActiveClusters=45, needs 16
+[ouns] self-check launch: ouns_kernel cl=8 m=1 run=1 ...
+[ouns] self-check done:   ouns_kernel cl=8 m=1 run=1
+[ouns] self-check launch: ouns_kernel cl=8 m=1 run=2 ...
+[ouns] self-check done:   ouns_kernel cl=8 m=1 run=2
+[ouns] self-check launch: ouns_kernel cl=8 m=5 run=1 ...
+[ouns] self-check done:   ouns_kernel cl=8 m=5 run=1
+[ouns] self-check launch: ouns_kernel cl=8 m=5 run=2 ...
+[ouns] self-check done:   ouns_kernel cl=8 m=5 run=2
+[ouns] self-check launch: ouns_kernel cl=8 m=8 run=1 ...
+[ouns] self-check done:   ouns_kernel cl=8 m=8 run=1
+[ouns] self-check launch: ouns_kernel cl=8 m=8 run=2 ...
+[ouns] self-check done:   ouns_kernel cl=8 m=8 run=2
+[ouns] self-check launch: ouns_kernel cl=8 m=1 run=1 ...
+[ouns] self-check done:   ouns_kernel cl=8 m=1 run=1
+[ouns] self-check launch: ouns_kernel cl=8 m=1 run=2 ...
+[ouns] self-check done:   ouns_kernel cl=8 m=1 run=2
+[ouns] gate m=1 (graph replay, 256 MB flush, 41 reps, interleaved): cluster median 10.24 us, swapab16 median 10.72 us, empty-graph baseline 5.22 us -> net 5.02 vs 5.50 us, incumbent/cluster 1.096x (need >= 1.02) -> WIN; eager-cold (not used) cluster 10.37 / swapab16 10.66 us
+[ouns] gate m=8 (graph replay, 256 MB flush, 41 reps, interleaved): cluster median 10.50 us, swapab16 median 10.94 us, empty-graph baseline 5.22 us -> net 5.28 vs 5.73 us, incumbent/cluster 1.085x (need >= 1.02) -> WIN; eager-cold (not used) cluster 10.69 / swapab16 10.85 us
+[ouns] PATH CHOSEN: unpooler slice m<=8 (n=1024) -> CUDA cluster/DSMEM split-K, cluster dim 8; self-check passed (m (1, 5, 8)) and graph-replay gate won at m (1, 8) (see the [ouns] gate lines for both medians)
+[prepare-time] ouns self-check + graph-replay gate: 0.16s
+[router_cluster] cs=8 nt=8: regs=162 local(spill)=0 B static smem=0 B dynamic smem=82432 B max active clusters=30
+[router_cluster] launching router_kernel<8,8> m=1 run 1
+[router_cluster] router_kernel<8,8> m=1 run 1 finished OK
+[router_cluster] launching router_kernel<8,8> m=1 run 2
+[router_cluster] router_kernel<8,8> m=1 run 2 finished OK
+[router_cluster] launching router_kernel<8,8> m=5 run 1
+[router_cluster] router_kernel<8,8> m=5 run 1 finished OK
+[router_cluster] launching router_kernel<8,8> m=5 run 2
+[router_cluster] router_kernel<8,8> m=5 run 2 finished OK
+[router_cluster] launching router_kernel<8,8> m=8 run 1
+[router_cluster] router_kernel<8,8> m=8 run 1 finished OK
+[router_cluster] launching router_kernel<8,8> m=8 run 2
+[router_cluster] router_kernel<8,8> m=8 run 2 finished OK
+[router_cluster] cs=8 self-check passed (m in (1, 5, 8))
+[router_cluster] PATH CHOSEN router m<=8 (n=256): CUDA cluster kernel router_kernel<8,8>, no memset; 9 <= m <= 32: swap-AB Triton router; m > 32: hilo
+[prepare-time] router cluster self-check: 0.03s
+[prepare-time] state build (A) total: 4.10s
+[prepare-time] weight splits + NN copies: 0.00s
+[router] swapab m=1 BLOCK_T=16 SPLIT_K=32 grid=(1, 4, 32) stages=3: n_regs=64 n_spills=0 wgmma=16 mma.sync=0 cp.async=65
+[router] swapab m=32 BLOCK_T=32 SPLIT_K=32 grid=(1, 4, 32) stages=3: n_regs=80 n_spills=0 wgmma=16 mma.sync=0 cp.async=71
+[router] m=1: swapab
+[router] m=8: swapab
+[router] m=16: swapab
+[router] m=32: swapab
+[router] m=64: hilo
+[router] m=128: hilo
+[router] m=256: hilo
+[prepare-time] router triton warm-up: 0.00s
+[prepare-time] pooler / qkv / unpooler / o triton warm-up: 0.00s
+[swapab] layer=pooler m=32 N=4096 K=8192 SPLIT_K=2 BLOCK_K=256 stages=4: n_regs=96 n_spills=0 wgmma=16 mma.sync=0 cp.async=106
+[swapab] layer=qkv_gate m=32 N=2304 K=8192 SPLIT_K=4 BLOCK_K=128 stages=4: n_regs=56 n_spills=0 wgmma=8 mma.sync=0 cp.async=58
+[swapab] layer=unpooler m=32 N=8192 K=4096 SPLIT_K=1 BLOCK_K=256 stages=4: n_regs=96 n_spills=0 wgmma=16 mma.sync=0 cp.async=106
+[swapab] layer=o m=32 N=8192 K=1024 SPLIT_K=1 BLOCK_K=256 stages=4: n_regs=96 n_spills=0 wgmma=16 mma.sync=0 cp.async=106
+[prepare-time] swapab m17-32 warm-up: 0.00s
+[swapab16] pooler m=16 N=4096 K=8192 SPLIT_K=2 BLOCK_K=256 stages=4: n_regs=72 n_spills=0 wgmma=16 mma.sync=0 cp.async=90
+[swapab16] qkv_gate m=16 N=2304 K=8192 SPLIT_K=4 BLOCK_K=128 stages=4: n_regs=48 n_spills=0 wgmma=8 mma.sync=0 cp.async=50
+[swapab16] o m=16 N=8192 K=1024 SPLIT_K=1 BLOCK_K=256 stages=4: n_regs=72 n_spills=0 wgmma=16 mma.sync=0 cp.async=90
+[swapab16] unpooler_slice m=8 N=1024 K=4096 SPLIT_K=8 BLOCK_K=128 stages=3: n_regs=56 n_spills=0 wgmma=8 mma.sync=0 cp.async=38
+[incumbent16] pooler _bf16_splitk_kernel m=16: n_regs=96 n_spills=0 wgmma=0 mma.sync=32 cp.async=90
+[incumbent16] qkv_gate _qkv_splitk_sem_kernel m=16: n_regs=64 n_spills=0 wgmma=0 mma.sync=16 cp.async=50
+[incumbent16] o _pooler_skinny_kernel m=16: n_regs=90 n_spills=0 wgmma=0 mma.sync=32 cp.async=90
+[incumbent16] unpooler_slice _bf16_splitk_kernel m=16: n_regs=72 n_spills=0 wgmma=0 mma.sync=16 cp.async=38
+[prepare-time] swapab16 warm-up: 0.00s
+[prepare-time] state build (B) total: 0.01s
+[ab] capture kernel_fn router m=1 n=256 state A (component router_cluster_ok) ...
+[ab] capture kernel_fn router m=1 n=256 state B (component router_cluster_ok) ...
+[ab] router m=1 n=256: A,B,A,B replays OK, worst rel L2 2.53e-06
+[ab] capture kernel_fn router m=8 n=256 state A (component router_cluster_ok) ...
+[ab] capture kernel_fn router m=8 n=256 state B (component router_cluster_ok) ...
+[ab] router m=8 n=256: A,B,A,B replays OK, worst rel L2 2.48e-06
+[ab] capture kernel_fn router m=128 n=256 state A (component master path) ...
+[ab] capture kernel_fn router m=128 n=256 state B (component master path) ...
+[ab] router m=128 n=256: A,B,A,B replays OK, worst rel L2 2.73e-06
+[ab] capture kernel_fn unpooler m=1 n=1024 state A (component ouns_cl) ...
+[ab] capture kernel_fn unpooler m=1 n=1024 state B (component ouns_cl) ...
+[ab] unpooler m=1 n=1024: A,B,A,B replays OK, worst rel L2 1.74e-03
+[ab] capture kernel_fn unpooler m=8 n=1024 state A (component ouns_cl) ...
+[ab] capture kernel_fn unpooler m=8 n=1024 state B (component ouns_cl) ...
+[ab] unpooler m=8 n=1024: A,B,A,B replays OK, worst rel L2 1.67e-03
+[ab] capture kernel_fn unpooler m=128 n=8192 state A (component nn_ok) ...
+[ab] capture kernel_fn unpooler m=128 n=8192 state B (component nn_ok) ...
+[ab] unpooler m=128 n=8192: A,B,A,B replays OK, worst rel L2 1.66e-03
+[ab] capture kernel_fn pooler m=1 n=4096 state A (component master path) ...
+[ab] capture kernel_fn pooler m=1 n=4096 state B (component master path) ...
+[ab] pooler m=1 n=4096: A,B,A,B replays OK, worst rel L2 1.67e-03
+[ab] capture kernel_fn pooler m=8 n=4096 state A (component master path) ...
+[ab] capture kernel_fn pooler m=8 n=4096 state B (component master path) ...
+[ab] pooler m=8 n=4096: A,B,A,B replays OK, worst rel L2 1.66e-03
+[ab] capture kernel_fn pooler m=128 n=4096 state A (component nn_ok) ...
+[ab] capture kernel_fn pooler m=128 n=4096 state B (component nn_ok) ...
+[ab] pooler m=128 n=4096: A,B,A,B replays OK, worst rel L2 1.66e-03
+[ab] capture kernel_fn pooler m=256 n=4096 state A (component nn_p256_ok) ...
+[ab] capture kernel_fn pooler m=256 n=4096 state B (component nn_p256_ok) ...
+[ab] pooler m=256 n=4096: A,B,A,B replays OK, worst rel L2 1.66e-03
+[ab] done in 0.2s; flags now {'ouns_cl': 8, 'router_cluster_ok': True, 'nn_ok': True, 'nn_p256_ok': True}
+[ouns] final: cl=8: cudaOccupancyMaxActiveClusters=45, needs 16
+[ouns] final: cl=4: cudaOccupancyMaxActiveClusters=62, needs 32
+[router_cluster] final: [162, 0, 0, 82432, 30] (regs, spill B, static smem, dyn smem, max active clusters; needs 16)
+[prepare] FINAL FLAGS: ouns_cl=8 router_cluster_ok=True nn_ok=True nn_p256_ok=True; prepare total 4.3s
