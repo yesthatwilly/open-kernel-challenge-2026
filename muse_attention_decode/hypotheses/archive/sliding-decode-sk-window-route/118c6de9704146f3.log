@@ -1,0 +1,131 @@
+ TOK=1> grid 32 (p2):    27.0 us raw,    24.0 us net, Triton / pair 0.678x
+[sd-gate] B=16: [pre-attn + sk] <4 stages, ticket, PSEUDO TOK=1> grid 48 (p3):    23.3 us raw,    20.3 us net, Triton / pair 0.803x
+[sd-gate] B=16: [pre-attn + sk] <4 stages, two-level ticket, PSEUDO TOK=1> grid 48 (p3):    25.8 us raw,    22.8 us net, Triton / pair 0.714x
+[sd-gate] B=16: [pre-attn + sk] <4 stages, ticket, PSEUDO TOK=1> grid 64 (p4):    21.1 us raw,    18.0 us net, Triton / pair 0.902x
+[sd-gate] B=16: [pre-attn + sk] <4 stages, two-level ticket, PSEUDO TOK=1> grid 64 (p4):    23.9 us raw,    20.8 us net, Triton / pair 0.780x
+[sd-gate] B=16: [pre-attn + sk] <4 stages, ticket, PSEUDO TOK=1> grid 128 (p8):    19.2 us raw,    16.2 us net, Triton / pair 1.006x
+[sd-gate] B=16: [pre-attn + sk] <4 stages, two-level ticket, PSEUDO TOK=1> grid 128 (p8):    21.9 us raw,    18.8 us net, Triton / pair 0.865x
+[sd-gate] B=16: [pre-attn + sk] <4 stages, ticket, PSEUDO TOK=1> grid 132 (sm):    21.4 us raw,    18.4 us net, Triton / pair 0.885x
+[sd-gate] B=16: [pre-attn + sk] <4 stages, two-level ticket, PSEUDO TOK=1> grid 132 (sm):    24.4 us raw,    21.3 us net, Triton / pair 0.762x
+[sd-gate] B=16: [pre-attn + sk] <4 stages, ticket, PSEUDO TOK=1> grid 264 (2sm):    22.2 us raw,    19.1 us net, Triton / pair 0.849x
+[sd-gate] B=16: [pre-attn + sk] <4 stages, two-level ticket, PSEUDO TOK=1> grid 264 (2sm):    22.7 us raw,    19.6 us net, Triton / pair 0.827x
+[sd-gate] B=16: best pair <4 stages, ticket, PSEUDO TOK=1> grid 128 (p8): sk kernel alone 13.1 us net (0.64 TB/s of window bytes), pre-attention alone 3.7 us net, pair 15.7 us net, Triton 16.3 us net (second interleaved pass, empty 3.1 us)
+[sd-gate] B=16: best pair <4 stages, ticket, PSEUDO TOK=1> grid 128 (p8) 16.2 us vs Triton 16.3 us -> Triton / pair 1.006x (below the 1.05x gate or recorded only: Triton)
+[sd-gate] B=32: 32 rows x 32 tiles = 1024 tiles; unique K+V 16.8 MB over DRAM (no amplification: one token per request)
+[sd-gate] B=32: launching _pre_attention_kernel
+[sd-gate] B=32: pre-attention returned (new rows stored)
+[sd-gate] B=32: launching <4 stages, ticket, PSEUDO TOK=1> grid 64 (p2) (eager correctness run)
+[sd-gate] B=32: <4 stages, ticket, PSEUDO TOK=1> grid 64 (p2) returned, rel L2 1.66e-03, finite True, 16.0 tiles per CTA, ~2.0 slots per request
+[sd-gate] B=32: launching <4 stages, two-level ticket, PSEUDO TOK=1> grid 64 (p2) (eager correctness run)
+[sd-gate] B=32: <4 stages, two-level ticket, PSEUDO TOK=1> grid 64 (p2) returned, rel L2 1.66e-03, finite True, 16.0 tiles per CTA, ~2.0 slots per request
+[sd-gate] B=32: launching <4 stages, ticket, PSEUDO TOK=1> grid 96 (p3) (eager correctness run)
+[sd-gate] B=32: <4 stages, ticket, PSEUDO TOK=1> grid 96 (p3) returned, rel L2 1.66e-03, finite True, 10.7 tiles per CTA, ~3.0 slots per request
+[sd-gate] B=32: launching <4 stages, two-level ticket, PSEUDO TOK=1> grid 96 (p3) (eager correctness run)
+[sd-gate] B=32: <4 stages, two-level ticket, PSEUDO TOK=1> grid 96 (p3) returned, rel L2 1.66e-03, finite True, 10.7 tiles per CTA, ~3.0 slots per request
+[sd-gate] B=32: launching <4 stages, ticket, PSEUDO TOK=1> grid 128 (p4) (eager correctness run)
+[sd-gate] B=32: <4 stages, ticket, PSEUDO TOK=1> grid 128 (p4) returned, rel L2 1.66e-03, finite True, 8.0 tiles per CTA, ~4.0 slots per request
+[sd-gate] B=32: launching <4 stages, two-level ticket, PSEUDO TOK=1> grid 128 (p4) (eager correctness run)
+[sd-gate] B=32: <4 stages, two-level ticket, PSEUDO TOK=1> grid 128 (p4) returned, rel L2 1.66e-03, finite True, 8.0 tiles per CTA, ~4.0 slots per request
+[sd-gate] B=32: launching <4 stages, ticket, PSEUDO TOK=1> grid 256 (p8) (eager correctness run)
+[sd-gate] B=32: <4 stages, ticket, PSEUDO TOK=1> grid 256 (p8) returned, rel L2 1.66e-03, finite True, 4.0 tiles per CTA, ~8.0 slots per request
+[sd-gate] B=32: launching <4 stages, two-level ticket, PSEUDO TOK=1> grid 256 (p8) (eager correctness run)
+[sd-gate] B=32: <4 stages, two-level ticket, PSEUDO TOK=1> grid 256 (p8) returned, rel L2 1.66e-03, finite True, 4.0 tiles per CTA, ~8.0 slots per request
+[sd-gate] B=32: launching <4 stages, ticket, PSEUDO TOK=1> grid 132 (sm) (eager correctness run)
+[sd-gate] B=32: <4 stages, ticket, PSEUDO TOK=1> grid 132 (sm) returned, rel L2 1.66e-03, finite True, 7.8 tiles per CTA, ~4.1 slots per request
+[sd-gate] B=32: launching <4 stages, two-level ticket, PSEUDO TOK=1> grid 132 (sm) (eager correctness run)
+[sd-gate] B=32: <4 stages, two-level ticket, PSEUDO TOK=1> grid 132 (sm) returned, rel L2 1.66e-03, finite True, 7.8 tiles per CTA, ~4.1 slots per request
+[sd-gate] B=32: launching <4 stages, ticket, PSEUDO TOK=1> grid 264 (2sm) (eager correctness run)
+[sd-gate] B=32: <4 stages, ticket, PSEUDO TOK=1> grid 264 (2sm) returned, rel L2 1.66e-03, finite True, 3.9 tiles per CTA, ~8.2 slots per request
+[sd-gate] B=32: launching <4 stages, two-level ticket, PSEUDO TOK=1> grid 264 (2sm) (eager correctness run)
+[sd-gate] B=32: <4 stages, two-level ticket, PSEUDO TOK=1> grid 264 (2sm) returned, rel L2 1.66e-03, finite True, 3.9 tiles per CTA, ~8.2 slots per request
+[sd-gate] B=32: launching master Triton _sliding_fused_kernel (eager) for its error
+[sd-gate] B=32: master Triton rel L2 8.43e-02, finite True
+[sd-gate] B=32: timing 13 graphs interleaved (+ empty), cold L2, median of 21
+[sd-gate] B=32: empty graph replay 3.1 us (subtracted from every number below)
+[sd-gate] B=32: master Triton _sliding_fused_kernel:    28.4 us raw,    25.4 us net
+[sd-gate] B=32: [pre-attn + sk] <4 stages, ticket, PSEUDO TOK=1> grid 64 (p2):    27.6 us raw,    24.5 us net, Triton / pair 1.035x
+[sd-gate] B=32: [pre-attn + sk] <4 stages, two-level ticket, PSEUDO TOK=1> grid 64 (p2):    27.7 us raw,    24.7 us net, Triton / pair 1.029x
+[sd-gate] B=32: [pre-attn + sk] <4 stages, ticket, PSEUDO TOK=1> grid 96 (p3):    24.6 us raw,    21.5 us net, Triton / pair 1.178x
+[sd-gate] B=32: [pre-attn + sk] <4 stages, two-level ticket, PSEUDO TOK=1> grid 96 (p3):    26.8 us raw,    23.7 us net, Triton / pair 1.072x
+[sd-gate] B=32: [pre-attn + sk] <4 stages, ticket, PSEUDO TOK=1> grid 128 (p4):    22.4 us raw,    19.3 us net, Triton / pair 1.313x
+[sd-gate] B=32: [pre-attn + sk] <4 stages, two-level ticket, PSEUDO TOK=1> grid 128 (p4):    24.9 us raw,    21.9 us net, Triton / pair 1.161x
+[sd-gate] B=32: [pre-attn + sk] <4 stages, ticket, PSEUDO TOK=1> grid 256 (p8):    25.0 us raw,    22.0 us net, Triton / pair 1.156x
+[sd-gate] B=32: [pre-attn + sk] <4 stages, two-level ticket, PSEUDO TOK=1> grid 256 (p8):    27.6 us raw,    24.6 us net, Triton / pair 1.033x
+[sd-gate] B=32: [pre-attn + sk] <4 stages, ticket, PSEUDO TOK=1> grid 132 (sm):    24.4 us raw,    21.3 us net, Triton / pair 1.189x
+[sd-gate] B=32: [pre-attn + sk] <4 stages, two-level ticket, PSEUDO TOK=1> grid 132 (sm):    27.3 us raw,    24.3 us net, Triton / pair 1.046x
+[sd-gate] B=32: [pre-attn + sk] <4 stages, ticket, PSEUDO TOK=1> grid 264 (2sm):    27.3 us raw,    24.2 us net, Triton / pair 1.048x
+[sd-gate] B=32: [pre-attn + sk] <4 stages, two-level ticket, PSEUDO TOK=1> grid 264 (2sm):    30.1 us raw,    27.0 us net, Triton / pair 0.938x
+[sd-gate] B=32: best pair <4 stages, ticket, PSEUDO TOK=1> grid 128 (p4): sk kernel alone 16.0 us net (1.05 TB/s of window bytes), pre-attention alone 3.8 us net, pair 18.8 us net, Triton 26.0 us net (second interleaved pass, empty 3.1 us)
+[sd-gate] B=32: sk kernel 16.0 us vs cluster C=4 kernel row 18.0 us (off-master; a restack picks one)
+[sd-gate] B=32: best pair <4 stages, ticket, PSEUDO TOK=1> grid 128 (p4) 19.3 us vs Triton 25.4 us -> Triton / pair 1.313x (ROUTE)
+[sd] replay B=32 state A: eager warm-up of kernel_fn on a side stream
+[sd] replay B=32 state A: warm-up returned; capturing kernel_fn
+[sd] replay B=32 state B: eager warm-up of kernel_fn on a side stream
+[sd] replay B=32 state B: warm-up returned; capturing kernel_fn
+[sd] replay B=32 round 0 state A (refilled): launching graph (_pre_attention_kernel + splitkv_attn_sk_kernel)
+[sd] replay B=32 round 0 state A: rel L2 1.64e-03, finite True -> ok
+[sd] replay B=32 round 0 state B (refilled): launching graph (_pre_attention_kernel + splitkv_attn_sk_kernel)
+[sd] replay B=32 round 0 state B: rel L2 1.64e-03, finite True -> ok
+[sd] replay B=32 round 1 state A (refilled): launching graph (_pre_attention_kernel + splitkv_attn_sk_kernel)
+[sd] replay B=32 round 1 state A: rel L2 1.64e-03, finite True -> ok
+[sd] replay B=32 round 1 state B (refilled): launching graph (_pre_attention_kernel + splitkv_attn_sk_kernel)
+[sd] replay B=32 round 1 state B: rel L2 1.63e-03, finite True -> ok
+[sd] replay B=32 round 2 state A (refilled): launching graph (_pre_attention_kernel + splitkv_attn_sk_kernel)
+[sd] replay B=32 round 2 state A: rel L2 1.68e-03, finite True -> ok
+[sd] replay B=32 round 2 state B (refilled): launching graph (_pre_attention_kernel + splitkv_attn_sk_kernel)
+[sd] replay B=32 round 2 state B: rel L2 1.66e-03, finite True -> ok
+[sd] replay B=32 round 3 state A (refilled): launching graph (_pre_attention_kernel + splitkv_attn_sk_kernel)
+[sd] replay B=32 round 3 state A: rel L2 1.67e-03, finite True -> ok
+[sd] replay B=32 round 3 state B (refilled): launching graph (_pre_attention_kernel + splitkv_attn_sk_kernel)
+[sd] replay B=32 round 3 state B: rel L2 1.66e-03, finite True -> ok
+[sd] tickets (both levels) after the replay checks: sum 0
+PATH CHOSEN: sliding decode B=1: master Triton _sliding_fused_kernel (sk window not >= 1.05x in the printed timings, recorded only, or failed a check); best printed pair 14.3 us net vs Triton 14.1 us net (0.984x)
+PATH CHOSEN: sliding decode B=2..16: master Triton _sliding_fused_kernel (sk window not >= 1.05x in the printed timings, recorded only, or failed a check); best printed pair 16.2 us net vs Triton 16.3 us net (1.006x)
+PATH CHOSEN: sliding decode B=17..32: [pre-attn + stream-K sk window] <4 stages, ticket, PSEUDO TOK=1> grid p4; best printed pair 19.3 us net vs Triton 25.4 us net (1.313x) (>= 1.05x)
+[sk] diag variant check B=16 ragged: launching _pre_attention_kernel
+[sk] diag variant check B=16 ragged: launching splitkv_attn_sk_kernel<4 stages, no ticket> grid 264
+[sk] diag variant check B=16 ragged: splitkv_attn_sk_kernel returned
+[sk] diag variant check B=16 ragged: launching splitkv_sk_combine_kernel
+[sk] diag variant check B=16 ragged: splitkv_sk_combine_kernel returned
+[sk] diag variant check B=16 ragged: rel L2 1.66e-03, finite True -> ok
+[sk] diag variant check B=16 ragged: launching _pre_attention_kernel
+[sk] diag variant check B=16 ragged: launching splitkv_attn_sk_kernel<5 stages, ticket> grid 264
+[sk] diag variant check B=16 ragged: splitkv_attn_sk_kernel returned
+[sk] diag variant check B=16 ragged: rel L2 1.66e-03, finite True -> ok
+[sk-diag] B=16: launching _pre_attention_kernel
+[sk-diag] B=16: timing stage-1 A + B
+[sk-diag] B=16 x 80000: 328 MB of K+V rows, grid 264, eager, cold L2, median of 10
+[sk-diag]   stage-1 A splitkv_attn_kernel            117.8 us  2.78 TB/s
+[sk-diag]   stage-1 B splitkv_combine_kernel          12.2 us  -> A+B   130.0 us
+[sk-diag]   stream-K + ticket, 4 st (timed path)     113.9 us  2.88 TB/s  (vs stage-1 out rel 2.4e-04)
+[sk-diag] B=16: timing stream-K no ticket + combine
+[sk-diag]   stream-K no ticket, 4 st             107.6 us  3.05 TB/s  + combine 11.6 us -> 119.2 us  (rel 2.4e-04)
+[sk-diag] B=16: timing stream-K + ticket, 5 stages
+[sk-diag]   stream-K + ticket, 5 st              115.9 us  2.83 TB/s  (rel 2.4e-04)
+[sk-diag] B=16 ratios (>1 = first is slower): stage-1 A+B / v2 1.141x; split/locality: stage-1 A / stream-K no-ticket A 1.095x; ticket fold: (no-ticket A + combine) / ticket 1.046x; stages: 4 st / 5 st 0.983x
+[sk-diag] B=32: launching _pre_attention_kernel
+[sk-diag] B=32: timing stage-1 A + B
+[sk-diag] B=32 x 80000: 655 MB of K+V rows, grid 264, eager, cold L2, median of 10
+[sk-diag]   stage-1 A splitkv_attn_kernel            247.5 us  2.65 TB/s
+[sk-diag]   stage-1 B splitkv_combine_kernel          12.7 us  -> A+B   260.2 us
+[sk-diag]   stream-K + ticket, 4 st (timed path)     221.8 us  2.96 TB/s  (vs stage-1 out rel 1.9e-04)
+[sk-diag] B=32: timing stream-K no ticket + combine
+[sk-diag]   stream-K no ticket, 4 st             217.0 us  3.02 TB/s  + combine 11.7 us -> 228.7 us  (rel 1.9e-04)
+[sk-diag] B=32: timing stream-K + ticket, 5 stages
+[sk-diag]   stream-K + ticket, 5 st              223.7 us  2.93 TB/s  (rel 1.9e-04)
+[sk-diag] B=32 ratios (>1 = first is slower): stage-1 A+B / v2 1.173x; split/locality: stage-1 A / stream-K no-ticket A 1.140x; ticket fold: (no-ticket A + combine) / ticket 1.031x; stages: 4 st / 5 st 0.991x
+[sk3-diag] B=1: launching _pre_attention_kernel
+[sk3-diag] B=1 x 80000: 20 MB of K+V rows, eager, cold L2, median of 10
+[sk3-diag]   (a) single-level grid 2xSM (stage 2 as is)        52.9 us  0.39 TB/s  (rel L2 1.7e-03, finite True)
+[sk3-diag]   (b) single-level grid SM                          34.9 us  0.59 TB/s  (rel L2 1.7e-03, finite True)
+[sk3-diag]   (c) two-level grid SM (timed path)                22.8 us  0.90 TB/s  (rel L2 1.7e-03, finite True)
+[sk3-diag]   (d) two-level grid 2xSM                           24.4 us  0.84 TB/s  (rel L2 1.7e-03, finite True)
+[sk3-diag] fastest of the four: (c) two-level grid SM (timed path); timed path (c) is 22.8 us, (a) control 52.9 us, (c)/(a) 0.431x
+[sk3-diag] B=1: timing master FA3 (main + combine) and norm-gate
+[sk3-diag]   master FA3 main+combine    32.8 us + norm-gate 5.2 us = 38.1 us (pre-attention kernel excluded from both sides)
+[sk3-diag] B=16: launching _pre_attention_kernel
+[sk3-diag] B=16 x 80000: 328 MB of K+V rows, eager, cold L2, median of 10
+[sk3-diag]   two-level grid 2xSM at B=16 (diagnostic)         115.7 us  2.83 TB/s  (rel L2 1.6e-03, finite True)
+[sk3-diag]   single-level grid 2xSM at B=16 (stage 2)         107.3 us  3.05 TB/s  (rel L2 1.6e-03, finite True)
+PATH CHOSEN: full decode_1 streamk two-level
+PATH CHOSEN: every other shape (sliding decode bands not named above, other verify bands, page 64, dp): master path, unchanged

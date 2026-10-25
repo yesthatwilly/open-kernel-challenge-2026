@@ -1,0 +1,580 @@
+diff --git a/muse_attention_decode/submission.py b/muse_attention_decode/submission.py
+index 76492911..1117ad04 100644
+--- a/muse_attention_decode/submission.py
++++ b/muse_attention_decode/submission.py
+@@ -15,6 +15,7 @@ stage 1's two kernels kept as its fallback.
+ import os
+ import random
+ import time
++from types import MappingProxyType
+ from typing import TypedDict
+ 
+ import torch
+@@ -966,7 +967,7 @@ constexpr int QBYTES = HQ * D;               // one request's e4m3 query
+ constexpr int PS_MAXR = 256;                 // PSEUDO: pseudo-rows (8 per verify request, B <= 32)
+ constexpr int PS_WINDOW = 2048;              // PSEUDO: the sliding window (keys p - 2047 .. p)
+ #ifdef SK_PSEUDO
+-constexpr int SK_MAX_VARIANT = 5;
++constexpr int SK_MAX_VARIANT = 7;
+ #else
+ constexpr int SK_MAX_VARIANT = 3;
+ #endif
+@@ -1043,14 +1044,16 @@ __device__ __forceinline__ void load_prefix(const int* __restrict__ seqlens, int
+ // lo_s[r] = lo_r is added only to the page-table offset, tp_s is the inclusive tile prefix by one
+ // block-wide scan (R = 8B <= 256 = THREADS). wsum: >= 8 ints of scratch. Ends with a barrier.
+ // Without SK_PSEUDO the body is empty (the landed build).
++template <int TOK>
+ __device__ __forceinline__ void load_prefix_pseudo(const int* __restrict__ seqlens, int B, int* cnt_s, int* lo_s,
+                                                    int* tp_s, int* wsum) {
+ #ifdef SK_PSEUDO
+   const int tid = threadIdx.x, lane = tid & 31, warp = tid >> 5;
+-  const int R = B * 8;
++  const int R = B * TOK;
+   int v = 0;
+   if (tid < R) {
+-    int sp = seqlens[tid >> 3] - 7 + (tid & 7);
++    // TOK == 8 (sliding verify) keeps the shift / mask forms; TOK == 1 (sliding decode): row = request.
++    int sp = seqlens[TOK == 8 ? (tid >> 3) : tid / TOK] - (TOK - 1) + (TOK == 8 ? (tid & 7) : tid % TOK);
+     sp = sp > 0 ? sp : 0;
+     const int lo = sp > PS_WINDOW ? sp - PS_WINDOW : 0;
+     const int cnt = sp - lo;
+@@ -1142,10 +1145,12 @@ __device__ __forceinline__ void finalize_store(float4 o, float L, float vs, int
+   op[1] = __floats2bfloat162_rn(y2, y3);
+ }
+ 
+-// PSEUDO (sliding verify, q_len 8): the kernel rows are the R = 8B pseudo-rows r = 8 b + j; q is the
++// PSEUDO (sliding verify, q_len 8, TOK = 8): the kernel rows are the R = 8B pseudo-rows r = 8 b + j; q is the
+ // e4m3 query [B * 8, HQ, D] (token r), qkv / out rows are r, page_table row is r >> 3, seqlens is
+ // cache_seqlens [B]; ws / ticket / group slots are sized for R. PSEUDO = false is the landed kernel.
+-template <int STAGES, bool TICKET, bool TWO = false, bool PSEUDO = false>
++// TOK = 1 (sliding decode, q_len 1): R = B, row r = request r, sp_r = cache_seqlens[r] (the new key
++// included), page-table row r. TOK = 8 compiles exactly as before (only constants changed spelling).
++template <int STAGES, bool TICKET, bool TWO = false, bool PSEUDO = false, int TOK = 8>
+ __global__ void __launch_bounds__(THREADS, 2)
+ splitkv_attn_sk_kernel(const uint8_t* __restrict__ q,          // e4m3 [B, HQ, D]
+                        const uint8_t* __restrict__ kc,         // e4m3 [rows, ROW]
+@@ -1177,8 +1182,8 @@ splitkv_attn_sk_kernel(const uint8_t* __restrict__ q,          // e4m3 [B, HQ, D
+ 
+   const int tid = threadIdx.x, lane = tid & 31, warp = tid >> 5;
+   const int bx = blockIdx.x;
+-  const int R = PSEUDO ? B * 8 : B;  // rows of the flat tile space
+-  if constexpr (PSEUDO) load_prefix_pseudo(seqlens, B, seq_s, lo_s, tp_s, reinterpret_cast<int*>(acc_s));
++  const int R = PSEUDO ? B * TOK : B;  // rows of the flat tile space
++  if constexpr (PSEUDO) load_prefix_pseudo<TOK>(seqlens, B, seq_s, lo_s, tp_s, reinterpret_cast<int*>(acc_s));
+   else load_prefix(seqlens, B, seq_s, tp_s);
+   const int T = tp_s[R];
+   if (T <= 0) return;  // uniform
+@@ -1217,7 +1222,7 @@ splitkv_attn_sk_kernel(const uint8_t* __restrict__ q,          // e4m3 [B, HQ, D
+       seq = seq_s[b];
+     }
+     int prb = b, plo = 0;  // page-table row, first key of the request's range
+-    if constexpr (PSEUDO) { prb = b >> 3; plo = lo_s[b]; }
++    if constexpr (PSEUDO) { prb = TOK == 8 ? (b >> 3) : b / TOK; plo = lo_s[b]; }
+     const int* prow = page_table + (int64_t)prb * pt_stride;
+ #pragma unroll
+     for (int j = 0; j < 4; ++j) {
+@@ -1490,19 +1495,22 @@ SkFn sk_pick(int64_t v) {
+ #ifdef SK_PSEUDO
+   if (v == 4) return splitkv_attn_sk_kernel<4, true, false, true>;
+   if (v == 5) return splitkv_attn_sk_kernel<4, true, true, true>;
++  if (v == 6) return splitkv_attn_sk_kernel<4, true, false, true, 1>;
++  if (v == 7) return splitkv_attn_sk_kernel<4, true, true, true, 1>;
+ #endif
+   if (v == 3) return splitkv_attn_sk_kernel<4, true, true>;
+   if (v == 1) return splitkv_attn_sk_kernel<4, false>;
+   if (v == 2) return splitkv_attn_sk_kernel<5, true>;
+   return splitkv_attn_sk_kernel<4, true>;
+ }
+-// variant 3 = <4, ticket, two-level>; 4 / 5 = the PSEUDO single-level / two-level ticket kernels
++// variant 3 = <4, ticket, two-level>; 4 / 5 = the PSEUDO single-level / two-level ticket kernels (TOK 8, verify);
++// 6 / 7 = the same with TOK 1 (sliding decode)
+ int sk_smem(int64_t v) {
+   if (v >= 4) return Lay<4, PS_MAXR, true>::BYTES;
+   return v == 2 ? Lay<5>::BYTES : Lay<4>::BYTES;
+ }
+ void sk_prepare(int64_t v) {
+-  static bool done[6] = {false, false, false, false, false, false};
++  static bool done[8] = {false, false, false, false, false, false, false, false};  // no device state
+   if (!done[v]) {
+     C10_CUDA_CHECK(cudaFuncSetAttribute(reinterpret_cast<const void*>(sk_pick(v)),
+                                         cudaFuncAttributeMaxDynamicSharedMemorySize, sk_smem(v)));
+@@ -1520,9 +1528,10 @@ void sk_attn(torch::Tensor q, torch::Tensor k_cache, torch::Tensor v_cache, torc
+   const int B = static_cast<int>(cache_seqlens.size(0));
+   TORCH_CHECK(variant >= 0 && variant <= SK_MAX_VARIANT, "sk_attn: variant");
+   const bool pseudo = variant >= 4;
+-  const int R = pseudo ? B * 8 : B;  // rows of the tile space (pseudo-rows for verify)
+-  TORCH_CHECK(B >= 1 && B <= (pseudo ? PS_MAXR / 8 : MAXB), "sk_attn: batch out of range");
+-  if (variant == 3 || variant == 5) {
++  const int tok = variant >= 6 ? 1 : 8;  // rows per request: 8 (verify pseudo-rows) or 1 (decode)
++  const int R = pseudo ? B * tok : B;  // rows of the tile space (pseudo-rows for verify)
++  TORCH_CHECK(B >= 1 && B <= (pseudo ? PS_MAXR / tok : MAXB), "sk_attn: batch out of range");
++  if (variant == 3 || variant == 5 || variant == 7) {
+     TORCH_CHECK(grid <= 1024, "sk_attn: two-level ticket needs grid <= 1024 (<= 32 groups)");
+     TORCH_CHECK(gticket.numel() >= R * 32 && gticket.scalar_type() == at::kInt, "sk_attn: gticket");
+     TORCH_CHECK(gacc.size(0) >= R * 32 && gml.size(0) >= R * 32 && gacc.scalar_type() == at::kFloat
+@@ -1575,7 +1584,8 @@ std::vector<int64_t> sk_attrs(int64_t variant) {
+ """
+ 
+ _SK_LABELS = ("<4 stages, ticket>", "<4 stages, no ticket>", "<5 stages, ticket>", "<4 stages, two-level ticket>",
+-              "<4 stages, ticket, PSEUDO>", "<4 stages, two-level ticket, PSEUDO>")
++              "<4 stages, ticket, PSEUDO>", "<4 stages, two-level ticket, PSEUDO>",
++              "<4 stages, ticket, PSEUDO TOK=1>", "<4 stages, two-level ticket, PSEUDO TOK=1>")
+ _EXT2 = None       # the stage-2 module; None keeps stage 1 (A + B) on the gated path
+ _SK_VARIANT = 0    # the timed path: 4 stages + ticket (fixed; the diagnostics call the module directly)
+ _SK_ARCH_FLAGS = None
+@@ -1701,6 +1711,8 @@ def kernel_fn(data: Inputs) -> torch.Tensor:
+     # Sliding decode at every batch (config-only predicate): the whole step in one fused launch.
+     # Every other shape (sliding verify, every full layer) keeps the path below.
+     if cfg["window"] and cfg["q_len"] == 1:
++        if _sd_gate(cfg):  # import-time route table, config-only predicate: [pre-attn + sk window] pair
++            return _sliding_decode_sk(data)
+         return _sliding_forward(data)
+     batch, length = cfg["batch"], cfg["q_len"]
+     hq, hkv, d = cfg["num_q_heads"], cfg["num_kv_heads"], cfg["head_dim"]
+@@ -2380,11 +2392,11 @@ def _ps_fa3(data: Inputs, q: torch.Tensor, qkv: torch.Tensor) -> torch.Tensor:
+     return o.view(batch, 8, hq * d)
+ 
+ 
+-def _ps_synthetic(lens, kv_scale, gen, device, max_pages=None):
+-    """Sliding verify inputs (q_len 8, window 2048, RoPE 500000, page 1, tp8) with seq_lens = lens,
++def _ps_synthetic(lens, kv_scale, gen, device, max_pages=None, L=8):
++    """Sliding verify (q_len L = 8) or decode (L = 1) inputs (window 2048, RoPE 500000, page 1, tp8) with seq_lens = lens,
+     built as reference.generate_input builds them (scattered pages, room for the 8 new tokens).
+     max_pages (>= max(lens) + 8) fixes the shapes so a second set can refill the first in place."""
+-    batch, hq, hkv, d, L = len(lens), 16, 2, 64, 8
++    batch, hq, hkv, d = len(lens), 16, 2, 64
+     max_pages = max_pages or max(lens) + L + 37
+     total = batch * max_pages
+     perm = torch.randperm(total, generator=gen, device=device).to(torch.int32)
+@@ -2747,6 +2759,413 @@ def _ps_setup() -> None:
+                  f"faster than FA3 in the printed timings, or failed a check)")
+ 
+ 
++# ---------------------------------------------------------------------------------------------
++# Sliding DECODE (q_len 1, window 2048, page 1, tp8) as the same PSEUDO kernel with TOK = 1.
++#
++# One row per request: R = B, sp = cache_seqlens[b] (the new key included), lo = max(0, sp - 2048), page-table
++# row b, query / qkv / out row b. Master's Triton _sliding_fused_kernel folds norm / RoPE / cache store into its
++# own launch, so this route is the pair [_pre_attention_kernel (PAIRED=False, ROPE on) + splitkv_attn_sk_kernel
++# variant 6 / 7]: two nodes of one graph, always timed together against the Triton kernel in ONE captured graph
++# each, interleaved, cold L2, with an empty captured graph subtracted from every number. Bands: B = 2..16
++# (gated at 16) and B = 17..32 (gated at 32) are routed only at >= 1.05x; B = 1 is timed for the record and is
++# never routed. The route table is filled once at import and frozen before kernel_fn can see it.
++# ---------------------------------------------------------------------------------------------
++
++_SD_ROUTE = {}   # band (2, 3) -> (variant 6 | 7, grid spec); empty = sliding decode stays on Triton
++_SD_SPECS = ("p2", "p3", "p4", "p8", "sm", "2sm")
++_SD_CLUSTER_C4_US = 18.0  # off-master cluster C=4 kernel row at B=32 (reference only, printed next to ours)
++
++
++def _sd_gate(cfg) -> bool:
++    """Config-only predicate: this sliding decode shape's band has a validated sk-window route."""
++    return (bool(_SD_ROUTE) and _EXT2 is not None and cfg["window"] == _PS_WINDOW and cfg["q_len"] == 1
++            and cfg["page_size"] == 1 and cfg["num_q_heads"] == 16 and cfg["num_kv_heads"] == 2
++            and cfg["head_dim"] == 64 and bool(cfg["rope_theta"]) and 2 <= cfg["batch"] <= 32
++            and _ps_band(cfg["batch"]) in _SD_ROUTE)
++
++
++def _sd_grid(spec: str, rows: int, sms: int) -> int:
++    """CTAs of a grid spec for `rows` = B (one row per sequence): 2R / 3R / 4R / 8R (a merge of ~2 / 3 / 4 / 8 slots per
++    request), one CTA per SM, or two per SM; never above 2 x SM."""
++    g = {"p2": 2 * rows, "p3": 3 * rows, "p4": 4 * rows, "p8": 8 * rows, "sm": sms, "2sm": 2 * sms}[spec]
++    return max(1, min(g, 2 * sms))
++
++
++def _sd_sk_launch(data: Inputs, q: torch.Tensor, qkv: torch.Tensor, variant: int, grid: int) -> torch.Tensor:
++    """The TOK = 1 PSEUDO kernel on a sliding decode shape (q is the pre-attention e4m3 query [B, 16, 64]).
++    Workspace and group slots come from shapes only; the tickets are the self-resetting zero arrays."""
++    cfg = data["config"]
++    batch, hq, d = cfg["batch"], cfg["num_q_heads"], cfg["head_dim"]
++    device = qkv.device
++    ws_acc = torch.empty((grid + batch, hq, d), dtype=torch.float32, device=device)
++    ws_ml = torch.empty((grid + batch, 2, hq), dtype=torch.float32, device=device)
++    out = torch.empty((batch, 1, hq * d), dtype=torch.bfloat16, device=device)
++    ng = batch * 32 if variant == 7 else 1
++    gacc = torch.empty((ng, hq, d), dtype=torch.float32, device=device)
++    gml = torch.empty((ng, 2, hq), dtype=torch.float32, device=device)
++    _EXT2.sk_attn(q, data["k_cache"], data["v_cache"], data["page_table"], data["cache_seqlens"], data["k_scale"],
++                  data["v_scale"], qkv, qkv.stride(0), out, ws_acc, ws_ml, _ps_ticket(device), _ps_gticket(device),
++                  gacc, gml, cfg["sm_scale"] * cfg["qk_scale_factor"] * LOG2E, RMS_EPS, grid, variant)
++    return out
++
++
++def _sd_run(data: Inputs, variant: int, grid: int) -> torch.Tensor:
++    """The routed sliding decode step: _pre_attention_kernel (stores the new K/V row the window includes) then
++    the sk kernel. kernel_fn and the gate both call exactly this."""
++    q, qkv = _ps_prepare_q(data)
++    return _sd_sk_launch(data, q, qkv, variant, grid)
++
++
++def _sliding_decode_sk(data: Inputs) -> torch.Tensor:
++    batch = data["config"]["batch"]
++    variant, spec = _SD_ROUTE[_ps_band(batch)]
++    return _sd_run(data, variant, _sd_grid(spec, batch, _sm_count(data["qkv"].device)))
++
++
++def _sd_case(tag, lens, kv_scale, variant, grid, gen) -> bool:
++    """One synthetic sliding-decode case, each launch announced before and synced + confirmed after (a fault
++    names its kernel), against the FP32 windowed reference."""
++    data = _ps_synthetic(lens, kv_scale, gen, torch.device("cuda"), L=1)
++    _say(f"[sd] {tag}: launching _pre_attention_kernel")
++    q, qkv = _ps_prepare_q(data)
++    torch.cuda.synchronize()
++    _say(f"[sd] {tag}: _pre_attention_kernel returned; launching splitkv_attn_sk_kernel{_SK_LABELS[variant]} "
++         f"grid {grid}")
++    out = _sd_sk_launch(data, q, qkv, variant, grid)
++    torch.cuda.synchronize()
++    _say(f"[sd] {tag}: splitkv_attn_sk_kernel returned")
++    err, finite = _rel_l2(out, _ps_reference(data, lens))
++    ok = finite and err < 2e-2
++    _say(f"[sd] {tag}: rel L2 {err:.2e}, finite {finite} -> {'ok' if ok else 'FAIL'}")
++    return ok
++
++
++def _sd_validate() -> "str | None":
++    """Canary + self-check of the TOK = 1 kernels against the FP32 windowed reference: lens 0, 1, 63, 2047, 2048,
++    2049, 80000, ragged B = 16 / 32, kv scale 1 and 0.25, grids 3 / 7 / 2R / 3R / SM / 2xSM. None on success,
++    else the reason sliding decode stays on Triton. Also prints the TOK = 8 variants' attributes (byte-identical
++    to sliding-verify-sk-pseudo-decode-s1's: same regs / local / smem / CTAs)."""
++    dev = torch.device("cuda")
++    sms = _sm_count(dev)
++    for v in (4, 5, 6, 7):
++        a = list(_EXT2.sk_attrs(v))
++        _say(f"[sd] splitkv_attn_sk_kernel{_SK_LABELS[v]}: binaryVersion {a[0]}, ptxVersion {a[1]}, regs {a[2]}, "
++             f"local {a[3]} B, dyn smem {a[5]} B, {a[6]} CTAs/SM"
++             + (" (TOK=8: must equal sliding-verify-sk-pseudo-decode-s1's line)" if v < 6 else ""))
++        if a[0] != 90:
++            return f"cubin version is not 90 (variant {v})"
++        if a[6] < 1:
++            return f"decode variant {v} cannot launch (0 CTAs/SM)"
++        if a[6] < 2:
++            _say(f"[sd] WARNING: decode variant {v} does not reach 2 CTAs/SM (performance, not correctness)")
++    gen = torch.Generator(device="cuda").manual_seed(8642)
++    rng = random.Random(2027)
++    lens16 = list(_SK_LENS16)
++    lens16[0] = 80000
++    lens32 = [rng.randint(1, 12000) for _ in range(32)]
++    lens32[0], lens32[3], lens32[5], lens32[9], lens32[17] = 80000, 2047, 2048, 1, 0
++    lens32[21], lens32[22], lens32[23] = 2049, 63, 2050
++    two = 2 * sms
++    cases = (
++        ("canary B=1 lens 1 grid 3", [1], 1.0, 6, 3),
++        ("B=1 lens 0 two-level grid 3", [0], 1.0, 7, 3),
++        ("B=1 lens 63 kv 0.25 two-level grid 7", [63], 0.25, 7, 7),
++        ("B=1 lens 2047 grid device", [2047], 1.0, 6, two),
++        ("B=1 lens 2048 two-level grid 3", [2048], 1.0, 7, 3),
++        ("B=1 lens 2049 kv 0.25 grid 7", [2049], 0.25, 6, 7),
++        ("B=1 lens 80000 grid 4", [80000], 1.0, 6, 4),
++        ("B=1 lens 80000 kv 0.25 two-level grid 8", [80000], 0.25, 7, 8),
++        ("B=1 lens 80000 two-level grid SM", [80000], 1.0, 7, sms),
++        ("B=3 lens 1/2047/80000 grid 7", [1, 2047, 80000], 1.0, 6, 7),
++        ("B=3 lens 63/2049/80000 kv 0.25 two-level grid device", [63, 2049, 80000], 0.25, 7, two),
++        ("B=16 ragged kv 0.25 grid device", lens16, 0.25, 6, two),
++        ("B=16 ragged two-level grid 3", lens16, 1.0, 7, 3),
++        ("B=16 ragged grid 2R", lens16, 1.0, 6, 32),
++        ("B=16 ragged two-level grid 3R", lens16, 1.0, 7, 48),
++        ("B=16 ragged two-level grid SM", lens16, 1.0, 7, sms),
++        ("B=32 ragged grid device", lens32, 1.0, 6, two),
++        ("B=32 ragged kv 0.25 two-level grid 7", lens32, 0.25, 7, 7),
++        ("B=32 ragged grid 2R", lens32, 1.0, 6, 64),
++        ("B=32 ragged two-level grid device", lens32, 1.0, 7, two),
++    )
++    for tag, lens, kv_scale, variant, grid in cases:
++        if not _sd_case(tag, lens, kv_scale, variant, grid, gen):
++            return f"self-check {tag}"
++    left = int(_ps_ticket(dev).abs().sum().item()) + int(_ps_gticket(dev).abs().sum().item())
++    _say(f"[sd] tickets (both levels) after the self-check: sum {left}")
++    if left:
++        return "decode tickets not reset"
++    return None
++
++
++def _sd_capture(fn):
++    """fn eagerly twice on a side stream, then captured; returns the CUDA graph."""
++    side = torch.cuda.Stream()
++    side.wait_stream(torch.cuda.current_stream())
++    with torch.cuda.stream(side):
++        for _ in range(2):
++            fn()
++    torch.cuda.current_stream().wait_stream(side)
++    torch.cuda.synchronize()
++    graph = torch.cuda.CUDAGraph()
++    with torch.cuda.graph(graph):
++        fn()
++    torch.cuda.synchronize()
++    return graph
++
++
++def _sd_interleaved(fns: dict, flush, warm=3, reps=21) -> dict:
++    """Median GPU time (us) of one graph replay of each fn in `fns` (name -> callable), every fn captured as its
++    own CUDA graph and replayed round-robin (the start rotates every repetition, so no fn is always first), the
++    L2 made cold by reading a 256 MB buffer before each replay, events around the replay only. The entry
++    "empty" is a captured graph with no work (its replay cost is the fixed graph overhead); the caller subtracts
++    it from the others. If an empty capture is refused, a one-element kernel stands in and is printed."""
++    graphs = {}
++    for name, fn in fns.items():
++        graphs[name] = _sd_capture(fn)
++    try:
++        eg = torch.cuda.CUDAGraph()
++        with torch.cuda.graph(eg):
++            pass
++        torch.cuda.synchronize()
++        eg.replay()
++        torch.cuda.synchronize()
++        graphs["empty"] = eg
++    except Exception as e:
++        _say(f"[sd-gate] empty graph capture refused ({e!r}): a one-element kernel stands in for the baseline")
++        tiny = torch.zeros(1, dtype=torch.float32, device="cuda")
++        graphs["empty"] = _sd_capture(lambda: tiny.zero_())
++    names = list(graphs)
++    ts = {n: [] for n in names}
++    for it in range(warm + reps):
++        k = it % len(names)
++        for n in names[k:] + names[:k]:
++            flush.sum()
++            e0, e1 = torch.cuda.Event(enable_timing=True), torch.cuda.Event(enable_timing=True)
++            e0.record()
++            graphs[n].replay()
++            e1.record()
++            torch.cuda.synchronize()
++            if it >= warm:
++                ts[n].append(e0.elapsed_time(e1) * 1e3)
++    del graphs
++    return {n: sorted(v)[len(v) // 2] for n, v in ts.items()}
++
++
++def _sd_gate_band(batch: int, gen, flush, sms: int):
++    """Time [pre-attention + sk] for every variant x grid (2R / 3R / 4R / 8R / SM / 2xSM, single and two-level
++    ticket) and master's Triton _sliding_fused_kernel at `batch` x 80000, as interleaved cold-L2 graph replays
++    each in its own captured graph (the pair's two nodes in ONE graph), the empty-graph replay subtracted from
++    every number; print everything. Returns (variant, spec) of the best pair if it is >= 1.05x faster than
++    Triton, else None; B = 1 is for the record only and always returns None."""
++    dev = torch.device("cuda")
++    lens = [80000] * batch
++    data = _ps_synthetic(lens, 1.0, gen, dev, L=1)
++    nbytes = batch * (_PS_WINDOW + 1) * 256
++    cands, seen = [], set()
++    for spec in _SD_SPECS:
++        g = _sd_grid(spec, batch, sms)
++        for v in (6, 7):
++            if (v, g) not in seen:
++                seen.add((v, g))
++                cands.append((v, spec, g))
++    tiles = batch * (_PS_WINDOW // 64)
++    _say(f"[sd-gate] B={batch}: {batch} rows x {_PS_WINDOW // 64} tiles = {tiles} tiles; unique K+V "
++         f"{nbytes / 1e6:.1f} MB over DRAM (no amplification: one token per request)")
++    _say(f"[sd-gate] B={batch}: launching _pre_attention_kernel")
++    q, qkv = _ps_prepare_q(data)
++    torch.cuda.synchronize()
++    _say(f"[sd-gate] B={batch}: pre-attention returned (new rows stored)")
++    ref = _ps_reference(data, lens)
++    ok_cands = []
++    for v, spec, g in cands:
++        label = f"{_SK_LABELS[v]} grid {g} ({spec})"
++        _say(f"[sd-gate] B={batch}: launching {label} (eager correctness run)")
++        out = _sd_sk_launch(data, q, qkv, v, g)
++        torch.cuda.synchronize()
++        err, finite = _rel_l2(out, ref)
++        _say(f"[sd-gate] B={batch}: {label} returned, rel L2 {err:.2e}, finite {finite}, "
++             f"{tiles / g:.1f} tiles per CTA, ~{g / batch:.1f} slots per request")
++        if finite and err < 2e-2:
++            ok_cands.append((v, spec, g))
++        else:
++            _say(f"[sd-gate] B={batch}: {label} FAILED its correctness check: not timed")
++    _say(f"[sd-gate] B={batch}: launching master Triton _sliding_fused_kernel (eager) for its error")
++    tout = _sliding_forward(data)
++    torch.cuda.synchronize()
++    terr, tfin = _rel_l2(tout, ref)
++    _say(f"[sd-gate] B={batch}: master Triton rel L2 {terr:.2e}, finite {tfin}")
++    del tout
++    fns = {"triton": (lambda: _sliding_forward(data))}
++    for v, spec, g in ok_cands:
++        fns[f"pair {v} {spec} {g}"] = (lambda v=v, g=g: _sd_run(data, v, g))
++    _say(f"[sd-gate] B={batch}: timing {len(fns)} graphs interleaved (+ empty), cold L2, median of 21")
++    t = _sd_interleaved(fns, flush)
++    base = t["empty"]
++    _say(f"[sd-gate] B={batch}: empty graph replay {base:.1f} us (subtracted from every number below)")
++    t_tri = max(t["triton"] - base, 0.5)
++    _say(f"[sd-gate] B={batch}: master Triton _sliding_fused_kernel: {t['triton']:7.1f} us raw, {t_tri:7.1f} us net")
++    results = []
++    for v, spec, g in ok_cands:
++        raw = t[f"pair {v} {spec} {g}"]
++        net = max(raw - base, 0.5)
++        _say(f"[sd-gate] B={batch}: [pre-attn + sk] {_SK_LABELS[v]} grid {g} ({spec}): {raw:7.1f} us raw, "
++             f"{net:7.1f} us net, Triton / pair {t_tri / net:.3f}x")
++        results.append((net, v, spec, g))
++    choice = None
++    if results:
++        net, v, spec, g = min(results)
++        ratio = t_tri / net
++        # The kernel rows alone (pre-attention and the sk kernel timed as their own graphs), for the restack.
++        sub = {"pre": (lambda: _ps_prepare_q(data)), "sk": (lambda: _sd_sk_launch(data, q, qkv, v, g)),
++               "pair": (lambda: _sd_run(data, v, g)), "triton": (lambda: _sliding_forward(data))}
++        t2 = _sd_interleaved(sub, flush)
++        b2 = t2["empty"]
++        k_sk, k_pre = max(t2["sk"] - b2, 0.5), max(t2["pre"] - b2, 0.5)
++        _say(f"[sd-gate] B={batch}: best pair {_SK_LABELS[v]} grid {g} ({spec}): sk kernel alone {k_sk:.1f} us net "
++             f"({nbytes / k_sk / 1e6:.2f} TB/s of window bytes), pre-attention alone {k_pre:.1f} us net, "
++             f"pair {max(t2['pair'] - b2, 0.5):.1f} us net, Triton {max(t2['triton'] - b2, 0.5):.1f} us net "
++             f"(second interleaved pass, empty {b2:.1f} us)")
++        if batch >= 17:
++            _say(f"[sd-gate] B={batch}: sk kernel {k_sk:.1f} us vs cluster C=4 kernel row {_SD_CLUSTER_C4_US:.1f} us "
++                 f"(off-master; a restack picks one)")
++        if batch == 1:
++            _say(f"[sd-gate] B=1: recorded only, never routed (expected to lose to Triton 10.2 / cluster C=16 10.6): "
++                 f"pair/Triton {ratio:.3f}x")
++        elif ratio >= 1.05:
++            choice = (v, spec)
++        _say(f"[sd-gate] B={batch}: best pair {_SK_LABELS[v]} grid {g} ({spec}) {net:.1f} us vs Triton {t_tri:.1f} us "
++             f"-> Triton / pair {ratio:.3f}x ({'ROUTE' if choice else 'below the 1.05x gate or recorded only: Triton'})")
++    else:
++        _say(f"[sd-gate] B={batch}: no decode variant passed its correctness check")
++    del data, q, qkv, ref, fns
++    torch.cuda.empty_cache()
++    return choice, (t_tri, results)
++
++
++def _sd_replay_check(batch: int, lens, kv_scale: float, gen) -> "str | None":
++    """Two states, as the judge prepares them (copies: 2): kernel_fn captured once on each, then replays
++    alternate A, B, A, B, ... with each state refilled in place (other seq lens, fresh K/V and routing) before its
++    replay and its output poisoned with NaN; every replay is compared with the FP32 reference computed from the
++    state's own cache afterwards. Right only if the tickets returned to 0 after every launch and nothing in the
++    path is shared between the states' graphs."""
++    dev = torch.device("cuda")
++    sets = [list(lens), [max(0, n - 977) for n in reversed(lens)], [min(80000, 3 * n + 5) for n in lens],
++            [n // 2 for n in lens]]
++    max_pages = max(max(s) for s in sets) + 1 + 37
++    states = []
++    for name, s0 in (("A", sets[0]), ("B", sets[1])):
++        data = _ps_synthetic(s0, kv_scale, gen, dev, max_pages=max_pages, L=1)
++        assert _sd_gate(data["config"]), "route not active for the replay case"
++        _say(f"[sd] replay B={batch} state {name}: eager warm-up of kernel_fn on a side stream")
++        side = torch.cuda.Stream()
++        side.wait_stream(torch.cuda.current_stream())
++        with torch.cuda.stream(side):
++            kernel_fn(data)
++        torch.cuda.current_stream().wait_stream(side)
++        torch.cuda.synchronize()
++        _say(f"[sd] replay B={batch} state {name}: warm-up returned; capturing kernel_fn")
++        graph = torch.cuda.CUDAGraph()
++        with torch.cuda.graph(graph):
++            out = kernel_fn(data)
++        torch.cuda.synchronize()
++        states.append((name, data, graph, out))
++    keys = ("qkv", "positions", "cache_loc", "cache_seqlens", "cu_seqlens_q", "k_cache", "v_cache",
++            "k_scale", "v_scale", "page_table", "seq_lens")
++    for rnd in range(4):
++        for si, (name, data, graph, out) in enumerate(states):
++            lens_r = sets[(rnd + 2 * si) % 4]
++            new = _ps_synthetic(lens_r, kv_scale, gen, dev, max_pages=max_pages, L=1)
++            for key in keys:
++                data[key].copy_(new[key])
++            del new
++            out.fill_(float("nan"))
++            _say(f"[sd] replay B={batch} round {rnd} state {name} (refilled): launching graph "
++                 f"(_pre_attention_kernel + splitkv_attn_sk_kernel)")
++            graph.replay()
++            torch.cuda.synchronize()
++            err, finite = _rel_l2(out, _ps_reference(data, lens_r))
++            ok = finite and err < 2e-2
++            _say(f"[sd] replay B={batch} round {rnd} state {name}: rel L2 {err:.2e}, finite {finite} -> "
++                 f"{'ok' if ok else 'FAIL'}")
++            if not ok:
++                return f"two-state graph replay B={batch} round {rnd} state {name}"
++    del states
++    torch.cuda.empty_cache()
++    return None
++
++
++def _sd_setup() -> None:
++    """Validate the TOK = 1 kernels, gate each band against master Triton on printed timings, replay-check the
++    routed bands with two states, and freeze _SD_ROUTE. Any failure leaves sliding decode on Triton; nothing
++    here raises."""
++    global _SD_ROUTE
++    dev = torch.device("cuda")
++    _ps_ticket(dev)
++    _ps_gticket(dev)
++    if not _PS_BUILT or _EXT2 is None:
++        _say("PATH CHOSEN: sliding decode Triton (fallback: PSEUDO build or stage-2 module unavailable)")
++        return
++    try:
++        reason = _sd_validate()
++    except Exception as e:
++        reason = f"self-check raised {e!r}"
++    if reason is not None:
++        _say(f"PATH CHOSEN: sliding decode Triton (fallback: {reason})")
++        return
++    sms = _sm_count(dev)
++    gen = torch.Generator(device="cuda").manual_seed(9753)
++    flush = torch.empty(64 << 20, dtype=torch.float32, device=dev)  # 256 MB > L2
++    choice, nums = {}, {}
++    for band, batch in ((1, 1), (2, 16), (3, 32)):
++        try:
++            c, n = _sd_gate_band(batch, gen, flush, sms)
++        except Exception as e:
++            _say(f"[sd-gate] B={batch} raised (band stays on Triton): {e!r}")
++            c, n = None, None
++        nums[band] = n
++        if c is not None:
++            choice[band] = c
++    del flush
++    torch.cuda.empty_cache()
++    route = {}
++    if choice:
++        rng = random.Random(78)
++        lens32 = [rng.randint(1, 12000) for _ in range(32)]
++        lens32[0], lens32[1] = 80000, 2047
++        replay = {2: (16, [80000] + _SK_LENS16[1:], 0.25), 3: (32, lens32, 1.0)}
++        _SD_ROUTE.update(choice)
++        for band in sorted(choice):
++            batch, lens, kv_scale = replay[band]
++            try:
++                why = _sd_replay_check(batch, lens, kv_scale, gen)
++            except Exception as e:
++                why = f"replay raised {e!r}"
++            if why is not None:
++                _say(f"[sd] band {_PS_BAND_NAMES[band]} dropped to Triton ({why})")
++                _SD_ROUTE.pop(band, None)
++        left = int(_ps_ticket(dev).abs().sum().item()) + int(_ps_gticket(dev).abs().sum().item())
++        _say(f"[sd] tickets (both levels) after the replay checks: sum {left}")
++        if left:
++            _SD_ROUTE.clear()
++            _say("[sd] tickets not reset: every band dropped to Triton")
++        route = dict(_SD_ROUTE)
++    _SD_ROUTE = MappingProxyType(route)  # frozen: kernel_fn only reads it
++    for band in (1, 2, 3):
++        n = nums.get(band)
++        timing = ""
++        if n is not None and n[1]:
++            net, v, spec, g = min(n[1])
++            timing = f"; best printed pair {net:.1f} us net vs Triton {n[0]:.1f} us net ({n[0] / net:.3f}x)"
++        if band in _SD_ROUTE:
++            v, spec = _SD_ROUTE[band]
++            _say(f"PATH CHOSEN: sliding decode {_PS_BAND_NAMES[band]}: [pre-attn + stream-K sk window] {_SK_LABELS[v]} "
++                 f"grid {spec}{timing} (>= 1.05x)")
++        else:
++            _say(f"PATH CHOSEN: sliding decode {_PS_BAND_NAMES[band]}: master Triton _sliding_fused_kernel "
++                 f"(sk window not >= 1.05x in the printed timings, recorded only, or failed a check){timing}")
++
++
+ if torch.cuda.is_available():
+     _EXT = _build_splitkv()
+     if _EXT is not None and not _splitkv_self_check():
+@@ -2781,6 +3200,11 @@ if torch.cuda.is_available():
+             except Exception as e:
+                 _PS_ROUTE.clear()
+                 _say(f"PATH CHOSEN: sliding verify FA3 (fallback: setup raised {e!r})")
++            try:
++                _sd_setup()
++            except Exception as e:
++                _SD_ROUTE = MappingProxyType({})
++                _say(f"PATH CHOSEN: sliding decode Triton (fallback: setup raised {e!r})")
+             try:
+                 _sk_diagnostics()
+                 if _b1_reason is None:
+@@ -2802,4 +3226,4 @@ if torch.cuda.is_available():
+         _say("PATH CHOSEN: full decode_1 FA3 (fallback: splitkv v1 unavailable)")
+     if _PS_ROUTE == {} and (_EXT is None or _EXT2 is None):
+         _say("PATH CHOSEN: sliding verify FA3 (fallback: stage-2 module unavailable)")
+-    _say("PATH CHOSEN: every other shape (sliding decode, other verify bands, page 64, dp): master path, unchanged")
++    _say("PATH CHOSEN: every other shape (sliding decode bands not named above, other verify bands, page 64, dp): master path, unchanged")

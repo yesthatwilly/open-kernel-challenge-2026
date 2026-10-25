@@ -54,10 +54,10 @@ controls_for: null
 rewrite_stage: 2
 replaces: "sliding decode (q_len 1, page 1, tp8, 2<=B<=32): master Triton _sliding_fused_kernel (16 splits, in-kernel pre-attention)"
 review: proceed
-status: running
+status: done
 review_at: 2026-10-25T054724Z
 review_companions: null
-stage: dispatched
+stage: harvested
 claimed_at: 2026-10-25T054724Z
 base_sha: 6f95ce71ba21682ba9cbb6d346abb2a93a862b2f
 base_blob: 76492911dfd6685139a2ffac06c1d27083ecdb0a
@@ -76,6 +76,13 @@ attempt_file: 2026-10-25T084628Z-check-sliding-decode-sk-window-route.md
 prepared_at: 2026-10-25T084628Z
 job: 118c6de9704146f3
 dispatched_at: 2026-10-25T084636Z
+outcome: neutral
+verdict_detail: unproven-vs-best
+speedup: 1.4972632172137348
+speedup_ci: [1.4748042689555287, 1.5197221654719406]
+harvested_at: 2026-10-25T091107Z
+best_at_harvest: 1.444132502888963
+promotion: null
 ---
 
 # sliding-decode-sk-window-route
@@ -175,3 +182,36 @@ Audited 2026-10-25 by an opus subagent, by reading only (no GPU on this node). *
 - Scope: the diff matches the change paragraph. The 2R/3R grids come from the review, and B=1 is timed and printed but never routed, as the expected rows say.
 
 Residual risk: the CUDA has not been compiled. A compile error falls back to the landed-only build and leaves sliding verify and sliding decode on master. B=16 is likely to land near the 1.05x gate and stay on Triton.
+
+## Result
+
+- job `118c6de9704146f3` (check), status done, passed True, tests 16/16
+- speedup 1.4973x, 95% CI [1.4748, 1.5197], score 2515.4561714330553 µs vs SGLang 3766.3 µs
+- best at harvest: {"speedup": 1.444132502888963, "ci": [1.4224705153456287, 1.4657944904322975], "job": "341623fa53d94cef"}; base result: muse_attention_decode/hypotheses/done/neutral/sliding-verify-sk-pseudo-decode-s1.result.json
+- **outcome: neutral** (unproven-vs-best)
+- files: `muse_attention_decode/hypotheses/done/neutral/sliding-decode-sk-window-route.result.json`, `muse_attention_decode/hypotheses/done/neutral/sliding-decode-sk-window-route.patch`; branch `hyp/muse_attention_decode/sliding-decode-sk-window-route`
+
+## Attribution
+
+| shape | w | base µs | hyp µs | delta | verdict |
+|---|---|---|---|---|---|
+| batch=1 ctx=80000 dist=soft heads=tp8 layer=sliding load=decode_1 page=1 | 46 | 13.33 | 13.57 | 1.0033 | flat |
+| batch=1 ctx=80000 dist=coherent heads=tp8 layer=full load=decode_1 page=1 | 16 | 22.73 | 22.98 | 1.0073 | flat |
+| batch=16 ctx=80000 dist=soft heads=tp8 layer=sliding load=decode_16 page=1 spread=agentic | 46 | 15.72 | 15.42 | 1.0126 | flat |
+| batch=16 ctx=80000 dist=coherent heads=tp8 layer=full load=decode_16 page=1 spread=agentic | 16 | 110.4 | 111.17 | 0.9856 | flat |
+| batch=32 ctx=80000 dist=soft heads=tp8 layer=sliding load=decode_32 page=1 spread=agentic | 46 | 23.85 | 17.38 | 1.385 | gained |
+| batch=32 ctx=80000 dist=coherent heads=tp8 layer=full load=decode_32 page=1 spread=agentic | 16 | 226.28 | 212.84 | 1.0676 | gained |
+| batch=1 ctx=80000 dist=soft heads=tp8 layer=sliding load=verify_1 page=1 q_len=8 | 46 | 13.44 | 13.65 | 0.9933 | flat |
+| batch=1 ctx=80000 dist=coherent heads=tp8 layer=full load=verify_1 page=1 q_len=8 | 16 | 30.1 | 30.01 | 1.0023 | flat |
+| batch=16 ctx=80000 dist=soft heads=tp8 layer=sliding load=verify_16 page=1 q_len=8 spread=agentic | 46 | 22.39 | 22.66 | 0.9863 | flat |
+| batch=16 ctx=80000 dist=coherent heads=tp8 layer=full load=verify_16 page=1 q_len=8 spread=agentic | 16 | 162.76 | 162.9 | 0.9966 | flat |
+| batch=32 ctx=80000 dist=soft heads=tp8 layer=sliding load=verify_32 page=1 q_len=8 spread=agentic | 46 | 28.49 | 28.76 | 0.9972 | flat |
+| batch=32 ctx=80000 dist=coherent heads=tp8 layer=full load=verify_32 page=1 q_len=8 spread=agentic | 16 | 302.78 | 301.44 | 0.9988 | flat |
+
+gained on sliding decode_32; full decode_32. Expected hit: 2/4. Noise ±1.5%.
+
+## Follow-ups
+
+- rewrite stage 2 of `sliding decode (q_len 1, page 1, tp8, 2<=B<=32): master Triton _sliding_fused_kernel (16 splits, in-kernel pre-attention)`: read the replaced kernels' own us per shape (profile top_kernels) against the incumbent and the floor, and check which Milestone it reached. The next stage is `/hypothesize muse_attention_decode "<what to fix or tune>" --kind rewrite --depends-on sliding-decode-sk-window-route --stage 3`; a slow or failed first cut is the expected start, not a do-not-retry.
+- unproven-vs-best: the change is not proven either way; a stacked hypothesis (`depends_on: sliding-decode-sk-window-route`) that adds a further change in the same area is the only way to learn more (identical code is never re-run).
+
