@@ -57,7 +57,7 @@ review: proceed
 status: running
 review_at: 2026-10-25T150343Z
 review_companions: null
-stage: implemented
+stage: dispatched
 claimed_at: 2026-10-25T150343Z
 base_sha: 2f268b5931c7c758c5178f3bb152d80688ca9d95
 base_blob: 07cda658e21f2eb25a9dd1f50ac5202ad5985831
@@ -74,6 +74,8 @@ submission_blob: 4bb57fd292a7f0fd5a80bd88dc773008b490bf8c
 lint_warnings: 57
 attempt_file: 2026-10-25T151022Z-submit-dl3-piece-a-gate-stride-check-fix.md
 prepared_at: 2026-10-25T151022Z
+job: 933d3f825a044d36
+dispatched_at: 2026-10-25T151030Z
 ---
 
 # dl3-piece-a-gate-stride-check-fix
