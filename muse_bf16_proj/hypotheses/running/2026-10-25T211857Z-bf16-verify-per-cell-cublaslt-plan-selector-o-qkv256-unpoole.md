@@ -54,9 +54,18 @@ kind: primary
 controls_for: null
 prior: "bf16-cublaslt-algo-pick-in-prepare-m128-m256: that pick was timed without interleaving against the incumbent, with no empty-graph baseline and no margin, and its qkv m=256 choice flipped (+14%) in the judge; this reuses master's cell-B Lt plan machinery per cell with the hardened two-round 1.03 gate, a profiler kernel assert, and excludes the dead K-split candidates"
 review: proceed
-status: queued
+status: running
 review_at: 2026-10-25T212522Z
 review_companions: null
+stage: claimed
+claimed_at: 2026-10-25T212547Z
+base_sha: d8ecddc962f6cc4f6ef3802f28e49e32b60b4010
+base_blob: ad8d7254a64a52db2a8f56ec0ad262748153a2e8
+branch: hyp/muse_bf16_proj/bf16-verify-per-cell-cublaslt-plan-selector-o-qkv256-unpoole
+worktree: .worktrees/muse_bf16_proj/bf16-verify-per-cell-cublaslt-plan-selector-o-qkv256-unpoole
+mode: check
+restack_of: null
+stale_base: null
 ---
 
 # bf16-verify-per-cell-cublaslt-plan-selector-o-qkv256-unpoole
