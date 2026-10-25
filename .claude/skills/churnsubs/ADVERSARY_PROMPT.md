@@ -18,7 +18,10 @@ Answer these, adversarially:
 A. **Justification.** Is the stated mechanism plausible on this hardware for these shapes? Does
    the profile data in FINDINGS support it (which kernels, how many µs, how far from the
    speed-of-light floor)? Are the `expected` shapes and directions consistent with the shape
-   weights and floors in TASK.md? Name the weakest link in the argument.
+   weights and floors in TASK.md? Name the weakest link in the argument. Check the `prior`
+   field (the closest earlier attempt and what differs) against that slug's file and outcome,
+   and FINDINGS' "Do not try" list: is the difference real, or is this the same mechanism again?
+   A `prior: none` that has an obvious earlier attempt is grounds for hold.
 B. **Confounding by what already landed.** For each landed hypothesis that touches the same
    area, the same launch sequence, the same memory traffic, or the same numerical path: could a
    gain or loss measured for this hypothesis be caused by the interaction rather than by the

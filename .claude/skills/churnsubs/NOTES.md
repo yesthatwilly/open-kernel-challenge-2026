@@ -68,3 +68,46 @@ outside the skill.
 `_scalar` now parses `[a, b]` flow lists, so `speedup_ci: [lo, hi]` reads back as floats.
 Before the fix `promote` crashed on the first real gain ("'<=' not supported between
 instances of 'str' and 'float'") and the gain sat in `done/gain` unmerged for a tick.
+
+## Judging, confirm reruns, diagnosis (added 2026-10-25)
+Prompted by a read of github.com/Dogacel/auto-gpu-kernel (MLSys 2026 FlashInfer DSA winner) and an
+adversarial Opus review of the plan. Of 193 neutral results, 106 were `unproven-vs-best` (faster
+than the best, not proven) and about 30 neutrals had been landed by hand: the CI-overlap gain rule
+(`lo > best.ci.hi`) was the bottleneck, not the ideas.
+- **Measured drift.** 22 independent identical-code pairs (a check and its scored submit, from
+  `archive/<slug>/<job>.okc.json.gz`) differ by 0.4% mean, 1.01% max: one run's headline sd is
+  ~0.35% (`SIGMA_RUN`), while okc's 95% CI is a near-constant ±1.5%. 13 further pairs returned
+  exactly the same number: okc deduplicated them (identical bytes), e.g. fused-preattention-triton's
+  check → dfee6f2939974bad. LESSONS.md's "not deduplicated" line was wrong.
+- **Rule.** gain iff `s > best * (1 + margin(runs))`, `margin = GAIN_Z * SIGMA_RUN * sqrt(1/runs + 1)`,
+  `GAIN_Z = 2.5`: 1.24% one run, 1.07% pooled. At Z 2 (0.99%) two of the 22 pairs sat on the line.
+  `reclassify` (dry) says 31 past `unproven-vs-best` results would have been gains (11 of them were
+  hand-landed). Regression/beats-base use the same margin against the base.
+- **Confirm reruns** (`kind: confirm`, slug `<parent>-cf`; a prefix would collide with find_hyp's
+  `-<slug>.md` suffix match). Queued by harvest when an unproven result clears the best by
+  `CONFIRM_MIN` 0.5%, and from the backlog by `reclassify --queue-confirms` (3/problem/day). Claim
+  bases it on the parent's impl_commit and appends a marker comment so okc re-times it;
+  commit-impl skips the duplicate check for it; checks only, `CONFIRM_SHARE` 25% of the day's
+  checks from the non-rewrite side. Harvest pools (mean; CI half-width sqrt(w1²+w2²)/2), writes
+  `pooled` into the parent's result.json, and moves a pooled gain to done/gain (`gain-pooled`,
+  `runs: 2`). A deduplicated rerun pools nothing (`confirm_outcome: deduplicated`).
+  Validated in a scratch clone (queue → claim → commit-impl → prepare-run → synthetic harvest →
+  parent in done/gain → promote picked the parent, unmerged because master moved; dedup path).
+  Not yet validated against the live judge: the first real confirm will show whether a trailing
+  comment defeats okc's dedup.
+- **expire-holds**: holds older than 24 h whose reason does not mention the user, and confirms
+  whose parent stopped mattering, move to `done/expired/` (not run; slugs stay taken). First
+  dry run: 52 items, mostly FA3-path holds made moot by master.
+- **FINDINGS**: a mechanical "Do not try" list (regressions, within-ci, rejected, unconfirmed;
+  rewrite stages exempt), generic per-outcome follow-ups dropped, a pointer to DIAGNOSIS.md.
+- **Daily diagnosis**: `tick` reports `diagnose` (DIAGNOSIS.md missing or not from today);
+  churnsubs step 1b runs `hypothesize/RESEARCH_PROMPT.md` per problem on Opus. /hypothesize reads
+  it first and mints its Actions first. LESSONS edits it proposes are applied by churnsubs.
+- **`hyp.py new --prior`**: closest earlier slug and what differs (or `none`), required except for
+  companions; 40+ characters when the prior is a regression, within-ci or rejected. The
+  adversary checks it.
+- **Evaluated and dropped**: a brainstorm step on the RC gateway (`127.0.0.1:7000`,
+  muse-spark-open and kimi-k2-7-code). Every one of 4 probe ideas duplicated earlier or queued
+  work and 3 of 4 misread master; triage by Opus would cost more than Opus writing the ideas.
+  Also dropped: a workload inspector (value-dependent branches are forbidden; TASK.md already
+  gives shapes and floors).

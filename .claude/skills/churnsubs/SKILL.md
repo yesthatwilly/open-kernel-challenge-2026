@@ -37,12 +37,14 @@ C="python3 -I $CLAUDE_PROJECT_DIR/.claude/skills/churnsubs/bin/churn.py"
 ## Fixed rules
 
 - **Never create a hypothesis file yourself.** The only hypotheses churnsubs causes to exist are
-  the A/B companions the adversarial reviewer specifies (step 4). If the queue is empty, report
-  the shortfall and suggest `/hypothesize`. Never "fix" a failed hypothesis by re-running it: identical code is never re-run,
-  and a fix is a new hypothesis for /hypothesize to mint.
-- **One run per hypothesis.** `check` while the problem has checks left, else a scored `submit`
-  (never a scored run for `risk: high`). The board shows only the best run, so a slow scored run
-  costs nothing in rank.
+  the A/B companions the adversarial reviewer specifies (step 4) and the `kind: confirm` reruns
+  churn.py queues itself (see Judging). If the queue is empty, report the shortfall and suggest
+  `/hypothesize`. Never "fix" a failed hypothesis by re-running it: a fix is a new hypothesis for
+  /hypothesize to mint.
+- **One run per hypothesis**, plus at most one confirm rerun of an unproven result (the user,
+  2026-10-25: "yes, auto-confirm"). `check` while the problem has checks left, else a scored
+  `submit` (never a scored run for `risk: high`, never for a confirm). The board shows only the
+  best run, so a slow scored run costs nothing in rank.
 - **Spend to 100% when prudent.** Prudent means: lint-clean, rules reviewed, not superseded by a
   landed finding, not a duplicate. It never means spending a run on a hypothesis you judge weak:
   `hold` it with a reason and let the shortfall show in the index.
@@ -56,18 +58,29 @@ C="python3 -I $CLAUDE_PROJECT_DIR/.claude/skills/churnsubs/bin/churn.py"
 ## The tick
 
 1. **Plan.** `$C tick` → JSON with `promote` (scored submits to run), `dispatch` (per-problem
-   picks with mode), `wake_s`, `needs_human`, and the sub-reports. It already ran preflight (lock,
-   master, okc signed in), intake (commits new queue files that pass lint), recover, harvest,
-   harvest-promotions, promote (merged gains + wrote their submit attempt files), budget, index.
+   picks with mode), `diagnose` (problems due a diagnosis), `wake_s`, `needs_human`, and the
+   sub-reports. It already ran preflight (lock, master, okc signed in), intake (commits new queue
+   files that pass lint, and any new DIAGNOSIS.md), recover, expire-holds (stale holds and moot
+   confirms to `done/expired/`), harvest (pools confirms, queues new ones), harvest-promotions,
+   promote (merged gains + wrote their submit attempt files), reclassify --queue-confirms (the
+   older backlog, 3 per problem per day), budget, index.
    Exit 2 = refused (another tick holds the lock, or the main tree is not on master): stop and say
    why. Anything in `needs_human`: report it and still continue with the rest.
+1b. **Diagnosis (Opus), once per problem per UTC day.** For each problem in `diagnose`, spawn
+   `Agent` (`subagent_type: general-purpose`, **`model: opus`**) with
+   `.claude/skills/hypothesize/RESEARCH_PROMPT.md`, `{PROBLEM}` and `{REPO}` filled in, in
+   parallel with step 4. Quote the predicted cost from COSTS.md first. It writes
+   `<p>/hypotheses/DIAGNOSIS.md`; the next tick's intake commits it. Apply its "LESSONS edits"
+   to `hypotheses/LESSONS.md` yourself, one `churn.py note <p> diagnosis "<edit and why>"` per
+   edit. Its Actions are what `/hypothesize <p>` mints first when you refill the queue.
 2. **Report the harvest** in one or two lines per result: slug → outcome, speedup and CI, the
    attribution summary from its `.result.json`. Mention gains that were merged or are `unmerged`.
 3. **Promotions.** For each entry in `promote`, run its `run` command verbatim, then
    `$C record-submit <p> <slug> '<okc output>'`.
 4. **Adversarial review (Opus), one subagent per pick, in parallel.** Every hypothesis is
    attacked by a fresh Opus context before it is claimed; `claim` refuses anything whose
-   frontmatter is not `review: proceed`. For each pick whose `review` is not `proceed`:
+   frontmatter is not `review: proceed`. Confirms arrive as `review: proceed` (they test no new
+   idea). For each pick whose `review` is not `proceed`:
    - Gather its inputs: `$C landed <p>` (hypotheses already on master's kernel, with patch
      paths), the hypothesis path, `<p>/hypotheses/FINDINGS.md`, `BEST.json`, the base
      `submission.py` (master, or the parent's worktree for an A/B companion), and the other
@@ -99,6 +112,8 @@ C="python3 -I $CLAUDE_PROJECT_DIR/.claude/skills/churnsubs/bin/churn.py"
      must hand-merge the parent's patch (`restack_patch`) before the hypothesis's own change. Companions
      and rewrite stages still build on the parent's commit; `stale_base: true` flags one whose parent
      predates master's current submission.py.
+   - A `kind: confirm` pick skips 5b: `claim` already based it on the parent's `impl_commit`,
+     appended the marker comment and wrote its notes and Rules check. Go straight to 5c.
    - 5b **Implement** (a subagent per pick, briefed with `IMPLEMENT_PROMPT.md`) the `change` in `<worktree>/<p>/submission.py` exactly as specified,
      modestly, touching only the named area; keep the first-line marker. Then edit the hypothesis
      file (its `md` path, on master) and write `## Implementation notes` (what you changed, where,
@@ -132,10 +147,26 @@ last 2 hours, so the split never leaves a check unspent. When a problem has no e
 that is a shortfall to fix by minting one (`/hypothesize <p> --kind rewrite`), not by spending the
 share on primaries all day.
 
+## Judging and confirm reruns
+
+`classify` judges a run against the best on measured drift, not on overlap of okc's CIs (okc's
+95% CI is a near-constant ±1.5%, 3-4x wider than real drift). One run's headline has sd
+`SIGMA_RUN` ≈ 0.35% (22 identical-code pairs, check vs scored submit, 2026-10-25); a **gain** must
+beat the best by `margin()` = 2.5 sd of the difference: 1.24% for one run, 1.07% for two pooled.
+A result above the best but inside that margin is `unproven-vs-best`; if it clears the best by
+`CONFIRM_MIN` (0.5%), harvest queues one `<slug>-cf` confirm: the parent's code plus a trailing
+comment (okc dedups identical bytes, so without it the judge returns the old job). Confirms run
+first, as checks only, within `CONFIRM_SHARE` (25%) of the day's checks, carved out of the
+non-rewrite side. Their harvest pools the two runs; a pooled gain moves the parent to `done/gain`
+(`gain-pooled`) for the normal promote path, logged in DECISIONS.md. A deduplicated rerun pools
+nothing. `churn.py reclassify` shows what the rule would change on past results without moving
+them.
+
 ## What to tell the user each tick
 
-Three lines unless something needs them: what was harvested (outcome per slug), what the
-adversary said (verdict per slug, companions queued), what was dispatched (slug, mode, job id),
+Three lines unless something needs them: what was harvested (outcome per slug, and for a
+confirm the pooled verdict of its parent), what the adversary said (verdict per slug, companions
+queued), diagnoses written (strategy and top action), what was dispatched (slug, mode, job id),
 and the budget line per problem (checks left / scored left /
 in flight / shortfall + reason). `needs_human` items and `unmerged` gains always get their own
 line with the file path.

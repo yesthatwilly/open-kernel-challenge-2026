@@ -31,7 +31,9 @@ H="python3 -I $CLAUDE_PROJECT_DIR/.claude/skills/hypothesize/bin/hyp.py"
 ## Procedure
 
 1. `$H context <problem>` → the files to read, the current best, the queue, done slugs, area
-   hints. Read `hypotheses/LESSONS.md` (cross-problem measured facts) and **FINDINGS.md first** (learnings by area, open follow-ups, do-not-retry, where the
+   hints. If `DIAGNOSIS.md` is listed, read it first: it is today's clean-context diagnosis and
+   its **Actions** are minted before your own ideas, its **Do not try** is binding. Read
+   `hypotheses/LESSONS.md` (cross-problem measured facts) and **FINDINGS.md** (learnings by area, open follow-ups, Do not try, where the
    best spends its time), then TASK.md (shapes, weights, floors, tests, rules), `baseline.py`
    (SGLang's pipeline: the named parts a hypothesis may touch), and master's `submission.py`
    (what the next hypothesis will be built on). For `all`, spawn one subagent per problem with
@@ -43,12 +45,17 @@ H="python3 -I $CLAUDE_PROJECT_DIR/.claude/skills/hypothesize/bin/hyp.py"
    shapes, (d) stacked ideas with `depends_on` on a landed or pending gain. Never: top-k/sparse
    attention, precision below what the rules allow, caching anything derived from inputs, host
    syncs, work outside the timed call. Do not duplicate a queued/running/done slug or a
-   do-not-retry entry.
+   Do-not-try entry. **Size for the judge:** a gain must beat the best by ~1.2% on the headline
+   (1.07% after a confirm rerun; churn.py `margin()`), so an idea whose weighted effect is
+   smaller can only land stacked with others: say so, or stack it.
 3. For each idea run `$H new` with: `--slug` (short, kebab), `--area` (one named part),
    `--change` (a paragraph a different engineer could implement without asking: which function,
    which call, what replaces what, what stays), `--expected` (JSON list of
    `{shapes: glob over shape keys like "layer=sliding load=decode_*", direction, why}`),
-   `--risk`, `--priority` (1 = first), `--depends-on` when stacking, `--notes` for the risk text.
+   `--risk`, `--priority` (1 = first), `--depends-on` when stacking, `--notes` for the risk text,
+   and **`--prior "<closest earlier slug>: what differs this time"`** (or `none`; required). Find
+   the closest earlier attempt of the same mechanism before writing the change; when it was a
+   regression, flat (`within-ci`) or rejected, `hyp.py` wants 40+ characters on what differs.
    The command lints the file and prints its path; on an error, fix the arguments and retry.
    **Rewrites.** When FINDINGS show a subsystem far from its floor (2x or more) and tuning the
    incumbent has stopped paying, mint `--kind rewrite --replaces "<kernels replaced>" --stage 1`:

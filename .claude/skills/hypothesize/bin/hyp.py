@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """hyp.py — write, lint and list hypothesis files for /hypothesize.
 
-  hyp.py new --problem P --slug S --area A --change TEXT [--expected JSON] [--risk low|medium|high]
+  hyp.py new --problem P --slug S --area A --change TEXT --prior "SLUG: what differs"|none [--expected JSON] [--risk low|medium|high]
              [--depends-on SLUG] [--priority N] [--notes TEXT]
   hyp.py list [P]            queue / running / done per problem, one line each
   hyp.py lint FILE           same check churn.py intake applies
@@ -63,6 +63,30 @@ def unique_slug(p, slug):
     return f"{slug}-{n}"
 
 
+def check_prior(p, a):
+    """`--prior "<slug>: what differs this time"` (or `none`): the closest earlier attempt, so nobody
+    re-mints a measured dead end without saying why this one is different. Companions are exempt."""
+    if a.kind in ("ab-revert", "ab-tune", "control"):
+        return a.prior
+    if not a.prior:
+        print("--prior is required: '<closest earlier slug>: what differs this time', or 'none'", file=sys.stderr)
+        sys.exit(2)
+    if a.prior.strip().lower() == "none":
+        return "none"
+    slug, _, differs = a.prior.partition(":")
+    path, where = churn.find_hyp(p, slug.strip())
+    if not path:
+        print(f"--prior {slug.strip()} not found in {p}", file=sys.stderr)
+        sys.exit(2)
+    h = churn.read_hyp(path)
+    dead = where in ("done/regression", "done/rejected") or h.get("verdict_detail") == "within-ci"
+    if dead and len(differs.strip()) < 40:
+        print(f"--prior {slug.strip()} is a measured dead end ({where}, {h.get('verdict_detail')}): say in 40+ "
+              "characters what is different this time", file=sys.stderr)
+        sys.exit(2)
+    return f"{slug.strip()}: {differs.strip()}" if differs.strip() else slug.strip()
+
+
 def cmd_new(a):
     p = problem_of(a.problem)
     slug = re.sub(r"[^a-z0-9-]+", "-", a.slug.lower()).strip("-")[:60]
@@ -76,6 +100,7 @@ def cmd_new(a):
         if not dp:
             print(f"depends_on {a.depends_on} not found in {p}", file=sys.stderr)
             sys.exit(2)
+    prior = check_prior(p, a)
     created = dt.datetime.now(dt.timezone.utc).strftime("%Y-%m-%dT%H%M%SZ")
     fm = ["---", f"problem: {p}", f"slug: {slug}", f"created: {created}", "base: master",
           f"area: {yaml_scalar(a.area)}", f"change: {folded(a.change)}"]
@@ -88,7 +113,7 @@ def cmd_new(a):
     else:
         fm.append("expected: []")
     fm += [f"risk: {a.risk}", f"depends_on: {yaml_scalar(a.depends_on)}", f"priority: {a.priority}",
-           f"kind: {a.kind}", f"controls_for: {yaml_scalar(a.controls_for)}"]
+           f"kind: {a.kind}", f"controls_for: {yaml_scalar(a.controls_for)}", f"prior: {yaml_scalar(prior)}"]
     if a.kind == "rewrite":
         fm += [f"rewrite_stage: {a.stage}", f"replaces: {yaml_scalar(a.replaces or a.area)}"]
     fm += ["review: required", "status: queued", "---"]
@@ -133,9 +158,11 @@ def cmd_context(a):
     p = problem_of(a.problem)
     hd = os.path.join(REPO, p, "hypotheses")
     best = churn.load_best(p)
+    diag = [f"{p}/hypotheses/DIAGNOSIS.md"] if os.path.exists(os.path.join(hd, "DIAGNOSIS.md")) else []
     print(json.dumps({
         "problem": p,
-        "read_first": [f"{p}/hypotheses/FINDINGS.md", f"{p}/TASK.md", f"{p}/baseline.py", f"{p}/submission.py", "rules/technical-rules.llms.txt"],
+        "read_first": diag + [f"{p}/hypotheses/FINDINGS.md", f"{p}/TASK.md", f"{p}/baseline.py", f"{p}/submission.py", "rules/technical-rules.llms.txt"],
+        "diagnosis_due": p in churn.diagnose_due(),
         "best": best,
         "queue": [h.get("slug") for h in churn.all_hyps(p) if h["_where"] in ("queue", "running")],
         "done": [(h.get("slug"), h.get("outcome")) for h in churn.all_hyps(p) if h["_where"].startswith("done/")],
@@ -157,6 +184,7 @@ def main():
     x.add_argument("--stage", type=int, default=1, help="rewrite only: stage number (1 = first cut)")
     x.add_argument("--replaces", help="rewrite only: the kernels/subsystem being replaced, e.g. 'Marlin w13+w2 at bs<=8'")
     x.add_argument("--controls-for", help="slug of the hypothesis this companion is an A/B control for")
+    x.add_argument("--prior", help="'<closest earlier slug>: what differs this time', or 'none' (required except for companions)")
     x.set_defaults(fn=cmd_new)
     x = sp.add_parser("list"); x.add_argument("problem", nargs="?"); x.set_defaults(fn=cmd_list)
     x = sp.add_parser("lint"); x.add_argument("file"); x.set_defaults(fn=cmd_lint)

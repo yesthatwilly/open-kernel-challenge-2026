@@ -35,10 +35,20 @@ ALIASES = {
     "moe": "muse_moe_w4a16", "w4a16": "muse_moe_w4a16",
     "prefill": "muse_prefill_layer", "prefill_layer": "muse_prefill_layer",
 }
-OUTCOMES = ["gain", "neutral", "regression", "failed", "rejected"]
+OUTCOMES = ["gain", "neutral", "regression", "failed", "rejected", "expired"]
 MAX_IN_FLIGHT = 8          # M: per problem
 PER_TICK_CAP = 4           # C: per problem per tick
 REWRITE_SHARE = 0.4        # share of each day's checks kept for kind: rewrite (user, 2026-10-24)
+# Judging. okc's 95% CI is a near-constant +-1.5% and 3-4x wider than real run-to-run drift: 22
+# independent repeat pairs of identical code (check vs its scored submit, 2026-10-25) differed by
+# 0.4% mean, 1.01% max, sd 0.5% for the pair, so one run's headline has sd ~0.35%.
+SIGMA_RUN = 0.0035         # relative sd of one run's headline speedup
+GAIN_Z = 2.5               # a gain must clear Z sd of the difference: 1.24% for one run, 1.07% pooled.
+                           # At Z 2 (0.99%) two of the 22 identical-code pairs sat on the line.
+CONFIRM_MIN = 0.005        # an unproven result this far above the best earns one confirm rerun
+CONFIRM_SHARE = 0.25       # share of each day's checks kept for confirm reruns (user, 2026-10-25)
+CONFIRM_BACKLOG_PER_DAY = 3  # older unproven results queued for a confirm per problem per day
+HOLD_EXPIRE_H = 24.0       # a hold this old (not waiting on the user) moves to done/expired
 GLOBAL_TICK_CAP = 6
 SUBMIT_FLOOR = 1.0         # a check-proven gain is promoted with a scored run only if ci.low >= this
 STALE_H = 6.0              # queued this long: no longer counts as in flight
@@ -609,22 +619,28 @@ def classify(res, best, base):
     if s is None or lo is None:
         return "failed", "no-speedup-in-result"
     B = (best or {}).get("speedup") or 0.0
-    Bhi = ((best or {}).get("ci") or [B, B])[1] or B
     b = (base or {}).get("speedup") if base else None
     if b is None:
         b = B
     elif b > B:
         # A base merged without a scored submit can be ahead of BEST.json; a gain must beat it too.
-        B, Bhi = b, ((base or {}).get("speedup_ci") or [b, b])[1] or b
-    if lo > max(B, Bhi) and s > B:
-        return "gain", "gain"
+        B = b
+    # Judged on measured drift (SIGMA_RUN), not on overlap of okc's CIs; a pooled confirm has runs=2.
+    m = margin(res.get("runs") or 1)
+    if s > B * (1 + m):
+        return "gain", "gain" if (res.get("runs") or 1) == 1 else "gain-pooled"
     if s > B:
         return "neutral", "unproven-vs-best"
-    if hi < b:
+    if s < b * (1 - m):
         return "regression", "regression"
-    if lo > b:
+    if s > b * (1 + m):
         return "neutral", "beats-base-not-best"
     return "neutral", "within-ci"
+
+
+def margin(runs=1, best_runs=1):
+    """Relative difference a result of `runs` pooled runs must clear against a one-run best."""
+    return GAIN_Z * SIGMA_RUN * math.sqrt(1 / runs + 1 / best_runs)
 
 
 # ----------------------------------------------------------------------------- subcommands
@@ -661,8 +677,14 @@ def cmd_intake(a):
             continue
         git("add", "--", f)
         added.append(f)
+    for p in PROBLEMS:
+        # the day's clean-context diagnosis (written by the research subagent) rides with the intake
+        dg = f"{p}/hypotheses/DIAGNOSIS.md"
+        if os.path.exists(os.path.join(REPO, dg)) and git("status", "--porcelain", "--", dg).strip():
+            git("add", "--", dg)
+            added.append(dg)
     if added:
-        git("commit", "-q", "-m", f"churn: intake {len(added)} hypotheses\n\n" + "\n".join(added))
+        git("commit", "-q", "-m", f"churn: intake {len(added)} files\n\n" + "\n".join(added))
     out({"ok": True, "added": added, "skipped": skipped}, 0 if (added or not skipped) else 0)
 
 
@@ -841,8 +863,7 @@ def _harvest_one(p, h, job, sj):
         base["_path"] = base_path
     res["attribution"] = attribute(res, base, h) if res.get("shapes") else None
     outcome, detail = classify(res, best, base)
-    if res.get("mode") == "submit" and outcome == "gain":
-        pass  # promotion bookkeeping below
+    pooled = _pool_confirm(p, h, job, res, best) if h.get("kind") == "confirm" else None
     ddir = hdir(p, "done", outcome)
     os.makedirs(ddir, exist_ok=True)
     new_md = os.path.join(ddir, os.path.basename(h["_path"]))
@@ -867,6 +888,8 @@ def _harvest_one(p, h, job, sj):
     lines.append(f"- best at harvest: {json.dumps({k: best.get(k) for k in ('speedup', 'ci', 'job')} ) if best else 'none'}; base result: {base_path or 'SGLang (no base result)'}")
     lines.append(f"- **outcome: {outcome}** ({detail})")
     lines.append(f"- files: `{rel(rj)}`, `{rel(os.path.join(ddir, slug + '.patch'))}`; branch `{h.get('branch')}`")
+    if pooled:
+        lines.append(f"- confirm of `{h.get('confirm_of')}`: {pooled['note']}")
     set_section(new_md, "Result", "\n".join(lines))
     if res.get("attribution"):
         at = res["attribution"]
@@ -876,25 +899,30 @@ def _harvest_one(p, h, job, sj):
         extra = f"\n\n{at['summary']}." + (f" Expected hit: {at['expected_hit']}." if at.get("expected_hit") else "") + f" Noise ±{at['noise']*100:.1f}%."
         set_section(new_md, "Attribution", "\n".join(tbl) + extra)
     fu = []
-    if str(h.get("kind") or "") == "rewrite":
+    if pooled:
+        fu.append(f"- pooled verdict for `{h.get('confirm_of')}`: {pooled['outcome']} ({pooled['detail']}); this file is the record of the rerun only.")
+    elif str(h.get("kind") or "") == "rewrite":
         fu.append(f"- rewrite stage {h.get('rewrite_stage') or 1} of `{h.get('replaces') or h.get('area')}`: read the replaced kernels' own us per shape "
                   f"(profile top_kernels) against the incumbent and the floor, and check which Milestone it reached. The next stage is "
                   f"`/hypothesize {p} \"<what to fix or tune>\" --kind rewrite --depends-on {slug} --stage {int(h.get('rewrite_stage') or 1) + 1}`; "
                   "a slow or failed first cut is the expected start, not a do-not-retry.")
     if outcome == "failed" and res.get("first_failing"):
         fu.append(f"- first failing case {json.dumps(res['first_failing'].get('case'))}: {res['first_failing'].get('message')}. Suggest `/hypothesize {p} \"fix {slug}: ...\"` with the fix as its own change.")
+    elif outcome == "neutral" and detail == "unproven-vs-best":
+        fu.append("- unproven-vs-best: faster than the best but inside the drift margin; churn queues one confirm rerun when the margin allows (CONFIRM_MIN), and pools the two runs.")
     elif outcome == "neutral":
-        fu.append(f"- {detail}: the change is not proven either way; a stacked hypothesis (`depends_on: {slug}`) that adds a further change in the same area is the only way to learn more (identical code is never re-run).")
+        fu.append(f"- {detail}: the change is not proven either way; a stacked hypothesis (`depends_on: {slug}`) that adds a further change in the same area is the only way to learn more.")
     elif outcome == "regression" and str(h.get("kind") or "") != "rewrite":
         fu.append("- record which shapes lost (Attribution) and do not retry this area in this form.")
     elif outcome == "gain":
         fu.append("- candidate for promotion; stack further changes with `depends_on` once it lands.")
     set_section(new_md, "Follow-ups", "\n".join(fu) or "- none")
+    promotion = ("pending" if outcome == "gain" and res.get("mode") != "submit" else ("onboard" if outcome == "gain" else None))
+    if h.get("kind") == "confirm":
+        promotion = "via-parent" if outcome == "gain" else None  # the parent carries the code and the promotion
     fm_set(new_md, stage="harvested", status="done", outcome=outcome, verdict_detail=detail,
            speedup=s, speedup_ci=ci if s is not None else None, harvested_at=ts(),
-           best_at_harvest=(best or {}).get("speedup"),
-           promotion=("pending" if outcome == "gain" and res.get("mode") != "submit" else
-                      ("onboard" if outcome == "gain" else None)))
+           best_at_harvest=(best or {}).get("speedup"), promotion=promotion)
     # carry the attempt file from the branch
     if h.get("attempt_file") and h.get("branch"):
         git("checkout", h["branch"], "--", f"{p}/attempts/{h['attempt_file']}", check=False)
@@ -909,18 +937,106 @@ def _harvest_one(p, h, job, sj):
         git("add", "-A", "--", rel(archive_job(p, slug, job, sj)))
     except Exception as e:  # archiving must never block a harvest
         print(f"warning: archive of {slug} failed: {e}", file=sys.stderr)
-    git("add", "-A", "--", rel(ddir), rel(hdir(p, "running")))
+    git("add", "-A", "--", rel(hdir(p, "done")), rel(hdir(p, "running")))
     msg = f"churn({p}): {slug} → {outcome} (job {job}" + (f", {s:.4f}x [{ci[0]:.4f},{ci[1]:.4f}]" if s is not None else "") + ")"
+    if pooled:
+        msg += f"; pooled {h.get('confirm_of')} → {pooled['outcome']}"
     git("commit", "-q", "-m", msg)
     # a gain measured by a scored run is already on the board: land it on master now
-    if outcome == "gain" and res.get("mode") == "submit":
+    if outcome == "gain" and res.get("mode") == "submit" and h.get("kind") != "confirm":
         _land(p, read_hyp(new_md), res, rel(rj), submitted_job=job)
+    # one confirm rerun for a result that beat the best by less than the drift margin
+    if (outcome, detail) == ("neutral", "unproven-vs-best") and h.get("kind") != "confirm" and res.get("mode") == "check" \
+            and best and s >= best["speedup"] * (1 + CONFIRM_MIN):
+        _queue_confirm(p, read_hyp(new_md), job, "harvest")
     # worktree cleanup (branch stays)
     wt = os.path.join(WORKTREES, p, slug)
-    keep = outcome == "gain"
+    keep = outcome == "gain" and h.get("kind") != "confirm"
     if os.path.isdir(wt) and not keep:
         git("worktree", "remove", "--force", wt, check=False)
     return {"problem": p, "slug": slug, "job": job, "outcome": outcome, "detail": detail, "speedup": s, "ci": ci, "md": rel(new_md)}
+
+
+def _pool_confirm(p, h, job, res, best):
+    """Pool a confirm rerun with its parent's run. The parent moves to done/gain when the pair clears
+    the two-run margin. Returns {outcome, detail, note} about the parent for the confirm's record."""
+    parent = str(h.get("confirm_of") or h.get("depends_on") or "")
+    ppath, where = find_hyp(p, parent)
+    if not ppath or not (where or "").startswith("done/"):
+        return {"outcome": "skipped", "detail": "parent-not-done", "note": f"parent `{parent}` is {where}; nothing pooled"}
+    prj = os.path.join(hdir(p, where), f"{parent}.result.json")
+    pres = json.load(open(prj)) if os.path.exists(prj) else {}
+    if pres.get("speedup") is None or not pres.get("speedup_ci") or res.get("speedup") is None or not res.get("passed"):
+        fm_set(ppath, confirm_job=job, confirm_outcome="no-result")
+        return {"outcome": "skipped", "detail": "no-result", "note": "one of the two runs has no speedup; nothing pooled"}
+    if res.get("duplicate_of"):
+        # okc returned an earlier job's result: pooling it would count one run twice
+        fm_set(ppath, confirm_job=job, confirm_outcome="deduplicated")
+        return {"outcome": "skipped", "detail": "deduplicated", "note": f"okc deduplicated the rerun to `{res['duplicate_of']}`; nothing new to pool"}
+    s1, s2 = pres["speedup"], res["speedup"]
+    w1 = (pres["speedup_ci"][1] - pres["speedup_ci"][0]) / 2
+    w2 = ((res.get("speedup_ci") or [s2, s2])[1] - (res.get("speedup_ci") or [s2, s2])[0]) / 2
+    sp, hw = (s1 + s2) / 2, math.sqrt(w1 * w1 + w2 * w2) / 2
+    ph = read_hyp(ppath)
+    base, _ = base_result_for(p, ph, best)
+    oc, det = classify(dict(pres, speedup=sp, speedup_ci=[sp - hw, sp + hw], runs=2), best, base)
+    B = (best or {}).get("speedup") or 0.0
+    note = (f"pooled {s1:.4f}x (job {pres.get('job')}) and {s2:.4f}x (job {job}) → {sp:.4f}x; best {B:.4f}x, "
+            f"two-run margin {margin(2) * 100:.2f}% → {oc} ({det})")
+    pres["pooled"] = {"jobs": [pres.get("job"), job], "speedups": [s1, s2], "speedup": sp, "ci": [sp - hw, sp + hw],
+                      "outcome": oc, "detail": det, "best": B, "at": ts()}
+    json.dump(pres, open(prj, "w"), indent=1)
+    open(prj, "a").write("\n")
+    upd = {"confirm_job": job, "confirm_outcome": oc, "pooled_speedup": sp}
+    if oc == "gain" and where != "done/gain":
+        gdir = hdir(p, "done", "gain")
+        os.makedirs(gdir, exist_ok=True)
+        for f in (os.path.basename(ppath), f"{parent}.patch", f"{parent}.result.json"):
+            if os.path.exists(os.path.join(hdir(p, where), f)):
+                git("mv", rel(os.path.join(hdir(p, where), f)), rel(os.path.join(gdir, f)))
+        ppath = os.path.join(gdir, os.path.basename(ppath))
+        upd.update(outcome="gain", verdict_detail="gain-pooled", speedup=sp, speedup_ci=[sp - hw, sp + hw], runs=2, promotion="pending")
+        log_decision(p, parent, f"confirm {h['slug']}: {note}; moved from {where} to done/gain")
+    fm_set(ppath, **upd)
+    git("add", "--", rel(ppath))
+    return {"outcome": oc, "detail": det, "note": note}
+
+
+def _queue_confirm(p, ph, job, why):
+    """Queue one `kind: confirm` rerun of a finished hypothesis: its own code plus one trailing comment
+    (okc dedups identical bytes), checked and pooled at harvest. Never twice, never of a confirm."""
+    if ph.get("confirm_queued") or ph.get("kind") == "confirm" or not ph.get("impl_commit"):
+        return None
+    # a suffix, not a prefix: find_hyp matches filenames by `-<slug>.md`, so "cf-<parent>" would be
+    # found when looking up the parent itself
+    taken = {x.get("slug") for x in all_hyps(p)}
+    stem = str(ph["slug"])[:58].rstrip("-") + "-cf"
+    slug, n = stem, 2
+    while slug in taken:
+        slug, n = f"{stem}{n}", n + 1
+    created = ts()
+    path = os.path.join(hdir(p, "queue"), f"{created}-{slug}.md")
+    change = (f"Confirmation rerun of {ph['slug']}: its implementation commit {ph['impl_commit']} unchanged except one "
+              f"trailing comment, run as a check and pooled with job {job} at harvest.")
+    B = (load_best(p) or {}).get("speedup")
+    fm = ["---", f"problem: {p}", f"slug: {slug}", f"created: {created}", "base: master",
+          f"area: {json.dumps(str(ph.get('area') or '?'))}", f"change: {json.dumps(change)}", "expected: []", "risk: low",
+          f"depends_on: {ph['slug']}", "priority: 1", "kind: confirm", f"controls_for: {ph['slug']}",
+          f"confirm_of: {ph['slug']}", f"confirm_of_job: {job}", "review: proceed", "status: queued", "---"]
+    body = [f"# {slug}", "", "## Change", "", change, "", "## Why", "",
+            f"Queued by churn.py ({why}): `{ph['slug']}` ran {ph.get('speedup') or 0:.4f}x against best {B or 0:.4f}x, above the best but inside "
+            f"the one-run margin ({margin(1) * 100:.2f}%). Two pooled runs need {margin(2) * 100:.2f}%. No new idea is tested, so it "
+            "skips the adversarial review; the user sanctioned confirm reruns on 2026-10-25.", ""]
+    open(path, "w").write("\n".join(fm) + "\n\n" + "\n".join(body))
+    errs, _ = lint_hyp(path, p)
+    if errs:
+        os.remove(path)
+        print(f"warning: confirm of {ph['slug']} not queued: {errs}", file=sys.stderr)
+        return None
+    fm_set(ph["_path"], confirm_queued=slug)
+    git("add", "--", rel(path), rel(ph["_path"]))
+    git("commit", "-q", "-m", f"churn({p}): queue confirm {slug} of {ph['slug']} ({why})", check=False)
+    return slug
 
 
 def _master_blob(p):
@@ -983,7 +1099,7 @@ def cmd_promote(a):
             for f in list_md(hdir(p, "done", o)):
                 h = read_hyp(os.path.join(hdir(p, "done", o), f))
                 # a neutral is a candidate only once `land` merged it by hand on its per-shape rows
-                if o == "neutral" and not h.get("hand_landed"):
+                if (o == "neutral" and not h.get("hand_landed")) or h.get("kind") == "confirm":
                     continue
                 if h.get("promotion") in (None, "pending", "merged") and h.get("mode") != "submit":
                     h["_dir"] = o
@@ -997,8 +1113,7 @@ def cmd_promote(a):
         h = cands[0]
         s, ci = h.get("speedup") or 0, h.get("speedup_ci") or [0, 0]
         B = (best or {}).get("speedup") or 0
-        Bhi = ((best or {}).get("ci") or [B, B])[1] or B
-        if ci[0] <= max(B, Bhi) and (best or {}).get("slug") != h["slug"] and not h.get("hand_landed"):
+        if s <= B * (1 + margin(h.get("runs") or 1)) and (best or {}).get("slug") != h["slug"] and not h.get("hand_landed"):
             fm_set(h["_path"], promotion="superseded", promotion_reason=f"best is now {B}")
             git("add", "--", rel(h["_path"]))
             git("commit", "-q", "-m", f"churn({p}): {h['slug']} superseded", check=False)
@@ -1145,6 +1260,13 @@ def _eligible_queue(p):
                 # a slow or failing first cut is the expected start of a rewrite, not a dead end
                 if not parent.get("impl_commit") or where == "done/rejected" or not where.startswith("done/"):
                     continue
+            elif h.get("kind") == "confirm":
+                # a confirm only means something while its parent is an unproven neutral that still
+                # beats the best; expire-holds retires the ones that stopped mattering
+                B = (load_best(p) or {}).get("speedup") or 0
+                if not parent.get("impl_commit") or where != "done/neutral" or parent.get("hand_landed") \
+                        or (parent.get("speedup") or 0) <= B:
+                    continue
             elif str(h.get("kind") or "").startswith("ab-"):
                 # an A/B companion only needs its parent's code to exist; a regressed parent is
                 # exactly what it is there to explain
@@ -1154,15 +1276,16 @@ def _eligible_queue(p):
                 if not where.startswith("done/") or where in ("done/regression", "done/failed", "done/rejected"):
                     continue
         items.append(h)
-    # rewrites are the bigger bets: they go ahead of primaries at the same priority or below
-    items.sort(key=lambda h: (0 if h.get("kind") == "rewrite" else 1, h.get("priority") or 3, h.get("created") or ""))
+    # confirms settle results already paid for, so they go first; rewrites are the bigger bets and go
+    # ahead of primaries at the same priority or below
+    items.sort(key=lambda h: ({"confirm": 0, "rewrite": 1}.get(h.get("kind"), 2), h.get("priority") or 3, h.get("created") or ""))
     return items
 
 
 def checks_today_by_kind(p, t=None):
-    """Checks dispatched this UTC day, as (rewrites, everything else), from running and done files."""
+    """Checks dispatched this UTC day, as (rewrites, confirms, everything else), from running and done files."""
     day = (t or now()).strftime("%Y-%m-%d")
-    r = o = 0
+    r = c = o = 0
     dirs = [hdir(p, "running")] + [os.path.join(hdir(p, "done"), d) for d in os.listdir(hdir(p, "done"))
                                    if os.path.isdir(os.path.join(hdir(p, "done"), d))]
     for d in dirs:
@@ -1172,9 +1295,11 @@ def checks_today_by_kind(p, t=None):
                 continue
             if h.get("kind") == "rewrite":
                 r += 1
+            elif h.get("kind") == "confirm":
+                c += 1
             else:
                 o += 1
-    return r, o
+    return r, c, o
 
 
 def budget_for(p, q, t=None):
@@ -1196,32 +1321,36 @@ def budget_for(p, q, t=None):
     N = max(0, min(L, len(Q), PER_TICK_CAP, MAX_IN_FLIGHT - F, pace))
     # the 40% rule: REWRITE_SHARE of the day's checks goes to rewrites, the rest to everything else.
     # Each side's unused share is released to the other when it has nothing eligible, and in the
-    # last 2 hours, so the split never leaves a check unspent.
+    # last 2 hours, so the split never leaves a check unspent. Confirm reruns get CONFIRM_SHARE, carved
+    # out of the non-rewrite side, so the 40% rule is untouched.
     per_day = ((lim.get("checks") or {}).get("per_day")) or 0
-    r_used, o_used = checks_today_by_kind(p, t)
+    r_used, c_used, o_used = checks_today_by_kind(p, t)
+    side = lambda h: {"rewrite": "r", "confirm": "c"}.get(h.get("kind"), "o")
+    has = {k: any(side(h) == k for h in Q) for k in "rco"}
     r_share = math.ceil(REWRITE_SHARE * per_day)
-    r_left, o_left = max(0, r_share - r_used), max(0, per_day - r_share - o_used)
-    has_r = any(h.get("kind") == "rewrite" for h in Q)
-    has_o = any(h.get("kind") != "rewrite" for h in Q)
-    if H <= 2 or not has_o:
-        r_left = Lc
-    if H <= 2 or not has_r:
-        o_left = Lc
+    c_left = max(0, math.ceil(CONFIRM_SHARE * per_day) - c_used) if has["c"] else 0
+    left = {"r": max(0, r_share - r_used), "c": c_left, "o": max(0, per_day - r_share - c_used - o_used - c_left)}
+    if H <= 2:
+        left = {k: Lc for k in left}
+    else:
+        if not has["o"] and not has["c"]:
+            left["r"] = Lc
+        if not has["r"]:
+            left["o"] = Lc
+        if not has["r"] and not has["o"]:
+            left["c"] = Lc
     picks, lc = [], Lc
     for h in Q:
         if len(picks) >= N:
             break
-        rw = h.get("kind") == "rewrite"
-        if lc > 0 and (r_left if rw else o_left) > 0:
+        k = side(h)
+        if lc > 0 and left[k] > 0:
             picks.append((h, "check"))
             lc -= 1
-            if rw:
-                r_left -= 1
-            else:
-                o_left -= 1
-        elif h.get("risk") != "high" and not rw:
+            left[k] -= 1
+        elif h.get("risk") != "high" and k == "o":
             picks.append((h, "submit"))
-        # a rewrite or high-risk pick with no check in its share waits for one
+        # a rewrite, confirm or high-risk pick with no check in its share waits for one
     ticks_left = max(1, int((H - 0.25) * 3600 / 900))
     projected = min(need, len(Q), pace * ticks_left)
     shortfall = max(0, need - projected)
@@ -1339,7 +1468,7 @@ def cmd_claim(a):
         on_master = parent.get("promotion") in ("merged", "merged-unsubmitted", "submitted", "done", "onboard")
         # Companions must share the parent's exact base, and a rewrite stage builds on the previous
         # stage's code whatever its score: those keep the parent's commit.
-        builds_on_parent = (h.get("kind") in ("ab-revert", "ab-tune", "control")
+        builds_on_parent = (h.get("kind") in ("ab-revert", "ab-tune", "control", "confirm")
                             or (h.get("kind") == "rewrite" and parent.get("kind") == "rewrite"))
         parent_ref = parent.get("impl_commit") or f"hyp/{p}/{h['depends_on']}"
         if on_master:
@@ -1392,12 +1521,31 @@ def cmd_claim(a):
             subprocess.run(["git", "reset", "-q", "--hard"], cwd=wt)
             restack = "conflicts"
         log(f"restack of {h['depends_on']} onto master: {restack}")
+    if h.get("kind") == "confirm":
+        _prepare_confirm(p, read_hyp(new_md), wt)
     hh = read_hyp(new_md)
     out({"ok": True, "problem": p, "slug": slug, "md": rel(new_md), "worktree": wt, "branch": br, "base_sha": base_sha,
          "restack_patch": rel(restack_patch) if restack_patch else None, "restack": restack, "stale_base": stale_base,
          "submission": os.path.join(wt, p, "submission.py"), "spec": {k: hh.get(k) for k in ("area", "change", "expected", "risk", "depends_on", "priority")},
          "findings": rel(hdir(p, "FINDINGS.md")), "best": load_best(p), "landed": landed(p),
          "review": hh.get("review"), "review_companions": hh.get("review_companions")})
+
+
+def _prepare_confirm(p, h, wt):
+    """A confirm needs no implementer: append the marker comment to the parent's code (okc dedups
+    identical bytes) and copy the parent's Rules check, so commit-impl and prepare-run apply as usual."""
+    parent = str(h.get("confirm_of") or h.get("depends_on"))
+    ppath, _ = find_hyp(p, parent)
+    sub = os.path.join(wt, p, "submission.py")
+    with open(sub, "a") as f:
+        f.write(f"\n# churn confirm rerun of {parent} (job {h.get('confirm_of_job')}); code otherwise identical\n")
+    rc = get_section(read_hyp(ppath)["_body"], "Rules check") if ppath else ""
+    set_section(h["_path"], "Implementation notes",
+                f"No code change: `{parent}` implementation commit `{h.get('base_sha')}` plus one trailing comment, so okc "
+                "times it again instead of returning the earlier job. Written by churn.py claim.")
+    set_section(h["_path"], "Rules check", rc + f"\n\nCopied from `{parent}`, whose code this is; the only change is a comment.")
+    git("add", "--", rel(h["_path"]))
+    git("commit", "-q", "-m", f"churn({p}): {h['slug']} confirm prepared", check=False)
 
 
 def landed(p):
@@ -1510,7 +1658,7 @@ def cmd_commit_impl(a):
     # local duplicate: identical to a known submission, or to SGLang's baseline.py once prose is
     # stripped (the judge only dedups exact bytes)
     ndigest = norm_sha256(sub)
-    for x in all_hyps(p):
+    for x in all_hyps(p) if h.get("kind") != "confirm" else []:  # a confirm is a deliberate rerun
         if x.get("slug") != a.slug and x.get("job") and (x.get("submission_sha256") == digest or (ndigest and x.get("norm_sha256") == ndigest)):
             _reject_local(p, h, f"duplicate-local:{x['slug']}", lj, copy_from=x)
     bl = os.path.join(REPO, p, "baseline.py")
@@ -1727,9 +1875,11 @@ def _findings(p, hs, best):
                 L.append(f"- {s['key']}: yours {s['median_ns']/1000:.1f}µs vs SGLang {s['baseline_ns']/1000:.1f}µs (SoL {s['speed_of_light_ns']/1000:.1f}µs) · {tk}")
     else:
         L.append("none recorded yet (run `churn.py best-init`).")
+    if os.path.exists(hdir(p, "DIAGNOSIS.md")):
+        L += ["", f"Today's clean-context diagnosis: `{p}/hypotheses/DIAGNOSIS.md` (ranked actions and its own Do-not-try list)."]
     by_area = {}
     for h in hs:
-        if h["_where"].startswith("done/"):
+        if h["_where"].startswith("done/") and h["_where"] != "done/expired":
             by_area.setdefault(str(h.get("area")), []).append(h)
     L += ["", "## By area", ""]
     for area, items in sorted(by_area.items()):
@@ -1745,17 +1895,132 @@ def _findings(p, hs, best):
                     pass
             L.append(f"- **{h['slug']}** → {h.get('outcome')} ({h.get('verdict_detail')})" + (f", {s:.4f}x" if isinstance(s, (int, float)) else "") + (f" — {summ}" if summ else "") + f". {str(h.get('change') or '')[:160]}")
         L.append("")
-    fol = []
+    # only follow-ups that say something: the generic per-outcome lines harvest writes repeat the outcome
+    generic = re.compile(r"^(unproven-vs-best|within-ci|beats-base-not-best|regression)\b|^record which shapes lost|^candidate for promotion")
+    fol = {}
     for h in hs:
-        if h["_where"] in ("done/failed", "done/neutral"):
+        if h["_where"] in ("done/failed", "done/neutral") and h.get("kind") != "confirm":
             fu = get_section(h["_body"], "Follow-ups")
-            if fu:
-                fol.append(f"- {h['slug']}: " + fu.splitlines()[0].lstrip("- ")[:220])
-    L += ["## Open follow-ups", ""] + (fol or ["- none"]) + [""]
-    dn = [f"- {h['slug']}: {h.get('verdict_detail')}" for h in hs if h["_where"] == "done/rejected"]
-    L += ["## Do not retry (rejected / duplicates)", ""] + (dn or ["- none"]) + [""]
-    L += ["## Queue and in flight", ""] + ([f"- {h['_where']}: {h['slug']} [{h.get('area')}] p{h.get('priority')} {h.get('status')}" for h in hs if h["_where"] in ("queue", "running")] or ["- empty"]) + [""]
+            text = fu.splitlines()[0].lstrip("- ") if fu else ""
+            if text and not generic.match(text):
+                fol.setdefault(text.replace(str(h["slug"]), "<slug>")[:220], []).append(h["slug"])
+    L += ["## Open follow-ups", ""] + ([f"- {', '.join(s)}: {t}" for t, s in fol.items()] or ["- none"]) + [""]
+    # measured dead ends: what ran and did not move, so a new idea must say what differs (hyp.py --prior)
+    dn = []
+    for h in hs:
+        w, det = h["_where"], h.get("verdict_detail")
+        if h.get("kind") == "confirm" or (h.get("kind") == "rewrite" and w != "done/rejected"):
+            continue
+        why = None
+        if w in ("done/rejected", "done/regression") or det == "within-ci":
+            why = det
+        elif h.get("confirm_outcome") in ("neutral", "regression"):
+            why = f"not confirmed (pooled {h.get('pooled_speedup')})"
+        if why:
+            chg = re.sub(r"^(Built on master[^.]*\.|Stacked on [^.]*\.)\s*", "", " ".join(str(h.get("change") or "").split()))
+            dn.append(f"- **{h['slug']}** [{h.get('area')}] {w[5:]}, {why}: {chg[:90]}")
+    L += ["## Do not try (regressions, flat results, rejected)", "",
+          "Rewrite stages are exempt: a slow early stage is not a dead end.", ""] + (dn or ["- none"]) + [""]
+    nexp = sum(1 for h in hs if h["_where"] == "done/expired")
+    L += ["## Queue and in flight", ""] + ([f"- {h['_where']}: {h['slug']} [{h.get('area')}] p{h.get('priority')} {h.get('status')}" for h in hs if h["_where"] in ("queue", "running")] or ["- empty"])
+    L += ([f"- {nexp} stale holds expired to `done/expired/` (not run)"] if nexp else []) + [""]
     return "\n".join(L)
+
+
+def cmd_reclassify(a):
+    """Re-judge every harvested result under the current rule (nothing historical moves). Lists the
+    outcomes that would change, and the unproven neutrals that still beat the best: the confirm
+    backlog. --queue-confirms queues up to CONFIRM_BACKLOG_PER_DAY of those per problem per day."""
+    probs = [problem_of(a.problem)] if a.problem else PROBLEMS
+    day = now().strftime("%Y-%m-%d")
+    report = []
+    for p in probs:
+        best = load_best(p)
+        B = (best or {}).get("speedup") or 0
+        flips, backlog = [], []
+        for h in all_hyps(p):
+            w = h["_where"]
+            if not w.startswith("done/") or w in ("done/rejected", "done/expired", "done/failed"):
+                continue
+            rjp = os.path.join(hdir(p, w), f"{h['slug']}.result.json")
+            if not os.path.exists(rjp):
+                continue
+            res = json.load(open(rjp))
+            if res.get("speedup") is None:
+                continue
+            # judged as at harvest: against the best of that moment and the result's own base
+            then = {"speedup": h.get("best_at_harvest") or B}
+            base, _ = base_result_for(p, h, best)
+            oc, det = classify(dict(res, runs=h.get("runs") or 1), then, base)
+            if h.get("best_at_harvest") and (oc, det) != (w[5:], h.get("verdict_detail")) and not (oc == "neutral" and w == "done/neutral"):
+                flips.append({"slug": h["slug"], "was": f"{w[5:]}/{h.get('verdict_detail')}", "now": f"{oc}/{det}",
+                              "speedup": round(res["speedup"], 4), "best_then": then["speedup"]})
+            if (w == "done/neutral" and h.get("kind") not in ("confirm", "control") and h.get("mode") == "check"
+                    and h.get("impl_commit") and not h.get("hand_landed") and not h.get("confirm_queued")
+                    and B and res["speedup"] >= B * (1 + CONFIRM_MIN)):
+                backlog.append((res["speedup"] / B - 1, h))
+        backlog.sort(key=lambda x: -x[0])
+        queued = []
+        if a.queue_confirms:
+            today = sum(1 for h in all_hyps(p) if h.get("kind") == "confirm" and str(h.get("created") or "")[:10] == day
+                        and "(backlog)" in h["_body"])
+            for _, h in backlog[:max(0, CONFIRM_BACKLOG_PER_DAY - today)]:
+                s = _queue_confirm(p, h, h.get("job"), "backlog")
+                if s:
+                    queued.append(s)
+        report.append({"problem": p, "best": B, "flips": flips,
+                       "backlog": [{"slug": h["slug"], "margin_pct": round(m * 100, 2)} for m, h in backlog], "queued": queued})
+    out({"ok": True, "margin_1run_pct": round(margin(1) * 100, 3), "margin_2run_pct": round(margin(2) * 100, 3), "problems": report})
+
+
+def cmd_expire_holds(a):
+    """Retire stale queue items to done/expired/: holds older than HOLD_EXPIRE_H that are not waiting
+    on the user, and confirms whose parent stopped mattering. They keep their slug; nothing is run."""
+    reasons = []
+    for p in PROBLEMS:
+        B = (load_best(p) or {}).get("speedup") or 0
+        for f in list_md(hdir(p, "queue")):
+            path = os.path.join(hdir(p, "queue"), f)
+            h = read_hyp(path)
+            why = None
+            if h.get("status") == "hold":
+                since = git("log", "-1", "--format=%ct", "--", rel(path), check=False).strip()
+                age_h = (time.time() - int(since)) / 3600 if since.isdigit() else 0
+                hr = str(h.get("hold_reason") or "")
+                if age_h > HOLD_EXPIRE_H and not re.search(r"\buser\b|PENDING_USER|human", hr, re.I):
+                    why = f"hold expired after {age_h:.0f} h: {hr[:120]}"
+            elif h.get("kind") == "confirm":
+                dp, where = find_hyp(p, str(h.get("confirm_of") or h.get("depends_on")))
+                parent = read_hyp(dp) if dp else {}
+                if where != "done/neutral" or parent.get("hand_landed") or (parent.get("speedup") or 0) <= B:
+                    why = f"confirm no longer needed: parent is {where}, {parent.get('speedup')}x vs best {B}x"
+            if not why:
+                continue
+            reasons.append({"problem": p, "slug": h.get("slug"), "why": why})
+            if a.dry_run:
+                continue
+            ddir = hdir(p, "done", "expired")
+            os.makedirs(ddir, exist_ok=True)
+            new = os.path.join(ddir, f)
+            git("mv", rel(path), rel(new))
+            fm_set(new, status="done", outcome="expired", verdict_detail=why[:160], expired_at=ts())
+            log_decision(p, h.get("slug"), f"expired: {why}")
+            git("add", "--", rel(new))
+    if reasons and not a.dry_run:
+        git("commit", "-q", "-m", f"churn: expire {len(reasons)} stale queue items", check=False)
+    out({"ok": True, "dry_run": bool(a.dry_run), "expired": reasons}, 0 if reasons else 1)
+
+
+def diagnose_due(t=None):
+    """Problems whose DIAGNOSIS.md is missing or older than today's 00:00Z (one diagnosis a day)."""
+    day = (t or now()).strftime("%Y-%m-%d")
+    due = []
+    for p in PROBLEMS:
+        path = hdir(p, "DIAGNOSIS.md")
+        at = str((parse_fm(open(path).read())[0] if os.path.exists(path) else {}).get("diagnosed_at") or "")
+        if at[:10] != day:
+            due.append(p)
+    return due
 
 
 def cmd_classify(a):
@@ -1794,13 +2059,15 @@ def cmd_tick(a):
         out({"ok": False, "report": report}, 2)
     sub("intake")
     rc = sub("recover")
+    sub("expire-holds")
     sub("harvest")
     sub("harvest-promotions")
     pr = sub("promote")
+    sub("reclassify", "--queue-confirms")
     b = sub("budget")
     sub("index")
     res = {"ok": True, "promote": pr.get("promote", []), "dispatch": [{"problem": x["problem"], "picks": x["picks"]} for x in b.get("plans", []) if x.get("picks")],
-           "wake_s": b.get("wake_s", 1800), "needs_human": rc.get("needs_human", []), "report": report}
+           "wake_s": b.get("wake_s", 1800), "needs_human": rc.get("needs_human", []), "diagnose": diagnose_due(), "report": report}
     try:
         tdir = os.path.join(REPO, "hypotheses", "ticks")
         os.makedirs(tdir, exist_ok=True)
@@ -1842,6 +2109,9 @@ def main():
     x = sp.add_parser("index"); x.add_argument("--no-commit", action="store_true"); x.set_defaults(fn=cmd_index)
     x = sp.add_parser("classify"); x.add_argument("status_json"); x.add_argument("--problem"); x.add_argument("--best"); x.add_argument("--base"); x.add_argument("--slug"); x.add_argument("--full", action="store_true"); x.set_defaults(fn=cmd_classify)
     sp.add_parser("tick").set_defaults(fn=cmd_tick)
+    x = sp.add_parser("reclassify"); x.add_argument("--problem"); x.add_argument("--queue-confirms", action="store_true"); x.set_defaults(fn=cmd_reclassify)
+    x = sp.add_parser("expire-holds"); x.add_argument("--dry-run", action="store_true"); x.set_defaults(fn=cmd_expire_holds)
+    sp.add_parser("diagnose-due").set_defaults(fn=lambda a: out({"ok": True, "diagnose": diagnose_due()}))
     a = ap.parse_args()
     try:
         a.fn(a)
