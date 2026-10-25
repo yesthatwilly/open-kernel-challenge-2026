@@ -23,7 +23,7 @@ kind: primary
 controls_for: null
 review: required
 status: running
-stage: implemented
+stage: dispatched
 claimed_at: 2026-10-24T233335Z
 base_sha: a0eb6398a55163f42feb6a3cdfb8e02b392e090b
 base_blob: db8a3344398bca79ea5cafeb580f701c055fd475
@@ -40,6 +40,8 @@ lint_warnings: 7
 attempt_file: 2026-10-25T000329Z-check-silu-mul-sorted-first-turn.md
 mode: check
 prepared_at: 2026-10-25T000329Z
+job: 9528eed511b04f33
+dispatched_at: 2026-10-25T000344Z
 ---
 
 # silu-mul-sorted-first-turn
