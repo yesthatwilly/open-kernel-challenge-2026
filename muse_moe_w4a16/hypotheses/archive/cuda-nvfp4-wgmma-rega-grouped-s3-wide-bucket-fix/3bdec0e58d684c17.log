@@ -1,0 +1,95 @@
+y]     [mixed M=256 production] after align (moe_align_block_size) / before wg_gather_kernel
+[cuda-wgmma-verify]     [mixed M=256 production] after wg_gather_kernel / before wg_kernel<w13+silu>
+[cuda-wgmma-verify]     [mixed M=256 production] after wg_kernel<w13+silu> / before wg_kernel<w2>
+[cuda-wgmma-verify]     [mixed M=256 production] after wg_kernel<w2> / before post-expert norm
+[cuda-wgmma-verify]     [mixed M=256 production] after post-expert norm
+[cuda-wgmma-verify]   [mixed M=256] M=256: 644 local routes, n_padded 2112, 10 chunks (N buckets {16: 2, 32: 2, 64: 2, 128: 4}, multi-chunk expert True), local_ids equal True, all local routes have a slot True
+[cuda-wgmma-verify]   [mixed M=256] gather: real rows bad 0/644, pad rows not zero 0/60, remote-block slots written 0/1408 (expected 0)
+[cuda-wgmma-verify]   [mixed M=256] w13+silu h vs Marlin cache2: PASS n 644 unwritten 0 partial 0 nonfinite-rows 0 (elems 0) rel-L2 6.49e-03 max-abs 1.250e-01 [finite rows 6.49e-03, max row 7.59e-03]
+[cuda-wgmma-verify]   [mixed M=256] w13+silu h vs Marlin cache2 per N bucket: N16:n11/unw0/nf0/rel6.4e-03 N32:n47/unw0/nf0/rel6.5e-03 N64:n108/unw0/nf0/rel6.5e-03 N128:n478/unw0/nf0/rel6.5e-03
+[cuda-wgmma-verify]   [mixed M=256] w13+silu h vs Marlin cache2 worst N-tiles (tile, nonfinite rows, rel-L2) [(36, 0, 0.006804622550079818), (50, 0, 0.006738981105125029), (22, 0, 0.006730372645162353)]
+[cuda-wgmma-verify]   [mixed M=256] w2 (fed Marlin cache2) y vs Marlin y: PASS n 644 unwritten 0 partial 0 nonfinite-rows 0 (elems 0) rel-L2 3.47e-03 max-abs 1.562e-02 [finite rows 3.47e-03, max row 3.74e-03]
+[cuda-wgmma-verify]   [mixed M=256] w2 (fed Marlin cache2) y vs Marlin y per N bucket: N16:n11/unw0/nf0/rel3.5e-03 N32:n47/unw0/nf0/rel3.4e-03 N64:n108/unw0/nf0/rel3.5e-03 N128:n478/unw0/nf0/rel3.5e-03
+[cuda-wgmma-verify]   [mixed M=256] w2 (fed Marlin cache2) y vs Marlin y worst N-tiles (tile, nonfinite rows, rel-L2) [(27, 0, 0.003491012127221186), (3, 0, 0.0034904031665244223), (29, 0, 0.0034901723728514946)]
+[cuda-wgmma-verify]   [mixed M=256] w2 (own h) y vs Marlin y: PASS n 644 unwritten 0 partial 0 nonfinite-rows 0 (elems 0) rel-L2 8.46e-03 max-abs 3.125e-02 [finite rows 8.46e-03, max row 9.59e-03]
+[cuda-wgmma-verify]   [mixed M=256] w2 (own h) y vs Marlin y per N bucket: N16:n11/unw0/nf0/rel8.4e-03 N32:n47/unw0/nf0/rel8.4e-03 N64:n108/unw0/nf0/rel8.5e-03 N128:n478/unw0/nf0/rel8.5e-03
+[cuda-wgmma-verify]   [mixed M=256] w2 (own h) y vs Marlin y worst N-tiles (tile, nonfinite rows, rel-L2) [(16, 0, 0.008504405444250691), (23, 0, 0.008496344096295932), (29, 0, 0.00849589136807487)]
+[cuda-wgmma-verify]   [mixed M=256] fused norm skips remote rows (NaN-filled run equals sentinel run): True; out rel-L2 via Marlin-cache2 y 3.76e-03; production out rel-L2 6.06e-03 finite True; device error word 0
+[cuda-wgmma-verify] diagnostic: w13+silu PASS, w2 PASS (rel-L2 <= 0.01 vs Marlin each); N buckets exercised [16, 32, 64, 128] multi-chunk True; fused norm skips remote rows: True
+[cuda-wgmma-verify]     [M=128 random] eval + graph capture/3 replays
+[cuda-wgmma-verify]   M=128 random: 139 local, n_padded 1408, 32 chunks {16: 32, 32: 0, 64: 0, 128: 0}; h rel 6.54e-03 (unw 0 nf 0) | w2 fed Marlin cache2 rel 3.48e-03 (unw 0 nf 0) | w2 own-h rel 8.50e-03 | out rel 6.06e-03 | graph 0.0e+00 | ok
+[cuda-wgmma-verify]     [M=128 skewed] eval + graph capture/3 replays
+[cuda-wgmma-verify]   M=128 skewed: 570 local, n_padded 1392, 30 chunks {16: 26, 32: 0, 64: 0, 128: 4}; h rel 6.49e-03 (unw 0 nf 0) | w2 fed Marlin cache2 rel 3.47e-03 (unw 0 nf 0) | w2 own-h rel 8.46e-03 | out rel 6.07e-03 | graph 0.0e+00 | ok
+[cuda-wgmma-verify]     [M=128 all-one-expert] eval + graph capture/3 replays
+[cuda-wgmma-verify]   M=128 all-one-expert: 128 local, n_padded 1024, 1 chunks {16: 0, 32: 0, 64: 0, 128: 1}; h rel 6.50e-03 (unw 0 nf 0) | w2 fed Marlin cache2 rel 3.47e-03 (unw 0 nf 0) | w2 own-h rel 8.45e-03 | out rel 6.07e-03 | graph 0.0e+00 | ok
+[cuda-wgmma-verify]   fp32-dequant M=128 expert 3: 128 routes, h 3.10e-03 y 1.66e-03
+[cuda-wgmma-verify]     [M=128 all-remote] eval + graph capture/3 replays
+[cuda-wgmma-verify]   M=128 all-remote: 0 local, n_padded 1024, 0 chunks {16: 0, 32: 0, 64: 0, 128: 0}; h rel 0.00e+00 (unw 0 nf 0) | w2 fed Marlin cache2 rel 0.00e+00 (unw 0 nf 0) | w2 own-h rel 0.00e+00 | out rel 0.00e+00 | graph 0.0e+00 | ok
+[cuda-wgmma-verify]     [M=128 all-local] eval + graph capture/3 replays
+[cuda-wgmma-verify]   M=128 all-local: 1024 local, n_padded 1024, 8 chunks {16: 0, 32: 0, 64: 0, 128: 8}; h rel 6.49e-03 (unw 0 nf 0) | w2 fed Marlin cache2 rel 3.48e-03 (unw 0 nf 0) | w2 own-h rel 8.46e-03 | out rel 6.07e-03 | graph 0.0e+00 | ok
+[cuda-wgmma-verify]     [M=192 random] eval + graph capture/3 replays
+[cuda-wgmma-verify]   M=192 random: 218 local, n_padded 1840, 32 chunks {16: 32, 32: 0, 64: 0, 128: 0}; h rel 6.50e-03 (unw 0 nf 0) | w2 fed Marlin cache2 rel 3.47e-03 (unw 0 nf 0) | w2 own-h rel 8.47e-03 | out rel 6.05e-03 | graph 0.0e+00 | ok
+[cuda-wgmma-verify]     [M=192 skewed] eval + graph capture/3 replays
+[cuda-wgmma-verify]   M=192 skewed: 844 local, n_padded 1904, 35 chunks {16: 27, 32: 0, 64: 4, 128: 4}; h rel 6.51e-03 (unw 0 nf 0) | w2 fed Marlin cache2 rel 3.47e-03 (unw 0 nf 0) | w2 own-h rel 8.48e-03 | out rel 6.07e-03 | graph 0.0e+00 | ok
+[cuda-wgmma-verify]     [M=192 all-one-expert] eval + graph capture/3 replays
+[cuda-wgmma-verify]   M=192 all-one-expert: 192 local, n_padded 1536, 2 chunks {16: 0, 32: 0, 64: 1, 128: 1}; h rel 6.51e-03 (unw 0 nf 0) | w2 fed Marlin cache2 rel 3.47e-03 (unw 0 nf 0) | w2 own-h rel 8.48e-03 | out rel 6.05e-03 | graph 0.0e+00 | ok
+[cuda-wgmma-verify]     [M=192 all-remote] eval + graph capture/3 replays
+[cuda-wgmma-verify]   M=192 all-remote: 0 local, n_padded 1536, 0 chunks {16: 0, 32: 0, 64: 0, 128: 0}; h rel 0.00e+00 (unw 0 nf 0) | w2 fed Marlin cache2 rel 0.00e+00 (unw 0 nf 0) | w2 own-h rel 0.00e+00 | out rel 0.00e+00 | graph 0.0e+00 | ok
+[cuda-wgmma-verify]     [M=192 all-local] eval + graph capture/3 replays
+[cuda-wgmma-verify]   M=192 all-local: 1536 local, n_padded 1536, 16 chunks {16: 0, 32: 0, 64: 8, 128: 8}; h rel 6.49e-03 (unw 0 nf 0) | w2 fed Marlin cache2 rel 3.47e-03 (unw 0 nf 0) | w2 own-h rel 8.46e-03 | out rel 6.07e-03 | graph 0.0e+00 | ok
+[cuda-wgmma-verify]     [M=256 random] eval + graph capture/3 replays
+[cuda-wgmma-verify]   M=256 random: 263 local, n_padded 2304, 32 chunks {16: 32, 32: 0, 64: 0, 128: 0}; h rel 6.46e-03 (unw 0 nf 0) | w2 fed Marlin cache2 rel 3.47e-03 (unw 0 nf 0) | w2 own-h rel 8.42e-03 | out rel 6.03e-03 | graph 0.0e+00 | ok
+[cuda-wgmma-verify]     [M=256 skewed] eval + graph capture/3 replays
+[cuda-wgmma-verify]   M=256 skewed: 1138 local, n_padded 2384, 36 chunks {16: 28, 32: 0, 64: 0, 128: 8}; h rel 6.49e-03 (unw 0 nf 0) | w2 fed Marlin cache2 rel 3.47e-03 (unw 0 nf 0) | w2 own-h rel 8.46e-03 | out rel 6.07e-03 | graph 0.0e+00 | ok
+[cuda-wgmma-verify]     [M=256 all-one-expert] eval + graph capture/3 replays
+[cuda-wgmma-verify]   M=256 all-one-expert: 256 local, n_padded 2048, 2 chunks {16: 0, 32: 0, 64: 0, 128: 2}; h rel 6.50e-03 (unw 0 nf 0) | w2 fed Marlin cache2 rel 3.48e-03 (unw 0 nf 0) | w2 own-h rel 8.47e-03 | out rel 6.04e-03 | graph 0.0e+00 | ok
+[cuda-wgmma-verify]     [M=256 all-remote] eval + graph capture/3 replays
+[cuda-wgmma-verify]   M=256 all-remote: 0 local, n_padded 2048, 0 chunks {16: 0, 32: 0, 64: 0, 128: 0}; h rel 0.00e+00 (unw 0 nf 0) | w2 fed Marlin cache2 rel 0.00e+00 (unw 0 nf 0) | w2 own-h rel 0.00e+00 | out rel 0.00e+00 | graph 0.0e+00 | ok
+[cuda-wgmma-verify]     [M=256 all-local] eval + graph capture/3 replays
+[cuda-wgmma-verify]   M=256 all-local: 2048 local, n_padded 2048, 16 chunks {16: 0, 32: 0, 64: 0, 128: 16}; h rel 6.48e-03 (unw 0 nf 0) | w2 fed Marlin cache2 rel 3.47e-03 (unw 0 nf 0) | w2 own-h rel 8.46e-03 | out rel 6.06e-03 | graph 0.0e+00 | ok
+[cuda-wgmma-verify]     [M=257 random] eval + graph capture/3 replays
+[cuda-wgmma-verify]   M=257 random: 254 local, n_padded 2320, 32 chunks {16: 32, 32: 0, 64: 0, 128: 0}; h rel 6.50e-03 (unw 0 nf 0) | w2 fed Marlin cache2 rel 3.48e-03 (unw 0 nf 0) | w2 own-h rel 8.46e-03 | out rel 6.08e-03 | graph 0.0e+00 | ok
+[cuda-wgmma-verify]     [M=257 skewed] eval + graph capture/3 replays
+[cuda-wgmma-verify]   M=257 skewed: 1148 local, n_padded 2432, 39 chunks {16: 31, 32: 0, 64: 0, 128: 8}; h rel 6.48e-03 (unw 0 nf 0) | w2 fed Marlin cache2 rel 3.47e-03 (unw 0 nf 0) | w2 own-h rel 8.45e-03 | out rel 6.08e-03 | graph 0.0e+00 | ok
+[cuda-wgmma-verify]     [M=257 all-one-expert] eval + graph capture/3 replays
+[cuda-wgmma-verify]   M=257 all-one-expert: 257 local, n_padded 2080, 3 chunks {16: 1, 32: 0, 64: 0, 128: 2}; h rel 6.47e-03 (unw 0 nf 0) | w2 fed Marlin cache2 rel 3.47e-03 (unw 0 nf 0) | w2 own-h rel 8.44e-03 | out rel 6.03e-03 | graph 0.0e+00 | ok
+[cuda-wgmma-verify]   fp32-dequant M=257 expert 3: 257 routes, h 3.08e-03 y 1.66e-03
+[cuda-wgmma-verify]     [M=257 all-remote] eval + graph capture/3 replays
+[cuda-wgmma-verify]   M=257 all-remote: 0 local, n_padded 2064, 0 chunks {16: 0, 32: 0, 64: 0, 128: 0}; h rel 0.00e+00 (unw 0 nf 0) | w2 fed Marlin cache2 rel 0.00e+00 (unw 0 nf 0) | w2 own-h rel 0.00e+00 | out rel 0.00e+00 | graph 0.0e+00 | ok
+[cuda-wgmma-verify]     [M=257 all-local] eval + graph capture/3 replays
+[cuda-wgmma-verify]   M=257 all-local: 2056 local, n_padded 2176, 24 chunks {16: 8, 32: 0, 64: 0, 128: 16}; h rel 6.50e-03 (unw 0 nf 0) | w2 fed Marlin cache2 rel 3.48e-03 (unw 0 nf 0) | w2 own-h rel 8.47e-03 | out rel 6.09e-03 | graph 0.0e+00 | ok
+[cuda-wgmma-verify]   self-check: worst rel-L2 vs Marlin h 6.54e-03 w2(fed Marlin cache2) 3.48e-03 out 6.09e-03; 0 failing cases
+[cuda-wgmma-verify] timing  M=128: warm wgmma gather 6.4 + w13+silu 411.7 + w2 211.4 = 629.5 us | Marlin w13 598.5 + silu 11.1 + w2 307.4 = 917.0 us (block_size_m 16; 1024 local routes)
+[cuda-wgmma-verify] timing  M=128: COLD-L2 wgmma 9.9 + 435.1 + 224.1 = 669.0 us | Marlin 598.7 + 13.3 + 309.3 = 921.3 us (stage 2 warm eager: 515.9 vs 911.3 us at M=128, 728.0 vs 1258.5 at M=256)
+[cuda-wgmma-verify] timing  M=256: warm wgmma gather 8.6 + w13+silu 523.0 + w2 273.0 = 804.6 us | Marlin w13 824.2 + silu 14.9 + w2 421.7 = 1260.9 us (block_size_m 32; 2048 local routes)
+[cuda-wgmma-verify] timing  M=256: COLD-L2 wgmma 12.2 + 543.6 + 281.8 = 837.6 us | Marlin 812.5 + 19.7 + 418.5 = 1250.7 us (stage 2 warm eager: 515.9 vs 911.3 us at M=128, 728.0 vs 1258.5 at M=256)
+[cuda-wgmma-verify] ===== STAGE 3 DIAGNOSTIC SUMMARY (last block of the log) =====
+[cuda-wgmma-verify] build: TORCH_CUDA_ARCH_LIST=9.0a -> ['-gencode=arch=compute_90a,code=sm_90a']; cflags ['-O3', '-lineinfo', '-gencode=arch=compute_90a,code=sm_90a']; 33.8s (ok); ptxas warnings 0, wgmma 'serialized' warning: no warning (info-level note not visible)
+[cuda-wgmma-verify] kernel w13+silu: regs 168, local (spill) 0 B, smem 8192+187392 B, CTAs/SM 1
+[cuda-wgmma-verify] kernel w2: regs 168, local (spill) 0 B, smem 8192+203776 B, CTAs/SM 1
+[cuda-wgmma-verify] cuTensorMapEncodeTiled x8 rc 0
+[cuda-wgmma-verify] s3 bucket canary (A = wgmma_wait<0> before dequant, B = double-buffered a[2][8][4]); picks ['A(wait0)', 'A(wait0)', 'A(wait0)', 'A(wait0)']; vmask 85:
+[cuda-wgmma-verify]   A(wait0) N16 (c=16, 16 local routes, buckets [0]): w13 max-abs 9.375e-02 rel 6.45e-03 nonf rows 0 unw 0 | w2 max-abs 1.562e-02 rel 3.49e-03 nonf rows 0 unw 0 | out rel 5.93e-03 | ref non-finite 0/0 | err word 0 | cold pair 57.4 us | PASS
+[cuda-wgmma-verify]   A(wait0) N32 (c=32, 32 local routes, buckets [1]): w13 max-abs 9.375e-02 rel 6.48e-03 nonf rows 0 unw 0 | w2 max-abs 1.562e-02 rel 3.49e-03 nonf rows 0 unw 0 | out rel 5.95e-03 | ref non-finite 0/0 | err word 0 | cold pair 62.5 us | PASS
+[cuda-wgmma-verify]   A(wait0) N64 (c=64, 64 local routes, buckets [2]): w13 max-abs 9.375e-02 rel 6.44e-03 nonf rows 0 unw 0 | w2 max-abs 1.562e-02 rel 3.48e-03 nonf rows 0 unw 0 | out rel 5.96e-03 | ref non-finite 0/0 | err word 0 | cold pair 66.8 us | PASS
+[cuda-wgmma-verify]   A(wait0) N128 (c=128, 128 local routes, buckets [3]): w13 max-abs 9.375e-02 rel 6.48e-03 nonf rows 0 unw 0 | w2 max-abs 1.562e-02 rel 3.48e-03 nonf rows 0 unw 0 | out rel 6.00e-03 | ref non-finite 0/0 | err word 0 | cold pair 85.7 us | PASS
+[cuda-wgmma-verify]   B(dbuf) N16 (c=16, 16 local routes, buckets [0]): w13 max-abs 9.375e-02 rel 6.45e-03 nonf rows 0 unw 0 | w2 max-abs 1.562e-02 rel 3.49e-03 nonf rows 0 unw 0 | out rel 5.93e-03 | ref non-finite 0/0 | err word 0 | cold pair 60.3 us | PASS
+[cuda-wgmma-verify]   B(dbuf) N32 (c=32, 32 local routes, buckets [1]): w13 max-abs 9.375e-02 rel 6.48e-03 nonf rows 0 unw 0 | w2 max-abs 1.562e-02 rel 3.49e-03 nonf rows 0 unw 0 | out rel 5.95e-03 | ref non-finite 0/0 | err word 0 | cold pair 63.7 us | PASS
+[cuda-wgmma-verify]   B(dbuf) N64 (c=64, 64 local routes, buckets [2]): w13 max-abs 9.375e-02 rel 6.44e-03 nonf rows 0 unw 0 | w2 max-abs 1.562e-02 rel 3.48e-03 nonf rows 0 unw 0 | out rel 5.96e-03 | ref non-finite 0/0 | err word 0 | cold pair 67.2 us | PASS
+[cuda-wgmma-verify]   B(dbuf) N128 (c=128, 128 local routes, buckets [3]): w13 max-abs 9.375e-02 rel 6.48e-03 nonf rows 0 unw 0 | w2 max-abs 1.562e-02 rel 3.48e-03 nonf rows 0 unw 0 | out rel 6.00e-03 | ref non-finite 0/0 | err word 0 | cold pair 91.7 us | PASS
+[cuda-wgmma-verify]   bucket N16: pick A(wait0) (cold pair A(wait0) 57.4 us, B(dbuf) 60.3 us)
+[cuda-wgmma-verify]   bucket N32: pick A(wait0) (cold pair A(wait0) 62.5 us, B(dbuf) 63.7 us)
+[cuda-wgmma-verify]   bucket N64: pick A(wait0) (cold pair A(wait0) 66.8 us, B(dbuf) 67.2 us)
+[cuda-wgmma-verify]   bucket N128: pick A(wait0) (cold pair A(wait0) 85.7 us, B(dbuf) 91.7 us)
+[cuda-wgmma-verify] w13+silu: PASS; w2 (fed Marlin cache2): PASS; N buckets exercised [16, 32, 64, 128] multi-chunk True; fused norm skips remote rows: True
+[cuda-wgmma-verify]   canary M=128: w13 h unw 0 part 0 nonfin 0 rel 6.52e-03 | w2(Marlin cache2) unw 0 part 0 nonfin 0 rel 3.47e-03 | w2(own h) rel 8.49e-03 | out rel 6.03e-03 | gather bad 0/128 pad!=0 0/0 | ids True cov True | err word 0
+[cuda-wgmma-verify]   mixed M=128: w13 h unw 0 part 0 nonfin 0 rel 6.51e-03 | w2(Marlin cache2) unw 0 part 0 nonfin 0 rel 3.48e-03 | w2(own h) rel 8.50e-03 | out rel 6.09e-03 | gather bad 0/432 pad!=0 0/64 | ids True cov True | err word 0
+[cuda-wgmma-verify]   mixed M=256: w13 h unw 0 part 0 nonfin 0 rel 6.49e-03 | w2(Marlin cache2) unw 0 part 0 nonfin 0 rel 3.47e-03 | w2(own h) rel 8.46e-03 | out rel 6.06e-03 | gather bad 0/644 pad!=0 0/60 | ids True cov True | err word 0
+[cuda-wgmma-verify] self-check (4 M x 5 routings, eager + graph): PASS; worst rel-L2 vs Marlin h 6.54e-03 y2 3.48e-03 out 6.09e-03; device error word 0
+[cuda-wgmma-verify] prepare timing (warm: eager events, median of 20; cold: L2 flushed, 1 launch, median of 20; the judge profile reads 20-25% higher; optimistic if a kernel releases early):
+[cuda-wgmma-verify]   M=128: warm wgmma gather 6.4 + w13+silu 411.7 + w2 211.4 = 629.5 us | Marlin w13 598.5 + silu 11.1 + w2 307.4 = 917.0 us (block_size_m 16; 1024 local routes)
+[cuda-wgmma-verify]   M=128: COLD-L2 wgmma 9.9 + 435.1 + 224.1 = 669.0 us | Marlin 598.7 + 13.3 + 309.3 = 921.3 us (stage 2 warm eager: 515.9 vs 911.3 us at M=128, 728.0 vs 1258.5 at M=256)
+[cuda-wgmma-verify]   M=256: warm wgmma gather 8.6 + w13+silu 523.0 + w2 273.0 = 804.6 us | Marlin w13 824.2 + silu 14.9 + w2 421.7 = 1260.9 us (block_size_m 32; 2048 local routes)
+[cuda-wgmma-verify]   M=256: COLD-L2 wgmma 12.2 + 543.6 + 281.8 = 837.6 us | Marlin 812.5 + 19.7 + 418.5 = 1250.7 us (stage 2 warm eager: 515.9 vs 911.3 us at M=128, 728.0 vs 1258.5 at M=256)
+[cuda-wgmma-verify] verdicts: w13+silu PASS, w2 PASS, self-check PASS; wgmma is enabled only if BOTH kernels pass rel-L2 <= 0.01 vs Marlin; setup 35.3s (prepare so far 38.4s)
+[cuda-wgmma-verify] PATH CHOSEN = WGMMA for 128 <= num_tokens <= 512; MARLIN for num_tokens < 128 and > 512; variants per bucket ['A(wait0)', 'A(wait0)', 'A(wait0)', 'A(wait0)']

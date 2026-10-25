@@ -57,10 +57,10 @@ controls_for: null
 rewrite_stage: 3
 replaces: Marlin w13+w2 (moe_wna16_marlin_gemm x2) + silu_and_mul at num_tokens >= 128
 review: proceed
-status: running
+status: done
 review_at: 2026-10-25T040253Z
 review_companions: null
-stage: dispatched
+stage: harvested
 claimed_at: 2026-10-25T040259Z
 base_sha: 570f5e4ac5465931183addaf7a472e01668ced15
 base_blob: 1ae7e9cac6dc078a0e71c7a6b0b77ec48b0ed01f
@@ -79,6 +79,13 @@ attempt_file: 2026-10-25T041252Z-check-cuda-nvfp4-wgmma-rega-grouped-s3-wide-buc
 prepared_at: 2026-10-25T041252Z
 job: 3bdec0e58d684c17
 dispatched_at: 2026-10-25T041258Z
+outcome: failed
+verdict_detail: "test:failed"
+speedup: null
+speedup_ci: null
+harvested_at: 2026-10-25T043402Z
+best_at_harvest: 1.344525539017997
+promotion: null
 ---
 
 # cuda-nvfp4-wgmma-rega-grouped-s3-wide-bucket-fix
@@ -181,3 +188,27 @@ Audited 2026-10-25 by reading the code (model opus). No GPU here, so nothing was
 - **Rules.** OK. kernel_fn adds only the prepare-time constant `state["wg_vmask"]` (a Python int, graph-safe). The canary uses seeded synthetic inputs. Weights stay NVFP4 and activations stay BF16.
 
 Residual risk: the device lambda `step` (3 call sites in B) must be inlined. If NVVM does not inline it, ptxas serializes the wgmma for crossing a call, which is slow but correct. ptxas may also serialize the whole kernel because of B at N128. Either outcome shows as a failed `-Werror` probe in the log. And if the real fault is neither the A-register nor the accumulator hazard, both variants fail at N64/N128, and the log names the cause per bucket.
+
+## Result
+
+- job `3bdec0e58d684c17` (check), status done, passed False, tests 5/5
+- best at harvest: {"speedup": 1.344525539017997, "ci": [1.324357655932727, 1.364693422103267], "job": "a2744bc496b84790"}; base result: muse_moe_w4a16/hypotheses/done/neutral/cuda-nvfp4-wgmma-rega-grouped-s2-finite-fix.result.json
+- **outcome: failed** (test:failed)
+- files: `muse_moe_w4a16/hypotheses/done/failed/cuda-nvfp4-wgmma-rega-grouped-s3-wide-bucket-fix.result.json`, `muse_moe_w4a16/hypotheses/done/failed/cuda-nvfp4-wgmma-rega-grouped-s3-wide-bucket-fix.patch`; branch `hyp/muse_moe_w4a16/cuda-nvfp4-wgmma-rega-grouped-s3-wide-bucket-fix`
+
+## Attribution
+
+| shape | w | base µs | hyp µs | delta | verdict |
+|---|---|---|---|---|---|
+| bs=1 load=decode_1 sharding=ep8 | 60 | 49.19 | 48.68 | 0.9973 | flat |
+| bs=16 load=decode_16 sharding=ep8 | 60 | 152.25 | 152.88 | 0.9956 | flat |
+| bs=32 load=decode_32 sharding=ep8 | 60 | 198.22 | 195.77 | 1.0019 | flat |
+| bs=8 load=verify_1 sharding=ep8 | 60 | 107.39 | 113.54 | 0.9922 | flat |
+| bs=128 load=verify_16 sharding=ep8 | 60 | 323.73 | 0.0 | None | lost |
+
+lost on verify_16 verify_16. Expected hit: 0/3. Noise ±1.5%.
+
+## Follow-ups
+
+- rewrite stage 3 of `Marlin w13+w2 (moe_wna16_marlin_gemm x2) + silu_and_mul at num_tokens >= 128`: read the replaced kernels' own us per shape (profile top_kernels) against the incumbent and the floor, and check which Milestone it reached. The next stage is `/hypothesize muse_moe_w4a16 "<what to fix or tune>" --kind rewrite --depends-on cuda-nvfp4-wgmma-rega-grouped-s3-wide-bucket-fix --stage 4`; a slow or failed first cut is the expected start, not a do-not-retry.
+
