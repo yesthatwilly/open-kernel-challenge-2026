@@ -66,7 +66,7 @@ base_sha: 4488c6a7868d7d953811b7b93ec0403d0f8bfde8
 base_blob: d8769ef25caf845a0e207538ccc5c62394b6ee3b
 branch: hyp/muse_attention_decode/sliding-verify-sk-pseudo-decode-s1
 worktree: .worktrees/muse_attention_decode/sliding-verify-sk-pseudo-decode-s1
-mode: null
+mode: check
 restack_of: null
 stale_base: null
 implemented_at: 2026-10-25T044314Z
@@ -75,6 +75,8 @@ submission_sha256: e1e1054ff99e9be0e1cb0f44d06c07cc54de33d08197c48e72668db0f6b93
 norm_sha256: a37cfcac0e6a83aff97b999dbdbbd7e7c7676af1abccc429ae2d61b928d3e156
 submission_blob: 76492911dfd6685139a2ffac06c1d27083ecdb0a
 lint_warnings: 27
+attempt_file: 2026-10-25T044314Z-check-sliding-verify-sk-pseudo-decode-s1.md
+prepared_at: 2026-10-25T044314Z
 ---
 
 # sliding-verify-sk-pseudo-decode-s1
