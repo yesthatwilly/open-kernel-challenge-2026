@@ -57,9 +57,18 @@ controls_for: null
 rewrite_stage: 4
 replaces: Marlin w13+silu+w2 at 128<=T<=512
 review: proceed
-status: queued
+status: running
 review_at: 2026-10-25T044714Z
 review_companions: null
+stage: claimed
+claimed_at: 2026-10-25T050458Z
+base_sha: 8261c0480931bf1fdcb44c0d04d1dbf675b0c06a
+base_blob: bf65a3afdf6ebe0d9b73a817ffd2be1240f91870
+branch: hyp/muse_moe_w4a16/cuda-nvfp4-wgmma-rega-grouped-s4-replay-safe
+worktree: .worktrees/muse_moe_w4a16/cuda-nvfp4-wgmma-rega-grouped-s4-replay-safe
+mode: null
+restack_of: null
+stale_base: true
 ---
 
 # cuda-nvfp4-wgmma-rega-grouped-s4-replay-safe
