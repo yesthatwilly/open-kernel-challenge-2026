@@ -39,7 +39,7 @@ review: proceed
 status: running
 review_at: 2026-10-24T165620Z
 review_companions: null
-stage: claimed
+stage: implemented
 claimed_at: 2026-10-25T003236Z
 base_sha: 3c444875aef3f2a85c86b412e22d10ce0a6290dc
 base_blob: 526518b54879e7929be2f03a0c8084907596fa70
@@ -48,6 +48,12 @@ worktree: .worktrees/muse_prefill_layer/experts-triton-packed-dequant-turn4
 mode: null
 restack_of: null
 stale_base: true
+implemented_at: 2026-10-25T003418Z
+impl_commit: de7af5e266755a23304676ec04c4526206066029
+submission_sha256: 05424a69403b2c02e4e13bafd664dea069f501d3c8b82bbd85595eed371c5e5c
+norm_sha256: e58f695f11f4803b559e8d0c23c67e51b80393eddb8ddeb844118ad5099d04e7
+submission_blob: 0910a52804bc45a2f5ace82707c915f4634d8add
+lint_warnings: 7
 ---
 
 # experts-triton-packed-dequant-turn4
@@ -101,3 +107,29 @@ No companion is warranted. This is a rewrite stage with a single-constant change
 - ZERO_NONLOCAL_W2 zero-stores ~21K non-local rows x 4096 x 2 B (~170 MB, ~35 us) at turn_4. Does fused_post_expert_norm_weighted_sum mask by slot_expert_ids? If it does, the zero store (and Marlin's equivalent) can go in a later stage.
 - The grid covers the static EM bound (~24096 + 256*127 slots -> ~442 token tiles x 64 w-tiles for w13). Most CTAs exit early. That launch overhead is likely 10-20 us at turn_4: small, but visible against a ~0.4 ms target.
 
+
+## Implementation notes
+
+Edited only `muse_prefill_layer/submission.py` in the worktree (16 insertions, 13 deletions).
+- `MARLIN_MAX_TOKENS` 4096 -> 1024 (comment updated). turn_4 (T=3012) and the T=1506 / T=4096 tests now run `_experts_triton` with the existing (4096, BLOCK_T=128, BLOCK_W=128, num_warps=8, num_stages=3) entry and stage 5's packed dequant; turn_1 and T<=1024 stay on Marlin.
+- Review fix (open question 1): `E2E_CHECK_TOKENS` is now `(8192, 3012)` and `_check_experts_e2e` takes `t`; prepare() runs both (in both the first attempt and the scalar-fallback retry), so a packed-path wiring bug at BLOCK_T 128 falls back to the scalar dequant instead of failing the judge. Untimed, prepare() only.
+- num_stages: kept 3. REWRITE_READ_2026-10-25.md reports a w13 BLOCK_T 256 spill (4 spills, 255 regs) but no spill for the BLOCK_T 128 variant, so the num_stages=2 rule does not trigger.
+- STALE BASE: claim reported stale_base: true. The worktree is on stage 5's commit (3c444875ae), which predates prefill master (stack-tonight-five-prefill, 1.0705 check / 1.0744 scored). Built on stage 5 as the spec says; not rebased. Master's parallel align and `_silu_mul_sorted_kernel` are therefore absent here, so the turn_4 comparison against master's Marlin rows (2148/2115 us) is against a different surrounding pipeline.
+- Context from REWRITE_READ: stage 5 was judged DEAD (packed dequant ON, mean +1.4% at first_turn, within noise; asm added a smem round trip). The review expects only ~1.6-1.8 ms at turn_4, so a gain here is plausible but modest. Check the log for 'packed dequant ON' and both '[expert e2e]' lines before attributing.
+
+## Rules check
+
+- [x] CUDA-graph capturable: diff touches a constant, prepare() and its untimed check only; kernel_fn path unchanged, no new sync/alloc/value-dependent control flow (gate reads x.shape[0] only).
+- [x] Nothing derived from `data` is cached across calls: n/a to kernel_fn; the e2e check uses synthetic data inside prepare() only.
+- [x] Weights: unchanged (no repacking changes in the diff).
+- [x] Activations BF16 / KV FP8 / queries: unchanged by the diff.
+- [x] Attention sees every key: attention untouched by the diff.
+- [x] No timing patches, harness frames/I/O/secrets, module edits, reference import, subprocesses or network: none added.
+- [x] All work happens inside the timed call; no output caching or replay: the Triton path runs fully inside kernel_fn; no caching added.
+
+okc_lint output:
+```
+warn  host-sync    L537, L579, L633, L638, L649, L658, L668: torch.cuda.synchronize()  (outside kernel_fn's call graph; fine in prepare())
+OK with warnings: muse_prefill_layer/submission.py
+```
+py_compile passed; __pycache__ removed.
