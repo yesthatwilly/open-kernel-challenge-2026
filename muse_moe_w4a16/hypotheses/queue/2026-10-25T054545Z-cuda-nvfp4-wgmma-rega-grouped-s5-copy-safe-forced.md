@@ -67,8 +67,10 @@ kind: rewrite
 controls_for: null
 rewrite_stage: 5
 replaces: Marlin w13+silu+w2 (moe_wna16_marlin_gemm x2 + act_and_mul) at 128<=T<=512
-review: required
+review: proceed
 status: queued
+review_at: 2026-10-25T054930Z
+review_companions: null
 ---
 
 # cuda-nvfp4-wgmma-rega-grouped-s5-copy-safe-forced
@@ -98,3 +100,27 @@ shape (profile top_kernels) against the incumbent and the speed-of-light floor, 
 2. at or below the incumbent kernels' time on the target shapes;
 3. within ~1.5x of the floor on the target shapes, and the headline CI clears 1.0 (promotable).
 The next stage is minted with `--kind rewrite --depends-on <this slug> --stage N+1`.
+
+## Adversarial review
+
+Reviewed 2026-10-25T054930Z by an adversarial subagent (model opus).
+
+**Verdict: proceed.** The diagnosis holds up against the s4 archive. The judge prepared once (setup record copies=2 with prepare_s 39.34 s, the same as the log's single 'prepare so far 39.3s'), so its second state is a copy and not a second prepare(). Any tensor-cloning copy leaves the stored wg_mptr_py tuple pointing at the old scratch, which makes _wg_state_live false, and the judged bs=128/256 profiles show only Marlin. Encoding the TMA maps per call from the state's own bsrc pointer is host-only work done at capture time, is legal and is graph-safe. Proceed with the fixes below: the LAUNCHED check, a recursive state C, and the M2 comparator.
+
+### Justification
+A: Evidence for the copy claim comes from the s4 archive (muse_moe_w4a16/hypotheses/archive/cuda-nvfp4-wgmma-rega-grouped-s4-replay-safe/). (1) The okc.json setup record is {copies: 2, baseline_copies: 4, prepare_pad: 2223104, prepare_s: 39.344}. The log's last prepare line reads 'setup 35.7s (prepare so far 39.3s)', so prepare_s is ONE prepare and the second state did not come from prepare(). TASK.md, AGENTS.md and rules/ never define 'copies'. This is an inference from the record, not a documented fact. (2) s4 kernel_fn (branch hyp/.../s4-replay-safe, submission.py:2680-2681) gates on _wg_state_live (:1363-1367). That gate compares the Python tuple state['wg_mptr_py'] with the live wg_xs/wg_hs data_ptr(). A copy that clones tensors keeps the tuple, so the gate fails silently and runs Marlin. That fits profiles 4 and 5 (Marlin x2 at 306.2 / 483.2 us, act_and_mul present, no wg_kernel) and a headline of 1.343894 against master's 1.343895. If the judge had re-run prepare, the pointers would match and wgmma would have run. (3) The judge's copy cannot be copy.deepcopy: state['wg_ext'] is a Python module, deepcopy raises on a module, and the s4 setup passed. The copy is therefore a structure walk that clones tensors and shares everything else, likely with a pad allocation between copies (prepare_pad). The s3 failure fits this model too. Its global g_maps described state A's scratch, and copy B's TMA read A's stale rows. Per-call encode: cuTensorMapEncodeTiled is a pure host driver call. It touches no device, does not sync and does not allocate. The descriptor depends only on bsrc.data_ptr() and its shape, which are state scratch rather than input data, so nothing is cached from inputs and the path does not branch on values. Passed by value as a __grid_constant__ parameter, it is frozen into the graph node at capture. Each copy's graph therefore carries its own copy's scratch, which is exactly the property needed. Host cost is about 1 us per encode, paid only at capture or eager time and never on replay. Weakest link: performance in the judge's routing regime. The s4 forecast (580.8 vs 921.6 us cold at M=128) used all-local routing (1024 local routes). The judge's Marlin pair is 306 us at bs=128, which implies roughly a third as many routes. Nothing yet shows how the wgmma grouped kernel scales when routes are sparse and the per-expert N buckets are small. At 580 us for 1024 routes it sits at about 5.7x the 101.3 us floor, so it is not weight-bound, and its time may not fall in proportion to the route count. Milestone 2 is genuinely uncertain, and that is what this stage measures. A second weak link is item (5), the torch.profiler LAUNCHED assertion; see rules_flags.
+
+### Confounders on the current kernel
+- w2-marlin-atomic-add-small-m (9080a71, the base): T<=32 only; it does not overlap the 128<=T<=512 wgmma path. Control shapes bs=1/8/16/32 should stay flat.
+- marlin-block-m-two-smaller-on-postnorm: tunes the incumbent Marlin block_size_m at T>=128, which is the comparator being replaced. It does not confound the wgmma rows, but the forced path removes the Marlin rows from bs=128/256 in this run, so the incumbent figure must come from another job (s4 4e7f8be895a145ba: 306.2/483.2 us, or master 7a0d900a1dd34666).
+- triton-map-align-on-block-m-restack / align-parallel-per-expert-verify: the wgmma path runs its own align at block 16, so align time belongs to the replaced subsystem. Compare align + gather + 2x wg_kernel + norm against align + 2x Marlin + act_and_mul + norm per kernel, not on the headline.
+- post-expert-norm-triton-small-m / sglang-marlin-path-parity: shared post-norm/combine; at T>=128 both paths call SGLang's fused_post_expert_norm_weighted_sum, so it cancels.
+
+### Interference and A/B needs
+No companion. This is a rewrite stage judged on its own kernel rows, and forcing the path means the judged profile names the launched kernels directly. The one thing a companion could separate (did the copy fix work, or did something else block wgmma) is read from the bs=128/256 kernel names in this run's own profile. The sibling s5-copy-safe-bucket-gate is identical code plus a selector, and its 'wgmma rows appear' depends on exactly the same fix. Moe has 5 checks left and 5 queued, so run forced first and hold the bucket-gate and s6 until this job's profile shows wg_kernel rows. If it shows Marlin again, the copy hypothesis is wrong, and the bucket-gate would burn a check on the same failure.
+
+### Open questions
+- Milestone M2 says 'wgmma pair row <= 0.9x the Marlin pair row in the same profile', but forcing wgmma at 128<=T<=512 leaves no Marlin row at bs=128/256 in this profile. Restate it against s4 job 4e7f8be895a145ba (306.2 / 483.2 us) and master 7a0d900a1dd34666, allowing for cross-run noise.
+- What does the judge's copy actually do? Is it a recursive clone with a pad between copies, and does it clone CPU tensors (wg_maps blob, wg_mptr)? The per-call encode works under every plausible variant, but a log line in kernel_fn is impossible. The judged profile kernel names are the only confirmation.
+- Does the wgmma grouped kernel's time scale down with route count at judge-like skew (around 300-400 local routes at bs=128)? The calibrated prepare print in item (6) should give the answer before the profile does.
+
