@@ -60,10 +60,10 @@ controls_for: null
 rewrite_stage: 1
 replaces: moe_wna16_marlin_gemm x2 (Marlin w13 + w2) at 1024 < T <= 4096 (turn_4, T=3012)
 review: proceed
-status: running
+status: done
 review_at: 2026-10-25T043310Z
 review_companions: null
-stage: dispatched
+stage: harvested
 claimed_at: 2026-10-25T043310Z
 base_sha: 8c0b24db143ab6bf6ff8765c64729c63abac3138
 base_blob: db8a3344398bca79ea5cafeb580f701c055fd475
@@ -82,6 +82,13 @@ attempt_file: 2026-10-25T044809Z-check-experts-turn4-cuda-dequant-producer-ss-wg
 prepared_at: 2026-10-25T044809Z
 job: 40541db65f1b4ec6
 dispatched_at: 2026-10-25T044817Z
+outcome: neutral
+verdict_detail: within-ci
+speedup: 1.07139986174477
+speedup_ci: [1.0553288638185985, 1.0874708596709415]
+harvested_at: 2026-10-25T053804Z
+best_at_harvest: 1.074386115190733
+promotion: null
 ---
 
 # experts-turn4-cuda-dequant-producer-ss-wgmma
@@ -195,3 +202,32 @@ Audited 2026-10-25 by an opus subagent, by reading the code and running a numpy 
 - **Untested code.** Nothing has run yet. A first-launch fault, such as a wrong wgmma operand syntax, would still poison the context, so the first measurement must be an okc check.
 
 **Residual risk:** the kernel has never compiled or run, so a first-launch fault or a register spill at the 168-register cap with n256 could make the run unreadable. The okc check log's regs/local_bytes line and the canary line will tell which.
+
+## Result
+
+- job `40541db65f1b4ec6` (check), status done, passed True, tests 5/5
+- speedup 1.0714x, 95% CI [1.0553, 1.0875], score 361586.6623028255 µs vs SGLang 387403.9 µs
+- best at harvest: {"speedup": 1.074386115190733, "ci": [1.058270323462872, 1.090501906918594], "job": "502f2eab95164781"}; base result: muse_prefill_layer/hypotheses/done/neutral/stack-tonight-five-prefill.result.json
+- **outcome: neutral** (within-ci)
+- files: `muse_prefill_layer/hypotheses/done/neutral/experts-turn4-cuda-dequant-producer-ss-wgmma.result.json`, `muse_prefill_layer/hypotheses/done/neutral/experts-turn4-cuda-dequant-producer-ss-wgmma.patch`; branch `hyp/muse_prefill_layer/experts-turn4-cuda-dequant-producer-ss-wgmma`
+
+## Attribution
+
+| shape | w | base µs | hyp µs | delta | verdict |
+|---|---|---|---|---|---|
+| batch=1 ctx=80000 dist=soft layer=sliding load=turn_1 page=1 q_len=753 repeats=6 | 46 | 1101.29 | 1057.77 | 1.0069 | flat |
+| batch=1 ctx=80000 dist=soft layer=full load=turn_1 page=1 q_len=753 repeats=6 | 16 | 1529.55 | 1439.01 | 1.0025 | flat |
+| batch=4 ctx=80000 dist=soft layer=sliding load=turn_4 page=1 q_len=753 repeats=6 | 46 | 3318.71 | 3280.77 | 1.0002 | flat |
+| batch=4 ctx=80000 dist=soft layer=full load=turn_4 page=1 q_len=753 repeats=6 | 16 | 4849.27 | 4816.62 | 0.9981 | flat |
+| batch=1 ctx=0 dist=soft layer=full load=first_turn page=1 q_len=16384 repeats=6 | 16 | 14705.32 | 14042.79 | 0.9849 | flat |
+| batch=1 ctx=32768 dist=soft layer=sliding load=first_turn page=1 q_len=16384 repeats=6 | 138 | 14264.64 | 14047.39 | 1.0012 | flat |
+| batch=1 ctx=32768 dist=soft layer=full load=first_turn page=1 q_len=16384 repeats=6 | 16 | 17746.69 | 17971.84 | 0.9912 | flat |
+| batch=1 ctx=65536 dist=soft layer=full load=first_turn page=1 q_len=16384 repeats=6 | 16 | 21733.75 | 21624.58 | 0.9913 | flat |
+
+no shape moved outside noise. Expected hit: 0/3. Noise ±1.5%.
+
+## Follow-ups
+
+- rewrite stage 1 of `moe_wna16_marlin_gemm x2 (Marlin w13 + w2) at 1024 < T <= 4096 (turn_4, T=3012)`: read the replaced kernels' own us per shape (profile top_kernels) against the incumbent and the floor, and check which Milestone it reached. The next stage is `/hypothesize muse_prefill_layer "<what to fix or tune>" --kind rewrite --depends-on experts-turn4-cuda-dequant-producer-ss-wgmma --stage 2`; a slow or failed first cut is the expected start, not a do-not-retry.
+- within-ci: the change is not proven either way; a stacked hypothesis (`depends_on: experts-turn4-cuda-dequant-producer-ss-wgmma`) that adds a further change in the same area is the only way to learn more (identical code is never re-run).
+
