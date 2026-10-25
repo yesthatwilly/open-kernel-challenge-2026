@@ -50,7 +50,7 @@ base_sha: 9d3c58e166fc04c1df6f9c7b4eccd2672e82be7c
 base_blob: 60dfe35d5417d9c0f89067ff313efdc2c41d03a2
 branch: hyp/muse_moe_w4a16/w2-marlin-atomic-add-verify
 worktree: .worktrees/muse_moe_w4a16/w2-marlin-atomic-add-verify
-mode: null
+mode: check
 restack_of: null
 stale_base: null
 implemented_at: 2026-10-25T043034Z
@@ -59,6 +59,8 @@ submission_sha256: 368af90c389cc11ddb7744c2542f344707fa26ef7ab0a31c5a70d5b6132e5
 norm_sha256: 50eb74f865262beaeaa444ab71c7530d3a3b78445dc12cb366f2a25a4e2af7d9
 submission_blob: 28fdab5be6f60d2b4e91078e80a5bf4e2f8d098e
 lint_warnings: 18
+attempt_file: 2026-10-25T043034Z-check-w2-marlin-atomic-add-verify.md
+prepared_at: 2026-10-25T043034Z
 ---
 
 # w2-marlin-atomic-add-verify
