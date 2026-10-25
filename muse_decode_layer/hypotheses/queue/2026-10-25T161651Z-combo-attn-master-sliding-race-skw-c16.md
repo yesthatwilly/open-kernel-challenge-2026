@@ -106,7 +106,7 @@ worktree: null
 mode: null
 restack_of: null
 stale_base: null
-hold_reason: "builder found D1-D3 and C1 already on master (ec89382b); what remains is A1+A2, a multi-thousand-line CUDA port from muse_attention_decode with two new load_inline builds: not buildable here and unsafe as an unchecked scored submit; run it as a check once checks reset, or split A1 and A2"
+hold_reason: "superseded: remainder equals sliding-sk-window-port-decode32-verify1 + sliding-cluster-c16-decode1-port, both queued (decode minter, 2026-10-25)"
 ---
 
 # combo-attn-master-sliding-race-skw-c16
