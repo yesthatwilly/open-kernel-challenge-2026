@@ -49,8 +49,10 @@ depends_on: null
 priority: 2
 kind: primary
 controls_for: null
-review: required
+review: proceed
 status: queued
+review_at: 2026-10-25T203307Z
+review_companions: null
 ---
 
 # full-decode1-sk-two-level-deep-ring
@@ -70,3 +72,26 @@ Built on current master (no depends_on). Full decode_1 runs splitkv_attn_sk_kern
 ## Risk
 
 5 stages gave nothing at B=16 (bandwidth-bound there); B=1 is latency-bound, which is why depth may pay only here. Full decode_1 is 40% of the decode_1 load.
+
+## Adversarial review
+
+Reviewed 2026-10-25T203307Z by an adversarial subagent (model opus).
+
+**Verdict: proceed.** Deepening the ring of the existing <STAGES, two-level> stream-K kernel at grid = SM count for full decode_1 is untried, rules-clean and self-measuring via in-prepare variant timing. Likely gain is small (~+0.5-1% headline, inside CI), and B=1 stays slower than the unlanded c320 path (17.4 us). Read it on the per-variant kernel times. 12 stages does not fit shared memory; use 8 and 10 (or 11).
+
+### Justification
+At grid 132, ~9.5 tiles of 16 KB per CTA; 4 stages = 3 in flight (~1 meta round trip + ~3 dependent waves); 8 stages ~1 + 1.4: 1-2 fewer round trips (1-2 us each). Weakest link: most of the 19.0 us is prologue, per-tile compute and the two-level merge/finalize tail, which depth does not touch; steady-state bytes in flight (6.3 MB) already exceed Little's law. Smem: Lay<8> 164,896 B fits; Lay<12> 234,528 B > 232,448 B limit; Lay<10> 199,712 B, Lay<11> 217,120 B. Full decode_1 weight 16 at 22.4 us; a 3 us cut ~+0.9% headline. Prior (missing field): full-decode1-sk4-cluster-dsmem-merge, -sk-two-level-fused-preattn, -sk-pdl-from-preattn, -cuda-splitkv-chunk320/640; none changed ring depth.
+
+### Confounders on the current kernel
+- full-decode1-streamk-s3-two-level-ticket: defines the kernel and merge tail; flat means the tail dominates; [sk3-diag] per-variant times separate it.
+- restack-sk-pseudo-cluster-plus-v3-fused-preattn / restack-sliding-decode-sk-window-on-cluster-master: PSEUDO instantiations (variants 4-7) of the same template; do not renumber them or touch Lay<4,PS_MAXR,true> / sk_smem / sk_prepare for v>=4; extra instantiations add compile time.
+- Unlanded c320 path (17.4 us full decode_1): confounds the value, not the measurement.
+
+### Interference and A/B needs
+No companion: prepare times <4,two-level> vs 8/10 stages under the same cold-L2 graph replay and routes at >= 1.03x; the log plus the profile's full decode_1 top kernel read it.
+
+### Open questions
+- Is attention's only scored run best spent here (best case ~1.52-1.53 vs board 1.5347)?
+- Was STAGES=5 or deeper timed at B=1 grid SM in any [sk3-diag] log?
+- Phase split of the 19.0 us (merge/tail vs streaming) via clock64 in prepare.
+
