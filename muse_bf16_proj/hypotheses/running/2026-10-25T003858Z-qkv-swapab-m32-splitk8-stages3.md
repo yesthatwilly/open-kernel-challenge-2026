@@ -56,7 +56,7 @@ base_sha: eaddbb705ebf231e1f6510a66f7051d716c65fdd
 base_blob: a8bb42ac483318e9fbc84bc7826a27b7a704d1fb
 branch: hyp/muse_bf16_proj/qkv-swapab-m32-splitk8-stages3
 worktree: .worktrees/muse_bf16_proj/qkv-swapab-m32-splitk8-stages3
-mode: null
+mode: check
 restack_of: null
 stale_base: null
 implemented_at: 2026-10-25T004327Z
@@ -65,6 +65,8 @@ submission_sha256: 128cc19c4135b2d8eb3e87ede2b12983edaacf8cc12b4ca3f1b5ad0d79f20
 norm_sha256: 3640abea7b64eccffd761e873abdb0974b9806e370121a5cc2f1c4e586ab0f1a
 submission_blob: 46e00b642357edc983496010f4eef95573178aa2
 lint_warnings: 0
+attempt_file: 2026-10-25T004328Z-check-qkv-swapab-m32-splitk8-stages3.md
+prepared_at: 2026-10-25T004328Z
 ---
 
 # qkv-swapab-m32-splitk8-stages3
