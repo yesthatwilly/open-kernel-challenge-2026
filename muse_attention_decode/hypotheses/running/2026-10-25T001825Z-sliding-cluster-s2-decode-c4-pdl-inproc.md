@@ -68,9 +68,18 @@ controls_for: null
 rewrite_stage: 2
 replaces: "sliding layer decode at tp8/page 1, 1<=batch<=32: master Triton _sliding_fused_kernel (stage-1 sliding_cluster_kernel<1>)"
 review: proceed
-status: queued
+status: running
 review_at: 2026-10-25T002143Z
 review_companions: null
+stage: claimed
+claimed_at: 2026-10-25T002143Z
+base_sha: 593859d3ce482d60c7bb0ec1fb4e4101e7b1ce31
+base_blob: bd96c94a12cf87fdcdac119d1e0508f009c4120c
+branch: hyp/muse_attention_decode/sliding-cluster-s2-decode-c4-pdl-inproc
+worktree: .worktrees/muse_attention_decode/sliding-cluster-s2-decode-c4-pdl-inproc
+mode: null
+restack_of: null
+stale_base: true
 ---
 
 # sliding-cluster-s2-decode-c4-pdl-inproc
