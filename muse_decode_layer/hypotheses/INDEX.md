@@ -1,6 +1,6 @@
 # muse_decode_layer hypotheses
 
-Regenerated 2026-10-25T150117Z. Best: 1.3018x [1.2822,1.3213] job `34a9be06918d448b` (check)
+Regenerated 2026-10-25T151051Z. Best: 1.3018x [1.2822,1.3213] job `34a9be06918d448b` (check)
 
 | created | slug | kind | area | where | outcome | speedup | CI | job | mode | promotion | review | expected hit |
 |---|---|---|---|---|---|---|---|---|---|---|---|---|
@@ -70,8 +70,8 @@ Regenerated 2026-10-25T150117Z. Best: 1.3018x [1.2822,1.3213] job `34a9be06918d4
 | 2026-10-25T054152Z | dense-chain-s3-t1-q-sk2-o-route-unpool | rewrite | whole-layer fusion (T=1 dense chain: qkv/o GEMM side + routing R + unpooler) | done/neutral | neutral | 1.3018 | [1.282,1.321] | 34a9be06918d448b | check | merged | proceed | 3/5 |
 | 2026-10-25T110639Z | sliding-cluster-c4-s3-satfinite-on-sk-ticket | rewrite | FA3 call (sliding decode, batch 17..32) | queue | queued |  |  |  |  |  | required |  |
 | 2026-10-25T110701Z | qkv-o-swapab16-t2-t16-no-fork | primary | qkv GEMM + o GEMM (2 <= T <= 16) | done/neutral | neutral | 1.3056 | [1.286,1.325] | b0057d2e6cef4d5a | submit |  | proceed | 3/6 |
-| 2026-10-25T145938Z | dl3-piece-a-gate-stride-check-fix | primary | full decode_1 attention side (dl3 piece A enable) | queue | queued |  |  |  |  |  | required |  |
 | 2026-10-25T145938Z | dl3-unpool-nf1-t2-t8 | primary | unpooler GEMM (T=2..8, dl3 piece C widened) | queue | queued |  |  |  |  |  | required |  |
+| 2026-10-25T145938Z | dl3-piece-a-gate-stride-check-fix | primary | full decode_1 attention side (dl3 piece A enable) | running | running |  |  | 933d3f825a044d36 | submit |  | proceed |  |
 
 ## Held
 

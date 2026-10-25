@@ -1,6 +1,6 @@
 # muse_prefill_layer hypotheses
 
-Regenerated 2026-10-25T150117Z. Best: 1.4458x [1.4241,1.4674] job `4e6f815a8dd945ba` (check)
+Regenerated 2026-10-25T151051Z. Best: 1.4480x [1.4263,1.4698] job `bff8e36788a04917` (submit)
 
 | created | slug | kind | area | where | outcome | speedup | CI | job | mode | promotion | review | expected hit |
 |---|---|---|---|---|---|---|---|---|---|---|---|---|
@@ -69,7 +69,7 @@ Regenerated 2026-10-25T150117Z. Best: 1.4458x [1.4241,1.4674] job `4e6f815a8dd94
 | 2026-10-25T054848Z | turn-align-sglang32-prenorm-triton-restack | primary | MoE align on the Marlin path (T <= 4096) + pre-expert norm: restack of two measured row wins | done/neutral | neutral | 1.0694 | [1.053,1.085] | 9cfd4f58d24044b2 | check |  | proceed | 0/3 |
 | 2026-10-25T110612Z | experts-turn4-ssdq-s2-tma-raw-weight-ring | rewrite | w13 + w2 expert GEMMs at 1024 < T <= 4096 (turn_4): ssdq producer weight feed, TMA raw-code smem ring instead of register __ldg prefetch | done/neutral | neutral | 1.1293 | [1.112,1.146] | 05dbf2d59a874444 | check |  | proceed | 1/3 |
 | 2026-10-25T110643Z | turn-align-two-phase-chunk-prefix | primary | MoE align/dispatch on T <= 4096 (Marlin turn_1 + ssdq turn_4): _align_parallel replaced by a two-launch chunk-count + prefix-place align | done/neutral | neutral | 1.3369 | [1.317,1.357] | d792e5c9d6d94f02 | check |  | proceed | 1/3 |
-| 2026-10-25T125453Z | align-two-phase-all-t-rega | primary | MoE align/dispatch on the rega path (200 < T <= 16384): _align_parallel replaced by the two-phase chunk-count + prefix-place align, including the first_turn class | done/neutral | neutral | 1.4458 | [1.424,1.467] | 4e6f815a8dd945ba | check | submitted | proceed | 3/3 |
+| 2026-10-25T125453Z | align-two-phase-all-t-rega | primary | MoE align/dispatch on the rega path (200 < T <= 16384): _align_parallel replaced by the two-phase chunk-count + prefix-place align, including the first_turn class | done/neutral | neutral | 1.4458 | [1.424,1.467] | 4e6f815a8dd945ba | check | done | proceed | 3/3 |
 | 2026-10-25T125554Z | experts-rega-low-class-two-ctas-per-sm | rewrite | w13 + w2 expert GEMMs at 200 < T <= 1024 (turn_1, rega low class): two resident CTAs per SM with a 64- or 32-route slab, to hide consumer dequant latency | done/neutral | neutral | 1.4173 | [1.396,1.439] | 1a77da43b3304b07 | check |  | proceed | 1/3 |
 
 ## Held

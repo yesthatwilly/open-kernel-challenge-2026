@@ -1,6 +1,6 @@
 # muse_attention_decode findings
 
-Regenerated 2026-10-25T150117Z by `churn.py index`. Read this before writing a hypothesis for muse_attention_decode.
+Regenerated 2026-10-25T151051Z by `churn.py index`. Read this before writing a hypothesis for muse_attention_decode.
 
 ## Current best
 
@@ -229,5 +229,5 @@ Where the time goes (per scored shape, top kernels):
 - queue: sliding-verify1-triton-pseudo-decode [sliding-layer attention (batch-1 verify, Triton fused decode kernel)] p2 hold
 - queue: full-verify1-sk-pseudo-decode [full-layer attention (batch-1 verify, stream-K pseudo-decode)] p3 hold
 - queue: sliding-decode-sk-s3-fused-preattn-rope [sliding-layer attention (decode, stream-K windowed kernel, pre-attention fold)] p2 queued
-- queue: epilogue-gate-l2-prefetch-cuda [output norm-gate (gate operand prefetch in the CUDA epilogues)] p2 queued
 - queue: preattention-tiled-every-verify-block [pre-attention norm+rope] p2 queued
+- running: epilogue-gate-l2-prefetch-cuda [output norm-gate (gate operand prefetch in the CUDA epilogues)] p2 running

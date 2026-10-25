@@ -1,6 +1,6 @@
 # muse_decode_layer findings
 
-Regenerated 2026-10-25T150117Z by `churn.py index`. Read this before writing a hypothesis for muse_decode_layer.
+Regenerated 2026-10-25T151051Z by `churn.py index`. Read this before writing a hypothesis for muse_decode_layer.
 
 ## Current best
 
@@ -215,5 +215,5 @@ Where the time goes (per scored shape, top kernels):
 - queue: marlin-two-stream-halves-port [w13 marlin + silu-mul + w2 marlin (8<=T<=32, stream overlap)] p5 hold
 - queue: moe-chain-cuda-swapab-expert-once-fix [w13 marlin + silu-mul + w2 marlin (T>32)] p2 hold
 - queue: sliding-cluster-c4-s3-satfinite-on-sk-ticket [FA3 call (sliding decode, batch 17..32)] p1 queued
-- queue: dl3-piece-a-gate-stride-check-fix [full decode_1 attention side (dl3 piece A enable)] p1 queued
 - queue: dl3-unpool-nf1-t2-t8 [unpooler GEMM (T=2..8, dl3 piece C widened)] p2 queued
+- running: dl3-piece-a-gate-stride-check-fix [full decode_1 attention side (dl3 piece A enable)] p1 running

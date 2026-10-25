@@ -1,6 +1,6 @@
 # muse_attention_decode hypotheses
 
-Regenerated 2026-10-25T150117Z. Best: 1.5017x [1.4791,1.5304] job `252abb7f11ec48c3` (check)
+Regenerated 2026-10-25T151051Z. Best: 1.5017x [1.4791,1.5304] job `252abb7f11ec48c3` (check)
 
 | created | slug | kind | area | where | outcome | speedup | CI | job | mode | promotion | review | expected hit |
 |---|---|---|---|---|---|---|---|---|---|---|---|---|
@@ -83,8 +83,8 @@ Regenerated 2026-10-25T150117Z. Best: 1.5017x [1.4791,1.5304] job `252abb7f11ec4
 | 2026-10-25T054449Z | sliding-decode-sk-window-route | rewrite | sliding-layer attention (decode, stream-K windowed kernel) | done/neutral | neutral | 1.4973 | [1.475,1.520] | 118c6de9704146f3 | check |  | proceed | 2/4 |
 | 2026-10-25T110636Z | restack-sliding-decode-sk-window-on-cluster-master | primary | sliding-layer attention (decode, stream-K windowed kernel) restack | done/neutral | neutral | 1.5017 | [1.479,1.530] | 252abb7f11ec48c3 | submit | merged | proceed | 5/5 |
 | 2026-10-25T110716Z | sliding-decode-sk-s3-fused-preattn-rope | rewrite | sliding-layer attention (decode, stream-K windowed kernel, pre-attention fold) | queue | queued |  |  |  |  |  | required |  |
-| 2026-10-25T150036Z | epilogue-gate-l2-prefetch-cuda | primary | output norm-gate (gate operand prefetch in the CUDA epilogues) | queue | queued |  |  |  |  |  | required |  |
 | 2026-10-25T150036Z | preattention-tiled-every-verify-block | primary | pre-attention norm+rope | queue | queued |  |  |  |  |  | required |  |
+| 2026-10-25T150036Z | epilogue-gate-l2-prefetch-cuda | primary | output norm-gate (gate operand prefetch in the CUDA epilogues) | running | running |  |  | 917a9689ba4645bd | submit |  | proceed |  |
 
 ## Held
 

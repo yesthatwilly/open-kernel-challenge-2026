@@ -1,10 +1,10 @@
 # muse_moe_w4a16 findings
 
-Regenerated 2026-10-25T150117Z by `churn.py index`. Read this before writing a hypothesis for muse_moe_w4a16.
+Regenerated 2026-10-25T151051Z by `churn.py index`. Read this before writing a hypothesis for muse_moe_w4a16.
 
 ## Current best
 
-1.3727x [1.3521,1.3933] from job `4e4a0e26c85944f2` (submit), master commit ``, hypothesis cuda-nvfp4-wgmma-rega-grouped-s5-copy-safe-bucket-gate
+1.3727x [1.3521,1.3933] from job `4e4a0e26c85944f2` (submit), master commit `40e2e860c4`, hypothesis cuda-nvfp4-wgmma-rega-grouped-s5-copy-safe-bucket-gate
 
 Where the time goes (per scored shape, top kernels):
 
@@ -158,5 +158,6 @@ Where the time goes (per scored shape, top kernels):
 - queue: cuda-nvfp4-wgmma-rega-b256-n64-deep-ring [w13 marlin + silu-mul + w2 marlin] p3 queued
 - queue: cuda-nvfp4-wgmma-rega-pingpong-consumers [w13 marlin + silu-mul + w2 marlin] p1 queued
 - queue: cuda-nvfp4-wgmma-rega-producer-scale-expand [w13 marlin + silu-mul + w2 marlin] p2 queued
-- queue: align-two-phase-port-from17 [MoE align/dispatch] p1 queued
-- queue: silu-mul-triton-row-tiled-gated [silu-mul] p2 queued
+- queue: silu-mul-triton-row-tiled-gated [silu-mul] p2 hold
+- queue: restack-bucket-gate-on-master-align-atomic [expert GEMM path selection (wgmma vs Marlin) restack] p1 hold
+- running: align-two-phase-port-from17 [MoE align/dispatch] p1 running

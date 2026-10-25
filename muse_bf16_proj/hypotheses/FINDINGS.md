@@ -1,6 +1,6 @@
 # muse_bf16_proj findings
 
-Regenerated 2026-10-25T150117Z by `churn.py index`. Read this before writing a hypothesis for muse_bf16_proj.
+Regenerated 2026-10-25T151051Z by `churn.py index`. Read this before writing a hypothesis for muse_bf16_proj.
 
 ## Current best
 
@@ -202,5 +202,5 @@ Where the time goes (per scored shape, top kernels):
 - queue: pooler-m32-tma-splitk-extend [pooler GEMM (m=17..32)] p3 hold
 - queue: bf16-lossless-exp4-warpspec-persistent-stage3 [lossless exp4 compressed-weight stream kernel (_lossless_swapab_kernel)] p1 hold
 - queue: bf16-verify32-cutlass-coop-256x128-splitk-stage2 [bf16 GEMM dispatch (m=129..256, CUTLASS sm90 cooperative split-K)] p1 queued
-- queue: pooler-nn-layout-widen-m256 [pooler GEMM (m=129..256, cuBLAS NN layout)] p2 queued
-- queue: unpooler-full-m16-swapab16-blockt16 [unpooler GEMM (full width n=8192, m=9..16, swap-AB BLOCK_T 16)] p3 queued
+- queue: unpooler-full-m16-swapab16-blockt16 [unpooler GEMM (full width n=8192, m=9..16, swap-AB BLOCK_T 16)] p3 hold
+- running: pooler-nn-layout-widen-m256 [pooler GEMM (m=129..256, cuBLAS NN layout)] p2 running

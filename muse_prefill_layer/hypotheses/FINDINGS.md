@@ -1,10 +1,10 @@
 # muse_prefill_layer findings
 
-Regenerated 2026-10-25T150117Z by `churn.py index`. Read this before writing a hypothesis for muse_prefill_layer.
+Regenerated 2026-10-25T151051Z by `churn.py index`. Read this before writing a hypothesis for muse_prefill_layer.
 
 ## Current best
 
-1.4458x [1.4241,1.4674] from job `4e6f815a8dd945ba` (check), master commit `1932a9c4fb`, hypothesis align-two-phase-all-t-rega
+1.4480x [1.4263,1.4698] from job `bff8e36788a04917` (submit), master commit `1932a9c4fb`, hypothesis align-two-phase-all-t-rega
 
 Where the time goes (per scored shape, top kernels):
 

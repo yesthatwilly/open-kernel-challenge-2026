@@ -1,6 +1,6 @@
 # muse_moe_w4a16 hypotheses
 
-Regenerated 2026-10-25T150117Z. Best: 1.3727x [1.3521,1.3933] job `4e4a0e26c85944f2` (submit)
+Regenerated 2026-10-25T151051Z. Best: 1.3727x [1.3521,1.3933] job `4e4a0e26c85944f2` (submit)
 
 | created | slug | kind | area | where | outcome | speedup | CI | job | mode | promotion | review | expected hit |
 |---|---|---|---|---|---|---|---|---|---|---|---|---|
@@ -75,8 +75,9 @@ Regenerated 2026-10-25T150117Z. Best: 1.3727x [1.3521,1.3933] job `4e4a0e26c8594
 | 2026-10-25T110544Z | cuda-nvfp4-wgmma-rega-b256-n64-deep-ring | rewrite | w13 marlin + silu-mul + w2 marlin | queue | queued |  |  |  |  |  | required |  |
 | 2026-10-25T125414Z | cuda-nvfp4-wgmma-rega-pingpong-consumers | rewrite | w13 marlin + silu-mul + w2 marlin | queue | queued |  |  |  |  |  | required |  |
 | 2026-10-25T125512Z | cuda-nvfp4-wgmma-rega-producer-scale-expand | rewrite | w13 marlin + silu-mul + w2 marlin | queue | queued |  |  |  |  |  | required |  |
-| 2026-10-25T145952Z | align-two-phase-port-from17 | primary | MoE align/dispatch | queue | queued |  |  |  |  |  | required |  |
-| 2026-10-25T145952Z | silu-mul-triton-row-tiled-gated | primary | silu-mul | queue | queued |  |  |  |  |  | required |  |
+| 2026-10-25T145952Z | silu-mul-triton-row-tiled-gated | primary | silu-mul | queue | hold |  |  |  |  |  | proceed |  |
+| 2026-10-25T145952Z | align-two-phase-port-from17 | primary | MoE align/dispatch | running | running |  |  | c05a8f7326004be6 | submit |  | proceed |  |
+| 2026-10-25T150301Z | restack-bucket-gate-on-master-align-atomic | primary | expert GEMM path selection (wgmma vs Marlin) restack | queue | hold |  |  |  |  |  | hold |  |
 
 ## Held
 
@@ -97,3 +98,5 @@ Regenerated 2026-10-25T150117Z. Best: 1.3727x [1.3521,1.3933] job `4e4a0e26c8594
 - cuda-nvfp4-wgmma-rega-midm-bucket-cap32: Reviewer: proceed but wait for s3 wide-bucket-fix (3bdec0e58d684c17) harvest; rebuild on s3 commit + master 9080a71 with the variant s3 picks at N16/N32; cap32 is an assert at T<=32; use master _align_small block 16; then unhold.
 - cuda-nvfp4-wgmma-rega-w2-only-midm: Reviewer: proceed but dispatch only after s3 (3bdec0e58d684c17) is harvested; build on s3 commit + 9080a71; if A and B both fail use variant A at N16/N32; remote rows of y must be zero; pairs with cap32 as its control.
 - marlin-exec-config-autotune-mid-m: Reviewer: no evidence SGLang moe_wna16_marlin_gemm takes thread_k/thread_n/blocks_per_sm; a print-only kwargs probe + cold-L2 config timing table rides in w13-marlin-atomic-add-on-master-small-m prepare(). Build only if a config is >=8% faster on two routings; fp32 reference; w2 in master atomic mode; T=8/16/32 only.
+- silu-mul-triton-row-tiled-gated: Weak for a scored run: prefill's Triton act_and_mul swap (silu-mul-triton-local-rows-marlin-turn, b2259479) ran ~2x slower on the judge; its only expected-faster shapes (128<=T<=512) are covered by the wgmma bucket-gate (fused silu) now on the board and being restacked onto master; the warm-L2 bare-kernel gate is noise-prone at ~2 us. Revisit on a check after the restack lands, with the review's gate/do_not_specialize fixes.
+- restack-bucket-gate-on-master-align-atomic: adversarial review: The premise is false: the parent's submission.py (blob 1774e42c, branch tip = impl fc959d9c) already contains master's align-parallel-per-expert-verify and w2-m
