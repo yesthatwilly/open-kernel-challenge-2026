@@ -73,7 +73,7 @@ review: proceed
 status: running
 review_at: 2026-10-25T161627Z
 review_companions: null
-stage: claimed
+stage: implemented
 claimed_at: 2026-10-25T161628Z
 base_sha: 65440e974f1eccc4c5d39e2e004e0f64d2c9d806
 base_blob: f919748b5af6e815f319e5d2d828ed68e5b28a71
@@ -82,6 +82,12 @@ worktree: .worktrees/muse_bf16_proj/combo-naive-pooler-m1-rowowner-qkv-m128-cubl
 mode: null
 restack_of: null
 stale_base: null
+implemented_at: 2026-10-25T163320Z
+impl_commit: 81048abffa7ec82c3af58cf5fa7ccd8ba5c91718
+submission_sha256: c3a86c47cf009e0cc389517303d4f4fa02287a45b93b28a3cea1dc497d162965
+norm_sha256: 67ee24281e5a53be2bbc0663f3f01019ab3bcd0ca7b3279280844fc772bbde8e
+submission_blob: 9008c43b0750f70feb5d559b0947cb067f00aac8
+lint_warnings: 39
 ---
 
 # combo-naive-pooler-m1-rowowner-qkv-m128-cublaslt
@@ -188,3 +194,23 @@ Built 2026-10-25 on base 65440e97 (blob f919748b). Master f77fd49a differs only 
 - [x] prepare-only syncs, prints, try/except and profiler; each flag lives in state; a build or self-check miss lands on master's path and never raises.
 
 okc_lint output (`python3 -I .claude/skills/churnsubs/bin/okc_lint.py <worktree>/muse_bf16_proj/submission.py --problem muse_bf16_proj`): `OK with warnings`. There are no errors. Every warning is `host-sync ... (outside kernel_fn's call graph; fine in prepare())` or `dtype ... torch.empty(..., dtype=torch.uint8)`; the uint8 ones are flush and Lt workspace buffers in prepare, not compute precision. `py_compile` OK, `__pycache__` removed. An AST undefined-name scan found 0 bare names.
+
+## Pre-flight audit
+
+Audited 2026-10-25 by reading the code (model opus). No GPU on this node, so nothing was compiled or run. **Verdict: dispatch-with-fixes.**
+
+**Fixes** (worktree `muse_bf16_proj/submission.py`, uncommitted)
+1. **`bulk_run` host bounds checks.** Added TORCH_CHECKs before the launch: cuda tensors on one device, bf16 wt/x/out and int32 err, rank 2, contiguous wt and out, x unit inner stride (row stride 8192 when m > 1), x.size(0) >= m, 16-byte aligned x and wt. Reason: the C++ checked only m and the sizes. A bad x (too few rows, strided, misaligned) would have reached cp.async.bulk and could fault the device in a prepare canary, which voids the whole run.
+2. **cuBLASLt descriptors are now built per call, not cached.** The function-static `std::map` descriptor cache (module-global C++ state) is replaced by a RAII `MuseLtDesc(n, k, m)` that each of `lt_candidates`, `lt_force_splitk1` and `lt_run` creates and destroys, the same way ATen's own `gemm_and_bias` does. The algo row and workspace stay per state. The handle is torch's current Lt handle, the same one `torch.mm` uses; no handle of ours is held. The cost is host-only and happens at capture, never at replay.
+3. **A failed inherit turns off only its own cell.** `_cells_inherit` (the A/B second state's repack and Lt buffers) ran unguarded inside `_prepare_state`. Any exception there failed the whole second-state build, and the except in `_ab_selfcheck` then turned off `nn_ok`, `nn_p256_ok`, `router_cluster_ok` and `ouns_cl`. Each cell's inherit is now wrapped and turns off only that cell. `_ab_selfcheck` then turns the same cell off in the kept state A.
+
+**Verified, no change needed**
+- A build failure sets `_BULK_EXT` or `_LT_EXT` to None, which disables only cell A, or Lt mode 1 (the addmm mode 2 is still gated).
+- No `preferred_blas_library` or `torch.backends` write anywhere. The addmm fallback changes no global flag.
+- kernel_fn branches only on cfg, shape, stride, alignment and the state flags. It has no state writes, syncs, prints or try/except.
+- The verify_32 check is not an always-fail gate: master routes qkv_gate m=256 to `_bf16_gemm_dispatch_impl`, which is exactly the "want" side of the comparison.
+- Judge x comes from a fresh `.to(bf16)` tensor, so the 16 B and 256 B alignment gates pass.
+- `_ab_component` maps pooler m=1 and qkv_gate m=128 to their own flags, so an A/B miss on either cell never touches another flag.
+- **Budget:** import builds are about 37.7 + 36.8 (master) + ~37 (bulk) + ~15 (Lt) = ~127 s. Prepare is ~4 s for master plus an estimated ~10-30 s for the cells. Master-lineage runs took ~150 s end to end with 2 builds, so the estimate is ~4-5 min against the 10-minute limit and prepare well under 300 s.
+
+**Residual risk:** this is the first compile of the ported bulk TU, the new Lt C++ and the edits above (any failure lands on master for that cell only), and cell B may find no splitK=1 algo within 0.98x, in which case it prints PATH CHOSEN master.
