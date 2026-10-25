@@ -58,7 +58,7 @@ review: proceed
 status: running
 review_at: 2026-10-25T042453Z
 review_companions: null
-stage: claimed
+stage: implemented
 claimed_at: 2026-10-25T042453Z
 base_sha: f6e653b6cc358b21c20086af784b37d069a021a5
 base_blob: c9067b8201f2480c64910c4a71098df7ce616f73
@@ -67,6 +67,12 @@ worktree: .worktrees/muse_decode_layer/full-decode-streamk-ticket-port
 mode: null
 restack_of: null
 stale_base: null
+implemented_at: 2026-10-25T043330Z
+impl_commit: c7fca44d4e87242a87fcd253b40eae128912e9f2
+submission_sha256: a69a00ee5d71779ad51f9fb05824d398a416f7d62f2609e73d64723e081d4ed9
+norm_sha256: 07b790c1ca28561819a451e3ec1ad0a5a4f52bf75bd1ae58b75d60d378d0f1a7
+submission_blob: 14a7c7be22acb26d22510ac7c55ea96451f9c483
+lint_warnings: 44
 ---
 
 # full-decode-streamk-ticket-port
@@ -121,3 +127,55 @@ No companion is warranted. Kind is rewrite stage 3, judged on the replaced kerne
 - Workspace sizing without config in prepare: fixed MAXB=64 x (2*SMs + 64) slots, or allocated per call as attention s2 did? The hypothesis says 'no allocation in kernel_fn', but master already allocates there.
 - The decode_layer profile is dist=soft while attention is dist=coherent. That is the MoE routing distribution and does not affect attention, but confirm the agentic KV-length spread is the same generator in both problems.
 
+
+## Implementation notes
+
+All edits are in `muse_decode_layer/submission.py` of the worktree (+918/-2).
+
+What changed:
+- New module `muse_decode_sk_ticket` (load_inline at import, `TORCH_CUDA_ARCH_LIST=9.0a` set around the build and restored; arch flags printed; `-O3 -std=c++20 -lineinfo`). The CUDA source is attention master c3c1b01's stream-K block (lines 942-1407 of its submission.py) copied verbatim: `splitkv_attn_sk_kernel<STAGES, TICKET, TWO>`, merge/finalize helpers, two-level code included. Only `<4, true, false>` is instantiated (`sk_pick`), `sk_attn` rejects any variant but 0. The attention-only diagnostic kernels (`splitkv_sk_combine_kernel`, no-ticket and 5-stage variants, `sk_combine`) were dropped. The sibling full-decode1-two-level-ticket-port can add `<4, true, true>` plus its batch == 1 gate under the same module name.
+- `_sk_launch` / `_full_decode_sk`: one launch replacing `_splitkv_attn` + `_splitkv_combine`; same q (FP8 [B,16,64]), KV cache, page_table, cache_seqlens, k/v_scale and qkv gate columns (`qkv.stride(0)`), writes the same `[B,1,Hq*D]` bf16. Kernel A/B and its module stay compiled as the fallback.
+- Gate `_sk_gate(cfg)` = `_SK_OK and _splitkv_gate(cfg) and _SK_CHOICE[16 if batch <= 23 else 32]`, config-only. In kernel_fn the splitkv branch calls the stream-K launch when it is true, else kernels A+B.
+- Ticket buffer: module-level int32 [64] zeros allocated at import; zeroed in prepare outside graph capture before the self-check and again after it (and after each selector run and at the end). The sum after the self-check is printed and must be 0.
+- Workspace: persistent fixed buffers (2 x SM + 64 slots of [16,64] fp32 and [2,16] fp32) allocated in prepare, so kernel_fn does not allocate them (it still allocates the bf16 out per call, as master does).
+- `_sk_prepare` (called from prepare after `_splitkv_prepare`): capability (9,0), `sk_attrs` print (binaryVersion, regs, local, smem, CTAs/SM) and cubin==90 check, canary B=2 [4,66] with launching/returned prints and sync, then 13 cases with a flushed print before and a synchronize + print after every launch: B in {2,5,16,32,33}, agentic and uniform lengths, kv_scale 1 and 0.25, grids device/3/7/40, a B=16 batch with seq%64 in 1..7 and sequences < 64 (1, 7, 33, 63, 64, 65), all vs the fp32 reference (rel L2 < 2e-2, finite). Two CUDA-graph replays (twice each, NaN-poisoned output) on the tails batch and on an agentic B=16 kv 0.25 batch check the ticket reset.
+- Selector `_sk_select(b)` for b in 16 and 32: synthetic agentic lengths (uniform 80000 +/- 7.5%, ctx 80000, as reference.py's spread), checks stream-K vs the incumbent A+B output (rel L2 < 1e-2), then times both interleaved with CUDA events (7 reps x 10 calls, median), picks stream-K only if it is faster by 1% (ratio < 0.99), and prints `PATH CHOSEN: full decode attention batch B: ...` with both timings. Any failure prints `PATH CHOSEN ... (fallback: <reason>)` and keeps A+B; nothing raises.
+
+Deviations / review fixes applied (the review wins over the spec):
+- Kernel source from attention c3c1b01 and module name `muse_decode_sk_ticket`, TWO=false only (review).
+- Selector at agentic ragged lengths per batch (16 and 32 separately) with PATH CHOSEN per batch, fixed MAXB=64-style workspace instead of "sized from config" (review). Gated batches 2..23 follow the B=16 decision, 24..64 follow B=32 (my choice; the judged shapes are 16 and 32).
+- Tickets zeroed outside capture and after the self-check; partials merged in slot order (merge_slots loops c_lo..c_hi) (review).
+- Self-check covers seq%64 in 1..7 and sequences < 64 (review).
+- sm_90a: the kernel uses only mma.sync, cp.async and cvt e4m3x2 (no wgmma/setmaxnreg), so no `__CUDA_ARCH_FEAT_SM90_ALL` guard was added; the 9.0a build and cubin check are kept as in attention.
+- No spin waits exist in this kernel (no CTA waits on another), so no bounded wait was added; faults are caught by the per-launch prints.
+- Judge on the `splitkv_attn_sk_kernel` row of the profile (kill if >= 116 us at decode_16 / 245 us at decode_32), not the headline; PATH CHOSEN tells which kernel ran. If the selector keeps A+B the run measures the incumbent.
+
+## Rules check
+
+- [x] CUDA-graph capturable: kernel_fn path only launches the kernel and allocates the bf16 out by shape (as master); workspace and tickets are preallocated; all synchronize/.item() calls are in prepare (lint: warnings only, all "outside kernel_fn's call graph").
+- [x] Nothing derived from `data` is cached across calls: the ticket, workspace and dummies are shape/device-only scratch; the selector uses synthetic data only.
+- [x] Weights untouched (n/a: no weight change).
+- [x] Activations BF16, KV cache FP8, query FP8 E4M3 (same q_fp8 as the incumbent); softmax/accumulate fp32.
+- [x] Attention sees every key: stream-K covers every 64-token tile of every request; no skipping.
+- [x] No timing patches, harness frames, subprocesses or network (grepped the diff for subprocess/multiprocessing/fork/Popen: none; `os` is used only for the TORCH_CUDA_ARCH_LIST env around load_inline).
+- [x] All work happens inside the timed call; no output caching or replay.
+
+okc_lint: `OK with warnings: muse_decode_layer/submission.py` (only prepare-only host-sync warnings). py_compile OK; __pycache__ removed.
+
+Biggest risk: first judge compile and launch of the module (nvcc with `-std=c++20` plus sm_90a-only arch list, 2 CTAs/SM register/smem fit unverified here) and a possible selector that keeps A+B on noise. No GPU on this node, nothing was run.
+
+## Pre-flight audit
+
+Audited 2026-10-25 by an opus subagent (read-only emulation, no GPU). **Verdict: dispatch** (no fixes).
+
+- Kernel source: diffed against attention c3c1b01 lines 942-1508. The kernel body and its helpers are byte-identical. Only the diagnostics (`splitkv_sk_combine_kernel`, `sk_combine`) and the variant 1/2/3 dispatch were removed, and `sk_pick` is pinned to `<4, true, false>`.
+- Glue matches the incumbent. q is the same `q.view(T,16,64).to(FP8).contiguous()`. Cache layout, contiguity and `page_table.stride(1)==1` checks are the same as kernel A, and `pt_stride = page_table.stride(0)`. The gate is read at `(HQ+2*HKV)*D` via `qkv.stride(0)`, as in kernel B. `v_scale` and `RMS_EPS` are applied as in kernel B. The output is the same `[B,1,Hq*D]` bf16.
+- Workspace is sized 2·SM+64 slots, which covers the maximum slot bx+b < grid+B. The slot pairs (bx,b) cannot collide because CTA and request tile ranges are both monotone.
+- Gate is config-only. `_SK_CHOICE` is fixed in prepare. Every gated batch in TASK (16, 32, and the B=16/B=33 tests) is self-checked for correctness. For B=33 that check is the B=33 ragged and uniform cases.
+- Tickets are zeroed in prepare outside capture and checked after the self-check and after each selector run. The last arriver resets its ticket, so the counters are back to 0 by the next graph replay. The replay test covers this, with NaN-poisoned output.
+- Build: `-std=c++20` matches torch's own default. The bf16 cxx20 review showed this torch requires C++20. `TORCH_CUDA_ARCH_LIST=9.0a` is set around load_inline and restored in `finally`. The binaryVersion==90 check and the 90a-only flag check can pass.
+- Selector equivalence gate: in a numpy emulation at ctx 80000 (fp16 P, chunk-1024 vs ragged stream-K segments), the worst rel L2 between stream-K and A+B was 3e-4, against the 1e-2 gate. It does not always fail.
+- Selector timing: eager, CUDA events, interleaved, median of 7×10, with no explicit L2 flush and no graph replay. The KV stream is 327/655 MB per call, so L2 is effectively cold. The eager A→B launch gap biases the comparison by a few µs toward stream-K. That is smaller than the expected ~10 µs gain, and the 1% margin (~1.2 µs) cannot flip a ~9% win.
+- kernel_fn has no prints, try/except, syncs or per-call state. The only per-call allocation is the bf16 out, as on master. okc_lint: OK with warnings (all prepare-only). py_compile OK.
+
+Residual risk: the first judge compile and launch of the new module (2 CTAs/SM fit unverified), and a ~2% eager-timing bias in the selector that only matters if the true gain is under ~2%.
