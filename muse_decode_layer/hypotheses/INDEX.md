@@ -1,6 +1,6 @@
 # muse_decode_layer hypotheses
 
-Regenerated 2026-10-25T034141Z. Best: 1.2521x [1.2333,1.2709] job `39bcf05afc4e4dd3` (submit)
+Regenerated 2026-10-25T040348Z. Best: 1.2521x [1.2333,1.2709] job `39bcf05afc4e4dd3` (submit)
 
 | created | slug | kind | area | where | outcome | speedup | CI | job | mode | promotion | review | expected hit |
 |---|---|---|---|---|---|---|---|---|---|---|---|---|
@@ -30,7 +30,7 @@ Regenerated 2026-10-25T034141Z. Best: 1.2521x [1.2333,1.2709] job `39bcf05afc4e4
 | 2026-10-24T165224Z | full-verify-cuda-splitkv-stage2 | rewrite | FA3 call | done/regression | regression | 1.1559 | [1.139,1.173] | e9d5eeffddef4f70 | check |  | proceed | 3/5 |
 | 2026-10-24T165242Z | bf16-m32-swapab-wgmma-port | primary | pooler GEMM | queue | hold |  |  |  |  |  | proceed |  |
 | 2026-10-24T165302Z | moe-align-small-t-restack-on-master | primary | MoE align/dispatch | queue | hold |  |  |  |  |  | proceed |  |
-| 2026-10-24T165619Z | fused-preattention-paired-pad-restack | primary | pre-attention norm+rope | queue | queued |  |  |  |  |  | proceed |  |
+| 2026-10-24T165619Z | fused-preattention-paired-pad-restack | primary | pre-attention norm+rope | running | running |  |  | 5e9b5464d1444708 | check |  | proceed |  |
 | 2026-10-24T172107Z | moe-chain-cuda-swapab-expert-once-large-t | rewrite | w13 marlin + silu-mul + w2 marlin | done/failed | failed |  |  | 1bba1bab70da4f61 | submit |  | proceed |  |
 | 2026-10-24T172138Z | small-t-launch-minimal-dense-chain-pdl | rewrite | whole-layer fusion | done/gain | gain | 1.2283 | [1.210,1.247] | 81ee6714b7614a99 | submit | done | proceed | 6/6 |
 | 2026-10-24T174421Z | decode-restack-sliding-port-paired-pad-gemms-t1 | primary | restack (sliding decode_1 port + paired pad/unpad + T=1 Triton GEMMs) | done/neutral | neutral | 1.1937 | [1.176,1.212] | 4739dd4590524487 | submit |  | proceed | 3/5 |
@@ -57,7 +57,9 @@ Regenerated 2026-10-25T034141Z. Best: 1.2521x [1.2333,1.2709] job `39bcf05afc4e4
 | 2026-10-25T001250Z | moe-chain-cuda-swapab-expert-once-fix | rewrite | w13 marlin + silu-mul + w2 marlin (T>32) | queue | hold |  |  |  |  |  | hold |  |
 | 2026-10-25T001251Z | full-decode-splitkv-kv-bw-3p5 | rewrite | FA3 call (full decode, batch > 1): splitkv_attn_kernel bytes in flight | done/neutral | neutral | 1.2663 | [1.247,1.285] | 6af3b0e3311943ee | check |  | proceed | 3/5 |
 | 2026-10-25T001824Z | moe-chain-cuda-swapab-expert-once-fix-inproc | rewrite | w13 marlin + silu-mul + w2 marlin (T>32) | done/regression | regression | 1.1651 | [1.148,1.183] | 4ebd055adab34ecd | check |  | proceed | 2/4 |
-| 2026-10-25T014617Z | moe-chain-cuda-swapab-expert-once-s3-rebase-fp32ref-bound | rewrite | w13 marlin + silu-mul + w2 marlin (T>32) | queue | queued |  |  |  |  |  | required |  |
+| 2026-10-25T014617Z | moe-chain-cuda-swapab-expert-once-s3-rebase-fp32ref-bound | rewrite | w13 marlin + silu-mul + w2 marlin (T>32) | running | running |  |  | 51d047cbc5ff450a | check |  | proceed |  |
+| 2026-10-25T035400Z | stack-route-topk-pdl-unpool-nf1 | primary | routing top-k (kernel R) + post-MoE unpooler (T<=8) | running | running |  |  |  |  |  | proceed |  |
+| 2026-10-25T035414Z | dense-chain-stage2-attn-side-pdl-t1-gate | primary | qkv GEMM + o GEMM + attention-side small kernels (T=1 only) | running | running |  |  |  |  |  | proceed |  |
 
 ## Held
 
@@ -76,4 +78,4 @@ Regenerated 2026-10-25T034141Z. Best: 1.2521x [1.2333,1.2709] job `39bcf05afc4e4
 - moe-bs1-fused-persistent-port: adversarial review: Hold: the hypothesis gates its own dispatch on the moe parent (1105a02aa3fa4e56) being faster than moe master at bs=1, and it was not (bs=1 50.93 us vs 48.37 us
 - prefork-qkv-o-swapab-t16-t32: adversarial review: Its main purpose no longer holds on the current master: small-t-launch-minimal-dense-chain-pdl removed the router side stream at T<=32, so there is no fork for 
 - marlin-two-stream-halves-port: adversarial review: Hold: the moe parent it ports (marlin-two-stream-expert-halves-small-m, job 5d630369b1634f77) came back neutral, with every scored shape flat and verify_1 1.5% 
-- moe-chain-cuda-swapab-expert-once-fix: adversarial review: Hold for a rules problem only: fix (1), the central fix, runs the self-check in a torch.multiprocessing spawn child or subprocess, and TASK.md says a submission
+- moe-chain-cuda-swapab-expert-once-fix: Retired: its design runs the self-check in a child process, which the rules statically reject; superseded by the -inproc line (LESSONS 2026-10-25).

@@ -1,6 +1,6 @@
 # muse_bf16_proj hypotheses
 
-Regenerated 2026-10-25T034141Z. Best: 1.2215x [1.2032,1.2398] job `60b20fd0bf924267` (submit)
+Regenerated 2026-10-25T040348Z. Best: 1.2215x [1.2032,1.2398] job `60b20fd0bf924267` (submit)
 
 | created | slug | kind | area | where | outcome | speedup | CI | job | mode | promotion | review | expected hit |
 |---|---|---|---|---|---|---|---|---|---|---|---|---|
@@ -53,6 +53,7 @@ Regenerated 2026-10-25T034141Z. Best: 1.2215x [1.2032,1.2398] job `60b20fd0bf924
 | 2026-10-25T011408Z | bf16-lossless-exp4-decode-only-throughput-probe | primary | lossless exp4 compressed-weight stream kernel (_lossless_swapab_kernel) | done/regression | regression | 1.1904 | [1.173,1.208] | 9148142cee4441ad | check |  | proceed | 1/1 |
 | 2026-10-25T011408Z | bf16-verify-deepgemm-bf16-gemm-nt-route | primary | bf16 GEMM dispatch (m=65..256, DeepGEMM bf16) | done/regression | regression | 1.2027 | [1.185,1.221] | 2d522d47ca5c4fc9 | check |  | proceed | 5/8 |
 | 2026-10-25T011408Z | pooler-unpooler-full-bulk-tma-row-owner-stream-rewrite | rewrite | pooler GEMM + unpooler GEMM (m<=32 DRAM weight streams, bulk-TMA row-owner kernel) | done/regression | regression | 1.1828 | [1.165,1.201] | cd39d36e31814087 | check |  | proceed | 8/15 |
+| 2026-10-25T035343Z | pooler-unpooler-bulk-tma-row-owner-s2-cxx20-rebuild | rewrite | pooler GEMM + unpooler GEMM (m<=32 DRAM weight streams, bulk-TMA row-owner kernel) | running | running |  |  |  |  |  | proceed |  |
 
 ## Held
 

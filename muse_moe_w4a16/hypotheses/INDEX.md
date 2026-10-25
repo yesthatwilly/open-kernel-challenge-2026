@@ -1,6 +1,6 @@
 # muse_moe_w4a16 hypotheses
 
-Regenerated 2026-10-25T034141Z. Best: 1.3278x [1.3079,1.3477] job `1947e3ec2abb4bdf` (submit)
+Regenerated 2026-10-25T040348Z. Best: 1.3278x [1.3079,1.3477] job `1947e3ec2abb4bdf` (submit)
 
 | created | slug | kind | area | where | outcome | speedup | CI | job | mode | promotion | review | expected hit |
 |---|---|---|---|---|---|---|---|---|---|---|---|---|
@@ -58,6 +58,7 @@ Regenerated 2026-10-25T034141Z. Best: 1.3278x [1.3079,1.3477] job `1947e3ec2abb4
 | 2026-10-25T011401Z | cuda-align-kernel-a-from17 | primary | MoE align/dispatch | queue | hold |  |  |  |  |  | hold |  |
 | 2026-10-25T011401Z | cuda-combine-kernel-b-bs128-only | primary | post-expert norm+combine | queue | hold |  |  |  |  |  | hold |  |
 | 2026-10-25T011401Z | w2-marlin-atomic-add-small-m | primary | w2 marlin | done/neutral | neutral | 1.3445 | [1.324,1.365] | a2744bc496b84790 | check |  | proceed | 3/6 |
+| 2026-10-25T035329Z | cuda-nvfp4-wgmma-rega-grouped-s3-wide-bucket-fix | rewrite | w13 marlin + silu-mul + w2 marlin | running | running |  |  |  |  |  | proceed |  |
 
 ## Held
 

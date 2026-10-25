@@ -1,6 +1,6 @@
 # muse_prefill_layer findings
 
-Regenerated 2026-10-25T034141Z by `churn.py index`. Read this before writing a hypothesis for muse_prefill_layer.
+Regenerated 2026-10-25T040348Z by `churn.py index`. Read this before writing a hypothesis for muse_prefill_layer.
 
 ## Current best
 
@@ -159,8 +159,8 @@ Where the time goes (per scored shape, top kernels):
 - queue: first-turn-moe-dead-work-stack [MoE dispatch + silu-mul + Triton NVFP4 grid at T > 4096 (first_turn dead-work removal, combined)] p3 hold
 - queue: experts-triton-turn4-persistent-local-align [w13 marlin + w2 marlin at turn_4 (route 1024 < T <= 4096 to the Triton NVFP4 engine, with persistent grid and local-routes align)] p2 hold
 - queue: turn-moe-local-align-sorted-silu [MoE align/dispatch + silu-mul on the Marlin path (T <= 4096)] p3 hold
-- queue: norm-boundaries-persistent-multirow [attention boundary + FFN boundary (FusedPostNormResidualPreNorm x2, persistent multi-row variant)] p5 queued
 - queue: moe-pre-post-norm-triton-multitoken [pre-expert norm + post-expert norm/combine (the MoE elementwise ends)] p5 queued
-- queue: experts-triton-first-turn-unmasked-loads-l2-hints [w13 marlin + w2 marlin (Triton NVFP4 engine at T > 4096: K-loop load predication and L2 eviction hints)] p4 queued
 - queue: attn-full-prefill-cuda-fp8-wgmma-hard-gate [FA3 call on full-attention layers at page_size 1 (CUDA sm_90a FP8 wgmma flash attention, stage 1b: fix of attn-full-prefill-cuda-fp8-exp-offload with build fix, hard timing gate, no exp offload)] p2 hold
 - queue: experts-cuda-wgmma-grouped-gemm-remeasure-sm90a [w13 + w2 expert GEMMs at T > 4096 (CUDA sm_90a wgmma W4A16 grouped GEMM, stage 1b: re-measure of experts-cuda-wgmma-mixed-input-grouped-gemm with the build fix, on the new master)] p1 hold
+- running: norm-boundaries-persistent-multirow [attention boundary + FFN boundary (FusedPostNormResidualPreNorm x2, persistent multi-row variant)] p5 running
+- running: experts-triton-first-turn-unmasked-loads-l2-hints [w13 marlin + w2 marlin (Triton NVFP4 engine at T > 4096: K-loop load predication and L2 eviction hints)] p4 running

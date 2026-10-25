@@ -1,6 +1,6 @@
 # muse_bf16_proj findings
 
-Regenerated 2026-10-25T034141Z by `churn.py index`. Read this before writing a hypothesis for muse_bf16_proj.
+Regenerated 2026-10-25T040348Z by `churn.py index`. Read this before writing a hypothesis for muse_bf16_proj.
 
 ## Current best
 
@@ -167,3 +167,4 @@ Where the time goes (per scored shape, top kernels):
 - queue: pooler-m32-tma-splitk-extend [pooler GEMM (m=17..32)] p3 hold
 - queue: bf16-lossless-exp4-warpspec-persistent-stage3 [lossless exp4 compressed-weight stream kernel (_lossless_swapab_kernel)] p1 hold
 - queue: bf16-verify-swapab-wgmma-cluster-dsmem-rewrite [bf16 GEMM dispatch (m=65..256, swap-AB wgmma + cluster DSMEM split-K)] p1 hold
+- running: pooler-unpooler-bulk-tma-row-owner-s2-cxx20-rebuild [pooler GEMM + unpooler GEMM (m<=32 DRAM weight streams, bulk-TMA row-owner kernel)] p2 running

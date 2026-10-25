@@ -1,6 +1,6 @@
 # muse_decode_layer findings
 
-Regenerated 2026-10-25T034141Z by `churn.py index`. Read this before writing a hypothesis for muse_decode_layer.
+Regenerated 2026-10-25T040348Z by `churn.py index`. Read this before writing a hypothesis for muse_decode_layer.
 
 ## Current best
 
@@ -163,11 +163,13 @@ Where the time goes (per scored shape, top kernels):
 - queue: triton-flash-decode-full-verify-paired-kv [FA3 call] p5 hold
 - queue: bf16-m32-swapab-wgmma-port [pooler GEMM] p3 hold
 - queue: moe-align-small-t-restack-on-master [MoE align/dispatch] p4 hold
-- queue: fused-preattention-paired-pad-restack [pre-attention norm+rope] p5 queued
 - queue: pre-expert-rmsnorm-triton [pre-expert norm] p3 hold
 - queue: moe-small-t-cuda-swapab-port [w13 marlin + silu-mul + w2 marlin (T<=32)] p4 hold
 - queue: moe-bs1-fused-persistent-port [w13 marlin + silu-mul + w2 marlin + post-expert combine (T=1)] p5 hold
 - queue: prefork-qkv-o-swapab-t16-t32 [qkv GEMM + o GEMM (before the router fork)] p4 hold
 - queue: marlin-two-stream-halves-port [w13 marlin + silu-mul + w2 marlin (8<=T<=32, stream overlap)] p5 hold
 - queue: moe-chain-cuda-swapab-expert-once-fix [w13 marlin + silu-mul + w2 marlin (T>32)] p2 hold
-- queue: moe-chain-cuda-swapab-expert-once-s3-rebase-fp32ref-bound [w13 marlin + silu-mul + w2 marlin (T>32)] p2 queued
+- running: fused-preattention-paired-pad-restack [pre-attention norm+rope] p5 running
+- running: moe-chain-cuda-swapab-expert-once-s3-rebase-fp32ref-bound [w13 marlin + silu-mul + w2 marlin (T>32)] p2 running
+- running: stack-route-topk-pdl-unpool-nf1 [routing top-k (kernel R) + post-MoE unpooler (T<=8)] p2 running
+- running: dense-chain-stage2-attn-side-pdl-t1-gate [qkv GEMM + o GEMM + attention-side small kernels (T=1 only)] p2 running

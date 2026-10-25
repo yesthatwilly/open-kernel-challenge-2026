@@ -1,6 +1,6 @@
 # muse_attention_decode hypotheses
 
-Regenerated 2026-10-25T034141Z. Best: 1.3949x [1.3740,1.4158] job `698d4cd3838c4a63` (submit)
+Regenerated 2026-10-25T040348Z. Best: 1.3949x [1.3740,1.4158] job `698d4cd3838c4a63` (submit)
 
 | created | slug | kind | area | where | outcome | speedup | CI | job | mode | promotion | review | expected hit |
 |---|---|---|---|---|---|---|---|---|---|---|---|---|
@@ -58,14 +58,15 @@ Regenerated 2026-10-25T034141Z. Best: 1.3949x [1.3740,1.4158] job `698d4cd3838c4
 | 2026-10-25T001825Z | full-decode-splitkv-s2-streamk-ticket-inproc | rewrite | full-layer attention (decode, splitkv kernel A/B) | done/neutral | neutral | 1.4171 | [1.396,1.443] | e592b1f5d3db4f83 | check |  | proceed | 2/3 |
 | 2026-10-25T001825Z | full-verify-wgmma-s3-warpgroup-per-kvhead-inproc | rewrite | full-layer attention (verify, splitkv A8/B8) | done/neutral | neutral | 1.3801 | [1.359,1.401] | 2c3f7fff72bb4e1d | check |  | proceed | 2/3 |
 | 2026-10-25T001825Z | sliding-cluster-s2-decode-c4-pdl-inproc | rewrite | sliding-layer attention (decode, cluster kernel) | done/neutral | neutral | 1.4001 | [1.379,1.426] | 1990ce53e9d34073 | check |  | proceed | 2/5 |
-| 2026-10-25T003621Z | full-decode-splitkv-s3-fused-preattn | rewrite | full-layer attention (decode, splitkv stream-K kernel prologue) | running | running |  |  |  |  |  | proceed |  |
+| 2026-10-25T003621Z | full-decode-splitkv-s3-fused-preattn | rewrite | full-layer attention (decode, splitkv stream-K kernel prologue) | running | running |  |  | 825baa03798f431a | check |  | proceed |  |
 | 2026-10-25T003637Z | full-decode1-streamk-s3-two-level-ticket | rewrite | full-layer attention (batch-1 decode, splitkv stream-K kernel) | done/neutral | neutral | 1.4322 | [1.411,1.455] | 2a3241780c7b4c46 | check |  | proceed | 2/3 |
-| 2026-10-25T003705Z | full-verify-wgmma-s4-sliding-window | rewrite | sliding-layer attention (verify, wgmma stream-K kernel) | queue | queued |  |  |  |  |  | required |  |
-| 2026-10-25T003705Z | full-verify1-wgmma-s4-batch1-grid-sm | rewrite | full-layer attention (batch-1 verify, wgmma stream-K kernel) | queue | queued |  |  |  |  |  | required |  |
+| 2026-10-25T003705Z | full-verify-wgmma-s4-sliding-window | rewrite | sliding-layer attention (verify, wgmma stream-K kernel) | queue | hold |  |  |  |  |  | hold |  |
+| 2026-10-25T003705Z | full-verify1-wgmma-s4-batch1-grid-sm | rewrite | full-layer attention (batch-1 verify, wgmma stream-K kernel) | queue | hold |  |  |  |  |  | hold |  |
 | 2026-10-25T003735Z | sliding-decode-paired-kvhead-rows | primary | sliding-layer attention (batched decode, KV row gather) | done/regression | regression | 1.2865 | [1.267,1.306] | 48ffbe5690cc4ab4 | check |  | proceed | 0/3 |
 | 2026-10-25T003735Z | sliding-verify-fa3-head-pairing | primary | FA3 call (head packing, sliding verify) | done/regression | regression | 1.3475 | [1.327,1.368] | 031731b5db294a92 | check |  | proceed | 0/3 |
 | 2026-10-25T004021Z | sliding-decode-paired-kvhead-rows-control-unpaired-s8 | control→sliding-decode-paired-kvhead-rows | sliding-layer attention (batched decode, split depth) | queue | queued |  |  |  |  |  | required |  |
-| 2026-10-25T014545Z | stack-streamk-ticket-cluster-c16-c4 | primary | full + sliding decode attention (stack of two pending kernels) | queue | queued |  |  |  |  |  | required |  |
+| 2026-10-25T014545Z | stack-streamk-ticket-cluster-c16-c4 | primary | full + sliding decode attention (stack of two pending kernels) | running | running |  |  | 195dcc1209b6457b | check |  | proceed |  |
+| 2026-10-25T035310Z | full-verify-wgmma-s4-multitile-fix | rewrite | full-layer attention (verify, wgmma stream-K kernel, multi-tile correctness) | running | running |  |  |  |  |  | proceed |  |
 
 ## Held
 
@@ -89,3 +90,5 @@ Regenerated 2026-10-25T034141Z. Best: 1.3949x [1.3740,1.4158] job `698d4cd3838c4
 - full-decode-splitkv-s2-streamk-ticket: superseded by full-decode-splitkv-s2-streamk-ticket-inproc: the original spec runs a self-check in a child process, which the rules reject (starting processes)
 - full-verify-wgmma-s3-warpgroup-per-kvhead: superseded by full-verify-wgmma-s3-warpgroup-per-kvhead-inproc: the original spec runs a self-check in a child process, which the rules reject (starting processes)
 - sliding-cluster-s2-decode-c4-pdl: superseded by sliding-cluster-s2-decode-c4-pdl-inproc: the original spec runs a self-check in a child process, which the rules reject (starting processes)
+- full-verify-wgmma-s4-sliding-window: adversarial review: Sequencing hold, not a rejection of the design. The stage-3 kernel this builds on never ran in the timed call. It failed its own self-check (case 2: B=6, kv_sca
+- full-verify1-wgmma-s4-batch1-grid-sm: adversarial review: Hold by this hypothesis's own condition ('worth running only once stage 3 shows A8 at or near its gate'). Stage 3's wgmma kernel failed its self-check (case 2, 

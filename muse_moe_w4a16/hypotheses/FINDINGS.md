@@ -1,6 +1,6 @@
 # muse_moe_w4a16 findings
 
-Regenerated 2026-10-25T034141Z by `churn.py index`. Read this before writing a hypothesis for muse_moe_w4a16.
+Regenerated 2026-10-25T040348Z by `churn.py index`. Read this before writing a hypothesis for muse_moe_w4a16.
 
 ## Current best
 
@@ -130,3 +130,4 @@ Where the time goes (per scored shape, top kernels):
 - queue: cuda-nvfp4-wgmma-rega-s2-per-kernel-enable [w13 marlin + silu-mul + w2 marlin] p1 hold
 - queue: cuda-align-kernel-a-from17 [MoE align/dispatch] p2 hold
 - queue: cuda-combine-kernel-b-bs128-only [post-expert norm+combine] p3 hold
+- running: cuda-nvfp4-wgmma-rega-grouped-s3-wide-bucket-fix [w13 marlin + silu-mul + w2 marlin] p1 running

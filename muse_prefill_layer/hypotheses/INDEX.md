@@ -1,6 +1,6 @@
 # muse_prefill_layer hypotheses
 
-Regenerated 2026-10-25T034141Z. Best: 1.0744x [1.0583,1.0905] job `502f2eab95164781` (submit)
+Regenerated 2026-10-25T040348Z. Best: 1.0744x [1.0583,1.0905] job `502f2eab95164781` (submit)
 
 | created | slug | kind | area | where | outcome | speedup | CI | job | mode | promotion | review | expected hit |
 |---|---|---|---|---|---|---|---|---|---|---|---|---|
@@ -40,9 +40,9 @@ Regenerated 2026-10-25T034141Z. Best: 1.0744x [1.0583,1.0905] job `502f2eab95164
 | 2026-10-24T185108Z | experts-triton-turn4-persistent-local-align | primary | w13 marlin + w2 marlin at turn_4 (route 1024 < T <= 4096 to the Triton NVFP4 engine, with persistent grid and local-routes align) | queue | hold |  |  |  |  |  | proceed |  |
 | 2026-10-24T185232Z | turn-moe-local-align-sorted-silu | primary | MoE align/dispatch + silu-mul on the Marlin path (T <= 4096) | queue | hold |  |  |  |  |  | hold |  |
 | 2026-10-24T185248Z | router-hilo-one-gemm-n512 | primary | router GEMM (hi and lo halves as one N=512 cuBLAS GEMM) | done/neutral | neutral | 1.0607 | [1.045,1.077] | f4e3c5f4c306427b | check |  | required | 0/3 |
-| 2026-10-24T224410Z | norm-boundaries-persistent-multirow | primary | attention boundary + FFN boundary (FusedPostNormResidualPreNorm x2, persistent multi-row variant) | queue | queued |  |  |  |  |  | required |  |
+| 2026-10-24T224410Z | norm-boundaries-persistent-multirow | primary | attention boundary + FFN boundary (FusedPostNormResidualPreNorm x2, persistent multi-row variant) | running | running |  |  | 46afe489e2754c83 | check |  | proceed |  |
 | 2026-10-24T224425Z | moe-pre-post-norm-triton-multitoken | primary | pre-expert norm + post-expert norm/combine (the MoE elementwise ends) | queue | queued |  |  |  |  |  | required |  |
-| 2026-10-24T224437Z | experts-triton-first-turn-unmasked-loads-l2-hints | primary | w13 marlin + w2 marlin (Triton NVFP4 engine at T > 4096: K-loop load predication and L2 eviction hints) | queue | queued |  |  |  |  |  | required |  |
+| 2026-10-24T224437Z | experts-triton-first-turn-unmasked-loads-l2-hints | primary | w13 marlin + w2 marlin (Triton NVFP4 engine at T > 4096: K-loop load predication and L2 eviction hints) | running | running |  |  | aeda8b5a523642b1 | check |  | proceed |  |
 | 2026-10-24T232728Z | restack-router-hilo-align32-zerostore | primary | router GEMM + MoE align (T>4096) + w2 zero-store (T>4096) | done/neutral | neutral | 1.0608 | [1.045,1.077] | ead4bc2e7b364add | check |  | required | 0/1 |
 | 2026-10-24T232928Z | stack-tonight-four-prefill | primary | router GEMM + MoE align (both paths) + w2 zero-store | done/neutral | neutral | 1.0675 | [1.052,1.084] | 7499d9c71acd4417 | check |  | required | 0/1 |
 | 2026-10-24T232955Z | align-local-parallel-first-turn | primary | MoE align on the Triton path (T > 4096, first_turn) | done/neutral | neutral | 1.0626 | [1.047,1.079] | c2f3e9d8297f4a18 | check |  | required | 0/1 |
