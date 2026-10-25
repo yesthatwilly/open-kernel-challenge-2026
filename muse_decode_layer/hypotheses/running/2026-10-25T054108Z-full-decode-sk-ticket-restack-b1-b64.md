@@ -59,9 +59,18 @@ priority: 1
 kind: primary
 controls_for: null
 review: proceed
-status: queued
+status: running
 review_at: 2026-10-25T054426Z
 review_companions: null
+stage: claimed
+claimed_at: 2026-10-25T054426Z
+base_sha: 3856ee7eca4325994492f9d6308b31aba517ef17
+base_blob: 62c5a9413ba5710defea2ca3de14c1a1dc3b5a6d
+branch: hyp/muse_decode_layer/full-decode-sk-ticket-restack-b1-b64
+worktree: .worktrees/muse_decode_layer/full-decode-sk-ticket-restack-b1-b64
+mode: null
+restack_of: null
+stale_base: null
 ---
 
 # full-decode-sk-ticket-restack-b1-b64
