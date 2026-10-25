@@ -44,6 +44,10 @@ Differs from SGLang:
     config and a prepare() self-check), two CUDA kernels replace the pooler, the router (hi + lo
     at every T, so also T=1), the side stream, FusedMuseSparkRouting, the expert-id map, the align
     and the pre-expert norm; see the "Small-T dense chain" section. Above 32 tokens: as below.
+  * Sliding batch-1 decode (hypothesis sliding-fused-triton-decode1-port, config-only gate): after
+    the qkv projection, one _sliding_fused_kernel launch (ported from muse_attention_decode) does
+    the QK-norm + RoPE, the FP8 cache store, the 16-split window attention with an in-kernel
+    combine and the output norm x sigmoid(gate), replacing FusedQKNorm through FusedRMSNormGate.
   * The step's positions, cache rows, FA3 lengths and FA3 scheduler metadata come in with the
     inputs; SGLang builds them once per step for all layers.
   * All-reduces are the identity; the all-gather is a zero pad of the unpooler's output."""
@@ -841,6 +845,186 @@ def _block_size_m(num_tokens):
     return min(block_size_m, MARLIN_BLOCK_SIZE_M_CAP)
 
 
+# Above ALIGN_PAR_MIN_TOKENS tokens _experts replaces the expert_map gather and moe_align_block_size
+# with _align_parallel_kernel, ported from muse_moe_w4a16 master (hypothesis
+# moe-align-parallel-large-t-port). routes per chunk (a [512, 32] one-hot at 8 warps is 64 int32 per
+# thread per temporary), warps, and the block_experts store tile.
+ALIGN_PAR_MIN_TOKENS = 33
+ALIGN_PAR_CHUNK = 512
+ALIGN_PAR_WARPS = 8
+ALIGN_PAR_BLK = 64
+ALIGN_PAR_TAG = "[align-parallel-large-t]"
+
+
+@triton.jit(do_not_specialize=["local_start", "local_count", "n", "cap", "n_blocks"])
+def _align_parallel_kernel(topk_ids_ptr, local_ids_ptr, sorted_ids_ptr, block_experts_ptr, n_padded_ptr,
+                           local_start, local_count, n, cap, n_blocks, CHUNK: tl.constexpr,
+                           PAD_BLOCK: tl.constexpr, BLK: tl.constexpr, BSM: tl.constexpr,
+                           NUM_E: tl.constexpr):
+    """_align_small_kernel's outputs for any n, grid (local_count + 1,).
+
+    Every program streams the n route ids in CHUNK chunks and counts all local experts, so each
+    knows every segment start. Program e < local_count then places expert e's routes in ascending
+    route order (segment start + routes placed by earlier chunks + rank in the chunk), its padding
+    slots (sentinel n) and its block_experts entries. Program local_count writes local_ids, the
+    sentinel into [total, cap), -1 into block_experts past the used blocks, and n_padded. The
+    store sets are disjoint across programs, so no atomics or ordering are needed; no program
+    reads what another writes (local ids are recomputed from topk_ids)."""
+    pid = tl.program_id(0)
+    offs0 = tl.arange(0, CHUNK)
+    experts = tl.arange(0, NUM_E)
+
+    counts = tl.zeros([NUM_E], dtype=tl.int32)
+    for c in range(0, n, CHUNK):
+        offs = c + offs0
+        mask = offs < n
+        ids = tl.load(topk_ids_ptr + offs, mask=mask, other=0).to(tl.int32)
+        local = ids - local_start
+        local = tl.where(mask & (local >= 0) & (local < local_count), local, -1)
+        counts += tl.sum((local[:, None] == experts[None, :]).to(tl.int32), axis=0)
+    padded = (counts + BSM - 1) // BSM * BSM
+    seg_end = tl.cumsum(padded, axis=0)
+    seg_start = seg_end - padded
+    total = tl.sum(padded, axis=0)
+
+    if pid < local_count:
+        sel = experts == pid
+        my_count = tl.sum(tl.where(sel, counts, 0), axis=0)
+        my_padded = tl.sum(tl.where(sel, padded, 0), axis=0)
+        my_start = tl.sum(tl.where(sel, seg_start, 0), axis=0)
+        # This expert's routes, ascending route index.
+        base = my_start
+        for c in range(0, n, CHUNK):
+            offs = c + offs0
+            mask = offs < n
+            ids = tl.load(topk_ids_ptr + offs, mask=mask, other=0).to(tl.int32)
+            local = ids - local_start
+            match = (mask & (local == pid)).to(tl.int32)
+            rank = tl.cumsum(match, axis=0) - 1
+            tl.store(sorted_ids_ptr + base + rank, offs, mask=match > 0)
+            base += tl.sum(match, axis=0)
+        # Its padding slots: fewer than BSM, over a power-of-2 tile (BSM 48 is not one).
+        j = tl.arange(0, PAD_BLOCK)
+        tl.store(sorted_ids_ptr + my_start + my_count + j, tl.zeros([PAD_BLOCK], dtype=tl.int32) + n,
+                 mask=j < my_padded - my_count)
+        # Its m-blocks [my_start / BSM, (my_start + my_padded) / BSM); a runtime loop, since one
+        # expert can own up to cdiv(M, BSM) blocks.
+        b0 = my_start // BSM
+        nb = my_padded // BSM
+        kb0 = tl.arange(0, BLK)
+        for k in range(0, nb, BLK):
+            kb = k + kb0
+            tl.store(block_experts_ptr + b0 + kb, tl.zeros([BLK], dtype=tl.int32) + pid, mask=kb < nb)
+    else:
+        for c in range(0, n, CHUNK):
+            offs = c + offs0
+            mask = offs < n
+            ids = tl.load(topk_ids_ptr + offs, mask=mask, other=0).to(tl.int32)
+            local = ids - local_start
+            local = tl.where((local >= 0) & (local < local_count), local, -1)
+            tl.store(local_ids_ptr + offs, local, mask=mask)
+        # Every slot past the used length.
+        for s in range(0, cap, CHUNK):
+            slots = s + offs0
+            tl.store(sorted_ids_ptr + slots, tl.zeros([CHUNK], dtype=tl.int32) + n,
+                     mask=(slots >= total) & (slots < cap))
+        used_blocks = total // BSM
+        kb0 = tl.arange(0, BLK)
+        for k in range(0, n_blocks, BLK):
+            kb = k + kb0
+            tl.store(block_experts_ptr + kb, tl.zeros([BLK], dtype=tl.int32) - 1,
+                     mask=(kb >= used_blocks) & (kb < n_blocks))
+        tl.store(n_padded_ptr, total)
+
+
+def _align_parallel(topk_ids, local_start, local_count, block_size_m):
+    """Marlin's (sorted_ids, block_experts, n_padded) and local_ids [M, 8] int32 for M > 32, in one launch of
+    _align_parallel_kernel over local_count + 1 programs. n, cap and n_blocks are runtime
+    arguments, so only block_size_m selects a compiled variant."""
+    topk_ids = topk_ids.contiguous()
+    device = topk_ids.device
+    n = topk_ids.numel()
+    cap = n + local_count * (block_size_m - 1)
+    n_blocks = triton.cdiv(cap, block_size_m)
+    local_ids = torch.empty(topk_ids.shape, dtype=torch.int32, device=device)
+    sorted_ids = torch.empty((cap,), dtype=torch.int32, device=device)
+    block_experts = torch.empty((n_blocks,), dtype=torch.int32, device=device)
+    n_padded = torch.empty((1,), dtype=torch.int32, device=device)
+    _align_parallel_kernel[(local_count + 1,)](
+        topk_ids, local_ids, sorted_ids, block_experts, n_padded, local_start, local_count, n, cap,
+        n_blocks, CHUNK=ALIGN_PAR_CHUNK, PAD_BLOCK=triton.next_power_of_2(block_size_m),
+        BLK=ALIGN_PAR_BLK, BSM=block_size_m, NUM_E=triton.next_power_of_2(local_count),
+        num_warps=ALIGN_PAR_WARPS)
+    return local_ids, (sorted_ids, block_experts, n_padded)
+
+def _align_par_ref_view(sorted_ids, block_experts, n_padded, n, bsm):
+    """Per local expert: (sorted routes, block count) from an align's three outputs."""
+    sorted_ids = sorted_ids.cpu()
+    block_experts = block_experts.cpu()
+    used = min(int(n_padded.cpu()[0]) // bsm, block_experts.numel())
+    out = {}
+    for e in range(LOCAL_EXPERTS):
+        blocks = (block_experts[:used] == e).nonzero().flatten().tolist()
+        routes = []
+        for b in blocks:
+            seg = sorted_ids[b * bsm:(b + 1) * bsm]
+            routes += seg[seg < n].tolist()
+        out[e] = (sorted(routes), len(blocks))
+    return out
+
+
+def _align_par_setup(state, device):
+    """Untimed, prepare() only: compile _align_parallel_kernel for every block_size_m kernel_fn can
+    pick above 32 tokens (and both id dtypes), then compare it per local expert with SGLang's
+    moe_align_block_size(expert_map[ids], bsm, N_EXPERTS) on synthetic skewed routings. Padding and
+    capacity differences are ignored. Sets state["align_par_ok"]; any failure keeps master."""
+    state["align_par_ok"] = False
+    cases = mismatches = 0
+    try:
+        bsms = sorted({_block_size_m(t) for t in range(ALIGN_PAR_MIN_TOKENS, 1025)} | {8, 16})
+        for bsm in bsms:
+            for dt in (torch.int32, torch.int64):
+                _align_parallel(torch.zeros((ALIGN_PAR_MIN_TOKENS, TOP_K), dtype=dt, device=device),
+                                0, LOCAL_EXPERTS, bsm)
+        torch.cuda.synchronize()
+        gen = torch.Generator().manual_seed(20261024)
+        emap = state["bank"]["expert_map"]
+        for tokens in (33, 40, 57, 128, 256, 257):
+            for kind in ("random", "skewed", "remote_heavy"):
+                rows = []
+                for _ in range(tokens):
+                    if kind == "random":
+                        rows.append(torch.randperm(N_EXPERTS, generator=gen)[:TOP_K].tolist())
+                    elif kind == "skewed":
+                        hot = [0, 31, 5, 17]
+                        rest = [e for e in torch.randperm(N_EXPERTS, generator=gen).tolist() if e not in hot]
+                        rows.append(hot + rest[:TOP_K - 4])
+                    else:
+                        rest = torch.randperm(N_EXPERTS - LOCAL_EXPERTS, generator=gen)[:TOP_K - 1] + LOCAL_EXPERTS
+                        rows.append([int(torch.randint(0, LOCAL_EXPERTS, (1,), generator=gen))] + rest.tolist())
+                ids = torch.tensor(rows, dtype=torch.int32, device=device)
+                bsm = _block_size_m(tokens)
+                ref_local = emap[ids.long()].contiguous()
+                r_sorted, r_blocks, r_pad = moe_align_block_size(ref_local, bsm, N_EXPERTS)
+                n_local, (n_sorted, n_blocks, n_pad) = _align_parallel(ids, 0, LOCAL_EXPERTS, bsm)
+                cases += 1
+                bad = not torch.equal(n_local, ref_local)
+                if not bad:
+                    bad = (_align_par_ref_view(r_sorted, r_blocks, r_pad, ids.numel(), bsm)
+                           != _align_par_ref_view(n_sorted, n_blocks, n_pad, ids.numel(), bsm))
+                if bad:
+                    mismatches += 1
+                    print(f"{ALIGN_PAR_TAG}   mismatch T={tokens} {kind} bsm={bsm}", flush=True)
+        torch.cuda.synchronize()
+        state["align_par_ok"] = mismatches == 0
+    except Exception as e:
+        print(f"{ALIGN_PAR_TAG} setup raised {e!r}", flush=True)
+        mismatches = max(mismatches, 1)
+        state["align_par_ok"] = False
+    print(f"{ALIGN_PAR_TAG} {'ON' if state['align_par_ok'] else 'OFF'} cases={cases} mismatches={mismatches}",
+          flush=True)
+
+
 def _dl_forward(ffn_input, local_start, dl, pdl=None):
     """Kernels P and R for T <= DL_MAX_TOKENS. Returns (pre-expert-normed expert input bf16 [T, 4096],
     topk_weights fp32 [T, 8], topk_ids int32 [T, 8] global, local_ids int32 [T, 8],
@@ -1177,6 +1361,255 @@ def _dl_setup(weights, state):
         return None
 
 
+# Sliding batch-1 decode: muse_attention_decode's _sliding_fused_kernel and its helpers,
+# ported verbatim (hypothesis sliding-fused-triton-decode1-port).
+_INV_FREQ = {}
+
+
+def _inv_freq(theta: float, d: int, device) -> torch.Tensor:
+    """[d/2] float32 theta^(-2i/d), built exactly as the reference builds it; cached per theta."""
+    key = (theta, d, str(device))
+    cache = _INV_FREQ.get(key)
+    if cache is None:
+        cache = _INV_FREQ[key] = 1.0 / (theta ** (torch.arange(0, d, 2, device=device).float() / d))
+    return cache
+
+
+LOG2E = 1.4426950408889634
+_COUNTERS = {}
+
+
+def _counters(batch: int, hkv: int, device) -> torch.Tensor:
+    """int32 [B*Hkv] ticket counters for the in-kernel split combine. Zeroed once per
+    (B, Hkv, device) on the first (eager) call; every launch leaves them at 0 again (the
+    program that draws the last ticket resets its counter), so they hold no data."""
+    key = (batch, hkv, str(device))
+    buf = _COUNTERS.get(key)
+    if buf is None:
+        buf = _COUNTERS[key] = torch.zeros(batch * hkv, dtype=torch.int32, device=device)
+    return buf
+
+
+def _num_splits(batch: int, hkv: int) -> int:
+    """Window splits per (request, kv head), from config only: the power of two that brings
+    the grid to ~128 CTAs, capped at 16 (B=1: 16, B=16: 4, B=32: 2, B>=64: 1)."""
+    s = 1
+    while s < 16 and batch * hkv * s * 2 <= 128:
+        s *= 2
+    return s
+
+
+@triton.jit
+def _norm_rope(x, xs, pos, freq, d, D: tl.constexpr, ROPE: tl.constexpr, EPS: tl.constexpr):
+    """Rows of x [R, D] (xs: the same rows with each pair swapped, xs[:, d] = x[:, d ^ 1]):
+    scaleless RMSNorm, then interleaved RoPE at pos [R] with freq [D] = inv_freq[d // 2].
+    Even d: x_e cos - x_o sin; odd d: x_o cos + x_e sin, as _pre_attention_kernel."""
+    r = 1.0 / tl.sqrt(tl.sum(x * x, axis=1) / D + EPS)
+    x = x * r[:, None]
+    if ROPE:
+        xs = xs * r[:, None]
+        ang = pos[:, None] * freq[None, :]
+        sign = tl.where(d % 2 == 0, -1.0, 1.0)
+        x = x * tl.cos(ang) + sign[None, :] * xs * tl.sin(ang)
+    return x
+
+
+@triton.jit
+def _gpu_fence(x):
+    """fence.acq_rel.gpu executed by every thread holding an element of x (int32)."""
+    return tl.inline_asm_elementwise("fence.acq_rel.gpu;\n\tmov.b32 $0, $1;", "=r,r", [x],
+                                     dtype=tl.int32, is_pure=False, pack=1)
+
+
+@triton.jit
+def _online_update(qk, valid, v, m_i, l_i, acc):
+    """One key block of the online softmax (base-2 logits qk [M, N], values v [N, D] bf16).
+    -inf safe: a row with no valid key so far keeps m = -inf, l = 0, acc = 0, never NaN."""
+    qk = tl.where(valid, qk, float("-inf"))
+    m_new = tl.maximum(m_i, tl.max(qk, axis=1))
+    m_use = tl.where(m_new == float("-inf"), 0.0, m_new)
+    alpha = tl.exp2(m_i - m_use)
+    p = tl.exp2(qk - m_use[:, None])
+    l_i = l_i * alpha + tl.sum(p, axis=1)
+    acc = acc * alpha[:, None] + tl.dot(p.to(tl.bfloat16), v)
+    return m_new, l_i, acc
+
+
+@triton.jit
+def _gate_epilogue(o, qkv_ptr, out_ptr, tok, head, rvalid, d, qkv_stride,
+                   HQ: tl.constexpr, HKV: tl.constexpr, D: tl.constexpr, EPS: tl.constexpr):
+    """out[tok, head] = rmsnorm(o) * sigmoid(gate), o [M, D] fp32 (no bf16 rounding before)."""
+    r = 1.0 / tl.sqrt(tl.sum(o * o, axis=1) / D + EPS)
+    gptr = qkv_ptr + tok.to(tl.int64)[:, None] * qkv_stride + (HQ + 2 * HKV) * D + head[:, None] * D + d[None, :]
+    gate = tl.load(gptr, mask=rvalid[:, None], other=0.0).to(tl.float32)
+    y = o * r[:, None] * tl.sigmoid(gate)
+    optr = out_ptr + (tok.to(tl.int64)[:, None] * HQ + head[:, None]) * D + d[None, :]
+    tl.store(optr, y.to(tl.bfloat16), mask=rvalid[:, None])
+
+
+@triton.jit
+def _sliding_fused_kernel(
+    qkv_ptr, pos_ptr, loc_ptr, seq_ptr, pt_ptr, inv_freq_ptr, k_scale_ptr, v_scale_ptr,
+    k_cache_ptr, v_cache_ptr, ws_acc_ptr, ws_ml_ptr, cnt_ptr, out_ptr,
+    qkv_stride, pt_stride, q_scale, score_scale,
+    HQ: tl.constexpr, HKV: tl.constexpr, D: tl.constexpr, L: tl.constexpr, M: tl.constexpr,
+    LN: tl.constexpr, WINDOW: tl.constexpr, PAGE: tl.constexpr, S: tl.constexpr,
+    BLOCK_N: tl.constexpr, ROPE: tl.constexpr, EPS: tl.constexpr,
+):
+    """Sliding-window layer, one launch: pre-attention, attention, output norm x gate.
+    Grid (B, HKV, S). Program (b, g, s) serves kv head g's GROUP query heads for the block's L
+    tokens as one M-row tile (row r = j * GROUP + hh; rows past GROUP * L are padding), over
+    chunk s of the old keys [lo, seq - 1], lo = max(0, seq - (WINDOW - 1)). Program S - 1 also
+    builds the L new keys/values, stores them (E4M3) at cache_loc and attends them from
+    registers (causal i <= j). Splits combine in-kernel through a ticket counter."""
+    b = tl.program_id(0)
+    g = tl.program_id(1)
+    s = tl.program_id(2)
+    GROUP: tl.constexpr = HQ // HKV
+    d = tl.arange(0, D)
+    dsw = d ^ 1
+    freq = tl.load(inv_freq_ptr + d // 2) if ROPE else tl.zeros([D], dtype=tl.float32)
+
+    # Query rows: token j = r // GROUP (clamped for padding rows, which stay finite), head h.
+    r = tl.arange(0, M)
+    rvalid = r < GROUP * L
+    j = tl.minimum(r // GROUP, L - 1)
+    head = g * GROUP + r % GROUP
+    tok = b * L + j
+    qrow = qkv_ptr + tok.to(tl.int64)[:, None] * qkv_stride + head[:, None] * D
+    xq = tl.load(qrow + d[None, :], mask=rvalid[:, None], other=0.0).to(tl.float32)
+    xqs = tl.load(qrow + dsw[None, :], mask=rvalid[:, None], other=0.0).to(tl.float32)
+    qpos = tl.load(pos_ptr + tok).to(tl.float32)
+    q = _norm_rope(xq, xqs, qpos, freq, d, D, ROPE, EPS)
+    # bf16 operands (finer than FA3's E4M3), rounded after qk_scale_factor as the reference.
+    q = (q * q_scale).to(tl.bfloat16)
+
+    k_scale = tl.load(k_scale_ptr)
+    v_scale = tl.load(v_scale_ptr)
+    qk_scale = score_scale * k_scale  # sm_scale * log2(e) * k_scale
+    seq = tl.load(seq_ptr + b)
+    p_row = seq + j  # each row's token position
+
+    m_i = tl.full([M], float("-inf"), dtype=tl.float32)
+    l_i = tl.zeros([M], dtype=tl.float32)
+    acc = tl.zeros([M, D], dtype=tl.float32)
+
+    if s == S - 1:
+        # The block's new keys/values for head g: never read back from the cache.
+        i = tl.arange(0, LN)
+        ivalid = i < L
+        ntok = b * L + tl.minimum(i, L - 1)
+        nrow = qkv_ptr + ntok.to(tl.int64)[:, None] * qkv_stride
+        xk = tl.load(nrow + (HQ + g) * D + d[None, :], mask=ivalid[:, None], other=0.0).to(tl.float32)
+        xks = tl.load(nrow + (HQ + g) * D + dsw[None, :], mask=ivalid[:, None], other=0.0).to(tl.float32)
+        kpos = tl.load(pos_ptr + ntok).to(tl.float32)
+        kn = _norm_rope(xk, xks, kpos, freq, d, D, ROPE, EPS)
+        k8 = (kn / k_scale).to(tl.float8e4nv)
+        vn = tl.load(nrow + (HQ + HKV + g) * D + d[None, :], mask=ivalid[:, None], other=0.0).to(tl.float32)
+        v8 = (vn / v_scale).to(tl.float8e4nv)
+        loc = tl.load(loc_ptr + ntok).to(tl.int64)
+        cptr = (loc[:, None] * HKV + g) * D + d[None, :]
+        tl.store(k_cache_ptr + cptr, k8.to(tl.uint8, bitcast=True), mask=ivalid[:, None])
+        tl.store(v_cache_ptr + cptr, v8.to(tl.uint8, bitcast=True), mask=ivalid[:, None])
+        # Attend the stored E4M3 values (dequantized via the scales), causal inside the block.
+        qk = tl.dot(q, tl.trans(k8.to(tl.bfloat16))) * qk_scale
+        valid = ivalid[None, :] & (i[None, :] <= j[:, None])
+        m_i, l_i, acc = _online_update(qk, valid, v8.to(tl.bfloat16), m_i, l_i, acc)
+
+    # Old keys: chunk s of [lo, seq - 1]; every key of every row's window is scored.
+    lo = tl.maximum(seq - (WINDOW - 1), 0)
+    count = seq - lo
+    chunk = ((count + S - 1) // S + BLOCK_N - 1) // BLOCK_N * BLOCK_N
+    start = lo + s * chunk
+    end = tl.minimum(start + chunk, seq)
+    n = tl.arange(0, BLOCK_N)
+    for n0 in range(start, end, BLOCK_N):
+        t = n0 + n
+        tmask = t < end
+        page = tl.load(pt_ptr + b.to(tl.int64) * pt_stride + t // PAGE, mask=tmask, other=0)
+        row = page.to(tl.int64) * PAGE + t % PAGE
+        kvoff = (row[:, None] * HKV + g) * D + d[None, :]
+        kb = tl.load(k_cache_ptr + kvoff, mask=tmask[:, None], other=0).to(tl.float8e4nv, bitcast=True)
+        vb = tl.load(v_cache_ptr + kvoff, mask=tmask[:, None], other=0).to(tl.float8e4nv, bitcast=True)
+        qk = tl.dot(q, tl.trans(kb.to(tl.bfloat16))) * qk_scale
+        # t <= p_j for every old key; the window's lower edge is per row.
+        valid = tmask[None, :] & (t[None, :] >= p_row[:, None] - (WINDOW - 1))
+        m_i, l_i, acc = _online_update(qk, valid, vb.to(tl.bfloat16), m_i, l_i, acc)
+
+    if S == 1:
+        # Program 0 holds the new keys, so l > 0 on every row.
+        o = acc / l_i[:, None] * v_scale
+        _gate_epilogue(o, qkv_ptr, out_ptr, tok, head, rvalid, d, qkv_stride, HQ, HKV, D, EPS)
+    else:
+        bg = b * HKV + g
+        part = (bg * S + s).to(tl.int64)
+        tl.store(ws_acc_ptr + (part * M + r[:, None]) * D + d[None, :], acc)
+        tl.store(ws_ml_ptr + part * 2 * M + r, m_i)
+        tl.store(ws_ml_ptr + part * 2 * M + M + r, l_i)
+        # Release: every thread fences its partial stores at gpu scope, the CTA syncs, then one
+        # acq_rel gpu-scope ticket. The program drawing the last ticket combines.
+        _gpu_fence(r)
+        tl.debug_barrier()
+        ticket = tl.atomic_add(cnt_ptr + bg, 1, sem="acq_rel", scope="gpu")
+        tl.debug_barrier()
+        if ticket == S - 1:
+            _gpu_fence(r)  # acquire side, every thread, before the L2 (.cg) reloads
+            base = (bg * S).to(tl.int64)
+            m_max = tl.full([M], float("-inf"), dtype=tl.float32)
+            for s2 in tl.static_range(S):
+                m_s = tl.load(ws_ml_ptr + (base + s2) * 2 * M + r, cache_modifier=".cg")
+                m_max = tl.maximum(m_max, m_s)
+            # Partial S - 1 holds the new keys and is finite on every row, so m_max is too;
+            # empty or fully masked partials (m = -inf) get weight 0, never exp2(-inf - -inf).
+            m_max = tl.where(m_max == float("-inf"), 0.0, m_max)
+            l_sum = tl.zeros([M], dtype=tl.float32)
+            o = tl.zeros([M, D], dtype=tl.float32)
+            for s2 in tl.static_range(S):
+                m_s = tl.load(ws_ml_ptr + (base + s2) * 2 * M + r, cache_modifier=".cg")
+                l_s = tl.load(ws_ml_ptr + (base + s2) * 2 * M + M + r, cache_modifier=".cg")
+                a_s = tl.load(ws_acc_ptr + ((base + s2) * M + r[:, None]) * D + d[None, :], cache_modifier=".cg")
+                w = tl.where(m_s == float("-inf"), 0.0, tl.exp2(m_s - m_max))
+                l_sum += l_s * w
+                o += a_s * w[:, None]
+            o = o / l_sum[:, None] * v_scale
+            _gate_epilogue(o, qkv_ptr, out_ptr, tok, head, rvalid, d, qkv_stride, HQ, HKV, D, EPS)
+            tl.store(cnt_ptr + bg, 0)  # ready for the next launch / graph replay
+
+
+def _sliding_forward(data, qkv):
+    """Sliding batch-1 decode: one launch of _sliding_fused_kernel on the qkv GEMM's [T, 2304]
+    output, returning the [T, 1024] bf16 normed-and-gated attention output (master's FusedQKNorm,
+    FP8 casts, store_cache, FA3 and FusedRMSNormGate at that shape). Branches on config only."""
+    cfg = data["config"]
+    batch, length = cfg["batch"], cfg["q_len"]
+    hq, hkv, d = cfg["num_q_heads"], cfg["num_kv_heads"], cfg["head_dim"]
+    tokens = batch * length
+    device = qkv.device
+    theta = cfg["rope_theta"]
+    group = hq // hkv
+    m = max(16, triton.next_power_of_2(group * length))
+    splits = _num_splits(batch, hkv)
+    out = torch.empty((tokens, hq * d), dtype=torch.bfloat16, device=device)
+    if splits > 1:
+        ws_acc = torch.empty((batch * hkv * splits, m, d), dtype=torch.float32, device=device)
+        ws_ml = torch.empty((batch * hkv * splits, 2, m), dtype=torch.float32, device=device)
+        counters = _counters(batch, hkv, device)
+    else:
+        ws_acc = ws_ml = counters = out  # unused when S == 1
+    inv_freq = _inv_freq(theta, d, device) if theta else data["k_scale"]  # unused when ROPE is off
+    page_table = data["page_table"]
+    _sliding_fused_kernel[(batch, hkv, splits)](
+        qkv, data["positions"], data["cache_loc"], data["seq_lens"], page_table, inv_freq,
+        data["k_scale"], data["v_scale"],
+        data["k_cache"].view(torch.uint8), data["v_cache"].view(torch.uint8), ws_acc, ws_ml, counters, out,
+        qkv.stride(0), page_table.stride(0), cfg["qk_scale_factor"], cfg["sm_scale"] * LOG2E,
+        HQ=hq, HKV=hkv, D=d, L=length, M=m, LN=max(16, triton.next_power_of_2(length)),
+        WINDOW=cfg["window"], PAGE=cfg["page_size"], S=splits, BLOCK_N=64, ROPE=bool(theta), EPS=RMS_EPS,
+        num_warps=4, num_stages=2,
+    )
+    return out
+
+
 def prepare(weights):
     device = weights["qkv_gate"].device
     router = weights["router"]
@@ -1218,11 +1651,28 @@ def prepare(weights):
     del freqs
     # Small-T dense chain (T <= DL_MAX_TOKENS): constants, PDL probe and self-check; None keeps master.
     state["dl"] = _dl_setup(weights, state)
+    _align_par_setup(state, device)
     torch.cuda.synchronize()
     return state
 
 
-def _experts(x, topk_weights, topk_ids, state, align=None):
+def _expert_dispatch(topk_ids, topk_weights, local_start, num_tokens, state):
+    """Routing-only half of master's _experts (expert_map gather, fp32 cast, moe_align_block_size);
+    topk_ids are the raw routing ids. Returns (local_ids, topk_weights fp32, (sorted_ids, block_experts,
+    n_padded)). Runs on the side stream for T > DL_MAX_TOKENS."""
+    shifted = (topk_ids - local_start) % N_EXPERTS
+    tw = topk_weights.to(torch.float32).contiguous()
+    if num_tokens >= ALIGN_PAR_MIN_TOKENS and state.get("align_par_ok", False):
+        # stack-align-par-sidestream-sliding1: the parallel align (gather + align in one launch) runs on
+        # the side stream; prepare() self-checked it against expert_map[ids] + moe_align_block_size.
+        local_ids, align = _align_parallel(shifted, 0, LOCAL_EXPERTS, _block_size_m(num_tokens))
+        return local_ids, tw, align
+    local_ids = state["bank"]["expert_map"][shifted].contiguous()
+    align = moe_align_block_size(local_ids, _block_size_m(num_tokens), N_EXPERTS)
+    return local_ids, tw, align
+
+
+def _experts(x, topk_weights, topk_ids, state, align=None, dispatch=None):
     """MuseSpark1xFp4Experts._marlin_expert_outputs and its post-expert-norm finalize.
 
     align=None: master (topk_ids are (id - local_start) % 256; expert_map gather, fp32 cast and
@@ -1233,7 +1683,15 @@ def _experts(x, topk_weights, topk_ids, state, align=None):
     size_n = bank["size_n"]
     gemm1_n = 2 * size_n
     block_size_m = _block_size_m(num_tokens)
-    if align is None:
+    if dispatch is not None:
+        local_ids, topk_weights, (sorted_ids, block_experts, n_padded) = dispatch
+    elif align is None and num_tokens >= ALIGN_PAR_MIN_TOKENS and state.get("align_par_ok", False):
+        # moe-align-parallel-large-t-port: one launch for the expert_map gather and the align. The ids
+        # are already (id - local_start) % 256, so the local experts are 0..31.
+        topk_weights = topk_weights.to(torch.float32).contiguous()
+        local_ids, (sorted_ids, block_experts, n_padded) = _align_parallel(
+            topk_ids, 0, LOCAL_EXPERTS, block_size_m)
+    elif align is None:
         local_ids = bank["expert_map"][topk_ids].contiguous()
         topk_weights = topk_weights.to(torch.float32).contiguous()
         sorted_ids, block_experts, n_padded = moe_align_block_size(local_ids, block_size_m, N_EXPERTS)
@@ -1276,76 +1734,81 @@ def kernel_fn(data, state):
     dense = state["dense"]
     # Attention: MuseSpark1xAttention.forward.
     qkv = _gemm(data["attn_input"], dense["qkv_gate"])
-    if cfg["rope_theta"]:
-        q, k = state["qk_norm"](qkv, data["positions"], state["cos_sin"])
+    # Sliding batch-1 decode only (config-only predicate): attention in one fused launch.
+    # Every other shape (sliding batch > 1, every verify block, every full layer) keeps the path below.
+    if cfg["window"] and batch == 1 and length == 1:
+        o = _sliding_forward(data, qkv)
     else:
-        q, k = state["qk_norm"](qkv)
-    v = qkv[:, hq * d + hkv * d: hq * d + 2 * hkv * d]
-    gate = qkv[:, hq * d + 2 * hkv * d:]
-    k_cache, v_cache = data["k_cache"], data["v_cache"]
-    scaled = cfg["kv_scale"] != 1.0
-    k = k.reshape(tokens, hkv * d)
-    if scaled:
-        k, v = k / data["k_scale"], v / data["v_scale"]
-    # The pool keeps FP8 rows as bytes; slot 0 is a live row here (SGLang reserves it for padding).
-    store_cache(k.to(FP8).view(torch.uint8), v.to(FP8).view(torch.uint8),
-                k_cache.view(-1, hkv * d).view(torch.uint8), v_cache.view(-1, hkv * d).view(torch.uint8),
-                data["cache_loc"], reserved_skip_index=-1)
-    window = cfg["window"]
-    # Full layers with batch > 1: pair the two KV heads of each token into one 128-byte FP8 row
-    # (heads 2s and 2s+1 are adjacent halves of it) so FA3 gathers one row per token instead of
-    # two. Each query sits in its own head's half of a zero-padded 128-wide FP8 query (the pad
-    # copy also does the BF16 -> E4M3 cast), so the zero half adds exactly 0 to every logit; FA3
-    # maps query head h to super-head h // (2G), which keeps the original grouping. The judge's
-    # scheduler_metadata was built for the unpaired geometry, so it is not passed. Batch 1 stays
-    # unpaired (pairing lost there in muse_attention_decode). The gate reads config only.
-    paired = window == 0 and batch > 1 and hkv % 2 == 0
-    if paired:
-        g, s = hq // hkv, hkv // 2
-        pages, page_size = k_cache.shape[0], k_cache.shape[1]
-        k_attn = k_cache.view(pages, page_size, s, 2 * d)
-        v_attn = v_cache.view(pages, page_size, s, 2 * d)
-        q_attn = torch.zeros((tokens, hq, 2 * d), dtype=FP8, device=q.device)
-        qp = q_attn.view(tokens, s, 2, g, 2 * d)
-        qv = q.view(tokens, s, 2, g, d)
-        qp[:, :, 0, :, :d] = qv[:, :, 0]
-        qp[:, :, 1, :, d:] = qv[:, :, 1]
-        attn_heads = s
-        metadata = None
-    else:
-        k_attn, v_attn, q_attn = k_cache, v_cache, q.view(tokens, hq, d).to(FP8)
-        attn_heads = hkv
-        metadata = data["scheduler_metadata"]
-    descale = {}
-    if scaled:
-        descale = dict(k_descale=data["k_scale"].reshape(1, 1).expand(batch, attn_heads),
-                       v_descale=data["v_scale"].reshape(1, 1).expand(batch, attn_heads))
-    out = flash_attn_with_kvcache(
-        q=q_attn,
-        k_cache=k_attn,
-        v_cache=v_attn,
-        page_table=data["page_table"],
-        cache_seqlens=data["cache_seqlens"],
-        cu_seqlens_q=data["cu_seqlens_q"],
-        max_seqlen_q=length,
-        softmax_scale=cfg["sm_scale"] * cfg["qk_scale_factor"],
-        causal=True,
-        window_size=(window - 1, 0) if window else (-1, -1),
-        scheduler_metadata=metadata,
-        **descale,
-    )
-    if isinstance(out, tuple):
-        out = out[0]
-    if paired:
-        # Keep each query's own half of FA3's 128-wide output; the other half is the other
-        # head's P@V and is discarded.
-        attn = torch.empty((tokens, hq, d), dtype=torch.bfloat16, device=q.device)
-        a = attn.view(tokens, s, 2, g, d)
-        o = out.view(tokens, s, 2, g, 2 * d)
-        a[:, :, 0] = o[:, :, 0, :, :d]
-        a[:, :, 1] = o[:, :, 1, :, d:]
-        out = attn
-    o = state["o_norm_gate"](out.reshape(tokens, hq * d).to(torch.bfloat16), gate)
+        if cfg["rope_theta"]:
+            q, k = state["qk_norm"](qkv, data["positions"], state["cos_sin"])
+        else:
+            q, k = state["qk_norm"](qkv)
+        v = qkv[:, hq * d + hkv * d: hq * d + 2 * hkv * d]
+        gate = qkv[:, hq * d + 2 * hkv * d:]
+        k_cache, v_cache = data["k_cache"], data["v_cache"]
+        scaled = cfg["kv_scale"] != 1.0
+        k = k.reshape(tokens, hkv * d)
+        if scaled:
+            k, v = k / data["k_scale"], v / data["v_scale"]
+        # The pool keeps FP8 rows as bytes; slot 0 is a live row here (SGLang reserves it for padding).
+        store_cache(k.to(FP8).view(torch.uint8), v.to(FP8).view(torch.uint8),
+                    k_cache.view(-1, hkv * d).view(torch.uint8), v_cache.view(-1, hkv * d).view(torch.uint8),
+                    data["cache_loc"], reserved_skip_index=-1)
+        window = cfg["window"]
+        # Full layers with batch > 1: pair the two KV heads of each token into one 128-byte FP8 row
+        # (heads 2s and 2s+1 are adjacent halves of it) so FA3 gathers one row per token instead of
+        # two. Each query sits in its own head's half of a zero-padded 128-wide FP8 query (the pad
+        # copy also does the BF16 -> E4M3 cast), so the zero half adds exactly 0 to every logit; FA3
+        # maps query head h to super-head h // (2G), which keeps the original grouping. The judge's
+        # scheduler_metadata was built for the unpaired geometry, so it is not passed. Batch 1 stays
+        # unpaired (pairing lost there in muse_attention_decode). The gate reads config only.
+        paired = window == 0 and batch > 1 and hkv % 2 == 0
+        if paired:
+            g, s = hq // hkv, hkv // 2
+            pages, page_size = k_cache.shape[0], k_cache.shape[1]
+            k_attn = k_cache.view(pages, page_size, s, 2 * d)
+            v_attn = v_cache.view(pages, page_size, s, 2 * d)
+            q_attn = torch.zeros((tokens, hq, 2 * d), dtype=FP8, device=q.device)
+            qp = q_attn.view(tokens, s, 2, g, 2 * d)
+            qv = q.view(tokens, s, 2, g, d)
+            qp[:, :, 0, :, :d] = qv[:, :, 0]
+            qp[:, :, 1, :, d:] = qv[:, :, 1]
+            attn_heads = s
+            metadata = None
+        else:
+            k_attn, v_attn, q_attn = k_cache, v_cache, q.view(tokens, hq, d).to(FP8)
+            attn_heads = hkv
+            metadata = data["scheduler_metadata"]
+        descale = {}
+        if scaled:
+            descale = dict(k_descale=data["k_scale"].reshape(1, 1).expand(batch, attn_heads),
+                           v_descale=data["v_scale"].reshape(1, 1).expand(batch, attn_heads))
+        out = flash_attn_with_kvcache(
+            q=q_attn,
+            k_cache=k_attn,
+            v_cache=v_attn,
+            page_table=data["page_table"],
+            cache_seqlens=data["cache_seqlens"],
+            cu_seqlens_q=data["cu_seqlens_q"],
+            max_seqlen_q=length,
+            softmax_scale=cfg["sm_scale"] * cfg["qk_scale_factor"],
+            causal=True,
+            window_size=(window - 1, 0) if window else (-1, -1),
+            scheduler_metadata=metadata,
+            **descale,
+        )
+        if isinstance(out, tuple):
+            out = out[0]
+        if paired:
+            # Keep each query's own half of FA3's 128-wide output; the other half is the other
+            # head's P@V and is discarded.
+            attn = torch.empty((tokens, hq, d), dtype=torch.bfloat16, device=q.device)
+            a = attn.view(tokens, s, 2, g, d)
+            o = out.view(tokens, s, 2, g, 2 * d)
+            a[:, :, 0] = o[:, :, 0, :, :d]
+            a[:, :, 1] = o[:, :, 1, :, d:]
+            out = attn
+        o = state["o_norm_gate"](out.reshape(tokens, hq * d).to(torch.bfloat16), gate)
     attn_output = _gemm(o, dense["o"])  # all-reduce: identity
 
     # Post-attention boundary, router and MoE block: MuseSpark1xMoE._forward_experts.
@@ -1374,14 +1837,16 @@ def kernel_fn(data, state):
             else:
                 logits = F.linear(router_input, state["router"])
             topk_weights, topk_ids = state["routing"](None, logits, TOP_K, True)
+            # This GPU's experts start at local_start: as SGLang's expert_map on that EP rank.
+            # Routing-only dispatch stays on the side stream, off the pooler's critical path.
+            local_ids, tw, align = _expert_dispatch(topk_ids, topk_weights, data["local_start"], tokens, state)
+        xn = state["pre_expert_norm"](expert_input)  # main stream, overlaps the side branch
         main_stream.wait_stream(side_stream)
         if not torch.cuda.is_current_stream_capturing():
-            for tensor in (topk_weights, topk_ids):
+            for tensor in (topk_weights, topk_ids, local_ids, tw, *align):
                 tensor.record_stream(main_stream)
-        # This GPU's experts start at local_start: as SGLang's expert_map on that EP rank.
-        local_ids = (topk_ids - data["local_start"]) % N_EXPERTS
         # all-reduce: identity
-        expert_output = _experts(state["pre_expert_norm"](expert_input), topk_weights, local_ids, state)
+        expert_output = _experts(xn, None, None, state, dispatch=(local_ids, tw, align))
     if tokens <= SLICED_UNPOOL_MAX_TOKENS:
         unpooled = _gemm(expert_output, dense["unpooler"][:UNPOOL_SLICE])
         ffn_output = F.pad(unpooled, (0, HIDDEN - UNPOOL_SLICE))  # all-gather: identity
