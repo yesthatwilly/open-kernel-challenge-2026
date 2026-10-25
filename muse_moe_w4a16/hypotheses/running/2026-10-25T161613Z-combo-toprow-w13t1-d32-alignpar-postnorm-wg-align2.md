@@ -106,9 +106,18 @@ priority: 1
 kind: primary
 controls_for: null
 review: proceed
-status: queued
+status: running
 review_at: 2026-10-25T162036Z
 review_companions: null
+stage: claimed
+claimed_at: 2026-10-25T162036Z
+base_sha: 1a68e94c6b2606b0ecd994ea29ea38fc22e70f0e
+base_blob: 593b238c16387c5ac3774424ee9557882b9fc46a
+branch: hyp/muse_moe_w4a16/combo-toprow-w13t1-d32-alignpar-postnorm-wg-align2
+worktree: .worktrees/muse_moe_w4a16/combo-toprow-w13t1-d32-alignpar-postnorm-wg-align2
+mode: null
+restack_of: null
+stale_base: null
 ---
 
 # combo-toprow-w13t1-d32-alignpar-postnorm-wg-align2
