@@ -41,9 +41,18 @@ priority: 2
 kind: primary
 controls_for: null
 review: proceed
-status: queued
+status: running
 review_at: 2026-10-25T042602Z
 review_companions: null
+stage: claimed
+claimed_at: 2026-10-25T042602Z
+base_sha: 9d3c58e166fc04c1df6f9c7b4eccd2672e82be7c
+base_blob: 60dfe35d5417d9c0f89067ff313efdc2c41d03a2
+branch: hyp/muse_moe_w4a16/w2-marlin-atomic-add-verify
+worktree: .worktrees/muse_moe_w4a16/w2-marlin-atomic-add-verify
+mode: null
+restack_of: null
+stale_base: null
 ---
 
 # w2-marlin-atomic-add-verify
