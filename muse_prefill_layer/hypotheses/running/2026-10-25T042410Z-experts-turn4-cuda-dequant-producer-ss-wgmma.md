@@ -60,9 +60,18 @@ controls_for: null
 rewrite_stage: 1
 replaces: moe_wna16_marlin_gemm x2 (Marlin w13 + w2) at 1024 < T <= 4096 (turn_4, T=3012)
 review: proceed
-status: queued
+status: running
 review_at: 2026-10-25T043310Z
 review_companions: null
+stage: claimed
+claimed_at: 2026-10-25T043310Z
+base_sha: 8c0b24db143ab6bf6ff8765c64729c63abac3138
+base_blob: db8a3344398bca79ea5cafeb580f701c055fd475
+branch: hyp/muse_prefill_layer/experts-turn4-cuda-dequant-producer-ss-wgmma
+worktree: .worktrees/muse_prefill_layer/experts-turn4-cuda-dequant-producer-ss-wgmma
+mode: null
+restack_of: null
+stale_base: null
 ---
 
 # experts-turn4-cuda-dequant-producer-ss-wgmma
