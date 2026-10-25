@@ -74,9 +74,18 @@ controls_for: null
 rewrite_stage: 3
 replaces: rega_kernel<true,false> + rega_kernel<false,false> (NMAX 128, 4 stages, 1 CTA/SM) in the low class 200 < T <= 1024
 review: proceed
-status: queued
+status: running
 review_at: 2026-10-25T130000Z
 review_companions: null
+stage: claimed
+claimed_at: 2026-10-25T130000Z
+base_sha: 5ab477f4e13746722c0fdaef292988846cff3fa4
+base_blob: c2e3e595def2e6b5949e0fd350ce98ed59729147
+branch: hyp/muse_prefill_layer/experts-rega-low-class-two-ctas-per-sm
+worktree: .worktrees/muse_prefill_layer/experts-rega-low-class-two-ctas-per-sm
+mode: null
+restack_of: null
+stale_base: null
 ---
 
 # experts-rega-low-class-two-ctas-per-sm
