@@ -63,7 +63,7 @@ review: proceed
 status: running
 review_at: 2026-10-25T043310Z
 review_companions: null
-stage: implemented
+stage: dispatched
 claimed_at: 2026-10-25T043310Z
 base_sha: 8c0b24db143ab6bf6ff8765c64729c63abac3138
 base_blob: db8a3344398bca79ea5cafeb580f701c055fd475
@@ -80,6 +80,8 @@ submission_blob: d5e8e93c9f001ce31b439299ad78db8bf3b8f614
 lint_warnings: 32
 attempt_file: 2026-10-25T044809Z-check-experts-turn4-cuda-dequant-producer-ss-wgmma.md
 prepared_at: 2026-10-25T044809Z
+job: 40541db65f1b4ec6
+dispatched_at: 2026-10-25T044817Z
 ---
 
 # experts-turn4-cuda-dequant-producer-ss-wgmma
