@@ -55,8 +55,10 @@ depends_on: null
 priority: 3
 kind: primary
 controls_for: null
-review: required
+review: proceed
 status: queued
+review_at: 2026-10-25T203206Z
+review_companions: null
 ---
 
 # wg-producer-direct-x-rows-no-gather
@@ -75,3 +77,27 @@ Drop the wg_gather_kernel launch and the wg_xs round trip on master's wgmma path
 ## Risk
 
 Avoids the align area (the in-flight align-two-phase-port-from17 touches the Marlin path's align; this keeps the wgmma path's moe_align_block_size call as is). Code overlap: the queued producer-scale-expand also wants producer warps 1-3 for scale conversion; if it lands first, give x loads warp 3 only or split the 96 threads, and re-check the setmaxnreg budget. Effect is small (~1-2% on one load), near the noise floor; judge it on the kernel rows.
+
+## Adversarial review
+
+Reviewed 2026-10-25T203206Z by an adversarial subagent (model opus).
+
+**Verdict: proceed.** Real, new, attributable mechanism (deletes the gather launch and the wg_xs round trip rather than overlapping it; not a duplicate), but the payoff is ~1% on verify_32 (~0.2% headline), smaller than claimed, and the spec misses a fence.proxy.async that wgmma needs, so as written it can be wrong.
+
+### Justification
+Producer warps 1-3 idle after setmaxnreg.dec 40 (submission.py ~1314-1338). wg_gather_kernel is 3.8 us (0.9%) of 402.4 us at verify_32 (combo-toprow b395f5b6); ceiling ~-1.2% on bs=256 incl. the launch gap; bs=256 err_ns ~3.2 us. Weakest link: w13 row flat when B moves from 2 TMA boxes to hundreds-thousands of 16-byte cp.async by 96 threads at 40 regs; a 2% w13 regression erases the gain. Hoist sorted_ids loads per item; copy only nvalid rows. Correctness gaps: (1) fence.proxy.async.shared::cta between generic-proxy writes (cp.async, zero-fill) and wgmma reads; (2) warps 1-3 must run the item/stage loop and wait on empty barriers; (3) bound rows to nvalid / sorted_ids.numel(). Prior (missing): wg-pdl-gather-w13-w2-chain (different mechanism).
+
+### Confounders on the current kernel
+- wg-pdl-gather-w13-w2-chain: same launch chain; read WG MODULE BUILT and wg_pdl lines before attributing.
+- combo-toprow / align-two-phase-port-from17: front end sets sorted_ids layout and bucket mix; check PATH CHOSEN / wg_align2 lines match.
+- Board best is the occ2 branch (wg2_kernel, 1.4021x), not master (1.3866x): a clean gain here cannot move the board.
+
+### Interference and A/B needs
+No companions: the gather row vanishing and wg_kernel<true> staying within ~1 us of 258 us is the readout.
+
+### Open questions
+- Empty-barrier waits and full-barrier arrive counts for warps 1-3 with zero rows.
+- Hoist sorted_ids per item.
+- Bucket mix at verify_32 (N64/N128 share).
+- Interaction with queued producer-scale-expand (also wants warps 1-3).
+
