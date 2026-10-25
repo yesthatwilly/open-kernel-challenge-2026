@@ -67,10 +67,10 @@ priority: 2
 kind: primary
 controls_for: null
 review: proceed
-status: running
+status: done
 review_at: 2026-10-25T011846Z
 review_companions: null
-stage: dispatched
+stage: harvested
 claimed_at: 2026-10-25T011846Z
 base_sha: 9bb477f684086cd51b09c1e8a08fa8d50ae04e59
 base_blob: a8bb42ac483318e9fbc84bc7826a27b7a704d1fb
@@ -89,6 +89,13 @@ attempt_file: 2026-10-25T012031Z-check-bf16-verify-deepgemm-bf16-gemm-nt-route.m
 prepared_at: 2026-10-25T012031Z
 job: 2d522d47ca5c4fc9
 dispatched_at: 2026-10-25T012103Z
+outcome: regression
+verdict_detail: regression
+speedup: 1.202651704303411
+speedup_ci: [1.18461192873886, 1.220691479867962]
+harvested_at: 2026-10-25T034133Z
+best_at_harvest: 1.2215006063849365
+promotion: null
 ---
 
 # bf16-verify-deepgemm-bf16-gemm-nt-route
@@ -160,3 +167,53 @@ warn  host-sync    L741: torch.cuda.synchronize()  (outside kernel_fn's call gra
 OK with warnings: submission.py
 ```
 py_compile OK; __pycache__ removed.
+
+## Result
+
+- job `2d522d47ca5c4fc9` (check), status done, passed True, tests 9/9
+- speedup 1.2027x, 95% CI [1.1846, 1.2207], score 4016.7905493453336 µs vs SGLang 4830.8 µs
+- best at harvest: {"speedup": 1.2215006063849365, "ci": [1.2031780972891624, 1.2398231154807104], "job": "60b20fd0bf924267"}; base result: muse_bf16_proj/hypotheses/done/neutral/bf16-restack-m16-swapab-router-swapab-m32.result.json
+- **outcome: regression** (regression)
+- files: `muse_bf16_proj/hypotheses/done/regression/bf16-verify-deepgemm-bf16-gemm-nt-route.result.json`, `muse_bf16_proj/hypotheses/done/regression/bf16-verify-deepgemm-bf16-gemm-nt-route.patch`; branch `hyp/muse_bf16_proj/bf16-verify-deepgemm-bf16-gemm-nt-route`
+
+## Attribution
+
+| shape | w | base µs | hyp µs | delta | verdict |
+|---|---|---|---|---|---|
+| layer=qkv_gate load=decode_1 m=1 | 62 | 12.18 | 13.46 | 0.9367 | lost |
+| layer=o load=decode_1 m=1 | 62 | 5.89 | 6.34 | 0.9429 | lost |
+| layer=pooler load=decode_1 m=1 | 62 | 18.84 | 19.12 | 0.9981 | flat |
+| layer=unpooler load=decode_1 m=1 | 62 | 6.15 | 6.13 | 0.977 | flat |
+| layer=router load=decode_1 m=1 | 62 | 5.38 | 5.4 | 0.9711 | flat |
+| layer=qkv_gate load=decode_16 m=16 | 62 | 13.15 | 13.58 | 0.9563 | lost |
+| layer=o load=decode_16 m=16 | 62 | 6.23 | 6.49 | 0.9571 | lost |
+| layer=pooler load=decode_16 m=16 | 62 | 19.47 | 19.86 | 0.9855 | flat |
+| layer=unpooler load=decode_16 m=16 | 62 | 18.51 | 18.64 | 0.988 | flat |
+| layer=router load=decode_16 m=16 | 62 | 5.47 | 5.97 | 0.9371 | lost |
+| layer=qkv_gate load=decode_32 m=32 | 62 | 14.19 | 13.86 | 0.9989 | flat |
+| layer=o load=decode_32 m=32 | 62 | 6.34 | 6.45 | 0.9721 | flat |
+| layer=pooler load=decode_32 m=32 | 62 | 19.73 | 19.54 | 0.994 | flat |
+| layer=unpooler load=decode_32 m=32 | 62 | 18.08 | 18.47 | 0.9873 | flat |
+| layer=router load=decode_32 m=32 | 62 | 6.2 | 6.46 | 0.951 | lost |
+| layer=qkv_gate load=verify_1 m=8 | 62 | 12.5 | 13.74 | 0.9488 | lost |
+| layer=o load=verify_1 m=8 | 62 | 6.13 | 6.27 | 0.9602 | lost |
+| layer=pooler load=verify_1 m=8 | 62 | 18.89 | 19.06 | 0.9908 | flat |
+| layer=unpooler load=verify_1 m=8 | 62 | 6.0 | 6.03 | 0.9838 | flat |
+| layer=router load=verify_1 m=8 | 62 | 5.47 | 5.48 | 0.9866 | flat |
+| layer=qkv_gate load=verify_16 m=128 | 62 | 17.05 | 17.15 | 0.9884 | flat |
+| layer=o load=verify_16 m=128 | 62 | 6.98 | 7.24 | 0.9819 | flat |
+| layer=pooler load=verify_16 m=128 | 62 | 25.0 | 24.97 | 1.0124 | flat |
+| layer=unpooler load=verify_16 m=128 | 62 | 19.96 | 19.78 | 1.0108 | flat |
+| layer=router load=verify_16 m=128 | 62 | 7.28 | 7.12 | 1.0097 | flat |
+| layer=qkv_gate load=verify_32 m=256 | 62 | 19.69 | 19.62 | 1.0016 | flat |
+| layer=o load=verify_32 m=256 | 62 | 9.26 | 9.26 | 0.983 | flat |
+| layer=pooler load=verify_32 m=256 | 62 | 31.19 | 28.96 | 1.022 | flat |
+| layer=unpooler load=verify_32 m=256 | 62 | 24.42 | 24.39 | 0.9967 | flat |
+| layer=router load=verify_32 m=256 | 62 | 9.6 | 9.63 | 1.0048 | flat |
+
+lost on qkv_gate decode_1, decode_16, verify_1; o decode_1, decode_16, verify_1; router decode_16, decode_32. Expected hit: 5/8. Noise ±1.5%.
+
+## Follow-ups
+
+- record which shapes lost (Attribution) and do not retry this area in this form.
+

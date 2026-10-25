@@ -1,0 +1,55 @@
+[swapab] layer=pooler m=32 N=4096 K=8192 SPLIT_K=2 BLOCK_K=256 stages=4: n_regs=96 n_spills=0 wgmma=16 mma.sync=0 cp.async=106
+[swapab] layer=qkv_gate m=32 N=2304 K=8192 SPLIT_K=4 BLOCK_K=128 stages=4: n_regs=56 n_spills=0 wgmma=8 mma.sync=0 cp.async=58
+[swapab] layer=unpooler m=32 N=8192 K=4096 SPLIT_K=1 BLOCK_K=256 stages=4: n_regs=96 n_spills=0 wgmma=16 mma.sync=0 cp.async=106
+[swapab] layer=o m=32 N=8192 K=1024 SPLIT_K=1 BLOCK_K=256 stages=4: n_regs=96 n_spills=0 wgmma=16 mma.sync=0 cp.async=106
+[deepgemm] module=/opt/sglang/lib/python3.12/site-packages/deep_gemm/__init__.py version=0.2.1.post1+muse.cbe1727 bf16 candidates=['bf16_gemm_nn', 'bf16_gemm_nt', 'bf16_gemm_tn', 'bf16_gemm_tt', 'bf16_m_grouped_gemm_nt_masked', 'k_grouped_bf16_gemm_tn_contiguous', 'm_grouped_bf16_gemm_nn_contiguous', 'm_grouped_bf16_gemm_nt_contiguous', 'm_grouped_bf16_gemm_nt_masked']
+[deepgemm] AVAILABLE: bf16_gemm_nt found
+[deepgemm] signature used: bf16_gemm_nt(a, b, d, c=None, compiled_dims='', alpha=None) called as (x, W, out)
+[deepgemm] pooler m=128 OK rel_l2=1.66e-03 probe=0.0e+00 graph_rel_l2=1.66e-03
+[deepgemm] pooler m=128 warm+check 0.3 s
+[deepgemm] pooler m=130 OK rel_l2=1.66e-03 probe=0.0e+00 graph_rel_l2=1.66e-03
+[deepgemm] pooler m=130 warm+check 0.0 s
+[deepgemm] pooler m=200 OK rel_l2=1.66e-03 probe=0.0e+00 graph_rel_l2=1.66e-03
+[deepgemm] pooler m=200 warm+check 0.0 s
+[deepgemm] pooler m=256 OK rel_l2=1.66e-03 probe=0.0e+00 graph_rel_l2=1.66e-03
+[deepgemm] pooler m=256 warm+check 0.0 s
+[deepgemm] qkv_gate m=128 OK rel_l2=1.66e-03 probe=0.0e+00 graph_rel_l2=1.66e-03
+[deepgemm] qkv_gate m=128 warm+check 0.0 s
+[deepgemm] qkv_gate m=130 OK rel_l2=1.66e-03 probe=0.0e+00 graph_rel_l2=1.66e-03
+[deepgemm] qkv_gate m=130 warm+check 0.0 s
+[deepgemm] qkv_gate m=200 OK rel_l2=1.66e-03 probe=0.0e+00 graph_rel_l2=1.66e-03
+[deepgemm] qkv_gate m=200 warm+check 0.0 s
+[deepgemm] qkv_gate m=256 OK rel_l2=1.66e-03 probe=0.0e+00 graph_rel_l2=1.66e-03
+[deepgemm] qkv_gate m=256 warm+check 0.0 s
+[deepgemm] unpooler m=128 OK rel_l2=1.66e-03 probe=0.0e+00 graph_rel_l2=1.66e-03
+[deepgemm] unpooler m=128 warm+check 0.0 s
+[deepgemm] unpooler m=130 OK rel_l2=1.66e-03 probe=0.0e+00 graph_rel_l2=1.66e-03
+[deepgemm] unpooler m=130 warm+check 0.0 s
+[deepgemm] unpooler m=200 OK rel_l2=1.66e-03 probe=0.0e+00 graph_rel_l2=1.66e-03
+[deepgemm] unpooler m=200 warm+check 0.0 s
+[deepgemm] unpooler m=256 OK rel_l2=1.66e-03 probe=0.0e+00 graph_rel_l2=1.66e-03
+[deepgemm] unpooler m=256 warm+check 0.0 s
+[deepgemm] o m=128 OK rel_l2=1.66e-03 probe=0.0e+00 graph_rel_l2=1.66e-03
+[deepgemm] o m=128 warm+check 0.0 s
+[deepgemm] o m=130 OK rel_l2=1.66e-03 probe=0.0e+00 graph_rel_l2=1.66e-03
+[deepgemm] o m=130 warm+check 0.0 s
+[deepgemm] o m=200 OK rel_l2=1.66e-03 probe=0.0e+00 graph_rel_l2=1.66e-03
+[deepgemm] o m=200 warm+check 0.0 s
+[deepgemm] o m=256 OK rel_l2=1.66e-03 probe=0.0e+00 graph_rel_l2=1.66e-03
+[deepgemm] o m=256 warm+check 0.0 s
+[deepgemm] PATH CHOSEN pooler m=128: deepgemm
+[deepgemm] PATH CHOSEN pooler m=130: deepgemm
+[deepgemm] PATH CHOSEN pooler m=200: deepgemm
+[deepgemm] PATH CHOSEN pooler m=256: deepgemm
+[deepgemm] PATH CHOSEN qkv_gate m=128: deepgemm
+[deepgemm] PATH CHOSEN qkv_gate m=130: deepgemm
+[deepgemm] PATH CHOSEN qkv_gate m=200: deepgemm
+[deepgemm] PATH CHOSEN qkv_gate m=256: deepgemm
+[deepgemm] PATH CHOSEN unpooler m=128: deepgemm
+[deepgemm] PATH CHOSEN unpooler m=130: deepgemm
+[deepgemm] PATH CHOSEN unpooler m=200: deepgemm
+[deepgemm] PATH CHOSEN unpooler m=256: deepgemm
+[deepgemm] PATH CHOSEN o m=128: deepgemm
+[deepgemm] PATH CHOSEN o m=130: deepgemm
+[deepgemm] PATH CHOSEN o m=200: deepgemm
+[deepgemm] PATH CHOSEN o m=256: deepgemm

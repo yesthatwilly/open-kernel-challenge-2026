@@ -1,0 +1,193 @@
+diff --git a/muse_bf16_proj/submission.py b/muse_bf16_proj/submission.py
+index a8bb42a..94b3734 100644
+--- a/muse_bf16_proj/submission.py
++++ b/muse_bf16_proj/submission.py
+@@ -39,6 +39,8 @@ workspace), unpooler / o full K. Every other shape keeps its path above.
+ 
+ from typing import TypedDict
+ 
++import time
++
+ import torch
+ import torch.nn.functional as F
+ import triton
+@@ -651,10 +653,156 @@ def _swapab_prepare(state: dict) -> None:
+     state["swapab_cnt_qkv"].zero_()
+ 
+ 
++# ---------------------------------------------------------------------------------------------
++# DeepGEMM BF16 NT route (hypothesis bf16-verify-deepgemm-bf16-gemm-nt-route). In-image library
++# (/opt/sglang/.../deep_gemm); not installed on every dev box, so everything is guarded and any
++# missing API / failed self-check / failed graph capture keeps master's cuBLAS path.
++# Routed ONLY at the exact m values warmed, self-checked and graph-capture-tested in prepare()
++# (DeepGEMM JIT-compiles per tile config, which depends on m), so nothing compiles in a timed or
++# captured call.
++# ---------------------------------------------------------------------------------------------
++DG_ROUTE_MS = (128, 130, 200, 256)
++DG_LAYERS = ("pooler", "qkv_gate", "unpooler", "o")   # likelier winners first
++DG_STOP_S = 200.0        # stop warming (gate off for the rest) past this much of prepare()'s 300 s
++DG_REL_L2 = 3e-3
++DG_PROBE_TOL = 1e-4
++_DG_NAMES = ("bf16_gemm_nt", "gemm_bf16_nt", "bf16_gemm_nt_contiguous", "m_bf16_gemm_nt")
++
++try:
++    import deep_gemm as _deep_gemm
++except Exception as _e:  # missing or broken install: master path
++    _deep_gemm = None
++    print(f"[deepgemm] unavailable, master kept (import failed: {type(_e).__name__}: {_e})", flush=True)
++
++
++def _dg_find_fn():
++    """Return (name, fn) for the first BF16 NT GEMM entry point the installed deep_gemm exports."""
++    if _deep_gemm is None:
++        return None, None
++    cands = [n for n in dir(_deep_gemm) if "bf16" in n.lower() and "gemm" in n.lower()]
++    print(f"[deepgemm] module={getattr(_deep_gemm, '__file__', '?')} "
++          f"version={getattr(_deep_gemm, '__version__', '?')} bf16 candidates={cands}", flush=True)
++    for name in _DG_NAMES:
++        fn = getattr(_deep_gemm, name, None)
++        if callable(fn) and name == "bf16_gemm_nt":
++            print("[deepgemm] AVAILABLE: bf16_gemm_nt found", flush=True)
++            return name, fn
++    for name in _DG_NAMES[1:3]:
++        fn = getattr(_deep_gemm, name, None)
++        if callable(fn):
++            print(f"[deepgemm] AVAILABLE: using {name} (bf16_gemm_nt absent)", flush=True)
++            return name, fn
++    print("[deepgemm] unavailable, master kept (no bf16 NT GEMM entry point)", flush=True)
++    return None, None
++
++
++def _dg_forward(fn, x: torch.Tensor, w: torch.Tensor) -> torch.Tensor:
++    """x bf16 [m, k] contiguous @ w[n, k].T -> bf16 [m, n]; w is DeepGEMM's NT 'b', read in place."""
++    out = torch.empty((x.shape[0], w.shape[0]), dtype=torch.bfloat16, device=x.device)
++    fn(x, w, out)
++    return out
++
++
++def _dg_check_one(fn, layer: str, w: torch.Tensor, m: int) -> None:
++    """Eager call + self-check + graph capture/replay test at this exact (layer, m). Raises on any
++    failure."""
++    dev = w.device
++    k = w.shape[1]
++    x = torch.randn((m, k), device=dev, dtype=torch.float32).to(torch.bfloat16)
++    out = _dg_forward(fn, x, w)           # first call: DeepGEMM JIT compile for this shape
++    torch.cuda.synchronize()
++    ref = x.float() @ w.float().T
++    of = out.float()
++    if not bool(torch.isfinite(of).all()):
++        raise RuntimeError("non-finite output")
++    rel = float((of - ref).norm() / ref.norm().clamp_min(1e-30))
++    if not rel <= DG_REL_L2:
++        raise RuntimeError(f"rel L2 {rel:.3e} > {DG_REL_L2}")
++    # One-hot probe: each row selects one weight column exactly (products by 1.0 are exact).
++    cols = (torch.arange(m, device=dev) * 37 + 5) % k
++    xp = torch.zeros((m, k), device=dev, dtype=torch.bfloat16)
++    xp[torch.arange(m, device=dev), cols] = 1.0
++    refp = w[:, cols].T.float()
++    outp = _dg_forward(fn, xp, w).float()
++    perr = float((outp - refp).abs().max() / refp.abs().max().clamp_min(1e-30))
++    if not perr <= DG_PROBE_TOL:
++        raise RuntimeError(f"one-hot probe err {perr:.3e} > {DG_PROBE_TOL}")
++    # Graph capture + replay (stream-ordered; allocation inside capture uses the graph pool).
++    side = torch.cuda.Stream()
++    side.wait_stream(torch.cuda.current_stream())
++    with torch.cuda.stream(side):
++        _dg_forward(fn, x, w)
++    torch.cuda.current_stream().wait_stream(side)
++    torch.cuda.synchronize()
++    g = torch.cuda.CUDAGraph()
++    with torch.cuda.graph(g):
++        gout = _dg_forward(fn, x, w)
++    g.replay()
++    torch.cuda.synchronize()
++    grel = float((gout.float() - ref).norm() / ref.norm().clamp_min(1e-30))
++    if not grel <= DG_REL_L2:
++        raise RuntimeError(f"graph replay rel L2 {grel:.3e} > {DG_REL_L2}")
++    print(f"[deepgemm] {layer} m={m} OK rel_l2={rel:.2e} probe={perr:.1e} graph_rel_l2={grel:.2e}",
++          flush=True)
++
++
++def _dg_prepare(state: dict, t0: float) -> None:
++    """Warm + verify every (layer, m) the gate routes; state['dg_ms'][layer] is the set of m values
++    that passed everything (empty set = master). Gate off once elapsed time passes DG_STOP_S."""
++    state["dg_fn"] = None
++    state["dg_ms"] = {layer: frozenset() for layer in DG_LAYERS}
++    name, fn = _dg_find_fn()
++    if fn is None:
++        return
++    try:
++        import inspect
++        print(f"[deepgemm] signature used: {name}{inspect.signature(fn)} called as (x, W, out)",
++              flush=True)
++    except Exception:
++        print(f"[deepgemm] signature used: {name}(x, W, out) (inspect unavailable)", flush=True)
++    for layer in DG_LAYERS:
++        w = state[layer]
++        if not (w.dim() == 2 and w.dtype == torch.bfloat16 and w.is_contiguous()):
++            print(f"[deepgemm] {layer} DISABLED: unexpected weight layout", flush=True)
++            continue
++        ok = []
++        for m in DG_ROUTE_MS:
++            if time.perf_counter() - t0 > DG_STOP_S:
++                print(f"[deepgemm] {layer} m={m} skipped: prepare budget ({DG_STOP_S:.0f} s) reached",
++                      flush=True)
++                continue
++            ts = time.perf_counter()
++            try:
++                _dg_check_one(fn, layer, w, m)
++                ok.append(m)
++            except Exception as e:
++                print(f"[deepgemm] {layer} m={m} DISABLED: {type(e).__name__}: {e}", flush=True)
++            print(f"[deepgemm] {layer} m={m} warm+check {time.perf_counter() - ts:.1f} s", flush=True)
++        state["dg_ms"][layer] = frozenset(ok)
++    state["dg_fn"] = fn
++    for layer in DG_LAYERS:
++        for m in DG_ROUTE_MS:
++            print(f"[deepgemm] PATH CHOSEN {layer} m={m}: "
++                  f"{'deepgemm' if m in state['dg_ms'][layer] else 'master'}", flush=True)
++
++
++def _dg_route_ok(state: dict, layer: str, x: torch.Tensor, cfg) -> bool:
++    """cfg / shape gate only: an exactly warmed-and-verified m, full-width n, contiguous bf16 x."""
++    fn = state.get("dg_fn")
++    if fn is None or layer not in state["dg_ms"]:
++        return False
++    w = state[layer]
++    m = cfg["m"]
++    return (m in state["dg_ms"][layer] and cfg["n"] == w.shape[0]
++            and x.dim() == 2 and x.shape[0] == m and x.shape[1] == w.shape[1]
++            and x.dtype == torch.bfloat16 and x.is_contiguous())
++
++
+ def prepare(weights: Weights) -> dict:
+     """Called once, untimed. Keep the bf16 weights as they are (contiguous), build the router's
+     hi + lo bf16 split as [256, 8192] row-major (N x K), and pre-compile every m-bucket of the
+     router kernel on synthetic bf16 x so the timed call never compiles."""
++    t_prepare0 = time.perf_counter()
+     state = {name: w.contiguous() for name, w in weights.items()}
+     router = state["router"]
+     hi = router.to(torch.bfloat16).contiguous()
+@@ -708,6 +856,13 @@ def prepare(weights: Weights) -> dict:
+     state["unpool_cnt"].zero_()
+     # (5) Swap-AB at 17 <= m <= 32 for all four bf16 layers (own workspaces / tickets).
+     _swapab_prepare(state)
++    # (6) DeepGEMM BF16 NT at the verified m values (last, so the 200 s guard sees all other warm-ups).
++    try:
++        _dg_prepare(state, t_prepare0)
++    except Exception as e:
++        print(f"[deepgemm] unavailable, master kept (prepare failed: {type(e).__name__}: {e})", flush=True)
++        state["dg_fn"] = None
++        state["dg_ms"] = {layer: frozenset() for layer in DG_LAYERS}
+     return state
+ 
+ 
+@@ -728,6 +883,8 @@ def kernel_fn(data: Inputs, state: dict) -> torch.Tensor:
+             and _swapab_route_ok(layer, x, state[layer], cfg)):
+         ws, cnt = _swapab_buffers(state, layer)
+         return _swapab_forward(layer, x, state[layer], ws, cnt, state["swapab_stages"][layer])
++    if layer != "router" and _dg_route_ok(state, layer, x, cfg):
++        return _dg_forward(state["dg_fn"], x, state[layer])
+     if layer != "router":
+         # The unpooler's slice is its first n rows (all of them above 8 tokens).
+         return _bf16_gemm_dispatch_impl(x, state[layer][: cfg["n"]], None)
