@@ -42,7 +42,7 @@ kind: primary
 controls_for: null
 review: required
 status: running
-stage: implemented
+stage: dispatched
 claimed_at: 2026-10-24T231559Z
 base_sha: 6ee651fff7bb5c5df237c4dac9b6b32e474908f2
 base_blob: 4da94677234faaa06b42b5ced541db8961fd6f34
@@ -60,6 +60,8 @@ submission_blob: c9067b8201f2480c64910c4a71098df7ce616f73
 lint_warnings: 30
 attempt_file: 2026-10-25T002143Z-check-full-decode-splitkv-restack-on-pdl.md
 prepared_at: 2026-10-25T002143Z
+job: c243a29f26dc4725
+dispatched_at: 2026-10-25T002202Z
 ---
 
 # full-decode-splitkv-restack-on-pdl
