@@ -1,0 +1,47 @@
+[w2 zero-store] OFF (weighted sum skips remote slots)
+[expert gemm] w13 BLOCK_T=64 BLOCK_W=128 warps=4 stages=3: n_regs=255 n_spills=0 shared=67584
+[expert gemm] w13 BLOCK_T=128 BLOCK_W=128 warps=8 stages=3: n_regs=176 n_spills=0 shared=116736
+[expert gemm] w13 BLOCK_T=256 BLOCK_W=128 warps=8 stages=2: n_regs=254 n_spills=4 shared=140288
+[expert gemm] w2 BLOCK_T=64 BLOCK_W=128 warps=4 stages=3: n_regs=255 n_spills=0 shared=67584
+[expert gemm] w2 BLOCK_T=128 BLOCK_W=128 warps=8 stages=3: n_regs=176 n_spills=0 shared=116736
+[expert gemm] w2 BLOCK_T=256 BLOCK_W=128 warps=8 stages=2: n_regs=254 n_spills=4 shared=140288
+[align-local] ON cases=15 mismatches=0 (PATH CHOSEN = parallel align on the Marlin path)
+[silu-sorted] ON max rel err 0.00e+00 (PATH CHOSEN = sorted silu on the Marlin path)
+[expert e2e] T=8192 triton vs marlin: rel L2 5.923e-03, worst row 7.426e-03 (8341 local routes)
+[boundary] coefficients attn: probe vs formula max diff 0.00e+00
+[boundary] coefficients ffn: probe vs formula max diff 1.93e-03
+[boundary] variant master T=753 50.8 us
+[boundary] parity ('rows', 4) attn T=753: stream err/residual 1.66e-03, out rel L2 1.73e-03, out max 164629.00 ulp
+[boundary] parity ('rows', 4) ffn T=753: stream err/residual 2.78e-03, out rel L2 2.30e-03, out max 2310397.00 ulp
+[boundary] variant ('rows', 4) T=753 56.8 us (1.118x master)
+[boundary] parity ('rows', 8) attn T=753: stream err/residual 1.66e-03, out rel L2 1.73e-03, out max 164629.00 ulp
+[boundary] parity ('rows', 8) ffn T=753: stream err/residual 2.78e-03, out rel L2 2.30e-03, out max 2310397.00 ulp
+[boundary] variant ('rows', 8) T=753 60.4 us (1.188x master)
+[boundary] parity ('persistent', 8) attn T=753: stream err/residual 1.66e-03, out rel L2 1.73e-03, out max 164629.00 ulp
+[boundary] parity ('persistent', 8) ffn T=753: stream err/residual 2.78e-03, out rel L2 2.30e-03, out max 2310397.00 ulp
+[boundary] variant ('persistent', 8) T=753 61.9 us (1.216x master)
+[boundary] T=753 PATH CHOSEN: master (SGLang modules)
+[boundary] variant master T=3012 163.0 us
+[boundary] parity ('rows', 4) attn T=3012: stream err/residual 1.67e-03, out rel L2 1.74e-03, out max 4178050.00 ulp
+[boundary] parity ('rows', 4) ffn T=3012: stream err/residual 2.79e-03, out rel L2 2.31e-03, out max 21364504.00 ulp
+[boundary] variant ('rows', 4) T=3012 191.2 us (1.173x master)
+[boundary] parity ('rows', 8) attn T=3012: stream err/residual 1.67e-03, out rel L2 1.74e-03, out max 4178050.00 ulp
+[boundary] parity ('rows', 8) ffn T=3012: stream err/residual 2.79e-03, out rel L2 2.31e-03, out max 21364504.00 ulp
+[boundary] variant ('rows', 8) T=3012 216.2 us (1.326x master)
+[boundary] parity ('persistent', 8) attn T=3012: stream err/residual 1.67e-03, out rel L2 1.74e-03, out max 4178050.00 ulp
+[boundary] parity ('persistent', 8) ffn T=3012: stream err/residual 2.79e-03, out rel L2 2.31e-03, out max 21364504.00 ulp
+[boundary] variant ('persistent', 8) T=3012 202.4 us (1.241x master)
+[boundary] T=3012 PATH CHOSEN: master (SGLang modules)
+[boundary] variant master T=16384 807.8 us
+[boundary] parity ('rows', 4) attn T=16384: stream err/residual 1.66e-03, out rel L2 1.73e-03, out max 126877464.00 ulp
+[boundary] parity ('rows', 4) ffn T=16384: stream err/residual 2.78e-03, out rel L2 2.31e-03, out max 5406901.00 ulp
+[boundary] variant ('rows', 4) T=16384 987.9 us (1.223x master)
+[boundary] parity ('rows', 8) attn T=16384: stream err/residual 1.66e-03, out rel L2 1.73e-03, out max 126877464.00 ulp
+[boundary] parity ('rows', 8) ffn T=16384: stream err/residual 2.78e-03, out rel L2 2.31e-03, out max 5406901.00 ulp
+[boundary] variant ('rows', 8) T=16384 1125.9 us (1.394x master)
+[boundary] parity ('persistent', 8) attn T=16384: stream err/residual 1.66e-03, out rel L2 1.73e-03, out max 126877464.00 ulp
+[boundary] parity ('persistent', 8) ffn T=16384: stream err/residual 2.78e-03, out rel L2 2.31e-03, out max 5406901.00 ulp
+[boundary] variant ('persistent', 8) T=16384 1054.2 us (1.305x master)
+[boundary] T=16384 PATH CHOSEN: master (SGLang modules)
+[boundary] OFF: no variant beat master by 2%; PATH CHOSEN per T class: {753: 'master', 3012: 'master', 16384: 'master'}
+[prepare] max_memory_allocated 8.65 GiB

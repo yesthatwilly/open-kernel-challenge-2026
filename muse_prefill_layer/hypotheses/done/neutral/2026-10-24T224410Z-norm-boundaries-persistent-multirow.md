@@ -45,10 +45,10 @@ priority: 5
 kind: primary
 controls_for: null
 review: proceed
-status: running
+status: done
 review_at: 2026-10-25T034755Z
 review_companions: null
-stage: dispatched
+stage: harvested
 claimed_at: 2026-10-25T034755Z
 base_sha: dc91f8e5bab764e046dc86798ba9f2cc8afa6ee9
 base_blob: db8a3344398bca79ea5cafeb580f701c055fd475
@@ -67,6 +67,13 @@ attempt_file: 2026-10-25T035047Z-check-norm-boundaries-persistent-multirow.md
 prepared_at: 2026-10-25T035047Z
 job: 46afe489e2754c83
 dispatched_at: 2026-10-25T035054Z
+outcome: neutral
+verdict_detail: within-ci
+speedup: 1.0716402826818254
+speedup_ci: [1.055565678441598, 1.0877148869220528]
+harvested_at: 2026-10-25T043403Z
+best_at_harvest: 1.074386115190733
+promotion: null
 ---
 
 # norm-boundaries-persistent-multirow
@@ -133,3 +140,31 @@ okc_lint: OK with warnings (host-sync warnings all in prepare(), outside kernel_
 ### Implementation notes, revision (coordinator fixes)
 - Stream parity is now |s - ref| / |ref - alpha*s_in| <= 4e-3 (SGLang rounds the post-norm output to bf16); output gate is <= 2 ulp OR out rel L2 <= 3e-3. Supersedes the 1e-6 / AND gate above.
 - alpha/beta are probed from the SGLang modules in prepare() (stream=1, branch=0 gives alpha; stream=0, branch=1 gives beta divided by the normalized branch), cross-checked against the reference formula; > 1e-2 apart prints `[boundary] OFF: <reason>`. The cited `_dlb_coeffs` file did not exist, so the probe is written from the description. Supersedes deviation (2). Lint OK (warnings only), py_compile OK, __pycache__ removed.
+
+## Result
+
+- job `46afe489e2754c83` (check), status done, passed True, tests 5/5
+- speedup 1.0716x, 95% CI [1.0556, 1.0877], score 361505.54086162685 µs vs SGLang 387403.9 µs
+- best at harvest: {"speedup": 1.074386115190733, "ci": [1.058270323462872, 1.090501906918594], "job": "502f2eab95164781"}; base result: muse_prefill_layer/hypotheses/done/neutral/stack-tonight-five-prefill.result.json
+- **outcome: neutral** (within-ci)
+- files: `muse_prefill_layer/hypotheses/done/neutral/norm-boundaries-persistent-multirow.result.json`, `muse_prefill_layer/hypotheses/done/neutral/norm-boundaries-persistent-multirow.patch`; branch `hyp/muse_prefill_layer/norm-boundaries-persistent-multirow`
+
+## Attribution
+
+| shape | w | base µs | hyp µs | delta | verdict |
+|---|---|---|---|---|---|
+| batch=1 ctx=80000 dist=soft layer=sliding load=turn_1 page=1 q_len=753 repeats=6 | 46 | 1101.29 | 1035.74 | 1.003 | flat |
+| batch=1 ctx=80000 dist=soft layer=full load=turn_1 page=1 q_len=753 repeats=6 | 16 | 1529.55 | 1399.23 | 1.0015 | flat |
+| batch=4 ctx=80000 dist=soft layer=sliding load=turn_4 page=1 q_len=753 repeats=6 | 46 | 3318.71 | 3345.01 | 0.9994 | flat |
+| batch=4 ctx=80000 dist=soft layer=full load=turn_4 page=1 q_len=753 repeats=6 | 16 | 4849.27 | 4906.26 | 0.9982 | flat |
+| batch=1 ctx=0 dist=soft layer=full load=first_turn page=1 q_len=16384 repeats=6 | 16 | 14705.32 | 14147.16 | 0.9952 | flat |
+| batch=1 ctx=32768 dist=soft layer=sliding load=first_turn page=1 q_len=16384 repeats=6 | 138 | 14264.64 | 14072.11 | 1.0063 | flat |
+| batch=1 ctx=32768 dist=soft layer=full load=first_turn page=1 q_len=16384 repeats=6 | 16 | 17746.69 | 18272.46 | 0.9905 | flat |
+| batch=1 ctx=65536 dist=soft layer=full load=first_turn page=1 q_len=16384 repeats=6 | 16 | 21733.75 | 22328.51 | 0.9914 | flat |
+
+no shape moved outside noise. Expected hit: 0/3. Noise ±1.5%.
+
+## Follow-ups
+
+- within-ci: the change is not proven either way; a stacked hypothesis (`depends_on: norm-boundaries-persistent-multirow`) that adds a further change in the same area is the only way to learn more (identical code is never re-run).
+

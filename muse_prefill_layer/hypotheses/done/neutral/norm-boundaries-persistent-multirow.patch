@@ -1,0 +1,288 @@
+diff --git a/muse_prefill_layer/submission.py b/muse_prefill_layer/submission.py
+index db8a334..64df734 100644
+--- a/muse_prefill_layer/submission.py
++++ b/muse_prefill_layer/submission.py
+@@ -546,6 +546,257 @@ def _weighted_sum_skips_remote(state, device):
+         return False
+ 
+ 
++# Hypothesis norm-boundaries-persistent-multirow: both residual boundaries (post-norm + residual +
++# next pre-norm) as one Triton kernel, in three structures swept in prepare() against master's
++# SGLang modules on synthetic data, per T class, graph-timed with a cold L2. A variant is used only
++# if it passes the parity gate and is <= BND_MIN_GAIN x master's time in that T class.
++BND_CLASSES = (753, 3012, 16384)
++BND_VARIANTS = (("rows", 4), ("rows", 8), ("persistent", 8))  # (structure, num_warps)
++BND_MIN_GAIN = 0.98
++BND_STREAM_RESIDUAL_TOL = 4e-3  # |s - ref| / |ref - alpha * s_in|: SGLang rounds the post-norm output to bf16
++BND_COEF_TOL = 1e-2
++BND_OUT_MAX_ULP = 2.0
++BND_OUT_REL_L2 = 3e-3
++BND_REPS = 25
++BND_PERSISTENT_PER_SM = 2
++BND_TAG = "[boundary]"
++
++
++@triton.jit
++def _boundary_row(b_raw, s_raw, cols, alpha_ptr, beta_ptr, wpost_ptr, wpre_ptr, N: tl.constexpr,
++                  HAS_POST_W: tl.constexpr):
++    b = b_raw.to(tl.float32)
++    if HAS_POST_W:
++        b = b * tl.load(wpost_ptr + cols)
++    b = b * tl.rsqrt(tl.sum(b * b, axis=0) / N + 1e-8)
++    s_new = tl.load(alpha_ptr + cols) * s_raw + tl.load(beta_ptr + cols) * b
++    out = s_new * tl.rsqrt(tl.sum(s_new * s_new, axis=0) / N + 1e-5) * tl.load(wpre_ptr + cols)
++    return s_new, out
++
++
++@triton.jit
++def _boundary_rows_kernel(branch_ptr, stream_ptr, alpha_ptr, beta_ptr, wpost_ptr, wpre_ptr, s_ptr, o_ptr,
++                          N: tl.constexpr, HAS_POST_W: tl.constexpr):
++    """One row per program, grid (T,): the whole row in registers, so every row's loads are in flight at once."""
++    t = tl.program_id(0).to(tl.int64)
++    cols = tl.arange(0, N)
++    b_raw = tl.load(branch_ptr + t * N + cols)
++    s_raw = tl.load(stream_ptr + t * N + cols)
++    s_new, out = _boundary_row(b_raw, s_raw, cols, alpha_ptr, beta_ptr, wpost_ptr, wpre_ptr, N, HAS_POST_W)
++    tl.store(s_ptr + t * N + cols, s_new)
++    tl.store(o_ptr + t * N + cols, out.to(tl.bfloat16))
++
++
++@triton.jit(do_not_specialize=["T", "nprog"])
++def _boundary_persistent_kernel(branch_ptr, stream_ptr, alpha_ptr, beta_ptr, wpost_ptr, wpre_ptr, s_ptr, o_ptr,
++                                T, nprog, N: tl.constexpr, HAS_POST_W: tl.constexpr):
++    """Persistent: program p walks rows p, p + nprog, ...; the next row's loads are issued before the current
++    row's math and stores (software prefetch). Requires nprog <= T."""
++    pid = tl.program_id(0)
++    cols = tl.arange(0, N)
++    cur_b = tl.load(branch_ptr + pid.to(tl.int64) * N + cols)
++    cur_s = tl.load(stream_ptr + pid.to(tl.int64) * N + cols)
++    for t in range(pid, T, nprog):
++        nt = t + nprog
++        valid = (cols < N) & (nt < T)
++        nxt_b = tl.load(branch_ptr + nt.to(tl.int64) * N + cols, mask=valid, other=0.0)
++        nxt_s = tl.load(stream_ptr + nt.to(tl.int64) * N + cols, mask=valid, other=0.0)
++        s_new, out = _boundary_row(cur_b, cur_s, cols, alpha_ptr, beta_ptr, wpost_ptr, wpre_ptr, N, HAS_POST_W)
++        tl.store(s_ptr + t.to(tl.int64) * N + cols, s_new)
++        tl.store(o_ptr + t.to(tl.int64) * N + cols, out.to(tl.bfloat16))
++        cur_b = nxt_b
++        cur_s = nxt_s
++
++
++def _boundary_launch(variant, bnd, which, stream, branch):
++    """variant = (structure, num_warps); which = 'attn' | 'ffn'. Returns (next_input bf16, stream fp32)."""
++    kind, warps = variant
++    t = branch.shape[0]
++    s_new = torch.empty((t, HIDDEN), dtype=torch.float32, device=branch.device)
++    out = torch.empty((t, HIDDEN), dtype=torch.bfloat16, device=branch.device)
++    c = bnd[which]
++    args = (branch, stream, c["alpha"], c["beta"], c["wpost"], c["wpre"], s_new, out)
++    if kind == "rows":
++        _boundary_rows_kernel[(t,)](*args, N=HIDDEN, HAS_POST_W=c["has_post_w"], num_warps=warps)
++    else:
++        nprog = min(t, bnd["num_sms"] * BND_PERSISTENT_PER_SM)
++        _boundary_persistent_kernel[(nprog,)](*args, t, nprog, N=HIDDEN, HAS_POST_W=c["has_post_w"],
++                                              num_warps=warps)
++    return out, s_new
++
++
++def _boundary_class(t):
++    """The T class (shape only) whose sweep decision applies to t tokens."""
++    if t < 1536:
++        return BND_CLASSES[0]
++    return BND_CLASSES[1] if t < 8192 else BND_CLASSES[2]
++
++
++def _boundary_setup(state, weights, pre_ffn, next_pre_attn, post_ffn, device):
++    """fp32 [8192] alpha, beta and effective weights for both boundaries. alpha and beta are probed from the
++    SGLang modules themselves (stream=1, branch=0 gives alpha; stream=0, branch=1 gives beta divided by the
++    normalized branch), then cross-checked against the reference formula; > BND_COEF_TOL apart raises."""
++    def eff(mod):
++        return mod._get_effective_weight().detach().float().contiguous()
++
++    wpost = eff(post_ffn)
++    rows = 8
++    ones = torch.ones((rows, HIDDEN), dtype=torch.float32, device=device)
++    zeros = torch.zeros_like(ones)
++    out = {"num_sms": int(torch.cuda.get_device_properties(device).multi_processor_count)}
++    for which, gate_name, wp, wpre in (("attn", "attn_residual_gate", None, eff(pre_ffn)),
++                                       ("ffn", "ffn_residual_gate", wpost, eff(next_pre_attn))):
++        _, alpha_p = _master_boundary(state, which, ones.clone(), zeros.to(torch.bfloat16))
++        _, beta_raw = _master_boundary(state, which, zeros.clone(), ones.to(torch.bfloat16))
++        b = torch.ones(HIDDEN, dtype=torch.float32, device=device)
++        if wp is not None:
++            b = b * wp
++        b = b * torch.rsqrt((b * b).mean() + 1e-8)
++        alpha_p, beta_p = alpha_p[0].float().contiguous(), (beta_raw[0].float() / b).contiguous()
++        w = weights[gate_name].float() / 0.3
++        beta_f = torch.sigmoid(w)
++        alpha_f = torch.sqrt(torch.clamp(torch.sigmoid(-w) * (1.0 + beta_f), min=1e-3))
++        d = max(float((alpha_p - alpha_f).abs().max()), float((beta_p - beta_f).abs().max()))
++        torch.cuda.synchronize()
++        print(f"{BND_TAG} coefficients {which}: probe vs formula max diff {d:.2e}", flush=True)
++        if not d <= BND_COEF_TOL:
++            raise RuntimeError(f"{which} alpha/beta probe differs from the reference formula by {d:.2e} > {BND_COEF_TOL:g}")
++        out[which] = {"alpha": alpha_p, "beta": beta_p, "wpost": wpost, "wpre": wpre, "has_post_w": wp is not None}
++    return out
++
++
++def _bf16_ulp_diff(got, want):
++    """Max |got - want| in bf16 ulps of want (ulp = 2^(exponent - 8))."""
++    w = want.float()
++    _, e = torch.frexp(w)
++    ulp = torch.exp2((e - 8).float())
++    return float(((got.float() - w).abs() / ulp).max())
++
++
++def _master_boundary(state, which, stream, branch):
++    if which == "attn":
++        out, s_new, _ = state["attn_boundary"](stream, branch, branch_dtype=torch.bfloat16, router_dtype=None)
++    else:
++        out, s_new, _ = state["ffn_boundary"](stream, branch, branch_dtype=torch.bfloat16)
++    return out, s_new
++
++
++def _boundary_parity(state, bnd, variant, t, stream, branch):
++    """None when variant matches the SGLang modules on both boundaries at t rows, else the reason."""
++    for which in ("attn", "ffn"):
++        want_o, want_s = _master_boundary(state, which, stream.clone(), branch)
++        got_o, got_s = _boundary_launch(variant, bnd, which, stream, branch)
++        torch.cuda.synchronize()
++        if not (bool(torch.isfinite(got_o.float()).all()) and bool(torch.isfinite(got_s).all())):
++            return f"{which} T={t}: NaN/Inf"
++        res = (want_s - bnd[which]["alpha"] * stream).norm().clamp_min(1e-30)
++        rel_s = float((got_s - want_s).norm() / res)
++        rel_o = float((got_o.float() - want_o.float()).norm() / want_o.float().norm().clamp_min(1e-30))
++        ulp = _bf16_ulp_diff(got_o, want_o)
++        print(f"{BND_TAG} parity {variant} {which} T={t}: stream err/residual {rel_s:.2e}, out rel L2 {rel_o:.2e}, "
++              f"out max {ulp:.2f} ulp", flush=True)
++        if rel_s > BND_STREAM_RESIDUAL_TOL:
++            return f"{which} T={t}: stream err/residual {rel_s:.2e} > {BND_STREAM_RESIDUAL_TOL:g}"
++        if ulp > BND_OUT_MAX_ULP and rel_o > BND_OUT_REL_L2:
++            return f"{which} T={t}: out {ulp:.2f} ulp and rel L2 {rel_o:.2e}"
++    return None
++
++
++def _boundary_time_us(run, flush):
++    """Median us of CUDA-graph replays of run() (attn then ffn boundary), L2 flushed before each replay."""
++    for _ in range(3):
++        run()
++    torch.cuda.synchronize()
++    graph = torch.cuda.CUDAGraph()
++    with torch.cuda.graph(graph):
++        run()
++    graph.replay()
++    torch.cuda.synchronize()
++    times = []
++    for _ in range(BND_REPS):
++        flush.zero_()
++        start, end = torch.cuda.Event(enable_timing=True), torch.cuda.Event(enable_timing=True)
++        start.record()
++        graph.replay()
++        end.record()
++        torch.cuda.synchronize()
++        times.append(start.elapsed_time(end) * 1000.0)
++    del graph
++    times.sort()
++    return times[len(times) // 2]
++
++
++def _boundary_sweep(state, bnd, device):
++    """Per T class: time master's modules and every parity-passing variant on synthetic data; choose the
++    fastest only if <= BND_MIN_GAIN x master, else None (master's modules). Returns {T class: variant | None}."""
++    gen = torch.Generator(device=device).manual_seed(20261025)
++    flush = torch.empty(256 * 2**20, dtype=torch.uint8, device=device)  # larger than L2
++    choice = {}
++    for t in BND_CLASSES:
++        stream = torch.randn((t, HIDDEN), generator=gen, device=device, dtype=torch.float32)
++        branch = torch.randn((t, HIDDEN), generator=gen, device=device, dtype=torch.float32).to(torch.bfloat16)
++
++        def run_master():
++            _, s = _master_boundary(state, "attn", stream, branch)
++            _master_boundary(state, "ffn", s, branch)
++
++        master_us = _boundary_time_us(run_master, flush)
++        print(f"{BND_TAG} variant master T={t} {master_us:.1f} us", flush=True)
++        best, best_us = None, master_us
++        for variant in BND_VARIANTS:
++            try:
++                why = _boundary_parity(state, bnd, variant, t, stream, branch)
++                if why is not None:
++                    print(f"{BND_TAG} variant {variant} T={t} skipped: parity {why}", flush=True)
++                    continue
++
++                def run_variant():
++                    _, s = _boundary_launch(variant, bnd, "attn", stream, branch)
++                    _boundary_launch(variant, bnd, "ffn", s, branch)
++
++                us = _boundary_time_us(run_variant, flush)
++            except Exception as e:  # a variant that cannot compile or capture is simply not a candidate
++                print(f"{BND_TAG} variant {variant} T={t} skipped: {e!r}", flush=True)
++                continue
++            print(f"{BND_TAG} variant {variant} T={t} {us:.1f} us ({us / master_us:.3f}x master)", flush=True)
++            if us < best_us:
++                best, best_us = variant, us
++        if best is not None and best_us > BND_MIN_GAIN * master_us:
++            print(f"{BND_TAG} T={t}: best {best} {best_us / master_us:.3f}x master > {BND_MIN_GAIN}x, keeping master",
++                  flush=True)
++            best = None
++        choice[t] = best
++        print(f"{BND_TAG} T={t} PATH CHOSEN: {best if best is not None else 'master (SGLang modules)'}", flush=True)
++        del stream, branch
++    del flush
++    torch.cuda.empty_cache()
++    return choice
++
++
++def _boundary_prepare(state, weights, pre_ffn, next_pre_attn, post_ffn, device):
++    try:
++        bnd = _boundary_setup(state, weights, pre_ffn, next_pre_attn, post_ffn, device)
++        bnd["choice"] = _boundary_sweep(state, bnd, device)
++    except Exception as e:
++        print(f"{BND_TAG} OFF: {e!r}", flush=True)
++        return None
++    on = any(v is not None for v in bnd["choice"].values())
++    print(f"{BND_TAG} {'ON' if on else 'OFF: no variant beat master by 2%'}; PATH CHOSEN per T class: "
++          f"{ {t: (v if v is not None else 'master') for t, v in bnd['choice'].items()} }", flush=True)
++    return bnd
++
++
++def _boundary(state, which, stream, branch):
++    """Both boundaries' dispatch: the swept variant for this T class (a shape), else master's module."""
++    bnd = state["bnd"]
++    variant = None
++    if bnd is not None and stream.is_contiguous() and branch.is_contiguous():
++        variant = bnd["choice"][_boundary_class(branch.shape[0])]
++    if variant is None:
++        return _master_boundary(state, which, stream, branch)
++    return _boundary_launch(variant, bnd, which, stream, branch)
++
++
+ def prepare(weights):
+     device = weights["qkv_gate"].device
+     router = weights["router"]
+@@ -604,6 +855,8 @@ def prepare(weights):
+     _silu_sorted_setup(state, device)
+     _check_experts_e2e(state, device)
+     torch.cuda.synchronize()
++    state["bnd"] = _boundary_prepare(state, weights, pre_ffn, next_pre_attn, post_ffn, device)
++    torch.cuda.synchronize()
+     print(f"[prepare] max_memory_allocated {torch.cuda.max_memory_allocated(device) / 2**30:.2f} GiB", flush=True)
+     return state
+ 
+@@ -978,8 +1231,7 @@ def kernel_fn(data, state):
+     attn_output = _gemm(o, dense["o"])  # all-reduce: identity
+ 
+     # Post-attention boundary, router and MoE block: MuseSpark1xMoE._forward_experts.
+-    ffn_input, stream, _ = state["attn_boundary"](
+-        data["stream"], attn_output, branch_dtype=torch.bfloat16, router_dtype=None)
++    ffn_input, stream = _boundary(state, "attn", data["stream"], attn_output)
+     # The router and routing run on a side stream, overlapping the pooler on the main one.
+     main_stream, side_stream = torch.cuda.current_stream(), state["side_stream"]
+     side_stream.wait_stream(main_stream)
+@@ -999,5 +1251,5 @@ def kernel_fn(data, state):
+     ffn_output = _gemm(expert_output, dense["unpooler"])
+ 
+     # Post-FFN boundary, with the next layer's pre-attention norm.
+-    next_attn_input, stream, _ = state["ffn_boundary"](stream, ffn_output, branch_dtype=torch.bfloat16)
++    next_attn_input, stream = _boundary(state, "ffn", stream, ffn_output)
+     return next_attn_input, stream, topk_ids
