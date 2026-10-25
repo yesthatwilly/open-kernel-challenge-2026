@@ -102,10 +102,10 @@ priority: 1
 kind: primary
 controls_for: null
 review: proceed
-status: running
+status: done
 review_at: 2026-10-25T162106Z
 review_companions: null
-stage: dispatched
+stage: harvested
 claimed_at: 2026-10-25T162106Z
 base_sha: c20f01f78876c85beb295ad153dccfe3078c3ad4
 base_blob: 5cf8fae31e5b84c36efeeb4569763eb9b06e1c8a
@@ -124,6 +124,13 @@ attempt_file: 2026-10-25T185755Z-submit-combo-b1-chain-c320-fused-pre-pdl.md
 prepared_at: 2026-10-25T185755Z
 job: 8713665f3064462c
 dispatched_at: 2026-10-25T185802Z
+outcome: neutral
+verdict_detail: unproven-vs-best
+speedup: 1.5295495462227864
+speedup_ci: [1.5066063030294445, 1.552492789416128]
+harvested_at: 2026-10-25T192025Z
+best_at_harvest: 1.5199437286563244
+promotion: null
 ---
 
 # combo-b1-chain-c320-fused-pre-pdl
@@ -260,3 +267,35 @@ Fix:
 After the edit, okc_lint returned OK with warnings (host-sync only outside kernel_fn), py_compile passed, and __pycache__ was removed.
 
 Residual risk: nvcc and the device semantics (inline PTX, griddepcontrol, the cp.async/overwrite ordering) are not compile- or run-verified. A FUSED build failure falls back cleanly, but a runtime device fault in the import checks would still void the run.
+
+## Result
+
+- job `8713665f3064462c` (submit), status done, passed True, tests 16/16
+- speedup 1.5295x, 95% CI [1.5066, 1.5525], score 2462.358940448092 µs vs SGLang 3766.3 µs
+- best at harvest: {"speedup": 1.5199437286563244, "ci": [1.4971445727264796, 1.5427428845861693], "job": "52cbfaebab9646f2"}; base result: muse_attention_decode/hypotheses/done/neutral/restack-sliding-decode-sk-window-on-cluster-master.result.json
+- **outcome: neutral** (unproven-vs-best)
+- files: `muse_attention_decode/hypotheses/done/neutral/combo-b1-chain-c320-fused-pre-pdl.result.json`, `muse_attention_decode/hypotheses/done/neutral/combo-b1-chain-c320-fused-pre-pdl.patch`; branch `hyp/muse_attention_decode/combo-b1-chain-c320-fused-pre-pdl`
+
+## Attribution
+
+| shape | w | base µs | hyp µs | delta | verdict |
+|---|---|---|---|---|---|
+| batch=1 ctx=80000 dist=soft heads=tp8 layer=sliding load=decode_1 page=1 | 46 | 11.88 | 12.1 | 1.011 | flat |
+| batch=1 ctx=80000 dist=coherent heads=tp8 layer=full load=decode_1 page=1 | 16 | 22.4 | 17.39 | 1.2916 | gained |
+| batch=16 ctx=80000 dist=soft heads=tp8 layer=sliding load=decode_16 page=1 spread=agentic | 46 | 15.51 | 15.46 | 1.0041 | flat |
+| batch=16 ctx=80000 dist=coherent heads=tp8 layer=full load=decode_16 page=1 spread=agentic | 16 | 111.12 | 110.77 | 1.0022 | flat |
+| batch=32 ctx=80000 dist=soft heads=tp8 layer=sliding load=decode_32 page=1 spread=agentic | 46 | 17.68 | 17.46 | 1.0135 | flat |
+| batch=32 ctx=80000 dist=coherent heads=tp8 layer=full load=decode_32 page=1 spread=agentic | 16 | 227.87 | 226.89 | 1.0024 | flat |
+| batch=1 ctx=80000 dist=soft heads=tp8 layer=sliding load=verify_1 page=1 q_len=8 | 46 | 13.17 | 13.23 | 0.9967 | flat |
+| batch=1 ctx=80000 dist=coherent heads=tp8 layer=full load=verify_1 page=1 q_len=8 | 16 | 30.48 | 30.27 | 0.9933 | flat |
+| batch=16 ctx=80000 dist=soft heads=tp8 layer=sliding load=verify_16 page=1 q_len=8 spread=agentic | 46 | 22.83 | 22.62 | 1.005 | flat |
+| batch=16 ctx=80000 dist=coherent heads=tp8 layer=full load=verify_16 page=1 q_len=8 spread=agentic | 16 | 163.0 | 162.46 | 1.0048 | flat |
+| batch=32 ctx=80000 dist=soft heads=tp8 layer=sliding load=verify_32 page=1 q_len=8 spread=agentic | 46 | 29.21 | 29.01 | 1.0002 | flat |
+| batch=32 ctx=80000 dist=coherent heads=tp8 layer=full load=verify_32 page=1 q_len=8 spread=agentic | 16 | 302.31 | 301.99 | 1.0015 | flat |
+
+gained on full decode_1. Expected hit: 3/4. Noise ±1.5%.
+
+## Follow-ups
+
+- unproven-vs-best: the change is not proven either way; a stacked hypothesis (`depends_on: combo-b1-chain-c320-fused-pre-pdl`) that adds a further change in the same area is the only way to learn more (identical code is never re-run).
+
