@@ -68,6 +68,8 @@ submission_sha256: b769d39e3819acc9f5bf7b89c4011b04922a2d57f97460aa24293485263dc
 norm_sha256: b4054cd3ff8db0745897065c1643d86de8b908ee5371aba2f5e34ff527c79aec
 submission_blob: 246f5494a75eb62a330900ae938f598bee8341b8
 lint_warnings: 64
+attempt_file: 2026-10-25T203814Z-submit-full-decode1-sk-two-level-deep-ring.md
+prepared_at: 2026-10-25T203814Z
 ---
 
 # full-decode1-sk-two-level-deep-ring
