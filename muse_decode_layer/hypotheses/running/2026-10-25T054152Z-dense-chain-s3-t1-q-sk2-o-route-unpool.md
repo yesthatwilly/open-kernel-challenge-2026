@@ -66,7 +66,7 @@ review: proceed
 status: running
 review_at: 2026-10-25T054418Z
 review_companions: null
-stage: claimed
+stage: implemented
 claimed_at: 2026-10-25T054418Z
 base_sha: 06cbcc08c8e651f4bb7e2791d8b1321bdb54ee3e
 base_blob: 62c5a9413ba5710defea2ca3de14c1a1dc3b5a6d
@@ -75,6 +75,12 @@ worktree: .worktrees/muse_decode_layer/dense-chain-s3-t1-q-sk2-o-route-unpool
 mode: null
 restack_of: null
 stale_base: null
+implemented_at: 2026-10-25T091047Z
+impl_commit: e4b884143211d9afb63a4a2d196a6aae1ea5fb81
+submission_sha256: 887c43be53ff776e2cb33f103a9855d13c044a3d6e4c1276f45351a3bbfdc75f
+norm_sha256: 44a5db33f1742645fa9b8d5413de5c629f9da15d24352adc0dafcf3a65ed0e39
+submission_blob: 07cda658e21f2eb25a9dd1f50ac5202ad5985831
+lint_warnings: 57
 ---
 
 # dense-chain-s3-t1-q-sk2-o-route-unpool
@@ -130,3 +136,67 @@ No companion runs are warranted. This is a rewrite stage with three pieces behin
 - Does _w2_atomic_self_check run after the new R is installed, and does the new R emit the same sorted_ids sentinel/padding that Marlin's atomic-add w2 assumes?
 - Is the sliding decode_1 kill line (122.5) achievable given that 87211e13's -5 us was against a 127.48 base and current master already reads 123.9? Consider judging B+C on their profile kernel times (R 7.0 -> 5.8, unpool+pad 9.2 -> 6.5) rather than the row median.
 
+
+## Implementation notes
+
+Built 2026-10-25 by a Sonnet build agent. Not run (no GPU on the build node): every kernel edit below is a verbatim port from a branch that already ran on the judge, plus new glue; a g++ `-fsyntax-only` pass over both CUDA TUs with stub headers is clean, `py_compile` and okc_lint pass.
+
+**Base.** The worktree was claimed before its parent existed. Step 1 replaced `muse_decode_layer/submission.py` with `git show hyp/muse_decode_layer/full-decode-sk-ticket-restack-b1-b64:muse_decode_layer/submission.py` (3709 lines), then the stage-3 change went on top (diff vs the parent: +1881/-90).
+
+**What changed (all in `muse_decode_layer/submission.py`).**
+- One new module name, `muse_decode_dense_chain_s3` (the stage-1 dense-chain TU, hand-merged), built at import with `TORCH_CUDA_ARCH_LIST=9.0a` around `load_inline` (restored after), flags `-O3 -std=c++20 -lineinfo`, arch flags printed. No wgmma / setmaxnreg anywhere, so no `__CUDA_ARCH_FEAT_SM90_ALL` guard is needed. Stage 1's R is kept as `dl_route_norm_align_v1_kernel` (variant 2: every T > 1, and T = 1 when piece B is off, so T > 1 is the parent's code).
+- From `hyp/.../stack-route-topk-pdl-unpool-nf1`: the per-warp top-8 kernel R (`dl_route_norm_align_kernel<true>`, griddepcontrol.wait after the constants, binary-search pad), `launch_r`, the `(pdl, variant)` wrapper, `griddep_launch()` at the end of P's main K loop (a no-op for a dependent launched without the attribute), `dl_unpool_kernel` NF=1 (`launch_u<1, 8, 1024>`, T <= 8 code, used at T = 1 only) and its `dl_unpool` wrapper. The `_DLB` boundary kernels of that branch are NOT ported (boundaries stay SGLang's).
+- From `hyp/.../dense-chain-stage2-attn-side-pdl-t1-gate`: `dl_qkv_kernel<NF>` and `dl_o_kernel<NF>` with their launchers and the `dl2_qkv` / `dl2_o` wrappers; used here at NF = 1, mode 0 (unpaired q), prologue 0 only.
+- sk kernel (`muse_decode_sk`): `finalize_store` no longer hard-codes the gate offset. `sk_attn` takes `gate_off`; the host passes `qkv.data_ptr() + gate_off` with the row stride, and TORCH_CHECKs that `gate_off + (B-1) * stride + 1024 <= numel` (a stride / offset mismatch throws, never reads another tensor's memory). `_full_decode_sk(..., gate=None)` keeps the parent's call (qkv, offset 1280, `qkv.stride(0)`); piece A passes `gate=` dl_qkv's contiguous [T, 1024] bf16 gate (offset 0, stride `gate.stride(0)` = 1024). The kernel also issues `griddepcontrol.launch_dependents` at each CTA's last tile so dl_o (the only dependent launched with the programmatic attribute) can prefetch its weights during the sk merge; a no-op for every other dependent.
+- Python: `kernel_fn` is split (`_parent_attention` = the parent's attention side, verbatim); piece A (`_dl3_attention`) runs only when `state["dl3"]["a"]`, `tokens == 1` and `_sk_variant(cfg, state["sk"]) == 3` (config + the state's own flags). Piece B is `state["dl"]["r_new"]` (read by `_dl_forward` at tokens == 1, PDL after P). Piece C is `state["dl3"]["u"]` (tokens == 1 and the T=1 dense chain on). Sliding decode_1 keeps `_sliding_forward` and gets B + C only. Tickets, workspaces and flags: `state["dl3"]` (Q/O/unpool), `state["dl"]` (P/R, existing), `state["sk"]` (existing), all built per prepare() call; nothing device-side in module globals (the C++ statics are function-attribute bools only).
+- prepare() order: `_dl_setup` -> `_dl3_setup_bc` (pieces B, C: kernel self-check + selector) -> align-parallel -> `_w2_atomic_self_check` -> split-KV -> `_sk_prepare` -> `_dl3_finish` (piece A, layer-level checks, PATH CHOSEN lines).
+
+**Adversarial-review items, each applied.**
+1. sk needs `gate_stride` for dl_qkv's contiguous gate (no silent wrong-gate read): done as above, plus a prepare check that the separate-gate sk output is bit-identical to the qkv-gate output (n = 4097 and 30000, kv_scale 1 and 0.25) and `gate.stride(0) == 1024`.
+2. Parent's B=1 selector keeps FA3 (or sk is off for the state): piece A is OFF (reason printed), it never falls back to s2's FA3 + dl_o prologue-1 composition; B and C are independent of it. (Answers the first open question: turn off.)
+3. dl_o runs with prologue 0 after sk (the s2 6.5 us figure was prologue 1 = unpad + o_norm_gate absorbed; the selector times the whole chain against the parent's actual chain, which is the right comparison; expected A saving ~4-6 us as the review says, the spec's 8-12 us double-counts o_norm_gate). The chain time (Q + sk + O) is printed against the 36 us M2 line.
+4. w2: piece B is installed before `_w2_atomic_self_check`, whose `_dl_route` call now takes the new R at T=1 (so the self-check runs through the R in use); R's outputs (including sorted_ids sentinel / padding, block_experts, n_padded) are verified bit-identical to stage 1's R before B can turn on. If B is later turned off by a layer-level check the w2 self-check is re-run. `w2_mode` is printed in every PATH CHOSEN line.
+5. dl_qkv KV store vs `store_cache`: the kernel reads `k_scale` / `v_scale` from the device tensors and divides in fp32 then rounds through bf16 (as `bf16 / 0-dim fp32` does); prepare compares q, k, v FP8 bytes to the parent's ops with a code-gap <= 1 gate (plus rel L2 <= 4e-2), untouched cache rows byte-equal, for kv_scale 1.0 and 0.25 (inputs scaled so v / scale stays inside E4M3, where torch's cast would give NaN and ours saturates).
+6. Tickets / workspaces per state and self-resetting: yes (see above); the layer-level check builds a second state over the same constants with its own P/R, Q/O/unpool and sk buffers, captures one graph per state of the whole `kernel_fn` at T=1 (full kv_scale 0.25, and sliding), alternates six replays between them with refilled inputs (outputs poisoned first), compares each to the parent path run eagerly, and requires every ticket back at 0 after each replay.
+7. Near-tie top-k vs SGLang's tie order: R's key is (biased score, lower expert id first). The check requires the new R bit-identical to stage 1's R (which the judge accepted) on random logits, no-local, one-hot, a 1e-7 near tie, and two EXACT-tie cases (zero router bias, 12 equal logits straddling the 8th place; two tie groups), with and without PDL; it also runs a zero-bias `FusedMuseSparkRouting` on the exact-tie cases and PRINTS whether its ids / order match ("tie order ..." lines). That comparison is information only: SGLang's own tie order is not documented and the judge's routing check allows a 0.05 score window.
+8. Per-piece selector lines: `selector A/B/C` (CUDA-event graph replays behind a 256 MB flush, interleaved, median of 15, new must win by 1.02x) and `PATH CHOSEN: dl3 piece A/B/C ...` lines, each with `w2_mode`.
+9. Open question on the sliding kill line (122.5 inside the noise band): not a build item; judge B + C on the profile rows (R 7.0 -> 5.8, unpool + pad 9.2 -> 6.5) and the `selector B` / `selector C` lines.
+
+**Deviations from the spec.** (a) Self-check bound for q / k / v is stated as an FP8 code gap <= 1 (plus the s2 audit's rel L2 4e-2), not "within one code" for every element of every tensor at once: q and k go through RMSNorm + RoPE in fp32 then bf16, FusedQKNorm may round differently inside. (b) The layer-level hidden / stream bounds are 5e-2 / 2e-2 with piece A on (1e-2 / 5e-3 without) and the expert ids may differ by one swapped near-tie expert with A on (A off: equal). (c) The unused linear-pad instantiation of the new R from the stack branch is dropped; only the binary-search variant is compiled. (d) Sliding decode_1 does not use dl_qkv (s2 was flat there).
+
+**Bisect on failure.** If the combined layer-level check fails, each piece is tried alone and only the failing ones are turned off (reason printed); if the survivors fail together, they are all turned off.
+
+## Rules check
+
+- [x] CUDA-graph capturable: no `.item()` / `.cpu()` / `synchronize()` / prints in `kernel_fn`'s call graph (okc_lint: every host-sync warning is outside kernel_fn, in prepare()); kernel_fn allocates only shape-sized outputs, branches on config, `tokens` and per-state flags set in prepare(); no try/except, no timing, no per-call mutable state. The layer-level check captures `kernel_fn` itself on two states.
+- [x] Nothing derived from `data` is cached across calls: tickets / workspaces / flags are prepare()-time per-state buffers and booleans; scales, positions, cache_loc, page table are read from the device tensors by the kernels every call.
+- [x] Weights: unchanged. No repack, no new precision: qkv_gate / o / unpooler are the same bf16 tensors in `state["dense"]`, read directly by the new kernels.
+- [x] Activations BF16 where SGLang keeps BF16 (qkv GEMV outputs rounded through bf16 before norm / cast, gate bf16, o out bf16, unpool out bf16); KV cache FP8 E4M3 (k, v stored by dl_qkv_kernel as the parent's store_cache does); queries E4M3 only (q rounded via bf16 to E4M3, as FA3's path).
+- [x] Attention sees every key: the sk two-level kernel is unchanged apart from the gate pointer and a launch_dependents; no top-k, sparse, block-skip or weight-based skipping.
+- [x] No timing patches, harness frames / I/O / secrets, module edits, reference import, subprocesses or network: grep for subprocess / multiprocessing / os.fork / Popen / os.system finds nothing; the only builds are `load_inline` (as the parent's), in-process; checks run in-process in prepare().
+- [x] All work happens inside the timed call; no output caching or replay (prepare()-only checks and selectors never feed outputs to kernel_fn).
+- [x] Two states (judge `copies: 2`): n/a to globals, none added; the per-state check is described above.
+- [x] sm_90a: n/a for wgmma (none used); the build is sm_90a-only via TORCH_CUDA_ARCH_LIST=9.0a, `-lineinfo`, cubin version 90 asserted per kernel in prepare(), regs / local / smem / CTAs-per-SM printed (`dl3_attrs`).
+- [x] Self-check launches announced with a flushed print before and synchronize + print after (`_dl3_launch`); no spin-waits added (the new kernels use tickets only, no waits on other CTAs).
+
+okc_lint output (`python3 -I .claude/skills/churnsubs/bin/okc_lint.py <worktree>/muse_decode_layer/submission.py --problem muse_decode_layer`): `OK with warnings`: 57 `host-sync` warnings, all marked "outside kernel_fn's call graph; fine in prepare()", no errors, no other warning class. `python3 -I -m py_compile` clean; `__pycache__` removed.
+
+## Pre-flight audit
+
+Audited 2026-10-25 (opus) against the parent `hyp/muse_decode_layer/full-decode-sk-ticket-restack-b1-b64`. **Verdict: dispatch-with-fixes.**
+
+Fixes (applied in the worktree's `muse_decode_layer/submission.py` by a Python read/write script; py_compile, okc_lint (OK, 57 host-sync warnings, all outside kernel_fn) and a symtable undefined-name scan are clean; `__pycache__` removed):
+1. **The build is now independent (top issue).** The combined module `muse_decode_dense_chain_s3` replaced stage 1's module, so a compile failure would have turned the landed dense chain off at every T. The parent's dense-chain TU and its build function are now kept verbatim (`_DL1_CPP` / `_DL1_CUDA` / `_build_dense_chain_v1`, module `muse_decode_dense_chain_v1`, `-O3 -arch=sm_90a`). They are built only if the s3 build fails. `_DL_S3` (set at import, from the build result only) routes `_dl_route_launch` to v1's 14-argument `dl_route_norm_align`, and `_dl3_setup_bc` turns pieces A, B and C off. In that case every T runs exactly the parent's stage-1 chain.
+2. **The sk module gets the same treatment.** Stage 3 also edited the parent's sk TU (the `gate_off` argument and `launch_dependents`), so an sk build failure would have dropped the parent's sk paths at every batch. The s3 sk module is now named `muse_decode_sk_s3`. If it fails, the parent's exact TU is rebuilt as `muse_decode_sk`. That TU is derived by reversing 7 exact string edits (`_SK1_REVERSE`), and I checked offline that the reversal reproduces the parent's `_SK_CPP` / `_SK_CUDA` byte for byte. `_full_decode_sk` then makes the parent's call, and piece A is off (`_SK_S3`).
+
+Checked with no change needed:
+- The gate_off / gate_stride host TORCH_CHECK holds for the parent's qkv layout: 1280 + (B-1)·2304 + 1024 = B·2304. It also holds for dl_qkv's contiguous gate (0 + 1024 = 1024).
+- The w2 self-check runs after piece B is installed, and goes through `_dl_route` with variant None, i.e. the R in use. It is re-run if B is turned off later, and it never raises.
+- `k_scale` / `v_scale` are read in-kernel via `__ldg` from the device tensors. Only the `scaled` flag comes from config, as in the parent.
+- Tickets and workspaces are per state (`_dl3_buffers` in prepare). Their sizes match the CUDA constants: Q 6·32·2304, O 2·32·8192, U = `WS_FLOATS`.
+- The new R uses the same arithmetic and ordering as v1, so the bit-identical gate can pass.
+- Every self-check, selector and layer check sits inside try/except, and a miss lands on the parent path with a PATH CHOSEN line.
+- kernel_fn branches only on config and per-state flags. It has no syncs, try/except or prints, and allocates only shape-sized buffers.
+- No undefined names in any f-string or except branch.
+
+Residual risk: piece A's composition (dl_qkv's q / FP8 KV versus FusedQKNorm + store_cache, then PDL into dl_o) has never run on hardware. A self-check miss there only turns A off, but a device fault in a new kernel during prepare would still poison the context.
