@@ -112,7 +112,7 @@ base_sha: 2de39fe31bc772463640a6e1897c6c89e11c919a
 base_blob: 970b415b746fa03cb92e419d270be92588273178
 branch: hyp/muse_bf16_proj/bf16-verify-swapab-wgmma-cluster-dsmem-rewrite
 worktree: .worktrees/muse_bf16_proj/bf16-verify-swapab-wgmma-cluster-dsmem-rewrite
-mode: null
+mode: check
 restack_of: null
 stale_base: null
 implemented_at: 2026-10-25T043519Z
@@ -121,6 +121,8 @@ submission_sha256: e6e8eb4fb8a499c32e3af19aaa21282dd14fc5cb5d0bd8049e92e1aef3b6b
 norm_sha256: 09a9326fe7f41fd9b59628dc64b958abbdd7bb81140a0c92e6f73df3548b6b4d
 submission_blob: a2fcfaab4280e7587fb1654e3d00b9d7459d4c42
 lint_warnings: 7
+attempt_file: 2026-10-25T043519Z-check-bf16-verify-swapab-wgmma-cluster-dsmem-rewrite.md
+prepared_at: 2026-10-25T043519Z
 ---
 
 # bf16-verify-swapab-wgmma-cluster-dsmem-rewrite
