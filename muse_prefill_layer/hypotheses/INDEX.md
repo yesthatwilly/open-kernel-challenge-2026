@@ -1,6 +1,6 @@
 # muse_prefill_layer hypotheses
 
-Regenerated 2026-10-24T184810Z. Best: 1.0592x [1.0433,1.0751] job `ba9c16b9cc6b4605` (submit)
+Regenerated 2026-10-25T000226Z. Best: 1.0592x [1.0433,1.0751] job `ba9c16b9cc6b4605` (submit)
 
 | created | slug | kind | area | where | outcome | speedup | CI | job | mode | promotion | review | expected hit |
 |---|---|---|---|---|---|---|---|---|---|---|---|---|
@@ -27,11 +27,28 @@ Regenerated 2026-10-24T184810Z. Best: 1.0592x [1.0433,1.0751] job `ba9c16b9cc6b4
 | 2026-10-24T140133Z | experts-triton-packed-dequant-turn4 | rewrite | w13 marlin + w2 marlin (Triton NVFP4 engine, stage 6: take over turn_4) | queue | queued |  |  |  |  |  | proceed |  |
 | 2026-10-24T140154Z | experts-triton-turn1-blockt32-stream | rewrite | w13 marlin + w2 marlin (Triton NVFP4 engine, stage 7: take over turn_1 with a weight-stream config) | queue | queued |  |  |  |  |  | proceed |  |
 | 2026-10-24T165318Z | dense-gemm-cublaslt-algo-pick-prefill-t | primary | dense bf16 GEMM dispatch (qkv, o, pooler, unpooler; cuBLASLt algo selection) | queue | hold |  |  |  |  |  | proceed |  |
-| 2026-10-24T165335Z | silu-mul-triton-local-rows-marlin-turn | primary | silu-mul (Marlin path, T <= 4096) | queue | hold |  |  |  |  |  | proceed |  |
+| 2026-10-24T165335Z | silu-mul-triton-local-rows-marlin-turn | primary | silu-mul (Marlin path, T <= 4096) | done/neutral | neutral | 1.0512 | [1.035,1.067] | b2259479e57e4196 | check |  | proceed | 1/3 |
 | 2026-10-24T165356Z | norm-residual-boundaries-triton-row-kernel | primary | attention boundary + FFN boundary (FusedPostNormResidualPreNorm x2) | queue | hold |  |  |  |  |  | proceed |  |
 | 2026-10-24T172035Z | experts-cuda-wgmma-mixed-input-grouped-gemm | rewrite | w13 marlin + w2 marlin (CUDA sm_90a warp-specialized wgmma W4A16 grouped GEMM, stage 1: first_turn) | done/neutral | neutral | 1.0637 | [1.048,1.080] | 1821bb0e1f7246e2 | submit |  | proceed | 0/3 |
 | 2026-10-24T172146Z | attn-full-prefill-cuda-fp8-exp-offload | rewrite | FA3 call (CUDA sm_90a FP8 prefill flash attention with software-exp offload, stage 1: full layers, page size 1) | done/regression | regression | 0.8813 | [0.868,0.895] | f5c30b15fd284c15 | submit |  | proceed | 0/4 |
-| 2026-10-24T183246Z | sliding-attn-block-triton-gqa-fused-normgate | rewrite | sliding-window attention block (q FP8 cast + FA3 + FlashAttnFwdCombine + FusedRMSNormGate) on sliding layers | running | running |  |  | 78d8d7bdec55491c | submit |  | proceed |  |
+| 2026-10-24T183246Z | sliding-attn-block-triton-gqa-fused-normgate | rewrite | sliding-window attention block (q FP8 cast + FA3 + FlashAttnFwdCombine + FusedRMSNormGate) on sliding layers | done/neutral | neutral | 1.0507 | [1.035,1.066] | 78d8d7bdec55491c | submit |  | proceed | 1/4 |
+| 2026-10-24T184832Z | experts-triton-persistent-grid-first-turn | primary | w13 marlin + w2 marlin (Triton NVFP4 engine at T > 4096: persistent grid, no dead CTAs) | queue | queued |  |  |  |  |  | required |  |
+| 2026-10-24T184852Z | moe-align-local-routes-parallel-port | primary | MoE align/dispatch (local-routes-only align, port of muse_moe_w4a16 align-parallel-per-expert-verify) | done/neutral | neutral | 1.0658 | [1.050,1.082] | 7e91d9ee93144387 | check |  | required | 0/3 |
+| 2026-10-24T184911Z | first-turn-moe-dead-work-stack | primary | MoE dispatch + silu-mul + Triton NVFP4 grid at T > 4096 (first_turn dead-work removal, combined) | queue | queued |  |  |  |  |  | required |  |
+| 2026-10-24T184923Z | w2-nonlocal-zero-store-off-first-turn | primary | w2 (Triton NVFP4 engine at T > 4096: remote-block zero store) | done/neutral | neutral | 1.0609 | [1.045,1.077] | 9b731599dfa24278 | check |  | required | 0/2 |
+| 2026-10-24T184946Z | moe-align-32-experts-first-turn | primary | MoE align/dispatch (align over the 32 local experts at T > 4096) | done/neutral | neutral | 1.0604 | [1.044,1.076] | b5bf94b463d34d21 | check |  | required | 0/2 |
+| 2026-10-24T185108Z | experts-triton-turn4-persistent-local-align | primary | w13 marlin + w2 marlin at turn_4 (route 1024 < T <= 4096 to the Triton NVFP4 engine, with persistent grid and local-routes align) | queue | queued |  |  |  |  |  | required |  |
+| 2026-10-24T185232Z | turn-moe-local-align-sorted-silu | primary | MoE align/dispatch + silu-mul on the Marlin path (T <= 4096) | queue | queued |  |  |  |  |  | required |  |
+| 2026-10-24T185248Z | router-hilo-one-gemm-n512 | primary | router GEMM (hi and lo halves as one N=512 cuBLAS GEMM) | done/neutral | neutral | 1.0607 | [1.045,1.077] | f4e3c5f4c306427b | check |  | required | 0/3 |
+| 2026-10-24T224410Z | norm-boundaries-persistent-multirow | primary | attention boundary + FFN boundary (FusedPostNormResidualPreNorm x2, persistent multi-row variant) | queue | queued |  |  |  |  |  | required |  |
+| 2026-10-24T224425Z | moe-pre-post-norm-triton-multitoken | primary | pre-expert norm + post-expert norm/combine (the MoE elementwise ends) | queue | queued |  |  |  |  |  | required |  |
+| 2026-10-24T224437Z | experts-triton-first-turn-unmasked-loads-l2-hints | primary | w13 marlin + w2 marlin (Triton NVFP4 engine at T > 4096: K-loop load predication and L2 eviction hints) | queue | queued |  |  |  |  |  | required |  |
+| 2026-10-24T232728Z | restack-router-hilo-align32-zerostore | primary | router GEMM + MoE align (T>4096) + w2 zero-store (T>4096) | done/neutral | neutral | 1.0608 | [1.045,1.077] | ead4bc2e7b364add | check |  | required | 0/1 |
+| 2026-10-24T232928Z | stack-tonight-four-prefill | primary | router GEMM + MoE align (both paths) + w2 zero-store | done/neutral | neutral | 1.0675 | [1.052,1.084] | 7499d9c71acd4417 | check |  | required | 0/1 |
+| 2026-10-24T232955Z | align-local-parallel-first-turn | primary | MoE align on the Triton path (T > 4096, first_turn) | done/neutral | neutral | 1.0626 | [1.047,1.079] | c2f3e9d8297f4a18 | check |  | required | 0/1 |
+| 2026-10-24T233200Z | stack-tonight-five-prefill | primary | router GEMM + MoE align (both paths) + w2 zero-store + Marlin silu-mul | done/neutral | neutral | 1.0705 | [1.054,1.087] | c4d14d62f11e4aaf | check |  | required | 0/1 |
+| 2026-10-24T233245Z | stack-tonight-six-prefill | primary | router GEMM + MoE align (both paths, parallel) + w2 zero-store + Marlin silu-mul | done/neutral | neutral | 1.0642 | [1.048,1.080] | 5cb6e68a86ec48f0 | check |  | required | 0/1 |
+| 2026-10-24T233334Z | silu-mul-sorted-first-turn | primary | silu-mul on the Triton path (T > 4096, first_turn) | running | running |  |  |  | check |  | required |  |
 
 ## Held
 
@@ -44,5 +61,4 @@ Regenerated 2026-10-24T184810Z. Best: 1.0592x [1.0433,1.0751] job `ba9c16b9cc6b4
 - router-triton-hilo-splitk-turn: reviewer: the side-stream router (~40-45 us) already fits under the main branch (the 39.3 us nvjet is qkv_gate, not the pooler), expected 0.3-1% inside noise; prefill has 2 checks and the rewrite's next stage needs them
 - router-pooler-concat-gemm-turn: adversarial review: Rule-clean, but the size of the win rests on a router side branch of ~80-90 us that the current master profile does not show. At turn_1 sliding the router pair 
 - dense-gemm-cublaslt-algo-pick-prefill-t: reviewer: claim only after the bf16 precedent (bf16-cublaslt-algo-pick-in-prepare-m128-m256, 26a8be34a5eb4426) harvests; ~0.5-1.1% headline; time pooler keys with the router running or require a >=5% margin
-- silu-mul-triton-local-rows-marlin-turn: projected ~0.7% is below run-to-run noise (shape medians move 2-6% between batches; see LESSONS); not worth an agent plus a run. Fold into a larger prefill change if one lands.
 - norm-residual-boundaries-triton-row-kernel: reviewer: same one-row-per-program structure as the incumbent; expect 0.2-0.4% headline, below run noise; re-mint as a multi-row/persistent variant if wanted

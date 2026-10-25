@@ -1,6 +1,6 @@
 # muse_attention_decode findings
 
-Regenerated 2026-10-24T184810Z by `churn.py index`. Read this before writing a hypothesis for muse_attention_decode.
+Regenerated 2026-10-25T000226Z by `churn.py index`. Read this before writing a hypothesis for muse_attention_decode.
 
 ## Current best
 
@@ -26,6 +26,8 @@ Where the time goes (per scored shape, top kernels):
 ### FA3 call (full-layer decode gather)
 - **full-decode-cuda-gather-splitkv** → gain (gain), 1.3468x — gained on full decode_16, decode_32; lost on sliding decode_1. Stage 1 of a rewrite of full-attention decode, built on master (sliding-fused-triton-decode1-gate). Gate (config/shape only): cfg window == 0 and q_len == 1 and
 - **full-decode-cuda-fp8-qk-mma** → neutral (within-ci), 1.3439x — gained on sliding decode_1. Built on master (full-decode-cuda-gather-splitkv). One change inside splitkv_attn_kernel (full-layer decode at 1 < batch <= 64, the only kernel touched): comput
+- **splitkv-full-line-gather-mapping** → neutral (unproven-vs-best), 1.4160x — gained on full decode_16, decode_32; lost on sliding decode_1. One change inside splitkv_attn_kernel's issue_tile lambda (master full decode, 1 < batch <= 64): remap threads so that each warp-wide cp.async instruction cover
+- **splitkv-chunk2048-batch32** → neutral (within-ci), 1.3838x — no shape moved outside noise. Shape-gated chunk size for master's CUDA split-KV path: at batch >= 32 use 2048-token work items instead of 1024, halving the partials written by kernel A and m
 
 ### FA3 call (full-layer verify gather)
 - **full-verify-cuda-streamk-splitkv** → regression (regression), 1.2314x — gained on full decode_32; lost on full verify_16, verify_32. Stage 2 of the full-attention rewrite, built on master (stage 1 full-decode-cuda-gather-splitkv landed). Extend the CUDA split-KV path to full-layer VERIFY (q_l
@@ -44,9 +46,17 @@ Where the time goes (per scored shape, top kernels):
 
 ### full-layer attention (batch-1 decode gate)
 - **full-fused-triton-decode1-gate** → neutral (within-ci), 1.3417x — lost on full decode_1. Built on master. Route full-attention batch-1 decode (config window == 0 and batch == 1 and q_len == 1) through master _sliding_fused_kernel via _sliding_forwar
+- **full-decode1-cuda-splitkv-chunk320** → neutral (unproven-vs-best), 1.3954x — gained on full decode_1; lost on full decode_32; sliding verify_1. Route FULL-layer decode at batch 1 (window == 0, q_len 1, tp8, d 64, page 1) through master's existing CUDA split-KV path with a smaller work chunk, instead of 
+- **full-decode1-cuda-splitkv-chunk640** → neutral (within-ci), 1.3805x — gained on full decode_1; lost on full decode_32; sliding verify_1. Same mechanism as full-decode1-cuda-splitkv-chunk320, with fewer, longer items. Route FULL-layer decode at batch 1 (window == 0, q_len 1, tp8, d 64, page 1) thr
 
 ### full-layer attention (whole-path rewrite, warp-specialized one launch)
 - **full-cuda-onelaunch-warpspec-bulk-gather** → regression (regression), 0.8238x — lost on full decode_16, decode_32; sliding verify_1. Stage 1 of a rewrite of the FULL-layer path, built on master (stage 1 of the first CUDA kernel, full-decode-cuda-gather-splitkv, has landed; no depends_on). Why
+
+### launch overhead
+- **splitkv-pdl-attn-to-combine** → neutral (within-ci), 1.3929x — lost on full decode_32. Programmatic dependent launch between master's kernel A (splitkv_attn_kernel) and kernel B (splitkv_combine_kernel), full decode 1 < batch <= 64. (1) In splitkv
+
+### output norm-gate
+- **paired-norm-gate-token-tiled** → neutral (within-ci), 1.3911x — lost on full decode_32. Regrid master _paired_norm_gate_kernel (the paired full-layer epilogue, which now runs only at full verify_16/32) from one 1-warp program per (token, query head
 
 ### page table (sliding)
 - **fa3-window-trimmed-page-table** → regression (regression), 1.1411x — lost on sliding decode_1, decode_16, decode_32, verify_1, verify_16, verify_32. On sliding-window layers only (config window != 0) hand FA3 a window-trimmed view of each request instead of the whole 80K-token context. Let W = window - 1 + L
@@ -54,6 +64,7 @@ Where the time goes (per scored shape, top kernels):
 ### pre-attention norm+rope
 - **fused-preattention-triton** → gain (gain), 1.1274x — gained on sliding decode_1, decode_16, decode_32, verify_1, verify_16, verify_32; full decode_1, decode_16, decode_32, verify_1, verify_16, verify_32. Replace the five pre-attention launches of the parity pipeline (FusedQKNorm (+RoPE), k .to(FP8), v .to(FP8), store_cache, q .to(FP8)) with one Triton kernel, gr
 - **preattention-group-tiled-programs** → neutral (within-ci), 1.2614x — gained on sliding verify_32; lost on sliding decode_1. Regrid master _pre_attention_kernel from one 1-warp program per (token, head) ((tokens, Hq+Hkv) = 18 programs per token, 4608 at verify_32) to one program per (
+- **preattention-tiled-gate-large-tokens** → neutral (within-ci), 1.3863x — gained on sliding verify_32; lost on full decode_32. Restack preattention-group-tiled-programs (neutral at 1.261x on an older master; its patch is muse_attention_decode/hypotheses/done/neutral/preattention-group-t
 
 ### sliding attention, batched decode, split depth
 - **sliding-deep-splits-on-cuda-splitkv** → gain (gain), 1.3949x — gained on sliding decode_1, decode_16, decode_32, verify_1; full decode_32. Stack sliding-fused-triton-decode-batched-deep-splits (1.309x on the pre-CUDA master; sliding decode_16 gained 33%, decode_32 +3%, every other shape flat) onto 
@@ -64,14 +75,24 @@ Where the time goes (per scored shape, top kernels):
 ### sliding-layer attention (batch-1 decode, split depth)
 - **sliding-fused-triton-decode1-splits-32** → neutral (unproven-vs-best), 1.3520x — no shape moved outside noise. Built on master. One config-only change in _sliding_forward: at batch 1 and q_len 1 (the only shape master routes to _sliding_fused_kernel) use S = 32 splits in
 
+### sliding-layer attention (batched decode, gather prologue)
+- **sliding-fused-hoist-first-tile** → regression (regression), 1.3449x — lost on sliding decode_1, decode_16, decode_32; full decode_32. In master _sliding_fused_kernel, issue the first old-key tile's gather before the query work so the KV round trip overlaps the q load, RMSNorm and RoPE. Move th
+
 ### sliding-layer attention (batched decode, split depth)
 - **sliding-fused-triton-decode-batched-deep-splits** → neutral (unproven-vs-best), 1.3087x — gained on sliding decode_16. Built on master. Two edits, both config-only. (1) In kernel_fn widen the fused sliding gate from (window and batch == 1 and q_len == 1) to (window and q_len == 
+- **sliding-decode32-splits-8** → neutral (unproven-vs-best), 1.3973x — gained on sliding decode_32; lost on full decode_32. Config-only change in _sliding_forward: at length == 1 use splits = 16 if batch <= 16 else 8 (today 16 at every batch). At batch 32 that is 512 programs of 256 
+
+### sliding-layer attention (batched decode, tile size)
+- **sliding-decode-blockn128-single-tile** → neutral (within-ci), 1.3834x — gained on sliding decode_1; lost on full decode_32. Config-only change in _sliding_forward (master sliding decode at every batch, 16 splits): pass BLOCK_N=128 instead of 64 when length == 1. With S = 16 a split c
 
 ### sliding-layer attention (whole-path rewrite)
 - **sliding-single-launch-fused-attention** → regression (regression), 0.9452x — gained on sliding decode_1; lost on sliding decode_16, decode_32, verify_1, verify_16, verify_32. Stage 1 of a rewrite of the sliding-layer path. Built on hyp/muse_attention_decode/fused-preattention-triton (1.127x, job dfee6f2939974bad). On sliding layers (
 
 ### sliding-layer attention (whole-path rewrite, CUDA cluster)
 - **sliding-cuda-cluster-dsmem-onelaunch** → regression (regression), 1.2206x — gained on sliding decode_1, decode_16; lost on sliding verify_1, verify_16, verify_32. Stage 1 of a rewrite of the whole SLIDING-layer path, built on master (no depends_on). Why: the sliding layer runs 46x per step in every load, and it costs 13.9
+
+### split-KV combine
+- **splitkv-combine-wide-mlp** → neutral (within-ci), 1.3836x — lost on full decode_32. Rework splitkv_combine_kernel (master full decode, 1 < batch <= 64) for more loads in flight; grid (B, 16) and the math stay. Today each (request, head) block h
 
 ## Open follow-ups
 
@@ -82,6 +103,16 @@ Where the time goes (per scored shape, top kernels):
 - full-fused-triton-decode1-gate: within-ci: the change is not proven either way; a stacked hypothesis (`depends_on: full-fused-triton-decode1-gate`) that adds a further change in the same area is the only way to learn more (identical code is never re-ru
 - sliding-fused-triton-decode1-splits-32: unproven-vs-best: the change is not proven either way; a stacked hypothesis (`depends_on: sliding-fused-triton-decode1-splits-32`) that adds a further change in the same area is the only way to learn more (identical code
 - full-decode-cuda-fp8-qk-mma: within-ci: the change is not proven either way; a stacked hypothesis (`depends_on: full-decode-cuda-fp8-qk-mma`) that adds a further change in the same area is the only way to learn more (identical code is never re-run).
+- full-decode1-cuda-splitkv-chunk320: unproven-vs-best: the change is not proven either way; a stacked hypothesis (`depends_on: full-decode1-cuda-splitkv-chunk320`) that adds a further change in the same area is the only way to learn more (identical code is 
+- full-decode1-cuda-splitkv-chunk640: within-ci: the change is not proven either way; a stacked hypothesis (`depends_on: full-decode1-cuda-splitkv-chunk640`) that adds a further change in the same area is the only way to learn more (identical code is never r
+- splitkv-full-line-gather-mapping: unproven-vs-best: the change is not proven either way; a stacked hypothesis (`depends_on: splitkv-full-line-gather-mapping`) that adds a further change in the same area is the only way to learn more (identical code is ne
+- splitkv-combine-wide-mlp: within-ci: the change is not proven either way; a stacked hypothesis (`depends_on: splitkv-combine-wide-mlp`) that adds a further change in the same area is the only way to learn more (identical code is never re-run).
+- paired-norm-gate-token-tiled: within-ci: the change is not proven either way; a stacked hypothesis (`depends_on: paired-norm-gate-token-tiled`) that adds a further change in the same area is the only way to learn more (identical code is never re-run)
+- preattention-tiled-gate-large-tokens: within-ci: the change is not proven either way; a stacked hypothesis (`depends_on: preattention-tiled-gate-large-tokens`) that adds a further change in the same area is the only way to learn more (identical code is never
+- sliding-decode-blockn128-single-tile: within-ci: the change is not proven either way; a stacked hypothesis (`depends_on: sliding-decode-blockn128-single-tile`) that adds a further change in the same area is the only way to learn more (identical code is never
+- sliding-decode32-splits-8: unproven-vs-best: the change is not proven either way; a stacked hypothesis (`depends_on: sliding-decode32-splits-8`) that adds a further change in the same area is the only way to learn more (identical code is never re-
+- splitkv-chunk2048-batch32: within-ci: the change is not proven either way; a stacked hypothesis (`depends_on: splitkv-chunk2048-batch32`) that adds a further change in the same area is the only way to learn more (identical code is never re-run).
+- splitkv-pdl-attn-to-combine: within-ci: the change is not proven either way; a stacked hypothesis (`depends_on: splitkv-pdl-attn-to-combine`) that adds a further change in the same area is the only way to learn more (identical code is never re-run).
 
 ## Do not retry (rejected / duplicates)
 
@@ -108,14 +139,3 @@ Where the time goes (per scored shape, top kernels):
 - queue: sliding-verify-cuda-streamk-window [sliding-layer attention (verify)] p2 queued
 - queue: full-verify1-cuda-streamk-batch1 [full-layer attention (batch-1 verify gate)] p2 queued
 - queue: splitkv-l2-128b-prefetch-hint [FA3 call (full-layer decode gather)] p5 hold
-- running: full-decode1-cuda-splitkv-chunk320 [full-layer attention (batch-1 decode gate)] p1 running
-- running: full-decode1-cuda-splitkv-chunk640 [full-layer attention (batch-1 decode gate)] p3 running
-- running: splitkv-full-line-gather-mapping [FA3 call (full-layer decode gather)] p2 running
-- running: splitkv-combine-wide-mlp [split-KV combine] p4 running
-- running: paired-norm-gate-token-tiled [output norm-gate] p5 running
-- running: preattention-tiled-gate-large-tokens [pre-attention norm+rope] p3 running
-- running: sliding-decode-blockn128-single-tile [sliding-layer attention (batched decode, tile size)] p4 running
-- running: sliding-decode32-splits-8 [sliding-layer attention (batched decode, split depth)] p5 running
-- running: sliding-fused-hoist-first-tile [sliding-layer attention (batched decode, gather prologue)] p4 running
-- running: splitkv-chunk2048-batch32 [FA3 call (full-layer decode gather)] p4 running
-- running: splitkv-pdl-attn-to-combine [launch overhead] p5 running

@@ -1,6 +1,6 @@
 # muse_moe_w4a16 findings
 
-Regenerated 2026-10-24T184810Z by `churn.py index`. Read this before writing a hypothesis for muse_moe_w4a16.
+Regenerated 2026-10-25T000226Z by `churn.py index`. Read this before writing a hypothesis for muse_moe_w4a16.
 
 ## Current best
 
@@ -31,6 +31,9 @@ Where the time goes (per scored shape, top kernels):
 
 ### MoE align/dispatch + block_size_m pick
 - **triton-map-align-on-block-m-restack** → gain (gain), 1.3117x — gained on decode_1 decode_1; decode_16 decode_16; decode_32 decode_32; verify_1 verify_1. Stack the two measured, shape-disjoint moe wins: start from master (marlin-block-m-two-smaller-on-postnorm, 1.254x: block_size_m two candidates down at num_toke
+
+### MoE align/dispatch + post-expert norm+combine
+- **cuda-dispatch-combine-pdl-verify** → neutral (unproven-vs-best), 1.3283x — no shape moved outside noise. Dispatch + combine only, at num_tokens > 32 (verify_16 bs=128, verify_32 bs=256, and the bs=33, bs=257 and skewed bs=128 tests). num_tokens <= 32 runs master by
 
 ### launch overhead
 - **marlin-two-stream-expert-halves-small-m** → neutral (within-ci), 1.3024x — no shape moved outside noise. At 8 <= num_tokens <= 32 only (verify_1 bs=8, decode_16 bs=16, decode_32 bs=32; bs=1, the bs=4 test and num_tokens > 32 run master unchanged), split the expert 
@@ -76,6 +79,7 @@ Where the time goes (per scored shape, top kernels):
 - marlin-two-stream-expert-halves-small-m: within-ci: the change is not proven either way; a stacked hypothesis (`depends_on: marlin-two-stream-expert-halves-small-m`) that adds a further change in the same area is the only way to learn more (identical code is ne
 - cuda-fused-moe-bs1-persistent-w13-silu-w2: rewrite stage 1 of `Marlin w13+w2 (moe_wna16_marlin_gemm x2) at bs<=32`: read the replaced kernels' own us per shape (profile top_kernels) against the incumbent and the floor, and check which Milestone it reached. The ne
 - cuda-nvfp4-wgmma-rega-grouped-verify: rewrite stage 1 of `Marlin w13+w2 (moe_wna16_marlin_gemm x2) + silu_and_mul at num_tokens >= 128`: read the replaced kernels' own us per shape (profile top_kernels) against the incumbent and the floor, and check which Mi
+- cuda-dispatch-combine-pdl-verify: rewrite stage 1 of `_align_parallel_kernel + fused_post_expert_norm_weighted_sum at num_tokens > 32`: read the replaced kernels' own us per shape (profile top_kernels) against the incumbent and the floor, and check which
 - post-norm-combine-hoisted-slot-loads: unproven-vs-best: the change is not proven either way; a stacked hypothesis (`depends_on: post-norm-combine-hoisted-slot-loads`) that adds a further change in the same area is the only way to learn more (identical code i
 - align-parallel-from-17-tokens: unproven-vs-best: the change is not proven either way; a stacked hypothesis (`depends_on: align-parallel-from-17-tokens`) that adds a further change in the same area is the only way to learn more (identical code is never
 - align-small-one-warp-tiny-m: unproven-vs-best: the change is not proven either way; a stacked hypothesis (`depends_on: align-small-one-warp-tiny-m`) that adds a further change in the same area is the only way to learn more (identical code is never r
@@ -98,4 +102,3 @@ Where the time goes (per scored shape, top kernels):
 - queue: cuda-fused-moe-midm-single-launch-routed [whole-layer fusion] p2 queued
 - queue: post-norm-triton-hoisted-decode32 [post-expert norm+combine] p2 queued
 - queue: post-norm-pdl-launch-small-m [launch overhead] p2 queued
-- running: cuda-dispatch-combine-pdl-verify [MoE align/dispatch + post-expert norm+combine] p2 running

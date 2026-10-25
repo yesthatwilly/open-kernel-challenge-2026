@@ -1,6 +1,6 @@
 # muse_prefill_layer findings
 
-Regenerated 2026-10-24T184810Z by `churn.py index`. Read this before writing a hypothesis for muse_prefill_layer.
+Regenerated 2026-10-25T000226Z by `churn.py index`. Read this before writing a hypothesis for muse_prefill_layer.
 
 ## Current best
 
@@ -25,14 +25,44 @@ Where the time goes (per scored shape, top kernels):
 ### FA3 call (CUDA sm_90a FP8 prefill flash attention with software-exp offload, stage 1: full layers, page size 1)
 - **attn-full-prefill-cuda-fp8-exp-offload** → regression (regression), 0.8813x — lost on full first_turn, turn_1, turn_4. Replace FA3 (flash_attn_with_kvcache and its FlashAttnFwdCombine) on full-attention prefill layers with a hand-written sm_90a FP8 flash-attention forward kernel
 
+### MoE align on the Triton path (T > 4096, first_turn)
+- **align-local-parallel-first-turn** → neutral (within-ci), 1.0626x — no shape moved outside noise. Built on moe-align-local-routes-parallel-port (running, its implementation commit). In _experts_triton, when state['align_par_ok'], replace moe_align_block_size
+
 ### MoE align/dispatch
 - **moe-align-side-stream** → neutral (unproven-vs-best), 1.0076x — no shape moved outside noise. Keep the parity base and move three pieces of work that depend only on the routing outputs and local_start onto the existing side stream, inside the same torch.
+
+### MoE align/dispatch (align over the 32 local experts at T > 4096)
+- **moe-align-32-experts-first-turn** → neutral (unproven-vs-best), 1.0604x — no shape moved outside noise. Built on master (635cfee). One argument in _experts_triton (T > 4096 only): moe_align_block_size(local_ids, cfg['BLOCK_T'], N_EXPERTS) becomes moe_align_block_s
+
+### MoE align/dispatch (local-routes-only align, port of muse_moe_w4a16 align-parallel-per-expert-verify)
+- **moe-align-local-routes-parallel-port** → neutral (unproven-vs-best), 1.0658x — no shape moved outside noise. Built on master (635cfee). Port muse_moe_w4a16's measured align (master there: _align_parallel_kernel and its host wrapper _align_parallel in muse_moe_w4a16/sub
 
 ### pre-attention norm+rope + cache store
 - **qk-norm-fp8-cache-store-fusion** → neutral (unproven-vs-best), 1.0093x — no shape moved outside noise. One Triton kernel replaces five launches on the attention front: FusedQKNorm, k.to(FP8), v.to(FP8), store_cache and q.view(T, 16, 64).to(FP8). One program per t
 
+### router GEMM (hi and lo halves as one N=512 cuBLAS GEMM)
+- **router-hilo-one-gemm-n512** → neutral (unproven-vs-best), 1.0607x — no shape moved outside noise. Built on master (635cfee). prepare(): add state['router_hilo_t'] = torch.cat((hi.t(), lo.t()), dim=1).contiguous(), bf16 [8192, 512] (the same BF16 hi/lo split 
+
+### router GEMM + MoE align (T>4096) + w2 zero-store (T>4096)
+- **restack-router-hilo-align32-zerostore** → neutral (unproven-vs-best), 1.0608x — lost on full first_turn. Built on master. Stack the three shape-disjoint prefill checks of 2026-10-24 23:15Z, each applied unchanged from its done/ patch: router-hilo-one-gemm-n512 (one
+
+### router GEMM + MoE align (both paths) + w2 zero-store
+- **stack-tonight-four-prefill** → neutral (unproven-vs-best), 1.0675x — no shape moved outside noise. Built on master. Stack all four prefill changes built on 2026-10-24 night, each applied unchanged: router-hilo-one-gemm-n512, moe-align-32-experts-first-turn, w
+
+### router GEMM + MoE align (both paths) + w2 zero-store + Marlin silu-mul
+- **stack-tonight-five-prefill** → neutral (unproven-vs-best), 1.0705x — no shape moved outside noise. Built on master. stack-tonight-four-prefill (router-hilo-one-gemm-n512, moe-align-32-experts-first-turn, w2-nonlocal-zero-store-off-first-turn, moe-align-local-
+
+### router GEMM + MoE align (both paths, parallel) + w2 zero-store + Marlin silu-mul
+- **stack-tonight-six-prefill** → neutral (unproven-vs-best), 1.0642x — no shape moved outside noise. Built on master. stack-tonight-five-prefill plus align-local-parallel-first-turn (the parallel local-routes align on the Triton path too, self-checked at T=1638
+
+### silu-mul (Marlin path, T <= 4096)
+- **silu-mul-triton-local-rows-marlin-turn** → neutral (within-ci), 1.0512x — no shape moved outside noise. Built on master (635cfee). In _experts_marlin only (the Marlin path, T <= MARLIN_MAX_TOKENS = 4096: turn_1 T=753, turn_4 T=3012 and every test), replace silu_an
+
 ### silu-mul (fused into the w13 Triton NVFP4 GEMM epilogue, T > 4096)
 - **experts-triton-w13-fused-silu-epilogue** → neutral (within-ci), 1.0525x — lost on full first_turn. Fuse SGLang's silu_and_mul into the epilogue of the first (w13) Triton NVFP4 GEMM on the T > 4096 path (_experts_triton, first_turn only), built on master. (1) 
+
+### sliding-window attention block (q FP8 cast + FA3 + FlashAttnFwdCombine + FusedRMSNormGate) on sliding layers
+- **sliding-attn-block-triton-gqa-fused-normgate** → neutral (within-ci), 1.0507x — no shape moved outside noise. Built on master alone (b92a0f4, experts-hybrid-marlin-turn-triton-first-turn); touches nothing the two in-flight prefill runs touch (full-layer FA3 stays FA3, e
 
 ### w13 marlin + w2 marlin (CUDA sm_90a warp-specialized wgmma W4A16 grouped GEMM, stage 1: first_turn)
 - **experts-cuda-wgmma-mixed-input-grouped-gemm** → neutral (unproven-vs-best), 1.0637x — no shape moved outside noise. Replace the expert GEMM engine with a hand-written Hopper (sm_90a) mixed-input grouped GEMM in CUDA, compiled with torch.utils.cpp_extension.load_inline at impo
@@ -56,6 +86,9 @@ Where the time goes (per scored shape, top kernels):
 ### w13 marlin + w2 marlin (stage 4: hybrid shape gate, Marlin at T<=4096, Triton NVFP4 above)
 - **experts-hybrid-marlin-turn-triton-first-turn** → gain (gain), 1.0599x — gained on sliding turn_1, turn_4; full turn_1. Stage 4 of the Triton NVFP4 expert rewrite, built on master (a1f93c2, = stage 3 experts-triton-w4a16-first-turn-blockt256). Only prepare() and _experts in muse_
 
+### w2 (Triton NVFP4 engine at T > 4096: remote-block zero store)
+- **w2-nonlocal-zero-store-off-first-turn** → neutral (unproven-vs-best), 1.0609x — no shape moved outside noise. Built on master (635cfee). One flag and one prepare() guard. Today ZERO_NONLOCAL_W2 = True makes the second _nvfp4_moe_gemm call in _experts_triton (T > 4096 on
+
 ### whole-layer parity (SGLang pipeline) + routing remap
 - **sglang-pipeline-parity** → gain (gain), 1.0039x — no shape moved outside noise. Rewrite kernel_fn and prepare in muse_prefill_layer/submission.py to run SGLang's own pipeline module for module as baseline.py does: _bf16_gemm_dispatch_impl f
 
@@ -68,7 +101,18 @@ Where the time goes (per scored shape, top kernels):
 - experts-triton-w4a16-first-turn-blockt256: rewrite stage 3 of `Marlin w13+w2 (moe_wna16_marlin_gemm x2) at every prefill T`: read the replaced kernels' own us per shape (profile top_kernels) against the incumbent and the floor, and check which Milestone it reache
 - experts-triton-nvfp4-packed-asm-dequant: rewrite stage 5 of `Marlin w13+w2 (moe_wna16_marlin_gemm x2) at every prefill T`: read the replaced kernels' own us per shape (profile top_kernels) against the incumbent and the floor, and check which Milestone it reache
 - experts-triton-w13-fused-silu-epilogue: within-ci: the change is not proven either way; a stacked hypothesis (`depends_on: experts-triton-w13-fused-silu-epilogue`) that adds a further change in the same area is the only way to learn more (identical code is nev
+- silu-mul-triton-local-rows-marlin-turn: within-ci: the change is not proven either way; a stacked hypothesis (`depends_on: silu-mul-triton-local-rows-marlin-turn`) that adds a further change in the same area is the only way to learn more (identical code is nev
 - experts-cuda-wgmma-mixed-input-grouped-gemm: rewrite stage 1 of `_moe_nvfp4_gemm_kernel x2 (w13, w2) at T > 4096 in stage 1; moe_wna16_marlin_gemm x2 at T <= 4096 in stages 2-3`: read the replaced kernels' own us per shape (profile top_kernels) against the incumben
+- sliding-attn-block-triton-gqa-fused-normgate: rewrite stage 1 of `q.view(T,16,64).to(FP8) + flash_attn_with_kvcache (FA3 cutlass::device_kernel<flash::...> + FlashAttnFwdCombine) + state['o_norm_gate'] (FusedRMSNormGate) on sliding layers (cfg['window'] == 2048)`: r
+- moe-align-local-routes-parallel-port: unproven-vs-best: the change is not proven either way; a stacked hypothesis (`depends_on: moe-align-local-routes-parallel-port`) that adds a further change in the same area is the only way to learn more (identical code i
+- w2-nonlocal-zero-store-off-first-turn: unproven-vs-best: the change is not proven either way; a stacked hypothesis (`depends_on: w2-nonlocal-zero-store-off-first-turn`) that adds a further change in the same area is the only way to learn more (identical code 
+- moe-align-32-experts-first-turn: unproven-vs-best: the change is not proven either way; a stacked hypothesis (`depends_on: moe-align-32-experts-first-turn`) that adds a further change in the same area is the only way to learn more (identical code is nev
+- router-hilo-one-gemm-n512: unproven-vs-best: the change is not proven either way; a stacked hypothesis (`depends_on: router-hilo-one-gemm-n512`) that adds a further change in the same area is the only way to learn more (identical code is never re-
+- restack-router-hilo-align32-zerostore: unproven-vs-best: the change is not proven either way; a stacked hypothesis (`depends_on: restack-router-hilo-align32-zerostore`) that adds a further change in the same area is the only way to learn more (identical code 
+- stack-tonight-four-prefill: unproven-vs-best: the change is not proven either way; a stacked hypothesis (`depends_on: stack-tonight-four-prefill`) that adds a further change in the same area is the only way to learn more (identical code is never re
+- align-local-parallel-first-turn: within-ci: the change is not proven either way; a stacked hypothesis (`depends_on: align-local-parallel-first-turn`) that adds a further change in the same area is the only way to learn more (identical code is never re-r
+- stack-tonight-five-prefill: unproven-vs-best: the change is not proven either way; a stacked hypothesis (`depends_on: stack-tonight-five-prefill`) that adds a further change in the same area is the only way to learn more (identical code is never re
+- stack-tonight-six-prefill: unproven-vs-best: the change is not proven either way; a stacked hypothesis (`depends_on: stack-tonight-six-prefill`) that adds a further change in the same area is the only way to learn more (identical code is never re-
 
 ## Do not retry (rejected / duplicates)
 
@@ -87,6 +131,12 @@ Where the time goes (per scored shape, top kernels):
 - queue: experts-triton-packed-dequant-turn4 [w13 marlin + w2 marlin (Triton NVFP4 engine, stage 6: take over turn_4)] p1 queued
 - queue: experts-triton-turn1-blockt32-stream [w13 marlin + w2 marlin (Triton NVFP4 engine, stage 7: take over turn_1 with a weight-stream config)] p2 queued
 - queue: dense-gemm-cublaslt-algo-pick-prefill-t [dense bf16 GEMM dispatch (qkv, o, pooler, unpooler; cuBLASLt algo selection)] p2 hold
-- queue: silu-mul-triton-local-rows-marlin-turn [silu-mul (Marlin path, T <= 4096)] p3 hold
 - queue: norm-residual-boundaries-triton-row-kernel [attention boundary + FFN boundary (FusedPostNormResidualPreNorm x2)] p4 hold
-- running: sliding-attn-block-triton-gqa-fused-normgate [sliding-window attention block (q FP8 cast + FA3 + FlashAttnFwdCombine + FusedRMSNormGate) on sliding layers] p1 running
+- queue: experts-triton-persistent-grid-first-turn [w13 marlin + w2 marlin (Triton NVFP4 engine at T > 4096: persistent grid, no dead CTAs)] p1 queued
+- queue: first-turn-moe-dead-work-stack [MoE dispatch + silu-mul + Triton NVFP4 grid at T > 4096 (first_turn dead-work removal, combined)] p3 queued
+- queue: experts-triton-turn4-persistent-local-align [w13 marlin + w2 marlin at turn_4 (route 1024 < T <= 4096 to the Triton NVFP4 engine, with persistent grid and local-routes align)] p2 queued
+- queue: turn-moe-local-align-sorted-silu [MoE align/dispatch + silu-mul on the Marlin path (T <= 4096)] p3 queued
+- queue: norm-boundaries-persistent-multirow [attention boundary + FFN boundary (FusedPostNormResidualPreNorm x2, persistent multi-row variant)] p5 queued
+- queue: moe-pre-post-norm-triton-multitoken [pre-expert norm + post-expert norm/combine (the MoE elementwise ends)] p5 queued
+- queue: experts-triton-first-turn-unmasked-loads-l2-hints [w13 marlin + w2 marlin (Triton NVFP4 engine at T > 4096: K-loop load predication and L2 eviction hints)] p4 queued
+- running: silu-mul-sorted-first-turn [silu-mul on the Triton path (T > 4096, first_turn)] p1 running

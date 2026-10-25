@@ -1,6 +1,6 @@
 # muse_attention_decode hypotheses
 
-Regenerated 2026-10-24T184810Z. Best: 1.3949x [1.3740,1.4158] job `698d4cd3838c4a63` (submit)
+Regenerated 2026-10-25T000226Z. Best: 1.3949x [1.3740,1.4158] job `698d4cd3838c4a63` (submit)
 
 | created | slug | kind | area | where | outcome | speedup | CI | job | mode | promotion | review | expected hit |
 |---|---|---|---|---|---|---|---|---|---|---|---|---|
@@ -40,18 +40,18 @@ Regenerated 2026-10-24T184810Z. Best: 1.3949x [1.3740,1.4158] job `698d4cd3838c4
 | 2026-10-24T165342Z | full-verify1-cuda-streamk-batch1 | primary | full-layer attention (batch-1 verify gate) | queue | queued |  |  |  |  |  | proceed |  |
 | 2026-10-24T172034Z | sliding-cuda-cluster-dsmem-onelaunch | rewrite | sliding-layer attention (whole-path rewrite, CUDA cluster) | done/regression | regression | 1.2206 | [1.202,1.239] | 6821e67ff3e749b7 | submit |  | proceed | 3/7 |
 | 2026-10-24T172110Z | full-cuda-onelaunch-warpspec-bulk-gather | rewrite | full-layer attention (whole-path rewrite, warp-specialized one launch) | done/regression | regression | 0.8238 | [0.811,0.836] | 4994759f5b4b4278 | submit |  | proceed | 3/5 |
-| 2026-10-24T183847Z | full-decode1-cuda-splitkv-chunk320 | primary | full-layer attention (batch-1 decode gate) | running | running |  |  | 8d4771feca9b4e18 | submit |  | proceed |  |
-| 2026-10-24T183847Z | full-decode1-cuda-splitkv-chunk640 | primary | full-layer attention (batch-1 decode gate) | running | running |  |  | 91d541778b8f45f3 | check |  | proceed |  |
-| 2026-10-24T183847Z | splitkv-full-line-gather-mapping | primary | FA3 call (full-layer decode gather) | running | running |  |  | cfa8c89e4f2b488d | check |  | proceed |  |
+| 2026-10-24T183847Z | full-decode1-cuda-splitkv-chunk320 | primary | full-layer attention (batch-1 decode gate) | done/neutral | neutral | 1.3954 | [1.374,1.416] | 8d4771feca9b4e18 | submit |  | proceed | 3/4 |
+| 2026-10-24T183847Z | full-decode1-cuda-splitkv-chunk640 | primary | full-layer attention (batch-1 decode gate) | done/neutral | neutral | 1.3805 | [1.360,1.405] | 91d541778b8f45f3 | check |  | proceed | 3/4 |
+| 2026-10-24T183847Z | splitkv-full-line-gather-mapping | primary | FA3 call (full-layer decode gather) | done/neutral | neutral | 1.4160 | [1.395,1.442] | cfa8c89e4f2b488d | check |  | proceed | 0/2 |
 | 2026-10-24T183848Z | splitkv-l2-128b-prefetch-hint | primary | FA3 call (full-layer decode gather) | queue | hold |  |  |  |  |  | hold |  |
-| 2026-10-24T183848Z | splitkv-combine-wide-mlp | primary | split-KV combine | running | running |  |  | 47967b6c4d98454b | check |  | proceed |  |
-| 2026-10-24T183855Z | paired-norm-gate-token-tiled | primary | output norm-gate | running | running |  |  | 5e01430a8dfe4977 | check |  | proceed |  |
-| 2026-10-24T183855Z | preattention-tiled-gate-large-tokens | primary | pre-attention norm+rope | running | running |  |  | c2ebf6ed05824692 | check |  | proceed |  |
-| 2026-10-24T183855Z | sliding-decode-blockn128-single-tile | primary | sliding-layer attention (batched decode, tile size) | running | running |  |  | 88c62334775e48e4 | check |  | proceed |  |
-| 2026-10-24T183855Z | sliding-decode32-splits-8 | primary | sliding-layer attention (batched decode, split depth) | running | running |  |  | 16d3fb5cae3f4141 | check |  | proceed |  |
-| 2026-10-24T183855Z | sliding-fused-hoist-first-tile | primary | sliding-layer attention (batched decode, gather prologue) | running | running |  |  | ead13d58c6c843e9 | check |  | proceed |  |
-| 2026-10-24T183855Z | splitkv-chunk2048-batch32 | primary | FA3 call (full-layer decode gather) | running | running |  |  | 7cfc8c5be3a04369 | check |  | proceed |  |
-| 2026-10-24T183855Z | splitkv-pdl-attn-to-combine | primary | launch overhead | running | running |  |  | 113cbf3093dd40b9 | check |  | proceed |  |
+| 2026-10-24T183848Z | splitkv-combine-wide-mlp | primary | split-KV combine | done/neutral | neutral | 1.3836 | [1.363,1.404] | 47967b6c4d98454b | check |  | proceed | 0/2 |
+| 2026-10-24T183855Z | paired-norm-gate-token-tiled | primary | output norm-gate | done/neutral | neutral | 1.3911 | [1.370,1.415] | 5e01430a8dfe4977 | check |  | proceed | 0/3 |
+| 2026-10-24T183855Z | preattention-tiled-gate-large-tokens | primary | pre-attention norm+rope | done/neutral | neutral | 1.3863 | [1.365,1.407] | c2ebf6ed05824692 | check |  | proceed | 1/4 |
+| 2026-10-24T183855Z | sliding-decode-blockn128-single-tile | primary | sliding-layer attention (batched decode, tile size) | done/neutral | neutral | 1.3834 | [1.363,1.408] | 88c62334775e48e4 | check |  | proceed | 2/3 |
+| 2026-10-24T183855Z | sliding-decode32-splits-8 | primary | sliding-layer attention (batched decode, split depth) | done/neutral | neutral | 1.3973 | [1.376,1.418] | 16d3fb5cae3f4141 | check |  | proceed | 2/3 |
+| 2026-10-24T183855Z | splitkv-chunk2048-batch32 | primary | FA3 call (full-layer decode gather) | done/neutral | neutral | 1.3838 | [1.363,1.405] | 7cfc8c5be3a04369 | check |  | proceed | 1/3 |
+| 2026-10-24T183855Z | splitkv-pdl-attn-to-combine | primary | launch overhead | done/neutral | neutral | 1.3929 | [1.372,1.414] | 113cbf3093dd40b9 | check |  | proceed | 0/2 |
+| 2026-10-24T183855Z | sliding-fused-hoist-first-tile | primary | sliding-layer attention (batched decode, gather prologue) | done/regression | regression | 1.3449 | [1.325,1.365] | ead13d58c6c843e9 | check |  | proceed | 1/3 |
 
 ## Held
 

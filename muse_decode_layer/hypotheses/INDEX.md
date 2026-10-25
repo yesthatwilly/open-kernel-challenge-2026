@@ -1,6 +1,6 @@
 # muse_decode_layer hypotheses
 
-Regenerated 2026-10-24T184810Z. Best: 1.2283x [1.2099,1.2468] job `81ee6714b7614a99` (submit)
+Regenerated 2026-10-25T000226Z. Best: 1.2283x [1.2099,1.2468] job `81ee6714b7614a99` (submit)
 
 | created | slug | kind | area | where | outcome | speedup | CI | job | mode | promotion | review | expected hit |
 |---|---|---|---|---|---|---|---|---|---|---|---|---|
@@ -34,15 +34,26 @@ Regenerated 2026-10-24T184810Z. Best: 1.2283x [1.2099,1.2468] job `81ee6714b7614
 | 2026-10-24T172107Z | moe-chain-cuda-swapab-expert-once-large-t | rewrite | w13 marlin + silu-mul + w2 marlin | done/failed | failed |  |  | 1bba1bab70da4f61 | submit |  | proceed |  |
 | 2026-10-24T172138Z | small-t-launch-minimal-dense-chain-pdl | rewrite | whole-layer fusion | done/gain | gain | 1.2283 | [1.210,1.247] | 81ee6714b7614a99 | submit | done | proceed | 6/6 |
 | 2026-10-24T174421Z | decode-restack-sliding-port-paired-pad-gemms-t1 | primary | restack (sliding decode_1 port + paired pad/unpad + T=1 Triton GEMMs) | done/neutral | neutral | 1.1937 | [1.176,1.212] | 4739dd4590524487 | submit |  | proceed | 3/5 |
-| 2026-10-24T184247Z | sliding-fused-batched-decode-port | primary | FA3 call (sliding decode, batch > 1) | queue | queued |  |  |  |  |  | required |  |
-| 2026-10-24T184303Z | moe-dispatch-prep-on-side-stream | primary | MoE align/dispatch (stream placement) | queue | queued |  |  |  |  |  | required |  |
-| 2026-10-24T184316Z | pre-expert-rmsnorm-triton | primary | pre-expert norm | queue | queued |  |  |  |  |  | required |  |
-| 2026-10-24T184335Z | moe-small-t-cuda-swapab-port | rewrite | w13 marlin + silu-mul + w2 marlin (T<=32) | queue | queued |  |  |  |  |  | required |  |
-| 2026-10-24T184355Z | moe-bs1-fused-persistent-port | primary | w13 marlin + silu-mul + w2 marlin + post-expert combine (T=1) | queue | queued |  |  |  |  |  | required |  |
-| 2026-10-24T184430Z | l2-prefetch-o-pooler-during-sliding-attention | primary | o GEMM + pooler GEMM (L2 warm-up overlapped with attention) | queue | queued |  |  |  |  |  | required |  |
-| 2026-10-24T184451Z | prefork-qkv-o-swapab-t16-t32 | primary | qkv GEMM + o GEMM (before the router fork) | queue | queued |  |  |  |  |  | required |  |
-| 2026-10-24T184511Z | moe-align-parallel-large-t-port | primary | MoE align/dispatch (T>32) | queue | queued |  |  |  |  |  | required |  |
-| 2026-10-24T184527Z | marlin-two-stream-halves-port | primary | w13 marlin + silu-mul + w2 marlin (8<=T<=32, stream overlap) | queue | queued |  |  |  |  |  | required |  |
+| 2026-10-24T184247Z | sliding-fused-batched-decode-port | primary | FA3 call (sliding decode, batch > 1) | done/neutral | neutral | 1.2248 | [1.206,1.243] | b01fd2df41a040b3 | check |  | proceed | 5/5 |
+| 2026-10-24T184303Z | moe-dispatch-prep-on-side-stream | primary | MoE align/dispatch (stream placement) | done/neutral | neutral | 1.2294 | [1.211,1.248] | fe3422db9ea540d8 | check |  | proceed | 0/6 |
+| 2026-10-24T184316Z | pre-expert-rmsnorm-triton | primary | pre-expert norm | queue | hold |  |  |  |  |  | hold |  |
+| 2026-10-24T184335Z | moe-small-t-cuda-swapab-port | rewrite | w13 marlin + silu-mul + w2 marlin (T<=32) | queue | hold |  |  |  |  |  | required |  |
+| 2026-10-24T184355Z | moe-bs1-fused-persistent-port | primary | w13 marlin + silu-mul + w2 marlin + post-expert combine (T=1) | queue | hold |  |  |  |  |  | hold |  |
+| 2026-10-24T184430Z | l2-prefetch-o-pooler-during-sliding-attention | primary | o GEMM + pooler GEMM (L2 warm-up overlapped with attention) | done/regression | regression | 1.1670 | [1.150,1.185] | 96ee63e15edb438c | check |  | proceed | 3/6 |
+| 2026-10-24T184451Z | prefork-qkv-o-swapab-t16-t32 | primary | qkv GEMM + o GEMM (before the router fork) | queue | hold |  |  |  |  |  | hold |  |
+| 2026-10-24T184511Z | moe-align-parallel-large-t-port | primary | MoE align/dispatch (T>32) | done/neutral | neutral | 1.2433 | [1.225,1.262] | b42e33406f2d4978 | check |  | proceed | 3/4 |
+| 2026-10-24T184527Z | marlin-two-stream-halves-port | primary | w13 marlin + silu-mul + w2 marlin (8<=T<=32, stream overlap) | queue | hold |  |  |  |  |  | hold |  |
+| 2026-10-24T224424Z | dense-chain-stage2-attn-side-pdl | rewrite | qkv GEMM + o GEMM + attention-side small kernels (T<=32) | queue | queued |  |  |  |  |  | required |  |
+| 2026-10-24T224452Z | boundaries-unpooler-pdl-small-t | primary | post-MoE unpooler + residual boundaries (T<=32) | queue | queued |  |  |  |  |  | required |  |
+| 2026-10-24T224452Z | dl-route-warp-topk-pdl | primary | routing top-k + MoE align (kernel R, T<=32) | queue | queued |  |  |  |  |  | required |  |
+| 2026-10-24T224506Z | dl-p-wide-tile-t16-t32 | primary | pooler + router GEMM (kernel P, T=9..32) | queue | queued |  |  |  |  |  | required |  |
+| 2026-10-24T224525Z | full-decode-splitkv-restack-on-pdl | primary | FA3 call (full decode, batch > 1) | running | running |  |  |  |  |  | required |  |
+| 2026-10-24T224525Z | sliding-decode1-fused-restack-on-pdl | primary | FA3 call (sliding decode, batch 1) | done/neutral | neutral | 1.2374 | [1.219,1.256] | 30027c28212946fd | check |  | required | 1/4 |
+| 2026-10-24T233529Z | stack-align-par-sliding1 | primary | MoE align (T>32) + sliding batch-1 attention | done/neutral | neutral | 1.2444 | [1.226,1.263] | d41952184b714e37 | check |  | required | 1/1 |
+| 2026-10-24T233637Z | stack-sidestream-sliding1 | primary | T>32 MoE dispatch on the side stream + sliding batch-1 fused attention | done/neutral | neutral | 1.2352 | [1.217,1.254] | 158fed699fdb4d0e | check |  | required | 1/1 |
+| 2026-10-24T233637Z | stack-align-par-sliding-batched | primary | T>32 parallel align + sliding batch>1 fused attention | done/failed | failed |  |  | b94e797333fb4a27 | check |  | required | 0/1 |
+| 2026-10-24T233638Z | stack-sidestream-sliding-batched | primary | T>32 MoE dispatch on the side stream + sliding batch>1 fused attention | done/neutral | neutral | 1.2443 | [1.226,1.263] | 2193fc0dc9be4b3c | check |  | required | 1/1 |
+| 2026-10-24T233721Z | stack-align-par-sidestream-sliding1 | primary | T>32 MoE dispatch (parallel align on the side stream) + sliding batch-1 attention | done/neutral | neutral | 1.2495 | [1.231,1.268] | cc92097b64784c0f | check |  | required | 1/1 |
 
 ## Held
 
@@ -56,3 +67,8 @@ Regenerated 2026-10-24T184810Z. Best: 1.2283x [1.2099,1.2468] job `81ee6714b7614
 - triton-flash-decode-full-verify-paired-kv: adversarial review: Stage 1 measured the paired-KV kernel at about 1.63-1.66 TB/s, which is slower than FA3: 200.8 vs 188.8 us at decode_16 and 394.8 vs 374.4 us at decode_32. That
 - bf16-m32-swapab-wgmma-port: reviewer: ~0.15% headline (3-5 us at decode_32), inside drift; edits the same call sites as bf16-shape-gated-triton-gemms-small-t (in the judge). Revisit as part of a combined decode GEMM restack after that harvests (per-layer kernel names for attribution)
 - moe-align-small-t-restack-on-master: projected +0.5-0.9% is below noise, and small-t-launch-minimal-dense-chain-pdl (built for the reset) replaces the same align at T<=32. Revisit only if that rewrite fails.
+- pre-expert-rmsnorm-triton: adversarial review: Stale premise: master (small-t-launch-minimal-dense-chain-pdl, f1f2f35) already folds the pre-expert RMSNorm into dl_route_norm_align at T <= 32, so 4 of the 6 
+- moe-small-t-cuda-swapab-port: its parent, moe cuda-nvfp4-swapab-mma-persistent-small-m (8f198afc3bf14f6f), failed its tests on 2026-10-24; the minter made dispatch conditional on that parent winning
+- moe-bs1-fused-persistent-port: adversarial review: Hold: the hypothesis gates its own dispatch on the moe parent (1105a02aa3fa4e56) being faster than moe master at bs=1, and it was not (bs=1 50.93 us vs 48.37 us
+- prefork-qkv-o-swapab-t16-t32: adversarial review: Its main purpose no longer holds on the current master: small-t-launch-minimal-dense-chain-pdl removed the router side stream at T<=32, so there is no fork for 
+- marlin-two-stream-halves-port: adversarial review: Hold: the moe parent it ports (marlin-two-stream-expert-halves-small-m, job 5d630369b1634f77) came back neutral, with every scored shape flat and verify_1 1.5% 
