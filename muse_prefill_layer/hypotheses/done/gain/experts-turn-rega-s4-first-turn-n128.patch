@@ -1,0 +1,911 @@
+diff --git a/muse_prefill_layer/submission.py b/muse_prefill_layer/submission.py
+index 712edc5e..c2e3e595 100644
+--- a/muse_prefill_layer/submission.py
++++ b/muse_prefill_layer/submission.py
+@@ -49,6 +49,7 @@ Differs from SGLang (as baseline.py does):
+ from typing import TypedDict
+ 
+ import copy
++import hashlib
+ import os
+ import re
+ import time
+@@ -625,8 +626,9 @@ def _experts(x, topk_weights, local_ids, state):
+     """Shape gate. For T <= MARLIN_MAX_TOKENS, in this order: the register-A wgmma kernel (REGA_MIN_TOKENS < T)
+     when prepare()'s gate for the T's class ('low' T <= REGA_LOW_MAX, 'high' above) turned it ON; else the
+     dequant-producer SS-wgmma kernel for SSDQ_MIN_TOKENS < T when its turn_4 gate turned it ON; else Marlin.
+-    The Triton NVFP4 GEMM above MARLIN_MAX_TOKENS. Reads the token count (a shape) and prepare-time flags,
+-    never tensor values."""
++    Above MARLIN_MAX_TOKENS: the register-A wgmma kernel for T <= REGA_FT_MAX when prepare()'s first-turn
++    gate ('ft') turned it ON, else (and always above REGA_FT_MAX) the Triton NVFP4 GEMM. Reads the token count
++    (a shape) and prepare-time flags, never tensor values."""
+     tokens = x.shape[0]
+     if tokens <= MARLIN_MAX_TOKENS:
+         if tokens > REGA_MIN_TOKENS and state.get("rega_ok", {}).get("low" if tokens <= REGA_LOW_MAX else "high", False):
+@@ -634,6 +636,8 @@ def _experts(x, topk_weights, local_ids, state):
+         if tokens > SSDQ_MIN_TOKENS and state.get("ssdq_ok", False):
+             return _experts_ssdq(x, topk_weights, local_ids, state)
+         return _experts_marlin(x, topk_weights, local_ids, state)
++    if tokens <= REGA_FT_MAX and state.get("rega_ok", {}).get("ft", False):
++        return _experts_rega(x, topk_weights, local_ids, state)
+     return _experts_triton(x, topk_weights, local_ids, state)
+ 
+ 
+@@ -806,6 +810,55 @@ def _align_par_setup(state, device):
+     print(f"{ALIGN_PAR_TAG} {'ON' if state['align_par_ok'] else 'OFF'} cases={cases} mismatches={mismatches}"
+           f" (PATH CHOSEN = {'parallel align' if state['align_par_ok'] else 'MASTER align'} on the Marlin path)",
+           flush=True)
++    _align_par_ft_setup(state, device)
++
++
++ALIGN_PAR_FT_TOKENS = (8192, 16384)
++
++
++def _align_par_ft_setup(state, device):
++    """Untimed, prepare() only (experts-turn-rega-s4-first-turn-n128): the same per-expert comparison with
++    moe_align_block_size at the first-turn sizes, at Marlin's block size for the T and at REGA_BSM (the rega
++    path's block), on random, skewed and local-saturated (every route on a local expert: the most blocks)
++    routings. Sets state["align_par_ft_ok"] only, so a miss here turns off the rega first-turn class and never
++    master's Marlin-path align."""
++    state["align_par_ft_ok"] = False
++    cases = mismatches = 0
++    try:
++        gen = torch.Generator(device=device).manual_seed(20261025)
++        for tokens in ALIGN_PAR_FT_TOKENS:
++            for kind in ("random", "skewed", "local"):
++                if kind == "local":
++                    ids = torch.rand((tokens, LOCAL_EXPERTS), generator=gen, device=device).topk(
++                        TOP_K, dim=1).indices.to(torch.int32)
++                else:
++                    ids = torch.randint(0, N_EXPERTS, (tokens, TOP_K), generator=gen, device=device,
++                                        dtype=torch.int32)
++                    if kind == "skewed":
++                        ids[:, :4] = torch.tensor([0, 31, 5, 17], dtype=torch.int32, device=device)
++                local_ids = torch.where(ids < LOCAL_EXPERTS, ids, torch.full_like(ids, -1)).contiguous()
++                for bsm in BLOCK_SIZE_M_CANDIDATES:
++                    if tokens * TOP_K / LOCAL_EXPERTS / bsm < 0.9:
++                        break
++                for b in sorted({bsm, REGA_BSM}):
++                    r_sorted, r_blocks, r_pad = moe_align_block_size(local_ids, b, N_EXPERTS)
++                    n_local, (n_sorted, n_blocks, n_pad) = _align_parallel(local_ids, 0, LOCAL_EXPERTS, b)
++                    cases += 1
++                    bad = not torch.equal(n_local, local_ids)
++                    if not bad:
++                        bad = (_align_par_ref_view(r_sorted, r_blocks, r_pad, ids.numel(), b)
++                               != _align_par_ref_view(n_sorted, n_blocks, n_pad, ids.numel(), b))
++                    if bad:
++                        mismatches += 1
++                        print(f"{ALIGN_PAR_TAG}   mismatch T={tokens} {kind} bsm={b}", flush=True)
++        torch.cuda.synchronize()
++        state["align_par_ft_ok"] = cases > 0 and mismatches == 0
++    except Exception as e:
++        print(f"{ALIGN_PAR_TAG} first-turn cases raised {e!r}", flush=True)
++        mismatches = max(mismatches, 1)
++        state["align_par_ft_ok"] = False
++    print(f"{ALIGN_PAR_TAG} first-turn T {ALIGN_PAR_FT_TOKENS}: {'ok' if state['align_par_ft_ok'] else 'MISS'} "
++          f"cases={cases} mismatches={mismatches} (gates only the rega first-turn class)", flush=True)
+ # Marlin-path silu-mul over the aligned local rows only (hypothesis silu-mul-triton-local-rows-marlin-turn):
+ # SGLang's act_and_mul_kernel launches over all T*8 slots; this walks moe_align_block_size's sorted_ids
+ # up to n_padded and computes silu(gate) * up for slots whose local id is >= 0 (remote and padding rows
+@@ -2004,12 +2057,26 @@ REGA_EPI_BYTES = {True: 128 * (64 * 2 + 16), False: 128 * (128 * 2 + 16)}
+ REGA_SMEM = {g: 1024 + REGA_STAGES * REGA_STAGE_BYTES + REGA_EPI_BYTES[g] for g in (True, False)}
+ REGA_STATIC_SMEM_BOUND = 16384  # tables + barriers (the C++ static_assert uses the same bound)
+ REGA_SMEM_LIMIT = 227 * 1024
+-REGA_EXT_NAME = "muse_prefill_rega_v1"
++REGA_EXT_NAME = "muse_prefill_rega_v2"  # v2: rega_kernel<G, BIG> (first-turn capacity class)
+ REGA_GENCODE = "-gencode=arch=compute_90a,code=sm_90a"
+ REGA_CUDA_CFLAGS = ["-O3", "-std=c++20", "-lineinfo", REGA_GENCODE]
+ REGA_MAGIC = 0x57474d4d        # block 0 of each kernel writes it to err[1] (w13) / err[2] (w2)
+ REGA_ERR_TEXT = {0: "ok", 1: "mbarrier wait timed out", 2: "non-sm_90a image ran (wgmma compiled out)",
+                  3: "block or chunk table overflow", 4: "an expert owns two runs of blocks (align not sorted)"}
++# experts-turn-rega-s4-first-turn-n128 (rewrite stage 2): class 'ft' = MARLIN_MAX_TOKENS < T <= REGA_FT_MAX, gated
++# at T = 16384 (soft routing) against master's Triton block (the rega-off dispatch). The kernel's first-turn
++# capacity class (rega_kernel<G, true>) holds the worst case at REGA_FT_MAX (every route local); T > REGA_FT_MAX
++# always stays on Triton (shape-based).
++REGA_FT_MAX = 16384
++REGA_FT_GATE_TOKENS = 16384
++REGA_MAXBLK = 2304             # small class block table (C++ MAXBLK); larger tables launch the first-turn class
++REGA_MAXBLK_FT = 8224          # C++ MAXBLK_FT
++REGA_MAXC_FT = 1088            # C++ MAXC_FT
++REGA_FT_START_DEADLINE_S = 150.0   # no ft checks if prepare() has already used this many seconds
++# (4500, local): 36480 slots = 2280 blocks, the largest stage-1-class table above 4096 (class boundary)
++REGA_FT_SELF_CHECKS = ((4500, "local"), (8192, "random"), (8192, "local"), (16384, "random"), (16384, "skewed"),
++                       (16384, "one"), (16384, "local"))
++REGA_FT_REPLAY_PLAN = ((8192, ("random", "local")), (16384, ("random", "skewed", "one", "local")))
+ REGA_STATE_KEYS = ("rega_ext", "rega_bank", "rega_err", "rega_grid", "post_expert_w", "zero_nonlocal_w2",
+                    "align_par_ok")
+ 
+@@ -2048,6 +2115,11 @@ constexpr int SLAB_HALF = 128 * 128;             // one SWIZZLE_128B box: up to
+ constexpr int STAGE_BYTES = WST + 2 * SLAB_HALF; // 41984
+ constexpr int MAXBLK = 2304;                     // block-table capacity (T = 4096: 2078 blocks of 16)
+ constexpr int MAXC = 512;                        // chunk-table capacity (<= 8 blocks per chunk)
++// first-turn capacity class (T <= 16384): worst case 131072 local routes + 32 x 15 padding = 8222 blocks of 16
++// and <= 8222 / 8 + 32 = 1059 chunks. Its block-expert table is read from global (__ldg), only the chunk
++// tables live in shared memory (2 x 1088 x 4 B).
++constexpr int MAXBLK_FT = 8224;
++constexpr int MAXC_FT = 1088;
+ constexpr int MAXE = 32;                         // local experts
+ constexpr int PITCH13 = 64 * 2 + 16;             // staging row pitch, w13 (64 bf16 + pad)
+ constexpr int PITCH2 = 128 * 2 + 16;             // staging row pitch, w2 (128 bf16 + pad)
+@@ -2058,6 +2130,35 @@ struct Smem {
+   static constexpr int BYTES = 1024 + STAGES * STAGE_BYTES + EPI;
+ };
+ static_assert(Smem<false>::BYTES + 16384 <= 227 * 1024, "shared memory budget");
++// Capacity class: BIG = false is the T <= 4096 build (tables and smem exactly as stage 1); BIG = true serves
++// 4096 < T <= 16384 with the block-expert table in global memory.
++template <bool BIG>
++struct Cap {
++  static constexpr int BLK = BIG ? MAXBLK_FT : MAXBLK;
++  static constexpr int C = BIG ? MAXC_FT : MAXC;
++  static constexpr int SBE = BIG ? 1 : MAXBLK;   // shared block-expert table entries
++};
++// static tables + barriers / per-expert arrays stay under the 16384 B static bound in both classes
++static_assert((Cap<false>::SBE + 2 * Cap<false>::C) * 4 + 1024 <= 16384, "static smem, small class");
++static_assert((Cap<true>::SBE + 2 * Cap<true>::C) * 4 + 1024 <= 16384, "static smem, first-turn class");
++// Block-expert table views: the small class indexes its shared copy (a plain pointer, as stage 1); the large
++// class reads global memory through the read-only path.
++struct GTab {
++  const int* p;
++  __device__ __forceinline__ int operator[](int i) const { return __ldg(p + i); }
++};
++template <bool BIG>
++struct BeSel;
++template <>
++struct BeSel<false> {
++  using T = const int*;
++  static __device__ __forceinline__ T make(const int* s, const int* g) { return s; }
++};
++template <>
++struct BeSel<true> {
++  using T = GTab;
++  static __device__ __forceinline__ T make(const int* s, const int* g) { return GTab{g}; }
++};
+ 
+ struct __align__(64) Maps { CUtensorMap m[4]; };
+ 
+@@ -2198,7 +2299,9 @@ struct Item {
+ };
+ // Item it of the (expert, tile, chunk) order. Expert group = chunks [f, f + k) of one expert
+ // (f = gfirst[e], k = gcount[e]), items [f * T, (f + k) * T); it / T always lands inside its own group.
+-__device__ __forceinline__ Item decode_item(int it, int T, const int* be, const int* cblk, const int* cnb,
++// be: the block-expert table view (shared pointer in the small class, GTab in the first-turn class).
++template <class BE>
++__device__ __forceinline__ Item decode_item(int it, int T, BE be, const int* cblk, const int* cnb,
+                                             const int* gfirst, const int* gcount) {
+   const int cg = it / T;
+   const int ge = be[cblk[cg]];
+@@ -2325,7 +2428,7 @@ __device__ __forceinline__ void consume_item(const Item& m, uint8_t* smem, uint8
+   }
+ }
+ 
+-template <bool G>
++template <bool G, bool BIG>
+ __global__ void __launch_bounds__(THREADS, 1)
+ rega_kernel(const __grid_constant__ Maps maps,
+           const uint8_t* __restrict__ wbank,        // [E][T][K/64][REC]
+@@ -2342,7 +2445,8 @@ rega_kernel(const __grid_constant__ Maps maps,
+   if (blockIdx.x == 0 && threadIdx.x == 0) err[G ? 1 : 2] = 0x57474d4d;
+   extern __shared__ __align__(1024) uint8_t smem_raw[];
+   __shared__ __align__(8) uint64_t bars[2 * STAGES];
+-  __shared__ int s_be[MAXBLK], s_cblk[MAXC], s_cnb[MAXC];
++  constexpr int CBLK = Cap<BIG>::BLK, CC = Cap<BIG>::C;
++  __shared__ int s_be[Cap<BIG>::SBE], s_cblk[CC], s_cnb[CC];
+   __shared__ int s_first[MAXE], s_gfirst[MAXE], s_gcount[MAXE];
+   __shared__ int s_wsum[THREADS / 32];
+   __shared__ int s_bad;  // set when an expert owns two runs: the chunk groups would not be contiguous
+@@ -2351,13 +2455,17 @@ rega_kernel(const __grid_constant__ Maps maps,
+   uint8_t* smem = smem_raw + ((1024u - (raw & 1023u)) & 1023u);
+   uint8_t* ep = smem + STAGES * STAGE_BYTES;
+   const uint32_t full0 = smem_u32(&bars[0]), empty0 = smem_u32(&bars[STAGES]);
++  // block-expert table view: s_be (small class) or block_experts in global via __ldg (first-turn class)
++  const typename BeSel<BIG>::T be = BeSel<BIG>::make(s_be, block_experts);
+ 
+   int nb = __ldg(n_padded) / 16;
+   const int nb_wanted = nb;
+   nb = nb < blocks_len ? nb : blocks_len;
+-  nb = nb < MAXBLK ? nb : MAXBLK;
++  nb = nb < CBLK ? nb : CBLK;
+   if (tid == 0 && nb_wanted > nb) atomicExch(err, 3);  // never truncate silently
+-  for (int b = tid; b < nb; b += THREADS) s_be[b] = __ldg(block_experts + b);
++  if constexpr (!BIG) {
++    for (int b = tid; b < nb; b += THREADS) s_be[b] = __ldg(block_experts + b);
++  }
+   if (tid < MAXE) {
+     s_first[tid] = -1;
+     s_gfirst[tid] = 0;
+@@ -2379,8 +2487,8 @@ rega_kernel(const __grid_constant__ Maps maps,
+   // that is not sorted) loses the CAS and sets error word 4: never a silent mis-chunking. Any expert id outside
+   // [0, n_experts) is not local.
+   for (int b = tid; b < nb; b += THREADS) {
+-    const int e = s_be[b];
+-    if (e >= 0 && e < n_experts && e < MAXE && (b == 0 || s_be[b - 1] != e)) {
++    const int e = be[b];
++    if (e >= 0 && e < n_experts && e < MAXE && (b == 0 || be[b - 1] != e)) {
+       if (atomicCAS(&s_first[e], -1, b) != -1) {
+         atomicExch(err, 4);
+         s_bad = 1;
+@@ -2396,11 +2504,11 @@ rega_kernel(const __grid_constant__ Maps maps,
+     const int b = r0 + tid;
+     int flag = 0, cn = 0;
+     if (b < nb) {
+-      const int e = s_be[b];
++      const int e = be[b];
+       if (e >= 0 && e < n_experts && e < MAXE && s_first[e] >= 0 && ((b - s_first[e]) & 7) == 0) {
+         flag = 1;
+         cn = 1;
+-        while (cn < 8 && b + cn < nb && s_be[b + cn] == e) ++cn;
++        while (cn < 8 && b + cn < nb && be[b + cn] == e) ++cn;
+       }
+     }
+     const unsigned ball = __ballot_sync(0xffffffffu, flag);
+@@ -2413,7 +2521,7 @@ rega_kernel(const __grid_constant__ Maps maps,
+       int off = 0;
+       for (int w = 0; w < warp; ++w) off += s_wsum[w];
+       const int idx = base + off + __popc(ball & ((1u << lane) - 1u));
+-      if (idx < MAXC) {
++      if (idx < CC) {
+         s_cblk[idx] = b;
+         s_cnb[idx] = cn;
+       }
+@@ -2421,13 +2529,13 @@ rega_kernel(const __grid_constant__ Maps maps,
+     base += tot;
+     __syncthreads();
+   }
+-  if (tid == 0 && base > MAXC) atomicExch(err, 3);
+-  const int nc = base < MAXC ? base : MAXC;
++  if (tid == 0 && base > CC) atomicExch(err, 3);
++  const int nc = base < CC ? base : CC;
+   // Per-expert chunk group: first chunk and chunk count (chunks of one expert are consecutive).
+   for (int c = tid; c < nc; c += THREADS) {
+-    const int e = s_be[s_cblk[c]];
++    const int e = be[s_cblk[c]];
+     atomicAdd(&s_gcount[e], 1);
+-    if (c == 0 || s_be[s_cblk[c - 1]] != e) s_gfirst[e] = c;
++    if (c == 0 || be[s_cblk[c - 1]] != e) s_gfirst[e] = c;
+   }
+   __syncthreads();
+ 
+@@ -2442,7 +2550,7 @@ rega_kernel(const __grid_constant__ Maps maps,
+       const int KC = K / 64;
+       int n = 0;
+       for (int it = blockIdx.x; it < total; it += gridDim.x) {
+-        const Item m = decode_item(it, n_tiles, s_be, s_cblk, s_cnb, s_gfirst, s_gcount);
++        const Item m = decode_item(it, n_tiles, be, s_cblk, s_cnb, s_gfirst, s_gcount);
+         const uint8_t* wsrc = wbank + (static_cast<size_t>(m.e) * n_tiles + m.j) * static_cast<size_t>(KC) * REC;
+         const uint64_t map = reinterpret_cast<uint64_t>(&maps.m[m.bucket]);
+         const uint32_t tx = WST + 2 * (16 << m.bucket) * 128;
+@@ -2463,7 +2571,7 @@ rega_kernel(const __grid_constant__ Maps maps,
+     const int ctid = tid - 128, cw = ctid >> 5;
+     int n = 0;
+     for (int it = blockIdx.x; it < total; it += gridDim.x) {
+-      const Item m = decode_item(it, n_tiles, s_be, s_cblk, s_cnb, s_gfirst, s_gcount);
++      const Item m = decode_item(it, n_tiles, be, s_cblk, s_cnb, s_gfirst, s_gcount);
+ #define WG_CONSUME(NB_)                                                                                      \
+   consume_item<NB_, G>(m, smem, ep, full0, empty0, n, KS, cw, lane, ctid, gs, sorted_ids, num_routes, out,  \
+                        out_ld, err, dead)
+@@ -2525,16 +2633,16 @@ EncodeTiledFn get_encode() {
+   return reinterpret_cast<EncodeTiledFn>(fn);
+ }
+ 
+-template <bool G>
++template <bool G, bool BIG>
+ void info_one(std::vector<int64_t>& r) {
+-  const void* fn = reinterpret_cast<const void*>(rega_kernel<G>);
++  const void* fn = reinterpret_cast<const void*>(rega_kernel<G, BIG>);
+   const cudaError_t e1 = cudaFuncSetAttribute(fn, cudaFuncAttributeMaxDynamicSharedMemorySize, Smem<G>::BYTES);
+   cudaFuncAttributes a{};
+   const cudaError_t e2 = cudaFuncGetAttributes(&a, fn);
+   int occ = 0;
+   const cudaError_t e3 = cudaOccupancyMaxActiveBlocksPerMultiprocessor(&occ, fn, THREADS, Smem<G>::BYTES);
+   if (e1 != cudaSuccess || e2 != cudaSuccess || e3 != cudaSuccess) (void)cudaGetLastError();
+-  r.push_back(G ? 1 : 0);
++  r.push_back((G ? 1 : 0) + (BIG ? 2 : 0));
+   r.push_back(e1 == cudaSuccess && e2 == cudaSuccess && e3 == cudaSuccess ? 1 : 0);
+   r.push_back(a.numRegs);
+   r.push_back(static_cast<int64_t>(a.localSizeBytes));
+@@ -2548,13 +2656,16 @@ void info_one(std::vector<int64_t>& r) {
+ 
+ }  // namespace
+ 
+-// Per instantiation (w13 then w2): gated, attribute calls ok, numRegs, localSizeBytes, static
++// Per instantiation (w13 then w2 of the small class, then w13 then w2 of the first-turn class): gated + 2 x
++// first-turn class, attribute calls ok, numRegs, localSizeBytes, static
+ // smem, dynamic smem, occupancy (CTAs per SM), cudaFuncSetAttribute's error code, binaryVersion,
+ // ptxVersion (both report 90 for sm_90 and sm_90a: logged only; error word 2 is the real proof).
+ std::vector<int64_t> rega_init() {
+   std::vector<int64_t> r;
+-  info_one<true>(r);
+-  info_one<false>(r);
++  info_one<true, false>(r);
++  info_one<false, false>(r);
++  info_one<true, true>(r);
++  info_one<false, true>(r);
+   return r;
+ }
+ 
+@@ -2589,12 +2700,15 @@ void rega_gemm(int64_t which, torch::Tensor bsrc, torch::Tensor wbank,
+               block_experts.scalar_type() == at::kInt && n_padded.scalar_type() == at::kInt &&
+               out.scalar_type() == at::kBFloat16 && err.scalar_type() == at::kInt && err.numel() >= 3,
+               "rega_gemm: layout");
+-  TORCH_CHECK(K % BK == 0 && block_experts.numel() <= MAXBLK && gs.numel() <= MAXE && sorted_ids.numel() <= bsrc.size(0),
++  TORCH_CHECK(K % BK == 0 && block_experts.numel() <= MAXBLK_FT && gs.numel() <= MAXE && sorted_ids.numel() <= bsrc.size(0),
+               "rega_gemm: sizes");
+   TORCH_CHECK(wbank.numel() == gs.numel() * n_tiles * (K / 64) * REC, "rega_gemm: weight bank size");
+   TORCH_CHECK(out.size(1) == (which == 0 ? n_tiles * 64 : n_tiles * 128), "rega_gemm: output width");
+   auto stream = at::cuda::getCurrentCUDAStream();
+   const int blocks_len = static_cast<int>(block_experts.numel());
++  // Capacity class from the table length (a shape: T * 8 + 32 * 15 slots / 16): the stage-1 instantiation
++  // for every table it can hold (all T <= 4096), the first-turn one above.
++  const bool big = blocks_len > MAXBLK;
+   // s5: encode this launch's four tensor maps (N buckets 16/32/64/128) over the bsrc passed in THIS call,
+   // into a stack-local Maps passed by value as the __grid_constant__ kernel parameter (frozen into the
+   // graph node at capture). Host-only driver work: no sync, no allocation, nothing persisted.
+@@ -2615,13 +2729,17 @@ void rega_gemm(int64_t which, torch::Tensor bsrc, torch::Tensor wbank,
+       TORCH_CHECK(rc == CUDA_SUCCESS, "rega_gemm: tensor map ", b, " rc ", static_cast<int>(rc));
+     }
+   }
+-#define WG_LAUNCH(G_)                                                                                         \
+-  rega_kernel<G_><<<static_cast<unsigned>(grid), THREADS, Smem<G_>::BYTES, stream>>>(                          \
++#define WG_LAUNCH(G_, B_)                                                                                     \
++  rega_kernel<G_, B_><<<static_cast<unsigned>(grid), THREADS, Smem<G_>::BYTES, stream>>>(                          \
+       mp, reinterpret_cast<uint8_t*>(wbank.data_ptr()), reinterpret_cast<float*>(gs.data_ptr()), reinterpret_cast<int*>(sorted_ids.data_ptr()),             \
+       reinterpret_cast<int*>(block_experts.data_ptr()), reinterpret_cast<int*>(n_padded.data_ptr()), blocks_len, static_cast<int>(num_routes),      \
+       static_cast<int>(n_tiles), static_cast<int>(K), static_cast<int>(gs.numel()),                           \
+       reinterpret_cast<__nv_bfloat16*>(out.data_ptr()), static_cast<int>(out.size(1)), reinterpret_cast<int*>(err.data_ptr()))
+-  if (which == 0) WG_LAUNCH(true); else WG_LAUNCH(false);
++  if (which == 0) {
++    if (big) WG_LAUNCH(true, true); else WG_LAUNCH(true, false);
++  } else {
++    if (big) WG_LAUNCH(false, true); else WG_LAUNCH(false, false);
++  }
+ #undef WG_LAUNCH
+   C10_CUDA_KERNEL_LAUNCH_CHECK();
+ }
+@@ -2659,7 +2777,175 @@ def _rega_src():
+     return _REGA_HEAD + _rega_wgmma_src() + _REGA_BODY
+ 
+ 
+-def _rega_build():
++# Build-failure fallback (pre-flight audit): if muse_prefill_rega_v2 does not compile or load, prepare() builds
++# master's exact stage-1 extension (muse_prefill_rega_v1) instead, so the low / high classes master ships survive
++# and 'ft' stays OFF. Its source is derived from the v2 source by reverting this stage's edits, and is used
++# only when its sha256 equals master's (else no fallback: everything OFF, as before).
++REGA_EXT_NAME_V1 = "muse_prefill_rega_v1"
++REGA_V1_SHA256 = "244ca8b9220a6adc820f3ef7eec3717c5ce1f2be7caf238158008807fb534a0f"
++_REGA_V1_EDITS = (  # (part, text in v2, master's text)
++    ("head",
++     ('// first-turn capacity class (T <= 16384): worst case 131072 local routes + 32 x 15 padding = 8222 blocks of 16\n'
++      '// and <= 8222 / 8 + 32 = 1059 chunks. Its block-expert table is read from global (__ldg), only the chunk\n'
++      '// tables live in shared memory (2 x 1088 x 4 B).\n'
++      'constexpr int MAXBLK_FT = 8224;\n'
++      'constexpr int MAXC_FT = 1088;\n'),
++     ""),
++    ("head",
++     ('// Capacity class: BIG = false is the T <= 4096 build (tables and smem exactly as stage 1); BIG = true serves\n'
++      '// 4096 < T <= 16384 with the block-expert table in global memory.\n'
++      'template <bool BIG>\n'
++      'struct Cap {\n'
++      '  static constexpr int BLK = BIG ? MAXBLK_FT : MAXBLK;\n'
++      '  static constexpr int C = BIG ? MAXC_FT : MAXC;\n'
++      '  static constexpr int SBE = BIG ? 1 : MAXBLK;   // shared block-expert table entries\n'
++      '};\n'
++      '// static tables + barriers / per-expert arrays stay under the 16384 B static bound in both classes\n'
++      'static_assert((Cap<false>::SBE + 2 * Cap<false>::C) * 4 + 1024 <= 16384, "static smem, small class");\n'
++      'static_assert((Cap<true>::SBE + 2 * Cap<true>::C) * 4 + 1024 <= 16384, "static smem, first-turn class");\n'
++      '// Block-expert table views: the small class indexes its shared copy (a plain pointer, as stage 1); the large\n'
++      '// class reads global memory through the read-only path.\n'
++      'struct GTab {\n'
++      '  const int* p;\n'
++      '  __device__ __forceinline__ int operator[](int i) const { return __ldg(p + i); }\n'
++      '};\n'
++      'template <bool BIG>\n'
++      'struct BeSel;\n'
++      'template <>\n'
++      'struct BeSel<false> {\n'
++      '  using T = const int*;\n'
++      '  static __device__ __forceinline__ T make(const int* s, const int* g) { return s; }\n'
++      '};\n'
++      'template <>\n'
++      'struct BeSel<true> {\n'
++      '  using T = GTab;\n'
++      '  static __device__ __forceinline__ T make(const int* s, const int* g) { return GTab{g}; }\n'
++      '};\n'),
++     ""),
++    ("body",
++     ('// be: the block-expert table view (shared pointer in the small class, GTab in the first-turn class).\n'
++      'template <class BE>\n'
++      '__device__ __forceinline__ Item decode_item(int it, int T, BE be, const int* cblk, const int* cnb,\n'),
++     ('__device__ __forceinline__ Item decode_item(int it, int T, const int* be, const int* cblk, const int* cnb,\n')),
++    ("body",
++     ('  }\n'
++      '}\n'
++      '\n'
++      'template <bool G, bool BIG>\n'),
++     ('  }\n'
++      '}\n'
++      '\n'
++      'template <bool G>\n')),
++    ("body",
++     ('  constexpr int CBLK = Cap<BIG>::BLK, CC = Cap<BIG>::C;\n'
++      '  __shared__ int s_be[Cap<BIG>::SBE], s_cblk[CC], s_cnb[CC];\n'),
++     ('  __shared__ int s_be[MAXBLK], s_cblk[MAXC], s_cnb[MAXC];\n')),
++    ("body",
++     ('  // block-expert table view: s_be (small class) or block_experts in global via __ldg (first-turn class)\n'
++      '  const typename BeSel<BIG>::T be = BeSel<BIG>::make(s_be, block_experts);\n'),
++     ""),
++    ("body",
++     ('  nb = nb < CBLK ? nb : CBLK;\n'),
++     ('  nb = nb < MAXBLK ? nb : MAXBLK;\n')),
++    ("body",
++     ('  if constexpr (!BIG) {\n'
++      '    for (int b = tid; b < nb; b += THREADS) s_be[b] = __ldg(block_experts + b);\n'
++      '  }\n'),
++     ('  for (int b = tid; b < nb; b += THREADS) s_be[b] = __ldg(block_experts + b);\n')),
++    ("body",
++     ('    const int e = be[b];\n'
++      '    if (e >= 0 && e < n_experts && e < MAXE && (b == 0 || be[b - 1] != e)) {\n'),
++     ('    const int e = s_be[b];\n'
++      '    if (e >= 0 && e < n_experts && e < MAXE && (b == 0 || s_be[b - 1] != e)) {\n')),
++    ("body",
++     ('      const int e = be[b];\n'),
++     ('      const int e = s_be[b];\n')),
++    ("body",
++     ('        while (cn < 8 && b + cn < nb && be[b + cn] == e) ++cn;\n'),
++     ('        while (cn < 8 && b + cn < nb && s_be[b + cn] == e) ++cn;\n')),
++    ("body",
++     ('      if (idx < CC) {\n'),
++     ('      if (idx < MAXC) {\n')),
++    ("body",
++     ('  if (tid == 0 && base > CC) atomicExch(err, 3);\n'
++      '  const int nc = base < CC ? base : CC;\n'),
++     ('  if (tid == 0 && base > MAXC) atomicExch(err, 3);\n'
++      '  const int nc = base < MAXC ? base : MAXC;\n')),
++    ("body",
++     ('    const int e = be[s_cblk[c]];\n'),
++     ('    const int e = s_be[s_cblk[c]];\n')),
++    ("body",
++     ('    if (c == 0 || be[s_cblk[c - 1]] != e) s_gfirst[e] = c;\n'),
++     ('    if (c == 0 || s_be[s_cblk[c - 1]] != e) s_gfirst[e] = c;\n')),
++    ("body",
++     ('        const Item m = decode_item(it, n_tiles, be, s_cblk, s_cnb, s_gfirst, s_gcount);\n'),
++     ('        const Item m = decode_item(it, n_tiles, s_be, s_cblk, s_cnb, s_gfirst, s_gcount);\n')),
++    ("body",
++     ('    for (int it = blockIdx.x; it < total; it += gridDim.x) {\n'
++      '      const Item m = decode_item(it, n_tiles, be, s_cblk, s_cnb, s_gfirst, s_gcount);\n'),
++     ('    for (int it = blockIdx.x; it < total; it += gridDim.x) {\n'
++      '      const Item m = decode_item(it, n_tiles, s_be, s_cblk, s_cnb, s_gfirst, s_gcount);\n')),
++    ("body",
++     ('  return reinterpret_cast<EncodeTiledFn>(fn);\n'
++      '}\n'
++      '\n'
++      'template <bool G, bool BIG>\n'),
++     ('  return reinterpret_cast<EncodeTiledFn>(fn);\n'
++      '}\n'
++      '\n'
++      'template <bool G>\n')),
++    ("body",
++     ('  const void* fn = reinterpret_cast<const void*>(rega_kernel<G, BIG>);\n'),
++     ('  const void* fn = reinterpret_cast<const void*>(rega_kernel<G>);\n')),
++    ("body",
++     ('  r.push_back((G ? 1 : 0) + (BIG ? 2 : 0));\n'),
++     ('  r.push_back(G ? 1 : 0);\n')),
++    ("body",
++     ('// Per instantiation (w13 then w2 of the small class, then w13 then w2 of the first-turn class): gated + 2 x\n'
++      '// first-turn class, attribute calls ok, numRegs, localSizeBytes, static\n'),
++     ('// Per instantiation (w13 then w2): gated, attribute calls ok, numRegs, localSizeBytes, static\n')),
++    ("body",
++     ('  info_one<true, false>(r);\n'
++      '  info_one<false, false>(r);\n'
++      '  info_one<true, true>(r);\n'
++      '  info_one<false, true>(r);\n'),
++     ('  info_one<true>(r);\n'
++      '  info_one<false>(r);\n')),
++    ("body",
++     ('  TORCH_CHECK(K % BK == 0 && block_experts.numel() <= MAXBLK_FT && gs.numel() <= MAXE && sorted_ids.numel() <= bsrc.size(0),\n'),
++     ('  TORCH_CHECK(K % BK == 0 && block_experts.numel() <= MAXBLK && gs.numel() <= MAXE && sorted_ids.numel() <= bsrc.size(0),\n')),
++    ("body",
++     ('  // Capacity class from the table length (a shape: T * 8 + 32 * 15 slots / 16): the stage-1 instantiation\n'
++      '  // for every table it can hold (all T <= 4096), the first-turn one above.\n'
++      '  const bool big = blocks_len > MAXBLK;\n'),
++     ""),
++    ("body",
++     ('#define WG_LAUNCH(G_, B_)                                                                                     \\\n'
++      '  rega_kernel<G_, B_><<<static_cast<unsigned>(grid), THREADS, Smem<G_>::BYTES, stream>>>(                          \\\n'),
++     ('#define WG_LAUNCH(G_)                                                                                         \\\n'
++      '  rega_kernel<G_><<<static_cast<unsigned>(grid), THREADS, Smem<G_>::BYTES, stream>>>(                          \\\n')),
++    ("body",
++     ('  if (which == 0) {\n'
++      '    if (big) WG_LAUNCH(true, true); else WG_LAUNCH(true, false);\n'
++      '  } else {\n'
++      '    if (big) WG_LAUNCH(false, true); else WG_LAUNCH(false, false);\n'
++      '  }\n'),
++     ('  if (which == 0) WG_LAUNCH(true); else WG_LAUNCH(false);\n')),
++)
++
++
++def _rega_src_v1():
++    """Master's exact rega CUDA source (stage 1), or None when the reverted text does not hash to master's."""
++    parts = {"head": _REGA_HEAD, "body": _REGA_BODY}
++    for part, new, old in _REGA_V1_EDITS:
++        if parts[part].count(new) != 1:
++            return None
++        parts[part] = parts[part].replace(new, old)
++    src = parts["head"] + _rega_wgmma_src() + parts["body"]
++    return src if hashlib.sha256(src.encode()).hexdigest() == REGA_V1_SHA256 else None
++
++
++def _rega_build(name=REGA_EXT_NAME, src=None):
+     """Compile the module (prepare only, never during capture): (ext or None, error text). sm_90a only:
+     cpp_extension's JIT path appends -gencode flags from TORCH_CUDA_ARCH_LIST (else from the device, a plain
+     compute_90 pass that cannot assemble wgmma), so the list is set to 9.0a for the build and restored after;
+@@ -2685,7 +2971,7 @@ def _rega_build():
+             arch_flags = ["<unknown>"]
+         print(f"{REGA_TAG} build arch flags: TORCH_CUDA_ARCH_LIST={os.environ.get('TORCH_CUDA_ARCH_LIST')!r} -> "
+               f"{arch_flags}; extra_cuda_cflags {REGA_CUDA_CFLAGS}", flush=True)
+-        ext = load_inline(name=REGA_EXT_NAME, cpp_sources=_REGA_CPP, cuda_sources=_rega_src(),
++        ext = load_inline(name=name, cpp_sources=_REGA_CPP, cuda_sources=src if src is not None else _rega_src(),
+                           functions=["rega_init", "rega_gather", "rega_gemm"],
+                           extra_cuda_cflags=list(REGA_CUDA_CFLAGS), verbose=False)
+     except Exception as e:
+@@ -2909,13 +3195,18 @@ class _RegaTracer:
+ 
+     def __init__(self, tag):
+         self.tag = tag
++        self.t0 = 0.0
+ 
+     def __call__(self, when, name):
+         if when == "before":
+             print(f"{REGA_TAG} [{self.tag}] launching {name}", flush=True)
++            torch.cuda.synchronize()
++            self.t0 = time.perf_counter()
+             return
+         torch.cuda.synchronize()
+-        print(f"{REGA_TAG} [{self.tag}] {name} done", flush=True)
++        # eager host-timed launch + kernel (us): a ranking aid, not the judged number
++        print(f"{REGA_TAG} [{self.tag}] {name} done ({(time.perf_counter() - self.t0) * 1e6:.0f} us eager)",
++              flush=True)
+ 
+ 
+ def _rega_reference_y(x, local_ids, weights, cache):
+@@ -2977,7 +3268,39 @@ REGA_REPLAY_KINDS = ("random", "skewed", "one")
+ REGA_REPLAY_SEQ = ("A", "B", "C", "A", "B")
+ 
+ 
+-def _rega_replay_check(state, weights, cache, device, gen):
++def _rega_case(tokens, kind, gen, device):
++    """_ssdq_case, plus kind 'local': every token's top 8 drawn from the 32 local experts only (all 8 routes
++    local), which forces the most blocks and chunks the align can produce at this T."""
++    if kind != "local":
++        return _ssdq_case(tokens, kind, gen, device)
++    x = torch.randn((tokens, D_EXPERT), generator=gen, device=device, dtype=torch.float32).to(torch.bfloat16)
++    local_ids = torch.rand((tokens, LOCAL_EXPERTS), generator=gen, device=device).topk(
++        TOP_K, dim=1).indices.to(torch.int32).contiguous()
++    tw = torch.rand((tokens, TOP_K), generator=gen, device=device, dtype=torch.float32) + 0.1
++    tw = (tw / tw.sum(dim=1, keepdim=True)).contiguous()
++    return x, tw, local_ids
++
++
++def _rega_incumbent(tokens):
++    """(name, fn) of master's expert block at this T without rega: Marlin up to MARLIN_MAX_TOKENS, else Triton.
++    The self-check bound is calibrated on its error against the fp32 reference."""
++    if tokens <= MARLIN_MAX_TOKENS:
++        return "marlin", _experts_marlin
++    return "triton", _experts_triton
++
++
++def _rega_tiles(lids):
++    """prepare() only: the rega align's table sizes for these ids: (blocks table length, used blocks, chunks,
++    max chunks of one expert). Work items: chunks x 64 (w13) and chunks x 32 (w2)."""
++    _, (_, block_experts, n_padded) = _align_parallel(lids, 0, LOCAL_EXPERTS, REGA_BSM)
++    used = min(int(n_padded.cpu()[0]) // REGA_BSM, block_experts.numel())
++    be = block_experts[:used].cpu().long()
++    counts = torch.bincount(be[(be >= 0) & (be < LOCAL_EXPERTS)], minlength=LOCAL_EXPERTS)
++    chunks = (counts + 7) // 8
++    return block_experts.numel(), used, int(chunks.sum()), int(chunks.max())
++
++
++def _rega_replay_check(state, weights, cache, device, gen, plan=None):
+     """prepare() only. The judge prepares TWO states (setup copies: 2), copies tensors, and rotates them across
+     repetitions with refilled inputs. Three states over the pieces _experts_rega reads: A = the prepared
+     state, B = copy.deepcopy (the ext module shared through the memo), C = the recursive tensor-cloning walk
+@@ -2985,7 +3308,11 @@ def _rega_replay_check(state, weights, cache, device, gen):
+     inputs; per routing, replays A, B, C, A, B, each after REFILLING that state's inputs in place with a fresh
+     case, each compared with the fp32 reference (bound: max(2 x Marlin's own error, 8e-3), worst row 5x) and
+     each required to leave BOTH launch markers and error word 0 in that state's own error tensor (this is the
+-    LAUNCHED = rega assertion). Returns (None or why, summary line)."""
++    LAUNCHED = rega assertion). plan: ((T, kinds), ...), default REGA_REPLAY_TOKENS x REGA_REPLAY_KINDS; above
++    MARLIN_MAX_TOKENS the bound is calibrated on Triton (master's block there) instead of Marlin. Graphs are freed
++    after every T and the peak allocation printed. Returns (None or why, summary line)."""
++    if plan is None:
++        plan = tuple((t, REGA_REPLAY_KINDS) for t in REGA_REPLAY_TOKENS)
+     mini = {k: state[k] for k in REGA_STATE_KEYS}
+     states = {"A": mini}
+     pads = []
+@@ -3006,11 +3333,12 @@ def _rega_replay_check(state, weights, cache, device, gen):
+             return f"copy {label} shares state A's tensors", ""
+     n = n_launched = 0
+     worst_new = worst_mar = 0.0
+-    for t in REGA_REPLAY_TOKENS:
++    for t, kinds in plan:
++        inc_name, inc_fn = _rega_incumbent(t)
+         graphs, bufs, holders = {}, {}, {}
+         try:
+             for name, st in states.items():
+-                b = _ssdq_case(t, "random", gen, device)
++                b = _rega_case(t, "random", gen, device)
+                 holder = {}
+ 
+                 def fn(st=st, b=b, holder=holder):
+@@ -3018,10 +3346,10 @@ def _rega_replay_check(state, weights, cache, device, gen):
+ 
+                 graphs[name] = _ssdq_graph_time(fn, device)
+                 bufs[name], holders[name] = b, holder
+-            for kind in REGA_REPLAY_KINDS:
++            for kind in kinds:
+                 for name in REGA_REPLAY_SEQ:
+                     st = states[name]
+-                    x, tw, lids = _ssdq_case(t, kind, gen, device)
++                    x, tw, lids = _rega_case(t, kind, gen, device)
+                     for dst, src in zip(bufs[name], (x, tw, lids)):
+                         dst.copy_(src)
+                     st["rega_err"].zero_()
+@@ -3030,7 +3358,7 @@ def _rega_replay_check(state, weights, cache, device, gen):
+                     got = holders[name]["out"].clone()
+                     word, m13, m2 = _rega_marks(st["rega_err"])
+                     ref = _rega_reference_out(x, tw, lids, state, weights, cache)
+-                    mar = _experts_marlin(x, tw, lids, state)
++                    mar = inc_fn(x, tw, lids, state)
+                     torch.cuda.synchronize()
+                     e_new, w_new = _ssdq_metrics(got, ref)
+                     e_mar, _ = _ssdq_metrics(mar, ref)
+@@ -3041,7 +3369,7 @@ def _rega_replay_check(state, weights, cache, device, gen):
+                     worst_new, worst_mar = max(worst_new, e_new), max(worst_mar, e_mar)
+                     ok = word == 0 and launched and e_new <= bound and w_new <= 5.0 * bound
+                     print(f"{REGA_TAG} replay T={t} {kind} state {name}: rega rel L2 {e_new:.3e} worst row "
+-                          f"{w_new:.3e}; marlin {e_mar:.3e}; bound {bound:.3e}; error word {word}; launch markers "
++                          f"{w_new:.3e}; {inc_name} {e_mar:.3e}; bound {bound:.3e}; error word {word}; launch markers "
+                           f"w13 {'yes' if m13 == REGA_MAGIC else 'NO'} w2 {'yes' if m2 == REGA_MAGIC else 'NO'}"
+                           f"{'' if ok else '  <-- MISS'}", flush=True)
+                     if not ok:
+@@ -3052,11 +3380,14 @@ def _rega_replay_check(state, weights, cache, device, gen):
+             del graphs, bufs, holders
+             torch.cuda.synchronize()
+             torch.cuda.empty_cache()
++            if t > MARLIN_MAX_TOKENS:
++                print(f"{REGA_TAG} replay T={t}: graphs freed; max_memory_allocated "
++                      f"{torch.cuda.max_memory_allocated(device) / 2**30:.2f} GiB", flush=True)
+     del states, pads
+     torch.cuda.empty_cache()
+-    return None, (f"{n} refilled graph replays over states A, B (deepcopy), C (tensor clone) at T "
+-                  f"{REGA_REPLAY_TOKENS} x {REGA_REPLAY_KINDS}; LAUNCHED = rega on {n_launched}/{n} (both launch "
+-                  f"markers); worst rel L2 {worst_new:.2e} (marlin {worst_mar:.2e})")
++    return None, (f"{n} refilled graph replays over states A, B (deepcopy), C (tensor clone) at "
++                  f"{[(t, k) for t, k in plan]}; LAUNCHED = rega on {n_launched}/{n} (both launch "
++                  f"markers); worst rel L2 {worst_new:.2e} (incumbent {worst_mar:.2e})")
+ 
+ 
+ def _rega_gate(state, device, tokens):
+@@ -3065,14 +3396,16 @@ def _rega_gate(state, device, tokens):
+     the same loop, REGA_ALTERNATIONS alternations, the order rotated and flipped each time, an empty-graph
+     baseline subtracted from every median. Alternatives: whatever _experts dispatches with rega off (the
+     incumbent: ssdq when ON at T > SSDQ_MIN_TOKENS, else Marlin), ssdq itself when it exists and is ON, and
+-    Marlin's block. Returns {name: median us}."""
++    Marlin's block. Above MARLIN_MAX_TOKENS (class 'ft') the only alternative is the dispatch: master's Triton
++    block (ssdq and Marlin do not serve those T). Returns {name: median us}."""
+     gen = torch.Generator(device=device).manual_seed(20261025)
+     x, tw, lids = _ssdq_case(tokens, "random", gen, device)
+     fns = {"rega": lambda: _experts_rega(x, tw, lids, state),
+            "dispatch": lambda: _experts(x, tw, lids, state)}  # rega flags are False while gating
+-    if tokens > SSDQ_MIN_TOKENS and state.get("ssdq_ok", False):
+-        fns["ssdq"] = lambda: _experts_ssdq(x, tw, lids, state)
+-    fns["marlin"] = lambda: _experts_marlin(x, tw, lids, state)
++    if tokens <= MARLIN_MAX_TOKENS:
++        if tokens > SSDQ_MIN_TOKENS and state.get("ssdq_ok", False):
++            fns["ssdq"] = lambda: _experts_ssdq(x, tw, lids, state)
++        fns["marlin"] = lambda: _experts_marlin(x, tw, lids, state)
+     graphs = {name: _ssdq_graph_time(fn, device) for name, fn in fns.items()}
+     tiny = torch.zeros(16, dtype=torch.float32, device=device)
+     graphs["empty"] = _ssdq_graph_time(lambda: tiny.zero_(), device)
+@@ -3102,13 +3435,108 @@ def _rega_gate(state, device, tokens):
+     return {name: max(v - base, 0.0) for name, v in med.items()}
+ 
+ 
++def _rega_ft_setup(state, weights, device, t_start, phase, big_ok):
++    """prepare() only, after the low / high gates (the kernel has passed canary, self-check and the copy / replay
++    check at T <= 4096). Class 'ft' (MARLIN_MAX_TOKENS < T <= REGA_FT_MAX): the capacity arithmetic, the
++    first-turn instantiations' attributes, zero_nonlocal_w2 False, the first-turn align check, an eager
++    self-check at T 8192 / 16384 (random, skewed, one-expert, local-saturated: the most blocks and chunks) against
++    the fp32 reference with the bound calibrated on Triton's own error, the A/B/C copy / replay check at 8192 and
++    16384, then the cold-L2 gate at T = REGA_FT_GATE_TOKENS (soft routing) against master's Triton block (the
++    rega-off dispatch). Sets only state['rega_ok']['ft']; returns (gate line or None, OFF reason or None). Any
++    failure leaves the low / high classes and master's Triton path as they were."""
++    state["rega_ok"]["ft"] = False
++    zero = bool(state["zero_nonlocal_w2"])
++    worst_slots = REGA_FT_MAX * TOP_K + LOCAL_EXPERTS * (REGA_BSM - 1)
++    worst_blocks = -(-worst_slots // REGA_BSM)
++    worst_chunks = worst_blocks // 8 + LOCAL_EXPERTS
++    print(f"{REGA_TAG} ft capacity: worst case at T={REGA_FT_MAX} (every route local): {worst_blocks} blocks "
++          f"(table {REGA_MAXBLK_FT}), <= {worst_chunks} chunks (table {REGA_MAXC_FT}); tables of <= {REGA_MAXBLK} "
++          f"blocks launch the stage-1 instantiation; zero_nonlocal_w2 {zero}", flush=True)
++    if worst_blocks > REGA_MAXBLK_FT or worst_chunks > REGA_MAXC_FT:
++        return None, "first-turn tables smaller than the worst case"
++    if not big_ok:
++        return None, "first-turn instantiation attribute / occupancy / register-pool check failed"
++    if zero:
++        return None, "zero_nonlocal_w2 is True (rega would memset a 1.07 GB y every call)"
++    if not state.get("align_par_ft_ok", False):
++        return None, "parallel align missed at first-turn sizes"
++    used = time.perf_counter() - t_start
++    if used > REGA_FT_START_DEADLINE_S:
++        return None, f"prepare already used {used:.0f}s > {REGA_FT_START_DEADLINE_S:.0f}s ft start deadline"
++    torch.cuda.empty_cache()
++    torch.cuda.reset_peak_memory_stats(device)
++    gen = torch.Generator(device=device).manual_seed(20261026)
++    cache = {}
++    try:
++        for tokens, kind in REGA_FT_SELF_CHECKS:
++            x, tw, lids = _rega_case(tokens, kind, gen, device)
++            tab_len, n_used, chunks, max_chunks = _rega_tiles(lids)
++            inc_name, inc_fn = _rega_incumbent(tokens)
++            state["rega_err"].zero_()
++            ref = _rega_reference_out(x, tw, lids, state, weights, cache)
++            new = _experts_rega(x, tw, lids, state, tracer=_RegaTracer(f"ft T={tokens} {kind}"))
++            torch.cuda.synchronize()
++            inc = inc_fn(x, tw, lids, state)
++            torch.cuda.synchronize()
++            word, m13, m2 = _rega_marks(state["rega_err"])
++            e_new, w_new = _ssdq_metrics(new, ref)
++            e_inc, w_inc = _ssdq_metrics(inc, ref)
++            bound = max(2.0 * e_inc, 8e-3)
++            ok = word == 0 and _rega_launched(m13, m2) and e_new <= bound and w_new <= 5.0 * bound
++            print(f"{REGA_TAG} ft self-check T={tokens} {kind}: {int((lids >= 0).sum())} local routes; block table "
++                  f"{tab_len} ({'first-turn' if tab_len > REGA_MAXBLK else 'stage-1'} class), {n_used} used, "
++                  f"{chunks} chunks (max {max_chunks} per expert; items w13 {chunks * (D_EXPERT // 64)}, w2 "
++                  f"{chunks * (D_EXPERT // 128)}); rega rel L2 {e_new:.3e} worst row {w_new:.3e}; {inc_name} "
++                  f"{e_inc:.3e} / {w_inc:.3e}; bound {bound:.3e}; error word {word} "
++                  f"({REGA_ERR_TEXT.get(word, '?')}); launch markers w13 {m13:#x} w2 {m2:#x}"
++                  f"{'' if ok else '  <-- MISS'}", flush=True)
++            del x, tw, lids, ref, new, inc
++            if not ok:
++                return None, (f"self-check failed at T={tokens} {kind} (error word {word} "
++                              f"{REGA_ERR_TEXT.get(word, '?')}, rel L2 {e_new:.3e}, worst row {w_new:.3e}, bound "
++                              f"{bound:.3e}, markers {m13:#x}/{m2:#x})")
++        torch.cuda.empty_cache()
++        print(f"{REGA_TAG} ft self-check done; max_memory_allocated {torch.cuda.max_memory_allocated(device) / 2**30:.2f}"
++              f" GiB", flush=True)
++        phase("ft-self-check")
++        why, line = _rega_replay_check(state, weights, cache, device, gen, plan=REGA_FT_REPLAY_PLAN)
++        if why:
++            return None, f"copy / replay check failed: {why}"
++        print(f"{REGA_TAG} LAUNCHED = rega (ft): {line}", flush=True)
++        phase("ft-copy-check")
++    finally:
++        cache.clear()
++        torch.cuda.synchronize()
++        torch.cuda.empty_cache()
++    used = time.perf_counter() - t_start
++    if used > REGA_BUDGET_S:
++        return None, f"gate skipped: prepare already used {used:.0f}s > {REGA_BUDGET_S:.0f}s budget"
++    meds = _rega_gate(state, device, REGA_FT_GATE_TOKENS)
++    torch.cuda.synchronize()
++    torch.cuda.empty_cache()
++    ratio = meds["rega"] / max(meds["dispatch"], 1e-9)
++    state["rega_ok"]["ft"] = bool(ratio <= REGA_GATE_RATIO)
++    gate_line = (f"{REGA_TAG} GATE ft T={REGA_FT_GATE_TOKENS} soft cold-L2 graph medians over {REGA_ALTERNATIONS} "
++                 f"alternations (empty-graph baseline subtracted): rega {meds['rega']:.1f} us; dispatch (master's "
++                 f"Triton block) {meds['dispatch']:.1f} us; ratio {ratio:.3f} (ON at <= {REGA_GATE_RATIO}); "
++                 f"zero_nonlocal_w2 {zero}; max_memory_allocated "
++                 f"{torch.cuda.max_memory_allocated(device) / 2**30:.2f} GiB: "
++                 f"{'ON' if state['rega_ok']['ft'] else 'OFF'}")
++    print(gate_line, flush=True)
++    phase("ft-gate")
++    return gate_line, None
++
++
+ def _rega_setup(state, weights, device, t_start):
+     """prepare() only, after master's ssdq setup. Build, retile, canary, self-check against an fp32
+     reference (bound calibrated on Marlin's own error), the two-state copy / replay check with the launch
+     markers (LAUNCHED asserted), then one cold-L2 gate per T class. Sets state['rega_ok'] = {'low': bool,
+     'high': bool}; every failure prints one OFF line and leaves master's dispatch as it was. The gate
+-    medians and the PATH CHOSEN lines are printed LAST (the archived log keeps the tail)."""
+-    state["rega_ok"] = {"low": False, "high": False}
++    medians and the PATH CHOSEN lines are printed LAST (the archived log keeps the tail). Then the first-turn
++    class 'ft' (_rega_ft_setup), whose failures turn off 'ft' only."""
++    state["rega_ok"] = {"low": False, "high": False, "ft": False}
++    ft_line, ft_off = None, None
++    v1_fallback = False
+     phases = []
+     t_phase = [time.perf_counter()]
+     t_pre = t_phase[0] - t_start
+@@ -3155,20 +3583,34 @@ def _rega_setup(state, weights, device, t_start):
+         ext, _ = _rega_build()
+         phase("build")
+         if ext is None:
+-            off.append("build failed")
+-            return
++            # v2 did not compile / load: build master's exact stage-1 extension so low / high keep master's
++            # behaviour; the first-turn class stays OFF (that build has no first-turn instantiation).
++            src_v1 = _rega_src_v1()
++            print(f"{REGA_TAG} v2 build FAILED; fallback: master's {REGA_EXT_NAME_V1} "
++                  f"({'source sha256 matches master' if src_v1 else 'source does NOT match master: no fallback'})",
++                  flush=True)
++            if src_v1 is not None:
++                ext, _ = _rega_build(REGA_EXT_NAME_V1, src_v1)
++                phase("build-v1-fallback")
++            if ext is None:
++                off.append("build failed")
++                return
++            v1_fallback = True
+         info = ext.rega_init()
+-        attrs_ok = True
++        # per capacity class (False: stage-1 tables, True: first-turn); the v1 fallback has no first-turn class
++        attrs_ok = {False: True, True: not v1_fallback}
+         for i in range(0, len(info), 10):
+-            gated, a_ok, regs, local_bytes, static_smem, dyn_smem, occ, e1, bin_v, ptx_v = info[i:i + 10]
+-            print(f"{REGA_TAG} kernel {'w13+silu' if gated else 'w2'}: attrs ok {bool(a_ok)} (SetAttribute rc {e1}), "
++            flag, a_ok, regs, local_bytes, static_smem, dyn_smem, occ, e1, bin_v, ptx_v = info[i:i + 10]
++            gated, big = bool(flag & 1), bool(flag & 2)
++            print(f"{REGA_TAG} kernel {'w13+silu' if gated else 'w2'} {'first-turn' if big else 'stage-1'} class: "
++                  f"attrs ok {bool(a_ok)} (SetAttribute rc {e1}), "
+                   f"regs {regs}, local bytes {local_bytes}{' (SPILL)' if local_bytes > 0 else ''}, static smem "
+                   f"{static_smem} B, dynamic smem {dyn_smem} B, CTAs/SM {occ}, binaryVersion {bin_v}, ptxVersion "
+                   f"{ptx_v}", flush=True)
+             # setmaxnreg.inc blocks forever unless the CTA's register pool covers 40 x 128 + 232 x 256
+-            attrs_ok = (attrs_ok and bool(a_ok) and occ >= 1 and static_smem + dyn_smem <= REGA_SMEM_LIMIT
+-                        and regs * REGA_THREADS >= 40 * 128 + 232 * 256 and bin_v == 90)
+-        if not attrs_ok:
++            attrs_ok[big] = (attrs_ok[big] and bool(a_ok) and occ >= 1 and static_smem + dyn_smem <= REGA_SMEM_LIMIT
++                             and regs * REGA_THREADS >= 40 * 128 + 232 * 256 and bin_v == 90)
++        if not attrs_ok[False]:
+             off.append("cudaFuncSetAttribute / cudaFuncGetAttributes / occupancy / register-pool check failed")
+             return
+         findings = _rega_audit_globals()
+@@ -3257,13 +3699,24 @@ def _rega_setup(state, weights, device, t_start):
+                   f"{REGA_GATE_RATIO}): {'ON' if state['rega_ok'][cls] else 'OFF'}")
+             print(gate_lines[-1], flush=True)
+         phase("gate")
++        # First-turn class: its own checks and gate; a failure there turns off 'ft' only.
++        try:
++            if v1_fallback:
++                ft_line, ft_off = None, f"v2 build failed; running master's {REGA_EXT_NAME_V1} (no first-turn class)"
++            else:
++                ft_line, ft_off = _rega_ft_setup(state, weights, device, t_start, phase, attrs_ok[True])
++        except Exception as e:
++            state["rega_ok"]["ft"] = False
++            ft_line, ft_off = None, f"ft setup raised {e!r}"[:300]
++        if ft_off:
++            state["rega_ok"]["ft"] = False
+     except Exception as e:  # never raises into prepare(); a device fault would have poisoned the context
+-        state["rega_ok"] = {"low": False, "high": False}
++        state["rega_ok"] = {"low": False, "high": False, "ft": False}
+         off.append(f"setup raised {e!r}"[:300])
+     finally:
+         total = time.perf_counter() - t_start
+         if off:
+-            state["rega_ok"] = {"low": False, "high": False}
++            state["rega_ok"] = {"low": False, "high": False, "ft": False}
+             print(f"{REGA_TAG} OFF: {'; '.join(off)}"[:900], flush=True)
+         torch.cuda.synchronize()
+         torch.cuda.empty_cache()
+@@ -3273,13 +3726,20 @@ def _rega_setup(state, weights, device, t_start):
+               + f"; total {total:.1f}s; budget {REGA_BUDGET_S:.0f}s", flush=True)
+         for line in gate_lines:
+             print(line, flush=True)
++        if ft_line:
++            print(ft_line, flush=True)
++        if ft_off and not off:
++            print(f"{REGA_TAG} OFF ft: {ft_off} (T in ({MARLIN_MAX_TOKENS}, {REGA_FT_MAX}] stays on triton)"[:900],
++                  flush=True)
+         ok = state["rega_ok"]
+         ssdq_on = bool(state.get("ssdq_ok"))
+         print(f"{REGA_TAG} PATH CHOSEN T in ({REGA_MIN_TOKENS}, {REGA_LOW_MAX}]: "
+               f"{'rega' if ok['low'] else 'marlin (master unchanged)'}; T in ({REGA_LOW_MAX}, {MARLIN_MAX_TOKENS}]: "
+               f"{'rega' if ok['high'] else ('ssdq' if ssdq_on else 'marlin')} (dispatch order: rega if ON, else ssdq if "
+               f"ON, else marlin; ssdq {'ON' if ssdq_on else 'OFF'}); T <= {REGA_MIN_TOKENS}: marlin; T > "
+-              f"{MARLIN_MAX_TOKENS}: triton/unchanged", flush=True)
++              f"{MARLIN_MAX_TOKENS}: next line", flush=True)
++        print(f"{REGA_TAG} PATH CHOSEN T in ({MARLIN_MAX_TOKENS}, {REGA_FT_MAX}]: "
++              f"{'rega' if ok.get('ft', False) else 'triton'}; T > {REGA_FT_MAX}: triton", flush=True)
+ 
+ 
+ def kernel_fn(data, state):

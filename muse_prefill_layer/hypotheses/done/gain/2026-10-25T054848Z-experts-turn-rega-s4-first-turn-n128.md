@@ -71,10 +71,10 @@ controls_for: null
 rewrite_stage: 2
 replaces: _moe_nvfp4_gemm_kernel x2 (Triton w13 + w2) and act_and_mul at T > 4096
 review: proceed
-status: running
+status: done
 review_at: 2026-10-25T120230Z
 review_companions: null
-stage: dispatched
+stage: harvested
 claimed_at: 2026-10-25T120231Z
 base_sha: c0cdf3a56f74658d323e211e760d12b57dcf6772
 base_blob: 712edc5ea5be2dde8f558a016d0877b285340ee4
@@ -93,6 +93,13 @@ attempt_file: 2026-10-25T121653Z-check-experts-turn-rega-s4-first-turn-n128.md
 prepared_at: 2026-10-25T121653Z
 job: 07a069bc69ba42a8
 dispatched_at: 2026-10-25T121702Z
+outcome: gain
+verdict_detail: gain
+speedup: 1.4060131381907617
+speedup_ci: [1.3849229411179003, 1.4271033352636229]
+harvested_at: 2026-10-25T124810Z
+best_at_harvest: 1.3274587526558561
+promotion: pending
 ---
 
 # experts-turn-rega-s4-first-turn-n128
@@ -222,3 +229,32 @@ Audited 2026-10-25 by an Opus subagent, against master muse_prefill_layer/submis
 - `undef.py` reports `[]`, py_compile passes, and okc_lint reports warnings only, all in parent code or prepare-only. `__pycache__` was removed.
 
 **Residual risk:** the first-turn instantiation is unproven under nvcc. A device fault in its T=16384 self-check would poison the context, and a fallback cannot cover that. The small instantiation may also compile to different SASS through the templated `be` pointer, which could shift turn rows slightly.
+
+## Result
+
+- job `07a069bc69ba42a8` (check), status done, passed True, tests 5/5
+- speedup 1.4060x, 95% CI [1.3849, 1.4271], score 275533.62730202224 µs vs SGLang 387403.9 µs
+- best at harvest: {"speedup": 1.3274587526558561, "ci": [1.3075468713660183, 1.347370633945694], "job": "2910b2fb4b744865"}; base result: muse_prefill_layer/hypotheses/done/gain/experts-turn-rega-s4-port-t4096.result.json
+- **outcome: gain** (gain)
+- files: `muse_prefill_layer/hypotheses/done/gain/experts-turn-rega-s4-first-turn-n128.result.json`, `muse_prefill_layer/hypotheses/done/gain/experts-turn-rega-s4-first-turn-n128.patch`; branch `hyp/muse_prefill_layer/experts-turn-rega-s4-first-turn-n128`
+
+## Attribution
+
+| shape | w | base µs | hyp µs | delta | verdict |
+|---|---|---|---|---|---|
+| batch=1 ctx=80000 dist=soft layer=sliding load=turn_1 page=1 q_len=753 repeats=6 | 46 | 730.17 | 777.02 | 0.9636 | lost |
+| batch=1 ctx=80000 dist=soft layer=full load=turn_1 page=1 q_len=753 repeats=6 | 16 | 1105.64 | 1136.06 | 0.9908 | flat |
+| batch=4 ctx=80000 dist=soft layer=sliding load=turn_4 page=1 q_len=753 repeats=6 | 46 | 2167.2 | 2251.37 | 1.0151 | flat |
+| batch=4 ctx=80000 dist=soft layer=full load=turn_4 page=1 q_len=753 repeats=6 | 16 | 3748.07 | 3785.25 | 0.9905 | flat |
+| batch=1 ctx=0 dist=soft layer=full load=first_turn page=1 q_len=16384 repeats=6 | 16 | 14585.46 | 12148.27 | 1.21 | gained |
+| batch=1 ctx=32768 dist=soft layer=sliding load=first_turn page=1 q_len=16384 repeats=6 | 138 | 14010.59 | 11658.83 | 1.2286 | gained |
+| batch=1 ctx=32768 dist=soft layer=full load=first_turn page=1 q_len=16384 repeats=6 | 16 | 17741.73 | 15589.38 | 1.167 | gained |
+| batch=1 ctx=65536 dist=soft layer=full load=first_turn page=1 q_len=16384 repeats=6 | 16 | 21874.7 | 19167.43 | 1.1623 | gained |
+
+gained on full first_turn; sliding first_turn; lost on sliding turn_1. Expected hit: 1/2. Noise ±1.5%.
+
+## Follow-ups
+
+- rewrite stage 2 of `_moe_nvfp4_gemm_kernel x2 (Triton w13 + w2) and act_and_mul at T > 4096`: read the replaced kernels' own us per shape (profile top_kernels) against the incumbent and the floor, and check which Milestone it reached. The next stage is `/hypothesize muse_prefill_layer "<what to fix or tune>" --kind rewrite --depends-on experts-turn-rega-s4-first-turn-n128 --stage 3`; a slow or failed first cut is the expected start, not a do-not-retry.
+- candidate for promotion; stack further changes with `depends_on` once it lands.
+
