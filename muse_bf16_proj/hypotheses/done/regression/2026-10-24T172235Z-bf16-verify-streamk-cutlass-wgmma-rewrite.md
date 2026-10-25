@@ -99,10 +99,10 @@ controls_for: null
 rewrite_stage: 1
 replaces: cuBLAS nvjet at m=256 (verify_32) for qkv_gate (nvjet_sm90_tst_96x64_64x10_2x4, 19.4 us), o (nvjet 128x128, 8.3 us), pooler (nvjet 128x64, 29.5 us) and unpooler (nvjet 128x128, 24.6 us)
 review: proceed
-status: running
+status: done
 review_at: 2026-10-24T172632Z
 review_companions: null
-stage: dispatched
+stage: harvested
 claimed_at: 2026-10-24T172707Z
 base_sha: 18e37900783719c41373a7e04963ba5b66578579
 base_blob: a8bb42ac483318e9fbc84bc7826a27b7a704d1fb
@@ -119,6 +119,13 @@ attempt_file: 2026-10-25T001016Z-check-bf16-verify-streamk-cutlass-wgmma-rewrite
 prepared_at: 2026-10-25T001016Z
 job: f5b1361aaa0e48b5
 dispatched_at: 2026-10-25T001031Z
+outcome: regression
+verdict_detail: regression
+speedup: 1.1634896500286909
+speedup_ci: [1.1460373052782604, 1.180941994779121]
+harvested_at: 2026-10-25T003209Z
+best_at_harvest: 1.1958517819004566
+promotion: null
 ---
 
 # bf16-verify-streamk-cutlass-wgmma-rewrite
@@ -250,3 +257,53 @@ OK with warnings: muse_bf16_proj/submission.py
 ## Build fix (2026-10-25 ~00:30Z)
 
 Per the bf16 per-shape read and LESSONS 2026-10-25: torch's cpp_extension adds its own compute_90 -gencode beside the explicit sm_90a one, and that pass cannot assemble wgmma (both prefill CUDA rewrites failed to build this way). The build now sets TORCH_CUDA_ARCH_LIST=9.0a around load_inline and restores the previous value after it. CUTLASS's SM90 kernels already guard on the arch feature. 12 lines, prepare-time only; no change to kernel_fn. Rules check above unchanged; lint no errors.
+
+## Result
+
+- job `f5b1361aaa0e48b5` (check), status done, passed True, tests 9/9
+- speedup 1.1635x, 95% CI [1.1460, 1.1809], score 4151.992241513172 µs vs SGLang 4830.8 µs
+- best at harvest: {"speedup": 1.1958517819004566, "ci": [1.1779140051719497, 1.2137895586289633], "job": "eeb9985396764ac2"}; base result: muse_bf16_proj/hypotheses/done/neutral/bf16-m32-swapab-wgmma-triton.result.json
+- **outcome: regression** (regression)
+- files: `muse_bf16_proj/hypotheses/done/regression/bf16-verify-streamk-cutlass-wgmma-rewrite.result.json`, `muse_bf16_proj/hypotheses/done/regression/bf16-verify-streamk-cutlass-wgmma-rewrite.patch`; branch `hyp/muse_bf16_proj/bf16-verify-streamk-cutlass-wgmma-rewrite`
+
+## Attribution
+
+| shape | w | base µs | hyp µs | delta | verdict |
+|---|---|---|---|---|---|
+| layer=qkv_gate load=decode_1 m=1 | 62 | 12.91 | 13.22 | 0.9489 | lost |
+| layer=o load=decode_1 m=1 | 62 | 6.32 | 6.52 | 0.9755 | flat |
+| layer=pooler load=decode_1 m=1 | 62 | 19.0 | 19.29 | 1.021 | flat |
+| layer=unpooler load=decode_1 m=1 | 62 | 5.94 | 6.02 | 0.9931 | flat |
+| layer=router load=decode_1 m=1 | 62 | 5.73 | 5.87 | 0.9808 | flat |
+| layer=qkv_gate load=decode_16 m=16 | 62 | 13.39 | 13.48 | 1.0338 | gained |
+| layer=o load=decode_16 m=16 | 62 | 6.66 | 6.77 | 0.988 | flat |
+| layer=pooler load=decode_16 m=16 | 62 | 19.85 | 20.09 | 0.9851 | flat |
+| layer=unpooler load=decode_16 m=16 | 62 | 18.61 | 18.57 | 0.9966 | flat |
+| layer=router load=decode_16 m=16 | 62 | 6.03 | 5.99 | 1.0398 | gained |
+| layer=qkv_gate load=decode_32 m=32 | 62 | 13.69 | 13.7 | 1.0429 | gained |
+| layer=o load=decode_32 m=32 | 62 | 6.67 | 6.37 | 1.0329 | gained |
+| layer=pooler load=decode_32 m=32 | 62 | 20.0 | 19.92 | 0.9995 | flat |
+| layer=unpooler load=decode_32 m=32 | 62 | 18.48 | 18.57 | 0.9986 | flat |
+| layer=router load=decode_32 m=32 | 62 | 6.55 | 6.29 | 1.0384 | gained |
+| layer=qkv_gate load=verify_1 m=8 | 62 | 13.18 | 13.59 | 0.9621 | lost |
+| layer=o load=verify_1 m=8 | 62 | 6.32 | 6.46 | 0.985 | flat |
+| layer=pooler load=verify_1 m=8 | 62 | 19.14 | 19.68 | 0.9866 | flat |
+| layer=unpooler load=verify_1 m=8 | 62 | 6.13 | 6.14 | 1.0058 | flat |
+| layer=router load=verify_1 m=8 | 62 | 5.91 | 5.74 | 1.0321 | gained |
+| layer=qkv_gate load=verify_16 m=128 | 62 | 16.81 | 18.01 | 0.9825 | flat |
+| layer=o load=verify_16 m=128 | 62 | 7.09 | 7.67 | 0.983 | flat |
+| layer=pooler load=verify_16 m=128 | 62 | 25.55 | 24.86 | 1.0655 | gained |
+| layer=unpooler load=verify_16 m=128 | 62 | 19.79 | 19.95 | 0.9959 | flat |
+| layer=router load=verify_16 m=128 | 62 | 7.35 | 7.44 | 0.985 | flat |
+| layer=qkv_gate load=verify_32 m=256 | 62 | 19.62 | 28.52 | 0.6775 | lost |
+| layer=o load=verify_32 m=256 | 62 | 9.01 | 11.47 | 0.8239 | lost |
+| layer=pooler load=verify_32 m=256 | 62 | 30.53 | 34.28 | 0.8528 | lost |
+| layer=unpooler load=verify_32 m=256 | 62 | 24.5 | 26.52 | 0.9164 | lost |
+| layer=router load=verify_32 m=256 | 62 | 9.3 | 9.27 | 1.0069 | flat |
+
+gained on qkv_gate decode_16, decode_32; router decode_16, decode_32, verify_1; o decode_32; pooler verify_16; lost on qkv_gate decode_1, verify_1, verify_32; o verify_32; pooler verify_32; unpooler verify_32. Expected hit: 0/8. Noise ±1.5%.
+
+## Follow-ups
+
+- rewrite stage 1 of `cuBLAS nvjet at m=256 (verify_32) for qkv_gate (nvjet_sm90_tst_96x64_64x10_2x4, 19.4 us), o (nvjet 128x128, 8.3 us), pooler (nvjet 128x64, 29.5 us) and unpooler (nvjet 128x128, 24.6 us)`: read the replaced kernels' own us per shape (profile top_kernels) against the incumbent and the floor, and check which Milestone it reached. The next stage is `/hypothesize muse_bf16_proj "<what to fix or tune>" --kind rewrite --depends-on bf16-verify-streamk-cutlass-wgmma-rewrite --stage 2`; a slow or failed first cut is the expected start, not a do-not-retry.
+

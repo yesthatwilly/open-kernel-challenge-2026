@@ -1,0 +1,48 @@
+[streamk] headers: package cutlass_library not installed
+[streamk] headers: hit src=flashinfer include=/opt/sglang/lib/python3.12/site-packages/flashinfer/data/cutlass/include version=(4, 5, 0) cute/=True sm90_stream_k=True
+[streamk] headers: hit src=deep_gemm include=/opt/sglang/lib/python3.12/site-packages/deep_gemm/include version=(4, 2, 1) cute/=True sm90_stream_k=True
+[streamk] headers: hit src=tilelang include=/opt/sglang/lib/python3.12/site-packages/tilelang/3rdparty/cutlass/include version=(4, 1, 0) cute/=True sm90_stream_k=True
+[streamk] build: CUTLASS (4, 5, 0) from flashinfer: /opt/sglang/lib/python3.12/site-packages/flashinfer/data/cutlass/include
+[streamk] build OK: load_inline compiled in 49.0s (CUTLASS (4, 5, 0), /opt/sglang/lib/python3.12/site-packages/flashinfer/data/cutlass/include)
+[swapab] layer=pooler m=32 N=4096 K=8192 SPLIT_K=2 BLOCK_K=256 stages=4: n_regs=96 n_spills=0 wgmma=16 mma.sync=0 cp.async=106
+[swapab] layer=qkv_gate m=32 N=2304 K=8192 SPLIT_K=4 BLOCK_K=128 stages=4: n_regs=56 n_spills=0 wgmma=8 mma.sync=0 cp.async=58
+[swapab] layer=unpooler m=32 N=8192 K=4096 SPLIT_K=1 BLOCK_K=256 stages=4: n_regs=96 n_spills=0 wgmma=16 mma.sync=0 cp.async=106
+[swapab] layer=o m=32 N=8192 K=1024 SPLIT_K=1 BLOCK_K=256 stages=4: n_regs=96 n_spills=0 wgmma=16 mma.sync=0 cp.async=106
+[streamk] cudaFuncSetAttribute(MaxDynamicSharedMemorySize=214016) OK, sm_count=132
+[streamk] qkv_gate m=129 n=2304 k=8192 requested=StreamK mode_set=True grid=(132,1,1) threads=384 smem=214016 B workspace=2359680 B sk_tiles=36 sk_units=132 (DataParallel if sk_tiles == 0) CUTLASS=40500
+[streamk] qkv_gate m=200 n=2304 k=8192 requested=StreamK mode_set=True grid=(132,1,1) threads=384 smem=214016 B workspace=2359680 B sk_tiles=36 sk_units=132 (DataParallel if sk_tiles == 0) CUTLASS=40500
+[streamk] qkv_gate m=256 n=2304 k=8192 requested=StreamK mode_set=True grid=(132,1,1) threads=384 smem=214016 B workspace=2359680 B sk_tiles=36 sk_units=132 (DataParallel if sk_tiles == 0) CUTLASS=40500
+[streamk] qkv_gate workspace bytes over m 129..256: min 2359680 max 2359680
+[streamk] pooler m=129 n=4096 k=8192 requested=StreamK mode_set=True grid=(132,1,1) threads=384 smem=214016 B workspace=4194816 B sk_tiles=64 sk_units=132 (DataParallel if sk_tiles == 0) CUTLASS=40500
+[streamk] pooler m=200 n=4096 k=8192 requested=StreamK mode_set=True grid=(132,1,1) threads=384 smem=214016 B workspace=4194816 B sk_tiles=64 sk_units=132 (DataParallel if sk_tiles == 0) CUTLASS=40500
+[streamk] pooler m=256 n=4096 k=8192 requested=StreamK mode_set=True grid=(132,1,1) threads=384 smem=214016 B workspace=4194816 B sk_tiles=64 sk_units=132 (DataParallel if sk_tiles == 0) CUTLASS=40500
+[streamk] pooler workspace bytes over m 129..256: min 4194816 max 4194816
+[streamk] o m=129 n=8192 k=1024 requested=Heuristic mode_set=True grid=(132,1,1) threads=384 smem=214016 B workspace=0 B sk_tiles=0 sk_units=0 (DataParallel if sk_tiles == 0) CUTLASS=40500
+[streamk] o m=200 n=8192 k=1024 requested=Heuristic mode_set=True grid=(132,1,1) threads=384 smem=214016 B workspace=0 B sk_tiles=0 sk_units=0 (DataParallel if sk_tiles == 0) CUTLASS=40500
+[streamk] o m=256 n=8192 k=1024 requested=Heuristic mode_set=True grid=(132,1,1) threads=384 smem=214016 B workspace=0 B sk_tiles=0 sk_units=0 (DataParallel if sk_tiles == 0) CUTLASS=40500
+[streamk] o workspace bytes over m 129..256: min 0 max 0
+[streamk] unpooler m=129 n=8192 k=4096 requested=Heuristic mode_set=True grid=(132,1,1) threads=384 smem=214016 B workspace=0 B sk_tiles=0 sk_units=0 (DataParallel if sk_tiles == 0) CUTLASS=40500
+[streamk] unpooler m=200 n=8192 k=4096 requested=Heuristic mode_set=True grid=(132,1,1) threads=384 smem=214016 B workspace=0 B sk_tiles=0 sk_units=0 (DataParallel if sk_tiles == 0) CUTLASS=40500
+[streamk] unpooler m=256 n=8192 k=4096 requested=Heuristic mode_set=True grid=(132,1,1) threads=384 smem=214016 B workspace=0 B sk_tiles=0 sk_units=0 (DataParallel if sk_tiles == 0) CUTLASS=40500
+[streamk] unpooler workspace bytes over m 129..256: min 0 max 0
+[streamk] workspace allocated once: 4194816 B (max over layers {'qkv_gate': 2359680, 'pooler': 4194816, 'o': 0, 'unpooler': 0})
+[streamk] self-check qkv_gate m=130: rel L2 1.66e-03 probe 0.00e+00 finite True run2-bit-identical True
+[streamk] self-check qkv_gate m=200: rel L2 1.66e-03 probe 0.00e+00 finite True run2-bit-identical True
+[streamk] self-check qkv_gate m=256: rel L2 1.66e-03 probe 0.00e+00 finite True run2-bit-identical True
+[streamk] self-check pooler m=130: rel L2 1.66e-03 probe 0.00e+00 finite True run2-bit-identical True
+[streamk] self-check pooler m=200: rel L2 1.66e-03 probe 0.00e+00 finite True run2-bit-identical True
+[streamk] self-check pooler m=256: rel L2 1.66e-03 probe 0.00e+00 finite True run2-bit-identical True
+[streamk] self-check o m=130: rel L2 1.66e-03 probe 0.00e+00 finite True run2-bit-identical True
+[streamk] self-check o m=200: rel L2 1.66e-03 probe 0.00e+00 finite True run2-bit-identical True
+[streamk] self-check o m=256: rel L2 1.66e-03 probe 0.00e+00 finite True run2-bit-identical True
+[streamk] self-check unpooler m=130: rel L2 1.66e-03 probe 0.00e+00 finite True run2-bit-identical True
+[streamk] self-check unpooler m=200: rel L2 1.66e-03 probe 0.00e+00 finite True run2-bit-identical True
+[streamk] self-check unpooler m=256: rel L2 1.66e-03 probe 0.00e+00 finite True run2-bit-identical True
+[streamk] diag qkv_gate m=256 warm-L2: cutlass 28.16 us (343 TFLOP/s) vs cuBLAS 19.97 us (484 TFLOP/s)
+[streamk] diag pooler m=256 warm-L2: cutlass 34.70 us (495 TFLOP/s) vs cuBLAS 33.60 us (511 TFLOP/s)
+[streamk] diag o m=256 warm-L2: cutlass 10.53 us (408 TFLOP/s) vs cuBLAS 13.58 us (316 TFLOP/s)
+[streamk] diag unpooler m=256 warm-L2: cutlass 28.27 us (608 TFLOP/s) vs cuBLAS 26.54 us (647 TFLOP/s)
+[streamk] PATH CHOSEN qkv_gate: 129 <= m <= 256 -> CUTLASS sm90 stream-K (StreamK, tile 128x128x64, cluster 2x1x1)
+[streamk] PATH CHOSEN pooler: 129 <= m <= 256 -> CUTLASS sm90 stream-K (StreamK, tile 128x128x64, cluster 2x1x1)
+[streamk] PATH CHOSEN o: 129 <= m <= 256 -> CUTLASS sm90 stream-K (Heuristic, tile 128x128x64, cluster 2x1x1)
+[streamk] PATH CHOSEN unpooler: 129 <= m <= 256 -> CUTLASS sm90 stream-K (Heuristic, tile 128x128x64, cluster 2x1x1)

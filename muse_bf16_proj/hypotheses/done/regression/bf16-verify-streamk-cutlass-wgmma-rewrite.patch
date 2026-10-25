@@ -1,0 +1,612 @@
+diff --git a/muse_bf16_proj/submission.py b/muse_bf16_proj/submission.py
+index a8bb42a..bcf8bff 100644
+--- a/muse_bf16_proj/submission.py
++++ b/muse_bf16_proj/submission.py
+@@ -35,8 +35,20 @@ Swap-AB at 17 <= m <= 32 (hypothesis bf16-m32-swapab-wgmma-triton): all four bf1
+ _bf16_swapab_kernel, 64 weight rows on tl.dot's M side and the (<= 32) tokens on N, so Triton
+ can emit wgmma m64n32k16; pooler split-K 2, qkv_gate split-K 4 (same ticket reduce, transposed
+ workspace), unpooler / o full K. Every other shape keeps its path above.
++
++CUTLASS stream-K at 129 <= m <= 256 (hypothesis bf16-verify-streamk-cutlass-wgmma-rewrite, stage
++1): qkv_gate / o / pooler / unpooler run ONE CUTLASS sm90 GemmUniversal (TMA + warp-specialized
++cooperative wgmma, tile 128x128x64, cluster 2x1x1 multicasting W, StreamKScheduler with a
++deterministic reduction), compiled at import with load_inline from CUTLASS headers found in the
++image. qkv_gate / pooler force stream-K; o / unpooler use CUTLASS's heuristic. A layer whose
++prepare() self-check fails, or any build failure, keeps master's cuBLAS dispatch.
+ """
+ 
++import glob
++import importlib.util
++import os
++import re
++import time
+ from typing import TypedDict
+ 
+ import torch
+@@ -651,6 +663,568 @@ def _swapab_prepare(state: dict) -> None:
+     state["swapab_cnt_qkv"].zero_()
+ 
+ 
++# --- (6) qkv_gate / o / pooler / unpooler, 129 <= m <= 256: CUTLASS sm90 persistent stream-K ----
++# (hypothesis bf16-verify-streamk-cutlass-wgmma-rewrite, rewrite stage 1)
++# ONE CUTLASS 3.x/4.x GemmUniversal instantiation (TMA + warp-specialized cooperative wgmma
++# mainloop, TMA epilogue, StreamKScheduler), shared by the four layers; the problem shape and the
++# decomposition mode are runtime arguments. TN GEMM: x [m, k] bf16 row-major is A (RowMajor),
++# W [n, k] bf16 row-major is B read as a K x N column-major matrix (no repack), D = out [m, n]
++# bf16 row-major, no C (beta 0), fp32 accumulation, deterministic stream-K reduction.
++# Tile 128x128x64, cluster 2x1x1 (the two M-tiles of m <= 256 share each W tile by TMA multicast).
++STREAMK_MIN_M = 129
++STREAMK_MAX_M = 256
++# Decomposition per layer (static constants, never chosen by timing): qkv_gate (18 N-tiles) and
++# pooler (32) under-fill 132 SMs, so forced stream-K; o and unpooler (64 N-tiles x 2 M-tiles =
++# 128 tiles, one wave) use CUTLASS's own heuristic (review: Heuristic or DataParallel).
++STREAMK_MODE_HEURISTIC = 0
++STREAMK_MODE_DATAPARALLEL = 1
++STREAMK_MODE_STREAMK = 3
++STREAMK_MODES = {
++    "qkv_gate": STREAMK_MODE_STREAMK,
++    "pooler": STREAMK_MODE_STREAMK,
++    "o": STREAMK_MODE_HEURISTIC,
++    "unpooler": STREAMK_MODE_HEURISTIC,
++}
++_STREAMK_MODE_NAMES = {0: "Heuristic", 1: "DataParallel", 2: "SplitK", 3: "StreamK"}
++_STREAMK_SELF_CHECK_MS = (130, 200, 256)
++_CUTLASS_PKGS = ("flashinfer", "deep_gemm", "sgl_kernel", "tilelang", "cutlass_library")
++_CUTLASS_BUILDER_REL = os.path.join("cutlass", "gemm", "collective", "collective_builder.hpp")
++
++_STREAMK_CPP = r"""
++#include <torch/extension.h>
++#include <vector>
++void streamk_gemm(torch::Tensor x, torch::Tensor w, torch::Tensor out, torch::Tensor ws,
++                  int64_t mode, int64_t sm_count);
++std::vector<int64_t> streamk_query(torch::Tensor x, torch::Tensor w, torch::Tensor out, int64_t m,
++                                   int64_t mode, int64_t sm_count);
++int64_t streamk_set_attr();
++"""
++
++_STREAMK_CUDA = r"""
++#include <ATen/cuda/CUDAContext.h>
++#include <c10/cuda/CUDAException.h>
++#include <cstdint>
++#include <type_traits>
++#include <utility>
++#include <vector>
++
++#include "cutlass/cutlass.h"
++#include "cutlass/version.h"
++#include "cutlass/numeric_types.h"
++#include "cute/tensor.hpp"
++#include "cutlass/kernel_hardware_info.h"
++#include "cutlass/epilogue/thread/linear_combination.h"
++#include "cutlass/epilogue/collective/default_epilogue.hpp"
++#include "cutlass/gemm/dispatch_policy.hpp"
++#include "cutlass/gemm/collective/collective_builder.hpp"
++#include "cutlass/epilogue/collective/collective_builder.hpp"
++#include "cutlass/gemm/device/gemm_universal_adapter.h"
++#include "cutlass/gemm/kernel/gemm_universal.hpp"
++#include "cutlass/gemm/kernel/tile_scheduler.hpp"
++
++namespace sk {
++
++using ElementA = cutlass::bfloat16_t;
++using ElementB = cutlass::bfloat16_t;
++using ElementD = cutlass::bfloat16_t;
++using ElementAcc = float;
++using ElementCompute = float;
++using LayoutA = cutlass::layout::RowMajor;     // x [M, K], K contiguous
++using LayoutB = cutlass::layout::ColumnMajor;  // W [N, K] row-major == K x N column-major (TN)
++using LayoutD = cutlass::layout::RowMajor;     // out [M, N], N contiguous
++constexpr int kAlign = 8;                      // 16 B of bf16 (TMA)
++
++using TileShape = cute::Shape<cute::_128, cute::_128, cute::_64>;
++using ClusterShape = cute::Shape<cute::_2, cute::_1, cute::_1>;  // multicast W over the 2 M-tiles
++
++using CollectiveEpilogue = typename cutlass::epilogue::collective::CollectiveBuilder<
++    cutlass::arch::Sm90, cutlass::arch::OpClassTensorOp,
++    TileShape, ClusterShape,
++    cutlass::epilogue::collective::EpilogueTileAuto,
++    ElementAcc, ElementCompute,
++    void, LayoutD, kAlign,          // no C operand (beta 0)
++    ElementD, LayoutD, kAlign,
++    cutlass::epilogue::TmaWarpSpecializedCooperative>::CollectiveOp;
++
++using CollectiveMainloop = typename cutlass::gemm::collective::CollectiveBuilder<
++    cutlass::arch::Sm90, cutlass::arch::OpClassTensorOp,
++    ElementA, LayoutA, kAlign,
++    ElementB, LayoutB, kAlign,
++    ElementAcc,
++    TileShape, ClusterShape,
++    cutlass::gemm::collective::StageCountAutoCarveout<
++        static_cast<int>(sizeof(typename CollectiveEpilogue::SharedStorage))>,
++    cutlass::gemm::KernelTmaWarpSpecializedCooperative>::CollectiveOp;
++
++using GemmKernel = cutlass::gemm::kernel::GemmUniversal<
++    cute::Shape<int, int, int, int>,
++    CollectiveMainloop,
++    CollectiveEpilogue,
++    cutlass::gemm::StreamKScheduler>;
++
++using Gemm = cutlass::gemm::device::GemmUniversalAdapter<GemmKernel>;
++using Arguments = typename Gemm::Arguments;
++using ProblemShape = typename GemmKernel::ProblemShape;
++using StrideA = typename GemmKernel::StrideA;
++using StrideB = typename GemmKernel::StrideB;
++using StrideC = typename GemmKernel::StrideC;
++using StrideD = typename GemmKernel::StrideD;
++
++// (leading, unit, batch) strides built with cute::make_stride (no cutlass/util dependency).
++// A RowMajor [M,K,L], B ColumnMajor [N,K,L], C/D RowMajor [M,N,L] are all Stride<int64_t, _1, int64_t>.
++template <class Stride>
++Stride ld_stride(int64_t ld, int64_t batch) {
++  auto s = cute::make_stride(ld, cute::Int<1>{}, batch);
++  static_assert(std::is_same<decltype(s), Stride>::value, "streamk: unexpected CUTLASS stride type");
++  return s;
++}
++
++// Scheduler argument names moved across CUTLASS 3.x / 4.x: set each only if it exists.
++template <class T, class = void> struct has_decomposition_mode : std::false_type {};
++template <class T>
++struct has_decomposition_mode<T, std::void_t<decltype(std::declval<T&>().decomposition_mode)>>
++    : std::true_type {};
++template <class T, class = void> struct has_reduction_mode : std::false_type {};
++template <class T>
++struct has_reduction_mode<T, std::void_t<decltype(std::declval<T&>().reduction_mode)>>
++    : std::true_type {};
++template <class T, class = void> struct has_sk_tiles : std::false_type {};
++template <class T>
++struct has_sk_tiles<T, std::void_t<decltype(std::declval<T const&>().sk_tiles_)>> : std::true_type {};
++template <class T, class = void> struct has_sk_units : std::false_type {};
++template <class T>
++struct has_sk_units<T, std::void_t<decltype(std::declval<T const&>().sk_units_)>> : std::true_type {};
++
++// mode: 0 Heuristic, 1 DataParallel, 3 StreamK. Returns 1 if the decomposition mode could be set.
++template <class SA>
++int64_t set_scheduler(SA& sa, int64_t mode) {
++  int64_t applied = 0;
++  if constexpr (has_decomposition_mode<SA>::value) {
++    using DM = std::remove_cv_t<std::remove_reference_t<decltype(sa.decomposition_mode)>>;
++    sa.decomposition_mode = mode == 3 ? DM::StreamK : (mode == 1 ? DM::DataParallel : DM::Heuristic);
++    applied = 1;
++  }
++  if constexpr (has_reduction_mode<SA>::value) {
++    using RM = std::remove_cv_t<std::remove_reference_t<decltype(sa.reduction_mode)>>;
++    sa.reduction_mode = RM::Deterministic;  // fixed summation order
++  }
++  return applied;
++}
++
++template <class P> int64_t get_sk_tiles(P const& p) {
++  if constexpr (has_sk_tiles<P>::value) { return static_cast<int64_t>(p.sk_tiles_); } else { return -1; }
++}
++template <class P> int64_t get_sk_units(P const& p) {
++  if constexpr (has_sk_units<P>::value) { return static_cast<int64_t>(p.sk_units_); } else { return -1; }
++}
++
++Arguments make_args(void const* x, void const* w, void* out, int m, int n, int k, int64_t mode,
++                    int sm_count, int device_id, int64_t* mode_applied) {
++  cutlass::KernelHardwareInfo hw_info;
++  hw_info.device_id = device_id;
++  hw_info.sm_count = sm_count;
++  Arguments args{
++      cutlass::gemm::GemmUniversalMode::kGemm,
++      ProblemShape{m, n, k, 1},
++      {static_cast<ElementA const*>(x), ld_stride<StrideA>(k, static_cast<int64_t>(m) * k),
++       static_cast<ElementB const*>(w), ld_stride<StrideB>(k, static_cast<int64_t>(n) * k)},
++      {{}, nullptr, ld_stride<StrideC>(n, static_cast<int64_t>(m) * n),
++       static_cast<ElementD*>(out), ld_stride<StrideD>(n, static_cast<int64_t>(m) * n)},
++      hw_info};
++  args.epilogue.thread.alpha = 1.0f;
++  args.epilogue.thread.beta = 0.0f;
++  int64_t applied = set_scheduler(args.scheduler, mode);
++  if (mode_applied != nullptr) { *mode_applied = applied; }
++  return args;
++}
++
++void check_operands(torch::Tensor const& x, torch::Tensor const& w, torch::Tensor const& out, int m) {
++  TORCH_CHECK(x.is_cuda() && w.is_cuda() && out.is_cuda(), "streamk: CUDA tensors required");
++  TORCH_CHECK(x.scalar_type() == at::kBFloat16 && w.scalar_type() == at::kBFloat16 &&
++              out.scalar_type() == at::kBFloat16, "streamk: bf16 x / w / out required");
++  TORCH_CHECK(x.dim() == 2 && w.dim() == 2 && out.dim() == 2, "streamk: 2-D tensors required");
++  TORCH_CHECK(x.is_contiguous() && w.is_contiguous() && out.is_contiguous(), "streamk: contiguous required");
++  TORCH_CHECK(x.size(1) == w.size(1) && out.size(1) == w.size(0), "streamk: shape mismatch");
++  TORCH_CHECK(m >= 1 && m <= x.size(0) && m <= out.size(0), "streamk: m out of range");
++  TORCH_CHECK(w.size(1) % kAlign == 0 && w.size(0) % kAlign == 0, "streamk: n / k not 16 B aligned");
++}
++
++}  // namespace sk
++
++// out[m, n] = x[m, k] @ w[n, k]^T on the current stream. Branches on shapes only.
++void streamk_gemm(torch::Tensor x, torch::Tensor w, torch::Tensor out, torch::Tensor ws,
++                  int64_t mode, int64_t sm_count) {
++  const int m = static_cast<int>(x.size(0));
++  const int n = static_cast<int>(w.size(0));
++  const int k = static_cast<int>(w.size(1));
++  sk::check_operands(x, w, out, m);
++  TORCH_CHECK(out.size(0) == m, "streamk: out rows != m");
++  TORCH_CHECK(ws.is_cuda() && ws.is_contiguous(), "streamk: workspace must be a contiguous CUDA tensor");
++  auto args = sk::make_args(x.data_ptr(), w.data_ptr(), out.data_ptr(), m, n, k, mode,
++                            static_cast<int>(sm_count), x.get_device(), nullptr);
++  cutlass::Status st = sk::Gemm::can_implement(args);
++  TORCH_CHECK(st == cutlass::Status::kSuccess, "streamk: can_implement failed: ", cutlassGetStatusString(st));
++  const size_t need = sk::Gemm::get_workspace_size(args);
++  TORCH_CHECK(need <= static_cast<size_t>(ws.nbytes()), "streamk: workspace too small (need ", need,
++              " B, have ", ws.nbytes(), " B)");
++  cudaStream_t stream = at::cuda::getCurrentCUDAStream(x.get_device()).stream();
++  // GemmUniversalAdapter::initialize() split in two so the timed path does not repeat the
++  // cudaFuncSetAttribute call (done once in prepare() by streamk_set_attr):
++  // (1) zero the stream-K barrier region on the stream (one memset node under graph capture),
++  st = sk::GemmKernel::initialize_workspace(args, ws.data_ptr(), stream);
++  TORCH_CHECK(st == cutlass::Status::kSuccess, "streamk: initialize_workspace failed: ",
++              cutlassGetStatusString(st));
++  // (2) host-side params (TMA descriptors from these pointers, scheduler from the shape),
++  auto params = sk::GemmKernel::to_underlying_arguments(args, ws.data_ptr());
++  // (3) one cluster launch of the persistent kernel on the current stream.
++  st = sk::Gemm::run(params, stream);
++  TORCH_CHECK(st == cutlass::Status::kSuccess, "streamk: run failed: ", cutlassGetStatusString(st));
++  C10_CUDA_KERNEL_LAUNCH_CHECK();
++}
++
++// Host-only query for problem rows m (x / out may be taller; only their pointers are used):
++// {can_implement, workspace bytes, grid x, y, z, smem bytes, threads, decomposition-mode applied,
++//  sk_tiles (-1 n/a), sk_units (-1 n/a), CUTLASS version as MAJOR*10000 + MINOR*100 + PATCH}.
++std::vector<int64_t> streamk_query(torch::Tensor x, torch::Tensor w, torch::Tensor out, int64_t m,
++                                   int64_t mode, int64_t sm_count) {
++  const int mi = static_cast<int>(m);
++  const int n = static_cast<int>(w.size(0));
++  const int k = static_cast<int>(w.size(1));
++  sk::check_operands(x, w, out, mi);
++  int64_t applied = 0;
++  auto args = sk::make_args(x.data_ptr(), w.data_ptr(), out.data_ptr(), mi, n, k, mode,
++                            static_cast<int>(sm_count), x.get_device(), &applied);
++  const int64_t can = sk::Gemm::can_implement(args) == cutlass::Status::kSuccess ? 1 : 0;
++  const int64_t ws = static_cast<int64_t>(sk::Gemm::get_workspace_size(args));
++  auto params = sk::GemmKernel::to_underlying_arguments(args, nullptr);
++  dim3 grid = sk::GemmKernel::get_grid_shape(params);
++  return {can, ws, static_cast<int64_t>(grid.x), static_cast<int64_t>(grid.y), static_cast<int64_t>(grid.z),
++          static_cast<int64_t>(sk::GemmKernel::SharedStorageSize),
++          static_cast<int64_t>(sk::GemmKernel::MaxThreadsPerBlock), applied,
++          sk::get_sk_tiles(params.scheduler), sk::get_sk_units(params.scheduler),
++          static_cast<int64_t>(CUTLASS_MAJOR * 10000 + CUTLASS_MINOR * 100 + CUTLASS_PATCH)};
++}
++
++// Raise the kernel's dynamic shared-memory limit once (prepare()); returns the bytes requested.
++int64_t streamk_set_attr() {
++  const int smem = static_cast<int>(sk::GemmKernel::SharedStorageSize);
++  C10_CUDA_CHECK(cudaFuncSetAttribute(cutlass::device_kernel<sk::GemmKernel>,
++                                      cudaFuncAttributeMaxDynamicSharedMemorySize, smem));
++  return static_cast<int64_t>(smem);
++}
++"""
++
++
++def _cutlass_version(include_dir: str):
++    """(MAJOR, MINOR, PATCH) from <include_dir>/cutlass/version.h, or None."""
++    try:
++        with open(os.path.join(include_dir, "cutlass", "version.h")) as f:
++            txt = f.read()
++        ver = []
++        for key in ("MAJOR", "MINOR", "PATCH"):
++            mm = re.search(r"#define\s+CUTLASS_" + key + r"\s+(\d+)", txt)
++            ver.append(int(mm.group(1)) if mm else -1)
++        return tuple(ver)
++    except Exception:
++        return None
++
++
++def _find_cutlass_includes():
++    """Glob the importlib-resolved package dirs of flashinfer / deep_gemm / sgl_kernel / tilelang /
++    cutlass_library plus /usr/local/cutlass and /usr/include for
++    cutlass/gemm/collective/collective_builder.hpp with a sibling cute/ (and the sm90 stream-K
++    scheduler). Prints every hit; returns [(version, include_dir, source)] newest first."""
++    roots = []
++    for pkg in _CUTLASS_PKGS:
++        try:
++            spec = importlib.util.find_spec(pkg)
++        except Exception as e:
++            print(f"[streamk] headers: find_spec({pkg}) raised {type(e).__name__}: {e}", flush=True)
++            continue
++        if spec is None:
++            print(f"[streamk] headers: package {pkg} not installed", flush=True)
++            continue
++        locs = list(spec.submodule_search_locations or [])
++        if not locs and spec.origin:
++            locs = [os.path.dirname(spec.origin)]
++        roots += [(pkg, p) for p in locs]
++    roots += [("system", "/usr/local/cutlass"), ("system", "/usr/include")]
++    hits, seen = [], set()
++    for src, root in roots:
++        if not os.path.isdir(root):
++            continue
++        try:
++            found = glob.glob(os.path.join(root, "**", _CUTLASS_BUILDER_REL), recursive=True)
++        except Exception as e:
++            print(f"[streamk] headers: glob under {root} raised {type(e).__name__}: {e}", flush=True)
++            continue
++        for path in found:
++            inc = os.path.realpath(path[: -len(_CUTLASS_BUILDER_REL)].rstrip(os.sep))
++            if inc in seen:
++                continue
++            seen.add(inc)
++            has_cute = os.path.isdir(os.path.join(inc, "cute"))
++            has_sk = os.path.isfile(os.path.join(inc, "cutlass", "gemm", "kernel",
++                                                 "sm90_tile_scheduler_stream_k.hpp"))
++            ver = _cutlass_version(inc)
++            print(f"[streamk] headers: hit src={src} include={inc} version={ver} cute/={has_cute} "
++                  f"sm90_stream_k={has_sk}", flush=True)
++            if has_cute and has_sk and ver is not None and ver[0] >= 3:
++                hits.append((ver, inc, src))
++    hits.sort(key=lambda h: h[0], reverse=True)
++    return hits
++
++
++def _build_streamk():
++    """Compile the CUTLASS stream-K module once per process, at import (never during capture).
++    Tries the newest usable CUTLASS tree, then one other version if the first build fails and
++    time allows. Returns the module or None (master path everywhere)."""
++    t_all = time.perf_counter()
++    try:
++        hits = _find_cutlass_includes()
++    except Exception as e:
++        print(f"[streamk] header search raised {type(e).__name__}: {e}; master kept", flush=True)
++        return None
++    if not hits:
++        print("[streamk] no CUTLASS headers, master kept", flush=True)
++        return None
++    try:
++        from torch.utils.cpp_extension import load_inline
++    except Exception as e:
++        print(f"[streamk] cpp_extension unavailable ({e!r}); master kept", flush=True)
++        return None
++    tried = []
++    for ver, inc, src in hits:
++        if len(tried) >= 2 or ver in tried:
++            continue
++        if tried and time.perf_counter() - t_all > 150.0:
++            print("[streamk] build: no time for another CUTLASS tree", flush=True)
++            break
++        tried.append(ver)
++        t0 = time.perf_counter()
++        print(f"[streamk] build: CUTLASS {ver} from {src}: {inc}", flush=True)
++        # sm_90a only: torch's cpp_extension otherwise adds its own compute_90 -gencode from
++        # TORCH_CUDA_ARCH_LIST / the device, and that pass cannot assemble wgmma (LESSONS 2026-10-25).
++        _arch_prev = os.environ.get("TORCH_CUDA_ARCH_LIST")
++        os.environ["TORCH_CUDA_ARCH_LIST"] = "9.0a"
++        try:
++            ext = load_inline(
++                name=f"muse_bf16_streamk_v1_c{ver[0]}_{ver[1]}_{ver[2]}",
++                cpp_sources=_STREAMK_CPP,
++                cuda_sources=_STREAMK_CUDA,
++                functions=["streamk_gemm", "streamk_query", "streamk_set_attr"],
++                extra_include_paths=[inc],
++                extra_cflags=["-O3"],
++                extra_cuda_cflags=[
++                    # -std is left to torch (it appends -std=c++17 unless one is given).
++                    "-O3", "-DNDEBUG", "--expt-relaxed-constexpr", "--expt-extended-lambda",
++                    "-gencode=arch=compute_90a,code=sm_90a",
++                    "-U__CUDA_NO_HALF_OPERATORS__", "-U__CUDA_NO_HALF_CONVERSIONS__",
++                    "-U__CUDA_NO_HALF2_OPERATORS__", "-U__CUDA_NO_BFLOAT16_CONVERSIONS__",
++                    "-U__CUDA_NO_BFLOAT16_OPERATORS__",
++                    "-DCUTLASS_DEBUG_TRACE_LEVEL=0",
++                ],
++                verbose=False,
++            )
++        except Exception as e:
++            msg = repr(e)
++            if _arch_prev is None:
++                os.environ.pop("TORCH_CUDA_ARCH_LIST", None)
++            else:
++                os.environ["TORCH_CUDA_ARCH_LIST"] = _arch_prev
++            print(f"[streamk] build FAILED after {time.perf_counter() - t0:.1f}s with CUTLASS {ver}: "
++                  f"{msg[-3000:]}", flush=True)
++            continue
++        if _arch_prev is None:
++            os.environ.pop("TORCH_CUDA_ARCH_LIST", None)
++        else:
++            os.environ["TORCH_CUDA_ARCH_LIST"] = _arch_prev
++        print(f"[streamk] build OK: load_inline compiled in {time.perf_counter() - t0:.1f}s "
++              f"(CUTLASS {ver}, {inc})", flush=True)
++        return ext
++    print("[streamk] build: every attempt failed, master kept", flush=True)
++    return None
++
++
++_STREAMK_EXT = None
++if torch.cuda.is_available():
++    _STREAMK_EXT = _build_streamk()
++
++
++def _streamk_route_ok(layer: str, x: torch.Tensor, state: dict, cfg) -> bool:
++    """Stream-K path: a bf16 layer whose prepare() self-check passed, 129 <= cfg m <= 256, cfg n/k
++    equal to the full weight, x a contiguous bf16 [m, k]. Branches on cfg and shapes only."""
++    ok = state.get("streamk_ok")
++    if _STREAMK_EXT is None or not ok or not ok.get(layer, False):
++        return False
++    w = state[layer]
++    m = cfg["m"]
++    return (STREAMK_MIN_M <= m <= STREAMK_MAX_M and cfg["n"] == w.shape[0] and cfg["k"] == w.shape[1]
++            and x.dim() == 2 and x.shape[0] == m and x.shape[1] == w.shape[1]
++            and x.dtype == torch.bfloat16 and x.is_contiguous() and x.data_ptr() % 16 == 0)
++
++
++def _streamk_forward(layer: str, x: torch.Tensor, state: dict) -> torch.Tensor:
++    """x bf16 [m, k] @ W[n, k].T -> bf16 [m, n], one CUTLASS launch (plus the stream-K barrier
++    memset initialize() may issue) into the prepare()-allocated workspace."""
++    w = state[layer]
++    out = torch.empty((x.shape[0], w.shape[0]), dtype=torch.bfloat16, device=x.device)
++    _STREAMK_EXT.streamk_gemm(x, w, out, state["streamk_ws"], STREAMK_MODES[layer], state["streamk_sms"])
++    return out
++
++
++def _streamk_time_us(fn, iters: int = 20) -> float:
++    """Warm-L2 cudaEvent time per call in us (prepare-time diagnostics only; never routes)."""
++    for _ in range(3):
++        fn()
++    start = torch.cuda.Event(enable_timing=True)
++    end = torch.cuda.Event(enable_timing=True)
++    start.record()
++    for _ in range(iters):
++        fn()
++    end.record()
++    end.synchronize()
++    return start.elapsed_time(end) * 1000.0 / iters
++
++
++def _streamk_prepare(state: dict) -> None:
++    """Per-layer setup and SELF-CHECK of the stream-K path. Sets state['streamk_ok'][layer], a
++    constant fixed here; every failure prints '[streamk] <layer> DISABLED: <reason>' and keeps
++    master (cuBLAS) for that layer. Allocates ONE workspace (max over layers and every m in
++    129..256) reused by every call."""
++    state["streamk_ok"] = {layer: False for layer in STREAMK_MODES}
++    if _STREAMK_EXT is None:
++        print("[streamk] PATH CHOSEN: extension unavailable, all layers keep master cuBLAS at "
++              "129 <= m <= 256", flush=True)
++        return
++    ext = _STREAMK_EXT
++    dev = state["qkv_gate"].device
++    sms = torch.cuda.get_device_properties(dev).multi_processor_count
++    state["streamk_sms"] = sms
++    try:
++        smem = ext.streamk_set_attr()
++        print(f"[streamk] cudaFuncSetAttribute(MaxDynamicSharedMemorySize={smem}) OK, sm_count={sms}",
++              flush=True)
++    except Exception as e:
++        print(f"[streamk] ALL DISABLED: cudaFuncSetAttribute failed: {e!r}", flush=True)
++        return
++
++    # Workspace: query every m in 129..256 for every layer; allocate the max once.
++    need, usable = {}, {}
++    for layer, mode in STREAMK_MODES.items():
++        w = state[layer]
++        reason = None
++        if not (w.dim() == 2 and w.dtype == torch.bfloat16 and w.is_contiguous()):
++            reason = f"weight {tuple(w.shape)} {w.dtype} not a contiguous bf16 matrix"
++        else:
++            try:
++                xq = torch.zeros((STREAMK_MAX_M, w.shape[1]), dtype=torch.bfloat16, device=dev)
++                oq = torch.empty((STREAMK_MAX_M, w.shape[0]), dtype=torch.bfloat16, device=dev)
++                sizes = []
++                for m in range(STREAMK_MIN_M, STREAMK_MAX_M + 1):
++                    q = ext.streamk_query(xq, w, oq, m, mode, sms)
++                    if q[0] != 1:
++                        reason = f"can_implement failed at m={m}"
++                        break
++                    sizes.append(q[1])
++                    if m in (STREAMK_MIN_M, 200, STREAMK_MAX_M):
++                        print(f"[streamk] {layer} m={m} n={w.shape[0]} k={w.shape[1]} "
++                              f"requested={_STREAMK_MODE_NAMES.get(mode, mode)} mode_set={bool(q[7])} "
++                              f"grid=({q[2]},{q[3]},{q[4]}) threads={q[6]} smem={q[5]} B "
++                              f"workspace={q[1]} B sk_tiles={q[8]} sk_units={q[9]} "
++                              f"(DataParallel if sk_tiles == 0) CUTLASS={q[10]}", flush=True)
++                if reason is None:
++                    need[layer] = max(sizes)
++                    print(f"[streamk] {layer} workspace bytes over m 129..256: min {min(sizes)} "
++                          f"max {max(sizes)}", flush=True)
++            except Exception as e:
++                reason = f"query raised {e!r}"
++        if reason is not None:
++            print(f"[streamk] {layer} DISABLED: {reason}", flush=True)
++        else:
++            usable[layer] = True
++    if not usable:
++        print("[streamk] PATH CHOSEN: every layer keeps master cuBLAS at 129 <= m <= 256", flush=True)
++        return
++    ws_bytes = max(max(need.values()), 8)
++    state["streamk_ws"] = torch.zeros(((ws_bytes + 7) // 8,), dtype=torch.int64, device=dev)
++    print(f"[streamk] workspace allocated once: {ws_bytes} B (max over layers {need})", flush=True)
++    for layer, nb in need.items():
++        assert nb <= state["streamk_ws"].numel() * 8, f"streamk workspace too small for {layer}"
++
++    # SELF-CHECK on synthetic x (weights only): m in {130, 200, 256}, two runs each through the
++    # shared workspace.
++    gen = torch.Generator(device=dev)
++    gen.manual_seed(1234)
++    for layer in usable:
++        w = state[layer]
++        n, k = w.shape
++        reason = None
++        try:
++            wd = w.double()
++            for m in _STREAMK_SELF_CHECK_MS:
++                x = torch.randn((m, k), device=dev, dtype=torch.float32, generator=gen).to(torch.bfloat16)
++                probe_col = (37 * m) % k
++                x[0].zero_()
++                x[0, probe_col] = 2.0  # one-hot power-of-two row: output must be 2 * W[:, col] exactly
++                out1 = torch.empty((m, n), dtype=torch.bfloat16, device=dev)
++                out2 = torch.empty((m, n), dtype=torch.bfloat16, device=dev)
++                ext.streamk_gemm(x, w, out1, state["streamk_ws"], STREAMK_MODES[layer], sms)
++                ext.streamk_gemm(x, w, out2, state["streamk_ws"], STREAMK_MODES[layer], sms)
++                ref = x.double() @ wd.T
++                o1 = out1.double()
++                err = ((o1 - ref).norm() / ref.norm().clamp_min(1e-30)).item()
++                pref = 2.0 * wd[:, probe_col]
++                perr = ((o1[0] - pref).norm() / pref.norm().clamp_min(1e-30)).item()
++                finite = bool(torch.isfinite(out1).all().item())
++                same = bool(torch.equal(out1, out2))
++                print(f"[streamk] self-check {layer} m={m}: rel L2 {err:.2e} probe {perr:.2e} "
++                      f"finite {finite} run2-bit-identical {same}", flush=True)
++                if not finite:
++                    reason = f"non-finite output at m={m}"
++                elif err > 3e-3:
++                    reason = f"rel L2 {err:.2e} > 3e-3 at m={m}"
++                elif perr > 1e-4:
++                    reason = f"one-hot probe rel err {perr:.2e} > 1e-4 at m={m}"
++                elif not same:
++                    reason = f"second run not bit-identical at m={m}"
++                if reason is not None:
++                    break
++        except Exception as e:
++            reason = f"self-check raised {e!r}"
++        if reason is not None:
++            print(f"[streamk] {layer} DISABLED: {reason}", flush=True)
++            continue
++        state["streamk_ok"][layer] = True
++
++    # DIAGNOSTICS (print-only, never routing): warm-L2 kernel time at m=256, CUTLASS vs master cuBLAS.
++    for layer, enabled in state["streamk_ok"].items():
++        if not enabled:
++            continue
++        try:
++            w = state[layer]
++            n, k = w.shape
++            x = torch.randn((STREAMK_MAX_M, k), device=dev, dtype=torch.float32, generator=gen).to(torch.bfloat16)
++            out = torch.empty((STREAMK_MAX_M, n), dtype=torch.bfloat16, device=dev)
++            mode = STREAMK_MODES[layer]
++            t_sk = _streamk_time_us(lambda: ext.streamk_gemm(x, w, out, state["streamk_ws"], mode, sms))
++            t_cb = _streamk_time_us(lambda: _bf16_gemm_dispatch_impl(x, w, None))
++            flop = 2.0 * STREAMK_MAX_M * n * k
++            print(f"[streamk] diag {layer} m=256 warm-L2: cutlass {t_sk:.2f} us "
++                  f"({flop / t_sk * 1e-6:.0f} TFLOP/s) vs cuBLAS {t_cb:.2f} us "
++                  f"({flop / t_cb * 1e-6:.0f} TFLOP/s)", flush=True)
++        except Exception as e:
++            print(f"[streamk] diag {layer}: unavailable ({type(e).__name__}: {e})", flush=True)
++
++    for layer, enabled in state["streamk_ok"].items():
++        if enabled:
++            print(f"[streamk] PATH CHOSEN {layer}: 129 <= m <= 256 -> CUTLASS sm90 stream-K "
++                  f"({_STREAMK_MODE_NAMES[STREAMK_MODES[layer]]}, tile 128x128x64, cluster 2x1x1)",
++                  flush=True)
++        else:
++            print(f"[streamk] PATH CHOSEN {layer}: 129 <= m <= 256 -> master cuBLAS", flush=True)
++
++
+ def prepare(weights: Weights) -> dict:
+     """Called once, untimed. Keep the bf16 weights as they are (contiguous), build the router's
+     hi + lo bf16 split as [256, 8192] row-major (N x K), and pre-compile every m-bucket of the
+@@ -708,6 +1282,8 @@ def prepare(weights: Weights) -> dict:
+     state["unpool_cnt"].zero_()
+     # (5) Swap-AB at 17 <= m <= 32 for all four bf16 layers (own workspaces / tickets).
+     _swapab_prepare(state)
++    # (6) CUTLASS sm90 stream-K at 129 <= m <= 256 for the four bf16 layers (own workspace).
++    _streamk_prepare(state)
+     return state
+ 
+ 
+@@ -728,6 +1304,8 @@ def kernel_fn(data: Inputs, state: dict) -> torch.Tensor:
+             and _swapab_route_ok(layer, x, state[layer], cfg)):
+         ws, cnt = _swapab_buffers(state, layer)
+         return _swapab_forward(layer, x, state[layer], ws, cnt, state["swapab_stages"][layer])
++    if layer != "router" and _streamk_route_ok(layer, x, state, cfg):
++        return _streamk_forward(layer, x, state)
+     if layer != "router":
+         # The unpooler's slice is its first n rows (all of them above 8 tokens).
+         return _bf16_gemm_dispatch_impl(x, state[layer][: cfg["n"]], None)
