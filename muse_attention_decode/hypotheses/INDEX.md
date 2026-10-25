@@ -1,6 +1,6 @@
 # muse_attention_decode hypotheses
 
-Regenerated 2026-10-25T091113Z. Best: 1.4920x [1.4696,1.5144] job `cbd49dc94be548e7` (check)
+Regenerated 2026-10-25T110754Z. Best: 1.4920x [1.4696,1.5144] job `cbd49dc94be548e7` (check)
 
 | created | slug | kind | area | where | outcome | speedup | CI | job | mode | promotion | review | expected hit |
 |---|---|---|---|---|---|---|---|---|---|---|---|---|
@@ -73,14 +73,16 @@ Regenerated 2026-10-25T091113Z. Best: 1.4920x [1.4696,1.5144] job `cbd49dc94be54
 | 2026-10-25T042334Z | sliding-verify-sk-pseudo-decode-s1 | rewrite | sliding-layer attention (verify, stream-K pseudo-decode kernel) | done/neutral | neutral | 1.4705 | [1.448,1.493] | 94523c3313444fd8 | check |  | proceed | 1/4 |
 | 2026-10-25T042335Z | full-verify1-sk-pseudo-decode | primary | full-layer attention (batch-1 verify, stream-K pseudo-decode) | queue | hold |  |  |  |  |  | proceed |  |
 | 2026-10-25T042335Z | full-decode1-sk-pdl-from-preattn | primary | launch overhead (full decode_1, pre-attention -> stream-K kernel) | done/neutral | neutral | 1.4571 | [1.432,1.479] | c0f1945a108c4aa2 | check |  | proceed | 0/2 |
-| 2026-10-25T054448Z | restack-sk-pseudo-cluster-plus-v3-fused-preattn | primary | full-layer attention (decode 1<B<=64 prologue) on top of the sliding restack | done/gain | gain | 1.4920 | [1.470,1.514] | cbd49dc94be548e7 | check | merged | proceed | 3/5 |
+| 2026-10-25T054448Z | restack-sk-pseudo-cluster-plus-v3-fused-preattn | primary | full-layer attention (decode 1<B<=64 prologue) on top of the sliding restack | done/gain | gain | 1.4920 | [1.470,1.514] | cbd49dc94be548e7 | check | submitted | proceed | 3/5 |
 | 2026-10-25T054448Z | full-decode1-sk-two-level-fused-preattn | rewrite | full-layer attention (batch-1 decode, stream-K prologue fusion) | done/neutral | neutral | 1.4411 | [1.419,1.463] | 2038a530edd04309 | check |  | proceed | 3/3 |
 | 2026-10-25T054448Z | full-verify-wgmma-s5-qfrag-reload | rewrite | full-layer attention (verify, wgmma stream-K kernel, multi-tile Q-fragment fix) | done/neutral | neutral | 1.4345 | [1.413,1.456] | 71e40388a1904937 | check |  | proceed | 1/4 |
 | 2026-10-25T054448Z | restack-sk-pseudo-b1-cluster-c16-c4 | primary | sliding-layer attention (restack of two measured row wins: verify B=1 pseudo-decode + decode cluster C=16/C=4) | done/neutral | neutral | 1.4870 | [1.465,1.509] | eb6ff0cb701d4def | check |  | proceed | 5/5 |
 | 2026-10-25T054448Z | sliding-verify-sk-pseudo-s2-token-group | rewrite | sliding-layer attention (verify, stream-K pseudo-decode kernel, token grouping) | done/regression | regression | 1.4251 | [1.404,1.452] | bd0ddd413f7f4a94 | check |  | proceed | 1/4 |
 | 2026-10-25T054448Z | full-decode-sk-s4-deferred-ticket-arrive | rewrite | full-layer attention (decode 1<B<=64, stream-K ticket epilogue) | done/failed | failed |  |  | 7f10d2d820cd49ee | check |  | proceed |  |
-| 2026-10-25T054449Z | full-verify1-sk-two-level-token-group | rewrite | full-layer attention (batch-1 verify, stream-K two-level kernel, token grouping) | running | running |  |  | 7d23e8776c194344 | check |  | proceed |  |
+| 2026-10-25T054449Z | full-verify1-sk-two-level-token-group | rewrite | full-layer attention (batch-1 verify, stream-K two-level kernel, token grouping) | done/neutral | neutral | 1.4714 | [1.449,1.494] | 7d23e8776c194344 | check |  | proceed | 1/3 |
 | 2026-10-25T054449Z | sliding-decode-sk-window-route | rewrite | sliding-layer attention (decode, stream-K windowed kernel) | done/neutral | neutral | 1.4973 | [1.475,1.520] | 118c6de9704146f3 | check |  | proceed | 2/4 |
+| 2026-10-25T110636Z | restack-sliding-decode-sk-window-on-cluster-master | primary | sliding-layer attention (decode, stream-K windowed kernel) restack | queue | queued |  |  |  |  |  | required |  |
+| 2026-10-25T110716Z | sliding-decode-sk-s3-fused-preattn-rope | rewrite | sliding-layer attention (decode, stream-K windowed kernel, pre-attention fold) | queue | queued |  |  |  |  |  | required |  |
 
 ## Held
 

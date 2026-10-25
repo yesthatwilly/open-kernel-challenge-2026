@@ -1,6 +1,6 @@
 # muse_attention_decode findings
 
-Regenerated 2026-10-25T091113Z by `churn.py index`. Read this before writing a hypothesis for muse_attention_decode.
+Regenerated 2026-10-25T110754Z by `churn.py index`. Read this before writing a hypothesis for muse_attention_decode.
 
 ## Current best
 
@@ -63,6 +63,9 @@ Where the time goes (per scored shape, top kernels):
 
 ### full-layer attention (batch-1 decode, stream-K prologue fusion)
 - **full-decode1-sk-two-level-fused-preattn** → neutral (within-ci), 1.4411x — gained on full decode_1. Full decode_1 is 22.6 us shape for 18.6 us of stream-K kernel + 1.4 us _pre_attention_kernel: ~2.6 us of the row is the second graph node and its launch gap. PD
+
+### full-layer attention (batch-1 verify, stream-K two-level kernel, token grouping)
+- **full-verify1-sk-two-level-token-group** → neutral (beats-base-not-best), 1.4714x — gained on sliding decode_1, verify_1. On the token-group branch (sliding-verify-sk-pseudo-s2-token-group). Full verify_1 is 30.5 us shape: FA3 15.4 + combine 7.0 + prepare 2.8 + pre-attn 1.5 + norm-
 
 ### full-layer attention (decode 1<B<=64 prologue) on top of the sliding restack
 - **restack-sk-pseudo-cluster-plus-v3-fused-preattn** → gain (gain), 1.4920x — gained on sliding decode_1, decode_32, verify_1. Exactly restack-sk-pseudo-b1-cluster-c16-c4 (pseudo-decode sliding verify B=1 + sliding cluster C=16 at B=1 and C=4 at B=17..32, on master c3c1b01), PLUS the st
@@ -183,6 +186,7 @@ Where the time goes (per scored shape, top kernels):
 - full-decode1-sk-two-level-fused-preattn: rewrite stage 4 of `full decode batch 1: _pre_attention_kernel launch + master splitkv_attn_sk_kernel<4, two-level ticket>`: read the replaced kernels' own us per shape (profile top_kernels) against the incumbent and the
 - full-verify-wgmma-s5-qfrag-reload: rewrite stage 5 of `full-layer verify at 1<batch<=64: FA3 main + prepare_varlen_num_blocks + FlashAttnFwdCombine + norm-gate (master paired FA3)`: read the replaced kernels' own us per shape (profile top_kernels) against
 - restack-sk-pseudo-b1-cluster-c16-c4: unproven-vs-best: the change is not proven either way; a stacked hypothesis (`depends_on: restack-sk-pseudo-b1-cluster-c16-c4`) that adds a further change in the same area is the only way to learn more (identical code is
+- full-verify1-sk-two-level-token-group: rewrite stage 3 of `full verify batch 1 (q_len 8): prepare_varlen_num_blocks + FA3 main + FlashAttnFwdCombine + norm-gate`: read the replaced kernels' own us per shape (profile top_kernels) against the incumbent and the 
 - sliding-decode-sk-window-route: rewrite stage 2 of `sliding decode (q_len 1, page 1, tp8, 2<=B<=32): master Triton _sliding_fused_kernel (16 splits, in-kernel pre-attention)`: read the replaced kernels' own us per shape (profile top_kernels) against th
 - full-decode-sk-s4-deferred-ticket-arrive: rewrite stage 4 of `full decode 1<B<=64: master splitkv_attn_sk_kernel<4, ticket> single-level in-stream ticket epilogue`: read the replaced kernels' own us per shape (profile top_kernels) against the incumbent and the f
 
@@ -220,4 +224,5 @@ Where the time goes (per scored shape, top kernels):
 - queue: sliding-cluster-s3-verify-attn-only-phase-timed [sliding-layer attention (verify, cluster kernel)] p2 hold
 - queue: sliding-verify1-triton-pseudo-decode [sliding-layer attention (batch-1 verify, Triton fused decode kernel)] p2 hold
 - queue: full-verify1-sk-pseudo-decode [full-layer attention (batch-1 verify, stream-K pseudo-decode)] p3 hold
-- running: full-verify1-sk-two-level-token-group [full-layer attention (batch-1 verify, stream-K two-level kernel, token grouping)] p3 running
+- queue: restack-sliding-decode-sk-window-on-cluster-master [sliding-layer attention (decode, stream-K windowed kernel) restack] p1 queued
+- queue: sliding-decode-sk-s3-fused-preattn-rope [sliding-layer attention (decode, stream-K windowed kernel, pre-attention fold)] p2 queued
