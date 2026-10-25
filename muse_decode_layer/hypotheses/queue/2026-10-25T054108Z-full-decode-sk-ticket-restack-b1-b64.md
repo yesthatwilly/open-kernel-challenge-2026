@@ -58,8 +58,10 @@ depends_on: null
 priority: 1
 kind: primary
 controls_for: null
-review: required
+review: proceed
 status: queued
+review_at: 2026-10-25T054426Z
+review_companions: null
 ---
 
 # full-decode-sk-ticket-restack-b1-b64
@@ -79,3 +81,28 @@ Restack onto current master (w2-marlin-atomic-add-t1-port, 1.2856 check) the two
 ## Risk
 
 Land candidate if the three full decode rows reproduce: the kernels are unchanged from runs that passed every test; the new risk is only the per-state ticket move. Judge on the three full decode rows and the sk kernel profile rows, not the headline (sum of row gains ~+0.008-0.012).
+
+## Adversarial review
+
+Reviewed 2026-10-25T054426Z by an adversarial subagent (model opus).
+
+**Verdict: proceed.** This restacks two attention kernels, each of which already won its own gated rows (6d48932b on full decode_16/32, 5e44c7ae on full decode_1), onto master 00e36e3. The gates do not overlap, and the landed changes that share these rows are serial MoE or GEMM work in the same graph, so the three full-decode rows can each be read on their own. No companion run is needed; spend one check.
+
+### Justification
+A. The mechanism is plausible. On master, full decode_16 and decode_32 spend 112.4 µs (37.5%) and 248.1 µs (52%) in splitkv_attn_kernel, against shape floors of 137.5 and 208.1 µs. Their attention is a pure FP8 KV stream at ctx about 80K, so a stream-K single-level-ticket schedule that removes the tail imbalance of agentic-length chunks and folds the combine into the last CTA should save the measured 11 and 30 µs. The port profile shows sk rows of 109.7 and 227.3 µs against 121.1 and 257.1 for kernels A+B. At full decode_1, FA3 main (18.5 µs) plus FlashAttnFwdCombine, the pad/unpad copies and FusedRMSNormGate (about 30 µs in total) are replaced by one SM-count-grid two-level-ticket kernel at 20.1 µs. The expected directions agree with the weights: each full row has weight 16 against 46 for sliding. The load-level savings are about 1.0% (decode_1), 1.3% (decode_16) and 2.8% (decode_32), so the headline should rise by only about 0.8-0.9% (to about 1.296). That is inside the ±1.5% CI, so the hypothesis is rightly judged per row and per kernel. WEAKEST LINK: the decode_1 claim. In 5e44c7ae, full decode_1 went 142.7 -> 137.7, but churn did not class it as moved: that run's only gain was outside the gate, on sliding verify_32. The base here is 139.2 µs (w2-atomic already took Marlin T=1 from about 44 to 35.8 µs). The predicted 134 needs about 5 µs to reproduce on top of a different MoE tail, and the kill line of 137 sits only about 3 standard errors (err about 0.7 µs) below the current row. A secondary weak point is the per-state ticket and workspace move, which is new code, so the earlier 13/13 passes do not cover it. One more difference from the incumbent: master allocates ws_acc and ws_ml per call with torch.empty, while the restack preallocates them per state. Under a graph this should be neutral, but it changes the memory layout.
+
+### Confounders on the current kernel
+- w2-marlin-atomic-add-t1-port (current master, landed after both ports were measured): it shares the full decode_1 row with sub-change (b). The w2 path's mode (atomic / atomic_zero / master) is picked by a self-check in prepare(), and atomic_zero adds a cache3.zero_() memset. If the new sk setup in prepare (extra allocations, captures, refills) flips that choice, decode_1 moves by about 1-3 µs on both sliding and full, for reasons that have nothing to do with attention. Sliding decode_1 (123.9) is the control: if it moves, read the w2 line in the log before crediting (b). Otherwise the two are serial and roughly additive, because Marlin runs after attention in the graph.
+- full-decode-splitkv-restack-on-pdl (landed; the incumbent kernels A/B that (a) replaces, and the pre-attention q route that both sub-changes read): the selector compares new against these very kernels, so the comparison has a clean incumbent. Any delta on decode_16/32 can only come from replacing A+B, or from the workspace moving out of per-call torch.empty.
+- small-t-launch-minimal-dense-chain-pdl (landed; PDL dense chain at T<=32): the o GEMM and pooler/router kernels that follow attention may be launched with programmatic serialization. If the sk kernels never execute griddepcontrol.launch_dependents, the PDL overlap at the attention-to-o boundary is lost or changes compared with master, which ran plain FA3 or kernel B there. That can shift decode_1/16/32 by a few µs in either direction for reasons unrelated to the attention kernel itself. Read the attention row in top_kernels, not only the shape median.
+- fa3-hdim128-head-pairing-batched and post-expert-norm-triton-small-t: these no longer touch the gated paths ((a) replaces paired FA3 territory that the splitkv path already took over; post-expert norm is downstream MoE). They do not confound.
+
+### Interference and A/B needs
+No companion is warranted. The two sub-changes are gated on batch==1 versus 1<batch<=64 and land on different scored rows (full decode_1 versus full decode_16/32), so each row isolates one kernel and a control would add nothing. Each kernel was already measured on its own, one master earlier. The only landed change since then (w2-atomic, T=1 MoE) is serial with attention, and sliding decode_1 detects any drift it causes. An ab-revert of w2-atomic would only re-measure what 5e44c7ae already measured. With 3 decode checks left today, one run is the right spend. If decode_1 comes in at 137-139 while decode_16/32 reproduce, the follow-up is not a companion but a narrower restack of (a) alone, plus a look at whether (b) loses its PDL edge into the o GEMM.
+
+### Open questions
+- Did 5e44c7ae's full decode_1 improvement (142.7 -> 137.7) fail churn's 'moved' test because of base drift? If so, how much of the predicted 5 µs is real, and is the 137 kill line too tight now that the base is 139.2?
+- Do the sk kernels issue griddepcontrol.launch_dependents so that the PDL-launched kernels after attention keep their overlap, and was this the same in both port runs?
+- Does the w2_mode line in the log stay 'atomic', as on master, after the new sk setup is added to prepare()?
+- Are the two port branches' base_sha values (f6e653b, 08b1841) the same master tree? If not, each port's row delta was measured against a slightly different incumbent.
+
