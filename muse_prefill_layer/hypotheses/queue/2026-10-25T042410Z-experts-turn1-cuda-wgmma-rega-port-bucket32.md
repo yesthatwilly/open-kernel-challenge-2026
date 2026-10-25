@@ -61,9 +61,10 @@ controls_for: null
 rewrite_stage: 1
 replaces: moe_wna16_marlin_gemm x2 (Marlin w13 + w2) and the silu-mul between them at T <= 1024 (turn_1, T=753)
 review: proceed
-status: queued
+status: hold
 review_at: 2026-10-25T043311Z
 review_companions: null
+hold_reason: "Reviewer: proceed but wait for moe s3 wide-bucket-fix (3bdec0e58d684c17) harvest, which decides the register-A hazard variant; then build per the review builder_instruction (168-reg cap, wait<0>/hazard-free order)."
 ---
 
 # experts-turn1-cuda-wgmma-rega-port-bucket32
