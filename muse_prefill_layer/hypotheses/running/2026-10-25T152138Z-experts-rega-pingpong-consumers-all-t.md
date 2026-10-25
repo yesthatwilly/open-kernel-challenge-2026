@@ -89,7 +89,7 @@ review: proceed
 status: running
 review_at: 2026-10-25T152526Z
 review_companions: null
-stage: implemented
+stage: dispatched
 claimed_at: 2026-10-25T152526Z
 base_sha: f4ace8661739740d326729699aeb3d2f785ae596
 base_blob: a2fe2a75893c60d4f68cf94fcce8ce8f9b708a71
@@ -106,6 +106,8 @@ submission_blob: d3e7b75d044c8d3262672f0fb473e87a4f68f7af
 lint_warnings: 83
 attempt_file: 2026-10-25T154139Z-submit-experts-rega-pingpong-consumers-all-t.md
 prepared_at: 2026-10-25T154139Z
+job: 5fbaec9a075543d4
+dispatched_at: 2026-10-25T154147Z
 ---
 
 # experts-rega-pingpong-consumers-all-t
