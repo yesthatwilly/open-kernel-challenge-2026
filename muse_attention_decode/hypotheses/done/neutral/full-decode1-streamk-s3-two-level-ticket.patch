@@ -1,0 +1,559 @@
+diff --git a/muse_attention_decode/submission.py b/muse_attention_decode/submission.py
+index 695c97d..d8769ef 100644
+--- a/muse_attention_decode/submission.py
++++ b/muse_attention_decode/submission.py
+@@ -867,14 +867,22 @@ def _sm_count(device) -> int:
+     return n
+ 
+ 
+-def _splitkv_gate(cfg) -> bool:
+-    """Config-only predicate for the CUDA split-KV path: full-layer decode, 1 < batch <= 64, tp8
+-    heads, head dim 64, page 1. Every other shape keeps the master path."""
+-    return (_EXT is not None and cfg["window"] == 0 and cfg["q_len"] == 1 and 1 < cfg["batch"] <= 64
++_B1_PATH = False  # batch 1 on the two-level stream-K kernel; set only once its in-process validation passes
++
++
++def _shape_gate(cfg) -> bool:
++    """Config-only shape predicate: full-layer decode, 1 <= batch <= 64, tp8 heads, head dim 64, page 1."""
++    return (cfg["window"] == 0 and cfg["q_len"] == 1 and 1 <= cfg["batch"] <= 64
+             and cfg["num_q_heads"] == 16 and cfg["num_kv_heads"] == 2 and cfg["head_dim"] == 64
+             and cfg["page_size"] == 1)
+ 
+ 
++def _splitkv_gate(cfg) -> bool:
++    """Config-only predicate for the CUDA split-KV path. Batch 1 additionally needs the validated
++    two-level stage-3 path (otherwise it stays on master FA3); 1 < batch <= 64 is stage 2/1 as before."""
++    return _EXT is not None and _shape_gate(cfg) and (cfg["batch"] > 1 or _B1_PATH)
++
++
+ def _full_decode_splitkv(data: Inputs, q: torch.Tensor, qkv: torch.Tensor) -> torch.Tensor:
+     """Kernels A and B on the gated path; q is the unpaired FP8 query [B, 16, 64]. The workspace
+     and grid come from shapes and the device only."""
+@@ -923,6 +931,7 @@ _SK_CPP = r"""
+ void sk_attn(torch::Tensor q, torch::Tensor k_cache, torch::Tensor v_cache, torch::Tensor page_table,
+              torch::Tensor cache_seqlens, torch::Tensor k_scale, torch::Tensor v_scale, torch::Tensor qkv,
+              int64_t qkv_stride, torch::Tensor out, torch::Tensor ws_acc, torch::Tensor ws_ml, torch::Tensor ticket,
++             torch::Tensor gticket, torch::Tensor gacc, torch::Tensor gml,
+              double score_scale, double eps, int64_t grid, int64_t variant);
+ void sk_combine(torch::Tensor ws_acc, torch::Tensor ws_ml, torch::Tensor cache_seqlens, torch::Tensor v_scale,
+                 torch::Tensor qkv, int64_t qkv_stride, torch::Tensor out, int64_t attn_grid, double eps);
+@@ -1024,18 +1033,20 @@ __device__ __forceinline__ int tile_owner(int t, int T, int gx) {
+   return static_cast<int>(((static_cast<long long>(t) + 1) * gx - 1) / T);
+ }
+ 
+-// LSE merge of request b's partials at slots c + b, c = c_lo..c_hi, for head h, dims d0..d0+3.
+-// L2 loads (__ldcg): the slots were written by other CTAs.
+-__device__ __forceinline__ void merge_slots(const float* ws_acc, const float* ws_ml, int b, int c_lo, int c_hi,
+-                                            int h, int d0, float4& o, float& L) {
++// LSE merge of the partials in slots s_lo..s_hi for head h, dims d0..d0+3 (M = the raw max, so the
++// result can itself be stored as a slot). L2 loads (__ldcg): the slots were written by other CTAs.
++// Stage-2 callers pass s = c + b (c = c_lo..c_hi); the two-level path passes group-slot indices.
++__device__ __forceinline__ void merge_range(const float* ws_acc, const float* ws_ml, int s_lo, int s_hi,
++                                            int h, int d0, float4& o, float& L, float& Mout) {
+   const float NEG_INF = __int_as_float(0xff800000u);
+   float M = NEG_INF;
+-  for (int c = c_lo; c <= c_hi; ++c) M = fmaxf(M, __ldcg(ws_ml + (int64_t)(c + b) * 2 * HQ + h));
++  for (int c = s_lo; c <= s_hi; ++c) M = fmaxf(M, __ldcg(ws_ml + (int64_t)c * 2 * HQ + h));
+   const float Mu = M == NEG_INF ? 0.f : M;
++  Mout = M;
+   o = make_float4(0.f, 0.f, 0.f, 0.f);
+   L = 0.f;
+-  for (int c = c_lo; c <= c_hi; ++c) {
+-    const int64_t sl = c + b;
++  for (int c = s_lo; c <= s_hi; ++c) {
++    const int64_t sl = c;
+     const float m = __ldcg(ws_ml + sl * 2 * HQ + h);
+     const float wt = m == NEG_INF ? 0.f : ex2(m - Mu);
+     L += wt * __ldcg(ws_ml + sl * 2 * HQ + HQ + h);
+@@ -1043,6 +1054,20 @@ __device__ __forceinline__ void merge_slots(const float* ws_acc, const float* ws
+     o.x += wt * a.x; o.y += wt * a.y; o.z += wt * a.z; o.w += wt * a.w;
+   }
+ }
++__device__ __forceinline__ void merge_slots(const float* ws_acc, const float* ws_ml, int b, int c_lo, int c_hi,
++                                            int h, int d0, float4& o, float& L) {
++  float M;
++  merge_range(ws_acc, ws_ml, c_lo + b, c_hi + b, h, d0, o, L, M);
++}
++
++// Release/acquire ticket draw (two-level path): the CTA's partial stores are ordered before the
++// increment (acq_rel at gpu scope, on top of the caller's __threadfence + __syncthreads), and the
++// returned count orders the winner after every earlier arrival's stores.
++__device__ __forceinline__ int ticket_arrive(int* p) {
++  int old;
++  asm volatile("atom.acq_rel.gpu.global.add.s32 %0, [%1], %2;" : "=r"(old) : "l"(p), "r"(1) : "memory");
++  return old;
++}
+ 
+ // Stage-1 B epilogue for head h, dims d0..d0+3 (16 consecutive lanes hold one head): o / L *
+ // v_scale, scaleless RMSNorm over 64 (eps inside the sqrt), times sigmoid(gate), bf16 out.
+@@ -1070,7 +1095,7 @@ __device__ __forceinline__ void finalize_store(float4 o, float L, float vs, int
+   op[1] = __floats2bfloat162_rn(y2, y3);
+ }
+ 
+-template <int STAGES, bool TICKET>
++template <int STAGES, bool TICKET, bool TWO = false>
+ __global__ void __launch_bounds__(THREADS, 2)
+ splitkv_attn_sk_kernel(const uint8_t* __restrict__ q,          // e4m3 [B, HQ, D]
+                        const uint8_t* __restrict__ kc,         // e4m3 [rows, ROW]
+@@ -1083,6 +1108,9 @@ splitkv_attn_sk_kernel(const uint8_t* __restrict__ q,          // e4m3 [B, HQ, D
+                        float* __restrict__ ws_acc,             // f32 [grid + B, HQ, D]
+                        float* __restrict__ ws_ml,              // f32 [grid + B, 2, HQ]
+                        int* __restrict__ ticket,               // int32 [>= B], 0 between launches
++                       int* __restrict__ gticket,              // int32 [>= B * 32], 0 between launches (TWO)
++                       float* __restrict__ gacc,               // f32 [B * 32, HQ, D] group slots (TWO)
++                       float* __restrict__ gml,                // f32 [B * 32, 2, HQ] (TWO)
+                        float eps) {
+   using S = Lay<STAGES>;
+   extern __shared__ __align__(128) uint8_t smem[];
+@@ -1314,7 +1342,49 @@ splitkv_attn_sk_kernel(const uint8_t* __restrict__ q,          // e4m3 [B, HQ, D
+         const int64_t slot = (int64_t)bx + c_b;
+         *reinterpret_cast<float4*>(ws_acc + (slot * HQ + h) * D + d0) = o;
+         if ((tid & 15) == 0) { ws_ml[slot * 2 * HQ + h] = M; ws_ml[slot * 2 * HQ + HQ + h] = L; }
+-        if (TICKET) {
++        if (TICKET && TWO) {
++          // Two-level ticket. CTAs c_lo..c_hi hold request c_b's segments (nseg of them); group
++          // size Gs = ceil(sqrt(nseg)), group gi = (c - c_lo) / Gs, ngrp = ceil(nseg / Gs) <= 32.
++          const int c_lo = tile_owner(tp_s[c_b], T, gx);
++          const int c_hi = tile_owner(tp_s[c_b + 1] - 1, T, gx);
++          const int nseg = c_hi - c_lo + 1;
++          int Gs = 1;
++          while (Gs * Gs < nseg) ++Gs;
++          const int gi = (bx - c_lo) / Gs;
++          const int ngrp = (nseg + Gs - 1) / Gs;
++          const int g_lo = c_lo + gi * Gs;
++          const int g_hi = min(c_hi, g_lo + Gs - 1);
++          __threadfence();  // release: this CTA's partial is visible device-wide before the ticket
++          __syncthreads();
++          if (tid == 0) flag_s[0] = ticket_arrive(gticket + c_b * 32 + gi) == g_hi - g_lo ? 1 : 0;
++          __syncthreads();
++          if (flag_s[0]) {  // uniform: the last arrival of group gi
++            __threadfence();  // acquire: every group member's partial is visible
++            float4 om;
++            float Lm, Mm;
++            merge_range(ws_acc, ws_ml, g_lo + c_b, g_hi + c_b, h, d0, om, Lm, Mm);
++            if (tid == 0) gticket[c_b * 32 + gi] = 0;  // all members arrived: clean for the next launch
++            if (ngrp == 1) {
++              finalize_store(om, Lm, vs, c_b, h, d0, qkv, qkv_stride, out, eps);
++            } else {
++              const int64_t gs = (int64_t)c_b * 32 + gi;
++              *reinterpret_cast<float4*>(gacc + (gs * HQ + h) * D + d0) = om;
++              if ((tid & 15) == 0) { gml[gs * 2 * HQ + h] = Mm; gml[gs * 2 * HQ + HQ + h] = Lm; }
++              __threadfence();  // release: the group slot is visible before the second-level ticket
++              __syncthreads();
++              if (tid == 0) flag_s[1] = ticket_arrive(ticket + c_b) == ngrp - 1 ? 1 : 0;
++              __syncthreads();
++              if (flag_s[1]) {  // uniform: the last group of request c_b
++                __threadfence();  // acquire
++                float4 of;
++                float Lf, Mf;
++                merge_range(gacc, gml, c_b * 32, c_b * 32 + ngrp - 1, h, d0, of, Lf, Mf);
++                finalize_store(of, Lf, vs, c_b, h, d0, qkv, qkv_stride, out, eps);
++                if (tid == 0) ticket[c_b] = 0;  // every group has arrived: clean for the next launch
++              }
++            }
++          }
++        } else if (TICKET) {
+           const int c_lo = tile_owner(tp_s[c_b], T, gx);
+           const int c_hi = tile_owner(tp_s[c_b + 1] - 1, T, gx);
+           __threadfence();  // this CTA's partial is visible device-wide before the ticket
+@@ -1359,16 +1429,17 @@ splitkv_sk_combine_kernel(const float* __restrict__ ws_acc, const float* __restr
+ 
+ using SkFn = void (*)(const uint8_t*, const uint8_t*, const uint8_t*, const int*, int64_t, const int*, int,
+                       const float*, const float*, float, const __nv_bfloat16*, int64_t, __nv_bfloat16*,
+-                      float*, float*, int*, float);
++                      float*, float*, int*, int*, float*, float*, float);
+ 
+ SkFn sk_pick(int64_t v) {
++  if (v == 3) return splitkv_attn_sk_kernel<4, true, true>;
+   if (v == 1) return splitkv_attn_sk_kernel<4, false>;
+   if (v == 2) return splitkv_attn_sk_kernel<5, true>;
+   return splitkv_attn_sk_kernel<4, true>;
+ }
+-int sk_smem(int64_t v) { return v == 2 ? Lay<5>::BYTES : Lay<4>::BYTES; }
++int sk_smem(int64_t v) { return v == 2 ? Lay<5>::BYTES : Lay<4>::BYTES; }  // variant 3 = <4, ticket, two-level>
+ void sk_prepare(int64_t v) {
+-  static bool done[3] = {false, false, false};
++  static bool done[4] = {false, false, false, false};
+   if (!done[v]) {
+     C10_CUDA_CHECK(cudaFuncSetAttribute(reinterpret_cast<const void*>(sk_pick(v)),
+                                         cudaFuncAttributeMaxDynamicSharedMemorySize, sk_smem(v)));
+@@ -1381,10 +1452,17 @@ void sk_prepare(int64_t v) {
+ void sk_attn(torch::Tensor q, torch::Tensor k_cache, torch::Tensor v_cache, torch::Tensor page_table,
+              torch::Tensor cache_seqlens, torch::Tensor k_scale, torch::Tensor v_scale, torch::Tensor qkv,
+              int64_t qkv_stride, torch::Tensor out, torch::Tensor ws_acc, torch::Tensor ws_ml, torch::Tensor ticket,
++             torch::Tensor gticket, torch::Tensor gacc, torch::Tensor gml,
+              double score_scale, double eps, int64_t grid, int64_t variant) {
+   const int B = static_cast<int>(cache_seqlens.size(0));
+   TORCH_CHECK(B >= 1 && B <= MAXB, "sk_attn: batch out of range");
+-  TORCH_CHECK(variant >= 0 && variant <= 2, "sk_attn: variant");
++  TORCH_CHECK(variant >= 0 && variant <= 3, "sk_attn: variant");
++  if (variant == 3) {
++    TORCH_CHECK(grid <= 1024, "sk_attn: two-level ticket needs grid <= 1024 (<= 32 groups)");
++    TORCH_CHECK(gticket.numel() >= B * 32 && gticket.scalar_type() == at::kInt, "sk_attn: gticket");
++    TORCH_CHECK(gacc.size(0) >= B * 32 && gml.size(0) >= B * 32 && gacc.scalar_type() == at::kFloat
++                && gml.scalar_type() == at::kFloat, "sk_attn: group slots");
++  }
+   TORCH_CHECK(grid >= 1 && ws_acc.size(0) >= grid + B && ws_ml.size(0) >= grid + B, "sk_attn: workspace");
+   TORCH_CHECK(ticket.numel() >= B && ticket.scalar_type() == at::kInt, "sk_attn: ticket");
+   TORCH_CHECK(cache_seqlens.scalar_type() == at::kInt && page_table.scalar_type() == at::kInt, "sk_attn: dtypes");
+@@ -1399,7 +1477,8 @@ void sk_attn(torch::Tensor q, torch::Tensor k_cache, torch::Tensor v_cache, torc
+       cache_seqlens.data_ptr<int>(), B, k_scale.data_ptr<float>(), v_scale.data_ptr<float>(),
+       static_cast<float>(score_scale), reinterpret_cast<const __nv_bfloat16*>(qkv.data_ptr()), qkv_stride,
+       reinterpret_cast<__nv_bfloat16*>(out.data_ptr()), ws_acc.data_ptr<float>(), ws_ml.data_ptr<float>(),
+-      ticket.data_ptr<int>(), static_cast<float>(eps));
++      ticket.data_ptr<int>(), gticket.data_ptr<int>(), gacc.data_ptr<float>(), gml.data_ptr<float>(),
++      static_cast<float>(eps));
+   C10_CUDA_KERNEL_LAUNCH_CHECK();
+ }
+ 
+@@ -1417,7 +1496,7 @@ void sk_combine(torch::Tensor ws_acc, torch::Tensor ws_ml, torch::Tensor cache_s
+ 
+ // {binaryVersion, ptxVersion, numRegs, localSizeBytes, maxThreadsPerBlock, dynamic smem, CTAs/SM}
+ std::vector<int64_t> sk_attrs(int64_t variant) {
+-  TORCH_CHECK(variant >= 0 && variant <= 2, "sk_attrs: variant");
++  TORCH_CHECK(variant >= 0 && variant <= 3, "sk_attrs: variant");
+   sk_prepare(variant);
+   cudaFuncAttributes a;
+   C10_CUDA_CHECK(cudaFuncGetAttributes(&a, reinterpret_cast<const void*>(sk_pick(variant))));
+@@ -1429,7 +1508,7 @@ std::vector<int64_t> sk_attrs(int64_t variant) {
+ }
+ """
+ 
+-_SK_LABELS = ("<4 stages, ticket>", "<4 stages, no ticket>", "<5 stages, ticket>")
++_SK_LABELS = ("<4 stages, ticket>", "<4 stages, no ticket>", "<5 stages, ticket>", "<4 stages, two-level ticket>")
+ _EXT2 = None       # the stage-2 module; None keeps stage 1 (A + B) on the gated path
+ _SK_VARIANT = 0    # the timed path: 4 stages + ticket (fixed; the diagnostics call the module directly)
+ _SK_ARCH_FLAGS = None
+@@ -1450,6 +1529,19 @@ def _sk_ticket(device) -> torch.Tensor:
+     return t
+ 
+ 
++_GTICKETS = {}
++
++
++def _sk_gticket(device) -> torch.Tensor:
++    """int32 [64 * 32] group-level ticket counters of the two-level path, zeroed once at import
++    (allocated from the device alone); every launch leaves them at 0."""
++    key = device.index if device.index is not None else torch.cuda.current_device()
++    t = _GTICKETS.get(key)
++    if t is None:
++        t = _GTICKETS[key] = torch.zeros(64 * 32, dtype=torch.int32, device=device)
++    return t
++
++
+ def _build_sk():
+     """Compile the stage-2 module at import, sm_90a only (TORCH_CUDA_ARCH_LIST=9.0a, restored after)."""
+     global _SK_ARCH_FLAGS
+@@ -1463,10 +1555,10 @@ def _build_sk():
+             _SK_ARCH_FLAGS = list(_get_cuda_arch_flags())
+         except Exception as e:  # private helper; the cubin check below is authoritative
+             _say(f"[sk] could not read torch's nvcc arch flags: {e!r}")
+-        _say(f"[sk] building muse_full_decode_splitkv_v2: TORCH_CUDA_ARCH_LIST=9.0a, arch flags {_SK_ARCH_FLAGS}, "
++        _say(f"[sk] building muse_full_decode_splitkv_v3: TORCH_CUDA_ARCH_LIST=9.0a, arch flags {_SK_ARCH_FLAGS}, "
+              f"extra -O3 -lineinfo")
+         ext = load_inline(
+-            name="muse_full_decode_splitkv_v2",
++            name="muse_full_decode_splitkv_v3",
+             cpp_sources=_SK_CPP,
+             cuda_sources=_SK_CUDA,
+             functions=["sk_attn", "sk_combine", "sk_attrs"],
+@@ -1493,9 +1585,12 @@ def _sk_launch(data: Inputs, q: torch.Tensor, qkv: torch.Tensor, variant: int, g
+     ws_acc = torch.empty((grid + batch, hq, d), dtype=torch.float32, device=device)
+     ws_ml = torch.empty((grid + batch, 2, hq), dtype=torch.float32, device=device)
+     out = torch.empty((batch, 1, hq * d), dtype=torch.bfloat16, device=device)
++    ng = batch * 32 if variant == 3 else 1  # group slots only for the two-level variant
++    gacc = torch.empty((ng, hq, d), dtype=torch.float32, device=device)
++    gml = torch.empty((ng, 2, hq), dtype=torch.float32, device=device)
+     _EXT2.sk_attn(q, data["k_cache"], data["v_cache"], data["page_table"], data["cache_seqlens"], data["k_scale"],
+                   data["v_scale"], qkv, qkv.stride(0), out, ws_acc, ws_ml, _sk_ticket(device),
+-                  cfg["sm_scale"] * cfg["qk_scale_factor"] * LOG2E, RMS_EPS, grid, variant)
++                  _sk_gticket(device), gacc, gml, cfg["sm_scale"] * cfg["qk_scale_factor"] * LOG2E, RMS_EPS, grid, variant)
+     return out, ws_acc, ws_ml
+ 
+ 
+@@ -1506,7 +1601,11 @@ def _sk_combine(data: Inputs, qkv: torch.Tensor, out, ws_acc, ws_ml, grid: int)
+ def _full_decode_sk(data: Inputs, q: torch.Tensor, qkv: torch.Tensor) -> torch.Tensor:
+     """Stage 2 on the gated path: one launch after the pre-attention kernel (variant 1, the
+     no-ticket diagnostic, adds the separate combine)."""
+-    grid = _SPLITKV_GRID or 2 * _sm_count(qkv.device)
++    sms = _sm_count(qkv.device)
++    if data["config"]["batch"] == 1:  # stage 3: one CTA per SM + the two-level ticket (fixed by shape)
++        out, _, _ = _sk_launch(data, q, qkv, 3, _SPLITKV_GRID or sms)
++        return out
++    grid = _SPLITKV_GRID or 2 * sms
+     out, ws_acc, ws_ml = _sk_launch(data, q, qkv, _SK_VARIANT, grid)
+     if _SK_VARIANT == 1:
+         _sk_combine(data, qkv, out, ws_acc, ws_ml, grid)
+@@ -1720,7 +1819,7 @@ def _sk_case(tag, lens, kv_scale, grid, gen, variant=0) -> bool:
+     (a fault names its kernel), against the FP32 reference."""
+     dev = torch.device("cuda")
+     data = _splitkv_synthetic(lens, kv_scale, gen, dev)
+-    assert _splitkv_gate(data["config"])
++    assert _shape_gate(data["config"])
+     g = grid or 2 * _sm_count(dev)
+     _say(f"[sk] {tag}: launching _pre_attention_kernel")
+     q, qkv = _sk_prepare_q(data)
+@@ -1740,11 +1839,12 @@ def _sk_case(tag, lens, kv_scale, grid, gen, variant=0) -> bool:
+     return ok
+ 
+ 
+-def _sk_replay_check(gen):
++def _sk_replay_check(gen, lens=None, kv_scale=1.0):
+     """kernel_fn captured as a CUDA graph and replayed twice, the output poisoned with NaN before
+-    each replay: the second replay is right only if the first left every ticket at 0."""
++    each replay: the second replay is right only if the first left every ticket (both levels) at 0."""
+     dev = torch.device("cuda")
+-    data = _splitkv_synthetic(_SK_LENS16, 1.0, gen, dev)
++    lens = lens or _SK_LENS16
++    data = _splitkv_synthetic(lens, kv_scale, gen, dev)
+     _say("[sk] replay: eager warm-up of kernel_fn on a side stream")
+     side = torch.cuda.Stream()
+     side.wait_stream(torch.cuda.current_stream())
+@@ -1753,7 +1853,7 @@ def _sk_replay_check(gen):
+     torch.cuda.current_stream().wait_stream(side)
+     torch.cuda.synchronize()
+     _say("[sk] replay: warm-up returned")
+-    ref = _splitkv_reference(data, _SK_LENS16)
++    ref = _splitkv_reference(data, lens)
+     graph = torch.cuda.CUDAGraph()
+     _say("[sk] replay: capturing kernel_fn")
+     with torch.cuda.graph(graph):
+@@ -1761,14 +1861,14 @@ def _sk_replay_check(gen):
+     torch.cuda.synchronize()
+     for i in (1, 2):
+         out.fill_(float("nan"))
+-        _say(f"[sk] replay {i}: launching graph (_pre_attention_kernel + splitkv_attn_sk_kernel)")
++        _say(f"[sk] replay B={len(lens)} {i}: launching graph (_pre_attention_kernel + splitkv_attn_sk_kernel)")
+         graph.replay()
+         torch.cuda.synchronize()
+         err, finite = _rel_l2(out, ref)
+         ok = finite and err < 2e-2
+-        _say(f"[sk] replay {i}: rel L2 {err:.2e}, finite {finite} -> {'ok' if ok else 'FAIL'}")
++        _say(f"[sk] replay B={len(lens)} {i}: rel L2 {err:.2e}, finite {finite} -> {'ok' if ok else 'FAIL'}")
+         if not ok:
+-            return f"graph replay {i}"
++            return f"graph replay B={len(lens)} {i}"
+     del graph
+     return None
+ 
+@@ -1877,6 +1977,8 @@ def _sk_diagnostics() -> None:
+         wm = torch.empty((grid + batch, 2, 16), dtype=torch.float32, device=dev)
+         outs = {k: torch.empty((batch, 1, 1024), dtype=torch.bfloat16, device=dev) for k in ("s1", "nt", "t4", "t5")}
+         tk = _sk_ticket(dev)
++        gdum_a = torch.empty((1, 16, 64), dtype=torch.float32, device=dev)  # unused below variant 3
++        gdum_m = torch.empty((1, 2, 16), dtype=torch.float32, device=dev)
+ 
+         def bw(us):
+             return nbytes / (us * 1e-6) / 1e12
+@@ -1889,7 +1991,7 @@ def _sk_diagnostics() -> None:
+ 
+         def sk(variant, key):
+             return lambda: _EXT2.sk_attn(q, kc, vc, pt, seql, ksc, vsc, qkv, qkv.stride(0), outs[key], wa, wm, tk,
+-                                         scale, RMS_EPS, grid, variant)
++                                         _sk_gticket(dev), gdum_a, gdum_m, scale, RMS_EPS, grid, variant)
+ 
+         def skc():
+             _EXT2.sk_combine(wa, wm, seql, vsc, qkv, qkv.stride(0), outs["nt"], grid, RMS_EPS)
+@@ -1931,6 +2033,157 @@ def _sk_diagnostics() -> None:
+     torch.cuda.empty_cache()
+ 
+ 
++def _sk_validate_b1() -> "str | None":
++    """In-process gate for stage 3 (batch 1, two-level ticket, grid = SM count). Requires stage 2
++    validated. Returns None on success, else the reason batch 1 stays on master FA3."""
++    global _B1_PATH
++    dev = torch.device("cuda")
++    sms = _sm_count(dev)
++    a = list(_EXT2.sk_attrs(3))
++    _say(f"[sk3] splitkv_attn_sk_kernel{_SK_LABELS[3]}: binaryVersion {a[0]}, ptxVersion {a[1]}, regs {a[2]}, "
++         f"local {a[3]} B, dyn smem {a[5]} B, {a[6]} CTAs/SM")
++    if a[0] != 90:
++        return "cubin version is not 90 (two-level variant)"
++    if a[6] < 1:
++        return "two-level variant cannot launch (0 CTAs/SM)"
++    if a[6] < 2:
++        _say("[sk3] WARNING: the two-level variant does not reach 2 CTAs/SM (performance, not correctness)")
++    gen = torch.Generator(device="cuda").manual_seed(8642)
++    cases = (
++        ("B=1 80000 keys grid SM", [80000], 1.0, sms),
++        ("B=1 80000 keys kv 0.25 grid SM", [80000], 0.25, sms),
++        ("B=1 80000 keys grid 7", [80000], 1.0, 7),
++        ("B=1 80000 keys grid 3", [80000], 0.25, 3),
++        ("B=1 80000 keys grid 2xSM", [80000], 1.0, 2 * sms),
++        ("B=1 4097 keys grid SM", [4096], 1.0, sms),
++        ("B=1 4097 keys kv 0.25 grid 7", [4096], 0.25, 7),
++        ("B=1 63 keys grid SM", [62], 1.0, sms),
++        ("B=1 63 keys kv 0.25 grid 3", [62], 0.25, 3),
++        ("B=1 1 key grid SM", [0], 1.0, sms),
++        ("B=1 1 key kv 0.25 grid 3", [0], 0.25, 3),
++        ("B=16 ragged two-level grid device", _SK_LENS16, 0.25, 2 * sms),
++    )
++    for tag, lens, kv_scale, grid in cases:
++        if not _sk_case(tag, lens, kv_scale, grid, gen, variant=3):
++            return f"self-check {tag}"
++    _B1_PATH = True  # kernel_fn must take the batch-1 path for the replay checks below
++    try:
++        for lens, kv_scale in (([80000], 1.0), ([4096], 0.25)):
++            reason = _sk_replay_check(gen, lens, kv_scale)
++            if reason is not None:
++                return reason
++    finally:
++        _B1_PATH = False
++    left = int(_sk_ticket(dev).abs().sum().item()) + int(_sk_gticket(dev).abs().sum().item())
++    _say(f"[sk3] tickets (both levels) after the self-check: sum {left}")
++    if left:
++        return "two-level tickets not reset"
++    return None
++
++
++def _sk_b1_diagnostics() -> None:
++    """Import-time eager timings at synthetic B=1 x 80000 (cold L2 per rep, median of 10) bracketing
++    the two fixed stage-3 choices: (a) stage-2 kernel as is (grid 2xSM, single-level) = the
++    widen-gate-only control, (b) grid SM single-level, (c) grid SM two-level (the timed path),
++    (d) grid 2xSM two-level; plus master FA3 main + combine + norm-gate on the same input and the
++    two-level kernel at B=16 (diagnostic only). Prints only: the timed path is fixed by shape."""
++    dev = torch.device("cuda")
++    sms = _sm_count(dev)
++    gen = torch.Generator(device="cuda").manual_seed(77)
++    flush = torch.empty(64 << 20, dtype=torch.float32, device=dev)  # 256 MB > L2
++
++    def timed(fns, warm=2, reps=10):
++        per = [[] for _ in fns]
++        for it in range(warm + reps):
++            flush.zero_()
++            ev = [torch.cuda.Event(enable_timing=True) for _ in range(len(fns) + 1)]
++            ev[0].record()
++            for i, f in enumerate(fns):
++                f()
++                ev[i + 1].record()
++            torch.cuda.synchronize()
++            if it >= warm:
++                for i in range(len(fns)):
++                    per[i].append(ev[i].elapsed_time(ev[i + 1]) * 1e3)
++        return [sorted(t)[len(t) // 2] for t in per]
++
++    for batch, variants in ((1, ((0, 2 * sms, "(a) single-level grid 2xSM (stage 2 as is)"),
++                                 (0, sms, "(b) single-level grid SM"),
++                                 (3, sms, "(c) two-level grid SM (timed path)"),
++                                 (3, 2 * sms, "(d) two-level grid 2xSM"))),
++                            (16, ((3, 2 * sms, "two-level grid 2xSM at B=16 (diagnostic)"),
++                                  (0, 2 * sms, "single-level grid 2xSM at B=16 (stage 2)")))):
++        lens = [80000] * batch
++        data = _splitkv_synthetic(lens, 1.0, gen, dev)
++        _say(f"[sk3-diag] B={batch}: launching _pre_attention_kernel")
++        q, qkv = _sk_prepare_q(data)
++        torch.cuda.synchronize()
++        nbytes = sum(n + 1 for n in lens) * 256
++        cfg = data["config"]
++        scale = cfg["sm_scale"] * cfg["qk_scale_factor"] * LOG2E
++        kc, vc, pt = data["k_cache"], data["v_cache"], data["page_table"]
++        seql, ksc, vsc = data["cache_seqlens"], data["k_scale"], data["v_scale"]
++        tk, gtk = _sk_ticket(dev), _sk_gticket(dev)
++        ws = {}
++        fns, labels, outs = [], [], []
++        for v, grid, label in variants:
++            wa = torch.empty((grid + batch, 16, 64), dtype=torch.float32, device=dev)
++            wm = torch.empty((grid + batch, 2, 16), dtype=torch.float32, device=dev)
++            ng = batch * 32 if v == 3 else 1
++            ga = torch.empty((ng, 16, 64), dtype=torch.float32, device=dev)
++            gm = torch.empty((ng, 2, 16), dtype=torch.float32, device=dev)
++            out = torch.empty((batch, 1, 1024), dtype=torch.bfloat16, device=dev)
++            ws[label] = (wa, wm, ga, gm)
++            outs.append(out)
++            labels.append(label)
++            fns.append(lambda v=v, grid=grid, wa=wa, wm=wm, ga=ga, gm=gm, out=out: _EXT2.sk_attn(
++                q, kc, vc, pt, seql, ksc, vsc, qkv, qkv.stride(0), out, wa, wm, tk, gtk, ga, gm,
++                scale, RMS_EPS, grid, v))
++        _say(f"[sk3-diag] B={batch} x 80000: {nbytes / 1e6:.0f} MB of K+V rows, eager, cold L2, median of 10")
++        times = timed(fns)
++        ref = _splitkv_reference(data, lens)
++        for label, t, out in zip(labels, times, outs):
++            err, finite = _rel_l2(out, ref)
++            _say(f"[sk3-diag]   {label:46s} {t:7.1f} us  {nbytes / (t * 1e-6) / 1e12:.2f} TB/s  "
++                 f"(rel L2 {err:.1e}, finite {finite})")
++        if batch == 1:
++            fastest = min(range(len(times)), key=times.__getitem__)
++            _say(f"[sk3-diag] fastest of the four: {labels[fastest]}; timed path (c) is {times[2]:.1f} us, "
++                 f"(a) control {times[0]:.1f} us, (c)/(a) {times[2] / times[0]:.3f}x")
++            if fastest != 2:
++                _say("[sk3-diag] WARNING: the static choice (c) is not the fastest in this run; "
++                     "the path stays fixed by shape (the order is a prepare-time ranking only)")
++            try:
++                def fa3():
++                    return flash_attn_with_kvcache(
++                        q=q, k_cache=kc, v_cache=vc, page_table=pt, cache_seqlens=seql,
++                        cu_seqlens_q=data["cu_seqlens_q"], max_seqlen_q=1,
++                        softmax_scale=cfg["sm_scale"] * cfg["qk_scale_factor"], causal=True,
++                        window_size=(-1, -1), scheduler_metadata=None)
++
++                holder = {}
++
++                def fa3_main():
++                    o = fa3()
++                    holder["o"] = o[0] if isinstance(o, tuple) else o
++
++                def fa3_norm():
++                    gate = qkv[:, (16 + 4) * 64:]
++                    holder["r"] = rms_norm_gate(holder["o"].reshape(1, 1024).to(torch.bfloat16), gate, None,
++                                                head_dim=64, eps=RMS_EPS, has_norm=True)
++
++                _say("[sk3-diag] B=1: timing master FA3 (main + combine) and norm-gate")
++                t_fa3, t_ng = timed([fa3_main, fa3_norm])
++                _say(f"[sk3-diag]   master FA3 main+combine {t_fa3:7.1f} us + norm-gate {t_ng:.1f} us = "
++                     f"{t_fa3 + t_ng:.1f} us (pre-attention kernel excluded from both sides)")
++            except Exception as e:
++                _say(f"[sk3-diag] master FA3 timing raised (path unaffected): {e!r}")
++        del data, q, qkv, kc, vc, pt, ws, outs, fns
++        torch.cuda.empty_cache()
++    del flush
++    torch.cuda.empty_cache()
++
++
+ if torch.cuda.is_available():
+     _EXT = _build_splitkv()
+     if _EXT is not None and not _splitkv_self_check():
+@@ -1940,6 +2193,7 @@ if torch.cuda.is_available():
+         _say("PATH CHOSEN: full decode 1<B<=64 tp8 page 1: master FA3 (splitkv v1 unavailable; v2 not tried)")
+     else:
+         _sk_ticket(torch.device("cuda", torch.cuda.current_device()))  # zeroed once, here
++        _sk_gticket(torch.device("cuda", torch.cuda.current_device()))  # zeroed once, here
+         _EXT2 = _build_sk()
+         _sk_reason = "build failed" if _EXT2 is None else None
+         if _EXT2 is not None:
+@@ -1947,19 +2201,35 @@ if torch.cuda.is_available():
+                 _sk_reason = _sk_validate()
+             except Exception as e:
+                 _sk_reason = f"self-check raised {e!r}"
++        _b1_reason = "stage 2 unavailable"
+         if _sk_reason is not None:
+             _EXT2 = None
+             _say(f"PATH CHOSEN: full decode splitkv v1 (fallback: {_sk_reason})")
+         else:
+             _say("PATH CHOSEN: full decode streamk+ticket v2")
++            try:
++                _b1_reason = _sk_validate_b1()
++            except Exception as e:
++                _b1_reason = f"batch-1 self-check raised {e!r}"
++            if _b1_reason is None:
++                _B1_PATH = True
+             try:
+                 _sk_diagnostics()
++                if _b1_reason is None:
++                    _sk_b1_diagnostics()
+             except Exception as e:
+                 _say(f"[sk-diag] diagnostics raised (path unaffected): {e!r}")
+             finally:  # a diagnostic variant must not leave the shared tickets dirty for the timed path
+                 try:
+                     _sk_ticket(torch.device("cuda", torch.cuda.current_device())).zero_()
++                    _sk_gticket(torch.device("cuda", torch.cuda.current_device())).zero_()
+                     torch.cuda.synchronize()
+                 except Exception as e:
+                     _say(f"[sk-diag] ticket re-zero raised: {e!r}")
+-    _say("PATH CHOSEN: every other shape (sliding, verify, batch 1, page 64, dp): master path, unchanged")
++        if _B1_PATH:
++            _say("PATH CHOSEN: full decode_1 streamk two-level")
++        else:
++            _say(f"PATH CHOSEN: full decode_1 FA3 (fallback: {_b1_reason})")
++    if _EXT is None:
++        _say("PATH CHOSEN: full decode_1 FA3 (fallback: splitkv v1 unavailable)")
++    _say("PATH CHOSEN: every other shape (sliding, verify, page 64, dp): master path, unchanged")

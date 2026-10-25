@@ -48,10 +48,10 @@ controls_for: null
 rewrite_stage: 3
 replaces: FA3 main + FlashAttnFwdCombine + sglang rms_norm_gate on full decode batch 1
 review: proceed
-status: running
+status: done
 review_at: 2026-10-25T014055Z
 review_companions: null
-stage: dispatched
+stage: harvested
 claimed_at: 2026-10-25T014056Z
 base_sha: f291b49c49670595d0615e749294f69bc15de1a4
 base_blob: 695c97d2e9fef8f806ec02d2fe14a02668989e3f
@@ -70,6 +70,13 @@ attempt_file: 2026-10-25T014724Z-check-full-decode1-streamk-s3-two-level-ticket.
 prepared_at: 2026-10-25T014724Z
 job: 2a3241780c7b4c46
 dispatched_at: 2026-10-25T014732Z
+outcome: neutral
+verdict_detail: unproven-vs-best
+speedup: 1.4321773019894537
+speedup_ci: [1.4106946424596118, 1.4554282820505813]
+harvested_at: 2026-10-25T034127Z
+best_at_harvest: 1.3948738389144513
+promotion: null
 ---
 
 # full-decode1-streamk-s3-two-level-ticket
@@ -158,3 +165,36 @@ Audited 2026-10-25 by an opus subagent (read-only review plus a Python emulation
 - Checked, no change needed: the group arithmetic relative to c_lo. A Python emulation (20k random cases, B=1 and B=2..64, grids 1..1024, shuffled arrival order, plus B=1 at 1/63/4097/80001/1048577 keys over grids 1/3/7/132/264/1024) confirms every partial is merged exactly once, each group and the request finalize exactly once, ngrp <= 32, leaders are well defined for nseg < Gs, and both ticket levels end at 0. Release/acquire: the writer does fence, sync, then an acq_rel atomic, and the reader syncs, fences, then does __ldcg loads at both levels, the standard threadFenceReduction pattern. Both levels are reset in-kernel by their last arrival. The routing for batch > 1 is identical to stage 2, because _splitkv_gate is unchanged when batch > 1 and pairing still needs batch > 1. Batch 1 stays on FA3 unless _sk_validate_b1 passes. The diagnostics re-zero both ticket levels in finally. The gate checks binaryVersion == 90, not ptxVersion. kernel_fn has no host sync, no data caching and no child process, and its allocations depend only on shapes. Every key is attended, KV stays FP8, and ROPE is off on full layers.
 
 Residual risk: variant 3 is untested on hardware. A ptxas or register-allocation problem in the shared v3 module would also cost stage 2 for batch > 1, though it falls back cleanly to v1 with a PATH CHOSEN line. Import time grows with 12 extra cases, 2 replays and the B=16x80000 diagnostics.
+
+## Result
+
+- job `2a3241780c7b4c46` (check), status done, passed True, tests 16/16
+- speedup 1.4322x, 95% CI [1.4107, 1.4554], score 2629.7721621255905 µs vs SGLang 3766.3 µs
+- best at harvest: {"speedup": 1.3948738389144513, "ci": [1.3739507313307344, 1.415796946498168], "job": "698d4cd3838c4a63"}; base result: muse_attention_decode/hypotheses/done/neutral/full-decode-splitkv-s2-streamk-ticket-inproc.result.json
+- **outcome: neutral** (unproven-vs-best)
+- files: `muse_attention_decode/hypotheses/done/neutral/full-decode1-streamk-s3-two-level-ticket.result.json`, `muse_attention_decode/hypotheses/done/neutral/full-decode1-streamk-s3-two-level-ticket.patch`; branch `hyp/muse_attention_decode/full-decode1-streamk-s3-two-level-ticket`
+
+## Attribution
+
+| shape | w | base µs | hyp µs | delta | verdict |
+|---|---|---|---|---|---|
+| batch=1 ctx=80000 dist=soft heads=tp8 layer=sliding load=decode_1 page=1 | 46 | 13.09 | 13.15 | 1.0286 | flat |
+| batch=1 ctx=80000 dist=coherent heads=tp8 layer=full load=decode_1 page=1 | 16 | 27.19 | 22.6 | 1.2023 | gained |
+| batch=16 ctx=80000 dist=soft heads=tp8 layer=sliding load=decode_16 page=1 spread=agentic | 46 | 15.19 | 15.33 | 0.9998 | flat |
+| batch=16 ctx=80000 dist=coherent heads=tp8 layer=full load=decode_16 page=1 spread=agentic | 16 | 110.91 | 111.14 | 0.9953 | flat |
+| batch=32 ctx=80000 dist=soft heads=tp8 layer=sliding load=decode_32 page=1 spread=agentic | 46 | 24.29 | 24.33 | 1.0135 | flat |
+| batch=32 ctx=80000 dist=coherent heads=tp8 layer=full load=decode_32 page=1 spread=agentic | 16 | 226.81 | 226.42 | 0.9996 | flat |
+| batch=1 ctx=80000 dist=soft heads=tp8 layer=sliding load=verify_1 page=1 q_len=8 | 46 | 16.83 | 17.78 | 0.9407 | lost |
+| batch=1 ctx=80000 dist=coherent heads=tp8 layer=full load=verify_1 page=1 q_len=8 | 16 | 29.84 | 30.51 | 0.9845 | flat |
+| batch=16 ctx=80000 dist=soft heads=tp8 layer=sliding load=verify_16 page=1 q_len=8 spread=agentic | 46 | 22.72 | 22.68 | 1.0097 | flat |
+| batch=16 ctx=80000 dist=coherent heads=tp8 layer=full load=verify_16 page=1 q_len=8 spread=agentic | 16 | 163.42 | 162.8 | 1.0095 | flat |
+| batch=32 ctx=80000 dist=soft heads=tp8 layer=sliding load=verify_32 page=1 q_len=8 spread=agentic | 46 | 28.87 | 28.34 | 1.0127 | flat |
+| batch=32 ctx=80000 dist=coherent heads=tp8 layer=full load=verify_32 page=1 q_len=8 spread=agentic | 16 | 302.06 | 302.2 | 1.0065 | flat |
+
+gained on full decode_1; lost on sliding verify_1. Expected hit: 2/3. Noise ±1.6%.
+
+## Follow-ups
+
+- rewrite stage 3 of `FA3 main + FlashAttnFwdCombine + sglang rms_norm_gate on full decode batch 1`: read the replaced kernels' own us per shape (profile top_kernels) against the incumbent and the floor, and check which Milestone it reached. The next stage is `/hypothesize muse_attention_decode "<what to fix or tune>" --kind rewrite --depends-on full-decode1-streamk-s3-two-level-ticket --stage 4`; a slow or failed first cut is the expected start, not a do-not-retry.
+- unproven-vs-best: the change is not proven either way; a stacked hypothesis (`depends_on: full-decode1-streamk-s3-two-level-ticket`) that adds a further change in the same area is the only way to learn more (identical code is never re-run).
+
