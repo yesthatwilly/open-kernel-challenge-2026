@@ -107,9 +107,18 @@ priority: 1
 kind: primary
 controls_for: null
 review: proceed
-status: queued
+status: running
 review_at: 2026-10-25T162256Z
 review_companions: null
+stage: claimed
+claimed_at: 2026-10-25T162256Z
+base_sha: 0c4719336efd5dcbef40bf2e1bbbccad0ca34463
+base_blob: 4bb57fd292a7f0fd5a80bd88dc773008b490bf8c
+branch: hyp/muse_decode_layer/combo-measured-rows-slide-batched-preattn-t8-tail
+worktree: .worktrees/muse_decode_layer/combo-measured-rows-slide-batched-preattn-t8-tail
+mode: null
+restack_of: null
+stale_base: null
 ---
 
 # combo-measured-rows-slide-batched-preattn-t8-tail
