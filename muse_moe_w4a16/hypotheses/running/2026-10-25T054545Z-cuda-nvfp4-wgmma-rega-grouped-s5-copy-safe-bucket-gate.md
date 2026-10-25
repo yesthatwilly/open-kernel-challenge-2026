@@ -55,7 +55,7 @@ base_sha: 928151c3ea4e903fc4a05ae7ac59672291b71d0d
 base_blob: a13d5fea2e79f85df573670cbd55a8a10fbc3d2c
 branch: hyp/muse_moe_w4a16/cuda-nvfp4-wgmma-rega-grouped-s5-copy-safe-bucket-gate
 worktree: .worktrees/muse_moe_w4a16/cuda-nvfp4-wgmma-rega-grouped-s5-copy-safe-bucket-gate
-mode: null
+mode: check
 restack_of: null
 stale_base: true
 implemented_at: 2026-10-25T111451Z
@@ -64,6 +64,8 @@ submission_sha256: df4015221c841885cfd0bb09c73db61dacbcf319ab400e161e5626ba8b5ac
 norm_sha256: cfff66e4073b3a4672d1dd38d33c134d33a4a1717a3300d97304097ceac0af62
 submission_blob: 1774e42c833541afe7204a9d9cd3d6bb265be5b1
 lint_warnings: 66
+attempt_file: 2026-10-25T111451Z-check-cuda-nvfp4-wgmma-rega-grouped-s5-copy-safe-bucket-gate.md
+prepared_at: 2026-10-25T111451Z
 ---
 
 # cuda-nvfp4-wgmma-rega-grouped-s5-copy-safe-bucket-gate
