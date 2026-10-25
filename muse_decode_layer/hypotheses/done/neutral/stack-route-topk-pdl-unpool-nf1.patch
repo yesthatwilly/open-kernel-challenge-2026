@@ -1,0 +1,1335 @@
+diff --git a/muse_decode_layer/submission.py b/muse_decode_layer/submission.py
+index 4da9467..20289b4 100644
+--- a/muse_decode_layer/submission.py
++++ b/muse_decode_layer/submission.py
+@@ -292,7 +292,8 @@ void dl_pooler_router(torch::Tensor x, torch::Tensor w, torch::Tensor ei, torch:
+ void dl_route_norm_align(torch::Tensor ei, torch::Tensor norm_w, torch::Tensor xn, torch::Tensor logits,
+                          torch::Tensor bias, torch::Tensor local_start, torch::Tensor topk_ids,
+                          torch::Tensor topk_w, torch::Tensor local_ids, torch::Tensor sorted_ids,
+-                         torch::Tensor block_experts, torch::Tensor n_padded, torch::Tensor cnt, int64_t bsm);
++                         torch::Tensor block_experts, torch::Tensor n_padded, torch::Tensor cnt, int64_t bsm,
++                         int64_t pdl, int64_t variant);
+ int64_t dl_occupancy(int64_t nf);
+ void dl_pdl_probe(torch::Tensor times, int64_t spin_ns, int64_t pdl);
+ """
+@@ -453,6 +454,10 @@ dl_pooler_router_kernel(const __nv_bfloat16* __restrict__ x, const __nv_bfloat16
+     }
+   }
+ 
++  // PDL: this CTA's main K loop is done; let the dependent (kernel R) launch while the split-K
++  // partial stores / ticket / reduce run. R's griddepcontrol.wait still waits for P's completion.
++  griddep_launch();
++
+   // C fragment: c0, c1 -> weight row lane/4, tokens 2*(lane%4) + {0, 1}; c2, c3 -> row + 8.
+   const int r0 = n0 + warp * 16 + (lane >> 2);
+   float* wsp = ws + (int64_t)sidx * MAXT * ROWS;
+@@ -516,9 +521,11 @@ __device__ __forceinline__ unsigned long long warp_max_u64(unsigned long long k)
+   return k;
+ }
+ 
++// dl_route_norm_align_v1: master's kernel R, unchanged, compiled ONLY so prepare() can time it
++// against the new one (and compare outputs); kernel_fn never launches it.
+ // Grid m blocks x 256 threads (256 experts). See the Python comment above for the contract.
+ __global__ void __launch_bounds__(256)
+-dl_route_norm_align_kernel(const __nv_bfloat16* __restrict__ ei, const float* __restrict__ norm_w,
++dl_route_norm_align_v1_kernel(const __nv_bfloat16* __restrict__ ei, const float* __restrict__ norm_w,
+                            __nv_bfloat16* __restrict__ xn, const float* __restrict__ logits,
+                            const float* __restrict__ bias, const int* __restrict__ local_start,
+                            int* __restrict__ topk_ids, float* __restrict__ topk_w, int* __restrict__ local_ids,
+@@ -664,6 +671,204 @@ dl_route_norm_align_kernel(const __nv_bfloat16* __restrict__ ei, const float* __
+   }
+ }
+ 
++
++// Kernel R, new (hypothesis dl-route-warp-topk-pdl). Same contract as v1. Changes: (a) per-warp
++// top-8 with lane-local taken flags and one block barrier before and one after the cross-warp
++// merge (v1: 2 barriers per round); route keys are unique per expert, so the ordered top-8 set is
++// identical; (b) PDL: only prepare() constants (norm_w, bias) are read before griddepcontrol.wait,
++// ei / logits / local_start only after it (a no-op wait when launched without the attribute);
++// (c) the padding / block_experts expert lookup is a 5-step binary search (BSEARCH) or v1's scan.
++template <bool BSEARCH>
++__global__ void __launch_bounds__(256)
++dl_route_norm_align_kernel(const __nv_bfloat16* __restrict__ ei, const float* __restrict__ norm_w,
++                           __nv_bfloat16* __restrict__ xn, const float* __restrict__ logits,
++                           const float* __restrict__ bias, const int* __restrict__ local_start,
++                           int* __restrict__ topk_ids, float* __restrict__ topk_w, int* __restrict__ local_ids,
++                           int* __restrict__ sorted_ids, int* __restrict__ block_experts,
++                           int* __restrict__ n_padded, int* __restrict__ cnt,
++                           int m, int bsm, int cap, int n_blocks) {
++  __shared__ float s_red[8];
++  __shared__ unsigned long long s_cand[64];
++  __shared__ unsigned long long s_sel[8];
++  __shared__ float s_score[256];
++  __shared__ int s_last;
++  __shared__ int s_wc[8][32];      // per-warp route count of each local expert
++  __shared__ int s_off[8][32];     // exclusive prefix of s_wc over warps
++  __shared__ int s_count[32], s_seg0[32], s_seg1[32];
++  __shared__ int s_total;
++  const int tid = threadIdx.x, lane = tid & 31, warp = tid >> 5;
++  const int t = blockIdx.x;
++  const int e = tid;  // thread e owns expert e
++
++  // Before the PDL wait: prepare() constants only. norm_w elements [8 tid, 8 tid + 8) and 2048 + that.
++  float nwf[16];
++  {
++    const float4* nwp = reinterpret_cast<const float4*>(norm_w);
++    const float4 q0 = nwp[tid * 2], q1 = nwp[tid * 2 + 1], q2 = nwp[512 + tid * 2], q3 = nwp[512 + tid * 2 + 1];
++    nwf[0] = q0.x; nwf[1] = q0.y; nwf[2] = q0.z; nwf[3] = q0.w;
++    nwf[4] = q1.x; nwf[5] = q1.y; nwf[6] = q1.z; nwf[7] = q1.w;
++    nwf[8] = q2.x; nwf[9] = q2.y; nwf[10] = q2.z; nwf[11] = q2.w;
++    nwf[12] = q3.x; nwf[13] = q3.y; nwf[14] = q3.z; nwf[15] = q3.w;
++  }
++  const float bias_e = bias[e];
++  griddep_wait();  // ei and logits (written by P) and local_start are read only after this
++
++  const float lg = logits[t * 256 + e];
++  const uint4* src = reinterpret_cast<const uint4*>(ei + (int64_t)t * 4096);
++  uint4 raw[2] = {src[tid], src[256 + tid]};
++
++  // (1) Pre-expert RMSNorm of ei[t] (4096 bf16), arithmetic as v1.
++  {
++    float v[16];
++#pragma unroll
++    for (int h = 0; h < 2; ++h) {
++      const __nv_bfloat162* p2 = reinterpret_cast<const __nv_bfloat162*>(&raw[h]);
++#pragma unroll
++      for (int q = 0; q < 4; ++q) {
++        const float2 f2 = __bfloat1622float2(p2[q]);
++        v[h * 8 + 2 * q] = f2.x;
++        v[h * 8 + 2 * q + 1] = f2.y;
++      }
++    }
++    float ss = 0.f;
++#pragma unroll
++    for (int i = 0; i < 16; ++i) ss += v[i] * v[i];
++#pragma unroll
++    for (int o = 16; o > 0; o >>= 1) ss += __shfl_xor_sync(0xffffffffu, ss, o);
++    if (lane == 0) s_red[warp] = ss;
++    __syncthreads();
++    float tot = 0.f;
++#pragma unroll
++    for (int i = 0; i < 8; ++i) tot += s_red[i];
++    const float rstd = rsqrtf(tot / 4096.f + 1e-5f);
++    uint4 outv[2];
++#pragma unroll
++    for (int h = 0; h < 2; ++h) {
++      __nv_bfloat162* o2 = reinterpret_cast<__nv_bfloat162*>(&outv[h]);
++#pragma unroll
++      for (int q = 0; q < 4; ++q)
++        o2[q] = __floats2bfloat162_rn(v[h * 8 + 2 * q] * rstd * nwf[h * 8 + 2 * q],
++                                      v[h * 8 + 2 * q + 1] * rstd * nwf[h * 8 + 2 * q + 1]);
++    }
++    uint4* dst = reinterpret_cast<uint4*>(xn + (int64_t)t * 4096);
++    dst[tid] = outv[0];
++    dst[256 + tid] = outv[1];
++  }
++
++  // (2) Routing. Same score and key as v1.
++  const float score = 1.f / (1.f + expf(-0.1767766952966369f * lg));
++  s_score[e] = score;
++  const unsigned long long key = route_key(score + bias_e, e);
++  // Per-warp top-8 over this warp's 32 keys: lane-local taken flag, no block barrier.
++  bool taken = false;
++  unsigned long long cw = 0ull;
++#pragma unroll
++  for (int r = 0; r < 8; ++r) {
++    const unsigned long long k = warp_max_u64(taken ? 0ull : key);
++    if (key == k) taken = true;
++    if (lane == r) cw = k;
++  }
++  if (lane < 8) s_cand[warp * 8 + lane] = cw;
++  __syncthreads();
++  if (warp == 0) {  // global top-8 of the 64 candidates, each lane holds two
++    const unsigned long long c0 = s_cand[lane], c1 = s_cand[lane + 32];
++    bool t0 = false, t1 = false;
++#pragma unroll
++    for (int r = 0; r < 8; ++r) {
++      const unsigned long long a0 = t0 ? 0ull : c0, a1 = t1 ? 0ull : c1;
++      const unsigned long long k = warp_max_u64(a0 > a1 ? a0 : a1);
++      if (c0 == k) t0 = true;
++      if (c1 == k) t1 = true;
++      if (lane == 0) s_sel[r] = k;
++    }
++  }
++  __syncthreads();
++  if (tid < 8) {
++    float sum = 0.f;
++#pragma unroll
++    for (int j = 0; j < 8; ++j) sum += s_score[255 - static_cast<int>(s_sel[j] & 0xffffffffull)];
++    const int ex = 255 - static_cast<int>(s_sel[tid] & 0xffffffffull);
++    const int local = (ex - local_start[0]) & 255;
++    topk_ids[t * 8 + tid] = ex;
++    topk_w[t * 8 + tid] = s_score[ex] / (sum + 1e-15f);
++    local_ids[t * 8 + tid] = local < 32 ? local : -1;
++  }
++
++  // (3) Ticket: the last block aligns every token's routes for Marlin.
++  __threadfence();
++  __syncthreads();
++  if (tid == 0) s_last = (atomicAdd(cnt, 1) == m - 1);
++  __syncthreads();
++  if (!s_last) return;
++  __threadfence();
++  const int n = m * 8;  // routes (<= 256 = one per thread)
++  const int lid = tid < n ? __ldcg(local_ids + tid) : -1;
++  s_wc[warp][lane] = 0;
++  __syncthreads();
++  const unsigned mask = __match_any_sync(0xffffffffu, lid);
++  const int rank = __popc(mask & ((1u << lane) - 1u));
++  if (lid >= 0 && lane == __ffs(mask) - 1) s_wc[warp][lid] = __popc(mask);
++  __syncthreads();
++  if (warp == 0) {
++    int run = 0;
++#pragma unroll
++    for (int w2 = 0; w2 < 8; ++w2) { s_off[w2][lane] = run; run += s_wc[w2][lane]; }
++    const int padded = (run + bsm - 1) / bsm * bsm;
++    int incl = padded;
++#pragma unroll
++    for (int o = 1; o < 32; o <<= 1) {
++      const int up = __shfl_up_sync(0xffffffffu, incl, o);
++      if (lane >= o) incl += up;
++    }
++    s_count[lane] = run;
++    s_seg0[lane] = incl - padded;
++    s_seg1[lane] = incl;
++    if (lane == 31) s_total = incl;
++  }
++  __syncthreads();
++  const int total = s_total;
++  if (lid >= 0) sorted_ids[s_seg0[lid] + s_off[warp][lid] + rank] = tid;
++  for (int idx = tid; idx < cap; idx += 256) {  // padding slots (disjoint from the real ones)
++    bool pad = idx >= total;
++    if (!pad) {
++      if (BSEARCH) {
++        // idx < total lies in the segment of the largest x with seg0[x] <= idx (seg0 non-decreasing,
++        // segments tile [0, total)).
++        int x2 = 0;
++#pragma unroll
++        for (int st = 16; st > 0; st >>= 1)
++          if (x2 + st < 32 && s_seg0[x2 + st] <= idx) x2 += st;
++        pad = idx - s_seg0[x2] >= s_count[x2];
++      } else {
++        for (int x2 = 0; x2 < 32; ++x2)
++          if (idx >= s_seg0[x2] && idx < s_seg1[x2]) { pad = idx - s_seg0[x2] >= s_count[x2]; break; }
++      }
++    }
++    if (pad) sorted_ids[idx] = n;
++  }
++  for (int b = tid; b < n_blocks; b += 256) {
++    const int bs = b * bsm;
++    int be = -1;
++    if (bs < total) {
++      if (BSEARCH) {
++        int x2 = 0;
++#pragma unroll
++        for (int st = 16; st > 0; st >>= 1)
++          if (x2 + st < 32 && s_seg0[x2 + st] <= bs) x2 += st;
++        be = x2;
++      } else {
++        for (int x2 = 0; x2 < 32; ++x2)
++          if (bs >= s_seg0[x2] && bs < s_seg1[x2]) { be = x2; break; }
++      }
++    }
++    block_experts[b] = be;
++  }
++  if (tid == 0) {
++    n_padded[0] = total;
++    atomicExch(cnt, 0);  // all m tickets are drawn: reset for the next launch / replay
++  }
++}
++
+ // PDL probe: the primary triggers its dependents at once, then spins; the secondary records when
+ // it started (before griddepcontrol.wait) and when the wait returned. With a programmatic edge
+ // the secondary starts before the primary ends. times int64 [4].
+@@ -709,6 +914,26 @@ void launch_p(const __nv_bfloat16* x, const __nv_bfloat16* w, __nv_bfloat16* ei,
+   C10_CUDA_CHECK(cudaLaunchKernelEx(&cfg, dl_pooler_router_kernel<NF>, x, w, ei, logits, ws, cnt, m));
+ }
+ 
++template <bool BSEARCH>
++void launch_r(const __nv_bfloat16* ei, const float* norm_w, __nv_bfloat16* xn, const float* logits,
++              const float* bias, const int* local_start, int* topk_ids, float* topk_w, int* local_ids,
++              int* sorted_ids, int* block_experts, int* n_padded, int* cnt, int m, int bsm, int cap,
++              int n_blocks, bool pdl, cudaStream_t stream) {
++  cudaLaunchConfig_t cfg = {};
++  cfg.gridDim = dim3(static_cast<unsigned>(m));
++  cfg.blockDim = dim3(256);
++  cfg.dynamicSmemBytes = 0;
++  cfg.stream = stream;
++  cudaLaunchAttribute attr[1];
++  attr[0].id = cudaLaunchAttributeProgrammaticStreamSerialization;
++  attr[0].val.programmaticStreamSerializationAllowed = 1;
++  cfg.attrs = attr;
++  cfg.numAttrs = pdl ? 1 : 0;
++  C10_CUDA_CHECK(cudaLaunchKernelEx(&cfg, dl_route_norm_align_kernel<BSEARCH>, ei, norm_w, xn, logits, bias,
++                                    local_start, topk_ids, topk_w, local_ids, sorted_ids, block_experts,
++                                    n_padded, cnt, m, bsm, cap, n_blocks));
++}
++
+ }  // namespace
+ 
+ void dl_pooler_router(torch::Tensor x, torch::Tensor w, torch::Tensor ei, torch::Tensor logits,
+@@ -740,14 +965,19 @@ void dl_pooler_router(torch::Tensor x, torch::Tensor w, torch::Tensor ei, torch:
+ void dl_route_norm_align(torch::Tensor ei, torch::Tensor norm_w, torch::Tensor xn, torch::Tensor logits,
+                          torch::Tensor bias, torch::Tensor local_start, torch::Tensor topk_ids,
+                          torch::Tensor topk_w, torch::Tensor local_ids, torch::Tensor sorted_ids,
+-                         torch::Tensor block_experts, torch::Tensor n_padded, torch::Tensor cnt, int64_t bsm) {
++                         torch::Tensor block_experts, torch::Tensor n_padded, torch::Tensor cnt, int64_t bsm,
++                         int64_t pdl, int64_t variant) {
++  // variant 0: new R (binary-search pad), 1: new R with v1's linear pad scan, 2: v1 (master's R, timing only).
++  // pdl applies to the new R only (v1 has no griddepcontrol.wait, so it is never launched with the attribute).
+   const int64_t m = ei.size(0);
++  TORCH_CHECK(variant >= 0 && variant <= 2, "dl_route_norm_align: variant");
+   TORCH_CHECK(m >= 1 && m <= MAXT && bsm >= 1 && bsm <= 64, "dl_route_norm_align: sizes");
+   TORCH_CHECK(ei.scalar_type() == at::kBFloat16 && ei.is_contiguous() && ei.size(1) == 4096, "dl_route_norm_align: ei");
+   TORCH_CHECK(xn.scalar_type() == at::kBFloat16 && xn.is_contiguous() && xn.size(0) == m && xn.size(1) == 4096,
+               "dl_route_norm_align: xn");
+-  TORCH_CHECK(norm_w.scalar_type() == at::kFloat && norm_w.is_contiguous() && norm_w.numel() == 4096,
+-              "dl_route_norm_align: norm_w");
++  TORCH_CHECK(norm_w.scalar_type() == at::kFloat && norm_w.is_contiguous() && norm_w.numel() == 4096 &&
++              reinterpret_cast<uintptr_t>(norm_w.data_ptr()) % 16 == 0,
++              "dl_route_norm_align: norm_w (new R reads it as float4)");
+   TORCH_CHECK(logits.scalar_type() == at::kFloat && logits.is_contiguous() && logits.size(0) == m &&
+               logits.size(1) == 256, "dl_route_norm_align: logits");
+   TORCH_CHECK(bias.scalar_type() == at::kFloat && bias.is_contiguous() && bias.numel() == 256, "dl_route_norm_align: bias");
+@@ -766,12 +996,29 @@ void dl_route_norm_align(torch::Tensor ei, torch::Tensor norm_w, torch::Tensor x
+   TORCH_CHECK(n_padded.scalar_type() == at::kInt && n_padded.numel() >= 1, "dl_route_norm_align: n_padded");
+   TORCH_CHECK(cnt.scalar_type() == at::kInt && cnt.numel() >= 1, "dl_route_norm_align: cnt");
+   auto stream = at::cuda::getCurrentCUDAStream().stream();
+-  dl_route_norm_align_kernel<<<static_cast<unsigned>(m), 256, 0, stream>>>(
+-      reinterpret_cast<const __nv_bfloat16*>(ei.data_ptr()), norm_w.data_ptr<float>(),
+-      reinterpret_cast<__nv_bfloat16*>(xn.data_ptr()), logits.data_ptr<float>(), bias.data_ptr<float>(),
+-      local_start.data_ptr<int>(), topk_ids.data_ptr<int>(), topk_w.data_ptr<float>(), local_ids.data_ptr<int>(),
+-      sorted_ids.data_ptr<int>(), block_experts.data_ptr<int>(), n_padded.data_ptr<int>(), cnt.data_ptr<int>(),
+-      static_cast<int>(m), static_cast<int>(bsm), static_cast<int>(cap), static_cast<int>(n_blocks));
++  const auto* eip = reinterpret_cast<const __nv_bfloat16*>(ei.data_ptr());
++  auto* xnp = reinterpret_cast<__nv_bfloat16*>(xn.data_ptr());
++  const int mi = static_cast<int>(m), bi = static_cast<int>(bsm), ci = static_cast<int>(cap),
++            nb = static_cast<int>(n_blocks);
++  if (variant == 2) {
++    dl_route_norm_align_v1_kernel<<<static_cast<unsigned>(m), 256, 0, stream>>>(
++        eip, norm_w.data_ptr<float>(), xnp, logits.data_ptr<float>(), bias.data_ptr<float>(),
++        local_start.data_ptr<int>(), topk_ids.data_ptr<int>(), topk_w.data_ptr<float>(), local_ids.data_ptr<int>(),
++        sorted_ids.data_ptr<int>(), block_experts.data_ptr<int>(), n_padded.data_ptr<int>(), cnt.data_ptr<int>(),
++        mi, bi, ci, nb);
++    C10_CUDA_KERNEL_LAUNCH_CHECK();
++    return;
++  }
++  if (variant == 0)
++    launch_r<true>(eip, norm_w.data_ptr<float>(), xnp, logits.data_ptr<float>(), bias.data_ptr<float>(),
++                   local_start.data_ptr<int>(), topk_ids.data_ptr<int>(), topk_w.data_ptr<float>(),
++                   local_ids.data_ptr<int>(), sorted_ids.data_ptr<int>(), block_experts.data_ptr<int>(),
++                   n_padded.data_ptr<int>(), cnt.data_ptr<int>(), mi, bi, ci, nb, pdl != 0, stream);
++  else
++    launch_r<false>(eip, norm_w.data_ptr<float>(), xnp, logits.data_ptr<float>(), bias.data_ptr<float>(),
++                    local_start.data_ptr<int>(), topk_ids.data_ptr<int>(), topk_w.data_ptr<float>(),
++                    local_ids.data_ptr<int>(), sorted_ids.data_ptr<int>(), block_experts.data_ptr<int>(),
++                    n_padded.data_ptr<int>(), cnt.data_ptr<int>(), mi, bi, ci, nb, pdl != 0, stream);
+   C10_CUDA_KERNEL_LAUNCH_CHECK();
+ }
+ 
+@@ -822,7 +1069,7 @@ def _build_dense_chain():
+             cpp_sources=_DL_CPP,
+             cuda_sources=_DL_CUDA,
+             functions=["dl_pooler_router", "dl_route_norm_align", "dl_occupancy", "dl_pdl_probe"],
+-            extra_cuda_cflags=["-O3", "-arch=sm_90a"],
++            extra_cuda_cflags=["-O3", "-arch=sm_90a", "-lineinfo"],
+             verbose=False,
+         )
+     except Exception as e:  # keep the master path if the build fails
+@@ -830,13 +1077,431 @@ def _build_dense_chain():
+         print(f"{DL_TAG} load_inline FAILED after {dt:.1f}s, master path kept: {e!r}", flush=True)
+         return None, dt
+     dt = time.perf_counter() - t0
+-    print(f"{DL_TAG} load_inline compiled in {dt:.1f}s", flush=True)
++    print(f"{DL_TAG} load_inline compiled in {dt:.1f}s (flags -O3 -arch=sm_90a -lineinfo; no sm_90a-only PTX "
++          f"beyond griddepcontrol)", flush=True)
+     return ext, dt
+ 
+ 
+ _DL_EXT, _DL_COMPILE_S = _build_dense_chain() if torch.cuda.is_available() else (None, 0.0)
+ 
+ 
++# ---------------------------------------------------------------------------------------------
++# Boundaries + unpooler for T <= DLB_MAX_TOKENS (hypothesis boundaries-unpooler-pdl-small-t).
++# A second, separate TU so that a build failure here leaves the landed dense chain untouched.
++DLB_MAX_TOKENS = 32          # gate of this path; deliberately not DL_MAX_TOKENS / DL2_MAX_TOKENS
++DLB_TAG = "[dl-boundary-unpool]"
++
++_DLB_CPP = r"""
++#include <torch/extension.h>
++void dl_boundary(torch::Tensor branch, torch::Tensor in_scale, torch::Tensor alpha, torch::Tensor beta,
++                 torch::Tensor s_in, torch::Tensor pre_w, torch::Tensor s_out, torch::Tensor out,
++                 int64_t ncols, int64_t has_scale, int64_t pdl);
++void dl_unpool(torch::Tensor x, torch::Tensor w, torch::Tensor out, torch::Tensor ws, torch::Tensor cnt,
++               int64_t pdl);
++"""
++
++_DLB_CUDA = r"""
++#include <torch/extension.h>
++#include <ATen/cuda/CUDAContext.h>
++#include <c10/cuda/CUDAException.h>
++#include <cuda_runtime.h>
++#include <cuda_bf16.h>
++#include <cstdint>
++
++namespace {
++
++constexpr int HID = 8192;
++constexpr int UK = 4096;                          // unpooler K
++constexpr int BLOCK_N = 64;
++constexpr int BLOCK_K = 128;
++constexpr int UKB = UK / BLOCK_K;                 // 32 K-blocks
++constexpr int MAXT = 32;
++constexpr int STAGES = 4;
++constexpr int THREADS = 128;
++constexpr int ROW_BYTES = BLOCK_K * 2;
++constexpr int W_STAGE = BLOCK_N * ROW_BYTES;
++constexpr int WS_FLOATS = 2 * MAXT * HID;         // 524288: max over the three variants
++template <int NF> struct Smem {
++  static constexpr int X_STAGE = NF * 8 * ROW_BYTES;
++  static constexpr int STAGE_BYTES = W_STAGE + X_STAGE;
++  static constexpr int BYTES = STAGES * STAGE_BYTES;
++};
++
++__device__ __forceinline__ uint32_t smem_u32(const void* p) {
++  return static_cast<uint32_t>(__cvta_generic_to_shared(p));
++}
++__device__ __forceinline__ void cp_async16(uint32_t dst, const void* src, int src_bytes) {
++  asm volatile("cp.async.cg.shared.global [%0], [%1], 16, %2;\n" :: "r"(dst), "l"(src), "r"(src_bytes) : "memory");
++}
++__device__ __forceinline__ void cp_commit() { asm volatile("cp.async.commit_group;\n" ::: "memory"); }
++template <int N>
++__device__ __forceinline__ void cp_wait() { asm volatile("cp.async.wait_group %0;\n" :: "n"(N) : "memory"); }
++__device__ __forceinline__ void ldsm_x4(uint32_t (&r)[4], uint32_t addr) {
++  asm volatile("ldmatrix.sync.aligned.m8n8.x4.shared.b16 {%0,%1,%2,%3}, [%4];\n"
++               : "=r"(r[0]), "=r"(r[1]), "=r"(r[2]), "=r"(r[3]) : "r"(addr));
++}
++__device__ __forceinline__ void mma_bf16(float (&c)[4], const uint32_t (&a)[4], uint32_t b0, uint32_t b1) {
++  asm volatile("mma.sync.aligned.m16n8k16.row.col.f32.bf16.bf16.f32 {%0,%1,%2,%3}, {%4,%5,%6,%7}, {%8,%9}, {%0,%1,%2,%3};\n"
++               : "+f"(c[0]), "+f"(c[1]), "+f"(c[2]), "+f"(c[3])
++               : "r"(a[0]), "r"(a[1]), "r"(a[2]), "r"(a[3]), "r"(b0), "r"(b1));
++}
++__device__ __forceinline__ void griddep_wait() { asm volatile("griddepcontrol.wait;\n" ::: "memory"); }
++__device__ __forceinline__ void griddep_launch() { asm volatile("griddepcontrol.launch_dependents;\n" ::: "memory"); }
++__device__ __forceinline__ void prefetch_l2(const void* p) { asm volatile("prefetch.global.L2 [%0];\n" :: "l"(p)); }
++
++__device__ __forceinline__ float block_sum(float v, float* red, int lane, int warp) {
++#pragma unroll
++  for (int o = 16; o > 0; o >>= 1) v += __shfl_xor_sync(0xffffffffu, v, o);
++  if (lane == 0) red[warp] = v;
++  __syncthreads();
++  float tot = 0.f;
++#pragma unroll
++  for (int i = 0; i < 8; ++i) tot += red[i];
++  return tot;
++}
++
++// One CTA per token. new_stream = alpha * s_in + beta * rms(branch * in_scale, 1e-8);
++// out = bf16(rms(new_stream, 1e-5) * pre_w). branch bf16 [T, 8192] (only the first `ncols` columns
++// are read, the rest are known zero), in_scale / alpha / beta / pre_w fp32 [8192] constants,
++// s_in / s_out fp32 [T, 8192]. launch_dependents first, then the wait: everything read before the
++// wait is a prepare() constant (L2 prefetch only).
++__global__ void __launch_bounds__(256)
++dl_boundary_kernel(const __nv_bfloat16* __restrict__ branch, const float* __restrict__ in_scale,
++                   const float* __restrict__ alpha, const float* __restrict__ beta,
++                   const float* __restrict__ s_in, const float* __restrict__ pre_w,
++                   float* __restrict__ s_out, __nv_bfloat16* __restrict__ out, int ncols, int flags) {
++  __shared__ float s_red[2][8];
++  griddep_launch();
++  // flags bit0: input scale present (ffn); bit1: round the post-norm output to bf16 before the
++  // residual add (picked in prepare() to match SGLang's FusedPostNormResidualPreNorm).
++  const bool has_scale = (flags & 1) != 0, round_post = (flags & 2) != 0;
++  const int tid = threadIdx.x, lane = tid & 31, warp = tid >> 5;
++  const int t = blockIdx.x;
++#pragma unroll
++  for (int j = 0; j < 4; ++j) {
++    const int base = (tid + 256 * j) * 8;
++    prefetch_l2(alpha + base);
++    prefetch_l2(beta + base);
++    prefetch_l2(pre_w + base);
++    if (has_scale) prefetch_l2(in_scale + base);
++  }
++  griddep_wait();
++  float v[32];
++#pragma unroll
++  for (int j = 0; j < 4; ++j) {
++    const int base = (tid + 256 * j) * 8;
++    uint4 raw = make_uint4(0u, 0u, 0u, 0u);
++    if (base < ncols) raw = __ldg(reinterpret_cast<const uint4*>(branch + (int64_t)t * HID + base));
++    const __nv_bfloat162* p2 = reinterpret_cast<const __nv_bfloat162*>(&raw);
++#pragma unroll
++    for (int q = 0; q < 4; ++q) {
++      const float2 f2 = __bfloat1622float2(p2[q]);
++      v[j * 8 + 2 * q] = f2.x;
++      v[j * 8 + 2 * q + 1] = f2.y;
++    }
++    if (has_scale) {
++      const float4 a = __ldg(reinterpret_cast<const float4*>(in_scale + base));
++      const float4 b = __ldg(reinterpret_cast<const float4*>(in_scale + base + 4));
++      v[j * 8 + 0] *= a.x; v[j * 8 + 1] *= a.y; v[j * 8 + 2] *= a.z; v[j * 8 + 3] *= a.w;
++      v[j * 8 + 4] *= b.x; v[j * 8 + 5] *= b.y; v[j * 8 + 6] *= b.z; v[j * 8 + 7] *= b.w;
++    }
++  }
++  float ss = 0.f;
++#pragma unroll
++  for (int i = 0; i < 32; ++i) ss += v[i] * v[i];
++  const float rstd1 = rsqrtf(block_sum(ss, s_red[0], lane, warp) / 8192.f + 1e-8f);
++  float ns[32];
++  float ss2 = 0.f;
++#pragma unroll
++  for (int j = 0; j < 4; ++j) {
++    const int base = (tid + 256 * j) * 8;
++    const float* sp = s_in + (int64_t)t * HID + base;
++    const float4 s0 = __ldg(reinterpret_cast<const float4*>(sp));
++    const float4 s1 = __ldg(reinterpret_cast<const float4*>(sp + 4));
++    const float4 a0 = __ldg(reinterpret_cast<const float4*>(alpha + base));
++    const float4 a1 = __ldg(reinterpret_cast<const float4*>(alpha + base + 4));
++    const float4 b0 = __ldg(reinterpret_cast<const float4*>(beta + base));
++    const float4 b1 = __ldg(reinterpret_cast<const float4*>(beta + base + 4));
++    const float sv[8] = {s0.x, s0.y, s0.z, s0.w, s1.x, s1.y, s1.z, s1.w};
++    const float av[8] = {a0.x, a0.y, a0.z, a0.w, a1.x, a1.y, a1.z, a1.w};
++    const float bv[8] = {b0.x, b0.y, b0.z, b0.w, b1.x, b1.y, b1.z, b1.w};
++#pragma unroll
++    for (int q = 0; q < 8; ++q) {
++      float nb = v[j * 8 + q] * rstd1;
++      if (round_post) nb = __bfloat162float(__float2bfloat16_rn(nb));
++      const float r = av[q] * sv[q] + bv[q] * nb;
++      ns[j * 8 + q] = r;
++      ss2 += r * r;
++    }
++    float* op = s_out + (int64_t)t * HID + base;
++    *reinterpret_cast<float4*>(op) = make_float4(ns[j * 8], ns[j * 8 + 1], ns[j * 8 + 2], ns[j * 8 + 3]);
++    *reinterpret_cast<float4*>(op + 4) = make_float4(ns[j * 8 + 4], ns[j * 8 + 5], ns[j * 8 + 6], ns[j * 8 + 7]);
++  }
++  const float rstd2 = rsqrtf(block_sum(ss2, s_red[1], lane, warp) / 8192.f + 1e-5f);
++#pragma unroll
++  for (int j = 0; j < 4; ++j) {
++    const int base = (tid + 256 * j) * 8;
++    const float4 w0 = __ldg(reinterpret_cast<const float4*>(pre_w + base));
++    const float4 w1 = __ldg(reinterpret_cast<const float4*>(pre_w + base + 4));
++    const float wv[8] = {w0.x, w0.y, w0.z, w0.w, w1.x, w1.y, w1.z, w1.w};
++    uint4 o;
++    __nv_bfloat162* o2 = reinterpret_cast<__nv_bfloat162*>(&o);
++#pragma unroll
++    for (int q = 0; q < 4; ++q)
++      o2[q] = __floats2bfloat162_rn(ns[j * 8 + 2 * q] * rstd2 * wv[2 * q],
++                                    ns[j * 8 + 2 * q + 1] * rstd2 * wv[2 * q + 1]);
++    *reinterpret_cast<uint4*>(out + (int64_t)t * HID + base) = o;
++  }
++}
++
++// out bf16 [m, 8192] = x bf16 [m, 4096] @ W[:NROWS]^T (W bf16 [>= NROWS, 4096]). Grid =
++// (NROWS / 64) * SPLIT_: n-tile = blockIdx.x / SPLIT_, K-chunk = blockIdx.x % SPLIT_. Same pipeline
++// as dl_pooler_router_kernel: weight ring before the PDL wait, x after it, fixed-order ticket
++// split-K reduce. When NROWS < 8192, columns NROWS..8191 of out are stored as bf16 zeros (each CTA
++// a disjoint slice), after the wait. ws fp32 [SPLIT_, 32, NROWS]; cnt int32 [NROWS / 64] (0 between launches).
++template <int NF, int SPLIT_, int NROWS>
++__global__ void __launch_bounds__(THREADS, 2)
++dl_unpool_kernel(const __nv_bfloat16* __restrict__ x, const __nv_bfloat16* __restrict__ w,
++                 __nv_bfloat16* __restrict__ out, float* __restrict__ ws, int* __restrict__ cnt, int m) {
++  using S = Smem<NF>;
++  constexpr int NT = NROWS / BLOCK_N;
++  extern __shared__ __align__(128) uint8_t smem[];
++  __shared__ int s_last;
++  const int tid = threadIdx.x, lane = tid & 31, warp = tid >> 5;
++  const int ntile = blockIdx.x / SPLIT_, sidx = blockIdx.x % SPLIT_;
++  const int n0 = ntile * BLOCK_N;
++  const int kb0 = sidx * UKB / SPLIT_, kb1 = (sidx + 1) * UKB / SPLIT_;
++  const int nsteps = kb1 - kb0;
++  const __nv_bfloat16* wbase = w + (int64_t)n0 * UK;
++
++  auto issue_w = [&](int j) {
++    uint8_t* sw = smem + (j % STAGES) * S::STAGE_BYTES;
++    const int kel = (kb0 + j) * BLOCK_K;
++#pragma unroll
++    for (int u = 0; u < (BLOCK_N * 16) / THREADS; ++u) {
++      const int q = tid + u * THREADS;
++      const int row = q >> 4, c = q & 15;
++      cp_async16(smem_u32(sw + row * ROW_BYTES + ((c ^ (row & 7)) << 4)),
++                 wbase + (int64_t)row * UK + kel + c * 8, 16);
++    }
++  };
++  auto issue_x = [&](int j) {
++    uint8_t* sx = smem + (j % STAGES) * S::STAGE_BYTES + W_STAGE;
++    const int kel = (kb0 + j) * BLOCK_K;
++#pragma unroll
++    for (int u = 0; u < NF; ++u) {
++      const int q = tid + u * THREADS;
++      const int row = q >> 4, c = q & 15;
++      const bool ok = row < m;
++      const __nv_bfloat16* src = x + (ok ? (int64_t)row * UK : (int64_t)0) + kel + c * 8;
++      cp_async16(smem_u32(sx + row * ROW_BYTES + ((c ^ (row & 7)) << 4)), src, ok ? 16 : 0);
++    }
++  };
++
++#pragma unroll
++  for (int j = 0; j < STAGES - 1; ++j)
++    if (j < nsteps) issue_w(j);
++  griddep_wait();
++  if constexpr (NROWS < HID) {
++    // Zero columns [NROWS, 8192): 56 per token per CTA. The previous kernel is done (wait above).
++    constexpr int ZC = (HID - NROWS) / (NT * SPLIT_);
++    static_assert(ZC % 8 == 0 && (HID - NROWS) % (NT * SPLIT_) == 0, "zero slice");
++    constexpr int ZV = ZC / 8;                       // uint4 per token
++    const int zc0 = NROWS + blockIdx.x * ZC;
++    for (int e = tid; e < m * ZV; e += THREADS) {
++      const int t = e / ZV, q = e % ZV;
++      *reinterpret_cast<uint4*>(out + (int64_t)t * HID + zc0 + q * 8) = make_uint4(0u, 0u, 0u, 0u);
++    }
++  }
++#pragma unroll
++  for (int j = 0; j < STAGES - 1; ++j) {
++    if (j < nsteps) issue_x(j);
++    cp_commit();
++  }
++
++  float acc[2][NF][4];
++#pragma unroll
++  for (int h = 0; h < 2; ++h)
++#pragma unroll
++    for (int f = 0; f < NF; ++f)
++#pragma unroll
++      for (int r = 0; r < 4; ++r) acc[h][f][r] = 0.f;
++  const int arow = warp * 16 + (lane & 15);
++  const int asw = arow & 7;
++  const int ahalf = lane >> 4;
++  const int xrow = lane & 7;
++  const int xq = lane >> 3;
++
++  for (int i = 0; i < nsteps; ++i) {
++    cp_wait<STAGES - 2>();
++    __syncthreads();
++    {
++      const int nx = i + STAGES - 1;
++      if (nx < nsteps) { issue_w(nx); issue_x(nx); }
++      cp_commit();
++    }
++    const uint8_t* sw = smem + (i % STAGES) * S::STAGE_BYTES;
++    const uint32_t a_base = smem_u32(sw) + arow * ROW_BYTES;
++    const uint32_t b_base = smem_u32(sw + W_STAGE) + xrow * ROW_BYTES;
++#pragma unroll
++    for (int kp = 0; kp < BLOCK_K / 32; ++kp) {
++      uint32_t a0[4], a1[4];
++      ldsm_x4(a0, a_base + ((((kp * 2 + 0) * 2 + ahalf) ^ asw) << 4));
++      ldsm_x4(a1, a_base + ((((kp * 2 + 1) * 2 + ahalf) ^ asw) << 4));
++#pragma unroll
++      for (int f = 0; f < NF; ++f) {
++        uint32_t b[4];
++        ldsm_x4(b, b_base + f * 8 * ROW_BYTES + (((kp * 4 + xq) ^ xrow) << 4));
++        mma_bf16(acc[0][f], a0, b[0], b[1]);
++        mma_bf16(acc[1][f], a1, b[2], b[3]);
++      }
++    }
++  }
++
++  const int r0 = n0 + warp * 16 + (lane >> 2);
++  float* wsp = ws + (int64_t)sidx * MAXT * NROWS;
++#pragma unroll
++  for (int f = 0; f < NF; ++f) {
++    const int t0 = f * 8 + (lane & 3) * 2;
++    if (t0 < m) {
++      wsp[(int64_t)t0 * NROWS + r0] = acc[0][f][0] + acc[1][f][0];
++      wsp[(int64_t)t0 * NROWS + r0 + 8] = acc[0][f][2] + acc[1][f][2];
++    }
++    if (t0 + 1 < m) {
++      wsp[(int64_t)(t0 + 1) * NROWS + r0] = acc[0][f][1] + acc[1][f][1];
++      wsp[(int64_t)(t0 + 1) * NROWS + r0 + 8] = acc[0][f][3] + acc[1][f][3];
++    }
++  }
++  __threadfence();
++  __syncthreads();
++  if (tid == 0) s_last = (atomicAdd(cnt + ntile, 1) == SPLIT_ - 1);
++  __syncthreads();
++  if (s_last) {
++    __threadfence();
++    for (int e = tid; e < m * BLOCK_N; e += THREADS) {
++      const int t = e / BLOCK_N, r = n0 + (e % BLOCK_N);
++      float s = 0.f;
++#pragma unroll
++      for (int p = 0; p < SPLIT_; ++p) s += __ldcg(ws + ((int64_t)p * MAXT + t) * NROWS + r);
++      out[(int64_t)t * HID + r] = __float2bfloat16_rn(s);
++    }
++    if (tid == 0) atomicExch(cnt + ntile, 0);
++  }
++}
++
++template <int NF, int SPLIT_, int NROWS>
++void launch_u(const __nv_bfloat16* x, const __nv_bfloat16* w, __nv_bfloat16* out, float* ws, int* cnt, int m,
++              bool pdl, cudaStream_t stream) {
++  static bool done = false;
++  if (!done) {
++    C10_CUDA_CHECK(cudaFuncSetAttribute(dl_unpool_kernel<NF, SPLIT_, NROWS>,
++                                        cudaFuncAttributeMaxDynamicSharedMemorySize, Smem<NF>::BYTES));
++    C10_CUDA_CHECK(cudaFuncSetAttribute(dl_unpool_kernel<NF, SPLIT_, NROWS>,
++                                        cudaFuncAttributePreferredSharedMemoryCarveout, cudaSharedmemCarveoutMaxShared));
++    done = true;
++  }
++  cudaLaunchConfig_t cfg = {};
++  cfg.gridDim = dim3((NROWS / BLOCK_N) * SPLIT_);
++  cfg.blockDim = dim3(THREADS);
++  cfg.dynamicSmemBytes = Smem<NF>::BYTES;
++  cfg.stream = stream;
++  cudaLaunchAttribute attr[1];
++  attr[0].id = cudaLaunchAttributeProgrammaticStreamSerialization;
++  attr[0].val.programmaticStreamSerializationAllowed = 1;
++  cfg.attrs = attr;
++  cfg.numAttrs = pdl ? 1 : 0;
++  C10_CUDA_CHECK(cudaLaunchKernelEx(&cfg, dl_unpool_kernel<NF, SPLIT_, NROWS>, x, w, out, ws, cnt, m));
++}
++
++}  // namespace
++
++void dl_boundary(torch::Tensor branch, torch::Tensor in_scale, torch::Tensor alpha, torch::Tensor beta,
++                 torch::Tensor s_in, torch::Tensor pre_w, torch::Tensor s_out, torch::Tensor out,
++                 int64_t ncols, int64_t has_scale, int64_t pdl) {
++  const int64_t m = out.size(0);
++  TORCH_CHECK(m >= 1 && m <= MAXT, "dl_boundary: tokens out of range");
++  TORCH_CHECK(branch.scalar_type() == at::kBFloat16 && branch.is_contiguous() && branch.size(0) == m &&
++              branch.size(1) == HID, "dl_boundary: branch");
++  TORCH_CHECK(ncols > 0 && ncols <= HID && ncols % 8 == 0, "dl_boundary: ncols");
++  for (const auto* v : {&in_scale, &alpha, &beta, &pre_w})
++    TORCH_CHECK(v->scalar_type() == at::kFloat && v->is_contiguous() && v->numel() == HID, "dl_boundary: vector");
++  TORCH_CHECK(s_in.scalar_type() == at::kFloat && s_in.is_contiguous() && s_in.size(0) == m && s_in.size(1) == HID,
++              "dl_boundary: s_in");
++  TORCH_CHECK(s_out.scalar_type() == at::kFloat && s_out.is_contiguous() && s_out.size(0) == m &&
++              s_out.size(1) == HID, "dl_boundary: s_out");
++  TORCH_CHECK(out.scalar_type() == at::kBFloat16 && out.is_contiguous() && out.size(1) == HID, "dl_boundary: out");
++  auto stream = at::cuda::getCurrentCUDAStream().stream();
++  cudaLaunchConfig_t cfg = {};
++  cfg.gridDim = dim3(static_cast<unsigned>(m));
++  cfg.blockDim = dim3(256);
++  cfg.dynamicSmemBytes = 0;
++  cfg.stream = stream;
++  cudaLaunchAttribute attr[1];
++  attr[0].id = cudaLaunchAttributeProgrammaticStreamSerialization;
++  attr[0].val.programmaticStreamSerializationAllowed = 1;
++  cfg.attrs = attr;
++  cfg.numAttrs = pdl ? 1 : 0;
++  C10_CUDA_CHECK(cudaLaunchKernelEx(
++      &cfg, dl_boundary_kernel, reinterpret_cast<const __nv_bfloat16*>(branch.data_ptr()),
++      in_scale.data_ptr<float>(), alpha.data_ptr<float>(), beta.data_ptr<float>(), s_in.data_ptr<float>(),
++      pre_w.data_ptr<float>(), s_out.data_ptr<float>(), reinterpret_cast<__nv_bfloat16*>(out.data_ptr()),
++      static_cast<int>(ncols), static_cast<int>(has_scale)));
++}
++
++void dl_unpool(torch::Tensor x, torch::Tensor w, torch::Tensor out, torch::Tensor ws, torch::Tensor cnt,
++               int64_t pdl) {
++  const int64_t m = x.size(0);
++  TORCH_CHECK(m >= 1 && m <= MAXT, "dl_unpool: tokens out of range");
++  TORCH_CHECK(x.scalar_type() == at::kBFloat16 && x.is_contiguous() && x.size(1) == UK, "dl_unpool: x");
++  TORCH_CHECK(w.scalar_type() == at::kBFloat16 && w.is_contiguous() && w.size(0) == HID && w.size(1) == UK,
++              "dl_unpool: w");
++  TORCH_CHECK(out.scalar_type() == at::kBFloat16 && out.is_contiguous() && out.size(0) == m && out.size(1) == HID,
++              "dl_unpool: out");
++  TORCH_CHECK(ws.scalar_type() == at::kFloat && ws.numel() >= WS_FLOATS, "dl_unpool: ws");
++  TORCH_CHECK(cnt.scalar_type() == at::kInt && cnt.numel() >= HID / BLOCK_N, "dl_unpool: cnt");
++  auto stream = at::cuda::getCurrentCUDAStream().stream();
++  const auto* xp = reinterpret_cast<const __nv_bfloat16*>(x.data_ptr());
++  const auto* wp = reinterpret_cast<const __nv_bfloat16*>(w.data_ptr());
++  auto* op = reinterpret_cast<__nv_bfloat16*>(out.data_ptr());
++  float* wsp = ws.data_ptr<float>();
++  int* cp = cnt.data_ptr<int>();
++  const int mi = static_cast<int>(m);
++  if (m <= 8) launch_u<1, 8, 1024>(xp, wp, op, wsp, cp, mi, pdl != 0, stream);
++  else if (m <= 16) launch_u<2, 2, 8192>(xp, wp, op, wsp, cp, mi, pdl != 0, stream);
++  else launch_u<4, 2, 8192>(xp, wp, op, wsp, cp, mi, pdl != 0, stream);
++}
++"""
++
++
++def _build_boundary_unpool():
++    """Compile the boundary/unpooler TU once per process, at import. Any failure leaves the landed
++    dense chain (and master) as the path."""
++    t0 = time.perf_counter()
++    flags = ["-O3", "-arch=sm_90a", "-lineinfo"]
++    try:
++        from torch.utils.cpp_extension import load_inline
++        ext = load_inline(
++            name="muse_decode_boundary_unpool_v2",
++            cpp_sources=_DLB_CPP,
++            cuda_sources=_DLB_CUDA,
++            functions=["dl_boundary", "dl_unpool"],
++            extra_cuda_cflags=flags,
++            verbose=False,
++        )
++    except Exception as e:
++        dt = time.perf_counter() - t0
++        print(f"{DLB_TAG} load_inline FAILED after {dt:.1f}s, flags {flags}, boundary/unpool path OFF: {e!r}", flush=True)
++        return None, dt
++    dt = time.perf_counter() - t0
++    print(f"{DLB_TAG} load_inline compiled in {dt:.1f}s, flags {flags} (no sm_90a-only PTX: griddepcontrol, "
++          f"mma.sync, cp.async only)", flush=True)
++    return ext, dt
++
++
++_DLB_EXT, _DLB_COMPILE_S = (_build_boundary_unpool() if (torch.cuda.is_available() and _DL_EXT is not None)
++                            else (None, 0.0))
++
++
+ def _block_size_m(num_tokens):
+     """MuseSpark1xFp4Experts' block_size_m pick, then master's Marlin cap (shape-only)."""
+     for block_size_m in BLOCK_SIZE_M_CANDIDATES:
+@@ -1033,18 +1698,37 @@ def _dl_forward(ffn_input, local_start, dl, pdl=None):
+     ext = _DL_EXT
+     tokens = ffn_input.shape[0]
+     dev = ffn_input.device
++    pdl_v = dl["pdl"] if pdl is None else pdl
+     x = ffn_input.contiguous()
+     ei = torch.empty((tokens, D_EXPERT), dtype=torch.bfloat16, device=dev)
+     logits = torch.empty((tokens, N_EXPERTS), dtype=torch.float32, device=dev)
+-    ext.dl_pooler_router(x, dl["w_pr"], ei, logits, dl["ws"], dl["cnt_p"], dl["pdl"] if pdl is None else pdl)
+-    xn, routed = _dl_route(ei, logits, local_start, dl)
++    ext.dl_pooler_router(x, dl["w_pr"], ei, logits, dl["ws"], dl["cnt_p"], pdl_v)
++    variant = dl.get("r_variant", 0)  # 0 = new R; 2 = master's R (prepare() timing picked it)
++    xn, routed = _dl_route(ei, logits, local_start, dl, pdl_v if variant == 0 else 0, variant)
+     return xn, routed, (ei, logits)
+ 
+ 
+-def _dl_route(ei, logits, local_start, dl):
+-    """Kernel R alone (also driven directly by the self-check with crafted logits)."""
+-    tokens = ei.shape[0]
+-    dev = ei.device
++def _dl_forward_traced(ffn_input, local_start, dl, pdl):
++    """_dl_forward for the prepare() self-check only (eager): flushed print before and sync + print
++    after each of P and R, so a fault names its kernel."""
++    tokens = ffn_input.shape[0]
++    dev = ffn_input.device
++    x = ffn_input.contiguous()
++    ei = torch.empty((tokens, D_EXPERT), dtype=torch.bfloat16, device=dev)
++    logits = torch.empty((tokens, N_EXPERTS), dtype=torch.float32, device=dev)
++    print(f"{DL_TAG} self-check launching P (T={tokens} pdl={pdl})", flush=True)
++    _DL_EXT.dl_pooler_router(x, dl["w_pr"], ei, logits, dl["ws"], dl["cnt_p"], pdl)
++    torch.cuda.synchronize()
++    print(f"{DL_TAG} self-check P done (T={tokens})", flush=True)
++    print(f"{DL_TAG} self-check launching R (T={tokens} pdl={pdl})", flush=True)
++    xn, routed = _dl_route(ei, logits, local_start, dl, pdl)
++    torch.cuda.synchronize()
++    print(f"{DL_TAG} self-check R done (T={tokens})", flush=True)
++    return xn, routed, (ei, logits)
++
++
++def _dl_route_bufs(tokens, dev):
++    """R's outputs for T tokens (shape-only). Returns (bufs, bsm)."""
+     bsm = _block_size_m(tokens)
+     n = tokens * TOP_K
+     cap = n + LOCAL_EXPERTS * (bsm - 1)
+@@ -1056,8 +1740,22 @@ def _dl_route(ei, logits, local_start, dl):
+     sorted_ids = torch.empty((cap,), dtype=torch.int32, device=dev)
+     block_experts = torch.empty((n_blocks,), dtype=torch.int32, device=dev)
+     n_padded = torch.empty((1,), dtype=torch.int32, device=dev)
++    return (xn, topk_ids, topk_w, local_ids, sorted_ids, block_experts, n_padded), bsm
++
++
++def _dl_route_launch(ei, logits, local_start, dl, bufs, bsm, pdl, variant):
++    """One launch of R. variant 0 = new (binary-search pad), 1 = new with the linear pad scan,
++    2 = master's R (dl_route_norm_align_v1, prepare() timing / comparison only)."""
++    xn, topk_ids, topk_w, local_ids, sorted_ids, block_experts, n_padded = bufs
+     _DL_EXT.dl_route_norm_align(ei, dl["norm_w"], xn, logits, dl["bias"], local_start, topk_ids, topk_w, local_ids,
+-                                sorted_ids, block_experts, n_padded, dl["cnt_r"], bsm)
++                                sorted_ids, block_experts, n_padded, dl["cnt_r"], bsm, pdl, variant)
++
++
++def _dl_route(ei, logits, local_start, dl, pdl=0, variant=0):
++    """Kernel R alone (also driven directly by the self-check with crafted logits)."""
++    bufs, bsm = _dl_route_bufs(ei.shape[0], ei.device)
++    _dl_route_launch(ei, logits, local_start, dl, bufs, bsm, pdl, variant)
++    xn, topk_ids, topk_w, local_ids, sorted_ids, block_experts, n_padded = bufs
+     return xn, (topk_w, topk_ids, local_ids, (sorted_ids, block_experts, n_padded))
+ 
+ 
+@@ -1148,7 +1846,7 @@ def _dl_self_check(state, pdl):
+         tag = f"T={tokens} ls={ls_val}"
+         x = torch.randn((tokens, HIDDEN), device=dev, generator=gen).to(torch.bfloat16)
+         for rep in range(2):  # twice: a ticket that fails to reset shows on the second launch
+-            xn, (tw, ids, lids, align), (ei, logits) = _dl_forward(x, ls, dl, pdl)
++            xn, (tw, ids, lids, align), (ei, logits) = _dl_forward_traced(x, ls, dl, pdl)
+         torch.cuda.synchronize()
+         ei_ref = _gemm(x, pooler)
+         logit_ref = x.double() @ router.double().T
+@@ -1194,8 +1892,10 @@ def _dl_self_check(state, pdl):
+             tag = f"R T={tokens} {name}"
+             ls = torch.tensor([ls_val], dtype=torch.int32, device=dev)
+             lg = lg.contiguous()
+-            xn, (tw, ids, lids, align) = _dl_route(ei, lg, ls, dl)
++            print(f"{DL_TAG} self-check launching R alone ({tag} pdl={pdl})", flush=True)
++            xn, (tw, ids, lids, align) = _dl_route(ei, lg, ls, dl, pdl)
+             torch.cuda.synchronize()
++            print(f"{DL_TAG} self-check R alone done ({tag})", flush=True)
+             problems += _dl_route_problems(lg, tw, ids, lids, ls_val, state, tag, tie_free=tie_free)
+             problems += _dl_align_problems(lids, align, _block_size_m(tokens), tag)
+             no_local = bool((lids < 0).all())
+@@ -1209,6 +1909,26 @@ def _dl_self_check(state, pdl):
+                 float(y_new.abs().max()) == 0.0 if no_local else _rel_l2(y_new, y_ref) <= 1e-3)
+             if not ok_y:
+                 problems.append(f"{tag}: Marlin output y differs")
++    # New R (both pad variants) against master's R (v1) on the same random inputs: every output
++    # (xn, ids, weights, local ids, align) must be bit-identical, so the top-8 ordered set is too.
++    for tokens in (1, 8, 32):
++        ei = torch.randn((tokens, D_EXPERT), device=dev, generator=gen).to(torch.bfloat16)
++        lg = (torch.randn((tokens, N_EXPERTS), device=dev, generator=gen) * 4.0).contiguous()
++        ls = torch.tensor([96], dtype=torch.int32, device=dev)
++        outs = {}
++        for variant in (2, 0, 1):
++            bufs, bsm = _dl_route_bufs(tokens, dev)
++            print(f"{DL_TAG} self-check launching R variant {variant} (T={tokens} pdl={pdl if variant != 2 else 0})",
++                  flush=True)
++            _dl_route_launch(ei, lg, ls, dl, bufs, bsm, pdl if variant != 2 else 0, variant)
++            torch.cuda.synchronize()
++            print(f"{DL_TAG} self-check R variant {variant} done (T={tokens})", flush=True)
++            outs[variant] = bufs
++        for variant in (0, 1):
++            names = ("xn", "topk_ids", "topk_w", "local_ids", "sorted_ids", "block_experts", "n_padded")
++            for nm, a_, b_ in zip(names, outs[variant], outs[2]):
++                if not torch.equal(a_, b_):
++                    problems.append(f"R v1-vs-new T={tokens} variant {variant}: {nm} differs from master's R")
+     # The chain as kernel_fn runs it (attn_boundary -> P -> R -> experts), captured in a CUDA graph
+     # and replayed once, against the same chain run eagerly.
+     for tokens in (8, 32):
+@@ -1298,6 +2018,85 @@ def _dl_time_p(state, with_pdl):
+     return out
+ 
+ 
++def _dl_graph_us(launch, inner):
++    """Back-to-back replay time per launch group: `inner` copies captured in one CUDA graph."""
++    graph = torch.cuda.CUDAGraph()
++    with torch.cuda.graph(graph):
++        for _ in range(inner):
++            launch()
++    graph.replay()
++    torch.cuda.synchronize()
++    start, end = torch.cuda.Event(enable_timing=True), torch.cuda.Event(enable_timing=True)
++    start.record()
++    for _ in range(5):
++        graph.replay()
++    end.record()
++    torch.cuda.synchronize()
++    us = start.elapsed_time(end) * 1e3 / (5 * inner)
++    del graph
++    return us
++
++
++def _dl_time_r(state, pdl_ok, chosen_pdl):
++    """Print-only (prepare()): CUDA-event times. (1) R alone, master's R (v1) vs the new R at T 1/8/32;
++    (2) the new R with v1's linear pad scan vs the binary search (bsm printed); (3) the P->R pair
++    captured in a CUDA graph and replayed back to back with pdl 0 and pdl 1 (and with master's R)."""
++    dl = state["dl"]
++    dev = dl["w_pr"].device
++    ls = torch.tensor([96], dtype=torch.int32, device=dev)
++    out = []
++    pair_us = {"new": 0.0, "old": 0.0}
++    pair_ok = {"new": True, "old": True}
++    for tokens in (1, 8, 32):
++        ei = torch.randn((tokens, D_EXPERT), device=dev).to(torch.bfloat16)
++        lg = (torch.randn((tokens, N_EXPERTS), device=dev) * 4.0).contiguous()
++        bufs, bsm = _dl_route_bufs(tokens, dev)
++        row = [f"R T={tokens} bsm={bsm}"]
++        for label, variant in (("old(v1)", 2), ("new", 0), ("new-linear-pad", 1)):
++            try:
++                us = _dl_graph_us(lambda: _dl_route_launch(ei, lg, ls, dl, bufs, bsm, 0, variant), 20)
++                row.append(f"{label} {us:.2f} us")
++            except Exception as e:
++                row.append(f"{label} timing raised {e!r}")
++        out.append(" ".join(row))
++        dl["cnt_r"].zero_()
++        x = torch.randn((tokens, HIDDEN), device=dev).to(torch.bfloat16)
++        eip = torch.empty((tokens, D_EXPERT), dtype=torch.bfloat16, device=dev)
++        lgp = torch.empty((tokens, N_EXPERTS), dtype=torch.float32, device=dev)
++        row = [f"P->R pair T={tokens}"]
++        # old-R pair: P keeps the chosen pdl (as kernel_fn runs P with variant 2); v1 R itself never gets PDL.
++        for label, pdl, variant in (("new pdl=0", 0, 0), ("new pdl=1", 1, 0),
++                                    (f"old-R (P pdl={chosen_pdl})", chosen_pdl, 2)):
++            if pdl and not pdl_ok:
++                continue
++            key = "old" if variant == 2 else ("new" if pdl == chosen_pdl else None)
++            def pair(pdl=pdl, variant=variant):
++                _DL_EXT.dl_pooler_router(x, dl["w_pr"], eip, lgp, dl["ws"], dl["cnt_p"], pdl)
++                _dl_route_launch(eip, lgp, ls, dl, bufs, bsm, pdl, variant)
++            try:
++                us = _dl_graph_us(pair, 10)
++                row.append(f"{label} {us:.2f} us")
++                if key:
++                    pair_us[key] += us
++            except Exception as e:
++                row.append(f"{label} timing raised {e!r}")
++                if key:
++                    pair_ok[key] = False
++            dl["cnt_p"].zero_()
++            dl["cnt_r"].zero_()
++        out.append(" ".join(row))
++    # Winner: the new R (with the pdl the self-check chose) must beat master's R on the summed P->R pairs
++    # at T=1/8/32, else master's R stays (variant 2, no PDL on R).
++    if pair_ok["new"] and pair_ok["old"] and pair_us["new"] < pair_us["old"]:
++        winner = 0
++    else:
++        winner = 2
++    out.append(f"R selector: new R pdl={chosen_pdl} {pair_us['new']:.2f} us vs master R {pair_us['old']:.2f} us "
++               f"(sum of P->R pairs T=1/8/32, ok {pair_ok}): WINNER = {'NEW R' if winner == 0 else 'MASTER R'}; "
++               f"PATH CHOSEN = {'new dl_route_norm_align (variant 0)' if winner == 0 else 'MASTER R (variant 2)'}")
++    return out, winner
++
++
+ def _dl_setup(weights, state):
+     """Build the small-T chain's prepare() constants, probe PDL, self-check (pdl=1 then pdl=0),
+     and return its dict, or None to keep master's path. Prints the verdict loudly."""
+@@ -1350,6 +2149,14 @@ def _dl_setup(weights, state):
+             return None
+         for line in _dl_time_p(state, with_pdl=pdl == 1 or "raised" not in probe):
+             print(f"{DL_TAG} P timing {line}", flush=True)
++        try:
++            lines, winner = _dl_time_r(state, pdl == 1, pdl)
++            for line in lines:
++                print(f"{DL_TAG} {line}", flush=True)
++            state["dl"]["r_variant"] = winner
++        except Exception as e:
++            state["dl"]["r_variant"] = 2
++            print(f"{DL_TAG} R timing raised {e!r}: PATH CHOSEN = MASTER R (variant 2)", flush=True)
+         state["dl"]["cnt_p"].zero_()
+         state["dl"]["cnt_r"].zero_()
+         print(f"{DL_TAG} ON pdl={pdl} compile {_DL_COMPILE_S:.1f}s max errs {summary}: "
+@@ -1361,6 +2168,315 @@ def _dl_setup(weights, state):
+         return None
+ 
+ 
++# ---------------------------------------------------------------------------------------------
++# Boundaries + unpooler (T <= DLB_MAX_TOKENS): kernel_fn helpers, prepare() self-check and timing.
++def _dlb_nf(tokens):
++    return 1 if tokens <= SLICED_UNPOOL_MAX_TOKENS else (2 if tokens <= 16 else 4)
++
++
++def _dlb_attn(dlb, stream, attn_output, pdl):
++    """Attention boundary: ffn_input bf16 and the new fp32 stream (SGLang's FusedPostNormResidualPreNorm
++    with router_dtype None)."""
++    tokens = attn_output.shape[0]
++    dev = attn_output.device
++    ffn_input = torch.empty((tokens, HIDDEN), dtype=torch.bfloat16, device=dev)
++    stream1 = torch.empty((tokens, HIDDEN), dtype=torch.float32, device=dev)
++    _DLB_EXT.dl_boundary(attn_output.contiguous(), dlb["dummy"], dlb["alpha1"], dlb["beta1"], stream.contiguous(),
++                         dlb["pre_w1"], stream1, ffn_input, HIDDEN, dlb["rnd1"], pdl)
++    return ffn_input, stream1
++
++
++def _unpool_master(dense, expert_output):
++    if expert_output.shape[0] <= SLICED_UNPOOL_MAX_TOKENS:
++        unpooled = _gemm(expert_output, dense["unpooler"][:UNPOOL_SLICE])
++        return F.pad(unpooled, (0, HIDDEN - UNPOOL_SLICE))  # all-gather: identity
++    return _gemm(expert_output, dense["unpooler"])
++
++
++def _dlb_unpool(dlb, dense, expert_output, pdl, force=None):
++    tokens = expert_output.shape[0]
++    # NF=1 only (T <= SLICED_UNPOOL_MAX_TOKENS): NF=2/4 always stay on master's _gemm.
++    custom = (tokens <= SLICED_UNPOOL_MAX_TOKENS) and (dlb["unpool"][1] if force is None else force)
++    if not custom:
++        return _unpool_master(dense, expert_output)
++    ffn_output = torch.empty((tokens, HIDDEN), dtype=torch.bfloat16, device=expert_output.device)
++    _DLB_EXT.dl_unpool(expert_output.contiguous(), dense["unpooler"], ffn_output, dlb["ws"], dlb["cnt"], pdl)
++    return ffn_output
++
++
++def _dlb_ffn(dlb, stream1, ffn_output, pdl):
++    """FFN boundary: stream2 = alpha2 * stream1 + beta2 * rms(f * (1 + post_ffn_norm), 1e-8), then
++    rms(stream2) * (1 + next_pre_attn_norm). Up to 8 tokens f is zero past UNPOOL_SLICE: read only that."""
++    tokens = ffn_output.shape[0]
++    dev = ffn_output.device
++    nxt = torch.empty((tokens, HIDDEN), dtype=torch.bfloat16, device=dev)
++    stream2 = torch.empty((tokens, HIDDEN), dtype=torch.float32, device=dev)
++    ncols = UNPOOL_SLICE if tokens <= SLICED_UNPOOL_MAX_TOKENS else HIDDEN
++    _DLB_EXT.dl_boundary(ffn_output.contiguous(), dlb["scale2"], dlb["alpha2"], dlb["beta2"], stream1,
++                         dlb["pre_w2"], stream2, nxt, ncols, 1 | dlb["rnd2"], pdl)
++    return nxt, stream2
++
++
++def _dlb_coeffs(w, state):
++    """alpha, beta fp32 [8192] exactly as SGLang's FusedPostNormResidualPreNorm applies them,
++    measured from the module itself (deterministic, no attribute-name guessing): a probe boundary
++    with this gate and the weightless post-attention norm gives new_stream = alpha * 1 + beta * 0
++    for (stream = 1, branch = 0) and alpha * 0 + beta * rms(1) = beta for (stream = 0, branch = 1).
++    Cross-checked against reference.py's formula; a mismatch > 1e-2 raises (path OFF)."""
++    pre_ffn, _next_pre_attn, post_attn, _post_ffn, _post_expert = state["_modules"]
++    probe = FusedPostNormResidualPreNorm(post_attn, _residual(w), pre_ffn)
++    dev = w.device
++    ones_s = torch.ones((1, HIDDEN), dtype=torch.float32, device=dev)
++    zeros_b = torch.zeros((1, HIDDEN), dtype=torch.bfloat16, device=dev)
++    alpha = probe(ones_s.clone(), zeros_b.clone(), branch_dtype=torch.bfloat16, router_dtype=None)[1]
++    alpha = alpha.detach().float().reshape(-1).clone().contiguous()
++    beta = probe(torch.zeros_like(ones_s), torch.ones_like(zeros_b), branch_dtype=torch.bfloat16, router_dtype=None)[1]
++    beta = beta.detach().float().reshape(-1).clone().contiguous()
++    wf = w.float() / 0.3
++    beta_f = torch.sigmoid(wf)
++    alpha_f = torch.sqrt(torch.clamp(torch.sigmoid(-wf) * (1.0 + beta_f), min=1e-3))
++    da, db = _rel_l2(alpha, alpha_f), _rel_l2(beta, beta_f)
++    if not (bool(torch.isfinite(alpha).all()) and bool(torch.isfinite(beta).all())) or da > 1e-2 or db > 1e-2:
++        raise RuntimeError(f"residual coefficient probe disagrees with the formula: alpha {da:.2e} beta {db:.2e}")
++    return alpha, beta, f"module probe (vs reference formula: alpha {da:.1e}, beta {db:.1e})"
++
++
++def _dlb_upd_err(out, ref, alpha, s_in):
++    """Stream error relative to the residual update (ref - alpha * s_in), i.e. the beta * norm part
++    the judge checks; bf16-level differences there are ~1e-3, formula bugs >= 1e-2."""
++    upd = ref.double() - alpha.double() * s_in.double()
++    return float((out.double() - ref.double()).norm() / upd.norm().clamp_min(1e-30))
++
++
++def _dlb_pick_round(state, dlb, pdl):
++    """(A) Does SGLang round the post-norm output to bf16 before the residual add? Run the kernel both
++    ways on synthetic data against each module and keep the closer (sets dlb rnd1 / rnd2)."""
++    dev = state["dl"]["w_pr"].device
++    gen = torch.Generator(device=dev)
++    gen.manual_seed(20261027)
++    tokens = 16  # full-width FFN branch
++    s0 = torch.randn((tokens, HIDDEN), device=dev, generator=gen) * 3.0
++    a0 = torch.randn((tokens, HIDDEN), device=dev, generator=gen).to(torch.bfloat16)
++    f0 = (torch.randn((tokens, HIDDEN), device=dev, generator=gen) * 0.5).to(torch.bfloat16)
++    _ref_in, ref_s1, _ = state["attn_boundary"](s0.clone(), a0, branch_dtype=torch.bfloat16, router_dtype=None)
++    _ref_nx, ref_s2, _ = state["ffn_boundary"](ref_s1.clone(), f0, branch_dtype=torch.bfloat16)
++    errs = {}
++    for rnd in (0, 2):
++        dlb["rnd1"] = dlb["rnd2"] = rnd
++        _, s1 = _dlb_step(f"dl_boundary attn round={rnd}", lambda: _dlb_attn(dlb, s0, a0, pdl))
++        _, s2 = _dlb_step(f"dl_boundary ffn round={rnd}", lambda: _dlb_ffn(dlb, ref_s1, f0, pdl))
++        errs[rnd] = (_dlb_upd_err(s1, ref_s1, dlb["alpha1"], s0), _dlb_upd_err(s2, ref_s2, dlb["alpha2"], ref_s1))
++    dlb["rnd1"] = 0 if errs[0][0] <= errs[2][0] else 2
++    dlb["rnd2"] = 0 if errs[0][1] <= errs[2][1] else 2
++    print(f"{DLB_TAG} post-norm rounding probe (stream err / |update|): fp32 attn {errs[0][0]:.2e} ffn {errs[0][1]:.2e}, "
++          f"bf16 attn {errs[2][0]:.2e} ffn {errs[2][1]:.2e} -> attn {'bf16' if dlb['rnd1'] else 'fp32'}, "
++          f"ffn {'bf16' if dlb['rnd2'] else 'fp32'}", flush=True)
++
++
++def _dlb_eff(mod, raw):
++    try:
++        return mod._get_effective_weight().detach().float().reshape(-1).contiguous()
++    except Exception:
++        return (1.0 + raw.float()).reshape(-1).contiguous()
++
++
++def _dlb_graph_us(fn, reps=20):
++    """CUDA-event time per call of fn: reps back-to-back calls in a graph, 5 replays."""
++    graph = torch.cuda.CUDAGraph()
++    with torch.cuda.graph(graph):
++        for _ in range(reps):
++            fn()
++    graph.replay()
++    torch.cuda.synchronize()
++    start, end = torch.cuda.Event(enable_timing=True), torch.cuda.Event(enable_timing=True)
++    start.record()
++    for _ in range(5):
++        graph.replay()
++    end.record()
++    torch.cuda.synchronize()
++    del graph
++    return start.elapsed_time(end) * 1e3 / (5 * reps)
++
++
++def _dlb_step(name, fn):
++    """One self-check launch, announced before and synced after so a fault names its kernel."""
++    print(f"{DLB_TAG} self-check launch {name}", flush=True)
++    out = fn()
++    torch.cuda.synchronize()
++    print(f"{DLB_TAG} self-check done   {name}", flush=True)
++    return out
++
++
++def _dlb_kernels_check(state, dlb, pdl):
++    """dl_unpool_kernel (NF=1 only, T=1/4/8) on synthetic data against master's slice GEMM + F.pad.
++    Returns (problems, worst rel L2)."""
++    dl = state["dl"]
++    dev = dl["w_pr"].device
++    dense = state["dense"]
++    gen = torch.Generator(device=dev)
++    gen.manual_seed(20261025)
++    worst = 0.0
++    problems = []
++    for tokens in (1, 4, 8):
++        tag = f"T={tokens}"
++        y = (torch.randn((tokens, D_EXPERT), device=dev, generator=gen) * 0.5).to(torch.bfloat16)
++        f_new = torch.empty((tokens, HIDDEN), dtype=torch.bfloat16, device=dev)
++
++        def run_unpool():
++            f_new.fill_(7.0)  # poison: the kernel must write every column, zeros included
++            _DLB_EXT.dl_unpool(y, dense["unpooler"], f_new, dlb["ws"], dlb["cnt"], pdl)
++
++        for rep in range(2):  # twice: a ticket that fails to reset shows on the second launch
++            _dlb_step(f"dl_unpool NF=1 {tag}", run_unpool)
++        f_ref = _unpool_master(dense, y)
++        e_u = _rel_l2(f_new, f_ref)
++        worst = max(worst, e_u)
++        zero_ok = bool((f_new[:, UNPOOL_SLICE:] == 0).all())
++        if not bool(torch.isfinite(f_new).all()) or e_u > 2e-3 or not zero_ok:
++            problems.append(f"{tag} unpool: rel L2 {e_u:.2e}, zero columns exact {zero_ok}")
++    return problems, worst
++
++
++def _dlb_chain_check(state, dlb, pdl):
++    """The whole layer middle as kernel_fn runs it with this path (SGLang boundary -> P -> R -> experts ->
++    unpool (custom at T <= 8) -> SGLang boundary), captured in a CUDA graph and replayed, against the same chain eagerly and
++    against the SGLang boundaries + master unpooler. T=32 goes through the SGLang combine, T < 32
++    through the Triton one (the real _experts picks)."""
++    dl = state["dl"]
++    dev = dl["w_pr"].device
++    dense = state["dense"]
++    gen = torch.Generator(device=dev)
++    gen.manual_seed(20261026)
++    problems, worst = [], {"graph": 0.0, "master": 0.0}
++    for tokens in (1, 8, 16, 31, 32):
++        s0 = torch.randn((tokens, HIDDEN), device=dev, generator=gen) * 3.0
++        a0 = torch.randn((tokens, HIDDEN), device=dev, generator=gen).to(torch.bfloat16)
++        ls = torch.tensor([32], dtype=torch.int32, device=dev)
++
++        def chain_new():
++            ffn_input, s1, _ = state["attn_boundary"](s0.clone(), a0, branch_dtype=torch.bfloat16, router_dtype=None)
++            xn, (tw, ids, lids, align), _ = _dl_forward(ffn_input, ls, dl, pdl)
++            y = _experts(xn, tw, lids, state, align=align)
++            f = _dlb_unpool(dlb, dense, y, pdl)
++            nxt, s2, _ = state["ffn_boundary"](s1, f, branch_dtype=torch.bfloat16)
++            return nxt, s2, ids
++
++        def chain_master():
++            ffn_input, s1, _ = state["attn_boundary"](s0.clone(), a0, branch_dtype=torch.bfloat16, router_dtype=None)
++            xn, (tw, ids, lids, align), _ = _dl_forward(ffn_input, ls, dl, pdl)
++            y = _experts(xn, tw, lids, state, align=align)
++            f = _unpool_master(dense, y)
++            nxt, s2, _ = state["ffn_boundary"](s1, f, branch_dtype=torch.bfloat16)
++            return nxt, s2, ids
++
++        tag = f"chain T={tokens}"
++        eager = _dlb_step(f"{tag} eager", chain_new)
++        master = _dlb_step(f"{tag} master", chain_master)
++        graph = torch.cuda.CUDAGraph()
++        print(f"{DLB_TAG} self-check launch {tag} graph capture + replay", flush=True)
++        with torch.cuda.graph(graph):
++            g_out = chain_new()
++        graph.replay()
++        torch.cuda.synchronize()
++        print(f"{DLB_TAG} self-check done   {tag} graph capture + replay", flush=True)
++        e_gn, e_gs = _rel_l2(g_out[0], eager[0]), _rel_l2(g_out[1], eager[1])
++        e_mn, e_ms = _rel_l2(eager[0], master[0]), _rel_l2(eager[1], master[1])
++        worst["graph"] = max(worst["graph"], e_gn, e_gs)
++        worst["master"] = max(worst["master"], e_mn, e_ms)
++        finite = all(bool(torch.isfinite(v).all()) for v in (g_out[0], g_out[1]))
++        if (not finite or not torch.equal(g_out[2], eager[2]) or e_gn > 1e-3 or e_gs > 1e-3
++                or e_mn > 1e-2 or e_ms > 2e-3):
++            problems.append(f"{tag} pdl={pdl}: graph vs eager (next {e_gn:.2e} stream {e_gs:.2e}), "
++                            f"vs master (next {e_mn:.2e} stream {e_ms:.2e}), finite {finite}")
++        del graph
++    return problems, worst
++
++
++def _dlb_time_unpool(state, dlb):
++    """NF=1 only, on synthetic data (cold-ish L2: a 200 MB memset before every launch, its cost
++    subtracted): dl_unpool_kernel (no PDL) vs master's slice _gemm + F.pad at T=1 and T=8. The custom
++    kernel must win on the sum, else master stays. Sets dlb["unpool"][1]."""
++    dl = state["dl"]
++    dev = dl["w_pr"].device
++    dense = state["dense"]
++    dlb["unpool"][1] = False
++    if not dlb["unpool_ok"][1]:
++        print(f"{DLB_TAG} unpool NF=1: self-check failed, WINNER = MASTER; PATH CHOSEN = MASTER _gemm + F.pad", flush=True)
++        return
++    flush = torch.empty(100 * 1024 * 1024, dtype=torch.bfloat16, device=dev)
++    try:
++        base = _dlb_graph_us(lambda: flush.zero_(), reps=10)
++        tot_new = tot_old = 0.0
++        for tokens in (1, 8):
++            y = (torch.randn((tokens, D_EXPERT), device=dev) * 0.5).to(torch.bfloat16)
++            us_new = _dlb_graph_us(lambda: (flush.zero_(), _dlb_unpool(dlb, dense, y, 0, force=True)), reps=10) - base
++            us_old = _dlb_graph_us(lambda: (flush.zero_(), _dlb_unpool(dlb, dense, y, 0, force=False)), reps=10) - base
++            tot_new += us_new
++            tot_old += us_old
++            print(f"{DLB_TAG} unpool NF=1 (T={tokens}): dl_unpool_kernel {us_new:.1f} us vs master "
++                  f"_gemm + F.pad {us_old:.1f} us (memset-subtracted, pdl off)", flush=True)
++        dlb["unpool"][1] = tot_new < tot_old
++        print(f"{DLB_TAG} unpool NF=1 selector: custom {tot_new:.1f} us vs master {tot_old:.1f} us (T=1+8): "
++              f"WINNER = {'CUSTOM dl_unpool_kernel' if dlb['unpool'][1] else 'MASTER _gemm + F.pad'}; "
++              f"PATH CHOSEN = {'CUSTOM dl_unpool_kernel' if dlb['unpool'][1] else 'MASTER _gemm + F.pad'}", flush=True)
++    except Exception as e:
++        dlb["unpool"][1] = False
++        print(f"{DLB_TAG} unpool NF=1 timing raised {e!r}: WINNER = MASTER; PATH CHOSEN = MASTER _gemm + F.pad", flush=True)
++    del flush
++
++
++def _dlb_setup(weights, state):
++    """Unpool-only (NF=1, T <= 8): build the constants, self-check, time and pick. Returns the dlb dict
++    or None (kernel_fn then runs master's slice GEMM + F.pad). Boundaries stay on SGLang. Prints loudly."""
++    if _DLB_EXT is None or state.get("dl") is None:
++        print(f"{DLB_TAG} OFF (build failed or dense chain off): PATH CHOSEN = MASTER _gemm + F.pad unpooler "
++              f"at every T, SGLang boundaries", flush=True)
++        return None
++    try:
++        dl = state["dl"]
++        dev = dl["w_pr"].device
++        dlb = {
++            "ws": torch.zeros((2 * DL_MAX_TOKENS * HIDDEN,), dtype=torch.float32, device=dev),
++            "cnt": torch.zeros((HIDDEN // 64,), dtype=torch.int32, device=dev),
++            "unpool": {1: True, 2: False, 4: False},
++            "unpool_ok": {1: True, 2: False, 4: False},
++        }
++        pdl = dl["pdl"]
++        problems, worst = _dlb_kernels_check(state, dlb, pdl)
++        dlb["cnt"].zero_()
++        if problems:
++            dlb["unpool_ok"][1] = False
++            print(f"{DLB_TAG} unpool NF=1 SELF-CHECK FAILED: {problems[:4]}", flush=True)
++            print(f"{DLB_TAG} OFF: PATH CHOSEN = MASTER _gemm + F.pad unpooler", flush=True)
++            return None
++        _dlb_time_unpool(state, dlb)
++        dlb["cnt"].zero_()
++        if not dlb["unpool"][1]:
++            print(f"{DLB_TAG} OFF: unpool lost its prepare A/B: PATH CHOSEN = MASTER _gemm + F.pad unpooler", flush=True)
++            return None
++        cproblems, cworst = _dlb_chain_check(state, dlb, pdl)
++        dlb["cnt"].zero_()
++        dl["cnt_p"].zero_()
++        dl["cnt_r"].zero_()
++        if cproblems:
++            print(f"{DLB_TAG} chain SELF-CHECK FAILED: {cproblems[:6]}", flush=True)
++            print(f"{DLB_TAG} OFF: PATH CHOSEN = MASTER _gemm + F.pad unpooler", flush=True)
++            return None
++        errs = " ".join(f"{k} {v:.2e}" for k, v in {"unpool": worst, **{"chain_" + k: v for k, v in cworst.items()}}.items())
++        print(f"{DLB_TAG} ON pdl={pdl} compile {_DLB_COMPILE_S:.1f}s max errs {errs}: PATH CHOSEN = CUSTOM dl_unpool_kernel "
++              f"at T <= {SLICED_UNPOOL_MAX_TOKENS} (NF=1), MASTER _gemm at T 9-32 and above; boundaries stay SGLang", flush=True)
++        return dlb
++    except Exception as e:
++        print(f"{DLB_TAG} OFF setup raised {e!r}: PATH CHOSEN = MASTER _gemm + F.pad unpooler", flush=True)
++        try:
++            state["dl"]["cnt_p"].zero_()
++            state["dl"]["cnt_r"].zero_()
++            torch.cuda.synchronize()
++        except Exception:
++            pass
++        return None
++
++
+ # Sliding batch-1 decode: muse_attention_decode's _sliding_fused_kernel and its helpers,
+ # ported verbatim (hypothesis sliding-fused-triton-decode1-port).
+ _INV_FREQ = {}
+@@ -1651,6 +2767,8 @@ def prepare(weights):
+     del freqs
+     # Small-T dense chain (T <= DL_MAX_TOKENS): constants, PDL probe and self-check; None keeps master.
+     state["dl"] = _dl_setup(weights, state)
++    state["dlb"] = _dlb_setup(weights, state)
++    state["dlb_ok"] = state["dlb"] is not None
+     _align_par_setup(state, device)
+     torch.cuda.synchronize()
+     return state
+@@ -1818,6 +2936,8 @@ def kernel_fn(data, state):
+     dl = state.get("dl")
+     use_dl = dl is not None and tokens <= DL_MAX_TOKENS
+     split_router = tokens > ROUTER_FP32_MAX_TOKENS
++    dlb = state.get("dlb")
++    use_unpool = use_dl and dlb is not None and dlb["unpool"][1] and tokens <= SLICED_UNPOOL_MAX_TOKENS
+     ffn_input, stream, router_input = state["attn_boundary"](
+         data["stream"], attn_output, branch_dtype=torch.bfloat16,
+         router_dtype=None if (split_router or use_dl) else torch.float32)
+@@ -1847,7 +2967,11 @@ def kernel_fn(data, state):
+                 tensor.record_stream(main_stream)
+         # all-reduce: identity
+         expert_output = _experts(xn, None, None, state, dispatch=(local_ids, tw, align))
+-    if tokens <= SLICED_UNPOOL_MAX_TOKENS:
++    if use_unpool:
++        # stack-route-topk-pdl-unpool-nf1: dl_unpool_kernel (NF=1, T <= 8) replaces slice GEMM + F.pad;
++        # the FFN boundary below is SGLang's, launched normally.
++        ffn_output = _dlb_unpool(dlb, dense, expert_output, dl["pdl"])
++    elif tokens <= SLICED_UNPOOL_MAX_TOKENS:
+         unpooled = _gemm(expert_output, dense["unpooler"][:UNPOOL_SLICE])
+         ffn_output = F.pad(unpooled, (0, HIDDEN - UNPOOL_SLICE))  # all-gather: identity
+     else:

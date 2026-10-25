@@ -46,10 +46,10 @@ priority: 2
 kind: primary
 controls_for: null
 review: proceed
-status: running
+status: done
 review_at: 2026-10-25T040253Z
 review_companions: null
-stage: dispatched
+stage: harvested
 claimed_at: 2026-10-25T040259Z
 base_sha: cd742704c601ae9e373cdd9ab7989a60db8c599d
 base_blob: 4da94677234faaa06b42b5ced541db8961fd6f34
@@ -68,6 +68,13 @@ attempt_file: 2026-10-25T040848Z-check-stack-route-topk-pdl-unpool-nf1.md
 prepared_at: 2026-10-25T040848Z
 job: 87211e1362b64c4c
 dispatched_at: 2026-10-25T040855Z
+outcome: neutral
+verdict_detail: within-ci
+speedup: 1.2671291437775074
+speedup_ci: [1.2481222066208448, 1.28613608093417]
+harvested_at: 2026-10-25T043359Z
+best_at_harvest: 1.2680313318618024
+promotion: null
 ---
 
 # stack-route-topk-pdl-unpool-nf1
@@ -142,3 +149,35 @@ Audited 2026-10-25 (opus), by reading. **Verdict: dispatch-with-fixes.**
 - lint OK with warnings (prepare()-only syncs); py_compile OK; __pycache__ removed.
 
 Residual risk: never compiled together on GPU here. A new-R self-check failure drops the whole dense chain, not just R, and the unpool A/B depends on a memset-subtracted timing of about 3 us.
+
+## Result
+
+- job `87211e1362b64c4c` (check), status done, passed True, tests 13/13
+- speedup 1.2671x, 95% CI [1.2481, 1.2861], score 17851.61371363095 µs vs SGLang 22620.3 µs
+- best at harvest: {"speedup": 1.2680313318618024, "ci": [1.2490108618838753, 1.2870518018397292], "job": "c243a29f26dc4725"}; base result: muse_decode_layer/hypotheses/done/neutral/stack-align-par-sidestream-sliding1.result.json
+- **outcome: neutral** (within-ci)
+- files: `muse_decode_layer/hypotheses/done/neutral/stack-route-topk-pdl-unpool-nf1.result.json`, `muse_decode_layer/hypotheses/done/neutral/stack-route-topk-pdl-unpool-nf1.patch`; branch `hyp/muse_decode_layer/stack-route-topk-pdl-unpool-nf1`
+
+## Attribution
+
+| shape | w | base µs | hyp µs | delta | verdict |
+|---|---|---|---|---|---|
+| batch=1 ctx=80000 dist=soft layer=sliding load=decode_1 page=1 repeats=60 | 46 | 127.48 | 122.44 | 1.0421 | gained |
+| batch=1 ctx=80000 dist=soft layer=full load=decode_1 page=1 repeats=60 | 16 | 142.93 | 136.93 | 1.0399 | gained |
+| batch=16 ctx=80000 dist=soft layer=sliding load=decode_16 page=1 spread=agentic | 46 | 204.98 | 204.43 | 1.0097 | flat |
+| batch=16 ctx=80000 dist=soft layer=full load=decode_16 page=1 spread=agentic | 16 | 349.47 | 353.39 | 1.0084 | flat |
+| batch=32 ctx=80000 dist=soft layer=sliding load=decode_32 page=1 spread=agentic | 46 | 245.77 | 240.29 | 1.0099 | flat |
+| batch=32 ctx=80000 dist=soft layer=full load=decode_32 page=1 spread=agentic | 16 | 529.71 | 529.39 | 0.9988 | flat |
+| batch=1 ctx=80000 dist=soft layer=sliding load=verify_1 page=1 q_len=8 | 46 | 190.8 | 176.8 | 1.0434 | gained |
+| batch=1 ctx=80000 dist=soft layer=full load=verify_1 page=1 q_len=8 | 16 | 192.44 | 194.17 | 1.0162 | flat |
+| batch=16 ctx=80000 dist=soft layer=sliding load=verify_16 page=1 q_len=8 spread=agentic | 46 | 429.61 | 422.99 | 1.0044 | flat |
+| batch=16 ctx=80000 dist=soft layer=full load=verify_16 page=1 q_len=8 spread=agentic | 16 | 563.65 | 573.24 | 0.9794 | flat |
+| batch=32 ctx=80000 dist=soft layer=sliding load=verify_32 page=1 q_len=8 spread=agentic | 46 | 592.52 | 601.16 | 0.9962 | flat |
+| batch=32 ctx=80000 dist=soft layer=full load=verify_32 page=1 q_len=8 spread=agentic | 16 | 861.3 | 874.8 | 0.9991 | flat |
+
+gained on sliding decode_1, verify_1; full decode_1. Expected hit: 2/3. Noise ±1.5%.
+
+## Follow-ups
+
+- within-ci: the change is not proven either way; a stacked hypothesis (`depends_on: stack-route-topk-pdl-unpool-nf1`) that adds a further change in the same area is the only way to learn more (identical code is never re-run).
+

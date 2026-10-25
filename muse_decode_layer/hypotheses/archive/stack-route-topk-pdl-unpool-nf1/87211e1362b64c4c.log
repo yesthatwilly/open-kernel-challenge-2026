@@ -1,0 +1,146 @@
+[small-t-dense-chain] load_inline compiled in 42.9s (flags -O3 -arch=sm_90a -lineinfo; no sm_90a-only PTX beyond griddepcontrol)
+[dl-boundary-unpool] load_inline compiled in 41.4s, flags ['-O3', '-arch=sm_90a', '-lineinfo'] (no sm_90a-only PTX: griddepcontrol, mma.sync, cp.async only)
+[small-t-dense-chain] P occupancy (CTAs/SM, NF=1/2/4): [3, 2, 2]; grid 216 CTAs
+[small-t-dense-chain] PDL probe: eager overlap False (-6.6 us), graph overlap True (49.7 us, secondary waited 50.3 us) -> pdl=1
+[small-t-dense-chain] self-check launching P (T=1 pdl=1)
+[small-t-dense-chain] self-check P done (T=1)
+[small-t-dense-chain] self-check launching R (T=1 pdl=1)
+[small-t-dense-chain] self-check R done (T=1)
+[small-t-dense-chain] self-check launching P (T=1 pdl=1)
+[small-t-dense-chain] self-check P done (T=1)
+[small-t-dense-chain] self-check launching R (T=1 pdl=1)
+[small-t-dense-chain] self-check R done (T=1)
+[small-t-dense-chain] self-check launching P (T=4 pdl=1)
+[small-t-dense-chain] self-check P done (T=4)
+[small-t-dense-chain] self-check launching R (T=4 pdl=1)
+[small-t-dense-chain] self-check R done (T=4)
+[small-t-dense-chain] self-check launching P (T=4 pdl=1)
+[small-t-dense-chain] self-check P done (T=4)
+[small-t-dense-chain] self-check launching R (T=4 pdl=1)
+[small-t-dense-chain] self-check R done (T=4)
+[small-t-dense-chain] self-check launching P (T=8 pdl=1)
+[small-t-dense-chain] self-check P done (T=8)
+[small-t-dense-chain] self-check launching R (T=8 pdl=1)
+[small-t-dense-chain] self-check R done (T=8)
+[small-t-dense-chain] self-check launching P (T=8 pdl=1)
+[small-t-dense-chain] self-check P done (T=8)
+[small-t-dense-chain] self-check launching R (T=8 pdl=1)
+[small-t-dense-chain] self-check R done (T=8)
+[small-t-dense-chain] self-check launching P (T=9 pdl=1)
+[small-t-dense-chain] self-check P done (T=9)
+[small-t-dense-chain] self-check launching R (T=9 pdl=1)
+[small-t-dense-chain] self-check R done (T=9)
+[small-t-dense-chain] self-check launching P (T=9 pdl=1)
+[small-t-dense-chain] self-check P done (T=9)
+[small-t-dense-chain] self-check launching R (T=9 pdl=1)
+[small-t-dense-chain] self-check R done (T=9)
+[small-t-dense-chain] self-check launching P (T=16 pdl=1)
+[small-t-dense-chain] self-check P done (T=16)
+[small-t-dense-chain] self-check launching R (T=16 pdl=1)
+[small-t-dense-chain] self-check R done (T=16)
+[small-t-dense-chain] self-check launching P (T=16 pdl=1)
+[small-t-dense-chain] self-check P done (T=16)
+[small-t-dense-chain] self-check launching R (T=16 pdl=1)
+[small-t-dense-chain] self-check R done (T=16)
+[small-t-dense-chain] self-check launching P (T=32 pdl=1)
+[small-t-dense-chain] self-check P done (T=32)
+[small-t-dense-chain] self-check launching R (T=32 pdl=1)
+[small-t-dense-chain] self-check R done (T=32)
+[small-t-dense-chain] self-check launching P (T=32 pdl=1)
+[small-t-dense-chain] self-check P done (T=32)
+[small-t-dense-chain] self-check launching R (T=32 pdl=1)
+[small-t-dense-chain] self-check R done (T=32)
+[small-t-dense-chain] self-check launching R alone (R T=1 no-local pdl=1)
+[small-t-dense-chain] self-check R alone done (R T=1 no-local)
+[small-t-dense-chain] self-check launching R alone (R T=1 one-hot-local pdl=1)
+[small-t-dense-chain] self-check R alone done (R T=1 one-hot-local)
+[small-t-dense-chain] self-check launching R alone (R T=1 near-tie pdl=1)
+[small-t-dense-chain] self-check R alone done (R T=1 near-tie)
+[small-t-dense-chain] self-check launching R alone (R T=8 no-local pdl=1)
+[small-t-dense-chain] self-check R alone done (R T=8 no-local)
+[small-t-dense-chain] self-check launching R alone (R T=8 one-hot-local pdl=1)
+[small-t-dense-chain] self-check R alone done (R T=8 one-hot-local)
+[small-t-dense-chain] self-check launching R alone (R T=8 near-tie pdl=1)
+[small-t-dense-chain] self-check R alone done (R T=8 near-tie)
+[small-t-dense-chain] self-check launching R alone (R T=32 no-local pdl=1)
+[small-t-dense-chain] self-check R alone done (R T=32 no-local)
+[small-t-dense-chain] self-check launching R alone (R T=32 one-hot-local pdl=1)
+[small-t-dense-chain] self-check R alone done (R T=32 one-hot-local)
+[small-t-dense-chain] self-check launching R alone (R T=32 near-tie pdl=1)
+[small-t-dense-chain] self-check R alone done (R T=32 near-tie)
+[small-t-dense-chain] self-check launching R variant 2 (T=1 pdl=0)
+[small-t-dense-chain] self-check R variant 2 done (T=1)
+[small-t-dense-chain] self-check launching R variant 0 (T=1 pdl=1)
+[small-t-dense-chain] self-check R variant 0 done (T=1)
+[small-t-dense-chain] self-check launching R variant 1 (T=1 pdl=1)
+[small-t-dense-chain] self-check R variant 1 done (T=1)
+[small-t-dense-chain] self-check launching R variant 2 (T=8 pdl=0)
+[small-t-dense-chain] self-check R variant 2 done (T=8)
+[small-t-dense-chain] self-check launching R variant 0 (T=8 pdl=1)
+[small-t-dense-chain] self-check R variant 0 done (T=8)
+[small-t-dense-chain] self-check launching R variant 1 (T=8 pdl=1)
+[small-t-dense-chain] self-check R variant 1 done (T=8)
+[small-t-dense-chain] self-check launching R variant 2 (T=32 pdl=0)
+[small-t-dense-chain] self-check R variant 2 done (T=32)
+[small-t-dense-chain] self-check launching R variant 0 (T=32 pdl=1)
+[small-t-dense-chain] self-check R variant 0 done (T=32)
+[small-t-dense-chain] self-check launching R variant 1 (T=32 pdl=1)
+[small-t-dense-chain] self-check R variant 1 done (T=32)
+[small-t-dense-chain] P timing T=1 pdl=0 20.9 us (3.60 TB/s) pdl=1 21.0 us (3.59 TB/s)
+[small-t-dense-chain] P timing T=8 pdl=0 22.2 us (3.40 TB/s) pdl=1 22.8 us (3.31 TB/s)
+[small-t-dense-chain] P timing T=32 pdl=0 26.5 us (2.84 TB/s) pdl=1 26.6 us (2.84 TB/s)
+[small-t-dense-chain] R T=1 bsm=8 old(v1) 6.98 us new 5.82 us new-linear-pad 5.96 us
+[small-t-dense-chain] P->R pair T=1 new pdl=0 27.34 us new pdl=1 26.76 us old-R (P pdl=1) 28.36 us
+[small-t-dense-chain] R T=8 bsm=8 old(v1) 7.07 us new 5.87 us new-linear-pad 6.08 us
+[small-t-dense-chain] P->R pair T=8 new pdl=0 28.68 us new pdl=1 27.97 us old-R (P pdl=1) 30.05 us
+[small-t-dense-chain] R T=32 bsm=16 old(v1) 7.78 us new 6.27 us new-linear-pad 6.77 us
+[small-t-dense-chain] P->R pair T=32 new pdl=0 33.08 us new pdl=1 32.58 us old-R (P pdl=1) 34.55 us
+[small-t-dense-chain] R selector: new R pdl=1 87.31 us vs master R 92.96 us (sum of P->R pairs T=1/8/32, ok {'new': True, 'old': True}): WINNER = NEW R; PATH CHOSEN = new dl_route_norm_align (variant 0)
+[small-t-dense-chain] ON pdl=1 compile 42.9s max errs ei 1.55e-04 logit 3.12e-06 xn 1.52e-05 w 0.00e+00 y 0.00e+00 graph 0.00e+00: PATH CHOSEN = DENSE-CHAIN at T <= 32, MASTER above
+[dl-boundary-unpool] self-check launch dl_unpool NF=1 T=1
+[dl-boundary-unpool] self-check done   dl_unpool NF=1 T=1
+[dl-boundary-unpool] self-check launch dl_unpool NF=1 T=1
+[dl-boundary-unpool] self-check done   dl_unpool NF=1 T=1
+[dl-boundary-unpool] self-check launch dl_unpool NF=1 T=4
+[dl-boundary-unpool] self-check done   dl_unpool NF=1 T=4
+[dl-boundary-unpool] self-check launch dl_unpool NF=1 T=4
+[dl-boundary-unpool] self-check done   dl_unpool NF=1 T=4
+[dl-boundary-unpool] self-check launch dl_unpool NF=1 T=8
+[dl-boundary-unpool] self-check done   dl_unpool NF=1 T=8
+[dl-boundary-unpool] self-check launch dl_unpool NF=1 T=8
+[dl-boundary-unpool] self-check done   dl_unpool NF=1 T=8
+[dl-boundary-unpool] unpool NF=1 (T=1): dl_unpool_kernel 6.5 us vs master _gemm + F.pad 9.2 us (memset-subtracted, pdl off)
+[dl-boundary-unpool] unpool NF=1 (T=8): dl_unpool_kernel 7.3 us vs master _gemm + F.pad 10.6 us (memset-subtracted, pdl off)
+[dl-boundary-unpool] unpool NF=1 selector: custom 13.8 us vs master 19.8 us (T=1+8): WINNER = CUSTOM dl_unpool_kernel; PATH CHOSEN = CUSTOM dl_unpool_kernel
+[dl-boundary-unpool] self-check launch chain T=1 eager
+[dl-boundary-unpool] self-check done   chain T=1 eager
+[dl-boundary-unpool] self-check launch chain T=1 master
+[dl-boundary-unpool] self-check done   chain T=1 master
+[dl-boundary-unpool] self-check launch chain T=1 graph capture + replay
+[dl-boundary-unpool] self-check done   chain T=1 graph capture + replay
+[dl-boundary-unpool] self-check launch chain T=8 eager
+[dl-boundary-unpool] self-check done   chain T=8 eager
+[dl-boundary-unpool] self-check launch chain T=8 master
+[dl-boundary-unpool] self-check done   chain T=8 master
+[dl-boundary-unpool] self-check launch chain T=8 graph capture + replay
+[dl-boundary-unpool] self-check done   chain T=8 graph capture + replay
+[dl-boundary-unpool] self-check launch chain T=16 eager
+[dl-boundary-unpool] self-check done   chain T=16 eager
+[dl-boundary-unpool] self-check launch chain T=16 master
+[dl-boundary-unpool] self-check done   chain T=16 master
+[dl-boundary-unpool] self-check launch chain T=16 graph capture + replay
+[dl-boundary-unpool] self-check done   chain T=16 graph capture + replay
+[dl-boundary-unpool] self-check launch chain T=31 eager
+[dl-boundary-unpool] self-check done   chain T=31 eager
+[dl-boundary-unpool] self-check launch chain T=31 master
+[dl-boundary-unpool] self-check done   chain T=31 master
+[dl-boundary-unpool] self-check launch chain T=31 graph capture + replay
+[dl-boundary-unpool] self-check done   chain T=31 graph capture + replay
+[dl-boundary-unpool] self-check launch chain T=32 eager
+[dl-boundary-unpool] self-check done   chain T=32 eager
+[dl-boundary-unpool] self-check launch chain T=32 master
+[dl-boundary-unpool] self-check done   chain T=32 master
+[dl-boundary-unpool] self-check launch chain T=32 graph capture + replay
+[dl-boundary-unpool] self-check done   chain T=32 graph capture + replay
+[dl-boundary-unpool] ON pdl=1 compile 41.4s max errs unpool 9.18e-05 chain_graph 0.00e+00 chain_master 2.33e-05: PATH CHOSEN = CUSTOM dl_unpool_kernel at T <= 8 (NF=1), MASTER _gemm at T 9-32 and above; boundaries stay SGLang
+[align-parallel-large-t] ON cases=18 mismatches=0
