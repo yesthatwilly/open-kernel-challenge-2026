@@ -66,8 +66,10 @@ kind: rewrite
 controls_for: null
 rewrite_stage: 1
 replaces: "cuBLAS at m=65..128 (verify_16): qkv_gate nvjet 96x64 splitK 12.7 + cublasLt splitKreduce 3.1 us, o nvjet 128x64 TNT 5.5 us, pooler NN nvjet 128x64 splitK 20.2 + splitKreduce 3.0 us, unpooler NN nvjet 128x64 NNT 20.4 us"
-review: required
+review: proceed
 status: queued
+review_at: 2026-10-25T212614Z
+review_companions: null
 ---
 
 # bf16-verify16-cutlass-m128-onetile-splitk-rewrite
@@ -97,3 +99,43 @@ shape (profile top_kernels) against the incumbent and the speed-of-light floor, 
 2. at or below the incumbent kernels' time on the target shapes;
 3. within ~1.5x of the floor on the target shapes, and the headline CI clears 1.0 (promotable).
 The next stage is minted with `--kind rewrite --depends-on <this slug> --stage N+1`.
+
+## Adversarial review
+
+Reviewed 2026-10-25T212614Z by an adversarial subagent (model opus).
+
+**Verdict: proceed.** This is a sound rewrite stage. The CUTLASS 4.5 scaffold is proven on the judge (f5b1361a: built in 49.0 s from flashinfer's tree, every self-check passed, cutlass::device_kernel rows in the profile), and a one-M-tile split-K design at m=128 can physically reach M2 on pooler, unpooler and qkv. Before the build, the stale base and incumbents must be fixed. The selector must reuse master's _cell_gate flag on/off machinery so it races master's actual NN and Lt routes, and it should adopt today's two-round >=1.03 lesson.
+
+### Justification
+Mechanism. At m<=128 a 128x128x64 tile makes the token dimension a single M-tile, so each W byte is fetched from DRAM by exactly one CTA. Split-K then fills 126-128 CTAs in one wave. The cooperative TMA/wgmma mainloop with setmaxnreg is the one mainloop family not yet tried at m=128: both Triton mainloops are on Do-not-try at 26-27.6 us, and the swap-AB cluster design is dead. DIAGNOSIS action 3 explicitly endorses this line.
+
+Numbers from the prior run. The same template (128x128x64 coop, 384 threads, 214 KB smem) ran at m=256 at roughly 0.42 us per 64-wide k-step per CTA. Unpooler data-parallel took 26.8 us for 64 k-steps. At m=128 the per-CTA math per k-step is identical, but there are only 32 k-steps per split for pooler and unpooler (K 2048). That gives about 13.4 us of mainloop if math-limited, or about 15.5-16 us if limited by DRAM at roughly 4.3 TB/s for 67 MB, plus the fixup and memset. Expected rows are about 17-18.5 us for unpooler against 18.95, and about 18-19.5 us for pooler against 22.94 (20.8 + 3.0 splitKreduce). For qkv (126 CTAs, about 18-19 k-steps, 7-way fixup) expect about 11-12 us. All of these are consistent with the M2 and M3 targets. o (8 k-steps per split, fill and epilogue dominated) is marginal; letting the gate drop it is correct.
+
+Weakest link 1 (empirical). The only measurement of this exact template on this hardware lost to nvjet on all four layers at m=256: qkv 25.3 vs 19.4, pooler 31.0 vs 29.5, o 9.2 vs 8.3, unpooler 26.8 vs 24.6. That run ran at 495-608 TFLOP/s warm, and with cluster 2x1x1 W was already multicast there. DIAGNOSIS's 'fetched W twice' explanation of that loss is therefore partly wrong, and the m=128 win rests on the bytes-per-k-step argument holding when DRAM, not the tensor cores, sets the pace. The kill criterion covers this. Judge pooler on the cutlass kernel plus its Memset node (incumbent 23.8 us kernel time), not the bare kernel against 20.2.
+
+Weakest link 2 (stale facts):
+- The md says 'Built on current master (blob 353e3b19)'. Master is now 36c26199, blob ad8d7254.
+- On that master, qkv_gate m=128 already runs the B-cell cuBLASLt single-node plan: nvjet tst_40x64, 15.5 us row, no splitKreduce. The hypothesis still lists the qkv incumbent as 12.7 + 3.1 = 16.58, so the expected entry and M2 must use 15.5. The rationale that M2 on qkv 'proves the reduce-node removal' is void, because master already removed it.
+- Pooler (22.9, NN splitK + reduce) and unpooler (18.9, NN) match the md.
+
+Prior and Do-not-try. There is no prior field, but the body names the scaffold source, bf16-verify-streamk-cutlass-wgmma-rewrite (regression at m=256, different band, tile quantization and stream-K issue). The m=128 band was explicitly left to it as 'stage 2 scope'. The CUTLASS line is not a re-run of the dead Triton m=128 designs. It is not a duplicate.
+
+Shapes and weights. All verify_16 rows carry weight 62. A load drop from 73.2 to about 62 us is roughly +2.5-3% headline, in line with M3. The decode, verify_1 and verify_32 'unchanged' entries are right if the gating is cfg-m based as stated.
+
+### Confounders on the current kernel
+- combo-rowowner-reduce-free-m1-qkv-o-plus-naive (latest landed, BEST): its B cell routes qkv_gate m=128 to a prepare-fixed cuBLASLt single-node plan (15.5 us; lt_qkv128_ok, _lt_route_ok sits before the cuBLAS fallback in kernel_fn). The CUTLASS qkv candidate must be raced against that path, not against _bf16_gemm_dispatch_impl. If the selector is copied from _ouns_gate and races plain dispatch (16.6-17.4 us), it can route CUTLASS over a faster incumbent and record a false 'win'. The md's qkv incumbent numbers predate this landing.
+- restack-three-cell-wins-router-unpooler-cluster-m8-nn-m128: nn_ok sends pooler and unpooler at 65..128 to NN-layout torch.mm on pooler_t / unpooler NN copies. That NN path is the real incumbent for both rows. The md's numbers already reflect it, but the gate must keep nn_ok's route as 'master', and the new branch must preempt it only when its own state flag is set.
+- pooler-nn-layout-widen-m256: touches only m=129..256. No interaction, provided the new branch's upper gate is cfg m <= 128.
+- Not landed, but in flight on the same cells: ooler-k-halves-fp32-partials-restack-m128-m256 (pooler m=128, row about 21.4) and f16-verify-per-cell-cublaslt-plan-selector-o-qkv256-unpoole. DIAGNOSIS action 3 says to dispatch this one after those and race whatever they routed. If either lands before tonight's build, rebuild on it so the selector's incumbent is current. Otherwise a later stack could double-route the cell.
+
+### Interference and A/B needs
+No companion is warranted. This is a rewrite stage judged on the replaced kernels' own time in top_kernels. The run carries its own in-prepare A/B: the interleaved graph-replay gate per (layer, m=128) against master's flag-off path, with both medians printed and the launched kernel names asserted by the profiler. Both a gain and a loss are therefore attributable from one run, without a revert of any landed hypothesis. The landed hypotheses that touch these cells (B-cell Lt for qkv, nn_ok for pooler/unpooler) are exactly the incumbents the gate must race. Reverting them would only measure the CUTLASS kernel against a weaker baseline nobody would ship. If one control were ever needed, it would be the in-prepare print of the CUTLASS kernel with cluster 1x1x1 vs 1x2x1 (x multicast on/off). That belongs in stage 2 as a second instantiation, not in a separate check.
+
+### Open questions
+- Rebase onto master 36c26199 (blob ad8d7254). Update the qkv expected and M2 line to the 15.5 us Lt single-node incumbent (and the pooler kill line to kernel + memset < 23.8 us), not 12.7 + 3.1.
+- Selector: reuse master's _cell_gate / _cell_kernels with a new per-layer state flag (cand = flag on, master = flag off, same kernel_fn), not a copy of _ouns_gate racing plain dispatch. Per today's lesson, require two interleaved rounds, each >= 1.03 (not one round at 1.02), with an IQR bound printed.
+- Does CUTLASS 4.5's sm90 stream-K scheduler in DecompositionMode::SplitK accept ClusterShape 1x2x1 with uneven K splits? qkv uses 7 splits over 128 k-tiles (18.3 per split). Print can_implement, the splits actually applied and sk_units per layer. If can_implement fails for qkv, try 8 splits (18 x 8 = 144 CTAs > 132) or fall back to 4 rather than disabling.
+- Is the deterministic split-K fixup of 4-7 peers serialized inside the single wave (the last split waits on its peers' workspace flags)? If pooler or qkv misses M2 by about the fixup time, stage 2's in-cluster DSMEM reduce is the right next step, as the md already plans.
+- Confirm that kernel-name assertion and harvest grep pick up a cutlass::device_kernel<...GemmUniversal...> row on each routed m=128 row before any number is read. The m=256 run proved the selector prints, not the routed kernel.
+- If the per-cell cuBLASLt selector (action 2) or the pooler K-halves restack lands first, which incumbent will tonight's build race? The build should rebase on whatever master holds at build time.
+
