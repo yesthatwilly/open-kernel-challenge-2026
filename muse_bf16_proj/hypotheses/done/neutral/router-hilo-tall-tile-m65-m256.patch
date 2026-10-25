@@ -1,0 +1,322 @@
+diff --git a/muse_bf16_proj/submission.py b/muse_bf16_proj/submission.py
+index ad8d7254..07996bb0 100644
+--- a/muse_bf16_proj/submission.py
++++ b/muse_bf16_proj/submission.py
+@@ -102,6 +102,18 @@ ROUTER_SWAPAB_MAX_M = 32  # m <= this: swap-AB _router_forward; above: master's
+ # the timed call never compiles (M is not specialized and the grid's token extent is a launch
+ # argument, so one compile serves a whole bucket).
+ ROUTER_WARM_MS = (1, 8, 16, 32, 64, 128, 256)
++# router-hilo-tall-tile-m65-m256: candidate hilo configs (BLOCK_M, BLOCK_N, SPLIT_K, BLOCK_K,
++# stages, warps) for m 65..128 (bucket key 128) and 129..256 (bucket key 256), all 128 CTAs.
++# m 33..64 stays on master's (64, 64, 16). prepare() times them against master's config on
++# synthetic x and keeps one only if it wins by >= ROUTER_TALL_WIN; else master's config.
++ROUTER_TALL_LO_A = 65
++ROUTER_TALL_CANDS = {
++    128: ((128, 64, 32, 64, 3, 4), (128, 64, 32, 64, 4, 4)),
++    256: ((128, 64, 16, 128, 3, 4), (256, 64, 32, 64, 3, 8)),
++}
++ROUTER_TALL_CHECK_MS = {128: (65, 128), 256: (129, 130, 200, 256)}
++ROUTER_TALL_WIN = 1.02
++ROUTER_TALL_REPS = 41
+ # Gate for the pooler/unpooler NN path (own constants so it stacks cleanly with the cluster routes
+ # on other rows): these layers run torch.mm(x, W_t) against a transposed [K, N] copy of the
+ # weight made once in prepare() for NN_GATED_MIN_M <= m <= NN_GATED_MAX_M, full width only.
+@@ -114,6 +126,7 @@ NN_POOLER_MAX_M = 256
+ # Cells of the prepare()-time A/B/A/B graph self-check: (layer, n, k, m).
+ AB_CASES = (
+     ("router", ROUTER_N, ROUTER_K, 1), ("router", ROUTER_N, ROUTER_K, 8), ("router", ROUTER_N, ROUTER_K, 128),
++    ("router", ROUTER_N, ROUTER_K, 256),
+     ("unpooler", 1024, 4096, 1), ("unpooler", 1024, 4096, 8), ("unpooler", 8192, 4096, 128),
+     ("pooler", 4096, 8192, 1), ("pooler", 4096, 8192, 8), ("pooler", 4096, 8192, 128),
+     ("pooler", 4096, 8192, 256),
+@@ -264,46 +277,67 @@ def _router_forward(x: torch.Tensor, hi: torch.Tensor, lo: torch.Tensor, num_sta
+     return out
+ 
+ 
+-def _router_hilo_forward(x: torch.Tensor, hi: torch.Tensor, lo: torch.Tensor) -> torch.Tensor:
++def _router_hilo_cfg6(m: int, tall=None):
++    """Full hilo launch config (BLOCK_M, BLOCK_N, SPLIT_K, BLOCK_K, num_stages, num_warps) from m
++    and the prepare()-fixed constant `tall` ({bucket: cfg6 or absent}); shapes only. m 33..64
++    stays on master's (64, 64, 16) explicitly; 65..128 / 129..256 take the selector's tall config
++    only when it won, otherwise master's."""
++    bm, bn, sk = _router_hilo_config(m)
++    cfg = (bm, bn, sk, ROUTER_BLOCK_K, ROUTER_NUM_STAGES, ROUTER_NUM_WARPS)
++    if tall:
++        if ROUTER_TALL_LO_A <= m <= 128:
++            return tall.get(128) or cfg
++        if 128 < m <= 256:
++            return tall.get(256) or cfg
++    return cfg
++
++
++def _router_hilo_forward(x: torch.Tensor, hi: torch.Tensor, lo: torch.Tensor, cfg6=None,
++                         report: bool = False) -> torch.Tensor:
+     """x bf16 [m, 8192] @ (hi + lo).T with fp32 accumulation -> fp32 [m, 256]. One launch plus
+-    the memset of the zeroed output. Branches only on shapes."""
++    the memset of the zeroed output. Branches only on shapes (and the cfg6 constant)."""
+     m, k = x.shape
+     n = hi.shape[0]
+-    block_m, block_n, split_k = _router_hilo_config(m)
++    block_m, block_n, split_k, block_k, num_stages, num_warps = cfg6 or _router_hilo_cfg6(m)
+     k_slice = k // split_k
+     # Zeroed right before the launch, every call: the K-partials are atomically added into it.
+     out = torch.zeros((m, n), dtype=torch.float32, device=x.device)
+     grid = (triton.cdiv(m, block_m), n // block_n, split_k)
+-    _router_hilo_kernel[grid](
++    compiled = _router_hilo_kernel[grid](
+         x, hi, lo, out,
+         m,
+         x.stride(0), hi.stride(0), out.stride(0),
+         K_SLICE=k_slice,
+-        BLOCK_M=block_m, BLOCK_N=block_n, BLOCK_K=ROUTER_BLOCK_K,
+-        num_warps=ROUTER_NUM_WARPS, num_stages=ROUTER_NUM_STAGES,
++        BLOCK_M=block_m, BLOCK_N=block_n, BLOCK_K=block_k,
++        num_warps=num_warps, num_stages=num_stages,
+     )
++    if report:
++        _print_ptx_counts(f"[router] hilo m={m} cfg(BM,BN,SK,BK,stages,warps)={cfg6} grid={grid}",
++                          compiled)
+     return out
+ 
+ 
+-def _router_shape_ok(x: torch.Tensor, hi: torch.Tensor) -> bool:
++def _router_shape_ok(x: torch.Tensor, hi: torch.Tensor, cfg6=None) -> bool:
+     """The Triton path's shape preconditions (the problem's router is always [*, 8192] -> 256)."""
+     if x.dim() != 2 or x.dtype != torch.bfloat16 or x.stride(1) != 1:
+         return False
+     m, k = x.shape
+     n = hi.shape[0]
++    block_k = ROUTER_BLOCK_K
+     if m <= ROUTER_SWAPAB_MAX_M:   # swap-AB: SPLIT_K 32, 64 weight rows per program
+         _block_t, split_k = _router_config(m)
+         block_n = ROUTER_BLOCK_W
+-    else:                          # master's hilo: SPLIT_K 16 / 8
+-        _block_m, block_n, split_k = _router_hilo_config(m)
+-    return (k == hi.shape[1] and k % (ROUTER_BLOCK_K * split_k) == 0 and n % block_n == 0
++    else:                          # hilo: per-config tile, split-K and BLOCK_K
++        _block_m, block_n, split_k, block_k, _st, _nw = cfg6 or _router_hilo_cfg6(m)
++    return (k == hi.shape[1] and k % (block_k * split_k) == 0 and n % block_n == 0
+             and hi.stride(1) == 1)
+ 
+ 
+-def _router_path(x: torch.Tensor, hi: torch.Tensor, n: int, stages: dict) -> str:
++def _router_path(x: torch.Tensor, hi: torch.Tensor, n: int, stages: dict, tall=None) -> str:
+     """Which router kernel a call takes, from shapes only: "swapab" (m <= 32), "hilo" (m > 32,
+-    master's) or "" (the exact fp32 F.linear fallback)."""
+-    if not (_router_shape_ok(x, hi) and n == hi.shape[0]):
++    master's or the selected tall config) or "" (the exact fp32 F.linear fallback)."""
++    cfg6 = _router_hilo_cfg6(x.shape[0], tall) if x.shape[0] > ROUTER_SWAPAB_MAX_M else None
++    if not (_router_shape_ok(x, hi, cfg6) and n == hi.shape[0]):
+         return ""
+     if x.shape[0] > ROUTER_SWAPAB_MAX_M:
+         return "hilo"
+@@ -345,11 +379,141 @@ def _router_prepare(state: dict) -> None:
+     state["router_stages"] = stages
+     if tuple(hi.shape) == (ROUTER_N, ROUTER_K):
+         for m, x in xs.items():
+-            path = _router_path(x, hi, ROUTER_N, stages)
++            path = _router_path(x, hi, ROUTER_N, stages)   # master config (tall not yet chosen)
+             assert path in ("swapab", "hilo"), f"router m={m} resolves to the F.linear fallback"
+             print(f"[router] m={m}: {path}", flush=True)
+ 
+ 
++def _router_tall_time(fns: dict, reps: int) -> dict:
++    """prepare()-only. CUDA-graph each callable, replay interleaved with a 256 MB L2 flush before
++    every replay, subtract an empty-ish graph's median; returns {key: median ms}. Frees the flush
++    buffer and every graph before returning."""
++    flush = torch.empty(256 * 1024 * 1024, dtype=torch.uint8, device="cuda")
++    graphs = {}
++    try:
++        tiny = torch.zeros((1,), device="cuda")
++        fns = dict(fns)
++        fns["_base"] = lambda: tiny.zero_()
++        for key, fn in fns.items():
++            for _ in range(2):
++                fn()
++            torch.cuda.synchronize()
++            gr = torch.cuda.CUDAGraph()
++            with torch.cuda.graph(gr):
++                fn()
++            torch.cuda.synchronize()
++            graphs[key] = gr
++        times = {key: [] for key in graphs}
++        for _ in range(reps):
++            evs = {}
++            for key, gr in graphs.items():
++                flush.zero_()
++                e0, e1 = torch.cuda.Event(enable_timing=True), torch.cuda.Event(enable_timing=True)
++                e0.record()
++                gr.replay()
++                e1.record()
++                evs[key] = (e0, e1)
++            torch.cuda.synchronize()
++            for key, (e0, e1) in evs.items():
++                times[key].append(e0.elapsed_time(e1))
++        med = {key: sorted(v)[len(v) // 2] for key, v in times.items()}
++        base = med.pop("_base")
++        return {key: max(v - base, 1e-6) for key, v in med.items()}
++    finally:
++        graphs.clear()
++        del flush
++        torch.cuda.synchronize()
++
++
++def _router_tall_prepare(state: dict, flags=None) -> None:
++    """Fix state["router_tall"] = {bucket: cfg6} (empty = master's config everywhere). State A
++    runs the selector on synthetic x only; state B inherits A's constant and just warms it. Every
++    failure falls back to master's config. Nothing here depends on a later call's inputs."""
++    state["router_tall"] = {}
++    hi, lo = state["router_hi"], state["router_lo"]
++    if tuple(hi.shape) != (ROUTER_N, ROUTER_K):
++        return
++    try:
++        if flags is not None:
++            for bucket, cfg in flags["router_tall"].items():
++                m = max(ROUTER_TALL_CHECK_MS[bucket])
++                x = torch.randn((m, ROUTER_K), device=hi.device, dtype=torch.float32).to(torch.bfloat16)
++                _router_hilo_forward(x, hi, lo, cfg)
++                state["router_tall"][bucket] = cfg
++            return
++        wref = state["router"].double()
++        tall = {}
++        for bucket, cands in ROUTER_TALL_CANDS.items():
++            m_t = max(ROUTER_TALL_CHECK_MS[bucket])
++            x_t = torch.randn((m_t, ROUTER_K), device=hi.device, dtype=torch.float32).to(torch.bfloat16)
++            master = _router_hilo_cfg6(m_t)
++            ok = []
++            for cfg in cands:
++                try:
++                    if not _router_shape_ok(x_t, hi, cfg):
++                        print(f"[router_tall] {bucket}: {cfg} fails shape preconditions", flush=True)
++                        continue
++                    worst = 0.0
++                    for m in ROUTER_TALL_CHECK_MS[bucket]:
++                        x = torch.randn((m, ROUTER_K), device=hi.device, dtype=torch.float32).to(torch.bfloat16)
++                        o = _router_hilo_forward(x, hi, lo, cfg, report=(m == m_t)).double()
++                        ref = x.double() @ wref.T
++                        if not bool(torch.isfinite(o).all()):
++                            raise RuntimeError(f"non-finite output at m={m}")
++                        err = float((o - ref).norm() / ref.norm().clamp_min(1e-30))
++                        worst = max(worst, err)
++                        if err > AB_ROUTER_REL_L2:
++                            raise RuntimeError(f"rel L2 {err:.2e} > {AB_ROUTER_REL_L2:.0e} at m={m}")
++                    print(f"[router_tall] {bucket}: {cfg} self-check OK (m in "
++                          f"{ROUTER_TALL_CHECK_MS[bucket]}), worst rel L2 {worst:.2e}", flush=True)
++                    ok.append(cfg)
++                except Exception as e:   # OutOfResources, compile failure, wrong answer: reject
++                    print(f"[router_tall] {bucket}: {cfg} REJECTED ({type(e).__name__}: {e})", flush=True)
++            if not ok:
++                print(f"[router_tall] {bucket}: PATH CHOSEN master {master} (no usable candidate)", flush=True)
++                continue
++            try:
++                fns = {"master": (lambda x=x_t, c=master: _router_hilo_forward(x, hi, lo, c))}
++                for i, cfg in enumerate(ok):
++                    fns[i] = (lambda x=x_t, c=cfg: _router_hilo_forward(x, hi, lo, c))
++                med = _router_tall_time(fns, ROUTER_TALL_REPS)
++                best = min(range(len(ok)), key=lambda i: med[i])
++                print(f"[router_tall] {bucket} m={m_t}: master {med['master'] * 1e3:.2f} us; "
++                      + "; ".join(f"{ok[i]} {med[i] * 1e3:.2f} us" for i in range(len(ok))), flush=True)
++                if med["master"] / med[best] >= ROUTER_TALL_WIN:
++                    tall[bucket] = ok[best]
++                else:
++                    print(f"[router_tall] {bucket}: PATH CHOSEN master {master} (best {ok[best]} wins "
++                          f"only {med['master'] / med[best]:.3f}x < {ROUTER_TALL_WIN}x)", flush=True)
++            except Exception as e:
++                print(f"[router_tall] {bucket}: selector timing failed ({type(e).__name__}: {e}); "
++                      f"PATH CHOSEN master", flush=True)
++        # Profile one call of each chosen path: the launched kernel must be the hilo kernel.
++        for bucket in list(tall):
++            try:
++                m_t = max(ROUTER_TALL_CHECK_MS[bucket])
++                x = torch.randn((m_t, ROUTER_K), device=hi.device, dtype=torch.float32).to(torch.bfloat16)
++                from torch.profiler import ProfilerActivity, profile
++                with profile(activities=[ProfilerActivity.CUDA]) as prof:
++                    _router_hilo_forward(x, hi, lo, tall[bucket])
++                    torch.cuda.synchronize()
++                names = [ev.key for ev in prof.key_averages()]
++                print(f"[router_tall] {bucket}: profiled kernels {names}", flush=True)
++                assert any("_router_hilo_kernel" in nme for nme in names), "hilo kernel not launched"
++            except Exception as e:
++                print(f"[router_tall] {bucket}: profile assertion failed ({type(e).__name__}: {e}); "
++                      f"PATH CHOSEN master", flush=True)
++                tall.pop(bucket, None)
++        state["router_tall"] = tall
++        for m in (33, 64, 65, 128, 129, 200, 256):
++            print(f"[router_tall] PATH CHOSEN m={m}: hilo cfg(BM,BN,SK,BK,stages,warps)="
++                  f"{_router_hilo_cfg6(m, tall)}", flush=True)
++    except Exception as e:
++        print(f"[router_tall] selector failed ({type(e).__name__}: {e}); PATH CHOSEN master everywhere",
++              flush=True)
++        state["router_tall"] = {}
++
++
+ @triton.jit(do_not_specialize=["M"])
+ def _bf16_splitk_kernel(
+     x_ptr, w_ptr, out_ptr, ws_ptr, cnt_ptr,
+@@ -2944,6 +3108,7 @@ def _prepare_state(weights: Weights, flags=None) -> dict:
+     t = tick("weight splits + NN copies", t)
+     # Stage choice, side-by-side diagnostics and warm-up on synthetic inputs.
+     _router_prepare(state)
++    _router_tall_prepare(state, flags)
+     t = tick("router triton warm-up", t)
+     # (1) Pooler split-K scratch (fp32 partials, overwritten every call) and per-N-tile tickets.
+     pooler = state["pooler"]
+@@ -3021,7 +3186,8 @@ def _prepare_state(weights: Weights, flags=None) -> dict:
+ 
+ def _ab_flags(state: dict) -> dict:
+     flags = {"ouns_cl": state["ouns_cl"], "router_cluster_ok": state["router_cluster_ok"],
+-             "nn_ok": state["nn_ok"], "nn_p256_ok": state["nn_p256_ok"]}
++             "nn_ok": state["nn_ok"], "nn_p256_ok": state["nn_p256_ok"],
++             "router_tall": dict(state["router_tall"])}
+     for name in NEW_CELL_FLAGS:
+         flags[name] = state[name]
+     return flags
+@@ -3036,6 +3202,8 @@ def _ab_component(layer: str, m: int) -> str:
+         return LT_FLAG
+     if layer == "router" and m <= ROUTER_CLUSTER_MAX_M:
+         return "router_cluster_ok"
++    if layer == "router" and m > ROUTER_SWAPAB_MAX_M:
++        return "router_tall"
+     if layer == "unpooler" and m <= OUNS_MAX_M:
+         return "ouns_cl"
+     if layer in NN_GATED_LAYERS and NN_GATED_MIN_M <= m <= NN_GATED_MAX_M:
+@@ -3065,6 +3233,7 @@ def _ab_selfcheck(weights: Weights, state_a: dict) -> None:
+         for st in (state_a,):
+             st["nn_ok"], st["router_cluster_ok"], st["ouns_cl"] = False, False, 0
+             st["nn_p256_ok"] = False
++            st["router_tall"] = {}
+             for name in NEW_CELL_FLAGS:
+                 st[name] = False
+         return
+@@ -3126,7 +3295,7 @@ def _ab_selfcheck(weights: Weights, state_a: dict) -> None:
+     wf.clear()
+     for comp in bad:
+         for st in states.values():
+-            st[comp] = 0 if comp == "ouns_cl" else False
++            st[comp] = 0 if comp == "ouns_cl" else ({} if comp == "router_tall" else False)
+     print(f"[ab] done in {time.perf_counter() - t0:.1f}s; flags now {_ab_flags(state_a)}", flush=True)
+     del states, state_b
+ 
+@@ -3156,7 +3325,7 @@ def prepare(weights: Weights) -> dict:
+     except Exception as e:
+         print(f"[prepare] final occupancy query failed ({type(e).__name__}: {e})", flush=True)
+     print(f"[prepare] FINAL FLAGS: ouns_cl={state['ouns_cl']} router_cluster_ok={state['router_cluster_ok']} "
+-          f"nn_ok={state['nn_ok']} nn_p256_ok={state['nn_p256_ok']} "
++          f"nn_ok={state['nn_ok']} nn_p256_ok={state['nn_p256_ok']} router_tall={state['router_tall']} "
+           + " ".join(f"{name}={state[name]}" for name in NEW_CELL_FLAGS)
+           + f"; prepare total {time.perf_counter() - t0:.1f}s", flush=True)
+     return state
+@@ -3203,10 +3372,11 @@ def kernel_fn(data: Inputs, state: dict) -> torch.Tensor:
+     if _router_cluster_route(x, cfg, state):   # 1 <= m <= 8, n == 256: one launch, no memset
+         return _router_cluster_forward(x, state)
+     hi, lo = state["router_hi"], state["router_lo"]
+-    path = _router_path(x, hi, cfg["n"], state["router_stages"])
++    tall = state["router_tall"]
++    path = _router_path(x, hi, cfg["n"], state["router_stages"], tall)
+     if path == "swapab":   # m <= 32
+         return _router_forward(x, hi, lo, state["router_stages"][_router_config(x.shape[0])])
+     if path == "hilo":     # m > 32: master's forward
+-        return _router_hilo_forward(x, hi, lo)
++        return _router_hilo_forward(x, hi, lo, _router_hilo_cfg6(x.shape[0], tall))
+     # Shape outside the kernel's preconditions (never for this problem's router): exact fp32 path.
+     return F.linear(x.float(), state["router"][: cfg["n"]])

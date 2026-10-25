@@ -46,10 +46,10 @@ priority: 1
 kind: primary
 controls_for: null
 review: proceed
-status: running
+status: done
 review_at: 2026-10-25T203138Z
 review_companions: null
-stage: dispatched
+stage: harvested
 claimed_at: 2026-10-25T203138Z
 base_sha: 72279d8be856d60ae496236e976e81549d53cc2d
 base_blob: ad8d7254a64a52db2a8f56ec0ad262748153a2e8
@@ -68,6 +68,13 @@ attempt_file: 2026-10-25T203553Z-submit-router-hilo-tall-tile-m65-m256.md
 prepared_at: 2026-10-25T203553Z
 job: 864e8094b5bc4c1b
 dispatched_at: 2026-10-25T203601Z
+outcome: neutral
+verdict_detail: within-ci
+speedup: 1.2539493043550642
+speedup_ci: [1.2351400647897384, 1.2727585439203901]
+harvested_at: 2026-10-25T204223Z
+best_at_harvest: 1.2566457115954903
+promotion: null
 ---
 
 # router-hilo-tall-tile-m65-m256
@@ -138,3 +145,53 @@ Audited 2026-10-25 (opus, read-only; no fixes). **Verdict: dispatch.**
 - Scope: matches the change paragraph plus the review's asks (explicit 33..64 = master, flag via _ab_flags, router m=256 A/B cell); the extra 4-stage candidate at bucket 128 is a declared deviation, cost seconds.
 
 Residual risk: an untested config could device-fault (not hang/raise) on first launch in prepare(), which no try can catch; masking analysis finds no such path.
+
+## Result
+
+- job `864e8094b5bc4c1b` (submit), status done, passed True, tests 9/9
+- speedup 1.2539x, 95% CI [1.2351, 1.2728], score 3852.468343993057 µs vs SGLang 4830.8 µs
+- best at harvest: {"speedup": 1.2566457115954903, "ci": [1.237796025921558, 1.2754953972694225], "job": "741072dca5fc4c9d"}; base result: muse_bf16_proj/hypotheses/done/neutral/combo-rowowner-reduce-free-m1-qkv-o-plus-naive.result.json
+- **outcome: neutral** (within-ci)
+- files: `muse_bf16_proj/hypotheses/done/neutral/router-hilo-tall-tile-m65-m256.result.json`, `muse_bf16_proj/hypotheses/done/neutral/router-hilo-tall-tile-m65-m256.patch`; branch `hyp/muse_bf16_proj/router-hilo-tall-tile-m65-m256`
+
+## Attribution
+
+| shape | w | base µs | hyp µs | delta | verdict |
+|---|---|---|---|---|---|
+| layer=qkv_gate load=decode_1 m=1 | 62 | 10.54 | 10.75 | 1.014 | flat |
+| layer=o load=decode_1 m=1 | 62 | 6.32 | 6.07 | 0.9986 | flat |
+| layer=pooler load=decode_1 m=1 | 62 | 17.72 | 17.54 | 1.0045 | flat |
+| layer=unpooler load=decode_1 m=1 | 62 | 5.01 | 4.72 | 1.0568 | gained |
+| layer=router load=decode_1 m=1 | 62 | 5.17 | 4.91 | 1.0555 | gained |
+| layer=qkv_gate load=decode_16 m=16 | 62 | 12.64 | 12.9 | 0.987 | flat |
+| layer=o load=decode_16 m=16 | 62 | 6.21 | 5.94 | 1.022 | flat |
+| layer=pooler load=decode_16 m=16 | 62 | 19.46 | 19.38 | 1.0108 | flat |
+| layer=unpooler load=decode_16 m=16 | 62 | 18.82 | 18.64 | 1.0034 | flat |
+| layer=router load=decode_16 m=16 | 62 | 5.51 | 5.86 | 0.9345 | lost |
+| layer=qkv_gate load=decode_32 m=32 | 62 | 13.71 | 13.8 | 0.9932 | flat |
+| layer=o load=decode_32 m=32 | 62 | 6.47 | 6.39 | 0.9981 | flat |
+| layer=pooler load=decode_32 m=32 | 62 | 19.86 | 20.16 | 0.9925 | flat |
+| layer=unpooler load=decode_32 m=32 | 62 | 18.49 | 18.43 | 1.0048 | flat |
+| layer=router load=decode_32 m=32 | 62 | 5.95 | 6.05 | 0.9855 | flat |
+| layer=qkv_gate load=verify_1 m=8 | 62 | 12.35 | 12.82 | 1.0066 | flat |
+| layer=o load=verify_1 m=8 | 62 | 5.9 | 6.1 | 0.9924 | flat |
+| layer=pooler load=verify_1 m=8 | 62 | 19.31 | 18.94 | 1.0148 | flat |
+| layer=unpooler load=verify_1 m=8 | 62 | 5.54 | 5.55 | 1.015 | flat |
+| layer=router load=verify_1 m=8 | 62 | 5.49 | 5.16 | 1.0637 | gained |
+| layer=qkv_gate load=verify_16 m=128 | 62 | 15.55 | 16.03 | 0.9773 | flat |
+| layer=o load=verify_16 m=128 | 62 | 7.68 | 7.45 | 0.9799 | flat |
+| layer=pooler load=verify_16 m=128 | 62 | 22.85 | 22.78 | 0.9735 | flat |
+| layer=unpooler load=verify_16 m=128 | 62 | 18.88 | 18.67 | 0.9893 | flat |
+| layer=router load=verify_16 m=128 | 62 | 7.61 | 7.5 | 1.0054 | flat |
+| layer=qkv_gate load=verify_32 m=256 | 62 | 19.46 | 19.98 | 0.9836 | flat |
+| layer=o load=verify_32 m=256 | 62 | 9.44 | 9.11 | 0.99 | flat |
+| layer=pooler load=verify_32 m=256 | 62 | 27.98 | 29.88 | 0.9734 | flat |
+| layer=unpooler load=verify_32 m=256 | 62 | 24.18 | 24.56 | 0.9971 | flat |
+| layer=router load=verify_32 m=256 | 62 | 9.72 | 9.99 | 0.9642 | lost |
+
+gained on unpooler decode_1; router decode_1, verify_1; lost on router decode_16, verify_32. Expected hit: 0/3. Noise ±1.5%.
+
+## Follow-ups
+
+- within-ci: the change is not proven either way; a stacked hypothesis (`depends_on: router-hilo-tall-tile-m65-m256`) that adds a further change in the same area is the only way to learn more.
+
