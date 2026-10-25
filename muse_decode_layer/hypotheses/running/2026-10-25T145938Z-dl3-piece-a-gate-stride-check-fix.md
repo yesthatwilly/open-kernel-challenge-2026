@@ -63,7 +63,7 @@ base_sha: 2f268b5931c7c758c5178f3bb152d80688ca9d95
 base_blob: 07cda658e21f2eb25a9dd1f50ac5202ad5985831
 branch: hyp/muse_decode_layer/dl3-piece-a-gate-stride-check-fix
 worktree: .worktrees/muse_decode_layer/dl3-piece-a-gate-stride-check-fix
-mode: null
+mode: submit
 restack_of: null
 stale_base: null
 implemented_at: 2026-10-25T151022Z
@@ -72,6 +72,8 @@ submission_sha256: 7c05556dc4f176d98eaee0a84a2cb72a9c42ae167af50f3291020bc809abf
 norm_sha256: 0ecc710dd1b881b74d8fdef9019a3ab78a795894ae7614342aed797ae968c552
 submission_blob: 4bb57fd292a7f0fd5a80bd88dc773008b490bf8c
 lint_warnings: 57
+attempt_file: 2026-10-25T151022Z-submit-dl3-piece-a-gate-stride-check-fix.md
+prepared_at: 2026-10-25T151022Z
 ---
 
 # dl3-piece-a-gate-stride-check-fix
