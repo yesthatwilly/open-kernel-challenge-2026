@@ -59,8 +59,11 @@ depends_on: null
 priority: 4
 kind: primary
 controls_for: null
-review: required
-status: queued
+review: hold
+status: hold
+review_at: 2026-10-25T203413Z
+review_companions: null
+hold_reason: "adversarial review: Plausible but small (~2 us on the 118.5 us sliding decode_1 row, ~0.25% headline); its own first measurement must be an okc check, and it is an unchecked cross-"
 ---
 
 # sliding-cluster-c16-decode1-port
@@ -79,3 +82,27 @@ Port muse_attention_decode master's sliding_cluster_kernel at cluster size C=16 
 ## Risk
 
 Small (~1.5% on one weight-46 row, ~0.25% headline) but attributable to one kernel row, and it is the batch-1 half of the cluster port whose batch-17..32 half is queued as sliding-cluster-c4-s3-satfinite-on-sk-ticket (that branch is unlanded, so this is on master and B=1 only; if both land, one cluster module with C=4 and C=16 instantiations). Risk: a cluster launch faulting in prepare poisons the CUDA context (LESSONS), so run the 1-CTA-cluster canary first and print after each launch; the extra build adds ~40 s to prepare.
+
+## Adversarial review
+
+Reviewed 2026-10-25T203413Z by an adversarial subagent (model opus).
+
+**Verdict: hold.** Plausible but small (~2 us on the 118.5 us sliding decode_1 row, ~0.25% headline); its own first measurement must be an okc check, and it is an unchecked cross-problem port of a ~1,300-line cluster CUDA module that cannot be compiled here. Hold until checks reset, like sliding-sk-window-port-decode32-verify1 and combo-attn-master-sliding-race-skw-c16 (its A2).
+
+### Justification
+BEST a903b9d0: _sliding_fused_kernel 13.5 us (10.9%) of 118.5 us vs SoL 40.0; attention's C=16 cluster kernel does the same fused work in 10.8 us (~1.2x). The branch is in _attn_core (submission.py:7216), not _parent_attention. Prior (missing): sliding-cluster-c4-decode32-port / -s2-k-encode-match (never measured: s2 fell back on the byte-exact probe); difference is real (C=16, B=1, attention's acceptance rules). Weakest link: a cluster-16 launch or DSMEM/ticket fault in prepare poisons the CUDA context and fails the whole scored run with no prepare log.
+
+### Confounders on the current kernel
+- sliding-decode1-fused-restack-on-pdl: installed the incumbent; the selector compares directly.
+- small-t-launch-minimal-dense-chain-pdl / dense-chain-s3: PDL around attention; time attention + o GEMM in one graph.
+- combo-measured-rows-slide-batched-preattn-t8-tail: disjoint (B>=2).
+
+### Interference and A/B needs
+No companions: one gated shape class with its own in-prepare race; time it as attention kernel + o GEMM.
+
+### Open questions
+- Module-level statics in attention's cluster host wrapper?
+- Query cudaOccupancyMaxActiveClusters for C=16 before the first launch.
+- Fold into sliding-cluster-c4-s3-satfinite-on-sk-ticket as one module with C=4 and C=16?
+- Quote savings against a903b9d0 (13.5 us).
+

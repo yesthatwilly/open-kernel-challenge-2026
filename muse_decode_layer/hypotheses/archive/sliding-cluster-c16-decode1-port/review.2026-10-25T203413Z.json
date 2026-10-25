@@ -1,0 +1,25 @@
+{
+ "model": "opus",
+ "verdict": "hold",
+ "summary": "Plausible but small (~2 us on the 118.5 us sliding decode_1 row, ~0.25% headline); its own first measurement must be an okc check, and it is an unchecked cross-problem port of a ~1,300-line cluster CUDA module that cannot be compiled here. Hold until checks reset, like sliding-sk-window-port-decode32-verify1 and combo-attn-master-sliding-race-skw-c16 (its A2).",
+ "justification": "BEST a903b9d0: _sliding_fused_kernel 13.5 us (10.9%) of 118.5 us vs SoL 40.0; attention's C=16 cluster kernel does the same fused work in 10.8 us (~1.2x). The branch is in _attn_core (submission.py:7216), not _parent_attention. Prior (missing): sliding-cluster-c4-decode32-port / -s2-k-encode-match (never measured: s2 fell back on the byte-exact probe); difference is real (C=16, B=1, attention's acceptance rules). Weakest link: a cluster-16 launch or DSMEM/ticket fault in prepare poisons the CUDA context and fails the whole scored run with no prepare log.",
+ "confounders": [
+  "sliding-decode1-fused-restack-on-pdl: installed the incumbent; the selector compares directly.",
+  "small-t-launch-minimal-dense-chain-pdl / dense-chain-s3: PDL around attention; time attention + o GEMM in one graph.",
+  "combo-measured-rows-slide-batched-preattn-t8-tail: disjoint (B>=2)."
+ ],
+ "interference": "No companions: one gated shape class with its own in-prepare race; time it as attention kernel + o GEMM.",
+ "rules_flags": [
+  "Own condition: first measurement is an okc check.",
+  "k-cache bytes may differ by one E4M3 code (accepted under 6% self-check); v byte-exact.",
+  "q rounded to E4M3 after qk_scale_factor: still E4M3.",
+  "Tickets/DSMEM workspaces per state, reset in-kernel; check the host wrapper keeps no static workspace."
+ ],
+ "companions": [],
+ "open_questions": [
+  "Module-level statics in attention's cluster host wrapper?",
+  "Query cudaOccupancyMaxActiveClusters for C=16 before the first launch.",
+  "Fold into sliding-cluster-c4-s3-satfinite-on-sk-ticket as one module with C=4 and C=16?",
+  "Quote savings against a903b9d0 (13.5 us)."
+ ]
+}
