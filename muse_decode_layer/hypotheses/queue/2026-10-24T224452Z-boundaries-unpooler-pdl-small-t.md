@@ -55,8 +55,10 @@ depends_on: small-t-launch-minimal-dense-chain-pdl
 priority: 2
 kind: primary
 controls_for: null
-review: required
+review: proceed
 status: queued
+review_at: 2026-10-25T010851Z
+review_companions: null
 ---
 
 # boundaries-unpooler-pdl-small-t
@@ -77,3 +79,27 @@ Extend PDL to the stages around the landed dense chain at tokens <= DL_MAX_TOKEN
 ## Risk
 
 High: the boundary must reproduce SGLang residual-gate numerics exactly (stream output is checked against fp32 reference); the self-check gates it. An early launch_dependents is legal because the dependent still griddepcontrol.waits before reading anything this kernel writes; only constant weights are read before the wait. Disjoint from dense-chain-stage2-attn-side-pdl (different kernels), so the two can stack by merge. bf16-m32-swapab-wgmma-port (held) also targets the T=32 unpooler.
+
+## Adversarial review
+
+Reviewed 2026-10-25T010851Z by an adversarial subagent (model opus).
+
+**Verdict: proceed.** Plausible; duplicates nothing landed, running or do-not-retry. Two spec errors to fix before the build: residual coefficients are per-channel [8192] vectors, not scalars, and post_ffn applies (1+w) as an input scale before the RMS. The T=9..32 full-width unpooler will probably be flat or slower than nvjet, so decode_16/32 'faster' rests almost entirely on the boundaries.
+
+### Justification
+At T<=8 the replaced chain (nvjet sliced unpooler 8.4 MB + splitKreduce + F.pad, ~9 us vs a ~3 us P-body GEMV) is real overhead; the P-body GEMV already runs fault-free at ~3.4-3.6 TB/s for NF=1. Fusing both boundaries with an immediate launch_dependents makes attn boundary -> P the first adjacent hand-written pair, so P's W_pr prefetch overlaps for real: decode_1/verify_1 ~5-8 us. Incumbents are stale (master decode_1 127.5/142.9). Weakest link: the T=9..32 full-width unpooler (NF=2/4) inherits P's x L2 re-read (2.85 TB/s at T=32, ~3.1 at T=16) vs master nvjet ~3.1-3.2 TB/s: parity at T=16, up to ~2 us slower at T=32. At T=1 the one-CTA boundary runs two dependent block reductions over ~100 KB, ~2-3 us vs SGLang 3.6. Spec errors: (1) alpha = sqrt(clamp(sigmoid(-w/0.3)*(1+sigmoid(w/0.3)), 1e-3)) and beta = sigmoid(w/0.3) per channel; attn/ffn_residual_gate are [8192] (reference.py:109,123,339-344), so alpha/beta must be fp32 [8192] device vectors from the module's precomputed buffers, not scalars, else dlb_ok goes False and the check measures master. (2) ffn boundary (reference.py:472-476): stream2 = alpha2*stream1 + beta2*rms(f*(1+post_ffn_norm), 1e-8); (1+w) is an INPUT scale before the RMS; only the attn post-norm has no weight; next attention input rms(stream2)*(1+next_pre_attn_norm) eps 1e-5. (3) Optional: at T<=8, f columns 1024..8191 are zero, so the ffn boundary can read 1024 columns. Headline ~+1.5-2.5%, inside CI; read profile rows.
+
+### Confounders on the current kernel
+- small-t-launch-minimal-dense-chain-pdl (base): overlap exists only because P is PDL-launched; re-run _dl_self_check graph (attn_boundary -> P -> R -> experts) with the new boundary; part of any gain shows as a shorter P row.
+- post-expert-norm-triton-small-t: the unpooler's predecessor (Triton at T<32, SGLang at T=32); self-check must cover both layouts through the real _experts.
+- stack-align-par-sidestream-sliding1: no interaction at T<=32; stale incumbents only.
+- marlin-block-m-cap-16, fa3-hdim128-head-pairing-batched, sglang-pipeline-parity-router-hilo-m8: no confound.
+
+### Interference and A/B needs
+No companion. Rows dl_boundary_kernel, dl_unpool_kernel<1> (T<=8) and dl_unpool_kernel<2/4> (T=9..32) are separable from master's rows; a shorter P row isolates the PDL overlap; verify_16/32 are the drift control. Build note: in prepare time dl_unpool_kernel vs _gemm per NF on synthetic data and keep nvjet for any NF where the custom kernel is slower; print the pick per NF. Overlaps: dense-chain-stage2 (kernel-disjoint, same TU: textual conflict, complementary); split-KV checks (no overlap); dl-route-warp-topk-pdl edits P and R in the same TU; dl-p-wide-tile-t16-t32 fixes the x re-read this inherits.
+
+### Open questions
+- dl_boundary_kernel CUDA-event time at T=1 with one CTA vs SGLang 3.6/3.7 us? If >= 3 us, several CTAs per token?
+- Does SGLang FusedPostNormResidualPreNorm read alpha/beta as precomputed fp32 buffers or recompute from bf16 gates? Match its rounding.
+- Is dl_unpool_kernel<2/4> faster than nvjet at T=9..32 in prepare timing? If not, gate it off.
+
