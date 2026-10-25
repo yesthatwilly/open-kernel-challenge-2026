@@ -58,7 +58,7 @@ base_sha: 39fb54fe3f47f42f763160b2e09426e294bdbe7a
 base_blob: 7fd30a78be18303b7c935dc944c31ff33649bed0
 branch: hyp/muse_attention_decode/full-verify1-sk-two-level-token-group
 worktree: .worktrees/muse_attention_decode/full-verify1-sk-two-level-token-group
-mode: null
+mode: check
 restack_of: null
 stale_base: null
 implemented_at: 2026-10-25T090903Z
@@ -67,6 +67,8 @@ submission_sha256: 404a5c90967355a77eceb12855212df3d9518e8dc01be95ec5a3011f19475
 norm_sha256: 6e37eb509d458b2cf40dde59667d4cb698e6af7d647d17281d847e7fd9613cb5
 submission_blob: 2a3da06aac723bdc92ec4648642f25ec1c2ccc2c
 lint_warnings: 41
+attempt_file: 2026-10-25T090903Z-check-full-verify1-sk-two-level-token-group.md
+prepared_at: 2026-10-25T090903Z
 ---
 
 # full-verify1-sk-two-level-token-group
