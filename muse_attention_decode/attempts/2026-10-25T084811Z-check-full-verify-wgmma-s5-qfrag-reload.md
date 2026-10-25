@@ -1,0 +1,55 @@
+# muse_attention_decode · 2026-10-25T084811Z · check · full-verify-wgmma-s5-qfrag-reload
+
+Hypothesis: `muse_attention_decode/hypotheses/running/2026-10-25T054448Z-full-verify-wgmma-s5-qfrag-reload.md` (branch `hyp/muse_attention_decode/full-verify-wgmma-s5-qfrag-reload`).
+
+- **Job:** `71e40388a1904937` (`okc status <job>`)
+- **File:** `muse_attention_decode/submission.py` at git `69378d74`
+
+## Goal
+Stage 5 on branch hyp/muse_attention_decode/full-verify-wgmma-s4-multitile-fix (job 51b0d5c110f3459c). s4's bisect: every multi-tile segment (>=2 tiles, even B1-2t with no request crossing) is wrong with all 128 rows' running max bad; 1-tile segments pass at any ring stage; the fully synchronised variant fails identically, ruling out ring/mbarrier races. The only per-segment state not reloaded before the S wgmma of tile lt>=1 is the register-sourced Q A-fragment qa[2][4], loaded only at n == 0 || lt == 0 and passed as the {a regs} operand across iterations. Fix (a): reload qa from smem/L2 unconditionally before EVERY tile's S wgmma (2 KB), with wg_fence/fence_acc ordering around it as for the first tile; keep the rest of s4. Add the DIAG from the read (c): for B1-2t, dump S (pre-max) of tile 1 and compare with the fp32 reference S, printing max abs err, so 'S wrong' vs 'carry wrong' separates in this one check. If (a) fixes S but rows still fail, print per-tile mA/lA and oacc error to localise the carry (ex2(mA - uA) with Max_offset folded). Drop the SYNC variant. Keep FP8 P with FA3's Max_offset (P = exp2(s - (max - 8))) and test on COHERENT long-context data, not random keys (LESSONS). Gate: after the full s4 bisect table passes (every multi-tile case, kv 0.25, grid 3, device grid, lens_a/lens_b, coherent), time [wgmma ticket], [wgmma b8] vs master paired FA3 path (prepare + main + combine + paired norm-gate) at B=16 and B=32 by interleaved graph replay; route a band only at >= 1.05x. Print regs/local per variant (refuse a spill, LESSONS prefill wgmma). RULES (every path): CUDA-graph capturable; kernel_fn does no host sync, no allocation sized by input values (shape/config only), no data-dependent Python control flow, no prints, no try/except, no per-call mutable Python state; nothing cached from inputs; KV FP8, q at most FP8 E4M3, fp32 softmax/merges, bf16 out; every key in each window attended; no child processes. The judge prepares TWO states (setup copies: 2) and rotates them: no module/static global may hold a device pointer into a state's tensors, a TMA map or a state-sized buffer (master's self-resetting int32 ticket arrays, zeroed once and returned to 0 by every launch, hold no data and stay as they are). Every new CUDA route self-checks in prepare against an fp32 reference with two states and alternating graph replays with refilled inputs (capture once, refill A, replay, refill B, replay, compare each), and on any miss falls back to master's path for that band with a PATH CHOSEN line naming the failing case. Build as the landed TUs (TORCH_CUDA_ARCH_LIST=9.0a, -lineinfo, in-process canary, sync+print after each self-check launch). Gates route a band only when the printed interleaved graph-replay timing (cold L2, 256 MB flush, empty-graph baseline subtracted) shows the new path winning by the stated margin; PATH CHOSEN prints both numbers.
+
+## What changed, and where
+Worktree `.worktrees/muse_attention_decode/full-verify-wgmma-s5-qfrag-reload`, `muse_attention_decode/submission.py` only.
+
+**Rebase onto master (stale_base).** The branch was s3+s4 on 27b43dc; master was 52ca902. `git merge-file` conflicted in 11 hunks (s3 also edited the decode `splits`/sliding predicate that master has since superseded), so I took master's file wholesale and re-applied only the verify-path additions of s4: the `muse_full_verify_wgmma` module block (inserted after `_full_decode_splitkv`), the `_verify_synthetic` ... `_wg_verify_setup` block (before the final `if torch.cuda.is_available():`), the `splitkv_verify` gate/dispatch in `kernel_fn`, one `_wg_verify_setup()` call at the end of the import-time block, and the docstring sentence. Everything outside the verify path (decode stream-K, two-level ticket c3c1b01, sliding fused path, restacks) is byte-identical to master; `git diff master` shows 2 deleted lines (docstring, `paired` predicate), the rest additions.
+
+**The change (stage 5).**
+- qa[2][4] is staged in shared memory ONCE per segment (each thread writes its own 8 A-fragment words at `n == 0 || lt == 0`, word-major `u32[8][256]`, 8 KB, `QS_OFF`; SMEM_A grows by 8 KB, 2 CTAs/SM still fit) and RELOADED into registers before EVERY tile via volatile `ld.shared` (8 conflict-free loads), issued before `wait_bar(full_bar(st))` so they overlap the barrier wait. The existing `fence_acc` + `wg_fence` sit between the reload and the S wgmma. (Review: not an L2 `__ldg` on the critical path; applied.)
+- SYNC variant dropped (template param, `use_sync` arg, `ticket_sync` mode removed). Its slot is now `DBG` (template bool, a separate instantiation used only by the prepare DIAG; the timed kernels are unchanged apart from the qa reload).
+- DIAG (prepare only, after case B1-2t, ticket mode): a second launch of the DBG kernel dumps CTA 0's tile-1 scaled S (pre edge-mask, pre-max) and running mA/mB/lA/lB after tiles 0..3; the host compares S with the fp32 reference (max abs err, entries off, verdict "S correct / S WRONG") and prints per-tile max |mA - ref| and l relative error (quad-summed lane partials), which localises the carry if S is fine. Never launched from the timed path (`_WG_DBG` is None, `use_dbg` 0). Per-tile oacc error is not dumped (per-segment O error from `_wg_diagnose` remains).
+- New bisect cases: `mid-1t-B1-3t-grid3` (lens [192], grid 3: CTAs 1 and 2 each own one tile that starts mid-request, n == 0, lt >= 1) and `mid-1t-2req-grid3` (lens [128,128], grid 3: CTA 1's single tile is lt = 1 of request 0, CTA 2 crosses into request 1). `_wg_verdict` names them.
+- regs/local per variant: `_wg_image_check` prints regs, local bytes, binary/ptx version, CTAs/SM for `<ticket>` and `<B8>` and the combine kernel (unchanged, still prints; a local-bytes > 0 spill is visible in the log). Module renamed `muse_full_verify_wgmma_v3` (fresh build cache).
+- Two-state graph check (brief requirement): `_wg_two_state_check` prepares two states, warms and captures one graph per state, then replays A B A B B A with `_wg_refill` (qkv, k_cache, v_cache refilled in place) and compares each replay with the fp32 reference of its own state. No kernel static or module global holds a state pointer; the only module-level tensors are the pre-existing self-resetting int32 tickets and the error word.
+- Routing gate (spec: >= 1.05x): the old eager, non-gating `_wg_time` is replaced by `_wg_time_graph`: wgmma path vs master paired FA3 path (pre-attention + FA3 + paired norm-gate) at B=16 and B=32, each in its own CUDA graph, interleaved replays (alternating order), 256 MB L2 flush before each, empty-graph baseline subtracted, medians of 40. Band routed only if master/wgmma >= 1.05; `_splitkv_verify_gate` consults `_WG_BANDS[16 if batch <= 24 else 32]` (config only). PATH CHOSEN lines per band print both numbers (TIMING line) and the decision; if neither band wins the whole path falls back to master.
+
+**Review items.** (1) smem staging / reload before the barrier wait: done. (2) DIAG tile-1 S vs fp32 only in prepare: done. (3) 1-tile mid-request segment in the bisect table: done (two cases). (4) regs/local printed per variant: done. (5) Rebase onto master incl. c3c1b01: done (see above); master paired path times as the incumbent. (6) cuobjdump / any subprocess: NOT added (no child processes). Open question left unanswered for the user, since SASS cannot be dumped in-process: does `cuobjdump -sass` of splitkv_verify_wgmma_kernel<true,false> show ptxas re-using or rematerialising qa's registers across the loop, or "wgmma serialized" warnings (the true root cause of the stage-4 failure, which also threatens pa / oacc)? The smem reload makes the result independent of that, but does not explain it. (7) Open question "did s4's bisect include a 1-tile mid-request segment": unknown, hence the new cases. (8) Open question "regs/thread after the fix": printed at run time.
+
+**Deviations.** Band mapping (<= 24 / > 24) is my choice. FP8 P / Max_offset, coherent cases, kv 0.25 and grid cases are kept from s4 unchanged. Not built or run (no GPU): the biggest risk is a compile error in the new CUDA (DBG template, ld/st.shared asm) or the extra 8 KB smem dropping occupancy below 2 CTAs/SM (prepare prints CTAs/SM and warns).
+
+## Rules check (each must be true before the run)
+- [x] CUDA-graph capturable: kernel_fn path adds no sync/.item()/.cpu()/print; all new syncs/prints are in prepare (self-check, DIAG, timing); lint only warns host-sync outside kernel_fn's call graph.
+- [x] Nothing derived from `data` is cached across calls: workspaces are allocated per call from shapes; tickets are self-resetting zero arrays; DIAG/refill buffers are prepare-local; `_WG_BANDS` is a config-only routing decision from synthetic data, not from judge inputs.
+- [x] Weights: n/a: attention kernel, no weights.
+- [x] Activations/KV: KV cache FP8, q E4M3 at most (FP8 query), fp32 softmax and merges, bf16 out; unchanged from s4.
+- [x] Attention sees every key: every 64-token tile of each window is attended; causal mask only (t <= seq - 8 + j).
+- [x] No timing patches / harness access / reference import: the prepare timing uses CUDA events on synthetic data only and gates routing on a printed margin; no child processes, no cuobjdump.
+- [x] All work inside the timed call, no output caching or replay: yes.
+- [x] Judge two states: no device pointer, TMA map or state-sized buffer in any module/static global; two-state alternating graph self-check added.
+
+okc_lint output:
+```
+OK with warnings: muse_attention_decode/submission.py
+(35 warnings, all host-sync in prepare-only code outside kernel_fn's call graph, plus one dtype warning for the uint8 256 MB L2-flush buffer in prepare)
+```
+py_compile: ok; __pycache__ removed.
+
+## Risks / what could fail
+high
+Even a fallback run is informative: the DIAG decides between the Q-fragment and the carry. First timed measurement of this kernel; okc check only.
+
+## Result (after the run)
+- job `71e40388a1904937` (check), status done, passed True, tests 16/16
+- speedup 1.4345x, 95% CI [1.4130, 1.4561], score 2625.426324311454 µs vs SGLang 3766.3 µs
+- best at harvest: {"speedup": 1.444132502888963, "ci": [1.4224705153456287, 1.4657944904322975], "job": "341623fa53d94cef"}; base result: muse_attention_decode/hypotheses/done/neutral/full-verify-wgmma-s4-multitile-fix.result.json
+- **outcome: neutral** (beats-base-not-best)
+- files: `muse_attention_decode/hypotheses/done/neutral/full-verify-wgmma-s5-qfrag-reload.result.json`, `muse_attention_decode/hypotheses/done/neutral/full-verify-wgmma-s5-qfrag-reload.patch`; branch `hyp/muse_attention_decode/full-verify-wgmma-s5-qfrag-reload`

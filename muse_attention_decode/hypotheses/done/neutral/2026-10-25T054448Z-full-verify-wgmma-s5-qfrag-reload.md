@@ -58,10 +58,10 @@ controls_for: null
 rewrite_stage: 5
 replaces: "full-layer verify at 1<batch<=64: FA3 main + prepare_varlen_num_blocks + FlashAttnFwdCombine + norm-gate (master paired FA3)"
 review: proceed
-status: running
+status: done
 review_at: 2026-10-25T054737Z
 review_companions: null
-stage: dispatched
+stage: harvested
 claimed_at: 2026-10-25T054738Z
 base_sha: 3ee2b893476879190a690392a3295a35afed11bf
 base_blob: 9bcf522b0dd23a0a8173046d2150473827122206
@@ -80,6 +80,13 @@ attempt_file: 2026-10-25T084811Z-check-full-verify-wgmma-s5-qfrag-reload.md
 prepared_at: 2026-10-25T084811Z
 job: 71e40388a1904937
 dispatched_at: 2026-10-25T084834Z
+outcome: neutral
+verdict_detail: beats-base-not-best
+speedup: 1.4345479685047922
+speedup_ci: [1.4130297489772203, 1.456066188032364]
+harvested_at: 2026-10-25T091104Z
+best_at_harvest: 1.444132502888963
+promotion: null
 ---
 
 # full-verify-wgmma-s5-qfrag-reload
@@ -188,3 +195,36 @@ Fixes, both in `_wg_time_graph`:
 2. **Agreement check.** The self-check's longest request is 9,000 tokens, but the band-16 route also carries the test `batch 2, ctx 100000, q_len 8`. A bug that only shows at long context would fail the run instead of falling back. A band is now routed only if the wgmma output, on the 80K timing data, also matches master's paired-FA3 output: rel L2 < 3e-2, finite, and the error word clear. The TIMING line prints all of this.
 
 Residual risk: the CUDA has never been built (DBG template, ld/st.shared asm), and if the multi-tile bug is not the Q fragment, every band falls back again; the DIAG localises it either way.
+
+## Result
+
+- job `71e40388a1904937` (check), status done, passed True, tests 16/16
+- speedup 1.4345x, 95% CI [1.4130, 1.4561], score 2625.426324311454 µs vs SGLang 3766.3 µs
+- best at harvest: {"speedup": 1.444132502888963, "ci": [1.4224705153456287, 1.4657944904322975], "job": "341623fa53d94cef"}; base result: muse_attention_decode/hypotheses/done/neutral/full-verify-wgmma-s4-multitile-fix.result.json
+- **outcome: neutral** (beats-base-not-best)
+- files: `muse_attention_decode/hypotheses/done/neutral/full-verify-wgmma-s5-qfrag-reload.result.json`, `muse_attention_decode/hypotheses/done/neutral/full-verify-wgmma-s5-qfrag-reload.patch`; branch `hyp/muse_attention_decode/full-verify-wgmma-s5-qfrag-reload`
+
+## Attribution
+
+| shape | w | base µs | hyp µs | delta | verdict |
+|---|---|---|---|---|---|
+| batch=1 ctx=80000 dist=soft heads=tp8 layer=sliding load=decode_1 page=1 | 46 | 13.27 | 13.23 | 0.9915 | flat |
+| batch=1 ctx=80000 dist=coherent heads=tp8 layer=full load=decode_1 page=1 | 16 | 27.06 | 22.76 | 1.1826 | gained |
+| batch=16 ctx=80000 dist=soft heads=tp8 layer=sliding load=decode_16 page=1 spread=agentic | 46 | 15.99 | 15.47 | 1.0292 | flat |
+| batch=16 ctx=80000 dist=coherent heads=tp8 layer=full load=decode_16 page=1 spread=agentic | 16 | 122.76 | 111.02 | 1.1047 | gained |
+| batch=32 ctx=80000 dist=soft heads=tp8 layer=sliding load=decode_32 page=1 spread=agentic | 46 | 24.71 | 24.35 | 1.0173 | flat |
+| batch=32 ctx=80000 dist=coherent heads=tp8 layer=full load=decode_32 page=1 spread=agentic | 16 | 258.18 | 229.95 | 1.1299 | gained |
+| batch=1 ctx=80000 dist=soft heads=tp8 layer=sliding load=verify_1 page=1 q_len=8 | 46 | 17.14 | 17.21 | 0.9983 | flat |
+| batch=1 ctx=80000 dist=coherent heads=tp8 layer=full load=verify_1 page=1 q_len=8 | 16 | 30.35 | 30.13 | 1.0011 | flat |
+| batch=16 ctx=80000 dist=soft heads=tp8 layer=sliding load=verify_16 page=1 q_len=8 spread=agentic | 46 | 22.86 | 22.83 | 1.0096 | flat |
+| batch=16 ctx=80000 dist=coherent heads=tp8 layer=full load=verify_16 page=1 q_len=8 spread=agentic | 16 | 163.63 | 162.75 | 1.0047 | flat |
+| batch=32 ctx=80000 dist=soft heads=tp8 layer=sliding load=verify_32 page=1 q_len=8 spread=agentic | 46 | 29.03 | 29.09 | 1.0096 | flat |
+| batch=32 ctx=80000 dist=coherent heads=tp8 layer=full load=verify_32 page=1 q_len=8 spread=agentic | 16 | 301.66 | 301.13 | 1.0053 | flat |
+
+gained on full decode_1, decode_16, decode_32. Expected hit: 1/4. Noise ±1.5%.
+
+## Follow-ups
+
+- rewrite stage 5 of `full-layer verify at 1<batch<=64: FA3 main + prepare_varlen_num_blocks + FlashAttnFwdCombine + norm-gate (master paired FA3)`: read the replaced kernels' own us per shape (profile top_kernels) against the incumbent and the floor, and check which Milestone it reached. The next stage is `/hypothesize muse_attention_decode "<what to fix or tune>" --kind rewrite --depends-on full-verify-wgmma-s5-qfrag-reload --stage 6`; a slow or failed first cut is the expected start, not a do-not-retry.
+- beats-base-not-best: the change is not proven either way; a stacked hypothesis (`depends_on: full-verify-wgmma-s5-qfrag-reload`) that adds a further change in the same area is the only way to learn more (identical code is never re-run).
+

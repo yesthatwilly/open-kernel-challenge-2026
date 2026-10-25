@@ -1,0 +1,135 @@
+cket fold: (no-ticket A + combine) / ticket 1.049x; stages: 4 st / 5 st 0.977x
+[sk-diag] B=32: launching _pre_attention_kernel
+[sk-diag] B=32: timing stage-1 A + B
+[sk-diag] B=32 x 80000: 655 MB of K+V rows, grid 264, eager, cold L2, median of 10
+[sk-diag]   stage-1 A splitkv_attn_kernel            247.4 us  2.65 TB/s
+[sk-diag]   stage-1 B splitkv_combine_kernel          12.6 us  -> A+B   260.0 us
+[sk-diag]   stream-K + ticket, 4 st (timed path)     222.8 us  2.94 TB/s  (vs stage-1 out rel 1.9e-04)
+[sk-diag] B=32: timing stream-K no ticket + combine
+[sk-diag]   stream-K no ticket, 4 st             218.6 us  3.00 TB/s  + combine 11.6 us -> 230.2 us  (rel 1.9e-04)
+[sk-diag] B=32: timing stream-K + ticket, 5 stages
+[sk-diag]   stream-K + ticket, 5 st              223.9 us  2.93 TB/s  (rel 1.9e-04)
+[sk-diag] B=32 ratios (>1 = first is slower): stage-1 A+B / v2 1.167x; split/locality: stage-1 A / stream-K no-ticket A 1.132x; ticket fold: (no-ticket A + combine) / ticket 1.033x; stages: 4 st / 5 st 0.995x
+[sk3-diag] B=1: launching _pre_attention_kernel
+[sk3-diag] B=1 x 80000: 20 MB of K+V rows, eager, cold L2, median of 10
+[sk3-diag]   (a) single-level grid 2xSM (stage 2 as is)        53.6 us  0.38 TB/s  (rel L2 1.7e-03, finite True)
+[sk3-diag]   (b) single-level grid SM                          34.3 us  0.60 TB/s  (rel L2 1.7e-03, finite True)
+[sk3-diag]   (c) two-level grid SM (timed path)                22.9 us  0.90 TB/s  (rel L2 1.7e-03, finite True)
+[sk3-diag]   (d) two-level grid 2xSM                           24.4 us  0.84 TB/s  (rel L2 1.7e-03, finite True)
+[sk3-diag] fastest of the four: (c) two-level grid SM (timed path); timed path (c) is 22.9 us, (a) control 53.6 us, (c)/(a) 0.427x
+[sk3-diag] B=1: timing master FA3 (main + combine) and norm-gate
+[sk3-diag]   master FA3 main+combine    32.8 us + norm-gate 5.2 us = 38.0 us (pre-attention kernel excluded from both sides)
+[sk3-diag] B=16: launching _pre_attention_kernel
+[sk3-diag] B=16 x 80000: 328 MB of K+V rows, eager, cold L2, median of 10
+[sk3-diag]   two-level grid 2xSM at B=16 (diagnostic)         114.8 us  2.85 TB/s  (rel L2 1.6e-03, finite True)
+[sk3-diag]   single-level grid 2xSM at B=16 (stage 2)         107.0 us  3.06 TB/s  (rel L2 1.6e-03, finite True)
+PATH CHOSEN: full decode_1 streamk two-level
+[wgmma-verify] load_inline compiled in 33.9s; nvcc arch flags -gencode=arch=compute_90a,code=sm_90a only (TORCH_CUDA_ARCH_LIST=9.0a during the build), cflags ['-O3', '-gencode=arch=compute_90a,code=sm_90a', '-lineinfo']
+[wgmma-verify] device capability (9, 0); splitkv_verify_wgmma_kernel<ticket>: regs 127, local bytes 0, binaryVersion 90, ptxVersion 90, CTAs/SM 2; <B8>: regs 125, local bytes 0, binaryVersion 90, ptxVersion 90, CTAs/SM 2; B8 combine regs 35, local bytes 0; dynamic smem 99936 B (static 0, max dyn attr 99936)
+[wgmma-verify] ticket canary: B=2 kv_scale=1.0 grid=4 coherent=False; launching kernel_fn (pre-attention first)
+[wgmma-verify]   pre-attention (Triton) done; launching splitkv_verify_wgmma_kernel<ticket> grid 4
+[wgmma-verify]   splitkv_verify_wgmma_kernel done
+[wgmma-verify] ticket canary: rel L2 7.86e-03, finite True, ERROR WORD 0 (1: not sm_90a, 2: mbarrier wait timeout, 4: shape) -> PASS
+[wgmma-verify] ticket single-tile-lens_a-device: B=6 kv_scale=1.0 grid=device coherent=False; launching kernel_fn (pre-attention first)
+[wgmma-verify]   pre-attention (Triton) done; launching splitkv_verify_wgmma_kernel<ticket> grid 264
+[wgmma-verify]   splitkv_verify_wgmma_kernel done
+[wgmma-verify] ticket single-tile-lens_a-device: rel L2 4.79e-03, finite True, ERROR WORD 0 (1: not sm_90a, 2: mbarrier wait timeout, 4: shape) -> PASS
+[wgmma-verify] ticket single-tile-lens_a-device: second eager call identical True
+[wgmma-verify] ticket lens_a-grid3-kv1: B=6 kv_scale=1.0 grid=3 coherent=False; launching kernel_fn (pre-attention first)
+[wgmma-verify]   pre-attention (Triton) done; launching splitkv_verify_wgmma_kernel<ticket> grid 3
+[wgmma-verify]   splitkv_verify_wgmma_kernel done
+[wgmma-verify] ticket lens_a-grid3-kv1: rel L2 8.58e-03, finite True, ERROR WORD 0 (1: not sm_90a, 2: mbarrier wait timeout, 4: shape) -> PASS
+[wgmma-verify] ticket kv0.25-grid264: B=6 kv_scale=0.25 grid=264 coherent=False; launching kernel_fn (pre-attention first)
+[wgmma-verify]   pre-attention (Triton) done; launching splitkv_verify_wgmma_kernel<ticket> grid 264
+[wgmma-verify]   splitkv_verify_wgmma_kernel done
+[wgmma-verify] ticket kv0.25-grid264: rel L2 4.93e-03, finite True, ERROR WORD 0 (1: not sm_90a, 2: mbarrier wait timeout, 4: shape) -> PASS
+[wgmma-verify] ticket B1-2t: B=1 kv_scale=1.0 grid=1 coherent=False; launching kernel_fn (pre-attention first)
+[wgmma-verify]   pre-attention (Triton) done; launching splitkv_verify_wgmma_kernel<ticket> grid 1
+[wgmma-verify]   splitkv_verify_wgmma_kernel done
+[wgmma-verify] ticket B1-2t: rel L2 8.93e-03, finite True, ERROR WORD 0 (1: not sm_90a, 2: mbarrier wait timeout, 4: shape) -> PASS
+[wgmma-verify] ticket DIAG: launching the DBG kernel on the B1-2t data
+[wgmma-verify] ticket DIAG: DBG kernel done, error word 0
+[wgmma-verify] ticket DIAG tile-1 S vs fp32 reference: max abs err 5.482e-03 (max |S| 32.98), 0/8192 entries off -> S correct
+[wgmma-verify] ticket DIAG after tile 0: max |mA - ref| 7.530e-03, max l rel err 2.428e-03
+[wgmma-verify] ticket DIAG after tile 1: max |mA - ref| 7.530e-03, max l rel err 2.792e-03
+[wgmma-verify] ticket B1-4t: B=1 kv_scale=1.0 grid=1 coherent=False; launching kernel_fn (pre-attention first)
+[wgmma-verify]   pre-attention (Triton) done; launching splitkv_verify_wgmma_kernel<ticket> grid 1
+[wgmma-verify]   splitkv_verify_wgmma_kernel done
+[wgmma-verify] ticket B1-4t: rel L2 8.47e-03, finite True, ERROR WORD 0 (1: not sm_90a, 2: mbarrier wait timeout, 4: shape) -> PASS
+[wgmma-verify] ticket B1-17t: B=1 kv_scale=1.0 grid=1 coherent=False; launching kernel_fn (pre-attention first)
+[wgmma-verify]   pre-attention (Triton) done; launching splitkv_verify_wgmma_kernel<ticket> grid 1
+[wgmma-verify]   splitkv_verify_wgmma_kernel done
+[wgmma-verify] ticket B1-17t: rel L2 9.20e-03, finite True, ERROR WORD 0 (1: not sm_90a, 2: mbarrier wait timeout, 4: shape) -> PASS
+[wgmma-verify] ticket B1-34t: B=1 kv_scale=1.0 grid=1 coherent=False; launching kernel_fn (pre-attention first)
+[wgmma-verify]   pre-attention (Triton) done; launching splitkv_verify_wgmma_kernel<ticket> grid 1
+[wgmma-verify]   splitkv_verify_wgmma_kernel done
+[wgmma-verify] ticket B1-34t: rel L2 9.19e-03, finite True, ERROR WORD 0 (1: not sm_90a, 2: mbarrier wait timeout, 4: shape) -> PASS
+[wgmma-verify] ticket B1-4t-kv0.25: B=1 kv_scale=0.25 grid=1 coherent=False; launching kernel_fn (pre-attention first)
+[wgmma-verify]   pre-attention (Triton) done; launching splitkv_verify_wgmma_kernel<ticket> grid 1
+[wgmma-verify]   splitkv_verify_wgmma_kernel done
+[wgmma-verify] ticket B1-4t-kv0.25: rel L2 8.44e-03, finite True, ERROR WORD 0 (1: not sm_90a, 2: mbarrier wait timeout, 4: shape) -> PASS
+[wgmma-verify] ticket cross-2req-4t: B=2 kv_scale=1.0 grid=1 coherent=False; launching kernel_fn (pre-attention first)
+[wgmma-verify]   pre-attention (Triton) done; launching splitkv_verify_wgmma_kernel<ticket> grid 1
+[wgmma-verify]   splitkv_verify_wgmma_kernel done
+[wgmma-verify] ticket cross-2req-4t: rel L2 8.75e-03, finite True, ERROR WORD 0 (1: not sm_90a, 2: mbarrier wait timeout, 4: shape) -> PASS
+[wgmma-verify] ticket mid-1t-B1-3t-grid3: B=1 kv_scale=1.0 grid=3 coherent=False; launching kernel_fn (pre-attention first)
+[wgmma-verify]   pre-attention (Triton) done; launching splitkv_verify_wgmma_kernel<ticket> grid 3
+[wgmma-verify]   splitkv_verify_wgmma_kernel done
+[wgmma-verify] ticket mid-1t-B1-3t-grid3: rel L2 7.59e-03, finite True, ERROR WORD 0 (1: not sm_90a, 2: mbarrier wait timeout, 4: shape) -> PASS
+[wgmma-verify] ticket mid-1t-2req-grid3: B=2 kv_scale=1.0 grid=3 coherent=False; launching kernel_fn (pre-attention first)
+[wgmma-verify]   pre-attention (Triton) done; launching splitkv_verify_wgmma_kernel<ticket> grid 3
+[wgmma-verify]   splitkv_verify_wgmma_kernel done
+[wgmma-verify] ticket mid-1t-2req-grid3: rel L2 8.35e-03, finite True, ERROR WORD 0 (1: not sm_90a, 2: mbarrier wait timeout, 4: shape) -> PASS
+[wgmma-verify] ticket lens_a-grid3-kv0.25: B=6 kv_scale=0.25 grid=3 coherent=False; launching kernel_fn (pre-attention first)
+[wgmma-verify]   pre-attention (Triton) done; launching splitkv_verify_wgmma_kernel<ticket> grid 3
+[wgmma-verify]   splitkv_verify_wgmma_kernel done
+[wgmma-verify] ticket lens_a-grid3-kv0.25: rel L2 8.52e-03, finite True, ERROR WORD 0 (1: not sm_90a, 2: mbarrier wait timeout, 4: shape) -> PASS
+[wgmma-verify] ticket lens_a-grid7-kv1: B=6 kv_scale=1.0 grid=7 coherent=False; launching kernel_fn (pre-attention first)
+[wgmma-verify]   pre-attention (Triton) done; launching splitkv_verify_wgmma_kernel<ticket> grid 7
+[wgmma-verify]   splitkv_verify_wgmma_kernel done
+[wgmma-verify] ticket lens_a-grid7-kv1: rel L2 7.69e-03, finite True, ERROR WORD 0 (1: not sm_90a, 2: mbarrier wait timeout, 4: shape) -> PASS
+[wgmma-verify] ticket lens_a-grid61-kv0.25: B=6 kv_scale=0.25 grid=61 coherent=False; launching kernel_fn (pre-attention first)
+[wgmma-verify]   pre-attention (Triton) done; launching splitkv_verify_wgmma_kernel<ticket> grid 61
+[wgmma-verify]   splitkv_verify_wgmma_kernel done
+[wgmma-verify] ticket lens_a-grid61-kv0.25: rel L2 5.32e-03, finite True, ERROR WORD 0 (1: not sm_90a, 2: mbarrier wait timeout, 4: shape) -> PASS
+[wgmma-verify] ticket lens_b-device: B=13 kv_scale=1.0 grid=device coherent=False; launching kernel_fn (pre-attention first)
+[wgmma-verify]   pre-attention (Triton) done; launching splitkv_verify_wgmma_kernel<ticket> grid 264
+[wgmma-verify]   splitkv_verify_wgmma_kernel done
+[wgmma-verify] ticket lens_b-device: rel L2 7.46e-03, finite True, ERROR WORD 0 (1: not sm_90a, 2: mbarrier wait timeout, 4: shape) -> PASS
+[wgmma-verify] ticket lens_b-device: second eager call identical True
+[wgmma-verify] ticket lens_b-grid7-kv0.25: B=13 kv_scale=0.25 grid=7 coherent=False; launching kernel_fn (pre-attention first)
+[wgmma-verify]   pre-attention (Triton) done; launching splitkv_verify_wgmma_kernel<ticket> grid 7
+[wgmma-verify]   splitkv_verify_wgmma_kernel done
+[wgmma-verify] ticket lens_b-grid7-kv0.25: rel L2 8.07e-03, finite True, ERROR WORD 0 (1: not sm_90a, 2: mbarrier wait timeout, 4: shape) -> PASS
+[wgmma-verify] ticket coherent-lens_a-grid3: B=6 kv_scale=1.0 grid=3 coherent=True; launching kernel_fn (pre-attention first)
+[wgmma-verify]   pre-attention (Triton) done; launching splitkv_verify_wgmma_kernel<ticket> grid 3
+[wgmma-verify]   splitkv_verify_wgmma_kernel done
+[wgmma-verify] ticket coherent-lens_a-grid3: rel L2 1.33e-02, finite True, ERROR WORD 0 (1: not sm_90a, 2: mbarrier wait timeout, 4: shape) -> PASS
+[wgmma-verify] ticket coherent-lens_a-device: B=6 kv_scale=1.0 grid=device coherent=True; launching kernel_fn (pre-attention first)
+[wgmma-verify]   pre-attention (Triton) done; launching splitkv_verify_wgmma_kernel<ticket> grid 264
+[wgmma-verify]   splitkv_verify_wgmma_kernel done
+[wgmma-verify] ticket coherent-lens_a-device: rel L2 9.75e-03, finite True, ERROR WORD 0 (1: not sm_90a, 2: mbarrier wait timeout, 4: shape) -> PASS
+[wgmma-verify] ticket BISECT: 1-tile mid-request segments pass: lt-based edge mask and segment-start state cleared
+[wgmma-verify] ticket BISECT table: canary=ok, single-tile-lens_a-device=ok, lens_a-grid3-kv1=ok, kv0.25-grid264=ok, B1-2t=ok, B1-4t=ok, B1-17t=ok, B1-34t=ok, B1-4t-kv0.25=ok, cross-2req-4t=ok, mid-1t-B1-3t-grid3=ok, mid-1t-2req-grid3=ok, lens_a-grid3-kv0.25=ok, lens_a-grid7-kv1=ok, lens_a-grid61-kv0.25=ok, lens_b-device=ok, lens_b-grid7-kv0.25=ok, coherent-lens_a-grid3=ok, coherent-lens_a-device=ok
+[wgmma-verify] ticket two-state: eager warm-up of state A
+[wgmma-verify] ticket two-state: eager warm-up of state B
+[wgmma-verify] ticket two-state: capturing graph of state A
+[wgmma-verify] ticket two-state: capturing graph of state B
+[wgmma-verify] ticket two-state: step 0 refilled state A, replaying its graph
+[wgmma-verify] ticket two-state: step 0 state A rel L2 5.12e-03, finite True, error word 0
+[wgmma-verify] ticket two-state: step 1 refilled state B, replaying its graph
+[wgmma-verify] ticket two-state: step 1 state B rel L2 4.67e-03, finite True, error word 0
+[wgmma-verify] ticket two-state: step 2 refilled state A, replaying its graph
+[wgmma-verify] ticket two-state: step 2 state A rel L2 5.13e-03, finite True, error word 0
+[wgmma-verify] ticket two-state: step 3 refilled state B, replaying its graph
+[wgmma-verify] ticket two-state: step 3 state B rel L2 4.87e-03, finite True, error word 0
+[wgmma-verify] ticket two-state: step 4 refilled state B, replaying its graph
+[wgmma-verify] ticket two-state: step 4 state B rel L2 5.33e-03, finite True, error word 0
+[wgmma-verify] ticket two-state: step 5 refilled state A, replaying its graph
+[wgmma-verify] ticket two-state: step 5 state A rel L2 5.20e-03, finite True, error word 0
+[wgmma-verify] ticket two-state graph replays PASS (worst rel L2 5.33e-03)
+[wgmma-verify] TIMING B=16 (CUDA-graph replay, cold L2, ctx ~80K, empty-graph 5.3 us subtracted): wgmma 288.7 us vs master paired FA3 164.4 us -> master / wgmma 0.570x; wgmma vs master rel L2 6.91e-03, finite True, error word 0 (keep master, needs >= 1.05x and rel L2 < 3e-2)
+[wgmma-verify] TIMING B=32 (CUDA-graph replay, cold L2, ctx ~80K, empty-graph 5.4 us subtracted): wgmma 429.5 us vs master paired FA3 302.4 us -> master / wgmma 0.704x; wgmma vs master rel L2 8.62e-03, finite True, error word 0 (keep master, needs >= 1.05x and rel L2 < 3e-2)
+PATH CHOSEN: full verify B=16 band (1..24): master FA3, paired heads (self-check passed; routed only at >= 1.05x vs master paired FA3, see TIMING above)
+PATH CHOSEN: full verify B=32 band (25..64): master FA3, paired heads (self-check passed; routed only at >= 1.05x vs master paired FA3, see TIMING above)
+PATH CHOSEN: every other shape (sliding, verify, page 64, dp): master path, unchanged
