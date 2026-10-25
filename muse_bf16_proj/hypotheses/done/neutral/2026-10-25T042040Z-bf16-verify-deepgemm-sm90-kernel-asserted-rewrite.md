@@ -66,10 +66,10 @@ controls_for: null
 rewrite_stage: 1
 replaces: cuBLAS nvjet (+cublasLt splitKreduce) for qkv_gate, pooler, unpooler at m=65..256
 review: proceed
-status: running
+status: done
 review_at: 2026-10-25T042455Z
 review_companions: null
-stage: dispatched
+stage: harvested
 claimed_at: 2026-10-25T042455Z
 base_sha: e5548a78a3d321973c377dc21431b085c324a412
 base_blob: 970b415b746fa03cb92e419d270be92588273178
@@ -88,6 +88,13 @@ attempt_file: 2026-10-25T043744Z-check-bf16-verify-deepgemm-sm90-kernel-asserted
 prepared_at: 2026-10-25T043744Z
 job: 4c224bebdd384541
 dispatched_at: 2026-10-25T043751Z
+outcome: neutral
+verdict_detail: unproven-vs-best
+speedup: 1.222051031750983
+speedup_ci: [1.2037202662747182, 1.2403817972272475]
+harvested_at: 2026-10-25T053758Z
+best_at_harvest: 1.2215006063849365
+promotion: null
 ---
 
 # bf16-verify-deepgemm-sm90-kernel-asserted-rewrite
@@ -197,3 +204,54 @@ Confirmed unchanged:
 - Lint: OK with warnings (prepare-only syncs). py_compile is clean.
 
 Residual risk: the 6-instantiation cute TU may compile slowly enough to crowd prepare's 300 s, the build starts by 110 s and there is no cap on compile time. The blind header port (an untested BLOCK_N=48 tile, enum or epilogue names) may still be a VOID build. A genuine in-kernel hang still loses the 10-minute check.
+
+## Result
+
+- job `4c224bebdd384541` (check), status done, passed True, tests 9/9
+- speedup 1.2221x, 95% CI [1.2037, 1.2404], score 3953.02640764381 µs vs SGLang 4830.8 µs
+- best at harvest: {"speedup": 1.2215006063849365, "ci": [1.2031780972891624, 1.2398231154807104], "job": "1e90292c7b954d96"}; base result: muse_bf16_proj/hypotheses/done/neutral/bf16-restack-m16-swapab-router-swapab-m32.result.json
+- **outcome: neutral** (unproven-vs-best)
+- files: `muse_bf16_proj/hypotheses/done/neutral/bf16-verify-deepgemm-sm90-kernel-asserted-rewrite.result.json`, `muse_bf16_proj/hypotheses/done/neutral/bf16-verify-deepgemm-sm90-kernel-asserted-rewrite.patch`; branch `hyp/muse_bf16_proj/bf16-verify-deepgemm-sm90-kernel-asserted-rewrite`
+
+## Attribution
+
+| shape | w | base µs | hyp µs | delta | verdict |
+|---|---|---|---|---|---|
+| layer=qkv_gate load=decode_1 m=1 | 62 | 12.18 | 12.42 | 1.01 | flat |
+| layer=o load=decode_1 m=1 | 62 | 5.89 | 6.27 | 0.9778 | flat |
+| layer=pooler load=decode_1 m=1 | 62 | 18.84 | 18.71 | 1.0155 | flat |
+| layer=unpooler load=decode_1 m=1 | 62 | 6.15 | 5.75 | 1.0191 | flat |
+| layer=router load=decode_1 m=1 | 62 | 5.38 | 5.47 | 0.9896 | flat |
+| layer=qkv_gate load=decode_16 m=16 | 62 | 13.15 | 13.16 | 1.0073 | flat |
+| layer=o load=decode_16 m=16 | 62 | 6.23 | 6.25 | 0.9918 | flat |
+| layer=pooler load=decode_16 m=16 | 62 | 19.47 | 19.16 | 1.0095 | flat |
+| layer=unpooler load=decode_16 m=16 | 62 | 18.51 | 18.52 | 0.9947 | flat |
+| layer=router load=decode_16 m=16 | 62 | 5.47 | 5.78 | 0.9507 | lost |
+| layer=qkv_gate load=decode_32 m=32 | 62 | 14.19 | 14.2 | 0.9783 | flat |
+| layer=o load=decode_32 m=32 | 62 | 6.34 | 6.45 | 0.9627 | lost |
+| layer=pooler load=decode_32 m=32 | 62 | 19.73 | 19.84 | 0.992 | flat |
+| layer=unpooler load=decode_32 m=32 | 62 | 18.08 | 18.69 | 0.9813 | flat |
+| layer=router load=decode_32 m=32 | 62 | 6.2 | 6.11 | 1.0003 | flat |
+| layer=qkv_gate load=verify_1 m=8 | 62 | 12.5 | 12.93 | 1.0002 | flat |
+| layer=o load=verify_1 m=8 | 62 | 6.13 | 6.29 | 1.0032 | flat |
+| layer=pooler load=verify_1 m=8 | 62 | 18.89 | 18.92 | 1.0077 | flat |
+| layer=unpooler load=verify_1 m=8 | 62 | 6.0 | 5.49 | 1.044 | gained |
+| layer=router load=verify_1 m=8 | 62 | 5.47 | 5.16 | 1.0492 | gained |
+| layer=qkv_gate load=verify_16 m=128 | 62 | 17.05 | 17.25 | 0.9921 | flat |
+| layer=o load=verify_16 m=128 | 62 | 6.98 | 7.39 | 0.9935 | flat |
+| layer=pooler load=verify_16 m=128 | 62 | 25.0 | 24.69 | 1.0209 | flat |
+| layer=unpooler load=verify_16 m=128 | 62 | 19.96 | 19.77 | 1.0031 | flat |
+| layer=router load=verify_16 m=128 | 62 | 7.28 | 7.87 | 0.945 | lost |
+| layer=qkv_gate load=verify_32 m=256 | 62 | 19.69 | 19.26 | 1.0245 | flat |
+| layer=o load=verify_32 m=256 | 62 | 9.26 | 9.41 | 1.0067 | flat |
+| layer=pooler load=verify_32 m=256 | 62 | 31.19 | 30.8 | 0.9972 | flat |
+| layer=unpooler load=verify_32 m=256 | 62 | 24.42 | 24.22 | 1.0085 | flat |
+| layer=router load=verify_32 m=256 | 62 | 9.6 | 9.4 | 1.0051 | flat |
+
+gained on unpooler verify_1; router verify_1; lost on router decode_16, verify_16; o decode_32. Expected hit: 2/8. Noise ±1.5%.
+
+## Follow-ups
+
+- rewrite stage 1 of `cuBLAS nvjet (+cublasLt splitKreduce) for qkv_gate, pooler, unpooler at m=65..256`: read the replaced kernels' own us per shape (profile top_kernels) against the incumbent and the floor, and check which Milestone it reached. The next stage is `/hypothesize muse_bf16_proj "<what to fix or tune>" --kind rewrite --depends-on bf16-verify-deepgemm-sm90-kernel-asserted-rewrite --stage 2`; a slow or failed first cut is the expected start, not a do-not-retry.
+- unproven-vs-best: the change is not proven either way; a stacked hypothesis (`depends_on: bf16-verify-deepgemm-sm90-kernel-asserted-rewrite`) that adds a further change in the same area is the only way to learn more (identical code is never re-run).
+

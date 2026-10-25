@@ -1,0 +1,844 @@
+diff --git a/muse_bf16_proj/submission.py b/muse_bf16_proj/submission.py
+index 970b415..4891748 100644
+--- a/muse_bf16_proj/submission.py
++++ b/muse_bf16_proj/submission.py
+@@ -47,6 +47,10 @@ m64n16k16) and their own 16-row workspaces / tickets, routed BEFORE the m <= 16
+ keeps cuBLAS; every m >= 17 shape keeps its path.
+ """
+ 
++import hashlib
++import os
++import re
++import time
+ from typing import TypedDict
+ 
+ import torch
+@@ -985,10 +989,804 @@ def _swapab16_prepare(state: dict) -> None:
+             state[f"swapab16_cnt_{key}"].zero_()
+ 
+ 
++# ---------------------------------------------------------------------------------------------
++# DeepGEMM sm90 BF16 kernel, asserted (hypothesis bf16-verify-deepgemm-sm90-kernel-asserted-
++# rewrite). Log tag "[dg]". The previous run (2d522d47) printed PATH CHOSEN deepgemm for every
++# pair but every m >= 128 kernel in the judge profile was cuBLAS nvjet, so this stage proves what
++# launches, with no profiler (no CUPTI):
++#   STEP A (prepare, untimed): print deep_gemm.bf16_gemm_nt's source or docstring and grep it for
++#     cublas; compare its output bit-for-bit with master's cuBLAS dispatch (identical output = it
++#     IS cuBLAS). The API route is used only if the source shows no cuBLAS AND the outputs differ
++#     AND the numeric self-check passes.
++#   STEP B (the real experiment): build DeepGEMM's own sm90 BF16 kernel from the header tree in
++#     the image (impls/sm90_bf16_gemm.cuh + bundled CUTLASS/CuTe) with load_inline for sm_90a
++#     only, instantiate it per (layer, m-group) with DeepGEMM's own tile/stage/multicast
++#     heuristics ported to Python, M runtime (SHAPE_M = 0) with TMA OOB zero-fill and clipped TMA
++#     stores, N and K compile-time. The launcher is ours, so cudaFuncGetAttributes on the
++#     instantiated kernel (regs, local bytes, smem) plus the prepare-time "[dg] ROUTE ..." probe
++#     through kernel_fn are the proof of what ran.
++# The template/argument list is read from the installed header and every name must be one this
++# port knows; any mismatch prints the signature and keeps master (a VOID run, not a design result).
++# Routed ONLY at the exact m values built and verified (DG2_MS); everything else is master.
++# ---------------------------------------------------------------------------------------------
++DG2_LAYERS = ("pooler", "qkv_gate", "unpooler")   # o stays on cuBLAS (short K)
++DG2_SPEC = {"qkv_gate": (2304, 8192), "pooler": (4096, 8192), "unpooler": (8192, 4096)}
++DG2_MS = (128, 130, 200, 256)
++DG2_GROUPS = ((128,), (130, 200, 256))   # one instantiation per (layer, group); group-2 m % 128 != 0
++DG2_NUM_SMS = 132
++DG2_BLOCK_K = 64
++DG2_SMEM_CAP = 232448
++DG2_REL_L2 = 3e-3
++DG2_PROBE_TOL = 1e-4
++DG2_BUILD_START_MAX_S = 110.0    # do not start the header build later than this into prepare()
++DG2_CHECK_STOP_S = 270.0         # stop self-checking past this much of prepare()'s 300 s
++DG2_LOCAL_BYTES_MAX = 512        # reject a variant whose local (spill / stack) bytes exceed this
++_DG2_CLUSTER_ARCH = "9.0a"
++
++try:
++    import deep_gemm as _dg2_mod
++except Exception as _e:  # missing or broken install: master path
++    _dg2_mod = None
++    print(f"[dg] deep_gemm import failed ({type(_e).__name__}: {_e}); master kept", flush=True)
++
++
++def _dg2_flush(msg: str) -> None:
++    print(f"[dg] {msg}", flush=True)
++
++
++DG2_WATCHDOG_S = 10.0   # a launch of these GEMMs takes microseconds; 10 s means a hung kernel
++
++
++class _Dg2Hang(BaseException):
++    """A [dg] launch did not complete within DG2_WATCHDOG_S (DeepGEMM's mbarrier waits are
++    unbounded). A hung kernel cannot be killed, so the run is lost either way; this only makes the
++    log say so early and stops issuing more [dg] work. BaseException so the per-pair
++    `except Exception` handlers do not swallow it; _dg2_prepare catches it."""
++
++
++def _dg2_sync(label: str) -> None:
++    """prepare()-only: host-side watchdog on the current stream (event polling), then sync."""
++    ev = torch.cuda.Event()
++    ev.record()
++    t = time.perf_counter()
++    while not ev.query():
++        if time.perf_counter() - t > DG2_WATCHDOG_S:
++            _dg2_flush(f"WATCHDOG: {label} not complete after {DG2_WATCHDOG_S:.0f} s: the kernel is "
++                       f"hung (unbounded mbarrier wait). The CUDA context cannot recover; this run is "
++                       f"LOST (timeout expected). Stopping all [dg] work.")
++            raise _Dg2Hang(label)
++        time.sleep(0.002)
++    torch.cuda.synchronize()
++
++
++def _dg2_check(forward, layer: str, w: torch.Tensor, m: int, label: str) -> None:
++    """In-process self-check at this exact (layer, m): announce + sync + announce around each
++    launch (a fault names its launch), finite, rel L2 <= 3e-3 vs fp64, one-hot probe, then CUDA
++    graph capture + replay. Prints the bitwise comparison with master's cuBLAS output (information
++    only). Raises on any failure."""
++    dev = w.device
++    k = w.shape[1]
++    x = torch.randn((m, k), device=dev, dtype=torch.float32).to(torch.bfloat16)
++    _dg2_flush(f"launching {label} layer={layer} m={m} (eager, random x)")
++    out = forward(x)
++    _dg2_sync(f"{label} layer={layer} m={m} eager")
++    _dg2_flush(f"done      {label} layer={layer} m={m} (eager, random x)")
++    ref = x.double() @ w.double().T
++    of = out.double()
++    if not bool(torch.isfinite(of).all()):
++        raise RuntimeError("non-finite output")
++    rel = float((of - ref).norm() / ref.norm().clamp_min(1e-30))
++    if not rel <= DG2_REL_L2:
++        raise RuntimeError(f"rel L2 {rel:.3e} > {DG2_REL_L2}")
++    cub = _bf16_gemm_dispatch_impl(x, w, None)
++    bit_equal = bool(torch.equal(out, cub))
++    # One-hot probe: each row selects one weight column exactly (products by 1.0 are exact).
++    cols = (torch.arange(m, device=dev) * 37 + 5) % k
++    xp = torch.zeros((m, k), device=dev, dtype=torch.bfloat16)
++    xp[torch.arange(m, device=dev), cols] = 1.0
++    refp = w[:, cols].T.float()
++    _dg2_flush(f"launching {label} layer={layer} m={m} (eager, one-hot probe)")
++    outp = forward(xp).float()
++    _dg2_sync(f"{label} layer={layer} m={m} probe")
++    _dg2_flush(f"done      {label} layer={layer} m={m} (eager, one-hot probe)")
++    perr = float((outp - refp).abs().max() / refp.abs().max().clamp_min(1e-30))
++    if not perr <= DG2_PROBE_TOL:
++        raise RuntimeError(f"one-hot probe err {perr:.3e} > {DG2_PROBE_TOL}")
++    side = torch.cuda.Stream()
++    side.wait_stream(torch.cuda.current_stream())
++    with torch.cuda.stream(side):
++        forward(x)
++    torch.cuda.current_stream().wait_stream(side)
++    torch.cuda.synchronize()
++    g = torch.cuda.CUDAGraph()
++    _dg2_flush(f"capturing {label} layer={layer} m={m}")
++    with torch.cuda.graph(g):
++        gout = forward(x)
++    g.replay()
++    _dg2_sync(f"{label} layer={layer} m={m} graph replay")
++    _dg2_flush(f"replayed  {label} layer={layer} m={m}")
++    grel = float((gout.double() - ref).norm() / ref.norm().clamp_min(1e-30))
++    if not grel <= DG2_REL_L2:
++        raise RuntimeError(f"graph replay rel L2 {grel:.3e} > {DG2_REL_L2}")
++    _dg2_flush(f"{label} layer={layer} m={m} OK rel_l2={rel:.2e} probe={perr:.1e} "
++               f"graph_rel_l2={grel:.2e} bitwise_equal_to_cublas={bit_equal}")
++
++
++# ---- STEP A: what does deep_gemm.bf16_gemm_nt launch? (no profiler) ---------------------------
++def _dg2_step_a(state: dict) -> dict:
++    """Print bf16_gemm_nt's source / docstring, grep it for cuBLAS, and compare its output bitwise
++    with master's cuBLAS dispatch on synthetic x at m in {128, 256} for every layer. Returns
++    {"fn", "cublas_in_source", "equal": {(layer, m): bool}, "api_genuine"}."""
++    res = {"fn": None, "cublas_in_source": None, "equal": {}, "api_genuine": False}
++    if _dg2_mod is None:
++        return res
++    fn = getattr(_dg2_mod, "bf16_gemm_nt", None)
++    if not callable(fn):
++        _dg2_flush("STEP A: deep_gemm.bf16_gemm_nt absent")
++        return res
++    res["fn"] = fn
++    import inspect
++    text = ""
++    try:
++        text = inspect.getsource(fn)
++        _dg2_flush(f"STEP A: bf16_gemm_nt source ({len(text)} chars):")
++        print(text[:3000], flush=True)
++    except Exception as e:
++        doc = getattr(fn, "__doc__", None) or ""
++        text = doc
++        _dg2_flush(f"STEP A: no python source ({type(e).__name__}: {e}); module={getattr(fn, '__module__', '?')} "
++                   f"doc={doc[:600]!r}")
++    try:
++        mod_file = getattr(_dg2_mod, "__file__", "")
++        _dg2_flush(f"STEP A: deep_gemm {getattr(_dg2_mod, '__version__', '?')} at {mod_file}")
++        cfg_names = [n for n in dir(_dg2_mod) if n.startswith(("get_", "set_")) or "config" in n.lower()]
++        _dg2_flush(f"STEP A: deep_gemm getters/setters: {cfg_names[:40]}")
++        envs = sorted(k for k in os.environ if k.startswith("DG_"))
++        _dg2_flush(f"STEP A: DG_* env set: {envs}")
++    except Exception as e:
++        _dg2_flush(f"STEP A: module info unavailable ({type(e).__name__}: {e})")
++    low = text.lower()
++    hits = [t for t in ("cublas", "cublaslt", "nvjet", "gemmsn") if t in low]
++    res["cublas_in_source"] = bool(hits)
++    _dg2_flush(f"STEP A: cuBLAS words in bf16_gemm_nt source/doc: {hits}")
++    dev = state["pooler"].device
++    for layer in DG2_LAYERS:
++        w = state[layer]
++        for m in (128, 256):
++            try:
++                x = torch.randn((m, w.shape[1]), device=dev, dtype=torch.float32).to(torch.bfloat16)
++                out = torch.empty((m, w.shape[0]), dtype=torch.bfloat16, device=dev)
++                _dg2_flush(f"STEP A launching bf16_gemm_nt layer={layer} m={m}")
++                fn(x, w, out)
++                torch.cuda.synchronize()
++                _dg2_flush(f"STEP A done      bf16_gemm_nt layer={layer} m={m}")
++                cub = _bf16_gemm_dispatch_impl(x, w, None)
++                torch.cuda.synchronize()
++                res["equal"][(layer, m)] = bool(torch.equal(out, cub))
++            except Exception as e:
++                _dg2_flush(f"STEP A layer={layer} m={m} call failed: {type(e).__name__}: {e}")
++                res["equal"][(layer, m)] = None
++    _dg2_flush(f"STEP A: bitwise equal to cuBLAS dispatch per pair: {res['equal']}")
++    all_equal = bool(res["equal"]) and all(v is not False for v in res["equal"].values())
++    res["api_genuine"] = (not res["cublas_in_source"]) and (not all_equal) and \
++        all(v is False for v in res["equal"].values())
++    _dg2_flush(f"STEP A verdict: api_genuine={res['api_genuine']} "
++               f"({'API looks like cuBLAS -> STEP B' if not res['api_genuine'] else 'genuine deep_gemm kernel'})")
++    return res
++
++
++# ---- STEP B: header build ----------------------------------------------------------------------
++def _dg2_scan_balanced(text: str, i: int, open_c: str, close_c: str):
++    """text[i] == open_c; return (inner text, index after the matching close)."""
++    depth = 0
++    for j in range(i, len(text)):
++        if text[j] == open_c:
++            depth += 1
++        elif text[j] == close_c:
++            depth -= 1
++            if depth == 0:
++                return text[i + 1:j], j + 1
++    raise ValueError("unbalanced")
++
++
++def _dg2_split_top(s: str):
++    out, depth, cur = [], 0, []
++    for ch in s:
++        if ch in "<([":
++            depth += 1
++        elif ch in ">)]":
++            depth -= 1
++        if ch == "," and depth == 0:
++            out.append("".join(cur).strip())
++            cur = []
++        else:
++            cur.append(ch)
++    tail = "".join(cur).strip()
++    if tail:
++        out.append(tail)
++    return out
++
++
++def _dg2_param_name(decl: str) -> str:
++    decl = decl.split("=")[0].strip()
++    return re.split(r"[\s*&]+", decl)[-1]
++
++
++def _dg2_parse_kernel(text: str):
++    """Find the __global__ kernel template in the header. Returns {"name", "tparams": [(decl,
++    name)], "fparams": [(decl, name)], "namespaced"}; raises if not found."""
++    clean = re.sub(r"//[^\n]*", "", text)
++    clean = re.sub(r"/\*.*?\*/", "", clean, flags=re.S)
++    # "__global__ void __launch_bounds__(a, b) name(" would otherwise parse as a kernel named
++    # __launch_bounds__ (DeepGEMM writes it both before and after `void`).
++    while True:
++        lb = re.search(r"__launch_bounds__\s*\(", clean)
++        if lb is None:
++            break
++        _inner, lb_end = _dg2_scan_balanced(clean, lb.end() - 1, "(", ")")
++        clean = clean[:lb.start()] + " " + clean[lb_end:]
++    m = None
++    for m_ in re.finditer(r"template\s*<", clean):
++        j = m_.end() - 1
++        try:
++            tp, after = _dg2_scan_balanced(clean, j, "<", ">")
++        except ValueError:
++            continue
++        tail = clean[after:after + 400]
++        if "__global__" in tail.split("(")[0] or "__global__" in tail[:60]:
++            km = re.search(r"\bvoid\s+(\w+)\s*\(", tail)
++            if km:
++                m = (tp, after, km)
++                break
++    if m is None:
++        raise ValueError("no __global__ template kernel found in header")
++    tp, after, km = m
++    fstart = after + km.end() - 1
++    fp, _ = _dg2_scan_balanced(clean, fstart, "(", ")")
++    tparams = [(d, _dg2_param_name(d)) for d in _dg2_split_top(tp)]
++    fparams = [(d, _dg2_param_name(d)) for d in _dg2_split_top(fp)]
++    return {"name": km.group(1), "tparams": tparams, "fparams": fparams,
++            "namespaced": "namespace deep_gemm" in clean}
++
++
++def _dg2_find_header():
++    """(include_dir, relative header path or None, listing). Looks for impls/*sm90*bf16*gemm*.cuh."""
++    if _dg2_mod is None:
++        return None, None, []
++    root = os.path.dirname(getattr(_dg2_mod, "__file__", "") or "")
++    inc = os.path.join(root, "include")
++    impls = os.path.join(inc, "deep_gemm", "impls")
++    listing = sorted(os.listdir(impls)) if os.path.isdir(impls) else []
++    _dg2_flush(f"header tree: include={inc} exists={os.path.isdir(inc)} impls={listing}")
++    pick = None
++    for name in listing:
++        if name == "sm90_bf16_gemm.cuh":
++            pick = name
++            break
++    if pick is None:
++        for name in listing:
++            if "sm90" in name and "bf16" in name and "gemm" in name and name.endswith(".cuh"):
++                pick = name
++                break
++    if pick is None:
++        return inc, None, listing
++    return inc, f"deep_gemm/impls/{pick}", listing
++
++
++def _dg2_grep_tree(inc: str, pattern: str, limit: int = 3):
++    hits = []
++    base = os.path.join(inc, "deep_gemm")
++    for dp, _dn, fns in os.walk(base):
++        for fn_ in sorted(fns):
++            if not fn_.endswith((".cuh", ".hpp", ".h")):
++                continue
++            try:
++                with open(os.path.join(dp, fn_), "r", errors="ignore") as f:
++                    t = f.read()
++            except Exception:
++                continue
++            for mm in re.finditer(pattern, t):
++                hits.append(mm)
++                if len(hits) >= limit:
++                    return hits
++    return hits
++
++
++def _dg2_pick_cfg(n: int, k: int, ms):
++    """DeepGEMM-style heuristic, ported: choose (BLOCK_M, BLOCK_N, multicast, on_a, stages) for a
++    persistent kernel over `ms` (the largest m sets the tile count) by a bytes-and-flops cost
++    model per wave. Block sizes divide n; multicast 2 needs an even number of blocks along the
++    clustered dimension for EVERY m in the group."""
++    mmax = max(ms)
++    best = None
++    for bm in (64, 128):
++        mb = -(-mmax // bm)
++        for bn in range(32, 257, 16):
++            if n % bn:
++                continue
++            smem_d = ((bm * bn * 2 + 1023) // 1024) * 1024
++            per_stage = (bm + bn) * DG2_BLOCK_K * 2 + 16
++            stages = min(12, (DG2_SMEM_CAP - 4096 - smem_d) // per_stage, k // DG2_BLOCK_K)
++            if stages < 3:
++                continue
++            # Cluster 1 only (audit): the port's per-CTA box split (BLOCK/mc) does not match
++            # DeepGEMM's sm90 multicast (rank 0 issues the full box); a tx-byte mismatch is an
++            # unbounded mbarrier hang. Multicast is a follow-up once the kernel is proven to run.
++            for mc, on_a in ((1, False),):
++                if mc == 2:
++                    if on_a and (n // bn) % 2:
++                        continue
++                    if (not on_a) and any(m % (2 * bm) for m in ms):
++                        continue
++                tiles = mb * (n // bn)
++                waves = -(-tiles // DG2_NUM_SMS)
++                a_bytes = bm * k * 2 / (2 if (mc == 2 and on_a) else 1)
++                b_bytes = bn * k * 2 / (2 if (mc == 2 and not on_a) else 1)
++                t_mem = (a_bytes + b_bytes) / 80e9
++                t_math = 2.0 * bm * bn * k / (800e12 / DG2_NUM_SMS)
++                cost = waves * max(t_mem, t_math)
++                key = (round(cost * 1e6, 2), -bm * bn, mc)
++                if best is None or key < best[0]:
++                    best = (key, dict(bm=bm, bn=bn, mc=mc, on_a=on_a, stages=int(stages),
++                                      tiles=tiles, waves=waves, cost_us=cost * 1e6))
++    if best is None:
++        raise ValueError(f"no legal config for n={n} k={k} ms={ms}")
++    return best[1]
++
++
++def _dg2_swizzle_bytes(block_n: int) -> int:
++    nbytes = block_n * 2
++    for s in (128, 64, 32):
++        if nbytes % s == 0:
++            return s
++    return 0
++
++
++def _dg2_make_variants():
++    variants = []
++    for layer in DG2_LAYERS:
++        n, k = DG2_SPEC[layer]
++        for grp in DG2_GROUPS:
++            c = _dg2_pick_cfg(n, k, grp)
++            c.update(layer=layer, n=n, k=k, ms=grp, id=len(variants))
++            c["swz_d"] = _dg2_swizzle_bytes(c["bn"])
++            c["tdn"] = c["bn"] if c["swz_d"] == 0 else c["swz_d"] // 2
++            c["math_threads"] = 128 if c["bm"] <= 64 else 256
++            c["smem_d"] = ((c["bm"] * c["bn"] * 2 + 1023) // 1024) * 1024
++            c["smem"] = min(DG2_SMEM_CAP, c["smem_d"] + c["stages"] * ((c["bm"] + c["bn"]) * DG2_BLOCK_K * 2 + 16) + 4096)
++            variants.append(c)
++    return variants
++
++
++def _dg2_gen_source(parsed: dict, header_rel: str, variants, gemm_enum: str, epi_type: str):
++    """Generate the .cu source from the parsed kernel signature. Returns (src, decls, functions).
++    Raises ValueError (naming the unknown parameter) if any template / function parameter is not
++    one this port knows how to fill."""
++    kq = ("deep_gemm::" if parsed["namespaced"] else "") + parsed["name"]
++    fn_lines, setup_lines = [], []
++    for v in variants:
++        vals = {
++            "SHAPE_M": "0u", "kShapeM": "0u",
++            "SHAPE_N": f"{v['n']}u", "kShapeN": f"{v['n']}u",
++            "SHAPE_K": f"{v['k']}u", "kShapeK": f"{v['k']}u",
++            "kNumGroups": "1u",
++            "BLOCK_M": f"{v['bm']}u", "BLOCK_N": f"{v['bn']}u", "BLOCK_K": f"{DG2_BLOCK_K}u",
++            "kSwizzleAMode": "128u", "kSwizzleBMode": "128u", "kSwizzleDMode": f"{v['swz_d']}u",
++            "kNumStages": f"{v['stages']}u",
++            "kNumLastStages": f"{(v['k'] // DG2_BLOCK_K) % v['stages']}u",
++            "kNumTMAThreads": "128u", "kNumMathThreads": f"{v['math_threads']}u",
++            "kNumTMAMulticast": f"{v['mc']}u", "kNumMulticast": f"{v['mc']}u",
++            "kIsTMAMulticastOnA": "true" if v["on_a"] else "false",
++            "kIsMulticastOnA": "true" if v["on_a"] else "false",
++            "kNumSMs": f"{DG2_NUM_SMS}u",
++            "kGemmType": gemm_enum, "epilogue_type_t": epi_type,
++            "kWithAccumulation": "false",
++            "kMajorA": "cute::UMMA::Major::K", "kMajorB": "cute::UMMA::Major::K",
++            "cd_dtype_t": "cutlass::bfloat16_t",
++        }
++        targs = []
++        for decl, name in parsed["tparams"]:
++            if name not in vals:
++                raise ValueError(f"unknown template parameter '{name}' ({decl!r})")
++            targs.append(vals[name])
++        args = []
++        for decl, name in parsed["fparams"]:
++            if name in ("grouped_layout", "tensor_map_buffer"):
++                args.append("nullptr")
++            elif name == "shape_m":
++                args.append("m")
++            elif name == "shape_n":
++                args.append(f"{v['n']}u")
++            elif name == "shape_k":
++                args.append(f"{v['k']}u")
++            elif name == "tensor_map_a":
++                args.append("ta")
++            elif name == "tensor_map_b":
++                args.append("tb")
++            elif name in ("tensor_map_cd", "tensor_map_d"):
++                args.append("td")
++            else:
++                raise ValueError(f"unknown kernel argument '{name}' ({decl!r})")
++        i = v["id"]
++        kern = f"&{kq}<{', '.join(targs)}>"
++        fn_lines.append(f"""
++static void dgh_run_v{i}(const CUtensorMap& ta, const CUtensorMap& tb, const CUtensorMap& td,
++                        uint32_t m, cudaStream_t s) {{
++    auto kern = {kern};
++    cudaLaunchConfig_t cfg = {{}};
++    cfg.gridDim = dim3({DG2_NUM_SMS}, 1, 1);
++    cfg.blockDim = dim3({128 + v['math_threads']}, 1, 1);
++    cfg.dynamicSmemBytes = {v['smem']};
++    cfg.stream = s;
++    cudaLaunchAttribute at[1];
++    at[0].id = cudaLaunchAttributeClusterDimension;
++    at[0].val.clusterDim.x = {v['mc']};
++    at[0].val.clusterDim.y = 1;
++    at[0].val.clusterDim.z = 1;
++    cfg.attrs = at;
++    cfg.numAttrs = 1;
++    cudaError_t e = cudaLaunchKernelEx(&cfg, kern, {', '.join(args)});
++    TORCH_CHECK(e == cudaSuccess, "dgh_run_v{i}: ", cudaGetErrorString(e));
++}}
++static std::vector<int64_t> dgh_setup_v{i}() {{
++    auto kern = {kern};
++    cudaError_t e = cudaFuncSetAttribute(kern, cudaFuncAttributeMaxDynamicSharedMemorySize, {v['smem']});
++    TORCH_CHECK(e == cudaSuccess, "dgh_setup_v{i} smem attr: ", cudaGetErrorString(e));
++    cudaFuncAttributes a;
++    e = cudaFuncGetAttributes(&a, kern);
++    TORCH_CHECK(e == cudaSuccess, "dgh_setup_v{i} attributes: ", cudaGetErrorString(e));
++    return {{(int64_t)a.numRegs, (int64_t)a.localSizeBytes, (int64_t)a.sharedSizeBytes,
++            (int64_t)a.maxDynamicSharedSizeBytes, (int64_t)a.binaryVersion, (int64_t)a.ptxVersion,
++            (int64_t)a.maxThreadsPerBlock, (int64_t)a.constSizeBytes}};
++}}""")
++        tbl = (f"{{{v['bm']}, {v['bn']}, {v['mc']}, {1 if v['on_a'] else 0}, {v['tdn']}, {v['swz_d']}, "
++               f"{v['n']}, {v['k']}}}")
++        setup_lines.append((f"dgh_run_v{i}", f"dgh_setup_v{i}", tbl))
++    nv = len(variants)
++    run_tbl = ", ".join(r for r, _s, _t in setup_lines)
++    setup_tbl = ", ".join(s for _r, s, _t in setup_lines)
++    cfg_tbl = ",\n    ".join(t for _r, _s, t in setup_lines)
++    src = f"""
++#if defined(__CUDA_ARCH__) && !defined(__CUDA_ARCH_FEAT_SM90_ALL)
++#error "dg: device pass is not sm_90a (a stray sm_90 gencode pass); this build must target sm_90a only"
++#endif
++#include <torch/types.h>
++#include <ATen/cuda/CUDAContext.h>
++#include <c10/cuda/CUDAException.h>
++#include <cuda.h>
++#include <cuda_runtime.h>
++#include <cstdint>
++#include <vector>
++#include <{header_rel}>
++
++typedef CUresult (*DgEncodeFn)(CUtensorMap*, CUtensorMapDataType, cuuint32_t, void*, const cuuint64_t*,
++                               const cuuint64_t*, const cuuint32_t*, const cuuint32_t*,
++                               CUtensorMapInterleave, CUtensorMapSwizzle, CUtensorMapL2promotion,
++                               CUtensorMapFloatOOBfill);
++
++static DgEncodeFn dgh_encode_fn() {{
++    static DgEncodeFn fn = nullptr;
++    if (fn == nullptr) {{
++        void* p = nullptr;
++        cudaDriverEntryPointQueryResult q;
++#if CUDART_VERSION >= 13000
++        cudaGetDriverEntryPointByVersion("cuTensorMapEncodeTiled", &p, 12000, cudaEnableDefault, &q);
++#elif CUDART_VERSION >= 12050
++        cudaGetDriverEntryPoint("cuTensorMapEncodeTiled", &p, cudaEnableDefault, &q);
++#else
++        cudaGetDriverEntryPoint("cuTensorMapEncodeTiled", &p, cudaEnableDefault);
++#endif
++        fn = reinterpret_cast<DgEncodeFn>(p);
++    }}
++    TORCH_CHECK(fn != nullptr, "cuTensorMapEncodeTiled entry point not found");
++    return fn;
++}}
++
++static CUtensorMapSwizzle dgh_swz(int bytes) {{
++    switch (bytes) {{
++        case 32: return CU_TENSOR_MAP_SWIZZLE_32B;
++        case 64: return CU_TENSOR_MAP_SWIZZLE_64B;
++        case 128: return CU_TENSOR_MAP_SWIZZLE_128B;
++        default: return CU_TENSOR_MAP_SWIZZLE_NONE;
++    }}
++}}
++
++static void dgh_encode2d(CUtensorMap* map, const void* ptr, uint64_t inner, uint64_t outer,
++                         uint32_t box_inner, uint32_t box_outer, int swz_bytes) {{
++    cuuint64_t dims[2] = {{inner, outer}};
++    cuuint64_t strides[1] = {{inner * 2}};
++    cuuint32_t box[2] = {{box_inner, box_outer}};
++    cuuint32_t es[2] = {{1, 1}};
++    CUresult r = dgh_encode_fn()(map, CU_TENSOR_MAP_DATA_TYPE_BFLOAT16, 2, const_cast<void*>(ptr), dims,
++                                 strides, box, es, CU_TENSOR_MAP_INTERLEAVE_NONE, dgh_swz(swz_bytes),
++                                 CU_TENSOR_MAP_L2_PROMOTION_L2_256B, CU_TENSOR_MAP_FLOAT_OOB_FILL_NONE);
++    TORCH_CHECK(r == CUDA_SUCCESS, "cuTensorMapEncodeTiled failed, CUresult ", (int)r);
++}}
++{''.join(fn_lines)}
++
++struct DghCfg {{ int bm, bn, mc, on_a, tdn, swz_d, n, k; }};
++typedef void (*DghRunFn)(const CUtensorMap&, const CUtensorMap&, const CUtensorMap&, uint32_t, cudaStream_t);
++typedef std::vector<int64_t> (*DghSetupFn)();
++static const int kDghNumVariants = {nv};
++static DghRunFn g_run[{nv}] = {{{run_tbl}}};
++static DghSetupFn g_setup[{nv}] = {{{setup_tbl}}};
++static const DghCfg g_cfg[{nv}] = {{
++    {cfg_tbl}
++}};
++static CUtensorMap g_tb[{nv}];
++
++int64_t dg2_num_variants() {{ return kDghNumVariants; }}
++
++// Weight (B) descriptor once, per variant; sets the max dynamic smem; returns
++// [regs, local bytes, static smem, max dynamic smem, binary ver, ptx ver, max threads, const bytes].
++std::vector<int64_t> dg2_set_weight(int64_t v, torch::Tensor w) {{
++    TORCH_CHECK(v >= 0 && v < kDghNumVariants, "bad variant");
++    const DghCfg& c = g_cfg[v];
++    TORCH_CHECK(w.is_cuda() && w.scalar_type() == torch::kBFloat16 && w.is_contiguous()
++                && w.size(0) == c.n && w.size(1) == c.k, "dg2_set_weight: bad weight");
++    uint32_t box_n = c.on_a ? (uint32_t)c.bn : (uint32_t)(c.bn / c.mc);
++    dgh_encode2d(&g_tb[v], w.data_ptr(), (uint64_t)c.k, (uint64_t)c.n, {DG2_BLOCK_K}, box_n, 128);
++    return g_setup[v]();
++}}
++
++// Per call: encodes the x (A) and out (D) descriptors from pointers and shapes only, then launches.
++void dg2_run(int64_t v, torch::Tensor x, torch::Tensor out) {{
++    TORCH_CHECK(v >= 0 && v < kDghNumVariants, "bad variant");
++    const DghCfg& c = g_cfg[v];
++    TORCH_CHECK(x.is_cuda() && x.scalar_type() == torch::kBFloat16 && x.is_contiguous() && x.size(1) == c.k,
++                "dg2_run: bad x");
++    TORCH_CHECK(out.is_cuda() && out.scalar_type() == torch::kBFloat16 && out.is_contiguous()
++                && out.size(0) == x.size(0) && out.size(1) == c.n, "dg2_run: bad out");
++    uint32_t m = (uint32_t)x.size(0);
++    CUtensorMap ta, td;
++    uint32_t box_m = c.on_a ? (uint32_t)(c.bm / c.mc) : (uint32_t)c.bm;
++    dgh_encode2d(&ta, x.data_ptr(), (uint64_t)c.k, (uint64_t)m, {DG2_BLOCK_K}, box_m, 128);
++    dgh_encode2d(&td, out.data_ptr(), (uint64_t)c.n, (uint64_t)m, (uint32_t)c.tdn, (uint32_t)c.bm, c.swz_d);
++    g_run[v](ta, g_tb[v], td, m, at::cuda::getCurrentCUDAStream());
++}}
++"""
++    decls = ("#include <torch/extension.h>\n#include <vector>\n"
++             "int64_t dg2_num_variants();\n"
++             "std::vector<int64_t> dg2_set_weight(int64_t v, torch::Tensor w);\n"
++             "void dg2_run(int64_t v, torch::Tensor x, torch::Tensor out);\n")
++    return src, decls, ["dg2_num_variants", "dg2_set_weight", "dg2_run"]
++
++
++def _dg2_build(state: dict, t0: float):
++    """Locate and parse the header, generate + build the extension. Returns (module, variants) or
++    None (loudly) so the caller keeps master."""
++    inc, header_rel, listing = _dg2_find_header()
++    if inc is None or header_rel is None:
++        _dg2_flush("header absent: impls/sm90_bf16_gemm.cuh not found in the installed deep_gemm; "
++                   "VOID RUN (this measures master, not DeepGEMM's kernel)")
++        return None
++    with open(os.path.join(inc, header_rel), "r", errors="ignore") as f:
++        text = f.read()
++    try:
++        parsed = _dg2_parse_kernel(text)
++    except Exception as e:
++        _dg2_flush(f"header parse failed ({type(e).__name__}: {e}); VOID RUN")
++        return None
++    _dg2_flush(f"header {header_rel}: kernel={parsed['name']} namespaced={parsed['namespaced']}")
++    _dg2_flush("template params: " + " | ".join(" ".join(d.split()) for d, _n in parsed["tparams"]))
++    _dg2_flush("kernel params: " + " | ".join(" ".join(d.split()) for d, _n in parsed["fparams"]))
++    gemm_enum = "deep_gemm::GemmType::Normal"
++    epi_type = "deep_gemm::EpilogueIdentity"
++    try:
++        hit = _dg2_grep_tree(inc, r"enum\s+class\s+GemmType\s*\{([^}]*)\}", 1)
++        if hit:
++            names = [t.strip().split("=")[0].strip() for t in hit[0].group(1).split(",") if t.strip()]
++            _dg2_flush(f"GemmType enumerators: {names}")
++            if "Normal" in names:
++                gemm_enum = "deep_gemm::GemmType::Normal"
++        ehit = _dg2_grep_tree(inc, r"struct\s+(Epilogue\w+)", 6)
++        enames = [h.group(1) for h in ehit]
++        _dg2_flush(f"epilogue types in tree: {enames}")
++        if enames and "EpilogueIdentity" not in enames:
++            epi_type = f"deep_gemm::{enames[0]}"
++    except Exception as e:
++        _dg2_flush(f"enum/epilogue scan failed ({type(e).__name__}: {e}); using defaults")
++    variants = _dg2_make_variants()
++    for v in variants:
++        _dg2_flush(f"variant {v['id']} layer={v['layer']} ms={v['ms']} n={v['n']} k={v['k']}: "
++                   f"BLOCK_M={v['bm']} BLOCK_N={v['bn']} multicast={v['mc']} on_A={v['on_a']} "
++                   f"stages={v['stages']} swizzle_d={v['swz_d']} math_threads={v['math_threads']} "
++                   f"tiles={v['tiles']} waves={v['waves']} model_us={v['cost_us']:.1f} smem={v['smem']}")
++    try:
++        src, decls, funcs = _dg2_gen_source(parsed, header_rel, variants, gemm_enum, epi_type)
++    except ValueError as e:
++        _dg2_flush(f"signature mismatch, cannot instantiate: {e}; VOID RUN (read the template/kernel "
++                   f"params printed above and extend the port)")
++        return None
++    if time.perf_counter() - t0 > DG2_BUILD_START_MAX_S:
++        _dg2_flush(f"build skipped: {time.perf_counter() - t0:.0f} s of prepare() already used")
++        return None
++    from torch.utils.cpp_extension import load_inline
++    tag = hashlib.md5(src.encode()).hexdigest()[:10]
++    flags = ["-std=c++20", "-O3", "-DNDEBUG", "--expt-relaxed-constexpr", "--expt-extended-lambda",
++             "-lineinfo", "-gencode=arch=compute_90a,code=sm_90a",
++             "-U__CUDA_NO_HALF_OPERATORS__", "-U__CUDA_NO_HALF_CONVERSIONS__",
++             "-U__CUDA_NO_HALF2_OPERATORS__", "-U__CUDA_NO_BFLOAT16_CONVERSIONS__"]
++    _dg2_flush(f"building load_inline dg2_sm90_bf16_{tag}: TORCH_CUDA_ARCH_LIST={_DG2_CLUSTER_ARCH} "
++               f"nvcc flags={flags} -I{inc}")
++    prev = os.environ.get("TORCH_CUDA_ARCH_LIST")
++    os.environ["TORCH_CUDA_ARCH_LIST"] = _DG2_CLUSTER_ARCH
++    tb = time.perf_counter()
++    try:
++        mod = load_inline(name=f"dg2_sm90_bf16_{tag}", cpp_sources=[decls], cuda_sources=[src],
++                          functions=funcs, extra_cflags=["-O2", "-std=c++20"], extra_cuda_cflags=flags,
++                          extra_include_paths=[inc], with_cuda=True, verbose=False)
++    except Exception as e:
++        msg = str(e)
++        _dg2_flush(f"build FAILED after {time.perf_counter() - tb:.1f} s ({type(e).__name__}); "
++                   f"tail of error:\n{msg[-3000:]}\nVOID RUN (master kept)")
++        return None
++    finally:
++        if prev is None:
++            os.environ.pop("TORCH_CUDA_ARCH_LIST", None)
++        else:
++            os.environ["TORCH_CUDA_ARCH_LIST"] = prev
++    _dg2_flush(f"build OK: load_inline compiled in {time.perf_counter() - tb:.1f} s")
++    return mod, variants
++
++
++def _dg2_prepare(state: dict, t0: float) -> None:
++    """STEP A, then (if the API is not a genuine deep_gemm kernel) STEP B. state['dg2_route'] maps
++    (layer, m) -> ("api", fn) or ("header", variant id, mod) for every pair that passed everything;
++    a pair absent from it runs master. Never raises."""
++    state["dg2_route"] = {}
++    try:
++        return _dg2_prepare_body(state, t0)
++    except _Dg2Hang as e:
++        state["dg2_route"] = {}
++        _dg2_flush(f"HANG at {e}: no pair routed; the run is lost (GPU work queued behind a hung kernel)")
++
++
++def _dg2_route_probe(state: dict, route: dict) -> None:
++    """prepare()-only proof that kernel_fn reaches the [dg] branch: for every routed (layer, m) call
++    kernel_fn itself on synthetic x with the judge's cfg, and compare bitwise with a direct call of
++    the branch (_dg2_forward, deterministic: no split-K) and with master's cuBLAS dispatch. kernel_fn
++    holds no flag or print; a pair whose kernel_fn call raises is dropped from the route."""
++    for (layer, m) in sorted(route):
++        ent = route[(layer, m)]
++        w = state[layer]
++        try:
++            x = torch.randn((m, w.shape[1]), device=w.device, dtype=torch.float32).to(torch.bfloat16)
++            cfg = {"m": m, "n": int(w.shape[0]), "k": int(w.shape[1]), "layer": layer}
++            if _dg2_route_ok(state, layer, x, cfg) is not ent:
++                raise RuntimeError("gate does not select the route entry")
++            got = kernel_fn({"x": x, "config": cfg}, state)
++            direct = _dg2_forward(ent, state, layer, x)
++            cub = _bf16_gemm_dispatch_impl(x, w, None)
++            _dg2_sync(f"route probe {layer} m={m}")
++            taken = bool(torch.equal(got, direct))
++            distinct = not bool(torch.equal(direct, cub))
++            verdict = ("TAKEN" if (taken and distinct) else
++                       "INCONCLUSIVE (deepgemm == cuBLAS bitwise)" if taken else "NOT TAKEN")
++            _dg2_flush(f"ROUTE {verdict} {layer} m={m} path={ent[0]} (prepare probe through kernel_fn: "
++                       f"kernel_fn==branch {taken}, branch!=cuBLAS {distinct})")
++        except Exception as e:
++            route.pop((layer, m), None)
++            _dg2_flush(f"route probe {layer} m={m} FAILED ({type(e).__name__}: {e}); pair DISABLED")
++
++
++def _dg2_prepare_body(state: dict, t0: float) -> None:
++    try:
++        step_a = _dg2_step_a(state)
++    except Exception as e:
++        _dg2_flush(f"STEP A failed ({type(e).__name__}: {e}); treating the API as unusable")
++        step_a = {"fn": None, "api_genuine": False}
++    route = {}
++    if step_a.get("api_genuine"):
++        fn = step_a["fn"]
++        for layer in DG2_LAYERS:
++            w_l = state[layer]
++
++            def api_fwd(x, _fn=fn, _w=w_l):
++                out = torch.empty((x.shape[0], _w.shape[0]), dtype=torch.bfloat16, device=x.device)
++                _fn(x, _w, out)
++                return out
++            for m in DG2_MS:
++                if time.perf_counter() - t0 > DG2_CHECK_STOP_S:
++                    break
++                try:
++                    _dg2_check(api_fwd, layer, w_l, m, "deepgemm-api")
++                    route[(layer, m)] = ("api", fn)
++                except Exception as e:
++                    _dg2_flush(f"api layer={layer} m={m} DISABLED: {type(e).__name__}: {e}")
++    else:
++        built = None
++        try:
++            built = _dg2_build(state, t0)
++        except Exception as e:
++            _dg2_flush(f"STEP B failed ({type(e).__name__}: {e}); master kept")
++        if built is not None:
++            mod, variants = built
++            ok_variant = {}
++            for v in variants:
++                layer = v["layer"]
++                w = state[layer]
++                try:
++                    if not (tuple(w.shape) == (v["n"], v["k"]) and w.dtype == torch.bfloat16
++                            and w.is_contiguous()):
++                        raise RuntimeError("unexpected weight layout")
++                    a = list(mod.dg2_set_weight(v["id"], w))
++                    _dg2_flush(f"variant {v['id']} layer={layer} ms={v['ms']} attributes: regs={a[0]} "
++                               f"local_bytes={a[1]} static_smem={a[2]} max_dyn_smem={a[3]} "
++                               f"sass_arch=sm_{a[4]} ptx={a[5]} max_threads={a[6]} const={a[7]}")
++                    if a[4] != 90:
++                        raise RuntimeError(f"binaryVersion {a[4]} != 90")
++                    if a[1] > DG2_LOCAL_BYTES_MAX:
++                        raise RuntimeError(f"spills/local {a[1]} B > {DG2_LOCAL_BYTES_MAX}")
++                    ok_variant[v["id"]] = v
++                except Exception as e:
++                    _dg2_flush(f"variant {v['id']} layer={layer} ms={v['ms']} REJECTED: "
++                               f"{type(e).__name__}: {e}")
++            for v in variants:
++                if v["id"] not in ok_variant:
++                    continue
++                layer = v["layer"]
++                w = state[layer]
++
++                def hdr_fwd(x, _vid=v["id"], _w=w, _mod=mod):
++                    out = torch.empty((x.shape[0], _w.shape[0]), dtype=torch.bfloat16, device=x.device)
++                    _mod.dg2_run(_vid, x, out)
++                    return out
++                for m in v["ms"]:
++                    if time.perf_counter() - t0 > DG2_CHECK_STOP_S:
++                        _dg2_flush(f"layer={layer} m={m} skipped: prepare budget reached")
++                        continue
++                    try:
++                        _dg2_check(hdr_fwd, layer, w, m, f"deepgemm-header v{v['id']}")
++                        route[(layer, m)] = ("header", v["id"], mod)
++                    except Exception as e:
++                        _dg2_flush(f"header layer={layer} m={m} DISABLED: {type(e).__name__}: {e}")
++    state["dg2_route"] = route
++    _dg2_route_probe(state, route)
++    for layer in DG2_LAYERS:
++        for m in DG2_MS:
++            ent = route.get((layer, m))
++            if ent is None:
++                _dg2_flush(f"PATH CHOSEN {layer} m={m}: master KERNEL=cublas-nvjet (_bf16_gemm_dispatch_impl)")
++            elif ent[0] == "api":
++                _dg2_flush(f"PATH CHOSEN {layer} m={m}: deepgemm-api KERNEL=deep_gemm.bf16_gemm_nt")
++            else:
++                _dg2_flush(f"PATH CHOSEN {layer} m={m}: deepgemm-header KERNEL=sm90_bf16_gemm_impl v{ent[1]}")
++    if not route:
++        _dg2_flush("NO pair routed: this run measures master (VOID, not a design result)")
++
++
++def _dg2_route_ok(state: dict, layer: str, x: torch.Tensor, cfg):
++    """cfg / shape gate only: an exactly built-and-verified (layer, m), full-width n, contiguous
++    bf16 x. Returns the route entry or None."""
++    route = state.get("dg2_route")
++    if not route:
++        return None
++    ent = route.get((layer, cfg["m"]))
++    if ent is None:
++        return None
++    w = state[layer]
++    if (cfg["n"] == w.shape[0] and x.dim() == 2 and x.shape[0] == cfg["m"] and x.shape[1] == w.shape[1]
++            and x.dtype == torch.bfloat16 and x.is_contiguous() and x.data_ptr() % 16 == 0):
++        return ent
++    return None
++
++
++def _dg2_forward(ent, state: dict, layer: str, x: torch.Tensor) -> torch.Tensor:
++    w = state[layer]
++    out = torch.empty((x.shape[0], w.shape[0]), dtype=torch.bfloat16, device=x.device)
++    if ent[0] == "api":
++        ent[1](x, w, out)
++    else:
++        ent[2].dg2_run(ent[1], x, out)
++    return out
++
++
+ def prepare(weights: Weights) -> dict:
+     """Called once, untimed. Keep the bf16 weights as they are (contiguous), build the router's
+     hi + lo bf16 split as [256, 8192] row-major (N x K), and pre-compile every m-bucket of the
+     router kernel on synthetic bf16 x so the timed call never compiles."""
++    t_prepare0 = time.perf_counter()
+     state = {name: w.contiguous() for name, w in weights.items()}
+     router = state["router"]
+     hi = router.to(torch.bfloat16).contiguous()
+@@ -1041,6 +1839,12 @@ def prepare(weights: Weights) -> dict:
+     _swapab_prepare(state)
+     # (6) Swap-AB, BLOCK_T 16, at m <= 16 for pooler / qkv_gate / o and the unpooler slice.
+     _swapab16_prepare(state)
++    # (7) DeepGEMM sm90 BF16 kernel, asserted (last, so the prepare-time guards see all warm-ups).
++    try:
++        _dg2_prepare(state, t_prepare0)
++    except Exception as e:
++        _dg2_flush(f"prepare failed ({type(e).__name__}: {e}); master kept")
++        state["dg2_route"] = {}
+     return state
+ 
+ 
+@@ -1066,6 +1870,10 @@ def kernel_fn(data: Inputs, state: dict) -> torch.Tensor:
+             and _swapab_route_ok(layer, x, state[layer], cfg)):
+         ws, cnt = _swapab_buffers(state, layer)
+         return _swapab_forward(layer, x, state[layer], ws, cnt, state["swapab_stages"][layer])
++    if layer in DG2_LAYERS:
++        ent = _dg2_route_ok(state, layer, x, cfg)
++        if ent is not None:
++            return _dg2_forward(ent, state, layer, x)
+     if layer != "router":
+         # The unpooler's slice is its first n rows (all of them above 8 tokens).
+         return _bf16_gemm_dispatch_impl(x, state[layer][: cfg["n"]], None)
