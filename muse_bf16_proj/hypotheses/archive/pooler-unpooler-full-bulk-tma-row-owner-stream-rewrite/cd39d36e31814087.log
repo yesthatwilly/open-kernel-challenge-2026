@@ -1,0 +1,12 @@
+[swapab] layer=pooler m=32 N=4096 K=8192 SPLIT_K=2 BLOCK_K=256 stages=4: n_regs=96 n_spills=0 wgmma=16 mma.sync=0 cp.async=106
+[swapab] layer=qkv_gate m=32 N=2304 K=8192 SPLIT_K=4 BLOCK_K=128 stages=4: n_regs=56 n_spills=0 wgmma=8 mma.sync=0 cp.async=58
+[swapab] layer=unpooler m=32 N=8192 K=4096 SPLIT_K=1 BLOCK_K=256 stages=4: n_regs=96 n_spills=0 wgmma=16 mma.sync=0 cp.async=106
+[swapab] layer=o m=32 N=8192 K=1024 SPLIT_K=1 BLOCK_K=256 stages=4: n_regs=96 n_spills=0 wgmma=16 mma.sync=0 cp.async=106
+[bulk] arch flags passed to nvcc: ['-gencode=arch=compute_90a,code=sm_90a']
+[bulk] build FAILED (RuntimeError: e PyTorch.
+    5 | #error C++20 or later compatible compiler is required to use PyTorch.
+      |  ^~~~~
+[2/3] ccache c++ -MMD -MF main.o.d -DTORCH_EXTENSION_NAME=okc_bf16_bulk_rowown_s1 -DTORCH_API_INCLUDE_EXTENSION_H -isystem /opt/sglang/lib/python3.12/site-packages/torch/include -isystem /opt/sglang/lib/python3.12/site-packages/torch/include/torch/csrc/api/include -isystem /usr/local/cuda/include -isystem /usr/include/python3.12 -fPIC -std=c++20 -c /tmp/muse_bf16_proj-m2henu9a/sandbox/cache/torch_extensions/okc_bf16_bulk_rowown_s1/main.cpp -o main.o 
+ninja: build stopped: subcommand failed.
+)
+[bulk] DISABLED: no extension; master paths

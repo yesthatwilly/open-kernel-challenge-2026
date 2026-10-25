@@ -103,10 +103,10 @@ controls_for: null
 rewrite_stage: 1
 replaces: pooler m<=32 (_bf16_splitk_kernel m<=16 19.0-19.6 us, _bf16_swapab_kernel m=32 20.7 us) and unpooler-full m=16/32 (nvjet 64x16 19.3 us, _bf16_swapab_kernel 18.7 us)
 review: proceed
-status: running
+status: done
 review_at: 2026-10-25T012031Z
 review_companions: null
-stage: dispatched
+stage: harvested
 claimed_at: 2026-10-25T012032Z
 base_sha: 0a2ef67eeb9be9dce45fed1c5dd5f4e4ba19537c
 base_blob: a8bb42ac483318e9fbc84bc7826a27b7a704d1fb
@@ -125,6 +125,13 @@ attempt_file: 2026-10-25T013045Z-check-pooler-unpooler-full-bulk-tma-row-owner-s
 prepared_at: 2026-10-25T013045Z
 job: cd39d36e31814087
 dispatched_at: 2026-10-25T013053Z
+outcome: regression
+verdict_detail: regression
+speedup: 1.1827696304198618
+speedup_ci: [1.1650280859635638, 1.2005111748761597]
+harvested_at: 2026-10-25T034134Z
+best_at_harvest: 1.2215006063849365
+promotion: null
 ---
 
 # pooler-unpooler-full-bulk-tma-row-owner-stream-rewrite
@@ -252,3 +259,53 @@ Fixes:
 okc_lint: OK with warnings (prepare-only host syncs). py_compile clean, __pycache__ removed.
 
 Residual risk: this is the extension's first-ever nvcc compile, so a template or PTX typo would leave master's paths running via DISABLED. Pooler m=32 will likely lag because each CTA re-reads all of x from L2.
+
+## Result
+
+- job `cd39d36e31814087` (check), status done, passed True, tests 9/9
+- speedup 1.1828x, 95% CI [1.1650, 1.2005], score 4084.311835336145 µs vs SGLang 4830.8 µs
+- best at harvest: {"speedup": 1.2215006063849365, "ci": [1.2031780972891624, 1.2398231154807104], "job": "60b20fd0bf924267"}; base result: muse_bf16_proj/hypotheses/done/neutral/bf16-restack-m16-swapab-router-swapab-m32.result.json
+- **outcome: regression** (regression)
+- files: `muse_bf16_proj/hypotheses/done/regression/pooler-unpooler-full-bulk-tma-row-owner-stream-rewrite.result.json`, `muse_bf16_proj/hypotheses/done/regression/pooler-unpooler-full-bulk-tma-row-owner-stream-rewrite.patch`; branch `hyp/muse_bf16_proj/pooler-unpooler-full-bulk-tma-row-owner-stream-rewrite`
+
+## Attribution
+
+| shape | w | base µs | hyp µs | delta | verdict |
+|---|---|---|---|---|---|
+| layer=qkv_gate load=decode_1 m=1 | 62 | 12.18 | 13.62 | 0.9137 | lost |
+| layer=o load=decode_1 m=1 | 62 | 5.89 | 6.62 | 0.8991 | lost |
+| layer=pooler load=decode_1 m=1 | 62 | 18.84 | 19.71 | 0.943 | lost |
+| layer=unpooler load=decode_1 m=1 | 62 | 6.15 | 6.39 | 0.9492 | lost |
+| layer=router load=decode_1 m=1 | 62 | 5.38 | 5.99 | 0.8986 | lost |
+| layer=qkv_gate load=decode_16 m=16 | 62 | 13.15 | 13.97 | 0.9308 | lost |
+| layer=o load=decode_16 m=16 | 62 | 6.23 | 6.86 | 0.934 | lost |
+| layer=pooler load=decode_16 m=16 | 62 | 19.47 | 19.94 | 0.9555 | lost |
+| layer=unpooler load=decode_16 m=16 | 62 | 18.51 | 18.72 | 0.9857 | flat |
+| layer=router load=decode_16 m=16 | 62 | 5.47 | 5.97 | 0.9256 | lost |
+| layer=qkv_gate load=decode_32 m=32 | 62 | 14.19 | 14.21 | 0.9916 | flat |
+| layer=o load=decode_32 m=32 | 62 | 6.34 | 6.74 | 0.982 | flat |
+| layer=pooler load=decode_32 m=32 | 62 | 19.73 | 19.85 | 0.9774 | flat |
+| layer=unpooler load=decode_32 m=32 | 62 | 18.08 | 18.84 | 0.9776 | flat |
+| layer=router load=decode_32 m=32 | 62 | 6.2 | 6.5 | 0.9474 | lost |
+| layer=qkv_gate load=verify_1 m=8 | 62 | 12.5 | 13.36 | 0.9348 | lost |
+| layer=o load=verify_1 m=8 | 62 | 6.13 | 6.41 | 0.9703 | flat |
+| layer=pooler load=verify_1 m=8 | 62 | 18.89 | 19.19 | 0.961 | lost |
+| layer=unpooler load=verify_1 m=8 | 62 | 6.0 | 5.98 | 1.0265 | flat |
+| layer=router load=verify_1 m=8 | 62 | 5.47 | 5.48 | 0.9864 | flat |
+| layer=qkv_gate load=verify_16 m=128 | 62 | 17.05 | 16.85 | 1.0051 | flat |
+| layer=o load=verify_16 m=128 | 62 | 6.98 | 7.31 | 0.9997 | flat |
+| layer=pooler load=verify_16 m=128 | 62 | 25.0 | 25.55 | 0.9971 | flat |
+| layer=unpooler load=verify_16 m=128 | 62 | 19.96 | 19.73 | 0.9939 | flat |
+| layer=router load=verify_16 m=128 | 62 | 7.28 | 7.11 | 1.0051 | flat |
+| layer=qkv_gate load=verify_32 m=256 | 62 | 19.69 | 20.28 | 0.9788 | flat |
+| layer=o load=verify_32 m=256 | 62 | 9.26 | 9.49 | 0.9964 | flat |
+| layer=pooler load=verify_32 m=256 | 62 | 31.19 | 29.83 | 0.9867 | flat |
+| layer=unpooler load=verify_32 m=256 | 62 | 24.42 | 24.53 | 0.9942 | flat |
+| layer=router load=verify_32 m=256 | 62 | 9.6 | 9.37 | 1.0195 | flat |
+
+lost on qkv_gate decode_1, decode_16, verify_1; o decode_1, decode_16; pooler decode_1, decode_16, verify_1; unpooler decode_1; router decode_1, decode_16, decode_32. Expected hit: 8/15. Noise ±1.5%.
+
+## Follow-ups
+
+- rewrite stage 1 of `pooler m<=32 (_bf16_splitk_kernel m<=16 19.0-19.6 us, _bf16_swapab_kernel m=32 20.7 us) and unpooler-full m=16/32 (nvjet 64x16 19.3 us, _bf16_swapab_kernel 18.7 us)`: read the replaced kernels' own us per shape (profile top_kernels) against the incumbent and the floor, and check which Milestone it reached. The next stage is `/hypothesize muse_bf16_proj "<what to fix or tune>" --kind rewrite --depends-on pooler-unpooler-full-bulk-tma-row-owner-stream-rewrite --stage 2`; a slow or failed first cut is the expected start, not a do-not-retry.
+

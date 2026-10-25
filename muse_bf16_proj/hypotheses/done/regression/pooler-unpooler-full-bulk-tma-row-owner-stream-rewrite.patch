@@ -1,0 +1,605 @@
+diff --git a/muse_bf16_proj/submission.py b/muse_bf16_proj/submission.py
+index a8bb42a..d2ef037 100644
+--- a/muse_bf16_proj/submission.py
++++ b/muse_bf16_proj/submission.py
+@@ -35,6 +35,13 @@ Swap-AB at 17 <= m <= 32 (hypothesis bf16-m32-swapab-wgmma-triton): all four bf1
+ _bf16_swapab_kernel, 64 weight rows on tl.dot's M side and the (<= 32) tokens on N, so Triton
+ can emit wgmma m64n32k16; pooler split-K 2, qkv_gate split-K 4 (same ticket reduce, transposed
+ workspace), unpooler / o full K. Every other shape keeps its path above.
++
++Bulk-TMA row-owner stream (hypothesis pooler-unpooler-full-bulk-tma-row-owner-stream-rewrite):
++pooler at 1 <= m <= 32 and the full unpooler (n = 8192) at 9 <= m <= 32 run one load_inline CUDA
++kernel (128 CTAs, bulk-copy producer warp + 4 mma.sync consumer warps, K whole per CTA, no
++split-K / workspace / ticket) over a lossless row-owner repack of the weight made in prepare();
++see the comment block above BULK_EXT_NAME. Self-check, cold-L2 timings, pure-read diagnostics and
++a print-only 3.8 TB/s kill-gate verdict run in prepare(); a self-check miss routes back to master.
+ """
+ 
+ from typing import TypedDict
+@@ -651,6 +658,563 @@ def _swapab_prepare(state: dict) -> None:
+     state["swapab_cnt_qkv"].zero_()
+ 
+ 
++# ---------------------------------------------------------------------------------------------
++# Bulk-TMA row-owner stream (hypothesis pooler-unpooler-full-bulk-tma-row-owner-stream-rewrite):
++# pooler (n=4096, k=8192) at 1 <= m <= 32 and the full unpooler (n=8192, k=4096) at 9 <= m <= 32.
++# One CUDA kernel (load_inline, mma.sync, plain sm_90 instructions), grid 128 CTAs, 1 CTA/SM,
++# 160 threads: warp 0 is the producer (cp.async.bulk + mbarrier full/empty ring, 6 stages), warps
++# 1-4 are consumers (each owns a quarter of every chunk's K). Each CTA owns R output rows (32 for
++# the pooler, 64 for the unpooler) over the WHOLE K: no split-K, no workspace, no ticket, no tail.
++# prepare() repacks each weight losslessly (a pure permutation of bf16 values) into
++# Wt[cta][kblock][row][64 k] with the 16 B segments of every 128 B row XOR-swizzled by (row & 7),
++# so a CTA's 512 KB is one contiguous span and each 16 KB chunk is one 1-D bulk copy that lands
++# ldmatrix-ready. The x chunk [m tokens x CKK] rides in the same slot (m row copies of CKK*2 B,
++# row stride padded by 16 B in smem). Slot columns >= m are never written: MMA columns are
++# independent and those accumulators are never stored, so stale smem there is harmless.
++# ---------------------------------------------------------------------------------------------
++BULK_EXT_NAME = "okc_bf16_bulk_rowown_s1"
++BULK_POOLER_N, BULK_POOLER_K = 4096, 8192
++BULK_UNPOOLER_N, BULK_UNPOOLER_K = 8192, 4096
++# This hypothesis's OWN gate constants (never derived from the other paths' bounds).
++BULK_POOLER_MIN_M, BULK_POOLER_MAX_M = 1, 32
++BULK_UNPOOLER_MIN_M, BULK_UNPOOLER_MAX_M = 9, 32
++# Every routed m bucket (NT 8 / 16 / 32) is checked at an interior m as well as its scored ends.
++BULK_SELFCHECK_MS = {"pooler": (1, 7, 8, 12, 16, 24, 32), "unpooler": (9, 16, 24, 32)}
++BULK_REL_L2 = 3e-3
++BULK_PROBE_TOL = 1e-4
++BULK_READ_GATE_TBS = 3.8   # in-run kill gate: cold pure-read below this disables the route
++BULK_STREAM_BYTES = 128 * 512 * 1024  # 67,108,864 B per layer
++BULK_FLUSH_BYTES = 256 * 1024 * 1024
++
++# Master's numbers (run 1602a4e947e64090) the review asked to restate; print-only.
++BULK_INCUMBENT_US = {("pooler", 1): 19.0, ("pooler", 8): 19.3, ("pooler", 16): 19.5,
++                     ("pooler", 32): 20.5, ("unpooler", 16): 18.5, ("unpooler", 32): 18.9}
++
++_BULK_CPP = r"""
++#include <torch/extension.h>
++#include <string>
++void bulk_run(torch::Tensor wt, torch::Tensor x, torch::Tensor out, torch::Tensor err,
++              torch::Tensor dummy, int64_t layer, int64_t m, int64_t mode);
++std::string bulk_info(int64_t layer, int64_t nt);
++"""
++
++_BULK_CUDA = r"""
++#include <torch/extension.h>
++#include <ATen/cuda/CUDAContext.h>
++#include <c10/cuda/CUDAException.h>
++#include <cuda_runtime.h>
++#include <cuda_bf16.h>
++#include <cstdint>
++#include <string>
++#include <sstream>
++
++#define BULK_STAGES 6
++#define BULK_WAIT_NS 500000000ULL   // every mbarrier wait is bounded to 0.5 s, then an error flag
++
++__device__ __forceinline__ uint32_t smem_u32(const void* p) {
++  return static_cast<uint32_t>(__cvta_generic_to_shared(p));
++}
++__device__ __forceinline__ void mbar_init(uint32_t a, uint32_t cnt) {
++  asm volatile("mbarrier.init.shared::cta.b64 [%0], %1;" :: "r"(a), "r"(cnt) : "memory");
++}
++__device__ __forceinline__ void mbar_expect_tx(uint32_t a, uint32_t tx) {
++  asm volatile("mbarrier.arrive.expect_tx.shared::cta.b64 _, [%0], %1;" :: "r"(a), "r"(tx) : "memory");
++}
++__device__ __forceinline__ void mbar_arrive(uint32_t a) {
++  asm volatile("mbarrier.arrive.shared::cta.b64 _, [%0];" :: "r"(a) : "memory");
++}
++__device__ __forceinline__ unsigned long long gtimer() {
++  unsigned long long t;
++  asm volatile("mov.u64 %0, %%globaltimer;" : "=l"(t));   // %%: literal % in operand asm
++  return t;
++}
++// Bounded wait: false after BULK_WAIT_NS (the caller sets the error flag and leaves the loop).
++__device__ __forceinline__ bool mbar_wait(uint32_t a, uint32_t parity) {
++  unsigned long long t0 = 0;
++  for (uint32_t it = 0;; ++it) {
++    uint32_t done;
++    asm volatile("{\n .reg .pred p;\n mbarrier.try_wait.parity.shared::cta.b64 p, [%1], %2;\n"
++                 " selp.u32 %0, 1, 0, p;\n}\n" : "=r"(done) : "r"(a), "r"(parity) : "memory");
++    if (done) return true;
++    if (it == 0) t0 = gtimer();
++    else if (gtimer() - t0 > BULK_WAIT_NS) return false;
++  }
++}
++// Plain 1-D bulk copy global -> shared, completion counted on the mbarrier; no cache-hint form.
++__device__ __forceinline__ void bulk_g2s(uint32_t dst, const void* src, uint32_t bytes, uint32_t bar) {
++  asm volatile("cp.async.bulk.shared::cluster.global.mbarrier::complete_tx::bytes [%0], [%1], %2, [%3];"
++               :: "r"(dst), "l"(src), "r"(bytes), "r"(bar) : "memory");
++}
++__device__ __forceinline__ void ldsm_x4(uint32_t& r0, uint32_t& r1, uint32_t& r2, uint32_t& r3, uint32_t a) {
++  asm volatile("ldmatrix.sync.aligned.m8n8.x4.shared.b16 {%0,%1,%2,%3}, [%4];"
++               : "=r"(r0), "=r"(r1), "=r"(r2), "=r"(r3) : "r"(a) : "memory");
++}
++__device__ __forceinline__ void ldsm_x2(uint32_t& r0, uint32_t& r1, uint32_t a) {
++  asm volatile("ldmatrix.sync.aligned.m8n8.x2.shared.b16 {%0,%1}, [%2];"
++               : "=r"(r0), "=r"(r1) : "r"(a) : "memory");
++}
++__device__ __forceinline__ void mma_bf16(float* d, uint32_t a0, uint32_t a1, uint32_t a2, uint32_t a3,
++                                         uint32_t b0, uint32_t b1) {
++  asm volatile("mma.sync.aligned.m16n8k16.row.col.f32.bf16.bf16.f32 "
++               "{%0,%1,%2,%3}, {%4,%5,%6,%7}, {%8,%9}, {%0,%1,%2,%3};"
++               : "+f"(d[0]), "+f"(d[1]), "+f"(d[2]), "+f"(d[3])
++               : "r"(a0), "r"(a1), "r"(a2), "r"(a3), "r"(b0), "r"(b1));
++}
++
++// R: weight rows per CTA (32 pooler, 64 unpooler); K: reduction length; NT: padded tokens (8/16/32).
++// MODE 0: full kernel (wt = repacked weight). MODE 1: pure read of the repacked weight (x unused,
++// consumers XOR one word per chunk). MODE 2: pure read of the ORIGINAL strided weight (wt = [N][K]
++// row-major; per chunk R row segments of CKK*2 B at stride K*2 B), same ring and issue structure.
++// err codes: 1 producer wait timeout, 2 consumer wait timeout, 3 built without sm_90.
++template <int R, int K, int NT, int MODE>
++__global__ void __launch_bounds__(160, 1)
++bulk_kernel(const __nv_bfloat16* __restrict__ wt, const __nv_bfloat16* __restrict__ x,
++            __nv_bfloat16* __restrict__ out, int* err, unsigned* dummy, int m) {
++#if defined(__CUDA_ARCH__) && (__CUDA_ARCH__ >= 900)
++  constexpr int CKK = 8192 / R;              // K per chunk: weight chunk is exactly 16 KB
++  constexpr int NCHUNK = K / CKK;            // 32 for both layers
++  constexpr int S = BULK_STAGES;
++  constexpr int XS = CKK * 2 + 16;           // padded x row stride in smem (bank-conflict free)
++  constexpr int SLOT = 16384 + NT * XS;
++  constexpr int MT = R / 16;
++  constexpr int NN = NT / 8;
++  constexpr int KSW = CKK / 64;              // k16 steps per consumer warp per chunk
++  static_assert(K % CKK == 0 && (SLOT % 128) == 0 && R * CKK * 2 == 16384, "geometry");
++  static_assert(NN == 1 || NN % 2 == 0, "NT");
++  extern __shared__ __align__(1024) unsigned char smem[];
++  const uint32_t sbase = smem_u32(smem);
++  const uint32_t full0 = sbase, empty0 = sbase + 64, slot0 = sbase + 256;
++  const int tid = threadIdx.x, warp = tid >> 5, lane = tid & 31;
++  if (tid == 0) {
++#pragma unroll
++    for (int s = 0; s < S; ++s) { mbar_init(full0 + 8 * s, 1); mbar_init(empty0 + 8 * s, 4); }
++    asm volatile("fence.mbarrier_init.release.cluster;" ::: "memory");
++  }
++  __syncthreads();
++
++  float acc[MT][NN][4];
++#pragma unroll
++  for (int a = 0; a < MT; ++a)
++#pragma unroll
++    for (int b = 0; b < NN; ++b)
++#pragma unroll
++      for (int c = 0; c < 4; ++c) acc[a][b][c] = 0.f;
++  unsigned pr = 0u;
++
++  if (warp == 0) {
++    // ---- producer: whole warp, lane 0 waits and arms the barrier, lanes issue the copies ----
++    const uint32_t tx = 16384u + (MODE == 0 ? (uint32_t)m * (CKK * 2) : 0u);
++    for (int j = 0; j < NCHUNK; ++j) {
++      const int s = j % S;
++      const uint32_t eph = ((j / S) & 1) ^ 1;
++      int good = 1;
++      if (lane == 0) {
++        good = mbar_wait(empty0 + 8 * s, eph) ? 1 : 0;
++        if (good) mbar_expect_tx(full0 + 8 * s, tx);
++      }
++      good = __shfl_sync(0xffffffffu, good, 0);
++      if (!good) { if (lane == 0) atomicExch(err, 1); break; }
++      const uint32_t wslot = slot0 + (uint32_t)s * SLOT;
++      const uint32_t fb = full0 + 8 * s;
++      if constexpr (MODE == 2) {
++        for (int r = lane; r < R; r += 32)
++          bulk_g2s(wslot + (uint32_t)r * (CKK * 2),
++                   wt + (size_t)(blockIdx.x * R + r) * K + (size_t)j * CKK, CKK * 2, fb);
++      } else {
++        if (lane == 0)
++          bulk_g2s(wslot, wt + ((size_t)blockIdx.x * NCHUNK + j) * (size_t)(R * CKK), 16384, fb);
++        if constexpr (MODE == 0) {
++          if (lane < m)
++            bulk_g2s(wslot + 16384 + (uint32_t)lane * XS, x + (size_t)lane * K + (size_t)j * CKK,
++                     CKK * 2, fb);
++        }
++      }
++    }
++    __syncwarp();
++  } else {
++    // ---- consumers: warp cw owns k16 steps [cw*KSW, (cw+1)*KSW) of every chunk ----
++    const int cw = warp - 1;
++    for (int j = 0; j < NCHUNK; ++j) {
++      const int s = j % S;
++      const uint32_t ph = (j / S) & 1;
++      if (!mbar_wait(full0 + 8 * s, ph)) { if (lane == 0) atomicExch(err, 2); break; }
++      const uint32_t wslot = slot0 + (uint32_t)s * SLOT;
++      if constexpr (MODE == 0) {
++        const uint32_t xslot = wslot + 16384;
++#pragma unroll
++        for (int i = 0; i < KSW; ++i) {
++          const int kk16 = cw * KSW + i;
++          const int kbi = kk16 >> 2;
++          const int seg = (kk16 & 3) * 2;
++          uint32_t bfr[NN][2];
++          if constexpr (NN == 1) {
++            const int khalf = (lane >> 3) & 1;
++            ldsm_x2(bfr[0][0], bfr[0][1],
++                    xslot + (uint32_t)((lane & 7) * XS + kk16 * 32 + khalf * 16));
++          } else {
++#pragma unroll
++            for (int p = 0; p < NN / 2; ++p) {
++              const int mi = lane >> 3;
++              const int tok = (2 * p + (mi >> 1)) * 8 + (lane & 7);
++              ldsm_x4(bfr[2 * p][0], bfr[2 * p][1], bfr[2 * p + 1][0], bfr[2 * p + 1][1],
++                      xslot + (uint32_t)(tok * XS + kk16 * 32 + (mi & 1) * 16));
++            }
++          }
++#pragma unroll
++          for (int mt = 0; mt < MT; ++mt) {
++            uint32_t a0, a1, a2, a3;
++            const int row = mt * 16 + (lane & 15);
++            ldsm_x4(a0, a1, a2, a3,
++                    wslot + (uint32_t)((kbi * R + row) * 128 + (((seg + (lane >> 4)) ^ (lane & 7)) * 16)));
++#pragma unroll
++            for (int nn = 0; nn < NN; ++nn) mma_bf16(acc[mt][nn], a0, a1, a2, a3, bfr[nn][0], bfr[nn][1]);
++          }
++        }
++      } else {
++        pr ^= *reinterpret_cast<const volatile unsigned*>(smem + 256 + (size_t)s * SLOT + (size_t)(tid - 32) * 4);
++      }
++      __syncwarp();
++      if (lane == 0) mbar_arrive(empty0 + 8 * s);
++    }
++  }
++  __syncthreads();   // every issued copy has been waited on by the consumers: the ring is quiescent
++  if constexpr (MODE == 0) {
++    float* scratch = reinterpret_cast<float*>(smem + 256);   // aliases the ring: [cw][R][NT]
++    if (warp >= 1) {
++      const int cw = warp - 1;
++#pragma unroll
++      for (int mt = 0; mt < MT; ++mt)
++#pragma unroll
++        for (int nn = 0; nn < NN; ++nn)
++#pragma unroll
++          for (int c = 0; c < 4; ++c) {
++            const int row = mt * 16 + (lane >> 2) + (c >> 1) * 8;
++            const int tok = nn * 8 + (lane & 3) * 2 + (c & 1);
++            scratch[(cw * R + row) * NT + tok] = acc[mt][nn][c];
++          }
++    }
++    __syncthreads();
++    const int N = gridDim.x * R;
++    for (int idx = tid; idx < R * m; idx += 160) {
++      const int tok = idx / R, row = idx % R;
++      const float s0 = scratch[(0 * R + row) * NT + tok], s1 = scratch[(1 * R + row) * NT + tok];
++      const float s2 = scratch[(2 * R + row) * NT + tok], s3 = scratch[(3 * R + row) * NT + tok];
++      out[(size_t)tok * N + (size_t)blockIdx.x * R + row] = __float2bfloat16_rn(((s0 + s1) + s2) + s3);
++    }
++  } else {
++    if (warp >= 1) dummy[blockIdx.x * 160 + tid] = pr;
++  }
++#else
++  if (threadIdx.x == 0) atomicExch(err, 3);
++#endif
++}
++
++template <int R, int K, int NT, int MODE>
++static void bulk_launch(const torch::Tensor& wt, const torch::Tensor& x, const torch::Tensor& out,
++                        const torch::Tensor& err, const torch::Tensor& dummy, int m) {
++  constexpr int XS = (8192 / R) * 2 + 16;
++  constexpr size_t smem = 256 + (size_t)BULK_STAGES * (16384 + NT * XS);
++  static bool attr_set = false;
++  if (!attr_set) {
++    C10_CUDA_CHECK(cudaFuncSetAttribute(bulk_kernel<R, K, NT, MODE>,
++                                        cudaFuncAttributeMaxDynamicSharedMemorySize, (int)smem));
++    attr_set = true;
++  }
++  bulk_kernel<R, K, NT, MODE><<<128, 160, smem, at::cuda::getCurrentCUDAStream()>>>(
++      reinterpret_cast<const __nv_bfloat16*>(wt.data_ptr<at::BFloat16>()),
++      reinterpret_cast<const __nv_bfloat16*>(x.data_ptr<at::BFloat16>()),
++      reinterpret_cast<__nv_bfloat16*>(out.data_ptr<at::BFloat16>()),
++      err.data_ptr<int>(), reinterpret_cast<unsigned*>(dummy.data_ptr<int>()), m);
++  C10_CUDA_KERNEL_LAUNCH_CHECK();
++}
++
++void bulk_run(torch::Tensor wt, torch::Tensor x, torch::Tensor out, torch::Tensor err,
++              torch::Tensor dummy, int64_t layer, int64_t m, int64_t mode) {
++  TORCH_CHECK(m >= 1 && m <= 32, "bulk_run: m out of range");
++  const int mi = (int)m;
++  if (layer == 0) {
++    if (mode == 1) { bulk_launch<32, 8192, 8, 1>(wt, x, out, err, dummy, mi); return; }
++    if (mode == 2) { bulk_launch<32, 8192, 8, 2>(wt, x, out, err, dummy, mi); return; }
++    if (m <= 8) bulk_launch<32, 8192, 8, 0>(wt, x, out, err, dummy, mi);
++    else if (m <= 16) bulk_launch<32, 8192, 16, 0>(wt, x, out, err, dummy, mi);
++    else bulk_launch<32, 8192, 32, 0>(wt, x, out, err, dummy, mi);
++  } else {
++    if (mode == 1) { bulk_launch<64, 4096, 8, 1>(wt, x, out, err, dummy, mi); return; }
++    if (mode == 2) { bulk_launch<64, 4096, 8, 2>(wt, x, out, err, dummy, mi); return; }
++    if (m <= 16) bulk_launch<64, 4096, 16, 0>(wt, x, out, err, dummy, mi);
++    else bulk_launch<64, 4096, 32, 0>(wt, x, out, err, dummy, mi);
++  }
++}
++
++template <int R, int K, int NT, int MODE>
++static std::string bulk_inst_info() {
++  cudaFuncAttributes a;
++  std::ostringstream o;
++  constexpr int XS = (8192 / R) * 2 + 16;
++  constexpr int SLOT = 16384 + NT * XS;
++  if (cudaFuncGetAttributes(&a, bulk_kernel<R, K, NT, MODE>) != cudaSuccess) {
++    (void)cudaGetLastError();
++    return "attributes unavailable";
++  }
++  o << "R=" << R << " K=" << K << " NT=" << NT << " mode=" << MODE << ": regs=" << a.numRegs
++    << " local=" << a.localSizeBytes << "B static_smem=" << a.sharedSizeBytes
++    << "B slot=" << SLOT << "B (weight 16384 + x " << NT * XS << ") x" << BULK_STAGES
++    << " stages, dyn smem=" << (256 + BULK_STAGES * SLOT) << "B, 160 threads, 1 CTA/SM, grid 128";
++  return o.str();
++}
++
++std::string bulk_info(int64_t layer, int64_t nt) {
++  if (layer == 0) {
++    if (nt == 8) return bulk_inst_info<32, 8192, 8, 0>();
++    if (nt == 16) return bulk_inst_info<32, 8192, 16, 0>();
++    return bulk_inst_info<32, 8192, 32, 0>();
++  }
++  if (nt == 16) return bulk_inst_info<64, 4096, 16, 0>();
++  return bulk_inst_info<64, 4096, 32, 0>();
++}
++"""
++
++
++def _bulk_build():
++    """Compile the extension (sm_90a-only arch list, restored afterwards). Returns the module or
++    None (never raises)."""
++    import os
++    import time
++    prev = os.environ.get("TORCH_CUDA_ARCH_LIST")
++    os.environ["TORCH_CUDA_ARCH_LIST"] = "9.0a"
++    try:
++        from torch.utils import cpp_extension
++        try:
++            print(f"[bulk] arch flags passed to nvcc: {cpp_extension._get_cuda_arch_flags()}", flush=True)
++        except Exception as e:  # diagnostic only
++            print(f"[bulk] arch flags unavailable ({type(e).__name__}: {e})", flush=True)
++        t0 = time.time()
++        mod = cpp_extension.load_inline(
++            name=BULK_EXT_NAME, cpp_sources=_BULK_CPP, cuda_sources=_BULK_CUDA,
++            functions=["bulk_run", "bulk_info"],
++            extra_cuda_cflags=["-O3", "-lineinfo", "-std=c++17"], verbose=False)
++        print(f"[bulk] load_inline compiled in {time.time() - t0:.1f}s (TORCH_CUDA_ARCH_LIST=9.0a)",
++              flush=True)
++        return mod
++    except Exception as e:
++        print(f"[bulk] build FAILED ({type(e).__name__}: {str(e)[-600:]})", flush=True)
++        return None
++    finally:
++        if prev is None:
++            os.environ.pop("TORCH_CUDA_ARCH_LIST", None)
++        else:
++            os.environ["TORCH_CUDA_ARCH_LIST"] = prev
++
++
++def _bulk_repack(w: torch.Tensor, rows: int) -> torch.Tensor:
++    """Lossless permutation of a bf16 [N, K] weight into Wt[cta][kblock][row][64 k], with the 8
++    16-byte segments of each 128 B row swizzled by seg ^ (row & 7). Verified bit-exact."""
++    n, k = w.shape
++    c, kb = n // rows, k // 64
++    src = w.contiguous().view(c, rows, kb, 8, 8).permute(0, 2, 1, 3, 4)  # [c, kb, row, seg, e]
++    rr = torch.arange(rows, device=w.device).view(rows, 1)
++    ss = torch.arange(8, device=w.device).view(1, 8) ^ (rr & 7)
++    dst = src[:, :, rr, ss, :].contiguous()                                # [c, kb, row, seg', e]
++    back = dst[:, :, rr, ss, :]                                            # xor is an involution
++    ok = torch.equal(back.reshape(c, kb, rows, 64).permute(0, 2, 1, 3).reshape(n, k).view(torch.int16),
++                     w.contiguous().view(torch.int16))
++    if not ok:
++        raise RuntimeError("bulk repack is not bit-exact")
++    return dst.view(n, k)
++
++
++def _bulk_route_ok(layer: str, x: torch.Tensor, cfg) -> bool:
++    """Static route gate: cfg layer / m / n / k and x's shape, dtype and alignment only."""
++    m = cfg["m"]
++    if layer == "pooler":
++        n, k, lo, hi = BULK_POOLER_N, BULK_POOLER_K, BULK_POOLER_MIN_M, BULK_POOLER_MAX_M
++    else:
++        n, k, lo, hi = BULK_UNPOOLER_N, BULK_UNPOOLER_K, BULK_UNPOOLER_MIN_M, BULK_UNPOOLER_MAX_M
++    return (lo <= m <= hi and cfg["n"] == n and cfg["k"] == k
++            and x.dim() == 2 and x.shape[0] == m and x.shape[1] == k
++            and x.dtype == torch.bfloat16 and x.stride(1) == 1 and x.stride(0) == k
++            and x.data_ptr() % 16 == 0)
++
++
++def _bulk_forward(layer: str, x: torch.Tensor, state: dict) -> torch.Tensor:
++    """ONE launch: out[m, n] = x @ W.T, K whole per CTA, bf16 stored once. No workspace."""
++    m = x.shape[0]
++    pooler = layer == "pooler"
++    out = torch.empty((m, BULK_POOLER_N if pooler else BULK_UNPOOLER_N),
++                      dtype=torch.bfloat16, device=x.device)
++    state["bulk_ext"].bulk_run(state["bulk_wt_pooler" if pooler else "bulk_wt_unpooler"], x, out,
++                               state["bulk_err"], state["bulk_dummy"], 0 if pooler else 1, m, 0)
++    return out
++
++
++def _bulk_median_us(fn, flush: torch.Tensor, reps: int = 25) -> float:
++    """Cold-L2 per-launch time: a 256 MB flush is enqueued, then start event, launch, stop event
++    (the host enqueues them while the flush runs, so there is no idle gap). Prepare-time only."""
++    for _ in range(3):
++        flush.zero_()
++        fn()
++    torch.cuda.synchronize()
++    ts = []
++    for _ in range(reps):
++        flush.zero_()
++        a = torch.cuda.Event(enable_timing=True)
++        b = torch.cuda.Event(enable_timing=True)
++        a.record()
++        fn()
++        b.record()
++        torch.cuda.synchronize()
++        ts.append(a.elapsed_time(b) * 1000.0)
++    ts.sort()
++    return ts[len(ts) // 2]
++
++
++def _bulk_prepare(state: dict) -> None:
++    """Build, repack, self-check (announced and synced launch by launch), print per-shape cold-L2
++    timings and the pure-read diagnostics, apply the in-run kill gate. Never raises; any failure
++    leaves the routes off (master's paths run)."""
++    state["bulk_pooler"] = False
++    state["bulk_unpooler"] = False
++    try:
++        dev = state["pooler"].device
++        ok_shape = (state["pooler"].shape == (BULK_POOLER_N, BULK_POOLER_K)
++                    and state["unpooler"].shape == (BULK_UNPOOLER_N, BULK_UNPOOLER_K)
++                    and state["pooler"].dtype == torch.bfloat16 and state["unpooler"].dtype == torch.bfloat16)
++        if not ok_shape:
++            print("[bulk] DISABLED: unexpected weight shape/dtype; master paths", flush=True)
++            return
++        ext = _bulk_build()
++        if ext is None:
++            print("[bulk] DISABLED: no extension; master paths", flush=True)
++            return
++        state["bulk_ext"] = ext
++        state["bulk_err"] = torch.zeros(1, dtype=torch.int32, device=dev)
++        state["bulk_dummy"] = torch.zeros(128 * 160, dtype=torch.int32, device=dev)
++        state["bulk_wt_pooler"] = _bulk_repack(state["pooler"], 32)
++        state["bulk_wt_unpooler"] = _bulk_repack(state["unpooler"], 64)
++        print("[bulk] weight repack: lossless bf16 permutation, bit-exact round trip verified; "
++              f"pooler Wt{tuple(state['bulk_wt_pooler'].shape)} unpooler Wt{tuple(state['bulk_wt_unpooler'].shape)}",
++              flush=True)
++        for lid, nts in ((0, (8, 16, 32)), (1, (16, 32))):
++            for nt in nts:
++                print(f"[bulk] geometry layer={'pooler' if lid == 0 else 'unpooler'} NT={nt}: "
++                      f"{ext.bulk_info(lid, nt)}", flush=True)
++
++        def launch_checked(layer, tag, x, out):
++            lid = 0 if layer == "pooler" else 1
++            wt = state["bulk_wt_pooler" if lid == 0 else "bulk_wt_unpooler"]
++            print(f"[bulk] LAUNCH layer={layer} {tag} m={x.shape[0]} (about to run)", flush=True)
++            ext.bulk_run(wt, x, out, state["bulk_err"], state["bulk_dummy"], lid, x.shape[0], 0)
++            torch.cuda.synchronize()
++            code = int(state["bulk_err"].item())
++            state["bulk_err"].zero_()
++            print(f"[bulk] DONE   layer={layer} {tag} m={x.shape[0]} (synced, error word {code})", flush=True)
++            return code
++
++        passed = {}
++        for layer in ("pooler", "unpooler"):
++            w = state[layer]
++            n, k = w.shape
++            wd = w.double()
++            good = True
++            for m in BULK_SELFCHECK_MS[layer]:
++                xr = torch.randn((m, k), device=dev, dtype=torch.float32).to(torch.bfloat16)
++                out = torch.empty((m, n), dtype=torch.bfloat16, device=dev)
++                code = launch_checked(layer, "random", xr, out)
++                ref = xr.double() @ wd.T
++                rel = ((out.double() - ref).norm() / ref.norm()).item()
++                finite = bool(torch.isfinite(out.float()).all().item())
++                xp = xr.clone()
++                xp[0].zero_()
++                xp[0, 1234 % k] = 0.5                      # power of two: output row is a weight column
++                outp = torch.empty((m, n), dtype=torch.bfloat16, device=dev)
++                code2 = launch_checked(layer, "probe", xp, outp)
++                pref = wd[:, 1234 % k] * 0.5
++                prel = ((outp[0].double() - pref).norm() / pref.norm()).item()
++                this = (code == 0 and code2 == 0 and finite and rel <= BULK_REL_L2
++                        and prel <= BULK_PROBE_TOL and bool(torch.isfinite(outp.float()).all().item()))
++                print(f"[bulk] self-check layer={layer} m={m}: rel L2 {rel:.3e} (<= {BULK_REL_L2:g}), "
++                      f"probe rel {prel:.3e} (<= {BULK_PROBE_TOL:g}), finite {finite}, "
++                      f"errors {code}/{code2} -> {'ok' if this else 'MISS'}", flush=True)
++                good = good and this
++            del wd
++            passed[layer] = good
++        if not any(passed.values()):
++            print("[bulk] DISABLED: every self-check missed; master paths", flush=True)
++            return
++
++        # ---- print-only per-shape cold-L2 timings, pure-read diagnostics and the kill gate ----
++        flush = torch.empty(BULK_FLUSH_BYTES // 4, dtype=torch.int32, device=dev)
++        swap_stages = state.get("swapab_stages", {})
++        rates = {}
++        for layer in ("pooler", "unpooler"):
++            if not passed[layer]:
++                continue
++            lid = 0 if layer == "pooler" else 1
++            wt = state["bulk_wt_pooler" if lid == 0 else "bulk_wt_unpooler"]
++            w = state[layer]
++            n, k = w.shape
++            x8 = torch.randn((8, k), device=dev, dtype=torch.float32).to(torch.bfloat16)
++            o8 = torch.empty((8, n), dtype=torch.bfloat16, device=dev)
++            err, dummy = state["bulk_err"], state["bulk_dummy"]
++            t_c = _bulk_median_us(lambda: ext.bulk_run(wt, x8, o8, err, dummy, lid, 8, 1), flush)
++            t_s = _bulk_median_us(lambda: ext.bulk_run(w, x8, o8, err, dummy, lid, 8, 2), flush)
++            tbs_c = BULK_STREAM_BYTES / (t_c * 1e-6) / 1e12
++            tbs_s = BULK_STREAM_BYTES / (t_s * 1e-6) / 1e12
++            rates[layer] = tbs_c
++            print(f"[bulk] pure-read error word after timing: {int(err.item())}", flush=True)
++            err.zero_()
++            print(f"[bulk] PURE-READ layer={layer} contiguous repacked: {t_c:.2f} us cold-L2 = {tbs_c:.2f} TB/s; "
++                  f"strided ORIGINAL layout (R row segments, same ring/issue): {t_s:.2f} us = {tbs_s:.2f} TB/s "
++                  f"-> {'repack is the lever' if t_c < 0.95 * t_s else 'repack is NOT the lever (bulk issue / no split-K is)'}",
++                  flush=True)
++            for m in ((1, 8, 16, 32) if layer == "pooler" else (16, 32)):
++                xm = torch.randn((m, k), device=dev, dtype=torch.float32).to(torch.bfloat16)
++                om = torch.empty((m, n), dtype=torch.bfloat16, device=dev)
++                t_f = _bulk_median_us(lambda: ext.bulk_run(wt, xm, om, err, dummy, lid, m, 0), flush)
++                if layer == "pooler":
++                    if m <= POOLER_MAX_M:
++                        mfn = lambda: _pooler_forward(xm, state["pooler"], state["pooler_ws"], state["pooler_cnt"])
++                    else:
++                        mfn = lambda: _swapab_forward("pooler", xm, state["pooler"], *_swapab_buffers(state, "pooler"),
++                                                      swap_stages["pooler"])
++                elif m <= 16:
++                    mfn = lambda: _bf16_gemm_dispatch_impl(xm, state["unpooler"], None)
++                else:
++                    mfn = lambda: _swapab_forward("unpooler", xm, state["unpooler"], None, None,
++                                                  swap_stages["unpooler"])
++                try:
++                    t_m = _bulk_median_us(mfn, flush)
++                except Exception as e:  # diagnostic only
++                    t_m = float("nan")
++                    print(f"[bulk] master timing unavailable for {layer} m={m}: {type(e).__name__}", flush=True)
++                inc = BULK_INCUMBENT_US.get((layer, m), float("nan"))
++                print(f"[bulk] TIME layer={layer} m={m}: bulk {t_f:.2f} us ({BULK_STREAM_BYTES / (t_f * 1e-6) / 1e12:.2f} TB/s eff), "
++                      f"pure-read {t_c:.2f} us, gap {t_f - t_c:+.2f} us; master path {t_m:.2f} us "
++                      f"(run 1602a4e947e64090 kernel {inc:.1f} us); eager cold-L2 prepare timings undercount the "
++                      f"judge profile by ~20-25%", flush=True)
++        for layer, ok in passed.items():
++            if not ok:
++                print(f"[bulk] DISABLED layer={layer}: self-check missed; master path", flush=True)
++                continue
++            r = rates.get(layer, 0.0)
++            gate = r >= BULK_READ_GATE_TBS
++            print(f"[bulk] KILL-GATE layer={layer}: cold pure-read {r:.2f} TB/s vs gate {BULK_READ_GATE_TBS} TB/s: "
++                  f"{'PASS' if gate else 'MISS -> contiguous bulk stream gives no headroom (line DEAD); route kept on so the judge profile still times the kernel'}",
++                  flush=True)
++            # Print-only verdict (spec: the pure-read is a print-only diagnostic). An eager cold-L2
++            # event time near the gate must not silently drop a self-checked route from the run.
++            state["bulk_" + layer] = True
++        del flush
++    except Exception as e:
++        state["bulk_pooler"] = False
++        state["bulk_unpooler"] = False
++        print(f"[bulk] DISABLED: {type(e).__name__}: {str(e)[-400:]}; master paths", flush=True)
++    for layer, rng in (("pooler", f"{BULK_POOLER_MIN_M}..{BULK_POOLER_MAX_M}"),
++                       ("unpooler", f"{BULK_UNPOOLER_MIN_M}..{BULK_UNPOOLER_MAX_M} (n=8192)")):
++        print(f"[bulk] PATH CHOSEN layer={layer} m {rng}: "
++              f"{'bulk-TMA row-owner stream' if state['bulk_' + layer] else 'master path'}", flush=True)
++
++
+ def prepare(weights: Weights) -> dict:
+     """Called once, untimed. Keep the bf16 weights as they are (contiguous), build the router's
+     hi + lo bf16 split as [256, 8192] row-major (N x K), and pre-compile every m-bucket of the
+@@ -708,6 +1272,9 @@ def prepare(weights: Weights) -> dict:
+     state["unpool_cnt"].zero_()
+     # (5) Swap-AB at 17 <= m <= 32 for all four bf16 layers (own workspaces / tickets).
+     _swapab_prepare(state)
++    # (6) Bulk-TMA row-owner stream for pooler m <= 32 and unpooler-full 9 <= m <= 32 (own keys;
++    # never raises: any miss leaves the routes off and the paths above run).
++    _bulk_prepare(state)
+     return state
+ 
+ 
+@@ -715,6 +1282,12 @@ def kernel_fn(data: Inputs, state: dict) -> torch.Tensor:
+     x, cfg = data["x"], data["config"]
+     layer = cfg["layer"]
+     # Shape gate (cfg layer / m / n and shape preconditions only; never on input values).
++    # Bulk-TMA row-owner stream first (own gate constants; routes are off unless prepare()'s
++    # build and self-check passed).
++    if layer == "pooler" and state["bulk_pooler"] and _bulk_route_ok(layer, x, cfg):
++        return _bulk_forward(layer, x, state)
++    if layer == "unpooler" and state["bulk_unpooler"] and _bulk_route_ok(layer, x, cfg):
++        return _bulk_forward(layer, x, state)
+     if layer == "pooler" and _pooler_shape_ok(x, state["pooler"], cfg):
+         return _pooler_forward(x, state["pooler"], state["pooler_ws"], state["pooler_cnt"])
+     if (layer == "qkv_gate" and state["qkv_gate"].shape == (QKV_N, QKV_K)
