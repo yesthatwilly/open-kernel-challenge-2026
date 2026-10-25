@@ -59,7 +59,7 @@ review: proceed
 status: running
 review_at: 2026-10-25T034534Z
 review_companions: null
-stage: claimed
+stage: implemented
 claimed_at: 2026-10-25T034535Z
 base_sha: 63995118a6d87d5714181d318458a7595fe4bbac
 base_blob: c6854f093588da524e63657576b27ed720756e32
@@ -68,6 +68,12 @@ worktree: .worktrees/muse_attention_decode/stack-streamk-ticket-cluster-c16-c4
 mode: null
 restack_of: full-decode-splitkv-s2-streamk-ticket-inproc
 stale_base: null
+implemented_at: 2026-10-25T034707Z
+impl_commit: 41fcca02d61db12be673f401bba44d547d33fa13
+submission_sha256: 8c8ef8bdee615f0949d6703101b48de03a1da47a1a89223fe4a64395f38250f9
+norm_sha256: d38bad22f2e2fc66b2e82e27e9a1e3fb21010307aee25312ecd3b7cfa26ea734
+submission_blob: edf13326bb5bcdae8c345dd5a780fcb948cb78d6
+lint_warnings: 13
 ---
 
 # stack-streamk-ticket-cluster-c16-c4
@@ -112,3 +118,29 @@ No companion. Each half was already measured alone against the same BEST, the sh
 - Does the import-time time budget hold if cluster fp8qk fails and the f16qk rebuild runs (+~40 s), on top of streamk's _sk_diagnostics? Keep the diagnostics or trim them to one B.
 - Landing needs the user's approval for both parents, which are user-held.
 
+
+## Implementation notes
+
+Merge (review recipe, which wins over the spec's `git apply -3` of the stage-2 delta): `git merge-file` in a scratch dir with base = `589a891^:submission.py`, ours = the restacked stream-K file in the worktree, theirs = branch `hyp/.../sliding-cluster-s2-decode-c4-pdl-inproc`. Exactly 4 conflicts, resolved as the review said:
+1. Module docstring and imports: combined text (stream-K full decode + cluster sliding at C=16 B=1 and C=4 B=17..32); kept `import random` (stream-K needs it).
+2. Head of kernel_fn: took the cluster side (`_slide_gate` -> `_slide_forward` inside try/except RuntimeError with master fallback; else master Triton `_sliding_forward`; verify falls to FA3).
+3. Appended CUDA source and helpers: kept both (stream-K block, then the cluster TU and `_slide_*` helpers).
+4. Import-time init: stream-K init block first (unchanged: tickets zeroed, `_sk_diagnostics`, tickets re-zeroed), then `try: _slide_init() except -> all _SLIDE_MOD None`.
+
+Verified: AST-level comparison of every top-level function vs master blob c6854f0: `_sliding_forward` and its Triton kernels are byte-identical (deep-splits kept). Only `_full_decode_splitkv` (stream-K, expected) and `kernel_fn` differ.
+
+C=8 off: `_slide_init` builds/checks only C in {16, 4} (`_SLIDE_MOD[8]` stays None; the C=8 template stays compiled-in, unused); `_slide_clusters` returns 0 for B=2..16 and B=1 no longer falls back to C=8; PATH CHOSEN for B=2..16 prints "sliding master Triton (deep-splits) ... (C=8 off by gate)"; the B=1/17..32 failure message `want` no longer references 8; stream-K's last line now reads "every other shape (verify, full batch 1, page 64, dp, sliding outside the cluster gate)"; docstring and stage comment updated.
+
+Audit fixes kept: stream-K (gx = min(gridDim.x, T), tickets re-zeroed, binaryVersion == 90 gate) untouched; cluster try/except fallback around `_slide_forward` kept. No prepare(): all builds and self-checks run at import, as in both parents; the f16qk rebuild fallback remains (+~40 s worst case), diagnostics not trimmed.
+
+## Rules check
+
+- [x] CUDA-graph capturable: kernel_fn adds only config-only gates and kernel launches; syncs/.item() are only in import-time self-checks (lint warnings below).
+- [x] Nothing derived from `data` is cached across calls (tickets/workspaces are shape-independent buffers; gates read cfg only).
+- [x] Weights: n/a: no weight repack touched.
+- [x] Activations/KV/q precision unchanged from the two parents (cluster fp8qk is the parent's measured, self-checked path).
+- [x] Attention sees every key: n/a for new logic; both kernels are the parents' unchanged, self-checked kernels.
+- [x] No timing patches, harness access, reference import, child process or subprocess (grep for subprocess/fork/multiprocessing/Popen/os.system empty).
+- [x] All work inside the timed call; no output caching or replay.
+
+okc_lint: `OK with warnings` (only host-sync warns, all outside kernel_fn's call graph, import-time self-checks). py_compile ok; __pycache__ removed.
