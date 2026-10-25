@@ -44,7 +44,7 @@ review: proceed
 status: running
 review_at: 2026-10-25T085209Z
 review_companions: null
-stage: claimed
+stage: implemented
 claimed_at: 2026-10-25T085209Z
 base_sha: e6cf5ce8f79493b9904b7c6d74e6a6c25f14f820
 base_blob: db8a3344398bca79ea5cafeb580f701c055fd475
@@ -53,6 +53,12 @@ worktree: .worktrees/muse_prefill_layer/turn-align-sglang32-prenorm-triton-resta
 mode: null
 restack_of: null
 stale_base: null
+implemented_at: 2026-10-25T085911Z
+impl_commit: fb2bd51078e513f04f4de0f9b066ee834cc6e0c9
+submission_sha256: 7c16998b2c1a958d783f2bb1bdbc6e90cc9931d22b61989a27a6b9c4b530159b
+norm_sha256: 33b2313415f5a9bfdfed0b6118ab1539bda1a5900b29c07c2b4e5120e1293589
+submission_blob: 8507f9e93acf5b0c3acb3b0dd45789b556d1344a
+lint_warnings: 31
 ---
 
 # turn-align-sglang32-prenorm-triton-restack
@@ -94,3 +100,58 @@ No companions. Each of the two sub-changes affects disjoint kernels with their o
 - Is the ~25 us SGLang 32-expert align at T=3012 measured or extrapolated? The cited ~17+10 us figure was for the 256-expert call. The prepare log line will answer this, so record it in the attempt file.
 - At T=753 _align_parallel is 16.7 us, and SGLang's two-kernel align is probably ~8-12 us there, close to the 0.9x gate. Expect turn_1 align to stay on _align_parallel, which makes turn_1's expected gain pre-norm only (~3 us).
 
+
+## Implementation notes
+
+Base: worktree base e6cf5ce8 differs from master 771e9743 only by a claim commit; `git diff e6cf5ce8 master -- muse_prefill_layer/submission.py` is empty, so no merge needed. Only `muse_prefill_layer/submission.py` was edited (+323/-3).
+
+What changed:
+- `_experts_marlin(..., align_mode=None)`: align chosen by a static per-T-class dict `state["align_mode"]` (classes 753 / 3012 / 16384 by shape only, `_gate_class`, `_align_mode`). Modes: `par` (master's `_align_parallel`), `sgl32` (`moe_align_block_size(local_ids, bsm, 32)`), `sgl32fix` (the same plus `_align_fix_npad`, a one-program Triton kernel that sets n_padded to BSM x the number of local blocks among the first n_padded/BSM blocks), `n256` (master's old fallback when `align_par_ok` is False).
+- `_align_gate_setup` (prepare, after `_silu_sorted_setup`): probes that SGLang's -1 bucket is last on synthetic routings (random, skewed, all-remote at T=753 and 3012) and that the fixed n_padded gives the same per-expert route sets as `_align_parallel`; enables `sgl32fix` only if so. For each class it checks the candidates' `_experts_marlin` output against the baseline mode's (random and skewed routing, rel L2 <= 1e-3, bitwise equality printed), then times the END-TO-END `_experts_marlin` (align + w13 + silu + w2 + combine) in a CUDA graph with a 288 MB cold-L2 flush, 31 interleaved reps in rotating order. A candidate is switched on only if gain > max(half-IQR of both, 1 us) and ratio <= 0.99; the largest gain wins. Align-only times (par / sgl32 / sgl32fix) are printed as well. `PATH CHOSEN align T=...` per class. Any exception keeps the baseline.
+- Pre-norm: persistent Triton `_pre_expert_rmsnorm_kernel` (grid 4 x SMs); stores only the bf16 checkpoint weight `state["pre_w"]` and adds 1 in fp32 inside the kernel (no widened fp32 copy). `_pre_norm_setup` times nw 4/8 against the module's call per class (cold-L2 graph), requires err vs an fp32 reference <= 1.25 x master's + 1e-4 and rel L2 vs master <= 5e-3, gate ratio <= 0.98, else the module call. `PATH CHOSEN pre-norm T=...`.
+- kernel_fn hot path has no prints, `.cpu()` or `.item()`: only dict lookups on shapes.
+
+Review items and what was done:
+- Gate on end-to-end `_experts_marlin`, print both align-only and end-to-end times, ON only beyond noise: done (above).
+- Open question, -1 bucket last: probed at runtime; if true, one-program n_padded fix-up (`sgl32fix`) restores local-only blocks for Marlin and the sorted silu; both variants are timed end to end.
+- Correctness compares local-derived rows only: the compared tensor is the combine output, which skips remote slots; remote cache3 rows are never read.
+- Pre-norm weight not stored widened: bf16 w, +1 in-kernel in fp32.
+- Gate keyed by T class only, static per class: yes.
+- Spec deviation (review wins): the spec's 15-case Marlin-pair check and fixed 0.9x align-only gate are replaced by the end-to-end gate; the spec's use of the module's `_get_effective_weight()` fp32 copy is replaced by bf16 w plus in-kernel +1, so the spacing-vs-master check of the old patch is dropped in favour of err vs an fp32 reference.
+- Open question on the 25 us SGLang figure: the prepare log prints the measured numbers; record them in the attempt file.
+
+## Rules check
+
+- [x] No CUDA extension, Python/Triton only; sm90a bullets n/a (no wgmma/load_inline)
+- [x] No child process/subprocess/multiprocessing (diff checked)
+- [x] No host syncs, .cpu(), prints or allocation on input values in kernel_fn path; syncs/prints only in prepare()
+- [x] CUDA-graph capturable: new kernels use shape-derived grids, no data-dependent control flow
+- [x] No device pointers, tensors or buffers in module globals; everything lives in `state` (pre_w, align_mode, norm_grid)
+- [x] Weights: pre_w is a lossless bf16 copy of the BF16 weight; no precision change
+- [x] Nothing cached from inputs; synthetic data only in prepare()
+- [x] Any exception or failed check lands on master's path (align_base / module norm), never raises; loud PATH CHOSEN lines
+- [x] First line marker `# okc: problem=muse_prefill_layer` kept
+- [x] triton.autotune not used
+- Note (not a rules item): not run on this node (no GPU/torch); compile risk untested
+
+okc_lint: `OK with warnings` (only host-sync warnings in prepare() and two dtype warnings on the uint8 flush buffer in prepare()). py_compile OK; __pycache__ removed.
+
+## Pre-flight audit
+
+Audited 2026-10-25 (opus, by reading the code; no GPU). **Verdict: dispatch-with-fixes.** Rules OK.
+
+Fix:
+- `_align_fix_npad_kernel` now has `do_not_specialize=["n_blocks"]`. n_blocks = cdiv(T*8 + 33*(bsm-1), bsm) changes with T, and Triton specializes integer arguments on %16 and ==1. Without the fix, a T whose n_blocks falls in a different specialization from the prepare probes (127 and 409) would JIT-compile on its first kernel_fn call. This only matters if sgl32fix is chosen. After the edit, lint is OK with warnings (prepare-only syncs and the uint8 flush buffer), py_compile is OK, and __pycache__ is removed.
+
+Checked and fine:
+- Master equivalence. `align_base` is "par" when `align_par_ok` holds, else "n256", the same mapping as master. T > 4096 has no align_mode entry, so it uses base. `_check_experts_e2e` at T=8192 therefore still runs master's align. Note: the classes are ranges that cover every T. The tests at T=300/600/753 run the 753 decision and T=1506/4096 run the 3012 decision, so no T is "outside" a class. Both new paths are correct at any T (bsm is 64 for every T >= 200).
+- Static choice. Both choices are dict lookups on `_gate_class(x.shape[0])`, decided in prepare on seeded synthetic data. kernel_fn gains no sync, print, .cpu/.item, try/except or value-dependent branch.
+- Pre-norm weight. Only `pre_w` is stored: a bf16 [4096] clone. The +1 is added in fp32 inside the kernel. The fp32 `w1` exists only inside prepare.
+- Align check. It compares the combine output against base: rel L2 <= 1e-3 and finite. That output reads only local slots, and the remote y rows are unwritten in both modes. Marlin's per-row output does not depend on how routes are grouped into blocks (use_atomic_add=False), so the outputs should be bit-exact and the gate can pass.
+- Graph capture in prepare. An eager warm-up and a side-stream warm-up run before capture, so every Triton kernel compiles outside capture. A capture or replay exception lands in the per-class `except`, and state is written only after success. The graph and its private pool are dropped on unwind, and `empty_cache` runs per class. Only a sticky CUDA fault could poison the context, and the eager warm-up would hit that first.
+- Fallbacks. A probe error disables only sgl32fix. A per-class error keeps base, and an outer error resets every class. Pre-norm errors, per class or outer, fall back to the module call. Every path prints a `PATH CHOSEN` line.
+- Per-state. All new buffers (`pre_w`) and decisions live in `state`. Module globals hold only constants and kernels.
+- Prepare budget. The added work is about 3 small Triton compiles, ~20 graph captures and a few hundred replays at the ms scale: an estimated 15-40 s on top of master. The SSDQ attempt's 170 s budget guard suggests master is well under that.
+- Expectation. sgl_kernel's moe_align_block_size likely shifts ids by +1, which would put the -1 bucket first, not last. Then the probe disables sgl32fix, and only plain sgl32 is timed. It walks the remote -1 blocks, so the extra Marlin and silu work may eat the align saving. The end-to-end gate handles that by staying on par.
+
+Residual risk: the align half may stay OFF at both classes (sgl32fix disabled by the probe, plain sgl32 not beating par end to end), which would leave only the pre-norm row gain. Compile and runtime are untested on a GPU.
