@@ -73,7 +73,7 @@ review: proceed
 status: running
 review_at: 2026-10-25T003616Z
 review_companions: null
-stage: claimed
+stage: implemented
 claimed_at: 2026-10-25T003624Z
 base_sha: 6a839f514cc7024729ac75ac28402e894091c0bd
 base_blob: 4da94677234faaa06b42b5ced541db8961fd6f34
@@ -82,6 +82,12 @@ worktree: .worktrees/muse_decode_layer/dense-chain-stage2-attn-side-pdl
 mode: null
 restack_of: null
 stale_base: null
+implemented_at: 2026-10-25T004858Z
+impl_commit: 605685b75c53ea22b855f05ee2d1e4163f2c9b52
+submission_sha256: 783ad43899b0d22545f0d6798b67695ef9946e8eb9c58bb884a0939ac0f3ea26
+norm_sha256: c4f2d6012193c3d0e7de0a42d10bab87fe52833b3fd4f5684ed007e1c529729b
+submission_blob: b4771cc5ac7c69bf030cba94a480f3ae96f5d06c
+lint_warnings: 33
 ---
 
 # dense-chain-stage2-attn-side-pdl
@@ -137,3 +143,65 @@ No companion warranted. A rewrite judged on replaced-row time; the profile separ
 - Will Q at T=32 hit P's 2.85 TB/s ceiling? If so stage 3 should share dl-p-wide-tile-t16-t32's BLOCK_N 128 tiling.
 - Does FA3 here execute griddepcontrol.launch_dependents? Print O's pdl 0 vs 1 event times.
 
+
+## Implementation notes
+
+Edited only `muse_decode_layer/submission.py` in the worktree (not run, no GPU here). The CUDA module is renamed `muse_decode_dense_chain_v2` and gains `-lineinfo` (flags printed at build and in the stage-2 log; no wgmma/setmaxnreg, so plain `-arch=sm_90a` as stage 1 ran).
+
+What changed:
+- Two kernels added to the `_DL_CUDA` TU, copied from the P body (swap-AB `mma.sync m16n8k16`, 64 weight rows per CTA, cp.async.cg, ldmatrix.x4, PDL weight prefetch before `griddepcontrol.wait`, fixed-order ticket split-K, in-kernel counter reset).
+  - Q `dl_qkv_kernel<NF>`: 36 head tiles x 6 K-splits = 216 CTAs. The last-ticket CTA per tile does the epilogue, one warp per token, lane = element pair, so a lane owns an interleaved RoPE pair. Tiles 0-15: scaleless RMSNorm (eps 1e-5), interleaved RoPE from `state["cos_sin"]` at `positions`, bf16 round, E4M3 into `q_attn`, unpaired [T,16,64] or paired [T,16,128] (own half plus 64 zero bytes, so no zeros fill). Tiles 16-17: same, then divide by k_scale when `kv_scale != 1`, bf16 round, E4M3 to the `cache_loc` row. Tiles 18-19: v, same divide, E4M3 store. Tiles 20-35: bf16 gate [T,1024]. mode 1 (raw) writes the bf16 [T,2304] projection.
+  - O `dl_o_kernel<NF>`: 128 row tiles x 2 K-halves = 256 CTAs, all four 16 KB weight K-blocks of the CTA resident in smem (cp.async before the PDL wait). Prologue 1 builds the bf16 x tile in smem from FA3's output (unpaired, or paired taking the head's own half (h>>3)&1) and the gate: per-head scaleless RMSNorm x sigmoid(gate) in fp32 with one bf16 rounding. Prologue 0 (raw) copies the already normed-and-gated [T,1024] input. Epilogue writes attn_output bf16 [T,8192].
+- `kernel_fn`: master's attention side moved verbatim into `_master_attention`. `kernel_fn` calls `_dl2_attention` (Q, then the unchanged FA3 call, then O) when `state["dl2_ok"]` and `state["dl"]` are set and `_dl2_applies(cfg)` (config only); otherwise `_master_attention`. Everything after the attention (boundary, P, R, experts, unpooler, ffn_boundary) is untouched.
+- prepare(): `_dl2_setup` allocates the ws/counters, prints occupancy, runs the self-check (pdl as stage 1 chose, then 0) and the Q/O timing, and prints `[dense-chain-s2] ON|OFF pdl=... max errs ...` plus three `PATH CHOSEN` lines.
+
+Adversarial-review fixes applied (the review wins over the spec):
+- (a) Sliding decode_1 carve-out: `DL2_SLIDING1 = "raw"` runs Q in raw mode (bf16 qkv [T,2304]) into master's `_sliding_forward` and O without the prologue; `"nvjet"` keeps master's whole path there. Config-only, logged. Expected gain at that shape is therefore only the qkv and o GEMM rows, about 5-7 us (review).
+- (b) New `DL2_MAX_TOKENS = 32`; `DL_MAX_TOKENS` is not used for gating (ws is sized with the new constant).
+- (c) Self-check case batch 4, q_len 8, sliding, kv_scale 0.015625 (T=32).
+- (d) Instruction forms limited to cp.async.cg, ldmatrix.x4, mma.sync m16n8k16 bf16; no createpolicy / cache_hint. FP8 encode is `__nv_cvt_float2_to_fp8x2(..., __NV_SATFINITE, __NV_E4M3)` on values already rounded through bf16 (including after the k/v divide); the satfinite note (clamps at 448 where torch's e4m3fn cast gives NaN) is logged. The self-check scales x down so `v / kv_scale` stays below 448.
+- (e) Self-check prints before each launch and syncs and prints after it, separately for Q, Q-raw, O and O-raw and the graph chain; Q and O event times at pdl 0 and 1 for T=1 and T=32 are printed.
+- (f) Gates are config only; no host sync in `kernel_fn`; counters (`cnt_q`, `cnt_o`) reset in-kernel and are checked back at 0 after the self-check; FA3 attends every key.
+
+Deviations from the spec:
+- RoPE is the interleaved (GPT-J) layout (pairs 2i, 2i+1), as reference.py and `_norm_rope` define it, not the neox layout the spec text says; cos/sin come from `state["cos_sin"]` (cos in columns 0-31, sin in 32-63).
+- O keeps all four K-blocks of its weight slab resident (64 KB + up to 32 KB x tile, 2 CTAs/SM, 256 CTAs fit one wave) instead of the spec's 3 CTAs/SM ring; occupancy is printed.
+- Q's gate output goes to a separate [T,1024] bf16 tensor that O reads, not a slice of a [T,2304] qkv.
+- The graph check captures Q, O, Q-raw and O-raw with a stand-in FA3 output, not the real FA3 call (the synthetic inputs have no page table).
+- FusedQKNorm / FusedRMSNormGate sources are not on this node, so their bf16 rounding points are inferred from master's tensor dtypes; the self-check compares against the live modules (q and cache rel L2 <= 1e-2, gate 1e-2, attention output <= 5e-3).
+
+## Rules check
+
+- [x] CUDA-graph capturable: no `.item()`/`.cpu()`/`synchronize()`/tensor prints in `kernel_fn`'s call graph (`_dl2_attention`, `_dl2_q`, `_dl2_o`, `_master_attention`); the only synchronizes are in prepare()-only helpers (lint reports them as outside kernel_fn). Allocation is by shape only; no value-dependent control flow (gates read `config`). The self-check captures and replays Q/O in a CUDA graph.
+- [x] Nothing derived from `data` is cached across calls: ws/counters are prepare() buffers that hold no data (every launch leaves the counters at 0).
+- [x] Weights: no new weight copies at all; Q and O read `state["dense"]["qkv_gate"]` and `["o"]` as BF16.
+- [x] Activations BF16 where SGLang keeps BF16; KV cache FP8 (E4M3 written through bf16); queries E4M3, no coarser.
+- [x] Attention sees every key: FA3 call is unchanged (same q_attn / cache / metadata logic); the sliding decode_1 shape keeps `_sliding_forward`.
+- [x] No timing patches, harness access, module edits, reference import, subprocesses or network (git diff grepped for subprocess, multiprocessing, os.fork: none).
+- [x] All work happens inside the timed call; no output caching or replay.
+- [x] Only instruction forms already proven on the judge (cp.async.cg, ldmatrix.x4, mma.sync m16n8k16 bf16); no createpolicy/cache_hint; no sm_90a-only PTX (no TORCH_CUDA_ARCH_LIST change needed); `-lineinfo` added.
+- [x] n/a: bounded mbarrier/spin waits: the new kernels use no mbarrier or spin wait (cp.async groups, `__syncthreads`, a single atomic ticket).
+- [x] Any build error, self-check miss or exception lands on master's attention side (stage-1 FFN kept) and never raises; loud `PATH CHOSEN` lines per shape class.
+
+okc_lint output:
+
+```
+OK with warnings: muse_decode_layer/submission.py
+(warnings only: host-sync lines outside kernel_fn's call graph in prepare(); dtype warnings for the self-check's synthetic uint8 -> FP8 cache init at _dl2_make_data)
+```
+
+`python3 -I -m py_compile` passed; `__pycache__` removed.
+
+Uncertainties: never compiled or run (no nvcc here); a first-launch fault would poison the context, so the first run should be an `okc check`.
+
+## Pre-flight audit
+
+Audited 2026-10-24 by an opus subagent (read-only review plus a numpy emulation of the FP8 gate). **Verdict: dispatch-with-fixes.**
+
+Verified: interleaved RoPE matches reference.py `_rope` and the `cos_sin` table (cos 0-31 | sin 32-63), the convention the judge-passed fused-preattention-triton also used. The cache row is `(cache_loc[t]*2 + kv_head)*64` into contiguous [pages,page,2,64] (valid for any page size). The k/v divide is on the bf16 value, rounded to bf16, then E4M3 RN with satfinite, as master's bf16 `k / k_scale` then `.to(FP8)`. The raw sliding decode_1 feed is bf16 [T,2304] contiguous, as nvjet produced, and O skips the prologue only there. Paired q puts head h in half (h>>3)&1 of [T,16,128] and zeroes the other half; O reads the same half. Ticket counters reset in-kernel, gates read config only, there are no host syncs in kernel_fn, FA3 is unchanged over every key, there is no child process, only cp.async.cg / ldmatrix.x4 / mma.sync are used, `-lineinfo` is on, and there is no ptxVersion gate.
+
+Fixes (worktree submission.py; lint OK with warnings only, py_compile OK):
+1. Self-check FP8 tolerance for q/k/v went from 1e-2 to 4e-2; the bf16 gate stays at 1e-2. Reason: a numpy emulation shows that one extra bf16 rounding inside FusedQKNorm before RoPE (its source is not on this node) alone gives about 1.05e-2 rel L2 from E4M3 boundary crossings. With 1e-2 the gate could fail on every case and stage 2 would never run. A wrong RoPE or layout gives O(1), and the judge's cache tolerance is 8%.
+2. `_dl2_ref_q` now returns a clone of the qkv GEMM output taken before `state["qk_norm"]` runs. If FusedQKNorm normalizes in place, the Q-raw comparison would have compared against normed q/k and failed every case.
+
+Residual risk: the build has never been compiled. A compile error now also takes stage 1 down to master, because the two stages share one TU. A device fault in the first self-check launch would poison the context, so the first run should be an okc check.
