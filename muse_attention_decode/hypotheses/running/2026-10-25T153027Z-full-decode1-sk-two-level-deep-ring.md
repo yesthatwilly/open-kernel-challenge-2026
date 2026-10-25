@@ -50,9 +50,18 @@ priority: 2
 kind: primary
 controls_for: null
 review: proceed
-status: queued
+status: running
 review_at: 2026-10-25T203307Z
 review_companions: null
+stage: claimed
+claimed_at: 2026-10-25T203307Z
+base_sha: 6d8fce0bdeed57b76fcd060aaec81554c9798b15
+base_blob: 6d6afa4722731ceb9cb8216d0334a03f1a96ad2b
+branch: hyp/muse_attention_decode/full-decode1-sk-two-level-deep-ring
+worktree: .worktrees/muse_attention_decode/full-decode1-sk-two-level-deep-ring
+mode: submit
+restack_of: null
+stale_base: null
 ---
 
 # full-decode1-sk-two-level-deep-ring
