@@ -68,10 +68,10 @@ priority: 1
 kind: primary
 controls_for: null
 review: proceed
-status: running
+status: done
 review_at: 2026-10-25T153001Z
 review_companions: null
-stage: dispatched
+stage: harvested
 claimed_at: 2026-10-25T153001Z
 base_sha: e15152e9078a60b4c86e9eaf4e8b71da18b05e66
 base_blob: a2fe2a75893c60d4f68cf94fcce8ce8f9b708a71
@@ -90,6 +90,13 @@ attempt_file: 2026-10-25T153857Z-submit-pre-expert-norm-fused-rega-gather.md
 prepared_at: 2026-10-25T153857Z
 job: edf68fa3131c4bf8
 dispatched_at: 2026-10-25T153906Z
+outcome: neutral
+verdict_detail: unproven-vs-best
+speedup: 1.4599652306075455
+speedup_ci: [1.4380657521484324, 1.4818647090666586]
+harvested_at: 2026-10-25T154457Z
+best_at_harvest: 1.4586709689454935
+promotion: null
 ---
 
 # pre-expert-norm-fused-rega-gather
@@ -189,3 +196,31 @@ Checked and found OK:
 - prepare: `_norm_gather_setup` runs after `_rega_setup`, with the 270 s skip at its start and before each class. Exceptions are caught per class (class OFF = master's path), and the PATH CHOSEN line is printed in `finally`.
 
 Residual risk: the Triton 3.8 compile of the dynamic-step persistent loop is unverified. A compile failure only turns the class OFF, but an in-kernel fault would poison the context. Reading found no OOB path.
+
+## Result
+
+- job `edf68fa3131c4bf8` (submit), status done, passed True, tests 5/5
+- speedup 1.4600x, 95% CI [1.4381, 1.4819], score 265351.4562389866 µs vs SGLang 387403.9 µs
+- best at harvest: {"speedup": 1.4586709689454935, "ci": [1.4367909044113112, 1.4805510334796759], "job": "1cc92a43b8be40f8"}; base result: muse_prefill_layer/hypotheses/done/neutral/align-two-phase-all-t-rega.result.json
+- **outcome: neutral** (unproven-vs-best)
+- files: `muse_prefill_layer/hypotheses/done/neutral/pre-expert-norm-fused-rega-gather.result.json`, `muse_prefill_layer/hypotheses/done/neutral/pre-expert-norm-fused-rega-gather.patch`; branch `hyp/muse_prefill_layer/pre-expert-norm-fused-rega-gather`
+
+## Attribution
+
+| shape | w | base µs | hyp µs | delta | verdict |
+|---|---|---|---|---|---|
+| batch=1 ctx=80000 dist=soft layer=sliding load=turn_1 page=1 q_len=753 repeats=6 | 46 | 704.38 | 717.44 | 0.9971 | flat |
+| batch=1 ctx=80000 dist=soft layer=full load=turn_1 page=1 q_len=753 repeats=6 | 16 | 1097.89 | 1095.15 | 0.9765 | flat |
+| batch=4 ctx=80000 dist=soft layer=sliding load=turn_4 page=1 q_len=753 repeats=6 | 46 | 2098.36 | 2114.02 | 1.0004 | flat |
+| batch=4 ctx=80000 dist=soft layer=full load=turn_4 page=1 q_len=753 repeats=6 | 16 | 3644.6 | 3545.31 | 1.0031 | flat |
+| batch=1 ctx=0 dist=soft layer=full load=first_turn page=1 q_len=16384 repeats=6 | 16 | 12078.49 | 10336.38 | 1.0012 | flat |
+| batch=1 ctx=32768 dist=soft layer=sliding load=first_turn page=1 q_len=16384 repeats=6 | 138 | 11285.6 | 10888.93 | 1.0452 | gained |
+| batch=1 ctx=32768 dist=soft layer=full load=first_turn page=1 q_len=16384 repeats=6 | 16 | 15310.56 | 13985.03 | 1.0156 | flat |
+| batch=1 ctx=65536 dist=soft layer=full load=first_turn page=1 q_len=16384 repeats=6 | 16 | 18819.51 | 17780.98 | 1.0166 | flat |
+
+gained on sliding first_turn. Expected hit: 2/3. Noise ±1.5%.
+
+## Follow-ups
+
+- unproven-vs-best: the change is not proven either way; a stacked hypothesis (`depends_on: pre-expert-norm-fused-rega-gather`) that adds a further change in the same area is the only way to learn more (identical code is never re-run).
+
