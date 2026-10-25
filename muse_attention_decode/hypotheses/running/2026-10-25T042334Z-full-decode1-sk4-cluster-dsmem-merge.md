@@ -44,9 +44,18 @@ controls_for: null
 rewrite_stage: 4
 replaces: "full decode batch 1: master splitkv_attn_sk_kernel two-level global ticket (grid SM)"
 review: proceed
-status: queued
+status: running
 review_at: 2026-10-25T043142Z
 review_companions: null
+stage: claimed
+claimed_at: 2026-10-25T043142Z
+base_sha: aafeb8f4d969d4a791dafeca1ad8dda986c3e7c1
+base_blob: d8769ef25caf845a0e207538ccc5c62394b6ee3b
+branch: hyp/muse_attention_decode/full-decode1-sk4-cluster-dsmem-merge
+worktree: .worktrees/muse_attention_decode/full-decode1-sk4-cluster-dsmem-merge
+mode: null
+restack_of: null
+stale_base: null
 ---
 
 # full-decode1-sk4-cluster-dsmem-merge
