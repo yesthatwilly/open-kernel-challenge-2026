@@ -51,8 +51,11 @@ depends_on: null
 priority: 2
 kind: primary
 controls_for: null
-review: required
-status: queued
+review: hold
+status: hold
+review_at: 2026-10-25T203045Z
+review_companions: null
+hold_reason: "adversarial review: Sixth scored run of the same _pre_attention_tiled_kernel; its parent preattention-tiled-gate-large-tokens is on Do-not-try. The only new part (gate widened to S"
 ---
 
 # preattention-tiled-every-verify-block
@@ -72,3 +75,26 @@ Built on current master eb1b68b (no depends_on). Restack the group-tiled pre-att
 ## Risk
 
 Low risk: the kernel is copied from a patch that passed every test and every timed-call check twice (877731a3, c2ebf6ed), including the PAIRED full-verify layout. Widening the gate to q_len == 8 means 7 of the 16 pre-tests (q_len 8, page 1 and 64, tp8 and dp, kv_scale 1/64) now exercise it before timing, which removes the previous run's residual risk that only the scored calls covered it; the auditor should confirm G = Hq/Hkv is a power of two under dp as well as tp8 (the parent audit said G = 8 for both). Expected headline effect ~+0.3-0.4%, inside the 1.5% CI by construction; judge it on the _pre_attention_tiled_kernel row and on sliding verify_16/32 paired ratios, not the headline. Stacks with restack-sliding-decode-sk-window-on-cluster-master and sliding-decode-sk-s3-fused-preattn-rope (decode only, q_len 1) without overlap.
+
+## Adversarial review
+
+Reviewed 2026-10-25T203045Z by an adversarial subagent (model opus).
+
+**Verdict: hold.** Sixth scored run of the same _pre_attention_tiled_kernel; its parent preattention-tiled-gate-large-tokens is on Do-not-try. The only new part (gate widened to SV1/SV16/FV1/FV16/FV32) was measured flat or slower per class in combo-naive-c320-fd1-tiled-preattn-verify's whole-step gate (log b9d062aaa94c4cbf l.158-163); the one winning class (SV32) is already carried by merge-perkvhead-c320-sv32-tiled (1.5347x).
+
+### Justification
+Tiled cuts pre-attention at SV32 (4.1-4.2 -> 2.7 us; rows 1.0385/1.0456/1.0416/1.0425). Weakest link: 'SV16 faster' -- four judged runs 0.9955/1.0007/0.9955/1.0107. Gate step ratios tiled/master: SV1 1.013, SV16 1.008, FV1 1.009, FV16 1.005, FV32 0.999, SV32 0.964. No prior field although five earlier runs used this kernel; the change only removes the timing gate. Base stale (eb1b68b vs 5d528bf). Expected ~1.51-1.52, below best 1.5295.
+
+### Confounders on the current kernel
+- restack-sk-pseudo-cluster-plus-v3-fused-preattn: SV1 runs the PSEUDO stream-K route; tiled q into it measured 1.013x slower.
+- fa3-hdim128-head-pairing / paired-heads-launch-cleanup: FV16/FV32 PAIRED layout, tiled gains ~0.1 us (noise).
+- fused-preattention-triton: incumbent 1-warp grid fills better at low token counts, where tiled loses.
+- merge-perkvhead-c320-sv32-tiled (not landed): already routes tiled at SV32.
+
+### Interference and A/B needs
+No companion: every touched row already has a recent per-class whole-step measurement. The worthwhile follow-up is the confirm of merge-perkvhead-c320-sv32-tiled.
+
+### Open questions
+- Why does the SV16 kernel saving (2.8 -> 2.0 us) not reach the step? Profile start-to-start gaps first.
+- Small-token tiled variant for SV1, or fold pre-attention into the PSEUDO kernel?
+

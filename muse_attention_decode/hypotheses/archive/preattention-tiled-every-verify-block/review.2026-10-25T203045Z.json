@@ -1,0 +1,21 @@
+{
+ "model": "opus",
+ "verdict": "hold",
+ "summary": "Sixth scored run of the same _pre_attention_tiled_kernel; its parent preattention-tiled-gate-large-tokens is on Do-not-try. The only new part (gate widened to SV1/SV16/FV1/FV16/FV32) was measured flat or slower per class in combo-naive-c320-fd1-tiled-preattn-verify's whole-step gate (log b9d062aaa94c4cbf l.158-163); the one winning class (SV32) is already carried by merge-perkvhead-c320-sv32-tiled (1.5347x).",
+ "justification": "Tiled cuts pre-attention at SV32 (4.1-4.2 -> 2.7 us; rows 1.0385/1.0456/1.0416/1.0425). Weakest link: 'SV16 faster' -- four judged runs 0.9955/1.0007/0.9955/1.0107. Gate step ratios tiled/master: SV1 1.013, SV16 1.008, FV1 1.009, FV16 1.005, FV32 0.999, SV32 0.964. No prior field although five earlier runs used this kernel; the change only removes the timing gate. Base stale (eb1b68b vs 5d528bf). Expected ~1.51-1.52, below best 1.5295.",
+ "confounders": [
+  "restack-sk-pseudo-cluster-plus-v3-fused-preattn: SV1 runs the PSEUDO stream-K route; tiled q into it measured 1.013x slower.",
+  "fa3-hdim128-head-pairing / paired-heads-launch-cleanup: FV16/FV32 PAIRED layout, tiled gains ~0.1 us (noise).",
+  "fused-preattention-triton: incumbent 1-warp grid fills better at low token counts, where tiled loses.",
+  "merge-perkvhead-c320-sv32-tiled (not landed): already routes tiled at SV32."
+ ],
+ "interference": "No companion: every touched row already has a recent per-class whole-step measurement. The worthwhile follow-up is the confirm of merge-perkvhead-c320-sv32-tiled.",
+ "rules_flags": [
+  "None on rules. Process: dropping combo-naive's exactness gate exposes the never-judged page-64/dp specializations; keep page_size == 1 if revived."
+ ],
+ "companions": [],
+ "open_questions": [
+  "Why does the SV16 kernel saving (2.8 -> 2.0 us) not reach the step? Profile start-to-start gaps first.",
+  "Small-token tiled variant for SV1, or fold pre-attention into the PSEUDO kernel?"
+ ]
+}
