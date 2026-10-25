@@ -51,8 +51,10 @@ depends_on: null
 priority: 2
 kind: primary
 controls_for: null
-review: required
+review: proceed
 status: queued
+review_at: 2026-10-25T212855Z
+review_companions: null
 ---
 
 # full-verify-fa3-num-splits-band-gate
@@ -72,3 +74,28 @@ Built on current master (no depends_on). Full verify still runs FA3: B=1 unpaire
 ## Risk
 
 Full verify_1 is 45% of the verify_1 load (16 x 30.5 of 1095 us). Low cost: config + prepare timing only.
+
+## Adversarial review
+
+Reviewed 2026-10-25T212855Z by an adversarial subagent (model opus).
+
+**Verdict: proceed.** A cheap, config-only, self-measuring stopgap that DIAGNOSIS action 5 names for full verify_1's 7.2 us combine. It caps FA3's split count below the dynamic pick, which is the only direction LESSONS says works. Proceed as a single check with no companions, because the prepare sweep already carries its own auto-vs-chosen control. Fix the missing prior and use the two-round selector rule.
+
+### Justification
+Mechanism: reference.py passes scheduler_metadata=None on every verify block, and master's FA3 call for full verify (B=1 unpaired, B>1 paired) passes metadata=None or the judge's None, so FA3 runs prepare_varlen_num_blocks and splits dynamically. The board profile confirms this: prepare 2.8 us at verify_1, 3.1 us at verify_16. Under varlen dynamic split num_splits is a cap (LESSONS 'Attention'), so a value below the heuristic does change the schedule. Values at or above auto (64/96 at B=1, 16 at B=16/32) should time the same as auto, which gives a free internal noise control. Profile support: full verify_1 is 30.3 us (FA3 main 15.2, combine 7.2, prepare 2.8, plus pre-attn and norm-gate) against a 4.3 us floor. At B=1 with pack-GQA there are only 2 m-tiles (1 request x 2 kv heads x 64 packed rows), so FA3 fans out to about 64 splits. The combine is then latency-dominated: about 2 MB of fp32 partials should take under 1 us at bandwidth, yet it takes 7.2 us. Fewer splits can plausibly cut 2-4 us of combine, but every halving also halves the CTAs pulling 20.5 MB through a page-1 gather that today runs at only about 1.35 TB/s. Weakest link: the trade is not monotone and the main kernel may slow by more than the combine saves. The prepare sweep with a >=1.03x gate turns that loss into 'keep auto' (flat), so the run is cheap either way. Expected directions are consistent with TASK. Full verify_1 has weight 16: 2-4 us there is 32-64 us on the verify_1 load (~1095 us), +3-6% on that load and about +0.5-1% headline, which is inside the headline CI. Read the result per shape (judge paired-ratio medians on full verify_1), not from the headline. At verify_16/32 the combine is 6.4/6.7 us of 162/302 us. Reaching 1.03x on the step would need about 5/9 us of saving, so 'flat via auto' is the right expectation, and a lower cap there mostly removes CTAs from a gather-bound kernel. Prior: the frontmatter has NO prior field, and there are obvious earlier attempts. (1) muse_attention_decode/hypotheses/done/expired/2026-10-23T225858Z-fa3-num-splits-full-verify.md, held as moot and expired unrun. It tried to RAISE splits to fill SMs, which the cap semantics make impossible. (2) muse_decode_layer done/expired fa3-full-single-split-probe (num_splits=1 cap, held and unrun). Neither was ever measured. This hypothesis caps BELOW the dynamic pick and chooses the value by measurement, so the difference is real and the mechanism has not been tried. It is not on either Do-not-try list, and DIAGNOSIS action 5 explicitly names this slug as the stopgap. I do not hold on the missing prior, but the builder must add prior: fa3-num-splits-full-verify (expired, unrun; tried to raise splits, while this one lowers them under the cap).
+
+### Confounders on the current kernel
+- fa3-hdim128-head-pairing + paired-heads-launch-cleanup + paired-heads-launch-cleanup-ab-tune-batch-gate: these fix the tile geometry the split choice depends on (B=1 unpaired, 2 kv heads x 1 m-tile; B>1 paired, 1 super-head). The chosen caps only hold for that geometry. The sweep is measured on master's own geometry, so it is self-consistent, but the table would be stale if pairing at B=1 ever changed.
+- fused-preattention-triton (+ paired q layout): sets the q tensor layout FA3 sees (64- vs 128-wide). It does not move with num_splits, so it is no confounder for the attributed delta. Note only that the sweep must time the step AFTER pre-attention, as specified.
+- Not landed but relevant: full-verify-wgmma-ws-s1-producer-split / full-verify-wgmma-s6-split-ring-2cta would replace paired FA3 at B=16/32 where they gate. If one lands first, the B=16/32 bands of this table become dead code. That causes no confounding, because the gate keeps those shapes on whatever routes first, but the merge needs the band check ordered after the wgmma gate.
+
+### Interference and A/B needs
+No companion is warranted. The change is a single keyword argument, and its value is chosen by an in-prepare A/B against auto (num_splits=0) on master's exact step at each band, with every number printed. That log is itself the control: a flat result reads as 'auto kept' (or as a chosen cap below 1.03x), and a gain or loss on full verify_1 is attributable to the printed cap with no landed hypothesis in between. An ab-revert of pairing would only re-measure the B=1 unpaired geometry, which already is unpaired. An ab-tune of the cap set duplicates what the sweep already does. The only real ambiguity risk is selector noise, which is addressed in open_questions (two interleaved rounds), not by a companion run.
+
+### Open questions
+- Add the missing prior field: fa3-num-splits-full-verify (expired, unrun; it raised splits, this one caps below them).
+- Gate the table on the scored geometry (heads tp8 / hkv 2, head_dim 64, page_size 1) as well as window/q_len/batch. Otherwise the B=1 cap also applies to the 'batch 1 ctx 1048576 q_len 8' test (page 64) and the dp-heads verify tests, and the B=2..24 band cap applies to 'batch 2 ctx 100000'. That is correct but unmeasured. Keep everything off the scored geometry on auto.
+- Should the B=1 candidate set include 8, and an explicit 1 (no combine launch at all), as diagnostic rows only? Printing them would tell whether the combine or the main kernel's MLP sets the curve. 1 is almost certainly slower (2 CTAs), so keep it unroutable.
+- Confirm that at B=1 FA3 actually skips or shrinks FlashAttnFwdCombine when the cap lowers the dynamic split. Read it from the run's profile: combine us at the chosen cap against 7.2 us.
+- Can it be stacked with sliding-verify-fa3-num-splits-band-gate? It uses the same mechanism on disjoint shapes, so if both gain, a restack is a clean merge.
+
