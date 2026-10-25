@@ -66,7 +66,7 @@ base_sha: f896dc264c4b4ee1df6c4b33556b50f2d4282f9c
 base_blob: 712edc5ea5be2dde8f558a016d0877b285340ee4
 branch: hyp/muse_prefill_layer/turn-align-two-phase-chunk-prefix
 worktree: .worktrees/muse_prefill_layer/turn-align-two-phase-chunk-prefix
-mode: null
+mode: check
 restack_of: null
 stale_base: null
 implemented_at: 2026-10-25T120316Z
@@ -75,6 +75,8 @@ submission_sha256: 310aa880f5b7dfee7103747c2cb5e48debf1ed514003e3c8c00fb7903dfd3
 norm_sha256: 4f74716bf86c95b37ed9ab8f12ca34fca862d6d8e4a6730232089dc80471e569
 submission_blob: dab438b9e49302463ff706a54540d8782b47aae5
 lint_warnings: 56
+attempt_file: 2026-10-25T120316Z-check-turn-align-two-phase-chunk-prefix.md
+prepared_at: 2026-10-25T120316Z
 ---
 
 # turn-align-two-phase-chunk-prefix
