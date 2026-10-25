@@ -72,7 +72,7 @@ review: proceed
 status: running
 review_at: 2026-10-25T111131Z
 review_companions: null
-stage: claimed
+stage: implemented
 claimed_at: 2026-10-25T111131Z
 base_sha: b427e7bfe8620ee6bea6bcd1c992aa9f6eef1acb
 base_blob: f2d91dd181aeb44de20d2eed62ab7e564f2b181f
@@ -81,6 +81,12 @@ worktree: .worktrees/muse_prefill_layer/experts-turn4-ssdq-s2-tma-raw-weight-rin
 mode: null
 restack_of: null
 stale_base: null
+implemented_at: 2026-10-25T112047Z
+impl_commit: 77c80c6a8dd4400ad5fb988e07df7e3ead6b6307
+submission_sha256: c6b135e1dd972b70ab5ab7ff1afffd70ff9df1af168e317b235a794825248192
+norm_sha256: 25ac7b55c95fbb20c8296da8d34b6b0511ec1f1eaef18044ed02f96ca0e960be
+submission_blob: ab3dc5a011bcff33c3c1503e782b46f03335e239
+lint_warnings: 44
 ---
 
 # experts-turn4-ssdq-s2-tma-raw-weight-ring
@@ -133,3 +139,57 @@ No companion is warranted. This is kind: rewrite, judged on the replaced kernel'
 - The TMA tensor over bank['w13'|'w2'] viewed as [E*N, K/2] uint8: does every 256-row box start at a 256-row boundary inside one expert? N % 256 == 0 is TORCH_CHECKed, so yes. Is the bank tensor's base 16 B aligned after the nibble reorder (TMA requires it)?
 - Will the profile show ssdq2_kernel with the producer's raw_full wait counter, so the 'consumer wait share < 40%' milestone and the load-vs-ALU split can be read from one run?
 
+
+## Implementation notes
+
+Built in `.worktrees/muse_prefill_layer/experts-turn4-ssdq-s2-tma-raw-weight-ring/muse_prefill_layer/submission.py` (base b427e7bf; master 537653db differs from it only in md files, so no merge was needed). Nothing was run (no GPU/nvcc on this node); the CUDA source was only brace-checked.
+
+What changed
+- `ssdq2_kernel` (new, same load_inline module, SSDQ_EXT_NAME2 `muse_prefill_ssdq_v2`): master's ssdq kernel with only the producer feed replaced. A 4-entry smem raw ring (RAW_STAGES 4, 18432 B each: 16 KB codes by one 2-D TMA over `w` viewed as uint8 [E*N, K/2], box {64 B, 256 rows}, SWIZZLE_NONE; 2 KB e4m3 scales by cp.async.ca 8 B, 2 rows per thread, then cp.async.mbarrier.arrive.noinc; raw_full init count 1 + 128, thread 0 does expect_tx(16384) + TMA). Per chunk: wait raw_full, read the entry into registers (cur/cs, 48 regs; the nxt/ns prefetch registers are gone), optional fence.proxy.async, `bar.sync 1,128` (producer-only), refill entry with chunk c+4, then dequantize both halves from registers with master's math and the same empty/full protocol. Releasing the entry right after the register read (not after the dequant) keeps all 4 entries in flight; the spec's "bar.sync then refill" order is kept.
+- Own constants STAGES2=3, RAW_STAGES=4, SMEM2=222208 (static_assert == 222208 and fits 227 KB with the 80 B of static mbarriers), own static `bars[2*STAGES2+RAW_STAGES]`, own `ssdq2_info()` with its own cudaFuncSetAttribute(MaxDynamicSharedMemorySize, SMEM2) called before the canary (prepare requires dyn_smem == 222208, ctas_per_sm >= 1).
+- `ssdq2_gemm` host entry: both maps (A, and weight code map) encoded per call from the tensors passed in, in a stack `Maps2`; nothing static except master's cached `get_encode()` function pointer. Returns 2000 if the weight base is not 16 B aligned or K/2 % 16 != 0.
+- Python: `_experts_ssdq(..., v2, fence)`, `_experts` dispatch (ssdq2_ok first, then ssdq_ok, else Marlin), `_ssdq_source_audit/_ssdq_build/_ssdq_src(with2)`, `_ssdq_replay_check(v2)`, new `_ssdq2_checks`, `_ssdq_counters_line`, and `_ssdq_gate` is now the three-way gate. ssdq2 has its own `ssdq2_err` (3 ints) and `ssdq2_prof` (10 int64) in state.
+
+Adversarial-review items
+1. Keep master's ssdq unchanged / own constants / own mbarriers / own opt-in: done. `ssdq_kernel`, STAGES=4, SMEM_BYTES, `ssdq_info`, `ssdq_gemm` are untouched (diff has no deletions inside them); the hypothesis text's "STAGES = 3 for master" error is overridden (STAGES2=3 is ssdq2's only). If the module with ssdq2 does not build or fails the source audit, prepare rebuilds master's module alone (name `muse_prefill_ssdq_v1`) so a stage-2 compile error cannot cost master's ssdq.
+2. Wait counters: ssdq2 prof has [0] producer empty-stage wait, [1] consumer wait, [2] CTAs, [3] total cycles, [4] producer raw_full wait. `_ssdq_counters_line` prints raw_full wait, empty wait, total cycles per CTA and the consumer wait as a percent of the CTA, for master ("master ssdq") and ssdq2 at T=3012, w13 and w2, with the reading rule (raw_full large = load-latency bound, small with consumers still waiting = dequant-ALU bound).
+3. TMA weight map: encoded inside every `ssdq2_gemm` call from the passed `w`; no static/global/data_ptr-keyed cache; 16 B base alignment checked (rc 2000, reported by the tracer as an encode failure -> ssdq2 OFF). The replay check clones the bank for state B and captures a graph per state, so a frozen map would fail.
+4. Proxy fence: `fence_variant` kernel arg (1 = `fence.proxy.async` by every producer thread between the ring reads and the bar.sync/refill, 0 = mbarrier ordering only). The canary runs both variants; the self-check runs fence=1 on all five cases and fence=0 additionally on T=3012 random and T=4096 skewed; the gate times both. Shipped variant is fence=1 (`state["ssdq2_fence"]`, a prepare-time flag); the fence=0 timing is printed only and never routes (deviation: a faster unfenced variant would need its own sign-off).
+5. Kernel named `ssdq2_kernel`.
+6. Three-way gate: Marlin pair, master's ssdq, ssdq2 (+ the other fence variant, informational), >= 9 interleaved alternations (order rotated), cold-L2 flush, empty-graph baseline (one 4-byte memset graph) subtracted from every sample. ssdq2 ON iff ssdq2 <= 0.98 x ssdq and also ssdq2 <= 0.95 x Marlin (added: ssdq2 must still win the Marlin gate when ssdq alone would not); else ssdq if <= 0.95 x Marlin; else Marlin. `ssdq_ok` = either on, `ssdq2_ok` selects the kernel. No data_ptr gating. Two-state replay check: one graph per state with that state's own ssdq2 error word, inputs refilled in place, A/B/B/A over random/skewed/one/random at T=4096.
+Open questions answered: ssdq2 has its own opt-in (above); fence flag exercised in the canary (above); N % 256 == 0 is TORCH_CHECKed so every box stays inside one expert; the profile will show `ssdq2_kernel` separately and the printed counters give the raw_full split from one run.
+
+Other
+- ssdq2 checks start only after master's ssdq passed canary, self-check, replay check and counters, and skipped when prepare has used > SSDQ2_BUDGET_S = 215 s. The fp32 reference cache is kept alive through the ssdq2 checks, then freed (it used to be freed after master's replay check).
+- A python-level failure in the ssdq2 checks leaves master's ssdq decision intact; a device fault would poison the context regardless (hangs are bounded by the 2^26-cycle mbarrier timeout on every wait, including raw_full).
+- Biggest risks: compile errors in untested PTX (cp.async.mbarrier.arrive.noinc.shared.b64, tensor map for uint8 / SWIZZLE_NONE), 168-register cap (cur/cs 48 regs still live), and smem bandwidth.
+
+## Rules check
+
+- [x] CUDA-graph capturable: kernel_fn path adds no sync/.item()/print/allocation on values; ssdq2 launch is a plain kernel launch with a per-call tensor map; dispatch only on T and prepare flags (checked in the diff of `_experts`/`_experts_ssdq`).
+- [x] Nothing derived from `data` is cached across calls: maps are encoded per launch from `state` tensors; only the `get_encode()` function pointer is static (as master).
+- [x] Weights: NVFP4 stays NVFP4 in global memory (TMA/cp.async read the nibble-reordered bank), dequantized in-kernel only; no BF16 weight copy.
+- [x] Activations BF16, router/attention untouched (diff touches only the ssdq section).
+- [x] Attention sees every key: n/a, attention code is not in the diff.
+- [x] No timing patches, harness frames/I-O/secrets, module edits, reference import, subprocesses or network (load_inline is master's existing path; no subprocess/fork added).
+- [x] All work happens inside the timed call; no output caching or replay.
+- [x] sm_90a: TORCH_CUDA_ARCH_LIST=9.0a around load_inline (master's `_ssdq_build`, restored in finally), flags exactly ['-O3','-std=c++20','-lineinfo','-gencode=arch=compute_90a,code=sm_90a'], wgmma/ssdq2 body under `__CUDA_ARCH_FEAT_SM90_ALL` with the error-word-2 `#else`.
+- [x] Judge two states: no device pointer, map or buffer in module/static/C++ globals; ssdq2 err/prof live in state; replay check covers two states.
+
+Lint (`okc_lint.py --problem muse_prefill_layer`): `OK with warnings`, 0 errors; all 44 warnings are `host-sync` in prepare()-only code (outside kernel_fn's call graph). `undef.py`: no undefined names. `py_compile`: ok; __pycache__ removed.
+
+## Pre-flight audit
+
+Audited 2026-10-25 by an Opus subagent, by reading only (no nvcc or GPU on this node). **Verdict: dispatch.** No fixes were needed.
+
+- PTX: `cp.async.mbarrier.arrive.noinc.shared.b64 [r]`, `cp.async.ca.shared.global [d], [s], 8` and `bar.sync 1, 128` are valid forms. raw_full is initialised to 129, which matches 1 expect_tx arrive (thread 0) + 128 noinc arrives, one per producer thread including thread 0. full=129 and empty=8 are as in master.
+- Ring phases: raw entry r=c%4 waits on parity (c/4)&1. The named barrier sits after every producer thread has waited and read entry r, so no arrive for phase n+1 can come before a waiter has passed phase n. The bf16 ring at STAGES2=3 uses master's kt%S and ((kt/S)&1)^1 protocol unchanged. Every issued chunk is consumed before exit, so no async copy is still pending when the CTA exits.
+- Refill order: the generic reads go into registers, then the optional fence.proxy.async (on by default), then bar.sync 1,128, then the TMA from thread 0 and cp.async from all threads.
+- Weight tensor map (uint8, SWIZZLE_NONE): dims {K/2, E*N}, stride K/2 (checked to be a multiple of 16), box {64, 256}, 16 B base alignment checked (rc 2000). Smem destinations are 1024-aligned (18432 B per entry). The coordinates (c*64, e*N+n0) match master's __ldg addressing.
+- smem: SMEM2=222208 plus 80 B static fits the 227 KB opt-in. ssdq2_info sets its own cudaFuncSetAttribute(..., SMEM2), and the prepare check on info[3] == 222208 cannot fail by construction.
+- Master's ssdq_kernel, _SSDQ_HEAD and _SSDQ_CPP are byte-identical to master. _SSDQ_BODY matches master once the two placeholders are removed (checked by AST string comparison).
+- Fallback: a failed v2 audit, build or import rebuilds master's module alone (v1 name). A Python-level ssdq2 failure returns False and keeps master's ssdq decision. Master's build took 31 s, so a second build fits the 300 s window.
+- The weight map is encoded inside every ssdq2_gemm call from the w passed in. Nothing is cached apart from master's encode function pointer. The two-state replay check clones the bank.
+- kernel_fn is unchanged. _experts dispatches only on T and prepare flags, with no try/except, prints or per-call state. undef.py found nothing. py_compile is ok. okc_lint reports OK (host-sync warnings in prepare only).
+
+Residual risk: the untested PTX or tensor-map encode may fail to build or launch, which lands cleanly on master's ssdq. A device fault in ssdq2 would still poison the context.
