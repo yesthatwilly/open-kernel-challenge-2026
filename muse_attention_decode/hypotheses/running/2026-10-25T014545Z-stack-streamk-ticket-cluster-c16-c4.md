@@ -56,9 +56,18 @@ priority: 1
 kind: primary
 controls_for: null
 review: proceed
-status: queued
+status: running
 review_at: 2026-10-25T034534Z
 review_companions: null
+stage: claimed
+claimed_at: 2026-10-25T034535Z
+base_sha: 63995118a6d87d5714181d318458a7595fe4bbac
+base_blob: c6854f093588da524e63657576b27ed720756e32
+branch: hyp/muse_attention_decode/stack-streamk-ticket-cluster-c16-c4
+worktree: .worktrees/muse_attention_decode/stack-streamk-ticket-cluster-c16-c4
+mode: null
+restack_of: full-decode-splitkv-s2-streamk-ticket-inproc
+stale_base: null
 ---
 
 # stack-streamk-ticket-cluster-c16-c4
