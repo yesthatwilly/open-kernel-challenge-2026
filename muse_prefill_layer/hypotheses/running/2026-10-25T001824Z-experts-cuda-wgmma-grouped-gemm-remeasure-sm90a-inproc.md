@@ -78,7 +78,7 @@ base_sha: d7ccd530009419f0e32f5bd4bdae7f0fdad273a3
 base_blob: db8a3344398bca79ea5cafeb580f701c055fd475
 branch: hyp/muse_prefill_layer/experts-cuda-wgmma-grouped-gemm-remeasure-sm90a-inproc
 worktree: .worktrees/muse_prefill_layer/experts-cuda-wgmma-grouped-gemm-remeasure-sm90a-inproc
-mode: null
+mode: check
 restack_of: null
 stale_base: null
 implemented_at: 2026-10-25T003406Z
@@ -87,6 +87,8 @@ submission_sha256: 29e30e2184a52c4c93a1a68b2b4c701d393ee221d0b9145a1ec9ac62d5941
 norm_sha256: 59a1e5f9157ec54310476843316c32370929dd2005a745307aa00f1ff6822b1a
 submission_blob: 113e7ac977c8ebb579d91c34400f9530c4ae6881
 lint_warnings: 24
+attempt_file: 2026-10-25T003406Z-check-experts-cuda-wgmma-grouped-gemm-remeasure-sm90a-inproc.md
+prepared_at: 2026-10-25T003406Z
 ---
 
 # experts-cuda-wgmma-grouped-gemm-remeasure-sm90a-inproc
