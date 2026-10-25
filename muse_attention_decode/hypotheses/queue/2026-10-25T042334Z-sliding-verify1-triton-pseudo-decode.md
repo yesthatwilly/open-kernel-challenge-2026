@@ -31,8 +31,11 @@ depends_on: null
 priority: 2
 kind: primary
 controls_for: null
-review: required
-status: queued
+review: hold
+status: hold
+review_at: 2026-10-25T043143Z
+review_companions: null
+hold_reason: "adversarial review: HOLD for two reasons. (1) The key range is wrong: seq = seq_lens[b]-7+j treats seq_lens as the post-block length, but seq_lens is the prefix length (positions ="
 ---
 
 # sliding-verify1-triton-pseudo-decode
@@ -49,3 +52,25 @@ Built on master. At sliding verify batch 1 only (window != 0, q_len 8, batch 1, 
 ## Risk
 
 Kill: sliding verify_1 shape not below 16.0 us (kernel rows pre-attn + fused >= FA3 sum). Risk: two launches instead of one gap; position/rope must use each token own position.
+
+## Adversarial review
+
+Reviewed 2026-10-25T043143Z by an adversarial subagent (model opus).
+
+**Verdict: hold.** HOLD for two reasons. (1) The key range is wrong: seq = seq_lens[b]-7+j treats seq_lens as the post-block length, but seq_lens is the prefix length (positions = seq_lens+j, cache_seqlens = seq_lens+8). Each pseudo-query would attend a window shifted 8 keys into the past, missing its own and the preceding block keys: an every-key/causal rule break. (2) It duplicates the B=1 band of sliding-verify-sk-pseudo-decode-s1 on the same row. Unhold, with the fix below, only if that run's B=1 band falls back to FA3 or lands above ~12.5 us shape.
+
+### Justification
+Mechanism (once fixed): 8 pseudo-requests x 2 kv heads x 16 splits = 256 programs. Each does about the same work per program as master's decode (~128 keys), so the kernel should sit between decode_1 (10.4 us, 32 programs) and decode_16 (12.9 us, 512 programs), call it ~11 us. Add pre-attn ~1.3 us and one launch gap, ~13-13.5 us, against the 16.7 us shape. That is a plausible ~20% on sliding verify_1 (weight 46, 62% of the verify_1 load). WEAKEST LINK: the arithmetic error above, plus the fact that the 16 tests never exercise this route (no sliding q_len 8 test at batch 1). The first correctness check would be the judge's timed-call check, after a full run is spent.
+
+### Confounders on the current kernel
+- sliding-fused-triton-decode1-gate / sliding-deep-splits-on-cuda-splitkv (landed): this edits _sliding_fused_kernel, which serves every sliding decode row. PSEUDO=0 must be the master specialization (constexpr-gated, so the Triton cache key differs and the decode code is unchanged). Expect no decode movement.
+- fused-preattention-triton (landed): it writes the 8 new K/V rows before this kernel. Correctness now depends on that store (the S-1 new-key branch is skipped), so its cache rows are the attended keys. That matches what the judge checks ('reference attending to your own new entries').
+- sliding-verify-sk-pseudo-decode-s1 (queued, p1): same row, same idea (verify token = decode query), different kernel. Running both now buys a second implementation of one row with no new information unless the CUDA one loses at B=1.
+
+### Interference and A/B needs
+No companion while held. If unheld, it is attributable on its own: only sliding verify_1 changes, against an FA3 base row, and every other row is master code.
+
+### Open questions
+- UNHOLD CONDITION: sliding-verify-sk-pseudo-decode-s1 prints B=1 band FA3 (fallback/timing) or its routed sliding verify_1 shape is > ~12.5 us. Then run this with the corrected range and an import-time fp32 windowed-causal self-check at B=1 (lens 5, 2000, 2050, 80000; kv_scale 1 and 0.25), failure keeping FA3.
+- If unheld, consider S=8 vs 16 splits per pseudo-request as a prepare-timed choice (256 vs 128 programs). Decode evidence (sliding-decode32-splits-8) says fewer splits can win when programs exceed ~256.
+
