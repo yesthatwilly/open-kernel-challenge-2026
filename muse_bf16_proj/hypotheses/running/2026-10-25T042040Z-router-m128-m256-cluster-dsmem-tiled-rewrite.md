@@ -61,7 +61,7 @@ review: proceed
 status: running
 review_at: 2026-10-25T042454Z
 review_companions: null
-stage: implemented
+stage: dispatched
 claimed_at: 2026-10-25T042454Z
 base_sha: c67ea8677fb5f5a23ea879170b1d782395102bf1
 base_blob: 970b415b746fa03cb92e419d270be92588273178
@@ -78,6 +78,8 @@ submission_blob: 095978ec904ee937a4b5b039bf2b47b911801fa6
 lint_warnings: 3
 attempt_file: 2026-10-25T043258Z-check-router-m128-m256-cluster-dsmem-tiled-rewrite.md
 prepared_at: 2026-10-25T043258Z
+job: b7b2b55d04544660
+dispatched_at: 2026-10-25T043310Z
 ---
 
 # router-m128-m256-cluster-dsmem-tiled-rewrite
