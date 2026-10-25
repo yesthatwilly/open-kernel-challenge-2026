@@ -1,0 +1,128 @@
+[small-t-dense-chain] load_inline compiled in 41.7s
+[dl-boundary-unpool] load_inline compiled in 40.6s, flags ['-O3', '-arch=sm_90a', '-lineinfo'] (no sm_90a-only PTX: griddepcontrol, mma.sync, cp.async only)
+[small-t-dense-chain] P occupancy (CTAs/SM, NF=1/2/4): [3, 2, 2]; grid 216 CTAs
+[small-t-dense-chain] PDL probe: eager overlap False (-6.5 us), graph overlap True (49.7 us, secondary waited 50.3 us) -> pdl=1
+[small-t-dense-chain] P timing T=1 pdl=0 21.2 us (3.56 TB/s) pdl=1 21.0 us (3.60 TB/s)
+[small-t-dense-chain] P timing T=8 pdl=0 22.3 us (3.38 TB/s) pdl=1 22.0 us (3.43 TB/s)
+[small-t-dense-chain] P timing T=32 pdl=0 26.2 us (2.88 TB/s) pdl=1 26.0 us (2.91 TB/s)
+[small-t-dense-chain] ON pdl=1 compile 41.7s max errs ei 1.84e-04 logit 3.14e-06 xn 2.69e-06 w 0.00e+00 y 0.00e+00 graph 0.00e+00: PATH CHOSEN = DENSE-CHAIN at T <= 32, MASTER above
+[dl-boundary-unpool] residual coefficients per channel fp32 [8192] from: attn module probe (vs reference formula: alpha 0.0e+00, beta 0.0e+00), ffn module probe (vs reference formula: alpha 0.0e+00, beta 0.0e+00)
+[dl-boundary-unpool] self-check launch dl_boundary attn round=0
+[dl-boundary-unpool] self-check done   dl_boundary attn round=0
+[dl-boundary-unpool] self-check launch dl_boundary ffn round=0
+[dl-boundary-unpool] self-check done   dl_boundary ffn round=0
+[dl-boundary-unpool] self-check launch dl_boundary attn round=2
+[dl-boundary-unpool] self-check done   dl_boundary attn round=2
+[dl-boundary-unpool] self-check launch dl_boundary ffn round=2
+[dl-boundary-unpool] self-check done   dl_boundary ffn round=2
+[dl-boundary-unpool] post-norm rounding probe (stream err / |update|): fp32 attn 1.72e-03 ffn 2.34e-03, bf16 attn 1.09e-04 ffn 2.85e-03 -> attn bf16, ffn fp32
+[dl-boundary-unpool] self-check launch dl_boundary attn T=1
+[dl-boundary-unpool] self-check done   dl_boundary attn T=1
+[dl-boundary-unpool] self-check launch dl_boundary attn T=1
+[dl-boundary-unpool] self-check done   dl_boundary attn T=1
+[dl-boundary-unpool] self-check launch dl_unpool NF=1 T=1
+[dl-boundary-unpool] self-check done   dl_unpool NF=1 T=1
+[dl-boundary-unpool] self-check launch dl_unpool NF=1 T=1
+[dl-boundary-unpool] self-check done   dl_unpool NF=1 T=1
+[dl-boundary-unpool] self-check launch dl_boundary ffn T=1
+[dl-boundary-unpool] self-check done   dl_boundary ffn T=1
+[dl-boundary-unpool] self-check launch dl_boundary ffn T=1
+[dl-boundary-unpool] self-check done   dl_boundary ffn T=1
+[dl-boundary-unpool] self-check launch dl_boundary attn T=4
+[dl-boundary-unpool] self-check done   dl_boundary attn T=4
+[dl-boundary-unpool] self-check launch dl_boundary attn T=4
+[dl-boundary-unpool] self-check done   dl_boundary attn T=4
+[dl-boundary-unpool] self-check launch dl_unpool NF=1 T=4
+[dl-boundary-unpool] self-check done   dl_unpool NF=1 T=4
+[dl-boundary-unpool] self-check launch dl_unpool NF=1 T=4
+[dl-boundary-unpool] self-check done   dl_unpool NF=1 T=4
+[dl-boundary-unpool] self-check launch dl_boundary ffn T=4
+[dl-boundary-unpool] self-check done   dl_boundary ffn T=4
+[dl-boundary-unpool] self-check launch dl_boundary ffn T=4
+[dl-boundary-unpool] self-check done   dl_boundary ffn T=4
+[dl-boundary-unpool] self-check launch dl_boundary attn T=8
+[dl-boundary-unpool] self-check done   dl_boundary attn T=8
+[dl-boundary-unpool] self-check launch dl_boundary attn T=8
+[dl-boundary-unpool] self-check done   dl_boundary attn T=8
+[dl-boundary-unpool] self-check launch dl_unpool NF=1 T=8
+[dl-boundary-unpool] self-check done   dl_unpool NF=1 T=8
+[dl-boundary-unpool] self-check launch dl_unpool NF=1 T=8
+[dl-boundary-unpool] self-check done   dl_unpool NF=1 T=8
+[dl-boundary-unpool] self-check launch dl_boundary ffn T=8
+[dl-boundary-unpool] self-check done   dl_boundary ffn T=8
+[dl-boundary-unpool] self-check launch dl_boundary ffn T=8
+[dl-boundary-unpool] self-check done   dl_boundary ffn T=8
+[dl-boundary-unpool] self-check launch dl_boundary attn T=9
+[dl-boundary-unpool] self-check done   dl_boundary attn T=9
+[dl-boundary-unpool] self-check launch dl_boundary attn T=9
+[dl-boundary-unpool] self-check done   dl_boundary attn T=9
+[dl-boundary-unpool] self-check launch dl_unpool NF=2 T=9
+[dl-boundary-unpool] self-check done   dl_unpool NF=2 T=9
+[dl-boundary-unpool] self-check launch dl_unpool NF=2 T=9
+[dl-boundary-unpool] self-check done   dl_unpool NF=2 T=9
+[dl-boundary-unpool] self-check launch dl_boundary ffn T=9
+[dl-boundary-unpool] self-check done   dl_boundary ffn T=9
+[dl-boundary-unpool] self-check launch dl_boundary ffn T=9
+[dl-boundary-unpool] self-check done   dl_boundary ffn T=9
+[dl-boundary-unpool] self-check launch dl_boundary attn T=16
+[dl-boundary-unpool] self-check done   dl_boundary attn T=16
+[dl-boundary-unpool] self-check launch dl_boundary attn T=16
+[dl-boundary-unpool] self-check done   dl_boundary attn T=16
+[dl-boundary-unpool] self-check launch dl_unpool NF=2 T=16
+[dl-boundary-unpool] self-check done   dl_unpool NF=2 T=16
+[dl-boundary-unpool] self-check launch dl_unpool NF=2 T=16
+[dl-boundary-unpool] self-check done   dl_unpool NF=2 T=16
+[dl-boundary-unpool] self-check launch dl_boundary ffn T=16
+[dl-boundary-unpool] self-check done   dl_boundary ffn T=16
+[dl-boundary-unpool] self-check launch dl_boundary ffn T=16
+[dl-boundary-unpool] self-check done   dl_boundary ffn T=16
+[dl-boundary-unpool] self-check launch dl_boundary attn T=32
+[dl-boundary-unpool] self-check done   dl_boundary attn T=32
+[dl-boundary-unpool] self-check launch dl_boundary attn T=32
+[dl-boundary-unpool] self-check done   dl_boundary attn T=32
+[dl-boundary-unpool] self-check launch dl_unpool NF=4 T=32
+[dl-boundary-unpool] self-check done   dl_unpool NF=4 T=32
+[dl-boundary-unpool] self-check launch dl_unpool NF=4 T=32
+[dl-boundary-unpool] self-check done   dl_unpool NF=4 T=32
+[dl-boundary-unpool] self-check launch dl_boundary ffn T=32
+[dl-boundary-unpool] self-check done   dl_boundary ffn T=32
+[dl-boundary-unpool] self-check launch dl_boundary ffn T=32
+[dl-boundary-unpool] self-check done   dl_boundary ffn T=32
+[dl-boundary-unpool] unpool NF=1 (T=1): dl_unpool_kernel 6.5 us vs master _gemm + F.pad 9.2 us (memset-subtracted, pdl off): PATH CHOSEN = CUSTOM dl_unpool_kernel
+[dl-boundary-unpool] unpool NF=2 (T=16): dl_unpool_kernel 25.8 us vs master _gemm 23.9 us (memset-subtracted, pdl off): PATH CHOSEN = MASTER _gemm
+[dl-boundary-unpool] unpool NF=4 (T=32): dl_unpool_kernel 27.6 us vs master _gemm 24.0 us (memset-subtracted, pdl off): PATH CHOSEN = MASTER _gemm
+[dl-boundary-unpool] boundary timing T=1: dl_boundary_kernel 3.91 us vs SGLang FusedPostNormResidualPreNorm 2.79 us
+[dl-boundary-unpool] boundary timing T=8: dl_boundary_kernel 4.09 us vs SGLang FusedPostNormResidualPreNorm 2.92 us
+[dl-boundary-unpool] boundary timing T=32: dl_boundary_kernel 4.20 us vs SGLang FusedPostNormResidualPreNorm 3.07 us
+[dl-boundary-unpool] self-check launch chain T=1 eager
+[dl-boundary-unpool] self-check done   chain T=1 eager
+[dl-boundary-unpool] self-check launch chain T=1 master
+[dl-boundary-unpool] self-check done   chain T=1 master
+[dl-boundary-unpool] self-check launch chain T=1 graph capture + replay
+[dl-boundary-unpool] self-check done   chain T=1 graph capture + replay
+[dl-boundary-unpool] self-check launch chain T=8 eager
+[dl-boundary-unpool] self-check done   chain T=8 eager
+[dl-boundary-unpool] self-check launch chain T=8 master
+[dl-boundary-unpool] self-check done   chain T=8 master
+[dl-boundary-unpool] self-check launch chain T=8 graph capture + replay
+[dl-boundary-unpool] self-check done   chain T=8 graph capture + replay
+[dl-boundary-unpool] self-check launch chain T=16 eager
+[dl-boundary-unpool] self-check done   chain T=16 eager
+[dl-boundary-unpool] self-check launch chain T=16 master
+[dl-boundary-unpool] self-check done   chain T=16 master
+[dl-boundary-unpool] self-check launch chain T=16 graph capture + replay
+[dl-boundary-unpool] self-check done   chain T=16 graph capture + replay
+[dl-boundary-unpool] self-check launch chain T=31 eager
+[dl-boundary-unpool] self-check done   chain T=31 eager
+[dl-boundary-unpool] self-check launch chain T=31 master
+[dl-boundary-unpool] self-check done   chain T=31 master
+[dl-boundary-unpool] self-check launch chain T=31 graph capture + replay
+[dl-boundary-unpool] self-check done   chain T=31 graph capture + replay
+[dl-boundary-unpool] self-check launch chain T=32 eager
+[dl-boundary-unpool] self-check done   chain T=32 eager
+[dl-boundary-unpool] self-check launch chain T=32 master
+[dl-boundary-unpool] self-check done   chain T=32 master
+[dl-boundary-unpool] self-check launch chain T=32 graph capture + replay
+[dl-boundary-unpool] self-check done   chain T=32 graph capture + replay
+[dl-boundary-unpool] ON pdl=1 compile 40.6s max errs attn_out 1.07e-05 attn_stream 0.00e+00 ffn_out 1.24e-03 ffn_stream 2.56e-03 unpool 1.81e-04 chain_graph 0.00e+00 chain_master 9.10e-04: PATH CHOSEN = boundaries CUSTOM at T <= 32; unpooler CUSTOM per NF {1: True, 2: False, 4: False} (NF 1: T<=8, 2: T 9-16, 4: T 17-32), MASTER above
+[align-parallel-large-t] ON cases=18 mismatches=0

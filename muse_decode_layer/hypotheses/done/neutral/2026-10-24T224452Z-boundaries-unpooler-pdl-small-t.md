@@ -56,10 +56,10 @@ priority: 2
 kind: primary
 controls_for: null
 review: proceed
-status: running
+status: done
 review_at: 2026-10-25T010851Z
 review_companions: null
-stage: dispatched
+stage: harvested
 claimed_at: 2026-10-25T010851Z
 base_sha: 63b7f3a3bc19c847c204f5d5298872f66d86505a
 base_blob: 4da94677234faaa06b42b5ced541db8961fd6f34
@@ -78,6 +78,13 @@ attempt_file: 2026-10-25T011821Z-check-boundaries-unpooler-pdl-small-t.md
 prepared_at: 2026-10-25T011821Z
 job: 1dfe83fdbeea458a
 dispatched_at: 2026-10-25T011829Z
+outcome: neutral
+verdict_detail: unproven-vs-best
+speedup: 1.2559449871115151
+speedup_ci: [1.2371058123048424, 1.2747841619181877]
+harvested_at: 2026-10-25T034135Z
+best_at_harvest: 1.2521147631671776
+promotion: null
 ---
 
 # boundaries-unpooler-pdl-small-t
@@ -175,3 +182,35 @@ Checked OK:
 - No child process beyond load_inline, nothing cached from `data`, and no ptxVersion gate.
 
 Residual risk: all of the CUDA code is still unexecuted; a fault in the new kernels or a module probe that misbehaves turns the path OFF, so the run measures the landed dense chain.
+
+## Result
+
+- job `1dfe83fdbeea458a` (check), status done, passed True, tests 13/13
+- speedup 1.2559x, 95% CI [1.2371, 1.2748], score 18010.581858384812 µs vs SGLang 22620.3 µs
+- best at harvest: {"speedup": 1.2521147631671776, "ci": [1.23333304171967, 1.270896484614685], "job": "39bcf05afc4e4dd3"}; base result: muse_decode_layer/hypotheses/done/neutral/stack-align-par-sidestream-sliding1.result.json
+- **outcome: neutral** (unproven-vs-best)
+- files: `muse_decode_layer/hypotheses/done/neutral/boundaries-unpooler-pdl-small-t.result.json`, `muse_decode_layer/hypotheses/done/neutral/boundaries-unpooler-pdl-small-t.patch`; branch `hyp/muse_decode_layer/boundaries-unpooler-pdl-small-t`
+
+## Attribution
+
+| shape | w | base µs | hyp µs | delta | verdict |
+|---|---|---|---|---|---|
+| batch=1 ctx=80000 dist=soft layer=sliding load=decode_1 page=1 repeats=60 | 46 | 127.48 | 123.87 | 1.025 | flat |
+| batch=1 ctx=80000 dist=soft layer=full load=decode_1 page=1 repeats=60 | 16 | 142.93 | 140.45 | 1.0162 | flat |
+| batch=16 ctx=80000 dist=soft layer=sliding load=decode_16 page=1 spread=agentic | 46 | 204.98 | 208.88 | 0.9859 | flat |
+| batch=16 ctx=80000 dist=soft layer=full load=decode_16 page=1 spread=agentic | 16 | 349.47 | 357.68 | 0.9965 | flat |
+| batch=32 ctx=80000 dist=soft layer=sliding load=decode_32 page=1 spread=agentic | 46 | 245.77 | 247.46 | 0.9971 | flat |
+| batch=32 ctx=80000 dist=soft layer=full load=decode_32 page=1 spread=agentic | 16 | 529.71 | 520.57 | 0.9954 | flat |
+| batch=1 ctx=80000 dist=soft layer=sliding load=verify_1 page=1 q_len=8 | 46 | 190.8 | 181.58 | 1.0146 | flat |
+| batch=1 ctx=80000 dist=soft layer=full load=verify_1 page=1 q_len=8 | 16 | 192.44 | 191.12 | 1.0003 | flat |
+| batch=16 ctx=80000 dist=soft layer=sliding load=verify_16 page=1 q_len=8 spread=agentic | 46 | 429.61 | 427.43 | 1.0084 | flat |
+| batch=16 ctx=80000 dist=soft layer=full load=verify_16 page=1 q_len=8 spread=agentic | 16 | 563.65 | 575.79 | 1.0088 | flat |
+| batch=32 ctx=80000 dist=soft layer=sliding load=verify_32 page=1 q_len=8 spread=agentic | 46 | 592.52 | 604.9 | 1.0083 | flat |
+| batch=32 ctx=80000 dist=soft layer=full load=verify_32 page=1 q_len=8 spread=agentic | 16 | 861.3 | 889.52 | 0.9952 | flat |
+
+no shape moved outside noise. Expected hit: 2/6. Noise ±1.5%.
+
+## Follow-ups
+
+- unproven-vs-best: the change is not proven either way; a stacked hypothesis (`depends_on: boundaries-unpooler-pdl-small-t`) that adds a further change in the same area is the only way to learn more (identical code is never re-run).
+

@@ -1,0 +1,831 @@
+diff --git a/muse_decode_layer/submission.py b/muse_decode_layer/submission.py
+index 4da9467..7781304 100644
+--- a/muse_decode_layer/submission.py
++++ b/muse_decode_layer/submission.py
+@@ -837,6 +837,423 @@ def _build_dense_chain():
+ _DL_EXT, _DL_COMPILE_S = _build_dense_chain() if torch.cuda.is_available() else (None, 0.0)
+ 
+ 
++# ---------------------------------------------------------------------------------------------
++# Boundaries + unpooler for T <= DLB_MAX_TOKENS (hypothesis boundaries-unpooler-pdl-small-t).
++# A second, separate TU so that a build failure here leaves the landed dense chain untouched.
++DLB_MAX_TOKENS = 32          # gate of this path; deliberately not DL_MAX_TOKENS / DL2_MAX_TOKENS
++DLB_TAG = "[dl-boundary-unpool]"
++
++_DLB_CPP = r"""
++#include <torch/extension.h>
++void dl_boundary(torch::Tensor branch, torch::Tensor in_scale, torch::Tensor alpha, torch::Tensor beta,
++                 torch::Tensor s_in, torch::Tensor pre_w, torch::Tensor s_out, torch::Tensor out,
++                 int64_t ncols, int64_t has_scale, int64_t pdl);
++void dl_unpool(torch::Tensor x, torch::Tensor w, torch::Tensor out, torch::Tensor ws, torch::Tensor cnt,
++               int64_t pdl);
++"""
++
++_DLB_CUDA = r"""
++#include <torch/extension.h>
++#include <ATen/cuda/CUDAContext.h>
++#include <c10/cuda/CUDAException.h>
++#include <cuda_runtime.h>
++#include <cuda_bf16.h>
++#include <cstdint>
++
++namespace {
++
++constexpr int HID = 8192;
++constexpr int UK = 4096;                          // unpooler K
++constexpr int BLOCK_N = 64;
++constexpr int BLOCK_K = 128;
++constexpr int UKB = UK / BLOCK_K;                 // 32 K-blocks
++constexpr int MAXT = 32;
++constexpr int STAGES = 4;
++constexpr int THREADS = 128;
++constexpr int ROW_BYTES = BLOCK_K * 2;
++constexpr int W_STAGE = BLOCK_N * ROW_BYTES;
++constexpr int WS_FLOATS = 2 * MAXT * HID;         // 524288: max over the three variants
++template <int NF> struct Smem {
++  static constexpr int X_STAGE = NF * 8 * ROW_BYTES;
++  static constexpr int STAGE_BYTES = W_STAGE + X_STAGE;
++  static constexpr int BYTES = STAGES * STAGE_BYTES;
++};
++
++__device__ __forceinline__ uint32_t smem_u32(const void* p) {
++  return static_cast<uint32_t>(__cvta_generic_to_shared(p));
++}
++__device__ __forceinline__ void cp_async16(uint32_t dst, const void* src, int src_bytes) {
++  asm volatile("cp.async.cg.shared.global [%0], [%1], 16, %2;\n" :: "r"(dst), "l"(src), "r"(src_bytes) : "memory");
++}
++__device__ __forceinline__ void cp_commit() { asm volatile("cp.async.commit_group;\n" ::: "memory"); }
++template <int N>
++__device__ __forceinline__ void cp_wait() { asm volatile("cp.async.wait_group %0;\n" :: "n"(N) : "memory"); }
++__device__ __forceinline__ void ldsm_x4(uint32_t (&r)[4], uint32_t addr) {
++  asm volatile("ldmatrix.sync.aligned.m8n8.x4.shared.b16 {%0,%1,%2,%3}, [%4];\n"
++               : "=r"(r[0]), "=r"(r[1]), "=r"(r[2]), "=r"(r[3]) : "r"(addr));
++}
++__device__ __forceinline__ void mma_bf16(float (&c)[4], const uint32_t (&a)[4], uint32_t b0, uint32_t b1) {
++  asm volatile("mma.sync.aligned.m16n8k16.row.col.f32.bf16.bf16.f32 {%0,%1,%2,%3}, {%4,%5,%6,%7}, {%8,%9}, {%0,%1,%2,%3};\n"
++               : "+f"(c[0]), "+f"(c[1]), "+f"(c[2]), "+f"(c[3])
++               : "r"(a[0]), "r"(a[1]), "r"(a[2]), "r"(a[3]), "r"(b0), "r"(b1));
++}
++__device__ __forceinline__ void griddep_wait() { asm volatile("griddepcontrol.wait;\n" ::: "memory"); }
++__device__ __forceinline__ void griddep_launch() { asm volatile("griddepcontrol.launch_dependents;\n" ::: "memory"); }
++__device__ __forceinline__ void prefetch_l2(const void* p) { asm volatile("prefetch.global.L2 [%0];\n" :: "l"(p)); }
++
++__device__ __forceinline__ float block_sum(float v, float* red, int lane, int warp) {
++#pragma unroll
++  for (int o = 16; o > 0; o >>= 1) v += __shfl_xor_sync(0xffffffffu, v, o);
++  if (lane == 0) red[warp] = v;
++  __syncthreads();
++  float tot = 0.f;
++#pragma unroll
++  for (int i = 0; i < 8; ++i) tot += red[i];
++  return tot;
++}
++
++// One CTA per token. new_stream = alpha * s_in + beta * rms(branch * in_scale, 1e-8);
++// out = bf16(rms(new_stream, 1e-5) * pre_w). branch bf16 [T, 8192] (only the first `ncols` columns
++// are read, the rest are known zero), in_scale / alpha / beta / pre_w fp32 [8192] constants,
++// s_in / s_out fp32 [T, 8192]. launch_dependents first, then the wait: everything read before the
++// wait is a prepare() constant (L2 prefetch only).
++__global__ void __launch_bounds__(256)
++dl_boundary_kernel(const __nv_bfloat16* __restrict__ branch, const float* __restrict__ in_scale,
++                   const float* __restrict__ alpha, const float* __restrict__ beta,
++                   const float* __restrict__ s_in, const float* __restrict__ pre_w,
++                   float* __restrict__ s_out, __nv_bfloat16* __restrict__ out, int ncols, int flags) {
++  __shared__ float s_red[2][8];
++  griddep_launch();
++  // flags bit0: input scale present (ffn); bit1: round the post-norm output to bf16 before the
++  // residual add (picked in prepare() to match SGLang's FusedPostNormResidualPreNorm).
++  const bool has_scale = (flags & 1) != 0, round_post = (flags & 2) != 0;
++  const int tid = threadIdx.x, lane = tid & 31, warp = tid >> 5;
++  const int t = blockIdx.x;
++#pragma unroll
++  for (int j = 0; j < 4; ++j) {
++    const int base = (tid + 256 * j) * 8;
++    prefetch_l2(alpha + base);
++    prefetch_l2(beta + base);
++    prefetch_l2(pre_w + base);
++    if (has_scale) prefetch_l2(in_scale + base);
++  }
++  griddep_wait();
++  float v[32];
++#pragma unroll
++  for (int j = 0; j < 4; ++j) {
++    const int base = (tid + 256 * j) * 8;
++    uint4 raw = make_uint4(0u, 0u, 0u, 0u);
++    if (base < ncols) raw = __ldg(reinterpret_cast<const uint4*>(branch + (int64_t)t * HID + base));
++    const __nv_bfloat162* p2 = reinterpret_cast<const __nv_bfloat162*>(&raw);
++#pragma unroll
++    for (int q = 0; q < 4; ++q) {
++      const float2 f2 = __bfloat1622float2(p2[q]);
++      v[j * 8 + 2 * q] = f2.x;
++      v[j * 8 + 2 * q + 1] = f2.y;
++    }
++    if (has_scale) {
++      const float4 a = __ldg(reinterpret_cast<const float4*>(in_scale + base));
++      const float4 b = __ldg(reinterpret_cast<const float4*>(in_scale + base + 4));
++      v[j * 8 + 0] *= a.x; v[j * 8 + 1] *= a.y; v[j * 8 + 2] *= a.z; v[j * 8 + 3] *= a.w;
++      v[j * 8 + 4] *= b.x; v[j * 8 + 5] *= b.y; v[j * 8 + 6] *= b.z; v[j * 8 + 7] *= b.w;
++    }
++  }
++  float ss = 0.f;
++#pragma unroll
++  for (int i = 0; i < 32; ++i) ss += v[i] * v[i];
++  const float rstd1 = rsqrtf(block_sum(ss, s_red[0], lane, warp) / 8192.f + 1e-8f);
++  float ns[32];
++  float ss2 = 0.f;
++#pragma unroll
++  for (int j = 0; j < 4; ++j) {
++    const int base = (tid + 256 * j) * 8;
++    const float* sp = s_in + (int64_t)t * HID + base;
++    const float4 s0 = __ldg(reinterpret_cast<const float4*>(sp));
++    const float4 s1 = __ldg(reinterpret_cast<const float4*>(sp + 4));
++    const float4 a0 = __ldg(reinterpret_cast<const float4*>(alpha + base));
++    const float4 a1 = __ldg(reinterpret_cast<const float4*>(alpha + base + 4));
++    const float4 b0 = __ldg(reinterpret_cast<const float4*>(beta + base));
++    const float4 b1 = __ldg(reinterpret_cast<const float4*>(beta + base + 4));
++    const float sv[8] = {s0.x, s0.y, s0.z, s0.w, s1.x, s1.y, s1.z, s1.w};
++    const float av[8] = {a0.x, a0.y, a0.z, a0.w, a1.x, a1.y, a1.z, a1.w};
++    const float bv[8] = {b0.x, b0.y, b0.z, b0.w, b1.x, b1.y, b1.z, b1.w};
++#pragma unroll
++    for (int q = 0; q < 8; ++q) {
++      float nb = v[j * 8 + q] * rstd1;
++      if (round_post) nb = __bfloat162float(__float2bfloat16_rn(nb));
++      const float r = av[q] * sv[q] + bv[q] * nb;
++      ns[j * 8 + q] = r;
++      ss2 += r * r;
++    }
++    float* op = s_out + (int64_t)t * HID + base;
++    *reinterpret_cast<float4*>(op) = make_float4(ns[j * 8], ns[j * 8 + 1], ns[j * 8 + 2], ns[j * 8 + 3]);
++    *reinterpret_cast<float4*>(op + 4) = make_float4(ns[j * 8 + 4], ns[j * 8 + 5], ns[j * 8 + 6], ns[j * 8 + 7]);
++  }
++  const float rstd2 = rsqrtf(block_sum(ss2, s_red[1], lane, warp) / 8192.f + 1e-5f);
++#pragma unroll
++  for (int j = 0; j < 4; ++j) {
++    const int base = (tid + 256 * j) * 8;
++    const float4 w0 = __ldg(reinterpret_cast<const float4*>(pre_w + base));
++    const float4 w1 = __ldg(reinterpret_cast<const float4*>(pre_w + base + 4));
++    const float wv[8] = {w0.x, w0.y, w0.z, w0.w, w1.x, w1.y, w1.z, w1.w};
++    uint4 o;
++    __nv_bfloat162* o2 = reinterpret_cast<__nv_bfloat162*>(&o);
++#pragma unroll
++    for (int q = 0; q < 4; ++q)
++      o2[q] = __floats2bfloat162_rn(ns[j * 8 + 2 * q] * rstd2 * wv[2 * q],
++                                    ns[j * 8 + 2 * q + 1] * rstd2 * wv[2 * q + 1]);
++    *reinterpret_cast<uint4*>(out + (int64_t)t * HID + base) = o;
++  }
++}
++
++// out bf16 [m, 8192] = x bf16 [m, 4096] @ W[:NROWS]^T (W bf16 [>= NROWS, 4096]). Grid =
++// (NROWS / 64) * SPLIT_: n-tile = blockIdx.x / SPLIT_, K-chunk = blockIdx.x % SPLIT_. Same pipeline
++// as dl_pooler_router_kernel: weight ring before the PDL wait, x after it, fixed-order ticket
++// split-K reduce. When NROWS < 8192, columns NROWS..8191 of out are stored as bf16 zeros (each CTA
++// a disjoint slice), after the wait. ws fp32 [SPLIT_, 32, NROWS]; cnt int32 [NROWS / 64] (0 between launches).
++template <int NF, int SPLIT_, int NROWS>
++__global__ void __launch_bounds__(THREADS, 2)
++dl_unpool_kernel(const __nv_bfloat16* __restrict__ x, const __nv_bfloat16* __restrict__ w,
++                 __nv_bfloat16* __restrict__ out, float* __restrict__ ws, int* __restrict__ cnt, int m) {
++  using S = Smem<NF>;
++  constexpr int NT = NROWS / BLOCK_N;
++  extern __shared__ __align__(128) uint8_t smem[];
++  __shared__ int s_last;
++  const int tid = threadIdx.x, lane = tid & 31, warp = tid >> 5;
++  const int ntile = blockIdx.x / SPLIT_, sidx = blockIdx.x % SPLIT_;
++  const int n0 = ntile * BLOCK_N;
++  const int kb0 = sidx * UKB / SPLIT_, kb1 = (sidx + 1) * UKB / SPLIT_;
++  const int nsteps = kb1 - kb0;
++  const __nv_bfloat16* wbase = w + (int64_t)n0 * UK;
++
++  auto issue_w = [&](int j) {
++    uint8_t* sw = smem + (j % STAGES) * S::STAGE_BYTES;
++    const int kel = (kb0 + j) * BLOCK_K;
++#pragma unroll
++    for (int u = 0; u < (BLOCK_N * 16) / THREADS; ++u) {
++      const int q = tid + u * THREADS;
++      const int row = q >> 4, c = q & 15;
++      cp_async16(smem_u32(sw + row * ROW_BYTES + ((c ^ (row & 7)) << 4)),
++                 wbase + (int64_t)row * UK + kel + c * 8, 16);
++    }
++  };
++  auto issue_x = [&](int j) {
++    uint8_t* sx = smem + (j % STAGES) * S::STAGE_BYTES + W_STAGE;
++    const int kel = (kb0 + j) * BLOCK_K;
++#pragma unroll
++    for (int u = 0; u < NF; ++u) {
++      const int q = tid + u * THREADS;
++      const int row = q >> 4, c = q & 15;
++      const bool ok = row < m;
++      const __nv_bfloat16* src = x + (ok ? (int64_t)row * UK : (int64_t)0) + kel + c * 8;
++      cp_async16(smem_u32(sx + row * ROW_BYTES + ((c ^ (row & 7)) << 4)), src, ok ? 16 : 0);
++    }
++  };
++
++#pragma unroll
++  for (int j = 0; j < STAGES - 1; ++j)
++    if (j < nsteps) issue_w(j);
++  griddep_wait();
++  if constexpr (NROWS < HID) {
++    // Zero columns [NROWS, 8192): 56 per token per CTA. The previous kernel is done (wait above).
++    constexpr int ZC = (HID - NROWS) / (NT * SPLIT_);
++    static_assert(ZC % 8 == 0 && (HID - NROWS) % (NT * SPLIT_) == 0, "zero slice");
++    constexpr int ZV = ZC / 8;                       // uint4 per token
++    const int zc0 = NROWS + blockIdx.x * ZC;
++    for (int e = tid; e < m * ZV; e += THREADS) {
++      const int t = e / ZV, q = e % ZV;
++      *reinterpret_cast<uint4*>(out + (int64_t)t * HID + zc0 + q * 8) = make_uint4(0u, 0u, 0u, 0u);
++    }
++  }
++#pragma unroll
++  for (int j = 0; j < STAGES - 1; ++j) {
++    if (j < nsteps) issue_x(j);
++    cp_commit();
++  }
++
++  float acc[2][NF][4];
++#pragma unroll
++  for (int h = 0; h < 2; ++h)
++#pragma unroll
++    for (int f = 0; f < NF; ++f)
++#pragma unroll
++      for (int r = 0; r < 4; ++r) acc[h][f][r] = 0.f;
++  const int arow = warp * 16 + (lane & 15);
++  const int asw = arow & 7;
++  const int ahalf = lane >> 4;
++  const int xrow = lane & 7;
++  const int xq = lane >> 3;
++
++  for (int i = 0; i < nsteps; ++i) {
++    cp_wait<STAGES - 2>();
++    __syncthreads();
++    {
++      const int nx = i + STAGES - 1;
++      if (nx < nsteps) { issue_w(nx); issue_x(nx); }
++      cp_commit();
++    }
++    const uint8_t* sw = smem + (i % STAGES) * S::STAGE_BYTES;
++    const uint32_t a_base = smem_u32(sw) + arow * ROW_BYTES;
++    const uint32_t b_base = smem_u32(sw + W_STAGE) + xrow * ROW_BYTES;
++#pragma unroll
++    for (int kp = 0; kp < BLOCK_K / 32; ++kp) {
++      uint32_t a0[4], a1[4];
++      ldsm_x4(a0, a_base + ((((kp * 2 + 0) * 2 + ahalf) ^ asw) << 4));
++      ldsm_x4(a1, a_base + ((((kp * 2 + 1) * 2 + ahalf) ^ asw) << 4));
++#pragma unroll
++      for (int f = 0; f < NF; ++f) {
++        uint32_t b[4];
++        ldsm_x4(b, b_base + f * 8 * ROW_BYTES + (((kp * 4 + xq) ^ xrow) << 4));
++        mma_bf16(acc[0][f], a0, b[0], b[1]);
++        mma_bf16(acc[1][f], a1, b[2], b[3]);
++      }
++    }
++  }
++
++  const int r0 = n0 + warp * 16 + (lane >> 2);
++  float* wsp = ws + (int64_t)sidx * MAXT * NROWS;
++#pragma unroll
++  for (int f = 0; f < NF; ++f) {
++    const int t0 = f * 8 + (lane & 3) * 2;
++    if (t0 < m) {
++      wsp[(int64_t)t0 * NROWS + r0] = acc[0][f][0] + acc[1][f][0];
++      wsp[(int64_t)t0 * NROWS + r0 + 8] = acc[0][f][2] + acc[1][f][2];
++    }
++    if (t0 + 1 < m) {
++      wsp[(int64_t)(t0 + 1) * NROWS + r0] = acc[0][f][1] + acc[1][f][1];
++      wsp[(int64_t)(t0 + 1) * NROWS + r0 + 8] = acc[0][f][3] + acc[1][f][3];
++    }
++  }
++  __threadfence();
++  __syncthreads();
++  if (tid == 0) s_last = (atomicAdd(cnt + ntile, 1) == SPLIT_ - 1);
++  __syncthreads();
++  if (s_last) {
++    __threadfence();
++    for (int e = tid; e < m * BLOCK_N; e += THREADS) {
++      const int t = e / BLOCK_N, r = n0 + (e % BLOCK_N);
++      float s = 0.f;
++#pragma unroll
++      for (int p = 0; p < SPLIT_; ++p) s += __ldcg(ws + ((int64_t)p * MAXT + t) * NROWS + r);
++      out[(int64_t)t * HID + r] = __float2bfloat16_rn(s);
++    }
++    if (tid == 0) atomicExch(cnt + ntile, 0);
++  }
++}
++
++template <int NF, int SPLIT_, int NROWS>
++void launch_u(const __nv_bfloat16* x, const __nv_bfloat16* w, __nv_bfloat16* out, float* ws, int* cnt, int m,
++              bool pdl, cudaStream_t stream) {
++  static bool done = false;
++  if (!done) {
++    C10_CUDA_CHECK(cudaFuncSetAttribute(dl_unpool_kernel<NF, SPLIT_, NROWS>,
++                                        cudaFuncAttributeMaxDynamicSharedMemorySize, Smem<NF>::BYTES));
++    C10_CUDA_CHECK(cudaFuncSetAttribute(dl_unpool_kernel<NF, SPLIT_, NROWS>,
++                                        cudaFuncAttributePreferredSharedMemoryCarveout, cudaSharedmemCarveoutMaxShared));
++    done = true;
++  }
++  cudaLaunchConfig_t cfg = {};
++  cfg.gridDim = dim3((NROWS / BLOCK_N) * SPLIT_);
++  cfg.blockDim = dim3(THREADS);
++  cfg.dynamicSmemBytes = Smem<NF>::BYTES;
++  cfg.stream = stream;
++  cudaLaunchAttribute attr[1];
++  attr[0].id = cudaLaunchAttributeProgrammaticStreamSerialization;
++  attr[0].val.programmaticStreamSerializationAllowed = 1;
++  cfg.attrs = attr;
++  cfg.numAttrs = pdl ? 1 : 0;
++  C10_CUDA_CHECK(cudaLaunchKernelEx(&cfg, dl_unpool_kernel<NF, SPLIT_, NROWS>, x, w, out, ws, cnt, m));
++}
++
++}  // namespace
++
++void dl_boundary(torch::Tensor branch, torch::Tensor in_scale, torch::Tensor alpha, torch::Tensor beta,
++                 torch::Tensor s_in, torch::Tensor pre_w, torch::Tensor s_out, torch::Tensor out,
++                 int64_t ncols, int64_t has_scale, int64_t pdl) {
++  const int64_t m = out.size(0);
++  TORCH_CHECK(m >= 1 && m <= MAXT, "dl_boundary: tokens out of range");
++  TORCH_CHECK(branch.scalar_type() == at::kBFloat16 && branch.is_contiguous() && branch.size(0) == m &&
++              branch.size(1) == HID, "dl_boundary: branch");
++  TORCH_CHECK(ncols > 0 && ncols <= HID && ncols % 8 == 0, "dl_boundary: ncols");
++  for (const auto* v : {&in_scale, &alpha, &beta, &pre_w})
++    TORCH_CHECK(v->scalar_type() == at::kFloat && v->is_contiguous() && v->numel() == HID, "dl_boundary: vector");
++  TORCH_CHECK(s_in.scalar_type() == at::kFloat && s_in.is_contiguous() && s_in.size(0) == m && s_in.size(1) == HID,
++              "dl_boundary: s_in");
++  TORCH_CHECK(s_out.scalar_type() == at::kFloat && s_out.is_contiguous() && s_out.size(0) == m &&
++              s_out.size(1) == HID, "dl_boundary: s_out");
++  TORCH_CHECK(out.scalar_type() == at::kBFloat16 && out.is_contiguous() && out.size(1) == HID, "dl_boundary: out");
++  auto stream = at::cuda::getCurrentCUDAStream().stream();
++  cudaLaunchConfig_t cfg = {};
++  cfg.gridDim = dim3(static_cast<unsigned>(m));
++  cfg.blockDim = dim3(256);
++  cfg.dynamicSmemBytes = 0;
++  cfg.stream = stream;
++  cudaLaunchAttribute attr[1];
++  attr[0].id = cudaLaunchAttributeProgrammaticStreamSerialization;
++  attr[0].val.programmaticStreamSerializationAllowed = 1;
++  cfg.attrs = attr;
++  cfg.numAttrs = pdl ? 1 : 0;
++  C10_CUDA_CHECK(cudaLaunchKernelEx(
++      &cfg, dl_boundary_kernel, reinterpret_cast<const __nv_bfloat16*>(branch.data_ptr()),
++      in_scale.data_ptr<float>(), alpha.data_ptr<float>(), beta.data_ptr<float>(), s_in.data_ptr<float>(),
++      pre_w.data_ptr<float>(), s_out.data_ptr<float>(), reinterpret_cast<__nv_bfloat16*>(out.data_ptr()),
++      static_cast<int>(ncols), static_cast<int>(has_scale)));
++}
++
++void dl_unpool(torch::Tensor x, torch::Tensor w, torch::Tensor out, torch::Tensor ws, torch::Tensor cnt,
++               int64_t pdl) {
++  const int64_t m = x.size(0);
++  TORCH_CHECK(m >= 1 && m <= MAXT, "dl_unpool: tokens out of range");
++  TORCH_CHECK(x.scalar_type() == at::kBFloat16 && x.is_contiguous() && x.size(1) == UK, "dl_unpool: x");
++  TORCH_CHECK(w.scalar_type() == at::kBFloat16 && w.is_contiguous() && w.size(0) == HID && w.size(1) == UK,
++              "dl_unpool: w");
++  TORCH_CHECK(out.scalar_type() == at::kBFloat16 && out.is_contiguous() && out.size(0) == m && out.size(1) == HID,
++              "dl_unpool: out");
++  TORCH_CHECK(ws.scalar_type() == at::kFloat && ws.numel() >= WS_FLOATS, "dl_unpool: ws");
++  TORCH_CHECK(cnt.scalar_type() == at::kInt && cnt.numel() >= HID / BLOCK_N, "dl_unpool: cnt");
++  auto stream = at::cuda::getCurrentCUDAStream().stream();
++  const auto* xp = reinterpret_cast<const __nv_bfloat16*>(x.data_ptr());
++  const auto* wp = reinterpret_cast<const __nv_bfloat16*>(w.data_ptr());
++  auto* op = reinterpret_cast<__nv_bfloat16*>(out.data_ptr());
++  float* wsp = ws.data_ptr<float>();
++  int* cp = cnt.data_ptr<int>();
++  const int mi = static_cast<int>(m);
++  if (m <= 8) launch_u<1, 8, 1024>(xp, wp, op, wsp, cp, mi, pdl != 0, stream);
++  else if (m <= 16) launch_u<2, 2, 8192>(xp, wp, op, wsp, cp, mi, pdl != 0, stream);
++  else launch_u<4, 2, 8192>(xp, wp, op, wsp, cp, mi, pdl != 0, stream);
++}
++"""
++
++
++def _build_boundary_unpool():
++    """Compile the boundary/unpooler TU once per process, at import. Any failure leaves the landed
++    dense chain (and master) as the path."""
++    t0 = time.perf_counter()
++    flags = ["-O3", "-arch=sm_90a", "-lineinfo"]
++    try:
++        from torch.utils.cpp_extension import load_inline
++        ext = load_inline(
++            name="muse_decode_boundary_unpool_v2",
++            cpp_sources=_DLB_CPP,
++            cuda_sources=_DLB_CUDA,
++            functions=["dl_boundary", "dl_unpool"],
++            extra_cuda_cflags=flags,
++            verbose=False,
++        )
++    except Exception as e:
++        dt = time.perf_counter() - t0
++        print(f"{DLB_TAG} load_inline FAILED after {dt:.1f}s, flags {flags}, boundary/unpool path OFF: {e!r}", flush=True)
++        return None, dt
++    dt = time.perf_counter() - t0
++    print(f"{DLB_TAG} load_inline compiled in {dt:.1f}s, flags {flags} (no sm_90a-only PTX: griddepcontrol, "
++          f"mma.sync, cp.async only)", flush=True)
++    return ext, dt
++
++
++_DLB_EXT, _DLB_COMPILE_S = (_build_boundary_unpool() if (torch.cuda.is_available() and _DL_EXT is not None)
++                            else (None, 0.0))
++
++
+ def _block_size_m(num_tokens):
+     """MuseSpark1xFp4Experts' block_size_m pick, then master's Marlin cap (shape-only)."""
+     for block_size_m in BLOCK_SIZE_M_CANDIDATES:
+@@ -1361,6 +1778,363 @@ def _dl_setup(weights, state):
+         return None
+ 
+ 
++# ---------------------------------------------------------------------------------------------
++# Boundaries + unpooler (T <= DLB_MAX_TOKENS): kernel_fn helpers, prepare() self-check and timing.
++def _dlb_nf(tokens):
++    return 1 if tokens <= SLICED_UNPOOL_MAX_TOKENS else (2 if tokens <= 16 else 4)
++
++
++def _dlb_attn(dlb, stream, attn_output, pdl):
++    """Attention boundary: ffn_input bf16 and the new fp32 stream (SGLang's FusedPostNormResidualPreNorm
++    with router_dtype None)."""
++    tokens = attn_output.shape[0]
++    dev = attn_output.device
++    ffn_input = torch.empty((tokens, HIDDEN), dtype=torch.bfloat16, device=dev)
++    stream1 = torch.empty((tokens, HIDDEN), dtype=torch.float32, device=dev)
++    _DLB_EXT.dl_boundary(attn_output.contiguous(), dlb["dummy"], dlb["alpha1"], dlb["beta1"], stream.contiguous(),
++                         dlb["pre_w1"], stream1, ffn_input, HIDDEN, dlb["rnd1"], pdl)
++    return ffn_input, stream1
++
++
++def _unpool_master(dense, expert_output):
++    if expert_output.shape[0] <= SLICED_UNPOOL_MAX_TOKENS:
++        unpooled = _gemm(expert_output, dense["unpooler"][:UNPOOL_SLICE])
++        return F.pad(unpooled, (0, HIDDEN - UNPOOL_SLICE))  # all-gather: identity
++    return _gemm(expert_output, dense["unpooler"])
++
++
++def _dlb_unpool(dlb, dense, expert_output, pdl, force=None):
++    tokens = expert_output.shape[0]
++    custom = dlb["unpool"][_dlb_nf(tokens)] if force is None else force
++    if not custom:
++        return _unpool_master(dense, expert_output)
++    ffn_output = torch.empty((tokens, HIDDEN), dtype=torch.bfloat16, device=expert_output.device)
++    _DLB_EXT.dl_unpool(expert_output.contiguous(), dense["unpooler"], ffn_output, dlb["ws"], dlb["cnt"], pdl)
++    return ffn_output
++
++
++def _dlb_ffn(dlb, stream1, ffn_output, pdl):
++    """FFN boundary: stream2 = alpha2 * stream1 + beta2 * rms(f * (1 + post_ffn_norm), 1e-8), then
++    rms(stream2) * (1 + next_pre_attn_norm). Up to 8 tokens f is zero past UNPOOL_SLICE: read only that."""
++    tokens = ffn_output.shape[0]
++    dev = ffn_output.device
++    nxt = torch.empty((tokens, HIDDEN), dtype=torch.bfloat16, device=dev)
++    stream2 = torch.empty((tokens, HIDDEN), dtype=torch.float32, device=dev)
++    ncols = UNPOOL_SLICE if tokens <= SLICED_UNPOOL_MAX_TOKENS else HIDDEN
++    _DLB_EXT.dl_boundary(ffn_output.contiguous(), dlb["scale2"], dlb["alpha2"], dlb["beta2"], stream1,
++                         dlb["pre_w2"], stream2, nxt, ncols, 1 | dlb["rnd2"], pdl)
++    return nxt, stream2
++
++
++def _dlb_coeffs(w, state):
++    """alpha, beta fp32 [8192] exactly as SGLang's FusedPostNormResidualPreNorm applies them,
++    measured from the module itself (deterministic, no attribute-name guessing): a probe boundary
++    with this gate and the weightless post-attention norm gives new_stream = alpha * 1 + beta * 0
++    for (stream = 1, branch = 0) and alpha * 0 + beta * rms(1) = beta for (stream = 0, branch = 1).
++    Cross-checked against reference.py's formula; a mismatch > 1e-2 raises (path OFF)."""
++    pre_ffn, _next_pre_attn, post_attn, _post_ffn, _post_expert = state["_modules"]
++    probe = FusedPostNormResidualPreNorm(post_attn, _residual(w), pre_ffn)
++    dev = w.device
++    ones_s = torch.ones((1, HIDDEN), dtype=torch.float32, device=dev)
++    zeros_b = torch.zeros((1, HIDDEN), dtype=torch.bfloat16, device=dev)
++    alpha = probe(ones_s.clone(), zeros_b.clone(), branch_dtype=torch.bfloat16, router_dtype=None)[1]
++    alpha = alpha.detach().float().reshape(-1).clone().contiguous()
++    beta = probe(torch.zeros_like(ones_s), torch.ones_like(zeros_b), branch_dtype=torch.bfloat16, router_dtype=None)[1]
++    beta = beta.detach().float().reshape(-1).clone().contiguous()
++    wf = w.float() / 0.3
++    beta_f = torch.sigmoid(wf)
++    alpha_f = torch.sqrt(torch.clamp(torch.sigmoid(-wf) * (1.0 + beta_f), min=1e-3))
++    da, db = _rel_l2(alpha, alpha_f), _rel_l2(beta, beta_f)
++    if not (bool(torch.isfinite(alpha).all()) and bool(torch.isfinite(beta).all())) or da > 1e-2 or db > 1e-2:
++        raise RuntimeError(f"residual coefficient probe disagrees with the formula: alpha {da:.2e} beta {db:.2e}")
++    return alpha, beta, f"module probe (vs reference formula: alpha {da:.1e}, beta {db:.1e})"
++
++
++def _dlb_upd_err(out, ref, alpha, s_in):
++    """Stream error relative to the residual update (ref - alpha * s_in), i.e. the beta * norm part
++    the judge checks; bf16-level differences there are ~1e-3, formula bugs >= 1e-2."""
++    upd = ref.double() - alpha.double() * s_in.double()
++    return float((out.double() - ref.double()).norm() / upd.norm().clamp_min(1e-30))
++
++
++def _dlb_pick_round(state, dlb, pdl):
++    """(A) Does SGLang round the post-norm output to bf16 before the residual add? Run the kernel both
++    ways on synthetic data against each module and keep the closer (sets dlb rnd1 / rnd2)."""
++    dev = state["dl"]["w_pr"].device
++    gen = torch.Generator(device=dev)
++    gen.manual_seed(20261027)
++    tokens = 16  # full-width FFN branch
++    s0 = torch.randn((tokens, HIDDEN), device=dev, generator=gen) * 3.0
++    a0 = torch.randn((tokens, HIDDEN), device=dev, generator=gen).to(torch.bfloat16)
++    f0 = (torch.randn((tokens, HIDDEN), device=dev, generator=gen) * 0.5).to(torch.bfloat16)
++    _ref_in, ref_s1, _ = state["attn_boundary"](s0.clone(), a0, branch_dtype=torch.bfloat16, router_dtype=None)
++    _ref_nx, ref_s2, _ = state["ffn_boundary"](ref_s1.clone(), f0, branch_dtype=torch.bfloat16)
++    errs = {}
++    for rnd in (0, 2):
++        dlb["rnd1"] = dlb["rnd2"] = rnd
++        _, s1 = _dlb_step(f"dl_boundary attn round={rnd}", lambda: _dlb_attn(dlb, s0, a0, pdl))
++        _, s2 = _dlb_step(f"dl_boundary ffn round={rnd}", lambda: _dlb_ffn(dlb, ref_s1, f0, pdl))
++        errs[rnd] = (_dlb_upd_err(s1, ref_s1, dlb["alpha1"], s0), _dlb_upd_err(s2, ref_s2, dlb["alpha2"], ref_s1))
++    dlb["rnd1"] = 0 if errs[0][0] <= errs[2][0] else 2
++    dlb["rnd2"] = 0 if errs[0][1] <= errs[2][1] else 2
++    print(f"{DLB_TAG} post-norm rounding probe (stream err / |update|): fp32 attn {errs[0][0]:.2e} ffn {errs[0][1]:.2e}, "
++          f"bf16 attn {errs[2][0]:.2e} ffn {errs[2][1]:.2e} -> attn {'bf16' if dlb['rnd1'] else 'fp32'}, "
++          f"ffn {'bf16' if dlb['rnd2'] else 'fp32'}", flush=True)
++
++
++def _dlb_eff(mod, raw):
++    try:
++        return mod._get_effective_weight().detach().float().reshape(-1).contiguous()
++    except Exception:
++        return (1.0 + raw.float()).reshape(-1).contiguous()
++
++
++def _dlb_graph_us(fn, reps=20):
++    """CUDA-event time per call of fn: reps back-to-back calls in a graph, 5 replays."""
++    graph = torch.cuda.CUDAGraph()
++    with torch.cuda.graph(graph):
++        for _ in range(reps):
++            fn()
++    graph.replay()
++    torch.cuda.synchronize()
++    start, end = torch.cuda.Event(enable_timing=True), torch.cuda.Event(enable_timing=True)
++    start.record()
++    for _ in range(5):
++        graph.replay()
++    end.record()
++    torch.cuda.synchronize()
++    del graph
++    return start.elapsed_time(end) * 1e3 / (5 * reps)
++
++
++def _dlb_step(name, fn):
++    """One self-check launch, announced before and synced after so a fault names its kernel."""
++    print(f"{DLB_TAG} self-check launch {name}", flush=True)
++    out = fn()
++    torch.cuda.synchronize()
++    print(f"{DLB_TAG} self-check done   {name}", flush=True)
++    return out
++
++
++def _dlb_kernels_check(state, dlb, pdl):
++    """Boundaries and unpooler on synthetic data against SGLang / master. Returns (boundary problems,
++    {nf: unpool problems}, worst errors)."""
++    dl = state["dl"]
++    dev = dl["w_pr"].device
++    dense = state["dense"]
++    gen = torch.Generator(device=dev)
++    gen.manual_seed(20261025)
++    worst = {"attn_out": 0.0, "attn_stream": 0.0, "ffn_out": 0.0, "ffn_stream": 0.0, "unpool": 0.0}
++    prob_b, prob_u = [], {1: [], 2: [], 4: []}
++    for tokens in (1, 4, 8, 9, 16, 32):
++        tag = f"T={tokens}"
++        s0 = torch.randn((tokens, HIDDEN), device=dev, generator=gen) * 3.0
++        a0 = torch.randn((tokens, HIDDEN), device=dev, generator=gen).to(torch.bfloat16)
++        for rep in range(2):
++            ffn_in, s1 = _dlb_step(f"dl_boundary attn {tag}", lambda: _dlb_attn(dlb, s0, a0, pdl))
++        ref_in, ref_s1, _ = state["attn_boundary"](s0.clone(), a0, branch_dtype=torch.bfloat16, router_dtype=None)
++        e_o, e_s = _rel_l2(ffn_in, ref_in), _dlb_upd_err(s1, ref_s1, dlb["alpha1"], s0)
++        worst["attn_out"], worst["attn_stream"] = max(worst["attn_out"], e_o), max(worst["attn_stream"], e_s)
++        if not (bool(torch.isfinite(ffn_in).all()) and bool(torch.isfinite(s1).all())) or e_o > 2e-3 or e_s > 4e-3:
++            prob_b.append(f"{tag} attn boundary: branch {e_o:.2e} stream {e_s:.2e}")
++        # Unpooler (custom forced on) vs master's, on y with an fp32-ish spread.
++        y = (torch.randn((tokens, D_EXPERT), device=dev, generator=gen) * 0.5).to(torch.bfloat16)
++        nf = _dlb_nf(tokens)
++        f_new = torch.empty((tokens, HIDDEN), dtype=torch.bfloat16, device=dev)
++
++        def run_unpool():
++            f_new.fill_(7.0)  # poison: the kernel must write every column, zeros included
++            _DLB_EXT.dl_unpool(y, dense["unpooler"], f_new, dlb["ws"], dlb["cnt"], pdl)
++
++        for rep in range(2):  # twice: a ticket that fails to reset shows on the second launch
++            _dlb_step(f"dl_unpool NF={nf} {tag}", run_unpool)
++        f_ref = _unpool_master(dense, y)
++        e_u = _rel_l2(f_new, f_ref)
++        worst["unpool"] = max(worst["unpool"], e_u)
++        zero_ok = True
++        if tokens <= SLICED_UNPOOL_MAX_TOKENS:
++            zero_ok = bool((f_new[:, UNPOOL_SLICE:] == 0).all())
++        if not bool(torch.isfinite(f_new).all()) or e_u > 2e-3 or not zero_ok:
++            prob_u[nf].append(f"{tag} unpool: rel L2 {e_u:.2e}, zero columns exact {zero_ok}")
++        # FFN boundary on the master unpooler output (zero past 1024 at T <= 8).
++        for rep in range(2):
++            nxt, s2 = _dlb_step(f"dl_boundary ffn {tag}", lambda: _dlb_ffn(dlb, ref_s1, f_ref, pdl))
++        ref_nxt, ref_s2, _ = state["ffn_boundary"](ref_s1.clone(), f_ref, branch_dtype=torch.bfloat16)
++        e_o, e_s = _rel_l2(nxt, ref_nxt), _dlb_upd_err(s2, ref_s2, dlb["alpha2"], ref_s1)
++        worst["ffn_out"], worst["ffn_stream"] = max(worst["ffn_out"], e_o), max(worst["ffn_stream"], e_s)
++        if not (bool(torch.isfinite(nxt).all()) and bool(torch.isfinite(s2).all())) or e_o > 2e-3 or e_s > 4e-3:
++            prob_b.append(f"{tag} ffn boundary: branch {e_o:.2e} stream {e_s:.2e}")
++    return prob_b, prob_u, worst
++
++
++def _dlb_chain_check(state, dlb, pdl):
++    """The whole layer middle as kernel_fn runs it with this path (boundary -> P -> R -> experts ->
++    unpool -> boundary), captured in a CUDA graph and replayed, against the same chain eagerly and
++    against the SGLang boundaries + master unpooler. T=32 goes through the SGLang combine, T < 32
++    through the Triton one (the real _experts picks)."""
++    dl = state["dl"]
++    dev = dl["w_pr"].device
++    dense = state["dense"]
++    gen = torch.Generator(device=dev)
++    gen.manual_seed(20261026)
++    problems, worst = [], {"graph": 0.0, "master": 0.0}
++    for tokens in (1, 8, 16, 31, 32):
++        s0 = torch.randn((tokens, HIDDEN), device=dev, generator=gen) * 3.0
++        a0 = torch.randn((tokens, HIDDEN), device=dev, generator=gen).to(torch.bfloat16)
++        ls = torch.tensor([32], dtype=torch.int32, device=dev)
++
++        def chain_new():
++            ffn_input, s1 = _dlb_attn(dlb, s0, a0, pdl)
++            xn, (tw, ids, lids, align), _ = _dl_forward(ffn_input, ls, dl, pdl)
++            y = _experts(xn, tw, lids, state, align=align)
++            f = _dlb_unpool(dlb, dense, y, pdl)
++            nxt, s2 = _dlb_ffn(dlb, s1, f, pdl)
++            return nxt, s2, ids
++
++        def chain_master():
++            ffn_input, s1, _ = state["attn_boundary"](s0.clone(), a0, branch_dtype=torch.bfloat16, router_dtype=None)
++            xn, (tw, ids, lids, align), _ = _dl_forward(ffn_input, ls, dl, pdl)
++            y = _experts(xn, tw, lids, state, align=align)
++            f = _unpool_master(dense, y)
++            nxt, s2, _ = state["ffn_boundary"](s1, f, branch_dtype=torch.bfloat16)
++            return nxt, s2, ids
++
++        tag = f"chain T={tokens}"
++        eager = _dlb_step(f"{tag} eager", chain_new)
++        master = _dlb_step(f"{tag} master", chain_master)
++        graph = torch.cuda.CUDAGraph()
++        print(f"{DLB_TAG} self-check launch {tag} graph capture + replay", flush=True)
++        with torch.cuda.graph(graph):
++            g_out = chain_new()
++        graph.replay()
++        torch.cuda.synchronize()
++        print(f"{DLB_TAG} self-check done   {tag} graph capture + replay", flush=True)
++        e_gn, e_gs = _rel_l2(g_out[0], eager[0]), _rel_l2(g_out[1], eager[1])
++        e_mn, e_ms = _rel_l2(eager[0], master[0]), _rel_l2(eager[1], master[1])
++        worst["graph"] = max(worst["graph"], e_gn, e_gs)
++        worst["master"] = max(worst["master"], e_mn, e_ms)
++        finite = all(bool(torch.isfinite(v).all()) for v in (g_out[0], g_out[1]))
++        if (not finite or not torch.equal(g_out[2], eager[2]) or e_gn > 1e-3 or e_gs > 1e-3
++                or e_mn > 1e-2 or e_ms > 2e-3):
++            problems.append(f"{tag} pdl={pdl}: graph vs eager (next {e_gn:.2e} stream {e_gs:.2e}), "
++                            f"vs master (next {e_mn:.2e} stream {e_ms:.2e}), finite {finite}")
++        del graph
++    return problems, worst
++
++
++def _dlb_time_unpool(state, dlb):
++    """Per NF on synthetic data (cold-ish L2: a 200 MB memset before every launch, its cost
++    subtracted): dl_unpool_kernel (no PDL) vs master's _gemm path. Fills dlb["unpool"][nf]."""
++    dl = state["dl"]
++    dev = dl["w_pr"].device
++    dense = state["dense"]
++    flush = torch.empty(100 * 1024 * 1024, dtype=torch.bfloat16, device=dev)
++    base = _dlb_graph_us(lambda: flush.zero_(), reps=10)
++    for nf, tokens in ((1, 1), (2, 16), (4, 32)):
++        if not dlb["unpool_ok"][nf]:
++            dlb["unpool"][nf] = False
++            print(f"{DLB_TAG} unpool NF={nf} (T={tokens}): self-check failed, PATH CHOSEN = MASTER _gemm", flush=True)
++            continue
++        y = (torch.randn((tokens, D_EXPERT), device=dev) * 0.5).to(torch.bfloat16)
++        try:
++            us_new = _dlb_graph_us(lambda: (flush.zero_(), _dlb_unpool(dlb, dense, y, 0, force=True)), reps=10) - base
++            us_old = _dlb_graph_us(lambda: (flush.zero_(), _dlb_unpool(dlb, dense, y, 0, force=False)), reps=10) - base
++        except Exception as e:
++            dlb["unpool"][nf] = False
++            print(f"{DLB_TAG} unpool NF={nf} timing raised {e!r}: PATH CHOSEN = MASTER _gemm", flush=True)
++            continue
++        dlb["unpool"][nf] = us_new < us_old
++        print(f"{DLB_TAG} unpool NF={nf} (T={tokens}): dl_unpool_kernel {us_new:.1f} us vs master "
++              f"{'_gemm + F.pad' if nf == 1 else '_gemm'} {us_old:.1f} us (memset-subtracted, pdl off): "
++              f"PATH CHOSEN = {'CUSTOM dl_unpool_kernel' if dlb['unpool'][nf] else 'MASTER _gemm'}", flush=True)
++    del flush
++
++
++def _dlb_time_boundary(state, dlb):
++    """Print-only: dl_boundary_kernel CUDA-event time (back-to-back in a graph, pdl off) vs the SGLang module."""
++    dev = state["dl"]["w_pr"].device
++    for tokens in (1, 8, 32):
++        s0 = torch.randn((tokens, HIDDEN), device=dev) * 3.0
++        a0 = torch.randn((tokens, HIDDEN), device=dev).to(torch.bfloat16)
++        try:
++            us_new = _dlb_graph_us(lambda: _dlb_attn(dlb, s0, a0, 0))
++            us_old = _dlb_graph_us(lambda: state["attn_boundary"](s0, a0, branch_dtype=torch.bfloat16,
++                                                                   router_dtype=None))
++            print(f"{DLB_TAG} boundary timing T={tokens}: dl_boundary_kernel {us_new:.2f} us "
++                  f"vs SGLang FusedPostNormResidualPreNorm {us_old:.2f} us", flush=True)
++        except Exception as e:
++            print(f"{DLB_TAG} boundary timing T={tokens} raised {e!r}", flush=True)
++
++
++def _dlb_setup(weights, state):
++    """Build the boundary/unpooler constants, self-check and time them. Returns the dlb dict or None
++    (kernel_fn then runs the landed dense chain / master). Prints the verdict loudly."""
++    if _DLB_EXT is None or state.get("dl") is None:
++        print(f"{DLB_TAG} OFF (build failed or dense chain off): PATH CHOSEN = landed dense chain / MASTER boundaries "
++              f"and unpooler", flush=True)
++        return None
++    try:
++        dl = state["dl"]
++        dev = dl["w_pr"].device
++        pre_ffn, next_pre_attn, _post_attn, post_ffn, _post_expert = state["_modules"]
++        a1, b1, src1 = _dlb_coeffs(weights["attn_residual_gate"], state)
++        a2, b2, src2 = _dlb_coeffs(weights["ffn_residual_gate"], state)
++        print(f"{DLB_TAG} residual coefficients per channel fp32 [{HIDDEN}] from: attn {src1}, ffn {src2}", flush=True)
++        dlb = {
++            "alpha1": a1, "beta1": b1, "alpha2": a2, "beta2": b2,
++            "pre_w1": _dlb_eff(pre_ffn, weights["pre_ffn_norm"]),
++            "pre_w2": _dlb_eff(next_pre_attn, weights["next_pre_attn_norm"]),
++            "scale2": _dlb_eff(post_ffn, weights["post_ffn_norm"]),
++            "dummy": torch.ones((HIDDEN,), dtype=torch.float32, device=dev),
++            "ws": torch.zeros((2 * DL_MAX_TOKENS * HIDDEN,), dtype=torch.float32, device=dev),
++            "cnt": torch.zeros((HIDDEN // 64,), dtype=torch.int32, device=dev),
++            "unpool": {1: True, 2: True, 4: True},
++            "unpool_ok": {1: True, 2: True, 4: True},
++            "rnd1": 0, "rnd2": 0,
++        }
++        pdl = dl["pdl"]
++        _dlb_pick_round(state, dlb, pdl)
++        prob_b, prob_u, worst = _dlb_kernels_check(state, dlb, pdl)
++        dlb["cnt"].zero_()
++        for nf, probs in prob_u.items():
++            if probs:
++                dlb["unpool_ok"][nf] = False
++                print(f"{DLB_TAG} unpool NF={nf} SELF-CHECK FAILED: {probs[:4]}", flush=True)
++        if prob_b:
++            print(f"{DLB_TAG} boundary SELF-CHECK FAILED ({len(prob_b)} problems): {prob_b[:8]}", flush=True)
++            print(f"{DLB_TAG} OFF: PATH CHOSEN = landed dense chain / MASTER boundaries and unpooler", flush=True)
++            return None
++        _dlb_time_unpool(state, dlb)
++        _dlb_time_boundary(state, dlb)
++        problems, cworst = _dlb_chain_check(state, dlb, pdl)
++        if problems and any(dlb["unpool"].values()):
++            print(f"{DLB_TAG} chain check failed with custom unpooler ({problems[:3]}); retrying with master unpooler", flush=True)
++            dlb["unpool"] = {1: False, 2: False, 4: False}
++            problems, cworst = _dlb_chain_check(state, dlb, pdl)
++        dlb["cnt"].zero_()
++        dl["cnt_p"].zero_()
++        dl["cnt_r"].zero_()
++        if problems:
++            print(f"{DLB_TAG} chain SELF-CHECK FAILED: {problems[:6]}", flush=True)
++            print(f"{DLB_TAG} OFF: PATH CHOSEN = landed dense chain / MASTER boundaries and unpooler", flush=True)
++            return None
++        errs = " ".join(f"{k} {v:.2e}" for k, v in {**worst, **{"chain_" + k: v for k, v in cworst.items()}}.items())
++        print(f"{DLB_TAG} ON pdl={pdl} compile {_DLB_COMPILE_S:.1f}s max errs {errs}: PATH CHOSEN = boundaries "
++              f"CUSTOM at T <= {DLB_MAX_TOKENS}; unpooler CUSTOM per NF {dlb['unpool']} (NF 1: T<=8, 2: T 9-16, "
++              f"4: T 17-32), MASTER above", flush=True)
++        return dlb
++    except Exception as e:
++        print(f"{DLB_TAG} OFF setup raised {e!r}: PATH CHOSEN = landed dense chain / MASTER boundaries and unpooler",
++              flush=True)
++        try:
++            state["dl"]["cnt_p"].zero_()
++            state["dl"]["cnt_r"].zero_()
++            torch.cuda.synchronize()
++        except Exception:
++            pass
++        return None
++
++
+ # Sliding batch-1 decode: muse_attention_decode's _sliding_fused_kernel and its helpers,
+ # ported verbatim (hypothesis sliding-fused-triton-decode1-port).
+ _INV_FREQ = {}
+@@ -1651,6 +2425,8 @@ def prepare(weights):
+     del freqs
+     # Small-T dense chain (T <= DL_MAX_TOKENS): constants, PDL probe and self-check; None keeps master.
+     state["dl"] = _dl_setup(weights, state)
++    state["dlb"] = _dlb_setup(weights, state)
++    state["dlb_ok"] = state["dlb"] is not None
+     _align_par_setup(state, device)
+     torch.cuda.synchronize()
+     return state
+@@ -1818,9 +2594,14 @@ def kernel_fn(data, state):
+     dl = state.get("dl")
+     use_dl = dl is not None and tokens <= DL_MAX_TOKENS
+     split_router = tokens > ROUTER_FP32_MAX_TOKENS
+-    ffn_input, stream, router_input = state["attn_boundary"](
+-        data["stream"], attn_output, branch_dtype=torch.bfloat16,
+-        router_dtype=None if (split_router or use_dl) else torch.float32)
++    dlb = state.get("dlb")
++    use_dlb = use_dl and dlb is not None and tokens <= DLB_MAX_TOKENS
++    if use_dlb:
++        ffn_input, stream = _dlb_attn(dlb, data["stream"], attn_output, dl["pdl"])
++    else:
++        ffn_input, stream, router_input = state["attn_boundary"](
++            data["stream"], attn_output, branch_dtype=torch.bfloat16,
++            router_dtype=None if (split_router or use_dl) else torch.float32)
+     if use_dl:
+         xn, (topk_weights, topk_ids, local_ids, align), _ = _dl_forward(ffn_input, data["local_start"], dl)
+         # all-reduce: identity
+@@ -1847,6 +2628,11 @@ def kernel_fn(data, state):
+                 tensor.record_stream(main_stream)
+         # all-reduce: identity
+         expert_output = _experts(xn, None, None, state, dispatch=(local_ids, tw, align))
++    if use_dlb:
++        # boundaries-unpooler-pdl-small-t: unpooler (per-NF pick made in prepare) and FFN boundary.
++        ffn_output = _dlb_unpool(dlb, dense, expert_output, dl["pdl"])
++        next_attn_input, stream = _dlb_ffn(dlb, stream, ffn_output, dl["pdl"])
++        return next_attn_input, stream, topk_ids
+     if tokens <= SLICED_UNPOOL_MAX_TOKENS:
+         unpooled = _gemm(expert_output, dense["unpooler"][:UNPOOL_SLICE])
+         ffn_output = F.pad(unpooled, (0, HIDDEN - UNPOOL_SLICE))  # all-gather: identity
