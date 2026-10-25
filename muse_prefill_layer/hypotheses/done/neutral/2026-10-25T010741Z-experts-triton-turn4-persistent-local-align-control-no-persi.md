@@ -33,10 +33,10 @@ priority: 2
 kind: control
 controls_for: experts-triton-turn4-persistent-local-align
 review: proceed
-status: running
+status: done
 review_at: 2026-10-25T011030Z
 review_companions: null
-stage: dispatched
+stage: harvested
 claimed_at: 2026-10-25T011048Z
 base_sha: e530b77b8a03d595f892b57b91b666002026a175
 base_blob: db8a3344398bca79ea5cafeb580f701c055fd475
@@ -55,6 +55,13 @@ attempt_file: 2026-10-25T011203Z-check-experts-triton-turn4-persistent-local-ali
 prepared_at: 2026-10-25T011203Z
 job: 374efc72c4d14856
 dispatched_at: 2026-10-25T011211Z
+outcome: neutral
+verdict_detail: within-ci
+speedup: 1.0556685709426956
+speedup_ci: [1.0398335423785552, 1.071503599506836]
+harvested_at: 2026-10-25T034139Z
+best_at_harvest: 1.074386115190733
+promotion: null
 ---
 
 # experts-triton-turn4-persistent-local-align-control-no-persi
@@ -117,3 +124,31 @@ All in muse_prefill_layer/submission.py (+97/-7). Review fixes applied:
 - [x] All work inside the timed call; no output caching or replay.
 
 okc_lint: `OK with warnings: submission.py` (only host-sync warnings, all in prepare(), outside kernel_fn). py_compile OK; __pycache__ removed.
+
+## Result
+
+- job `374efc72c4d14856` (check), status done, passed True, tests 5/5
+- speedup 1.0557x, 95% CI [1.0398, 1.0715], score 366974.9300711438 µs vs SGLang 387403.9 µs
+- best at harvest: {"speedup": 1.074386115190733, "ci": [1.058270323462872, 1.090501906918594], "job": "502f2eab95164781"}; base result: muse_prefill_layer/hypotheses/done/neutral/stack-tonight-five-prefill.result.json
+- **outcome: neutral** (within-ci)
+- files: `muse_prefill_layer/hypotheses/done/neutral/experts-triton-turn4-persistent-local-align-control-no-persi.result.json`, `muse_prefill_layer/hypotheses/done/neutral/experts-triton-turn4-persistent-local-align-control-no-persi.patch`; branch `hyp/muse_prefill_layer/experts-triton-turn4-persistent-local-align-control-no-persi`
+
+## Attribution
+
+| shape | w | base µs | hyp µs | delta | verdict |
+|---|---|---|---|---|---|
+| batch=1 ctx=80000 dist=soft layer=sliding load=turn_1 page=1 q_len=753 repeats=6 | 46 | 1101.29 | 1101.96 | 0.9998 | flat |
+| batch=1 ctx=80000 dist=soft layer=full load=turn_1 page=1 q_len=753 repeats=6 | 16 | 1529.55 | 1516.24 | 1.0004 | flat |
+| batch=4 ctx=80000 dist=soft layer=sliding load=turn_4 page=1 q_len=753 repeats=6 | 46 | 3318.71 | 3376.45 | 0.9734 | flat |
+| batch=4 ctx=80000 dist=soft layer=full load=turn_4 page=1 q_len=753 repeats=6 | 16 | 4849.27 | 4966.9 | 0.9855 | flat |
+| batch=1 ctx=0 dist=soft layer=full load=first_turn page=1 q_len=16384 repeats=6 | 16 | 14705.32 | 14896.47 | 0.9831 | flat |
+| batch=1 ctx=32768 dist=soft layer=sliding load=first_turn page=1 q_len=16384 repeats=6 | 138 | 14264.64 | 14460.51 | 0.9806 | flat |
+| batch=1 ctx=32768 dist=soft layer=full load=first_turn page=1 q_len=16384 repeats=6 | 16 | 17746.69 | 18058.45 | 0.9801 | flat |
+| batch=1 ctx=65536 dist=soft layer=full load=first_turn page=1 q_len=16384 repeats=6 | 16 | 21733.75 | 22299.1 | 0.9839 | flat |
+
+no shape moved outside noise. Expected hit: 2/3. Noise ±1.5%.
+
+## Follow-ups
+
+- within-ci: the change is not proven either way; a stacked hypothesis (`depends_on: experts-triton-turn4-persistent-local-align-control-no-persi`) that adds a further change in the same area is the only way to learn more (identical code is never re-run).
+

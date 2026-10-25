@@ -1,0 +1,164 @@
+diff --git a/muse_prefill_layer/submission.py b/muse_prefill_layer/submission.py
+index db8a334..9196054 100644
+--- a/muse_prefill_layer/submission.py
++++ b/muse_prefill_layer/submission.py
+@@ -154,7 +154,10 @@ SMALL_BATCH_MAX_TOKENS = 8
+ # tokens (turn_1 753, turn_4 3012, every test) SGLang's two Marlin GEMMs; above it (the first turn's
+ # 16384) the Triton NVFP4 grouped GEMM. Not a measured crossover: T in (4096, 16384) is unscored and
+ # untuned.
+-MARLIN_MAX_TOKENS = 4096
++# Hypothesis experts-triton-turn4-persistent-local-align-control-no-persi: 1024 < T <= 4096 (turn_4's
++# 3012) goes to the Triton engine too; T <= 1024 (turn_1 753, tests) stays on Marlin. _experts reads
++# state['marlin_max_tokens'] (prepare() sets 4096 on any turn-4 check failure), never mutating this.
++MARLIN_MAX_TOKENS = 1024
+ # MuseSpark1xFp4Experts' candidates, smallest first.
+ BLOCK_SIZE_M_CANDIDATES = (8, 16, 32, 48, 64)
+ # Grouped NVFP4 GEMM (swap-AB) tile configs, chosen from the shape (tokens) only. About T of the
+@@ -487,14 +490,14 @@ E2E_CHECK_TOL = 2e-2  # under the judge's tightest 3%; Triton-vs-Marlin is two b
+ E2E_ROW_FACTOR = 5.0
+ 
+ 
+-def _check_experts_e2e(state, device):
++def _check_experts_e2e(state, device, tokens=E2E_CHECK_TOKENS):
+     """Untimed. One call each of _experts_triton (state['bank']) and _experts_marlin (state['marlin'])
+     on synthetic data built here (random bf16 rows, random distinct top-8 experts of 256 mapped to this
+     GPU's 32 as kernel_fn maps them, random normalized weights): the same inputs through both banks
+     must agree. Covers both banks' wiring and any scale corruption between them."""
+     gen = torch.Generator(device=device)
+     gen.manual_seed(0)
+-    t = E2E_CHECK_TOKENS
++    t = tokens
+     x = torch.randn((t, D_EXPERT), generator=gen, device=device, dtype=torch.float32).to(torch.bfloat16)
+     ids = torch.rand((t, N_EXPERTS), generator=gen, device=device).topk(TOP_K, dim=1).indices.to(torch.int32)
+     local_ids = torch.where(ids < LOCAL_EXPERTS, ids, torch.full_like(ids, -1)).contiguous()
+@@ -601,8 +604,9 @@ def prepare(weights):
+     del scales_before
+     torch.cuda.empty_cache()
+     _align_par_setup(state, device)
++    _align_par_triton_setup(state, device)
+     _silu_sorted_setup(state, device)
+-    _check_experts_e2e(state, device)
++    _turn4_triton_setup(state, device)
+     torch.cuda.synchronize()
+     print(f"[prepare] max_memory_allocated {torch.cuda.max_memory_allocated(device) / 2**30:.2f} GiB", flush=True)
+     return state
+@@ -611,7 +615,7 @@ def prepare(weights):
+ def _experts(x, topk_weights, local_ids, state):
+     """Shape gate: Marlin up to MARLIN_MAX_TOKENS tokens, the Triton NVFP4 GEMM above. Reads the
+     token count (a shape), never tensor values."""
+-    if x.shape[0] <= MARLIN_MAX_TOKENS:
++    if x.shape[0] <= state.get("marlin_max_tokens", MARLIN_MAX_TOKENS):
+         return _experts_marlin(x, topk_weights, local_ids, state)
+     return _experts_triton(x, topk_weights, local_ids, state)
+ 
+@@ -786,6 +790,86 @@ def _align_par_setup(state, device):
+           f" (PATH CHOSEN = {'parallel align' if state['align_par_ok'] else 'MASTER align'} on the Marlin path)",
+           flush=True)
+ # Marlin-path silu-mul over the aligned local rows only (hypothesis silu-mul-triton-local-rows-marlin-turn):
++def _align_par_triton_setup(state, device):
++    """Untimed, prepare() only (hypothesis experts-triton-turn4-persistent-local-align-control-no-persi).
++    Self-check of _align_parallel at the Triton path's token tiles (128, 256) at T=3012 and 16384 against
++    moe_align_block_size(local_ids, bsm, LOCAL_EXPERTS), per local expert. Own flag
++    state["align_par_triton_ok"] (align_par_ok is untouched, so a failure leaves the Marlin path as on
++    master). Also off when the w2 zero-store is on: with local-only blocks the remote y rows are never
++    written. Prints n_padded at T=3012 for both aligns."""
++    state["align_par_triton_ok"] = False
++    cases = mismatches = 0
++    reason = None
++    try:
++        if state["zero_nonlocal_w2"]:
++            raise RuntimeError("zero_nonlocal_w2 is on")
++        for bsm in (128, 256):  # compile before any graph capture
++            _align_parallel(torch.zeros((16, TOP_K), dtype=torch.int32, device=device), 0, LOCAL_EXPERTS, bsm)
++        torch.cuda.synchronize()
++        gen = torch.Generator(device=device).manual_seed(20261025)
++        for tokens in (3012, 16384):
++            for kind in ("random", "skewed", "all_remote"):
++                ids = torch.randint(0, N_EXPERTS, (tokens, TOP_K), generator=gen, device=device, dtype=torch.int32)
++                if kind == "skewed":
++                    ids[:, :4] = torch.tensor([0, 31, 5, 17], dtype=torch.int32, device=device)
++                elif kind == "all_remote":
++                    ids = ids % (N_EXPERTS - LOCAL_EXPERTS) + LOCAL_EXPERTS
++                local_ids = torch.where(ids < LOCAL_EXPERTS, ids, torch.full_like(ids, -1)).contiguous()
++                for bsm in (128, 256):
++                    r_sorted, r_blocks, r_pad = moe_align_block_size(local_ids, bsm, LOCAL_EXPERTS)
++                    n_local, (n_sorted, n_blocks, n_pad) = _align_parallel(local_ids, 0, LOCAL_EXPERTS, bsm)
++                    cases += 1
++                    if tokens == 3012 and kind == "random":
++                        print(f"[turn4-triton] n_padded T=3012 bsm={bsm}: moe_align_block_size {int(r_pad[0])}"
++                              f" vs local-parallel {int(n_pad[0])}", flush=True)
++                    bad = not torch.equal(n_local, local_ids)
++                    if not bad:
++                        bad = (_align_par_ref_view(r_sorted, r_blocks, r_pad, ids.numel(), bsm)
++                               != _align_par_ref_view(n_sorted, n_blocks, n_pad, ids.numel(), bsm))
++                    if bad:
++                        mismatches += 1
++                        print(f"[turn4-triton]   align mismatch T={tokens} {kind} bsm={bsm}", flush=True)
++        torch.cuda.synchronize()
++        state["align_par_triton_ok"] = mismatches == 0
++        if mismatches:
++            reason = f"triton-path align self-check mismatches={mismatches}"
++    except Exception as e:
++        state["align_par_triton_ok"] = False
++        reason = f"align setup: {e!r}"
++    print(f"[turn4-triton] align_par_triton_ok={state['align_par_triton_ok']} cases={cases}"
++          f" mismatches={mismatches}" + (f" ({reason})" if reason else ""), flush=True)
++
++
++def _turn4_triton_setup(state, device):
++    """Untimed, prepare() only: the end-to-end Triton-vs-Marlin check at T=8192 (as master) and then
++    T=3012 (turn_4). A T=8192 failure with the local align on drops that align and rechecks under
++    master's, asserting as master does. A T=3012 failure sends turn_4 back to Marlin
++    (state['marlin_max_tokens'] = 4096). Logs '[turn4-triton] ON' or 'OFF: <reason>'."""
++    try:
++        _check_experts_e2e(state, device, E2E_CHECK_TOKENS)
++    except AssertionError as e:
++        if not state.get("align_par_triton_ok", False):
++            raise
++        print(f"[turn4-triton] 8192 check failed with local align ({e}); master align", flush=True)
++        state["align_par_triton_ok"] = False
++        _check_experts_e2e(state, device, E2E_CHECK_TOKENS)
++    reason = None
++    if state["zero_nonlocal_w2"]:
++        reason = "zero_nonlocal_w2 is on"
++    elif not state.get("align_par_triton_ok", False):
++        reason = "align_par_triton_ok is False"
++    else:
++        try:
++            _check_experts_e2e(state, device, 3012)
++        except AssertionError as e:
++            reason = f"T=3012 e2e: {e}"
++    if reason is not None:
++        state["marlin_max_tokens"] = 4096
++        print(f"[turn4-triton] OFF: {reason}", flush=True)
++    else:
++        print("[turn4-triton] ON", flush=True)
++
++
+ # SGLang's act_and_mul_kernel launches over all T*8 slots; this walks moe_align_block_size's sorted_ids
+ # up to n_padded and computes silu(gate) * up for slots whose local id is >= 0 (remote and padding rows
+ # are skipped, as today their cache2 rows are left unwritten and never read).
+@@ -914,7 +998,13 @@ def _experts_triton(x, topk_weights, local_ids, state):
+     cfg = _expert_config(num_tokens)
+     # moe-align-32-experts-first-turn: the ids are already 0-31 or -1, so align over the 32 local experts
+     # (muse_moe_w4a16 master does the same): 32 counters and numel + 33*(BLOCK_T-1) capacity, not 257.
+-    sorted_ids, block_experts, n_padded = moe_align_block_size(local_ids, cfg["BLOCK_T"], LOCAL_EXPERTS)
++    zero_w2 = state["zero_nonlocal_w2"]
++    if state.get("align_par_triton_ok", False):
++        # Local routes only (no -1 tiles); prepare() self-checked, and only enabled with zero_nonlocal_w2 off.
++        _, (sorted_ids, block_experts, n_padded) = _align_parallel(local_ids, 0, LOCAL_EXPERTS, cfg["BLOCK_T"])
++        zero_w2 = False
++    else:
++        sorted_ids, block_experts, n_padded = moe_align_block_size(local_ids, cfg["BLOCK_T"], LOCAL_EXPERTS)
+     cache2 = torch.empty((num_slots, size_n), device=x.device, dtype=x.dtype)
+     cache13 = torch.empty((num_slots * max(gemm1_n, size_k),), device=x.device, dtype=x.dtype)
+     cache1 = cache13[: num_slots * gemm1_n].view(-1, gemm1_n)
+@@ -923,7 +1013,7 @@ def _experts_triton(x, topk_weights, local_ids, state):
+                     n_padded, TOP_K, num_slots, cfg, False)
+     silu_and_mul(cache1, cache2, expert_ids=local_ids.view(-1), expert_step=1)
+     y = _nvfp4_moe_gemm(cache2, bank["w2"], bank["w2_sf"], bank["w2_gs"], cache3, sorted_ids, block_experts,
+-                        n_padded, 1, num_slots, cfg, state["zero_nonlocal_w2"]).view(num_tokens, TOP_K, size_k)
++                        n_padded, 1, num_slots, cfg, zero_w2).view(num_tokens, TOP_K, size_k)
+     return fused_post_expert_norm_weighted_sum(
+         y, topk_weights, norm_weight=state["post_expert_w"], eps=POST_NORM_EPS, weight_first=True,
+         slot_expert_ids=local_ids)

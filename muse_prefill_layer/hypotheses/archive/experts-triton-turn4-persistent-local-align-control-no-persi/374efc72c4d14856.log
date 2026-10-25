@@ -1,0 +1,16 @@
+[w2 zero-store] OFF (weighted sum skips remote slots)
+[expert gemm] w13 BLOCK_T=64 BLOCK_W=128 warps=4 stages=3: n_regs=255 n_spills=0 shared=67584
+[expert gemm] w13 BLOCK_T=128 BLOCK_W=128 warps=8 stages=3: n_regs=176 n_spills=0 shared=116736
+[expert gemm] w13 BLOCK_T=256 BLOCK_W=128 warps=8 stages=2: n_regs=254 n_spills=4 shared=140288
+[expert gemm] w2 BLOCK_T=64 BLOCK_W=128 warps=4 stages=3: n_regs=255 n_spills=0 shared=67584
+[expert gemm] w2 BLOCK_T=128 BLOCK_W=128 warps=8 stages=3: n_regs=176 n_spills=0 shared=116736
+[expert gemm] w2 BLOCK_T=256 BLOCK_W=128 warps=8 stages=2: n_regs=254 n_spills=4 shared=140288
+[align-local] ON cases=15 mismatches=0 (PATH CHOSEN = parallel align on the Marlin path)
+[turn4-triton] n_padded T=3012 bsm=128: moe_align_block_size 25216 vs local-parallel 4096
+[turn4-triton] n_padded T=3012 bsm=256: moe_align_block_size 29440 vs local-parallel 8192
+[turn4-triton] align_par_triton_ok=True cases=12 mismatches=0
+[silu-sorted] ON max rel err 0.00e+00 (PATH CHOSEN = sorted silu on the Marlin path)
+[expert e2e] T=8192 triton vs marlin: rel L2 5.916e-03, worst row 7.018e-03 (8341 local routes)
+[expert e2e] T=3012 triton vs marlin: rel L2 5.929e-03, worst row 6.956e-03 (3017 local routes)
+[turn4-triton] ON
+[prepare] max_memory_allocated 4.90 GiB
