@@ -77,7 +77,7 @@ review: proceed
 status: running
 review_at: 2026-10-25T004153Z
 review_companions: null
-stage: claimed
+stage: implemented
 claimed_at: 2026-10-25T004153Z
 base_sha: dcd2ff817f67ee97bdc52e92ec44df3a3752ccf1
 base_blob: a8bb42ac483318e9fbc84bc7826a27b7a704d1fb
@@ -86,6 +86,12 @@ worktree: .worktrees/muse_bf16_proj/o-unpooler-slice-cuda-cluster-dsmem-rewrite
 mode: null
 restack_of: null
 stale_base: null
+implemented_at: 2026-10-25T005050Z
+impl_commit: 6ca6fa934e5ff0ef054baef30cc261eb9ad818ea
+submission_sha256: 86f5e904f75d000bb58ee88f983282cc49c71e46bd9eee996ddc2f0bb0ac9393
+norm_sha256: bf100462c0369acafb87e40b68b6f33c1bb7d039aef602e76a0863d1e420c812
+submission_blob: 3ba071c2ec0b65200650da8027388a0e73be5fb1
+lint_warnings: 6
 ---
 
 # o-unpooler-slice-cuda-cluster-dsmem-rewrite
@@ -145,3 +151,56 @@ No companion. Judge on replaced kernels' time per shape vs master (1602a4e947e64
 - Slice at 256 CTAs (32 KB, 2/SM) instead of 128 x 64 KB? Worth a prepare diagnostic.
 - Use the prepare cold-L2 event time to decide whether slice M3 is reachable before stage 2.
 
+
+## Implementation notes
+
+Only `muse_bf16_proj/submission.py` in the worktree changed (+~520 lines, nothing removed): a new section (6) before `prepare()`, a `_oun_prepare(state)` call at the end of `prepare()`, two imports (`os`, `time`) and one routing branch in `kernel_fn` placed before the existing unpooler/o branches. Master's paths are untouched and remain the fallback.
+
+What it is: one templated CUDA kernel `oun_kernel<NT, ROWS, KPER, CL, NG>`, built at import with `load_inline` (extension `muse_bf16_o_unpool_cluster_v1`, `-O3 -lineinfo`, plain sm_90 PTX: mma.sync m16n8k16 swap-AB, cp.async.cg 16 B, ldmatrix, cluster launch via `cudaLaunchKernelEx`, `mapa` + `ld.shared::cluster.v4`, `barrier.cluster` arrive.release / wait.acquire; no wgmma, so no 9.0a override and no `__CUDA_ARCH_FEAT_SM90_ALL` guard, the body is only guarded by `__CUDA_ARCH__ >= 900`). 256 threads/CTA, 8 warps split rows and K; every CTA issues all its weight + x loads up front in NG commit groups (o NG 2, slice NG 4) and consumes them group by group. The CTA's fp32 partial `part[t][row]` (pitch ROWS+4) is aliased onto the weight buffer; K-group warps add into it in fixed order; one cluster barrier; rank r reduces its ROWS/CL rows over ranks 0..CL-1 in fixed order through DSMEM and stores bf16 `out[m, n]` (tokens < m only, 8 B coalesced stores); a second cluster barrier before exit. `torch.empty` output, no memset, no atomics, no global workspace. Instances: o NT 8/16 (m<=8 / 9..16) x CL 8 (ROWS 256, K/CTA 128) or CL 4 (ROWS 128, K/CTA 256); slice NT 8 x CL 8 (ROWS 64, K/CTA 512) or CL 4 (ROWS 32, K/CTA 1024). Routing: o at 1<=m<=16 and the unpooler with n==1024 at 1<=m<=8, only when `state["oun_cl"][layer]` (its own prepare-time constant, 0 = master) is nonzero; the weight is read in place (stride 4096 for the slice).
+
+Review fixes applied (the review wins where it corrects the spec):
+- XOR swizzle (chunk c of row r at c ^ (r & 7)) in both cp.async destinations and ldmatrix addresses, for the weight and the x tile (row pitches 256 B - 2 KB, all multiples of 128 B).
+- `cudaOccupancyMaxActiveClusters` queried per (layer, cluster dim) in prepare(): CL 8 needs 32 (o) / 16 (slice) clusters, else CL 4 needs 64 / 32, else the layer keeps master. Never launches more clusters than reported; one `PATH CHOSEN` line per layer prints the path and cluster dim. A CL whose self-check fails also falls to the next CL, then to master.
+- fp32 partial aliased onto the consumed weight buffer (static_assert it fits); smem ~68 KB (o), 72 KB (slice CL 8), 80 KB (slice CL 4), 2 CTAs/SM fits for o.
+- Plain `cp.async.cg` (no createpolicy/cache hints), `-lineinfo`, flushed print before and `torch.cuda.synchronize()` + flushed print after each self-check launch.
+- Unique extension name and own route constant (`oun_cl`), distinct from the router sibling.
+- Baselines corrected: the Expected/replaces text quoted the restack run 60b20fd0bf924267. Master's run is 1602a4e947e64090: o kernels 4.6/5.2/4.8 us (m 1/8/16), rows 6.32/6.32; slice kernels 4.5/4.6 us, rows 5.94/6.13. Judge M2 against those (rows), and also report vs the restack. M3 on the slice (<= 4.2) remains a stretch since slice rows sit ~1.5 us above kernel time.
+
+Self-check (prepare, in-process): o at m in {1, 5, 8, 16}, slice at m in {1, 5, 8}, plus an m=1 one-hot case, each launched twice: rel L2 <= 3e-3 vs fp64, one-hot probe row within 1e-4 (exact weight column), finite, run 2 bit-identical. Diagnostics printed: cudaFuncGetAttributes (regs, local/spill, smem), occupancy, warm-L2 and cold-L2 (256 MB flush) eager event times vs master's path at m=1 and the top m.
+
+Deviations: (1) NT 16 instances only for o (the slice is m<=8, NT 8). (2) Slice at 256 CTAs x 32 KB (review open question) not built; CL 4 slice (128 CTAs x 64 KB, K 1024) is the fallback instead. (3) Kernel was not compiled or run (no GPU/nvcc here): first compile and launch happen on the judge, run it as `okc check`.
+
+## Rules check
+
+- [x] CUDA-graph capturable: kernel_fn only calls `_oun_forward` (torch.empty + one cudaLaunchKernelEx on the current stream); syncs/prints only in prepare(); branches on cfg/shapes/strides/pointer alignment and the prepare constant `oun_cl`, never on input values (checked in `git diff`).
+- [x] Nothing derived from `data` is cached: `oun_cl` comes from weights and synthetic x in prepare(); self-check inputs are generated, not from data.
+- [x] Weights: no repack, no copy; bf16 weights read in place at their own precision (slice: first 1024 rows of the [8192, 4096] weight).
+- [x] Activations BF16 (x bf16, fp32 accumulate, bf16 output, as SGLang); KV cache n/a: n/a (no attention here).
+- [x] Attention sees every key: n/a: dense projection, no attention.
+- [x] No timing patches, harness frames/I/O/secrets, module edits, reference import, subprocesses (no subprocess/multiprocessing/fork; load_inline is in-process as in earlier accepted builds) or network.
+- [x] All work happens inside the timed call (the full GEMM + reduce in one launch); no output caching or replay.
+
+okc_lint (python3 -I okc_lint.py submission.py --problem muse_bf16_proj):
+```
+warn  host-sync    L1064: torch.cuda.synchronize()  (outside kernel_fn's call graph; fine in prepare())
+warn  dtype        L1086: flush = torch.empty(256 * 1024 * 1024, dtype=torch.uint8, device=w.device)  (allowed only where SGLang does the same)
+warn  host-sync    L1096: torch.cuda.synchronize()  (outside kernel_fn's call graph; fine in prepare())
+warn  host-sync    L1103: e1.synchronize()  (outside kernel_fn's call graph; fine in prepare())
+warn  host-sync    L1111: e1.synchronize()  (outside kernel_fn's call graph; fine in prepare())
+warn  host-sync    L1168: torch.cuda.synchronize()  (outside kernel_fn's call graph; fine in prepare())
+OK with warnings: muse_bf16_proj/submission.py
+```
+py_compile OK, __pycache__ removed. The uint8 flush buffer is a prepare-only cold-L2 diagnostic, never used in kernel_fn or its output.
+
+## Pre-flight audit
+
+Audited 2026-10-24 (opus) by reading the diff plus a numpy emulation of the kernel's exact smem/fragment indexing (cp.async swizzled destinations, ldmatrix x4 lane addressing, mma.sync m16n8k16 A/B/C fragment layouts, K-group partial adds, DSMEM rank reduce) for all six template instances (o NT 8/16 x CL 8/4, slice CL 8/4, m 1/5/8/13/16): all match x @ W.T to fp32 roundoff (max abs err <= 8e-5), no unwritten output.
+
+**Verdict: dispatch-with-fixes** (run as `okc check`).
+
+Checked and fine: mapa rank/offset (16 B aligned: PR*4 and RPR*4 multiples of 16) and arrive.release/wait.acquire pairing, executed by all threads; second cluster barrier before exit; fp32 partial aliased onto the weight buffer only after the last cp.async.wait_group 0 + __syncthreads (all ldmatrix done), and peers read only partials after barrier 1; XOR swizzle identical in cp.async and ldmatrix (row & 7 == lane & 7 in both operands, CHG multiple of 8); cudaLaunchKernelEx on the current torch stream with cluster attribute, MaxDynamicSharedMemorySize set in prep() before occupancy/launch, C10_CUDA_KERNEL_LAUNCH_CHECK, graph-capturable; occupancy gate CL 8 -> CL 4 -> master never launches more clusters than reported; static_asserts pass for all six instances; self-check gates (rel L2 3e-3, exact one-hot probe, bit-identical rerun) are passable; routing on cfg/shape/stride/alignment and a prepare constant only; torch.empty output, fp32 accumulate, fixed-order reduce, bf16 store; no host sync, no cache from data, no process beyond load_inline. No ptxVersion gate exists.
+
+Fixes:
+- `_build_oun`: set `TORCH_CUDA_ARCH_LIST=9.0a` around `load_inline` and restore the previous value (or unset) in `finally`, as the spec and the router sibling do. The implementation compiled for whatever the image's arch list holds, which can multiply nvcc time inside the 10-minute run limit; the kernel uses no wgmma so 9.0a is safe. Build print now also shows the previous value.
+
+Residual risk: a first-launch fault still poisons the context unrecoverably (check mode only); o CL 8 may report < 32 co-resident clusters on chips with 14-SM GPCs and drop to CL 4, and the 128-CTA slice may pack 2 CTAs/SM (launch_bounds 256,2), costing bandwidth rather than correctness.
