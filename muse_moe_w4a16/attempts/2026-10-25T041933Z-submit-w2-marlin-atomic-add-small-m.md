@@ -2,7 +2,7 @@
 
 Hypothesis: `muse_moe_w4a16/hypotheses/done/neutral/2026-10-25T011401Z-w2-marlin-atomic-add-small-m.md` (branch `hyp/muse_moe_w4a16/w2-marlin-atomic-add-small-m`).
 
-- **Job:** `<job id>` (`okc status <job>`)
+- **Job:** `7a0d900a1dd34666` (`okc status <job>`)
 - **File:** `muse_moe_w4a16/submission.py` at git `b45b808`
 
 ## Goal
