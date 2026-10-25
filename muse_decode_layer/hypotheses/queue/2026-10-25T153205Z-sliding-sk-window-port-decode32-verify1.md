@@ -75,10 +75,10 @@ priority: 2
 kind: primary
 controls_for: null
 review: proceed
-status: hold
+status: queued
 review_at: 2026-10-25T203233Z
 review_companions: null
-hold_reason: "own condition: first measurement is an okc check (unchecked multi-thousand-line CUDA port; a sticky fault fails the run with no prepare log); only scored submits remained on 2026-10-25. Unhold when checks reset; apply the review's per-state tickets, distinct kernel symbols and variant sub-race"
+hold_reason: null
 ---
 
 # sliding-sk-window-port-decode32-verify1
