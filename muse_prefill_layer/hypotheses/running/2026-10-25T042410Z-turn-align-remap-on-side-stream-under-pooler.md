@@ -45,7 +45,7 @@ base_sha: 1a306457948093d586d8985f430235643dff1d1c
 base_blob: db8a3344398bca79ea5cafeb580f701c055fd475
 branch: hyp/muse_prefill_layer/turn-align-remap-on-side-stream-under-pooler
 worktree: .worktrees/muse_prefill_layer/turn-align-remap-on-side-stream-under-pooler
-mode: null
+mode: check
 restack_of: null
 stale_base: null
 implemented_at: 2026-10-25T043641Z
@@ -54,6 +54,8 @@ submission_sha256: 02617200060af1e25c246f4c985cf9a423a95941450d9dbf8c8f1ea34dc02
 norm_sha256: ccaca75a2e779cb7590e98d1dbf59485ea5c17682b3715e8c1520ac76bd34715
 submission_blob: 116f43fe0bea9fd64170c2f38973e38d7d3be8b4
 lint_warnings: 15
+attempt_file: 2026-10-25T043641Z-check-turn-align-remap-on-side-stream-under-pooler.md
+prepared_at: 2026-10-25T043641Z
 ---
 
 # turn-align-remap-on-side-stream-under-pooler
