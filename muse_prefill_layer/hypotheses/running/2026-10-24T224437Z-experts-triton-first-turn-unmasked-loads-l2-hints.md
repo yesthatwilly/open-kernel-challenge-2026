@@ -36,7 +36,7 @@ review: proceed
 status: running
 review_at: 2026-10-25T034754Z
 review_companions: null
-stage: claimed
+stage: implemented
 claimed_at: 2026-10-25T034755Z
 base_sha: 62d28685d7829e2134746918148e95305d852b47
 base_blob: db8a3344398bca79ea5cafeb580f701c055fd475
@@ -45,6 +45,12 @@ worktree: .worktrees/muse_prefill_layer/experts-triton-first-turn-unmasked-loads
 mode: null
 restack_of: null
 stale_base: null
+implemented_at: 2026-10-25T034946Z
+impl_commit: 9504288923f2bf57ab290450bdf2eb7e204a38eb
+submission_sha256: cd367d224bbe6d7e8c670cb65df0c69236a004d25f9270596449f741260ec4e9
+norm_sha256: c6d47ba7433f421ab2c6e3b1c9b2c33d6f8a7a0e20185351f9a26f13fff1ef43
+submission_blob: 92d0b57884af6ce9d3a9770fd7e4f65fb49a7fd1
+lint_warnings: 18
 ---
 
 # experts-triton-first-turn-unmasked-loads-l2-hints
@@ -84,3 +90,31 @@ No separate companion run. The two sub-changes could have opposite signs (unmask
 - Do n_spills on the BLOCK_T=256 variant drop from 4 to 0 with unmasked loads? If yes, that is the likely source of any gain.
 - Is evict_first on b/s harmful given the token-tile-fastest swizzle? The in-prepare three-way A/B answers this directly.
 
+
+## Implementation notes
+
+Edited only the worktree's muse_prefill_layer/submission.py (worktree HEAD 62d2868, the a81d19c lineage per the review).
+- `_moe_nvfp4_gemm_kernel` gets two SEPARATE constexpr switches. `UNMASKED_A`: padding slots (sentinel id) are pointed at row 0 via `tl.where(token_mask, offs_token, 0) // TOP_K` and a_lo/a_hi load with no mask; the store keeps `mask=token_mask`. `L2_HINTS`: `eviction_policy="evict_last"` on the activation slabs only. Per the review, NO evict_first on the weights (b, s): it fights the token-tile-fastest swizzle.
+- Variants are (UNMASKED_A, L2_HINTS) pairs: master (F,F), unmasked (T,F), unmasked+hints (T,T). `_nvfp4_moe_gemm` takes `loads=` and an optional `info` dict (n_regs/n_spills).
+- `_check_expert_gemms` now iterates `_check_cases()`: every config with master loads, plus the T>4096 config with both new variants, so all are compiled and dequant-checked before capture.
+- New `_loads_ab()` in prepare(), after the Marlin bank and before the e2e check (so the e2e check, whose real align has padding slots, runs the chosen variants): synthetic T=16384, real `moe_align_block_size`, first-turn config; for w13 and w2, CUDA-graph replays of the three variants, 7 alternations (plus a dropped warmup) with rotating order, 256 MB L2 flush before each timed replay, event-timed. Prints medians, ratio, n_regs, n_spills per variant and `PATH CHOSEN`. A variant is chosen per GEMM only if best and <= 0.98x master's median; else master. Any exception keeps master.
+- `_experts_triton` passes `_loads_for(state, name, cfg)`: chosen variant on the first-turn config only, master loads otherwise. Marlin path untouched, so turn_* is structurally neutral.
+- Deviations: decision is per GEMM (w13, w2 independently) rather than one joint pick. Hints are activations-only, as the review requires (spec's evict_first on weights dropped).
+- Not run (no GPU): nothing verified at runtime. Padding-column garbage (row 0; for w2, a possibly unwritten cache2 row) stays in dropped output columns since acc[n, t] depends on A[t] only.
+
+## Rules check
+
+- [x] CUDA-graph capturable: diff adds no .item()/.cpu()/sync/allocation in kernel_fn's path; `_loads_for` reads state and cfg identity only; all A/B syncs and graph captures are in prepare().
+- [x] Nothing derived from `data` cached across calls: the choice comes from synthetic prepare() data; state holds only variant tuples.
+- [x] Weights: unchanged, NVFP4 stays NVFP4 (dequant in kernel untouched).
+- [x] Activations BF16 where SGLang keeps BF16: n/a to change, synthetic inputs are bf16; no dtype changes in the timed path.
+- [x] Attention sees every key: n/a, no attention change.
+- [x] No timing patches, harness frames/I/O/secrets, module edits, reference import, subprocesses or network: diff has none.
+- [x] All work inside the timed call; no output caching or replay: kernels still run every call; the A/B only picks a constexpr variant in prepare().
+- [x] No triton.autotune, no host sync in kernel_fn, first-line marker `# okc: problem=muse_prefill_layer` kept.
+
+okc_lint (host-sync warnings in prepare() filtered; all are outside kernel_fn's call graph):
+```
+OK with warnings: .../experts-triton-first-turn-unmasked-loads-l2-hints/muse_prefill_layer/submission.py
+```
+py_compile OK; __pycache__ removed.
