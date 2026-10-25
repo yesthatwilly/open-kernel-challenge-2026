@@ -106,7 +106,7 @@ status: running
 review_at: 2026-10-25T012031Z
 review_companions: null
 hold_reason: null
-stage: implemented
+stage: dispatched
 claimed_at: 2026-10-25T042030Z
 base_sha: 2de39fe31bc772463640a6e1897c6c89e11c919a
 base_blob: 970b415b746fa03cb92e419d270be92588273178
@@ -123,6 +123,8 @@ submission_blob: a2fcfaab4280e7587fb1654e3d00b9d7459d4c42
 lint_warnings: 7
 attempt_file: 2026-10-25T043519Z-check-bf16-verify-swapab-wgmma-cluster-dsmem-rewrite.md
 prepared_at: 2026-10-25T043519Z
+job: 3a7f42bc7f544886
+dispatched_at: 2026-10-25T043542Z
 ---
 
 # bf16-verify-swapab-wgmma-cluster-dsmem-rewrite
