@@ -102,9 +102,18 @@ priority: 1
 kind: primary
 controls_for: null
 review: proceed
-status: queued
+status: running
 review_at: 2026-10-25T162106Z
 review_companions: null
+stage: claimed
+claimed_at: 2026-10-25T162106Z
+base_sha: c20f01f78876c85beb295ad153dccfe3078c3ad4
+base_blob: 5cf8fae31e5b84c36efeeb4569763eb9b06e1c8a
+branch: hyp/muse_attention_decode/combo-b1-chain-c320-fused-pre-pdl
+worktree: .worktrees/muse_attention_decode/combo-b1-chain-c320-fused-pre-pdl
+mode: null
+restack_of: null
+stale_base: null
 ---
 
 # combo-b1-chain-c320-fused-pre-pdl
