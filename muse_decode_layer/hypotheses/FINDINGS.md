@@ -1,6 +1,6 @@
 # muse_decode_layer findings
 
-Regenerated 2026-10-25T204227Z by `churn.py index`. Read this before writing a hypothesis for muse_decode_layer.
+Regenerated 2026-10-25T204644Z by `churn.py index`. Read this before writing a hypothesis for muse_decode_layer.
 
 ## Current best
 
@@ -88,6 +88,9 @@ Today's clean-context diagnosis: `muse_decode_layer/hypotheses/DIAGNOSIS.md` (ra
 
 ### cache store
 - **cache-store-fused-fp8-cast** → neutral (unproven-vs-best), 1.0303x — no shape moved outside noise. In kernel_fn, replace the four separate launches between FusedQKNorm and flash_attn_with_kvcache, namely k.to(FP8), v.to(FP8), store_cache(...) and q.view(token
+
+### combination: C1 measured stack + w13/w2 rega and align2 at 128<=T<=512
+- **combo-measured-rows-plus-rega-align2-large-t** → neutral (unproven-vs-best), 1.3164x — lost on sliding verify_16; full verify_16. COMBINATION (measured stack + cross-problem MoE at large T): C1's three decode-measured sources (S1 Triton sliding batched 2..32 from sliding-fused-batched-deco
 
 ### combination: sliding attention B=2..32 + pre-attention feeds (T>1) + routing R / unpooler (2<=T<=32 / 2<=T<=8)
 - **combo-measured-rows-slide-batched-preattn-t8-tail** → neutral (unproven-vs-best), 1.3142x — gained on full verify_1, verify_16. COMBINATION (naive top-row stack): the decode-measured per-shape winners that never reached master, each routed only to the shape class where it won, on master 
@@ -212,4 +215,3 @@ Rewrite stages are exempt: a slow early stage is not a dead end.
 - queue: sliding-sk-window-port-decode32-verify1 [FA3 call (sliding decode B=17..32 and sliding verify B=1: windowed stream-K)] p2 hold
 - queue: combo-attn-master-sliding-race-skw-c16 [combination: sliding attention per-band race (B=1, 2..16, 17..32, verify B=1) + routing R / unpooler tail] p1 hold
 - queue: swapab16-t2-t16-port-on-master [qkv GEMM + o GEMM (2 <= T <= 16)] p1 hold
-- running: combo-measured-rows-plus-rega-align2-large-t [combination: C1 measured stack + w13/w2 rega and align2 at 128<=T<=512] p1 running

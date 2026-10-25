@@ -1,6 +1,6 @@
 # muse_decode_layer hypotheses
 
-Regenerated 2026-10-25T204227Z. Best: 1.3142x [1.2945,1.3339] job `a903b9d004d2452d` (submit)
+Regenerated 2026-10-25T204644Z. Best: 1.3142x [1.2945,1.3339] job `a903b9d004d2452d` (submit)
 
 | created | slug | kind | area | where | outcome | speedup | CI | job | mode | promotion | review | expected hit |
 |---|---|---|---|---|---|---|---|---|---|---|---|---|
@@ -79,7 +79,7 @@ Regenerated 2026-10-25T204227Z. Best: 1.3142x [1.2945,1.3339] job `a903b9d004d24
 | 2026-10-25T153205Z | sliding-cluster-c16-decode1-port | primary | FA3 call (sliding decode, batch 1) | queue | hold |  |  |  |  |  | hold |  |
 | 2026-10-25T153205Z | sliding-sk-window-port-decode32-verify1 | primary | FA3 call (sliding decode B=17..32 and sliding verify B=1: windowed stream-K) | queue | hold |  |  |  |  |  | proceed |  |
 | 2026-10-25T161651Z | combo-attn-master-sliding-race-skw-c16 | primary | combination: sliding attention per-band race (B=1, 2..16, 17..32, verify B=1) + routing R / unpooler tail | queue | hold |  |  |  |  |  | proceed |  |
-| 2026-10-25T161651Z | combo-measured-rows-plus-rega-align2-large-t | primary | combination: C1 measured stack + w13/w2 rega and align2 at 128<=T<=512 | running | running |  |  | eaa8cc0f18f64bfb | submit |  | proceed |  |
+| 2026-10-25T161651Z | combo-measured-rows-plus-rega-align2-large-t | primary | combination: C1 measured stack + w13/w2 rega and align2 at 128<=T<=512 | done/neutral | neutral | 1.3164 | [1.297,1.336] | eaa8cc0f18f64bfb | submit |  | proceed | 1/7 |
 | 2026-10-25T161651Z | combo-measured-rows-slide-batched-preattn-t8-tail | primary | combination: sliding attention B=2..32 + pre-attention feeds (T>1) + routing R / unpooler (2<=T<=32 / 2<=T<=8) | done/neutral | neutral | 1.3142 | [1.295,1.334] | a903b9d004d2452d | submit | done | proceed | 3/8 |
 | 2026-10-25T202335Z | swapab16-t2-t16-port-on-master | primary | qkv GEMM + o GEMM (2 <= T <= 16) | queue | hold |  |  |  |  |  | hold |  |
 

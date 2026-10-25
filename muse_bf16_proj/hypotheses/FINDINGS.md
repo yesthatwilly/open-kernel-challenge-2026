@@ -1,6 +1,6 @@
 # muse_bf16_proj findings
 
-Regenerated 2026-10-25T204227Z by `churn.py index`. Read this before writing a hypothesis for muse_bf16_proj.
+Regenerated 2026-10-25T204644Z by `churn.py index`. Read this before writing a hypothesis for muse_bf16_proj.
 
 ## Current best
 
@@ -133,6 +133,9 @@ Today's clean-context diagnosis: `muse_bf16_proj/hypotheses/DIAGNOSIS.md` (ranke
 ### qkv GEMM (m=17..32, swap-AB)
 - **qkv-swapab-m32-splitk8-stages3** → regression (regression), 1.1963x — gained on pooler verify_16; lost on qkv_gate decode_1, decode_16, decode_32, verify_1; o decode_1, decode_16, verify_1; unpooler decode_1; router decode_1, decode_16, decode_32, verify_1. Built on master (8b9ad43, blob a8bb42a). qkv_gate at 17 <= m <= 32 runs _bf16_swapab_kernel with SWAPAB_CFG qkv_gate = (2304, 8192, SPLIT_K 4, BLOCK_K 128, 4 st
 
+### qkv GEMM (m=65..256, K-split as a batched cuBLAS GEMM)
+- **qkv-k-split-batched-gemm-m65-m256** → regression (regression), 1.2410x — gained on unpooler verify_1; router verify_1; lost on qkv_gate decode_1, decode_16, verify_32; o decode_16; router decode_16, decode_32; pooler verify_32. Built on current master (blob 353e3b19). For layer == 'qkv_gate' at 65 <= cfg m <= 256 only, which covers the scored rows verify_16 m=128 and verify_32 m=256. T
+
 ### restack (m<=16 swap-AB GEMMs + router swap-AB)
 - **bf16-restack-m16-swapab-router-swapab-m32** → neutral (unproven-vs-best), 1.2215x — gained on o decode_1, decode_16, decode_32, verify_1; unpooler decode_1, verify_1; router decode_1, decode_16, decode_32, verify_1. Restack two harvested per-shape winners onto current master (bf16-m32-swapab-wgmma-triton) by a 3-way git merge-file of their patches. (1) bf16-m16-swapab-wgmma
 
@@ -169,6 +172,9 @@ Today's clean-context diagnosis: `muse_bf16_proj/hypotheses/DIAGNOSIS.md` (ranke
 - **unpooler-slice-triton-splitk8-semaphore** → neutral (unproven-vs-best), 1.1546x — gained on unpooler decode_1, verify_1; lost on router verify_1, verify_16. Built on master (dba4ffd; router untouched). For layer == 'unpooler' with cfg n == 1024 (the sliced case, m <= 8: k=4096, an 8.4 MB bf16 read of W[:1024]) only,
 - **unpooler-full-m16-swapab-route** → regression (regression), 1.1885x — gained on router verify_32; lost on qkv_gate decode_1, decode_16, verify_1; o decode_1, decode_16, verify_1; pooler decode_1, decode_16, verify_1; router decode_1, decode_16, decode_32, verify_1; unpooler verify_1. Built on master (8b9ad43, blob a8bb42a). On master the full-weight unpooler (n=8192, k=4096, 67 MB) at 9 <= m <= 16 falls through to _bf16_gemm_dispatch_impl (c
 
+### unpooler GEMM (full width, m=65..128, K-split as a 2-batch cuBLAS GEMM)
+- **unpooler-k-halves-batched-gemm-m65-m128** → neutral (within-ci), 1.2452x — gained on unpooler verify_1; router verify_1; lost on qkv_gate decode_1, decode_16, decode_32, verify_1; router decode_16; pooler verify_16. Built on current master (blob 353e3b19). For layer == 'unpooler' at full width (cfg n == 8192) and 65 <= cfg m <= 128 only (scored row verify_16 m=128). The m=1
+
 ### unpooler GEMM (sliced n=1024, m<=8)
 - **restack-unpooler-slice-cluster-dsmem-m8** → neutral (unproven-vs-best), 1.2260x — gained on unpooler decode_1, verify_1; router verify_1; lost on o verify_16; router verify_16. Built on master (b99b1dd, the landed restack). Port ONLY the unpooler-slice half of the oun kernel from branch hyp/muse_bf16_proj/o-unpooler-slice-cuda-cluster-
 
@@ -200,6 +206,7 @@ Rewrite stages are exempt: a slow early stage is not a dead end.
 - **pooler-nn-layout-widen-m256** [pooler GEMM (m=129..256, cuBLAS NN layout)] neutral, within-ci: 2491x). Master already builds state['pooler_t'] = W_pooler.t().contiguous() ([8192, 4096] 
 - **pooler-k-halves-batched-gemm-m65-m256** [pooler GEMM (m=65..256, K-split as a 2-batch cuBLAS GEMM)] neutral, within-ci: Built on current master (blob 353e3b19). For layer == 'pooler' at 65 <= cfg m <= 256 only 
 - **router-hilo-tall-tile-m65-m256** [router GEMM (m=65..256, hilo tile config)] neutral, within-ci: Built on current master (blob 353e3b19). Only the m > 32 router path changes: _router_hilo
+- **unpooler-k-halves-batched-gemm-m65-m128** [unpooler GEMM (full width, m=65..128, K-split as a 2-batch cuBLAS GEMM)] neutral, within-ci: Built on current master (blob 353e3b19). For layer == 'unpooler' at full width (cfg n == 8
 - **combo-naive-pooler-m1-rowowner-qkv-m128-cublaslt** [combination (pooler m=1 bulk row-owner + qkv_gate m=128 cuBLASLt single-node)] neutral, within-ci: Built on current master (commit 67b46a57, blob f919748b: restack-three-cell-wins + pooler-
 - **router-triton-hilo-fused** [router GEMM] regression, regression: Replace the whole router branch of kernel_fn (both the F.linear fp32 path at m<=8 and the 
 - **unpooler-slice-triton-gemv** [unpooler GEMM] regression, regression: For layer == 'unpooler' and m <= 8 only (the sliced case: n=1024, k=4096, an 8.4 MB weight
@@ -211,6 +218,7 @@ Rewrite stages are exempt: a slow early stage is not a dead end.
 - **pooler-unpooler-m128-nn-layout-gated** [pooler GEMM + unpooler GEMM (m=65..128, cuBLAS NN layout)] regression, regression: Narrow bf16-m128-nn-weight-layout-probe (done/neutral, 1.158x on the older dba4ffd master)
 - **bf16-lossless-exp4-decode-only-throughput-probe** [lossless exp4 compressed-weight stream kernel (_lossless_swapab_kernel)] regression, regression: A one-run kill/revive gate for the held lossless line, not a pipeline stage: kernel_fn rou
 - **bf16-verify-deepgemm-bf16-gemm-nt-route** [bf16 GEMM dispatch (m=65..256, DeepGEMM bf16)] regression, regression: At m=128/256 all four bf16 layers still run cuBLAS nvjet and sit at ~1.0x SGLang (master p
+- **qkv-k-split-batched-gemm-m65-m256** [qkv GEMM (m=65..256, K-split as a batched cuBLAS GEMM)] regression, regression: Built on current master (blob 353e3b19). For layer == 'qkv_gate' at 65 <= cfg m <= 256 onl
 
 ## Queue and in flight
 
@@ -225,5 +233,3 @@ Rewrite stages are exempt: a slow early stage is not a dead end.
 - queue: bf16-verify16-cutlass-m128-onetile-splitk-rewrite [bf16 GEMM dispatch (m=65..128, CUTLASS sm90 one-M-tile split-K)] p1 queued
 - queue: router-m128-m256-wgmma-swapab-tall-cluster-stage2 [router GEMM (m=65..256, CUDA wgmma swap-AB cluster kernel)] p2 queued
 - queue: combo-cublaslt-single-node-m128-m256-plus-naive [combination (naive stack + cuBLASLt single-node probe on pooler/unpooler/o m=128/256)] p1 hold
-- running: qkv-k-split-batched-gemm-m65-m256 [qkv GEMM (m=65..256, K-split as a batched cuBLAS GEMM)] p2 running
-- running: unpooler-k-halves-batched-gemm-m65-m128 [unpooler GEMM (full width, m=65..128, K-split as a 2-batch cuBLAS GEMM)] p3 running
