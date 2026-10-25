@@ -1,0 +1,44 @@
+diff --git a/muse_moe_w4a16/submission.py b/muse_moe_w4a16/submission.py
+index 60dfe35..5ce6af6 100644
+--- a/muse_moe_w4a16/submission.py
++++ b/muse_moe_w4a16/submission.py
+@@ -79,6 +79,10 @@ TOP_K = 8
+ # MuseSpark1xFp4Experts' candidates, smallest first.
+ BLOCK_SIZE_M_CANDIDATES = (8, 16, 32, 48, 64)
+ POST_NORM_EPS = 1e-8
++# Hypothesis marlin-block-m-8-verify16: block_size_m for 128 <= tokens <= 255 (verify_16 bs=128 and
++# the skewed bs=128 test); tokens >= 256 keeps the two-smaller pick, tokens < 128 SGLang's.
++VERIFY16_BLOCK_SIZE_M = 8
++VERIFY16_MAX_TOKENS = 255
+ # Below this many tokens kernel_fn combines with _post_norm_combine_kernel instead of SGLang's
+ # fused_post_expert_norm_weighted_sum (hypothesis post-expert-norm-triton-small-m).
+ SMALL_M_POST_NORM = 32
+@@ -320,6 +324,9 @@ def _align_self_check(device, count):
+             bsm1 = BLOCK_SIZE_M_CANDIDATES[max(BLOCK_SIZE_M_CANDIDATES.index(bsm0) - 2, 0)]
+             if bsm1 != bsm0:
+                 shapes.append((tokens, bsm1))
++            if tokens <= VERIFY16_MAX_TOKENS:
++                # marlin-block-m-8-verify16: kernel_fn's pick at 128 <= tokens <= 255, i.e. (128, 8).
++                shapes.append((tokens, VERIFY16_BLOCK_SIZE_M))
+     for tokens, bsm in shapes:
+         align = _align_small if tokens <= ALIGN_FUSED_MAX_TOKENS else _align_parallel
+         for start in (0, 32, N_EXPERTS - count):
+@@ -449,7 +456,7 @@ def prepare(weights: Weights) -> dict:
+                              start, count, _block_size_m(tokens, count))
+             # _align_parallel_kernel: one variant per block_size_m it can see above 32 tokens
+             # (n is runtime), on dummy ids.
+-            for bsm in (16, 32, 48, 64):
++            for bsm in (VERIFY16_BLOCK_SIZE_M, 16, 32, 48, 64):
+                 _align_parallel(torch.full((ALIGN_FUSED_MAX_TOKENS + 1, TOP_K), start, dtype=torch.int32,
+                                            device=device), start, count, bsm)
+             torch.cuda.synchronize()
+@@ -551,6 +558,9 @@ def _forward(data: Inputs, state: dict, w2_mode: str) -> torch.Tensor:
+         # at the verify shapes (bs=128: 48 -> 16, bs=256/257: 64 -> 32). A host-side pick on the
+         # shape only; num_tokens < 128 keeps SGLang's pick.
+         block_size_m = BLOCK_SIZE_M_CANDIDATES[max(BLOCK_SIZE_M_CANDIDATES.index(block_size_m) - 2, 0)]
++        if num_tokens <= VERIFY16_MAX_TOKENS:
++            # Hypothesis marlin-block-m-8-verify16: 16 -> 8 for 128 <= tokens <= 255. Shape only.
++            block_size_m = VERIFY16_BLOCK_SIZE_M
+     if expert_map is not None:
+         # One launch does the expert_map gather and the align, with the bank's prepare-time
+         # start/count: up to 32 tokens _align_small (hypothesis triton-map-align-small-m-port), above

@@ -41,10 +41,10 @@ priority: 2
 kind: primary
 controls_for: null
 review: proceed
-status: running
+status: done
 review_at: 2026-10-25T054818Z
 review_companions: null
-stage: dispatched
+stage: harvested
 claimed_at: 2026-10-25T054818Z
 base_sha: 1f8d1d245fbad53f62cd763917484822e82cb0ff
 base_blob: 60dfe35d5417d9c0f89067ff313efdc2c41d03a2
@@ -63,6 +63,13 @@ attempt_file: 2026-10-25T054935Z-check-marlin-block-m-8-verify16.md
 prepared_at: 2026-10-25T054935Z
 job: d0811c27500c416a
 dispatched_at: 2026-10-25T054944Z
+outcome: regression
+verdict_detail: regression
+speedup: 1.299218762248412
+speedup_ci: [1.2797304808146857, 1.318707043682138]
+harvested_at: 2026-10-25T084158Z
+best_at_harvest: 1.3438953504561806
+promotion: null
 ---
 
 # marlin-block-m-8-verify16
@@ -128,3 +135,29 @@ Worktree base 1f8d1d2 equals master's submission.py (no diff vs master 0a3cc8a),
 - [x] No module/static globals hold device pointers or buffers (only int constants added).
 
 okc_lint: OK with warnings (host-sync warnings only in prepare()/self-checks, outside kernel_fn). py_compile OK, __pycache__ removed.
+
+## Result
+
+- job `d0811c27500c416a` (check), status done, passed True, tests 5/5
+- speedup 1.2992x, 95% CI [1.2797, 1.3187], score 10351.220587921769 µs vs SGLang 13448.5 µs
+- best at harvest: {"speedup": 1.3438953504561806, "ci": [1.3237369201993379, 1.364053780713023], "job": "7a0d900a1dd34666"}; base result: muse_moe_w4a16/hypotheses/done/neutral/w2-marlin-atomic-add-small-m.result.json
+- **outcome: regression** (regression)
+- files: `muse_moe_w4a16/hypotheses/done/regression/marlin-block-m-8-verify16.result.json`, `muse_moe_w4a16/hypotheses/done/regression/marlin-block-m-8-verify16.patch`; branch `hyp/muse_moe_w4a16/marlin-block-m-8-verify16`
+
+## Attribution
+
+| shape | w | base µs | hyp µs | delta | verdict |
+|---|---|---|---|---|---|
+| bs=1 load=decode_1 sharding=ep8 | 60 | 44.88 | 46.63 | 0.9934 | flat |
+| bs=16 load=decode_16 sharding=ep8 | 60 | 147.71 | 147.14 | 0.9961 | flat |
+| bs=32 load=decode_32 sharding=ep8 | 60 | 198.72 | 203.14 | 0.9971 | flat |
+| bs=8 load=verify_1 sharding=ep8 | 60 | 106.03 | 109.72 | 0.997 | flat |
+| bs=128 load=verify_16 sharding=ep8 | 60 | 317.77 | 390.93 | 0.8154 | lost |
+| bs=256 load=verify_32 sharding=ep8 | 60 | 467.8 | 455.9 | 1.015 | flat |
+
+lost on verify_16 verify_16. Expected hit: 3/4. Noise ±1.5%.
+
+## Follow-ups
+
+- record which shapes lost (Attribution) and do not retry this area in this form.
+
