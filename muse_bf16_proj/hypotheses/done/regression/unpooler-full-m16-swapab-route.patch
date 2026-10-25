@@ -1,0 +1,42 @@
+diff --git a/muse_bf16_proj/submission.py b/muse_bf16_proj/submission.py
+index a8bb42a..fa481a0 100644
+--- a/muse_bf16_proj/submission.py
++++ b/muse_bf16_proj/submission.py
+@@ -483,6 +483,9 @@ def _o_skinny_warmup(w: torch.Tensor) -> None:
+ # instead of the mma.sync it emits with 16/32 tokens on M.
+ SWAPAB_MIN_M = 17
+ SWAPAB_MAX_M = 32
++# Per-layer lower bound override: the full-weight unpooler (n=8192) takes swap-AB from m=9
++# (the slice, n=1024, is caught earlier by _unpool_shape_ok). Drives route gate and warm loop.
++SWAPAB_MIN_M_BY_LAYER = {"unpooler": 9}
+ SWAPAB_BLOCK_W = 64   # weight rows per program = wgmma M for one warpgroup
+ SWAPAB_BLOCK_T = 32   # token columns per program (all of them); columns >= m masked
+ SWAPAB_NUM_WARPS = 4  # one warpgroup
+@@ -569,7 +572,8 @@ def _swapab_route_ok(layer: str, x: torch.Tensor, w: torch.Tensor, cfg) -> bool:
+         return False
+     n, k = spec[0], spec[1]
+     m = cfg["m"]
+-    return (SWAPAB_MIN_M <= m <= SWAPAB_MAX_M and cfg["n"] == n and cfg["k"] == k
++    return (SWAPAB_MIN_M_BY_LAYER.get(layer, SWAPAB_MIN_M) <= m <= SWAPAB_MAX_M
++            and cfg["n"] == n and cfg["k"] == k
+             and x.dim() == 2 and x.shape[0] == m and x.shape[1] == k
+             and x.dtype == torch.bfloat16 and x.stride(1) == 1
+             and w.dim() == 2 and tuple(w.shape) == (n, k) and w.dtype == torch.bfloat16
+@@ -620,7 +624,7 @@ def _swapab_buffers(state: dict, layer: str):
+ def _swapab_prepare(state: dict) -> None:
+     """Allocate the swap-AB workspaces / tickets (own keys), choose each layer's stage count
+     (4, or 3 if the 4-stage variant is OutOfResources; recorded in state as a constant), and warm
+-    every m in 17..32 for each layer on synthetic x, so the timed call never compiles."""
++    every m in the layer's range (17..32; unpooler 9..32) on synthetic x, so the timed call never compiles."""
+     dev = state["pooler"].device
+     state["swapab_ws_pooler"] = torch.empty((2, SWAPAB_MAX_M, 4096), dtype=torch.float32, device=dev)
+     state["swapab_cnt_pooler"] = torch.zeros(4096 // SWAPAB_BLOCK_W, dtype=torch.int32, device=dev)
+@@ -642,7 +646,7 @@ def _swapab_prepare(state: dict) -> None:
+             num_stages = SWAPAB_FALLBACK_STAGES
+             _swapab_forward(layer, x, w, ws, cnt, num_stages, report=True)
+         stages[layer] = num_stages
+-        for m in range(SWAPAB_MIN_M, SWAPAB_MAX_M):
++        for m in range(SWAPAB_MIN_M_BY_LAYER.get(layer, SWAPAB_MIN_M), SWAPAB_MAX_M):
+             xm = torch.randn((m, k), device=dev, dtype=torch.float32).to(torch.bfloat16)
+             _swapab_forward(layer, xm, w, ws, cnt, num_stages)
+     state["swapab_stages"] = stages

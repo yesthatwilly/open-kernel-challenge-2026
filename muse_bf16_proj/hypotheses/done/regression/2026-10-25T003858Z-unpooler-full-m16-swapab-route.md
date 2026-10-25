@@ -48,10 +48,10 @@ priority: 2
 kind: primary
 controls_for: null
 review: proceed
-status: running
+status: done
 review_at: 2026-10-25T004113Z
 review_companions: null
-stage: dispatched
+stage: harvested
 claimed_at: 2026-10-25T004113Z
 base_sha: e024827fbfe10f55e792e5540c00390bc0df3798
 base_blob: a8bb42ac483318e9fbc84bc7826a27b7a704d1fb
@@ -70,6 +70,13 @@ attempt_file: 2026-10-25T004327Z-check-unpooler-full-m16-swapab-route.md
 prepared_at: 2026-10-25T004327Z
 job: 05782267384343eb
 dispatched_at: 2026-10-25T004351Z
+outcome: regression
+verdict_detail: regression
+speedup: 1.1884519539056506
+speedup_ci: [1.170625174597066, 1.2062787332142353]
+harvested_at: 2026-10-25T034131Z
+best_at_harvest: 1.2215006063849365
+promotion: null
 ---
 
 # unpooler-full-m16-swapab-route
@@ -133,3 +140,53 @@ okc_lint output:
 ```
 CLEAN: muse_bf16_proj/submission.py
 ```
+
+## Result
+
+- job `05782267384343eb` (check), status done, passed True, tests 9/9
+- speedup 1.1885x, 95% CI [1.1706, 1.2063], score 4064.7835902195084 µs vs SGLang 4830.8 µs
+- best at harvest: {"speedup": 1.2215006063849365, "ci": [1.2031780972891624, 1.2398231154807104], "job": "60b20fd0bf924267"}; base result: muse_bf16_proj/hypotheses/done/neutral/bf16-restack-m16-swapab-router-swapab-m32.result.json
+- **outcome: regression** (regression)
+- files: `muse_bf16_proj/hypotheses/done/regression/unpooler-full-m16-swapab-route.result.json`, `muse_bf16_proj/hypotheses/done/regression/unpooler-full-m16-swapab-route.patch`; branch `hyp/muse_bf16_proj/unpooler-full-m16-swapab-route`
+
+## Attribution
+
+| shape | w | base µs | hyp µs | delta | verdict |
+|---|---|---|---|---|---|
+| layer=qkv_gate load=decode_1 m=1 | 62 | 12.18 | 13.26 | 0.925 | lost |
+| layer=o load=decode_1 m=1 | 62 | 5.89 | 6.41 | 0.9271 | lost |
+| layer=pooler load=decode_1 m=1 | 62 | 18.84 | 19.42 | 0.9551 | lost |
+| layer=unpooler load=decode_1 m=1 | 62 | 6.15 | 5.92 | 0.9796 | flat |
+| layer=router load=decode_1 m=1 | 62 | 5.38 | 5.89 | 0.9177 | lost |
+| layer=qkv_gate load=decode_16 m=16 | 62 | 13.15 | 13.91 | 0.9562 | lost |
+| layer=o load=decode_16 m=16 | 62 | 6.23 | 6.52 | 0.9683 | lost |
+| layer=pooler load=decode_16 m=16 | 62 | 19.47 | 19.86 | 0.9602 | lost |
+| layer=unpooler load=decode_16 m=16 | 62 | 18.51 | 18.48 | 1.0129 | flat |
+| layer=router load=decode_16 m=16 | 62 | 5.47 | 6.14 | 0.9072 | lost |
+| layer=qkv_gate load=decode_32 m=32 | 62 | 14.19 | 14.0 | 1.01 | flat |
+| layer=o load=decode_32 m=32 | 62 | 6.34 | 6.47 | 1.0046 | flat |
+| layer=pooler load=decode_32 m=32 | 62 | 19.73 | 20.05 | 0.9719 | flat |
+| layer=unpooler load=decode_32 m=32 | 62 | 18.08 | 18.2 | 0.9934 | flat |
+| layer=router load=decode_32 m=32 | 62 | 6.2 | 6.54 | 0.9277 | lost |
+| layer=qkv_gate load=verify_1 m=8 | 62 | 12.5 | 13.49 | 0.9343 | lost |
+| layer=o load=verify_1 m=8 | 62 | 6.13 | 6.71 | 0.9268 | lost |
+| layer=pooler load=verify_1 m=8 | 62 | 18.89 | 19.45 | 0.9515 | lost |
+| layer=unpooler load=verify_1 m=8 | 62 | 6.0 | 6.16 | 0.9694 | lost |
+| layer=router load=verify_1 m=8 | 62 | 5.47 | 6.05 | 0.9048 | lost |
+| layer=qkv_gate load=verify_16 m=128 | 62 | 17.05 | 16.99 | 1.0127 | flat |
+| layer=o load=verify_16 m=128 | 62 | 6.98 | 7.55 | 0.9805 | flat |
+| layer=pooler load=verify_16 m=128 | 62 | 25.0 | 25.23 | 1.006 | flat |
+| layer=unpooler load=verify_16 m=128 | 62 | 19.96 | 20.06 | 1.0085 | flat |
+| layer=router load=verify_16 m=128 | 62 | 7.28 | 7.28 | 0.9801 | flat |
+| layer=qkv_gate load=verify_32 m=256 | 62 | 19.69 | 19.81 | 1.0066 | flat |
+| layer=o load=verify_32 m=256 | 62 | 9.26 | 9.5 | 0.9754 | flat |
+| layer=pooler load=verify_32 m=256 | 62 | 31.19 | 29.84 | 0.9976 | flat |
+| layer=unpooler load=verify_32 m=256 | 62 | 24.42 | 24.35 | 0.9919 | flat |
+| layer=router load=verify_32 m=256 | 62 | 9.6 | 9.14 | 1.038 | gained |
+
+gained on router verify_32; lost on qkv_gate decode_1, decode_16, verify_1; o decode_1, decode_16, verify_1; pooler decode_1, decode_16, verify_1; router decode_1, decode_16, decode_32, verify_1; unpooler verify_1. Expected hit: 5/8. Noise ±1.5%.
+
+## Follow-ups
+
+- record which shapes lost (Attribution) and do not retry this area in this form.
+
