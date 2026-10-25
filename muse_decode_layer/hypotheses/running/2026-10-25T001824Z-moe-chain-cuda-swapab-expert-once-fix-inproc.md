@@ -58,7 +58,7 @@ review: proceed
 status: running
 review_at: 2026-10-25T002143Z
 review_companions: null
-stage: claimed
+stage: implemented
 claimed_at: 2026-10-25T002143Z
 base_sha: e65eda8e263ae1408bdb9e263068ca89a29ceb0d
 base_blob: 81d11fec488c02b0e7fe3a48f764aca20bb6a438
@@ -67,6 +67,12 @@ worktree: .worktrees/muse_decode_layer/moe-chain-cuda-swapab-expert-once-fix-inp
 mode: null
 restack_of: null
 stale_base: true
+implemented_at: 2026-10-25T003525Z
+impl_commit: 1177e314e5b0c1b2d21bb03967270350659d0f15
+submission_sha256: 6d41970e84202091134a0a93b2751855d8c308929f1f67bbae40ff4ec9ee1cd2
+norm_sha256: abc0472c2583c0b8bd66ea59c18519191a43b73fac1b73155b7bfea42c41cd10
+submission_blob: 451c3c09efdc6fc55db461ae20f27cd8e1cd4e9c
+lint_warnings: 25
 ---
 
 # moe-chain-cuda-swapab-expert-once-fix-inproc
@@ -233,3 +239,38 @@ warn  host-sync    L1414: torch.cuda.synchronize()  (outside kernel_fn's call gr
 OK with warnings: .worktrees/muse_decode_layer/moe-chain-cuda-swapab-expert-once-fix-inproc/muse_decode_layer/submission.py
 ```
 py_compile: OK; __pycache__ removed.
+
+## Pre-flight audit
+
+Audited 2026-10-24 by an opus subagent, read-only (no GPU or nvcc on this node).
+
+**Verdict: dispatch. No fixes were applied.** okc_lint returned OK with warnings; every warning is a prepare()-only sync or a uint8/fp16 test tensor. py_compile passed.
+
+**What was checked:**
+
+- **Canary gates can pass.** The references were derived by hand against the m16n8k16 A, B and C fragment layouts, the ldmatrix.x4 lane mapping and the slab swizzle, and they match the kernels:
+  - The cvt canary covers every non-NaN E4M3 byte. Each value is exact in fp16, so a bitwise compare is valid.
+  - In the dequant canary, scale bytes 0x20-0x57 are normal E4M3. s·2^119 is exact in bf16 and below 2^127. Every product is exact, so a bitwise compare is valid.
+  - The mma canary uses a row rel bound of 1e-4 on a 64-term fp32 sum.
+  - The cp.async canary's expected buffer gets the right zero-fill (chunk 63 of 64) and the right reversal. NCH is 13824, which is 216·64.
+  - The canary sizes match the TORCH_CHECKs.
+- **221 KB smem.** cudaFuncSetAttribute(MaxDynamicSharedMemorySize, 221184) is set in lt_init (info_one) for moe_w13_silu_swapab, moe_w2_swapab and lt_canary_cpasync. That happens before any of them launches, and the attribute persists for kernel_fn's graph capture. The gate also checks maxDynamicSharedSizeBytes >= 221184 and logs the opt-in max (232448 on H100/H200). No GEMM kernel has static smem.
+- **__hmul2 does not change the fault class.** On sm_90, cuda_bf16.hpp lowers bf16 __hmul2 to mul.bf16x2 (an HMUL2.BF16 instead of an HFMA2.BF16 with a -0 addend). At most that changes the SASS. Both forms are legal on sm_90, and neither is a plausible source of a 715. Results are unchanged: the products are exact and feed mma directly, so contraction cannot change them. Count it as eliminated only if the dequant canary runs and the fault shows up later.
+- **TORCH_CUDA_ARCH_LIST.** cpp_extension returns no arch flags of its own once a cflag contains "arch", so 9.0a is never parsed. It is harmless, and it is restored in a finally block.
+- **Rules.**
+  - No child process: no subprocess, multiprocessing or os.system. load_inline is the same build mechanism master already uses.
+  - Nothing derived from data is cached, because the self-check and canaries are synthetic.
+  - kernel_fn only gained hook=None. It has no sync, no value-dependent allocation and no branch on values, so it is graph-capturable.
+  - NVFP4 retiling is lossless and asserted. Activations stay BF16. Attention and KV are untouched.
+- **Fallback.**
+  - These all land on Marlin with ON/OFF and PATH CHOSEN printed: a build failure (caught in _lt_build), any Python or TORCH_CHECK or non-sticky launch error (caught in _lt_setup), and a failure at the arch, probe, canary, T=33 or self-check stage.
+  - The only exception is a sticky 715, which cannot be recovered by nature. That is why this run must be an `okc check`.
+
+**Stale base.** The check is still interpretable for its two jobs. The first job is fault attribution: the ladder is independent of the base. The second is the replaced kernels' time against Marlin: the in-run event-timing line and the profile's top_kernels compare both within the same run. The stale base does need a note, and the harvest must record it:
+
+- This run's headline and per-shape speedups are against stage 1's base, not master (stack-align-par-sidestream-sliding1, 1.2521). Do not compare them to master's board number, and do not promote from them.
+- The decode_*/verify_1 controls are flat relative to stage 1's base.
+- MoE runs on the main stream here, not master's side stream, so overlap effects are absent.
+- Promotion requires the restack onto master as a separate stage.
+
+**Residual risk.** The underlying 715 was not root-caused. The likeliest outcome is that it faults again, with the last `launching <name>` line naming the kernel and form. A minor risk is that the ptxVersion==90 gate turns the path OFF if the driver reports a different value for a cubin-only sm_90a build. That would be logged loudly, and the arch probe is the stronger check.
