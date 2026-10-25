@@ -44,7 +44,7 @@ review: proceed
 status: running
 review_at: 2026-10-25T054818Z
 review_companions: null
-stage: claimed
+stage: implemented
 claimed_at: 2026-10-25T054818Z
 base_sha: 1f8d1d245fbad53f62cd763917484822e82cb0ff
 base_blob: 60dfe35d5417d9c0f89067ff313efdc2c41d03a2
@@ -53,6 +53,12 @@ worktree: .worktrees/muse_moe_w4a16/marlin-block-m-8-verify16
 mode: null
 restack_of: null
 stale_base: null
+implemented_at: 2026-10-25T054935Z
+impl_commit: 5e32dd597f804d7134d66b027769b1d0731a8320
+submission_sha256: e120fb16f9d7cc0941655601606b670c29c20a9dfb420c81be80333f174b4405
+norm_sha256: f0c5de4921acc049cc037b08d09ab2a543d4b22235e99e85c473e6eff995934a
+submission_blob: 5ce6af6b334300197dd14ec64f045cf23f54566c
+lint_warnings: 11
 ---
 
 # marlin-block-m-8-verify16
@@ -96,3 +102,25 @@ No companion is warranted. Only one shape's pick changes, and every other scored
 - If this comes back flat or slower, the block-m axis at bs=128 is exhausted (48/32/16/8 all measured). Record it in FINDINGS as do-not-retry for uniform block 8 at T >= 128 and leave the shape to the wgmma/swapab rewrites. A per-expert two-class split (like marlin-two-class-block-m-decode32 at bs=32: 8 for cold experts, 16 for hot ones) is the only block-m variant left with a mechanism.
 - Priority: given the bs=32 evidence and the thread_m_blocks floor, consider dispatching this after the higher-expected-value queued moe items. It is cheap and interpretable but has a low prior.
 
+
+## Implementation notes
+
+Worktree base 1f8d1d2 equals master's submission.py (no diff vs master 0a3cc8a), so no merge was needed. Changes in muse_moe_w4a16/submission.py only (+11/-1):
+- Added constants VERIFY16_BLOCK_SIZE_M = 8 and VERIFY16_MAX_TOKENS = 255.
+- _forward: inside the `num_tokens >= 128` branch, after the two-smaller pick, `if num_tokens <= VERIFY16_MAX_TOKENS: block_size_m = 8`. Branches on num_tokens only. 256/257 keep 32; T < 128 untouched. The same block_size_m feeds _align_parallel (BSM=8, PAD_BLOCK=8) and both Marlin moe_block_size kwargs.
+- prepare(): the _align_parallel warm loop is now (8, 16, 32, 48, 64).
+- _align_self_check: adds shape (128, 8) (for tokens <= 255 with tokens >= 128). Mismatch classification is unchanged (": capacity " counted as capacity-only), and big_cases counts it automatically.
+- Review items: no spec corrections; the open questions (w13/w2 split in the profile, do-not-retry note on a flat result, queue priority) are for the profile/closing stage, not the build. No deviations.
+
+## Rules check
+
+- [x] CUDA-graph capturable: diff adds only host-side Python int comparisons in _forward; no sync/print/.item in kernel_fn.
+- [x] Nothing derived from `data` is cached: only num_tokens (shape) branch; no new state.
+- [x] Weights untouched: n/a, no weight changes; NVFP4 stays NVFP4.
+- [x] Activations BF16 where SGLang keeps BF16: unchanged.
+- [x] Attention: n/a, MoE; every route is still processed (block size only changes padding).
+- [x] No timing patches, harness access, module edits, reference import, or child processes in the diff.
+- [x] All work inside the timed call; no output caching or replay.
+- [x] No module/static globals hold device pointers or buffers (only int constants added).
+
+okc_lint: OK with warnings (host-sync warnings only in prepare()/self-checks, outside kernel_fn). py_compile OK, __pycache__ removed.
