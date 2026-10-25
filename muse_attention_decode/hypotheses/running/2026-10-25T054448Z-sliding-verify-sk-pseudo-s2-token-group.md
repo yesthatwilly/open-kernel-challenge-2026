@@ -65,7 +65,7 @@ review: proceed
 status: running
 review_at: 2026-10-25T054704Z
 review_companions: null
-stage: claimed
+stage: implemented
 claimed_at: 2026-10-25T054704Z
 base_sha: 6f95ce71ba21682ba9cbb6d346abb2a93a862b2f
 base_blob: 76492911dfd6685139a2ffac06c1d27083ecdb0a
@@ -74,6 +74,12 @@ worktree: .worktrees/muse_attention_decode/sliding-verify-sk-pseudo-s2-token-gro
 mode: null
 restack_of: null
 stale_base: null
+implemented_at: 2026-10-25T084910Z
+impl_commit: 39fb54fe3f47f42f763160b2e09426e294bdbe7a
+submission_sha256: 1926573a2bbdde9bebf692b1770bff845fac7977b2ec293f9d03ef6e03b6dd2c
+norm_sha256: bf3c789fd6f7bc3061490ec1cb37abfdd4992d0e3b01d201e3fecd13d719a494
+submission_blob: 7fd30a78be18303b7c935dc944c31ff33649bed0
+lint_warnings: 27
 ---
 
 # sliding-verify-sk-pseudo-s2-token-group
@@ -127,3 +133,46 @@ No companion. Every sliding verify row is either the TG kernel, routed only when
 - The gate uses uniform 80000-length synthetic batches, but the scored B=16/32 shapes are spread=agentic. Consider timing the band candidates on a spread-like synthetic too, so a marginal (5-10%) route does not invert on the real shape.
 - Kill criterion as written: if every TG at B=16 is still slower than FA3, retire the pseudo line to B=1 only and hand verify_16/32 to the wgmma or cluster verify lines. Never stack those lines on this one.
 
+
+## Implementation notes
+
+Edited only `muse_attention_decode/submission.py` in the worktree (nothing could be compiled or run on this node: no GPU, no nvcc).
+
+Kernel (`splitkv_attn_sk_kernel`): new template `int TG = 1`; the TG=1 body is the old code verbatim inside `if constexpr (TG == 1)`; `Lay` gained `TGM` (q slots x TG, SP0 table), `merge_range` gained default `sstride/soff`, `load_prefix_pseudo<TG>` builds union count / lo / raw sp0 per token block. Variants 6/7 = TG 2 (single/two-level), 8/9 = TG 4. A block = TG consecutive tokens, R = 8B/TG, union key range, K/V tile loaded once. Workspace/group slots index `(cta + block) * TG + token`; finalize writes rows `block*TG + token`. Per-token masks `lo_j <= t < sp_j` rebuilt per tile from lo_s/sp0_s; `m=-inf` guard kept per token row.
+
+Deviation (review/spec said warp w owns group w%TG, one 16-row group per token): s1's mma.sync wastes mma rows 8-15 (a1/a3 = 0, acc[2..3] dead). TG>1 puts token a in rows 0-7 and token b in rows 8-15 of the SAME m16n8k16, so TG=2 costs s1's MMA count per warp and TG=4 is 2 token pairs x 2 warps per pair (32-key slices) - this is also the review's "TG=4 with 8 warps" ask, no extra template needed. q is kept as raw e4m3 words (8 regs) and converted per tile to stay near the 128-reg cap; the segment-end merge runs in two passes reusing acc_s/ml_s (smem stays inside 2 CTAs/SM by arithmetic: TG2 ~100.9 KB, TG4 ~108.1 KB).
+
+Review fixes applied: per-TG regs/local/smem/CTAs-per-SM printed and the issue layout printed (`_ps_layout_lines`); a variant that spills (local>0) or cannot launch is refused, a variant that misses a self-check case is excluded alone with a PATH CHOSEN line naming the case; s1 TG=1 best, TG=2/4 best and FA3 printed together per band plus the TG1/TG4 ratio; gate grid pruned (`_ps_candidates`: effective grid, dup/<2-tiles-per-CTA drops, two-level only at >=4 CTAs/block); B=16/32 top-per-TG candidates re-timed with FA3 on an agentic synthetic (80000 +-7.5%) and a route needs >=1.05x on BOTH uniform and agentic; PSEUDO=false variants untouched (variant 0 identical check still printed in `_sk_validate`); workspace sized from batch/grid/TG only. New self-check cases per variant: tile-edge straddle lens 2041..2055 at kv 0.25, B=1 lens 0, B=3, B=16/32 ragged. Replay check replaced by `_ps_two_state_check`: two prepared states, a graph captured on each, alternating A,B,A,B replays each preceded by an in-place refill with new lens.
+
+## Rules check
+
+- [x] CUDA-graph capturable: kernel_fn path unchanged in form (pre-attention + one launch); workspace is torch.empty sized from batch/grid/TG only; no sync, no input-value control flow (diff checked).
+- [x] Nothing derived from `data` is cached: only self-resetting int32 ticket arrays are module-level; no pointer/tensor map/workspace in a global.
+- [x] n/a: no weights in this problem.
+- [x] KV FP8, q e4m3 from the pre-attention kernel, fp32 softmax/merges, bf16 out.
+- [x] Every key of each token's window attended (union range + per-token masks); no skipping.
+- [x] No timing patches, harness access, subprocess or network (lint OK).
+- [x] All work inside the timed call; sm_90a build flags unchanged (TORCH_CUDA_ARCH_LIST=9.0a, -lineinfo, no setmaxnreg/wgmma used).
+
+okc_lint: `OK with warnings` (only host-sync warnings in prepare-time code, outside kernel_fn). `py_compile` OK, __pycache__ removed.
+
+## Pre-flight audit
+
+Audited 2026-10-25 by an Opus subagent, by reading the code and emulating the masks in plain Python. Nothing was compiled or run.
+
+**Verdict: dispatch-with-fixes.**
+
+Checked and found sound:
+- PSEUDO=false and TG=1 are unchanged in source. The TG=1 body is verbatim inside `if constexpr (TG == 1)`. `Lay<..., TGM=1>` gives the earlier offsets. `merge_range` defaults to stride 1 and offset 0. The landed no-SK_PSEUDO fallback build still compiles the new helpers.
+- Masks: a brute-force emulation covered lens 0..2099, 5000, 79999 and 80000 at TG 2 and 4. For every token, union range [lo_j0, sp_j0+TG-1), tile count and per-token mask `lo_j <= t < sp_j` select exactly the reference window max(0,p-2047)..p, with 0 mismatches.
+- MMA fragments: token a sits in rows 0-7 (a0/a2, c0/c1) and token b in rows 8-15 (a1/a3, c2/c3). The QK and PV k-permutations match TG=1. The smem merge picks the warps hg + 2(p2 + NP j). Finalize rows are c_b*TG + k = b*8 + j. Workspace slots are (cta + block)*TG + k, and group slots are (c_b*32 + gi)*TG + k. Every host TORCH_CHECK holds for B <= 32.
+- Smem: TG2 is 100896 B and TG4 is 108064 B, so both fit 2 CTAs per SM. The m=-inf guards match TG=1. Tickets reset at both levels.
+- Rules: kernel_fn is unchanged in form, with a config-only gate, workspace sized from batch, grid and TG, and no sync, print or try/except. The only module state is self-resetting int32 tickets plus floats in _PS_INFO. The two-state check captures one graph per state, then refills and replays them in the order A, B, A, B.
+- Fallbacks: a spill or a self-check miss in one variant excludes that variant alone, with a PATH CHOSEN line. Validate, gate and two-state exceptions are caught and the band goes to FA3.
+
+Fix:
+- The FA3-fallback PATH CHOSEN lines carried no numbers, and the per-band gate SUMMARY lines may fall out of the 16 KB log tail because the s2 gate prints about 17 candidates x 3 lines per band. The kill criterion for this run is "every TG at B=16 slower than FA3", so the fallback lines need the numbers. _PS_INFO is now recorded for every gated band, not only routed ones, and includes the best uniform time per TG. The fallback PATH CHOSEN now prints the best time per TG, FA3, and the agentic pair when present. Logging only; routing is unchanged.
+
+okc_lint: OK with warnings (prepare-time host syncs only). py_compile: OK. __pycache__ removed.
+
+Residual risk: the CUDA has never been compiled. A compile error in the TG>1 branch would drop full decode to a landed rebuild, which doubles compile time. A spill at TG=4 under the 128-reg cap refuses that variant loudly. About 59 self-check cases plus about 4 new instantiations push prepare above the 380 s that s1 took, though it should stay under 900 s. A device fault in a new variant would poison the context, which is the same exposure as s1.
