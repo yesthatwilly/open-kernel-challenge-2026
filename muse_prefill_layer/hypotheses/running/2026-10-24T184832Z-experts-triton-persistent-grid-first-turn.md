@@ -47,7 +47,7 @@ review: proceed
 status: running
 review_at: 2026-10-25T003615Z
 review_companions: null
-stage: claimed
+stage: implemented
 claimed_at: 2026-10-25T003624Z
 base_sha: d310c3558b4da1934c0587b4005cb3c14093af5f
 base_blob: db8a3344398bca79ea5cafeb580f701c055fd475
@@ -56,6 +56,12 @@ worktree: .worktrees/muse_prefill_layer/experts-triton-persistent-grid-first-tur
 mode: null
 restack_of: null
 stale_base: null
+implemented_at: 2026-10-25T004119Z
+impl_commit: f82cccec98bb61df139cb881efa9287d51bb212f
+submission_sha256: a5897dd8c1546dc182ed1e23c3545fd869d6fef6bb57c0c9d5f1a3523f8f8c7d
+norm_sha256: 273f451c9c54497e1a3c42621dcd160319cc524f79e8df40078df98c6496f942
+submission_blob: 680ae9105b7863c930da7c8759029431bf2d4680
+lint_warnings: 22
 ---
 
 # experts-triton-persistent-grid-first-turn
@@ -97,3 +103,40 @@ No companion makes this readable; the ambiguity is kernel-row noise (~+-10%). Fi
 - Should the next-tile expert_id prefetch be part of this change?
 - If the CUDA wgmma remeasure wins at first_turn, this becomes moot.
 
+
+## Implementation notes
+
+Worktree `muse_prefill_layer/submission.py` only (+224/-47). Not run (no GPU on this node).
+- Per-tile math moved verbatim into `@triton.jit _nvfp4_live_tile`; master's `_moe_nvfp4_gemm_kernel` is otherwise unchanged (early loads, return-on-dead, same swizzle) and calls it, so it stays the A/B baseline.
+- New `_moe_nvfp4_gemm_persistent_kernel` + `_persistent_tile_coords` (master's GROUP_SIZE_T swizzle with runtime `num_pid_t = cdiv(n_padded, BLOCK_T)`, group size clamped to >= 1 for the masked prefetch of a past-the-end tile). Per tile: `expert_ids` only (next tile's id prefetched at loop top, loop-carried), `sorted_ids`/`offs_token` loaded inside the live branch (and inside the -1 branch only when ZERO_NONLOCAL). if/else, no return in the loop.
+- Launcher `_nvfp4_moe_gemm(..., persistent=False)`: grid = min(`_num_sms(device)`, cdiv(EM, BLOCK_T) * N/BLOCK_W); `_num_sms` is a host hardware constant read per launch (not cached, not input-derived).
+- `_check_expert_gemms` now runs master and persistent variants (w13/w2 each), keeps the -1 and past-n_padded assertions; the persistent case uses live token blocks so live tiles >= 2*NUM_SMS (loop wraps). Log line says `persistent grid=<g>` or `non-persistent` with n_regs/n_spills/shared for both variants.
+- `_bench_persistent` (prepare, untimed): T=16384 random distinct top-8 of 256 -> 32 local, `moe_align_block_size(local_ids, 256, 32)`, CUDA-graph replays of both kernels for w13 and w2, 7 alternations (order flipped each round), 256 MiB flush write before every replay (cold L2), prints per-GEMM medians and ratio and a `PATH CHOSEN` line. `state["persistent"][w13|w2]` is True only at ratio <= 0.98; any exception -> non-persistent. `_experts_triton` passes it per GEMM.
+- Deviation: the gate is per GEMM, not joint. Extra memory in prepare: ~4 GiB of synthetic buffers, freed before returning.
+
+## Rules check
+
+- [x] CUDA-graph capturable: kernel_fn adds only dict reads of bools and a launcher host call (`get_device_properties`); no .item/.cpu/sync, no data-dependent control flow (diff checked; `.cpu()`/sync only in prepare).
+- [x] Nothing derived from `data` is cached across calls: `state["persistent"]` comes from synthetic prepare() data; SM count is hardware.
+- [x] Weights: unchanged; NVFP4 stays NVFP4 (same in-register dequant).
+- [x] Activations BF16 / KV FP8 / queries: n/a, no attention or dtype change; the flush buffer is a uint8 scratch (lint warn, not an activation).
+- [x] Attention sees every key: n/a, attention untouched.
+- [x] No timing patches, harness access, module edits, reference import, subprocesses or network: none added (no child process).
+- [x] All work inside the timed call; no output caching or replay: GEMMs run every call; the benchmark outputs are scratch, in prepare only.
+
+okc_lint: `OK with warnings` (host-sync warns all in prepare(), one dtype warn for the uint8 flush buffer, none in kernel_fn). `py_compile` ok, `__pycache__` removed.
+
+## Pre-flight audit
+
+Audited 2026-10-25 (opus). **Verdict: dispatch-with-fixes.**
+
+Checked and fine: the baseline kernel inlines `_nvfp4_live_tile` with the same loads, early return and swizzle as master, so it does the same work (`HALF`/`GROUPS_HALF` are now dead locals there). Turn_1, turn_4 and the tests run Marlin (T <= 4096), so they are untouched. In the persistent loop, an emulation over num_pid_t 0..39, num_pid_w {1,2,3,32,64}, G {1,4,8} and nprog {1,7,132} shows the swizzle with runtime `num_pid_t = cdiv(n_padded, BLOCK_T)` is a bijection onto the live tiles and the strided loop visits each tile exactly once. The `max(...,1)` clamp only affects masked past-the-end prefetch ids. The prefetched `off_expert` always matches the current tile. Both if/else branches yield matching types. `n_padded` is read once on device. kernel_fn adds only dict reads and a host `get_device_properties`: no sync, graph-capturable. The gate uses synthetic data only, is keyed on the shape class (T > 4096 -> BLOCK_T 256), and adds only seconds and about 4 GiB to prepare. NVFP4 and the dequant are unchanged. No child process.
+
+Fixes:
+1. `prepare()` called `_check_experts_e2e` (which runs `_experts_triton`, which reads `state["persistent"]`) before `state["persistent"]` was set. That is a KeyError on every run. Now `state["persistent"]` starts as non-persistent before the e2e check.
+2. The persistent variants ran inside `_check_expert_gemms`, so a build error or dequant mismatch failed prepare instead of falling back. They now run with `persistent=True` inside `_bench_persistent`'s try, so any failure prints `PATH CHOSEN: non-persistent`. Master's variants still assert as before.
+3. When the gate picks a persistent GEMM, `_check_experts_e2e` runs again on the chosen path against Marlin. If it fails, the path goes back to non-persistent with a loud `PATH CHOSEN` line.
+
+Residual risk: the gain (~0.3 ms upper bound) may land under the 0.98 gate. Then the run is neutral and the readout is the `[persistent A/B]` ratio line. Also, the nested loop may change the pipelining or spills of w13 at BLOCK_T 256 (see the `[expert gemm] ... persistent` n_regs/n_spills lines).
+
+okc_lint after fixes: `OK with warnings` (host-sync in prepare only); `py_compile` ok; `__pycache__` removed.
