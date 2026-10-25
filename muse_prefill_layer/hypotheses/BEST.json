@@ -1,17 +1,17 @@
 {
- "problem": "muse_prefill_layer",
- "job": "9bfc488c36c84924",
- "check_job": "9bfc488c36c84924",
- "mode": "check",
- "speedup": 1.4604901800994607,
- "ci": [
-  1.4385828273979688,
-  1.4823975328009524
- ],
- "score_us": 265256.0799646167,
- "commit": "33aa4083ab571529b6fa2ede89d066994e37370a",
- "submission_blob": "6a16d158f6a6df0e484eb053e147a6fdae43b713",
- "slug": "combo-a-master-normgather-naive-stack",
- "result": "muse_prefill_layer/hypotheses/done/neutral/combo-a-master-normgather-naive-stack.result.json",
- "updated_at": "2026-10-25T162149Z"
+  "problem": "muse_prefill_layer",
+  "job": "9bfc488c36c84924",
+  "check_job": "9bfc488c36c84924",
+  "mode": "submit",
+  "speedup": 1.4604901800994607,
+  "ci": [
+    1.4385828273979688,
+    1.4823975328009524
+  ],
+  "score_us": 265256.0799646167,
+  "commit": "aab679312bea4f6d582b7edf39069ec495ff24f6",
+  "submission_blob": "6a16d158f6a6df0e484eb053e147a6fdae43b713",
+  "slug": "combo-a-master-normgather-naive-stack",
+  "result": "muse_prefill_layer/hypotheses/done/neutral/combo-a-master-normgather-naive-stack.result.json",
+  "updated_at": "2026-10-25T162149Z"
 }
