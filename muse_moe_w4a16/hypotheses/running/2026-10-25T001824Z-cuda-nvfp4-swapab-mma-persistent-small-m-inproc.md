@@ -57,7 +57,7 @@ review: proceed
 status: running
 review_at: 2026-10-25T002203Z
 review_companions: null
-stage: implemented
+stage: dispatched
 claimed_at: 2026-10-25T002203Z
 base_sha: f8b3f7230f2656a4143b6a87bb6b8dc1be0b5e49
 base_blob: 7d31b758c60017e045f6e0f75d2e437931ea34b0
@@ -74,6 +74,8 @@ submission_blob: 90abfd1b6a054e344505bc60431e382b3f5fe552
 lint_warnings: 24
 attempt_file: 2026-10-25T003250Z-check-cuda-nvfp4-swapab-mma-persistent-small-m-inproc.md
 prepared_at: 2026-10-25T003250Z
+job: fecc63ef567b4dc2
+dispatched_at: 2026-10-25T003256Z
 ---
 
 # cuda-nvfp4-swapab-mma-persistent-small-m-inproc
