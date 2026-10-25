@@ -47,4 +47,4 @@ okc_lint output: `OK with warnings: muse_bf16_proj/submission.py` (13 warnings: 
 medium
 
 ## Result (after the run)
-(pending)
+Promotion passed: 1.2491x [1.2303,1.2678], board: {"rank": 276, "team": "yesthatwilly", "speedup": 1.2491, "first": false, "ahead": 275, "to_first": 1.2888}

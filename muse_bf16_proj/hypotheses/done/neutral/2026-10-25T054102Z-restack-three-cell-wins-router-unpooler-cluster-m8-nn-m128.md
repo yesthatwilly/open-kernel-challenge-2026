@@ -135,12 +135,13 @@ speedup: 1.236629518166488
 speedup_ci: [1.2180800753939907, 1.2551789609389852]
 harvested_at: 2026-10-25T084157Z
 best_at_harvest: 1.2215006063849365
-promotion: submitted
+promotion: done
 hand_landed: true
 promotion_commit: 040fc7e18f4d9c17ea9fc4a4b9a4cae9216a2335
 promotion_attempt: 2026-10-25T110032Z-submit-restack-three-cell-wins-router-unpooler-cluster-m8-nn-m128.md
 promotion_job: ee4f89f2f62c42d3
 promotion_at: 2026-10-25T110043Z
+board: "{\"rank\": 276, \"team\": \"yesthatwilly\", \"speedup\": 1.2491, \"first\": false, \"ahead\": 275, \"to_first\": 1.2888}"
 ---
 
 # restack-three-cell-wins-router-unpooler-cluster-m8-nn-m128
