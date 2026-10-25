@@ -59,8 +59,11 @@ kind: rewrite
 controls_for: null
 rewrite_stage: 1
 replaces: _moe_nvfp4_gemm_kernel x2 (w13, w2) at T > 4096 (first_turn)
-review: required
-status: queued
+review: hold
+status: hold
+review_at: 2026-10-25T001517Z
+review_companions: null
+hold_reason: "adversarial review: The rewrite design and the build fix are sound, but change item (2) spawns a multiprocessing child in prepare(), and TASK.md and the technical rules list 'start"
 ---
 
 # experts-cuda-wgmma-grouped-gemm-remeasure-sm90a
@@ -87,3 +90,27 @@ shape (profile top_kernels) against the incumbent and the speed-of-light floor, 
 2. at or below the incumbent kernels' time on the target shapes;
 3. within ~1.5x of the floor on the target shapes, and the headline CI clears 1.0 (promotable).
 The next stage is minted with `--kind rewrite --depends-on <this slug> --stage N+1`.
+
+## Adversarial review
+
+Reviewed 2026-10-25T001517Z by an adversarial subagent (model opus).
+
+**Verdict: hold.** The rewrite design and the build fix are sound, but change item (2) spawns a multiprocessing child in prepare(), and TASK.md and the technical rules list 'starts processes' as a static reject; drop (2), keep the __CUDA_ARCH_FEAT_SM90_ALL guard plus the in-process one-hot/e2e checks as the safety net, then proceed unchanged.
+
+### Justification
+A: The target is real and the largest gap in the layer: _moe_nvfp4_gemm_kernel x2 costs 8083-9174 us at every first_turn shape on master c4d14d62 (37-57% of those shapes), against a ~1.67 ms math floor (~2.0-2.3 ms with BLOCK_T-256 padding), so about 4-5x off. first_turn carries the heaviest load weight (138 on sliding ctx32768). A persistent sm_90a kernel with RS wgmma m64n256k16 on two consumer WGs, a TMA-bulk producer warp and a 5-stage ring is the right tensor-core path for this shape (T=16384, about 4K rows per local expert, K=8192-class), and M1 (<6 ms) is plausible. The expected directions agree with TASK.md: turn_1 and turn_4 stay on Marlin (T<=4096 gate), so they should be flat. The build diagnosis in REWRITE_READ_2026-10-25 #1 is specific and correct: torch's cpp_extension adds a compute_90 gencode from TORCH_CUDA_ARCH_LIST, and ptxas rejects wgmma there. Setting TORCH_CUDA_ARCH_LIST=9.0a plus the feature-macro guard fixes it. The earlier patch already honours zero_nonlocal for -1 items (producer 'if (e < 0) continue', consumer store guarded by zero_nonlocal), so item (3) only needs master's state['zero_nonlocal_w2'] to be passed through in place of the old ZERO_NONLOCAL_W2 constant. The weakest link is M2 (<3.5 ms, ~470 TFLOP/s). The RS path dequantizes NVFP4 to BF16 in the consumer warpgroups' registers, so dequant ALU work competes with wgmma issue, and with only 2 consumer WGs per SM there is little overlap headroom. This stage measures whether dequant or the producer bound first, which is fine for a rewrite stage. A secondary risk is a hard fault (illegal instruction or hang) in the first in-process launch. That would kill the CUDA context and fail the whole check run instead of falling back. The child-process isolation was meant to contain that risk, but it is not allowed (see rules_flags), so the run must accept the risk.
+
+### Confounders on the current kernel
+- stack-tonight-five-prefill (moe-align-32-experts-first-turn + w2-nonlocal-zero-store-off-first-turn): this changes the CUDA kernel's input contract (32-expert align, so fewer padded tiles and different n_padded/block_experts, and w2 zero-store OFF). The port inherits both deliberately, and the incumbent row in c4d14d62 already includes them, so the kernel-row comparison is like-for-like. If the port wrongly hard-codes zero_nonlocal=True, it adds back ~940 MB of stores and confounds the w2 row; check the '[w2 zero-store] OFF' log line.
+- experts-hybrid-marlin-turn-triton-first-turn: this supplies the T>4096 gate the CUDA path hangs off, so the change is shape-disjoint from Marlin. Not a confounder if _experts keeps the gate byte-identical.
+- experts-triton-w4a16-first-turn-blockt256: this fixes BLOCK_T=256 in EXPERT_CONFIGS, and the align pads to it. The CUDA kernel's TILE_T must equal cfg['BLOCK_T'] or the align output is misread. This is a correctness coupling, not a timing confounder.
+- sglang-pipeline-parity: no interaction beyond providing the surrounding pipeline.
+
+### Interference and A/B needs
+No companion is warranted. This is kind: rewrite and is judged on the _nvfp4_wgmma_grouped_kernel row (2 calls) against the incumbent _moe_nvfp4_gemm_kernel row per first_turn shape, with noise of about +-6% (REWRITE_READ calibration). An ab-revert of align32/zero-store would only change the incumbent baseline that the port deliberately shares. A control would not disambiguate anything the profile row does not already show. The next stage is the follow-up.
+
+### Open questions
+- Does the ported _cuda_bank index exactly the same 32 local experts (local_start offset) as state['bank']? The old patch built it against the 257-expert align.
+- Does the producer's 1-D cp.async.bulk weight-block size times 5 stages fit shared memory alongside the BF16 activation tiles for BLOCK_T=256 on both w13 (N=2*size_n) and w2 (K=size_n)? Log the smem bytes and occupancy at build.
+- If the kernel row lands between the M1 and M2 milestones, is the bottleneck the RS dequant (consumer ALU) or the producer bandwidth? Ask the next stage's profile for an ncu-style split (or a no-dequant timing variant in prepare) to decide stage 2.
+
