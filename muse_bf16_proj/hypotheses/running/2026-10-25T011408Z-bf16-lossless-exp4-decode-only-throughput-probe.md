@@ -49,7 +49,7 @@ base_sha: 41b1d0ab801c3b80cbb8f4ac832daa8d0cabfc3a
 base_blob: a8bb42ac483318e9fbc84bc7826a27b7a704d1fb
 branch: hyp/muse_bf16_proj/bf16-lossless-exp4-decode-only-throughput-probe
 worktree: .worktrees/muse_bf16_proj/bf16-lossless-exp4-decode-only-throughput-probe
-mode: null
+mode: check
 restack_of: null
 stale_base: null
 implemented_at: 2026-10-25T012237Z
@@ -58,6 +58,8 @@ submission_sha256: 6212769b2b06c04fd5a532ebf23d401b5b3d4d2dcc92736e6269e77efc71c
 norm_sha256: a9f9ec775d9c456c02d65a2558aa383ba13d59eaa0837fe6c151271a79be2ea5
 submission_blob: 11c9d817fdded87c2ece585de4a74a40df07155d
 lint_warnings: 13
+attempt_file: 2026-10-25T012237Z-check-bf16-lossless-exp4-decode-only-throughput-probe.md
+prepared_at: 2026-10-25T012237Z
 ---
 
 # bf16-lossless-exp4-decode-only-throughput-probe
