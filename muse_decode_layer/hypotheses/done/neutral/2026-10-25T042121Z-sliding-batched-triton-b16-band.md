@@ -36,10 +36,10 @@ priority: 2
 kind: primary
 controls_for: null
 review: proceed
-status: running
+status: done
 review_at: 2026-10-25T042452Z
 review_companions: null
-stage: dispatched
+stage: harvested
 claimed_at: 2026-10-25T042453Z
 base_sha: 94f52a0a74f65619042e18250fd7cb4a206cf66a
 base_blob: c9067b8201f2480c64910c4a71098df7ce616f73
@@ -58,6 +58,13 @@ attempt_file: 2026-10-25T042712Z-check-sliding-batched-triton-b16-band.md
 prepared_at: 2026-10-25T042712Z
 job: 02bf417257e14a3d
 dispatched_at: 2026-10-25T042729Z
+outcome: neutral
+verdict_detail: unproven-vs-best
+speedup: 1.274307463334638
+speedup_ci: [1.2551928513846184, 1.2934220752846575]
+harvested_at: 2026-10-25T043401Z
+best_at_harvest: 1.2680313318618024
+promotion: null
 ---
 
 # sliding-batched-triton-b16-band
@@ -124,3 +131,35 @@ Edited only `muse_decode_layer/submission.py` in the worktree (+67/-2). Hand-mer
 - [x] No triton.autotune; Triton compile errors fall back to master, never raise.
 
 okc_lint: `OK with warnings` (only pre-existing host-sync warns in prepare(), outside kernel_fn's call graph). py_compile OK, __pycache__ removed.
+
+## Result
+
+- job `02bf417257e14a3d` (check), status done, passed True, tests 13/13
+- speedup 1.2743x, 95% CI [1.2552, 1.2934], score 17751.053533663424 µs vs SGLang 22620.3 µs
+- best at harvest: {"speedup": 1.2680313318618024, "ci": [1.2490108618838753, 1.2870518018397292], "job": "c243a29f26dc4725"}; base result: muse_decode_layer/hypotheses/done/neutral/full-decode-splitkv-restack-on-pdl.result.json
+- **outcome: neutral** (unproven-vs-best)
+- files: `muse_decode_layer/hypotheses/done/neutral/sliding-batched-triton-b16-band.result.json`, `muse_decode_layer/hypotheses/done/neutral/sliding-batched-triton-b16-band.patch`; branch `hyp/muse_decode_layer/sliding-batched-triton-b16-band`
+
+## Attribution
+
+| shape | w | base µs | hyp µs | delta | verdict |
+|---|---|---|---|---|---|
+| batch=1 ctx=80000 dist=soft layer=sliding load=decode_1 page=1 repeats=60 | 46 | 126.15 | 126.22 | 0.987 | flat |
+| batch=1 ctx=80000 dist=soft layer=full load=decode_1 page=1 repeats=60 | 16 | 142.7 | 143.06 | 0.9931 | flat |
+| batch=16 ctx=80000 dist=soft layer=sliding load=decode_16 page=1 spread=agentic | 46 | 209.82 | 215.34 | 1.0281 | flat |
+| batch=16 ctx=80000 dist=soft layer=full load=decode_16 page=1 spread=agentic | 16 | 306.72 | 312.09 | 0.9966 | flat |
+| batch=32 ctx=80000 dist=soft layer=sliding load=decode_32 page=1 spread=agentic | 46 | 242.33 | 241.73 | 1.0044 | flat |
+| batch=32 ctx=80000 dist=soft layer=full load=decode_32 page=1 spread=agentic | 16 | 479.6 | 445.99 | 1.0854 | gained |
+| batch=1 ctx=80000 dist=soft layer=sliding load=verify_1 page=1 q_len=8 | 46 | 187.97 | 183.2 | 1.006 | flat |
+| batch=1 ctx=80000 dist=soft layer=full load=verify_1 page=1 q_len=8 | 16 | 201.51 | 197.05 | 1.011 | flat |
+| batch=16 ctx=80000 dist=soft layer=sliding load=verify_16 page=1 q_len=8 spread=agentic | 46 | 420.42 | 437.67 | 0.9747 | flat |
+| batch=16 ctx=80000 dist=soft layer=full load=verify_16 page=1 q_len=8 spread=agentic | 16 | 564.2 | 580.77 | 0.9765 | flat |
+| batch=32 ctx=80000 dist=soft layer=sliding load=verify_32 page=1 q_len=8 spread=agentic | 46 | 600.82 | 631.69 | 1.0028 | flat |
+| batch=32 ctx=80000 dist=soft layer=full load=verify_32 page=1 q_len=8 spread=agentic | 16 | 864.67 | 897.05 | 1.0147 | flat |
+
+gained on full decode_32. Expected hit: 3/5. Noise ±1.5%.
+
+## Follow-ups
+
+- unproven-vs-best: the change is not proven either way; a stacked hypothesis (`depends_on: sliding-batched-triton-b16-band`) that adds a further change in the same area is the only way to learn more (identical code is never re-run).
+

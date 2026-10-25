@@ -1,0 +1,69 @@
+diff --git a/muse_decode_layer/submission.py b/muse_decode_layer/submission.py
+index c9067b8..97d3797 100644
+--- a/muse_decode_layer/submission.py
++++ b/muse_decode_layer/submission.py
+@@ -1616,6 +1616,47 @@ def _sliding_forward(data, qkv):
+     return out
+ 
+ 
++# Sliding decode at 2 <= batch <= 16 (hypothesis sliding-batched-triton-b16-band): the same fused
++# kernel with S = 16 splits hard-coded (NOT _num_splits, which gives 4 at B=16 and was never
++# measured in the layer). Config-only gate; batch 17+ is left to master (FA3).
++_SLIDING_B16_MIN, _SLIDING_B16_MAX = 2, 16
++
++
++def _sliding_b16_gate(cfg) -> bool:
++    return bool(cfg["window"]) and cfg["q_len"] == 1 and cfg["page_size"] == 1 \
++        and _SLIDING_B16_MIN <= cfg["batch"] <= _SLIDING_B16_MAX \
++        and cfg["num_q_heads"] == 16 and cfg["num_kv_heads"] == 2 and cfg["head_dim"] == 64
++
++
++def _sliding_forward_b16(data, qkv):
++    """Batch 2..16 sliding decode: one _sliding_fused_kernel launch, S = 16 splits, returning the
++    [T, 1024] bf16 normed-and-gated attention output. Same launch as _sliding_forward with S fixed."""
++    cfg = data["config"]
++    batch, length = cfg["batch"], cfg["q_len"]
++    hq, hkv, d = cfg["num_q_heads"], cfg["num_kv_heads"], cfg["head_dim"]
++    device = qkv.device
++    theta = cfg["rope_theta"]
++    group = hq // hkv
++    m = max(16, triton.next_power_of_2(group * length))
++    splits = 16
++    out = torch.empty((batch * length, hq * d), dtype=torch.bfloat16, device=device)
++    ws_acc = torch.empty((batch * hkv * splits, m, d), dtype=torch.float32, device=device)
++    ws_ml = torch.empty((batch * hkv * splits, 2, m), dtype=torch.float32, device=device)
++    counters = _counters(batch, hkv, device)
++    inv_freq = _inv_freq(theta, d, device) if theta else data["k_scale"]  # unused when ROPE is off
++    page_table = data["page_table"]
++    _sliding_fused_kernel[(batch, hkv, splits)](
++        qkv, data["positions"], data["cache_loc"], data["seq_lens"], page_table, inv_freq,
++        data["k_scale"], data["v_scale"],
++        data["k_cache"].view(torch.uint8), data["v_cache"].view(torch.uint8), ws_acc, ws_ml, counters, out,
++        qkv.stride(0), page_table.stride(0), cfg["qk_scale_factor"], cfg["sm_scale"] * LOG2E,
++        HQ=hq, HKV=hkv, D=d, L=length, M=m, LN=max(16, triton.next_power_of_2(length)),
++        WINDOW=cfg["window"], PAGE=cfg["page_size"], S=splits, BLOCK_N=64, ROPE=bool(theta), EPS=RMS_EPS,
++        num_warps=4, num_stages=2,
++    )
++    return out
++
++
+ # ---------------------------------------------------------------------------------------------
+ # Full-layer decode at batch > 1 (tp8 heads, page 1): split-KV gather attention in CUDA.
+ #
+@@ -2364,10 +2405,14 @@ def kernel_fn(data, state):
+     # Attention: MuseSpark1xAttention.forward.
+     qkv = _gemm(data["attn_input"], dense["qkv_gate"])
+     # Sliding batch-1 decode only (config-only predicate): attention in one fused launch.
+-    # Every other shape (sliding batch > 1, every verify block, every full layer) keeps the path below.
++    # Sliding decode at 2 <= batch <= 16 with page 1: the same kernel, S = 16 (sliding-batched-triton-b16-band).
++    # Every other shape (sliding batch > 16, every verify block, every full layer) keeps the path below.
++    o = None
+     if cfg["window"] and batch == 1 and length == 1:
+         o = _sliding_forward(data, qkv)
+-    else:
++    elif _sliding_b16_gate(cfg):  # batch 2..16 band; a batch 17..32 elif can sit right here
++        o = _sliding_forward_b16(data, qkv)
++    if o is None:
+         if cfg["rope_theta"]:
+             q, k = state["qk_norm"](qkv, data["positions"], state["cos_sin"])
+         else:
