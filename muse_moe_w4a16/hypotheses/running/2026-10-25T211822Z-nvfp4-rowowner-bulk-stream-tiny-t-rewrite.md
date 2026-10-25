@@ -64,9 +64,18 @@ prior: "cuda-fused-split-i-moe-tiny-t: that queued design keeps the wgmma rega c
 rewrite_stage: 1
 replaces: Marlin w13 + silu_and_mul + Marlin w2 (moe_wna16_marlin_gemm x2) at 1 <= num_tokens <= 4
 review: proceed
-status: queued
+status: running
 review_at: 2026-10-25T212523Z
 review_companions: null
+stage: claimed
+claimed_at: 2026-10-25T212549Z
+base_sha: 641f0e0099c84be50a9f8705e113a62388a5847a
+base_blob: 35b8a851e4ef5fa8fd66b12d09caac88b7ea7615
+branch: hyp/muse_moe_w4a16/nvfp4-rowowner-bulk-stream-tiny-t-rewrite
+worktree: .worktrees/muse_moe_w4a16/nvfp4-rowowner-bulk-stream-tiny-t-rewrite
+mode: check
+restack_of: null
+stale_base: null
 ---
 
 # nvfp4-rowowner-bulk-stream-tiny-t-rewrite
