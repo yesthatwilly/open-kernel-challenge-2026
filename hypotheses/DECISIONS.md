@@ -348,3 +348,4 @@ overrides of a reviewer) with the reason, newest last. Written by `churn.py note
 - 2026-10-25T213034Z `muse_decode_layer` **moe-rega-bucket-gate-port-t128-t512**: hold: superseded: decode's own selector switched rega OFF at T=128 (384.8 vs Marlin 327.2 us) and T=256 (454.6 vs 440.0) on 2026-10-25; dead in decode (decode minter, 2026-10-25)
 - 2026-10-25T213035Z `muse_decode_layer` **dl3-unpool-nf1-t2-t8**: hold: superseded: the unpooler path is already on master (decode minter, 2026-10-25)
 - 2026-10-25T213035Z `muse_decode_layer` **combo-attn-master-sliding-race-skw-c16**: hold: superseded: remainder equals sliding-sk-window-port-decode32-verify1 + sliding-cluster-c16-decode1-port, both queued (decode minter, 2026-10-25)
+- 2026-10-25T213035Z `muse_decode_layer` **sliding-cluster-c4-s3-satfinite-on-sk-ticket**: deprioritised: attention now prefers sk over cluster at B=32 (17.4 vs 20.6 us); run only after the sk-window port
