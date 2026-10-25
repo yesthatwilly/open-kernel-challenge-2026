@@ -52,9 +52,18 @@ priority: 2
 kind: primary
 controls_for: null
 review: proceed
-status: queued
+status: running
 review_at: 2026-10-25T212855Z
 review_companions: null
+stage: claimed
+claimed_at: 2026-10-25T212903Z
+base_sha: 2922874607ac8f3aee67594fba45a5337e29365e
+base_blob: 6d6afa4722731ceb9cb8216d0334a03f1a96ad2b
+branch: hyp/muse_attention_decode/full-verify-fa3-num-splits-band-gate
+worktree: .worktrees/muse_attention_decode/full-verify-fa3-num-splits-band-gate
+mode: null
+restack_of: null
+stale_base: null
 ---
 
 # full-verify-fa3-num-splits-band-gate
