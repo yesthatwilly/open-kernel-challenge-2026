@@ -1,0 +1,219 @@
+# Rewrite read — muse_decode_layer, 2026-10-24 kind:rewrite runs (H200)
+
+Each rewrite is judged on the replaced kernels' own time per target shape. That time is compared with the incumbent profile (the `attribution.base_result` job) and with the floor in the rewrite's `## Milestones`. The headline is not the measure.
+
+Sources:
+- `done/<outcome>/<slug>.result.json`
+- `archive/<slug>/<job>.{log,okc.json.gz,profile.json.gz}`
+- the base job's `profile.json.gz`
+
+Caveats:
+- The profiles list only the top ~12 kernel names per shape. Rows marked "+hidden" mean that some replaced small kernels fall into the "... N more" tail and cannot be counted. All µs figures are single-profile kernel times. Shape µs figures are the benchmark medians from attribution.
+- Marlin moves by ±20-40 µs between single profiles, even on byte-identical master paths. For example, at full verify_16 in the dense-chain run Marlin went 284→326 µs on the T>32 master path, and in the oversub run it went 109→74 µs. The Marlin rows are noise unless a pattern repeats.
+
+| slug | outcome | verdict |
+|---|---|---|
+| small-t-launch-minimal-dense-chain-pdl | gain (master) | **PROMISING**: stage 1 met M1; it missed M2 on R and on P at T≥16, and missed M3 by 2.7 µs |
+| full-decode-cuda-splitkv-port | neutral (vs a moved best) | **PROMISING**: −45 µs on the replaced kernels at both target shapes, about 1.8-2.0x the floor |
+| triton-flash-decode-full-paired-kv | neutral | **DEAD**: slower than FA3 (1.63-1.66 TB/s), superseded by the CUDA split-KV kernel |
+| triton-flash-decode-full-oversub-kv-prefetch | regression | **DEAD**: kernel 1 got 21-22% slower (1.34-1.37 TB/s) |
+| moe-chain-cuda-swapab-expert-once-large-t | failed (0/0 tests) | **FIXABLE bug**: a sticky CUDA illegal instruction in the prepare self-check; the design was never measured |
+
+---
+
+## 1. small-t-launch-minimal-dense-chain-pdl (gain, now master) — job 81ee6714b7614a99, base 9dcaec316b3045a7
+
+**Path (log):**
+- `load_inline compiled in 41.5s`, P occupancy [3,2,2], grid 216 CTAs.
+- PDL probe: eager overlap False; graph overlap True, so pdl=1.
+- Self-check max errors: ei 1.3e-4, logit 3.0e-6, others 0.
+- `PATH CHOSEN = DENSE-CHAIN at T <= 32, MASTER above`. There was no fallback. The verify_16/32 shapes (T=128/256) ran master and are the in-run control.
+- P timing from the log, with CUDA events in a graph:
+
+| T | pdl=0 | pdl=1 |
+|---|---|---|
+| 1 | 21.0 µs (3.60 TB/s) | 20.7 µs (3.64 TB/s) |
+| 8 | 22.1 µs | 21.9 µs (3.45 TB/s) |
+| 32 | 26.7 µs | 26.4 µs (2.85 TB/s) |
+
+**Replaced kernels per target shape (µs).**
+
+Incumbent:
+- the pooler nvjet row (the 2-call row minus the remaining qkv call, or the separate 128xN splitK row)
+- the router: cuBLAS `dot_kernel` at T=1, or the `tss` hi/lo pair at T≥8
+- the pooler's splitKreduce share
+- `vectorized_layer_norm` (pre-expert F.rms_norm)
+- +hidden: FusedMuseSparkRouting, the expert_map gather, casts and moe_align, roughly 2 µs each
+
+New: `dl_pooler_router_kernel<NF>` (P) and `dl_route_norm_align_kernel` (R).
+
+| shape (T) | incumbent visible | new P + R | Δ shape (bench) | shape floor | M2 bar (P / R) |
+|---|---|---|---|---|---|
+| sliding decode_1 (1) | 18.8 + 5.0 + 1.6 + 6.2 = 31.6 +hidden | 21.9 + 7.6 = 29.5 | 145.8→132.7 (−13.1) | 40.0 | P ≤20: 20.7 (event) — miss by 0.7; R ≤4: 7.6 — miss |
+| full decode_1 (1) | 20.3 + 5.0 + 1.9 + 5.6 = 32.8 +hidden | 21.2 + 7.5 = 28.7 | 157.0→142.6 (−14.4) | 44.2 | same |
+| sliding verify_1 (8) | 19.9 + 9.2 + 2.1 + 5.2 = 36.4 +hidden | 22.5 + 7.4 = 29.9 | 200.8→186.5 (−14.3) | 62.3 | P 21.9 (event) OK at ≤22; R miss |
+| full verify_1 (8) | 19.3 + 9.0 + 5.6 + 5.8 = 39.7 +hidden | 22.9 + 7.5 = 30.4 | 218.1→195.9 (−22.1) | 66.4 | same |
+| sliding decode_16 (16) | 20.0 + 9.7 + 7.2 + 5.7 = 42.6 +hidden | 23.9 + 8.0 = 31.9 | 225.8→217.1 (−8.7) | 76.7 | P ~ OK; R miss |
+| full decode_16 (16) | 20.1 + 9.3 + 3.7+ + 5.6 = 38.7 +hidden | 24.3 + 7.7 = 32.0 | 364.9→347.5 (−17.4) | 137.5 | same |
+| sliding decode_32 (32) | 20.5 + 9.3 + 7.8 + 5.5 = 43.1 +hidden | 28.3 + 7.6 = 35.9 | 251.9→247.0 (−4.9) | 84.5 | P ≤22: 26.4 (event) — miss |
+| full decode_32 (32) | 21.0 + 9.2 + ? + 5.8 = 36.0+ +hidden | 27.6 + 7.5 = 35.1 | 535.8→535.0 (flat) | 208.1 | same |
+
+**Where the time went:**
+- M1 is met everywhere: P is at or below master's pooler+router+reduce rows.
+- P streams 75.5 MB at 3.6 TB/s at T=1, which is ~1.3x the 4.8 TB/s byte floor (~15.7 µs) and right at the 3.8 TB/s M2 target. At T=32 it drops to 2.85 TB/s; the implementation notes already flagged the per-CTA L2 re-read of x (~37.7 MB vs 75.5 MB of weight) as the cause.
+- **R is 7.4-8.0 µs on every shape, ~2x its 4 µs bar.** It is T-independent, so it is a serial tail: the last block builds the whole align. It is not per-token work.
+- **PDL bought only 0.3 µs.** In the P timing, pdl=1 is only 0.3 µs faster than pdl=0. P's predecessor is the SGLang attn_boundary JIT kernel, which never executes `launch_dependents`, so the weight prefetch overlaps nothing until the predecessors are our own kernels.
+- At decode_1 sliding the rows left after stage 1 are:
+  - Marlin 40.2 µs (30%)
+  - qkv nvjet 13.1 µs, 37.7 MB, which is ~2.9 TB/s against ~9.9 µs at 3.8 TB/s
+  - o/unpooler nvjet 7.0 + 5.3 µs, plus splitKreduce 3.4 µs (2 calls)
+  - norm_residual 3.6 µs × 2
+  - FA3 10.4 + 4.0 µs
+- Marlin check: at verify_1 (T=8), Marlin read 76→96 µs (sliding) and 87→107 µs (full) in this profile. The benchmarked verify_1 gain is still positive, and Marlin moves ±40 µs on untouched master shapes, so this is probably noise. It is still worth one A/B on the Marlin row with R's align vs master's align at T=8, because R produces a different sorted_ids layout.
+
+**Verdict: PROMISING (already on master).** Stage 2 should target, in order:
+1. **Attention-side chain (the planned stage 2).** One qkv split-K GEMV, which is 13 µs now against a ~10 µs bar, with QKNorm, RoPE, the FP8 casts and the cache store in the last CTA. Plus an o GEMV with RMSNorm×sigmoid(gate) in its prologue. This is also what makes PDL pay, because the predecessors become our kernels that can trigger `launch_dependents`.
+2. **R to ≤4 µs:** a parallel align (per-expert warps, or a warp top-k), not a single last block.
+3. **P at T=16/32:** a wider token tile (BLOCK_N 128) to halve the x re-read, from 26.4 to ≤22 µs.
+
+Items 1-3 are already queued as `dense-chain-stage2-attn-side-pdl`, `dl-route-warp-topk-pdl` and `dl-p-wide-tile-t16-t32`. M3 (decode_1 sliding ≤130 µs) needs about 3 more µs. Fixing R alone covers that.
+
+---
+
+## 2. full-decode-cuda-splitkv-port (neutral) — job e789032128df4291, base 9dcaec316b3045a7
+
+**Path (log):**
+- `[splitkv] load_inline compiled in 49.6s`.
+- Self-check rel L2 1.63-1.69e-3 on all 4 cases, including B=33.
+- `self-check passed: CUDA split-KV path on full decode, 1 < batch <= 64`. There was no fallback.
+- Only full decode_16/32 take the path. The sliding, decode_1 and verify shapes ran master and serve as controls; they are all flat within ±1.5% (sliding verify_16 is +2.7%, which is noise).
+
+**Replaced kernels (µs).**
+
+Incumbent: paired FA3 main + FlashAttnFwdCombine + pad/unpad elementwise + hidden (FA3 prepare, FusedRMSNormGate, zero-fill).
+
+New: `splitkv_attn_kernel` + `splitkv_combine_kernel`.
+
+| shape | incumbent | new A + B | saving | Δ shape (bench) | KV floor | new / floor | KV BW A vs FA3 |
+|---|---|---|---|---|---|---|---|
+| full decode_16 | 146.8 + 4.3 + 4.4 (+hidden) ≈ 155-165 | 112.0 + 8.1 = 120.1 | ~ −35 to −45 | 364.9→329.1 (−35.8, 1.128x) | ~63 | 1.9x | 2.9 vs 2.2 TB/s |
+| full decode_32 | 289.0 + 4.8 (+combine, +hidden) ≈ 300-305 | 249.5 + 9.4 = 258.9 | ~ −41 to −46 | 535.8→490.2 (−45.6, 1.103x) | ~126 | 2.05x | 2.6 vs 2.3 TB/s |
+
+**Milestones:**
+- M1 (correct, 13/13): met.
+- M2 (at or below the incumbent): met on both shapes.
+- M3 (≤1.5x floor, i.e. ≤95 / ≤189 µs): not met.
+
+The headline was 1.186x against its base's 1.166x. It was filed "neutral" only because best moved to 1.228x (dense-chain landed) during the run. Dense-chain changes disjoint kernels, so the two stack.
+
+**Where the time went:**
+- Kernel A is 93-96% of the replaced time.
+- It reaches 2.6-2.9 TB/s on the row gather, which is better than FA3's ~2.2 but still ~2x the floor. Bandwidth drops at B=32: a persistent 2×SM grid over 1024-token chunks, with agentic spread imbalance at the tail.
+- The combine (8-9 µs) is twice FA3's combine plus the gate's cost. It does the LSE merge + RMSNorm + gate and could absorb more.
+
+**Verdict: PROMISING.** Stage 2:
+1. Re-stack onto the current master. This is running now as `full-decode-splitkv-restack-on-pdl`. It is the cheapest way to bank the ~36-46 µs at full decode_16/32.
+2. Raise kernel A's bytes in flight: a deeper ring, or a smaller chunk at B=32 so the tail drains, to get it to ≥3.5 TB/s, about 95 / 190 µs (M3).
+3. Extend it to full verify (queued `full-verify-cuda-splitkv-stage2`), where paired FA3 is still 153/296 µs.
+
+---
+
+## 3. triton-flash-decode-full-paired-kv (neutral) — job e82b11f9d9f64b23, base 0730135cdcac43b7
+
+**Path:**
+- The log tail has only profiler USDT lines. This path has no self-check or fallback: Triton runs unconditionally on full decode (q_len=1).
+- 13/13 tests passed. `_full_decode_split_kernel` appears in every full-decode profile, so the path ran.
+
+**Replaced kernels (µs).** Incumbent: FA3 main + FlashAttnFwdCombine. New: `_full_decode_split_kernel` + `_full_decode_combine_kernel` (the combine is in the hidden tail, a few µs).
+
+| shape | FA3 main + combine | new k1 (+k2 hidden) | stage-1 bar | Δ shape (bench) | KV floor | k1 BW |
+|---|---|---|---|---|---|---|
+| full decode_1 | 18.4 + 6.8 = 25.2 | 21.2 + ~3 | ≤25 | 183.8→183.0 flat | 4.3 | — |
+| full decode_16 | 188.8 + ~4 | 200.8 + ~4 | ≤150 | 433.0→442.4 (−1.3%) | ~68 | 1.63 TB/s (FA3 1.74) |
+| full decode_32 | 374.4 + ~4 | 394.8 + ~4 | ≤300 | 601.7→637.4 (−1.3%) | ~137 | 1.66 TB/s (FA3 1.75) |
+
+**Where the time went:** kernel 1 is gather-latency bound. It has one 16 KB K+V tile in flight per CTA at ~2 CTAs/SM (272-288 CTAs), so it reaches the same ~1.65 TB/s as FA3 even with the 128-byte paired-row reads. The paired-row idea itself was not the lever.
+
+**Verdict: DEAD.** M2 was missed on both targets, and it is ~2.9x the floor. The CUDA split-KV kernel (rewrite 2) is the better line: on the same KV it runs 112.0 / 249.5 µs against this kernel's 200.8 / 394.8 µs. Do not mint a stage 3 of the Triton line.
+
+---
+
+## 4. triton-flash-decode-full-oversub-kv-prefetch (regression) — job e55908a05eec4000, base = rewrite 3 (e82b11f9d9f64b23)
+
+**Path:**
+- No self-check or fallback lines; same as stage 1.
+- 13/13 passed. Kernel 1 + the visible combine are in the profiles, so the path ran.
+
+| shape | stage-1 k1 | stage-2 k1 + k2 | bar | Δ shape (bench) | k1 BW |
+|---|---|---|---|---|---|
+| full decode_1 | 21.2 | 26.8 + hidden | ≤25 | 183.0→187.7 (−1.7%) | — |
+| full decode_16 | 200.8 | 245.3 + 4.6 = 249.9 | ≤150 | 442.4→485.5 (0.886x) | 1.34 TB/s |
+| full decode_32 | 394.8 | 478.2 + 3.8 = 482.0 | ≤300 | 637.4→718.8 (0.864x) | 1.37 TB/s |
+
+**Where the time went:** kernel 1 is 21-22% slower at every batch size, including B=1, where S is unchanged at 128. That rules out the oversubscribed grid as the main cause. The common change is the explicit one-tile K/V prefetch with `num_stages=1`:
+- The loop carries K and V tiles for both the current and the next tile (uint8 [64,128] each, about 32 regs/thread per tile pair at 128 threads), which most likely cut residency.
+- `num_stages=1` removed whatever pipelining Triton's `num_stages=3` was doing on the stage-1 loads.
+
+Combine cost at S=64/32 is small (3.8-4.6 µs) and is not the problem. There is no numRegs in the log to confirm the residency drop.
+
+**Verdict: DEAD.** It is worse than stage 1, which was itself worse than FA3. The Triton flash-decode line should be closed in favour of the CUDA split-KV kernel.
+
+---
+
+## 5. moe-chain-cuda-swapab-expert-once-large-t (FAILED, 0/0 tests) — job 1bba1bab70da4f61
+
+**Path (log):**
+```
+[moe-cuda-large-t] load_inline compiled in 41.6s
+kernel moe_route_list: numRegs 22, local 0 · moe_w13_silu_swapab / moe_w2_swapab: numRegs 148, local 0, dyn smem 221184 B (attrs ok)
+retiled 32 experts losslessly · grid 132 persistent CTAs x 256 threads, chunk 64 routes
+OFF: compile 41.6s, max row rel nan, setup raised AcceleratorError("CUDA error: an illegal instruction was encountered ... 715 CUDA_ERROR_ILLEGAL_INSTRUCTION")
+PATH CHOSEN = MARLIN ...
+Traceback ... prepare() -> torch.cuda.synchronize() -> AcceleratorError: illegal instruction (Sticky error detected)
+```
+
+**Failing test:** none ran (`tests 0/0`, returncode 112). The run died in `prepare()`.
+
+The order of events:
+1. The first self-check case (T=40) ran `_marlin_experts`, then `_lt_experts` twice, then `torch.cuda.synchronize()`.
+2. No `self-check T=40` line was printed, so the fault came from the first batch of new-kernel launches.
+3. The Python `except` set the path OFF.
+4. The error is sticky (715), so prepare's final `torch.cuda.synchronize()` re-raised it and the worker died.
+
+The fallback design cannot catch this class of fault. The hypothesis' own Uncertainties had flagged that risk.
+
+**Likely cause:**
+- The same swap-AB mainloop was ported verbatim from moe `cuda-nvfp4-swapab-mma-persistent-small-m`. That sibling died the same way: `muse_moe_w4a16/hypotheses/archive/cuda-nvfp4-swapab-mma-persistent-small-m/8f198afc3bf14f6f.log`, "CUDA path setup raised: ... illegal instruction". The sibling had no `moe_route_list`, so the fault is in the shared GEMM body/helpers. It is not in the route list.
+- These PTX forms in it have passed on the judge in other TUs:
+  - `cp.async.cg/ca`, `ldmatrix.x4` and `mma.sync m16n8k16 bf16`, all in dense-chain
+  - `cvt.rn.f16x2.e4m3x2`, in splitkv
+- These forms are unique to the failing pair and have never run on the judge:
+  - `createpolicy.fractional.L2::evict_first` + `cp.async.cg...L2::cache_hint` with the 64-bit policy operand
+  - the inline `fma.rn.bf16x2` dequant (`mul_bf16x2` with a −0 addend)
+  - 221 KB dynamic smem at 256 threads
+- An illegal-instruction trap (rather than an illegal-address one) points to an instruction or encoding problem, or to a `.sync.aligned` collective executed by a non-converged warp. The `f < me_nf` / item-end branches look CTA-uniform on paper.
+
+The exact opcode cannot be pinned from this log.
+
+**Verdict: FIXABLE (a bug, not a design verdict).** No timing exists, so expert-once swap-AB at T=128/256 is still untested against Marlin's 254-443 µs. Stage-2 fix, in order:
+1. **Make the self-check fault-safe.** Run the first launch of each new kernel in a `torch.multiprocessing` spawn child (or a subprocess with the same TU cache) and return OK/err, so a sticky fault falls back to Marlin instead of killing the run. The dense-chain and splitkv TUs could also have died this way.
+2. **Name the kernel.** In the self-check, call `torch.cuda.synchronize()` and print after each of `moe_route_list`, w13 and w2.
+3. **Swap the two never-judge-proven forms for proven ones:** plain `cp.async.cg.shared.global [d],[s],16` (drop createpolicy/cache_hint), and `__hmul2` on `__nv_bfloat162` (or `fma.rn.bf16x2` with a +0 addend via the intrinsic) in `dequant8`. Optionally add a 1-CTA micro-kernel self-test of `dequant8` + one mma tile before the full launch.
+
+The same fix applies to the moe sibling.
+
+---
+
+## Addendum: the load_inline gencode check (coordinator request)
+
+The concern: `cpp_extension` adds a plain `compute_90` gencode next to `-arch=sm_90a`, so ptxas rejects wgmma or setmaxnreg for `.target sm_90` and the run silently measures the fallback. I checked each decode CUDA build for this.
+
+| build | log build line | ptxas / gencode errors | wgmma / setmaxnreg in patch | did the new kernel run? |
+|---|---|---|---|---|
+| small-t-launch-minimal-dense-chain-pdl | `load_inline compiled in 41.5s` | none | 0 | **Yes.** `PATH CHOSEN = DENSE-CHAIN at T <= 32`, and `dl_pooler_router_kernel` / `dl_route_norm_align_kernel` appear in every T≤32 profile. |
+| full-decode-cuda-splitkv-port | `load_inline compiled in 49.6s` | none | 0 | **Yes.** `self-check passed`, and `splitkv_attn_kernel` / `splitkv_combine_kernel` appear in the full decode_16/32 profiles. |
+| moe-chain-cuda-swapab-expert-once-large-t | `load_inline compiled in 41.6s` | none | 0 | **It built and launched, then faulted at runtime.** All three kernels report attributes (numRegs 22/148/148). The run died on a 715 illegal instruction during the first self-check launch, so nothing was measured. |
+
+None of the three uses wgmma or setmaxnreg; they are mma.sync / ldmatrix / cp.async code, which is valid for plain sm_90. So none is "UNMEASURED (build)", and the gencode issue does not explain the moe fault.
+
+The prefill fix (`TORCH_CUDA_ARCH_LIST=9.0a` + an `__CUDA_ARCH_FEAT_SM90_ALL` guard) is still worth adding to the moe stage-2 TU as hygiene. It ensures only one sm_90a cubin is built and loaded. Any later wgmma stage (for example `bf16-m32-swapab-wgmma-port`) needs it.
