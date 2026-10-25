@@ -60,9 +60,18 @@ controls_for: null
 rewrite_stage: 6
 replaces: Marlin w13+silu+w2 (moe_wna16_marlin_gemm x2 + act_and_mul) at 128<=T<=255
 review: proceed
-status: queued
+status: running
 review_at: 2026-10-25T120207Z
 review_companions: null
+stage: claimed
+claimed_at: 2026-10-25T120207Z
+base_sha: 57e77548ba31c2145d575df62752f62684b2f6ad
+base_blob: 77f34503659c90a5953f91a93ba6e1a2b02e4613
+branch: hyp/muse_moe_w4a16/cuda-nvfp4-wgmma-rega-b128-n32-deep-ring
+worktree: .worktrees/muse_moe_w4a16/cuda-nvfp4-wgmma-rega-b128-n32-deep-ring
+mode: null
+restack_of: null
+stale_base: true
 ---
 
 # cuda-nvfp4-wgmma-rega-b128-n32-deep-ring
