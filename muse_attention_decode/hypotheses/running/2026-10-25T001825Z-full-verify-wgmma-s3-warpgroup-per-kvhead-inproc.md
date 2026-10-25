@@ -75,9 +75,18 @@ controls_for: null
 rewrite_stage: 3
 replaces: "full-layer verify at 1<batch<=64: FA3 main + prepare_varlen_num_blocks + FlashAttnFwdCombine + norm-gate (master); stage-2 splitkv_verify_kernel A8 + splitkv_verify_combine B8"
 review: proceed
-status: queued
+status: running
 review_at: 2026-10-25T002202Z
 review_companions: null
+stage: claimed
+claimed_at: 2026-10-25T002203Z
+base_sha: ee7dd2035bcffc84a11faafb7b5574466ee3bcae
+base_blob: 2b7e5dbf0fde0ae0163e5ecaefd87a5f0848e6b0
+branch: hyp/muse_attention_decode/full-verify-wgmma-s3-warpgroup-per-kvhead-inproc
+worktree: .worktrees/muse_attention_decode/full-verify-wgmma-s3-warpgroup-per-kvhead-inproc
+mode: null
+restack_of: null
+stale_base: true
 ---
 
 # full-verify-wgmma-s3-warpgroup-per-kvhead-inproc
