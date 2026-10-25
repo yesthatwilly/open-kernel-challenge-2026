@@ -111,6 +111,8 @@ submission_sha256: 71486a3937c60c91670a0c5a0ac9dc7876a21e7f8b22accde5a60f5c9d5fa
 norm_sha256: 21a2a380cebb677a170e239831e033ec42f10e306595c2dc81fca5d56ea8125c
 submission_blob: fc88ac07e23933ce3f8951894577f1b70ec2b0ff
 lint_warnings: 96
+attempt_file: 2026-10-25T204200Z-submit-combo-measured-rows-plus-rega-align2-large-t.md
+prepared_at: 2026-10-25T204200Z
 ---
 
 # combo-measured-rows-plus-rega-align2-large-t
