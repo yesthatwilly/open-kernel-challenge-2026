@@ -1,0 +1,48 @@
+diff --git a/muse_attention_decode/submission.py b/muse_attention_decode/submission.py
+index 5cf8fae3..eb07606c 100644
+--- a/muse_attention_decode/submission.py
++++ b/muse_attention_decode/submission.py
+@@ -1022,6 +1022,9 @@ __device__ __forceinline__ void mma16816(float (&c)[4], uint32_t a0, uint32_t a1
+       : "r"(a0), "r"(a1), "r"(a2), "r"(a3), "r"(b0), "r"(b1));
+ }
+ 
++// L2 prefetch hint (plain prefetch.global.L2, no cache-hint form): no data dependence, cannot fault.
++__device__ __forceinline__ void prefetch_l2(const void* p) { asm volatile("prefetch.global.L2 [%0];" :: "l"(p)); }
++
+ // cache_seqlens -> seq_s, and the tile prefix tp_s[0..B] (tp_s[B] = Ttot). Ends with a barrier.
+ __device__ __forceinline__ void load_prefix(const int* __restrict__ seqlens, int B, int* seq_s, int* tp_s) {
+   const int tid = threadIdx.x;
+@@ -1183,6 +1186,10 @@ splitkv_attn_sk_kernel(const uint8_t* __restrict__ q,          // e4m3 [B, HQ, D
+   const int tid = threadIdx.x, lane = tid & 31, warp = tid >> 5;
+   const int bx = blockIdx.x;
+   const int R = PSEUDO ? B * TOK : B;  // rows of the flat tile space
++  // Gate logits (16 aligned 128 B lines per row) are read only in finalize_store, after a cold-L2 flush: pull
++  // them into L2 now, from every CTA (before any early return), so the ticket winner hits L2.
++  for (int i = bx * THREADS + tid; i < R * 16; i += static_cast<int>(gridDim.x) * THREADS)
++    prefetch_l2(qkv + static_cast<int64_t>(i >> 4) * qkv_stride + (HQ + 2 * HKV) * D + (i & 15) * D);
+   if constexpr (PSEUDO) load_prefix_pseudo<TOK>(seqlens, B, seq_s, lo_s, tp_s, reinterpret_cast<int*>(acc_s));
+   else load_prefix(seqlens, B, seq_s, tp_s);
+   const int T = tp_s[R];
+@@ -3874,6 +3881,9 @@ __device__ __forceinline__ void attend_tile(const uint8_t* Kb, const uint8_t* Vb
+   }
+ }
+ 
++// L2 prefetch hint (plain prefetch.global.L2, no cache-hint form): no data dependence, cannot fault.
++__device__ __forceinline__ void prefetch_l2(const void* p) { asm volatile("prefetch.global.L2 [%0];" :: "l"(p)); }
++
+ __global__ void __launch_bounds__(THREADS, 2)
+ sliding_cluster_kernel(const __nv_bfloat16* __restrict__ qkv, int64_t qkv_stride,
+                        const int64_t* __restrict__ positions, const int64_t* __restrict__ cache_loc,
+@@ -3892,6 +3902,12 @@ sliding_cluster_kernel(const __nv_bfloat16* __restrict__ qkv, int64_t qkv_stride
+   const int tid = threadIdx.x, lane = tid & 31, warp = tid >> 5;
+   const int b = static_cast<int>(blockIdx.x) / C;      // 1-D clusters: blocks b*C .. b*C+C-1
+   const int rank = static_cast<int>(blockIdx.x) % C;   // == cluster.block_rank()
++  {  // gate lines of the rows this rank finishes in the reduce-scatter, plus v_scale_p, pulled into L2 now
++    const int NRp = HQ / C;
++    if (tid < NRp)
++      prefetch_l2(qkv + static_cast<int64_t>(b) * qkv_stride + (HQ + 2 * HKV) * D + (rank * NRp + tid) * D);
++    else if (tid == NRp) prefetch_l2(v_scale_p);
++  }
+   const int seq = seq_lens[b];
+   const int lo = max(0, seq - (window - 1));
+   const int ck = (((seq - lo) + C - 1) / C + 15) & ~15;

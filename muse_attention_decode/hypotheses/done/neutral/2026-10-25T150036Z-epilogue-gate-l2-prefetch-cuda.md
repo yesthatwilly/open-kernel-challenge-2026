@@ -62,10 +62,10 @@ priority: 2
 kind: primary
 controls_for: null
 review: proceed
-status: running
+status: done
 review_at: 2026-10-25T150347Z
 review_companions: null
-stage: dispatched
+stage: harvested
 claimed_at: 2026-10-25T150348Z
 base_sha: 5e7ce21f82b7a49dc31b038e9868884c8a90a3e0
 base_blob: 5cf8fae31e5b84c36efeeb4569763eb9b06e1c8a
@@ -84,6 +84,13 @@ attempt_file: 2026-10-25T150712Z-submit-epilogue-gate-l2-prefetch-cuda.md
 prepared_at: 2026-10-25T150712Z
 job: 917a9689ba4645bd
 dispatched_at: 2026-10-25T150720Z
+outcome: neutral
+verdict_detail: unproven-vs-best
+speedup: 1.5020049012278882
+speedup_ci: [1.4794748277094698, 1.5245349747463064]
+harvested_at: 2026-10-25T153249Z
+best_at_harvest: 1.5016522435853301
+promotion: null
 ---
 
 # epilogue-gate-l2-prefetch-cuda
@@ -163,3 +170,35 @@ Audited 2026-10-25 by an Opus subagent (read-only; no GPU or nvcc on this node).
 - Rules: the prefetch is a hint only. There is no host sync, allocation or Python change; the kernel stays capturable and nothing is cached. lint gives "OK with warnings" (existing prepare()-only warnings). py_compile is OK and __pycache__ was removed.
 
 Residual risk: performance only (regs/spill or scheduling changes in the shared sk template, or the gate load already being hidden). Read the [slide]/[sk]/[ps]/[sd]/[skF] regs lines and the PATH CHOSEN lines in the log; correctness is not at risk.
+
+## Result
+
+- job `917a9689ba4645bd` (submit), status done, passed True, tests 16/16
+- speedup 1.5020x, 95% CI [1.4795, 1.5245], score 2507.51511990477 µs vs SGLang 3766.3 µs
+- best at harvest: {"speedup": 1.5016522435853301, "ci": [1.47912745993155, 1.530423257736894], "job": "252abb7f11ec48c3"}; base result: muse_attention_decode/hypotheses/done/neutral/restack-sliding-decode-sk-window-on-cluster-master.result.json
+- **outcome: neutral** (unproven-vs-best)
+- files: `muse_attention_decode/hypotheses/done/neutral/epilogue-gate-l2-prefetch-cuda.result.json`, `muse_attention_decode/hypotheses/done/neutral/epilogue-gate-l2-prefetch-cuda.patch`; branch `hyp/muse_attention_decode/epilogue-gate-l2-prefetch-cuda`
+
+## Attribution
+
+| shape | w | base µs | hyp µs | delta | verdict |
+|---|---|---|---|---|---|
+| batch=1 ctx=80000 dist=soft heads=tp8 layer=sliding load=decode_1 page=1 | 46 | 11.88 | 11.88 | 1.0138 | flat |
+| batch=1 ctx=80000 dist=coherent heads=tp8 layer=full load=decode_1 page=1 | 16 | 22.4 | 22.53 | 1.0016 | flat |
+| batch=16 ctx=80000 dist=soft heads=tp8 layer=sliding load=decode_16 page=1 spread=agentic | 46 | 15.51 | 15.79 | 0.9988 | flat |
+| batch=16 ctx=80000 dist=coherent heads=tp8 layer=full load=decode_16 page=1 spread=agentic | 16 | 111.12 | 111.27 | 1.0022 | flat |
+| batch=32 ctx=80000 dist=soft heads=tp8 layer=sliding load=decode_32 page=1 spread=agentic | 46 | 17.68 | 17.59 | 1.0125 | flat |
+| batch=32 ctx=80000 dist=coherent heads=tp8 layer=full load=decode_32 page=1 spread=agentic | 16 | 227.87 | 230.53 | 0.9894 | flat |
+| batch=1 ctx=80000 dist=soft heads=tp8 layer=sliding load=verify_1 page=1 q_len=8 | 46 | 13.17 | 13.17 | 0.996 | flat |
+| batch=1 ctx=80000 dist=coherent heads=tp8 layer=full load=verify_1 page=1 q_len=8 | 16 | 30.48 | 30.26 | 0.9971 | flat |
+| batch=16 ctx=80000 dist=soft heads=tp8 layer=sliding load=verify_16 page=1 q_len=8 spread=agentic | 46 | 22.83 | 23.23 | 0.999 | flat |
+| batch=16 ctx=80000 dist=coherent heads=tp8 layer=full load=verify_16 page=1 q_len=8 spread=agentic | 16 | 163.0 | 164.33 | 0.9967 | flat |
+| batch=32 ctx=80000 dist=soft heads=tp8 layer=sliding load=verify_32 page=1 q_len=8 spread=agentic | 46 | 29.21 | 29.38 | 1.0082 | flat |
+| batch=32 ctx=80000 dist=coherent heads=tp8 layer=full load=verify_32 page=1 q_len=8 spread=agentic | 16 | 302.31 | 302.34 | 1.0019 | flat |
+
+no shape moved outside noise. Expected hit: 0/6. Noise ±1.5%.
+
+## Follow-ups
+
+- unproven-vs-best: the change is not proven either way; a stacked hypothesis (`depends_on: epilogue-gate-l2-prefetch-cuda`) that adds a further change in the same area is the only way to learn more (identical code is never re-run).
+
