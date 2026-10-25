@@ -39,8 +39,10 @@ depends_on: null
 priority: 4
 kind: primary
 controls_for: null
-review: required
+review: proceed
 status: queued
+review_at: 2026-10-25T011846Z
+review_companions: null
 ---
 
 # bf16-lossless-exp4-decode-only-throughput-probe
@@ -56,3 +58,23 @@ A one-run kill/revive gate for the held lossless line, not a pipeline stage: ker
 ## Risk
 
 Low for the score (routes nothing), costs one check. Must not exceed the 10-minute budget: stage 2's build took ~52 s and the encoder runs untimed; the probe adds ~1 s of launches. Rules: prepare-time timing is print-only and selects nothing. Cheap and decisive per the stage-3 review; if the user or churnsubs prefers to spend no more on the lossless line, close it without this run.
+
+## Adversarial review
+
+Reviewed 2026-10-25T011846Z by an adversarial subagent (model opus).
+
+**Verdict: proceed.** This costs one check and routes nothing, so its value depends on what it replaces. It is worth running because bf16-lossless-exp4-warpspec-persistent-stage3 is still queued at p1 even though LESSONS (2026-10-25) already calls the line dead. The probe is the cheapest way to settle that conflict for good. Two conditions: stage 3 must be blocked on it, and its pass/fail thresholds must use a yardstick measured in the same harness, because prepare-time event timings overstate throughput by 20-25%.
+
+### Justification
+The question is the right one, but the fixed thresholds are miscalibrated. Stage 2 streamed compressed weights at 1.4-1.6 TB/s with the MMA attached (pooler 40.3 vs 19.0 us incumbent). The tie point is real: master's pooler m=1 swap-AB kernel takes 18.6 us in the profile for 67.1 MB, which is 3.6 TB/s raw. At ratio 0.761 (51.1 MB compressed) the decoder must deliver about 2.7 TB/s compressed just to tie, before any MMA or x work. That is borderline, not hopeless, on paper: 3.6 TB/s raw is about 1.8e12 bf16/s, or about 7 elements per SM-cycle over 132 SMs, which leaves a budget of roughly 15-18 lane-instructions per element for exp4 decode. So a measurement is needed. WEAKEST LINK: the DECISION compares absolute prepare-measured TB/s to 2.7/3.3, but LESSONS 2026-10-25 (harvest) says prepare CUDA-event timings undercount the judge profile by 20-25%. A prepare reading of 3.0 TB/s is therefore about 2.4-2.5 TB/s in profile terms, which is a kill, while the rule as written would call it a tie. FIX: in the same prepare harness, with the same cold-L2 flush and event method, also time master's own pooler m=1 _bf16_swapab_kernel path (or _bf16_gemm_dispatch_impl at m=1) as the YARDSTICK. Decide on ratios: decode-only cold time / yardstick time <= ~0.85 means revive (it leaves room for MMA+x), 0.85-1.0 means dead for mma.sync, > 1.0 means DEAD. Keep the copy-only variant: if copy-only itself is slower than the yardstick, the ring, not the decoder, is the limiter, and that is also a kill for this design. The warm/L2-resident qkv number is diagnostic only: every timed replay starts with a cold L2 (TASK.md), so it must not enter the decision.
+
+### Confounders on the current kernel
+- None. kernel_fn is byte-identical to master and no landed path is touched. Any headline or row movement is run-to-run noise, and the harvest must say so (expected flat everywhere).
+
+### Interference and A/B needs
+No companion. The readout is the [decode-probe] lines, not the rows. The yardstick timing inside the same run replaces any control. Without the yardstick, one run would be ambiguous because of the 20-25% prepare undercount. With it, the run is decisive.
+
+### Open questions
+- Before dispatch, set bf16-lossless-exp4-warpspec-persistent-stage3 to depends_on this probe (or hold it), so the line cannot spend a stage-3 check before the probe decides. If the user prefers to spend nothing more on the line, close both now. LESSONS already supports that.
+- At harvest, record in FINDINGS and LESSONS the decode-only/yardstick ratio, the copy-only/yardstick ratio, and the regs/spills of the best config. On a kill, move the lossless line to Do-not-retry with that number.
+
