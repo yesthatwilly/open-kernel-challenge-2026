@@ -59,7 +59,7 @@ review: proceed
 status: running
 review_at: 2026-10-25T111210Z
 review_companions: null
-stage: claimed
+stage: implemented
 claimed_at: 2026-10-25T111210Z
 base_sha: 848976650adeb8a2fc5263b71136dbf192bebf90
 base_blob: 353e3b19a7edd5cb879e202d78097f474bcce207
@@ -68,6 +68,12 @@ worktree: .worktrees/muse_bf16_proj/qkv-swapab-w128-splitk7-one-wave-m32
 mode: null
 restack_of: null
 stale_base: null
+implemented_at: 2026-10-25T111928Z
+impl_commit: d634a1ef1fc94dd7c0db05612c7c16aadf874f8b
+submission_sha256: 8aefb6e42b790ebe4bc8c6a2906d0029247c293c95ff1d096945e83fcd46ab60
+norm_sha256: 178db6026e557087ce1fedba1a0eaf582876420f94ed134cb9e4d6b680c8d9c7
+submission_blob: b3a2f3b5156edd61c70c5007840f11068f7afb95
+lint_warnings: 20
 ---
 
 # qkv-swapab-w128-splitk7-one-wave-m32
@@ -115,3 +121,53 @@ No companion. Every bf16 run left today is a scored submit, so each companion co
 - If m=32 lands but m=1/8 are flat, a per-m gate (new config at 17..32 only) is the natural follow-up, not a retry.
 - The hypothesis's risk text says '8 of 126... every pid_k with an extra block'. With the stated formula only pid_k=6 (18 CTAs) gets 10 K-blocks. The builder should implement the formula as written and not try to 'balance' it differently.
 
+
+## Implementation notes
+
+Edited only `.worktrees/muse_bf16_proj/qkv-swapab-w128-splitk7-one-wave-m32/muse_bf16_proj/submission.py` (base blob 353e3b19 == current master's blob, no merge needed; 312 insertions, 81 deletions). Nothing could be run (no GPU/Triton on this node).
+
+What changed:
+- `_bf16_swapab_kernel`: new constexprs `NUM_KB` and `MAINLOOP_ONLY`. `NUM_KB == 0` takes the original code (`k_start = pid_k*K_SLICE`, `K_SLICE // BLOCK_K` iterations), so pooler/o/unpooler-slice are traced as before. `NUM_KB > 0` uses `kb_lo = pid_k*NUM_KB//SPLIT_K`, `kb_hi = (pid_k+1)*NUM_KB//SPLIT_K` and loops `range(0, kb_hi-kb_lo)` (6 slices of 9 K-blocks, pid_k=6 gets 10). `MAINLOOP_ONLY` (A/B control only) skips the ticket/reduce.
+- Per-layer `BLOCK_W`: `SWAPAB_BLOCK_W_BY_KEY = {"qkv_gate": 128}`, default 64. One shared launcher `_swapab_launch` (grid `(n // block_w, split_k)`) is used by `_swapab_forward` (17..32), `_swapab16_forward` (m<=16) and the A/B.
+- `SWAPAB_CFG` / `SWAPAB16_CFG` `qkv_gate` = (2304, 8192, 7, 128, 4), grid (18, 7) = 126 CTAs. A `qkv_gate_old` entry keeps master's (36, 4) config as the fallback and the A/B "old" arm.
+- Buffers: `swapab_ws_qkv` (7, 32, 2304) and `swapab16_ws_qkv_gate` (7, 16, 2304); tickets `n // block_w` = 18 on both routes (`_swapab_prepare`, `_swapab16_prepare`); separate buffers for `qkv_gate_old`. All in `state`, no globals.
+- Fallback: in prepare, the new qkv config's build error or a `_qkv_selfcheck` miss deletes it from the stage dict; `state["swapab_qkv_key"]` / `state["swapab16_qkv_key"]` (constants) pick `qkv_gate` or `qkv_gate_old`; `kernel_fn` reads them. Loud `PATH CHOSEN` line per route.
+
+Adversarial-review items:
+1. Kernel shape: uneven split exactly as written; the m<=16 route switched too (grid, ticket count in `_swapab16_prepare`, BLOCK_W in `_swapab16_forward`). Done.
+2. Print-only A/B (`_qkv_ab_report`, state A only): old / new / mainloop-only control per route (swapab16 m in 1,8,16; swapab with BLOCK_T 32 m in 1,8,16,32, since BLOCK_T 16 cannot hold m=32), cold-L2 (256 MB flush before each replay), graph replay medians, separate ws/cnt per variant, tickets re-zeroed after every replay, flush and A/B buffers freed (finally + empty_cache). Never routes, never raises.
+3. Compile checks: `_print_ptx_counts` now prints shared and, for swap-AB variants, `wgmma_ok` (wgmma>0 and mma.sync==0) with BLOCK_T and stages in the tag, for BLOCK_T 16 and 32 and every layer; non-qkv variants print n_regs/n_spills/shared (compare to master's log; I did not add a PTX hash). Stage count shown in the tag and in PATH CHOSEN.
+4. Self-check: relative L2 vs x.float() @ W.float().T, bound 1e-2 (bf16 rounding is ~3e-3), two launches per m on different x, tickets must be 0 afterwards; each launch announced with flushed prints and a sync before and after. m in (17, 24, 32) and (1, 8, 16).
+5. Malformed `expected` entry: treated as the two flat entries 'layer=qkv_gate load=verify_16 m=128' and 'layer=qkv_gate load=verify_32 m=256'; frontmatter left as is. Both stay on cuBLAS nvjet.
+- Review's risk-text correction (only pid_k=6 gets 10 blocks) and "do not rebalance": followed. Review's "profile kernel time is L2-contaminated, use the A/B print": noted for judging.
+
+Deviations: (a) the brief's two-state graph self-check is not possible inside one prepare for a Triton-only path; there are no module/static globals, every pointer comes from `state`, and the A/B graph replays use per-variant buffers. (b) Fallback goes to the old qkv swap-AB config (master's behaviour) instead of a non-swap-AB path.
+
+Biggest risks: Triton may not pipeline the dynamic-trip-count loop (NUM_KB path) at 4 stages as it does the constexpr loop, or may emit mma.sync/spill for the [128, BLOCK_T] dot; both show in the compile print and the A/B.
+
+## Rules check
+
+- [x] CUDA-graph capturable: kernel_fn only launches `_bf16_swapab_kernel` via `_swapab_launch`; syncs/`.item()` live only in prepare helpers (`_qkv_selfcheck`, `_qkv_ab_report`); routing reads constants from `state`.
+- [x] Nothing derived from `data` is cached across calls (diff checked): buffers/tickets are prepare-time, key choice is a prepare constant.
+- [x] Weights: unchanged, bf16 read in place; the fp32 `w.float()` copy exists only inside prepare helpers and is freed.
+- [x] Activations BF16, fp32 accumulation, bf16 output: unchanged.
+- [x] n/a: attention not touched.
+- [x] No timing patches, harness access, subprocesses or network: none added.
+- [x] All work inside the timed call; no output caching or replay (the A/B outputs are dropped).
+- [x] Judge two-state: no tensors/pointers in module globals (workspaces and tickets in `state`).
+
+okc_lint: `OK with warnings` (only host-sync warnings in prepare-only code and the uint8 flush buffer dtype warning, same class as the existing ouns flush); undef.py: []; py_compile OK; __pycache__ removed.
+
+## Pre-flight audit
+
+Audited 2026-10-25 (opus), by reading the diff against master blob 353e3b19; the kernel could not be run on this node. **Verdict: dispatch.** No fixes were needed.
+
+- The `NUM_KB == 0` / `MAINLOOP_ONLY == False` branches are static constexpr ifs. Every other config splits evenly: pooler 8192/(2x256), o 1024/256, unpooler 4096/256, unpooler_slice 4096/(8x128) and qkv_gate_old 8192/(4x128). So pooler, o, unpooler and the slice trace the original `k_start = pid_k*K_SLICE`, `range(0, K_SLICE // BLOCK_K)` code. Only qkv_gate (8192 % 896 != 0) takes NUM_KB = 64, which splits as 9x6 + 10 at pid_k = 6.
+- Both routes use one launcher with grid `(n // block_w, split_k)` = (18, 7). There are 18 tickets on both routes (`_swapab_prepare` and `_swapab16_prepare` use `_swapab_block_w`). The workspace stride is WS_M*N = 16 or 32 x 2304, which BLOCK_W does not affect. The old config has its own ws and cnt.
+- Fallback: a build error in the new qkv config, or a self-check miss, removes it from the stage dict. The route then reads `swapab*_qkv_key` = qkv_gate_old (master's config), and a PATH CHOSEN line prints for each route. The self-check bound (rel L2 1e-2 vs fp32) and the zero-ticket check can pass, since bf16 output rounding is about 1e-3.
+- kernel_fn reads only state constants: no try/except, no prints, no syncs. The data_ptr checks are pre-existing alignment checks, not pointer-equality gates. State B rebuilds and self-checks independently.
+- Prepare budget: about 4 extra Triton compiles (new BLOCK_T 16 and 32, plus the two MAINLOOP_ONLY controls). The A/B is 21 graphs x 25 replays with a 256 MB memset, well under a second, against the current ~1 s per swapab warm-up stage. That fits easily in 300 s.
+- Cleanup: tickets are re-zeroed after every replay and again in `finally` (both routes, both keys). The flush buffer and graphs are dropped and `empty_cache` runs. The selfcheck prints and syncs are prepare-only.
+- Lint passes with warnings only (host-sync in prepare code, the existing ouns uint8 flush). undef.py reports [] and py_compile is OK.
+
+Residual risk: Triton may pipeline the dynamic-trip-count loop or the [128, BLOCK_T] wgmma poorly, which would make the qkv rows flat or slower. That is a performance risk, not a correctness one, and the self-check catches a numerics miss.
