@@ -50,7 +50,7 @@ review: proceed
 status: running
 review_at: 2026-10-25T001534Z
 review_companions: null
-stage: implemented
+stage: dispatched
 claimed_at: 2026-10-25T002203Z
 base_sha: b2f95e63a6e8ad3cff7947760e69e448399e295d
 base_blob: c9067b8201f2480c64910c4a71098df7ce616f73
@@ -67,6 +67,8 @@ submission_blob: 320bc577c8ea6a341804b40ed6228e4cbc6757e2
 lint_warnings: 36
 attempt_file: 2026-10-25T003019Z-check-full-decode-splitkv-kv-bw-3p5.md
 prepared_at: 2026-10-25T003019Z
+job: 6af3b0e3311943ee
+dispatched_at: 2026-10-25T003026Z
 ---
 
 # full-decode-splitkv-kv-bw-3p5
