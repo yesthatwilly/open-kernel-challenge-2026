@@ -235,3 +235,64 @@ The kernel lost on every shape it ran. It is slowest relative to Marlin at T=8-3
 **Per-shape:** this is master's path. Every shape is within noise of check 45eacf4c (decode_1 −0.3%, decode_16 −1.0%, decode_32 +3.6% z 1.9, verify_1 +6.0% z 2.4, verify_16/32 +1.3/+2.0%). The 1.330 is not a gain over the 1.3287 best.
 
 **Verdict: FIXABLE (bug).** It was never timed. Stage-next should make the canary name the first non-finite tensor (w13 output vs w2 output, and the first bad row/col), and compare one tile against the fp32 dequant reference. Remove the w2 spill (8 B local at 168 regs) too. It is worth one more check only if the per-kernel bar (≤ Marlin at T=128-512) still looks reachable.
+
+---
+
+## 01:36Z harvest
+
+Master for comparison is BEST `align-parallel-per-expert-verify`: submit 1947e3ec 1.3278x; check 45eacf4c 1.3249x [1.305, 1.345] is the result file named in BEST.json. z is Δ / √(err_new² + err_ref²).
+
+All three logs show master's own align self-check line, `tokens > 32: 135 cases, 135 mismatches, 135 capacity-only, 0 other`. That is unchanged master behaviour.
+
+### cuda-fused-moe-bs1-persistent-nospin-bandwidth-inproc — job 7a6919420b724ee7, neutral 1.3257x [1.306, 1.368]: RAN at bs=1. The slow mode is REDUCED, NOT GONE. NEXT STAGE.
+
+**What ran (log):**
+- The build used TORCH_CUDA_ARCH_LIST=9.0a with `-gencode=arch=compute_90a,code=sm_90a`, `-O3 -lineinfo`, and compiled in 41.0 s.
+- The kernel uses 72 regs (DBG 78), 0 local, 158208 B smem, 8 stages, 1 block/SM, grid 132.
+- The arch probe reported `__CUDA_ARCH_FEAT_SM90_ALL` defined, and the ARCH GATE was OK (binaryVersion and ptxVersion 90/90).
+- Canaries `<false>` and `<true>` (DBG) gave rel-L2 vs master 5.55e-3, 0 spin-bound hits, and counters reset.
+- 9 rounds of 5 eager launches and 10 graph replays ran with R in {0,1,2,3,8}. Against an fp32 dequant reference, the fused kernel scored 2.96e-3 / 2.83e-3 and master 4.97e-3 / 4.81e-3.
+- The log reports `SELF-CHECK PASSED ... max rel-L2 vs master 6.06e-03` and `PATH CHOSEN = fused for num_tokens == 1`. No fault.
+- The prepare DIAG ran 100 cold-L2 graph replays interleaved with master. Fused R=2 had p50 **42.7 µs** (p10 42.2, p90 43.6, max 54.8) against master's 51.8. The run reported it as **UNIMODAL** with p90/p10 1.03. The other R values gave R=1 33.9, R=3 66.2 and R=8 141.6 µs.
+- Timeline for the DBG run: phase 1 ends at ~21 µs, the phase-2 first-wait max is 18.7 µs (median 1.25), and spins reach max 38 (median 1).
+
+**Per-shape against BEST:**
+
+| shape | master µs | new µs | Δ% | z | note |
+|---|---|---|---|---|---|
+| **decode_1 (bs=1, fused)** | 48.8±0.5 | 47.7±1.3 | −2.4% | −0.8 | paired 1.613 vs 1.578 (+2.2%) |
+| decode_16 / decode_32 / verify_1 (Marlin) | 148.4 / 199.9 / 107.7 | 146.8 / 199.6 / 108.0 | −1.1 / −0.2 / +0.2% | ≤0.5 | control |
+| verify_16 / verify_32 (Marlin) | 318.3 / 454.3 | 327.3 / 467.2 | +2.8 / +2.8% | 2.3 / 2.4 | control, drift |
+
+**The judge's bs=1 runs are still bimodal:**
+
+| run | 40-45 µs | 65-80 µs | other | median |
+|---|---|---|---|---|
+| this run | 59/100 | 40/100 | 1 at 95+ | 47.7 (raw 43.6) |
+| stage 1 | 41/100 | 59/100 | — | — |
+
+Master is unimodal at 50-60 µs. The single profile replay caught the slow mode (61.6 µs). In the replay order the slow runs are scattered and roughly every 3rd-7th one, so this is not warm-up.
+
+**Verdict: NEXT STAGE**, not a land. The nospin change moved the fast-mode share from 41% to 59%, but the slow mode (+23 µs) survives under the judge even though the prepare DIAG is unimodal.
+
+The judge's timed loop differs from the DIAG: a different L2 flush, baseline interleaving, and the replay gate. Stage 3 should keep the per-CTA globaltimer debug buffer in the TIMED instantiation for a sample of replays and dump the slow ones. Fast mode everywhere is worth ~42.5 vs 48.8 µs, about +13% on the decode 1 load.
+
+### post-norm-triton-hoisted-decode32 — job 47d186dd91974d84, neutral 1.3248x: RAN at decode_32. DEAD (below resolution).
+
+This is Triton only, with no CUDA build. The log is the 15 KB tail of the align dump and has no PATH line for this change. The profile shows `_post_norm_combine_hoisted_kernel` at decode_32 only, so the gate held:
+- decode_32: kernel 3.8 µs vs SGLang `_post_expert_norm_weighted_sum` 4.5 (−0.7 µs). Shape 199.9 → 201.5 (+0.8%, z 0.4), because Marlin's row is seed-noisy (207.5 vs 220.8).
+- Every other shape is within ±1.9%, |z| ≤ 1.5.
+
+0.7 µs per call cannot be seen in the headline. At most it is worth folding into the sibling hoisted kernel for bs<32 as one restack. It does not justify a check of its own.
+
+### post-norm-pdl-launch-small-m — job 5202cf15936c4492, neutral 1.3222x: RAN (`[post-norm-pdl] PATH CHOSEN: pdl on (self-test passed)`). DEAD.
+
+| shape | master µs | new µs | Δ% | z |
+|---|---|---|---|---|
+| decode_1 | 48.8 | 48.7 | −0.2% | −0.1 |
+| decode_16 | 148.4 | 148.2 | −0.1% | −0.1 |
+| decode_32 | 199.9 | 199.9 | 0.0% | 0.0 |
+| verify_1 | 107.7 | 112.8 | +4.7% | +1.8 |
+| verify_16 / verify_32 | 318.3 / 454.3 | 318.4 / 451.1 | +0.1 / −0.7% | ≤0.6 |
+
+The `_post_norm_combine_kernel` row moved 3.1 → 2.8 µs at bs=1, with no shape-level effect. PDL on a ~3 µs tail kernel after Marlin buys nothing measurable.

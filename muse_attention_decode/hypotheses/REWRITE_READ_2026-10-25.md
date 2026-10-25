@@ -193,3 +193,97 @@ structural fix on sm_90, because there is no TMA gather for 128 B page-1 rows. T
 keeping (in-kernel ticket combine, fused pre-attention, stream-K tiles) belong on master's
 splitkv kernel A as stage 2 of `full-decode-cuda-gather-splitkv` (section 1), not as a stage 2 of
 this rewrite.
+
+---
+
+## 01:36Z harvest
+
+Master for comparison is BEST `sliding-deep-splits-on-cuda-splitkv`, submit 698d4cd3838c4a63, 1.3949x [1.374, 1.416]. That is the result file named in BEST.json. Per-shape figures are benchmark medians ± err; z is Δ / √(err_new² + err_ref²). The err values here are 0.0-0.3 µs, so z overstates confidence: identical untouched kernels drift up to ~6% between runs (LESSONS). Every claim below is therefore also checked against the kernel rows in the profile.
+
+### full-decode-splitkv-s2-streamk-ticket-inproc — job e592b1f5d3db4f83, check 1.4171x [1.396, 1.443]: RAN, WON on both target shapes. LAND CANDIDATE.
+
+**What ran (log):**
+- The master splitkv TU built (48.9 s) and passed its 3 self-checks. The new TU `muse_full_decode_splitkv_v2` built with `TORCH_CUDA_ARCH_LIST=9.0a`, `-gencode=arch=compute_90a,code=sm_90a`, `-O3 -lineinfo`, in 36.9 s, on an H200 with capability (9, 0) and 132 SMs.
+- Kernel attributes: `splitkv_attn_sk_kernel<4 stages, ticket>` uses 121 regs, 0 B local, 95264 B dyn smem, 2 CTAs/SM. The no-ticket variant uses 113 regs, and the 5-stage variant 117 regs with 112672 B. All three are binaryVersion and ptxVersion 90.
+- The canary (B=2 short) and 8 self-check cases passed. They cover B=2/16/32/64, ragged and mixed lengths, kv 0.25, and grids 3, 7 and device. rel L2 was 1.63-1.75e-3, all finite. Two graph replays passed and tickets summed to 0 after the self-check. No fault.
+- `PATH CHOSEN: full decode streamk+ticket v2` (full decode, 1<B≤64, page 1). Every other shape kept master's path.
+- The prepare diagnostic (eager, cold L2, median of 10):
+
+| B | stage-1 A + combine | stream-K + ticket, 4 stages (timed path) | stream-K no ticket + combine | stream-K + ticket, 5 stages |
+|---|---|---|---|---|
+| 16 | 117.5 + 12.2 = 129.7 µs (2.79 TB/s) | **112.7 µs (2.91 TB/s)** | 106.9 + 11.7 = 118.6 | 116.1 |
+| 32 | 245.3 + 12.5 = 257.8 µs (2.67 TB/s) | **221.3 µs (2.96 TB/s)** | 215.1 + 11.9 = 227.0 | 221.1 |
+
+  The diagnostic splits the gain in two. Stream-K split and locality gives 1.10x at B=16 and 1.14x at B=32. Folding the combine into a ticket gives 1.05x and 1.03x. A 5th stage gives nothing. This is the first variant above 2.9 TB/s; kernel A without the combine reaches 3.05 TB/s.
+
+**Per-shape against BEST (698d4cd3):**
+
+| shape | master µs | new µs | Δ% | z | kernel rows (profile) |
+|---|---|---|---|---|---|
+| **full decode_16** | 122.8 | 110.9 | **−9.7%** | **−57.8** | splitkv A 111.8 + combine 8.2 = 120.0 → sk 108.9 (−9.3%) |
+| **full decode_32** | 241.9 | 226.8 | **−6.2%** | **−41.5** | 245.9 + 8.4 = 254.3 → sk 226.8 (−10.8%) |
+| full decode_1 (not routed) | 27.3 | 27.2 | −0.3% | −1.0 | FA3, same |
+| sliding decode_1/16/32 (not routed) | 13.2 / 15.3 / 24.2 | 13.1 / 15.2 / 24.3 | −0.6 / −1.0 / +0.2% | −1.3 / −2.8 / +0.5 | Triton, same |
+| sliding verify_1/16/32 (not routed) | 16.7 / 22.7 / 28.7 | 16.8 / 22.7 / 28.9 | +0.6 / +0.2 / +0.6% | 1.5 / 0.7 / 2.2 | FA3, same |
+| full verify_1/16/32 (not routed) | 30.0 / 162.0 / 300.8 | 29.8 / 163.4 / 302.1 | −0.6 / +0.9 / +0.4% | −2.6 / 4.5 / 3.0 | FA3 152.4 vs 151.1: drift |
+
+- Only the two target shapes moved beyond noise, and the kernel rows confirm both: −11 µs and −27 µs per call. Every control is within ±1%. The +0.9% at full verify_16 is the untouched FA3 kernel (+1.3 µs), so it is run drift.
+- Loads: decode 16 rose from 1.663 to 1.791 and decode 32 from 1.520 to 1.593. The other loads are flat (decode 1 moved 1.397 → 1.381, which is sliding decode_1 drift).
+- The headline CI lower bound (1.396) sits just above master's point (1.3949), so the headline gain alone is marginal. The per-shape gain is unambiguous.
+
+**Verdict: LAND CANDIDATE** (scored submit, needs the user's approval). Possible next stages:
+- The no-ticket kernel A at 3.05 TB/s shows the ticket epilogue costs ~6 µs at B=16. A cheaper fold, such as last-CTA-per-request only, is the stage-3 lever.
+- Port the kernel to decode_layer's full decode once `full-decode-splitkv-restack-on-pdl` lands there.
+
+### sliding-cluster-s2-decode-c4-pdl-inproc — job 1990ce53e9d34073, check 1.4001x [1.379, 1.426]: RAN at every B. WON at B=1 and B=32, LOST at B=16. NEXT STAGE (gate C=8 off).
+
+**What ran (log):**
+- The master splitkv TU built (50.7 s) and passed its self-checks. The new fp8qk TU built with `-gencode=arch=compute_90a,code=sm_90a` in 40.7 s on capability (9, 0).
+- `sliding_cluster_kernel` uses 124 regs, **32 B local/spill**, 103424 B dyn smem/CTA, and is binaryVersion and ptxVersion 90. Max active clusters are C=4 → 62, C=8 → 30 and C=16 → 14.
+- Canaries passed (finite) at C=16, C=8 and C=4. Self-checks passed for C=16 at B=1 (kv 1 and 0.25), C=8 at B=2 and B=16, and C=4 at B=17 and B=32. rel L2 was 1.59-1.67e-3, and cache k/v matched 1.0000 with rel 0. A graph capture and replay matched at each C. No fault.
+- **PATH CHOSEN: C=16 at B=1, C=8 at B=2..16, C=4 at B=17..32 (fp8qk).** Master kept B>32 decode, every verify (FA3) and page 64.
+- Per-case path lines confirm the scored shapes: batch=1 → C=16, batch=16 → C=8, batch=32 → C=4. The profile shows `sliding_cluster_kernel` as the only kernel on sliding decode_1, decode_16 and decode_32. **The cluster path ran at every B.**
+- The log has no prepare timing or PDL line. Each sliding decode shape is a single kernel, so PDL has nothing to overlap inside the measured region.
+
+**Per-shape against BEST (698d4cd3):**
+
+| shape | master µs | new µs | Δ% | z | kernel rows (profile) |
+|---|---|---|---|---|---|
+| **sliding decode_1 (C=16)** | 13.2 | 12.5 | **−5.0%** | **−10.8** | Triton 10.4 → cluster 10.6 (kernel flat; the 0.7 µs shape gain is outside the kernel) |
+| **sliding decode_16 (C=8)** | 15.3 | 16.2 | **+5.7%** | **+13.6** | 12.9 → 13.8 (+7%): LOST |
+| **sliding decode_32 (C=4)** | 24.2 | 20.2 | **−16.8%** | **−48.1** | 22.1 → 18.3 (−17%) |
+| full decode_1/16 (untouched) | 27.3 / 122.8 | 27.2 / 122.2 | −0.3 / −0.5% | −1.2 / −3.8 | same |
+| full decode_32 (untouched) | 241.9 | 257.7 | +6.5% | +51.8 | splitkv A 245.9 vs 244.4: identical kernel, benchmark drift (the known 242 vs 256-260 bimodality) |
+| sliding verify_1/16/32 (untouched) | 16.7 / 22.7 / 28.7 | 16.6 / 22.6 / 29.5 | −0.8 / −0.3 / +2.9% | −2.1 / −0.9 / 11.0 | FA3 15.0 vs 14.5 at verify_32: drift |
+| full verify_1/16/32 (untouched) | 30.0 / 162.0 / 300.8 | 29.9 / 162.0 / 300.6 | ≤0.6% | ≤2.5 | same |
+
+- The kernel targets were missed: the review set decode_16 ≤ 10 µs and decode_32 ≤ 12 µs, and the kernels ran at 13.8 and 18.3.
+- The decode_32 win (−3.8 µs kernel, −4.0 µs shape) and the decode_1 win (−0.7 µs) are real. decode_16 is a real loss (+0.9 µs).
+- The full decode_32 +6.5% is drift on an identical kernel. It costs this run about 0.01 of headline, so the headline understates the sliding change.
+- **Not a landing candidate as-is**, because of the decode_16 loss.
+
+**Gated estimate:** take BEST's rows, substitute the cluster rows at B=1 and B=32 only, and recompute the six load speedups. That gives about 1.411x vs 1.395, which is the next stage. Concretely: the same kernel with the C=8 band turned off (B=2..16 back to master Triton), as an `okc check`.
+
+### Do they stack?
+
+**Yes.** The two changes touch disjoint shapes and code paths:
+- streamk: full layer, decode, 1<B≤64, page 1
+- cluster: sliding layer, decode, B≤32, page 1
+
+The streamk run left every sliding row on master, and the cluster run left every full row on master's kernels. Substituting both runs' winning rows into BEST's rows gives these estimates (load-level recompute; drift not removed):
+
+| stack | estimated headline |
+|---|---|
+| streamk only | ~1.424 |
+| streamk + cluster at B=1,32 only | **~1.440** |
+| streamk + cluster at every B | ~1.437 |
+
+Restack streamk with the C=8-gated cluster kernel as one check.
+
+### Answer for the held `sliding-decode-paired-kvhead-rows`
+
+The cluster path **ran at every B** (C=16 / C=8 / C=4, confirmed by PATH CHOSEN, the per-case path lines and the profile). It won at B=1 and B=32 and **lost at B=16**. By the hold rule ("if it lands on all batches, drop; ... lands only at one batch, run this pair"), it did **not** land on all batches, so **unhold the pair and its unpaired S=8 control**.
+
+The pair targets B>1:
+- decode_16: Triton master 12.9 µs, cluster 13.8. The cluster loses here, so the pair has the shape to itself.
+- decode_32: cluster 18.3 µs vs the earlier unpaired S=8 Triton 17.3 µs. The pair and its control must beat 18.3 there to displace the cluster.

@@ -281,3 +281,62 @@ Per-shape figures are benchmark medians ± err. z is Δ / √(err_new² + err_re
 | sliding verify_32 (untouched) | 634.8 | 592.5 | +7.1% (z 6.7) | 600.8 | paired 1.175 vs 1.176: run drift, not the change |
 
 **Verdict: DEAD** as a config knob. Do not land it, because it is worse than the restack at decode_16. A further kernel-A stage needs a structural change, such as more warps or bytes in flight per SM at higher occupancy, or a different gather. It also needs a timing-driven or corrected variant choice, keeping C1024 at every batch.
+
+---
+
+## 01:36Z harvest
+
+Master for comparison is BEST `stack-align-par-sidestream-sliding1`, check cc92097b64784c0f, 1.2495x, which is the result file named in BEST.json. z is Δ / √(err_new² + err_ref²).
+
+Both runs below are on **stale bases** that lack master's dense chain. Their profiles have no `dl_pooler_` kernel and instead show an `nvjet 128x8` at ~32 µs. So their decode_1 and verify_1 rows are +4% to +15% worse than master for reasons unrelated to the change. Only the kernel rows of the changed path count.
+
+### full-verify-cuda-splitkv-stage2 — job e9d5eeffddef4f70, regression 1.1559x [1.139, 1.173]: RAN, LOST on its targets. DEAD.
+
+**What ran (log):**
+- Build flags were `-O3 -arch=sm_90a -lineinfo` with TORCH_CUDA_ARCH_LIST=None. The code is mma.sync and cp.async with no wgmma, so this build is fine. It compiled in 41.6 s.
+- Stage-1 decode self-checks passed at B=5 and B=33 (rel L2 1.63-1.69e-3), and the run reported `PATH CHOSEN: full decode CUDA split-KV (stage 1)`.
+- The verify kernel uses 124 regs, 0 local, 90640 B dyn smem and 256 threads. Its 4 verify self-checks passed (B=5 and B=33, rel L2 1.64-1.67e-3), and the run reported `PATH CHOSEN: full verify CUDA split-KV (stage 2)`. No fault.
+- There were no timing or gate lines in prepare, so the path was chosen without being timed.
+
+**Per-shape (target rows) against BEST:**
+
+| shape | master µs | new µs | Δ% | z | kernels (profile) |
+|---|---|---|---|---|---|
+| **full verify_16** | 563.7 | 682.7 | **+21.1%** | +20.9 | FA3 153.2 + combine 5.8 = 159.0 → verify A 251.7 + combine 19.3 = 271.0 (**1.70x slower**) |
+| **full verify_32** | 861.3 | 1126.7 | **+30.8%** | +38.1 | 289.4 + 7.7 = 297.1 → 506.0 + 26.8 = 532.8 (**1.79x slower**) |
+| full decode_16 / 32 (stage 1) | 349.5 / 529.7 | 327.7 / 509.4 | −6.2 / −3.8% | −5.4 / −2.0 | splitkv 111.3 / 248.3 vs FA3 151.0 / 287.7 (this is the restack land candidate already read at 01:04Z) |
+| full verify_1 (B=1, not routed) | 192.4 | 216.1 | +12.3% | +4.8 | stale base (nvjet 33.5 vs pooler) |
+
+**Verdict: DEAD.** With q_len 8 and GQA 8, the verify tile is 64 rows per kv head, and FA3's wgmma beats the mma.sync split-KV design by 1.7-1.8x. The decode split-KV kernel is gather-bound, but verify is MMA-bound. Do not mint a verify stage 3 on mma.sync.
+
+### moe-chain-cuda-swapab-expert-once-fix-inproc — job 4ebd055adab34ecd, regression 1.1651x [1.148, 1.183]: BUILT and RAN every kernel with NO FAULT, but the self-check missed its own bound, so it ran Marlin everywhere. UNMEASURED. NEXT STAGE (bound fix).
+
+**What ran (log):**
+- The build used TORCH_CUDA_ARCH_LIST=9.0a with `-gencode=arch=compute_90a,code=sm_90a`, `-O3 -lineinfo`, and compiled in 30.8 s. torch was 2.14.1+cu130, capability (9, 0).
+- Every kernel reported binaryVersion and ptxVersion 90. `moe_w13_silu_swapab` and `moe_w2_swapab` use 148 regs, 0 local and 221184 B dyn smem (the opt-in max is 232448).
+- The arch probe reported `__CUDA_ARCH__ 900, __CUDA_ARCH_FEAT_SM90_ALL 1`.
+- These canaries ran ok:
+  - cvt e4m3x2
+  - dequant8 (__hmul2)
+  - ldmatrix.x4 + mma.sync, with tile rel 3.0e-8
+  - cp.async at 221 KB × 256 threads
+- **The 715 did NOT recur.** Every launch printed `launching` and then `ok`:
+  - `moe_route_list`, `moe_w13_silu_swapab`, `moe_w2_swapab` and `post_expert_norm_weighted_sum` at the T=33 canary (62 local routes, finite)
+  - the Marlin reference and two full chains at T=40
+- The old run (1bba1bab) faulted in the first prepare self-check launch but never named the kernel, because it had no per-launch prints. This run changed three things at once:
+  - plain cp.async.cg instead of the createpolicy cache-hint form
+  - __hmul2 instead of fma.rn.bf16x2 with a −0 addend
+  - an sm_90a-only build
+
+  So the fix cannot be attributed to one of them. The cache-hint cp.async is the likeliest, since the reviewer called __hmul2 an implausible cause.
+- **Self-check at T=40:** act row rel 8.79e-3, **y row rel 1.07e-2 (bound 1e-2)**, out global rel 6.00e-3, finite, ids equal, repeat identical. The y row missed the bound by 7%, giving `OFF ... max row rel 1.075e-02` and `PATH CHOSEN = MARLIN for tokens > 32; MARLIN at tokens <= 32`. The T=128/256 kernel timings were never printed.
+
+**Per-shape:** this is Marlin on a very stale base. It has no dense chain, and full decode still uses FA3 (149.5 µs). Every shape is +3% to +14% vs master: decode_1 +13.6% (z 16), verify_16 full +4.6% (z 4.1), verify_32 full +4.5% (z 5.3). This is base staleness; no kernel of the change was timed. The Marlin rows at verify_16/32 (295.6-305.7 / 425.4-475.2 µs) are the untouched control.
+
+**Verdict: FIXABLE, next stage.** The design is still untested against Marlin's 254-443 µs at verify_16/32. The 1e-2 row bound is self-imposed and compares against Marlin, which is itself approximate. The judge allows 3-15% on the layer output, with rows up to 5× that.
+
+Stage 3:
+1. Rebase onto current master (`stack-align-par-sidestream-sliding1`).
+2. Gate against an fp32-dequant reference rather than Marlin, as the moe bs1 kernel does: fused 2.9e-3 vs master 4.9e-3. Use a bound derived from Marlin's own error against that reference (e.g. ≤ 1.5× Marlin's).
+3. Print the T=128/256 CUDA-event timings before the decision.
+4. Keep `okc check` only.
