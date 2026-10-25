@@ -70,9 +70,18 @@ priority: 1
 kind: primary
 controls_for: null
 review: proceed
-status: queued
+status: running
 review_at: 2026-10-25T161627Z
 review_companions: null
+stage: claimed
+claimed_at: 2026-10-25T161628Z
+base_sha: 65440e974f1eccc4c5d39e2e004e0f64d2c9d806
+base_blob: f919748b5af6e815f319e5d2d828ed68e5b28a71
+branch: hyp/muse_bf16_proj/combo-naive-pooler-m1-rowowner-qkv-m128-cublaslt
+worktree: .worktrees/muse_bf16_proj/combo-naive-pooler-m1-rowowner-qkv-m128-cublaslt
+mode: null
+restack_of: null
+stale_base: null
 ---
 
 # combo-naive-pooler-m1-rowowner-qkv-m128-cublaslt
