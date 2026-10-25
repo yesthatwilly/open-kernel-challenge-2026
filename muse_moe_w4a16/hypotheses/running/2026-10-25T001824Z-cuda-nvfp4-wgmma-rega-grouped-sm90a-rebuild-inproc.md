@@ -59,7 +59,7 @@ review: proceed
 status: running
 review_at: 2026-10-25T002121Z
 review_companions: null
-stage: claimed
+stage: implemented
 claimed_at: 2026-10-25T002121Z
 base_sha: f50b333a602cc590f2785a1fdd2171af25fe94bb
 base_blob: 5c34fabe0f05fb53014dd85b66864cd3b38bc673
@@ -68,6 +68,12 @@ worktree: .worktrees/muse_moe_w4a16/cuda-nvfp4-wgmma-rega-grouped-sm90a-rebuild-
 mode: null
 restack_of: null
 stale_base: true
+implemented_at: 2026-10-25T003418Z
+impl_commit: c89b01f6d4eeee26bad681a66af3e272ffc51f07
+submission_sha256: e0877f3e365fcbabe7eee80f4343f64b2eacb77ad952034ad3785b27b45ef821
+norm_sha256: c1b2762ac7d1bc7b239c59ceb492b584c0a35be528a0f37fc3849e6f31505214
+submission_blob: f09390b45e1e1af24f0ccc3645988b81f97b2bf8
+lint_warnings: 30
 ---
 
 # cuda-nvfp4-wgmma-rega-grouped-sm90a-rebuild-inproc
@@ -188,3 +194,24 @@ warn  dtype        L1221: q2 = torch.empty((count, rec2), dtype=torch.uint8, dev
 OK with warnings: .worktrees/muse_moe_w4a16/cuda-nvfp4-wgmma-rega-grouped-sm90a-rebuild-inproc/muse_moe_w4a16/submission.py
 ```
 py_compile: OK; __pycache__ removed.
+
+## Pre-flight audit
+
+Audited 2026-10-24 by an opus subagent (read-only plus a numpy emulation; no GPU on this node).
+
+**Verdict: dispatch-with-fixes.** Must be an `okc check`, never a submit.
+
+Verified:
+- Master port: the worktree file contains master (1a5da3d, blob 108d36e) verbatim apart from the wgmma additions and the kernel_fn -> `_moe_marlin` split (`data[...]` -> arguments, the return tuple). `_align_parallel_kernel`, its warm-up, `_align_self_check` and block-m two-smaller are identical, so the non-wgmma path is master's.
+- Retiling vs device read: a numpy emulation of `_wg_tile_expert` against consume_item's loads (cw*512 + lane*16 word s, nibble 4kl + 3 - i, scale byte 2s + rh) and the wgmma A fragment (i = rh + 2kh) gives 0 mismatches for both w13 (gate/up interleave) and w2. The stmatrix .trans epilogue maps and the exactness of the dequant (bf16 subnormal 2^-127 kept by fma.rn.bf16x2; 448 * 2^119 < bf16 max) check out by hand, so the self-check is not structurally doomed.
+- Illegal-instruction surface: every wgmma (fence, commit, wait, mma_async) and both setmaxnreg sit under `__CUDA_ARCH_FEAT_SM90_ALL` (the #else sets error word 2). No createpolicy or L2::cache_hint remains. The rest are sm_90 / sm_89 instructions: mbarrier expect_tx/try_wait, cp.async.bulk(.tensor), stmatrix, cvt e4m3x2, fma bf16x2. The setmaxnreg.inc hang is gated on numRegs*384 >= 64512, and mbarrier waits are bounded.
+- Fallback: a build error, a 9.0a rejection, the attrs, smem, regs or binaryVersion gate, tensor-map encode, canary, self-check, error word or budget each land on Marlin with a flushed PATH CHOSEN line. A sticky 715/700 is still fatal, which is why this must be a check.
+- Rules: no subprocess or multiprocessing (load_inline's nvcc is sanctioned); TORCH_CUDA_ARCH_LIST is restored in `finally`. kernel_fn branches only on shape and the prepare flag. Its wgmma call graph has no sync, .item or value-dependent allocation. Tensor maps are kernel params over prepare-time scratch. wg_xs/wg_hs are overwritten wherever a stored output depends on them (stale rows feed only unstored N columns). The NVFP4 bank is a lossless retiling with gs * 128 exact.
+- Shapes: M = 128, 256 and the 257 test are gated in. Capacity at M <= 512: sorted_ids <= 4576 <= 8192 rows and block_experts <= 286 <= 384 (MAXB = THREADS).
+
+Fixes applied:
+1. The setup budget is now measured from prepare()'s start (`t_prepare` passed to `_wg_setup`), not from `_wg_setup`'s start. Reason: master's prepare work (Marlin repack, about 36 Triton align compiles, align self-check) and the unbudgeted wgmma self-check both sat outside the 200 s window. A slow build could then push prepare() past its 300 s limit and turn a neutral fallback into a failed run.
+
+okc_lint: OK with warnings (only the uint8 NVFP4 bank allocations in prepare); py_compile OK; __pycache__ removed.
+
+Residual risk: no instruction of this kernel has ever executed. A sticky 715/700 in the canary still kills the run (the log names the kernel), and ptxas may serialize the wgmma pipeline (A-register reuse), which costs only speed.
