@@ -48,10 +48,10 @@ priority: 3
 kind: primary
 controls_for: null
 review: proceed
-status: running
+status: done
 review_at: 2026-10-25T004221Z
 review_companions: null
-stage: dispatched
+stage: harvested
 claimed_at: 2026-10-25T004221Z
 base_sha: 9a3cafafd2a3738a49dc5fe238ef2bf753adafd4
 base_blob: a8bb42ac483318e9fbc84bc7826a27b7a704d1fb
@@ -70,6 +70,13 @@ attempt_file: 2026-10-25T004336Z-check-o-swapab-m32-splitk2-two-ctas-per-sm.md
 prepared_at: 2026-10-25T004336Z
 job: 75f09fa68f9c4415
 dispatched_at: 2026-10-25T004351Z
+outcome: regression
+verdict_detail: regression
+speedup: 1.186026535994556
+speedup_ci: [1.1682361379546378, 1.2038169340344744]
+harvested_at: 2026-10-25T034130Z
+best_at_harvest: 1.2215006063849365
+promotion: null
 ---
 
 # o-swapab-m32-splitk2-two-ctas-per-sm
@@ -138,3 +145,53 @@ In `muse_bf16_proj/submission.py` (worktree only, +11/-1):
 - [x] All work is inside the timed call: no output caching or replay.
 
 okc_lint: `CLEAN: muse_bf16_proj/submission.py`. py_compile OK, `__pycache__` removed.
+
+## Result
+
+- job `75f09fa68f9c4415` (check), status done, passed True, tests 9/9
+- speedup 1.1860x, 95% CI [1.1682, 1.2038], score 4073.096050881423 µs vs SGLang 4830.8 µs
+- best at harvest: {"speedup": 1.2215006063849365, "ci": [1.2031780972891624, 1.2398231154807104], "job": "60b20fd0bf924267"}; base result: muse_bf16_proj/hypotheses/done/neutral/bf16-restack-m16-swapab-router-swapab-m32.result.json
+- **outcome: regression** (regression)
+- files: `muse_bf16_proj/hypotheses/done/regression/o-swapab-m32-splitk2-two-ctas-per-sm.result.json`, `muse_bf16_proj/hypotheses/done/regression/o-swapab-m32-splitk2-two-ctas-per-sm.patch`; branch `hyp/muse_bf16_proj/o-swapab-m32-splitk2-two-ctas-per-sm`
+
+## Attribution
+
+| shape | w | base µs | hyp µs | delta | verdict |
+|---|---|---|---|---|---|
+| layer=qkv_gate load=decode_1 m=1 | 62 | 12.18 | 13.52 | 0.9352 | lost |
+| layer=o load=decode_1 m=1 | 62 | 5.89 | 6.36 | 0.9375 | lost |
+| layer=pooler load=decode_1 m=1 | 62 | 18.84 | 19.71 | 0.9729 | flat |
+| layer=unpooler load=decode_1 m=1 | 62 | 6.15 | 6.22 | 0.957 | lost |
+| layer=router load=decode_1 m=1 | 62 | 5.38 | 6.0 | 0.9133 | lost |
+| layer=qkv_gate load=decode_16 m=16 | 62 | 13.15 | 14.13 | 0.9474 | lost |
+| layer=o load=decode_16 m=16 | 62 | 6.23 | 6.62 | 0.9364 | lost |
+| layer=pooler load=decode_16 m=16 | 62 | 19.47 | 19.82 | 0.9758 | flat |
+| layer=unpooler load=decode_16 m=16 | 62 | 18.51 | 18.53 | 0.9908 | flat |
+| layer=router load=decode_16 m=16 | 62 | 5.47 | 6.04 | 0.9065 | lost |
+| layer=qkv_gate load=decode_32 m=32 | 62 | 14.19 | 14.12 | 0.9696 | lost |
+| layer=o load=decode_32 m=32 | 62 | 6.34 | 9.39 | 0.686 | lost |
+| layer=pooler load=decode_32 m=32 | 62 | 19.73 | 20.08 | 0.9933 | flat |
+| layer=unpooler load=decode_32 m=32 | 62 | 18.08 | 18.42 | 0.99 | flat |
+| layer=router load=decode_32 m=32 | 62 | 6.2 | 6.43 | 0.9455 | lost |
+| layer=qkv_gate load=verify_1 m=8 | 62 | 12.5 | 13.38 | 0.942 | lost |
+| layer=o load=verify_1 m=8 | 62 | 6.13 | 6.47 | 0.9667 | lost |
+| layer=pooler load=verify_1 m=8 | 62 | 18.89 | 19.57 | 0.9843 | flat |
+| layer=unpooler load=verify_1 m=8 | 62 | 6.0 | 6.12 | 0.9803 | flat |
+| layer=router load=verify_1 m=8 | 62 | 5.47 | 5.65 | 0.9586 | lost |
+| layer=qkv_gate load=verify_16 m=128 | 62 | 17.05 | 16.95 | 1.0048 | flat |
+| layer=o load=verify_16 m=128 | 62 | 6.98 | 7.34 | 0.9946 | flat |
+| layer=pooler load=verify_16 m=128 | 62 | 25.0 | 24.96 | 1.0254 | flat |
+| layer=unpooler load=verify_16 m=128 | 62 | 19.96 | 20.11 | 1.0099 | flat |
+| layer=router load=verify_16 m=128 | 62 | 7.28 | 7.38 | 0.9857 | flat |
+| layer=qkv_gate load=verify_32 m=256 | 62 | 19.69 | 19.67 | 1.0057 | flat |
+| layer=o load=verify_32 m=256 | 62 | 9.26 | 9.14 | 1.0069 | flat |
+| layer=pooler load=verify_32 m=256 | 62 | 31.19 | 30.84 | 1.0083 | flat |
+| layer=unpooler load=verify_32 m=256 | 62 | 24.42 | 24.63 | 1.0035 | flat |
+| layer=router load=verify_32 m=256 | 62 | 9.6 | 9.48 | 1.001 | flat |
+
+lost on qkv_gate decode_1, decode_16, decode_32, verify_1; o decode_1, decode_16, decode_32, verify_1; unpooler decode_1; router decode_1, decode_16, decode_32, verify_1. Expected hit: 4/8. Noise ±1.5%.
+
+## Follow-ups
+
+- record which shapes lost (Attribution) and do not retry this area in this form.
+

@@ -1,0 +1,51 @@
+diff --git a/muse_bf16_proj/submission.py b/muse_bf16_proj/submission.py
+index a8bb42a..0f369f4 100644
+--- a/muse_bf16_proj/submission.py
++++ b/muse_bf16_proj/submission.py
+@@ -491,7 +491,7 @@ SWAPAB_CFG = {
+     "pooler":   (4096, 8192, 2, 256, 4),  # grid (64, 2) = 128 CTAs, 48 KB/stage
+     "qkv_gate": (2304, 8192, 4, 128, 4),  # grid (36, 4) = 144 CTAs, 24 KB/stage
+     "unpooler": (8192, 4096, 1, 256, 4),  # grid (128, 1), full width (m > 8)
+-    "o":        (8192, 1024, 1, 256, 4),  # grid (128, 1), 4 K-steps, all in flight
++    "o":        (8192, 1024, 2, 256, 2),  # grid (128, 2) = 256 CTAs, 2 K-steps, 96 KB smem: 2 CTAs/SM
+ }
+ SWAPAB_FALLBACK_STAGES = 3  # used for a layer whose 4-stage compile is OutOfResources
+ 
+@@ -604,6 +604,11 @@ def _swapab_forward(layer: str, x: torch.Tensor, w: torch.Tensor, ws, cnt, num_s
+                   f"n_spills={getattr(compiled, 'n_spills', '?')} "
+                   f"wgmma={ptx.count('wgmma.mma_async')} mma.sync={ptx.count('mma.sync')} "
+                   f"cp.async={ptx.count('cp.async')}", flush=True)
++            first_wait = ptx.find("cp.async.wait_group")
++            head = ptx if first_wait < 0 else ptx[:first_wait]
++            print(f"[swapab] layer={layer}: shared={getattr(compiled.metadata, 'shared', '?')} B "
++                  f"n_regs={getattr(compiled, 'n_regs', '?')} "
++                  f"commit_groups_before_first_wait={head.count('cp.async.commit_group')}", flush=True)
+         except Exception as e:  # diagnostic only
+             print(f"[swapab] layer={layer}: diagnostics unavailable ({type(e).__name__}: {e})", flush=True)
+     return out
+@@ -614,6 +619,8 @@ def _swapab_buffers(state: dict, layer: str):
+         return state["swapab_ws_pooler"], state["swapab_cnt_pooler"]
+     if layer == "qkv_gate":
+         return state["swapab_ws_qkv"], state["swapab_cnt_qkv"]
++    if layer == "o":
++        return state["swapab_ws_o"], state["swapab_cnt_o"]
+     return None, None
+ 
+ 
+@@ -626,6 +633,8 @@ def _swapab_prepare(state: dict) -> None:
+     state["swapab_cnt_pooler"] = torch.zeros(4096 // SWAPAB_BLOCK_W, dtype=torch.int32, device=dev)
+     state["swapab_ws_qkv"] = torch.empty((4, SWAPAB_MAX_M, 2304), dtype=torch.float32, device=dev)
+     state["swapab_cnt_qkv"] = torch.zeros(2304 // SWAPAB_BLOCK_W, dtype=torch.int32, device=dev)
++    state["swapab_ws_o"] = torch.empty((2, SWAPAB_MAX_M, 8192), dtype=torch.float32, device=dev)
++    state["swapab_cnt_o"] = torch.zeros(8192 // SWAPAB_BLOCK_W, dtype=torch.int32, device=dev)
+     stages = {}
+     for layer, (n, k, _split, _bk, num_stages) in SWAPAB_CFG.items():
+         w = state[layer]
+@@ -649,6 +658,7 @@ def _swapab_prepare(state: dict) -> None:
+     # The split-K variants self-reset, but re-zero the counters after the warm-ups regardless.
+     state["swapab_cnt_pooler"].zero_()
+     state["swapab_cnt_qkv"].zero_()
++    state["swapab_cnt_o"].zero_()
+ 
+ 
+ def prepare(weights: Weights) -> dict:
