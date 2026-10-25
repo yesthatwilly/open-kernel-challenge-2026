@@ -63,7 +63,7 @@ review: proceed
 status: running
 review_at: 2026-10-25T120207Z
 review_companions: null
-stage: claimed
+stage: implemented
 claimed_at: 2026-10-25T120207Z
 base_sha: 57e77548ba31c2145d575df62752f62684b2f6ad
 base_blob: 77f34503659c90a5953f91a93ba6e1a2b02e4613
@@ -72,6 +72,12 @@ worktree: .worktrees/muse_moe_w4a16/cuda-nvfp4-wgmma-rega-b128-n32-deep-ring
 mode: null
 restack_of: null
 stale_base: true
+implemented_at: 2026-10-25T121529Z
+impl_commit: c30fd0cc3d4a310d54f63abf868723b75b3f1210
+submission_sha256: f56d66ed56172aea69bf8f2b46153a13aca09da79762057579db1c791a27b1fb
+norm_sha256: 64b78e769b3c8135c0204f0801805499ad9bb6cfaadf5040fb58dffd503b5750
+submission_blob: 0ff43a7c6e340a04dce17ace8dc8e7b37aca61ac
+lint_warnings: 78
 ---
 
 # cuda-nvfp4-wgmma-rega-b128-n32-deep-ring
@@ -124,3 +130,49 @@ No companion. Moe has one check left, so a companion is unaffordable, and none i
 - Build time: two extra instantiations (w13/w2 at NMAX=32) plus the selector add perhaps 20-40 s to s5's 37.5 s. That is well under WG_SETUP_BUDGET_S=200, but the build-failure fallback must leave B128 on Marlin (not s5) and B256 on the bucket-gate decision.
 - STAGES=10 is not a power of two: n % STAGES and (n / STAGES) & 1 stay correct, but recheck any code that assumed STAGES=4 (bit masks, unrolled init loops, barrier array sizing tied to 2*STAGES in static smem).
 
+
+## Implementation notes
+
+Base: `hyp/muse_moe_w4a16/cuda-nvfp4-wgmma-rega-grouped-s5-copy-safe-bucket-gate:muse_moe_w4a16/submission.py` copied over the worktree's submission.py (per the user's instruction and the binding review; B256 route ON in that build, checked 1.3744). That file already contains master's landed align-parallel and w2-atomic changes, so the stale_base 3-way merge was not run (replacing with the bucket-gate file was the explicit instruction). Edit only the worktree's `muse_moe_w4a16/submission.py`.
+
+Review items applied (the review wins over the spec where they differ):
+- Rebase onto bucket-gate, B256 byte-identical: B256 always runs variant 0 = `wg_kernel<G,128,4>`, which is the s5 kernel with the same code (the ring geometry became template constants; for (128,4) every constant, chunk cut `& 7`, N16..N128 consumers and smem is unchanged). The B256 selector body, the calibrated-zipf gate and `wg_on_256` are untouched.
+- Not forced: B128 goes through the existing graph-replay selector at T=128. `_wg_select_b128` times Marlin full path vs s5 kernel vs NMAX32/STAGES10 vs NMAX64/STAGES7 (full-path graphs, cold L2 flush, 41 interleaved reps, empty-graph baseline subtracted) and enables the best variant only if its worse ratio is >= 1.02x.
+- Build/self-check failure leaves B128 on Marlin: `wg_gemm`/`wg_init` take a variant; the module is built with `WG_NEW_VARIANTS=1`; if that build fails the s5-only module (`WG_NEW_VARIANTS=0`, name `..._s5only`) is built, B256 keeps the bucket-gate decision and B128 has no candidates (Marlin, not s5). A new variant that fails its attribute check (regs/occupancy/smem/bin, and 0 B spill), `_wg_variant_check` or the copy check only drops itself.
+- Judge-like routing: `_wg_judge_ids` rebuilds reference.generate_input (dist normal, rank busiest: rand scores + 0.03 * Student-t popularity, top-8, busiest-GPU rotation) in prepare from a fixed CPU generator, 8 draws, keeps the draw whose touched-expert count is nearest 17 (the review's floor estimate); never from inputs. Gate = worse ratio of zipf a=0.3 and that routing (B128 only; random routing dropped from B128, B256 prints as before).
+- Prints per variant and routing: touched experts, max routes on one expert, chunk count (and experts split), weight read twice (MB; a k-chunk expert re-streams k-1 times its w13+w2 bytes), w13 and w2 kernel-graph us and achieved TB/s (touched-expert bytes / kernel-graph time, empty-graph baseline subtracted).
+- STAGES=10 not a power of two: all stage indexing is `n % STG` and `(n / STG) & 1`; barrier array is `2*STG` (160 B static at 10, the 8192 B static bound still holds: 5x384x4 + 160 + 48 + 4 = 7892); the init loop is `#pragma unroll` over STG; the only `& (CH-1)` is the chunk cut, CH = NMAX/16 in {2,4,8} (power of two, static_assert'ed). Nothing else assumed 4 or a power of two.
+- NMAX=64/STAGES=7 added as the review's open-question suggestion (stage 25600 B, dyn smem w13 197632 B / w2 215040 B + <=8192 static < 227 KB).
+- Open question on the unlanded base: user chose it. Open question on forced form: user chose gated.
+
+What changed (all in submission.py):
+- CUDA: `Geo<NMAX,STG>` (SLAB_HALF = NMAX*128, STAGE_BYTES = 9216 + 2*SLAB_HALF, 1024-B alignment static_asserts), `Smem<G,NMAX,STG>`; `consume_item<NB,G,NMAX,STG>` and `wg_kernel<G,NMAX,STG>` use the template constants (make_desc offsets use the template SLAB_HALF); chunk cut every CH blocks; consumer buckets above NMAX are not instantiated (`if constexpr`); `wg_init` returns 11 ints per instantiation (variant first); `wg_gemm` takes `variant` (0 s5, 1 NMAX32/10, 2 NMAX64/7). Ext name bumped to `muse_moe_w4a16_wgmma_rega_v6`.
+- Python: `WG_VARIANTS`; `variant=` threaded through `_wg_gemm`, `_moe_wgmma`, `_wg_eval_case`, `_wg_chunks(cut)`; new `_wg_judge_ids`, `_wg_route_stats`, `_wg_variant_stats`, `_wg_variant_check`, `_wg_select_b128`; `_wg_select` takes `cands128` and returns `(decisions, lines, v128)`; `_wg_copy_check(plan)` runs the three-state (A, deepcopy B, tree-clone C) refilled-replay check once per variant (new variants at M 128 and 255) and returns per-variant results; `_wg_setup` builds/falls back, parses the variant attribute table, runs variant checks and the copy check, picks candidates, sets `state['wg_on_128']`, `state['wg_v128']`; PATH CHOSEN lines name the variant.
+- kernel_fn: shape + `wg_on_128` / `wg_on_256` / int `wg_v128` only; no try/except, prints or per-call state; B256 call unchanged.
+
+Not run (no GPU/nvcc on this node): nothing was compiled or executed. Biggest risk: the CUDA template edits compile only in the judge's nvcc (first build of the 6 instantiations; build time maybe 2x s5's, inside WG_SETUP_BUDGET_S=200 with the s5-only fallback if it fails) and the ring-depth effect may be flat if bytes in flight is not the limiter (the printed TB/s per variant answers that either way).
+
+## Rules check
+
+- [x] CUDA-graph capturable: kernel_fn adds only a Python int read (`state.get("wg_v128")`) and one extra kernel argument; the variant is chosen on host before capture; per-call tensor-map encode, no sync/allocation/branching on input values (checked in `git diff`: the only kernel_fn change is the B128/B256 branch).
+- [x] Nothing derived from `data` is cached across calls: the judge-like and zipf routings are built in prepare from fixed seeds; state holds only flags/ints.
+- [x] Weights: same lossless retiled NVFP4 bank in prepare; NVFP4 stays NVFP4 (dequant in registers); no new weight format.
+- [x] Activations BF16 (gathered BF16 slab, BF16 outputs); no KV cache/queries in this problem (n/a for those clauses).
+- [x] Attends every route: chunks of an expert with more than NMAX routes are split into several chunks (each re-streams the weight); the variant checks (c=64/128 one expert, skewed-4hot, all-one-expert at T=255) and copy check compare against the fp32-dequant reference; no skipping.
+- [x] No timing patches, harness access, module edits, reference import (reference.py was only read to mirror generate_input; nothing imported), subprocesses (load_inline is the existing in-process build) or network.
+- [x] All work inside the timed call; no output caching or replay; no module/static device state (audit `_wg_audit_cpp` scans the new source; only the host driver function pointer remains); per-call TMA encode, launch markers, LAUNCHED and PATH CHOSEN lines kept; the judge's two copied states are covered by the copy check on every enabled variant.
+- [x] sm_90a: TORCH_CUDA_ARCH_LIST=9.0a around load_inline and `__CUDA_ARCH_FEAT_SM90_ALL` guards unchanged; every mbarrier wait stays bounded (2^26 cycles -> error word 1).
+
+Lint (okc_lint, `python3 -I .claude/skills/churnsubs/bin/okc_lint.py <worktree>/muse_moe_w4a16/submission.py --problem muse_moe_w4a16`): `OK with warnings` (only host-sync/dtype warnings at prepare()-only lines, outside kernel_fn's call graph). undef.py: `[]` (no undefined names). py_compile: ok. __pycache__ removed.
+
+## Pre-flight audit
+
+Audited 2026-10-25 (opus), against the bucket-gate base (hyp/.../s5-copy-safe-bucket-gate, checked 1.3744). **Verdict: dispatch-with-fixes.**
+
+Checked and found sound: variant 0 = `wg_kernel<G,128,4>` reproduces the s5 kernel exactly (CH=8 gives the same `& 7` / `cn < 8` chunk cut; SLAB_HALF 16384, STAGE_BYTES 41984, 4 stages; stage index `n % STG` and parity `(n / STG) & 1` give the same values; tx bytes, TMA offsets, make_desc and epilogue are unchanged), so the B256 kernel cannot move. For the new instantiations, smem with the 8192 B static bound is 218112 B (n32s10 w2) and 223232 B (n64s7 w2), both at most 232448 B; stages, slab halves and weight records are all 1024-B aligned; `cudaFuncSetAttribute` runs once per instantiation in `wg_init`. Compile: no global STAGES/SLAB_HALF/STAGE_BYTES is left anywhere; buckets above NMAX are behind `if constexpr` inside the template, so they are not instantiated; the `#if WG_NEW_VARIANTS` launch chain is well formed for both 0 and 1; the C++ declaration and the definition of `wg_gemm(which, variant, ...)` match the Python call. The `_wg_audit_cpp` emulation finds no globals in either source. kernel_fn branches only on shape, two bools and the int `wg_v128`. It has no pointer gate, and module globals hold no device state.
+
+Fixes:
+1. Copy-check order: the new variants now run before variant 0. Before the fix, a stage-6 variant that left an error word in state A's `wg_err` (for example an mbarrier timeout) leaked into the path-wide `err_word` read after the copy check. That turned the whole wgmma path off, B256 included, which is a fallback cascade. Variant 0 zeroes the word before each of its own replays, so its result decides the path-wide flags again.
+2. Build fallback: if the -Werror probe fails with no ptxas line (a front-end compile error), the module is no longer rebuilt with the stage-6 variants without -Werror, since that rebuild would hit the same error. The s5-only module is built at once, which saves budget so B256 keeps its bucket-gate decision.
+
+Residual risk: nvcc has not compiled the new template instantiations (this node has no nvcc), and a hard device fault in a new variant during prepare would poison the context. B256's selector now draws different random inputs than the base (the generator is consumed differently at T=128), so its decision, about 1.06x against a 1.02x margin, carries ordinary noise.
