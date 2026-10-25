@@ -35,9 +35,18 @@ priority: 1
 kind: primary
 controls_for: null
 review: proceed
-status: queued
+status: running
 review_at: 2026-10-25T191118Z
 review_companions: null
+stage: claimed
+claimed_at: 2026-10-25T191118Z
+base_sha: 8eca21f5b391cbe0335e7b32676b0f35d9c5ff9e
+base_blob: 6d6afa4722731ceb9cb8216d0334a03f1a96ad2b
+branch: hyp/muse_attention_decode/merge-perkvhead-c320-sv32-tiled
+worktree: .worktrees/muse_attention_decode/merge-perkvhead-c320-sv32-tiled
+mode: null
+restack_of: null
+stale_base: null
 ---
 
 # merge-perkvhead-c320-sv32-tiled
