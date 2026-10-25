@@ -71,7 +71,7 @@ review: proceed
 status: running
 review_at: 2026-10-25T054930Z
 review_companions: null
-stage: implemented
+stage: dispatched
 claimed_at: 2026-10-25T084302Z
 base_sha: 928151c3ea4e903fc4a05ae7ac59672291b71d0d
 base_blob: a13d5fea2e79f85df573670cbd55a8a10fbc3d2c
@@ -88,6 +88,8 @@ submission_blob: 77f34503659c90a5953f91a93ba6e1a2b02e4613
 lint_warnings: 60
 attempt_file: 2026-10-25T085424Z-check-cuda-nvfp4-wgmma-rega-grouped-s5-copy-safe-forced.md
 prepared_at: 2026-10-25T085424Z
+job: d4ad4f31d2764050
+dispatched_at: 2026-10-25T085432Z
 ---
 
 # cuda-nvfp4-wgmma-rega-grouped-s5-copy-safe-forced
