@@ -1,0 +1,818 @@
+diff --git a/muse_decode_layer/submission.py b/muse_decode_layer/submission.py
+index e7b58542..f8b86798 100644
+--- a/muse_decode_layer/submission.py
++++ b/muse_decode_layer/submission.py
+@@ -50,8 +50,9 @@ Differs from SGLang:
+     combine and the output norm x sigmoid(gate), replacing FusedQKNorm through FusedRMSNormGate.
+   * Sliding decode at 17 <= batch <= 32 (hypothesis sliding-cluster-c4-decode32-port, config-only gate,
+     prepare() self-check and timing selector): one cluster-of-4 CUDA kernel ported from
+-    muse_attention_decode (or the 16-split Triton kernel, whichever prepare() times fastest against
+-    master's whole chain with the L2 flushed) replaces FusedQKNorm through FusedRMSNormGate.
++    muse_attention_decode (kept only if prepare()'s self-check passes and it times >= 1.02x faster than
++    master's whole chain with the L2 flushed; stage 2 matches master's k encode) replaces
++    FusedQKNorm through FusedRMSNormGate.
+   * The step's positions, cache rows, FA3 lengths and FA3 scheduler metadata come in with the
+     inputs; SGLang builds them once per step for all layers.
+   * All-reduces are the identity; the all-gather is a zero pad of the unpooler's output.
+@@ -1587,7 +1588,7 @@ def _sliding_fused_kernel(
+             tl.store(cnt_ptr + bg, 0)  # ready for the next launch / graph replay
+ 
+ 
+-def _sliding_forward(data, qkv, splits=None):
++def _sliding_forward(data, qkv):
+     """Sliding batch-1 decode: one launch of _sliding_fused_kernel on the qkv GEMM's [T, 2304]
+     output, returning the [T, 1024] bf16 normed-and-gated attention output (master's FusedQKNorm,
+     FP8 casts, store_cache, FA3 and FusedRMSNormGate at that shape). Branches on config only."""
+@@ -1599,7 +1600,7 @@ def _sliding_forward(data, qkv, splits=None):
+     theta = cfg["rope_theta"]
+     group = hq // hkv
+     m = max(16, triton.next_power_of_2(group * length))
+-    splits = _num_splits(batch, hkv) if splits is None else splits
++    splits = _num_splits(batch, hkv)
+     out = torch.empty((tokens, hq * d), dtype=torch.bfloat16, device=device)
+     if splits > 1:
+         ws_acc = torch.empty((batch * hkv * splits, m, d), dtype=torch.float32, device=device)
+@@ -2348,11 +2349,17 @@ def _master_attn(data, state, qkv):
+ # with m16n8k16 f16; the four ranks merge over distributed shared memory, times v_scale, scaleless
+ # RMSNorm, times sigmoid(gate), bf16 out. No PDL, no spin waits (cluster barriers only).
+ #
+-# prepare() builds nothing new: it reads the occupancy / register / spill line, runs a tiny canary
+-# and a self-check of the cluster kernel and of the 16-split Triton kernel (_sliding_forward with
+-# 16 splits, hypothesis sliding-batched-triton-b16-band) against master's own chain, then times the
+-# WHOLE master chain, the cluster launch and the Triton launch as CUDA graphs with the L2 flushed
+-# before every replay, and keeps the fastest. kernel_fn only reads config and the chosen path.
++# Stage 2 (hypothesis sliding-cluster-c4-decode32-s2-k-encode-match): the new key is encoded as master
++# does: bf16 after RoPE (FusedQKNorm's bf16 write), bf16 quotient by the bf16 scale, then torch's
++# NON-saturating E4M3 cast, emulated by a satfinite cvt plus a per-element select of sign | 0x7F at and
++# above the overflow edge that prepare() measures from torch itself. prepare() runs a canary, then a
++# self-check of the kernel against master's own chain in two k-encode modes (with the worst k byte
++# mismatches and their classes printed, "within one code" on the sign-magnitude ordinal with -0 == +0,
++# the NaN class exact, synthetic rows straddling 448 / 464 / 480), a two-state graph alternation, and the
++# whole-chain timing selector (master chain vs the cluster launch as CUDA graphs, L2 flushed before every
++# replay, the cluster must win by SLIDE_MIN_GAIN). Everything the launch reads besides the step's inputs
++# is in the per-state dict; kernel_fn only reads config and state["slide_path"]. The stage-1 16-split
++# Triton candidate is dropped: its tickets live in a module global, which the two-state rule forbids.
+ # ---------------------------------------------------------------------------------------------
+ 
+ _SLIDE_CPP = r"""
+@@ -2361,7 +2368,8 @@ torch::Tensor slide_setup();
+ void slide_attn(torch::Tensor qkv, torch::Tensor positions, torch::Tensor cache_loc, torch::Tensor seq_lens,
+                 torch::Tensor page_table, torch::Tensor inv_freq, torch::Tensor k_scale, torch::Tensor v_scale,
+                 torch::Tensor k_cache, torch::Tensor v_cache, torch::Tensor out,
+-                int64_t C, int64_t window, double q_scale, double score_scale, double eps);
++                int64_t C, int64_t window, double q_scale, double score_scale, double eps, double nan_thr,
++                int64_t enc_mode);
+ """
+ 
+ _SLIDE_CUDA = r"""
+@@ -2442,6 +2450,21 @@ __device__ __forceinline__ uint16_t f32x2_to_e4m3x2(float lo, float hi) {
+   asm("cvt.rn.satfinite.e4m3x2.f32 %0, %1, %2;\n" : "=h"(r) : "f"(hi), "f"(lo));
+   return r;
+ }
++// torch's float8_e4m3fn conversion (c10 fp8e4m3fn_from_fp32_value) does not saturate: it is round to
++// nearest even to the E4M3 grid and writes 0x7F (NaN) | sign for |x| above its overflow edge (and for
++// NaN / inf). The hardware cvt (satfinite is mandatory on sm_90) never yields NaN, so run it and then
++// select, per element, sign | 0x7F where !(|x| < nan_thr). nan_thr comes from prepare(), which measures
++// torch's own edge (the review expects 480, a plain reading of c10's RNE gives > 464); the self-check
++// compares the result against master's bytes. Elements below the edge keep the satfinite result.
++__device__ __forceinline__ uint32_t e4m3_byte_torch(float x, uint32_t sat_byte, float nan_thr) {
++  const uint32_t sign = (__float_as_uint(x) >> 24) & 0x80u;
++  return fabsf(x) < nan_thr ? sat_byte : (sign | 0x7Fu);  // NaN compares false: NaN code
++}
++__device__ __forceinline__ uint16_t f32x2_to_e4m3x2_torch(float lo, float hi, float nan_thr) {
++  const uint16_t r = f32x2_to_e4m3x2(lo, hi);
++  return static_cast<uint16_t>(e4m3_byte_torch(lo, r & 0xFFu, nan_thr) | (e4m3_byte_torch(hi, r >> 8, nan_thr) << 8));
++}
++__device__ __forceinline__ float bf16_round(float x) { return __bfloat162float(__float2bfloat16_rn(x)); }
+ __device__ __forceinline__ uint32_t pack_f16x2(float lo, float hi) {
+   __half2 h = __floats2half2_rn(lo, hi);  // .x (low half) = lo
+   return *reinterpret_cast<uint32_t*>(&h);
+@@ -2610,7 +2633,7 @@ sliding_cluster_kernel(const __nv_bfloat16* __restrict__ qkv, int64_t qkv_stride
+                        const float* __restrict__ inv_freq, const float* __restrict__ k_scale_p,
+                        const float* __restrict__ v_scale_p, uint8_t* kc, uint8_t* vc,
+                        __nv_bfloat16* __restrict__ out, int C, int window, float q_scale, float score_scale,
+-                       float eps) {
++                       float eps, float nan_thr, int enc_mode) {
+   extern __shared__ __align__(128) uint8_t smem[];
+   uint8_t* XK = smem + XK_OFF;
+   uint8_t* XV = smem + XV_OFF;
+@@ -2671,7 +2694,10 @@ sliding_cluster_kernel(const __nv_bfloat16* __restrict__ qkv, int64_t qkv_stride
+       const int r = 1 + (x >> 4), part = x & 15;
+       *reinterpret_cast<uint4*>((part < 8 ? XK : XV) + r * ROW + (part & 7) * 16) = make_uint4(0u, 0u, 0u, 0u);
+     }
+-    const float ksc = __ldg(k_scale_p), vsc = __ldg(v_scale_p);
++    // Master: FusedQKNorm writes bf16, then (bf16 tensor) / (0-dim fp32 scale) is a bf16 tensor (the divisor
++    // is promoted to bf16, the quotient rounded to bf16; exact for power-of-two scales and a no-op at 1),
++    // then c10's non-saturating E4M3 cast. No bf16 rounding before RoPE: the norm and the rotation stay fp32.
++    const float ksc = bf16_round(__ldg(k_scale_p)), vsc = bf16_round(__ldg(v_scale_p));
+     for (int u = warp; u < 2 * HKV; u += WARPS) {
+       const bool isv = u >= HKV;
+       const int g = u % HKV;
+@@ -2686,12 +2712,16 @@ sliding_cluster_kernel(const __nv_bfloat16* __restrict__ qkv, int64_t qkv_stride
+         const float r = 1.f / sqrtf(ss / D + eps);
+         xe *= r;
+         xo *= r;
++        if (enc_mode & 1) {  // prepare() picks it only if master's bytes need it: normed k rounded to bf16 before RoPE
++          xe = bf16_round(xe);
++          xo = bf16_round(xo);
++        }
+         float sn, cs;
+         sincosf(pos * fr, &sn, &cs);
+         const float ye = xe * cs - xo * sn, yo = xe * sn + xo * cs;
+-        packed = f32x2_to_e4m3x2(ye / ksc, yo / ksc);
++        packed = f32x2_to_e4m3x2_torch(bf16_round(bf16_round(ye) / ksc), bf16_round(bf16_round(yo) / ksc), nan_thr);
+       } else {
+-        packed = f32x2_to_e4m3x2(xe / vsc, xo / vsc);
++        packed = f32x2_to_e4m3x2_torch(bf16_round(xe / vsc), bf16_round(xo / vsc), nan_thr);
+       }
+       const int64_t loc = cache_loc[b];
+       *reinterpret_cast<uint16_t*>((isv ? vc : kc) + loc * ROW + g * D + 2 * lane) = packed;
+@@ -2898,7 +2928,8 @@ torch::Tensor slide_setup() {
+ void slide_attn(torch::Tensor qkv, torch::Tensor positions, torch::Tensor cache_loc, torch::Tensor seq_lens,
+                 torch::Tensor page_table, torch::Tensor inv_freq, torch::Tensor k_scale, torch::Tensor v_scale,
+                 torch::Tensor k_cache, torch::Tensor v_cache, torch::Tensor out,
+-                int64_t C, int64_t window, double q_scale, double score_scale, double eps) {
++                int64_t C, int64_t window, double q_scale, double score_scale, double eps, double nan_thr,
++                int64_t enc_mode) {
+   const int64_t B = seq_lens.size(0);
+   TORCH_CHECK(B >= 1 && B <= 32, "slide_attn: batch out of range (one wave of clusters)");
+   TORCH_CHECK(C == 4, "slide_attn: only cluster size 4 is built");
+@@ -2939,7 +2970,7 @@ void slide_attn(torch::Tensor qkv, torch::Tensor positions, torch::Tensor cache_
+       k_scale.data_ptr<float>(), v_scale.data_ptr<float>(), reinterpret_cast<uint8_t*>(k_cache.data_ptr()),
+       reinterpret_cast<uint8_t*>(v_cache.data_ptr()), reinterpret_cast<__nv_bfloat16*>(out.data_ptr()),
+       static_cast<int>(C), static_cast<int>(window), static_cast<float>(q_scale), static_cast<float>(score_scale),
+-      static_cast<float>(eps)));
++      static_cast<float>(eps), static_cast<float>(nan_thr), static_cast<int>(enc_mode)));
+ }
+ """
+ 
+@@ -2947,7 +2978,7 @@ SLIDE_C = 4              # cluster size built (one instantiation)
+ SLIDE_B_LO, SLIDE_B_HI = 17, 32
+ SLIDE_NEED_CLUSTERS = 32  # co-resident clusters for one wave at batch 32
+ SLIDE_TAG = "[slide-c4]"
+-SLIDE_SPLITS = 16        # the Triton candidate's window splits
++SLIDE_MIN_GAIN = 1.02    # the selector keeps master unless the cluster launch wins by this factor
+ SLIDE_FLUSH_BYTES = 320 * 2 ** 20  # > 256 MB: evicts the H200's 50 MB L2 before every timed replay
+ SLIDE_TIME_REPS = 30
+ 
+@@ -2967,7 +2998,7 @@ def _build_slide():
+         except Exception as e:
+             print(f"{SLIDE_TAG} nvcc arch flags unavailable: {e!r}", flush=True)
+         ext = load_inline(
+-            name="muse_sliding_cluster_c4_v1",
++            name="muse_sliding_cluster_c4_v2",
+             cpp_sources=_SLIDE_CPP,
+             cuda_sources=_SLIDE_CUDA,
+             functions=["slide_setup", "slide_attn"],
+@@ -2983,45 +3014,42 @@ def _build_slide():
+             os.environ.pop("TORCH_CUDA_ARCH_LIST", None)
+         else:
+             os.environ["TORCH_CUDA_ARCH_LIST"] = prev
+-    print(f"{SLIDE_TAG} load_inline compiled in {time.perf_counter() - t0:.1f}s", flush=True)
++    print(f"{SLIDE_TAG} load_inline compiled in {time.perf_counter() - t0:.1f}s "
++          f"(compile seconds, module muse_sliding_cluster_c4_v2: {time.perf_counter() - t0:.1f})", flush=True)
+     return ext
+ 
+ 
+ _SLIDE_EXT = None        # the compiled module; None keeps master on the band
+-_SLIDE_PATH = "master"   # set once by prepare(): "cluster" | "triton16" | "master"
+ if torch.cuda.is_available():
+     _SLIDE_EXT = _build_slide()
+ 
+ 
+-def _slide_gate(cfg) -> bool:
++def _slide_gate(cfg, state) -> bool:
+     """Config-only predicate: sliding decode, q_len 1, page 1, tp8 heads, 17 <= batch <= 32, and
+-    prepare() chose a non-master path. Everything else keeps master's chain."""
+-    return (_SLIDE_PATH != "master" and cfg["q_len"] == 1 and 0 < cfg["window"] <= 2048
++    this state's prepare() chose the cluster path (state["slide_path"], set once in prepare()).
++    Everything else keeps master's chain."""
++    return (state.get("slide_path") == "cluster" and cfg["q_len"] == 1 and 0 < cfg["window"] <= 2048
+             and cfg["rope_theta"] != 0 and SLIDE_B_LO <= cfg["batch"] <= SLIDE_B_HI
+             and cfg["num_q_heads"] == 16 and cfg["num_kv_heads"] == 2 and cfg["head_dim"] == 64
+             and cfg["page_size"] == 1)
+ 
+ 
+-def _slide_launch(data: Inputs, qkv: torch.Tensor) -> torch.Tensor:
++def _slide_launch(data: Inputs, qkv: torch.Tensor, state, enc_mode: int) -> torch.Tensor:
+     """One launch of sliding_cluster_kernel (C = 4) on the qkv GEMM output [B, 2304]; returns the
+-    normed-and-gated [B, 1024] bf16 input of the o GEMM. No sync, no query, no timing."""
++    normed-and-gated [B, 1024] bf16 input of the o GEMM. No sync, no query, no timing. Everything it
++    reads besides the step's inputs lives in this state (RoPE frequencies, E4M3 overflow edge, mode)."""
+     cfg = data["config"]
+     batch, hq, d = cfg["batch"], cfg["num_q_heads"], cfg["head_dim"]
+     out = torch.empty((batch, hq * d), dtype=torch.bfloat16, device=qkv.device)
+     _SLIDE_EXT.slide_attn(
+         qkv, data["positions"], data["cache_loc"], data["seq_lens"], data["page_table"],
+-        _inv_freq(cfg["rope_theta"], d, qkv.device), data["k_scale"], data["v_scale"],
++        state["slide_inv_freq"], data["k_scale"], data["v_scale"],
+         data["k_cache"], data["v_cache"], out,
+-        SLIDE_C, cfg["window"], cfg["qk_scale_factor"], cfg["sm_scale"] * LOG2E, RMS_EPS)
++        SLIDE_C, cfg["window"], cfg["qk_scale_factor"], cfg["sm_scale"] * LOG2E, RMS_EPS,
++        state["slide_nan_thr"], enc_mode)
+     return out
+ 
+ 
+-def _slide_forward(data: Inputs, qkv: torch.Tensor) -> torch.Tensor:
+-    """The gated path chosen by prepare() (a module constant, not data)."""
+-    if _SLIDE_PATH == "cluster":
+-        return _slide_launch(data, qkv)
+-    return _sliding_forward(data, qkv, splits=SLIDE_SPLITS)
+-
+ 
+ def _slide_rms(x):
+     return x * torch.rsqrt(x.pow(2).mean(-1, keepdim=True) + RMS_EPS)
+@@ -3125,27 +3153,64 @@ def _slide_rel(a, b):
+     return float((a.float() - b.float()).norm() / b.float().norm().clamp_min(1e-30))
+ 
+ 
+-def _slide_cache_ok(mine, master, loc, exact):
+-    """New rows (at cache_loc) of a path vs master's, and nothing else written. v rows must be byte
+-    exact (a bf16 / 2^-n division is exact); k rows may differ by one E4M3 code in a few percent of
+-    bytes (master rounds through bf16 first, the kernels from fp32). Returns (ok, note)."""
++def _fp8_ord(u):
++    """Sign-magnitude ordinal of E4M3 bytes held in an int16 tensor (-0 == +0 == 0); NaN codes excluded."""
++    mag = u & 0x7F
++    return torch.where((u & 0x80) != 0, -mag, mag)
++
++
++def _slide_cache_ok(mine, master, loc, exact, label, pre=None, scale=1.0):
++    """New rows (at cache_loc) of the cluster path vs master's, and nothing else written. "Within one
++    code" is the sign-magnitude ordinal distance <= 1 with -0 == +0 (a 0x00 / 0x80 crossing is the same
++    value, not a mismatch); the overflow class must match EXACTLY: a NaN code (0x7F | sign, what torch's
++    non-saturating cast writes) in one and not the other, or with a different sign, fails. v rows must be
++    byte exact (a bf16 / 2^-n division is exact); k rows may differ by one code in a few percent of bytes.
++    Prints the class counts and the worst mismatches (master byte, new byte, fp32 pre-quant value, its
++    bf16 value, |x / kv_scale|). Returns (ok, note, byte mismatch fraction)."""
+     a = mine.view(torch.uint8).view(-1, 128)
+     m = master.view(torch.uint8).view(-1, 128)
+-    af, mf = a[loc].view(FP8).float(), m[loc].view(FP8).float()
+-    mism = float((a[loc] != m[loc]).float().mean())
+-    within = bool(((af - mf).abs() <= 0.126 * mf.abs() + 2.0 ** -9).all())
++    ab, mb = a[loc].to(torch.int16), m[loc].to(torch.int16)
++    a_nan, m_nan = (ab & 0x7F) == 0x7F, (mb & 0x7F) == 0x7F
++    any_nan = a_nan | m_nan
++    diff = ab != mb
++    dist = (_fp8_ord(ab) - _fp8_ord(mb)).abs()
++    nan_bad = (a_nan != m_nan) | (a_nan & m_nan & diff)
++    far = diff & ~any_nan & (dist > 1)
++    one = diff & ~any_nan & (dist == 1)
++    zero_eq = diff & ~any_nan & (dist == 0)
++    mism = float(diff.float().mean())
++    n_nb, n_far, n_one, n_zero = (int(x.sum()) for x in (nan_bad, far, one, zero_eq))
++    within = n_nb == 0 and n_far == 0
++    sat_m, sat_a = int(((mb & 0x7F) == 0x7E).sum()), int(((ab & 0x7F) == 0x7E).sum())
++    print(f"{SLIDE_TAG}   {label} classes: overflow(NaN code mismatch) {n_nb}, > 1 code {n_far}, 1 code {n_one}, "
++          f"+-0 equal value {n_zero}; NaN codes master {int(m_nan.sum())} new {int(a_nan.sum())}; "
++          f"0x7E/0xFE master {sat_m} new {sat_a}", flush=True)
++    if bool(diff.any()):
++        score = torch.where(diff, torch.where(nan_bad, torch.full_like(dist, 1000), dist + 1), torch.zeros_like(dist))
++        top = torch.topk(score.flatten().float(), min(6, int(diff.sum()))).indices.tolist()
++        rows = []
++        for f in top:
++            b, e = divmod(f, 128)
++            cls = ("overflow(NaN code)" if bool(nan_bad[b, e]) else f"{int(dist[b, e])} codes" if bool(far[b, e])
++                   else "1 code" if bool(one[b, e]) else "+-0 equal value")
++            x = f"{float(pre[b, e]):.6g}" if pre is not None else "n/a"
++            xb = f"{float(pre[b, e].bfloat16().float()):.6g}" if pre is not None else "n/a"
++            q = f"{abs(float(pre[b, e].bfloat16().float())) / scale:.6g}" if pre is not None else "n/a"
++            rows.append(f"[b{b} e{e}: master 0x{int(mb[b, e]):02X} new 0x{int(ab[b, e]):02X} fp32 {x} bf16 {xb} "
++                        f"|x/kv_scale| {q} {cls}]")
++        print(f"{SLIDE_TAG}   worst {label} mismatches: " + " ".join(rows), flush=True)
+     a[loc] = m[loc]
+     rest = bool(torch.equal(a, m))
+     ok = rest and within and (mism == 0.0 if exact else mism < 0.06)
+-    return ok, f"byte mismatch {mism:.4f}, within one code {within}, other rows untouched {rest}"
++    return ok, f"byte mismatch {mism:.4f}, within one code {within}, other rows untouched {rest}", mism
+ 
+ 
+-def _slide_canary(device) -> bool:
++def _slide_canary(device, state) -> bool:
+     """A tiny synthetic first launch of the cluster kernel (B=1, 40 keys, slot 0 as the new row)."""
+     try:
+         gen = torch.Generator(device=device).manual_seed(97)
+         data, qkv = _slide_synthetic([40], 1.0, gen, device)
+-        out = _slide_run("sliding_cluster_kernel canary", lambda: _slide_launch(data, qkv), 1)
++        out = _slide_run("sliding_cluster_kernel canary", lambda: _slide_launch(data, qkv, state, 0), 1)
+         ok = bool(torch.isfinite(out).all())
+         print(f"{SLIDE_TAG} canary: output finite {ok}", flush=True)
+         return ok
+@@ -3162,78 +3227,205 @@ _SLIDE_CASES = (  # (lens, kv_scale): below, at and past the window; batches 17
+ )
+ 
+ 
+-def _slide_self_check(state, device, do_cluster, do_triton):
+-    """Eager check on synthetic data only, never in the timed path: master's own chain (_master_attn)
+-    against the fp32 reference, then each candidate against the fp32 reference (own query rounding
+-    and unrounded, calibrated against master's own error) and against master's new cache rows, and
+-    one graph capture + replay of the cluster launch. Returns (cluster_ok, triton_ok)."""
+-    gen = torch.Generator(device=device).manual_seed(4321)
+-    c_ok, t_ok = do_cluster, do_triton
+-    try:
+-        data = None
+-        for lens, kv_scale in _SLIDE_CASES:
+-            data, qkv = _slide_synthetic(lens, kv_scale, gen, device)
+-            batch = len(lens)
+-            d_m, d_c, d_t = _slide_clone(data), _slide_clone(data), _slide_clone(data)
+-            o_m = _slide_run("master chain (FusedQKNorm .. FusedRMSNormGate)",
+-                             lambda: _master_attn(d_m, state, qkv).float(), batch)
+-            ref_none = _slide_reference(data, qkv, lens, d_m["k_cache"], d_m["v_cache"], False)
+-            err_m = _slide_rel(o_m, ref_none)
+-            note = f"{SLIDE_TAG} self-check B={batch} kv_scale={kv_scale:g}: master rel L2 {err_m:.2e}"
+-            loc = data["cache_loc"]
+-            if do_cluster and c_ok:
+-                o_c = _slide_run("sliding_cluster_kernel", lambda: _slide_launch(d_c, qkv).float(), batch)
+-                ref_own = _slide_reference(data, qkv, lens, d_c["k_cache"], d_c["v_cache"], True)
+-                e_own = _slide_rel(o_c, ref_own)
+-                e_none = _slide_rel(o_c, ref_none)
+-                kok, knote = _slide_cache_ok(d_c["k_cache"], d_m["k_cache"], loc, False)
+-                vok, vnote = _slide_cache_ok(d_c["v_cache"], d_m["v_cache"], loc, True)
+-                ok = (bool(torch.isfinite(o_c).all()) and e_own < 2e-2 and e_none <= 2.5 * err_m + 5e-3
+-                      and kok and vok)
+-                note += (f"; cluster own-rounding rel L2 {e_own:.2e}, vs fp32 {e_none:.2e}, k [{knote}], "
+-                         f"v [{vnote}] -> {'ok' if ok else 'FAIL'}")
+-                c_ok = c_ok and ok
+-            if do_triton and t_ok:
+-                o_t = _slide_run(f"_sliding_fused_kernel splits={SLIDE_SPLITS}",
+-                                 lambda: _sliding_forward(d_t, qkv, splits=SLIDE_SPLITS).float(), batch)
+-                e_t = _slide_rel(o_t, ref_none)
+-                kok, knote = _slide_cache_ok(d_t["k_cache"], d_m["k_cache"], loc, False)
+-                vok, vnote = _slide_cache_ok(d_t["v_cache"], d_m["v_cache"], loc, True)
+-                ok = bool(torch.isfinite(o_t).all()) and e_t < 2e-2 and kok and vok
+-                note += f"; triton16 vs fp32 {e_t:.2e}, k [{knote}], v [{vnote}] -> {'ok' if ok else 'FAIL'}"
+-                t_ok = t_ok and ok
+-            print(note, flush=True)
+-        if do_cluster and c_ok:
+-            # The judge replays kernel_fn as a CUDA graph: capture the cluster launch once.
+-            d_g = _slide_clone(data)
+-            eager = _slide_run("sliding_cluster_kernel graph-eager", lambda: _slide_launch(d_g, qkv), len(_SLIDE_CASES[-1][0]))
+-            graph = torch.cuda.CUDAGraph()
+-            with torch.cuda.graph(graph):
+-                static = _slide_launch(d_g, qkv)
+-            print(f"{SLIDE_TAG} replaying the captured sliding_cluster_kernel graph ...", flush=True)
+-            graph.replay()
+-            torch.cuda.synchronize()
+-            same = bool(torch.equal(static, eager))
+-            print(f"{SLIDE_TAG} graph capture + replay {'matches eager' if same else 'DIFFERS'}", flush=True)
+-            c_ok = c_ok and same
+-            del graph
+-    except Exception as e:
+-        print(f"{SLIDE_TAG} self-check raised: {e!r}", flush=True)
+-        return False, False
+-    return c_ok, t_ok
++def _slide_probe_nan_thr(device):
++    """Measure torch's own E4M3 overflow edge on the exact op master uses (bf16 tensor .to(float8_e4m3fn)).
++    The review expects NaN (0x7F | sign) only from |x| >= 480; a plain reading of c10's round-to-nearest-even
++    puts the edge just above 464 (the tie, which rounds to the even 0x7E). bf16 values here are 2 apart, so
++    the probe tells which. Returns the smallest |x| that maps to the NaN code, or None if torch's behaviour is
++    not 'RNE below an edge, NaN code at and above it' (then the path stays off)."""
++    mags = torch.arange(400.0, 520.0, 2.0)
++    x = torch.cat([mags, -mags, torch.tensor([float("inf"), float("-inf"), float("nan")])]).to(device).to(torch.bfloat16)
++    b = x.to(FP8).view(torch.uint8).cpu().tolist()
++    xs = x.float().cpu().tolist()
++    nan_mags = sorted({abs(v) for v, c in zip(xs, b) if v == v and abs(v) != float("inf") and (c & 0x7F) == 0x7F})
++    if not nan_mags:
++        print(f"{SLIDE_TAG} probe: torch's cast never produced a NaN code below 520", flush=True)
++        return None
++    edge = nan_mags[0]
++    bad = []
++    for v, c in zip(xs, b):
++        if v != v or abs(v) == float("inf"):
++            want = 0x7F | (0x80 if (v < 0) else 0)
++        elif abs(v) >= edge:
++            want = 0x7F | (0x80 if v < 0 else 0)
++        elif 448.0 <= abs(v):
++            want = 0x7E | (0x80 if v < 0 else 0)
++        else:
++            continue
++        if c != want:
++            bad.append((v, c, want))
++    at = {v: c for v, c in zip(xs, b) if v in (448.0, 450.0, 464.0, 466.0, 478.0, 480.0, 482.0)}
++    print(f"{SLIDE_TAG} probe: torch float8_e4m3fn cast NaN edge: first NaN |x| = {edge:g}; bytes at "
++          + ", ".join(f"{v:g}->0x{c:02X}" for v, c in sorted(at.items())) + f"; inconsistent {len(bad)}", flush=True)
++    return float(edge) if not bad else None
++
++
++def _slide_prequant(data, qkv):
++    """fp32 post-RoPE normed k [B, 128] and raw v [B, 128] of the step (for the mismatch print only)."""
++    cfg = data["config"]
++    batch, hq, hkv, d = cfg["batch"], cfg["num_q_heads"], cfg["num_kv_heads"], cfg["head_dim"]
++    kf = qkv[:, hq * d:(hq + hkv) * d].float().reshape(batch, hkv, d)
++    kn = _slide_rope(_slide_rms(kf), data["positions"], _inv_freq(cfg["rope_theta"], d, qkv.device))
++    return kn.reshape(batch, hkv * d), qkv[:, (hq + hkv) * d:(hq + 2 * hkv) * d].float()
++
+ 
++_SLIDE_OVF_SCALE = 1.0 / 64.0
+ 
+-def _slide_select(state, device, candidates):
+-    """Time the WHOLE master chain and each candidate as a CUDA graph at B=32, the L2 flushed by a
+-    320 MB write before every replay, interleaved. Returns (medians in us by name, or None)."""
++
++def _slide_overflow_case(gen, device):
++    """Batch 32 at kv_scale 1/64 with rows engineered so |x / kv_scale| straddles 448, 464 and 480 (and
++    reaches 510): per (request, kv head) one hot key lane (dims 0, 1 = +-1, 0) plus a noise tail whose
++    energy sets the normed hot value to 512 / sqrt(1 + R^2); positions are 0, so RoPE is the identity
++    and the encoded value is that normed value / kv_scale (bf16-exact scale). The values dimension gets
++    raw v at +-430..520 * kv_scale. Cache bytes only are compared (the outputs hold NaN keys, as master's)."""
++    lens = _SLIDE_LENS17 + [n + 7 for n in _SLIDE_LENS17[:15]]
++    data, qkv = _slide_synthetic(lens, _SLIDE_OVF_SCALE, gen, device)
++    data["positions"] = torch.zeros_like(data["positions"])
++    batch, hq, hkv, d = len(lens), 16, 2, 64
++    rows = batch * hkv
++    tgt = torch.cat([torch.linspace(444, 452, 16), torch.linspace(460, 468, 16),
++                     torch.linspace(476, 484, 16), torch.linspace(490, 510, rows - 48)]).to(device)
++    tgt = tgt[torch.randperm(rows, generator=gen, device=device)]
++    r2 = ((512.0 / tgt) ** 2 - 1.0 - 64.0 * RMS_EPS).clamp_min(0.0)
++    tail = torch.randn((rows, d), generator=gen, device=device)
++    tail[:, :2] = 0
++    tail = tail / tail.norm(dim=1, keepdim=True) * r2.sqrt()[:, None]
++    tail[:, 0] = (torch.rand(rows, generator=gen, device=device) > 0.5).float() * 2 - 1
++    qkv[:, hq * d:(hq + hkv) * d] = tail.view(batch, hkv * d).to(torch.bfloat16)
++    mag = 430.0 + 90.0 * torch.rand((batch, hkv * d), generator=gen, device=device)
++    sgn = (torch.rand((batch, hkv * d), generator=gen, device=device) > 0.5).float() * 2 - 1
++    qkv[:, (hq + hkv) * d:(hq + 2 * hkv) * d] = (sgn * mag * _SLIDE_OVF_SCALE).to(torch.bfloat16)
++    return lens, data, qkv
++
++
++def _slide_compare(label, o_c, d_c, o_m, d_m, data, qkv, lens, kv_scale, check_out):
++    """One candidate result against master's (same inputs): output vs the fp32 reference (own query
++    rounding, and unrounded calibrated on master's own error), k and v bytes vs master's. Returns
++    (ok, k byte mismatch fraction)."""
++    loc = data["cache_loc"]
++    pre_k, pre_v = _slide_prequant(data, qkv)
++    refs = None
++    if check_out:  # before the cache comparison below, which copies master's new rows into d_c
++        refs = (_slide_reference(data, qkv, lens, d_m["k_cache"], d_m["v_cache"], False),
++                _slide_reference(data, qkv, lens, d_c["k_cache"], d_c["v_cache"], True))
++    kok, knote, kmis = _slide_cache_ok(d_c["k_cache"], d_m["k_cache"], loc, False, label + " k", pre_k, kv_scale)
++    vok, vnote, _ = _slide_cache_ok(d_c["v_cache"], d_m["v_cache"], loc, True, label + " v", pre_v, kv_scale)
++    note = f"{SLIDE_TAG} {label}: k [{knote}], v [{vnote}]"
++    ok = kok and vok
++    if check_out:
++        ref_none, ref_own = refs
++        err_m = _slide_rel(o_m, ref_none)
++        e_own, e_none = _slide_rel(o_c, ref_own), _slide_rel(o_c, ref_none)
++        ok = ok and bool(torch.isfinite(o_c).all()) and e_own < 2e-2 and e_none <= 2.5 * err_m + 5e-3
++        note += (f"; master rel L2 {err_m:.2e}, cluster own-rounding rel L2 {e_own:.2e}, vs fp32 {e_none:.2e}")
++    print(note + f" -> {'ok' if ok else 'FAIL'}", flush=True)
++    return ok, kmis
++
++
++def _slide_self_check(state, device):
++    """Eager check on synthetic data only, never in the timed path: per k-encode mode (0 = fp32 norm and
++    RoPE with a single bf16 round, as the review expects of master's FusedQKNorm; 1 = also a bf16 round of
++    the normed k before RoPE) the cluster kernel against master's own chain and the fp32 reference on the
++    three stage-1 cases plus the 448 / 464 / 480 overflow case. Picks the passing mode with the fewest k
++    byte mismatches (ties: mode 0). Returns the mode or None."""
++    gen = torch.Generator(device=device).manual_seed(4321)
++    cases = []
++    for lens, kv_scale in _SLIDE_CASES:
++        data, qkv = _slide_synthetic(lens, kv_scale, gen, device)
++        cases.append((lens, kv_scale, data, qkv, True))
++    lens, data, qkv = _slide_overflow_case(gen, device)
++    cases.append((lens, _SLIDE_OVF_SCALE, data, qkv, False))
++    masters = []
++    for lens, kv_scale, data, qkv, check_out in cases:
++        d_m = _slide_clone(data)
++        o_m = _slide_run("master chain (FusedQKNorm .. FusedRMSNormGate)",
++                         lambda: _master_attn(d_m, state, qkv).float(), len(lens))
++        masters.append((d_m, o_m))
++        if not check_out:
++            mk = d_m["k_cache"].view(torch.uint8).view(-1, 128)[data["cache_loc"]]
++            mv = d_m["v_cache"].view(torch.uint8).view(-1, 128)[data["cache_loc"]]
++            n_nan, n_sat = int(((mk & 0x7F) == 0x7F).sum()), int(((mk & 0x7F) == 0x7E).sum())
++            nv_nan, nv_sat = int(((mv & 0x7F) == 0x7F).sum()), int(((mv & 0x7F) == 0x7E).sum())
++            print(f"{SLIDE_TAG} overflow case at kv_scale {kv_scale:g}: master k NaN codes {n_nan}, 0x7E/0xFE {n_sat}; "
++                  f"v NaN codes {nv_nan}, 0x7E/0xFE {nv_sat}", flush=True)
++            if n_nan == 0 or n_sat == 0 or nv_nan == 0 or nv_sat == 0:
++                print(f"{SLIDE_TAG} WARNING: the overflow case did not exercise both classes in master's bytes", flush=True)
++    results = {}
++    for mode in (0, 1):
++        ok_all, mism = True, 0.0
++        for (lens, kv_scale, data, qkv, check_out), (d_m, o_m) in zip(cases, masters):
++            d_c = _slide_clone(data)
++            o_c = _slide_run(f"sliding_cluster_kernel enc_mode={mode}",
++                             lambda: _slide_launch(d_c, qkv, state, mode).float(), len(lens))
++            ok, kmis = _slide_compare(f"B={len(lens)} kv_scale={kv_scale:g} enc_mode={mode}",
++                                      o_c, d_c, o_m, d_m, data, qkv, lens, kv_scale, check_out)
++            ok_all, mism = ok_all and ok, mism + kmis
++        results[mode] = (ok_all, mism)
++        print(f"{SLIDE_TAG} enc_mode={mode}: {'passes every case' if ok_all else 'FAILS'}, summed k byte mismatch "
++              f"fraction {mism:.4f}", flush=True)
++    passing = [(mism, mode) for mode, (ok, mism) in results.items() if ok]
++    return min(passing)[1] if passing else None
++
++
++def _slide_two_state_check(state, device, mode):
++    """The judge prepares two state copies and rotates them: build two independent step states (own
++    caches, tables, qkv, output), capture one CUDA graph per state, then alternate replays 0, 1, 0, 1 ...
++    with every input refilled in place (new keys, shuffled lengths, new page tables) and compare each
++    replay with master's chain on the same inputs; the other state's last output must not change."""
++    gen = torch.Generator(device=device).manual_seed(2026)
++    base = [(_SLIDE_LENS17 + [n + 7 for n in _SLIDE_LENS17[:15]], 0.25),
++            ([2300 + 61 * i for i in range(32)], 1.0)]
++    states = []
++    for lens, kv_scale in base:
++        data, qkv = _slide_synthetic(lens, kv_scale, gen, device)
++        states.append({"lens": lens, "scale": kv_scale, "data": data, "qkv": qkv})
++    for i, st in enumerate(states):
++        _slide_run(f"two-state warm-up state {i}", lambda: _slide_launch(st["data"], st["qkv"], state, mode), 32)
++        st["graph"] = torch.cuda.CUDAGraph()
++        print(f"{SLIDE_TAG} capturing the cluster launch on state {i} ...", flush=True)
++        with torch.cuda.graph(st["graph"]):
++            st["out"] = _slide_launch(st["data"], st["qkv"], state, mode)
++        torch.cuda.synchronize()
++        print(f"{SLIDE_TAG} captured state {i} ok", flush=True)
++    ok_all, last = True, [None, None]
++    for step in range(6):
++        i = step % 2
++        st = states[i]
++        lens = list(st["lens"])
++        order = torch.randperm(len(lens), generator=torch.Generator().manual_seed(100 + step)).tolist()
++        lens = [lens[j] for j in order]
++        new, new_qkv = _slide_synthetic(lens, st["scale"], gen, device)
++        for key in ("positions", "cache_loc", "cache_seqlens", "k_cache", "v_cache", "page_table", "seq_lens"):
++            st["data"][key].copy_(new[key])
++        st["qkv"].copy_(new_qkv)
++        st["lens"] = lens
++        d_m = _slide_clone(st["data"])
++        o_m = _slide_run(f"two-state master chain state {i} step {step}",
++                         lambda: _master_attn(d_m, state, st["qkv"]).float(), 32)
++        print(f"{SLIDE_TAG} replaying state {i}'s captured graph (step {step}) ...", flush=True)
++        st["graph"].replay()
++        torch.cuda.synchronize()
++        print(f"{SLIDE_TAG} state {i} replay {step} ok", flush=True)
++        o_c = st["out"].float().clone()
++        if last[1 - i] is not None and not torch.equal(states[1 - i]["out"].float(), last[1 - i]):
++            ok_all = False
++            print(f"{SLIDE_TAG} state {1 - i}'s output changed during state {i}'s replay (aliased buffers)", flush=True)
++        last[i] = o_c
++        ok, _ = _slide_compare(f"two-state step {step} state {i}", o_c, st["data"], o_m, d_m, st["data"], st["qkv"],
++                               lens, st["scale"], True)
++        ok_all = ok_all and ok
++    for st in states:
++        del st["graph"]
++    return ok_all
++
++
++def _slide_select(state, device, mode):
++    """Time the WHOLE master chain (FusedQKNorm .. FusedRMSNormGate) and the cluster launch as CUDA graphs at
++    B=32, the L2 flushed by a 320 MB write before every replay, interleaved. Returns medians in us."""
+     lens = [3000 + 97 * i for i in range(32)]  # every window full, as the scored decode_32
+     gen = torch.Generator(device=device).manual_seed(777)
+     data, qkv = _slide_synthetic(lens, 1.0, gen, device)
+-    fns = {"master": lambda: _master_attn(data, state, qkv)}
+-    if "cluster" in candidates:
+-        fns["cluster"] = lambda: _slide_launch(data, qkv)
+-    if "triton16" in candidates:
+-        fns["triton16"] = lambda: _sliding_forward(data, qkv, splits=SLIDE_SPLITS)
++    fns = {"master": lambda: _master_attn(data, state, qkv), "cluster": lambda: _slide_launch(data, qkv, state, mode)}
+     flush = torch.empty(SLIDE_FLUSH_BYTES, dtype=torch.uint8, device=device)
+     graphs = {}
+     for name, fn in fns.items():
+@@ -3265,14 +3457,14 @@ def _slide_select(state, device, candidates):
+ 
+ 
+ def _slide_prepare(state, device):
+-    """Once per process, before any graph capture: occupancy / register line, canary, self-check,
+-    timed selection; any failure keeps master's chain on the band (never raises)."""
+-    global _SLIDE_PATH
++    """Once per state, before any graph capture: occupancy / register line, E4M3 edge probe, canary,
++    self-check (k-encode mode), two-state graph check, timed selection (the cluster must win by
++    SLIDE_MIN_GAIN); any failure keeps master's chain on the band (never raises). The outcome lives in
++    this state: state["slide_path"], ["slide_enc_mode"], ["slide_nan_thr"], ["slide_inv_freq"]."""
++    state["slide_path"], state["slide_enc_mode"], state["slide_nan_thr"] = "master", 0, 480.0
+     why = None
+     try:
+-        for b in range(SLIDE_B_LO, SLIDE_B_HI + 1):  # ticket counters of the Triton candidate, zeroed eagerly
+-            _counters(b, 2, device)
+-        _inv_freq(ROPE_THETA, 64, device)
++        state["slide_inv_freq"] = _inv_freq(ROPE_THETA, 64, device).clone()
+         cap = tuple(torch.cuda.get_device_capability())
+         print(f"{SLIDE_TAG} device capability {cap}", flush=True)
+         do_cluster = True
+@@ -3286,38 +3478,43 @@ def _slide_prepare(state, device):
+             print(f"{SLIDE_TAG} sliding_cluster_kernel {regs} regs, {local} B local/spill, {smem} B dynamic smem/CTA, "
+                   f"binaryVersion {binv}, ptxVersion {ptxv}; cudaOccupancyMaxActiveClusters C={SLIDE_C} -> {occ}",
+                   flush=True)
++            thr = _slide_probe_nan_thr(device)
+             if binv != 90:
+                 do_cluster, why = False, f"binaryVersion {binv} is not the sm_90 image"
+             elif occ < SLIDE_NEED_CLUSTERS:
+                 do_cluster, why = False, f"max active clusters {occ} < {SLIDE_NEED_CLUSTERS} (one wave at B=32)"
+-            elif not _slide_canary(device):
+-                do_cluster, why = False, "canary failed"
+-        c_ok, t_ok = _slide_self_check(state, device, do_cluster, True)
+-        if do_cluster and not c_ok:
+-            why = "self-check failed"
+-        elif not do_cluster and why is None:
+-            why = "cluster off"
+-        candidates = [n for n, ok in (("cluster", c_ok), ("triton16", t_ok)) if ok]
+-        if not t_ok:
+-            print(f"{SLIDE_TAG} triton16 candidate off: self-check failed or raised", flush=True)
+-        if not candidates:
++            elif thr is None:
++                do_cluster, why = False, "torch's E4M3 overflow behaviour is not an edge the kernel can emulate"
++            else:
++                state["slide_nan_thr"] = thr
++                if not _slide_canary(device, state):
++                    do_cluster, why = False, "canary failed"
++        mode = None
++        if do_cluster:
++            mode = _slide_self_check(state, device)
++            if mode is None:
++                do_cluster, why = False, "self-check failed (k bytes vs master, see the classes above)"
++            else:
++                state["slide_enc_mode"] = mode
++                if not _slide_two_state_check(state, device, mode):
++                    do_cluster, why = False, "two-state graph replay check failed"
++        if not do_cluster:
+             print(f"{SLIDE_TAG} PATH CHOSEN: sliding decode batch {SLIDE_B_LO}..{SLIDE_B_HI}: master chain "
+-                  f"(fallback: {why or 'no candidate passed'})", flush=True)
++                  f"(fallback: {why or 'cluster off'})", flush=True)
+         else:
+-            med = _slide_select(state, device, candidates)
+-            best = min(candidates, key=lambda n: med[n])
++            med = _slide_select(state, device, mode)
+             line = ", ".join(f"{n} {med[n]:.1f} us" for n in med)
+-            if not c_ok:
+-                line += f"; cluster off: {why}"
+-            if med[best] < med["master"]:
+-                _SLIDE_PATH = best
+-                print(f"{SLIDE_TAG} PATH CHOSEN: sliding decode batch {SLIDE_B_LO}..{SLIDE_B_HI}: {best} "
+-                      f"(medians at B=32, L2 flushed: {line})", flush=True)
++            if med["cluster"] * SLIDE_MIN_GAIN <= med["master"]:
++                state["slide_path"] = "cluster"
++                print(f"{SLIDE_TAG} PATH CHOSEN: sliding decode batch {SLIDE_B_LO}..{SLIDE_B_HI}: cluster "
++                      f"(enc_mode {mode}, nan edge {state['slide_nan_thr']:g}; medians at B=32, L2 flushed: {line}; "
++                      f"master/cluster {med['master'] / med['cluster']:.3f}x >= {SLIDE_MIN_GAIN}x)", flush=True)
+             else:
+                 print(f"{SLIDE_TAG} PATH CHOSEN: sliding decode batch {SLIDE_B_LO}..{SLIDE_B_HI}: master chain "
+-                      f"(fallback: no candidate faster; medians at B=32, L2 flushed: {line})", flush=True)
++                      f"(fallback: cluster not >= {SLIDE_MIN_GAIN}x faster; medians at B=32, L2 flushed: {line})",
++                      flush=True)
+     except Exception as e:
+-        _SLIDE_PATH = "master"
++        state["slide_path"] = "master"
+         print(f"{SLIDE_TAG} PATH CHOSEN: sliding decode batch {SLIDE_B_LO}..{SLIDE_B_HI}: master chain "
+               f"(fallback: prepare raised {e!r})", flush=True)
+     print(f"{SLIDE_TAG} PATH CHOSEN: sliding batch 1 _sliding_fused_kernel, sliding 2..16 and > 32 master chain, "
+@@ -3366,14 +3563,94 @@ def prepare(weights):
+     # Small-T dense chain (T <= DL_MAX_TOKENS): constants, PDL probe and self-check; None keeps master.
+     state["dl"] = _dl_setup(weights, state)
+     _align_par_setup(state, device)
++    state["w2_mode"] = _w2_atomic_self_check(state, device)
+     # Full decode at 1 < batch <= 64: split-KV self-check; failure keeps FA3 on every shape.
+     _splitkv_prepare(device)
+-    # Sliding decode at 17 <= batch <= 32: cluster / 16-split Triton self-check and timed selection.
++    # Sliding decode at 17 <= batch <= 32: cluster self-check, two-state check and timed selection.
+     _slide_prepare(state, device)
+     torch.cuda.synchronize()
+     return state
+ 
+ 
++W2_ATOMIC_TOL = 2e-2  # rel L2 vs master's w2 on the post-combine output. Audit: moe's 5e-3 sat on its own
++# measured atomic jitter (4.79e-3); a missing-zero / stale-C bug is O(1) here because the self-check pre-fills C
++# with W2_JUNK, and the judge's bound is 3-15%.
++W2_JUNK = 100.0  # prepare()-only: C (cache3) is filled with this before w2 so stale data cannot pass as zero
++W2_TAG = "[w2-atomic]"
++
++
++def _w2_atomic_self_check(state, device):
++    """Untimed, prepare() only, synthetic inputs, real weights. Picks the T=1 w2 mode through kernel R's
++    align path (dense chain) with remote (-1) routes present: "atomic" (no memset), "atomic_zero", or
++    "master". Compares the post-combine _experts output against master's w2 on identical inputs."""
++    mode, reason = "master", "no candidate passed"
++    dl = state.get("dl")
++    try:
++        if dl is None:
++            reason = "dense chain off: T=1 uses master's align path, not covered"
++            raise RuntimeError(reason)
++        gen = torch.Generator(device=device)
++        gen.manual_seed(20261025)
++        ok = {"atomic": True, "atomic_zero": True}
++        worst = {"atomic": 0.0, "atomic_zero": 0.0}
++        err = {}
++        n_remote = n_local = 0
++        for trial in range(12):
++            ls_val = (0, 32, 96, 224, 160, 64)[trial % 6]
++            ls = torch.tensor([ls_val], dtype=torch.int32, device=device)
++            ei = torch.randn((1, D_EXPERT), device=device, generator=gen).to(torch.bfloat16)
++            lg = (torch.randn((1, N_EXPERTS), device=device, generator=gen) * 4.0)
++            k_local = 1 + trial % 4  # 1..4 local slots, the rest remote
++            idx = (torch.randperm(LOCAL_EXPERTS, device=device, generator=gen)[:k_local] + ls_val) % N_EXPERTS
++            lg[0, idx] = 30.0
++            lg = lg.contiguous()
++            xn, (tw, ids, lids, align) = _dl_route(ei, lg, ls, dl)
++            torch.cuda.synchronize()
++            nl = int((lids >= 0).sum())
++            n_local += nl
++            n_remote += TOP_K - nl
++            print(f"{W2_TAG} trial {trial}: master w2 launch (local slots {nl})", flush=True)
++            ref = _experts(xn, tw, lids, state, align=align, w2_mode="master", w2_fill=W2_JUNK).float()
++            torch.cuda.synchronize()
++            print(f"{W2_TAG} trial {trial}: master w2 done", flush=True)
++            for cand in ("atomic", "atomic_zero"):
++                if not ok[cand]:
++                    continue
++                try:
++                    print(f"{W2_TAG} trial {trial}: {cand} w2 launch", flush=True)
++                    out = _experts(xn, tw, lids, state, align=align, w2_mode=cand, w2_fill=W2_JUNK).float()
++                    torch.cuda.synchronize()
++                    print(f"{W2_TAG} trial {trial}: {cand} w2 done", flush=True)
++                    rel = float((out - ref).norm() / ref.norm().clamp_min(1e-12)) if bool(ref.abs().sum() > 0) \
++                        else float(out.abs().max())
++                    if not (bool(torch.isfinite(out).all()) and rel <= W2_ATOMIC_TOL):
++                        ok[cand] = False
++                        err[cand] = f"trial {trial} rel-L2 {rel:.3g}"
++                    worst[cand] = max(worst[cand], rel)
++                except Exception as e:  # binding rejected the combination
++                    ok[cand] = False
++                    err[cand] = f"trial {trial} {type(e).__name__}: {str(e)[:200]}"
++        print(f"{W2_TAG} self-check slots: local {n_local} remote {n_remote}", flush=True)
++        if n_local == 0 or n_remote == 0:
++            raise RuntimeError(f"self-check lacked local ({n_local}) or remote ({n_remote}) routes")
++        for cand in ("atomic", "atomic_zero"):
++            if ok[cand]:
++                mode, reason = cand, f"worst rel-L2 vs master {worst[cand]:.3g}"
++                break
++        else:
++            reason = "; ".join(f"{k} failed ({v})" for k, v in err.items())
++    except Exception as e:
++        mode = "master"
++        reason = f"self-check error {type(e).__name__}: {str(e)[:200]}"
++    if dl is not None:
++        torch.cuda.synchronize()
++        dl["cnt_r"].zero_()  # as _dl_setup does after its own self-check
++    print(f"{W2_TAG} PATH CHOSEN = {'MASTER' if mode == 'master' else mode.upper()} w2 at T=1 ({reason}); "
++          f"use_atomic_add={mode != 'master'} use_fp32_reduce=True memset in path: {mode == 'atomic_zero'}; "
++          "T>1 MASTER", flush=True)
++    return mode
++
++
+ def _expert_dispatch(topk_ids, topk_weights, local_start, num_tokens, state):
+     """Routing-only half of master's _experts (expert_map gather, fp32 cast, moe_align_block_size);
+     topk_ids are the raw routing ids. Returns (local_ids, topk_weights fp32, (sorted_ids, block_experts,
+@@ -3390,12 +3667,16 @@ def _expert_dispatch(topk_ids, topk_weights, local_start, num_tokens, state):
+     return local_ids, tw, align
+ 
+ 
+-def _experts(x, topk_weights, topk_ids, state, align=None, dispatch=None):
++def _experts(x, topk_weights, topk_ids, state, align=None, dispatch=None, w2_mode=None, w2_fill=None):
+     """MuseSpark1xFp4Experts._marlin_expert_outputs and its post-expert-norm finalize.
+ 
+     align=None: master (topk_ids are (id - local_start) % 256; expert_map gather, fp32 cast and
+     moe_align_block_size here). Otherwise kernel R already produced them: topk_ids are the int32
+-    local ids (-1 remote), topk_weights fp32 contiguous, align = (sorted_ids, block_experts, n_padded)."""
++    local ids (-1 remote), topk_weights fp32 contiguous, align = (sorted_ids, block_experts, n_padded).
++
++    w2-marlin-atomic-add-t1-port: at num_tokens == 1 with kernel R's align, the w2 call may use
++    use_atomic_add=True (use_fp32_reduce stays True, cache3 still aliases cache13); w2_mode None reads
++    state["w2_mode"] ("atomic", "atomic_zero" or "master", chosen by prepare()'s self-check)."""
+     bank = state["bank"]
+     num_tokens, size_k = x.shape
+     size_n = bank["size_n"]
+@@ -3424,15 +3705,24 @@ def _experts(x, topk_weights, topk_ids, state, align=None, dispatch=None):
+                   b_q_type=scalar_types.float4_e2m1f, is_k_full=True, use_atomic_add=False,
+                   use_fp32_reduce=True, is_zp_float=False)
+     ws = bank["workspace"]
++    if w2_mode is None:
++        w2_mode = state.get("w2_mode", "master")
++    w2_common = common
++    if w2_mode != "master" and num_tokens == 1 and align is not None and dispatch is None:
++        w2_common = dict(common, use_atomic_add=True)
+     cache1 = moe_wna16_marlin_gemm(
+         x, cache1, bank["w13"], None, bank["w13_s"], bank["w13_gs"], None, None, None, ws,
+         sorted_ids, block_experts, n_padded, topk_weights, top_k=TOP_K,
+         size_m=num_tokens, size_n=gemm1_n, size_k=size_k, **common)
+     silu_and_mul(cache1.view(-1, gemm1_n), cache2, expert_ids=local_ids.view(-1), expert_step=1)
++    if w2_fill is not None:  # prepare() self-check only: junk in C before w2
++        cache3.fill_(w2_fill)
++    if w2_common is not common and w2_mode == "atomic_zero":
++        cache3.zero_()
+     y = moe_wna16_marlin_gemm(
+         cache2, cache3, bank["w2"], None, bank["w2_s"], bank["w2_gs"], None, None, None, ws,
+         sorted_ids, block_experts, n_padded, topk_weights, top_k=1,
+-        size_m=num_tokens * TOP_K, size_n=size_k, size_k=size_n, **common).view(num_tokens, TOP_K, size_k)
++        size_m=num_tokens * TOP_K, size_n=size_k, size_k=size_n, **w2_common).view(num_tokens, TOP_K, size_k)
+     if num_tokens < SMALL_T_POST_NORM:
+         y = y.contiguous()
+         out = torch.empty((num_tokens, size_k), device=x.device, dtype=torch.bfloat16)
+@@ -3454,13 +3744,13 @@ def kernel_fn(data, state):
+     qkv = _gemm(data["attn_input"], dense["qkv_gate"])
+     # Sliding batch-1 decode only (config-only predicate): attention in one fused launch.
+     # A batch 2..16 sliding branch would sit here (sliding-batched-triton-b16-band). Sliding batch 17..32
+-    # (config-only gate, enabled by prepare()'s self-check and timing selector): one cluster launch or the
+-    # 16-split Triton kernel, whichever prepare() timed fastest against master's whole chain. Every other
++    # (config-only gate, enabled by prepare()'s self-check and timing selector): one cluster launch, kept
++    # only if prepare() timed it faster than master's whole chain. Every other
+     # shape (every verify block, every full layer, other batches) keeps master's chain.
+     if cfg["window"] and batch == 1 and length == 1:
+         o = _sliding_forward(data, qkv)
+-    elif _slide_gate(cfg):
+-        o = _slide_forward(data, qkv)
++    elif _slide_gate(cfg, state):
++        o = _slide_launch(data, qkv, state, state["slide_enc_mode"])
+     else:
+         o = _master_attn(data, state, qkv)
+     attn_output = _gemm(o, dense["o"])  # all-reduce: identity

@@ -61,10 +61,10 @@ controls_for: null
 rewrite_stage: 2
 replaces: FusedQKNorm/rope + FP8 casts + store_cache + FA3 main + FlashAttnFwdCombine + prepare_varlen_num_blocks + FusedRMSNormGate on sliding decode, 17 <= batch <= 32
 review: proceed
-status: running
+status: done
 review_at: 2026-10-25T054427Z
 review_companions: null
-stage: dispatched
+stage: harvested
 claimed_at: 2026-10-25T054427Z
 base_sha: a3136ce5805b8fcc8f1c58fdd3500b1d54aeb06e
 base_blob: e7b58542dc954a2a306648904dbd486bda0c417b
@@ -83,6 +83,13 @@ attempt_file: 2026-10-25T084641Z-check-sliding-cluster-c4-decode32-s2-k-encode-m
 prepared_at: 2026-10-25T084641Z
 job: 7c04214e90354dfa
 dispatched_at: 2026-10-25T084656Z
+outcome: neutral
+verdict_detail: unproven-vs-best
+speedup: 1.2802651084084147
+speedup_ci: [1.2610611317822884, 1.2994690850345407]
+harvested_at: 2026-10-25T091108Z
+best_at_harvest: 1.2725637226942819
+promotion: null
 ---
 
 # sliding-cluster-c4-decode32-s2-k-encode-match
@@ -180,3 +187,36 @@ Audited 2026-10-25 (opus). **Verdict: dispatch-with-fixes** (the fixes are to co
 - Note: the stage-1 k miss at kv_scale 0.25 cannot be overflow. Scaleless-normed |k| <= 8, so |k/0.25| <= 32. It belongs to a near-zero class: stage 1's value-based test failed either a sign flip of one subnormal or a miss of 2 codes. The new ordinal test still fails a +1/-1 flip (distance 2). So the path is taken only if enc_mode 0 or 1 actually reproduces FusedQKNorm's rounding.
 
 Residual risk: if neither enc_mode reproduces FusedQKNorm's near-zero k bytes, the self-check falls back again. The run is then diagnosis only, with the classes printed.
+
+## Result
+
+- job `7c04214e90354dfa` (check), status done, passed True, tests 13/13
+- speedup 1.2803x, 95% CI [1.2611, 1.2995], score 17668.44995730677 µs vs SGLang 22620.3 µs
+- best at harvest: {"speedup": 1.2725637226942819, "ci": [1.2534752668538676, 1.291652178534696], "job": "3fd3fa1f96d045dd"}; base result: muse_decode_layer/hypotheses/done/neutral/sliding-cluster-c4-decode32-port.result.json
+- **outcome: neutral** (unproven-vs-best)
+- files: `muse_decode_layer/hypotheses/done/neutral/sliding-cluster-c4-decode32-s2-k-encode-match.result.json`, `muse_decode_layer/hypotheses/done/neutral/sliding-cluster-c4-decode32-s2-k-encode-match.patch`; branch `hyp/muse_decode_layer/sliding-cluster-c4-decode32-s2-k-encode-match`
+
+## Attribution
+
+| shape | w | base µs | hyp µs | delta | verdict |
+|---|---|---|---|---|---|
+| batch=1 ctx=80000 dist=soft layer=sliding load=decode_1 page=1 repeats=60 | 46 | 127.04 | 123.58 | 1.0271 | flat |
+| batch=1 ctx=80000 dist=soft layer=full load=decode_1 page=1 repeats=60 | 16 | 143.47 | 139.52 | 1.0325 | gained |
+| batch=16 ctx=80000 dist=soft layer=sliding load=decode_16 page=1 spread=agentic | 46 | 213.45 | 217.22 | 0.9994 | flat |
+| batch=16 ctx=80000 dist=soft layer=full load=decode_16 page=1 spread=agentic | 16 | 312.4 | 314.86 | 1.0007 | flat |
+| batch=32 ctx=80000 dist=soft layer=sliding load=decode_32 page=1 spread=agentic | 46 | 241.94 | 253.55 | 0.9963 | flat |
+| batch=32 ctx=80000 dist=soft layer=full load=decode_32 page=1 spread=agentic | 16 | 471.45 | 477.45 | 1.007 | flat |
+| batch=1 ctx=80000 dist=soft layer=sliding load=verify_1 page=1 q_len=8 | 46 | 189.78 | 183.14 | 1.0018 | flat |
+| batch=1 ctx=80000 dist=soft layer=full load=verify_1 page=1 q_len=8 | 16 | 201.65 | 202.0 | 0.9972 | flat |
+| batch=16 ctx=80000 dist=soft layer=sliding load=verify_16 page=1 q_len=8 spread=agentic | 46 | 409.95 | 415.67 | 0.9988 | flat |
+| batch=16 ctx=80000 dist=soft layer=full load=verify_16 page=1 q_len=8 spread=agentic | 16 | 559.08 | 563.17 | 0.9939 | flat |
+| batch=32 ctx=80000 dist=soft layer=sliding load=verify_32 page=1 q_len=8 spread=agentic | 46 | 589.84 | 573.22 | 1.0339 | gained |
+| batch=32 ctx=80000 dist=soft layer=full load=verify_32 page=1 q_len=8 spread=agentic | 16 | 863.51 | 877.01 | 1.0142 | flat |
+
+gained on full decode_1; sliding verify_32. Expected hit: 2/5. Noise ±1.5%.
+
+## Follow-ups
+
+- rewrite stage 2 of `FusedQKNorm/rope + FP8 casts + store_cache + FA3 main + FlashAttnFwdCombine + prepare_varlen_num_blocks + FusedRMSNormGate on sliding decode, 17 <= batch <= 32`: read the replaced kernels' own us per shape (profile top_kernels) against the incumbent and the floor, and check which Milestone it reached. The next stage is `/hypothesize muse_decode_layer "<what to fix or tune>" --kind rewrite --depends-on sliding-cluster-c4-decode32-s2-k-encode-match --stage 3`; a slow or failed first cut is the expected start, not a do-not-retry.
+- unproven-vs-best: the change is not proven either way; a stacked hypothesis (`depends_on: sliding-cluster-c4-decode32-s2-k-encode-match`) that adds a further change in the same area is the only way to learn more (identical code is never re-run).
+

@@ -1,0 +1,103 @@
+[small-t-dense-chain] load_inline compiled in 49.5s
+[splitkv] load_inline compiled in 48.8s
+[slide-c4] nvcc arch flags: ['-gencode=arch=compute_90a,code=sm_90a']
+[slide-c4] load_inline compiled in 40.8s (compile seconds, module muse_sliding_cluster_c4_v2: 40.8)
+[small-t-dense-chain] P occupancy (CTAs/SM, NF=1/2/4): [3, 2, 2]; grid 216 CTAs
+[small-t-dense-chain] PDL probe: eager overlap False (-6.4 us), graph overlap True (49.7 us, secondary waited 50.3 us) -> pdl=1
+[small-t-dense-chain] P timing T=1 pdl=0 20.9 us (3.62 TB/s) pdl=1 20.6 us (3.67 TB/s)
+[small-t-dense-chain] P timing T=8 pdl=0 21.9 us (3.45 TB/s) pdl=1 21.7 us (3.48 TB/s)
+[small-t-dense-chain] P timing T=32 pdl=0 26.4 us (2.86 TB/s) pdl=1 26.1 us (2.90 TB/s)
+[small-t-dense-chain] ON pdl=1 compile 49.5s max errs ei 1.26e-04 logit 3.11e-06 xn 1.07e-05 w 0.00e+00 y 0.00e+00 graph 0.00e+00: PATH CHOSEN = DENSE-CHAIN at T <= 32, MASTER above
+[align-parallel-large-t] ON cases=18 mismatches=0
+[w2-atomic] trial 0: master w2 launch (local slots 2)
+[w2-atomic] trial 0: master w2 done
+[w2-atomic] trial 0: atomic w2 launch
+[w2-atomic] trial 0: atomic w2 done
+[w2-atomic] trial 0: atomic_zero w2 launch
+[w2-atomic] trial 0: atomic_zero w2 done
+[w2-atomic] trial 1: master w2 launch (local slots 3)
+[w2-atomic] trial 1: master w2 done
+[w2-atomic] trial 1: atomic w2 launch
+[w2-atomic] trial 1: atomic w2 done
+[w2-atomic] trial 1: atomic_zero w2 launch
+[w2-atomic] trial 1: atomic_zero w2 done
+[w2-atomic] trial 2: master w2 launch (local slots 3)
+[w2-atomic] trial 2: master w2 done
+[w2-atomic] trial 2: atomic w2 launch
+[w2-atomic] trial 2: atomic w2 done
+[w2-atomic] trial 2: atomic_zero w2 launch
+[w2-atomic] trial 2: atomic_zero w2 done
+[w2-atomic] trial 3: master w2 launch (local slots 5)
+[w2-atomic] trial 3: master w2 done
+[w2-atomic] trial 3: atomic w2 launch
+[w2-atomic] trial 3: atomic w2 done
+[w2-atomic] trial 3: atomic_zero w2 launch
+[w2-atomic] trial 3: atomic_zero w2 done
+[w2-atomic] trial 4: master w2 launch (local slots 2)
+[w2-atomic] trial 4: master w2 done
+[w2-atomic] trial 4: atomic w2 launch
+[w2-atomic] trial 4: atomic w2 done
+[w2-atomic] trial 4: atomic_zero w2 launch
+[w2-atomic] trial 4: atomic_zero w2 done
+[w2-atomic] trial 5: master w2 launch (local slots 4)
+[w2-atomic] trial 5: master w2 done
+[w2-atomic] trial 5: atomic w2 launch
+[w2-atomic] trial 5: atomic w2 done
+[w2-atomic] trial 5: atomic_zero w2 launch
+[w2-atomic] trial 5: atomic_zero w2 done
+[w2-atomic] trial 6: master w2 launch (local slots 4)
+[w2-atomic] trial 6: master w2 done
+[w2-atomic] trial 6: atomic w2 launch
+[w2-atomic] trial 6: atomic w2 done
+[w2-atomic] trial 6: atomic_zero w2 launch
+[w2-atomic] trial 6: atomic_zero w2 done
+[w2-atomic] trial 7: master w2 launch (local slots 4)
+[w2-atomic] trial 7: master w2 done
+[w2-atomic] trial 7: atomic w2 launch
+[w2-atomic] trial 7: atomic w2 done
+[w2-atomic] trial 7: atomic_zero w2 launch
+[w2-atomic] trial 7: atomic_zero w2 done
+[w2-atomic] trial 8: master w2 launch (local slots 1)
+[w2-atomic] trial 8: master w2 done
+[w2-atomic] trial 8: atomic w2 launch
+[w2-atomic] trial 8: atomic w2 done
+[w2-atomic] trial 8: atomic_zero w2 launch
+[w2-atomic] trial 8: atomic_zero w2 done
+[w2-atomic] trial 9: master w2 launch (local slots 3)
+[w2-atomic] trial 9: master w2 done
+[w2-atomic] trial 9: atomic w2 launch
+[w2-atomic] trial 9: atomic w2 done
+[w2-atomic] trial 9: atomic_zero w2 launch
+[w2-atomic] trial 9: atomic_zero w2 done
+[w2-atomic] trial 10: master w2 launch (local slots 4)
+[w2-atomic] trial 10: master w2 done
+[w2-atomic] trial 10: atomic w2 launch
+[w2-atomic] trial 10: atomic w2 done
+[w2-atomic] trial 10: atomic_zero w2 launch
+[w2-atomic] trial 10: atomic_zero w2 done
+[w2-atomic] trial 11: master w2 launch (local slots 4)
+[w2-atomic] trial 11: master w2 done
+[w2-atomic] trial 11: atomic w2 launch
+[w2-atomic] trial 11: atomic w2 done
+[w2-atomic] trial 11: atomic_zero w2 launch
+[w2-atomic] trial 11: atomic_zero w2 done
+[w2-atomic] self-check slots: local 39 remote 57
+[w2-atomic] PATH CHOSEN = ATOMIC w2 at T=1 (worst rel-L2 vs master 0.00576); use_atomic_add=True use_fp32_reduce=True memset in path: False; T>1 MASTER
+[splitkv] self-check kernel A (splitkv_attn) ok, B=5 grid=device
+[splitkv] self-check kernel B (splitkv_combine) ok, B=5
+[splitkv] self-check B=5 kv_scale=1.0 grid=device: rel L2 1.67e-03, finite True
+[splitkv] self-check kernel A (splitkv_attn) ok, B=5 grid=3
+[splitkv] self-check kernel B (splitkv_combine) ok, B=5
+[splitkv] self-check B=5 kv_scale=0.25 grid=3: rel L2 1.66e-03, finite True
+[splitkv] self-check kernel A (splitkv_attn) ok, B=5 grid=3
+[splitkv] self-check kernel B (splitkv_combine) ok, B=5
+[splitkv] self-check B=5 kv_scale=1.0 grid=3: rel L2 1.69e-03, finite True
+[splitkv] self-check kernel A (splitkv_attn) ok, B=33 grid=device
+[splitkv] self-check kernel B (splitkv_combine) ok, B=33
+[splitkv] self-check B=33 kv_scale=1.0 grid=device: rel L2 1.63e-03, finite True
+[splitkv] ON: self-check passed: CUDA split-KV path on full decode, 1 < batch <= 64
+[slide-c4] device capability (9, 0)
+[slide-c4] sliding_cluster_kernel 124 regs, 32 B local/spill, 103424 B dynamic smem/CTA, binaryVersion 90, ptxVersion 90; cudaOccupancyMaxActiveClusters C=4 -> 62
+[slide-c4] probe: torch's cast never produced a NaN code below 520
+[slide-c4] PATH CHOSEN: sliding decode batch 17..32: master chain (fallback: torch's E4M3 overflow behaviour is not an edge the kernel can emulate)
+[slide-c4] PATH CHOSEN: sliding batch 1 _sliding_fused_kernel, sliding 2..16 and > 32 master chain, every verify block and full layer unchanged (by gate)
