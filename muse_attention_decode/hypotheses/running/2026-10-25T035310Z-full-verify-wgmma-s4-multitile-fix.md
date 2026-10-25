@@ -62,7 +62,7 @@ review: proceed
 status: running
 review_at: 2026-10-25T040253Z
 review_companions: null
-stage: claimed
+stage: implemented
 claimed_at: 2026-10-25T040258Z
 base_sha: ff9bf1e4fbe38f9f847a906f5135ecaf60604668
 base_blob: 136874e0158f8b76208c4130e523bc91b84160ad
@@ -71,6 +71,12 @@ worktree: .worktrees/muse_attention_decode/full-verify-wgmma-s4-multitile-fix
 mode: null
 restack_of: null
 stale_base: true
+implemented_at: 2026-10-25T041932Z
+impl_commit: 3ee2b893476879190a690392a3295a35afed11bf
+submission_sha256: c0b8173eb722f5a655d5e072dbcded9cf8bb90cde652ab077ad34e1b184c3d87
+norm_sha256: b4c0abba9555df955e632b86d0dcbe8b2bd85739ce933ff73a04d14abc9455f0
+submission_blob: 9bcf522b0dd23a0a8173046d2150473827122206
+lint_warnings: 11
 ---
 
 # full-verify-wgmma-s4-multitile-fix
@@ -121,3 +127,50 @@ No companion. This is a rewrite stage whose deliverable is a named cause (M1) an
 - BUILDER: do not rewrite items (a) to (d) blindly. They read correct on the s3 branch (reset at lt==0, rescale after wg_wait0, Max_offset, parity). Change the loop only where the bisect points, and keep any speculative edit behind a constexpr so the s3 path can be A/B'd inside the self-check.
 - When the self-check passes, choose wgmma regardless of the prepare timing (print both). This is a check, and M2 needs the kernel's profile rows. A timing hard gate would hide it, and prepare under-reads the judge by 20-25%.
 
+
+## Implementation notes
+
+Edited only `.worktrees/muse_attention_decode/full-verify-wgmma-s4-multitile-fix/muse_attention_decode/submission.py` (no GPU here; nothing was run).
+
+**Review wins over the spec.** The review says fixes (a)-(d) are already in the s3 kernel, so I did NOT rewrite the loop. I re-read the kernel independently and agree: m/l/oacc reset only at `n == 0 || lt == 0`; oacc/l rescaled by ex2(m_old - m_new) after the previous PV `wg_wait0` and before the next PV issue; full parity `(n/STAGES)&1`, refill empty parity `((n-1)/STAGES)&1` (checked for aliasing and the initial-phase trick, correct); V^T buffer `n&1`; Max_offset 8 present; k_scale folded into the score scale and v_scale in the merge; slot `bx + cb` is collision-free; the index-block overwrite is ordered after the last read by the empty-barrier chain. No arithmetic or barrier fault is visible from reading, so there is no fix to land blind.
+
+**One review hypothesis is already ruled out by the s3 code.** The s3 self-check returned on a nonzero error word BEFORE computing rel L2, and case 2 failed with a rel L2 of 1.23, so the error word was 0: the bounded-wait abort (word 2) did not fire in case 2. The garbage is real, not a timeout. Also: every s3 passing launch (canary grid 4 over 3 tiles; case 1 on grid 264 over 242 tiles) gave each CTA at most one tile, so loop iterations n >= 1 (ring stages 1-3, V^T buffer 1, oacc/l/m carry, refill with empty wait) were never exercised by any passing case. That, not kv_scale, is the real untested surface.
+
+What changed:
+1. Module renamed `muse_full_verify_wgmma_v2` (recompiles). Same sm_90a flags, `__CUDA_ARCH_FEAT_SM90_ALL` guard, `-lineinfo`, TORCH_CUDA_ARCH_LIST=9.0a around load_inline, no child process.
+2. Kernel is now `<TICKET, SYNC>`; SYNC (constexpr, diagnostic A/B) adds one `__syncthreads()` at the end of every tile, serializing both warpgroups and the producer side. Instantiated as `<true,false>`, `<false,false>`, `<true,true>`. Default path is byte-for-byte the s3 loop. New mode `ticket_sync` is tried last: if the s3 loop fails but this passes, the fault is a pipeline race and the check also leaves a working (slower) kernel chosen.
+3. Self-check runs EVERY case (no early return), prints per case: rel L2, finiteness and the DEVICE ERROR WORD, PASS/FAIL. Cases: canary; case 1 (lens_a kv 1.0 device); lens_a kv 1.0 grid 3; lens_a kv 0.25 grid 264; B=1 single CTA with 2 / 4 / 17 / 34 tiles (34 rotates both index buffers and wraps the ring); B=1 4 tiles kv 0.25; [128,128] grid 1 (request crossing, 4 tiles); lens_a kv 0.25 grid 3 (the s3 failure); stage-2 leftovers (grid 7, 61, lens_b); two coherent-key cases (planted keys along the last query, 0.3x noise: peaked softmax with a long tail for the FP8 P range). B=1 is allowed through the gate only inside the self-check (`_WG_ANYB`).
+4. For failing cases (first four, ticket and ticket_sync modes) `_wg_diagnose` copies the per-slot partials (ws_acc O, ws_ml m/l) and compares each (CTA range, request) segment to an fp32 reference of exactly that segment (O/l and l with the 2^8 offset, raw m), prints bad/good counts by tiles per segment, after request crossing, CTA-relative tile >= 16, starts at CTA tile > 0, and the first four bad segments with cta, req, tiles, whether it follows a crossing, tile index past 16, worst row, per kv head error. `_wg_verdict` turns the case table into a BISECT line naming the variable (single-tile math, multi-tile loop state, long-case index/ring rotation, request crossing, kv_scale).
+5. Choice: the first mode whose whole self-check (incl. graph replays) passes is chosen regardless of timing. `_wg_time` then prints CUDA-event times (eager kernel_fn, B=16 and 32, ragged ~2-5.8k keys) for wgmma vs master paired FA3, information only. Final line: `PATH CHOSEN: full verify wgmma stream-K v2 (<mode>) vs master FA3` or `... master FA3, paired heads vs wgmma v2 (fallback: <case, rel L2, finite, error word>)` (reasons of all three modes joined).
+
+Deviations from the spec: no loop rewrite (see above); added the SYNC A/B variant and ticket_sync mode (review: keep speculative edits behind a constexpr); added a B=1 34-tile and a [128,128] crossing case.
+
+Biggest risk: compile time grows with a third kernel instantiation, and if the bug is arithmetic in the loop the check yields a diagnosis (named segment) but no wgmma path (falls back to master FA3).
+
+## Rules check
+
+- [x] CUDA-graph capturable: kernel_fn adds no `.item()`/sync/alloc on input values; the only new kernel_fn-side code reads module globals (`_WG_KEEP`, `_WG_MODE`) set by the self-check; all syncs and prints are in prepare-time self-check functions (lint: host-sync warnings only outside kernel_fn).
+- [x] Nothing derived from `data` is cached across calls (`_WG_KEEP` is only set during the self-check on synthetic data and cleared).
+- [x] Weights: n/a: no weight handling touched.
+- [x] Activations BF16, KV cache FP8, queries FP8 E4M3: unchanged kernel math.
+- [x] Attention sees every key: unchanged; causal mask only inside the 8-token block.
+- [x] No timing patches, harness frames/I/O/secrets, module edits, reference import, or child processes (grep for subprocess/multiprocessing/fork/spawn is empty).
+- [x] All work happens inside the timed call; no output caching or replay.
+- [x] sm_90a-only PTX stays under `__CUDA_ARCH_FEAT_SM90_ALL` with an error-flag `#else`; every mbarrier wait bounded; build/self-check failure lands on master paired FA3, never raises.
+
+okc_lint: `OK with warnings: submission.py` (11 host-sync warnings, all in prepare()-only self-check code, outside kernel_fn's call graph). `python3 -I -m py_compile` passes; `__pycache__` deleted.
+
+## Pre-flight audit
+
+Audited 2026-10-25 (model opus). **Verdict: dispatch-with-fixes.** Rules OK.
+
+Multi-tile bug hunt (loop iterations n >= 1). By reading, again no fault: the FULL parity `(n/STAGES)&1` and the refill EMPTY parity `((n-1)/STAGES)&1` are correct, a barrier can never run two phases ahead, and the noinc FULL count of 256 matches. The page-index block k is written by tile 16(k-1)'s cp.async and covered by that tile's FULL arrival, which every thread waits on at loop 16k-16, before its first read at loop 16k-3. The overwrite of buffer k&1 (issued at loop 16k-15) comes after every thread's last read of block k-2, ordered by the EMPTY chain. V^T buffer n&1 is ordered against PV n-2 by the tile n-1 named barrier. m/l/oacc reset only at segment start, the oacc/l rescale happens after the previous PV wg_wait0, Max_offset is consistent in l, O and the merge, and the slot/owner/req bookkeeping is collision-free. A numpy emulation of the kernel's exact control flow (per-CTA flat tiles, 4-stage ring and double-buffered 16-tile index blocks in issue order, segment reset and store, E4M3 P with offset 8, the ticket/B8 LSE merge) reproduces the fp32 reference at rel L2 4.7e-3 (lens_a grid 264), 8.2e-3 (lens_a grid 3, kv 1.0 and 0.25), 8.8e-3 (B1 34 tiles), 8.2e-3 (2-request crossing) and 7.1e-3 (grid 7). So the stage-3 algorithm and bookkeeping are right as written. Ticket and B8 both gave exactly 1.23e+00, which points to a deterministic hardware-semantics fault that only shows on n >= 1: ring stages 1-3 reuse, V^T buffer 1, or an async-proxy view of a reused stage. It is not arithmetic. The bisect plus DIAG will localize it.
+
+Gate passability. Coherent cases emulate at 1.76-1.81e-2 over 5 seeds at grid 3 (1.3e-2 at device grid), under the 3e-2 self-check threshold. All other cases are under 9e-3. No gate always fails.
+
+Fallback. A build failure, image check, self-check miss or exception in any mode leaves `_WG_MODE`/`_WEXT` None, so the gate is False, `paired` is True, master FA3 runs, and the loud `PATH CHOSEN ... (fallback: ...)` line prints. Every mbarrier wait is bounded, and tickets complete even on abort. The residual risk is a device fault (illegal address), which would poison the in-process context. This is unchanged from s3. Compile: s3's 2 instantiations took 34.5 s. With a third, expect about 50 s plus 41 s for the decode module, well inside the 15-minute budget.
+
+Fix:
+1. `SYNC` variant (ticket_sync, A/B only): added `cp_wait_all(); fence_proxy_async(); __syncthreads();` right after the FULL wait. Reason: the only s3 hazard I could not rule out by reading is the ring's cross-thread cp.async (generic proxy) -> wgmma (async proxy) visibility on a REUSED stage. s3 fences that on the consumer side only. The end-of-tile `__syncthreads` alone would not separate that hypothesis from a warpgroup race. Now ticket_sync covers both with the canonical writer-side fence, so "ticket FAIL / ticket_sync PASS" names a pipeline/proxy fault and still leaves a working kernel chosen. The default `<*, false>` path is unchanged. Lint OK (host-sync warnings only, all outside kernel_fn), py_compile OK, __pycache__ removed.
+
+Residual risk: if the fault is a stage/buffer layout error for n >= 1, all three modes fail and the run falls back to master FA3 with a DIAG-localized cause (neutral run, stage 5 needed).
