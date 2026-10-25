@@ -74,10 +74,10 @@ controls_for: null
 rewrite_stage: 1
 replaces: o at m<=16 (_pooler_skinny_kernel, 4.1-4.4 us kernel, rows 5.9-6.3) and the unpooler slice at m<=8 (_bf16_splitk_kernel/ticket split-K 8, 4.3-4.4 us kernel, rows 5.9-6.1)
 review: proceed
-status: running
+status: done
 review_at: 2026-10-25T004153Z
 review_companions: null
-stage: dispatched
+stage: harvested
 claimed_at: 2026-10-25T004153Z
 base_sha: dcd2ff817f67ee97bdc52e92ec44df3a3752ccf1
 base_blob: a8bb42ac483318e9fbc84bc7826a27b7a704d1fb
@@ -96,6 +96,13 @@ attempt_file: 2026-10-25T005050Z-check-o-unpooler-slice-cuda-cluster-dsmem-rewri
 prepared_at: 2026-10-25T005050Z
 job: 3f3330f70b6e4cdc
 dispatched_at: 2026-10-25T005058Z
+outcome: regression
+verdict_detail: regression
+speedup: 1.171027797720377
+speedup_ci: [1.1534623807545712, 1.1885932146861824]
+harvested_at: 2026-10-25T034129Z
+best_at_harvest: 1.2215006063849365
+promotion: null
 ---
 
 # o-unpooler-slice-cuda-cluster-dsmem-rewrite
@@ -208,3 +215,53 @@ Fixes:
 - `_build_oun`: set `TORCH_CUDA_ARCH_LIST=9.0a` around `load_inline` and restore the previous value (or unset) in `finally`, as the spec and the router sibling do. The implementation compiled for whatever the image's arch list holds, which can multiply nvcc time inside the 10-minute run limit; the kernel uses no wgmma so 9.0a is safe. Build print now also shows the previous value.
 
 Residual risk: a first-launch fault still poisons the context unrecoverably (check mode only); o CL 8 may report < 32 co-resident clusters on chips with 14-SM GPCs and drop to CL 4, and the 128-CTA slice may pack 2 CTAs/SM (launch_bounds 256,2), costing bandwidth rather than correctness.
+
+## Result
+
+- job `3f3330f70b6e4cdc` (check), status done, passed True, tests 9/9
+- speedup 1.1710x, 95% CI [1.1535, 1.1886], score 4125.265010279047 µs vs SGLang 4830.8 µs
+- best at harvest: {"speedup": 1.2215006063849365, "ci": [1.2031780972891624, 1.2398231154807104], "job": "60b20fd0bf924267"}; base result: muse_bf16_proj/hypotheses/done/neutral/bf16-restack-m16-swapab-router-swapab-m32.result.json
+- **outcome: regression** (regression)
+- files: `muse_bf16_proj/hypotheses/done/regression/o-unpooler-slice-cuda-cluster-dsmem-rewrite.result.json`, `muse_bf16_proj/hypotheses/done/regression/o-unpooler-slice-cuda-cluster-dsmem-rewrite.patch`; branch `hyp/muse_bf16_proj/o-unpooler-slice-cuda-cluster-dsmem-rewrite`
+
+## Attribution
+
+| shape | w | base µs | hyp µs | delta | verdict |
+|---|---|---|---|---|---|
+| layer=qkv_gate load=decode_1 m=1 | 62 | 12.18 | 13.36 | 0.9252 | lost |
+| layer=o load=decode_1 m=1 | 62 | 5.89 | 7.2 | 0.8318 | lost |
+| layer=pooler load=decode_1 m=1 | 62 | 18.84 | 19.39 | 1.0 | flat |
+| layer=unpooler load=decode_1 m=1 | 62 | 6.15 | 5.02 | 1.1588 | gained |
+| layer=router load=decode_1 m=1 | 62 | 5.38 | 6.05 | 0.9105 | lost |
+| layer=qkv_gate load=decode_16 m=16 | 62 | 13.15 | 14.14 | 0.936 | lost |
+| layer=o load=decode_16 m=16 | 62 | 6.23 | 9.85 | 0.65 | lost |
+| layer=pooler load=decode_16 m=16 | 62 | 19.47 | 19.67 | 0.9906 | flat |
+| layer=unpooler load=decode_16 m=16 | 62 | 18.51 | 18.85 | 0.9823 | flat |
+| layer=router load=decode_16 m=16 | 62 | 5.47 | 6.05 | 0.9033 | lost |
+| layer=qkv_gate load=decode_32 m=32 | 62 | 14.19 | 14.38 | 0.9626 | lost |
+| layer=o load=decode_32 m=32 | 62 | 6.34 | 6.74 | 0.9568 | lost |
+| layer=pooler load=decode_32 m=32 | 62 | 19.73 | 19.98 | 0.9902 | flat |
+| layer=unpooler load=decode_32 m=32 | 62 | 18.08 | 18.59 | 0.985 | flat |
+| layer=router load=decode_32 m=32 | 62 | 6.2 | 6.63 | 0.9196 | lost |
+| layer=qkv_gate load=verify_1 m=8 | 62 | 12.5 | 13.76 | 0.9128 | lost |
+| layer=o load=verify_1 m=8 | 62 | 6.13 | 8.45 | 0.747 | lost |
+| layer=pooler load=verify_1 m=8 | 62 | 18.89 | 19.74 | 0.9726 | flat |
+| layer=unpooler load=verify_1 m=8 | 62 | 6.0 | 5.56 | 1.0896 | gained |
+| layer=router load=verify_1 m=8 | 62 | 5.47 | 5.95 | 0.9187 | lost |
+| layer=qkv_gate load=verify_16 m=128 | 62 | 17.05 | 17.3 | 0.9765 | flat |
+| layer=o load=verify_16 m=128 | 62 | 6.98 | 7.64 | 0.9646 | lost |
+| layer=pooler load=verify_16 m=128 | 62 | 25.0 | 25.29 | 0.9896 | flat |
+| layer=unpooler load=verify_16 m=128 | 62 | 19.96 | 20.38 | 0.9839 | flat |
+| layer=router load=verify_16 m=128 | 62 | 7.28 | 7.47 | 0.9741 | flat |
+| layer=qkv_gate load=verify_32 m=256 | 62 | 19.69 | 20.07 | 0.9938 | flat |
+| layer=o load=verify_32 m=256 | 62 | 9.26 | 9.52 | 0.9733 | flat |
+| layer=pooler load=verify_32 m=256 | 62 | 31.19 | 31.22 | 1.0062 | flat |
+| layer=unpooler load=verify_32 m=256 | 62 | 24.42 | 24.65 | 0.9913 | flat |
+| layer=router load=verify_32 m=256 | 62 | 9.6 | 9.23 | 1.0238 | flat |
+
+gained on unpooler decode_1, verify_1; lost on qkv_gate decode_1, decode_16, decode_32, verify_1; o decode_1, decode_16, decode_32, verify_1, verify_16; router decode_1, decode_16, decode_32, verify_1. Expected hit: 6/10. Noise ±1.5%.
+
+## Follow-ups
+
+- rewrite stage 1 of `o at m<=16 (_pooler_skinny_kernel, 4.1-4.4 us kernel, rows 5.9-6.3) and the unpooler slice at m<=8 (_bf16_splitk_kernel/ticket split-K 8, 4.3-4.4 us kernel, rows 5.9-6.1)`: read the replaced kernels' own us per shape (profile top_kernels) against the incumbent and the floor, and check which Milestone it reached. The next stage is `/hypothesize muse_bf16_proj "<what to fix or tune>" --kind rewrite --depends-on o-unpooler-slice-cuda-cluster-dsmem-rewrite --stage 2`; a slow or failed first cut is the expected start, not a do-not-retry.
+
