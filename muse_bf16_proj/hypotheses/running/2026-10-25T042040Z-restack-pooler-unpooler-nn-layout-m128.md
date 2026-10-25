@@ -44,9 +44,18 @@ priority: 2
 kind: primary
 controls_for: null
 review: proceed
-status: queued
+status: running
 review_at: 2026-10-25T042254Z
 review_companions: null
+stage: claimed
+claimed_at: 2026-10-25T042254Z
+base_sha: b2ff4b18564626ccd3f3e253cc2c61aae1c11131
+base_blob: 970b415b746fa03cb92e419d270be92588273178
+branch: hyp/muse_bf16_proj/restack-pooler-unpooler-nn-layout-m128
+worktree: .worktrees/muse_bf16_proj/restack-pooler-unpooler-nn-layout-m128
+mode: null
+restack_of: null
+stale_base: null
 ---
 
 # restack-pooler-unpooler-nn-layout-m128
