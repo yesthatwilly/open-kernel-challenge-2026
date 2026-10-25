@@ -61,10 +61,10 @@ priority: 1
 kind: primary
 controls_for: null
 review: proceed
-status: running
+status: done
 review_at: 2026-10-25T125918Z
 review_companions: null
-stage: dispatched
+stage: harvested
 claimed_at: 2026-10-25T125919Z
 base_sha: 8517012b49a52a4bad4cd73abb2b38533a9adde2
 base_blob: c2e3e595def2e6b5949e0fd350ce98ed59729147
@@ -83,6 +83,13 @@ attempt_file: 2026-10-25T130218Z-check-align-two-phase-all-t-rega.md
 prepared_at: 2026-10-25T130218Z
 job: 4e6f815a8dd945ba
 dispatched_at: 2026-10-25T130234Z
+outcome: neutral
+verdict_detail: unproven-vs-best
+speedup: 1.4457544543391616
+speedup_ci: [1.4240681375240742, 1.467440771154249]
+harvested_at: 2026-10-25T135010Z
+best_at_harvest: 1.4060131381907617
+promotion: null
 ---
 
 # align-two-phase-all-t-rega
@@ -157,3 +164,31 @@ Not run: no GPU here, so the Triton kernels are uncompiled. The `dist` loop uses
 - [x] Judge state copy: no module/static globals hold tensors; state['align2_ok'] is a dict of ints inside REGA_STATE_KEYS.
 
 okc_lint: `OK with warnings: muse_prefill_layer/submission.py` (only host-sync warnings in prepare code and the known dtype warnings). undef.py: `[]`. py_compile: OK. __pycache__ deleted.
+
+## Result
+
+- job `4e6f815a8dd945ba` (check), status done, passed True, tests 5/5
+- speedup 1.4458x, 95% CI [1.4241, 1.4674], score 267959.6793475404 µs vs SGLang 387403.9 µs
+- best at harvest: {"speedup": 1.4060131381907617, "ci": [1.3849229411179003, 1.4271033352636229], "job": "07a069bc69ba42a8"}; base result: muse_prefill_layer/hypotheses/done/gain/experts-turn-rega-s4-first-turn-n128.result.json
+- **outcome: neutral** (unproven-vs-best)
+- files: `muse_prefill_layer/hypotheses/done/neutral/align-two-phase-all-t-rega.result.json`, `muse_prefill_layer/hypotheses/done/neutral/align-two-phase-all-t-rega.patch`; branch `hyp/muse_prefill_layer/align-two-phase-all-t-rega`
+
+## Attribution
+
+| shape | w | base µs | hyp µs | delta | verdict |
+|---|---|---|---|---|---|
+| batch=1 ctx=80000 dist=soft layer=sliding load=turn_1 page=1 q_len=753 repeats=6 | 46 | 777.02 | 704.38 | 1.0629 | gained |
+| batch=1 ctx=80000 dist=soft layer=full load=turn_1 page=1 q_len=753 repeats=6 | 16 | 1136.06 | 1097.89 | 1.015 | flat |
+| batch=4 ctx=80000 dist=soft layer=sliding load=turn_4 page=1 q_len=753 repeats=6 | 46 | 2251.37 | 2098.36 | 1.0374 | gained |
+| batch=4 ctx=80000 dist=soft layer=full load=turn_4 page=1 q_len=753 repeats=6 | 16 | 3785.25 | 3644.6 | 1.0144 | flat |
+| batch=1 ctx=0 dist=soft layer=full load=first_turn page=1 q_len=16384 repeats=6 | 16 | 12148.27 | 12078.49 | 1.0345 | gained |
+| batch=1 ctx=32768 dist=soft layer=sliding load=first_turn page=1 q_len=16384 repeats=6 | 138 | 11658.83 | 11285.6 | 1.0115 | flat |
+| batch=1 ctx=32768 dist=soft layer=full load=first_turn page=1 q_len=16384 repeats=6 | 16 | 15589.38 | 15310.56 | 1.0135 | flat |
+| batch=1 ctx=65536 dist=soft layer=full load=first_turn page=1 q_len=16384 repeats=6 | 16 | 19167.43 | 18819.51 | 0.9914 | flat |
+
+gained on sliding turn_1, turn_4; full first_turn. Expected hit: 3/3. Noise ±1.5%.
+
+## Follow-ups
+
+- unproven-vs-best: the change is not proven either way; a stacked hypothesis (`depends_on: align-two-phase-all-t-rega`) that adds a further change in the same area is the only way to learn more (identical code is never re-run).
+
