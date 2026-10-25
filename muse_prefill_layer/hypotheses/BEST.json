@@ -1,18 +1,17 @@
 {
-  "problem": "muse_prefill_layer",
-  "job": "edf68fa3131c4bf8",
-  "check_job": null,
-  "mode": "submit",
-  "speedup": 1.4599652306075455,
-  "ci": [
-    1.4380657521484324,
-    1.4818647090666586
-  ],
-  "score_us": 265351.4562389866,
-  "commit": "97e792cd86594c84955869d474331b1c65b34f23",
-  "submission_blob": "9fb1f7c4b4282dd7461c6cdba926fe3ebf12128e",
-  "slug": "pre-expert-norm-fused-rega-gather",
-  "result": "muse_prefill_layer/hypotheses/done/neutral/fa3-full-contiguous-kv-triton-gather-gated.result.json",
-  "updated_at": "2026-10-25T153935Z",
-  "note": "board best; scored from this slug (code may differ from master, see DECISIONS)"
+ "problem": "muse_prefill_layer",
+ "job": "9bfc488c36c84924",
+ "check_job": "9bfc488c36c84924",
+ "mode": "check",
+ "speedup": 1.4604901800994607,
+ "ci": [
+  1.4385828273979688,
+  1.4823975328009524
+ ],
+ "score_us": 265256.0799646167,
+ "commit": "33aa4083ab571529b6fa2ede89d066994e37370a",
+ "submission_blob": "6a16d158f6a6df0e484eb053e147a6fdae43b713",
+ "slug": "combo-a-master-normgather-naive-stack",
+ "result": "muse_prefill_layer/hypotheses/done/neutral/combo-a-master-normgather-naive-stack.result.json",
+ "updated_at": "2026-10-25T162149Z"
 }
