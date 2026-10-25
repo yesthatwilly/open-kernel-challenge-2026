@@ -1,17 +1,17 @@
 {
  "problem": "muse_attention_decode",
- "job": "cbd49dc94be548e7",
+ "job": "d672f69ea69b4396",
  "check_job": "cbd49dc94be548e7",
- "mode": "check",
- "speedup": 1.4919706177473366,
+ "mode": "submit",
+ "speedup": 1.482482693793331,
  "ci": [
-  1.4695910584811265,
-  1.5143501770135466
+  1.460245453386431,
+  1.5047199342002309
  ],
- "score_us": 2524.379471820013,
+ "score_us": 2540.5355595503834,
  "commit": "eb1b68bad24c7457aaa0606c1df0fa7733c03365",
  "submission_blob": "84b54ae2c9800a7b9bf96692557dd390904ed09b",
  "slug": "restack-sk-pseudo-cluster-plus-v3-fused-preattn",
  "result": "muse_attention_decode/hypotheses/done/gain/restack-sk-pseudo-cluster-plus-v3-fused-preattn.result.json",
- "updated_at": "2026-10-25T091112Z"
+ "updated_at": "2026-10-25T115712Z"
 }

@@ -35,4 +35,4 @@ okc_lint: OK with warnings (only host-sync warnings, all outside kernel_fn: prep
 medium
 
 ## Result (after the run)
-(pending)
+Promotion passed: 1.4825x [1.4602,1.5047], board: {"rank": 335, "team": "yesthatwilly", "speedup": 1.5017, "first": false, "ahead": 334, "to_first": 1.9376}
