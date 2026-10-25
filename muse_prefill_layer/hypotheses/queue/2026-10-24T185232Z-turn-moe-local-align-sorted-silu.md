@@ -45,8 +45,11 @@ depends_on: null
 priority: 3
 kind: primary
 controls_for: null
-review: required
-status: queued
+review: hold
+status: hold
+review_at: 2026-10-25T014119Z
+review_companions: null
+hold_reason: "adversarial review: Hold as a duplicate of landed work: master's _experts_marlin already runs _align_parallel (local routes only, no -1 blocks) and _silu_mul_sorted_kernel at T<=40"
 ---
 
 # turn-moe-local-align-sorted-silu
@@ -64,3 +67,23 @@ Built on master (635cfee). Only _experts_marlin (T <= 4096: turn_1 T=753, turn_4
 ## Risk
 
 Folds the held silu-mul-triton-local-rows-marlin-turn (held as below noise alone) into a larger turn-shape dispatch change, as its hold asked. Its align part is the T <= 4096 half of moe-align-local-routes-parallel-port; if both run, the act_and_mul vs _silu_mul_sorted_kernel row isolates the silu part. Shape-disjoint from first-turn-moe-dead-work-stack, so the two can be restacked by 3-way merge. Composes with any later expert engine at turn shapes (CUDA wgmma stages 2-3, Triton stages 6-7): it touches only align and silu. Risk: _align_parallel at T=3012 streams 24K ids twice per program (~8-10 us est.).
+
+## Adversarial review
+
+Reviewed 2026-10-25T014119Z by an adversarial subagent (model opus).
+
+**Verdict: hold.** Hold as a duplicate of landed work: master's _experts_marlin already runs _align_parallel (local routes only, no -1 blocks) and _silu_mul_sorted_kernel at T<=4096. Both were self-checked ON in the master jobs c4d14d62 and 502f2eab ('[align-local] ON', '[silu-sorted] ON'). Retire it; it does not need to wait for the running checks.
+
+### Justification
+Both parts landed with stack-tonight-five-prefill (moe-align-local-routes-parallel-port + silu-mul-triton-local-rows-marlin-turn). See submission.py _experts_marlin: _align_parallel(local_ids, 0, LOCAL_EXPERTS, block_size_m) when align_par_ok, and _silu_mul_sorted(...) when silu_sorted_ok. REWRITE_READ_2026-10-25 states that on the new master the parallel align and _silu_mul_sorted_kernel replace count_and_sort plus act_and_mul on the Marlin path. The hypothesis was written against 635cfee (pre-five), so its expected savings (act_and_mul 53->15-20 us, count_and_sort 17.4 us, ~330 remote m-blocks) are already in master's 1.0705/1.0744. The only residual difference is cosmetic. The hypothesis aligns straight from topk_ids plus data['local_start'] and skips _local_expert_ids, but it still returns local_ids for fused_post_expert_norm_weighted_sum, so at most one ~2-5 us remap launch is saved. That is far below the ±1.5% turn noise and not worth a check. WEAKEST LINK: the premise that master still runs moe_align_block_size + silu_and_mul on this path is false.
+
+### Confounders on the current kernel
+- stack-tonight-five-prefill: it contains this hypothesis's two parts verbatim, so the run would measure master against master.
+- Running experts-triton-turn4-persistent-local-align-control-no-persi: if it wins, turn_4 (T=3012) leaves Marlin entirely (MARLIN_MAX_TOKENS 1024), removing this hypothesis's main target shape anyway.
+
+### Interference and A/B needs
+No companion and no waiting are warranted. The change is already on master, so no result of the running first-turn persistent-grid or turn_4 control checks can make it informative. Only a new mechanism on the Marlin path would justify a run, e.g. fusing the _local_expert_ids remap into _align_parallel together with something else measurable.
+
+### Open questions
+- Move this to done/rejected (duplicate of stack-tonight-five-prefill) and add it to FINDINGS 'Do not retry', so /hypothesize stops re-minting the Marlin-path align+silu pair.
+
