@@ -80,7 +80,7 @@ base_sha: 8bbf53baef204e1a7c7f2d0b36f6da1996b27db4
 base_blob: 84b54ae2c9800a7b9bf96692557dd390904ed09b
 branch: hyp/muse_attention_decode/restack-sliding-decode-sk-window-on-cluster-master
 worktree: .worktrees/muse_attention_decode/restack-sliding-decode-sk-window-on-cluster-master
-mode: null
+mode: submit
 restack_of: sliding-decode-sk-window-route
 stale_base: null
 implemented_at: 2026-10-25T111803Z
@@ -89,6 +89,8 @@ submission_sha256: ae4af530224f3622f69a1551409a80f6342d9186a7104c609da6ebe969e7f
 norm_sha256: 313cc0c77b7e6b68a9111bdcc7ac717c75b52d01e9473448bdff11367615515b
 submission_blob: 5cf8fae31e5b84c36efeeb4569763eb9b06e1c8a
 lint_warnings: 57
+attempt_file: 2026-10-25T111803Z-submit-restack-sliding-decode-sk-window-on-cluster-master.md
+prepared_at: 2026-10-25T111803Z
 ---
 
 # restack-sliding-decode-sk-window-on-cluster-master
