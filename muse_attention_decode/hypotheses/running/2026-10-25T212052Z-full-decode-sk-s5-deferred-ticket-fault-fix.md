@@ -65,9 +65,18 @@ prior: "full-decode-sk-s4-deferred-ticket-arrive: same DEFER mechanism, which fa
 rewrite_stage: 5
 replaces: "full decode 1<B<=64: master splitkv_attn_sk_kernel<4, ticket> single-level in-stream ticket epilogue"
 review: proceed
-status: queued
+status: running
 review_at: 2026-10-25T212956Z
 review_companions: null
+stage: claimed
+claimed_at: 2026-10-25T212957Z
+base_sha: d6a7be8f77635e613d619df51fa1de4dea8f9afd
+base_blob: 6d6afa4722731ceb9cb8216d0334a03f1a96ad2b
+branch: hyp/muse_attention_decode/full-decode-sk-s5-deferred-ticket-fault-fix
+worktree: .worktrees/muse_attention_decode/full-decode-sk-s5-deferred-ticket-fault-fix
+mode: null
+restack_of: null
+stale_base: null
 ---
 
 # full-decode-sk-s5-deferred-ticket-fault-fix
