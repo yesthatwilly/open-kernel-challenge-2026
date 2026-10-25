@@ -46,9 +46,18 @@ priority: 2
 kind: primary
 controls_for: null
 review: proceed
-status: queued
+status: running
 review_at: 2026-10-25T040253Z
 review_companions: null
+stage: claimed
+claimed_at: 2026-10-25T040259Z
+base_sha: cd742704c601ae9e373cdd9ab7989a60db8c599d
+base_blob: 4da94677234faaa06b42b5ced541db8961fd6f34
+branch: hyp/muse_decode_layer/stack-route-topk-pdl-unpool-nf1
+worktree: .worktrees/muse_decode_layer/stack-route-topk-pdl-unpool-nf1
+mode: null
+restack_of: dl-route-warp-topk-pdl
+stale_base: null
 ---
 
 # stack-route-topk-pdl-unpool-nf1
