@@ -23,7 +23,16 @@ priority: 1
 kind: primary
 controls_for: null
 review: required
-status: queued
+status: running
+stage: claimed
+claimed_at: 2026-10-25T000436Z
+base_sha: f540d1c19b5798a2bd1f0421964922a582602231
+base_blob: 108d36e9f2266fc88531dd6ff0329a847c882013
+branch: hyp/muse_moe_w4a16/stack-onewarp-hoisted-dispatchcombine
+worktree: .worktrees/muse_moe_w4a16/stack-onewarp-hoisted-dispatchcombine
+mode: null
+restack_of: null
+stale_base: null
 ---
 
 # stack-onewarp-hoisted-dispatchcombine
