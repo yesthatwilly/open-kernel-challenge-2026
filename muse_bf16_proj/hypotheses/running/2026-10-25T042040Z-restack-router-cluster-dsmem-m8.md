@@ -60,7 +60,7 @@ review: proceed
 status: running
 review_at: 2026-10-25T042320Z
 review_companions: null
-stage: claimed
+stage: implemented
 claimed_at: 2026-10-25T042320Z
 base_sha: 459e84861e1a2c35ffa8148cd1fe09f5ead28416
 base_blob: 970b415b746fa03cb92e419d270be92588273178
@@ -69,6 +69,12 @@ worktree: .worktrees/muse_bf16_proj/restack-router-cluster-dsmem-m8
 mode: null
 restack_of: null
 stale_base: null
+implemented_at: 2026-10-25T042837Z
+impl_commit: 041d99b4bbca8464d43501a630a399e2afc877a6
+submission_sha256: 94473893a8f96855d29583bcb00d85036237fb6d9b0558d36352d5cdb2b395e6
+norm_sha256: 5516943688ba4ac5ae613c7840bd3c1e94ad07934c5fc33f5a5c31160314613b
+submission_blob: c857e5300e8435a8deb056ba49439d4d23ea126b
+lint_warnings: 1
 ---
 
 # restack-router-cluster-dsmem-m8
@@ -118,3 +124,60 @@ No companions are needed. The change is a pure shape gate (router, 1 <= m <= 8, 
 - At harvest, confirm in the profile: router_kernel<8,8> on router decode_1/verify_1 with no vectorized_elementwise (memset) node; _router_swapab_kernel on router decode_16/decode_32; _router_hilo_kernel on m=128/256; _bf16_swapab_kernel on the restack's bf16 rows. Also confirm qkv_gate decode_1 is near 12.2 us and not 13.5 us; 13.5 would mean the build was on pre-restack master, as in the nine 03:41Z mis-builds.
 - Why is the cluster kernel 3.6-4.3 us when swapab runs at 3.0-3.1 us? Cluster launch and scheduling cost and the DSMEM double barrier.cluster are likely causes. If this lands, the next stage should attack the kernel's own time, because the node saving has already been banked.
 
+
+## Implementation notes
+
+Edited only `muse_bf16_proj/submission.py` in the worktree (450 insertions, 0 deletions, on the restack b99b1dd content).
+
+What changed:
+- Added `import os, time`, and a new section "(7) router, 1 <= m <= 8" before `prepare()`: the CUDA source string (`_RC_CPP`, `_RC_CUDA`), `_build_router_cluster()` (load_inline, `TORCH_CUDA_ARCH_LIST=9.0a` set around the build and restored in `finally`, arch flags printed, `-O3 -lineinfo`; no `-std` override, so the c++20 note does not apply), `_RC_EXT` built at import, `_router_cluster_route`, `_router_cluster_forward` (`torch.empty` output, one launch, no memset), `_rc_check`, `_router_cluster_prepare`.
+- `prepare()`: `_router_cluster_prepare(state)` called right after `_router_prepare(state)` (so `router_stages` exists); sets the constant `state["router_cluster_ok"]`.
+- `kernel_fn` router branch: before `path = _router_path(...)`, `if _router_cluster_route(x, cfg, state): return _router_cluster_forward(x, state)`. The route requires `router_cluster_ok`, 1 <= m <= 8, cfg n == 256, k == 8192, bf16 CUDA x, stride(1) == 1, (m == 1 or stride(0) % 8 == 0), 16 B alignment. m 9..32 stays `_router_forward` (swapab), m > 32 stays hilo. Everything else is untouched.
+
+Reviewer instructions applied (they override the spec):
+- Gated to m <= 8 (C++ side also TORCH_CHECKs m <= 8); only `router_kernel<8,8>` is instantiated. The CS=4 variant and NT=16/32 instances are dropped.
+- Occupancy check kept: `router_info()` returns `cudaOccupancyMaxActiveClusters`; if CS=8 NT=8 reports < 16 active clusters, `router_cluster_ok` stays False and the swapab router runs (no CS=4 fallback).
+- Stride/alignment preconditions kept in both the Python gate and the C++ TORCH_CHECKs.
+- Self-check bounds kept (rel L2 <= 2e-5, worst row <= 1e-4, one-hot row within 1e-6 of hi+lo reconstruction, run 2 bit-identical), against `x.double() @ router.double().T`, at m in {1, 5, 8} (the source used 1, 8, 9, 16, 17, 32), each launch announced with a flushed print before and `torch.cuda.synchronize()` plus flushed print after.
+- mode=0 diagnostic NOT ported: the `mode` kernel/launch argument is removed entirely, the kernel always does the DSMEM reduce with both barrier.cluster. The `_rc_time` timing diagnostics are not ported either.
+- No memset on the m <= 8 path: output is `torch.empty`, the kernel writes every element (all m rows x 256 cols, one CTA per column pair), no `torch.zeros`/`zero_()` in the forward.
+- PATH CHOSEN lines are printed per m = 1..8 and for the other ranges. Any build error, occupancy miss, self-check miss or exception lands on the swapab path and never raises. No subprocess/fork. No mbarrier or spin waits exist in the kernel (cp.async groups plus hardware cluster barriers), so nothing to bound. The kernel uses only baseline sm_90 PTX (mma.sync, cp.async.cg, mapa, barrier.cluster), so no `__CUDA_ARCH_FEAT_SM90_ALL` guard is needed; 9.0a is still set per the brief.
+- Nothing was run (no GPU on this node); only py_compile and okc_lint.
+
+Harvest criteria:
+- Kill / promote on router `verify_1` (m=8): it must be below the restack's 5.47 us row (job 1e90292c7b954d96), expected about -7% (cluster read 5.08 us).
+- Count router `decode_1` (m=1) as a win only if its per-shape speedup is above 1.954 (restack 1.925 plus 1.5% noise); a 5.30-5.38 us row is a tie, not a loss.
+- In the profile confirm `router_kernel<8,8>` with NO memset node (no `vectorized_elementwise`) on router decode_1 and verify_1; `_router_swapab_kernel` on decode_16/decode_32; `_router_hilo_kernel` on m=128/256; `_bf16_swapab_kernel` on the restack's bf16 rows.
+- Confirm qkv_gate decode_1 is near 12.2 us (13.5 us would mean a pre-restack build, as in the nine 03:41Z mis-builds).
+- Expected headline about 1.2237 within CI; judge on the router rows only.
+
+## Rules check
+
+- [x] CUDA-graph capturable: kernel_fn's cluster path is `torch.empty` plus one `cudaLaunchKernelEx` on the current stream; no `.item()`/`.cpu()`/`synchronize()`/prints in kernel_fn (the only synchronize is in `_rc_check`, called from prepare()); no data-dependent control flow (gate uses cfg, shapes, strides, pointer alignment, and a prepare() constant).
+- [x] Nothing derived from `data` is cached across calls: only `state["router_cluster_ok"]`, derived from synthetic data and weights.
+- [x] Weights: hi/lo split unchanged from the restack, built in `prepare()` from the weights only; BF16 stays BF16.
+- [x] Activations BF16 where SGLang keeps BF16; KV cache FP8; queries at most FP8 E4M3: n/a, no attention or KV cache; router uses bf16 x with a bf16 hi+lo weight pair and fp32 accumulation, which the rules allow.
+- [x] Attention sees every key: n/a, no attention.
+- [x] No timing patches, harness frames/I/O/secrets, module edits, reference import, subprocess/fork/spawn: checked with grep of the diff; load_inline runs nvcc in-process via torch's build (same as the source run dc5d03c4, which passed the judge).
+- [x] All work happens inside the timed call; no output caching or replay: the output is a fresh `torch.empty` filled by the kernel on every call.
+
+okc_lint output:
+```
+warn  host-sync    L1377: torch.cuda.synchronize()  (outside kernel_fn's call graph; fine in prepare())
+OK with warnings: muse_bf16_proj/submission.py
+```
+
+## Pre-flight audit
+
+Audited 2026-10-24 by an opus subagent, by reading and numpy emulation; there is no GPU on this node.
+
+**Verdict: dispatch.** No fixes were needed.
+
+- Routing: the hook sits after every bf16-layer branch and immediately before `_router_path`. It fires only when `router_cluster_ok` is set, 1 <= m <= 8, `cfg["m"] == m`, `cfg["n"] == 256` and k == 8192, with stride and alignment preconditions met. Nothing earlier intercepts the router (`_swapab16_key` returns "" for the router, and `SWAPAB_CFG` has no router entry). m 9..32 still goes to `_router_forward` (swapab), m > 32 to `_router_hilo_forward`. The diff is 450 insertions and 0 deletions; the restack lines are byte-identical.
+- No memset: the m <= 8 path is `torch.empty` plus a single `cudaLaunchKernelEx`. Every output element is written: 16 clusters x 16 columns = 256, and in each CTA, rank r writes columns {2r, 2r+1} for every tok < m. The tokens >= m are zero-filled by cp.async with src_bytes 0, so they cannot leak garbage into the result. The kernel never reads `out`.
+- CUDA source: diffed against branch router-cuda-cluster-dsmem-splitk-rewrite (5abb1a1). The only differences are the mode=0 diagnostic and the dropped <8,16>/<8,32>/<4,*> instances. I re-derived the ldmatrix A/B fragment mapping, the XOR swizzle (store and load agree), the hi/lo row stacking (acc[0]+acc[2] gives hi+lo for the same column) and the warp-partial aliasing (2 KB <= 64 KB). All are correct.
+- Gates: the occupancy check (< 16 active clusters keeps swapab), the self-check bounds, the seed and the one-hot construction are identical to the source's. A numpy emulation of hi+lo with fp32 per-rank partials at m 1/5/8 gives rel L2 of about 2.3-2.8e-6 and a worst row of about 2.8e-6, against bounds of 2e-5 and 1e-4. That is about 7x margin, so the gate cannot always fail. The one-hot row is exact up to one fp32 add, well inside 1e-6. Determinism holds because the warp and rank sums run in a fixed order.
+- Fallbacks: a build error leaves `_RC_EXT` as None; any exception, occupancy miss or check miss leaves `router_cluster_ok` False. Each case prints `PATH CHOSEN` and lands on swapab. The C++ TORCH_CHECKs mirror the Python gate.
+- Rules: rules line 96 explicitly allows `load_inline`/nvcc, and the file has no subprocess, multiprocessing or os.fork. There are no host syncs, data-dependent branches or cached data in kernel_fn, and the only `synchronize` is in prepare(). hi/lo is unchanged from the restack. okc_lint gives OK with one warning (the prepare() synchronize), and py_compile passes.
+
+Residual risk: a device fault during the prepare() self-check would poison the CUDA context and fail the run instead of falling back (the same kernel already ran clean on the judge in dc5d03c4), and the m=1 win (about -2.6% against the restack) may land inside noise.
