@@ -63,7 +63,7 @@ review: proceed
 status: running
 review_at: 2026-10-25T042648Z
 review_companions: null
-stage: implemented
+stage: dispatched
 claimed_at: 2026-10-25T042648Z
 base_sha: 570f5e4ac5465931183addaf7a472e01668ced15
 base_blob: 1ae7e9cac6dc078a0e71c7a6b0b77ec48b0ed01f
@@ -80,6 +80,8 @@ submission_blob: 12ff8a5ce35b01937a68af59254faf69382f692a
 lint_warnings: 69
 attempt_file: 2026-10-25T044530Z-check-cuda-nvfp4-wgmma-rega-tiny-m-bucket16.md
 prepared_at: 2026-10-25T044530Z
+job: 3df5c69750884600
+dispatched_at: 2026-10-25T044538Z
 ---
 
 # cuda-nvfp4-wgmma-rega-tiny-m-bucket16
