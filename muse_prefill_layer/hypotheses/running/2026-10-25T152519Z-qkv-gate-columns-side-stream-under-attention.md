@@ -68,7 +68,7 @@ review: proceed
 status: running
 review_at: 2026-10-25T153023Z
 review_companions: null
-stage: implemented
+stage: dispatched
 claimed_at: 2026-10-25T153023Z
 base_sha: 712ef67fb9abd8cc36abfcb14e6187d4f513303b
 base_blob: a2fe2a75893c60d4f68cf94fcce8ce8f9b708a71
@@ -85,6 +85,8 @@ submission_blob: 19661e646dbeecc0186513d2515851128ab984d5
 lint_warnings: 72
 attempt_file: 2026-10-25T153907Z-submit-qkv-gate-columns-side-stream-under-attention.md
 prepared_at: 2026-10-25T153907Z
+job: b8b8536c4ed74d78
+dispatched_at: 2026-10-25T153915Z
 ---
 
 # qkv-gate-columns-side-stream-under-attention
