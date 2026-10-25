@@ -264,3 +264,4 @@ overrides of a reviewer) with the reason, newest last. Written by `churn.py note
 - 2026-10-25T204434Z `muse_prefill_layer` **diagnosis**: LESSONS: retired obsolete 'keep Marlin below first-turn sizes' harvest line (rega beats Marlin at T=753/3012)
 - 2026-10-25T204434Z `muse_prefill_layer` **diagnosis**: LESSONS: merged prefill Marlin block-m and Triton knob lines into one closed-knobs line
 - 2026-10-25T204434Z `muse_prefill_layer` **diagnosis**: LESSONS: rega inner-loop line gained cause (activation ingest limiter at 5.8-6.05 TB/s L2->SM)
+- 2026-10-25T204434Z `muse_prefill_layer` **diagnosis**: LESSONS: 2-CTA low-class line gained V64 ~6.4 TB/s ingest note (needs multicast)
