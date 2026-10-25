@@ -63,7 +63,7 @@ review: proceed
 status: running
 review_at: 2026-10-25T042648Z
 review_companions: null
-stage: claimed
+stage: implemented
 claimed_at: 2026-10-25T042648Z
 base_sha: 570f5e4ac5465931183addaf7a472e01668ced15
 base_blob: 1ae7e9cac6dc078a0e71c7a6b0b77ec48b0ed01f
@@ -72,6 +72,12 @@ worktree: .worktrees/muse_moe_w4a16/cuda-nvfp4-wgmma-rega-tiny-m-bucket16
 mode: null
 restack_of: null
 stale_base: true
+implemented_at: 2026-10-25T044530Z
+impl_commit: 81f149af81434325318683110c27e78d72eff58c
+submission_sha256: e3cc16bfd7dd263822fedff42f57c2b5bbcbf5690a5f1b89f1939d9d71e37473
+norm_sha256: 2b1a0c6181cc5112ef61e582be067f8bfaeabd5a8f3646a7c40d7d278c216a98
+submission_blob: 12ff8a5ce35b01937a68af59254faf69382f692a
+lint_warnings: 69
 ---
 
 # cuda-nvfp4-wgmma-rega-tiny-m-bucket16
@@ -128,3 +134,50 @@ No companion is warranted. This is kind: rewrite, judged on the replaced kernels
 - The prepare gate has been non-predictive of the judge at bs=1 twice (it showed unimodal while the judge was bimodal). The kill criteria should read the judge's raw decode_1 distribution (p10/p50 and slow-mode count) rather than trust PATH CHOSEN timings. The change already asks for this; make it a hard part of the harvest.
 - Merge order with siblings wgmma-rega-midm-bucket-cap32 / w2-only-midm (8<=T<=32) and s3 (>=128). All three edit the same load_inline module. Whichever lands second must rebase onto the renamed module, and the T ranges must stay disjoint (7 | 8).
 
+
+## Implementation notes
+
+Rebase: the worktree was at s2 (570f5e4); master 9080a71 has NONE of stage 1/2 (no CUDA block, no `_moe_marlin`, no wgmma hooks), so `git merge-file master base s2` conflicted over the whole inserted CUDA block. Resolved by taking s2's side (docstring + the full CUDA/python block); master's `prepare`/`_forward`/`kernel_fn` hunks merged cleanly: `diff master.py new` has zero master-only lines, so master's w2 atomic-add path (`W2_ATOMIC_MAX_TOKENS`, `_w2_atomic_self_check`, `_forward(.., w2_mode)`) is intact. Stage 1/2's dispatch hooks did not come across (they were never on master); I did not re-add them: stage 2's 128..512 path is DORMANT (`WG_S2_ENABLED = False`, `_wg_setup` not called), so bs >= 8 is master byte for byte and prepare does not pay a second build. Its code stays in the file for the s3 merge.
+
+Added (all in submission.py): a separate module `muse_moe_w4a16_wgmma_tiny_v1` (own `load_inline`, sm_90a only via TORCH_CUDA_ARCH_LIST=9.0a around the build, `-std=c++20 -O3 -lineinfo`, wgmma under `__CUDA_ARCH_FEAT_SM90_ALL` with error word 2 otherwise, printed arch flags) with N16-only `wgt_kernel<GATED>` + `wgt_gather_kernel`. It reuses only stage 2's PTX helper head, the N16 wgmma wrapper and the lossless `_wg_bank` retiling; the shared `wg_kernel` is untouched. Review fixes applied (they override the spec): bs<=7 only; 16 stages (13312 B, ~213 KB smem, 4 KB token slab); `wgmma_wait<0>` before the next dequant overwrites A plus register fences on A (register cap 168 under `__launch_bounds__(384,1)`; numRegs/spill printed); K split chosen on the GPU (`pick_split`, S in 1,2,4,8, integer cost, host mirror for logging), partials in an fp32 workspace, last-arriving CTA per (block, tile) group sums in K-slice order via a ticket (no spins); `wgt_gather` zeroes all tickets every call and the last CTA resets its own, and the host zeroes tickets on any error word; `_align_small` called with BSM=16 and warmed for T=1..7; combine = master's `_post_norm_combine_kernel`. LAUNCH COUNT: 5 (align, gather, w13+silu, w2, combine), not 2. Gate: per bucket (T=1; T=2-7 timed at 4 and 7) against master `_forward` with the chosen w2 mode (atomic add on), CUDA-graph replays, >=320 MB cold-L2 flush, interleaved A/B, 80 reps, p10/p50/p90 printed, skewed + local-random routings, enabled only if p50 <= 0.97 x master on every routing and the self-check passed; one PATH CHOSEN line per bucket, asserted equal to the enabled flag; ablation timing of K split forced 1 vs auto at T=1. Self-check: T in 1,2,4,7 x 6 routings (one-expert, skewed, all-local, random-local, uniform random, all-remote) x split auto/1/2/4/8 against an fp32 dequant reference with master's error printed beside it (bound max(2x master, 1e-2) aggregate / 4e-2 worst token), launch/done prints around each launch, graph capture of auto and split 4 with 3 replays, PLUS (coordinator finding from s3 job 3bdec0e58d684c17) one graph per T replayed with 6 different routings through refilled static buffers, each judged against the fp32 reference. Every routing-dependent quantity (n_padded, used blocks, split, tickets) is computed on the device per call; host-frozen values depend on T only.
+
+Deviations: stage 2's dispatch is not carried (see Rebase); `-std=c++20` added to the flags (stage 2 omitted it). Nothing was compiled or run here (no GPU/nvcc): biggest risk is the first nvcc/ptxas build and TMA/descriptor behaviour of the new 16-stage N16 kernel, then the ~300 s prepare budget (build + retile + self-check + gate; phases are skipped past `WGT_SETUP_BUDGET_S`=230 s and the path then stays master). Expected cost per stage is bandwidth-near-compute (wait<0> serialises dequant and wgmma within a warpgroup); a double-buffered A is the follow-up if M3 is missed.
+
+## Rules check
+
+- [x] CUDA-graph capturable: kernel_fn / `_moe_tiny` have no sync/.item()/.cpu(); every `.item()`/`synchronize` is in prepare-only helpers (lint warns only there).
+- [x] Nothing derived from `data` is cached across calls (scratch buffers are rewritten per call, tickets zeroed per call).
+- [x] Weights: lossless NVFP4 retiling in prepare() only (`_wg_bank`, round-trip asserted); no precision change.
+- [x] Activations BF16 where SGLang keeps BF16 (h and y stored bf16 as Marlin does; fp32 accumulate).
+- [x] n/a: attention/KV items (MoE problem).
+- [x] No timing patches, harness frames/I/O/secrets, module edits, reference import, child process, subprocess or network (load_inline only, in-process).
+- [x] All work inside the timed call; no output caching or replay.
+- [x] Shape-only host branching (T<=7 and prepare-time flags); bs>=8 is master unchanged.
+
+okc_lint: "OK with warnings" (only host-sync warnings in prepare-only code); py_compile OK; __pycache__ removed.
+
+## Pre-flight audit
+
+Audited 2026-10-25 by an Opus subagent, by reading the code (no GPU or nvcc on this node). **Verdict: dispatch-with-fixes.**
+
+Fixes (all in the worktree's `muse_moe_w4a16/submission.py`):
+1. **Restored `import os` and `import time`.** The rebase took master's import block, which has neither. prepare() now opens with `t_prepare = time.perf_counter()`, and `_wgt_build` and `_wgt_setup` use `os.environ` and `time`. As written, prepare() raised NameError on its first line and failed the whole run, at every shape. okc_lint did not catch it. An AST undefined-name scan now reports only `_moe_marlin`, which appears only in dormant stage-2 code that is never called.
+2. **Per-state tensor maps, no module globals.** This is the same root cause the coordinator found in s3 (job 3bdec0e58d684c17). The tiny module kept its maps in C++ globals (`TMaps g_tmaps[2]`, `g_tmaps_ok`, `g_tmap_rows`), and `wgt_set_maps` re-pointed them at the calling state's xs/hs. The judge calls prepare() twice and rotates the two states, so the second prepare would have re-pointed the first state's captured graphs at the other state's scratch. Now:
+   - `wgt_set_maps(xs, hs, maps)` encodes the maps into a per-state CPU uint8 tensor: 2 x TMaps, then the two row counts.
+   - `wgt_gemm(which, maps, ...)` copies the maps into a local TMaps and passes it by value. The C++ checks the size, and the gemm refuses maps that were never encoded.
+   - A new `_wgt_scratch()` builds one state's xs, hs, ws, tickets, err and maps. `state["wgt"]` holds them.
+   - The tiny module now has no mutable globals or statics, and no Python module global holds a tensor.
+3. **Two-state replay self-check.** `_wgt_replay_check` now builds a second state's scratch with its own maps, as a second prepare() would. For each T it captures one graph per state, A first then B. It then replays A, B, A, B, ... (12 replays), refilling a fresh routing in place before each replay. Each replay is judged against the fp32 dequant reference, with master's error printed beside it. Under the old globals, state A's graph would fail this check.
+
+Verified, no change needed:
+- **Routing-dependent values are computed on the device per call:** n_padded, used blocks, the K split (`pick_split`, which the producer and consumer compute identically) and the ticket targets. The host freezes only T-dependent sizes and the SM-count grid.
+- **Tickets are race-free.** The gather of call N+1 zeroes the tickets only after the w2 of call N has finished; stream order guarantees it. w13 and w2 use disjoint ticket rows.
+- **The split reduction is deterministic.** The last CTA sums the slices in K-slice order, so the graph output equals the eager output bitwise.
+- **No stale scratch is read.** The gather rewrites every xs row of the used blocks, sentinel rows included, and w13 rewrites every hs row of the used blocks.
+- **The A registers are not overwritten early.** Each stage runs `wgmma_wait<0>`, then `fence_acc` and `fence_a`, then the empty arrive, before the next dequant.
+- **Shared memory fits.** Dynamic smem is 1024 + 16 x 13312 + 16 x 272 = 218368 B, plus about 264 B static, which is within 227 KB. The opt-in attribute is set in `wgt_init` before the first launch. The stage, slab and box offsets are all 1024-aligned, and expect_tx = 9216 + 2 x 2048 B matches the copies.
+- **Master paths are unchanged.** Master's submission.py has not changed since 9080a71, and the diff against it removes no lines. bs >= 8 goes straight to master's `_forward(.., w2_mode)`, so the w2 atomic path is intact. Stage 2 is neither built nor called, and its `g_maps` globals sit only in the uncompiled `_WG_SRC_BODY`.
+- **A skipped or failed phase leaves master.** A budget skip (230 s, or 200 s before the self-check), a raise, or a self-check or gate miss all set `wgt_ok={}` and print `PATH CHOSEN = MASTER`.
+- **kernel_fn stays clean.** kernel_fn and `_moe_tiny` contain no sync, print, try/except or per-call host state.
+
+Residual risk: the first nvcc/ptxas build of the new 16-stage N16 kernel and its TMA/mbarrier behaviour are unproven on hardware. A device fault would be sticky and fail the run rather than fall back. T=3, 5 and 6 are enabled without their own self-check.
