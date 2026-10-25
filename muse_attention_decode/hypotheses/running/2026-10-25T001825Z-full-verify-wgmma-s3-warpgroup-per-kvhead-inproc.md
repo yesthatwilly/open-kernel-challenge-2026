@@ -78,7 +78,7 @@ review: proceed
 status: running
 review_at: 2026-10-25T002202Z
 review_companions: null
-stage: implemented
+stage: dispatched
 claimed_at: 2026-10-25T002203Z
 base_sha: ee7dd2035bcffc84a11faafb7b5574466ee3bcae
 base_blob: 2b7e5dbf0fde0ae0163e5ecaefd87a5f0848e6b0
@@ -95,6 +95,8 @@ submission_blob: 136874e0158f8b76208c4130e523bc91b84160ad
 lint_warnings: 8
 attempt_file: 2026-10-25T004725Z-check-full-verify-wgmma-s3-warpgroup-per-kvhead-inproc.md
 prepared_at: 2026-10-25T004725Z
+job: 2c3f7fff72bb4e1d
+dispatched_at: 2026-10-25T004732Z
 ---
 
 # full-verify-wgmma-s3-warpgroup-per-kvhead-inproc
