@@ -108,3 +108,25 @@ No companion. (i) An ab-revert of pooler-nn-layout-widen-m256 or of the NN resta
 - Overlap with the queued bf16-verify32-cutlass-coop-256x128-splitk-stage2 and bf16-verify16-cutlass-m128-onetile-splitk-rewrite (same cells) and with combo-cublaslt-single-node-m128-m256-plus-naive (B4 touches pooler m=256 NN): whichever lands second must re-baseline these rows against the other.
 - Should the selector's 1.02x threshold be per m? m=128 has the smaller expected margin and the larger risk of a false win from noise. With 41 reps the median error should be small, but print the IQR.
 
+
+## Implementation notes
+
+Base: worktree submission.py blob equals master's f919748b, so no merge was needed. Edited only muse_bf16_proj/submission.py (+181/-5).
+- New `_khalf_forward` (bmm of the two K halves of x, then torch.add) with candidates T (TN view of state['pooler']) and N (pooler_t halves, no new copy). Reuses pooler_t.
+- `_khalf_select(state)` runs once, on state A only, at the end of `_prepare_state(flags=None)`. For m=128 and 256 it captures master's NN torch.mm and both candidates as graphs and checks rel L2 and the profiler kernel names (exactly one GEMM and one elementwise add, no copy, memset or splitK reduce). It replays interleaved with a 256 MB flush, 41 reps, empty-graph baseline subtracted, and routes a candidate only at master/cand >= 1.02. Prints both medians, IQR and kernel names even when master is kept, plus xh.stride() and a PATH CHOSEN line per m.
+- Review fixes: (1) re-baselined: the selector compares against master's actual NN torch.mm at both m. (2) New flag `pooler_khalf_ok`, plus a per-m choice dict `pooler_khalf`. `_ab_component(layer, m, state)` returns it BEFORE the nn_ok and nn_p256_ok ranges, only for m in the chosen dict. A miss turns off only that flag, so master's NN path stays and unpooler m=128 NN is untouched. (3) The choice is made once on A and inherited by B via `_ab_flags`. (4) Final flags and a `FINAL PATH pooler m=..` line per m are printed in prepare(). (5) No new weight copy. The per-m 1.02x threshold is applied per m, and the IQR is printed.
+- Deviation: the route is exact-m (128, 256) and not the whole 65..256 band, because only those are measured and self-checked. The kernel_fn gate adds one dict lookup keyed on cfg m; there are no prints, state mutation or try/except in kernel_fn.
+- Note: if nn_ok or nn_p256_ok turn off later in the A/B check, the baseline shifts (the review flagged this); the attempt log must record all three flags.
+
+## Rules check
+
+- [x] No subprocess/fork/spawn added.
+- [x] No triton.autotune; no host sync, print or try/except in kernel_fn (diff checked).
+- [x] Nothing derived from inputs cached; no device pointers or tensors in module globals (all in `state`).
+- [x] Both states: B inherits the choice through _ab_flags; the A/B graph self-check covers pooler m=128 and 256 for both.
+- [x] Precision: two bf16 roundings, below the 6e-3 self-check bound; the selector rejects a candidate above it.
+- [x] Any selector failure keeps master's path and never raises.
+- [x] No sm_90a PTX/CUDA load_inline added: n/a.
+- [x] First-line marker kept; not committed, okc not run.
+
+okc_lint: OK with warnings (only existing prepare()-side host-sync and flush-dtype warnings); py_compile OK; __pycache__ removed.
