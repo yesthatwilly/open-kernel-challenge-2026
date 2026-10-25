@@ -49,7 +49,7 @@ review: proceed
 status: running
 review_at: 2026-10-25T010823Z
 review_companions: null
-stage: implemented
+stage: dispatched
 claimed_at: 2026-10-25T010823Z
 base_sha: 9d09de0cc3ef315d6ef3aab918058321b698da3f
 base_blob: 4da94677234faaa06b42b5ced541db8961fd6f34
@@ -66,6 +66,8 @@ submission_blob: 1dc2735e85cedd0e25f03663f989c4330ac8d50a
 lint_warnings: 33
 attempt_file: 2026-10-25T011431Z-check-dl-route-warp-topk-pdl.md
 prepared_at: 2026-10-25T011431Z
+job: b471a950805c4053
+dispatched_at: 2026-10-25T011438Z
 ---
 
 # dl-route-warp-topk-pdl
