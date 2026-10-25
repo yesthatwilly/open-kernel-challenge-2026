@@ -59,8 +59,11 @@ depends_on: null
 priority: 2
 kind: primary
 controls_for: null
-review: required
-status: queued
+review: hold
+status: hold
+review_at: 2026-10-25T203112Z
+review_companions: null
+hold_reason: "adversarial review: Already measured at B128 and lost: combo-wg-occ2-v64-hot-interleave-align2 (job 31c27e4b8fc84bd2, current BEST) built the same two-CTAs-per-SM wgmma port and ti"
 ---
 
 # wg-two-ctas-per-sm-port-b128-n32
@@ -79,3 +82,26 @@ Port of prefill's experts-rega-low-class-two-ctas-per-sm (done/neutral, gained 3
 ## Risk
 
 Not a duplicate of the queued pingpong-consumers / producer-scale-expand (one CTA, consumer schedule / instruction count) or b256-n64-deep-ring (B256 only, one CTA, deeper ring); this adds occupancy at B128 only. It is the one lever prefill measured as a gain on the same kernel. If pingpong lands first, rebase and keep both selectable; the selector then compares them.
+
+## Adversarial review
+
+Reviewed 2026-10-25T203112Z by an adversarial subagent (model opus).
+
+**Verdict: hold.** Already measured at B128 and lost: combo-wg-occ2-v64-hot-interleave-align2 (job 31c27e4b8fc84bd2, current BEST) built the same two-CTAs-per-SM wgmma port and timed B128 print-only: judge-like routing V64@OCC2 full path 268.5 us vs Marlin 251.5 us (1.067x worse); prefill's own gate measured the proposed V32 slab 23% slower under skew. Minted 15:34Z before that run; does not cite it.
+
+### Justification
+Occupancy is identical (384 threads x 80 regs caps at 2 CTAs/SM at NMAX 64 already); STG 4 vs 3 is the bytes-in-flight lever b128-n32-deep-ring measured flat; NMAX 32 splits hot experts (judge rebuild max 44 local routes) into more chunks, each re-dequantizing weight tiles (prefill gate job 1a77da43: pop:2 skew V64 0.994x, V32 1.233x, chunks 33->38->54). To flip B128 at the 1.02x margin V32 would need ~8-9% over V64. Missing prior: combo-wg-occ2-v64-hot-interleave-align2. Master has no wg2 module; the change would rebuild OCC2 machinery that exists on the combo branch.
+
+### Confounders on the current kernel
+- wg-pdl-gather-w13-w2-chain (on master): PDL across the wg chain interacts with 2 CTAs/SM residency (only if B128 wgmma is selected).
+- align-two-phase-port-from17 (on master): align2 v128 OFF; B128 full-path comparison partly front-end-driven.
+- combo-toprow-w13t1-d32-alignpar-postnorm-wg-align2 (master): wg-align2 front end applies to whichever wgmma bucket is ON.
+- combo-wg-occ2-v64-hot-interleave-align2 (BEST, not on master): direct pre-measurement of the mechanism; did not flip B128.
+
+### Interference and A/B needs
+No companions: the combo run's B128 print-only rows already give s5, V64@OCC2 and Marlin on three routings. If pursued, add a print-only V32 candidate to the combo branch's wg2 selector inside another hypothesis that rebuilds wg2.
+
+### Open questions
+- Could B128's ~7% gap to Marlin close via the queued pingpong-consumers or producer-scale-expand on the wg2 branch, or NMAX 128 / STG 2 at OCC2?
+- Restack master onto the BEST branch (wg2 at B256) before further wgmma-side hypotheses?
+
