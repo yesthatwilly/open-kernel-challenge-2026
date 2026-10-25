@@ -1,0 +1,166 @@
+[splitkv] load_inline compiled in 49.3s
+[splitkv] self-check kv_scale=1.0 grid=device: rel L2 1.69e-03, finite True
+[splitkv] self-check kv_scale=0.25 grid=3: rel L2 1.66e-03, finite True
+[splitkv] self-check kv_scale=1.0 grid=3: rel L2 1.62e-03, finite True
+[sk] building muse_full_decode_splitkv_v2: TORCH_CUDA_ARCH_LIST=9.0a, arch flags ['-gencode=arch=compute_90a,code=sm_90a'], extra -O3 -lineinfo
+[sk] load_inline compiled in 36.7s
+[sk] device capability (9, 0), NVIDIA H200, 132 SMs
+[sk] splitkv_attn_sk_kernel<4 stages, ticket>: binaryVersion 90, ptxVersion 90, regs 121, local 0 B, dyn smem 95264 B, 2 CTAs/SM
+[sk] splitkv_attn_sk_kernel<4 stages, no ticket>: binaryVersion 90, ptxVersion 90, regs 113, local 0 B, dyn smem 95264 B, 2 CTAs/SM
+[sk] splitkv_attn_sk_kernel<5 stages, ticket>: binaryVersion 90, ptxVersion 90, regs 117, local 0 B, dyn smem 112672 B, 2 CTAs/SM
+[sk] canary B=2 short: launching _pre_attention_kernel
+[sk] canary B=2 short: launching splitkv_attn_sk_kernel<4 stages, ticket> grid 264
+[sk] canary B=2 short: splitkv_attn_sk_kernel returned
+[sk] canary B=2 short: rel L2 1.65e-03, finite True -> ok
+[sk] B=2 one request spans every CTA, grid 7: launching _pre_attention_kernel
+[sk] B=2 one request spans every CTA, grid 7: launching splitkv_attn_sk_kernel<4 stages, ticket> grid 7
+[sk] B=2 one request spans every CTA, grid 7: splitkv_attn_sk_kernel returned
+[sk] B=2 one request spans every CTA, grid 7: rel L2 1.63e-03, finite True -> ok
+[sk] B=2 one request spans every CTA, grid device: launching _pre_attention_kernel
+[sk] B=2 one request spans every CTA, grid device: launching splitkv_attn_sk_kernel<4 stages, ticket> grid 264
+[sk] B=2 one request spans every CTA, grid device: splitkv_attn_sk_kernel returned
+[sk] B=2 one request spans every CTA, grid device: rel L2 1.75e-03, finite True -> ok
+[sk] B=16 ragged kv 0.25 grid device: launching _pre_attention_kernel
+[sk] B=16 ragged kv 0.25 grid device: launching splitkv_attn_sk_kernel<4 stages, ticket> grid 264
+[sk] B=16 ragged kv 0.25 grid device: splitkv_attn_sk_kernel returned
+[sk] B=16 ragged kv 0.25 grid device: rel L2 1.66e-03, finite True -> ok
+[sk] B=16 ragged grid 3: launching _pre_attention_kernel
+[sk] B=16 ragged grid 3: launching splitkv_attn_sk_kernel<4 stages, ticket> grid 3
+[sk] B=16 ragged grid 3: splitkv_attn_sk_kernel returned
+[sk] B=16 ragged grid 3: rel L2 1.65e-03, finite True -> ok
+[sk] B=32 ragged grid 3: launching _pre_attention_kernel
+[sk] B=32 ragged grid 3: launching splitkv_attn_sk_kernel<4 stages, ticket> grid 3
+[sk] B=32 ragged grid 3: splitkv_attn_sk_kernel returned
+[sk] B=32 ragged grid 3: rel L2 1.67e-03, finite True -> ok
+[sk] B=32 ragged kv 0.25 grid device: launching _pre_attention_kernel
+[sk] B=32 ragged kv 0.25 grid device: launching splitkv_attn_sk_kernel<4 stages, ticket> grid 264
+[sk] B=32 ragged kv 0.25 grid device: splitkv_attn_sk_kernel returned
+[sk] B=32 ragged kv 0.25 grid device: rel L2 1.65e-03, finite True -> ok
+[sk] B=64 mixed kv 0.25 grid device: launching _pre_attention_kernel
+[sk] B=64 mixed kv 0.25 grid device: launching splitkv_attn_sk_kernel<4 stages, ticket> grid 264
+[sk] B=64 mixed kv 0.25 grid device: splitkv_attn_sk_kernel returned
+[sk] B=64 mixed kv 0.25 grid device: rel L2 1.66e-03, finite True -> ok
+[sk] B=64 mixed grid 7: launching _pre_attention_kernel
+[sk] B=64 mixed grid 7: launching splitkv_attn_sk_kernel<4 stages, ticket> grid 7
+[sk] B=64 mixed grid 7: splitkv_attn_sk_kernel returned
+[sk] B=64 mixed grid 7: rel L2 1.66e-03, finite True -> ok
+[sk] replay: eager warm-up of kernel_fn on a side stream
+[sk] replay: warm-up returned
+[sk] replay: capturing kernel_fn
+[sk] replay 1: launching graph (_pre_attention_kernel + splitkv_attn_sk_kernel)
+[sk] replay 1: rel L2 1.69e-03, finite True -> ok
+[sk] replay 2: launching graph (_pre_attention_kernel + splitkv_attn_sk_kernel)
+[sk] replay 2: rel L2 1.69e-03, finite True -> ok
+[sk] tickets after the self-check: sum 0
+[sk] building muse_full_decode_splitkv_v3: TORCH_CUDA_ARCH_LIST=9.0a, arch flags ['-gencode=arch=compute_90a,code=sm_90a'], extra -O3 -lineinfo
+[sk] load_inline compiled in 36.4s
+[sk3] splitkv_attn_sk_fused_kernel: binaryVersion 90, ptxVersion 90, regs 125, local 0 B, dyn smem 99360 B, 2 CTAs/SM
+[sk3] canary B=2 short: launching _pre_attention_kernel (master reference, cloned caches)
+[sk3] canary B=2 short: launching splitkv_attn_sk_kernel (v2 reference) grid 264
+[sk3] canary B=2 short: launching splitkv_attn_sk_fused_kernel grid 264
+[sk3] canary B=2 short: splitkv_attn_sk_fused_kernel returned
+[sk3] canary B=2 short: k_cache new rows rel L2 0.00e+00, finite True, other rows unchanged True
+[sk3] canary B=2 short: v_cache new rows rel L2 0.00e+00, finite True, other rows unchanged True
+[sk3] canary B=2 short: out vs fp32 ref 1.57e-03, vs v2 0.00e+00, finite True -> ok
+[sk3] B=2 one request spans every CTA, grid 7: launching _pre_attention_kernel (master reference, cloned caches)
+[sk3] B=2 one request spans every CTA, grid 7: launching splitkv_attn_sk_kernel (v2 reference) grid 7
+[sk3] B=2 one request spans every CTA, grid 7: launching splitkv_attn_sk_fused_kernel grid 7
+[sk3] B=2 one request spans every CTA, grid 7: splitkv_attn_sk_fused_kernel returned
+[sk3] B=2 one request spans every CTA, grid 7: k_cache new rows rel L2 0.00e+00, finite True, other rows unchanged True
+[sk3] B=2 one request spans every CTA, grid 7: v_cache new rows rel L2 0.00e+00, finite True, other rows unchanged True
+[sk3] B=2 one request spans every CTA, grid 7: out vs fp32 ref 1.69e-03, vs v2 0.00e+00, finite True -> ok
+[sk3] B=2 one request spans every CTA, grid device: launching _pre_attention_kernel (master reference, cloned caches)
+[sk3] B=2 one request spans every CTA, grid device: launching splitkv_attn_sk_kernel (v2 reference) grid 264
+[sk3] B=2 one request spans every CTA, grid device: launching splitkv_attn_sk_fused_kernel grid 264
+[sk3] B=2 one request spans every CTA, grid device: splitkv_attn_sk_fused_kernel returned
+[sk3] B=2 one request spans every CTA, grid device: k_cache new rows rel L2 0.00e+00, finite True, other rows unchanged True
+[sk3] B=2 one request spans every CTA, grid device: v_cache new rows rel L2 0.00e+00, finite True, other rows unchanged True
+[sk3] B=2 one request spans every CTA, grid device: out vs fp32 ref 1.67e-03, vs v2 0.00e+00, finite True -> ok
+[sk3] B=16 ragged kv 0.25 grid device: launching _pre_attention_kernel (master reference, cloned caches)
+[sk3] B=16 ragged kv 0.25 grid device: launching splitkv_attn_sk_kernel (v2 reference) grid 264
+[sk3] B=16 ragged kv 0.25 grid device: launching splitkv_attn_sk_fused_kernel grid 264
+[sk3] B=16 ragged kv 0.25 grid device: splitkv_attn_sk_fused_kernel returned
+[sk3] B=16 ragged kv 0.25 grid device: k_cache new rows rel L2 0.00e+00, finite True, other rows unchanged True
+[sk3] B=16 ragged kv 0.25 grid device: v_cache new rows rel L2 0.00e+00, finite True, other rows unchanged True
+[sk3] B=16 ragged kv 0.25 grid device: out vs fp32 ref 1.66e-03, vs v2 0.00e+00, finite True -> ok
+[sk3] B=16 ragged grid 3: launching _pre_attention_kernel (master reference, cloned caches)
+[sk3] B=16 ragged grid 3: launching splitkv_attn_sk_kernel (v2 reference) grid 3
+[sk3] B=16 ragged grid 3: launching splitkv_attn_sk_fused_kernel grid 3
+[sk3] B=16 ragged grid 3: splitkv_attn_sk_fused_kernel returned
+[sk3] B=16 ragged grid 3: k_cache new rows rel L2 0.00e+00, finite True, other rows unchanged True
+[sk3] B=16 ragged grid 3: v_cache new rows rel L2 0.00e+00, finite True, other rows unchanged True
+[sk3] B=16 ragged grid 3: out vs fp32 ref 1.65e-03, vs v2 0.00e+00, finite True -> ok
+[sk3] B=32 ragged grid 3: launching _pre_attention_kernel (master reference, cloned caches)
+[sk3] B=32 ragged grid 3: launching splitkv_attn_sk_kernel (v2 reference) grid 3
+[sk3] B=32 ragged grid 3: launching splitkv_attn_sk_fused_kernel grid 3
+[sk3] B=32 ragged grid 3: splitkv_attn_sk_fused_kernel returned
+[sk3] B=32 ragged grid 3: k_cache new rows rel L2 0.00e+00, finite True, other rows unchanged True
+[sk3] B=32 ragged grid 3: v_cache new rows rel L2 0.00e+00, finite True, other rows unchanged True
+[sk3] B=32 ragged grid 3: out vs fp32 ref 1.65e-03, vs v2 0.00e+00, finite True -> ok
+[sk3] B=32 ragged kv 0.25 grid device: launching _pre_attention_kernel (master reference, cloned caches)
+[sk3] B=32 ragged kv 0.25 grid device: launching splitkv_attn_sk_kernel (v2 reference) grid 264
+[sk3] B=32 ragged kv 0.25 grid device: launching splitkv_attn_sk_fused_kernel grid 264
+[sk3] B=32 ragged kv 0.25 grid device: splitkv_attn_sk_fused_kernel returned
+[sk3] B=32 ragged kv 0.25 grid device: k_cache new rows rel L2 0.00e+00, finite True, other rows unchanged True
+[sk3] B=32 ragged kv 0.25 grid device: v_cache new rows rel L2 0.00e+00, finite True, other rows unchanged True
+[sk3] B=32 ragged kv 0.25 grid device: out vs fp32 ref 1.66e-03, vs v2 0.00e+00, finite True -> ok
+[sk3] B=64 mixed kv 0.25 grid device: launching _pre_attention_kernel (master reference, cloned caches)
+[sk3] B=64 mixed kv 0.25 grid device: launching splitkv_attn_sk_kernel (v2 reference) grid 264
+[sk3] B=64 mixed kv 0.25 grid device: launching splitkv_attn_sk_fused_kernel grid 264
+[sk3] B=64 mixed kv 0.25 grid device: splitkv_attn_sk_fused_kernel returned
+[sk3] B=64 mixed kv 0.25 grid device: k_cache new rows rel L2 0.00e+00, finite True, other rows unchanged True
+[sk3] B=64 mixed kv 0.25 grid device: v_cache new rows rel L2 0.00e+00, finite True, other rows unchanged True
+[sk3] B=64 mixed kv 0.25 grid device: out vs fp32 ref 1.68e-03, vs v2 0.00e+00, finite True -> ok
+[sk3] B=64 mixed grid 7: launching _pre_attention_kernel (master reference, cloned caches)
+[sk3] B=64 mixed grid 7: launching splitkv_attn_sk_kernel (v2 reference) grid 7
+[sk3] B=64 mixed grid 7: launching splitkv_attn_sk_fused_kernel grid 7
+[sk3] B=64 mixed grid 7: splitkv_attn_sk_fused_kernel returned
+[sk3] B=64 mixed grid 7: k_cache new rows rel L2 0.00e+00, finite True, other rows unchanged True
+[sk3] B=64 mixed grid 7: v_cache new rows rel L2 0.00e+00, finite True, other rows unchanged True
+[sk3] B=64 mixed grid 7: out vs fp32 ref 1.65e-03, vs v2 0.00e+00, finite True -> ok
+[sk] replay: eager warm-up of kernel_fn on a side stream
+[sk] replay: warm-up returned
+[sk] replay: capturing kernel_fn
+[sk] replay 1: launching graph (splitkv_attn_sk_fused_kernel)
+[sk] replay 1: rel L2 1.66e-03, finite True -> ok
+[sk] replay 2: launching graph (splitkv_attn_sk_fused_kernel)
+[sk] replay 2: rel L2 1.66e-03, finite True -> ok
+[sk3] tickets after the self-check: sum 0
+PATH CHOSEN: full decode streamk fused-preattn v3
+[sk] diag variant check B=16 ragged: launching _pre_attention_kernel
+[sk] diag variant check B=16 ragged: launching splitkv_attn_sk_kernel<4 stages, no ticket> grid 264
+[sk] diag variant check B=16 ragged: splitkv_attn_sk_kernel returned
+[sk] diag variant check B=16 ragged: launching splitkv_sk_combine_kernel
+[sk] diag variant check B=16 ragged: splitkv_sk_combine_kernel returned
+[sk] diag variant check B=16 ragged: rel L2 1.66e-03, finite True -> ok
+[sk] diag variant check B=16 ragged: launching _pre_attention_kernel
+[sk] diag variant check B=16 ragged: launching splitkv_attn_sk_kernel<5 stages, ticket> grid 264
+[sk] diag variant check B=16 ragged: splitkv_attn_sk_kernel returned
+[sk] diag variant check B=16 ragged: rel L2 1.66e-03, finite True -> ok
+[sk-diag] B=16: launching _pre_attention_kernel
+[sk-diag] B=16: timing stage-1 A + B
+[sk-diag] B=16 x 80000: 328 MB of K+V rows, grid 264, eager, cold L2, median of 10
+[sk-diag]   stage-1 A splitkv_attn_kernel            116.2 us  2.82 TB/s
+[sk-diag]   stage-1 B splitkv_combine_kernel          12.1 us  -> A+B   128.3 us
+[sk-diag]   stream-K + ticket, 4 st (timed path)     111.0 us  2.95 TB/s  (vs stage-1 out rel 2.4e-04)
+[sk-diag] B=16: timing stream-K no ticket + combine
+[sk-diag]   stream-K no ticket, 4 st             105.0 us  3.12 TB/s  + combine 11.6 us -> 116.7 us  (rel 2.4e-04)
+[sk-diag] B=16: timing stream-K + ticket, 5 stages
+[sk-diag]   stream-K + ticket, 5 st              114.0 us  2.87 TB/s  (rel 2.4e-04)
+[sk-diag] B=16 ratios (>1 = first is slower): stage-1 A+B / v2 1.155x; split/locality: stage-1 A / stream-K no-ticket A 1.106x; ticket fold: (no-ticket A + combine) / ticket 1.051x; stages: 4 st / 5 st 0.974x
+[sk-diag] B=32: launching _pre_attention_kernel
+[sk-diag] B=32: timing stage-1 A + B
+[sk-diag] B=32 x 80000: 655 MB of K+V rows, grid 264, eager, cold L2, median of 10
+[sk-diag]   stage-1 A splitkv_attn_kernel            245.0 us  2.68 TB/s
+[sk-diag]   stage-1 B splitkv_combine_kernel          12.7 us  -> A+B   257.7 us
+[sk-diag]   stream-K + ticket, 4 st (timed path)     220.4 us  2.97 TB/s  (vs stage-1 out rel 1.9e-04)
+[sk-diag] B=32: timing stream-K no ticket + combine
+[sk-diag]   stream-K no ticket, 4 st             215.8 us  3.04 TB/s  + combine 11.6 us -> 227.4 us  (rel 1.9e-04)
+[sk-diag] B=32: timing stream-K + ticket, 5 stages
+[sk-diag]   stream-K + ticket, 5 st              221.4 us  2.96 TB/s  (rel 1.9e-04)
+[sk-diag] B=32 ratios (>1 = first is slower): stage-1 A+B / v2 1.169x; split/locality: stage-1 A / stream-K no-ticket A 1.135x; ticket fold: (no-ticket A + combine) / ticket 1.032x; stages: 4 st / 5 st 0.995x
+[sk3-diag] B=16: timing pre-attn + v2, then fused v3 (eager, cold L2, median of 10)
+[sk3-diag] B=16 x 80000: _pre_attention_kernel 6.2 us + v2 kernel 111.9 us = 118.2 us; fused v3 kernel 115.1 us; v3 - v2 kernel (in-kernel q/kv build) +3.1 us; saved vs pre+v2 +3.1 us
+[sk3-diag] B=32: timing pre-attn + v2, then fused v3 (eager, cold L2, median of 10)
+[sk3-diag] B=32 x 80000: _pre_attention_kernel 6.4 us + v2 kernel 221.3 us = 227.7 us; fused v3 kernel 220.5 us; v3 - v2 kernel (in-kernel q/kv build) -0.8 us; saved vs pre+v2 +7.2 us
+PATH CHOSEN: every other shape (sliding, verify, batch 1, page 64, dp): master path, unchanged

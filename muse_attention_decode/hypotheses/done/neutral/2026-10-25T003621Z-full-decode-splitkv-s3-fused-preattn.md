@@ -52,10 +52,10 @@ controls_for: null
 rewrite_stage: 3
 replaces: _pre_attention_kernel launch on full decode 1<B<=64 (folded into splitkv_attn_sk_kernel)
 review: proceed
-status: running
+status: done
 review_at: 2026-10-25T014055Z
 review_companions: null
-stage: dispatched
+stage: harvested
 claimed_at: 2026-10-25T014055Z
 base_sha: f291b49c49670595d0615e749294f69bc15de1a4
 base_blob: 695c97d2e9fef8f806ec02d2fe14a02668989e3f
@@ -74,6 +74,13 @@ attempt_file: 2026-10-25T034225Z-check-full-decode-splitkv-s3-fused-preattn.md
 prepared_at: 2026-10-25T034225Z
 job: 825baa03798f431a
 dispatched_at: 2026-10-25T034233Z
+outcome: neutral
+verdict_detail: within-ci
+speedup: 1.42828155853798
+speedup_ci: [1.4068573351599103, 1.4497057819160495]
+harvested_at: 2026-10-25T043353Z
+best_at_harvest: 1.4321773019894537
+promotion: null
 ---
 
 # full-decode-splitkv-s3-fused-preattn
@@ -170,3 +177,36 @@ Fixes applied:
 2. The self-check tolerance on the new k/v rows is now rel L2 < 2e-2, up from 5e-3. Triton's approximate sqrt and division versus CUDA's IEEE ones can flip a single e4m3 ulp, which is about 8e-3 of a B=2 row set. That would silently drop the run to v2. A real indexing or scale bug shows up as O(1).
 
 Residual risk: the CUDA has never been compiled. The build adds about 40 s to import, and spills are only logged (`local` in the `[sk3]` attrs line), never gated. Check `PATH CHOSEN` and the `[sk3]` regs/local line before reading any timing.
+
+## Result
+
+- job `825baa03798f431a` (check), status done, passed True, tests 16/16
+- speedup 1.4283x, 95% CI [1.4069, 1.4497], score 2636.9450599469105 µs vs SGLang 3766.3 µs
+- best at harvest: {"speedup": 1.4321773019894537, "ci": [1.4106946424596118, 1.4554282820505813], "job": "2a3241780c7b4c46"}; base result: muse_attention_decode/hypotheses/done/neutral/full-decode-splitkv-s2-streamk-ticket-inproc.result.json
+- **outcome: neutral** (within-ci)
+- files: `muse_attention_decode/hypotheses/done/neutral/full-decode-splitkv-s3-fused-preattn.result.json`, `muse_attention_decode/hypotheses/done/neutral/full-decode-splitkv-s3-fused-preattn.patch`; branch `hyp/muse_attention_decode/full-decode-splitkv-s3-fused-preattn`
+
+## Attribution
+
+| shape | w | base µs | hyp µs | delta | verdict |
+|---|---|---|---|---|---|
+| batch=1 ctx=80000 dist=soft heads=tp8 layer=sliding load=decode_1 page=1 | 46 | 13.09 | 13.49 | 1.0085 | flat |
+| batch=1 ctx=80000 dist=coherent heads=tp8 layer=full load=decode_1 page=1 | 16 | 27.19 | 27.59 | 0.9855 | flat |
+| batch=16 ctx=80000 dist=soft heads=tp8 layer=sliding load=decode_16 page=1 spread=agentic | 46 | 15.19 | 15.67 | 0.9956 | flat |
+| batch=16 ctx=80000 dist=coherent heads=tp8 layer=full load=decode_16 page=1 spread=agentic | 16 | 110.91 | 109.55 | 1.0175 | flat |
+| batch=32 ctx=80000 dist=soft heads=tp8 layer=sliding load=decode_32 page=1 spread=agentic | 46 | 24.29 | 24.4 | 1.0163 | flat |
+| batch=32 ctx=80000 dist=coherent heads=tp8 layer=full load=decode_32 page=1 spread=agentic | 16 | 226.81 | 223.11 | 1.0243 | flat |
+| batch=1 ctx=80000 dist=soft heads=tp8 layer=sliding load=verify_1 page=1 q_len=8 | 46 | 16.83 | 17.35 | 0.9922 | flat |
+| batch=1 ctx=80000 dist=coherent heads=tp8 layer=full load=verify_1 page=1 q_len=8 | 16 | 29.84 | 30.04 | 0.9978 | flat |
+| batch=16 ctx=80000 dist=soft heads=tp8 layer=sliding load=verify_16 page=1 q_len=8 spread=agentic | 46 | 22.72 | 23.23 | 0.9953 | flat |
+| batch=16 ctx=80000 dist=coherent heads=tp8 layer=full load=verify_16 page=1 q_len=8 spread=agentic | 16 | 163.42 | 163.39 | 1.0136 | flat |
+| batch=32 ctx=80000 dist=soft heads=tp8 layer=sliding load=verify_32 page=1 q_len=8 spread=agentic | 46 | 28.87 | 29.6 | 0.9962 | flat |
+| batch=32 ctx=80000 dist=coherent heads=tp8 layer=full load=verify_32 page=1 q_len=8 spread=agentic | 16 | 302.06 | 300.35 | 1.0143 | flat |
+
+no shape moved outside noise. Expected hit: 0/3. Noise ±1.5%.
+
+## Follow-ups
+
+- rewrite stage 3 of `_pre_attention_kernel launch on full decode 1<B<=64 (folded into splitkv_attn_sk_kernel)`: read the replaced kernels' own us per shape (profile top_kernels) against the incumbent and the floor, and check which Milestone it reached. The next stage is `/hypothesize muse_attention_decode "<what to fix or tune>" --kind rewrite --depends-on full-decode-splitkv-s3-fused-preattn --stage 4`; a slow or failed first cut is the expected start, not a do-not-retry.
+- within-ci: the change is not proven either way; a stacked hypothesis (`depends_on: full-decode-splitkv-s3-fused-preattn`) that adds a further change in the same area is the only way to learn more (identical code is never re-run).
+
