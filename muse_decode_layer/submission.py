@@ -66,7 +66,12 @@ Differs from SGLang:
     per-state flag, self-check, selector and fallback): A full decode_1 attention side = dl_qkv_kernel (qkv GEMV +
     QK-norm + RoPE + FP8 + KV store) -> the sk two-level kernel (gate read from dl_qkv's contiguous gate) ->
     dl_o_kernel; B the per-warp top-8 kernel R with PDL after P; C dl_unpool_kernel NF=1. Module
-    muse_decode_dense_chain_s3 (stage 1's kernels P and R plus the new ones). See the "Stage 3" section."""
+    muse_decode_dense_chain_s3 (stage 1's kernels P and R plus the new ones). See the "Stage 3" section.
+  * Hypothesis combo-measured-rows-slide-batched-preattn-t8-tail (see the "Combination" section): S1 the Triton
+    _sliding_fused_kernel (S=16) at sliding decode 2 <= B <= 32; S2a kernel R variant 0 at 2 <= T <= 32; S2b
+    dl_unpool_kernel NF=1 at 2 <= T <= 8; S3 _pre_attention_kernel (+ _paired_norm_gate_kernel) on eight
+    full/sliding decode/verify cells. Each source x class has its own per-state flag, two-state graph-replay
+    correctness gate and cold-L2 graph selector (new/master <= 0.98); a full-layer T=8 layer check closes it."""
 
 from typing import TypedDict
 
@@ -2593,12 +2598,13 @@ def _align_par_setup(state, device):
           flush=True)
 
 
-def _dl_forward(ffn_input, local_start, dl, pdl=None):
+def _dl_forward(ffn_input, local_start, dl, pdl=None, r_t=False):
     """Kernels P and R for T <= DL_MAX_TOKENS. Returns (pre-expert-normed expert input bf16 [T, 4096],
     topk_weights fp32 [T, 8], topk_ids int32 [T, 8] global, local_ids int32 [T, 8],
     (sorted_ids, block_experts, n_padded)) plus the raw (expert_input, logits) for the self-check.
     Every size comes from T; nothing is cached. At T == 1 with piece B on (dl["r_new"], this state's own flag)
-    R is the per-warp top-8 kernel launched with PDL after P; everywhere else stage 1's R."""
+    R is the per-warp top-8 kernel launched with PDL after P; so it is at 2 <= T <= 32 when r_t (combination
+    source S2a, kernel_fn passes this state's dl3["b_t"] flag for T's class); everywhere else stage 1's R."""
     ext = _DL_EXT
     tokens = ffn_input.shape[0]
     dev = ffn_input.device
@@ -2607,7 +2613,7 @@ def _dl_forward(ffn_input, local_start, dl, pdl=None):
     ei = torch.empty((tokens, D_EXPERT), dtype=torch.bfloat16, device=dev)
     logits = torch.empty((tokens, N_EXPERTS), dtype=torch.float32, device=dev)
     ext.dl_pooler_router(x, dl["w_pr"], ei, logits, dl["ws"], dl["cnt_p"], pdl_v)
-    new_r = tokens == 1 and dl.get("r_new", False)
+    new_r = (tokens == 1 and dl.get("r_new", False)) or bool(r_t)
     xn, routed = _dl_route(ei, logits, local_start, dl, pdl_v if new_r else 0, 0 if new_r else 2)
     return xn, routed, (ei, logits)
 
@@ -2952,32 +2958,36 @@ def _dl_setup(weights, state):
 
 
 # Sliding batch-1 decode: muse_attention_decode's _sliding_fused_kernel and its helpers,
-# ported verbatim (hypothesis sliding-fused-triton-decode1-port).
-_INV_FREQ = {}
+# ported verbatim (hypothesis sliding-fused-triton-decode1-port). Combination review fix (2): the split
+# counters and the RoPE frequencies live in the state prepare() returns (state["slide_cnt"], state
+# ["slide_inv_freq"], both allocated there with torch.zeros / arange), never in a module global and never
+# lazily during capture. state["slide_cnt"] is [SLIDE_CNT_LEN] int32: [0, 64) is the batched band's
+# (S1, B * Hkv <= 64), [64, 128) is master's batch-1 launch's (it uses B * Hkv = 2 of it).
+SLIDE_CNT_BAND = 0
+SLIDE_CNT_B1 = 64
+SLIDE_CNT_LEN = 64 * 2
 
 
-def _inv_freq(theta: float, d: int, device) -> torch.Tensor:
-    """[d/2] float32 theta^(-2i/d), built exactly as the reference builds it; cached per theta."""
-    key = (theta, d, str(device))
-    cache = _INV_FREQ.get(key)
-    if cache is None:
-        cache = _INV_FREQ[key] = 1.0 / (theta ** (torch.arange(0, d, 2, device=device).float() / d))
-    return cache
+def _rope_inv_freq(theta: float, d: int, device) -> torch.Tensor:
+    """[d/2] float32 theta^(-2i/d), built exactly as the reference builds it (never cached in a global)."""
+    return 1.0 / (theta ** (torch.arange(0, d, 2, device=device).float() / d))
+
+
+def _slide_state(device) -> dict:
+    """prepare(): this state's sliding-kernel counters (all zero; every launch leaves them at 0 again, the
+    program drawing the last ticket resets its counter) and its RoPE frequencies at the model's theta."""
+    return {"slide_cnt": torch.zeros(SLIDE_CNT_LEN, dtype=torch.int32, device=device),
+            "slide_inv_freq": _rope_inv_freq(ROPE_THETA, 64, device)}
+
+
+def _slide_inv_freq(cfg, state, device) -> torch.Tensor:
+    """The state's frequencies at the model's theta; any other theta (config only) builds its own."""
+    if cfg["rope_theta"] == ROPE_THETA and cfg["head_dim"] == 64:
+        return state["slide_inv_freq"]
+    return _rope_inv_freq(cfg["rope_theta"], cfg["head_dim"], device)
 
 
 LOG2E = 1.4426950408889634
-_COUNTERS = {}
-
-
-def _counters(batch: int, hkv: int, device) -> torch.Tensor:
-    """int32 [B*Hkv] ticket counters for the in-kernel split combine. Zeroed once per
-    (B, Hkv, device) on the first (eager) call; every launch leaves them at 0 again (the
-    program that draws the last ticket resets its counter), so they hold no data."""
-    key = (batch, hkv, str(device))
-    buf = _COUNTERS.get(key)
-    if buf is None:
-        buf = _COUNTERS[key] = torch.zeros(batch * hkv, dtype=torch.int32, device=device)
-    return buf
 
 
 def _num_splits(batch: int, hkv: int) -> int:
@@ -3166,10 +3176,11 @@ def _sliding_fused_kernel(
             tl.store(cnt_ptr + bg, 0)  # ready for the next launch / graph replay
 
 
-def _sliding_forward(data, qkv):
+def _sliding_forward(data, qkv, state):
     """Sliding batch-1 decode: one launch of _sliding_fused_kernel on the qkv GEMM's [T, 2304]
     output, returning the [T, 1024] bf16 normed-and-gated attention output (master's FusedQKNorm,
-    FP8 casts, store_cache, FA3 and FusedRMSNormGate at that shape). Branches on config only."""
+    FP8 casts, store_cache, FA3 and FusedRMSNormGate at that shape). Branches on config only; the
+    split counters are this state's own slice of state["slide_cnt"]."""
     cfg = data["config"]
     batch, length = cfg["batch"], cfg["q_len"]
     hq, hkv, d = cfg["num_q_heads"], cfg["num_kv_heads"], cfg["head_dim"]
@@ -3183,10 +3194,10 @@ def _sliding_forward(data, qkv):
     if splits > 1:
         ws_acc = torch.empty((batch * hkv * splits, m, d), dtype=torch.float32, device=device)
         ws_ml = torch.empty((batch * hkv * splits, 2, m), dtype=torch.float32, device=device)
-        counters = _counters(batch, hkv, device)
+        counters = state["slide_cnt"][SLIDE_CNT_B1:SLIDE_CNT_B1 + batch * hkv]
     else:
         ws_acc = ws_ml = counters = out  # unused when S == 1
-    inv_freq = _inv_freq(theta, d, device) if theta else data["k_scale"]  # unused when ROPE is off
+    inv_freq = _slide_inv_freq(cfg, state, device) if theta else data["k_scale"]  # unused when ROPE is off
     page_table = data["page_table"]
     _sliding_fused_kernel[(batch, hkv, splits)](
         qkv, data["positions"], data["cache_loc"], data["seq_lens"], page_table, inv_freq,
@@ -3198,6 +3209,211 @@ def _sliding_forward(data, qkv):
         num_warps=4, num_stages=2,
     )
     return out
+
+
+# ---------------------------------------------------------------------------------------------
+# Combination source S1 (sliding-fused-batched-decode-port in the form of sliding-batched-triton-b16-band,
+# impl 1cabea713e): sliding decode, q_len 1, page 1, in two batch classes, A = 2..16 and B = 17..32, each
+# behind its own per-state flag state["s1"][class]. The same _sliding_fused_kernel launch as master's batch-1
+# path with S = 16 splits hard-coded, BLOCK_N 64, 4 warps, 2 stages. Its split counters are this state's
+# state["slide_cnt"][0:B * Hkv] (B * Hkv <= 64 in both classes). No module global, no try/except.
+S1_SPLITS = 16
+S1_CLASSES = {"A": (2, 16), "B": (17, 32)}
+
+
+def _s1_class(cfg):
+    """Config only: the S1 class of a shape ("A" / "B"), or None (master)."""
+    if not (cfg["window"] and cfg["q_len"] == 1 and cfg["page_size"] == 1 and cfg["num_q_heads"] == 16
+            and cfg["num_kv_heads"] == 2 and cfg["head_dim"] == 64):
+        return None
+    for name, (lo, hi) in S1_CLASSES.items():
+        if lo <= cfg["batch"] <= hi:
+            return name
+    return None
+
+
+def _sliding_forward_band(data, qkv, state):
+    """S1: sliding decode at 2 <= batch <= 32 (q_len 1, page 1): one _sliding_fused_kernel launch, S = 16,
+    returning the [T, 1024] bf16 normed-and-gated attention output. Workspaces are sized from config only."""
+    cfg = data["config"]
+    batch, length = cfg["batch"], cfg["q_len"]
+    hq, hkv, d = cfg["num_q_heads"], cfg["num_kv_heads"], cfg["head_dim"]
+    device = qkv.device
+    theta = cfg["rope_theta"]
+    m = max(16, triton.next_power_of_2((hq // hkv) * length))
+    splits = S1_SPLITS
+    out = torch.empty((batch * length, hq * d), dtype=torch.bfloat16, device=device)
+    ws_acc = torch.empty((batch * hkv * splits, m, d), dtype=torch.float32, device=device)
+    ws_ml = torch.empty((batch * hkv * splits, 2, m), dtype=torch.float32, device=device)
+    counters = state["slide_cnt"][SLIDE_CNT_BAND:SLIDE_CNT_BAND + batch * hkv]
+    inv_freq = _slide_inv_freq(cfg, state, device) if theta else data["k_scale"]  # unused when ROPE is off
+    page_table = data["page_table"]
+    _sliding_fused_kernel[(batch, hkv, splits)](
+        qkv, data["positions"], data["cache_loc"], data["seq_lens"], page_table, inv_freq,
+        data["k_scale"], data["v_scale"],
+        data["k_cache"].view(torch.uint8), data["v_cache"].view(torch.uint8), ws_acc, ws_ml, counters, out,
+        qkv.stride(0), page_table.stride(0), cfg["qk_scale_factor"], cfg["sm_scale"] * LOG2E,
+        HQ=hq, HKV=hkv, D=d, L=length, M=m, LN=max(16, triton.next_power_of_2(length)),
+        WINDOW=cfg["window"], PAGE=cfg["page_size"], S=splits, BLOCK_N=64, ROPE=bool(theta), EPS=RMS_EPS,
+        num_warps=4, num_stages=2,
+    )
+    return out
+
+
+# ---------------------------------------------------------------------------------------------
+# Combination source S3 (fused-preattention-paired-pad-restack, impl 963bcf0267): _pre_attention_kernel
+# (unpaired and PAIRED) and _paired_norm_gate_kernel, ported verbatim, routed per cell (S3_CELLS) only where
+# the attention side still runs FusedQKNorm + k/v/q FP8 casts + store_cache; each cell behind its own
+# per-state flag state["s3"][cell]. The kernels hold no state (no counters, no workspaces).
+S3_CELLS = ("c1-b16", "c1-b32", "c2-t8", "c2-t128", "c2-t256", "c3-t128", "c3-t256", "c4-t8")
+
+
+def _s3_cell(cfg, unpaired_feed, paired):
+    """Config (+ which attention consumer this state runs for the shape) only: the S3 cell, or None.
+    c1 full decode 2 <= B <= 64 feeding the sk / split-KV kernels (unpaired FP8 q); c2 sliding verify
+    (unpaired FA3); c3 full verify B > 1 (paired FA3 + _paired_norm_gate_kernel); c4 full verify B = 1."""
+    if not (cfg["num_q_heads"] == 16 and cfg["num_kv_heads"] == 2 and cfg["head_dim"] == 64):
+        return None
+    batch, length, window = cfg["batch"], cfg["q_len"], cfg["window"]
+    if length == 1:
+        if window == 0 and 2 <= batch <= 64 and unpaired_feed:
+            return "c1-b16" if batch <= 23 else "c1-b32"
+        return None
+    if not (2 <= length <= 8 and batch <= 64):
+        return None
+    if window:
+        return "c2-t8" if batch == 1 else ("c2-t128" if batch <= 23 else "c2-t256")
+    if batch == 1:
+        return "c4-t8"
+    if paired:
+        return "c3-t128" if batch <= 23 else "c3-t256"
+    return None
+
+
+@triton.jit
+def _pre_attention_kernel(
+    qkv_ptr, pos_ptr, loc_ptr, cos_sin_ptr, k_scale_ptr, v_scale_ptr,
+    q_out_ptr, k_cache_ptr, v_cache_ptr,
+    qkv_stride,
+    HQ: tl.constexpr, HKV: tl.constexpr, D: tl.constexpr, G: tl.constexpr, PAIRED: tl.constexpr,
+    ROPE: tl.constexpr, EPS: tl.constexpr,
+):
+    """One program per (token, head). Heads 0..HQ-1 are queries; HQ..HQ+HKV-1 are the new keys,
+    whose program also stores the matching value head. The q and k heads are contiguous in the
+    fused row, so head h starts at h*D for both. PAIRED: query h writes its D FP8 values into half
+    (h // G) % 2 of a [tokens, HQ, 2*D] FP8 row and D FP8 zeros into the other half."""
+    t = tl.program_id(0)
+    h = tl.program_id(1)
+    HALF: tl.constexpr = D // 2
+    i = tl.arange(0, HALF)
+    even = 2 * i
+    odd = 2 * i + 1
+
+    row = qkv_ptr + t.to(tl.int64) * qkv_stride
+    base = row + h * D
+    xe = tl.load(base + even).to(tl.float32)
+    xo = tl.load(base + odd).to(tl.float32)
+
+    # Scaleless RMSNorm over the head's D entries.
+    ss = tl.sum(xe * xe, axis=0) + tl.sum(xo * xo, axis=0)
+    r = 1.0 / tl.sqrt(ss / D + EPS)
+    xe = xe * r
+    xo = xo * r
+
+    if ROPE:
+        # Interleaved (GPT-J) RoPE: pair (2i, 2i+1) rotates by the angle in row positions[t] of
+        # the cos | sin table (cos in columns 0..HALF-1, sin in HALF..D-1), as FusedQKNorm reads it.
+        p = tl.load(pos_ptr + t).to(tl.int64)
+        cs = cos_sin_ptr + p * D
+        c = tl.load(cs + i)
+        s = tl.load(cs + HALF + i)
+        ye = xe * c - xo * s
+        yo = xe * s + xo * c
+        xe = ye
+        xo = yo
+
+    if h < HQ:
+        # Query, rounded to FP8 E4M3 for FA3 (qk_scale_factor is folded into the softmax scale).
+        if PAIRED:
+            half = (h // G) % 2
+            qrow = q_out_ptr + (t.to(tl.int64) * HQ + h) * (2 * D)
+            out = qrow + half * D
+            zj = tl.arange(0, D)
+            tl.store(qrow + (1 - half) * D + zj, tl.zeros([D], dtype=tl.float32).to(tl.float8e4nv))
+        else:
+            out = q_out_ptr + (t.to(tl.int64) * HQ + h) * D
+        tl.store(out + even, xe.to(tl.float8e4nv))
+        tl.store(out + odd, xo.to(tl.float8e4nv))
+    else:
+        kh = h - HQ
+        loc = tl.load(loc_ptr + t).to(tl.int64)
+        k_scale = tl.load(k_scale_ptr)
+        v_scale = tl.load(v_scale_ptr)
+        # The cache is [pages, page_size, HKV, D] contiguous: flat row loc, head kh.
+        kout = k_cache_ptr + (loc * HKV + kh) * D
+        tl.store(kout + even, (xe / k_scale).to(tl.float8e4nv))
+        tl.store(kout + odd, (xo / k_scale).to(tl.float8e4nv))
+        # The value head: no norm, no RoPE, just the scale and the FP8 cast.
+        j = tl.arange(0, D)
+        v = tl.load(row + (HQ + HKV + kh) * D + j).to(tl.float32)
+        vout = v_cache_ptr + (loc * HKV + kh) * D
+        tl.store(vout + j, (v / v_scale).to(tl.float8e4nv))
+
+
+@triton.jit
+def _paired_norm_gate_kernel(
+    attn_ptr, qkv_ptr, out_ptr,
+    attn_stride_t, attn_stride_h, qkv_stride,
+    HQ: tl.constexpr, HKV: tl.constexpr, D: tl.constexpr, G: tl.constexpr, EPS: tl.constexpr,
+):
+    """Full-layer epilogue for the paired path, one program per (token, query head): reads head
+    h's own half (h // G) % 2 of FA3's [tokens, HQ, 2*D] output (the other half is the other KV
+    head's P@V and is never read), applies the scaleless RMSNorm (eps inside the sqrt of the mean
+    of D squares, fp32) times sigmoid(gate) and stores bf16 into the [tokens, HQ*D] output."""
+    t = tl.program_id(0)
+    h = tl.program_id(1)
+    j = tl.arange(0, D)
+    half = (h // G) % 2
+    src = attn_ptr + t.to(tl.int64) * attn_stride_t + h * attn_stride_h + half * D
+    x = tl.load(src + j).to(tl.float32)
+    r = 1.0 / tl.sqrt(tl.sum(x * x, axis=0) / D + EPS)
+    gate = tl.load(qkv_ptr + t.to(tl.int64) * qkv_stride + (HQ + 2 * HKV) * D + h * D + j)
+    gate = gate.to(tl.float32)
+    y = x * r * tl.sigmoid(gate)
+    tl.store(out_ptr + (t.to(tl.int64) * HQ + h) * D + j, y.to(tl.bfloat16))
+
+
+def _s3_pre_attention(data, qkv, state, paired):
+    """S3: one launch for FusedQKNorm (+RoPE from the state's cos | sin table), the k/v scale divides and FP8
+    casts, store_cache and the q FP8 cast (paired: the zero-padded pair layout). Returns q FP8 [T, Hq, D] or
+    [T, Hq, 2D]; the new k/v rows are stored at cache_loc."""
+    cfg = data["config"]
+    tokens = cfg["tokens"]
+    hq, hkv, d = cfg["num_q_heads"], cfg["num_kv_heads"], cfg["head_dim"]
+    q = torch.empty((tokens, hq, 2 * d if paired else d), dtype=FP8, device=qkv.device)
+    _pre_attention_kernel[(tokens, hq + hkv)](
+        qkv, data["positions"], data["cache_loc"], state["cos_sin"], data["k_scale"], data["v_scale"],
+        q, data["k_cache"], data["v_cache"],
+        qkv.stride(0),
+        HQ=hq, HKV=hkv, D=d, G=hq // hkv, PAIRED=paired, ROPE=bool(cfg["rope_theta"]), EPS=RMS_EPS,
+        num_warps=1,
+    )
+    return q
+
+
+def _s3_paired_norm_gate(out, qkv, cfg):
+    """S3 c3: each query's own half of paired FA3's [T, Hq, 2D] output, normed x sigmoid(gate), in one launch."""
+    tokens = cfg["tokens"]
+    hq, hkv, d = cfg["num_q_heads"], cfg["num_kv_heads"], cfg["head_dim"]
+    attn = out.view(tokens, hq, 2 * d)
+    o = torch.empty((tokens, hq * d), dtype=torch.bfloat16, device=out.device)
+    _paired_norm_gate_kernel[(tokens, hq)](
+        attn, qkv, o,
+        attn.stride(0), attn.stride(1), qkv.stride(0),
+        HQ=hq, HKV=hkv, D=d, G=hq // hkv, EPS=RMS_EPS,
+        num_warps=1,
+    )
+    return o
 
 
 # ---------------------------------------------------------------------------------------------
@@ -5139,6 +5355,7 @@ def _dl3_ministate(state, device):
         sk = _sk_buffers(device)
         _sk_zero(sk)
         ms["sk"] = {**sk, "on": True, "b1": state["sk"]["b1"], "n": dict(state["sk"]["n"])}
+    ms["slide_cnt"] = torch.zeros_like(state["slide_cnt"])  # the sliding kernels' counters are per state too
     torch.cuda.synchronize()
     return ms
 
@@ -5298,10 +5515,11 @@ def _dl3_route_out(ei, lg, ls, dl, bias, variant, pdl):
     return bufs
 
 
-def _dl3_check_r(state, device):
-    """The new R against stage 1's R at T=1: every output (xn, topk ids / weights, local ids, sorted_ids,
-    block_experts, n_padded) must be bit-identical, on random logits, no-local, one-hot, a near tie and exact ties
-    (zero router bias, 12 equal logits straddling the 8th place: tie order). Also prints SGLang's tie order."""
+def _dl3_check_r(state, device, tokens=(1,)):
+    """The new R against stage 1's R at each T in `tokens` (master: T=1; combination S2a: its class's T): every
+    output (xn, topk ids / weights, local ids, sorted_ids, block_experts, n_padded) must be bit-identical, on random
+    logits, no-local, one-hot, a near tie and exact ties (zero router bias, 12 equal logits straddling the 8th
+    place: tie order). Also prints SGLang's tie order (T=1)."""
     dl = state["dl"]
     gen = torch.Generator(device=device)
     gen.manual_seed(20261032)
@@ -5309,33 +5527,34 @@ def _dl3_check_r(state, device):
     names = ("xn", "topk_ids", "topk_w", "local_ids", "sorted_ids", "block_experts", "n_padded")
     zero_bias = torch.zeros(N_EXPERTS, dtype=torch.float32, device=device)
     cases = []
-    for trial, ls_val in enumerate((0, 32, 96, 224, 160, 64)):
-        ei = torch.randn((1, D_EXPERT), device=device, generator=gen).to(torch.bfloat16)
-        lg = (torch.randn((1, N_EXPERTS), device=device, generator=gen) * 4.0).contiguous()
-        cases.append((f"random{trial} ls={ls_val}", ei, lg, ls_val, dl["bias"]))
-    ei = torch.randn((1, D_EXPERT), device=device, generator=gen).to(torch.bfloat16)
-    base = torch.randn((1, N_EXPERTS), device=device, generator=gen) * 4.0
-    lg = base.clone()
-    lg[:, :LOCAL_EXPERTS] = -200.0
-    lg[:, LOCAL_EXPERTS:LOCAL_EXPERTS + TOP_K] = 200.0
-    cases.append(("no-local ls=0", ei, lg.contiguous(), 0, dl["bias"]))
-    lg = base.clone()
-    lg[:, 64 + 5] = 200.0
-    cases.append(("one-hot-local ls=64", ei, lg.contiguous(), 64, dl["bias"]))
-    lg = base.clone()
-    sc = torch.sigmoid(lg.double() * 0.1767766952966369) + dl["bias"].double()
-    order = sc.argsort(dim=-1, descending=True)
-    a8, a9 = order[:, TOP_K - 1], order[:, TOP_K]
-    target = (sc.gather(1, a8[:, None]) - 1e-7 - dl["bias"].double()[a9][:, None]).clamp(1e-6, 1 - 1e-6)
-    lg.scatter_(1, a9[:, None], (torch.log(target / (1 - target)) / 0.1767766952966369).float())
-    cases.append(("near-tie ls=224", ei, lg.contiguous(), 224, dl["bias"]))
-    lg = (torch.randn((1, N_EXPERTS), device=device, generator=gen) * 0.5 - 6.0)
-    lg[:, 5:17] = 1.5  # 12 exactly equal logits, zero bias: ranks 1..12 tie, the 8th place is inside the tie
-    cases.append(("exact-tie12 ls=0 zero-bias", ei, lg.contiguous(), 0, zero_bias))
-    lg = (torch.randn((1, N_EXPERTS), device=device, generator=gen) * 0.5 - 6.0)
-    lg[:, 100:104] = 2.0
-    lg[:, 200:210] = 1.0  # two tie groups: 4 at the top, 10 below (the 8th is inside the lower group)
-    cases.append(("exact-tie-2groups ls=96 zero-bias", ei, lg.contiguous(), 96, zero_bias))
+    for t in tokens:
+        for trial, ls_val in enumerate((0, 32, 96, 224, 160, 64)):
+            ei = torch.randn((t, D_EXPERT), device=device, generator=gen).to(torch.bfloat16)
+            lg = (torch.randn((t, N_EXPERTS), device=device, generator=gen) * 4.0).contiguous()
+            cases.append((f"T={t} random{trial} ls={ls_val}", ei, lg, ls_val, dl["bias"]))
+        ei = torch.randn((t, D_EXPERT), device=device, generator=gen).to(torch.bfloat16)
+        base = torch.randn((t, N_EXPERTS), device=device, generator=gen) * 4.0
+        lg = base.clone()
+        lg[:, :LOCAL_EXPERTS] = -200.0
+        lg[:, LOCAL_EXPERTS:LOCAL_EXPERTS + TOP_K] = 200.0
+        cases.append((f"T={t} no-local ls=0", ei, lg.contiguous(), 0, dl["bias"]))
+        lg = base.clone()
+        lg[:, 64 + 5] = 200.0
+        cases.append((f"T={t} one-hot-local ls=64", ei, lg.contiguous(), 64, dl["bias"]))
+        lg = base.clone()
+        sc = torch.sigmoid(lg.double() * 0.1767766952966369) + dl["bias"].double()
+        order = sc.argsort(dim=-1, descending=True)
+        a8, a9 = order[:, TOP_K - 1], order[:, TOP_K]
+        target = (sc.gather(1, a8[:, None]) - 1e-7 - dl["bias"].double()[a9][:, None]).clamp(1e-6, 1 - 1e-6)
+        lg.scatter_(1, a9[:, None], (torch.log(target / (1 - target)) / 0.1767766952966369).float())
+        cases.append((f"T={t} near-tie ls=224", ei, lg.contiguous(), 224, dl["bias"]))
+        lg = (torch.randn((t, N_EXPERTS), device=device, generator=gen) * 0.5 - 6.0)
+        lg[:, 5:17] = 1.5  # 12 exactly equal logits, zero bias: ranks 1..12 tie, the 8th place is inside the tie
+        cases.append((f"T={t} exact-tie12 ls=0 zero-bias", ei, lg.contiguous(), 0, zero_bias))
+        lg = (torch.randn((t, N_EXPERTS), device=device, generator=gen) * 0.5 - 6.0)
+        lg[:, 100:104] = 2.0
+        lg[:, 200:210] = 1.0  # two tie groups: 4 at the top, 10 below (the 8th is inside the lower group)
+        cases.append((f"T={t} exact-tie-2groups ls=96 zero-bias", ei, lg.contiguous(), 96, zero_bias))
     for name, ei, lg, ls_val, bias in cases:
         ls = torch.tensor([ls_val], dtype=torch.int32, device=device)
         old = _dl3_route_out(ei, lg, ls, dl, bias, 2, 0)
@@ -5348,7 +5567,7 @@ def _dl3_check_r(state, device):
         if int(dl["cnt_r"].abs().sum()):
             problems.append(f"R {name}: ticket not reset")
             dl["cnt_r"].zero_()
-        if "exact-tie" in name:
+        if "exact-tie" in name and ei.shape[0] == 1:
             try:
                 router = FusedMuseSparkRouting(expert_bias=zero_bias, route_scale=1.0,
                                                router_output_multiplier=0.1767766952966369,
@@ -5364,14 +5583,15 @@ def _dl3_check_r(state, device):
     return problems
 
 
-def _dl3_check_u(state, device):
-    """dl_unpool_kernel NF=1 at T=1 against master's slice GEMM + F.pad: rel L2 <= 2e-3, zero columns exactly 0."""
+def _dl3_check_u(state, device, tokens_list=(1,)):
+    """dl_unpool_kernel NF=1 at each T in tokens_list (master: T=1; combination S2b: 2, 5, 8) against master's
+    slice GEMM + F.pad: rel L2 <= 2e-3, zero columns exactly 0."""
     d3 = state["dl3"]
     dense = state["dense"]
     gen = torch.Generator(device=device)
     gen.manual_seed(20261033)
     problems = []
-    for tokens in (1,):
+    for tokens in tokens_list:
         y = (torch.randn((tokens, D_EXPERT), device=device, generator=gen) * 0.5).to(torch.bfloat16)
         f_new = torch.empty((tokens, HIDDEN), dtype=torch.bfloat16, device=device)
 
@@ -5566,8 +5786,13 @@ def _dl3_alternation_check(state, device, a, b, u):
     return None
 
 
-def _dl3_layer_checks(state, device, a, b, u):
+def _dl3_layer_checks(state, device, a, b, u, t8=False):
+    """T=1 pieces (master's call, t8=False): eager + two-state alternation. t8=True (combination review fix (5)):
+    the FULL-layer (ctx 80000 and ~1048576) and sliding B=1 q_len 8 layer check of the state's T=8 cells under
+    two-state alternating graph replay with the judge's routing rules (_cb_t8_layer_check); a, b, u are unused."""
     try:
+        if t8:
+            return _cb_t8_layer_check(state, device)
         err = _dl3_eager_layer_check(state, device, a, b, u)
         if err is None:
             err = _dl3_alternation_check(state, device, a, b, u)
@@ -5596,7 +5821,9 @@ def _dl3_setup_bc(state, device):
               "stage 1): pieces A, B, C all off")
         return
     d3 = _dl3_buffers(device)
-    d3.update({"a": False, "u": False, "pdl": dl["pdl"], "reason": {}, "msg": {}})
+    # b_t / u8: combination sources S2a / S2b (T > 1), set only by _combo_prepare after _dl3_finish.
+    d3.update({"a": False, "u": False, "pdl": dl["pdl"], "reason": {}, "msg": {},
+               "b_t": {8: False, 16: False, 32: False}, "u8": False})
     dl["r_new"] = False
     state["dl3"] = d3
     try:
@@ -5729,6 +5956,979 @@ def _dl3_finish(state, device):
 
 
 
+# ---------------------------------------------------------------------------------------------
+# Combination (hypothesis combo-measured-rows-slide-batched-preattn-t8-tail). Four sources, each routed only to
+# the shape classes where it won, each class behind ONE per-state flag, its own correctness gate (two states with
+# their own counters / workspaces, one captured graph each, replays alternating with refilled inputs, outputs
+# poisoned first) and its own cold-L2 CUDA-graph selector (256 MB flush before every replay, CB_REPS interleaved
+# rounds, a one-kernel graph's median subtracted, enabled only when new / master <= CB_RATIO):
+#   S1   sliding decode q_len 1 page 1, classes A (2 <= B <= 16) and B (17 <= B <= 32).  flag state["s1"][cls]
+#   S2a  kernel R variant 0 (per-warp top-8, PDL after P) at 2 <= T <= 32, classes 8/16/32. flag dl3["b_t"][cls]
+#   S2b  dl_unpool_kernel NF=1 at 2 <= T <= 8.                                       flag dl3["u8"]
+#   S3   _pre_attention_kernel (+ _paired_norm_gate_kernel in c3), eight cells.     flag state["s3"][cell]
+# Prepare phases (each its own function, all AFTER master's _dl3_finish, each with a start deadline measured
+# from prepare()'s t_prepare0): _cb_prepare_s2a, _cb_prepare_s2b, _cb_prepare_s1, _cb_prepare_s3, then
+# _cb_prepare_t8 (the full-layer + sliding T = 8 layer check through _dl3_layer_checks(..., t8=True); a miss
+# turns every T = 8 cell off for the state). After every check and selector every counter of the state must read
+# 0, otherwise master is kept for the whole state. One PATH CHOSEN line per source per class at the end.
+CB_TAG = "[combo]"
+CB_RATIO = 0.98            # enable only when new / master <= 0.98 (master / new >= 1.02)
+CB_REPS = 41               # interleaved timing rounds per selector
+CB_FLUSH_BYTES = 256 << 20
+CB_DEADLINE = {"S2a": 120.0, "S2b": 120.0, "S1": 150.0, "S3": 180.0, "T8": 200.0}  # start, s from t_prepare0
+CB_CELL_DEADLINE = 240.0   # no new cell is started past this (prepare()'s limit is 300 s)
+CB_CASE_DEADLINE = 260.0   # audit: no new check case (inside a cell / the T=8 check) past this; the cell fails
+_CB_T0 = None              # this prepare()'s t_prepare0 (a plain float, prepare() only) for the case deadline
+CB_KV_SCALES = (1.0, 0.015625)
+S1_CHECK_B = {"A": (2, 9, 16), "B": (17, 32)}
+S1_SELECT_B = {"A": 16, "B": 32}
+S1_LENS = (1, 63, 2047, 2048, 2049, 80000)
+S2A_CLASSES = (8, 16, 32)
+S2A_CHECK_T = {8: (2, 5, 8), 16: (16,), 32: (32,)}
+S2B_CHECK_T = (2, 5, 8)
+_CB_POS_ROPE = (80000, 299995, 1048500)   # review fix (4): RoPE positions near 300000 and near 1048576
+S3_SPEC = {
+    # window, front-check (B, L) shapes, front-check position bases, end-to-end (B, L, ctx), selector (B, L)
+    "c1-b16": (0, ((2, 1), (16, 1)), (5000,), ((2, 1, 4000), (16, 1, 4000)), (16, 1)),
+    "c1-b32": (0, ((32, 1), (40, 1)), (5000,), ((32, 1, 4000), (40, 1, 4000)), (32, 1)),
+    "c2-t8": (2048, ((1, 8),), _CB_POS_ROPE, ((1, 8, 3000), (1, 8, 1)), (1, 8)),
+    "c2-t128": (2048, ((2, 8), (5, 3), (16, 8)), _CB_POS_ROPE, ((2, 8, 300001), (5, 3, 3000), (16, 8, 3000)), (16, 8)),
+    "c2-t256": (2048, ((32, 8),), _CB_POS_ROPE, ((32, 8, 3000),), (32, 8)),
+    "c3-t128": (0, ((2, 8), (5, 3), (16, 8)), (5000,), ((2, 8, 4000), (5, 3, 4000), (16, 8, 4000)), (16, 8)),
+    "c3-t256": (0, ((32, 8),), (5000,), ((32, 8, 4000),), (32, 8)),
+    "c4-t8": (0, ((1, 8),), (5000, 1048500), ((1, 8, 5000), (1, 8, 1)), (1, 8)),
+}
+_CB_T8_CELLS = (("S2a", 8), ("S2b", 8), ("S3", "c4-t8"), ("S3", "c2-t8"))
+_CB_T8_CASES = (("full ctx 80000", 0, 80000), ("full ctx 1048570", 0, 1048570), ("sliding ctx 80000", 2048, 80000))
+_CB_LINES = (
+    ("S1", "A", "sliding decode q_len 1 page 1, 2 <= B <= 16", "_sliding_fused_kernel S=16 (per-state counters)",
+     "FusedQKNorm + casts + store_cache + FA3 + FusedRMSNormGate"),
+    ("S1", "B", "sliding decode q_len 1 page 1, 17 <= B <= 32", "_sliding_fused_kernel S=16 (per-state counters)",
+     "FusedQKNorm + casts + store_cache + FA3 + FusedRMSNormGate"),
+    ("S2a", 8, "routing kernel R, 2 <= T <= 8", "per-warp top-8 R (variant 0), PDL after P", "stage 1's R"),
+    ("S2a", 16, "routing kernel R, 9 <= T <= 16", "per-warp top-8 R (variant 0), PDL after P", "stage 1's R"),
+    ("S2a", 32, "routing kernel R, 17 <= T <= 32", "per-warp top-8 R (variant 0), PDL after P", "stage 1's R"),
+    ("S2b", 8, "unpooler, 2 <= T <= 8", "dl_unpool_kernel NF=1", "slice GEMM + splitKreduce + F.pad"),
+    ("S3", "c1-b16", "full decode 2 <= B <= 23 (sk / split-KV feed)", "_pre_attention_kernel unpaired",
+     "FusedQKNorm + casts + store_cache + q FP8 cast"),
+    ("S3", "c1-b32", "full decode 24 <= B <= 64 (sk / split-KV feed)", "_pre_attention_kernel unpaired",
+     "FusedQKNorm + casts + store_cache + q FP8 cast"),
+    ("S3", "c2-t8", "sliding verify B = 1", "_pre_attention_kernel unpaired",
+     "FusedQKNorm + casts + store_cache + q FP8 cast"),
+    ("S3", "c2-t128", "sliding verify 2 <= B <= 23", "_pre_attention_kernel unpaired",
+     "FusedQKNorm + casts + store_cache + q FP8 cast"),
+    ("S3", "c2-t256", "sliding verify 24 <= B <= 64", "_pre_attention_kernel unpaired",
+     "FusedQKNorm + casts + store_cache + q FP8 cast"),
+    ("S3", "c3-t128", "full verify 2 <= B <= 23 (paired FA3)", "_pre_attention_kernel PAIRED + _paired_norm_gate_kernel",
+     "FusedQKNorm + casts + store_cache + paired zero pad + copies + FusedRMSNormGate"),
+    ("S3", "c3-t256", "full verify 24 <= B <= 64 (paired FA3)", "_pre_attention_kernel PAIRED + _paired_norm_gate_kernel",
+     "FusedQKNorm + casts + store_cache + paired zero pad + copies + FusedRMSNormGate"),
+    ("S3", "c4-t8", "full verify B = 1", "_pre_attention_kernel unpaired",
+     "FusedQKNorm + casts + store_cache + q FP8 cast"),
+)
+_CB_SELECT = {}  # plain (win, t_new, t_old, base) floats/bools per "source class" from the first prepare(); no tensor
+
+
+def _cb_say(message):
+    print(f"{CB_TAG} {message}", flush=True)
+
+
+def _cb_launch(label, fn):
+    """Announce a launch, run it, synchronize, confirm (with wall seconds, which include any Triton JIT)."""
+    _cb_say(f"launching {label}")
+    t0 = time.perf_counter()
+    result = fn()
+    torch.cuda.synchronize()
+    _cb_say(f"ok        {label} ({time.perf_counter() - t0:.2f}s)")
+    return result
+
+
+def _s2a_class(tokens):
+    return 8 if tokens <= 8 else (16 if tokens <= 16 else 32)
+
+
+# ---- per-state flags, copies and counters ---------------------------------------------------------------------
+def _cb_flags(state, s1=None, s3=None, b_t=None, u8=None):
+    """A shallow copy of state with some combination flags forced; every buffer is shared with the original."""
+    ms = dict(state)
+    if s1 is not None:
+        ms["s1"] = {**state["s1"], **s1}
+    if s3 is not None:
+        ms["s3"] = {**state["s3"], **s3}
+    if state.get("dl3") is not None and (b_t is not None or u8 is not None):
+        d3 = dict(state["dl3"])
+        if b_t is not None:
+            d3["b_t"] = {**d3["b_t"], **b_t}
+        if u8 is not None:
+            d3["u8"] = bool(u8)
+        ms["dl3"] = d3
+    return ms
+
+
+def _cb_off(state):
+    """The state with every combination flag off: master's path at every shape."""
+    return _cb_flags(state, s1={c: False for c in S1_CLASSES}, s3={c: False for c in S3_CELLS},
+                     b_t={c: False for c in S2A_CLASSES}, u8=False)
+
+
+def _cb_second_state(state, device):
+    """A second state over the same constants with its OWN counters, tickets and workspaces (slide_cnt, P/R,
+    Q/O/unpool, sk), as the judge's second prepared copy has."""
+    if state.get("dl") is not None and state.get("dl3") is not None:
+        ms = _dl3_ministate(state, device)
+    else:
+        ms = dict(state)
+        if state.get("sk") is not None:
+            sk = _sk_buffers(device)
+            _sk_zero(sk)
+            ms["sk"] = {**sk, "on": True, "b1": state["sk"]["b1"], "n": dict(state["sk"]["n"])}
+        ms["slide_cnt"] = torch.zeros_like(state["slide_cnt"])
+    torch.cuda.synchronize()
+    return ms
+
+
+def _cb_counters(state) -> int:
+    """Sum of every counter / ticket the state owns (dl3, dl, sk and the sliding kernel's). Syncs."""
+    return _dl3_tickets(state) + int(state["slide_cnt"].abs().sum())
+
+
+def _cb_clean(state, recs, label) -> bool:
+    """Review fix (3): after a check or selector every counter must read 0. Otherwise zero them and keep master
+    for the whole state (recs["_dirty"])."""
+    torch.cuda.synchronize()
+    left = _cb_counters(state)
+    if not left:
+        return True
+    _cb_say(f"counters NOT back to 0 after {label} (sum {left}): zeroed, master kept for this state")
+    _dl3_zero(state)
+    state["slide_cnt"].zero_()
+    torch.cuda.synchronize()
+    recs["_dirty"] = recs["_dirty"] or label
+    return False
+
+
+def _cb_late(t_prepare0) -> bool:
+    return time.perf_counter() - t_prepare0 > CB_CELL_DEADLINE
+
+
+def _cb_case_late() -> bool:
+    """Audit: True once this prepare() is past CB_CASE_DEADLINE; the running check then fails (master kept)."""
+    return _CB_T0 is not None and time.perf_counter() - _CB_T0 > CB_CASE_DEADLINE
+
+
+# ---- synthetic inputs and fp64 references (prepare() only, never judge data) -----------------------------------
+def _cb_rms(t):
+    return t / torch.sqrt((t * t).mean(-1, keepdim=True) + RMS_EPS)
+
+
+def _cb_rope64(x, positions, theta):
+    """Accurate interleaved RoPE in fp64 (angles in fp64, unlike any fp32 table)."""
+    d = x.shape[-1]
+    inv = 1.0 / (theta ** (torch.arange(0, d, 2, device=x.device, dtype=torch.float64) / d))
+    ang = positions.double()[:, None] * inv
+    cos, sin = ang.cos()[:, None, :], ang.sin()[:, None, :]
+    even, odd = x[..., 0::2], x[..., 1::2]
+    return torch.stack([even * cos - odd * sin, even * sin + odd * cos], -1).flatten(-2)
+
+
+def _cb_mixed(batch, ctx):
+    """Ragged lengths: the longest first, then short tails (1, 63, 64, 65, 2047, 2049), then near ctx."""
+    tails = (1, 63, 64, 65, 2047, 2049)
+    return [ctx] + [min(ctx, tails[(i - 1) % 6]) if i <= 6 else max(1, ctx - 37 * i) for i in range(1, batch)]
+
+
+def _cb_data(state, device, gen, window, batch, length, lens, kv_scale, local_start=0):
+    """Synthetic layer inputs in the judge's layout (page 1): lens are the old-key counts (seq_lens), the block's
+    new tokens sit at positions seq_lens + j. Keys are soft (std 0.3), values N(0, 1), clamped so the stored
+    values stay inside E4M3; attn_input rows are scaled so v / kv_scale stays below 100."""
+    hkv, d = 2, 64
+    tokens = batch * length
+    lens_t = torch.tensor(lens, dtype=torch.int64, device=device)
+    max_pages = max(lens) + length
+    total = batch * max_pages
+    perm = torch.randperm(total, generator=gen, device=device).to(torch.int32)
+    page_table = torch.full((batch, max_pages), -1, dtype=torch.int32, device=device)
+    off = 0
+    for b, n in enumerate(lens):
+        page_table[b, :n + length] = perm[off:off + n + length]
+        off += n + length
+    positions = (lens_t[:, None] + torch.arange(length, device=device)).reshape(-1)
+    cache_loc = torch.gather(page_table.long(), 1, positions.view(batch, length)).reshape(-1)
+    x = torch.randn((tokens, HIDDEN), device=device, generator=gen).to(torch.bfloat16)
+    vmax = _gemm(x, state["dense"]["qkv_gate"])[:, 1152:1280].float().abs().amax(dim=1, keepdim=True)
+    x = (x.float() * (100.0 * kv_scale / vmax.clamp_min(1e-6)).clamp(max=1.0)).to(torch.bfloat16)
+    cfg = {"batch": batch, "q_len": length, "tokens": tokens, "hidden": HIDDEN, "num_q_heads": 16,
+           "num_kv_heads": hkv, "head_dim": d, "page_size": 1, "window": window,
+           "rope_theta": ROPE_THETA if window else 0.0, "qk_scale_factor": 5.4730064863875, "sm_scale": d ** -0.5,
+           "kv_scale": kv_scale, "n_experts": N_EXPERTS, "top_k": TOP_K, "local_experts": LOCAL_EXPERTS}
+    kc = torch.randn((total, 1, hkv, d), generator=gen, device=device).clamp_(-6.0, 6.0) * 0.3 / kv_scale
+    vc = torch.randn((total, 1, hkv, d), generator=gen, device=device).clamp_(-6.0, 6.0) / kv_scale
+    return {
+        "stream": torch.randn((tokens, HIDDEN), device=device, generator=gen) * 3.0,
+        "attn_input": x,
+        "k_cache": kc.to(FP8),
+        "v_cache": vc.to(FP8),
+        "positions": positions,
+        "cache_loc": cache_loc,
+        "cache_seqlens": (lens_t + length).to(torch.int32),
+        "cu_seqlens_q": torch.arange(0, tokens + 1, length, dtype=torch.int32, device=device),
+        "scheduler_metadata": None,
+        "k_scale": torch.tensor(kv_scale, dtype=torch.float32, device=device),
+        "v_scale": torch.tensor(kv_scale, dtype=torch.float32, device=device),
+        "page_table": page_table,
+        "seq_lens": lens_t.to(torch.int32),
+        "local_start": torch.tensor([local_start], dtype=torch.int32, device=device),
+        "config": cfg,
+    }
+
+
+def _cb_refill(data, fresh):
+    for k, v in fresh.items():
+        if torch.is_tensor(v):
+            data[k].copy_(v)
+
+
+def _cb_attn_ref(data, qkv):
+    """fp64 attention side (q with accurate RoPE, never rounded; keys / values from the cache as stored) ->
+    normed and gated o [T, Hq*D]. Window (W-1, 0) on sliding layers, causal inside the block."""
+    cfg = data["config"]
+    batch, length = cfg["batch"], cfg["q_len"]
+    hq, hkv, d = 16, 2, 64
+    g = hq // hkv
+    window = cfg["window"]
+    x = qkv.double()
+    q = _cb_rms(x[:, :hq * d].reshape(-1, hq, d))
+    if cfg["rope_theta"]:
+        q = _cb_rope64(q, data["positions"], cfg["rope_theta"])
+    gate = x[:, (hq + 2 * hkv) * d:].reshape(-1, hq, d)
+    kc = data["k_cache"].view(-1, hkv, d)
+    vc = data["v_cache"].view(-1, hkv, d)
+    ks, vs = float(data["k_scale"]), float(data["v_scale"])
+    scale = cfg["sm_scale"] * cfg["qk_scale_factor"]
+    outs = []
+    for b in range(batch):
+        seq = int(data["seq_lens"][b])
+        n = seq + length
+        t0 = max(0, seq - (window - 1)) if window else 0
+        rows = data["page_table"][b, t0:n].long()
+        k = kc[rows].double() * ks
+        v = vc[rows].double() * vs
+        qb = q[b * length:(b + 1) * length].reshape(length, hkv, g, d)
+        s = torch.einsum("lkgd,nkd->lkgn", qb, k) * scale
+        t = torch.arange(t0, n, device=x.device)
+        p = seq + torch.arange(length, device=x.device)
+        valid = t[None, :] <= p[:, None]
+        if window:
+            valid &= t[None, :] >= p[:, None] - (window - 1)
+        s = s.masked_fill(~valid[:, None, None, :], float("-inf"))
+        outs.append(torch.einsum("lkgn,nkd->lkgd", torch.softmax(s, dim=-1), v).reshape(length, hq, d))
+    o = _cb_rms(torch.cat(outs, 0)) * torch.sigmoid(gate)
+    return o.reshape(-1, hq * d)
+
+
+# ---- correctness gates -------------------------------------------------------------------------------------------
+def _cb_cmp_attn(o_new, o_old, o_ref, d_new, d_old, worst):
+    """o vs master's o (rel L2 <= 1e-2), or, where master's own FP8-q error dominates, no worse than master vs the
+    fp64 reference (new <= 1.25 x master + 1e-3, AND per token row new <= 2 x master + 5e-3, so no single row can
+    hide a wrong result in the aggregate); cache: untouched rows identical, new v rows exact, new k rows by rel L2
+    vs master's (<= 4e-2, half the judge's 8% cache bound). Audit fix: no k byte / code-gap gate, because S1's
+    Triton RoPE (tl.cos / tl.sin, likely approximate) moves near-zero E4M3 k codes by several steps at large
+    positions and at kv_scale 1/64 (LESSONS: compare by rel L2, never bytes); k_gap / k_frac print as info."""
+    finite = bool(torch.isfinite(o_new.float()).all())
+    e_nm, e_n, e_m = _rel_l2(o_new, o_old), _rel_l2(o_new, o_ref), _rel_l2(o_old, o_ref)
+    rn = (o_new.double() - o_ref).norm(dim=-1) / o_ref.norm(dim=-1).clamp_min(1e-30)
+    rm = (o_old.double() - o_ref).norm(dim=-1) / o_ref.norm(dim=-1).clamp_min(1e-30)
+    rows_ok = bool((rn <= 2.0 * rm + 5e-3).all())
+    o_ok = finite and (e_nm <= 1e-2 or (e_n <= 1.25 * e_m + 1e-3 and rows_ok))
+    loc = d_old["cache_loc"]
+    kn, km = d_new["k_cache"].view(torch.uint8).view(-1, 128), d_old["k_cache"].view(torch.uint8).view(-1, 128)
+    vn, vm = d_new["v_cache"].view(torch.uint8).view(-1, 128), d_old["v_cache"].view(torch.uint8).view(-1, 128)
+    mask = torch.ones(kn.shape[0], dtype=torch.bool, device=kn.device)
+    mask[loc] = False
+    rest_ok = torch.equal(kn[mask], km[mask]) and torch.equal(vn[mask], vm[mask])
+    k_gap = _fp8_code_gap(kn[loc], km[loc])
+    k_frac = float((kn[loc] != km[loc]).float().mean())
+    k_rel = _rel_l2(kn[loc].view(FP8).float(), km[loc].view(FP8).float())
+    k_ok = bool(torch.isfinite(kn[loc].view(FP8).float()).all()) and k_rel <= 4e-2
+    v_ok = torch.equal(vn[loc], vm[loc])
+    ok = o_ok and rest_ok and k_ok and v_ok
+    for key, val in (("o_vs_master", e_nm), ("o_new_vs_fp64", e_n), ("o_master_vs_fp64", e_m), ("k_rel", k_rel),
+                     ("k_gap", k_gap), ("k_frac", k_frac)):
+        worst[key] = max(worst.get(key, 0), val)
+    msg = (f"o vs master {e_nm:.2e} (<= 1e-2), vs fp64 new {e_n:.2e} master {e_m:.2e} rows ok {rows_ok}, k rel L2 "
+           f"vs master {k_rel:.2e} (<= 4e-2; info: gap {k_gap} on {k_frac:.1%} of bytes), v exact {v_ok}, "
+           f"other rows intact {rest_ok}, finite {finite}")
+    return ok, msg
+
+
+def _cb_attn_alt(state, device, label, cases, on):
+    """Gate (a) for S1 and S3: the attention side (qkv GEMM -> o-GEMM input) with the cell forced on, two states
+    (each its own counters / tickets), one graph per state, replays alternating with refilled inputs and the output
+    poisoned, each against master's path run eagerly on a clone and against the fp64 reference. cases: (window,
+    batch, q_len, lens, kv_scale). Returns None or the first failure."""
+    second = _cb_second_state(state, device)
+    sts = [state, second]
+    st_on = [_cb_flags(s, **on) for s in sts]
+    st_off = [_cb_off(s) for s in sts]
+    gen = torch.Generator(device=device)
+    gen.manual_seed(20261041)
+    worst = {}
+    for window, batch, length, lens, kvs in cases:
+        tag = f"{label} B={batch} L={length} lens {min(lens)}..{max(lens)} kv_scale {kvs}"
+        if _cb_case_late():
+            return f"{tag}: case deadline {CB_CASE_DEADLINE:.0f}s passed"
+        sets = []
+        for s in range(2):
+            data = _cb_data(state, device, gen, window, batch, length, lens, kvs)
+            cell = {}
+
+            def fn(data=data, st=st_on[s], cell=cell):
+                cell["o"] = _attn_core(data, st)
+
+            _cb_launch(f"{tag}: eager warm-up state {s}", lambda: _attn_core(_dl3_clone_data(data), st_on[s]))
+            sets.append((data, cell, _sk_graph_of(fn, device)))
+        for r in range(4):
+            s = r % 2
+            data, cell, graph = sets[s]
+            cell["o"].fill_(float("nan"))
+            _cb_refill(data, _cb_data(state, device, gen, window, batch, length, lens, kvs))
+            d_old = _dl3_clone_data(data)
+            o_old = _attn_core(d_old, st_off[s])
+            o_ref = _cb_attn_ref(d_old, _gemm(d_old["attn_input"], state["dense"]["qkv_gate"]))
+            torch.cuda.synchronize()
+            _cb_say(f"{tag}: replay {r} on state {s}: launching graph")
+            graph.replay()
+            torch.cuda.synchronize()
+            ok, msg = _cb_cmp_attn(cell["o"], o_old, o_ref, data, d_old, worst)
+            left = _cb_counters(sts[s])
+            _cb_say(f"{tag}: replay {r} state {s}: {msg}, counters {left} -> {'ok' if ok and not left else 'FAIL'}")
+            if not ok or left:
+                return f"{tag} replay {r} state {s}: {msg}, counters {left}"
+            del d_old, o_old, o_ref
+        del sets
+    _cb_say(f"{label}: max errors over every replay: " + ", ".join(f"{k} {v:.3g}" for k, v in worst.items()))
+    return None
+
+
+def _s3_front_master(data, qkv, state, paired):
+    """Master's front half plus its q FP8 layout (unpaired [T, Hq, D] or the paired zero-padded rows)."""
+    cfg = data["config"]
+    tokens, hq, hkv, d = cfg["tokens"], 16, 2, 64
+    q = _master_front(data, qkv, state)
+    if paired:
+        return _master_pair_q(q, tokens, hq, hkv, d)
+    return q.view(tokens, hq, d).to(FP8).contiguous()
+
+
+def _s3_front_check(state, device, gen, window, batch, length, kv_scale, pos_base, paired):
+    """S3 kernel level, against master's front half and an fp64 accurate-RoPE reference (review fix (4): by rel L2,
+    not bytes): q and the new k rows within one E4M3 code of master and no worse than master vs fp64 (+1e-3), v rows
+    exact, the paired zero half exactly 0, every other cache row untouched. Returns None or the problem."""
+    tokens = batch * length
+    hq, hkv, d = 16, 2, 64
+    rows = 4 * tokens + 61
+    raw = torch.randn((tokens, DL3_Q_ROWS), generator=gen, device=device)
+    v_raw = raw[:, 1152:1280]
+    raw[:, 1152:1280] = v_raw * min(1.0, 100.0 * kv_scale / float(v_raw.abs().max()))
+    qkv = raw.to(torch.bfloat16)
+    seq = torch.tensor([pos_base + 37 * b for b in range(batch)], dtype=torch.int64, device=device)
+    positions = (seq[:, None] + torch.arange(length, device=device)).reshape(-1)
+    cache_loc = torch.randperm(rows, generator=gen, device=device)[:tokens].to(torch.int64)
+    kc0 = (torch.randn((rows, 1, hkv, d), generator=gen, device=device).clamp_(-6.0, 6.0) / kv_scale).to(FP8)
+    vc0 = (torch.randn((rows, 1, hkv, d), generator=gen, device=device).clamp_(-6.0, 6.0) / kv_scale).to(FP8)
+    cfg = {"batch": batch, "q_len": length, "tokens": tokens, "num_q_heads": hq, "num_kv_heads": hkv, "head_dim": d,
+           "page_size": 1, "window": window, "rope_theta": ROPE_THETA if window else 0.0, "kv_scale": kv_scale}
+
+    def mk():
+        return {"positions": positions, "cache_loc": cache_loc, "config": cfg,
+                "k_scale": torch.tensor(kv_scale, dtype=torch.float32, device=device),
+                "v_scale": torch.tensor(kv_scale, dtype=torch.float32, device=device),
+                "k_cache": kc0.clone(), "v_cache": vc0.clone()}
+
+    dm, dn = mk(), mk()
+    q_m = _s3_front_master(dm, qkv, state, paired)
+    torch.cuda.synchronize()
+    tag = (f"S3 front {'PAIRED' if paired else 'unpaired'} {'sliding' if window else 'full'} B={batch} L={length} "
+           f"pos~{pos_base} kv_scale {kv_scale}")
+    q_n = _cb_launch(f"{tag}: _pre_attention_kernel", lambda: _s3_pre_attention(dn, qkv, state, paired))
+    x = qkv.double()
+    q_ref = _cb_rms(x[:, :hq * d].reshape(tokens, hq, d))
+    k_ref = _cb_rms(x[:, hq * d:(hq + hkv) * d].reshape(tokens, hkv, d))
+    if window:
+        q_ref, k_ref = _cb_rope64(q_ref, positions, ROPE_THETA), _cb_rope64(k_ref, positions, ROPE_THETA)
+    k_ref = k_ref / kv_scale
+    if paired:
+        own = ((torch.arange(hq, device=device) // (hq // hkv)) % 2).view(1, hq, 1, 1).expand(tokens, hq, 1, d)
+        un, um = q_n.view(torch.uint8).view(tokens, hq, 2, d), q_m.view(torch.uint8).view(tokens, hq, 2, d)
+        qn_u, qm_u = un.gather(2, own).squeeze(2), um.gather(2, own).squeeze(2)
+        zero_ok = bool((un.gather(2, 1 - own) == 0).all())
+    else:
+        qn_u, qm_u = q_n.view(torch.uint8).view(tokens, hq, d), q_m.view(torch.uint8).view(tokens, hq, d)
+        zero_ok = True
+    gap_q = _fp8_code_gap(qn_u, qm_u)
+    e_qn, e_qm = _rel_l2(qn_u.view(FP8).float(), q_ref), _rel_l2(qm_u.view(FP8).float(), q_ref)
+    kn, km = dn["k_cache"].view(torch.uint8).view(-1, hkv * d), dm["k_cache"].view(torch.uint8).view(-1, hkv * d)
+    vn, vm = dn["v_cache"].view(torch.uint8).view(-1, hkv * d), dm["v_cache"].view(torch.uint8).view(-1, hkv * d)
+    gap_k = _fp8_code_gap(kn[cache_loc], km[cache_loc])
+    e_kn = _rel_l2(kn[cache_loc].view(FP8).float().view(tokens, hkv, d), k_ref)
+    e_km = _rel_l2(km[cache_loc].view(FP8).float().view(tokens, hkv, d), k_ref)
+    v_ok = torch.equal(vn[cache_loc], vm[cache_loc])
+    mask = torch.ones(rows, dtype=torch.bool, device=device)
+    mask[cache_loc] = False
+    k0, v0 = kc0.view(torch.uint8).view(-1, hkv * d), vc0.view(torch.uint8).view(-1, hkv * d)
+    rest_ok = torch.equal(kn[mask], k0[mask]) and torch.equal(vn[mask], v0[mask])
+    finite = bool(torch.isfinite(qn_u.view(FP8).float()).all())
+    ok = (finite and zero_ok and v_ok and rest_ok and gap_q <= 1 and gap_k <= 1 and e_qn <= e_qm + 1e-3
+          and e_kn <= e_km + 1e-3)
+    msg = (f"q gap {gap_q} rel L2 vs fp64 new {e_qn:.2e} master {e_qm:.2e}; k gap {gap_k} rel L2 vs fp64 new "
+           f"{e_kn:.2e} master {e_km:.2e}; v exact {v_ok}; zero half exact {zero_ok}; other rows intact {rest_ok}")
+    _cb_say(f"{tag}: {msg} -> {'ok' if ok else 'FAIL'}")
+    return None if ok else f"{tag}: {msg}"
+
+
+def _cb_s2_input(which, tokens, gen, device):
+    if which == "R":
+        return torch.randn((tokens, HIDDEN), device=device, generator=gen).to(torch.bfloat16)
+    return (torch.randn((tokens, D_EXPERT), device=device, generator=gen) * 0.5).to(torch.bfloat16)
+
+
+def _cb_s2_alt(state, device, which, tokens):
+    """Gate (a) for S2: two states (each its own P/R and unpool tickets and workspaces), one graph per state of the
+    piece as kernel_fn launches it, replays alternating with refilled inputs and poisoned outputs. R ("R"): P then R
+    variant 0 with PDL; all seven R outputs bit-identical to stage 1's R run eagerly on the graph's own P outputs.
+    Unpool ("U"): rel L2 <= 2e-3 vs the slice GEMM + F.pad, zero columns exact. Returns None or the failure."""
+    second = _cb_second_state(state, device)
+    sts = [state, second]
+    gen = torch.Generator(device=device)
+    gen.manual_seed(20261044 + tokens)
+    ls = torch.tensor([32], dtype=torch.int32, device=device)
+    dense = state["dense"]
+    names = ("xn", "topk_ids", "topk_w", "local_ids", "sorted_ids", "block_experts", "n_padded")
+    sets = []
+    for s in range(2):
+        dl, d3 = sts[s]["dl"], sts[s]["dl3"]
+        inp = _cb_s2_input(which, tokens, gen, device)
+        if which == "R":
+            ei = torch.empty((tokens, D_EXPERT), dtype=torch.bfloat16, device=device)
+            lg = torch.empty((tokens, N_EXPERTS), dtype=torch.float32, device=device)
+            bufs, bsm = _dl_route_bufs(tokens, device)
+
+            def fn(inp=inp, ei=ei, lg=lg, bufs=bufs, bsm=bsm, dl=dl):
+                _DL_EXT.dl_pooler_router(inp, dl["w_pr"], ei, lg, dl["ws"], dl["cnt_p"], dl["pdl"])
+                _dl_route_launch(ei, lg, ls, dl, bufs, bsm, dl["pdl"], 0)
+
+            io = {"inp": inp, "ei": ei, "lg": lg, "bufs": bufs, "bsm": bsm}
+        else:
+            out = torch.empty((tokens, HIDDEN), dtype=torch.bfloat16, device=device)
+
+            def fn(inp=inp, out=out, d3=d3):
+                _DL_EXT.dl_unpool(inp, dense["unpooler"], out, d3["ws_u"], d3["cnt_u"], d3["pdl"])
+
+            io = {"inp": inp, "out": out}
+        _cb_launch(f"S2 {which} T={tokens}: eager warm-up state {s}", fn)
+        sets.append((io, _sk_graph_of(fn, device)))
+    for r in range(4):
+        s = r % 2
+        io, graph = sets[s]
+        io["inp"].copy_(_cb_s2_input(which, tokens, gen, device))
+        if which == "R":
+            for t in io["bufs"]:
+                t.fill_(float("nan") if t.is_floating_point() else -7)
+        else:
+            io["out"].fill_(7.0)
+        _cb_say(f"S2 {which} T={tokens}: replay {r} on state {s}: launching graph")
+        graph.replay()
+        torch.cuda.synchronize()
+        if which == "R":
+            ref_bufs, _bsm = _dl_route_bufs(tokens, device)
+            _dl_route_launch(io["ei"], io["lg"], ls, sts[s]["dl"], ref_bufs, io["bsm"], 0, 2)
+            torch.cuda.synchronize()
+            bad = [nm for nm, a_, b_ in zip(names, io["bufs"], ref_bufs) if not torch.equal(a_, b_)]
+            finite = bool(torch.isfinite(io["lg"]).all()) and bool(torch.isfinite(io["ei"].float()).all())
+            ok = finite and not bad
+            msg = f"outputs differing from stage 1's R {bad}, P outputs finite {finite}"
+        else:
+            f_ref = _unpool_master(dense, io["inp"])
+            e_u = _rel_l2(io["out"], f_ref)
+            zero_ok = bool((io["out"][:, UNPOOL_SLICE:] == 0).all())
+            ok = bool(torch.isfinite(io["out"]).all()) and e_u <= 2e-3 and zero_ok
+            msg = f"rel L2 {e_u:.2e} (<= 2e-3), zero columns exact {zero_ok}"
+        left = _cb_counters(sts[s])
+        _cb_say(f"S2 {which} T={tokens}: replay {r} state {s}: {msg}, counters {left} -> "
+                f"{'ok' if ok and not left else 'FAIL'}")
+        if not ok or left:
+            return f"S2 {which} T={tokens} replay {r} state {s}: {msg}, counters {left}"
+    del sets
+    return None
+
+
+# ---- the T = 8 layer check (review fix (5)) -------------------------------------------------------------------
+def _cb_router_scores(data, ref_state):
+    """Biased router scores (sigmoid(0.177 logit) + bias, fp64) of master's path on this input."""
+    attn = _parent_attention(data, ref_state)
+    ffn_input, _s, _r = ref_state["attn_boundary"](data["stream"], attn, branch_dtype=torch.bfloat16,
+                                                   router_dtype=None)
+    logits = ffn_input.double() @ ref_state["router"].double().T
+    return torch.sigmoid(logits * 0.1767766952966369) + ref_state["router_bias"].double()
+
+
+def _cb_route_rules(ids, scores, ls_val):
+    """The judge's routing rules against master's scores: each pick within 0.05 of the 8th best; each local top-8
+    beating the 9th by > 0.03 picked; local routes >= ref - 8% - 4; distinct local experts >= ref - 15% - 2."""
+    ids = ids.long()
+    top9 = scores.topk(TOP_K + 1, dim=-1)
+    eighth, ninth = top9.values[:, TOP_K - 1], top9.values[:, TOP_K]
+    ref8, ref8v = top9.indices[:, :TOP_K], top9.values[:, :TOP_K]
+    r_pick = bool((scores.gather(1, ids) >= (eighth - 0.05)[:, None]).all())
+
+    def local(e):
+        return ((e - ls_val) % N_EXPERTS) < LOCAL_EXPERTS
+
+    must = local(ref8) & ((ref8v - ninth[:, None]) > 0.03)
+    present = (ref8.unsqueeze(-1) == ids.unsqueeze(-2)).any(-1)
+    r_clear = bool((present | ~must).all())
+    routes, ref_routes = int(local(ids).sum()), int(local(ref8).sum())
+    distinct, ref_distinct = len(set(ids[local(ids)].tolist())), len(set(ref8[local(ref8)].tolist()))
+    r_routes = routes >= 0.92 * ref_routes - 4
+    r_distinct = distinct >= 0.85 * ref_distinct - 2
+    ok = r_pick and r_clear and r_routes and r_distinct
+    return ok, (f"picks within 0.05 {r_pick}, clear-margin top-8 present {r_clear}, routes {routes}/{ref_routes}, "
+                f"distinct {distinct}/{ref_distinct}")
+
+
+def _cb_cmp_layer(got, ref, d_got, d_ref, s_in, scores, ls_val, worst):
+    finite = all(bool(torch.isfinite(t.float()).all()) for t in got[:2])
+    e_h, e_s = _rel_l2(got[0], ref[0]), _rel_l2(got[1], ref[1])
+    e_u = _rel_l2(got[1].double() - s_in.double(), ref[1].double() - s_in.double())
+    gi, ri = got[2].long(), ref[2].long()
+    n_diff = int((gi.sort(-1).values != ri.sort(-1).values).any(-1).sum())
+    rules_ok, rules = _cb_route_rules(gi, scores, ls_val)
+    tol_h, tol_s, tol_u = (2e-2, 1e-2, 5e-2) if n_diff == 0 else (5e-2, 2.5e-2, 1e-1)
+    loc = d_ref["cache_loc"]
+    kn, kr = d_got["k_cache"].view(torch.uint8).view(-1, 128), d_ref["k_cache"].view(torch.uint8).view(-1, 128)
+    vn, vr = d_got["v_cache"].view(torch.uint8).view(-1, 128), d_ref["v_cache"].view(torch.uint8).view(-1, 128)
+    mask = torch.ones(kn.shape[0], dtype=torch.bool, device=kn.device)
+    mask[loc] = False
+    rest_ok = torch.equal(kn[mask], kr[mask]) and torch.equal(vn[mask], vr[mask])
+    k_gap = _fp8_code_gap(kn[loc], kr[loc])
+    e_k = _rel_l2(kn[loc].view(FP8).float(), kr[loc].view(FP8).float())
+    v_ok = torch.equal(vn[loc], vr[loc])
+    for key, val in (("hidden", e_h), ("stream", e_s), ("update", e_u), ("k_cache", e_k), ("k_gap", k_gap),
+                     ("ids_tokens_differ", n_diff)):
+        worst[key] = max(worst.get(key, 0), val)
+    ok = (finite and rules_ok and e_h <= tol_h and e_s <= tol_s and e_u <= tol_u and rest_ok and k_gap <= 1
+          and e_k <= 4e-2 and v_ok)  # audit: 2e-2 was ~7% per replay to trip on fp32-vs-bf16 double rounding
+    msg = (f"hidden {e_h:.2e} (<= {tol_h}), stream {e_s:.2e} (<= {tol_s}), update {e_u:.2e} (<= {tol_u}), "
+           f"k_cache gap {k_gap} rel {e_k:.2e}, v_cache exact {v_ok}, other rows intact {rest_ok}, "
+           f"ids differ on {n_diff}/{gi.shape[0]} tokens, routing: {rules}, finite {finite}")
+    return ok, msg
+
+
+def _cb_t8_layer_check(state, device):
+    """kernel_fn at B = 1, q_len 8 with this state's combination flags (S2a / S2b / S3 c4 or c2 at T = 8), against
+    master's path (every combination flag off): a FULL layer at ctx 80000 and ctx 1048570, and a sliding layer at
+    ctx 80000. Two states (each its own counters / tickets), one graph per state, four replays alternating with
+    refilled inputs, outputs poisoned first; the judge's routing near-tie rules on master's scores; prints the max
+    error per output. Returns None or the first failure."""
+    second = _cb_second_state(state, device)
+    sts = [state, second]
+    refs = [_cb_off(s) for s in sts]
+    gen = torch.Generator(device=device)
+    gen.manual_seed(20261042)
+    ls_val = 96
+    worst = {}
+    for name, window, ctx in _CB_T8_CASES:
+        if _cb_case_late():
+            return f"T=8 layer {name}: case deadline {CB_CASE_DEADLINE:.0f}s passed"
+        sets = []
+        for s in range(2):
+            data = _cb_data(state, device, gen, window, 1, 8, [ctx], 1.0, ls_val)
+            cell = {}
+
+            def fn(data=data, st=sts[s], cell=cell):
+                cell["out"] = kernel_fn(data, st)
+
+            _cb_launch(f"T=8 layer {name}: eager warm-up state {s}", lambda: kernel_fn(_dl3_clone_data(data), sts[s]))
+            sets.append((data, cell, _sk_graph_of(fn, device)))
+        for r in range(4):
+            s = r % 2
+            data, cell, graph = sets[s]
+            # Poison the outputs FIRST (an output may alias an input the boundary updates in place), then refill.
+            cell["out"][0].fill_(float("nan"))
+            cell["out"][1].fill_(float("nan"))
+            cell["out"][2].fill_(-1)
+            _cb_refill(data, _cb_data(state, device, gen, window, 1, 8, [ctx], 1.0, ls_val))
+            s_in = data["stream"].clone()
+            d_ref, d_probe = _dl3_clone_data(data), _dl3_clone_data(data)
+            ref = kernel_fn(d_ref, refs[s])
+            scores = _cb_router_scores(d_probe, refs[s])
+            torch.cuda.synchronize()
+            _cb_say(f"T=8 layer {name}: replay {r} on state {s}: launching graph")
+            graph.replay()
+            torch.cuda.synchronize()
+            ok, msg = _cb_cmp_layer(cell["out"], ref, data, d_ref, s_in, scores, ls_val, worst)
+            left = _cb_counters(sts[s])
+            _cb_say(f"T=8 layer {name}: replay {r} state {s}: {msg}, counters {left} -> "
+                    f"{'ok' if ok and not left else 'FAIL'}")
+            if not ok or left:
+                return f"T=8 layer {name} replay {r} state {s}: {msg}, counters {left}"
+            del d_ref, d_probe, ref, scores
+        del sets
+    _cb_say("T=8 layer check max error per output: " + ", ".join(f"{k} {v:.3g}" for k, v in worst.items()))
+    return None
+
+
+# ---- selectors -----------------------------------------------------------------------------------------------
+def _cb_time(fns, device, reps=CB_REPS):
+    """Cold-L2 CUDA-graph timing, the judge's way: each callable captured once, plus a one-kernel graph whose median
+    is the fixed replay cost (subtracted from both); reps interleaved rounds (order reversed every round) after 3
+    warm rounds, a 256 MB flush before every replay, CUDA events. Returns ([net median us per fn], baseline us)."""
+    scratch = torch.zeros(1, dtype=torch.float32, device=device)
+    graphs = [_sk_graph_of(lambda: scratch.add_(1.0), device)] + [_sk_graph_of(f, device) for f in fns]
+    flush = torch.empty(CB_FLUSH_BYTES // 4, dtype=torch.float32, device=device)
+    e0, e1 = torch.cuda.Event(enable_timing=True), torch.cuda.Event(enable_timing=True)
+    ts = [[] for _ in graphs]
+    for it in range(3 + reps):
+        order = list(range(len(graphs)))
+        if it % 2:
+            order.reverse()
+        for i in order:
+            flush.zero_()
+            e0.record()
+            graphs[i].replay()
+            e1.record()
+            e1.synchronize()
+            if it >= 3:
+                ts[i].append(e0.elapsed_time(e1) * 1e3)
+    med = [sorted(t)[len(t) // 2] for t in ts]
+    del graphs, flush, scratch
+    torch.cuda.synchronize()
+    return [max(m - med[0], 0.05) for m in med[1:]], med[0]
+
+
+def _cb_select(source, cls, what, build, device):
+    """(b) of a cell's gate: new vs master as graphs (see _cb_time); win = new / master <= CB_RATIO. The first
+    prepare()'s plain numbers are reused by the second (each state still runs its own correctness gate)."""
+    key = f"{source} {cls}"
+    if key in _CB_SELECT:
+        win, t_new, t_old, base = _CB_SELECT[key]
+        note = " (timing of the first prepare(), reused)"
+    else:
+        new, old = build()
+        (t_new, t_old), base = _cb_time([new, old], device)
+        del new, old
+        win = t_new <= CB_RATIO * t_old
+        _CB_SELECT[key] = (win, t_new, t_old, base)
+        note = ""
+    _cb_say(f"selector {key} ({what}): new {t_new:.2f} us vs master {t_old:.2f} us (graph replay, "
+            f"{CB_FLUSH_BYTES >> 20} MB flush, {CB_REPS} interleaved reps, baseline {base:.2f} us subtracted), "
+            f"new/master {t_new / t_old:.3f}, need <= {CB_RATIO} -> WINNER = {'NEW' if win else 'MASTER'}{note}")
+    return win, t_new, t_old
+
+
+def _cb_verdict(rec, win, t_new, t_old):
+    rec.update(win=win, t_new=t_new, t_old=t_old)
+    if not win:
+        rec["reason"] = f"selector: new/master {t_new / t_old:.3f} > {CB_RATIO}"
+
+
+def _cb_attn_fns(state, device, window, batch, length, on):
+    """Selector pair for the whole attention side (qkv GEMM -> o-GEMM input) at agentic ctx 80000."""
+    rng = random.Random(4100 + 7 * batch + length + window)
+    gen = torch.Generator(device=device)
+    gen.manual_seed(4100 + batch)
+    lens = _sk_agentic(rng, batch, 80000) if batch > 1 else [80000]
+    data = _cb_data(state, device, gen, window, batch, length, lens, 1.0)
+    st_on, st_off = _cb_flags(state, **on), _cb_off(state)
+    return (lambda: _attn_core(data, st_on)), (lambda: _attn_core(data, st_off))
+
+
+def _cb_r_fns(state, device, tokens):
+    """Selector pair for S2a: the P -> R pair as kernel_fn launches it (new R with PDL after P vs stage 1's R)."""
+    dl = state["dl"]
+    pdl = dl["pdl"]
+    ls = torch.tensor([96], dtype=torch.int32, device=device)
+    x = torch.randn((tokens, HIDDEN), device=device).to(torch.bfloat16)
+    eip = torch.empty((tokens, D_EXPERT), dtype=torch.bfloat16, device=device)
+    lgp = torch.empty((tokens, N_EXPERTS), dtype=torch.float32, device=device)
+    bufs, bsm = _dl_route_bufs(tokens, device)
+
+    def pair(variant, rpdl):
+        def run():
+            _DL_EXT.dl_pooler_router(x, dl["w_pr"], eip, lgp, dl["ws"], dl["cnt_p"], pdl)
+            _dl_route_launch(eip, lgp, ls, dl, bufs, bsm, rpdl, variant)
+        return run
+
+    return pair(0, pdl), pair(2, 0)
+
+
+def _cb_u_fns(state, device, tokens):
+    """Selector pair for S2b: dl_unpool_kernel NF=1 vs the slice GEMM + F.pad."""
+    d3 = state["dl3"]
+    y = (torch.randn((tokens, D_EXPERT), device=device) * 0.5).to(torch.bfloat16)
+    return (lambda: _dl3_unpool(y, state, d3)), (lambda: _unpool_master(state["dense"], y))
+
+
+def _cb_cell_of(state, window, batch, length):
+    """The S3 cell this state's attention side routes a (window, batch, q_len) shape to (page 1, tp8 heads)."""
+    cfg = {"window": window, "q_len": length, "batch": batch, "num_q_heads": 16, "num_kv_heads": 2, "head_dim": 64,
+           "page_size": 1}
+    splitkv = _splitkv_gate(cfg)
+    paired = window == 0 and batch > 1 and not splitkv
+    return _s3_cell(cfg, _sk_variant(cfg, state.get("sk")) >= 0 or splitkv, paired)
+
+
+# ---- the phases ----------------------------------------------------------------------------------------------
+def _cb_prepare_s2a(state, device, recs, t_prepare0):
+    """S2a: R variant 0 at 2 <= T <= 32. Per class: _dl3_check_r at its T (bit-identical to stage 1's R incl.
+    sorted_ids, block_experts, n_padded), the two-state graph alternation, then the P -> R selector at T = class."""
+    if state.get("dl") is None or state.get("dl3") is None or not _DL_S3:
+        for rec in recs["S2a"].values():
+            rec["reason"] = "the dense chain or its stage-3 module is off for this state"
+        return
+    for cls in S2A_CLASSES:
+        rec = recs["S2a"][cls]
+        if _cb_late(t_prepare0):
+            rec["reason"] = f"cell deadline {CB_CELL_DEADLINE:.0f}s passed"
+            continue
+        problems = _dl3_check_r(state, device, tokens=S2A_CHECK_T[cls])
+        if not _cb_clean(state, recs, f"S2a check T-class {cls}"):
+            problems.append("counters not back to 0 after the check")
+        if not problems:
+            err = _cb_s2_alt(state, device, "R", cls)
+            if not _cb_clean(state, recs, f"S2a alternation T={cls}"):
+                err = err or "counters not back to 0 after the alternation"
+            if err:
+                problems.append(err)
+        _cb_say(f"S2a T-class {cls}: correctness {'ok' if not problems else 'FAIL: ' + '; '.join(problems[:3])}")
+        if problems:
+            rec["reason"] = "check: " + "; ".join(problems[:3])
+            continue
+        win, t_new, t_old = _cb_select("S2a", cls, f"P -> R pair T={cls}", lambda: _cb_r_fns(state, device, cls),
+                                       device)
+        _cb_verdict(rec, win, t_new, t_old)
+        if not _cb_clean(state, recs, f"S2a selector T={cls}"):
+            rec["reason"] = "counters not back to 0 after the selector"
+
+
+def _cb_prepare_s2b(state, device, recs, t_prepare0):
+    """S2b: dl_unpool_kernel NF=1 at 2 <= T <= 8: _dl3_check_u at T = 2, 5, 8, the two-state alternation at T = 8,
+    then the selector at T = 8."""
+    rec = recs["S2b"][8]
+    if state.get("dl") is None or state.get("dl3") is None or not _DL_S3:
+        rec["reason"] = "the dense chain or its stage-3 module is off for this state"
+        return
+    problems = _dl3_check_u(state, device, tokens_list=S2B_CHECK_T)
+    if not _cb_clean(state, recs, "S2b check"):
+        problems.append("counters not back to 0 after the check")
+    if not problems:
+        err = _cb_s2_alt(state, device, "U", 8)
+        if not _cb_clean(state, recs, "S2b alternation"):
+            err = err or "counters not back to 0 after the alternation"
+        if err:
+            problems.append(err)
+    _cb_say(f"S2b T 2..8: correctness {'ok' if not problems else 'FAIL: ' + '; '.join(problems[:3])}")
+    if problems:
+        rec["reason"] = "check: " + "; ".join(problems[:3])
+        return
+    win, t_new, t_old = _cb_select("S2b", 8, "unpooler T=8", lambda: _cb_u_fns(state, device, 8), device)
+    _cb_verdict(rec, win, t_new, t_old)
+    if not _cb_clean(state, recs, "S2b selector"):
+        rec["reason"] = "counters not back to 0 after the selector"
+
+
+def _cb_prepare_s1(state, device, recs, t_prepare0):
+    """S1 per class: the attention-side two-state alternation at B in S1_CHECK_B x lens S1_LENS x kv_scale
+    {1, 1/64}, then the whole-attention-side selector at B = 16 / 32 (agentic ctx 80000)."""
+    for cls in S1_CLASSES:
+        rec = recs["S1"][cls]
+        if _cb_late(t_prepare0):
+            rec["reason"] = f"cell deadline {CB_CELL_DEADLINE:.0f}s passed"
+            continue
+        cases = [(2048, b, 1, [S1_LENS[(i + b) % len(S1_LENS)] for i in range(b)], kvs)
+                 for b in S1_CHECK_B[cls] for kvs in CB_KV_SCALES]
+        err = _cb_attn_alt(state, device, f"S1 class {cls}", cases, {"s1": {cls: True}})
+        if not _cb_clean(state, recs, f"S1 class {cls} check"):
+            err = err or "counters not back to 0 after the check"
+        _cb_say(f"S1 class {cls}: correctness {'ok' if err is None else 'FAIL: ' + err}")
+        if err:
+            rec["reason"] = f"check: {err}"
+            continue
+        b = S1_SELECT_B[cls]
+        win, t_new, t_old = _cb_select("S1", cls, f"whole attention side, sliding decode B={b}",
+                                       lambda: _cb_attn_fns(state, device, 2048, b, 1, {"s1": {cls: True}}), device)
+        _cb_verdict(rec, win, t_new, t_old)
+        if not _cb_clean(state, recs, f"S1 class {cls} selector"):
+            rec["reason"] = "counters not back to 0 after the selector"
+
+
+def _cb_prepare_s3(state, device, recs, t_prepare0):
+    """S3 per cell: kernel-level front checks (q / k / v vs master and the fp64 accurate-RoPE reference, RoPE
+    positions near 300000 and 1048576 on sliding cells), the attention-side two-state alternation, then the
+    whole-attention-side selector at the cell's shape (ctx 80000)."""
+    gen = torch.Generator(device=device)
+    gen.manual_seed(20261043)
+    for cell in S3_CELLS:
+        rec = recs["S3"][cell]
+        window, fronts, poses, e2e, (sb, sl) = S3_SPEC[cell]
+        if _cb_late(t_prepare0):
+            rec["reason"] = f"cell deadline {CB_CELL_DEADLINE:.0f}s passed"
+            continue
+        if _cb_cell_of(state, window, sb, sl) != cell:
+            rec["reason"] = "this state's attention side does not route the cell (no unpaired sk / split-KV feed)"
+            continue
+        paired = cell.startswith("c3")
+        problems = []
+        for b, length in fronts:
+            for kvs in CB_KV_SCALES:
+                for pos in poses:
+                    p = _s3_front_check(state, device, gen, window, b, length, kvs, pos, paired)
+                    if p is not None:
+                        problems.append(p)
+        if not _cb_clean(state, recs, f"S3 {cell} front check"):
+            problems.append("counters not back to 0 after the front check")
+        if not problems:
+            cases = [(window, b, length, _cb_mixed(b, ctx), kvs) for b, length, ctx in e2e for kvs in CB_KV_SCALES]
+            err = _cb_attn_alt(state, device, f"S3 {cell}", cases, {"s3": {cell: True}})
+            if not _cb_clean(state, recs, f"S3 {cell} alternation"):
+                err = err or "counters not back to 0 after the alternation"
+            if err:
+                problems.append(err)
+        _cb_say(f"S3 {cell}: correctness {'ok' if not problems else 'FAIL: ' + '; '.join(problems[:2])}")
+        if problems:
+            rec["reason"] = "check: " + "; ".join(problems[:2])
+            continue
+        win, t_new, t_old = _cb_select("S3", cell, f"whole attention side B={sb} q_len {sl}",
+                                       lambda: _cb_attn_fns(state, device, window, sb, sl, {"s3": {cell: True}}),
+                                       device)
+        _cb_verdict(rec, win, t_new, t_old)
+        if not _cb_clean(state, recs, f"S3 {cell} selector"):
+            rec["reason"] = "counters not back to 0 after the selector"
+
+
+def _cb_on(recs, source, cls) -> bool:
+    rec = recs[source][cls]
+    return bool(rec.get("win")) and rec.get("reason") is None and recs["_dirty"] is None
+
+
+def _cb_prepare_t8(state, device, recs, t_prepare0):
+    """Review fix (5): the FULL-layer (and sliding) T = 8 layer check of every T = 8 cell that is on; a miss keeps
+    master at T = 8 (S2a class 8, S2b, S3 c4-t8 and c2-t8 off) for this state."""
+    live = [(s, c) for s, c in _CB_T8_CELLS if _cb_on(recs, s, c)]
+    if not live:
+        _cb_say("T=8 layer check: no T=8 cell is on for this state, nothing to check")
+        return
+    _cb_apply(state, recs)  # the check runs the flags exactly as kernel_fn will
+    err = _dl3_layer_checks(state, device, False, False, False, t8=True)
+    if not _cb_clean(state, recs, "T=8 layer check"):
+        err = err or "counters not back to 0"
+    if err is not None:
+        for s, c in live:
+            recs[s][c]["reason"] = f"T=8 layer check: {err}"
+        _cb_say(f"T=8 layer check FAILED ({err}): master kept at T=8 for {live}")
+    else:
+        _cb_say(f"T=8 layer check passed with {live} on")
+
+
+def _cb_apply(state, recs):
+    """Write the per-state flags kernel_fn reads (one entry per source)."""
+    state["s1"] = {c: _cb_on(recs, "S1", c) for c in S1_CLASSES}
+    state["s3"] = {c: _cb_on(recs, "S3", c) for c in S3_CELLS}
+    d3 = state.get("dl3")
+    if d3 is not None:
+        d3["b_t"] = {c: _cb_on(recs, "S2a", c) for c in S2A_CLASSES}
+        d3["u8"] = _cb_on(recs, "S2b", 8)
+
+
+def _cb_phase(name, state, device, t_prepare0, recs, body):
+    t0 = time.perf_counter()
+    since = t0 - t_prepare0
+    if since > CB_DEADLINE[name]:
+        reason = f"phase {name} skipped: start deadline {CB_DEADLINE[name]:.0f}s passed ({since:.1f}s into prepare())"
+    else:
+        _cb_say(f"phase {name}: start {since:.1f}s into prepare()")
+        try:
+            body(state, device, recs, t_prepare0)
+            reason = None
+        except Exception as e:
+            reason = f"phase {name} raised {type(e).__name__}: {str(e)[:300]}"
+        try:
+            _cb_clean(state, recs, f"phase {name}")
+        except Exception as e:
+            recs["_dirty"] = recs["_dirty"] or f"phase {name} counter read raised {e!r}"
+    if reason is not None:
+        _cb_say(reason)
+        cells = _CB_T8_CELLS if name == "T8" else [(name, c) for c in recs[name]]
+        for src, c in cells:
+            rec = recs[src][c]
+            if name == "T8":
+                if _cb_on(recs, src, c):
+                    rec["reason"] = f"T=8 layer check not completed: {reason}"
+            elif rec.get("reason") is None and not rec.get("win"):
+                rec["reason"] = reason
+    _cb_apply(state, recs)
+    torch.cuda.empty_cache()
+    now = time.perf_counter()
+    _cb_say(f"phase {name}: {now - t0:.1f}s wall, this prepare() {now - t_prepare0:.1f}s, "
+            f"all prepare() calls {_PREPARE_WALL_S + now - t_prepare0:.1f}s")
+
+
+def _cb_report(state, recs):
+    """One PATH CHOSEN line per source per class; the flag kernel_fn reads must equal the printed winner."""
+    d3 = state.get("dl3")
+    for source, cls, what, new_name, old_name in _CB_LINES:
+        rec = recs[source][cls]
+        if source == "S1":
+            flag = state["s1"][cls]
+        elif source == "S3":
+            flag = state["s3"][cls]
+        elif d3 is None:
+            flag = False
+        else:
+            flag = d3["b_t"][cls] if source == "S2a" else d3["u8"]
+        winner_new = _cb_on(recs, source, cls)
+        if flag != winner_new:  # never expected: force master and say so
+            _cb_say(f"ASSERT: {source} {cls} flag {flag} != printed winner {winner_new}; forcing master")
+            if source == "S1":
+                state["s1"][cls] = False
+            elif source == "S3":
+                state["s3"][cls] = False
+            elif d3 is not None and source == "S2a":
+                d3["b_t"][cls] = False
+            elif d3 is not None:
+                d3["u8"] = False
+            flag, winner_new = False, False
+            rec["reason"] = rec.get("reason") or "flag / winner mismatch"
+        times = (f"[new {rec['t_new']:.2f} us vs master {rec['t_old']:.2f} us]" if rec.get("t_new") is not None
+                 else "[not timed]")
+        if winner_new:
+            print(f"PATH CHOSEN: {source} {what}: NEW {new_name} {times}", flush=True)
+        else:
+            why = recs["_dirty"] and f"counters not back to 0 after {recs['_dirty']}" or rec.get("reason")
+            print(f"PATH CHOSEN: {source} {what}: MASTER {old_name} {times} (fallback: {why})", flush=True)
+
+
+def _combo_prepare(state, device, t_prepare0):
+    """prepare(), after master's own setup (_dl3_finish): the source phases, the T = 8 layer check, then one PATH
+    CHOSEN line per source per class. Never raises; every miss keeps master for that cell (or, on a dirty counter,
+    for the whole state)."""
+    global _CB_T0
+    _CB_T0 = t_prepare0
+    recs = {"S1": {c: {} for c in S1_CLASSES}, "S2a": {c: {} for c in S2A_CLASSES}, "S2b": {8: {}},
+            "S3": {c: {} for c in S3_CELLS}, "_dirty": None}
+    _cb_say("no new load_inline module (compile 0.0s): S1 / S3 are Triton (JIT at their first prepare() launch, "
+            "timed in the launch lines), S2a / S2b are kernels of muse_decode_dense_chain_s3 built at import")
+    for name, body in (("S2a", _cb_prepare_s2a), ("S2b", _cb_prepare_s2b), ("S1", _cb_prepare_s1),
+                       ("S3", _cb_prepare_s3), ("T8", _cb_prepare_t8)):
+        _cb_phase(name, state, device, t_prepare0, recs, body)
+    try:
+        _cb_report(state, recs)
+    except Exception as e:  # printing only; never leave a flag on that was not reported
+        _cb_say(f"report raised {e!r}: every combination flag off for this state")
+        recs["_dirty"] = recs["_dirty"] or "report"
+        _cb_apply(state, recs)
+
+
 def prepare(weights):
     t_prepare0 = time.perf_counter()
     device = weights["qkv_gate"].device
@@ -5767,6 +6967,12 @@ def prepare(weights):
         "bank": _marlin_bank(weights),
         "side_stream": torch.cuda.Stream(device),
         "_modules": (pre_ffn, next_pre_attn, post_attn, post_ffn, post_expert),
+        "router_bias": weights["router_bias"].float().contiguous(),
+        # Combination flags (sources S1 and S3; S2a / S2b live in state["dl3"]): all off until _combo_prepare.
+        "s1": {c: False for c in S1_CLASSES},
+        "s3": {c: False for c in S3_CELLS},
+        # Review fix (2): the sliding kernels' split counters and RoPE frequencies, this state's own.
+        **_slide_state(device),
     }
     del freqs
     # Small-T dense chain (T <= DL_MAX_TOKENS): constants, PDL probe and self-check; None keeps master.
@@ -5783,6 +6989,8 @@ def prepare(weights):
     _sk_prepare(state, device, t_prepare0)
     # Stage 3 piece A (needs the sk B=1 decision), then the layer-level checks and the per-piece PATH CHOSEN lines.
     _dl3_finish(state, device)
+    # Combination phases (S2a, S2b, S1, S3, the T=8 layer check), all after master's own setup; never raises.
+    _combo_prepare(state, device, t_prepare0)
     torch.cuda.synchronize()
     _prepare_done(t_prepare0)
     return state
@@ -5951,109 +7159,143 @@ def _experts(x, topk_weights, topk_ids, state, align=None, dispatch=None, w2_mod
         slot_expert_ids=local_ids)
 
 
-def _parent_attention(data, state):
-    """The parent's attention side, unchanged: qkv GEMM, QK-norm, cache store, FA3 / split-KV / sk, norm-gate,
-    o GEMM. Returns attn_output."""
+def _master_front(data, qkv, state):
+    """Master's attention front half, unchanged: FusedQKNorm (+RoPE), the k/v scale divides, FP8 casts and
+    store_cache at cache_loc. Returns the bf16 q (FusedQKNorm's output)."""
+    cfg = data["config"]
+    tokens = cfg["tokens"]
+    hq, hkv, d = cfg["num_q_heads"], cfg["num_kv_heads"], cfg["head_dim"]
+    if cfg["rope_theta"]:
+        q, k = state["qk_norm"](qkv, data["positions"], state["cos_sin"])
+    else:
+        q, k = state["qk_norm"](qkv)
+    v = qkv[:, hq * d + hkv * d: hq * d + 2 * hkv * d]
+    k_cache, v_cache = data["k_cache"], data["v_cache"]
+    k = k.reshape(tokens, hkv * d)
+    if cfg["kv_scale"] != 1.0:
+        k, v = k / data["k_scale"], v / data["v_scale"]
+    # The pool keeps FP8 rows as bytes; slot 0 is a live row here (SGLang reserves it for padding).
+    store_cache(k.to(FP8).view(torch.uint8), v.to(FP8).view(torch.uint8),
+                k_cache.view(-1, hkv * d).view(torch.uint8), v_cache.view(-1, hkv * d).view(torch.uint8),
+                data["cache_loc"], reserved_skip_index=-1)
+    return q
+
+
+def _master_pair_q(q, tokens, hq, hkv, d):
+    """Master's paired FP8 query: each query in its own head's half of a zero-padded 128-wide row."""
+    g, s = hq // hkv, hkv // 2
+    q_attn = torch.zeros((tokens, hq, 2 * d), dtype=FP8, device=q.device)
+    qp = q_attn.view(tokens, s, 2, g, 2 * d)
+    qv = q.view(tokens, s, 2, g, d)
+    qp[:, :, 0, :, :d] = qv[:, :, 0]
+    qp[:, :, 1, :, d:] = qv[:, :, 1]
+    return q_attn
+
+
+def _attn_route(cfg, state):
+    """Config + this state's own prepare() flags only: (s1 class or None, use S3, s3 cell, splitkv, sk variant,
+    paired) for kernel_fn's attention side."""
+    batch, hkv = cfg["batch"], cfg["num_kv_heads"]
+    splitkv = _splitkv_gate(cfg)
+    sk_variant = _sk_variant(cfg, state.get("sk"))
+    paired = cfg["window"] == 0 and batch > 1 and hkv % 2 == 0 and not splitkv
+    cell = _s3_cell(cfg, sk_variant >= 0 or splitkv, paired)
+    use_s3 = cell is not None and state["s3"][cell]
+    return use_s3, cell, splitkv, sk_variant, paired
+
+
+def _attn_core(data, state):
+    """MuseSpark1xAttention.forward up to the o GEMM's input: qkv GEMM, QK-norm, cache store, attention,
+    norm-gate. Returns o bf16 [T, Hq*D]. With every combination flag off this is master's code path, launch for
+    launch. Branches on config and this state's own flags only."""
     cfg = data["config"]
     batch, length, tokens = cfg["batch"], cfg["q_len"], cfg["tokens"]
     hq, hkv, d = cfg["num_q_heads"], cfg["num_kv_heads"], cfg["head_dim"]
-    dense = state["dense"]
-    # Attention: MuseSpark1xAttention.forward.
-    qkv = _gemm(data["attn_input"], dense["qkv_gate"])
-    # Sliding batch-1 decode only (config-only predicate): attention in one fused launch.
-    # Every other shape (sliding batch > 1, every verify block, every full layer) keeps the path below.
+    qkv = _gemm(data["attn_input"], state["dense"]["qkv_gate"])
+    # Sliding batch-1 decode (config-only predicate): attention in one fused launch.
     if cfg["window"] and batch == 1 and length == 1:
-        o = _sliding_forward(data, qkv)
+        return _sliding_forward(data, qkv, state)
+    # S1: sliding decode 2 <= B <= 32 (q_len 1, page 1), per class, this state's flag.
+    s1 = _s1_class(cfg)
+    if s1 is not None and state["s1"][s1]:
+        return _sliding_forward_band(data, qkv, state)
+    gate = qkv[:, hq * d + 2 * hkv * d:]
+    k_cache, v_cache = data["k_cache"], data["v_cache"]
+    scaled = cfg["kv_scale"] != 1.0
+    window = cfg["window"]
+    # Full-layer decode at 1 < batch <= 64 (config-only gate): the CUDA split-KV kernels or, per the state's
+    # prepare()-time flags, the stream-K + ticket kernels take the unpaired FP8 query and replace FA3, the paired
+    # pad/unpad copies and FusedRMSNormGate. S3 (per cell, this state's flag) replaces the front half.
+    use_s3, _cell, splitkv, sk_variant, paired = _attn_route(cfg, state)
+    if use_s3:
+        q8 = _s3_pre_attention(data, qkv, state, paired)
+        q = None
     else:
-        if cfg["rope_theta"]:
-            q, k = state["qk_norm"](qkv, data["positions"], state["cos_sin"])
-        else:
-            q, k = state["qk_norm"](qkv)
-        v = qkv[:, hq * d + hkv * d: hq * d + 2 * hkv * d]
-        gate = qkv[:, hq * d + 2 * hkv * d:]
-        k_cache, v_cache = data["k_cache"], data["v_cache"]
-        scaled = cfg["kv_scale"] != 1.0
-        k = k.reshape(tokens, hkv * d)
-        if scaled:
-            k, v = k / data["k_scale"], v / data["v_scale"]
-        # The pool keeps FP8 rows as bytes; slot 0 is a live row here (SGLang reserves it for padding).
-        store_cache(k.to(FP8).view(torch.uint8), v.to(FP8).view(torch.uint8),
-                    k_cache.view(-1, hkv * d).view(torch.uint8), v_cache.view(-1, hkv * d).view(torch.uint8),
-                    data["cache_loc"], reserved_skip_index=-1)
-        window = cfg["window"]
-        # Full-layer decode at 1 < batch <= 64 (tp8, page 1; config-only gate): the CUDA split-KV
-        # kernels (hypothesis full-decode-cuda-splitkv-port) take the unpaired FP8 query and replace
-        # FA3, the paired pad/unpad copies and FusedRMSNormGate; kernel B reads the gate from qkv and
-        # writes the normed, gated [T, Hq*D] bf16 input of the o GEMM. scheduler_metadata is unused.
-        splitkv = _splitkv_gate(cfg)
-        # Stream-K + ticket (hypothesis full-decode-sk-ticket-restack-b1-b64), config + the state's own
-        # prepare()-time flags only: batch 1 -> two-level ticket kernel (replaces FA3, its combine and
-        # FusedRMSNormGate); 1 < batch <= 64 -> single-level ticket kernel (replaces kernels A + B).
-        # Both read the unpaired FP8 q and write the bf16 [T, Hq*D] input of the o GEMM.
-        sk_variant = _sk_variant(cfg, state.get("sk"))
-        if sk_variant >= 0:
-            q_fp8 = q.view(tokens, hq, d).to(FP8).contiguous()
-            o = _full_decode_sk(data, q_fp8, qkv, state["sk"], sk_variant).reshape(tokens, hq * d)
-        elif splitkv:
-            q_fp8 = q.view(tokens, hq, d).to(FP8).contiguous()
-            o = _full_decode_splitkv(data, q_fp8, qkv).reshape(tokens, hq * d)
-        else:
-            # Full layers with batch > 1: pair the two KV heads of each token into one 128-byte FP8 row
-            # (heads 2s and 2s+1 are adjacent halves of it) so FA3 gathers one row per token instead of
-            # two. Each query sits in its own head's half of a zero-padded 128-wide FP8 query (the pad
-            # copy also does the BF16 -> E4M3 cast), so the zero half adds exactly 0 to every logit; FA3
-            # maps query head h to super-head h // (2G), which keeps the original grouping. The judge's
-            # scheduler_metadata was built for the unpaired geometry, so it is not passed. Batch 1 stays
-            # unpaired (pairing lost there in muse_attention_decode). The gate reads config only.
-            paired = window == 0 and batch > 1 and hkv % 2 == 0 and not splitkv
-            if paired:
-                g, s = hq // hkv, hkv // 2
-                pages, page_size = k_cache.shape[0], k_cache.shape[1]
-                k_attn = k_cache.view(pages, page_size, s, 2 * d)
-                v_attn = v_cache.view(pages, page_size, s, 2 * d)
-                q_attn = torch.zeros((tokens, hq, 2 * d), dtype=FP8, device=q.device)
-                qp = q_attn.view(tokens, s, 2, g, 2 * d)
-                qv = q.view(tokens, s, 2, g, d)
-                qp[:, :, 0, :, :d] = qv[:, :, 0]
-                qp[:, :, 1, :, d:] = qv[:, :, 1]
-                attn_heads = s
-                metadata = None
-            else:
-                k_attn, v_attn, q_attn = k_cache, v_cache, q.view(tokens, hq, d).to(FP8)
-                attn_heads = hkv
-                metadata = data["scheduler_metadata"]
-            descale = {}
-            if scaled:
-                descale = dict(k_descale=data["k_scale"].reshape(1, 1).expand(batch, attn_heads),
-                               v_descale=data["v_scale"].reshape(1, 1).expand(batch, attn_heads))
-            out = flash_attn_with_kvcache(
-                q=q_attn,
-                k_cache=k_attn,
-                v_cache=v_attn,
-                page_table=data["page_table"],
-                cache_seqlens=data["cache_seqlens"],
-                cu_seqlens_q=data["cu_seqlens_q"],
-                max_seqlen_q=length,
-                softmax_scale=cfg["sm_scale"] * cfg["qk_scale_factor"],
-                causal=True,
-                window_size=(window - 1, 0) if window else (-1, -1),
-                scheduler_metadata=metadata,
-                **descale,
-            )
-            if isinstance(out, tuple):
-                out = out[0]
-            if paired:
-                # Keep each query's own half of FA3's 128-wide output; the other half is the other
-                # head's P@V and is discarded.
-                attn = torch.empty((tokens, hq, d), dtype=torch.bfloat16, device=q.device)
-                a = attn.view(tokens, s, 2, g, d)
-                o = out.view(tokens, s, 2, g, 2 * d)
-                a[:, :, 0] = o[:, :, 0, :, :d]
-                a[:, :, 1] = o[:, :, 1, :, d:]
-                out = attn
-            o = state["o_norm_gate"](out.reshape(tokens, hq * d).to(torch.bfloat16), gate)
-    attn_output = _gemm(o, dense["o"])  # all-reduce: identity
-    return attn_output
+        q = _master_front(data, qkv, state)
+        q8 = None
+    if sk_variant >= 0:
+        q_fp8 = q8 if use_s3 else q.view(tokens, hq, d).to(FP8).contiguous()
+        return _full_decode_sk(data, q_fp8, qkv, state["sk"], sk_variant).reshape(tokens, hq * d)
+    if splitkv:
+        q_fp8 = q8 if use_s3 else q.view(tokens, hq, d).to(FP8).contiguous()
+        return _full_decode_splitkv(data, q_fp8, qkv).reshape(tokens, hq * d)
+    # Full layers with batch > 1: pair the two KV heads of each token into one 128-byte FP8 row
+    # (heads 2s and 2s+1 are adjacent halves of it) so FA3 gathers one row per token instead of
+    # two. Each query sits in its own head's half of a zero-padded 128-wide FP8 query, so the zero
+    # half adds exactly 0 to every logit; FA3 maps query head h to super-head h // (2G), which keeps
+    # the original grouping. The judge's scheduler_metadata was built for the unpaired geometry, so
+    # it is not passed. Batch 1 stays unpaired. The gate reads config only.
+    if paired:
+        g, s = hq // hkv, hkv // 2
+        pages, page_size = k_cache.shape[0], k_cache.shape[1]
+        k_attn = k_cache.view(pages, page_size, s, 2 * d)
+        v_attn = v_cache.view(pages, page_size, s, 2 * d)
+        q_attn = q8 if use_s3 else _master_pair_q(q, tokens, hq, hkv, d)
+        attn_heads = s
+        metadata = None
+    else:
+        k_attn, v_attn = k_cache, v_cache
+        q_attn = q8 if use_s3 else q.view(tokens, hq, d).to(FP8)
+        attn_heads = hkv
+        metadata = data["scheduler_metadata"]
+    descale = {}
+    if scaled:
+        descale = dict(k_descale=data["k_scale"].reshape(1, 1).expand(batch, attn_heads),
+                       v_descale=data["v_scale"].reshape(1, 1).expand(batch, attn_heads))
+    out = flash_attn_with_kvcache(
+        q=q_attn,
+        k_cache=k_attn,
+        v_cache=v_attn,
+        page_table=data["page_table"],
+        cache_seqlens=data["cache_seqlens"],
+        cu_seqlens_q=data["cu_seqlens_q"],
+        max_seqlen_q=length,
+        softmax_scale=cfg["sm_scale"] * cfg["qk_scale_factor"],
+        causal=True,
+        window_size=(window - 1, 0) if window else (-1, -1),
+        scheduler_metadata=metadata,
+        **descale,
+    )
+    if isinstance(out, tuple):
+        out = out[0]
+    if paired and use_s3:
+        return _s3_paired_norm_gate(out, qkv, cfg)
+    if paired:
+        # Keep each query's own half of FA3's 128-wide output; the other half is the other
+        # head's P@V and is discarded.
+        g, s = hq // hkv, hkv // 2
+        attn = torch.empty((tokens, hq, d), dtype=torch.bfloat16, device=out.device)
+        a = attn.view(tokens, s, 2, g, d)
+        o = out.view(tokens, s, 2, g, 2 * d)
+        a[:, :, 0] = o[:, :, 0, :, :d]
+        a[:, :, 1] = o[:, :, 1, :, d:]
+        out = attn
+    return state["o_norm_gate"](out.reshape(tokens, hq * d).to(torch.bfloat16), gate)
+
+
+def _parent_attention(data, state):
+    """The attention side: _attn_core, then the o GEMM (all-reduce: identity). Returns attn_output."""
+    return _gemm(_attn_core(data, state), state["dense"]["o"])
 
 
 def kernel_fn(data, state):
@@ -6080,7 +7322,9 @@ def kernel_fn(data, state):
         data["stream"], attn_output, branch_dtype=torch.bfloat16,
         router_dtype=None if (split_router or use_dl) else torch.float32)
     if use_dl:
-        xn, (topk_weights, topk_ids, local_ids, align), _ = _dl_forward(ffn_input, data["local_start"], dl)
+        # S2a: R variant 0 at 2 <= T <= 32 for T's class while this state's flag is on (config + flag only).
+        r_t = dl3 is not None and tokens >= 2 and dl3["b_t"][_s2a_class(tokens)]
+        xn, (topk_weights, topk_ids, local_ids, align), _ = _dl_forward(ffn_input, data["local_start"], dl, r_t=r_t)
         # all-reduce: identity
         expert_output = _experts(xn, topk_weights, local_ids, state, align=align)
     else:
@@ -6105,8 +7349,10 @@ def kernel_fn(data, state):
                 tensor.record_stream(main_stream)
         # all-reduce: identity
         expert_output = _experts(xn, None, None, state, dispatch=(local_ids, tw, align))
-    if use_dl and tokens == 1 and dl3 is not None and dl3["u"]:
-        # Stage 3 piece C: dl_unpool_kernel NF=1 replaces the slice GEMM + F.pad (this state's flag and buffers).
+    if use_dl and dl3 is not None and ((tokens == 1 and dl3["u"])
+                                       or (2 <= tokens <= SLICED_UNPOOL_MAX_TOKENS and dl3["u8"])):
+        # Stage 3 piece C (T=1) / combination S2b (2 <= T <= 8): dl_unpool_kernel NF=1 replaces the slice GEMM +
+        # F.pad (this state's flags and buffers).
         ffn_output = _dl3_unpool(expert_output, state, dl3)
     elif tokens <= SLICED_UNPOOL_MAX_TOKENS:
         unpooled = _gemm(expert_output, dense["unpooler"][:UNPOOL_SLICE])
