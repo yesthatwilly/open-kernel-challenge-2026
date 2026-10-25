@@ -60,7 +60,7 @@ review: proceed
 status: running
 review_at: 2026-10-25T054724Z
 review_companions: null
-stage: claimed
+stage: implemented
 claimed_at: 2026-10-25T054724Z
 base_sha: 0561d7b52f7d8abd273c88d35e7f5da32adba650
 base_blob: d8769ef25caf845a0e207538ccc5c62394b6ee3b
@@ -69,6 +69,12 @@ worktree: .worktrees/muse_attention_decode/full-decode-sk-s4-deferred-ticket-arr
 mode: null
 restack_of: null
 stale_base: null
+implemented_at: 2026-10-25T084530Z
+impl_commit: a94b74ede576aa49f574495c01fd9968f9f4496a
+submission_sha256: 60f75b152859d787c14199405b1f423f0d3e9fcced02ae825f7173fe223a4398
+norm_sha256: beade6948ed71eb80fe497b5def8b24946a4a39a0f3d9eb4d13da3c560e9aaae
+submission_blob: 4326c3933949f96c023cf1095133ec105e76f55f
+lint_warnings: 25
 ---
 
 # full-decode-sk-s4-deferred-ticket-arrive
@@ -120,3 +126,46 @@ No companion is warranted. This is a kind: rewrite stage judged on the sk kernel
 - How long does merge_slots + finalize_store take for ~16 slots, measured as the tail of the last CTA? That is the likely real cost, and a stage that parallelizes it may be the better stage 4.
 - Under DEFER, how often does one CTA become last arriver for two requests (head and tail) and run two serial merges at the end? Print the count in the self-check if cheap.
 
+
+## Implementation notes
+
+Worktree base 0561d7b is current for submission.py (no master commit touched it since; no merge needed). Edited only `muse_attention_decode/submission.py` (+292/-14).
+
+What changed
+- `splitkv_attn_sk_kernel<STAGES, TICKET, TWO, DEFER, CNT, SKIPM>` (new defaults false). DEFER (variant 4) on the single-level ticket path: a finished non-whole segment stores its partial (slot bx + c_b) and records c_b in `flag_s[2 + ndef]` (the unused FLAG ints; no smem growth, so occupancy is unchanged), no fence or atomic in the loop. After `cp_wait<0>`: ONE `__threadfence` + `__syncthreads`, then per recorded request: ticket atomicAdd (== c_hi - c_lo), last arriver does `__threadfence` (acquire) then merge_slots + finalize_store + ticket reset, `__syncthreads` before the next draw rewrites `flag_s[0]`. Whole segments finalize in place as before.
+- Variant 5 = DEFER + CNT (self-check/diag only): a CTA that wins two end merges bumps `gticket[2047]`; host zeroes that slot before and after every read. Variant 6 = SKIPM (diag only, never routed): last arriver resets the ticket but skips merge + finalize.
+- Host: variants 0..6 in sk_pick/sk_prepare/sk_attn/sk_attrs; `_SK_ROUTE` (batch -> (variant, grid multiple)), written only in prepare, read by config (batch) in kernel_fn, default (0, 2) = master. B=1 two-level `<4,true,true>` and `<4,true>`/`<4,false>`/`<5,true>` are unchanged template code (every new branch is constexpr-false for them).
+- Prepare: `_sk_defer_validate` (attrs, 13 cases x variants 4 and 5, double-last-arriver counts, two-state alternating graph replays at B=16/32/64 for grid 2xSM and SM, tickets zero), `_sk_defer_matrix` (DEFER on/off x grid 2xSM/SM at B=16/32/64 x 80000, one graph per cell, interleaved rotating replays, 256 MB flush, empty-graph baseline subtracted, median of 20; routes a band to DEFER only if best DEFER cell >= 1.02x faster than master variant 0; PATH CHOSEN prints both numbers). Any validation miss leaves `_SK_ROUTE` empty (master) with a PATH CHOSEN line naming the failing case.
+- `_sk_diagnostics`: new `[sk-diag]` row "merge skipped" (variant 6) at B=16 and 32 plus a printed gap split (timed - skipped = end-merge tail; skipped - no-ticket A = in-loop fence + ticket cost).
+
+Review fixes applied
+1. Size the deferred list on non-whole segments (<= 2, not total segments), no trap/assert: list capacity 2; a hypothetical third would take the immediate-arrival path. No `assert`/`__trap`.
+2. Single post-loop `__threadfence` after all partial stores and before every atomicAdd; acquire `__threadfence` before merge_slots: done.
+3. Diag-only [sk-diag] row with merge+finalize skipped, never routed (variant 6): done.
+4. Double-last-arriver count in the self-check: printed per case and at B=16/32/64 x 80000.
+5. B=1 two-level instantiation byte-identical: template defaults unchanged, new code constexpr-dead for it (cannot verify SASS here: no GPU/nvcc).
+6. Open questions: the diag row answers the merge-tail question (printed in the prepare log); measurement asymmetry in the no-ticket number remains the existing eager diag (unchanged); the matrix itself is graph-replay interleaved.
+
+Deviations: deferred list in the existing `flag_s` smem ints and a register count rather than a new smem array (same capacity, no layout change). Whole-segment and non-routed-batch behavior unchanged.
+
+## Rules check
+- [x] CUDA-graph capturable: kernel_fn has no sync/alloc on input values; routing is a dict lookup on `config["batch"]`; two-state graph captures are in the self-check.
+- [x] Nothing derived from `data` cached across calls: `_SK_ROUTE` is keyed by batch, set in prepare only; tickets are the existing self-resetting arrays; no device pointers in globals.
+- [x] Weights n/a: attention only, no weights.
+- [x] KV FP8, q E4M3, fp32 merges, bf16 out: math untouched.
+- [x] Attention sees every key: tile ranges unchanged; only arrival timing moved.
+- [x] No timing patches, harness access, subprocesses or network (grep for subprocess/fork/multiprocessing: none).
+- [x] All work inside the timed call; no output caching (SKIPM variant 6 is diag only and never routed).
+
+okc_lint: `OK with warnings: muse_attention_decode/submission.py` (only host-sync warnings in prepare-side code, "fine in prepare()"). `py_compile` passes; __pycache__ removed.
+
+## Pre-flight audit
+
+Audited 2026-10-25 (opus). **Verdict: dispatch** (no edits needed).
+
+- Fallback and master parity: DEFER, CNT and SKIPM are new template parameters that default to false. For variants 0-3, every new branch is constexpr-dead (`ndef` is unused and `if (!SKIPM)` is always true), so B=1 two-level and the other paths compile from the same code. kernel_fn changes only by a dict lookup on `config["batch"]`; without a route it takes master's `(0, 2)`. Only B in {16, 32, 64} can be routed, and only after `_sk_defer_validate` passes. Any miss, raise or ticket-reset failure prints a PATH CHOSEN line and leaves `_SK_ROUTE` empty. The `try/finally` restores `_SK_ROUTE` after the two-state replays.
+- Fences and tickets: only a CTA's first and last segments can be non-whole, so the 2-entry list in `flag_s[2..3]` (FLAG is int32[4]; flag_s[1] is used only by TWO) cannot overflow, and the `ndef >= 2` branch falls back to an immediate arrival. After the loop, every thread stores its partials, then `__threadfence` + `__syncthreads`, then tid 0 does `atomicAdd`. The winner does an acquire `__threadfence` before `merge_slots`. A trailing `__syncthreads` stops the next draw from overwriting flag_s[0] early. This is the same release/acquire pattern as master's in-loop path. Slots `bx + c_b` stay unique because requests are contiguous in tile order. Nothing spins, so deferral cannot deadlock.
+- Rules: kernel_fn has no sync, prints, try/except or input-dependent allocation. `_SK_ROUTE` holds only ints. The counter at gticket[2047] lives in the existing self-resetting array and is zeroed around every read. The two-level path uses only [0, 32) at B=1. The self-check follows the two-state rule (two states, one capture each, alternating refill and replay, FP32 reference). Variant 6 (merge skipped) is diagnostics only and never routed.
+- Budget: three more instantiations of the sk kernel; the last sk build took 31.2 s with four. The new prepare work is 26 small eager cases, 6 two-state replay sets, and 3 matrices with 4 graphs and 23 x 5 replays each. Expected prepare time is about a minute, well inside 15 minutes. okc_lint is OK (prepare-side host-sync warnings only), py_compile passes, and __pycache__ was removed.
+
+Residual risk: the gate compares the best DEFER cell (2xSM or SM) against master at 2xSM only. If DEFER wins only at grid SM, part of the gain may come from the grid and not from DEFER; read the "<4,ticket> SM" cell in the matrix to tell them apart. The reviewer expects the result to be flat.
