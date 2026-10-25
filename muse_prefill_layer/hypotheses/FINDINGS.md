@@ -1,21 +1,21 @@
 # muse_prefill_layer findings
 
-Regenerated 2026-10-25T112626Z by `churn.py index`. Read this before writing a hypothesis for muse_prefill_layer.
+Regenerated 2026-10-25T115715Z by `churn.py index`. Read this before writing a hypothesis for muse_prefill_layer.
 
 ## Current best
 
-1.1076x [1.0909,1.1242] from job `810b5f7decc84206` (submit), master commit `ca1d41b1dc`, hypothesis experts-turn4-ssdq-s1b-dataptr-symbol-fix
+1.3275x [1.3075,1.3474] from job `2910b2fb4b744865` (check), master commit `23c1d5fa90`, hypothesis experts-turn-rega-s4-port-t4096
 
 Where the time goes (per scored shape, top kernels):
 
-- batch=1 ctx=80000 dist=soft layer=sliding load=turn_1 page=1 q_len=753 repeats=6: yours 1081.5µs vs SGLang 1099.8µs (SoL 257.0µs) · void sglang::device::marlin_moe::Marlin<__nv_bfloat16, 56... 692.8µs 65.7%, nvjet_sm90_tst_128x192_64x5_2x1_v_bz_coopB_TNN 154.3µs 14.6%, nvjet_sm90_tst_112x128_64x7_1x2_h_bz_TNN 39.1µs 3.7%
-- batch=1 ctx=80000 dist=soft layer=full load=turn_1 page=1 q_len=753 repeats=6: yours 1460.6µs vs SGLang 1479.8µs (SoL 496.7µs) · void sglang::device::marlin_moe::Marlin<__nv_bfloat16, 56... 732.6µs 47.1%, void cutlass::device_kernel<flash::enable_sm90_or_later<f... 419.0µs 26.9%, nvjet_sm90_tst_128x192_64x5_2x1_v_bz_coopB_TNN 164.0µs 10.5%
-- batch=4 ctx=80000 dist=soft layer=sliding load=turn_4 page=1 q_len=753 repeats=6: yours 3012.3µs vs SGLang 3373.3µs (SoL 1036.3µs) · (anonymous namespace)::ssdq_kernel((anonymous namespace):... 1878.0µs 59.0%, nvjet_sm90_tst_256x152_64x4_1x2_h_bz_coopA_TNT 327.3µs 10.3%, nvjet_sm90_tst_128x256_64x4_2x1_v_bz_coopA_TNN 256.5µs 8.1%
-- batch=4 ctx=80000 dist=soft layer=full load=turn_4 page=1 q_len=753 repeats=6: yours 4686.3µs vs SGLang 5027.4µs (SoL 1992.4µs) · (anonymous namespace)::ssdq_kernel((anonymous namespace):... 1865.4µs 39.2%, void cutlass::device_kernel<flash::enable_sm90_or_later<f... 1647.8µs 34.6%, nvjet_sm90_tst_256x152_64x4_1x2_h_bz_coopA_TNT 324.6µs 6.8%
-- batch=1 ctx=0 dist=soft layer=full load=first_turn page=1 q_len=16384 repeats=6: yours 14970.9µs vs SGLang 17813.1µs (SoL 5518.4µs) · _moe_nvfp4_gemm_kernel 8287.2µs 55.2%, nvjet_sm90_tst_192x192_64x4_2x1_v_bz_coopB_TNN 2555.4µs 17.0%, nvjet_sm90_tst_320x128_64x3_1x2_h_bz_coopB_TNT 1493.5µs 9.9%
-- batch=1 ctx=32768 dist=soft layer=sliding load=first_turn page=1 q_len=16384 repeats=6: yours 14118.5µs vs SGLang 17013.8µs (SoL 5663.4µs) · _moe_nvfp4_gemm_kernel 8202.5µs 57.2%, nvjet_sm90_tst_192x192_64x4_2x1_v_bz_coopB_TNN 2553.6µs 17.8%, nvjet_sm90_tst_320x128_64x3_1x2_h_bz_coopB_TNT 1496.1µs 10.4%
-- batch=1 ctx=32768 dist=soft layer=full load=first_turn page=1 q_len=16384 repeats=6: yours 18379.9µs vs SGLang 21286.0µs (SoL 7710.0µs) · _moe_nvfp4_gemm_kernel 8686.2µs 45.8%, void cutlass::device_kernel<flash::enable_sm90_or_later<f... 4458.7µs 23.5%, nvjet_sm90_tst_192x192_64x4_2x1_v_bz_coopB_TNN 2547.3µs 13.4%
-- batch=1 ctx=65536 dist=soft layer=full load=first_turn page=1 q_len=16384 repeats=6: yours 22181.9µs vs SGLang 24984.3µs (SoL 9847.7µs) · void cutlass::device_kernel<flash::enable_sm90_or_later<f... 8020.0µs 36.9%, _moe_nvfp4_gemm_kernel 7947.6µs 36.5%, nvjet_sm90_tst_192x192_64x4_2x1_v_bz_coopB_TNN 2548.6µs 11.7%
+- batch=1 ctx=80000 dist=soft layer=sliding load=turn_1 page=1 q_len=753 repeats=6: yours 730.2µs vs SGLang 1048.1µs (SoL 257.0µs) · void (anonymous namespace)::rega_kernel<true>((anonymous ... 244.2µs 33.1%, nvjet_sm90_tst_128x192_64x5_2x1_v_bz_coopB_TNN 155.8µs 21.1%, void (anonymous namespace)::rega_kernel<false>((anonymous... 127.0µs 17.2%
+- batch=1 ctx=80000 dist=soft layer=full load=turn_1 page=1 q_len=753 repeats=6: yours 1105.6µs vs SGLang 1426.0µs (SoL 496.7µs) · void cutlass::device_kernel<flash::enable_sm90_or_later<f... 416.6µs 35.4%, void (anonymous namespace)::rega_kernel<true>((anonymous ... 247.5µs 21.0%, nvjet_sm90_tst_128x192_64x5_2x1_v_bz_coopB_TNN 164.2µs 13.9%
+- batch=4 ctx=80000 dist=soft layer=sliding load=turn_4 page=1 q_len=753 repeats=6: yours 2167.2µs vs SGLang 3229.0µs (SoL 1036.3µs) · void (anonymous namespace)::rega_kernel<true>((anonymous ... 702.4µs 30.6%, void (anonymous namespace)::rega_kernel<false>((anonymous... 338.7µs 14.8%, nvjet_sm90_tst_256x152_64x4_1x2_h_bz_coopA_TNT 326.1µs 14.2%
+- batch=4 ctx=80000 dist=soft layer=full load=turn_4 page=1 q_len=753 repeats=6: yours 3748.1µs vs SGLang 4860.7µs (SoL 1992.4µs) · void cutlass::device_kernel<flash::enable_sm90_or_later<f... 1652.7µs 43.3%, void (anonymous namespace)::rega_kernel<true>((anonymous ... 716.9µs 18.8%, void (anonymous namespace)::rega_kernel<false>((anonymous... 345.6µs 9.0%
+- batch=1 ctx=0 dist=soft layer=full load=first_turn page=1 q_len=16384 repeats=6: yours 14585.5µs vs SGLang 17413.2µs (SoL 5518.4µs) · _moe_nvfp4_gemm_kernel 7862.9µs 54.1%, nvjet_sm90_tst_192x192_64x4_2x1_v_bz_coopB_TNN 2523.3µs 17.4%, nvjet_sm90_tst_320x128_64x3_1x2_h_bz_coopB_TNT 1482.3µs 10.2%
+- batch=1 ctx=32768 dist=soft layer=sliding load=first_turn page=1 q_len=16384 repeats=6: yours 14010.6µs vs SGLang 16976.8µs (SoL 5663.4µs) · _moe_nvfp4_gemm_kernel 8233.4µs 57.6%, nvjet_sm90_tst_192x192_64x4_2x1_v_bz_coopB_TNN 2528.0µs 17.7%, nvjet_sm90_tst_320x128_64x3_1x2_h_bz_coopB_TNT 1384.6µs 9.7%
+- batch=1 ctx=32768 dist=soft layer=full load=first_turn page=1 q_len=16384 repeats=6: yours 17741.7µs vs SGLang 20429.2µs (SoL 7710.0µs) · _moe_nvfp4_gemm_kernel 8095.4µs 44.2%, void cutlass::device_kernel<flash::enable_sm90_or_later<f... 4501.9µs 24.6%, nvjet_sm90_tst_192x192_64x4_2x1_v_bz_coopB_TNN 2519.0µs 13.7%
+- batch=1 ctx=65536 dist=soft layer=full load=first_turn page=1 q_len=16384 repeats=6: yours 21874.7µs vs SGLang 24281.7µs (SoL 9847.7µs) · void cutlass::device_kernel<flash::enable_sm90_or_later<f... 8067.1µs 36.9%, _moe_nvfp4_gemm_kernel 8002.8µs 36.6%, nvjet_sm90_tst_192x192_64x4_2x1_v_bz_coopB_TNN 2523.8µs 11.6%
 
 ## By area
 
@@ -90,6 +90,12 @@ Where the time goes (per scored shape, top kernels):
 
 ### w13 + w2 expert GEMMs at 1024 < T <= 4096 (turn_4): CUDA sm_90a warp-specialized grouped GEMM with an in-kernel dequant-producer warpgroup and SS wgmma
 - **experts-turn4-cuda-dequant-producer-ss-wgmma** → neutral (within-ci), 1.0714x — no shape moved outside noise. Built on master (a81d19c). At turn_4 the Marlin pair is 2148/2115 us (64%/43% of the sliding/full turn_4 shapes) against a 306 us math floor (~3012 local routes
+
+### w13 + w2 expert GEMMs at 1024 < T <= 4096 (turn_4): ssdq producer weight feed, TMA raw-code smem ring instead of register __ldg prefetch
+- **experts-turn4-ssdq-s2-tma-raw-weight-ring** → neutral (unproven-vs-best), 1.1293x — gained on sliding turn_4; full turn_4. Stage 2 of the ssdq line, built on master (experts-turn4-ssdq-s1b-dataptr-symbol-fix landed: ssdq_kernel serves 1024 < T <= 4096). Only the PRODUCER's weight fe
+
+### w13 + w2 expert GEMMs at T <= 4096 (turn_1 T=753, turn_4 T=3012): port of muse_moe_w4a16's replay-safe register-A swap-AB wgmma NVFP4 grouped GEMM (s4), all four N buckets
+- **experts-turn-rega-s4-port-t4096** → gain (gain), 1.3275x — gained on sliding turn_1, turn_4; full turn_1, turn_4. Built on master (a81d19c, stack-tonight-five-prefill). The Marlin pair is 768.6/735.9 us at turn_1 (68%/48% of the sliding/full shape) and 2148/2115 us at turn_
 
 ### w13 + w2 expert GEMMs at T > 4096 (CUDA sm_90a wgmma W4A16 grouped GEMM, stage 1b: re-measure of experts-cuda-wgmma-mixed-input-grouped-gemm with the build fix, on the new master)
 - **experts-cuda-wgmma-grouped-gemm-remeasure-sm90a-inproc** → regression (regression), 0.9401x — lost on full first_turn; sliding first_turn. BUILDS ON THE CURRENT MASTER (stack-tonight-five-prefill, 1.0705 check / 1.0744 scored), not on the old branch: start from master's submission.py and hand-port 
@@ -167,6 +173,7 @@ Where the time goes (per scored shape, top kernels):
 - turn-align-remap-on-side-stream-under-pooler: within-ci: the change is not proven either way; a stacked hypothesis (`depends_on: turn-align-remap-on-side-stream-under-pooler`) that adds a further change in the same area is the only way to learn more (identical code 
 - experts-turn4-ssdq-s1b-dataptr-symbol-fix: rewrite stage 1 of `moe_wna16_marlin_gemm x2 (Marlin w13 + w2) at 1024 < T <= 4096 (turn_4, T=3012)`: read the replaced kernels' own us per shape (profile top_kernels) against the incumbent and the floor, and check which
 - turn-align-sglang32-prenorm-triton-restack: within-ci: the change is not proven either way; a stacked hypothesis (`depends_on: turn-align-sglang32-prenorm-triton-restack`) that adds a further change in the same area is the only way to learn more (identical code is
+- experts-turn4-ssdq-s2-tma-raw-weight-ring: rewrite stage 2 of `ssdq_kernel x2 (w13, w2) at 1024 < T <= 4096 (turn_4, T=3012)`: read the replaced kernels' own us per shape (profile top_kernels) against the incumbent and the floor, and check which Milestone it reac
 
 ## Do not retry (rejected / duplicates)
 
@@ -198,5 +205,3 @@ Where the time goes (per scored shape, top kernels):
 - queue: experts-turn-rega-s4-w2-only-t4096 [w2 expert GEMM only at T <= 4096 (turn_1, turn_4): s4 register-A swap-AB wgmma w2 fed by master's Marlin w13 + _silu_mul_sorted output] p2 queued
 - queue: experts-turn1-ssdq-s2-m64-tile [w13 + w2 expert GEMMs at T <= 1024 (turn_1 T=753): ssdq with a 64-route M tile, one consumer warpgroup per tile, dequant-once per weight stage] p3 queued
 - queue: turn-align-two-phase-chunk-prefix [MoE align/dispatch on T <= 4096 (Marlin turn_1 + ssdq turn_4): _align_parallel replaced by a two-launch chunk-count + prefix-place align] p2 queued
-- running: experts-turn-rega-s4-port-t4096 [w13 + w2 expert GEMMs at T <= 4096 (turn_1 T=753, turn_4 T=3012): port of muse_moe_w4a16's replay-safe register-A swap-AB wgmma NVFP4 grouped GEMM (s4), all four N buckets] p1 running
-- running: experts-turn4-ssdq-s2-tma-raw-weight-ring [w13 + w2 expert GEMMs at 1024 < T <= 4096 (turn_4): ssdq producer weight feed, TMA raw-code smem ring instead of register __ldg prefetch] p1 running

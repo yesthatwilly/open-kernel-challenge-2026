@@ -1,6 +1,6 @@
 # muse_decode_layer findings
 
-Regenerated 2026-10-25T112626Z by `churn.py index`. Read this before writing a hypothesis for muse_decode_layer.
+Regenerated 2026-10-25T115715Z by `churn.py index`. Read this before writing a hypothesis for muse_decode_layer.
 
 ## Current best
 
@@ -110,6 +110,9 @@ Where the time goes (per scored shape, top kernels):
 - **fused-preattention-triton** → neutral (unproven-vs-best), 1.0970x — gained on sliding decode_32. Port muse_attention_decode's fused pre-attention Triton kernel (main tree muse_attention_decode/submission.py, _pre_attention_kernel: passed 16/16 at 1.127x the
 - **fused-preattention-paired-pad-restack** → neutral (unproven-vs-best), 1.2745x — gained on full decode_1, decode_16, decode_32; sliding verify_1. Restack decode's own neutral fused-preattention-triton (1.097x vs 1.087x master then; patch muse_decode_layer/hypotheses/done/neutral/fused-preattention-triton.
 
+### qkv GEMM + o GEMM (2 <= T <= 16)
+- **qkv-o-swapab16-t2-t16-no-fork** → neutral (unproven-vs-best), 1.3056x — gained on sliding decode_1; full decode_1, decode_16, decode_32; lost on sliding verify_32. Port muse_bf16_proj master's m<=16 swap-AB wgmma path (hypothesis bf16-m16-swapab-wgmma-extend: qkv 18% faster, o 10-19% at m<=16 there) to exactly two call sit
+
 ### qkv GEMM + o GEMM + attention-side small kernels (T<=32)
 - **dense-chain-stage2-attn-side-pdl** → regression (regression), 1.2253x — gained on full decode_1; lost on sliding decode_16, decode_32; full decode_32. Stage 2 of the landed small-t-launch-minimal-dense-chain-pdl rewrite (master f1f2f35, its stage plan item 2). Gate: tokens <= DL_MAX_TOKENS (config) and state["
 
@@ -185,6 +188,7 @@ Where the time goes (per scored shape, top kernels):
 - full-decode-sk-ticket-restack-b1-b64: within-ci: the change is not proven either way; a stacked hypothesis (`depends_on: full-decode-sk-ticket-restack-b1-b64`) that adds a further change in the same area is the only way to learn more (identical code is never
 - sliding-cluster-c4-decode32-s2-k-encode-match: rewrite stage 2 of `FusedQKNorm/rope + FP8 casts + store_cache + FA3 main + FlashAttnFwdCombine + prepare_varlen_num_blocks + FusedRMSNormGate on sliding decode, 17 <= batch <= 32`: read the replaced kernels' own us per 
 - dense-chain-s3-t1-q-sk2-o-route-unpool: rewrite stage 3 of `T=1 dense chain: nvjet qkv + FusedQKNorm/rope + FP8 casts + store_cache + nvjet o (full decode_1), routing kernel R and unpooler GEMM+pad at NF=1 (both decode_1 rows)`: read the replaced kernels' own 
+- qkv-o-swapab16-t2-t16-no-fork: unproven-vs-best: the change is not proven either way; a stacked hypothesis (`depends_on: qkv-o-swapab16-t2-t16-no-fork`) that adds a further change in the same area is the only way to learn more (identical code is never
 - moe-chain-cuda-swapab-expert-once-large-t: rewrite stage 1 of `moe_align_block_size + Marlin w13 + silu_and_mul (act_and_mul_kernel) + Marlin w2 at T > 32 (verify_16 T=128, verify_32 T=256)`: read the replaced kernels' own us per shape (profile top_kernels) again
 - stack-align-par-sliding-batched: none
 
@@ -211,4 +215,3 @@ Where the time goes (per scored shape, top kernels):
 - queue: marlin-two-stream-halves-port [w13 marlin + silu-mul + w2 marlin (8<=T<=32, stream overlap)] p5 hold
 - queue: moe-chain-cuda-swapab-expert-once-fix [w13 marlin + silu-mul + w2 marlin (T>32)] p2 hold
 - queue: sliding-cluster-c4-s3-satfinite-on-sk-ticket [FA3 call (sliding decode, batch 17..32)] p1 queued
-- running: qkv-o-swapab16-t2-t16-no-fork [qkv GEMM + o GEMM (2 <= T <= 16)] p2 running

@@ -1,6 +1,6 @@
 # muse_bf16_proj findings
 
-Regenerated 2026-10-25T112626Z by `churn.py index`. Read this before writing a hypothesis for muse_bf16_proj.
+Regenerated 2026-10-25T115715Z by `churn.py index`. Read this before writing a hypothesis for muse_bf16_proj.
 
 ## Current best
 
@@ -113,6 +113,9 @@ Where the time goes (per scored shape, top kernels):
 - **qkv-gate-triton-skinny-m32** → regression (regression), 0.9238x — lost on qkv_gate decode_1, decode_16, decode_32, verify_1. Extend the skinny Triton GEMM from pooler-triton-skinny-m32 to layer == 'qkv_gate' at m <= 32 (n=2304, k=8192, a 37.7 MB weight): in kernel_fn route qkv_gate at
 - **qkv-gate-triton-splitk4-blockn64-semaphore** → neutral (within-ci), 1.1431x — gained on qkv_gate decode_1, decode_16, verify_1; router decode_16; pooler verify_16; lost on qkv_gate decode_32; o verify_1; unpooler verify_1; router verify_1, verify_16. Built on master (dba4ffd; router untouched). For layer == 'qkv_gate' and cfg m <= 32 only (n=2304, k=8192, 37.7 MB bf16), replace _bf16_gemm_dispatch_impl (nvje
 
+### qkv GEMM (m<=32, swap-AB)
+- **qkv-swapab-w128-splitk7-one-wave-m32** → neutral (within-ci), 1.2229x — gained on o verify_32; lost on router decode_16, decode_32, verify_1; qkv_gate decode_32, verify_1; o decode_32. Built on master (blob 353e3b19, restack-three-cell-wins-router-unpooler-cluster-m8-nn-m128, check 84f17adc3f074a33, 1.2366x). WHY: at m<=32 qkv_gate (n=2304, k=
+
 ### qkv GEMM (m=17..32, swap-AB)
 - **qkv-swapab-m32-splitk8-stages3** → regression (regression), 1.1963x — gained on pooler verify_16; lost on qkv_gate decode_1, decode_16, decode_32, verify_1; o decode_1, decode_16, verify_1; unpooler decode_1; router decode_1, decode_16, decode_32, verify_1. Built on master (8b9ad43, blob a8bb42a). qkv_gate at 17 <= m <= 32 runs _bf16_swapab_kernel with SWAPAB_CFG qkv_gate = (2304, 8192, SPLIT_K 4, BLOCK_K 128, 4 st
 
@@ -184,6 +187,7 @@ Where the time goes (per scored shape, top kernels):
 - router-cluster-dsmem-s2-flat-in-m-occupancy: rewrite stage 2 of `_router_swapab_kernel + memset at router m<=32 (restack) / _router_hilo_kernel + memset (master)`: read the replaced kernels' own us per shape (profile top_kernels) against the incumbent and the floor
 - router-m128-m256-cluster-dsmem-tiled-rewrite: rewrite stage 1 of `_router_hilo_kernel + torch.zeros memset at router m=65..256`: read the replaced kernels' own us per shape (profile top_kernels) against the incumbent and the floor, and check which Milestone it reach
 - restack-three-cell-wins-router-unpooler-cluster-m8-nn-m128: unproven-vs-best: the change is not proven either way; a stacked hypothesis (`depends_on: restack-three-cell-wins-router-unpooler-cluster-m8-nn-m128`) that adds a further change in the same area is the only way to learn 
+- qkv-swapab-w128-splitk7-one-wave-m32: within-ci: the change is not proven either way; a stacked hypothesis (`depends_on: qkv-swapab-w128-splitk7-one-wave-m32`) that adds a further change in the same area is the only way to learn more (identical code is never
 
 ## Do not retry (rejected / duplicates)
 
@@ -198,4 +202,3 @@ Where the time goes (per scored shape, top kernels):
 - queue: pooler-m32-tma-splitk-extend [pooler GEMM (m=17..32)] p3 hold
 - queue: bf16-lossless-exp4-warpspec-persistent-stage3 [lossless exp4 compressed-weight stream kernel (_lossless_swapab_kernel)] p1 hold
 - queue: bf16-verify32-cutlass-coop-256x128-splitk-stage2 [bf16 GEMM dispatch (m=129..256, CUTLASS sm90 cooperative split-K)] p1 queued
-- running: qkv-swapab-w128-splitk7-one-wave-m32 [qkv GEMM (m<=32, swap-AB)] p1 running

@@ -1,10 +1,10 @@
 # muse_attention_decode findings
 
-Regenerated 2026-10-25T112626Z by `churn.py index`. Read this before writing a hypothesis for muse_attention_decode.
+Regenerated 2026-10-25T115715Z by `churn.py index`. Read this before writing a hypothesis for muse_attention_decode.
 
 ## Current best
 
-1.4920x [1.4696,1.5144] from job `cbd49dc94be548e7` (check), master commit `eb1b68bad2`, hypothesis restack-sk-pseudo-cluster-plus-v3-fused-preattn
+1.4825x [1.4602,1.5047] from job `d672f69ea69b4396` (submit), master commit `eb1b68bad2`, hypothesis restack-sk-pseudo-cluster-plus-v3-fused-preattn
 
 Where the time goes (per scored shape, top kernels):
 
@@ -136,6 +136,9 @@ Where the time goes (per scored shape, top kernels):
 ### sliding-layer attention (decode, stream-K windowed kernel)
 - **sliding-decode-sk-window-route** → neutral (unproven-vs-best), 1.4973x — gained on sliding decode_32; full decode_32. On branch hyp/muse_attention_decode/sliding-verify-sk-pseudo-decode-s1. The PSEUDO kernel is already a windowed stream-K decode kernel (per-row lo = max(0, sp -
 
+### sliding-layer attention (decode, stream-K windowed kernel) restack
+- **restack-sliding-decode-sk-window-on-cluster-master** → neutral (unproven-vs-best), 1.5017x — gained on sliding decode_32. Restack sliding-decode-sk-window-route (done/neutral 1.4973x [1.475,1.520], job 118c6de9704146f3; built on the unlanded s1 branch, base blob 76492911) onto curr
+
 ### sliding-layer attention (restack of two measured row wins: verify B=1 pseudo-decode + decode cluster C=16/C=4)
 - **restack-sk-pseudo-b1-cluster-c16-c4** → neutral (unproven-vs-best), 1.4870x — gained on sliding decode_1, decode_32, verify_1. Restack onto current master (c3c1b01, full decode stream-K v2 at 1<B<=64 + two-level ticket at B=1) the two measured sliding-row wins that touch disjoint shapes
 
@@ -188,6 +191,7 @@ Where the time goes (per scored shape, top kernels):
 - restack-sk-pseudo-b1-cluster-c16-c4: unproven-vs-best: the change is not proven either way; a stacked hypothesis (`depends_on: restack-sk-pseudo-b1-cluster-c16-c4`) that adds a further change in the same area is the only way to learn more (identical code is
 - full-verify1-sk-two-level-token-group: rewrite stage 3 of `full verify batch 1 (q_len 8): prepare_varlen_num_blocks + FA3 main + FlashAttnFwdCombine + norm-gate`: read the replaced kernels' own us per shape (profile top_kernels) against the incumbent and the 
 - sliding-decode-sk-window-route: rewrite stage 2 of `sliding decode (q_len 1, page 1, tp8, 2<=B<=32): master Triton _sliding_fused_kernel (16 splits, in-kernel pre-attention)`: read the replaced kernels' own us per shape (profile top_kernels) against th
+- restack-sliding-decode-sk-window-on-cluster-master: unproven-vs-best: the change is not proven either way; a stacked hypothesis (`depends_on: restack-sliding-decode-sk-window-on-cluster-master`) that adds a further change in the same area is the only way to learn more (id
 - full-decode-sk-s4-deferred-ticket-arrive: rewrite stage 4 of `full decode 1<B<=64: master splitkv_attn_sk_kernel<4, ticket> single-level in-stream ticket epilogue`: read the replaced kernels' own us per shape (profile top_kernels) against the incumbent and the f
 
 ## Do not retry (rejected / duplicates)
@@ -225,4 +229,3 @@ Where the time goes (per scored shape, top kernels):
 - queue: sliding-verify1-triton-pseudo-decode [sliding-layer attention (batch-1 verify, Triton fused decode kernel)] p2 hold
 - queue: full-verify1-sk-pseudo-decode [full-layer attention (batch-1 verify, stream-K pseudo-decode)] p3 hold
 - queue: sliding-decode-sk-s3-fused-preattn-rope [sliding-layer attention (decode, stream-K windowed kernel, pre-attention fold)] p2 queued
-- running: restack-sliding-decode-sk-window-on-cluster-master [sliding-layer attention (decode, stream-K windowed kernel) restack] p1 running

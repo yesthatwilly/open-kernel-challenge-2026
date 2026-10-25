@@ -1,6 +1,6 @@
 # muse_decode_layer hypotheses
 
-Regenerated 2026-10-25T112626Z. Best: 1.2726x [1.2535,1.2917] job `3fd3fa1f96d045dd` (submit)
+Regenerated 2026-10-25T115715Z. Best: 1.2726x [1.2535,1.2917] job `3fd3fa1f96d045dd` (submit)
 
 | created | slug | kind | area | where | outcome | speedup | CI | job | mode | promotion | review | expected hit |
 |---|---|---|---|---|---|---|---|---|---|---|---|---|
@@ -69,7 +69,7 @@ Regenerated 2026-10-25T112626Z. Best: 1.2726x [1.2535,1.2917] job `3fd3fa1f96d04
 | 2026-10-25T054127Z | sliding-cluster-c4-decode32-s2-k-encode-match | rewrite | FA3 call (sliding decode, batch 17..32) | done/neutral | neutral | 1.2803 | [1.261,1.299] | 7c04214e90354dfa | check |  | proceed | 2/5 |
 | 2026-10-25T054152Z | dense-chain-s3-t1-q-sk2-o-route-unpool | rewrite | whole-layer fusion (T=1 dense chain: qkv/o GEMM side + routing R + unpooler) | done/neutral | neutral | 1.3018 | [1.282,1.321] | 34a9be06918d448b | check |  | proceed | 3/5 |
 | 2026-10-25T110639Z | sliding-cluster-c4-s3-satfinite-on-sk-ticket | rewrite | FA3 call (sliding decode, batch 17..32) | queue | queued |  |  |  |  |  | required |  |
-| 2026-10-25T110701Z | qkv-o-swapab16-t2-t16-no-fork | primary | qkv GEMM + o GEMM (2 <= T <= 16) | running | running |  |  | b0057d2e6cef4d5a | submit |  | proceed |  |
+| 2026-10-25T110701Z | qkv-o-swapab16-t2-t16-no-fork | primary | qkv GEMM + o GEMM (2 <= T <= 16) | done/neutral | neutral | 1.3056 | [1.286,1.325] | b0057d2e6cef4d5a | submit |  | proceed | 3/6 |
 
 ## Held
 
