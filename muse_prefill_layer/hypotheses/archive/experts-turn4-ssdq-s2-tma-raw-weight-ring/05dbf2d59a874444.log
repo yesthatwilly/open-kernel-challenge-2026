@@ -1,0 +1,184 @@
+dom] launching silu_rows
+[ssdq] [T=1506 random] silu_rows done
+[ssdq] [T=1506 random] launching ssdq_gemm w2
+[ssdq] [T=1506 random] ssdq_gemm w2 done
+[ssdq] self-check T=1506 random: ssdq rel L2 6.287e-04 worst row 2.956e-03; marlin rel L2 5.919e-03 worst row 6.836e-03; bound 1.184e-02; error word 0; 1512 local routes; launch marker w13 1024 w2 512
+[ssdq] [T=3012 random] launching align
+[ssdq] [T=3012 random] align done
+[ssdq] [T=3012 random] launching ssdq_gather
+[ssdq] [T=3012 random] ssdq_gather done
+[ssdq] [T=3012 random] launching ssdq_gemm w13
+[ssdq] [T=3012 random] ssdq_gemm w13 done
+[ssdq] [T=3012 random] launching silu_rows
+[ssdq] [T=3012 random] silu_rows done
+[ssdq] [T=3012 random] launching ssdq_gemm w2
+[ssdq] [T=3012 random] ssdq_gemm w2 done
+[ssdq] self-check T=3012 random: ssdq rel L2 5.851e-04 worst row 2.150e-03; marlin rel L2 5.904e-03 worst row 6.880e-03; bound 1.181e-02; error word 0; 3102 local routes; launch marker w13 1024 w2 512
+[ssdq] [T=4096 skewed] launching align
+[ssdq] [T=4096 skewed] align done
+[ssdq] [T=4096 skewed] launching ssdq_gather
+[ssdq] [T=4096 skewed] ssdq_gather done
+[ssdq] [T=4096 skewed] launching ssdq_gemm w13
+[ssdq] [T=4096 skewed] ssdq_gemm w13 done
+[ssdq] [T=4096 skewed] launching silu_rows
+[ssdq] [T=4096 skewed] silu_rows done
+[ssdq] [T=4096 skewed] launching ssdq_gemm w2
+[ssdq] [T=4096 skewed] ssdq_gemm w2 done
+[ssdq] self-check T=4096 skewed: ssdq rel L2 7.030e-04 worst row 2.269e-03; marlin rel L2 5.864e-03 worst row 6.419e-03; bound 1.173e-02; error word 0; 18446 local routes; launch marker w13 5120 w2 2560
+[ssdq] [T=1100 one] launching align
+[ssdq] [T=1100 one] align done
+[ssdq] [T=1100 one] launching ssdq_gather
+[ssdq] [T=1100 one] ssdq_gather done
+[ssdq] [T=1100 one] launching ssdq_gemm w13
+[ssdq] [T=1100 one] ssdq_gemm w13 done
+[ssdq] [T=1100 one] launching silu_rows
+[ssdq] [T=1100 one] silu_rows done
+[ssdq] [T=1100 one] launching ssdq_gemm w2
+[ssdq] [T=1100 one] ssdq_gemm w2 done
+[ssdq] self-check T=1100 one: ssdq rel L2 5.742e-04 worst row 2.370e-03; marlin rel L2 5.853e-03 worst row 7.005e-03; bound 1.171e-02; error word 0; 1100 local routes; launch marker w13 288 w2 144
+[ssdq] [T=4096 random] launching align
+[ssdq] [T=4096 random] align done
+[ssdq] [T=4096 random] launching ssdq_gather
+[ssdq] [T=4096 random] ssdq_gather done
+[ssdq] [T=4096 random] launching ssdq_gemm w13
+[ssdq] [T=4096 random] ssdq_gemm w13 done
+[ssdq] [T=4096 random] launching silu_rows
+[ssdq] [T=4096 random] silu_rows done
+[ssdq] [T=4096 random] launching ssdq_gemm w2
+[ssdq] [T=4096 random] ssdq_gemm w2 done
+[ssdq] self-check T=4096 random: ssdq rel L2 5.686e-04 worst row 2.187e-03; marlin rel L2 5.903e-03 worst row 7.467e-03; bound 1.181e-02; error word 0; 4058 local routes; launch marker w13 1536 w2 768
+[ssdq] phase self-check: 0.2s; prepare total 36.3s; budget remaining 133.7s of 170s
+[ssdq] replay round 0 state A T=4096: ssdq rel L2 5.724e-04 worst row 2.330e-03; bound 1.182e-02; error word 0; launch marker w13 1472 w2 736
+[ssdq] replay round 0 state B T=4096: ssdq rel L2 5.828e-04 worst row 2.397e-03; bound 1.179e-02; error word 0; launch marker w13 1504 w2 752
+[ssdq] replay round 1 state B T=4096: ssdq rel L2 5.729e-04 worst row 2.454e-03; bound 1.171e-02; error word 0; launch marker w13 1024 w2 512
+[ssdq] replay round 1 state A T=4096: ssdq rel L2 7.187e-04 worst row 2.209e-03; bound 1.174e-02; error word 0; launch marker w13 5120 w2 2560
+[ssdq] replay round 2 state A T=4096: ssdq rel L2 5.796e-04 worst row 2.637e-03; bound 1.173e-02; error word 0; launch marker w13 1024 w2 512
+[ssdq] replay round 2 state B T=4096: ssdq rel L2 7.104e-04 worst row 2.321e-03; bound 1.174e-02; error word 0; launch marker w13 5120 w2 2560
+[ssdq] replay round 3 state B T=4096: ssdq rel L2 5.948e-04 worst row 2.769e-03; bound 1.179e-02; error word 0; launch marker w13 1536 w2 768
+[ssdq] replay round 3 state A T=4096: ssdq rel L2 5.853e-04 worst row 2.852e-03; bound 1.179e-02; error word 0; launch marker w13 1440 w2 720
+[ssdq] two-state replay check ok (4 rounds x 2 states)
+[ssdq] phase replay-check: 0.3s; prepare total 36.6s; budget remaining 133.4s of 170s
+[ssdq] counters w13 (master ssdq) T=3012: 1024 CTAs, per CTA 157265 cycles, producer waiting on empty stages 6343 cycles, consumer waiting on full stages 132511 cycles per warpgroup (84% of the CTA) (producer-bound if the consumer wait is large; raw_full wait large = load-latency bound, small = dequant-ALU bound)
+[ssdq] counters w2 (master ssdq) T=3012: 512 CTAs, per CTA 158353 cycles, producer waiting on empty stages 6354 cycles, consumer waiting on full stages 133678 cycles per warpgroup (84% of the CTA) (producer-bound if the consumer wait is large; raw_full wait large = load-latency bound, small = dequant-ALU bound)
+[ssdq] phase counters: 0.0s; prepare total 36.6s; budget remaining 133.4s of 170s
+[ssdq2] kernel ssdq2_kernel: regs=168 local_bytes=16 static_smem=1024 dyn_smem=222208 (expected 222208; STAGES2=3 RAW_STAGES=4) ctas_per_sm=1 setattr_rc=0 binaryVersion=90 ptxVersion=90 attr_ok=1
+[ssdq] [ssdq2 canary fence=1] launching align
+[ssdq] [ssdq2 canary fence=1] align done
+[ssdq] [ssdq2 canary fence=1] launching ssdq_gather
+[ssdq] [ssdq2 canary fence=1] ssdq_gather done
+[ssdq] [ssdq2 canary fence=1] launching ssdq_gemm w13
+[ssdq] [ssdq2 canary fence=1] ssdq_gemm w13 done
+[ssdq] [ssdq2 canary fence=1] launching silu_rows
+[ssdq] [ssdq2 canary fence=1] silu_rows done
+[ssdq] [ssdq2 canary fence=1] launching ssdq_gemm w2
+[ssdq] [ssdq2 canary fence=1] ssdq_gemm w2 done
+[ssdq2] canary fence=1: error word 0, launch marker w13 992 w2 496
+[ssdq] [ssdq2 canary fence=0] launching align
+[ssdq] [ssdq2 canary fence=0] align done
+[ssdq] [ssdq2 canary fence=0] launching ssdq_gather
+[ssdq] [ssdq2 canary fence=0] ssdq_gather done
+[ssdq] [ssdq2 canary fence=0] launching ssdq_gemm w13
+[ssdq] [ssdq2 canary fence=0] ssdq_gemm w13 done
+[ssdq] [ssdq2 canary fence=0] launching silu_rows
+[ssdq] [ssdq2 canary fence=0] silu_rows done
+[ssdq] [ssdq2 canary fence=0] launching ssdq_gemm w2
+[ssdq] [ssdq2 canary fence=0] ssdq_gemm w2 done
+[ssdq2] canary fence=0: error word 0, launch marker w13 1024 w2 512
+[ssdq2] canary ok (both fence variants)
+[ssdq] phase ssdq2-canary: 0.0s; prepare total 36.6s; budget remaining 133.4s of 170s
+[ssdq] [ssdq2 T=1506 random fence=1] launching align
+[ssdq] [ssdq2 T=1506 random fence=1] align done
+[ssdq] [ssdq2 T=1506 random fence=1] launching ssdq_gather
+[ssdq] [ssdq2 T=1506 random fence=1] ssdq_gather done
+[ssdq] [ssdq2 T=1506 random fence=1] launching ssdq_gemm w13
+[ssdq] [ssdq2 T=1506 random fence=1] ssdq_gemm w13 done
+[ssdq] [ssdq2 T=1506 random fence=1] launching silu_rows
+[ssdq] [ssdq2 T=1506 random fence=1] silu_rows done
+[ssdq] [ssdq2 T=1506 random fence=1] launching ssdq_gemm w2
+[ssdq] [ssdq2 T=1506 random fence=1] ssdq_gemm w2 done
+[ssdq2] self-check T=1506 random fence=1: ssdq2 rel L2 5.618e-04 worst row 1.643e-03; marlin rel L2 5.912e-03 worst row 7.383e-03; bound 1.182e-02; error word 0; 1460 local routes; launch marker w13 1024 w2 512
+[ssdq] [ssdq2 T=3012 random fence=1] launching align
+[ssdq] [ssdq2 T=3012 random fence=1] align done
+[ssdq] [ssdq2 T=3012 random fence=1] launching ssdq_gather
+[ssdq] [ssdq2 T=3012 random fence=1] ssdq_gather done
+[ssdq] [ssdq2 T=3012 random fence=1] launching ssdq_gemm w13
+[ssdq] [ssdq2 T=3012 random fence=1] ssdq_gemm w13 done
+[ssdq] [ssdq2 T=3012 random fence=1] launching silu_rows
+[ssdq] [ssdq2 T=3012 random fence=1] silu_rows done
+[ssdq] [ssdq2 T=3012 random fence=1] launching ssdq_gemm w2
+[ssdq] [ssdq2 T=3012 random fence=1] ssdq_gemm w2 done
+[ssdq2] self-check T=3012 random fence=1: ssdq2 rel L2 5.921e-04 worst row 2.251e-03; marlin rel L2 5.910e-03 worst row 6.844e-03; bound 1.182e-02; error word 0; 3036 local routes; launch marker w13 1024 w2 512
+[ssdq] [ssdq2 T=3012 random fence=0] launching align
+[ssdq] [ssdq2 T=3012 random fence=0] align done
+[ssdq] [ssdq2 T=3012 random fence=0] launching ssdq_gather
+[ssdq] [ssdq2 T=3012 random fence=0] ssdq_gather done
+[ssdq] [ssdq2 T=3012 random fence=0] launching ssdq_gemm w13
+[ssdq] [ssdq2 T=3012 random fence=0] ssdq_gemm w13 done
+[ssdq] [ssdq2 T=3012 random fence=0] launching silu_rows
+[ssdq] [ssdq2 T=3012 random fence=0] silu_rows done
+[ssdq] [ssdq2 T=3012 random fence=0] launching ssdq_gemm w2
+[ssdq] [ssdq2 T=3012 random fence=0] ssdq_gemm w2 done
+[ssdq2] self-check T=3012 random fence=0: ssdq2 rel L2 5.921e-04 worst row 2.251e-03; marlin rel L2 5.910e-03 worst row 6.844e-03; bound 1.182e-02; error word 0; 3036 local routes; launch marker w13 1024 w2 512
+[ssdq] [ssdq2 T=4096 skewed fence=1] launching align
+[ssdq] [ssdq2 T=4096 skewed fence=1] align done
+[ssdq] [ssdq2 T=4096 skewed fence=1] launching ssdq_gather
+[ssdq] [ssdq2 T=4096 skewed fence=1] ssdq_gather done
+[ssdq] [ssdq2 T=4096 skewed fence=1] launching ssdq_gemm w13
+[ssdq] [ssdq2 T=4096 skewed fence=1] ssdq_gemm w13 done
+[ssdq] [ssdq2 T=4096 skewed fence=1] launching silu_rows
+[ssdq] [ssdq2 T=4096 skewed fence=1] silu_rows done
+[ssdq] [ssdq2 T=4096 skewed fence=1] launching ssdq_gemm w2
+[ssdq] [ssdq2 T=4096 skewed fence=1] ssdq_gemm w2 done
+[ssdq2] self-check T=4096 skewed fence=1: ssdq2 rel L2 7.094e-04 worst row 1.826e-03; marlin rel L2 5.863e-03 worst row 6.554e-03; bound 1.173e-02; error word 0; 18435 local routes; launch marker w13 5120 w2 2560
+[ssdq] [ssdq2 T=4096 skewed fence=0] launching align
+[ssdq] [ssdq2 T=4096 skewed fence=0] align done
+[ssdq] [ssdq2 T=4096 skewed fence=0] launching ssdq_gather
+[ssdq] [ssdq2 T=4096 skewed fence=0] ssdq_gather done
+[ssdq] [ssdq2 T=4096 skewed fence=0] launching ssdq_gemm w13
+[ssdq] [ssdq2 T=4096 skewed fence=0] ssdq_gemm w13 done
+[ssdq] [ssdq2 T=4096 skewed fence=0] launching silu_rows
+[ssdq] [ssdq2 T=4096 skewed fence=0] silu_rows done
+[ssdq] [ssdq2 T=4096 skewed fence=0] launching ssdq_gemm w2
+[ssdq] [ssdq2 T=4096 skewed fence=0] ssdq_gemm w2 done
+[ssdq2] self-check T=4096 skewed fence=0: ssdq2 rel L2 7.094e-04 worst row 1.826e-03; marlin rel L2 5.863e-03 worst row 6.554e-03; bound 1.173e-02; error word 0; 18435 local routes; launch marker w13 5120 w2 2560
+[ssdq] [ssdq2 T=1100 one fence=1] launching align
+[ssdq] [ssdq2 T=1100 one fence=1] align done
+[ssdq] [ssdq2 T=1100 one fence=1] launching ssdq_gather
+[ssdq] [ssdq2 T=1100 one fence=1] ssdq_gather done
+[ssdq] [ssdq2 T=1100 one fence=1] launching ssdq_gemm w13
+[ssdq] [ssdq2 T=1100 one fence=1] ssdq_gemm w13 done
+[ssdq] [ssdq2 T=1100 one fence=1] launching silu_rows
+[ssdq] [ssdq2 T=1100 one fence=1] silu_rows done
+[ssdq] [ssdq2 T=1100 one fence=1] launching ssdq_gemm w2
+[ssdq] [ssdq2 T=1100 one fence=1] ssdq_gemm w2 done
+[ssdq2] self-check T=1100 one fence=1: ssdq2 rel L2 5.445e-04 worst row 1.934e-03; marlin rel L2 5.853e-03 worst row 6.827e-03; bound 1.171e-02; error word 0; 1100 local routes; launch marker w13 288 w2 144
+[ssdq] [ssdq2 T=4096 random fence=1] launching align
+[ssdq] [ssdq2 T=4096 random fence=1] align done
+[ssdq] [ssdq2 T=4096 random fence=1] launching ssdq_gather
+[ssdq] [ssdq2 T=4096 random fence=1] ssdq_gather done
+[ssdq] [ssdq2 T=4096 random fence=1] launching ssdq_gemm w13
+[ssdq] [ssdq2 T=4096 random fence=1] ssdq_gemm w13 done
+[ssdq] [ssdq2 T=4096 random fence=1] launching silu_rows
+[ssdq] [ssdq2 T=4096 random fence=1] silu_rows done
+[ssdq] [ssdq2 T=4096 random fence=1] launching ssdq_gemm w2
+[ssdq] [ssdq2 T=4096 random fence=1] ssdq_gemm w2 done
+[ssdq2] self-check T=4096 random fence=1: ssdq2 rel L2 5.650e-04 worst row 2.061e-03; marlin rel L2 5.898e-03 worst row 6.983e-03; bound 1.180e-02; error word 0; 3954 local routes; launch marker w13 1344 w2 672
+[ssdq] phase ssdq2-self-check: 0.1s; prepare total 36.7s; budget remaining 133.3s of 170s
+[ssdq2] replay round 0 state A T=4096: ssdq rel L2 5.727e-04 worst row 2.460e-03; bound 1.181e-02; error word 0; launch marker w13 1568 w2 784
+[ssdq2] replay round 0 state B T=4096: ssdq rel L2 5.784e-04 worst row 2.265e-03; bound 1.181e-02; error word 0; launch marker w13 1376 w2 688
+[ssdq2] replay round 1 state B T=4096: ssdq rel L2 5.577e-04 worst row 2.476e-03; bound 1.174e-02; error word 0; launch marker w13 1024 w2 512
+[ssdq2] replay round 1 state A T=4096: ssdq rel L2 7.106e-04 worst row 1.834e-03; bound 1.173e-02; error word 0; launch marker w13 5120 w2 2560
+[ssdq2] replay round 2 state A T=4096: ssdq rel L2 5.789e-04 worst row 2.598e-03; bound 1.171e-02; error word 0; launch marker w13 1024 w2 512
+[ssdq2] replay round 2 state B T=4096: ssdq rel L2 7.085e-04 worst row 2.229e-03; bound 1.173e-02; error word 0; launch marker w13 5120 w2 2560
+[ssdq2] replay round 3 state B T=4096: ssdq rel L2 5.721e-04 worst row 2.075e-03; bound 1.180e-02; error word 0; launch marker w13 1536 w2 768
+[ssdq2] replay round 3 state A T=4096: ssdq rel L2 5.825e-04 worst row 2.217e-03; bound 1.181e-02; error word 0; launch marker w13 1568 w2 784
+[ssdq2] two-state replay check ok (4 rounds x 2 states)
+[ssdq] phase ssdq2-replay-check: 0.3s; prepare total 37.0s; budget remaining 133.0s of 170s
+[ssdq2] counters w13 T=3012: 1024 CTAs, per CTA 125138 cycles, producer waiting on raw_full (TMA ring) 5581 cycles, producer waiting on empty stages 6400 cycles, consumer waiting on full stages 74740 cycles per warpgroup (60% of the CTA) (producer-bound if the consumer wait is large; raw_full wait large = load-latency bound, small = dequant-ALU bound)
+[ssdq2] counters w2 T=3012: 512 CTAs, per CTA 126297 cycles, producer waiting on raw_full (TMA ring) 5927 cycles, producer waiting on empty stages 6500 cycles, consumer waiting on full stages 77988 cycles per warpgroup (62% of the CTA) (producer-bound if the consumer wait is large; raw_full wait large = load-latency bound, small = dequant-ALU bound)
+[ssdq] phase ssdq2-counters: 0.0s; prepare total 37.0s; budget remaining 133.0s of 170s
+[ssdq] phase gate: 0.1s; prepare total 37.1s; budget remaining 132.9s of 170s
+[ssdq] GATE T=3012 cold-L2 graph medians over 9 alternations (empty-graph baseline 5.0 us subtracted): marlin pair 1553.2 us, ssdq 1253.1 us (ratio 0.807, ON at <= 0.95), ssdq2 1066.6 us (vs ssdq 0.851, ON at <= 0.98; vs marlin 0.687); ssdq2_nofence 1044.8 us
+[ssdq] PATH CHOSEN T in (1024, 4096]: ssdq2 (ssdq2 1066.6 us <= 0.98 x ssdq 1253.1 us; marlin 1553.2 us); all other T: unchanged
+[ssdq] prepare per-phase seconds: before-ssdq 4.5, audit 0.0, build 31.3, canary 0.3, self-check 0.2, replay-check 0.3, counters 0.0, ssdq2-canary 0.0, ssdq2-self-check 0.1, ssdq2-replay-check 0.3, ssdq2-counters 0.0, gate 0.1; total 37.1s; budget remaining 132.9s of 170s
+[ssdq] PATH CHOSEN T <= 1024: marlin/unchanged; T in (1024, 4096]: ssdq2 (gate ratios SSDQ_GATE_RATIO = 0.95, SSDQ2_GATE_RATIO = 0.98); T > 4096: triton/unchanged

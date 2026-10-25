@@ -69,10 +69,10 @@ controls_for: null
 rewrite_stage: 2
 replaces: ssdq_kernel x2 (w13, w2) at 1024 < T <= 4096 (turn_4, T=3012)
 review: proceed
-status: running
+status: done
 review_at: 2026-10-25T111131Z
 review_companions: null
-stage: dispatched
+stage: harvested
 claimed_at: 2026-10-25T111131Z
 base_sha: b427e7bfe8620ee6bea6bcd1c992aa9f6eef1acb
 base_blob: f2d91dd181aeb44de20d2eed62ab7e564f2b181f
@@ -91,6 +91,13 @@ attempt_file: 2026-10-25T112047Z-check-experts-turn4-ssdq-s2-tma-raw-weight-ring
 prepared_at: 2026-10-25T112047Z
 job: 05dbf2d59a874444
 dispatched_at: 2026-10-25T112055Z
+outcome: neutral
+verdict_detail: unproven-vs-best
+speedup: 1.1292778537767272
+speedup_ci: [1.1123386859700763, 1.146217021583378]
+harvested_at: 2026-10-25T115712Z
+best_at_harvest: 1.1075501334948785
+promotion: null
 ---
 
 # experts-turn4-ssdq-s2-tma-raw-weight-ring
@@ -197,3 +204,32 @@ Audited 2026-10-25 by an Opus subagent, by reading only (no nvcc or GPU on this 
 - kernel_fn is unchanged. _experts dispatches only on T and prepare flags, with no try/except, prints or per-call state. undef.py found nothing. py_compile is ok. okc_lint reports OK (host-sync warnings in prepare only).
 
 Residual risk: the untested PTX or tensor-map encode may fail to build or launch, which lands cleanly on master's ssdq. A device fault in ssdq2 would still poison the context.
+
+## Result
+
+- job `05dbf2d59a874444` (check), status done, passed True, tests 5/5
+- speedup 1.1293x, 95% CI [1.1123, 1.1462], score 343054.5447290732 µs vs SGLang 387403.9 µs
+- best at harvest: {"speedup": 1.1075501334948785, "ci": [1.0909368814924554, 1.1241633854973017], "job": "810b5f7decc84206"}; base result: muse_prefill_layer/hypotheses/done/neutral/experts-turn4-ssdq-s1b-dataptr-symbol-fix.result.json
+- **outcome: neutral** (unproven-vs-best)
+- files: `muse_prefill_layer/hypotheses/done/neutral/experts-turn4-ssdq-s2-tma-raw-weight-ring.result.json`, `muse_prefill_layer/hypotheses/done/neutral/experts-turn4-ssdq-s2-tma-raw-weight-ring.patch`; branch `hyp/muse_prefill_layer/experts-turn4-ssdq-s2-tma-raw-weight-ring`
+
+## Attribution
+
+| shape | w | base µs | hyp µs | delta | verdict |
+|---|---|---|---|---|---|
+| batch=1 ctx=80000 dist=soft layer=sliding load=turn_1 page=1 q_len=753 repeats=6 | 46 | 1081.49 | 1005.66 | 1.0032 | flat |
+| batch=1 ctx=80000 dist=soft layer=full load=turn_1 page=1 q_len=753 repeats=6 | 16 | 1460.63 | 1417.56 | 1.0021 | flat |
+| batch=4 ctx=80000 dist=soft layer=sliding load=turn_4 page=1 q_len=753 repeats=6 | 46 | 3012.25 | 2695.78 | 1.0897 | gained |
+| batch=4 ctx=80000 dist=soft layer=full load=turn_4 page=1 q_len=753 repeats=6 | 16 | 4686.3 | 4288.82 | 1.0573 | gained |
+| batch=1 ctx=0 dist=soft layer=full load=first_turn page=1 q_len=16384 repeats=6 | 16 | 14970.94 | 14913.25 | 1.0196 | flat |
+| batch=1 ctx=32768 dist=soft layer=sliding load=first_turn page=1 q_len=16384 repeats=6 | 138 | 14118.46 | 13967.46 | 0.9998 | flat |
+| batch=1 ctx=32768 dist=soft layer=full load=first_turn page=1 q_len=16384 repeats=6 | 16 | 18379.93 | 18540.03 | 0.9885 | flat |
+| batch=1 ctx=65536 dist=soft layer=full load=first_turn page=1 q_len=16384 repeats=6 | 16 | 22181.89 | 21961.91 | 0.994 | flat |
+
+gained on sliding turn_4; full turn_4. Expected hit: 1/3. Noise ±1.5%.
+
+## Follow-ups
+
+- rewrite stage 2 of `ssdq_kernel x2 (w13, w2) at 1024 < T <= 4096 (turn_4, T=3012)`: read the replaced kernels' own us per shape (profile top_kernels) against the incumbent and the floor, and check which Milestone it reached. The next stage is `/hypothesize muse_prefill_layer "<what to fix or tune>" --kind rewrite --depends-on experts-turn4-ssdq-s2-tma-raw-weight-ring --stage 3`; a slow or failed first cut is the expected start, not a do-not-retry.
+- unproven-vs-best: the change is not proven either way; a stacked hypothesis (`depends_on: experts-turn4-ssdq-s2-tma-raw-weight-ring`) that adds a further change in the same area is the only way to learn more (identical code is never re-run).
+

@@ -1,0 +1,845 @@
+diff --git a/muse_prefill_layer/submission.py b/muse_prefill_layer/submission.py
+index f2d91dd1..ab3dc5a0 100644
+--- a/muse_prefill_layer/submission.py
++++ b/muse_prefill_layer/submission.py
+@@ -623,7 +623,7 @@ def _experts(x, topk_weights, local_ids, state):
+     tokens = x.shape[0]
+     if tokens <= MARLIN_MAX_TOKENS:
+         if tokens > SSDQ_MIN_TOKENS and state.get("ssdq_ok", False):
+-            return _experts_ssdq(x, topk_weights, local_ids, state)
++            return _experts_ssdq(x, topk_weights, local_ids, state, v2=bool(state.get("ssdq2_ok", False)))
+         return _experts_marlin(x, topk_weights, local_ids, state)
+     return _experts_triton(x, topk_weights, local_ids, state)
+ 
+@@ -975,6 +975,16 @@ SSDQ_CUDA_CFLAGS = ["-O3", "-std=c++20", "-lineinfo", SSDQ_GENCODE]
+ SSDQ_ERR_TEXT = {0: "ok", 1: "mbarrier wait timed out", 2: "non-sm_90a image ran (wgmma compiled out)"}
+ SSDQ_SILU_BLOCK_R = 16
+ SSDQ_SILU_BLOCK_N = 512
++# Stage 2 (hypothesis experts-turn4-ssdq-s2-tma-raw-weight-ring): ssdq2_kernel sits beside master's
++# ssdq_kernel (unchanged, STAGES 4) in one module. Its producer takes the packed weight codes from a
++# 4-entry smem ring filled by TMA (codes) and cp.async (scales) instead of register __ldg prefetch.
++SSDQ_EXT_NAME2 = "muse_prefill_ssdq_v2"
++SSDQ2_TAG = "[ssdq2]"
++SSDQ2_GATE_RATIO = 0.98       # ssdq2 ON only when ssdq2 / master's ssdq <= this (and it still beats Marlin)
++SSDQ2_BUDGET_S = 215.0        # skip the ssdq2 checks when prepare() has used more than this already
++SSDQ2_SMEM_BYTES = 222208     # 1024 + 3 x 48 KB + 4 x 18 KB, asserted in the CUDA source
++SSDQ2_RAW_STAGES = 4
++SSDQ2_STAGES = 3
+ 
+ _SSDQ_CPP = r"""
+ #include <torch/extension.h>
+@@ -1319,6 +1329,7 @@ ssdq_gather_kernel(const __nv_bfloat16* __restrict__ x, const int* __restrict__
+   }
+ }
+ 
++@SSDQ2_KERNEL@
+ typedef CUresult (*EncodeTiledFn)(CUtensorMap*, CUtensorMapDataType, cuuint32_t, void*, const cuuint64_t*,
+                                   const cuuint64_t*, const cuuint32_t*, const cuuint32_t*, CUtensorMapInterleave,
+                                   CUtensorMapSwizzle, CUtensorMapL2promotion, CUtensorMapFloatOOBfill);
+@@ -1427,6 +1438,325 @@ int64_t ssdq_gemm(int64_t mode, torch::Tensor a, torch::Tensor w, torch::Tensor
+   C10_CUDA_KERNEL_LAUNCH_CHECK();
+   return 0;
+ }
++@SSDQ2_HOST@
++"""
++
++
++_SSDQ2_CPP = r"""
++std::vector<int64_t> ssdq2_info();
++int64_t ssdq2_gemm(int64_t mode, torch::Tensor a, torch::Tensor w, torch::Tensor sf, torch::Tensor gs,
++                   torch::Tensor sorted_ids, torch::Tensor block_experts, int64_t num_routes, torch::Tensor out,
++                   torch::Tensor err, torch::Tensor prof, int64_t use_prof, int64_t fence_variant);
++"""
++
++# ssdq2_kernel: master's ssdq_kernel with only the PRODUCER's weight feed changed. Own constants
++# (STAGES2 3, RAW_STAGES 4, SMEM2), own static mbarriers, own cudaFuncSetAttribute (ssdq2_info).
++_SSDQ2_KERNEL = r"""
++// ------------------------------- ssdq2 (stage 2) -------------------------------
++constexpr int STAGES2 = 3;                    // bf16 stages (master's ssdq_kernel keeps STAGES = 4)
++constexpr int RAW_STAGES = 4;                 // raw weight ring entries, one 128-k chunk of 256 rows each
++constexpr int RAW_CODE_BYTES = BN * 64;       // 16384: 256 rows x 64 B packed codes (one TMA)
++constexpr int RAW_SF_BYTES = BN * 8;          // 2048: 256 rows x 8 e4m3 scales (cp.async, 8 B per row)
++constexpr int RAW_BYTES = RAW_CODE_BYTES + RAW_SF_BYTES;   // 18432
++constexpr int SMEM2 = 1024 + STAGES2 * STAGE_BYTES + RAW_STAGES * RAW_BYTES;   // 222208
++static_assert(SMEM2 == 222208, "SMEM2");
++static_assert(RAW_BYTES % 1024 == 0 && (STAGES2 * STAGE_BYTES) % 1024 == 0, "ring alignment");
++static_assert(SMEM2 + (2 * STAGES2 + RAW_STAGES) * 8 + 4096 <= 227 * 1024, "shared memory budget (ssdq2)");
++
++struct __align__(64) Maps2 { CUtensorMap a; CUtensorMap w; };
++
++__device__ __forceinline__ void cp_async8(uint32_t dst, const void* src) {
++  asm volatile("cp.async.ca.shared.global [%0], [%1], 8;\n" :: "r"(dst), "l"(src) : "memory");
++}
++// Arrive on the mbarrier when this thread's earlier cp.asyncs have landed; .noinc: the barrier's init
++// count already includes this arrive (no pending-count increment).
++__device__ __forceinline__ void cp_async_mbar_arrive_noinc(uint32_t bar) {
++  asm volatile("cp.async.mbarrier.arrive.noinc.shared.b64 [%0];\n" :: "r"(bar) : "memory");
++}
++__device__ __forceinline__ void producer_bar_sync() {   // the 128 producer threads only (named barrier 1)
++  asm volatile("bar.sync 1, 128;\n" ::: "memory");
++}
++
++// Fill raw ring entry c % RAW_STAGES with chunk c: thread 0 issues the code TMA (expect_tx 16384), every
++// producer thread copies 2 rows of scales and arrives (noinc) when they land. raw_full init count 1 + 128.
++__device__ __forceinline__ void raw_issue(int c, int p, uint32_t rawb, uint32_t rawfull0, uint64_t wmap, int wrow0,
++                                          const uint8_t* sbase, int K) {
++  const int r = c % RAW_STAGES;
++  const uint32_t ent = rawb + r * RAW_BYTES;
++  const uint32_t bar = rawfull0 + 8 * r;
++  if (p == 0) {
++    mbar_expect_tx(bar, RAW_CODE_BYTES);
++    tma_2d(ent, wmap, c * 64, wrow0, bar);
++  }
++#pragma unroll
++  for (int j = 0; j < 2; ++j) {
++    const int row = p + 128 * j;
++    cp_async8(ent + RAW_CODE_BYTES + row * 8, sbase + static_cast<size_t>(row) * (K / 16) + c * 8);
++  }
++  cp_async_mbar_arrive_noinc(bar);
++}
++
++// prof (5 per mode): [0] producer wait on empty stages, [1] consumer wait on full stages (summed over
++// the 2 warpgroups), [2] CTAs, [3] producer total cycles, [4] producer wait on raw_full (the TMA ring).
++__global__ void __launch_bounds__(THREADS, 1)
++ssdq2_kernel(const __grid_constant__ Maps2 maps,
++             const uint8_t* __restrict__ sf,        // e4m3 [E][N][K/16]
++             const float* __restrict__ gs,          // fp32 [E] global scales
++             const int* __restrict__ sorted_ids,    // block-128 align of the local ids
++             const int* __restrict__ block_experts,
++             int n_experts, int num_routes, int N, int K, int mode,
++             __nv_bfloat16* __restrict__ out, int out_ld, int* __restrict__ err, long long* __restrict__ prof,
++             int fence_variant) {
++#if defined(__CUDA_ARCH_FEAT_SM90_ALL)
++  extern __shared__ __align__(1024) uint8_t smem_raw[];
++  __shared__ __align__(8) uint64_t bars[2 * STAGES2 + RAW_STAGES];
++  const int e = __ldg(block_experts + blockIdx.y);
++  if (e < 0 || e >= n_experts) return;  // uniform over the CTA: no barrier has been touched yet
++  if (threadIdx.x == 0) atomicAdd(err + 1 + mode, 1);
++
++  const int tid = threadIdx.x, lane = tid & 31, warp = tid >> 5;
++  const uint32_t raw = smem_u32(smem_raw);
++  uint8_t* smem = smem_raw + ((1024u - (raw & 1023u)) & 1023u);
++  const uint32_t full0 = smem_u32(&bars[0]), empty0 = smem_u32(&bars[STAGES2]);
++  const uint32_t rawfull0 = smem_u32(&bars[2 * STAGES2]);
++  const int n0 = blockIdx.x * BN;
++  const int m0 = blockIdx.y * BM;
++  const int KT = K / BKT;
++  const bool do_prof = prof != nullptr;
++  long long* pr = prof + 5 * mode;
++
++  if (tid == 0) {
++#pragma unroll
++    for (int s = 0; s < STAGES2; ++s) {
++      mbar_init(full0 + 8 * s, 129);   // 128 producer threads + the TMA thread's expect_tx arrive
++      mbar_init(empty0 + 8 * s, 8);    // one arrive per consumer warp
++    }
++#pragma unroll
++    for (int s = 0; s < RAW_STAGES; ++s) mbar_init(rawfull0 + 8 * s, 129);   // thread 0 expect_tx + 128 cp.async arrives
++    fence_barrier_init();
++  }
++  __syncthreads();
++  bool dead = false;
++
++  if (warp < 4) {
++    // ---------------- producer warpgroup ----------------
++    const int p = tid;                 // 0..127
++    const int q = p & 3;
++    const int rs = p >> 2;             // rows rs + 32 * it
++    const uint8_t* sbase = sf + (static_cast<size_t>(e) * N + n0) * (K / 16);
++    const int wrow0 = e * N + n0;      // row of the 256-row weight box in the [E*N, K/2] code map
++    const int nchunks = K / 128;
++    const uint32_t rawb = smem_u32(smem + STAGES2 * STAGE_BYTES);
++    const uint64_t wmap = reinterpret_cast<uint64_t>(&maps.w);
++    long long wait_cyc = 0, raw_cyc = 0;
++    const long long t_begin = (do_prof && p == 0) ? clock64() : 0;
++#pragma unroll
++    for (int c = 0; c < RAW_STAGES; ++c) {
++      if (c < nchunks) raw_issue(c, p, rawb, rawfull0, wmap, wrow0, sbase, K);
++    }
++    for (int c = 0; c < nchunks; ++c) {
++      const int r = c % RAW_STAGES;
++      const long long tr = do_prof ? clock64() : 0;
++      mbar_wait(rawfull0 + 8 * r, (c / RAW_STAGES) & 1, err, dead);
++      if (do_prof) raw_cyc += clock64() - tr;
++      const uint8_t* ent = smem + STAGES2 * STAGE_BYTES + r * RAW_BYTES;
++      uint4 cur[8];
++      uint2 cs[8];
++#pragma unroll
++      for (int it = 0; it < 8; ++it) {
++        const int row = it * 32 + rs;
++        cur[it] = *reinterpret_cast<const uint4*>(ent + row * 64 + q * 16);
++        cs[it] = *reinterpret_cast<const uint2*>(ent + RAW_CODE_BYTES + row * 8);
++      }
++      // Entry r is now in registers: release it for chunk c + RAW_STAGES. Every producer thread has
++      // finished its generic reads when the named barrier completes; the optional proxy fence orders
++      // those reads before the async-proxy TMA write that refills the entry.
++      if (fence_variant != 0) fence_proxy_async();
++      producer_bar_sync();
++      if (c + RAW_STAGES < nchunks) raw_issue(c + RAW_STAGES, p, rawb, rawfull0, wmap, wrow0, sbase, K);
++#pragma unroll
++      for (int half = 0; half < 2; ++half) {
++        const int kt = 2 * c + half;
++        const int s = kt % STAGES2;
++        const long long tw = do_prof ? clock64() : 0;
++        mbar_wait(empty0 + 8 * s, ((kt / STAGES2) & 1) ^ 1, err, dead);
++        if (do_prof) wait_cyc += clock64() - tw;
++        uint8_t* stage = smem + s * STAGE_BYTES;
++        if (p == 0) {
++          mbar_expect_tx(full0 + 8 * s, A_BYTES);
++          tma_2d(smem_u32(stage), reinterpret_cast<uint64_t>(&maps.a), kt * BKT, m0, full0 + 8 * s);
++        }
++        uint8_t* bt = stage + A_BYTES;
++#pragma unroll
++        for (int it = 0; it < 8; ++it) {
++          const int row = it * 32 + rs;
++          const uint32_t sc = half ? cs[it].y : cs[it].x;
++          const uint32_t sb2 = sf_bf16x2((sc >> (8 * q)) & 0xFFu);
++          const uint32_t wv[4] = {cur[it].x, cur[it].y, cur[it].z, cur[it].w};
++          uint32_t o[8];
++#pragma unroll
++          for (int i = 0; i < 4; ++i) {
++            const uint32_t pa = __byte_perm(wv[i], 0u, 0x4140) >> (4 * half);
++            const uint32_t pb = __byte_perm(wv[i], 0u, 0x4342) >> (4 * half);
++            o[2 * i] = dq_pair(pa, sb2);
++            o[2 * i + 1] = dq_pair(pb, sb2);
++          }
++          uint8_t* rowp = bt + row * 128;
++          const int sw = row & 7;
++          *reinterpret_cast<uint4*>(rowp + (((2 * q) ^ sw) << 4)) = make_uint4(o[0], o[1], o[2], o[3]);
++          *reinterpret_cast<uint4*>(rowp + (((2 * q + 1) ^ sw) << 4)) = make_uint4(o[4], o[5], o[6], o[7]);
++        }
++        fence_proxy_async();
++        mbar_arrive(full0 + 8 * s);
++      }
++    }
++    if (do_prof && p == 0) {
++      atomicAdd(reinterpret_cast<unsigned long long*>(pr + 0), static_cast<unsigned long long>(wait_cyc));
++      atomicAdd(reinterpret_cast<unsigned long long*>(pr + 2), 1ull);
++      atomicAdd(reinterpret_cast<unsigned long long*>(pr + 3), static_cast<unsigned long long>(clock64() - t_begin));
++      atomicAdd(reinterpret_cast<unsigned long long*>(pr + 4), static_cast<unsigned long long>(raw_cyc));
++    }
++  } else {
++    // ---------------- consumer warpgroups (as master's) ----------------
++    const int ctid = tid - 128, wg = ctid >> 7, cw = (ctid >> 5) & 3;
++    float acc[128];
++#pragma unroll
++    for (int i = 0; i < 128; ++i) acc[i] = 0.f;
++    long long wait_cyc = 0;
++    for (int kt = 0; kt < KT; ++kt) {
++      const int s = kt % STAGES2;
++      const long long tw = do_prof ? clock64() : 0;
++      mbar_wait(full0 + 8 * s, (kt / STAGES2) & 1, err, dead);
++      if (do_prof) wait_cyc += clock64() - tw;
++      const uint32_t a = smem_u32(smem + s * STAGE_BYTES) + wg * (64 * 128);
++      const uint32_t b = smem_u32(smem + s * STAGE_BYTES + A_BYTES);
++      fence_acc(acc);
++      wgmma_fence();
++#pragma unroll
++      for (int k = 0; k < 4; ++k) {
++        const uint64_t da = make_desc(a + k * 32), db = make_desc(b + k * 32);
++@MMA_CALL@
++      }
++      wgmma_commit();
++      wgmma_wait<1>();
++      fence_acc(acc);
++      if (kt > 0 && lane == 0) mbar_arrive(empty0 + 8 * ((kt - 1) % STAGES2));
++    }
++    wgmma_wait<0>();
++    fence_acc(acc);
++    if (lane == 0) mbar_arrive(empty0 + 8 * ((KT - 1) % STAGES2));
++    if (do_prof && (ctid & 127) == 0) {
++      atomicAdd(reinterpret_cast<unsigned long long*>(pr + 1), static_cast<unsigned long long>(wait_cyc));
++    }
++
++    const float gsc = __ldg(gs + e) * 128.0f;   // the 2^7 the dequantized tile left out
++    const int rbase = m0 + wg * 64 + cw * 16 + (lane >> 2);
++    int sid0 = 0, sid1 = 0;
++    if (mode == 1) {
++      sid0 = __ldg(sorted_ids + rbase);
++      sid1 = __ldg(sorted_ids + rbase + 8);
++    }
++    const bool ok0 = mode == 0 || (sid0 >= 0 && sid0 < num_routes);
++    const bool ok1 = mode == 0 || (sid1 >= 0 && sid1 < num_routes);
++    const size_t r0 = mode == 0 ? static_cast<size_t>(rbase) : static_cast<size_t>(sid0);
++    const size_t r1 = mode == 0 ? static_cast<size_t>(rbase + 8) : static_cast<size_t>(sid1);
++    __nv_bfloat16* o0 = out + r0 * out_ld + n0 + 2 * (lane & 3);
++    __nv_bfloat16* o1 = out + r1 * out_ld + n0 + 2 * (lane & 3);
++#pragma unroll
++    for (int j = 0; j < 32; ++j) {
++      if (ok0) {
++        __nv_bfloat162 v = __floats2bfloat162_rn(acc[4 * j] * gsc, acc[4 * j + 1] * gsc);
++        *reinterpret_cast<__nv_bfloat162*>(o0 + 8 * j) = v;
++      }
++      if (ok1) {
++        __nv_bfloat162 v = __floats2bfloat162_rn(acc[4 * j + 2] * gsc, acc[4 * j + 3] * gsc);
++        *reinterpret_cast<__nv_bfloat162*>(o1 + 8 * j) = v;
++      }
++    }
++  }
++#else
++  if (threadIdx.x == 0) atomicExch(err, 2);
++#endif
++}
++"""
++
++_SSDQ2_HOST = r"""
++// regs, local bytes, static smem, dynamic smem, CTAs per SM, cudaFuncSetAttribute rc, binaryVersion,
++// ptxVersion, attribute calls ok. ssdq2 gets its OWN opt-in to SMEM2 (master's ssdq_info sets SMEM_BYTES).
++std::vector<int64_t> ssdq2_info() {
++  std::vector<int64_t> r;
++  const void* fn = reinterpret_cast<const void*>(ssdq2_kernel);
++  const cudaError_t e1 = cudaFuncSetAttribute(fn, cudaFuncAttributeMaxDynamicSharedMemorySize, SMEM2);
++  cudaFuncAttributes a{};
++  const cudaError_t e2 = cudaFuncGetAttributes(&a, fn);
++  int occ = 0;
++  const cudaError_t e3 = cudaOccupancyMaxActiveBlocksPerMultiprocessor(&occ, ssdq2_kernel, THREADS, SMEM2);
++  const bool ok = e1 == cudaSuccess && e2 == cudaSuccess && e3 == cudaSuccess;
++  if (!ok) (void)cudaGetLastError();
++  r.push_back(a.numRegs);
++  r.push_back(static_cast<int64_t>(a.localSizeBytes));
++  r.push_back(static_cast<int64_t>(a.sharedSizeBytes));
++  r.push_back(SMEM2);
++  r.push_back(occ);
++  r.push_back(static_cast<int64_t>(e1));
++  r.push_back(a.binaryVersion);
++  r.push_back(a.ptxVersion);
++  r.push_back(ok ? 1 : 0);
++  return r;
++}
++
++// As ssdq_gemm, plus the weight code map: the weight tensor w (uint8 [E][N][K/2]) viewed as [E*N, K/2],
++// box {64 B, 256 rows}, encoded HERE on every call from the w passed in (never cached: the judge's two
++// states hold different tensors). Returns 0, 1 (no encode entry point), 1000 + CUresult (a map encode
++// failed), 2000 (the weight base is not 16 B aligned or its row stride is not a multiple of 16).
++int64_t ssdq2_gemm(int64_t mode, torch::Tensor a, torch::Tensor w, torch::Tensor sf, torch::Tensor gs,
++                   torch::Tensor sorted_ids, torch::Tensor block_experts, int64_t num_routes, torch::Tensor out,
++                   torch::Tensor err, torch::Tensor prof, int64_t use_prof, int64_t fence_variant) {
++  TORCH_CHECK(mode == 0 || mode == 1, "ssdq2_gemm: mode");
++  TORCH_CHECK(a.is_cuda() && a.is_contiguous() && w.is_contiguous() && sf.is_contiguous() && gs.is_contiguous() &&
++              sorted_ids.is_contiguous() && block_experts.is_contiguous() && out.is_contiguous(), "ssdq2_gemm: contiguous");
++  TORCH_CHECK(a.scalar_type() == at::kBFloat16 && out.scalar_type() == at::kBFloat16 && w.scalar_type() == at::kByte &&
++              sf.scalar_type() == at::kFloat8_e4m3fn && gs.scalar_type() == at::kFloat &&
++              sorted_ids.scalar_type() == at::kInt && block_experts.scalar_type() == at::kInt &&
++              err.scalar_type() == at::kInt && prof.scalar_type() == at::kLong && prof.numel() >= 10, "ssdq2_gemm: dtypes");
++  const int64_t E = w.size(0), N = w.size(1), K = w.size(2) * 2;
++  TORCH_CHECK(N % BN == 0 && K % 128 == 0 && a.size(1) == K && sf.size(2) * 16 == K && out.size(1) == N &&
++              gs.numel() == E && sf.size(0) == E && sf.size(1) == N, "ssdq2_gemm: shapes");
++  const int64_t nb = block_experts.numel();
++  TORCH_CHECK(a.size(0) == nb * BM && sorted_ids.numel() <= a.size(0), "ssdq2_gemm: rows");
++  TORCH_CHECK(mode == 0 ? out.size(0) == a.size(0) : out.size(0) == num_routes, "ssdq2_gemm: out rows");
++  if (nb == 0) return 0;
++  EncodeTiledFn enc = get_encode();
++  if (enc == nullptr) return 1;
++  if ((reinterpret_cast<uintptr_t>(w.data_ptr()) & 15u) != 0 || ((K / 2) % 16) != 0) return 2000;
++  Maps2 maps;
++  const cuuint64_t dims[2] = {static_cast<cuuint64_t>(K), static_cast<cuuint64_t>(a.size(0))};
++  const cuuint64_t strides[1] = {static_cast<cuuint64_t>(K) * 2};
++  const cuuint32_t box[2] = {64, static_cast<cuuint32_t>(BM)};
++  const cuuint32_t es[2] = {1, 1};
++  CUresult rc = enc(&maps.a, CU_TENSOR_MAP_DATA_TYPE_BFLOAT16, 2, a.data_ptr(), dims, strides, box, es,
++                    CU_TENSOR_MAP_INTERLEAVE_NONE, CU_TENSOR_MAP_SWIZZLE_128B,
++                    CU_TENSOR_MAP_L2_PROMOTION_L2_256B, CU_TENSOR_MAP_FLOAT_OOB_FILL_NONE);
++  if (rc != CUDA_SUCCESS) return 1000 + static_cast<int64_t>(rc);
++  const cuuint64_t wdims[2] = {static_cast<cuuint64_t>(K / 2), static_cast<cuuint64_t>(E * N)};
++  const cuuint64_t wstrides[1] = {static_cast<cuuint64_t>(K / 2)};
++  const cuuint32_t wbox[2] = {64, static_cast<cuuint32_t>(BN)};
++  rc = enc(&maps.w, CU_TENSOR_MAP_DATA_TYPE_UINT8, 2, w.data_ptr(), wdims, wstrides, wbox, es,
++           CU_TENSOR_MAP_INTERLEAVE_NONE, CU_TENSOR_MAP_SWIZZLE_NONE,
++           CU_TENSOR_MAP_L2_PROMOTION_L2_128B, CU_TENSOR_MAP_FLOAT_OOB_FILL_NONE);
++  if (rc != CUDA_SUCCESS) return 1000 + static_cast<int64_t>(rc);
++  auto stream = at::cuda::getCurrentCUDAStream();
++  dim3 grid(static_cast<unsigned>(N / BN), static_cast<unsigned>(nb));
++  ssdq2_kernel<<<grid, THREADS, SMEM2, stream>>>(
++      maps, reinterpret_cast<const uint8_t*>(sf.data_ptr()),
++      reinterpret_cast<const float*>(gs.data_ptr()), reinterpret_cast<const int*>(sorted_ids.data_ptr()),
++      reinterpret_cast<const int*>(block_experts.data_ptr()), static_cast<int>(gs.numel()),
++      static_cast<int>(num_routes), static_cast<int>(N), static_cast<int>(K), static_cast<int>(mode),
++      reinterpret_cast<__nv_bfloat16*>(out.data_ptr()), static_cast<int>(out.size(1)), reinterpret_cast<int*>(err.data_ptr()),
++      use_prof ? reinterpret_cast<long long*>(prof.data_ptr()) : nullptr, static_cast<int>(fence_variant));
++  C10_CUDA_KERNEL_LAUNCH_CHECK();
++  return 0;
++}
+ """
+ 
+ 
+@@ -1448,8 +1778,15 @@ def _ssdq_mma_call():
+     ])
+ 
+ 
+-def _ssdq_src():
+-    return _SSDQ_HEAD + _SSDQ_BODY.replace("@MMA_CALL@", _ssdq_mma_call())
++def _ssdq_src(with2=False):
++    """The CUDA source: master's module, plus ssdq2_kernel and its host entry points when with2."""
++    body = _SSDQ_BODY.replace("@SSDQ2_KERNEL@", _SSDQ2_KERNEL if with2 else "")
++    body = body.replace("@SSDQ2_HOST@", _SSDQ2_HOST if with2 else "")
++    return _SSDQ_HEAD + body.replace("@MMA_CALL@", _ssdq_mma_call())
++
++
++def _ssdq_cpp(with2=False):
++    return _SSDQ_CPP + (_SSDQ2_CPP if with2 else "")
+ 
+ 
+ @triton.jit
+@@ -1474,7 +1811,7 @@ def _silu_rows(c1, c2, n_padded, size_n):
+                             BLOCK_N=SSDQ_SILU_BLOCK_N, num_warps=4)
+ 
+ 
+-def _experts_ssdq(x, topk_weights, local_ids, state, tracer=None, use_prof=False):
++def _experts_ssdq(x, topk_weights, local_ids, state, tracer=None, use_prof=False, v2=False, fence=None):
+     """The experts on the dequant-producer SS-wgmma kernel, on ids already mapped to this GPU's experts
+     (0-31, -1 elsewhere). align (block 128, local routes only) -> gather rows into sorted order ->
+     w13 -> silu*up (row to row) -> w2 (scatter to the route slot) -> master's weighted sum. tracer, only
+@@ -1485,7 +1822,11 @@ def _experts_ssdq(x, topk_weights, local_ids, state, tracer=None, use_prof=False
+     size_n = gemm1_n // 2
+     num_slots = num_tokens * TOP_K
+     topk_weights = topk_weights.to(torch.float32).contiguous()
+-    err, prof = state["ssdq_err"], state["ssdq_prof"]
++    if v2:  # stage 2: ssdq2_kernel with its own error word / counters and the proxy-fence flag
++        err, prof = state["ssdq2_err"], state["ssdq2_prof"]
++        fence_flag = int(state.get("ssdq2_fence", 1) if fence is None else fence)
++    else:
++        err, prof = state["ssdq_err"], state["ssdq_prof"]
+     if tracer:
+         tracer("align")
+     _, (sorted_ids, block_experts, n_padded) = _align_parallel(local_ids, 0, LOCAL_EXPERTS, SSDQ_BM)
+@@ -1501,8 +1842,12 @@ def _experts_ssdq(x, topk_weights, local_ids, state, tracer=None, use_prof=False
+     c1 = torch.empty((rows, gemm1_n), device=x.device, dtype=x.dtype)
+     if tracer:
+         tracer("ssdq_gemm w13")
+-    rc = ext.ssdq_gemm(0, xs, bank["w13"], bank["w13_sf"], bank["w13_gs"], sorted_ids, block_experts, num_slots,
+-                       c1, err, prof, 1 if use_prof else 0)
++    if v2:
++        rc = ext.ssdq2_gemm(0, xs, bank["w13"], bank["w13_sf"], bank["w13_gs"], sorted_ids, block_experts,
++                            num_slots, c1, err, prof, 1 if use_prof else 0, fence_flag)
++    else:
++        rc = ext.ssdq_gemm(0, xs, bank["w13"], bank["w13_sf"], bank["w13_gs"], sorted_ids, block_experts, num_slots,
++                           c1, err, prof, 1 if use_prof else 0)
+     if tracer:
+         tracer("ssdq_gemm w13 done", c1, n_padded)
+         tracer.rc("w13", rc)
+@@ -1520,8 +1865,12 @@ def _experts_ssdq(x, topk_weights, local_ids, state, tracer=None, use_prof=False
+         y = torch.empty((num_slots, size_k), device=x.device, dtype=x.dtype)
+     if tracer:
+         tracer("ssdq_gemm w2")
+-    rc = ext.ssdq_gemm(1, c2, bank["w2"], bank["w2_sf"], bank["w2_gs"], sorted_ids, block_experts, num_slots,
+-                       y, err, prof, 1 if use_prof else 0)
++    if v2:
++        rc = ext.ssdq2_gemm(1, c2, bank["w2"], bank["w2_sf"], bank["w2_gs"], sorted_ids, block_experts,
++                            num_slots, y, err, prof, 1 if use_prof else 0, fence_flag)
++    else:
++        rc = ext.ssdq_gemm(1, c2, bank["w2"], bank["w2_sf"], bank["w2_gs"], sorted_ids, block_experts, num_slots,
++                           y, err, prof, 1 if use_prof else 0)
+     if tracer:
+         tracer("ssdq_gemm w2 done", y, None, local_ids)
+         tracer.rc("w2", rc)
+@@ -1534,19 +1883,19 @@ _SSDQ_TEMPLATED_ACCESSOR = re.compile(
+     r"(?:\.|->)\s*(?:\w*data_ptr|size|stride|item|sizes|strides|accessor|packed_accessor\w*|data|to|toType)\s*<")
+ 
+ 
+-def _ssdq_source_audit():
++def _ssdq_source_audit(with2=False):
+     """Cheap pre-build audit of the C++/CUDA source. libtorch exports Tensor::data_ptr<int64_t> (long) but
+     not <long long>, so a templated accessor can link and then fail at import with an undefined symbol
+     (the ssdq stage-1 failure). Returns a list of 'line N: text' offenders (empty = clean)."""
+     bad = []
+-    for name, src in (("cpp", _SSDQ_CPP), ("cuda", _ssdq_src())):
++    for name, src in (("cpp", _ssdq_cpp(with2)), ("cuda", _ssdq_src(with2))):
+         for n, line in enumerate(src.splitlines(), 1):
+             if "data_ptr<" in line or "data_ptr <" in line or _SSDQ_TEMPLATED_ACCESSOR.search(line):
+                 bad.append(f"{name} line {n}: {line.strip()[:120]}")
+     return bad
+ 
+ 
+-def _ssdq_build():
++def _ssdq_build(with2=False):
+     """Compile the module (prepare only, never during capture): (ext or None, error text). sm_90a only:
+     cpp_extension's JIT path appends -gencode flags from TORCH_CUDA_ARCH_LIST (else from the device, a
+     plain compute_90 pass that cannot assemble wgmma), so the list is set to 9.0a for the build and
+@@ -1572,8 +1921,10 @@ def _ssdq_build():
+             arch_flags = [f"<unknown>"]
+         print(f"{SSDQ_TAG} build arch flags: TORCH_CUDA_ARCH_LIST={os.environ.get('TORCH_CUDA_ARCH_LIST')!r} -> "
+               f"{arch_flags}; extra_cuda_cflags {SSDQ_CUDA_CFLAGS}", flush=True)
+-        ext = load_inline(name=SSDQ_EXT_NAME, cpp_sources=_SSDQ_CPP, cuda_sources=_ssdq_src(),
+-                          functions=["ssdq_info", "ssdq_gather", "ssdq_gemm"],
++        ext = load_inline(name=SSDQ_EXT_NAME2 if with2 else SSDQ_EXT_NAME, cpp_sources=_ssdq_cpp(with2),
++                          cuda_sources=_ssdq_src(with2),
++                          functions=["ssdq_info", "ssdq_gather", "ssdq_gemm"]
++                          + (["ssdq2_info", "ssdq2_gemm"] if with2 else []),
+                           extra_cuda_cflags=list(SSDQ_CUDA_CFLAGS), verbose=False)
+     except Exception as e:
+         err_text = str(e)
+@@ -1694,17 +2045,21 @@ SSDQ_REPLAY_TOKENS = 4096     # a judge test shape inside the path's range
+ SSDQ_REPLAY_KINDS = ("random", "skewed", "one", "random")
+ 
+ 
+-def _ssdq_replay_check(state, weights, cache, device, gen):
++def _ssdq_replay_check(state, weights, cache, device, gen, v2=False):
+     """prepare() only. The judge prepares two states (setup copies: 2) and rotates them across
+     repetitions with refilled inputs. Emulate it: a second state with its own bank copy, error word
+     and counters; one CUDA graph of _experts_ssdq per state over that state's own static inputs; then
+     rounds that refill a state's inputs with a fresh routing, replay its graph and check it against the
+     fp32 reference, alternating A, B / B, A. A launch input shared across states (a module global, a
+-    tensor map or buffer frozen for the other state) shows up as a mismatch. Returns None or why."""
++    tensor map or buffer frozen for the other state) shows up as a mismatch. Returns None or why. With v2
++    the graphs run ssdq2_kernel (the weight code map is encoded per call from each state's own bank, at
++    capture time), with that state's own ssdq2 error word and counters."""
++    ekey, pkey = ("ssdq2_err", "ssdq2_prof") if v2 else ("ssdq_err", "ssdq_prof")
++    tag = SSDQ2_TAG if v2 else SSDQ_TAG
+     st2 = dict(state)
+     st2["bank"] = {k: v.clone() for k, v in state["bank"].items()}
+-    st2["ssdq_err"] = torch.zeros_like(state["ssdq_err"])
+-    st2["ssdq_prof"] = torch.zeros_like(state["ssdq_prof"])
++    st2[ekey] = torch.zeros_like(state[ekey])
++    st2[pkey] = torch.zeros_like(state[pkey])
+     states = (state, st2)
+     t = SSDQ_REPLAY_TOKENS
+     bufs, graphs, holders = [], [], []
+@@ -1714,7 +2069,7 @@ def _ssdq_replay_check(state, weights, cache, device, gen):
+             holder = {}
+ 
+             def fn(st=st, b=b, holder=holder):
+-                holder["out"] = _experts_ssdq(b[0], b[1], b[2], st)
++                holder["out"] = _experts_ssdq(b[0], b[1], b[2], st, v2=v2)
+ 
+             graphs.append(_ssdq_graph_time(fn, device))
+             bufs.append(b)
+@@ -1724,7 +2079,7 @@ def _ssdq_replay_check(state, weights, cache, device, gen):
+                 x, tw, lids = _ssdq_case(t, kind if i == 0 else SSDQ_REPLAY_KINDS[-1 - r], gen, device)
+                 for dst, src in zip(bufs[i], (x, tw, lids)):
+                     dst.copy_(src)
+-                states[i]["ssdq_err"].zero_()
++                states[i][ekey].zero_()
+                 graphs[i].replay()
+                 torch.cuda.synchronize()
+                 got = holders[i]["out"].clone()
+@@ -1734,19 +2089,19 @@ def _ssdq_replay_check(state, weights, cache, device, gen):
+                     weight_first=True, slot_expert_ids=lids)
+                 mar = _experts_marlin(x, tw, lids, state)
+                 torch.cuda.synchronize()
+-                word = int(states[i]["ssdq_err"][0].item())
+-                marks = states[i]["ssdq_err"].tolist()
++                word = int(states[i][ekey][0].item())
++                marks = states[i][ekey].tolist()
+                 if marks[1] <= 0 or marks[2] <= 0:  # this replay did not launch the ssdq kernels
+                     word = word or 99
+                 e_new, w_new = _ssdq_metrics(got, ref)
+                 e_mar, _ = _ssdq_metrics(mar, ref)
+                 bound = max(2.0 * e_mar, 8e-3)
+-                print(f"{SSDQ_TAG} replay round {r} state {'AB'[i]} T={t}: ssdq rel L2 {e_new:.3e} worst row "
++                print(f"{tag} replay round {r} state {'AB'[i]} T={t}: ssdq rel L2 {e_new:.3e} worst row "
+                       f"{w_new:.3e}; bound {bound:.3e}; error word {word}; launch marker w13 {marks[1]} "
+                       f"w2 {marks[2]}", flush=True)
+                 if word != 0 or not (e_new <= bound and w_new <= 5.0 * bound):
+                     return f"round {r} state {'AB'[i]} rel L2 {e_new:.3e} worst row {w_new:.3e} word {word}"
+-        print(f"{SSDQ_TAG} two-state replay check ok ({len(SSDQ_REPLAY_KINDS)} rounds x 2 states)", flush=True)
++        print(f"{tag} two-state replay check ok ({len(SSDQ_REPLAY_KINDS)} rounds x 2 states)", flush=True)
+         return None
+     finally:
+         del graphs, holders, bufs, st2, states
+@@ -1754,14 +2109,24 @@ def _ssdq_replay_check(state, weights, cache, device, gen):
+         torch.cuda.empty_cache()
+ 
+ 
+-def _ssdq_gate(state, device):
++def _ssdq_gate(state, device, with2=False):
+     """Interleaved CUDA-graph replays with a cold-L2 flush of the whole expert block (align, GEMMs,
+-    silu, weighted sum) at the scored turn_4 T: Marlin pair vs the new path, SSDQ_ALTERNATIONS
+-    alternations, order swapped each time. Returns (marlin_us, ssdq_us), medians."""
++    silu, weighted sum) at the scored turn_4 T: the Marlin pair, master's ssdq and (with2) ssdq2 with the
++    proxy fence on and off (the off variant is informational only), SSDQ_ALTERNATIONS alternations with
++    the order rotated each time. The cost of replaying an empty-ish graph (one 4-byte memset) is
++    subtracted from every sample. Returns {name: median us}, plus 'empty'."""
+     gen = torch.Generator(device=device).manual_seed(20261025)
+     x, tw, local_ids = _ssdq_case(SSDQ_GATE_TOKENS, "random", gen, device)
+-    g_m = _ssdq_graph_time(lambda: _experts_marlin(x, tw, local_ids, state), device)
+-    g_n = _ssdq_graph_time(lambda: _experts_ssdq(x, tw, local_ids, state), device)
++    fns = [("marlin", lambda: _experts_marlin(x, tw, local_ids, state)),
++           ("ssdq", lambda: _experts_ssdq(x, tw, local_ids, state))]
++    if with2:
++        f_on = int(state.get("ssdq2_fence", 1))
++        fns.append(("ssdq2", lambda: _experts_ssdq(x, tw, local_ids, state, v2=True, fence=f_on)))
++        fns.append(("ssdq2_nofence" if f_on else "ssdq2_fence",
++                    lambda: _experts_ssdq(x, tw, local_ids, state, v2=True, fence=1 - f_on)))
++    tiny = torch.zeros(1, dtype=torch.int32, device=device)
++    fns.append(("empty", lambda: tiny.zero_()))
++    graphs = [(name, _ssdq_graph_time(fn, device)) for name, fn in fns]
+     flush = torch.empty(256 * 2 ** 20 // 4, dtype=torch.float32, device=device)  # > the 50 MB L2
+     ev = [torch.cuda.Event(enable_timing=True) for _ in range(2)]
+ 
+@@ -1773,19 +2138,131 @@ def _ssdq_gate(state, device):
+         torch.cuda.synchronize()
+         return ev[0].elapsed_time(ev[1]) * 1000.0
+ 
+-    t_m, t_n = [], []
+-    once(g_m)
+-    once(g_n)
++    for _, g in graphs:
++        once(g)
++    samples = {name: [] for name, _ in graphs}
+     for i in range(SSDQ_ALTERNATIONS):
+-        if i % 2 == 0:
+-            t_m.append(once(g_m))
+-            t_n.append(once(g_n))
+-        else:
+-            t_n.append(once(g_n))
+-            t_m.append(once(g_m))
+-    t_m.sort()
+-    t_n.sort()
+-    return t_m[len(t_m) // 2], t_n[len(t_n) // 2]
++        k = i % len(graphs)
++        for name, g in graphs[k:] + graphs[:k]:
++            samples[name].append(once(g))
++    med = {}
++    for name, v in samples.items():
++        v.sort()
++        med[name] = v[len(v) // 2]
++    base = med["empty"]
++    out = {name: max(m - base, 1.0) for name, m in med.items() if name != "empty"}
++    out["empty"] = base
++    return out
++
++
++def _ssdq_counters_line(tag, name, rec):
++    """One counters print. rec = (empty wait, consumer wait (2 warpgroups), CTAs, total cycles, raw wait or None)."""
++    wait_p, wait_c, ctas, cyc, wait_r = rec
++    if not ctas:
++        return
++    raw_txt = "" if wait_r is None else f"producer waiting on raw_full (TMA ring) {wait_r / ctas:.0f} cycles, "
++    print(f"{tag} counters {name} T={SSDQ_GATE_TOKENS}: {ctas} CTAs, per CTA {cyc / ctas:.0f} cycles, "
++          f"{raw_txt}producer waiting on empty stages {wait_p / ctas:.0f} cycles, consumer waiting on full "
++          f"stages {wait_c / (2 * ctas):.0f} cycles per warpgroup ({100.0 * wait_c / (2 * ctas) / max(cyc / ctas, 1):.0f}% "
++          f"of the CTA) (producer-bound if the consumer wait is large; raw_full wait large = load-latency bound, "
++          f"small = dequant-ALU bound)", flush=True)
++
++
++def _ssdq2_checks(state, weights, cache, device, gen, t_start, phase):
++    """prepare() only, after master's ssdq has passed its own canary, self-check, replay check and counters.
++    ssdq2: own opt-in to SMEM2, canary (both proxy-fence variants), self-check vs the fp32 reference (bound
++    as master's), the two-state replay check, and the counters next to master's. Returns True when ssdq2
++    may enter the gate. Never raises; a failure leaves master's ssdq as it was."""
++    try:
++        if time.perf_counter() - t_start > SSDQ2_BUDGET_S:
++            print(f"{SSDQ2_TAG} OFF: prepare already used {time.perf_counter() - t_start:.0f}s > "
++                  f"{SSDQ2_BUDGET_S:.0f}s (ssdq2 not tried)", flush=True)
++            return False
++        ext = state["ssdq_ext"]
++        info = ext.ssdq2_info()
++        print(f"{SSDQ2_TAG} kernel ssdq2_kernel: regs={info[0]} local_bytes={info[1]} static_smem={info[2]} "
++              f"dyn_smem={info[3]} (expected {SSDQ2_SMEM_BYTES}; STAGES2={SSDQ2_STAGES} RAW_STAGES={SSDQ2_RAW_STAGES}) "
++              f"ctas_per_sm={info[4]} setattr_rc={info[5]} binaryVersion={info[6]} ptxVersion={info[7]} "
++              f"attr_ok={info[8]}", flush=True)
++        if not info[8] or info[4] < 1 or info[3] != SSDQ2_SMEM_BYTES:
++            print(f"{SSDQ2_TAG} OFF: cannot launch (attributes/occupancy/smem)", flush=True)
++            return False
++        state["ssdq2_err"] = torch.zeros(3, dtype=torch.int32, device=device)
++        state["ssdq2_prof"] = torch.zeros(10, dtype=torch.int64, device=device)
++        state["ssdq2_fence"] = 1   # shipped variant: fence.proxy.async between the ring reads and the refill
++
++        # Canary after master's: one tiny launch per proxy-fence variant, each synced and printed.
++        for fence in (1, 0):
++            x, tw, lids = _ssdq_case(130, "random", gen, device)
++            state["ssdq2_err"].zero_()
++            tracer = _SsdqTracer(f"ssdq2 canary fence={fence}")
++            out = _experts_ssdq(x, tw, lids, state, tracer=tracer, v2=True, fence=fence)
++            torch.cuda.synchronize()
++            word = int(state["ssdq2_err"][0].item())
++            marks = state["ssdq2_err"].tolist()
++            print(f"{SSDQ2_TAG} canary fence={fence}: error word {word}, launch marker w13 {marks[1]} w2 {marks[2]}",
++                  flush=True)
++            if (marks[1] <= 0 or marks[2] <= 0 or word != 0 or tracer.rc_bad or tracer.bad
++                    or not bool(torch.isfinite(out.float()).all())):
++                print(f"{SSDQ2_TAG} OFF: canary fence={fence} failed: error word {word} "
++                      f"({SSDQ_ERR_TEXT.get(word, '?')}), {tracer.rc_bad}, non-finite after {tracer.bad}", flush=True)
++                return False
++        print(f"{SSDQ2_TAG} canary ok (both fence variants)", flush=True)
++        phase("ssdq2-canary")
++
++        # Self-check: the shipped (fence=1) variant on every case; fence=0 also on two of them.
++        cases = ((1506, "random", (1,)), (3012, "random", (1, 0)), (4096, "skewed", (1, 0)),
++                 (1100, "one", (1,)), (4096, "random", (1,)))
++        for tokens, kind, fences in cases:
++            x, tw, lids = _ssdq_case(tokens, kind, gen, device)
++            ref_y = _ssdq_reference_y(x, lids, weights, cache)
++            ref = fused_post_expert_norm_weighted_sum(
++                ref_y.view(tokens, TOP_K, D_EXPERT), tw, norm_weight=state["post_expert_w"], eps=POST_NORM_EPS,
++                weight_first=True, slot_expert_ids=lids)
++            mar = _experts_marlin(x, tw, lids, state)
++            torch.cuda.synchronize()
++            e_mar, w_mar = _ssdq_metrics(mar, ref)
++            bound = max(2.0 * e_mar, 8e-3)
++            for fence in fences:
++                state["ssdq2_err"].zero_()
++                tracer = _SsdqTracer(f"ssdq2 T={tokens} {kind} fence={fence}")
++                new = _experts_ssdq(x, tw, lids, state, tracer=tracer, v2=True, fence=fence)
++                torch.cuda.synchronize()
++                word = int(state["ssdq2_err"][0].item())
++                marks = state["ssdq2_err"].tolist()
++                e_new, w_new = _ssdq_metrics(new, ref)
++                print(f"{SSDQ2_TAG} self-check T={tokens} {kind} fence={fence}: ssdq2 rel L2 {e_new:.3e} worst row "
++                      f"{w_new:.3e}; marlin rel L2 {e_mar:.3e} worst row {w_mar:.3e}; bound {bound:.3e}; error word "
++                      f"{word}; {int((lids >= 0).sum())} local routes; launch marker w13 {marks[1]} w2 {marks[2]}",
++                      flush=True)
++                if marks[1] <= 0 or marks[2] <= 0:
++                    word = word or 99
++                if word != 0 or tracer.rc_bad or tracer.bad or not (e_new <= bound and w_new <= 5.0 * bound):
++                    print(f"{SSDQ2_TAG} OFF: self-check failed at T={tokens} {kind} fence={fence} (error word {word}, "
++                          f"{tracer.rc_bad}, non-finite after {tracer.bad})", flush=True)
++                    return False
++        phase("ssdq2-self-check")
++        why = _ssdq_replay_check(state, weights, cache, device, gen, v2=True)
++        if why:
++            print(f"{SSDQ2_TAG} OFF: two-state replay check failed: {why}", flush=True)
++            return False
++        phase("ssdq2-replay-check")
++
++        # Counters at T=3012: ssdq2 next to master's (master's were printed just before).
++        gen2 = torch.Generator(device=device).manual_seed(20261025)
++        x, tw, lids = _ssdq_case(SSDQ_GATE_TOKENS, "random", gen2, device)
++        state["ssdq2_prof"].zero_()
++        _experts_ssdq(x, tw, lids, state, use_prof=True, v2=True)
++        torch.cuda.synchronize()
++        prof = state["ssdq2_prof"].tolist()
++        for mode, name in ((0, "w13"), (1, "w2")):
++            p5 = prof[5 * mode:5 * mode + 5]
++            _ssdq_counters_line(SSDQ2_TAG, name, (p5[0], p5[1], p5[2], p5[3], p5[4]))
++        phase("ssdq2-counters")
++        return True
++    except Exception as e:  # a python-level failure only: master's ssdq keeps its own decision
++        print(f"{SSDQ2_TAG} OFF: ssdq2 checks raised {e!r}", flush=True)
++        return False
+ 
+ 
+ def _ssdq_setup(state, weights, device, t_start):
+@@ -1793,6 +2270,7 @@ def _ssdq_setup(state, weights, device, t_start):
+     error), producer/consumer-wait counters, and the cold-L2 graph gate at turn_4. Sets
+     state['ssdq_ok']; every failure prints one OFF line and leaves Marlin as master has it."""
+     state["ssdq_ok"] = False
++    state["ssdq2_ok"] = False
+     why = None
+     phases = []
+     t_phase = [time.perf_counter()]
+@@ -1815,14 +2293,29 @@ def _ssdq_setup(state, weights, device, t_start):
+         if why:
+             print(f"{SSDQ_TAG} OFF: {why} (PATH CHOSEN = marlin at every T)", flush=True)
+             return
+-        offenders = _ssdq_source_audit()
++        # The module with ssdq2_kernel first; if it does not build, rebuild master's module alone so a
++        # stage-2 compile error never costs master's ssdq (ssdq2 is then off).
++        has2 = True
++        offenders = _ssdq_source_audit(True)
++        if offenders:
++            print(f"{SSDQ_TAG} source audit (with ssdq2) found templated accessors (long/long long trap): "
++                  f"{offenders[:4]}; building master's module without ssdq2", flush=True)
++            has2 = False
++            offenders = _ssdq_source_audit(False)
+         if offenders:
+             print(f"{SSDQ_TAG} OFF: source audit found templated accessors (long/long long trap): "
+                   f"{offenders[:4]} (PATH CHOSEN = marlin at every T)", flush=True)
+             return
+         print(f"{SSDQ_TAG} source audit ok: no data_ptr<..> or templated size/item/data/to accessor", flush=True)
+         phase("audit")
+-        ext, err_text = _ssdq_build()
++        ext, err_text = _ssdq_build(has2) if has2 else (None, "")
++        if ext is None and has2:
++            print(f"{SSDQ2_TAG} OFF: module with ssdq2_kernel did not build; rebuilding master's ssdq module alone",
++                  flush=True)
++        if ext is None:
++            has2 = False
++            if time.perf_counter() - t_start <= SSDQ2_BUDGET_S + 40.0:
++                ext, err_text = _ssdq_build(False)
+         phase("build")
+         if ext is None:
+             print(f"{SSDQ_TAG} OFF: build failed (PATH CHOSEN = marlin at every T)", flush=True)
+@@ -1893,9 +2386,9 @@ def _ssdq_setup(state, weights, device, t_start):
+                 return
+         phase("self-check")
+         replay_why = _ssdq_replay_check(state, weights, cache, device, gen)
+-        del cache
+-        torch.cuda.empty_cache()
+         if replay_why:
++            del cache
++            torch.cuda.empty_cache()
+             print(f"{SSDQ_TAG} OFF: two-state replay check failed: {replay_why} (PATH CHOSEN = marlin)", flush=True)
+             return
+ 
+@@ -1910,29 +2403,50 @@ def _ssdq_setup(state, weights, device, t_start):
+         prof = state["ssdq_prof"].tolist()
+         for mode, name in ((0, "w13"), (1, "w2")):
+             wait_p, wait_c, ctas, cyc = prof[4 * mode:4 * mode + 4]
+-            if ctas:
+-                print(f"{SSDQ_TAG} counters {name} T={SSDQ_GATE_TOKENS}: {ctas} CTAs, per CTA {cyc / ctas:.0f} cycles, "
+-                      f"producer waiting on empty stages {wait_p / ctas:.0f} cycles, consumer waiting on full "
+-                      f"stages {wait_c / (2 * ctas):.0f} cycles per warpgroup "
+-                      f"(producer-bound if the consumer wait is large and the producer wait small)", flush=True)
++            _ssdq_counters_line(SSDQ_TAG, name + " (master ssdq)", (wait_p, wait_c, ctas, cyc, None))
+ 
+         phase("counters")
+-        # Gate: cold-L2 CUDA-graph replays, whole expert block, new vs Marlin pair, turn_4 T.
+-        t_m, t_n = _ssdq_gate(state, device)
++        # Stage 2: ssdq2 (after master's ssdq has been canaried, self-checked and counted). Its checks
++        # reuse the fp32 reference cache, which is freed right after.
++        ok2_pre = False
++        if has2:
++            ok2_pre = _ssdq2_checks(state, weights, cache, device, gen, t_start, phase)
++        del cache
++        torch.cuda.empty_cache()
++        # Gate: cold-L2 CUDA-graph replays, whole expert block, Marlin pair vs master's ssdq vs ssdq2
++        # (and ssdq2 with the proxy fence flipped, informational), turn_4 T, empty-graph baseline subtracted.
++        med = _ssdq_gate(state, device, with2=ok2_pre)
+         phase("gate")
++        t_m, t_n = med["marlin"], med["ssdq"]
++        t_2 = med.get("ssdq2")
+         ratio = t_n / t_m
+-        ok = ratio <= SSDQ_GATE_RATIO
+-        state["ssdq_ok"] = bool(ok)
+-        print(f"{SSDQ_TAG} GATE T={SSDQ_GATE_TOKENS} cold-L2 graph medians over {SSDQ_ALTERNATIONS} alternations: "
+-              f"marlin pair {t_m:.1f} us, ssdq {t_n:.1f} us, ratio {ratio:.3f} (ON at <= {SSDQ_GATE_RATIO})", flush=True)
+-        print(f"{SSDQ_TAG} PATH CHOSEN T in ({SSDQ_MIN_TOKENS}, {MARLIN_MAX_TOKENS}]: "
+-              f"{'ssdq (faster: ' + format(t_n, '.1f') + ' < ' + format(t_m, '.1f') + ' us)' if ok else f'marlin (ssdq ratio {ratio:.3f} not <= {SSDQ_GATE_RATIO})'}; "
++        ok1 = ratio <= SSDQ_GATE_RATIO
++        ok2 = False
++        gate_txt = (f"marlin pair {t_m:.1f} us, ssdq {t_n:.1f} us (ratio {ratio:.3f}, ON at <= {SSDQ_GATE_RATIO})")
++        if t_2 is not None:
++            r2 = t_2 / t_n
++            ok2 = r2 <= SSDQ2_GATE_RATIO and t_2 / t_m <= SSDQ_GATE_RATIO
++            other = [f"{k} {v:.1f} us" for k, v in med.items() if k.startswith("ssdq2_")]
++            gate_txt += (f", ssdq2 {t_2:.1f} us (vs ssdq {r2:.3f}, ON at <= {SSDQ2_GATE_RATIO}; vs marlin "
++                         f"{t_2 / t_m:.3f}); " + ", ".join(other))
++        state["ssdq2_ok"] = bool(ok2)
++        state["ssdq_ok"] = bool(ok1 or ok2)
++        print(f"{SSDQ_TAG} GATE T={SSDQ_GATE_TOKENS} cold-L2 graph medians over {SSDQ_ALTERNATIONS} alternations "
++              f"(empty-graph baseline {med['empty']:.1f} us subtracted): {gate_txt}", flush=True)
++        if ok2:
++            chosen = f"ssdq2 (ssdq2 {t_2:.1f} us <= {SSDQ2_GATE_RATIO} x ssdq {t_n:.1f} us; marlin {t_m:.1f} us)"
++        elif ok1:
++            chosen = (f"ssdq (master's; ssdq {t_n:.1f} < marlin {t_m:.1f} us"
++                      + ("" if t_2 is None else f"; ssdq2 {t_2:.1f} us not <= {SSDQ2_GATE_RATIO} x ssdq") + ")")
++        else:
++            chosen = f"marlin (ssdq ratio {ratio:.3f} not <= {SSDQ_GATE_RATIO})"
++        print(f"{SSDQ_TAG} PATH CHOSEN T in ({SSDQ_MIN_TOKENS}, {MARLIN_MAX_TOKENS}]: {chosen}; "
+               f"all other T: unchanged", flush=True)
+-        if not ok:
++        if not (ok1 or ok2):
+             print(f"{SSDQ_TAG} OFF: gate ratio {ratio:.3f} > {SSDQ_GATE_RATIO}", flush=True)
+-        assert (not ok) or t_n < t_m
+     except Exception as e:  # never raises into prepare(); a device fault would have poisoned the context
+         state["ssdq_ok"] = False
++        state["ssdq2_ok"] = False
+         print(f"{SSDQ_TAG} OFF: setup raised {e!r} (PATH CHOSEN = marlin)", flush=True)
+     finally:
+         # Last lines of prepare(): the archived log keeps the tail.
+@@ -1942,10 +2456,11 @@ def _ssdq_setup(state, weights, device, t_start):
+               + f"; total {total:.1f}s; budget remaining {SSDQ_BUDGET_S - total:.1f}s of {SSDQ_BUDGET_S:.0f}s",
+               flush=True)
+         ssdq_on = bool(state.get("ssdq_ok"))
++        which = "ssdq2" if state.get("ssdq2_ok") else ("ssdq" if ssdq_on else "marlin")
+         print(f"{SSDQ_TAG} PATH CHOSEN T <= {SSDQ_MIN_TOKENS}: marlin/unchanged; "
+-              f"T in ({SSDQ_MIN_TOKENS}, {MARLIN_MAX_TOKENS}]: {'ssdq' if ssdq_on else 'marlin'} "
+-              f"(gate ratio constant SSDQ_GATE_RATIO = {SSDQ_GATE_RATIO}); T > {MARLIN_MAX_TOKENS}: triton/unchanged",
+-              flush=True)
++              f"T in ({SSDQ_MIN_TOKENS}, {MARLIN_MAX_TOKENS}]: {which} "
++              f"(gate ratios SSDQ_GATE_RATIO = {SSDQ_GATE_RATIO}, SSDQ2_GATE_RATIO = {SSDQ2_GATE_RATIO}); "
++              f"T > {MARLIN_MAX_TOKENS}: triton/unchanged", flush=True)
+ 
+ 
+ def kernel_fn(data, state):
