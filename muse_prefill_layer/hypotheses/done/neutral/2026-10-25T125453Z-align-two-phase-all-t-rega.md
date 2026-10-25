@@ -92,6 +92,7 @@ best_at_harvest: 1.4060131381907617
 promotion: merged
 hand_landed: true
 promotion_commit: 1932a9c4fb3d8dc735bb1a513853637c0ada892c
+promotion_attempt: 2026-10-25T145748Z-submit-align-two-phase-all-t-rega.md
 ---
 
 # align-two-phase-all-t-rega
