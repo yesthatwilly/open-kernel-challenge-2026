@@ -1,6 +1,6 @@
 # muse_attention_decode findings
 
-Regenerated 2026-10-25T003217Z by `churn.py index`. Read this before writing a hypothesis for muse_attention_decode.
+Regenerated 2026-10-25T010422Z by `churn.py index`. Read this before writing a hypothesis for muse_attention_decode.
 
 ## Current best
 
@@ -142,6 +142,13 @@ Where the time goes (per scored shape, top kernels):
 - queue: full-decode-splitkv-s2-streamk-ticket [full-layer attention (decode, splitkv kernel A/B)] p1 hold
 - queue: full-verify-wgmma-s3-warpgroup-per-kvhead [full-layer attention (verify, splitkv A8/B8)] p2 hold
 - queue: sliding-cluster-s2-decode-c4-pdl [sliding-layer attention (decode, cluster kernel)] p2 hold
+- queue: full-decode-splitkv-s3-fused-preattn [full-layer attention (decode, splitkv stream-K kernel prologue)] p1 queued
+- queue: full-decode1-streamk-s3-two-level-ticket [full-layer attention (batch-1 decode, splitkv stream-K kernel)] p1 queued
+- queue: full-verify-wgmma-s4-sliding-window [sliding-layer attention (verify, wgmma stream-K kernel)] p2 queued
+- queue: full-verify1-wgmma-s4-batch1-grid-sm [full-layer attention (batch-1 verify, wgmma stream-K kernel)] p2 queued
+- queue: sliding-decode-paired-kvhead-rows [sliding-layer attention (batched decode, KV row gather)] p2 hold
+- queue: sliding-decode-paired-kvhead-rows-control-unpaired-s8 [sliding-layer attention (batched decode, split depth)] p2 queued
 - running: full-decode-splitkv-s2-streamk-ticket-inproc [full-layer attention (decode, splitkv kernel A/B)] p1 running
 - running: full-verify-wgmma-s3-warpgroup-per-kvhead-inproc [full-layer attention (verify, splitkv A8/B8)] p2 running
 - running: sliding-cluster-s2-decode-c4-pdl-inproc [sliding-layer attention (decode, cluster kernel)] p2 running
+- running: sliding-verify-fa3-head-pairing [FA3 call (head packing, sliding verify)] p3 running

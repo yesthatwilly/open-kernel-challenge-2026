@@ -1,6 +1,6 @@
 # muse_moe_w4a16 findings
 
-Regenerated 2026-10-25T003349Z by `churn.py index`. Read this before writing a hypothesis for muse_moe_w4a16.
+Regenerated 2026-10-25T010422Z by `churn.py index`. Read this before writing a hypothesis for muse_moe_w4a16.
 
 ## Current best
 
@@ -63,6 +63,8 @@ Where the time goes (per scored shape, top kernels):
 ### w13 marlin + silu-mul + w2 marlin
 - **cuda-nvfp4-swapab-mma-persistent-small-m** → failed (test:failed). Small-M only: num_tokens <= 32 (decode_1 bs=1, verify_1 bs=8, decode_16, decode_32 and the bs=1/bs=4 tests); num_tokens > 32 (bs=33, 128, 256, 257 tests and ver
 - **cuda-nvfp4-wgmma-rega-grouped-verify** → neutral (within-ci), 1.3123x — no shape moved outside noise. Verify shapes only: num_tokens >= 128 (verify_16 bs=128, verify_32 bs=256, and the bs=128-skewed and bs=257 tests). num_tokens < 128 (incl. the bs=33 test) keep
+- **cuda-nvfp4-wgmma-rega-grouped-sm90a-rebuild-inproc** → neutral (unproven-vs-best), 1.3303x — gained on verify_16 verify_16; verify_32 verify_32. RE-MEASURE (stage 1b): the previous run never executed the new kernel; load_inline failed because cpp_extension appended its own -gencode arch=compute_90,code=s
+- **cuda-nvfp4-swapab-mma-persistent-small-m-inproc** → regression (regression), 0.9250x — gained on decode_1 decode_1; verify_16 verify_16; verify_32 verify_32; lost on decode_16 decode_16; decode_32 decode_32; verify_1 verify_1. FIX (stage 1b, make it run): the previous run built (51.2 s, 80-128 regs, 0 local) but its first CUDA launch in _cuda_self_check hit illegal instruction 715 (st
 
 ### w2 marlin
 - **w2-l2-prefetch-decode1** → regression (regression), 1.2615x — lost on decode_1 decode_1. At num_tokens == 1 only (decode_1; every other M runs master unchanged), warm L2 with the w2 weights of this token's local experts before the w13 Marlin call, s
@@ -91,6 +93,7 @@ Where the time goes (per scored shape, top kernels):
 - align-small-one-warp-tiny-m: unproven-vs-best: the change is not proven either way; a stacked hypothesis (`depends_on: align-small-one-warp-tiny-m`) that adds a further change in the same area is the only way to learn more (identical code is never r
 - stack-onewarp-hoisted-dispatchcombine: within-ci: the change is not proven either way; a stacked hypothesis (`depends_on: stack-onewarp-hoisted-dispatchcombine`) that adds a further change in the same area is the only way to learn more (identical code is neve
 - stack-onewarp-hoisted-dispatchcombine-from17: within-ci: the change is not proven either way; a stacked hypothesis (`depends_on: stack-onewarp-hoisted-dispatchcombine-from17`) that adds a further change in the same area is the only way to learn more (identical code 
+- cuda-nvfp4-wgmma-rega-grouped-sm90a-rebuild-inproc: rewrite stage 1 of `Marlin w13+w2 (moe_wna16_marlin_gemm x2) + silu_and_mul at num_tokens >= 128`: read the replaced kernels' own us per shape (profile top_kernels) against the incumbent and the floor, and check which Mi
 - triton-map-align-verify-chunked: none
 - cuda-nvfp4-swapab-mma-persistent-small-m: rewrite stage 1 of `Marlin w13+w2 (moe_wna16_marlin_gemm x2) at bs<=32`: read the replaced kernels' own us per shape (profile top_kernels) against the incumbent and the floor, and check which Milestone it reached. The ne
 
@@ -115,5 +118,3 @@ Where the time goes (per scored shape, top kernels):
 - running: post-norm-triton-hoisted-decode32 [post-expert norm+combine] p2 running
 - running: post-norm-pdl-launch-small-m [launch overhead] p2 running
 - running: cuda-fused-moe-bs1-persistent-nospin-bandwidth-inproc [whole-layer fusion] p3 running
-- running: cuda-nvfp4-swapab-mma-persistent-small-m-inproc [w13 marlin + silu-mul + w2 marlin] p2 running
-- running: cuda-nvfp4-wgmma-rega-grouped-sm90a-rebuild-inproc [w13 marlin + silu-mul + w2 marlin] p1 running

@@ -1,6 +1,6 @@
 # muse_moe_w4a16 hypotheses
 
-Regenerated 2026-10-25T003349Z. Best: 1.3278x [1.3079,1.3477] job `1947e3ec2abb4bdf` (submit)
+Regenerated 2026-10-25T010422Z. Best: 1.3278x [1.3079,1.3477] job `1947e3ec2abb4bdf` (submit)
 
 | created | slug | kind | area | where | outcome | speedup | CI | job | mode | promotion | review | expected hit |
 |---|---|---|---|---|---|---|---|---|---|---|---|---|
@@ -39,8 +39,8 @@ Regenerated 2026-10-25T003349Z. Best: 1.3278x [1.3079,1.3477] job `1947e3ec2abb4
 | 2026-10-24T172123Z | cuda-fused-moe-midm-single-launch-routed | rewrite | whole-layer fusion | queue | hold |  |  |  |  |  | proceed |  |
 | 2026-10-24T183202Z | cuda-dispatch-combine-pdl-verify | rewrite | MoE align/dispatch + post-expert norm+combine | done/neutral | neutral | 1.3283 | [1.308,1.348] | c41860068fe4432f | submit |  | proceed | 4/6 |
 | 2026-10-24T183618Z | post-norm-combine-hoisted-slot-loads | primary | post-expert norm+combine | done/neutral | neutral | 1.3282 | [1.308,1.348] | d7501477ce2748d5 | submit |  | proceed | 3/6 |
-| 2026-10-24T183635Z | post-norm-triton-hoisted-decode32 | primary | post-expert norm+combine | running | running |  |  |  |  |  | proceed |  |
-| 2026-10-24T183649Z | post-norm-pdl-launch-small-m | primary | launch overhead | running | running |  |  |  |  |  | proceed |  |
+| 2026-10-24T183635Z | post-norm-triton-hoisted-decode32 | primary | post-expert norm+combine | running | running |  |  | 47d186dd91974d84 | check |  | proceed |  |
+| 2026-10-24T183649Z | post-norm-pdl-launch-small-m | primary | launch overhead | running | running |  |  | 5202cf15936c4492 | check |  | proceed |  |
 | 2026-10-24T183702Z | align-parallel-from-17-tokens | primary | MoE align/dispatch | done/neutral | neutral | 1.3250 | [1.305,1.345] | ed6d884240084d9c | submit |  | proceed | 5/6 |
 | 2026-10-24T183722Z | align-small-one-warp-tiny-m | primary | MoE align/dispatch | done/neutral | neutral | 1.3287 | [1.309,1.349] | 38532ba10e394e3c | submit |  | proceed | 4/6 |
 | 2026-10-25T000436Z | stack-onewarp-hoisted-dispatchcombine | primary | MoE align (bs<=8 one warp; bs>=128 CUDA) + post-expert combine (bs<32 hoisted; bs>=128 CUDA) | done/neutral | neutral | 1.3176 | [1.298,1.337] | 7e5ab95a413f4ebe | check |  | required | 0/1 |
@@ -48,9 +48,9 @@ Regenerated 2026-10-25T003349Z. Best: 1.3278x [1.3079,1.3477] job `1947e3ec2abb4
 | 2026-10-25T001223Z | cuda-nvfp4-wgmma-rega-grouped-sm90a-rebuild | rewrite | w13 marlin + silu-mul + w2 marlin | queue | hold |  |  |  |  |  | hold |  |
 | 2026-10-25T001240Z | cuda-nvfp4-swapab-mma-persistent-small-m-childcheck | rewrite | w13 marlin + silu-mul + w2 marlin | queue | hold |  |  |  |  |  | hold |  |
 | 2026-10-25T001254Z | cuda-fused-moe-bs1-persistent-nospin-bandwidth | rewrite | whole-layer fusion | queue | hold |  |  |  |  |  | hold |  |
-| 2026-10-25T001824Z | cuda-fused-moe-bs1-persistent-nospin-bandwidth-inproc | rewrite | whole-layer fusion | running | running |  |  |  |  |  | proceed |  |
-| 2026-10-25T001824Z | cuda-nvfp4-swapab-mma-persistent-small-m-inproc | rewrite | w13 marlin + silu-mul + w2 marlin | running | running |  |  | fecc63ef567b4dc2 | check |  | proceed |  |
-| 2026-10-25T001824Z | cuda-nvfp4-wgmma-rega-grouped-sm90a-rebuild-inproc | rewrite | w13 marlin + silu-mul + w2 marlin | running | running |  |  |  |  |  | proceed |  |
+| 2026-10-25T001824Z | cuda-fused-moe-bs1-persistent-nospin-bandwidth-inproc | rewrite | whole-layer fusion | running | running |  |  | 7a6919420b724ee7 | check |  | proceed |  |
+| 2026-10-25T001824Z | cuda-nvfp4-wgmma-rega-grouped-sm90a-rebuild-inproc | rewrite | w13 marlin + silu-mul + w2 marlin | done/neutral | neutral | 1.3303 | [1.310,1.350] | b56d17fda2d54be2 | check |  | proceed | 6/6 |
+| 2026-10-25T001824Z | cuda-nvfp4-swapab-mma-persistent-small-m-inproc | rewrite | w13 marlin + silu-mul + w2 marlin | done/regression | regression | 0.9250 | [0.911,0.939] | fecc63ef567b4dc2 | check |  | proceed | 1/6 |
 | 2026-10-25T001825Z | cuda-fused-moe-bs1-persistent-bandwidth-s3-inproc | rewrite | whole-layer fusion | queue | queued |  |  |  |  |  | proceed |  |
 
 ## Held
