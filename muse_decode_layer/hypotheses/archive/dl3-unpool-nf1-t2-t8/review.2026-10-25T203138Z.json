@@ -1,0 +1,16 @@
+{
+ "model": "opus",
+ "verdict": "hold",
+ "summary": "Duplicate of master: the landed combo-measured-rows-slide-batched-preattn-t8-tail (ec89382b, BEST 1.3142x) contains S2b, dl_unpool_kernel NF=1 at 2 <= T <= 8 with the same dl3['u8'] flag, checks, selector and kernel_fn gate; the BEST job turned it on (PATH CHOSEN S2b NEW 6.50 vs 11.10 us; profile dl_unpool_kernel<1,8,1024> 6.6 us at verify_1).",
+ "justification": "master submission.py l.7352-7356 carries the identical gate; per-state u8 at l.5826/6063/6840; BEST log a903b9d004d2452d l.56/63; profile l.133/151. The hypothesis's base d5595769 is two promotions stale and its expected rows assume the nvjet splitK incumbent that verify_1 no longer runs. Missing prior: stack-route-topk-pdl-unpool-nf1 and the combo's S2b.",
+ "confounders": [
+  "combo-measured-rows-slide-batched-preattn-t8-tail (landed): contains this exact change (duplicate, not confounder).",
+  "dense-chain-s3-t1-q-sk2-o-route-unpool (landed): supplies the T=1 piece and module S2b reuses."
+ ],
+ "interference": "No companions: on master the change is a no-op.",
+ "rules_flags": [],
+ "companions": [],
+ "open_questions": [
+  "Retire as superseded by the combo's S2b."
+ ]
+}
