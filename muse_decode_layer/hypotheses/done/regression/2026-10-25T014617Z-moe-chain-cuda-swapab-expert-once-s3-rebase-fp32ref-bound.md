@@ -68,10 +68,10 @@ controls_for: null
 rewrite_stage: 3
 replaces: moe_align + Marlin w13 + act_and_mul + Marlin w2 at tokens > 32
 review: proceed
-status: running
+status: done
 review_at: 2026-10-25T034534Z
 review_companions: null
-stage: dispatched
+stage: harvested
 claimed_at: 2026-10-25T034535Z
 base_sha: 1177e314e5b0c1b2d21bb03967270350659d0f15
 base_blob: 451c3c09efdc6fc55db461ae20f27cd8e1cd4e9c
@@ -90,6 +90,13 @@ attempt_file: 2026-10-25T035159Z-check-moe-chain-cuda-swapab-expert-once-s3-reba
 prepared_at: 2026-10-25T035159Z
 job: 51d047cbc5ff450a
 dispatched_at: 2026-10-25T035207Z
+outcome: regression
+verdict_detail: regression
+speedup: 1.0637372150195272
+speedup_ci: [1.0477811567942343, 1.0796932732448201]
+harvested_at: 2026-10-25T043358Z
+best_at_harvest: 1.2680313318618024
+promotion: null
 ---
 
 # moe-chain-cuda-swapab-expert-once-s3-rebase-fp32ref-bound
@@ -178,3 +185,35 @@ Checked, no change needed:
 - Rules: no child process beyond load_inline's build, nothing cached from inputs.
 
 Residual risk: the fp32 reference now matches the judge, but stage 2's ~6e-3 out gap may be real new-chain error. If so, the 1.5x-Marlin ratio keeps the path OFF (a neutral run).
+
+## Result
+
+- job `51d047cbc5ff450a` (check), status done, passed True, tests 13/13
+- speedup 1.0637x, 95% CI [1.0478, 1.0797], score 21264.932429373315 µs vs SGLang 22620.3 µs
+- best at harvest: {"speedup": 1.2680313318618024, "ci": [1.2490108618838753, 1.2870518018397292], "job": "c243a29f26dc4725"}; base result: muse_decode_layer/hypotheses/done/regression/moe-chain-cuda-swapab-expert-once-fix-inproc.result.json
+- **outcome: regression** (regression)
+- files: `muse_decode_layer/hypotheses/done/regression/moe-chain-cuda-swapab-expert-once-s3-rebase-fp32ref-bound.result.json`, `muse_decode_layer/hypotheses/done/regression/moe-chain-cuda-swapab-expert-once-s3-rebase-fp32ref-bound.patch`; branch `hyp/muse_decode_layer/moe-chain-cuda-swapab-expert-once-s3-rebase-fp32ref-bound`
+
+## Attribution
+
+| shape | w | base µs | hyp µs | delta | verdict |
+|---|---|---|---|---|---|
+| batch=1 ctx=80000 dist=soft layer=sliding load=decode_1 page=1 repeats=60 | 46 | 144.87 | 127.64 | 1.1407 | gained |
+| batch=1 ctx=80000 dist=soft layer=full load=decode_1 page=1 repeats=60 | 16 | 154.93 | 142.74 | 1.0889 | gained |
+| batch=16 ctx=80000 dist=soft layer=sliding load=decode_16 page=1 spread=agentic | 46 | 232.64 | 209.4 | 1.0853 | gained |
+| batch=16 ctx=80000 dist=soft layer=full load=decode_16 page=1 spread=agentic | 16 | 371.92 | 352.9 | 1.0497 | gained |
+| batch=32 ctx=80000 dist=soft layer=sliding load=decode_32 page=1 spread=agentic | 46 | 261.06 | 241.62 | 1.0775 | gained |
+| batch=32 ctx=80000 dist=soft layer=full load=decode_32 page=1 spread=agentic | 16 | 546.21 | 530.0 | 1.0419 | gained |
+| batch=1 ctx=80000 dist=soft layer=sliding load=verify_1 page=1 q_len=8 | 46 | 202.38 | 173.54 | 1.1003 | gained |
+| batch=1 ctx=80000 dist=soft layer=full load=verify_1 page=1 q_len=8 | 16 | 211.61 | 194.34 | 1.0911 | gained |
+| batch=16 ctx=80000 dist=soft layer=sliding load=verify_16 page=1 q_len=8 spread=agentic | 46 | 446.97 | 743.63 | 0.5986 | lost |
+| batch=16 ctx=80000 dist=soft layer=full load=verify_16 page=1 q_len=8 spread=agentic | 16 | 589.42 | 893.0 | 0.6603 | lost |
+| batch=32 ctx=80000 dist=soft layer=sliding load=verify_32 page=1 q_len=8 spread=agentic | 46 | 621.68 | 935.94 | 0.6396 | lost |
+| batch=32 ctx=80000 dist=soft layer=full load=verify_32 page=1 q_len=8 spread=agentic | 16 | 899.65 | 1236.5 | 0.7259 | lost |
+
+gained on sliding decode_1, decode_16, decode_32, verify_1; full decode_1, decode_16, decode_32, verify_1; lost on sliding verify_16, verify_32; full verify_16, verify_32. Expected hit: 0/4. Noise ±1.5%.
+
+## Follow-ups
+
+- rewrite stage 3 of `moe_align + Marlin w13 + act_and_mul + Marlin w2 at tokens > 32`: read the replaced kernels' own us per shape (profile top_kernels) against the incumbent and the floor, and check which Milestone it reached. The next stage is `/hypothesize muse_decode_layer "<what to fix or tune>" --kind rewrite --depends-on moe-chain-cuda-swapab-expert-once-s3-rebase-fp32ref-bound --stage 4`; a slow or failed first cut is the expected start, not a do-not-retry.
+

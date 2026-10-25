@@ -1,0 +1,107 @@
+[small-t-dense-chain] load_inline compiled in 49.0s
+[small-t-dense-chain] P occupancy (CTAs/SM, NF=1/2/4): [3, 2, 2]; grid 216 CTAs
+[small-t-dense-chain] PDL probe: eager overlap False (-6.7 us), graph overlap True (49.7 us, secondary waited 50.4 us) -> pdl=1
+[small-t-dense-chain] P timing T=1 pdl=0 20.9 us (3.62 TB/s) pdl=1 20.6 us (3.67 TB/s)
+[small-t-dense-chain] P timing T=8 pdl=0 21.9 us (3.44 TB/s) pdl=1 21.7 us (3.49 TB/s)
+[small-t-dense-chain] P timing T=32 pdl=0 26.3 us (2.87 TB/s) pdl=1 26.0 us (2.90 TB/s)
+[small-t-dense-chain] ON pdl=1 compile 49.0s max errs ei 1.35e-04 logit 4.29e-06 xn 3.39e-05 w 0.00e+00 y 0.00e+00 graph 0.00e+00: PATH CHOSEN = DENSE-CHAIN at T <= 32, MASTER above
+[align-parallel-large-t] ON cases=18 mismatches=0
+[moe-cuda-large-t] building with TORCH_CUDA_ARCH_LIST=9.0a (was None), extra_cuda_cflags ['-O3', '-lineinfo', '-gencode=arch=compute_90a,code=sm_90a']
+[moe-cuda-large-t] load_inline compiled in 37.0s
+[moe-cuda-large-t] device capability (9, 0), torch 2.14.1+cu130, cuda 13.0, build flags ['-O3', '-lineinfo', '-gencode=arch=compute_90a,code=sm_90a']
+[moe-cuda-large-t] device max dynamic smem per block (opt-in) 232448 B; GEMMs request 221184 B
+[moe-cuda-large-t] kernel moe_route_list: attrs ok True, binaryVersion 90, ptxVersion 90, numRegs 22, localSizeBytes 0, static smem 256 B, dyn smem requested 0 B, maxDynamicSharedSizeBytes 48896 B
+[moe-cuda-large-t] kernel moe_w13_silu_swapab: attrs ok True, binaryVersion 90, ptxVersion 90, numRegs 148, localSizeBytes 0, static smem 0 B, dyn smem requested 221184 B, maxDynamicSharedSizeBytes 221184 B
+[moe-cuda-large-t] kernel moe_w2_swapab: attrs ok True, binaryVersion 90, ptxVersion 90, numRegs 148, localSizeBytes 0, static smem 0 B, dyn smem requested 221184 B, maxDynamicSharedSizeBytes 221184 B
+[moe-cuda-large-t] kernel lt_arch_probe: attrs ok True, binaryVersion 90, ptxVersion 90, numRegs 10, localSizeBytes 0, static smem 0 B, dyn smem requested 0 B, maxDynamicSharedSizeBytes 49152 B
+[moe-cuda-large-t] kernel lt_canary_cvt: attrs ok True, binaryVersion 90, ptxVersion 90, numRegs 12, localSizeBytes 0, static smem 0 B, dyn smem requested 0 B, maxDynamicSharedSizeBytes 49152 B
+[moe-cuda-large-t] kernel lt_canary_dequant: attrs ok True, binaryVersion 90, ptxVersion 90, numRegs 20, localSizeBytes 0, static smem 0 B, dyn smem requested 0 B, maxDynamicSharedSizeBytes 49152 B
+[moe-cuda-large-t] kernel lt_canary_mma: attrs ok True, binaryVersion 90, ptxVersion 90, numRegs 32, localSizeBytes 0, static smem 4096 B, dyn smem requested 0 B, maxDynamicSharedSizeBytes 45056 B
+[moe-cuda-large-t] kernel lt_canary_cpasync: attrs ok True, binaryVersion 90, ptxVersion 90, numRegs 71, localSizeBytes 0, static smem 0 B, dyn smem requested 221184 B, maxDynamicSharedSizeBytes 221184 B
+[moe-cuda-large-t] launching lt_arch_probe
+[moe-cuda-large-t] ok lt_arch_probe
+[moe-cuda-large-t] arch probe: __CUDA_ARCH__ 900, __CUDA_ARCH_FEAT_SM90_ALL 1
+[moe-cuda-large-t] launching canary cvt.rn.f16x2.e4m3x2 (lt_canary_cvt)
+[moe-cuda-large-t] ok canary cvt.rn.f16x2.e4m3x2 (lt_canary_cvt)
+[moe-cuda-large-t] launching canary dequant8 bf16x2 multiply (lt_canary_dequant)
+[moe-cuda-large-t] ok canary dequant8 bf16x2 multiply (lt_canary_dequant)
+[moe-cuda-large-t] launching canary ldmatrix.x4 + mma.sync m16n8k16 tile (lt_canary_mma)
+[moe-cuda-large-t] ok canary ldmatrix.x4 + mma.sync m16n8k16 tile (lt_canary_mma)
+[moe-cuda-large-t]   canary mma tile row rel 3.01e-08 (bound 1e-4)
+[moe-cuda-large-t] launching canary cp.async at 221184 B dyn smem x 256 threads (lt_canary_cpasync)
+[moe-cuda-large-t] ok canary cp.async at 221184 B dyn smem x 256 threads (lt_canary_cpasync)
+[moe-cuda-large-t] retiled 32 experts losslessly (round trips exact) in 0.1s
+[moe-cuda-large-t] grid 132 persistent CTAs x 256 threads, chunk 64 routes
+[moe-cuda-large-t] launching moe_route_list T=33
+[moe-cuda-large-t] ok moe_route_list T=33
+[moe-cuda-large-t] launching moe_w13_silu_swapab T=33
+[moe-cuda-large-t] ok moe_w13_silu_swapab T=33
+[moe-cuda-large-t] launching moe_w2_swapab T=33
+[moe-cuda-large-t] ok moe_w2_swapab T=33
+[moe-cuda-large-t] launching post_expert_norm_weighted_sum T=33
+[moe-cuda-large-t] ok post_expert_norm_weighted_sum T=33
+[moe-cuda-large-t]   canary T=33: 62 local routes, finite True
+[moe-cuda-large-t] launching marlin reference T=40
+[moe-cuda-large-t] ok marlin reference T=40
+[moe-cuda-large-t] launching moe_route_list T=40
+[moe-cuda-large-t] ok moe_route_list T=40
+[moe-cuda-large-t] launching moe_w13_silu_swapab T=40
+[moe-cuda-large-t] ok moe_w13_silu_swapab T=40
+[moe-cuda-large-t] launching moe_w2_swapab T=40
+[moe-cuda-large-t] ok moe_w2_swapab T=40
+[moe-cuda-large-t] launching post_expert_norm_weighted_sum T=40
+[moe-cuda-large-t] ok post_expert_norm_weighted_sum T=40
+[moe-cuda-large-t] launching moe_route_list T=40
+[moe-cuda-large-t] ok moe_route_list T=40
+[moe-cuda-large-t] launching moe_w13_silu_swapab T=40
+[moe-cuda-large-t] ok moe_w13_silu_swapab T=40
+[moe-cuda-large-t] launching moe_w2_swapab T=40
+[moe-cuda-large-t] ok moe_w2_swapab T=40
+[moe-cuda-large-t] launching post_expert_norm_weighted_sum T=40
+[moe-cuda-large-t] ok post_expert_norm_weighted_sum T=40
+[moe-cuda-large-t]   T=40 vs fp32 (global/row), new | marlin: act 2.81e-03/3.17e-03 | 5.37e-03/7.01e-03; y 3.19e-03/3.72e-03 | 4.92e-03/9.12e-03; out 4.14e-03/4.38e-03 | 5.09e-03/5.36e-03; out ratio new/marlin global 0.81 row 0.82; bounds out global 7.63e-03 row 8.04e-03 caps 1.5e-02/3.0e-02
+[moe-cuda-large-t]   T=40 old marlin-relative: act row 7.74e-03 y row 1.10e-02 out global 5.92e-03; 62 local routes, finite True, ids equal True, repeat True, fp32-combine sanity 2.94e-03
+[moe-cuda-large-t] launching marlin reference T=128
+[moe-cuda-large-t] ok marlin reference T=128
+[moe-cuda-large-t] launching moe_route_list T=128
+[moe-cuda-large-t] ok moe_route_list T=128
+[moe-cuda-large-t] launching moe_w13_silu_swapab T=128
+[moe-cuda-large-t] ok moe_w13_silu_swapab T=128
+[moe-cuda-large-t] launching moe_w2_swapab T=128
+[moe-cuda-large-t] ok moe_w2_swapab T=128
+[moe-cuda-large-t] launching post_expert_norm_weighted_sum T=128
+[moe-cuda-large-t] ok post_expert_norm_weighted_sum T=128
+[moe-cuda-large-t] launching moe_route_list T=128
+[moe-cuda-large-t] ok moe_route_list T=128
+[moe-cuda-large-t] launching moe_w13_silu_swapab T=128
+[moe-cuda-large-t] ok moe_w13_silu_swapab T=128
+[moe-cuda-large-t] launching moe_w2_swapab T=128
+[moe-cuda-large-t] ok moe_w2_swapab T=128
+[moe-cuda-large-t] launching post_expert_norm_weighted_sum T=128
+[moe-cuda-large-t] ok post_expert_norm_weighted_sum T=128
+[moe-cuda-large-t]   T=128 vs fp32 (global/row), new | marlin: act 2.94e-03/3.29e-03 | 5.31e-03/7.31e-03; y 3.42e-03/3.66e-03 | 5.14e-03/9.20e-03; out 4.17e-03/4.48e-03 | 5.11e-03/5.51e-03; out ratio new/marlin global 0.82 row 0.81; bounds out global 7.67e-03 row 8.26e-03 caps 1.5e-02/3.0e-02
+[moe-cuda-large-t]   T=128 old marlin-relative: act row 8.45e-03 y row 1.12e-02 out global 5.96e-03; 171 local routes, finite True, ids equal True, repeat True, fp32-combine sanity 2.95e-03
+[moe-cuda-large-t] launching marlin reference T=256
+[moe-cuda-large-t] ok marlin reference T=256
+[moe-cuda-large-t] launching moe_route_list T=256
+[moe-cuda-large-t] ok moe_route_list T=256
+[moe-cuda-large-t] launching moe_w13_silu_swapab T=256
+[moe-cuda-large-t] ok moe_w13_silu_swapab T=256
+[moe-cuda-large-t] launching moe_w2_swapab T=256
+[moe-cuda-large-t] ok moe_w2_swapab T=256
+[moe-cuda-large-t] launching post_expert_norm_weighted_sum T=256
+[moe-cuda-large-t] ok post_expert_norm_weighted_sum T=256
+[moe-cuda-large-t] launching moe_route_list T=256
+[moe-cuda-large-t] ok moe_route_list T=256
+[moe-cuda-large-t] launching moe_w13_silu_swapab T=256
+[moe-cuda-large-t] ok moe_w13_silu_swapab T=256
+[moe-cuda-large-t] launching moe_w2_swapab T=256
+[moe-cuda-large-t] ok moe_w2_swapab T=256
+[moe-cuda-large-t] launching post_expert_norm_weighted_sum T=256
+[moe-cuda-large-t] ok post_expert_norm_weighted_sum T=256
+[moe-cuda-large-t]   T=256 vs fp32 (global/row), new | marlin: act 2.87e-03/3.29e-03 | 5.40e-03/7.35e-03; y 3.30e-03/3.78e-03 | 6.59e-03/9.49e-03; out 4.14e-03/4.56e-03 | 5.10e-03/5.56e-03; out ratio new/marlin global 0.81 row 0.82; bounds out global 7.65e-03 row 8.34e-03 caps 1.5e-02/3.0e-02
+[moe-cuda-large-t]   T=256 old marlin-relative: act row 8.71e-03 y row 1.16e-02 out global 5.92e-03; 433 local routes, finite True, ids equal True, repeat True, fp32-combine sanity 2.93e-03
+[moe-cuda-large-t] eager event timing T=128 (synthetic routing, warm L2, print only): moe_route_list 8.5 us, moe_w13_silu_swapab 421.8 us, moe_w2_swapab 240.0 us, post_expert_norm_weighted_sum 8.9 us; route+w13+w2 670.3 us; marlin path total 319.5 us
+[moe-cuda-large-t] eager event timing T=256 (synthetic routing, warm L2, print only): moe_route_list 9.3 us, moe_w13_silu_swapab 546.8 us, moe_w2_swapab 312.8 us, post_expert_norm_weighted_sum 9.2 us; route+w13+w2 868.9 us; marlin path total 442.4 us
+[moe-cuda-large-t] ON: compile 37.0s, worst out error ratio new/marlin vs fp32 0.82 (bound 1.5, floors 3e-03/6e-03, caps 1.5e-02/3.0e-02), last launch / stage none, all checks passed
+[moe-cuda-large-t] PATH CHOSEN = CUDA for tokens > 32; MARLIN at tokens <= 32
