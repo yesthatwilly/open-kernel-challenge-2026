@@ -79,8 +79,11 @@ kind: rewrite
 controls_for: null
 rewrite_stage: 3
 replaces: master Triton weight streams at m<=32 for pooler (_bf16_splitk_kernel m<=16, _bf16_swapab_kernel m 17..32), unpooler-full (nvjet m=16, swap-AB m=32) and qkv_gate (_qkv_splitk_sem_kernel m<=16, swap-AB m 17..32)
-review: required
-status: queued
+review: hold
+status: hold
+review_at: 2026-10-25T010658Z
+review_companions: null
+hold_reason: "adversarial review: Stage 2's pooler m=1 kernel took 30.8 us in the judge profile, past this hypothesis's own supersede threshold (> 28 us) and 1.62x short of the 19.0 us kill gate"
 ---
 
 # bf16-lossless-exp4-warpspec-persistent-stage3
@@ -116,3 +119,26 @@ shape (profile top_kernels) against the incumbent and the speed-of-light floor, 
 2. at or below the incumbent kernels' time on the target shapes;
 3. within ~1.5x of the floor on the target shapes, and the headline CI clears 1.0 (promotable).
 The next stage is minted with `--kind rewrite --depends-on <this slug> --stage N+1`.
+
+## Adversarial review
+
+Reviewed 2026-10-25T010658Z by an adversarial subagent (model opus).
+
+**Verdict: hold.** Stage 2's pooler m=1 kernel took 30.8 us in the judge profile, past this hypothesis's own supersede threshold (> 28 us) and 1.62x short of the 19.0 us kill gate. Stage 2's log also shows the kernel is decode/issue-bound inside the SM, not memory-latency-bound, which is what warp-specialized cp.async producers and a persistent split target. Mark superseded; do not spend a check on it as written.
+
+### Justification
+Stage 2 (job f1024212dd2f49f3, 0.887x [0.874, 0.900], 9/9 pass, bit-exact): pooler m=1 30.8 us (incumbent 19.0), m=8/16/32 31.0/34.7/39.6; unpooler m=16/32 32.7/34.3 (incumbent ~18.5/18.1); qkv_gate m=1/8/16/32 18.9/19.2/22.2/25.7 (incumbent 12.2-14.2). Every routed row 1.5-2.1x slower. Stage 1->2 bought 1.32x for 2x warps; stage 3 needs another 1.62x to tie. Warm vs cold L2 barely differ (pooler 33.1 vs 40.3, unpooler 31.3 vs 38.6), and qkv_gate's L2-resident compressed stream runs at ~1.5 TB/s compressed vs the incumbent's ~3 TB/s raw from L2: decode ALU/issue and the mma.sync chain are the limit. Only part 2 (double-buffered decoded A fragments) targets it, and it competes for registers. NT growth +29-36% suggests dequant-once did not take effect or per-token work dominates. Compression ratio 0.761 caps the byte saving at ~24%; qkv_gate is L2-resident, so compression can only lose there.
+
+### Confounders on the current kernel
+- bf16-m32-swapab-wgmma-triton / bf16-shape-gated-triton-winners-combo: the incumbents; stage 2 misses by 1.5-2.1x, loss belongs to the lossless kernel.
+- Base drift: BEST is the unlanded 1.2215 restack, whose incumbents are faster still on these rows.
+
+### Interference and A/B needs
+No companion. The deciding question is physics: can the exp4 decoder plus mma.sync reach >= 3.3 TB/s compressed? If revived, the next stage should first measure decode-only throughput from L2-resident data (no mma, no output) in prepare; if decode alone cannot beat ~2.7 TB/s compressed, the line is dead.
+
+### Open questions
+- Why does stage-2 kernel time grow 29-36% from NT=8 to NT=32 if dequant happens once per fragment?
+- Decoder ALU ops per element?
+- Drop qkv_gate from scope in any revival?
+- Is this rewrite slot better spent elsewhere given ~+6-8% on 4 of 6 loads vs the 1.2215 restack?
+
