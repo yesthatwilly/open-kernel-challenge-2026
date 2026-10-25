@@ -23,8 +23,8 @@ priority: 1
 kind: primary
 controls_for: null
 review: required
-status: running
-stage: dispatched
+status: done
+stage: harvested
 claimed_at: 2026-10-24T232737Z
 base_sha: 40aa18e2a31c08252c27c88f94c261e2614a4998
 base_blob: 635cfee3ac2c3f7c66840b8c8a082cad2fa41a68
@@ -43,6 +43,13 @@ attempt_file: 2026-10-24T232747Z-check-restack-router-hilo-align32-zerostore.md
 prepared_at: 2026-10-24T232747Z
 job: ead4bc2e7b364add
 dispatched_at: 2026-10-24T232756Z
+outcome: neutral
+verdict_detail: unproven-vs-best
+speedup: 1.0608200319850172
+speedup_ci: [1.044907731505242, 1.0767323324647924]
+harvested_at: 2026-10-25T000222Z
+best_at_harvest: 1.0591912383762452
+promotion: null
 ---
 
 # restack-router-hilo-align32-zerostore
@@ -73,3 +80,31 @@ Built in the main thread 2026-10-24 ~23:30Z (user-approved self-review, no new a
 - [x] No timing/harness access, processes, network or module edits.
 - [x] No work outside timed calls added.
 - [x] okc_lint: no errors.
+
+## Result
+
+- job `ead4bc2e7b364add` (check), status done, passed True, tests 5/5
+- speedup 1.0608x, 95% CI [1.0449, 1.0767], score 365192.8586558513 µs vs SGLang 387403.9 µs
+- best at harvest: {"speedup": 1.0591912383762452, "ci": [1.0433033698006016, 1.0750791069518888], "job": "ba9c16b9cc6b4605"}; base result: muse_prefill_layer/hypotheses/done/gain/experts-hybrid-marlin-turn-triton-first-turn.result.json
+- **outcome: neutral** (unproven-vs-best)
+- files: `muse_prefill_layer/hypotheses/done/neutral/restack-router-hilo-align32-zerostore.result.json`, `muse_prefill_layer/hypotheses/done/neutral/restack-router-hilo-align32-zerostore.patch`; branch `hyp/muse_prefill_layer/restack-router-hilo-align32-zerostore`
+
+## Attribution
+
+| shape | w | base µs | hyp µs | delta | verdict |
+|---|---|---|---|---|---|
+| batch=1 ctx=80000 dist=soft layer=sliding load=turn_1 page=1 q_len=753 repeats=6 | 46 | 1079.54 | 1169.39 | 1.003 | flat |
+| batch=1 ctx=80000 dist=soft layer=full load=turn_1 page=1 q_len=753 repeats=6 | 16 | 1419.09 | 1543.95 | 0.9981 | flat |
+| batch=4 ctx=80000 dist=soft layer=sliding load=turn_4 page=1 q_len=753 repeats=6 | 46 | 3334.9 | 3529.67 | 1.0025 | flat |
+| batch=4 ctx=80000 dist=soft layer=full load=turn_4 page=1 q_len=753 repeats=6 | 16 | 4937.98 | 4821.87 | 1.001 | flat |
+| batch=1 ctx=0 dist=soft layer=full load=first_turn page=1 q_len=16384 repeats=6 | 16 | 15386.32 | 13914.5 | 0.9665 | lost |
+| batch=1 ctx=32768 dist=soft layer=sliding load=first_turn page=1 q_len=16384 repeats=6 | 138 | 14275.3 | 14704.17 | 1.0032 | flat |
+| batch=1 ctx=32768 dist=soft layer=full load=first_turn page=1 q_len=16384 repeats=6 | 16 | 18165.94 | 18491.3 | 1.0012 | flat |
+| batch=1 ctx=65536 dist=soft layer=full load=first_turn page=1 q_len=16384 repeats=6 | 16 | 22332.92 | 21942.14 | 0.9932 | flat |
+
+lost on full first_turn. Expected hit: 0/1. Noise ±1.5%.
+
+## Follow-ups
+
+- unproven-vs-best: the change is not proven either way; a stacked hypothesis (`depends_on: restack-router-hilo-align32-zerostore`) that adds a further change in the same area is the only way to learn more (identical code is never re-run).
+

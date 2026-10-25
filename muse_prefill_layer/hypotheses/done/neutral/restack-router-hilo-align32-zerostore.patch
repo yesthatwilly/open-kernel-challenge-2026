@@ -1,0 +1,110 @@
+diff --git a/muse_prefill_layer/submission.py b/muse_prefill_layer/submission.py
+index 635cfee..191990a 100644
+--- a/muse_prefill_layer/submission.py
++++ b/muse_prefill_layer/submission.py
+@@ -424,7 +424,7 @@ CHECK_ROWS = 128
+ CHECK_K = EXPERT_BLOCK_K
+ 
+ 
+-def _check_expert_gemms(bank, weights):
++def _check_expert_gemms(bank, weights, zero_w2=ZERO_NONLOCAL_W2):
+     """Untimed. Runs every kernel variant kernel_fn can launch (so each is compiled before capture)
+     on a synthetic case built from the weights alone, and asserts its in-kernel dequant of the
+     reordered bank equals nvfp4.dequantize of the ORIGINAL packing. Row r of A is one-hot at
+@@ -434,7 +434,7 @@ def _check_expert_gemms(bank, weights):
+     block when zero-storing)."""
+     device = bank["w13"].device
+     e = LOCAL_EXPERTS - 1  # the largest expert offsets
+-    for name, top_k, zero_nonlocal in (("w13", TOP_K, False), ("w2", 1, ZERO_NONLOCAL_W2)):
++    for name, top_k, zero_nonlocal in (("w13", TOP_K, False), ("w2", 1, zero_w2)):
+         w, sf, gs = bank[name], bank[name + "_sf"], bank[name + "_gs"]
+         orig = weights[name]
+         n, k = w.shape[1], w.shape[2] * 2
+@@ -515,6 +515,37 @@ def _check_experts_e2e(state, device):
+         f"expert e2e check: worst row {worst:.3e} > {E2E_ROW_FACTOR:g} x {E2E_CHECK_TOL:g}")
+ 
+ 
++def _weighted_sum_skips_remote(state, device):
++    """Untimed, prepare() only (hypothesis w2-nonlocal-zero-store-off-first-turn). True when
++    fused_post_expert_norm_weighted_sum never reads the y rows of remote slots: its output is
++    bitwise equal and finite whether those rows hold NaN or zero. Then the w2 zero-store of -1 token
++    tiles is dead work and can be turned off."""
++    try:
++        gen = torch.Generator(device=device).manual_seed(20261024)
++        t = 4096
++        ids = torch.randint(0, N_EXPERTS, (t, TOP_K), generator=gen, device=device, dtype=torch.int32)
++        local_ids = torch.where(ids < LOCAL_EXPERTS, ids, torch.full_like(ids, -1)).contiguous()
++        w = torch.rand((t, TOP_K), generator=gen, device=device, dtype=torch.float32)
++        w = (w / w.sum(dim=1, keepdim=True)).contiguous()
++        y = torch.randn((t, TOP_K, D_EXPERT), generator=gen, device=device, dtype=torch.float32).to(torch.bfloat16)
++        remote = local_ids < 0
++        outs = []
++        for fill in (float("nan"), 0.0):
++            yy = y.clone()
++            yy[remote] = fill
++            outs.append(fused_post_expert_norm_weighted_sum(
++                yy, w, norm_weight=state["post_expert_w"], eps=POST_NORM_EPS, weight_first=True,
++                slot_expert_ids=local_ids))
++        torch.cuda.synchronize()
++        ok = bool(torch.isfinite(outs[0].float()).all()) and torch.equal(outs[0], outs[1])
++        print(f"[w2 zero-store] {'OFF (weighted sum skips remote slots)' if ok else 'ON: weighted sum reads remote rows'}",
++              flush=True)
++        return ok
++    except Exception as e:
++        print(f"[w2 zero-store] ON: probe raised {e!r}", flush=True)
++        return False
++
++
+ def prepare(weights):
+     device = weights["qkv_gate"].device
+     router = weights["router"]
+@@ -535,6 +566,8 @@ def prepare(weights):
+         "dense": {name: weights[name].contiguous() for name in ("qkv_gate", "o", "pooler", "unpooler")},
+         "router_hi_t": hi.t().contiguous(),
+         "router_lo_t": lo.t().contiguous(),
++        # router-hilo-one-gemm-n512: hi | lo side by side, bf16 [8192, 512], so one GEMM gives both halves.
++        "router_hilo_t": torch.cat((hi.t(), lo.t()), dim=1).contiguous(),
+         "routing": FusedMuseSparkRouting(expert_bias=weights["router_bias"].float().contiguous(), route_scale=1.0,
+                                          router_output_multiplier=0.1767766952966369,
+                                          router_score_division_eps=1e-15),
+@@ -553,7 +586,8 @@ def prepare(weights):
+     # The Triton bank first (its scales alias the weights), and its check: compiles every
+     # expert-GEMM variant and checks its dequant against nvfp4.dequantize.
+     state["bank"] = _expert_bank(weights)
+-    _check_expert_gemms(state["bank"], weights)
++    state["zero_nonlocal_w2"] = not _weighted_sum_skips_remote(state, device)
++    _check_expert_gemms(state["bank"], weights, state["zero_nonlocal_w2"])
+     torch.cuda.synchronize()
+     scale_names = ("w13_sf", "w13_gs", "w2_sf", "w2_gs")
+     scales_before = {name: state["bank"][name].clone() for name in scale_names}
+@@ -625,7 +659,9 @@ def _experts_triton(x, topk_weights, local_ids, state):
+     num_slots = num_tokens * TOP_K
+     topk_weights = topk_weights.to(torch.float32).contiguous()
+     cfg = _expert_config(num_tokens)
+-    sorted_ids, block_experts, n_padded = moe_align_block_size(local_ids, cfg["BLOCK_T"], N_EXPERTS)
++    # moe-align-32-experts-first-turn: the ids are already 0-31 or -1, so align over the 32 local experts
++    # (muse_moe_w4a16 master does the same): 32 counters and numel + 33*(BLOCK_T-1) capacity, not 257.
++    sorted_ids, block_experts, n_padded = moe_align_block_size(local_ids, cfg["BLOCK_T"], LOCAL_EXPERTS)
+     cache2 = torch.empty((num_slots, size_n), device=x.device, dtype=x.dtype)
+     cache13 = torch.empty((num_slots * max(gemm1_n, size_k),), device=x.device, dtype=x.dtype)
+     cache1 = cache13[: num_slots * gemm1_n].view(-1, gemm1_n)
+@@ -634,7 +670,7 @@ def _experts_triton(x, topk_weights, local_ids, state):
+                     n_padded, TOP_K, num_slots, cfg, False)
+     silu_and_mul(cache1, cache2, expert_ids=local_ids.view(-1), expert_step=1)
+     y = _nvfp4_moe_gemm(cache2, bank["w2"], bank["w2_sf"], bank["w2_gs"], cache3, sorted_ids, block_experts,
+-                        n_padded, 1, num_slots, cfg, ZERO_NONLOCAL_W2).view(num_tokens, TOP_K, size_k)
++                        n_padded, 1, num_slots, cfg, state["zero_nonlocal_w2"]).view(num_tokens, TOP_K, size_k)
+     return fused_post_expert_norm_weighted_sum(
+         y, topk_weights, norm_weight=state["post_expert_w"], eps=POST_NORM_EPS, weight_first=True,
+         slot_expert_ids=local_ids)
+@@ -696,8 +732,8 @@ def kernel_fn(data, state):
+     side_stream.wait_stream(main_stream)
+     expert_input = _gemm(ffn_input, dense["pooler"])
+     with torch.cuda.stream(side_stream):
+-        logits = torch.mm(ffn_input, state["router_hi_t"], out_dtype=torch.float32)
+-        logits += torch.mm(ffn_input, state["router_lo_t"], out_dtype=torch.float32)
++        both = torch.mm(ffn_input, state["router_hilo_t"], out_dtype=torch.float32)
++        logits = both[:, :N_EXPERTS] + both[:, N_EXPERTS:]
+         topk_weights, topk_ids = state["routing"](None, logits, TOP_K, True)
+     main_stream.wait_stream(side_stream)
+     if not torch.cuda.is_current_stream_capturing():
