@@ -52,10 +52,10 @@ priority: 1
 kind: primary
 controls_for: null
 review: proceed
-status: running
+status: done
 review_at: 2026-10-25T042349Z
 review_companions: null
-stage: dispatched
+stage: harvested
 claimed_at: 2026-10-25T042349Z
 base_sha: fd92cb3a1268dd03948af28bfe64ae31f385757e
 base_blob: 970b415b746fa03cb92e419d270be92588273178
@@ -74,6 +74,13 @@ attempt_file: 2026-10-25T043016Z-check-restack-unpooler-slice-cluster-dsmem-m8.m
 prepared_at: 2026-10-25T043016Z
 job: e557d92969864449
 dispatched_at: 2026-10-25T043024Z
+outcome: neutral
+verdict_detail: unproven-vs-best
+speedup: 1.2260415399232283
+speedup_ci: [1.2076509168243799, 1.2444321630220765]
+harvested_at: 2026-10-25T043616Z
+best_at_harvest: 1.2215006063849365
+promotion: null
 ---
 
 # restack-unpooler-slice-cluster-dsmem-m8
@@ -179,3 +186,53 @@ Audited 2026-10-25 by an opus subagent, by reading only (no GPU here). **Verdict
 - Rules: OK. Self-check and gate use synthetic x, weights are read in place in bf16, and load_inline is the sanctioned build. Lint is OK with warnings, all of which are in prepare. py_compile passes.
 
 Residual risk: m = 8 may land near the 1.02x line in the graph-replay gate (the expected margin is only ~1.08x), and the gate would then switch the route off and the run would measure the restack.
+
+## Result
+
+- job `e557d92969864449` (check), status done, passed True, tests 9/9
+- speedup 1.2260x, 95% CI [1.2077, 1.2444], score 3940.1601354408376 µs vs SGLang 4830.8 µs
+- best at harvest: {"speedup": 1.2215006063849365, "ci": [1.2031780972891624, 1.2398231154807104], "job": "1e90292c7b954d96"}; base result: muse_bf16_proj/hypotheses/done/neutral/bf16-restack-m16-swapab-router-swapab-m32.result.json
+- **outcome: neutral** (unproven-vs-best)
+- files: `muse_bf16_proj/hypotheses/done/neutral/restack-unpooler-slice-cluster-dsmem-m8.result.json`, `muse_bf16_proj/hypotheses/done/neutral/restack-unpooler-slice-cluster-dsmem-m8.patch`; branch `hyp/muse_bf16_proj/restack-unpooler-slice-cluster-dsmem-m8`
+
+## Attribution
+
+| shape | w | base µs | hyp µs | delta | verdict |
+|---|---|---|---|---|---|
+| layer=qkv_gate load=decode_1 m=1 | 62 | 12.18 | 12.65 | 0.9883 | flat |
+| layer=o load=decode_1 m=1 | 62 | 5.89 | 5.8 | 1.0015 | flat |
+| layer=pooler load=decode_1 m=1 | 62 | 18.84 | 18.99 | 1.0052 | flat |
+| layer=unpooler load=decode_1 m=1 | 62 | 6.15 | 5.34 | 1.1363 | gained |
+| layer=router load=decode_1 m=1 | 62 | 5.38 | 5.38 | 0.9971 | flat |
+| layer=qkv_gate load=decode_16 m=16 | 62 | 13.15 | 13.42 | 0.9919 | flat |
+| layer=o load=decode_16 m=16 | 62 | 6.23 | 6.18 | 1.0123 | flat |
+| layer=pooler load=decode_16 m=16 | 62 | 19.47 | 19.44 | 1.0058 | flat |
+| layer=unpooler load=decode_16 m=16 | 62 | 18.51 | 18.54 | 1.0038 | flat |
+| layer=router load=decode_16 m=16 | 62 | 5.47 | 5.5 | 0.9979 | flat |
+| layer=qkv_gate load=decode_32 m=32 | 62 | 14.19 | 14.09 | 0.9852 | flat |
+| layer=o load=decode_32 m=32 | 62 | 6.34 | 6.63 | 0.9989 | flat |
+| layer=pooler load=decode_32 m=32 | 62 | 19.73 | 19.79 | 1.0111 | flat |
+| layer=unpooler load=decode_32 m=32 | 62 | 18.08 | 18.45 | 1.0017 | flat |
+| layer=router load=decode_32 m=32 | 62 | 6.2 | 5.92 | 1.02 | flat |
+| layer=qkv_gate load=verify_1 m=8 | 62 | 12.5 | 12.56 | 1.0003 | flat |
+| layer=o load=verify_1 m=8 | 62 | 6.13 | 6.16 | 1.01 | flat |
+| layer=pooler load=verify_1 m=8 | 62 | 18.89 | 18.89 | 1.0145 | flat |
+| layer=unpooler load=verify_1 m=8 | 62 | 6.0 | 5.41 | 1.1241 | gained |
+| layer=router load=verify_1 m=8 | 62 | 5.47 | 5.26 | 1.0315 | gained |
+| layer=qkv_gate load=verify_16 m=128 | 62 | 17.05 | 17.19 | 0.9954 | flat |
+| layer=o load=verify_16 m=128 | 62 | 6.98 | 7.44 | 0.966 | lost |
+| layer=pooler load=verify_16 m=128 | 62 | 25.0 | 25.06 | 1.0014 | flat |
+| layer=unpooler load=verify_16 m=128 | 62 | 19.96 | 19.97 | 0.9949 | flat |
+| layer=router load=verify_16 m=128 | 62 | 7.28 | 7.55 | 0.964 | lost |
+| layer=qkv_gate load=verify_32 m=256 | 62 | 19.69 | 19.92 | 0.9915 | flat |
+| layer=o load=verify_32 m=256 | 62 | 9.26 | 9.42 | 0.9964 | flat |
+| layer=pooler load=verify_32 m=256 | 62 | 31.19 | 30.83 | 0.9966 | flat |
+| layer=unpooler load=verify_32 m=256 | 62 | 24.42 | 24.14 | 1.005 | flat |
+| layer=router load=verify_32 m=256 | 62 | 9.6 | 9.49 | 1.0028 | flat |
+
+gained on unpooler decode_1, verify_1; router verify_1; lost on o verify_16; router verify_16. Expected hit: 7/9. Noise ±1.5%.
+
+## Follow-ups
+
+- unproven-vs-best: the change is not proven either way; a stacked hypothesis (`depends_on: restack-unpooler-slice-cluster-dsmem-m8`) that adds a further change in the same area is the only way to learn more (identical code is never re-run).
+

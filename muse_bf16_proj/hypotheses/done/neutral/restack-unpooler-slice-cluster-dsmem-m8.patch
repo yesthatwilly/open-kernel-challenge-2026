@@ -1,0 +1,618 @@
+diff --git a/muse_bf16_proj/submission.py b/muse_bf16_proj/submission.py
+index 970b415..5b37668 100644
+--- a/muse_bf16_proj/submission.py
++++ b/muse_bf16_proj/submission.py
+@@ -47,6 +47,8 @@ m64n16k16) and their own 16-row workspaces / tickets, routed BEFORE the m <= 16
+ keeps cuBLAS; every m >= 17 shape keeps its path.
+ """
+ 
++import os
++import time
+ from typing import TypedDict
+ 
+ import torch
+@@ -985,6 +987,586 @@ def _swapab16_prepare(state: dict) -> None:
+             state[f"swapab16_cnt_{key}"].zero_()
+ 
+ 
++# --- (7) unpooler n == 1024 slice, m <= 8: CUDA cluster / DSMEM split-K, gated at prepare -------
++# (hypothesis restack-unpooler-slice-cluster-dsmem-m8; the kernel is ported unchanged from job
++# 3f3330f7's oun_kernel, unpooler instantiation only: NT 8, no o instantiation is compiled.)
++#
++# Weight rows sit on the mma.sync m16n8k16 M side, the tokens on N (NT 8). A thread-block cluster of
++# CL CTAs splits K: rank r owns K [r*K/CL, (r+1)*K/CL) of the cluster's ROWS output rows. Every CTA
++# issues ALL its weight loads at once (NG cp.async.cg commit groups, no ring, 64 KB per CTA), the
++# smem tile is XOR-swizzled (16 B chunk c of row r stored at c ^ (r & 7)) in both the cp.async
++# destination and the ldmatrix addresses, the fp32 partial aliases the consumed weight buffer, and
++# the CL partials are reduced through distributed shared memory in fixed rank order with one bf16
++# store: no global workspace, no ticket, no atomics, no memset. There is no mbarrier and no
++# spin-wait in this kernel (only cluster barriers), so nothing to bound.
++#   CL 8 -> 16 clusters x 8 = 128 CTAs (1/SM), ROWS 64, K/CTA 512,  NG 4
++#   CL 4 -> 32 clusters x 4 = 128 CTAs (1/SM), ROWS 32, K/CTA 1024, NG 4
++# CL 8 is used only if cudaOccupancyMaxActiveClusters reports every cluster co-resident, else CL 4
++# under the same rule, else master's path. All PTX is baseline sm_90 (cluster launch, mapa,
++# barrier.cluster, mma.sync, cp.async): no wgmma / setmaxnreg, so no sm_90a-only guard is needed.
++#
++# The route is enabled only if, in prepare(), it passes the self-check AND beats the restack's own
++# unpooler-slice path by OUNS_MIN_WIN on the judge's own measurement: CUDA-graph replay, >= 256 MB
++# L2 flush before every replay, both paths interleaved (order swapped each rep), median of reps,
++# at m = 1 and m = 8. The profile shows no kernel-time gain; the gain lives in row time minus
++# kernel time, which only a graph replay includes.
++OUNS_MAX_M = 8
++OUNS_N = 1024
++OUNS_K = 4096
++OUNS_CLUSTERS_NEEDED = {8: 16, 4: 32}
++OUNS_CHECK_MS = (1, 5, 8)
++OUNS_GATE_MS = (1, 8)
++OUNS_FLUSH_BYTES = 256 * 1024 * 1024
++OUNS_GATE_REPS = 41
++OUNS_MIN_WIN = 1.02
++OUNS_EXT_NAME = "muse_bf16_unpool_slice_cluster_v3"
++
++_OUNS_CPP = r"""
++#include <torch/extension.h>
++#include <string>
++void ouns_run(torch::Tensor x, torch::Tensor w, torch::Tensor out, int64_t cl);
++int64_t ouns_occupancy(int64_t cl);
++std::string ouns_attrs(int64_t cl);
++"""
++
++_OUNS_CUDA = r"""
++#include <torch/extension.h>
++#include <ATen/cuda/CUDAContext.h>
++#include <c10/cuda/CUDAException.h>
++#include <cuda_bf16.h>
++#include <cstdint>
++#include <string>
++
++namespace {
++
++__device__ __forceinline__ uint32_t smem_u32(const void* p) {
++  return static_cast<uint32_t>(__cvta_generic_to_shared(p));
++}
++__device__ __forceinline__ void cp_async16(uint32_t dst, const void* src, int src_bytes) {
++  asm volatile("cp.async.cg.shared.global [%0], [%1], 16, %2;\n" :: "r"(dst), "l"(src), "r"(src_bytes) : "memory");
++}
++__device__ __forceinline__ void cp_commit() { asm volatile("cp.async.commit_group;\n" ::: "memory"); }
++template <int N>
++__device__ __forceinline__ void cp_wait() { asm volatile("cp.async.wait_group %0;\n" :: "n"(N) : "memory"); }
++__device__ __forceinline__ void cp_wait_pending(int pending) {
++  if (pending >= 3) cp_wait<3>();
++  else if (pending == 2) cp_wait<2>();
++  else if (pending == 1) cp_wait<1>();
++  else cp_wait<0>();
++}
++__device__ __forceinline__ void ldsm_x4(uint32_t (&r)[4], uint32_t addr) {
++  asm volatile("ldmatrix.sync.aligned.m8n8.x4.shared.b16 {%0,%1,%2,%3}, [%4];\n"
++               : "=r"(r[0]), "=r"(r[1]), "=r"(r[2]), "=r"(r[3]) : "r"(addr));
++}
++__device__ __forceinline__ void mma_bf16(float (&c)[4], const uint32_t (&a)[4], uint32_t b0, uint32_t b1) {
++  asm volatile("mma.sync.aligned.m16n8k16.row.col.f32.bf16.bf16.f32 {%0,%1,%2,%3}, {%4,%5,%6,%7}, {%8,%9}, {%0,%1,%2,%3};\n"
++               : "+f"(c[0]), "+f"(c[1]), "+f"(c[2]), "+f"(c[3])
++               : "r"(a[0]), "r"(a[1]), "r"(a[2]), "r"(a[3]), "r"(b0), "r"(b1));
++}
++__device__ __forceinline__ void cluster_arrive() { asm volatile("barrier.cluster.arrive.release.aligned;\n" ::: "memory"); }
++__device__ __forceinline__ void cluster_wait() { asm volatile("barrier.cluster.wait.acquire.aligned;\n" ::: "memory"); }
++__device__ __forceinline__ uint32_t map_rank(uint32_t addr, uint32_t rank) {
++  uint32_t r;
++  asm volatile("mapa.shared::cluster.u32 %0, %1, %2;\n" : "=r"(r) : "r"(addr), "r"(rank));
++  return r;
++}
++__device__ __forceinline__ float4 ld_remote_f4(uint32_t addr) {
++  float4 v;
++  asm volatile("ld.shared::cluster.v4.f32 {%0,%1,%2,%3}, [%4];\n"
++               : "=f"(v.x), "=f"(v.y), "=f"(v.z), "=f"(v.w) : "r"(addr) : "memory");
++  return v;
++}
++
++template <int NT, int ROWS, int KPER, int CL, int NG>
++struct Cfg {
++  static constexpr int THREADS = 256, NW = 8;
++  static constexpr int T = ROWS / 16;                 // 16-row MMA tiles per cluster
++  static constexpr int RG = T < NW ? T : NW;          // warp row groups
++  static constexpr int KG = NW / RG;                  // warp K groups
++  static constexpr int TPW = T / RG;                  // row tiles per warp
++  static constexpr int NB = NT / 8;                   // n8 blocks
++  static constexpr int PITCH = KPER * 2;              // smem row pitch, bytes
++  static constexpr int CHG = KPER / NG / 8;           // 16 B chunks per row per commit group
++  static constexpr int SG = KPER / NG / 16;           // k16 steps per commit group
++  static constexpr int SPG = SG / KG;                 // k16 steps per warp per group
++  static constexpr int PR = ROWS + 4;                 // partial pitch (floats): conflict-free C stores
++  static constexpr int W_BYTES = ROWS * PITCH;
++  static constexpr int X_BYTES = NT * PITCH;
++  static constexpr int SMEM = W_BYTES + X_BYTES;
++  static constexpr int RPR = ROWS / CL;               // rows each rank reduces
++  static_assert(ROWS % 16 == 0 && T % RG == 0 && NW % RG == 0, "row tiling");
++  static_assert(KPER % (NG * 16) == 0 && CHG % 8 == 0, "swizzle needs groups of 8-chunk multiples");
++  static_assert(SG % KG == 0 && SPG % 2 == 0, "k split");
++  static_assert(NT * PR * 4 <= W_BYTES, "fp32 partial must fit on the weight buffer");
++  static_assert(RPR % 4 == 0 && NG <= 4, "reduce / wait");
++};
++
++// out[m, n] bf16 = x[m, KPER*CL] @ w[:n, :KPER*CL]^T. Grid = (n / ROWS) * CL CTAs, cluster dim CL.
++template <int NT, int ROWS, int KPER, int CL, int NG>
++__global__ void __launch_bounds__(256, 2)
++ouns_kernel(const __nv_bfloat16* __restrict__ x, int64_t stride_x,
++           const __nv_bfloat16* __restrict__ w, int64_t stride_w,
++           __nv_bfloat16* __restrict__ out, int64_t stride_o, int m) {
++#if defined(__CUDA_ARCH__) && __CUDA_ARCH__ >= 900
++  using C = Cfg<NT, ROWS, KPER, CL, NG>;
++  extern __shared__ __align__(128) uint8_t smem[];
++  const int tid = threadIdx.x, lane = tid & 31, warp = tid >> 5;
++  uint32_t rank;
++  asm volatile("mov.u32 %0, %%cluster_ctarank;\n" : "=r"(rank));
++  const int cid = blockIdx.x / CL;
++  const int n0 = cid * ROWS;
++  const int kbase = static_cast<int>(rank) * KPER;
++  const uint32_t sw = smem_u32(smem);
++  const uint32_t sx = sw + C::W_BYTES;
++  const __nv_bfloat16* wb = w + (int64_t)n0 * stride_w + kbase;
++  const __nv_bfloat16* xb = x + kbase;
++
++  // All loads in flight at once: NG commit groups, each a K chunk of every weight row + x.
++#pragma unroll
++  for (int g = 0; g < NG; ++g) {
++    for (int q = tid; q < ROWS * C::CHG; q += C::THREADS) {
++      const int row = q / C::CHG, c = g * C::CHG + (q % C::CHG);
++      cp_async16(sw + row * C::PITCH + ((c ^ (row & 7)) << 4), wb + (int64_t)row * stride_w + c * 8, 16);
++    }
++    for (int q = tid; q < NT * C::CHG; q += C::THREADS) {
++      const int tok = q / C::CHG, c = g * C::CHG + (q % C::CHG);
++      const bool ok = tok < m;
++      cp_async16(sx + tok * C::PITCH + ((c ^ (tok & 7)) << 4),
++                 xb + (ok ? (int64_t)tok * stride_x : (int64_t)0) + c * 8, ok ? 16 : 0);
++    }
++    cp_commit();
++  }
++
++  float acc[C::TPW][C::NB][4];
++#pragma unroll
++  for (int i = 0; i < C::TPW; ++i)
++#pragma unroll
++    for (int nb = 0; nb < C::NB; ++nb)
++#pragma unroll
++      for (int e = 0; e < 4; ++e) acc[i][nb][e] = 0.f;
++
++  const int rg = warp % C::RG, kg = warp / C::RG;
++#pragma unroll
++  for (int g = 0; g < NG; ++g) {
++    cp_wait_pending(NG - 1 - g);
++    __syncthreads();  // group g (all threads' copies) is visible
++#pragma unroll
++    for (int j = 0; j < C::SPG; j += 2) {
++      const int kp = (g * C::SG + kg * C::SPG + j) / 2;  // k32 pair index in the CTA's K range
++      uint32_t b[C::NB][4];
++#pragma unroll
++      for (int nb = 0; nb < C::NB; ++nb)
++        ldsm_x4(b[nb], sx + (nb * 8 + (lane & 7)) * C::PITCH + (((kp * 4 + (lane >> 3)) ^ (lane & 7)) << 4));
++#pragma unroll
++      for (int i = 0; i < C::TPW; ++i) {
++        const int arow = (rg * C::TPW + i) * 16 + (lane & 15);
++#pragma unroll
++        for (int h = 0; h < 2; ++h) {
++          uint32_t a[4];
++          ldsm_x4(a, sw + arow * C::PITCH + (((((kp * 2 + h) * 2) + (lane >> 4)) ^ (lane & 7)) << 4));
++#pragma unroll
++          for (int nb = 0; nb < C::NB; ++nb) mma_bf16(acc[i][nb], a, b[nb][2 * h], b[nb][2 * h + 1]);
++        }
++      }
++    }
++  }
++  __syncthreads();  // every warp is done with the weight buffer: the fp32 partial aliases it
++
++  // CTA partial part[t][row] (pitch PR), K groups added in fixed order.
++  float* part = reinterpret_cast<float*>(smem);
++#pragma unroll
++  for (int st = 0; st < C::KG; ++st) {
++    if (kg == st) {
++#pragma unroll
++      for (int i = 0; i < C::TPW; ++i)
++#pragma unroll
++        for (int nb = 0; nb < C::NB; ++nb) {
++          const int row = (rg * C::TPW + i) * 16 + (lane >> 2);
++          const int t = nb * 8 + (lane & 3) * 2;
++          float* p0 = part + t * C::PR + row;
++          float* p1 = p0 + C::PR;
++          if (st == 0) {
++            p0[0] = acc[i][nb][0]; p1[0] = acc[i][nb][1]; p0[8] = acc[i][nb][2]; p1[8] = acc[i][nb][3];
++          } else {
++            p0[0] += acc[i][nb][0]; p1[0] += acc[i][nb][1]; p0[8] += acc[i][nb][2]; p1[8] += acc[i][nb][3];
++          }
++        }
++    }
++    __syncthreads();
++  }
++
++  cluster_arrive();  // release: this CTA's partial is visible cluster-wide
++  cluster_wait();    // acquire: all CL partials are visible
++
++  const uint32_t part_s = smem_u32(part);
++  constexpr int Q4 = C::RPR / 4;
++  const int items = m * Q4;
++  for (int idx = tid; idx < items; idx += C::THREADS) {
++    const int t = idx / Q4, j = idx % Q4;
++    const uint32_t off = static_cast<uint32_t>((t * C::PR + static_cast<int>(rank) * C::RPR + j * 4) * 4);
++    float4 s = make_float4(0.f, 0.f, 0.f, 0.f);
++#pragma unroll
++    for (int r = 0; r < CL; ++r) {  // fixed rank order: bit-deterministic
++      const float4 v = ld_remote_f4(map_rank(part_s + off, static_cast<uint32_t>(r)));
++      s.x += v.x; s.y += v.y; s.z += v.z; s.w += v.w;
++    }
++    __nv_bfloat162 lo = __floats2bfloat162_rn(s.x, s.y), hi = __floats2bfloat162_rn(s.z, s.w);
++    uint2 pk;
++    pk.x = *reinterpret_cast<uint32_t*>(&lo);
++    pk.y = *reinterpret_cast<uint32_t*>(&hi);
++    *reinterpret_cast<uint2*>(out + (int64_t)t * stride_o + n0 + static_cast<int>(rank) * C::RPR + j * 4) = pk;
++  }
++
++  cluster_arrive();  // nobody exits while another CTA may still read its shared memory
++  cluster_wait();
++#endif
++}
++
++template <int NT, int ROWS, int KPER, int CL, int NG>
++struct Inst {
++  using C = Cfg<NT, ROWS, KPER, CL, NG>;
++  static void prep() {
++    static bool done = false;
++    if (!done) {
++      C10_CUDA_CHECK(cudaFuncSetAttribute(ouns_kernel<NT, ROWS, KPER, CL, NG>,
++                                          cudaFuncAttributeMaxDynamicSharedMemorySize, C::SMEM));
++      done = true;
++    }
++  }
++  static cudaLaunchConfig_t config(int64_t n, cudaStream_t stream, cudaLaunchAttribute* attr) {
++    cudaLaunchConfig_t cfg = {};
++    cfg.gridDim = dim3(static_cast<unsigned>((n / ROWS) * CL), 1, 1);
++    cfg.blockDim = dim3(C::THREADS, 1, 1);
++    cfg.dynamicSmemBytes = C::SMEM;
++    cfg.stream = stream;
++    attr[0].id = cudaLaunchAttributeClusterDimension;
++    attr[0].val.clusterDim.x = CL;
++    attr[0].val.clusterDim.y = 1;
++    attr[0].val.clusterDim.z = 1;
++    cfg.attrs = attr;
++    cfg.numAttrs = 1;
++    return cfg;
++  }
++  static void launch(const torch::Tensor& x, const torch::Tensor& w, torch::Tensor& out, int64_t n, int64_t k) {
++    TORCH_CHECK(k == (int64_t)KPER * CL && n % ROWS == 0, "ouns: tiling");
++    prep();
++    cudaLaunchAttribute attr[1];
++    cudaLaunchConfig_t cfg = config(n, at::cuda::getCurrentCUDAStream(), attr);
++    C10_CUDA_CHECK(cudaLaunchKernelEx(
++        &cfg, ouns_kernel<NT, ROWS, KPER, CL, NG>,
++        reinterpret_cast<const __nv_bfloat16*>(x.data_ptr()), (int64_t)x.stride(0),
++        reinterpret_cast<const __nv_bfloat16*>(w.data_ptr()), (int64_t)w.stride(0),
++        reinterpret_cast<__nv_bfloat16*>(out.data_ptr()), (int64_t)out.stride(0), (int)x.size(0)));
++    C10_CUDA_KERNEL_LAUNCH_CHECK();
++  }
++  static int64_t occupancy(int64_t n) {
++    prep();
++    cudaLaunchAttribute attr[1];
++    cudaLaunchConfig_t cfg = config(n, at::cuda::getCurrentCUDAStream(), attr);
++    int clusters = 0;
++    C10_CUDA_CHECK(cudaOccupancyMaxActiveClusters(&clusters, ouns_kernel<NT, ROWS, KPER, CL, NG>, &cfg));
++    return clusters;
++  }
++  static std::string attrs() {
++    prep();
++    cudaFuncAttributes a;
++    C10_CUDA_CHECK(cudaFuncGetAttributes(&a, ouns_kernel<NT, ROWS, KPER, CL, NG>));
++    return "NT=" + std::to_string(NT) + " ROWS=" + std::to_string(ROWS) + " CL=" + std::to_string(CL) +
++           " regs=" + std::to_string(a.numRegs) + " local(spill)=" + std::to_string(a.localSizeBytes) +
++           " static_smem=" + std::to_string(a.sharedSizeBytes) + " dyn_smem=" + std::to_string(C::SMEM) +
++           " max_threads=" + std::to_string(a.maxThreadsPerBlock);
++  }
++};
++
++// The unpooler n == 1024 slice only (k 4096, m 1..8, NT = 8): NO o instantiation is compiled.
++template <class F>
++bool dispatch(int64_t cl, int64_t m, F&& f) {
++  if (m < 1 || m > 8) return false;
++  if (cl == 8) { f(Inst<8, 64, 512, 8, 4>{}, 1024, 4096); return true; }
++  if (cl == 4) { f(Inst<8, 32, 1024, 4, 4>{}, 1024, 4096); return true; }
++  return false;
++}
++
++}  // namespace
++
++void ouns_run(torch::Tensor x, torch::Tensor w, torch::Tensor out, int64_t cl) {
++  TORCH_CHECK(x.dim() == 2 && x.stride(1) == 1 && x.stride(0) % 8 == 0 && x.data_ptr<at::BFloat16>() != nullptr, "ouns: x");
++  TORCH_CHECK(w.dim() == 2 && w.stride(1) == 1 && w.stride(0) % 8 == 0, "ouns: w");
++  TORCH_CHECK(reinterpret_cast<uintptr_t>(x.data_ptr()) % 16 == 0 && reinterpret_cast<uintptr_t>(w.data_ptr()) % 16 == 0, "ouns: align");
++  TORCH_CHECK(out.dim() == 2 && out.stride(1) == 1 && out.stride(0) % 4 == 0 && out.size(0) == x.size(0), "ouns: out");
++  const bool ok = dispatch(cl, x.size(0), [&](auto inst, int64_t n, int64_t k) {
++    using I = decltype(inst);
++    TORCH_CHECK(x.size(1) == k && w.size(1) == k && w.size(0) >= n && out.size(1) == n, "ouns: shapes");
++    I::launch(x, w, out, n, k);
++  });
++  TORCH_CHECK(ok, "ouns: unsupported (cl, m)");
++}
++
++int64_t ouns_occupancy(int64_t cl) {
++  int64_t r = -1;
++  dispatch(cl, 8, [&](auto inst, int64_t n, int64_t) { r = decltype(inst)::occupancy(n); });
++  return r;
++}
++
++std::string ouns_attrs(int64_t cl) {
++  std::string r = "unsupported";
++  dispatch(cl, 8, [&](auto inst, int64_t, int64_t) { r = decltype(inst)::attrs(); });
++  return r;
++}
++
++"""
++
++
++def _build_ouns():
++    """Compile the CUDA module once per process, at import (never during graph capture), under its
++    OWN extension name. No -std flag is passed (torch's default compiled this kernel in 31 s on
++    3f3330f7). Built for 9.0a only (TORCH_CUDA_ARCH_LIST set around the build and restored after).
++    On any build failure the nvcc error tail is printed and master's routing is kept."""
++    t0 = time.perf_counter()
++    prev = os.environ.get("TORCH_CUDA_ARCH_LIST")
++    os.environ["TORCH_CUDA_ARCH_LIST"] = "9.0a"
++    flags = ["-O3", "-lineinfo"]
++    try:
++        from torch.utils.cpp_extension import load_inline
++        print(f"[ouns] building {OUNS_EXT_NAME}: TORCH_CUDA_ARCH_LIST={os.environ.get('TORCH_CUDA_ARCH_LIST')!r} "
++              f"(was {prev!r}), device cc {torch.cuda.get_device_capability()}, extra nvcc flags {flags}",
++              flush=True)
++        ext = load_inline(
++            name=OUNS_EXT_NAME,
++            cpp_sources=_OUNS_CPP,
++            cuda_sources=_OUNS_CUDA,
++            functions=["ouns_run", "ouns_occupancy", "ouns_attrs"],
++            extra_cuda_cflags=flags,
++            verbose=False,
++        )
++    except Exception as e:  # a build failure must never raise out of the import
++        msg = str(e)
++        print(f"[ouns] load_inline FAILED after {time.perf_counter() - t0:.1f}s ({type(e).__name__}); "
++              f"nvcc error tail:\n{msg[-3000:]}\n[ouns] master path kept", flush=True)
++        return None
++    finally:
++        if prev is None:
++            os.environ.pop("TORCH_CUDA_ARCH_LIST", None)
++        else:
++            os.environ["TORCH_CUDA_ARCH_LIST"] = prev
++    print(f"[ouns] load_inline compiled in {time.perf_counter() - t0:.1f}s", flush=True)
++    return ext
++
++
++_OUNS_EXT = _build_ouns() if torch.cuda.is_available() else None
++
++
++def _ouns_route_ok(x: torch.Tensor, w: torch.Tensor, cfg, state: dict) -> bool:
++    """The unpooler's n == 1024 slice at 1 <= m <= 8, the cluster dim chosen in prepare()
++    (state["ouns_cl"] > 0 means self-check passed AND the graph-replay gate won), 16-byte-aligned
++    bf16 rows. Branches on cfg, shapes, strides and a prepare() constant only."""
++    if _OUNS_EXT is None or not state.get("ouns_cl", 0):
++        return False
++    m = cfg["m"]
++    return (1 <= m <= OUNS_MAX_M and cfg["n"] == OUNS_N and cfg["k"] == OUNS_K
++            and x.dim() == 2 and x.shape[0] == m and x.shape[1] == OUNS_K
++            and x.dtype == torch.bfloat16 and x.stride(1) == 1 and x.stride(0) % 8 == 0
++            and x.data_ptr() % 16 == 0
++            and w.dim() == 2 and w.dtype == torch.bfloat16 and w.shape[0] >= OUNS_N
++            and w.shape[1] == OUNS_K and w.stride(1) == 1 and w.stride(0) % 8 == 0
++            and w.data_ptr() % 16 == 0)
++
++
++def _ouns_forward(x: torch.Tensor, w: torch.Tensor, cl: int) -> torch.Tensor:
++    """x bf16 [m, 4096] @ w[:1024].T -> bf16 [m, 1024], ONE cluster launch, w read in place."""
++    out = torch.empty((x.shape[0], OUNS_N), dtype=torch.bfloat16, device=x.device)
++    _OUNS_EXT.ouns_run(x, w, out, cl)
++    return out
++
++
++def _ouns_check(cl: int, w: torch.Tensor) -> str:
++    """In-process self-check of one cluster dim at m = 1, 5, 8 (plus a final m = 1): synthetic x
++    against an fp64 reference, every case launched twice and required bit-identical. A flushed
++    print precedes each launch and a synchronize plus a flushed print follows it, so a fault names
++    its kernel. Returns "" on pass, else why."""
++    n, k = OUNS_N, OUNS_K
++    dev = w.device
++    wd = w[:n].double()
++    g = torch.Generator(device=dev)
++    g.manual_seed(4321)
++    cases = [(m, m >= 2) for m in OUNS_CHECK_MS] + [(1, True)]
++    for m, onehot in cases:
++        x = torch.randn((m, k), device=dev, dtype=torch.float32, generator=g).to(torch.bfloat16)
++        if onehot:  # last row: one power-of-two entry, its output is a weight column exactly
++            x[m - 1].zero_()
++            x[m - 1, (37 * m + 5) % k] = 2.0
++        ref = x.double() @ wd.T
++        ref_b = ref.to(torch.bfloat16).double()
++        outs = []
++        for rep in (1, 2):
++            print(f"[ouns] self-check launch: ouns_kernel cl={cl} m={m} run={rep} ...", flush=True)
++            outs.append(_ouns_forward(x, w, cl))
++            torch.cuda.synchronize()
++            print(f"[ouns] self-check done:   ouns_kernel cl={cl} m={m} run={rep}", flush=True)
++        if not torch.equal(outs[0], outs[1]):
++            return f"m={m}: second launch differs from the first"
++        o = outs[0].double()
++        if not bool(torch.isfinite(o).all()):
++            return f"m={m}: non-finite output"
++        err = float((o - ref).norm() / ref.norm().clamp_min(1e-30))
++        if not err <= 3e-3:
++            return f"m={m}: rel L2 {err:.2e} (bound 3e-3)"
++        if onehot:
++            probe = float((o[m - 1] - ref_b[m - 1]).abs().max())
++            if not probe <= 1e-4:
++                return f"m={m}: one-hot row off by {probe:.2e} (bound 1e-4)"
++    return ""
++
++
++def _ouns_median(v):
++    s = sorted(v)
++    return s[len(s) // 2]
++
++
++def _ouns_incumbent(state: dict):
++    """The restack's own path for the unpooler slice (what kernel_fn runs without this route):
++    _swapab16_forward 'unpooler_slice' when it was prepared, else the split-K8 ticket path."""
++    w = state["unpooler"]
++    stages = state.get("swapab16_stages", {})
++    if "unpooler_slice" in stages:
++        ws, cnt = _swapab16_buffers(state, "unpooler_slice")
++        return "swapab16", (lambda x: _swapab16_forward("unpooler_slice", x, w, ws, cnt,
++                                                       stages["unpooler_slice"]))
++    return "unpool_splitk8", (lambda x: _unpool_forward(x, w, state["unpool_ws"], state["unpool_cnt"]))
++
++
++def _ouns_gate(cl: int, state: dict) -> bool:
++    """prepare()-only: does the cluster route beat the incumbent on the judge's measurement?
++    For m in OUNS_GATE_MS: capture each path once as a CUDA graph (synthetic x, output allocated
++    from the graph's pool), then OUNS_GATE_REPS times replay both with a >= 256 MB flush before
++    each replay (the order alternates every rep, so drift and which-went-first cancel), time each
++    replay with CUDA events and take medians. A trivial-kernel graph measured the same way gives
++    the fixed replay cost, subtracted from both (the judge subtracts about 4 us). The route is
++    enabled only if incumbent / cluster >= OUNS_MIN_WIN at every m. Eager cold medians are printed
++    too, for continuity with 3f3330f7, but never decide. Any exception keeps master's path."""
++    w = state["unpooler"]
++    dev = w.device
++    inc_name, inc = _ouns_incumbent(state)
++    flush = torch.empty(OUNS_FLUSH_BYTES, dtype=torch.uint8, device=dev)
++    scratch = torch.zeros(1, dtype=torch.float32, device=dev)
++    ev = [torch.cuda.Event(enable_timing=True) for _ in range(2)]
++
++    def replay_us(g) -> float:
++        flush.zero_()
++        ev[0].record()
++        g.replay()
++        ev[1].record()
++        ev[1].synchronize()
++        return ev[0].elapsed_time(ev[1]) * 1e3
++
++    def capture(fn):
++        for _ in range(3):  # warm on the current stream before capture
++            fn()
++        torch.cuda.synchronize()
++        g = torch.cuda.CUDAGraph()
++        with torch.cuda.graph(g):
++            fn()
++        torch.cuda.synchronize()
++        return g
++
++    wins = []
++    try:
++        g_base = capture(lambda: scratch.add_(1.0))
++        base = _ouns_median([replay_us(g_base) for _ in range(OUNS_GATE_REPS)])
++        for m in OUNS_GATE_MS:
++            x = torch.randn((m, OUNS_K), device=dev, dtype=torch.float32).to(torch.bfloat16)
++            fns = {"cluster": (lambda x=x: _ouns_forward(x, w, cl)), "incumbent": (lambda x=x: inc(x))}
++            graphs = {name: capture(fn) for name, fn in fns.items()}
++            times = {"cluster": [], "incumbent": []}
++            for rep in range(OUNS_GATE_REPS):
++                order = ("cluster", "incumbent") if rep % 2 == 0 else ("incumbent", "cluster")
++                for name in order:
++                    times[name].append(replay_us(graphs[name]))
++            med = {name: _ouns_median(v) for name, v in times.items()}
++            adj = {name: max(v - base, 0.25) for name, v in med.items()}
++            ratio = adj["incumbent"] / adj["cluster"]
++            # eager cold, continuity only (includes Python / Triton launch cost, biased to cluster)
++            eager = {}
++            for name, fn in fns.items():
++                vals = []
++                for _ in range(20):
++                    flush.zero_()
++                    ev[0].record()
++                    fn()
++                    ev[1].record()
++                    ev[1].synchronize()
++                    vals.append(ev[0].elapsed_time(ev[1]) * 1e3)
++                eager[name] = _ouns_median(vals)
++            win = ratio >= OUNS_MIN_WIN
++            wins.append(win)
++            print(f"[ouns] gate m={m} (graph replay, {OUNS_FLUSH_BYTES >> 20} MB flush, {OUNS_GATE_REPS} reps, "
++                  f"interleaved): cluster median {med['cluster']:.2f} us, {inc_name} median "
++                  f"{med['incumbent']:.2f} us, empty-graph baseline {base:.2f} us -> net "
++                  f"{adj['cluster']:.2f} vs {adj['incumbent']:.2f} us, incumbent/cluster {ratio:.3f}x "
++                  f"(need >= {OUNS_MIN_WIN}) -> {'WIN' if win else 'LOSS'}; eager-cold (not used) "
++                  f"cluster {eager['cluster']:.2f} / {inc_name} {eager['incumbent']:.2f} us", flush=True)
++            del graphs
++    except Exception as e:
++        print(f"[ouns] gate failed ({type(e).__name__}: {e}); master path kept", flush=True)
++        return False
++    return len(wins) == len(OUNS_GATE_MS) and all(wins)
++
++
++def _ouns_prepare(state: dict) -> None:
++    """Query co-residency (cluster 8, else cluster 4, else master), self-check the chosen cluster
++    dim, run the graph-replay gate, and fix state["ouns_cl"] (0 = restack's path) for the run."""
++    state["ouns_cl"] = 0
++    if _OUNS_EXT is None:
++        print("[ouns] PATH CHOSEN: unpooler slice m<=8 -> restack path (swapab16): no CUDA module", flush=True)
++        return
++    w = state["unpooler"]
++    if not (w.dim() == 2 and w.dtype == torch.bfloat16 and w.shape[0] >= OUNS_N
++            and w.shape[1] == OUNS_K and w.stride(1) == 1 and w.stride(0) % 8 == 0
++            and w.data_ptr() % 16 == 0):
++        print(f"[ouns] PATH CHOSEN: unpooler slice m<=8 -> restack path: weight {tuple(w.shape)} unexpected",
++              flush=True)
++        return
++    chosen = 0
++    try:
++        for cl in (8, 4):
++            need = OUNS_CLUSTERS_NEEDED[cl]
++            try:
++                print(f"[ouns] cl={cl} {_OUNS_EXT.ouns_attrs(cl)}", flush=True)
++                have = int(_OUNS_EXT.ouns_occupancy(cl))
++            except Exception as e:
++                print(f"[ouns] cl={cl}: attribute/occupancy query failed ({e!r})", flush=True)
++                continue
++            print(f"[ouns] cl={cl}: cudaOccupancyMaxActiveClusters={have}, needs {need}", flush=True)
++            if have < need:
++                print(f"[ouns] cl={cl}: too few co-resident clusters, trying the next", flush=True)
++                continue
++            try:
++                why = _ouns_check(cl, w)
++            except Exception as e:
++                why = f"raised {e!r}"
++            if why:
++                print(f"[ouns] SELF-CHECK FAILED cl={cl}: {why}", flush=True)
++                continue
++            chosen = cl
++            break
++        if chosen and _ouns_gate(chosen, state):
++            state["ouns_cl"] = chosen
++    except Exception as e:  # never raises: any surprise leaves the restack path
++        print(f"[ouns] prepare raised ({type(e).__name__}: {e}); restack path kept", flush=True)
++        state["ouns_cl"] = 0
++    torch.cuda.synchronize()
++    for key in ("unpool_cnt", "swapab16_cnt_unpooler_slice"):
++        if key in state:
++            state[key].zero_()
++    if state["ouns_cl"]:
++        print(f"[ouns] PATH CHOSEN: unpooler slice m<=8 (n=1024) -> CUDA cluster/DSMEM split-K, cluster dim "
++              f"{state['ouns_cl']}; self-check passed (m {OUNS_CHECK_MS}) and graph-replay gate won at m "
++              f"{OUNS_GATE_MS} (see the [ouns] gate lines for both medians)", flush=True)
++    else:
++        print("[ouns] PATH CHOSEN: unpooler slice m<=8 (n=1024) -> restack path (swapab16); cluster route off "
++              "(see the [ouns] lines above for why)", flush=True)
++
++
+ def prepare(weights: Weights) -> dict:
+     """Called once, untimed. Keep the bf16 weights as they are (contiguous), build the router's
+     hi + lo bf16 split as [256, 8192] row-major (N x K), and pre-compile every m-bucket of the
+@@ -1041,6 +1623,8 @@ def prepare(weights: Weights) -> dict:
+     _swapab_prepare(state)
+     # (6) Swap-AB, BLOCK_T 16, at m <= 16 for pooler / qkv_gate / o and the unpooler slice.
+     _swapab16_prepare(state)
++    # (7) Unpooler slice m <= 8: CUDA cluster + DSMEM split-K behind a graph-replay gate (own state['ouns_cl']).
++    _ouns_prepare(state)
+     return state
+ 
+ 
+@@ -1048,6 +1632,8 @@ def kernel_fn(data: Inputs, state: dict) -> torch.Tensor:
+     x, cfg = data["x"], data["config"]
+     layer = cfg["layer"]
+     # Shape gate (cfg layer / m / n and shape preconditions only; never on input values).
++    if layer == "unpooler" and _ouns_route_ok(x, state["unpooler"], cfg, state):
++        return _ouns_forward(x, state["unpooler"], state["ouns_cl"])
+     key16 = _swapab16_key(layer, cfg)
+     if (key16 in state["swapab16_stages"]
+             and _swapab16_route_ok(key16, x, state[layer], cfg)):
