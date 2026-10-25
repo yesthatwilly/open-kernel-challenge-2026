@@ -61,9 +61,18 @@ prior: "experts-rega-pingpong-consumers-all-t: changed only the consumer schedul
 rewrite_stage: 1
 replaces: "rega_kernel<true,BIG> + rega_kernel<false,BIG> (w13, w2) in all three rega classes: low T<=1024, high 1024<T<=4096, ft 4096<T<=16384"
 review: proceed
-status: queued
+status: running
 review_at: 2026-10-25T212524Z
 review_companions: null
+stage: claimed
+claimed_at: 2026-10-25T212550Z
+base_sha: 98cd3251d87b4318340450cec6f52e37f574895c
+base_blob: f4751fc054335a94d1b401af272e98a2d4760363
+branch: hyp/muse_prefill_layer/experts-rega-mc2-slab-multicast-all-t
+worktree: .worktrees/muse_prefill_layer/experts-rega-mc2-slab-multicast-all-t
+mode: check
+restack_of: null
+stale_base: null
 ---
 
 # experts-rega-mc2-slab-multicast-all-t
