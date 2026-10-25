@@ -62,9 +62,18 @@ priority: 2
 kind: primary
 controls_for: null
 review: proceed
-status: queued
+status: running
 review_at: 2026-10-25T150347Z
 review_companions: null
+stage: claimed
+claimed_at: 2026-10-25T150348Z
+base_sha: 5e7ce21f82b7a49dc31b038e9868884c8a90a3e0
+base_blob: 5cf8fae31e5b84c36efeeb4569763eb9b06e1c8a
+branch: hyp/muse_attention_decode/epilogue-gate-l2-prefetch-cuda
+worktree: .worktrees/muse_attention_decode/epilogue-gate-l2-prefetch-cuda
+mode: null
+restack_of: null
+stale_base: null
 ---
 
 # epilogue-gate-l2-prefetch-cuda
