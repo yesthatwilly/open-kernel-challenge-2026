@@ -1,17 +1,17 @@
 {
  "problem": "muse_bf16_proj",
- "job": "1e90292c7b954d96",
- "check_job": "1e90292c7b954d96",
+ "job": "84f17adc3f074a33",
+ "check_job": "84f17adc3f074a33",
  "mode": "check",
- "speedup": 1.2215006063849365,
+ "speedup": 1.236629518166488,
  "ci": [
-  1.2031780972891624,
-  1.2398231154807104
+  1.2180800753939907,
+  1.2551789609389852
  ],
- "score_us": 3954.807696982551,
- "commit": "b99b1dd3508b24bbdf847b51d2fb53de219ca957",
- "submission_blob": "970b415b746fa03cb92e419d270be92588273178",
- "slug": "bf16-restack-m16-swapab-router-swapab-m32",
- "result": "muse_bf16_proj/hypotheses/done/neutral/bf16-restack-m16-swapab-router-swapab-m32.result.json",
- "updated_at": "2026-10-25T041905Z"
+ "score_us": 3906.4246235707496,
+ "commit": "040fc7e18f4d9c17ea9fc4a4b9a4cae9216a2335",
+ "submission_blob": "353e3b19a7edd5cb879e202d78097f474bcce207",
+ "slug": "restack-three-cell-wins-router-unpooler-cluster-m8-nn-m128",
+ "result": "muse_bf16_proj/hypotheses/done/neutral/restack-three-cell-wins-router-unpooler-cluster-m8-nn-m128.result.json",
+ "updated_at": "2026-10-25T110028Z"
 }
