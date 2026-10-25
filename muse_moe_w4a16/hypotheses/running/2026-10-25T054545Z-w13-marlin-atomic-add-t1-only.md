@@ -47,7 +47,7 @@ base_sha: ea4c938779678da09fceb3d72b468aef6f3272d9
 base_blob: 60dfe35d5417d9c0f89067ff313efdc2c41d03a2
 branch: hyp/muse_moe_w4a16/w13-marlin-atomic-add-t1-only
 worktree: .worktrees/muse_moe_w4a16/w13-marlin-atomic-add-t1-only
-mode: null
+mode: check
 restack_of: w13-marlin-atomic-add-on-master-small-m
 stale_base: null
 implemented_at: 2026-10-25T054919Z
@@ -56,6 +56,8 @@ submission_sha256: 99f131fd0b4c055483fe2da22f8581d675ec5db7d54b59f186dde3c730c07
 norm_sha256: b42c84d36edc8fc938435770ac7fbaefe197a66865d46a41316df5d174a407c1
 submission_blob: 34e5b52476fd39c5296e0de9a53a3c5797cd52e1
 lint_warnings: 19
+attempt_file: 2026-10-25T054919Z-check-w13-marlin-atomic-add-t1-only.md
+prepared_at: 2026-10-25T054919Z
 ---
 
 # w13-marlin-atomic-add-t1-only
