@@ -1,0 +1,23 @@
+{
+ "model": "opus",
+ "verdict": "proceed",
+ "summary": "The key-range algebra is correct and the change is rules-safe, but its physical floor is weak. 8 pseudo-requests x 80K keys is ~164 MB of L2-served cp.async, which at a realistic 4-7 TB/s is ~23-40 us against the ~26.5 us it replaces, so the 5% gate will likely keep FA3. Dispatch it after sliding-verify-sk-pseudo-decode-s1 (it shares the PSEUDO template, so build on that code) and after the in-flight full-verify-wgmma-s4-multitile-fix reports. If the wgmma verify kernel works, the queued full-verify1-wgmma-s4-batch1-grid-sm owns this row.",
+ "justification": "Mechanism: keeping the gather-bound 16-row tile and moving each token's reuse to L2 avoids the 64-row MMA-bound verify tile. Request-major stream-K over 8 near-equal pseudo-requests (~16.5 CTAs each) naturally co-schedules equal key offsets, so DRAM traffic plausibly stays ~20 MB. WEAKEST LINK: the claim '160 MB L2 at ~9 TB/s ~18 us'. The landed kernel moves ~3 TB/s at B=16 and 0.89 TB/s at B=1 grid SM. Its rate is bounded by cp.async bytes in flight per SM, not by where the bytes come from, so L2 hits raise it by the latency ratio (~1.5-2x), not to 9 TB/s. At 2xSM and ~5 TB/s effective that is ~33 us before the merge, above the 26.5 us replaced. So the likely outcome is the gate keeping FA3, flat, which costs a check for a kill. Target <=24 us shape needs >=7 TB/s of sustained L2 gather. The wgmma verify line (stage 3 fixing in flight as full-verify-wgmma-s4-multitile-fix, then full-verify1-wgmma-s4-batch1-grid-sm) reads 20.5 MB once and has a ~8.5 us + ~2 us merge plan. It is the physically better route to this row. Not a duplicate, but strictly the backup.",
+ "confounders": [
+  "full-decode1-streamk-s3-two-level-ticket (landed): the kernel being templated. PSEUDO=false must be byte-identical (print and compare sk_attrs). The change chooses the SINGLE-level ticket at grid 2xSM: ~33 partials per pseudo-request merged by one CTA, the same serial-merge shape that cost 34.8 vs 23.1 us at B=1 decode. Include the two-level variant (gticket sized 8*32) and grid SM in the prepare.",
+  "sliding-verify-sk-pseudo-decode-s1 (queued, p1): the same PSEUDO template flag (it is this change plus a window lo_p). Two independent implementations of one flag will conflict at landing. Build this one on that branch's PSEUDO code with window=0, or fold it in as a fourth band there. The full verify_1 row stays separately attributable either way, since sliding rows and full rows are disjoint.",
+  "full-verify1-cuda-streamk-batch1 (queued, built on the regressed A8 stage 2) and full-verify1-wgmma-s4-batch1-grid-sm (held on wgmma s3): same row, same B=1 gate. Never stack them; whichever runs, the others' code must be off this row."
+ ],
+ "interference": "No companion. The prepare prints this kernel against FA3 (prepare+main+combine+norm-gate, pre-attn excluded) on the same input, routes only at >=5%, and PATH CHOSEN names the variant. The full verify_1 row is either this kernel or byte-identical FA3, so it is attributable alone.",
+ "rules_flags": [
+  "Verified: reference query j is at p = seq_lens[0]+j and attends keys [0, p]. seq_j = cache_seqlens[0]-7+j = p+1 with keys [0, seq_j) matches exactly, and every key is attended. Derive it from cache_seqlens, not seq_lens.",
+  "Gate is page_size == 1, batch 1, window 0, q_len 8. No test covers it (the B=1 q_len 8 full test is ctx 1M at page 64), so the in-process fp32 causal self-check (80000/4097/63/8 keys, kv 1.0 and 0.25, grids 3/7/device, two replays) is the only correctness gate before timing. Keep it mandatory.",
+  "Pre-attention writes rows seq_lens..seq_lens+7 before the kernel. Pseudo j reads only up to row p, so there is no intra-launch race.",
+  "q is FP8 E4M3 from _pre_attention_kernel (PAIRED=False) and allowed. Norm-gate epilogue per token row j into out row j."
+ ],
+ "companions": [],
+ "open_questions": [
+  "BUILDER/DISPATCH: wait for full-verify-wgmma-s4-multitile-fix (51b0d5c110f3459c). If its wgmma kernel passes and reaches >=2.4 TB/s at verify_16, prefer full-verify1-wgmma-s4-batch1-grid-sm for this row and drop this. Otherwise run this one, on sliding-verify-sk-pseudo-decode-s1's PSEUDO code.",
+  "BUILDER: in the prepare, also time the pseudo-request-interleaved tile order (tile = key_tile*8 + j) named in Risk, and two-level vs single-level at grid SM and 2xSM. Print achieved effective bytes/us (164 MB / t) so the L2-bandwidth assumption is measured, not argued."
+ ]
+}
