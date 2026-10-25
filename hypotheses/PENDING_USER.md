@@ -5,6 +5,7 @@ items here and in each tick's summary. Resolved items move to the log at the bot
 
 ## Open
 
+- 2026-10-25 bf16 **bf16-restack-m16-swapab-router-swapab-m32** was NOT landed on master: its scored confirmation 60b20fd0bf924267 came back `duplicate` of 1e90292c7b954d96 (okc dedups identical code, so no second measurement and no scored run spent). Single run: 1.2215 [1.203, 1.240] vs master lineage 1.1959 [1.178, 1.214]; it is already bf16's board entry. Land it on one run (later bf16 hypotheses then build on it), or wait for a stack built on it to measure it again? Default until you answer: not landed; new bf16 work stays on master.
 - 2026-10-24 rules heads-up (not blocking): bf16 **bf16-cublaslt-algo-pick-in-prepare-m128-m256** times cuBLASLt algorithm candidates on synthetic data inside the untimed prepare() and replays the winner in kernel_fn (no timing or autotune in kernel_fn). The Opus reviewer read the rules as allowing it, and decode's pooler-gemm-splitk-autotune used the same pattern. It runs on tomorrow's quota unless you say to hold it.
 
 ## Standing answers
