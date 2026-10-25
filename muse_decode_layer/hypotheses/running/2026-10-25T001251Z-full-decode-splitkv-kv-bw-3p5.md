@@ -56,7 +56,7 @@ base_sha: b2f95e63a6e8ad3cff7947760e69e448399e295d
 base_blob: c9067b8201f2480c64910c4a71098df7ce616f73
 branch: hyp/muse_decode_layer/full-decode-splitkv-kv-bw-3p5
 worktree: .worktrees/muse_decode_layer/full-decode-splitkv-kv-bw-3p5
-mode: null
+mode: check
 restack_of: null
 stale_base: null
 implemented_at: 2026-10-25T003019Z
@@ -65,6 +65,8 @@ submission_sha256: 2994e7e8a781f2149779a53aca4cac8f7065ca815b203b72cc71acb3cbae8
 norm_sha256: 10e4d35a9616c4cacabaf3c1578711425d88a6788b025816b233298546a3e1a2
 submission_blob: 320bc577c8ea6a341804b40ed6228e4cbc6757e2
 lint_warnings: 36
+attempt_file: 2026-10-25T003019Z-check-full-decode-splitkv-kv-bw-3p5.md
+prepared_at: 2026-10-25T003019Z
 ---
 
 # full-decode-splitkv-kv-bw-3p5
