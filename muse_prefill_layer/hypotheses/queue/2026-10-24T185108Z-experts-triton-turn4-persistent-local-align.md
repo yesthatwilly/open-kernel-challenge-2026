@@ -48,8 +48,10 @@ depends_on: null
 priority: 2
 kind: primary
 controls_for: null
-review: required
+review: proceed
 status: queued
+review_at: 2026-10-25T010741Z
+review_companions: [experts-triton-turn4-persistent-local-align-control-no-persi]
 ---
 
 # experts-triton-turn4-persistent-local-align
@@ -67,3 +69,32 @@ Built on master (635cfee). MOTIVATION: the Triton swap-AB kernel already measure
 ## Risk
 
 Overlap: experts-triton-packed-dequant-turn4 (queued stage 6) also moves turn_4 to the Triton engine, but with the packed asm dequant that measured flat; this one keeps master's dequant and removes the dead work instead. experts-cuda-wgmma-mixed-input-grouped-gemm (in the judge) plans turn_4 for its stage 2. Parts 2-3 duplicate experts-triton-persistent-grid-first-turn and moe-align-local-routes-parallel-port; read the turn_4 _moe_nvfp4_gemm_kernel row against Marlin's 2131-2300 us, and the first_turn rows against those two runs. Risk high: Triton turn_4 times varied 2100-2318 us between runs, so the margin over Marlin is the dead-work estimate itself; if the kernel row lands at Marlin's time this is a wash on turn_4.
+
+## Adversarial review
+
+Reviewed 2026-10-25T010741Z by an adversarial subagent (model opus).
+
+**Verdict: proceed-with-companions.** Moving turn_4 to Triton is worth one more run, but only as the dead-work-removal run on master's base, with the motivation's numbers corrected. The persistent grid (part 2) should not ride in this run until experts-triton-persistent-grid-first-turn harvests. Run the companion control (parts 1 and 3 only) now; hold the parent until the persistent-grid result, then rebuild it on that branch or retire it.
+
+### Justification
+Triton has never beaten Marlin at turn_4: stage 2 2100-2158 us, stage 3 2275-2318, packed-dequant-turn4 (ce3cc1a22a244ec7) 2149.0 sliding / 2306.1 full vs master Marlin 2148.2 / 2115.3 (c4d14d62f11e4aaf). That run's 1.052 headline is mostly first_turn on a stale base (no parallel align, no sorted silu). Master's _experts_triton already aligns over LOCAL_EXPERTS=32, so capacity at T=3012 is ~28.3K slots / ~221 tiles, not 444; ~165 remote -1 tiles remain (~10.5K early-return w13 CTAs, ~5K w2 CTAs zero-storing ~170 MB, ~35-40 us HBM). Realistic saving 50-120 us, putting Triton turn_4 at ~2.03-2.25 ms vs Marlin 2.12-2.15, inside the ~7% run-to-run spread. Weakest links: the dead-work premise measured on 257-expert-align bases; part 2 is the change under test in the running persistent-grid check and would mask the turn_4 read via first_turn (weight 186 of 310).
+
+### Confounders on the current kernel
+- stack-tonight-five-prefill (master): 32-expert align already on the Triton path; sorted silu-mul only on the Marlin path, so turn_4 also swaps silu implementation (~10-30 us).
+- experts-hybrid-marlin-turn-triton-first-turn (landed): this undoes its turn_4 half; the intended A/B.
+- experts-triton-w4a16-first-turn-blockt256 (landed): owns the reused BLOCK_T 128 config; its turn_4 rows vary ~7%.
+- experts-triton-persistent-grid-first-turn (running): part 2 is identical; rebuild or drop part 2 depending on its result.
+
+### Interference and A/B needs
+As written a single run is ambiguous both ways. Dispatch the control (parts 1 and 3, master's non-persistent grid) now; hold the parent until experts-triton-persistent-grid-first-turn harvests; if that gains, rebuild the parent on its branch adding only parts 1 and 3; if not, retire the parent and keep the control.
+
+### Companions queued
+- `experts-triton-turn4-persistent-local-align-control-no-persi`: 
+
+### Open questions
+- Does moe_align_block_size with num_experts=32 put -1 routes in a 33rd bucket inside n_padded, or drop them? If dropped, part 3's mechanism is nearly zero.
+- Master-based Triton turn_4 has never been measured; the control provides it.
+- Port _silu_mul_sorted to the Triton path later if turn_4 lands near Marlin.
+- Reconcile with first-turn-moe-dead-work-stack (queued), which overlaps parts 2 and 3.
+- If the control comes back flat, stop spending runs on turn_4 routing.
+
