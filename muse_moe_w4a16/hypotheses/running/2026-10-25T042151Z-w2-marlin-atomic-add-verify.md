@@ -44,7 +44,7 @@ review: proceed
 status: running
 review_at: 2026-10-25T042602Z
 review_companions: null
-stage: claimed
+stage: implemented
 claimed_at: 2026-10-25T042602Z
 base_sha: 9d3c58e166fc04c1df6f9c7b4eccd2672e82be7c
 base_blob: 60dfe35d5417d9c0f89067ff313efdc2c41d03a2
@@ -53,6 +53,12 @@ worktree: .worktrees/muse_moe_w4a16/w2-marlin-atomic-add-verify
 mode: null
 restack_of: null
 stale_base: null
+implemented_at: 2026-10-25T043034Z
+impl_commit: dfcd2a53161a12eca630e34c48ea12a4d29ac1cc
+submission_sha256: 368af90c389cc11ddb7744c2542f344707fa26ef7ab0a31c5a70d5b6132e52e5
+norm_sha256: 50eb74f865262beaeaa444ab71c7530d3a3b78445dc12cb366f2a25a4e2af7d9
+submission_blob: 28fdab5be6f60d2b4e91078e80a5bf4e2f8d098e
+lint_warnings: 18
 ---
 
 # w2-marlin-atomic-add-verify
@@ -100,3 +106,40 @@ No companion is warranted. The ambiguity in a single run is noise at bs=256 plus
 - Does the Marlin MoE launcher zero C itself when use_atomic_add=True (the landed check chose 'atomic' with no memset on a stale aliased buffer, which implies it does or that slice 0 plain-stores)? If it zeroes internally, a ~16.8 MB internal memset at bs=256 may hide inside the Marlin row and eat any gain.
 - The 391 vs 451 us Marlin-row swing at bs=256 appears in profile rows on identical code. Is it clock or thermal variance? Comparing the SGLang column at bs=256 across the two runs (616.0 vs 629.5 us, also +2%) suggests at least part of it is machine-wide, not a Marlin-specific slow mode.
 
+
+## Implementation notes
+
+Edited only `muse_moe_w4a16/submission.py` in the worktree (+160/-11). Review overrides applied (the review wins over the spec):
+- block_size_m at bs=128/256/257 is 16/32/32 (master's per-T value, unchanged); the spec's 8/16 was wrong. No block_size_m code touched.
+- Verify mode is decided apart from the landed one: `state["w2_mode"]` (T<=32, `_w2_atomic_self_check`, untouched) vs new `state["w2_mode_verify"]` = {class: mode} from `_w2_verify_self_check`, wrapped in try/except so an error leaves verify on master and never touches bs<=32. `kernel_fn` picks by `hidden_states.shape[0]` (host shape only): T<=32 -> w2_mode, else verify class (33..127, 128..255, >=256).
+- `_forward` takes the mode as an argument; the w2 launch is now a local closure `w2_call(mode)`; the old `num_tokens <= W2_ATOMIC_MAX_TOKENS` test moved into kernel_fn's pick. Same launch/args for master and T<=32.
+- Verify self-check: T in (33,128,256,257), random and skewed routing, compares the final combined output vs master. atomic_zero is measured but never chosen (16.8 MB / 8.4 MB memset cancels the gain); if only atomic_zero passes a class stays master.
+- Tolerance: rel-L2 vs master <= 5e-3 on the whole output and <= 2.5e-2 on any row (row denominator max(row norm, 0.1*mean row norm)). Justified from TASK: output vs FP32 ref <= 1.5%, any row <= 5x; master's own error spends first, so atomic may add at most a third of each bound (the T<=32 path sat at 4.79e-3 against the same 5e-3).
+- In prepare(), w2 alone timed at T=128 and T=256 (skewed) for master/atomic/atomic_zero: CUDA events around the call (memset included for atomic_zero), 256 MB `fill_` before each rep (cold L2), 50 interleaved reps, median. A class takes atomic only if it passes the gate and atomic <= master in this timing (class 33 is not timed; gate only). Extra gate beyond the review, to avoid a loss: a slower atomic stays master.
+- Prints: per-class `PATH CHOSEN`, per-T verify mode with worst rel-L2/row for atomic and atomic_zero, the w2-alone timings, and `NO-OP` if every class chose master (harvest as no-op, not flat).
+- No CUDA/PTX added, no processes, no mbarriers; the only new kernel work is the existing Marlin launch.
+
+## Rules check
+
+- [x] CUDA-graph capturable: no sync/.item() in kernel_fn's call graph; the mode pick is a host dict lookup on the shape; timing/sync only in prepare().
+- [x] Nothing derived from `data` is cached: modes come from synthetic inputs in prepare().
+- [x] Weights: unchanged, repacked in prepare() as on master.
+- [x] Activations BF16 as master; use_fp32_reduce stays True; only use_atomic_add toggles on w2 (same as landed).
+- [x] Attention: n/a, MoE problem.
+- [x] No timing patches, harness frames, subprocesses or network (verified against the diff).
+- [x] All work inside the timed call; no output caching or replay.
+- [x] Any self-check miss or error lands on master's path and never raises.
+
+okc_lint: `OK with warnings` (0 errors; host-sync warnings only in prepare()-side code, one dtype warning for the uint8 L2-flush buffer in prepare()). py_compile OK; __pycache__ deleted.
+
+## Pre-flight audit
+
+Audited 2026-10-24 (opus). **Verdict: dispatch-with-fixes.** Rules OK.
+
+- kernel_fn: host pick on `hidden_states.shape[0]` only; dict lookups, no per-call mutable state, no prints. T<=32 passes `state["w2_mode"]` into the same launch, so it behaves byte for byte like master (master's `num_tokens <= 32` test is now the kernel_fn branch, and the landed self-check only uses T in 1..32). The verify self-check runs in its own try/except, so it never touches `w2_mode`.
+- Gate (5e-3 rel-L2, 2.5e-2 row vs master): this is probably not a gate no-op. A numpy bf16 emulation of slice-0 store plus bf16 atomic adds, against an fp32 reduce with one final rounding, gives rel-L2 0 / 2.2e-3 / 3.0e-3 / 3.9e-3 / 5.1e-3 at slice_count 1 / 2 / 4 / 8 / 16. The 16-slice figure matches the landed T<=32 result (4.79e-3). At verify, about 20-50 m-blocks x 16 n-tiles against 528 CTAs means slice_count is about 1-2, so expect <= ~2.5e-3. A looser bound could be justified if needed. The reference uses the same NVFP4 weights in fp32, so master's own error is only bf16 intermediates (~2-3e-3 estimated). 1e-2 would leave sqrt(3e-3^2 + 1e-2^2) ~ 1.05e-2 < 1.5e-2. The constant was left at 5e-3.
+- Zeroed C: no zeroed C is needed for "atomic" (no memset). Marlin's slice 0 plain-stores and later slices atomic-add. The landed T<=32 check passed on the stale aliased cache3, which empirically confirms this. The verify self-check also uses the aliased cache3, so it re-tests the same behaviour at T=33..257.
+- FIX: timing gate `atomic <= master` changed to `atomic <= master * 1.02` (W2_VERIFY_SLOWER_TOL). At slice_count ~1 the two launches are near-identical, and a bare `<=` on two 50-rep medians would pick master about half the time. That makes a class a silent coin-flip no-op. Now only an atomic path that is clearly slower stays on master. The PATH CHOSEN lines now print both medians.
+- lint OK with warnings (prepare-only syncs, uint8 L2-flush buffer); py_compile OK; __pycache__ removed.
+
+Residual risk: at slice_count ~1 atomic add has no mechanism, so bs=128/256 will most likely read flat. The w2-alone A/B timings in the log are the attribution.
