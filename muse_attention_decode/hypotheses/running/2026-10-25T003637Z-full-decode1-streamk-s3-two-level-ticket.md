@@ -51,7 +51,7 @@ review: proceed
 status: running
 review_at: 2026-10-25T014055Z
 review_companions: null
-stage: implemented
+stage: dispatched
 claimed_at: 2026-10-25T014056Z
 base_sha: f291b49c49670595d0615e749294f69bc15de1a4
 base_blob: 695c97d2e9fef8f806ec02d2fe14a02668989e3f
@@ -68,6 +68,8 @@ submission_blob: d8769ef25caf845a0e207538ccc5c62394b6ee3b
 lint_warnings: 13
 attempt_file: 2026-10-25T014724Z-check-full-decode1-streamk-s3-two-level-ticket.md
 prepared_at: 2026-10-25T014724Z
+job: 2a3241780c7b4c46
+dispatched_at: 2026-10-25T014732Z
 ---
 
 # full-decode1-streamk-s3-two-level-ticket
