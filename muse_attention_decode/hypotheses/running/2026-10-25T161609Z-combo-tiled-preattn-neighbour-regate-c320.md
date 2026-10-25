@@ -110,7 +110,7 @@ review: proceed
 status: running
 review_at: 2026-10-25T162052Z
 review_companions: null
-stage: implemented
+stage: dispatched
 claimed_at: 2026-10-25T162052Z
 base_sha: 1e8d6d6adbaadd4ecaf72ebd01c75f24004e81bc
 base_blob: 5cf8fae31e5b84c36efeeb4569763eb9b06e1c8a
@@ -127,6 +127,8 @@ submission_blob: 21b3e1e32dfdd66befa9a3f5bb59050edac082d2
 lint_warnings: 72
 attempt_file: 2026-10-25T185648Z-submit-combo-tiled-preattn-neighbour-regate-c320.md
 prepared_at: 2026-10-25T185648Z
+job: 52cbfaebab9646f2
+dispatched_at: 2026-10-25T185655Z
 ---
 
 # combo-tiled-preattn-neighbour-regate-c320
