@@ -121,7 +121,7 @@ review: proceed
 status: running
 review_at: 2026-10-25T162203Z
 review_companions: null
-stage: implemented
+stage: dispatched
 claimed_at: 2026-10-25T162203Z
 base_sha: 757927698c5069efecc0af3dde3ee3553dc1971f
 base_blob: 593b238c16387c5ac3774424ee9557882b9fc46a
@@ -138,6 +138,8 @@ submission_blob: 1f96da53a3e3c191b471b7c49f22e098069ba50c
 lint_warnings: 100
 attempt_file: 2026-10-25T190500Z-submit-combo-wg-occ2-v64-hot-interleave-align2.md
 prepared_at: 2026-10-25T190500Z
+job: 31c27e4b8fc84bd2
+dispatched_at: 2026-10-25T190508Z
 ---
 
 # combo-wg-occ2-v64-hot-interleave-align2
