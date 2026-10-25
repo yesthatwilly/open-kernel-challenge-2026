@@ -1,0 +1,206 @@
+diff --git a/muse_moe_w4a16/submission.py b/muse_moe_w4a16/submission.py
+index 60dfe35..28fdab5 100644
+--- a/muse_moe_w4a16/submission.py
++++ b/muse_moe_w4a16/submission.py
+@@ -463,9 +463,18 @@ def prepare(weights: Weights) -> dict:
+         # The original BF16 weight for _post_norm_combine_kernel, which adds the 1 in fp32.
+         "post_norm_w": weights["post_norm_w"].contiguous(),
+         "w2_mode": "master",
++        # Hypothesis w2-marlin-atomic-add-verify: the T > 32 modes, decided apart from "w2_mode" so a
++        # verify-range failure can never turn the landed T <= 32 path back to master.
++        "w2_mode_verify": {},
+     }
+     if (0, 32) in banks and banks[(0, 32)]["expert_map"] is not None:
+         state["w2_mode"] = _w2_atomic_self_check(weights, state, device)
++        try:
++            state["w2_mode_verify"] = _w2_verify_self_check(weights, state, device)
++        except Exception as e:  # never raise: verify shapes stay on master
++            state["w2_mode_verify"] = {}
++            print("[w2-atomic-verify] PATH CHOSEN = master for all T > 32 (self-check error %s: %s)"
++                  % (type(e).__name__, str(e)[:200]), flush=True)
+     return state
+ 
+ 
+@@ -529,12 +538,148 @@ def _w2_atomic_self_check(weights, state, device):
+     return mode
+ 
+ 
++# Hypothesis w2-marlin-atomic-add-verify. Verify classes (tokens > 32): the self-check runs at
++# T = 33 (class 33), 128 (class 128), 256 and 257 (class 256); a class gets atomic only if every T in
++# it passes the gate with plain "atomic" (no memset) and the in-process w2 timing is not slower.
++W2_VERIFY_TOKENS = (33, 128, 256, 257)
++# Verify tolerance. TASK bound: output vs FP32 reference <= 1.5% rel-L2, any row <= 5x that. Master's own
++# error vs the reference is spent first, so the atomic path may add at most a third of the bound
++# (5e-3) on the whole output, and a third of the row bound (2.5e-2) on any row; the two add in
++# quadrature at worst, leaving master's error room. Same 5e-3 as the landed T <= 32 gate.
++W2_VERIFY_REL_L2 = 5e-3
++W2_VERIFY_ROW_REL = 2.5e-2
++W2_VERIFY_TIME_TOKENS = (128, 256)
++# Pre-flight audit: the timing gate keeps master only when atomic is clearly slower. At slice_count ~1
++# the two launches are near-identical, and a bare atomic <= master would pick master on a coin flip.
++W2_VERIFY_SLOWER_TOL = 1.02
++
++
++def _w2_verify_class(tokens):
++    return 33 if tokens < 128 else (128 if tokens < 256 else 256)
++
++
++def _time_w2(w2_call, modes, device, reps=50, flush_mb=256):
++    """Median microseconds of w2_call(mode) per mode: events around the call (and the memset for
++    atomic_zero), a >= 256 MB write before each rep so L2 is cold. Interleaved reps across modes."""
++    flush = torch.empty(flush_mb * 1024 * 1024, dtype=torch.uint8, device=device)
++    for m in modes:
++        w2_call(m)
++    torch.cuda.synchronize()
++    ms = {m: [] for m in modes}
++    for _ in range(reps):
++        for m in modes:
++            flush.fill_(1)
++            a = torch.cuda.Event(enable_timing=True)
++            b = torch.cuda.Event(enable_timing=True)
++            a.record()
++            w2_call(m)
++            b.record()
++            torch.cuda.synchronize()
++            ms[m].append(a.elapsed_time(b) * 1000.0)
++    return {m: sorted(v)[len(v) // 2] for m, v in ms.items()}
++
++
++def _w2_verify_self_check(weights, state, device):
++    """Untimed except for the w2-alone A/B, synthetic inputs only. Returns {class: mode}, mode in
++    "atomic" or "master". "atomic_zero" is measured but never chosen: its cache3.zero_() (8.4 MB at
++    T=128, 16.8 MB at T=256) cancels the gain."""
++    count = 32
++    bank = state["banks"][(0, count)]
++    gen = torch.Generator(device=device)
++    gen.manual_seed(4321)
++    worst = {}
++    row_worst = {}
++    ok = {}
++    err = {}
++    times = {}
++    for tokens in W2_VERIFY_TOKENS:
++        cls = _w2_verify_class(tokens)
++        for routing in ("random", "skewed"):
++            ids = torch.randint(0, N_EXPERTS, (tokens, TOP_K), generator=gen, device=device, dtype=torch.int32)
++            if routing == "random":
++                ids[:, :3] = torch.randint(bank["start"], bank["start"] + count, (tokens, 3), generator=gen,
++                                           device=device, dtype=torch.int32)
++            else:  # most routes onto a few hot local experts, the rest remote
++                ids[:, :5] = torch.randint(bank["start"], bank["start"] + 4, (tokens, 5), generator=gen,
++                                           device=device, dtype=torch.int32)
++            data = {
++                "hidden_states": torch.randn((tokens, 4096), generator=gen, device=device, dtype=torch.bfloat16),
++                "topk_ids": ids,
++                "topk_weights": torch.rand((tokens, TOP_K), generator=gen, device=device, dtype=torch.float32),
++                "config": {"bs": tokens, "d_hidden": 4096, "d_expert": 4096, "n_experts": N_EXPERTS,
++                           "local_start": bank["start"], "local_count": count, "top_k": TOP_K,
++                           "sharding": "ep8"},
++            }
++            ref = _forward(data, state, "master").float()
++            for cand in ("atomic", "atomic_zero"):
++                key = (cls, cand)
++                ok.setdefault(key, True)
++                try:
++                    out = _forward(data, state, cand).float()
++                    torch.cuda.synchronize()
++                    rel = ((out - ref).norm() / ref.norm().clamp_min(1e-12)).item()
++                    rn = ref.norm(dim=1)
++                    denom = torch.maximum(rn, 0.1 * rn.mean()).clamp_min(1e-12)
++                    row = ((out - ref).norm(dim=1) / denom).max().item()
++                    if not (torch.isfinite(out).all().item() and rel <= W2_VERIFY_REL_L2
++                            and row <= W2_VERIFY_ROW_REL):
++                        ok[key] = False
++                        err[key] = "T=%d %s rel-L2 %.3g row %.3g" % (tokens, routing, rel, row)
++                    worst[(tokens, cand)] = max(worst.get((tokens, cand), 0.0), rel)
++                    row_worst[(tokens, cand)] = max(row_worst.get((tokens, cand), 0.0), row)
++                except Exception as e:
++                    ok[key] = False
++                    err[key] = "T=%d %s %s: %s" % (tokens, routing, type(e).__name__, str(e)[:200])
++            if routing == "skewed" and tokens in W2_VERIFY_TIME_TOKENS:
++                probe = {"modes": ("master", "atomic", "atomic_zero")}
++                _forward(data, state, "master", probe=probe)
++                times[tokens] = _time_w2(probe["w2_call"], probe["modes"], probe["device"])
++                probe.clear()
++    nan = float("nan")
++    modes = {}
++    for cls in (33, 128, 256):
++        t = times.get(cls)
++        if ok.get((cls, "atomic"), False):
++            if t is None or t["atomic"] <= t["master"] * W2_VERIFY_SLOWER_TOL:
++                modes[cls] = "atomic"
++                why = "atomic passed" + ("" if t is None else " and not >2%% slower than master (%.1f vs %.1f us)" % (t["atomic"], t["master"]))
++            else:
++                modes[cls] = "master"
++                why = "atomic passed but >2%% slower than master in the w2-alone timing (%.1f vs %.1f us)" % (t["atomic"], t["master"])
++        elif ok.get((cls, "atomic_zero"), False):
++            modes[cls] = "master"
++            why = "only atomic_zero passed (memset cancels the gain)"
++        else:
++            modes[cls] = "master"
++            why = "no atomic candidate passed: " + "; ".join(
++                "%s %s" % (k[1], v) for k, v in err.items() if k[0] == cls)
++        print("[w2-atomic-verify] class T>=%d PATH CHOSEN = %s (%s)" % (cls, modes[cls], why), flush=True)
++    for tokens in W2_VERIFY_TOKENS:
++        print("[w2-atomic-verify] T=%d verify mode %s; worst rel-L2 vs master atomic %.3g (row %.3g), "
++              "atomic_zero %.3g (row %.3g); gate rel-L2 %.0e row %.1e"
++              % (tokens, modes[_w2_verify_class(tokens)], worst.get((tokens, "atomic"), nan),
++                 row_worst.get((tokens, "atomic"), nan), worst.get((tokens, "atomic_zero"), nan),
++                 row_worst.get((tokens, "atomic_zero"), nan), W2_VERIFY_REL_L2, W2_VERIFY_ROW_REL),
++              flush=True)
++    for tokens, t in times.items():
++        print("[w2-atomic-verify] T=%d w2 alone, cold L2, median of 50: master %.1f us, atomic %.1f us, "
++              "atomic_zero (incl. memset) %.1f us" % (tokens, t["master"], t["atomic"], t["atomic_zero"]),
++              flush=True)
++    if all(m == "master" for m in modes.values()):
++        print("[w2-atomic-verify] NO-OP: every verify class chose master", flush=True)
++    return modes
++
++
+ def kernel_fn(data: Inputs, state: dict) -> torch.Tensor:
+     """This GPU's share of the MoE output, bfloat16 [M, H]."""
+-    return _forward(data, state, state.get("w2_mode", "master"))
++    # Host-side pick on the shape only: the landed mode up to 32 tokens, the verify class's mode above.
++    tokens = data["hidden_states"].shape[0]
++    if tokens <= W2_ATOMIC_MAX_TOKENS:
++        return _forward(data, state, state.get("w2_mode", "master"))
++    return _forward(data, state, state.get("w2_mode_verify", {}).get(_w2_verify_class(tokens), "master"))
+ 
+ 
+-def _forward(data: Inputs, state: dict, w2_mode: str) -> torch.Tensor:
++def _forward(data: Inputs, state: dict, w2_mode: str, probe: dict = None) -> torch.Tensor:
+     cfg = data["config"]
+     bank = state["banks"][(cfg["local_start"], cfg["local_count"])]
+     x = data["hidden_states"].contiguous()
+@@ -586,15 +731,22 @@ def _forward(data: Inputs, state: dict, w2_mode: str) -> torch.Tensor:
+         sorted_ids, block_experts, n_padded, topk_weights, top_k=TOP_K,
+         size_m=num_tokens, size_n=gemm1_n, size_k=size_k, **common)
+     silu_and_mul(cache1.view(-1, gemm1_n), cache2, expert_ids=local_ids.view(-1), expert_step=1)
+-    w2_common = common
+-    if w2_mode != "master" and num_tokens <= W2_ATOMIC_MAX_TOKENS:
+-        w2_common = dict(common, use_atomic_add=True)
+-        if w2_mode == "atomic_zero":
+-            cache3.zero_()
+-    y = moe_wna16_marlin_gemm(
+-        cache2, cache3, bank["w2"], None, bank["w2_s"], bank["w2_gs"], None, None, None, ws,
+-        sorted_ids, block_experts, n_padded, topk_weights, top_k=1,
+-        size_m=num_tokens * TOP_K, size_n=size_k, size_k=size_n, **w2_common).view(num_tokens, TOP_K, size_k)
++    def w2_call(mode):
++        w2_common = common
++        if mode != "master":
++            w2_common = dict(common, use_atomic_add=True)
++            if mode == "atomic_zero":
++                cache3.zero_()
++        return moe_wna16_marlin_gemm(
++            cache2, cache3, bank["w2"], None, bank["w2_s"], bank["w2_gs"], None, None, None, ws,
++            sorted_ids, block_experts, n_padded, topk_weights, top_k=1,
++            size_m=num_tokens * TOP_K, size_n=size_k, size_k=size_n, **w2_common)
++
++    if probe is not None:
++        # prepare()-only: hand the w2 launch to the self-check, which times it per mode.
++        probe["w2_call"] = w2_call
++        probe["device"] = x.device
++    y = w2_call(w2_mode).view(num_tokens, TOP_K, size_k)
+     if num_tokens < SMALL_M_POST_NORM:
+         y = y.contiguous()
+         out = torch.empty((num_tokens, size_k), device=x.device, dtype=torch.bfloat16)

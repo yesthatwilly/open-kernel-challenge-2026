@@ -41,10 +41,10 @@ priority: 2
 kind: primary
 controls_for: null
 review: proceed
-status: running
+status: done
 review_at: 2026-10-25T042602Z
 review_companions: null
-stage: dispatched
+stage: harvested
 claimed_at: 2026-10-25T042602Z
 base_sha: 9d3c58e166fc04c1df6f9c7b4eccd2672e82be7c
 base_blob: 60dfe35d5417d9c0f89067ff313efdc2c41d03a2
@@ -63,6 +63,13 @@ attempt_file: 2026-10-25T043034Z-check-w2-marlin-atomic-add-verify.md
 prepared_at: 2026-10-25T043034Z
 job: ccbcda65da584be0
 dispatched_at: 2026-10-25T043040Z
+outcome: neutral
+verdict_detail: within-ci
+speedup: 1.3407199017390183
+speedup_ci: [1.320609103212933, 1.3608307002651034]
+harvested_at: 2026-10-25T043620Z
+best_at_harvest: 1.3438953504561806
+promotion: null
 ---
 
 # w2-marlin-atomic-add-verify
@@ -147,3 +154,29 @@ Audited 2026-10-24 (opus). **Verdict: dispatch-with-fixes.** Rules OK.
 - lint OK with warnings (prepare-only syncs, uint8 L2-flush buffer); py_compile OK; __pycache__ removed.
 
 Residual risk: at slice_count ~1 atomic add has no mechanism, so bs=128/256 will most likely read flat. The w2-alone A/B timings in the log are the attribution.
+
+## Result
+
+- job `ccbcda65da584be0` (check), status done, passed True, tests 5/5
+- speedup 1.3407x, 95% CI [1.3206, 1.3608], score 10030.80507908941 µs vs SGLang 13448.5 µs
+- best at harvest: {"speedup": 1.3438953504561806, "ci": [1.3237369201993379, 1.364053780713023], "job": "7a0d900a1dd34666"}; base result: muse_moe_w4a16/hypotheses/done/neutral/w2-marlin-atomic-add-small-m.result.json
+- **outcome: neutral** (within-ci)
+- files: `muse_moe_w4a16/hypotheses/done/neutral/w2-marlin-atomic-add-verify.result.json`, `muse_moe_w4a16/hypotheses/done/neutral/w2-marlin-atomic-add-verify.patch`; branch `hyp/muse_moe_w4a16/w2-marlin-atomic-add-verify`
+
+## Attribution
+
+| shape | w | base µs | hyp µs | delta | verdict |
+|---|---|---|---|---|---|
+| bs=1 load=decode_1 sharding=ep8 | 60 | 44.88 | 45.08 | 0.9948 | flat |
+| bs=16 load=decode_16 sharding=ep8 | 60 | 147.71 | 147.4 | 0.9977 | flat |
+| bs=32 load=decode_32 sharding=ep8 | 60 | 198.72 | 207.03 | 0.9976 | flat |
+| bs=8 load=verify_1 sharding=ep8 | 60 | 106.03 | 108.34 | 0.9886 | flat |
+| bs=128 load=verify_16 sharding=ep8 | 60 | 317.77 | 326.59 | 1.0026 | flat |
+| bs=256 load=verify_32 sharding=ep8 | 60 | 467.8 | 468.77 | 1.0018 | flat |
+
+no shape moved outside noise. Expected hit: 4/6. Noise ±1.5%.
+
+## Follow-ups
+
+- within-ci: the change is not proven either way; a stacked hypothesis (`depends_on: w2-marlin-atomic-add-verify`) that adds a further change in the same area is the only way to learn more (identical code is never re-run).
+
