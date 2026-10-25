@@ -1,25 +1,25 @@
 # muse_decode_layer findings
 
-Regenerated 2026-10-25T040348Z by `churn.py index`. Read this before writing a hypothesis for muse_decode_layer.
+Regenerated 2026-10-25T043406Z by `churn.py index`. Read this before writing a hypothesis for muse_decode_layer.
 
 ## Current best
 
-1.2521x [1.2333,1.2709] from job `39bcf05afc4e4dd3` (submit), master commit `8fa8fbf0c8`, hypothesis stack-align-par-sidestream-sliding1
+1.2680x [1.2490,1.2871] from job `c243a29f26dc4725` (check), master commit `b047510f64`, hypothesis full-decode-splitkv-restack-on-pdl
 
 Where the time goes (per scored shape, top kernels):
 
-- batch=1 ctx=80000 dist=soft layer=sliding load=decode_1 page=1 repeats=60: yours 127.5µs vs SGLang 171.4µs (SoL 40.0µs) · void sglang::device::marlin_moe::Marlin<__nv_bfloat16, 56... 40.9µs 32.9%, void (anonymous namespace)::dl_pooler_router_kernel<1>(__... 21.1µs 16.9%, nvjet_sm90_tst_128x8_64x12_4x1_v_bz_splitK_TNT 13.2µs 10.6%
-- batch=1 ctx=80000 dist=soft layer=full load=decode_1 page=1 repeats=60: yours 142.9µs vs SGLang 181.0µs (SoL 44.2µs) · void sglang::device::marlin_moe::Marlin<__nv_bfloat16, 56... 46.2µs 31.2%, void (anonymous namespace)::dl_pooler_router_kernel<1>(__... 21.2µs 14.3%, void cutlass::device_kernel<flash::enable_sm90_or_later<f... 18.1µs 12.2%
-- batch=16 ctx=80000 dist=soft layer=sliding load=decode_16 page=1 spread=agentic: yours 205.0µs vs SGLang 256.4µs (SoL 76.7µs) · void sglang::device::marlin_moe::Marlin<__nv_bfloat16, 56... 97.0µs 45.9%, nvjet_sm90_tst_64x16_64x16_2x1_v_bz_TNT 26.3µs 12.4%, void (anonymous namespace)::dl_pooler_router_kernel<2>(__... 25.1µs 11.9%
-- batch=16 ctx=80000 dist=soft layer=full load=decode_16 page=1 spread=agentic: yours 349.5µs vs SGLang 429.6µs (SoL 137.5µs) · void cutlass::device_kernel<flash::enable_sm90_or_later<f... 151.0µs 43.6%, void sglang::device::marlin_moe::Marlin<__nv_bfloat16, 56... 86.7µs 25.0%, nvjet_sm90_tst_64x16_64x16_2x1_v_bz_TNT 25.8µs 7.4%
-- batch=32 ctx=80000 dist=soft layer=sliding load=decode_32 page=1 spread=agentic: yours 245.8µs vs SGLang 264.1µs (SoL 84.5µs) · void sglang::device::marlin_moe::Marlin<__nv_bfloat16, 56... 133.9µs 52.0%, nvjet_sm90_tst_64x32_64x16_2x1_v_bz_TNT 27.6µs 10.7%, void (anonymous namespace)::dl_pooler_router_kernel<4>(__... 27.0µs 10.5%
-- batch=32 ctx=80000 dist=soft layer=full load=decode_32 page=1 spread=agentic: yours 529.7µs vs SGLang 623.8µs (SoL 208.1µs) · void cutlass::device_kernel<flash::enable_sm90_or_later<f... 287.7µs 57.2%, void sglang::device::marlin_moe::Marlin<__nv_bfloat16, 56... 101.1µs 20.1%, void (anonymous namespace)::dl_pooler_router_kernel<4>(__... 26.6µs 5.3%
-- batch=1 ctx=80000 dist=soft layer=sliding load=verify_1 page=1 q_len=8: yours 190.8µs vs SGLang 269.2µs (SoL 62.3µs) · void sglang::device::marlin_moe::Marlin<__nv_bfloat16, 56... 64.8µs 39.9%, void (anonymous namespace)::dl_pooler_router_kernel<1>(__... 22.2µs 13.7%, nvjet_sm90_tst_128x8_64x12_4x1_v_bz_splitK_TNT 13.0µs 8.0%
-- batch=1 ctx=80000 dist=soft layer=full load=verify_1 page=1 q_len=8: yours 192.4µs vs SGLang 270.8µs (SoL 66.4µs) · void sglang::device::marlin_moe::Marlin<__nv_bfloat16, 56... 86.2µs 43.4%, void (anonymous namespace)::dl_pooler_router_kernel<1>(__... 22.8µs 11.4%, void cutlass::device_kernel<flash::enable_sm90_or_later<f... 18.3µs 9.2%
-- batch=16 ctx=80000 dist=soft layer=sliding load=verify_16 page=1 q_len=8 spread=agentic: yours 429.6µs vs SGLang 531.3µs (SoL 126.6µs) · void sglang::device::marlin_moe::Marlin<__nv_bfloat16, 56... 285.3µs 65.3%, nvjet_sm90_tst_128x64_64x8_1x2_h_bz_TNT 27.7µs 6.3%, nvjet_sm90_tst_64x64_64x13_2x1_v_bz_TNT 25.2µs 5.8%
-- batch=16 ctx=80000 dist=soft layer=full load=verify_16 page=1 q_len=8 spread=agentic: yours 563.7µs vs SGLang 694.2µs (SoL 188.7µs) · void sglang::device::marlin_moe::Marlin<__nv_bfloat16, 56... 285.3µs 48.4%, void cutlass::device_kernel<flash::enable_sm90_or_later<f... 153.2µs 26.0%, nvjet_sm90_tst_128x64_64x8_1x2_h_bz_TNT 28.6µs 4.9%
-- batch=32 ctx=80000 dist=soft layer=sliding load=verify_32 page=1 q_len=8 spread=agentic: yours 592.5µs vs SGLang 696.8µs (SoL 143.8µs) · void sglang::device::marlin_moe::Marlin<__nv_bfloat16, 56... 409.1µs 68.4%, nvjet_sm90_tst_128x128_64x6_2x1_v_bz_TNT 33.8µs 5.7%, nvjet_sm90_tst_128x64_64x8_1x2_h_bz_TNT 30.7µs 5.1%
-- batch=32 ctx=80000 dist=soft layer=full load=verify_32 page=1 q_len=8 spread=agentic: yours 861.3µs vs SGLang 1044.6µs (SoL 267.2µs) · void sglang::device::marlin_moe::Marlin<__nv_bfloat16, 56... 431.5µs 47.0%, void cutlass::device_kernel<flash::enable_sm90_or_later<f... 289.4µs 31.5%, nvjet_sm90_tst_128x128_64x6_2x1_v_bz_TNT 35.4µs 3.9%
+- batch=1 ctx=80000 dist=soft layer=sliding load=decode_1 page=1 repeats=60: yours 126.1µs vs SGLang 172.1µs (SoL 40.0µs) · void sglang::device::marlin_moe::Marlin<__nv_bfloat16, 56... 40.9µs 33.1%, void (anonymous namespace)::dl_pooler_router_kernel<1>(__... 21.0µs 17.0%, _sliding_fused_kernel 13.1µs 10.6%
+- batch=1 ctx=80000 dist=soft layer=full load=decode_1 page=1 repeats=60: yours 142.7µs vs SGLang 181.4µs (SoL 44.2µs) · void sglang::device::marlin_moe::Marlin<__nv_bfloat16, 56... 40.3µs 28.3%, void (anonymous namespace)::dl_pooler_router_kernel<1>(__... 21.2µs 14.9%, void cutlass::device_kernel<flash::enable_sm90_or_later<f... 18.5µs 13.0%
+- batch=16 ctx=80000 dist=soft layer=sliding load=decode_16 page=1 spread=agentic: yours 209.8µs vs SGLang 261.7µs (SoL 76.7µs) · void sglang::device::marlin_moe::Marlin<__nv_bfloat16, 56... 116.7µs 50.7%, nvjet_sm90_tst_64x16_64x16_2x1_v_bz_TNT 26.4µs 11.5%, void (anonymous namespace)::dl_pooler_router_kernel<2>(__... 24.5µs 10.7%
+- batch=16 ctx=80000 dist=soft layer=full load=decode_16 page=1 spread=agentic: yours 306.7µs vs SGLang 431.6µs (SoL 137.5µs) · (anonymous namespace)::splitkv_attn_kernel(unsigned char ... 112.7µs 36.2%, void sglang::device::marlin_moe::Marlin<__nv_bfloat16, 56... 95.9µs 30.8%, nvjet_sm90_tst_64x16_64x16_2x1_v_bz_TNT 27.0µs 8.7%
+- batch=32 ctx=80000 dist=soft layer=sliding load=decode_32 page=1 spread=agentic: yours 242.3µs vs SGLang 260.8µs (SoL 84.5µs) · void sglang::device::marlin_moe::Marlin<__nv_bfloat16, 56... 112.7µs 46.7%, void (anonymous namespace)::dl_pooler_router_kernel<4>(__... 28.2µs 11.7%, nvjet_sm90_tst_64x32_64x16_2x1_v_bz_TNT 26.7µs 11.1%
+- batch=32 ctx=80000 dist=soft layer=full load=decode_32 page=1 spread=agentic: yours 479.6µs vs SGLang 624.1µs (SoL 208.1µs) · (anonymous namespace)::splitkv_attn_kernel(unsigned char ... 248.5µs 53.5%, void sglang::device::marlin_moe::Marlin<__nv_bfloat16, 56... 111.2µs 23.9%, nvjet_sm90_tst_64x32_64x16_2x1_v_bz_TNT 26.9µs 5.8%
+- batch=1 ctx=80000 dist=soft layer=sliding load=verify_1 page=1 q_len=8: yours 188.0µs vs SGLang 264.9µs (SoL 62.3µs) · void sglang::device::marlin_moe::Marlin<__nv_bfloat16, 56... 94.9µs 48.8%, void (anonymous namespace)::dl_pooler_router_kernel<1>(__... 22.7µs 11.7%, nvjet_sm90_tst_128x8_64x12_4x1_v_bz_splitK_TNT 13.0µs 6.7%
+- batch=1 ctx=80000 dist=soft layer=full load=verify_1 page=1 q_len=8: yours 201.5µs vs SGLang 277.6µs (SoL 66.4µs) · void sglang::device::marlin_moe::Marlin<__nv_bfloat16, 56... 85.6µs 43.1%, void (anonymous namespace)::dl_pooler_router_kernel<1>(__... 22.7µs 11.4%, void cutlass::device_kernel<flash::enable_sm90_or_later<f... 19.1µs 9.6%
+- batch=16 ctx=80000 dist=soft layer=sliding load=verify_16 page=1 q_len=8 spread=agentic: yours 420.4µs vs SGLang 518.8µs (SoL 126.6µs) · void sglang::device::marlin_moe::Marlin<__nv_bfloat16, 56... 283.6µs 64.8%, nvjet_sm90_tst_128x64_64x8_1x2_h_bz_TNT 29.3µs 6.7%, nvjet_sm90_tst_64x64_64x13_2x1_v_bz_TNT 26.8µs 6.1%
+- batch=16 ctx=80000 dist=soft layer=full load=verify_16 page=1 q_len=8 spread=agentic: yours 564.2µs vs SGLang 695.3µs (SoL 188.7µs) · void sglang::device::marlin_moe::Marlin<__nv_bfloat16, 56... 283.7µs 48.3%, void cutlass::device_kernel<flash::enable_sm90_or_later<f... 153.7µs 26.2%, nvjet_sm90_tst_128x64_64x8_1x2_h_bz_TNT 28.4µs 4.8%
+- batch=32 ctx=80000 dist=soft layer=sliding load=verify_32 page=1 q_len=8 spread=agentic: yours 600.8µs vs SGLang 703.0µs (SoL 143.8µs) · void sglang::device::marlin_moe::Marlin<__nv_bfloat16, 56... 405.2µs 68.3%, nvjet_sm90_tst_128x128_64x6_2x1_v_bz_TNT 34.2µs 5.8%, nvjet_sm90_tst_128x64_64x8_1x2_h_bz_TNT 32.3µs 5.4%
+- batch=32 ctx=80000 dist=soft layer=full load=verify_32 page=1 q_len=8 spread=agentic: yours 864.7µs vs SGLang 1047.2µs (SoL 267.2µs) · void sglang::device::marlin_moe::Marlin<__nv_bfloat16, 56... 430.2µs 48.0%, void cutlass::device_kernel<flash::enable_sm90_or_later<f... 286.5µs 31.9%, nvjet_sm90_tst_128x128_64x6_2x1_v_bz_TNT 34.7µs 3.9%
 
 ## By area
 
@@ -39,6 +39,9 @@ Where the time goes (per scored shape, top kernels):
 
 ### FA3 call (sliding decode, batch 1)
 - **sliding-decode1-fused-restack-on-pdl** → neutral (unproven-vs-best), 1.2374x — gained on sliding decode_1, decode_16, decode_32, verify_1, verify_16; full decode_1, decode_16, decode_32, verify_1. Restack decode own neutral sliding-fused-triton-decode1-port (sliding decode_1 145.8 -> 139.4 us, +4.4%, every other shape flat; it also carried the +8.75% slid
+
+### FA3 call (sliding decode, batch 2..16)
+- **sliding-batched-triton-b16-band** → neutral (unproven-vs-best), 1.2743x — gained on full decode_32. Built on master, which now carries the landed full-decode-splitkv-restack-on-pdl (CUDA split-KV kernel A/B on full decode 1 < batch <= 64). Re-apply decode's ha
 
 ### FA3 call (sliding decode, batch > 1)
 - **sliding-fused-batched-decode-port** → neutral (within-ci), 1.2248x — gained on sliding decode_16, decode_32; lost on sliding verify_32; full verify_32. Port muse_attention_decode master batched sliding-decode path (landed sliding-deep-splits-on-cuda-splitkv, job 698d4cd3838c4a63: sliding decode_16 20.7 -> 15.3 
@@ -92,15 +95,22 @@ Where the time goes (per scored shape, top kernels):
 
 ### pre-attention norm+rope
 - **fused-preattention-triton** → neutral (unproven-vs-best), 1.0970x — gained on sliding decode_32. Port muse_attention_decode's fused pre-attention Triton kernel (main tree muse_attention_decode/submission.py, _pre_attention_kernel: passed 16/16 at 1.127x the
+- **fused-preattention-paired-pad-restack** → neutral (unproven-vs-best), 1.2745x — gained on full decode_1, decode_16, decode_32; sliding verify_1. Restack decode's own neutral fused-preattention-triton (1.097x vs 1.087x master then; patch muse_decode_layer/hypotheses/done/neutral/fused-preattention-triton.
 
 ### qkv GEMM + o GEMM + attention-side small kernels (T<=32)
 - **dense-chain-stage2-attn-side-pdl** → regression (regression), 1.2253x — gained on full decode_1; lost on sliding decode_16, decode_32; full decode_32. Stage 2 of the landed small-t-launch-minimal-dense-chain-pdl rewrite (master f1f2f35, its stage plan item 2). Gate: tokens <= DL_MAX_TOKENS (config) and state["
+
+### qkv GEMM + o GEMM + attention-side small kernels (T=1 only)
+- **dense-chain-stage2-attn-side-pdl-t1-gate** → neutral (unproven-vs-best), 1.2717x — gained on full decode_1, decode_32, verify_32; sliding verify_32. Restack dense-chain-stage2-attn-side-pdl onto master (claim applies its patch, depends_on) and narrow its gate from tokens <= DL_MAX_TOKENS to tokens == 1. Its 
 
 ### restack (sliding decode_1 port + paired pad/unpad + T=1 Triton GEMMs)
 - **decode-restack-sliding-port-paired-pad-gemms-t1** → neutral (beats-base-not-best), 1.1937x — gained on sliding decode_1, verify_32; full decode_1, verify_16. Restack three harvested per-shape winners onto current master (post-expert-norm-triton-small-t) by a 3-way merge of their branches, resolving conflicts by hand 
 
 ### router GEMM
 - **sglang-pipeline-parity-router-hilo-m8** → gain (gain), 1.0216x — gained on sliding decode_1, decode_16, decode_32, verify_1, verify_16, verify_32; full decode_1, decode_16, decode_32, verify_1, verify_16, verify_32. Replace the starter's plain-PyTorch layer with SGLang's own pipeline exactly as baseline.py composes it: prepare() builds the Marlin bank via prepare_moe_nvfp4_
+
+### routing top-k (kernel R) + post-MoE unpooler (T<=8)
+- **stack-route-topk-pdl-unpool-nf1** → neutral (within-ci), 1.2671x — gained on sliding decode_1, verify_1; full decode_1. Stack two measured T=1 gains on master (BEST stack-align-par-sidestream-sliding1). Claim restacks dl-route-warp-topk-pdl onto master from its patch (depends_on)
 
 ### routing top-k + MoE align (kernel R, T<=32)
 - **dl-route-warp-topk-pdl** → neutral (unproven-vs-best), 1.2599x — no shape moved outside noise. Kernel R (dl_route_norm_align_kernel in master _DL_CUDA) costs 7.4-8.0 us at every T<=32 (profile 81ee6714b7614a99; its own milestone was <= 4 us). Two changes,
@@ -113,6 +123,7 @@ Where the time goes (per scored shape, top kernels):
 
 ### w13 marlin + silu-mul + w2 marlin (T>32)
 - **moe-chain-cuda-swapab-expert-once-fix-inproc** → regression (regression), 1.1651x — gained on sliding decode_1, decode_16, verify_1, verify_16, verify_32; full decode_1, decode_16, decode_32, verify_1, verify_16, verify_32. Stage 1b FIX (numbered stage 2 only because stage is an int; the original stage plan's stage 2 still comes after this) of failed moe-chain-cuda-swapab-expert-on
+- **moe-chain-cuda-swapab-expert-once-s3-rebase-fp32ref-bound** → regression (regression), 1.0637x — gained on sliding decode_1, decode_16, decode_32, verify_1; full decode_1, decode_16, decode_32, verify_1; lost on sliding verify_16, verify_32; full verify_16, verify_32. Stage 3 of the expert-once swap-AB MoE chain (moe_route_list + moe_w13_silu_swapab + moe_w2_swapab replacing moe_align + Marlin w13 + act_and_mul + Marlin w2 at
 
 ### whole-layer fusion
 - **small-t-launch-minimal-dense-chain-pdl** → gain (gain), 1.2283x — gained on sliding decode_1, decode_16, decode_32, verify_1; full decode_1, decode_16, verify_1. WHY: at T<=32 (decode_1/16/32 and verify_1: 4 of the 6 loads) master runs ~27-29 graph nodes per layer. At decode_1 sliding (145.6 us, floor 40.0) Marlin is 40.
@@ -130,6 +141,7 @@ Where the time goes (per scored shape, top kernels):
 - sliding-fused-triton-decode1-port: unproven-vs-best: the change is not proven either way; a stacked hypothesis (`depends_on: sliding-fused-triton-decode1-port`) that adds a further change in the same area is the only way to learn more (identical code is n
 - paired-heads-pad-unpad-triton: within-ci: the change is not proven either way; a stacked hypothesis (`depends_on: paired-heads-pad-unpad-triton`) that adds a further change in the same area is the only way to learn more (identical code is never re-run
 - full-decode-cuda-splitkv-port: rewrite stage 1 of `paired FA3 flash_fwd main + FlashAttnFwdCombine + pad/unpad copies + FusedRMSNormGate on full-layer decode, batch 16/32`: read the replaced kernels' own us per shape (profile top_kernels) against the 
+- fused-preattention-paired-pad-restack: unproven-vs-best: the change is not proven either way; a stacked hypothesis (`depends_on: fused-preattention-paired-pad-restack`) that adds a further change in the same area is the only way to learn more (identical code 
 - decode-restack-sliding-port-paired-pad-gemms-t1: beats-base-not-best: the change is not proven either way; a stacked hypothesis (`depends_on: decode-restack-sliding-port-paired-pad-gemms-t1`) that adds a further change in the same area is the only way to learn more (id
 - sliding-fused-batched-decode-port: within-ci: the change is not proven either way; a stacked hypothesis (`depends_on: sliding-fused-batched-decode-port`) that adds a further change in the same area is the only way to learn more (identical code is never re
 - moe-dispatch-prep-on-side-stream: unproven-vs-best: the change is not proven either way; a stacked hypothesis (`depends_on: moe-dispatch-prep-on-side-stream`) that adds a further change in the same area is the only way to learn more (identical code is ne
@@ -144,6 +156,9 @@ Where the time goes (per scored shape, top kernels):
 - stack-sidestream-sliding-batched: unproven-vs-best: the change is not proven either way; a stacked hypothesis (`depends_on: stack-sidestream-sliding-batched`) that adds a further change in the same area is the only way to learn more (identical code is ne
 - stack-align-par-sidestream-sliding1: unproven-vs-best: the change is not proven either way; a stacked hypothesis (`depends_on: stack-align-par-sidestream-sliding1`) that adds a further change in the same area is the only way to learn more (identical code is
 - full-decode-splitkv-kv-bw-3p5: rewrite stage 2 of `paired FA3 flash_fwd + FlashAttnFwdCombine + pad/unpad copies + FusedRMSNormGate on full decode, 1 < batch <= 64 (now splitkv_attn_kernel + splitkv_combine_kernel)`: read the replaced kernels' own us 
+- stack-route-topk-pdl-unpool-nf1: within-ci: the change is not proven either way; a stacked hypothesis (`depends_on: stack-route-topk-pdl-unpool-nf1`) that adds a further change in the same area is the only way to learn more (identical code is never re-r
+- dense-chain-stage2-attn-side-pdl-t1-gate: unproven-vs-best: the change is not proven either way; a stacked hypothesis (`depends_on: dense-chain-stage2-attn-side-pdl-t1-gate`) that adds a further change in the same area is the only way to learn more (identical co
+- sliding-batched-triton-b16-band: unproven-vs-best: the change is not proven either way; a stacked hypothesis (`depends_on: sliding-batched-triton-b16-band`) that adds a further change in the same area is the only way to learn more (identical code is nev
 - moe-chain-cuda-swapab-expert-once-large-t: rewrite stage 1 of `moe_align_block_size + Marlin w13 + silu_and_mul (act_and_mul_kernel) + Marlin w2 at T > 32 (verify_16 T=128, verify_32 T=256)`: read the replaced kernels' own us per shape (profile top_kernels) again
 - stack-align-par-sliding-batched: none
 
@@ -169,7 +184,7 @@ Where the time goes (per scored shape, top kernels):
 - queue: prefork-qkv-o-swapab-t16-t32 [qkv GEMM + o GEMM (before the router fork)] p4 hold
 - queue: marlin-two-stream-halves-port [w13 marlin + silu-mul + w2 marlin (8<=T<=32, stream overlap)] p5 hold
 - queue: moe-chain-cuda-swapab-expert-once-fix [w13 marlin + silu-mul + w2 marlin (T>32)] p2 hold
-- running: fused-preattention-paired-pad-restack [pre-attention norm+rope] p5 running
-- running: moe-chain-cuda-swapab-expert-once-s3-rebase-fp32ref-bound [w13 marlin + silu-mul + w2 marlin (T>32)] p2 running
-- running: stack-route-topk-pdl-unpool-nf1 [routing top-k (kernel R) + post-MoE unpooler (T<=8)] p2 running
-- running: dense-chain-stage2-attn-side-pdl-t1-gate [qkv GEMM + o GEMM + attention-side small kernels (T=1 only)] p2 running
+- running: full-decode-streamk-ticket-port [FA3 call (full decode, batch > 1): splitkv_attn_kernel + splitkv_combine_kernel] p1 running
+- running: full-decode1-two-level-ticket-port [FA3 call (full decode, batch 1)] p2 running
+- running: sliding-cluster-c4-decode32-port [FA3 call (sliding decode, batch 17..32)] p1 running
+- running: w2-marlin-atomic-add-t1-port [w2 marlin (T=1)] p2 running

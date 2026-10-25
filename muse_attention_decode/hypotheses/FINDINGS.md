@@ -1,25 +1,25 @@
 # muse_attention_decode findings
 
-Regenerated 2026-10-25T040348Z by `churn.py index`. Read this before writing a hypothesis for muse_attention_decode.
+Regenerated 2026-10-25T043406Z by `churn.py index`. Read this before writing a hypothesis for muse_attention_decode.
 
 ## Current best
 
-1.3949x [1.3740,1.4158] from job `698d4cd3838c4a63` (submit), master commit `0a56d22c1f`, hypothesis sliding-deep-splits-on-cuda-splitkv
+1.4322x [1.4107,1.4554] from job `2a3241780c7b4c46` (check), master commit `c3c1b01b18`, hypothesis full-decode1-streamk-s3-two-level-ticket
 
 Where the time goes (per scored shape, top kernels):
 
-- batch=1 ctx=80000 dist=soft heads=tp8 layer=sliding load=decode_1 page=1: yours 13.2µs vs SGLang 20.8µs (SoL 0.1µs) · _sliding_fused_kernel 10.4µs 100.0%
-- batch=1 ctx=80000 dist=coherent heads=tp8 layer=full load=decode_1 page=1: yours 27.3µs vs SGLang 31.2µs (SoL 4.3µs) · void cutlass::device_kernel<flash::enable_sm90_or_later<f... 14.6µs 60.5%, void cutlass::device_kernel<flash::FlashAttnFwdCombine<cu... 7.1µs 29.5%, _pre_attention_kernel 1.3µs 5.6%
-- batch=16 ctx=80000 dist=soft heads=tp8 layer=sliding load=decode_16 page=1 spread=agentic: yours 15.3µs vs SGLang 26.7µs (SoL 1.6µs) · _sliding_fused_kernel 12.9µs 100.0%
-- batch=16 ctx=80000 dist=coherent heads=tp8 layer=full load=decode_16 page=1 spread=agentic: yours 122.8µs vs SGLang 200.8µs (SoL 63.2µs) · (anonymous namespace)::splitkv_attn_kernel(unsigned char ... 111.8µs 91.5%, (anonymous namespace)::splitkv_combine_kernel(float const... 8.2µs 6.7%, _pre_attention_kernel 2.1µs 1.8%
-- batch=32 ctx=80000 dist=soft heads=tp8 layer=sliding load=decode_32 page=1 spread=agentic: yours 24.2µs vs SGLang 31.2µs (SoL 3.3µs) · _sliding_fused_kernel 22.1µs 100.0%
-- batch=32 ctx=80000 dist=coherent heads=tp8 layer=full load=decode_32 page=1 spread=agentic: yours 241.9µs vs SGLang 384.0µs (SoL 126.4µs) · (anonymous namespace)::splitkv_attn_kernel(unsigned char ... 245.9µs 95.9%, (anonymous namespace)::splitkv_combine_kernel(float const... 8.4µs 3.3%, _pre_attention_kernel 2.0µs 0.8%
-- batch=1 ctx=80000 dist=soft heads=tp8 layer=sliding load=verify_1 page=1 q_len=8: yours 16.7µs vs SGLang 22.7µs (SoL 0.1µs) · void cutlass::device_kernel<flash::enable_sm90_or_later<f... 7.6µs 47.7%, void cutlass::device_kernel<flash::FlashAttnFwdCombine<cu... 3.9µs 24.3%, void flash::prepare_varlen_num_blocks_kernel<1, false>(in... 1.7µs 10.7%
-- batch=1 ctx=80000 dist=coherent heads=tp8 layer=full load=verify_1 page=1 q_len=8: yours 30.0µs vs SGLang 36.0µs (SoL 4.3µs) · void cutlass::device_kernel<flash::enable_sm90_or_later<f... 15.0µs 54.0%, void cutlass::device_kernel<flash::FlashAttnFwdCombine<cu... 7.6µs 27.4%, void flash::prepare_varlen_num_blocks_kernel<1, true>(int... 2.7µs 9.6%
-- batch=16 ctx=80000 dist=soft heads=tp8 layer=sliding load=verify_16 page=1 q_len=8 spread=agentic: yours 22.7µs vs SGLang 29.0µs (SoL 1.9µs) · void cutlass::device_kernel<flash::enable_sm90_or_later<f... 10.7µs 51.7%, void cutlass::device_kernel<flash::FlashAttnFwdCombine<cu... 4.1µs 19.8%, _pre_attention_kernel 2.7µs 13.1%
-- batch=16 ctx=80000 dist=coherent heads=tp8 layer=full load=verify_16 page=1 q_len=8 spread=agentic: yours 162.0µs vs SGLang 204.5µs (SoL 63.4µs) · void cutlass::device_kernel<flash::enable_sm90_or_later<f... 151.1µs 91.4%, void cutlass::device_kernel<flash::FlashAttnFwdCombine<cu... 6.0µs 3.6%, void flash::prepare_varlen_num_blocks_kernel<1, true>(int... 3.0µs 1.8%
-- batch=32 ctx=80000 dist=soft heads=tp8 layer=sliding load=verify_32 page=1 q_len=8 spread=agentic: yours 28.7µs vs SGLang 34.3µs (SoL 3.7µs) · void cutlass::device_kernel<flash::enable_sm90_or_later<f... 14.5µs 55.0%, void cutlass::device_kernel<flash::FlashAttnFwdCombine<cu... 4.3µs 16.4%, _pre_attention_kernel 4.1µs 15.7%
-- batch=32 ctx=80000 dist=coherent heads=tp8 layer=full load=verify_32 page=1 q_len=8 spread=agentic: yours 300.8µs vs SGLang 388.3µs (SoL 126.8µs) · void cutlass::device_kernel<flash::enable_sm90_or_later<f... 290.3µs 94.0%, void cutlass::device_kernel<flash::FlashAttnFwdCombine<cu... 7.1µs 2.3%, _pre_attention_kernel 4.1µs 1.3%
+- batch=1 ctx=80000 dist=soft heads=tp8 layer=sliding load=decode_1 page=1: yours 13.1µs vs SGLang 20.9µs (SoL 0.1µs) · _sliding_fused_kernel 10.2µs 100.0%
+- batch=1 ctx=80000 dist=coherent heads=tp8 layer=full load=decode_1 page=1: yours 22.6µs vs SGLang 31.2µs (SoL 4.3µs) · void (anonymous namespace)::splitkv_attn_sk_kernel<4, tru... 18.6µs 93.1%, _pre_attention_kernel 1.4µs 6.9%
+- batch=16 ctx=80000 dist=soft heads=tp8 layer=sliding load=decode_16 page=1 spread=agentic: yours 15.3µs vs SGLang 26.8µs (SoL 1.6µs) · _sliding_fused_kernel 12.7µs 100.0%
+- batch=16 ctx=80000 dist=coherent heads=tp8 layer=full load=decode_16 page=1 spread=agentic: yours 111.1µs vs SGLang 199.9µs (SoL 63.2µs) · void (anonymous namespace)::splitkv_attn_sk_kernel<4, tru... 110.1µs 98.2%, _pre_attention_kernel 2.0µs 1.8%
+- batch=32 ctx=80000 dist=soft heads=tp8 layer=sliding load=decode_32 page=1 spread=agentic: yours 24.3µs vs SGLang 31.4µs (SoL 3.3µs) · _sliding_fused_kernel 22.4µs 100.0%
+- batch=32 ctx=80000 dist=coherent heads=tp8 layer=full load=decode_32 page=1 spread=agentic: yours 226.4µs vs SGLang 383.0µs (SoL 126.4µs) · void (anonymous namespace)::splitkv_attn_sk_kernel<4, tru... 225.6µs 99.0%, _pre_attention_kernel 2.2µs 1.0%
+- batch=1 ctx=80000 dist=soft heads=tp8 layer=sliding load=verify_1 page=1 q_len=8: yours 17.8µs vs SGLang 22.6µs (SoL 0.1µs) · void cutlass::device_kernel<flash::enable_sm90_or_later<f... 7.9µs 48.1%, void cutlass::device_kernel<flash::FlashAttnFwdCombine<cu... 3.9µs 23.7%, void flash::prepare_varlen_num_blocks_kernel<1, false>(in... 1.8µs 11.0%
+- batch=1 ctx=80000 dist=coherent heads=tp8 layer=full load=verify_1 page=1 q_len=8: yours 30.5µs vs SGLang 36.0µs (SoL 4.3µs) · void cutlass::device_kernel<flash::enable_sm90_or_later<f... 15.4µs 54.2%, void cutlass::device_kernel<flash::FlashAttnFwdCombine<cu... 7.0µs 24.5%, void flash::prepare_varlen_num_blocks_kernel<1, true>(int... 2.8µs 9.7%
+- batch=16 ctx=80000 dist=soft heads=tp8 layer=sliding load=verify_16 page=1 q_len=8 spread=agentic: yours 22.7µs vs SGLang 29.2µs (SoL 1.9µs) · void cutlass::device_kernel<flash::enable_sm90_or_later<f... 10.7µs 52.0%, void cutlass::device_kernel<flash::FlashAttnFwdCombine<cu... 4.0µs 19.3%, _pre_attention_kernel 2.8µs 13.4%
+- batch=16 ctx=80000 dist=coherent heads=tp8 layer=full load=verify_16 page=1 q_len=8 spread=agentic: yours 162.8µs vs SGLang 205.4µs (SoL 63.4µs) · void cutlass::device_kernel<flash::enable_sm90_or_later<f... 151.6µs 91.4%, void cutlass::device_kernel<flash::FlashAttnFwdCombine<cu... 6.0µs 3.6%, void flash::prepare_varlen_num_blocks_kernel<1, true>(int... 3.0µs 1.8%
+- batch=32 ctx=80000 dist=soft heads=tp8 layer=sliding load=verify_32 page=1 q_len=8 spread=agentic: yours 28.3µs vs SGLang 34.0µs (SoL 3.7µs) · void cutlass::device_kernel<flash::enable_sm90_or_later<f... 14.8µs 55.7%, void cutlass::device_kernel<flash::FlashAttnFwdCombine<cu... 4.2µs 15.8%, _pre_attention_kernel 4.2µs 15.7%
+- batch=32 ctx=80000 dist=coherent heads=tp8 layer=full load=verify_32 page=1 q_len=8 spread=agentic: yours 302.2µs vs SGLang 390.9µs (SoL 126.8µs) · void cutlass::device_kernel<flash::enable_sm90_or_later<f... 288.0µs 93.8%, void cutlass::device_kernel<flash::FlashAttnFwdCombine<cu... 7.5µs 2.4%, _pre_attention_kernel 4.1µs 1.3%
 
 ## By area
 
@@ -47,6 +47,9 @@ Where the time goes (per scored shape, top kernels):
 ### attention boundary
 - **paired-heads-launch-cleanup** → gain (gain), 1.2436x — gained on full decode_1, decode_16, decode_32, verify_1, verify_16. Stacked on fa3-hdim128-head-pairing (and using fused-preattention-triton's kernel, which must have landed too): remove the five pad/un-pad launches the pairing 
 
+### full + sliding decode attention (stack of two pending kernels)
+- **stack-streamk-ticket-cluster-c16-c4** → neutral (beats-base-not-best), 1.4266x — gained on full decode_16, decode_32; sliding decode_32; lost on sliding verify_1. Stack the two pending (user-held, not on master) decode wins on current master; they touch disjoint shapes and code paths (REWRITE_READ_2026-10-25 '01:36Z harve
+
 ### full-layer attention (batch-1 decode gate)
 - **full-fused-triton-decode1-gate** → neutral (within-ci), 1.3417x — lost on full decode_1. Built on master. Route full-attention batch-1 decode (config window == 0 and batch == 1 and q_len == 1) through master _sliding_fused_kernel via _sliding_forwar
 - **full-decode1-cuda-splitkv-chunk320** → neutral (unproven-vs-best), 1.3954x — gained on full decode_1; lost on full decode_32; sliding verify_1. Route FULL-layer decode at batch 1 (window == 0, q_len 1, tp8, d 64, page 1) through master's existing CUDA split-KV path with a smaller work chunk, instead of 
@@ -58,8 +61,14 @@ Where the time goes (per scored shape, top kernels):
 ### full-layer attention (decode, splitkv kernel A/B)
 - **full-decode-splitkv-s2-streamk-ticket-inproc** → neutral (unproven-vs-best), 1.4171x — gained on full decode_16, decode_32. Stage 2 of the full-decode rewrite, built on master (stage 1 kernels splitkv_attn_kernel A + splitkv_combine_kernel B in load_inline module muse_full_decode_spl
 
+### full-layer attention (decode, splitkv stream-K kernel prologue)
+- **full-decode-splitkv-s3-fused-preattn** → neutral (within-ci), 1.4283x — no shape moved outside noise. Stage 3 of the full-decode rewrite, built on the stage-2 branch hyp/muse_attention_decode/full-decode-splitkv-s2-streamk-ticket-inproc (stream-K over 64-token t
+
 ### full-layer attention (verify, splitkv A8/B8)
 - **full-verify-wgmma-s3-warpgroup-per-kvhead-inproc** → neutral (beats-base-not-best), 1.3801x — gained on sliding decode_1, decode_16, decode_32; full verify_16, verify_32; lost on full decode_32. Stage 3 of the full-attention rewrite, built on the stage-2 code (branch hyp/muse_attention_decode/full-verify-cuda-streamk-splitkv, impl_commit ee7dd20, rebase
+
+### full-layer attention (verify, wgmma stream-K kernel, multi-tile correctness)
+- **full-verify-wgmma-s4-multitile-fix** → neutral (within-ci), 1.3758x — no shape moved outside noise. Stage 4 (correctness fix) of the full-verify wgmma rewrite, built on the stage-3 commit (hyp/muse_attention_decode/full-verify-wgmma-s3-warpgroup-per-kvhead-inp
 
 ### full-layer attention (whole-path rewrite, warp-specialized one launch)
 - **full-cuda-onelaunch-warpspec-bulk-gather** → regression (regression), 0.8238x — lost on full decode_16, decode_32; sliding verify_1. Stage 1 of a rewrite of the FULL-layer path, built on master (stage 1 of the first CUDA kernel, full-decode-cuda-gather-splitkv, has landed; no depends_on). Why
@@ -134,7 +143,10 @@ Where the time goes (per scored shape, top kernels):
 - full-decode-splitkv-s2-streamk-ticket-inproc: rewrite stage 2 of `full-layer decode at 1<batch<=64: splitkv_attn_kernel A + splitkv_combine_kernel B (stage 1, master)`: read the replaced kernels' own us per shape (profile top_kernels) against the incumbent and the f
 - full-verify-wgmma-s3-warpgroup-per-kvhead-inproc: rewrite stage 3 of `full-layer verify at 1<batch<=64: FA3 main + prepare_varlen_num_blocks + FlashAttnFwdCombine + norm-gate (master); stage-2 splitkv_verify_kernel A8 + splitkv_verify_combine B8`: read the replaced kern
 - sliding-cluster-s2-decode-c4-pdl-inproc: rewrite stage 2 of `sliding layer decode at tp8/page 1, 1<=batch<=32: master Triton _sliding_fused_kernel (stage-1 sliding_cluster_kernel<1>)`: read the replaced kernels' own us per shape (profile top_kernels) against th
+- full-decode-splitkv-s3-fused-preattn: rewrite stage 3 of `_pre_attention_kernel launch on full decode 1<B<=64 (folded into splitkv_attn_sk_kernel)`: read the replaced kernels' own us per shape (profile top_kernels) against the incumbent and the floor, and ch
 - full-decode1-streamk-s3-two-level-ticket: rewrite stage 3 of `FA3 main + FlashAttnFwdCombine + sglang rms_norm_gate on full decode batch 1`: read the replaced kernels' own us per shape (profile top_kernels) against the incumbent and the floor, and check which Mi
+- stack-streamk-ticket-cluster-c16-c4: beats-base-not-best: the change is not proven either way; a stacked hypothesis (`depends_on: stack-streamk-ticket-cluster-c16-c4`) that adds a further change in the same area is the only way to learn more (identical code
+- full-verify-wgmma-s4-multitile-fix: rewrite stage 4 of `full-layer verify at 1<batch<=64: FA3 main + prepare_varlen_num_blocks + FlashAttnFwdCombine + norm-gate (master paired FA3)`: read the replaced kernels' own us per shape (profile top_kernels) against
 
 ## Do not retry (rejected / duplicates)
 
@@ -167,6 +179,9 @@ Where the time goes (per scored shape, top kernels):
 - queue: full-verify-wgmma-s4-sliding-window [sliding-layer attention (verify, wgmma stream-K kernel)] p2 hold
 - queue: full-verify1-wgmma-s4-batch1-grid-sm [full-layer attention (batch-1 verify, wgmma stream-K kernel)] p2 hold
 - queue: sliding-decode-paired-kvhead-rows-control-unpaired-s8 [sliding-layer attention (batched decode, split depth)] p2 queued
-- running: full-decode-splitkv-s3-fused-preattn [full-layer attention (decode, splitkv stream-K kernel prologue)] p1 running
-- running: stack-streamk-ticket-cluster-c16-c4 [full + sliding decode attention (stack of two pending kernels)] p1 running
-- running: full-verify-wgmma-s4-multitile-fix [full-layer attention (verify, wgmma stream-K kernel, multi-tile correctness)] p1 running
+- queue: sliding-cluster-s3-verify-attn-only-phase-timed [sliding-layer attention (verify, cluster kernel)] p2 hold
+- queue: sliding-verify1-triton-pseudo-decode [sliding-layer attention (batch-1 verify, Triton fused decode kernel)] p2 hold
+- queue: full-verify1-sk-pseudo-decode [full-layer attention (batch-1 verify, stream-K pseudo-decode)] p3 hold
+- running: full-decode1-sk4-cluster-dsmem-merge [full-layer attention (batch-1 decode, stream-K kernel merge)] p1 running
+- running: sliding-verify-sk-pseudo-decode-s1 [sliding-layer attention (verify, stream-K pseudo-decode kernel)] p1 running
+- running: full-decode1-sk-pdl-from-preattn [launch overhead (full decode_1, pre-attention -> stream-K kernel)] p2 running

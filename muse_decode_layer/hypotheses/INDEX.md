@@ -1,6 +1,6 @@
 # muse_decode_layer hypotheses
 
-Regenerated 2026-10-25T040348Z. Best: 1.2521x [1.2333,1.2709] job `39bcf05afc4e4dd3` (submit)
+Regenerated 2026-10-25T043406Z. Best: 1.2680x [1.2490,1.2871] job `c243a29f26dc4725` (check)
 
 | created | slug | kind | area | where | outcome | speedup | CI | job | mode | promotion | review | expected hit |
 |---|---|---|---|---|---|---|---|---|---|---|---|---|
@@ -30,7 +30,7 @@ Regenerated 2026-10-25T040348Z. Best: 1.2521x [1.2333,1.2709] job `39bcf05afc4e4
 | 2026-10-24T165224Z | full-verify-cuda-splitkv-stage2 | rewrite | FA3 call | done/regression | regression | 1.1559 | [1.139,1.173] | e9d5eeffddef4f70 | check |  | proceed | 3/5 |
 | 2026-10-24T165242Z | bf16-m32-swapab-wgmma-port | primary | pooler GEMM | queue | hold |  |  |  |  |  | proceed |  |
 | 2026-10-24T165302Z | moe-align-small-t-restack-on-master | primary | MoE align/dispatch | queue | hold |  |  |  |  |  | proceed |  |
-| 2026-10-24T165619Z | fused-preattention-paired-pad-restack | primary | pre-attention norm+rope | running | running |  |  | 5e9b5464d1444708 | check |  | proceed |  |
+| 2026-10-24T165619Z | fused-preattention-paired-pad-restack | primary | pre-attention norm+rope | done/neutral | neutral | 1.2745 | [1.255,1.294] | 5e9b5464d1444708 | check |  | proceed | 4/6 |
 | 2026-10-24T172107Z | moe-chain-cuda-swapab-expert-once-large-t | rewrite | w13 marlin + silu-mul + w2 marlin | done/failed | failed |  |  | 1bba1bab70da4f61 | submit |  | proceed |  |
 | 2026-10-24T172138Z | small-t-launch-minimal-dense-chain-pdl | rewrite | whole-layer fusion | done/gain | gain | 1.2283 | [1.210,1.247] | 81ee6714b7614a99 | submit | done | proceed | 6/6 |
 | 2026-10-24T174421Z | decode-restack-sliding-port-paired-pad-gemms-t1 | primary | restack (sliding decode_1 port + paired pad/unpad + T=1 Triton GEMMs) | done/neutral | neutral | 1.1937 | [1.176,1.212] | 4739dd4590524487 | submit |  | proceed | 3/5 |
@@ -47,7 +47,7 @@ Regenerated 2026-10-25T040348Z. Best: 1.2521x [1.2333,1.2709] job `39bcf05afc4e4
 | 2026-10-24T224452Z | boundaries-unpooler-pdl-small-t | primary | post-MoE unpooler + residual boundaries (T<=32) | done/neutral | neutral | 1.2559 | [1.237,1.275] | 1dfe83fdbeea458a | check |  | proceed | 2/6 |
 | 2026-10-24T224452Z | dl-route-warp-topk-pdl | primary | routing top-k + MoE align (kernel R, T<=32) | done/neutral | neutral | 1.2599 | [1.241,1.279] | b471a950805c4053 | check |  | proceed | 2/6 |
 | 2026-10-24T224506Z | dl-p-wide-tile-t16-t32 | primary | pooler + router GEMM (kernel P, T=9..32) | done/neutral | neutral | 1.2457 | [1.227,1.264] | 9ad8e2cf869c4b4f | check |  | proceed | 2/4 |
-| 2026-10-24T224525Z | full-decode-splitkv-restack-on-pdl | primary | FA3 call (full decode, batch > 1) | done/neutral | neutral | 1.2680 | [1.249,1.287] | c243a29f26dc4725 | check |  | required | 5/5 |
+| 2026-10-24T224525Z | full-decode-splitkv-restack-on-pdl | primary | FA3 call (full decode, batch > 1) | done/neutral | neutral | 1.2680 | [1.249,1.287] | c243a29f26dc4725 | check | merged | required | 5/5 |
 | 2026-10-24T224525Z | sliding-decode1-fused-restack-on-pdl | primary | FA3 call (sliding decode, batch 1) | done/neutral | neutral | 1.2374 | [1.219,1.256] | 30027c28212946fd | check |  | required | 1/4 |
 | 2026-10-24T233529Z | stack-align-par-sliding1 | primary | MoE align (T>32) + sliding batch-1 attention | done/neutral | neutral | 1.2444 | [1.226,1.263] | d41952184b714e37 | check |  | required | 1/1 |
 | 2026-10-24T233637Z | stack-sidestream-sliding1 | primary | T>32 MoE dispatch on the side stream + sliding batch-1 fused attention | done/neutral | neutral | 1.2352 | [1.217,1.254] | 158fed699fdb4d0e | check |  | required | 1/1 |
@@ -57,9 +57,14 @@ Regenerated 2026-10-25T040348Z. Best: 1.2521x [1.2333,1.2709] job `39bcf05afc4e4
 | 2026-10-25T001250Z | moe-chain-cuda-swapab-expert-once-fix | rewrite | w13 marlin + silu-mul + w2 marlin (T>32) | queue | hold |  |  |  |  |  | hold |  |
 | 2026-10-25T001251Z | full-decode-splitkv-kv-bw-3p5 | rewrite | FA3 call (full decode, batch > 1): splitkv_attn_kernel bytes in flight | done/neutral | neutral | 1.2663 | [1.247,1.285] | 6af3b0e3311943ee | check |  | proceed | 3/5 |
 | 2026-10-25T001824Z | moe-chain-cuda-swapab-expert-once-fix-inproc | rewrite | w13 marlin + silu-mul + w2 marlin (T>32) | done/regression | regression | 1.1651 | [1.148,1.183] | 4ebd055adab34ecd | check |  | proceed | 2/4 |
-| 2026-10-25T014617Z | moe-chain-cuda-swapab-expert-once-s3-rebase-fp32ref-bound | rewrite | w13 marlin + silu-mul + w2 marlin (T>32) | running | running |  |  | 51d047cbc5ff450a | check |  | proceed |  |
-| 2026-10-25T035400Z | stack-route-topk-pdl-unpool-nf1 | primary | routing top-k (kernel R) + post-MoE unpooler (T<=8) | running | running |  |  |  |  |  | proceed |  |
-| 2026-10-25T035414Z | dense-chain-stage2-attn-side-pdl-t1-gate | primary | qkv GEMM + o GEMM + attention-side small kernels (T=1 only) | running | running |  |  |  |  |  | proceed |  |
+| 2026-10-25T014617Z | moe-chain-cuda-swapab-expert-once-s3-rebase-fp32ref-bound | rewrite | w13 marlin + silu-mul + w2 marlin (T>32) | done/regression | regression | 1.0637 | [1.048,1.080] | 51d047cbc5ff450a | check |  | proceed | 0/4 |
+| 2026-10-25T035400Z | stack-route-topk-pdl-unpool-nf1 | primary | routing top-k (kernel R) + post-MoE unpooler (T<=8) | done/neutral | neutral | 1.2671 | [1.248,1.286] | 87211e1362b64c4c | check |  | proceed | 2/3 |
+| 2026-10-25T035414Z | dense-chain-stage2-attn-side-pdl-t1-gate | primary | qkv GEMM + o GEMM + attention-side small kernels (T=1 only) | done/neutral | neutral | 1.2717 | [1.253,1.291] | c6cb53d8ebc2478a | check |  | proceed | 2/3 |
+| 2026-10-25T042121Z | full-decode-streamk-ticket-port | rewrite | FA3 call (full decode, batch > 1): splitkv_attn_kernel + splitkv_combine_kernel | running | running |  |  | 6d48932b230d4067 | check |  | proceed |  |
+| 2026-10-25T042121Z | full-decode1-two-level-ticket-port | rewrite | FA3 call (full decode, batch 1) | running | running |  |  | 5e44c7aedecd4cc1 | check |  | proceed |  |
+| 2026-10-25T042121Z | sliding-cluster-c4-decode32-port | rewrite | FA3 call (sliding decode, batch 17..32) | running | running |  |  |  |  |  | proceed |  |
+| 2026-10-25T042121Z | w2-marlin-atomic-add-t1-port | primary | w2 marlin (T=1) | running | running |  |  | 7a9f5de5aecc4aba | check |  | proceed |  |
+| 2026-10-25T042121Z | sliding-batched-triton-b16-band | primary | FA3 call (sliding decode, batch 2..16) | done/neutral | neutral | 1.2743 | [1.255,1.293] | 02bf417257e14a3d | check |  | proceed | 3/5 |
 
 ## Held
 

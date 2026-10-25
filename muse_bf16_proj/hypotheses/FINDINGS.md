@@ -1,10 +1,10 @@
 # muse_bf16_proj findings
 
-Regenerated 2026-10-25T040348Z by `churn.py index`. Read this before writing a hypothesis for muse_bf16_proj.
+Regenerated 2026-10-25T043406Z by `churn.py index`. Read this before writing a hypothesis for muse_bf16_proj.
 
 ## Current best
 
-1.2215x [1.2032,1.2398] from job `60b20fd0bf924267` (submit), master commit ``, hypothesis bf16-restack-m16-swapab-router-swapab-m32
+1.2215x [1.2032,1.2398] from job `1e90292c7b954d96` (check), master commit `b99b1dd350`, hypothesis bf16-restack-m16-swapab-router-swapab-m32
 
 Where the time goes (per scored shape, top kernels):
 
@@ -93,6 +93,7 @@ Where the time goes (per scored shape, top kernels):
 
 ### pooler GEMM + unpooler GEMM (m<=32 DRAM weight streams, bulk-TMA row-owner kernel)
 - **pooler-unpooler-full-bulk-tma-row-owner-stream-rewrite** → regression (regression), 1.1828x — lost on qkv_gate decode_1, decode_16, verify_1; o decode_1, decode_16; pooler decode_1, decode_16, verify_1; unpooler decode_1; router decode_1, decode_16, decode_32. Built on master (blob a8bb42a). WHY: pooler (n=4096, k=8192) and the full unpooler (n=8192, k=4096) are 67.1 MB pure weight streams at m<=32 with a 14.0-14.1 us
+- **pooler-unpooler-bulk-tma-row-owner-s2-cxx20-rebuild** → regression (regression), 1.0331x — gained on qkv_gate decode_1; o decode_1; pooler decode_1; lost on pooler decode_16, decode_32; unpooler decode_16, decode_32, verify_1; router verify_1, verify_16; o verify_16. Stage 2 (build fix and rerun) of pooler-unpooler-full-bulk-tma-row-owner-stream-rewrite, built on its commit (8ba8624, claim bases a rewrite-on-rewrite on the p
 
 ### pooler GEMM + unpooler GEMM (m=128)
 - **pooler-unpooler-m128-wgmma-splitk-semaphore** → regression (regression), 1.1158x — gained on router decode_16; lost on qkv_gate verify_1; o verify_1; unpooler verify_1, verify_16; router verify_1, verify_16; pooler verify_16. Built on master (dba4ffd: parity dispatch + 3-D split-K Triton router; router untouched). For layer in {pooler, unpooler} and cfg m == 128 only (verify_16; any 
@@ -100,6 +101,7 @@ Where the time goes (per scored shape, top kernels):
 
 ### pooler GEMM + unpooler GEMM (m=65..128, cuBLAS NN layout)
 - **pooler-unpooler-m128-nn-layout-gated** → regression (regression), 1.1953x — gained on pooler verify_16; unpooler verify_16; router verify_32; lost on qkv_gate decode_1, decode_16, verify_1; o decode_1, decode_16, decode_32, verify_1; unpooler decode_1, verify_1; router decode_1, decode_16, decode_32, verify_1; pooler decode_16. Built on master (blob a8bb42a). Narrow bf16-m128-nn-weight-layout-probe (done/neutral, 1.158x on the older dba4ffd master) to the only rows it won. Measured per
+- **restack-pooler-unpooler-nn-layout-m128** → neutral (unproven-vs-best), 1.2282x — gained on unpooler decode_1, verify_16; router verify_1; pooler verify_16; lost on router decode_16, verify_16; o decode_32. Built on master (b99b1dd, the landed restack). Apply the exact change of branch hyp/muse_bf16_proj/pooler-unpooler-m128-nn-layout-gated (job 0daf3faa) to the re
 
 ### qkv GEMM
 - **qkv-gate-triton-skinny-m32** → regression (regression), 0.9238x — lost on qkv_gate decode_1, decode_16, decode_32, verify_1. Extend the skinny Triton GEMM from pooler-triton-skinny-m32 to layer == 'qkv_gate' at m <= 32 (n=2304, k=8192, a 37.7 MB weight): in kernel_fn route qkv_gate at
@@ -121,6 +123,9 @@ Where the time goes (per scored shape, top kernels):
 - **router-splitk32-small-m-all-loads-in-flight-control-stages3** → neutral (unproven-vs-best), 1.1518x — gained on unpooler decode_1; router decode_1, decode_16, decode_32, verify_1; qkv_gate decode_16; lost on o verify_16; pooler verify_16; router verify_16. From the parent's branch (router-splitk32-small-m-all-loads-in-flight), keep everything exactly as the parent: the new m<=16 bucket (BLOCK_M=16, BLOCK_N=32, SPL
 - **router-swapab-wgmma-all-m** → neutral (within-ci), 1.1951x — gained on router decode_1, decode_16, decode_32, verify_1; lost on qkv_gate decode_1, decode_16, decode_32, verify_1; router verify_16. Built on master (8b9ad43). Master's router is _router_hilo_kernel with the tokens on tl.dot's M side: grid (cdiv(m, BLOCK_M), 256 // BLOCK_N, SPLIT_K), (BLOCK_M
 - **router-cuda-cluster-dsmem-splitk-rewrite** → regression (regression), 1.1897x — gained on router decode_1, verify_1; lost on qkv_gate decode_1, decode_16, verify_1; o decode_1, decode_16, verify_1, verify_16, verify_32; unpooler decode_1, verify_1; router decode_16, decode_32, verify_16. Built on master (8b9ad43, blob a8bb42a); the restack is not landed and is not needed. WHY: router rows at m<=32 are 5.4-6.2 us against a 1.8-1.9 us floor (8.4 M
+
+### router GEMM (m<=8)
+- **restack-router-cluster-dsmem-m8** → neutral (within-ci), 1.2199x — gained on router decode_1, verify_1; qkv_gate decode_16; lost on o decode_32, verify_16; router verify_16. Built on master (b99b1dd, the landed restack bf16-restack-m16-swapab-router-swapab-m32, 1.2215x; check 1e90292c7b954d96). Port ONLY the router cluster kernel fr
 
 ### unpooler GEMM
 - **unpooler-slice-triton-gemv** → regression (regression), 0.8801x — gained on o verify_1; lost on unpooler decode_1, verify_1. For layer == 'unpooler' and m <= 8 only (the sliced case: n=1024, k=4096, an 8.4 MB weight read), replace the _bf16_gemm_dispatch_impl(x, W[:1024], None) call i
@@ -153,6 +158,8 @@ Where the time goes (per scored shape, top kernels):
 - router-swapab-wgmma-all-m: within-ci: the change is not proven either way; a stacked hypothesis (`depends_on: router-swapab-wgmma-all-m`) that adds a further change in the same area is the only way to learn more (identical code is never re-run).
 - bf16-restack-m16-swapab-router-swapab-m32: unproven-vs-best: the change is not proven either way; a stacked hypothesis (`depends_on: bf16-restack-m16-swapab-router-swapab-m32`) that adds a further change in the same area is the only way to learn more (identical c
 - bf16-lossless-exp4-occupancy-dequant-once-stage2: rewrite stage 2 of `Triton swap-AB m<=32 kernels (bf16-m32-swapab-wgmma-triton) on pooler m 1-32, unpooler-full m 16/32, qkv_gate m 1-32`: read the replaced kernels' own us per shape (profile top_kernels) against the inc
+- restack-pooler-unpooler-nn-layout-m128: unproven-vs-best: the change is not proven either way; a stacked hypothesis (`depends_on: restack-pooler-unpooler-nn-layout-m128`) that adds a further change in the same area is the only way to learn more (identical code
+- restack-router-cluster-dsmem-m8: within-ci: the change is not proven either way; a stacked hypothesis (`depends_on: restack-router-cluster-dsmem-m8`) that adds a further change in the same area is the only way to learn more (identical code is never re-r
 
 ## Do not retry (rejected / duplicates)
 
@@ -166,5 +173,8 @@ Where the time goes (per scored shape, top kernels):
 - queue: qkv-gate-o-m128-wgmma-splitk-semaphore [qkv GEMM + o GEMM (m=128)] p2 hold
 - queue: pooler-m32-tma-splitk-extend [pooler GEMM (m=17..32)] p3 hold
 - queue: bf16-lossless-exp4-warpspec-persistent-stage3 [lossless exp4 compressed-weight stream kernel (_lossless_swapab_kernel)] p1 hold
-- queue: bf16-verify-swapab-wgmma-cluster-dsmem-rewrite [bf16 GEMM dispatch (m=65..256, swap-AB wgmma + cluster DSMEM split-K)] p1 hold
-- running: pooler-unpooler-bulk-tma-row-owner-s2-cxx20-rebuild [pooler GEMM + unpooler GEMM (m<=32 DRAM weight streams, bulk-TMA row-owner kernel)] p2 running
+- running: bf16-verify-swapab-wgmma-cluster-dsmem-rewrite [bf16 GEMM dispatch (m=65..256, swap-AB wgmma + cluster DSMEM split-K)] p1 running
+- running: bf16-verify-deepgemm-sm90-kernel-asserted-rewrite [bf16 GEMM dispatch (m=65..256, DeepGEMM sm90 BF16 kernel)] p1 running
+- running: restack-unpooler-slice-cluster-dsmem-m8 [unpooler GEMM (sliced n=1024, m<=8)] p1 running
+- running: router-cluster-dsmem-s2-flat-in-m-occupancy [router GEMM (m<=32, cluster DSMEM kernel)] p2 running
+- running: router-m128-m256-cluster-dsmem-tiled-rewrite [router GEMM (m=65..256)] p2 running

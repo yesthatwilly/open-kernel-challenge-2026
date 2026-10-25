@@ -1,6 +1,6 @@
 # muse_moe_w4a16 hypotheses
 
-Regenerated 2026-10-25T040348Z. Best: 1.3278x [1.3079,1.3477] job `1947e3ec2abb4bdf` (submit)
+Regenerated 2026-10-25T043406Z. Best: 1.3439x [1.3237,1.3641] job `7a0d900a1dd34666` (submit)
 
 | created | slug | kind | area | where | outcome | speedup | CI | job | mode | promotion | review | expected hit |
 |---|---|---|---|---|---|---|---|---|---|---|---|---|
@@ -57,8 +57,14 @@ Regenerated 2026-10-25T040348Z. Best: 1.3278x [1.3079,1.3477] job `1947e3ec2abb4
 | 2026-10-25T011332Z | cuda-nvfp4-wgmma-rega-s2-per-kernel-enable | rewrite | w13 marlin + silu-mul + w2 marlin | queue | hold |  |  |  |  |  | hold |  |
 | 2026-10-25T011401Z | cuda-align-kernel-a-from17 | primary | MoE align/dispatch | queue | hold |  |  |  |  |  | hold |  |
 | 2026-10-25T011401Z | cuda-combine-kernel-b-bs128-only | primary | post-expert norm+combine | queue | hold |  |  |  |  |  | hold |  |
-| 2026-10-25T011401Z | w2-marlin-atomic-add-small-m | primary | w2 marlin | done/neutral | neutral | 1.3445 | [1.324,1.365] | a2744bc496b84790 | check |  | proceed | 3/6 |
-| 2026-10-25T035329Z | cuda-nvfp4-wgmma-rega-grouped-s3-wide-bucket-fix | rewrite | w13 marlin + silu-mul + w2 marlin | running | running |  |  |  |  |  | proceed |  |
+| 2026-10-25T011401Z | w2-marlin-atomic-add-small-m | primary | w2 marlin | done/neutral | neutral | 1.3445 | [1.324,1.365] | a2744bc496b84790 | check | done | proceed | 3/6 |
+| 2026-10-25T035329Z | cuda-nvfp4-wgmma-rega-grouped-s3-wide-bucket-fix | rewrite | w13 marlin + silu-mul + w2 marlin | done/failed | failed |  |  | 3bdec0e58d684c17 | check |  | proceed | 0/3 |
+| 2026-10-25T042150Z | cuda-nvfp4-wgmma-rega-midm-bucket-cap32 | rewrite | w13 marlin + silu-mul + w2 marlin | queue | hold |  |  |  |  |  | proceed |  |
+| 2026-10-25T042150Z | cuda-nvfp4-wgmma-rega-w2-only-midm | rewrite | w2 marlin | queue | hold |  |  |  |  |  | proceed |  |
+| 2026-10-25T042150Z | cuda-nvfp4-wgmma-rega-tiny-m-bucket16 | rewrite | w13 marlin + silu-mul + w2 marlin | running | running |  |  |  |  |  | proceed |  |
+| 2026-10-25T042150Z | w13-marlin-atomic-add-on-master-small-m | primary | w13 marlin | running | running |  |  | 171684977ec1470f | check |  | proceed |  |
+| 2026-10-25T042151Z | marlin-exec-config-autotune-mid-m | primary | Marlin launch config (w13 + w2) | queue | hold |  |  |  |  |  | proceed |  |
+| 2026-10-25T042151Z | w2-marlin-atomic-add-verify | primary | w2 marlin | running | running |  |  | ccbcda65da584be0 | check |  | proceed |  |
 
 ## Held
 
@@ -76,3 +82,6 @@ Regenerated 2026-10-25T040348Z. Best: 1.3278x [1.3079,1.3477] job `1947e3ec2abb4
 - cuda-nvfp4-wgmma-rega-s2-per-kernel-enable: adversarial review: Hold, and set depends_on to cuda-nvfp4-wgmma-rega-grouped-s2-finite-fix. Its valuable part, judging w13+silu and w2 independently with their own verdict lines, 
 - cuda-align-kernel-a-from17: adversarial review: Hold. Kernel A's rows at bs=128/256 have already been measured three times, and a run cannot see a ~0.3% headline change. In the one new range (17..32), the com
 - cuda-combine-kernel-b-bs128-only: adversarial review: Hold. This re-measures a kernel row already known from three runs (kernel B 3.5-3.8 us vs SGLang 4.9-5.9 us at bs=128) for about -1.2 us on one of six loads, ro
+- cuda-nvfp4-wgmma-rega-midm-bucket-cap32: Reviewer: proceed but wait for s3 wide-bucket-fix (3bdec0e58d684c17) harvest; rebuild on s3 commit + master 9080a71 with the variant s3 picks at N16/N32; cap32 is an assert at T<=32; use master _align_small block 16; then unhold.
+- cuda-nvfp4-wgmma-rega-w2-only-midm: Reviewer: proceed but dispatch only after s3 (3bdec0e58d684c17) is harvested; build on s3 commit + 9080a71; if A and B both fail use variant A at N16/N32; remote rows of y must be zero; pairs with cap32 as its control.
+- marlin-exec-config-autotune-mid-m: Reviewer: no evidence SGLang moe_wna16_marlin_gemm takes thread_k/thread_n/blocks_per_sm; a print-only kwargs probe + cold-L2 config timing table rides in w13-marlin-atomic-add-on-master-small-m prepare(). Build only if a config is >=8% faster on two routings; fp32 reference; w2 in master atomic mode; T=8/16/32 only.

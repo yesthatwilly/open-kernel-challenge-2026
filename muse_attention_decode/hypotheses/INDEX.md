@@ -1,6 +1,6 @@
 # muse_attention_decode hypotheses
 
-Regenerated 2026-10-25T040348Z. Best: 1.3949x [1.3740,1.4158] job `698d4cd3838c4a63` (submit)
+Regenerated 2026-10-25T043406Z. Best: 1.4322x [1.4107,1.4554] job `2a3241780c7b4c46` (check)
 
 | created | slug | kind | area | where | outcome | speedup | CI | job | mode | promotion | review | expected hit |
 |---|---|---|---|---|---|---|---|---|---|---|---|---|
@@ -58,15 +58,21 @@ Regenerated 2026-10-25T040348Z. Best: 1.3949x [1.3740,1.4158] job `698d4cd3838c4
 | 2026-10-25T001825Z | full-decode-splitkv-s2-streamk-ticket-inproc | rewrite | full-layer attention (decode, splitkv kernel A/B) | done/neutral | neutral | 1.4171 | [1.396,1.443] | e592b1f5d3db4f83 | check |  | proceed | 2/3 |
 | 2026-10-25T001825Z | full-verify-wgmma-s3-warpgroup-per-kvhead-inproc | rewrite | full-layer attention (verify, splitkv A8/B8) | done/neutral | neutral | 1.3801 | [1.359,1.401] | 2c3f7fff72bb4e1d | check |  | proceed | 2/3 |
 | 2026-10-25T001825Z | sliding-cluster-s2-decode-c4-pdl-inproc | rewrite | sliding-layer attention (decode, cluster kernel) | done/neutral | neutral | 1.4001 | [1.379,1.426] | 1990ce53e9d34073 | check |  | proceed | 2/5 |
-| 2026-10-25T003621Z | full-decode-splitkv-s3-fused-preattn | rewrite | full-layer attention (decode, splitkv stream-K kernel prologue) | running | running |  |  | 825baa03798f431a | check |  | proceed |  |
-| 2026-10-25T003637Z | full-decode1-streamk-s3-two-level-ticket | rewrite | full-layer attention (batch-1 decode, splitkv stream-K kernel) | done/neutral | neutral | 1.4322 | [1.411,1.455] | 2a3241780c7b4c46 | check |  | proceed | 2/3 |
+| 2026-10-25T003621Z | full-decode-splitkv-s3-fused-preattn | rewrite | full-layer attention (decode, splitkv stream-K kernel prologue) | done/neutral | neutral | 1.4283 | [1.407,1.450] | 825baa03798f431a | check |  | proceed | 0/3 |
+| 2026-10-25T003637Z | full-decode1-streamk-s3-two-level-ticket | rewrite | full-layer attention (batch-1 decode, splitkv stream-K kernel) | done/neutral | neutral | 1.4322 | [1.411,1.455] | 2a3241780c7b4c46 | check | merged | proceed | 2/3 |
 | 2026-10-25T003705Z | full-verify-wgmma-s4-sliding-window | rewrite | sliding-layer attention (verify, wgmma stream-K kernel) | queue | hold |  |  |  |  |  | hold |  |
 | 2026-10-25T003705Z | full-verify1-wgmma-s4-batch1-grid-sm | rewrite | full-layer attention (batch-1 verify, wgmma stream-K kernel) | queue | hold |  |  |  |  |  | hold |  |
 | 2026-10-25T003735Z | sliding-decode-paired-kvhead-rows | primary | sliding-layer attention (batched decode, KV row gather) | done/regression | regression | 1.2865 | [1.267,1.306] | 48ffbe5690cc4ab4 | check |  | proceed | 0/3 |
 | 2026-10-25T003735Z | sliding-verify-fa3-head-pairing | primary | FA3 call (head packing, sliding verify) | done/regression | regression | 1.3475 | [1.327,1.368] | 031731b5db294a92 | check |  | proceed | 0/3 |
 | 2026-10-25T004021Z | sliding-decode-paired-kvhead-rows-control-unpaired-s8 | control→sliding-decode-paired-kvhead-rows | sliding-layer attention (batched decode, split depth) | queue | queued |  |  |  |  |  | required |  |
-| 2026-10-25T014545Z | stack-streamk-ticket-cluster-c16-c4 | primary | full + sliding decode attention (stack of two pending kernels) | running | running |  |  | 195dcc1209b6457b | check |  | proceed |  |
-| 2026-10-25T035310Z | full-verify-wgmma-s4-multitile-fix | rewrite | full-layer attention (verify, wgmma stream-K kernel, multi-tile correctness) | running | running |  |  |  |  |  | proceed |  |
+| 2026-10-25T014545Z | stack-streamk-ticket-cluster-c16-c4 | primary | full + sliding decode attention (stack of two pending kernels) | done/neutral | neutral | 1.4266 | [1.405,1.454] | 195dcc1209b6457b | check |  | proceed | 6/7 |
+| 2026-10-25T035310Z | full-verify-wgmma-s4-multitile-fix | rewrite | full-layer attention (verify, wgmma stream-K kernel, multi-tile correctness) | done/neutral | neutral | 1.3758 | [1.355,1.396] | 51b0d5c110f3459c | check |  | proceed | 0/3 |
+| 2026-10-25T042334Z | sliding-cluster-s3-verify-attn-only-phase-timed | rewrite | sliding-layer attention (verify, cluster kernel) | queue | hold |  |  |  |  |  | proceed |  |
+| 2026-10-25T042334Z | sliding-verify1-triton-pseudo-decode | primary | sliding-layer attention (batch-1 verify, Triton fused decode kernel) | queue | hold |  |  |  |  |  | hold |  |
+| 2026-10-25T042334Z | full-decode1-sk4-cluster-dsmem-merge | rewrite | full-layer attention (batch-1 decode, stream-K kernel merge) | running | running |  |  |  |  |  | proceed |  |
+| 2026-10-25T042334Z | sliding-verify-sk-pseudo-decode-s1 | rewrite | sliding-layer attention (verify, stream-K pseudo-decode kernel) | running | running |  |  |  |  |  | proceed |  |
+| 2026-10-25T042335Z | full-verify1-sk-pseudo-decode | primary | full-layer attention (batch-1 verify, stream-K pseudo-decode) | queue | hold |  |  |  |  |  | proceed |  |
+| 2026-10-25T042335Z | full-decode1-sk-pdl-from-preattn | primary | launch overhead (full decode_1, pre-attention -> stream-K kernel) | running | running |  |  |  |  |  | proceed |  |
 
 ## Held
 
@@ -92,3 +98,6 @@ Regenerated 2026-10-25T040348Z. Best: 1.3949x [1.3740,1.4158] job `698d4cd3838c4
 - sliding-cluster-s2-decode-c4-pdl: superseded by sliding-cluster-s2-decode-c4-pdl-inproc: the original spec runs a self-check in a child process, which the rules reject (starting processes)
 - full-verify-wgmma-s4-sliding-window: adversarial review: Sequencing hold, not a rejection of the design. The stage-3 kernel this builds on never ran in the timed call. It failed its own self-check (case 2: B=6, kv_sca
 - full-verify1-wgmma-s4-batch1-grid-sm: adversarial review: Hold by this hypothesis's own condition ('worth running only once stage 3 shows A8 at or near its gate'). Stage 3's wgmma kernel failed its self-check (case 2, 
+- sliding-cluster-s3-verify-attn-only-phase-timed: Reviewer: proceed but wait for stack-streamk-ticket-cluster-c16-c4 (195dcc1209b6457b) and build on its branch (raw s2 carries the C=8 band, +5.7% on sliding decode_16). Port setup_one<8>/launch<8> back from stage 1 593859d; mask rows to p-(W-1)<=t<=p; phase timing in prepare only.
+- sliding-verify1-triton-pseudo-decode: adversarial review: HOLD for two reasons. (1) The key range is wrong: seq = seq_lens[b]-7+j treats seq_lens as the post-block length, but seq_lens is the prefix length (positions =
+- full-verify1-sk-pseudo-decode: Reviewer: low priority; dispatch after full-verify-wgmma-s4-multitile-fix (51b0d5c110f3459c) and after sliding-verify-sk-pseudo-decode-s1 harvest; build on s1 PSEUDO code with window=0; if the wgmma fix works, full-verify1-wgmma-s4-batch1-grid-sm owns this row.

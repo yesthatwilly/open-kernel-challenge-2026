@@ -1,6 +1,6 @@
 # muse_bf16_proj hypotheses
 
-Regenerated 2026-10-25T040348Z. Best: 1.2215x [1.2032,1.2398] job `60b20fd0bf924267` (submit)
+Regenerated 2026-10-25T043406Z. Best: 1.2215x [1.2032,1.2398] job `1e90292c7b954d96` (check)
 
 | created | slug | kind | area | where | outcome | speedup | CI | job | mode | promotion | review | expected hit |
 |---|---|---|---|---|---|---|---|---|---|---|---|---|
@@ -40,7 +40,7 @@ Regenerated 2026-10-25T040348Z. Best: 1.2215x [1.2032,1.2398] job `60b20fd0bf924
 | 2026-10-24T165102Z | bf16-small-m-cuda-gemv-rewrite | rewrite | bf16 GEMM dispatch (m<=8, hand-written CUDA weight stream) | done/regression | regression | 1.1667 | [1.149,1.184] | b76aca7ec1a048e7 | submit |  | proceed | 4/13 |
 | 2026-10-24T172152Z | bf16-lossless-exp4-weight-stream-rewrite | rewrite | bf16 GEMM dispatch (m<=32, lossless-compressed weight stream) | done/regression | regression | 0.7071 | [0.697,0.718] | 542f2b169c934706 | submit |  | proceed | 2/17 |
 | 2026-10-24T172235Z | bf16-verify-streamk-cutlass-wgmma-rewrite | rewrite | bf16 GEMM dispatch (m=129..256, persistent stream-K TMA/wgmma) | done/regression | regression | 1.1635 | [1.146,1.181] | f5b1361aaa0e48b5 | check |  | proceed | 0/8 |
-| 2026-10-24T174421Z | bf16-restack-m16-swapab-router-swapab-m32 | primary | restack (m<=16 swap-AB GEMMs + router swap-AB) | done/neutral | neutral | 1.2215 | [1.203,1.240] | 1e90292c7b954d96 | submit | done | proceed | 3/4 |
+| 2026-10-24T174421Z | bf16-restack-m16-swapab-router-swapab-m32 | primary | restack (m<=16 swap-AB GEMMs + router swap-AB) | done/neutral | neutral | 1.2215 | [1.203,1.240] | 1e90292c7b954d96 | submit | merged | proceed | 3/4 |
 | 2026-10-25T001220Z | bf16-lossless-exp4-occupancy-dequant-once-stage2 | rewrite | lossless exp4 compressed-weight stream kernel (_lossless_swapab_kernel) | done/neutral | neutral | 0.8870 | [0.874,0.900] | f1024212dd2f49f3 | check |  | proceed | 13/13 |
 | 2026-10-25T003715Z | bf16-lossless-exp4-warpspec-persistent-stage3 | rewrite | lossless exp4 compressed-weight stream kernel (_lossless_swapab_kernel) | queue | hold |  |  |  |  |  | hold |  |
 | 2026-10-25T003758Z | router-cuda-cluster-dsmem-splitk-rewrite | rewrite | router GEMM | done/regression | regression | 1.1897 | [1.172,1.208] | dc5d03c4d9604b0e | check |  | proceed | 7/10 |
@@ -49,11 +49,17 @@ Regenerated 2026-10-25T040348Z. Best: 1.2215x [1.2032,1.2398] job `60b20fd0bf924
 | 2026-10-25T003858Z | qkv-swapab-m32-splitk8-stages3 | primary | qkv GEMM (m=17..32, swap-AB) | done/regression | regression | 1.1963 | [1.178,1.214] | a61778a08ec04ea6 | check |  | proceed | 3/8 |
 | 2026-10-25T003858Z | unpooler-full-m16-swapab-route | primary | unpooler GEMM | done/regression | regression | 1.1885 | [1.171,1.206] | 05782267384343eb | check |  | proceed | 5/8 |
 | 2026-10-25T011407Z | pooler-unpooler-m128-nn-layout-gated | primary | pooler GEMM + unpooler GEMM (m=65..128, cuBLAS NN layout) | done/regression | regression | 1.1953 | [1.177,1.213] | 0daf3faa83ab4e81 | check |  | proceed | 8/9 |
-| 2026-10-25T011408Z | bf16-verify-swapab-wgmma-cluster-dsmem-rewrite | rewrite | bf16 GEMM dispatch (m=65..256, swap-AB wgmma + cluster DSMEM split-K) | queue | hold |  |  |  |  |  | proceed |  |
+| 2026-10-25T011408Z | bf16-verify-swapab-wgmma-cluster-dsmem-rewrite | rewrite | bf16 GEMM dispatch (m=65..256, swap-AB wgmma + cluster DSMEM split-K) | running | running |  |  |  |  |  | proceed |  |
 | 2026-10-25T011408Z | bf16-lossless-exp4-decode-only-throughput-probe | primary | lossless exp4 compressed-weight stream kernel (_lossless_swapab_kernel) | done/regression | regression | 1.1904 | [1.173,1.208] | 9148142cee4441ad | check |  | proceed | 1/1 |
 | 2026-10-25T011408Z | bf16-verify-deepgemm-bf16-gemm-nt-route | primary | bf16 GEMM dispatch (m=65..256, DeepGEMM bf16) | done/regression | regression | 1.2027 | [1.185,1.221] | 2d522d47ca5c4fc9 | check |  | proceed | 5/8 |
 | 2026-10-25T011408Z | pooler-unpooler-full-bulk-tma-row-owner-stream-rewrite | rewrite | pooler GEMM + unpooler GEMM (m<=32 DRAM weight streams, bulk-TMA row-owner kernel) | done/regression | regression | 1.1828 | [1.165,1.201] | cd39d36e31814087 | check |  | proceed | 8/15 |
-| 2026-10-25T035343Z | pooler-unpooler-bulk-tma-row-owner-s2-cxx20-rebuild | rewrite | pooler GEMM + unpooler GEMM (m<=32 DRAM weight streams, bulk-TMA row-owner kernel) | running | running |  |  |  |  |  | proceed |  |
+| 2026-10-25T035343Z | pooler-unpooler-bulk-tma-row-owner-s2-cxx20-rebuild | rewrite | pooler GEMM + unpooler GEMM (m<=32 DRAM weight streams, bulk-TMA row-owner kernel) | done/regression | regression | 1.0331 | [1.018,1.049] | 571ea532ad7a410d | check |  | proceed | 1/7 |
+| 2026-10-25T042040Z | bf16-verify-deepgemm-sm90-kernel-asserted-rewrite | rewrite | bf16 GEMM dispatch (m=65..256, DeepGEMM sm90 BF16 kernel) | running | running |  |  |  |  |  | proceed |  |
+| 2026-10-25T042040Z | restack-unpooler-slice-cluster-dsmem-m8 | primary | unpooler GEMM (sliced n=1024, m<=8) | running | running |  |  | e557d92969864449 | check |  | proceed |  |
+| 2026-10-25T042040Z | router-cluster-dsmem-s2-flat-in-m-occupancy | rewrite | router GEMM (m<=32, cluster DSMEM kernel) | running | running |  |  | ef8a8bca31ef420e | check |  | proceed |  |
+| 2026-10-25T042040Z | router-m128-m256-cluster-dsmem-tiled-rewrite | rewrite | router GEMM (m=65..256) | running | running |  |  | b7b2b55d04544660 | check |  | proceed |  |
+| 2026-10-25T042040Z | restack-pooler-unpooler-nn-layout-m128 | primary | pooler GEMM + unpooler GEMM (m=65..128, cuBLAS NN layout) | done/neutral | neutral | 1.2282 | [1.210,1.247] | 92cd4e758a924ca0 | check |  | proceed | 6/8 |
+| 2026-10-25T042040Z | restack-router-cluster-dsmem-m8 | primary | router GEMM (m<=8) | done/neutral | neutral | 1.2199 | [1.202,1.238] | d323ce8ef6a54fde | check |  | proceed | 8/10 |
 
 ## Held
 
@@ -63,4 +69,3 @@ Regenerated 2026-10-25T040348Z. Best: 1.2215x [1.2032,1.2398] job `60b20fd0bf924
 - qkv-gate-o-m128-wgmma-splitk-semaphore: same m=128 wgmma split-K design as pooler-unpooler-m128-wgmma-splitk-semaphore (dispatching now); its reviewer asked to wait for that harvest; re-queue by hand if that kernel reaches its target
 - pooler-m32-tma-splitk-extend: adversarial review: Moot under master 8b9ad43 (bf16-m32-swapab-wgmma-triton, 1.198x): pooler decode_32 m=32 already runs _bf16_swapab_kernel at 20.0 us row / 20.5 us kernel vs SGLa
 - bf16-lossless-exp4-warpspec-persistent-stage3: adversarial review: Stage 2's pooler m=1 kernel took 30.8 us in the judge profile, past this hypothesis's own supersede threshold (> 28 us) and 1.62x short of the 19.0 us kill gate
-- bf16-verify-swapab-wgmma-cluster-dsmem-rewrite: Reviewer: wait for the build/cluster-launch/self-check log lines of dc5d03c4d9604b0e and 3f3330f70b6e4cdc (in-flight cluster checks) before dispatch; not their perf.

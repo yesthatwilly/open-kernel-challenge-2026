@@ -1,6 +1,6 @@
 # muse_prefill_layer hypotheses
 
-Regenerated 2026-10-25T040348Z. Best: 1.0744x [1.0583,1.0905] job `502f2eab95164781` (submit)
+Regenerated 2026-10-25T043406Z. Best: 1.0744x [1.0583,1.0905] job `502f2eab95164781` (submit)
 
 | created | slug | kind | area | where | outcome | speedup | CI | job | mode | promotion | review | expected hit |
 |---|---|---|---|---|---|---|---|---|---|---|---|---|
@@ -40,9 +40,9 @@ Regenerated 2026-10-25T040348Z. Best: 1.0744x [1.0583,1.0905] job `502f2eab95164
 | 2026-10-24T185108Z | experts-triton-turn4-persistent-local-align | primary | w13 marlin + w2 marlin at turn_4 (route 1024 < T <= 4096 to the Triton NVFP4 engine, with persistent grid and local-routes align) | queue | hold |  |  |  |  |  | proceed |  |
 | 2026-10-24T185232Z | turn-moe-local-align-sorted-silu | primary | MoE align/dispatch + silu-mul on the Marlin path (T <= 4096) | queue | hold |  |  |  |  |  | hold |  |
 | 2026-10-24T185248Z | router-hilo-one-gemm-n512 | primary | router GEMM (hi and lo halves as one N=512 cuBLAS GEMM) | done/neutral | neutral | 1.0607 | [1.045,1.077] | f4e3c5f4c306427b | check |  | required | 0/3 |
-| 2026-10-24T224410Z | norm-boundaries-persistent-multirow | primary | attention boundary + FFN boundary (FusedPostNormResidualPreNorm x2, persistent multi-row variant) | running | running |  |  | 46afe489e2754c83 | check |  | proceed |  |
+| 2026-10-24T224410Z | norm-boundaries-persistent-multirow | primary | attention boundary + FFN boundary (FusedPostNormResidualPreNorm x2, persistent multi-row variant) | done/neutral | neutral | 1.0716 | [1.056,1.088] | 46afe489e2754c83 | check |  | proceed | 0/3 |
 | 2026-10-24T224425Z | moe-pre-post-norm-triton-multitoken | primary | pre-expert norm + post-expert norm/combine (the MoE elementwise ends) | queue | queued |  |  |  |  |  | required |  |
-| 2026-10-24T224437Z | experts-triton-first-turn-unmasked-loads-l2-hints | primary | w13 marlin + w2 marlin (Triton NVFP4 engine at T > 4096: K-loop load predication and L2 eviction hints) | running | running |  |  | aeda8b5a523642b1 | check |  | proceed |  |
+| 2026-10-24T224437Z | experts-triton-first-turn-unmasked-loads-l2-hints | primary | w13 marlin + w2 marlin (Triton NVFP4 engine at T > 4096: K-loop load predication and L2 eviction hints) | done/neutral | neutral | 1.0677 | [1.052,1.084] | aeda8b5a523642b1 | check |  | proceed | 0/2 |
 | 2026-10-24T232728Z | restack-router-hilo-align32-zerostore | primary | router GEMM + MoE align (T>4096) + w2 zero-store (T>4096) | done/neutral | neutral | 1.0608 | [1.045,1.077] | ead4bc2e7b364add | check |  | required | 0/1 |
 | 2026-10-24T232928Z | stack-tonight-four-prefill | primary | router GEMM + MoE align (both paths) + w2 zero-store | done/neutral | neutral | 1.0675 | [1.052,1.084] | 7499d9c71acd4417 | check |  | required | 0/1 |
 | 2026-10-24T232955Z | align-local-parallel-first-turn | primary | MoE align on the Triton path (T > 4096, first_turn) | done/neutral | neutral | 1.0626 | [1.047,1.079] | c2f3e9d8297f4a18 | check |  | required | 0/1 |
@@ -54,6 +54,12 @@ Regenerated 2026-10-25T040348Z. Best: 1.0744x [1.0583,1.0905] job `502f2eab95164
 | 2026-10-25T001824Z | attn-full-prefill-cuda-fp8-wgmma-hard-gate-inproc | rewrite | FA3 call on full-attention layers at page_size 1 (CUDA sm_90a FP8 wgmma flash attention, stage 1b: fix of attn-full-prefill-cuda-fp8-exp-offload with build fix, hard timing gate, no exp offload) | done/neutral | neutral | 1.0679 | [1.052,1.084] | 306cbde58aff4fa4 | check |  | proceed | 0/2 |
 | 2026-10-25T001824Z | experts-cuda-wgmma-grouped-gemm-remeasure-sm90a-inproc | rewrite | w13 + w2 expert GEMMs at T > 4096 (CUDA sm_90a wgmma W4A16 grouped GEMM, stage 1b: re-measure of experts-cuda-wgmma-mixed-input-grouped-gemm with the build fix, on the new master) | done/regression | regression | 0.9401 | [0.926,0.954] | 6d047cdeefd94357 | check |  | proceed | 0/3 |
 | 2026-10-25T010741Z | experts-triton-turn4-persistent-local-align-control-no-persi | control→experts-triton-turn4-persistent-local-align | w13 + w2 at turn_4 (1024 < T <= 4096) routed to the Triton NVFP4 engine with local-routes align, original non-persistent grid | done/neutral | neutral | 1.0557 | [1.040,1.072] | 374efc72c4d14856 | check |  | proceed | 2/3 |
+| 2026-10-25T042410Z | experts-cuda-wgmma-s2-setmaxnreg-pingpong-first-turn | rewrite | w13 + w2 expert GEMMs at T > 4096 (CUDA sm_90a wgmma W4A16 grouped GEMM, stage 2: setmaxnreg register split + overlapped register-A dequant) | queue | hold |  |  |  |  |  | proceed |  |
+| 2026-10-25T042410Z | experts-triton-first-turn-per-gemm-config-pick | primary | Triton NVFP4 engine at T > 4096 (first_turn): separate tile config for w13 and w2, picked by prepare timing | queue | hold |  |  |  |  |  | hold |  |
+| 2026-10-25T042410Z | experts-turn1-cuda-wgmma-rega-port-bucket32 | rewrite | w13 + w2 expert GEMMs at T <= 1024 (turn_1): port of muse_moe_w4a16's register-A swap-AB wgmma NVFP4 grouped GEMM, 16/32-row buckets only | queue | hold |  |  |  |  |  | proceed |  |
+| 2026-10-25T042410Z | marlin-w2-atomic-add-turn | primary | w2 Marlin call on the Marlin path (T <= 4096): use_atomic_add, picked per shape class in prepare | queue | hold |  |  |  |  |  | hold |  |
+| 2026-10-25T042410Z | experts-turn4-cuda-dequant-producer-ss-wgmma | rewrite | w13 + w2 expert GEMMs at 1024 < T <= 4096 (turn_4): CUDA sm_90a warp-specialized grouped GEMM with an in-kernel dequant-producer warpgroup and SS wgmma | running | running |  |  |  |  |  | proceed |  |
+| 2026-10-25T042410Z | turn-align-remap-on-side-stream-under-pooler | primary | MoE align/dispatch placement at T <= 4096: local-id remap + _align_parallel moved onto the router side stream, under the pooler GEMM | running | running |  |  |  |  |  | proceed |  |
 
 ## Held
 
@@ -72,3 +78,7 @@ Regenerated 2026-10-25T040348Z. Best: 1.0744x [1.0583,1.0905] job `502f2eab95164
 - turn-moe-local-align-sorted-silu: adversarial review: Hold as a duplicate of landed work: master's _experts_marlin already runs _align_parallel (local routes only, no -1 blocks) and _silu_mul_sorted_kernel at T<=40
 - attn-full-prefill-cuda-fp8-wgmma-hard-gate: adversarial review: The rewrite's target and gate are sound, but sub-change (4) runs the first launch in a multiprocessing-spawn child process, and TASK.md says a submission that '
 - experts-cuda-wgmma-grouped-gemm-remeasure-sm90a: adversarial review: The rewrite design and the build fix are sound, but change item (2) spawns a multiprocessing child in prepare(), and TASK.md and the technical rules list 'start
+- experts-cuda-wgmma-s2-setmaxnreg-pingpong-first-turn: Reviewer: proceed but wait for moe s3 wide-bucket-fix (3bdec0e58d684c17) harvest, which decides the register-A hazard variant; then build per the review builder_instruction (168-reg cap, wait<0>/hazard-free order).
+- experts-triton-first-turn-per-gemm-config-pick: adversarial review: Weak mechanism and a candidate list made mostly of known losers or configs that will not compile; the likely outcome is PATH CHOSEN = master for both GEMMs, i.e
+- experts-turn1-cuda-wgmma-rega-port-bucket32: Reviewer: proceed but wait for moe s3 wide-bucket-fix (3bdec0e58d684c17) harvest, which decides the register-A hazard variant; then build per the review builder_instruction (168-reg cap, wait<0>/hazard-free order).
+- marlin-w2-atomic-add-turn: adversarial review: The ported mechanism does not apply at prefill M, and the correctness bound as written rejects the atomic modes anyway, so the expected outcome is PATH CHOSEN =

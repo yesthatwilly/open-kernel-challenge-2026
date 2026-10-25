@@ -1,19 +1,19 @@
 # muse_moe_w4a16 findings
 
-Regenerated 2026-10-25T040348Z by `churn.py index`. Read this before writing a hypothesis for muse_moe_w4a16.
+Regenerated 2026-10-25T043406Z by `churn.py index`. Read this before writing a hypothesis for muse_moe_w4a16.
 
 ## Current best
 
-1.3278x [1.3079,1.3477] from job `1947e3ec2abb4bdf` (submit), master commit `1a5da3d22c`, hypothesis align-parallel-per-expert-verify
+1.3439x [1.3237,1.3641] from job `7a0d900a1dd34666` (submit), master commit `9080a71e91`, hypothesis w2-marlin-atomic-add-small-m
 
 Where the time goes (per scored shape, top kernels):
 
-- bs=1 load=decode_1 sharding=ep8: yours 48.8µs vs SGLang 77.1µs (SoL 11.4µs) · void sglang::device::marlin_moe::Marlin<__nv_bfloat16, 56... 44.7µs 87.9%, _post_norm_combine_kernel 3.1µs 6.2%, void sglang::act_and_mul_kernel<__nv_bfloat16, (sglang::A... 1.6µs 3.1%
-- bs=16 load=decode_16 sharding=ep8: yours 148.4µs vs SGLang 189.0µs (SoL 52.5µs) · void sglang::device::marlin_moe::Marlin<__nv_bfloat16, 56... 176.1µs 95.0%, _post_norm_combine_kernel 4.3µs 2.3%, _align_small_kernel 2.8µs 1.5%
-- bs=32 load=decode_32 sharding=ep8: yours 199.9µs vs SGLang 206.4µs (SoL 70.8µs) · void sglang::device::marlin_moe::Marlin<__nv_bfloat16, 56... 207.5µs 94.9%, _post_expert_norm_weighted_sum_kernel 4.5µs 2.1%, _align_small_kernel 4.2µs 1.9%
-- bs=8 load=verify_1 sharding=ep8: yours 107.7µs vs SGLang 144.4µs (SoL 37.3µs) · void sglang::device::marlin_moe::Marlin<__nv_bfloat16, 56... 114.0µs 93.0%, _post_norm_combine_kernel 3.8µs 3.1%, _align_small_kernel 2.7µs 2.2%
-- bs=128 load=verify_16 sharding=ep8: yours 318.3µs vs SGLang 456.2µs (SoL 101.3µs) · void sglang::device::marlin_moe::Marlin<__nv_bfloat16, 56... 292.5µs 95.8%, _post_expert_norm_weighted_sum_kernel 4.9µs 1.6%, _align_parallel_kernel 4.0µs 1.3%
-- bs=256 load=verify_32 sharding=ep8: yours 454.3µs vs SGLang 616.0µs (SoL 108.9µs) · void sglang::device::marlin_moe::Marlin<__nv_bfloat16, 56... 391.4µs 95.5%, _align_parallel_kernel 6.9µs 1.7%, _post_expert_norm_weighted_sum_kernel 6.0µs 1.5%
+- bs=1 load=decode_1 sharding=ep8: yours 44.9µs vs SGLang 77.2µs (SoL 11.4µs) · void sglang::device::marlin_moe::Marlin<__nv_bfloat16, 56... 42.1µs 87.1%, _post_norm_combine_kernel 3.3µs 6.9%, void sglang::act_and_mul_kernel<__nv_bfloat16, (sglang::A... 1.5µs 3.0%
+- bs=16 load=decode_16 sharding=ep8: yours 147.7µs vs SGLang 189.0µs (SoL 52.5µs) · void sglang::device::marlin_moe::Marlin<__nv_bfloat16, 56... 176.6µs 95.6%, _post_norm_combine_kernel 3.2µs 1.7%, _align_small_kernel 2.7µs 1.4%
+- bs=32 load=decode_32 sharding=ep8: yours 198.7µs vs SGLang 205.4µs (SoL 70.8µs) · void sglang::device::marlin_moe::Marlin<__nv_bfloat16, 56... 121.5µs 92.3%, _align_small_kernel 4.3µs 3.2%, _post_expert_norm_weighted_sum_kernel 3.5µs 2.7%
+- bs=8 load=verify_1 sharding=ep8: yours 106.0µs vs SGLang 142.3µs (SoL 37.3µs) · void sglang::device::marlin_moe::Marlin<__nv_bfloat16, 56... 94.4µs 92.6%, _post_norm_combine_kernel 3.0µs 3.0%, _align_small_kernel 2.5µs 2.5%
+- bs=128 load=verify_16 sharding=ep8: yours 317.8µs vs SGLang 456.7µs (SoL 101.3µs) · void sglang::device::marlin_moe::Marlin<__nv_bfloat16, 56... 305.9µs 95.7%, _post_expert_norm_weighted_sum_kernel 5.7µs 1.8%, void sglang::act_and_mul_kernel<__nv_bfloat16, (sglang::A... 4.0µs 1.3%
+- bs=256 load=verify_32 sharding=ep8: yours 467.8µs vs SGLang 629.5µs (SoL 108.9µs) · void sglang::device::marlin_moe::Marlin<__nv_bfloat16, 56... 451.5µs 96.1%, _align_parallel_kernel 7.0µs 1.5%, _post_expert_norm_weighted_sum_kernel 5.8µs 1.2%
 
 ## By area
 
@@ -68,6 +68,7 @@ Where the time goes (per scored shape, top kernels):
 - **cuda-nvfp4-wgmma-rega-grouped-sm90a-rebuild-inproc** → neutral (unproven-vs-best), 1.3303x — gained on verify_16 verify_16; verify_32 verify_32. RE-MEASURE (stage 1b): the previous run never executed the new kernel; load_inline failed because cpp_extension appended its own -gencode arch=compute_90,code=s
 - **cuda-nvfp4-swapab-mma-persistent-small-m-inproc** → regression (regression), 0.9250x — gained on decode_1 decode_1; verify_16 verify_16; verify_32 verify_32; lost on decode_16 decode_16; decode_32 decode_32; verify_1 verify_1. FIX (stage 1b, make it run): the previous run built (51.2 s, 80-128 regs, 0 local) but its first CUDA launch in _cuda_self_check hit illegal instruction 715 (st
 - **cuda-nvfp4-wgmma-rega-grouped-s2-finite-fix** → neutral (unproven-vs-best), 1.3307x — no shape moved outside noise. Stage 2 of the wgmma register-A grouped NVFP4 rewrite (make it numerically correct). Stage 1b (job b56d17fda2d54be2) finally BUILT and RAN on the judge: TORCH_C
+- **cuda-nvfp4-wgmma-rega-grouped-s3-wide-bucket-fix** → failed (test:failed) — lost on verify_16 verify_16. Stage 3 of the wgmma register-A grouped NVFP4 rewrite, built on the stage-2 commit (cuda-nvfp4-wgmma-rega-grouped-s2-finite-fix, claim bases a rewrite-on-rewrit
 
 ### w2 marlin
 - **w2-l2-prefetch-decode1** → regression (regression), 1.2615x — lost on decode_1 decode_1. At num_tokens == 1 only (decode_1; every other M runs master unchanged), warm L2 with the w2 weights of this token's local experts before the w13 Marlin call, s
@@ -108,6 +109,7 @@ Where the time goes (per scored shape, top kernels):
 - w2-marlin-atomic-add-small-m: unproven-vs-best: the change is not proven either way; a stacked hypothesis (`depends_on: w2-marlin-atomic-add-small-m`) that adds a further change in the same area is the only way to learn more (identical code is never 
 - triton-map-align-verify-chunked: none
 - cuda-nvfp4-swapab-mma-persistent-small-m: rewrite stage 1 of `Marlin w13+w2 (moe_wna16_marlin_gemm x2) at bs<=32`: read the replaced kernels' own us per shape (profile top_kernels) against the incumbent and the floor, and check which Milestone it reached. The ne
+- cuda-nvfp4-wgmma-rega-grouped-s3-wide-bucket-fix: rewrite stage 3 of `Marlin w13+w2 (moe_wna16_marlin_gemm x2) + silu_and_mul at num_tokens >= 128`: read the replaced kernels' own us per shape (profile top_kernels) against the incumbent and the floor, and check which Mi
 
 ## Do not retry (rejected / duplicates)
 
@@ -130,4 +132,9 @@ Where the time goes (per scored shape, top kernels):
 - queue: cuda-nvfp4-wgmma-rega-s2-per-kernel-enable [w13 marlin + silu-mul + w2 marlin] p1 hold
 - queue: cuda-align-kernel-a-from17 [MoE align/dispatch] p2 hold
 - queue: cuda-combine-kernel-b-bs128-only [post-expert norm+combine] p3 hold
-- running: cuda-nvfp4-wgmma-rega-grouped-s3-wide-bucket-fix [w13 marlin + silu-mul + w2 marlin] p1 running
+- queue: cuda-nvfp4-wgmma-rega-midm-bucket-cap32 [w13 marlin + silu-mul + w2 marlin] p1 hold
+- queue: cuda-nvfp4-wgmma-rega-w2-only-midm [w2 marlin] p2 hold
+- queue: marlin-exec-config-autotune-mid-m [Marlin launch config (w13 + w2)] p3 hold
+- running: cuda-nvfp4-wgmma-rega-tiny-m-bucket16 [w13 marlin + silu-mul + w2 marlin] p2 running
+- running: w13-marlin-atomic-add-on-master-small-m [w13 marlin] p1 running
+- running: w2-marlin-atomic-add-verify [w2 marlin] p2 running
