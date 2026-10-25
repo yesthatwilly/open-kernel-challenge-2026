@@ -49,10 +49,13 @@ priority: 2
 kind: primary
 controls_for: null
 review: proceed
-status: hold
+status: done
 review_at: 2026-10-25T010741Z
 review_companions: [experts-triton-turn4-persistent-local-align-control-no-persi]
 hold_reason: "Reviewer: wait for experts-triton-persistent-grid-first-turn (job 5d9ddbbaaffd4599); if it gains, rebuild on its branch with parts 1+3 only, else retire. The control runs now."
+outcome: expired
+verdict_detail: "retired: engine runs on no scored shape (rega replaced Triton/Marlin/ssdq; prefill DIAGNOSIS 2026-10-25)"
+expired_at: 2026-10-25T211931Z
 ---
 
 # experts-triton-turn4-persistent-local-align

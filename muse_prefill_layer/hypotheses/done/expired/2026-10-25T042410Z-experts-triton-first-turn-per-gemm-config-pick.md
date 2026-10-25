@@ -38,10 +38,13 @@ priority: 3
 kind: primary
 controls_for: null
 review: hold
-status: hold
+status: done
 review_at: 2026-10-25T043311Z
 review_companions: null
 hold_reason: "adversarial review: Weak mechanism and a candidate list made mostly of known losers or configs that will not compile; the likely outcome is PATH CHOSEN = master for both GEMMs, i.e"
+outcome: expired
+verdict_detail: "retired: engine runs on no scored shape (rega replaced Triton/Marlin/ssdq; prefill DIAGNOSIS 2026-10-25)"
+expired_at: 2026-10-25T211931Z
 ---
 
 # experts-triton-first-turn-per-gemm-config-pick

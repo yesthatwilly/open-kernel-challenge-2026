@@ -44,10 +44,13 @@ priority: 2
 kind: primary
 controls_for: null
 review: proceed
-status: hold
+status: done
 review_at: 2026-10-24T044949Z
 review_companions: null
 hold_reason: "needs human: rules check. The change materializes a full 3.2 GB BF16 copy of the NVFP4 expert weights in global memory on every call, then runs BF16 grouped GEMMs on it. TASK.md allows 'dequantizing inside your kernels' but forbids storing weights at a different precision; a per-call BF16 weight tensor is the strongest reading of that clause (reviewer's words) and may not survive the organizers' manual review. Proceed only if the user confirms it is within the rules; the adversarial review otherwise says proceed (~1.08x geomean upside)."
+outcome: expired
+verdict_detail: "retired: ruled out by the user's rules ruling (no per-call BF16 dequant of NVFP4 weights)"
+expired_at: 2026-10-25T211931Z
 ---
 
 # experts-dequant-triton-moe-16k

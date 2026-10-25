@@ -304,3 +304,20 @@ overrides of a reviewer) with the reason, newest last. Written by `churn.py note
 - 2026-10-25T211329Z `muse_prefill_layer` **router-triton-hilo-splitk-turn**: expired: hold expired after 35 h: reviewer: the side-stream router (~40-45 us) already fits under the main branch (the 39.3 us nvjet is qkv_gate, not the
 - 2026-10-25T211329Z `muse_prefill_layer` **router-pooler-concat-gemm-turn**: expired: hold expired after 33 h: adversarial review: Rule-clean, but the size of the win rests on a router side branch of ~80-90 us that the current mast
 - 2026-10-25T211329Z `muse_prefill_layer` **norm-residual-boundaries-triton-row-kernel**: expired: hold expired after 28 h: reviewer: same one-row-per-program structure as the incumbent; expect 0.2-0.4% headline, below run noise; re-mint as a m
+- 2026-10-25T211931Z `muse_prefill_layer` **experts-triton-first-turn-per-gemm-config-pick**: retired: engine runs on no scored shape (rega replaced Triton/Marlin/ssdq; prefill DIAGNOSIS 2026-10-25)
+- 2026-10-25T211931Z `muse_prefill_layer` **experts-triton-turn4-persistent-local-align**: retired: engine runs on no scored shape (rega replaced Triton/Marlin/ssdq; prefill DIAGNOSIS 2026-10-25)
+- 2026-10-25T211931Z `muse_prefill_layer` **first-turn-moe-dead-work-stack**: retired: engine runs on no scored shape (rega replaced Triton/Marlin/ssdq; prefill DIAGNOSIS 2026-10-25)
+- 2026-10-25T211931Z `muse_prefill_layer` **marlin-w2-atomic-add-turn**: retired: engine runs on no scored shape (rega replaced Triton/Marlin/ssdq; prefill DIAGNOSIS 2026-10-25)
+- 2026-10-25T211931Z `muse_prefill_layer` **turn-moe-local-align-sorted-silu**: retired: engine runs on no scored shape (rega replaced Triton/Marlin/ssdq; prefill DIAGNOSIS 2026-10-25)
+- 2026-10-25T211931Z `muse_prefill_layer` **experts-first-turn-ssdq-s2-large-m**: retired: engine runs on no scored shape (rega replaced Triton/Marlin/ssdq; prefill DIAGNOSIS 2026-10-25)
+- 2026-10-25T211931Z `muse_prefill_layer` **experts-turn1-ssdq-s2-m64-tile**: retired: engine runs on no scored shape (rega replaced Triton/Marlin/ssdq; prefill DIAGNOSIS 2026-10-25)
+- 2026-10-25T211931Z `muse_prefill_layer` **experts-turn-rega-s4-w2-only-t4096**: retired: already replaced by rega s4 (experts-turn-rega-s4-port-t4096)
+- 2026-10-25T211931Z `muse_prefill_layer` **experts-turn1-cuda-wgmma-rega-port-bucket32**: retired: already replaced by rega s4 (experts-turn-rega-s4-port-t4096)
+- 2026-10-25T211931Z `muse_prefill_layer` **experts-cuda-wgmma-s2-setmaxnreg-pingpong-first-turn**: retired: already replaced by rega s4 (experts-turn-rega-s4-port-t4096)
+- 2026-10-25T211931Z `muse_prefill_layer` **experts-cuda-wgmma-grouped-gemm-remeasure-sm90a**: retired: already run as its -inproc twin
+- 2026-10-25T211931Z `muse_prefill_layer` **attn-full-prefill-cuda-fp8-wgmma-hard-gate**: retired: already run as its -inproc twin
+- 2026-10-25T211931Z `muse_prefill_layer` **experts-dequant-grouped-mm-cutlass**: retired: ruled out by the user's rules ruling (no per-call BF16 dequant of NVFP4 weights)
+- 2026-10-25T211931Z `muse_prefill_layer` **experts-dequant-overlap-attention**: retired: ruled out by the user's rules ruling (no per-call BF16 dequant of NVFP4 weights)
+- 2026-10-25T211931Z `muse_prefill_layer` **experts-dequant-threshold-turn4**: retired: ruled out by the user's rules ruling (no per-call BF16 dequant of NVFP4 weights)
+- 2026-10-25T211931Z `muse_prefill_layer` **experts-dequant-triton-moe-16k**: retired: ruled out by the user's rules ruling (no per-call BF16 dequant of NVFP4 weights)
+- 2026-10-25T211931Z `muse_prefill_layer` **dense-gemm-cublaslt-algo-pick-prefill-t**: retired: on the prefill DIAGNOSIS Do-not-try list

@@ -46,10 +46,13 @@ priority: 3
 kind: primary
 controls_for: null
 review: hold
-status: hold
+status: done
 review_at: 2026-10-25T014119Z
 review_companions: null
 hold_reason: "adversarial review: Hold as a duplicate of landed work: master's _experts_marlin already runs _align_parallel (local routes only, no -1 blocks) and _silu_mul_sorted_kernel at T<=40"
+outcome: expired
+verdict_detail: "retired: engine runs on no scored shape (rega replaced Triton/Marlin/ssdq; prefill DIAGNOSIS 2026-10-25)"
+expired_at: 2026-10-25T211931Z
 ---
 
 # turn-moe-local-align-sorted-silu

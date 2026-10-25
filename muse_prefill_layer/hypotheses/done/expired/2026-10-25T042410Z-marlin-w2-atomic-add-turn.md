@@ -33,10 +33,13 @@ priority: 4
 kind: primary
 controls_for: null
 review: hold
-status: hold
+status: done
 review_at: 2026-10-25T043311Z
 review_companions: null
 hold_reason: "adversarial review: The ported mechanism does not apply at prefill M, and the correctness bound as written rejects the atomic modes anyway, so the expected outcome is PATH CHOSEN ="
+outcome: expired
+verdict_detail: "retired: engine runs on no scored shape (rega replaced Triton/Marlin/ssdq; prefill DIAGNOSIS 2026-10-25)"
+expired_at: 2026-10-25T211931Z
 ---
 
 # marlin-w2-atomic-add-turn

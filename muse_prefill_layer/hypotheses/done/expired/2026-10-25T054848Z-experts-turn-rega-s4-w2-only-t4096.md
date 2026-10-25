@@ -68,8 +68,11 @@ controls_for: null
 rewrite_stage: 1
 replaces: moe_wna16_marlin_gemm (Marlin w2 only) at 200 < T <= 4096
 review: required
-status: hold
+status: done
 hold_reason: "superseded: experts-turn-rega-s4-port-t4096 (gain 1.3275) beat ssdq 805 vs 1250 us at T=3012 and Marlin at T=753; rega owns 200<T<=4096 (first_turn rega extension in flight)"
+outcome: expired
+verdict_detail: "retired: already replaced by rega s4 (experts-turn-rega-s4-port-t4096)"
+expired_at: 2026-10-25T211931Z
 ---
 
 # experts-turn-rega-s4-w2-only-t4096

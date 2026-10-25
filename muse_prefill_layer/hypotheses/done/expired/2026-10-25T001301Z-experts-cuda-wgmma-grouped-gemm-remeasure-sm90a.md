@@ -60,10 +60,13 @@ controls_for: null
 rewrite_stage: 1
 replaces: _moe_nvfp4_gemm_kernel x2 (w13, w2) at T > 4096 (first_turn)
 review: hold
-status: hold
+status: done
 review_at: 2026-10-25T001517Z
 review_companions: null
 hold_reason: "adversarial review: The rewrite design and the build fix are sound, but change item (2) spawns a multiprocessing child in prepare(), and TASK.md and the technical rules list 'start"
+outcome: expired
+verdict_detail: "retired: already run as its -inproc twin"
+expired_at: 2026-10-25T211931Z
 ---
 
 # experts-cuda-wgmma-grouped-gemm-remeasure-sm90a

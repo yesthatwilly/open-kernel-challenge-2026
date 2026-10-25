@@ -70,8 +70,11 @@ controls_for: null
 rewrite_stage: 2
 replaces: moe_wna16_marlin_gemm x2 (Marlin w13 + w2) at 200 < T <= 1024 (turn_1)
 review: required
-status: hold
+status: done
 hold_reason: "superseded: experts-turn-rega-s4-port-t4096 (gain 1.3275) beat ssdq 805 vs 1250 us at T=3012 and Marlin at T=753; rega owns 200<T<=4096 (first_turn rega extension in flight)"
+outcome: expired
+verdict_detail: "retired: engine runs on no scored shape (rega replaced Triton/Marlin/ssdq; prefill DIAGNOSIS 2026-10-25)"
+expired_at: 2026-10-25T211931Z
 ---
 
 # experts-turn1-ssdq-s2-m64-tile

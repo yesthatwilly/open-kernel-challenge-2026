@@ -31,8 +31,11 @@ priority: 3
 kind: primary
 controls_for: null
 review: required
-status: hold
+status: done
 hold_reason: "standing answer: the per-call BF16 dequant family stays held; pursue in-kernel dequant only (experts-cuda-wgmma-mixed-input-grouped-gemm)"
+outcome: expired
+verdict_detail: "retired: ruled out by the user's rules ruling (no per-call BF16 dequant of NVFP4 weights)"
+expired_at: 2026-10-25T211931Z
 ---
 
 # experts-dequant-overlap-attention

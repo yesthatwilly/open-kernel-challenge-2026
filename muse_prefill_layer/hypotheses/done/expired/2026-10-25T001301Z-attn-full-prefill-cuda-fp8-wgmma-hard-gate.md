@@ -53,10 +53,13 @@ controls_for: null
 rewrite_stage: 1
 replaces: "flash_attn_with_kvcache (FA3 cutlass::device_kernel<flash::...> + FlashAttnFwdCombine) on full-attention layers at page_size 1"
 review: hold
-status: hold
+status: done
 review_at: 2026-10-25T001525Z
 review_companions: null
 hold_reason: "adversarial review: The rewrite's target and gate are sound, but sub-change (4) runs the first launch in a multiprocessing-spawn child process, and TASK.md says a submission that '"
+outcome: expired
+verdict_detail: "retired: already run as its -inproc twin"
+expired_at: 2026-10-25T211931Z
 ---
 
 # attn-full-prefill-cuda-fp8-wgmma-hard-gate
