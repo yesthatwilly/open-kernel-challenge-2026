@@ -111,7 +111,9 @@ speedup: 1.2566457115954903
 speedup_ci: [1.237796025921558, 1.2754953972694225]
 harvested_at: 2026-10-25T185516Z
 best_at_harvest: 1.2490645809967658
-promotion: null
+promotion: merged
+hand_landed: true
+promotion_commit: 36c26199f24a1b0d49cb3f63d518a67cfd388f04
 ---
 
 # combo-rowowner-reduce-free-m1-qkv-o-plus-naive

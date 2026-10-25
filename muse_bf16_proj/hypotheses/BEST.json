@@ -1,18 +1,17 @@
 {
-  "problem": "muse_bf16_proj",
-  "job": "ee4f89f2f62c42d3",
-  "check_job": "85c91578cc184287",
-  "mode": "submit",
-  "speedup": 1.2490645809967658,
-  "ci": [
-    1.2303286122818142,
-    1.267800549711717
-  ],
-  "score_us": 3867.534211998049,
-  "commit": "67b46a57e69d86ab79f476a19502b06e05d4a471",
-  "submission_blob": "f919748b5af6e815f319e5d2d828ed68e5b28a71",
-  "slug": "restack-three-cell-wins-router-unpooler-cluster-m8-nn-m128",
-  "result": "muse_bf16_proj/hypotheses/done/neutral/pooler-nn-layout-widen-m256.result.json",
-  "updated_at": "2026-10-25T153311Z",
-  "note": "board best; scored from this slug (code may differ from master, see DECISIONS)"
+ "problem": "muse_bf16_proj",
+ "job": "741072dca5fc4c9d",
+ "check_job": "741072dca5fc4c9d",
+ "mode": "check",
+ "speedup": 1.2566457115954903,
+ "ci": [
+  1.237796025921558,
+  1.2754953972694225
+ ],
+ "score_us": 3844.2020335760453,
+ "commit": "36c26199f24a1b0d49cb3f63d518a67cfd388f04",
+ "submission_blob": "ad8d7254a64a52db2a8f56ec0ad262748153a2e8",
+ "slug": "combo-rowowner-reduce-free-m1-qkv-o-plus-naive",
+ "result": "muse_bf16_proj/hypotheses/done/neutral/combo-rowowner-reduce-free-m1-qkv-o-plus-naive.result.json",
+ "updated_at": "2026-10-25T185544Z"
 }
