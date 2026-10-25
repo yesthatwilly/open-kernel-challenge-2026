@@ -56,8 +56,10 @@ kind: rewrite
 controls_for: null
 rewrite_stage: 4
 replaces: Marlin w13+silu+w2 at 128<=T<=512
-review: required
+review: proceed
 status: queued
+review_at: 2026-10-25T044714Z
+review_companions: null
 ---
 
 # cuda-nvfp4-wgmma-rega-grouped-s4-replay-safe
@@ -88,3 +90,25 @@ shape (profile top_kernels) against the incumbent and the speed-of-light floor, 
 2. at or below the incumbent kernels' time on the target shapes;
 3. within ~1.5x of the floor on the target shapes, and the headline CI clears 1.0 (promotable).
 The next stage is minted with `--kind rewrite --depends-on <this slug> --stage N+1`.
+
+## Adversarial review
+
+Reviewed 2026-10-25T044714Z by an adversarial subagent (model opus).
+
+**Verdict: proceed.** Diagnosis confirmed from the s3 branch (hyp/muse_moe_w4a16/cuda-nvfp4-wgmma-rega-grouped-s3-wide-bucket-fix; its worktree no longer exists). The process-global Maps g_maps[2] / g_maps_ok / g_map_rows[2] (s3 submission.py:972-974) are re-encoded by every prepare() over that state's wg_xs/wg_hs (:1026-1047, called at :2122-2124) and passed by value at launch (:1087), so a graph captured on one judge copy TMA-reads the other copy's scratch. No other module-global holds a device pointer in the s3 module, so the planned per-state map blob is enough. Proceed; it is a rewrite stage with a sound fix and the right self-check.
+
+### Justification
+A: The mechanism holds. The gather (:1364) and the w13 output (:1368) use state['wg_xs'] and state['wg_hs'], but both TMA reads go through g_maps[which], which encodes the LAST prepared state's buffers. The last-prepared copy is self-consistent. The other copy reads stale rows, which matches 'passes tests and reps 0/1, fails recheck rep 2 at rel-L2 1.21'. The full audit of the s3 C++ found nothing else that holds a pointer. The other C++ statics are constexpr or static_assert (Smem<G>::BYTES and the like); get_encode re-queries every time (no static cache); cudaFuncSetAttribute is per-function and idempotent. On the Python side, WG_BUILD_INFO (:1135) is diagnostic only. wg_err (:2135), wg_banks (:2130), wg_vmask (:2146) and wg_xs/wg_hs are already per state. The load_inline module is shared across prepare() calls in one process (same name, so the same .so), and that is exactly why any C++ global is cross-copy state. The g_maps_ok flip in wg_set_maps (:1030) is a second hazard: if a later prepare's encode fails, every copy's next launch dies on TORCH_CHECK, not only that copy's. The per-state blob removes this too. Weakest link: the expected speedups are the s3 prepare-time cold timings (669 vs 921 us at M=128, 838 vs 1251 us at M=256). No judge benchmark or profile of the wgmma path exists yet, because s3 failed before timing. Against floors of 101.3 / 108.9 us (TASK.md), both paths are far off-floor, so milestone 2 (at or below the incumbent) is plausible but unproven under judge timing, and milestone 3 is not expected this stage.
+
+### Confounders on the current kernel
+- w2-marlin-atomic-add-small-m (9080a71, the base): changes only the T<=32 w2 Marlin call; the wgmma path covers 128<=T<=512, so it is disjoint. Neutral control shapes stay neutral.
+- triton-map-align-on-block-m-restack / align-parallel-per-expert-verify: the wgmma path calls its own moe_align_block_size at block 16 (s3 :1356) instead of master's align, so the align change is part of the replaced subsystem and is not separable from the kernel time. Read the profile per kernel (align + gather + 2x wg_kernel + norm vs align + 2x Marlin + act_and_mul + norm), not the headline.
+- marlin-block-m-two-smaller-on-postnorm: tunes Marlin's block_size_m at T>=128, i.e. the incumbent being replaced. The comparison is against this tuned Marlin, which is correct and is not a confounder.
+
+### Interference and A/B needs
+No companions. This is a rewrite stage whose purpose is to be correct under the judge's multi-copy rotation. The control is built in: T<128 and T>512 run master Marlin, and the prepare-time cold A/B against Marlin at M=128/256 is kept. An ab-revert of a landed hypothesis would not change whether the fix works.
+
+### Open questions
+- Does the judge capture each copy's graph after ALL prepares, or right after its own prepare? The per-state fix is correct either way, but it decides whether s3's failure could ever have shown on rep 0. The self-check should cover both orders: capture GA before and after building B.
+- Do the judge's copies hold distinct weight tensors (different data_ptr / values)? That does not matter for moe (wg_banks is per state), but it decides whether the bf16 deepgemm g_tb global (below) is latent or live.
+

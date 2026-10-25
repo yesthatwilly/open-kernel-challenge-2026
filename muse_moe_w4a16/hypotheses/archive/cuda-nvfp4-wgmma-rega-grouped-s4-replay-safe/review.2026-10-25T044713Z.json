@@ -1,0 +1,78 @@
+{
+ "model": "opus",
+ "verdict": "proceed",
+ "summary": "Diagnosis confirmed from the s3 branch (hyp/muse_moe_w4a16/cuda-nvfp4-wgmma-rega-grouped-s3-wide-bucket-fix; its worktree no longer exists). The process-global Maps g_maps[2] / g_maps_ok / g_map_rows[2] (s3 submission.py:972-974) are re-encoded by every prepare() over that state's wg_xs/wg_hs (:1026-1047, called at :2122-2124) and passed by value at launch (:1087), so a graph captured on one judge copy TMA-reads the other copy's scratch. No other module-global holds a device pointer in the s3 module, so the planned per-state map blob is enough. Proceed; it is a rewrite stage with a sound fix and the right self-check.",
+ "justification": "A: The mechanism holds. The gather (:1364) and the w13 output (:1368) use state['wg_xs'] and state['wg_hs'], but both TMA reads go through g_maps[which], which encodes the LAST prepared state's buffers. The last-prepared copy is self-consistent. The other copy reads stale rows, which matches 'passes tests and reps 0/1, fails recheck rep 2 at rel-L2 1.21'. The full audit of the s3 C++ found nothing else that holds a pointer. The other C++ statics are constexpr or static_assert (Smem<G>::BYTES and the like); get_encode re-queries every time (no static cache); cudaFuncSetAttribute is per-function and idempotent. On the Python side, WG_BUILD_INFO (:1135) is diagnostic only. wg_err (:2135), wg_banks (:2130), wg_vmask (:2146) and wg_xs/wg_hs are already per state. The load_inline module is shared across prepare() calls in one process (same name, so the same .so), and that is exactly why any C++ global is cross-copy state. The g_maps_ok flip in wg_set_maps (:1030) is a second hazard: if a later prepare's encode fails, every copy's next launch dies on TORCH_CHECK, not only that copy's. The per-state blob removes this too. Weakest link: the expected speedups are the s3 prepare-time cold timings (669 vs 921 us at M=128, 838 vs 1251 us at M=256). No judge benchmark or profile of the wgmma path exists yet, because s3 failed before timing. Against floors of 101.3 / 108.9 us (TASK.md), both paths are far off-floor, so milestone 2 (at or below the incumbent) is plausible but unproven under judge timing, and milestone 3 is not expected this stage.",
+ "confounders": [
+  "w2-marlin-atomic-add-small-m (9080a71, the base): changes only the T<=32 w2 Marlin call; the wgmma path covers 128<=T<=512, so it is disjoint. Neutral control shapes stay neutral.",
+  "triton-map-align-on-block-m-restack / align-parallel-per-expert-verify: the wgmma path calls its own moe_align_block_size at block 16 (s3 :1356) instead of master's align, so the align change is part of the replaced subsystem and is not separable from the kernel time. Read the profile per kernel (align + gather + 2x wg_kernel + norm vs align + 2x Marlin + act_and_mul + norm), not the headline.",
+  "marlin-block-m-two-smaller-on-postnorm: tunes Marlin's block_size_m at T>=128, i.e. the incumbent being replaced. The comparison is against this tuned Marlin, which is correct and is not a confounder."
+ ],
+ "interference": "No companions. This is a rewrite stage whose purpose is to be correct under the judge's multi-copy rotation. The control is built in: T<128 and T>512 run master Marlin, and the prepare-time cold A/B against Marlin at M=128/256 is kept. An ab-revert of a landed hypothesis would not change whether the fix works.",
+ "rules_flags": [
+  "None blocking. The maps encode scratch buffers allocated in prepare() from shape constants (WG_CAP_ROWS), never from inputs; n_padded and the chunk tables are read on the device; kernel_fn branches on shape only. No host sync in kernel_fn: the data_ptr TORCH_CHECK is host-side pointer arithmetic, and the CPU blob memcpy into a __grid_constant__ argument is captured by value. Both are fine under capture.",
+  "Keep the cross-copy self-check's second state inside prepare()'s 300 s budget. Build it with the wgmma setup alone (scratch + maps + err; reuse the read-only wg_banks), never by recursively calling prepare(), which would repeat the build, canary and self-check."
+ ],
+ "companions": [],
+ "open_questions": [
+  "Does the judge capture each copy's graph after ALL prepares, or right after its own prepare? The per-state fix is correct either way, but it decides whether s3's failure could ever have shown on rep 0. The self-check should cover both orders: capture GA before and after building B.",
+  "Do the judge's copies hold distinct weight tensors (different data_ptr / values)? That does not matter for moe (wg_banks is per state), but it decides whether the bf16 deepgemm g_tb global (below) is latent or live."
+ ],
+ "builder_instructions": [
+  "Delete g_maps, g_maps_ok and g_map_rows entirely (s3 :972-974). wg_make_maps(xs, hs) returns CPU uint8 [2, sizeof(Maps)] (= 2 x 512 B). Store it with state['wg_map_ptrs'] = (xs.data_ptr(), hs.data_ptr()) and state['wg_map_rows'] = (xs.size(0), hs.size(0)).",
+  "In wg_gemm: declare a local `Maps m;` (Maps holds CUtensorMap, which is alignas(64)), std::memcpy it from blob.data_ptr<uint8_t>() + which*sizeof(Maps), and pass m to the launch. TORCH_CHECK blob.device().is_cpu(), blob.numel() == 2*sizeof(Maps), src.data_ptr() == recorded ptr, and sorted_ids.numel() <= recorded rows. Pass the recorded ptr/rows as int64 args, not as C++ globals.",
+  "Bump WG_EXT_NAME (for example muse_moe_w4a16_wgmma_rega_v4) so a stale s3 .so in the judge's build cache can never load.",
+  "Print the audit line literally, for example 'AUDIT module globals: none hold device pointers (encode fn re-queried; attrs idempotent)'. After the build, also grep the generated source string in Python for a file-scope 'g_' / non-constexpr 'static' / '__device__' variable, and set OFF if one is found.",
+  "Self-check (a): use static x/topk_ids/topk_weights buffers, capture once, copy_ in >=3 different routings, replay, and compare to eager Marlin. Include a routing that changes n_padded and block count (all-one-expert vs random) and one with remote ids (-1 local), so stale-chunk-table bugs also show.",
+  "Self-check (b): order GA-capture, build B, GB-capture, then replay GA, GB, GA, GB, GA, each with fresh refilled routing. Also print, per replay, the blob ptr pair against that state's wg_xs/wg_hs data_ptr. Free state B (scratch + graph) before returning so it does not hold ~2 x 8192 x (H+I) bf16 of memory.",
+  "Keep the variant-A-only cut: removing vmask and variant B also removes the A/B timing-dependent pick, so the two copies cannot choose different variants.",
+  "Harvest rule: a recheck failure at rep >= 2 with rep 0/1 passing points to cross-copy state. If one appears again, look for another shared pointer before blaming the kernel."
+ ],
+ "cross_problem_global_state": [
+  {
+   "where": "hyp/muse_moe_w4a16/cuda-nvfp4-wgmma-rega-tiny-m-bucket16 (RUNNING) submission.py:946-948 (committed) and worktree .worktrees/muse_moe_w4a16/cuda-nvfp4-wgmma-rega-tiny-m-bucket16/submission.py:952-954 plus :2349-2351 (TMaps g_tmaps[2], g_tmaps_ok, g_tmap_rows[2], uncommitted)",
+   "severity": "LIVE BUG (same as s3)",
+   "note": "Same g_maps pattern, plus a second global map set for the tiny-M path. Expect the same judge-recheck failure. Do not read a failure as kernel evidence; rebuild on s4."
+  },
+  {
+   "where": "muse_moe_w4a16 queue (status hold): cuda-nvfp4-wgmma-rega-midm-bucket-cap32, -w2-only-midm (depends_on s2-finite-fix), -s2-per-kernel-enable, -s2-fix-gate-from-8, -grouped-sm90a-rebuild; branches s2-finite-fix:946, sm90a-rebuild-inproc:938, grouped-verify:779",
+   "severity": "LIVE BUG if built on s2/s3",
+   "note": "All carry Maps g_maps[2]. Re-base them on s4's commit."
+  },
+  {
+   "where": "muse_prefill_layer/hypotheses/queue/2026-10-25T042410Z-experts-turn1-cuda-wgmma-rega-port-bucket32.md (hold, no branch yet)",
+   "severity": "LIVE BUG if ported from s2/s3",
+   "note": "Port from s4's per-state maps, not from g_maps."
+  },
+  {
+   "where": "hyp/muse_bf16_proj/bf16-verify-deepgemm-sm90-kernel-asserted-rewrite (RUNNING) submission.py:1516 `static CUtensorMap g_tb[{nv}]` (encoded in dg2_set_weight :1522-1530 from prepare :1713 over state[layer]; used by value in dg2_run :1545)",
+   "severity": "LATENT (live if copies have distinct weight values or freed weights)",
+   "note": "This is the weight (B) descriptor. It points at the LAST prepared copy's weight tensor. If the copies share the weight tensors, or hold identical values that stay alive, the numbers are still correct. Otherwise this is the same bug. Fix it like swcl: return a per-state CPU uint8 blob from set_weight and memcpy it per launch."
+  },
+  {
+   "where": "hyp/muse_bf16_proj/bf16-verify-swapab-wgmma-cluster-dsmem-rewrite (RUNNING) submission.py:1443-1476 (swcl_make_wmap returns a CPU uint8 blob stored in state['swcl_wmap'][layer] :1694; the X map is encoded per call :1476); statics :1349 (encode fn cache) and :1383 (attr done)",
+   "severity": "SAFE",
+   "note": "This is the reference pattern for the s4 fix. Workspaces are per state (:766-779)."
+  },
+  {
+   "where": "wt muse_prefill_layer/experts-turn4-cuda-dequant-producer-ss-wgmma (RUNNING, uncommitted) submission.py:1405-1412",
+   "severity": "SAFE",
+   "note": "The A-map is encoded per call from the passed tensor; the only static is the encode-fn cache (:1323)."
+  },
+  {
+   "where": "muse_decode_layer full-decode-streamk-ticket-port (RUNNING) :2803-2805 `_SK_TICKETS/_SK_WS/_SK_DUMMY` (keyed by device); full-decode1-two-level-ticket-port :2801-2802 `_SK_TICKETS/_SK_GTICKETS`",
+   "severity": "SHARED but safe under serial replay",
+   "note": "Process-global per-device tickets and workspace, allocated from the device only. Every launch writes the workspace before reading it and leaves the tickets at 0. This is safe while the judge replays copies serially on one stream. It breaks only if a launch aborts mid-ticket (stuck nonzero for ALL copies) or if copies ever run concurrently. Global routing flags (_SK_CHOICE, _SK_OK at :2802/:3086) are decided by the LAST prepare."
+  },
+  {
+   "where": "muse_attention_decode master submission.py:1515 `_TICKETS`, :1532 `_GTICKETS` (also in full-decode1-sk4-cluster-dsmem-merge :1778/:1795, full-decode1-sk-pdl-from-preattn :1581/:1598); sliding-verify-sk-pseudo-decode-s1 worktree :1582/:1599 plus :2293-2294 `_PS_TICKETS/_PS_GTICKETS` and :2292 `_PS_ROUTE`",
+   "severity": "SHARED but safe under serial replay",
+   "note": "Same self-resetting ticket pattern as decode_layer. _PS_ROUTE / _B1_PATH / _B1_CL (sk4 :871) are process-global route choices, so the last prepare wins for every copy. That is consistent as long as no route refers to per-state buffers. The sk4 cluster-dsmem and decode32 cluster kernels hold no C++ pointer globals (only `static bool done[]` attribute guards at master :809/:1442, sk4 :1596/:1617)."
+  },
+  {
+   "where": "muse_decode_layer master :691 / sliding-cluster-c4-decode32-port :696, muse_bf16_proj router-* :1242/:1254 `static bool done`",
+   "severity": "SAFE",
+   "note": "Idempotent cudaFuncSetAttribute guards."
+  }
+ ]
+}
