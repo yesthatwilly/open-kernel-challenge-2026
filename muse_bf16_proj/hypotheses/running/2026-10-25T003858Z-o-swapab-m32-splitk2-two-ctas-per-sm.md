@@ -51,7 +51,7 @@ review: proceed
 status: running
 review_at: 2026-10-25T004221Z
 review_companions: null
-stage: claimed
+stage: implemented
 claimed_at: 2026-10-25T004221Z
 base_sha: 9a3cafafd2a3738a49dc5fe238ef2bf753adafd4
 base_blob: a8bb42ac483318e9fbc84bc7826a27b7a704d1fb
@@ -60,6 +60,12 @@ worktree: .worktrees/muse_bf16_proj/o-swapab-m32-splitk2-two-ctas-per-sm
 mode: null
 restack_of: null
 stale_base: null
+implemented_at: 2026-10-25T004336Z
+impl_commit: 39a42db73c9d1d3a1ab4a83d849e7df0aafd05e8
+submission_sha256: 8464768fc46c9b7419314e4ec533840ca5943d44f8b13d377d170f4aa2efa7ce
+norm_sha256: 64a798663fc01d49f9fbbd163aa6704b8bb2711413e3d3b393e7f380c2459105
+submission_blob: 0f369f4fc86ec397d2ae1110613230f66f999fa9
+lint_warnings: 0
 ---
 
 # o-swapab-m32-splitk2-two-ctas-per-sm
@@ -107,3 +113,24 @@ No companion. A gain is attributable; a loss is ambiguous between the ticket tai
 - Harvest baseline: master o decode_32 kernel 4.5-4.6, row 6.64-6.73.
 - If it wins, the restack's SWAPAB16_CFG['o'] at m<=16 is the next target.
 
+
+## Implementation notes
+
+In `muse_bf16_proj/submission.py` (worktree only, +11/-1):
+- `SWAPAB_CFG["o"]` is now `(8192, 1024, 2, 256, 2)`: grid (128, 2), K_SLICE 512, 2 stages.
+- `_swapab_buffers` returns `swapab_ws_o` and `swapab_cnt_o` for layer o.
+- `_swapab_prepare` allocates both from constant shapes. `swapab_ws_o` is fp32 (2, 32, 8192). `swapab_cnt_o` is int32 zeros(128). It zeroes `swapab_cnt_o` again after the warm-up loop.
+- The `report=True` print in prepare() now also shows `compiled.metadata.shared` (must be <= ~113 KB for 2 CTAs/SM), `n_regs`, and the number of `cp.async.commit_group` before the first `cp.async.wait_group` in the PTX. It prints for every swap-AB layer, in prepare() only.
+- No deviation from the spec. `kernel_fn` is untouched. If 2 stages hit OutOfResources, the existing fallback uses 3 stages, which would break the 2 CTAs/SM goal. The printed shared size shows this.
+
+## Rules check
+
+- [x] CUDA-graph capturable: the diff adds no `.item()`, `.cpu()` or sync to `kernel_fn`. The new prints are in prepare() only, and `ws` and `cnt` are preallocated.
+- [x] Nothing derived from `data` is cached: the new state is constant-shape buffers only.
+- [x] Weights: unchanged, BF16 stays BF16. The split-K workspace is fp32 accumulation scratch, as for pooler and qkv.
+- [x] Activations BF16 where SGLang keeps BF16: n/a, no activation dtype change.
+- [x] Attention: n/a, projection GEMMs only.
+- [x] No timing patches, harness access, subprocesses or network: checked in the diff.
+- [x] All work is inside the timed call: no output caching or replay.
+
+okc_lint: `CLEAN: muse_bf16_proj/submission.py`. py_compile OK, `__pycache__` removed.
