@@ -49,8 +49,10 @@ depends_on: null
 priority: 2
 kind: primary
 controls_for: null
-review: required
+review: proceed
 status: queued
+review_at: 2026-10-25T150319Z
+review_companions: null
 ---
 
 # pooler-nn-layout-widen-m256
@@ -71,3 +73,26 @@ Built on master (blob 353e3b19, restack-three-cell-wins-router-unpooler-cluster-
 ## Risk
 
 Expected headline effect is small (verify_32 is the weakest load at 1.075x; ~1 us of 94.5 us there is ~+0.2% geomean), so judge on the paired pooler verify_32 ratio, not the headline. Risk: the probe was one run on an older master; cuBLAS NN may pick the same 128x64 tile at m=256 and the 1.034x could be partly drift. Downside is bounded to one row (worst case ~0.97x, the qkv m=256 NN loss magnitude). Shape coverage: the test m=130 unpooler is unaffected (unpooler bound stays 128); no pooler test sits in 129..256, so nearby-shape behaviour equals cuBLAS NN, the same math. Overlap: queued bf16-verify32-cutlass-coop-256x128-splitk-stage2 also targets pooler m=256; if both ever stack, branch order decides, so this keeps its own gate constant NN_POOLER_MAX_M.
+
+## Adversarial review
+
+Reviewed 2026-10-25T150319Z by an adversarial subagent (model opus).
+
+**Verdict: proceed.** This is a low-risk change gated on config only. It reuses the existing lossless pooler_t copy for one row, pooler verify_32 m=256. The headline cannot show a gain this small (about +0.2% geomean against a CI of at least ±1.5%), so judge it on the row's paired ratio and the nvjet NNT kernel name. No companion is needed.
+
+### Justification
+Mechanism: on master, pooler m=256 falls through every Triton gate (pooler split-K and swap-AB16 are m<=16/32, swap-AB is 17..32) to _bf16_gemm_dispatch_impl. That path runs cuBLAS nvjet_sm90_tst_128x64_64x8_1x2_h_bz_TNT at 30.4 us on a 31.3 us row, against SGLang's 30.9 and a 17.4 floor, so it is about 1.8x off the floor and roughly at parity with SGLang. The same NN copy already wins at m=128 on master (pooler verify_16 22.9 vs 25.5, splitK_NNT). So the [K,N] layout changing cuBLAS's heuristic and tile/split choice for this K-heavy (k=8192, n=4096) weight is plausible on H200. The expected shapes and directions agree with TASK.md: only pooler m=256 should move, and every other row is byte-identical because the gate branches on cfg layer/m/n only. The predicted -0.8 to -1.4 us on one verify_32 shape is about 1% of that load (94.5 us), so roughly +0.2% headline, well inside the CI. Weakest link: the evidence is ONE probe run (2dc5dce0) on an old master (dba4ffd), and it chose the SAME tile (128x64_64x8_1x2) as the TN incumbent, at 29.5 us NNT vs 28.5-30.4 us TNT across runs. The raw kernel-us gap is inside cross-run drift. Only the within-run paired ratio (1.034 vs 0.986/0.999/0.9998) separates them, and a single 3.5% paired-ratio gap on one row has never been replicated. The m=128 win also came with a splitK NNT variant, while the m=256 probe kernel is non-splitK, so the m=128 mechanism (a different split choice) does not obviously carry over.
+
+### Confounders on the current kernel
+- restack-three-cell-wins-router-unpooler-cluster-m8-nn-m128: introduced pooler_t, the NN gate and the shared nn_ok flag. Widening reuses that flag, so if the proposed new m=256 A/B self-check cell MISSes, nn_ok turns off for BOTH layers at m=128 as well. pooler/unpooler verify_16 would then regress and confound the read. The attempt must log the final flags (nn_ok=True) or the run is void.
+- sglang-gemm-dispatch-parity: the incumbent is _bf16_gemm_dispatch_impl and the new path is plain torch.mm. The measured delta therefore mixes the NN layout with whatever the dispatch impl does differently (cuBLASLt vs cuBLAS handle, workspace, heuristic). That does not change the decision, since either cause is a legitimate lossless gain, but the gain should not be credited to 'layout' alone in FINDINGS without that caveat.
+- Other landed items (router hilo/cluster, swap-AB m<=32, unpooler-slice cluster) touch different (layer, m) cells and do not share this launch or its memory traffic. Every timed replay starts with a cold L2, so the extra 67 MB pooler_t residency has no cross-row effect.
+
+### Interference and A/B needs
+No companion. An ab-revert of the restack would remove pooler_t itself, so the change could not exist. An ab-tune of the gate is the change itself. A control isolating torch.mm-TN vs dispatch-impl-TN would only split the credit between layout and call path, and both outcomes lead to the same keep/drop decision. The single run is already interpretable from its own row. The incumbent's paired ratio on pooler verify_32 has three prior reads (0.986, 0.999, 0.9998), which gives a usable baseline distribution, and the kernel-name check (must be *_NNT) confirms the route actually changed. Decision rule: call it a gain if pooler verify_32 paired >= ~1.02 with an NNT kernel, call it a loss if <= ~0.97, and treat anything between as noise to log as neutral. Spending a second scored run to firm up a ~0.2% headline item is not justified.
+
+### Open questions
+- Should the optional m=256 A/B self-check cell get its own flag (e.g. nn_pooler256_ok) so a miss there cannot switch off the proven m=128 NN cells? Prefer either a separate flag or skipping the extra cell. AB_BF16_REL_L2=6e-3 vs ~2e-3 bf16 rounding makes a false miss unlikely but not impossible at k=8192.
+- Does nvjet pick a different algorithm for NN at m=256 on the current driver/master than in the probe (128x64_64x8_1x2 NNT)? Record the exact kernel name and us. If it is the same tile as the TNT incumbent, any gain is weakly explained.
+- Ordering with the queued bf16-verify32-cutlass-coop-256x128-splitk-stage2, which also targets pooler m=256: whichever lands second must re-baseline this row against the other, not against the current master.
+
