@@ -46,7 +46,7 @@ review: proceed
 status: running
 review_at: 2026-10-25T011915Z
 review_companions: null
-stage: claimed
+stage: implemented
 claimed_at: 2026-10-25T011915Z
 base_sha: 0ad8ffa797c1d65f94a31d3ee5951c1a36987746
 base_blob: 108d36e9f2266fc88531dd6ff0329a847c882013
@@ -55,6 +55,12 @@ worktree: .worktrees/muse_moe_w4a16/w2-marlin-atomic-add-small-m
 mode: null
 restack_of: null
 stale_base: null
+implemented_at: 2026-10-25T012018Z
+impl_commit: 6960c4c3e43ee1e20f6920f6e94949f1ebb09793
+submission_sha256: 121fdb1d41669ab68551399843439d591ec20709eec731ca8288e779cf6fcf98
+norm_sha256: cdac564d58950b4c0c15329c436088da4fcf19ae5c8ed13f972448ba0b7f5630
+submission_blob: 60dfe35d5417d9c0f89067ff313efdc2c41d03a2
+lint_warnings: 11
 ---
 
 # w2-marlin-atomic-add-small-m
@@ -99,3 +105,23 @@ No companion. The change is one flag on one call, plus at most one memset that h
 - What is the actual slice_count for w2 at bs=1 (it depends on Marlin's thread_n/thread_k pick for m_block 8)? Printing it once from the bank shapes would show whether a 2-5 us win is even possible.
 - Does profile.txt list the two Marlin launches separately? If yes, read w2's own row. If not, rely on the per-shape median and treat the aggregated Marlin row as noise.
 
+
+## Implementation notes
+
+- Worktree submission.py only. kernel_fn is now a thin wrapper over `_forward(data, state, w2_mode)`; the body is unchanged except the w2 call, which uses `w2_common = dict(common, use_atomic_add=True)` when `w2_mode != "master"` and num_tokens <= 32 (`W2_ATOMIC_MAX_TOKENS`). w13 and every T > 32 call keep master's `common` exactly.
+- Review corrections applied: use_fp32_reduce stays True; cache3 still aliases cache13 (holds w13's output, so non-zero); prepare() prints atomic enabled / memset in path.
+- Deviation: sglang source is not readable on this node, so zeroing is decided empirically. `_w2_atomic_self_check` (prepare, synthetic seeded inputs only) tries "atomic" (no memset) at T in {1,4,8,16,32}, then "atomic_zero" (one `cache3.zero_()` before w2, graph-safe) if that fails, else "master". Gate: finite and rel-L2 vs master <= 5e-3. Binding exceptions are caught and logged. Chosen mode is stored in state["w2_mode"] (set in prepare, not derived from inputs).
+- Prints: `[w2-atomic] PATH CHOSEN = atomic|master (<reason>)` and a line with atomic enabled, fp32_reduce=True, memset in path.
+- Not run (no GPU). slice_count printing was skipped (needs Marlin internals).
+
+## Rules check
+
+- [x] CUDA-graph capturable: diff adds no sync/.item()/.cpu() in kernel_fn path; branch on num_tokens and state string only; `zero_()` is a graph-safe kernel. Syncs/.item() are only in prepare().
+- [x] Nothing derived from `data` is cached: only w2_mode from prepare's synthetic inputs.
+- [x] Weights: untouched; NVFP4 stays NVFP4.
+- [x] Activations BF16 as before; unchanged.
+- [x] Attention: n/a, no attention in this problem.
+- [x] No timing patches, harness access, subprocesses or network in diff.
+- [x] All work inside the timed call; no output caching or replay.
+
+okc_lint: `OK with warnings: submission.py` (only host-sync warnings, all in prepare(), outside kernel_fn's call graph). py_compile OK; __pycache__ removed.
