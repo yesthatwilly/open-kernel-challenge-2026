@@ -1,17 +1,17 @@
 {
  "problem": "muse_prefill_layer",
- "job": "ef281fb8b7304240",
+ "job": "810b5f7decc84206",
  "check_job": "ef281fb8b7304240",
- "mode": "check",
- "speedup": 1.1004181185941053,
+ "mode": "submit",
+ "speedup": 1.1075501334948785,
  "ci": [
-  1.0839118468151938,
-  1.1169243903730168
+  1.0909368814924554,
+  1.1241633854973017
  ],
- "score_us": 352051.5460931772,
+ "score_us": 349784.5273852711,
  "commit": "ca1d41b1dc9f1cca7f8d13c3e0e5b2027055e6fa",
  "submission_blob": "f2d91dd181aeb44de20d2eed62ab7e564f2b181f",
  "slug": "experts-turn4-ssdq-s1b-dataptr-symbol-fix",
  "result": "muse_prefill_layer/hypotheses/done/neutral/experts-turn4-ssdq-s1b-dataptr-symbol-fix.result.json",
- "updated_at": "2026-10-25T110028Z"
+ "updated_at": "2026-10-25T110752Z"
 }

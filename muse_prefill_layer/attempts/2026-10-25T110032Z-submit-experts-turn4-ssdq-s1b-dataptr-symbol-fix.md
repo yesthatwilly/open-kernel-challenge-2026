@@ -38,4 +38,4 @@ okc_lint: `OK with warnings: muse_prefill_layer/submission.py` (only host-sync w
 high
 
 ## Result (after the run)
-(pending)
+Promotion passed: 1.1076x [1.0909,1.1242], board: {"rank": 293, "team": "yesthatwilly", "speedup": 1.1076, "first": false, "ahead": 292, "to_first": 1.7386}
