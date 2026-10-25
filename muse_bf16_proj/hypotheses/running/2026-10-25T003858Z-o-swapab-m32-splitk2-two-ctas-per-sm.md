@@ -51,7 +51,7 @@ review: proceed
 status: running
 review_at: 2026-10-25T004221Z
 review_companions: null
-stage: implemented
+stage: dispatched
 claimed_at: 2026-10-25T004221Z
 base_sha: 9a3cafafd2a3738a49dc5fe238ef2bf753adafd4
 base_blob: a8bb42ac483318e9fbc84bc7826a27b7a704d1fb
@@ -68,6 +68,8 @@ submission_blob: 0f369f4fc86ec397d2ae1110613230f66f999fa9
 lint_warnings: 0
 attempt_file: 2026-10-25T004336Z-check-o-swapab-m32-splitk2-two-ctas-per-sm.md
 prepared_at: 2026-10-25T004336Z
+job: 75f09fa68f9c4415
+dispatched_at: 2026-10-25T004351Z
 ---
 
 # o-swapab-m32-splitk2-two-ctas-per-sm
