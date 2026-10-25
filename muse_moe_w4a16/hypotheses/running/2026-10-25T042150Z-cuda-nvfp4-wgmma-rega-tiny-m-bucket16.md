@@ -69,7 +69,7 @@ base_sha: 570f5e4ac5465931183addaf7a472e01668ced15
 base_blob: 1ae7e9cac6dc078a0e71c7a6b0b77ec48b0ed01f
 branch: hyp/muse_moe_w4a16/cuda-nvfp4-wgmma-rega-tiny-m-bucket16
 worktree: .worktrees/muse_moe_w4a16/cuda-nvfp4-wgmma-rega-tiny-m-bucket16
-mode: null
+mode: check
 restack_of: null
 stale_base: true
 implemented_at: 2026-10-25T044530Z
@@ -78,6 +78,8 @@ submission_sha256: e3cc16bfd7dd263822fedff42f57c2b5bbcbf5690a5f1b89f1939d9d71e37
 norm_sha256: 2b1a0c6181cc5112ef61e582be067f8bfaeabd5a8f3646a7c40d7d278c216a98
 submission_blob: 12ff8a5ce35b01937a68af59254faf69382f692a
 lint_warnings: 69
+attempt_file: 2026-10-25T044530Z-check-cuda-nvfp4-wgmma-rega-tiny-m-bucket16.md
+prepared_at: 2026-10-25T044530Z
 ---
 
 # cuda-nvfp4-wgmma-rega-tiny-m-bucket16
