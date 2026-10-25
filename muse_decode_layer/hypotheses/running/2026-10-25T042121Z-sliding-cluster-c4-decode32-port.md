@@ -57,7 +57,7 @@ review: proceed
 status: running
 review_at: 2026-10-25T042453Z
 review_companions: null
-stage: claimed
+stage: implemented
 claimed_at: 2026-10-25T042453Z
 base_sha: 1cd12f4d3d46062939ca75935ef0fcad232f2ffc
 base_blob: c9067b8201f2480c64910c4a71098df7ce616f73
@@ -66,6 +66,12 @@ worktree: .worktrees/muse_decode_layer/sliding-cluster-c4-decode32-port
 mode: null
 restack_of: null
 stale_base: null
+implemented_at: 2026-10-25T043714Z
+impl_commit: a3136ce5805b8fcc8f1c58fdd3500b1d54aeb06e
+submission_sha256: 6bc87cd5411ce83e3a66d094be94c2d5bb4d94045a2f85bf5c66e9458cc1bd96
+norm_sha256: f1a9292234f511aaf177bbad3b01d3b6940d525ee88242155f748f3d8ce21cca
+submission_blob: e7b58542dc954a2a306648904dbd486bda0c417b
+lint_warnings: 35
 ---
 
 # sliding-cluster-c4-decode32-port
@@ -155,3 +161,17 @@ How to judge (per the review): compare the `sliding_cluster_kernel` row against 
 - [x] All work happens inside the timed call; no output caching or replay.
 
 okc_lint (`python3 -I .claude/skills/churnsubs/bin/okc_lint.py muse_decode_layer/submission.py --problem muse_decode_layer`): `OK with warnings`, 0 errors. All warnings are `host-sync` outside kernel_fn's call graph (prepare-only), plus one `dtype` warning for the uint8 L2-flush scratch buffer in prepare() (never an activation or weight). `python3 -I -m py_compile` passes and `__pycache__` was deleted.
+
+## Pre-flight audit
+
+Audited 2026-10-25 by an opus subagent, reading only (no GPU). **Verdict: dispatch-with-fixes** (one cosmetic log fix). Rules OK.
+
+- `_master_attn`: identical to master's `else:` branch once the indent is removed (mechanical diff; the only addition is `return o`). It recomputes batch/length/tokens/heads from cfg exactly as kernel_fn does, and kernel_fn uses none of the branch's locals after it. Every non-gated shape is unchanged.
+- Kernel vs donor (hyp/muse_attention_decode/sliding-cluster-s2-decode-c4-pdl-inproc 3355d0f): the CUDA TU is byte-identical apart from host trimming (C=4 only, B <= 32, no NonPortableClusterSize attribute). It stores cache_loc for every row, slot 0 included. q is RMSNorm + RoPE in fp32, then times qk_scale_factor, then E4M3 once. Window keys are [seq-2047, seq) plus the new key, which is every key the reference's `key_pos > query_pos - window` admits. The host args match the donor call. qkv column layout, int64 positions/cache_loc, int32 seq_lens/page_table and cache shape [pages, 1, 2, 64] all match reference.generate_input, so the kernel's TORCH_CHECKs hold on judge data. rope_theta is nonzero on sliding layers, so the gate can fire.
+- Calibration (numpy emulation of the synthetic cases): master's error against the unrounded fp32 reference is about 0.064-0.076, and the cluster's (round-after-scale) is about 0.064-0.074. The bound is 2.5x master + 5e-3, about 0.19, so the check is neither always-fail nor loose. The own-rounding bound (< 2e-2) sits against an expected ~1e-3. The k-row byte mismatch from bf16 double rounding is 3.1% emulated (6% threshold, about 8 sd of margin at B=17), and the one-code bound 0.126|x| + 2^-9 covers the E4M3 worst case of 0.125.
+- Gate is config plus the prepare-set `_SLIDE_PATH`. kernel_fn has no try/except, timing, sync or per-call state. `_inv_freq` and the Triton counters are warmed in prepare. Occupancy < 32 disabling is sensible (donor reported 62).
+- Selector: whole master chain vs single launch as graphs, interleaved, flushed. The flush is a 320 MB *write* (the judge reads), so dirty-line writeback adds roughly equal absolute time to both paths. That is left as is because the ranking is preserved.
+- Fix: the PATH CHOSEN line now also names why the cluster was off when triton16 is the pick (`; cluster off: <why>`). Before, the reason appeared only in the no-candidate fallback line.
+- Scope creep (flagged, not removed): the Triton 16-split candidate belongs to the sibling hypothesis. Triton at decode_32 was already harvested near-neutral. If it wins the selector, this run shows no sliding_cluster_kernel row and measures the sibling, so read the medians line first.
+
+Residual risk: compile budget (a third load_inline module, ~41 s, plus per-prepare self-check/selector), and a prepare-time selector that may still mis-rank by the LESSONS 20-25% undercount.
