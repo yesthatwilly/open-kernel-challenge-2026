@@ -44,7 +44,7 @@ base_sha: 4086e385d4c82ab39da7076fd7a040127403956c
 base_blob: c9067b8201f2480c64910c4a71098df7ce616f73
 branch: hyp/muse_decode_layer/w2-marlin-atomic-add-t1-port
 worktree: .worktrees/muse_decode_layer/w2-marlin-atomic-add-t1-port
-mode: null
+mode: check
 restack_of: null
 stale_base: null
 implemented_at: 2026-10-25T042854Z
@@ -53,6 +53,8 @@ submission_sha256: 83a46d0d62743469dfe7967584070fac1d6422217328efeef980b774ce3c8
 norm_sha256: d27fda6c4a9e3625660f6deabea785f8b8cdc1eb05deb5ab7db0d66b7e5b6a83
 submission_blob: 62c5a9413ba5710defea2ca3de14c1a1dc3b5a6d
 lint_warnings: 34
+attempt_file: 2026-10-25T042854Z-check-w2-marlin-atomic-add-t1-port.md
+prepared_at: 2026-10-25T042854Z
 ---
 
 # w2-marlin-atomic-add-t1-port
