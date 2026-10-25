@@ -68,7 +68,7 @@ base_sha: 3856ee7eca4325994492f9d6308b31aba517ef17
 base_blob: 62c5a9413ba5710defea2ca3de14c1a1dc3b5a6d
 branch: hyp/muse_decode_layer/full-decode-sk-ticket-restack-b1-b64
 worktree: .worktrees/muse_decode_layer/full-decode-sk-ticket-restack-b1-b64
-mode: null
+mode: check
 restack_of: null
 stale_base: null
 implemented_at: 2026-10-25T084818Z
@@ -77,6 +77,8 @@ submission_sha256: 1c947e7006f96e2847e14a34154b3aade32b33fb14f61a691ba8dbb81dbd3
 norm_sha256: 1f16e86616a18da73331a7ba4bdb9cb8135e5edb4fbd79acd1bd8dc04ea309e2
 submission_blob: d67278e071e62145a19d0d67759c2d311ce1e398
 lint_warnings: 45
+attempt_file: 2026-10-25T084818Z-check-full-decode-sk-ticket-restack-b1-b64.md
+prepared_at: 2026-10-25T084818Z
 ---
 
 # full-decode-sk-ticket-restack-b1-b64
