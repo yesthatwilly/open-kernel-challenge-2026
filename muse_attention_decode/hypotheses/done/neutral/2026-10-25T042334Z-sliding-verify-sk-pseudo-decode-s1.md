@@ -57,10 +57,10 @@ controls_for: null
 rewrite_stage: 1
 replaces: "sliding verify (q_len 8, page 1, tp8, 1<=B<=32): prepare_varlen_num_blocks + FA3 main + FlashAttnFwdCombine + sglang rms_norm_gate"
 review: proceed
-status: running
+status: done
 review_at: 2026-10-25T043142Z
 review_companions: null
-stage: dispatched
+stage: harvested
 claimed_at: 2026-10-25T043142Z
 base_sha: 4488c6a7868d7d953811b7b93ec0403d0f8bfde8
 base_blob: d8769ef25caf845a0e207538ccc5c62394b6ee3b
@@ -79,6 +79,13 @@ attempt_file: 2026-10-25T044314Z-check-sliding-verify-sk-pseudo-decode-s1.md
 prepared_at: 2026-10-25T044314Z
 job: 94523c3313444fd8
 dispatched_at: 2026-10-25T044328Z
+outcome: neutral
+verdict_detail: unproven-vs-best
+speedup: 1.470517218533826
+speedup_ci: [1.4484594602558185, 1.4925749768118333]
+harvested_at: 2026-10-25T053757Z
+best_at_harvest: 1.4321773019894537
+promotion: null
 ---
 
 # sliding-verify-sk-pseudo-decode-s1
@@ -168,3 +175,36 @@ Fixes:
 - `_ps_replay_check` now also REFILLS the captured inputs in place with different seq lens (same shapes; `_ps_synthetic(max_pages=...)`), replays the graph and checks against the reference of the refilled data, as the judge recheck does. The kernel reads cache_seqlens on device and sizes everything from config, so this should pass; it guards the routed band against a refill-only failure.
 
 Residual risk: uncompiled CUDA (a compile error costs one extra landed-only build and leaves sliding verify on FA3; an in-kernel fault at import would poison the context for the whole run, as with the landed kernels).
+
+## Result
+
+- job `94523c3313444fd8` (check), status done, passed True, tests 16/16
+- speedup 1.4705x, 95% CI [1.4485, 1.4926], score 2561.207684297078 µs vs SGLang 3766.3 µs
+- best at harvest: {"speedup": 1.4321773019894537, "ci": [1.4106946424596118, 1.4554282820505813], "job": "2a3241780c7b4c46"}; base result: muse_attention_decode/hypotheses/done/neutral/full-decode1-streamk-s3-two-level-ticket.result.json
+- **outcome: neutral** (unproven-vs-best)
+- files: `muse_attention_decode/hypotheses/done/neutral/sliding-verify-sk-pseudo-decode-s1.result.json`, `muse_attention_decode/hypotheses/done/neutral/sliding-verify-sk-pseudo-decode-s1.patch`; branch `hyp/muse_attention_decode/sliding-verify-sk-pseudo-decode-s1`
+
+## Attribution
+
+| shape | w | base µs | hyp µs | delta | verdict |
+|---|---|---|---|---|---|
+| batch=1 ctx=80000 dist=soft heads=tp8 layer=sliding load=decode_1 page=1 | 46 | 13.15 | 13.33 | 0.9612 | lost |
+| batch=1 ctx=80000 dist=coherent heads=tp8 layer=full load=decode_1 page=1 | 16 | 22.6 | 22.73 | 0.9939 | flat |
+| batch=16 ctx=80000 dist=soft heads=tp8 layer=sliding load=decode_16 page=1 spread=agentic | 46 | 15.33 | 15.72 | 0.9854 | flat |
+| batch=16 ctx=80000 dist=coherent heads=tp8 layer=full load=decode_16 page=1 spread=agentic | 16 | 111.14 | 110.4 | 1.015 | flat |
+| batch=32 ctx=80000 dist=soft heads=tp8 layer=sliding load=decode_32 page=1 spread=agentic | 46 | 24.33 | 23.85 | 1.0137 | flat |
+| batch=32 ctx=80000 dist=coherent heads=tp8 layer=full load=decode_32 page=1 spread=agentic | 16 | 226.42 | 226.28 | 1.0028 | flat |
+| batch=1 ctx=80000 dist=soft heads=tp8 layer=sliding load=verify_1 page=1 q_len=8 | 46 | 17.78 | 13.44 | 1.3268 | gained |
+| batch=1 ctx=80000 dist=coherent heads=tp8 layer=full load=verify_1 page=1 q_len=8 | 16 | 30.51 | 30.1 | 1.0165 | flat |
+| batch=16 ctx=80000 dist=soft heads=tp8 layer=sliding load=verify_16 page=1 q_len=8 spread=agentic | 46 | 22.68 | 22.39 | 1.0046 | flat |
+| batch=16 ctx=80000 dist=coherent heads=tp8 layer=full load=verify_16 page=1 q_len=8 spread=agentic | 16 | 162.8 | 162.76 | 0.9994 | flat |
+| batch=32 ctx=80000 dist=soft heads=tp8 layer=sliding load=verify_32 page=1 q_len=8 spread=agentic | 46 | 28.34 | 28.49 | 0.9952 | flat |
+| batch=32 ctx=80000 dist=coherent heads=tp8 layer=full load=verify_32 page=1 q_len=8 spread=agentic | 16 | 302.2 | 302.78 | 0.9996 | flat |
+
+gained on sliding verify_1; lost on sliding decode_1. Expected hit: 1/4. Noise ±1.5%.
+
+## Follow-ups
+
+- rewrite stage 1 of `sliding verify (q_len 8, page 1, tp8, 1<=B<=32): prepare_varlen_num_blocks + FA3 main + FlashAttnFwdCombine + sglang rms_norm_gate`: read the replaced kernels' own us per shape (profile top_kernels) against the incumbent and the floor, and check which Milestone it reached. The next stage is `/hypothesize muse_attention_decode "<what to fix or tune>" --kind rewrite --depends-on sliding-verify-sk-pseudo-decode-s1 --stage 2`; a slow or failed first cut is the expected start, not a do-not-retry.
+- unproven-vs-best: the change is not proven either way; a stacked hypothesis (`depends_on: sliding-verify-sk-pseudo-decode-s1`) that adds a further change in the same area is the only way to learn more (identical code is never re-run).
+

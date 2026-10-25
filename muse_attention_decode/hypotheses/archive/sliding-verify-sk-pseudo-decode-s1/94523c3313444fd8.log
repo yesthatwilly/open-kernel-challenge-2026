@@ -1,0 +1,156 @@
+n_sk_kernel returned
+[ps] B=32 ragged two-level grid device: rel L2 1.66e-03, finite True -> ok
+[ps] tickets (both levels) after the self-check: sum 0
+[ps-gate] B=1: launching _pre_attention_kernel
+[ps-gate] B=1: pre-attention returned (new rows stored)
+[ps-gate] B=1: 8 pseudo-rows x 32 tiles = 256 tiles; unique K+V 0.5 MB over DRAM vs ~4 MB of L2-served reads (analytic: 8 pseudo-rows share ~2041 of 2048 keys)
+[ps-gate] B=1 layout <4 stages, ticket, PSEUDO> grid 32 (p4): 8.0 tiles per CTA, ~4.0 slots to merge per pseudo-request
+[ps-gate] B=1 layout <4 stages, two-level ticket, PSEUDO> grid 32 (p4): 8.0 tiles per CTA, ~4.0 slots to merge per pseudo-request, two-level groups
+[ps-gate] B=1 layout <4 stages, ticket, PSEUDO> grid 64 (p8): 4.0 tiles per CTA, ~8.0 slots to merge per pseudo-request
+[ps-gate] B=1 layout <4 stages, two-level ticket, PSEUDO> grid 64 (p8): 4.0 tiles per CTA, ~8.0 slots to merge per pseudo-request, two-level groups
+[ps-gate] B=1 layout <4 stages, ticket, PSEUDO> grid 132 (sm): 1.9 tiles per CTA, ~16.5 slots to merge per pseudo-request
+[ps-gate] B=1 layout <4 stages, two-level ticket, PSEUDO> grid 132 (sm): 1.9 tiles per CTA, ~16.5 slots to merge per pseudo-request, two-level groups
+[ps-gate] B=1 layout <4 stages, ticket, PSEUDO> grid 264 (2sm): 1.0 tiles per CTA, ~33.0 slots to merge per pseudo-request
+[ps-gate] B=1 layout <4 stages, two-level ticket, PSEUDO> grid 264 (2sm): 1.0 tiles per CTA, ~33.0 slots to merge per pseudo-request, two-level groups
+[ps-gate] B=1: launching <4 stages, ticket, PSEUDO> grid 32 (p4) (eager correctness run)
+[ps-gate] B=1: <4 stages, ticket, PSEUDO> grid 32 (p4) returned, rel L2 1.64e-03, finite True
+[ps-gate] B=1: timing <4 stages, ticket, PSEUDO> grid 32 (p4) (graph replays)
+[ps-gate] B=1: <4 stages, ticket, PSEUDO> grid 32 (p4):    17.8 us
+[ps-gate] B=1: launching <4 stages, two-level ticket, PSEUDO> grid 32 (p4) (eager correctness run)
+[ps-gate] B=1: <4 stages, two-level ticket, PSEUDO> grid 32 (p4) returned, rel L2 1.64e-03, finite True
+[ps-gate] B=1: timing <4 stages, two-level ticket, PSEUDO> grid 32 (p4) (graph replays)
+[ps-gate] B=1: <4 stages, two-level ticket, PSEUDO> grid 32 (p4):    20.7 us
+[ps-gate] B=1: launching <4 stages, ticket, PSEUDO> grid 64 (p8) (eager correctness run)
+[ps-gate] B=1: <4 stages, ticket, PSEUDO> grid 64 (p8) returned, rel L2 1.64e-03, finite True
+[ps-gate] B=1: timing <4 stages, ticket, PSEUDO> grid 64 (p8) (graph replays)
+[ps-gate] B=1: <4 stages, ticket, PSEUDO> grid 64 (p8):    15.4 us
+[ps-gate] B=1: launching <4 stages, two-level ticket, PSEUDO> grid 64 (p8) (eager correctness run)
+[ps-gate] B=1: <4 stages, two-level ticket, PSEUDO> grid 64 (p8) returned, rel L2 1.64e-03, finite True
+[ps-gate] B=1: timing <4 stages, two-level ticket, PSEUDO> grid 64 (p8) (graph replays)
+[ps-gate] B=1: <4 stages, two-level ticket, PSEUDO> grid 64 (p8):    18.1 us
+[ps-gate] B=1: launching <4 stages, ticket, PSEUDO> grid 132 (sm) (eager correctness run)
+[ps-gate] B=1: <4 stages, ticket, PSEUDO> grid 132 (sm) returned, rel L2 1.64e-03, finite True
+[ps-gate] B=1: timing <4 stages, ticket, PSEUDO> grid 132 (sm) (graph replays)
+[ps-gate] B=1: <4 stages, ticket, PSEUDO> grid 132 (sm):    16.1 us
+[ps-gate] B=1: launching <4 stages, two-level ticket, PSEUDO> grid 132 (sm) (eager correctness run)
+[ps-gate] B=1: <4 stages, two-level ticket, PSEUDO> grid 132 (sm) returned, rel L2 1.64e-03, finite True
+[ps-gate] B=1: timing <4 stages, two-level ticket, PSEUDO> grid 132 (sm) (graph replays)
+[ps-gate] B=1: <4 stages, two-level ticket, PSEUDO> grid 132 (sm):    16.7 us
+[ps-gate] B=1: launching <4 stages, ticket, PSEUDO> grid 264 (2sm) (eager correctness run)
+[ps-gate] B=1: <4 stages, ticket, PSEUDO> grid 264 (2sm) returned, rel L2 1.64e-03, finite True
+[ps-gate] B=1: timing <4 stages, ticket, PSEUDO> grid 264 (2sm) (graph replays)
+[ps-gate] B=1: <4 stages, ticket, PSEUDO> grid 264 (2sm):    19.5 us
+[ps-gate] B=1: launching <4 stages, two-level ticket, PSEUDO> grid 264 (2sm) (eager correctness run)
+[ps-gate] B=1: <4 stages, two-level ticket, PSEUDO> grid 264 (2sm) returned, rel L2 1.64e-03, finite True
+[ps-gate] B=1: timing <4 stages, two-level ticket, PSEUDO> grid 264 (2sm) (graph replays)
+[ps-gate] B=1: <4 stages, two-level ticket, PSEUDO> grid 264 (2sm):    19.5 us
+[ps-gate] B=1: launching master FA3 path (eager) for its error
+[ps-gate] B=1: master FA3 path rel L2 6.08e-03, finite True; timing it (graph replays)
+[ps-gate] B=1: master FA3 (prepare + main + combine + norm-gate):    19.6 us (pre-attention excluded from both sides; graph replay, cold L2, median of 10)
+[ps-gate] B=1: best pseudo <4 stages, ticket, PSEUDO> grid 64 (p8) 15.4 us vs FA3 19.6 us -> FA3 / pseudo 1.277x (ROUTE)
+[ps-gate] B=16: launching _pre_attention_kernel
+[ps-gate] B=16: pre-attention returned (new rows stored)
+[ps-gate] B=16: 128 pseudo-rows x 32 tiles = 4096 tiles; unique K+V 8.4 MB over DRAM vs ~67 MB of L2-served reads (analytic: 8 pseudo-rows share ~2041 of 2048 keys)
+[ps-gate] B=16: launching <4 stages, ticket, PSEUDO> grid 264 (p4) (eager correctness run)
+[ps-gate] B=16: <4 stages, ticket, PSEUDO> grid 264 (p4) returned, rel L2 1.68e-03, finite True
+[ps-gate] B=16: timing <4 stages, ticket, PSEUDO> grid 264 (p4) (graph replays)
+[ps-gate] B=16: <4 stages, ticket, PSEUDO> grid 264 (p4):    37.2 us
+[ps-gate] B=16: launching <4 stages, two-level ticket, PSEUDO> grid 264 (p4) (eager correctness run)
+[ps-gate] B=16: <4 stages, two-level ticket, PSEUDO> grid 264 (p4) returned, rel L2 1.68e-03, finite True
+[ps-gate] B=16: timing <4 stages, two-level ticket, PSEUDO> grid 264 (p4) (graph replays)
+[ps-gate] B=16: <4 stages, two-level ticket, PSEUDO> grid 264 (p4):    41.8 us
+[ps-gate] B=16: launching <4 stages, ticket, PSEUDO> grid 132 (sm) (eager correctness run)
+[ps-gate] B=16: <4 stages, ticket, PSEUDO> grid 132 (sm) returned, rel L2 1.68e-03, finite True
+[ps-gate] B=16: timing <4 stages, ticket, PSEUDO> grid 132 (sm) (graph replays)
+[ps-gate] B=16: <4 stages, ticket, PSEUDO> grid 132 (sm):    38.3 us
+[ps-gate] B=16: launching <4 stages, two-level ticket, PSEUDO> grid 132 (sm) (eager correctness run)
+[ps-gate] B=16: <4 stages, two-level ticket, PSEUDO> grid 132 (sm) returned, rel L2 1.68e-03, finite True
+[ps-gate] B=16: timing <4 stages, two-level ticket, PSEUDO> grid 132 (sm) (graph replays)
+[ps-gate] B=16: <4 stages, two-level ticket, PSEUDO> grid 132 (sm):    38.9 us
+[ps-gate] B=16: launching master FA3 path (eager) for its error
+[ps-gate] B=16: master FA3 path rel L2 6.59e-03, finite True; timing it (graph replays)
+[ps-gate] B=16: master FA3 (prepare + main + combine + norm-gate):    24.3 us (pre-attention excluded from both sides; graph replay, cold L2, median of 10)
+[ps-gate] B=16: best pseudo <4 stages, ticket, PSEUDO> grid 264 (p4) 37.2 us vs FA3 24.3 us -> FA3 / pseudo 0.653x (below the 1.05x gate: FA3)
+[ps-gate] B=32: launching _pre_attention_kernel
+[ps-gate] B=32: pre-attention returned (new rows stored)
+[ps-gate] B=32: 256 pseudo-rows x 32 tiles = 8192 tiles; unique K+V 16.8 MB over DRAM vs ~135 MB of L2-served reads (analytic: 8 pseudo-rows share ~2041 of 2048 keys)
+[ps-gate] B=32: launching <4 stages, ticket, PSEUDO> grid 264 (p4) (eager correctness run)
+[ps-gate] B=32: <4 stages, ticket, PSEUDO> grid 264 (p4) returned, rel L2 1.66e-03, finite True
+[ps-gate] B=32: timing <4 stages, ticket, PSEUDO> grid 264 (p4) (graph replays)
+[ps-gate] B=32: <4 stages, ticket, PSEUDO> grid 264 (p4):    62.6 us
+[ps-gate] B=32: launching <4 stages, two-level ticket, PSEUDO> grid 264 (p4) (eager correctness run)
+[ps-gate] B=32: <4 stages, two-level ticket, PSEUDO> grid 264 (p4) returned, rel L2 1.66e-03, finite True
+[ps-gate] B=32: timing <4 stages, two-level ticket, PSEUDO> grid 264 (p4) (graph replays)
+[ps-gate] B=32: <4 stages, two-level ticket, PSEUDO> grid 264 (p4):    63.0 us
+[ps-gate] B=32: launching <4 stages, ticket, PSEUDO> grid 132 (sm) (eager correctness run)
+[ps-gate] B=32: <4 stages, ticket, PSEUDO> grid 132 (sm) returned, rel L2 1.66e-03, finite True
+[ps-gate] B=32: timing <4 stages, ticket, PSEUDO> grid 132 (sm) (graph replays)
+[ps-gate] B=32: <4 stages, ticket, PSEUDO> grid 132 (sm):    65.5 us
+[ps-gate] B=32: launching <4 stages, two-level ticket, PSEUDO> grid 132 (sm) (eager correctness run)
+[ps-gate] B=32: <4 stages, two-level ticket, PSEUDO> grid 132 (sm) returned, rel L2 1.66e-03, finite True
+[ps-gate] B=32: timing <4 stages, two-level ticket, PSEUDO> grid 132 (sm) (graph replays)
+[ps-gate] B=32: <4 stages, two-level ticket, PSEUDO> grid 132 (sm):    65.5 us
+[ps-gate] B=32: launching master FA3 path (eager) for its error
+[ps-gate] B=32: master FA3 path rel L2 7.58e-03, finite True; timing it (graph replays)
+[ps-gate] B=32: master FA3 (prepare + main + combine + norm-gate):    30.2 us (pre-attention excluded from both sides; graph replay, cold L2, median of 10)
+[ps-gate] B=32: best pseudo <4 stages, ticket, PSEUDO> grid 264 (p4) 62.6 us vs FA3 30.2 us -> FA3 / pseudo 0.482x (below the 1.05x gate: FA3)
+[ps] replay B=1: eager warm-up of kernel_fn on a side stream
+[ps] replay B=1: warm-up returned
+[ps] replay B=1: capturing kernel_fn
+[ps] replay B=1 1: launching graph (_pre_attention_kernel + splitkv_attn_sk_kernel)
+[ps] replay B=1 1: rel L2 1.65e-03, finite True -> ok
+[ps] replay B=1 2: launching graph (_pre_attention_kernel + splitkv_attn_sk_kernel)
+[ps] replay B=1 2: rel L2 1.65e-03, finite True -> ok
+[ps] replay B=1 refilled (other seq lens): launching graph
+[ps] replay B=1 refilled: rel L2 1.68e-03, finite True -> ok
+[ps] tickets (both levels) after the replay checks: sum 0
+PATH CHOSEN: sliding verify B=1: stream-K pseudo-decode <4 stages, ticket, PSEUDO> grid p8 (best printed variant >= 1.05x faster than FA3)
+PATH CHOSEN: sliding verify B=2..16: master FA3 (pseudo-decode not >= 1.05x faster than FA3 in the printed timings, or failed a check)
+PATH CHOSEN: sliding verify B=17..32: master FA3 (pseudo-decode not >= 1.05x faster than FA3 in the printed timings, or failed a check)
+[sk] diag variant check B=16 ragged: launching _pre_attention_kernel
+[sk] diag variant check B=16 ragged: launching splitkv_attn_sk_kernel<4 stages, no ticket> grid 264
+[sk] diag variant check B=16 ragged: splitkv_attn_sk_kernel returned
+[sk] diag variant check B=16 ragged: launching splitkv_sk_combine_kernel
+[sk] diag variant check B=16 ragged: splitkv_sk_combine_kernel returned
+[sk] diag variant check B=16 ragged: rel L2 1.66e-03, finite True -> ok
+[sk] diag variant check B=16 ragged: launching _pre_attention_kernel
+[sk] diag variant check B=16 ragged: launching splitkv_attn_sk_kernel<5 stages, ticket> grid 264
+[sk] diag variant check B=16 ragged: splitkv_attn_sk_kernel returned
+[sk] diag variant check B=16 ragged: rel L2 1.66e-03, finite True -> ok
+[sk-diag] B=16: launching _pre_attention_kernel
+[sk-diag] B=16: timing stage-1 A + B
+[sk-diag] B=16 x 80000: 328 MB of K+V rows, grid 264, eager, cold L2, median of 10
+[sk-diag]   stage-1 A splitkv_attn_kernel            118.7 us  2.76 TB/s
+[sk-diag]   stage-1 B splitkv_combine_kernel          12.1 us  -> A+B   130.8 us
+[sk-diag]   stream-K + ticket, 4 st (timed path)     114.3 us  2.87 TB/s  (vs stage-1 out rel 2.4e-04)
+[sk-diag] B=16: timing stream-K no ticket + combine
+[sk-diag]   stream-K no ticket, 4 st             106.7 us  3.07 TB/s  + combine 11.7 us -> 118.4 us  (rel 2.4e-04)
+[sk-diag] B=16: timing stream-K + ticket, 5 stages
+[sk-diag]   stream-K + ticket, 5 st              116.2 us  2.82 TB/s  (rel 2.4e-04)
+[sk-diag] B=16 ratios (>1 = first is slower): stage-1 A+B / v2 1.144x; split/locality: stage-1 A / stream-K no-ticket A 1.113x; ticket fold: (no-ticket A + combine) / ticket 1.036x; stages: 4 st / 5 st 0.983x
+[sk-diag] B=32: launching _pre_attention_kernel
+[sk-diag] B=32: timing stage-1 A + B
+[sk-diag] B=32 x 80000: 655 MB of K+V rows, grid 264, eager, cold L2, median of 10
+[sk-diag]   stage-1 A splitkv_attn_kernel            249.4 us  2.63 TB/s
+[sk-diag]   stage-1 B splitkv_combine_kernel          12.5 us  -> A+B   262.0 us
+[sk-diag]   stream-K + ticket, 4 st (timed path)     223.3 us  2.93 TB/s  (vs stage-1 out rel 1.9e-04)
+[sk-diag] B=32: timing stream-K no ticket + combine
+[sk-diag]   stream-K no ticket, 4 st             218.3 us  3.00 TB/s  + combine 11.6 us -> 230.0 us  (rel 1.9e-04)
+[sk-diag] B=32: timing stream-K + ticket, 5 stages
+[sk-diag]   stream-K + ticket, 5 st              224.5 us  2.92 TB/s  (rel 1.9e-04)
+[sk-diag] B=32 ratios (>1 = first is slower): stage-1 A+B / v2 1.173x; split/locality: stage-1 A / stream-K no-ticket A 1.142x; ticket fold: (no-ticket A + combine) / ticket 1.030x; stages: 4 st / 5 st 0.994x
+[sk3-diag] B=1: launching _pre_attention_kernel
+[sk3-diag] B=1 x 80000: 20 MB of K+V rows, eager, cold L2, median of 10
+[sk3-diag]   (a) single-level grid 2xSM (stage 2 as is)        54.2 us  0.38 TB/s  (rel L2 1.7e-03, finite True)
+[sk3-diag]   (b) single-level grid SM                          34.6 us  0.59 TB/s  (rel L2 1.7e-03, finite True)
+[sk3-diag]   (c) two-level grid SM (timed path)                23.0 us  0.89 TB/s  (rel L2 1.7e-03, finite True)
+[sk3-diag]   (d) two-level grid 2xSM                           24.8 us  0.82 TB/s  (rel L2 1.7e-03, finite True)
+[sk3-diag] fastest of the four: (c) two-level grid SM (timed path); timed path (c) is 23.0 us, (a) control 54.2 us, (c)/(a) 0.425x
+[sk3-diag] B=1: timing master FA3 (main + combine) and norm-gate
+[sk3-diag]   master FA3 main+combine    32.8 us + norm-gate 5.3 us = 38.1 us (pre-attention kernel excluded from both sides)
+[sk3-diag] B=16: launching _pre_attention_kernel
+[sk3-diag] B=16 x 80000: 328 MB of K+V rows, eager, cold L2, median of 10
+[sk3-diag]   two-level grid 2xSM at B=16 (diagnostic)         115.7 us  2.83 TB/s  (rel L2 1.6e-03, finite True)
+[sk3-diag]   single-level grid 2xSM at B=16 (stage 2)         106.5 us  3.08 TB/s  (rel L2 1.6e-03, finite True)
+PATH CHOSEN: full decode_1 streamk two-level
+PATH CHOSEN: every other shape (sliding decode, other verify bands, page 64, dp): master path, unchanged
