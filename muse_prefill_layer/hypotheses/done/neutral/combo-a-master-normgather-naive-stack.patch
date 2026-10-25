@@ -1,0 +1,472 @@
+diff --git a/muse_prefill_layer/submission.py b/muse_prefill_layer/submission.py
+index 9fb1f7c4..6a16d158 100644
+--- a/muse_prefill_layer/submission.py
++++ b/muse_prefill_layer/submission.py
+@@ -50,6 +50,7 @@ from typing import TypedDict
+ 
+ import copy
+ import hashlib
++import inspect
+ import os
+ import re
+ import time
+@@ -583,6 +584,9 @@ def prepare(weights):
+         "attn_boundary": FusedPostNormResidualPreNorm(post_attn, _residual(weights["attn_residual_gate"]), pre_ffn),
+         "ffn_boundary": FusedPostNormResidualPreNorm(post_ffn, _residual(weights["ffn_residual_gate"]), next_pre_attn),
+         "pre_expert_norm": _norm(MuseSpark1xRMSNorm, weights["pre_expert_norm"], D_EXPERT, RMS_EPS),
++        # pre-expert-norm-fused-rega-gather: the checkpoint's bf16 weight (applied as 1 + w); the fused kernel adds
++        # the 1 in fp32. A weight, not input-derived; read-only.
++        "pre_expert_w": weights["pre_expert_norm"].to(torch.bfloat16).contiguous(),
+         # MuseSpark1xFp4Experts binds the post-expert norm's effective (1 + w) weight.
+         "post_expert_w": post_expert._get_effective_weight().detach().to(torch.bfloat16),
+         "side_stream": torch.cuda.Stream(device),
+@@ -623,6 +627,9 @@ def prepare(weights):
+     # Last of all, after master's whole setup (so rega's first_turn setup starts before its own deadline): the
+     # contiguous-KV FA3 gate, with its own deadlines; any failure leaves master's paged FA3 call.
+     fa3c_lines = _fa3c_setup(state, device, t_prepare0)
++    # pre-expert-norm-fused-rega-gather: after rega's setup, so it gates what _experts really dispatches.
++    _norm_gather_setup(state, device, t_prepare0)
++    torch.cuda.synchronize()
+     # The align2 lines again, after rega's PATH CHOSEN lines, so the archived log tail keeps them.
+     for line in align2_lines:
+         print(line, flush=True)
+@@ -631,22 +638,38 @@ def prepare(weights):
+     return state
+ 
+ 
+-def _experts(x, topk_weights, local_ids, state):
++def _experts(x, topk_weights, local_ids, state, pre_norm=False):
+     """Shape gate. For T <= MARLIN_MAX_TOKENS, in this order: the register-A wgmma kernel (REGA_MIN_TOKENS < T)
+     when prepare()'s gate for the T's class ('low' T <= REGA_LOW_MAX, 'high' above) turned it ON; else the
+     dequant-producer SS-wgmma kernel for SSDQ_MIN_TOKENS < T when its turn_4 gate turned it ON; else Marlin.
+     Above MARLIN_MAX_TOKENS: the register-A wgmma kernel for T <= REGA_FT_MAX when prepare()'s first-turn
+     gate ('ft') turned it ON, else (and always above REGA_FT_MAX) the Triton NVFP4 GEMM. Reads the token count
+-    (a shape) and prepare-time flags, never tensor values."""
++    (a shape) and prepare-time flags, never tensor values.
++    pre_norm=True (kernel_fn): x is the raw pooler output and the pre-expert RMSNorm still has to be applied: on
++    the rega path with state['norm_gather_ok'][class] ON the norm is fused into rega's row gather; everywhere
++    else it is master's module call, then the path above."""
+     tokens = x.shape[0]
+     if tokens <= MARLIN_MAX_TOKENS:
+-        if tokens > REGA_MIN_TOKENS and state.get("rega_ok", {}).get("low" if tokens <= REGA_LOW_MAX else "high", False):
++        cls = "low" if tokens <= REGA_LOW_MAX else "high"
++        if tokens > REGA_MIN_TOKENS and state.get("rega_ok", {}).get(cls, False):
++            if pre_norm:
++                if state.get("norm_gather_ok", {}).get(cls, False):
++                    return _experts_rega(x, topk_weights, local_ids, state, prenorm=True)
++                x = state["pre_expert_norm"](x)
+             return _experts_rega(x, topk_weights, local_ids, state)
++        if pre_norm:
++            x = state["pre_expert_norm"](x)
+         if tokens > SSDQ_MIN_TOKENS and state.get("ssdq_ok", False):
+             return _experts_ssdq(x, topk_weights, local_ids, state)
+         return _experts_marlin(x, topk_weights, local_ids, state)
+     if tokens <= REGA_FT_MAX and state.get("rega_ok", {}).get("ft", False):
++        if pre_norm:
++            if state.get("norm_gather_ok", {}).get("ft", False):
++                return _experts_rega(x, topk_weights, local_ids, state, prenorm=True)
++            x = state["pre_expert_norm"](x)
+         return _experts_rega(x, topk_weights, local_ids, state)
++    if pre_norm:
++        x = state["pre_expert_norm"](x)
+     return _experts_triton(x, topk_weights, local_ids, state)
+ 
+ 
+@@ -3491,13 +3514,14 @@ def _rega_audit_globals():
+     return findings
+ 
+ 
+-def _experts_rega(x, topk_weights, local_ids, state, tracer=None):
++def _experts_rega(x, topk_weights, local_ids, state, tracer=None, prenorm=False):
+     """The experts on the register-A wgmma kernel, on ids already mapped to this GPU's experts (0-31, -1
+     elsewhere). align (block 16, local routes only, master's parallel align) -> gather the routed rows into
+     sorted order -> w13 + silu*up (fp32, one bf16 rounding) into hs -> w2 scattered to the route slot of y ->
+     master's weighted sum. Everything a launch reads comes from `state` (bank, error word) and this call's
+     tensors (the tensor maps are encoded from xs / hs in C++ on every call). tracer, only passed by
+-    prepare(), announces each launch before it and syncs + prints after it."""
++    prepare(), announces each launch before it and syncs + prints after it. prenorm=True: x is the RAW pooler
++    output; _norm_gather_kernel applies the pre-expert RMSNorm while gathering (replacing norm + rega_gather)."""
+     ext, bank = state["rega_ext"], state["rega_bank"]
+     err, grid = state["rega_err"], state["rega_grid"]
+     num_tokens, size_k = x.shape
+@@ -3512,7 +3536,12 @@ def _experts_rega(x, topk_weights, local_ids, state, tracer=None):
+     xs = torch.empty((rows, size_k), device=x.device, dtype=x.dtype)
+     if tracer:
+         tracer("before", "rega_gather")
+-    ext.rega_gather(x.contiguous(), sorted_ids, block_experts, n_padded, num_slots, LOCAL_EXPERTS, xs)
++    if prenorm:
++        nw, nprog, rnd = state["norm_gather_cfg"][_rega_class(num_tokens)]
++        _norm_gather(x.contiguous(), state["pre_expert_w"], sorted_ids, block_experts, n_padded, num_slots, xs,
++                     nw, nprog, rnd)
++    else:
++        ext.rega_gather(x.contiguous(), sorted_ids, block_experts, n_padded, num_slots, LOCAL_EXPERTS, xs)
+     if tracer:
+         tracer("after", "rega_gather")
+     hs = torch.empty((rows, D_EXPERT), device=x.device, dtype=x.dtype)
+@@ -4409,6 +4438,357 @@ def _fa3c_setup(state, device, t_start):
+     return lines
+ 
+ 
++# pre-expert-norm-fused-rega-gather: one Triton kernel replaces the pre-expert RMSNorm + rega_gather.
++# ---------------------------------------------------------------------------------------------------------------
++NG_TAG = "[norm-gather]"
++NG_RATIO = 0.90                # ON only when fused <= this x (module norm + rega_gather), cold-L2 graph replays
++NG_ALTERNATIONS = 21
++NG_BUDGET_S = 270.0            # the whole phase is skipped (every class OFF) when prepare() has used more
++NG_NWARPS = (4, 8)
++NG_MULTS = (1, 2)              # persistent grid = SMs x resident CTAs per SM (from the compiled kernel) x mult
++NG_CANARY = 0x5A5A
++
++
++def _rega_class(tokens):
++    """The T class of the rega path (the same split as rega_ok and align2_ok): shape only."""
++    return "low" if tokens <= REGA_LOW_MAX else ("high" if tokens <= MARLIN_MAX_TOKENS else "ft")
++
++
++@triton.jit(do_not_specialize=["num_routes", "nprog"])
++def _norm_gather_kernel(x_ptr, w_ptr, sorted_ptr, be_ptr, npad_ptr, xs_ptr, num_routes, nprog, eps,
++                        H: tl.constexpr, NE: tl.constexpr, BSM: tl.constexpr, ROUND_W: tl.constexpr):
++    """xs[slot] = rmsnorm(x[sorted_ids[slot] >> 3]) * (1 + w) for the slots of local blocks below n_padded
++    (zeros at sentinel slots), nothing written elsewhere: rega_gather's write set. Persistent: program pid
++    takes slots pid, pid + nprog, ... below n_padded (a device-side bound). fp32 math, one bf16 rounding;
++    the 1 is added to the bf16 checkpoint weight in fp32 (ROUND_W rounds 1 + w to bf16 first, for a module
++    that holds its effective weight in bf16)."""
++    pid = tl.program_id(0)
++    offs = tl.arange(0, H)
++    n_pad = tl.load(npad_ptr)
++    for slot in range(pid, n_pad, nprog):
++        be = tl.load(be_ptr + slot // BSM)
++        if (be >= 0) & (be < NE):
++            sid = tl.load(sorted_ptr + slot)
++            valid = (sid >= 0) & (sid < num_routes)
++            row = tl.load(x_ptr + (sid >> 3).to(tl.int64) * H + offs, mask=valid, other=0.0).to(tl.float32)
++            ss = tl.sum(row * row, axis=0)
++            rstd = tl.rsqrt(ss / H + eps)
++            w = 1.0 + tl.load(w_ptr + offs).to(tl.float32)
++            if ROUND_W:
++                w = w.to(tl.bfloat16).to(tl.float32)
++            y = tl.where(valid, row * rstd * w, 0.0)
++            tl.store(xs_ptr + slot.to(tl.int64) * H + offs, y.to(tl.bfloat16))
++
++
++def _norm_gather(x, w, sorted_ids, block_experts, n_padded, num_routes, xs, num_warps, nprog, round_w):
++    """Launch; returns Triton's compiled-kernel handle. Everything it reads is an argument."""
++    grid = min(nprog, sorted_ids.numel())
++    return _norm_gather_kernel[(grid,)](
++        x, w, sorted_ids, block_experts, n_padded, xs, num_routes, grid, RMS_EPS,
++        H=D_EXPERT, NE=LOCAL_EXPERTS, BSM=REGA_BSM, ROUND_W=round_w, num_warps=num_warps)
++
++
++def _ng_occupancy(handle, num_warps, device):
++    """Resident CTAs per SM of the compiled kernel (registers, threads, shared memory); 4 when the handle
++    does not report its registers."""
++    regs = getattr(handle, "n_regs", None)
++    if not regs:
++        return 4
++    props = torch.cuda.get_device_properties(device)
++    per_warp = -(-int(regs) * 32 // 256) * 256
++    by_regs = getattr(props, "regs_per_multiprocessor", 65536) // (per_warp * num_warps)
++    by_threads = getattr(props, "max_threads_per_multi_processor", 2048) // (32 * num_warps)
++    shared = getattr(handle, "shared", None) or getattr(getattr(handle, "metadata", None), "shared", None) or 0
++    by_smem = getattr(props, "shared_memory_per_multiprocessor", 233472) // shared if shared else 32
++    return max(1, min(by_regs, by_threads, by_smem, 32))
++
++
++def _ng_active_rows(sorted_ids, block_experts, n_padded):
++    """Bool [rows]: the rows rega_gather writes (slot < n_padded and a local block)."""
++    rows = block_experts.shape[0] * REGA_BSM
++    slots = torch.arange(rows, device=sorted_ids.device)
++    be = block_experts[slots // REGA_BSM]
++    return (slots < n_padded) & (be >= 0) & (be < LOCAL_EXPERTS)
++
++
++def _ng_compare(xs_new, xs_ref, active):
++    """(frac of active elements within 1 bf16 ulp, max ulp, rel L2, rows touched outside the active set in
++    either buffer), chunked over rows."""
++    idx = active.nonzero().squeeze(1)
++    n_el = 0
++    le1 = 0
++    mx = 0
++    num = 0.0
++    den = 0.0
++    for lo in range(0, idx.numel(), 2048):
++        sel = idx[lo:lo + 2048]
++        a, b = xs_new[sel], xs_ref[sel]
++        ua = a.view(torch.int16).to(torch.int32) & 0xFFFF
++        ub = b.view(torch.int16).to(torch.int32) & 0xFFFF
++        ka = torch.where((ua & 0x8000) != 0, -(ua & 0x7FFF), ua & 0x7FFF)
++        kb = torch.where((ub & 0x8000) != 0, -(ub & 0x7FFF), ub & 0x7FFF)
++        d = (ka - kb).abs()
++        n_el += d.numel()
++        le1 += int((d <= 1).sum())
++        mx = max(mx, int(d.max()))
++        diff = a.float() - b.float()
++        num += float((diff * diff).sum())
++        den += float((b.float() * b.float()).sum())
++    stray = 0
++    rows = xs_new.shape[0]
++    for lo in range(0, rows, 4096):
++        sl = slice(lo, min(lo + 4096, rows))
++        for buf in (xs_new, xs_ref):
++            touched = (buf[sl].view(torch.int16) != NG_CANARY).any(dim=1)
++            stray += int((touched & ~active[sl]).sum())
++    return le1 / max(n_el, 1), mx, (num / max(den, 1e-30)) ** 0.5, stray
++
++
++def _ng_step(tag, fn):
++    """A launch announced before and synced + printed after, so a fault names its kernel."""
++    print(f"{NG_TAG} [{tag}] launching", flush=True)
++    out = fn()
++    torch.cuda.synchronize()
++    print(f"{NG_TAG} [{tag}] done", flush=True)
++    return out
++
++
++def _ng_graph_medians(graphs, device):
++    """Cold-L2 replays (a 256 MiB flush write before each), interleaved over NG_ALTERNATIONS alternations in
++    a rotated and flipped order, an empty-graph baseline subtracted; {name: median us}."""
++    tiny = torch.zeros(16, dtype=torch.float32, device=device)
++    graphs = dict(graphs)
++    graphs["empty"] = _ssdq_graph_time(lambda: tiny.zero_(), device)
++    flush = torch.empty(256 * 2 ** 20 // 4, dtype=torch.float32, device=device)
++    ev = [torch.cuda.Event(enable_timing=True) for _ in range(2)]
++
++    def once(graph):
++        flush.zero_()
++        ev[0].record()
++        graph.replay()
++        ev[1].record()
++        torch.cuda.synchronize()
++        return ev[0].elapsed_time(ev[1]) * 1000.0
++
++    names = list(graphs)
++    samples = {name: [] for name in names}
++    for name in names:
++        once(graphs[name])
++    for i in range(NG_ALTERNATIONS):
++        order = names[i % len(names):] + names[:i % len(names)]
++        if i % 2:
++            order = order[::-1]
++        for name in order:
++            samples[name].append(once(graphs[name]))
++    med = {name: sorted(v)[len(v) // 2] for name, v in samples.items()}
++    base = med.pop("empty")
++    return {name: max(v - base, 0.0) for name, v in med.items()}
++
++
++def _ng_replay_check(state, device, tokens, gen):
++    """Two separately allocated states (the second with its own weight copy), a graph captured on each, replays
++    alternated A B A B with refilled inputs and routings, each against master's composed path eager. Returns
++    (worst rel L2, why or None)."""
++    sb = dict(state)
++    sb["pre_expert_w"] = state["pre_expert_w"].clone()
++    sts = [state, sb]
++    bufs = [list(_rega_case(tokens, "random", gen, device)) for _ in sts]
++    holders = [{} for _ in sts]
++    graphs = []
++    for st, (x, tw, lids), holder in zip(sts, bufs, holders):
++        def fn(st=st, x=x, tw=tw, lids=lids, holder=holder):
++            holder["out"] = _experts_rega(x, tw, lids, st, prenorm=True)
++        graphs.append(_ssdq_graph_time(fn, device))
++    worst = 0.0
++    for r, idx in enumerate((0, 1, 0, 1)):
++        x, tw, lids = _rega_case(tokens, ("random", "skewed")[r % 2], gen, device)
++        for dst, src in zip(bufs[idx], (x, tw, lids)):
++            dst.copy_(src)
++        state["rega_err"].zero_()
++        graphs[idx].replay()
++        torch.cuda.synchronize()
++        new = holders[idx]["out"].clone()
++        ref = _experts_rega(state["pre_expert_norm"](x), tw, lids, state)
++        torch.cuda.synchronize()
++        word = _rega_marks(state["rega_err"])[0]
++        err, _ = _ssdq_metrics(new, ref)
++        worst = max(worst, err)
++        if word != 0 or not err <= 1e-3:
++            return worst, f"replay {r} state {'AB'[idx]}: error word {word}, rel L2 {err:.3e}"
++    del graphs, holders, bufs, sb
++    return worst, None
++
++
++def _ng_class(state, device, cls, tokens, gen):
++    """Self-check, whole-output check, two-state replay and timing for one T class. Returns (ON, gate line)."""
++    sms = int(torch.cuda.get_device_properties(device).multi_processor_count)
++    ext = state["rega_ext"]
++    w = state["pre_expert_w"]
++    norm = state["pre_expert_norm"]
++    state["norm_gather_cfg"][cls] = (8, sms * 4, False)
++    cases = {}
++    for kind in ("random", "skewed"):
++        x, tw, lids = _rega_case(tokens, kind, gen, device)
++        _, (sorted_ids, block_experts, n_padded) = _align_dispatch(lids, REGA_BSM, state)
++        torch.cuda.synchronize()
++        cases[kind] = (x, tw, lids, sorted_ids, block_experts, n_padded)
++    num_routes = tokens * TOP_K
++    # 1. self-check: xs of the fused kernel vs master's norm + rega_gather; first with the plain fp32 1 + w, and,
++    # if that is not within 1 ulp of the module, with 1 + w rounded to bf16 first (a bf16 effective weight).
++    chosen, handle, checks = None, None, []
++    for round_w in (False, True):
++        passed = True
++        for kind, (x, tw, lids, sorted_ids, block_experts, n_padded) in cases.items():
++            rows = block_experts.shape[0] * REGA_BSM
++            xs_ref = torch.empty((rows, D_EXPERT), device=device, dtype=x.dtype)
++            xs_new = torch.empty_like(xs_ref)
++            xs_ref.view(torch.int16).fill_(NG_CANARY)
++            xs_new.view(torch.int16).fill_(NG_CANARY)
++            xn = _ng_step(f"module norm {cls} {kind}", lambda: norm(x))
++            _ng_step(f"rega_gather {cls} {kind}", lambda: ext.rega_gather(
++                xn.contiguous(), sorted_ids, block_experts, n_padded, num_routes, LOCAL_EXPERTS, xs_ref))
++            handle = _ng_step(f"_norm_gather_kernel {cls} {kind} round_w={round_w}", lambda: _norm_gather(
++                x, w, sorted_ids, block_experts, n_padded, num_routes, xs_new, 8, sms * 4, round_w))
++            active = _ng_active_rows(sorted_ids, block_experts, n_padded)
++            frac, mx, rel, stray = _ng_compare(xs_new, xs_ref, active)
++            ok = frac >= 0.999 and mx <= 2 and rel <= 1e-3 and stray == 0
++            checks.append(f"{kind} round_w={round_w}: within 1 ulp {frac:.5f}, max {mx} ulp, rel L2 {rel:.2e}, "
++                          f"stray rows {stray}, {int(active.sum())} active rows: {'ok' if ok else 'MISS'}")
++            print(f"{NG_TAG} self-check {cls} T={tokens} {checks[-1]}", flush=True)
++            passed = passed and ok
++            del xs_ref, xs_new, xn, active
++        if passed:
++            chosen = round_w
++            break
++    if chosen is None:
++        return False, f"{NG_TAG} GATE {cls} T={tokens} random: self-check missed ({'; '.join(checks[-2:])}): OFF"
++    # the compiled kernel's real occupancy, per num_warps (the 4-warp variant is compiled by its first launch)
++    occ = {8: _ng_occupancy(handle, 8, device)}
++    x, tw, lids, sorted_ids, block_experts, n_padded = cases["random"]
++    rows = block_experts.shape[0] * REGA_BSM
++    xs_t = torch.empty((rows, D_EXPERT), device=device, dtype=x.dtype)
++    handle4 = _ng_step(f"_norm_gather_kernel {cls} num_warps=4", lambda: _norm_gather(
++        x, w, sorted_ids, block_experts, n_padded, num_routes, xs_t, 4, sms * 4, chosen))
++    occ[4] = _ng_occupancy(handle4, 4, device)
++    print(f"{NG_TAG} {cls} compiled kernel: " + "; ".join(
++        f"num_warps={nw} n_regs {getattr(h, 'n_regs', 'n/a')} n_spills {getattr(h, 'n_spills', 'n/a')} "
++        f"shared {getattr(h, 'shared', 'n/a')} -> {occ[nw]} CTAs/SM" for nw, h in ((4, handle4), (8, handle))),
++        flush=True)
++    # 2. the whole _experts_rega output, prenorm vs master's composed path, alternating two separately allocated states
++    sb = dict(state)
++    sb["pre_expert_w"] = w.clone()
++    worst_out = 0.0
++    for r, st in enumerate((state, sb, state, sb)):
++        kind = ("random", "skewed")[r % 2]
++        x2, tw2, lids2, *_ = cases[kind]
++        st["norm_gather_cfg"][cls] = (8, sms * occ[8], chosen)
++        state["rega_err"].zero_()
++        ref = _ng_step(f"whole experts ref {cls} {kind}", lambda: _experts_rega(norm(x2), tw2, lids2, state))
++        new = _ng_step(f"whole experts prenorm {cls} {kind}", lambda: _experts_rega(x2, tw2, lids2, st, prenorm=True))
++        word = _rega_marks(state["rega_err"])[0]
++        err, _ = _ssdq_metrics(new, ref)
++        worst_out = max(worst_out, err)
++        if word != 0 or not err <= 1e-3:
++            return False, (f"{NG_TAG} GATE {cls} T={tokens} random: whole-output check missed ({kind} state "
++                           f"{'AB'[r % 2]}: error word {word}, rel L2 {err:.3e}): OFF")
++        del ref, new
++    print(f"{NG_TAG} whole-output check {cls} T={tokens}: worst rel L2 {worst_out:.2e} (bound 1e-3)", flush=True)
++    del sb
++    torch.cuda.empty_cache()
++    if tokens <= MARLIN_MAX_TOKENS:
++        worst_rep, why = _ng_replay_check(state, device, tokens, gen)
++        torch.cuda.empty_cache()
++        if why:
++            return False, f"{NG_TAG} GATE {cls} T={tokens} random: two-state replay check missed ({why}): OFF"
++        print(f"{NG_TAG} two-state replay check {cls} T={tokens}: worst rel L2 {worst_rep:.2e} (bound 1e-3)",
++              flush=True)
++    # 3. timing, random routing: the pair vs every fused config (grid from the compiled occupancy), one loop
++    xs_p = torch.empty((rows, D_EXPERT), device=device, dtype=x.dtype)
++    graphs = {"pair": _ssdq_graph_time(lambda: ext.rega_gather(
++        norm(x).contiguous(), sorted_ids, block_experts, n_padded, num_routes, LOCAL_EXPERTS, xs_p), device)}
++    cfgs = {}
++    for nw in NG_NWARPS:
++        for mult in NG_MULTS:
++            cfg = (nw, sms * occ[nw] * mult, chosen)
++            name = f"fused w{nw} g{cfg[1]}"
++            cfgs[name] = cfg
++            graphs[name] = _ssdq_graph_time(lambda cfg=cfg: _norm_gather(
++                x, w, sorted_ids, block_experts, n_padded, num_routes, xs_t, cfg[0], cfg[1], cfg[2]), device)
++    meds = _ng_graph_medians(graphs, device)
++    del graphs
++    best = min(cfgs, key=lambda k: meds[k])
++    ratio = meds[best] / max(meds["pair"], 1e-9)
++    on = bool(ratio <= NG_RATIO)
++    if on:
++        state["norm_gather_cfg"][cls] = cfgs[best]
++    line = (f"{NG_TAG} GATE {cls} T={tokens} random pair {meds['pair']:.1f} us fused {meds[best]:.1f} us "
++            f"ratio {ratio:.3f} (ON at <= {NG_RATIO}; {best}, round_w={chosen}; all fused: "
++            + ", ".join(f"{k} {meds[k]:.1f}" for k in cfgs) + f"): {'ON' if on else 'OFF'}")
++    return on, line
++
++
++def _norm_gather_setup(state, device, t_start):
++    """prepare() only, after _rega_setup: per T class, gate the fused pre-expert norm + gather against master's
++    module norm + rega_gather. Sets state['norm_gather_ok'][class] (and state['norm_gather_cfg'][class] =
++    (num_warps, persistent grid, round_w) for ON classes). Any failure, mismatch, slow ratio or exhausted
++    budget leaves the class OFF = master's path, byte for byte. Never raises."""
++    state["norm_gather_ok"] = {"low": False, "high": False, "ft": False}
++    state["norm_gather_cfg"] = {}
++    lines = {}
++    t0 = time.perf_counter()
++    try:
++        if time.perf_counter() - t_start > NG_BUDGET_S:
++            raise RuntimeError(f"prepare already used {time.perf_counter() - t_start:.0f}s > {NG_BUDGET_S:.0f}s")
++        norm = state["pre_expert_norm"]
++        try:
++            print(f"{NG_TAG} {type(norm).__name__}.forward source:\n"
++                  f"{inspect.getsource(type(norm).forward)}", flush=True)
++        except Exception as e:
++            print(f"{NG_TAG} forward source unavailable: {e!r}", flush=True)
++        try:
++            eff = norm._get_effective_weight()
++            print(f"{NG_TAG} module effective weight dtype {eff.dtype}; checkpoint weight dtype "
++                  f"{state['pre_expert_w'].dtype}", flush=True)
++        except Exception as e:
++            print(f"{NG_TAG} effective weight unavailable: {e!r}", flush=True)
++        gen = torch.Generator(device=device).manual_seed(20261026)
++        classes = {"low": REGA_GATE_TOKENS["low"], "high": REGA_GATE_TOKENS["high"], "ft": REGA_FT_GATE_TOKENS}
++        for cls, tokens in classes.items():
++            try:
++                if not state.get("rega_ok", {}).get(cls, False):
++                    lines[cls] = f"{NG_TAG} GATE {cls} T={tokens}: rega OFF for this class: OFF"
++                elif time.perf_counter() - t_start > NG_BUDGET_S:
++                    lines[cls] = (f"{NG_TAG} GATE {cls} T={tokens}: prepare already used "
++                                  f"{time.perf_counter() - t_start:.0f}s > {NG_BUDGET_S:.0f}s: OFF")
++                else:
++                    on, lines[cls] = _ng_class(state, device, cls, tokens, gen)
++                    state["norm_gather_ok"][cls] = on
++            except Exception as e:
++                state["norm_gather_ok"][cls] = False
++                lines[cls] = f"{NG_TAG} GATE {cls} T={tokens} random: raised {e!r}"[:400] + ": OFF"
++            if not state["norm_gather_ok"][cls]:
++                state["norm_gather_cfg"].pop(cls, None)
++            print(lines[cls], flush=True)
++            torch.cuda.synchronize()
++            torch.cuda.empty_cache()
++    except Exception as e:
++        state["norm_gather_ok"] = {"low": False, "high": False, "ft": False}
++        state["norm_gather_cfg"] = {}
++        print(f"{NG_TAG} OFF everywhere: {e!r}"[:400], flush=True)
++    finally:
++        torch.cuda.synchronize()
++        torch.cuda.empty_cache()
++        ok = state["norm_gather_ok"]
++        pick = lambda c: "fused norm+gather" if ok[c] else "master (module norm, then rega_gather)"
++        print(f"{NG_TAG} setup took {time.perf_counter() - t0:.1f}s; prepare total "
++              f"{time.perf_counter() - t_start:.1f}s", flush=True)
++        for line in lines.values():
++            print(line, flush=True)
++        print(f"{NG_TAG} PATH CHOSEN T in ({REGA_MIN_TOKENS}, {REGA_LOW_MAX}]: {pick('low')}; T in "
++              f"({REGA_LOW_MAX}, {MARLIN_MAX_TOKENS}]: {pick('high')}; T in ({MARLIN_MAX_TOKENS}, {REGA_FT_MAX}]: "
++              f"{pick('ft')} (applies only where rega is ON; every other path is master's)", flush=True)
++
++
+ def kernel_fn(data, state):
+     cfg = data["config"]
+     batch, length, tokens = cfg["batch"], cfg["q_len"], cfg["tokens"]
+@@ -4491,7 +4871,7 @@ def kernel_fn(data, state):
+     # This GPU's experts start at local_start: SGLang's expert_map on that EP rank, in one kernel.
+     local_ids = _local_expert_ids(topk_ids, data["local_start"])
+     # all-reduce: identity
+-    expert_output = _experts(state["pre_expert_norm"](expert_input), topk_weights, local_ids, state)
++    expert_output = _experts(expert_input, topk_weights, local_ids, state, pre_norm=True)
+     ffn_output = _gemm(expert_output, dense["unpooler"])
+ 
+     # Post-FFN boundary, with the next layer's pre-attention norm.

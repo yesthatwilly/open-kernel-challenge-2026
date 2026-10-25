@@ -53,10 +53,10 @@ priority: 1
 kind: primary
 controls_for: null
 review: proceed
-status: running
+status: done
 review_at: 2026-10-25T161512Z
 review_companions: null
-stage: dispatched
+stage: harvested
 claimed_at: 2026-10-25T161512Z
 base_sha: 982cc0e7665f7a510a5b0128e83949922fd6b456
 base_blob: 9fb1f7c4b4282dd7461c6cdba926fe3ebf12128e
@@ -75,6 +75,13 @@ attempt_file: 2026-10-25T161534Z-submit-combo-a-master-normgather-naive-stack.md
 prepared_at: 2026-10-25T161534Z
 job: 9bfc488c36c84924
 dispatched_at: 2026-10-25T161541Z
+outcome: neutral
+verdict_detail: unproven-vs-best
+speedup: 1.4604901800994607
+speedup_ci: [1.4385828273979688, 1.4823975328009524]
+harvested_at: 2026-10-25T162148Z
+best_at_harvest: 1.4599652306075455
+promotion: null
 ---
 
 # combo-a-master-normgather-naive-stack
@@ -144,4 +151,31 @@ no separate audit was spent on the unchanged code.
 - [x] All work inside the timed call; no output caching or replay; per-state buffers only.
 
 okc_lint: OK with warnings (prepare-only host-sync/dtype notes); undef.py clean.
+
+## Result
+
+- job `9bfc488c36c84924` (submit), status done, passed True, tests 5/5
+- speedup 1.4605x, 95% CI [1.4386, 1.4824], score 265256.0799646167 µs vs SGLang 387403.9 µs
+- best at harvest: {"speedup": 1.4599652306075455, "ci": [1.4380657521484324, 1.4818647090666586], "job": "edf68fa3131c4bf8"}; base result: muse_prefill_layer/hypotheses/done/neutral/fa3-full-contiguous-kv-triton-gather-gated.result.json
+- **outcome: neutral** (unproven-vs-best)
+- files: `muse_prefill_layer/hypotheses/done/neutral/combo-a-master-normgather-naive-stack.result.json`, `muse_prefill_layer/hypotheses/done/neutral/combo-a-master-normgather-naive-stack.patch`; branch `hyp/muse_prefill_layer/combo-a-master-normgather-naive-stack`
+
+## Attribution
+
+| shape | w | base µs | hyp µs | delta | verdict |
+|---|---|---|---|---|---|
+| batch=1 ctx=80000 dist=soft layer=sliding load=turn_1 page=1 q_len=753 repeats=6 | 46 | 720.18 | 775.23 | 0.9795 | flat |
+| batch=1 ctx=80000 dist=soft layer=full load=turn_1 page=1 q_len=753 repeats=6 | 16 | 1132.2 | 1144.87 | 0.9996 | flat |
+| batch=4 ctx=80000 dist=soft layer=sliding load=turn_4 page=1 q_len=753 repeats=6 | 46 | 2152.68 | 2114.3 | 1.006 | flat |
+| batch=4 ctx=80000 dist=soft layer=full load=turn_4 page=1 q_len=753 repeats=6 | 16 | 3701.15 | 3688.89 | 0.998 | flat |
+| batch=1 ctx=0 dist=soft layer=full load=first_turn page=1 q_len=16384 repeats=6 | 16 | 11852.94 | 11896.21 | 1.0096 | flat |
+| batch=1 ctx=32768 dist=soft layer=sliding load=first_turn page=1 q_len=16384 repeats=6 | 138 | 10947.18 | 10570.76 | 1.0143 | flat |
+| batch=1 ctx=32768 dist=soft layer=full load=first_turn page=1 q_len=16384 repeats=6 | 16 | 15058.23 | 14790.29 | 1.0184 | flat |
+| batch=1 ctx=65536 dist=soft layer=full load=first_turn page=1 q_len=16384 repeats=6 | 16 | 18490.87 | 18223.59 | 1.0124 | flat |
+
+no shape moved outside noise. Expected hit: 0/3. Noise ±1.5%.
+
+## Follow-ups
+
+- unproven-vs-best: the change is not proven either way; a stacked hypothesis (`depends_on: combo-a-master-normgather-naive-stack`) that adds a further change in the same area is the only way to learn more (identical code is never re-run).
 

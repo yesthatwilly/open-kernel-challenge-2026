@@ -1,0 +1,189 @@
+a us (gather alone 8.6 us; bar 0.98 x paged, best/paged 0.958) -> B
+[fa3 contig] GATE turn_4 b4 L753 ctx80000: paged 1627.8 us, contig-varlen 1586.1 us, contig-batched n/a us (gather alone 49.1 us; bar 0.97 x paged, best/paged 0.974) -> A
+[fa3 contig] GATE turn_1 b1 L753 ctx80000: paged 427.0 us, contig-varlen 418.7 us, contig-batched n/a us (gather alone 16.7 us; bar 0.97 x paged, best/paged 0.981) -> A
+[fa3 contig] PATH CHOSEN (full layers, page_size 1; sliding, page 64, scaled and untimed shapes run master's paged FA3): first_turn b1 L16384 ctx65536: B; first_turn b1 L16384 ctx32768: B; first_turn b1 L16384 ctx0: B; turn_4 b4 L753 ctx80000: A; turn_1 b1 L753 ctx80000: A; setup 1.0s, prepare total 125.8s
+[norm-gather] MuseSpark1xRMSNorm.forward source:
+    def forward(self, x: torch.Tensor) -> torch.Tensor:
+        if x.numel() == 0:
+            return x
+        dtype = x.dtype
+        weight = self._get_effective_weight()
+        if (
+            _is_cpu
+            and x.dtype in (torch.bfloat16, torch.float16)
+            and (weight is None or weight.dtype == x.dtype)
+        ):
+            x_2d = x.reshape(-1, self.hidden_size)
+            output = (
+                torch.ops.sgl_kernel.l2norm_cpu(x_2d, self.eps)
+                if weight is None
+                else torch.ops.sgl_kernel.rmsnorm_cpu(x_2d, weight, self.eps)
+            )
+            return output.reshape(x.shape)
+        return F.rms_norm(x, (self.hidden_size,), weight, self.eps).to(dtype)
+
+[norm-gather] module effective weight dtype torch.bfloat16; checkpoint weight dtype torch.bfloat16
+[norm-gather] [module norm low random] launching
+[norm-gather] [module norm low random] done
+[norm-gather] [rega_gather low random] launching
+[norm-gather] [rega_gather low random] done
+[norm-gather] [_norm_gather_kernel low random round_w=False] launching
+[norm-gather] [_norm_gather_kernel low random round_w=False] done
+[norm-gather] self-check low T=753 random round_w=False: within 1 ulp 1.00000, max 1 ulp, rel L2 2.93e-03, stray rows 0, 1024 active rows: MISS
+[norm-gather] [module norm low skewed] launching
+[norm-gather] [module norm low skewed] done
+[norm-gather] [rega_gather low skewed] launching
+[norm-gather] [rega_gather low skewed] done
+[norm-gather] [_norm_gather_kernel low skewed round_w=False] launching
+[norm-gather] [_norm_gather_kernel low skewed round_w=False] done
+[norm-gather] self-check low T=753 skewed round_w=False: within 1 ulp 1.00000, max 1 ulp, rel L2 2.93e-03, stray rows 0, 3584 active rows: MISS
+[norm-gather] [module norm low random] launching
+[norm-gather] [module norm low random] done
+[norm-gather] [rega_gather low random] launching
+[norm-gather] [rega_gather low random] done
+[norm-gather] [_norm_gather_kernel low random round_w=True] launching
+[norm-gather] [_norm_gather_kernel low random round_w=True] done
+[norm-gather] self-check low T=753 random round_w=True: within 1 ulp 1.00000, max 1 ulp, rel L2 1.63e-05, stray rows 0, 1024 active rows: ok
+[norm-gather] [module norm low skewed] launching
+[norm-gather] [module norm low skewed] done
+[norm-gather] [rega_gather low skewed] launching
+[norm-gather] [rega_gather low skewed] done
+[norm-gather] [_norm_gather_kernel low skewed round_w=True] launching
+[norm-gather] [_norm_gather_kernel low skewed round_w=True] done
+[norm-gather] self-check low T=753 skewed round_w=True: within 1 ulp 1.00000, max 1 ulp, rel L2 8.07e-06, stray rows 0, 3584 active rows: ok
+[norm-gather] [_norm_gather_kernel low num_warps=4] launching
+[norm-gather] [_norm_gather_kernel low num_warps=4] done
+[norm-gather] low compiled kernel: num_warps=4 n_regs 59 n_spills 0 shared n/a -> 8 CTAs/SM; num_warps=8 n_regs 32 n_spills 0 shared n/a -> 8 CTAs/SM
+[norm-gather] [whole experts ref low random] launching
+[norm-gather] [whole experts ref low random] done
+[norm-gather] [whole experts prenorm low random] launching
+[norm-gather] [whole experts prenorm low random] done
+[norm-gather] [whole experts ref low skewed] launching
+[norm-gather] [whole experts ref low skewed] done
+[norm-gather] [whole experts prenorm low skewed] launching
+[norm-gather] [whole experts prenorm low skewed] done
+[norm-gather] [whole experts ref low random] launching
+[norm-gather] [whole experts ref low random] done
+[norm-gather] [whole experts prenorm low random] launching
+[norm-gather] [whole experts prenorm low random] done
+[norm-gather] [whole experts ref low skewed] launching
+[norm-gather] [whole experts ref low skewed] done
+[norm-gather] [whole experts prenorm low skewed] launching
+[norm-gather] [whole experts prenorm low skewed] done
+[norm-gather] whole-output check low T=753: worst rel L2 2.10e-04 (bound 1e-3)
+[norm-gather] two-state replay check low T=753: worst rel L2 2.05e-04 (bound 1e-3)
+[norm-gather] GATE low T=753 random pair 15.0 us fused 5.2 us ratio 0.345 (ON at <= 0.9; fused w4 g1056, round_w=True; all fused: fused w4 g1056 5.2, fused w4 g2112 5.3, fused w8 g1056 5.4, fused w8 g2112 5.4): ON
+[norm-gather] [module norm high random] launching
+[norm-gather] [module norm high random] done
+[norm-gather] [rega_gather high random] launching
+[norm-gather] [rega_gather high random] done
+[norm-gather] [_norm_gather_kernel high random round_w=False] launching
+[norm-gather] [_norm_gather_kernel high random round_w=False] done
+[norm-gather] self-check high T=3012 random round_w=False: within 1 ulp 1.00000, max 1 ulp, rel L2 2.92e-03, stray rows 0, 3248 active rows: MISS
+[norm-gather] [module norm high skewed] launching
+[norm-gather] [module norm high skewed] done
+[norm-gather] [rega_gather high skewed] launching
+[norm-gather] [rega_gather high skewed] done
+[norm-gather] [_norm_gather_kernel high skewed round_w=False] launching
+[norm-gather] [_norm_gather_kernel high skewed round_w=False] done
+[norm-gather] self-check high T=3012 skewed round_w=False: within 1 ulp 1.00000, max 1 ulp, rel L2 2.93e-03, stray rows 0, 13712 active rows: MISS
+[norm-gather] [module norm high random] launching
+[norm-gather] [module norm high random] done
+[norm-gather] [rega_gather high random] launching
+[norm-gather] [rega_gather high random] done
+[norm-gather] [_norm_gather_kernel high random round_w=True] launching
+[norm-gather] [_norm_gather_kernel high random round_w=True] done
+[norm-gather] self-check high T=3012 random round_w=True: within 1 ulp 1.00000, max 1 ulp, rel L2 1.12e-05, stray rows 0, 3248 active rows: ok
+[norm-gather] [module norm high skewed] launching
+[norm-gather] [module norm high skewed] done
+[norm-gather] [rega_gather high skewed] launching
+[norm-gather] [rega_gather high skewed] done
+[norm-gather] [_norm_gather_kernel high skewed round_w=True] launching
+[norm-gather] [_norm_gather_kernel high skewed round_w=True] done
+[norm-gather] self-check high T=3012 skewed round_w=True: within 1 ulp 1.00000, max 1 ulp, rel L2 1.08e-05, stray rows 0, 13712 active rows: ok
+[norm-gather] [_norm_gather_kernel high num_warps=4] launching
+[norm-gather] [_norm_gather_kernel high num_warps=4] done
+[norm-gather] high compiled kernel: num_warps=4 n_regs 59 n_spills 0 shared n/a -> 8 CTAs/SM; num_warps=8 n_regs 32 n_spills 0 shared n/a -> 8 CTAs/SM
+[norm-gather] [whole experts ref high random] launching
+[norm-gather] [whole experts ref high random] done
+[norm-gather] [whole experts prenorm high random] launching
+[norm-gather] [whole experts prenorm high random] done
+[norm-gather] [whole experts ref high skewed] launching
+[norm-gather] [whole experts ref high skewed] done
+[norm-gather] [whole experts prenorm high skewed] launching
+[norm-gather] [whole experts prenorm high skewed] done
+[norm-gather] [whole experts ref high random] launching
+[norm-gather] [whole experts ref high random] done
+[norm-gather] [whole experts prenorm high random] launching
+[norm-gather] [whole experts prenorm high random] done
+[norm-gather] [whole experts ref high skewed] launching
+[norm-gather] [whole experts ref high skewed] done
+[norm-gather] [whole experts prenorm high skewed] launching
+[norm-gather] [whole experts prenorm high skewed] done
+[norm-gather] whole-output check high T=3012: worst rel L2 2.14e-04 (bound 1e-3)
+[norm-gather] two-state replay check high T=3012: worst rel L2 1.93e-04 (bound 1e-3)
+[norm-gather] GATE high T=3012 random pair 42.5 us fused 14.5 us ratio 0.341 (ON at <= 0.9; fused w8 g2112, round_w=True; all fused: fused w4 g1056 14.9, fused w4 g2112 14.6, fused w8 g1056 14.6, fused w8 g2112 14.5): ON
+[norm-gather] [module norm ft random] launching
+[norm-gather] [module norm ft random] done
+[norm-gather] [rega_gather ft random] launching
+[norm-gather] [rega_gather ft random] done
+[norm-gather] [_norm_gather_kernel ft random round_w=False] launching
+[norm-gather] [_norm_gather_kernel ft random round_w=False] done
+[norm-gather] self-check ft T=16384 random round_w=False: within 1 ulp 1.00000, max 1 ulp, rel L2 2.93e-03, stray rows 0, 16560 active rows: MISS
+[norm-gather] [module norm ft skewed] launching
+[norm-gather] [module norm ft skewed] done
+[norm-gather] [rega_gather ft skewed] launching
+[norm-gather] [rega_gather ft skewed] done
+[norm-gather] [_norm_gather_kernel ft skewed round_w=False] launching
+[norm-gather] [_norm_gather_kernel ft skewed round_w=False] done
+[norm-gather] self-check ft T=16384 skewed round_w=False: within 1 ulp 1.00000, max 1 ulp, rel L2 2.93e-03, stray rows 0, 73888 active rows: MISS
+[norm-gather] [module norm ft random] launching
+[norm-gather] [module norm ft random] done
+[norm-gather] [rega_gather ft random] launching
+[norm-gather] [rega_gather ft random] done
+[norm-gather] [_norm_gather_kernel ft random round_w=True] launching
+[norm-gather] [_norm_gather_kernel ft random round_w=True] done
+[norm-gather] self-check ft T=16384 random round_w=True: within 1 ulp 1.00000, max 1 ulp, rel L2 9.07e-06, stray rows 0, 16560 active rows: ok
+[norm-gather] [module norm ft skewed] launching
+[norm-gather] [module norm ft skewed] done
+[norm-gather] [rega_gather ft skewed] launching
+[norm-gather] [rega_gather ft skewed] done
+[norm-gather] [_norm_gather_kernel ft skewed round_w=True] launching
+[norm-gather] [_norm_gather_kernel ft skewed round_w=True] done
+[norm-gather] self-check ft T=16384 skewed round_w=True: within 1 ulp 1.00000, max 1 ulp, rel L2 1.01e-05, stray rows 0, 73888 active rows: ok
+[norm-gather] [_norm_gather_kernel ft num_warps=4] launching
+[norm-gather] [_norm_gather_kernel ft num_warps=4] done
+[norm-gather] ft compiled kernel: num_warps=4 n_regs 59 n_spills 0 shared n/a -> 8 CTAs/SM; num_warps=8 n_regs 32 n_spills 0 shared n/a -> 8 CTAs/SM
+[norm-gather] [whole experts ref ft random] launching
+[norm-gather] [whole experts ref ft random] done
+[norm-gather] [whole experts prenorm ft random] launching
+[norm-gather] [whole experts prenorm ft random] done
+[norm-gather] [whole experts ref ft skewed] launching
+[norm-gather] [whole experts ref ft skewed] done
+[norm-gather] [whole experts prenorm ft skewed] launching
+[norm-gather] [whole experts prenorm ft skewed] done
+[norm-gather] [whole experts ref ft random] launching
+[norm-gather] [whole experts ref ft random] done
+[norm-gather] [whole experts prenorm ft random] launching
+[norm-gather] [whole experts prenorm ft random] done
+[norm-gather] [whole experts ref ft skewed] launching
+[norm-gather] [whole experts ref ft skewed] done
+[norm-gather] [whole experts prenorm ft skewed] launching
+[norm-gather] [whole experts prenorm ft skewed] done
+[norm-gather] whole-output check ft T=16384: worst rel L2 1.81e-04 (bound 1e-3)
+[norm-gather] GATE ft T=16384 random pair 222.2 us fused 72.4 us ratio 0.326 (ON at <= 0.9; fused w4 g1056, round_w=True; all fused: fused w4 g1056 72.4, fused w4 g2112 72.4, fused w8 g1056 72.7, fused w8 g2112 72.4): ON
+[norm-gather] setup took 0.7s; prepare total 126.5s
+[norm-gather] GATE low T=753 random pair 15.0 us fused 5.2 us ratio 0.345 (ON at <= 0.9; fused w4 g1056, round_w=True; all fused: fused w4 g1056 5.2, fused w4 g2112 5.3, fused w8 g1056 5.4, fused w8 g2112 5.4): ON
+[norm-gather] GATE high T=3012 random pair 42.5 us fused 14.5 us ratio 0.341 (ON at <= 0.9; fused w8 g2112, round_w=True; all fused: fused w4 g1056 14.9, fused w4 g2112 14.6, fused w8 g1056 14.6, fused w8 g2112 14.5): ON
+[norm-gather] GATE ft T=16384 random pair 222.2 us fused 72.4 us ratio 0.326 (ON at <= 0.9; fused w4 g1056, round_w=True; all fused: fused w4 g1056 72.4, fused w4 g2112 72.4, fused w8 g1056 72.7, fused w8 g2112 72.4): ON
+[norm-gather] PATH CHOSEN T in (200, 1024]: fused norm+gather; T in (1024, 4096]: fused norm+gather; T in (4096, 16384]: fused norm+gather (applies only where rega is ON; every other path is master's)
+[align2] GATE bsm 16 low T=753 cold-L2 graph medians over 15 alternations (empty-graph baseline subtracted): master 17.9 us; chunk 512 8.8 us; chunk 1024 21.6 us; chunk chosen 512 ratio 0.493 (ON at <= 0.98), fill dist: ON
+[align2] GATE bsm 16 high T=3012 cold-L2 graph medians over 15 alternations (empty-graph baseline subtracted): master 71.1 us; chunk 512 8.9 us; chunk 1024 22.0 us; chunk chosen 512 ratio 0.126 (ON at <= 0.98), fill dist: ON
+[align2] GATE bsm 16 ft T=16384 cold-L2 graph medians over 15 alternations (empty-graph baseline subtracted): master 396.6 us; chunk 512 26.9 us; chunk 1024 23.5 us; chunk chosen 1024 ratio 0.059 (ON at <= 0.98), fill dist: ON
+[align2] PATH CHOSEN: bsm:class 16:ft: two-phase chunk 1024, fill dist; bsm:class 16:high: two-phase chunk 512, fill dist; bsm:class 16:low: two-phase chunk 512, fill dist (every other (bsm, class): master _align_parallel; rega path only; Marlin / ssdq keep master's align)
+[fa3 contig] GATE first_turn b1 L16384 ctx65536: paged 8017.2 us, contig-varlen 7618.6 us, contig-batched n/a us (gather alone 16.7 us; bar 0.98 x paged, best/paged 0.950) -> B
+[fa3 contig] GATE first_turn b1 L16384 ctx32768: paged 4464.2 us, contig-varlen 4247.2 us, contig-batched n/a us (gather alone 12.6 us; bar 0.98 x paged, best/paged 0.951) -> B
+[fa3 contig] GATE first_turn b1 L16384 ctx0: paged 898.9 us, contig-varlen 861.0 us, contig-batched n/a us (gather alone 8.6 us; bar 0.98 x paged, best/paged 0.958) -> B
+[fa3 contig] GATE turn_4 b4 L753 ctx80000: paged 1627.8 us, contig-varlen 1586.1 us, contig-batched n/a us (gather alone 49.1 us; bar 0.97 x paged, best/paged 0.974) -> A
+[fa3 contig] GATE turn_1 b1 L753 ctx80000: paged 427.0 us, contig-varlen 418.7 us, contig-batched n/a us (gather alone 16.7 us; bar 0.97 x paged, best/paged 0.981) -> A
+[fa3 contig] PATH CHOSEN (full layers, page_size 1; sliding, page 64, scaled and untimed shapes run master's paged FA3): first_turn b1 L16384 ctx65536: B; first_turn b1 L16384 ctx32768: B; first_turn b1 L16384 ctx0: B; turn_4 b4 L753 ctx80000: A; turn_1 b1 L753 ctx80000: A; setup 1.0s, prepare total 125.8s
