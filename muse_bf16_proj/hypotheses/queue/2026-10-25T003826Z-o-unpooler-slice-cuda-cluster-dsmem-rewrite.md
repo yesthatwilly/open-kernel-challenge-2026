@@ -73,8 +73,10 @@ kind: rewrite
 controls_for: null
 rewrite_stage: 1
 replaces: o at m<=16 (_pooler_skinny_kernel, 4.1-4.4 us kernel, rows 5.9-6.3) and the unpooler slice at m<=8 (_bf16_splitk_kernel/ticket split-K 8, 4.3-4.4 us kernel, rows 5.9-6.1)
-review: required
+review: proceed
 status: queued
+review_at: 2026-10-25T004153Z
+review_companions: null
 ---
 
 # o-unpooler-slice-cuda-cluster-dsmem-rewrite
@@ -108,3 +110,29 @@ shape (profile top_kernels) against the incumbent and the speed-of-light floor, 
 2. at or below the incumbent kernels' time on the target shapes;
 3. within ~1.5x of the floor on the target shapes, and the headline CI clears 1.0 (promotable).
 The next stage is minted with `--kind rewrite --depends-on <this slug> --stage N+1`.
+
+## Adversarial review
+
+Reviewed 2026-10-25T004153Z by an adversarial subagent (model opus).
+
+**Verdict: proceed.** Sound stage-1 rewrite aimed at the two shapes furthest from their floors; it fixes both causes REWRITE_READ section 2 found for the gemv loss (a ring that never fills; a global partial store plus a ticket tail that grows with m). Proceed as a check. Before building, correct the incumbent baselines (it quotes the restack's kernels, not master's), and add an smem swizzle and a cluster-residency gate.
+
+### Justification
+o (16.8 MB) and the unpooler slice (8.4 MB) are latency-bound 32-64 KB/CTA streams; issuing each CTA's whole slice at once puts the full weight in flight in one wave, and the DSMEM fixed-order reduce removes the gpu-scope ticket and fp32 global workspace (the m-proportional costs the read measured). Uses only baseline sm_90 (mma.sync, cp.async.cg, cluster launch, mapa, ld.shared::cluster, barrier.cluster); no wgmma. Weak points: (1) M3 needs the slice row at 4.0-4.2 us, but slice rows sit ~1.5 us above kernel time (master 4.5->5.94, restack 4.3->6.2), needing a ~2.5 us cold kernel for 8.4 MB plus cluster fixed cost; M2 credible, M3 on the slice a stretch, o <=5.0 plausible. (2) Baselines: master 8b9ad43 routes o m<=16 to _pooler_skinny_kernel and the slice to _bf16_splitk_kernel split-K 8; run 1602a4e947e64090 has o kernels 4.6/5.2/4.8 rows 6.32/6.32, slice kernels 4.5/4.6 rows 5.94/6.13. The quoted figures come from the restack run 60b20fd0bf924267. Judge M2 against master and also report vs the restack. (3) Bank conflicts: 256 B / 1 KB power-of-two row pitches make unswizzled ldmatrix ~8-way conflicted (~2 us); XOR-swizzle or +16 B pad the cp.async destination and ldmatrix addresses. Cluster residency: o needs 32 co-resident 8-CTA clusters at 2 CTAs/SM, an exact fit on 132 SMs; fall back to cluster dim 4 (64 x 4, K 256/rank) when cudaOccupancyMaxActiveClusters < 32, not straight to master; the slice (16 clusters at 1 CTA/SM) has the same risk. Smem ~80 KB, 2 CTAs/SM fits; alias the fp32 partial onto consumed weight buffer. Judge milestones on rows (warm-L2 caveat).
+
+### Confounders on the current kernel
+- bf16-shape-gated-triton-winners-combo (landed): supplies the replaced kernels; the true incumbent; compare to run 1602a4e947e64090.
+- bf16-restack-m16-swapab-router-swapab-m32 (not landed, pending user): re-routes the same shapes; report deltas vs both.
+- bf16-m32-swapab-wgmma-triton (landed): owns o at 17..32; rewrite stops at m=16, so o decode_32 flat is valid.
+- router-hilo / sglang-gemm-dispatch-parity / router-hilo-at-m8: other layers; no interference.
+
+### Interference and A/B needs
+No companion. Judge on replaced kernels' time per shape vs master (1602a4e947e64090) and restack (60b20fd0bf924267). The queued router-cuda-cluster-dsmem-splitk-rewrite uses the same design: give each its own load_inline extension name and its own route-ok constant (LESSONS 2026-10-25).
+
+### Open questions
+- Fix the expected/replaces text to master's numbers before the build.
+- cudaOccupancyMaxActiveClusters on the judge for cluster 8 at 2 CTAs/SM (o needs 32) and 1 CTA/SM (slice needs 16)? Fall back to cluster dim 4.
+- Is the smem tile swizzled or padded for ldmatrix?
+- Slice at 256 CTAs (32 KB, 2/SM) instead of 128 x 64 KB? Worth a prepare diagnostic.
+- Use the prepare cold-L2 event time to decide whether slice M3 is reachable before stage 2.
+
