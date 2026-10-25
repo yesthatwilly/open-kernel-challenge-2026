@@ -69,9 +69,18 @@ controls_for: null
 rewrite_stage: 1
 replaces: _moe_nvfp4_gemm_kernel x2 (w13, w2) at T > 4096 (first_turn)
 review: proceed
-status: queued
+status: running
 review_at: 2026-10-25T002131Z
 review_companions: null
+stage: claimed
+claimed_at: 2026-10-25T002131Z
+base_sha: d7ccd530009419f0e32f5bd4bdae7f0fdad273a3
+base_blob: db8a3344398bca79ea5cafeb580f701c055fd475
+branch: hyp/muse_prefill_layer/experts-cuda-wgmma-grouped-gemm-remeasure-sm90a-inproc
+worktree: .worktrees/muse_prefill_layer/experts-cuda-wgmma-grouped-gemm-remeasure-sm90a-inproc
+mode: null
+restack_of: null
+stale_base: null
 ---
 
 # experts-cuda-wgmma-grouped-gemm-remeasure-sm90a-inproc
