@@ -105,7 +105,9 @@ speedup: 1.1004181185941053
 speedup_ci: [1.0839118468151938, 1.1169243903730168]
 harvested_at: 2026-10-25T091110Z
 best_at_harvest: 1.074386115190733
-promotion: null
+promotion: merged
+hand_landed: true
+promotion_commit: ca1d41b1dc9f1cca7f8d13c3e0e5b2027055e6fa
 ---
 
 # experts-turn4-ssdq-s1b-dataptr-symbol-fix
