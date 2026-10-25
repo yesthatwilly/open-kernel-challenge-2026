@@ -106,7 +106,7 @@ review: proceed
 status: running
 review_at: 2026-10-25T012031Z
 review_companions: null
-stage: implemented
+stage: dispatched
 claimed_at: 2026-10-25T012032Z
 base_sha: 0a2ef67eeb9be9dce45fed1c5dd5f4e4ba19537c
 base_blob: a8bb42ac483318e9fbc84bc7826a27b7a704d1fb
@@ -123,6 +123,8 @@ submission_blob: d2ef0372de1f177e26ce1a1a4f578a993b4fa98c
 lint_warnings: 9
 attempt_file: 2026-10-25T013045Z-check-pooler-unpooler-full-bulk-tma-row-owner-stream-rewrite.md
 prepared_at: 2026-10-25T013045Z
+job: cd39d36e31814087
+dispatched_at: 2026-10-25T013053Z
 ---
 
 # pooler-unpooler-full-bulk-tma-row-owner-stream-rewrite
