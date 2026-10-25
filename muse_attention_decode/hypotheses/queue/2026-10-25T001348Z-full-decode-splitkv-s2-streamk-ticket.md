@@ -59,7 +59,8 @@ controls_for: null
 rewrite_stage: 2
 replaces: "full-layer decode at 1<batch<=64: splitkv_attn_kernel A + splitkv_combine_kernel B (stage 1, master)"
 review: required
-status: queued
+status: hold
+hold_reason: "superseded by full-decode-splitkv-s2-streamk-ticket-inproc: the original spec runs a self-check in a child process, which the rules reject (starting processes)"
 ---
 
 # full-decode-splitkv-s2-streamk-ticket
