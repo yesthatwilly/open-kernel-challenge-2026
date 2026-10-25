@@ -49,7 +49,7 @@ review: proceed
 status: running
 review_at: 2026-10-25T203138Z
 review_companions: null
-stage: claimed
+stage: implemented
 claimed_at: 2026-10-25T203138Z
 base_sha: 72279d8be856d60ae496236e976e81549d53cc2d
 base_blob: ad8d7254a64a52db2a8f56ec0ad262748153a2e8
@@ -58,6 +58,12 @@ worktree: .worktrees/muse_bf16_proj/router-hilo-tall-tile-m65-m256
 mode: submit
 restack_of: null
 stale_base: null
+implemented_at: 2026-10-25T203553Z
+impl_commit: 61b0437658831be3502564adac79478dd44c441e
+submission_sha256: 1af8e420904350eba5ffc36d54e97d46abd170e2573a0e9dcdfeeb41708ddd3d
+norm_sha256: 50c0204c429a714c8c74cdeed192fa0c0515eacb68f40f5f8b804e0a5ad393a0
+submission_blob: 07996bb0a21bf7d1b490334998bdc0f7517aa5f0
+lint_warnings: 37
 ---
 
 # router-hilo-tall-tile-m65-m256
@@ -101,3 +107,30 @@ No companion: the change is ~0.3-0.5% headline at most, inside the CI; the run i
 - 4-stage pipeline at 4 K-steps: try 3 stages; print n_regs/spills.
 - Overlap with queued router-m128-m256-wgmma-swapab-tall-cluster-stage2 (re-baseline if this lands).
 
+
+## Implementation notes
+
+Only muse_bf16_proj/submission.py in the worktree. Added `_router_hilo_cfg6(m, tall)` (full config: BM, BN, SPLIT_K, BLOCK_K, stages, warps); m 33..64 explicitly stays master (64,64,16,128,3,4); 65..128 / 129..256 use state["router_tall"][128|256] if set, else master. `_router_hilo_forward`, `_router_shape_ok`, `_router_path` take the per-config values (BLOCK_K, stages, warps, split-K), not the ROUTER_* globals. Candidates: bucket 128: (128,64,32,64) at 3 and 4 stages; bucket 256: A (128,64,16,128,3 st) and B (256,64,32,64,3 st, 8 warps). `_router_tall_prepare` (prepare only, state A): rel-L2 self-check (5e-5) at m in {65,128} / {129,130,200,256}, prints n_regs/spills/wgmma, CUDA-graph timing with 256 MB L2 flush, 41 interleaved reps, tiny-graph baseline subtracted, wins only at >= 1.02x, profiler kernel-name assert, PATH CHOSEN prints (m=33,64,65,128,129,200,256). Flush buffer and graphs are freed in `_router_tall_time`'s finally; nothing is stored in state except the constant dict. State B inherits the dict via `_ab_flags` ("router_tall") and only warms it. A/B self-check got a router m=256 cell and component "router_tall" (miss or B-build failure -> {} in both states = master config). kernel_fn: only shape + state["router_tall"] branching. Deviation: 3 vs 4 stages offered as two candidates at BK 64 (review asked to try 3) so the selector decides; extra compile time ~seconds.
+
+## Rules check
+- [x] CUDA-graph capturable: kernel_fn change is shape + constant dict lookup only; torch.zeros stays inside _router_hilo_forward; no syncs/timing/profiler there (all in prepare).
+- [x] Nothing derived from `data` is cached across calls: state holds only a per-bucket config constant chosen on synthetic x.
+- [x] Weights: unchanged (hi+lo split from prepare).
+- [x] Activations BF16 as before; router FP32 hi+lo with fp32 accumulate unchanged.
+- [x] Attention: n/a, no attention in this problem.
+- [x] No timing patches, harness access, subprocesses or network (torch.profiler is local, prepare only).
+- [x] All work inside the timed call; no output caching or replay.
+- [x] Lint: OK with warnings (only prepare-time host-sync/dtype warns, none in kernel_fn path); py_compile OK, __pycache__ removed.
+
+## Pre-flight audit
+
+Audited 2026-10-25 (opus, read-only; no fixes). **Verdict: dispatch.**
+
+- Gates: the self-check bound (AB_ROUTER_REL_L2 5e-5) is the same one master's identical kernel body passes; the split order is the only numeric change, so it can pass. K % (BLOCK_K*SPLIT_K) holds for every candidate (8192 = 64*32*4 = 128*16*4), n % 64 == 0, so _router_shape_ok accepts them.
+- Fallback: each candidate's first launch (Triton compile, OutOfResources, wrong answer, non-finite) sits inside a per-candidate try and is REJECTED with a print; timing, profiler and whole-selector failures each land on {} = master config with a PATH CHOSEN line; a state-B build failure or an A/B miss at router m=128/256 resets router_tall to {} in both states. _print_ptx_counts swallows its own errors, so a diagnostic cannot reject a good config.
+- Feasibility (H100, 227 KB smem/block): (128,64,BK64) 32 KB/stage -> 96 KB at 3 stages, 128 KB at 4; (128,64,BK128) 64 KB/stage -> 192 KB at 3 (+<=32 KB epilogue scratch still under the limit); (256,64,BK64,8 warps) 48 KB/stage -> 144 KB. fp32 acc is 64 regs/thread in every case. All plausible; any that is not is caught at launch.
+- Correctness: kernel body unchanged; rows masked by m_mask on load and atomic; tails (m=65, 129, 130, 200) covered by the self-check; no OOB indexing for any grid, so no device-fault path was found.
+- Rules: kernel_fn adds only a constant-dict lookup plus shape branching; torch.zeros stays as in master; selector, flush buffer, graphs and profiler are prepare()-only and synthetic-x only; no precision change. Lint OK (prepare-only warnings), py_compile OK.
+- Scope: matches the change paragraph plus the review's asks (explicit 33..64 = master, flag via _ab_flags, router m=256 A/B cell); the extra 4-stage candidate at bucket 128 is a declared deviation, cost seconds.
+
+Residual risk: an untested config could device-fault (not hang/raise) on first launch in prepare(), which no try can catch; masking analysis finds no such path.
