@@ -80,7 +80,7 @@ review: proceed
 status: running
 review_at: 2026-10-25T085139Z
 review_companions: null
-stage: claimed
+stage: implemented
 claimed_at: 2026-10-25T085139Z
 base_sha: de61d5aeb2cabe210254a89cbdd05b3f99ff7b1c
 base_blob: db8a3344398bca79ea5cafeb580f701c055fd475
@@ -89,6 +89,12 @@ worktree: .worktrees/muse_prefill_layer/experts-turn4-ssdq-s1b-dataptr-symbol-fi
 mode: null
 restack_of: null
 stale_base: null
+implemented_at: 2026-10-25T085911Z
+impl_commit: fc0079ab6bea5b4f00d78644e18f50a6b7e24f31
+submission_sha256: d1eb2de0a658ea2013fd039a536179107f33767d314d5febfc20a14200378fd7
+norm_sha256: 6a850da7eba761ade77dc5685cce0e9be6f48809426767fd726178f8a66c9ac5
+submission_blob: f2d91dd181aeb44de20d2eed62ab7e564f2b181f
+lint_warnings: 35
 ---
 
 # experts-turn4-ssdq-s1b-dataptr-symbol-fix
@@ -139,3 +145,53 @@ No companions. This is a kind: rewrite stage judged on the replaced kernels' own
 - Harvest: confirm the profile shows the ssdq kernel row at turn_4 and that Marlin is absent there. A PATH CHOSEN=ssdq line alone is not proof (moe s4 lesson).
 - SSDQ_BUDGET_S=170 s plus about 31 s of compile: does prepare() on current master (with the stack-tonight-five checks) leave room, or will the run go OFF for budget before it builds?
 
+
+## Implementation notes
+
+Base: worktree base de61d5ae equals master for submission.py (no stale_base, no merge needed). Applied the stage-1 patch (44ca9c2, hypotheses/done/neutral/experts-turn4-cuda-dequant-producer-ss-wgmma.patch) with `git apply` (clean), then:
+
+- data_ptr: all three templated calls in the C++ source (`data_ptr<int>`, `<float>`, `<long long>`) replaced by `reinterpret_cast<T*>(t.data_ptr())`; none remain.
+- Prepare source audit (`_ssdq_source_audit`, runs before the 30 s build): flags `data_ptr<`, `*data_ptr<` variants and templated `.size<> .stride<> .item<> .data<> .to<> .accessor<> .packed_accessor*<>` in both the cpp and cuda strings; OFF with the offending lines if any. (Review open question 1.)
+- setmaxnreg 232/160: not added; the patch already carries none (232+160 split needs 79,872 regs/SM > 65,536); all three warpgroups run at the 168-reg launch-bounds cap. (Review: spec error, review wins.)
+- Gate ratio: one constant, SSDQ_GATE_RATIO = 0.95 (spec value; review noted code 0.92 vs spec 0.95). The GATE line, the OFF line and the PATH CHOSEN lines print the constant; the hard-coded "0.92x" string is gone.
+- No pointer-equality/'live' gate: kernel_fn's only dispatch flag is state['ssdq_ok'] (unchanged from the patch). The per-launch TMA encode over the passed tensor is kept; no module/static device pointers.
+- Launch marker: the error tensor is now int32[3]: err[0] = error word (unchanged semantics), err[1+mode] = atomicAdd per CTA that starts real work (after the expert<0 early return). Canary and every self-check case print the marker and go OFF if w13 or w2 shows 0 CTAs. Harvest proof of a real launch: the 'canary launch marker' / 'self-check ... launch marker' log lines plus the ssdq kernel row in the profile. All `.item()` reads moved to err[0].
+- Per-phase times and budget: `[ssdq] phase <name>` after audit, build, canary, self-check, replay-check, counters, gate (each with total prepare seconds and remaining SSDQ_BUDGET_S=170); a line with prepare seconds used before ssdq setup; a `finally` block prints the per-phase summary and then the PATH CHOSEN lines per T class as the last lines of prepare() (the old trailing max_memory print moved before the ssdq setup). (Review open question 4: the budget check uses elapsed prepare time from t_prepare0; the printed remaining budget answers it at run time.)
+- Open questions 2 (bound tightness) and 3 (harvest must see ssdq kernel row, Marlin absent at turn_4): no code change; per-case rel-L2/bound lines are printed already; harvest checklist unchanged.
+- Not verifiable here (no GPU/nvcc): compile and run.
+
+## Rules check
+
+- [x] CUDA-graph capturable: kernel_fn path adds no host sync/print; the new marker atomicAdd is device-side; syncs/.item() only in prepare()
+- [x] Nothing derived from `data` cached across calls (scratch tensors are per-call or per-state)
+- [x] Weights: NVFP4 stays NVFP4 in global memory; dequant only in smem inside the kernel
+- [x] Activations BF16, fp32 accumulation
+- [x] Attention untouched: n/a
+- [x] No timing patches, harness frames/I/O/secrets, module edits, reference import, subprocess (in-process load_inline only; verified by grep of the diff)
+- [x] All work inside the timed call; no output caching or replay
+
+okc_lint: `OK with warnings: muse_prefill_layer/submission.py` (only host-sync warnings, all in prepare()); py_compile ok; __pycache__ removed.
+
+## Pre-flight audit
+
+Audited 2026-10-25 by an opus subagent, by reading the code and running a static emulation (no GPU on this node).
+
+**Verdict: dispatch-with-fixes.** Rules are OK.
+
+What was verified:
+- The C++ diff against stage 1 (44ca9c2) is minimal: the five templated `data_ptr<int|float|long long>` calls became `reinterpret_cast<T*>(t.data_ptr())`, plus the launch-marker atomicAdd. The `_ssdq_source_audit` regex was emulated on the generated cpp and cuda strings. It finds 0 offenders and no other templated member call of any kind.
+- Shapes outside 1024 < T <= 4096 run master exactly. The new branch is `tokens > SSDQ_MIN_TOKENS and state.get("ssdq_ok")`, nested inside the Marlin gate. Judge shapes that hit the new path are T = 1506, 3012 and 4096, and each is a self-check case.
+- The TMA map is encoded per launch from `a.data_ptr()` and passed as a `__grid_constant__` parameter. There is no pointer-equality gate. The only C++ static is the cached driver entry point, which is not a device pointer. err, prof and bank all live in state, so the judge's clone walk gives each copy its own (the stage-1 record shows `copies: 1` for this problem anyway).
+- kernel_fn's call graph has no sync, print, try/except or value-dependent branch. Allocations are sized by shape only. n_padded is read on the device. The encode rc is unused in the timed path.
+- `_align_parallel` fills the tail of block_experts with -1 and the tail of sorted_ids with the sentinel n, so the gather, GEMM and silu kernels only touch used blocks. Rows of c1 past n_padded are never read.
+- Kernel indexing checked by hand: the nibble order matches `_reorder_nibbles`; scale group = 4*half + q; the 128B swizzle is `chunk ^ (row & 7)` on 1024-aligned bases; the SW128 K-major descriptor uses SBO 1024 with a +32 B advance per k16; the wgmma operand numbering is right; the m64n256 accumulator-to-row/column epilogue map is right; full barrier = 129 arrivals, empty barrier = 8; the parity scheme is right. The dequant is exact: e2m1 * 2^-126 bf16 bits, times sf * 2^119, fma.rn.bf16x2 keeps subnormals, and the epilogue applies gs * 2^7.
+- All wgmma asm, and the whole kernel body, are under `__CUDA_ARCH_FEAT_SM90_ALL`; the `#else` branch sets error word 2. There is no setmaxnreg. mbarrier waits are bounded at 2^26 cycles and set error word 1.
+- Every failure lands in `except` or an OFF return, and the `finally` block prints the PATH CHOSEN lines last.
+- Budget: stage 1's prepare_s was 35.4 s including its 30.8 s build, so master needs about 5 s before ssdq starts. The ssdq setup should total well under 300 s.
+
+Fixes:
+- `_ssdq_replay_check` now reads the launch markers err[1] and err[2] after each two-state graph replay and fails the replay (word 99) if either is 0. Before this, only the canary and the self-check proved the kernels launched, and the replayed graphs were judged on output alone.
+
+Minor, not changed: the gate does not subtract an empty-graph baseline. That costs about 4 us on about 2000 us, which slightly favours Marlin, so it is conservative.
+
+Residual risk: the kernel has never run on hardware. The likeliest outcome is a canary or self-check OFF (descriptor, swizzle or barrier bug), which re-measures master at about 1.07. The gate's 0.95x bar may also keep it OFF. A device fault (as opposed to a timeout) would poison the context and fail the run.
