@@ -57,7 +57,7 @@ review: proceed
 status: running
 review_at: 2026-10-25T054724Z
 review_companions: null
-stage: claimed
+stage: implemented
 claimed_at: 2026-10-25T054724Z
 base_sha: 6f95ce71ba21682ba9cbb6d346abb2a93a862b2f
 base_blob: 76492911dfd6685139a2ffac06c1d27083ecdb0a
@@ -66,6 +66,12 @@ worktree: .worktrees/muse_attention_decode/sliding-decode-sk-window-route
 mode: null
 restack_of: null
 stale_base: null
+implemented_at: 2026-10-25T084628Z
+impl_commit: 376be02c8cf447e9c8f1f2f6a4301d52ea09aac6
+submission_sha256: e93aa862c1d039a34a3d08f82d3aa0a854f0fb864e50ead13a7cf3ccd4ce4be0
+norm_sha256: 4c56bd6e319def87714abd15800346199303250c4fddfee0921d78ae2377db89
+submission_blob: 1117ad04a8bbcd5ca4da54c883e209c1b6e6f278
+lint_warnings: 42
 ---
 
 # sliding-decode-sk-window-route
@@ -118,3 +124,50 @@ No companion. This is a rewrite stage with a per-band hard gate: each sliding de
 - BUILDER: at B=16 add a grid of 2R-4R (32-64 CTAs, 8-16 tiles each) so each request's merge is about 2-4 slots. s1's B=1 data showed that small merges won (p8 15.4 us vs 2xSM 19.5 us).
 - If B=17..32 routes, print its kernel time next to the cluster C=4 figure (18.0 us, off-master) so the restack picks one. If B=2..16 falls back, the next stage should fold pre-attention into the sk prologue (as full-decode-splitkv-s3-fused-preattn tried) rather than retune the grid.
 
+
+## Implementation notes
+
+Base: worktree base 6f95ce7 (s1 impl), master is ba17a47; no stale_base flag in the md, merge of master not done (master's P/submission.py was not touched by this build). Edits only in the worktree's `muse_attention_decode/submission.py` (+442/-18). Nothing could be run on this node (no GPU/torch): compile and gate numbers are unverified.
+
+Kernel (SK_PSEUDO source): `splitkv_attn_sk_kernel` gets a trailing template parameter `int TOK = 8`; `load_prefix_pseudo<TOK>`. TOK = 8 keeps the shift/mask spellings (`>> 3`, `& 7`, `B * 8` constants), so variants 4/5 are the same code as s1; the prepare prints their regs / local / smem / CTAs ("must equal s1's line"). New variants 6 = `<4, ticket, single, PSEUDO, TOK=1>` and 7 = `<4, ticket, two-level, PSEUDO, TOK=1>`: R = B rows, sp = cache_seqlens[b], lo = max(0, sp - 2048), page-table row b. Host side: tok = 1 for variant >= 6, ticket/group checks cover variant 7, `done[8]`, max variant 7. The PSEUDO=false instantiations are untouched.
+
+Python: `_ps_synthetic(..., L=8)` parameter (decode uses L=1). New block "Sliding DECODE": `_sd_gate` (config-only), `_sd_grid` (2R/3R/4R/8R/SM/2xSM, capped at 2xSM), `_sd_sk_launch`, `_sd_run` = `_ps_prepare_q` (PAIRED=False, ROPE on) + sk launch, `_sliding_decode_sk`, `_sd_validate`, `_sd_gate_band`, `_sd_replay_check`, `_sd_setup`. kernel_fn: sliding decode takes `_sliding_decode_sk` when `_sd_gate(cfg)`, else `_sliding_forward` (Triton) byte-identical. Tickets are the existing `_ps_ticket` / `_ps_gticket` self-resetting zero arrays (R <= 32 fits); no other module-level device state.
+
+Review items:
+- Empty-graph baseline: `_sd_interleaved` captures an empty graph (fallback: one-element kernel, printed), replays it round-robin with the others and every number is printed raw and net of it; the ratio uses net numbers (floor 0.5 us).
+- Pair as two nodes in ONE graph: each candidate is `_sd_run` (pre-attn + sk) captured as a single graph, timed interleaved (start rotated per rep, cold L2 via a 256 MB read, median of 21) against `_sliding_forward` (Triton) in its own graph.
+- 2R-4R at B=16: specs p2, p3, p4, p8, sm, 2sm x single/two-level (B=16: grids 32, 48, 64, 128, 132, 264); same at B=1 and B=32.
+- B=17..32: the best variant's sk kernel alone, pre-attention alone, pair and Triton are re-timed in a second interleaved pass and the sk row is printed next to the cluster C=4 figure (18.0 us).
+- TOK=8 byte-identical: see Kernel above; attrs printed for 4/5 and 6/7.
+- Route is an import-time constant: `_SD_ROUTE` is filled once by `_sd_setup` at import and replaced by a `MappingProxyType` before kernel_fn runs; kernel_fn only reads it.
+- Tickets back to 0: asserted after the self-check and after the replay checks (sum of both arrays must be 0, else every band drops to Triton).
+- lens-1 case kept: the canary is B=1 lens 1 (cache_seqlens 2), plus lens 0, 63, 2047, 2048, 2049, 80000, ragged B=16/32 (with 1, 63, 2047, 2048, 2049, 0 entries), kv 0.25.
+- Two-state replay check (`_sd_replay_check`): kernel_fn captured on state A and state B, 4 rounds alternating A, B with in-place refill of each state (other seq lens, fresh K/V/routing) and NaN-poisoned output before each replay; reference from each state's own cache after the replay.
+- Deviation: B=1 is timed and printed for the record but never routed (expected row says flat); the 1.05x gate applies to bands 2..16 (gated at B=16) and 17..32 (gated at B=32). Bound for correctness is rel L2 < 2e-2 as in s1's checks (vs fp32 windowed reference).
+- Expected timing caveat from the review: B=16 is near the gate; the review's fold-pre-attention-into-prologue next step applies if B=2..16 falls back.
+
+## Rules check
+
+- [x] CUDA-graph capturable: kernel_fn (decode route = `_pre_attention_kernel` + one `sk_attn` launch, torch.empty workspaces by shape/config only); no .item()/sync/prints in kernel_fn, no try/except; syncs are only in prepare-time self-check/gate code (lint: host-sync warnings only outside kernel_fn).
+- [x] Nothing derived from `data` is cached across calls: tickets are zero-after-launch arrays, `_inv_freq` is the existing theta-keyed constant, `_SD_ROUTE` is config-decided at import; no device pointers, TMA maps or state-sized buffers in globals.
+- [x] n/a: weights (no weights in this problem).
+- [x] Activations BF16 where SGLang keeps BF16; KV cache FP8; queries e4m3 from the pre-attention kernel, fp32 softmax/merges, bf16 out.
+- [x] Attention sees every key: each request's whole [max(0, sp - 2048), sp) window incl. the new row; no skipping.
+- [x] No timing patches, harness frames/I/O/secrets, module edits, reference import, child processes or network (no subprocess/fork anywhere; one docstring reworded to pass the lint's network word check).
+- [x] All work inside the timed call; no output caching or replay.
+- [x] sm_90a: the module still builds with TORCH_CUDA_ARCH_LIST=9.0a restored after, arch flags printed; no new wgmma/sm_90a-only PTX added (unchanged cp.async/mma.sync kernel); bounded waits: no mbarrier/spin added; the ticket merge has no spin.
+
+okc_lint: `OK with warnings: muse_attention_decode/submission.py` (only host-sync warnings in prepare()-side code, outside kernel_fn); `python3 -I -m py_compile` ok; __pycache__ removed.
+
+## Pre-flight audit
+
+Audited 2026-10-25 by an opus subagent, by reading only (no GPU on this node). **Verdict: dispatch.** No fixes were needed and the worktree was not edited.
+
+- Gates: `_sd_gate` is config-only (window 2048, q_len 1, page 1, tp8, 2 <= B <= 32, band in the frozen `_SD_ROUTE`). The band-2 gate runs at B=16 x 80000, the same shape as the scored rows. The correctness bound (rel L2 < 2e-2) leaves about 10x headroom over the 1.6e-3 that s1 measured on the same kernel body. The 1.05x gate compares net times, with the empty graph subtracted from both sides, so nothing in it makes it impossible to pass. The judged test `B=4 ctx 6000 sliding page 1 dist edges` runs the route whenever band 2 is routed.
+- Fallbacks: `_sd_validate`, each `_sd_gate_band`, each `_sd_replay_check` and the whole `_sd_setup` are wrapped. Any miss drops that band, or every band, to master Triton and prints a PATH CHOSEN line. `_SD_ROUTE` is then frozen, or set to `MappingProxyType({})` if setup raises. If the PSEUDO build fails, `_PS_BUILT` stays False and sliding decode stays on Triton.
+- Correctness: with TOK=1, R = B, sp = cache_seqlens[b] and lo = max(0, sp - 2048), which is [p - 2047, p] inclusive. That attends every key of the window and matches both `_ps_reference` and TASK. The page-table, query, qkv and out rows are all b. Workspace is grid + B and group slots are B*32. Ticket and gticket capacity (256 and 256*32) is at least R*32, grid is at most 264 (the limit is 1024) and ngrp is at most 32. TOK=8 constant-folds to s1's exact expressions (`>> 3`, `& 7`, `B * 8`). The PSEUDO=false variants are untouched.
+- Rules: kernel_fn's new branch is dict lookups plus `_pre_attention_kernel` and one `sk_attn` launch. Its allocations depend only on shape, config and SM count. It has no sync, print or try/except. The only module or static state is the existing self-resetting ticket arrays, the `_SMS` hardware-count cache and the route tuples. The C++ `done[8]` array holds flags only. FP8 KV, e4m3 queries, fp32 softmax and merges, and bf16 output are kept. The two-state replay check captures kernel_fn once per state, then alternates the states over 4 rounds, refilling each state and NaN-poisoning its output before every replay. okc_lint returns OK with warnings, all host-sync warnings on the prepare side. py_compile passes and __pycache__ was removed.
+- Budget: s1's run took 380 s end to end. This change adds two template instantiations to one TU (about +20-40 s of nvcc) and a few seconds of gate and replay checks, so it stays well inside 15 min.
+- Scope: the diff matches the change paragraph. The 2R/3R grids come from the review, and B=1 is timed and printed but never routed, as the expected rows say.
+
+Residual risk: the CUDA has not been compiled. A compile error falls back to the landed-only build and leaves sliding verify and sliding decode on master. B=16 is likely to land near the 1.05x gate and stay on Triton.
