@@ -47,7 +47,7 @@ review: proceed
 status: running
 review_at: 2026-10-25T042254Z
 review_companions: null
-stage: implemented
+stage: dispatched
 claimed_at: 2026-10-25T042254Z
 base_sha: b2ff4b18564626ccd3f3e253cc2c61aae1c11131
 base_blob: 970b415b746fa03cb92e419d270be92588273178
@@ -64,6 +64,8 @@ submission_blob: 6673ca42335cc9b45278bfec6b4517757676f72f
 lint_warnings: 0
 attempt_file: 2026-10-25T042357Z-check-restack-pooler-unpooler-nn-layout-m128.md
 prepared_at: 2026-10-25T042357Z
+job: 92cd4e758a924ca0
+dispatched_at: 2026-10-25T042406Z
 ---
 
 # restack-pooler-unpooler-nn-layout-m128
