@@ -1,0 +1,142 @@
+keys: fused kernel returned
+[sk4] canary B=1 5 keys: k_cache new row: 0/128 bytes differ from master's, rel L2 0.00e+00, finite True, other rows unchanged True
+[sk4] canary B=1 5 keys: v_cache new row: 0/128 bytes differ from master's, rel L2 0.00e+00, finite True, other rows unchanged True
+[sk4] canary B=1 5 keys: out vs fp32 ref 1.67e-03, vs two-level 0.00e+00, finite True -> ok
+[sk4] B=1 80000 keys grid SM: launching _pre_attention_kernel (master reference, cloned caches)
+[sk4] B=1 80000 keys grid SM: launching splitkv_attn_sk_kernel<4 stages, two-level ticket> (reference) grid 132
+[sk4] B=1 80000 keys grid SM: launching splitkv_attn_sk_kernel<4 stages, two-level ticket, fused pre-attention> grid 132
+[sk4] B=1 80000 keys grid SM: fused kernel returned
+[sk4] B=1 80000 keys grid SM: k_cache new row: 0/128 bytes differ from master's, rel L2 0.00e+00, finite True, other rows unchanged True
+[sk4] B=1 80000 keys grid SM: v_cache new row: 0/128 bytes differ from master's, rel L2 0.00e+00, finite True, other rows unchanged True
+[sk4] B=1 80000 keys grid SM: out vs fp32 ref 1.70e-03, vs two-level 0.00e+00, finite True -> ok
+[sk4] B=1 80000 keys kv 0.25 grid SM: launching _pre_attention_kernel (master reference, cloned caches)
+[sk4] B=1 80000 keys kv 0.25 grid SM: launching splitkv_attn_sk_kernel<4 stages, two-level ticket> (reference) grid 132
+[sk4] B=1 80000 keys kv 0.25 grid SM: launching splitkv_attn_sk_kernel<4 stages, two-level ticket, fused pre-attention> grid 132
+[sk4] B=1 80000 keys kv 0.25 grid SM: fused kernel returned
+[sk4] B=1 80000 keys kv 0.25 grid SM: k_cache new row: 0/128 bytes differ from master's, rel L2 0.00e+00, finite True, other rows unchanged True
+[sk4] B=1 80000 keys kv 0.25 grid SM: v_cache new row: 0/128 bytes differ from master's, rel L2 0.00e+00, finite True, other rows unchanged True
+[sk4] B=1 80000 keys kv 0.25 grid SM: out vs fp32 ref 1.69e-03, vs two-level 0.00e+00, finite True -> ok
+[sk4] B=1 80000 keys grid 7: launching _pre_attention_kernel (master reference, cloned caches)
+[sk4] B=1 80000 keys grid 7: launching splitkv_attn_sk_kernel<4 stages, two-level ticket> (reference) grid 7
+[sk4] B=1 80000 keys grid 7: launching splitkv_attn_sk_kernel<4 stages, two-level ticket, fused pre-attention> grid 7
+[sk4] B=1 80000 keys grid 7: fused kernel returned
+[sk4] B=1 80000 keys grid 7: k_cache new row: 0/128 bytes differ from master's, rel L2 0.00e+00, finite True, other rows unchanged True
+[sk4] B=1 80000 keys grid 7: v_cache new row: 0/128 bytes differ from master's, rel L2 0.00e+00, finite True, other rows unchanged True
+[sk4] B=1 80000 keys grid 7: out vs fp32 ref 1.71e-03, vs two-level 0.00e+00, finite True -> ok
+[sk4] B=1 80000 keys kv 0.25 grid 3: launching _pre_attention_kernel (master reference, cloned caches)
+[sk4] B=1 80000 keys kv 0.25 grid 3: launching splitkv_attn_sk_kernel<4 stages, two-level ticket> (reference) grid 3
+[sk4] B=1 80000 keys kv 0.25 grid 3: launching splitkv_attn_sk_kernel<4 stages, two-level ticket, fused pre-attention> grid 3
+[sk4] B=1 80000 keys kv 0.25 grid 3: fused kernel returned
+[sk4] B=1 80000 keys kv 0.25 grid 3: k_cache new row: 0/128 bytes differ from master's, rel L2 0.00e+00, finite True, other rows unchanged True
+[sk4] B=1 80000 keys kv 0.25 grid 3: v_cache new row: 0/128 bytes differ from master's, rel L2 0.00e+00, finite True, other rows unchanged True
+[sk4] B=1 80000 keys kv 0.25 grid 3: out vs fp32 ref 1.75e-03, vs two-level 0.00e+00, finite True -> ok
+[sk4] B=1 4097 keys grid SM: launching _pre_attention_kernel (master reference, cloned caches)
+[sk4] B=1 4097 keys grid SM: launching splitkv_attn_sk_kernel<4 stages, two-level ticket> (reference) grid 132
+[sk4] B=1 4097 keys grid SM: launching splitkv_attn_sk_kernel<4 stages, two-level ticket, fused pre-attention> grid 132
+[sk4] B=1 4097 keys grid SM: fused kernel returned
+[sk4] B=1 4097 keys grid SM: k_cache new row: 0/128 bytes differ from master's, rel L2 0.00e+00, finite True, other rows unchanged True
+[sk4] B=1 4097 keys grid SM: v_cache new row: 0/128 bytes differ from master's, rel L2 0.00e+00, finite True, other rows unchanged True
+[sk4] B=1 4097 keys grid SM: out vs fp32 ref 1.65e-03, vs two-level 0.00e+00, finite True -> ok
+[sk4] B=1 4097 keys kv 0.25 grid 7: launching _pre_attention_kernel (master reference, cloned caches)
+[sk4] B=1 4097 keys kv 0.25 grid 7: launching splitkv_attn_sk_kernel<4 stages, two-level ticket> (reference) grid 7
+[sk4] B=1 4097 keys kv 0.25 grid 7: launching splitkv_attn_sk_kernel<4 stages, two-level ticket, fused pre-attention> grid 7
+[sk4] B=1 4097 keys kv 0.25 grid 7: fused kernel returned
+[sk4] B=1 4097 keys kv 0.25 grid 7: k_cache new row: 0/128 bytes differ from master's, rel L2 0.00e+00, finite True, other rows unchanged True
+[sk4] B=1 4097 keys kv 0.25 grid 7: v_cache new row: 0/128 bytes differ from master's, rel L2 0.00e+00, finite True, other rows unchanged True
+[sk4] B=1 4097 keys kv 0.25 grid 7: out vs fp32 ref 1.56e-03, vs two-level 0.00e+00, finite True -> ok
+[sk4] B=1 64 keys grid SM: launching _pre_attention_kernel (master reference, cloned caches)
+[sk4] B=1 64 keys grid SM: launching splitkv_attn_sk_kernel<4 stages, two-level ticket> (reference) grid 132
+[sk4] B=1 64 keys grid SM: launching splitkv_attn_sk_kernel<4 stages, two-level ticket, fused pre-attention> grid 132
+[sk4] B=1 64 keys grid SM: fused kernel returned
+[sk4] B=1 64 keys grid SM: k_cache new row: 0/128 bytes differ from master's, rel L2 0.00e+00, finite True, other rows unchanged True
+[sk4] B=1 64 keys grid SM: v_cache new row: 0/128 bytes differ from master's, rel L2 0.00e+00, finite True, other rows unchanged True
+[sk4] B=1 64 keys grid SM: out vs fp32 ref 1.63e-03, vs two-level 0.00e+00, finite True -> ok
+[sk4] B=1 63 keys kv 0.25 grid 3: launching _pre_attention_kernel (master reference, cloned caches)
+[sk4] B=1 63 keys kv 0.25 grid 3: launching splitkv_attn_sk_kernel<4 stages, two-level ticket> (reference) grid 3
+[sk4] B=1 63 keys kv 0.25 grid 3: launching splitkv_attn_sk_kernel<4 stages, two-level ticket, fused pre-attention> grid 3
+[sk4] B=1 63 keys kv 0.25 grid 3: fused kernel returned
+[sk4] B=1 63 keys kv 0.25 grid 3: k_cache new row: 0/128 bytes differ from master's, rel L2 0.00e+00, finite True, other rows unchanged True
+[sk4] B=1 63 keys kv 0.25 grid 3: v_cache new row: 0/128 bytes differ from master's, rel L2 0.00e+00, finite True, other rows unchanged True
+[sk4] B=1 63 keys kv 0.25 grid 3: out vs fp32 ref 1.62e-03, vs two-level 0.00e+00, finite True -> ok
+[sk4] B=1 1 key grid SM: launching _pre_attention_kernel (master reference, cloned caches)
+[sk4] B=1 1 key grid SM: launching splitkv_attn_sk_kernel<4 stages, two-level ticket> (reference) grid 132
+[sk4] B=1 1 key grid SM: launching splitkv_attn_sk_kernel<4 stages, two-level ticket, fused pre-attention> grid 132
+[sk4] B=1 1 key grid SM: fused kernel returned
+[sk4] B=1 1 key grid SM: k_cache new row: 0/128 bytes differ from master's, rel L2 0.00e+00, finite True, other rows unchanged True
+[sk4] B=1 1 key grid SM: v_cache new row: 0/128 bytes differ from master's, rel L2 0.00e+00, finite True, other rows unchanged True
+[sk4] B=1 1 key grid SM: out vs fp32 ref 1.59e-03, vs two-level 0.00e+00, finite True -> ok
+[sk4] B=1 1 key kv 0.25 grid 3: launching _pre_attention_kernel (master reference, cloned caches)
+[sk4] B=1 1 key kv 0.25 grid 3: launching splitkv_attn_sk_kernel<4 stages, two-level ticket> (reference) grid 3
+[sk4] B=1 1 key kv 0.25 grid 3: launching splitkv_attn_sk_kernel<4 stages, two-level ticket, fused pre-attention> grid 3
+[sk4] B=1 1 key kv 0.25 grid 3: fused kernel returned
+[sk4] B=1 1 key kv 0.25 grid 3: k_cache new row: 0/128 bytes differ from master's, rel L2 0.00e+00, finite True, other rows unchanged True
+[sk4] B=1 1 key kv 0.25 grid 3: v_cache new row: 0/128 bytes differ from master's, rel L2 0.00e+00, finite True, other rows unchanged True
+[sk4] B=1 1 key kv 0.25 grid 3: out vs fp32 ref 1.62e-03, vs two-level 0.00e+00, finite True -> ok
+[sk4] replay state 0: eager warm-up of kernel_fn on a side stream
+[sk4] replay state 0: capturing kernel_fn
+[sk4] replay state 1: eager warm-up of kernel_fn on a side stream
+[sk4] replay state 1: capturing kernel_fn
+[sk4] replay 0: launching state 0's graph (splitkv_attn_sk_kernel<4 stages, two-level ticket, fused pre-attention>)
+[sk4] replay 0 state 0 (refilled): rel L2 1.67e-03, finite True -> ok
+[sk4] replay 1: launching state 1's graph (splitkv_attn_sk_kernel<4 stages, two-level ticket, fused pre-attention>)
+[sk4] replay 1 state 1 (refilled): rel L2 1.58e-03, finite True -> ok
+[sk4] replay 2: launching state 1's graph (splitkv_attn_sk_kernel<4 stages, two-level ticket, fused pre-attention>)
+[sk4] replay 2 state 1 (refilled): rel L2 1.58e-03, finite True -> ok
+[sk4] replay 3: launching state 0's graph (splitkv_attn_sk_kernel<4 stages, two-level ticket, fused pre-attention>)
+[sk4] replay 3 state 0 (refilled): rel L2 1.65e-03, finite True -> ok
+[sk4] replay 4: launching state 0's graph (splitkv_attn_sk_kernel<4 stages, two-level ticket, fused pre-attention>)
+[sk4] replay 4 state 0 (refilled): rel L2 1.59e-03, finite True -> ok
+[sk4] replay 5: launching state 1's graph (splitkv_attn_sk_kernel<4 stages, two-level ticket, fused pre-attention>)
+[sk4] replay 5 state 1 (refilled): rel L2 1.62e-03, finite True -> ok
+[sk4] tickets (both levels) after the self-check: sum 0
+[sk4] gate B=1 x 80000 keys, graph replay, cold L2, 41 interleaved reps: pre-attention + two-level 27.33 us, fused 26.08 us, empty graph 5.34 us (baseline subtracted: 21.98 vs 20.74 us)
+[sk4] gate passed: fused 20.74 us vs pre-attention + two-level 21.98 us = 1.060x >= 1.03x
+[sk] diag variant check B=16 ragged: launching _pre_attention_kernel
+[sk] diag variant check B=16 ragged: launching splitkv_attn_sk_kernel<4 stages, no ticket> grid 264
+[sk] diag variant check B=16 ragged: splitkv_attn_sk_kernel returned
+[sk] diag variant check B=16 ragged: launching splitkv_sk_combine_kernel
+[sk] diag variant check B=16 ragged: splitkv_sk_combine_kernel returned
+[sk] diag variant check B=16 ragged: rel L2 1.66e-03, finite True -> ok
+[sk] diag variant check B=16 ragged: launching _pre_attention_kernel
+[sk] diag variant check B=16 ragged: launching splitkv_attn_sk_kernel<5 stages, ticket> grid 264
+[sk] diag variant check B=16 ragged: splitkv_attn_sk_kernel returned
+[sk] diag variant check B=16 ragged: rel L2 1.66e-03, finite True -> ok
+[sk-diag] B=16: launching _pre_attention_kernel
+[sk-diag] B=16: timing stage-1 A + B
+[sk-diag] B=16 x 80000: 328 MB of K+V rows, grid 264, eager, cold L2, median of 10
+[sk-diag]   stage-1 A splitkv_attn_kernel            117.4 us  2.79 TB/s
+[sk-diag]   stage-1 B splitkv_combine_kernel          12.1 us  -> A+B   129.5 us
+[sk-diag]   stream-K + ticket, 4 st (timed path)     112.6 us  2.91 TB/s  (vs stage-1 out rel 2.4e-04)
+[sk-diag] B=16: timing stream-K no ticket + combine
+[sk-diag]   stream-K no ticket, 4 st             106.8 us  3.07 TB/s  + combine 11.6 us -> 118.4 us  (rel 2.4e-04)
+[sk-diag] B=16: timing stream-K + ticket, 5 stages
+[sk-diag]   stream-K + ticket, 5 st              115.5 us  2.84 TB/s  (rel 2.4e-04)
+[sk-diag] B=16 ratios (>1 = first is slower): stage-1 A+B / v2 1.150x; split/locality: stage-1 A / stream-K no-ticket A 1.100x; ticket fold: (no-ticket A + combine) / ticket 1.052x; stages: 4 st / 5 st 0.975x
+[sk-diag] B=32: launching _pre_attention_kernel
+[sk-diag] B=32: timing stage-1 A + B
+[sk-diag] B=32 x 80000: 655 MB of K+V rows, grid 264, eager, cold L2, median of 10
+[sk-diag]   stage-1 A splitkv_attn_kernel            247.0 us  2.65 TB/s
+[sk-diag]   stage-1 B splitkv_combine_kernel          12.7 us  -> A+B   259.7 us
+[sk-diag]   stream-K + ticket, 4 st (timed path)     221.6 us  2.96 TB/s  (vs stage-1 out rel 1.9e-04)
+[sk-diag] B=32: timing stream-K no ticket + combine
+[sk-diag]   stream-K no ticket, 4 st             215.8 us  3.04 TB/s  + combine 11.8 us -> 227.6 us  (rel 1.9e-04)
+[sk-diag] B=32: timing stream-K + ticket, 5 stages
+[sk-diag]   stream-K + ticket, 5 st              221.9 us  2.95 TB/s  (rel 1.9e-04)
+[sk-diag] B=32 ratios (>1 = first is slower): stage-1 A+B / v2 1.172x; split/locality: stage-1 A / stream-K no-ticket A 1.145x; ticket fold: (no-ticket A + combine) / ticket 1.027x; stages: 4 st / 5 st 0.999x
+[sk3-diag] B=1: launching _pre_attention_kernel
+[sk3-diag] B=1 x 80000: 20 MB of K+V rows, eager, cold L2, median of 10
+[sk3-diag]   (a) single-level grid 2xSM (stage 2 as is)        53.9 us  0.38 TB/s  (rel L2 1.7e-03, finite True)
+[sk3-diag]   (b) single-level grid SM                          34.8 us  0.59 TB/s  (rel L2 1.7e-03, finite True)
+[sk3-diag]   (c) two-level grid SM (timed path)                23.2 us  0.88 TB/s  (rel L2 1.7e-03, finite True)
+[sk3-diag]   (d) two-level grid 2xSM                           24.3 us  0.84 TB/s  (rel L2 1.7e-03, finite True)
+[sk3-diag] fastest of the four: (c) two-level grid SM (timed path); timed path (c) is 23.2 us, (a) control 53.9 us, (c)/(a) 0.431x
+[sk3-diag] B=1: timing master FA3 (main + combine) and norm-gate
+[sk3-diag]   master FA3 main+combine    32.9 us + norm-gate 5.2 us = 38.0 us (pre-attention kernel excluded from both sides)
+[sk3-diag] B=16: launching _pre_attention_kernel
+[sk3-diag] B=16 x 80000: 328 MB of K+V rows, eager, cold L2, median of 10
+[sk3-diag]   two-level grid 2xSM at B=16 (diagnostic)         114.3 us  2.87 TB/s  (rel L2 1.6e-03, finite True)
+[sk3-diag]   single-level grid 2xSM at B=16 (stage 2)         106.0 us  3.09 TB/s  (rel L2 1.6e-03, finite True)
+[sk4-diag] B=1 x 80000: timing _pre_attention_kernel, <4,true,true>, fused (eager, cold L2, median of 10)
+[sk4-diag] eager per-kernel: _pre_attention_kernel 6.37 us, splitkv_attn_sk_kernel<4,true,true> 25.02 us, fused 26.34 us; fused - two-level (in-kernel q + new-row build) +1.31 us; saved vs pre + two-level +5.06 us
+PATH CHOSEN: full decode_1 streamk two-level, pre-attention fused into the kernel (one launch)
+PATH CHOSEN: every other shape (sliding, verify, page 64, dp): master path, unchanged

@@ -52,10 +52,10 @@ controls_for: null
 rewrite_stage: 4
 replaces: "full decode batch 1: _pre_attention_kernel launch + master splitkv_attn_sk_kernel<4, two-level ticket>"
 review: proceed
-status: running
+status: done
 review_at: 2026-10-25T054716Z
 review_companions: null
-stage: dispatched
+stage: harvested
 claimed_at: 2026-10-25T054717Z
 base_sha: dbb845684aa94ad1867281815e42f53464870f19
 base_blob: 50274a3d8678d5656197b8e401ca411d4f08a6e2
@@ -74,6 +74,13 @@ attempt_file: 2026-10-25T084648Z-check-full-decode1-sk-two-level-fused-preattn.m
 prepared_at: 2026-10-25T084648Z
 job: 2038a530edd04309
 dispatched_at: 2026-10-25T084656Z
+outcome: neutral
+verdict_detail: within-ci
+speedup: 1.4410831181175277
+speedup_ci: [1.4194668713457648, 1.4626993648892905]
+harvested_at: 2026-10-25T091104Z
+best_at_harvest: 1.444132502888963
+promotion: null
 ---
 
 # full-decode1-sk-two-level-fused-preattn
@@ -187,3 +194,36 @@ Audited 2026-10-25 (opus), against `master:muse_attention_decode/submission.py`.
 - **Call sites and q layout.** Every sk_attn call site was updated for the new cache_loc argument. The q fragment's column and byte mapping matches master's `qr` read.
 
 Residual risk: nobody has compiled the CUDA yet, since this node has no nvcc. A compile error in the shared `_SK_CUDA` TU would also drop B>1 from v2 to v1. The run would print that loudly, but it would look like a regression. Beyond that, the gate may simply not reach 1.03x.
+
+## Result
+
+- job `2038a530edd04309` (check), status done, passed True, tests 16/16
+- speedup 1.4411x, 95% CI [1.4195, 1.4627], score 2613.5203116666025 µs vs SGLang 3766.3 µs
+- best at harvest: {"speedup": 1.444132502888963, "ci": [1.4224705153456287, 1.4657944904322975], "job": "341623fa53d94cef"}; base result: muse_attention_decode/hypotheses/done/neutral/full-decode-splitkv-s3-fused-preattn.result.json
+- **outcome: neutral** (within-ci)
+- files: `muse_attention_decode/hypotheses/done/neutral/full-decode1-sk-two-level-fused-preattn.result.json`, `muse_attention_decode/hypotheses/done/neutral/full-decode1-sk-two-level-fused-preattn.patch`; branch `hyp/muse_attention_decode/full-decode1-sk-two-level-fused-preattn`
+
+## Attribution
+
+| shape | w | base µs | hyp µs | delta | verdict |
+|---|---|---|---|---|---|
+| batch=1 ctx=80000 dist=soft heads=tp8 layer=sliding load=decode_1 page=1 | 46 | 13.49 | 12.99 | 0.9983 | flat |
+| batch=1 ctx=80000 dist=coherent heads=tp8 layer=full load=decode_1 page=1 | 16 | 27.59 | 21.6 | 1.2828 | gained |
+| batch=16 ctx=80000 dist=soft heads=tp8 layer=sliding load=decode_16 page=1 spread=agentic | 46 | 15.67 | 15.43 | 1.0053 | flat |
+| batch=16 ctx=80000 dist=coherent heads=tp8 layer=full load=decode_16 page=1 spread=agentic | 16 | 109.55 | 110.8 | 0.9844 | flat |
+| batch=32 ctx=80000 dist=soft heads=tp8 layer=sliding load=decode_32 page=1 spread=agentic | 46 | 24.4 | 24.41 | 0.9911 | flat |
+| batch=32 ctx=80000 dist=coherent heads=tp8 layer=full load=decode_32 page=1 spread=agentic | 16 | 223.11 | 227.6 | 0.9731 | flat |
+| batch=1 ctx=80000 dist=soft heads=tp8 layer=sliding load=verify_1 page=1 q_len=8 | 46 | 17.35 | 16.89 | 0.9979 | flat |
+| batch=1 ctx=80000 dist=coherent heads=tp8 layer=full load=verify_1 page=1 q_len=8 | 16 | 30.04 | 29.89 | 1.006 | flat |
+| batch=16 ctx=80000 dist=soft heads=tp8 layer=sliding load=verify_16 page=1 q_len=8 spread=agentic | 46 | 23.23 | 22.7 | 1.0095 | flat |
+| batch=16 ctx=80000 dist=coherent heads=tp8 layer=full load=verify_16 page=1 q_len=8 spread=agentic | 16 | 163.39 | 163.01 | 0.9926 | flat |
+| batch=32 ctx=80000 dist=soft heads=tp8 layer=sliding load=verify_32 page=1 q_len=8 spread=agentic | 46 | 29.6 | 28.93 | 1.0063 | flat |
+| batch=32 ctx=80000 dist=coherent heads=tp8 layer=full load=verify_32 page=1 q_len=8 spread=agentic | 16 | 300.35 | 301.53 | 0.9904 | flat |
+
+gained on full decode_1. Expected hit: 3/3. Noise ±1.5%.
+
+## Follow-ups
+
+- rewrite stage 4 of `full decode batch 1: _pre_attention_kernel launch + master splitkv_attn_sk_kernel<4, two-level ticket>`: read the replaced kernels' own us per shape (profile top_kernels) against the incumbent and the floor, and check which Milestone it reached. The next stage is `/hypothesize muse_attention_decode "<what to fix or tune>" --kind rewrite --depends-on full-decode1-sk-two-level-fused-preattn --stage 5`; a slow or failed first cut is the expected start, not a do-not-retry.
+- within-ci: the change is not proven either way; a stacked hypothesis (`depends_on: full-decode1-sk-two-level-fused-preattn`) that adds a further change in the same area is the only way to learn more (identical code is never re-run).
+
