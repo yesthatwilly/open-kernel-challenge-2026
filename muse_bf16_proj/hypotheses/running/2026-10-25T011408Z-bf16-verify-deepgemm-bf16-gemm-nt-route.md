@@ -67,9 +67,18 @@ priority: 2
 kind: primary
 controls_for: null
 review: proceed
-status: queued
+status: running
 review_at: 2026-10-25T011846Z
 review_companions: null
+stage: claimed
+claimed_at: 2026-10-25T011846Z
+base_sha: 9bb477f684086cd51b09c1e8a08fa8d50ae04e59
+base_blob: a8bb42ac483318e9fbc84bc7826a27b7a704d1fb
+branch: hyp/muse_bf16_proj/bf16-verify-deepgemm-bf16-gemm-nt-route
+worktree: .worktrees/muse_bf16_proj/bf16-verify-deepgemm-bf16-gemm-nt-route
+mode: null
+restack_of: null
+stale_base: null
 ---
 
 # bf16-verify-deepgemm-bf16-gemm-nt-route
