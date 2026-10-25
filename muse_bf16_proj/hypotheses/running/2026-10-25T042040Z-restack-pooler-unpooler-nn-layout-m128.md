@@ -53,7 +53,7 @@ base_sha: b2ff4b18564626ccd3f3e253cc2c61aae1c11131
 base_blob: 970b415b746fa03cb92e419d270be92588273178
 branch: hyp/muse_bf16_proj/restack-pooler-unpooler-nn-layout-m128
 worktree: .worktrees/muse_bf16_proj/restack-pooler-unpooler-nn-layout-m128
-mode: null
+mode: check
 restack_of: null
 stale_base: null
 implemented_at: 2026-10-25T042357Z
@@ -62,6 +62,8 @@ submission_sha256: 523d7578425b8d68b02874a77b7581e5942cad2d9d929d86c4baf5ad4e1ce
 norm_sha256: 48f2a4da9fb5a2233adf1dec6912dd41f5aa3ea88d7e5918e86bcbb640d586d7
 submission_blob: 6673ca42335cc9b45278bfec6b4517757676f72f
 lint_warnings: 0
+attempt_file: 2026-10-25T042357Z-check-restack-pooler-unpooler-nn-layout-m128.md
+prepared_at: 2026-10-25T042357Z
 ---
 
 # restack-pooler-unpooler-nn-layout-m128
