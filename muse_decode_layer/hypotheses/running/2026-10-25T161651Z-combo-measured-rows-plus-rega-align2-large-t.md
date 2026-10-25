@@ -96,7 +96,7 @@ review: proceed
 status: running
 review_at: 2026-10-25T162247Z
 review_companions: null
-stage: claimed
+stage: implemented
 claimed_at: 2026-10-25T202838Z
 base_sha: 955dc77c0c4e24a2271f21aa7a6691e2fd1d3086
 base_blob: 3fc72e97304e132db432fcc87872be997f842929
@@ -105,6 +105,12 @@ worktree: .worktrees/muse_decode_layer/combo-measured-rows-plus-rega-align2-larg
 mode: submit
 restack_of: null
 stale_base: null
+implemented_at: 2026-10-25T204200Z
+impl_commit: d3f01b4424fbe4f3802c90c5b666132bd2c1ff1d
+submission_sha256: 71486a3937c60c91670a0c5a0ac9dc7876a21e7f8b22accde5a60f5c9d5faf18
+norm_sha256: 21a2a380cebb677a170e239831e033ec42f10e306595c2dc81fca5d56ea8125c
+submission_blob: fc88ac07e23933ce3f8951894577f1b70ec2b0ff
+lint_warnings: 96
 ---
 
 # combo-measured-rows-plus-rega-align2-large-t
@@ -161,3 +167,56 @@ No companion warranted. M1 is directly attributable: its PATH CHOSEN line gives 
 - Expected B256 win: compare against decode's own Marlin (409 / 443 us), not moe's 457. If the selector prints REGA only for the full-layer routing's local-route count, is the flag per class (shared by both layers) or per (class, layer)? The spec is per class, so one routing mix decides for both layers. Print the local-route counts that drove it.
 - If M2 is kept: will its selector enable align2 even when the side branch is fully hidden behind the pooler, adding a cell that changes nothing measurable? Prefer gating it on the FFN-front join timing.
 
+
+## Implementation notes
+
+Implemented on current master (ec89382b, which already carries combo-measured-rows-slide-batched-preattn-t8-tail, i.e. the whole "measured rows" half: S1, S2a/S2b, S3 with their per-class gates). Only the not-yet-on-master part was added: M1 (rega bucket gate) for 128 <= T <= 512. Diff:  1 file changed, 1413 insertions(+), 1 deletion(-); one existing line replaced (the `_experts` call in kernel_fn's T > 32 branch became an if/else).
+
+Reconciliations / deviations (all recorded):
+- S1/S2/S3: already on master; NOT re-ported. T <= 32 is exactly master.
+- M2 (align2) NOT ported. The adversarial review says drop it or make it testable (its ~1.5 us effect is below the per-shape CI and the join slack cannot be read from a residual), and its composition with rega was never validated anywhere. Rega is therefore pinned to master's `_align_parallel` (review confounder 1 resolved by construction).
+- Port source: moe commit 40e2e860c4 (s5), not moe's later master (no PDL variant): the CUDA TU, wg_gather, wg_kernel<true|false>, per-CALL tensor-map encode, wg_init, retile (_wg_bank), nvfp4 decode, routing helpers and the tensor-cloning walk are verbatim (module renamed muse_decode_layer_rega_v1, tag "[rega]"). Build flags kept as moe's proven set (-O3 -lineinfo + sm_90a gencode, TORCH_CUDA_ARCH_LIST=9.0a around load_inline, restored) rather than adding -std=c++20, to not perturb a TU that scored; built at import, never raises (None keeps Marlin), prints compile seconds.
+- Compiled module is held in the import-time global _WG_EXT (a handle, like master's _DL_EXT/_SK), NOT in the state, so a deepcopy/clone of the state cannot trip on a module object. Everything device-side (wg_xs, wg_hs, wg_err, wg_bank, wg_grid) is per state.
+- prepare(): `rg_clones = _rg_clone_weights(weights)` is the first use of the weights (right after t_prepare0). The retile runs from the clones inside _rega_prepare, which runs AFTER _combo_prepare (so after _dl3_finish), start deadline 200 s from t_prepare0, selector skipped past 240 s; the clones are freed after. It never raises; any miss leaves state["rega"] = {128: False, 256: False} and frees the bank/scratch.
+- kernel_fn: in the T > DL_MAX_TOKENS branch after main_stream.wait_stream(side_stream), `_rega_class(tokens)` (shape only: 128 for 128..255, 256 for 256..512, None otherwise) and `state["rega"][class]` pick `_experts_rega(xn, tw, local_ids, align, state)` (gather, w13+silu, w2 into cache3 at the route index, master's fused_post_expert_norm_weighted_sum) over master's `_experts`. No host sync, no print, no try/except, no input-sized allocation.
+- Hard guard added (not in the spec): M1 is skipped unless state["align_par_ok"], because wg_gemm TORCH_CHECKs block_experts.numel() <= 384 and the 256-expert moe_align_block_size fallback exceeds that for T > ~290 (a raise inside kernel_fn). With _align_parallel the cap is 286 blocks at T = 512. Also asserted in prepare: WG_BSM == MARLIN_BLOCK_SIZE_M_CAP == _block_size_m(T) for every T in 128..512, and expert weight shapes.
+- Review fix 2 (align equivalence): every canary case also runs rega on moe_align_block_size(local_ids, 16, 32) and requires rel-L2 <= 1e-3 against rega fed _align_parallel's align.
+- Review fix 3 (copy check): a raw deepcopy of decode's state is NOT attempted (it holds a cuda Stream, Modules). The copy check uses the rega-relevant keys only: state A (prepared), B (copy.deepcopy of those keys), C (recursive tensor-cloning walk after a 2 MB pad); per T in (128, 256, 257) one graph per state, replays A,B,C,A,B per routing (random, skewed-4hot, all-one-expert, mixed) with inputs refilled, each vs an fp32-dequant reference, bound max(2x Marlin's own error, 1e-2), plus the launch marker in each state's own wg_err. Exceptions are printed with their text and turn M1 off; C must exist.
+- M1 correctness check: canary at T = 128 forcing N 16/32/64/128 (one expert with 16/32/64/128 routes, bucket asserted from the align), poisoned scratch/cache3, first non-finite tensor named (xs / hs / cache3 / out), error word and launch marker read back, every launch announced before and synced+confirmed after.
+- M1 selector (decode's own flags, nothing inherited from moe): per class T = 128 and T = 256, master's whole expert block (dispatch + Marlin + act_and_mul + Marlin + post-norm) vs rega's (dispatch + gather + w13+silu + w2 + post-norm), cold-L2 graphs via master's _cb_time (256 MB flush, 41 interleaved reps, empty graph subtracted), on (a) judge-like routing (real router_hi/lo and bias through FusedMuseSparkRouting on synthetic randn inputs) and (b) zipf a = 0.3; enabled only if rega/Marlin <= 0.98 on BOTH. One flag per class (shared by both layers); the flag set is the printed winner. Prints "[rega] PATH CHOSEN B128|B256 = REGA|MARLIN [rega X / Y us vs marlin X / Y us on soft / skew, local routes N / N]" and "PATH CHOSEN: M1 <class>: ...".
+- Unverifiable here (no GPU): nothing was run. Biggest risks: the ~1400-line TU compile at import (+45-60 s; failure falls back silently to Marlin), and the selector keeping B256/B128 on Marlin (the review expects at most a small B256 gain and MARLIN at B128).
+
+## Rules check
+
+- [x] CUDA-graph capturable: git diff shows kernel_fn's new branch calls only _rega_class (shape) and _experts_rega (launches + torch.empty of shape routes x 4096, fused norm); .item()/.cpu()/synchronize appear only in prepare()-time helpers (_rg_case, _rg_copy_check, _rega_prepare), none reached from kernel_fn; the only added control flow reads config tokens and state["rega"] flags.
+- [x] Nothing derived from data cached across calls: the diff adds state keys wg_xs/wg_hs/wg_err/wg_grid/wg_bank/rega only; wg_xs/wg_hs are scratch rewritten every call, tensor maps are encoded per call into a stack-local grid constant.
+- [x] Weights: wg_bank is a lossless retile of the same NVFP4 bytes (_wg_tile_expert asserts exact round trip), global scales stay fp32 with the exact x128 dequant bias; dequant is in registers inside wg_kernel; the BF16 dense weights are untouched; only prepare() builds it.
+- [x] Activations BF16 (xs, hs, cache3 bf16 as SGLang's Marlin path); KV cache and q paths untouched by this diff.
+- [x] n/a: attention untouched (every key still attended; the diff touches only the expert block at T >= 128).
+- [x] No timing patches, harness frames/I-O/secrets, module edits, reference import, subprocesses or network: diff adds import copy / gc only; load_inline is the same mechanism master uses; no new subprocess/os.fork/threads.
+- [x] All work inside the timed call; no output caching or replay: rega runs gather + two GEMMs + norm per call from that call's inputs.
+- [x] Exact fallbacks: _WG_EXT None, align_par_ok False, clone failure, deadline, canary/copy/selector miss each leave state["rega"] False => master's _experts, launch for launch.
+- [x] Per-state buffers: no device pointer, tensor map or counter lives in a module global (audit by reading the diff: module globals added are constants, _WG_EXT handle and _RG_SELECT floats only).
+- [x] Interpreter checks: py_compile clean, ast undefined-name scan empty, __pycache__ removed.
+
+okc_lint output:
+```
+OK with warnings: .worktrees/muse_decode_layer/combo-measured-rows-plus-rega-align2-large-t/muse_decode_layer/submission.py
+```
+(plus ~110 prepare-only host-sync warnings, all pre-existing style or in new prepare()-only code, and 2 uint8 dtype warnings for the retile scratch: NVFP4 bytes, same as moe.)
+
+## Pre-flight audit
+
+Audited 2026-10-25 by an opus pre-flight auditor (by reading, no GPU). **Verdict: dispatch** (no fixes applied).
+
+- Import-time build: `_wg_build` catches every exception, and the module-level block has its own try/except, so a build failure leaves `_WG_EXT = None` and the module importable. `_rega_prepare` then prints `PATH CHOSEN ... MARLIN (fallback: module ... unavailable)` for both classes. The compile (~45-60 s) counts against the 15 min run limit only, not against prepare()'s 300 s. Moving it into prepare would eat that budget, so it stays at import, as master's modules do.
+- Fallbacks: every gate (deadline, clone, align_par_ok, ext, BSM assert, weight shapes, smem and attribute/register checks, bucket canary, align-equivalence, A/B/C copy check, selector) raises `_RgSkip` inside one try. Any miss sets both flags False, frees the bank and scratch, and prints the reason per class. prepare() wraps the phase in a second try.
+- Per-state: wg_xs, wg_hs, wg_err, wg_bank and wg_grid live in the state. The tensor maps are encoded per call into a stack-local `__grid_constant__`. The only module globals are the `_WG_EXT` handle, `g_encode_pfn` (a host driver entry point) and `_RG_SELECT`, which holds selector floats only.
+- M1 gate: it requires `align_par_ok`, and the kernel_fn branch is reachable only for 128 <= T <= 512. With `_align_parallel` at bsm 16 the cap is 286 blocks at T = 512, within MAXB 384 and WG_CAP_ROWS 8192.
+- CUDA TU: byte-identical to moe 40e2e860c4 (`_WG_CPP`, `_WG_SRC_HEAD` and `_WG_SRC_BODY` compared). It has sm_90a guards, error word 2, bounded mbarrier waits, plain bulk copies, `-lineinfo`, and prints its arch flags. There is no subprocess.
+- Shapes: decode's w13 [32, 8192, 2048] and w2 [32, 4096, 2048] match the retile's size checks (q13 18,874,368 B and q2 9,437,184 B per expert = tiles x k/64 x 4608). The sentinel n and the -1 tail of `_align_parallel` match what `wg_gather` and `wg_kernel` skip. The remote-route rows of cache3 are masked by `slot_expert_ids`, as in master's Marlin path.
+- kernel_fn: no sync, print or try. The branch depends only on config and this state's flags, and the only allocation is cache3, sized by shape.
+- Deviations accepted: M2 (align2) was dropped, which the review allowed. The build keeps moe's proven flags without `-std=c++20`.
+- Lint: okc_lint OK with warnings (uint8 retile/pad dtype notes, prepare-only syncs); py_compile clean; __pycache__ removed.
+
+Residual risk: a device fault (sticky illegal instruction) in the prepare canary would fail the whole run instead of falling back. The selector may keep both classes on Marlin, which would make this a neutral run.
