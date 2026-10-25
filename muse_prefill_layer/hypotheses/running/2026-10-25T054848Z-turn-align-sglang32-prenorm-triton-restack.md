@@ -41,9 +41,18 @@ priority: 4
 kind: primary
 controls_for: null
 review: proceed
-status: queued
+status: running
 review_at: 2026-10-25T085209Z
 review_companions: null
+stage: claimed
+claimed_at: 2026-10-25T085209Z
+base_sha: e6cf5ce8f79493b9904b7c6d74e6a6c25f14f820
+base_blob: db8a3344398bca79ea5cafeb580f701c055fd475
+branch: hyp/muse_prefill_layer/turn-align-sglang32-prenorm-triton-restack
+worktree: .worktrees/muse_prefill_layer/turn-align-sglang32-prenorm-triton-restack
+mode: null
+restack_of: null
+stale_base: null
 ---
 
 # turn-align-sglang32-prenorm-triton-restack
