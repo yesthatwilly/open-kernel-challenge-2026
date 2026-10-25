@@ -54,7 +54,7 @@ review: proceed
 status: running
 review_at: 2026-10-25T040253Z
 review_companions: null
-stage: implemented
+stage: dispatched
 claimed_at: 2026-10-25T040259Z
 base_sha: 8ba8624df9248fb986052e4a67ab8e9a96a9770d
 base_blob: d2ef0372de1f177e26ce1a1a4f578a993b4fa98c
@@ -71,6 +71,8 @@ submission_blob: 624198bade1b9eb179d6baa90e3125ca2378f3e7
 lint_warnings: 10
 attempt_file: 2026-10-25T040754Z-check-pooler-unpooler-bulk-tma-row-owner-s2-cxx20-rebuild.md
 prepared_at: 2026-10-25T040754Z
+job: 571ea532ad7a410d
+dispatched_at: 2026-10-25T040801Z
 ---
 
 # pooler-unpooler-bulk-tma-row-owner-s2-cxx20-rebuild
