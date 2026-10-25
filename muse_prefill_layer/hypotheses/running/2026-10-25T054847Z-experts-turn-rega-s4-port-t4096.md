@@ -90,7 +90,7 @@ base_sha: c6fe58c3ab272abce5f98a2a19f884600fd2f6a8
 base_blob: f2d91dd181aeb44de20d2eed62ab7e564f2b181f
 branch: hyp/muse_prefill_layer/experts-turn-rega-s4-port-t4096
 worktree: .worktrees/muse_prefill_layer/experts-turn-rega-s4-port-t4096
-mode: null
+mode: check
 restack_of: null
 stale_base: null
 implemented_at: 2026-10-25T112615Z
@@ -99,6 +99,8 @@ submission_sha256: ea5b5ea0bbea782ee143ec92ec2a43f74a9a277b43bb22bce908e0e8bc029
 norm_sha256: bde5993f4966b997dc84622f3b16b884aa893547377dfce8b01f04879e8ed5c1
 submission_blob: 712edc5ea5be2dde8f558a016d0877b285340ee4
 lint_warnings: 51
+attempt_file: 2026-10-25T112615Z-check-experts-turn-rega-s4-port-t4096.md
+prepared_at: 2026-10-25T112615Z
 ---
 
 # experts-turn-rega-s4-port-t4096
