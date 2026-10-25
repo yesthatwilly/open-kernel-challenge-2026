@@ -33,10 +33,13 @@ priority: 1
 kind: primary
 controls_for: null
 review: hold
-status: hold
+status: done
 review_at: 2026-10-25T150511Z
 review_companions: null
 hold_reason: "adversarial review: The premise is false: the parent's submission.py (blob 1774e42c, branch tip = impl fc959d9c) already contains master's align-parallel-per-expert-verify and w2-m"
+outcome: expired
+verdict_detail: "retired: stale hold closed per the 2026-10-25 moe diagnosis"
+expired_at: 2026-10-25T212024Z
 ---
 
 # restack-bucket-gate-on-master-align-atomic

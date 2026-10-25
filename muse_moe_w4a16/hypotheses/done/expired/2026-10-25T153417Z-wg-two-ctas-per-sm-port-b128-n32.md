@@ -60,10 +60,13 @@ priority: 2
 kind: primary
 controls_for: null
 review: hold
-status: hold
+status: done
 review_at: 2026-10-25T203112Z
 review_companions: null
 hold_reason: "adversarial review: Already measured at B128 and lost: combo-wg-occ2-v64-hot-interleave-align2 (job 31c27e4b8fc84bd2, current BEST) built the same two-CTAs-per-SM wgmma port and ti"
+outcome: expired
+verdict_detail: "retired: superseded per the 2026-10-25 moe diagnosis (do not run; replaced by the wg2-based line or measured dead)"
+expired_at: 2026-10-25T212024Z
 ---
 
 # wg-two-ctas-per-sm-port-b128-n32

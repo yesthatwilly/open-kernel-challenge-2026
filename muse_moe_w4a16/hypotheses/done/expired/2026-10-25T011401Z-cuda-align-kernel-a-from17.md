@@ -48,10 +48,13 @@ priority: 2
 kind: primary
 controls_for: null
 review: hold
-status: hold
+status: done
 review_at: 2026-10-25T011915Z
 review_companions: null
 hold_reason: "adversarial review: Hold. Kernel A's rows at bs=128/256 have already been measured three times, and a run cannot see a ~0.3% headline change. In the one new range (17..32), the com"
+outcome: expired
+verdict_detail: "retired: stale hold closed per the 2026-10-25 moe diagnosis"
+expired_at: 2026-10-25T212024Z
 ---
 
 # cuda-align-kernel-a-from17

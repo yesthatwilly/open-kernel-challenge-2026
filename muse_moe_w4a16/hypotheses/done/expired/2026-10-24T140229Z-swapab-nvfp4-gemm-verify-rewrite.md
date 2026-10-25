@@ -51,10 +51,13 @@ controls_for: null
 rewrite_stage: 1
 replaces: Marlin w13+w2 (moe_wna16_marlin_gemm x2) at num_tokens >= 128
 review: proceed
-status: hold
+status: done
 review_at: 2026-10-24T140647Z
 review_companions: null
 hold_reason: "reviewer: stage 1 likely 1.5-2x slower than Marlin on the replaced kernels (Marlin runs only 15-18% more blocks; prefill's Triton tile costs ~25 us vs Marlin's 11.6-16.7 us/block). Unhold after prefill's packed-asm dequant stage (experts-triton-nvfp4-packed-asm-dequant) harvests and fold that dequant in, with BLOCK_T=64 at bs=256"
+outcome: expired
+verdict_detail: "retired: superseded per the 2026-10-25 moe diagnosis (do not run; replaced by the wg2-based line or measured dead)"
+expired_at: 2026-10-25T212024Z
 ---
 
 # swapab-nvfp4-gemm-verify-rewrite

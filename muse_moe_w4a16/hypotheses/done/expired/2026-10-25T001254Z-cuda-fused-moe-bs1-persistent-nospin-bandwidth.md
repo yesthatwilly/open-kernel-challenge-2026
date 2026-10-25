@@ -51,10 +51,13 @@ controls_for: null
 rewrite_stage: 2
 replaces: _align_small + Marlin w13+w2 + act_and_mul + _post_norm_combine at num_tokens == 1
 review: hold
-status: hold
+status: done
 review_at: 2026-10-25T001616Z
 review_companions: null
 hold_reason: "adversarial review: The design is sound and stage 1's data supports a stage 2, but the change as written runs the self-check in a spawned child process, and muse_moe_w4a16/TASK.md "
+outcome: expired
+verdict_detail: "retired: stale hold closed per the 2026-10-25 moe diagnosis"
+expired_at: 2026-10-25T212024Z
 ---
 
 # cuda-fused-moe-bs1-persistent-nospin-bandwidth

@@ -66,10 +66,13 @@ controls_for: null
 rewrite_stage: 3
 replaces: Marlin w13+w2 (moe_wna16_marlin_gemm x2) + silu_and_mul at 8 <= num_tokens <= 32
 review: proceed
-status: hold
+status: done
 review_at: 2026-10-25T042602Z
 review_companions: null
 hold_reason: "Reviewer: proceed but wait for s3 wide-bucket-fix (3bdec0e58d684c17) harvest; rebuild on s3 commit + master 9080a71 with the variant s3 picks at N16/N32; cap32 is an assert at T<=32; use master _align_small block 16; then unhold."
+outcome: expired
+verdict_detail: "retired: stale hold closed per the 2026-10-25 moe diagnosis"
+expired_at: 2026-10-25T212024Z
 ---
 
 # cuda-nvfp4-wgmma-rega-midm-bucket-cap32

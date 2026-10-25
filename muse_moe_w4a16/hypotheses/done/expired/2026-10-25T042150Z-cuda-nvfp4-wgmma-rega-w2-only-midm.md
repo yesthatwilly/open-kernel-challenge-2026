@@ -58,10 +58,13 @@ controls_for: null
 rewrite_stage: 3
 replaces: Marlin w2 (second moe_wna16_marlin_gemm) at 8 <= num_tokens <= 32
 review: proceed
-status: hold
+status: done
 review_at: 2026-10-25T042602Z
 review_companions: null
 hold_reason: "Reviewer: proceed but dispatch only after s3 (3bdec0e58d684c17) is harvested; build on s3 commit + 9080a71; if A and B both fail use variant A at N16/N32; remote rows of y must be zero; pairs with cap32 as its control."
+outcome: expired
+verdict_detail: "retired: stale hold closed per the 2026-10-25 moe diagnosis"
+expired_at: 2026-10-25T212024Z
 ---
 
 # cuda-nvfp4-wgmma-rega-w2-only-midm

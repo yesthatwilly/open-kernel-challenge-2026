@@ -48,10 +48,13 @@ controls_for: null
 rewrite_stage: 1
 replaces: Marlin w13+w2 (moe_wna16_marlin_gemm x2) at bs<=32
 review: hold
-status: hold
+status: done
 review_at: 2026-10-25T001525Z
 review_companions: null
 hold_reason: "adversarial review: Hold. Change (1) moves the self-check into a multiprocessing spawn child. TASK.md and the technical rules statically reject any submission that starts processes"
+outcome: expired
+verdict_detail: "retired: stale hold closed per the 2026-10-25 moe diagnosis"
+expired_at: 2026-10-25T212024Z
 ---
 
 # cuda-nvfp4-swapab-mma-persistent-small-m-childcheck

@@ -60,10 +60,13 @@ priority: 3
 kind: primary
 controls_for: null
 review: hold
-status: hold
+status: done
 review_at: 2026-10-25T203429Z
 review_companions: null
 hold_reason: "adversarial review: Tail mechanism real but small; numbers copied from the wrong profile; the spec's own condition is an okc check first and only scored submits remain today; a mas"
+outcome: expired
+verdict_detail: "retired: superseded per the 2026-10-25 moe diagnosis (do not run; replaced by the wg2-based line or measured dead)"
+expired_at: 2026-10-25T212024Z
 ---
 
 # wg-stream-k-tail-split

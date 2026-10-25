@@ -71,10 +71,13 @@ priority: 2
 kind: primary
 controls_for: null
 review: proceed
-status: hold
+status: done
 review_at: 2026-10-25T150432Z
 review_companions: null
 hold_reason: "Weak for a scored run: prefill's Triton act_and_mul swap (silu-mul-triton-local-rows-marlin-turn, b2259479) ran ~2x slower on the judge; its only expected-faster shapes (128<=T<=512) are covered by the wgmma bucket-gate (fused silu) now on the board and being restacked onto master; the warm-L2 bare-kernel gate is noise-prone at ~2 us. Revisit on a check after the restack lands, with the review's gate/do_not_specialize fixes."
+outcome: expired
+verdict_detail: "retired: stale hold closed per the 2026-10-25 moe diagnosis"
+expired_at: 2026-10-25T212024Z
 ---
 
 # silu-mul-triton-row-tiled-gated

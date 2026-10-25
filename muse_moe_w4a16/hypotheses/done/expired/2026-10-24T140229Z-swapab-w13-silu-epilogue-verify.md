@@ -36,7 +36,10 @@ controls_for: null
 rewrite_stage: 2
 replaces: silu_and_mul (act_and_mul_kernel) and the cache1 round trip at num_tokens >= 128
 review: required
-status: queued
+status: done
+outcome: expired
+verdict_detail: "retired: superseded per the 2026-10-25 moe diagnosis (do not run; replaced by the wg2-based line or measured dead)"
+expired_at: 2026-10-25T212024Z
 ---
 
 # swapab-w13-silu-epilogue-verify

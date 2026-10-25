@@ -48,10 +48,13 @@ controls_for: null
 rewrite_stage: 2
 replaces: Marlin w13+w2 (moe_wna16_marlin_gemm x2) + silu_and_mul at 8 <= num_tokens <= 512
 review: hold
-status: hold
+status: done
 review_at: 2026-10-25T012041Z
 review_companions: null
 hold_reason: "adversarial review: Hold, and set depends_on to cuda-nvfp4-wgmma-rega-grouped-s2-finite-fix. It re-implements the same unfixed correctness work and also widens the gate into shapes"
+outcome: expired
+verdict_detail: "retired: stale hold closed per the 2026-10-25 moe diagnosis"
+expired_at: 2026-10-25T212024Z
 ---
 
 # cuda-nvfp4-wgmma-rega-s2-fix-gate-from-8

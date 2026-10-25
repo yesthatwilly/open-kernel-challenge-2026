@@ -41,10 +41,13 @@ priority: 3
 kind: primary
 controls_for: null
 review: hold
-status: hold
+status: done
 review_at: 2026-10-25T011915Z
 review_companions: null
 hold_reason: "adversarial review: Hold. This re-measures a kernel row already known from three runs (kernel B 3.5-3.8 us vs SGLang 4.9-5.9 us at bs=128) for about -1.2 us on one of six loads, ro"
+outcome: expired
+verdict_detail: "retired: stale hold closed per the 2026-10-25 moe diagnosis"
+expired_at: 2026-10-25T212024Z
 ---
 
 # cuda-combine-kernel-b-bs128-only

@@ -69,7 +69,10 @@ controls_for: null
 rewrite_stage: 6
 replaces: Marlin w13+silu+w2 (moe_wna16_marlin_gemm x2 + act_and_mul) at 128<=T<=512
 review: required
-status: queued
+status: done
+outcome: expired
+verdict_detail: "retired: superseded per the 2026-10-25 moe diagnosis (do not run; replaced by the wg2-based line or measured dead)"
+expired_at: 2026-10-25T212024Z
 ---
 
 # cuda-nvfp4-wgmma-rega-pingpong-consumers

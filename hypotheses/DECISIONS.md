@@ -326,3 +326,19 @@ overrides of a reviewer) with the reason, newest last. Written by `churn.py note
 - 2026-10-25T211947Z `muse_bf16_proj` **bf16-lossless-exp4-warpspec-persistent-stage3**: retired: on the bf16 DIAGNOSIS Do-not-try list (lossless-exp4 line dead: decode alone 1.74 TB/s, kill gate missed 2.1x)
 - 2026-10-25T211947Z `muse_bf16_proj` **unpooler-full-m16-swapab16-blockt16**: retired: on the bf16 DIAGNOSIS Do-not-try list (m<=32 weight streams settled)
 - 2026-10-25T211947Z `muse_bf16_proj` **combo-cublaslt-single-node-m128-m256-plus-naive**: retired: superseded by bf16-verify-per-cell-cublaslt-plan-selector (2026-10-25 mint)
+- 2026-10-25T212024Z `muse_moe_w4a16` **cuda-nvfp4-wgmma-rega-b256-n64-deep-ring**: retired: superseded per the 2026-10-25 moe diagnosis (do not run; replaced by the wg2-based line or measured dead)
+- 2026-10-25T212024Z `muse_moe_w4a16` **swapab-nvfp4-gemm-verify-rewrite**: retired: superseded per the 2026-10-25 moe diagnosis (do not run; replaced by the wg2-based line or measured dead)
+- 2026-10-25T212024Z `muse_moe_w4a16` **swapab-w13-silu-epilogue-verify**: retired: superseded per the 2026-10-25 moe diagnosis (do not run; replaced by the wg2-based line or measured dead)
+- 2026-10-25T212024Z `muse_moe_w4a16` **cuda-nvfp4-wgmma-rega-pingpong-consumers**: retired: superseded per the 2026-10-25 moe diagnosis (do not run; replaced by the wg2-based line or measured dead)
+- 2026-10-25T212024Z `muse_moe_w4a16` **wg-two-ctas-per-sm-port-b128-n32**: retired: superseded per the 2026-10-25 moe diagnosis (do not run; replaced by the wg2-based line or measured dead)
+- 2026-10-25T212024Z `muse_moe_w4a16` **wg-stream-k-tail-split**: retired: superseded per the 2026-10-25 moe diagnosis (do not run; replaced by the wg2-based line or measured dead)
+- 2026-10-25T212024Z `muse_moe_w4a16` **cuda-nvfp4-wgmma-rega-s2-fix-gate-from-8**: retired: stale hold closed per the 2026-10-25 moe diagnosis
+- 2026-10-25T212024Z `muse_moe_w4a16` **cuda-nvfp4-wgmma-rega-s2-per-kernel-enable**: retired: stale hold closed per the 2026-10-25 moe diagnosis
+- 2026-10-25T212024Z `muse_moe_w4a16` **cuda-nvfp4-wgmma-rega-midm-bucket-cap32**: retired: stale hold closed per the 2026-10-25 moe diagnosis
+- 2026-10-25T212024Z `muse_moe_w4a16` **cuda-nvfp4-wgmma-rega-w2-only-midm**: retired: stale hold closed per the 2026-10-25 moe diagnosis
+- 2026-10-25T212024Z `muse_moe_w4a16` **cuda-align-kernel-a-from17**: retired: stale hold closed per the 2026-10-25 moe diagnosis
+- 2026-10-25T212024Z `muse_moe_w4a16` **cuda-combine-kernel-b-bs128-only**: retired: stale hold closed per the 2026-10-25 moe diagnosis
+- 2026-10-25T212024Z `muse_moe_w4a16` **silu-mul-triton-row-tiled-gated**: retired: stale hold closed per the 2026-10-25 moe diagnosis
+- 2026-10-25T212024Z `muse_moe_w4a16` **restack-bucket-gate-on-master-align-atomic**: retired: stale hold closed per the 2026-10-25 moe diagnosis
+- 2026-10-25T212024Z `muse_moe_w4a16` **cuda-fused-moe-bs1-persistent-nospin-bandwidth**: retired: stale hold closed per the 2026-10-25 moe diagnosis
+- 2026-10-25T212024Z `muse_moe_w4a16` **cuda-nvfp4-swapab-mma-persistent-small-m-childcheck**: retired: stale hold closed per the 2026-10-25 moe diagnosis
