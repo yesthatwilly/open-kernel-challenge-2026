@@ -51,7 +51,7 @@ base_sha: 001ddce7af3678bd9f650680c4da3a693cea5170
 base_blob: 60dfe35d5417d9c0f89067ff313efdc2c41d03a2
 branch: hyp/muse_moe_w4a16/w13-marlin-atomic-add-on-master-small-m
 worktree: .worktrees/muse_moe_w4a16/w13-marlin-atomic-add-on-master-small-m
-mode: null
+mode: check
 restack_of: null
 stale_base: null
 implemented_at: 2026-10-25T043232Z
@@ -60,6 +60,8 @@ submission_sha256: dba4831298c15e97cf3482be3f7ad594d858704769341f7ed01d10a2985f4
 norm_sha256: 1e8f2379b57178ccc0a805301a252b44b53a86d314f514cd8eecb00631742124
 submission_blob: 4ee9fda80c96b0149edd61482cbab157c48d39d8
 lint_warnings: 23
+attempt_file: 2026-10-25T043232Z-check-w13-marlin-atomic-add-on-master-small-m.md
+prepared_at: 2026-10-25T043232Z
 ---
 
 # w13-marlin-atomic-add-on-master-small-m
