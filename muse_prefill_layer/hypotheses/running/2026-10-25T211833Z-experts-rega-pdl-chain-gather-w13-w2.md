@@ -43,9 +43,18 @@ kind: primary
 controls_for: null
 prior: none
 review: proceed
-status: queued
+status: running
 review_at: 2026-10-25T212524Z
 review_companions: null
+stage: claimed
+claimed_at: 2026-10-25T212551Z
+base_sha: 30f67a9af087bff842ec0bd3a8a3ea252c962f52
+base_blob: f4751fc054335a94d1b401af272e98a2d4760363
+branch: hyp/muse_prefill_layer/experts-rega-pdl-chain-gather-w13-w2
+worktree: .worktrees/muse_prefill_layer/experts-rega-pdl-chain-gather-w13-w2
+mode: check
+restack_of: null
+stale_base: null
 ---
 
 # experts-rega-pdl-chain-gather-w13-w2
