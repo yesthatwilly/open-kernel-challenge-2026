@@ -34,10 +34,10 @@ priority: 2
 kind: primary
 controls_for: null
 review: proceed
-status: running
+status: done
 review_at: 2026-10-25T043143Z
 review_companions: null
-stage: dispatched
+stage: harvested
 claimed_at: 2026-10-25T043143Z
 base_sha: df59fe97803906261a926deeb694b808107ab115
 base_blob: d8769ef25caf845a0e207538ccc5c62394b6ee3b
@@ -56,6 +56,13 @@ attempt_file: 2026-10-25T043825Z-check-full-decode1-sk-pdl-from-preattn.md
 prepared_at: 2026-10-25T043825Z
 job: c0f1945a108c4aa2
 dispatched_at: 2026-10-25T043832Z
+outcome: neutral
+verdict_detail: unproven-vs-best
+speedup: 1.4571490826973899
+speedup_ci: [1.4317231259446173, 1.4790063189378506]
+harvested_at: 2026-10-25T053757Z
+best_at_harvest: 1.4321773019894537
+promotion: null
 ---
 
 # full-decode1-sk-pdl-from-preattn
@@ -136,3 +143,35 @@ Audited 2026-10-24 by an opus subagent (read-only reasoning; no GPU on this node
 - okc_lint OK with warnings (prepare-time syncs only); py_compile OK.
 
 Residual risk: Triton `inline_asm_elementwise` compile, or capture of a PDL edge (CUDA < 12.3), can fail; both land on mode 0 with a PATH CHOSEN line, and the gain may still miss the 1 us kill bar.
+
+## Result
+
+- job `c0f1945a108c4aa2` (check), status done, passed True, tests 16/16
+- speedup 1.4571x, 95% CI [1.4317, 1.4790], score 2584.704643280593 µs vs SGLang 3766.3 µs
+- best at harvest: {"speedup": 1.4321773019894537, "ci": [1.4106946424596118, 1.4554282820505813], "job": "2a3241780c7b4c46"}; base result: muse_attention_decode/hypotheses/done/neutral/full-decode1-streamk-s3-two-level-ticket.result.json
+- **outcome: neutral** (unproven-vs-best)
+- files: `muse_attention_decode/hypotheses/done/neutral/full-decode1-sk-pdl-from-preattn.result.json`, `muse_attention_decode/hypotheses/done/neutral/full-decode1-sk-pdl-from-preattn.patch`; branch `hyp/muse_attention_decode/full-decode1-sk-pdl-from-preattn`
+
+## Attribution
+
+| shape | w | base µs | hyp µs | delta | verdict |
+|---|---|---|---|---|---|
+| batch=1 ctx=80000 dist=soft heads=tp8 layer=sliding load=decode_1 page=1 | 46 | 13.15 | 13.19 | 0.9782 | flat |
+| batch=1 ctx=80000 dist=coherent heads=tp8 layer=full load=decode_1 page=1 | 16 | 22.6 | 23.08 | 0.9937 | flat |
+| batch=16 ctx=80000 dist=soft heads=tp8 layer=sliding load=decode_16 page=1 spread=agentic | 46 | 15.33 | 15.2 | 0.9993 | flat |
+| batch=16 ctx=80000 dist=coherent heads=tp8 layer=full load=decode_16 page=1 spread=agentic | 16 | 111.14 | 111.2 | 0.9993 | flat |
+| batch=32 ctx=80000 dist=soft heads=tp8 layer=sliding load=decode_32 page=1 spread=agentic | 46 | 24.33 | 24.54 | 0.9943 | flat |
+| batch=32 ctx=80000 dist=coherent heads=tp8 layer=full load=decode_32 page=1 spread=agentic | 16 | 226.42 | 199.36 | 1.1396 | gained |
+| batch=1 ctx=80000 dist=soft heads=tp8 layer=sliding load=verify_1 page=1 q_len=8 | 46 | 17.78 | 17.21 | 1.0431 | gained |
+| batch=1 ctx=80000 dist=coherent heads=tp8 layer=full load=verify_1 page=1 q_len=8 | 16 | 30.51 | 30.18 | 1.0071 | flat |
+| batch=16 ctx=80000 dist=soft heads=tp8 layer=sliding load=verify_16 page=1 q_len=8 spread=agentic | 46 | 22.68 | 22.3 | 1.0022 | flat |
+| batch=16 ctx=80000 dist=coherent heads=tp8 layer=full load=verify_16 page=1 q_len=8 spread=agentic | 16 | 162.8 | 162.49 | 0.9964 | flat |
+| batch=32 ctx=80000 dist=soft heads=tp8 layer=sliding load=verify_32 page=1 q_len=8 spread=agentic | 46 | 28.34 | 28.95 | 0.9972 | flat |
+| batch=32 ctx=80000 dist=coherent heads=tp8 layer=full load=verify_32 page=1 q_len=8 spread=agentic | 16 | 302.2 | 301.46 | 0.998 | flat |
+
+gained on full decode_32; sliding verify_1. Expected hit: 0/2. Noise ±1.6%.
+
+## Follow-ups
+
+- unproven-vs-best: the change is not proven either way; a stacked hypothesis (`depends_on: full-decode1-sk-pdl-from-preattn`) that adds a further change in the same area is the only way to learn more (identical code is never re-run).
+

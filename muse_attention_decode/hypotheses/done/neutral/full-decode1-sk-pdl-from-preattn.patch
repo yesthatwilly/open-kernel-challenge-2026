@@ -1,0 +1,393 @@
+diff --git a/muse_attention_decode/submission.py b/muse_attention_decode/submission.py
+index d8769ef..c91fe48 100644
+--- a/muse_attention_decode/submission.py
++++ b/muse_attention_decode/submission.py
+@@ -78,7 +78,7 @@ def _pre_attention_kernel(
+     q_out_ptr, k_cache_ptr, v_cache_ptr,
+     qkv_stride,
+     HQ: tl.constexpr, HKV: tl.constexpr, D: tl.constexpr, ROPE: tl.constexpr, EPS: tl.constexpr,
+-    PAIRED: tl.constexpr, G: tl.constexpr,
++    PAIRED: tl.constexpr, G: tl.constexpr, TRIGGER: tl.constexpr = False,
+ ):
+     """One program per (token, head). Heads 0..HQ-1 are queries; HQ..HQ+HKV-1 are the new keys,
+     whose program also stores the matching value head. The q and k heads are contiguous in the
+@@ -90,6 +90,12 @@ def _pre_attention_kernel(
+     h = tl.program_id(1)
+     HALF: tl.constexpr = D // 2
+     i = tl.arange(0, HALF)
++    if TRIGGER:
++        # Only the batch-1 stream-K launch (PDL variant b) sets this: let the dependent grid be
++        # scheduled now. Its griddepcontrol.wait still waits for this grid to complete and flush, so
++        # it is a launch hint only; on a launch without the programmatic attribute it is a no-op.
++        i = tl.inline_asm_elementwise("{ griddepcontrol.launch_dependents; mov.u32 $0, $1; }", "=r,r", [i],
++                                      dtype=tl.int32, is_pure=False, pack=1)
+     even = 2 * i
+     odd = 2 * i + 1
+ 
+@@ -868,6 +874,10 @@ def _sm_count(device) -> int:
+ 
+ 
+ _B1_PATH = False  # batch 1 on the two-level stream-K kernel; set only once its in-process validation passes
++# Batch-1 programmatic dependent launch of the stream-K kernel after _pre_attention_kernel: 0 = the
++# landed plain launch, 1 = PDL attribute only, 2 = PDL + griddepcontrol.launch_dependents at the top of
++# _pre_attention_kernel. Set only by the import-time timing selection (_sk_pdl_select).
++_B1_PDL = 0
+ 
+ 
+ def _shape_gate(cfg) -> bool:
+@@ -1095,7 +1105,7 @@ __device__ __forceinline__ void finalize_store(float4 o, float L, float vs, int
+   op[1] = __floats2bfloat162_rn(y2, y3);
+ }
+ 
+-template <int STAGES, bool TICKET, bool TWO = false>
++template <int STAGES, bool TICKET, bool TWO = false, bool PDL = false>
+ __global__ void __launch_bounds__(THREADS, 2)
+ splitkv_attn_sk_kernel(const uint8_t* __restrict__ q,          // e4m3 [B, HQ, D]
+                        const uint8_t* __restrict__ kc,         // e4m3 [rows, ROW]
+@@ -1174,7 +1184,7 @@ splitkv_attn_sk_kernel(const uint8_t* __restrict__ q,          // e4m3 [B, HQ, D
+   // token tid / 4, 16-byte chunks 2 * (tid % 4) + {0, 1} of its K row and V row, chunk c stored
+   // at c ^ (token % 8). A segment's first tile also brings the request's query into its q slot.
+   int p_b = find_req(t0);
+-  auto issue_tile = [&](int nn) {
++  auto issue_tile = [&](int nn, bool withq) {
+     const int gt = t0 + nn;
+     while (gt >= tp_s[p_b + 1]) ++p_b;
+     const int lt = gt - tp_s[p_b];
+@@ -1192,23 +1202,57 @@ splitkv_attn_sk_kernel(const uint8_t* __restrict__ q,          // e4m3 [B, HQ, D
+       cp_async16(smem_u32(stp + dst), ks + c * 16, ok ? 16 : 0);
+       cp_async16(smem_u32(stp + TILE * ROW + dst), vsrc + c * 16, ok ? 16 : 0);
+     }
+-    if ((nn == 0 || lt == 0) && tid < QBYTES / 16)
++    if (withq && (nn == 0 || lt == 0) && tid < QBYTES / 16)
+       cp_async16(smem_u32(qr + st * QBYTES + tid * 16), q + (int64_t)p_b * QBYTES + tid * 16, 16);
+   };
+ 
+   // Prologue: block 0's indices (waited), then tiles 0 .. STAGES-2; block 1 rides tile 0's group.
++  // PDL (launched after _pre_attention_kernel with the programmatic-stream-serialization
++  // attribute): everything above and issue_meta read only inputs the primary never writes
++  // (cache_seqlens, page_table). The primary writes exactly two things this kernel reads: the FP8
++  // query q and K/V row seq_b - 1 of each request (the last tile of the request). So the prologue
++  // issues the tiles before the first last-of-request tile, then griddepcontrol.wait, then that tile
++  // and the prologue queries (plain 16 B loads into the q slots, not part of any cp.async group; the
++  // __syncthreads at the top of the main loop publishes them). Later tiles and later queries are
++  // issued by the main loop, which runs after the wait. Workspace and ticket writes are all later.
++  // Every branch here is on smem values or constants, so it is uniform over the CTA.
+   issue_meta(0);
+   cp_commit();
+   cp_wait<0>();
+   __syncthreads();
++  bool waited = !PDL;
++  auto dep_wait = [&]() {
++    // griddepcontrol is plain sm_90 PTX (no sm_90a-only feature), so no arch-feature guard is needed.
++    if (PDL && !waited) asm volatile("griddepcontrol.wait;\n" ::: "memory");
++    waited = true;
++  };
+ #pragma unroll
+   for (int j = 0; j < STAGES - 1; ++j) {
+     if (j < N) {
+-      issue_tile(j);
++      if (PDL && !waited) {
++        const int gtj = t0 + j;
++        if (gtj + 1 == tp_s[find_req(gtj) + 1]) dep_wait();  // holds the request's newest key
++      }
++      issue_tile(j, !PDL);
+       if (j % MB_TILES == 0 && j / MB_TILES + 1 < nblk) issue_meta(j / MB_TILES + 1);
+     }
+     cp_commit();
+   }
++  if (PDL) {
++    dep_wait();  // no later read of primary output happens before this
++    if (tid < QBYTES / 16) {
++#pragma unroll
++      for (int j = 0; j < STAGES - 1; ++j) {
++        if (j < N) {
++          const int gtj = t0 + j;
++          const int bj = find_req(gtj);
++          if (j == 0 || gtj == tp_s[bj])
++            *reinterpret_cast<uint4*>(qr + j * QBYTES + tid * 16) =
++                __ldcg(reinterpret_cast<const uint4*>(q + (int64_t)bj * QBYTES + tid * 16));  // L2: written by the primary
++        }
++      }
++    }
++  }
+ 
+   const int g = warp & 1;             // kv head
+   const int slice = (warp >> 1) * 16; // token slice of each tile
+@@ -1225,7 +1269,7 @@ splitkv_attn_sk_kernel(const uint8_t* __restrict__ q,          // e4m3 [B, HQ, D
+     {
+       const int nn = n + STAGES - 1;
+       if (nn < N) {
+-        issue_tile(nn);
++        issue_tile(nn, true);
+         if (nn % MB_TILES == 0 && nn / MB_TILES + 1 < nblk) issue_meta(nn / MB_TILES + 1);
+       }
+       cp_commit();  // always, so the group count stays uniform
+@@ -1432,6 +1476,7 @@ using SkFn = void (*)(const uint8_t*, const uint8_t*, const uint8_t*, const int*
+                       float*, float*, int*, int*, float*, float*, float);
+ 
+ SkFn sk_pick(int64_t v) {
++  if (v == 4) return splitkv_attn_sk_kernel<4, true, true, true>;  // variant 3 + programmatic dependent launch
+   if (v == 3) return splitkv_attn_sk_kernel<4, true, true>;
+   if (v == 1) return splitkv_attn_sk_kernel<4, false>;
+   if (v == 2) return splitkv_attn_sk_kernel<5, true>;
+@@ -1439,7 +1484,7 @@ SkFn sk_pick(int64_t v) {
+ }
+ int sk_smem(int64_t v) { return v == 2 ? Lay<5>::BYTES : Lay<4>::BYTES; }  // variant 3 = <4, ticket, two-level>
+ void sk_prepare(int64_t v) {
+-  static bool done[4] = {false, false, false, false};
++  static bool done[5] = {false, false, false, false, false};
+   if (!done[v]) {
+     C10_CUDA_CHECK(cudaFuncSetAttribute(reinterpret_cast<const void*>(sk_pick(v)),
+                                         cudaFuncAttributeMaxDynamicSharedMemorySize, sk_smem(v)));
+@@ -1456,8 +1501,8 @@ void sk_attn(torch::Tensor q, torch::Tensor k_cache, torch::Tensor v_cache, torc
+              double score_scale, double eps, int64_t grid, int64_t variant) {
+   const int B = static_cast<int>(cache_seqlens.size(0));
+   TORCH_CHECK(B >= 1 && B <= MAXB, "sk_attn: batch out of range");
+-  TORCH_CHECK(variant >= 0 && variant <= 3, "sk_attn: variant");
+-  if (variant == 3) {
++  TORCH_CHECK(variant >= 0 && variant <= 4, "sk_attn: variant");
++  if (variant >= 3) {
+     TORCH_CHECK(grid <= 1024, "sk_attn: two-level ticket needs grid <= 1024 (<= 32 groups)");
+     TORCH_CHECK(gticket.numel() >= B * 32 && gticket.scalar_type() == at::kInt, "sk_attn: gticket");
+     TORCH_CHECK(gacc.size(0) >= B * 32 && gml.size(0) >= B * 32 && gacc.scalar_type() == at::kFloat
+@@ -1471,7 +1516,27 @@ void sk_attn(torch::Tensor q, torch::Tensor k_cache, torch::Tensor v_cache, torc
+   sk_prepare(variant);
+   auto stream = at::cuda::getCurrentCUDAStream();
+   SkFn fn = sk_pick(variant);
+-  fn<<<static_cast<unsigned>(grid), THREADS, sk_smem(variant), stream>>>(
++  auto launch = [&](auto&&... args) {
++    if (variant == 4) {
++      // After a kernel on the same stream with the programmatic stream serialization attribute: this
++      // grid may start while the previous one drains (or after its launch_dependents trigger);
++      // its griddepcontrol.wait returns only once that grid has completed and flushed.
++      cudaLaunchConfig_t cfg = {};
++      cfg.gridDim = dim3(static_cast<unsigned>(grid));
++      cfg.blockDim = dim3(THREADS);
++      cfg.dynamicSmemBytes = sk_smem(variant);
++      cfg.stream = stream;
++      cudaLaunchAttribute attr[1];
++      attr[0].id = cudaLaunchAttributeProgrammaticStreamSerialization;
++      attr[0].val.programmaticStreamSerializationAllowed = 1;
++      cfg.attrs = attr;
++      cfg.numAttrs = 1;
++      C10_CUDA_CHECK(cudaLaunchKernelEx(&cfg, fn, args...));
++    } else {
++      fn<<<static_cast<unsigned>(grid), THREADS, sk_smem(variant), stream>>>(args...);
++    }
++  };
++  launch(
+       reinterpret_cast<const uint8_t*>(q.data_ptr()), reinterpret_cast<const uint8_t*>(k_cache.data_ptr()),
+       reinterpret_cast<const uint8_t*>(v_cache.data_ptr()), page_table.data_ptr<int>(), page_table.stride(0),
+       cache_seqlens.data_ptr<int>(), B, k_scale.data_ptr<float>(), v_scale.data_ptr<float>(),
+@@ -1496,7 +1561,7 @@ void sk_combine(torch::Tensor ws_acc, torch::Tensor ws_ml, torch::Tensor cache_s
+ 
+ // {binaryVersion, ptxVersion, numRegs, localSizeBytes, maxThreadsPerBlock, dynamic smem, CTAs/SM}
+ std::vector<int64_t> sk_attrs(int64_t variant) {
+-  TORCH_CHECK(variant >= 0 && variant <= 3, "sk_attrs: variant");
++  TORCH_CHECK(variant >= 0 && variant <= 4, "sk_attrs: variant");
+   sk_prepare(variant);
+   cudaFuncAttributes a;
+   C10_CUDA_CHECK(cudaFuncGetAttributes(&a, reinterpret_cast<const void*>(sk_pick(variant))));
+@@ -1508,7 +1573,8 @@ std::vector<int64_t> sk_attrs(int64_t variant) {
+ }
+ """
+ 
+-_SK_LABELS = ("<4 stages, ticket>", "<4 stages, no ticket>", "<5 stages, ticket>", "<4 stages, two-level ticket>")
++_SK_LABELS = ("<4 stages, ticket>", "<4 stages, no ticket>", "<5 stages, ticket>", "<4 stages, two-level ticket>",
++              "<4 stages, two-level ticket, PDL>")
+ _EXT2 = None       # the stage-2 module; None keeps stage 1 (A + B) on the gated path
+ _SK_VARIANT = 0    # the timed path: 4 stages + ticket (fixed; the diagnostics call the module directly)
+ _SK_ARCH_FLAGS = None
+@@ -1585,7 +1651,7 @@ def _sk_launch(data: Inputs, q: torch.Tensor, qkv: torch.Tensor, variant: int, g
+     ws_acc = torch.empty((grid + batch, hq, d), dtype=torch.float32, device=device)
+     ws_ml = torch.empty((grid + batch, 2, hq), dtype=torch.float32, device=device)
+     out = torch.empty((batch, 1, hq * d), dtype=torch.bfloat16, device=device)
+-    ng = batch * 32 if variant == 3 else 1  # group slots only for the two-level variant
++    ng = batch * 32 if variant >= 3 else 1  # group slots only for the two-level variants
+     gacc = torch.empty((ng, hq, d), dtype=torch.float32, device=device)
+     gml = torch.empty((ng, 2, hq), dtype=torch.float32, device=device)
+     _EXT2.sk_attn(q, data["k_cache"], data["v_cache"], data["page_table"], data["cache_seqlens"], data["k_scale"],
+@@ -1603,7 +1669,7 @@ def _full_decode_sk(data: Inputs, q: torch.Tensor, qkv: torch.Tensor) -> torch.T
+     no-ticket diagnostic, adds the separate combine)."""
+     sms = _sm_count(qkv.device)
+     if data["config"]["batch"] == 1:  # stage 3: one CTA per SM + the two-level ticket (fixed by shape)
+-        out, _, _ = _sk_launch(data, q, qkv, 3, _SPLITKV_GRID or sms)
++        out, _, _ = _sk_launch(data, q, qkv, 4 if _B1_PDL else 3, _SPLITKV_GRID or sms)
+         return out
+     grid = _SPLITKV_GRID or 2 * sms
+     out, ws_acc, ws_ml = _sk_launch(data, q, qkv, _SK_VARIANT, grid)
+@@ -1647,6 +1713,7 @@ def kernel_fn(data: Inputs) -> torch.Tensor:
+         q, k_cache, v_cache,
+         qkv.stride(0),
+         HQ=hq, HKV=hkv, D=d, ROPE=bool(theta), EPS=RMS_EPS, PAIRED=paired, G=g,
++        TRIGGER=bool(splitkv and batch == 1 and _B1_PDL == 2),
+         num_warps=1,
+     )
+     if splitkv:
+@@ -1792,7 +1859,7 @@ def _splitkv_self_check() -> bool:
+ _SK_LENS16 = [9000, 1024, 66, 4097, 1028, 69, 6, 1, 39, 131, 2000, 5003, 63, 64, 3075, 700]
+ 
+ 
+-def _sk_prepare_q(data: Inputs):
++def _sk_prepare_q(data: Inputs, trigger: bool = False):
+     """The gated path's pre-attention launch (unpaired FP8 query, new cache rows), as kernel_fn
+     issues it. Import-time self-check and diagnostics only."""
+     cfg = data["config"]
+@@ -1804,6 +1871,7 @@ def _sk_prepare_q(data: Inputs):
+         q, data["k_cache"], data["v_cache"],
+         qkv.stride(0),
+         HQ=hq, HKV=hkv, D=d, ROPE=False, EPS=RMS_EPS, PAIRED=False, G=hq // hkv,
++        TRIGGER=trigger,
+         num_warps=1,
+     )
+     return q, qkv
+@@ -1814,16 +1882,18 @@ def _rel_l2(out, ref):
+     return float((out - ref).norm() / ref.norm()), bool(torch.isfinite(out).all())
+ 
+ 
+-def _sk_case(tag, lens, kv_scale, grid, gen, variant=0) -> bool:
++def _sk_case(tag, lens, kv_scale, grid, gen, variant=0, trigger=None) -> bool:
+     """One synthetic gated-shape case, each launch announced before and synced + confirmed after
+     (a fault names its kernel), against the FP32 reference."""
+     dev = torch.device("cuda")
+     data = _splitkv_synthetic(lens, kv_scale, gen, dev)
+     assert _shape_gate(data["config"])
+     g = grid or 2 * _sm_count(dev)
+-    _say(f"[sk] {tag}: launching _pre_attention_kernel")
+-    q, qkv = _sk_prepare_q(data)
+-    torch.cuda.synchronize()
++    _say(f"[sk] {tag}: launching _pre_attention_kernel"
++         + ("" if trigger is None else f" (launch_dependents trigger {trigger}), splitkv_attn_sk_kernel follows with no sync"))
++    q, qkv = _sk_prepare_q(data, bool(trigger))
++    if trigger is None:  # PDL cases launch the two kernels back to back: that is the point
++        torch.cuda.synchronize()
+     _say(f"[sk] {tag}: launching splitkv_attn_sk_kernel{_SK_LABELS[variant]} grid {g}")
+     out, ws_acc, ws_ml = _sk_launch(data, q, qkv, variant, g)
+     torch.cuda.synchronize()
+@@ -2081,6 +2151,107 @@ def _sk_validate_b1() -> "str | None":
+     return None
+ 
+ 
++def _sk_pdl_select() -> int:
++    """Import-time choice of the batch-1 launch (full decode_1 only). Validates the PDL kernel
++    (variant 4) back to back after _pre_attention_kernel, with and without the explicit trigger, then
++    times graph replays of kernel_fn at synthetic B=1 x 80000 keys, cold L2 per replay, interleaved
++    (0 = landed plain launch, 1 = PDL attribute only, 2 = PDL + launch_dependents trigger). Returns the
++    mode to run: the fastest, and only if it beats the plain launch by more than 0.05 us (median).
++    Any error or self-check miss returns 0 (the landed path); it never raises."""
++    global _B1_PDL
++    dev = torch.device("cuda")
++    sms = _sm_count(dev)
++    try:
++        a = list(_EXT2.sk_attrs(4))
++        _say(f"[pdl] splitkv_attn_sk_kernel{_SK_LABELS[4]}: binaryVersion {a[0]}, ptxVersion {a[1]}, regs {a[2]}, "
++             f"local {a[3]} B, dyn smem {a[5]} B, {a[6]} CTAs/SM")
++        if a[0] != 90:
++            _say("PATH CHOSEN: full decode_1 PDL off (cubin version is not 90)")
++            return 0
++        gen = torch.Generator(device="cuda").manual_seed(9753)
++        cases = (
++            ("B=1 80000 keys grid SM", [80000], 1.0, sms),
++            ("B=1 80000 keys kv 0.25 grid 7", [80000], 0.25, 7),
++            ("B=1 4097 keys grid 3", [4096], 1.0, 3),
++            ("B=1 64 keys (one tile, new key in it) grid SM", [63], 0.25, sms),
++            ("B=1 63 keys grid 3", [62], 1.0, 3),
++            ("B=1 1 key grid SM", [0], 1.0, sms),
++            ("B=16 ragged grid 2xSM", _SK_LENS16, 0.25, 2 * sms),
++        )
++        for trig in (False, True):
++            for tag, lens, kv_scale, grid in cases:
++                if not _sk_case(f"pdl trigger={trig} {tag}", lens, kv_scale, grid, gen, variant=4, trigger=trig):
++                    _say(f"PATH CHOSEN: full decode_1 PDL off (self-check {tag}, trigger {trig})")
++                    return 0
++        data = _splitkv_synthetic([80000], 1.0, gen, dev)
++        ref = _splitkv_reference(data, [80000])
++        flush = torch.empty(64 << 20, dtype=torch.float32, device=dev)  # 256 MB > L2
++        names = {0: "plain launch (landed)", 1: "(a) PDL attribute only", 2: "(b) PDL + launch_dependents trigger"}
++        graphs = {}
++        for mode in (0, 1, 2):
++            _B1_PDL = mode
++            _say(f"[pdl] mode {mode} {names[mode]}: eager warm-up of kernel_fn")
++            side = torch.cuda.Stream()
++            side.wait_stream(torch.cuda.current_stream())
++            with torch.cuda.stream(side):
++                kernel_fn(data)
++            torch.cuda.current_stream().wait_stream(side)
++            torch.cuda.synchronize()
++            graph = torch.cuda.CUDAGraph()
++            _say(f"[pdl] mode {mode}: capturing kernel_fn")
++            with torch.cuda.graph(graph):
++                out = kernel_fn(data)
++            torch.cuda.synchronize()
++            for i in (1, 2):
++                out.fill_(float("nan"))
++                _say(f"[pdl] mode {mode} replay {i}: launching graph")
++                graph.replay()
++                torch.cuda.synchronize()
++                err, finite = _rel_l2(out, ref)
++                _say(f"[pdl] mode {mode} replay {i}: rel L2 {err:.2e}, finite {finite}")
++                if not (finite and err < 2e-2):
++                    _say(f"PATH CHOSEN: full decode_1 PDL off (graph replay mode {mode} failed)")
++                    return 0
++            graphs[mode] = graph
++        _B1_PDL = 0
++        reps, per = 40, {0: [], 1: [], 2: []}
++        order = (0, 1, 2)
++        for it in range(reps + 3):
++            for mode in order[it % 3:] + order[:it % 3]:
++                flush.zero_()
++                e0, e1 = torch.cuda.Event(enable_timing=True), torch.cuda.Event(enable_timing=True)
++                e0.record()
++                graphs[mode].replay()
++                e1.record()
++                torch.cuda.synchronize()
++                if it >= 3:
++                    per[mode].append(e0.elapsed_time(e1) * 1e3)
++        med = {m: sorted(t)[len(t) // 2] for m, t in per.items()}
++        p10 = {m: sorted(t)[len(t) // 10] for m, t in per.items()}
++        for m in (0, 1, 2):
++            _say(f"[pdl]   {names[m]:38s} median {med[m]:7.2f} us  p10 {p10[m]:7.2f} us  "
++                 f"({med[m] - med[0]:+.2f} us vs plain)  [pre-attention + stream-K kernel, graph replay, cold L2]")
++        best = min(med, key=med.get)
++        left = int(_sk_ticket(dev).abs().sum().item()) + int(_sk_gticket(dev).abs().sum().item())
++        if left:
++            _say(f"PATH CHOSEN: full decode_1 PDL off (tickets not reset: sum {left})")
++            return 0
++        del graphs, flush
++        torch.cuda.empty_cache()
++        if best != 0 and med[best] < med[0] - 0.05:
++            _say(f"PATH CHOSEN: full decode_1 streamk two-level + PDL, {names[best]} "
++                 f"({med[best]:.2f} vs {med[0]:.2f} us plain)")
++            return best
++        _say(f"PATH CHOSEN: full decode_1 streamk two-level, no PDL (best PDL variant {names[best]} "
++             f"{med[best]:.2f} us vs plain {med[0]:.2f} us is not faster)")
++        return 0
++    except Exception as e:
++        _say(f"PATH CHOSEN: full decode_1 PDL off (raised {e!r})")
++        return 0
++    finally:
++        _B1_PDL = 0
++
++
+ def _sk_b1_diagnostics() -> None:
+     """Import-time eager timings at synthetic B=1 x 80000 (cold L2 per rep, median of 10) bracketing
+     the two fixed stage-3 choices: (a) stage-2 kernel as is (grid 2xSM, single-level) = the
+@@ -2213,6 +2384,8 @@ if torch.cuda.is_available():
+                 _b1_reason = f"batch-1 self-check raised {e!r}"
+             if _b1_reason is None:
+                 _B1_PATH = True
++            if _b1_reason is None:
++                _B1_PDL = _sk_pdl_select()
+             try:
+                 _sk_diagnostics()
+                 if _b1_reason is None:
+@@ -2227,7 +2400,8 @@ if torch.cuda.is_available():
+                 except Exception as e:
+                     _say(f"[sk-diag] ticket re-zero raised: {e!r}")
+         if _B1_PATH:
+-            _say("PATH CHOSEN: full decode_1 streamk two-level")
++            _say("PATH CHOSEN: full decode_1 streamk two-level, launch "
++                 + ("plain (no PDL)", "PDL attribute only (a)", "PDL + launch_dependents trigger (b)")[_B1_PDL])
+         else:
+             _say(f"PATH CHOSEN: full decode_1 FA3 (fallback: {_b1_reason})")
+     if _EXT is None:
