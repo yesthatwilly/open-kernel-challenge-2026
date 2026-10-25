@@ -254,3 +254,4 @@ overrides of a reviewer) with the reason, newest last. Written by `churn.py note
 - 2026-10-25T204433Z `muse_bf16_proj` **diagnosis**: LESSONS: cublaslt backend toggle line corrected (changes kernel per cell; headline flat from cancellation)
 - 2026-10-25T204433Z `muse_bf16_proj` **diagnosis**: LESSONS: prepare-time algo pick line corrected (non-interleaved pick failed; interleaved >=1.02 selector worked)
 - 2026-10-25T204433Z `muse_bf16_proj` **diagnosis**: LESSONS: naive-stack line corrected (cuBLASLt plan gained qkv verify_16 in both combos)
+- 2026-10-25T204433Z `muse_bf16_proj` **diagnosis**: LESSONS: row-owner line scoped to 1 CTA/SM pooler/unpooler; 2-CTA/SM qkv untested at m>=8
