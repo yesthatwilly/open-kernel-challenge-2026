@@ -1,6 +1,6 @@
 # muse_attention_decode hypotheses
 
-Regenerated 2026-10-25T202706Z. Best: 1.5295x [1.5066,1.5525] job `8713665f3064462c` (submit)
+Regenerated 2026-10-25T204227Z. Best: 1.5295x [1.5066,1.5525] job `8713665f3064462c` (submit)
 
 | created | slug | kind | area | where | outcome | speedup | CI | job | mode | promotion | review | expected hit |
 |---|---|---|---|---|---|---|---|---|---|---|---|---|
@@ -83,13 +83,13 @@ Regenerated 2026-10-25T202706Z. Best: 1.5295x [1.5066,1.5525] job `8713665f30644
 | 2026-10-25T054449Z | sliding-decode-sk-window-route | rewrite | sliding-layer attention (decode, stream-K windowed kernel) | done/neutral | neutral | 1.4973 | [1.475,1.520] | 118c6de9704146f3 | check |  | proceed | 2/4 |
 | 2026-10-25T110636Z | restack-sliding-decode-sk-window-on-cluster-master | primary | sliding-layer attention (decode, stream-K windowed kernel) restack | done/neutral | neutral | 1.5017 | [1.479,1.530] | 252abb7f11ec48c3 | submit | merged | proceed | 5/5 |
 | 2026-10-25T110716Z | sliding-decode-sk-s3-fused-preattn-rope | rewrite | sliding-layer attention (decode, stream-K windowed kernel, pre-attention fold) | queue | queued |  |  |  |  |  | required |  |
-| 2026-10-25T150036Z | preattention-tiled-every-verify-block | primary | pre-attention norm+rope | queue | queued |  |  |  |  |  | required |  |
+| 2026-10-25T150036Z | preattention-tiled-every-verify-block | primary | pre-attention norm+rope | queue | hold |  |  |  |  |  | hold |  |
 | 2026-10-25T150036Z | epilogue-gate-l2-prefetch-cuda | primary | output norm-gate (gate operand prefetch in the CUDA epilogues) | done/neutral | neutral | 1.5020 | [1.479,1.525] | 917a9689ba4645bd | submit |  | proceed | 0/6 |
-| 2026-10-25T153027Z | full-decode1-sk-two-level-deep-ring | primary | full-layer attention (batch-1 decode, stream-K ring depth) | queue | queued |  |  |  |  |  | required |  |
 | 2026-10-25T153027Z | full-verify-fa3-num-splits-band-gate | primary | FA3 call (full verify split count) | queue | queued |  |  |  |  |  | required |  |
 | 2026-10-25T153027Z | full-verify-wgmma-ws-s1-producer-split | rewrite | full-layer attention (verify, wgmma stream-K kernel, warp-specialized pipeline) | queue | queued |  |  |  |  |  | required |  |
 | 2026-10-25T153027Z | sliding-verify-fa3-num-splits-band-gate | primary | FA3 call (sliding verify split count) | queue | queued |  |  |  |  |  | required |  |
 | 2026-10-25T153027Z | sliding-verify-wgmma-window-s1 | rewrite | sliding-layer attention (verify, wgmma stream-K windowed kernel) | queue | queued |  |  |  |  |  | required |  |
+| 2026-10-25T153027Z | full-decode1-sk-two-level-deep-ring | primary | full-layer attention (batch-1 decode, stream-K ring depth) | running | running |  |  | 26c049edfdd842b3 | submit |  | proceed |  |
 | 2026-10-25T153027Z | sliding-decode1-cluster-per-kvhead | primary | sliding-layer attention (batch-1 decode, cluster kernel work split) | done/neutral | neutral | 1.5120 | [1.489,1.535] | 4b608df595b046fb | submit | done | proceed | 5/5 |
 | 2026-10-25T161608Z | combo-b1-chain-c320-fused-pre-pdl | primary | combination (conjectural: full decode_1 chunk320 + fused pre-attention prologue + PDL to combine) | done/neutral | neutral | 1.5295 | [1.507,1.552] | 8713665f3064462c | submit |  | proceed | 3/4 |
 | 2026-10-25T161608Z | combo-naive-c320-fd1-tiled-preattn-verify | primary | combination (naive top-row stack: full decode_1 chunk320 + verify tiled pre-attention) | done/neutral | neutral | 1.5094 | [1.487,1.538] | b9d062aaa94c4cbf | submit |  | proceed | 5/6 |
@@ -123,3 +123,4 @@ Regenerated 2026-10-25T202706Z. Best: 1.5295x [1.5066,1.5525] job `8713665f30644
 - sliding-cluster-s3-verify-attn-only-phase-timed: Reviewer: proceed but wait for stack-streamk-ticket-cluster-c16-c4 (195dcc1209b6457b) and build on its branch (raw s2 carries the C=8 band, +5.7% on sliding decode_16). Port setup_one<8>/launch<8> back from stage 1 593859d; mask rows to p-(W-1)<=t<=p; phase timing in prepare only.
 - sliding-verify1-triton-pseudo-decode: adversarial review: HOLD for two reasons. (1) The key range is wrong: seq = seq_lens[b]-7+j treats seq_lens as the post-block length, but seq_lens is the prefix length (positions =
 - full-verify1-sk-pseudo-decode: Reviewer: low priority; dispatch after full-verify-wgmma-s4-multitile-fix (51b0d5c110f3459c) and after sliding-verify-sk-pseudo-decode-s1 harvest; build on s1 PSEUDO code with window=0; if the wgmma fix works, full-verify1-wgmma-s4-batch1-grid-sm owns this row.
+- preattention-tiled-every-verify-block: adversarial review: Sixth scored run of the same _pre_attention_tiled_kernel; its parent preattention-tiled-gate-large-tokens is on Do-not-try. The only new part (gate widened to S

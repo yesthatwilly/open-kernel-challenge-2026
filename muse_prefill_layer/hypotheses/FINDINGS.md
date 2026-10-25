@@ -1,6 +1,6 @@
 # muse_prefill_layer findings
 
-Regenerated 2026-10-25T202706Z by `churn.py index`. Read this before writing a hypothesis for muse_prefill_layer.
+Regenerated 2026-10-25T204227Z by `churn.py index`. Read this before writing a hypothesis for muse_prefill_layer.
 
 ## Current best
 
@@ -16,6 +16,8 @@ Where the time goes (per scored shape, top kernels):
 - batch=1 ctx=32768 dist=soft layer=sliding load=first_turn page=1 q_len=16384 repeats=6: yours 11119.7µs vs SGLang 17244.1µs (SoL 5663.4µs) · void (anonymous namespace)::rega_kernel<true, true>((anon... 3652.7µs 32.5%, nvjet_sm90_tst_192x192_64x4_2x1_v_bz_coopB_TNN 2534.6µs 22.6%, void (anonymous namespace)::rega_kernel<false, true>((ano... 1851.5µs 16.5%
 - batch=1 ctx=32768 dist=soft layer=full load=first_turn page=1 q_len=16384 repeats=6: yours 15073.4µs vs SGLang 21451.9µs (SoL 7710.0µs) · void cutlass::device_kernel<flash::enable_sm90_or_later<f... 4304.5µs 28.0%, void (anonymous namespace)::rega_kernel<true, true>((anon... 3769.2µs 24.5%, nvjet_sm90_tst_192x192_64x4_2x1_v_bz_coopB_TNN 2533.7µs 16.5%
 - batch=1 ctx=65536 dist=soft layer=full load=first_turn page=1 q_len=16384 repeats=6: yours 18589.7µs vs SGLang 25128.9µs (SoL 9847.7µs) · void cutlass::device_kernel<flash::enable_sm90_or_later<f... 7736.5µs 42.4%, void (anonymous namespace)::rega_kernel<true, true>((anon... 3401.4µs 18.6%, nvjet_sm90_tst_192x192_64x4_2x1_v_bz_coopB_TNN 2526.3µs 13.8%
+
+Today's clean-context diagnosis: `muse_prefill_layer/hypotheses/DIAGNOSIS.md` (ranked actions and its own Do-not-try list).
 
 ## By area
 

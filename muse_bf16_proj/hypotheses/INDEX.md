@@ -1,6 +1,6 @@
 # muse_bf16_proj hypotheses
 
-Regenerated 2026-10-25T202706Z. Best: 1.2566x [1.2378,1.2755] job `741072dca5fc4c9d` (check)
+Regenerated 2026-10-25T204227Z. Best: 1.2566x [1.2378,1.2755] job `741072dca5fc4c9d` (check)
 
 | created | slug | kind | area | where | outcome | speedup | CI | job | mode | promotion | review | expected hit |
 |---|---|---|---|---|---|---|---|---|---|---|---|---|
@@ -66,11 +66,11 @@ Regenerated 2026-10-25T202706Z. Best: 1.2566x [1.2378,1.2755] job `741072dca5fc4
 | 2026-10-25T145403Z | unpooler-full-m16-swapab16-blockt16 | primary | unpooler GEMM (full width n=8192, m=9..16, swap-AB BLOCK_T 16) | queue | hold |  |  |  |  |  | proceed |  |
 | 2026-10-25T145403Z | pooler-nn-layout-widen-m256 | primary | pooler GEMM (m=129..256, cuBLAS NN layout) | done/neutral | neutral | 1.2394 | [1.221,1.258] | 85c91578cc184287 | submit | done | proceed | 5/6 |
 | 2026-10-25T153141Z | bf16-verify16-cutlass-m128-onetile-splitk-rewrite | rewrite | bf16 GEMM dispatch (m=65..128, CUTLASS sm90 one-M-tile split-K) | queue | queued |  |  |  |  |  | required |  |
-| 2026-10-25T153141Z | qkv-k-split-batched-gemm-m65-m256 | primary | qkv GEMM (m=65..256, K-split as a batched cuBLAS GEMM) | queue | queued |  |  |  |  |  | required |  |
-| 2026-10-25T153141Z | router-hilo-tall-tile-m65-m256 | primary | router GEMM (m=65..256, hilo tile config) | queue | queued |  |  |  |  |  | required |  |
 | 2026-10-25T153141Z | router-m128-m256-wgmma-swapab-tall-cluster-stage2 | rewrite | router GEMM (m=65..256, CUDA wgmma swap-AB cluster kernel) | queue | queued |  |  |  |  |  | required |  |
-| 2026-10-25T153141Z | unpooler-k-halves-batched-gemm-m65-m128 | primary | unpooler GEMM (full width, m=65..128, K-split as a 2-batch cuBLAS GEMM) | queue | queued |  |  |  |  |  | required |  |
+| 2026-10-25T153141Z | qkv-k-split-batched-gemm-m65-m256 | primary | qkv GEMM (m=65..256, K-split as a batched cuBLAS GEMM) | running | running |  |  | 9d93c3d0cc184226 | submit |  | proceed |  |
+| 2026-10-25T153141Z | unpooler-k-halves-batched-gemm-m65-m128 | primary | unpooler GEMM (full width, m=65..128, K-split as a 2-batch cuBLAS GEMM) | running | running |  |  | e82feba3dd8d4efb | submit |  | proceed |  |
 | 2026-10-25T153141Z | pooler-k-halves-batched-gemm-m65-m256 | primary | pooler GEMM (m=65..256, K-split as a 2-batch cuBLAS GEMM) | done/neutral | neutral | 1.2470 | [1.228,1.266] | ce808e5a055f41b4 | submit |  | proceed | 2/3 |
+| 2026-10-25T153141Z | router-hilo-tall-tile-m65-m256 | primary | router GEMM (m=65..256, hilo tile config) | done/neutral | neutral | 1.2539 | [1.235,1.273] | 864e8094b5bc4c1b | submit |  | proceed | 0/3 |
 | 2026-10-25T161307Z | combo-cublaslt-single-node-m128-m256-plus-naive | primary | combination (naive stack + cuBLASLt single-node probe on pooler/unpooler/o m=128/256) | queue | hold |  |  |  |  |  | proceed |  |
 | 2026-10-25T161307Z | combo-naive-pooler-m1-rowowner-qkv-m128-cublaslt | primary | combination (pooler m=1 bulk row-owner + qkv_gate m=128 cuBLASLt single-node) | done/neutral | neutral | 1.2448 | [1.226,1.263] | 0ee2055590aa4e84 | submit |  | proceed | 2/3 |
 | 2026-10-25T161307Z | combo-rowowner-reduce-free-m1-qkv-o-plus-naive | primary | combination (naive stack + bulk row-owner widened to qkv_gate/o m=1) | done/neutral | neutral | 1.2566 | [1.238,1.275] | 741072dca5fc4c9d | submit | done | proceed | 3/4 |

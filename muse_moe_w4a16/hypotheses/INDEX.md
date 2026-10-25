@@ -1,6 +1,6 @@
 # muse_moe_w4a16 hypotheses
 
-Regenerated 2026-10-25T202706Z. Best: 1.4021x [1.3811,1.4231] job `31c27e4b8fc84bd2` (submit)
+Regenerated 2026-10-25T204227Z. Best: 1.4021x [1.3811,1.4231] job `31c27e4b8fc84bd2` (submit)
 
 | created | slug | kind | area | where | outcome | speedup | CI | job | mode | promotion | review | expected hit |
 |---|---|---|---|---|---|---|---|---|---|---|---|---|
@@ -80,9 +80,9 @@ Regenerated 2026-10-25T202706Z. Best: 1.4021x [1.3811,1.4231] job `31c27e4b8fc84
 | 2026-10-25T150301Z | restack-bucket-gate-on-master-align-atomic | primary | expert GEMM path selection (wgmma vs Marlin) restack | queue | hold |  |  |  |  |  | hold |  |
 | 2026-10-25T153417Z | cuda-fused-split-i-moe-midt-cluster-reduce | rewrite | w13 marlin + silu-mul + w2 marlin | queue | queued |  |  |  |  |  | required |  |
 | 2026-10-25T153417Z | cuda-fused-split-i-moe-tiny-t | rewrite | w13 marlin + silu-mul + w2 marlin | queue | queued |  |  |  |  |  | required |  |
-| 2026-10-25T153417Z | wg-producer-direct-x-rows-no-gather | primary | MoE dispatch (wgmma x gather) | queue | queued |  |  |  |  |  | required |  |
-| 2026-10-25T153417Z | wg-stream-k-tail-split | primary | w13 marlin + silu-mul + w2 marlin | queue | queued |  |  |  |  |  | required |  |
-| 2026-10-25T153417Z | wg-two-ctas-per-sm-port-b128-n32 | primary | w13 marlin + silu-mul + w2 marlin | queue | queued |  |  |  |  |  | required |  |
+| 2026-10-25T153417Z | wg-producer-direct-x-rows-no-gather | primary | MoE dispatch (wgmma x gather) | queue | hold |  |  |  |  |  | proceed |  |
+| 2026-10-25T153417Z | wg-stream-k-tail-split | primary | w13 marlin + silu-mul + w2 marlin | queue | hold |  |  |  |  |  | hold |  |
+| 2026-10-25T153417Z | wg-two-ctas-per-sm-port-b128-n32 | primary | w13 marlin + silu-mul + w2 marlin | queue | hold |  |  |  |  |  | hold |  |
 | 2026-10-25T153417Z | wg-pdl-gather-w13-w2-chain | primary | launch overhead | done/neutral | neutral | 1.3752 | [1.355,1.396] | 667b64e3fb1343ec | submit | done | proceed | 3/4 |
 | 2026-10-25T161613Z | combo-smallm-two-stream-halves-x-w13-splitk | primary | combination: small-M Marlin two-stream halves x w13 split-K atomic + shared floor | done/neutral | neutral | 1.3887 | [1.368,1.409] | 9a455a2aae7842cb | submit |  | proceed | 1/6 |
 | 2026-10-25T161613Z | combo-toprow-w13t1-d32-alignpar-postnorm-wg-align2 | primary | combination: naive top-row stack (decode_1 w13 atomic, decode_32 align+post-norm, verify_32 wgmma align2 front end) | done/neutral | neutral | 1.3866 | [1.366,1.407] | b395f5b6097348c7 | submit | done | proceed | 4/6 |
@@ -109,3 +109,6 @@ Regenerated 2026-10-25T202706Z. Best: 1.4021x [1.3811,1.4231] job `31c27e4b8fc84
 - marlin-exec-config-autotune-mid-m: Reviewer: no evidence SGLang moe_wna16_marlin_gemm takes thread_k/thread_n/blocks_per_sm; a print-only kwargs probe + cold-L2 config timing table rides in w13-marlin-atomic-add-on-master-small-m prepare(). Build only if a config is >=8% faster on two routings; fp32 reference; w2 in master atomic mode; T=8/16/32 only.
 - silu-mul-triton-row-tiled-gated: Weak for a scored run: prefill's Triton act_and_mul swap (silu-mul-triton-local-rows-marlin-turn, b2259479) ran ~2x slower on the judge; its only expected-faster shapes (128<=T<=512) are covered by the wgmma bucket-gate (fused silu) now on the board and being restacked onto master; the warm-L2 bare-kernel gate is noise-prone at ~2 us. Revisit on a check after the restack lands, with the review's gate/do_not_specialize fixes.
 - restack-bucket-gate-on-master-align-atomic: adversarial review: The premise is false: the parent's submission.py (blob 1774e42c, branch tip = impl fc959d9c) already contains master's align-parallel-per-expert-verify and w2-m
+- wg-producer-direct-x-rows-no-gather: own condition: first measurement must be an okc check (new cp.async/mbarrier producer can fault or hang); only scored submits remained on 2026-10-25, and a gain on master cannot move the board (best is the occ2 branch). Unhold when checks reset; apply the reviewer's fence.proxy.async and nvalid-bound fixes when building
+- wg-stream-k-tail-split: adversarial review: Tail mechanism real but small; numbers copied from the wrong profile; the spec's own condition is an okc check first and only scored submits remain today; a mas
+- wg-two-ctas-per-sm-port-b128-n32: adversarial review: Already measured at B128 and lost: combo-wg-occ2-v64-hot-interleave-align2 (job 31c27e4b8fc84bd2, current BEST) built the same two-CTAs-per-SM wgmma port and ti

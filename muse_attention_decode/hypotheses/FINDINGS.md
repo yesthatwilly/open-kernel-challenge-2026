@@ -1,6 +1,6 @@
 # muse_attention_decode findings
 
-Regenerated 2026-10-25T202706Z by `churn.py index`. Read this before writing a hypothesis for muse_attention_decode.
+Regenerated 2026-10-25T204227Z by `churn.py index`. Read this before writing a hypothesis for muse_attention_decode.
 
 ## Current best
 
@@ -20,6 +20,8 @@ Where the time goes (per scored shape, top kernels):
 - batch=16 ctx=80000 dist=coherent heads=tp8 layer=full load=verify_16 page=1 q_len=8 spread=agentic: yours 162.5µs vs SGLang 205.3µs (SoL 63.4µs) · void cutlass::device_kernel<flash::enable_sm90_or_later<f... 148.7µs 91.0%, void cutlass::device_kernel<flash::FlashAttnFwdCombine<cu... 6.4µs 3.9%, void flash::prepare_varlen_num_blocks_kernel<1, true>(int... 3.1µs 1.9%
 - batch=32 ctx=80000 dist=soft heads=tp8 layer=sliding load=verify_32 page=1 q_len=8 spread=agentic: yours 29.0µs vs SGLang 34.4µs (SoL 3.7µs) · void cutlass::device_kernel<flash::enable_sm90_or_later<f... 14.8µs 56.1%, void cutlass::device_kernel<flash::FlashAttnFwdCombine<cu... 4.3µs 16.1%, _pre_attention_kernel 4.1µs 15.6%
 - batch=32 ctx=80000 dist=coherent heads=tp8 layer=full load=verify_32 page=1 q_len=8 spread=agentic: yours 302.0µs vs SGLang 390.0µs (SoL 126.8µs) · void cutlass::device_kernel<flash::enable_sm90_or_later<f... 288.7µs 94.1%, void cutlass::device_kernel<flash::FlashAttnFwdCombine<cu... 6.7µs 2.2%, _pre_attention_kernel 4.1µs 1.3%
+
+Today's clean-context diagnosis: `muse_attention_decode/hypotheses/DIAGNOSIS.md` (ranked actions and its own Do-not-try list).
 
 ## By area
 
@@ -243,9 +245,9 @@ Rewrite stages are exempt: a slow early stage is not a dead end.
 - queue: sliding-verify1-triton-pseudo-decode [sliding-layer attention (batch-1 verify, Triton fused decode kernel)] p2 hold
 - queue: full-verify1-sk-pseudo-decode [full-layer attention (batch-1 verify, stream-K pseudo-decode)] p3 hold
 - queue: sliding-decode-sk-s3-fused-preattn-rope [sliding-layer attention (decode, stream-K windowed kernel, pre-attention fold)] p2 queued
-- queue: preattention-tiled-every-verify-block [pre-attention norm+rope] p2 queued
-- queue: full-decode1-sk-two-level-deep-ring [full-layer attention (batch-1 decode, stream-K ring depth)] p2 queued
+- queue: preattention-tiled-every-verify-block [pre-attention norm+rope] p2 hold
 - queue: full-verify-fa3-num-splits-band-gate [FA3 call (full verify split count)] p2 queued
 - queue: full-verify-wgmma-ws-s1-producer-split [full-layer attention (verify, wgmma stream-K kernel, warp-specialized pipeline)] p1 queued
 - queue: sliding-verify-fa3-num-splits-band-gate [FA3 call (sliding verify split count)] p2 queued
 - queue: sliding-verify-wgmma-window-s1 [sliding-layer attention (verify, wgmma stream-K windowed kernel)] p1 queued
+- running: full-decode1-sk-two-level-deep-ring [full-layer attention (batch-1 decode, stream-K ring depth)] p2 running

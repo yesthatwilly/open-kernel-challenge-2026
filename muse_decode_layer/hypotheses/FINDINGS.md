@@ -1,6 +1,6 @@
 # muse_decode_layer findings
 
-Regenerated 2026-10-25T202706Z by `churn.py index`. Read this before writing a hypothesis for muse_decode_layer.
+Regenerated 2026-10-25T204227Z by `churn.py index`. Read this before writing a hypothesis for muse_decode_layer.
 
 ## Current best
 
@@ -20,6 +20,8 @@ Where the time goes (per scored shape, top kernels):
 - batch=16 ctx=80000 dist=soft layer=full load=verify_16 page=1 q_len=8 spread=agentic: yours 593.4µs vs SGLang 751.9µs (SoL 188.7µs) · void sglang::device::marlin_moe::Marlin<__nv_bfloat16, 56... 272.9µs 47.2%, void cutlass::device_kernel<flash::enable_sm90_or_later<f... 155.6µs 26.9%, nvjet_sm90_tst_128x64_64x8_1x2_h_bz_TNT 29.8µs 5.2%
 - batch=32 ctx=80000 dist=soft layer=sliding load=verify_32 page=1 q_len=8 spread=agentic: yours 599.8µs vs SGLang 720.9µs (SoL 143.8µs) · void sglang::device::marlin_moe::Marlin<__nv_bfloat16, 56... 397.2µs 67.9%, nvjet_sm90_tst_128x128_64x6_2x1_v_bz_TNT 34.4µs 5.9%, nvjet_sm90_tst_128x64_64x8_1x2_h_bz_TNT 30.8µs 5.3%
 - batch=32 ctx=80000 dist=soft layer=full load=verify_32 page=1 q_len=8 spread=agentic: yours 866.6µs vs SGLang 1073.7µs (SoL 267.2µs) · void sglang::device::marlin_moe::Marlin<__nv_bfloat16, 56... 375.5µs 44.5%, void cutlass::device_kernel<flash::enable_sm90_or_later<f... 288.4µs 34.2%, nvjet_sm90_tst_128x128_64x6_2x1_v_bz_TNT 34.0µs 4.0%
+
+Today's clean-context diagnosis: `muse_decode_layer/hypotheses/DIAGNOSIS.md` (ranked actions and its own Do-not-try list).
 
 ## By area
 
@@ -201,13 +203,13 @@ Rewrite stages are exempt: a slow early stage is not a dead end.
 - queue: marlin-two-stream-halves-port [w13 marlin + silu-mul + w2 marlin (8<=T<=32, stream overlap)] p5 hold
 - queue: moe-chain-cuda-swapab-expert-once-fix [w13 marlin + silu-mul + w2 marlin (T>32)] p2 hold
 - queue: sliding-cluster-c4-s3-satfinite-on-sk-ticket [FA3 call (sliding decode, batch 17..32)] p1 queued
-- queue: dl3-unpool-nf1-t2-t8 [unpooler GEMM (T=2..8, dl3 piece C widened)] p2 queued
+- queue: dl3-unpool-nf1-t2-t8 [unpooler GEMM (T=2..8, dl3 piece C widened)] p2 hold
 - queue: dense-qkv-o-unpool-swapab-bf16-master-port-t1-t32 [qkv GEMM + o GEMM + unpooler GEMM (T <= 32)] p1 hold
 - queue: ffn-front-t128-t256-concat-route [pooler GEMM + router GEMM + routing top-k + MoE align + pre-expert norm (T > 32)] p2 queued
 - queue: moe-rega-bucket-gate-port-t128-t512 [w13 marlin + silu-mul + w2 marlin (128 <= T <= 512)] p1 queued
-- queue: preattn-fused-t-gt1-sk-and-fa3-feeds [pre-attention norm+rope + cache store (T > 1, every shape not routed to _sliding_forward or dl3 piece A)] p3 queued
-- queue: sliding-cluster-c16-decode1-port [FA3 call (sliding decode, batch 1)] p4 queued
-- queue: sliding-sk-window-port-decode32-verify1 [FA3 call (sliding decode B=17..32 and sliding verify B=1: windowed stream-K)] p2 queued
+- queue: preattn-fused-t-gt1-sk-and-fa3-feeds [pre-attention norm+rope + cache store (T > 1, every shape not routed to _sliding_forward or dl3 piece A)] p3 hold
+- queue: sliding-cluster-c16-decode1-port [FA3 call (sliding decode, batch 1)] p4 hold
+- queue: sliding-sk-window-port-decode32-verify1 [FA3 call (sliding decode B=17..32 and sliding verify B=1: windowed stream-K)] p2 hold
+- queue: combo-attn-master-sliding-race-skw-c16 [combination: sliding attention per-band race (B=1, 2..16, 17..32, verify B=1) + routing R / unpooler tail] p1 hold
 - queue: swapab16-t2-t16-port-on-master [qkv GEMM + o GEMM (2 <= T <= 16)] p1 hold
-- running: combo-attn-master-sliding-race-skw-c16 [combination: sliding attention per-band race (B=1, 2..16, 17..32, verify B=1) + routing R / unpooler tail] p1 running
 - running: combo-measured-rows-plus-rega-align2-large-t [combination: C1 measured stack + w13/w2 rega and align2 at 128<=T<=512] p1 running

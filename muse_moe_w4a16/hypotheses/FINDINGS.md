@@ -1,6 +1,6 @@
 # muse_moe_w4a16 findings
 
-Regenerated 2026-10-25T202706Z by `churn.py index`. Read this before writing a hypothesis for muse_moe_w4a16.
+Regenerated 2026-10-25T204227Z by `churn.py index`. Read this before writing a hypothesis for muse_moe_w4a16.
 
 ## Current best
 
@@ -14,6 +14,8 @@ Where the time goes (per scored shape, top kernels):
 - bs=8 load=verify_1 sharding=ep8: yours 104.5µs vs SGLang 142.4µs (SoL 37.3µs) · void sglang::device::marlin_moe::Marlin<__nv_bfloat16, 56... 113.0µs 93.4%, _post_norm_combine_kernel 3.2µs 2.7%, _align_small_kernel 2.6µs 2.1%
 - bs=128 load=verify_16 sharding=ep8: yours 323.2µs vs SGLang 469.0µs (SoL 101.3µs) · void sglang::device::marlin_moe::Marlin<__nv_bfloat16, 56... 260.6µs 95.6%, _post_expert_norm_weighted_sum_kernel 4.3µs 1.6%, _align_parallel_kernel 3.9µs 1.4%
 - bs=256 load=verify_32 sharding=ep8: yours 358.1µs vs SGLang 606.9µs (SoL 108.9µs) · void (anonymous namespace)::wg2_kernel<true, 64, 3, 2, 0>... 225.3µs 59.3%, void (anonymous namespace)::wg2_kernel<false, 64, 3, 2, 0... 141.5µs 37.2%, _post_expert_norm_weighted_sum_kernel 5.2µs 1.4%
+
+Today's clean-context diagnosis: `muse_moe_w4a16/hypotheses/DIAGNOSIS.md` (ranked actions and its own Do-not-try list).
 
 ## By area
 
@@ -163,6 +165,6 @@ Rewrite stages are exempt: a slow early stage is not a dead end.
 - queue: restack-bucket-gate-on-master-align-atomic [expert GEMM path selection (wgmma vs Marlin) restack] p1 hold
 - queue: cuda-fused-split-i-moe-midt-cluster-reduce [w13 marlin + silu-mul + w2 marlin] p2 queued
 - queue: cuda-fused-split-i-moe-tiny-t [w13 marlin + silu-mul + w2 marlin] p1 queued
-- queue: wg-producer-direct-x-rows-no-gather [MoE dispatch (wgmma x gather)] p3 queued
-- queue: wg-stream-k-tail-split [w13 marlin + silu-mul + w2 marlin] p3 queued
-- queue: wg-two-ctas-per-sm-port-b128-n32 [w13 marlin + silu-mul + w2 marlin] p2 queued
+- queue: wg-producer-direct-x-rows-no-gather [MoE dispatch (wgmma x gather)] p3 hold
+- queue: wg-stream-k-tail-split [w13 marlin + silu-mul + w2 marlin] p3 hold
+- queue: wg-two-ctas-per-sm-port-b128-n32 [w13 marlin + silu-mul + w2 marlin] p2 hold

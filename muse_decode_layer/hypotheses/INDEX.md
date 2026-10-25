@@ -1,6 +1,6 @@
 # muse_decode_layer hypotheses
 
-Regenerated 2026-10-25T202706Z. Best: 1.3142x [1.2945,1.3339] job `a903b9d004d2452d` (submit)
+Regenerated 2026-10-25T204227Z. Best: 1.3142x [1.2945,1.3339] job `a903b9d004d2452d` (submit)
 
 | created | slug | kind | area | where | outcome | speedup | CI | job | mode | promotion | review | expected hit |
 |---|---|---|---|---|---|---|---|---|---|---|---|---|
@@ -67,19 +67,19 @@ Regenerated 2026-10-25T202706Z. Best: 1.3142x [1.2945,1.3339] job `a903b9d004d24
 | 2026-10-25T042121Z | w2-marlin-atomic-add-t1-port | primary | w2 marlin (T=1) | done/neutral | neutral | 1.2856 | [1.266,1.305] | 7a9f5de5aecc4aba | check | done | proceed | 2/4 |
 | 2026-10-25T054108Z | full-decode-sk-ticket-restack-b1-b64 | primary | FA3 call (full decode, all batches): split-KV A/B at 1<B<=64 and FA3 chain at B=1 | done/neutral | neutral | 1.2847 | [1.265,1.304] | 9c99379067084f6e | check |  | proceed | 4/5 |
 | 2026-10-25T054127Z | sliding-cluster-c4-decode32-s2-k-encode-match | rewrite | FA3 call (sliding decode, batch 17..32) | done/neutral | neutral | 1.2803 | [1.261,1.299] | 7c04214e90354dfa | check |  | proceed | 2/5 |
-| 2026-10-25T054152Z | dense-chain-s3-t1-q-sk2-o-route-unpool | rewrite | whole-layer fusion (T=1 dense chain: qkv/o GEMM side + routing R + unpooler) | done/neutral | neutral | 1.3018 | [1.282,1.321] | 34a9be06918d448b | check | merged | proceed | 3/5 |
+| 2026-10-25T054152Z | dense-chain-s3-t1-q-sk2-o-route-unpool | rewrite | whole-layer fusion (T=1 dense chain: qkv/o GEMM side + routing R + unpooler) | done/neutral | neutral | 1.3018 | [1.282,1.321] | 34a9be06918d448b | check | superseded | proceed | 3/5 |
 | 2026-10-25T110639Z | sliding-cluster-c4-s3-satfinite-on-sk-ticket | rewrite | FA3 call (sliding decode, batch 17..32) | queue | queued |  |  |  |  |  | required |  |
 | 2026-10-25T110701Z | qkv-o-swapab16-t2-t16-no-fork | primary | qkv GEMM + o GEMM (2 <= T <= 16) | done/neutral | neutral | 1.3056 | [1.286,1.325] | b0057d2e6cef4d5a | submit |  | proceed | 3/6 |
-| 2026-10-25T145938Z | dl3-unpool-nf1-t2-t8 | primary | unpooler GEMM (T=2..8, dl3 piece C widened) | queue | queued |  |  |  |  |  | required |  |
+| 2026-10-25T145938Z | dl3-unpool-nf1-t2-t8 | primary | unpooler GEMM (T=2..8, dl3 piece C widened) | queue | hold |  |  |  |  |  | hold |  |
 | 2026-10-25T145938Z | dl3-piece-a-gate-stride-check-fix | primary | full decode_1 attention side (dl3 piece A enable) | done/neutral | neutral | 1.3080 | [1.288,1.328] | 933d3f825a044d36 | submit | done | proceed | 7/7 |
 | 2026-10-25T153205Z | dense-qkv-o-unpool-swapab-bf16-master-port-t1-t32 | primary | qkv GEMM + o GEMM + unpooler GEMM (T <= 32) | queue | hold |  |  |  |  |  | hold |  |
 | 2026-10-25T153205Z | ffn-front-t128-t256-concat-route | rewrite | pooler GEMM + router GEMM + routing top-k + MoE align + pre-expert norm (T > 32) | queue | queued |  |  |  |  |  | required |  |
 | 2026-10-25T153205Z | moe-rega-bucket-gate-port-t128-t512 | rewrite | w13 marlin + silu-mul + w2 marlin (128 <= T <= 512) | queue | queued |  |  |  |  |  | required |  |
-| 2026-10-25T153205Z | preattn-fused-t-gt1-sk-and-fa3-feeds | primary | pre-attention norm+rope + cache store (T > 1, every shape not routed to _sliding_forward or dl3 piece A) | queue | queued |  |  |  |  |  | required |  |
-| 2026-10-25T153205Z | sliding-cluster-c16-decode1-port | primary | FA3 call (sliding decode, batch 1) | queue | queued |  |  |  |  |  | required |  |
-| 2026-10-25T153205Z | sliding-sk-window-port-decode32-verify1 | primary | FA3 call (sliding decode B=17..32 and sliding verify B=1: windowed stream-K) | queue | queued |  |  |  |  |  | required |  |
-| 2026-10-25T161651Z | combo-attn-master-sliding-race-skw-c16 | primary | combination: sliding attention per-band race (B=1, 2..16, 17..32, verify B=1) + routing R / unpooler tail | running | running |  |  |  |  |  | proceed |  |
-| 2026-10-25T161651Z | combo-measured-rows-plus-rega-align2-large-t | primary | combination: C1 measured stack + w13/w2 rega and align2 at 128<=T<=512 | running | running |  |  |  |  |  | proceed |  |
+| 2026-10-25T153205Z | preattn-fused-t-gt1-sk-and-fa3-feeds | primary | pre-attention norm+rope + cache store (T > 1, every shape not routed to _sliding_forward or dl3 piece A) | queue | hold |  |  |  |  |  | hold |  |
+| 2026-10-25T153205Z | sliding-cluster-c16-decode1-port | primary | FA3 call (sliding decode, batch 1) | queue | hold |  |  |  |  |  | hold |  |
+| 2026-10-25T153205Z | sliding-sk-window-port-decode32-verify1 | primary | FA3 call (sliding decode B=17..32 and sliding verify B=1: windowed stream-K) | queue | hold |  |  |  |  |  | proceed |  |
+| 2026-10-25T161651Z | combo-attn-master-sliding-race-skw-c16 | primary | combination: sliding attention per-band race (B=1, 2..16, 17..32, verify B=1) + routing R / unpooler tail | queue | hold |  |  |  |  |  | proceed |  |
+| 2026-10-25T161651Z | combo-measured-rows-plus-rega-align2-large-t | primary | combination: C1 measured stack + w13/w2 rega and align2 at 128<=T<=512 | running | running |  |  | eaa8cc0f18f64bfb | submit |  | proceed |  |
 | 2026-10-25T161651Z | combo-measured-rows-slide-batched-preattn-t8-tail | primary | combination: sliding attention B=2..32 + pre-attention feeds (T>1) + routing R / unpooler (2<=T<=32 / 2<=T<=8) | done/neutral | neutral | 1.3142 | [1.295,1.334] | a903b9d004d2452d | submit | done | proceed | 3/8 |
 | 2026-10-25T202335Z | swapab16-t2-t16-port-on-master | primary | qkv GEMM + o GEMM (2 <= T <= 16) | queue | hold |  |  |  |  |  | hold |  |
 
@@ -101,5 +101,10 @@ Regenerated 2026-10-25T202706Z. Best: 1.3142x [1.2945,1.3339] job `a903b9d004d24
 - prefork-qkv-o-swapab-t16-t32: adversarial review: Its main purpose no longer holds on the current master: small-t-launch-minimal-dense-chain-pdl removed the router side stream at T<=32, so there is no fork for 
 - marlin-two-stream-halves-port: adversarial review: Hold: the moe parent it ports (marlin-two-stream-expert-halves-small-m, job 5d630369b1634f77) came back neutral, with every scored shape flat and verify_1 1.5% 
 - moe-chain-cuda-swapab-expert-once-fix: Retired: its design runs the self-check in a child process, which the rules statically reject; superseded by the -inproc line (LESSONS 2026-10-25).
+- dl3-unpool-nf1-t2-t8: adversarial review: Duplicate of master: the landed combo-measured-rows-slide-batched-preattn-t8-tail (ec89382b, BEST 1.3142x) contains S2b, dl_unpool_kernel NF=1 at 2 <= T <= 8 wi
 - dense-qkv-o-unpool-swapab-bf16-master-port-t1-t32: adversarial review: Hold. The conjecture is that bf16 master's 'newer' swap-AB kernel will run in decode at its standalone 9.7/3.9 us. That premise is false, and the transfer has a
+- preattn-fused-t-gt1-sk-and-fa3-feeds: adversarial review: Duplicate of master: the landed combo-measured-rows-slide-batched-preattn-t8-tail (ec89382b, BEST 1.3142x) carries _pre_attention_kernel as source S3 (PAIRED an
+- sliding-cluster-c16-decode1-port: adversarial review: Plausible but small (~2 us on the 118.5 us sliding decode_1 row, ~0.25% headline); its own first measurement must be an okc check, and it is an unchecked cross-
+- sliding-sk-window-port-decode32-verify1: own condition: first measurement is an okc check (unchecked multi-thousand-line CUDA port; a sticky fault fails the run with no prepare log); only scored submits remained on 2026-10-25. Unhold when checks reset; apply the review's per-state tickets, distinct kernel symbols and variant sub-race
+- combo-attn-master-sliding-race-skw-c16: builder found D1-D3 and C1 already on master (ec89382b); what remains is A1+A2, a multi-thousand-line CUDA port from muse_attention_decode with two new load_inline builds: not buildable here and unsafe as an unchecked scored submit; run it as a check once checks reset, or split A1 and A2
 - swapab16-t2-t16-port-on-master: adversarial review: Hold. The swap-AB in-gate effect (T=8/16) was already measured kernel-by-kernel in the parent's profile b0057d2e6cef4d5a: ~1.5-2 us per in-gate shape, ~+0.3% he
