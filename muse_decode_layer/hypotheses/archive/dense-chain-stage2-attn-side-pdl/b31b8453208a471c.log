@@ -1,0 +1,165 @@
+[small-t-dense-chain] load_inline compiled in 50.8s, nvcc flags ['-O3', '-arch=sm_90a', '-lineinfo']
+[small-t-dense-chain] P occupancy (CTAs/SM, NF=1/2/4): [3, 2, 2]; grid 216 CTAs
+[small-t-dense-chain] PDL probe: eager overlap False (-6.3 us), graph overlap True (49.7 us, secondary waited 50.3 us) -> pdl=1
+[small-t-dense-chain] P timing T=1 pdl=0 20.8 us (3.63 TB/s) pdl=1 20.6 us (3.67 TB/s)
+[small-t-dense-chain] P timing T=8 pdl=0 22.0 us (3.43 TB/s) pdl=1 21.8 us (3.46 TB/s)
+[small-t-dense-chain] P timing T=32 pdl=0 26.2 us (2.89 TB/s) pdl=1 25.8 us (2.93 TB/s)
+[small-t-dense-chain] ON pdl=1 compile 50.8s max errs ei 1.19e-04 logit 3.16e-06 xn 2.03e-05 w 0.00e+00 y 0.00e+00 graph 0.00e+00: PATH CHOSEN = DENSE-CHAIN at T <= 32, MASTER above
+[dense-chain-s2] occupancy (CTAs/SM, NF=1/2/4): Q [3, 2, 2] grid 216; O [3, 2, 2] grid 256 (one wave needs >= 2/SM)
+[dense-chain-s2] FP8 encode: __nv_cvt_float2_to_fp8x2 with __NV_SATFINITE (clamps |x| > 448 to +-448 where torch's e4m3fn cast gives NaN), every value rounded through bf16 first; nvcc flags ['-O3', '-arch=sm_90a', '-lineinfo']
+[dense-chain-s2] sliding decode_1 carve-out: DL2_SLIDING1='raw' (Q raw + _sliding_forward + O raw)
+[dense-chain-s2] launch Q T=1 B=1 L=1 sliding kv_scale=1.0 pdl=1 rep0
+[dense-chain-s2] done   Q T=1 B=1 L=1 sliding kv_scale=1.0 pdl=1 rep0
+[dense-chain-s2] launch Q T=1 B=1 L=1 sliding kv_scale=1.0 pdl=1 rep1
+[dense-chain-s2] done   Q T=1 B=1 L=1 sliding kv_scale=1.0 pdl=1 rep1
+[dense-chain-s2] launch Q-raw T=1 B=1 L=1 sliding kv_scale=1.0 pdl=1
+[dense-chain-s2] done   Q-raw T=1 B=1 L=1 sliding kv_scale=1.0 pdl=1
+[dense-chain-s2] launch O T=1 B=1 L=1 sliding kv_scale=1.0 pdl=1 rep0
+[dense-chain-s2] done   O T=1 B=1 L=1 sliding kv_scale=1.0 pdl=1 rep0
+[dense-chain-s2] launch O T=1 B=1 L=1 sliding kv_scale=1.0 pdl=1 rep1
+[dense-chain-s2] done   O T=1 B=1 L=1 sliding kv_scale=1.0 pdl=1 rep1
+[dense-chain-s2] launch O-raw T=1 B=1 L=1 sliding kv_scale=1.0 pdl=1
+[dense-chain-s2] done   O-raw T=1 B=1 L=1 sliding kv_scale=1.0 pdl=1
+[dense-chain-s2] launch Q T=1 B=1 L=1 full kv_scale=1.0 pdl=1 rep0
+[dense-chain-s2] done   Q T=1 B=1 L=1 full kv_scale=1.0 pdl=1 rep0
+[dense-chain-s2] launch Q T=1 B=1 L=1 full kv_scale=1.0 pdl=1 rep1
+[dense-chain-s2] done   Q T=1 B=1 L=1 full kv_scale=1.0 pdl=1 rep1
+[dense-chain-s2] launch Q-raw T=1 B=1 L=1 full kv_scale=1.0 pdl=1
+[dense-chain-s2] done   Q-raw T=1 B=1 L=1 full kv_scale=1.0 pdl=1
+[dense-chain-s2] launch O T=1 B=1 L=1 full kv_scale=1.0 pdl=1 rep0
+[dense-chain-s2] done   O T=1 B=1 L=1 full kv_scale=1.0 pdl=1 rep0
+[dense-chain-s2] launch O T=1 B=1 L=1 full kv_scale=1.0 pdl=1 rep1
+[dense-chain-s2] done   O T=1 B=1 L=1 full kv_scale=1.0 pdl=1 rep1
+[dense-chain-s2] launch O-raw T=1 B=1 L=1 full kv_scale=1.0 pdl=1
+[dense-chain-s2] done   O-raw T=1 B=1 L=1 full kv_scale=1.0 pdl=1
+[dense-chain-s2] launch Q T=8 B=1 L=8 sliding kv_scale=0.25 pdl=1 rep0
+[dense-chain-s2] done   Q T=8 B=1 L=8 sliding kv_scale=0.25 pdl=1 rep0
+[dense-chain-s2] launch Q T=8 B=1 L=8 sliding kv_scale=0.25 pdl=1 rep1
+[dense-chain-s2] done   Q T=8 B=1 L=8 sliding kv_scale=0.25 pdl=1 rep1
+[dense-chain-s2] launch Q-raw T=8 B=1 L=8 sliding kv_scale=0.25 pdl=1
+[dense-chain-s2] done   Q-raw T=8 B=1 L=8 sliding kv_scale=0.25 pdl=1
+[dense-chain-s2] launch O T=8 B=1 L=8 sliding kv_scale=0.25 pdl=1 rep0
+[dense-chain-s2] done   O T=8 B=1 L=8 sliding kv_scale=0.25 pdl=1 rep0
+[dense-chain-s2] launch O T=8 B=1 L=8 sliding kv_scale=0.25 pdl=1 rep1
+[dense-chain-s2] done   O T=8 B=1 L=8 sliding kv_scale=0.25 pdl=1 rep1
+[dense-chain-s2] launch O-raw T=8 B=1 L=8 sliding kv_scale=0.25 pdl=1
+[dense-chain-s2] done   O-raw T=8 B=1 L=8 sliding kv_scale=0.25 pdl=1
+[dense-chain-s2] launch Q T=8 B=1 L=8 full kv_scale=1.0 pdl=1 rep0
+[dense-chain-s2] done   Q T=8 B=1 L=8 full kv_scale=1.0 pdl=1 rep0
+[dense-chain-s2] launch Q T=8 B=1 L=8 full kv_scale=1.0 pdl=1 rep1
+[dense-chain-s2] done   Q T=8 B=1 L=8 full kv_scale=1.0 pdl=1 rep1
+[dense-chain-s2] launch Q-raw T=8 B=1 L=8 full kv_scale=1.0 pdl=1
+[dense-chain-s2] done   Q-raw T=8 B=1 L=8 full kv_scale=1.0 pdl=1
+[dense-chain-s2] launch O T=8 B=1 L=8 full kv_scale=1.0 pdl=1 rep0
+[dense-chain-s2] done   O T=8 B=1 L=8 full kv_scale=1.0 pdl=1 rep0
+[dense-chain-s2] launch O T=8 B=1 L=8 full kv_scale=1.0 pdl=1 rep1
+[dense-chain-s2] done   O T=8 B=1 L=8 full kv_scale=1.0 pdl=1 rep1
+[dense-chain-s2] launch O-raw T=8 B=1 L=8 full kv_scale=1.0 pdl=1
+[dense-chain-s2] done   O-raw T=8 B=1 L=8 full kv_scale=1.0 pdl=1
+[dense-chain-s2] launch Q T=9 B=9 L=1 full kv_scale=1.0 pdl=1 rep0
+[dense-chain-s2] done   Q T=9 B=9 L=1 full kv_scale=1.0 pdl=1 rep0
+[dense-chain-s2] launch Q T=9 B=9 L=1 full kv_scale=1.0 pdl=1 rep1
+[dense-chain-s2] done   Q T=9 B=9 L=1 full kv_scale=1.0 pdl=1 rep1
+[dense-chain-s2] launch Q-raw T=9 B=9 L=1 full kv_scale=1.0 pdl=1
+[dense-chain-s2] done   Q-raw T=9 B=9 L=1 full kv_scale=1.0 pdl=1
+[dense-chain-s2] launch O T=9 B=9 L=1 full kv_scale=1.0 pdl=1 rep0
+[dense-chain-s2] done   O T=9 B=9 L=1 full kv_scale=1.0 pdl=1 rep0
+[dense-chain-s2] launch O T=9 B=9 L=1 full kv_scale=1.0 pdl=1 rep1
+[dense-chain-s2] done   O T=9 B=9 L=1 full kv_scale=1.0 pdl=1 rep1
+[dense-chain-s2] launch O-raw T=9 B=9 L=1 full kv_scale=1.0 pdl=1
+[dense-chain-s2] done   O-raw T=9 B=9 L=1 full kv_scale=1.0 pdl=1
+[dense-chain-s2] launch Q T=16 B=16 L=1 full kv_scale=0.25 pdl=1 rep0
+[dense-chain-s2] done   Q T=16 B=16 L=1 full kv_scale=0.25 pdl=1 rep0
+[dense-chain-s2] launch Q T=16 B=16 L=1 full kv_scale=0.25 pdl=1 rep1
+[dense-chain-s2] done   Q T=16 B=16 L=1 full kv_scale=0.25 pdl=1 rep1
+[dense-chain-s2] launch Q-raw T=16 B=16 L=1 full kv_scale=0.25 pdl=1
+[dense-chain-s2] done   Q-raw T=16 B=16 L=1 full kv_scale=0.25 pdl=1
+[dense-chain-s2] launch O T=16 B=16 L=1 full kv_scale=0.25 pdl=1 rep0
+[dense-chain-s2] done   O T=16 B=16 L=1 full kv_scale=0.25 pdl=1 rep0
+[dense-chain-s2] launch O T=16 B=16 L=1 full kv_scale=0.25 pdl=1 rep1
+[dense-chain-s2] done   O T=16 B=16 L=1 full kv_scale=0.25 pdl=1 rep1
+[dense-chain-s2] launch O-raw T=16 B=16 L=1 full kv_scale=0.25 pdl=1
+[dense-chain-s2] done   O-raw T=16 B=16 L=1 full kv_scale=0.25 pdl=1
+[dense-chain-s2] launch Q T=16 B=16 L=1 sliding kv_scale=1.0 pdl=1 rep0
+[dense-chain-s2] done   Q T=16 B=16 L=1 sliding kv_scale=1.0 pdl=1 rep0
+[dense-chain-s2] launch Q T=16 B=16 L=1 sliding kv_scale=1.0 pdl=1 rep1
+[dense-chain-s2] done   Q T=16 B=16 L=1 sliding kv_scale=1.0 pdl=1 rep1
+[dense-chain-s2] launch Q-raw T=16 B=16 L=1 sliding kv_scale=1.0 pdl=1
+[dense-chain-s2] done   Q-raw T=16 B=16 L=1 sliding kv_scale=1.0 pdl=1
+[dense-chain-s2] launch O T=16 B=16 L=1 sliding kv_scale=1.0 pdl=1 rep0
+[dense-chain-s2] done   O T=16 B=16 L=1 sliding kv_scale=1.0 pdl=1 rep0
+[dense-chain-s2] launch O T=16 B=16 L=1 sliding kv_scale=1.0 pdl=1 rep1
+[dense-chain-s2] done   O T=16 B=16 L=1 sliding kv_scale=1.0 pdl=1 rep1
+[dense-chain-s2] launch O-raw T=16 B=16 L=1 sliding kv_scale=1.0 pdl=1
+[dense-chain-s2] done   O-raw T=16 B=16 L=1 sliding kv_scale=1.0 pdl=1
+[dense-chain-s2] launch Q T=32 B=32 L=1 full kv_scale=1.0 pdl=1 rep0
+[dense-chain-s2] done   Q T=32 B=32 L=1 full kv_scale=1.0 pdl=1 rep0
+[dense-chain-s2] launch Q T=32 B=32 L=1 full kv_scale=1.0 pdl=1 rep1
+[dense-chain-s2] done   Q T=32 B=32 L=1 full kv_scale=1.0 pdl=1 rep1
+[dense-chain-s2] launch Q-raw T=32 B=32 L=1 full kv_scale=1.0 pdl=1
+[dense-chain-s2] done   Q-raw T=32 B=32 L=1 full kv_scale=1.0 pdl=1
+[dense-chain-s2] launch O T=32 B=32 L=1 full kv_scale=1.0 pdl=1 rep0
+[dense-chain-s2] done   O T=32 B=32 L=1 full kv_scale=1.0 pdl=1 rep0
+[dense-chain-s2] launch O T=32 B=32 L=1 full kv_scale=1.0 pdl=1 rep1
+[dense-chain-s2] done   O T=32 B=32 L=1 full kv_scale=1.0 pdl=1 rep1
+[dense-chain-s2] launch O-raw T=32 B=32 L=1 full kv_scale=1.0 pdl=1
+[dense-chain-s2] done   O-raw T=32 B=32 L=1 full kv_scale=1.0 pdl=1
+[dense-chain-s2] launch Q T=32 B=32 L=1 sliding kv_scale=0.25 pdl=1 rep0
+[dense-chain-s2] done   Q T=32 B=32 L=1 sliding kv_scale=0.25 pdl=1 rep0
+[dense-chain-s2] launch Q T=32 B=32 L=1 sliding kv_scale=0.25 pdl=1 rep1
+[dense-chain-s2] done   Q T=32 B=32 L=1 sliding kv_scale=0.25 pdl=1 rep1
+[dense-chain-s2] launch Q-raw T=32 B=32 L=1 sliding kv_scale=0.25 pdl=1
+[dense-chain-s2] done   Q-raw T=32 B=32 L=1 sliding kv_scale=0.25 pdl=1
+[dense-chain-s2] launch O T=32 B=32 L=1 sliding kv_scale=0.25 pdl=1 rep0
+[dense-chain-s2] done   O T=32 B=32 L=1 sliding kv_scale=0.25 pdl=1 rep0
+[dense-chain-s2] launch O T=32 B=32 L=1 sliding kv_scale=0.25 pdl=1 rep1
+[dense-chain-s2] done   O T=32 B=32 L=1 sliding kv_scale=0.25 pdl=1 rep1
+[dense-chain-s2] launch O-raw T=32 B=32 L=1 sliding kv_scale=0.25 pdl=1
+[dense-chain-s2] done   O-raw T=32 B=32 L=1 sliding kv_scale=0.25 pdl=1
+[dense-chain-s2] launch Q T=32 B=4 L=8 sliding kv_scale=0.015625 pdl=1 rep0
+[dense-chain-s2] done   Q T=32 B=4 L=8 sliding kv_scale=0.015625 pdl=1 rep0
+[dense-chain-s2] launch Q T=32 B=4 L=8 sliding kv_scale=0.015625 pdl=1 rep1
+[dense-chain-s2] done   Q T=32 B=4 L=8 sliding kv_scale=0.015625 pdl=1 rep1
+[dense-chain-s2] launch Q-raw T=32 B=4 L=8 sliding kv_scale=0.015625 pdl=1
+[dense-chain-s2] done   Q-raw T=32 B=4 L=8 sliding kv_scale=0.015625 pdl=1
+[dense-chain-s2] launch O T=32 B=4 L=8 sliding kv_scale=0.015625 pdl=1 rep0
+[dense-chain-s2] done   O T=32 B=4 L=8 sliding kv_scale=0.015625 pdl=1 rep0
+[dense-chain-s2] launch O T=32 B=4 L=8 sliding kv_scale=0.015625 pdl=1 rep1
+[dense-chain-s2] done   O T=32 B=4 L=8 sliding kv_scale=0.015625 pdl=1 rep1
+[dense-chain-s2] launch O-raw T=32 B=4 L=8 sliding kv_scale=0.015625 pdl=1
+[dense-chain-s2] done   O-raw T=32 B=4 L=8 sliding kv_scale=0.015625 pdl=1
+[dense-chain-s2] launch chain eager T=8 paired=1
+[dense-chain-s2] done   chain eager T=8 paired=1
+[dense-chain-s2] capture chain T=8
+[dense-chain-s2] launch chain graph replay T=8
+[dense-chain-s2] done   chain graph replay T=8
+[dense-chain-s2] launch chain eager T=32 paired=0
+[dense-chain-s2] done   chain eager T=32 paired=0
+[dense-chain-s2] capture chain T=32
+[dense-chain-s2] launch chain graph replay T=32
+[dense-chain-s2] done   chain graph replay T=32
+[dense-chain-s2] launch time Q T=1 pdl=0 warm replay
+[dense-chain-s2] done   time Q T=1 pdl=0 warm replay
+[dense-chain-s2] launch time Q T=1 pdl=1 warm replay
+[dense-chain-s2] done   time Q T=1 pdl=1 warm replay
+[dense-chain-s2] launch time O T=1 pdl=0 warm replay
+[dense-chain-s2] done   time O T=1 pdl=0 warm replay
+[dense-chain-s2] launch time O T=1 pdl=1 warm replay
+[dense-chain-s2] done   time O T=1 pdl=1 warm replay
+[dense-chain-s2] launch time Q T=32 pdl=0 warm replay
+[dense-chain-s2] done   time Q T=32 pdl=0 warm replay
+[dense-chain-s2] launch time Q T=32 pdl=1 warm replay
+[dense-chain-s2] done   time Q T=32 pdl=1 warm replay
+[dense-chain-s2] launch time O T=32 pdl=0 warm replay
+[dense-chain-s2] done   time O T=32 pdl=0 warm replay
+[dense-chain-s2] launch time O T=32 pdl=1 warm replay
+[dense-chain-s2] done   time O T=32 pdl=1 warm replay
+[dense-chain-s2] timing Q T=1 pdl=0 8.6 us (4.38 TB/s) pdl=1 8.4 us (4.51 TB/s)
+[dense-chain-s2] timing O T=1 pdl=0 6.6 us (2.53 TB/s) pdl=1 6.4 us (2.62 TB/s)
+[dense-chain-s2] timing Q T=32 pdl=0 18.0 us (2.10 TB/s) pdl=1 17.7 us (2.13 TB/s)
+[dense-chain-s2] timing O T=32 pdl=0 41.1 us (0.41 TB/s) pdl=1 40.8 us (0.41 TB/s)
+[dense-chain-s2] ON pdl=1 max errs q 1.19e-02 k 1.29e-02 v 0.00e+00 gate 1.46e-04 raw 1.65e-04 o 3.02e-04 o_raw 8.66e-05 graph 0.00e+00
+[dense-chain-s2] PATH CHOSEN sliding decode_1 (B=1, L=1, window): Q raw + _sliding_forward + O raw
+[dense-chain-s2] PATH CHOSEN every other shape at T <= 32: Q (norm/RoPE/FP8/cache store/paired pad) + FA3 over every key + O (norm-gate prologue, paired unpad)
+[dense-chain-s2] PATH CHOSEN T > 32: MASTER attention side
+[align-parallel-large-t] ON cases=18 mismatches=0

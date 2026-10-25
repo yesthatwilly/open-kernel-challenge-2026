@@ -70,10 +70,10 @@ controls_for: null
 rewrite_stage: 2
 replaces: "T<=32 attention side: qkv nvjet GEMM + splitKreduce, FusedQKNorm, k/v divide + FP8 casts, store_cache, q FP8 cast or paired pad copies, paired unpad copies, FusedRMSNormGate, o nvjet GEMM"
 review: proceed
-status: running
+status: done
 review_at: 2026-10-25T003616Z
 review_companions: null
-stage: dispatched
+stage: harvested
 claimed_at: 2026-10-25T003624Z
 base_sha: 6a839f514cc7024729ac75ac28402e894091c0bd
 base_blob: 4da94677234faaa06b42b5ced541db8961fd6f34
@@ -92,6 +92,13 @@ attempt_file: 2026-10-25T004858Z-check-dense-chain-stage2-attn-side-pdl.md
 prepared_at: 2026-10-25T004858Z
 job: b31b8453208a471c
 dispatched_at: 2026-10-25T004905Z
+outcome: regression
+verdict_detail: regression
+speedup: 1.2252948757939548
+speedup_ci: [1.2069154526570454, 1.243674298930864]
+harvested_at: 2026-10-25T034134Z
+best_at_harvest: 1.2521147631671776
+promotion: null
 ---
 
 # dense-chain-stage2-attn-side-pdl
@@ -209,3 +216,35 @@ Fixes (worktree submission.py; lint OK with warnings only, py_compile OK):
 2. `_dl2_ref_q` now returns a clone of the qkv GEMM output taken before `state["qk_norm"]` runs. If FusedQKNorm normalizes in place, the Q-raw comparison would have compared against normed q/k and failed every case.
 
 Residual risk: the build has never been compiled. A compile error now also takes stage 1 down to master, because the two stages share one TU. A device fault in the first self-check launch would poison the context, so the first run should be an okc check.
+
+## Result
+
+- job `b31b8453208a471c` (check), status done, passed True, tests 13/13
+- speedup 1.2253x, 95% CI [1.2069, 1.2437], score 18461.107156220427 µs vs SGLang 22620.3 µs
+- best at harvest: {"speedup": 1.2521147631671776, "ci": [1.23333304171967, 1.270896484614685], "job": "39bcf05afc4e4dd3"}; base result: muse_decode_layer/hypotheses/done/neutral/stack-align-par-sidestream-sliding1.result.json
+- **outcome: regression** (regression)
+- files: `muse_decode_layer/hypotheses/done/regression/dense-chain-stage2-attn-side-pdl.result.json`, `muse_decode_layer/hypotheses/done/regression/dense-chain-stage2-attn-side-pdl.patch`; branch `hyp/muse_decode_layer/dense-chain-stage2-attn-side-pdl`
+
+## Attribution
+
+| shape | w | base µs | hyp µs | delta | verdict |
+|---|---|---|---|---|---|
+| batch=1 ctx=80000 dist=soft layer=sliding load=decode_1 page=1 repeats=60 | 46 | 127.48 | 125.76 | 1.017 | flat |
+| batch=1 ctx=80000 dist=soft layer=full load=decode_1 page=1 repeats=60 | 16 | 142.93 | 139.26 | 1.0438 | gained |
+| batch=16 ctx=80000 dist=soft layer=sliding load=decode_16 page=1 spread=agentic | 46 | 204.98 | 223.88 | 0.9395 | lost |
+| batch=16 ctx=80000 dist=soft layer=full load=decode_16 page=1 spread=agentic | 16 | 349.47 | 355.92 | 0.9856 | flat |
+| batch=32 ctx=80000 dist=soft layer=sliding load=decode_32 page=1 spread=agentic | 46 | 245.77 | 278.93 | 0.882 | lost |
+| batch=32 ctx=80000 dist=soft layer=full load=decode_32 page=1 spread=agentic | 16 | 529.71 | 561.54 | 0.9427 | lost |
+| batch=1 ctx=80000 dist=soft layer=sliding load=verify_1 page=1 q_len=8 | 46 | 190.8 | 182.48 | 1.0112 | flat |
+| batch=1 ctx=80000 dist=soft layer=full load=verify_1 page=1 q_len=8 | 16 | 192.44 | 200.27 | 0.9818 | flat |
+| batch=16 ctx=80000 dist=soft layer=sliding load=verify_16 page=1 q_len=8 spread=agentic | 46 | 429.61 | 424.14 | 0.9943 | flat |
+| batch=16 ctx=80000 dist=soft layer=full load=verify_16 page=1 q_len=8 spread=agentic | 16 | 563.65 | 546.57 | 0.9716 | flat |
+| batch=32 ctx=80000 dist=soft layer=sliding load=verify_32 page=1 q_len=8 spread=agentic | 46 | 592.52 | 609.67 | 1.0237 | flat |
+| batch=32 ctx=80000 dist=soft layer=full load=verify_32 page=1 q_len=8 spread=agentic | 16 | 861.3 | 879.04 | 0.9865 | flat |
+
+gained on full decode_1; lost on sliding decode_16, decode_32; full decode_32. Expected hit: 3/7. Noise ±1.5%.
+
+## Follow-ups
+
+- rewrite stage 2 of `T<=32 attention side: qkv nvjet GEMM + splitKreduce, FusedQKNorm, k/v divide + FP8 casts, store_cache, q FP8 cast or paired pad copies, paired unpad copies, FusedRMSNormGate, o nvjet GEMM`: read the replaced kernels' own us per shape (profile top_kernels) against the incumbent and the floor, and check which Milestone it reached. The next stage is `/hypothesize muse_decode_layer "<what to fix or tune>" --kind rewrite --depends-on dense-chain-stage2-attn-side-pdl --stage 3`; a slow or failed first cut is the expected start, not a do-not-retry.
+
