@@ -36,9 +36,18 @@ controls_for: null
 rewrite_stage: 6
 replaces: Marlin w13+w2 (moe_wna16_marlin_gemm x2) at every prefill T
 review: proceed
-status: queued
+status: running
 review_at: 2026-10-24T165620Z
 review_companions: null
+stage: claimed
+claimed_at: 2026-10-25T003236Z
+base_sha: 3c444875aef3f2a85c86b412e22d10ce0a6290dc
+base_blob: 526518b54879e7929be2f03a0c8084907596fa70
+branch: hyp/muse_prefill_layer/experts-triton-packed-dequant-turn4
+worktree: .worktrees/muse_prefill_layer/experts-triton-packed-dequant-turn4
+mode: null
+restack_of: null
+stale_base: true
 ---
 
 # experts-triton-packed-dequant-turn4
