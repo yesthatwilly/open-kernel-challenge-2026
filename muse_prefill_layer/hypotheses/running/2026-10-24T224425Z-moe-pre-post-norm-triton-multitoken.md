@@ -50,7 +50,7 @@ base_sha: 7e9d65cd4721de1932a376a8f32f7db7343f97ef
 base_blob: db8a3344398bca79ea5cafeb580f701c055fd475
 branch: hyp/muse_prefill_layer/moe-pre-post-norm-triton-multitoken
 worktree: .worktrees/muse_prefill_layer/moe-pre-post-norm-triton-multitoken
-mode: null
+mode: check
 restack_of: null
 stale_base: null
 implemented_at: 2026-10-25T044421Z
@@ -59,6 +59,8 @@ submission_sha256: 5cb0bb62dfc10d7db34371668bd08462620233b7946e2cfb2a7d0ff0c17c6
 norm_sha256: 0c02bc77d8b21aeefde72af80fa702fa538e5f22deb7e8786489b6fd3bd3c8c8
 submission_blob: cab1f9ab2b7d6180afac73a43cbcf68cf1b6eb07
 lint_warnings: 23
+attempt_file: 2026-10-25T044421Z-check-moe-pre-post-norm-triton-multitoken.md
+prepared_at: 2026-10-25T044421Z
 ---
 
 # moe-pre-post-norm-triton-multitoken
