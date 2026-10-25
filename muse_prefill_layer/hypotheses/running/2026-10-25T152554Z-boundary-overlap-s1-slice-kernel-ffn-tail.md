@@ -69,9 +69,18 @@ controls_for: null
 rewrite_stage: 1
 replaces: "FusedPostNormResidualPreNorm (muse_spark_norm_residual_kernel) x2 on the critical path after the o and unpooler GEMMs at T > 4096 (stage 1: the FFN boundary)"
 review: proceed
-status: queued
+status: running
 review_at: 2026-10-25T212333Z
 review_companions: null
+stage: claimed
+claimed_at: 2026-10-25T212552Z
+base_sha: cc874e4f97ac53e4c4a00078d39a8ff28d8316aa
+base_blob: f4751fc054335a94d1b401af272e98a2d4760363
+branch: hyp/muse_prefill_layer/boundary-overlap-s1-slice-kernel-ffn-tail
+worktree: .worktrees/muse_prefill_layer/boundary-overlap-s1-slice-kernel-ffn-tail
+mode: check
+restack_of: null
+stale_base: null
 ---
 
 # boundary-overlap-s1-slice-kernel-ffn-tail
