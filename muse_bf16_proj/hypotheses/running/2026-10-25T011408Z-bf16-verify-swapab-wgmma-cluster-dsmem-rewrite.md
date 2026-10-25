@@ -106,7 +106,7 @@ status: running
 review_at: 2026-10-25T012031Z
 review_companions: null
 hold_reason: null
-stage: claimed
+stage: implemented
 claimed_at: 2026-10-25T042030Z
 base_sha: 2de39fe31bc772463640a6e1897c6c89e11c919a
 base_blob: 970b415b746fa03cb92e419d270be92588273178
@@ -115,6 +115,12 @@ worktree: .worktrees/muse_bf16_proj/bf16-verify-swapab-wgmma-cluster-dsmem-rewri
 mode: null
 restack_of: null
 stale_base: null
+implemented_at: 2026-10-25T043519Z
+impl_commit: fcfcc61f453733e05f669d91699569b261e5f628
+submission_sha256: e6e8eb4fb8a499c32e3af19aaa21282dd14fc5cb5d0bd8049e92e1aef3b6b176
+norm_sha256: 09a9326fe7f41fd9b59628dc64b958abbdd7bb81140a0c92e6f73df3548b6b4d
+submission_blob: a2fcfaab4280e7587fb1654e3d00b9d7459d4c42
+lint_warnings: 7
 ---
 
 # bf16-verify-swapab-wgmma-cluster-dsmem-rewrite
@@ -200,3 +206,26 @@ warn  host-sync  torch.cuda.synchronize() / err.item()  (outside kernel_fn's cal
 warn  dtype      flush = torch.empty(SWCL_FLUSH_BYTES, dtype=torch.uint8, ...)  (L2 flush buffer in prepare, not an activation)
 OK with warnings
 ```
+
+## Pre-flight audit
+
+Audited 2026-10-25 by an opus subagent, by reading the code plus a numpy check of the self-check bound. **Verdict: dispatch-with-fixes.**
+
+Checked and found OK:
+- **PTX under sm_90a.** The SW128 K-major descriptors are 1024-aligned. A 64x128 weight box and a T or T/2 by 64 x box land as 128 B rows with SBO 1024, and the +32 B k16 advance is correct. The wgmma operand lists are right (131 operands at n256, trans 0/0). Fragment-to-tile_f mapping matches m64nN. wgmma.fence runs before each block, commit/wait<1> releases the previous stage, and wait<0> plus a named barrier precede the ring alias. No fence.proxy.async is needed, because no generic smem write feeds TMA or wgmma. FULL expect_tx = 16 KB + T*128 B, and OOB zero-fill counts full box bytes. Multicast mask 3<<2cy matches rank = cx + 2cy, which the device checks (error word 3). The EMPTY barrier counts 8*CX, and every consumer warp arrives on both pair CTAs through mapa. Peer mbarriers are initialized before any remote op (fence.mbarrier_init + cluster sync). Every CTA does 3 cluster barriers, and the last comes after all DSMEM reads, so no CTA exits while a peer still reads it.
+- **Bounded waits.** Every mbarrier wait is bounded at 2^26 cycles and sets error word 1, which the self-check reads.
+- **TMA maps.** Built with cuTensorMapEncodeTiled through cudaGetDriverEntryPoint, in-process. Weights are mapped once in prepare. The x map is built on the host per call, from the pointer and m only. Pointers are checked for 16 B alignment and strides are k*2.
+- **Gate.** Per (layer, T class), at the scored m 128/256, from cold-L2 graph replays, routed only if <= 0.98x master. Routing depends on cfg and shape only. There are no prints, try/except or `.item()` in kernel_fn.
+- **Self-check numerics.** bf16 output rounding alone gives about 1.66e-3 rel L2 (numpy), which passes the 3e-3 bound. The one-hot row is exact.
+- **Scope.** Only qkv_gate/pooler at m 65..256 and the unpooler at 65..128 change. All earlier routes stop at m <= 32. None of the 9 tests reaches the new kernel; the scored calls are still checked per call.
+
+Fixes made in the worktree:
+1. A `__syncwarp()` before the first `.aligned` cluster barrier. Warp 0 was divergent there after the tid==0 init.
+2. `_swcl_check` is wrapped in a per-candidate try/except, and the error word is cleared on exception. Before this, one refused cluster launch, such as non-portable 2x7, propagated to the outer handler and wiped every layers' choice.
+3. The error word is read after the full-mode timing replays. A candidate whose bounded wait expired during timing is not routed.
+
+Lint is OK (warnings only, all in prepare) and py_compile is OK.
+
+Attribution: the routed rows are shared with restack-pooler-unpooler-nn-layout-m128 (NN layout, pooler/unpooler m 65..128, in flight) and with DeepGEMM/nvjet. Attribute by kernel name per row in top_kernels: `swcl_kernel<T,MC>` versus nvjet, DeepGEMM and Triton.
+
+Residual risk: a first-ever nvcc compile of hand-written wgmma/TMA-multicast PTX may fail to build (which falls back cleanly) or, worse, sticky-fault on its first self-check launch, which would fail the whole run.
