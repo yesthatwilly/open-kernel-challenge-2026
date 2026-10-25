@@ -47,7 +47,7 @@ review: proceed
 status: running
 review_at: 2026-10-24T183956Z
 review_companions: null
-stage: claimed
+stage: implemented
 claimed_at: 2026-10-25T003236Z
 base_sha: 5415d32531be94c6b20cde97470e8c1127019215
 base_blob: 108d36e9f2266fc88531dd6ff0329a847c882013
@@ -56,6 +56,12 @@ worktree: .worktrees/muse_moe_w4a16/post-norm-triton-hoisted-decode32
 mode: null
 restack_of: null
 stale_base: null
+implemented_at: 2026-10-25T003435Z
+impl_commit: 4aab01876d903e536854b728cbc89c5b18baf2f9
+submission_sha256: 86ca6990350fc0868f434d66b4933726088c8a1036036c1e5718767152590587
+norm_sha256: cb9fa6ca167a3a4b8966539b72b6c469811707de0924c2b2d4efd373495b0fae
+submission_blob: c54141f38978ee496a8ff7b2a4384572342d4585
+lint_warnings: 8
 ---
 
 # post-norm-triton-hoisted-decode32
@@ -101,3 +107,21 @@ No companion is warranted. The change is a separate kernel used only at bs=32, s
 - Would a 2-D grid (32 tokens x 2-4 H-chunks, with sum-of-squares needing the full row) or one program per (token, slot) with an atomic combine beat hoisting, given that only 32 of 132 SMs are busy?
 - If both this and the sibling win, restack them as a single hoisted kernel for bs<=32 and retire the separate decode32 branch.
 
+
+## Implementation notes
+
+- submission.py only (+41 lines): new `_post_norm_combine_hoisted_kernel` (master kernel's signature and math), constant `HOISTED_POST_NORM_TOKENS = 32`, a `num_tokens == 32` branch at the end of kernel_fn (y.contiguous(), torch.empty out, grid (32,), BLOCK_H=4096, num_warps=16, state['post_norm_w']), and an untimed dummy-data compile in prepare(). bs<32 and bs>=33 paths are unchanged.
+- Deviation from the spec: instead of a static_range of per-slot scalar extractions (tl.sum(tl.where(arange==s, ...))) with a Python list of loads, the kernel loads all 8 slot rows as one [8, BLOCK_H] tile (mask = id>=0 & offs<H) in a single tl.load, then does a row-wise sum of squares, coef = where(id>=0, g, 0) * rsqrt(ss/H+eps), and acc = sum(v * coef[:, None], axis=0). Same hoisting intent (all loads before any reduction, no 'if', remote rows never read), but avoids list-in-jit risk and scalar extraction. Cost: about 64 fp32 regs/thread for the tile at 512 threads.
+- Cannot be run here (no GPU/Triton); compile and numerics untested.
+
+## Rules check
+
+- [x] CUDA-graph capturable: diff adds only a Triton launch and torch.empty with shape-only size; no .item()/.cpu()/sync in kernel_fn; branch on num_tokens (shape) only.
+- [x] Nothing derived from `data` is cached across calls (prepare dummy compile uses zeros, not inputs).
+- [x] Weights: n/a: no weight repack changed; post_norm_w is the same BF16 tensor.
+- [x] Activations BF16 where SGLang keeps BF16: y read as BF16, fp32 math, BF16 output as master's small-M path.
+- [x] Attention: n/a: MoE problem.
+- [x] No timing patches, harness frames/I/O/secrets, module edits, reference import, subprocesses or network (checked diff).
+- [x] All work happens inside the timed call; no output caching or replay.
+
+okc_lint: `OK with warnings` (only host-sync warnings in pre-existing prepare()-only code, lines 355-491); py_compile OK, __pycache__ removed.
