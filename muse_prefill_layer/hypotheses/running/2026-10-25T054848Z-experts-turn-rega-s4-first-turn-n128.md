@@ -74,7 +74,7 @@ review: proceed
 status: running
 review_at: 2026-10-25T120230Z
 review_companions: null
-stage: implemented
+stage: dispatched
 claimed_at: 2026-10-25T120231Z
 base_sha: c0cdf3a56f74658d323e211e760d12b57dcf6772
 base_blob: 712edc5ea5be2dde8f558a016d0877b285340ee4
@@ -91,6 +91,8 @@ submission_blob: c2e3e595def2e6b5949e0fd350ce98ed59729147
 lint_warnings: 59
 attempt_file: 2026-10-25T121653Z-check-experts-turn-rega-s4-first-turn-n128.md
 prepared_at: 2026-10-25T121653Z
+job: 07a069bc69ba42a8
+dispatched_at: 2026-10-25T121702Z
 ---
 
 # experts-turn-rega-s4-first-turn-n128
