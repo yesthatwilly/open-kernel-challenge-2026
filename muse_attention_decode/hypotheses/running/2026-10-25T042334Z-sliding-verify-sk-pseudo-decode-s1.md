@@ -57,9 +57,18 @@ controls_for: null
 rewrite_stage: 1
 replaces: "sliding verify (q_len 8, page 1, tp8, 1<=B<=32): prepare_varlen_num_blocks + FA3 main + FlashAttnFwdCombine + sglang rms_norm_gate"
 review: proceed
-status: queued
+status: running
 review_at: 2026-10-25T043142Z
 review_companions: null
+stage: claimed
+claimed_at: 2026-10-25T043142Z
+base_sha: 4488c6a7868d7d953811b7b93ec0403d0f8bfde8
+base_blob: d8769ef25caf845a0e207538ccc5c62394b6ee3b
+branch: hyp/muse_attention_decode/sliding-verify-sk-pseudo-decode-s1
+worktree: .worktrees/muse_attention_decode/sliding-verify-sk-pseudo-decode-s1
+mode: null
+restack_of: null
+stale_base: null
 ---
 
 # sliding-verify-sk-pseudo-decode-s1
