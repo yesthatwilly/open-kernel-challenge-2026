@@ -41,9 +41,18 @@ priority: 2
 kind: primary
 controls_for: null
 review: proceed
-status: queued
+status: running
 review_at: 2026-10-25T054818Z
 review_companions: null
+stage: claimed
+claimed_at: 2026-10-25T054818Z
+base_sha: 1f8d1d245fbad53f62cd763917484822e82cb0ff
+base_blob: 60dfe35d5417d9c0f89067ff313efdc2c41d03a2
+branch: hyp/muse_moe_w4a16/marlin-block-m-8-verify16
+worktree: .worktrees/muse_moe_w4a16/marlin-block-m-8-verify16
+mode: null
+restack_of: null
+stale_base: null
 ---
 
 # marlin-block-m-8-verify16
