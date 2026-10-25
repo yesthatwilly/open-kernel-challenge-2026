@@ -63,9 +63,18 @@ controls_for: null
 rewrite_stage: 3
 replaces: "T=1 dense chain: nvjet qkv + FusedQKNorm/rope + FP8 casts + store_cache + nvjet o (full decode_1), routing kernel R and unpooler GEMM+pad at NF=1 (both decode_1 rows)"
 review: proceed
-status: queued
+status: running
 review_at: 2026-10-25T054418Z
 review_companions: null
+stage: claimed
+claimed_at: 2026-10-25T054418Z
+base_sha: 06cbcc08c8e651f4bb7e2791d8b1321bdb54ee3e
+base_blob: 62c5a9413ba5710defea2ca3de14c1a1dc3b5a6d
+branch: hyp/muse_decode_layer/dense-chain-s3-t1-q-sk2-o-route-unpool
+worktree: .worktrees/muse_decode_layer/dense-chain-s3-t1-q-sk2-o-route-unpool
+mode: null
+restack_of: null
+stale_base: null
 ---
 
 # dense-chain-s3-t1-q-sk2-o-route-unpool
