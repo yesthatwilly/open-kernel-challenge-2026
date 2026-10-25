@@ -1,0 +1,137 @@
+[router_cluster] building: TORCH_CUDA_ARCH_LIST=9.0a extra_cuda_cflags=['-O3', '-lineinfo']
+[router_cluster] load_inline compiled in 31.6s
+[router] swapab m=1 BLOCK_T=16 SPLIT_K=32 grid=(1, 4, 32) stages=3: n_regs=64 n_spills=0 wgmma=16 mma.sync=0 cp.async=65
+[router] swapab m=32 BLOCK_T=32 SPLIT_K=32 grid=(1, 4, 32) stages=3: n_regs=80 n_spills=0 wgmma=16 mma.sync=0 cp.async=71
+[router] m=1: swapab
+[router] m=8: swapab
+[router] m=16: swapab
+[router] m=32: swapab
+[router] m=64: hilo
+[router] m=128: hilo
+[router] m=256: hilo
+[router_cluster] variant=1 cs16/8warps(2 CTA/SM) nt=8: regs=54 local(spill)=0 B static smem=0 B dynamic smem=41472 B max active clusters=28 (need >= 16)
+[router_cluster] variant=1 cs16/8warps(2 CTA/SM) nt=16: regs=60 local(spill)=0 B static smem=0 B dynamic smem=50176 B max active clusters=28 (need >= 16)
+[router_cluster] variant=1 cs16/8warps(2 CTA/SM) nt=32: regs=85 local(spill)=0 B static smem=0 B dynamic smem=67584 B max active clusters=14 (need >= 16)
+[router_cluster] variant=2 cs16/4warps(3 CTA/SM) nt=8: regs=80 local(spill)=0 B static smem=0 B dynamic smem=41472 B max active clusters=35 (need >= 16)
+[router_cluster] variant=2 cs16/4warps(3 CTA/SM) nt=16: regs=96 local(spill)=0 B static smem=0 B dynamic smem=50176 B max active clusters=28 (need >= 16)
+[router_cluster] variant=2 cs16/4warps(3 CTA/SM) nt=32: regs=100 local(spill)=0 B static smem=0 B dynamic smem=67584 B max active clusters=21 (need >= 16)
+[router_cluster] variant=3 cs8/4warps(stage-1 geometry) nt=8: regs=162 local(spill)=0 B static smem=0 B dynamic smem=82432 B max active clusters=30 (need >= 16)
+[router_cluster] variant=3 cs8/4warps(stage-1 geometry) nt=16: regs=168 local(spill)=0 B static smem=0 B dynamic smem=99328 B max active clusters=30 (need >= 16)
+[router_cluster] variant=3 cs8/4warps(stage-1 geometry) nt=32: regs=198 local(spill)=0 B static smem=0 B dynamic smem=133120 B max active clusters=15 (need >= 16)
+[router_cluster] launching variant=1 m=1 run 1
+[router_cluster] variant=1 m=1 run 1 finished OK
+[router_cluster] launching variant=1 m=1 run 2
+[router_cluster] variant=1 m=1 run 2 finished OK
+[router_cluster] launching variant=1 m=8 run 1
+[router_cluster] variant=1 m=8 run 1 finished OK
+[router_cluster] launching variant=1 m=8 run 2
+[router_cluster] variant=1 m=8 run 2 finished OK
+[router_cluster] nt=8: variant 1 self-check passed (m in [1, 8])
+[router_cluster] launching variant=2 m=1 run 1
+[router_cluster] variant=2 m=1 run 1 finished OK
+[router_cluster] launching variant=2 m=1 run 2
+[router_cluster] variant=2 m=1 run 2 finished OK
+[router_cluster] launching variant=2 m=8 run 1
+[router_cluster] variant=2 m=8 run 1 finished OK
+[router_cluster] launching variant=2 m=8 run 2
+[router_cluster] variant=2 m=8 run 2 finished OK
+[router_cluster] nt=8: variant 2 self-check passed (m in [1, 8])
+[router_cluster] launching variant=3 m=1 run 1
+[router_cluster] variant=3 m=1 run 1 finished OK
+[router_cluster] launching variant=3 m=1 run 2
+[router_cluster] variant=3 m=1 run 2 finished OK
+[router_cluster] launching variant=3 m=8 run 1
+[router_cluster] variant=3 m=8 run 1 finished OK
+[router_cluster] launching variant=3 m=8 run 2
+[router_cluster] variant=3 m=8 run 2 finished OK
+[router_cluster] nt=8: variant 3 self-check passed (m in [1, 8])
+[router_cluster] launching variant=1 m=9 run 1
+[router_cluster] variant=1 m=9 run 1 finished OK
+[router_cluster] launching variant=1 m=9 run 2
+[router_cluster] variant=1 m=9 run 2 finished OK
+[router_cluster] launching variant=1 m=16 run 1
+[router_cluster] variant=1 m=16 run 1 finished OK
+[router_cluster] launching variant=1 m=16 run 2
+[router_cluster] variant=1 m=16 run 2 finished OK
+[router_cluster] nt=16: variant 1 self-check passed (m in [9, 16])
+[router_cluster] launching variant=2 m=9 run 1
+[router_cluster] variant=2 m=9 run 1 finished OK
+[router_cluster] launching variant=2 m=9 run 2
+[router_cluster] variant=2 m=9 run 2 finished OK
+[router_cluster] launching variant=2 m=16 run 1
+[router_cluster] variant=2 m=16 run 1 finished OK
+[router_cluster] launching variant=2 m=16 run 2
+[router_cluster] variant=2 m=16 run 2 finished OK
+[router_cluster] nt=16: variant 2 self-check passed (m in [9, 16])
+[router_cluster] launching variant=3 m=9 run 1
+[router_cluster] variant=3 m=9 run 1 finished OK
+[router_cluster] launching variant=3 m=9 run 2
+[router_cluster] variant=3 m=9 run 2 finished OK
+[router_cluster] launching variant=3 m=16 run 1
+[router_cluster] variant=3 m=16 run 1 finished OK
+[router_cluster] launching variant=3 m=16 run 2
+[router_cluster] variant=3 m=16 run 2 finished OK
+[router_cluster] nt=16: variant 3 self-check passed (m in [9, 16])
+[router_cluster] nt=32: variant 1 skipped, max active clusters 14 < 16 (would need a second wave)
+[router_cluster] launching variant=2 m=17 run 1
+[router_cluster] variant=2 m=17 run 1 finished OK
+[router_cluster] launching variant=2 m=17 run 2
+[router_cluster] variant=2 m=17 run 2 finished OK
+[router_cluster] launching variant=2 m=32 run 1
+[router_cluster] variant=2 m=32 run 1 finished OK
+[router_cluster] launching variant=2 m=32 run 2
+[router_cluster] variant=2 m=32 run 2 finished OK
+[router_cluster] nt=32: variant 2 self-check passed (m in [17, 32])
+[router_cluster] nt=32: variant 3 skipped, max active clusters 15 < 16 (would need a second wave)
+[router_cluster] cold-L2 m=1 NT=8 us/launch (eager, 256 MB flush, median 30): v1 cs16/8warps(2 CTA/SM) 9.98 (no-reduce 9.12, reduce tail 0.86) | v2 cs16/4warps(3 CTA/SM) 9.89 (no-reduce 9.06, reduce tail 0.83) | v3 cs8/4warps(stage-1 geometry) 10.05 (no-reduce 9.12, reduce tail 0.93) | master swapab+memset 10.85
+[router_cluster] cold-L2 m=8 NT=8 us/launch (eager, 256 MB flush, median 30): v1 cs16/8warps(2 CTA/SM) 10.50 (no-reduce 9.28, reduce tail 1.22) | v2 cs16/4warps(3 CTA/SM) 10.21 (no-reduce 9.12, reduce tail 1.09) | v3 cs8/4warps(stage-1 geometry) 10.11 (no-reduce 9.22, reduce tail 0.90) | master swapab+memset 10.91
+[router_cluster] gate NT=8 (m in (1, 8)): variant 2 beats master swapab at every timed m (margin 0.97)
+[router_cluster] cold-L2 m=16 NT=16 us/launch (eager, 256 MB flush, median 30): v1 cs16/8warps(2 CTA/SM) 10.75 (no-reduce 9.54, reduce tail 1.22) | v2 cs16/4warps(3 CTA/SM) 10.53 (no-reduce 9.38, reduce tail 1.15) | v3 cs8/4warps(stage-1 geometry) 10.82 (no-reduce 9.70, reduce tail 1.12) | master swapab+memset 11.04
+[router_cluster] gate NT=16 (m in (16,)): variant 2 beats master swapab at every timed m (margin 0.97)
+[router_cluster] cold-L2 m=32 NT=32 us/launch (eager, 256 MB flush, median 30): v2 cs16/4warps(3 CTA/SM) 11.62 (no-reduce 10.43, reduce tail 1.18) | master swapab+memset 11.20
+[router_cluster] gate NT=32 (m in (32,)): no variant beats master swapab; master path
+[router_cluster] PATH CHOSEN router m=1: CUDA cluster kernel variant 2 cs16/4warps(3 CTA/SM), NT 8
+[router_cluster] PATH CHOSEN router m=2: CUDA cluster kernel variant 2 cs16/4warps(3 CTA/SM), NT 8
+[router_cluster] PATH CHOSEN router m=3: CUDA cluster kernel variant 2 cs16/4warps(3 CTA/SM), NT 8
+[router_cluster] PATH CHOSEN router m=4: CUDA cluster kernel variant 2 cs16/4warps(3 CTA/SM), NT 8
+[router_cluster] PATH CHOSEN router m=5: CUDA cluster kernel variant 2 cs16/4warps(3 CTA/SM), NT 8
+[router_cluster] PATH CHOSEN router m=6: CUDA cluster kernel variant 2 cs16/4warps(3 CTA/SM), NT 8
+[router_cluster] PATH CHOSEN router m=7: CUDA cluster kernel variant 2 cs16/4warps(3 CTA/SM), NT 8
+[router_cluster] PATH CHOSEN router m=8: CUDA cluster kernel variant 2 cs16/4warps(3 CTA/SM), NT 8
+[router_cluster] PATH CHOSEN router m=9: CUDA cluster kernel variant 2 cs16/4warps(3 CTA/SM), NT 16
+[router_cluster] PATH CHOSEN router m=10: CUDA cluster kernel variant 2 cs16/4warps(3 CTA/SM), NT 16
+[router_cluster] PATH CHOSEN router m=11: CUDA cluster kernel variant 2 cs16/4warps(3 CTA/SM), NT 16
+[router_cluster] PATH CHOSEN router m=12: CUDA cluster kernel variant 2 cs16/4warps(3 CTA/SM), NT 16
+[router_cluster] PATH CHOSEN router m=13: CUDA cluster kernel variant 2 cs16/4warps(3 CTA/SM), NT 16
+[router_cluster] PATH CHOSEN router m=14: CUDA cluster kernel variant 2 cs16/4warps(3 CTA/SM), NT 16
+[router_cluster] PATH CHOSEN router m=15: CUDA cluster kernel variant 2 cs16/4warps(3 CTA/SM), NT 16
+[router_cluster] PATH CHOSEN router m=16: CUDA cluster kernel variant 2 cs16/4warps(3 CTA/SM), NT 16
+[router_cluster] PATH CHOSEN router m=17: master Triton swap-AB router
+[router_cluster] PATH CHOSEN router m=18: master Triton swap-AB router
+[router_cluster] PATH CHOSEN router m=19: master Triton swap-AB router
+[router_cluster] PATH CHOSEN router m=20: master Triton swap-AB router
+[router_cluster] PATH CHOSEN router m=21: master Triton swap-AB router
+[router_cluster] PATH CHOSEN router m=22: master Triton swap-AB router
+[router_cluster] PATH CHOSEN router m=23: master Triton swap-AB router
+[router_cluster] PATH CHOSEN router m=24: master Triton swap-AB router
+[router_cluster] PATH CHOSEN router m=25: master Triton swap-AB router
+[router_cluster] PATH CHOSEN router m=26: master Triton swap-AB router
+[router_cluster] PATH CHOSEN router m=27: master Triton swap-AB router
+[router_cluster] PATH CHOSEN router m=28: master Triton swap-AB router
+[router_cluster] PATH CHOSEN router m=29: master Triton swap-AB router
+[router_cluster] PATH CHOSEN router m=30: master Triton swap-AB router
+[router_cluster] PATH CHOSEN router m=31: master Triton swap-AB router
+[router_cluster] PATH CHOSEN router m=32: master Triton swap-AB router
+[router_cluster] PATH CHOSEN router m>32: master Triton hilo router
+[swapab] layer=pooler m=32 N=4096 K=8192 SPLIT_K=2 BLOCK_K=256 stages=4: n_regs=96 n_spills=0 wgmma=16 mma.sync=0 cp.async=106
+[swapab] layer=qkv_gate m=32 N=2304 K=8192 SPLIT_K=4 BLOCK_K=128 stages=4: n_regs=56 n_spills=0 wgmma=8 mma.sync=0 cp.async=58
+[swapab] layer=unpooler m=32 N=8192 K=4096 SPLIT_K=1 BLOCK_K=256 stages=4: n_regs=96 n_spills=0 wgmma=16 mma.sync=0 cp.async=106
+[swapab] layer=o m=32 N=8192 K=1024 SPLIT_K=1 BLOCK_K=256 stages=4: n_regs=96 n_spills=0 wgmma=16 mma.sync=0 cp.async=106
+[swapab16] pooler m=16 N=4096 K=8192 SPLIT_K=2 BLOCK_K=256 stages=4: n_regs=72 n_spills=0 wgmma=16 mma.sync=0 cp.async=90
+[swapab16] qkv_gate m=16 N=2304 K=8192 SPLIT_K=4 BLOCK_K=128 stages=4: n_regs=48 n_spills=0 wgmma=8 mma.sync=0 cp.async=50
+[swapab16] o m=16 N=8192 K=1024 SPLIT_K=1 BLOCK_K=256 stages=4: n_regs=72 n_spills=0 wgmma=16 mma.sync=0 cp.async=90
+[swapab16] unpooler_slice m=8 N=1024 K=4096 SPLIT_K=8 BLOCK_K=128 stages=3: n_regs=56 n_spills=0 wgmma=8 mma.sync=0 cp.async=38
+[incumbent16] pooler _bf16_splitk_kernel m=16: n_regs=96 n_spills=0 wgmma=0 mma.sync=32 cp.async=90
+[incumbent16] qkv_gate _qkv_splitk_sem_kernel m=16: n_regs=64 n_spills=0 wgmma=0 mma.sync=16 cp.async=50
+[incumbent16] o _pooler_skinny_kernel m=16: n_regs=90 n_spills=0 wgmma=0 mma.sync=32 cp.async=90
+[incumbent16] unpooler_slice _bf16_splitk_kernel m=16: n_regs=72 n_spills=0 wgmma=0 mma.sync=16 cp.async=38

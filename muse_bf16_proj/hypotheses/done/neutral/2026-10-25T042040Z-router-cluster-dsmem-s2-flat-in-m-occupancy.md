@@ -58,10 +58,10 @@ controls_for: null
 rewrite_stage: 2
 replaces: _router_swapab_kernel + memset at router m<=32 (restack) / _router_hilo_kernel + memset (master)
 review: proceed
-status: running
+status: done
 review_at: 2026-10-25T042412Z
 review_companions: null
-stage: dispatched
+stage: harvested
 claimed_at: 2026-10-25T042413Z
 base_sha: 0dea576ae73cfb9d114326146a90d40766b24f0e
 base_blob: 441dcedb5cd6286e6851afb629598d27c30f6c82
@@ -80,6 +80,13 @@ attempt_file: 2026-10-25T043058Z-check-router-cluster-dsmem-s2-flat-in-m-occupan
 prepared_at: 2026-10-25T043058Z
 job: ef8a8bca31ef420e
 dispatched_at: 2026-10-25T043105Z
+outcome: neutral
+verdict_detail: within-ci
+speedup: 1.205837800836652
+speedup_ci: [1.1877502338241022, 1.2239253678492017]
+harvested_at: 2026-10-25T053759Z
+best_at_harvest: 1.2215006063849365
+promotion: null
 ---
 
 # router-cluster-dsmem-s2-flat-in-m-occupancy
@@ -182,3 +189,54 @@ warn  host-sync    L1502: torch.cuda.synchronize()  (outside kernel_fn's call gr
 OK with warnings
 ```
 The uint8 flush buffer is a prepare()-only timing scratch, never an operand. py_compile OK, __pycache__ removed.
+
+## Result
+
+- job `ef8a8bca31ef420e` (check), status done, passed True, tests 9/9
+- speedup 1.2058x, 95% CI [1.1878, 1.2239], score 4006.1772791068784 µs vs SGLang 4830.8 µs
+- best at harvest: {"speedup": 1.2215006063849365, "ci": [1.2031780972891624, 1.2398231154807104], "job": "1e90292c7b954d96"}; base result: muse_bf16_proj/hypotheses/done/regression/router-cuda-cluster-dsmem-splitk-rewrite.result.json
+- **outcome: neutral** (within-ci)
+- files: `muse_bf16_proj/hypotheses/done/neutral/router-cluster-dsmem-s2-flat-in-m-occupancy.result.json`, `muse_bf16_proj/hypotheses/done/neutral/router-cluster-dsmem-s2-flat-in-m-occupancy.patch`; branch `hyp/muse_bf16_proj/router-cluster-dsmem-s2-flat-in-m-occupancy`
+
+## Attribution
+
+| shape | w | base µs | hyp µs | delta | verdict |
+|---|---|---|---|---|---|
+| layer=qkv_gate load=decode_1 m=1 | 62 | 13.56 | 12.75 | 1.0647 | gained |
+| layer=o load=decode_1 m=1 | 62 | 6.26 | 5.94 | 1.0626 | gained |
+| layer=pooler load=decode_1 m=1 | 62 | 19.58 | 19.15 | 1.007 | flat |
+| layer=unpooler load=decode_1 m=1 | 62 | 6.55 | 5.67 | 1.1044 | gained |
+| layer=router load=decode_1 m=1 | 62 | 5.24 | 5.3 | 0.9702 | flat |
+| layer=qkv_gate load=decode_16 m=16 | 62 | 14.07 | 13.13 | 1.0532 | gained |
+| layer=o load=decode_16 m=16 | 62 | 6.67 | 6.15 | 1.0801 | gained |
+| layer=pooler load=decode_16 m=16 | 62 | 19.69 | 19.55 | 1.0148 | flat |
+| layer=unpooler load=decode_16 m=16 | 62 | 18.63 | 18.53 | 0.9953 | flat |
+| layer=router load=decode_16 m=16 | 62 | 5.87 | 5.64 | 1.0162 | flat |
+| layer=qkv_gate load=decode_32 m=32 | 62 | 13.93 | 13.82 | 0.9979 | flat |
+| layer=o load=decode_32 m=32 | 62 | 6.45 | 6.42 | 1.0146 | flat |
+| layer=pooler load=decode_32 m=32 | 62 | 20.03 | 19.75 | 1.0001 | flat |
+| layer=unpooler load=decode_32 m=32 | 62 | 18.54 | 18.1 | 1.0023 | flat |
+| layer=router load=decode_32 m=32 | 62 | 6.85 | 5.55 | 1.1836 | gained |
+| layer=qkv_gate load=verify_1 m=8 | 62 | 13.68 | 12.72 | 1.0794 | gained |
+| layer=o load=verify_1 m=8 | 62 | 6.53 | 6.14 | 1.0519 | gained |
+| layer=pooler load=verify_1 m=8 | 62 | 19.33 | 19.42 | 1.0096 | flat |
+| layer=unpooler load=verify_1 m=8 | 62 | 6.29 | 6.31 | 1.0301 | gained |
+| layer=router load=verify_1 m=8 | 62 | 5.08 | 5.62 | 0.9077 | lost |
+| layer=qkv_gate load=verify_16 m=128 | 62 | 16.59 | 17.14 | 0.9875 | flat |
+| layer=o load=verify_16 m=128 | 62 | 7.69 | 7.69 | 1.0084 | flat |
+| layer=pooler load=verify_16 m=128 | 62 | 24.81 | 25.61 | 0.9593 | lost |
+| layer=unpooler load=verify_16 m=128 | 62 | 20.0 | 20.4 | 0.9788 | flat |
+| layer=router load=verify_16 m=128 | 62 | 7.54 | 7.75 | 0.9926 | flat |
+| layer=qkv_gate load=verify_32 m=256 | 62 | 19.83 | 19.66 | 1.0068 | flat |
+| layer=o load=verify_32 m=256 | 62 | 9.83 | 9.44 | 0.9996 | flat |
+| layer=pooler load=verify_32 m=256 | 62 | 31.82 | 31.09 | 1.0224 | flat |
+| layer=unpooler load=verify_32 m=256 | 62 | 24.75 | 24.78 | 0.9955 | flat |
+| layer=router load=verify_32 m=256 | 62 | 9.63 | 9.53 | 1.0015 | flat |
+
+gained on qkv_gate decode_1, decode_16, verify_1; o decode_1, decode_16, verify_1; unpooler decode_1, verify_1; router decode_32; lost on router verify_1; pooler verify_16. Expected hit: 4/10. Noise ±1.5%.
+
+## Follow-ups
+
+- rewrite stage 2 of `_router_swapab_kernel + memset at router m<=32 (restack) / _router_hilo_kernel + memset (master)`: read the replaced kernels' own us per shape (profile top_kernels) against the incumbent and the floor, and check which Milestone it reached. The next stage is `/hypothesize muse_bf16_proj "<what to fix or tune>" --kind rewrite --depends-on router-cluster-dsmem-s2-flat-in-m-occupancy --stage 3`; a slow or failed first cut is the expected start, not a do-not-retry.
+- within-ci: the change is not proven either way; a stacked hypothesis (`depends_on: router-cluster-dsmem-s2-flat-in-m-occupancy`) that adds a further change in the same area is the only way to learn more (identical code is never re-run).
+
