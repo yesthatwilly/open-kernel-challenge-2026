@@ -1,0 +1,657 @@
+{
+ "schema": 1,
+ "problem": "muse_attention_decode",
+ "slug": "restack-sliding-decode-sk-window-on-cluster-master",
+ "job": "252abb7f11ec48c3",
+ "mode": "submit",
+ "duplicate_of": null,
+ "content_hash": "4b49f274f6bc98e8c2f2edc4f453315a613394952015c4544593f93606fbd36b",
+ "submission_sha256": "ae4af530224f3622f69a1551409a80f6342d9186a7104c609da6ebe969e7f2c3",
+ "submission_blob": "5cf8fae31e5b84c36efeeb4569763eb9b06e1c8a",
+ "impl_commit": "79b7a1b88e9e662b9104a7006cad727ebb252e4b",
+ "base_sha": "8bbf53baef204e1a7c7f2d0b36f6da1996b27db4",
+ "created_at": 1792927087.0492322,
+ "finished_at": 1792927576.462827,
+ "gpu": "H200",
+ "evaluator_sha256": "1d519ebf2014fef91b41ffea9bcd7e9c5066784ef5a2a5e2cf06a8cec554d188",
+ "status": "done",
+ "passed": true,
+ "error": null,
+ "returncode": 0,
+ "tests": {
+  "total": 16,
+  "passed": 16
+ },
+ "first_failing": null,
+ "speedup": 1.5016522435853301,
+ "speedup_ci": [
+  1.47912745993155,
+  1.530423257736894
+ ],
+ "score_us": 2508.1040008355194,
+ "baseline_us": 3766.3,
+ "flags": [],
+ "checks": {
+  "flagged": [],
+  "ok": true,
+  "rejected": []
+ },
+ "shapes": [
+  {
+   "key": "batch=1 ctx=80000 dist=soft heads=tp8 layer=sliding load=decode_1 page=1",
+   "load": "decode 1",
+   "case": {
+    "batch": 1,
+    "ctx": 80000,
+    "dist": "soft",
+    "heads": "tp8",
+    "layer": "sliding",
+    "load": "decode 1",
+    "page": 1,
+    "seed": 1815477109327254399,
+    "weight": 46
+   },
+   "weight": 46,
+   "median_ns": 11881.65526427201,
+   "baseline_ns": 20304.000005126,
+   "speedup": 1.708852811626329,
+   "speedup_of_medians": 1.6987952182756163,
+   "err_ns": 39.253969240534204,
+   "speed_of_light_ns": 111.14666666666666,
+   "status": "pass",
+   "top_kernels": [
+    [
+     "(anonymous namespace)::sliding_cluster_kernel(__nv_bfloat...",
+     10.8,
+     100.0
+    ]
+   ]
+  },
+  {
+   "key": "batch=1 ctx=80000 dist=coherent heads=tp8 layer=full load=decode_1 page=1",
+   "load": "decode 1",
+   "case": {
+    "batch": 1,
+    "ctx": 80000,
+    "dist": "coherent",
+    "heads": "tp8",
+    "layer": "full",
+    "load": "decode 1",
+    "page": 1,
+    "seed": 1815568506777789403,
+    "weight": 16
+   },
+   "weight": 16,
+   "median_ns": 22404.25662576504,
+   "baseline_ns": 31199.99822229147,
+   "speedup": 1.3925924320296916,
+   "speedup_of_medians": 1.3879002309953339,
+   "err_ns": 53.05872045487426,
+   "speed_of_light_ns": 4268.586666666666,
+   "status": "pass",
+   "top_kernels": [
+    [
+     "void (anonymous namespace)::splitkv_attn_sk_kernel<4, tru...",
+     19.0,
+     93.0
+    ],
+    [
+     "_pre_attention_kernel",
+     1.4,
+     7.0
+    ]
+   ]
+  },
+  {
+   "key": "batch=16 ctx=80000 dist=soft heads=tp8 layer=sliding load=decode_16 page=1 spread=agentic",
+   "load": "decode 16",
+   "case": {
+    "batch": 16,
+    "ctx": 80000,
+    "dist": "soft",
+    "heads": "tp8",
+    "layer": "sliding",
+    "load": "decode 16",
+    "page": 1,
+    "seed": 1815659904228324408,
+    "spread": "agentic",
+    "weight": 46
+   },
+   "weight": 46,
+   "median_ns": 15514.000802230184,
+   "baseline_ns": 26895.999908447266,
+   "speedup": 1.7336598245232064,
+   "speedup_of_medians": 1.732989592110738,
+   "err_ns": 35.14790594531933,
+   "speed_of_light_ns": 1647.2746666666667,
+   "status": "pass",
+   "top_kernels": [
+    [
+     "_sliding_fused_kernel",
+     13.0,
+     100.0
+    ]
+   ]
+  },
+  {
+   "key": "batch=16 ctx=80000 dist=coherent heads=tp8 layer=full load=decode_16 page=1 spread=agentic",
+   "load": "decode 16",
+   "case": {
+    "batch": 16,
+    "ctx": 80000,
+    "dist": "coherent",
+    "heads": "tp8",
+    "layer": "full",
+    "load": "decode 16",
+    "page": 1,
+    "seed": 1815751301678859414,
+    "spread": "agentic",
+    "weight": 16
+   },
+   "weight": 16,
+   "median_ns": 111121.02428361127,
+   "baseline_ns": 200816.00127741694,
+   "speedup": 1.8071827772652593,
+   "speedup_of_medians": 1.8129424211662533,
+   "err_ns": 176.43317261986212,
+   "speed_of_light_ns": 63177.38666666667,
+   "status": "pass",
+   "top_kernels": [
+    [
+     "void (anonymous namespace)::splitkv_attn_sk_kernel<4, tru...",
+     109.0,
+     98.0
+    ],
+    [
+     "_pre_attention_kernel",
+     2.2,
+     2.0
+    ]
+   ]
+  },
+  {
+   "key": "batch=32 ctx=80000 dist=soft heads=tp8 layer=sliding load=decode_32 page=1 spread=agentic",
+   "load": "decode 32",
+   "case": {
+    "batch": 32,
+    "ctx": 80000,
+    "dist": "soft",
+    "heads": "tp8",
+    "layer": "sliding",
+    "load": "decode 32",
+    "page": 1,
+    "seed": 1815842699129394421,
+    "spread": "agentic",
+    "weight": 46
+   },
+   "weight": 46,
+   "median_ns": 17680.84879345628,
+   "baseline_ns": 31264.000106602907,
+   "speedup": 1.768240906973526,
+   "speedup_of_medians": 1.7540394822977259,
+   "err_ns": 38.16197539030724,
+   "speed_of_light_ns": 3294.5493333333334,
+   "status": "pass",
+   "top_kernels": [
+    [
+     "void (anonymous namespace)::splitkv_attn_sk_kernel<4, tru...",
+     14.0,
+     88.3
+    ],
+    [
+     "_pre_attention_kernel",
+     1.9,
+     11.7
+    ]
+   ]
+  },
+  {
+   "key": "batch=32 ctx=80000 dist=coherent heads=tp8 layer=full load=decode_32 page=1 spread=agentic",
+   "load": "decode 32",
+   "case": {
+    "batch": 32,
+    "ctx": 80000,
+    "dist": "coherent",
+    "heads": "tp8",
+    "layer": "full",
+    "load": "decode 32",
+    "page": 1,
+    "seed": 1815934096579929429,
+    "spread": "agentic",
+    "weight": 16
+   },
+   "weight": 16,
+   "median_ns": 227872.39220533567,
+   "baseline_ns": 384576.00865513086,
+   "speedup": 1.6876814472048447,
+   "speedup_of_medians": 1.690771023330123,
+   "err_ns": 336.4702648838425,
+   "speed_of_light_ns": 126354.77333333335,
+   "status": "pass",
+   "top_kernels": [
+    [
+     "void (anonymous namespace)::splitkv_attn_sk_kernel<4, tru...",
+     227.7,
+     99.0
+    ],
+    [
+     "_pre_attention_kernel",
+     2.4,
+     1.0
+    ]
+   ]
+  },
+  {
+   "key": "batch=1 ctx=80000 dist=soft heads=tp8 layer=sliding load=verify_1 page=1 q_len=8",
+   "load": "verify 1",
+   "case": {
+    "batch": 1,
+    "ctx": 80000,
+    "dist": "soft",
+    "heads": "tp8",
+    "layer": "sliding",
+    "load": "verify 1",
+    "page": 1,
+    "q_len": 8,
+    "seed": 1816025494030464438,
+    "weight": 46
+   },
+   "weight": 46,
+   "median_ns": 13174.34372566007,
+   "baseline_ns": 22640.000097453594,
+   "speedup": 1.7184916811724729,
+   "speedup_of_medians": 1.7214112568238218,
+   "err_ns": 33.65505871386496,
+   "speed_of_light_ns": 124.58666666666666,
+   "status": "pass",
+   "top_kernels": [
+    [
+     "void (anonymous namespace)::splitkv_attn_sk_kernel<4, tru...",
+     10.0,
+     85.7
+    ],
+    [
+     "_pre_attention_kernel",
+     1.7,
+     14.3
+    ]
+   ]
+  },
+  {
+   "key": "batch=1 ctx=80000 dist=coherent heads=tp8 layer=full load=verify_1 page=1 q_len=8",
+   "load": "verify 1",
+   "case": {
+    "batch": 1,
+    "ctx": 80000,
+    "dist": "coherent",
+    "heads": "tp8",
+    "layer": "full",
+    "load": "verify 1",
+    "page": 1,
+    "q_len": 8,
+    "seed": 1816116891480999448,
+    "weight": 16
+   },
+   "weight": 16,
+   "median_ns": 30483.338795480715,
+   "baseline_ns": 36512.00141757727,
+   "speedup": 1.197769104708121,
+   "speedup_of_medians": 1.2035865805672183,
+   "err_ns": 59.16843595997595,
+   "speed_of_light_ns": 4282.026666666667,
+   "status": "pass",
+   "top_kernels": [
+    [
+     "void cutlass::device_kernel<flash::enable_sm90_or_later<f...",
+     14.9,
+     54.2
+    ],
+    [
+     "void cutlass::device_kernel<flash::FlashAttnFwdCombine<cu...",
+     7.3,
+     26.6
+    ],
+    [
+     "void flash::prepare_varlen_num_blocks_kernel<1, true>(int...",
+     2.8,
+     10.0
+    ],
+    [
+     "_pre_attention_kernel",
+     1.4,
+     5.2
+    ]
+   ]
+  },
+  {
+   "key": "batch=16 ctx=80000 dist=soft heads=tp8 layer=sliding load=verify_16 page=1 q_len=8 spread=agentic",
+   "load": "verify 16",
+   "case": {
+    "batch": 16,
+    "ctx": 80000,
+    "dist": "soft",
+    "heads": "tp8",
+    "layer": "sliding",
+    "load": "verify 16",
+    "page": 1,
+    "q_len": 8,
+    "seed": 1816208288931534459,
+    "spread": "agentic",
+    "weight": 46
+   },
+   "weight": 46,
+   "median_ns": 22827.971043196027,
+   "baseline_ns": 29263.99977877736,
+   "speedup": 1.281936082860926,
+   "speedup_of_medians": 1.2844100615944538,
+   "err_ns": 51.70096054820689,
+   "speed_of_light_ns": 1862.3146666666669,
+   "status": "pass",
+   "top_kernels": [
+    [
+     "void cutlass::device_kernel<flash::enable_sm90_or_later<f...",
+     10.7,
+     51.7
+    ],
+    [
+     "void cutlass::device_kernel<flash::FlashAttnFwdCombine<cu...",
+     4.0,
+     19.2
+    ],
+    [
+     "_pre_attention_kernel",
+     2.8,
+     13.5
+    ],
+    [
+     "void flash::prepare_varlen_num_blocks_kernel<1, false>(in...",
+     1.9,
+     9.0
+    ]
+   ]
+  },
+  {
+   "key": "batch=16 ctx=80000 dist=coherent heads=tp8 layer=full load=verify_16 page=1 q_len=8 spread=agentic",
+   "load": "verify 16",
+   "case": {
+    "batch": 16,
+    "ctx": 80000,
+    "dist": "coherent",
+    "heads": "tp8",
+    "layer": "full",
+    "load": "verify 16",
+    "page": 1,
+    "q_len": 8,
+    "seed": 1816299686382069471,
+    "spread": "agentic",
+    "weight": 16
+   },
+   "weight": 16,
+   "median_ns": 163002.97324353523,
+   "baseline_ns": 204959.99790728092,
+   "speedup": 1.257400364109062,
+   "speedup_of_medians": 1.261944638211945,
+   "err_ns": 213.26765150427156,
+   "speed_of_light_ns": 63392.42666666667,
+   "status": "pass",
+   "top_kernels": [
+    [
+     "void cutlass::device_kernel<flash::enable_sm90_or_later<f...",
+     154.5,
+     91.7
+    ],
+    [
+     "void cutlass::device_kernel<flash::FlashAttnFwdCombine<cu...",
+     5.9,
+     3.5
+    ],
+    [
+     "void flash::prepare_varlen_num_blocks_kernel<1, true>(int...",
+     3.0,
+     1.8
+    ],
+    [
+     "_pre_attention_kernel",
+     2.7,
+     1.6
+    ]
+   ]
+  },
+  {
+   "key": "batch=32 ctx=80000 dist=soft heads=tp8 layer=sliding load=verify_32 page=1 q_len=8 spread=agentic",
+   "load": "verify 32",
+   "case": {
+    "batch": 32,
+    "ctx": 80000,
+    "dist": "soft",
+    "heads": "tp8",
+    "layer": "sliding",
+    "load": "verify 32",
+    "page": 1,
+    "q_len": 8,
+    "seed": 1816391083832604484,
+    "spread": "agentic",
+    "weight": 46
+   },
+   "weight": 46,
+   "median_ns": 29206.42039852068,
+   "baseline_ns": 34672.00044542551,
+   "speedup": 1.1871362519722433,
+   "speedup_of_medians": 1.188699980245156,
+   "err_ns": 52.21975231496237,
+   "speed_of_light_ns": 3724.6293333333338,
+   "status": "pass",
+   "top_kernels": [
+    [
+     "void cutlass::device_kernel<flash::enable_sm90_or_later<f...",
+     15.0,
+     56.1
+    ],
+    [
+     "_pre_attention_kernel",
+     4.2,
+     15.7
+    ],
+    [
+     "void cutlass::device_kernel<flash::FlashAttnFwdCombine<cu...",
+     4.2,
+     15.6
+    ],
+    [
+     "void flash::prepare_varlen_num_blocks_kernel<2, false>(in...",
+     1.8,
+     6.6
+    ]
+   ]
+  },
+  {
+   "key": "batch=32 ctx=80000 dist=coherent heads=tp8 layer=full load=verify_32 page=1 q_len=8 spread=agentic",
+   "load": "verify 32",
+   "case": {
+    "batch": 32,
+    "ctx": 80000,
+    "dist": "coherent",
+    "heads": "tp8",
+    "layer": "full",
+    "load": "verify 32",
+    "page": 1,
+    "q_len": 8,
+    "seed": 1816482481283139498,
+    "spread": "agentic",
+    "weight": 16
+   },
+   "weight": 16,
+   "median_ns": 302305.8515473794,
+   "baseline_ns": 389760.00249385834,
+   "speedup": 1.2892903015235633,
+   "speedup_of_medians": 1.2876625408456672,
+   "err_ns": 290.45859470300945,
+   "speed_of_light_ns": 126784.85333333335,
+   "status": "pass",
+   "top_kernels": [
+    [
+     "void cutlass::device_kernel<flash::enable_sm90_or_later<f...",
+     293.1,
+     93.8
+    ],
+    [
+     "void cutlass::device_kernel<flash::FlashAttnFwdCombine<cu...",
+     7.7,
+     2.5
+    ],
+    [
+     "_pre_attention_kernel",
+     4.2,
+     1.3
+    ],
+    [
+     "_paired_norm_gate_kernel",
+     3.9,
+     1.3
+    ]
+   ]
+  }
+ ],
+ "loads": [
+  {
+   "load": "decode 1",
+   "sglang_ns": 1433183.9717924595,
+   "yours_ns": 905024.2481687531,
+   "speedup": 1.583586268204854
+  },
+  {
+   "load": "decode 16",
+   "sglang_ns": 4450272.016227245,
+   "yours_ns": 2491580.4254403687,
+   "speedup": 1.7861241687354692
+  },
+  {
+   "load": "decode 32",
+   "sglang_ns": 7591360.143385828,
+   "yours_ns": 4459277.31978436,
+   "speedup": 1.7023745326861455
+  },
+  {
+   "load": "verify 1",
+   "sglang_ns": 1625632.0271641016,
+   "yours_ns": 1093753.2321080547,
+   "speedup": 1.4862877470368026
+  },
+  {
+   "load": "verify 16",
+   "sglang_ns": 4625503.956340253,
+   "yours_ns": 3658134.239883581,
+   "speedup": 1.264443471185316
+  },
+  {
+   "load": "verify 32",
+   "sglang_ns": 7831072.060391307,
+   "yours_ns": 6180388.963090021,
+   "speedup": 1.2670840148021996
+  }
+ ],
+ "attribution": {
+  "base_result": "muse_attention_decode/hypotheses/done/gain/restack-sk-pseudo-cluster-plus-v3-fused-preattn.result.json",
+  "noise": 0.0171,
+  "shapes": [
+   {
+    "key": "batch=1 ctx=80000 dist=soft heads=tp8 layer=sliding load=decode_1 page=1",
+    "weight": 46,
+    "base_us": 11.89,
+    "hyp_us": 11.88,
+    "delta": 0.9738,
+    "verdict": "flat"
+   },
+   {
+    "key": "batch=1 ctx=80000 dist=coherent heads=tp8 layer=full load=decode_1 page=1",
+    "weight": 16,
+    "base_us": 22.48,
+    "hyp_us": 22.4,
+    "delta": 1.0101,
+    "verdict": "flat"
+   },
+   {
+    "key": "batch=16 ctx=80000 dist=soft heads=tp8 layer=sliding load=decode_16 page=1 spread=agentic",
+    "weight": 46,
+    "base_us": 15.41,
+    "hyp_us": 15.51,
+    "delta": 0.9965,
+    "verdict": "flat"
+   },
+   {
+    "key": "batch=16 ctx=80000 dist=coherent heads=tp8 layer=full load=decode_16 page=1 spread=agentic",
+    "weight": 16,
+    "base_us": 111.34,
+    "hyp_us": 111.12,
+    "delta": 1.0035,
+    "verdict": "flat"
+   },
+   {
+    "key": "batch=32 ctx=80000 dist=soft heads=tp8 layer=sliding load=decode_32 page=1 spread=agentic",
+    "weight": 46,
+    "base_us": 20.64,
+    "hyp_us": 17.68,
+    "delta": 1.1582,
+    "verdict": "gained"
+   },
+   {
+    "key": "batch=32 ctx=80000 dist=coherent heads=tp8 layer=full load=decode_32 page=1 spread=agentic",
+    "weight": 16,
+    "base_us": 227.88,
+    "hyp_us": 227.87,
+    "delta": 1.0004,
+    "verdict": "flat"
+   },
+   {
+    "key": "batch=1 ctx=80000 dist=soft heads=tp8 layer=sliding load=verify_1 page=1 q_len=8",
+    "weight": 46,
+    "base_us": 13.33,
+    "hyp_us": 13.17,
+    "delta": 1.0141,
+    "verdict": "flat"
+   },
+   {
+    "key": "batch=1 ctx=80000 dist=coherent heads=tp8 layer=full load=verify_1 page=1 q_len=8",
+    "weight": 16,
+    "base_us": 30.27,
+    "hyp_us": 30.48,
+    "delta": 1.016,
+    "verdict": "flat"
+   },
+   {
+    "key": "batch=16 ctx=80000 dist=soft heads=tp8 layer=sliding load=verify_16 page=1 q_len=8 spread=agentic",
+    "weight": 46,
+    "base_us": 23.1,
+    "hyp_us": 22.83,
+    "delta": 1.006,
+    "verdict": "flat"
+   },
+   {
+    "key": "batch=16 ctx=80000 dist=coherent heads=tp8 layer=full load=verify_16 page=1 q_len=8 spread=agentic",
+    "weight": 16,
+    "base_us": 163.37,
+    "hyp_us": 163.0,
+    "delta": 1.0068,
+    "verdict": "flat"
+   },
+   {
+    "key": "batch=32 ctx=80000 dist=soft heads=tp8 layer=sliding load=verify_32 page=1 q_len=8 spread=agentic",
+    "weight": 46,
+    "base_us": 28.93,
+    "hyp_us": 29.21,
+    "delta": 0.999,
+    "verdict": "flat"
+   },
+   {
+    "key": "batch=32 ctx=80000 dist=coherent heads=tp8 layer=full load=verify_32 page=1 q_len=8 spread=agentic",
+    "weight": 16,
+    "base_us": 303.64,
+    "hyp_us": 302.31,
+    "delta": 1.0038,
+    "verdict": "flat"
+   }
+  ],
+  "summary": "gained on sliding decode_32",
+  "expected_hit": "5/5"
+ }
+}

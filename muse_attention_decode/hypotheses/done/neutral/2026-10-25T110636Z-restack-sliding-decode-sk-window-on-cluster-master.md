@@ -71,10 +71,10 @@ priority: 1
 kind: primary
 controls_for: null
 review: proceed
-status: running
+status: done
 review_at: 2026-10-25T111218Z
 review_companions: null
-stage: dispatched
+stage: harvested
 claimed_at: 2026-10-25T111218Z
 base_sha: 8bbf53baef204e1a7c7f2d0b36f6da1996b27db4
 base_blob: 84b54ae2c9800a7b9bf96692557dd390904ed09b
@@ -93,6 +93,13 @@ attempt_file: 2026-10-25T111803Z-submit-restack-sliding-decode-sk-window-on-clus
 prepared_at: 2026-10-25T111803Z
 job: 252abb7f11ec48c3
 dispatched_at: 2026-10-25T111810Z
+outcome: neutral
+verdict_detail: unproven-vs-best
+speedup: 1.5016522435853301
+speedup_ci: [1.47912745993155, 1.530423257736894]
+harvested_at: 2026-10-25T115709Z
+best_at_harvest: 1.4919706177473366
+promotion: null
 ---
 
 # restack-sliding-decode-sk-window-on-cluster-master
@@ -184,3 +191,35 @@ Audited 2026-10-25 (opus, read-only emulation; no GPU here). **Verdict: dispatch
 - Synthetic data for the incumbent timing has the dtypes slide_attn checks (positions int64, seq_lens int32, 4-D FP8 caches).
 
 Residual risk: the in-prepare 1.03x gate against cluster C=4 may land below the threshold, in which case B=17..32 stays on cluster and the scored run measures master. That outcome is neutral, not a failure.
+
+## Result
+
+- job `252abb7f11ec48c3` (submit), status done, passed True, tests 16/16
+- speedup 1.5017x, 95% CI [1.4791, 1.5304], score 2508.1040008355194 µs vs SGLang 3766.3 µs
+- best at harvest: {"speedup": 1.4919706177473366, "ci": [1.4695910584811265, 1.5143501770135466], "job": "cbd49dc94be548e7"}; base result: muse_attention_decode/hypotheses/done/gain/restack-sk-pseudo-cluster-plus-v3-fused-preattn.result.json
+- **outcome: neutral** (unproven-vs-best)
+- files: `muse_attention_decode/hypotheses/done/neutral/restack-sliding-decode-sk-window-on-cluster-master.result.json`, `muse_attention_decode/hypotheses/done/neutral/restack-sliding-decode-sk-window-on-cluster-master.patch`; branch `hyp/muse_attention_decode/restack-sliding-decode-sk-window-on-cluster-master`
+
+## Attribution
+
+| shape | w | base µs | hyp µs | delta | verdict |
+|---|---|---|---|---|---|
+| batch=1 ctx=80000 dist=soft heads=tp8 layer=sliding load=decode_1 page=1 | 46 | 11.89 | 11.88 | 0.9738 | flat |
+| batch=1 ctx=80000 dist=coherent heads=tp8 layer=full load=decode_1 page=1 | 16 | 22.48 | 22.4 | 1.0101 | flat |
+| batch=16 ctx=80000 dist=soft heads=tp8 layer=sliding load=decode_16 page=1 spread=agentic | 46 | 15.41 | 15.51 | 0.9965 | flat |
+| batch=16 ctx=80000 dist=coherent heads=tp8 layer=full load=decode_16 page=1 spread=agentic | 16 | 111.34 | 111.12 | 1.0035 | flat |
+| batch=32 ctx=80000 dist=soft heads=tp8 layer=sliding load=decode_32 page=1 spread=agentic | 46 | 20.64 | 17.68 | 1.1582 | gained |
+| batch=32 ctx=80000 dist=coherent heads=tp8 layer=full load=decode_32 page=1 spread=agentic | 16 | 227.88 | 227.87 | 1.0004 | flat |
+| batch=1 ctx=80000 dist=soft heads=tp8 layer=sliding load=verify_1 page=1 q_len=8 | 46 | 13.33 | 13.17 | 1.0141 | flat |
+| batch=1 ctx=80000 dist=coherent heads=tp8 layer=full load=verify_1 page=1 q_len=8 | 16 | 30.27 | 30.48 | 1.016 | flat |
+| batch=16 ctx=80000 dist=soft heads=tp8 layer=sliding load=verify_16 page=1 q_len=8 spread=agentic | 46 | 23.1 | 22.83 | 1.006 | flat |
+| batch=16 ctx=80000 dist=coherent heads=tp8 layer=full load=verify_16 page=1 q_len=8 spread=agentic | 16 | 163.37 | 163.0 | 1.0068 | flat |
+| batch=32 ctx=80000 dist=soft heads=tp8 layer=sliding load=verify_32 page=1 q_len=8 spread=agentic | 46 | 28.93 | 29.21 | 0.999 | flat |
+| batch=32 ctx=80000 dist=coherent heads=tp8 layer=full load=verify_32 page=1 q_len=8 spread=agentic | 16 | 303.64 | 302.31 | 1.0038 | flat |
+
+gained on sliding decode_32. Expected hit: 5/5. Noise ±1.7%.
+
+## Follow-ups
+
+- unproven-vs-best: the change is not proven either way; a stacked hypothesis (`depends_on: restack-sliding-decode-sk-window-on-cluster-master`) that adds a further change in the same area is the only way to learn more (identical code is never re-run).
+
