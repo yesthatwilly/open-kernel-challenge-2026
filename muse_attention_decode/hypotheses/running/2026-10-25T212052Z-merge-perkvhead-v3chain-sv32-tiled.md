@@ -66,7 +66,7 @@ review: proceed
 status: running
 review_at: 2026-10-25T212855Z
 review_companions: null
-stage: claimed
+stage: implemented
 claimed_at: 2026-10-25T212904Z
 base_sha: b27495d07f7afbf34627adb964d4beee91b40864
 base_blob: 6d6afa4722731ceb9cb8216d0334a03f1a96ad2b
@@ -75,6 +75,12 @@ worktree: .worktrees/muse_attention_decode/merge-perkvhead-v3chain-sv32-tiled
 mode: null
 restack_of: null
 stale_base: null
+implemented_at: 2026-10-25T213549Z
+impl_commit: 906f1bd409fc936d0460fe2c1373fc74c4d444e0
+submission_sha256: 0c361e8ac5f80705c503d9813b85cff96fb415246d13f940bc8148817bae9129
+norm_sha256: a8ca565fd226f89ad0371386c77c57a5c0ad4efb2e3e729262f38bc79141e003
+submission_blob: 219c08d9b932ec2cd4ba9f53ab3386d7b72348b7
+lint_warnings: 79
 ---
 
 # merge-perkvhead-v3chain-sv32-tiled
@@ -120,3 +126,63 @@ No companion is warranted. Every piece is shape-gated to a different row (FD1: c
 - Import clock: merge ended its phases at 222.8 s and combo-b1's chain finished at 179 s on a base without the PERHEAD build. combo-b1's module (FUSED + PDL variants, with a FUSED-fail rebuild path) is larger than the V1-only module. Expect the chain phase to end around 250-280 s, well within the 480 s start rule. Confirm only one muse_full_decode_c320 load_inline appears in the log; two modules with the same name and different sources would be a build-cache hazard.
 - Submit gating: at ~1.545 predicted vs 1.5295 best, a single check will not prove a new best. Treat it as the stacking base for sliding-verify1-pseudo-fused-preattn-rope (DIAGNOSIS action 3(ii)), and promote it to a scored submit only together with that stacked change, or if the check rows all land as predicted.
 
+
+## Implementation notes
+
+Built in `<worktree>/muse_attention_decode/submission.py` (7513 lines; +1672/-80 vs master blob 6d6afa47). Constructed from
+the merge branch `hyp/muse_attention_decode/merge-perkvhead-c320-sv32-tiled` (a78f29ae) with its V1-only piece A swapped for
+the chain of `combo-b1-chain-c320-fused-pre-pdl` (8713665f), both sources taken from their branches.
+
+- kernel_fn: the merge's `_C320_ROUTE`/`_full_decode_c320` line is replaced by combo-b1's
+  `if _C320_FN is not None and _c320_gate(cfg): return _C320_FN(data)` (same position after the sliding branch);
+  `_C320_FN` / `_c320_gate` defined above kernel_fn as in combo-b1. The SV32 tiled launch in kernel_fn and
+  `_pre_attention_tiled_kernel` are the merge branch's, byte for byte. Master's per-kvhead sliding route is untouched.
+- Piece A: combo-b1's block ported verbatim (constants, `_C320_CPP`, `_C320_CUDA` byte-identical per diff, `_build_c320(fused)`,
+  `_c320_run`, V1..V4 entry points, `_c320_rows` stored-row check vs `_pre_attention_kernel`, `_c320_bounds`, 21 `_C320_CASES`,
+  `_c320_alt` two-state A B B A A B replay at 80000 and 4097 keys, `_c320_timed`, `_c320_gate_run` 41 reps + 31-rep head-to-head,
+  route only if best/V0 <= 0.98, `_c320_setup_body`, `_c320_setup`, the 'PATH CHOSEN: full decode_1 [chain]: V<k>' line).
+  Called at the end of import inside try/except, after master's whole setup and before piece B.
+- Deleted from the merge branch: its V1-only `_C320_CPP/_C320_CUDA`, `_build_c320`, `_c320_ready`, `_c320_launch`,
+  `_full_decode_c320`, `_c320_case`, `_c320_gate_a`, `_cx_inc`, `_cx_phase_a`, `_C320_ROUTE/_C320_ARCH_FLAGS/_C320_BUILD_DEADLINE/_GATE_A_DEADLINE`.
+  Kept: `_cx_clock`, `_cx_may_start`, `_cx_interleaved`, `_cx_phase_b` and all `_tiled_*` (GATE B), diff-verified identical.
+- Only one c320 `load_inline` call site exists (module name `muse_full_decode_c320f`; the non-FUSED rebuild `muse_full_decode_c320`
+  runs only if the FUSED build fails, as in combo-b1, so at most one of them is ever built). No 6th module in the normal case.
+- `IMPORT_T0 = _IMPORT_T0` alias so combo-b1's `_c320_clock` shares the merge's import clock (started at module top).
+
+Review / override fixes applied:
+1. No two-round 1.03 rule on GATE B or the chain gate; both gates exactly as on their source branches.
+2. c320 regs/local bytes printed by combo-b1's `[c320] <kernel>: ... regs N, local B B` lines (via `c320_attrs`); V3/V4 are NOT refused on local bytes > 0.
+3. Exactly one c320 module; shared `_cx_*` helpers kept.
+4. `TORCH_CUDA_ARCH_LIST=9.0a` is set only around `load_inline` in `_build_c320` and restored in `finally` (combo-b1 code).
+5. GATE A's stored-row check (`_c320_rows`, V3/V4 <= 3 of 128 bytes differ, rel L2 < 2e-2) ported with the FUSED kernel.
+Deviations: none beyond the alias and call-site wiring. Biggest risk: the three-way hand merge at import (clock ~250-280 s expected), and V3/V4 register spills being unknown (printed, not gated).
+Not run (no GPU on this node).
+
+## Rules check
+
+- [x] CUDA-graph capturable: kernel_fn adds only `_C320_FN(data)` (torch.empty workspaces from page-table width, no sync/.item()); all `.item()`/synchronize are in import-time checks (lint: warnings only, outside kernel_fn).
+- [x] Nothing derived from `data` cached across calls: `_C320_FN` is a frozen function chosen at import; workspaces are per-call; no device pointers/TMA maps held in globals.
+- [x] Weights: n/a: attention problem, no weights.
+- [x] KV FP8, q at most FP8 E4M3 (FUSED kernel rounds q to e4m3 in registers, as master's kernel), fp32 softmax/merge, bf16 out.
+- [x] Attention sees every key (all 320-token items over seq keys incl. the new row); no skipping.
+- [x] No timing patches/harness edits/subprocesses/network in code (load_inline's own ninja as in the other modules); timing only at import.
+- [x] All work inside the timed call; no output caching or replay (checked against `git diff`).
+
+okc_lint: `OK with warnings` (only host-sync warnings outside kernel_fn's call graph, and one dtype warning at L7264 in the ported synthetic-input helper path); `py_compile` OK; __pycache__ removed.
+
+## Pre-flight audit
+
+Audited 2026-10-25 (opus), read-only plus diffs; no GPU on this node.
+
+**Verdict: dispatch.** No fixes.
+
+- Port fidelity, checked with `git show` + diff. Master blob at base b27495d0 = 6d6afa47 = the merge branch's base, so the merge branch is the right starting point. The c320 block (`_C320_CHUNK` .. end of `_c320_setup`, 1166 lines) is byte-identical to `hyp/muse_attention_decode/combo-b1-chain-c320-fused-pre-pdl`. Its `_C320_FN`/`_c320_gate` preamble is also byte-identical. Every top-level def that both the merge branch and this file have is byte-identical to `hyp/muse_attention_decode/merge-perkvhead-c320-sv32-tiled`, except for three groups. `_build_c320`, `_c320_case` and `_c320_gate` now equal combo-b1's versions. `kernel_fn` changes in one line: the c320 dispatch. `_sd_setup_body` differs only in the trailing header comment. That leaves `_cx_clock`, `_cx_may_start`, `_cx_interleaved`, `_cx_phase_b`, all `_tiled_*`, `_sd_*` and `_slide_*` identical to the merge branch.
+- The c320 block calls these master helpers: `_pre_attention_kernel`, `_sk_prepare_q`, `_splitkv_reference`, `_splitkv_synthetic`, `_alt_sets`, `_graph_of`, `_rel_l2`, `_rezero_tickets`, `_sm_count`, `_say` and `Inputs`. Each one is byte-identical between combo-b1's base and this file. The constants FP8, LOG2E, RMS_EPS, ROW_BYTES and _ALT_KEYS are also identical. An AST scan found no undefined names.
+- (1) No leftovers. `_C320_ROUTE`, `_full_decode_c320`, `_c320_ready`, `_c320_launch`, `_c320_gate_a`, `_cx_phase_a`, `_cx_inc`, `_C320_BUILD_DEADLINE`, `_GATE_A_DEADLINE`, `_C320_ARCH_FLAGS` and `c320_prepare` appear nowhere in the file.
+- (2) Phase order is master setup, then `_sd_setup`, then `_c320_setup`, then `_cx_phase_b`. Each phase sits in its own try/except with a PATH CHOSEN fallback line. The chain keeps combo-b1's start gates on the import clock: build 120 s, checks 60 s, gate 60 s, all against the 480 s budget. `IMPORT_T0` is an alias of the module-top `_IMPORT_T0`, so both phases use one clock. GATE B starts only if clock + 40 <= 480, and prints a PATH CHOSEN line even when it is skipped.
+- (3) The `_cx_*` helpers that GATE B needs are present and identical to the merge branch.
+- (4) There is one `load_inline` call site. `muse_full_decode_c320f` is built normally. `muse_full_decode_c320` is built only if the FUSED build fails.
+- (5) kernel_fn dispatches on `_C320_FN is not None and _c320_gate(cfg)`. That is config-only: batch, rope_theta and `_shape_gate`. `_C320_FN` is frozen at import. `_c320_run` allocates workspaces only from `page_table.shape[1]`, with no sync and no data-dependent control flow.
+- okc_lint: OK with warnings. The host-sync warnings are all outside kernel_fn, plus one ported dtype warning in a GATE B synthetic helper. py_compile: OK. __pycache__ removed.
+
+Residual risk: the import clock. The chain's phases can take up to 240 s on top of the setup that runs before it, so a slow build could push GATE B past its 440 s start gate. That would lose the SV32 row without failing the run. V3/V4 local bytes are printed but not gated.
