@@ -79,7 +79,7 @@ base_sha: 65440e974f1eccc4c5d39e2e004e0f64d2c9d806
 base_blob: f919748b5af6e815f319e5d2d828ed68e5b28a71
 branch: hyp/muse_bf16_proj/combo-naive-pooler-m1-rowowner-qkv-m128-cublaslt
 worktree: .worktrees/muse_bf16_proj/combo-naive-pooler-m1-rowowner-qkv-m128-cublaslt
-mode: null
+mode: submit
 restack_of: null
 stale_base: null
 implemented_at: 2026-10-25T163320Z
@@ -88,6 +88,8 @@ submission_sha256: c3a86c47cf009e0cc389517303d4f4fa02287a45b93b28a3cea1dc497d162
 norm_sha256: 67ee24281e5a53be2bbc0663f3f01019ab3bcd0ca7b3279280844fc772bbde8e
 submission_blob: 9008c43b0750f70feb5d559b0947cb067f00aac8
 lint_warnings: 39
+attempt_file: 2026-10-25T163321Z-submit-combo-naive-pooler-m1-rowowner-qkv-m128-cublaslt.md
+prepared_at: 2026-10-25T163321Z
 ---
 
 # combo-naive-pooler-m1-rowowner-qkv-m128-cublaslt
