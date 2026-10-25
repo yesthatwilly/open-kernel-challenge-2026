@@ -2,7 +2,7 @@
 
 Hypothesis: `muse_attention_decode/hypotheses/done/neutral/2026-10-25T003637Z-full-decode1-streamk-s3-two-level-ticket.md` (branch `hyp/muse_attention_decode/full-decode1-streamk-s3-two-level-ticket`).
 
-- **Job:** `<job id>` (`okc status <job>`)
+- **Job:** `341623fa53d94cef` (`okc status <job>`)
 - **File:** `muse_attention_decode/submission.py` at git `dd46532`
 
 ## Goal

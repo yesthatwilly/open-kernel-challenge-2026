@@ -76,10 +76,12 @@ speedup: 1.4321773019894537
 speedup_ci: [1.4106946424596118, 1.4554282820505813]
 harvested_at: 2026-10-25T034127Z
 best_at_harvest: 1.3948738389144513
-promotion: merged
+promotion: submitted
 hand_landed: true
 promotion_commit: c3c1b01b18837f889ac11a15d8f0daf06d356d98
 promotion_attempt: 2026-10-25T043620Z-submit-full-decode1-streamk-s3-two-level-ticket.md
+promotion_job: 341623fa53d94cef
+promotion_at: 2026-10-25T045332Z
 ---
 
 # full-decode1-streamk-s3-two-level-ticket
