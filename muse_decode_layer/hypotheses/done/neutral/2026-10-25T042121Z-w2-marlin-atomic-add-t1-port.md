@@ -66,6 +66,7 @@ best_at_harvest: 1.2680313318618024
 promotion: merged
 hand_landed: true
 promotion_commit: 00e36e3a74224d6c0cc4f10708dfd9e759d8ee84
+promotion_attempt: 2026-10-25T045638Z-submit-w2-marlin-atomic-add-t1-port.md
 ---
 
 # w2-marlin-atomic-add-t1-port
