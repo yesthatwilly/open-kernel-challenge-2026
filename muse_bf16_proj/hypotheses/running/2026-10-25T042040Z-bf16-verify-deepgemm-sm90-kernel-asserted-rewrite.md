@@ -66,9 +66,18 @@ controls_for: null
 rewrite_stage: 1
 replaces: cuBLAS nvjet (+cublasLt splitKreduce) for qkv_gate, pooler, unpooler at m=65..256
 review: proceed
-status: queued
+status: running
 review_at: 2026-10-25T042455Z
 review_companions: null
+stage: claimed
+claimed_at: 2026-10-25T042455Z
+base_sha: e5548a78a3d321973c377dc21431b085c324a412
+base_blob: 970b415b746fa03cb92e419d270be92588273178
+branch: hyp/muse_bf16_proj/bf16-verify-deepgemm-sm90-kernel-asserted-rewrite
+worktree: .worktrees/muse_bf16_proj/bf16-verify-deepgemm-sm90-kernel-asserted-rewrite
+mode: null
+restack_of: null
+stale_base: null
 ---
 
 # bf16-verify-deepgemm-sm90-kernel-asserted-rewrite
