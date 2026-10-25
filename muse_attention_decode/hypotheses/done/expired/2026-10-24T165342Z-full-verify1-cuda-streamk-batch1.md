@@ -33,9 +33,12 @@ priority: 2
 kind: primary
 controls_for: null
 review: proceed
-status: queued
+status: done
 review_at: 2026-10-24T170604Z
 review_companions: null
+outcome: expired
+verdict_detail: "retired: mma.sync verify design: attention DIAGNOSIS Do-not-try"
+expired_at: 2026-10-25T212148Z
 ---
 
 # full-verify1-cuda-streamk-batch1

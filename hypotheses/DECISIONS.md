@@ -342,3 +342,6 @@ overrides of a reviewer) with the reason, newest last. Written by `churn.py note
 - 2026-10-25T212024Z `muse_moe_w4a16` **restack-bucket-gate-on-master-align-atomic**: retired: stale hold closed per the 2026-10-25 moe diagnosis
 - 2026-10-25T212024Z `muse_moe_w4a16` **cuda-fused-moe-bs1-persistent-nospin-bandwidth**: retired: stale hold closed per the 2026-10-25 moe diagnosis
 - 2026-10-25T212024Z `muse_moe_w4a16` **cuda-nvfp4-swapab-mma-persistent-small-m-childcheck**: retired: stale hold closed per the 2026-10-25 moe diagnosis
+- 2026-10-25T212148Z `muse_attention_decode` **sliding-decode-paired-kvhead-rows-control-unpaired-s8**: retired: retire per the attention DIAGNOSIS 2026-10-25
+- 2026-10-25T212148Z `muse_attention_decode` **sliding-verify-cuda-streamk-window**: retired: mma.sync verify design: attention DIAGNOSIS Do-not-try (0.48-0.82x across four designs)
+- 2026-10-25T212148Z `muse_attention_decode` **full-verify1-cuda-streamk-batch1**: retired: mma.sync verify design: attention DIAGNOSIS Do-not-try

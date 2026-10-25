@@ -49,9 +49,12 @@ priority: 2
 kind: primary
 controls_for: null
 review: proceed
-status: queued
+status: done
 review_at: 2026-10-24T170604Z
 review_companions: null
+outcome: expired
+verdict_detail: "retired: mma.sync verify design: attention DIAGNOSIS Do-not-try (0.48-0.82x across four designs)"
+expired_at: 2026-10-25T212148Z
 ---
 
 # sliding-verify-cuda-streamk-window

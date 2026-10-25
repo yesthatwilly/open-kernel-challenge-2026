@@ -28,7 +28,10 @@ priority: 2
 kind: control
 controls_for: sliding-decode-paired-kvhead-rows
 review: required
-status: queued
+status: done
+outcome: expired
+verdict_detail: "retired: retire per the attention DIAGNOSIS 2026-10-25"
+expired_at: 2026-10-25T212148Z
 ---
 
 # sliding-decode-paired-kvhead-rows-control-unpaired-s8
