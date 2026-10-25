@@ -54,7 +54,7 @@ review: proceed
 status: running
 review_at: 2026-10-25T161935Z
 review_companions: null
-stage: implemented
+stage: dispatched
 claimed_at: 2026-10-25T161936Z
 base_sha: a5f0c41fcf6d081ab9a5f2262b3505c796565fea
 base_blob: 5cf8fae31e5b84c36efeeb4569763eb9b06e1c8a
@@ -71,6 +71,8 @@ submission_blob: 6d6afa4722731ceb9cb8216d0334a03f1a96ad2b
 lint_warnings: 60
 attempt_file: 2026-10-25T162957Z-submit-sliding-decode1-cluster-per-kvhead.md
 prepared_at: 2026-10-25T162957Z
+job: 4b608df595b046fb
+dispatched_at: 2026-10-25T163005Z
 ---
 
 # sliding-decode1-cluster-per-kvhead
