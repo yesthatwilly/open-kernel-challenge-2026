@@ -52,9 +52,18 @@ priority: 1
 kind: primary
 controls_for: null
 review: proceed
-status: queued
+status: running
 review_at: 2026-10-25T042349Z
 review_companions: null
+stage: claimed
+claimed_at: 2026-10-25T042349Z
+base_sha: fd92cb3a1268dd03948af28bfe64ae31f385757e
+base_blob: 970b415b746fa03cb92e419d270be92588273178
+branch: hyp/muse_bf16_proj/restack-unpooler-slice-cluster-dsmem-m8
+worktree: .worktrees/muse_bf16_proj/restack-unpooler-slice-cluster-dsmem-m8
+mode: null
+restack_of: null
+stale_base: null
 ---
 
 # restack-unpooler-slice-cluster-dsmem-m8
