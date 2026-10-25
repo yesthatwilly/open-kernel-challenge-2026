@@ -79,7 +79,7 @@ review: proceed
 status: running
 review_at: 2026-10-25T152551Z
 review_companions: null
-stage: claimed
+stage: implemented
 claimed_at: 2026-10-25T152552Z
 base_sha: 7faa35ba9069ec4a6c1942887916e7e77d381e1c
 base_blob: a2fe2a75893c60d4f68cf94fcce8ce8f9b708a71
@@ -88,6 +88,12 @@ worktree: .worktrees/muse_prefill_layer/fa3-full-contiguous-kv-triton-gather-gat
 mode: null
 restack_of: null
 stale_base: null
+implemented_at: 2026-10-25T153230Z
+impl_commit: 8367d46cf7527dea6fd3a2644c7b4e46c6378fc4
+submission_sha256: 6a87e63c212c463fdb8d647d539d387ca03a3e3ddf4b0f8d788394977a7e30ef
+norm_sha256: 3b7c506364e79a82fc669458246dd4d5a53b9de437a9819e4c3b103c1de893b1
+submission_blob: 9fb1f7c4b4282dd7461c6cdba926fe3ebf12128e
+lint_warnings: 74
 ---
 
 # fa3-full-contiguous-kv-triton-gather-gated
@@ -160,3 +166,20 @@ Deviations: route dict keeps the key spec'd, plus an exact-width check (above). 
 - [x] All work happens inside the timed call; no output caching or replay.
 
 okc_lint: OK with warnings (only host-sync warnings in prepare() and uint8 byte-buffer dtype warnings, no errors). py_compile OK, __pycache__ removed.
+
+## Pre-flight audit
+
+Audited 2026-10-25 by an opus subagent (read-only plus minimal fixes; no GPU on this node). **Verdict: dispatch-with-fixes.**
+
+Fixes in the worktree submission.py:
+1. kernel_fn no longer prints a per-shape `PATH CHOSEN` line, and `state["fa3c"]["seen"]` is gone. That was per-call mutable state plus a print inside the graph-captured call. The prepare-time GATE and PATH CHOSEN lines remain and are enough.
+2. The gate could pick a variant that failed mid-replay. `med` kept any variant with at least 12 samples, even one dropped from `graphs` after a replay error. It now keeps only variants still in `graphs`.
+3. New byte-exact gather check `_fa3c_gather_exact` in each self-check case. It fills the buffers with 0xFF (FP8 NaN) first, then requires every live row to equal `cache[page_table[b, :n]]` byte for byte and every position at or past cache_seqlens to be 0. A miss or a raise turns both B and C off. Each self-check line also logs `bitwise-equal to paged`, for information only. The FA3 output itself is not required to be bit-identical: contiguous TMA and paged cp.async use different tiles and PackGQA, so the accumulation order differs. A bit-exact gate would never pass. The output check stays rel L2 <= 1e-2, worst row <= 5e-2, vs the paged call.
+
+Verified with no change needed:
+- W and keys come from shapes and config only: W = page_table.shape[1], which reference.py sizes from the config as `_longest(ctx, spread) + q_len` (turn_4 = 86753, matching the gate). batch and q_len come from cfg. cache_seqlens is read only on device, as the Triton mask. The fallback `torch.empty` is sized (batch, width, 2, 64).
+- Per-state buffers are not module-global and are fully rewritten on every call (all W positions, zeros past cache_seqlens), so sharing them between two states would also be safe.
+- `_fa3c_setup` runs after `_rega_setup`, so the 150 s rega first_turn start deadline is untouched. fa3c has its own 235 s and 265 s deadlines.
+- Variant C fails closed. Exceptions are caught per variant in the self-check, in capture and in replay, and a wrong output fails the tolerance. Sliding layers, page 64, kv-scaled and every untimed key stay on master's call. No test shape hits a routed key.
+
+Residual risk: a sticky CUDA fault (illegal address) inside FA3 batched mode C during the self-check could not be contained by try/except, and the ctx65536 class sits near its 0.98 bar, so its routing may differ from run to run.
