@@ -70,7 +70,7 @@ review: proceed
 status: running
 review_at: 2026-10-25T011846Z
 review_companions: null
-stage: claimed
+stage: implemented
 claimed_at: 2026-10-25T011846Z
 base_sha: 9bb477f684086cd51b09c1e8a08fa8d50ae04e59
 base_blob: a8bb42ac483318e9fbc84bc7826a27b7a704d1fb
@@ -79,6 +79,12 @@ worktree: .worktrees/muse_bf16_proj/bf16-verify-deepgemm-bf16-gemm-nt-route
 mode: null
 restack_of: null
 stale_base: null
+implemented_at: 2026-10-25T012031Z
+impl_commit: ba330227271a61b5b66b2561ea2072550c888afe
+submission_sha256: 0fb340d50b20a772f3b4d35da138746ed8a68dfa6132fa6be2da5fa424b42d9f
+norm_sha256: ee29894b95224268b60cded8c47c7166f746b89f606ac3de3882987fb074fc1b
+submission_blob: 94b37346a8f849f5cc5a87d48977b9ff1b4f513b
+lint_warnings: 3
 ---
 
 # bf16-verify-deepgemm-bf16-gemm-nt-route
@@ -123,3 +129,30 @@ No companion. Each layer×m row is either DeepGEMM (confirmed by PATH CHOSEN plu
 - Is the minimum n alignment satisfied for qkv_gate n=2304 at DeepGEMM's chosen block_n? The self-check and try/except cover it, but print the chosen block config per layer×m so a loss can be traced to the tile choice.
 - Use per-layer harvest gating: promote only the layer×m rows whose paired ratio beats master by more than the CI. Expect pooler/unpooler to be the candidates and qkv_gate m=128 to be at risk.
 
+
+## Implementation notes
+
+Edited only `muse_bf16_proj/submission.py` in the worktree (+157 lines, nothing removed).
+- Module-level guarded `import deep_gemm`; `_dg_find_fn()` prints module path, version and every bf16/gemm candidate name, then picks `bf16_gemm_nt` (fallbacks `gemm_bf16_nt`, `bf16_gemm_nt_contiguous`). A loud `[deepgemm] AVAILABLE` or `[deepgemm] unavailable, master kept` line results. Signature is printed via inspect and the call is `fn(x, W, out)`.
+- `prepare()` (last step, `_dg_prepare`): for pooler, qkv_gate, unpooler, o and EVERY routed m in (128, 130, 200, 256): eager call (JIT), fp32 matmul self-check (rel L2 <= 3e-3), one-hot probe (<= 1e-4), then torch.cuda.graph capture + replay checked again. Per (layer, m) failure prints `DISABLED` and only that m is dropped. Elapsed time is tracked from prepare() start; past 200 s remaining (layer, m) are skipped (gate off). Prints `PATH CHOSEN <layer> m=<m>: deepgemm|master`.
+- `kernel_fn`: one branch just before master's cuBLAS fallback, gated on the exact verified m set (not 65..256, per the review), cfg n == full weight rows, contiguous bf16 x. Router, m<=32 paths and m=512/1000 are unchanged.
+- Deviation: gate is the warmed set {128,130,200,256}, not the whole 65..256, so no JIT can happen in a timed or captured call. Chosen tile config is not introspectable from here; not printed. Nothing could be run on this node (no GPU, no deep_gemm).
+
+## Rules check
+
+- [x] CUDA-graph capturable: branch has only torch.empty + the DeepGEMM launch, no sync/.item()/value-dependent control flow; capture tested per (layer, m) in prepare. Syncs are prepare-only.
+- [x] Nothing derived from `data` is cached: state holds only weight-derived/verified-m sets built from synthetic x.
+- [x] Weights: read in place, no repack; BF16 stays BF16.
+- [x] Activations BF16, output BF16; no precision change.
+- [x] Attention: n/a, dense projections only.
+- [x] No timing patches, harness access, subprocess or network added by me (DeepGEMM's own JIT is a library compile; no timing-based selection).
+- [x] All work inside the timed call; no output caching or replay.
+
+okc_lint output:
+```
+warn  host-sync    L713: torch.cuda.synchronize()  (outside kernel_fn's call graph; fine in prepare())
+warn  host-sync    L736: torch.cuda.synchronize()  (outside kernel_fn's call graph; fine in prepare())
+warn  host-sync    L741: torch.cuda.synchronize()  (outside kernel_fn's call graph; fine in prepare())
+OK with warnings: submission.py
+```
+py_compile OK; __pycache__ removed.
