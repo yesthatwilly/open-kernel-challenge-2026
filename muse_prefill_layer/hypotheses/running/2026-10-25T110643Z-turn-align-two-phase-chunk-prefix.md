@@ -60,7 +60,7 @@ review: proceed
 status: running
 review_at: 2026-10-25T115947Z
 review_companions: null
-stage: implemented
+stage: dispatched
 claimed_at: 2026-10-25T115947Z
 base_sha: f896dc264c4b4ee1df6c4b33556b50f2d4282f9c
 base_blob: 712edc5ea5be2dde8f558a016d0877b285340ee4
@@ -77,6 +77,8 @@ submission_blob: dab438b9e49302463ff706a54540d8782b47aae5
 lint_warnings: 56
 attempt_file: 2026-10-25T120316Z-check-turn-align-two-phase-chunk-prefix.md
 prepared_at: 2026-10-25T120316Z
+job: d792e5c9d6d94f02
+dispatched_at: 2026-10-25T120324Z
 ---
 
 # turn-align-two-phase-chunk-prefix
