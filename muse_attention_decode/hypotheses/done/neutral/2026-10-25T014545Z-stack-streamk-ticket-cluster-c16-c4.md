@@ -56,10 +56,10 @@ priority: 1
 kind: primary
 controls_for: null
 review: proceed
-status: running
+status: done
 review_at: 2026-10-25T034534Z
 review_companions: null
-stage: dispatched
+stage: harvested
 claimed_at: 2026-10-25T034535Z
 base_sha: 63995118a6d87d5714181d318458a7595fe4bbac
 base_blob: c6854f093588da524e63657576b27ed720756e32
@@ -78,6 +78,13 @@ attempt_file: 2026-10-25T034707Z-check-stack-streamk-ticket-cluster-c16-c4.md
 prepared_at: 2026-10-25T034707Z
 job: 195dcc1209b6457b
 dispatched_at: 2026-10-25T034716Z
+outcome: neutral
+verdict_detail: beats-base-not-best
+speedup: 1.4265750765791432
+speedup_ci: [1.405176450430456, 1.4537135820295741]
+harvested_at: 2026-10-25T043354Z
+best_at_harvest: 1.4321773019894537
+promotion: null
 ---
 
 # stack-streamk-ticket-cluster-c16-c4
@@ -148,3 +155,35 @@ Audit fixes kept: stream-K (gx = min(gridDim.x, T), tickets re-zeroed, binaryVer
 - [x] All work inside the timed call; no output caching or replay.
 
 okc_lint: `OK with warnings` (only host-sync warns, all outside kernel_fn's call graph, import-time self-checks). py_compile ok; __pycache__ removed.
+
+## Result
+
+- job `195dcc1209b6457b` (check), status done, passed True, tests 16/16
+- speedup 1.4266x, 95% CI [1.4052, 1.4537], score 2640.0993973842596 µs vs SGLang 3766.3 µs
+- best at harvest: {"speedup": 1.4321773019894537, "ci": [1.4106946424596118, 1.4554282820505813], "job": "2a3241780c7b4c46"}; base result: muse_attention_decode/hypotheses/done/gain/sliding-deep-splits-on-cuda-splitkv.result.json
+- **outcome: neutral** (beats-base-not-best)
+- files: `muse_attention_decode/hypotheses/done/neutral/stack-streamk-ticket-cluster-c16-c4.result.json`, `muse_attention_decode/hypotheses/done/neutral/stack-streamk-ticket-cluster-c16-c4.patch`; branch `hyp/muse_attention_decode/stack-streamk-ticket-cluster-c16-c4`
+
+## Attribution
+
+| shape | w | base µs | hyp µs | delta | verdict |
+|---|---|---|---|---|---|
+| batch=1 ctx=80000 dist=soft heads=tp8 layer=sliding load=decode_1 page=1 | 46 | 13.17 | 12.57 | 1.0317 | flat |
+| batch=1 ctx=80000 dist=coherent heads=tp8 layer=full load=decode_1 page=1 | 16 | 27.26 | 27.1 | 0.9969 | flat |
+| batch=16 ctx=80000 dist=soft heads=tp8 layer=sliding load=decode_16 page=1 spread=agentic | 46 | 15.34 | 15.26 | 0.998 | flat |
+| batch=16 ctx=80000 dist=coherent heads=tp8 layer=full load=decode_16 page=1 spread=agentic | 16 | 122.79 | 111.64 | 1.1004 | gained |
+| batch=32 ctx=80000 dist=soft heads=tp8 layer=sliding load=decode_32 page=1 spread=agentic | 46 | 24.24 | 20.05 | 1.1809 | gained |
+| batch=32 ctx=80000 dist=coherent heads=tp8 layer=full load=decode_32 page=1 spread=agentic | 16 | 241.9 | 226.98 | 1.0677 | gained |
+| batch=1 ctx=80000 dist=soft heads=tp8 layer=sliding load=verify_1 page=1 q_len=8 | 46 | 16.72 | 17.54 | 0.9417 | lost |
+| batch=1 ctx=80000 dist=coherent heads=tp8 layer=full load=verify_1 page=1 q_len=8 | 16 | 30.03 | 30.32 | 0.9903 | flat |
+| batch=16 ctx=80000 dist=soft heads=tp8 layer=sliding load=verify_16 page=1 q_len=8 spread=agentic | 46 | 22.67 | 22.75 | 1.0041 | flat |
+| batch=16 ctx=80000 dist=coherent heads=tp8 layer=full load=verify_16 page=1 q_len=8 spread=agentic | 16 | 161.98 | 162.52 | 1.0008 | flat |
+| batch=32 ctx=80000 dist=soft heads=tp8 layer=sliding load=verify_32 page=1 q_len=8 spread=agentic | 46 | 28.7 | 28.47 | 1.0095 | flat |
+| batch=32 ctx=80000 dist=coherent heads=tp8 layer=full load=verify_32 page=1 q_len=8 spread=agentic | 16 | 300.83 | 301.81 | 0.9994 | flat |
+
+gained on full decode_16, decode_32; sliding decode_32; lost on sliding verify_1. Expected hit: 6/7. Noise ±1.7%.
+
+## Follow-ups
+
+- beats-base-not-best: the change is not proven either way; a stacked hypothesis (`depends_on: stack-streamk-ticket-cluster-c16-c4`) that adds a further change in the same area is the only way to learn more (identical code is never re-run).
+
