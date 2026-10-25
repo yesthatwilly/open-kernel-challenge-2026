@@ -54,9 +54,18 @@ controls_for: null
 rewrite_stage: 1
 replaces: FusedQKNorm/rope + FP8 casts + store_cache + FA3 main + FlashAttnFwdCombine + prepare_varlen_num_blocks + FusedRMSNormGate on sliding decode, 17 <= batch <= 32
 review: proceed
-status: queued
+status: running
 review_at: 2026-10-25T042453Z
 review_companions: null
+stage: claimed
+claimed_at: 2026-10-25T042453Z
+base_sha: 1cd12f4d3d46062939ca75935ef0fcad232f2ffc
+base_blob: c9067b8201f2480c64910c4a71098df7ce616f73
+branch: hyp/muse_decode_layer/sliding-cluster-c4-decode32-port
+worktree: .worktrees/muse_decode_layer/sliding-cluster-c4-decode32-port
+mode: null
+restack_of: null
+stale_base: null
 ---
 
 # sliding-cluster-c4-decode32-port
