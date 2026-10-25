@@ -48,7 +48,7 @@ review: proceed
 status: running
 review_at: 2026-10-25T034755Z
 review_companions: null
-stage: claimed
+stage: implemented
 claimed_at: 2026-10-25T034755Z
 base_sha: dc91f8e5bab764e046dc86798ba9f2cc8afa6ee9
 base_blob: db8a3344398bca79ea5cafeb580f701c055fd475
@@ -57,6 +57,12 @@ worktree: .worktrees/muse_prefill_layer/norm-boundaries-persistent-multirow
 mode: null
 restack_of: null
 stale_base: null
+implemented_at: 2026-10-25T035046Z
+impl_commit: b2254b60488e1eb7ff8ddec70dc5732faf43f795
+submission_sha256: 099456e4ff1371e9b8d2494e7d85536ff61c9e1c299e1e6c3b62ee1490d07f7b
+norm_sha256: 981b8d34f7cb8de7b232b56a65feb66bb3b80ea8d27dcaa1f0d48986a89585ad
+submission_blob: 64df734f661474162d248733c3783591c8b005df
+lint_warnings: 22
 ---
 
 # norm-boundaries-persistent-multirow
@@ -97,3 +103,29 @@ No companion run; the replaced rows are directly readable and nothing landed sha
 - Does the chunked two-pass persistent kernel lose at first_turn, where the incumbent streams at about 4.0 TB/s? If it does, gate it to T <= 4096.
 - Does the JIT kernel round the normalized branch to bf16 before the residual combine? If so, the fp32-throughout math fails the stream rel L2 1e-6 gate. Check the sglang fused_norm_residual source before building.
 
+
+## Implementation notes
+
+Only `muse_prefill_layer/submission.py` changed (+242/-3). Added before `prepare()`: `_boundary_rows_kernel` (one row per program, whole 8192 row in registers, grid T), `_boundary_persistent_kernel` (grid min(T, 2 x SMs), row loop with the next row's branch/stream loads issued before the current row's math and stores), a shared `_boundary_row` math helper (fp32 throughout: optional post-FFN (1+w) multiply, rsqrt(mean+1e-8), alpha/beta combine, rsqrt(mean+1e-5) x pre-norm weight; s_new fp32 and out bf16 into torch.empty), `_boundary_launch`, and the prepare-time parity gate and sweep. `prepare()` ends with `state["bnd"] = _boundary_prepare(...)`; `kernel_fn` calls `_boundary(state, "attn"|"ffn", ...)`, which uses the T-class choice (T<1536 -> 753, <8192 -> 3012, else 16384; a shape-only lookup) or master's SGLang modules unchanged.
+
+Per the review (which wins):
+- Sweep per T class (753, 3012, 16384) on synthetic data: master vs {rows nw4 (single wave, every row resident), rows nw8, persistent nw8}. Each is CUDA-graph timed (attn + ffn boundary per graph, 256 MB L2 flush before each replay, median of 25). Prints `[boundary] variant ... us` and `PATH CHOSEN` per class and overall. A variant is picked only if <= 0.98x master; otherwise master's modules. Any exception means `[boundary] OFF: <reason>`.
+- Parity gate relaxed: stream rel L2 <= 1e-6, out max <= 2 bf16 ulp AND out rel L2 <= 3e-3, both boundaries, at every swept T, against the SGLang modules; a failing variant is skipped (logged), not silently chosen.
+
+Deviations: (1) persistent kernel keeps the whole row as one 8192 block rather than 4 x 2048 two-pass chunks, because the review showed chunking cuts bytes in flight and gives no win; prefetch is of the next whole row. (2) alpha/beta are computed in prepare() from the gate weights with the reference's formula (temperature 0.3, eps 1e-3) because the SGLang module's coefficient attribute names could not be inspected (no sglang on this node); the parity gate catches any mismatch. Effective weights come from the modules' `_get_effective_weight()`. (3) Not rebased onto a81d19c by me; the worktree is the current master. Nothing could be run here (no GPU/Triton): the JIT's bf16-rounding question is left to the parity gate (OFF if the stream rel L2 fails).
+
+## Rules check
+
+- [x] CUDA-graph capturable: kernel_fn only launches Triton kernels and torch.empty on shapes; branching is on shape/contiguity only; the sweep's syncs are in prepare().
+- [x] Nothing derived from `data` is cached across calls: state holds only weight-derived alpha/beta/weights and the sweep choice from synthetic data.
+- [x] Weights: n/a: no weights repacked or stored at another precision (alpha/beta/effective weights are fp32 [8192] derived coefficients, as SGLang's modules hold them).
+- [x] Activations: branch bf16 in, next attention input bf16 out, stream fp32 as master; math fp32.
+- [x] Attention sees every key: n/a: attention untouched.
+- [x] No timing patches, harness frames/I/O/secrets, module edits, reference import, subprocesses or network.
+- [x] All work inside the timed call; no output caching or replay (fresh torch.empty outputs each call).
+
+okc_lint: OK with warnings (host-sync warnings all in prepare(), outside kernel_fn; one dtype warn for the uint8 L2-flush scratch buffer in prepare()); py_compile OK; __pycache__ removed.
+
+### Implementation notes, revision (coordinator fixes)
+- Stream parity is now |s - ref| / |ref - alpha*s_in| <= 4e-3 (SGLang rounds the post-norm output to bf16); output gate is <= 2 ulp OR out rel L2 <= 3e-3. Supersedes the 1e-6 / AND gate above.
+- alpha/beta are probed from the SGLang modules in prepare() (stream=1, branch=0 gives alpha; stream=0, branch=1 gives beta divided by the normalized branch), cross-checked against the reference formula; > 1e-2 apart prints `[boundary] OFF: <reason>`. The cited `_dlb_coeffs` file did not exist, so the probe is written from the description. Supersedes deviation (2). Lint OK (warnings only), py_compile OK, __pycache__ removed.
