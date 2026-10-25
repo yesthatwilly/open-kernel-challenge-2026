@@ -79,7 +79,7 @@ review: proceed
 status: running
 review_at: 2026-10-25T152551Z
 review_companions: null
-stage: implemented
+stage: dispatched
 claimed_at: 2026-10-25T152552Z
 base_sha: 7faa35ba9069ec4a6c1942887916e7e77d381e1c
 base_blob: a2fe2a75893c60d4f68cf94fcce8ce8f9b708a71
@@ -96,6 +96,8 @@ submission_blob: 9fb1f7c4b4282dd7461c6cdba926fe3ebf12128e
 lint_warnings: 74
 attempt_file: 2026-10-25T153230Z-submit-fa3-full-contiguous-kv-triton-gather-gated.md
 prepared_at: 2026-10-25T153230Z
+job: 1cc92a43b8be40f8
+dispatched_at: 2026-10-25T153238Z
 ---
 
 # fa3-full-contiguous-kv-triton-gather-gated
