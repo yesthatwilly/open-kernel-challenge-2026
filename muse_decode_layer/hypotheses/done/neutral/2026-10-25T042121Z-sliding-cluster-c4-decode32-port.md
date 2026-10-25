@@ -54,10 +54,10 @@ controls_for: null
 rewrite_stage: 1
 replaces: FusedQKNorm/rope + FP8 casts + store_cache + FA3 main + FlashAttnFwdCombine + prepare_varlen_num_blocks + FusedRMSNormGate on sliding decode, 17 <= batch <= 32
 review: proceed
-status: running
+status: done
 review_at: 2026-10-25T042453Z
 review_companions: null
-stage: dispatched
+stage: harvested
 claimed_at: 2026-10-25T042453Z
 base_sha: 1cd12f4d3d46062939ca75935ef0fcad232f2ffc
 base_blob: c9067b8201f2480c64910c4a71098df7ce616f73
@@ -76,6 +76,13 @@ attempt_file: 2026-10-25T043714Z-check-sliding-cluster-c4-decode32-port.md
 prepared_at: 2026-10-25T043714Z
 job: 0fb2c9451c5d4283
 dispatched_at: 2026-10-25T043721Z
+outcome: neutral
+verdict_detail: within-ci
+speedup: 1.2693079361323087
+speedup_ci: [1.2502683170903242, 1.2883475551742933]
+harvested_at: 2026-10-25T053801Z
+best_at_harvest: 1.2855726646854595
+promotion: null
 ---
 
 # sliding-cluster-c4-decode32-port
@@ -179,3 +186,36 @@ Audited 2026-10-25 by an opus subagent, reading only (no GPU). **Verdict: dispat
 - Scope creep (flagged, not removed): the Triton 16-split candidate belongs to the sibling hypothesis. Triton at decode_32 was already harvested near-neutral. If it wins the selector, this run shows no sliding_cluster_kernel row and measures the sibling, so read the medians line first.
 
 Residual risk: compile budget (a third load_inline module, ~41 s, plus per-prepare self-check/selector), and a prepare-time selector that may still mis-rank by the LESSONS 20-25% undercount.
+
+## Result
+
+- job `0fb2c9451c5d4283` (check), status done, passed True, tests 13/13
+- speedup 1.2693x, 95% CI [1.2503, 1.2883], score 17820.971063118075 µs vs SGLang 22620.3 µs
+- best at harvest: {"speedup": 1.2855726646854595, "ci": [1.2662890747151776, 1.3048562546557412], "job": "7a9f5de5aecc4aba"}; base result: muse_decode_layer/hypotheses/done/neutral/full-decode-splitkv-restack-on-pdl.result.json
+- **outcome: neutral** (within-ci)
+- files: `muse_decode_layer/hypotheses/done/neutral/sliding-cluster-c4-decode32-port.result.json`, `muse_decode_layer/hypotheses/done/neutral/sliding-cluster-c4-decode32-port.patch`; branch `hyp/muse_decode_layer/sliding-cluster-c4-decode32-port`
+
+## Attribution
+
+| shape | w | base µs | hyp µs | delta | verdict |
+|---|---|---|---|---|---|
+| batch=1 ctx=80000 dist=soft layer=sliding load=decode_1 page=1 repeats=60 | 46 | 126.15 | 127.04 | 0.9895 | flat |
+| batch=1 ctx=80000 dist=soft layer=full load=decode_1 page=1 repeats=60 | 16 | 142.7 | 143.47 | 0.9919 | flat |
+| batch=16 ctx=80000 dist=soft layer=sliding load=decode_16 page=1 spread=agentic | 46 | 209.82 | 213.45 | 0.995 | flat |
+| batch=16 ctx=80000 dist=soft layer=full load=decode_16 page=1 spread=agentic | 16 | 306.72 | 312.4 | 0.9985 | flat |
+| batch=32 ctx=80000 dist=soft layer=sliding load=decode_32 page=1 spread=agentic | 46 | 242.33 | 241.94 | 1.0001 | flat |
+| batch=32 ctx=80000 dist=soft layer=full load=decode_32 page=1 spread=agentic | 16 | 479.6 | 471.45 | 0.9987 | flat |
+| batch=1 ctx=80000 dist=soft layer=sliding load=verify_1 page=1 q_len=8 | 46 | 187.97 | 189.78 | 1.0022 | flat |
+| batch=1 ctx=80000 dist=soft layer=full load=verify_1 page=1 q_len=8 | 16 | 201.51 | 201.65 | 0.9993 | flat |
+| batch=16 ctx=80000 dist=soft layer=sliding load=verify_16 page=1 q_len=8 spread=agentic | 46 | 420.42 | 409.95 | 1.0108 | flat |
+| batch=16 ctx=80000 dist=soft layer=full load=verify_16 page=1 q_len=8 spread=agentic | 16 | 564.2 | 559.08 | 1.0099 | flat |
+| batch=32 ctx=80000 dist=soft layer=sliding load=verify_32 page=1 q_len=8 spread=agentic | 46 | 600.82 | 589.84 | 1.0103 | flat |
+| batch=32 ctx=80000 dist=soft layer=full load=verify_32 page=1 q_len=8 spread=agentic | 16 | 864.67 | 863.51 | 1.0061 | flat |
+
+no shape moved outside noise. Expected hit: 4/5. Noise ±1.5%.
+
+## Follow-ups
+
+- rewrite stage 1 of `FusedQKNorm/rope + FP8 casts + store_cache + FA3 main + FlashAttnFwdCombine + prepare_varlen_num_blocks + FusedRMSNormGate on sliding decode, 17 <= batch <= 32`: read the replaced kernels' own us per shape (profile top_kernels) against the incumbent and the floor, and check which Milestone it reached. The next stage is `/hypothesize muse_decode_layer "<what to fix or tune>" --kind rewrite --depends-on sliding-cluster-c4-decode32-port --stage 2`; a slow or failed first cut is the expected start, not a do-not-retry.
+- within-ci: the change is not proven either way; a stacked hypothesis (`depends_on: sliding-cluster-c4-decode32-port`) that adds a further change in the same area is the only way to learn more (identical code is never re-run).
+

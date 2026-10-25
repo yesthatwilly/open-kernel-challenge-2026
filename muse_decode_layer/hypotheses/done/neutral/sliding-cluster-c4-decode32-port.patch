@@ -1,0 +1,1236 @@
+diff --git a/muse_decode_layer/submission.py b/muse_decode_layer/submission.py
+index c9067b8..e7b5854 100644
+--- a/muse_decode_layer/submission.py
++++ b/muse_decode_layer/submission.py
+@@ -48,6 +48,10 @@ Differs from SGLang:
+     the qkv projection, one _sliding_fused_kernel launch (ported from muse_attention_decode) does
+     the QK-norm + RoPE, the FP8 cache store, the 16-split window attention with an in-kernel
+     combine and the output norm x sigmoid(gate), replacing FusedQKNorm through FusedRMSNormGate.
++  * Sliding decode at 17 <= batch <= 32 (hypothesis sliding-cluster-c4-decode32-port, config-only gate,
++    prepare() self-check and timing selector): one cluster-of-4 CUDA kernel ported from
++    muse_attention_decode (or the 16-split Triton kernel, whichever prepare() times fastest against
++    master's whole chain with the L2 flushed) replaces FusedQKNorm through FusedRMSNormGate.
+   * The step's positions, cache rows, FA3 lengths and FA3 scheduler metadata come in with the
+     inputs; SGLang builds them once per step for all layers.
+   * All-reduces are the identity; the all-gather is a zero pad of the unpooler's output.
+@@ -60,6 +64,7 @@ Differs from SGLang:
+ 
+ from typing import TypedDict
+ 
++import os
+ import time
+ import types
+ 
+@@ -1582,7 +1587,7 @@ def _sliding_fused_kernel(
+             tl.store(cnt_ptr + bg, 0)  # ready for the next launch / graph replay
+ 
+ 
+-def _sliding_forward(data, qkv):
++def _sliding_forward(data, qkv, splits=None):
+     """Sliding batch-1 decode: one launch of _sliding_fused_kernel on the qkv GEMM's [T, 2304]
+     output, returning the [T, 1024] bf16 normed-and-gated attention output (master's FusedQKNorm,
+     FP8 casts, store_cache, FA3 and FusedRMSNormGate at that shape). Branches on config only."""
+@@ -1594,7 +1599,7 @@ def _sliding_forward(data, qkv):
+     theta = cfg["rope_theta"]
+     group = hq // hkv
+     m = max(16, triton.next_power_of_2(group * length))
+-    splits = _num_splits(batch, hkv)
++    splits = _num_splits(batch, hkv) if splits is None else splits
+     out = torch.empty((tokens, hq * d), dtype=torch.bfloat16, device=device)
+     if splits > 1:
+         ws_acc = torch.empty((batch * hkv * splits, m, d), dtype=torch.float32, device=device)
+@@ -2237,6 +2242,1088 @@ def _splitkv_prepare(device):
+         print("[splitkv] OFF: SELF-CHECK FAILED: CUDA split-KV path disabled, master FA3 path kept", flush=True)
+         _EXT = None
+ 
++def _master_attn(data, state, qkv):
++    """Master's attention chain between the qkv GEMM and the o GEMM (FusedQKNorm, FP8 casts, store_cache,
++    FA3 or the full-layer split-KV kernels, FusedRMSNormGate), unchanged from kernel_fn; returns o."""
++    cfg = data["config"]
++    batch, length, tokens = cfg["batch"], cfg["q_len"], cfg["tokens"]
++    hq, hkv, d = cfg["num_q_heads"], cfg["num_kv_heads"], cfg["head_dim"]
++    if cfg["rope_theta"]:
++        q, k = state["qk_norm"](qkv, data["positions"], state["cos_sin"])
++    else:
++        q, k = state["qk_norm"](qkv)
++    v = qkv[:, hq * d + hkv * d: hq * d + 2 * hkv * d]
++    gate = qkv[:, hq * d + 2 * hkv * d:]
++    k_cache, v_cache = data["k_cache"], data["v_cache"]
++    scaled = cfg["kv_scale"] != 1.0
++    k = k.reshape(tokens, hkv * d)
++    if scaled:
++        k, v = k / data["k_scale"], v / data["v_scale"]
++    # The pool keeps FP8 rows as bytes; slot 0 is a live row here (SGLang reserves it for padding).
++    store_cache(k.to(FP8).view(torch.uint8), v.to(FP8).view(torch.uint8),
++                k_cache.view(-1, hkv * d).view(torch.uint8), v_cache.view(-1, hkv * d).view(torch.uint8),
++                data["cache_loc"], reserved_skip_index=-1)
++    window = cfg["window"]
++    # Full-layer decode at 1 < batch <= 64 (tp8, page 1; config-only gate): the CUDA split-KV
++    # kernels (hypothesis full-decode-cuda-splitkv-port) take the unpaired FP8 query and replace
++    # FA3, the paired pad/unpad copies and FusedRMSNormGate; kernel B reads the gate from qkv and
++    # writes the normed, gated [T, Hq*D] bf16 input of the o GEMM. scheduler_metadata is unused.
++    splitkv = _splitkv_gate(cfg)
++    if splitkv:
++        q_fp8 = q.view(tokens, hq, d).to(FP8).contiguous()
++        o = _full_decode_splitkv(data, q_fp8, qkv).reshape(tokens, hq * d)
++    else:
++        # Full layers with batch > 1: pair the two KV heads of each token into one 128-byte FP8 row
++        # (heads 2s and 2s+1 are adjacent halves of it) so FA3 gathers one row per token instead of
++        # two. Each query sits in its own head's half of a zero-padded 128-wide FP8 query (the pad
++        # copy also does the BF16 -> E4M3 cast), so the zero half adds exactly 0 to every logit; FA3
++        # maps query head h to super-head h // (2G), which keeps the original grouping. The judge's
++        # scheduler_metadata was built for the unpaired geometry, so it is not passed. Batch 1 stays
++        # unpaired (pairing lost there in muse_attention_decode). The gate reads config only.
++        paired = window == 0 and batch > 1 and hkv % 2 == 0 and not splitkv
++        if paired:
++            g, s = hq // hkv, hkv // 2
++            pages, page_size = k_cache.shape[0], k_cache.shape[1]
++            k_attn = k_cache.view(pages, page_size, s, 2 * d)
++            v_attn = v_cache.view(pages, page_size, s, 2 * d)
++            q_attn = torch.zeros((tokens, hq, 2 * d), dtype=FP8, device=q.device)
++            qp = q_attn.view(tokens, s, 2, g, 2 * d)
++            qv = q.view(tokens, s, 2, g, d)
++            qp[:, :, 0, :, :d] = qv[:, :, 0]
++            qp[:, :, 1, :, d:] = qv[:, :, 1]
++            attn_heads = s
++            metadata = None
++        else:
++            k_attn, v_attn, q_attn = k_cache, v_cache, q.view(tokens, hq, d).to(FP8)
++            attn_heads = hkv
++            metadata = data["scheduler_metadata"]
++        descale = {}
++        if scaled:
++            descale = dict(k_descale=data["k_scale"].reshape(1, 1).expand(batch, attn_heads),
++                           v_descale=data["v_scale"].reshape(1, 1).expand(batch, attn_heads))
++        out = flash_attn_with_kvcache(
++            q=q_attn,
++            k_cache=k_attn,
++            v_cache=v_attn,
++            page_table=data["page_table"],
++            cache_seqlens=data["cache_seqlens"],
++            cu_seqlens_q=data["cu_seqlens_q"],
++            max_seqlen_q=length,
++            softmax_scale=cfg["sm_scale"] * cfg["qk_scale_factor"],
++            causal=True,
++            window_size=(window - 1, 0) if window else (-1, -1),
++            scheduler_metadata=metadata,
++            **descale,
++        )
++        if isinstance(out, tuple):
++            out = out[0]
++        if paired:
++            # Keep each query's own half of FA3's 128-wide output; the other half is the other
++            # head's P@V and is discarded.
++            attn = torch.empty((tokens, hq, d), dtype=torch.bfloat16, device=q.device)
++            a = attn.view(tokens, s, 2, g, d)
++            o = out.view(tokens, s, 2, g, 2 * d)
++            a[:, :, 0] = o[:, :, 0, :, :d]
++            a[:, :, 1] = o[:, :, 1, :, d:]
++            out = attn
++        o = state["o_norm_gate"](out.reshape(tokens, hq * d).to(torch.bfloat16), gate)
++    return o
++
++
++# ---------------------------------------------------------------------------------------------
++# Sliding-window decode at 17 <= batch <= 32 (hypothesis sliding-cluster-c4-decode32-port; tp8
++# heads, page 1, q_len 1): ONE CUDA kernel, sliding_cluster_kernel, ported unchanged from
++# muse_attention_decode (cluster size C = 4 only), in its own load_inline module so a failed build
++# or check leaves every other path untouched. It takes the qkv GEMM output and replaces master's
++# FusedQKNorm, FP8 casts, store_cache, FA3 (+ prepare/combine) and FusedRMSNormGate on that band.
++#
++# One thread-block cluster of 4 CTAs per request, 256 threads per CTA, two CTAs per SM. Rank r owns
++# the old keys [lo + r ck, lo + (r + 1) ck) with lo = max(0, seq - (window - 1)), ck =
++# round_up(ceil((seq - lo) / 4), 16) <= 512; every token is one 128-byte K row and one V row (both
++# kv heads), gathered with cp.async.cg into a ring of 3 slots of 128 keys (token-XOR swizzle). While
++# the gather flies every CTA builds the request's queries (scaleless RMSNorm, interleaved RoPE with
++# sincosf, times qk_scale_factor, rounded to E4M3 once) and the last rank builds the new key (RMSNorm
++# + RoPE, / k_scale) and value (/ v_scale), stores them at cache_loc (every row, slot 0 included)
++# and attends them from smem. S = Q K^T with mma.sync m16n8k32 e4m3, online exp2 softmax, O += P V
++# with m16n8k16 f16; the four ranks merge over distributed shared memory, times v_scale, scaleless
++# RMSNorm, times sigmoid(gate), bf16 out. No PDL, no spin waits (cluster barriers only).
++#
++# prepare() builds nothing new: it reads the occupancy / register / spill line, runs a tiny canary
++# and a self-check of the cluster kernel and of the 16-split Triton kernel (_sliding_forward with
++# 16 splits, hypothesis sliding-batched-triton-b16-band) against master's own chain, then times the
++# WHOLE master chain, the cluster launch and the Triton launch as CUDA graphs with the L2 flushed
++# before every replay, and keeps the fastest. kernel_fn only reads config and the chosen path.
++# ---------------------------------------------------------------------------------------------
++
++_SLIDE_CPP = r"""
++#include <torch/extension.h>
++torch::Tensor slide_setup();
++void slide_attn(torch::Tensor qkv, torch::Tensor positions, torch::Tensor cache_loc, torch::Tensor seq_lens,
++                torch::Tensor page_table, torch::Tensor inv_freq, torch::Tensor k_scale, torch::Tensor v_scale,
++                torch::Tensor k_cache, torch::Tensor v_cache, torch::Tensor out,
++                int64_t C, int64_t window, double q_scale, double score_scale, double eps);
++"""
++
++_SLIDE_CUDA = r"""
++
++#include <torch/extension.h>
++#include <ATen/cuda/CUDAContext.h>
++#include <c10/cuda/CUDAException.h>
++#include <cooperative_groups.h>
++#include <cuda_fp16.h>
++#include <cuda_bf16.h>
++#include <cstdint>
++#include <vector>
++
++#ifndef SLIDE_FP8QK
++#define SLIDE_FP8QK 1
++#endif
++
++namespace cg = cooperative_groups;
++
++namespace {
++
++constexpr int D = 64;              // head dim
++constexpr int HQ = 16;             // query heads
++constexpr int HKV = 2;             // kv heads
++constexpr int G = HQ / HKV;        // queries per kv head (8)
++constexpr int ROW = HKV * D;       // bytes per cache row (page 1: both kv heads, 128)
++constexpr int THREADS = 256;
++constexpr int WARPS = THREADS / 32;
++constexpr int SK = 128;            // keys per sub-chunk (one cp.async group, one ring slot)
++constexpr int NS = 3;              // ring slots, all in flight at the start
++constexpr int NSUB_MAX = 4;        // ck <= round16(ceil(2047 / 4)) = 512: host keeps window <= 2048, C >= 4
++static_assert(NSUB_MAX <= NS + 1, "only one late sub-chunk is prefetched (its indices sit in registers)");
++constexpr int SLOT = SK * ROW;                   // 16384 B per slot, for K and again for V
++constexpr int K_OFF = 0;                         // e4m3 [NS][SK][ROW], swizzled
++constexpr int V_OFF = K_OFF + NS * SLOT;         // e4m3 [NS][SK][ROW], swizzled
++constexpr int XK_OFF = V_OFF + NS * SLOT;        // e4m3 [16][ROW]: the new key (row 0), zero rows after
++constexpr int XV_OFF = XK_OFF + 16 * ROW;        // e4m3 [16][ROW]: the new value
++constexpr int Q_OFF = XV_OFF + 16 * ROW;         // e4m3 [HQ][D]
++constexpr int SMEM_BYTES = Q_OFF + HQ * D;       // 103424
++static_assert(SMEM_BYTES <= 113 * 1024, "two CTAs per SM (C = 4 needs them for one wave at batch 32)");
++#if SLIDE_FP8QK
++constexpr int QKS = 2;             // k32 steps of the m16n8k32 e4m3 QK
++#else
++constexpr int QKS = 4;             // k16 steps of the m16n8k16 f16 QK
++#endif
++
++// Partials alias the consumed ring once every warp is done: per-warp staging f32 [WARPS][G][D]
++// and [WARPS][G][2], then the CTA partial acc f32 [16][D], m f32 [16], l f32 [16].
++constexpr int STG_ACC = 0;
++constexpr int STG_ML = STG_ACC + WARPS * G * D * 4;    // 16384
++constexpr int P_ACC = STG_ML + WARPS * G * 2 * 4;      // 16896
++constexpr int P_M = P_ACC + HQ * D * 4;
++constexpr int P_L = P_M + HQ * 4;
++static_assert(P_L + HQ * 4 <= NS * SLOT, "partials must fit in the consumed ring");
++static_assert(P_ACC % 16 == 0, "float4 alignment");
++
++__device__ __forceinline__ uint32_t smem_u32(const void* p) {
++  return static_cast<uint32_t>(__cvta_generic_to_shared(p));
++}
++__device__ __forceinline__ void cp_async16(uint32_t dst, const void* src) {
++  asm volatile("cp.async.cg.shared.global [%0], [%1], 16;\n" :: "r"(dst), "l"(src) : "memory");
++}
++__device__ __forceinline__ void cp_commit() { asm volatile("cp.async.commit_group;\n" ::: "memory"); }
++__device__ __forceinline__ void cp_wait_ring() { asm volatile("cp.async.wait_group 2;\n" ::: "memory"); }
++static_assert(NS - 1 == 2, "cp_wait_ring waits for all but the NS - 1 newest groups");
++__device__ __forceinline__ void cp_wait_all() { asm volatile("cp.async.wait_group 0;\n" ::: "memory"); }
++
++// Four E4M3 bytes -> two f16x2: lo from bytes 0,1 (byte 0 in the low half), hi from bytes 2,3.
++__device__ __forceinline__ void e4m3x4_to_f16x2x2(uint32_t w, uint32_t& lo, uint32_t& hi) {
++  asm("{\n\t.reg .b16 a, b;\n\tmov.b32 {a, b}, %2;\n\t"
++      "cvt.rn.f16x2.e4m3x2 %0, a;\n\tcvt.rn.f16x2.e4m3x2 %1, b;\n\t}\n"
++      : "=r"(lo), "=r"(hi) : "r"(w));
++}
++// Two fp32 -> two E4M3 bytes (round to nearest even, saturating): lo in the low byte. The PTX
++// cvt puts its first source in the upper half.
++__device__ __forceinline__ uint16_t f32x2_to_e4m3x2(float lo, float hi) {
++  uint16_t r;
++  asm("cvt.rn.satfinite.e4m3x2.f32 %0, %1, %2;\n" : "=h"(r) : "f"(hi), "f"(lo));
++  return r;
++}
++__device__ __forceinline__ uint32_t pack_f16x2(float lo, float hi) {
++  __half2 h = __floats2half2_rn(lo, hi);  // .x (low half) = lo
++  return *reinterpret_cast<uint32_t*>(&h);
++}
++__device__ __forceinline__ float ex2(float x) {
++  float y;
++  asm("ex2.approx.ftz.f32 %0, %1;" : "=f"(y) : "f"(x));
++  return y;
++}
++__device__ __forceinline__ uint32_t ld32(const uint8_t* p) { return *reinterpret_cast<const uint32_t*>(p); }
++
++// D = A B + D, m16n8k16, A row-major f16 (4 regs), B col-major f16 (2 regs), fp32 accumulate.
++__device__ __forceinline__ void mma16816(float (&c)[4], uint32_t a0, uint32_t a1, uint32_t a2, uint32_t a3,
++                                         uint32_t b0, uint32_t b1) {
++  asm("mma.sync.aligned.m16n8k16.row.col.f32.f16.f16.f32 {%0,%1,%2,%3}, {%4,%5,%6,%7}, {%8,%9}, {%0,%1,%2,%3};\n"
++      : "+f"(c[0]), "+f"(c[1]), "+f"(c[2]), "+f"(c[3])
++      : "r"(a0), "r"(a1), "r"(a2), "r"(a3), "r"(b0), "r"(b1));
++}
++#if SLIDE_FP8QK
++// D = A B + D, m16n8k32, A row-major e4m3 (a0: row g, k 4t..4t+3; a1: row g+8, same k; a2: row g,
++// k 16+4t..; a3: row g+8, k 16+4t..), B col-major e4m3 (b0: k 4t..4t+3, b1: k 16+4t.., col g),
++// fp32 accumulate (C layout as m16n8k16).
++__device__ __forceinline__ void mma16832(float (&c)[4], uint32_t a0, uint32_t a1, uint32_t a2, uint32_t a3,
++                                         uint32_t b0, uint32_t b1) {
++  asm("mma.sync.aligned.m16n8k32.row.col.f32.e4m3.e4m3.f32 {%0,%1,%2,%3}, {%4,%5,%6,%7}, {%8,%9}, {%0,%1,%2,%3};\n"
++      : "+f"(c[0]), "+f"(c[1]), "+f"(c[2]), "+f"(c[3])
++      : "r"(a0), "r"(a1), "r"(a2), "r"(a3), "r"(b0), "r"(b1));
++}
++#endif
++
++// One row's online-softmax step over the lane's 4 base-2 logits (-inf = masked), quad-reduced
++// max; -inf safe (a row with no valid key so far keeps m = -inf, l = 0, alpha = 0).
++__device__ __forceinline__ float online_row(float& x0, float& x1, float& x2, float& x3, float& m_i, float& l_i) {
++  const float NEG_INF = __int_as_float(0xff800000u);
++  float mx = fmaxf(fmaxf(x0, x1), fmaxf(x2, x3));
++  mx = fmaxf(mx, __shfl_xor_sync(0xffffffffu, mx, 1));
++  mx = fmaxf(mx, __shfl_xor_sync(0xffffffffu, mx, 2));
++  const float m_new = fmaxf(m_i, mx);
++  const float m_use = m_new == NEG_INF ? 0.f : m_new;
++  const float alpha = ex2(m_i - m_use);
++  x0 = ex2(x0 - m_use);
++  x1 = ex2(x1 - m_use);
++  x2 = ex2(x2 - m_use);
++  x3 = ex2(x3 - m_use);
++  l_i = l_i * alpha + (x0 + x1) + (x2 + x3);  // this lane's columns; quad-reduced at the end
++  m_i = m_new;
++  return alpha;
++}
++
++// Page indices of sub-chunk s for this thread's tokens (tid / 8 + 32 i); 0 past the rank's keys.
++__device__ __forceinline__ void load_idx(int (&idx)[SK / 32], const int* prow, int s, int n_old, int tid) {
++  const int tsub = tid >> 3;
++#pragma unroll
++  for (int i = 0; i < SK / 32; ++i) {
++    const int e = s * SK + tsub + 32 * i;
++    idx[i] = e < n_old ? __ldg(prow + e) : 0;
++  }
++}
++
++// Gather sub-chunk s (s < nsub) into ring slot s % NS: thread -> token tid / 8 (+ 32 i), 16-byte
++// chunk tid % 8 of its K row and of its V row, chunk c stored at c ^ (slot row % 8); each warp
++// instruction covers 4 full 128-byte lines. Slot rows past the rank's last key up to the end of
++// its 16-row tile are zeroed (P = 0 there must not meet NaN bytes). The caller commits the group.
++__device__ __forceinline__ void issue_sub(uint8_t* smem, const uint8_t* kc, const uint8_t* vc,
++                                          const int (&idx)[SK / 32], int s, int n_old, int tid) {
++  const int tsub = tid >> 3, c = tid & 7;
++  uint8_t* Kd = smem + K_OFF + (s % NS) * SLOT;
++  uint8_t* Vd = smem + V_OFF + (s % NS) * SLOT;
++  const int base = s * SK;
++#pragma unroll
++  for (int i = 0; i < SK / 32; ++i) {
++    const int r = tsub + 32 * i;
++    if (base + r < n_old) {
++      const int dst = r * ROW + ((c ^ (r & 7)) << 4);
++      const int64_t row = static_cast<int64_t>(idx[i]);
++      cp_async16(smem_u32(Kd + dst), kc + row * ROW + c * 16);
++      cp_async16(smem_u32(Vd + dst), vc + row * ROW + c * 16);
++    }
++  }
++  const int rows = min(SK, n_old - base);
++  const int rpad = (rows + 15) & ~15;
++  for (int x = tid; x < (rpad - rows) * 16; x += THREADS) {
++    const int r = rows + (x >> 4), part = x & 15;
++    *reinterpret_cast<uint4*>((part < 8 ? Kd : Vd) + r * ROW + (part & 7) * 16) = make_uint4(0u, 0u, 0u, 0u);
++  }
++}
++
++// One 16-key tile at buffer rows tb .. tb + 15 of Kb / Vb (chunks swizzled on the buffer row):
++// S = Q K^T, mask (buffer row < nvalid, key position kp0 + row inside [low, p_row]), online
++// softmax, O += P V. A rows: row quad = query head g * 8 + quad, rows 8-15 zero.
++__device__ __forceinline__ void attend_tile(const uint8_t* Kb, const uint8_t* Vb, int tb, int nvalid, int kp0,
++                                            const uint32_t (&qa)[QKS][4], int g, int quad, int qi, float scale,
++                                            int p_row, int low, float& m_a, float& l_a, float (&acc)[8][4]) {
++  const float NEG_INF = __int_as_float(0xff800000u);
++  // S = Q K^T over the tile's 16 rows: n-block nb holds rows tb + nb * 8 + (0..7).
++  float s[2][4];
++#pragma unroll
++  for (int nb = 0; nb < 2; ++nb) {
++    s[nb][0] = s[nb][1] = s[nb][2] = s[nb][3] = 0.f;
++    const int tt = tb + nb * 8 + quad;
++    const uint8_t* kr = Kb + tt * ROW + qi * 4;
++#if SLIDE_FP8QK
++#pragma unroll
++    for (int ks = 0; ks < 2; ++ks) {
++      const uint32_t b0 = ld32(kr + (((g * 4 + 2 * ks) ^ (tt & 7)) << 4));
++      const uint32_t b1 = ld32(kr + (((g * 4 + 2 * ks + 1) ^ (tt & 7)) << 4));
++      mma16832(s[nb], qa[ks][0], qa[ks][1], qa[ks][2], qa[ks][3], b0, b1);
++    }
++#else
++#pragma unroll
++    for (int ks = 0; ks < 4; ++ks) {
++      uint32_t b0, b1;
++      e4m3x4_to_f16x2x2(ld32(kr + (((g * 4 + ks) ^ (tt & 7)) << 4)), b0, b1);
++      mma16816(s[nb], qa[ks][0], qa[ks][1], qa[ks][2], qa[ks][3], b0, b1);
++    }
++#endif
++  }
++  // This lane's columns: rows tb + 2 qi + {0, 1} (nb 0) and + 8 (nb 1).
++  bool ok[4];
++#pragma unroll
++  for (int c = 0; c < 4; ++c) {
++    const int e = tb + 2 * qi + (c & 1) + (c >> 1) * 8;
++    const int kp = kp0 + e;
++    ok[c] = e < nvalid && kp <= p_row && kp >= low;
++  }
++  float x0 = ok[0] ? s[0][0] * scale : NEG_INF;
++  float x1 = ok[1] ? s[0][1] * scale : NEG_INF;
++  float x2 = ok[2] ? s[1][0] * scale : NEG_INF;
++  float x3 = ok[3] ? s[1][1] * scale : NEG_INF;
++  const float alpha = online_row(x0, x1, x2, x3, m_a, l_a);
++  const uint32_t pa0 = pack_f16x2(x0, x1), pa2 = pack_f16x2(x2, x3);
++#pragma unroll
++  for (int nb = 0; nb < 8; ++nb) {
++    acc[nb][0] *= alpha;
++    acc[nb][1] *= alpha;
++  }
++  // O += P V. B operand of dim-block nb: k = rows tb + 2 qi + {0, 1} (reg 0) and + 8 (reg 1),
++  // column quad = dim quad * 8 + nb; each lane reads 8 contiguous V bytes per row and widens
++  // them to f16 in registers.
++  const int tv = tb + qi * 2;
++  const int vlc = g * 4 + (quad >> 1);
++  const int voff = (quad & 1) * 8;
++  const uint2 v0 = *reinterpret_cast<const uint2*>(Vb + tv * ROW + ((vlc ^ (tv & 7)) << 4) + voff);
++  const uint2 v1 = *reinterpret_cast<const uint2*>(Vb + (tv + 1) * ROW + ((vlc ^ ((tv + 1) & 7)) << 4) + voff);
++  const uint2 v8 = *reinterpret_cast<const uint2*>(Vb + (tv + 8) * ROW + ((vlc ^ ((tv + 8) & 7)) << 4) + voff);
++  const uint2 v9 = *reinterpret_cast<const uint2*>(Vb + (tv + 9) * ROW + ((vlc ^ ((tv + 9) & 7)) << 4) + voff);
++#pragma unroll
++  for (int hw = 0; hw < 2; ++hw) {
++    const uint32_t w0 = hw ? v0.y : v0.x, w1 = hw ? v1.y : v1.x;
++    const uint32_t w8 = hw ? v8.y : v8.x, w9 = hw ? v9.y : v9.x;
++    // Interleave two rows' bytes: byte 2j = row a dim j, byte 2j + 1 = row b dim j.
++    uint32_t r0[4], r1[4];
++    e4m3x4_to_f16x2x2(__byte_perm(w0, w1, 0x5140), r0[0], r0[1]);
++    e4m3x4_to_f16x2x2(__byte_perm(w0, w1, 0x7362), r0[2], r0[3]);
++    e4m3x4_to_f16x2x2(__byte_perm(w8, w9, 0x5140), r1[0], r1[1]);
++    e4m3x4_to_f16x2x2(__byte_perm(w8, w9, 0x7362), r1[2], r1[3]);
++#pragma unroll
++    for (int j = 0; j < 4; ++j) mma16816(acc[hw * 4 + j], pa0, 0u, pa2, 0u, r0[j], r1[j]);
++  }
++}
++
++__global__ void __launch_bounds__(THREADS, 2)
++sliding_cluster_kernel(const __nv_bfloat16* __restrict__ qkv, int64_t qkv_stride,
++                       const int64_t* __restrict__ positions, const int64_t* __restrict__ cache_loc,
++                       const int* __restrict__ seq_lens, const int* __restrict__ page_table, int64_t pt_stride,
++                       const float* __restrict__ inv_freq, const float* __restrict__ k_scale_p,
++                       const float* __restrict__ v_scale_p, uint8_t* kc, uint8_t* vc,
++                       __nv_bfloat16* __restrict__ out, int C, int window, float q_scale, float score_scale,
++                       float eps) {
++  extern __shared__ __align__(128) uint8_t smem[];
++  uint8_t* XK = smem + XK_OFF;
++  uint8_t* XV = smem + XV_OFF;
++  uint8_t* Qs = smem + Q_OFF;
++  cg::cluster_group cluster = cg::this_cluster();
++  const float NEG_INF = __int_as_float(0xff800000u);
++
++  const int tid = threadIdx.x, lane = tid & 31, warp = tid >> 5;
++  const int b = static_cast<int>(blockIdx.x) / C;      // 1-D clusters: blocks b*C .. b*C+C-1
++  const int rank = static_cast<int>(blockIdx.x) % C;   // == cluster.block_rank()
++  const int seq = seq_lens[b];
++  const int lo = max(0, seq - (window - 1));
++  const int ck = (((seq - lo) + C - 1) / C + 15) & ~15;
++  const int start = lo + rank * ck;
++  const int n_old = max(0, min(ck, seq - start));      // old keys of this rank
++  const bool last = rank == C - 1;
++  const int nsub = (n_old + SK - 1) / SK;              // 0 .. NSUB_MAX, CTA-uniform
++  const int* prow = page_table + static_cast<int64_t>(b) * pt_stride + start;
++
++  // ---- Prologue: the page indices of the first NS sub-chunks (every load before any copy), then
++  // one cp.async group per sub-chunk (empty groups past nsub keep the group count fixed).
++  {
++    int idx[NS][SK / 32];
++#pragma unroll
++    for (int s = 0; s < NS; ++s) load_idx(idx[s], prow, s, n_old, tid);
++#pragma unroll
++    for (int s = 0; s < NS; ++s) {
++      if (s < nsub) issue_sub(smem, kc, vc, idx[s], s, n_old, tid);
++      cp_commit();
++    }
++  }
++  int idx_late[SK / 32];  // sub-chunk NS (C = 4 only), issued into slot 0 once slot 0 is consumed
++  load_idx(idx_late, prow, NS, n_old, tid);
++
++  // ---- While the gather flies: the request's queries, one warp per head, lane = RoPE pair
++  // (dims 2 lane, 2 lane + 1). qk_scale_factor is applied here, once, before E4M3.
++  const float fr = inv_freq[lane];
++  const float pos = static_cast<float>(positions[b]);
++  for (int h = warp; h < HQ; h += WARPS) {
++    const __nv_bfloat162 x2 = *reinterpret_cast<const __nv_bfloat162*>(
++        qkv + static_cast<int64_t>(b) * qkv_stride + h * D + 2 * lane);
++    float xe = __low2float(x2), xo = __high2float(x2);
++    float ss = xe * xe + xo * xo;
++#pragma unroll
++    for (int o = 16; o > 0; o >>= 1) ss += __shfl_xor_sync(0xffffffffu, ss, o);
++    const float r = 1.f / sqrtf(ss / D + eps);
++    xe *= r;
++    xo *= r;
++    float sn, cs;
++    sincosf(pos * fr, &sn, &cs);
++    const float ye = xe * cs - xo * sn, yo = xe * sn + xo * cs;
++    *reinterpret_cast<uint16_t*>(Qs + h * D + 2 * lane) = f32x2_to_e4m3x2(ye * q_scale, yo * q_scale);
++  }
++  // The last rank: the new key (RMSNorm + RoPE, / k_scale) and value (/ v_scale), E4M3, stored at
++  // cache_loc and kept as row 0 of the XK / XV tile (rows 1..15 zero). One warp per (kind, kv head).
++  if (last) {
++    for (int x = tid; x < 15 * 16; x += THREADS) {
++      const int r = 1 + (x >> 4), part = x & 15;
++      *reinterpret_cast<uint4*>((part < 8 ? XK : XV) + r * ROW + (part & 7) * 16) = make_uint4(0u, 0u, 0u, 0u);
++    }
++    const float ksc = __ldg(k_scale_p), vsc = __ldg(v_scale_p);
++    for (int u = warp; u < 2 * HKV; u += WARPS) {
++      const bool isv = u >= HKV;
++      const int g = u % HKV;
++      const __nv_bfloat162 x2 = *reinterpret_cast<const __nv_bfloat162*>(
++          qkv + static_cast<int64_t>(b) * qkv_stride + (HQ + (isv ? HKV : 0) + g) * D + 2 * lane);
++      float xe = __low2float(x2), xo = __high2float(x2);
++      uint16_t packed;
++      if (!isv) {  // warp-uniform
++        float ss = xe * xe + xo * xo;
++#pragma unroll
++        for (int o = 16; o > 0; o >>= 1) ss += __shfl_xor_sync(0xffffffffu, ss, o);
++        const float r = 1.f / sqrtf(ss / D + eps);
++        xe *= r;
++        xo *= r;
++        float sn, cs;
++        sincosf(pos * fr, &sn, &cs);
++        const float ye = xe * cs - xo * sn, yo = xe * sn + xo * cs;
++        packed = f32x2_to_e4m3x2(ye / ksc, yo / ksc);
++      } else {
++        packed = f32x2_to_e4m3x2(xe / vsc, xo / vsc);
++      }
++      const int64_t loc = cache_loc[b];
++      *reinterpret_cast<uint16_t*>((isv ? vc : kc) + loc * ROW + g * D + 2 * lane) = packed;
++      const int db = g * D + 2 * lane;  // byte within the 128-byte row; row 0, so the swizzle is identity
++      *reinterpret_cast<uint16_t*>((isv ? XV : XK) + db) = packed;
++    }
++  }
++  __syncthreads();  // queries and the new-key tile are in smem
++
++  const int quad = lane >> 2, qi = lane & 3;
++  const int g = warp & 1;     // kv head
++  const int sub = warp >> 1;  // tile slice
++  const int qra = g * G + quad;
++#if SLIDE_FP8QK
++  uint32_t qa[QKS][4];
++#pragma unroll
++  for (int ks = 0; ks < 2; ++ks) {
++    const uint8_t* pa = Qs + qra * D + ks * 32 + qi * 4;
++    qa[ks][0] = ld32(pa);
++    qa[ks][2] = ld32(pa + 16);
++    qa[ks][1] = qa[ks][3] = 0u;
++  }
++#else
++  // f16 fallback: k index 2 qi + {0, 1} holds dims s*16 + 4 qi + {0, 1}, k index 8 + 2 qi + {0, 1}
++  // holds dims s*16 + 4 qi + {2, 3}; K uses the same permutation, so the dot product is unchanged.
++  uint32_t qa[QKS][4];
++#pragma unroll
++  for (int s = 0; s < 4; ++s) {
++    e4m3x4_to_f16x2x2(ld32(Qs + qra * D + s * 16 + qi * 4), qa[s][0], qa[s][2]);
++    qa[s][1] = qa[s][3] = 0u;
++  }
++#endif
++  const float scale = score_scale * __ldg(k_scale_p);  // sm_scale * log2(e) * k_scale
++  const int p_row = seq;                                // the query's position
++  const int low = p_row - (window - 1);
++  float m_a = NEG_INF, l_a = 0.f;
++  float acc[8][4];
++#pragma unroll
++  for (int nb = 0; nb < 8; ++nb) acc[nb][0] = acc[nb][1] = acc[nb][2] = acc[nb][3] = 0.f;
++
++  // ---- Attention, sub-chunk by sub-chunk as each cp.async group lands.
++  for (int s = 0; s < nsub; ++s) {
++    cp_wait_ring();   // groups 0 .. s are complete (NS + s committed so far)
++    __syncthreads();  // ... for every thread's copies
++    const int base = s * SK;
++    const int rows = min(SK, n_old - base);
++    const uint8_t* Kb = smem + K_OFF + (s % NS) * SLOT;
++    const uint8_t* Vb = smem + V_OFF + (s % NS) * SLOT;
++    const int nt = (rows + 15) >> 4;
++    for (int k = sub; k < nt; k += 4)
++      attend_tile(Kb, Vb, k * 16, rows, start + base, qa, g, quad, qi, scale, p_row, low, m_a, l_a, acc);
++    if (s + NS < nsub) {  // CTA-uniform; only s = 0 at C = 4
++      __syncthreads();    // every warp is done with slot s % NS
++      issue_sub(smem, kc, vc, idx_late, s + NS, n_old, tid);
++    }
++    cp_commit();
++  }
++  // The new key: one more tile on the last rank, for the slice next in the round robin
++  // (SK is a multiple of 4 tiles, so global tile t belongs to slice t % 4).
++  if (last && sub == (((n_old + 15) >> 4) & 3))
++    attend_tile(XK, XV, 0, 1, seq, qa, g, quad, qi, scale, p_row, low, m_a, l_a, acc);
++  cp_wait_all();  // only empty groups can remain
++  l_a += __shfl_xor_sync(0xffffffffu, l_a, 1);
++  l_a += __shfl_xor_sync(0xffffffffu, l_a, 2);
++  __syncthreads();  // every warp is done with the ring: the partials alias it
++
++  float* pacc = reinterpret_cast<float*>(smem + P_ACC);
++  float* pm = reinterpret_cast<float*>(smem + P_M);
++  float* pl = reinterpret_cast<float*>(smem + P_L);
++  {
++    // Stage each warp's 8 rows, then merge the four slice warps of each kv head (row h = head).
++    float* stg_acc = reinterpret_cast<float*>(smem + STG_ACC);
++    float* stg_ml = reinterpret_cast<float*>(smem + STG_ML);
++    const int rw = warp * G + quad;
++    if (qi == 0) { stg_ml[rw * 2] = m_a; stg_ml[rw * 2 + 1] = l_a; }
++    float* ar = stg_acc + rw * D;
++#pragma unroll
++    for (int nb = 0; nb < 8; ++nb) {
++      ar[(qi * 2) * 8 + nb] = acc[nb][0];
++      ar[(qi * 2 + 1) * 8 + nb] = acc[nb][1];
++    }
++    __syncthreads();
++    const int h = tid >> 4, d0 = (tid & 15) * 4;
++    const int hg = h / G, r = h % G;
++    float mw[4];
++    float M = NEG_INF;
++#pragma unroll
++    for (int j = 0; j < 4; ++j) { mw[j] = stg_ml[((hg + 2 * j) * G + r) * 2]; M = fmaxf(M, mw[j]); }
++    const float Mu = M == NEG_INF ? 0.f : M;
++    float4 o = make_float4(0.f, 0.f, 0.f, 0.f);
++    float Ls = 0.f;
++#pragma unroll
++    for (int j = 0; j < 4; ++j) {
++      const int wr = (hg + 2 * j) * G + r;
++      const float wt = mw[j] == NEG_INF ? 0.f : ex2(mw[j] - Mu);
++      Ls += wt * stg_ml[wr * 2 + 1];
++      const float4 a = *reinterpret_cast<const float4*>(stg_acc + wr * D + d0);
++      o.x += wt * a.x; o.y += wt * a.y; o.z += wt * a.z; o.w += wt * a.w;
++    }
++    *reinterpret_cast<float4*>(pacc + h * D + d0) = o;
++    if ((tid & 15) == 0) { pm[h] = M; pl[h] = Ls; }
++  }
++  cluster.sync();  // every rank's partial is written and visible cluster-wide
++
++  // ---- Reduce-scatter over DSMEM: rank r finishes rows [r NR, (r + 1) NR), 16 threads per row
++  // (4 dims each); warps past the owned rows idle, partially used warps duplicate the last row.
++  {
++    const int NR = HQ / C;
++    const int nthr = NR * 16;
++    if (warp * 32 < nthr) {
++      const int rl = min(tid >> 4, NR - 1);
++      const int h = rank * NR + rl;
++      const int d0 = (tid & 15) * 4;
++      float mv[16];
++      float M = NEG_INF;
++#pragma unroll
++      for (int c = 0; c < 16; ++c) {
++        mv[c] = NEG_INF;
++        if (c < C) {
++          mv[c] = *cluster.map_shared_rank(pm + h, static_cast<unsigned>(c));
++          M = fmaxf(M, mv[c]);
++        }
++      }
++      const float Mu = M == NEG_INF ? 0.f : M;
++      float4 o = make_float4(0.f, 0.f, 0.f, 0.f);
++      float Ls = 0.f;
++#pragma unroll
++      for (int c = 0; c < 16; ++c) {
++        if (c < C) {
++          const float wt = mv[c] == NEG_INF ? 0.f : ex2(mv[c] - Mu);  // masked partials weigh 0
++          Ls += wt * *cluster.map_shared_rank(pl + h, static_cast<unsigned>(c));
++          const float4 a = *reinterpret_cast<const float4*>(
++              cluster.map_shared_rank(pacc + h * D + d0, static_cast<unsigned>(c)));
++          o.x += wt * a.x; o.y += wt * a.y; o.z += wt * a.z; o.w += wt * a.w;
++        }
++      }
++      // Every row sees its own new key (last rank), so Ls > 0.
++      const float vs = __ldg(v_scale_p);
++      o.x = o.x / Ls * vs; o.y = o.y / Ls * vs; o.z = o.z / Ls * vs; o.w = o.w / Ls * vs;
++      float ss = o.x * o.x + o.y * o.y + o.z * o.z + o.w * o.w;
++#pragma unroll
++      for (int x = 8; x > 0; x >>= 1) ss += __shfl_xor_sync(0xffffffffu, ss, x);
++      const float rr = 1.f / sqrtf(ss / D + eps);
++      const int64_t t = static_cast<int64_t>(b);
++      const __nv_bfloat162* gp = reinterpret_cast<const __nv_bfloat162*>(
++          qkv + t * qkv_stride + (HQ + 2 * HKV) * D + h * D + d0);
++      const __nv_bfloat162 g01 = gp[0], g23 = gp[1];
++      const float y0 = o.x * rr / (1.f + expf(-__low2float(g01)));
++      const float y1 = o.y * rr / (1.f + expf(-__high2float(g01)));
++      const float y2 = o.z * rr / (1.f + expf(-__low2float(g23)));
++      const float y3 = o.w * rr / (1.f + expf(-__high2float(g23)));
++      if (tid < nthr) {
++        __nv_bfloat162* op = reinterpret_cast<__nv_bfloat162*>(out + (t * HQ + h) * D + d0);
++        op[0] = __floats2bfloat162_rn(y0, y1);
++        op[1] = __floats2bfloat162_rn(y2, y3);
++      }
++    }
++  }
++  cluster.sync();  // peers' smem stays live until every rank has read it
++}
++
++int occupancy_of(int C) {
++  cudaLaunchConfig_t cfg = {};
++  cfg.gridDim = dim3(static_cast<unsigned>(C), 1, 1);
++  cfg.blockDim = dim3(THREADS, 1, 1);
++  cfg.dynamicSmemBytes = SMEM_BYTES;
++  cudaLaunchAttribute attr[1];
++  attr[0].id = cudaLaunchAttributeClusterDimension;
++  attr[0].val.clusterDim.x = static_cast<unsigned>(C);
++  attr[0].val.clusterDim.y = 1;
++  attr[0].val.clusterDim.z = 1;
++  cfg.attrs = attr;
++  cfg.numAttrs = 1;
++  int n = -1;
++  if (cudaOccupancyMaxActiveClusters(&n, reinterpret_cast<const void*>(sliding_cluster_kernel), &cfg) != cudaSuccess) {
++    (void)cudaGetLastError();
++    return -1;
++  }
++  return n;
++}
++
++}  // namespace
++
++// int64 CPU [occ C=4, regs, local bytes, dynamic smem, binaryVersion, ptxVersion].
++torch::Tensor slide_setup() {
++  C10_CUDA_CHECK(cudaFuncSetAttribute(sliding_cluster_kernel, cudaFuncAttributeMaxDynamicSharedMemorySize,
++                                      SMEM_BYTES));
++  if (cudaFuncSetAttribute(sliding_cluster_kernel, cudaFuncAttributePreferredSharedMemoryCarveout, 100) != cudaSuccess)
++    (void)cudaGetLastError();
++  std::vector<int64_t> info;
++  info.push_back(occupancy_of(4));
++  cudaFuncAttributes fa;
++  C10_CUDA_CHECK(cudaFuncGetAttributes(&fa, reinterpret_cast<const void*>(sliding_cluster_kernel)));
++  info.push_back(fa.numRegs);
++  info.push_back(static_cast<int64_t>(fa.localSizeBytes));
++  info.push_back(SMEM_BYTES);
++  info.push_back(fa.binaryVersion);
++  info.push_back(fa.ptxVersion);
++  torch::Tensor t = torch::empty({static_cast<int64_t>(info.size())}, torch::dtype(torch::kLong));
++  for (size_t i = 0; i < info.size(); ++i) t.data_ptr<int64_t>()[i] = info[i];
++  return t;
++}
++
++void slide_attn(torch::Tensor qkv, torch::Tensor positions, torch::Tensor cache_loc, torch::Tensor seq_lens,
++                torch::Tensor page_table, torch::Tensor inv_freq, torch::Tensor k_scale, torch::Tensor v_scale,
++                torch::Tensor k_cache, torch::Tensor v_cache, torch::Tensor out,
++                int64_t C, int64_t window, double q_scale, double score_scale, double eps) {
++  const int64_t B = seq_lens.size(0);
++  TORCH_CHECK(B >= 1 && B <= 32, "slide_attn: batch out of range (one wave of clusters)");
++  TORCH_CHECK(C == 4, "slide_attn: only cluster size 4 is built");
++  TORCH_CHECK(window >= 1 && window <= 2048, "slide_attn: window must be in [1, 2048]");
++  TORCH_CHECK(qkv.scalar_type() == at::kBFloat16 && qkv.dim() == 2 && qkv.size(0) == B &&
++              qkv.size(1) >= (2 * HQ + 2 * HKV) * D && qkv.stride(1) == 1, "slide_attn: qkv layout (decode)");
++  TORCH_CHECK(out.scalar_type() == at::kBFloat16 && out.is_contiguous() && out.numel() == B * HQ * D,
++              "slide_attn: out layout");
++  TORCH_CHECK(positions.scalar_type() == at::kLong && positions.is_contiguous() && positions.numel() == B &&
++              cache_loc.scalar_type() == at::kLong && cache_loc.is_contiguous() && cache_loc.numel() == B,
++              "slide_attn: positions / cache_loc");
++  TORCH_CHECK(seq_lens.scalar_type() == at::kInt && seq_lens.is_contiguous() &&
++              page_table.scalar_type() == at::kInt && page_table.dim() == 2 && page_table.size(0) == B &&
++              page_table.stride(1) == 1, "slide_attn: seq_lens / page_table");
++  TORCH_CHECK(inv_freq.scalar_type() == at::kFloat && inv_freq.is_contiguous() && inv_freq.numel() == D / 2,
++              "slide_attn: inv_freq");
++  TORCH_CHECK(k_scale.scalar_type() == at::kFloat && v_scale.scalar_type() == at::kFloat, "slide_attn: scales");
++  for (const auto* c : {&k_cache, &v_cache})
++    TORCH_CHECK(c->is_contiguous() && c->element_size() == 1 && c->dim() == 4 && c->size(1) == 1 &&
++                c->size(2) == HKV && c->size(3) == D, "slide_attn: cache layout (page 1, 2 kv heads, 64)");
++  cudaLaunchConfig_t cfg = {};
++  cfg.gridDim = dim3(static_cast<unsigned>(B * C), 1, 1);
++  cfg.blockDim = dim3(THREADS, 1, 1);
++  cfg.dynamicSmemBytes = SMEM_BYTES;
++  cfg.stream = at::cuda::getCurrentCUDAStream();
++  cudaLaunchAttribute attr[1];
++  attr[0].id = cudaLaunchAttributeClusterDimension;
++  attr[0].val.clusterDim.x = static_cast<unsigned>(C);
++  attr[0].val.clusterDim.y = 1;
++  attr[0].val.clusterDim.z = 1;
++  cfg.attrs = attr;
++  cfg.numAttrs = 1;
++  C10_CUDA_CHECK(cudaLaunchKernelEx(
++      &cfg, sliding_cluster_kernel,
++      reinterpret_cast<const __nv_bfloat16*>(qkv.data_ptr()), static_cast<int64_t>(qkv.stride(0)),
++      positions.data_ptr<int64_t>(), cache_loc.data_ptr<int64_t>(), seq_lens.data_ptr<int>(),
++      page_table.data_ptr<int>(), static_cast<int64_t>(page_table.stride(0)), inv_freq.data_ptr<float>(),
++      k_scale.data_ptr<float>(), v_scale.data_ptr<float>(), reinterpret_cast<uint8_t*>(k_cache.data_ptr()),
++      reinterpret_cast<uint8_t*>(v_cache.data_ptr()), reinterpret_cast<__nv_bfloat16*>(out.data_ptr()),
++      static_cast<int>(C), static_cast<int>(window), static_cast<float>(q_scale), static_cast<float>(score_scale),
++      static_cast<float>(eps)));
++}
++"""
++
++SLIDE_C = 4              # cluster size built (one instantiation)
++SLIDE_B_LO, SLIDE_B_HI = 17, 32
++SLIDE_NEED_CLUSTERS = 32  # co-resident clusters for one wave at batch 32
++SLIDE_TAG = "[slide-c4]"
++SLIDE_SPLITS = 16        # the Triton candidate's window splits
++SLIDE_FLUSH_BYTES = 320 * 2 ** 20  # > 256 MB: evicts the H200's 50 MB L2 before every timed replay
++SLIDE_TIME_REPS = 30
++
++
++def _build_slide():
++    """Compile the sliding cluster module once per process, at import (never during capture), for
++    sm_90a only (TORCH_CUDA_ARCH_LIST=9.0a, restored afterwards); -std=c++20 because the flags are
++    overridden. None keeps master on the whole band."""
++    t0 = time.perf_counter()
++    prev = os.environ.get("TORCH_CUDA_ARCH_LIST")
++    os.environ["TORCH_CUDA_ARCH_LIST"] = "9.0a"
++    try:
++        from torch.utils.cpp_extension import load_inline
++        try:
++            from torch.utils.cpp_extension import _get_cuda_arch_flags
++            print(f"{SLIDE_TAG} nvcc arch flags: {_get_cuda_arch_flags()}", flush=True)
++        except Exception as e:
++            print(f"{SLIDE_TAG} nvcc arch flags unavailable: {e!r}", flush=True)
++        ext = load_inline(
++            name="muse_sliding_cluster_c4_v1",
++            cpp_sources=_SLIDE_CPP,
++            cuda_sources=_SLIDE_CUDA,
++            functions=["slide_setup", "slide_attn"],
++            extra_cuda_cflags=["-O3", "-std=c++20", "-lineinfo"],
++            verbose=False,
++        )
++    except Exception as e:
++        print(f"{SLIDE_TAG} load_inline FAILED after {time.perf_counter() - t0:.1f}s, master kept: "
++              f"{str(e)[-1500:]!r}", flush=True)
++        return None
++    finally:
++        if prev is None:
++            os.environ.pop("TORCH_CUDA_ARCH_LIST", None)
++        else:
++            os.environ["TORCH_CUDA_ARCH_LIST"] = prev
++    print(f"{SLIDE_TAG} load_inline compiled in {time.perf_counter() - t0:.1f}s", flush=True)
++    return ext
++
++
++_SLIDE_EXT = None        # the compiled module; None keeps master on the band
++_SLIDE_PATH = "master"   # set once by prepare(): "cluster" | "triton16" | "master"
++if torch.cuda.is_available():
++    _SLIDE_EXT = _build_slide()
++
++
++def _slide_gate(cfg) -> bool:
++    """Config-only predicate: sliding decode, q_len 1, page 1, tp8 heads, 17 <= batch <= 32, and
++    prepare() chose a non-master path. Everything else keeps master's chain."""
++    return (_SLIDE_PATH != "master" and cfg["q_len"] == 1 and 0 < cfg["window"] <= 2048
++            and cfg["rope_theta"] != 0 and SLIDE_B_LO <= cfg["batch"] <= SLIDE_B_HI
++            and cfg["num_q_heads"] == 16 and cfg["num_kv_heads"] == 2 and cfg["head_dim"] == 64
++            and cfg["page_size"] == 1)
++
++
++def _slide_launch(data: Inputs, qkv: torch.Tensor) -> torch.Tensor:
++    """One launch of sliding_cluster_kernel (C = 4) on the qkv GEMM output [B, 2304]; returns the
++    normed-and-gated [B, 1024] bf16 input of the o GEMM. No sync, no query, no timing."""
++    cfg = data["config"]
++    batch, hq, d = cfg["batch"], cfg["num_q_heads"], cfg["head_dim"]
++    out = torch.empty((batch, hq * d), dtype=torch.bfloat16, device=qkv.device)
++    _SLIDE_EXT.slide_attn(
++        qkv, data["positions"], data["cache_loc"], data["seq_lens"], data["page_table"],
++        _inv_freq(cfg["rope_theta"], d, qkv.device), data["k_scale"], data["v_scale"],
++        data["k_cache"], data["v_cache"], out,
++        SLIDE_C, cfg["window"], cfg["qk_scale_factor"], cfg["sm_scale"] * LOG2E, RMS_EPS)
++    return out
++
++
++def _slide_forward(data: Inputs, qkv: torch.Tensor) -> torch.Tensor:
++    """The gated path chosen by prepare() (a module constant, not data)."""
++    if _SLIDE_PATH == "cluster":
++        return _slide_launch(data, qkv)
++    return _sliding_forward(data, qkv, splits=SLIDE_SPLITS)
++
++
++def _slide_rms(x):
++    return x * torch.rsqrt(x.pow(2).mean(-1, keepdim=True) + RMS_EPS)
++
++
++def _slide_rope(x, pos, inv_freq):
++    """Interleaved RoPE of x [..., heads, 64] at pos [...] (fp32 angle), as the reference."""
++    ang = pos.float()[..., None] * inv_freq
++    cos, sin = ang.cos().unsqueeze(-2), ang.sin().unsqueeze(-2)
++    even, odd = x[..., 0::2], x[..., 1::2]
++    return torch.stack([even * cos - odd * sin, even * sin + odd * cos], -1).flatten(-2)
++
++
++def _slide_synthetic(lens, kv_scale, gen, device):
++    """Synthetic gated-shape sliding decode inputs (tp8, page 1, window 2048), never judge data:
++    scattered cache rows (request 0's new row is slot 0), a bf16 qkv [B, 2304], and per request a
++    key aligned with its query planted at the window's oldest position (inside) and just outside
++    it, as reference.generate_input's dist="edges" does."""
++    batch, hq, hkv, d, window = len(lens), 16, 2, 64, 2048
++    max_pages = max(lens) + 1 + 29
++    total = batch * max_pages
++    perm = torch.randperm(total, generator=gen, device=device).to(torch.int32)
++    zero_at = int((perm == 0).nonzero()[0, 0])
++    perm[[zero_at, lens[0]]] = perm[[lens[0], zero_at]]  # request 0's new token lands in slot 0
++    page_table = torch.full((batch, max_pages), -1, dtype=torch.int32, device=device)
++    off = 0
++    for b, n in enumerate(lens):
++        page_table[b, :n + 1] = perm[off:off + n + 1]
++        off += n + 1
++    seq = torch.tensor(lens, dtype=torch.int64, device=device)
++    k_cache = (torch.randn((total, 1, hkv, d), generator=gen, device=device) / kv_scale).clamp(-448, 448).to(FP8)
++    v_cache = (torch.randn((total, 1, hkv, d), generator=gen, device=device) / kv_scale).clamp(-448, 448).to(FP8)
++    qkv = (2 * torch.randn((batch, (2 * hq + 2 * hkv) * d), generator=gen, device=device)).to(torch.bfloat16)
++    qn = _slide_rope(_slide_rms(qkv[:, :hq * d].float().view(batch, hq, d)), seq, _inv_freq(ROPE_THETA, d, device))
++    planted = (qn[:, ::hq // hkv] / kv_scale).clamp(-448, 448).to(FP8)  # [B, Hkv, 64]
++    k_flat = k_cache.view(-1, hkv, d)
++    for b, p in enumerate(lens):
++        for t in (p - window + 1, p - window):
++            if 0 <= t < p:
++                k_flat[page_table[b, t].long()] = planted[b]
++    cache_loc = torch.gather(page_table.long(), 1, seq.view(batch, 1)).reshape(-1)
++    return {
++        "positions": seq.clone(),
++        "cache_loc": cache_loc,
++        "cache_seqlens": (seq + 1).to(torch.int32),
++        "cu_seqlens_q": torch.arange(0, batch + 1, dtype=torch.int32, device=device),
++        "scheduler_metadata": None,
++        "k_cache": k_cache,
++        "v_cache": v_cache,
++        "k_scale": torch.tensor(kv_scale, dtype=torch.float32, device=device),
++        "v_scale": torch.tensor(kv_scale, dtype=torch.float32, device=device),
++        "page_table": page_table,
++        "seq_lens": seq.to(torch.int32),
++        "config": {"batch": batch, "q_len": 1, "tokens": batch, "num_q_heads": hq, "num_kv_heads": hkv,
++                   "head_dim": d, "page_size": 1, "window": window, "rope_theta": ROPE_THETA,
++                   "qk_scale_factor": 5.4730064863875, "sm_scale": d ** -0.5, "kv_scale": kv_scale},
++    }, qkv
++
++
++def _slide_clone(data):
++    """The same step on cloned caches (every path stores its new rows in place)."""
++    out = dict(data)
++    out["k_cache"], out["v_cache"] = data["k_cache"].clone(), data["v_cache"].clone()
++    return out
++
++
++def _slide_reference(data, qkv, lens, k_cache, v_cache, scale_first):
++    """FP32 windowed attention over the cache as a path left it (its new rows included), then
++    rmsnorm x sigmoid(gate). scale_first rounds q * qk_scale_factor to E4M3 (the cluster kernel's
++    query), otherwise q stays fp32 (calibrates every path's own FP8/bf16 query error)."""
++    cfg = data["config"]
++    batch, hq, hkv, d, window = cfg["batch"], cfg["num_q_heads"], cfg["num_kv_heads"], cfg["head_dim"], cfg["window"]
++    qf = qkv.float()
++    q = _slide_rope(_slide_rms(qf[:, :hq * d].reshape(batch, hq, d)), data["positions"],
++                    _inv_freq(cfg["rope_theta"], d, qf.device)) * cfg["qk_scale_factor"]
++    if scale_first:
++        q = q.to(FP8).float()
++    kf, vf = k_cache.view(-1, hkv, d), v_cache.view(-1, hkv, d)
++    out = torch.empty((batch, hq, d), device=qf.device)
++    for b, n in enumerate(lens):
++        rows = data["page_table"][b, :n + 1].long()
++        keys = (kf[rows].float() * data["k_scale"]).repeat_interleave(hq // hkv, dim=1)
++        vals = (vf[rows].float() * data["v_scale"]).repeat_interleave(hq // hkv, dim=1)
++        s0 = max(0, n - window + 1)
++        att = torch.einsum("hd,thd->ht", q[b], keys[s0:n + 1]) * cfg["sm_scale"]
++        out[b] = torch.einsum("ht,thd->hd", att.softmax(-1), vals[s0:n + 1])
++    gate = qf[:, (hq + 2 * hkv) * d:].reshape(batch, hq, d)
++    return (_slide_rms(out) * torch.sigmoid(gate)).reshape(batch, hq * d)
++
++
++def _slide_run(name, fn, batch):
++    """An announced, synchronized launch (prepare only), so a fault names its kernel."""
++    print(f"{SLIDE_TAG} launching {name} B={batch} ...", flush=True)
++    out = fn()
++    torch.cuda.synchronize()
++    print(f"{SLIDE_TAG} {name} B={batch} ok", flush=True)
++    return out
++
++
++def _slide_rel(a, b):
++    return float((a.float() - b.float()).norm() / b.float().norm().clamp_min(1e-30))
++
++
++def _slide_cache_ok(mine, master, loc, exact):
++    """New rows (at cache_loc) of a path vs master's, and nothing else written. v rows must be byte
++    exact (a bf16 / 2^-n division is exact); k rows may differ by one E4M3 code in a few percent of
++    bytes (master rounds through bf16 first, the kernels from fp32). Returns (ok, note)."""
++    a = mine.view(torch.uint8).view(-1, 128)
++    m = master.view(torch.uint8).view(-1, 128)
++    af, mf = a[loc].view(FP8).float(), m[loc].view(FP8).float()
++    mism = float((a[loc] != m[loc]).float().mean())
++    within = bool(((af - mf).abs() <= 0.126 * mf.abs() + 2.0 ** -9).all())
++    a[loc] = m[loc]
++    rest = bool(torch.equal(a, m))
++    ok = rest and within and (mism == 0.0 if exact else mism < 0.06)
++    return ok, f"byte mismatch {mism:.4f}, within one code {within}, other rows untouched {rest}"
++
++
++def _slide_canary(device) -> bool:
++    """A tiny synthetic first launch of the cluster kernel (B=1, 40 keys, slot 0 as the new row)."""
++    try:
++        gen = torch.Generator(device=device).manual_seed(97)
++        data, qkv = _slide_synthetic([40], 1.0, gen, device)
++        out = _slide_run("sliding_cluster_kernel canary", lambda: _slide_launch(data, qkv), 1)
++        ok = bool(torch.isfinite(out).all())
++        print(f"{SLIDE_TAG} canary: output finite {ok}", flush=True)
++        return ok
++    except Exception as e:
++        print(f"{SLIDE_TAG} canary raised: {e!r}", flush=True)
++        return False
++
++
++_SLIDE_LENS17 = [2049, 17, 3000, 2048, 2047, 10, 5000, 2046, 1, 600, 2055, 129, 4096, 2000, 33, 2050, 2051]
++_SLIDE_CASES = (  # (lens, kv_scale): below, at and past the window; batches 17 and 32
++    (_SLIDE_LENS17, 0.25),
++    (_SLIDE_LENS17 + [n + 7 for n in _SLIDE_LENS17[:15]], 1.0),
++    ([2300 + 61 * i for i in range(32)], 0.25),
++)
++
++
++def _slide_self_check(state, device, do_cluster, do_triton):
++    """Eager check on synthetic data only, never in the timed path: master's own chain (_master_attn)
++    against the fp32 reference, then each candidate against the fp32 reference (own query rounding
++    and unrounded, calibrated against master's own error) and against master's new cache rows, and
++    one graph capture + replay of the cluster launch. Returns (cluster_ok, triton_ok)."""
++    gen = torch.Generator(device=device).manual_seed(4321)
++    c_ok, t_ok = do_cluster, do_triton
++    try:
++        data = None
++        for lens, kv_scale in _SLIDE_CASES:
++            data, qkv = _slide_synthetic(lens, kv_scale, gen, device)
++            batch = len(lens)
++            d_m, d_c, d_t = _slide_clone(data), _slide_clone(data), _slide_clone(data)
++            o_m = _slide_run("master chain (FusedQKNorm .. FusedRMSNormGate)",
++                             lambda: _master_attn(d_m, state, qkv).float(), batch)
++            ref_none = _slide_reference(data, qkv, lens, d_m["k_cache"], d_m["v_cache"], False)
++            err_m = _slide_rel(o_m, ref_none)
++            note = f"{SLIDE_TAG} self-check B={batch} kv_scale={kv_scale:g}: master rel L2 {err_m:.2e}"
++            loc = data["cache_loc"]
++            if do_cluster and c_ok:
++                o_c = _slide_run("sliding_cluster_kernel", lambda: _slide_launch(d_c, qkv).float(), batch)
++                ref_own = _slide_reference(data, qkv, lens, d_c["k_cache"], d_c["v_cache"], True)
++                e_own = _slide_rel(o_c, ref_own)
++                e_none = _slide_rel(o_c, ref_none)
++                kok, knote = _slide_cache_ok(d_c["k_cache"], d_m["k_cache"], loc, False)
++                vok, vnote = _slide_cache_ok(d_c["v_cache"], d_m["v_cache"], loc, True)
++                ok = (bool(torch.isfinite(o_c).all()) and e_own < 2e-2 and e_none <= 2.5 * err_m + 5e-3
++                      and kok and vok)
++                note += (f"; cluster own-rounding rel L2 {e_own:.2e}, vs fp32 {e_none:.2e}, k [{knote}], "
++                         f"v [{vnote}] -> {'ok' if ok else 'FAIL'}")
++                c_ok = c_ok and ok
++            if do_triton and t_ok:
++                o_t = _slide_run(f"_sliding_fused_kernel splits={SLIDE_SPLITS}",
++                                 lambda: _sliding_forward(d_t, qkv, splits=SLIDE_SPLITS).float(), batch)
++                e_t = _slide_rel(o_t, ref_none)
++                kok, knote = _slide_cache_ok(d_t["k_cache"], d_m["k_cache"], loc, False)
++                vok, vnote = _slide_cache_ok(d_t["v_cache"], d_m["v_cache"], loc, True)
++                ok = bool(torch.isfinite(o_t).all()) and e_t < 2e-2 and kok and vok
++                note += f"; triton16 vs fp32 {e_t:.2e}, k [{knote}], v [{vnote}] -> {'ok' if ok else 'FAIL'}"
++                t_ok = t_ok and ok
++            print(note, flush=True)
++        if do_cluster and c_ok:
++            # The judge replays kernel_fn as a CUDA graph: capture the cluster launch once.
++            d_g = _slide_clone(data)
++            eager = _slide_run("sliding_cluster_kernel graph-eager", lambda: _slide_launch(d_g, qkv), len(_SLIDE_CASES[-1][0]))
++            graph = torch.cuda.CUDAGraph()
++            with torch.cuda.graph(graph):
++                static = _slide_launch(d_g, qkv)
++            print(f"{SLIDE_TAG} replaying the captured sliding_cluster_kernel graph ...", flush=True)
++            graph.replay()
++            torch.cuda.synchronize()
++            same = bool(torch.equal(static, eager))
++            print(f"{SLIDE_TAG} graph capture + replay {'matches eager' if same else 'DIFFERS'}", flush=True)
++            c_ok = c_ok and same
++            del graph
++    except Exception as e:
++        print(f"{SLIDE_TAG} self-check raised: {e!r}", flush=True)
++        return False, False
++    return c_ok, t_ok
++
++
++def _slide_select(state, device, candidates):
++    """Time the WHOLE master chain and each candidate as a CUDA graph at B=32, the L2 flushed by a
++    320 MB write before every replay, interleaved. Returns (medians in us by name, or None)."""
++    lens = [3000 + 97 * i for i in range(32)]  # every window full, as the scored decode_32
++    gen = torch.Generator(device=device).manual_seed(777)
++    data, qkv = _slide_synthetic(lens, 1.0, gen, device)
++    fns = {"master": lambda: _master_attn(data, state, qkv)}
++    if "cluster" in candidates:
++        fns["cluster"] = lambda: _slide_launch(data, qkv)
++    if "triton16" in candidates:
++        fns["triton16"] = lambda: _sliding_forward(data, qkv, splits=SLIDE_SPLITS)
++    flush = torch.empty(SLIDE_FLUSH_BYTES, dtype=torch.uint8, device=device)
++    graphs = {}
++    for name, fn in fns.items():
++        _slide_run(f"timing warm-up {name}", fn, 32)
++        graph = torch.cuda.CUDAGraph()
++        print(f"{SLIDE_TAG} capturing {name} ...", flush=True)
++        with torch.cuda.graph(graph):
++            fn()
++        torch.cuda.synchronize()
++        print(f"{SLIDE_TAG} captured {name} ok", flush=True)
++        graphs[name] = graph
++    events = []
++    print(f"{SLIDE_TAG} timing {', '.join(graphs)} (graph replays, L2 flushed each) ...", flush=True)
++    for rep in range(SLIDE_TIME_REPS + 5):
++        for name, graph in graphs.items():
++            flush.zero_()
++            start, end = torch.cuda.Event(enable_timing=True), torch.cuda.Event(enable_timing=True)
++            start.record()
++            graph.replay()
++            end.record()
++            if rep >= 5:
++                events.append((name, start, end))
++    torch.cuda.synchronize()
++    print(f"{SLIDE_TAG} timing done", flush=True)
++    times = {name: [] for name in graphs}
++    for name, start, end in events:
++        times[name].append(1000.0 * start.elapsed_time(end))
++    return {name: sorted(v)[len(v) // 2] for name, v in times.items()}
++
++
++def _slide_prepare(state, device):
++    """Once per process, before any graph capture: occupancy / register line, canary, self-check,
++    timed selection; any failure keeps master's chain on the band (never raises)."""
++    global _SLIDE_PATH
++    why = None
++    try:
++        for b in range(SLIDE_B_LO, SLIDE_B_HI + 1):  # ticket counters of the Triton candidate, zeroed eagerly
++            _counters(b, 2, device)
++        _inv_freq(ROPE_THETA, 64, device)
++        cap = tuple(torch.cuda.get_device_capability())
++        print(f"{SLIDE_TAG} device capability {cap}", flush=True)
++        do_cluster = True
++        if _SLIDE_EXT is None:
++            do_cluster, why = False, "cluster module not built"
++        elif cap != (9, 0):
++            do_cluster, why = False, f"device capability {cap}, the sm_90a image needs (9, 0)"
++        else:
++            info = [int(x) for x in _SLIDE_EXT.slide_setup()]  # a CPU int64 tensor (host values)
++            occ, regs, local, smem, binv, ptxv = info
++            print(f"{SLIDE_TAG} sliding_cluster_kernel {regs} regs, {local} B local/spill, {smem} B dynamic smem/CTA, "
++                  f"binaryVersion {binv}, ptxVersion {ptxv}; cudaOccupancyMaxActiveClusters C={SLIDE_C} -> {occ}",
++                  flush=True)
++            if binv != 90:
++                do_cluster, why = False, f"binaryVersion {binv} is not the sm_90 image"
++            elif occ < SLIDE_NEED_CLUSTERS:
++                do_cluster, why = False, f"max active clusters {occ} < {SLIDE_NEED_CLUSTERS} (one wave at B=32)"
++            elif not _slide_canary(device):
++                do_cluster, why = False, "canary failed"
++        c_ok, t_ok = _slide_self_check(state, device, do_cluster, True)
++        if do_cluster and not c_ok:
++            why = "self-check failed"
++        elif not do_cluster and why is None:
++            why = "cluster off"
++        candidates = [n for n, ok in (("cluster", c_ok), ("triton16", t_ok)) if ok]
++        if not t_ok:
++            print(f"{SLIDE_TAG} triton16 candidate off: self-check failed or raised", flush=True)
++        if not candidates:
++            print(f"{SLIDE_TAG} PATH CHOSEN: sliding decode batch {SLIDE_B_LO}..{SLIDE_B_HI}: master chain "
++                  f"(fallback: {why or 'no candidate passed'})", flush=True)
++        else:
++            med = _slide_select(state, device, candidates)
++            best = min(candidates, key=lambda n: med[n])
++            line = ", ".join(f"{n} {med[n]:.1f} us" for n in med)
++            if not c_ok:
++                line += f"; cluster off: {why}"
++            if med[best] < med["master"]:
++                _SLIDE_PATH = best
++                print(f"{SLIDE_TAG} PATH CHOSEN: sliding decode batch {SLIDE_B_LO}..{SLIDE_B_HI}: {best} "
++                      f"(medians at B=32, L2 flushed: {line})", flush=True)
++            else:
++                print(f"{SLIDE_TAG} PATH CHOSEN: sliding decode batch {SLIDE_B_LO}..{SLIDE_B_HI}: master chain "
++                      f"(fallback: no candidate faster; medians at B=32, L2 flushed: {line})", flush=True)
++    except Exception as e:
++        _SLIDE_PATH = "master"
++        print(f"{SLIDE_TAG} PATH CHOSEN: sliding decode batch {SLIDE_B_LO}..{SLIDE_B_HI}: master chain "
++              f"(fallback: prepare raised {e!r})", flush=True)
++    print(f"{SLIDE_TAG} PATH CHOSEN: sliding batch 1 _sliding_fused_kernel, sliding 2..16 and > 32 master chain, "
++          f"every verify block and full layer unchanged (by gate)", flush=True)
++
++
+ def prepare(weights):
+     device = weights["qkv_gate"].device
+     router = weights["router"]
+@@ -2281,6 +3368,8 @@ def prepare(weights):
+     _align_par_setup(state, device)
+     # Full decode at 1 < batch <= 64: split-KV self-check; failure keeps FA3 on every shape.
+     _splitkv_prepare(device)
++    # Sliding decode at 17 <= batch <= 32: cluster / 16-split Triton self-check and timed selection.
++    _slide_prepare(state, device)
+     torch.cuda.synchronize()
+     return state
+ 
+@@ -2364,89 +3453,16 @@ def kernel_fn(data, state):
+     # Attention: MuseSpark1xAttention.forward.
+     qkv = _gemm(data["attn_input"], dense["qkv_gate"])
+     # Sliding batch-1 decode only (config-only predicate): attention in one fused launch.
+-    # Every other shape (sliding batch > 1, every verify block, every full layer) keeps the path below.
++    # A batch 2..16 sliding branch would sit here (sliding-batched-triton-b16-band). Sliding batch 17..32
++    # (config-only gate, enabled by prepare()'s self-check and timing selector): one cluster launch or the
++    # 16-split Triton kernel, whichever prepare() timed fastest against master's whole chain. Every other
++    # shape (every verify block, every full layer, other batches) keeps master's chain.
+     if cfg["window"] and batch == 1 and length == 1:
+         o = _sliding_forward(data, qkv)
++    elif _slide_gate(cfg):
++        o = _slide_forward(data, qkv)
+     else:
+-        if cfg["rope_theta"]:
+-            q, k = state["qk_norm"](qkv, data["positions"], state["cos_sin"])
+-        else:
+-            q, k = state["qk_norm"](qkv)
+-        v = qkv[:, hq * d + hkv * d: hq * d + 2 * hkv * d]
+-        gate = qkv[:, hq * d + 2 * hkv * d:]
+-        k_cache, v_cache = data["k_cache"], data["v_cache"]
+-        scaled = cfg["kv_scale"] != 1.0
+-        k = k.reshape(tokens, hkv * d)
+-        if scaled:
+-            k, v = k / data["k_scale"], v / data["v_scale"]
+-        # The pool keeps FP8 rows as bytes; slot 0 is a live row here (SGLang reserves it for padding).
+-        store_cache(k.to(FP8).view(torch.uint8), v.to(FP8).view(torch.uint8),
+-                    k_cache.view(-1, hkv * d).view(torch.uint8), v_cache.view(-1, hkv * d).view(torch.uint8),
+-                    data["cache_loc"], reserved_skip_index=-1)
+-        window = cfg["window"]
+-        # Full-layer decode at 1 < batch <= 64 (tp8, page 1; config-only gate): the CUDA split-KV
+-        # kernels (hypothesis full-decode-cuda-splitkv-port) take the unpaired FP8 query and replace
+-        # FA3, the paired pad/unpad copies and FusedRMSNormGate; kernel B reads the gate from qkv and
+-        # writes the normed, gated [T, Hq*D] bf16 input of the o GEMM. scheduler_metadata is unused.
+-        splitkv = _splitkv_gate(cfg)
+-        if splitkv:
+-            q_fp8 = q.view(tokens, hq, d).to(FP8).contiguous()
+-            o = _full_decode_splitkv(data, q_fp8, qkv).reshape(tokens, hq * d)
+-        else:
+-            # Full layers with batch > 1: pair the two KV heads of each token into one 128-byte FP8 row
+-            # (heads 2s and 2s+1 are adjacent halves of it) so FA3 gathers one row per token instead of
+-            # two. Each query sits in its own head's half of a zero-padded 128-wide FP8 query (the pad
+-            # copy also does the BF16 -> E4M3 cast), so the zero half adds exactly 0 to every logit; FA3
+-            # maps query head h to super-head h // (2G), which keeps the original grouping. The judge's
+-            # scheduler_metadata was built for the unpaired geometry, so it is not passed. Batch 1 stays
+-            # unpaired (pairing lost there in muse_attention_decode). The gate reads config only.
+-            paired = window == 0 and batch > 1 and hkv % 2 == 0 and not splitkv
+-            if paired:
+-                g, s = hq // hkv, hkv // 2
+-                pages, page_size = k_cache.shape[0], k_cache.shape[1]
+-                k_attn = k_cache.view(pages, page_size, s, 2 * d)
+-                v_attn = v_cache.view(pages, page_size, s, 2 * d)
+-                q_attn = torch.zeros((tokens, hq, 2 * d), dtype=FP8, device=q.device)
+-                qp = q_attn.view(tokens, s, 2, g, 2 * d)
+-                qv = q.view(tokens, s, 2, g, d)
+-                qp[:, :, 0, :, :d] = qv[:, :, 0]
+-                qp[:, :, 1, :, d:] = qv[:, :, 1]
+-                attn_heads = s
+-                metadata = None
+-            else:
+-                k_attn, v_attn, q_attn = k_cache, v_cache, q.view(tokens, hq, d).to(FP8)
+-                attn_heads = hkv
+-                metadata = data["scheduler_metadata"]
+-            descale = {}
+-            if scaled:
+-                descale = dict(k_descale=data["k_scale"].reshape(1, 1).expand(batch, attn_heads),
+-                               v_descale=data["v_scale"].reshape(1, 1).expand(batch, attn_heads))
+-            out = flash_attn_with_kvcache(
+-                q=q_attn,
+-                k_cache=k_attn,
+-                v_cache=v_attn,
+-                page_table=data["page_table"],
+-                cache_seqlens=data["cache_seqlens"],
+-                cu_seqlens_q=data["cu_seqlens_q"],
+-                max_seqlen_q=length,
+-                softmax_scale=cfg["sm_scale"] * cfg["qk_scale_factor"],
+-                causal=True,
+-                window_size=(window - 1, 0) if window else (-1, -1),
+-                scheduler_metadata=metadata,
+-                **descale,
+-            )
+-            if isinstance(out, tuple):
+-                out = out[0]
+-            if paired:
+-                # Keep each query's own half of FA3's 128-wide output; the other half is the other
+-                # head's P@V and is discarded.
+-                attn = torch.empty((tokens, hq, d), dtype=torch.bfloat16, device=q.device)
+-                a = attn.view(tokens, s, 2, g, d)
+-                o = out.view(tokens, s, 2, g, 2 * d)
+-                a[:, :, 0] = o[:, :, 0, :, :d]
+-                a[:, :, 1] = o[:, :, 1, :, d:]
+-                out = attn
+-            o = state["o_norm_gate"](out.reshape(tokens, hq * d).to(torch.bfloat16), gate)
++        o = _master_attn(data, state, qkv)
+     attn_output = _gemm(o, dense["o"])  # all-reduce: identity
+ 
+     # Post-attention boundary, router and MoE block: MuseSpark1xMoE._forward_experts.
