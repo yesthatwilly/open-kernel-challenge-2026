@@ -81,7 +81,7 @@ review: proceed
 status: running
 review_at: 2026-10-25T161800Z
 review_companions: null
-stage: claimed
+stage: implemented
 claimed_at: 2026-10-25T161800Z
 base_sha: 848b2c2e1405318d09d245e2d959487d1742f8c0
 base_blob: 9fb1f7c4b4282dd7461c6cdba926fe3ebf12128e
@@ -90,6 +90,12 @@ worktree: .worktrees/muse_prefill_layer/combo-b-normgather-two-cta-low-regate
 mode: null
 restack_of: null
 stale_base: null
+implemented_at: 2026-10-25T163415Z
+impl_commit: 25f55bbc6bb654b0c2d8c32d4d002e3c43a3db87
+submission_sha256: 7bb6651bce391f47600062e96ba41eb7dfec63165e60763198534bbd63d91031
+norm_sha256: 599f71fc79be55b13159b5c2958db2c3e6fad5b10a271e1bcb23957bd5c03da5
+submission_blob: f4751fc054335a94d1b401af272e98a2d4760363
+lint_warnings: 93
 ---
 
 # combo-b-normgather-two-cta-low-regate
@@ -149,3 +155,103 @@ No companion. A (master + norm-gather) is the paired control, and the readable s
 - Prepare could gate on the run's actual router: weights (router + router_bias of the judge-chosen router_seed) are available in prepare(), so routing synthetic h through them would reproduce the judge's expert popularity far better than a Zipf surrogate. Is that within the house rules for synthetic prepare-time cases (it uses only weights, not data)?
 - If B's gate keeps master (deadline skip, tiles miss, or guard > 1.00), is a forced-V64 scored control worth one submit to get the in-judge LO rows?
 
+
+
+## Implementation notes
+
+Base: worktree at 848b2c2e. Master (455705cd) differs from it only in this md, so no merge was needed. The worktree's submission.py starts from `hypotheses/archive/pre-expert-norm-fused-rega-gather/master_plus_normgather.merged.py`, which is combination A's exact code. The diff against that file:
+
+- **Master's rega module is untouched.** `_REGA_CPP`, `_REGA_HEAD`, `_REGA_BODY`, `_rega_build`, `_rega_setup` and the v1 fallback are unchanged. This was checked offline: sha256(`_REGA_CPP + _rega_src()`) = b7fbe28b..., the same v2 hash dfb755d3 recorded, and `_rega_src_v1()` still derives the source that hashes to `REGA_V1_SHA256`. prepare() prints both checks again (`_rega_lo_identity`), and LO stays OFF if v2 does not match.
+- **New section (before kernel_fn): the separate `muse_prefill_rega_lo` extension.**
+  - Source: `_REGA_HEAD + _rega_wgmma_src() + the namespace part of _REGA_BODY + "}  // namespace" + _REGA_LO_SRC`. `_REGA_LO_SRC` reopens the anonymous namespace. This is the same split pattern as `muse_prefill_rega_se`.
+  - `_REGA_LO_SRC` is dfb755d3's `rega_lo_kernel<G, NMAX, STG, OCC>`, `consume_item_lo`, `info_lo`, `rega_init_lo` and `rega_gemm_lo`, unchanged except that the V64-occ1 instantiations are dropped. That leaves 4 instantiations, and `rega_gemm_lo` accepts variant 1..2 only.
+  - Same `REGA_CUDA_CFLAGS`. `TORCH_CUDA_ARCH_LIST=9.0a` is set around load_inline, restored afterwards, and the arch flags are printed (`_rega_lo_build`).
+  - Pre-build audit (`_rega_lo_audit`): the templated-accessor scan plus `_rega_audit_cpp` over the LO cpp and cuda sources. A finding turns LO OFF.
+- **Constants.** `REGA_LO_VARIANTS = {1: V64 (64,3,2), 2: V32 (32,4,2)}`, `REGA_LO_REGS_OCC2 80`, `REGA_LO_POOL`, `REGA_LO_MAXBLK 1024`, `REGA_LO_STATIC_BOUND 12288`, `REGA_LO_START_DEADLINE_S 185`, `REGA_LO_GATE_DEADLINE_S 250`, and `REGA_LO_STATE_KEYS = REGA_STATE_KEYS + (rega_lo_ext, rega_low_variant, rega_low_grid)`. `REGA_FT_START_DEADLINE_S` and `REGA_COPY_DEADLINE_S` are unchanged.
+- **Dispatch (`_experts_rega`).** At T <= REGA_LOW_MAX it reads the int `state.get('rega_low_variant', 0)` and the grid int `state.get('rega_low_grid', grid)`. A nonzero variant calls `state['rega_lo_ext'].rega_gemm_lo(which, variant, ...)` for w13, on the xs that the fused norm-gather or master's gather produced, and for w2. Everything else is unchanged. kernel_fn itself is unchanged: no prints, mutable state or try/except.
+- **Small edits to master helpers, prepare-only, behaviour identical for master's calls.**
+  - `_rega_case` accepts `pop:<alpha>`.
+  - `_rega_replay_check` takes `keys=` (default `REGA_STATE_KEYS`). Its deepcopy memo shares every module-typed value, i.e. rega_ext and rega_lo_ext. Before, it shared rega_ext only.
+- **prepare().** `_rega_lo_phase` runs after `_rega_setup`, `_fa3c_setup` and `_norm_gather_setup` have returned. Its summary lines print after the align2 and fa3c echoes, so `[rega-lo] PATH CHOSEN low: master|V64|V32 (...)` is the last prepare() line. The line before it echoes A's flags (rega_ok, norm_gather_ok), because the LO self-check output may push them out of the 16 KB log tail.
+- **Phase order.** Identity check, then audit, then build, then `_rega_lo_attrs` (numRegs == 80, local 0, 2 CTAs/SM, binaryVersion 90, static <= 12288, geometry tag; checked before ANY launch). Then pop calibration, then per-candidate `_rega_lo_selfcheck`, then the gate, then the print-only SKEW CURVE. Any failure keeps variant 0. The phase never raises. If the diagnostic leaves an error word, the except path also resets to master.
+
+### Review fixes applied (binding review + caller's numbered list)
+1. **LO on master's two-phase align tables through the real path.**
+   - Every self-check runs `_experts_rega` on `dict(state)` with the candidate selected, so `_align_dispatch` uses align2 wherever master gated it ON.
+   - `_rega_lo_align_check` prints whether the align2 tables equal `_align_parallel`'s bit for bit (print-only), and requires `_rega_lo_tiles` equality at chunk sizes 8, 4 and 2.
+   - Each case also prints the rel L2 of LO against master's rega on the same tables.
+   - With norm-gather ON for the low class, prenorm=True cases are added: 753 random, 753 guard pop, 1024 local. So are `_ng_replay_check` on the LO state and the A/B/C replay check (`keys=REGA_LO_STATE_KEYS`, refilled inputs, 300 x {random, skewed, one}, 753 x {random, skewed, one, pop}).
+   - The gate's w13-alone and w2-alone graphs also use align2 tables.
+2. **Attribute check before every new launch.** The canary-equivalent self-checks, the gates and the SKEW CURVE all run only after `_rega_lo_attrs` passes. The SKEW CURVE candidate (V64, else the first passing one) must also have passed every self-check and replay check.
+3. **Pop alpha grid refined and pick by guard median.**
+   - `REGA_LO_POP_ALPHAS` = 1.0..3.0 in 0.1 steps (2.0-2.4 included), 3 draws each. The guard alpha is the one whose calibrated count is closest to `REGA_LO_GUARD_ROUTES = 1350`.
+   - The guard line prints the achieved routes, the ratio to random and the whole calibration table.
+   - The winner is the passing candidate with the lowest guard-routing block median, not the lowest random median.
+4. **'LO SKIPPED'.** Every time-based skip says so explicitly: the start deadline 185 s, the self-check or replay deadline 250 s, the gate deadline, and a pass that arrives after the deadline (no switch). The phase then also prints `[rega-lo] LO SKIPPED (time): ... identical to combination A`.
+5. **Gate as specified.**
+   - Cold-L2 graph medians, `REGA_LO_ALTERNATIONS = 11` (>= 9), a 256 MB flush, empty-graph baseline subtracted.
+   - Measured on the norm-gather-ON block (`prenorm` = `norm_gather_ok['low']`), at T=753.
+   - ON only at random <= 0.95 AND guard <= 1.00. The winner's medians are asserted.
+   - `LOW GATE` lines carry the block us/ratio, w13 and w2 kernel-alone us and TB/s, chunks, touched experts and max routes/expert.
+   - The verdict line comes next, then `[rega-lo] SKEW CURVE 1.0x r0 1.2x r1 1.5x r2 1.8x r3 (...)`, with routes, touched experts, max routes/expert and max chunks/expert per point. The 1.2x and 1.5x points are print-only; the 1.0x and 1.8x points reuse the gate measurements.
+   - `[rega-lo] PATH CHOSEN low: ...` is last.
+
+### Deviations
+- **Pick rule.** The spec's "pick the lower random-routing median" is replaced by the review's guard-median pick (caller item 3).
+- **Guard target.** The guard targets an absolute 1350 local routes, not 1.8x of the draw. This follows the review's open question; 1350 ≈ 1.79x of 752.
+- **Alternations.** 11 instead of 9, for a little less noise (still >= 9).
+- **Diagnostic placement.** The SKEW CURVE 1.2x/1.5x points run after the decision, so they cannot delay or affect it.
+- **Error word in the gate.** A nonzero error word after gate replays raises, which keeps master.
+- **Open questions not built.** Routing synthetic h through the judge's router weights, and a forced-V64 control, are new ideas, so they are not implemented.
+
+## Rules check
+- [x] CUDA-graph capturable. kernel_fn is unchanged; `_experts_rega` adds two prepare-set int lookups and a shape test (T <= REGA_LOW_MAX). There is no sync, no `.item()`/`.cpu()`, and no allocation or branch on input values. All new syncs are prepare-only (lint: outside kernel_fn's call graph).
+- [x] Nothing derived from `data` is cached. The LO module keeps no globals (audited with `_rega_audit_cpp`). TMA maps are encoded per call from that call's tensors. Each state copy carries its own ints and shares the ext module.
+- [x] Weights. Same `rega_bank` (lossless NVFP4 retile from master). The LO kernels dequantize in registers. NVFP4 stays NVFP4.
+- [x] Activations. bf16 xs/hs/y as master's rega. KV cache and attention are untouched.
+- [x] n/a: attention is untouched (the change is in the expert GEMMs only). Every key is still attended (FA3 / fa3c as in A).
+- [x] No timing patches, harness access, module edits, reference import, subprocess or network. load_inline compiles in-process; there is no child process.
+- [x] All work happens inside the timed call; no output caching or replay. The gate and checks are prepare-only.
+
+okc_lint: `OK with warnings` (host-sync warnings only, all outside kernel_fn's call graph in prepare(); uint8 dtype warnings are master's existing bank/pad/fa3c buffers). py_compile OK; __pycache__ removed. An offline check confirmed: v2 sha256 = b7fbe28b (matches), the v1 fallback derives, the LO source passes `_rega_lo_audit` with 0 findings, braces and parens balance, and no undefined globals (symtable scan).
+
+## Pre-flight audit
+
+Audited 2026-10-25 by an Opus subagent, by reading the code and running offline Python emulation. No GPU, so nothing was compiled.
+
+**Verdict: dispatch.** No fixes were needed.
+
+- **Base.** Master's `muse_prefill_layer/submission.py` (HEAD 33aa4083, combo A promoted, 1.4605) is byte-identical to `master_plus_normgather.merged.py`. The worktree diff against master has 8 hunks, and every one belongs to the LO change:
+  - the `_rega_lo_phase` call and its prints at the end of prepare();
+  - the variant / grid ints in `_experts_rega`;
+  - `_rega_case` pop:<alpha>;
+  - `_rega_replay_check` keys= and the module memo;
+  - the new section, a pure addition with no removed lines.
+
+  Remove the LO phase and the file is master.
+- **Hang safety.** The register split is 32 x 128 + 104 x 256 = 30720 = 80 x 384 (THREADS 384), with `__launch_bounds__(384, 2)`.
+  - `_rega_lo_attrs` requires numRegs == 80, local 0, 2 CTAs/SM, binaryVersion 90, static <= 12288, static + dyn <= 227 KB, and both GEMMs to have reported.
+  - `rega_init_lo` only sets and gets attributes and occupancy. It launches nothing.
+  - `state['rega_lo_ext']` is set only after that check passes. Self-checks run on `cands` only, and the gate and SKEW CURVE run on `passed` only, so no LO kernel launches before its attribute check.
+- **LO module source.** It is derived offline: `_rega_lo_src()` is not None, `_REGA_BODY` has exactly one `}  // namespace`, and the v2 sha256 matches b7fbe28b.
+  - Namespaces: HEAD opens the anonymous namespace (so the `Wg<>` specializations sit inside it), the body part closes it after `info_one`, and `_REGA_LO_SRC` reopens it and closes it before the host functions.
+  - Every identifier the LO part uses is defined in the namespace part: Maps, Item, decode_item, dq_stage, the mbar_* helpers, bulk_g2s, tma_2d, named_bar, stsm_x2_t/x4_t, make_desc, fence_acc, the wgmma_* helpers, get_encode, EncodeTiledFn, MAXE, PITCH13/2, WST, REC, BK, THREADS.
+  - Master's host functions are excluded, and its templates are never instantiated.
+  - `_REGA_LO_SRC` equals dfb755d3's apart from comments and the dropped V64-occ1 variant, and that code already ran in the judge (1a77da43).
+- **Master helper edits.** `_rega_case` changes nothing for master's kinds: none of random, skewed, one or local starts with "pop".
+  - In the `_rega_replay_check` default path, the only ModuleType value in REGA_STATE_KEYS is rega_ext, which is a load_inline module. So the memo is the same `{id(rega_ext): rega_ext}` as before.
+- **Gate.** ON only when random <= 0.95 AND guard <= 1.00. The guard alpha is the one closest to 1350 local routes, on a 1.0-3.0 grid with 0.1 steps. Both routings are timed at T=753 on the norm-gather-ON block, using 11 alternations, cold L2 and an empty-graph baseline. The winner is the passing candidate with the lowest guard median.
+- **Deadlines.** Master's REGA_FT_START_DEADLINE_S 150 and REGA_COPY_DEADLINE_S 255 are unchanged. LO has two deadlines of its own:
+  - It starts only if prepare is under 185 s.
+  - Each self-check case, the replay start, each gate, the switch and each diag point are all checked against 250 s.
+
+  Worst case is roughly 260 s, under the 300 s cap.
+- **Per-state safety.**
+  - Each state's ints are its own.
+  - The ext module is shared, like rega_ext.
+  - Launch markers and error words go to each state's own rega_err.
+  - TMA maps are encoded on every call.
+  - The A/B/C replay uses LO keys, and the two-state prenorm replay check runs on the LO state.
+- **kernel_fn.** It only adds `state.get` of the two plain ints (`int(...)`) and a shape test. okc_lint reports OK with warnings (prepare-only syncs). py_compile OK; __pycache__ removed.
+
+**Residual risk:** the guard is likely near parity (around 1.00) at about 1350 routes, so the gate may keep master and make B identical to A. The new module's nvcc compile is unverified offline.
