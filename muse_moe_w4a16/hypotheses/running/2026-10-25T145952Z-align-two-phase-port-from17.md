@@ -85,9 +85,18 @@ priority: 1
 kind: primary
 controls_for: null
 review: proceed
-status: queued
+status: running
 review_at: 2026-10-25T150410Z
 review_companions: null
+stage: claimed
+claimed_at: 2026-10-25T150410Z
+base_sha: ab49fef4d76d7a9d84457f2dc039617f1620cf0c
+base_blob: 60dfe35d5417d9c0f89067ff313efdc2c41d03a2
+branch: hyp/muse_moe_w4a16/align-two-phase-port-from17
+worktree: .worktrees/muse_moe_w4a16/align-two-phase-port-from17
+mode: null
+restack_of: null
+stale_base: null
 ---
 
 # align-two-phase-port-from17
