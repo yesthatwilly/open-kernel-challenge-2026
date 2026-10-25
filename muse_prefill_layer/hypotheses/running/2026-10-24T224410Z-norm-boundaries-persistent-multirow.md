@@ -54,7 +54,7 @@ base_sha: dc91f8e5bab764e046dc86798ba9f2cc8afa6ee9
 base_blob: db8a3344398bca79ea5cafeb580f701c055fd475
 branch: hyp/muse_prefill_layer/norm-boundaries-persistent-multirow
 worktree: .worktrees/muse_prefill_layer/norm-boundaries-persistent-multirow
-mode: null
+mode: check
 restack_of: null
 stale_base: null
 implemented_at: 2026-10-25T035046Z
@@ -63,6 +63,8 @@ submission_sha256: 099456e4ff1371e9b8d2494e7d85536ff61c9e1c299e1e6c3b62ee1490d07
 norm_sha256: 981b8d34f7cb8de7b232b56a65feb66bb3b80ea8d27dcaa1f0d48986a89585ad
 submission_blob: 64df734f661474162d248733c3783591c8b005df
 lint_warnings: 22
+attempt_file: 2026-10-25T035047Z-check-norm-boundaries-persistent-multirow.md
+prepared_at: 2026-10-25T035047Z
 ---
 
 # norm-boundaries-persistent-multirow
