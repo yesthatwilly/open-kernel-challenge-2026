@@ -86,7 +86,7 @@ base_sha: de61d5aeb2cabe210254a89cbdd05b3f99ff7b1c
 base_blob: db8a3344398bca79ea5cafeb580f701c055fd475
 branch: hyp/muse_prefill_layer/experts-turn4-ssdq-s1b-dataptr-symbol-fix
 worktree: .worktrees/muse_prefill_layer/experts-turn4-ssdq-s1b-dataptr-symbol-fix
-mode: null
+mode: check
 restack_of: null
 stale_base: null
 implemented_at: 2026-10-25T085911Z
@@ -95,6 +95,8 @@ submission_sha256: d1eb2de0a658ea2013fd039a536179107f33767d314d5febfc20a14200378
 norm_sha256: 6a850da7eba761ade77dc5685cce0e9be6f48809426767fd726178f8a66c9ac5
 submission_blob: f2d91dd181aeb44de20d2eed62ab7e564f2b181f
 lint_warnings: 35
+attempt_file: 2026-10-25T085911Z-check-experts-turn4-ssdq-s1b-dataptr-symbol-fix.md
+prepared_at: 2026-10-25T085911Z
 ---
 
 # experts-turn4-ssdq-s1b-dataptr-symbol-fix
