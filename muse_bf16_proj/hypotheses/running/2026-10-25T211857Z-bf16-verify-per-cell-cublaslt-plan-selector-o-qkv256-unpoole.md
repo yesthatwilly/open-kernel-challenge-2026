@@ -57,7 +57,7 @@ review: proceed
 status: running
 review_at: 2026-10-25T212522Z
 review_companions: null
-stage: claimed
+stage: implemented
 claimed_at: 2026-10-25T212547Z
 base_sha: d8ecddc962f6cc4f6ef3802f28e49e32b60b4010
 base_blob: ad8d7254a64a52db2a8f56ec0ad262748153a2e8
@@ -66,6 +66,12 @@ worktree: .worktrees/muse_bf16_proj/bf16-verify-per-cell-cublaslt-plan-selector-
 mode: check
 restack_of: null
 stale_base: null
+implemented_at: 2026-10-25T213559Z
+impl_commit: f687dee0203effc12bf5705f40598b8ef697614f
+submission_sha256: 81089cdd43d1fa6746db08109fba9c1cf9bd10bce63c3effc4d249afc53fc455
+norm_sha256: 5bf6afd6f22094b1d056a28188705c38b2b6b65973e74ce63f67cd5fc29c183e
+submission_blob: 1950f1435c1a301ea25f06353bed0780ab5a2bbd
+lint_warnings: 40
 ---
 
 # bf16-verify-per-cell-cublaslt-plan-selector-o-qkv256-unpoole
@@ -111,3 +117,63 @@ No companion is warranted. Each cell has its own state flag decided by an in-run
 - Per-cell 32 MB workspace x 5 cells x state copies is about 160+ MB per state. That is fine on H200, but would a single shared per-state workspace (cells run serially on one stream) be simpler and equally safe?
 - The hypothesis says it supersedes and retires the held combo-cublaslt-single-node-m128-m256-plus-naive. Confirm churn actually retires it so the two are not both dispatched.
 
+
+## Implementation notes
+
+Only `<worktree>/muse_bf16_proj/submission.py` changed (+498/-9). Cell B (`_LT_CPP`, `_lt_prepare`, `MuseLtDesc`) is untouched.
+
+What changed:
+- New C++ module `_LT2_CPP` (`muse_bf16_lt_percell_v1`; symbols `lt2_candidates`/`lt2_run`, struct `MuseLt2Desc`) with a `transa` flag: TN weight `[n,k]` or the NN view `[k,n]`. A separate module, so cell B's machinery cannot move (review: qkv m=128 is a machinery-defect canary). Built at import with build time printed; it holds no device kernels, so there are no regs/spills to report.
+- `PC_CELLS`: o128, o256, qkv256, unp128, unp256, each with its own flag (`lt_o128_ok`, ...) in `NEW_CELL_FLAGS`, so the A/B check, FINAL FLAGS and the failure path see them. Plans live in `state["pc_plan"]`; one shared 32 MB fp32 workspace per state (`pc_ws`; cells run serially on one stream; answers the review's open question). `o_t = W_o.t().contiguous()` is built in prepare and dropped if unused. State B inherits flags and plans, with its own algo-row clones, workspace and `o_t`.
+- `_pc_cell`: candidates are the heuristic plans on the TN weight and, for o and unpooler, the NN view, with split-K 1 (top 8 per layout) and split-K > 1 (top 4 per layout, 32 MB cap). unp256 also gets the K-halves bmm (S=2, fp32 partials via `torch.bmm(out_dtype=float32)`, add, cast). qkv K-split and unpooler m=128 K-halves are excluded as measured dead. Each candidate is correctness-checked (`_cell_check`, verbose off; its probe row is compared with the true weight column, which answers the review's NN-probe question) and cold-L2 graph-timed (LT_PICK_REPS). The master routed path is timed too. The top 2 go to the gate.
+- `_pc_gate_round`: two independent interleaved rounds. Each round uses a fresh x, recaptured graphs, 41 reps, a 256 MB flush and the empty-graph baseline. Route only if BOTH rounds give master/cand >= 1.03 AND cand IQR <= 1.5x master IQR. Both rounds are always run and printed, with medians and IQRs. Then `torch.profiler` lists master's and the candidate's kernels. The cell is dropped if the kernel names are identical to master's, or the launch count is 0 or above 4.
+- kernel_fn: one `_pc_route` branch (cfg/flag/shape only) placed ABOVE the bulk, NN and dispatch_impl branches. This is the required fix for unpooler m=128, whose incumbent is the NN torch.mm. The gate's flag-off side is kernel_fn with the flag off, i.e. the actually routed path. PATH CHOSEN prints which incumbent was gated (NN torch.mm vs dispatch_impl).
+- AB_CASES gained o 128, o 256, qkv_gate 256 and unpooler 256. `_ab_component(layer, m, state)` maps a routed PC cell to its own flag, so a miss cannot switch off nn_ok.
+- Deadlines: the phase does not start after 150 s into `_prepare_state`, and each cell not started inside 100 s of the phase prints `skipped: deadline`.
+- The LAST lines of prepare are one `PC-SUMMARY PATH CHOSEN` line per cell with its FINAL flag (after the A/B check).
+
+Review fixes applied:
+- (1) The unp128 branch sits above the NN branch.
+- (2) Lt candidates with OUTPUT_TYPE reduction (red=4) are excluded.
+- Open question 1: master's profiled kernel names are printed next to the candidate's, and an identical kernel set is dropped.
+- Open question 2: the master IQR is floored at 0.25 us in the bound, so a tiny master IQR cannot reject everything.
+- Open question 3: rounds are independent (fresh x, recaptured graphs).
+- Open question 4: the NN probe check is re-pointed (see above).
+- Open question 5: one shared workspace per state.
+- Open question 6 (retiring combo-cublaslt-single-node-m128-m256-plus-naive) is a churn action, not code.
+
+Deviations and clarifications:
+- Split-K > 1 plans are kept only with reduction scheme COMPUTE_TYPE (fp32 workspace partials). INPLACE (red=1) also accumulates in bf16, so it is excluded as well as OUTPUT_TYPE, for precision safety. Split-K-1 plans are not filtered by red.
+- `_cell_check` gained `verbose=True` (default unchanged) so screening ~100 candidates does not flood the log. Existing callers are unchanged.
+- The gate threshold is expressed as master/cand >= 1.03 (the hypothesis wording), not cell B's cand/master <= 0.98.
+
+Biggest risks:
+- The `torch.bmm(out_dtype=...)` support on the judge's torch is unknown. If it is missing, the K-halves candidate is excluded via the exception handler.
+- The new C++ module's compile time at import adds to the run's wall clock.
+- Nothing could be run on this node (no GPU or torch), so nothing is executed.
+
+## Rules check
+
+- [x] CUDA-graph capturable: kernel_fn's PC branch only calls `lt2_run` (host descriptors, no sync, no value-dependent allocation) or bmm/add/cast; the diff has no .item()/.cpu()/synchronize in kernel_fn. All syncs sit in prepare-only helpers.
+- [x] Nothing derived from `data` is cached: plans and workspace come from weights and synthetic prepare inputs only. The workspace is overwritten each call.
+- [x] Weights: `o_t` is a lossless transpose built in prepare; the bf16 weights are unchanged. No precision change (split-K only with fp32 COMPUTE_TYPE reduction; K-halves with fp32 partials).
+- [x] Activations BF16 where SGLang keeps BF16: x and out are bf16; fp32 is used only internally for accumulation and partials.
+- [x] Attention: n/a, bf16 projection problem.
+- [x] No timing patches, harness frames, module edits, reference import, subprocesses or network. load_inline compiles in-process, as cell B already does.
+- [x] All work happens inside the timed call; no output caching or replay.
+- [x] Any miss (build, check, gate, profile, deadline, A/B) lands on master's exact path per cell with its own flag; bounded waits n/a (no custom kernels, no spins).
+
+okc_lint: `OK with warnings: muse_bf16_proj/submission.py` (warnings are only prepare-time host-sync and flush-buffer dtype notes, the same kinds as on master). `py_compile` passes. `__pycache__` removed.
+
+## Pre-flight audit
+
+Audited 2026-10-25 by an opus subagent, by reading only (no GPU on this node). **Verdict: dispatch.** No fixes were needed.
+
+- (1) Second Lt module: `_lt2_build` catches every exception and returns None. `_pc_prepare` then sets all five flags False with note "no lt2 module", and `_pc_route` returns None, so every cell lands on master. The names are distinct from cell B everywhere: module `muse_bf16_lt_percell_v1` vs `muse_bf16_lt_qkv128_percall_v1` (separate build dirs), functions `lt2_candidates`/`lt2_run`, struct `MuseLt2Desc`, macro `MUSE_LT2_CHECK`, and a static helper. Each .so loads RTLD_LOCAL anyway.
+- (2) `torch.bmm(out_dtype=fp32)`: the K-halves candidate runs first inside `_pc_cell`'s per-candidate try, through `_cell_check` eagerly and before any capture. A missing overload raises there and excludes only that candidate. `torch.mm(out_dtype=)` has already run on the judge (router-hilo-addmm), so the overload family is present.
+- (3) Workspace: `pc_ws` is 32 MB and allocated in `_pc_prepare`, once per state; state B allocates its own. Heuristic plans that need more than `PC_WS_BYTES` are filtered out. The C++ code holds no static or global device pointer, and `lt2_run` takes the ws tensor per call.
+- (4) Split-K > 1 is kept only when red == 2 (COMPUTE_TYPE, fp32 with CUBLAS_COMPUTE_32F). OUTPUT_TYPE (4), INPLACE (1) and unreadable (-1) values are excluded. Split-K-1 plans have no reduction. The `_cell_check` rel-L2 of 3e-3 and the exact probe row of 1e-4 are a second guard.
+- (5) kernel_fn's PC branch makes no heuristic query. It builds host descriptors, then calls one `cublasLtMatmul` with the prepare-frozen CPU algo row and the state ws. The only allocation is the shape-only output (bmm partials for K-halves). It branches on cfg, shape and pointer alignment only, the same as cell B.
+- Also checked: the PC branch sits above the NN branch, so unpooler m=128 is reachable. The flag-off gate side is master's routing. The NN probe is compared with the true W column. `unpooler_t` always exists, so state B's K-halves plan is safe. A failed state-B build turns off the PC flags through NEW_CELL_FLAGS. The test shapes (m 33/130/512/1000) never match PC_BY_LM. okc_lint is OK (warnings are prepare-only) and py_compile passes.
+
+Residual risk: the gate will likely route 0-2 cells, so the result is mostly per-row PATH CHOSEN. The extra load_inline compile adds about 30-60 s of run wall clock, inside the 10-minute limit.
