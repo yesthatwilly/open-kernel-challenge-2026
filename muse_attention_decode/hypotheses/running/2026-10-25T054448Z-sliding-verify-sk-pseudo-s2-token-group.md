@@ -71,7 +71,7 @@ base_sha: 6f95ce71ba21682ba9cbb6d346abb2a93a862b2f
 base_blob: 76492911dfd6685139a2ffac06c1d27083ecdb0a
 branch: hyp/muse_attention_decode/sliding-verify-sk-pseudo-s2-token-group
 worktree: .worktrees/muse_attention_decode/sliding-verify-sk-pseudo-s2-token-group
-mode: null
+mode: check
 restack_of: null
 stale_base: null
 implemented_at: 2026-10-25T084910Z
@@ -80,6 +80,8 @@ submission_sha256: 1926573a2bbdde9bebf692b1770bff845fac7977b2ec293f9d03ef6e03b6d
 norm_sha256: bf3c789fd6f7bc3061490ec1cb37abfdd4992d0e3b01d201e3fecd13d719a494
 submission_blob: 7fd30a78be18303b7c935dc944c31ff33649bed0
 lint_warnings: 27
+attempt_file: 2026-10-25T084910Z-check-sliding-verify-sk-pseudo-s2-token-group.md
+prepared_at: 2026-10-25T084910Z
 ---
 
 # sliding-verify-sk-pseudo-s2-token-group
