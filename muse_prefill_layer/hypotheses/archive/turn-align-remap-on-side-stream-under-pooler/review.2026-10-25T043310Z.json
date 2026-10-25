@@ -1,0 +1,22 @@
+{
+ "model": "opus",
+ "verdict": "proceed",
+ "summary": "Cheap, rules-clean placement change with real slack to hide into at turn_4 (side branch ~105 us + align 70 us under a ~260-300 us pooler); can never be slower than master barring SM contention. Small headline (~+0.5-0.8%) and only readable from the profile's GPU-busy/overlap lines, not from shape z.",
+ "justification": "Profile (submit 502f2eab): _align_parallel_kernel 70.5/69.3 us at turn_4 and 16.9/16.8 us at turn_1, serial on the main stream after the join. Side branch today at turn_4: router GEMM (~39-43 us) + logits add (~30 us) + routing_kernel 32.7 us = ~105 us; the pooler is one of the big nvjet rows (~260-300 us at T=3012). GPU busy 4879 vs kernel-sum 4978 us shows the router branch already overlaps ~100 us, so concurrency works on this GPU. New critical path = max(pooler, branch+align) <= old max(pooler, branch) + align, so it is monotone except for SM/issue contention with the pooler. At turn_1 the pooler is only ~40-50 us and the branch ~35-50 us, so most of the 17 us will not hide - expect ~0 there. Weakest link: 'moe-align-side-stream' (old parity base) measured 1.0076 neutral for the same idea; the difference is that the align kernel moved now is 70 us, not SGLang's cheaper count_and_sort - plausible but unproven.",
+ "confounders": [
+  "router-hilo-one-gemm-n512 (in stack-tonight-five): sets the side branch length (one N=512 fp32-out GEMM + add); a longer branch would eat the slack. Unchanged here.",
+  "moe-align-local-routes-parallel-port (in stack-tonight-five): is the 70 us kernel being moved; its 33-program latency-bound shape is what makes it overlap-friendly (few SMs, little smem).",
+  "Queued experts-turn4-cuda-dequant-producer-ss-wgmma and experts-turn1 port also call _align_parallel inside _experts_marlin with their own bsm (128/32); merge conflict if several land - the helper should take bsm as a parameter."
+ ],
+ "interference": "No companion: the effect is read directly from the profile (the _align_parallel row starts before the pooler ends; GPU busy drops vs kernel sum by ~+60 us at turn_4). A revert-A/B would not add information.",
+ "rules_flags": [
+  "Do NOT pass data['local_start'] to _align_parallel directly: it is a device int32[1] tensor and the kernel takes local_start as a scalar, so that would need .item() (host sync, illegal under graph capture). Keep _local_expert_ids(topk_ids, data['local_start']) on the side stream, then _align_parallel(local_ids, 0, LOCAL_EXPERTS, bsm).",
+  "The new outputs (local_ids, sorted_ids, block_experts, n_padded) are allocated on the side stream; extend the record_stream loop to all of them (eager path), keep the single main_stream.wait_stream(side_stream)."
+ ],
+ "companions": [],
+ "open_questions": [
+  "Does the 33-CTA align co-reside with the coopA pooler kernel or wait for SM slots? The profile timeline answers it.",
+  "Could the turn_1 branch exceed the pooler and just move the wait? Harmless, but if so restrict to T > 1024 in a follow-up."
+ ],
+ "builder_instruction": "Move _local_expert_ids + _align_parallel(local_ids, 0, LOCAL_EXPERTS, bsm) (bsm from a shared shape-only helper) into the side-stream block for T <= MARLIN_MAX_TOKENS when align_par_ok, pass the tuple into _experts_marlin, record_stream every new tensor, and never hand the local_start tensor to the scalar kernel argument; read the result from the profile overlap, not shape z."
+}

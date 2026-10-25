@@ -35,8 +35,10 @@ depends_on: null
 priority: 3
 kind: primary
 controls_for: null
-review: required
+review: proceed
 status: queued
+review_at: 2026-10-25T043310Z
+review_companions: null
 ---
 
 # turn-align-remap-on-side-stream-under-pooler
@@ -54,3 +56,25 @@ Built on master (a81d19c). In the best profile master's _align_parallel_kernel r
 ## Risk
 
 Kill: the profile shows _align_parallel overlapping the pooler (GPU busy below the kernel sum) and turn_4 does not move beyond 1% -> placement is not the cost. Risk: a longer side branch than the pooler at turn_1 just moves the wait; the judge sees no harm beyond noise.
+
+## Adversarial review
+
+Reviewed 2026-10-25T043310Z by an adversarial subagent (model opus).
+
+**Verdict: proceed.** Cheap, rules-clean placement change with real slack to hide into at turn_4 (side branch ~105 us + align 70 us under a ~260-300 us pooler); can never be slower than master barring SM contention. Small headline (~+0.5-0.8%) and only readable from the profile's GPU-busy/overlap lines, not from shape z.
+
+### Justification
+Profile (submit 502f2eab): _align_parallel_kernel 70.5/69.3 us at turn_4 and 16.9/16.8 us at turn_1, serial on the main stream after the join. Side branch today at turn_4: router GEMM (~39-43 us) + logits add (~30 us) + routing_kernel 32.7 us = ~105 us; the pooler is one of the big nvjet rows (~260-300 us at T=3012). GPU busy 4879 vs kernel-sum 4978 us shows the router branch already overlaps ~100 us, so concurrency works on this GPU. New critical path = max(pooler, branch+align) <= old max(pooler, branch) + align, so it is monotone except for SM/issue contention with the pooler. At turn_1 the pooler is only ~40-50 us and the branch ~35-50 us, so most of the 17 us will not hide - expect ~0 there. Weakest link: 'moe-align-side-stream' (old parity base) measured 1.0076 neutral for the same idea; the difference is that the align kernel moved now is 70 us, not SGLang's cheaper count_and_sort - plausible but unproven.
+
+### Confounders on the current kernel
+- router-hilo-one-gemm-n512 (in stack-tonight-five): sets the side branch length (one N=512 fp32-out GEMM + add); a longer branch would eat the slack. Unchanged here.
+- moe-align-local-routes-parallel-port (in stack-tonight-five): is the 70 us kernel being moved; its 33-program latency-bound shape is what makes it overlap-friendly (few SMs, little smem).
+- Queued experts-turn4-cuda-dequant-producer-ss-wgmma and experts-turn1 port also call _align_parallel inside _experts_marlin with their own bsm (128/32); merge conflict if several land - the helper should take bsm as a parameter.
+
+### Interference and A/B needs
+No companion: the effect is read directly from the profile (the _align_parallel row starts before the pooler ends; GPU busy drops vs kernel sum by ~+60 us at turn_4). A revert-A/B would not add information.
+
+### Open questions
+- Does the 33-CTA align co-reside with the coopA pooler kernel or wait for SM slots? The profile timeline answers it.
+- Could the turn_1 branch exceed the pooler and just move the wait? Harmless, but if so restrict to T > 1024 in a follow-up.
+
