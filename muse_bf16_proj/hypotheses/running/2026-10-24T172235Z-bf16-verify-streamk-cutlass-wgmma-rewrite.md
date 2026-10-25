@@ -102,7 +102,7 @@ review: proceed
 status: running
 review_at: 2026-10-24T172632Z
 review_companions: null
-stage: implemented
+stage: dispatched
 claimed_at: 2026-10-24T172707Z
 base_sha: 18e37900783719c41373a7e04963ba5b66578579
 base_blob: a8bb42ac483318e9fbc84bc7826a27b7a704d1fb
@@ -117,6 +117,8 @@ submission_blob: 7161897671cd56878ce6338f47c57b9b0dd9b63c
 lint_warnings: 4
 attempt_file: 2026-10-25T001016Z-check-bf16-verify-streamk-cutlass-wgmma-rewrite.md
 prepared_at: 2026-10-25T001016Z
+job: f5b1361aaa0e48b5
+dispatched_at: 2026-10-25T001031Z
 ---
 
 # bf16-verify-streamk-cutlass-wgmma-rewrite
