@@ -66,7 +66,7 @@ base_sha: 0561d7b52f7d8abd273c88d35e7f5da32adba650
 base_blob: d8769ef25caf845a0e207538ccc5c62394b6ee3b
 branch: hyp/muse_attention_decode/full-decode-sk-s4-deferred-ticket-arrive
 worktree: .worktrees/muse_attention_decode/full-decode-sk-s4-deferred-ticket-arrive
-mode: null
+mode: check
 restack_of: null
 stale_base: null
 implemented_at: 2026-10-25T084530Z
@@ -75,6 +75,8 @@ submission_sha256: 60f75b152859d787c14199405b1f423f0d3e9fcced02ae825f7173fe223a4
 norm_sha256: beade6948ed71eb80fe497b5def8b24946a4a39a0f3d9eb4d13da3c560e9aaae
 submission_blob: 4326c3933949f96c023cf1095133ec105e76f55f
 lint_warnings: 25
+attempt_file: 2026-10-25T084530Z-check-full-decode-sk-s4-deferred-ticket-arrive.md
+prepared_at: 2026-10-25T084530Z
 ---
 
 # full-decode-sk-s4-deferred-ticket-arrive
