@@ -65,7 +65,7 @@ base_sha: 848976650adeb8a2fc5263b71136dbf192bebf90
 base_blob: 353e3b19a7edd5cb879e202d78097f474bcce207
 branch: hyp/muse_bf16_proj/qkv-swapab-w128-splitk7-one-wave-m32
 worktree: .worktrees/muse_bf16_proj/qkv-swapab-w128-splitk7-one-wave-m32
-mode: null
+mode: submit
 restack_of: null
 stale_base: null
 implemented_at: 2026-10-25T111928Z
@@ -74,6 +74,8 @@ submission_sha256: 8aefb6e42b790ebe4bc8c6a2906d0029247c293c95ff1d096945e83fcd46a
 norm_sha256: 178db6026e557087ce1fedba1a0eaf582876420f94ed134cb9e4d6b680c8d9c7
 submission_blob: b3a2f3b5156edd61c70c5007840f11068f7afb95
 lint_warnings: 20
+attempt_file: 2026-10-25T111928Z-submit-qkv-swapab-w128-splitk7-one-wave-m32.md
+prepared_at: 2026-10-25T111928Z
 ---
 
 # qkv-swapab-w128-splitk7-one-wave-m32
