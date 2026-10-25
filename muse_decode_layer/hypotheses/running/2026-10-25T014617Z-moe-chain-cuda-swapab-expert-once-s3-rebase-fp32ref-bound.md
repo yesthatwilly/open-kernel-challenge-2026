@@ -77,7 +77,7 @@ base_sha: 1177e314e5b0c1b2d21bb03967270350659d0f15
 base_blob: 451c3c09efdc6fc55db461ae20f27cd8e1cd4e9c
 branch: hyp/muse_decode_layer/moe-chain-cuda-swapab-expert-once-s3-rebase-fp32ref-bound
 worktree: .worktrees/muse_decode_layer/moe-chain-cuda-swapab-expert-once-s3-rebase-fp32ref-bound
-mode: null
+mode: check
 restack_of: null
 stale_base: true
 implemented_at: 2026-10-25T035159Z
@@ -86,6 +86,8 @@ submission_sha256: cdcac6439df93fb054336b23ab4c5cec6367baeb93e5a66a54cc8deef36d4
 norm_sha256: 2e18883291be972ece9c4588d8b6421f45d470803b492f037078ff59c7576269
 submission_blob: aa4d099296999ecc3e96238423bded7c90dd656e
 lint_warnings: 52
+attempt_file: 2026-10-25T035159Z-check-moe-chain-cuda-swapab-expert-once-s3-rebase-fp32ref-bound.md
+prepared_at: 2026-10-25T035159Z
 ---
 
 # moe-chain-cuda-swapab-expert-once-s3-rebase-fp32ref-bound
