@@ -170,3 +170,83 @@ No scored companion is warranted. The natural control already exists: combinatio
 - Was source E's band-2 1.006x ever a pass-2 number? The log shows only pass-1 lines for B=16 (grid 128 p8 at 16.2 us net). If pass 2 at B=16 has never been measured, the 'starting point' of the conjecture is unknown.
 - Is the tiled kernel's program count at 16-32 tokens (64 programs of 4 warps, per the conjecture) actually fewer and faster than 288-576 one-warp programs, or does it under-fill 132 SMs at that size? The GATE B SD16/SD32 pre-node lines answer this and should be printed even when the class declines.
 
+
+## Implementation notes
+
+Base: worktree at 1e8d6d6a (blob 5cf8fae). Master has since moved to 02296b75, but `git diff 1e8d6d6a master -- muse_attention_decode/submission.py` is empty, so no merge was needed. Built with `python3` edit scripts only. Diff: 1 file, +1473 / -95.
+
+What changed (worktree muse_attention_decode/submission.py):
+- **Clock.** `IMPORT_T0 = time.perf_counter()` now sits at the very top of the module, before every other import. `_nb_mark` prints the elapsed IMPORT_T0 time at each boundary of master's import sequence (prints only) and at the start and end of every new phase.
+- **SOURCE A (183eb55) as a new module `muse_full_decode_c320`.** The CUDA comes from 183eb55's templated `splitkv_attn_kernel<CHUNK>` and `splitkv_combine_kernel<CHUNK, NW>`, with the __host__ __device__ constexpr smem helpers and the strided issue_meta loop. It is instantiated only at <320> and <320,16> (512-thread combine). I checked by script that master's `_SPLITKV_CUDA` is byte-identical to 183eb55's base. Master's v1 module and its <1024> code are untouched.
+  - The module exposes `c320_init`, `c320_attn` and `c320_combine`. `c320_init` runs at import, before any launch. It calls cudaFuncSetAttribute and returns binaryVersion, ptxVersion, regs, local, dyn smem and CTAs/SM, plus the combine kernel's attributes. The module has no static locals and holds no device pointers (review 8, 9).
+  - Python: `_c320_forward` runs after master's `_pre_attention_kernel`. max_chunks = ceil(page_table.shape[1] / 320), grid 2 x SM, and the workspaces are `torch.empty` per call.
+  - kernel_fn takes it only when the class is FD1 and `_NB_C320` is set.
+- **GATE A** (`_nb_c320_gate`):
+  - The cubin must be version 90, with at least 1 CTA/SM; it warns below 2.
+  - 17 eager cases: the canary, lens 80000 and 5000 x kv 1 / 0.25 x grid device / 3, and 1 / 63 / 64 / 4097 keys at (kv 1, device) and (kv 0.25, grid 3). Each must reach rel L2 < 2e-2 vs `_splitkv_reference` and < 5e-3 vs master's own B=1 step on cloned caches, be finite, and leave cache bytes equal to master's.
+  - Two-state A B B A A B capture-once replay (refilled inputs, outputs poisoned with NaN) at 80001 and 4097 keys, then a ticket check.
+  - Interleaved cold-L2 graph timing, median of 41 with the empty graph subtracted, of the c320 step vs master's B=1 step (two-level when `_B1_PATH`, else FA3) and the pre-attention node alone. It routes only at ratio <= 0.98, and the decision prints as `PATH CHOSEN: full decode_1 [A chunk320]: ...`.
+- **SOURCE B (880b01b).** `_pre_attention_tiled_kernel` is copied verbatim. `_nb_pre` launches either first node. kernel_fn's non-sliding-decode body moved unchanged into `_nb_step(data, tiled, c320)`, so (False, False) is master launch for launch. kernel_fn calls it with flags derived from config only (`_nb_class(cfg)` read against the frozen `_NB_TILED` / `_NB_C320`).
+  - `_sd_run` and `_sliding_decode_sk` read `SD16` / `SD32` from `_NB_TILED`.
+  - GATE B per class: byte/ulp exactness (`_nb_exact`: cloned caches and NaN-poisoned query buffers; q and both caches must differ by at most 1 e4m3 ulp on at most 1% of bytes, with no NaN or unwritten byte). Then the whole step kernel_fn would run is timed with each first node, downstream held fixed, plus both nodes alone, interleaved cold-L2, median of 41. It routes at <= 0.98, followed by a two-state replay.
+  - Routable classes: SV1 / SV16 / SV32, FD1 (inside whichever B=1 pair GATE A chose), and SD16 / SD32 (decided inside the band gate's pass 2).
+- **SOURCE E band 2** (`_nb_sd_band`, a copy of master's `_sd_gate_band`). Pass 1 is unchanged: every TOK=1 variant x grid with master's pre-attention, against Triton and the cluster incumbent. Pass 2 is widened (see the review fixes). The route uses master's rule against the incumbent. A route then needs the two-state replay with [80000] + `_SK_LENS16[1:]` at kv 0.25 and tickets back to 0.
+- **Band 3.** It is re-timed by the same function at B=32 against cluster C=4. Its route changes only if GATE B picks the tiled node there and that pair clears master's 1.03x. Otherwise master's band-3 decision stands.
+- **Small edits to master's functions:**
+  - `_sd_case` and `_sd_validate` take `tiled=False`. Master's calls are unchanged, and their tags are unchanged when tiled is off.
+  - `_sd_setup_body` sets `_SD_VALID = True` once master's validation passes.
+  - Master's import sequence runs first, unchanged, apart from the clock prints and the c320 build thread (next item).
+- **Build overlap.** The c320 nvcc build runs on a `threading.Thread`, started before master's first `load_inline`. It overlaps master's own builds and finishes long before master's first timing gate, so master's measured selectors are not affected (the review's open question). P3 joins it, waiting at most 35 s. The thread never writes os.environ, because master's builds set TORCH_CUDA_ARCH_LIST on the main thread. Threads are not processes: no subprocess, multiprocessing, fork or spawn appears in the file.
+- **Phases after master,** in order, each with a start rule and a deadline:
+
+  | Phase | What it does | Deadline |
+  |---|---|---|
+  | P1 | Compiles every tiled Triton variant (RoPE+unpaired, noRoPE+unpaired, noRoPE+paired); exactness for SD16 / SD32 / SV1 / SV16 / SV32 / FD1; master's `_sd_validate` cases with the tiled first node | 60 s |
+  | P2 | Band 2 (B=16) gate + replay | 40 s |
+  | P3 | c320 join + GATE A | 60 s |
+  | P4 | Band 3 re-time | 40 s |
+  | P5 | GATE B for SV1 / SV16 / SV32 / FD1 + replays | 60 s |
+  | P6 | Print-only GATE B for FD16 / FD32 / FV1 / FV16 / FV32 | 30 s |
+
+  A phase starts only if elapsed + deadline <= 480 s. If it ends past its deadline, its decisions are discarded. Tickets are re-zeroed after each phase.
+- **Publish.** `_SD_ROUTE` (MappingProxyType), `_NB_TILED` (frozenset) and `_NB_C320` are assigned together in one statement after P6. Then one eager kernel_fn per changed class runs through the real dispatch, with its predicate asserted, against the FP32 reference. On any failure master's snapshot of all four tables is restored. Any exception in the phases leaves, or restores, master's tables.
+
+Review fixes, each one applied:
+1. Pass 2, bands 2 and 3: Triton, the cluster incumbent (band 3), [master pre + sk], [tiled pre + sk], both pre nodes alone and the sk kernel alone run in one interleaved set (median of 31). Both pairs' Triton / pair and incumbent / pair ratios are printed, along with GATE B's [tiled + sk] / [master + sk] ratio.
+2. Band 2 keeps master's 1.05x vs a Triton incumbent (`need` comes from master's rule: 1.05 vs Triton, 1.03 vs cluster). The PATH CHOSEN line also says whether the master-pre pair clears the bar.
+3. The skF re-gate is dropped. The FD16 / FD32 / FV1 / FV16 / FV32 GATE B lines are print-only (P6, last), and `_FUSED_ROUTE` is never touched.
+4. Band 2 is P2, right after the short tiled compile/exactness phase and before c320 GATE A, band 3 and every diagnostic. IMPORT_T0 is printed at every boundary of master's phases and of the new ones, and the clock starts at the top of the module.
+5. A phase starts only if now + deadline <= 480 s. A skip prints SKIPPED with the numbers, and its classes stay on master.
+6. The tiled-pre `_sd_run` passes master's `_sd_validate` cases (B=1 lens 0/1/63/2047/2048/2049/80000, B=3, ragged B=16/32, kv 1 / 0.25, grids 3/7/2R/3R/SM/2xSM), via `_sd_validate(tiled=True)` in P1. If it fails, SD16 and SD32 never take the tiled node.
+7. The route tables are published atomically after all phases, with no provisional global route during the checks. The replay checks call the exact functions kernel_fn dispatches to (`_nb_step`, `_sd_run`) with explicit flags, and a post-publish kernel_fn check confirms the dispatch.
+8. The c320 module holds no static state and no device pointers. The 183eb55 `static bool attr_set` was removed, and the workspaces are per call.
+9. `cudaFuncSetAttribute` runs in `c320_init` at import, before any c320 launch. Every routable tiled Triton variant is JIT-compiled in P1 before any gate or route uses it.
+- Open question 1 (import time): answered by building c320 on an overlapping thread and by the per-boundary IMPORT_T0 prints.
+- Open questions 2 and 3: answered by the printed pass-2 lines and GATE B lines, which are printed even when a class declines.
+
+Deviations:
+- **No TORCH_CUDA_ARCH_LIST=9.0a for c320.** The build thread cannot set it without racing master's main-thread builds. The c320 code has no sm_90a-only PTX (mma.sync, cp.async.cg/ca only), its arch flags are printed, and binaryVersion == 90 is checked before any launch.
+- **SD16 / SD32 GATE B uses the band gate's pass-1 pick, not a fixed p8.** It is decided inside that band's pass 2, with the downstream sk kernel set to pass 1's best (variant, grid) rather than a fixed p8 grid. That is the pair kernel_fn would route.
+- **Different c320 deadline from the spec.** The spec gave the c320 build 120 s. Because the build overlaps master's sequence, P3's deadline is 60 s (35 s join plus GATE A).
+- **Replay order.** All new two-state replays use the A B B A A B order.
+
+## Rules check
+
+- [x] CUDA-graph capturable. kernel_fn's reachable code (`_nb_class`, `_nb_step`, `_nb_pre`, `_c320_forward`, `_sliding_decode_sk`, `_sd_run`, `_ps_prepare_q_tiled`) has no `.item()`, `.cpu()`, synchronize or prints. Allocations are sized from shapes or config only (page_table.shape[1], batch, grid). The branches read config and the import-frozen tables only.
+- [x] Nothing derived from `data` is cached across calls. The new module globals are frozen tables, the c320 module handle and the build record; none holds a tensor or a device pointer into a state.
+- [x] Weights: n/a. This problem has no weights and no prepare().
+- [x] Activations are BF16 where SGLang keeps BF16, and bf16 out. The KV cache stays FP8 E4M3. Queries are FP8 E4M3 (both first nodes round q identically, within 1 ulp as checked). Softmax and merges are fp32.
+- [x] Attention sees every key. c320 covers every key of the context in 320-token items; the sk window covers the whole 2048 window. No top-k, sparse or skip.
+- [x] No timing patches, harness access, module edits, reference import, processes or network. The c320 build uses a thread, not a process, and the lint `process` rule is clean.
+- [x] All work happens inside the timed call; no output caching or replay. The judge's two states are safe: no static or module global holds per-state pointers. Two-state A B B A A B replays with refilled inputs and NaN-poisoned outputs cover every new route.
+- [x] No prints, try/except or per-call mutable state in kernel_fn or anything it reaches.
+- [x] First line `# okc: problem=muse_attention_decode` is kept. The file passes py_compile, and an AST/symtable scan found no undefined global names.
+
+okc_lint output (`python3 -I .claude/skills/churnsubs/bin/okc_lint.py <worktree>/muse_attention_decode/submission.py --problem muse_attention_decode`):
+
+    warn  host-sync ... (75 lines, all torch.cuda.synchronize() / .item() in import-time checks, "outside kernel_fn's call graph; fine in prepare()")
+    OK with warnings: muse_attention_decode/submission.py
+
+Biggest compile/run risk:
+- **Concurrent load_inline.** The c320 build on a background thread runs alongside master's main-thread load_inline; this is untested on the judge. If it fails, the build error is printed and FD1 stays on master.
+- **Import time.** If master's import sequence is already near 400 s, the 480 s rule skips P3 to P6, and the run measures master plus at most band 2.

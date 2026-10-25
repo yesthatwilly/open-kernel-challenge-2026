@@ -162,3 +162,69 @@ No companion is warranted. Every variant is a separate instantiation behind one 
 - launch_dependents placement in A: the source triggers after the partial writes (end of work), so the only overlap is combine launch latency. If an earlier trigger is tried, it is safe for correctness (wait blocks until A fully completes and flushes) but can park 512-thread combine CTAs on SMs. With 264 CTAs at 2/SM there is no free slot except the 14 idle-CTA slots. Keep the source's placement unless the gate shows a reason.
 - Harvest: compare full decode_1 against 22.4 us (master) and 19.49 us (chunk320 alone). A pass is <= ~19 us with the routed variant named. Read V0..V4 and the printed interaction term from the import log to confirm or refute super-additivity. A judged result near 19.5 us with V3/V4 routed means C and D added nothing on c320.
 
+
+## Implementation notes
+
+Built 2026-10-25 on base c20f01f7 (submission.py blob 5cf8fae, identical to current master 02296b75 for this file, so no merge was needed). Only `muse_attention_decode/submission.py` in the worktree changed (diff +1183/-1).
+
+What changed:
+- Top of module: `import time` then `IMPORT_T0 = time.perf_counter()` as the first statements after the docstring (review fix 7). The other imports follow, and the later duplicate `import time` was removed.
+- Before `kernel_fn`: `_C320_FN = None` and the config-only FD1 predicate `_c320_gate(cfg)` (batch 1, no RoPE, master's `_shape_gate`). `kernel_fn` gets one new branch after the sliding block: `if _C320_FN is not None and _c320_gate(cfg): return _C320_FN(data)`. `_C320_FN` stays None during master's whole import sequence, so every master check and every other shape class runs master byte for byte.
+- New section at the end of the module, which runs after `_sd_setup`:
+  - The new load_inline module `muse_full_decode_c320f` (with `-DC320_FUSED=1`), or `muse_full_decode_c320` (without it), is built with TORCH_CUDA_ARCH_LIST=9.0a, `-O3 -lineinfo -std=c++20`, and prints its arch flags. Master's v1/v2/skF/slide modules are untouched.
+  - `c320_attn_kernel<320, FUSED>` is SOURCE A's templated kernel A (strided issue_meta loop, `__host__ __device__ constexpr` smem helpers). The layout helpers now take the FUSED flag, because the q region grows from 2048 to 2832 B. FUSED=false is SOURCE A's logic line for line. Its signature has extra unused params (v_scale, qkv, cache_loc, eps), and kc/vc are non-const in this module only.
+  - FUSED=true ports SOURCE C's prologue into the item-based c320 kernel:
+    - The raw bf16 q row (2 KB) rides item 0's page-index cp.async group. issue_meta skips the per-item q copy.
+    - After tiles 0..2 are issued, every CTA builds `qa` in registers once, with the same column map as the smem path. B == 1, so every item has the same q.
+    - The owner CTA is `bx == (total-1) % gx`, and its item nk-1 holds key seq-1. It also brings the raw new k/v heads (512 B) and cache_loc[0]. Warps 0-3 build the new row, and the row is written over key seq-1's slot in the landed ring stage at flat tile `(nk-1)*TILES + last_in/TILE`. That happens after the loop-top wait and barrier, followed by one extra `__syncthreads`. The row is also stored to k/v cache at cache_loc.
+  - `c320_combine_kernel<320, 16, PDL>`: PDL=false is SOURCE A's combine. PDL=true waits on `griddepcontrol.wait`.
+  - `griddepcontrol.launch_dependents` sits at the end of kernel A, after the partial stores, where SOURCE D placed it.
+  - Host entry points: `c320_init`, `c320_attn`, `c320_attn_fused` (under `#ifdef C320_FUSED`), `c320_combine`, `c320_combine_pdl` and `c320_attrs`.
+  - Python: `_c320_run(data, fused, pdl, grid)` and the four fixed functions `_c320_v1.._v4`. Workspaces are `torch.empty` per call, sized from `page_table.shape[1]` (max_chunks = ceil(W/320)). The grid is 2 x SM. V1/V2 run master's unpaired `_pre_attention_kernel` (ROPE=False, as master's batch-1 branch) and then A.
+  - Phases (`_c320_setup` and `_c320_setup_body`):
+    - Build: deadline 120 s.
+    - Attrs: every kernel's binaryVersion/ptx/regs/local/smem/CTAs-per-SM is printed. It requires cap (9,0) and binaryVersion 90 for all.
+    - Checks: deadline 60 s. Every variant runs 21 eager correctness cases. Each is compared with an FP32 reference (< 2e-2) and with master's routed batch-1 output from kernel_fn on cloned caches (< 5e-3). The new rows are compared with master's, and every other row must be unchanged. Each variant then runs the two-state capture-once replays through kernel_fn at 80000 and 4097 keys.
+    - Gate: deadline 60 s. Pass 1 times V0..V4 interleaved: kernel_fn graphs, a 256 MB flush, the empty graph subtracted, median of 41, with p25/p75. Pass 2 times the pass-1 best head to head with V0 and V1 (31 reps). The best is routed only if pass-2 best / V0 <= 0.98.
+    - The route is frozen once in `_c320_setup` (`_C320_FN`), and the shared tickets are re-zeroed afterwards.
+  - Every launch in the checks is announced with a flushed print before it, then synced and confirmed after it.
+
+Adversarial review items and what I did:
+1. K RMSNorm before /k_scale (spec bug): the fused new-K path computes, per KV head over D=64, `rk = 1/sqrtf(warp_sum(x^2)/64 + eps)` and then `(x*rk)/k_scale`. V is `x/v_scale` with no norm. Both use `e4m3_byte` = `__nv_cvt_float_to_fp8(x, __NV_SATFINITE, __NV_E4M3)` (RTNE, saturating), the same order of operations as master's `_pre_attention_kernel`. The fused q uses the same norm and cast. Here the review overrides the spec paragraph ('k / k_scale').
+2. No per-call fallback. `c320_combine_pdl` is its own host entry point that only `C10_CUDA_CHECK`s `cudaLaunchKernelEx`. There is no `cudaGetLastError` recovery and no g_pdl flag. PDL is decided once at import: V2/V4 stay candidates only if their eager cases and their two-state capture/replay passed (printed as `[c320] PDL decided once here: ...`). The route is frozen before any judge capture. The smem attribute moved out of the call path into `c320_init()`, called once at import and covering both A<320,false> and A<320,true>; the launchers never touch process state.
+3. Build isolation. All FUSED-only device and host code (the cuda_fp8 include, e4m3_byte, the prologue, the overwrite, `c320_attn_fused`, its attrs and init) is inside `#ifdef C320_FUSED`. If the FUSED build fails, the module is rebuilt once without it, as `muse_full_decode_c320`, but only if the import clock + 120 s <= 480 s. V1/V2 survive.
+4. The gate prints:
+   - every variant's median with [p25, p75] in both passes, and its ratio to V0;
+   - `interaction (V1-V4) - [(V1-V2) + (V1-V3)]` with each term, the per-variant half-IQRs and their sum (positive = super-additive);
+   - `PATH CHOSEN: full decode_1 [A chunk320]: ...` (V1 vs V0, pass 2);
+   - `PATH CHOSEN: full decode_1 [chain]: V<k> (<sources>) (...)`, or `V0 master (fallback: <reason>)`, with the import clock.
+5. PDL edge. The programmatic serialization attribute is only on the combine launch. In `_c320_run` the output tensor is allocated before kernel A, so the combine directly follows A on the same stream with nothing in between (V2: pre-attn, A, combine; V4: A FUSED, combine). **Where the wait sits:** at the top of `c320_combine_kernel<..., true>`. Above it are only graph inputs that were complete before A started and that A never writes: `seqlens[b]` (n), `v_scale` and warp 0's two gate logits from qkv. Every `ws_ml`/`ws_acc` read (A's partials) is below it. So the combine's gate read does move above the wait (the review's open question). The trigger in A stays where SOURCE D put it (after the partial stores), following the review's guidance.
+6. Correctness cases where key seq-1 falls at offset 319 and at 320 of an item: 320 keys (seq-1 = 319, last of item 0), 321 keys (seq-1 = 320, first of item 1), 640/641 keys on grid 3, and 80000 keys (seq-1 = 79999 at 319 of item 249) / 80001 keys (0 of item 250). They run at kv 1 and 0.25 and at grid device and 3, plus 1 / 5 / 63 / 64 / 4097 / 5001 keys.
+7. `IMPORT_T0` is the first statement of the module. Each phase starts only if clock + deadline <= 480 s (build 120 s per attempt, checks 60 s, gate 60 s), and a phase that finishes past its own deadline is discarded (master kept, and PATH CHOSEN says so).
+- Review (a), overwrite ordering: the overwrite lands after `cp_wait<STAGES-2>` + `__syncthreads` of that tile's iteration. The tile issued in that iteration goes to a different stage ((n+3)%4). An extra `__syncthreads` follows before the QK and PV reads. The same code covers the K and V rings.
+- Review: no nvcc on this node, so the suggested local `nvcc -arch=sm_90a -std=c++20` compile check could not be run. Instead the CUDA source passed a g++ `-std=c++20 -fsyntax-only -Wall` pass in both the FUSED and non-FUSED configurations. CUDA builtins and torch were stubbed and the `<<<>>>` launches rewritten, so the host code and both A instantiations were checked, but device semantics and inline PTX were not. The nvcc risk remains; deviation noted.
+
+Other deviations:
+- `griddepcontrol.launch_dependents` sits in kernel A for both V1 and V2, unconditionally, as in SOURCE D. It is a no-op without a programmatic dependent, so V1 runs a no-op instruction compared with SOURCE A. Templating A on it would have doubled kernel-A instantiations and compile time.
+- The spec's GATE A line `PATH CHOSEN: full decode_1 [A chunk320]` is printed from the chain gate's pass-2 V1-vs-V0 numbers rather than from a separate gate.
+- Comparisons use master's routed batch-1 path through kernel_fn (two-level when `_B1_PATH`, otherwise FA3) as V0. The gate times exactly the kernel_fn graphs that would be routed (each variant is captured with its route set).
+- The replay order follows the spec (A B B A A B) through a new `_c320_alt`. Master's `_alt_check` walks A B A B A B and is left unchanged. Each replay also checks the new rows against master's pre-attention row (V1/V2 exact, V3/V4 <= 3/128 bytes), so a missing row store cannot hide inside 80000 keys.
+
+## Rules check
+
+- [x] CUDA-graph capturable: the new kernel_fn branch and `_c320_run` have no `.item()`, `.cpu()`, synchronize or prints. Workspaces are sized from `page_table.shape[1]` and config only, and the only branches are on the frozen `_C320_FN` and `config`. The variant's `fused`/`pdl` arguments are constants fixed per function. kernel_fn has no try/except. PDL is a captured programmatic edge, checked by the two-state capture/replay before routing.
+- [x] Nothing derived from `data` is cached across calls: no tickets, no device pointers and no workspaces in module or static globals (C++ has no `static` state in the call path; `attr_set` was replaced by `c320_init`). `_C320_EXT` and `_C320_FN` hold only the module and a function.
+- [x] Weights: n/a: no weights in this problem. Nothing is repacked.
+- [x] Activations BF16 where SGLang keeps BF16; KV cache FP8 (the new row is e4m3 RTNE/satfinite, as master); queries FP8 E4M3 (fused q: RMSNorm then e4m3, the same as master's kernel); fp32 softmax and merges; bf16 out.
+- [x] Attention sees every key. Every key 0..seq-1 is in some 320-token item, masked only past seq. The new key seq-1 is attended with its new bytes. There is no top-k, sparse or skip.
+- [x] No timing patches, harness frames/I/O/secrets, module edits, reference import, subprocesses or network: load_inline only, with no subprocess/multiprocessing/fork in the added code.
+- [x] All work happens inside the timed call; no output caching or replay. The import-time checks and gate use synthetic data only.
+
+okc_lint output (`python3 -I .claude/skills/churnsubs/bin/okc_lint.py <worktree>/muse_attention_decode/submission.py --problem muse_attention_decode`):
+
+```
+warn  host-sync  (68 lines, all "outside kernel_fn's call graph; fine in prepare()": master's and the new import-time checks)
+OK with warnings: .worktrees/muse_attention_decode/combo-b1-chain-c320-fused-pre-pdl/muse_attention_decode/submission.py
+```
+
+`python3 -I -m py_compile` ok and `__pycache__` removed. An AST scan of the new functions and kernel_fn found no undefined names.

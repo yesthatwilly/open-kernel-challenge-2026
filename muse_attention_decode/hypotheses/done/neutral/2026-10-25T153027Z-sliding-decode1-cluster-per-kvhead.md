@@ -51,10 +51,10 @@ priority: 2
 kind: primary
 controls_for: null
 review: proceed
-status: running
+status: done
 review_at: 2026-10-25T161935Z
 review_companions: null
-stage: dispatched
+stage: harvested
 claimed_at: 2026-10-25T161936Z
 base_sha: a5f0c41fcf6d081ab9a5f2262b3505c796565fea
 base_blob: 5cf8fae31e5b84c36efeeb4569763eb9b06e1c8a
@@ -73,6 +73,13 @@ attempt_file: 2026-10-25T162957Z-submit-sliding-decode1-cluster-per-kvhead.md
 prepared_at: 2026-10-25T162957Z
 job: 4b608df595b046fb
 dispatched_at: 2026-10-25T163005Z
+outcome: neutral
+verdict_detail: unproven-vs-best
+speedup: 1.5119748206149146
+speedup_ci: [1.4892951983056908, 1.5346544429241382]
+harvested_at: 2026-10-25T185514Z
+best_at_harvest: 1.5016522435853301
+promotion: null
 ---
 
 # sliding-decode1-cluster-per-kvhead
@@ -185,3 +192,35 @@ Verified, no change needed:
 - The `route.pop(1, None)` in `_sd_setup_body` is harmless (`route` is always defined, and band 1 was never filled).
 
 Residual risk: about 45 s more nvcc at import (wall 470-490 s plus PERHEAD checks, still well under the 15-min limit); a device fault inside PERHEAD on in-bounds data would still poison the context, with no fallback.
+
+## Result
+
+- job `4b608df595b046fb` (submit), status done, passed True, tests 16/16
+- speedup 1.5120x, 95% CI [1.4893, 1.5347], score 2490.9806358205487 µs vs SGLang 3766.3 µs
+- best at harvest: {"speedup": 1.5016522435853301, "ci": [1.47912745993155, 1.530423257736894], "job": "252abb7f11ec48c3"}; base result: muse_attention_decode/hypotheses/done/neutral/restack-sliding-decode-sk-window-on-cluster-master.result.json
+- **outcome: neutral** (unproven-vs-best)
+- files: `muse_attention_decode/hypotheses/done/neutral/sliding-decode1-cluster-per-kvhead.result.json`, `muse_attention_decode/hypotheses/done/neutral/sliding-decode1-cluster-per-kvhead.patch`; branch `hyp/muse_attention_decode/sliding-decode1-cluster-per-kvhead`
+
+## Attribution
+
+| shape | w | base µs | hyp µs | delta | verdict |
+|---|---|---|---|---|---|
+| batch=1 ctx=80000 dist=soft heads=tp8 layer=sliding load=decode_1 page=1 | 46 | 11.88 | 10.87 | 1.0985 | gained |
+| batch=1 ctx=80000 dist=coherent heads=tp8 layer=full load=decode_1 page=1 | 16 | 22.4 | 22.7 | 0.9921 | flat |
+| batch=16 ctx=80000 dist=soft heads=tp8 layer=sliding load=decode_16 page=1 spread=agentic | 46 | 15.51 | 15.24 | 1.0146 | flat |
+| batch=16 ctx=80000 dist=coherent heads=tp8 layer=full load=decode_16 page=1 spread=agentic | 16 | 111.12 | 110.73 | 0.9999 | flat |
+| batch=32 ctx=80000 dist=soft heads=tp8 layer=sliding load=decode_32 page=1 spread=agentic | 46 | 17.68 | 17.8 | 1.0058 | flat |
+| batch=32 ctx=80000 dist=coherent heads=tp8 layer=full load=decode_32 page=1 spread=agentic | 16 | 227.87 | 229.07 | 0.9964 | flat |
+| batch=1 ctx=80000 dist=soft heads=tp8 layer=sliding load=verify_1 page=1 q_len=8 | 46 | 13.17 | 13.85 | 0.9737 | flat |
+| batch=1 ctx=80000 dist=coherent heads=tp8 layer=full load=verify_1 page=1 q_len=8 | 16 | 30.48 | 30.31 | 0.9913 | flat |
+| batch=16 ctx=80000 dist=soft heads=tp8 layer=sliding load=verify_16 page=1 q_len=8 spread=agentic | 46 | 22.83 | 23.23 | 0.9947 | flat |
+| batch=16 ctx=80000 dist=coherent heads=tp8 layer=full load=verify_16 page=1 q_len=8 spread=agentic | 16 | 163.0 | 163.76 | 1.0001 | flat |
+| batch=32 ctx=80000 dist=soft heads=tp8 layer=sliding load=verify_32 page=1 q_len=8 spread=agentic | 46 | 29.21 | 28.83 | 1.0154 | flat |
+| batch=32 ctx=80000 dist=coherent heads=tp8 layer=full load=verify_32 page=1 q_len=8 spread=agentic | 16 | 302.31 | 302.56 | 1.0005 | flat |
+
+gained on sliding decode_1. Expected hit: 5/5. Noise ±1.5%.
+
+## Follow-ups
+
+- unproven-vs-best: the change is not proven either way; a stacked hypothesis (`depends_on: sliding-decode1-cluster-per-kvhead`) that adds a further change in the same area is the only way to learn more (identical code is never re-run).
+
