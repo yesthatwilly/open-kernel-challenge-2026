@@ -23,8 +23,8 @@ priority: 2
 kind: primary
 controls_for: null
 review: required
-status: running
-stage: dispatched
+status: done
+stage: harvested
 claimed_at: 2026-10-24T232955Z
 base_sha: 67f7473c299ffe95b9bb8701cdaf2079f00e3cab
 base_blob: 8780061c8886bf3d70fe3c433fbbfade9bdf8507
@@ -43,6 +43,13 @@ attempt_file: 2026-10-24T233023Z-check-align-local-parallel-first-turn.md
 prepared_at: 2026-10-24T233023Z
 job: c2f3e9d8297f4a18
 dispatched_at: 2026-10-24T233033Z
+outcome: neutral
+verdict_detail: within-ci
+speedup: 1.0625839850302201
+speedup_ci: [1.0466452252547669, 1.0785227448056733]
+harvested_at: 2026-10-25T000223Z
+best_at_harvest: 1.0591912383762452
+promotion: null
 ---
 
 # align-local-parallel-first-turn
@@ -73,3 +80,31 @@ Built in the main thread 2026-10-24 ~23:30Z with user-approved self-review, on m
 - [x] No timing/harness access, processes, network or module edits.
 - [x] No work outside timed calls added.
 - [x] okc_lint: no errors.
+
+## Result
+
+- job `c2f3e9d8297f4a18` (check), status done, passed True, tests 5/5
+- speedup 1.0626x, 95% CI [1.0466, 1.0785], score 364586.61664186686 µs vs SGLang 387403.9 µs
+- best at harvest: {"speedup": 1.0591912383762452, "ci": [1.0433033698006016, 1.0750791069518888], "job": "ba9c16b9cc6b4605"}; base result: muse_prefill_layer/hypotheses/done/neutral/moe-align-local-routes-parallel-port.result.json
+- **outcome: neutral** (within-ci)
+- files: `muse_prefill_layer/hypotheses/done/neutral/align-local-parallel-first-turn.result.json`, `muse_prefill_layer/hypotheses/done/neutral/align-local-parallel-first-turn.patch`; branch `hyp/muse_prefill_layer/align-local-parallel-first-turn`
+
+## Attribution
+
+| shape | w | base µs | hyp µs | delta | verdict |
+|---|---|---|---|---|---|
+| batch=1 ctx=80000 dist=soft layer=sliding load=turn_1 page=1 q_len=753 repeats=6 | 46 | 1049.13 | 1012.65 | 1.0019 | flat |
+| batch=1 ctx=80000 dist=soft layer=full load=turn_1 page=1 q_len=753 repeats=6 | 16 | 1472.72 | 1425.42 | 1.0002 | flat |
+| batch=4 ctx=80000 dist=soft layer=sliding load=turn_4 page=1 q_len=753 repeats=6 | 46 | 3289.65 | 3357.07 | 0.9999 | flat |
+| batch=4 ctx=80000 dist=soft layer=full load=turn_4 page=1 q_len=753 repeats=6 | 16 | 4933.23 | 4952.67 | 1.0003 | flat |
+| batch=1 ctx=0 dist=soft layer=full load=first_turn page=1 q_len=16384 repeats=6 | 16 | 14603.47 | 14832.8 | 0.9768 | flat |
+| batch=1 ctx=32768 dist=soft layer=sliding load=first_turn page=1 q_len=16384 repeats=6 | 138 | 14010.24 | 14230.65 | 0.9906 | flat |
+| batch=1 ctx=32768 dist=soft layer=full load=first_turn page=1 q_len=16384 repeats=6 | 16 | 18449.67 | 18516.9 | 0.9852 | flat |
+| batch=1 ctx=65536 dist=soft layer=full load=first_turn page=1 q_len=16384 repeats=6 | 16 | 22182.6 | 22089.62 | 0.9963 | flat |
+
+no shape moved outside noise. Expected hit: 0/1. Noise ±1.5%.
+
+## Follow-ups
+
+- within-ci: the change is not proven either way; a stacked hypothesis (`depends_on: align-local-parallel-first-turn`) that adds a further change in the same area is the only way to learn more (identical code is never re-run).
+

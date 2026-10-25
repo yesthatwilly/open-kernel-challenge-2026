@@ -1,0 +1,35 @@
+diff --git a/muse_prefill_layer/submission.py b/muse_prefill_layer/submission.py
+index 8780061..32d9f1e 100644
+--- a/muse_prefill_layer/submission.py
++++ b/muse_prefill_layer/submission.py
+@@ -720,7 +720,7 @@ def _align_par_setup(state, device):
+             _align_parallel(torch.zeros((16, TOP_K), dtype=torch.int32, device=device), 0, LOCAL_EXPERTS, bsm)
+         torch.cuda.synchronize()
+         gen = torch.Generator(device=device).manual_seed(20261024)
+-        for tokens in (9, 200, 753, 3012, 4096):
++        for tokens in (9, 200, 753, 3012, 4096, 16384):
+             for kind in ("random", "skewed", "all_remote"):
+                 ids = torch.randint(0, N_EXPERTS, (tokens, TOP_K), generator=gen, device=device, dtype=torch.int32)
+                 if kind == "skewed":
+@@ -731,6 +731,8 @@ def _align_par_setup(state, device):
+                 for bsm in BLOCK_SIZE_M_CANDIDATES:
+                     if tokens * TOP_K / LOCAL_EXPERTS / bsm < 0.9:
+                         break
++                if tokens > MARLIN_MAX_TOKENS:
++                    bsm = _expert_config(tokens)["BLOCK_T"]  # the Triton path's block (256)
+                 r_sorted, r_blocks, r_pad = moe_align_block_size(local_ids, bsm, N_EXPERTS)
+                 n_local, (n_sorted, n_blocks, n_pad) = _align_parallel(local_ids, 0, LOCAL_EXPERTS, bsm)
+                 cases += 1
+@@ -801,7 +803,11 @@ def _experts_triton(x, topk_weights, local_ids, state):
+     num_slots = num_tokens * TOP_K
+     topk_weights = topk_weights.to(torch.float32).contiguous()
+     cfg = _expert_config(num_tokens)
+-    sorted_ids, block_experts, n_padded = moe_align_block_size(local_ids, cfg["BLOCK_T"], N_EXPERTS)
++    if state.get("align_par_ok", False):
++        # align-local-parallel-first-turn: local routes only on the Triton path too (self-checked at T=16384).
++        _, (sorted_ids, block_experts, n_padded) = _align_parallel(local_ids, 0, LOCAL_EXPERTS, cfg["BLOCK_T"])
++    else:
++        sorted_ids, block_experts, n_padded = moe_align_block_size(local_ids, cfg["BLOCK_T"], N_EXPERTS)
+     cache2 = torch.empty((num_slots, size_n), device=x.device, dtype=x.dtype)
+     cache13 = torch.empty((num_slots * max(gemm1_n, size_k),), device=x.device, dtype=x.dtype)
+     cache1 = cache13[: num_slots * gemm1_n].view(-1, gemm1_n)
