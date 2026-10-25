@@ -51,9 +51,18 @@ controls_for: null
 rewrite_stage: 2
 replaces: pooler m<=32 (_bf16_splitk_kernel m<=16, _bf16_swapab_kernel m=32) and unpooler-full m=16/32 (nvjet 64x16, _bf16_swapab_kernel)
 review: proceed
-status: queued
+status: running
 review_at: 2026-10-25T040253Z
 review_companions: null
+stage: claimed
+claimed_at: 2026-10-25T040259Z
+base_sha: 8ba8624df9248fb986052e4a67ab8e9a96a9770d
+base_blob: d2ef0372de1f177e26ce1a1a4f578a993b4fa98c
+branch: hyp/muse_bf16_proj/pooler-unpooler-bulk-tma-row-owner-s2-cxx20-rebuild
+worktree: .worktrees/muse_bf16_proj/pooler-unpooler-bulk-tma-row-owner-s2-cxx20-rebuild
+mode: null
+restack_of: null
+stale_base: null
 ---
 
 # pooler-unpooler-bulk-tma-row-owner-s2-cxx20-rebuild
