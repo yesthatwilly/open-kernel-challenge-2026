@@ -48,7 +48,9 @@ speedup: 1.2495238726339006
 speedup_ci: [1.230781014544392, 1.268266730723409]
 harvested_at: 2026-10-25T000221Z
 best_at_harvest: 1.228328123558382
-promotion: null
+promotion: submitted
+promotion_job: 39bcf05afc4e4dd3
+promotion_at: 2026-10-25T000254Z
 ---
 
 # stack-align-par-sidestream-sliding1
