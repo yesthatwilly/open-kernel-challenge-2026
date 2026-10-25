@@ -73,7 +73,7 @@ review: proceed
 status: running
 review_at: 2026-10-25T161627Z
 review_companions: null
-stage: implemented
+stage: dispatched
 claimed_at: 2026-10-25T161628Z
 base_sha: 65440e974f1eccc4c5d39e2e004e0f64d2c9d806
 base_blob: f919748b5af6e815f319e5d2d828ed68e5b28a71
@@ -90,6 +90,8 @@ submission_blob: 9008c43b0750f70feb5d559b0947cb067f00aac8
 lint_warnings: 39
 attempt_file: 2026-10-25T163321Z-submit-combo-naive-pooler-m1-rowowner-qkv-m128-cublaslt.md
 prepared_at: 2026-10-25T163321Z
+job: 0ee2055590aa4e84
+dispatched_at: 2026-10-25T163329Z
 ---
 
 # combo-naive-pooler-m1-rowowner-qkv-m128-cublaslt
