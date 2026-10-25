@@ -74,7 +74,7 @@ review: proceed
 status: running
 review_at: 2026-10-25T120230Z
 review_companions: null
-stage: claimed
+stage: implemented
 claimed_at: 2026-10-25T120231Z
 base_sha: c0cdf3a56f74658d323e211e760d12b57dcf6772
 base_blob: 712edc5ea5be2dde8f558a016d0877b285340ee4
@@ -83,6 +83,12 @@ worktree: .worktrees/muse_prefill_layer/experts-turn-rega-s4-first-turn-n128
 mode: null
 restack_of: null
 stale_base: null
+implemented_at: 2026-10-25T121653Z
+impl_commit: d375dd60d9615046903966bfa1143a876e566b8a
+submission_sha256: 12a9680ac1d8b09158917d5cec51dd07e8af044263357248ca997c07eed5b99b
+norm_sha256: af4fbff4b62d1424d07b1d7d3689809b5c6e6c3e41115fb908a2b699789c11b9
+submission_blob: c2e3e595def2e6b5949e0fd350ce98ed59729147
+lint_warnings: 59
 ---
 
 # experts-turn-rega-s4-first-turn-n128
@@ -135,3 +141,80 @@ No companion is warranted. This is a rewrite stage whose in-prepare gate is itse
 - Prepare peak memory with 3 replay states x about 3.2 GB graph pools at T=16384: print max_memory_allocated and release graphs between T classes.
 - Queue hygiene: experts-turn-rega-s4-w2-only-t4096, experts-first-turn-ssdq-s2-large-m and experts-turn1-ssdq-s2-m64-tile are superseded by the landed rega gate result (rega 0.644-0.648x of the best alternative). Consider holding them so they do not take the remaining prefill checks.
 
+
+
+## Implementation notes
+
+Built 2026-10-25 on worktree base c0cdf3a5. Its muse_prefill_layer/submission.py is byte-identical to master 64d709d1, which carries experts-turn-rega-s4-port-t4096 (gain 1.3275), so no merge was needed. Only `muse_prefill_layer/submission.py` changed: +331/-56.
+
+**What changed.** The adversarial review overrides the spec. Each review item and what was done:
+
+- **(a) Names and scratch.** Uses the parent's names (`REGA_BSM`, `_experts_rega`, `_rega_setup`, `_rega_gate`, `state['rega_ok']`) and adds one class, `'ft'`. No `_wg_*` and no `WG_BSM`. xs/hs/y stay per-call graph-pool allocations, as in the parent. There are no per-state 1.07 GB buffers. The only per-state device data are still `rega_bank` and `rega_err`.
+- **(b) Align and dispatch.** The spec's moe_align_block_size/N=128 item is already in the parent: `_align_parallel` at block 16, chunks of at most 8 blocks (128 routes), expert-major decode. Nothing was added there. The one dispatch change is in `_experts`: for `MARLIN_MAX_TOKENS < T <= REGA_FT_MAX (16384)` with `state['rega_ok']['ft']`, call `_experts_rega`. Otherwise `_experts_triton` runs unchanged, and T > 16384 always goes to Triton. The branch reads only the token count and the prepare flag.
+- **(c) silu\*up epilogue.** Already in the parent (G=true). Nothing was built.
+- **(d) 2-CTA/SM branch.** Dropped.
+- **(e) Capacity.** `rega_kernel` is now `template <bool G, bool BIG>`.
+  - **Small class (`BIG=false`).** MAXBLK 2304 and MAXC 512, with `s_be[2304]` in shared memory, as in stage 1. The edits are type-level only: `decode_item` is templated on the table type and gets the same `const int*` to `s_be`. The `s_be` fill sits under `if constexpr (!BIG)`. `MAXC` becomes `Cap<false>::C` (=512). The SASS should match stage 1, but no nvcc was available here to diff it. The mangled kernel name changes (`rega_kernel<true, false>`), so profile rows are renamed.
+  - **Large class (`BIG=true`).** MAXBLK_FT 8224 and MAXC_FT 1088. block_experts is read from global memory through `GTab` (`__ldg`): in the run-start scan, the chunk scan, the group loop and the 2 loads per item in `decode_item`. Only `s_cblk`/`s_cnb[1088]` (8.7 KB) and the per-expert arrays sit in static shared memory. A static_assert checks both classes against the 16384 B static bound. w2 is 203776 B dynamic plus about 9.3 KB static, under 227 KB, so the 3-stage fallback was not needed and all instantiations keep 4 stages.
+  - **Class selection.** Host-side in `rega_gemm`, by `block_experts.numel() > MAXBLK`. The table length depends only on the shape: (T·8 + 480)/16. Every T ≤ 4096 (at most 2078 blocks) gets the stage-1 instantiation. T in (4096, 4548] also stays in the small class: at most 2304 blocks and at most 320 chunks, under 512. The `TORCH_CHECK` bound is now MAXBLK_FT.
+  - **Worst case.** prepare prints the worst-case arithmetic: 8222 blocks against a table of 8224, and at most 1059 chunks against 1088.
+  - **Other build changes.** `rega_init` now reports 4 instantiations (flag = G + 2·BIG). `REGA_EXT_NAME` is `muse_prefill_rega_v2`.
+- **(f) Self-checks at first-turn sizes.**
+  - **Align.** `_align_par_setup` now also runs `_align_par_ft_setup`. It checks T 8192 and 16384 with random, skewed and local-saturated routings, at Marlin's block size and at REGA_BSM=16, against moe_align_block_size. It sets only `state['align_par_ft_ok']`, so a miss there cannot turn off master's Marlin-path align or the low/high rega classes.
+  - **Eager self-check.** The new `_rega_ft_setup` checks (4500 local), (8192 random/local) and (16384 random/skewed/one/local) against the fp32 reference. The bound is max(2× Triton's own error, 8e-3), with worst row at 5×. Each case also requires error word 0, both launch markers and finite output. Each line prints the block-table length, the class, used blocks, chunks, max chunks per expert and the w13/w2 item counts. The tracer now prints the eager µs per launch (align, gather, w13, w2), which answers the review's per-kernel question at T=16384. The local-saturated cases force about 8192 blocks and about 1030-1059 chunks, so they test capacity: error word 3 would be a MISS.
+  - **Copy/replay check.** `_rega_replay_check` now takes a `plan` (default unchanged). It runs A (prepared), B (deepcopy) and C (tensor clone), replayed A/B/C/A/B with inputs refilled in place. The plan is T=8192 (random, local) and T=16384 (random, skewed, one, local), with the bound calibrated on Triton above 4096. Graphs are freed and `empty_cache` is called after every T, and `max_memory_allocated` is printed (peak stats are reset at the start of ft).
+- **(g) ft gate.** `_rega_gate` at T=16384 soft. Above 4096 it includes only `dispatch`, which is master's Triton block with the ft flag still False, plus the empty-graph baseline. ssdq and Marlin are excluded above MARLIN_MAX_TOKENS; their presence at 753/3012 is unchanged. It uses the parent's 9 alternations, 256 MB flush, rotated and flipped order, and baseline subtraction. ft is ON at rega/dispatch ≤ 0.95. The gate line prints both medians, the ratio, zero_nonlocal_w2 and max_memory_allocated. The final lines of prepare are the existing PATH CHOSEN line (its tail now reads "T > 4096: next line"), then `[rega] PATH CHOSEN T in (4096, 16384]: rega|triton; T > 16384: triton`.
+- **(h) zero_nonlocal_w2.** It is a precondition of ft. If it is True, prepare prints `OFF ft: zero_nonlocal_w2 is True ...` and ft stays OFF. It is printed in the capacity line and in the gate line.
+- **Failure isolation.** All ft work runs after the low/high gates, inside its own try. Any ft miss, exception, budget overrun or attribute failure prints one `[rega] OFF ft: <reason>` line and sets only `rega_ok['ft']=False`. The low/high classes and master's Triton path stay as they were. If the first-turn instantiations fail their attribute check (`attrs_ok[True]`), only ft goes off. If the stage-1 instantiations fail, everything goes off, as in the parent.
+- **Budget.** ft is skipped if prepare is already past 150 s when it starts. The ft gate is skipped past `REGA_BUDGET_S` = 200 s. Phase timings print per ft step (ft-self-check, ft-copy-check, ft-gate). Expected cost: about 15-20 s more build for 4 instantiations, about 3 s of first-turn align cases, and about 25-40 s for the ft phase, on top of the parent's 69 s. That makes about 115-130 s.
+
+**Not done / deviations.** Marlin is not in the ft gate (the review made it optional). The spec's per-state scratch and 2-CTA branch were dropped per review (a) and (d). Byte-identity of the small instantiation is argued from the source, not proven: nvcc is not on this node. A g++ `-fsyntax-only` pass over the CUDA source with CUDA/torch stubs, `<<<>>>` stripped and all 4 instantiations, compiled clean. The parent's `_rega_audit_cpp` global/static audit returns no findings on the new source, and the templated-accessor audit is clean.
+
+**Biggest risks.**
+1. Compile: the new template/`if constexpr`/`GTab` code under nvcc (checked only with g++).
+2. Performance: the B-side TMA/L2 traffic at T=16384 (131552 xs rows) may keep rega above 0.95× Triton, in which case the gate keeps Triton.
+3. Prepare memory/time at T=16384: 3 replay states of about 3.4 GB graph pool each, plus the 6.4 GB fp32 dequant cache, printed.
+
+## Rules check
+
+Checked against `git -C .worktrees/muse_prefill_layer/experts-turn-rega-s4-first-turn-n128 diff`:
+
+- [x] CUDA-graph capturable. The only kernel_fn-path change is `_experts`' branch on `tokens` (a shape) and `state['rega_ok']['ft']` (a prepare flag). `_experts_rega` is the parent's graph-safe body: per-call `torch.empty` sized by shape, and the capacity class is picked in C++ from `block_experts.numel()`, a shape. No `.item`/`.cpu`/sync/print, no try/except and no per-call mutable state in the timed path. All new syncs, `.cpu()` calls and prints are in prepare-only helpers (lint: every host-sync is outside kernel_fn's call graph).
+- [x] Nothing derived from `data` is cached across calls. There are no pointer-equality gates and no module globals holding tensors (the `_rega_audit_globals` scan is kept). TMA maps are still encoded per call from that call's xs/hs.
+- [x] Weights: the same lossless NVFP4 retiling as the parent (`_rega_bank` unchanged). There is no BF16 copy of any expert weight. Dequant happens only in registers inside the kernel.
+- [x] Activations: BF16 xs/hs/y, fp32 accumulation, silu\*up rounded to bf16 once, unchanged from the parent. KV/attention untouched.
+- [x] n/a: attention is untouched. Every key is still attended (FA3 path unchanged).
+- [x] No timing patches, harness frames, I/O, secrets, module edits, reference import, subprocesses (in-process load_inline only) or network.
+- [x] All work happens inside the timed call. No output caching or replay. Every route of every token is computed: tables cover the worst case at T ≤ 16384, overflow sets error word 3, and the local-saturated self-check proves word 0.
+- [x] Two judge states: the A/B/C copy/replay check is extended to T 8192/16384. No C++/static/module state was added.
+- [x] Build: `TORCH_CUDA_ARCH_LIST=9.0a` set and restored, extra_cuda_cflags `['-O3','-std=c++20','-lineinfo','-gencode=arch=compute_90a,code=sm_90a']` (unchanged). wgmma/setmaxnreg stay under `__CUDA_ARCH_FEAT_SM90_ALL` with the error-word-2 `#else`. No templated `data_ptr<T>`. Bounded mbarrier waits are unchanged.
+
+okc_lint (`python3 -I .claude/skills/churnsubs/bin/okc_lint.py <worktree>/muse_prefill_layer/submission.py --problem muse_prefill_layer`):
+
+```
+OK with warnings: .worktrees/muse_prefill_layer/experts-turn-rega-s4-first-turn-n128/muse_prefill_layer/submission.py
+(warnings only: host-sync lines, all "outside kernel_fn's call graph; fine in prepare()"; dtype uint8 at L2902/L2903
+ (rega bank, parent code) and L3151 (replay-check pad, parent code))
+```
+
+py_compile: ok. undef.py: `[]` (no unbound names). `__pycache__` removed. Not committed; okc not run.
+
+## Pre-flight audit
+
+Audited 2026-10-25 by an Opus subagent, against master muse_prefill_layer/submission.py. **Verdict: dispatch-with-fixes.**
+
+**Fix (build-failure blast radius).** Before this fix, a compile or load failure of `muse_prefill_rega_v2` appended "build failed" and turned off all of rega (`low`, `high` and `ft`). That would drop master's landed T<=4096 classes to Marlin/ssdq and read as a large regression. Now, when the v2 build returns None, `_rega_setup` builds master's exact stage-1 extension (`muse_prefill_rega_v1`).
+- `_rega_src_v1()` derives that source from the v2 source by reverting this stage's 26 edits (`_REGA_V1_EDITS`), and uses it only if its sha256 equals master's (`REGA_V1_SHA256`). On this node, the derivation was checked to be byte-identical to master's `_rega_src()`.
+- The fallback marks the first-turn class unavailable (`attrs_ok[True] = False`) and sets `ft` OFF with the reason "v2 build failed; running master's muse_prefill_rega_v1". It also prints `[rega] v2 build FAILED; fallback: ...`.
+- low/high then go through master's unchanged canary, self-check, replay check and gates.
+- `_rega_build` now takes `(name, src)` and its defaults are unchanged. `hashlib` is imported.
+
+**Checked, no change needed.**
+- **Small class.** With `BIG=false`, the code is semantically identical to master: `s_be[2304]`, `s_cblk`/`s_cnb[512]`, the same fill, clamp and err-3 logic, and `be` is a plain pointer to `s_be`. Every T<=4548 launches it (blocks_len <= 2304), so every T<=4096 does.
+- **Large class.** Every `__ldg` index into block_experts is below nb <= min(blocks_len, 8224), and blocks_len at T=16384 is 8222. The s_cblk/s_cnb writes are guarded by idx < 1088. The worst case is <= 1056 chunks, under 1088. Overflow sets err 3 and clamps, and decode_item stays inside [f, f+k) < nc. Output, xs and gather offsets are size_t.
+- **Memory.** The fp32 dequant cache (6.4 GB) is prepare-only and cleared in a `finally` before the gate. Replay-check graphs are freed per T. Estimated peak is about 6.4 + 3 x 3.4 GB + transients, well under 141 GB. No per-state buffers were added.
+- **Budget.** ft starts only before 150 s and the gate only before 200 s, against a 300 s prepare limit. The ft phase is about 30-40 s.
+- **kernel_fn.** The only change is a shape-plus-flag branch in `_experts`. The capacity class is chosen in C++ from `block_experts.numel()`, which is a shape. There is no try/except, print, sync, pointer gating or module-global device state.
+- `undef.py` reports `[]`, py_compile passes, and okc_lint reports warnings only, all in parent code or prepare-only. `__pycache__` was removed.
+
+**Residual risk:** the first-turn instantiation is unproven under nvcc. A device fault in its T=16384 self-check would poison the context, and a fallback cannot cover that. The small instantiation may also compile to different SASS through the templated `be` pointer, which could shift turn rows slightly.
