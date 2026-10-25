@@ -66,7 +66,7 @@ base_sha: a9625932047aa6e3c155977025168939699cb9b2
 base_blob: a8bb42ac483318e9fbc84bc7826a27b7a704d1fb
 branch: hyp/muse_bf16_proj/pooler-unpooler-m128-nn-layout-gated
 worktree: .worktrees/muse_bf16_proj/pooler-unpooler-m128-nn-layout-gated
-mode: null
+mode: check
 restack_of: bf16-m128-nn-weight-layout-probe
 stale_base: null
 implemented_at: 2026-10-25T012003Z
@@ -75,6 +75,8 @@ submission_sha256: 566e5e253ab0b470b429aaf95ad685a511645d457ab3f3f810b4238bcb010
 norm_sha256: 93c247c9b41768654a72c651c30e754e3d5accf1671e44ac6f9345621bb56e1e
 submission_blob: 49c0a5c0d548f29014363a027a990ff274abd5de
 lint_warnings: 0
+attempt_file: 2026-10-25T012003Z-check-pooler-unpooler-m128-nn-layout-gated.md
+prepared_at: 2026-10-25T012003Z
 ---
 
 # pooler-unpooler-m128-nn-layout-gated
