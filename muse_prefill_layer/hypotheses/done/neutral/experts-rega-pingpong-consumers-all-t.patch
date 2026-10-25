@@ -1,0 +1,712 @@
+diff --git a/muse_prefill_layer/submission.py b/muse_prefill_layer/submission.py
+index a2fe2a75..d3e7b75d 100644
+--- a/muse_prefill_layer/submission.py
++++ b/muse_prefill_layer/submission.py
+@@ -620,9 +620,17 @@ def prepare(weights):
+     # with rega off; it prints the final PATH CHOSEN lines last.
+     _rega_setup(state, weights, device, t_prepare0)
+     torch.cuda.synchronize()
++    # experts-rega-pingpong-consumers-all-t: only now, after master's whole rega setup (its build, checks, gates
++    # and ft / copy deadlines untouched and in their original order), the separate ping-pong extension with its
++    # own checks, gates and deadlines; any miss keeps master's rega for that class.
++    pp_lines = _rega_pp_setup(state, weights, device, t_prepare0)
++    torch.cuda.synchronize()
+     # The align2 lines again, after rega's PATH CHOSEN lines, so the archived log tail keeps them.
+     for line in align2_lines:
+         print(line, flush=True)
++    # Last lines of prepare(): the ping-pong gate lines and one PATH CHOSEN line per class.
++    for line in pp_lines:
++        print(line, flush=True)
+     return state
+ 
+ 
+@@ -3290,11 +3298,12 @@ def _rega_src_v1():
+     return src if hashlib.sha256(src.encode()).hexdigest() == REGA_V1_SHA256 else None
+ 
+ 
+-def _rega_build(name=REGA_EXT_NAME, src=None):
++def _rega_build(name=REGA_EXT_NAME, src=None, cpp=None, functions=None):
+     """Compile the module (prepare only, never during capture): (ext or None, error text). sm_90a only:
+     cpp_extension's JIT path appends -gencode flags from TORCH_CUDA_ARCH_LIST (else from the device, a plain
+     compute_90 pass that cannot assemble wgmma), so the list is set to 9.0a for the build and restored after;
+-    every wgmma / setmaxnreg body is also behind __CUDA_ARCH_FEAT_SM90_ALL with an error-word-2 #else."""
++    every wgmma / setmaxnreg body is also behind __CUDA_ARCH_FEAT_SM90_ALL with an error-word-2 #else.
++    cpp / functions default to master's module (the ping-pong extension passes its own)."""
+     t0 = time.perf_counter()
+     prev = os.environ.get("TORCH_CUDA_ARCH_LIST")
+     ext, err_text = None, ""
+@@ -3316,8 +3325,10 @@ def _rega_build(name=REGA_EXT_NAME, src=None):
+             arch_flags = ["<unknown>"]
+         print(f"{REGA_TAG} build arch flags: TORCH_CUDA_ARCH_LIST={os.environ.get('TORCH_CUDA_ARCH_LIST')!r} -> "
+               f"{arch_flags}; extra_cuda_cflags {REGA_CUDA_CFLAGS}", flush=True)
+-        ext = load_inline(name=name, cpp_sources=_REGA_CPP, cuda_sources=src if src is not None else _rega_src(),
+-                          functions=["rega_init", "rega_gather", "rega_gemm"],
++        ext = load_inline(name=name, cpp_sources=cpp if cpp is not None else _REGA_CPP,
++                          cuda_sources=src if src is not None else _rega_src(),
++                          functions=list(functions) if functions is not None else ["rega_init", "rega_gather",
++                                                                                   "rega_gemm"],
+                           extra_cuda_cflags=list(REGA_CUDA_CFLAGS), verbose=False)
+     except Exception as e:
+         err_text = str(e)
+@@ -3486,16 +3497,24 @@ def _rega_audit_globals():
+     return findings
+ 
+ 
+-def _experts_rega(x, topk_weights, local_ids, state, tracer=None):
++def _experts_rega(x, topk_weights, local_ids, state, tracer=None, pp=None, keep=None):
+     """The experts on the register-A wgmma kernel, on ids already mapped to this GPU's experts (0-31, -1
+     elsewhere). align (block 16, local routes only, master's parallel align) -> gather the routed rows into
+     sorted order -> w13 + silu*up (fp32, one bf16 rounding) into hs -> w2 scattered to the route slot of y ->
+     master's weighted sum. Everything a launch reads comes from `state` (bank, error word) and this call's
+     tensors (the tensor maps are encoded from xs / hs in C++ on every call). tracer, only passed by
+-    prepare(), announces each launch before it and syncs + prints after it."""
++    prepare(), announces each launch before it and syncs + prints after it.
++    experts-rega-pingpong-consumers-all-t: the two GEMM launches go to the ping-pong kernel (rega_gemm_pp of
++    the separate muse_prefill_rega_pp module, same signature) when pp is True; pp None (the timed call) reads
++    the prepare-time flag state['rega_pp'][class] for this token count's class (a shape), default False.
++    keep (prepare only) receives hs, y and the align tables for the exact compare."""
+     ext, bank = state["rega_ext"], state["rega_bank"]
+     err, grid = state["rega_err"], state["rega_grid"]
+     num_tokens, size_k = x.shape
++    if pp is None:
++        pp = state.get("rega_pp", {}).get(_rega_class(num_tokens), False)
++    gemm = state["rega_pp_ext"].rega_gemm_pp if pp else ext.rega_gemm
++    kname = "rega_kernel_pp" if pp else "rega_kernel"
+     num_slots = num_tokens * TOP_K
+     topk_weights = topk_weights.to(torch.float32).contiguous()
+     if tracer:
+@@ -3512,11 +3531,11 @@ def _experts_rega(x, topk_weights, local_ids, state, tracer=None):
+         tracer("after", "rega_gather")
+     hs = torch.empty((rows, D_EXPERT), device=x.device, dtype=x.dtype)
+     if tracer:
+-        tracer("before", "rega_kernel<w13+silu>")
+-    ext.rega_gemm(0, xs, bank["q13"], bank["gs13"], sorted_ids, block_experts, n_padded, num_slots,
++        tracer("before", f"{kname}<w13+silu>")
++    gemm(0, xs, bank["q13"], bank["gs13"], sorted_ids, block_experts, n_padded, num_slots,
+                   D_EXPERT // 64, size_k, hs, grid, err)
+     if tracer:
+-        tracer("after", "rega_kernel<w13+silu>")
++        tracer("after", f"{kname}<w13+silu>")
+     # The weighted sum skips remote slots when prepare() proved it (state['zero_nonlocal_w2'] False);
+     # otherwise remote rows must read as zeros.
+     if state["zero_nonlocal_w2"]:
+@@ -3524,11 +3543,13 @@ def _experts_rega(x, topk_weights, local_ids, state, tracer=None):
+     else:
+         y = torch.empty((num_slots, size_k), device=x.device, dtype=x.dtype)
+     if tracer:
+-        tracer("before", "rega_kernel<w2>")
+-    ext.rega_gemm(1, hs, bank["q2"], bank["gs2"], sorted_ids, block_experts, n_padded, num_slots,
++        tracer("before", f"{kname}<w2>")
++    gemm(1, hs, bank["q2"], bank["gs2"], sorted_ids, block_experts, n_padded, num_slots,
+                   size_k // 128, D_EXPERT, y, grid, err)
+     if tracer:
+-        tracer("after", "rega_kernel<w2>")
++        tracer("after", f"{kname}<w2>")
++    if keep is not None:
++        keep.update(hs=hs, y=y, sorted_ids=sorted_ids, block_experts=block_experts, n_padded=n_padded)
+     return fused_post_expert_norm_weighted_sum(
+         y.view(num_tokens, TOP_K, size_k), topk_weights, norm_weight=state["post_expert_w"], eps=POST_NORM_EPS,
+         weight_first=True, slot_expert_ids=local_ids)
+@@ -4087,6 +4108,602 @@ def _rega_setup(state, weights, device, t_start):
+               f"{'rega' if ok.get('ft', False) else 'triton'}; T > {REGA_FT_MAX}: triton", flush=True)
+ 
+ 
++# ---------------------------------------------------------------------------------------------
++# experts-rega-pingpong-consumers-all-t: ping-pong consumer warpgroups for rega_kernel, as a separate small
++# extension (muse_prefill_rega_pp) built and gated strictly AFTER master's whole rega setup (low / high / ft,
++# including master's ft start deadline and copy deadline), with its own checks, gates and deadlines.
++#
++# Master's consume_item runs both consumer warpgroups in lockstep on every k-stage (mbar_wait -> dequant ->
++# 8 register-A wgmma -> commit -> wgmma_wait<0>), so the tensor core idles during both dequants. The ping-pong
++# variant keeps master's variant A inside each warpgroup and offsets the two warpgroups by half a stage with
++# two named barriers (2 = PP_BAR_A, 3 = PP_BAR_B, count 256 each; 0 is __syncthreads, 1 the epilogue):
++#   WG1 (consumer warps cw 0-3, CTA warps 4-7):  [sync A, skipped on its first k-stage of the launch]
++#        mbar_wait(full); dq; 8 wgmma; commit; arrive B; wgmma_wait<0>; arrive(empty)
++#   WG2 (consumer warps cw 4-7, CTA warps 8-11): sync B; mbar_wait(full); dq; 8 wgmma; commit; arrive A;
++#        wgmma_wait<0>; arrive(empty)
++#   after the item loop: WG1 syncs A once more iff it consumed >= 1 k-stage (a CTA with no items does no op).
++# Per-warpgroup instruction order is master's, so the outputs are bit-identical; prepare() requires exactly
++# that (max diff 0 on hs and y) against master's rega before any class can turn on.
++#
++# The extension's source is DERIVED from master's _REGA_HEAD / _REGA_BODY by slicing and exact, counted text
++# substitutions (master's strings are never edited: the v1 fallback rebuilds from them with a SHA check). It
++# holds only the ping-pong instantiations (rega_kernel_pp<G, BIG>, 4) and the host entry rega_gemm_pp (master's
++# rega_gemm with the kernel name swapped: the same per-call __grid_constant__ tensor maps, nothing at file
++# scope). The gather stays master's (rega_ext.rega_gather).
++# ---------------------------------------------------------------------------------------------
++
++REGA_PP_TAG = "[rega-pp]"
++REGA_PP_EXT_NAME = "muse_prefill_rega_pp"
++REGA_PP_MAGIC = 0x50504d4d          # the ping-pong kernels' launch marker in err[1] (w13) / err[2] (w2)
++REGA_PP_RATIO = 0.98                # a class turns ON only when pp <= this x master's rega block
++REGA_PP_START_DEADLINE_S = 180.0    # no ping-pong build if prepare() has already used this many seconds
++REGA_PP_STEP_DEADLINE_S = 240.0     # no new ping-pong step (class check / replay / timing / gate) after this
++REGA_PP_CLASSES = ("ft", "high", "low")   # most valuable first (sliding first_turn has weight 138)
++REGA_PP_RANGES = {"low": f"({REGA_MIN_TOKENS}, {REGA_LOW_MAX}]", "high": f"({REGA_LOW_MAX}, {MARLIN_MAX_TOKENS}]",
++                  "ft": f"({MARLIN_MAX_TOKENS}, {REGA_FT_MAX}]"}
++REGA_PP_GATE_TOKENS = {"low": REGA_GATE_TOKENS["low"], "high": REGA_GATE_TOKENS["high"], "ft": REGA_FT_GATE_TOKENS}
++# Canary: T=210 'one' (one expert, 2 chunks: w2 has 64 items on 132 CTAs, so CTAs with 0 items and with exactly
++# 1 item; w13 128 items: 1 or 0 per CTA), then T=300 random (~32 one-block chunks: 7-16 items per CTA).
++REGA_PP_CANARY = ((210, "one"), (300, "random"))
++# Exactness cases: master's self-check routings at each class's sizes.
++REGA_PP_EXACT = {
++    "low": ((753, "random"), (753, "skewed"), (753, "one"), (1024, "random"), (1024, "skewed"), (1024, "one")),
++    "high": ((3012, "random"), (3012, "skewed"), (3012, "one"), (4096, "random"), (4096, "skewed"), (4096, "one")),
++    "ft": ((4500, "local"), (8192, "random"), (8192, "local"), (16384, "random"), (16384, "skewed"), (16384, "one"),
++           (16384, "local")),
++}
++REGA_PP_REPLAY_PLAN = {
++    "low": ((753, ("random", "skewed", "one")),),
++    "high": ((3012, ("random", "skewed", "one")), (4096, ("random", "skewed", "one"))),
++    "ft": REGA_FT_REPLAY_PLAN,
++}
++REGA_PP_FUNCTIONS = ("rega_pp_init", "rega_gemm_pp")
++
++_REGA_PP_CPP = r"""
++#include <torch/extension.h>
++#include <vector>
++std::vector<int64_t> rega_pp_init();
++void rega_gemm_pp(int64_t which, torch::Tensor bsrc, torch::Tensor wbank,
++             torch::Tensor gs, torch::Tensor sorted_ids, torch::Tensor block_experts, torch::Tensor n_padded,
++             int64_t num_routes, int64_t n_tiles, int64_t K, torch::Tensor out, int64_t grid, torch::Tensor err);
++"""
++
++_REGA_PP_PRE = r"""
++// Ping-pong named barriers (experts-rega-pingpong-consumers-all-t). Count 256 = the 128 threads of the syncing
++// warpgroup + the 128 of the arriving one. IDs 2 / 3 are used nowhere else (0 = __syncthreads, 1 = epilogue).
++// __syncwarp first: every lane of the warp executes the bar op converged (lane 0's mbar_arrive sits outside).
++constexpr int PP_BAR_A = 2;  // WG2 arrives after committing stage s; WG1 syncs on it before stage s + 1
++constexpr int PP_BAR_B = 3;  // WG1 arrives after committing stage s; WG2 syncs on it before stage s
++constexpr int PP_COUNT = 256;
++__device__ __forceinline__ void pp_sync(int id) {
++  __syncwarp();
++  asm volatile("bar.sync %0, %1;\n" :: "r"(id), "r"(PP_COUNT) : "memory");
++}
++__device__ __forceinline__ void pp_arrive(int id) {
++  __syncwarp();
++  asm volatile("bar.arrive %0, %1;\n" :: "r"(id), "r"(PP_COUNT) : "memory");
++}
++"""
++
++_REGA_PP_INIT = r"""
++// Per ping-pong instantiation, in rega_init's order and layout (w13 / w2 small class, then first-turn class).
++std::vector<int64_t> rega_pp_init() {
++  std::vector<int64_t> r;
++  info_one_pp<true, false>(r);
++  info_one_pp<false, false>(r);
++  info_one_pp<true, true>(r);
++  info_one_pp<false, true>(r);
++  return r;
++}
++
++"""
++
++# (slice name, old text, new text): exact substitutions, each must occur exactly once in its slice.
++_REGA_PP_SUBS = (
++    ("consume", "__device__ __forceinline__ void consume_item(const Item& m,",
++     "__device__ __forceinline__ void consume_item_pp(const Item& m,"),
++    ("consume", "int* err, bool& dead) {\n  constexpr int NA = NB / 2;",
++     "int* err, bool& dead, bool wg2, bool& started) {\n  constexpr int NA = NB / 2;"),
++    ("consume", "    const int s = n % STAGES;\n    mbar_wait(full0 + 8 * s, (n / STAGES) & 1, err, dead);\n",
++     "    const int s = n % STAGES;\n"
++     "    // ping-pong: WG2 starts stage s once WG1 has issued stage s's wgmmas; WG1 starts stage s + 1 once WG2\n"
++     "    // has issued stage s's (skipped only on WG1's first k-stage of the launch: `started`, a register).\n"
++     "    // Unconditional on `dead`: a timed-out mbarrier still executes every ping-pong op.\n"
++     "    if (wg2) {\n"
++     "      pp_sync(PP_BAR_B);\n"
++     "    } else {\n"
++     "      if (started) pp_sync(PP_BAR_A);\n"
++     "      started = true;\n"
++     "    }\n"
++     "    mbar_wait(full0 + 8 * s, (n / STAGES) & 1, err, dead);\n"),
++    ("consume", "    wgmma_commit();\n    wgmma_wait<0>();  // group retired",
++     "    wgmma_commit();\n"
++     "    pp_arrive(wg2 ? PP_BAR_A : PP_BAR_B);  // this warpgroup's wgmmas of stage s are issued\n"
++     "    wgmma_wait<0>();  // group retired"),
++    ("kernel", "rega_kernel(const __grid_constant__ Maps maps,", "rega_kernel_pp(const __grid_constant__ Maps maps,"),
++    ("kernel", "err[G ? 1 : 2] = 0x57474d4d;", "err[G ? 1 : 2] = 0x50504d4d;  // the ping-pong launch marker"),
++    ("kernel", "    const int ctid = tid - 128, cw = ctid >> 5;\n    int n = 0;\n",
++     "    const int ctid = tid - 128, cw = ctid >> 5;\n"
++     "    const bool wg2 = cw >= 4;  // warp-uniform: warps 8-11 are the second consumer warpgroup\n"
++     "    bool started = false;      // WG1: has consumed >= 1 k-stage in this launch (same in all 128 WG1 threads)\n"
++     "    int n = 0;\n"),
++    ("kernel", "  consume_item<NB_, G>(m, smem,", "  consume_item_pp<NB_, G>(m, smem,"),
++    ("kernel", "out_ld, err, dead)\n", "out_ld, err, dead, wg2, started)\n"),
++    ("kernel", "#undef WG_CONSUME\n    }\n  }\n#else",
++     "#undef WG_CONSUME\n    }\n"
++     "    // WG1's last PP_A sync pairs with WG2's arrive after its last k-stage. Both warpgroups walk the same items\n"
++     "    // and KS stages per item, so WG1 syncs A (stages - 1) + 1 times and WG2 arrives A `stages` times; a CTA\n"
++     "    // with no items (started false) does no ping-pong op at all.\n"
++     "    if (!wg2 && started) pp_sync(PP_BAR_A);\n"
++     "  }\n#else"),
++    ("info", "void info_one(std::vector<int64_t>& r) {", "void info_one_pp(std::vector<int64_t>& r) {"),
++    ("info", "rega_kernel<G, BIG>", "rega_kernel_pp<G, BIG>"),
++    ("gemm", "void rega_gemm(int64_t which,", "void rega_gemm_pp(int64_t which,"),
++    ("gemm", "  rega_kernel<G_, B_><<<", "  rega_kernel_pp<G_, B_><<<"),
++)
++
++
++def _rega_class(tokens):
++    """The rega shape class of a token count: 'low' T <= REGA_LOW_MAX, 'high' T <= MARLIN_MAX_TOKENS, else 'ft'."""
++    return "low" if tokens <= REGA_LOW_MAX else ("high" if tokens <= MARLIN_MAX_TOKENS else "ft")
++
++
++def _rega_pp_src():
++    """The ping-pong extension's CUDA source derived from master's strings (read, never edited), or (None, why).
++    Layout: master's head + wgmma wrappers + the ping-pong barrier helpers + master's Item / decode_item /
++    dq_stage + consume_item_pp + rega_kernel_pp + master's get_encode + info_one_pp, then rega_pp_init and
++    rega_gemm_pp outside the anonymous namespace (as master's rega_init / rega_gemm)."""
++    body = _REGA_BODY
++    anchors = {
++        "consume": "// wgmma_wait<0> right after the commit, BEFORE",
++        "kernel": "template <bool G, bool BIG>\n__global__ void __launch_bounds__(THREADS, 1)\nrega_kernel(",
++        "gather": "// xs[slot] = x[sorted_ids[slot] / 8]",
++        "encode": "typedef CUresult (*EncodeTiledFn)",
++        "info": "template <bool G, bool BIG>\nvoid info_one(",
++        "nsend": "}  // namespace\n",
++        "gemm": "void rega_gemm(int64_t which,",
++    }
++    for name, a in anchors.items():
++        if body.count(a) != 1:
++            return None, f"anchor {name!r} occurs {body.count(a)} times in master's body"
++    at = {name: body.index(a) for name, a in anchors.items()}
++    if not (at["consume"] < at["kernel"] < at["gather"] < at["encode"] < at["info"] < at["nsend"] < at["gemm"]):
++        return None, "master's body anchors are out of order"
++    parts = {
++        "prefix": body[:at["consume"]],
++        "consume": body[at["consume"]:at["kernel"]],
++        "kernel": body[at["kernel"]:at["gather"]],
++        "encode": body[at["encode"]:at["info"]],
++        "info": body[at["info"]:at["nsend"]],
++        "gemm": body[at["gemm"]:],
++    }
++    for part, old, new in _REGA_PP_SUBS:
++        n = parts[part].count(old)
++        if n != 1:
++            return None, f"substitution in {part!r} matched {n} times: {old[:60]!r}"
++        parts[part] = parts[part].replace(old, new)
++    src = (_REGA_HEAD + _rega_wgmma_src() + _REGA_PP_PRE + parts["prefix"] + parts["consume"] + parts["kernel"]
++           + parts["encode"] + parts["info"] + "}  // namespace\n" + _REGA_PP_INIT + parts["gemm"])
++    for bad in ("rega_kernel<", "consume_item<", "info_one<", "void rega_gemm(", "rega_gather"):
++        if bad in src:
++            return None, f"derived source still names master's {bad!r}"
++    return src, ""
++
++
++def _rega_pp_tables(km):
++    """(blocks used, valid hs row mask) from a keep dict: rows of used blocks owned by a local expert."""
++    nb = min(int(km["n_padded"].cpu()[0]) // REGA_BSM, km["block_experts"].numel())
++    be = km["block_experts"][:nb].long()
++    return nb, ((be >= 0) & (be < LOCAL_EXPERTS)).repeat_interleave(REGA_BSM)
++
++
++def _rega_pp_maxdiff(a, b):
++    if a.numel() == 0:
++        return 0.0
++    d = float((a.float() - b.float()).abs().max())
++    return d if d == d else float("inf")
++
++
++def _rega_pp_diff(kp, km, out_p, out_m, lids):
++    """prepare only: (bit-identical, line) for the ping-pong keep dict kp against master's km on one routing.
++    hs is compared on the rows of used local blocks (the only rows the w13 kernel writes; padding slots inside
++    them are computed from zero rows), y on the local routes' rows (the only rows w2 writes), plus the align
++    tables. The final weighted-sum output's max diff is printed as information."""
++    tables = (torch.equal(kp["sorted_ids"], km["sorted_ids"]) and torch.equal(kp["block_experts"], km["block_experts"])
++              and torch.equal(kp["n_padded"], km["n_padded"]))
++    nb, rows_h = _rega_pp_tables(km)
++    hp, hm = kp["hs"][:nb * REGA_BSM][rows_h], km["hs"][:nb * REGA_BSM][rows_h]
++    rows_y = lids.reshape(-1) >= 0
++    yp, ym = kp["y"][rows_y], km["y"][rows_y]
++    eq_h, eq_y = torch.equal(hp, hm), torch.equal(yp, ym)
++    dh = 0.0 if eq_h else _rega_pp_maxdiff(hp, hm)
++    dy = 0.0 if eq_y else _rega_pp_maxdiff(yp, ym)
++    dout = _rega_pp_maxdiff(out_p, out_m)
++    same = bool(tables and eq_h and eq_y)
++    line = (f"tables {'same' if tables else 'DIFFER'}; max |pp - master| hs {dh:.3g} ({hp.shape[0]} rows), y {dy:.3g} "
++            f"({yp.shape[0]} rows), out {dout:.3g}")
++    del hp, hm, yp, ym
++    return same, line
++
++
++def _rega_pp_compare(state, x, tw, lids, tracer=None):
++    """prepare only: master's rega and the ping-pong kernel eagerly on one routing. (ok, line): ok needs error
++    word 0 and the right launch markers after each, and bit-identical hs / y."""
++    err = state["rega_err"]
++    km, kp = {}, {}
++    err.zero_()
++    out_m = _experts_rega(x, tw, lids, state, pp=False, keep=km)
++    torch.cuda.synchronize()
++    wm, m13, m2 = _rega_marks(err)
++    err.zero_()
++    out_p = _experts_rega(x, tw, lids, state, tracer=tracer, pp=True, keep=kp)
++    torch.cuda.synchronize()
++    wp, p13, p2 = _rega_marks(err)
++    same, dline = _rega_pp_diff(kp, km, out_p, out_m, lids)
++    launched = _rega_launched(m13, m2) and p13 == REGA_PP_MAGIC and p2 == REGA_PP_MAGIC
++    ok = wm == 0 and wp == 0 and launched and same
++    line = (f"{int((lids >= 0).sum())} local routes; {dline}; error words master {wm} pp {wp} "
++            f"({REGA_ERR_TEXT.get(wp, '?')}); markers master {m13:#x}/{m2:#x} pp {p13:#x}/{p2:#x}"
++            f"{'' if ok else '  <-- MISS'}")
++    del km, kp, out_m, out_p
++    return ok, line
++
++
++def _rega_pp_replay_check(state, device, gen, plan):
++    """prepare only, master's _rega_replay_check plan with the ping-pong kernels: states A (the prepared one),
++    B (copy.deepcopy, both extension modules shared through the memo), C (the recursive tensor clone) after a
++    2 MB pad each; per T one CUDA graph of _experts_rega(pp=True) per state over its own static inputs; per
++    routing kind replays A, B, C, A, B, each after REFILLING that state's inputs with a fresh case, each requiring
++    error word 0 and both ping-pong markers in THAT state's error tensor and hs / y bit-identical to master's
++    rega run eagerly on the same inputs. Returns (None or why, summary)."""
++    keys = REGA_STATE_KEYS + ("rega_pp_ext",)
++    mini = {k: state[k] for k in keys}
++    states = {"A": mini}
++    pads = []
++    for label in ("B", "C"):
++        pads.append(torch.empty(2 * 1024 * 1024, dtype=torch.uint8, device=device))
++        if label == "B":
++            st = copy.deepcopy(mini, {id(mini["rega_ext"]): mini["rega_ext"],
++                                      id(mini["rega_pp_ext"]): mini["rega_pp_ext"]})
++        else:
++            st = _rega_copy_tree(mini)
++        torch.cuda.synchronize()
++        states[label] = st
++        if (st["rega_bank"]["q13"].data_ptr() == mini["rega_bank"]["q13"].data_ptr()
++                or st["rega_err"].data_ptr() == mini["rega_err"].data_ptr()):
++            return f"copy {label} shares state A's tensors", ""
++    n = 0
++    for t, kinds in plan:
++        graphs, bufs, holders = {}, {}, {}
++        try:
++            for name, st in states.items():
++                b = _rega_case(t, "random", gen, device)
++                holder = {}
++
++                def fn(st=st, b=b, holder=holder):
++                    holder["out"] = _experts_rega(b[0], b[1], b[2], st, pp=True, keep=holder)
++
++                graphs[name] = _ssdq_graph_time(fn, device)
++                bufs[name], holders[name] = b, holder
++            for kind in kinds:
++                for name in REGA_REPLAY_SEQ:
++                    st = states[name]
++                    x, tw, lids = _rega_case(t, kind, gen, device)
++                    for dst, src in zip(bufs[name], (x, tw, lids)):
++                        dst.copy_(src)
++                    st["rega_err"].zero_()
++                    graphs[name].replay()
++                    torch.cuda.synchronize()
++                    word, p13, p2 = _rega_marks(st["rega_err"])
++                    km = {}
++                    state["rega_err"].zero_()
++                    out_m = _experts_rega(x, tw, lids, state, pp=False, keep=km)
++                    torch.cuda.synchronize()
++                    wm, m13, m2 = _rega_marks(state["rega_err"])
++                    same, dline = _rega_pp_diff(holders[name], km, holders[name]["out"], out_m, lids)
++                    del km, out_m
++                    n += 1
++                    ok = (word == 0 and wm == 0 and p13 == REGA_PP_MAGIC and p2 == REGA_PP_MAGIC
++                          and _rega_launched(m13, m2) and same)
++                    print(f"{REGA_PP_TAG} replay T={t} {kind} state {name}: {dline}; error word {word}; pp markers "
++                          f"{p13:#x}/{p2:#x}{'' if ok else '  <-- MISS'}", flush=True)
++                    if not ok:
++                        return (f"T={t} {kind} state {name}: word {word} ({REGA_ERR_TEXT.get(word, '?')}) master "
++                                f"word {wm}, pp markers {p13:#x}/{p2:#x}, {dline}"), ""
++        finally:
++            del graphs, bufs, holders
++            torch.cuda.synchronize()
++            torch.cuda.empty_cache()
++    del states, pads
++    torch.cuda.empty_cache()
++    return None, (f"{n} refilled graph replays over states A, B (deepcopy), C (tensor clone) at "
++                  f"{[(t, k) for t, k in plan]}, all bit-identical to master's rega, markers and error word ok")
++
++
++def _rega_pp_medians(fns, device):
++    """Interleaved cold-L2 CUDA-graph medians (us), as _rega_gate times them: one graph per fn plus an empty
++    graph, a 256 MB flush before every replay, a warm-up replay each, REGA_ALTERNATIONS alternations with the
++    order rotated and flipped, the empty-graph median subtracted."""
++    graphs = {name: _ssdq_graph_time(fn, device) for name, fn in fns.items()}
++    tiny = torch.zeros(16, dtype=torch.float32, device=device)
++    graphs["empty"] = _ssdq_graph_time(lambda: tiny.zero_(), device)
++    flush = torch.empty(256 * 2 ** 20 // 4, dtype=torch.float32, device=device)  # > the 50 MB L2
++    ev = [torch.cuda.Event(enable_timing=True) for _ in range(2)]
++
++    def once(graph):
++        flush.zero_()
++        ev[0].record()
++        graph.replay()
++        ev[1].record()
++        torch.cuda.synchronize()
++        return ev[0].elapsed_time(ev[1]) * 1000.0
++
++    names = list(graphs)
++    samples = {name: [] for name in names}
++    for name in names:
++        once(graphs[name])
++    for i in range(REGA_ALTERNATIONS):
++        order = names[i % len(names):] + names[:i % len(names)]
++        if i % 2:
++            order = order[::-1]
++        for name in order:
++            samples[name].append(once(graphs[name]))
++    med = {name: sorted(v)[len(v) // 2] for name, v in samples.items()}
++    base = med.pop("empty")
++    del graphs, flush
++    return {name: max(v - base, 0.0) for name, v in med.items()}
++
++
++def _rega_pp_kernel_times(state, device, tokens):
++    """prepare only: the w13 and w2 kernels timed alone (a graph of one launch each, cold L2, interleaved) for
++    master's rega and the ping-pong variant at a class's gate T on the gate's soft routing, with TFLOP/s from the
++    MEASURED local route count and the L2-to-SM bytes/s the kernel moved (per item-stage 9216 B of weight + two
++    SWIZZLE_128B activation boxes of NB rows x 128 B, NB from each chunk's block count). Returns the line."""
++    gen = torch.Generator(device=device).manual_seed(20261025)
++    x, _, lids = _ssdq_case(tokens, "random", gen, device)
++    ext, pp_ext, bank = state["rega_ext"], state["rega_pp_ext"], state["rega_bank"]
++    err, grid = state["rega_err"], state["rega_grid"]
++    size_k = x.shape[1]
++    num_slots = tokens * TOP_K
++    routes = int((lids >= 0).sum())
++    _, (sorted_ids, block_experts, n_padded) = _align_dispatch(lids, REGA_BSM, state)
++    rows = block_experts.shape[0] * REGA_BSM
++    xs = torch.empty((rows, size_k), device=device, dtype=x.dtype)
++    ext.rega_gather(x.contiguous(), sorted_ids, block_experts, n_padded, num_slots, LOCAL_EXPERTS, xs)
++    hs = torch.empty((rows, D_EXPERT), device=device, dtype=x.dtype)
++    err.zero_()
++    ext.rega_gemm(0, xs, bank["q13"], bank["gs13"], sorted_ids, block_experts, n_padded, num_slots,
++                  D_EXPERT // 64, size_k, hs, grid, err)
++    hs_t = torch.empty_like(hs)
++    y = torch.empty((num_slots, size_k), device=device, dtype=x.dtype)
++    torch.cuda.synchronize()
++    # chunk histogram (the kernel's chunking: 8 blocks of 16 per chunk, the remainder last) and padded slots
++    nb = min(int(n_padded.cpu()[0]) // REGA_BSM, block_experts.numel())
++    be = block_experts[:nb].cpu().long()
++    counts = torch.bincount(be[(be >= 0) & (be < LOCAL_EXPERTS)], minlength=LOCAL_EXPERTS).tolist()
++    hist = {16: 0, 32: 0, 64: 0, 128: 0}
++    for c in counts:
++        full, r = divmod(int(c), 8)
++        hist[128] += full
++        if r:
++            hist[16 if r <= 1 else (32 if r <= 2 else (64 if r <= 4 else 128))] += 1
++
++    def traffic(n_tiles, k):
++        ks = k // REGA_BK
++        return sum(cnt * n_tiles * ks * (2 * REGA_REC + 2 * nbk * 128) for nbk, cnt in hist.items())
++
++    def w13(g):
++        return lambda: g(0, xs, bank["q13"], bank["gs13"], sorted_ids, block_experts, n_padded, num_slots,
++                         D_EXPERT // 64, size_k, hs_t, grid, err)
++
++    def w2(g):
++        return lambda: g(1, hs, bank["q2"], bank["gs2"], sorted_ids, block_experts, n_padded, num_slots,
++                         size_k // 128, D_EXPERT, y, grid, err)
++
++    meds = _rega_pp_medians({"w13 master": w13(ext.rega_gemm), "w13 pp": w13(pp_ext.rega_gemm_pp),
++                             "w2 master": w2(ext.rega_gemm), "w2 pp": w2(pp_ext.rega_gemm_pp)}, device)
++    torch.cuda.synchronize()
++    word = _rega_marks(err)[0]
++    flops = {"w13": 2.0 * routes * (2 * D_EXPERT) * size_k, "w2": 2.0 * routes * size_k * D_EXPERT}
++    byts = {"w13": traffic(D_EXPERT // 64, size_k), "w2": traffic(size_k // 128, D_EXPERT)}
++    parts = []
++    for k in ("w13", "w2"):
++        cells = []
++        for v in ("master", "pp"):
++            us = meds[f"{k} {v}"]
++            sec = max(us, 1e-3) * 1e-6
++            cells.append(f"{v} {us:.1f} us ({flops[k] / sec / 1e12:.0f} TFLOP/s, {byts[k] / sec / 1e12:.2f} TB/s "
++                         f"L2->SM)")
++        parts.append(f"{k}: " + " | ".join(cells) + f" ratio pp/master {meds[f'{k} pp'] / max(meds[f'{k} master'], 1e-9):.3f}")
++    del xs, hs, hs_t, y
++    torch.cuda.empty_cache()
++    return (f"{REGA_PP_TAG} KERNELS T={tokens} soft: {routes} local routes measured, {nb * REGA_BSM} padded slots, "
++            f"chunks by N bucket {hist}, {byts['w13'] / 2**30:.2f} / {byts['w2'] / 2**30:.2f} GiB L2->SM (w13 / w2); "
++            + "; ".join(parts) + f"; error word {word}")
++
++
++def _rega_pp_gate(state, device, tokens):
++    """The whole expert block, master's rega vs the ping-pong rega, cold-L2 graph medians at one class's gate T
++    on master's gate routing (soft / random, seed 20261025). Returns (master us, pp us)."""
++    gen = torch.Generator(device=device).manual_seed(20261025)
++    x, tw, lids = _ssdq_case(tokens, "random", gen, device)
++    meds = _rega_pp_medians({"master": lambda: _experts_rega(x, tw, lids, state, pp=False),
++                             "pp": lambda: _experts_rega(x, tw, lids, state, pp=True)}, device)
++    torch.cuda.synchronize()
++    torch.cuda.empty_cache()
++    return meds["master"], meds["pp"]
++
++
++def _rega_pp_setup(state, weights, device, t_start):
++    """prepare() only, strictly after master's _rega_setup (whose flags it never changes). Sets state['rega_pp'] =
++    {'low', 'high', 'ft'} (all False unless a class passes everything) and returns the final PATH CHOSEN lines.
++    Per class whose master rega is ON: exactness (bit-identical hs / y vs master's rega on master's self-check
++    routings), the two-state copy / refilled-replay check, the per-kernel timing line, then the gate (pp <=
++    REGA_PP_RATIO x master's rega block). Any failure prints 'OFF: <reason>' and that class keeps master's rega."""
++    state["rega_pp"] = {"low": False, "high": False, "ft": False}
++    why = {}
++    gate_lines = []
++    t_pp0 = time.perf_counter()
++    marks = []
++
++    def elapsed():
++        return time.perf_counter() - t_start
++
++    def phase(name):
++        marks.append(f"{name} {elapsed():.1f}s")
++        print(f"{REGA_PP_TAG} phase {name}: prepare total {elapsed():.1f}s", flush=True)
++
++    master_ok = dict(state.get("rega_ok", {}))
++    cands = [c for c in REGA_PP_CLASSES if master_ok.get(c, False)]
++    for c in REGA_PP_CLASSES:
++        if c not in cands:
++            why[c] = "master's rega is OFF for this class"
++    print(f"{REGA_PP_TAG} start after master's rega setup: prepare used {elapsed():.1f}s (start deadline "
++          f"{REGA_PP_START_DEADLINE_S:.0f}s, step deadline {REGA_PP_STEP_DEADLINE_S:.0f}s); candidate classes "
++          f"{cands}", flush=True)
++
++    def run():
++        if not cands:
++            return
++        if elapsed() > REGA_PP_START_DEADLINE_S:
++            for c in cands:
++                why[c] = f"prepare already used {elapsed():.0f}s > {REGA_PP_START_DEADLINE_S:.0f}s start deadline"
++            return
++        if len(state["rega_ext"].rega_init()) != 40:
++            for c in cands:
++                why[c] = "master runs its v1 fallback module (no v2 kernel to compare against)"
++            return
++        src, src_why = _rega_pp_src()
++        if src is None:
++            for c in cands:
++                why[c] = f"source derivation failed: {src_why}"
++            return
++        findings = _rega_audit_cpp(_REGA_PP_CPP + "\n" + src)
++        bad = [f"line {n}: {ln.strip()[:100]}" for n, ln in enumerate(src.splitlines(), 1)
++               if "data_ptr<" in ln or "data_ptr <" in ln or _SSDQ_TEMPLATED_ACCESSOR.search(ln)]
++        if findings or bad:
++            for c in cands:
++                why[c] = f"source audit: globals {findings[:3]}, templated accessors {bad[:3]}"
++            return
++        print(f"{REGA_PP_TAG} derived source ok ({len(src)} chars, {len(_REGA_PP_SUBS)} exact substitutions of "
++              f"master's text); audit: no file-scope / static / device globals, no templated accessor", flush=True)
++        t0 = time.perf_counter()
++        ext, _ = _rega_build(REGA_PP_EXT_NAME, src, cpp=_REGA_PP_CPP, functions=REGA_PP_FUNCTIONS)
++        print(f"{REGA_PP_TAG} nvcc build of {REGA_PP_EXT_NAME} {'ok' if ext is not None else 'FAILED'} in "
++              f"{time.perf_counter() - t0:.1f}s (flags {REGA_CUDA_CFLAGS}, TORCH_CUDA_ARCH_LIST=9.0a)", flush=True)
++        phase("build")
++        if ext is None:
++            for c in cands:
++                why[c] = "build failed"
++            return
++        info = ext.rega_pp_init()
++        cap_ok = {False: True, True: True}
++        for i in range(0, len(info), 10):
++            flag, a_ok, regs, local_bytes, static_smem, dyn_smem, occ, e1, bin_v, ptx_v = info[i:i + 10]
++            big = bool(flag & 2)
++            print(f"{REGA_PP_TAG} kernel rega_kernel_pp<{'w13+silu' if flag & 1 else 'w2'}, "
++                  f"{'first-turn' if big else 'stage-1'} class>: attrs ok {bool(a_ok)} (SetAttribute rc {e1}), regs "
++                  f"{regs}, local bytes {local_bytes}{' (SPILL: OFF)' if local_bytes > 0 else ''}, static smem "
++                  f"{static_smem} B, dynamic smem {dyn_smem} B, CTAs/SM {occ}, binaryVersion {bin_v}, ptxVersion "
++                  f"{ptx_v}", flush=True)
++            cap_ok[big] = (cap_ok[big] and bool(a_ok) and local_bytes == 0 and occ >= 1
++                           and static_smem + dyn_smem <= REGA_SMEM_LIMIT
++                           and regs * REGA_THREADS >= 40 * 128 + 232 * 256 and bin_v == 90)
++        if not cap_ok[False]:
++            for c in cands:
++                why[c] = "stage-1-class instantiation: attributes / spill / occupancy / register pool check failed"
++            return
++        if not cap_ok[True] and "ft" in cands:
++            why["ft"] = "first-turn-class instantiation: attributes / spill / occupancy / register pool check failed"
++            cands.remove("ft")
++        state["rega_pp_ext"] = ext
++        gen = torch.Generator(device=device).manual_seed(20261027)
++        # Canary: 0, 1 and 2+ items per CTA, each launch announced before and synced + printed after.
++        for tokens, kind in REGA_PP_CANARY:
++            x, tw, lids = _rega_case(tokens, kind, gen, device)
++            ok, line = _rega_pp_compare(state, x, tw, lids, tracer=_RegaTracer(f"pp canary T={tokens} {kind}"))
++            print(f"{REGA_PP_TAG} canary T={tokens} {kind}: {line}", flush=True)
++            if not ok:
++                for c in cands:
++                    why[c] = f"canary T={tokens} {kind} missed: {line}"
++                return
++        phase("canary")
++        for cls in cands:
++            try:
++                if elapsed() > REGA_PP_STEP_DEADLINE_S:
++                    why[cls] = f"step deadline: prepare already used {elapsed():.0f}s > {REGA_PP_STEP_DEADLINE_S:.0f}s"
++                    continue
++                miss = None
++                for tokens, kind in REGA_PP_EXACT[cls]:
++                    x, tw, lids = _rega_case(tokens, kind, gen, device)
++                    ok, line = _rega_pp_compare(state, x, tw, lids)
++                    print(f"{REGA_PP_TAG} exact {cls} T={tokens} {kind}: {line}", flush=True)
++                    del x, tw, lids
++                    if not ok:
++                        miss = f"exactness T={tokens} {kind}: {line}"
++                        break
++                torch.cuda.empty_cache()
++                phase(f"{cls}-exact")
++                if miss:
++                    why[cls] = miss
++                    continue
++                if elapsed() > REGA_PP_STEP_DEADLINE_S:
++                    why[cls] = f"step deadline before the copy check ({elapsed():.0f}s)"
++                    continue
++                rwhy, rline = _rega_pp_replay_check(state, device, gen, REGA_PP_REPLAY_PLAN[cls])
++                phase(f"{cls}-copy")
++                if rwhy:
++                    why[cls] = f"copy / replay check failed: {rwhy}"
++                    continue
++                print(f"{REGA_PP_TAG} LAUNCHED = rega_pp ({cls}): {rline}", flush=True)
++                if elapsed() > REGA_PP_STEP_DEADLINE_S:
++                    why[cls] = f"step deadline before the gate ({elapsed():.0f}s)"
++                    continue
++                tokens = REGA_PP_GATE_TOKENS[cls]
++                kline = _rega_pp_kernel_times(state, device, tokens)
++                print(kline, flush=True)
++                t_m, t_p = _rega_pp_gate(state, device, tokens)
++                ratio = t_p / max(t_m, 1e-9)
++                on = bool(ratio <= REGA_PP_RATIO)
++                gate_lines.append(kline)
++                gate_lines.append(
++                    f"{REGA_PP_TAG} GATE {cls} T={tokens} soft cold-L2 graph medians over {REGA_ALTERNATIONS} "
++                    f"alternations (empty-graph baseline subtracted), whole expert block: master rega {t_m:.1f} us; "
++                    f"pp {t_p:.1f} us; ratio {ratio:.3f} (ON at <= {REGA_PP_RATIO}): {'ON' if on else 'OFF'}")
++                print(gate_lines[-1], flush=True)
++                phase(f"{cls}-gate")
++                if on:
++                    state["rega_pp"][cls] = True
++                else:
++                    why[cls] = f"gate ratio {ratio:.3f} > {REGA_PP_RATIO}"
++            except Exception as e:  # this class keeps master's rega; a device fault would have poisoned the context
++                state["rega_pp"][cls] = False
++                why[cls] = f"raised {e!r}"[:300]
++                torch.cuda.synchronize()
++                torch.cuda.empty_cache()
++    try:
++        run()
++    except Exception as e:
++        state["rega_pp"] = {"low": False, "high": False, "ft": False}
++        for c in REGA_PP_CLASSES:
++            why.setdefault(c, f"setup raised {e!r}"[:300])
++    finally:
++        torch.cuda.synchronize()
++        torch.cuda.empty_cache()
++        for c in REGA_PP_CLASSES:
++            if not state["rega_pp"][c]:
++                why.setdefault(c, "not reached")
++    lines = [f"{REGA_PP_TAG} setup {time.perf_counter() - t_pp0:.1f}s; phases: {', '.join(marks) or 'none'}"]
++    lines += gate_lines
++    for c in REGA_PP_CLASSES:
++        if not state["rega_pp"][c]:
++            lines.append(f"{REGA_PP_TAG} OFF {c}: {why[c]}"[:600])
++    for c in ("low", "high", "ft"):
++        lines.append(f"{REGA_PP_TAG} PATH CHOSEN {c} T in {REGA_PP_RANGES[c]}: "
++                     f"{'pp' if state['rega_pp'][c] else 'master'} (master rega {'ON' if master_ok.get(c) else 'OFF'})")
++    return lines
++
++
+ def kernel_fn(data, state):
+     cfg = data["config"]
+     batch, length, tokens = cfg["batch"], cfg["q_len"], cfg["tokens"]

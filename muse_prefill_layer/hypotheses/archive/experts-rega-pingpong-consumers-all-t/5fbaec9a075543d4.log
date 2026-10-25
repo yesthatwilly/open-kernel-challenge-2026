@@ -1,0 +1,85 @@
+0x50504d4d/0x50504d4d
+[rega-pp] exact high T=3012 one: 3012 local routes; tables same; max |pp - master| hs 0 (3024 rows), y 0 (3012 rows), out 0; error words master 0 pp 0 (ok); markers master 0x57474d4d/0x57474d4d pp 0x50504d4d/0x50504d4d
+[rega-pp] exact high T=4096 random: 4097 local routes; tables same; max |pp - master| hs 0 (4352 rows), y 0 (4097 rows), out 0; error words master 0 pp 0 (ok); markers master 0x57474d4d/0x57474d4d pp 0x50504d4d/0x50504d4d
+[rega-pp] exact high T=4096 skewed: 18456 local routes; tables same; max |pp - master| hs 0 (18688 rows), y 0 (18456 rows), out 0; error words master 0 pp 0 (ok); markers master 0x57474d4d/0x57474d4d pp 0x50504d4d/0x50504d4d
+[rega-pp] exact high T=4096 one: 4096 local routes; tables same; max |pp - master| hs 0 (4096 rows), y 0 (4096 rows), out 0; error words master 0 pp 0 (ok); markers master 0x57474d4d/0x57474d4d pp 0x50504d4d/0x50504d4d
+[rega-pp] phase high-exact: prepare total 138.6s
+[rega-pp] replay T=3012 random state A: tables same; max |pp - master| hs 0 (3312 rows), y 0 (3055 rows), out 0; error word 0; pp markers 0x50504d4d/0x50504d4d
+[rega-pp] replay T=3012 random state B: tables same; max |pp - master| hs 0 (3200 rows), y 0 (2980 rows), out 0; error word 0; pp markers 0x50504d4d/0x50504d4d
+[rega-pp] replay T=3012 random state C: tables same; max |pp - master| hs 0 (3216 rows), y 0 (3006 rows), out 0; error word 0; pp markers 0x50504d4d/0x50504d4d
+[rega-pp] replay T=3012 random state A: tables same; max |pp - master| hs 0 (3312 rows), y 0 (3066 rows), out 0; error word 0; pp markers 0x50504d4d/0x50504d4d
+[rega-pp] replay T=3012 random state B: tables same; max |pp - master| hs 0 (3280 rows), y 0 (3033 rows), out 0; error word 0; pp markers 0x50504d4d/0x50504d4d
+[rega-pp] replay T=3012 skewed state A: tables same; max |pp - master| hs 0 (13712 rows), y 0 (13491 rows), out 0; error word 0; pp markers 0x50504d4d/0x50504d4d
+[rega-pp] replay T=3012 skewed state B: tables same; max |pp - master| hs 0 (13808 rows), y 0 (13545 rows), out 0; error word 0; pp markers 0x50504d4d/0x50504d4d
+[rega-pp] replay T=3012 skewed state C: tables same; max |pp - master| hs 0 (13728 rows), y 0 (13516 rows), out 0; error word 0; pp markers 0x50504d4d/0x50504d4d
+[rega-pp] replay T=3012 skewed state A: tables same; max |pp - master| hs 0 (13840 rows), y 0 (13619 rows), out 0; error word 0; pp markers 0x50504d4d/0x50504d4d
+[rega-pp] replay T=3012 skewed state B: tables same; max |pp - master| hs 0 (13840 rows), y 0 (13589 rows), out 0; error word 0; pp markers 0x50504d4d/0x50504d4d
+[rega-pp] replay T=3012 one state A: tables same; max |pp - master| hs 0 (3024 rows), y 0 (3012 rows), out 0; error word 0; pp markers 0x50504d4d/0x50504d4d
+[rega-pp] replay T=3012 one state B: tables same; max |pp - master| hs 0 (3024 rows), y 0 (3012 rows), out 0; error word 0; pp markers 0x50504d4d/0x50504d4d
+[rega-pp] replay T=3012 one state C: tables same; max |pp - master| hs 0 (3024 rows), y 0 (3012 rows), out 0; error word 0; pp markers 0x50504d4d/0x50504d4d
+[rega-pp] replay T=3012 one state A: tables same; max |pp - master| hs 0 (3024 rows), y 0 (3012 rows), out 0; error word 0; pp markers 0x50504d4d/0x50504d4d
+[rega-pp] replay T=3012 one state B: tables same; max |pp - master| hs 0 (3024 rows), y 0 (3012 rows), out 0; error word 0; pp markers 0x50504d4d/0x50504d4d
+[rega-pp] replay T=4096 random state A: tables same; max |pp - master| hs 0 (4224 rows), y 0 (4004 rows), out 0; error word 0; pp markers 0x50504d4d/0x50504d4d
+[rega-pp] replay T=4096 random state B: tables same; max |pp - master| hs 0 (4368 rows), y 0 (4167 rows), out 0; error word 0; pp markers 0x50504d4d/0x50504d4d
+[rega-pp] replay T=4096 random state C: tables same; max |pp - master| hs 0 (4272 rows), y 0 (4046 rows), out 0; error word 0; pp markers 0x50504d4d/0x50504d4d
+[rega-pp] replay T=4096 random state A: tables same; max |pp - master| hs 0 (4368 rows), y 0 (4094 rows), out 0; error word 0; pp markers 0x50504d4d/0x50504d4d
+[rega-pp] replay T=4096 random state B: tables same; max |pp - master| hs 0 (4240 rows), y 0 (4021 rows), out 0; error word 0; pp markers 0x50504d4d/0x50504d4d
+[rega-pp] replay T=4096 skewed state A: tables same; max |pp - master| hs 0 (18640 rows), y 0 (18403 rows), out 0; error word 0; pp markers 0x50504d4d/0x50504d4d
+[rega-pp] replay T=4096 skewed state B: tables same; max |pp - master| hs 0 (18704 rows), y 0 (18474 rows), out 0; error word 0; pp markers 0x50504d4d/0x50504d4d
+[rega-pp] replay T=4096 skewed state C: tables same; max |pp - master| hs 0 (18720 rows), y 0 (18430 rows), out 0; error word 0; pp markers 0x50504d4d/0x50504d4d
+[rega-pp] replay T=4096 skewed state A: tables same; max |pp - master| hs 0 (18656 rows), y 0 (18409 rows), out 0; error word 0; pp markers 0x50504d4d/0x50504d4d
+[rega-pp] replay T=4096 skewed state B: tables same; max |pp - master| hs 0 (18736 rows), y 0 (18495 rows), out 0; error word 0; pp markers 0x50504d4d/0x50504d4d
+[rega-pp] replay T=4096 one state A: tables same; max |pp - master| hs 0 (4096 rows), y 0 (4096 rows), out 0; error word 0; pp markers 0x50504d4d/0x50504d4d
+[rega-pp] replay T=4096 one state B: tables same; max |pp - master| hs 0 (4096 rows), y 0 (4096 rows), out 0; error word 0; pp markers 0x50504d4d/0x50504d4d
+[rega-pp] replay T=4096 one state C: tables same; max |pp - master| hs 0 (4096 rows), y 0 (4096 rows), out 0; error word 0; pp markers 0x50504d4d/0x50504d4d
+[rega-pp] replay T=4096 one state A: tables same; max |pp - master| hs 0 (4096 rows), y 0 (4096 rows), out 0; error word 0; pp markers 0x50504d4d/0x50504d4d
+[rega-pp] replay T=4096 one state B: tables same; max |pp - master| hs 0 (4096 rows), y 0 (4096 rows), out 0; error word 0; pp markers 0x50504d4d/0x50504d4d
+[rega-pp] phase high-copy: prepare total 138.8s
+[rega-pp] LAUNCHED = rega_pp (high): 30 refilled graph replays over states A, B (deepcopy), C (tensor clone) at [(3012, ('random', 'skewed', 'one')), (4096, ('random', 'skewed', 'one'))], all bit-identical to master's rega, markers and error word ok
+[rega-pp] KERNELS T=3012 soft: 3015 local routes measured, 3280 padded slots, chunks by N bucket {16: 0, 32: 0, 64: 0, 128: 32}, 2.56 / 1.28 GiB L2->SM (w13 / w2); w13: master 474.2 us (427 TFLOP/s, 5.80 TB/s L2->SM) | pp 577.9 us (350 TFLOP/s, 4.76 TB/s L2->SM) ratio pp/master 1.219; w2: master 227.3 us (445 TFLOP/s, 6.05 TB/s L2->SM) | pp 267.3 us (378 TFLOP/s, 5.15 TB/s L2->SM) ratio pp/master 1.176; error word 0
+[rega-pp] GATE high T=3012 soft cold-L2 graph medians over 9 alternations (empty-graph baseline subtracted), whole expert block: master rega 747.0 us; pp 880.5 us; ratio 1.179 (ON at <= 0.98): OFF
+[rega-pp] phase high-gate: prepare total 138.8s
+[rega-pp] exact low T=753 random: 796 local routes; tables same; max |pp - master| hs 0 (1072 rows), y 0 (796 rows), out 0; error words master 0 pp 0 (ok); markers master 0x57474d4d/0x57474d4d pp 0x50504d4d/0x50504d4d
+[rega-pp] exact low T=753 skewed: 3380 local routes; tables same; max |pp - master| hs 0 (3568 rows), y 0 (3380 rows), out 0; error words master 0 pp 0 (ok); markers master 0x57474d4d/0x57474d4d pp 0x50504d4d/0x50504d4d
+[rega-pp] exact low T=753 one: 753 local routes; tables same; max |pp - master| hs 0 (768 rows), y 0 (753 rows), out 0; error words master 0 pp 0 (ok); markers master 0x57474d4d/0x57474d4d pp 0x50504d4d/0x50504d4d
+[rega-pp] exact low T=1024 random: 988 local routes; tables same; max |pp - master| hs 0 (1216 rows), y 0 (988 rows), out 0; error words master 0 pp 0 (ok); markers master 0x57474d4d/0x57474d4d pp 0x50504d4d/0x50504d4d
+[rega-pp] exact low T=1024 skewed: 4608 local routes; tables same; max |pp - master| hs 0 (4832 rows), y 0 (4608 rows), out 0; error words master 0 pp 0 (ok); markers master 0x57474d4d/0x57474d4d pp 0x50504d4d/0x50504d4d
+[rega-pp] exact low T=1024 one: 1024 local routes; tables same; max |pp - master| hs 0 (1024 rows), y 0 (1024 rows), out 0; error words master 0 pp 0 (ok); markers master 0x57474d4d/0x57474d4d pp 0x50504d4d/0x50504d4d
+[rega-pp] phase low-exact: prepare total 138.8s
+[rega-pp] replay T=753 random state A: tables same; max |pp - master| hs 0 (1024 rows), y 0 (789 rows), out 0; error word 0; pp markers 0x50504d4d/0x50504d4d
+[rega-pp] replay T=753 random state B: tables same; max |pp - master| hs 0 (1008 rows), y 0 (768 rows), out 0; error word 0; pp markers 0x50504d4d/0x50504d4d
+[rega-pp] replay T=753 random state C: tables same; max |pp - master| hs 0 (1024 rows), y 0 (745 rows), out 0; error word 0; pp markers 0x50504d4d/0x50504d4d
+[rega-pp] replay T=753 random state A: tables same; max |pp - master| hs 0 (992 rows), y 0 (725 rows), out 0; error word 0; pp markers 0x50504d4d/0x50504d4d
+[rega-pp] replay T=753 random state B: tables same; max |pp - master| hs 0 (1024 rows), y 0 (738 rows), out 0; error word 0; pp markers 0x50504d4d/0x50504d4d
+[rega-pp] replay T=753 skewed state A: tables same; max |pp - master| hs 0 (3536 rows), y 0 (3339 rows), out 0; error word 0; pp markers 0x50504d4d/0x50504d4d
+[rega-pp] replay T=753 skewed state B: tables same; max |pp - master| hs 0 (3536 rows), y 0 (3379 rows), out 0; error word 0; pp markers 0x50504d4d/0x50504d4d
+[rega-pp] replay T=753 skewed state C: tables same; max |pp - master| hs 0 (3536 rows), y 0 (3383 rows), out 0; error word 0; pp markers 0x50504d4d/0x50504d4d
+[rega-pp] replay T=753 skewed state A: tables same; max |pp - master| hs 0 (3568 rows), y 0 (3383 rows), out 0; error word 0; pp markers 0x50504d4d/0x50504d4d
+[rega-pp] replay T=753 skewed state B: tables same; max |pp - master| hs 0 (3536 rows), y 0 (3365 rows), out 0; error word 0; pp markers 0x50504d4d/0x50504d4d
+[rega-pp] replay T=753 one state A: tables same; max |pp - master| hs 0 (768 rows), y 0 (753 rows), out 0; error word 0; pp markers 0x50504d4d/0x50504d4d
+[rega-pp] replay T=753 one state B: tables same; max |pp - master| hs 0 (768 rows), y 0 (753 rows), out 0; error word 0; pp markers 0x50504d4d/0x50504d4d
+[rega-pp] replay T=753 one state C: tables same; max |pp - master| hs 0 (768 rows), y 0 (753 rows), out 0; error word 0; pp markers 0x50504d4d/0x50504d4d
+[rega-pp] replay T=753 one state A: tables same; max |pp - master| hs 0 (768 rows), y 0 (753 rows), out 0; error word 0; pp markers 0x50504d4d/0x50504d4d
+[rega-pp] replay T=753 one state B: tables same; max |pp - master| hs 0 (768 rows), y 0 (753 rows), out 0; error word 0; pp markers 0x50504d4d/0x50504d4d
+[rega-pp] phase low-copy: prepare total 138.9s
+[rega-pp] LAUNCHED = rega_pp (low): 15 refilled graph replays over states A, B (deepcopy), C (tensor clone) at [(753, ('random', 'skewed', 'one'))], all bit-identical to master's rega, markers and error word ok
+[rega-pp] KERNELS T=753 soft: 766 local routes measured, 1008 padded slots, chunks by N bucket {16: 3, 32: 27, 64: 2, 128: 0}, 1.07 / 0.54 GiB L2->SM (w13 / w2); w13: master 307.3 us (167 TFLOP/s, 3.74 TB/s L2->SM) | pp 470.4 us (109 TFLOP/s, 2.44 TB/s L2->SM) ratio pp/master 1.531; w2: master 150.3 us (171 TFLOP/s, 3.82 TB/s L2->SM) | pp 213.1 us (121 TFLOP/s, 2.70 TB/s L2->SM) ratio pp/master 1.418; error word 0
+[rega-pp] GATE low T=753 soft cold-L2 graph medians over 9 alternations (empty-graph baseline subtracted), whole expert block: master rega 477.1 us; pp 702.0 us; ratio 1.471 (ON at <= 0.98): OFF
+[rega-pp] phase low-gate: prepare total 138.9s
+[align2] GATE bsm 16 low T=753 cold-L2 graph medians over 15 alternations (empty-graph baseline subtracted): master 17.9 us; chunk 512 9.2 us; chunk 1024 20.6 us; chunk chosen 512 ratio 0.513 (ON at <= 0.98), fill dist: ON
+[align2] GATE bsm 16 high T=3012 cold-L2 graph medians over 15 alternations (empty-graph baseline subtracted): master 69.2 us; chunk 512 8.8 us; chunk 1024 22.2 us; chunk chosen 512 ratio 0.127 (ON at <= 0.98), fill dist: ON
+[align2] GATE bsm 16 ft T=16384 cold-L2 graph medians over 15 alternations (empty-graph baseline subtracted): master 392.3 us; chunk 512 26.7 us; chunk 1024 22.9 us; chunk chosen 1024 ratio 0.058 (ON at <= 0.98), fill dist: ON
+[align2] PATH CHOSEN: bsm:class 16:ft: two-phase chunk 1024, fill dist; bsm:class 16:high: two-phase chunk 512, fill dist; bsm:class 16:low: two-phase chunk 512, fill dist (every other (bsm, class): master _align_parallel; rega path only; Marlin / ssdq keep master's align)
+[rega-pp] setup 35.2s; phases: build 136.6s, canary 137.2s, ft-exact 137.4s, ft-copy 138.3s, ft-gate 138.5s, high-exact 138.6s, high-copy 138.8s, high-gate 138.8s, low-exact 138.8s, low-copy 138.9s, low-gate 138.9s
+[rega-pp] KERNELS T=16384 soft: 16351 local routes measured, 16608 padded slots, chunks by N bucket {16: 9, 32: 7, 64: 2, 128: 127}, 10.73 / 5.36 GiB L2->SM (w13 / w2); w13: master 2064.6 us (531 TFLOP/s, 5.58 TB/s L2->SM) | pp 2682.8 us (409 TFLOP/s, 4.29 TB/s L2->SM) ratio pp/master 1.299; w2: master 1009.9 us (543 TFLOP/s, 5.70 TB/s L2->SM) | pp 1229.9 us (446 TFLOP/s, 4.68 TB/s L2->SM) ratio pp/master 1.218; error word 0
+[rega-pp] GATE ft T=16384 soft cold-L2 graph medians over 9 alternations (empty-graph baseline subtracted), whole expert block: master rega 3215.5 us; pp 3984.0 us; ratio 1.239 (ON at <= 0.98): OFF
+[rega-pp] KERNELS T=3012 soft: 3015 local routes measured, 3280 padded slots, chunks by N bucket {16: 0, 32: 0, 64: 0, 128: 32}, 2.56 / 1.28 GiB L2->SM (w13 / w2); w13: master 474.2 us (427 TFLOP/s, 5.80 TB/s L2->SM) | pp 577.9 us (350 TFLOP/s, 4.76 TB/s L2->SM) ratio pp/master 1.219; w2: master 227.3 us (445 TFLOP/s, 6.05 TB/s L2->SM) | pp 267.3 us (378 TFLOP/s, 5.15 TB/s L2->SM) ratio pp/master 1.176; error word 0
+[rega-pp] GATE high T=3012 soft cold-L2 graph medians over 9 alternations (empty-graph baseline subtracted), whole expert block: master rega 747.0 us; pp 880.5 us; ratio 1.179 (ON at <= 0.98): OFF
+[rega-pp] KERNELS T=753 soft: 766 local routes measured, 1008 padded slots, chunks by N bucket {16: 3, 32: 27, 64: 2, 128: 0}, 1.07 / 0.54 GiB L2->SM (w13 / w2); w13: master 307.3 us (167 TFLOP/s, 3.74 TB/s L2->SM) | pp 470.4 us (109 TFLOP/s, 2.44 TB/s L2->SM) ratio pp/master 1.531; w2: master 150.3 us (171 TFLOP/s, 3.82 TB/s L2->SM) | pp 213.1 us (121 TFLOP/s, 2.70 TB/s L2->SM) ratio pp/master 1.418; error word 0
+[rega-pp] GATE low T=753 soft cold-L2 graph medians over 9 alternations (empty-graph baseline subtracted), whole expert block: master rega 477.1 us; pp 702.0 us; ratio 1.471 (ON at <= 0.98): OFF
+[rega-pp] OFF ft: gate ratio 1.239 > 0.98
+[rega-pp] OFF high: gate ratio 1.179 > 0.98
+[rega-pp] OFF low: gate ratio 1.471 > 0.98
+[rega-pp] PATH CHOSEN low T in (200, 1024]: master (master rega ON)
+[rega-pp] PATH CHOSEN high T in (1024, 4096]: master (master rega ON)
+[rega-pp] PATH CHOSEN ft T in (4096, 16384]: master (master rega ON)

@@ -86,10 +86,10 @@ priority: 1
 kind: primary
 controls_for: null
 review: proceed
-status: running
+status: done
 review_at: 2026-10-25T152526Z
 review_companions: null
-stage: dispatched
+stage: harvested
 claimed_at: 2026-10-25T152526Z
 base_sha: f4ace8661739740d326729699aeb3d2f785ae596
 base_blob: a2fe2a75893c60d4f68cf94fcce8ce8f9b708a71
@@ -108,6 +108,13 @@ attempt_file: 2026-10-25T154139Z-submit-experts-rega-pingpong-consumers-all-t.md
 prepared_at: 2026-10-25T154139Z
 job: 5fbaec9a075543d4
 dispatched_at: 2026-10-25T154147Z
+outcome: neutral
+verdict_detail: within-ci
+speedup: 1.4478278865883787
+speedup_ci: [1.426110468289553, 1.4695453048872043]
+harvested_at: 2026-10-25T160622Z
+best_at_harvest: 1.4586709689454935
+promotion: null
 ---
 
 # experts-rega-pingpong-consumers-all-t
@@ -228,3 +235,31 @@ Audited 2026-10-25 by an Opus subagent. **Verdict: dispatch (no fixes).** The fo
 - **Lint and compile.** `okc_lint` gives OK with warnings (all pre-existing kinds). `py_compile` passes; `__pycache__` removed.
 
 Residual risk: nvcc has not been run on the derived source (the edits are syntactically trivial; a build failure or spill leaves every class on master's rega and prints PATH CHOSEN master).
+
+## Result
+
+- job `5fbaec9a075543d4` (submit), status done, passed True, tests 5/5
+- speedup 1.4478x, 95% CI [1.4261, 1.4695], score 267575.9346733318 µs vs SGLang 387403.9 µs
+- best at harvest: {"speedup": 1.4586709689454935, "ci": [1.4367909044113112, 1.4805510334796759], "job": "1cc92a43b8be40f8"}; base result: muse_prefill_layer/hypotheses/done/neutral/align-two-phase-all-t-rega.result.json
+- **outcome: neutral** (within-ci)
+- files: `muse_prefill_layer/hypotheses/done/neutral/experts-rega-pingpong-consumers-all-t.result.json`, `muse_prefill_layer/hypotheses/done/neutral/experts-rega-pingpong-consumers-all-t.patch`; branch `hyp/muse_prefill_layer/experts-rega-pingpong-consumers-all-t`
+
+## Attribution
+
+| shape | w | base µs | hyp µs | delta | verdict |
+|---|---|---|---|---|---|
+| batch=1 ctx=80000 dist=soft layer=sliding load=turn_1 page=1 q_len=753 repeats=6 | 46 | 704.38 | 755.78 | 0.9597 | lost |
+| batch=1 ctx=80000 dist=soft layer=full load=turn_1 page=1 q_len=753 repeats=6 | 16 | 1097.89 | 1133.3 | 1.0039 | flat |
+| batch=4 ctx=80000 dist=soft layer=sliding load=turn_4 page=1 q_len=753 repeats=6 | 46 | 2098.36 | 2150.97 | 0.9983 | flat |
+| batch=4 ctx=80000 dist=soft layer=full load=turn_4 page=1 q_len=753 repeats=6 | 16 | 3644.6 | 3837.36 | 1.0254 | flat |
+| batch=1 ctx=0 dist=soft layer=full load=first_turn page=1 q_len=16384 repeats=6 | 16 | 12078.49 | 11388.73 | 1.0169 | flat |
+| batch=1 ctx=32768 dist=soft layer=sliding load=first_turn page=1 q_len=16384 repeats=6 | 138 | 11285.6 | 11029.78 | 1.0238 | flat |
+| batch=1 ctx=32768 dist=soft layer=full load=first_turn page=1 q_len=16384 repeats=6 | 16 | 15310.56 | 15115.11 | 1.0284 | flat |
+| batch=1 ctx=65536 dist=soft layer=full load=first_turn page=1 q_len=16384 repeats=6 | 16 | 18819.51 | 19129.61 | 1.0323 | gained |
+
+gained on full first_turn; lost on sliding turn_1. Expected hit: 1/3. Noise ±1.5%.
+
+## Follow-ups
+
+- within-ci: the change is not proven either way; a stacked hypothesis (`depends_on: experts-rega-pingpong-consumers-all-t`) that adds a further change in the same area is the only way to learn more (identical code is never re-run).
+
