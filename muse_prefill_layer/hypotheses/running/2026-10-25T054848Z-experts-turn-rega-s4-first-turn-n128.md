@@ -71,9 +71,18 @@ controls_for: null
 rewrite_stage: 2
 replaces: _moe_nvfp4_gemm_kernel x2 (Triton w13 + w2) and act_and_mul at T > 4096
 review: proceed
-status: queued
+status: running
 review_at: 2026-10-25T120230Z
 review_companions: null
+stage: claimed
+claimed_at: 2026-10-25T120231Z
+base_sha: c0cdf3a56f74658d323e211e760d12b57dcf6772
+base_blob: 712edc5ea5be2dde8f558a016d0877b285340ee4
+branch: hyp/muse_prefill_layer/experts-turn-rega-s4-first-turn-n128
+worktree: .worktrees/muse_prefill_layer/experts-turn-rega-s4-first-turn-n128
+mode: null
+restack_of: null
+stale_base: null
 ---
 
 # experts-turn-rega-s4-first-turn-n128
