@@ -37,7 +37,7 @@ review: proceed
 status: running
 review_at: 2026-10-25T043143Z
 review_companions: null
-stage: implemented
+stage: dispatched
 claimed_at: 2026-10-25T043143Z
 base_sha: df59fe97803906261a926deeb694b808107ab115
 base_blob: d8769ef25caf845a0e207538ccc5c62394b6ee3b
@@ -54,6 +54,8 @@ submission_blob: c91fe482d3d19c0c9785cc932c7db5732076adbf
 lint_warnings: 18
 attempt_file: 2026-10-25T043825Z-check-full-decode1-sk-pdl-from-preattn.md
 prepared_at: 2026-10-25T043825Z
+job: c0f1945a108c4aa2
+dispatched_at: 2026-10-25T043832Z
 ---
 
 # full-decode1-sk-pdl-from-preattn
