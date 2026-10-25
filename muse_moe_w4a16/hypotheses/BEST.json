@@ -1,17 +1,17 @@
 {
- "problem": "muse_moe_w4a16",
- "job": "667b64e3fb1343ec",
- "check_job": "667b64e3fb1343ec",
- "mode": "check",
- "speedup": 1.3752355517671193,
- "ci": [
-  1.3546070184906125,
-  1.395864085043626
- ],
- "score_us": 9779.052019648014,
- "commit": "f7eac2c3ca666ac6dcd24425163ae410a5ca60f5",
- "submission_blob": "72de8f1edeaa3215bb806cdc5ae13791f54cebd2",
- "slug": "wg-pdl-gather-w13-w2-chain",
- "result": "muse_moe_w4a16/hypotheses/done/neutral/wg-pdl-gather-w13-w2-chain.result.json",
- "updated_at": "2026-10-25T163348Z"
+  "problem": "muse_moe_w4a16",
+  "job": "667b64e3fb1343ec",
+  "check_job": "667b64e3fb1343ec",
+  "mode": "submit",
+  "speedup": 1.3752355517671193,
+  "ci": [
+    1.3546070184906125,
+    1.395864085043626
+  ],
+  "score_us": 9779.052019648014,
+  "commit": "64f18b03974a1a85ca81cac2e0f7e45d5d8bfbbc",
+  "submission_blob": "72de8f1edeaa3215bb806cdc5ae13791f54cebd2",
+  "slug": "wg-pdl-gather-w13-w2-chain",
+  "result": "muse_moe_w4a16/hypotheses/done/neutral/wg-pdl-gather-w13-w2-chain.result.json",
+  "updated_at": "2026-10-25T163348Z"
 }
