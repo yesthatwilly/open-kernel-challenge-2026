@@ -1,0 +1,400 @@
+diff --git a/muse_prefill_layer/submission.py b/muse_prefill_layer/submission.py
+index 635cfee..6b59d3f 100644
+--- a/muse_prefill_layer/submission.py
++++ b/muse_prefill_layer/submission.py
+@@ -424,7 +424,7 @@ CHECK_ROWS = 128
+ CHECK_K = EXPERT_BLOCK_K
+ 
+ 
+-def _check_expert_gemms(bank, weights):
++def _check_expert_gemms(bank, weights, zero_w2=ZERO_NONLOCAL_W2):
+     """Untimed. Runs every kernel variant kernel_fn can launch (so each is compiled before capture)
+     on a synthetic case built from the weights alone, and asserts its in-kernel dequant of the
+     reordered bank equals nvfp4.dequantize of the ORIGINAL packing. Row r of A is one-hot at
+@@ -434,7 +434,7 @@ def _check_expert_gemms(bank, weights):
+     block when zero-storing)."""
+     device = bank["w13"].device
+     e = LOCAL_EXPERTS - 1  # the largest expert offsets
+-    for name, top_k, zero_nonlocal in (("w13", TOP_K, False), ("w2", 1, ZERO_NONLOCAL_W2)):
++    for name, top_k, zero_nonlocal in (("w13", TOP_K, False), ("w2", 1, zero_w2)):
+         w, sf, gs = bank[name], bank[name + "_sf"], bank[name + "_gs"]
+         orig = weights[name]
+         n, k = w.shape[1], w.shape[2] * 2
+@@ -515,6 +515,37 @@ def _check_experts_e2e(state, device):
+         f"expert e2e check: worst row {worst:.3e} > {E2E_ROW_FACTOR:g} x {E2E_CHECK_TOL:g}")
+ 
+ 
++def _weighted_sum_skips_remote(state, device):
++    """Untimed, prepare() only (hypothesis w2-nonlocal-zero-store-off-first-turn). True when
++    fused_post_expert_norm_weighted_sum never reads the y rows of remote slots: its output is
++    bitwise equal and finite whether those rows hold NaN or zero. Then the w2 zero-store of -1 token
++    tiles is dead work and can be turned off."""
++    try:
++        gen = torch.Generator(device=device).manual_seed(20261024)
++        t = 4096
++        ids = torch.randint(0, N_EXPERTS, (t, TOP_K), generator=gen, device=device, dtype=torch.int32)
++        local_ids = torch.where(ids < LOCAL_EXPERTS, ids, torch.full_like(ids, -1)).contiguous()
++        w = torch.rand((t, TOP_K), generator=gen, device=device, dtype=torch.float32)
++        w = (w / w.sum(dim=1, keepdim=True)).contiguous()
++        y = torch.randn((t, TOP_K, D_EXPERT), generator=gen, device=device, dtype=torch.float32).to(torch.bfloat16)
++        remote = local_ids < 0
++        outs = []
++        for fill in (float("nan"), 0.0):
++            yy = y.clone()
++            yy[remote] = fill
++            outs.append(fused_post_expert_norm_weighted_sum(
++                yy, w, norm_weight=state["post_expert_w"], eps=POST_NORM_EPS, weight_first=True,
++                slot_expert_ids=local_ids))
++        torch.cuda.synchronize()
++        ok = bool(torch.isfinite(outs[0].float()).all()) and torch.equal(outs[0], outs[1])
++        print(f"[w2 zero-store] {'OFF (weighted sum skips remote slots)' if ok else 'ON: weighted sum reads remote rows'}",
++              flush=True)
++        return ok
++    except Exception as e:
++        print(f"[w2 zero-store] ON: probe raised {e!r}", flush=True)
++        return False
++
++
+ def prepare(weights):
+     device = weights["qkv_gate"].device
+     router = weights["router"]
+@@ -535,6 +566,8 @@ def prepare(weights):
+         "dense": {name: weights[name].contiguous() for name in ("qkv_gate", "o", "pooler", "unpooler")},
+         "router_hi_t": hi.t().contiguous(),
+         "router_lo_t": lo.t().contiguous(),
++        # router-hilo-one-gemm-n512: hi | lo side by side, bf16 [8192, 512], so one GEMM gives both halves.
++        "router_hilo_t": torch.cat((hi.t(), lo.t()), dim=1).contiguous(),
+         "routing": FusedMuseSparkRouting(expert_bias=weights["router_bias"].float().contiguous(), route_scale=1.0,
+                                          router_output_multiplier=0.1767766952966369,
+                                          router_score_division_eps=1e-15),
+@@ -553,7 +586,8 @@ def prepare(weights):
+     # The Triton bank first (its scales alias the weights), and its check: compiles every
+     # expert-GEMM variant and checks its dequant against nvfp4.dequantize.
+     state["bank"] = _expert_bank(weights)
+-    _check_expert_gemms(state["bank"], weights)
++    state["zero_nonlocal_w2"] = not _weighted_sum_skips_remote(state, device)
++    _check_expert_gemms(state["bank"], weights, state["zero_nonlocal_w2"])
+     torch.cuda.synchronize()
+     scale_names = ("w13_sf", "w13_gs", "w2_sf", "w2_gs")
+     scales_before = {name: state["bank"][name].clone() for name in scale_names}
+@@ -566,6 +600,8 @@ def prepare(weights):
+         assert torch.equal(weights[name], scales_before[name]), f"weights[{name}] changed by the Marlin repack"
+     del scales_before
+     torch.cuda.empty_cache()
++    _align_par_setup(state, device)
++    _silu_sorted_setup(state, device)
+     _check_experts_e2e(state, device)
+     torch.cuda.synchronize()
+     print(f"[prepare] max_memory_allocated {torch.cuda.max_memory_allocated(device) / 2**30:.2f} GiB", flush=True)
+@@ -580,6 +616,252 @@ def _experts(x, topk_weights, local_ids, state):
+     return _experts_triton(x, topk_weights, local_ids, state)
+ 
+ 
++# On the Marlin path (T <= MARLIN_MAX_TOKENS) _experts_marlin replaces moe_align_block_size with
++# _align_parallel_kernel, ported from muse_moe_w4a16 master via the decode layer (hypothesis
++# moe-align-local-routes-parallel-port): one launch, and Marlin's block list holds the 32 local
++# experts' routes only, so no m-blocks are spent on remote routes. Gated by a prepare() self-check.
++ALIGN_PAR_CHUNK = 512
++ALIGN_PAR_WARPS = 8
++ALIGN_PAR_BLK = 64
++ALIGN_PAR_TAG = "[align-local]"
++
++
++@triton.jit(do_not_specialize=["local_start", "local_count", "n", "cap", "n_blocks"])
++def _align_parallel_kernel(topk_ids_ptr, local_ids_ptr, sorted_ids_ptr, block_experts_ptr, n_padded_ptr,
++                           local_start, local_count, n, cap, n_blocks, CHUNK: tl.constexpr,
++                           PAD_BLOCK: tl.constexpr, BLK: tl.constexpr, BSM: tl.constexpr,
++                           NUM_E: tl.constexpr):
++    """_align_small_kernel's outputs for any n, grid (local_count + 1,).
++
++    Every program streams the n route ids in CHUNK chunks and counts all local experts, so each
++    knows every segment start. Program e < local_count then places expert e's routes in ascending
++    route order (segment start + routes placed by earlier chunks + rank in the chunk), its padding
++    slots (sentinel n) and its block_experts entries. Program local_count writes local_ids, the
++    sentinel into [total, cap), -1 into block_experts past the used blocks, and n_padded. The
++    store sets are disjoint across programs, so no atomics or ordering are needed; no program
++    reads what another writes (local ids are recomputed from topk_ids)."""
++    pid = tl.program_id(0)
++    offs0 = tl.arange(0, CHUNK)
++    experts = tl.arange(0, NUM_E)
++
++    counts = tl.zeros([NUM_E], dtype=tl.int32)
++    for c in range(0, n, CHUNK):
++        offs = c + offs0
++        mask = offs < n
++        ids = tl.load(topk_ids_ptr + offs, mask=mask, other=0).to(tl.int32)
++        local = ids - local_start
++        local = tl.where(mask & (local >= 0) & (local < local_count), local, -1)
++        counts += tl.sum((local[:, None] == experts[None, :]).to(tl.int32), axis=0)
++    padded = (counts + BSM - 1) // BSM * BSM
++    seg_end = tl.cumsum(padded, axis=0)
++    seg_start = seg_end - padded
++    total = tl.sum(padded, axis=0)
++
++    if pid < local_count:
++        sel = experts == pid
++        my_count = tl.sum(tl.where(sel, counts, 0), axis=0)
++        my_padded = tl.sum(tl.where(sel, padded, 0), axis=0)
++        my_start = tl.sum(tl.where(sel, seg_start, 0), axis=0)
++        # This expert's routes, ascending route index.
++        base = my_start
++        for c in range(0, n, CHUNK):
++            offs = c + offs0
++            mask = offs < n
++            ids = tl.load(topk_ids_ptr + offs, mask=mask, other=0).to(tl.int32)
++            local = ids - local_start
++            match = (mask & (local == pid)).to(tl.int32)
++            rank = tl.cumsum(match, axis=0) - 1
++            tl.store(sorted_ids_ptr + base + rank, offs, mask=match > 0)
++            base += tl.sum(match, axis=0)
++        # Its padding slots: fewer than BSM, over a power-of-2 tile (BSM 48 is not one).
++        j = tl.arange(0, PAD_BLOCK)
++        tl.store(sorted_ids_ptr + my_start + my_count + j, tl.zeros([PAD_BLOCK], dtype=tl.int32) + n,
++                 mask=j < my_padded - my_count)
++        # Its m-blocks [my_start / BSM, (my_start + my_padded) / BSM); a runtime loop, since one
++        # expert can own up to cdiv(M, BSM) blocks.
++        b0 = my_start // BSM
++        nb = my_padded // BSM
++        kb0 = tl.arange(0, BLK)
++        for k in range(0, nb, BLK):
++            kb = k + kb0
++            tl.store(block_experts_ptr + b0 + kb, tl.zeros([BLK], dtype=tl.int32) + pid, mask=kb < nb)
++    else:
++        for c in range(0, n, CHUNK):
++            offs = c + offs0
++            mask = offs < n
++            ids = tl.load(topk_ids_ptr + offs, mask=mask, other=0).to(tl.int32)
++            local = ids - local_start
++            local = tl.where((local >= 0) & (local < local_count), local, -1)
++            tl.store(local_ids_ptr + offs, local, mask=mask)
++        # Every slot past the used length.
++        for s in range(0, cap, CHUNK):
++            slots = s + offs0
++            tl.store(sorted_ids_ptr + slots, tl.zeros([CHUNK], dtype=tl.int32) + n,
++                     mask=(slots >= total) & (slots < cap))
++        used_blocks = total // BSM
++        kb0 = tl.arange(0, BLK)
++        for k in range(0, n_blocks, BLK):
++            kb = k + kb0
++            tl.store(block_experts_ptr + kb, tl.zeros([BLK], dtype=tl.int32) - 1,
++                     mask=(kb >= used_blocks) & (kb < n_blocks))
++        tl.store(n_padded_ptr, total)
++
++
++def _align_parallel(topk_ids, local_start, local_count, block_size_m):
++    """Marlin's (sorted_ids, block_experts, n_padded) and local_ids [M, 8] int32 for M > 32, in one launch of
++    _align_parallel_kernel over local_count + 1 programs. n, cap and n_blocks are runtime
++    arguments, so only block_size_m selects a compiled variant."""
++    topk_ids = topk_ids.contiguous()
++    device = topk_ids.device
++    n = topk_ids.numel()
++    cap = n + local_count * (block_size_m - 1)
++    n_blocks = triton.cdiv(cap, block_size_m)
++    local_ids = torch.empty(topk_ids.shape, dtype=torch.int32, device=device)
++    sorted_ids = torch.empty((cap,), dtype=torch.int32, device=device)
++    block_experts = torch.empty((n_blocks,), dtype=torch.int32, device=device)
++    n_padded = torch.empty((1,), dtype=torch.int32, device=device)
++    _align_parallel_kernel[(local_count + 1,)](
++        topk_ids, local_ids, sorted_ids, block_experts, n_padded, local_start, local_count, n, cap,
++        n_blocks, CHUNK=ALIGN_PAR_CHUNK, PAD_BLOCK=triton.next_power_of_2(block_size_m),
++        BLK=ALIGN_PAR_BLK, BSM=block_size_m, NUM_E=triton.next_power_of_2(local_count),
++        num_warps=ALIGN_PAR_WARPS)
++    return local_ids, (sorted_ids, block_experts, n_padded)
++
++def _align_par_ref_view(sorted_ids, block_experts, n_padded, n, bsm):
++    """Per local expert: (sorted routes, block count) from an align's three outputs."""
++    sorted_ids = sorted_ids.cpu()
++    block_experts = block_experts.cpu()
++    used = min(int(n_padded.cpu()[0]) // bsm, block_experts.numel())
++    out = {}
++    for e in range(LOCAL_EXPERTS):
++        blocks = (block_experts[:used] == e).nonzero().flatten().tolist()
++        routes = []
++        for b in blocks:
++            seg = sorted_ids[b * bsm:(b + 1) * bsm]
++            routes += seg[seg < n].tolist()
++        out[e] = (sorted(routes), len(blocks))
++    return out
++
++
++def _align_par_setup(state, device):
++    """Untimed, prepare() only: compile _align_parallel_kernel for every block_size_m the Marlin path
++    can pick, then compare it per local expert with SGLang's moe_align_block_size(local_ids, bsm,
++    N_EXPERTS) on synthetic routings (local_ids 0-31, -1 remote). Remote routes, padding and capacity
++    differences are ignored. Sets state["align_par_ok"]; any failure keeps master's align."""
++    state["align_par_ok"] = False
++    cases = mismatches = 0
++    try:
++        for bsm in BLOCK_SIZE_M_CANDIDATES:
++            _align_parallel(torch.zeros((16, TOP_K), dtype=torch.int32, device=device), 0, LOCAL_EXPERTS, bsm)
++        torch.cuda.synchronize()
++        gen = torch.Generator(device=device).manual_seed(20261024)
++        for tokens in (9, 200, 753, 3012, 4096, 16384):
++            for kind in ("random", "skewed", "all_remote"):
++                ids = torch.randint(0, N_EXPERTS, (tokens, TOP_K), generator=gen, device=device, dtype=torch.int32)
++                if kind == "skewed":
++                    ids[:, :4] = torch.tensor([0, 31, 5, 17], dtype=torch.int32, device=device)
++                elif kind == "all_remote":
++                    ids = ids % (N_EXPERTS - LOCAL_EXPERTS) + LOCAL_EXPERTS
++                local_ids = torch.where(ids < LOCAL_EXPERTS, ids, torch.full_like(ids, -1)).contiguous()
++                for bsm in BLOCK_SIZE_M_CANDIDATES:
++                    if tokens * TOP_K / LOCAL_EXPERTS / bsm < 0.9:
++                        break
++                if tokens > MARLIN_MAX_TOKENS:
++                    bsm = _expert_config(tokens)["BLOCK_T"]  # the Triton path's block (256)
++                r_sorted, r_blocks, r_pad = moe_align_block_size(local_ids, bsm, N_EXPERTS)
++                n_local, (n_sorted, n_blocks, n_pad) = _align_parallel(local_ids, 0, LOCAL_EXPERTS, bsm)
++                cases += 1
++                bad = not torch.equal(n_local, local_ids)
++                if not bad:
++                    bad = (_align_par_ref_view(r_sorted, r_blocks, r_pad, ids.numel(), bsm)
++                           != _align_par_ref_view(n_sorted, n_blocks, n_pad, ids.numel(), bsm))
++                if bad:
++                    mismatches += 1
++                    print(f"{ALIGN_PAR_TAG}   mismatch T={tokens} {kind} bsm={bsm}", flush=True)
++        torch.cuda.synchronize()
++        state["align_par_ok"] = mismatches == 0
++    except Exception as e:
++        print(f"{ALIGN_PAR_TAG} setup raised {e!r}", flush=True)
++        mismatches = max(mismatches, 1)
++        state["align_par_ok"] = False
++    print(f"{ALIGN_PAR_TAG} {'ON' if state['align_par_ok'] else 'OFF'} cases={cases} mismatches={mismatches}"
++          f" (PATH CHOSEN = {'parallel align' if state['align_par_ok'] else 'MASTER align'} on the Marlin path)",
++          flush=True)
++# Marlin-path silu-mul over the aligned local rows only (hypothesis silu-mul-triton-local-rows-marlin-turn):
++# SGLang's act_and_mul_kernel launches over all T*8 slots; this walks moe_align_block_size's sorted_ids
++# up to n_padded and computes silu(gate) * up for slots whose local id is >= 0 (remote and padding rows
++# are skipped, as today their cache2 rows are left unwritten and never read).
++SILU_SORTED_BLOCK_R = 16
++SILU_SORTED_BLOCK_N = 512
++
++
++@triton.jit(do_not_specialize=["num_slots"])
++def _silu_mul_sorted_kernel(cache1_ptr, cache2_ptr, sorted_ptr, n_padded_ptr, local_ids_ptr, num_slots,
++                            SIZE_N: tl.constexpr, BLOCK_R: tl.constexpr, BLOCK_N: tl.constexpr):
++    n_padded = tl.load(n_padded_ptr)
++    r0 = tl.program_id(0) * BLOCK_R
++    if r0 < n_padded:
++        rows = r0 + tl.arange(0, BLOCK_R)
++        sid = tl.load(sorted_ptr + rows, mask=rows < n_padded, other=num_slots)
++        valid = sid < num_slots
++        lid = tl.load(local_ids_ptr + sid, mask=valid, other=-1)
++        valid = valid & (lid >= 0)
++        cols = tl.program_id(1) * BLOCK_N + tl.arange(0, BLOCK_N)
++        s64 = sid.to(tl.int64)
++        m = valid[:, None]
++        src = cache1_ptr + s64[:, None] * (2 * SIZE_N) + cols[None, :]
++        g = tl.load(src, mask=m, other=0.0).to(tl.float32)
++        u = tl.load(src + SIZE_N, mask=m, other=0.0).to(tl.float32)
++        y = g / (1.0 + tl.exp(-g)) * u
++        tl.store(cache2_ptr + s64[:, None] * SIZE_N + cols[None, :], y.to(tl.bfloat16), mask=m)
++
++
++def _silu_mul_sorted(cache1, cache2, sorted_ids, n_padded, local_ids, size_n):
++    num_slots = cache2.shape[0]
++    grid = (triton.cdiv(sorted_ids.shape[0], SILU_SORTED_BLOCK_R), size_n // SILU_SORTED_BLOCK_N)
++    _silu_mul_sorted_kernel[grid](cache1, cache2, sorted_ids, n_padded, local_ids, num_slots, SIZE_N=size_n,
++                                  BLOCK_R=SILU_SORTED_BLOCK_R, BLOCK_N=SILU_SORTED_BLOCK_N, num_warps=4)
++
++
++def _silu_sorted_setup(state, device):
++    """Untimed, prepare() only: compile _silu_mul_sorted_kernel and compare it with SGLang's
++    silu_and_mul on the local rows of synthetic caches at T=753 and T=3012 (Marlin block 64), within
++    one bf16 rounding (the exp may differ from SGLang's expf in the last fp32 bits). Sets
++    state["silu_sorted_ok"]; any failure keeps silu_and_mul."""
++    state["silu_sorted_ok"] = False
++    try:
++        size_n = state["marlin"]["size_n"]
++        if size_n % SILU_SORTED_BLOCK_N:
++            raise ValueError(f"size_n {size_n} not a multiple of {SILU_SORTED_BLOCK_N}")
++        gen = torch.Generator(device=device).manual_seed(20261024)
++        worst = 0.0
++        for tokens in (753, 3012):
++            ids = torch.randint(0, N_EXPERTS, (tokens, TOP_K), generator=gen, device=device, dtype=torch.int32)
++            local_ids = torch.where(ids < LOCAL_EXPERTS, ids, torch.full_like(ids, -1)).contiguous()
++            for bsm in BLOCK_SIZE_M_CANDIDATES:
++                if tokens * TOP_K / LOCAL_EXPERTS / bsm < 0.9:
++                    break
++            sorted_ids, _, n_padded = moe_align_block_size(local_ids, bsm, N_EXPERTS)
++            cache1 = (torch.randn((tokens * TOP_K, 2 * size_n), generator=gen, device=device) * 3).to(torch.bfloat16)
++            ref = torch.zeros((tokens * TOP_K, size_n), dtype=torch.bfloat16, device=device)
++            got = torch.zeros_like(ref)
++            silu_and_mul(cache1, ref, expert_ids=local_ids.view(-1), expert_step=1)
++            _silu_mul_sorted(cache1, got, sorted_ids, n_padded, local_ids.view(-1), size_n)
++            torch.cuda.synchronize()
++            loc = local_ids.view(-1) >= 0
++            r, g = ref[loc].float(), got[loc].float()
++            if not bool(torch.isfinite(g).all()):
++                raise AssertionError(f"non-finite output at T={tokens}")
++            err = ((g - r).abs() / (r.abs() + 1e-3)).max().item()
++            worst = max(worst, err)
++            if err > 2.0 ** -7:
++                raise AssertionError(f"T={tokens} max rel err {err:.3e} > 2^-7")
++        state["silu_sorted_ok"] = True
++        print(f"[silu-sorted] ON max rel err {worst:.2e} (PATH CHOSEN = sorted silu on the Marlin path)", flush=True)
++    except Exception as e:
++        print(f"[silu-sorted] OFF: {e!r} (PATH CHOSEN = MASTER silu_and_mul)", flush=True)
++
++
+ def _experts_marlin(x, topk_weights, local_ids, state):
+     """MuseSpark1xFp4Experts._marlin_expert_outputs and its post-expert-norm finalize, on ids
+     already mapped to this GPU's experts (0-31, -1 elsewhere)."""
+@@ -591,7 +873,11 @@ def _experts_marlin(x, topk_weights, local_ids, state):
+     for block_size_m in BLOCK_SIZE_M_CANDIDATES:
+         if num_tokens * TOP_K / LOCAL_EXPERTS / block_size_m < 0.9:
+             break
+-    sorted_ids, block_experts, n_padded = moe_align_block_size(local_ids, block_size_m, N_EXPERTS)
++    if state.get("align_par_ok", False):
++        # moe-align-local-routes-parallel-port: local routes only, one launch (prepare() self-checked).
++        _, (sorted_ids, block_experts, n_padded) = _align_parallel(local_ids, 0, LOCAL_EXPERTS, block_size_m)
++    else:
++        sorted_ids, block_experts, n_padded = moe_align_block_size(local_ids, block_size_m, N_EXPERTS)
+     cache2 = torch.empty((num_tokens * TOP_K, size_n), device=x.device, dtype=x.dtype)
+     cache13 = torch.empty((num_tokens * TOP_K * max(gemm1_n, size_k),), device=x.device, dtype=x.dtype)
+     cache1 = cache13[: num_tokens * TOP_K * gemm1_n].view(-1, gemm1_n)
+@@ -604,7 +890,10 @@ def _experts_marlin(x, topk_weights, local_ids, state):
+         x, cache1, bank["w13"], None, bank["w13_s"], bank["w13_gs"], None, None, None, ws,
+         sorted_ids, block_experts, n_padded, topk_weights, top_k=TOP_K,
+         size_m=num_tokens, size_n=gemm1_n, size_k=size_k, **common)
+-    silu_and_mul(cache1.view(-1, gemm1_n), cache2, expert_ids=local_ids.view(-1), expert_step=1)
++    if state.get("silu_sorted_ok", False):
++        _silu_mul_sorted(cache1.view(-1, gemm1_n), cache2, sorted_ids, n_padded, local_ids.view(-1), size_n)
++    else:
++        silu_and_mul(cache1.view(-1, gemm1_n), cache2, expert_ids=local_ids.view(-1), expert_step=1)
+     y = moe_wna16_marlin_gemm(
+         cache2, cache3, bank["w2"], None, bank["w2_s"], bank["w2_gs"], None, None, None, ws,
+         sorted_ids, block_experts, n_padded, topk_weights, top_k=1,
+@@ -625,7 +914,12 @@ def _experts_triton(x, topk_weights, local_ids, state):
+     num_slots = num_tokens * TOP_K
+     topk_weights = topk_weights.to(torch.float32).contiguous()
+     cfg = _expert_config(num_tokens)
+-    sorted_ids, block_experts, n_padded = moe_align_block_size(local_ids, cfg["BLOCK_T"], N_EXPERTS)
++    if state.get("align_par_ok", False):
++        # align-local-parallel-first-turn: local routes only on the Triton path too (self-checked at T=16384).
++        _, (sorted_ids, block_experts, n_padded) = _align_parallel(local_ids, 0, LOCAL_EXPERTS, cfg["BLOCK_T"])
++    else:
++        # moe-align-32-experts-first-turn: the ids are already 0-31 or -1, so align over the 32 local experts.
++        sorted_ids, block_experts, n_padded = moe_align_block_size(local_ids, cfg["BLOCK_T"], LOCAL_EXPERTS)
+     cache2 = torch.empty((num_slots, size_n), device=x.device, dtype=x.dtype)
+     cache13 = torch.empty((num_slots * max(gemm1_n, size_k),), device=x.device, dtype=x.dtype)
+     cache1 = cache13[: num_slots * gemm1_n].view(-1, gemm1_n)
+@@ -634,7 +928,7 @@ def _experts_triton(x, topk_weights, local_ids, state):
+                     n_padded, TOP_K, num_slots, cfg, False)
+     silu_and_mul(cache1, cache2, expert_ids=local_ids.view(-1), expert_step=1)
+     y = _nvfp4_moe_gemm(cache2, bank["w2"], bank["w2_sf"], bank["w2_gs"], cache3, sorted_ids, block_experts,
+-                        n_padded, 1, num_slots, cfg, ZERO_NONLOCAL_W2).view(num_tokens, TOP_K, size_k)
++                        n_padded, 1, num_slots, cfg, state["zero_nonlocal_w2"]).view(num_tokens, TOP_K, size_k)
+     return fused_post_expert_norm_weighted_sum(
+         y, topk_weights, norm_weight=state["post_expert_w"], eps=POST_NORM_EPS, weight_first=True,
+         slot_expert_ids=local_ids)
+@@ -696,8 +990,8 @@ def kernel_fn(data, state):
+     side_stream.wait_stream(main_stream)
+     expert_input = _gemm(ffn_input, dense["pooler"])
+     with torch.cuda.stream(side_stream):
+-        logits = torch.mm(ffn_input, state["router_hi_t"], out_dtype=torch.float32)
+-        logits += torch.mm(ffn_input, state["router_lo_t"], out_dtype=torch.float32)
++        both = torch.mm(ffn_input, state["router_hilo_t"], out_dtype=torch.float32)
++        logits = both[:, :N_EXPERTS] + both[:, N_EXPERTS:]
+         topk_weights, topk_ids = state["routing"](None, logits, TOP_K, True)
+     main_stream.wait_stream(side_stream)
+     if not torch.cuda.is_current_stream_capturing():

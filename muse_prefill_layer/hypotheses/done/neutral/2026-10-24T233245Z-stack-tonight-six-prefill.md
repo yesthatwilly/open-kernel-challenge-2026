@@ -19,8 +19,8 @@ priority: 1
 kind: primary
 controls_for: null
 review: required
-status: running
-stage: dispatched
+status: done
+stage: harvested
 claimed_at: 2026-10-24T233245Z
 base_sha: c1dfb14c99867d3818e9e99c82fd7d1fa4153ae3
 base_blob: 635cfee3ac2c3f7c66840b8c8a082cad2fa41a68
@@ -39,9 +39,15 @@ attempt_file: 2026-10-24T233306Z-check-stack-tonight-six-prefill.md
 prepared_at: 2026-10-24T233306Z
 job: 5cb6e68a86ec48f0
 dispatched_at: 2026-10-24T233314Z
-promotion: submitted
+promotion: null
 promotion_job: 3358a99eb27a405a
 promotion_at: 2026-10-24T234001Z
+outcome: neutral
+verdict_detail: unproven-vs-best
+speedup: 1.0641845512352945
+speedup_ci: [1.048221782966765, 1.0801473195038238]
+harvested_at: 2026-10-25T000224Z
+best_at_harvest: 1.0591912383762452
 ---
 
 # stack-tonight-six-prefill
@@ -72,3 +78,31 @@ Built in the main thread 2026-10-24 ~23:35Z with user-approved self-review: stac
 - [x] No timing/harness access, processes, network or module edits.
 - [x] No work outside timed calls added.
 - [x] okc_lint: no errors.
+
+## Result
+
+- job `5cb6e68a86ec48f0` (check), status done, passed True, tests 5/5
+- speedup 1.0642x, 95% CI [1.0482, 1.0801], score 364038.26718806016 µs vs SGLang 387403.9 µs
+- best at harvest: {"speedup": 1.0591912383762452, "ci": [1.0433033698006016, 1.0750791069518888], "job": "ba9c16b9cc6b4605"}; base result: muse_prefill_layer/hypotheses/done/gain/experts-hybrid-marlin-turn-triton-first-turn.result.json
+- **outcome: neutral** (unproven-vs-best)
+- files: `muse_prefill_layer/hypotheses/done/neutral/stack-tonight-six-prefill.result.json`, `muse_prefill_layer/hypotheses/done/neutral/stack-tonight-six-prefill.patch`; branch `hyp/muse_prefill_layer/stack-tonight-six-prefill`
+
+## Attribution
+
+| shape | w | base µs | hyp µs | delta | verdict |
+|---|---|---|---|---|---|
+| batch=1 ctx=80000 dist=soft layer=sliding load=turn_1 page=1 q_len=753 repeats=6 | 46 | 1079.54 | 1078.73 | 1.0091 | flat |
+| batch=1 ctx=80000 dist=soft layer=full load=turn_1 page=1 q_len=753 repeats=6 | 16 | 1419.09 | 1534.39 | 1.0033 | flat |
+| batch=4 ctx=80000 dist=soft layer=sliding load=turn_4 page=1 q_len=753 repeats=6 | 46 | 3334.9 | 3377.96 | 1.0129 | flat |
+| batch=4 ctx=80000 dist=soft layer=full load=turn_4 page=1 q_len=753 repeats=6 | 16 | 4937.98 | 4980.61 | 1.0067 | flat |
+| batch=1 ctx=0 dist=soft layer=full load=first_turn page=1 q_len=16384 repeats=6 | 16 | 15386.32 | 15368.44 | 0.98 | flat |
+| batch=1 ctx=32768 dist=soft layer=sliding load=first_turn page=1 q_len=16384 repeats=6 | 138 | 14275.3 | 14429.44 | 0.9931 | flat |
+| batch=1 ctx=32768 dist=soft layer=full load=first_turn page=1 q_len=16384 repeats=6 | 16 | 18165.94 | 19264.52 | 1.0069 | flat |
+| batch=1 ctx=65536 dist=soft layer=full load=first_turn page=1 q_len=16384 repeats=6 | 16 | 22332.92 | 22412.03 | 1.0008 | flat |
+
+no shape moved outside noise. Expected hit: 0/1. Noise ±1.5%.
+
+## Follow-ups
+
+- unproven-vs-best: the change is not proven either way; a stacked hypothesis (`depends_on: stack-tonight-six-prefill`) that adds a further change in the same area is the only way to learn more (identical code is never re-run).
+
