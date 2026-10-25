@@ -9,10 +9,9 @@
     1.3932562763325853
   ],
   "score_us": 9797.35582884361,
-  "commit": "fc959d9c0db31531d6ed750a69bb33b541435805",
+  "commit": "40e2e860c425e8ddaffb94ca4966985d9e65eb30",
   "submission_blob": "1774e42c833541afe7204a9d9cd3d6bb265be5b1",
   "slug": "cuda-nvfp4-wgmma-rega-grouped-s5-copy-safe-bucket-gate",
   "result": "muse_moe_w4a16/hypotheses/done/neutral/cuda-nvfp4-wgmma-rega-grouped-s5-copy-safe-bucket-gate.result.json",
-  "updated_at": "2026-10-25T150113Z",
-  "note": "scored from the stale-base branch, not on master; master (9080a71 lineage) last checked 1.3445x; restack-bucket-gate-on-master-align-atomic brings it to master"
+  "updated_at": "2026-10-25T150113Z"
 }
