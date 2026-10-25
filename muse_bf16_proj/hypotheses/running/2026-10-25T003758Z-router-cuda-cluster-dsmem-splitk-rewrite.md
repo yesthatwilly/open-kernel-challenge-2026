@@ -88,7 +88,7 @@ base_sha: 97cde2a7e308e68b1ea49821182fcf5267f527bd
 base_blob: a8bb42ac483318e9fbc84bc7826a27b7a704d1fb
 branch: hyp/muse_bf16_proj/router-cuda-cluster-dsmem-splitk-rewrite
 worktree: .worktrees/muse_bf16_proj/router-cuda-cluster-dsmem-splitk-rewrite
-mode: null
+mode: check
 restack_of: null
 stale_base: null
 implemented_at: 2026-10-25T005025Z
@@ -97,6 +97,8 @@ submission_sha256: b4e4fc77e63373b67db082d5f1ca688f0e1f1dedddd6980239c87e4da18a7
 norm_sha256: f13d86368030d24540e8b681214e491d060b3df7588484a1263247ab1efc0722
 submission_blob: 441dcedb5cd6286e6851afb629598d27c30f6c82
 lint_warnings: 3
+attempt_file: 2026-10-25T005026Z-check-router-cuda-cluster-dsmem-splitk-rewrite.md
+prepared_at: 2026-10-25T005026Z
 ---
 
 # router-cuda-cluster-dsmem-splitk-rewrite
