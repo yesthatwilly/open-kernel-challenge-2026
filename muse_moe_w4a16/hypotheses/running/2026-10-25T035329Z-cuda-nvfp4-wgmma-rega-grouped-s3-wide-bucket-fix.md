@@ -66,7 +66,7 @@ base_sha: 570f5e4ac5465931183addaf7a472e01668ced15
 base_blob: 1ae7e9cac6dc078a0e71c7a6b0b77ec48b0ed01f
 branch: hyp/muse_moe_w4a16/cuda-nvfp4-wgmma-rega-grouped-s3-wide-bucket-fix
 worktree: .worktrees/muse_moe_w4a16/cuda-nvfp4-wgmma-rega-grouped-s3-wide-bucket-fix
-mode: null
+mode: check
 restack_of: null
 stale_base: true
 implemented_at: 2026-10-25T041251Z
@@ -75,6 +75,8 @@ submission_sha256: e17235b17240bad1393d762e3408383cdb40d2ac6ce1cdb4d24ff5e2c096f
 norm_sha256: c43518a43fe432fcc81bf0ea64a290d0c5308b6493625d7ba191ad075b77351b
 submission_blob: bf65a3afdf6ebe0d9b73a817ffd2be1240f91870
 lint_warnings: 50
+attempt_file: 2026-10-25T041252Z-check-cuda-nvfp4-wgmma-rega-grouped-s3-wide-bucket-fix.md
+prepared_at: 2026-10-25T041252Z
 ---
 
 # cuda-nvfp4-wgmma-rega-grouped-s3-wide-bucket-fix
