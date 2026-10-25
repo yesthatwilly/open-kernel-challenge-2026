@@ -67,9 +67,18 @@ controls_for: null
 rewrite_stage: 1
 replaces: "cuBLAS at m=65..128 (verify_16): qkv_gate nvjet 96x64 splitK 12.7 + cublasLt splitKreduce 3.1 us, o nvjet 128x64 TNT 5.5 us, pooler NN nvjet 128x64 splitK 20.2 + splitKreduce 3.0 us, unpooler NN nvjet 128x64 NNT 20.4 us"
 review: proceed
-status: queued
+status: running
 review_at: 2026-10-25T212614Z
 review_companions: null
+stage: claimed
+claimed_at: 2026-10-25T212614Z
+base_sha: f8d14416f350af92938d3e41f3256af4aa532299
+base_blob: ad8d7254a64a52db2a8f56ec0ad262748153a2e8
+branch: hyp/muse_bf16_proj/bf16-verify16-cutlass-m128-onetile-splitk-rewrite
+worktree: .worktrees/muse_bf16_proj/bf16-verify16-cutlass-m128-onetile-splitk-rewrite
+mode: check
+restack_of: null
+stale_base: null
 ---
 
 # bf16-verify16-cutlass-m128-onetile-splitk-rewrite
