@@ -62,7 +62,7 @@ review: proceed
 status: running
 review_at: 2026-10-25T054426Z
 review_companions: null
-stage: claimed
+stage: implemented
 claimed_at: 2026-10-25T054426Z
 base_sha: 3856ee7eca4325994492f9d6308b31aba517ef17
 base_blob: 62c5a9413ba5710defea2ca3de14c1a1dc3b5a6d
@@ -71,6 +71,12 @@ worktree: .worktrees/muse_decode_layer/full-decode-sk-ticket-restack-b1-b64
 mode: null
 restack_of: null
 stale_base: null
+implemented_at: 2026-10-25T084818Z
+impl_commit: 67bca2f6fefd66e61404802d4382ee37e1797744
+submission_sha256: 1c947e7006f96e2847e14a34154b3aade32b33fb14f61a691ba8dbb81dbd3638
+norm_sha256: 1f16e86616a18da73331a7ba4bdb9cb8135e5edb4fbd79acd1bd8dc04ea309e2
+submission_blob: d67278e071e62145a19d0d67759c2d311ce1e398
+lint_warnings: 45
 ---
 
 # full-decode-sk-ticket-restack-b1-b64
@@ -115,3 +121,62 @@ No companion is warranted. The two sub-changes are gated on batch==1 versus 1<ba
 - Does the w2_mode line in the log stay 'atomic', as on master, after the new sk setup is added to prepare()?
 - Are the two port branches' base_sha values (f6e653b, 08b1841) the same master tree? If not, each port's row delta was measured against a slightly different incumbent.
 
+
+## Implementation notes
+
+Edited only `muse_decode_layer/submission.py` in the worktree (+1118/-2, no diff against master 00e36e3 before the edit). Nothing was run: this node has no GPU or torch.
+
+What changed:
+- One new module `muse_decode_sk` (load_inline at import, `TORCH_CUDA_ARCH_LIST=9.0a` set around the build and restored, `-O3 -std=c++20 -lineinfo`, arch flags printed). The kernel template is byte-identical in both port branches (checked by diff); it has two instantiations: variant 0 = `<4,true,false>` (grid 2 x SM) and variant 3 = `<4,true,true>` (grid = SM count). No wgmma/setmaxnreg, so no `__CUDA_ARCH_FEAT_SM90_ALL` guard is needed; the kernel uses cp.async.cg, mma.sync and cvt e4m3 only.
+- kernel_fn: `_sk_variant(cfg, state["sk"])` (config plus the state's own flags). B == 1 uses variant 3, which replaces FA3 + FlashAttnFwdCombine + FusedRMSNormGate. For 1 < B <= 64 it uses variant 0 where `_splitkv_gate` holds, replacing kernels A + B. The B=1 q route is the existing qk_norm/cast block (no extra change was needed). Kernels A/B and the FA3 chain stay as fallbacks. Sliding, verify and B > 64 are untouched.
+- Per state, not global: prepare() builds `state["sk"]` with ws_acc, ws_ml, ticket[64], gticket[32], gacc and gml (sized from SM count and kernel MAXB only, zeroed). The only module globals are the compiled module, arch flags, plain-bool decision dict and a wall-time float. The C++ side keeps only function-attribute flags in a static, no pointers.
+
+Review fixes applied (the review wins over the spec where they differ):
+- Tickets and workspaces per state: done. The ports' module-level ticket and per-call torch.empty workspaces are gone. The ws is preallocated per state, which the review flagged as a layout change that should be neutral under a graph.
+- Self-resetting: the last arriver zeroes its ticket (both levels). The self-check proves it: every replay of the alternation check asserts the state's ticket sum is 0.
+- `__threadfence` before the ticket atomic: present in both levels (all threads fence, `__syncthreads`, thread 0 draws). I also switched the single-level draw from `atomicAdd` to the same `atom.acq_rel.gpu` helper the two-level path uses.
+- prepare() zeroes every ticket before returning: a final `_sk_zero` plus sync, with the sum printed.
+- Stream-K covers [0, seqlen): the kernel masks positions >= seq and uses ceil(seq/64) tiles. Self-checks cover seq%64 in 1..7, lengths 1/7/33/63/64/65, agentic B=2 (ctx 80000), B=5 (20000), B=33 (8000), and kv_scale 1 and 0.25 against the fp32 reference. New: a planted-key probe (k = 6 x that kv head's head-0 q at the first / 63 / 64 / last position, so a dropped or doubled key changes the output by O(1), not 1e-4).
+- Norm-gate fp32 internal: `finalize_store` computes o/L*v_scale, the sum of squares, rsqrt, sigmoid and the product in fp32 and rounds to bf16 only at the store. The incumbent rounded o to bf16 before the norm.
+- launch_dependents: the incumbent kernels A/B and FA3 execute no griddepcontrol (grep: only the dense-chain TU has any), so the sk kernels issue none; this answers the review's open question.
+- Workspace sized from config/hardware only (2 x SM + 64 slots; batch-1 group slots = 32).
+- PATH CHOSEN lines (per state, three lines: B=1, B<=23, B>=24) carry the selector timing, `w2_mode=<state["w2_mode"]>` and `prepare_wall_cum=<s>`. A `[prepare] this call ..., cumulative ...` line prints at the end of every prepare().
+- Gates (LESSONS 2026-10-25): a path is chosen only if the graph-timed incumbent/new ratio is >= 1.02 (cold L2 flush, interleaved, 15 reps), at B = 1, 16, 32 on agentic ragged lengths (ctx 80000 +/- 7.5%). The incumbent for B=1 is FA3 + combine + norm-gate, for 16/32 it is kernels A + B. Class 16 covers B <= 23, class 32 covers B >= 24.
+
+Two-state proof: the first prepare() runs the full validation once with temporary buffer sets. Its alternation check (B=1 at 80000, B=2 at 80000, B=5 at 20000, B=33 at 8000) builds two independent buffer sets, captures one graph on each, and replays them alternately six times with refilled q/KV/page table/kv scale/lengths, NaN-poisoning the output each time. Every prepare() (including the second) also runs a graph-replay check on that state's own buffers.
+
+Deviations: (1) the worktree and the ports are on different bases, so the self-check was rewritten around per-state buffers rather than copied; (2) the selector uses graph timing with the 1.02 margin (ports used eager timing and 0.99); (3) `launch_dependents` was not added because the incumbent has none.
+
+Biggest risk: first-ever compile of the combined module (never built as one TU: the two ports built different single instantiations) and the longer prepare() (two builds plus about 40 reference checks and graph captures). Reading `[sk]`/PATH CHOSEN lines in the log is the first step; the build line must show 9.0a.
+
+## Rules check
+
+- [x] CUDA-graph capturable: `_full_decode_sk` only allocates `out` via torch.empty (as master's kernel B did) and launches; the tickets/workspaces are preallocated per state; no `.item()`/`.cpu()`/sync in kernel_fn (every sync is in prepare-time helpers); the capture itself is exercised in the self-check.
+- [x] Nothing derived from `data` is cached across calls: `state["sk"]` holds only zeroed tickets and scratch sized from SM count and kernel constants, plus bool flags from synthetic data.
+- [x] Weights: n/a: no weights touched.
+- [x] Activations BF16 where SGLang keeps BF16; KV cache FP8; queries at most FP8 E4M3: q is cast to E4M3 exactly as in the split-KV path, output is bf16, softmax and merge in fp32 (per TASK.md).
+- [x] Attention sees every key: stream-K covers [0, seqlen) exactly, with masked tails, verified against the fp32 reference including a planted-key probe at tile edges and the last position.
+- [x] No timing patches, harness frames/I/O/secrets, module edits, reference import, subprocesses or network: grep for subprocess/multiprocessing/fork/Popen is empty; the build and self-check are in-process.
+- [x] All work happens inside the timed call; no output caching or replay.
+- [x] Two-state rule: no device pointer, workspace, ticket or descriptor in a module/static global; everything comes from `state["sk"]`.
+- [x] sm_90a: `TORCH_CUDA_ARCH_LIST=9.0a` around load_inline and restored; arch flags printed; cubin version 90 asserted; no sm_90a-only PTX is used.
+
+okc_lint output: `OK with warnings: submission.py` (only prepare-time host-sync warnings, all outside kernel_fn's call graph). `python3 -I -m py_compile` passed; `__pycache__` removed.
+
+## Pre-flight audit
+
+Audited 2026-10-25 by an opus subagent, by reading the code plus a plain-Python emulation of the stream-K schedule. **Verdict: dispatch-with-fixes.**
+
+Fix (1):
+- `_sk_select` B=1 cross-check: the tolerance against the incumbent goes from 1e-2 to 2e-2 at B=1 only. The incumbent there is FA3, and its FP8-P error alone was logged at 3.4-7.6e-3 against fp32 in earlier muse_attention_decode runs (`[ps-gate] B=1 master FA3 path rel L2 6.08e-03`; `[fullfused] FA3 vs fp32 3.4-7.2e-3`). Combined with the sk error of about 1.6e-3, that left under 2x headroom, so on an unlucky seed the B=1 path could have been silently disabled. The port never ran this check. The authoritative check is still the fp32 reference (2e-2). B>1 stays at 1e-2: A+B and sk agree to about 1e-4.
+
+Checked and found OK:
+- Gates read config only. B==1 and 1<B<=64 (plus `_splitkv_gate`) do not overlap. Sliding, verify, B>64, page!=1 and any selector loss fall through to master's exact code (the diff is additive, base == master 00e36e3 blob). The prepare order keeps the w2 self-check before the sk setup, so w2_mode cannot flip.
+- Per state: ws_acc/ws_ml/ticket/gticket/gacc/gml live in `state["sk"]`. Module globals are the extension, arch flags, plain bool/str decision and a float. The C++ static holds only the cudaFuncSetAttribute bools.
+- Tickets self-reset: the last arriver zeroes each ticket. The alternation check asserts a zero sum after every replay, and prepare zeroes the tickets again.
+- Fallbacks: a build failure, a validate/select/state-check exception or a miss each lands on the incumbent with three PATH CHOSEN lines. Nothing raises out of prepare.
+- kernel_fn: no sync, print or try. The only allocation is `out` (torch.empty, shape from config, as master's kernel B). `_sm_count` is cached.
+- Stream-K coverage (emulated, 21k random configs, B 1..64, grids 1..1024, lengths 1..86k plus 1M): every tile is owned once, `tile_owner` is the exact inverse of `range_start`, partial slots bx+b are unique and < grid+B, every request is finalized exactly once, two-level ngrp<=32, and the group and second-level arrival counts match. Ragged tails are masked by pos < seq.
+- Budgets: a third load_inline module, as in each port run (30-37 s there; two instantiations here, so maybe ~45 s). The added prepare work is about 40 small eager cases, 8 alternation captures, 3 selectors and 1-2 state checks, well inside 300 s.
+
+Residual risk: the combined two-instantiation TU has never been compiled, and the B=1 gain (about 5 us expected) is small against the 137 us kill line.
