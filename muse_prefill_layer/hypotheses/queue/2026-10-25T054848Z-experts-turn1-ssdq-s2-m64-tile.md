@@ -70,7 +70,8 @@ controls_for: null
 rewrite_stage: 2
 replaces: moe_wna16_marlin_gemm x2 (Marlin w13 + w2) at 200 < T <= 1024 (turn_1)
 review: required
-status: queued
+status: hold
+hold_reason: "superseded: experts-turn-rega-s4-port-t4096 (gain 1.3275) beat ssdq 805 vs 1250 us at T=3012 and Marlin at T=753; rega owns 200<T<=4096 (first_turn rega extension in flight)"
 ---
 
 # experts-turn1-ssdq-s2-m64-tile
