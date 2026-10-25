@@ -70,7 +70,7 @@ review: proceed
 status: running
 review_at: 2026-10-25T011846Z
 review_companions: null
-stage: implemented
+stage: dispatched
 claimed_at: 2026-10-25T011846Z
 base_sha: 9bb477f684086cd51b09c1e8a08fa8d50ae04e59
 base_blob: a8bb42ac483318e9fbc84bc7826a27b7a704d1fb
@@ -87,6 +87,8 @@ submission_blob: 94b37346a8f849f5cc5a87d48977b9ff1b4f513b
 lint_warnings: 3
 attempt_file: 2026-10-25T012031Z-check-bf16-verify-deepgemm-bf16-gemm-nt-route.md
 prepared_at: 2026-10-25T012031Z
+job: 2d522d47ca5c4fc9
+dispatched_at: 2026-10-25T012103Z
 ---
 
 # bf16-verify-deepgemm-bf16-gemm-nt-route
