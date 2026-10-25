@@ -66,7 +66,7 @@ base_sha: 8261c0480931bf1fdcb44c0d04d1dbf675b0c06a
 base_blob: bf65a3afdf6ebe0d9b73a817ffd2be1240f91870
 branch: hyp/muse_moe_w4a16/cuda-nvfp4-wgmma-rega-grouped-s4-replay-safe
 worktree: .worktrees/muse_moe_w4a16/cuda-nvfp4-wgmma-rega-grouped-s4-replay-safe
-mode: null
+mode: check
 restack_of: null
 stale_base: true
 implemented_at: 2026-10-25T051658Z
@@ -75,6 +75,8 @@ submission_sha256: 35e3210cd344650481fe6a611622bad9d900e699997f66ec43683dee2c770
 norm_sha256: 48fff635d9984c58be53c056b405dad35e3e0f6ae62a6e96e516a3c4503c7eeb
 submission_blob: a13d5fea2e79f85df573670cbd55a8a10fbc3d2c
 lint_warnings: 60
+attempt_file: 2026-10-25T051658Z-check-cuda-nvfp4-wgmma-rega-grouped-s4-replay-safe.md
+prepared_at: 2026-10-25T051658Z
 ---
 
 # cuda-nvfp4-wgmma-rega-grouped-s4-replay-safe
