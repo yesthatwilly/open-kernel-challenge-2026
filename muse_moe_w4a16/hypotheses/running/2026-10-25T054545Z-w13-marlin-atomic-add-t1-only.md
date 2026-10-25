@@ -41,7 +41,7 @@ review: proceed
 status: running
 review_at: 2026-10-25T054817Z
 review_companions: null
-stage: implemented
+stage: dispatched
 claimed_at: 2026-10-25T054817Z
 base_sha: ea4c938779678da09fceb3d72b468aef6f3272d9
 base_blob: 60dfe35d5417d9c0f89067ff313efdc2c41d03a2
@@ -58,6 +58,8 @@ submission_blob: 34e5b52476fd39c5296e0de9a53a3c5797cd52e1
 lint_warnings: 19
 attempt_file: 2026-10-25T054919Z-check-w13-marlin-atomic-add-t1-only.md
 prepared_at: 2026-10-25T054919Z
+job: 1048c6edf3e54892
+dispatched_at: 2026-10-25T054930Z
 ---
 
 # w13-marlin-atomic-add-t1-only
