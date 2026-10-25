@@ -54,7 +54,7 @@ review: proceed
 status: running
 review_at: 2026-10-24T170604Z
 review_companions: null
-stage: claimed
+stage: implemented
 claimed_at: 2026-10-25T034153Z
 base_sha: 8ac7a2f409615586e09a8a8ce118f9c4f892b7ba
 base_blob: 4da94677234faaa06b42b5ced541db8961fd6f34
@@ -63,6 +63,12 @@ worktree: .worktrees/muse_decode_layer/fused-preattention-paired-pad-restack
 mode: null
 restack_of: paired-heads-pad-unpad-triton
 stale_base: null
+implemented_at: 2026-10-25T034605Z
+impl_commit: 963bcf02677e391bcb80d9d64971b5047bfcc4c8
+submission_sha256: 2b321f331e1f7c8cdd1fa4dd6acac23425374816ef0eeb8479ef672de2427188
+norm_sha256: 6a5ef1194cced186c0e9ede6711aafde54eba56d230f8edda917b488c2b28b80
+submission_blob: 549a90e07960194c47c7589e9fd5c35a5061cb0a
+lint_warnings: 28
 ---
 
 # fused-preattention-paired-pad-restack
@@ -136,3 +142,15 @@ Deviations: the parent fused patch has no prepare() warm-up (only the qk_norm re
 
 okc_lint: `OK with warnings` (0 errors). The warnings are pre-existing host-sync lines in prepare()/self-check code, outside kernel_fn.
 py_compile: ok; `__pycache__` removed.
+
+## Pre-flight audit
+
+Verdict: **dispatch** (no fixes).
+
+- Deleted dependencies: `qk_norm`, `store_cache`, `FusedQKNorm` and `_pair_pad_q_kernel` appear only in comments/docstrings. `_sliding_forward` has its own in-kernel norm/RoPE/store, and the dense-chain PDL, align-par and prepare() self-checks never referenced them, so there is no NameError path.
+- Diff against master is confined to the module docstring, the two imports, the two new kernels (inserted before `_sliding_forward`), the `qk_norm` state entry and the non-sliding-decode-1 attention block of kernel_fn. The landed stack-align-par-sidestream-sliding1 and small-t-launch-minimal-dense-chain-pdl code is byte-identical.
+- Numerics: the fp32 scaleless RMSNorm (eps inside the mean), then interleaved RoPE from the same cos | sin table (cols 0..31 cos, 32..63 sin; even = e*c - o*s, odd = e*s + o*c), matches reference `_rope` and master's `_norm_rope`. The q E4M3 cast now comes straight from fp32, which matches the reference's FP8-query path more closely than master's bf16 -> E4M3. The k/k_scale and v/v_scale fp32 -> E4M3 casts equal reference `_quant`, compared at CACHE_TOL rather than as bytes. The cache index is `(loc*HKV + kh)*D` on the contiguous [pages, page, 2, 64] FP8 cache, the same flat row as store_cache's view(-1, hkv*d). The v offset `(HQ+HKV+kh)*D` and the gate offset `(HQ+2HKV)*D + h*D` match the qkv split.
+- Paired layout: query h writes half (h//G)%2 of its [2D] row and zero-fills the other half. That is identical to master's `view(tokens, s, 2, g, 2d)` copy. `_paired_norm_gate_kernel` reads the same half from FA3's [T, HQ, 2D] output through its real strides.
+- Rules: kernel_fn adds only `torch.empty` and two Triton launches; PAIRED/ROPE/scaled are config-only; nothing cached from data; no sync, autotune or child process. FP8 tensors passed directly to Triton (q, k/v cache) were already exercised by the parent patch's q pad. Lint OK (pre-existing prepare() warnings only), py_compile OK.
+
+Residual risk: Triton FP8 casts saturate where torch's produce NaN, and q/k now skip master's intermediate bf16 rounding. Both stay within tolerance at realistic magnitudes, but the run is the first execution of _pre_attention_kernel on the full and sliding batch>1/verify shapes.
