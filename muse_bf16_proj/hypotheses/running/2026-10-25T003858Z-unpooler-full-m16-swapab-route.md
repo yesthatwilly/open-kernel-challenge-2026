@@ -57,7 +57,7 @@ base_sha: e024827fbfe10f55e792e5540c00390bc0df3798
 base_blob: a8bb42ac483318e9fbc84bc7826a27b7a704d1fb
 branch: hyp/muse_bf16_proj/unpooler-full-m16-swapab-route
 worktree: .worktrees/muse_bf16_proj/unpooler-full-m16-swapab-route
-mode: null
+mode: check
 restack_of: null
 stale_base: null
 implemented_at: 2026-10-25T004327Z
@@ -66,6 +66,8 @@ submission_sha256: 29fe6c94af0f444942b0674b9b8fa5946e611c9251162a858682a42a4e6e4
 norm_sha256: 4cb5554e9610443db7e595eb3b753beb986976d2fbbff54f40ef25a08d6896b7
 submission_blob: fa481a079056997fb3dc6ae5746193edccdcb297
 lint_warnings: 0
+attempt_file: 2026-10-25T004327Z-check-unpooler-full-m16-swapab-route.md
+prepared_at: 2026-10-25T004327Z
 ---
 
 # unpooler-full-m16-swapab-route
