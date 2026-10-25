@@ -111,7 +111,7 @@ base_sha: c20f01f78876c85beb295ad153dccfe3078c3ad4
 base_blob: 5cf8fae31e5b84c36efeeb4569763eb9b06e1c8a
 branch: hyp/muse_attention_decode/combo-b1-chain-c320-fused-pre-pdl
 worktree: .worktrees/muse_attention_decode/combo-b1-chain-c320-fused-pre-pdl
-mode: null
+mode: submit
 restack_of: null
 stale_base: null
 implemented_at: 2026-10-25T185755Z
@@ -120,6 +120,8 @@ submission_sha256: 87633370d03bb7e83b2fe78221dcdb6d2d88669aacdc9c0e88a85789dc117
 norm_sha256: 073e0180315a85ff288cffc4259044bf88c0c9e6cb1ae85e417dab663d8f71d5
 submission_blob: 6aeaa6d224eb1a7eede636e8781f36b65c438965
 lint_warnings: 71
+attempt_file: 2026-10-25T185755Z-submit-combo-b1-chain-c320-fused-pre-pdl.md
+prepared_at: 2026-10-25T185755Z
 ---
 
 # combo-b1-chain-c320-fused-pre-pdl
