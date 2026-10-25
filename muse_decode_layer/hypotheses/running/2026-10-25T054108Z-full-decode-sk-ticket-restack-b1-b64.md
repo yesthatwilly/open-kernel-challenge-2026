@@ -62,7 +62,7 @@ review: proceed
 status: running
 review_at: 2026-10-25T054426Z
 review_companions: null
-stage: implemented
+stage: dispatched
 claimed_at: 2026-10-25T054426Z
 base_sha: 3856ee7eca4325994492f9d6308b31aba517ef17
 base_blob: 62c5a9413ba5710defea2ca3de14c1a1dc3b5a6d
@@ -79,6 +79,8 @@ submission_blob: d67278e071e62145a19d0d67759c2d311ce1e398
 lint_warnings: 45
 attempt_file: 2026-10-25T084818Z-check-full-decode-sk-ticket-restack-b1-b64.md
 prepared_at: 2026-10-25T084818Z
+job: 9c99379067084f6e
+dispatched_at: 2026-10-25T084834Z
 ---
 
 # full-decode-sk-ticket-restack-b1-b64
