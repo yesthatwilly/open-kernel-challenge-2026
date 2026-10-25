@@ -40,3 +40,4 @@ items here and in each tick's summary. Resolved items move to the log at the bot
 - 2026-10-25: the user said "send the scored submits"; Claude ran them: attention master (full-decode1-streamk-s3-two-level-ticket) 341623fa53d94cef, decode master (full-decode-splitkv-restack-on-pdl) 7edbcb33c98349cb.
 - 2026-10-25: the user said "land the decode w2 atomic port"; landed w2-marlin-atomic-add-t1-port on decode master (00e36e3). No scored submit sent (not requested).
 - 2026-10-25: the user said "send the decode scored submit too"; Claude ran it for decode master with w2-marlin-atomic-add-t1-port, job 3fd3fa1f96d045dd.
+- 2026-10-25 ~05:40Z: the user said "lift the pause and mint for the remaining checks". Pause lifted; minting 25 (attention 8, decode 3, moe 5, prefill 8, bf16 1 = the three-row restack). Board after harvest: attention scored 1.4441 (341623fa), decode 1.2726 (3fd3fa1f).
