@@ -94,16 +94,16 @@ priority: 1
 kind: primary
 controls_for: null
 review: proceed
-status: queued
+status: running
 review_at: 2026-10-25T162310Z
 review_companions: null
-stage: null
-claimed_at: null
-base_sha: null
-base_blob: null
-branch: null
-worktree: null
-mode: null
+stage: claimed
+claimed_at: 2026-10-25T202838Z
+base_sha: 49aaf9da8622506d0d6ee1cee80083c4503514f4
+base_blob: 3fc72e97304e132db432fcc87872be997f842929
+branch: hyp/muse_decode_layer/combo-attn-master-sliding-race-skw-c16
+worktree: .worktrees/muse_decode_layer/combo-attn-master-sliding-race-skw-c16
+mode: submit
 restack_of: null
 stale_base: null
 ---
