@@ -80,8 +80,10 @@ kind: rewrite
 controls_for: null
 rewrite_stage: 1
 replaces: "full-layer verify at 1<batch<=64: FA3 main + prepare_varlen_num_blocks + FlashAttnFwdCombine + _paired_norm_gate_kernel (master paired FA3)"
-review: required
+review: proceed
 status: queued
+review_at: 2026-10-25T212521Z
+review_companions: null
 ---
 
 # full-verify-wgmma-ws-s1-producer-split
@@ -110,3 +112,29 @@ shape (profile top_kernels) against the incumbent and the speed-of-light floor, 
 2. at or below the incumbent kernels' time on the target shapes;
 3. within ~1.5x of the floor on the target shapes, and the headline CI clears 1.0 (promotable).
 The next stage is minted with `--kind rewrite --depends-on <this slug> --stage N+1`.
+
+## Adversarial review
+
+Reviewed 2026-10-25T212521Z by an adversarial subagent (model opus).
+
+**Verdict: proceed.** This is a sound rewrite stage aimed at the problem's largest gap (full verify_16/32 at 2.2 TB/s, 2.3x floor; DIAGNOSIS action 1). The gate makes it fail-safe. Its weakest link is producer width at 1 CTA/SM, which looks like the BULK=0 layout of full-cuda-onelaunch-warpspec-bulk-gather (1.77 TB/s). Before dispatch, add DIAGNOSIS's gather-only roofline DIAG and its 2-CTA/SM per-warpgroup-ring variant as in-run variants, fix the TILE=128 smem arithmetic, and move the gate to LESSONS' two-round rule.
+
+### Justification
+Mechanism: plausible. The profile backs every number. Full verify_16 is 162.5 us (FA3 148.7 + combine 6.4 + prepare 3.1 + norm-gate + pre-attn) against a 63.4 us floor. Verify_32 is 302.0 us (FA3 288.7) against 126.8 us. Master's CUDA stream-K decode kernel moves the same 256 B/token gather at 3.0-3.07 TB/s (decode_16 108.2 us), so decode-level bandwidth on verify (about 110/225 us) is a demonstrated ceiling, not a guess. s5 is correct (19 bisect cases, two-state replays). Its 0.570x/0.704x with 1.49x time for 2x bytes says it is latency-bound in a serial per-tile chain. Fixing that chain (S(n+1) issued before softmax(n), wait_group 1) is the right target. The compute fits (about 21 us of FP8 wgmma, about 40 us of MUFU at B=16) if it overlaps with a 108 us gather. q_len 8 x G 8 = 64 rows per kv head maps exactly onto m64 wgmma, one consumer warpgroup per kv head. The register budget fits (232x256 + 40x128 = 64,512). Expected shapes and directions match TASK: only full verify_16/32 move, decode, sliding and full verify_1 stay flat, and the milestones (M2 <=135/<=255 us, M3 <=95/<=190 us) sit between the incumbent and 1.5x floor. Weakest link: producer issue width and TLP at 1 CTA/SM. s5 ran 2 CTAs/SM with 512 issuing threads per SM, and master decode also has about 512 threads per SM in flight. This design has 128 issuers and 8 consumer warps per SM. That is the shape of full-cuda-onelaunch-warpspec-bulk-gather (1 CTA/SM, 8-stage ring, warp-specialized producer), whose BULK=0 per-thread 16 B cp.async variant capped at 1.77 TB/s with one producer warp. 4 producer warps instead of 1 is a real difference: 7 x 16 KB in flight easily covers Little's law at 3 TB/s, and about 32 warp-instructions per tile is little issue pressure. But nothing has yet shown that 4 warps reach 3 TB/s on a random 128 B row gather with a dependent page-index load per row. If they do not, M1 fails for a reason the consumer-side PHASE DIAG may only show indirectly (as long FULL waits). Prior: the frontmatter has no `prior` field. This is not grounds for hold: the body names s5 and the full_ws lesson, and DIAGNOSIS names s5 as the prior. The mechanism is different from s5 (overlapped, warp-specialized pipeline versus a serial chain with a CTA-wide EMPTY rendezvous). It is different from the do-not-try onelaunch item (a 128-thread cp.async producer warpgroup, not single-warp cp.async.bulk per row). It is different from the mma.sync verify do-not-try (wgmma). The churn tooling should add `prior: full-verify-wgmma-s5-qfrag-reload`. Concrete defect: 'Ring STAGES = 8 (8 x 16 KB = 128 KB)' is a 64-token tile (K 8 KB + V 8 KB for both heads). A TILE=128 stage is 32 KB, so 8 stages need 256 KB, more than the 227 KB per CTA. The TILE=128 variant must say STAGES=4-5 (or count stages in 64-token half-tiles). Otherwise it fails to launch or the builder improvises. The local-bytes>0 refusal does not catch an smem overflow, so the variant also needs an smem-size refusal. The DIAGNOSIS additions are not in the change text: (a) a gather-only roofline DIAG (same ring and producer, no MMA) and (b) a 2-CTA/SM variant that keeps s5's all-threads-issue layout, splits the ring per warpgroup and overlaps S(n+1). Add both as template variants in the same module. They answer the weakest link inside this one run.
+
+### Confounders on the current kernel
+- fa3-hdim128-head-pairing / paired-heads-launch-cleanup / paired-heads-launch-cleanup-ab-tune-batch-gate: these define the incumbent (paired FA3 + prepare + combine + _paired_norm_gate_kernel at full verify B>1). They do not confound the measured kernel, but the prepare gate must time exactly master's paired path, including the paired pre-attention q layout and the norm-gate, or the >=1.05x routing decision is mis-anchored. When the wgmma path routes, the pre-attention kernel's q layout must be the one the wgmma kernel expects, not the paired-padded layout.
+- fused-preattention-triton: the wgmma path keeps _pre_attention_kernel as its prologue. If the routed band changes the PAIRED constexpr passed to it, verify_16/32 pre-attention time (2.7/4.1 us) can move a few us either way and be misread as kernel gain or loss. Read the replaced kernels' own top_kernels, not the shape total.
+- full-decode-cuda-gather-splitkv / full-decode-splitkv-s2 stream-K (master decode kernel): it shares the load_inline import clock (222 s across 4 modules) and its ticket arrays. A new module adds compile time and a self-check, but there is no timing interaction on decode shapes, because they are untouched and gated by config.
+
+### Interference and A/B needs
+No companions. This is kind: rewrite, judged on the replaced kernels' own us at verify_16/32 against 162.5/302.0 and the floor, and the hard prepare gate makes the decision fail-safe (no route means master is re-measured). No landed hypothesis is a plausible cause of a move on those rows except through the incumbent definition, and the gate already times that path. The real single-run ambiguity is why it fails to route: producer issue width at 1 CTA/SM, or consumer latency at 1 CTA/SM. Separate checks are the wrong fix. Resolve it inside the run by building (a) DIAGNOSIS's gather-only roofline instantiation (producer plus ring, consumers just wait FULL and arrive EMPTY; time it at B=16 x 80K and print achieved TB/s) and (b) the 2-CTA/SM per-warpgroup-ring overlapped variant, as extra template instantiations in the same muse_full_verify_wgmma_ws_v1 module. Both are timed in the same interleaved harness, and either may route. The extra compile cost is one module. The next stage is the follow-up.
+
+### Open questions
+- TILE=128: what is STAGES? 8 x 32 KB does not fit in 227 KB. Specify 4 (or 5 with no other large smem) and add a refusal when dynamic smem exceeds the device limit, alongside local bytes > 0.
+- Does the 128-thread producer warpgroup sustain >= 2.8 TB/s on its own? The gather-only DIAG (DIAGNOSIS 1a) should answer this before the consumers are blamed. The BULK=0 single-warp precedent was 1.77 TB/s.
+- Page-index prefetch: how far ahead does the producer load page indices relative to the K/V issue? A dependent int32 load per row on the producer's critical path can cap issue rate more than the width can.
+- cp.async.mbarrier.arrive.noinc with 128 producer arrivals per FULL stage, plus EMPTY with 256 consumer arrivals: are expected counts initialised once and phase bits tracked per stage across stream-K segment boundaries (s4/s5's bug class was per-segment state)?
+- With two S accumulator sets at TILE=128 (2 x 64 regs) plus O (32) plus softmax temps, does the consumer stay under 232 regs with no spill? Print it per variant, as specified.
+- Should the gate also offer the 2-CTA/SM per-warpgroup-ring variant (DIAGNOSIS 1b), so that a 1-CTA/SM TLP loss does not leave the stage with nothing routed?
+
