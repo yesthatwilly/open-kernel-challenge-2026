@@ -102,11 +102,15 @@ ROUTER_WARM_MS = (1, 8, 16, 32, 64, 128, 256)
 NN_GATED_LAYERS = ("pooler", "unpooler")
 NN_GATED_MIN_M = 65
 NN_GATED_MAX_M = 128
+# Pooler only: widen the NN gate to 129..256 under its OWN flag (nn_p256_ok) so a self-check miss
+# there cannot switch off the proven m <= 128 NN path (nn_ok).
+NN_POOLER_MAX_M = 256
 # Cells of the prepare()-time A/B/A/B graph self-check: (layer, n, k, m).
 AB_CASES = (
     ("router", ROUTER_N, ROUTER_K, 1), ("router", ROUTER_N, ROUTER_K, 8), ("router", ROUTER_N, ROUTER_K, 128),
     ("unpooler", 1024, 4096, 1), ("unpooler", 1024, 4096, 8), ("unpooler", 8192, 4096, 128),
     ("pooler", 4096, 8192, 1), ("pooler", 4096, 8192, 8), ("pooler", 4096, 8192, 128),
+    ("pooler", 4096, 8192, 256),
 )
 AB_ROUNDS = 2           # A, B, A, B
 AB_BF16_REL_L2 = 6e-3   # bf16 output rounding is ~2e-3; the judge allows 1e-2
@@ -2062,6 +2066,7 @@ def _prepare_state(weights: Weights, flags=None) -> dict:
     for name in NN_GATED_LAYERS:
         state[name + "_t"] = state[name].t().contiguous()
     state["nn_ok"] = True   # constant; the A/B self-check may turn it off for the run
+    state["nn_p256_ok"] = True   # pooler 129..256 only; own flag, own self-check cell
     t = tick("weight splits + NN copies", t)
     # Stage choice, side-by-side diagnostics and warm-up on synthetic inputs.
     _router_prepare(state)
@@ -2124,6 +2129,7 @@ def _prepare_state(weights: Weights, flags=None) -> dict:
         state["ouns_cl"] = flags["ouns_cl"]
         state["router_cluster_ok"] = flags["router_cluster_ok"]
         state["nn_ok"] = flags["nn_ok"]
+        state["nn_p256_ok"] = flags["nn_p256_ok"]
     print(f"[prepare-time] state build ({'A' if flags is None else 'B'}) total: "
           f"{time.perf_counter() - t_all:.2f}s", flush=True)
     return state
@@ -2131,7 +2137,7 @@ def _prepare_state(weights: Weights, flags=None) -> dict:
 
 def _ab_flags(state: dict) -> dict:
     return {"ouns_cl": state["ouns_cl"], "router_cluster_ok": state["router_cluster_ok"],
-            "nn_ok": state["nn_ok"]}
+            "nn_ok": state["nn_ok"], "nn_p256_ok": state["nn_p256_ok"]}
 
 
 def _ab_component(layer: str, m: int) -> str:
@@ -2142,6 +2148,8 @@ def _ab_component(layer: str, m: int) -> str:
         return "ouns_cl"
     if layer in NN_GATED_LAYERS and NN_GATED_MIN_M <= m <= NN_GATED_MAX_M:
         return "nn_ok"
+    if layer == "pooler" and NN_GATED_MAX_M < m <= NN_POOLER_MAX_M:
+        return "nn_p256_ok"
     return ""
 
 
@@ -2162,6 +2170,7 @@ def _ab_selfcheck(weights: Weights, state_a: dict) -> None:
               f"unpooler cluster OFF", flush=True)
         for st in (state_a,):
             st["nn_ok"], st["router_cluster_ok"], st["ouns_cl"] = False, False, 0
+            st["nn_p256_ok"] = False
         return
     states = {"A": state_a, "B": state_b}
     dev = state_a["router"].device
@@ -2251,7 +2260,7 @@ def prepare(weights: Weights) -> dict:
     except Exception as e:
         print(f"[prepare] final occupancy query failed ({type(e).__name__}: {e})", flush=True)
     print(f"[prepare] FINAL FLAGS: ouns_cl={state['ouns_cl']} router_cluster_ok={state['router_cluster_ok']} "
-          f"nn_ok={state['nn_ok']}; prepare total {time.perf_counter() - t0:.1f}s", flush=True)
+          f"nn_ok={state['nn_ok']} nn_p256_ok={state['nn_p256_ok']}; prepare total {time.perf_counter() - t0:.1f}s", flush=True)
     return state
 
 
@@ -2281,8 +2290,10 @@ def kernel_fn(data: Inputs, state: dict) -> torch.Tensor:
         ws, cnt = _swapab_buffers(state, layer)
         return _swapab_forward(layer, x, state[layer], ws, cnt, state["swapab_stages"][layer])
     if layer != "router":
-        if (state["nn_ok"] and layer in NN_GATED_LAYERS and NN_GATED_MIN_M <= cfg["m"] <= NN_GATED_MAX_M
-                and cfg["n"] == state[layer + "_t"].shape[1]):
+        if (layer in NN_GATED_LAYERS and cfg["n"] == state[layer + "_t"].shape[1]
+                and ((state["nn_ok"] and NN_GATED_MIN_M <= cfg["m"] <= NN_GATED_MAX_M)
+                     or (layer == "pooler" and state["nn_p256_ok"]
+                         and NN_GATED_MAX_M < cfg["m"] <= NN_POOLER_MAX_M))):
             # NN layout: x [m, k] @ W_t [k, n] at the full weight width (cfg-only gate).
             return torch.mm(x, state[layer + "_t"])
         # The unpooler's slice is its first n rows (all of them above 8 tokens).
