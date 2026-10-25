@@ -105,10 +105,12 @@ speedup: 1.1004181185941053
 speedup_ci: [1.0839118468151938, 1.1169243903730168]
 harvested_at: 2026-10-25T091110Z
 best_at_harvest: 1.074386115190733
-promotion: merged
+promotion: submitted
 hand_landed: true
 promotion_commit: ca1d41b1dc9f1cca7f8d13c3e0e5b2027055e6fa
 promotion_attempt: 2026-10-25T110032Z-submit-experts-turn4-ssdq-s1b-dataptr-symbol-fix.md
+promotion_job: 810b5f7decc84206
+promotion_at: 2026-10-25T110043Z
 ---
 
 # experts-turn4-ssdq-s1b-dataptr-symbol-fix

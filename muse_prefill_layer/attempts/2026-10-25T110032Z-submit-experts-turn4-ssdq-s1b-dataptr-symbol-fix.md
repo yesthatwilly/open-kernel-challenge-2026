@@ -2,7 +2,7 @@
 
 Hypothesis: `muse_prefill_layer/hypotheses/done/neutral/2026-10-25T054848Z-experts-turn4-ssdq-s1b-dataptr-symbol-fix.md` (branch `hyp/muse_prefill_layer/experts-turn4-ssdq-s1b-dataptr-symbol-fix`).
 
-- **Job:** `<job id>` (`okc status <job>`)
+- **Job:** `810b5f7decc84206` (`okc status <job>`)
 - **File:** `muse_prefill_layer/submission.py` at git `aabcb8d6`
 
 ## Goal
