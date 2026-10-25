@@ -45,8 +45,10 @@ priority: 1
 kind: primary
 controls_for: null
 prior: "pooler-unpooler-bulk-tma-row-owner-s2-cxx20-rebuild: that row-owner lost +1 us at m=8 and +6 us at m=16 on pooler/unpooler at 1 CTA/SM; this widens master's qkv A2 instance, which runs 2 CTAs/SM and won 1.16x at m=1, against the split-K-4 swap-AB incumbent, behind a per-cell gate"
-review: required
+review: proceed
 status: queued
+review_at: 2026-10-25T212522Z
+review_companions: null
 ---
 
 # qkv-rowowner-a2-widen-m8-m16
@@ -64,3 +66,27 @@ DIAGNOSIS Action 4. Built on master 36c26199. Master routes qkv_gate at cfg m ==
 ## Risk
 
 Effect if both route: -1.3 us at 0.343 %/us (verify_1) plus ~-0.8 us at 0.27 %/us (decode_16), about +0.45-0.7% headline: below the margin, must stack (combo-verify-cells-pooler-khalf-plus-qkv-rowowner-m8-m16). New CUDA instance with mbarrier rings: fault/hang risk, so the first measurement is an okc check. The gate decides per cell, so a slow m=16 costs nothing.
+
+## Adversarial review
+
+Reviewed 2026-10-25T212522Z by an adversarial subagent (model opus).
+
+**Verdict: proceed.** This is a legitimate, unduplicated follow-up to DIAGNOSIS Action 4 and LESSONS' explicit 'untested at m>=8' note. Each cell has its own gate, so one check is cheap and can be read from the PATH CHOSEN lines and the qkv verify_1 and decode_16 rows. But the stated mechanism ('2 CTAs/SM escapes the pooler's per-token loss') is weak. An x-ingress model predicts m=8 is roughly break-even and m=16 loses, so expect the gate to keep master on m=16 and possibly on m=8.
+
+### Justification
+Profile/rows (741072dc): A2 took qkv decode_1 from 12.67 to 10.54 us, a margin of about 2.1 us. The swap-AB SPLIT_K 4 incumbent is nearly flat across m: rows 12.35 at m=8, 12.64 at m=16, 13.71 at m=32. The SoL is 7.9 us. The profile's 7.4 us bulk kernel time is below the 7.87 us floor, so profiler kernel times are L2-warm (H200 L2 > 37.7 MB). Only the cold rows and the cold gate are comparable; a profiler-derived 'kernel-only TB/s' will be inflated. m=8 is the strong half. On the existing NT=8 instance, m=8 runs exactly the same mma/ldmatrix work as m=1 (padding is already 8 tokens, NN=1). The only change is 8 KB of x per 16 KB weight chunk from L2, plus a larger epilogue. WEAKEST LINK: the argument that 2 CTAs/SM separates this from the failed pooler/unpooler row-owner. (1) The grid is 144 CTAs on 132 SMs, so only 12 SMs ever host two CTAs. The other 120 run one CTA, just like the pooler's 1 CTA/SM. (2) The pooler loss tracks x ingress, not occupancy. In the row-owner design every CTA re-reads all of x, so L2->SM x traffic = (n/R)*m*K*2, which is x/W = m/R. For qkv R=16 that ratio is 0.5 at m=8 and 1.0 at m=16. For the pooler (R=32) it was 0.25, 0.5 and 1.0 at m=8, 16 and 32, where the gap over the pure read was +1, +6 and +25 us on 67 MB. Scaled to 37.7 MB, qkv would pay about +3.4 us at m=8 and about +14 us at m=16, against a 2.1 us margin. An SM-ingress estimate using LESSONS' ~6 TB/s L2->SM agrees. m=8 needs 56.6 MB (about 9.4 us), level with the incumbent. m=16 needs 75.4 MB (about 12.6 us) and loses. The MMA issued per weight byte is also identical to the pooler at m=16 (16 mma per warp per 16 KB chunk in both). The ~11.0 target at m=8 is therefore optimistic: 11.2-11.6 is more plausible, or a gate reject. The ~11.8 target at m=16 is unlikely. The 99,328 B smem arithmetic for NT=16/S=3 is correct (2 x 99,328 < 228 KB), and 3 x 16 KB of weight in flight per CTA is enough for DRAM latency. The expected directions are consistent with TASK weights: every shape is weight 62, verify_1 ~0.343 %/us, decode_16 ~0.27 %/us. Prior check: `prior` names pooler-unpooler-bulk-tma-row-owner-s2-cxx20-rebuild (regression) honestly. The difference (qkv's A2 instance against a split-K-4 incumbent) is real and not on the do-not-try list: DIAGNOSIS limits that entry to pooler/unpooler at 1 CTA/SM, and LESSONS marks qkv m>=8 as untested. It is not a duplicate. The queued combo 'ombo-verify-cells-pooler-khalf-plus-qkv-rowowner-m8-m16' builds on it rather than duplicating it.
+
+### Confounders on the current kernel
+- combo-rowowner-reduce-free-m1-qkv-o-plus-naive (A2, master): the change reuses its compiled instance, its repack (bulk_wt_qkv_gate) and its gate machinery. This is a dependency, not a confound for the m=8/16 rows, but there is a build hazard. _bulk_prepare does state.pop('bulk_wt_' + layer) when a cell is off, and BULK_CELLS, _bulk_forward and _ab_component are keyed by layer with m == BULK_M. If the m=8 or m=16 cell is rejected after A2 m=1 passed, a naive extension deletes the shared repack and breaks or un-routes decode_1. Key cells by (layer, m), share one repack per layer, and pop it only when every cell of that layer is off. The decode_1 row must stay flat; if it moves, suspect this.
+- bf16-restack-m16-swapab-router-swapab-m32 / bf16-m16-swapab-wgmma-extend lineage: this set the incumbent being displaced at qkv m=8/16 (swap-AB SPLIT_K 4 with ticket, 9.5-9.6 us warm). Any measured gain is relative to that tuning. It is the right comparator, and the gate measures it directly, so it does not confound attribution.
+- bf16-m32-swapab-wgmma-triton: m=32 stays on swap-AB. No interaction, because routing is exact cfg m equality.
+
+### Interference and A/B needs
+No companion is warranted. The two target cells are separate scored shapes with exact-m routing, per-cell flags, per-cell PATH CHOSEN lines that print both medians and IQRs, and a profiler kernel-name assertion. A row move on qkv verify_1 or decode_16 is attributable from the log alone, and a gate reject reads as 'master measured'. Nothing else in kernel_fn changes. Every timed replay starts with a cold L2, so neighbouring layers cannot interact. The expected headline effect (+0.45-0.7%) is inside the ±1.5% CI, so judge the run on the two rows' paired ratios and the gate prints, not the headline. An m=8-only control would add nothing that the per-cell lines don't already show.
+
+### Open questions
+- Does the gate's printed cold net time at m=8 beat 1.03 x master in both rounds? The ingress model (W 37.7 MB + x 18.9 MB from L2 at ~6 TB/s ≈ 9.4 us) says it is marginal. Print W+x ingress bytes and the implied L2->SM rate per cell from the COLD gate median, not the warm profiler time, so the result can confirm or refute the x-ingress explanation.
+- If m=16 is gated off as predicted, should the m=16 instance be dropped to cut build and hang risk? A structural fix would need x multicast across a 2-4 CTA cluster (cp.async.bulk .multicast::cluster), which cuts x ingress by the cluster size, or a larger R. That is a design change, not a widen.
+- With 144 CTAs on 132 SMs, does occupancy=2 actually matter? A per-SM timing or a grid-132 variant would show whether the 12 doubled-up SMs set the tail at m=8.
+- Confirm that _ab_selfcheck's AB_CASES gains qkv m=8 and m=16 entries, and that _ab_component maps them to bulk_qkv8_ok and bulk_qkv16_ok, not to bulk_qkv_ok (the m=1 flag). A self-check miss at m=8 must not switch off A2 at m=1.
+
