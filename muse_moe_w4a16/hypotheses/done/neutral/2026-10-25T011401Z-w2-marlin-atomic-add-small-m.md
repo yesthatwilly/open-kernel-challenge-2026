@@ -74,6 +74,7 @@ best_at_harvest: 1.3278240305297715
 promotion: merged
 hand_landed: true
 promotion_commit: 9080a71e9183df77bc71f28ecfa0f635b7d0aff0
+promotion_attempt: 2026-10-25T041933Z-submit-w2-marlin-atomic-add-small-m.md
 ---
 
 # w2-marlin-atomic-add-small-m
