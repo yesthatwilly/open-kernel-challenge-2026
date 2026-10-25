@@ -67,8 +67,10 @@ kind: rewrite
 controls_for: null
 rewrite_stage: 3
 replaces: moe_align + Marlin w13 + act_and_mul + Marlin w2 at tokens > 32
-review: required
+review: proceed
 status: queued
+review_at: 2026-10-25T034534Z
+review_companions: null
 ---
 
 # moe-chain-cuda-swapab-expert-once-s3-rebase-fp32ref-bound
@@ -96,3 +98,26 @@ shape (profile top_kernels) against the incumbent and the speed-of-light floor, 
 2. at or below the incumbent kernels' time on the target shapes;
 3. within ~1.5x of the floor on the target shapes, and the headline CI clears 1.0 (promotable).
 The next stage is minted with `--kind rewrite --depends-on <this slug> --stage N+1`.
+
+## Adversarial review
+
+Reviewed 2026-10-25T034534Z by an adversarial subagent (model opus).
+
+**Verdict: proceed.** The fp32-reference recalibration is the right fix, and the absolute caps sit below the judge's bound (global 2x margin, row 5x). However, the max(..., 5e-3)/max(..., 1e-2) floors could pass a chain with 2-3x Marlin's error. The stage-2 numbers are already larger than rounding alone explains, so make the 1.5x-Marlin ratio the binding gate. The rebase recipe is also wrong: the stage-2 patch is a delta over stage 1.
+
+### Justification
+Rewrite stage 3, judged on whether the path gets enabled and timed against Marlin at verify_16/32 (Marlin w13+act+w2 254/271 and 443/427 us vs floor ~101/109 us). The design still has no timing, so the milestone is readable only if the path turns ON. Bound soundness, checked against reference.py/checks.py. The judge compares the residual update (stream - a1*a2*stream_in) against FP32, with tol = clamp(2.5 x the e4m3-query error, 0.03, 0.15) and any row <= 5x tol. The update = a2*b1*rms(attn) + b2*rms(f), where f = unpooler(moe)*(1+post_ffn_norm). The unpooler is linear and the RMS only removes the radial error component. So the MoE relative error passes roughly 1:1 into the FFN term, and the 'MoE output is only part of the residual update' argument gives no guaranteed attenuation. The real margins are global cap 1.5e-2 vs the 3% floor (2x, before master's own error adds in quadrature) and row cap 3e-2 vs 15% (5x). That is adequate, not 'well inside'. The judge's tests on the okc check are the final arbiter (milestone 1). Weakest link: the evidence suggests a real accuracy gap, not just a mis-set bound. (i) Stage 2 failed TWO of its bounds, not one: out global rel 6.00e-3 > its own 5e-3 as well as y row 1.07e-2 > 1e-2 (log line 54-55; the hypothesis and harvest mention only the row). (ii) The stated error source does not hold up: Marlin's SGLang path also rounds the w13 output and silu*mul to bf16 before w2. The fused chain keeps h in fp32 and rounds act once, so it should be at least as accurate on act. Pure bf16 rounding differences predict ~2-3e-3, but stage 2 measured act 8.8e-3 (max row) and out 6.0e-3 (global), which is 2-4x more. That points at something like the __hmul2 scale fold or a global-scale rounding, and the fp32 reference will say which kernel carries it. (iii) Because of that, the floors are the loosening risk. If Marlin's fp32 error is ~2e-3 global / 4e-3 row, then max(1.5x, 5e-3) and max(1.5x, 1e-2) admit 2.5x Marlin's error, which is exactly the hidden-bug case. The hypothesis's own Risk line says '>1.5x Marlin is a real defect', so enforce that: enable on new <= 1.5 x Marlin (global and max row, both vs fp32), with floors no higher than the bf16-rounding scale (~3e-3 global, ~6e-3 row), and keep the absolute caps as a backstop. Print the ratio. Also gate on the FINAL MoE output (post_expert_norm weighted sum, the tensor the judge's unpooler sees), with y/act printed for diagnosis only. Synthetic randn x is fine with the judge's real weights, but prefer a pre_expert_norm-shaped x, because LESSONS says random self-checks can pass where coherent data fails. Rebase defect: the stage-2 patch's preimage is blob 81d11fe = e65eda8:submission.py (stage-1 impl), which already contains _LT_CPP and the kernels; master's submission.py has no _lt_ code. So 'git checkout master -- submission.py; git apply -3 <stage-2 patch>' brings over only the stage1->stage2 delta, and the stage-1 kernel source lands in conflict or is lost. Use a cumulative 3-way merge instead: base = a449561:muse_decode_layer/submission.py (the parent of stage-1 impl e65eda8), ours = master, theirs = 1177e31. That is `git merge-file`, or apply `git -C <wt> diff a449561 1177e31 -- muse_decode_layer/submission.py` with -3. Then diff against master as the hypothesis says. Memory: dequantize to fp32 one expert at a time (32 experts x w13+w2 in fp32 at once is large) and free it before timing.
+
+### Confounders on the current kernel
+- stack-align-par-sidestream-sliding1: master moved the T>32 expert_map gather + moe_align onto the side stream (_expert_dispatch) and overlaps it with dense work. The new chain replaces moe_align with moe_route_list. Whether it is still overlapped on the side stream changes the shape time apart from the GEMMs, so judge the replaced kernels' rows, not the shape.
+- marlin-block-m-cap-16: the incumbent Marlin at T=128/256 runs with block_m capped at 16. The 254-443 us incumbent rows already reflect that, so compare against the current master profile rows, not older ones.
+- post-expert-norm-triton-small-t: small-T only (T<=32), so it is outside this gate. The new chain's own post_expert_norm_weighted_sum must match SGLang's large-T combine numerics, and it shares the fp32-ref check.
+- small-t-launch-minimal-dense-chain-pdl: T<=DL_MAX_TOKENS only. Its presence is what the rebase must preserve; it does not confound the T>32 rows.
+
+### Interference and A/B needs
+No companion. This is a rewrite stage whose result is read from the replaced kernels' own rows (moe_route_list + moe_w13_silu_swapab + moe_w2_swapab vs moe_align + 2x Marlin + act_and_mul) and the printed prepare timings. The decode_* and verify_1 shapes are in-run controls outside the gate. The next stage is the follow-up.
+
+### Open questions
+- If the fp32 reference shows the new chain at >1.5x Marlin, find the cause (scale fold in bf16 via __hmul2, global-scale rounding, act rounding) before raising any bound. If it shows Marlin at the larger error, the stage-2 OFF was a false negative.
+- Is stage 2's original queued sibling 'moe-chain-cuda-swapab-expert-once-fix' (child-process design, queue/2026-10-25T001250Z) still queued? The rules reject process starts, so it should be retired, not run.
+
