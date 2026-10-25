@@ -78,7 +78,7 @@ review: proceed
 status: running
 review_at: 2026-10-25T002202Z
 review_companions: null
-stage: claimed
+stage: implemented
 claimed_at: 2026-10-25T002203Z
 base_sha: ee7dd2035bcffc84a11faafb7b5574466ee3bcae
 base_blob: 2b7e5dbf0fde0ae0163e5ecaefd87a5f0848e6b0
@@ -87,6 +87,12 @@ worktree: .worktrees/muse_attention_decode/full-verify-wgmma-s3-warpgroup-per-kv
 mode: null
 restack_of: null
 stale_base: true
+implemented_at: 2026-10-25T004725Z
+impl_commit: ff9bf1e4fbe38f9f847a906f5135ecaf60604668
+submission_sha256: 2ca1face259a3dac8789bfa773c1b56e0916fa8f2ee976b4cf381ee4054e85b6
+norm_sha256: ead99c311f55e0171b9cd65f6fab8b3585c09e6ef9ad9689232be5dbe94b6b8e
+submission_blob: 136874e0158f8b76208c4130e523bc91b84160ad
+lint_warnings: 8
 ---
 
 # full-verify-wgmma-s3-warpgroup-per-kvhead-inproc
@@ -193,3 +199,15 @@ warn  host-sync    L2117: flag = int(_WG_ERR.item())  (outside kernel_fn's call 
 OK with warnings: muse_attention_decode/submission.py
 ```
 `python3 -I -m py_compile`: OK; __pycache__ removed.
+
+## Pre-flight audit
+
+Audited 2026-10-25 (opus, read-only plus a numpy emulation; no GPU or nvcc here). **Verdict: dispatch-with-fixes** (okc check first, as the spec says).
+
+Fixes applied in the worktree (`muse_attention_decode/submission.py`):
+1. **P lacked FA3's FP8 Max_offset.** P was `2^(s - max)` in [0, 1] rounded to E4M3, so every weight under ~2^-10 of the row max flushed to 0. A numpy emulation (judge `generate_input` logic, full verify, dist coherent, 80K keys, per-64-token-tile online softmax, E4M3 Q and P) **fails** the judge bound: rel L2 0.107 against a bound of 0.088 (seed 0), and a worst row of 0.400 against 0.397 (seed 3). That is the scored verify_16/32 data, so the timed-call check would have failed the run. The cause is the planted low-attention tail (values + u outside the top 2048 keys), which lies entirely below 2^-10. Fix: `p = ex2(s - (max - 8))`, FA3's Max_offset = 8. l and O both carry the 2^8, which cancels in O/l and in the slot merge (B8 and ticket). The same emulation then gives 0.029 / 0.026 against bounds of 0.088 / 0.079, equal to the E4M3-query-only error. Normal/soft 80K-100K cases, and short lengths (13, 90), are unchanged and pass either way. The self-check data (randn keys, peaked attention) would not have caught this.
+2. **Image gate relaxed** from `binaryVersion == 90 and ptxVersion >= 90` to `binaryVersion == 90` only. ptxVersion is still logged; it is undocumented for a cubin-only `code=sm_90a` image.
+
+Checked and OK. Register-A E4M3 fragment layout, which equals the m16n8k32 A layout, so register A is legal for e4m3 (K-major implied). C-fragment rows/columns. The P token permutation against the V^T byte transpose (prmt selectors and swizzled store addresses verified by hand). SW128 K descriptor (SBO 1024, start offset 64g + 32k, 1024-aligned stages). SW64 V^T (chunk ^ ((row >> 1) & 3), SBO 512, layout 2, +32 k-step). FULL/EMPTY parity and no phase overrun. Page-index RAW/WAR. Ticket release/acquire (threadfence, named barrier, atomicAdd, threadfence + __ldcg) with an in-kernel reset. Slot uniqueness c + b. Causal mask and edge predicate. Rows with no valid key. smem about 89.6 KB/CTA (2 CTAs/SM fit). No subprocess. Nothing cached from data. Allocations are shape-only. Every wgmma/mbarrier sits under __CUDA_ARCH_FEAT_SM90_ALL. TORCH_CUDA_ARCH_LIST=9.0a is restored afterwards. Decode and sliding are byte-identical to master; the only master lines changed are the docstring and `paired`. Self-check tolerance 3e-2: the emulated self-check error is about 1.0%, so the threshold is honest with about 3x margin (2e-2 would also pass). Rules: E4M3 P with offset 8 is exactly SGLang's FA3 FP8 path. KV stays FP8, Q is E4M3, the output is bf16 and every key is attended.
+
+Residual risk: the unverifiable hardware details (consumer-side fence.proxy.async after the cp.async mbarrier for the wgmma reads, descriptor field encodings) can only be judged on the GPU, and an illegal-instruction-class fault in the canary would poison the context (0/0).
