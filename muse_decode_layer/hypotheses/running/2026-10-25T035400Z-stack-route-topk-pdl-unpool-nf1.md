@@ -55,7 +55,7 @@ base_sha: cd742704c601ae9e373cdd9ab7989a60db8c599d
 base_blob: 4da94677234faaa06b42b5ced541db8961fd6f34
 branch: hyp/muse_decode_layer/stack-route-topk-pdl-unpool-nf1
 worktree: .worktrees/muse_decode_layer/stack-route-topk-pdl-unpool-nf1
-mode: null
+mode: check
 restack_of: dl-route-warp-topk-pdl
 stale_base: null
 implemented_at: 2026-10-25T040848Z
@@ -64,6 +64,8 @@ submission_sha256: d37307fd15dc525cab5140acaf91fbf9aa26cb6d0ab095d479527758d2f9c
 norm_sha256: 1956daa6ab32d3359b743675dc8fa77d42bcd09bc7dd5a9d4af9250fc55728b8
 submission_blob: 20289b4cab2e4420c35ffabe8e4610f511fc0929
 lint_warnings: 38
+attempt_file: 2026-10-25T040848Z-check-stack-route-topk-pdl-unpool-nf1.md
+prepared_at: 2026-10-25T040848Z
 ---
 
 # stack-route-topk-pdl-unpool-nf1
