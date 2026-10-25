@@ -56,7 +56,7 @@ review: proceed
 status: running
 review_at: 2026-10-25T042454Z
 review_companions: null
-stage: implemented
+stage: dispatched
 claimed_at: 2026-10-25T042454Z
 base_sha: 08b1841a86f49e34227afd254a2476f445746929
 base_blob: c9067b8201f2480c64910c4a71098df7ce616f73
@@ -73,6 +73,8 @@ submission_blob: b47225b69da4fb9da4572795511e455d26c0ad2b
 lint_warnings: 39
 attempt_file: 2026-10-25T043231Z-check-full-decode1-two-level-ticket-port.md
 prepared_at: 2026-10-25T043231Z
+job: 5e44c7aedecd4cc1
+dispatched_at: 2026-10-25T043241Z
 ---
 
 # full-decode1-two-level-ticket-port
