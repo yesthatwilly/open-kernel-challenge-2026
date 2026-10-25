@@ -61,9 +61,18 @@ priority: 1
 kind: primary
 controls_for: null
 review: proceed
-status: queued
+status: running
 review_at: 2026-10-25T125918Z
 review_companions: null
+stage: claimed
+claimed_at: 2026-10-25T125919Z
+base_sha: 8517012b49a52a4bad4cd73abb2b38533a9adde2
+base_blob: c2e3e595def2e6b5949e0fd350ce98ed59729147
+branch: hyp/muse_prefill_layer/align-two-phase-all-t-rega
+worktree: .worktrees/muse_prefill_layer/align-two-phase-all-t-rega
+mode: null
+restack_of: null
+stale_base: null
 ---
 
 # align-two-phase-all-t-rega
