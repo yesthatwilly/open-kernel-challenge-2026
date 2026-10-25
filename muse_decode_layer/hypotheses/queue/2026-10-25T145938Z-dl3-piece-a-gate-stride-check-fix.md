@@ -53,8 +53,10 @@ depends_on: null
 priority: 1
 kind: primary
 controls_for: null
-review: required
+review: proceed
 status: queued
+review_at: 2026-10-25T150343Z
+review_companions: null
 ---
 
 # dl3-piece-a-gate-stride-check-fix
@@ -76,3 +78,27 @@ Built on master d5595769 (dense-chain-s3-t1-q-sk2-o-route-unpool landed). Piece 
 ## Risk
 
 Risk: this turns on code that has never run in the judge's timed path. Its kernels passed their own checks in the landed job (Q code gaps 0/1/0, O rel L2 1e-5, sk gate output identical), but the A=1 layer-level checks and selector A have not run yet. Both still gate it, and a miss falls back to master. A scored submit that fails a test costs one submit and not the board. Upside is about 1.4% on the decode_1 load (one weight-16 shape), about 0.25% on the headline, so judge it on the full decode_1 row and the PATH CHOSEN line, not the headline. Reviewer: confirm that _dl3_layer_checks with A=1 exercise kv_scale 0.25 and 1.0, the alternating two-state graph replays and the tickets (cnt_q, cnt_o, sk) reset. Also confirm that kernel_fn's piece-A gate reads only config and the state flag.
+
+## Adversarial review
+
+Reviewed 2026-10-25T150343Z by an adversarial subagent (model opus).
+
+**Verdict: proceed.** The diagnosis checks out against master and the landed job's log: piece A was turned off by a test artifact, not by its kernels. The one-line fix to the check makes the stride clause pass for real and leaves every downstream gate (layer-level eager and alternating checks with A=1, selector A at 2%) in charge. The full decode_1 row, its profile rows and the PATH CHOSEN line make a single scored run readable without a companion.
+
+### Justification
+Verified in submission.py (master d5595769), lines 5276-5284: gate_c = sqkv[:, SK_QKV_GATE_OFF:].contiguous() on a [1, 2304] sqkv. A size-1 leading dim counts as contiguous, so stride(0) stays 2304 and the clause gate_c.stride(0) != DL3_GATE_STRIDE (1024) always trips. Log 34a9be06918d448b.log lines 83/88 print 'identical ... True', and line 143 prints the fallback naming 'gate stride 2304' for both n values. Q's live gate already reports stride 1024 (log lines 63/73), and the Q/O kernel checks passed: code gaps 0/1/0, O rel L2 1e-5. Mechanism: at full decode_1 (130.0 us vs SoL 44.2) the attention side around splitkv_attn_sk (19.8 us) still runs nvjet qkv splitK plus reduce, FusedQKNorm, FP8 casts, store_cache and nvjet o, about 27 us by s2's measurement. Replacing that with Q (8.3) and O (6.5) saving 4-8 us is plausible, and s2 measured -3.3% (z 5.8) for the same Q/O kernels on an older base. All other expected rows are correct as flat: kernel_fn line 6060 gates A on dl3['a'], tokens == 1 and _sk_variant == 3, which needs batch 1 and a full layer, so sliding decode_1 and every T>1 shape are untouched. Weakest link: the -4 to -8 us estimate carries over s2's FA3-era chain, but sk two-level already folded the norm-gate into its epilogue, and PDL in the parent may already hide part of the small-kernel launch gaps, so the real saving could sit at the low end (~3-4 us, ~3%). Selector A (80000 keys, needs 1.02x on a ~47 us chain) should still pass easily. A second, minor point: at B=1 the gate stride argument is never used past row 0, so the old and new checks test the same plumbing (offset 0 vs offset 1280). The fix is correct but it does not add test coverage.
+
+### Confounders on the current kernel
+- dense-chain-s3-t1-q-sk2-o-route-unpool (the base): pieces B and C are live. Turning A on reruns _dl3_layer_checks on {A,B,C} together. If that combined check fails, bisection can turn B or C off, and that would move BOTH decode_1 rows (B and C apply to sliding and full) for reasons unrelated to A. Read the 'layer-level check of pieces' and the per-piece PATH CHOSEN lines before attributing any decode_1 movement. A sliding decode_1 regression together with a B/C fallback means bisection, not A.
+- full-decode-sk-ticket-restack-b1-b64 / full-decode-splitkv-restack-on-pdl lineage (sk['b1'] decision): piece A only composes with the sk two-level variant 3. If the parent's B=1 selector picks FA3 in this run (run-to-run selector noise), A is off by construction and the run measures master. That is visible in the A fallback reason.
+- w2-marlin-atomic-add-t1-port: no numeric interaction with A, but if bisection turns B off, _w2_atomic_self_check reruns and w2_mode could change on both decode_1 rows. Check the w2_mode tail on the PATH CHOSEN lines.
+- small-t-launch-minimal-dense-chain-pdl: A's O output feeds the attn_boundary and P with PDL. A's Q rounds q to FP8 slightly differently, and _dl3_compare_layer allows one near-tied expert swap. Marlin cost is unchanged by routing ids at T=1 (8 experts either way), so this does not confound timing.
+
+### Interference and A/B needs
+No companion is warranted. The change is gated to one shape (full decode_1), and the run attributes itself: the PATH CHOSEN line says whether A went live and with which selector ratio, and the profile shows whether dl2_qkv/dl2_o replaced the nvjet qkv/o, FusedQKNorm and cast/store rows. All five other loads and sliding decode_1 act as built-in controls. If A is live and full decode_1 drops ~3-6% with the controls flat, that is a clean gain. If A is live and the row is flat or slower, that is a clean negative on the Q/O chain on the sk base. If A falls back, the run measures master plus the check fix, and the log says why. An ab-revert of the base would not make sense, because A exists only on the base, and any companion would cost a scored submit for no interpretive gain.
+
+### Open questions
+- Alternation coverage for A: _dl3_alternation_check runs only _DL3_CASES[0] (full kv_scale=0.25, n=4097) and sliding. The full kv_scale=1.0 / local_start=96 case is covered eagerly only, not under two-state graph replay. Tickets cnt_q/cnt_o/sk are checked as 0 after every replay, which answers the hypothesis's ticket-reset question.
+- Is s3's dl2_qkv (which now also does RoPE, the FP8 casts and the KV store) the same kernel s2 ran through the judge, or an extension? If it is an extension, the judge-pass evidence from s2 is weaker for the KV-store half (judge bound: new cache entries within 8%; the internal check allows a 1-code FP8 gap).
+- If the run passes and full decode_1 improves by less than ~2 us, check whether the prepare-time selector A ratio (printed with the M2 line) overstates the in-graph gain because the parent's chain already overlaps with PDL in the full layer.
+
