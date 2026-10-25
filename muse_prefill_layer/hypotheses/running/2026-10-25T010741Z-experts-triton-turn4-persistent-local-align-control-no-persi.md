@@ -36,7 +36,7 @@ review: proceed
 status: running
 review_at: 2026-10-25T011030Z
 review_companions: null
-stage: implemented
+stage: dispatched
 claimed_at: 2026-10-25T011048Z
 base_sha: e530b77b8a03d595f892b57b91b666002026a175
 base_blob: db8a3344398bca79ea5cafeb580f701c055fd475
@@ -53,6 +53,8 @@ submission_blob: 91960546c9fde845f6690ef5ee756719aa4d0b71
 lint_warnings: 17
 attempt_file: 2026-10-25T011203Z-check-experts-triton-turn4-persistent-local-align-control-no-persi.md
 prepared_at: 2026-10-25T011203Z
+job: 374efc72c4d14856
+dispatched_at: 2026-10-25T011211Z
 ---
 
 # experts-triton-turn4-persistent-local-align-control-no-persi
