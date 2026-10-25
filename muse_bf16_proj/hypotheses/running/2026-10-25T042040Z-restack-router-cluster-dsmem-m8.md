@@ -57,9 +57,18 @@ priority: 1
 kind: primary
 controls_for: null
 review: proceed
-status: queued
+status: running
 review_at: 2026-10-25T042320Z
 review_companions: null
+stage: claimed
+claimed_at: 2026-10-25T042320Z
+base_sha: 459e84861e1a2c35ffa8148cd1fe09f5ead28416
+base_blob: 970b415b746fa03cb92e419d270be92588273178
+branch: hyp/muse_bf16_proj/restack-router-cluster-dsmem-m8
+worktree: .worktrees/muse_bf16_proj/restack-router-cluster-dsmem-m8
+mode: null
+restack_of: null
+stale_base: null
 ---
 
 # restack-router-cluster-dsmem-m8
