@@ -67,7 +67,7 @@ base_sha: 0dea576ae73cfb9d114326146a90d40766b24f0e
 base_blob: 441dcedb5cd6286e6851afb629598d27c30f6c82
 branch: hyp/muse_bf16_proj/router-cluster-dsmem-s2-flat-in-m-occupancy
 worktree: .worktrees/muse_bf16_proj/router-cluster-dsmem-s2-flat-in-m-occupancy
-mode: null
+mode: check
 restack_of: null
 stale_base: true
 implemented_at: 2026-10-25T043058Z
@@ -76,6 +76,8 @@ submission_sha256: 0e9da739b6792b33b87518ad246b0fa848811b4886bd239cbfa9ecb4c596b
 norm_sha256: aebf5f794e8af4af09adcb2558e059c6c780cb86fb9739c54e0a737b3035f1de
 submission_blob: 9f00e0ed1a2bbb4ff08465385f6c583d07c83efa
 lint_warnings: 3
+attempt_file: 2026-10-25T043058Z-check-router-cluster-dsmem-s2-flat-in-m-occupancy.md
+prepared_at: 2026-10-25T043058Z
 ---
 
 # router-cluster-dsmem-s2-flat-in-m-occupancy
