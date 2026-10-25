@@ -39,7 +39,7 @@ review: proceed
 status: running
 review_at: 2026-10-25T042452Z
 review_companions: null
-stage: claimed
+stage: implemented
 claimed_at: 2026-10-25T042453Z
 base_sha: 94f52a0a74f65619042e18250fd7cb4a206cf66a
 base_blob: c9067b8201f2480c64910c4a71098df7ce616f73
@@ -48,6 +48,12 @@ worktree: .worktrees/muse_decode_layer/sliding-batched-triton-b16-band
 mode: null
 restack_of: null
 stale_base: null
+implemented_at: 2026-10-25T042712Z
+impl_commit: 1cabea713e533afb5702682a3a7bd2a095c140e6
+submission_sha256: 4d7058499be102b9ede8f6d4e75520364f48dc530b8e28ca3eb28a5803c7de98
+norm_sha256: 88f354bf180a612d29e0fcb2a25a382a5ab8a2c231a3e3b9bad730e078755f81
+submission_blob: 97d379721e56bf4fe6307b85b74f821940f73e67
+lint_warnings: 30
 ---
 
 # sliding-batched-triton-b16-band
@@ -93,3 +99,24 @@ No companion is warranted. The gate reads config only (window != 0, q_len 1, pag
 - stack-align-par-sliding-batched (b94e7973) failed on full verify_1 (rc 112, 13/13 tests) on a shape neither of its parents gates, and master (which carries align-par) has since passed. Treat it as unrelated unless the full verify_1 failure reappears here.
 - For the cluster port: make its prepare-time selector time the Triton S=16 path at B=32 alongside FA3 and the cluster kernel, so the decode_32 band owner is chosen on measured kernel time.
 
+
+## Implementation notes
+
+Edited only `muse_decode_layer/submission.py` in the worktree (+67/-2). Hand-merged the patch's kernel branch onto master; the patch's helper hunk was NOT applied (master's `_inv_freq`, `_counters`, `_sliding_fused_kernel` are used as they are).
+- New `_sliding_b16_gate(cfg)`: window != 0, q_len 1, page_size 1, 2 <= batch <= 16, hq 16 / hkv 2 / d 64. Config only. New `_sliding_forward_b16` (same launch as master's `_sliding_forward`, `splits = 16` hard-coded) and `_sliding_b16_or_none` (try/except, per-config on/off dict, prints `PATH CHOSEN = FUSED TRITON S=16` once, or `PATH CHOSEN = MASTER (FA3)` after a failure; never raises).
+- `kernel_fn`: `o = None`; `if batch == 1 sliding: _sliding_forward` / `elif _sliding_b16_gate(cfg): o = _sliding_b16_or_none(...)` / `if o is None:` master's existing body unchanged (indentation kept; a batch 17..32 elif can sit directly under the b16 elif). Master's splitkv/paired full-decode route is untouched.
+- Review fixes applied (the review wins over the spec text): S=16 hard-coded rather than `_num_splits` (4 at B=16); no duplicated helpers; gate has the page==1 term, so only the batch-9 test exercises the path (the page-64 batch-8 test stays on FA3), as the review accepted. Batch 1 stays on master's `_sliding_forward`.
+- Not done (profile read is post-run): record the `_sliding_fused_kernel` row vs FA3 main + combine + glue from the profile.
+
+## Rules check
+
+- [x] CUDA-graph capturable: no `.item()`/`.cpu()`/synchronize in the new code; the branch is config-only; workspace allocations are by shape, not values.
+- [x] Nothing derived from `data` is cached across calls: only a config-keyed on/off flag and master's zero-reset ticket counters (hold no data).
+- [x] Weights untouched (n/a: no weight change).
+- [x] Activations BF16, KV cache FP8, query bf16 in the fused kernel (finer than E4M3), same kernel as master's batch-1 path.
+- [x] Attention sees every key of the window (kernel unchanged; all splits cover [lo, seq-1] plus the new keys).
+- [x] No timing patches, harness frames/I/O/secrets, module edits, reference import, subprocess or child process.
+- [x] All work inside the timed call; no output caching or replay.
+- [x] No triton.autotune; Triton compile errors fall back to master, never raise.
+
+okc_lint: `OK with warnings` (only pre-existing host-sync warns in prepare(), outside kernel_fn's call graph). py_compile OK, __pycache__ removed.
