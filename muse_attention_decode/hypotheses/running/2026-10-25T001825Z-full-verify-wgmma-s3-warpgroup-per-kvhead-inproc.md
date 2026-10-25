@@ -84,7 +84,7 @@ base_sha: ee7dd2035bcffc84a11faafb7b5574466ee3bcae
 base_blob: 2b7e5dbf0fde0ae0163e5ecaefd87a5f0848e6b0
 branch: hyp/muse_attention_decode/full-verify-wgmma-s3-warpgroup-per-kvhead-inproc
 worktree: .worktrees/muse_attention_decode/full-verify-wgmma-s3-warpgroup-per-kvhead-inproc
-mode: null
+mode: check
 restack_of: null
 stale_base: true
 implemented_at: 2026-10-25T004725Z
@@ -93,6 +93,8 @@ submission_sha256: 2ca1face259a3dac8789bfa773c1b56e0916fa8f2ee976b4cf381ee4054e8
 norm_sha256: ead99c311f55e0171b9cd65f6fab8b3585c09e6ef9ad9689232be5dbe94b6b8e
 submission_blob: 136874e0158f8b76208c4130e523bc91b84160ad
 lint_warnings: 8
+attempt_file: 2026-10-25T004725Z-check-full-verify-wgmma-s3-warpgroup-per-kvhead-inproc.md
+prepared_at: 2026-10-25T004725Z
 ---
 
 # full-verify-wgmma-s3-warpgroup-per-kvhead-inproc
