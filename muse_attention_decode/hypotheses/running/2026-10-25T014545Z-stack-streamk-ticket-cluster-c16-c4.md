@@ -65,7 +65,7 @@ base_sha: 63995118a6d87d5714181d318458a7595fe4bbac
 base_blob: c6854f093588da524e63657576b27ed720756e32
 branch: hyp/muse_attention_decode/stack-streamk-ticket-cluster-c16-c4
 worktree: .worktrees/muse_attention_decode/stack-streamk-ticket-cluster-c16-c4
-mode: null
+mode: check
 restack_of: full-decode-splitkv-s2-streamk-ticket-inproc
 stale_base: null
 implemented_at: 2026-10-25T034707Z
@@ -74,6 +74,8 @@ submission_sha256: 8c8ef8bdee615f0949d6703101b48de03a1da47a1a89223fe4a64395f3825
 norm_sha256: d38bad22f2e2fc66b2e82e27e9a1e3fb21010307aee25312ecd3b7cfa26ea734
 submission_blob: edf13326bb5bcdae8c345dd5a780fcb948cb78d6
 lint_warnings: 13
+attempt_file: 2026-10-25T034707Z-check-stack-streamk-ticket-cluster-c16-c4.md
+prepared_at: 2026-10-25T034707Z
 ---
 
 # stack-streamk-ticket-cluster-c16-c4
