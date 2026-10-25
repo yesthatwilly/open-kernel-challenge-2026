@@ -1,6 +1,6 @@
 # muse_moe_w4a16 hypotheses
 
-Regenerated 2026-10-25T013623Z. Best: 1.3278x [1.3079,1.3477] job `1947e3ec2abb4bdf` (submit)
+Regenerated 2026-10-25T013724Z. Best: 1.3278x [1.3079,1.3477] job `1947e3ec2abb4bdf` (submit)
 
 | created | slug | kind | area | where | outcome | speedup | CI | job | mode | promotion | review | expected hit |
 |---|---|---|---|---|---|---|---|---|---|---|---|---|
@@ -51,8 +51,8 @@ Regenerated 2026-10-25T013623Z. Best: 1.3278x [1.3079,1.3477] job `1947e3ec2abb4
 | 2026-10-25T001824Z | cuda-fused-moe-bs1-persistent-nospin-bandwidth-inproc | rewrite | whole-layer fusion | done/neutral | neutral | 1.3257 | [1.306,1.368] | 7a6919420b724ee7 | check |  | proceed | 4/6 |
 | 2026-10-25T001824Z | cuda-nvfp4-wgmma-rega-grouped-sm90a-rebuild-inproc | rewrite | w13 marlin + silu-mul + w2 marlin | done/neutral | neutral | 1.3303 | [1.310,1.350] | b56d17fda2d54be2 | check |  | proceed | 6/6 |
 | 2026-10-25T001824Z | cuda-nvfp4-swapab-mma-persistent-small-m-inproc | rewrite | w13 marlin + silu-mul + w2 marlin | done/regression | regression | 0.9250 | [0.911,0.939] | fecc63ef567b4dc2 | check |  | proceed | 1/6 |
-| 2026-10-25T001825Z | cuda-fused-moe-bs1-persistent-bandwidth-s3-inproc | rewrite | whole-layer fusion | queue | queued |  |  |  |  |  | proceed |  |
-| 2026-10-25T011255Z | cuda-nvfp4-wgmma-rega-grouped-s2-finite-fix | rewrite | w13 marlin + silu-mul + w2 marlin | running | running |  |  |  |  |  | proceed |  |
+| 2026-10-25T001825Z | cuda-fused-moe-bs1-persistent-bandwidth-s3-inproc | rewrite | whole-layer fusion | running | running |  |  |  |  |  | proceed |  |
+| 2026-10-25T011255Z | cuda-nvfp4-wgmma-rega-grouped-s2-finite-fix | rewrite | w13 marlin + silu-mul + w2 marlin | running | running |  |  | 583a73418fbf4d01 | check |  | proceed |  |
 | 2026-10-25T011332Z | cuda-nvfp4-wgmma-rega-s2-fix-gate-from-8 | rewrite | w13 marlin + silu-mul + w2 marlin | queue | hold |  |  |  |  |  | hold |  |
 | 2026-10-25T011332Z | cuda-nvfp4-wgmma-rega-s2-per-kernel-enable | rewrite | w13 marlin + silu-mul + w2 marlin | queue | hold |  |  |  |  |  | hold |  |
 | 2026-10-25T011401Z | cuda-align-kernel-a-from17 | primary | MoE align/dispatch | queue | hold |  |  |  |  |  | hold |  |

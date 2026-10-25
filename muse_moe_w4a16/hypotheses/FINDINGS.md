@@ -1,6 +1,6 @@
 # muse_moe_w4a16 findings
 
-Regenerated 2026-10-25T013623Z by `churn.py index`. Read this before writing a hypothesis for muse_moe_w4a16.
+Regenerated 2026-10-25T013724Z by `churn.py index`. Read this before writing a hypothesis for muse_moe_w4a16.
 
 ## Current best
 
@@ -120,10 +120,10 @@ Where the time goes (per scored shape, top kernels):
 - queue: cuda-nvfp4-wgmma-rega-grouped-sm90a-rebuild [w13 marlin + silu-mul + w2 marlin] p1 hold
 - queue: cuda-nvfp4-swapab-mma-persistent-small-m-childcheck [w13 marlin + silu-mul + w2 marlin] p2 hold
 - queue: cuda-fused-moe-bs1-persistent-nospin-bandwidth [whole-layer fusion] p3 hold
-- queue: cuda-fused-moe-bs1-persistent-bandwidth-s3-inproc [whole-layer fusion] p3 queued
 - queue: cuda-nvfp4-wgmma-rega-s2-fix-gate-from-8 [w13 marlin + silu-mul + w2 marlin] p2 hold
 - queue: cuda-nvfp4-wgmma-rega-s2-per-kernel-enable [w13 marlin + silu-mul + w2 marlin] p1 hold
 - queue: cuda-align-kernel-a-from17 [MoE align/dispatch] p2 hold
 - queue: cuda-combine-kernel-b-bs128-only [post-expert norm+combine] p3 hold
+- running: cuda-fused-moe-bs1-persistent-bandwidth-s3-inproc [whole-layer fusion] p3 running
 - running: cuda-nvfp4-wgmma-rega-grouped-s2-finite-fix [w13 marlin + silu-mul + w2 marlin] p1 running
 - running: w2-marlin-atomic-add-small-m [w2 marlin] p2 running
