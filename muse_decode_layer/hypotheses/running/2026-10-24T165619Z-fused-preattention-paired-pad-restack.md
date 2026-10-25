@@ -51,9 +51,18 @@ priority: 5
 kind: primary
 controls_for: null
 review: proceed
-status: queued
+status: running
 review_at: 2026-10-24T170604Z
 review_companions: null
+stage: claimed
+claimed_at: 2026-10-25T034153Z
+base_sha: 8ac7a2f409615586e09a8a8ce118f9c4f892b7ba
+base_blob: 4da94677234faaa06b42b5ced541db8961fd6f34
+branch: hyp/muse_decode_layer/fused-preattention-paired-pad-restack
+worktree: .worktrees/muse_decode_layer/fused-preattention-paired-pad-restack
+mode: null
+restack_of: paired-heads-pad-unpad-triton
+stale_base: null
 ---
 
 # fused-preattention-paired-pad-restack
