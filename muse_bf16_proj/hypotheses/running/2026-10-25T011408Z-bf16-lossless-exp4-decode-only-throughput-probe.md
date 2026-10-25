@@ -40,9 +40,18 @@ priority: 4
 kind: primary
 controls_for: null
 review: proceed
-status: queued
+status: running
 review_at: 2026-10-25T011846Z
 review_companions: null
+stage: claimed
+claimed_at: 2026-10-25T011847Z
+base_sha: 41b1d0ab801c3b80cbb8f4ac832daa8d0cabfc3a
+base_blob: a8bb42ac483318e9fbc84bc7826a27b7a704d1fb
+branch: hyp/muse_bf16_proj/bf16-lossless-exp4-decode-only-throughput-probe
+worktree: .worktrees/muse_bf16_proj/bf16-lossless-exp4-decode-only-throughput-probe
+mode: null
+restack_of: null
+stale_base: null
 ---
 
 # bf16-lossless-exp4-decode-only-throughput-probe
