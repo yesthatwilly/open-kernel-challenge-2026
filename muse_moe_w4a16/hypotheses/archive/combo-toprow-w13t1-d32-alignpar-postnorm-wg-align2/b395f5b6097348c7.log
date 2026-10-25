@@ -1,0 +1,134 @@
+03 | w2(own h) rel 8.48e-03 | out rel 6.08e-03 | gather bad 0/644 pad!=0 0/60 | ids True cov True | err word 0
+[cuda-wgmma-verify] copy check (graphs through kernel_fn; A, deepcopy B, judge-model clone C): PASS: 60 refilled graph replays over states ABC (A, B, C, A, B per M (128, 256, 257) x 4 routings), launch marker seen 60/60, worst wgmma-vs-fp32 4.40e-03, worst Marlin-vs-fp32 5.50e-03, bound 1.5x Marlin
+[cuda-wgmma-verify] self-check (4 M x 5 routings, eager + graph): PASS; worst rel-L2 vs Marlin h 6.51e-03 y2 3.48e-03 out 6.09e-03; device error word 0
+[cuda-wgmma-verify] PDL bit-identity T=128: 4/4 routings identical (PDL off vs on x2, refilled inputs, graph replays)
+[cuda-wgmma-verify] PDL event timing, full wgmma path T=128 (random routing, align + gather + w13 + w2 + norm, graph replays, cold L2, median of 41, empty-graph 5.3 us subtracted): PDL off 168.2 us, PDL on 167.0 us, delta -1.2 us (-0.70%)
+[cuda-wgmma-verify] PDL event timing, kernels T=128 (zipf a=0.9, 543 local routes): w13+silu alone 325.4 us, w2 alone 159.3 us (eager, cold L2); gather+w13+w2 chain as a graph: PDL off 476.5 us, PDL on 473.3 us, delta -3.2 us
+[cuda-wgmma-verify] PDL bit-identity T=256: 4/4 routings identical (PDL off vs on x2, refilled inputs, graph replays)
+[cuda-wgmma-verify] PDL event timing, full wgmma path T=256 (random routing, align + gather + w13 + w2 + norm, graph replays, cold L2, median of 41, empty-graph 5.3 us subtracted): PDL off 220.4 us, PDL on 216.6 us, delta -3.8 us (-1.71%)
+[cuda-wgmma-verify] PDL event timing, kernels T=256 (zipf a=0.9, 1140 local routes): w13+silu alone 367.2 us, w2 alone 183.6 us (eager, cold L2); gather+w13+w2 chain as a graph: PDL off 545.5 us, PDL on 540.8 us, delta -4.8 us
+[cuda-wgmma-verify] PDL three-state copy check with PDL on: PASS (0.9s): 60 refilled graph replays over states ABC (A, B, C, A, B per M (128, 256, 257) x 4 routings), launch marker seen 60/60, worst wgmma-vs-fp32 4.40e-03, worst Marlin-vs-fp32 5.50e-03, bound 1.5x Marlin
+[cuda-wgmma-verify] PDL on: the w13 -> w2 boundary launches with programmatic stream serialization (the gather and w13 are plain launches)
+[cuda-wgmma-verify] bucket selector (full kernel_fn graphs, cold L2, 41 interleaved reps, empty-graph baseline subtracted, margin 1.02x on the judge-like routing):
+[cuda-wgmma-verify]   B128 T=128 judge-like zipf a=0.3 (241 local routes, Marlin bsm 16): median of 41 cold graph replays minus empty-graph 5.3 us: Marlin full path 368.0 us, wgmma full path 460.8 us, Marlin/wgmma 0.798x (end-to-end rel-L2 6.06e-03)
+[cuda-wgmma-verify]   B128 T=128 random (133 local routes, Marlin bsm 16): median of 41 cold graph replays minus empty-graph 5.3 us: Marlin full path 364.7 us, wgmma full path 460.5 us, Marlin/wgmma 0.792x (end-to-end rel-L2 6.08e-03)
+[cuda-wgmma-verify]   B128 (128 <= T <= 255): wgmma DISABLED (Marlin): ratios 0.798x, 0.792x (judge-like, random) vs margin 1.02x on the judge-like routing (random printed, not gating); calibrated Marlin pair 381 us (judged s4 Marlin pair 306.2 us); 0.2s
+[cuda-wgmma-verify]   B256 T=256 judge-like zipf a=0.3 (457 local routes, Marlin bsm 32): median of 41 cold graph replays minus empty-graph 5.3 us: Marlin full path 498.3 us, wgmma full path 471.9 us, Marlin/wgmma 1.056x (end-to-end rel-L2 6.09e-03)
+[cuda-wgmma-verify]   B256 T=256 random (245 local routes, Marlin bsm 32): median of 41 cold graph replays minus empty-graph 5.3 us: Marlin full path 483.6 us, wgmma full path 461.3 us, Marlin/wgmma 1.048x (end-to-end rel-L2 6.05e-03)
+[cuda-wgmma-verify]   B256 (256 <= T <= 512): wgmma ENABLED: ratios 1.056x, 1.048x (judge-like, random) vs margin 1.02x on the judge-like routing (random printed, not gating); calibrated Marlin pair 501 us (judged s4 Marlin pair 483.2 us); 0.2s
+[cuda-wgmma-verify] verdicts: w13+silu PASS, w2 PASS, self-check PASS, copy check PASS; wgmma is enabled only if BOTH kernels pass rel-L2 <= 0.01 vs Marlin; setup 40.8s (prepare so far 60.1s; copy check 0.9s, selector 0.3s)
+[cuda-wgmma-verify] PATH CHOSEN B128 (128 <= T <= 255) = MARLIN (selector)
+[cuda-wgmma-verify] PATH CHOSEN B256 (256 <= T <= 512) = WGMMA (selector)
+[cuda-wgmma-verify] FINAL FLAGS wg_on_128=False wg_on_256=True wg_pdl=True; B128 took MARLIN, B256 took WGMMA; PDL on
+[cuda-wgmma-verify] PATH CHOSEN = B128 MARLIN, B256 WGMMA; MARLIN for num_tokens < 128 and > 512; kernel variant A (wgmma_wait<0>); per-bucket graph-timed selector; tensor maps encoded per call
+[combo] F1 launching master T=1 zipf
+[combo] F1 ok master T=1 zipf
+[combo] F1 launching w13 atomic T=1 zipf (poisoned buffer)
+[combo] F1 ok w13 atomic T=1 zipf
+[combo] F1 T=1 zipf atomic: rel-L2 vs master 0.00759 (<= 0.0125), vs fp32 0.00603 (<= 0.0125); master vs fp32 0.00531
+[combo] F1 launching w13 atomic_zero T=1 zipf (poisoned buffer)
+[combo] F1 ok w13 atomic_zero T=1 zipf
+[combo] F1 T=1 zipf atomic_zero: rel-L2 vs master 0.00757 (<= 0.0125), vs fp32 0.00601 (<= 0.0125); master vs fp32 0.00531
+[combo] F1 launching master T=1 random
+[combo] F1 ok master T=1 random
+[combo] F1 launching w13 atomic T=1 random (poisoned buffer)
+[combo] F1 ok w13 atomic T=1 random
+[combo] F1 T=1 random atomic: rel-L2 vs master 0.0107 (<= 0.0125), vs fp32 0.00855 (<= 0.0125); master vs fp32 0.00653
+[combo] F1 launching w13 atomic_zero T=1 random (poisoned buffer)
+[combo] F1 ok w13 atomic_zero T=1 random
+[combo] F1 T=1 random atomic_zero: rel-L2 vs master 0.0107 (<= 0.0125), vs fp32 0.00862 (<= 0.0125); master vs fp32 0.00653
+[combo] F1 launching master T=1 all-local
+[combo] F1 ok master T=1 all-local
+[combo] F1 launching w13 atomic T=1 all-local (poisoned buffer)
+[combo] F1 ok w13 atomic T=1 all-local
+[combo] F1 T=1 all-local atomic: rel-L2 vs master 0.00696 (<= 0.0125), vs fp32 0.00587 (<= 0.0125); master vs fp32 0.00548
+[combo] F1 launching w13 atomic_zero T=1 all-local (poisoned buffer)
+[combo] F1 ok w13 atomic_zero T=1 all-local
+[combo] F1 T=1 all-local atomic_zero: rel-L2 vs master 0.00696 (<= 0.0125), vs fp32 0.00587 (<= 0.0125); master vs fp32 0.00548
+[combo] F1 correctness: atomic worst rel-L2 vs master 0.0107, vs fp32 0.00855; master vs fp32 worst 0.00653
+[combo] F1 [A/B] w13 Marlin call alone T=1: zipf: master 27.20 us, atomic 25.82 us; random: master 18.43 us, atomic 13.76 us
+[combo] PATH CHOSEN F1 class=decode_1 (T=1) = w13 atomic: worse routing zipf: master 27.20 us, w13 atomic 25.82 us, ratio 0.949 (ON at <= 0.98); fp32 worst 0.00855, vs master worst 0.0107
+[combo] phase F1: ran, 0.1 s (prepare at 60.1 s)
+[combo] F2 launching warm: _align_parallel and align2 chunks (64, 128, 256, 512) at bsm 16, T 128..512
+[combo] F2 ok warm
+[combo] F2 table check: 126 cases; failing candidates none
+[combo] F2 launching _moe_wgmma master front end T=128 skewed
+[combo] F2 ok _moe_wgmma master front end T=128 skewed
+[combo] F2 launching _moe_wgmma master front end T=128 random
+[combo] F2 ok _moe_wgmma master front end T=128 random
+[combo] F2 launching _moe_wgmma master front end T=191 skewed
+[combo] F2 ok _moe_wgmma master front end T=191 skewed
+[combo] F2 launching _moe_wgmma master front end T=191 random
+[combo] F2 ok _moe_wgmma master front end T=191 random
+[combo] F2 launching _moe_wgmma master front end T=192 skewed
+[combo] F2 ok _moe_wgmma master front end T=192 skewed
+[combo] F2 launching _moe_wgmma master front end T=192 random
+[combo] F2 ok _moe_wgmma master front end T=192 random
+[combo] F2 launching _moe_wgmma master front end T=256 skewed
+[combo] F2 ok _moe_wgmma master front end T=256 skewed
+[combo] F2 launching _moe_wgmma master front end T=256 random
+[combo] F2 ok _moe_wgmma master front end T=256 random
+[combo] F2 launching _moe_wgmma master front end T=257 skewed
+[combo] F2 ok _moe_wgmma master front end T=257 skewed
+[combo] F2 launching _moe_wgmma master front end T=257 random
+[combo] F2 ok _moe_wgmma master front end T=257 random
+[combo] F2 launching _moe_wgmma master front end T=384 skewed
+[combo] F2 ok _moe_wgmma master front end T=384 skewed
+[combo] F2 launching _moe_wgmma master front end T=384 random
+[combo] F2 ok _moe_wgmma master front end T=384 random
+[combo] F2 launching _moe_wgmma master front end T=512 skewed
+[combo] F2 ok _moe_wgmma master front end T=512 skewed
+[combo] F2 launching _moe_wgmma master front end T=512 random
+[combo] F2 ok _moe_wgmma master front end T=512 random
+[combo] F2 bitwise _moe_wgmma check: passing ['_align_parallel bsm 16', 'align2 chunk 64 bsm 16', 'align2 chunk 128 bsm 16', 'align2 chunk 256 bsm 16', 'align2 chunk 512 bsm 16']; failing none
+[combo] F2 [A/B] B256 front end alone T=256 (gather+cast+SGLang align vs candidates): zipf: master 12.54 us, _align_parallel bsm 16 6.24 us, align2 chunk 64 bsm 16 4.48 us, align2 chunk 128 bsm 16 5.73 us, align2 chunk 256 bsm 16 5.31 us, align2 chunk 512 bsm 16 7.23 us; random: master 12.80 us, _align_parallel bsm 16 6.21 us, align2 chunk 64 bsm 16 4.29 us, align2 chunk 128 bsm 16 5.60 us, align2 chunk 256 bsm 16 5.15 us, align2 chunk 512 bsm 16 7.26 us
+[combo] PATH CHOSEN F2 class=B128 = master (wgmma bucket off: kernel_fn runs Marlin there)
+[combo] PATH CHOSEN F2 class=B256 = align2 chunk 64 bsm 16: worse routing zipf: master 12.54 us, align2 chunk 64 bsm 16 4.48 us, ratio 0.357 (ON at <= 0.98)
+[combo] phase F2: ran, 2.4 s (prepare at 62.6 s)
+[combo] C1a launching warm: _align_parallel T 17..32
+[combo] C1a ok warm
+[combo] C1a [A/B] align alone T=32 bsm=16 (master = _align_small): zipf: master 3.62 us, align_parallel 2.11 us; random: master 3.65 us, align_parallel 1.95 us
+[combo] PATH CHOSEN C1a class=d32 (T 17..32) = _align_parallel: worse routing zipf: master 3.62 us, _align_parallel 2.11 us, ratio 0.584 (ON at <= 0.98); master pick _align_small; equivalence 90 cases torch.equal
+[combo] phase C1a: ran, 0.3 s (prepare at 62.8 s)
+[combo] C1b launching warm: _post_norm_combine_hoisted_kernel T=32
+[combo] C1b ok warm
+[combo] C1b T=32 random: hoisted rel-L2 vs fp32 0.00166, SGLang 0.00244, bound 0.00366
+[combo] C1b T=32 skewed: hoisted rel-L2 vs fp32 0.00166, SGLang 0.00245, bound 0.00368
+[combo] C1b T=32 all-remote: hoisted rel-L2 vs fp32 0, SGLang 0, bound 1e-05
+[combo] C1b T=32 all-one-expert: hoisted rel-L2 vs fp32 0.00166, SGLang 0.00245, bound 0.00367
+[combo] C1b T=32 all-local: hoisted rel-L2 vs fp32 0.00166, SGLang 0.00245, bound 0.00367
+[combo] C1b T=32 all-local-saturated: hoisted rel-L2 vs fp32 0.00166, SGLang 0.00245, bound 0.00368
+[combo] C1b [A/B] post-norm alone T=32: zipf: master 7.39 us, hoisted 3.23 us; random: master 3.49 us, hoisted 2.75 us
+[combo] PATH CHOSEN C1b class=decode_32 (T=32) = hoisted Triton post-norm: worse routing random: master 3.49 us, hoisted Triton post-norm 2.75 us, ratio 0.789 (ON at <= 0.98); error vs fp32 worst hoisted 0.00166 / SGLang 0.00245 (6 routings)
+[combo] phase C1b: ran, 0.2 s (prepare at 63.1 s)
+[cuda-wgmma-verify] select  B128 T=128 judge-like zipf a=0.3 (241 local routes, Marlin bsm 16): median of 41 cold graph replays minus empty-graph 5.9 us: Marlin full path 369.2 us, wgmma full path 462.2 us, Marlin/wgmma 0.799x (end-to-end rel-L2 6.06e-03)
+[cuda-wgmma-verify] select  B128 T=128 random (133 local routes, Marlin bsm 16): median of 41 cold graph replays minus empty-graph 5.7 us: Marlin full path 366.6 us, wgmma full path 463.0 us, Marlin/wgmma 0.792x (end-to-end rel-L2 6.08e-03)
+[cuda-wgmma-verify] select  B128 (128 <= T <= 255): wgmma DISABLED (Marlin): ratios 0.799x, 0.792x (judge-like, random) vs margin 1.02x on the judge-like routing (random printed, not gating); calibrated Marlin pair 376 us (judged s4 Marlin pair 306.2 us); 0.2s
+[cuda-wgmma-verify] select  B256 T=256 judge-like zipf a=0.3 (457 local routes, Marlin bsm 32): median of 41 cold graph replays minus empty-graph 5.7 us: Marlin full path 498.1 us, wgmma full path 464.8 us, Marlin/wgmma 1.072x (end-to-end rel-L2 6.09e-03)
+[cuda-wgmma-verify] select  B256 T=256 random (245 local routes, Marlin bsm 32): median of 41 cold graph replays minus empty-graph 5.7 us: Marlin full path 485.6 us, wgmma full path 455.0 us, Marlin/wgmma 1.067x (end-to-end rel-L2 6.05e-03)
+[cuda-wgmma-verify] select  B256 (256 <= T <= 512): wgmma ENABLED: ratios 1.072x, 1.067x (judge-like, random) vs margin 1.02x on the judge-like routing (random printed, not gating); calibrated Marlin pair 500 us (judged s4 Marlin pair 483.2 us); 0.2s
+[combo] F2 diag (not applied): _wg_select with the F2 front end would set B128 MARLIN, B256 WGMMA; live flags wg_on_128 False, wg_on_256 True
+[combo] phase F2-select-diag: ran, 0.3 s (prepare at 63.4 s)
+[combo] copy check (graphs through kernel_fn on the state and a tensor-cloning copy, alternating, refilled): 32 replays, T [1, 24, 32, 256]; PASS
+[combo] phase copy: ran, 0.3 s (prepare at 63.7 s)
+[align2] PATH CHOSEN class=d32 T=32 bsm=16 = master, incumbent 3.58 us, align2 4.03 us, ratio 0.889, equivalence 90 cases ok
+[align2] PATH CHOSEN class=v128 T=128 bsm=16 = master, incumbent 3.46 us, align2 4.58 us, ratio 0.755, equivalence 162 cases ok
+[align2] PATH CHOSEN class=v256 T=256 bsm=32 = align2 chunk 64, incumbent 6.05 us, align2 4.26 us, ratio 1.421, equivalence 72 cases ok
+[align2] final flags align2_ok={'d32': 0, 'v128': 0, 'v256': 64} (class: chunk, 0 = master)
+[combo] ===== COMBO SUMMARY (after master's prepare; per-phase start deadlines {'F1': 120.0, 'F2': 150.0, 'C1a': 160.0, 'C1b': 170.0, 'F2-select-diag': 200.0, 'copy': 255.0}, no timing past 270 s) =====
+[combo] phase F1: 0.1 s, ran
+[combo] phase F2: 2.4 s, ran
+[combo] phase C1a: 0.3 s, ran
+[combo] phase C1b: 0.2 s, ran
+[combo] phase F2-select-diag: 0.3 s, ran
+[combo] phase copy: 0.3 s, ran
+[combo] wg_on_128 False, wg_on_256 True (master's _wg_setup selector; F2 applies only to an ON bucket)
+[combo] PATH CHOSEN F1 class=decode_1 (T=1) = w13 atomic: worse routing zipf: master 27.20 us, w13 atomic 25.82 us, ratio 0.949 (ON at <= 0.98); fp32 worst 0.00855, vs master worst 0.0107
+[combo] PATH CHOSEN F2 class=B128 = master (wgmma bucket off: kernel_fn runs Marlin there)
+[combo] PATH CHOSEN F2 class=B256 = align2 chunk 64 bsm 16: worse routing zipf: master 12.54 us, align2 chunk 64 bsm 16 4.48 us, ratio 0.357 (ON at <= 0.98)
+[combo] PATH CHOSEN C1a class=d32 (T 17..32) = _align_parallel: worse routing zipf: master 3.62 us, _align_parallel 2.11 us, ratio 0.584 (ON at <= 0.98); master pick _align_small; equivalence 90 cases torch.equal
+[combo] PATH CHOSEN C1b class=decode_32 (T=32) = hoisted Triton post-norm: worse routing random: master 3.49 us, hoisted Triton post-norm 2.75 us, ratio 0.789 (ON at <= 0.98); error vs fp32 worst hoisted 0.00166 / SGLang 0.00245 (6 routings)
+[combo] F2 diag (not applied): _wg_select with the F2 front end would set B128 MARLIN, B256 WGMMA; live flags wg_on_128 False, wg_on_256 True
+[combo] copy check (graphs through kernel_fn on the state and a tensor-cloning copy, alternating, refilled): 32 replays, T [1, 24, 32, 256]; PASS
+[combo] final flags: w13_mode='atomic' wg_align2={128: 0, 256: 64} d32_align=1 d32_post_norm=1 (master = 'master'/0)
+[combo] prepare seconds: master 60.1, total 63.7

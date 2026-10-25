@@ -1,0 +1,1433 @@
+diff --git a/muse_moe_w4a16/submission.py b/muse_moe_w4a16/submission.py
+index 593b238c..35b8a851 100644
+--- a/muse_moe_w4a16/submission.py
++++ b/muse_moe_w4a16/submission.py
+@@ -73,6 +73,14 @@ plus a prepare-time selector. B128 (128 <= T <= 255) and B256 (256 <= T <= 512)
+ Marlin path by >= 1.02x on both a judge-like skewed and a random routing (graph-timed, cold L2, 41
+ interleaved reps). kernel_fn reads the shape and those two flags only.
+ 
++Combo (hypothesis combo-toprow-w13t1-d32-alignpar-postnorm-wg-align2): after master's prepare (unchanged), four
++prepare-gated sources, each with its own start deadline and a cold-L2 graph gate (ON at new / master <= 0.98 on the
++worse of a judge-like and a random routing): F1 w13 Marlin use_atomic_add at T == 1 (state['w13_mode']); F2 the
++wgmma path's front end (expert_map gather + SGLang align) replaced by _align_parallel or an align2 chunk at block 16
++per ON wgmma bucket (state['wg_align2'], checked per expert vs SGLang and bitwise on the _moe_wgmma output); C1a
++_align_parallel at 17 <= T <= 32 (state['d32_align']); C1b the hoisted Triton post-norm at T == 32
++(state['d32_post_norm']). A two-state graph copy check runs last. Every OFF flag runs master byte for byte.
++
+ Differs from SGLang: the expert all-reduce is not run."""
+ 
+ from typing import TypedDict
+@@ -164,6 +172,33 @@ ALIGN2_CLASSES = {
+ ALIGN2_STARTS = (0, 32, 224)
+ ALIGN2_MIN_RATIO = 1.05
+ ALIGN2_REPLAYS = 41
++# Hypothesis combo-toprow-w13t1-d32-alignpar-postnorm-wg-align2: four prepare-gated sources, each its own bound
++# constant (LESSONS 141), each run after master's prepare with its own start deadline (s from prepare()'s start).
++COMBO_TAG = "[combo]"
++COMBO_MAX_RATIO = 0.98            # ON only at new / master <= this on the worse of judge-like and random routing
++COMBO_TIMING_DEADLINE_S = 270.0   # no phase starts a timing past this
++COMBO_DEADLINES_S = {"F1": 120.0, "F2": 150.0, "C1a": 160.0, "C1b": 170.0, "F2-select-diag": 200.0, "copy": 255.0}
++# (F1, source w13-marlin-atomic-add-t1-only f29a0b9e) w13 Marlin use_atomic_add at num_tokens <= this.
++W13_ATOMIC_MAX_TOKENS = 1
++W13_POISON = 3.0e4
++W13_ATOMIC_TOL = 1.25e-2          # rel-L2 vs current master (w2 mode as chosen); source measured 8.4e-3 on ONE routing
++# rel-L2 vs a full fp32 reference (judge bound 1.5e-2): review F1 amendment. Pre-flight audit: 1e-2 was below the
++# expected stack (w13 atomic 8.1e-3 + w2 atomic 4.7e-3 + Marlin base, ~1.0e-2 in quadrature), so F1 would gate OFF.
++W13_FP32_TOL = 1.25e-2
++# (F2, source master's own align2) state["wg_align2"][bucket]: 0 = master's SGLang front end, WG_ALIGN_PAR =
++# _align_parallel at WG_BSM, else an align2 chunk (all chunks are >= 64).
++WG_ALIGN_PAR = 1
++WG_ALIGN2_EQ_TOKENS = (128, 191, 192, 256, 257, 384, 512)
++# (C1a, source align-parallel-from-17-tokens c9c2db89) _align_parallel for these T when state["d32_align"] == 1.
++D32_ALIGN_MIN_TOKENS = 17
++D32_ALIGN_MAX_TOKENS = 32
++D32_ALIGN_EQ_TOKENS = (17, 24, 28, 29, 32)
++# (C1b, source post-norm-triton-hoisted-decode32 4aab0187) hoisted Triton post-norm at exactly this T when
++# state["d32_post_norm"] == 1.
++HOISTED_POST_NORM_TOKENS = 32
++POST_NORM_ERR_FACTOR = 1.5
++POST_NORM_ERR_FLOOR = 1e-5
++COMBO_COPY_TOL = 3e-2             # graph replay on a state copy vs eager kernel_fn (atomic paths are not bitwise)
+ 
+ 
+ @triton.jit
+@@ -189,6 +224,41 @@ def _post_norm_combine_kernel(y_ptr, ids_ptr, tw_ptr, w_ptr, out_ptr, H, eps,
+     tl.store(out_ptr + t.to(tl.int64) * H + offs, acc.to(tl.bfloat16), mask=mask)
+ 
+ 
++@triton.jit
++def _post_norm_combine_hoisted_kernel(y_ptr, ids_ptr, tw_ptr, w_ptr, out_ptr, H, eps,
++                                      TOP_K_C: tl.constexpr, BLOCK_H: tl.constexpr):
++    """Same math and signature as _post_norm_combine_kernel, but all TOP_K_C slot rows are loaded
++    as one [TOP_K_C, BLOCK_H] tile before any reduction (hypothesis post-norm-triton-hoisted-decode32).
++    Remote slots (local id -1) are masked off the load, so their uninitialised y rows are never
++    read; a token with no local slot stores zeros."""
++    t = tl.program_id(0)
++    offs = tl.arange(0, BLOCK_H)
++    mask = offs < H
++    slots = tl.arange(0, TOP_K_C)
++    ids = tl.load(ids_ptr + t * TOP_K_C + slots)
++    gs = tl.load(tw_ptr + t * TOP_K_C + slots)
++    local = ids >= 0
++    nw = tl.load(w_ptr + offs, mask=mask, other=0.0).to(tl.float32) + 1.0
++    rows = (t * TOP_K_C + slots).to(tl.int64) * H
++    v = tl.load(y_ptr + rows[:, None] + offs[None, :], mask=local[:, None] & mask[None, :],
++                other=0.0).to(tl.float32) * nw[None, :]
++    r = tl.rsqrt(tl.sum(v * v, axis=1) / H + eps)
++    coef = tl.where(local, gs, 0.0) * r
++    acc = tl.sum(v * coef[:, None], axis=0)
++    tl.store(out_ptr + t.to(tl.int64) * H + offs, acc.to(tl.bfloat16), mask=mask)
++
++
++def _post_norm_hoisted(y, local_ids, topk_weights, post_norm_w):
++    """out [T, H] bf16 from y [T, 8, H] with _post_norm_combine_hoisted_kernel (one program per token)."""
++    num_tokens, _, size_k = y.shape
++    y = y.contiguous()
++    out = torch.empty((num_tokens, size_k), device=y.device, dtype=torch.bfloat16)
++    _post_norm_combine_hoisted_kernel[(num_tokens,)](
++        y, local_ids, topk_weights, post_norm_w, out, size_k, POST_NORM_EPS,
++        TOP_K_C=TOP_K, BLOCK_H=triton.next_power_of_2(size_k), num_warps=16)
++    return out
++
++
+ @triton.jit(do_not_specialize=["local_start", "local_count", "n", "cap", "n_blocks"])
+ def _align_small_kernel(topk_ids_ptr, local_ids_ptr, sorted_ids_ptr, block_experts_ptr, n_padded_ptr,
+                         local_start, local_count, n, cap, n_blocks, BLOCK_N: tl.constexpr,
+@@ -844,7 +914,8 @@ void wg_gather(torch::Tensor x, torch::Tensor sorted_ids, torch::Tensor block_ex
+                int64_t num_routes, int64_t n_experts, torch::Tensor xs);
+ void wg_gemm(int64_t which, torch::Tensor bsrc, torch::Tensor wbank,
+              torch::Tensor gs, torch::Tensor sorted_ids, torch::Tensor block_experts, torch::Tensor n_padded,
+-             int64_t num_routes, int64_t n_tiles, int64_t K, torch::Tensor out, int64_t grid, torch::Tensor err);
++             int64_t num_routes, int64_t n_tiles, int64_t K, torch::Tensor out, int64_t grid, torch::Tensor err,
++             int64_t pdl);
+ """
+ 
+ _WG_SRC_HEAD = r"""
+@@ -955,6 +1026,16 @@ __device__ __forceinline__ void fence_acc(float (&d)[NA]) {
+ __device__ __forceinline__ void named_bar(int id, int count) {
+   asm volatile("bar.sync %0, %1;\n" :: "r"(id), "r"(count) : "memory");
+ }
++// Programmatic dependent launch. griddepcontrol.wait returns at once when the grid was not launched with the
++// programmatic-stream-serialization attribute (or has no predecessor), otherwise it blocks until every
++// prerequisite grid has completed and its memory writes are visible. launch_dependents lets the next grid's
++// CTAs start; it is per CTA (all threads execute it or exit) and a no-op when nothing depends on this grid.
++__device__ __forceinline__ void griddep_wait() {
++  asm volatile("griddepcontrol.wait;\n" ::: "memory");
++}
++__device__ __forceinline__ void griddep_launch() {
++  asm volatile("griddepcontrol.launch_dependents;\n" ::: "memory");
++}
+ __device__ __forceinline__ void stsm_x2_t(uint32_t a, uint32_t r0, uint32_t r1) {
+   asm volatile("stmatrix.sync.aligned.m8n8.x2.trans.shared.b16 [%0], {%1, %2};\n" :: "r"(a), "r"(r0), "r"(r1) : "memory");
+ }
+@@ -1246,7 +1327,9 @@ wg_kernel(const __grid_constant__ Maps maps,
+           const uint32_t st = smem_u32(smem + s * STAGE_BYTES);
+           const uint32_t fb = full0 + 8 * s;
+           mbar_expect_tx(fb, tx);
+-          bulk_g2s(st, wsrc + static_cast<size_t>(kb) * WST, WST, fb);
++          bulk_g2s(st, wsrc + static_cast<size_t>(kb) * WST, WST, fb);  // weights: constant, no dependency
++          // PDL: the B slab (wg_xs / wg_hs) is the predecessor's output; nothing reads it before this wait.
++          if (n == 0) griddep_wait();
+           tma_2d(st + WST, map, kb * BK, m.slot0, fb);
+           tma_2d(st + WST + SLAB_HALF, map, kb * BK + 64, m.slot0, fb);
+         }
+@@ -1256,6 +1339,9 @@ wg_kernel(const __grid_constant__ Maps maps,
+     asm volatile("setmaxnreg.inc.sync.aligned.u32 232;\n" ::: "memory");
+     const int ctid = tid - 128, cw = ctid >> 5;
+     int n = 0;
++    // PDL: no consumer global store (the first epilogue) before the predecessor grid has completed. The
++    // consumers would idle on the full barriers until the producer's own wait returns anyway.
++    griddep_wait();
+     for (int it = blockIdx.x; it < total; it += gridDim.x) {
+       const Item m = decode_item(it, n_tiles, s_be, s_cblk, s_cnb, s_gf, s_gk);
+ #define WG_CONSUME(NB_)                                                                                      \
+@@ -1270,6 +1356,9 @@ wg_kernel(const __grid_constant__ Maps maps,
+ #undef WG_CONSUME
+     }
+   }
++  // PDL: this thread's item loop is over (the other threads of the producer warpgroup exited above): let the
++  // next grid's CTAs take the SMs freed in the tail. Every thread of the CTA executes it or has exited.
++  griddep_launch();
+ #else
+   // Not the sm_90a image: no wgmma here. Flag it (error word 2) and do nothing else.
+   if (threadIdx.x == 0) atomicExch(err, 2);
+@@ -1376,7 +1465,8 @@ void wg_gather(torch::Tensor x, torch::Tensor sorted_ids, torch::Tensor block_ex
+ 
+ void wg_gemm(int64_t which, torch::Tensor bsrc, torch::Tensor wbank,
+              torch::Tensor gs, torch::Tensor sorted_ids, torch::Tensor block_experts, torch::Tensor n_padded,
+-             int64_t num_routes, int64_t n_tiles, int64_t K, torch::Tensor out, int64_t grid, torch::Tensor err) {
++             int64_t num_routes, int64_t n_tiles, int64_t K, torch::Tensor out, int64_t grid, torch::Tensor err,
++             int64_t pdl) {
+   TORCH_CHECK(which == 0 || which == 1, "wg_gemm: which");
+   TORCH_CHECK(bsrc.is_cuda() && bsrc.is_contiguous() && bsrc.dim() == 2 && bsrc.scalar_type() == at::kBFloat16 &&
+               bsrc.size(0) > 0 && bsrc.size(1) > 0 && bsrc.size(1) == K,
+@@ -1417,14 +1507,36 @@ void wg_gemm(int64_t which, torch::Tensor bsrc, torch::Tensor wbank,
+     }
+   }
+ #define WG_LAUNCH(G_)                                                                                         \
+-  wg_kernel<G_><<<static_cast<unsigned>(grid), THREADS, Smem<G_>::BYTES, stream>>>(                          \
+-      mp, wbank.data_ptr<uint8_t>(), gs.data_ptr<float>(), sorted_ids.data_ptr<int>(),             \
+-      block_experts.data_ptr<int>(), n_padded.data_ptr<int>(), blocks_len, static_cast<int>(num_routes),      \
+-      static_cast<int>(n_tiles), static_cast<int>(K), static_cast<int>(gs.numel()),                           \
+-      reinterpret_cast<__nv_bfloat16*>(out.data_ptr()), static_cast<int>(out.size(1)), err.data_ptr<int>())
++  do { if (pdl == 0) {                                                                                             \
++    wg_kernel<G_><<<static_cast<unsigned>(grid), THREADS, Smem<G_>::BYTES, stream>>>(                        \
++        mp, wbank.data_ptr<uint8_t>(), gs.data_ptr<float>(), sorted_ids.data_ptr<int>(),           \
++        block_experts.data_ptr<int>(), n_padded.data_ptr<int>(), blocks_len, static_cast<int>(num_routes),    \
++        static_cast<int>(n_tiles), static_cast<int>(K), static_cast<int>(gs.numel()),                         \
++        reinterpret_cast<__nv_bfloat16*>(out.data_ptr()), static_cast<int>(out.size(1)), err.data_ptr<int>()); \
++    C10_CUDA_KERNEL_LAUNCH_CHECK();                                                                           \
++  } else {                                                                                                    \
++    cudaLaunchConfig_t cfg{};                                                                                 \
++    cfg.gridDim = dim3(static_cast<unsigned>(grid));                                                          \
++    cfg.blockDim = dim3(THREADS);                                                                             \
++    cfg.dynamicSmemBytes = Smem<G_>::BYTES;                                                                   \
++    cfg.stream = stream;                                                                                      \
++    cudaLaunchAttribute attr[1];                                                                              \
++    attr[0].id = cudaLaunchAttributeProgrammaticStreamSerialization;                                          \
++    attr[0].val.programmaticStreamSerializationAllowed = 1;                                                   \
++    cfg.attrs = attr;                                                                                         \
++    cfg.numAttrs = 1;                                                                                         \
++    const cudaError_t le_ = cudaLaunchKernelEx(                                                               \
++        &cfg, wg_kernel<G_>, mp, wbank.data_ptr<uint8_t>(), gs.data_ptr<float>(), sorted_ids.data_ptr<int>(),\
++        block_experts.data_ptr<int>(), n_padded.data_ptr<int>(), blocks_len, static_cast<int>(num_routes),    \
++        static_cast<int>(n_tiles), static_cast<int>(K), static_cast<int>(gs.numel()),                         \
++        reinterpret_cast<__nv_bfloat16*>(out.data_ptr()), static_cast<int>(out.size(1)), err.data_ptr<int>()); \
++    TORCH_CHECK(le_ == cudaSuccess, "wg_gemm: PDL launch: ", cudaGetErrorString(le_));                        \
++  } } while (0)
++  // do { } while (0): the macro is the body of if/else below; a bare if/else here left a dangling else.
++  // pdl != 0 (the w2 launch only; the gather and w13 are plain launches): the programmatic-stream-serialization
++  // attribute makes this grid a programmatic dependent of the previous kernel in the stream.
+   if (which == 0) WG_LAUNCH(true); else WG_LAUNCH(false);
+ #undef WG_LAUNCH
+-  C10_CUDA_KERNEL_LAUNCH_CHECK();
+ }
+ """
+ 
+@@ -1456,11 +1568,148 @@ def _wg_wgmma_src():
+     return "\n".join(out) + "\n"
+ 
+ 
+-def _wg_src():
++def _wg_src(pdl=True):
++    """pdl=False: MASTER's exact source text (the build fallback); see _WG_MASTER_REVERT."""
++    if not pdl:
++        return _wg_revert(_WG_SRC_HEAD, "head") + _wg_wgmma_src() + _wg_revert(_WG_SRC_BODY, "body")
+     return _WG_SRC_HEAD + _wg_wgmma_src() + _WG_SRC_BODY
+ 
+ 
+-WG_EXT_NAME = "muse_moe_w4a16_wgmma_rega_v5"
++WG_EXT_NAME = "muse_moe_w4a16_wgmma_rega_v6_pdl"
++
++
++# Build fallback (pre-flight audit): if the PDL module fails to build, prepare() builds MASTER's exact wgmma
++# module instead (same source text, same name) and runs with wg_pdl False. Master's text is derived from the
++# PDL text by reverting these (pdl text, master text) hunks; each must occur exactly once. The kernel hunks
++# are only the griddepcontrol helpers and their three call sites; the host hunks are the pdl argument and
++# the launch macro.
++WG_EXT_NAME_MASTER = "muse_moe_w4a16_wgmma_rega_v5"
++_WG_MASTER_REVERT = {
++    "cpp": [
++        (r'''             torch::Tensor gs, torch::Tensor sorted_ids, torch::Tensor block_experts, torch::Tensor n_padded,
++             int64_t num_routes, int64_t n_tiles, int64_t K, torch::Tensor out, int64_t grid, torch::Tensor err,
++             int64_t pdl);
++''',
++         r'''             torch::Tensor gs, torch::Tensor sorted_ids, torch::Tensor block_experts, torch::Tensor n_padded,
++             int64_t num_routes, int64_t n_tiles, int64_t K, torch::Tensor out, int64_t grid, torch::Tensor err);
++'''),
++    ],
++    "head": [
++        (r'''}
++// Programmatic dependent launch. griddepcontrol.wait returns at once when the grid was not launched with the
++// programmatic-stream-serialization attribute (or has no predecessor), otherwise it blocks until every
++// prerequisite grid has completed and its memory writes are visible. launch_dependents lets the next grid's
++// CTAs start; it is per CTA (all threads execute it or exit) and a no-op when nothing depends on this grid.
++__device__ __forceinline__ void griddep_wait() {
++  asm volatile("griddepcontrol.wait;\n" ::: "memory");
++}
++__device__ __forceinline__ void griddep_launch() {
++  asm volatile("griddepcontrol.launch_dependents;\n" ::: "memory");
++}
++__device__ __forceinline__ void stsm_x2_t(uint32_t a, uint32_t r0, uint32_t r1) {
++''',
++         r'''}
++__device__ __forceinline__ void stsm_x2_t(uint32_t a, uint32_t r0, uint32_t r1) {
++'''),
++    ],
++    "body": [
++        (r'''          mbar_expect_tx(fb, tx);
++          bulk_g2s(st, wsrc + static_cast<size_t>(kb) * WST, WST, fb);  // weights: constant, no dependency
++          // PDL: the B slab (wg_xs / wg_hs) is the predecessor's output; nothing reads it before this wait.
++          if (n == 0) griddep_wait();
++          tma_2d(st + WST, map, kb * BK, m.slot0, fb);
++''',
++         r'''          mbar_expect_tx(fb, tx);
++          bulk_g2s(st, wsrc + static_cast<size_t>(kb) * WST, WST, fb);
++          tma_2d(st + WST, map, kb * BK, m.slot0, fb);
++'''),
++        (r'''    int n = 0;
++    // PDL: no consumer global store (the first epilogue) before the predecessor grid has completed. The
++    // consumers would idle on the full barriers until the producer's own wait returns anyway.
++    griddep_wait();
++    for (int it = blockIdx.x; it < total; it += gridDim.x) {
++''',
++         r'''    int n = 0;
++    for (int it = blockIdx.x; it < total; it += gridDim.x) {
++'''),
++        (r'''  }
++  // PDL: this thread's item loop is over (the other threads of the producer warpgroup exited above): let the
++  // next grid's CTAs take the SMs freed in the tail. Every thread of the CTA executes it or has exited.
++  griddep_launch();
++#else
++''',
++         r'''  }
++#else
++'''),
++        (r'''             torch::Tensor gs, torch::Tensor sorted_ids, torch::Tensor block_experts, torch::Tensor n_padded,
++             int64_t num_routes, int64_t n_tiles, int64_t K, torch::Tensor out, int64_t grid, torch::Tensor err,
++             int64_t pdl) {
++  TORCH_CHECK(which == 0 || which == 1, "wg_gemm: which");
++''',
++         r'''             torch::Tensor gs, torch::Tensor sorted_ids, torch::Tensor block_experts, torch::Tensor n_padded,
++             int64_t num_routes, int64_t n_tiles, int64_t K, torch::Tensor out, int64_t grid, torch::Tensor err) {
++  TORCH_CHECK(which == 0 || which == 1, "wg_gemm: which");
++'''),
++        (r'''#define WG_LAUNCH(G_)                                                                                         \
++  do { if (pdl == 0) {                                                                                             \
++    wg_kernel<G_><<<static_cast<unsigned>(grid), THREADS, Smem<G_>::BYTES, stream>>>(                        \
++        mp, wbank.data_ptr<uint8_t>(), gs.data_ptr<float>(), sorted_ids.data_ptr<int>(),           \
++        block_experts.data_ptr<int>(), n_padded.data_ptr<int>(), blocks_len, static_cast<int>(num_routes),    \
++        static_cast<int>(n_tiles), static_cast<int>(K), static_cast<int>(gs.numel()),                         \
++        reinterpret_cast<__nv_bfloat16*>(out.data_ptr()), static_cast<int>(out.size(1)), err.data_ptr<int>()); \
++    C10_CUDA_KERNEL_LAUNCH_CHECK();                                                                           \
++  } else {                                                                                                    \
++    cudaLaunchConfig_t cfg{};                                                                                 \
++    cfg.gridDim = dim3(static_cast<unsigned>(grid));                                                          \
++    cfg.blockDim = dim3(THREADS);                                                                             \
++    cfg.dynamicSmemBytes = Smem<G_>::BYTES;                                                                   \
++    cfg.stream = stream;                                                                                      \
++    cudaLaunchAttribute attr[1];                                                                              \
++    attr[0].id = cudaLaunchAttributeProgrammaticStreamSerialization;                                          \
++    attr[0].val.programmaticStreamSerializationAllowed = 1;                                                   \
++    cfg.attrs = attr;                                                                                         \
++    cfg.numAttrs = 1;                                                                                         \
++    const cudaError_t le_ = cudaLaunchKernelEx(                                                               \
++        &cfg, wg_kernel<G_>, mp, wbank.data_ptr<uint8_t>(), gs.data_ptr<float>(), sorted_ids.data_ptr<int>(),\
++        block_experts.data_ptr<int>(), n_padded.data_ptr<int>(), blocks_len, static_cast<int>(num_routes),    \
++        static_cast<int>(n_tiles), static_cast<int>(K), static_cast<int>(gs.numel()),                         \
++        reinterpret_cast<__nv_bfloat16*>(out.data_ptr()), static_cast<int>(out.size(1)), err.data_ptr<int>()); \
++    TORCH_CHECK(le_ == cudaSuccess, "wg_gemm: PDL launch: ", cudaGetErrorString(le_));                        \
++  } } while (0)
++  // do { } while (0): the macro is the body of if/else below; a bare if/else here left a dangling else.
++  // pdl != 0 (the w2 launch only; the gather and w13 are plain launches): the programmatic-stream-serialization
++  // attribute makes this grid a programmatic dependent of the previous kernel in the stream.
++  if (which == 0) WG_LAUNCH(true); else WG_LAUNCH(false);
++''',
++         r'''#define WG_LAUNCH(G_)                                                                                         \
++  wg_kernel<G_><<<static_cast<unsigned>(grid), THREADS, Smem<G_>::BYTES, stream>>>(                          \
++      mp, wbank.data_ptr<uint8_t>(), gs.data_ptr<float>(), sorted_ids.data_ptr<int>(),             \
++      block_experts.data_ptr<int>(), n_padded.data_ptr<int>(), blocks_len, static_cast<int>(num_routes),      \
++      static_cast<int>(n_tiles), static_cast<int>(K), static_cast<int>(gs.numel()),                           \
++      reinterpret_cast<__nv_bfloat16*>(out.data_ptr()), static_cast<int>(out.size(1)), err.data_ptr<int>())
++  if (which == 0) WG_LAUNCH(true); else WG_LAUNCH(false);
++'''),
++        (r'''#undef WG_LAUNCH
++}
++''',
++         r'''#undef WG_LAUNCH
++  C10_CUDA_KERNEL_LAUNCH_CHECK();
++}
++'''),
++    ],
++}
++
++
++def _wg_revert(text, key):
++    """MASTER's text of one source part (cpp / head / body) from the PDL text."""
++    for new, old in _WG_MASTER_REVERT[key]:
++        assert text.count(new) == 1, f"master revert hunk not unique in {key}: {new[:60]!r}"
++        text = text.replace(new, old)
++    return text
++
++
++def _wg_cpp(pdl=True):
++    return _WG_CPP if pdl else _wg_revert(_WG_CPP, "cpp")
+ WG_GENCODE = "-gencode=arch=compute_90a,code=sm_90a"
+ WG_CUDA_CFLAGS = ["-O3", "-lineinfo", WG_GENCODE]
+ 
+@@ -1485,7 +1734,7 @@ def _wg_ptxas_warnings(text):
+     return out[:4]
+ 
+ 
+-def _wg_build(probe=False):
++def _wg_build(probe=False, pdl=True):
+     """Compile the wgmma module (prepare only, never during capture): (ext or None, error text).
+ 
+     sm_90a only (hypothesis cuda-nvfp4-wgmma-rega-grouped-sm90a-rebuild-inproc): cpp_extension's
+@@ -1501,7 +1750,8 @@ def _wg_build(probe=False):
+     t0 = time.perf_counter()
+     prev = os.environ.get("TORCH_CUDA_ARCH_LIST")
+     flags = list(WG_CUDA_CFLAGS) + (["-Xptxas", "-Werror"] if probe else [])
+-    name = WG_EXT_NAME + ("_probe" if probe else "")
++    # pdl=False: MASTER's module (same source text and name as master), the fallback when the PDL build fails.
++    name = (WG_EXT_NAME if pdl else WG_EXT_NAME_MASTER) + ("_probe" if probe else "")
+     ext, err_text = None, ""
+     try:
+         from torch.utils import cpp_extension
+@@ -1527,8 +1777,8 @@ def _wg_build(probe=False):
+               f"{arch_flags}; extra_cuda_cflags {flags}", flush=True)
+         ext = load_inline(
+             name=name,
+-            cpp_sources=_WG_CPP,
+-            cuda_sources=_wg_src(),
++            cpp_sources=_wg_cpp(pdl),
++            cuda_sources=_wg_src(pdl),
+             functions=["wg_init", "wg_gather", "wg_gemm"],
+             extra_cuda_cflags=flags,
+             verbose=False,
+@@ -1536,7 +1786,7 @@ def _wg_build(probe=False):
+     except Exception as e:  # keep the master path if the build fails
+         err_text = str(e)
+         ext = None
+-        print(f"{WG_TAG} load_inline{' probe' if probe else ''} failed after {time.perf_counter() - t0:.1f}s: "
++        print(f"{WG_TAG} load_inline {name} failed after {time.perf_counter() - t0:.1f}s: "
+               f"{err_text[:240]!r}", flush=True)
+     finally:
+         if prev is None:
+@@ -1544,7 +1794,7 @@ def _wg_build(probe=False):
+         else:
+             os.environ["TORCH_CUDA_ARCH_LIST"] = prev
+     if ext is not None:
+-        print(f"{WG_TAG} load_inline{' probe' if probe else ''} compiled in {time.perf_counter() - t0:.1f}s", flush=True)
++        print(f"{WG_TAG} load_inline {name} compiled in {time.perf_counter() - t0:.1f}s", flush=True)
+     return ext, err_text
+ 
+ 
+@@ -1681,8 +1931,15 @@ def _wg_gemm(state, which, wq, wgs, sorted_ids, block_experts, n_padded, routes,
+     B-source scratch (its tensor maps are encoded in C++ from THIS tensor on every call, into a
+     stack-local grid constant), the weights, the per-state error word. No module-level device pointer,
+     tensor map or tensor is involved."""
+-    state["wg_ext"].wg_gemm(which, state["wg_xs"] if which == 0 else state["wg_hs"], wq, wgs, sorted_ids,
+-                            block_experts, n_padded, routes, n_tiles, k, out, state["wg_grid"], state["wg_err"])
++    # PDL only on the w13 -> w2 boundary (which == 1); state['wg_pdl'] is set once in prepare, read-only here.
++    pdl = 1 if (which == 1 and state.get("wg_pdl", False)) else 0
++    args = (which, state["wg_xs"] if which == 0 else state["wg_hs"], wq, wgs, sorted_ids, block_experts, n_padded,
++            routes, n_tiles, k, out, state["wg_grid"], state["wg_err"])
++    # wg_ext_pdl (prepare-time bool): the PDL module takes the pdl argument; master's fallback module does not.
++    if state.get("wg_ext_pdl", False):
++        state["wg_ext"].wg_gemm(*args, pdl)
++    else:
++        state["wg_ext"].wg_gemm(*args)
+ 
+ 
+ WG_MAGIC = 0x57474d4d  # block 0 of wg_kernel writes it into wg_err[1] (the launch marker)
+@@ -1709,8 +1966,16 @@ def _moe_wgmma(x, topk_ids, topk_weights, bank, state, trace=None):
+     if trace is not None:
+         trace("before expert_map gather + moe_align_block_size")
+     topk_weights = topk_weights.to(torch.float32).contiguous()
+-    local_ids = bank["expert_map"][topk_ids.to(torch.int32)].contiguous()
+-    sorted_ids, block_experts, n_padded = moe_align_block_size(local_ids, WG_BSM, count)
++    # Combo F2: the bucket's prepare-gated front end (plain int; shape-only bucket pick). 0 = master's
++    # expert_map gather + SGLang moe_align_block_size; WG_ALIGN_PAR = _align_parallel; else an align2 chunk.
++    fe = state.get("wg_align2", {}).get(128 if num_tokens < WG_B256_MIN_TOKENS else 256, 0)
++    if fe == WG_ALIGN_PAR:
++        local_ids, (sorted_ids, block_experts, n_padded) = _align_parallel(topk_ids, start, count, WG_BSM)
++    elif fe:
++        local_ids, (sorted_ids, block_experts, n_padded) = _align_two_phase(topk_ids, start, count, WG_BSM, fe)
++    else:
++        local_ids = bank["expert_map"][topk_ids.to(torch.int32)].contiguous()
++        sorted_ids, block_experts, n_padded = moe_align_block_size(local_ids, WG_BSM, count)
+     wb = state["wg_banks"][(start, count)]
+     ext, err = state["wg_ext"], state["wg_err"]
+     routes = num_tokens * TOP_K
+@@ -2533,7 +2798,7 @@ def _wg_ref_fp32(bank, state, wref, x, topk_ids, tw):
+         eps=POST_NORM_EPS, weight_first=True, slot_expert_ids=local_ids)
+ 
+ 
+-def _wg_copy_check(weights, bank, state, device):
++def _wg_copy_check(weights, bank, state, device, pdl=False):
+     """MANDATORY (s5): the judge COPIES the prepared state, so graphs captured through kernel_fn on three
+     states must replay correctly: A = the prepared state, B = copy.deepcopy(state) with the ext module
+     shared via the memo, C = the recursive tensor-cloning walk after a ~2 MB pad allocation (the closest
+@@ -2541,7 +2806,9 @@ def _wg_copy_check(weights, bank, state, device):
+     replays A, B, C, A, B, each with that state's static inputs REFILLED, each compared with an fp32-dequant
+     reference (and Marlin's own error against it: the bound is 1.5x Marlin's), each also required to leave
+     the launch marker (wg_err[1] == WG_MAGIC, wg_err[0] == 0) that proves the wgmma kernel ran. A copy
+-    method that raises is skipped and named. Returns (ok, launched, failure lines, summary lines)."""
++    method that raises is skipped and named. pdl: every state's w2 launch carries the programmatic-
++    stream-serialization attribute (state['wg_pdl'] is set on A, B and C here). Returns (ok, launched,
++    failure lines, summary lines)."""
+     start, count = bank["start"], bank["count"]
+     hidden = weights["w2"].shape[1]
+     local_set = list(range(start, start + count))
+@@ -2574,6 +2841,7 @@ def _wg_copy_check(weights, bank, state, device):
+     for st in states.values():
+         # kernel_fn's gate reads the two bucket flags; the copy check exercises wgmma in both buckets
+         st["wgmma_ok"] = st["wg_on_128"] = st["wg_on_256"] = True
++        st["wg_pdl"] = bool(pdl)
+     wref = _wg_ref_weights(weights, bank)
+     seq = [n for n in ("A", "B", "C", "A", "B") if n in states]
+ 
+@@ -2630,7 +2898,7 @@ def _wg_copy_check(weights, bank, state, device):
+             stats["worst_w"], stats["worst_m"] = max(stats["worst_w"], worst_w), max(stats["worst_m"], worst_m)
+             group_all += 1
+             group_ok += int(bad == 0)
+-            print(f"{WG_TAG}   copy-check M={tokens} {kind} [{' '.join(seq)}]: worst wgmma-vs-fp32 {worst_w:.2e}, "
++            print(f"{WG_TAG}   copy-check{' PDL' if pdl else ''} M={tokens} {kind} [{' '.join(seq)}]: worst wgmma-vs-fp32 {worst_w:.2e}, "
+                   f"worst Marlin-vs-fp32 {worst_m:.2e} (bound 1.5x), {len(seq) - bad}/{len(seq)} ok", flush=True)
+         del graphs
+     torch.cuda.synchronize()
+@@ -2643,6 +2911,140 @@ def _wg_copy_check(weights, bank, state, device):
+             f"bound {WG_COPY_FACTOR}x Marlin" + (f"; {'; '.join(lines)}" if lines else ""))
+     return ok, launched_all, fails, line
+ 
++WG_PDL_TOKENS = (128, 256)    # T buckets the PDL A/B covers (B256 is the shape it targets)
++WG_PDL_DEADLINE_S = 225.0     # the PDL stage (~30-50 s with its copy check) must start before this many s into prepare()
++WG_PDL_REPS = 41              # interleaved A/B graph replays per timing
++WG_PDL_SLACK = 1.003          # PDL stays on only if its T=256 full-path median is <= this x the non-PDL median
++
++
++def _wg_pdl_stage(weights, bank, state, device, t_setup):
++    """prepare() only; never raises. Decides state['wg_pdl'] (the caller assigns the returned bool; this
++    function leaves state['wg_pdl'] False). PDL is only the programmatic-stream-serialization attribute on
++    the w2 launch (the w13 -> w2 boundary); the gather and w13 are plain launches.
++      1. bit identity: per T in WG_PDL_TOKENS the same _moe_wgmma path is captured twice (PDL off / on); for
++         each of four routings the inputs are refilled and replays off, on, on must agree bit for bit, with
++         error word 0 and the launch marker.
++      2. prepare-time event timings: w13 and w2 alone (cold L2, eager), the gather + w13 + w2 chain and the
++         full _moe_wgmma path as graphs, PDL off vs on, interleaved with a cold-L2 flush.
++      3. the three-state copy check (A, deepcopy B, judge-model clone C) with PDL on.
++    Any mismatch, error or exception: PDL off, master's launches. Returns (pdl_on, summary lines)."""
++    lines = []
++
++    def say(msg, summ=True):
++        print(f"{WG_TAG} PDL {msg}", flush=True)
++        if summ:
++            lines.append(f"PDL {msg}")
++
++    try:
++        if time.perf_counter() - t_setup > WG_PDL_DEADLINE_S:
++            say("OFF: prepare budget spent before the PDL stage")
++            return False, lines
++        start, count = bank["start"], bank["count"]
++        hidden = weights["w2"].shape[1]
++        local_set = list(range(start, start + count))
++        remote_set = [e for e in range(N_EXPERTS) if e not in local_set]
++        gen = torch.Generator().manual_seed(20261104)
++        flush = torch.empty(WG_SEL_FLUSH_BYTES, dtype=torch.uint8, device=device)
++        dummy = torch.zeros(1, dtype=torch.float32, device=device)
++        base_graph, _ = _wg_graph_of(lambda: dummy.add_(1.0))
++        identical = True
++        full_us = {}
++        for tokens in WG_PDL_TOKENS:
++            bufs = (torch.zeros((tokens, hidden), dtype=torch.bfloat16, device=device),
++                    torch.zeros((tokens, TOP_K), dtype=torch.int32, device=device),
++                    torch.full((tokens, TOP_K), 1.0 / TOP_K, dtype=torch.float32, device=device))
++            _wg_fill(bufs, "random", tokens, gen, hidden, local_set, remote_set)
++            pair = {}
++            for flag in (False, True):
++                state["wg_pdl"] = flag
++                print(f"{WG_TAG}     [pdl T={tokens}] capture of _moe_wgmma with PDL {'on' if flag else 'off'}",
++                      flush=True)
++                pair[flag] = _wg_graph_of(lambda: _moe_wgmma(bufs[0], bufs[1], bufs[2], bank, state)[0])
++            n_same = 0
++            for kind in WG_COPY_KINDS:
++                _wg_fill(bufs, kind, tokens, gen, hidden, local_set, remote_set)
++                res = []
++                for flag in (False, True, True):
++                    state["wg_err"].zero_()
++                    pair[flag][0].replay()
++                    torch.cuda.synchronize()
++                    err_word, marker = [int(v) for v in state["wg_err"].tolist()]
++                    res.append((pair[flag][1].clone().contiguous().view(torch.int16), err_word, marker,
++                                bool(torch.isfinite(pair[flag][1]).all())))
++                same = all(torch.equal(r[0], res[0][0]) for r in res[1:])
++                healthy = all(r[1] == 0 and r[2] == WG_MAGIC and r[3] for r in res)
++                n_same += int(same and healthy)
++                if not (same and healthy):
++                    identical = False
++                    say(f"MISMATCH T={tokens} {kind}: bit-identical {same}, error words/markers/finite "
++                        f"{[(r[1], hex(r[2] & 0xffffffff), r[3]) for r in res]}")
++            say(f"bit-identity T={tokens}: {n_same}/{len(WG_COPY_KINDS)} routings identical (PDL off vs on x2, "
++                f"refilled inputs, graph replays)")
++            if not identical:
++                break
++            med = _wg_ab_graphs(flush, {"off": pair[False][0], "on": pair[True][0], "base": base_graph},
++                                WG_PDL_REPS)
++            off_us, on_us = med["off"] - med["base"], med["on"] - med["base"]
++            full_us[tokens] = (off_us, on_us)
++            say(f"event timing, full wgmma path T={tokens} (random routing, align + gather + w13 + w2 + norm, "
++                f"graph replays, cold L2, median of {WG_PDL_REPS}, empty-graph {med['base']:.1f} us subtracted): "
++                f"PDL off {off_us:.1f} us, PDL on {on_us:.1f} us, delta {on_us - off_us:+.1f} us "
++                f"({100.0 * (on_us - off_us) / max(off_us, 1e-3):+.2f}%)")
++            # per-kernel and chain timings on a judge-like skewed routing
++            topk = _wg_zipf_ids(tokens, 0.9, gen, local_set).to(device)
++            fns, n_local, _ = _wg_time_fns(weights, bank, state, device, bufs[0], topk, bufs[2])
++
++            def chain():
++                fns["gather"]()
++                fns["w13"]()
++                fns["w2"]()
++
++            state["wg_pdl"] = False
++            t13 = _wg_med_cold(fns["w13"], flush, 9)
++            t2 = _wg_med_cold(fns["w2"], flush, 9)
++            gchain = {}
++            for flag in (False, True):
++                state["wg_pdl"] = flag
++                gchain[flag] = _wg_graph_of(chain)[0]
++            med2 = _wg_ab_graphs(flush, {"off": gchain[False], "on": gchain[True], "base": base_graph},
++                                 WG_PDL_REPS)
++            c_off, c_on = med2["off"] - med2["base"], med2["on"] - med2["base"]
++            say(f"event timing, kernels T={tokens} (zipf a=0.9, {n_local} local routes): w13+silu alone "
++                f"{t13:.1f} us, w2 alone {t2:.1f} us (eager, cold L2); gather+w13+w2 chain as a graph: PDL off "
++                f"{c_off:.1f} us, PDL on {c_on:.1f} us, delta {c_on - c_off:+.1f} us")
++            del fns, gchain, pair, bufs
++            torch.cuda.synchronize()
++        state["wg_pdl"] = False
++        del flush, base_graph
++        if not identical:
++            say("OFF: outputs are not bit-identical to the non-PDL launches")
++            return False, lines
++        off_us, on_us = full_us[256]
++        if on_us > off_us * WG_PDL_SLACK:
++            say(f"OFF: T=256 full path PDL on {on_us:.1f} us is not faster than off {off_us:.1f} us "
++                f"(slack {WG_PDL_SLACK})")
++            return False, lines
++        if time.perf_counter() - t_setup > WG_PDL_DEADLINE_S + 25.0:
++            say("OFF: prepare budget spent before the PDL copy check")
++            return False, lines
++        t_cc = time.perf_counter()
++        ok, launched, fails, rline = _wg_copy_check(weights, bank, state, device, pdl=True)
++        for f_ in fails[:6]:
++            print(f"{WG_TAG}   PDL COPY MISS {f_}"[:400], flush=True)
++        say(f"three-state copy check with PDL on: {'PASS' if ok and launched else 'FAIL'} "
++            f"({time.perf_counter() - t_cc:.1f}s): {rline}")
++        if not (ok and launched):
++            say("OFF: the PDL copy check failed")
++            return False, lines
++        say("on: the w13 -> w2 boundary launches with programmatic stream serialization (the gather and w13 are "
++            "plain launches)")
++        return True, lines
++    except Exception as e:
++        say(f"OFF: PDL stage raised {e!r}"[:300])
++        return False, lines
++    finally:
++        state["wg_pdl"] = False
++
+ 
+ def _wg_audit_cpp(src):
+     """Static scan of the CUDA/C++ source for state that outlives a call: mutable file / namespace
+@@ -2711,6 +3113,8 @@ def _wg_setup(weights, banks, state, device, t_start=None):
+     state["wgmma_ok"] = False
+     state["wg_on_128"] = False
+     state["wg_on_256"] = False
++    state["wg_pdl"] = False   # set once here (prepare); kernel_fn only reads it
++    state["wg_ext_pdl"] = False  # True only when the PDL module (not master's fallback module) was built
+     sel = {}
+     sel_s = 0.0
+     copy_s = 0.0
+@@ -2746,22 +3150,39 @@ def _wg_setup(weights, banks, state, device, t_start=None):
+         # it in-process), which is searched for the wgmma 'serialized' warning, then the real
+         # build runs without -Werror.
+         t_b = time.perf_counter()
+-        ext, btext = _wg_build(probe=True)
+-        warns = _wg_ptxas_warnings(btext)
+-        # A passing -Werror probe rules out a ptxas WARNING only: if this ptxas reports wgmma
+-        # serialization at info level (C75xx), load_inline discards it, so the answer is unknown.
+-        serialized = ("yes" if any("serialized" in w for w in warns)
+-                      else ("no warning (info-level note not visible)" if ext is not None else "unknown"))
++
++        def build_flow(pdl):
++            ext_, btext = _wg_build(probe=True, pdl=pdl)
++            warns_ = _wg_ptxas_warnings(btext)
++            # A passing -Werror probe rules out a ptxas WARNING only: if this ptxas reports wgmma
++            # serialization at info level (C75xx), load_inline discards it, so the answer is unknown.
++            ser_ = ("yes" if any("serialized" in w for w in warns_)
++                    else ("no warning (info-level note not visible)" if ext_ is not None else "unknown"))
++            if ext_ is None:
++                print(f"{WG_TAG} probe build (-Xptxas -Werror) failed; ptxas warning lines: {len(warns_)}; wgmma "
++                      f"'serialized' warning: {ser_}", flush=True)
++                for w in warns_:
++                    print(f"{WG_TAG}   ptxas: {w}", flush=True)
++                # PDL module: a failed probe with no ptxas line is a compile error the plain build would only
++                # repeat, so go straight to master's module. Master's module keeps master's exact sequence.
++                if (not pdl or warns_) and time.perf_counter() - t_setup < WG_SETUP_BUDGET_S - 60.0:
++                    ext_, _ = _wg_build(probe=False, pdl=pdl)
++            else:
++                print(f"{WG_TAG} probe build with -Xptxas -Werror passed: no ptxas warning (an info-level wgmma "
++                      f"serialization note would not fail it, so serialization is not ruled out)", flush=True)
++            return ext_, warns_, ser_
++
++        ext, warns, serialized = build_flow(True)
++        state["wg_ext_pdl"] = ext is not None
+         if ext is None:
+-            print(f"{WG_TAG} probe build (-Xptxas -Werror) failed; ptxas warning lines: {len(warns)}; wgmma "
+-                  f"'serialized' warning: {serialized}", flush=True)
+-            for w in warns:
+-                print(f"{WG_TAG}   ptxas: {w}", flush=True)
++            print(f"{WG_TAG} PDL module {WG_EXT_NAME} failed to build: building MASTER's wgmma module "
++                  f"{WG_EXT_NAME_MASTER} (master's source text); wg_pdl stays False", flush=True)
+             if time.perf_counter() - t_setup < WG_SETUP_BUDGET_S - 60.0:
+-                ext, _ = _wg_build(probe=False)
+-        else:
+-            print(f"{WG_TAG} probe build with -Xptxas -Werror passed: no ptxas warning (an info-level wgmma "
+-                  f"serialization note would not fail it, so serialization is not ruled out)", flush=True)
++                ext, warns, serialized = build_flow(False)
++        built = (WG_EXT_NAME if state["wg_ext_pdl"] else WG_EXT_NAME_MASTER) if ext is not None else "NONE"
++        print(f"{WG_TAG} WG MODULE BUILT = {built} ({'PDL-capable' if state['wg_ext_pdl'] else 'master module, no PDL'})",
++              flush=True)
++        summ.append(f"WG MODULE BUILT = {built}")
+         build_s = time.perf_counter() - t_b
+         summ.append(f"build: TORCH_CUDA_ARCH_LIST=9.0a -> {WG_BUILD_INFO.get('arch')}; cflags {WG_CUDA_CFLAGS}; "
+                     f"{build_s:.1f}s ({'ok' if ext is not None else 'FAILED'}); ptxas warnings {len(warns)}, wgmma "
+@@ -2887,6 +3308,13 @@ def _wg_setup(weights, banks, state, device, t_start=None):
+         if not (h_ok and w2_ok):
+             off.append("w13+silu or w2 failed rel-L2 vs Marlin")
+         ok = bool(canary_ok and h_ok and w2_ok and sc_ok and replay_ok and launched and err_word == 0)
++        # PDL on the w13 -> w2 boundary: decided before the selector so the selector times the shipped launches.
++        if ok and state.get("wg_ext_pdl", False):
++            pdl_on, pdl_lines = _wg_pdl_stage(weights, bank, state, device, t_setup)
++            state["wg_pdl"] = bool(pdl_on)
++            summ.extend(pdl_lines)
++        else:
++            summ.append("PDL OFF: " + ("the wgmma path is off" if not ok else "master's module was built (PDL build failed)"))
+         # s5 bucket gate: the path is a candidate only when correctness and the launch marker pass; each T
+         # bucket then ships only if the graph-timed A/B selector says wgmma wins it on the judge-like routing.
+         if ok and time.perf_counter() - t_setup < WG_TIMING_DEADLINE_S:
+@@ -2916,6 +3344,8 @@ def _wg_setup(weights, banks, state, device, t_start=None):
+     state["wgmma_ok"] = ok
+     state["wg_on_128"] = bool(ok and sel.get(128, False))
+     state["wg_on_256"] = bool(ok and sel.get(256, False))
++    if not (state["wg_on_128"] or state["wg_on_256"]):
++        state["wg_pdl"] = False  # no bucket runs wgmma: PDL is moot, keep master's launches
+     # Release every prepare-time graph, buffer and copied state before returning (they are locals of the
+     # checks above; a traceback from a failed check may still pin them).
+     gc.collect()
+@@ -2937,6 +3367,9 @@ def _wg_setup(weights, banks, state, device, t_start=None):
+         why_ = (" (wgmma path off)" if not ok else (" (selector skipped or raised)" if tokens not in sel
+                 else " (selector)"))
+         print(f"{WG_TAG} PATH CHOSEN {name} ({rng_text}) = {'WGMMA' if on else 'MARLIN'}{why_}", flush=True)
++    print(f"{WG_TAG} FINAL FLAGS wg_on_128={state['wg_on_128']} wg_on_256={state['wg_on_256']} "
++          f"wg_pdl={state['wg_pdl']}; B128 took {'WGMMA' if state['wg_on_128'] else 'MARLIN'}, B256 took "
++          f"{'WGMMA' if state['wg_on_256'] else 'MARLIN'}; PDL {'on' if state['wg_pdl'] else 'off'}", flush=True)
+     print(f"{WG_TAG} PATH CHOSEN = B128 {'WGMMA' if state['wg_on_128'] else 'MARLIN'}, B256 "
+           f"{'WGMMA' if state['wg_on_256'] else 'MARLIN'}; MARLIN for num_tokens < {WG_MIN_TOKENS} and > "
+           f"{WG_MAX_TOKENS}; kernel variant A (wgmma_wait<0>); per-bucket graph-timed selector; tensor maps "
+@@ -3005,6 +3438,11 @@ def prepare(weights: Weights) -> dict:
+         "post_norm_w": weights["post_norm_w"].contiguous(),
+         "w2_mode": "master",
+         "align2_ok": {cls: 0 for cls in ALIGN2_CLASSES},
++        # Combo flags (plain values; master until the combo phases after master's prepare gate them on).
++        "w13_mode": "master",
++        "wg_align2": {128: 0, 256: 0},
++        "d32_align": 0,
++        "d32_post_norm": 0,
+     }
+     align2_lines = []
+     if (0, 32) in banks and banks[(0, 32)]["expert_map"] is not None:
+@@ -3014,15 +3452,28 @@ def prepare(weights: Weights) -> dict:
+     # The wgmma verify path: built, retiled and self-checked here; state["wgmma_ok"] gates it.
+     _wg_setup(weights, banks, state, device, t_prepare)
+     torch.cuda.synchronize()
+-    # The [align2] lines last, so the archived log tail keeps them.
++    t_master = time.perf_counter() - t_prepare
++    # Combo phases: after master's prepare, unchanged; each with its own start deadline.
++    combo_lines = []
++    if (0, 32) in banks and banks[(0, 32)]["expert_map"] is not None:
++        combo_lines = _combo_setup(weights, state, device, t_prepare)
++    combo_lines.append(f"{COMBO_TAG} prepare seconds: master {t_master:.1f}, total {time.perf_counter() - t_prepare:.1f}")
++    # The [align2] lines, then the combo PATH CHOSEN / phase lines last, so the archived log tail keeps them.
+     for line in align2_lines:
+         print(line, flush=True)
++    for line in combo_lines:
++        print(line, flush=True)
+     return state
+ 
+ 
+-def _moe_marlin(x, topk_ids, topk_weights, bank, state, w2_mode="master"):
++def _moe_marlin(x, topk_ids, topk_weights, bank, state, w2_mode="master", w13_mode="master", d32_align=0,
++                d32_post_norm=0, poison=False):
+     """(out, local_ids, cache2, y) for x [M, H]: master's launches, unchanged (w2_mode as master's
+-    _forward: the atomic-add w2 only applies up to W2_ATOMIC_MAX_TOKENS tokens)."""
++    _forward: the atomic-add w2 only applies up to W2_ATOMIC_MAX_TOKENS tokens). Combo flags (plain
++    prepare-set values, branched with the shape only): w13_mode ("master" / "atomic" / "atomic_zero") at
++    num_tokens <= W13_ATOMIC_MAX_TOKENS (F1); d32_align 1 = _align_parallel at D32_ALIGN_MIN..MAX_TOKENS
++    (C1a); d32_post_norm 1 = the hoisted Triton post-norm at num_tokens == HOISTED_POST_NORM_TOKENS (C1b).
++    poison (prepare-time self-check only, never from kernel_fn) fills w13's output buffer with junk first."""
+     num_tokens, size_k = x.shape
+     size_n = bank["size_n"]
+     gemm1_n = 2 * size_n
+@@ -3038,7 +3489,11 @@ def _moe_marlin(x, topk_ids, topk_weights, bank, state, w2_mode="master"):
+         # it _align_parallel (hypothesis align-parallel-per-expert-verify). Branch on shape only.
+         cls = _align2_class(num_tokens)
+         chunk = state["align2_ok"][cls] if cls is not None else 0
+-        if chunk:
++        if d32_align and D32_ALIGN_MIN_TOKENS <= num_tokens <= D32_ALIGN_MAX_TOKENS:
++            # Combo C1a (hypothesis align-parallel-from-17-tokens): prepare() gated it against master's d32 pick.
++            local_ids, (sorted_ids, block_experts, n_padded) = _align_parallel(
++                topk_ids, bank["start"], bank["count"], block_size_m)
++        elif chunk:
+             # Hypothesis align-two-phase-port-from17: prepare() gated this class (every T warmed).
+             local_ids, (sorted_ids, block_experts, n_padded) = _align_two_phase(
+                 topk_ids, bank["start"], bank["count"], block_size_m, chunk)
+@@ -3069,10 +3524,19 @@ def _moe_marlin(x, topk_ids, topk_weights, bank, state, w2_mode="master"):
+                   b_q_type=scalar_types.float4_e2m1f, is_k_full=True, use_atomic_add=False,
+                   use_fp32_reduce=True, is_zp_float=False)
+     ws = state["workspace"]
++    w13_common = common
++    if poison:
++        # Self-check only: junk in the w13 output buffer so a missing zero-fill is caught.
++        cache13.fill_(W13_POISON)
++    if w13_mode != "master" and num_tokens <= W13_ATOMIC_MAX_TOKENS:
++        # Combo F1 (hypothesis w13-marlin-atomic-add-t1-only); use_fp32_reduce stays True.
++        w13_common = dict(common, use_atomic_add=True)
++        if w13_mode == "atomic_zero":
++            cache1.zero_()
+     cache1 = moe_wna16_marlin_gemm(
+         x, cache1, bank["w13"], None, bank["w13_s"], bank["w13_gs"], None, None, None, ws,
+         sorted_ids, block_experts, n_padded, topk_weights, top_k=TOP_K,
+-        size_m=num_tokens, size_n=gemm1_n, size_k=size_k, **common)
++        size_m=num_tokens, size_n=gemm1_n, size_k=size_k, **w13_common)
+     silu_and_mul(cache1.view(-1, gemm1_n), cache2, expert_ids=local_ids.view(-1), expert_step=1)
+     w2_common = common
+     if w2_mode != "master" and num_tokens <= W2_ATOMIC_MAX_TOKENS:
+@@ -3090,6 +3554,10 @@ def _moe_marlin(x, topk_ids, topk_weights, bank, state, w2_mode="master"):
+             y, local_ids, topk_weights, state["post_norm_w"], out, size_k, POST_NORM_EPS,
+             TOP_K_C=TOP_K, BLOCK_H=triton.next_power_of_2(size_k), num_warps=8)
+         return out, local_ids, cache2, y
++    if d32_post_norm and num_tokens == HOISTED_POST_NORM_TOKENS:
++        # Combo C1b (hypothesis post-norm-triton-hoisted-decode32).
++        y = y.contiguous()
++        return _post_norm_hoisted(y, local_ids, topk_weights, state["post_norm_w"]), local_ids, cache2, y
+     out = fused_post_expert_norm_weighted_sum(
+         y, topk_weights, norm_weight=state["norm_w"], eps=POST_NORM_EPS, weight_first=True,
+         slot_expert_ids=local_ids)
+@@ -3164,6 +3632,619 @@ def _forward(data: Inputs, state: dict, w2_mode: str) -> torch.Tensor:
+     return _moe_marlin(x, data["topk_ids"], data["topk_weights"], bank, state, w2_mode)[0]
+ 
+ 
++# ---------------------------------------------------------------------------------------------
++# Combo (hypothesis combo-toprow-w13t1-d32-alignpar-postnorm-wg-align2): prepare-time gates, run after
++# master's prepare. Each phase: correctness first, then cold-L2 CUDA-graph A/B (_align2_gate_time: 41
++# interleaved replays, 256 MB flush before each, empty-graph baseline subtracted, medians) on a judge-like
++# Zipf routing and a random one; ON only at new / master <= COMBO_MAX_RATIO on the worse of the two.
++# ---------------------------------------------------------------------------------------------
++
++
++class _ComboSkip(Exception):
++    """A combo phase ran out of its deadline; its flag stays master."""
++
++
++def _combo_rel(a, b):
++    """Aggregate rel-L2 |a - b| / |b| in fp64 (inf on non-finite a; 0/inf when b is all zero)."""
++    a, b = a.double(), b.double()
++    if not bool(torch.isfinite(a).all()):
++        return float("inf")
++    d, r = float((a - b).norm()), float(b.norm())
++    if r == 0.0:
++        return 0.0 if d == 0.0 else float("inf")
++    return d / r
++
++
++def _combo_post_norm_fp32(y, local_ids, tw, post_norm_w):
++    """fp32 post-expert norm + weighted sum: out[t] = sum_local g * rmsnorm(y * (1 + w)); remote slots ignored."""
++    v = y.float() * (post_norm_w.float() + 1.0)
++    v = torch.where((local_ids >= 0).unsqueeze(-1), v, torch.zeros_like(v))
++    r = torch.rsqrt(v.pow(2).mean(-1, keepdim=True) + POST_NORM_EPS)
++    g = torch.where(local_ids >= 0, tw.float(), torch.zeros_like(tw.float()))
++    return (v * r * g.unsqueeze(-1)).sum(1)
++
++
++def _combo_ref_fp32(weights, bank, state, x, topk_ids, tw):
++    """The MoE output fully in fp32 (fp32-dequant weights of the routed local experts only, fp32 matmuls,
++    fp32 h and y, fp32 post-norm). For small T (F1's gate)."""
++    start, inter = bank["start"], bank["size_n"]
++    tokens, hidden = x.shape
++    local = bank["expert_map"][topk_ids.to(torch.int32)]
++    flat = local.reshape(-1)
++    y = torch.zeros((tokens * TOP_K, hidden), dtype=torch.float32, device=x.device)
++    for e in sorted(set(flat.tolist()) - {-1}):
++        g = start + e
++        w13 = _wg_decode_nvfp4(weights["w13"][g], weights["w13_sf"][g], weights["w13_gs"][g])
++        w2 = _wg_decode_nvfp4(weights["w2"][g], weights["w2_sf"][g], weights["w2_gs"][g])
++        rts = (flat == e).nonzero().flatten()
++        hh = x[rts // TOP_K].float() @ w13.T
++        h = torch.nn.functional.silu(hh[:, :inter]) * hh[:, inter:]
++        y[rts] = h @ w2.T
++        del w13, w2
++    return _combo_post_norm_fp32(y.view(tokens, TOP_K, hidden), local, tw, state["post_norm_w"])
++
++
++def _combo_routings(tokens, gen, local_set, device):
++    """Timing routings [tokens, 8] int32: 'zipf' (judge-like, this GPU's experts the busiest, alpha 0.9) and
++    'random' (uniform); each row keeps at least one local route at tokens == 1."""
++    remote_set = [e for e in range(N_EXPERTS) if e not in set(local_set)]
++    z = _wg_zipf_ids(tokens, 0.9, gen, local_set)
++    r = torch.tensor(_wg_routing("random", tokens, gen, local_set, remote_set), dtype=torch.int32)
++    if tokens == 1:
++        for ids in (z, r):
++            if not any(int(v) in set(local_set) for v in ids[0].tolist()):
++                ids[0, 0] = local_set[int(torch.randint(0, len(local_set), (1,), generator=gen))]
++    return {"zipf": z.to(device).contiguous(), "random": r.to(device).contiguous()}
++
++
++def _combo_time(fn_of, names, routings, device, t_prepare):
++    """Cold-L2 graph medians for every name on every routing (names[0] is master). Returns (best candidate,
++    {cand: worse ratio new/master}, {routing: {name: us}}); raises _ComboSkip past COMBO_TIMING_DEADLINE_S."""
++    meds = {}
++    for rlabel, ids in routings.items():
++        if time.perf_counter() - t_prepare > COMBO_TIMING_DEADLINE_S:
++            raise _ComboSkip(f"timing not started: past {COMBO_TIMING_DEADLINE_S:.0f} s")
++        meds[rlabel] = _align2_gate_time({n: fn_of(n, ids) for n in names}, device)
++    worse = {n: max(meds[r][n] / max(meds[r][names[0]], 1e-3) for r in routings) for n in names[1:]}
++    best = min(worse, key=worse.get)
++    return best, worse, meds
++
++
++def _combo_meds_text(meds, names):
++    return "; ".join(f"{r}: " + ", ".join(f"{n} {v[n]:.2f} us" for n in names) for r, v in meds.items())
++
++
++def _combo_choice(src, cls, best, worse, meds, label_of):
++    """PATH CHOSEN line for a timed source/class; asserts the ON side is the faster printed one."""
++    on = worse[best] <= COMBO_MAX_RATIO
++    if on:
++        assert all(v[best] < v["master"] for v in meds.values()), f"{src} {cls}: ON side is not faster"
++    wr = max(meds, key=lambda r: meds[r][best] / max(meds[r]["master"], 1e-3))
++    return on, (f"{COMBO_TAG} PATH CHOSEN {src} class={cls} = {label_of(best) if on else 'master'}: worse routing "
++                f"{wr}: master {meds[wr]['master']:.2f} us, {label_of(best)} {meds[wr][best]:.2f} us, ratio "
++                f"{worse[best]:.3f} (ON at <= {COMBO_MAX_RATIO})")
++
++
++def _combo_f1(weights, state, device, t_prepare):
++    """F1: w13 Marlin use_atomic_add at T == 1. Correctness on three T=1 routings: rel-L2 vs current master
++    (w2 mode as chosen) <= W13_ATOMIC_TOL AND vs a full fp32 reference <= W13_FP32_TOL, output buffer poisoned;
++    then the w13 Marlin call alone, graph-timed. Sets state['w13_mode']."""
++    bank = state["banks"][(0, 32)]
++    start, count, inter = bank["start"], bank["count"], bank["size_n"]
++    hidden = weights["w2"].shape[1]
++    w2_mode = state["w2_mode"]
++    local_set = list(range(start, start + count))
++    gen = torch.Generator().manual_seed(20261026)
++    cases = _combo_routings(1, gen, local_set, device)
++    cases["all-local"] = torch.tensor([local_set[8:16]], dtype=torch.int32, device=device)
++    ok = {"atomic": True, "atomic_zero": True}
++    why = {}
++    worst = {"atomic": [0.0, 0.0], "atomic_zero": [0.0, 0.0]}
++    m32_worst = 0.0
++    for label, ids in cases.items():
++        x = torch.randn((1, hidden), generator=gen).to(torch.bfloat16).to(device)
++        tw = torch.rand((1, TOP_K), generator=gen).to(device)
++        ref32 = _combo_ref_fp32(weights, bank, state, x, ids, tw)
++        print(f"{COMBO_TAG} F1 launching master T=1 {label}", flush=True)
++        ref = _moe_marlin(x, ids, tw, bank, state, w2_mode)[0].float()
++        torch.cuda.synchronize()
++        print(f"{COMBO_TAG} F1 ok master T=1 {label}", flush=True)
++        m32 = _combo_rel(ref, ref32)
++        m32_worst = max(m32_worst, m32)
++        for cand in ("atomic", "atomic_zero"):
++            if not ok[cand]:
++                continue
++            try:
++                print(f"{COMBO_TAG} F1 launching w13 {cand} T=1 {label} (poisoned buffer)", flush=True)
++                out = _moe_marlin(x, ids, tw, bank, state, w2_mode, w13_mode=cand, poison=True)[0].float()
++                torch.cuda.synchronize()
++                print(f"{COMBO_TAG} F1 ok w13 {cand} T=1 {label}", flush=True)
++                rm, r32 = _combo_rel(out, ref), _combo_rel(out, ref32)
++                worst[cand] = [max(worst[cand][0], rm), max(worst[cand][1], r32)]
++                print(f"{COMBO_TAG} F1 T=1 {label} {cand}: rel-L2 vs master {rm:.3g} (<= {W13_ATOMIC_TOL:g}), vs fp32 "
++                      f"{r32:.3g} (<= {W13_FP32_TOL:g}); master vs fp32 {m32:.3g}", flush=True)
++                if not (rm <= W13_ATOMIC_TOL and r32 <= W13_FP32_TOL):
++                    ok[cand] = False
++                    why[cand] = f"{label} vs master {rm:.3g}, vs fp32 {r32:.3g}"
++            except Exception as e:  # prepare only: the binding rejected the combination
++                ok[cand] = False
++                why[cand] = f"{label} {type(e).__name__}: {str(e)[:160]}"
++    mode = next((c for c in ("atomic", "atomic_zero") if ok[c]), None)
++    if mode is None:
++        return (f"{COMBO_TAG} PATH CHOSEN F1 class=decode_1 (T=1) = master: correctness "
++                + "; ".join(f"{k} failed ({v})" for k, v in why.items()))
++    print(f"{COMBO_TAG} F1 correctness: {mode} worst rel-L2 vs master {worst[mode][0]:.3g}, vs fp32 "
++          f"{worst[mode][1]:.3g}; master vs fp32 worst {m32_worst:.3g}", flush=True)
++    bsm = _block_size_m(1, count)
++    x = torch.randn((1, hidden), generator=gen).to(torch.bfloat16).to(device)
++    tw = torch.rand((1, TOP_K), generator=gen).to(device)
++    ws = state["workspace"]
++
++    def fn_of(name, ids):
++        _, (s_ids, b_exp, n_pad) = _align_small(ids, start, count, bsm)
++        c1 = torch.empty((TOP_K, 2 * inter), dtype=torch.bfloat16, device=device)
++        common = dict(moe_block_size=bsm, mul_topk_weights=False, is_ep=True, b_q_type=scalar_types.float4_e2m1f,
++                      is_k_full=True, use_atomic_add=name != "master", use_fp32_reduce=True, is_zp_float=False)
++
++        def run():
++            if name == "atomic_zero":
++                c1.zero_()
++            return moe_wna16_marlin_gemm(x, c1, bank["w13"], None, bank["w13_s"], bank["w13_gs"], None, None, None,
++                                         ws, s_ids, b_exp, n_pad, tw, top_k=TOP_K, size_m=1, size_n=2 * inter,
++                                         size_k=hidden, **common)
++        return run
++
++    best, worse, meds = _combo_time(fn_of, ["master", mode], _combo_routings(1, gen, local_set, device), device,
++                                    t_prepare)
++    print(f"{COMBO_TAG} F1 [A/B] w13 Marlin call alone T=1: {_combo_meds_text(meds, ['master', mode])}", flush=True)
++    on, line = _combo_choice("F1", "decode_1 (T=1)", best, worse, meds, lambda n: f"w13 {n}")
++    if on:
++        state["w13_mode"] = mode
++    return line + f"; fp32 worst {worst[mode][1]:.3g}, vs master worst {worst[mode][0]:.3g}"
++
++
++def _combo_per_expert(ids, tables, local_start, count, bsm):
++    """Master's _align_self_check per-expert semantics of (local_ids, (sorted_ids, block_experts, n_padded))
++    against SGLang's moe_align_block_size on the same local ids. None if equivalent, else the first reason."""
++    local_ids, (s_ids, b_exp, n_pad) = tables
++    ref_map = torch.full((N_EXPERTS,), -1, dtype=torch.int32, device=ids.device)
++    ref_map[local_start:local_start + count] = torch.arange(count, dtype=torch.int32, device=ids.device)
++    ref_local = ref_map[ids].contiguous()
++    if not torch.equal(local_ids, ref_local):
++        return "local_ids differ"
++    r_ids, r_exp, r_pad = moe_align_block_size(ref_local, bsm, count)
++    numel = ids.numel()
++    s_ids, b_exp, n_pad = s_ids.tolist(), b_exp.tolist(), int(n_pad.item())
++    r_ids, r_exp, r_pad = r_ids.tolist(), r_exp.tolist(), int(r_pad.item())
++
++    def per_expert(sorted_ids, block_experts, used):
++        groups, blocks = {}, {}
++        for b in range(used // bsm):
++            e = block_experts[b]
++            if e < 0:
++                continue
++            blocks[e] = blocks.get(e, 0) + 1
++            groups.setdefault(e, []).extend(i for i in sorted_ids[b * bsm:(b + 1) * bsm] if i < numel)
++        return groups, blocks
++
++    mine, mine_blocks = per_expert(s_ids, b_exp, n_pad)
++    ref, ref_blocks = per_expert(r_ids, r_exp, r_pad)
++    if {e: sorted(v) for e, v in mine.items()} != {e: sorted(v) for e, v in ref.items()}:
++        return "per-expert routes differ"
++    if mine_blocks != ref_blocks or n_pad != bsm * sum(ref_blocks.values()):
++        return f"blocks/n_padded {n_pad} vs SGLang {r_pad}"
++    used = n_pad // bsm
++    if any(e < 0 for e in b_exp[:used]) or any(e != -1 for e in b_exp[used:]) or b_exp[:used] != sorted(b_exp[:used]):
++        return "block_experts layout"
++    real = sum(len(v) for v in mine.values())
++    if sum(1 for i in s_ids if i == numel) != len(s_ids) - real or any(i > numel for i in s_ids):
++        return "sorted_ids sentinel fill"
++    if used > WG_MAX_BLOCKS or len(b_exp) > WG_MAX_BLOCKS or len(s_ids) > WG_CAP_ROWS or len(b_exp) * WG_BSM < len(s_ids):
++        return f"wgmma capacity: used blocks {used}, blocks {len(b_exp)}, slots {len(s_ids)}"
++    return None
++
++
++def _combo_f2(weights, state, device, t_prepare):
++    """F2: the wgmma path's front end (expert_map gather + SGLang align at WG_BSM) replaced, per ON wgmma bucket,
++    by _align_parallel or an align2 chunk at WG_BSM. Review amendment: the tables are checked per expert against
++    SGLang (_align_parallel, master's _align_self_check semantics) and torch.equal align2 vs _align_parallel, never
++    torch.equal vs SGLang (whose layout pads remote blocks); then _moe_wgmma output must be bitwise equal to master's
++    front end. Sets state['wg_align2'][bucket]. Returns PATH CHOSEN lines (one per bucket)."""
++    bank = state["banks"][(0, 32)]
++    start, count = bank["start"], bank["count"]
++    hidden = weights["w2"].shape[1]
++    local_set = list(range(start, start + count))
++    lines = []
++    on_buckets = [b for b in (128, 256) if state.get(f"wg_on_{b}", False)]
++    for b in (128, 256):
++        if b not in on_buckets:
++            lines.append(f"{COMBO_TAG} PATH CHOSEN F2 class=B{b} = master (wgmma bucket off: kernel_fn runs Marlin there)")
++    if not on_buckets:
++        return lines
++    cands = [WG_ALIGN_PAR] + list(ALIGN2_CHUNKS)
++
++    def label_of(c):
++        return "_align_parallel bsm 16" if c == WG_ALIGN_PAR else f"align2 chunk {c} bsm 16"
++    print(f"{COMBO_TAG} F2 launching warm: _align_parallel and align2 chunks {ALIGN2_CHUNKS} at bsm {WG_BSM}, "
++          f"T 128..512", flush=True)
++    for tokens in range(WG_MIN_TOKENS, WG_MAX_TOKENS + 1):
++        ids = torch.full((tokens, TOP_K), start, dtype=torch.int32, device=device)
++        _align_parallel(ids, start, count, WG_BSM)
++        for chunk in ALIGN2_CHUNKS:
++            _align_two_phase(ids, start, count, WG_BSM, chunk)
++    torch.cuda.synchronize()
++    print(f"{COMBO_TAG} F2 ok warm", flush=True)
++    gen = torch.Generator().manual_seed(20261027)
++    bad = {}
++    n_cases = 0
++    for tokens in WG_ALIGN2_EQ_TOKENS:
++        for cstart in ALIGN2_STARTS:
++            for name, ids in _align2_routings(tokens, cstart, count, gen, device).items():
++                n_cases += 1
++                ref = _align_parallel(ids, cstart, count, WG_BSM)
++                tag = f"T={tokens} local_start={cstart} {name}"
++                if WG_ALIGN_PAR not in bad:
++                    why = _combo_per_expert(ids, ref, cstart, count, WG_BSM)
++                    if why:
++                        bad[WG_ALIGN_PAR] = f"{tag}: _align_parallel vs SGLang per expert: {why}"
++                for chunk in ALIGN2_CHUNKS:
++                    if chunk in bad:
++                        continue
++                    why = _align2_first_mismatch(ref, _align_two_phase(ids, cstart, count, WG_BSM, chunk))
++                    if why:
++                        bad[chunk] = f"{tag}: vs _align_parallel: {why}"
++    torch.cuda.synchronize()
++    if WG_ALIGN_PAR in bad:  # the align2 chunks were only proven equal to _align_parallel
++        for chunk in ALIGN2_CHUNKS:
++            bad.setdefault(chunk, "its reference _align_parallel failed the per-expert check")
++    print(f"{COMBO_TAG} F2 table check: {n_cases} cases; failing candidates "
++          f"{ {label_of(c): w for c, w in bad.items()} or 'none'}"[:600], flush=True)
++    # Bitwise _moe_wgmma output: candidate front end vs master's, two routings per T.
++    for tokens in WG_ALIGN2_EQ_TOKENS:
++        rts = _align2_routings(tokens, start, count, gen, device)
++        for name in ("skewed", "random"):
++            good = [c for c in cands if c not in bad]
++            if not good:
++                break
++            x = torch.randn((tokens, hidden), generator=gen).to(torch.bfloat16).to(device)
++            tw = torch.rand((tokens, TOP_K), generator=gen).to(device)
++            state["wg_err"].zero_()
++            print(f"{COMBO_TAG} F2 launching _moe_wgmma master front end T={tokens} {name}", flush=True)
++            out_m = _moe_wgmma(x, rts[name], tw, bank, dict(state, wg_align2={128: 0, 256: 0}))[0]
++            torch.cuda.synchronize()
++            print(f"{COMBO_TAG} F2 ok _moe_wgmma master front end T={tokens} {name}", flush=True)
++            for c in good:
++                out_c = _moe_wgmma(x, rts[name], tw, bank, dict(state, wg_align2={128: c, 256: c}))[0]
++                torch.cuda.synchronize()
++                if not torch.equal(out_c, out_m):
++                    bad[c] = (f"T={tokens} {name}: _moe_wgmma output not bitwise equal (rel-L2 "
++                              f"{_combo_rel(out_c.float(), out_m.float()):.3g})")
++            err_word = int(state["wg_err"][0].item())
++            if err_word:
++                for c in good:
++                    bad.setdefault(c, f"T={tokens} {name}: wgmma error word {err_word}")
++    state["wg_err"].zero_()
++    good = [c for c in cands if c not in bad]
++    print(f"{COMBO_TAG} F2 bitwise _moe_wgmma check: passing {[label_of(c) for c in good]}; failing "
++          f"{ {label_of(c): w for c, w in bad.items()} or 'none'}"[:600], flush=True)
++    if not good:
++        for b in on_buckets:
++            lines.append(f"{COMBO_TAG} PATH CHOSEN F2 class=B{b} = master: no front end passed the table/bitwise checks")
++        return lines
++
++    def fn_of(name, ids):
++        if name == "master":
++            def run():
++                local = bank["expert_map"][ids.to(torch.int32)].contiguous()
++                return moe_align_block_size(local, WG_BSM, count)
++            return run
++        if name == WG_ALIGN_PAR:
++            return lambda: _align_parallel(ids, start, count, WG_BSM)
++        return lambda: _align_two_phase(ids, start, count, WG_BSM, name)
++
++    for b in on_buckets:
++        best, worse, meds = _combo_time(fn_of, ["master"] + good, _combo_routings(b, gen, local_set, device), device,
++                                        t_prepare)
++        print(f"{COMBO_TAG} F2 [A/B] B{b} front end alone T={b} (gather+cast+SGLang align vs candidates): "
++              + "; ".join(f"{r}: " + ", ".join(f"{label_of(n) if n != 'master' else 'master'} {v[n]:.2f} us"
++                                             for n in ["master"] + good) for r, v in meds.items()), flush=True)
++        on, line = _combo_choice("F2", f"B{b}", best, worse, meds, label_of)
++        if on:
++            state["wg_align2"][b] = best
++        lines.append(line)
++    return lines
++
++
++def _combo_f2_select_diag(weights, state, device):
++    """Diagnostic only (conjecture 2): master's _wg_select re-run with the F2 front end live. Its decisions are
++    printed and NEVER applied (the bucket flags stay as master's selector set them)."""
++    bank = state["banks"][(0, 32)]
++    flags = (state["wg_on_128"], state["wg_on_256"])
++    sel, _ = _wg_select(weights, bank, state, device)
++    assert (state["wg_on_128"], state["wg_on_256"]) == flags
++    return (f"{COMBO_TAG} F2 diag (not applied): _wg_select with the F2 front end would set B128 "
++            f"{'WGMMA' if sel.get(128) else 'MARLIN'}, B256 {'WGMMA' if sel.get(256) else 'MARLIN'}; live flags "
++            f"wg_on_128 {flags[0]}, wg_on_256 {flags[1]}")
++
++
++def _combo_c1a(weights, state, device, t_prepare):
++    """C1a: _align_parallel at D32_ALIGN_MIN..MAX_TOKENS vs master's d32 pick (_align_small or the align2 chunk
++    _align2_setup chose). torch.equal on all four outputs vs _align_small, then the align alone graph-timed at
++    T=32. Sets state['d32_align']."""
++    bank = state["banks"][(0, 32)]
++    start, count = bank["start"], bank["count"]
++    local_set = list(range(start, start + count))
++    print(f"{COMBO_TAG} C1a launching warm: _align_parallel T {D32_ALIGN_MIN_TOKENS}..{D32_ALIGN_MAX_TOKENS}", flush=True)
++    for tokens in range(D32_ALIGN_MIN_TOKENS, D32_ALIGN_MAX_TOKENS + 1):
++        _align_parallel(torch.full((tokens, TOP_K), start, dtype=torch.int32, device=device), start, count,
++                        _fwd_block_size_m(tokens, count))
++    torch.cuda.synchronize()
++    print(f"{COMBO_TAG} C1a ok warm", flush=True)
++    gen = torch.Generator().manual_seed(20261028)
++    n_ok, bad = 0, None
++    for tokens in D32_ALIGN_EQ_TOKENS:
++        bsm = _fwd_block_size_m(tokens, count)
++        for cstart in ALIGN2_STARTS:
++            for name, ids in _align2_routings(tokens, cstart, count, gen, device).items():
++                why = _align2_first_mismatch(_align_small(ids, cstart, count, bsm),
++                                             _align_parallel(ids, cstart, count, bsm))
++                if why:
++                    bad = bad or f"T={tokens} bsm={bsm} local_start={cstart} {name}: {why}"
++                else:
++                    n_ok += 1
++    torch.cuda.synchronize()
++    if bad:
++        return f"{COMBO_TAG} PATH CHOSEN C1a class=d32 (T 17..32) = master: _align_parallel vs _align_small {bad}"
++    tokens = D32_ALIGN_MAX_TOKENS
++    bsm = _fwd_block_size_m(tokens, count)
++    chunk = state["align2_ok"]["d32"]
++
++    def fn_of(name, ids):
++        if name == "master":
++            if chunk:
++                return lambda: _align_two_phase(ids, start, count, bsm, chunk)
++            return lambda: _align_small(ids, start, count, bsm)
++        return lambda: _align_parallel(ids, start, count, bsm)
++
++    best, worse, meds = _combo_time(fn_of, ["master", "align_parallel"], _combo_routings(tokens, gen, local_set, device),
++                                    device, t_prepare)
++    mname = f"align2 chunk {chunk}" if chunk else "_align_small"
++    print(f"{COMBO_TAG} C1a [A/B] align alone T={tokens} bsm={bsm} (master = {mname}): "
++          f"{_combo_meds_text(meds, ['master', 'align_parallel'])}", flush=True)
++    on, line = _combo_choice("C1a", "d32 (T 17..32)", best, worse, meds, lambda n: "_align_parallel")
++    if on:
++        state["d32_align"] = 1
++    return line + f"; master pick {mname}; equivalence {n_ok} cases torch.equal"
++
++
++def _combo_c1b(weights, state, device, t_prepare):
++    """C1b: the hoisted Triton post-norm at T == 32. rel-L2 vs an fp32 post-norm of the same y <= 1.5x SGLang's own
++    error (floor 1e-5) on six routings (incl. all-remote rows; remote y rows hold junk), then the post-norm alone
++    graph-timed. Sets state['d32_post_norm']."""
++    bank = state["banks"][(0, 32)]
++    start, count = bank["start"], bank["count"]
++    hidden = weights["w2"].shape[1]
++    local_set = list(range(start, start + count))
++    tokens = HOISTED_POST_NORM_TOKENS
++    pw = state["post_norm_w"]
++    print(f"{COMBO_TAG} C1b launching warm: _post_norm_combine_hoisted_kernel T={tokens}", flush=True)
++    _post_norm_hoisted(torch.zeros((tokens, TOP_K, hidden), dtype=torch.bfloat16, device=device),
++                       torch.zeros((tokens, TOP_K), dtype=torch.int32, device=device),
++                       torch.zeros((tokens, TOP_K), dtype=torch.float32, device=device), pw)
++    torch.cuda.synchronize()
++    print(f"{COMBO_TAG} C1b ok warm", flush=True)
++    gen = torch.Generator().manual_seed(20261029)
++
++    def make(ids):
++        local = bank["expert_map"][ids.to(torch.int32)].contiguous()
++        y = torch.randn((tokens, TOP_K, hidden), generator=gen).to(torch.bfloat16).to(device)
++        y = torch.where((local >= 0).unsqueeze(-1), y, torch.full_like(y, 3.0e4))  # junk in remote rows
++        tw = torch.rand((tokens, TOP_K), generator=gen).to(device)
++        return y, local, tw
++
++    bad, n_ok, worst = None, 0, (0.0, 0.0)
++    for name, ids in _align2_routings(tokens, start, count, gen, device).items():
++        y, local, tw = make(ids)
++        ref32 = _combo_post_norm_fp32(y, local, tw, pw)
++        sg = fused_post_expert_norm_weighted_sum(y, tw, norm_weight=state["norm_w"], eps=POST_NORM_EPS,
++                                                 weight_first=True, slot_expert_ids=local).float()
++        ho = _post_norm_hoisted(y, local, tw, pw).float()
++        torch.cuda.synchronize()
++        e_sg, e_ho = _combo_rel(sg, ref32), _combo_rel(ho, ref32)
++        bound = max(POST_NORM_ERR_FACTOR * e_sg, POST_NORM_ERR_FLOOR)
++        print(f"{COMBO_TAG} C1b T={tokens} {name}: hoisted rel-L2 vs fp32 {e_ho:.3g}, SGLang {e_sg:.3g}, bound "
++              f"{bound:.3g}", flush=True)
++        if not e_ho <= bound:
++            bad = bad or f"{name}: hoisted {e_ho:.3g} > bound {bound:.3g}"
++        else:
++            n_ok += 1
++            worst = (max(worst[0], e_ho), max(worst[1], e_sg))
++    if bad:
++        return f"{COMBO_TAG} PATH CHOSEN C1b class=decode_32 (T=32) = master: {bad}"
++    bufs = {}
++
++    def fn_of(name, ids):
++        if ids.data_ptr() not in bufs:
++            bufs[ids.data_ptr()] = make(ids)
++        y, local, tw = bufs[ids.data_ptr()]
++        if name == "master":
++            return lambda: fused_post_expert_norm_weighted_sum(y, tw, norm_weight=state["norm_w"], eps=POST_NORM_EPS,
++                                                               weight_first=True, slot_expert_ids=local)
++        return lambda: _post_norm_hoisted(y, local, tw, pw)
++
++    best, worse, meds = _combo_time(fn_of, ["master", "hoisted"], _combo_routings(tokens, gen, local_set, device),
++                                    device, t_prepare)
++    print(f"{COMBO_TAG} C1b [A/B] post-norm alone T={tokens}: {_combo_meds_text(meds, ['master', 'hoisted'])}",
++          flush=True)
++    on, line = _combo_choice("C1b", "decode_32 (T=32)", best, worse, meds, lambda n: "hoisted Triton post-norm")
++    if on:
++        state["d32_post_norm"] = 1
++    return line + f"; error vs fp32 worst hoisted {worst[0]:.3g} / SGLang {worst[1]:.3g} ({n_ok} routings)"
++
++
++def _combo_copy_check(weights, state, device):
++    """The judge prepares two states and rotates them: for every T an ON combo flag reaches, capture kernel_fn as
++    a graph on this state and on a tensor-cloning copy, then alternate replays with refilled inputs and compare
++    each against eager kernel_fn. A miss turns that T's sources back to master. Returns a line."""
++    bank = state["banks"][(0, 32)]
++    start, count = bank["start"], bank["count"]
++    hidden = weights["w2"].shape[1]
++    local_set = list(range(start, start + count))
++    shapes = []
++    if state["w13_mode"] != "master":
++        shapes.append((1, ("F1",)))
++    if state["d32_align"]:
++        shapes.append((24, ("C1a",)))
++    if state["d32_align"] or state["d32_post_norm"]:
++        shapes.append((32, tuple(s for s, f in (("C1a", state["d32_align"]), ("C1b", state["d32_post_norm"])) if f)))
++    for b in (128, 256):
++        if state["wg_align2"][b]:
++            shapes.append((b, (f"F2-B{b}",)))
++    if not shapes:
++        return f"{COMBO_TAG} copy check: no combo flag ON, nothing to check"
++    pad = torch.empty(2 * 2 ** 20, dtype=torch.uint8, device=device)
++    other = _wg_copy_tree(state)
++    gen = torch.Generator().manual_seed(20261030)
++    fails, n_rep = [], 0
++    for tokens, srcs in shapes:
++        cfg = {"bs": tokens, "d_hidden": hidden, "d_expert": bank["size_n"], "n_experts": N_EXPERTS,
++               "local_start": start, "local_count": count, "top_k": TOP_K, "sharding": "ep8"}
++        per = []
++        for st in (state, other):
++            data = {"hidden_states": torch.zeros((tokens, hidden), dtype=torch.bfloat16, device=device),
++                    "topk_ids": torch.full((tokens, TOP_K), start, dtype=torch.int32, device=device),
++                    "topk_weights": torch.full((tokens, TOP_K), 1.0 / TOP_K, dtype=torch.float32, device=device),
++                    "config": cfg}
++            graph, out = _wg_graph_of(lambda data=data, st=st: kernel_fn(data, st))
++            per.append((data, graph, out))
++        for k in range(4):
++            ids = _combo_routings(tokens, gen, local_set, device)["zipf" if k % 2 == 0 else "random"]
++            x = torch.randn((tokens, hidden), generator=gen).to(torch.bfloat16).to(device)
++            tw = torch.rand((tokens, TOP_K), generator=gen).to(device)
++            for data, _, _ in per:
++                data["hidden_states"].copy_(x)
++                data["topk_ids"].copy_(ids)
++                data["topk_weights"].copy_(tw)
++            order = per if k % 2 == 0 else per[::-1]
++            for _, graph, _ in order:
++                graph.replay()
++            torch.cuda.synchronize()
++            ref = kernel_fn({"hidden_states": x, "topk_ids": ids, "topk_weights": tw, "config": cfg}, state).float()
++            for i, (_, _, out) in enumerate(per):
++                n_rep += 1
++                rel = _combo_rel(out.float(), ref)
++                if not rel <= COMBO_COPY_TOL:
++                    fails.append((tokens, srcs, f"T={tokens} state {'AB'[i]} refill {k}: rel-L2 vs eager {rel:.3g}"))
++        del per
++        torch.cuda.synchronize()
++    off = sorted({s for _, ss, _ in fails for s in ss})
++    for s in off:
++        if s == "F1":
++            state["w13_mode"] = "master"
++        elif s == "C1a":
++            state["d32_align"] = 0
++        elif s == "C1b":
++            state["d32_post_norm"] = 0
++        else:
++            state["wg_align2"][int(s[4:])] = 0
++    del other, pad
++    gc.collect()
++    torch.cuda.empty_cache()
++    return (f"{COMBO_TAG} copy check (graphs through kernel_fn on the state and a tensor-cloning copy, alternating, "
++            f"refilled): {n_rep} replays, T {[t for t, _ in shapes]}; "
++            + ("PASS" if not fails else f"FAIL -> master for {off}: {fails[0][2]}"))
++
++
++def _combo_setup(weights, state, device, t_prepare):
++    """Untimed, after master's prepare (unchanged). Runs F1, F2 (+ its diagnostic selector re-run), C1a, C1b and
++    the copy check, each only if it can start before its own deadline (COMBO_DEADLINES_S, seconds from
++    prepare()'s start); a skipped, failed or raising phase leaves its flags at master. Returns the lines prepare()
++    prints last: per-phase seconds / skipped, wg_on_128 / wg_on_256, one PATH CHOSEN per source per class."""
++    phases = []    # (name, seconds, status)
++    chosen = []
++
++    def run(name, fn, default_lines, reset=None):
++        el = time.perf_counter() - t_prepare
++        if el > COMBO_DEADLINES_S[name]:
++            phases.append((name, 0.0, f"SKIPPED for time (start at {el:.1f} s > deadline {COMBO_DEADLINES_S[name]:.0f} s)"))
++            chosen.extend(f"{ln} (deadline)" for ln in default_lines)
++            return
++        t0 = time.perf_counter()
++        status = "ran"
++        try:
++            out = fn()
++            out = out if isinstance(out, list) else [out]
++            for ln in out:
++                print(ln, flush=True)
++            chosen.extend(out)
++        except _ComboSkip as e:
++            status = f"SKIPPED for time ({e})"
++            chosen.extend(f"{ln} ({e})" for ln in default_lines)
++            if reset is not None:
++                reset()
++        except Exception as e:  # prepare only: never raises, the flags go back to master
++            status = f"raised {type(e).__name__}: {str(e)[:200]}"
++            chosen.extend(f"{ln} (phase raised)" for ln in default_lines)
++            if reset is not None:
++                reset()
++        torch.cuda.synchronize()
++        phases.append((name, time.perf_counter() - t0, status))
++        print(f"{COMBO_TAG} phase {name}: {status}, {phases[-1][1]:.1f} s (prepare at "
++              f"{time.perf_counter() - t_prepare:.1f} s)", flush=True)
++
++    def master_line(src, cls):
++        return f"{COMBO_TAG} PATH CHOSEN {src} class={cls} = master"
++
++    def reset_f1():
++        state["w13_mode"] = "master"
++
++    def reset_f2():
++        state["wg_align2"] = {128: 0, 256: 0}
++
++    def reset_c1a():
++        state["d32_align"] = 0
++
++    def reset_c1b():
++        state["d32_post_norm"] = 0
++
++    run("F1", lambda: _combo_f1(weights, state, device, t_prepare), [master_line("F1", "decode_1 (T=1)")], reset_f1)
++    run("F2", lambda: _combo_f2(weights, state, device, t_prepare),
++        [master_line("F2", "B128"), master_line("F2", "B256")], reset_f2)
++    run("C1a", lambda: _combo_c1a(weights, state, device, t_prepare), [master_line("C1a", "d32 (T 17..32)")],
++        reset_c1a)
++    run("C1b", lambda: _combo_c1b(weights, state, device, t_prepare), [master_line("C1b", "decode_32 (T=32)")],
++        reset_c1b)
++    if any(state["wg_align2"].values()):
++        # Lowest priority, after every gate: a diagnostic that never changes a flag.
++        run("F2-select-diag", lambda: _combo_f2_select_diag(weights, state, device), [])
++    copy_lines = []
++
++    def copy_phase():
++        line = _combo_copy_check(weights, state, device)
++        copy_lines.append(line)
++        return line
++
++    def copy_skipped():
++        # A skipped copy check would leave unchecked flags live: turn every combo flag back to master.
++        state["w13_mode"], state["d32_align"], state["d32_post_norm"] = "master", 0, 0
++        state["wg_align2"] = {128: 0, 256: 0}
++
++    run("copy", copy_phase, [])
++    if not copy_lines and phases[-1][0] == "copy":
++        copy_skipped()
++        chosen.append(f"{COMBO_TAG} copy check did not complete ({phases[-1][2]}): every combo flag -> master")
++    lines = [f"{COMBO_TAG} ===== COMBO SUMMARY (after master's prepare; per-phase start deadlines "
++             f"{COMBO_DEADLINES_S}, no timing past {COMBO_TIMING_DEADLINE_S:.0f} s) ====="]
++    for name, sec, status in phases:
++        lines.append(f"{COMBO_TAG} phase {name}: {sec:.1f} s, {status}")
++    lines.append(f"{COMBO_TAG} wg_on_128 {state.get('wg_on_128', False)}, wg_on_256 {state.get('wg_on_256', False)} "
++                 f"(master's _wg_setup selector; F2 applies only to an ON bucket)")
++    lines.extend(chosen)
++    lines.append(f"{COMBO_TAG} final flags: w13_mode={state['w13_mode']!r} wg_align2={dict(state['wg_align2'])} "
++                 f"d32_align={state['d32_align']} d32_post_norm={state['d32_post_norm']} (master = 'master'/0)")
++    return lines
++
++
+ def kernel_fn(data: Inputs, state: dict) -> torch.Tensor:
+     """This GPU's share of the MoE output, bfloat16 [M, H]."""
+     cfg = data["config"]
+@@ -3176,4 +4257,6 @@ def kernel_fn(data: Inputs, state: dict) -> torch.Tensor:
+     if bank["expert_map"] is not None and WG_MIN_TOKENS <= num_tokens <= WG_MAX_TOKENS:
+         if state.get("wg_on_128", False) if num_tokens < WG_B256_MIN_TOKENS else state.get("wg_on_256", False):
+             return _moe_wgmma(x, data["topk_ids"], data["topk_weights"], bank, state)[0]
+-    return _moe_marlin(x, data["topk_ids"], data["topk_weights"], bank, state, state.get("w2_mode", "master"))[0]
++    # Combo flags are prepare-set plain values; _moe_marlin branches on them and the shape only.
++    return _moe_marlin(x, data["topk_ids"], data["topk_weights"], bank, state, state.get("w2_mode", "master"),
++                       state.get("w13_mode", "master"), state.get("d32_align", 0), state.get("d32_post_norm", 0))[0]

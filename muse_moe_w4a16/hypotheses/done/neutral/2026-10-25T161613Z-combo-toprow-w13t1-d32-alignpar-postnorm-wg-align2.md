@@ -106,10 +106,10 @@ priority: 1
 kind: primary
 controls_for: null
 review: proceed
-status: running
+status: done
 review_at: 2026-10-25T162036Z
 review_companions: null
-stage: dispatched
+stage: harvested
 claimed_at: 2026-10-25T162036Z
 base_sha: 1a68e94c6b2606b0ecd994ea29ea38fc22e70f0e
 base_blob: 593b238c16387c5ac3774424ee9557882b9fc46a
@@ -128,6 +128,13 @@ attempt_file: 2026-10-25T185454Z-submit-combo-toprow-w13t1-d32-alignpar-postnorm
 prepared_at: 2026-10-25T185454Z
 job: b395f5b6097348c7
 dispatched_at: 2026-10-25T185505Z
+outcome: neutral
+verdict_detail: unproven-vs-best
+speedup: 1.3865522395057346
+speedup_ci: [1.3657539559131486, 1.4073505230983205]
+harvested_at: 2026-10-25T185827Z
+best_at_harvest: 1.3752355517671193
+promotion: null
 ---
 
 # combo-toprow-w13t1-d32-alignpar-postnorm-wg-align2
@@ -224,3 +231,29 @@ Audited 2026-10-25 (opus). Read only: there is no GPU here. **Verdict: dispatch-
 - okc_lint: OK with warnings (prepare-time host syncs only). py_compile passed, and __pycache__ was removed.
 
 Residual risk: F2's bitwise gate relies on wgmma columns being position- and N-invariant. If they are not, B256 keeps master's front end, which is safe but leaves verify_32 flat.
+
+## Result
+
+- job `b395f5b6097348c7` (submit), status done, passed True, tests 5/5
+- speedup 1.3866x, 95% CI [1.3658, 1.4074], score 9699.237877105876 µs vs SGLang 13448.5 µs
+- best at harvest: {"speedup": 1.3752355517671193, "ci": [1.3546070184906125, 1.395864085043626], "job": "667b64e3fb1343ec"}; base result: muse_moe_w4a16/hypotheses/done/neutral/align-two-phase-port-from17.result.json
+- **outcome: neutral** (unproven-vs-best)
+- files: `muse_moe_w4a16/hypotheses/done/neutral/combo-toprow-w13t1-d32-alignpar-postnorm-wg-align2.result.json`, `muse_moe_w4a16/hypotheses/done/neutral/combo-toprow-w13t1-d32-alignpar-postnorm-wg-align2.patch`; branch `hyp/muse_moe_w4a16/combo-toprow-w13t1-d32-alignpar-postnorm-wg-align2`
+
+## Attribution
+
+| shape | w | base µs | hyp µs | delta | verdict |
+|---|---|---|---|---|---|
+| bs=1 load=decode_1 sharding=ep8 | 60 | 46.77 | 45.4 | 1.0262 | flat |
+| bs=16 load=decode_16 sharding=ep8 | 60 | 145.99 | 148.4 | 0.9939 | flat |
+| bs=32 load=decode_32 sharding=ep8 | 60 | 203.75 | 205.25 | 1.0138 | flat |
+| bs=8 load=verify_1 sharding=ep8 | 60 | 111.85 | 110.36 | 0.9944 | flat |
+| bs=128 load=verify_16 sharding=ep8 | 60 | 319.08 | 317.48 | 1.0139 | flat |
+| bs=256 load=verify_32 sharding=ep8 | 60 | 404.89 | 402.36 | 1.0308 | gained |
+
+gained on verify_32 verify_32. Expected hit: 4/6. Noise ±1.5%.
+
+## Follow-ups
+
+- unproven-vs-best: the change is not proven either way; a stacked hypothesis (`depends_on: combo-toprow-w13t1-d32-alignpar-postnorm-wg-align2`) that adds a further change in the same area is the only way to learn more (identical code is never re-run).
+
