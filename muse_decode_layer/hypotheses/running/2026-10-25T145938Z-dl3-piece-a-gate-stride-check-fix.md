@@ -57,7 +57,7 @@ review: proceed
 status: running
 review_at: 2026-10-25T150343Z
 review_companions: null
-stage: claimed
+stage: implemented
 claimed_at: 2026-10-25T150343Z
 base_sha: 2f268b5931c7c758c5178f3bb152d80688ca9d95
 base_blob: 07cda658e21f2eb25a9dd1f50ac5202ad5985831
@@ -66,6 +66,12 @@ worktree: .worktrees/muse_decode_layer/dl3-piece-a-gate-stride-check-fix
 mode: null
 restack_of: null
 stale_base: null
+implemented_at: 2026-10-25T151022Z
+impl_commit: b7cda2f98490edaa87165022bdbfbb2ba1cb1e7c
+submission_sha256: 7c05556dc4f176d98eaee0a84a2cb72a9c42ae167af50f3291020bc809abf797
+norm_sha256: 0ecc710dd1b881b74d8fdef9019a3ab78a795894ae7614342aed797ae968c552
+submission_blob: 4bb57fd292a7f0fd5a80bd88dc773008b490bf8c
+lint_warnings: 57
 ---
 
 # dl3-piece-a-gate-stride-check-fix
@@ -111,3 +117,37 @@ No companion is warranted. The change is gated to one shape (full decode_1), and
 - Is s3's dl2_qkv (which now also does RoPE, the FP8 casts and the KV store) the same kernel s2 ran through the judge, or an extension? If it is an extension, the judge-pass evidence from s2 is weaker for the KV-store half (judge bound: new cache entries within 8%; the internal check allows a 1-code FP8 gap).
 - If the run passes and full decode_1 improves by less than ~2 us, check whether the prepare-time selector A ratio (printed with the M2 line) overstates the in-graph gain because the parent's chain already overlaps with PDL in the full layer.
 
+
+## Implementation notes
+
+Base 2f268b59 has the same submission.py blob as master 9716bda4, so no merge was needed. Single change in `_dl3_check_a` (muse_decode_layer/submission.py, 4 insertions, 1 deletion): the test gate is now `torch.empty((sqkv.shape[0], 1024), dtype=sqkv.dtype, device=device)` plus `gate_c.copy_(sqkv[:, SK_QKV_GATE_OFF:])`, replacing `.contiguous()`. The stride clause and torch.equal comparison are unchanged. Added one print after the plumbing line with `gate_c.stride()`. The per-piece `PATH CHOSEN: dl3 piece A/B/C` lines already exist in `_dl3_layer_checks` (one per piece, each with w2_mode tail and the fallback reason), so nothing was added there. Review items: all confounder and open-question items are reading guidance for the harvest (check the B/C PATH CHOSEN lines and w2_mode before attributing decode_1 movement); no build action needed. Deviations: none.
+
+## Rules check
+
+- [x] CUDA-graph capturable: change is prepare-only (self-check); kernel_fn untouched.
+- [x] Nothing derived from `data` is cached across calls: n/a, no state change.
+- [x] Weights: unchanged.
+- [x] Activations/KV/queries precision: unchanged.
+- [x] Attention sees every key: unchanged.
+- [x] No timing patches, harness I/O, module edits, reference import, child processes: checked in the git diff.
+- [x] All work inside the timed call: unchanged.
+
+okc_lint: OK with warnings (only host-sync warnings in prepare(), pre-existing). py_compile OK, __pycache__ removed.
+
+## Pre-flight audit
+
+Audited 2026-10-25 by an Opus subagent, before a SCORED submit with no checks left. **Verdict: dispatch-with-fixes.**
+
+The stride fix is correct: a fresh `torch.empty((rows, 1024))` has stride (1024, 1), so the clause passes, and the `torch.equal` test is unchanged. Scope matches the spec. kernel_fn's piece-A gate reads only config and state flags (tokens == 1, `_sk_variant == 3`, which needs page 1, a full layer and batch 1). Judge test 11 and the scored full decode_1 shape take A; the page-64 `batch 1, ctx 3000, full` test does not. Every failure path in `_dl3_finish` and `_dl3_layer_checks` is caught and lands on the parent path with a PATH CHOSEN line.
+
+The audit was told to be strict about what goes live once the gate passes, so it tightened the A=1 layer gate (prepare-only, all inside `_dl3_compare_layer` / `_dl3_alternation_check`):
+
+1. **The A-on stream tolerance went from 2e-2 to 1e-2, and hidden from 5e-2 to 2e-2.** The synthetic stream has rms ~3, so it dilutes the error: 2e-2 on the full stream allowed a residual-update error of about 7% against the parent. Judge test 11 in 34a9be06918d448b had the parent's update at 5.55% of a 0.148 bound and its hidden at 3.23% of 0.086. 1e-2 caps the added update error at about 3.5%, which keeps a worst-case linear sum well inside the bound. A's expected deviation is far smaller: kernel-level q gap 0, O 1e-5, sk output identical. B/C alone already show about 1.7e-3, so the gate should not trip on legitimate output.
+2. **A-on cache check gained a rel-L2 bound of 2e-2 on the new K/V rows** against the parent, in addition to the code gap of at most 1. A one-code shift on every element passes the gap test but is about 9% L2, over the judge's 8%.
+3. **The alternating two-state graph check now runs all three `_DL3_CASES`.** That adds full kv_scale=1, n=9001, local_start=96. Judge K_SCALE defaults to 1.0, so the scored full decode_1 shape and test 11 run at kv_scale=1, and before this they were covered only eagerly. Cost: one more pair of captures and 6 replays, under a second of prepare time.
+
+An observation, not fixed: in 34a9be06918d448b, alt full kv_scale=0.25 replays 2-5 compared at exactly 0.00e+00, while replays 0-1 and every sliding replay were about 1.7e-3. The most likely cause is that no local experts were routed, so C's numeric difference vanished. It is not structural aliasing, since replays 0-1 differ. Read the new alt full kv_scale=1 lines in the log.
+
+okc_lint: OK with warnings (only the pre-existing host-sync warnings in prepare()). py_compile OK, __pycache__ removed.
+
+Residual risk: A's Q/O kernels meet judge data for the first time in the timed path. The checks bound their deviation from the parent to about 3.5% of the update. That is inside the judge's headroom but rests on synthetic inputs (randn x, non-soft KV), and the worst case is a failed scored run, not a wrong board entry.
