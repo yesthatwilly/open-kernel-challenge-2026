@@ -105,7 +105,7 @@ review: proceed
 status: running
 review_at: 2026-10-25T162106Z
 review_companions: null
-stage: implemented
+stage: dispatched
 claimed_at: 2026-10-25T162106Z
 base_sha: c20f01f78876c85beb295ad153dccfe3078c3ad4
 base_blob: 5cf8fae31e5b84c36efeeb4569763eb9b06e1c8a
@@ -122,6 +122,8 @@ submission_blob: 6aeaa6d224eb1a7eede636e8781f36b65c438965
 lint_warnings: 71
 attempt_file: 2026-10-25T185755Z-submit-combo-b1-chain-c320-fused-pre-pdl.md
 prepared_at: 2026-10-25T185755Z
+job: 8713665f3064462c
+dispatched_at: 2026-10-25T185802Z
 ---
 
 # combo-b1-chain-c320-fused-pre-pdl
