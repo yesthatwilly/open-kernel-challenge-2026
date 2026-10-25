@@ -66,8 +66,10 @@ depends_on: null
 priority: 2
 kind: primary
 controls_for: null
-review: required
+review: proceed
 status: queued
+review_at: 2026-10-25T011846Z
+review_companions: null
 ---
 
 # bf16-verify-deepgemm-bf16-gemm-nt-route
@@ -90,3 +92,25 @@ Built on master (blob a8bb42a). At m=128/256 all four bf16 layers still run cuBL
 ## Risk
 
 Medium. (a) The installed DeepGEMM may predate the BF16 GEMMs (then the run measures master: read the [deepgemm] lines first). (b) Its JIT needs nvcc and a writable cache dir at prepare time; load_inline builds have run on the judge, so nvcc exists, but print the JIT seconds against the 10-minute budget. (c) DeepGEMM's heuristics favour large M; at m=128/256 with M on the token side it may choose block_m 64/128 and lose like CUTLASS did; per-shape rows decide, gate per layer at harvest. (d) If it allocates or syncs inside the call, graph capture fails in prepare and the layer is disabled. Rules: an in-image library (rules list DeepGEMM explicitly), no timing-based selection.
+
+## Adversarial review
+
+Reviewed 2026-10-25T011846Z by an adversarial subagent (model opus).
+
+**Verdict: proceed.** DeepGEMM is present in the judge image: the stream-K run's log (archive f5b1361aaa0e48b5.log) found it via importlib find_spec at /opt/sglang/lib/python3.12/site-packages/deep_gemm with bundled CUTLASS 4.2.1, and the technical rules name DeepGEMM. Whether that version exports bf16_gemm_nt is unverified, but the change already prints a loud availability line and PATH CHOSEN per layer, so a no-op run cannot be misread. Proceed. Pre-warm every m in the gate (or narrow the gate) so no JIT compile can happen inside a timed or captured call.
+
+### Justification
+The mechanism is plausible but overclaimed. At m=128/256, master runs cuBLAS nvjet at about 1.0x SGLang and 1.4-2x off the floor: qkv_gate m=128 is splitK 12.6 + splitKreduce 3.1 us (row 17.0, SoL 8.4); m=256 is 19.5 (SoL 9.8); pooler m=128 is 24.5 (SoL 14.6) and m=256 is 30.7 (SoL 17.4). Three in-house attempts lost here (Triton split-K, TMA+warp-spec, CUTLASS stream-K), so a vendor-tuned SM90 BF16 GEMM is the right next thing to try. WEAKEST LINK: the claim that DeepGEMM's heuristics are 'tuned for exactly these skinny-M, deep-K shapes' is not supported. DeepGEMM's normal (non-grouped) GEMMs have no split-K, and its block/multicast heuristic is designed around large-M training and prefill. At m=128 with n=2304 (qkv_gate), one m-block gives only 2304/block_n output tiles (18-72), and with no split-K each tile walks the whole K=8192, which is the same occupancy problem nvjet solved with splitK. A loss at qkv_gate m=128 is therefore as likely as a gain. pooler/unpooler (n=4096/8192) have more tiles and are the likelier winners. Directions in `expected` are reasonable apart from qkv_gate m=128, which should read 'uncertain'. The headline effect is bounded by verify_16/verify_32 being two loads of six.
+
+### Confounders on the current kernel
+- None of the landed hypotheses touch m=65..256 on the four bf16 layers. The swap-AB/Triton paths gate at m<=32. sglang-gemm-dispatch-parity made master's incumbent the same TN cuBLAS call SGLang makes, so the per-shape paired ratio vs SGLang measures DeepGEMM vs nvjet directly.
+- In flight, not landed: pooler-unpooler-m128-nn-layout-gated routes pooler/unpooler at 65..128 just before the same cuBLAS fallback. The two hypotheses must not be stacked without separate gate constants and an explicit branch order. Each is measured against master, so neither confounds the other's single run.
+
+### Interference and A/B needs
+No companion. Each layer×m row is either DeepGEMM (confirmed by PATH CHOSEN plus a deep_gemm kernel in top_kernels) or master, and is measured paired against SGLang's identical cuBLAS. A gain or a loss per row is attributable. If [deepgemm] prints 'unavailable, master kept' or every layer is DISABLED, churn must classify the run as VOID (measured master), not neutral, and must not record it as a DeepGEMM result. Hold the line only after that happens, not before.
+
+### Open questions
+- Does the installed deep_gemm export bf16_gemm_nt (DeepGEMM added dense BF16 GEMMs in its 2.x line; the bundled CUTLASS 4.2.1 suggests a late-2025 build, but sglang may pin an older fork)? The first [deepgemm] line answers it. If absent, consider whether any other in-image BF16 path (e.g. a FlashInfer or sgl_kernel bf16 GEMM) is worth the same scaffold.
+- Is the minimum n alignment satisfied for qkv_gate n=2304 at DeepGEMM's chosen block_n? The self-check and try/except cover it, but print the chosen block config per layer×m so a loss can be traced to the tile choice.
+- Use per-layer harvest gating: promote only the layer×m rows whose paired ratio beats master by more than the CI. Expect pooler/unpooler to be the candidates and qkv_gate m=128 to be at risk.
+
