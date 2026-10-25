@@ -67,8 +67,10 @@ kind: rewrite
 controls_for: null
 rewrite_stage: 2
 replaces: "sliding layer decode at tp8/page 1, 1<=batch<=32: master Triton _sliding_fused_kernel (stage-1 sliding_cluster_kernel<1>)"
-review: required
+review: proceed
 status: queued
+review_at: 2026-10-25T002143Z
+review_companions: null
 ---
 
 # sliding-cluster-s2-decode-c4-pdl-inproc
@@ -98,3 +100,34 @@ shape (profile top_kernels) against the incumbent and the speed-of-light floor, 
 2. at or below the incumbent kernels' time on the target shapes;
 3. within ~1.5x of the floor on the target shapes, and the headline CI clears 1.0 (promotable).
 The next stage is minted with `--kind rewrite --depends-on <this slug> --stage N+1`.
+
+## Adversarial review
+
+Reviewed 2026-10-25T002143Z by an adversarial subagent (model opus).
+
+**Verdict: proceed.** Sound stage 2 with no rules problem, but as specified it may hit its own fallback on decode_32 and its PDL part does nothing. The spec's ~144 KB smem at C=4 forces 1 CTA/SM. That gives the same per-GPC slot count as stage 1's C=8 at 2 CTAs/SM, which measured 30 max active clusters, below the 32 needed, so decode_32 would likely fall back to master. Size C=4 for 2 CTAs/SM (<= ~113 KB), and expect no gain from PDL, because the cluster kernel is the only kernel node in the sliding graph.
+
+### Justification
+Mechanism. FINDINGS and REWRITE_READ section 3 support stage 2 for decode only. On master, sliding decode_1/16/32 is one Triton _sliding_fused_kernel at 10.4/12.9/22.1 us against floors of 0.11/1.65/3.29 us. Stage 1's cluster kernel measured 10.0/13.0/22.2 us. decode_32 did not scale from decode_16 because of two waves: 32 clusters of C=8 against 30 co-resident. Bytes are small: 32 x 2048 x 2 heads x 128 B = 16.8 MB, about 3.5 us. So a one-wave decode_32 at <= 12 us is physically plausible, and so is decode_16 <= 10 us from a split gather that overlaps compute with the second half of the gather. Gating verify off is right, since stage 1 lost 0.48-0.69x there. The expected directions match the TASK.md weights: sliding shapes weigh 46 each in all three decode loads.
+
+WEAKEST LINK 1, the occupancy arithmetic of the one-wave fix. The spec sizes C=4 at '2 x 264 x 272 B ~ 144 KB smem, 1 CTA/SM'. A cluster must sit inside one GPC. With 1 CTA/SM, max active C=4 clusters is sum over GPCs of floor(SMs_g/4). Stage 1 ran C=8 at 2 CTAs/SM (the brief required fitting 2/SM), which gives floor(2*SMs_g/8). That is the same number, and it was measured at 30. So cudaOccupancyMaxActiveClusters for C=4 at 144 KB will very likely return about 30, not >= 32. The spec's own guard then disables C=4 for B=17..32, and decode_32, the stage's main target with the 'DEAD if not < 22 us' milestone, silently runs master. The check would teach nothing about decode_32. Fix in the build: keep the stage-1 aliasing (fp32 partials over consumed K, V widened per fragment in registers) and store only the raw fp8 K/V. That is 128 B/key x 528 keys ~ 66 KB plus q/partials, about 70-90 KB, which fits 2 CTAs/SM and should allow about 60 clusters. The two 'half-buffers' are just halves of the same 528 keys, so the split gather needs no extra smem. Also, as a fallback before reverting to master, try the non-portable size or C=2.
+
+WEAKEST LINK 2, PDL is inert on the timed shapes. Stage 1's profile shows sliding_cluster_kernel as the only kernel on every sliding shape: pre-attention and norm-gate are fused into it. So inside the captured graph it has no upstream kernel node. Programmatic edges do not cross graph launches or the judge's L2-flush read. griddepcontrol.wait returns at once, and launch_dependents has no dependents. The decode_16 M3 claim ('via PDL prologue overlap') and the decode_1 '~1 us from PDL' should be credited to the split gather alone, and decode_1 should be expected flat. It is harmless to keep, since it is graph-capturable and a no-op, but do not read a decode_16 gain as a PDL result.
+
+Minor: decode_1 is labelled 'faster' but its milestone is 'no regression'. At B=1 the bound is the dependent chain (index -> gather -> compute -> DSMEM merge), and none of the three changes shortens that chain, so flat is the honest expectation. Reaching 1.5x of the floor is out of reach at every shape, but rewrites are judged on the incumbent and the trajectory, and the decode_16/32 targets are reachable.
+
+### Confounders on the current kernel
+- sliding-deep-splits-on-cuda-splitkv: the incumbent being replaced (Triton _sliding_fused_kernel at 16 splits on batched decode) and also the fallback target. If the C=4 guard trips, decode_32 runs this kernel unchanged, and a flat decode_32 would wrongly read as 'C=4 did not help'. Read the printed max-clusters and PATH CHOSEN lines before interpreting decode_32.
+- sliding-fused-triton-decode1-gate: the B=1 incumbent (10.4 us). The cluster kernel at C=16 already matched it in stage 1 (10.0), so a decode_1 delta within about 0.5 us is noise, not this stage's change.
+- fused-preattention-triton: on the sliding cluster path the cluster kernel does its own q/k norm, RoPE, fp8 and cache store, while verify (now gated off) keeps master's _pre_attention_kernel plus FA3. There is no timing confound, but the cache-row self-check must compare against this landed kernel's store convention.
+- full-decode-cuda-gather-splitkv: a separate load_inline module compiled in the same process (~41 s), plus ~45 s for this module. That is fine for the 15-minute budget, but a build failure here must not disturb the splitkv module (keep the modules separate, as stage 1 did). No timing interaction: full shapes are untouched.
+
+### Interference and A/B needs
+No companion is warranted. This is kind: rewrite, judged on the replaced kernel's own time per shape from profile top_kernels, and the profile plus the import-time log (max active clusters per C, PATH CHOSEN per batch class, ptxas regs/smem) identify which path ran on each sliding decode shape. No landed hypothesis is reverted or tuned by this change. The verify shapes go back to master's FA3 byte for byte, and full layers are untouched. A PDL-off control would measure a no-op (no upstream kernel node in the graph). A C=8-vs-C=4 A/B is also not needed, because stage 1 already measured C=8 at decode_32 (22.2 us, two waves). The real risk to interpretability is the occupancy guard falling back on decode_32, and that is fixed in the build (size for 2 CTAs/SM), not by an extra run.
+
+### Open questions
+- What does cudaOccupancyMaxActiveClusters return for C=4 at the real smem size? If it is about 30 (the same as stage 1's C=8 at 2 CTAs/SM), decode_32 falls back. Does the build fit C=4 at 2 CTAs/SM (<= ~113 KB smem, <= 128 regs at the CTA size)?
+- Is anything other than the cluster kernel in the captured sliding-decode graph (an output memset, a counter zeroing)? If not, PDL has nothing to overlap, and decode_16/decode_1 gains must be credited to the split gather.
+- At C=4, does one CTA per 528-key chunk issue enough bytes in flight (about 135 KB per SM) to approach per-SM bandwidth, or is a deeper cp.async pipeline (more than 2 groups) needed in stage 3?
+- decode_1 at C=16 stays chain-bound at ~10 us. Which phase (page-table index load, gather, DSMEM merge, epilogue) dominates? Add clock64 per-phase stamps in the self-check so stage 3 can target it.
+
