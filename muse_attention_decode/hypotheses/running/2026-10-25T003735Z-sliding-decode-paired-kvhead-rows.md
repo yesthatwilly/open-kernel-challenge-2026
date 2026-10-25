@@ -45,15 +45,23 @@ status: running
 review_at: 2026-10-25T004021Z
 review_companions: [sliding-decode-paired-kvhead-rows-control-unpaired-s8]
 hold_reason: null
-stage: claimed
+stage: implemented
 claimed_at: 2026-10-25T014325Z
 base_sha: 0c91821ce96e550a59594394591699d20286eb84
 base_blob: c6854f093588da524e63657576b27ed720756e32
 branch: hyp/muse_attention_decode/sliding-decode-paired-kvhead-rows
 worktree: .worktrees/muse_attention_decode/sliding-decode-paired-kvhead-rows
-mode: null
+mode: check
 restack_of: null
 stale_base: null
+implemented_at: 2026-10-25T014526Z
+impl_commit: 990710b28b9dcf8dcc5513dd19981907c15e460d
+submission_sha256: 60a19c2fe163ce14ab00717c6cced9a3c35e9ec417b511b162052a4daf3353b0
+norm_sha256: fdda24a3a51127ec55fb90dbbb77e4a02e88e0859debf40544fb2b9ff47723fa
+submission_blob: af33f9553ee353859b9026c4071c9d22288fd453
+lint_warnings: 0
+attempt_file: 2026-10-25T014526Z-check-sliding-decode-paired-kvhead-rows.md
+prepared_at: 2026-10-25T014526Z
 ---
 
 # sliding-decode-paired-kvhead-rows
@@ -100,3 +108,26 @@ One companion: an unpaired S=8 same-grid control (B x 2 x 8 programs, 16 KB each
 - Row-half selection: reshape acc to [16,2,64] and masked-sum over axis 1; check no large smem shuffle.
 - Credit pairing at decode_32 only if clearly below 17.3 us.
 
+
+## Implementation notes
+
+- Worktree `muse_attention_decode/submission.py`, +172 lines, nothing removed. `_sliding_fused_kernel` and all other paths are untouched (byte-identical).
+- Deviation: a new kernel `_sliding_paired_kernel` instead of a PAIR constexpr inside `_sliding_fused_kernel`, so the unpaired kernel's code cannot change. Gate in `_sliding_forward` (config only): `length == 1 and batch > 1 and hkv == 2 and hq == 16 and d == 64`. Grid is (B, 16) with S = 16, M = 16, BLOCK_N 64, warps 4, stages 2.
+- Rows r = 0..15 are query heads (kv head r // 8, no padding). The query is loaded as its 64 values twice into 128 columns, normed and roped, then zeroed outside its own half.
+- Review item 1: `_norm_rope_halves` takes the RMSNorm per 64-wide half, for the query and for the new k. RoPE freq indexes `(d % 64) // 2`. The new k/v is stored contiguously at `loc * 128 + d2`, which is `(loc * 2 + g) * 64 + d` for g = 0, 1.
+- Review item 2: `_own_half` reshapes acc to [16, 2, 64] and takes a masked sum over axis 1. The partial write and the epilogue both use the result, so ws_acc stays [B*S, 16, 64]. Whether Triton lowers this without a large smem shuffle is unchecked (no GPU here).
+- Review item 3: counters are `_counters(batch, 1, device)`, one per request. Each of the 16 programs of request b draws one ticket, the last one combines and resets it to 0, so the zero-reset invariant holds across graph replay. The (B, 1) buffer is a different dict key from the old (B, 2) buffer, so they cannot alias.
+- Review item 4: the submission has no `prepare()`. The kernel's n_regs and n_spills are printed once, on the first (eager) launch, from the launch handle, with no sync. Check the log_tail for `[paired] ...`.
+- Weakest point: untested on GPU. The query norm over duplicated columns is mathematically equal to the 64-wide norm, but the sum order may differ in the last ulp.
+
+## Rules check
+
+- [x] CUDA-graph capturable: the only host work is the one-time print of n_regs and n_spills (host metadata); the branch is on config only; workspaces are allocated from shapes.
+- [x] Nothing derived from `data` is cached: counters are zero-by-invariant and carry no data; `_inv_freq` is unchanged.
+- [x] n/a: weights untouched, no repacking.
+- [x] KV cache stays FP8 E4M3; the query is bf16 as in master.
+- [x] Every key is attended: old window keys in all 16 splits, plus the new key from registers.
+- [x] No timing patches, subprocesses or network: the diff only adds a Triton kernel and a gated launch.
+- [x] All work is inside the timed call; no output caching or replay.
+
+okc_lint: `CLEAN: muse_attention_decode/submission.py`. `python3 -I -m py_compile` passed and `__pycache__` removed.
