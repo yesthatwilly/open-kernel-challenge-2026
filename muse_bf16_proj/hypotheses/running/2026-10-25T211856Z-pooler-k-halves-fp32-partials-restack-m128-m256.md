@@ -51,9 +51,18 @@ kind: primary
 controls_for: null
 prior: "pooler-k-halves-batched-gemm-m65-m256: same mechanism, now rebased onto the combo master 36c26199 (bulk row-owner, Lt cell B), with an fp32-partials candidate added and the hardened two-round 1.03 gate; the bf16-partials form already won pooler verify_16 23.2->21.43 and verify_32 29.94->26.75 on the 67b46a57 base"
 review: proceed
-status: queued
+status: running
 review_at: 2026-10-25T212522Z
 review_companions: null
+stage: claimed
+claimed_at: 2026-10-25T212546Z
+base_sha: c1d4c033dc83025d0a9fec3357e4d7f493a6c1b0
+base_blob: ad8d7254a64a52db2a8f56ec0ad262748153a2e8
+branch: hyp/muse_bf16_proj/pooler-k-halves-fp32-partials-restack-m128-m256
+worktree: .worktrees/muse_bf16_proj/pooler-k-halves-fp32-partials-restack-m128-m256
+mode: check
+restack_of: null
+stale_base: null
 ---
 
 # pooler-k-halves-fp32-partials-restack-m128-m256
