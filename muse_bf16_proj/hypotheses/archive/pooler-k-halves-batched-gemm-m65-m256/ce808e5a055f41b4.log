@@ -1,0 +1,110 @@
+WIN; eager-cold (not used) cluster 10.43 / swapab16 10.72 us
+[ouns] gate m=8 (graph replay, 256 MB flush, 41 reps, interleaved): cluster median 10.43 us, swapab16 median 10.78 us, empty-graph baseline 5.18 us -> net 5.25 vs 5.60 us, incumbent/cluster 1.067x (need >= 1.02) -> WIN; eager-cold (not used) cluster 10.62 / swapab16 10.82 us
+[ouns] PATH CHOSEN: unpooler slice m<=8 (n=1024) -> CUDA cluster/DSMEM split-K, cluster dim 8; self-check passed (m (1, 5, 8)) and graph-replay gate won at m (1, 8) (see the [ouns] gate lines for both medians)
+[prepare-time] ouns self-check + graph-replay gate: 0.14s
+[router_cluster] cs=8 nt=8: regs=162 local(spill)=0 B static smem=0 B dynamic smem=82432 B max active clusters=30
+[router_cluster] launching router_kernel<8,8> m=1 run 1
+[router_cluster] router_kernel<8,8> m=1 run 1 finished OK
+[router_cluster] launching router_kernel<8,8> m=1 run 2
+[router_cluster] router_kernel<8,8> m=1 run 2 finished OK
+[router_cluster] launching router_kernel<8,8> m=5 run 1
+[router_cluster] router_kernel<8,8> m=5 run 1 finished OK
+[router_cluster] launching router_kernel<8,8> m=5 run 2
+[router_cluster] router_kernel<8,8> m=5 run 2 finished OK
+[router_cluster] launching router_kernel<8,8> m=8 run 1
+[router_cluster] router_kernel<8,8> m=8 run 1 finished OK
+[router_cluster] launching router_kernel<8,8> m=8 run 2
+[router_cluster] router_kernel<8,8> m=8 run 2 finished OK
+[router_cluster] cs=8 self-check passed (m in (1, 5, 8))
+[router_cluster] PATH CHOSEN router m<=8 (n=256): CUDA cluster kernel router_kernel<8,8>, no memset; 9 <= m <= 32: swap-AB Triton router; m > 32: hilo
+[prepare-time] router cluster self-check: 0.02s
+[khalf] m=128: xh.stride()=(4096, 8192, 1) xh.is_contiguous()=False
+[khalf] m=128: checking master ...
+[khalf] m=128: master rel L2 1.66e-03 kernels ['nvjet_sm90_tst_128x64_64x8_1x2_h_bz_splitK_NNT', 'void cublasLt::splitKreduce_kernel<32, 16, int, float, __nv_bfloat16, float, __nv_bfloat16, false, float, __nv_bfloat16, __nv_bfloat16, true, false, false, false>(cublasLt::cublasSplitKParams<float>, float const*, __nv_bfloat16 const*, float*, __nv_bfloat16*, float const*, float const*, __nv_bfloat16 const*, float const*, __nv_bfloat16*, void*, long, float*, int*, float*, float*, float const*, float const*, float const*, float const*, float const*)'] valid=True
+[khalf] m=128: checking T ...
+[khalf] kernel name check: 2 CUDA events, gemm 1, elementwise 1, copies 0, splitKreduce 0
+[khalf] m=128: T rel L2 2.45e-03 kernels ['nvjet_sm90_tst_128x64_64x8_1x2_h_bz_TNT', 'void at::native::vectorized_elementwise_kernel<8, at::native::CUDAFunctor_add<c10::BFloat16>, std::array<char*, 3ul>, false>(int, at::native::CUDAFunctor_add<c10::BFloat16>, std::array<char*, 3ul>)'] valid=True
+[khalf] m=128: checking N ...
+[khalf] kernel name check: 2 CUDA events, gemm 1, elementwise 1, copies 0, splitKreduce 0
+[khalf] m=128: N rel L2 2.45e-03 kernels ['nvjet_sm90_tst_128x64_64x8_1x2_h_bz_NNT', 'void at::native::vectorized_elementwise_kernel<8, at::native::CUDAFunctor_add<c10::BFloat16>, std::array<char*, 3ul>, false>(int, at::native::CUDAFunctor_add<c10::BFloat16>, std::array<char*, 3ul>)'] valid=True
+[khalf] m=128: master median 32.32 us (IQR 0.70), cand T median 31.58 us (IQR 0.61), empty-graph baseline 5.18 us -> net 27.14 vs 26.40 us, master/cand 1.028x (need >= 1.02)
+[khalf] m=128: master median 32.32 us (IQR 0.70), cand N median 30.56 us (IQR 0.96), empty-graph baseline 5.18 us -> net 27.14 vs 25.38 us, master/cand 1.069x (need >= 1.02)
+[khalf] m=256: xh.stride()=(4096, 8192, 1) xh.is_contiguous()=False
+[khalf] m=256: checking master ...
+[khalf] m=256: master rel L2 1.66e-03 kernels ['nvjet_sm90_tst_128x64_64x8_1x2_h_bz_NNT'] valid=True
+[khalf] m=256: checking T ...
+[khalf] kernel name check: 2 CUDA events, gemm 1, elementwise 1, copies 0, splitKreduce 0
+[khalf] m=256: T rel L2 2.45e-03 kernels ['nvjet_sm90_tst_128x128_64x6_2x1_v_bz_TNT', 'void at::native::vectorized_elementwise_kernel<8, at::native::CUDAFunctor_add<c10::BFloat16>, std::array<char*, 3ul>, false>(int, at::native::CUDAFunctor_add<c10::BFloat16>, std::array<char*, 3ul>)'] valid=True
+[khalf] m=256: checking N ...
+[khalf] kernel name check: 2 CUDA events, gemm 1, elementwise 1, copies 0, splitKreduce 0
+[khalf] m=256: N rel L2 2.45e-03 kernels ['nvjet_sm90_tst_128x128_64x6_2x1_v_bz_NNT', 'void at::native::vectorized_elementwise_kernel<8, at::native::CUDAFunctor_add<c10::BFloat16>, std::array<char*, 3ul>, false>(int, at::native::CUDAFunctor_add<c10::BFloat16>, std::array<char*, 3ul>)'] valid=True
+[khalf] m=256: master median 36.96 us (IQR 1.34), cand T median 35.87 us (IQR 0.96), empty-graph baseline 5.18 us -> net 31.78 vs 30.69 us, master/cand 1.035x (need >= 1.02)
+[khalf] m=256: master median 36.96 us (IQR 1.34), cand N median 35.84 us (IQR 0.90), empty-graph baseline 5.18 us -> net 31.78 vs 30.66 us, master/cand 1.037x (need >= 1.02)
+[khalf] PATH CHOSEN: pooler m=128 -> K-halves bmm candidate N + add
+[khalf] PATH CHOSEN: pooler m=256 -> K-halves bmm candidate N + add
+[prepare-time] pooler k-halves selector: 0.22s
+[prepare-time] state build (A) total: 3.65s
+[prepare-time] weight splits + NN copies: 0.00s
+[router] swapab m=1 BLOCK_T=16 SPLIT_K=32 grid=(1, 4, 32) stages=3: n_regs=64 n_spills=0 wgmma=16 mma.sync=0 cp.async=65
+[router] swapab m=32 BLOCK_T=32 SPLIT_K=32 grid=(1, 4, 32) stages=3: n_regs=80 n_spills=0 wgmma=16 mma.sync=0 cp.async=71
+[router] m=1: swapab
+[router] m=8: swapab
+[router] m=16: swapab
+[router] m=32: swapab
+[router] m=64: hilo
+[router] m=128: hilo
+[router] m=256: hilo
+[prepare-time] router triton warm-up: 0.00s
+[prepare-time] pooler / qkv / unpooler / o triton warm-up: 0.00s
+[swapab] layer=pooler m=32 N=4096 K=8192 SPLIT_K=2 BLOCK_K=256 stages=4: n_regs=96 n_spills=0 wgmma=16 mma.sync=0 cp.async=106
+[swapab] layer=qkv_gate m=32 N=2304 K=8192 SPLIT_K=4 BLOCK_K=128 stages=4: n_regs=56 n_spills=0 wgmma=8 mma.sync=0 cp.async=58
+[swapab] layer=unpooler m=32 N=8192 K=4096 SPLIT_K=1 BLOCK_K=256 stages=4: n_regs=96 n_spills=0 wgmma=16 mma.sync=0 cp.async=106
+[swapab] layer=o m=32 N=8192 K=1024 SPLIT_K=1 BLOCK_K=256 stages=4: n_regs=96 n_spills=0 wgmma=16 mma.sync=0 cp.async=106
+[prepare-time] swapab m17-32 warm-up: 0.00s
+[swapab16] pooler m=16 N=4096 K=8192 SPLIT_K=2 BLOCK_K=256 stages=4: n_regs=72 n_spills=0 wgmma=16 mma.sync=0 cp.async=90
+[swapab16] qkv_gate m=16 N=2304 K=8192 SPLIT_K=4 BLOCK_K=128 stages=4: n_regs=48 n_spills=0 wgmma=8 mma.sync=0 cp.async=50
+[swapab16] o m=16 N=8192 K=1024 SPLIT_K=1 BLOCK_K=256 stages=4: n_regs=72 n_spills=0 wgmma=16 mma.sync=0 cp.async=90
+[swapab16] unpooler_slice m=8 N=1024 K=4096 SPLIT_K=8 BLOCK_K=128 stages=3: n_regs=56 n_spills=0 wgmma=8 mma.sync=0 cp.async=38
+[incumbent16] pooler _bf16_splitk_kernel m=16: n_regs=96 n_spills=0 wgmma=0 mma.sync=32 cp.async=90
+[incumbent16] qkv_gate _qkv_splitk_sem_kernel m=16: n_regs=64 n_spills=0 wgmma=0 mma.sync=16 cp.async=50
+[incumbent16] o _pooler_skinny_kernel m=16: n_regs=90 n_spills=0 wgmma=0 mma.sync=32 cp.async=90
+[incumbent16] unpooler_slice _bf16_splitk_kernel m=16: n_regs=72 n_spills=0 wgmma=0 mma.sync=16 cp.async=38
+[prepare-time] swapab16 warm-up: 0.00s
+[prepare-time] state build (B) total: 0.01s
+[ab] capture kernel_fn router m=1 n=256 state A (component router_cluster_ok) ...
+[ab] capture kernel_fn router m=1 n=256 state B (component router_cluster_ok) ...
+[ab] router m=1 n=256: A,B,A,B replays OK, worst rel L2 2.61e-06
+[ab] capture kernel_fn router m=8 n=256 state A (component router_cluster_ok) ...
+[ab] capture kernel_fn router m=8 n=256 state B (component router_cluster_ok) ...
+[ab] router m=8 n=256: A,B,A,B replays OK, worst rel L2 2.45e-06
+[ab] capture kernel_fn router m=128 n=256 state A (component master path) ...
+[ab] capture kernel_fn router m=128 n=256 state B (component master path) ...
+[ab] router m=128 n=256: A,B,A,B replays OK, worst rel L2 2.73e-06
+[ab] capture kernel_fn unpooler m=1 n=1024 state A (component ouns_cl) ...
+[ab] capture kernel_fn unpooler m=1 n=1024 state B (component ouns_cl) ...
+[ab] unpooler m=1 n=1024: A,B,A,B replays OK, worst rel L2 1.66e-03
+[ab] capture kernel_fn unpooler m=8 n=1024 state A (component ouns_cl) ...
+[ab] capture kernel_fn unpooler m=8 n=1024 state B (component ouns_cl) ...
+[ab] unpooler m=8 n=1024: A,B,A,B replays OK, worst rel L2 1.69e-03
+[ab] capture kernel_fn unpooler m=128 n=8192 state A (component nn_ok) ...
+[ab] capture kernel_fn unpooler m=128 n=8192 state B (component nn_ok) ...
+[ab] unpooler m=128 n=8192: A,B,A,B replays OK, worst rel L2 1.66e-03
+[ab] capture kernel_fn pooler m=1 n=4096 state A (component master path) ...
+[ab] capture kernel_fn pooler m=1 n=4096 state B (component master path) ...
+[ab] pooler m=1 n=4096: A,B,A,B replays OK, worst rel L2 1.68e-03
+[ab] capture kernel_fn pooler m=8 n=4096 state A (component master path) ...
+[ab] capture kernel_fn pooler m=8 n=4096 state B (component master path) ...
+[ab] pooler m=8 n=4096: A,B,A,B replays OK, worst rel L2 1.68e-03
+[ab] capture kernel_fn pooler m=128 n=4096 state A (component pooler_khalf_ok) ...
+[ab] capture kernel_fn pooler m=128 n=4096 state B (component pooler_khalf_ok) ...
+[ab] pooler m=128 n=4096: A,B,A,B replays OK, worst rel L2 2.45e-03
+[ab] capture kernel_fn pooler m=256 n=4096 state A (component pooler_khalf_ok) ...
+[ab] capture kernel_fn pooler m=256 n=4096 state B (component pooler_khalf_ok) ...
+[ab] pooler m=256 n=4096: A,B,A,B replays OK, worst rel L2 2.45e-03
+[ab] done in 0.0s; flags now {'ouns_cl': 8, 'router_cluster_ok': True, 'nn_ok': True, 'nn_p256_ok': True, 'pooler_khalf_ok': True, 'pooler_khalf': {128: 'N', 256: 'N'}}
+[ouns] final: cl=8: cudaOccupancyMaxActiveClusters=45, needs 16
+[ouns] final: cl=4: cudaOccupancyMaxActiveClusters=62, needs 32
+[router_cluster] final: [162, 0, 0, 82432, 30] (regs, spill B, static smem, dyn smem, max active clusters; needs 16)
+[prepare] FINAL PATH pooler m=128: K-halves bmm N + add
+[prepare] FINAL PATH pooler m=256: K-halves bmm N + add
+[prepare] FINAL FLAGS: ouns_cl=8 router_cluster_ok=True nn_ok=True nn_p256_ok=True pooler_khalf_ok=True pooler_khalf={128: 'N', 256: 'N'}; prepare total 3.7s

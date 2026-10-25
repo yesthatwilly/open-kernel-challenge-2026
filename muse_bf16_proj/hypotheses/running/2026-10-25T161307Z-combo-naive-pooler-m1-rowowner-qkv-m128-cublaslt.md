@@ -124,3 +124,67 @@ No companion is warranted, and none is worth a scored run. The two changed cells
 - Is the bulk extension built once per process (shared by both judge states) with per-state repacked weights, as the change says? Confirm that no module-global device pointer is captured into the graph.
 - Simpler alternative if the extension is unwanted: torch.addmm(zero_bias_bf16_in_state, x, W.t()) takes torch's cublasLt gemm_and_bias path without touching the global preference. Its algo choice is unverified, so it would need the same gate and kernel-name assert.
 
+## Implementation notes
+
+Built 2026-10-25 on base 65440e97 (blob f919748b). Master f77fd49a differs only by a claim commit: `git diff 65440e97 master -- muse_bf16_proj/submission.py` is empty, so no merge was needed. Only `muse_bf16_proj/submission.py` in the worktree was edited, and the diff is purely additive outside the new section (9). Diff stat: 1 file, +1054/-10.
+
+**What changed**
+- **New section (9)** sits before `_prepare_state`.
+  - **Cell A:** `_BULK_CPP`/`_BULK_CUDA`, `_bulk_build` (built at import, own extension name `okc_bf16_bulk_rowown_p1_v1`), `_bulk_repack`, `_bulk_route_ok`, `_bulk_forward`, `_bulk_check` and `_bulk_cell_prepare`.
+  - **Cell B:** `_LT_CPP` (with `lt_candidates`, `lt_force_splitk1` and `lt_run`), `_lt_build` (built at import as C++ only, `-lcublasLt`, name `muse_bf16_lt_qkv128_v1`), `_lt_route_ok`, `_lt_forward`, `_lt_find_plan` and `_lt_cell_prepare`.
+  - **Shared helpers:** `_cell_gate`, `_cell_capture`, `_cell_kernel_names`, `_cells_prepare`, `_cells_flags` and `_cells_inherit`.
+- **`_prepare_state`** gains `cells` and `t_prepare0`. `_cells_prepare` runs AFTER all of master's own work, including ouns and router_cluster. The A/B second state calls `_cells_inherit`, which gives it its own repacked weight, error word, Lt workspace, algo-row copy or zero bias.
+- **`kernel_fn`**: the two new branches come right after the ouns branch and BEFORE master's swapab16 branch. Cell A is `layer == "pooler"` and `_bulk_route_ok` (flag, then cfg m == 1, n 4096, k 8192, x shape/dtype/stride/16 B alignment). Cell B is `layer == "qkv_gate"` and `_lt_route_ok` (flag, then cfg m == 128, n 2304, k 8192, x contiguous, 256 B aligned). In cell B, mode 1 runs `_lt_forward` and mode 2 runs `torch.addmm(state["lt_qkv128_bias"], x, W.t())`. kernel_fn has no prints, no try/except and no state writes.
+- **A/B self-check**: AB_CASES adds `("qkv_gate", 2304, 8192, 128)`. The existing pooler m=1 case now exercises cell A. `_ab_component` maps pooler m==1 to `bulk_p1_ok` and qkv_gate m==128 to `lt_qkv128`, so a miss turns off only that cell's flag and never master's other components. Switch-off sets `lt_qkv128` to 0. If the second-state build fails, both cells are turned off too.
+- **Prints**: each cell prints one PATH CHOSEN line in prepare, in the format `PATH CHOSEN A(bulk-row-owner) pooler m=1: <candidate|master> (cand X us vs master Y us)` and `PATH CHOSEN B(cublaslt-no-splitk) qkv_gate m=128: ...`. prepare() then prints a final post-A/B PATH CHOSEN summary and FINAL FLAGS with both new flags.
+
+**Cell A (source impl b3e80b45), per the review and the caller**
+- `bulk_kernel` device code is ported verbatim. Only `<32, 8192, 8, 0>` is instantiated. The MODE 1/2 branches are `if constexpr` and compile out, and `dummy` is passed as nullptr. The NT16/NT32, unpooler and MODE 1/2 instances, the pure-read diagnostics, the 3.8 TB/s kill gate and the BULK_INCUMBENT print table are all dropped.
+- The C++ `bulk_run(wt, x, out, err, m)` launches pooler `<32,8192,8,0>` only. Its host-side TORCH_CHECKs cover m 1..8 and the shapes.
+- **Required fix applied:** the source's `state["bulk_route_hit"] = (layer, m)` per-call write is DROPPED. The route probe is replaced by a torch.profiler assertion: kernel_fn pooler m=1 must launch exactly one kernel whose name contains `bulk_kernel`.
+- The error word `state["bulk_err"]` is per state. It is read only in the prepare self-check (synced), zeroed once at the end of `_bulk_cell_prepare` (and after each self-check read), and never read in kernel_fn.
+- The bit-exact repack round-trip check (`_bulk_repack`) is kept verbatim. The repacked weight is per state (`state["bulk_wt_pooler"]`) and is dropped from the state when the cell is off.
+- **Self-check (m=1):** a random launch plus a bit-identical repeat, and a probe row (single 0.5 entry). Bounds: rel L2 vs fp64 <= 3e-3, probe rel <= 1e-4, finite, error words 0. Each launch has a flushed print before it and a synchronize plus print after.
+- **Gate:** `_cell_gate`, copied from `_ouns_gate`, runs kernel_fn captured with flag off (master's swapab16 path) and flag on. Settings: 256 MB flush before every replay, 41 interleaved reps, empty-graph baseline subtracted, candidate/master <= 0.98 required. Both medians are printed.
+- **Deadline:** if prepare elapsed is over 200 s, the cell prints PATH CHOSEN master.
+- **Build:** TORCH_CUDA_ARCH_LIST is set to 9.0a around the build and restored after; the arch flags are printed. extra_cuda_cflags are `-O3 -lineinfo -std=c++20`. The source's `#if __CUDA_ARCH__ >= 900` / err=3 guard is kept. The kernel uses no wgmma or setmaxnreg; cp.async.bulk and mbarrier are baseline sm_90. Every mbarrier wait is bounded at 0.5 s and sets an error flag.
+- **Deviation:** if torch.profiler itself is unavailable, cell A stays on, with a loud print, because the routed branch calls `bulk_run` directly. If the profiler records names and they are not exactly one bulk_kernel, the cell goes off.
+
+**Cell B: the review's required change replaces the spec's per-call toggle**
+- **Spec error overridden:** there is NO `torch.backends.cuda.preferred_blas_library` toggle anywhere. B is now a prepare-time cuBLASLt plan. The matmul desc and layouts are cached by shape inside the extension; they are host-only objects with no device pointer. The algo row (CPU int64[8]) and the workspace are held in state.
+- **Getting splitK=1 (review WEAKEST LINK):**
+  - `cublasLtMatmulAlgoGetHeuristic` is queried under workspace caps of 0, 1 MiB, 4 MiB and 32 MiB, smallest first.
+  - Every split-K result is ALSO tried with `CUBLASLT_ALGO_CONFIG_SPLITK_NUM` forced to 1 and REDUCTION_SCHEME set to NONE, validated by `cublasLtMatmulAlgoCheck`.
+  - Only candidates whose SPLITK_NUM reads exactly 1 are kept.
+  - Each candidate must be finite, have rel L2 vs fp64 <= 3e-3 and <= 1.10x master's own error (the algo-pick extension's guard, from the review's open question), and have a probe row <= 1e-4. It is then screened by cold-L2 graph replay, and the fastest is taken.
+- **Open question on torch's Lt workspace size:** it is not queried directly, because `at::cuda::getCUDABlasLtWorkspaceSize` is version-dependent. The 0/1/4/32 MiB sweep brackets it, and every heuristic result is printed.
+- **No-plan case:** if no splitK=1 algo is obtained, `[lt] NO splitK=1 cuBLASLt algo obtained for qkv_gate m=128: mode 1 (Lt plan) dropped` is printed.
+- **Review's fallback (mode 2):** `torch.addmm(zero bf16 bias in state, x, W.t())` is tried only if mode 1 is unavailable or fails, and only behind the SAME check, gate and kernel-name assertion. If both fail, PATH CHOSEN prints master and the run is A alone.
+- **Gate:** the same `_cell_gate`, with kernel_fn flag off (master's `_bf16_gemm_dispatch_impl`, the review's control) vs on. It requires <= 0.98x on cold-L2 graph replays.
+- **Kernel-name assertion (strict):** kernel_fn qkv_gate m=128 must launch exactly ONE kernel with no "splitk" in its name, so neither a split-K nvjet nor a splitKreduce node is allowed. If the profiler is unavailable, the cell goes off, because the name would be unproven. Master's m=128 kernel names are printed for the record.
+- **verify_32 check (review "keep the replacement check"):** with the flag on, the profiler compares kernel_fn qkv_gate m=256 against `_bf16_gemm_dispatch_impl` directly. Any difference turns B off. Since no global preference exists, the leak clause is moot by construction.
+- **Deadline:** if prepare elapsed is over 250 s, the cell prints PATH CHOSEN master.
+
+**Two judge states**
+- Nothing device-side is module-global. The extensions themselves are module globals, like master's `_OUNS_EXT`/`_RC_EXT`.
+- The C++ globals are a static bool (cudaFuncSetAttribute done once) and the Lt descriptor cache (shape-keyed, host-only).
+- Repacked weight, error word, Lt workspace, algo row and zero bias are all per state.
+- Every prepare() decides its own flags. The A/B second state inherits them and builds its own buffers, and master's A/B harness captures and replays both states alternately with refilled x, now including both cells.
+
+**Biggest risks**
+1. No splitK=1 Lt algo is as fast as the 48x64 kernel the toggle got. Then B lands on the addmm fallback or on master, which the PATH CHOSEN line will show.
+2. A third CUDA build (about 40 s) plus the Lt C++ build (about 15-25 s) at import adds to the 10-minute budget.
+3. torch.profiler/CUPTI misbehaving in prepare would leave B off, which is safe.
+
+## Rules check
+
+- [x] CUDA-graph capturable: kernel_fn's new branches do torch.empty plus one extension launch, or one torch.addmm. There is no .item/.cpu/sync/print, and no allocation or branching on values: only cfg m/n/k, shapes, strides, data_ptr alignment and prepare() flags.
+- [x] Nothing derived from `data` is cached: kernel_fn writes nothing to state (the bulk_route_hit write was dropped).
+- [x] Weights: the pooler repack is a lossless bf16 permutation done in prepare() with a bit-exact round-trip check. qkv_gate is used as-is. The zero bias is a bf16 constant that does not change the result.
+- [x] Activations BF16 where SGLang keeps BF16: x and out are bf16 with fp32 accumulation, as in cuBLAS.
+- [x] n/a: attention rule (no attention in this problem).
+- [x] No timing patches, harness frames/I/O/secrets, module edits, reference import, subprocesses or network. load_inline only, at import. No `preferred_blas_library` or other global library state is changed.
+- [x] All work happens inside the timed call; no output caching or replay.
+- [x] prepare-only syncs, prints, try/except and profiler; each flag lives in state; a build or self-check miss lands on master's path and never raises.
+
+okc_lint output (`python3 -I .claude/skills/churnsubs/bin/okc_lint.py <worktree>/muse_bf16_proj/submission.py --problem muse_bf16_proj`): `OK with warnings`. There are no errors. Every warning is `host-sync ... (outside kernel_fn's call graph; fine in prepare())` or `dtype ... torch.empty(..., dtype=torch.uint8)`; the uint8 ones are flush and Lt workspace buffers in prepare, not compute precision. `py_compile` OK, `__pycache__` removed. An AST undefined-name scan found 0 bare names.

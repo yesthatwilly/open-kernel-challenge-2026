@@ -1,0 +1,268 @@
+diff --git a/muse_bf16_proj/submission.py b/muse_bf16_proj/submission.py
+index f919748b..37b0e68c 100644
+--- a/muse_bf16_proj/submission.py
++++ b/muse_bf16_proj/submission.py
+@@ -112,6 +112,12 @@ AB_CASES = (
+     ("pooler", 4096, 8192, 1), ("pooler", 4096, 8192, 8), ("pooler", 4096, 8192, 128),
+     ("pooler", 4096, 8192, 256),
+ )
++# Pooler K-halves (own flag pooler_khalf_ok): at these m the pooler runs as a 2-batch cuBLAS GEMM over
++# the two K halves plus a bf16 add, chosen once on state A by a graph-replay selector and passed to
++# state B through _ab_flags. A miss falls back to master's own NN path (nn_ok / nn_p256_ok untouched).
++POOLER_KHALF_MS = (128, 256)
++POOLER_KHALF_MIN_WIN = 1.02
++POOLER_KHALF_HALF = 4096
+ AB_ROUNDS = 2           # A, B, A, B
+ AB_BF16_REL_L2 = 6e-3   # bf16 output rounding is ~2e-3; the judge allows 1e-2
+ AB_ROUTER_REL_L2 = 5e-5  # the judge allows 1e-4
+@@ -2041,6 +2047,159 @@ def _router_cluster_prepare(state: dict) -> None:
+           + "; 9 <= m <= 32: swap-AB Triton router; m > 32: hilo", flush=True)
+ 
+ 
++POOLER_KHALF_WEIGHTS = ("T", "N")
++
++
++def _khalf_forward(x: torch.Tensor, state: dict, cand: str) -> torch.Tensor:
++    """Two K-halves of the pooler as one strided-batched GEMM, then one bf16 add. x [m, 8192]
++    contiguous. Candidate T: TN view of the pooler weight [2, 4096 k, 4096 n] (strides 4096, 1,
++    8192). Candidate N: contiguous halves of the existing NN weight pooler_t."""
++    m = x.shape[0]
++    xh = x.view(m, 2, POOLER_KHALF_HALF).permute(1, 0, 2)
++    if cand == "T":
++        wh = state["pooler"].view(POOLER_N, 2, POOLER_KHALF_HALF).permute(1, 2, 0)
++    else:
++        wh = state["pooler_t"].view(2, POOLER_KHALF_HALF, POOLER_N)
++    p = torch.bmm(xh, wh)
++    return torch.add(p[0], p[1])
++
++
++def _khalf_kernel_names(fn) -> list:
++    """Names of the CUDA kernels / copies one eager call of fn launches (torch.profiler)."""
++    from torch.profiler import ProfilerActivity, profile
++    fn()
++    torch.cuda.synchronize()
++    with profile(activities=[ProfilerActivity.CPU, ProfilerActivity.CUDA]) as prof:
++        fn()
++        torch.cuda.synchronize()
++    return [e.name for e in prof.events() if e.device_type == torch.autograd.DeviceType.CUDA]
++
++
++def _khalf_names_ok(names: list) -> bool:
++    """Disqualify only a copy of xh/w (torch inserted contiguous()) or a cuBLAS split-K reduce
++    kernel. Kernel counts are printed, not asserted: an exact count is fragile (unknown GEMM
++    names, a cuBLAS memset, or a profiler that sees no CUDA events would wrongly reject a valid
++    candidate); numerics and the graph-replay timing decide the rest."""
++    low = [n.lower() for n in names]
++    gemm = [n for n in low if ("nvjet" in n or "cutlass" in n or "gemm" in n or "sm90" in n)
++            and "reduce" not in n and "elementwise" not in n]
++    elem = [n for n in low if "elementwise" in n or "vectorized" in n]
++    copies = [n for n in low if n not in gemm and ("memcpy" in n or "copy" in n or "contiguous" in n)]
++    reduce_k = [n for n in low if "splitkreduce" in n]
++    print(f"[khalf] kernel name check: {len(low)} CUDA events, gemm {len(gemm)}, elementwise {len(elem)}, "
++          f"copies {len(copies)}, splitKreduce {len(reduce_k)}"
++          + ("; profiler saw no CUDA kernels, name check skipped" if not low else ""), flush=True)
++    return not copies and not reduce_k
++
++
++def _khalf_select(state: dict) -> None:
++    """prepare()-only, state A only. For m in POOLER_KHALF_MS: capture master's NN torch.mm and both
++    K-halves candidates as CUDA graphs on the same synthetic x, check numerics and kernel names,
++    replay interleaved with a 256 MB flush before each replay (41 reps, empty-graph baseline
++    subtracted), print both candidates' medians, IQR and kernel names even when master is kept, and
++    route a candidate only if master / candidate >= POOLER_KHALF_MIN_WIN. Fixes state['pooler_khalf']
++    ({m: 'T' or 'N'}) and state['pooler_khalf_ok']. Never raises."""
++    state["pooler_khalf"] = {}
++    state["pooler_khalf_ok"] = False
++    w = state["pooler"]
++    if not (w.dim() == 2 and tuple(w.shape) == (POOLER_N, POOLER_K) and w.dtype == torch.bfloat16
++            and w.stride(1) == 1 and w.stride(0) == POOLER_K and state["pooler_t"].is_contiguous()
++            and tuple(state["pooler_t"].shape) == (POOLER_K, POOLER_N)):
++        print(f"[khalf] PATH CHOSEN: pooler m={POOLER_KHALF_MS} -> master: weight layout unexpected", flush=True)
++        return
++    dev = w.device
++    flush = torch.empty(OUNS_FLUSH_BYTES, dtype=torch.uint8, device=dev)
++    scratch = torch.zeros(1, dtype=torch.float32, device=dev)
++    ev = [torch.cuda.Event(enable_timing=True) for _ in range(2)]
++
++    def replay_us(g) -> float:
++        flush.zero_()
++        ev[0].record()
++        g.replay()
++        ev[1].record()
++        ev[1].synchronize()
++        return ev[0].elapsed_time(ev[1]) * 1e3
++
++    def capture(fn):
++        for _ in range(3):
++            fn()
++        torch.cuda.synchronize()
++        g = torch.cuda.CUDAGraph()
++        with torch.cuda.graph(g):
++            fn()
++        torch.cuda.synchronize()
++        return g
++
++    chosen = {}
++    try:
++        g_base = capture(lambda: scratch.add_(1.0))
++        base = _ouns_median([replay_us(g_base) for _ in range(OUNS_GATE_REPS)])
++        wt = state["pooler_t"]
++        wref = w.float()
++        for m in POOLER_KHALF_MS:
++            x = torch.randn((m, POOLER_K), device=dev, dtype=torch.float32).to(torch.bfloat16)
++            xh = x.view(m, 2, POOLER_KHALF_HALF).permute(1, 0, 2)
++            print(f"[khalf] m={m}: xh.stride()={tuple(xh.stride())} xh.is_contiguous()={xh.is_contiguous()}",
++                  flush=True)
++            fns = {"master": (lambda x=x: torch.mm(x, wt))}
++            for c in POOLER_KHALF_WEIGHTS:
++                fns[c] = (lambda x=x, c=c: _khalf_forward(x, state, c))
++            ref = x.float() @ wref.T
++            valid, names = {}, {}
++            for name, fn in fns.items():
++                print(f"[khalf] m={m}: checking {name} ...", flush=True)
++                o = fn()
++                torch.cuda.synchronize()
++                err = float((o.float() - ref).norm() / ref.norm().clamp_min(1e-30))
++                names[name] = _khalf_kernel_names(fn)
++                ok = bool(torch.isfinite(o).all()) and err <= AB_BF16_REL_L2
++                if name != "master":
++                    ok = ok and _khalf_names_ok(names[name])
++                valid[name] = ok
++                print(f"[khalf] m={m}: {name} rel L2 {err:.2e} kernels {names[name]} valid={ok}", flush=True)
++            live = [n for n in fns if valid[n]]
++            graphs = {name: capture(fns[name]) for name in live}
++            times = {name: [] for name in live}
++            for rep in range(OUNS_GATE_REPS):
++                order = live if rep % 2 == 0 else live[::-1]
++                for name in order:
++                    times[name].append(replay_us(graphs[name]))
++            med, adj, iqr = {}, {}, {}
++            for name, v in times.items():
++                sv = sorted(v)
++                med[name] = sv[len(sv) // 2]
++                iqr[name] = sv[(3 * len(sv)) // 4] - sv[len(sv) // 4]
++                adj[name] = max(med[name] - base, 0.25)
++            best, best_ratio = "master", 1.0
++            for c in POOLER_KHALF_WEIGHTS:
++                if c in adj and "master" in adj:
++                    ratio = adj["master"] / adj[c]
++                    print(f"[khalf] m={m}: master median {med['master']:.2f} us (IQR {iqr['master']:.2f}), cand {c} "
++                          f"median {med[c]:.2f} us (IQR {iqr[c]:.2f}), empty-graph baseline {base:.2f} us -> net "
++                          f"{adj['master']:.2f} vs {adj[c]:.2f} us, master/cand {ratio:.3f}x "
++                          f"(need >= {POOLER_KHALF_MIN_WIN})", flush=True)
++                    if ratio > best_ratio:
++                        best, best_ratio = c, ratio
++                else:
++                    print(f"[khalf] m={m}: cand {c} not timed (invalid)", flush=True)
++            if best != "master" and best_ratio >= POOLER_KHALF_MIN_WIN:
++                chosen[m] = best
++            del graphs
++    except Exception as e:
++        print(f"[khalf] selector failed ({type(e).__name__}: {e}); master path kept", flush=True)
++        chosen = {}
++    finally:
++        flush = None
++        scratch = None
++        torch.cuda.synchronize()
++    state["pooler_khalf"] = dict(chosen)
++    state["pooler_khalf_ok"] = bool(chosen)
++    for m in POOLER_KHALF_MS:
++        print(f"[khalf] PATH CHOSEN: pooler m={m} -> "
++              + (f"K-halves bmm candidate {chosen[m]} + add" if m in chosen else "master (NN torch.mm)"),
++              flush=True)
++
++
+ def _prepare_state(weights: Weights, flags=None) -> dict:
+     """Build one state. flags None: run the router-cluster and unpooler-cluster self-checks and the
+     unpooler gate (the state the judge keeps). flags a dict: the second state of the prepare()-time
+@@ -2067,6 +2226,8 @@ def _prepare_state(weights: Weights, flags=None) -> dict:
+         state[name + "_t"] = state[name].t().contiguous()
+     state["nn_ok"] = True   # constant; the A/B self-check may turn it off for the run
+     state["nn_p256_ok"] = True   # pooler 129..256 only; own flag, own self-check cell
++    state["pooler_khalf_ok"] = False   # K-halves bmm path; chosen once on state A (see _khalf_select)
++    state["pooler_khalf"] = {}
+     t = tick("weight splits + NN copies", t)
+     # Stage choice, side-by-side diagnostics and warm-up on synthetic inputs.
+     _router_prepare(state)
+@@ -2125,11 +2286,16 @@ def _prepare_state(weights: Weights, flags=None) -> dict:
+         # (8) Router m <= 8: CUDA cluster + DSMEM split-K (constant state["router_cluster_ok"]).
+         _router_cluster_prepare(state)
+         t = tick("router cluster self-check", t)
++        # (9) Pooler K-halves at m in POOLER_KHALF_MS: selector on state A only.
++        _khalf_select(state)
++        t = tick("pooler k-halves selector", t)
+     else:
+         state["ouns_cl"] = flags["ouns_cl"]
+         state["router_cluster_ok"] = flags["router_cluster_ok"]
+         state["nn_ok"] = flags["nn_ok"]
+         state["nn_p256_ok"] = flags["nn_p256_ok"]
++        state["pooler_khalf_ok"] = flags["pooler_khalf_ok"]
++        state["pooler_khalf"] = dict(flags["pooler_khalf"])
+     print(f"[prepare-time] state build ({'A' if flags is None else 'B'}) total: "
+           f"{time.perf_counter() - t_all:.2f}s", flush=True)
+     return state
+@@ -2137,11 +2303,15 @@ def _prepare_state(weights: Weights, flags=None) -> dict:
+ 
+ def _ab_flags(state: dict) -> dict:
+     return {"ouns_cl": state["ouns_cl"], "router_cluster_ok": state["router_cluster_ok"],
+-            "nn_ok": state["nn_ok"], "nn_p256_ok": state["nn_p256_ok"]}
++            "nn_ok": state["nn_ok"], "nn_p256_ok": state["nn_p256_ok"],
++            "pooler_khalf_ok": state["pooler_khalf_ok"], "pooler_khalf": dict(state["pooler_khalf"])}
+ 
+ 
+-def _ab_component(layer: str, m: int) -> str:
+-    """Which stacked component serves this cell ("" = master's path, nothing to switch off)."""
++def _ab_component(layer: str, m: int, state: dict) -> str:
++    """Which stacked component serves this cell ("" = master's path, nothing to switch off). The
++    K-halves flag is checked BEFORE the NN ranges, so its miss falls back to master's NN path."""
++    if layer == "pooler" and state["pooler_khalf_ok"] and m in state["pooler_khalf"]:
++        return "pooler_khalf_ok"
+     if layer == "router" and m <= ROUTER_CLUSTER_MAX_M:
+         return "router_cluster_ok"
+     if layer == "unpooler" and m <= OUNS_MAX_M:
+@@ -2171,6 +2341,7 @@ def _ab_selfcheck(weights: Weights, state_a: dict) -> None:
+         for st in (state_a,):
+             st["nn_ok"], st["router_cluster_ok"], st["ouns_cl"] = False, False, 0
+             st["nn_p256_ok"] = False
++            st["pooler_khalf_ok"] = False
+         return
+     states = {"A": state_a, "B": state_b}
+     dev = state_a["router"].device
+@@ -2179,7 +2350,7 @@ def _ab_selfcheck(weights: Weights, state_a: dict) -> None:
+     bad = {}
+     wf = {}
+     for layer, n, k, m in AB_CASES:
+-        comp = _ab_component(layer, m)
++        comp = _ab_component(layer, m, state_a)
+         graphs, xs, outs = {}, {}, {}
+         try:
+             cfg = {"m": m, "n": n, "k": k, "layer": layer}
+@@ -2259,8 +2430,15 @@ def prepare(weights: Weights) -> dict:
+                   f"max active clusters; needs 16)", flush=True)
+     except Exception as e:
+         print(f"[prepare] final occupancy query failed ({type(e).__name__}: {e})", flush=True)
++    for m in POOLER_KHALF_MS:
++        print(f"[prepare] FINAL PATH pooler m={m}: "
++              + (f"K-halves bmm {state['pooler_khalf'][m]} + add"
++                 if state["pooler_khalf_ok"] and m in state["pooler_khalf"] else
++                 ("master NN torch.mm" if (state["nn_ok"] if m <= NN_GATED_MAX_M else state["nn_p256_ok"])
++                  else "master dispatch (NN flag off)")), flush=True)
+     print(f"[prepare] FINAL FLAGS: ouns_cl={state['ouns_cl']} router_cluster_ok={state['router_cluster_ok']} "
+-          f"nn_ok={state['nn_ok']} nn_p256_ok={state['nn_p256_ok']}; prepare total {time.perf_counter() - t0:.1f}s", flush=True)
++          f"nn_ok={state['nn_ok']} nn_p256_ok={state['nn_p256_ok']} "
++          f"pooler_khalf_ok={state['pooler_khalf_ok']} pooler_khalf={state['pooler_khalf']}; prepare total {time.perf_counter() - t0:.1f}s", flush=True)
+     return state
+ 
+ 
+@@ -2290,6 +2468,11 @@ def kernel_fn(data: Inputs, state: dict) -> torch.Tensor:
+         ws, cnt = _swapab_buffers(state, layer)
+         return _swapab_forward(layer, x, state[layer], ws, cnt, state["swapab_stages"][layer])
+     if layer != "router":
++        if (layer == "pooler" and state["pooler_khalf_ok"] and cfg["n"] == POOLER_N
++                and cfg["k"] == POOLER_K and x.dim() == 2 and x.shape[1] == POOLER_K
++                and x.dtype == torch.bfloat16 and x.is_contiguous()
++                and cfg["m"] in state["pooler_khalf"] and x.shape[0] == cfg["m"]):
++            return _khalf_forward(x, state, state["pooler_khalf"][cfg["m"]])
+         if (layer in NN_GATED_LAYERS and cfg["n"] == state[layer + "_t"].shape[1]
+                 and ((state["nn_ok"] and NN_GATED_MIN_M <= cfg["m"] <= NN_GATED_MAX_M)
+                      or (layer == "pooler" and state["nn_p256_ok"]

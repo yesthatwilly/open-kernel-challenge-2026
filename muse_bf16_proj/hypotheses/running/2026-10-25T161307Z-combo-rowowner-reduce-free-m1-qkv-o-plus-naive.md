@@ -112,7 +112,7 @@ Built on current master (commit 67b46a57, blob f919748b). Everything in combo-na
 
 ## Risk
 
-Expected: combo 1's ~+0.8% plus up to +0.7% from qkv decode_1 (-2 us of a 47.5 us load). Risk medium: new template instantiations of a kernel that ran clean, behind a canary and a hard gate. ## Conjecture: the row-owner kernel won pooler m=1 not by bandwidth (its cold pure read was only 2.54 TB/s in prepare and ~3.95 TB/s effective in the judge, about master's swap-AB rate on qkv) but by being reduce-free: one CTA owns whole output rows, so there is no split-K ticket, no fp32 workspace round trip and no tail CTA doing the reduce. If so, the gain carries to the cell with the deepest split (qkv_gate, SPLIT_K 4, the largest row-minus-kernel gap at 3.1 us) and NOT to o (SPLIT_K 1, 0.0 reduce, K only 1024, where an 8-chunk ring cannot amortise its fill). A second interaction is occupancy: A2 needs 2 CTAs/SM at 4 stages, so it also tests whether the row-owner stream survives half the ring depth. Confirmed if A2's gate prints cand <= 0.98x and the profile's qkv decode_1 row drops with its row-minus-kernel gap shrinking below ~1 us, while A3's gate keeps master. Refuted if A2 is flat or slower with the same kernel time (then the 3.1 us gap is not the reduce) or if A3 also wins (then the effect is the TMA bulk issue path, not reduce removal).
+Expected: combo 1's ~+0.8% plus up to +0.7% from qkv decode_1 (-2 us of a 47.5 us load). Risk medium: new template instantiations of a kernel that ran clean, behind a canary and a hard gate. ## Conjecture: the row-owner kernel won pooler m=1 not by bandwidth (its cold pure read was only 2.54 TB/s in prepare and ~3.95 TB/s effective in the judge, about master's swap-AB rate on qkv) but by being reduce-free: one CTA owns whole output rows, so there is no split-K ticket, no fp32 workspace round trip and no tail CTA doing the reduce. If so, the gain carries to the cell with the deepest split (qkv_gate, SPLIT_K 4, the largest row-minus-kernel gap at 3.1 us) and NOT to o (SPLIT_K 1, 0.0 reduce, K only 1024, where an 8-chunk ring cannot amortise its fill). A second interaction is occupancy: A2 needs 2 CTAs/SM at 4 stages, so it also tests whether the row-owner stream survives half the ring depth. Confirmed (criteria restated per the adversarial review, on kernel time) if A2's gate routes (PATH CHOSEN A2 qkv_gate m=1: candidate, cand/master <= 0.98) AND the profile's bulk_kernel<16, 8192, 8, 4, 2> time is < 9.6 us AND the qkv_gate decode_1 row is < ~12.3 us. Refuted if A2's gate keeps master, or the bulk kernel time is >= 9.6 us. (The 'row-minus-kernel gap below ~1 us' test is dropped: master's pooler (SPLIT_K 2, gap 0.2 us) and o (SPLIT_K 1, gap 2.1 us) show the gap does not track the reduce. An A3 win would only mean a faster stream, since o has no reduce to remove.)
 
 ## Adversarial review
 
@@ -138,3 +138,84 @@ No companion. Every new cell is behind its own in-prepare A/B gate, which prints
 - The A2 template adds a stage-count parameter. Make sure bulk_launch's smem formula, the kernel's S, and bulk_inst_info's printed 'dyn smem' all use the same template S, not the BULK_STAGES #define.
 - Prepare/import budget: log each load_inline build's wall time (ouns, router_cluster, bulk, Lt) and each gate's seconds. The whole run must finish inside 10 minutes including timing.
 
+## Implementation notes
+
+Worktree `.worktrees/muse_bf16_proj/combo-rowowner-reduce-free-m1-qkv-o-plus-naive`, file `muse_bf16_proj/submission.py` only (+~900 / -7, uncommitted). Base a2286ee3. Master 455705cd differs from it only in hypothesis md files, so no merge was needed and everything outside the change is master byte-identical.
+
+**What changed.** The new section (9) sits just before `_prepare_state`.
+- **CUDA module `muse_bf16_bulk_rowown_m1_v1`.** Ported from b3e80b45's `_BULK_CUDA`, MODE 0 only (the MODE 1/2 pure-read probes and the 3.8 TB/s kill gate are dropped).
+  - `bulk_kernel<R, K, NT, S, MINB>`: the ring depth S and the `__launch_bounds__(160, MINB)` min-CTAs/SM are template parameters. The grid is `n / R`, set at launch from `out.size(1)`. The epilogue keeps `N = gridDim.x * R`.
+  - A `BulkInst<...>` struct derives its SMEM from the same template S as the kernel, and `bulk_setup` prints that S. This answers the review's open question on S consistency.
+  - Three instances:
+    - A, pooler: `<32, 8192, 8, 6, 1>`, grid 128, 123,904 B.
+    - A2, qkv_gate: `<16, 8192, 8, 4, 2>`, grid 144, 99,072 B.
+    - A3, o: `<64, 1024, 8, 6, 1>`, grid 128, 111,616 B.
+  - Static asserts hold for all three. A2: SLOT 24704, scratch 2 KB. A3: SLOT 18560, scratch 8 KB.
+  - The source's `static bool attr_set` is gone. `bulk_setup(inst)`, called in prepare() before any launch, sets MaxDynamicSharedMemorySize and **PreferredSharedMemoryCarveout = cudaSharedmemCarveoutMaxShared**. It returns regs, local, static/dyn smem and `cudaOccupancyMaxActiveBlocksPerMultiprocessor`.
+  - The build happens at import with `TORCH_CUDA_ARCH_LIST=9.0a`, set and then restored, and flags `-O3 -lineinfo -std=c++20`. The arch flags and the build seconds are printed.
+- **cuBLASLt module `muse_bf16_lt_qkv128_v1`.** Ported from a77cdec6's `_LT_CPP`. The static descriptor map is replaced by a per-call RAII `MuseLtDesc` (host-only; under graph replay none of it runs), so there is no static or global C++ state. The module is built at import, and its seconds are printed.
+- **Python helpers.** `_bulk_repack` (lossless, round trip asserted bit-exact), `_bulk_route_ok`, `_bulk_forward` and `_lt_route_ok`/`_lt_forward`.
+- **Shared gate helpers.**
+  - `_cell_check`: canary plus correctness, with flushed LAUNCH/DONE prints, a sync and the error word per launch. It checks rel L2 vs fp64 <= 3e-3, a probe row rel <= 1e-4, finiteness, and that run 2 is bit-identical.
+  - `_cell_gate`: `_ouns_gate`'s model selector run through `kernel_fn` itself on shallow state copies with the cell flag on vs off. It uses graph replay, a 256 MB flush, 41 interleaved reps and an empty-graph baseline, and prints both medians.
+  - `_cell_kernels`: one torch.profiler call that returns the CUDA kernel names.
+- **`_bulk_prepare` / `_lt_prepare`.** These run after master's own work in `_prepare_state` (flags None). Each is timed with a `[prepare-time]` line. The per-cell total and the gate seconds are printed. Each cell prints exactly one `PATH CHOSEN <A|A2|A3|B> <layer> m=<m>: <candidate|master> (cand X us vs master Y us)` line, with the reason when it is master.
+  - The second state of the A/B check (flags given) inherits the flags and the Lt algo row. It builds its own repacked weights, error word and 1 MiB Lt workspace.
+- **`kernel_fn`.** After the ouns line, `_bulk_route_ok` sends pooler/qkv_gate/o at cfg m == 1 to `_bulk_forward` when that cell's flag is set. In the bf16 branch, before master's `_bf16_gemm_dispatch_impl`, qkv_gate m == 128 goes to `_lt_forward` when `lt_qkv128_ok` is set. There are no prints, no state writes and no try/except.
+- **A/B check.** `AB_CASES` gains qkv_gate m=1, o m=1 and qkv_gate m=128; pooler m=1 was already there.
+
+**Review fixes applied:**
+1. **No per-call `preferred_blas_library` toggle.** Source B's toggle was NOT ported. qkv m=128 uses a prepare-time cuBLASLt plan in state (`lt_algo_qkv128` CPU int64[8] plus a per-state `lt_ws_qkv128`).
+   - The heuristic is queried at workspace caps 0 and 1 MiB, and only SPLITK_NUM == 1 candidates within 1 MiB are kept, deduplicated.
+   - Each candidate is canaried and checked eagerly, then ranked by graph replay (15 reps, cold L2). The best one is gated against master.
+   - When routed, torch.profiler must show exactly ONE kernel whose name contains no "splitk" or "reduce". Otherwise, if no split-K-1 candidate exists, the gate fails or the profiler is unavailable, the cell is dropped and the reason goes on its PATH CHOSEN line.
+2. **The `state['bulk_route_hit']` write is removed.** `_bulk_forward` writes nothing to state. The source's route probe that read it is replaced by the profiler kernel-name assertion.
+3. **A2 occupancy.** A2 sets the max-shared carveout. `bulk_setup` returns the occupancy query, and the cell is disabled (never launched) if it is < 2, i.e. 1. The value is printed.
+4. **Canary before capture.** Every new kernel instance and every Lt candidate is first launched eagerly in `_cell_check`, before any graph capture. The A2 instance never launches at all if its occupancy check fails.
+5. **Per-cell flags in the A/B check.** `_ab_flags` carries `bulk_pooler_ok`, `bulk_qkv_ok`, `bulk_o_ok` and `lt_qkv128_ok`. `_ab_component` maps (pooler|qkv_gate|o, m=1) and (qkv_gate, m=128) to their own flags, checked before the NN/router/ouns rules. A miss switches off only that cell, never nn_ok or another cell. The second-state-build-failure path also turns the new flags off.
+6. **Confirm/refute criteria restated on kernel time** in the Risk/Conjecture paragraph above:
+   - Confirmed: A2 routes AND bulk_kernel<16,...> < 9.6 us AND row < ~12.3 us.
+   - Refuted: A2 keeps master, or the kernel time is >= 9.6 us.
+   - The "gap below 1 us" test is dropped, as is the "A3 wins means TMA issue" reading.
+7. **Timing logs and PATH CHOSEN lines.**
+   - Build seconds: `[build-time] bulk ...` and `[build-time] lt ...` (ouns and router_cluster already print theirs).
+   - Gate seconds: `[prepare-time] gate <src> ...`, plus the per-cell total, plus the ouns gate tick that already exists.
+   - Exactly one PATH CHOSEN line per cell, on every exit path.
+   - The review's open question on the 144-on-132 imbalance is also handled: every bulk gate prints the projected `bytes / 3.95 TB/s` time (qkv: 37.7 MB -> 9.55 us) next to the candidate median.
+
+**Deviations from the spec:**
+- **Source B is not the toggle.** The review overrides the spec: B uses a cuBLASLt split-K-1 plan picked in prepare. It may not reproduce the toggle's nvjet 48x64 kernel. The gate decides, and a miss keeps master.
+- **Bulk-cell profiler failures keep the route.** If torch.profiler raises or returns no CUDA events for a bulk cell, the route is kept, with a printed note: kernel_fn calls our own extension directly, so the launched kernel is not in doubt. A *wrong* kernel name still disables the cell. For B a profiler failure drops the cell, as the review requires.
+- **Gate rule.** The gate is cand/master <= 0.98 on net medians, as the spec says (equivalent to master/cand >= 1.0204).
+- **Lt workspace.** It is 1 MiB per state, where a77cdec6 used 32 MiB, because split-K-1 algos need none.
+
+## Rules check
+
+Checked against `git -C .worktrees/muse_bf16_proj/combo-rowowner-reduce-free-m1-qkv-o-plus-naive diff` (submission.py only):
+
+- [x] **CUDA-graph capturable.**
+  - kernel_fn's new branches call `_bulk_route_ok`/`_lt_route_ok`, which read cfg, shape, dtype, contiguity, data_ptr alignment and prepare()-set state flags.
+  - `_bulk_forward` does `torch.empty` plus one `bulk_run` launch. `_lt_forward` does `torch.empty` plus one `cublasLtMatmul` with a prepare()-allocated workspace.
+  - There is no `.item()`, sync, print or try/except in kernel_fn's call graph; every lint host-sync hit is outside it.
+  - Branching uses cfg and shapes only.
+- [x] **Nothing derived from `data` is cached.** The only state writes are in prepare(): flags, repacked weights, error word, algo row and workspace, all from weights and synthetic x. kernel_fn and its callees write nothing to state; the `bulk_route_hit` write was removed.
+- [x] **Weights stay BF16, repacked losslessly in prepare() only.** `_bulk_repack` is a pure permutation of bf16 values with a bit-exact round trip asserted, done per state. Lt uses the weight as stored. The router path is untouched.
+- [x] **Activations BF16.** bf16 x in and bf16 out, with fp32 accumulation (mma.sync f32 / CUBLAS_COMPUTE_32F). Lt keeps only split-K-1 algos, so there is no reduced-precision reduction. KV cache / queries: n/a (no attention in this problem).
+- [x] n/a: there is no attention in muse_bf16_proj, and every weight row and K element is read.
+- [x] **No forbidden operations.** No timing patches, harness frames, I/O or secrets, module edits, reference import, subprocesses or network (lint PROCESS/NETWORK/HARNESS checks clean). `load_inline` builds at import as master's ouns/router_cluster do. torch.profiler, CUDAGraph and Event are only *used* in prepare(), never patched.
+- [x] **All work happens inside the timed call.** Every output is computed fresh. Only the per-cell route decision and the Lt algo choice, made in untimed prepare() from synthetic data, are reused.
+- [x] **Multi-state safety.** First line is still `# okc: problem=muse_bf16_proj`; there is no triton.autotune. There are no device pointers, workspaces or descriptors in module or C++ globals or statics: the source's `static bool attr_set` and the Lt static descriptor map were both removed. Each judge copy has its own repacked weights, error word and Lt workspace. The A/B check captures a graph on two states and alternates replays with refilled x on the new cells too.
+
+Lint (`python3 -I .claude/skills/churnsubs/bin/okc_lint.py <wt>/muse_bf16_proj/submission.py --problem muse_bf16_proj`), rc 0:
+
+```
+26 x warn host-sync ... (outside kernel_fn's call graph; fine in prepare())
+warn  dtype        L1483: flush = torch.empty(OUNS_FLUSH_BYTES, dtype=torch.uint8, device=dev)  (allowed only where SGLang does the same)
+warn  dtype        L2655: flush = torch.empty(CELL_FLUSH_BYTES, dtype=torch.uint8, device=dev)  (allowed only where SGLang does the same)
+warn  dtype        L2825: state["lt_ws_qkv128"] = torch.empty(LT_WS_BYTES, dtype=torch.uint8, device=dev)  (allowed only where SGLang does the same)
+warn  dtype        L2836: ws = torch.empty(LT_WS_BYTES, dtype=torch.uint8, device=dev)  (allowed only where SGLang does the same)
+warn  dtype        L2852: flush = torch.empty(CELL_FLUSH_BYTES, dtype=torch.uint8, device=dev)  (allowed only where SGLang does the same)
+OK with warnings
+```
+
+The uint8 hits are L2-flush and cuBLASLt workspace byte buffers, not activations. `python3 -I -m py_compile` passed, and `__pycache__` was removed. A symtable scan found no undefined global names in the file (LESSONS 2026-10-25 f-string check). No CPU dry run was possible: there is no torch on this node.

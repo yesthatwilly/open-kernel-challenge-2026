@@ -47,10 +47,10 @@ priority: 1
 kind: primary
 controls_for: null
 review: proceed
-status: running
+status: done
 review_at: 2026-10-25T161612Z
 review_companions: null
-stage: dispatched
+stage: harvested
 claimed_at: 2026-10-25T161612Z
 base_sha: e2a24e6c8d5b0c6b1ec53f88d2d22e18c50aa1ae
 base_blob: f919748b5af6e815f319e5d2d828ed68e5b28a71
@@ -69,6 +69,13 @@ attempt_file: 2026-10-25T162132Z-submit-pooler-k-halves-batched-gemm-m65-m256.md
 prepared_at: 2026-10-25T162132Z
 job: ce808e5a055f41b4
 dispatched_at: 2026-10-25T162139Z
+outcome: neutral
+verdict_detail: within-ci
+speedup: 1.246989255982173
+speedup_ci: [1.2282844171424403, 1.2656940948219053]
+harvested_at: 2026-10-25T163043Z
+best_at_harvest: 1.2490645809967658
+promotion: null
 ---
 
 # pooler-k-halves-batched-gemm-m65-m256
@@ -150,3 +157,53 @@ Audited 2026-10-25 (model opus, scored submit). **Verdict: dispatch-with-fixes.*
 - okc_lint OK (only pre-existing prepare-side warnings); py_compile OK; __pycache__ removed.
 
 Residual risk: cuBLAS may pick a 128x64 or split-K tile for the strided bmm, so the selector keeps master and the run only measures master. The prints make that readable as "refuted at prepare-time".
+
+## Result
+
+- job `ce808e5a055f41b4` (submit), status done, passed True, tests 9/9
+- speedup 1.2470x, 95% CI [1.2283, 1.2657], score 3873.970827595536 µs vs SGLang 4830.8 µs
+- best at harvest: {"speedup": 1.2490645809967658, "ci": [1.2303286122818142, 1.267800549711717], "job": "ee4f89f2f62c42d3"}; base result: muse_bf16_proj/hypotheses/done/neutral/pooler-nn-layout-widen-m256.result.json
+- **outcome: neutral** (within-ci)
+- files: `muse_bf16_proj/hypotheses/done/neutral/pooler-k-halves-batched-gemm-m65-m256.result.json`, `muse_bf16_proj/hypotheses/done/neutral/pooler-k-halves-batched-gemm-m65-m256.patch`; branch `hyp/muse_bf16_proj/pooler-k-halves-batched-gemm-m65-m256`
+
+## Attribution
+
+| shape | w | base µs | hyp µs | delta | verdict |
+|---|---|---|---|---|---|
+| layer=qkv_gate load=decode_1 m=1 | 62 | 12.67 | 12.3 | 1.0405 | gained |
+| layer=o load=decode_1 m=1 | 62 | 5.97 | 5.93 | 0.9969 | flat |
+| layer=pooler load=decode_1 m=1 | 62 | 18.93 | 19.22 | 0.9829 | flat |
+| layer=unpooler load=decode_1 m=1 | 62 | 4.88 | 4.86 | 1.0038 | flat |
+| layer=router load=decode_1 m=1 | 62 | 5.01 | 4.97 | 1.0147 | flat |
+| layer=qkv_gate load=decode_16 m=16 | 62 | 12.98 | 13.13 | 1.0305 | gained |
+| layer=o load=decode_16 m=16 | 62 | 6.04 | 6.04 | 0.9849 | flat |
+| layer=pooler load=decode_16 m=16 | 62 | 19.12 | 19.5 | 0.9933 | flat |
+| layer=unpooler load=decode_16 m=16 | 62 | 18.62 | 18.35 | 0.9881 | flat |
+| layer=router load=decode_16 m=16 | 62 | 5.53 | 5.68 | 0.969 | lost |
+| layer=qkv_gate load=decode_32 m=32 | 62 | 13.76 | 13.69 | 1.0133 | flat |
+| layer=o load=decode_32 m=32 | 62 | 6.48 | 6.56 | 0.9985 | flat |
+| layer=pooler load=decode_32 m=32 | 62 | 19.93 | 19.81 | 0.9938 | flat |
+| layer=unpooler load=decode_32 m=32 | 62 | 17.96 | 18.37 | 0.9843 | flat |
+| layer=router load=decode_32 m=32 | 62 | 5.97 | 5.99 | 0.9944 | flat |
+| layer=qkv_gate load=verify_1 m=8 | 62 | 12.99 | 12.76 | 1.0226 | flat |
+| layer=o load=verify_1 m=8 | 62 | 5.8 | 6.48 | 0.9806 | flat |
+| layer=pooler load=verify_1 m=8 | 62 | 18.86 | 19.24 | 0.9973 | flat |
+| layer=unpooler load=verify_1 m=8 | 62 | 5.34 | 5.33 | 1.0017 | flat |
+| layer=router load=verify_1 m=8 | 62 | 5.47 | 5.25 | 1.031 | gained |
+| layer=qkv_gate load=verify_16 m=128 | 62 | 17.38 | 17.16 | 0.9977 | flat |
+| layer=o load=verify_16 m=128 | 62 | 7.36 | 7.58 | 0.9747 | flat |
+| layer=pooler load=verify_16 m=128 | 62 | 23.2 | 21.43 | 1.0627 | gained |
+| layer=unpooler load=verify_16 m=128 | 62 | 19.03 | 19.15 | 0.9882 | flat |
+| layer=router load=verify_16 m=128 | 62 | 7.44 | 7.62 | 0.9761 | flat |
+| layer=qkv_gate load=verify_32 m=256 | 62 | 20.24 | 20.0 | 1.0029 | flat |
+| layer=o load=verify_32 m=256 | 62 | 9.47 | 9.5 | 0.9951 | flat |
+| layer=pooler load=verify_32 m=256 | 62 | 29.94 | 26.75 | 1.1228 | gained |
+| layer=unpooler load=verify_32 m=256 | 62 | 24.56 | 24.47 | 0.9893 | flat |
+| layer=router load=verify_32 m=256 | 62 | 9.72 | 9.67 | 0.9932 | flat |
+
+gained on qkv_gate decode_1, decode_16; router verify_1; pooler verify_16, verify_32; lost on router decode_16. Expected hit: 2/3. Noise ±1.5%.
+
+## Follow-ups
+
+- within-ci: the change is not proven either way; a stacked hypothesis (`depends_on: pooler-k-halves-batched-gemm-m65-m256`) that adds a further change in the same area is the only way to learn more (identical code is never re-run).
+
