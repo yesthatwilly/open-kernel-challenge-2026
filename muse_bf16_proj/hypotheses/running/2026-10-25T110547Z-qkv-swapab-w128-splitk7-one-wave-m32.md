@@ -59,7 +59,7 @@ review: proceed
 status: running
 review_at: 2026-10-25T111210Z
 review_companions: null
-stage: implemented
+stage: dispatched
 claimed_at: 2026-10-25T111210Z
 base_sha: 848976650adeb8a2fc5263b71136dbf192bebf90
 base_blob: 353e3b19a7edd5cb879e202d78097f474bcce207
@@ -76,6 +76,8 @@ submission_blob: b3a2f3b5156edd61c70c5007840f11068f7afb95
 lint_warnings: 20
 attempt_file: 2026-10-25T111928Z-submit-qkv-swapab-w128-splitk7-one-wave-m32.md
 prepared_at: 2026-10-25T111928Z
+job: c7138fe05598428e
+dispatched_at: 2026-10-25T111935Z
 ---
 
 # qkv-swapab-w128-splitk7-one-wave-m32
