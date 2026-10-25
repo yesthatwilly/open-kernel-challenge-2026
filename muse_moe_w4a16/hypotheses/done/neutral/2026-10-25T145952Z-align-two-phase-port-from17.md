@@ -85,10 +85,10 @@ priority: 1
 kind: primary
 controls_for: null
 review: proceed
-status: running
+status: done
 review_at: 2026-10-25T150410Z
 review_companions: null
-stage: dispatched
+stage: harvested
 claimed_at: 2026-10-25T150410Z
 base_sha: ab49fef4d76d7a9d84457f2dc039617f1620cf0c
 base_blob: 60dfe35d5417d9c0f89067ff313efdc2c41d03a2
@@ -107,6 +107,13 @@ attempt_file: 2026-10-25T151035Z-submit-align-two-phase-port-from17.md
 prepared_at: 2026-10-25T151035Z
 job: c05a8f7326004be6
 dispatched_at: 2026-10-25T151043Z
+outcome: neutral
+verdict_detail: beats-base-not-best
+speedup: 1.3700229697096111
+speedup_ci: [1.349472625163967, 1.3905733142552552]
+harvested_at: 2026-10-25T153251Z
+best_at_harvest: 1.3726662821010693
+promotion: null
 ---
 
 # align-two-phase-port-from17
@@ -211,3 +218,29 @@ Audited 2026-10-25 (opus) for a scored submit. **Verdict: dispatch (no fixes).**
 - lint: OK with warnings (host-sync in prepare() only). py_compile ok. __pycache__ removed.
 
 Residual risk: Triton compile time for 39 variants on the judge is not measured (at worst ~2 min, still inside both budgets); any compile or equivalence failure lands on master.
+
+## Result
+
+- job `c05a8f7326004be6` (submit), status done, passed True, tests 5/5
+- speedup 1.3700x, 95% CI [1.3495, 1.3906], score 9816.258776194483 µs vs SGLang 13448.5 µs
+- best at harvest: {"speedup": 1.3726662821010693, "ci": [1.3520762878695534, 1.3932562763325853], "job": "4e4a0e26c85944f2"}; base result: muse_moe_w4a16/hypotheses/done/neutral/w2-marlin-atomic-add-small-m.result.json
+- **outcome: neutral** (beats-base-not-best)
+- files: `muse_moe_w4a16/hypotheses/done/neutral/align-two-phase-port-from17.result.json`, `muse_moe_w4a16/hypotheses/done/neutral/align-two-phase-port-from17.patch`; branch `hyp/muse_moe_w4a16/align-two-phase-port-from17`
+
+## Attribution
+
+| shape | w | base µs | hyp µs | delta | verdict |
+|---|---|---|---|---|---|
+| bs=1 load=decode_1 sharding=ep8 | 60 | 44.88 | 46.77 | 0.9955 | flat |
+| bs=16 load=decode_16 sharding=ep8 | 60 | 147.71 | 145.99 | 1.0014 | flat |
+| bs=32 load=decode_32 sharding=ep8 | 60 | 198.72 | 203.75 | 0.9973 | flat |
+| bs=8 load=verify_1 sharding=ep8 | 60 | 106.03 | 111.85 | 0.9962 | flat |
+| bs=128 load=verify_16 sharding=ep8 | 60 | 317.77 | 319.08 | 0.9963 | flat |
+| bs=256 load=verify_32 sharding=ep8 | 60 | 467.8 | 404.89 | 1.1344 | gained |
+
+gained on verify_32 verify_32. Expected hit: 4/6. Noise ±1.5%.
+
+## Follow-ups
+
+- beats-base-not-best: the change is not proven either way; a stacked hypothesis (`depends_on: align-two-phase-port-from17`) that adds a further change in the same area is the only way to learn more (identical code is never re-run).
+
