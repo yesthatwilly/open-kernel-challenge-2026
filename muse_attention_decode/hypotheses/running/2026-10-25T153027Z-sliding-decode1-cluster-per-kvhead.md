@@ -54,7 +54,7 @@ review: proceed
 status: running
 review_at: 2026-10-25T161935Z
 review_companions: null
-stage: claimed
+stage: implemented
 claimed_at: 2026-10-25T161936Z
 base_sha: a5f0c41fcf6d081ab9a5f2262b3505c796565fea
 base_blob: 5cf8fae31e5b84c36efeeb4569763eb9b06e1c8a
@@ -63,6 +63,12 @@ worktree: .worktrees/muse_attention_decode/sliding-decode1-cluster-per-kvhead
 mode: null
 restack_of: null
 stale_base: null
+implemented_at: 2026-10-25T162957Z
+impl_commit: 037e0696dc223ca43c8c3460f3dc2fd7ed7b573a
+submission_sha256: 5875b86506261122bba2f7c47dd333ab98d9b2163b230ecc341e5d52b0aac932
+norm_sha256: 7b5894f405355819a421a39d1af1293dd5826a93e7c0949ab330f60db4497c5a
+submission_blob: 6d6afa4722731ceb9cb8216d0334a03f1a96ad2b
+lint_warnings: 60
 ---
 
 # sliding-decode1-cluster-per-kvhead
@@ -107,3 +113,71 @@ No companion. The change is internally A/B'd: prepare times PERHEAD against mast
 - Do the two 16-CTA clusters land on separate GPCs, or do they share SMs (2 CTAs/SM at 101 KB smem)? If 32 CTAs pack onto 16 SMs, per-SM gather bandwidth and issue are shared and the halving partly cancels. Printing %smid or %clusterid once in the canary would show it.
 - Would C=8 per head (2 clusters x 8 CTAs = 16 CTAs, 256 keys each) be a cheaper variant to time in the same prepare gate? It needs no new occupancy assumption and keeps DSMEM fan-in at 8.
 
+
+## Implementation notes
+
+Base a5f0c41f; master 43e5ca46 differs from it only in this md (submission.py identical), so no merge was needed. Edits only in `.worktrees/muse_attention_decode/sliding-decode1-cluster-per-kvhead/muse_attention_decode/submission.py` (diff: +235 / -56).
+
+CUDA (`_SLIDE_CUDA`):
+- `sliding_cluster_kernel` is now `template <bool PERHEAD>`. With `false` (master), every branch reduces to master's expressions (`b = blockIdx/C`, `kh = 0`, same loops and constants). `load_idx<PH>` and `issue_sub<PH>(..., kh)` are templated too. In PH, a thread handles token `tid/4 (+64 i)` and chunk `4 kh + tid%4`: 16-byte cp.async on the 4 chunks of the head's 64-byte half, 2 passes per 128-key sub-chunk, same smem row layout and XOR swizzle. Padding rows still zero both halves, and the unloaded half is never read: attend_tile reads only chunks `4g..4g+3`.
+- PH grid: `B * HKV * C` CTAs. Cluster `cl = blockIdx/C` gives `b = cl / HKV`, `kh = cl % HKV`. q-build: warp w builds head `kh*8 + w` (one head per warp). On the last rank, warps 0/1 build k/v of head kh only and write only that head's 64-byte half of the cache row (disjoint bytes across the two clusters). Compute: `g = kh`, `sub = warp`, tile stride `NSL = 8` (master 4). The new-key tile goes to slice `nt & (NSL-1)`.
+- Review fix (2), reduce-scatter: in PH the CTA partial has G = 8 local rows. The in-CTA merge (threads 0..127, 16 per row) loops over all 8 warps (`mw[WARPS]`). In the DSMEM reduce, `NROWS = G` and `NR = max(1, G/C)` = 1 at C = 16. `owns = rank*NR < NROWS`, so ranks 0..7 own one row each. Ranks 8..15 skip the whole reduce/write block but still execute both cluster.sync. Partials are read at the local row `hl`; gate and output use the global head `h = kh*8 + hl`.
+- Review fix (6), cluster.sync audit (done by hand plus a grep of the kernel body): the kernel has no `return`. Exactly two `cluster.sync()` calls exist, both at the top level of the kernel body and outside every branch, so every rank of every cluster runs exactly 2 on both instances. Every `__syncthreads` is at a CTA-uniform point: the loop bound `nsub` and the condition `s+NS<nsub` are CTA-uniform, and the staging barrier comes before the `if (PERHEAD)`. The `owns` branch is CTA-uniform and contains only warp shuffles (warp 0, full warp inside). The two PH clusters share no barrier, ticket or memory dependency.
+- Host: `occupancy_of<PH>`, `set_attrs<PH>` (max dynamic smem, carveout and non-portable cluster size, for both instances). `slide_setup()` appends `[PERHEAD occ C=16, regs, local]` at indices 8..10 and leaves master's indices 0..7 unchanged. `slide_attn(..., int64 perhead)` picks the instance and sets the grid to `B*C*(ph?HKV:1)`. The profile names the instance (`sliding_cluster_kernel<true>`, 32 CTAs).
+
+Python:
+- `_SLIDE_PH = False` (module flag). `_slide_forward` passes `_SLIDE_PH and c == 16`, and C = 16 serves only B = 1. kernel_fn is unchanged: no prints, no try/except, no new mutable state. It only reads the frozen flag.
+- Review fix (4): `_SLIDE_PH` is set once at import, in `_slide_init`, after the C loop and before the PATH CHOSEN prints. It is never toggled per call. The two-state replay sets it provisionally to True at import and restores it in a `finally`. The init-exception fallback resets it to False.
+- Review fixes (1) and (3): `_slide_ph_init` runs only if `_SLIDE_MOD[16] is not None`, i.e. only if C = 16 itself routed in this run (canary, self-check, its own two-state replay and its timing gate against Triton). It checks, in order:
+  (a) the PERHEAD instance's `cudaOccupancyMaxActiveClusters` at C = 16 is >= 2;
+  (b) a PERHEAD canary;
+  (c) an eager self-check at B = 1 on lens 1/10/2047/2048/2049/80000 at kv 0.25 and 2049 at 1.0: rel L2 vs fp32 reference < 2e-2 (master's bound), vs master C = 16 on identical inputs < 1e-2, and new cache rows vs master C = 16's rel < 1e-2 (byte match printed);
+  (d) the two-state alternating graph replay through kernel_fn with `_SLIDE_PH` on (`_alt_check`, gate `_slide_gate`);
+  (e) an output check at 80000 vs C = 16, then the timing gate: interleaved cold-L2 graph replays (`_interleaved_us`, reps = 31, empty graph subtracted), routing only at C16/PERHEAD >= 1.03x.
+  Any failure or exception leaves `_SLIDE_PH = False`, which keeps master C = 16, never Triton.
+- Review fix (3), second half: `_sd_setup_body` now runs `route.pop(1, None)` before freezing `_SD_ROUTE`, so the sk-window decode route can never take B = 1. Today it only fills band 3 anyway.
+- Review fix (5): `[slide-gate] PERHEAD-vs-C=16 B=1 x 80000: [cluster C=16] X us, [PERHEAD 2 x C=16] Y us -> C=16 / PERHEAD r x (ROUTE PERHEAD | ... master C=16)` prints whenever the gate is reached, routed or not. There is also an output rel-L2 line, plus `[slide] PATH CHOSEN: sliding B=1 PERHEAD ON|OFF (reason)` and the per-band PATH CHOSEN line (`PERHEAD 2 x C=16` when on).
+- Every PERHEAD launch at import is announced, synced and confirmed (`_slide_run`), and the build already has `-lineinfo`. PH adds no new PTX: same cp.async.cg, mma.sync and cvt forms as master. No mbarrier or spin waits. No module or static global holds device pointers: the PH instance takes everything from the launch arguments.
+
+Deviations / not done:
+- Open question "print %smid/%clusterid in the canary": not done, to avoid new PTX in a scored run.
+- Open question "C=8 per head variant": not built (out of scope; candidate follow-up).
+- The spec's "rel L2 < 1e-2 vs master" is applied both in the self-check cases and at the 80000 gate input.
+- Because this is a scored submit, a hard fault in the first PERHEAD launch (illegal address) would poison the context with no fallback. The canary is the first PH launch, so a fault would be attributed to it, but it is still a risk.
+
+## Rules check
+- [x] CUDA-graph capturable: kernel_fn -> `_slide_forward` -> one `cudaLaunchKernelEx` (shape-only grid). No sync, `.item()` or print in that path. The flag is a host bool frozen at import. Allocation is `torch.empty` of the config shape only.
+- [x] Nothing derived from `data` is cached across calls: no new caches. `_SLIDE_INFO` holds host ints from `slide_setup`, not data.
+- [x] n/a: weights: this problem has no weights; no repack.
+- [x] Activations: qkv/out BF16; KV cache FP8 E4M3 (new rows written as E4M3 halves); q rounded once to E4M3 (same as master); fp32 softmax/merges.
+- [x] Every key: each cluster attends every key of the 2048 window for its kv head (same ck split over 16 ranks, all tiles masked only by window/causal bounds), plus the new key on the last rank; no skipping.
+- [x] No timing patches, harness access, module edits, reference import, subprocesses or network (lint clean on these).
+- [x] All work inside the timed call; no output caching or replay. Import-time work is checks and timing on synthetic data only.
+- [x] Two-state rotation: no device pointer, map or workspace in module/static globals. The two-state alternating replay with refilled inputs is run for PERHEAD through kernel_fn.
+
+okc_lint (`python3 -I .claude/skills/churnsubs/bin/okc_lint.py <wt>/muse_attention_decode/submission.py --problem muse_attention_decode`):
+```
+warn  host-sync  (59 lines, all "outside kernel_fn's call graph; fine in prepare()")
+OK with warnings: submission.py
+```
+py_compile: OK; __pycache__ removed. An AST scan of the changed functions found no undefined names.
+
+## Pre-flight audit
+
+Audited 2026-10-25 by an Opus subagent, by reading only (no GPU here). **Verdict: dispatch-with-fixes.**
+
+Fixes (all in the worktree submission.py):
+- **The PERHEAD build is now in its own module.** The builder had templated master's own `sliding_cluster_kernel` inside master's module (`muse_sliding_cluster_v2`). An nvcc failure on `<true>` would have lost master's C=16 (B=1) and C=4 (B=17..32) routes and sent those shapes to Triton, a regression. `_SLIDE_CPP` / `_SLIDE_CUDA` are now restored byte-identical to master (checked by AST string equality against base a5f0c41f). The templated source is `_SLIDE_PH_CPP` / `_SLIDE_PH_CUDA`, with host entry points renamed `slide_ph_setup` / `slide_ph_attn` and built as `muse_sliding_cluster_v2_ph[_f16qk]` by `_build_slide(fp8qk, ph=True)`. That build happens inside `_slide_ph_init`, only after C=16 routed. A build failure returns "PERHEAD module build failed; master module untouched" and leaves master C=16. `_slide_launch` calls `slide_ph_attn(..., 1)` only when ph, and otherwise calls master's `slide_attn` with master's signature. `_slide_forward` picks `_SLIDE_PH_MOD` (set once at import, reset to None when PERHEAD does not route). The master side of the self-check, the gate output check and the interleaved timing now run master's real module (`mext`). `_SLIDE_INFO` was removed. The load_inline lines print the module name, and a new `[slide] modules: master C=16 ..., C=4 ..., PERHEAD ...` line prints after PATH CHOSEN.
+- **Host bounds check before every PERHEAD launch.** In `_slide_run` with ph (prepare-time only), `_slide_bounds` checks that the page indices in each request's window [lo, seq) and cache_loc lie in [0, cache rows), and that seq <= page_table width. If not, it raises, which lands on master C=16 (the canary catches it; the self-check, replay and gate errors are caught in `_slide_init`). This prevents a device fault from poisoning the context.
+
+Verified, no change needed:
+- With PERHEAD=false, the templated code folds to master's expressions. It is moot now, since master's module source is byte-identical.
+- Cache-row half-writes: on the last rank of cluster kh, warp 0 writes K and warp 1 writes V at bytes kh*64 + 2*lane (32 lanes x 2 B = 64 B). Cluster 0 covers bytes 0..63 and cluster 1 covers 64..127, so each byte of the K row and of the V row is written exactly once. The new key is never re-read from the cache (each cluster uses its smem XK/XV, of which only the kh half of row 0 is read; rows 1..15 are zeroed). There is no race.
+- cluster.sync: there are exactly 2 calls, both at the top level, and the kernel has no return. The `owns` branch (ranks 0..7) contains only warp-0 shuffles, `__syncthreads` sits at CTA-uniform points, and the PH in-CTA merge (tid < 128) contains no barrier.
+- Reduce-scatter at C=16: NR=1, ranks 0..7 own local row hl = rank, the output and gate use head kh*8+hl, and the 16 heads are covered exactly once across the 2 clusters.
+- Gather: tokens tid/4 + 64 i (i < 2) cover 128 rows, chunks 4kh..4kh+3 match what attend_tile reads (QK g*4..g*4+3, V vlc = g*4 + quad/2), and pad rows are zeroed in both halves.
+- `_SLIDE_PH` is set only in `_slide_init` / `_slide_ph_init` at import (provisional True for the replay, restored in finally) and never per call.
+- kernel_fn purity: kernel_fn reads two frozen module globals, does no sync or print, allocates only by shape, and has no data-dependent control flow. Lint is clean apart from 59 prepare-time host-sync warnings.
+- The `route.pop(1, None)` in `_sd_setup_body` is harmless (`route` is always defined, and band 1 was never filled).
+
+Residual risk: about 45 s more nvcc at import (wall 470-490 s plus PERHEAD checks, still well under the 15-min limit); a device fault inside PERHEAD on in-bounds data would still poison the context, with no fallback.
