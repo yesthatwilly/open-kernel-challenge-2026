@@ -75,10 +75,10 @@ controls_for: null
 rewrite_stage: 3
 replaces: "full-layer verify at 1<batch<=64: FA3 main + prepare_varlen_num_blocks + FlashAttnFwdCombine + norm-gate (master); stage-2 splitkv_verify_kernel A8 + splitkv_verify_combine B8"
 review: proceed
-status: running
+status: done
 review_at: 2026-10-25T002202Z
 review_companions: null
-stage: dispatched
+stage: harvested
 claimed_at: 2026-10-25T002203Z
 base_sha: ee7dd2035bcffc84a11faafb7b5574466ee3bcae
 base_blob: 2b7e5dbf0fde0ae0163e5ecaefd87a5f0848e6b0
@@ -97,6 +97,13 @@ attempt_file: 2026-10-25T004725Z-check-full-verify-wgmma-s3-warpgroup-per-kvhead
 prepared_at: 2026-10-25T004725Z
 job: 2c3f7fff72bb4e1d
 dispatched_at: 2026-10-25T004732Z
+outcome: neutral
+verdict_detail: beats-base-not-best
+speedup: 1.3801418445957605
+speedup_ci: [1.359439716926824, 1.4008439722646968]
+harvested_at: 2026-10-25T034127Z
+best_at_harvest: 1.3948738389144513
+promotion: null
 ---
 
 # full-verify-wgmma-s3-warpgroup-per-kvhead-inproc
@@ -215,3 +222,36 @@ Fixes applied in the worktree (`muse_attention_decode/submission.py`):
 Checked and OK. Register-A E4M3 fragment layout, which equals the m16n8k32 A layout, so register A is legal for e4m3 (K-major implied). C-fragment rows/columns. The P token permutation against the V^T byte transpose (prmt selectors and swizzled store addresses verified by hand). SW128 K descriptor (SBO 1024, start offset 64g + 32k, 1024-aligned stages). SW64 V^T (chunk ^ ((row >> 1) & 3), SBO 512, layout 2, +32 k-step). FULL/EMPTY parity and no phase overrun. Page-index RAW/WAR. Ticket release/acquire (threadfence, named barrier, atomicAdd, threadfence + __ldcg) with an in-kernel reset. Slot uniqueness c + b. Causal mask and edge predicate. Rows with no valid key. smem about 89.6 KB/CTA (2 CTAs/SM fit). No subprocess. Nothing cached from data. Allocations are shape-only. Every wgmma/mbarrier sits under __CUDA_ARCH_FEAT_SM90_ALL. TORCH_CUDA_ARCH_LIST=9.0a is restored afterwards. Decode and sliding are byte-identical to master; the only master lines changed are the docstring and `paired`. Self-check tolerance 3e-2: the emulated self-check error is about 1.0%, so the threshold is honest with about 3x margin (2e-2 would also pass). Rules: E4M3 P with offset 8 is exactly SGLang's FA3 FP8 path. KV stays FP8, Q is E4M3, the output is bf16 and every key is attended.
 
 Residual risk: the unverifiable hardware details (consumer-side fence.proxy.async after the cp.async mbarrier for the wgmma reads, descriptor field encodings) can only be judged on the GPU, and an illegal-instruction-class fault in the canary would poison the context (0/0).
+
+## Result
+
+- job `2c3f7fff72bb4e1d` (check), status done, passed True, tests 16/16
+- speedup 1.3801x, 95% CI [1.3594, 1.4008], score 2728.92240369912 µs vs SGLang 3766.3 µs
+- best at harvest: {"speedup": 1.3948738389144513, "ci": [1.3739507313307344, 1.415796946498168], "job": "698d4cd3838c4a63"}; base result: muse_attention_decode/hypotheses/done/regression/full-verify-cuda-streamk-splitkv.result.json
+- **outcome: neutral** (beats-base-not-best)
+- files: `muse_attention_decode/hypotheses/done/neutral/full-verify-wgmma-s3-warpgroup-per-kvhead-inproc.result.json`, `muse_attention_decode/hypotheses/done/neutral/full-verify-wgmma-s3-warpgroup-per-kvhead-inproc.patch`; branch `hyp/muse_attention_decode/full-verify-wgmma-s3-warpgroup-per-kvhead-inproc`
+
+## Attribution
+
+| shape | w | base µs | hyp µs | delta | verdict |
+|---|---|---|---|---|---|
+| batch=1 ctx=80000 dist=soft heads=tp8 layer=sliding load=decode_1 page=1 | 46 | 13.91 | 13.01 | 1.0505 | gained |
+| batch=1 ctx=80000 dist=coherent heads=tp8 layer=full load=decode_1 page=1 | 16 | 27.5 | 27.82 | 0.9989 | flat |
+| batch=16 ctx=80000 dist=soft heads=tp8 layer=sliding load=decode_16 page=1 spread=agentic | 46 | 20.75 | 15.61 | 1.3378 | gained |
+| batch=16 ctx=80000 dist=coherent heads=tp8 layer=full load=decode_16 page=1 spread=agentic | 16 | 122.37 | 122.48 | 1.0005 | flat |
+| batch=32 ctx=80000 dist=soft heads=tp8 layer=sliding load=decode_32 page=1 spread=agentic | 46 | 25.16 | 24.2 | 1.049 | gained |
+| batch=32 ctx=80000 dist=coherent heads=tp8 layer=full load=decode_32 page=1 spread=agentic | 16 | 226.29 | 259.2 | 0.8746 | lost |
+| batch=1 ctx=80000 dist=soft heads=tp8 layer=sliding load=verify_1 page=1 q_len=8 | 46 | 16.85 | 17.44 | 1.0017 | flat |
+| batch=1 ctx=80000 dist=coherent heads=tp8 layer=full load=verify_1 page=1 q_len=8 | 16 | 29.88 | 30.2 | 0.9996 | flat |
+| batch=16 ctx=80000 dist=soft heads=tp8 layer=sliding load=verify_16 page=1 q_len=8 spread=agentic | 46 | 22.25 | 22.44 | 0.9854 | flat |
+| batch=16 ctx=80000 dist=coherent heads=tp8 layer=full load=verify_16 page=1 q_len=8 spread=agentic | 16 | 243.99 | 162.61 | 1.5026 | gained |
+| batch=32 ctx=80000 dist=soft heads=tp8 layer=sliding load=verify_32 page=1 q_len=8 spread=agentic | 46 | 28.93 | 28.67 | 1.0053 | flat |
+| batch=32 ctx=80000 dist=coherent heads=tp8 layer=full load=verify_32 page=1 q_len=8 spread=agentic | 16 | 465.11 | 301.91 | 1.5488 | gained |
+
+gained on sliding decode_1, decode_16, decode_32; full verify_16, verify_32; lost on full decode_32. Expected hit: 2/3. Noise ±1.5%.
+
+## Follow-ups
+
+- rewrite stage 3 of `full-layer verify at 1<batch<=64: FA3 main + prepare_varlen_num_blocks + FlashAttnFwdCombine + norm-gate (master); stage-2 splitkv_verify_kernel A8 + splitkv_verify_combine B8`: read the replaced kernels' own us per shape (profile top_kernels) against the incumbent and the floor, and check which Milestone it reached. The next stage is `/hypothesize muse_attention_decode "<what to fix or tune>" --kind rewrite --depends-on full-verify-wgmma-s3-warpgroup-per-kvhead-inproc --stage 4`; a slow or failed first cut is the expected start, not a do-not-retry.
+- beats-base-not-best: the change is not proven either way; a stacked hypothesis (`depends_on: full-verify-wgmma-s3-warpgroup-per-kvhead-inproc`) that adds a further change in the same area is the only way to learn more (identical code is never re-run).
+

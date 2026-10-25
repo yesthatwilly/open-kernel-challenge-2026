@@ -1,0 +1,41 @@
+[splitkv] load_inline compiled in 41.0s
+[splitkv] self-check kv_scale=1.0 grid=device: rel L2 1.69e-03, finite True
+[splitkv] self-check kv_scale=0.25 grid=3: rel L2 1.66e-03, finite True
+[splitkv] self-check kv_scale=1.0 grid=3: rel L2 1.62e-03, finite True
+[wgmma-verify] load_inline compiled in 34.5s; nvcc arch flags -gencode=arch=compute_90a,code=sm_90a only (TORCH_CUDA_ARCH_LIST=9.0a during the build), cflags ['-O3', '-gencode=arch=compute_90a,code=sm_90a', '-lineinfo']
+[wgmma-verify] device capability (9, 0); splitkv_verify_wgmma_kernel<ticket>: regs 128, local bytes 0, binaryVersion 90, ptxVersion 90, CTAs/SM 2; <B8>: regs 120, local bytes 0, binaryVersion 90, ptxVersion 90, CTAs/SM 2; B8 combine regs 35, local bytes 0; dynamic smem 91744 B (static 0, max dyn attr 91744)
+[wgmma-verify] ticket canary: B=2 kv_scale=1.0 grid=4; launching kernel_fn (pre-attention first)
+[wgmma-verify]   pre-attention (Triton) done; launching splitkv_verify_wgmma_kernel<ticket> grid 4
+[wgmma-verify]   splitkv_verify_wgmma_kernel done
+[wgmma-verify] ticket canary: rel L2 7.86e-03, finite True
+[wgmma-verify] ticket case 1: B=6 kv_scale=1.0 grid=device; launching kernel_fn (pre-attention first)
+[wgmma-verify]   pre-attention (Triton) done; launching splitkv_verify_wgmma_kernel<ticket> grid 264
+[wgmma-verify]   splitkv_verify_wgmma_kernel done
+[wgmma-verify] ticket case 1: rel L2 4.79e-03, finite True
+[wgmma-verify] ticket case 1: second eager call identical True
+[wgmma-verify] ticket case 2: B=6 kv_scale=0.25 grid=3; launching kernel_fn (pre-attention first)
+[wgmma-verify]   pre-attention (Triton) done; launching splitkv_verify_wgmma_kernel<ticket> grid 3
+[wgmma-verify]   splitkv_verify_wgmma_kernel done
+[wgmma-verify] ticket case 2: rel L2 1.23e+00, finite True
+[wgmma-verify] ticket SELF-CHECK FAILED: case 2 rel L2 1.23e+00 finite True; retrying with stage 2's B8 combine
+[wgmma-verify] b8 canary: B=2 kv_scale=1.0 grid=4; launching kernel_fn (pre-attention first)
+[wgmma-verify]   pre-attention (Triton) done; launching splitkv_verify_wgmma_kernel<B8> grid 4
+[wgmma-verify]   splitkv_verify_wgmma_kernel done
+[wgmma-verify]   launching splitkv_verify_combine_kernel (B8)
+[wgmma-verify]   splitkv_verify_combine_kernel (B8) done
+[wgmma-verify] b8 canary: rel L2 7.86e-03, finite True
+[wgmma-verify] b8 case 1: B=6 kv_scale=1.0 grid=device; launching kernel_fn (pre-attention first)
+[wgmma-verify]   pre-attention (Triton) done; launching splitkv_verify_wgmma_kernel<B8> grid 264
+[wgmma-verify]   splitkv_verify_wgmma_kernel done
+[wgmma-verify]   launching splitkv_verify_combine_kernel (B8)
+[wgmma-verify]   splitkv_verify_combine_kernel (B8) done
+[wgmma-verify] b8 case 1: rel L2 4.79e-03, finite True
+[wgmma-verify] b8 case 2: B=6 kv_scale=0.25 grid=3; launching kernel_fn (pre-attention first)
+[wgmma-verify]   pre-attention (Triton) done; launching splitkv_verify_wgmma_kernel<B8> grid 3
+[wgmma-verify]   splitkv_verify_wgmma_kernel done
+[wgmma-verify]   launching splitkv_verify_combine_kernel (B8)
+[wgmma-verify]   splitkv_verify_combine_kernel (B8) done
+[wgmma-verify] b8 case 2: rel L2 1.23e+00, finite True
+[wgmma-verify] b8 SELF-CHECK FAILED: case 2 rel L2 1.23e+00 finite True
+PATH CHOSEN: full verify master FA3, paired heads (fallback: self-check failed (b8: case 2 rel L2 1.23e+00 finite True))
+PATH CHOSEN: full decode 1<B<=64 page 1: CUDA split-KV v1; full B=1: FA3 unpaired; sliding decode: Triton fused; sliding verify: FA3 unpaired; other full B>1: FA3 paired

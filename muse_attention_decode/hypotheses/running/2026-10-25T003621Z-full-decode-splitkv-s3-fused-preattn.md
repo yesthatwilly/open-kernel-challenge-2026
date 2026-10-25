@@ -116,3 +116,30 @@ No okc companion. The only ambiguity is whether a ~2 us shape delta is the launc
 - Does the q build add per-segment latency measurable in v3's own kernel time vs v2's? The eager diagnostic should print it.
 - positions and inv_freq are not needed on full layers. Drop them from the v3 signature, or confirm they are unused.
 
+
+## Implementation notes
+
+Edited only `muse_attention_decode/submission.py` in the worktree (+643/-10 lines, nothing committed). Built on stage 2 as-is (relaxed arch gate `binaryVersion == 90`, effective grid `gx = min(gridDim.x, T)`, tickets re-zeroed in the `finally` after diagnostics; all kept).
+
+- New module `muse_full_decode_splitkv_v3` (`_SK3_CPP`/`_SK3_CUDA`, built by `_build_sk(name, cpp, cuda, funcs)`; TORCH_CUDA_ARCH_LIST=9.0a around load_inline and restored; `-O3 -lineinfo`). Its source is stage 2's helper prefix (sliced from `_SK_CUDA` at import, so v2 is byte-identical) plus `splitkv_attn_sk_fused_kernel`: 4 stages, ticket protocol, same tile math and finalize as stage 2. v2 stays compiled as the fallback.
+- Q build (review: overlap with the ring): the segment's first tile cp.asyncs the request's 2 KB bf16 q slice of qkv into a per-stage slot with the K/V rows. At consumption (tile landed, next 3 tiles in flight) each thread normalizes its own row (scaleless RMSNorm, eps 1e-5, 2-step shuffle across the 4 lanes of a quad), rounds to e4m3 (`__nv_cvt_float_to_fp8` SATFINITE, RN) and builds the MMA A fragments. Nothing runs ahead of the ring prologue. Unpaired q layout.
+- New k/v row: the CTA whose stream-K range holds a request's last tile (key seq_b - 1 = cache_loc[b]) stores k = norm(k)/k_scale and v = v/v_scale as e4m3 while block 0's page indices are in flight (warps 0-3), `__threadfence()`, and the barrier after the index wait orders it before every ring cp.async. Tile ranges are disjoint, so no other CTA reads that row.
+- Review correction applied (review wins over spec): NO RoPE. Verified: reference.py `rope_theta = ROPE_THETA if layer == "sliding" else 0.0`, TASK.md "no RoPE" on full layers, master's `_pre_attention_kernel` is launched with `ROPE=bool(theta)` = False. So positions/inv_freq are dropped from the v3 signature (answers the review's open question), and kernel_fn takes v3 only when `not theta` (else v2/master path). The spec's sin/cos tolerance caveat is moot; new-row check is still rel L2 < 5e-3.
+- Dispatch in kernel_fn: `splitkv and _EXT3 is not None and not theta` -> `_full_decode_sk3` (one launch, no q tensor, no `_pre_attention_kernel`). Everything else unchanged byte for byte.
+- Self-check (`_sk3_validate`, in-process, only after stage 2 validated): image check (cap 9.0, binaryVersion 90, CTAs/SM), canary B=2, 8 ragged cases (B=2/16/32/64, kv_scale 1 and 0.25, grids 3/7/device). Per case: host ownership check (cache_loc == page_table[b, seq-1]; exactly one CTA owns each last tile), master `_pre_attention_kernel` + v2 on cloned caches as reference, v3 on the originals; asserts v3 out vs FP32 ref < 2e-2 and vs v2 out < 5e-3, new k/v rows vs master rel L2 < 5e-3 and finite, all other cache bytes equal. Each launch printed before, synced and printed after. Then graph capture + 2 NaN-poisoned replays through kernel_fn, and a ticket-sum == 0 check.
+- PATH CHOSEN lines: success `full decode streamk fused-preattn v3`; any v3 failure `full decode streamk v2 (fallback: <reason>)` (v2 keeps running); v2 failures keep the stage-2 messages.
+- Added `_sk3_diagnostics` (eager, cold L2, B=16/32 x 80000): pre-attn + v2 vs fused v3 and v3 - v2 kernel time, as the review asked.
+- Not verified: no nvcc/GPU on this node; the CUDA was only read-checked and py_compiled.
+
+## Rules check
+
+- [x] CUDA-graph capturable: kernel_fn v3 path only allocates workspaces from shapes and launches one kernel; no sync/.item()/value-dependent control flow (syncs are in prepare-time self-check only; replay check captures kernel_fn).
+- [x] Nothing derived from `data` is cached across calls: tickets are device-allocated, zeroed once, and every launch resets them; the cache rows are outputs, not cached inputs.
+- [x] Weights: n/a: attention problem, no weights touched.
+- [x] KV cache FP8 e4m3 (k/v rows stored e4m3), queries rounded to FP8 E4M3 (not lower), activations bf16.
+- [x] Attention sees every key: stream-K covers all tiles of every request including the new token; no skipping.
+- [x] No timing patches, harness I/O, module edits, reference import, subprocesses or network (grep of diff: no subprocess/fork/multiprocessing; load_inline is in-process).
+- [x] All work inside the timed call; no output caching or replay (self-check runs at import on synthetic data only).
+- [x] No triton.autotune; first-line marker `# okc: problem=muse_attention_decode` kept.
+
+okc_lint output (`python3 -I okc_lint.py submission.py --problem muse_attention_decode`): `OK with warnings: submission.py`; 16 `warn host-sync` lines, all `torch.cuda.synchronize()` / `.item()` in prepare-time self-check code, "outside kernel_fn's call graph; fine in prepare()". No errors. `py_compile` passed; `__pycache__` removed.
