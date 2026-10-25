@@ -1,0 +1,129 @@
+true,false> B=33 grid 264
+[sk] B=33 agentic ctx 8000 planted last key grid device: splitkv_attn_sk_kernel<4,true,false> returned
+[sk] B=33 agentic ctx 8000 planted last key grid device: rel L2 1.64e-03 (incumbent A+B 1.64e-03), finite True -> ok
+[sk] B=33 ragged grid device: launching splitkv_attn_sk_kernel<4,true,false> B=33 grid 264
+[sk] B=33 ragged grid device: splitkv_attn_sk_kernel<4,true,false> returned
+[sk] B=33 ragged grid device: rel L2 1.65e-03 (incumbent A+B 1.65e-03), finite True -> ok
+[sk] B=33 uniform grid device: launching splitkv_attn_sk_kernel<4,true,false> B=33 grid 264
+[sk] B=33 uniform grid device: splitkv_attn_sk_kernel<4,true,false> returned
+[sk] B=33 uniform grid device: rel L2 1.66e-03 (incumbent A+B 1.66e-03), finite True -> ok
+[sk] B=1 80000 keys grid SM: launching splitkv_attn_sk_kernel<4,true,true> B=1 grid 132
+[sk] B=1 80000 keys grid SM: splitkv_attn_sk_kernel<4,true,true> returned
+[sk] B=1 80000 keys grid SM: rel L2 1.61e-03, finite True -> ok
+[sk] B=1 80000 keys kv 0.25 grid SM: launching splitkv_attn_sk_kernel<4,true,true> B=1 grid 132
+[sk] B=1 80000 keys kv 0.25 grid SM: splitkv_attn_sk_kernel<4,true,true> returned
+[sk] B=1 80000 keys kv 0.25 grid SM: rel L2 1.52e-03, finite True -> ok
+[sk] B=1 80000 keys grid 7: launching splitkv_attn_sk_kernel<4,true,true> B=1 grid 7
+[sk] B=1 80000 keys grid 7: splitkv_attn_sk_kernel<4,true,true> returned
+[sk] B=1 80000 keys grid 7: rel L2 1.74e-03, finite True -> ok
+[sk] B=1 80000 keys kv 0.25 grid 3: launching splitkv_attn_sk_kernel<4,true,true> B=1 grid 3
+[sk] B=1 80000 keys kv 0.25 grid 3: splitkv_attn_sk_kernel<4,true,true> returned
+[sk] B=1 80000 keys kv 0.25 grid 3: rel L2 1.59e-03, finite True -> ok
+[sk] B=1 79999 keys planted last key grid SM: launching splitkv_attn_sk_kernel<4,true,true> B=1 grid 132
+[sk] B=1 79999 keys planted last key grid SM: splitkv_attn_sk_kernel<4,true,true> returned
+[sk] B=1 79999 keys planted last key grid SM: rel L2 1.65e-03, finite True -> ok
+[sk] B=1 80001 keys planted last key grid 7: launching splitkv_attn_sk_kernel<4,true,true> B=1 grid 7
+[sk] B=1 80001 keys planted last key grid 7: splitkv_attn_sk_kernel<4,true,true> returned
+[sk] B=1 80001 keys planted last key grid 7: rel L2 1.67e-03, finite True -> ok
+[sk] B=1 4097 keys grid SM: launching splitkv_attn_sk_kernel<4,true,true> B=1 grid 132
+[sk] B=1 4097 keys grid SM: splitkv_attn_sk_kernel<4,true,true> returned
+[sk] B=1 4097 keys grid SM: rel L2 1.69e-03, finite True -> ok
+[sk] B=1 4097 keys planted key 64 grid 7: launching splitkv_attn_sk_kernel<4,true,true> B=1 grid 7
+[sk] B=1 4097 keys planted key 64 grid 7: splitkv_attn_sk_kernel<4,true,true> returned
+[sk] B=1 4097 keys planted key 64 grid 7: rel L2 1.71e-03, finite True -> ok
+[sk] B=1 4097 keys planted last key grid SM: launching splitkv_attn_sk_kernel<4,true,true> B=1 grid 132
+[sk] B=1 4097 keys planted last key grid SM: splitkv_attn_sk_kernel<4,true,true> returned
+[sk] B=1 4097 keys planted last key grid SM: rel L2 1.72e-03, finite True -> ok
+[sk] B=1 63 keys grid SM: launching splitkv_attn_sk_kernel<4,true,true> B=1 grid 132
+[sk] B=1 63 keys grid SM: splitkv_attn_sk_kernel<4,true,true> returned
+[sk] B=1 63 keys grid SM: rel L2 1.79e-03, finite True -> ok
+[sk] B=1 63 keys planted last key grid 3: launching splitkv_attn_sk_kernel<4,true,true> B=1 grid 3
+[sk] B=1 63 keys planted last key grid 3: splitkv_attn_sk_kernel<4,true,true> returned
+[sk] B=1 63 keys planted last key grid 3: rel L2 1.64e-03, finite True -> ok
+[sk] B=1 1 key grid SM: launching splitkv_attn_sk_kernel<4,true,true> B=1 grid 132
+[sk] B=1 1 key grid SM: splitkv_attn_sk_kernel<4,true,true> returned
+[sk] B=1 1 key grid SM: rel L2 1.64e-03, finite True -> ok
+[sk] B=1 1 key kv 0.25 grid 3: launching splitkv_attn_sk_kernel<4,true,true> B=1 grid 3
+[sk] B=1 1 key kv 0.25 grid 3: splitkv_attn_sk_kernel<4,true,true> returned
+[sk] B=1 1 key kv 0.25 grid 3: rel L2 1.63e-03, finite True -> ok
+[sk] tickets (both levels) after the eager self-checks: sum 0
+[sk] alt splitkv_attn_sk_kernel<4,true,true> B=1 max 80000: capturing state 0
+[sk] alt splitkv_attn_sk_kernel<4,true,true> B=1 max 80000: capturing state 1
+[sk] alt splitkv_attn_sk_kernel<4,true,true> B=1 max 80000: replay 0 on state 0 kv_scale 1.0 lens 80000..80000: launching graph (splitkv_attn_sk_kernel<4,true,true>)
+[sk] alt splitkv_attn_sk_kernel<4,true,true> B=1 max 80000: replay 0 state 0: rel L2 1.60e-03, finite True, tickets 0
+[sk] alt splitkv_attn_sk_kernel<4,true,true> B=1 max 80000: replay 1 on state 1 kv_scale 1.0 lens 80000..80000: launching graph (splitkv_attn_sk_kernel<4,true,true>)
+[sk] alt splitkv_attn_sk_kernel<4,true,true> B=1 max 80000: replay 1 state 1: rel L2 1.61e-03, finite True, tickets 0
+[sk] alt splitkv_attn_sk_kernel<4,true,true> B=1 max 80000: replay 2 on state 0 kv_scale 0.25 lens 80000..80000: launching graph (splitkv_attn_sk_kernel<4,true,true>)
+[sk] alt splitkv_attn_sk_kernel<4,true,true> B=1 max 80000: replay 2 state 0: rel L2 1.63e-03, finite True, tickets 0
+[sk] alt splitkv_attn_sk_kernel<4,true,true> B=1 max 80000: replay 3 on state 1 kv_scale 0.25 lens 80000..80000: launching graph (splitkv_attn_sk_kernel<4,true,true>)
+[sk] alt splitkv_attn_sk_kernel<4,true,true> B=1 max 80000: replay 3 state 1: rel L2 1.70e-03, finite True, tickets 0
+[sk] alt splitkv_attn_sk_kernel<4,true,true> B=1 max 80000: replay 4 on state 0 kv_scale 1.0 lens 80000..80000: launching graph (splitkv_attn_sk_kernel<4,true,true>)
+[sk] alt splitkv_attn_sk_kernel<4,true,true> B=1 max 80000: replay 4 state 0: rel L2 1.59e-03, finite True, tickets 0
+[sk] alt splitkv_attn_sk_kernel<4,true,true> B=1 max 80000: replay 5 on state 1 kv_scale 1.0 lens 80000..80000: launching graph (splitkv_attn_sk_kernel<4,true,true>)
+[sk] alt splitkv_attn_sk_kernel<4,true,true> B=1 max 80000: replay 5 state 1: rel L2 1.69e-03, finite True, tickets 0
+[sk] alt splitkv_attn_sk_kernel<4,true,false> B=2 max 80000: capturing state 0
+[sk] alt splitkv_attn_sk_kernel<4,true,false> B=2 max 80000: capturing state 1
+[sk] alt splitkv_attn_sk_kernel<4,true,false> B=2 max 80000: replay 0 on state 0 kv_scale 1.0 lens 49786..80000: launching graph (splitkv_attn_sk_kernel<4,true,false>)
+[sk] alt splitkv_attn_sk_kernel<4,true,false> B=2 max 80000: replay 0 state 0: rel L2 1.63e-03, finite True, tickets 0
+[sk] alt splitkv_attn_sk_kernel<4,true,false> B=2 max 80000: replay 1 on state 1 kv_scale 1.0 lens 60156..80000: launching graph (splitkv_attn_sk_kernel<4,true,false>)
+[sk] alt splitkv_attn_sk_kernel<4,true,false> B=2 max 80000: replay 1 state 1: rel L2 1.60e-03, finite True, tickets 0
+[sk] alt splitkv_attn_sk_kernel<4,true,false> B=2 max 80000: replay 2 on state 0 kv_scale 0.25 lens 73240..80000: launching graph (splitkv_attn_sk_kernel<4,true,false>)
+[sk] alt splitkv_attn_sk_kernel<4,true,false> B=2 max 80000: replay 2 state 0: rel L2 1.64e-03, finite True, tickets 0
+[sk] alt splitkv_attn_sk_kernel<4,true,false> B=2 max 80000: replay 3 on state 1 kv_scale 0.25 lens 69740..80000: launching graph (splitkv_attn_sk_kernel<4,true,false>)
+[sk] alt splitkv_attn_sk_kernel<4,true,false> B=2 max 80000: replay 3 state 1: rel L2 1.60e-03, finite True, tickets 0
+[sk] alt splitkv_attn_sk_kernel<4,true,false> B=2 max 80000: replay 4 on state 0 kv_scale 1.0 lens 67975..80000: launching graph (splitkv_attn_sk_kernel<4,true,false>)
+[sk] alt splitkv_attn_sk_kernel<4,true,false> B=2 max 80000: replay 4 state 0: rel L2 1.64e-03, finite True, tickets 0
+[sk] alt splitkv_attn_sk_kernel<4,true,false> B=2 max 80000: replay 5 on state 1 kv_scale 1.0 lens 67348..80000: launching graph (splitkv_attn_sk_kernel<4,true,false>)
+[sk] alt splitkv_attn_sk_kernel<4,true,false> B=2 max 80000: replay 5 state 1: rel L2 1.69e-03, finite True, tickets 0
+[sk] alt splitkv_attn_sk_kernel<4,true,false> B=5 max 20000: capturing state 0
+[sk] alt splitkv_attn_sk_kernel<4,true,false> B=5 max 20000: capturing state 1
+[sk] alt splitkv_attn_sk_kernel<4,true,false> B=5 max 20000: replay 0 on state 0 kv_scale 1.0 lens 11929..20000: launching graph (splitkv_attn_sk_kernel<4,true,false>)
+[sk] alt splitkv_attn_sk_kernel<4,true,false> B=5 max 20000: replay 0 state 0: rel L2 1.63e-03, finite True, tickets 0
+[sk] alt splitkv_attn_sk_kernel<4,true,false> B=5 max 20000: replay 1 on state 1 kv_scale 1.0 lens 11860..20000: launching graph (splitkv_attn_sk_kernel<4,true,false>)
+[sk] alt splitkv_attn_sk_kernel<4,true,false> B=5 max 20000: replay 1 state 1: rel L2 1.65e-03, finite True, tickets 0
+[sk] alt splitkv_attn_sk_kernel<4,true,false> B=5 max 20000: replay 2 on state 0 kv_scale 0.25 lens 12418..20000: launching graph (splitkv_attn_sk_kernel<4,true,false>)
+[sk] alt splitkv_attn_sk_kernel<4,true,false> B=5 max 20000: replay 2 state 0: rel L2 1.68e-03, finite True, tickets 0
+[sk] alt splitkv_attn_sk_kernel<4,true,false> B=5 max 20000: replay 3 on state 1 kv_scale 0.25 lens 11193..20000: launching graph (splitkv_attn_sk_kernel<4,true,false>)
+[sk] alt splitkv_attn_sk_kernel<4,true,false> B=5 max 20000: replay 3 state 1: rel L2 1.61e-03, finite True, tickets 0
+[sk] alt splitkv_attn_sk_kernel<4,true,false> B=5 max 20000: replay 4 on state 0 kv_scale 1.0 lens 10982..20000: launching graph (splitkv_attn_sk_kernel<4,true,false>)
+[sk] alt splitkv_attn_sk_kernel<4,true,false> B=5 max 20000: replay 4 state 0: rel L2 1.70e-03, finite True, tickets 0
+[sk] alt splitkv_attn_sk_kernel<4,true,false> B=5 max 20000: replay 5 on state 1 kv_scale 1.0 lens 10118..20000: launching graph (splitkv_attn_sk_kernel<4,true,false>)
+[sk] alt splitkv_attn_sk_kernel<4,true,false> B=5 max 20000: replay 5 state 1: rel L2 1.72e-03, finite True, tickets 0
+[sk] alt splitkv_attn_sk_kernel<4,true,false> B=33 max 8000: capturing state 0
+[sk] alt splitkv_attn_sk_kernel<4,true,false> B=33 max 8000: capturing state 1
+[sk] alt splitkv_attn_sk_kernel<4,true,false> B=33 max 8000: replay 0 on state 0 kv_scale 1.0 lens 4222..8000: launching graph (splitkv_attn_sk_kernel<4,true,false>)
+[sk] alt splitkv_attn_sk_kernel<4,true,false> B=33 max 8000: replay 0 state 0: rel L2 1.66e-03, finite True, tickets 0
+[sk] alt splitkv_attn_sk_kernel<4,true,false> B=33 max 8000: replay 1 on state 1 kv_scale 1.0 lens 4095..8000: launching graph (splitkv_attn_sk_kernel<4,true,false>)
+[sk] alt splitkv_attn_sk_kernel<4,true,false> B=33 max 8000: replay 1 state 1: rel L2 1.66e-03, finite True, tickets 0
+[sk] alt splitkv_attn_sk_kernel<4,true,false> B=33 max 8000: replay 2 on state 0 kv_scale 0.25 lens 4112..8000: launching graph (splitkv_attn_sk_kernel<4,true,false>)
+[sk] alt splitkv_attn_sk_kernel<4,true,false> B=33 max 8000: replay 2 state 0: rel L2 1.65e-03, finite True, tickets 0
+[sk] alt splitkv_attn_sk_kernel<4,true,false> B=33 max 8000: replay 3 on state 1 kv_scale 0.25 lens 4004..8000: launching graph (splitkv_attn_sk_kernel<4,true,false>)
+[sk] alt splitkv_attn_sk_kernel<4,true,false> B=33 max 8000: replay 3 state 1: rel L2 1.66e-03, finite True, tickets 0
+[sk] alt splitkv_attn_sk_kernel<4,true,false> B=33 max 8000: replay 4 on state 0 kv_scale 1.0 lens 4114..8000: launching graph (splitkv_attn_sk_kernel<4,true,false>)
+[sk] alt splitkv_attn_sk_kernel<4,true,false> B=33 max 8000: replay 4 state 0: rel L2 1.67e-03, finite True, tickets 0
+[sk] alt splitkv_attn_sk_kernel<4,true,false> B=33 max 8000: replay 5 on state 1 kv_scale 1.0 lens 4024..8000: launching graph (splitkv_attn_sk_kernel<4,true,false>)
+[sk] alt splitkv_attn_sk_kernel<4,true,false> B=33 max 8000: replay 5 state 1: rel L2 1.65e-03, finite True, tickets 0
+[sk] selector B=1: launching incumbent (FA3 + combine + norm-gate) then splitkv_attn_sk_kernel<4,true,true>, lens 80000..80000
+[sk] selector B=1: both returned
+[sk] selector B=1: new 24.8 us (0.83 TB/s) vs incumbent FA3 + combine + norm-gate 34.1 us (0.60 TB/s), ratio old/new 1.376, need >= 1.02, rel L2 vs incumbent 3.88e-03
+[sk] selector B=16: launching incumbent (splitkv A+B) then splitkv_attn_sk_kernel<4,true,false>, lens 74116..84803
+[sk] selector B=16: both returned
+[sk] selector B=16: new 113.4 us (2.84 TB/s) vs incumbent splitkv A+B 126.4 us (2.55 TB/s), ratio old/new 1.115, need >= 1.02, rel L2 vs incumbent 1.93e-04
+[sk] selector B=32: launching incumbent (splitkv A+B) then splitkv_attn_sk_kernel<4,true,false>, lens 74400..83847
+[sk] selector B=32: both returned
+[sk] selector B=32: new 221.8 us (2.92 TB/s) vs incumbent splitkv A+B 254.3 us (2.54 TB/s), ratio old/new 1.147, need >= 1.02, rel L2 vs incumbent 1.76e-04
+[sk] state check: capturing splitkv_attn_sk_kernel<4,true,true> B=1 on this state's buffers
+[sk] state check: replay 1: launching graph (splitkv_attn_sk_kernel<4,true,true>)
+[sk] state check: replay 1: rel L2 1.64e-03, finite True
+[sk] state check: replay 2: launching graph (splitkv_attn_sk_kernel<4,true,true>)
+[sk] state check: replay 2: rel L2 1.64e-03, finite True
+[sk] state check: capturing splitkv_attn_sk_kernel<4,true,false> B=5 on this state's buffers
+[sk] state check: replay 1: launching graph (splitkv_attn_sk_kernel<4,true,false>)
+[sk] state check: replay 1: rel L2 1.66e-03, finite True
+[sk] state check: replay 2: launching graph (splitkv_attn_sk_kernel<4,true,false>)
+[sk] state check: replay 2: rel L2 1.66e-03, finite True
+[sk] tickets of this state zeroed: sum 0
+PATH CHOSEN: full decode attention B=1: stream-K two-level ticket, grid = SM count [new 24.8 us (0.83 TB/s) vs incumbent FA3 + combine + norm-gate 34.1 us (0.60 TB/s), ratio old/new 1.376, need >= 1.02, rel L2 vs incumbent 3.88e-03] w2_mode=atomic prepare_wall_cum=2.8s
+PATH CHOSEN: full decode attention B<=23: stream-K single-level ticket, grid 2 x SM [new 113.4 us (2.84 TB/s) vs incumbent splitkv A+B 126.4 us (2.55 TB/s), ratio old/new 1.115, need >= 1.02, rel L2 vs incumbent 1.93e-04] w2_mode=atomic prepare_wall_cum=2.8s
+PATH CHOSEN: full decode attention B>=24: stream-K single-level ticket, grid 2 x SM [new 221.8 us (2.92 TB/s) vs incumbent splitkv A+B 254.3 us (2.54 TB/s), ratio old/new 1.147, need >= 1.02, rel L2 vs incumbent 1.76e-04] w2_mode=atomic prepare_wall_cum=2.8s
+[prepare] this call 2.8s, cumulative 2.8s

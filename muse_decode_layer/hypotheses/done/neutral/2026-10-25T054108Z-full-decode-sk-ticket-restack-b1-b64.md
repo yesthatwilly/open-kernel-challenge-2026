@@ -59,10 +59,10 @@ priority: 1
 kind: primary
 controls_for: null
 review: proceed
-status: running
+status: done
 review_at: 2026-10-25T054426Z
 review_companions: null
-stage: dispatched
+stage: harvested
 claimed_at: 2026-10-25T054426Z
 base_sha: 3856ee7eca4325994492f9d6308b31aba517ef17
 base_blob: 62c5a9413ba5710defea2ca3de14c1a1dc3b5a6d
@@ -81,6 +81,13 @@ attempt_file: 2026-10-25T084818Z-check-full-decode-sk-ticket-restack-b1-b64.md
 prepared_at: 2026-10-25T084818Z
 job: 9c99379067084f6e
 dispatched_at: 2026-10-25T084834Z
+outcome: neutral
+verdict_detail: within-ci
+speedup: 1.2847016460556344
+speedup_ci: [1.2654311213648, 1.3039721707464689]
+harvested_at: 2026-10-25T091108Z
+best_at_harvest: 1.2725637226942819
+promotion: null
 ---
 
 # full-decode-sk-ticket-restack-b1-b64
@@ -184,3 +191,35 @@ Checked and found OK:
 - Budgets: a third load_inline module, as in each port run (30-37 s there; two instantiations here, so maybe ~45 s). The added prepare work is about 40 small eager cases, 8 alternation captures, 3 selectors and 1-2 state checks, well inside 300 s.
 
 Residual risk: the combined two-instantiation TU has never been compiled, and the B=1 gain (about 5 us expected) is small against the 137 us kill line.
+
+## Result
+
+- job `9c99379067084f6e` (check), status done, passed True, tests 13/13
+- speedup 1.2847x, 95% CI [1.2654, 1.3040], score 17607.434433862647 µs vs SGLang 22620.3 µs
+- best at harvest: {"speedup": 1.2725637226942819, "ci": [1.2534752668538676, 1.291652178534696], "job": "3fd3fa1f96d045dd"}; base result: muse_decode_layer/hypotheses/done/neutral/w2-marlin-atomic-add-t1-port.result.json
+- **outcome: neutral** (within-ci)
+- files: `muse_decode_layer/hypotheses/done/neutral/full-decode-sk-ticket-restack-b1-b64.result.json`, `muse_decode_layer/hypotheses/done/neutral/full-decode-sk-ticket-restack-b1-b64.patch`; branch `hyp/muse_decode_layer/full-decode-sk-ticket-restack-b1-b64`
+
+## Attribution
+
+| shape | w | base µs | hyp µs | delta | verdict |
+|---|---|---|---|---|---|
+| batch=1 ctx=80000 dist=soft layer=sliding load=decode_1 page=1 repeats=60 | 46 | 123.88 | 121.33 | 1.0027 | flat |
+| batch=1 ctx=80000 dist=soft layer=full load=decode_1 page=1 repeats=60 | 16 | 139.18 | 135.74 | 1.0224 | flat |
+| batch=16 ctx=80000 dist=soft layer=sliding load=decode_16 page=1 spread=agentic | 46 | 204.68 | 205.4 | 1.0059 | flat |
+| batch=16 ctx=80000 dist=soft layer=full load=decode_16 page=1 spread=agentic | 16 | 308.69 | 291.9 | 1.0473 | gained |
+| batch=32 ctx=80000 dist=soft layer=sliding load=decode_32 page=1 spread=agentic | 46 | 240.67 | 240.09 | 0.9957 | flat |
+| batch=32 ctx=80000 dist=soft layer=full load=decode_32 page=1 spread=agentic | 16 | 473.31 | 444.46 | 1.0703 | gained |
+| batch=1 ctx=80000 dist=soft layer=sliding load=verify_1 page=1 q_len=8 | 46 | 191.42 | 193.99 | 0.9909 | flat |
+| batch=1 ctx=80000 dist=soft layer=full load=verify_1 page=1 q_len=8 | 16 | 201.63 | 203.15 | 0.9989 | flat |
+| batch=16 ctx=80000 dist=soft layer=sliding load=verify_16 page=1 q_len=8 spread=agentic | 46 | 414.6 | 416.27 | 0.9898 | flat |
+| batch=16 ctx=80000 dist=soft layer=full load=verify_16 page=1 q_len=8 spread=agentic | 16 | 565.16 | 562.02 | 0.987 | flat |
+| batch=32 ctx=80000 dist=soft layer=sliding load=verify_32 page=1 q_len=8 spread=agentic | 46 | 600.78 | 582.95 | 0.9569 | lost |
+| batch=32 ctx=80000 dist=soft layer=full load=verify_32 page=1 q_len=8 spread=agentic | 16 | 880.71 | 870.87 | 0.9738 | flat |
+
+gained on full decode_16, decode_32; lost on sliding verify_32. Expected hit: 4/5. Noise ±1.5%.
+
+## Follow-ups
+
+- within-ci: the change is not proven either way; a stacked hypothesis (`depends_on: full-decode-sk-ticket-restack-b1-b64`) that adds a further change in the same area is the only way to learn more (identical code is never re-run).
+
