@@ -1,0 +1,684 @@
+diff --git a/muse_moe_w4a16/submission.py b/muse_moe_w4a16/submission.py
+index 5c34fab..f09390b 100644
+--- a/muse_moe_w4a16/submission.py
++++ b/muse_moe_w4a16/submission.py
+@@ -20,7 +20,10 @@ M*8 + 256*(block_size_m-1)) and its per-expert cumsum runs over 32 counters.
+ Up to 32 tokens (hypothesis triton-map-align-small-m-port), one single-program Triton kernel
+ (_align_small_kernel) does the expert_map gather and moe_align_block_size's work over the 32 local
+ experts (capacity M*8 + 32*(block_size_m - 1), as the 32-expert align allocates; remote routes get
+-no bucket). Above 32 tokens the expert_map gather and moe_align_block_size(..., 32) run as before.
++no bucket). Above 32 tokens (hypothesis align-parallel-per-expert-verify) one launch of the
++33-program _align_parallel_kernel does the same work: program e < 32 counts every expert and places
++expert e's routes, padding and block_experts entries; the last program writes local_ids and the
++tail past the used length.
+ 
+ From 128 to 512 tokens (hypothesis cuda-nvfp4-wgmma-rega-grouped-verify, rewrite stage 1), when
+ the prepare-time build and self-check pass, the two moe_wna16_marlin_gemm calls and silu_and_mul
+@@ -31,10 +34,17 @@ A operand and the gathered BF16 tokens as the TMA-loaded shared-memory B operand
+ w13 epilogue. It reads its own lossless retiling of the same NVFP4 codes and E4M3 scales. Below 128
+ tokens, above 512, or when the wgmma path is off, every launch is master's.
+ 
++Stage 1b (hypothesis cuda-nvfp4-wgmma-rega-grouped-sm90a-rebuild-inproc): the module is built for
++sm_90a only (TORCH_CUDA_ARCH_LIST=9.0a around load_inline, -gencode compute_90a/sm_90a, -lineinfo),
++every wgmma / setmaxnreg body is guarded by __CUDA_ARCH_FEAT_SM90_ALL (else error word 2), the
++weight bulk copy carries no createpolicy / L2::cache_hint operand, and prepare() runs an in-process
++traced canary launch before the full self-check.
++
+ Differs from SGLang: the expert all-reduce is not run."""
+ 
+ from typing import TypedDict
+ 
++import os
+ import time
+ import types
+ 
+@@ -90,8 +100,14 @@ POST_NORM_EPS = 1e-8
+ # fused_post_expert_norm_weighted_sum (hypothesis post-expert-norm-triton-small-m).
+ SMALL_M_POST_NORM = 32
+ # Up to this many tokens _align_small_kernel does the expert_map gather and the align in one
+-# launch (hypothesis triton-map-align-small-m-port); above it, master's gather + moe_align_block_size.
++# launch (hypothesis triton-map-align-small-m-port); above it, _align_parallel_kernel does the same
++# in one 33-program launch (hypothesis align-parallel-per-expert-verify).
+ ALIGN_FUSED_MAX_TOKENS = 32
++# _align_parallel_kernel: routes per chunk (a [512, 32] one-hot at 8 warps is 64 int32 per thread
++# per temporary), warps, and the block_experts store tile.
++ALIGN_PAR_CHUNK = 512
++ALIGN_PAR_WARPS = 8
++ALIGN_PAR_BLK = 64
+ 
+ 
+ @triton.jit
+@@ -168,6 +184,87 @@ def _align_small_kernel(topk_ids_ptr, local_ids_ptr, sorted_ids_ptr, block_exper
+     tl.store(n_padded_ptr, total)
+ 
+ 
++@triton.jit(do_not_specialize=["local_start", "local_count", "n", "cap", "n_blocks"])
++def _align_parallel_kernel(topk_ids_ptr, local_ids_ptr, sorted_ids_ptr, block_experts_ptr, n_padded_ptr,
++                           local_start, local_count, n, cap, n_blocks, CHUNK: tl.constexpr,
++                           PAD_BLOCK: tl.constexpr, BLK: tl.constexpr, BSM: tl.constexpr,
++                           NUM_E: tl.constexpr):
++    """_align_small_kernel's outputs for any n, grid (local_count + 1,).
++
++    Every program streams the n route ids in CHUNK chunks and counts all local experts, so each
++    knows every segment start. Program e < local_count then places expert e's routes in ascending
++    route order (segment start + routes placed by earlier chunks + rank in the chunk), its padding
++    slots (sentinel n) and its block_experts entries. Program local_count writes local_ids, the
++    sentinel into [total, cap), -1 into block_experts past the used blocks, and n_padded. The
++    store sets are disjoint across programs, so no atomics or ordering are needed; no program
++    reads what another writes (local ids are recomputed from topk_ids)."""
++    pid = tl.program_id(0)
++    offs0 = tl.arange(0, CHUNK)
++    experts = tl.arange(0, NUM_E)
++
++    counts = tl.zeros([NUM_E], dtype=tl.int32)
++    for c in range(0, n, CHUNK):
++        offs = c + offs0
++        mask = offs < n
++        ids = tl.load(topk_ids_ptr + offs, mask=mask, other=0).to(tl.int32)
++        local = ids - local_start
++        local = tl.where(mask & (local >= 0) & (local < local_count), local, -1)
++        counts += tl.sum((local[:, None] == experts[None, :]).to(tl.int32), axis=0)
++    padded = (counts + BSM - 1) // BSM * BSM
++    seg_end = tl.cumsum(padded, axis=0)
++    seg_start = seg_end - padded
++    total = tl.sum(padded, axis=0)
++
++    if pid < local_count:
++        sel = experts == pid
++        my_count = tl.sum(tl.where(sel, counts, 0), axis=0)
++        my_padded = tl.sum(tl.where(sel, padded, 0), axis=0)
++        my_start = tl.sum(tl.where(sel, seg_start, 0), axis=0)
++        # This expert's routes, ascending route index.
++        base = my_start
++        for c in range(0, n, CHUNK):
++            offs = c + offs0
++            mask = offs < n
++            ids = tl.load(topk_ids_ptr + offs, mask=mask, other=0).to(tl.int32)
++            local = ids - local_start
++            match = (mask & (local == pid)).to(tl.int32)
++            rank = tl.cumsum(match, axis=0) - 1
++            tl.store(sorted_ids_ptr + base + rank, offs, mask=match > 0)
++            base += tl.sum(match, axis=0)
++        # Its padding slots: fewer than BSM, over a power-of-2 tile (BSM 48 is not one).
++        j = tl.arange(0, PAD_BLOCK)
++        tl.store(sorted_ids_ptr + my_start + my_count + j, tl.zeros([PAD_BLOCK], dtype=tl.int32) + n,
++                 mask=j < my_padded - my_count)
++        # Its m-blocks [my_start / BSM, (my_start + my_padded) / BSM); a runtime loop, since one
++        # expert can own up to cdiv(M, BSM) blocks.
++        b0 = my_start // BSM
++        nb = my_padded // BSM
++        kb0 = tl.arange(0, BLK)
++        for k in range(0, nb, BLK):
++            kb = k + kb0
++            tl.store(block_experts_ptr + b0 + kb, tl.zeros([BLK], dtype=tl.int32) + pid, mask=kb < nb)
++    else:
++        for c in range(0, n, CHUNK):
++            offs = c + offs0
++            mask = offs < n
++            ids = tl.load(topk_ids_ptr + offs, mask=mask, other=0).to(tl.int32)
++            local = ids - local_start
++            local = tl.where((local >= 0) & (local < local_count), local, -1)
++            tl.store(local_ids_ptr + offs, local, mask=mask)
++        # Every slot past the used length.
++        for s in range(0, cap, CHUNK):
++            slots = s + offs0
++            tl.store(sorted_ids_ptr + slots, tl.zeros([CHUNK], dtype=tl.int32) + n,
++                     mask=(slots >= total) & (slots < cap))
++        used_blocks = total // BSM
++        kb0 = tl.arange(0, BLK)
++        for k in range(0, n_blocks, BLK):
++            kb = k + kb0
++            tl.store(block_experts_ptr + kb, tl.zeros([BLK], dtype=tl.int32) - 1,
++                     mask=(kb >= used_blocks) & (kb < n_blocks))
++        tl.store(n_padded_ptr, total)
++
++
+ def _block_size_m(num_tokens, count):
+     """MuseSpark1xFp4Experts' block_size_m choice (unchanged)."""
+     for block_size_m in BLOCK_SIZE_M_CANDIDATES:
+@@ -198,17 +295,50 @@ def _align_small(topk_ids, local_start, local_count, block_size_m):
+     return local_ids, (sorted_ids, block_experts, n_padded)
+ 
+ 
++def _align_parallel(topk_ids, local_start, local_count, block_size_m):
++    """_align_small's outputs (same sizes) for M > ALIGN_FUSED_MAX_TOKENS, in one launch of
++    _align_parallel_kernel over local_count + 1 programs. n, cap and n_blocks are runtime
++    arguments, so only block_size_m selects a compiled variant."""
++    topk_ids = topk_ids.contiguous()
++    device = topk_ids.device
++    n = topk_ids.numel()
++    cap = n + local_count * (block_size_m - 1)
++    n_blocks = triton.cdiv(cap, block_size_m)
++    local_ids = torch.empty(topk_ids.shape, dtype=torch.int32, device=device)
++    sorted_ids = torch.empty((cap,), dtype=torch.int32, device=device)
++    block_experts = torch.empty((n_blocks,), dtype=torch.int32, device=device)
++    n_padded = torch.empty((1,), dtype=torch.int32, device=device)
++    _align_parallel_kernel[(local_count + 1,)](
++        topk_ids, local_ids, sorted_ids, block_experts, n_padded, local_start, local_count, n, cap,
++        n_blocks, CHUNK=ALIGN_PAR_CHUNK, PAD_BLOCK=triton.next_power_of_2(block_size_m),
++        BLK=ALIGN_PAR_BLK, BSM=block_size_m, NUM_E=triton.next_power_of_2(local_count),
++        num_warps=ALIGN_PAR_WARPS)
++    return local_ids, (sorted_ids, block_experts, n_padded)
++
++
+ def _align_self_check(device, count):
+-    """Untimed, prepare() only: _align_small against SGLang's moe_align_block_size(ref_local, bsm,
+-    count) on synthetic routings (fixed seeds), per local expert. Prints a one-line summary, any
+-    mismatch, and per case n_padded vs SGLang's own r_pad (info: whether SGLang's align buckets the
+-    -1 routes into m-blocks of its own)."""
++    """Untimed, prepare() only: _align_small (tokens <= 32) and _align_parallel (tokens > 32, with
++    SGLang's block_size_m and, at >= 128 tokens, kernel_fn's two-smaller pick) against SGLang's
++    moe_align_block_size(ref_local, bsm, count) on synthetic routings (fixed seeds), per local
++    expert. Prints a one-line summary, any mismatch, and per case n_padded vs SGLang's own r_pad
++    (info: whether SGLang's align buckets the -1 routes into m-blocks of its own); for the
++    tokens > 32 cases only the pad lines that differ, and a separate summary line."""
+     tag0 = "[triton-map-align-small-m-port]"
+     gen = torch.Generator().manual_seed(20261024)
+     bad = []
+     pads = []
+     cases = 0
+-    for tokens in (1, 8, 16, 32):
++    shapes = [(tokens, _block_size_m(tokens, count)) for tokens in (1, 8, 16, 32)]
++    for tokens in (33, 57, 120, 128, 256, 257):
++        bsm0 = _block_size_m(tokens, count)
++        shapes.append((tokens, bsm0))
++        if tokens >= 128:
++            # kernel_fn's marlin-block-m-two-smaller-on-postnorm pick.
++            bsm1 = BLOCK_SIZE_M_CANDIDATES[max(BLOCK_SIZE_M_CANDIDATES.index(bsm0) - 2, 0)]
++            if bsm1 != bsm0:
++                shapes.append((tokens, bsm1))
++    for tokens, bsm in shapes:
++        align = _align_small if tokens <= ALIGN_FUSED_MAX_TOKENS else _align_parallel
+         for start in (0, 32, N_EXPERTS - count):
+             local_set = list(range(start, start + count))
+             remote_set = [e for e in range(N_EXPERTS) if e not in local_set]
+@@ -224,10 +354,9 @@ def _align_self_check(device, count):
+             }
+             for name, ids in rows.items():
+                 cases += 1
+-                tag = f"T={tokens} local_start={start} {name}"
++                tag = f"T={tokens} bsm={bsm} local_start={start} {name}"
+                 topk_ids = torch.tensor(ids, dtype=torch.int32, device=device)
+-                bsm = _block_size_m(tokens, count)
+-                local_ids, (s_ids, b_exp, n_pad) = _align_small(topk_ids, start, count, bsm)
++                local_ids, (s_ids, b_exp, n_pad) = align(topk_ids, start, count, bsm)
+                 ref_map = torch.full((N_EXPERTS,), -1, dtype=torch.int32, device=device)
+                 ref_map[start:start + count] = torch.arange(count, dtype=torch.int32, device=device)
+                 ref_local = ref_map[topk_ids].contiguous()
+@@ -243,8 +372,8 @@ def _align_self_check(device, count):
+                                f"{r_ids.numel()}/{r_exp.numel()}")
+                 s_ids, b_exp, n_pad = s_ids.tolist(), b_exp.tolist(), int(n_pad.item())
+                 r_ids, r_exp, r_pad = r_ids.tolist(), r_exp.tolist(), int(r_pad.item())
+-                pads.append(f"{tag} bsm={bsm}: n_pad={n_pad} r_pad={r_pad}"
+-                            + (" DIFF" if n_pad != r_pad else ""))
++                if tokens <= ALIGN_FUSED_MAX_TOKENS or n_pad != r_pad:
++                    pads.append(f"{tag}: n_pad={n_pad} r_pad={r_pad}" + (" DIFF" if n_pad != r_pad else ""))
+ 
+                 def per_expert(sorted_ids, block_experts, used):
+                     groups, blocks = {}, {}
+@@ -280,6 +409,15 @@ def _align_self_check(device, count):
+         print(f"{tag0}   {message}")
+     for line in pads:
+         print(f"{tag0}   pad {line}")
++    # The _align_parallel cases (tokens > 32), apart, so a real mismatch there is not hidden above.
++    tag1 = "[align-parallel-per-expert-verify]"
++    big_cases = sum(1 for tokens, _ in shapes if tokens > ALIGN_FUSED_MAX_TOKENS) * 3 * 5
++    big = [m for m in hard if int(m.split()[0][2:]) > ALIGN_FUSED_MAX_TOKENS]
++    big_real = [m for m in big if ": capacity " not in m]
++    print(f"{tag1} self-check tokens > {ALIGN_FUSED_MAX_TOKENS}: {big_cases} cases, {len(big)} mismatches, "
++          f"{len(big) - len(big_real)} capacity-only, {len(big_real)} other")
++    for message in big_real[:10]:
++        print(f"{tag1}   {message}")
+ 
+ 
+ # ---------------------------------------------------------------------------------------------
+@@ -328,6 +466,10 @@ WG_SMEM_LIMIT = 227 * 1024
+ WG_MAX_BLOCKS = 384                 # chunk-table capacity (one 16-row block per thread)
+ WG_CAP_ROWS = 8192                  # xs / h_sorted scratch rows (>= any sorted_ids at M <= 512)
+ WG_BUCKETS = (16, 32, 64, 128)
++# _wg_setup's own time budget inside prepare()'s 300 s (build + retile + canary + self-check):
++# past it the path stays off (the build alone is unmeasured on the judge).
++WG_SETUP_BUDGET_S = 200.0  # measured from prepare()'s start; the self-check (~20-60 s) runs after it
++WG_ERR_TEXT = {0: "ok", 1: "mbarrier wait timed out", 2: "non-sm_90a image ran (wgmma compiled out)"}
+ 
+ _WG_CPP = r"""
+ #include <torch/extension.h>
+@@ -398,7 +540,7 @@ __device__ __forceinline__ bool mbar_try(uint32_t a, uint32_t parity) {
+                : "=r"(ok) : "r"(a), "r"(parity) : "memory");
+   return ok != 0;
+ }
+-// Bounded wait: after ~2^31 cycles without the phase, record an error word and stop waiting
++// Bounded wait: after 2^26 cycles without the phase, record an error word and stop waiting
+ // (dead), so a broken pipeline ends in a failed self-check instead of a hang.
+ __device__ __forceinline__ void mbar_wait(uint32_t a, uint32_t parity, int* err, bool& dead) {
+   if (dead || mbar_try(a, parity)) return;
+@@ -411,18 +553,35 @@ __device__ __forceinline__ void mbar_wait(uint32_t a, uint32_t parity, int* err,
+     }
+   }
+ }
+-__device__ __forceinline__ void bulk_g2s(uint32_t dst, const void* src, uint32_t bytes, uint32_t bar, uint64_t pol) {
+-  asm volatile("cp.async.bulk.shared::cluster.global.mbarrier::complete_tx::bytes.L2::cache_hint [%0], [%1], %2, [%3], %4;\n"
+-               :: "r"(dst), "l"(src), "r"(bytes), "r"(bar), "l"(pol) : "memory");
++// Plain 1-D bulk copy (no createpolicy / .L2::cache_hint operand: that helper family never ran on
++// the judge and is the prime suspect of the swap-AB sibling's illegal instruction 715).
++__device__ __forceinline__ void bulk_g2s(uint32_t dst, const void* src, uint32_t bytes, uint32_t bar) {
++  asm volatile("cp.async.bulk.shared::cluster.global.mbarrier::complete_tx::bytes [%0], [%1], %2, [%3];\n"
++               :: "r"(dst), "l"(src), "r"(bytes), "r"(bar) : "memory");
+ }
+ __device__ __forceinline__ void tma_2d(uint32_t dst, uint64_t map, int c0, int c1, uint32_t bar) {
+   asm volatile("cp.async.bulk.tensor.2d.shared::cluster.global.mbarrier::complete_tx::bytes [%0], [%1, {%2, %3}], [%4];\n"
+                :: "r"(dst), "l"(map), "r"(c0), "r"(c1), "r"(bar) : "memory");
+ }
+-__device__ __forceinline__ void wgmma_fence() { asm volatile("wgmma.fence.sync.aligned;\n" ::: "memory"); }
+-__device__ __forceinline__ void wgmma_commit() { asm volatile("wgmma.commit_group.sync.aligned;\n" ::: "memory"); }
++// wgmma / setmaxnreg exist only for sm_90a: every such body is compiled only when
++// __CUDA_ARCH_FEAT_SM90_ALL is defined, so a stray plain compute_90 pass still assembles; in that
++// pass wg_kernel only sets error word 2 and returns (the path is then turned off in setup).
++__device__ __forceinline__ void wgmma_fence() {
++#if defined(__CUDA_ARCH_FEAT_SM90_ALL)
++  asm volatile("wgmma.fence.sync.aligned;\n" ::: "memory");
++#endif
++}
++__device__ __forceinline__ void wgmma_commit() {
++#if defined(__CUDA_ARCH_FEAT_SM90_ALL)
++  asm volatile("wgmma.commit_group.sync.aligned;\n" ::: "memory");
++#endif
++}
+ template <int N>
+-__device__ __forceinline__ void wgmma_wait() { asm volatile("wgmma.wait_group.sync.aligned %0;\n" :: "n"(N) : "memory"); }
++__device__ __forceinline__ void wgmma_wait() {
++#if defined(__CUDA_ARCH_FEAT_SM90_ALL)
++  asm volatile("wgmma.wait_group.sync.aligned %0;\n" :: "n"(N) : "memory");
++#endif
++}
+ template <int NA>
+ __device__ __forceinline__ void fence_acc(float (&d)[NA]) {
+ #pragma unroll
+@@ -624,6 +783,7 @@ wg_kernel(const __grid_constant__ Maps maps,
+           const int* __restrict__ n_padded,
+           int blocks_len, int num_routes, int n_tiles, int K, int n_experts,
+           __nv_bfloat16* __restrict__ out, int out_ld, int* __restrict__ err) {
++#if defined(__CUDA_ARCH_FEAT_SM90_ALL)
+   extern __shared__ __align__(1024) uint8_t smem_raw[];
+   __shared__ __align__(8) uint64_t bars[2 * STAGES];
+   __shared__ int s_be[MAXB], s_cblk[MAXB], s_cnb[MAXB], s_gf[MAXB], s_gk[MAXB];
+@@ -698,16 +858,11 @@ wg_kernel(const __grid_constant__ Maps maps,
+   if (warp < 4) {
+     asm volatile("setmaxnreg.dec.sync.aligned.u32 40;\n" ::: "memory");
+     if (tid == 0) {
+-      uint64_t pol_first, pol_norm;
+-      asm volatile("createpolicy.fractional.L2::evict_first.b64 %0, 1.0;\n" : "=l"(pol_first));
+-      asm volatile("createpolicy.fractional.L2::evict_normal.b64 %0, 1.0;\n" : "=l"(pol_norm));
+       const int KC = K / 64;
+       int n = 0;
+       for (int it = blockIdx.x; it < total; it += gridDim.x) {
+         const Item m = decode_item(it, n_tiles, s_be, s_cblk, s_cnb, s_gf, s_gk);
+         const uint8_t* wsrc = wbank + (static_cast<size_t>(m.e) * n_tiles + m.j) * static_cast<size_t>(KC) * REC;
+-        // An expert with several chunks re-reads each weight tile: keep it in L2 (evict_normal).
+-        const uint64_t pol = m.multi ? pol_norm : pol_first;
+         const uint64_t map = reinterpret_cast<uint64_t>(&maps.m[m.bucket]);
+         const uint32_t tx = WST + 2 * (16 << m.bucket) * 128;
+         for (int kb = 0; kb < KS; ++kb, ++n) {
+@@ -716,7 +871,7 @@ wg_kernel(const __grid_constant__ Maps maps,
+           const uint32_t st = smem_u32(smem + s * STAGE_BYTES);
+           const uint32_t fb = full0 + 8 * s;
+           mbar_expect_tx(fb, tx);
+-          bulk_g2s(st, wsrc + static_cast<size_t>(kb) * WST, WST, fb, pol);
++          bulk_g2s(st, wsrc + static_cast<size_t>(kb) * WST, WST, fb);
+           tma_2d(st + WST, map, kb * BK, m.slot0, fb);
+           tma_2d(st + WST + SLAB_HALF, map, kb * BK + 64, m.slot0, fb);
+         }
+@@ -748,6 +903,10 @@ wg_kernel(const __grid_constant__ Maps maps,
+       }
+     }
+   }
++#else
++  // Not the sm_90a image: no wgmma here. Flag it (error word 2) and do nothing else.
++  if (threadIdx.x == 0) atomicExch(err, 2);
++#endif
+ }
+ 
+ // xs[slot] = x[sorted_ids[slot] / 8] for the slots of local blocks (sentinel slots: zeros);
+@@ -812,12 +971,15 @@ void info_one(std::vector<int64_t>& r) {
+   r.push_back(Smem<G>::BYTES);
+   r.push_back(occ);
+   r.push_back(static_cast<int64_t>(e1));
++  r.push_back(a.binaryVersion);
++  r.push_back(a.ptxVersion);
+ }
+ 
+ }  // namespace
+ 
+ // Per instantiation (w13 then w2): gated, attribute calls ok, numRegs, localSizeBytes, static
+-// smem, dynamic smem, occupancy (CTAs per SM), cudaFuncSetAttribute's error code.
++// smem, dynamic smem, occupancy (CTAs per SM), cudaFuncSetAttribute's error code, binaryVersion,
++// ptxVersion (both report 90 for sm_90 and sm_90a: logged only; error word 2 is the real proof).
+ std::vector<int64_t> wg_init() {
+   std::vector<int64_t> r;
+   info_one<true>(r);
+@@ -910,6 +1072,7 @@ def _wg_wgmma_src():
+             "template <>",
+             f"struct Wg<{nb}> {{",
+             f"  static __device__ __forceinline__ void mma(float (&d)[{na}], const uint32_t (&a)[4], uint64_t desc) {{",
++            "#if defined(__CUDA_ARCH_FEAT_SM90_ALL)",
+             '    asm volatile("{\\n\\t.reg .pred p;\\n\\t"',
+             f'                 "setp.ne.b32 p, %{na + 5}, 0;\\n\\t"',
+             f'                 "wgmma.mma_async.sync.aligned.m64n{nb}k16.f32.bf16.bf16 "',
+@@ -917,6 +1080,7 @@ def _wg_wgmma_src():
+             f'                 "{{%{na}, %{na + 1}, %{na + 2}, %{na + 3}}}, %{na + 4}, p, 1, 1, 0;\\n\\t}}\\n"',
+             "                 : " + ", ".join(f'"+f"(d[{i}])' for i in range(na)),
+             '                 : "r"(a[0]), "r"(a[1]), "r"(a[2]), "r"(a[3]), "l"(desc), "r"(1));',
++            "#endif",
+             "  }",
+             "};",
+         ]
+@@ -928,23 +1092,60 @@ def _wg_src():
+     return _WG_SRC_HEAD + _wg_wgmma_src() + _WG_SRC_BODY
+ 
+ 
++WG_EXT_NAME = "muse_moe_w4a16_wgmma_rega_v2"
++WG_GENCODE = "-gencode=arch=compute_90a,code=sm_90a"
++WG_CUDA_CFLAGS = ["-O3", "-lineinfo", WG_GENCODE]
++
++
+ def _wg_build():
+-    """Compile the wgmma module once (prepare only, never during capture); None on failure."""
++    """Compile the wgmma module once (prepare only, never during capture); None on failure.
++
++    sm_90a only (hypothesis cuda-nvfp4-wgmma-rega-grouped-sm90a-rebuild-inproc): cpp_extension's
++    JIT path appends -gencode flags from TORCH_CUDA_ARCH_LIST (else from the device, i.e. a plain
++    compute_90 pass that cannot assemble wgmma / setmaxnreg), so the list is set to 9.0a for the
++    build and restored after. If this torch rejects '9.0a', the build runs with the default list:
++    the __CUDA_ARCH_FEAT_SM90_ALL guards keep the compute_90 pass assembling, and error word 2 after
++    the canary turns the path off if that image is the one that loads."""
+     t0 = time.perf_counter()
++    prev = os.environ.get("TORCH_CUDA_ARCH_LIST")
+     try:
++        from torch.utils import cpp_extension
+         from torch.utils.cpp_extension import load_inline
++        print(f"{WG_TAG} torch {torch.__version__} cuda {torch.version.cuda}; device capability "
++              f"{torch.cuda.get_device_capability()}", flush=True)
++        os.environ["TORCH_CUDA_ARCH_LIST"] = "9.0a"
++        try:
++            arch_flags = cpp_extension._get_cuda_arch_flags()
++        except Exception as e:  # this torch does not know the 'a' suffix: default list + guards
++            print(f"{WG_TAG} TORCH_CUDA_ARCH_LIST=9.0a rejected ({e!r}); building with the default list "
++                  f"(the compute_90 pass is guarded; error word 2 decides)", flush=True)
++            if prev is None:
++                os.environ.pop("TORCH_CUDA_ARCH_LIST", None)
++            else:
++                os.environ["TORCH_CUDA_ARCH_LIST"] = prev
++            try:
++                arch_flags = cpp_extension._get_cuda_arch_flags()
++            except Exception as e2:
++                arch_flags = [f"<unknown: {e2!r}>"]
++        print(f"{WG_TAG} build arch flags: TORCH_CUDA_ARCH_LIST={os.environ.get('TORCH_CUDA_ARCH_LIST')!r} -> "
++              f"{arch_flags}; extra_cuda_cflags {WG_CUDA_CFLAGS}", flush=True)
+         ext = load_inline(
+-            name="muse_moe_w4a16_wgmma_rega_v1",
++            name=WG_EXT_NAME,
+             cpp_sources=_WG_CPP,
+             cuda_sources=_wg_src(),
+             functions=["wg_init", "wg_set_maps", "wg_gather", "wg_gemm"],
+-            extra_cuda_cflags=["-O3", "-arch=sm_90a"],
++            extra_cuda_cflags=WG_CUDA_CFLAGS,
+             verbose=False,
+         )
+     except Exception as e:  # keep the master path if the build fails
+-        print(f"{WG_TAG} load_inline failed after {time.perf_counter() - t0:.1f}s, Marlin kept: {e!r}")
++        print(f"{WG_TAG} load_inline failed after {time.perf_counter() - t0:.1f}s, Marlin kept: {e!r}", flush=True)
+         return None
+-    print(f"{WG_TAG} load_inline compiled in {time.perf_counter() - t0:.1f}s")
++    finally:
++        if prev is None:
++            os.environ.pop("TORCH_CUDA_ARCH_LIST", None)
++        else:
++            os.environ["TORCH_CUDA_ARCH_LIST"] = prev
++    print(f"{WG_TAG} load_inline compiled in {time.perf_counter() - t0:.1f}s", flush=True)
+     return ext
+ 
+ 
+@@ -1066,29 +1267,52 @@ def _wg_row_rel(a, b):
+     return float(rel.max())
+ 
+ 
+-def _moe_wgmma(x, topk_ids, topk_weights, bank, state):
++def _wg_tracer(label):
++    """prepare()-only launch tracer (never passed by kernel_fn, never used under capture): a device
++    sync, then a flushed print naming the launch just finished and the one about to start, so a
++    fault names its kernel."""
++    def _step(what):
++        torch.cuda.synchronize()
++        print(f"{WG_TAG}     [{label}] {what}", flush=True)
++    return _step
++
++
++def _moe_wgmma(x, topk_ids, topk_weights, bank, state, trace=None):
+     """(out, local_ids, sorted_ids, block_experts, n_padded, y) for x [M, H] on the wgmma path:
+     master's expert_map gather and moe_align_block_size at block 16, the gather, w13 + silu into
+-    h_sorted (state scratch), w2 into cache3 at the route index, master's post-expert norm."""
++    h_sorted (state scratch), w2 into cache3 at the route index, master's post-expert norm.
++    trace (prepare only, eager only): a _wg_tracer; each launch is then synced and logged."""
+     num_tokens, size_k = x.shape
+     size_n = bank["size_n"]
+     start, count = bank["start"], bank["count"]
++    if trace is not None:
++        trace("before expert_map gather + moe_align_block_size")
+     topk_weights = topk_weights.to(torch.float32).contiguous()
+     local_ids = bank["expert_map"][topk_ids.to(torch.int32)].contiguous()
+     sorted_ids, block_experts, n_padded = moe_align_block_size(local_ids, WG_BSM, count)
+     wb = state["wg_banks"][(start, count)]
+     ext, grid, err = state["wg_ext"], state["wg_grid"], state["wg_err"]
+     routes = num_tokens * TOP_K
++    if trace is not None:
++        trace("after align (moe_align_block_size) / before wg_gather_kernel")
+     ext.wg_gather(x, sorted_ids, block_experts, n_padded, routes, count, state["wg_xs"])
++    if trace is not None:
++        trace("after wg_gather_kernel / before wg_kernel<w13+silu>")
+     ext.wg_gemm(0, wb["q13"], wb["gs13"], sorted_ids, block_experts, n_padded, routes, size_n // 64, size_k,
+                 state["wg_hs"], grid, err)
++    if trace is not None:
++        trace("after wg_kernel<w13+silu> / before wg_kernel<w2>")
+     cache3 = torch.empty((routes, size_k), device=x.device, dtype=x.dtype)
+     ext.wg_gemm(1, wb["q2"], wb["gs2"], sorted_ids, block_experts, n_padded, routes, size_k // 128, size_n,
+                 cache3, grid, err)
++    if trace is not None:
++        trace("after wg_kernel<w2> / before post-expert norm")
+     y = cache3.view(num_tokens, TOP_K, size_k)
+     out = fused_post_expert_norm_weighted_sum(
+         y, topk_weights, norm_weight=state["norm_w"], eps=POST_NORM_EPS, weight_first=True,
+         slot_expert_ids=local_ids)
++    if trace is not None:
++        trace("after post-expert norm")
+     return out, local_ids, sorted_ids, block_experts, n_padded, y
+ 
+ 
+@@ -1124,10 +1348,12 @@ def _wg_self_check(weights, bank, state, device):
+             tw = torch.rand((tokens, TOP_K), generator=gen)
+             tw = (tw / tw.sum(-1, keepdim=True)).to(device)
+             r_out, r_local, r_c2, r_y = _moe_marlin(x, topk_ids, tw, bank, state)
+-            n_out, n_local, s_ids, b_exp, n_pad, n_y = _moe_wgmma(x, topk_ids, tw, bank, state)
++            n_out, n_local, s_ids, b_exp, n_pad, n_y = _moe_wgmma(x, topk_ids, tw, bank, state,
++                                                                 trace=_wg_tracer(f"M={tokens} {name} eager"))
+             torch.cuda.synchronize()
+             if int(state["wg_err"].item()):
+-                print(f"{WG_TAG}   pipeline wait timed out (M={tokens} {name}); aborting self-check")
++                print(f"{WG_TAG}   device error word {int(state['wg_err'].item())} (M={tokens} {name}); "
++                      f"aborting self-check", flush=True)
+                 return False, float("inf")
+             routes = tokens * TOP_K
+             used = int(n_pad.item())
+@@ -1150,13 +1376,18 @@ def _wg_self_check(weights, bank, state, device):
+             # Graph capture + 3 replays of the same inputs: must reproduce the eager output.
+             h_keep = h_new
+             graph = torch.cuda.CUDAGraph()
++            print(f"{WG_TAG}     [M={tokens} {name} graph] before capture", flush=True)
+             with torch.cuda.graph(graph):
+                 g_out = _moe_wgmma(x, topk_ids, tw, bank, state)[0]
+-            for _ in range(3):
++            print(f"{WG_TAG}     [M={tokens} {name} graph] after capture", flush=True)
++            for i in range(3):
++                print(f"{WG_TAG}     [M={tokens} {name} graph] before replay {i}", flush=True)
+                 graph.replay()
+-            torch.cuda.synchronize()
++                torch.cuda.synchronize()
++                print(f"{WG_TAG}     [M={tokens} {name} graph] after replay {i}", flush=True)
+             if int(state["wg_err"].item()):
+-                print(f"{WG_TAG}   pipeline wait timed out (M={tokens} {name}); aborting self-check")
++                print(f"{WG_TAG}   device error word {int(state['wg_err'].item())} (M={tokens} {name}); "
++                      f"aborting self-check", flush=True)
+                 return False, float("inf")
+             g_err = _wg_row_rel(g_out, n_out)
+             del graph, g_out
+@@ -1192,12 +1423,48 @@ def _wg_self_check(weights, bank, state, device):
+     return ok, worst
+ 
+ 
+-def _wg_setup(weights, banks, state, device):
++def _wg_canary(weights, bank, state, device):
++    """Untimed, prepare() only, in-process guarded first launch: the smallest gated M (128 tokens)
++    with one local route per token (slot 0 on local expert 0, the other 7 remote), synthetic
++    activations (fixed seed) on the retiled bank. Each launch (align, gather, w13, w2, norm) is
++    announced, synced and logged, so a fault names its kernel; then the device error word is read
++    (2 = the non-sm_90a image ran, 1 = a wait timed out). True only if the word is 0 and the output
++    is finite."""
++    gen = torch.Generator().manual_seed(20261025)
++    start, count = bank["start"], bank["count"]
++    hidden = weights["w2"].shape[1]
++    tokens = WG_MIN_TOKENS
++    remote = [e for e in range(N_EXPERTS) if not start <= e < start + count]
++    ids = [[start] + [remote[i] for i in torch.randperm(len(remote), generator=gen)[:TOP_K - 1].tolist()]
++           for _ in range(tokens)]
++    topk_ids = torch.tensor(ids, dtype=torch.int32, device=device)
++    x = torch.randn((tokens, hidden), generator=gen).to(torch.bfloat16).to(device)
++    tw = torch.full((tokens, TOP_K), 1.0 / TOP_K, dtype=torch.float32, device=device)
++    state["wg_err"].zero_()
++    torch.cuda.synchronize()
++    print(f"{WG_TAG} canary: M={tokens}, 1 local route per token (expert {start}), first launch of each kernel",
++          flush=True)
++    out = _moe_wgmma(x, topk_ids, tw, bank, state, trace=_wg_tracer(f"canary M={tokens}"))[0]
++    torch.cuda.synchronize()
++    word = int(state["wg_err"].item())
++    finite = bool(torch.isfinite(out).all())
++    print(f"{WG_TAG} canary done: device error word {word} ({WG_ERR_TEXT.get(word, '?')}), output finite {finite}",
++          flush=True)
++    return word == 0 and finite
++
++
++def _wg_setup(weights, banks, state, device, t_start=None):
+     """Build, retile, warm and self-check the wgmma verify path. Sets state['wgmma_ok']; on any
+-    failure every M keeps master's path. Nothing here sees any input."""
++    failure every M keeps master's path. Nothing here sees any input. t_start: prepare()'s start,
++    so the budget covers master's prepare work too (pre-flight audit fix)."""
+     state["wgmma_ok"] = False
+     ok = False
++    t_setup = time.perf_counter() if t_start is None else t_start
+     try:
++        cap = torch.cuda.get_device_capability(device)
++        print(f"{WG_TAG} device capability {cap} (sm_90a path needs (9, 0))", flush=True)
++        if tuple(cap) != (9, 0):
++            raise RuntimeError(f"device capability {cap} is not (9, 0)")
+         bank = banks[(0, 32)]
+         start, count = bank["start"], bank["count"]
+         if bank["expert_map"] is None:
+@@ -1218,16 +1485,19 @@ def _wg_setup(weights, banks, state, device):
+         ext = _wg_build()
+         if ext is None:
+             raise RuntimeError("load_inline failed")
++        if time.perf_counter() - t_setup > WG_SETUP_BUDGET_S:
++            raise RuntimeError(f"setup budget {WG_SETUP_BUDGET_S:.0f}s spent by the build")
+         info = ext.wg_init()
+         attrs_ok = True
+-        for i in range(0, len(info), 8):
+-            gated, a_ok, regs, local_bytes, static_smem, dyn_smem, occ, e1 = info[i:i + 8]
++        for i in range(0, len(info), 10):
++            gated, a_ok, regs, local_bytes, static_smem, dyn_smem, occ, e1, bin_v, ptx_v = info[i:i + 10]
+             print(f"{WG_TAG} kernel {'w13+silu' if gated else 'w2'}: attrs ok {bool(a_ok)} (SetAttribute rc {e1}), "
+                   f"numRegs {regs}, localSizeBytes {local_bytes}{' (SPILL, not fatal)' if local_bytes > 0 else ''}, "
+-                  f"static smem {static_smem} B, dynamic smem {dyn_smem} B, CTAs/SM {occ}")
++                  f"static smem {static_smem} B, dynamic smem {dyn_smem} B, CTAs/SM {occ}, binaryVersion {bin_v}, "
++                  f"ptxVersion {ptx_v} (90 for sm_90 and sm_90a alike: error word 2 decides)", flush=True)
+             # setmaxnreg.inc blocks forever unless the CTA's register pool covers 40x128 + 232x256
+             attrs_ok = (attrs_ok and bool(a_ok) and occ >= 1 and static_smem + dyn_smem <= WG_SMEM_LIMIT
+-                        and regs * WG_THREADS >= 40 * 128 + 232 * 256)
++                        and regs * WG_THREADS >= 40 * 128 + 232 * 256 and bin_v == 90)
+         if not attrs_ok:
+             raise RuntimeError("cudaFuncSetAttribute / cudaFuncGetAttributes / occupancy check failed")
+         state["wg_xs"] = torch.zeros((WG_CAP_ROWS, hidden), dtype=torch.bfloat16, device=device)
+@@ -1244,21 +1514,25 @@ def _wg_setup(weights, banks, state, device):
+         state["wg_grid"] = torch.cuda.get_device_properties(device).multi_processor_count
+         state["wg_err"] = torch.zeros((1,), dtype=torch.int32, device=device)
+         print(f"{WG_TAG} grid {state['wg_grid']} persistent CTAs x {WG_THREADS} threads, BK {WG_BK}, "
+-              f"{WG_STAGES} stages, N buckets {WG_BUCKETS}, split-K none")
++              f"{WG_STAGES} stages, N buckets {WG_BUCKETS}, split-K none", flush=True)
++        if not _wg_canary(weights, bank, state, device):
++            raise RuntimeError("canary failed")
++        if time.perf_counter() - t_setup > WG_SETUP_BUDGET_S:
++            raise RuntimeError(f"setup budget {WG_SETUP_BUDGET_S:.0f}s spent before the self-check")
+         ok, worst = _wg_self_check(weights, bank, state, device)
+         torch.cuda.synchronize()
+         err_word = int(state["wg_err"].item())
+         if err_word:
+-            print(f"{WG_TAG} pipeline wait timed out on device (error word {err_word})")
++            print(f"{WG_TAG} device error word {err_word}: {WG_ERR_TEXT.get(err_word, '?')}", flush=True)
+             ok = False
+         print(f"{WG_TAG} SELF-CHECK {'PASSED' if ok else 'FAILED'}: max rel-L2 {worst:.3e} (bound 1e-2), "
+-              f"device error word {err_word}")
++              f"device error word {err_word}, setup {time.perf_counter() - t_setup:.1f}s", flush=True)
+     except Exception as e:
+-        print(f"{WG_TAG} wgmma path setup raised: {e!r}")
++        print(f"{WG_TAG} wgmma path setup raised: {e!r}", flush=True)
+         ok = False
+     state["wgmma_ok"] = ok
+     print(f"{WG_TAG} PATH CHOSEN = {'WGMMA' if ok else 'MARLIN'} for {WG_MIN_TOKENS} <= num_tokens <= "
+-          f"{WG_MAX_TOKENS}; MARLIN elsewhere")
++          f"{WG_MAX_TOKENS}; MARLIN for num_tokens < {WG_MIN_TOKENS} and > {WG_MAX_TOKENS}", flush=True)
+ 
+ 
+ def _marlin_layer(weights, start, count):
+@@ -1283,6 +1557,7 @@ def _marlin_layer(weights, start, count):
+ 
+ def prepare(weights: Weights) -> dict:
+     """Called once, untimed. Repack this GPU's experts into Marlin's layout as SGLang does at load."""
++    t_prepare = time.perf_counter()
+     device = weights["w13"].device
+     # One repacked bank: this GPU's 32 experts under EP8.
+     banks = {}
+@@ -1305,6 +1580,11 @@ def prepare(weights: Weights) -> dict:
+             for tokens in range(1, ALIGN_FUSED_MAX_TOKENS + 1):
+                 _align_small(torch.full((tokens, TOP_K), start, dtype=torch.int32, device=device),
+                              start, count, _block_size_m(tokens, count))
++            # _align_parallel_kernel: one variant per block_size_m it can see above 32 tokens
++            # (n is runtime), on dummy ids.
++            for bsm in (16, 32, 48, 64):
++                _align_parallel(torch.full((ALIGN_FUSED_MAX_TOKENS + 1, TOP_K), start, dtype=torch.int32,
++                                           device=device), start, count, bsm)
+             torch.cuda.synchronize()
+             _align_self_check(device, count)
+     torch.cuda.synchronize()
+@@ -1317,7 +1597,7 @@ def prepare(weights: Weights) -> dict:
+         "post_norm_w": weights["post_norm_w"].contiguous(),
+     }
+     # The wgmma verify path: built, retiled and self-checked here; state["wgmma_ok"] gates it.
+-    _wg_setup(weights, banks, state, device)
++    _wg_setup(weights, banks, state, device, t_prepare)
+     torch.cuda.synchronize()
+     return state
+ 
+@@ -1337,10 +1617,12 @@ def _moe_marlin(x, topk_ids, topk_weights, bank, state):
+         # at the verify shapes (bs=128: 48 -> 16, bs=256/257: 64 -> 32). A host-side pick on the
+         # shape only; num_tokens < 128 keeps SGLang's pick.
+         block_size_m = BLOCK_SIZE_M_CANDIDATES[max(BLOCK_SIZE_M_CANDIDATES.index(block_size_m) - 2, 0)]
+-    if expert_map is not None and num_tokens <= ALIGN_FUSED_MAX_TOKENS:
+-        # Up to 32 tokens (branch on shape only): one launch does the expert_map gather and the
+-        # align, with the bank's prepare-time start/count (hypothesis triton-map-align-small-m-port).
+-        local_ids, (sorted_ids, block_experts, n_padded) = _align_small(
++    if expert_map is not None:
++        # One launch does the expert_map gather and the align, with the bank's prepare-time
++        # start/count: up to 32 tokens _align_small (hypothesis triton-map-align-small-m-port), above
++        # it _align_parallel (hypothesis align-parallel-per-expert-verify). Branch on shape only.
++        align = _align_small if num_tokens <= ALIGN_FUSED_MAX_TOKENS else _align_parallel
++        local_ids, (sorted_ids, block_experts, n_padded) = align(
+             topk_ids, bank["start"], bank["count"], block_size_m)
+     else:
+         local_ids = topk_ids.to(torch.int32)

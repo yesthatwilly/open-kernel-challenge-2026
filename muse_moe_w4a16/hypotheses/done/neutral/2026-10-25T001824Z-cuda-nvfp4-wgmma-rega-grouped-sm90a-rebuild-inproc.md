@@ -56,10 +56,10 @@ controls_for: null
 rewrite_stage: 1
 replaces: Marlin w13+w2 (moe_wna16_marlin_gemm x2) + silu_and_mul at num_tokens >= 128
 review: proceed
-status: running
+status: done
 review_at: 2026-10-25T002121Z
 review_companions: null
-stage: dispatched
+stage: harvested
 claimed_at: 2026-10-25T002121Z
 base_sha: f50b333a602cc590f2785a1fdd2171af25fe94bb
 base_blob: 5c34fabe0f05fb53014dd85b66864cd3b38bc673
@@ -78,6 +78,13 @@ attempt_file: 2026-10-25T003418Z-check-cuda-nvfp4-wgmma-rega-grouped-sm90a-rebui
 prepared_at: 2026-10-25T003418Z
 job: b56d17fda2d54be2
 dispatched_at: 2026-10-25T003428Z
+outcome: neutral
+verdict_detail: unproven-vs-best
+speedup: 1.3302505045527886
+speedup_ci: [1.3102967469844968, 1.3502042621210804]
+harvested_at: 2026-10-25T010418Z
+best_at_harvest: 1.3278240305297715
+promotion: null
 ---
 
 # cuda-nvfp4-wgmma-rega-grouped-sm90a-rebuild-inproc
@@ -219,3 +226,30 @@ Fixes applied:
 okc_lint: OK with warnings (only the uint8 NVFP4 bank allocations in prepare); py_compile OK; __pycache__ removed.
 
 Residual risk: no instruction of this kernel has ever executed. A sticky 715/700 in the canary still kills the run (the log names the kernel), and ptxas may serialize the wgmma pipeline (A-register reuse), which costs only speed.
+
+## Result
+
+- job `b56d17fda2d54be2` (check), status done, passed True, tests 5/5
+- speedup 1.3303x, 95% CI [1.3103, 1.3502], score 10109.749971131336 µs vs SGLang 13448.5 µs
+- best at harvest: {"speedup": 1.3278240305297715, "ci": [1.307906670071825, 1.3477413909877178], "job": "1947e3ec2abb4bdf"}; base result: muse_moe_w4a16/hypotheses/done/neutral/cuda-nvfp4-wgmma-rega-grouped-verify.result.json
+- **outcome: neutral** (unproven-vs-best)
+- files: `muse_moe_w4a16/hypotheses/done/neutral/cuda-nvfp4-wgmma-rega-grouped-sm90a-rebuild-inproc.result.json`, `muse_moe_w4a16/hypotheses/done/neutral/cuda-nvfp4-wgmma-rega-grouped-sm90a-rebuild-inproc.patch`; branch `hyp/muse_moe_w4a16/cuda-nvfp4-wgmma-rega-grouped-sm90a-rebuild-inproc`
+
+## Attribution
+
+| shape | w | base µs | hyp µs | delta | verdict |
+|---|---|---|---|---|---|
+| bs=1 load=decode_1 sharding=ep8 | 60 | 50.54 | 48.69 | 1.0073 | flat |
+| bs=16 load=decode_16 sharding=ep8 | 60 | 146.42 | 146.95 | 1.0077 | flat |
+| bs=32 load=decode_32 sharding=ep8 | 60 | 198.76 | 207.02 | 0.9993 | flat |
+| bs=8 load=verify_1 sharding=ep8 | 60 | 107.34 | 114.26 | 0.9934 | flat |
+| bs=128 load=verify_16 sharding=ep8 | 60 | 343.61 | 322.42 | 1.0432 | gained |
+| bs=256 load=verify_32 sharding=ep8 | 60 | 471.52 | 463.3 | 1.0321 | gained |
+
+gained on verify_16 verify_16; verify_32 verify_32. Expected hit: 6/6. Noise ±1.5%.
+
+## Follow-ups
+
+- rewrite stage 1 of `Marlin w13+w2 (moe_wna16_marlin_gemm x2) + silu_and_mul at num_tokens >= 128`: read the replaced kernels' own us per shape (profile top_kernels) against the incumbent and the floor, and check which Milestone it reached. The next stage is `/hypothesize muse_moe_w4a16 "<what to fix or tune>" --kind rewrite --depends-on cuda-nvfp4-wgmma-rega-grouped-sm90a-rebuild-inproc --stage 2`; a slow or failed first cut is the expected start, not a do-not-retry.
+- unproven-vs-best: the change is not proven either way; a stacked hypothesis (`depends_on: cuda-nvfp4-wgmma-rega-grouped-sm90a-rebuild-inproc`) that adds a further change in the same area is the only way to learn more (identical code is never re-run).
+

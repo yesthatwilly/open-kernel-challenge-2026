@@ -1,0 +1,146 @@
+ bsm=16 local_start=0 all-one-expert: n_pad=32 r_pad=256 DIFF
+[triton-map-align-small-m-port]   pad T=32 bsm=16 local_start=0 all-local: n_pad=256 r_pad=256
+[triton-map-align-small-m-port]   pad T=32 bsm=16 local_start=32 random: n_pad=288 r_pad=528 DIFF
+[triton-map-align-small-m-port]   pad T=32 bsm=16 local_start=32 skewed: n_pad=96 r_pad=256 DIFF
+[triton-map-align-small-m-port]   pad T=32 bsm=16 local_start=32 all-remote: n_pad=0 r_pad=256 DIFF
+[triton-map-align-small-m-port]   pad T=32 bsm=16 local_start=32 all-one-expert: n_pad=32 r_pad=256 DIFF
+[triton-map-align-small-m-port]   pad T=32 bsm=16 local_start=32 all-local: n_pad=256 r_pad=256
+[triton-map-align-small-m-port]   pad T=32 bsm=16 local_start=224 random: n_pad=368 r_pad=592 DIFF
+[triton-map-align-small-m-port]   pad T=32 bsm=16 local_start=224 skewed: n_pad=96 r_pad=256 DIFF
+[triton-map-align-small-m-port]   pad T=32 bsm=16 local_start=224 all-remote: n_pad=0 r_pad=256 DIFF
+[triton-map-align-small-m-port]   pad T=32 bsm=16 local_start=224 all-one-expert: n_pad=32 r_pad=256 DIFF
+[triton-map-align-small-m-port]   pad T=32 bsm=16 local_start=224 all-local: n_pad=256 r_pad=256
+[triton-map-align-small-m-port]   pad T=33 bsm=16 local_start=0 random: n_pad=304 r_pad=544 DIFF
+[triton-map-align-small-m-port]   pad T=33 bsm=16 local_start=0 skewed: n_pad=144 r_pad=320 DIFF
+[triton-map-align-small-m-port]   pad T=33 bsm=16 local_start=0 all-remote: n_pad=0 r_pad=272 DIFF
+[triton-map-align-small-m-port]   pad T=33 bsm=16 local_start=0 all-one-expert: n_pad=48 r_pad=288 DIFF
+[triton-map-align-small-m-port]   pad T=33 bsm=16 local_start=32 random: n_pad=336 r_pad=576 DIFF
+[triton-map-align-small-m-port]   pad T=33 bsm=16 local_start=32 skewed: n_pad=144 r_pad=320 DIFF
+[triton-map-align-small-m-port]   pad T=33 bsm=16 local_start=32 all-remote: n_pad=0 r_pad=272 DIFF
+[triton-map-align-small-m-port]   pad T=33 bsm=16 local_start=32 all-one-expert: n_pad=48 r_pad=288 DIFF
+[triton-map-align-small-m-port]   pad T=33 bsm=16 local_start=224 random: n_pad=240 r_pad=480 DIFF
+[triton-map-align-small-m-port]   pad T=33 bsm=16 local_start=224 skewed: n_pad=144 r_pad=320 DIFF
+[triton-map-align-small-m-port]   pad T=33 bsm=16 local_start=224 all-remote: n_pad=0 r_pad=272 DIFF
+[triton-map-align-small-m-port]   pad T=33 bsm=16 local_start=224 all-one-expert: n_pad=48 r_pad=288 DIFF
+[triton-map-align-small-m-port]   pad T=57 bsm=16 local_start=0 random: n_pad=400 r_pad=800 DIFF
+[triton-map-align-small-m-port]   pad T=57 bsm=16 local_start=0 skewed: n_pad=192 r_pad=480 DIFF
+[triton-map-align-small-m-port]   pad T=57 bsm=16 local_start=0 all-remote: n_pad=0 r_pad=464 DIFF
+[triton-map-align-small-m-port]   pad T=57 bsm=16 local_start=0 all-one-expert: n_pad=64 r_pad=464 DIFF
+[triton-map-align-small-m-port]   pad T=57 bsm=16 local_start=32 random: n_pad=384 r_pad=800 DIFF
+[triton-map-align-small-m-port]   pad T=57 bsm=16 local_start=32 skewed: n_pad=192 r_pad=480 DIFF
+[triton-map-align-small-m-port]   pad T=57 bsm=16 local_start=32 all-remote: n_pad=0 r_pad=464 DIFF
+[triton-map-align-small-m-port]   pad T=57 bsm=16 local_start=32 all-one-expert: n_pad=64 r_pad=464 DIFF
+[triton-map-align-small-m-port]   pad T=57 bsm=16 local_start=224 random: n_pad=384 r_pad=784 DIFF
+[triton-map-align-small-m-port]   pad T=57 bsm=16 local_start=224 skewed: n_pad=192 r_pad=480 DIFF
+[triton-map-align-small-m-port]   pad T=57 bsm=16 local_start=224 all-remote: n_pad=0 r_pad=464 DIFF
+[triton-map-align-small-m-port]   pad T=57 bsm=16 local_start=224 all-one-expert: n_pad=64 r_pad=464 DIFF
+[triton-map-align-small-m-port]   pad T=120 bsm=48 local_start=0 random: n_pad=1440 r_pad=2304 DIFF
+[triton-map-align-small-m-port]   pad T=120 bsm=48 local_start=0 skewed: n_pad=432 r_pad=1056 DIFF
+[triton-map-align-small-m-port]   pad T=120 bsm=48 local_start=0 all-remote: n_pad=0 r_pad=960 DIFF
+[triton-map-align-small-m-port]   pad T=120 bsm=48 local_start=0 all-one-expert: n_pad=144 r_pad=1008 DIFF
+[triton-map-align-small-m-port]   pad T=120 bsm=48 local_start=32 random: n_pad=1488 r_pad=2352 DIFF
+[triton-map-align-small-m-port]   pad T=120 bsm=48 local_start=32 skewed: n_pad=432 r_pad=1056 DIFF
+[triton-map-align-small-m-port]   pad T=120 bsm=48 local_start=32 all-remote: n_pad=0 r_pad=960 DIFF
+[triton-map-align-small-m-port]   pad T=120 bsm=48 local_start=32 all-one-expert: n_pad=144 r_pad=1008 DIFF
+[triton-map-align-small-m-port]   pad T=120 bsm=48 local_start=224 random: n_pad=1488 r_pad=2352 DIFF
+[triton-map-align-small-m-port]   pad T=120 bsm=48 local_start=224 skewed: n_pad=432 r_pad=1056 DIFF
+[triton-map-align-small-m-port]   pad T=120 bsm=48 local_start=224 all-remote: n_pad=0 r_pad=960 DIFF
+[triton-map-align-small-m-port]   pad T=120 bsm=48 local_start=224 all-one-expert: n_pad=144 r_pad=1008 DIFF
+[triton-map-align-small-m-port]   pad T=128 bsm=48 local_start=0 random: n_pad=1536 r_pad=2448 DIFF
+[triton-map-align-small-m-port]   pad T=128 bsm=48 local_start=0 skewed: n_pad=432 r_pad=1104 DIFF
+[triton-map-align-small-m-port]   pad T=128 bsm=48 local_start=0 all-remote: n_pad=0 r_pad=1056 DIFF
+[triton-map-align-small-m-port]   pad T=128 bsm=48 local_start=0 all-one-expert: n_pad=144 r_pad=1056 DIFF
+[triton-map-align-small-m-port]   pad T=128 bsm=48 local_start=32 random: n_pad=1536 r_pad=2448 DIFF
+[triton-map-align-small-m-port]   pad T=128 bsm=48 local_start=32 skewed: n_pad=432 r_pad=1104 DIFF
+[triton-map-align-small-m-port]   pad T=128 bsm=48 local_start=32 all-remote: n_pad=0 r_pad=1056 DIFF
+[triton-map-align-small-m-port]   pad T=128 bsm=48 local_start=32 all-one-expert: n_pad=144 r_pad=1056 DIFF
+[triton-map-align-small-m-port]   pad T=128 bsm=48 local_start=224 random: n_pad=1536 r_pad=2448 DIFF
+[triton-map-align-small-m-port]   pad T=128 bsm=48 local_start=224 skewed: n_pad=432 r_pad=1104 DIFF
+[triton-map-align-small-m-port]   pad T=128 bsm=48 local_start=224 all-remote: n_pad=0 r_pad=1056 DIFF
+[triton-map-align-small-m-port]   pad T=128 bsm=48 local_start=224 all-one-expert: n_pad=144 r_pad=1056 DIFF
+[triton-map-align-small-m-port]   pad T=128 bsm=16 local_start=0 random: n_pad=512 r_pad=1424 DIFF
+[triton-map-align-small-m-port]   pad T=128 bsm=16 local_start=0 skewed: n_pad=384 r_pad=1024 DIFF
+[triton-map-align-small-m-port]   pad T=128 bsm=16 local_start=0 all-remote: n_pad=0 r_pad=1024 DIFF
+[triton-map-align-small-m-port]   pad T=128 bsm=16 local_start=0 all-one-expert: n_pad=128 r_pad=1024 DIFF
+[triton-map-align-small-m-port]   pad T=128 bsm=16 local_start=32 random: n_pad=512 r_pad=1424 DIFF
+[triton-map-align-small-m-port]   pad T=128 bsm=16 local_start=32 skewed: n_pad=384 r_pad=1024 DIFF
+[triton-map-align-small-m-port]   pad T=128 bsm=16 local_start=32 all-remote: n_pad=0 r_pad=1024 DIFF
+[triton-map-align-small-m-port]   pad T=128 bsm=16 local_start=32 all-one-expert: n_pad=128 r_pad=1024 DIFF
+[triton-map-align-small-m-port]   pad T=128 bsm=16 local_start=224 random: n_pad=496 r_pad=1408 DIFF
+[triton-map-align-small-m-port]   pad T=128 bsm=16 local_start=224 skewed: n_pad=384 r_pad=1024 DIFF
+[triton-map-align-small-m-port]   pad T=128 bsm=16 local_start=224 all-remote: n_pad=0 r_pad=1024 DIFF
+[triton-map-align-small-m-port]   pad T=128 bsm=16 local_start=224 all-one-expert: n_pad=128 r_pad=1024 DIFF
+[triton-map-align-small-m-port]   pad T=256 bsm=64 local_start=0 random: n_pad=2048 r_pad=3840 DIFF
+[triton-map-align-small-m-port]   pad T=256 bsm=64 local_start=0 skewed: n_pad=768 r_pad=2048 DIFF
+[triton-map-align-small-m-port]   pad T=256 bsm=64 local_start=0 all-remote: n_pad=0 r_pad=2048 DIFF
+[triton-map-align-small-m-port]   pad T=256 bsm=64 local_start=0 all-one-expert: n_pad=256 r_pad=2048 DIFF
+[triton-map-align-small-m-port]   pad T=256 bsm=64 local_start=32 random: n_pad=2048 r_pad=3840 DIFF
+[triton-map-align-small-m-port]   pad T=256 bsm=64 local_start=32 skewed: n_pad=768 r_pad=2048 DIFF
+[triton-map-align-small-m-port]   pad T=256 bsm=64 local_start=32 all-remote: n_pad=0 r_pad=2048 DIFF
+[triton-map-align-small-m-port]   pad T=256 bsm=64 local_start=32 all-one-expert: n_pad=256 r_pad=2048 DIFF
+[triton-map-align-small-m-port]   pad T=256 bsm=64 local_start=224 random: n_pad=2048 r_pad=3840 DIFF
+[triton-map-align-small-m-port]   pad T=256 bsm=64 local_start=224 skewed: n_pad=768 r_pad=2048 DIFF
+[triton-map-align-small-m-port]   pad T=256 bsm=64 local_start=224 all-remote: n_pad=0 r_pad=2048 DIFF
+[triton-map-align-small-m-port]   pad T=256 bsm=64 local_start=224 all-one-expert: n_pad=256 r_pad=2048 DIFF
+[triton-map-align-small-m-port]   pad T=256 bsm=32 local_start=0 random: n_pad=1024 r_pad=2848 DIFF
+[triton-map-align-small-m-port]   pad T=256 bsm=32 local_start=0 skewed: n_pad=768 r_pad=2048 DIFF
+[triton-map-align-small-m-port]   pad T=256 bsm=32 local_start=0 all-remote: n_pad=0 r_pad=2048 DIFF
+[triton-map-align-small-m-port]   pad T=256 bsm=32 local_start=0 all-one-expert: n_pad=256 r_pad=2048 DIFF
+[triton-map-align-small-m-port]   pad T=256 bsm=32 local_start=32 random: n_pad=1024 r_pad=2816 DIFF
+[triton-map-align-small-m-port]   pad T=256 bsm=32 local_start=32 skewed: n_pad=768 r_pad=2048 DIFF
+[triton-map-align-small-m-port]   pad T=256 bsm=32 local_start=32 all-remote: n_pad=0 r_pad=2048 DIFF
+[triton-map-align-small-m-port]   pad T=256 bsm=32 local_start=32 all-one-expert: n_pad=256 r_pad=2048 DIFF
+[triton-map-align-small-m-port]   pad T=256 bsm=32 local_start=224 random: n_pad=1024 r_pad=2816 DIFF
+[triton-map-align-small-m-port]   pad T=256 bsm=32 local_start=224 skewed: n_pad=768 r_pad=2048 DIFF
+[triton-map-align-small-m-port]   pad T=256 bsm=32 local_start=224 all-remote: n_pad=0 r_pad=2048 DIFF
+[triton-map-align-small-m-port]   pad T=256 bsm=32 local_start=224 all-one-expert: n_pad=256 r_pad=2048 DIFF
+[triton-map-align-small-m-port]   pad T=257 bsm=64 local_start=0 random: n_pad=2048 r_pad=3840 DIFF
+[triton-map-align-small-m-port]   pad T=257 bsm=64 local_start=0 skewed: n_pad=960 r_pad=2304 DIFF
+[triton-map-align-small-m-port]   pad T=257 bsm=64 local_start=0 all-remote: n_pad=0 r_pad=2112 DIFF
+[triton-map-align-small-m-port]   pad T=257 bsm=64 local_start=0 all-one-expert: n_pad=320 r_pad=2176 DIFF
+[triton-map-align-small-m-port]   pad T=257 bsm=64 local_start=32 random: n_pad=2048 r_pad=3904 DIFF
+[triton-map-align-small-m-port]   pad T=257 bsm=64 local_start=32 skewed: n_pad=960 r_pad=2304 DIFF
+[triton-map-align-small-m-port]   pad T=257 bsm=64 local_start=32 all-remote: n_pad=0 r_pad=2112 DIFF
+[triton-map-align-small-m-port]   pad T=257 bsm=64 local_start=32 all-one-expert: n_pad=320 r_pad=2176 DIFF
+[triton-map-align-small-m-port]   pad T=257 bsm=64 local_start=224 random: n_pad=2048 r_pad=3904 DIFF
+[triton-map-align-small-m-port]   pad T=257 bsm=64 local_start=224 skewed: n_pad=960 r_pad=2304 DIFF
+[triton-map-align-small-m-port]   pad T=257 bsm=64 local_start=224 all-remote: n_pad=0 r_pad=2112 DIFF
+[triton-map-align-small-m-port]   pad T=257 bsm=64 local_start=224 all-one-expert: n_pad=320 r_pad=2176 DIFF
+[triton-map-align-small-m-port]   pad T=257 bsm=32 local_start=0 random: n_pad=1024 r_pad=2880 DIFF
+[triton-map-align-small-m-port]   pad T=257 bsm=32 local_start=0 skewed: n_pad=864 r_pad=2176 DIFF
+[triton-map-align-small-m-port]   pad T=257 bsm=32 local_start=0 all-remote: n_pad=0 r_pad=2080 DIFF
+[triton-map-align-small-m-port]   pad T=257 bsm=32 local_start=0 all-one-expert: n_pad=288 r_pad=2112 DIFF
+[triton-map-align-small-m-port]   pad T=257 bsm=32 local_start=32 random: n_pad=1024 r_pad=2848 DIFF
+[triton-map-align-small-m-port]   pad T=257 bsm=32 local_start=32 skewed: n_pad=864 r_pad=2176 DIFF
+[triton-map-align-small-m-port]   pad T=257 bsm=32 local_start=32 all-remote: n_pad=0 r_pad=2080 DIFF
+[triton-map-align-small-m-port]   pad T=257 bsm=32 local_start=32 all-one-expert: n_pad=288 r_pad=2112 DIFF
+[triton-map-align-small-m-port]   pad T=257 bsm=32 local_start=224 random: n_pad=1024 r_pad=2816 DIFF
+[triton-map-align-small-m-port]   pad T=257 bsm=32 local_start=224 skewed: n_pad=864 r_pad=2176 DIFF
+[triton-map-align-small-m-port]   pad T=257 bsm=32 local_start=224 all-remote: n_pad=0 r_pad=2080 DIFF
+[triton-map-align-small-m-port]   pad T=257 bsm=32 local_start=224 all-one-expert: n_pad=288 r_pad=2112 DIFF
+[align-parallel-per-expert-verify] self-check tokens > 32: 135 cases, 135 mismatches, 135 capacity-only, 0 other
+[cuda-wgmma-verify] device capability (9, 0) (sm_90a path needs (9, 0))
+[cuda-wgmma-verify] smem w13: dynamic 187392 B (+ <= 8192 B static) <= 232448 B
+[cuda-wgmma-verify] smem w2: dynamic 203776 B (+ <= 8192 B static) <= 232448 B
+[cuda-wgmma-verify] smem N=16: stage = 9216 B weight + 2 x 2048 B slab used of 41984 B, 4 stages, 36 KB weight in flight per SM
+[cuda-wgmma-verify] smem N=32: stage = 9216 B weight + 2 x 4096 B slab used of 41984 B, 4 stages, 36 KB weight in flight per SM
+[cuda-wgmma-verify] smem N=64: stage = 9216 B weight + 2 x 8192 B slab used of 41984 B, 4 stages, 36 KB weight in flight per SM
+[cuda-wgmma-verify] smem N=128: stage = 9216 B weight + 2 x 16384 B slab used of 41984 B, 4 stages, 36 KB weight in flight per SM
+[cuda-wgmma-verify] torch 2.14.1+cu130 cuda 13.0; device capability (9, 0)
+[cuda-wgmma-verify] build arch flags: TORCH_CUDA_ARCH_LIST='9.0a' -> ['-gencode=arch=compute_90a,code=sm_90a']; extra_cuda_cflags ['-O3', '-lineinfo', '-gencode=arch=compute_90a,code=sm_90a']
+[cuda-wgmma-verify] load_inline compiled in 32.8s
+[cuda-wgmma-verify] kernel w13+silu: attrs ok True (SetAttribute rc 0), numRegs 168, localSizeBytes 0, static smem 8192 B, dynamic smem 187392 B, CTAs/SM 1, binaryVersion 90, ptxVersion 90 (90 for sm_90 and sm_90a alike: error word 2 decides)
+[cuda-wgmma-verify] kernel w2: attrs ok True (SetAttribute rc 0), numRegs 168, localSizeBytes 8 (SPILL, not fatal), static smem 8192 B, dynamic smem 203776 B, CTAs/SM 1, binaryVersion 90, ptxVersion 90 (90 for sm_90 and sm_90a alike: error word 2 decides)
+[cuda-wgmma-verify] cuTensorMapEncodeTiled (driver entry point via the runtime) x 8: rc 0
+[cuda-wgmma-verify] retiled 32 experts losslessly (round trips exact) in 0.1s
+[cuda-wgmma-verify] grid 132 persistent CTAs x 384 threads, BK 128, 4 stages, N buckets (16, 32, 64, 128), split-K none
+[cuda-wgmma-verify] canary: M=128, 1 local route per token (expert 0), first launch of each kernel
+[cuda-wgmma-verify]     [canary M=128] before expert_map gather + moe_align_block_size
+[cuda-wgmma-verify]     [canary M=128] after align (moe_align_block_size) / before wg_gather_kernel
+[cuda-wgmma-verify]     [canary M=128] after wg_gather_kernel / before wg_kernel<w13+silu>
+[cuda-wgmma-verify]     [canary M=128] after wg_kernel<w13+silu> / before wg_kernel<w2>
+[cuda-wgmma-verify]     [canary M=128] after wg_kernel<w2> / before post-expert norm
+[cuda-wgmma-verify]     [canary M=128] after post-expert norm
+[cuda-wgmma-verify] canary done: device error word 0 (ok), output finite False
+[cuda-wgmma-verify] wgmma path setup raised: RuntimeError('canary failed')
+[cuda-wgmma-verify] PATH CHOSEN = MARLIN for 128 <= num_tokens <= 512; MARLIN for num_tokens < 128 and > 512
