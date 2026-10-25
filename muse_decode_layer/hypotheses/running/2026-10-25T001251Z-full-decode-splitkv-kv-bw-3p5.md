@@ -50,7 +50,7 @@ review: proceed
 status: running
 review_at: 2026-10-25T001534Z
 review_companions: null
-stage: claimed
+stage: implemented
 claimed_at: 2026-10-25T002203Z
 base_sha: b2f95e63a6e8ad3cff7947760e69e448399e295d
 base_blob: c9067b8201f2480c64910c4a71098df7ce616f73
@@ -59,6 +59,12 @@ worktree: .worktrees/muse_decode_layer/full-decode-splitkv-kv-bw-3p5
 mode: null
 restack_of: null
 stale_base: null
+implemented_at: 2026-10-25T003019Z
+impl_commit: 2e50a1c882d8266acaa8403578ff0edf3d7df2ab
+submission_sha256: 2994e7e8a781f2149779a53aca4cac8f7065ca815b203b72cc71acb3cbae8ccd
+norm_sha256: 10e4d35a9616c4cacabaf3c1578711425d88a6788b025816b233298546a3e1a2
+submission_blob: 320bc577c8ea6a341804b40ed6228e4cbc6757e2
+lint_warnings: 36
 ---
 
 # full-decode-splitkv-kv-bw-3p5
@@ -113,3 +119,62 @@ No companions. This is kind: rewrite stage 2, judged on kernel A's own us agains
 - STAGES 6 cannot fit 2 CTAs/SM with the current layout (about 126 KB). Should it be dropped from the build, or should acc_s (16 KB) be aliased onto a ring stage at item end to make 6 stages fit?
 - Is full-decode-splitkv-restack-on-pdl's measured kernel-A time close to the stage-1 112.0/249.5 us? If the restack itself moved kernel A, re-derive the expected savings before reading this run.
 
+
+## Implementation notes
+
+Built on the worktree base b2f95e63a6 (the hand-merged full-decode-splitkv-restack-on-pdl). Only the split-KV section of `muse_decode_layer/submission.py` changed: kernel A, the host launcher, the combine's chunk argument, the self-check, and prepare-time selection and timing. The gate (`_splitkv_gate`), the kernel_fn call site and the combine's math are unchanged.
+
+- **Kernel A is templated as `splitkv_attn_kernel<STAGES, CHUNK, AHEAD>`** with a `KCfg` smem layout struct. Six instantiations are dispatched by a variant id: 0 = S4/C1024/A1 (stage 1, byte-identical logic), 1 = S5/C1024/A1, 2 = S5/C1024/A2, 3 = S4/C512/A1, 4 = S5/C512/A1, 5 = S5/C512/A2. The extension was renamed `muse_full_decode_splitkv_v2` and gained `splitkv_variant_info(v)`, which returns `cudaOccupancyMaxActiveBlocksPerMultiprocessor` and the smem bytes.
+- **(a) Ring depth: STAGES 5, not 6 (review fix).** S6 would need ~126 KB/CTA and drop to 1 CTA/SM. S5 is 109,584 B at C1024/A1 and 114,704 B with the third meta buffer. The cp.async.cg 16-B form and `wait_group<STAGES-2>` are unchanged.
+- **(b) CHUNK 512 by batch only, applied to the small-batch class (review fix; the review overrides the spec's rule).** The spec's rule (512 when batch >= 24) put the small chunk on B=32, where the round-robin tail loss is ~3%, and skipped B=16, where it is ~15%. The rule is now CHUNK 512 when batch <= 23 and 1024 above it. The combine takes the chunk as a runtime argument (n = ceil(len/chunk)), and `max_chunks` and the workspace are sized per chunk.
+- **(c) Two-ahead index/query prefetch (AHEAD=2), kept per the spec with the third buffer the review flagged.** It uses `[NBUF=3][CHUNK]` idx and q buffers indexed `k % NBUF`, so there is no k&1 race. The prologue waits for items 0..AHEAD-1, and meta(k+AHEAD) rides item k's first tile and reuses item k-1's buffer. `static_assert`s enforce `AHEAD*TILES >= STAGES-1` and `TILES > STAGES-1`.
+- **Selection (prepare, batch only):**
+  - Small batch prefers 5 (S5/C512/A2), then 4, then stage 1.
+  - Large batch prefers 2 (S5/C1024/A2), then 1, then stage 1.
+  - A variant qualifies only if it passes the self-check and has occupancy >= 2.
+  - If the stage-1 variant fails its self-check, the path is OFF (FA3). Any other variant's failure falls back to stage 1, not to FA3.
+  - The log prints `[splitkv-s2] PATH CHOSEN = ...`.
+- **Self-check:** the existing 4 cases (B=5 at kv_scale 1/0.25 on the device grid and grid 3, plus B=33) run for every variant with that variant forced. Each launch is announced before, synced, and printed after.
+- **In-run timings (review fix):** `_splitkv_s2_timing` prints every self-checked variant's kernel-A CUDA-event time and TB/s at B=16 and B=32 on synthetic lengths with a ~74K mean, plus the combine time at each chunk. This covers S4/S5 × C1024/C512 and two-ahead on/off, so the kept sub-change can be decided from the log. The timing only informs; it does not choose the variant (no autotuning). Caveat: warm L2 and a synthetic page table.
+- **Not done:** the review's acc_s-aliasing idea to make S6 fit (it is a new idea, outside scope). No wgmma or setmaxnreg is used, so `TORCH_CUDA_ARCH_LIST` is untouched. The existing `-arch=sm_90a -lineinfo` flags are kept. There are no mbarriers; the only waits are cp.async wait_group, which are bounded.
+
+## Rules check
+
+Checked against `git -C .worktrees/muse_decode_layer/full-decode-splitkv-kv-bw-3p5 diff`:
+- [x] CUDA-graph capturable. kernel_fn's path adds only a dict lookup on `batch` (config) and a `torch.empty` sized from shapes. The syncs and `.elapsed_time` calls are in prepare-only self-check and timing code.
+- [x] Nothing derived from `data` is cached. `_SPLITKV_SEL` is set once in prepare from synthetic checks and the device occupancy.
+- [x] Weights are untouched by this change.
+- [x] Activations and precision are unchanged: the query is FP8 E4M3, the KV stays FP8, the combine output is bf16, and accumulation is fp32.
+- [x] Attention sees every key: all chunks cover [0, len) and only positions >= len are masked.
+- [x] No timing patches, harness access, module edits, reference import, network, or processes. There is no subprocess, multiprocessing, fork or spawn.
+- [x] All work happens inside the timed call; nothing is cached or replayed.
+- [x] Fallbacks never raise. Build failure or a stage-1 self-check failure gives FA3; a new-variant failure gives stage 1. The timing is wrapped in try/except.
+
+okc_lint output:
+```
+(host-sync warnings, all "outside kernel_fn's call graph; fine in prepare()")
+warn  dtype        L2348/L2350: torch.randint(..., dtype=torch.uint8) -- synthetic FP8 cache bytes for prepare-time timing only
+OK with warnings: submission.py
+```
+`python3 -I -m py_compile` passed. `__pycache__` was removed.
+
+## Pre-flight audit
+
+Audited 2026-10-24 by an opus subagent, by reading the code; no nvcc or GPU was available. **Verdict: dispatch-with-fixes.**
+
+Fixes:
+- `attn_launch`: hoisted `KCfg<S, CK, A>::SMEM` into `constexpr int smem_bytes` before the launch, so no template-id sits inside `<<< >>>`. This is defensive and costs nothing at runtime. A parse error there would cost the whole module and fall back to FA3.
+
+Verified:
+- **Pipeline.** A Python emulation (`AHEAD*TILES >= STAGES-1`, `TILES > STAGES-1`) covered all 6 variants at nk 1..14. In each case, item k's meta lands before its first tile issue and before the t==0 q read. The `k % NBUF` buffer is overwritten only after item k-1's last tile was issued and its q was read, with a `__syncthreads` in between. The `wait_group<STAGES-2>` group count stays uniform.
+- **Shared memory and occupancy.** smem is 114,704 B for S5/C1024/A2: 2×(114,704+1,024) = 231,456 ≤ 233,472, so 2 CTAs/SM. All offsets are 16-B aligned for cp.async16 and the float4 reads. `__launch_bounds__(256,2)` is unchanged.
+- **Dispatch.** The macro dispatch, `C10_CUDA_CHECK` around template-ids (the commas are paren-protected), the per-instantiation `static attr_set`, the anonymous-namespace split and the pybind return of `std::vector<int64_t>` all read correctly.
+- **Combine.** The chunk comes from the same variant tuple as kernel A's CHUNK, and `max_chunks` and ws are sized per chunk.
+- **No new memory accesses out of bounds and no spin waits.**
+- **Fallbacks.** A build error goes to FA3 with PATH CHOSEN printed. A stage-1 self-check miss goes to FA3. A new variant's miss, or occupancy < 2, goes to stage 1. The final `[splitkv-s2] PATH CHOSEN` line names the variant per batch class.
+- **prepare()'s timing sweep.** It only logs: it reads `_SPLITKV_SEL` after the selection is final, and it resets `_SPLITKV_FORCE` in a `finally`. kernel_fn depends on nothing from the sweep. There is no subprocess, multiprocessing or fork.
+- **kernel_fn.** It adds only dict lookups on `batch` and allocations sized from shapes. There is no host sync, and nothing derived from data is cached.
+
+Scope note: the CHUNK rule is inverted from the spec, to 512 at batch <= 23, following the adversarial review. B=16 gets C512 and B=32 gets C1024.
+
+Residual risk: the 6-way template has never been compiled. A build error lands on FA3, not stage 1, and a device fault in a new variant's self-check would poison the CUDA context rather than fall back. No out-of-bounds path was found by reading.
