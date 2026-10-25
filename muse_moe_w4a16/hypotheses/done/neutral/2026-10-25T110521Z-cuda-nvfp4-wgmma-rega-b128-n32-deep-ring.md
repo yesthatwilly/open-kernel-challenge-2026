@@ -60,10 +60,10 @@ controls_for: null
 rewrite_stage: 6
 replaces: Marlin w13+silu+w2 (moe_wna16_marlin_gemm x2 + act_and_mul) at 128<=T<=255
 review: proceed
-status: running
+status: done
 review_at: 2026-10-25T120207Z
 review_companions: null
-stage: dispatched
+stage: harvested
 claimed_at: 2026-10-25T120207Z
 base_sha: 57e77548ba31c2145d575df62752f62684b2f6ad
 base_blob: 77f34503659c90a5953f91a93ba6e1a2b02e4613
@@ -82,6 +82,13 @@ attempt_file: 2026-10-25T121529Z-check-cuda-nvfp4-wgmma-rega-b128-n32-deep-ring.
 prepared_at: 2026-10-25T121529Z
 job: 6759e36bbd4648fc
 dispatched_at: 2026-10-25T121537Z
+outcome: neutral
+verdict_detail: unproven-vs-best
+speedup: 1.368960342866081
+speedup_ci: [1.3484259377230898, 1.389494748009072]
+harvested_at: 2026-10-25T124810Z
+best_at_harvest: 1.3438953504561806
+promotion: null
 ---
 
 # cuda-nvfp4-wgmma-rega-b128-n32-deep-ring
@@ -180,3 +187,30 @@ Fixes:
 2. Build fallback: if the -Werror probe fails with no ptxas line (a front-end compile error), the module is no longer rebuilt with the stage-6 variants without -Werror, since that rebuild would hit the same error. The s5-only module is built at once, which saves budget so B256 keeps its bucket-gate decision.
 
 Residual risk: nvcc has not compiled the new template instantiations (this node has no nvcc), and a hard device fault in a new variant during prepare would poison the context. B256's selector now draws different random inputs than the base (the generator is consumed differently at T=128), so its decision, about 1.06x against a 1.02x margin, carries ordinary noise.
+
+## Result
+
+- job `6759e36bbd4648fc` (check), status done, passed True, tests 5/5
+- speedup 1.3690x, 95% CI [1.3484, 1.3895], score 9823.878441828321 µs vs SGLang 13448.5 µs
+- best at harvest: {"speedup": 1.3438953504561806, "ci": [1.3237369201993379, 1.364053780713023], "job": "7a0d900a1dd34666"}; base result: muse_moe_w4a16/hypotheses/done/neutral/cuda-nvfp4-wgmma-rega-grouped-s5-copy-safe-forced.result.json
+- **outcome: neutral** (unproven-vs-best)
+- files: `muse_moe_w4a16/hypotheses/done/neutral/cuda-nvfp4-wgmma-rega-b128-n32-deep-ring.result.json`, `muse_moe_w4a16/hypotheses/done/neutral/cuda-nvfp4-wgmma-rega-b128-n32-deep-ring.patch`; branch `hyp/muse_moe_w4a16/cuda-nvfp4-wgmma-rega-b128-n32-deep-ring`
+
+## Attribution
+
+| shape | w | base µs | hyp µs | delta | verdict |
+|---|---|---|---|---|---|
+| bs=1 load=decode_1 sharding=ep8 | 60 | 45.47 | 45.53 | 0.9981 | flat |
+| bs=16 load=decode_16 sharding=ep8 | 60 | 145.97 | 147.69 | 0.9926 | flat |
+| bs=32 load=decode_32 sharding=ep8 | 60 | 198.58 | 201.23 | 0.9981 | flat |
+| bs=8 load=verify_1 sharding=ep8 | 60 | 112.38 | 106.41 | 0.9977 | flat |
+| bs=128 load=verify_16 sharding=ep8 | 60 | 364.85 | 317.28 | 1.1118 | gained |
+| bs=256 load=verify_32 sharding=ep8 | 60 | 404.67 | 411.26 | 0.9958 | flat |
+
+gained on verify_16 verify_16. Expected hit: 3/3. Noise ±1.5%.
+
+## Follow-ups
+
+- rewrite stage 6 of `Marlin w13+silu+w2 (moe_wna16_marlin_gemm x2 + act_and_mul) at 128<=T<=255`: read the replaced kernels' own us per shape (profile top_kernels) against the incumbent and the floor, and check which Milestone it reached. The next stage is `/hypothesize muse_moe_w4a16 "<what to fix or tune>" --kind rewrite --depends-on cuda-nvfp4-wgmma-rega-b128-n32-deep-ring --stage 7`; a slow or failed first cut is the expected start, not a do-not-retry.
+- unproven-vs-best: the change is not proven either way; a stacked hypothesis (`depends_on: cuda-nvfp4-wgmma-rega-b128-n32-deep-ring`) that adds a further change in the same area is the only way to learn more (identical code is never re-run).
+
