@@ -43,9 +43,10 @@ priority: 3
 kind: primary
 controls_for: null
 review: proceed
-status: queued
+status: hold
 review_at: 2026-10-25T042602Z
 review_companions: null
+hold_reason: "Reviewer: no evidence SGLang moe_wna16_marlin_gemm takes thread_k/thread_n/blocks_per_sm; a print-only kwargs probe + cold-L2 config timing table rides in w13-marlin-atomic-add-on-master-small-m prepare(). Build only if a config is >=8% faster on two routings; fp32 reference; w2 in master atomic mode; T=8/16/32 only."
 ---
 
 # marlin-exec-config-autotune-mid-m
