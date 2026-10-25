@@ -57,7 +57,7 @@ base_sha: 9a3cafafd2a3738a49dc5fe238ef2bf753adafd4
 base_blob: a8bb42ac483318e9fbc84bc7826a27b7a704d1fb
 branch: hyp/muse_bf16_proj/o-swapab-m32-splitk2-two-ctas-per-sm
 worktree: .worktrees/muse_bf16_proj/o-swapab-m32-splitk2-two-ctas-per-sm
-mode: null
+mode: check
 restack_of: null
 stale_base: null
 implemented_at: 2026-10-25T004336Z
@@ -66,6 +66,8 @@ submission_sha256: 8464768fc46c9b7419314e4ec533840ca5943d44f8b13d377d170f4aa2efa
 norm_sha256: 64a798663fc01d49f9fbbd163aa6704b8bb2711413e3d3b393e7f380c2459105
 submission_blob: 0f369f4fc86ec397d2ae1110613230f66f999fa9
 lint_warnings: 0
+attempt_file: 2026-10-25T004336Z-check-o-swapab-m32-splitk2-two-ctas-per-sm.md
+prepared_at: 2026-10-25T004336Z
 ---
 
 # o-swapab-m32-splitk2-two-ctas-per-sm
