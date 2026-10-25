@@ -62,7 +62,7 @@ base_sha: 08b1841a86f49e34227afd254a2476f445746929
 base_blob: c9067b8201f2480c64910c4a71098df7ce616f73
 branch: hyp/muse_decode_layer/full-decode1-two-level-ticket-port
 worktree: .worktrees/muse_decode_layer/full-decode1-two-level-ticket-port
-mode: null
+mode: check
 restack_of: null
 stale_base: null
 implemented_at: 2026-10-25T043231Z
@@ -71,6 +71,8 @@ submission_sha256: 820d148b2802f92c7dc1c3330444e7f99f525489303a624db290357b317ea
 norm_sha256: fbdeed8229000872e5363f1c3ab8727f206576940cc890d0348fc64144d8e914
 submission_blob: b47225b69da4fb9da4572795511e455d26c0ad2b
 lint_warnings: 39
+attempt_file: 2026-10-25T043231Z-check-full-decode1-two-level-ticket-port.md
+prepared_at: 2026-10-25T043231Z
 ---
 
 # full-decode1-two-level-ticket-port
