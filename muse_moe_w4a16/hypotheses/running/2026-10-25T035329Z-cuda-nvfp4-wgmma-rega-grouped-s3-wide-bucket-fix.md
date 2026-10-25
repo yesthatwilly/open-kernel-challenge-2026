@@ -60,7 +60,7 @@ review: proceed
 status: running
 review_at: 2026-10-25T040253Z
 review_companions: null
-stage: implemented
+stage: dispatched
 claimed_at: 2026-10-25T040259Z
 base_sha: 570f5e4ac5465931183addaf7a472e01668ced15
 base_blob: 1ae7e9cac6dc078a0e71c7a6b0b77ec48b0ed01f
@@ -77,6 +77,8 @@ submission_blob: bf65a3afdf6ebe0d9b73a817ffd2be1240f91870
 lint_warnings: 50
 attempt_file: 2026-10-25T041252Z-check-cuda-nvfp4-wgmma-rega-grouped-s3-wide-bucket-fix.md
 prepared_at: 2026-10-25T041252Z
+job: 3bdec0e58d684c17
+dispatched_at: 2026-10-25T041258Z
 ---
 
 # cuda-nvfp4-wgmma-rega-grouped-s3-wide-bucket-fix
