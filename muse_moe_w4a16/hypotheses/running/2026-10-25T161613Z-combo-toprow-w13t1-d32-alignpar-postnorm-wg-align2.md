@@ -109,7 +109,7 @@ review: proceed
 status: running
 review_at: 2026-10-25T162036Z
 review_companions: null
-stage: implemented
+stage: dispatched
 claimed_at: 2026-10-25T162036Z
 base_sha: 1a68e94c6b2606b0ecd994ea29ea38fc22e70f0e
 base_blob: 593b238c16387c5ac3774424ee9557882b9fc46a
@@ -126,6 +126,8 @@ submission_blob: 35b8a851e4ef5fa8fd66b12d09caac88b7ea7615
 lint_warnings: 96
 attempt_file: 2026-10-25T185454Z-submit-combo-toprow-w13t1-d32-alignpar-postnorm-wg-align2.md
 prepared_at: 2026-10-25T185454Z
+job: b395f5b6097348c7
+dispatched_at: 2026-10-25T185505Z
 ---
 
 # combo-toprow-w13t1-d32-alignpar-postnorm-wg-align2
