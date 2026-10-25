@@ -55,9 +55,18 @@ controls_for: null
 rewrite_stage: 2
 replaces: _router_hilo_kernel + torch.zeros memset at router m=65..256 (hilo 5.0 + 0.8 us at m=128, 7.0 + 0.7 us at m=256)
 review: proceed
-status: queued
+status: running
 review_at: 2026-10-25T212522Z
 review_companions: null
+stage: claimed
+claimed_at: 2026-10-25T212549Z
+base_sha: 8dd2a8d59b8619aeeb15dc4ebd6d2939f2eab87e
+base_blob: 095978ec904ee937a4b5b039bf2b47b911801fa6
+branch: hyp/muse_bf16_proj/router-m128-m256-wgmma-swapab-tall-cluster-stage2
+worktree: .worktrees/muse_bf16_proj/router-m128-m256-wgmma-swapab-tall-cluster-stage2
+mode: check
+restack_of: null
+stale_base: true
 ---
 
 # router-m128-m256-wgmma-swapab-tall-cluster-stage2
