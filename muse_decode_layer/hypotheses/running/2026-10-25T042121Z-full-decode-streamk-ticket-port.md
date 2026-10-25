@@ -58,7 +58,7 @@ review: proceed
 status: running
 review_at: 2026-10-25T042453Z
 review_companions: null
-stage: implemented
+stage: dispatched
 claimed_at: 2026-10-25T042453Z
 base_sha: f6e653b6cc358b21c20086af784b37d069a021a5
 base_blob: c9067b8201f2480c64910c4a71098df7ce616f73
@@ -75,6 +75,8 @@ submission_blob: 14a7c7be22acb26d22510ac7c55ea96451f9c483
 lint_warnings: 44
 attempt_file: 2026-10-25T043330Z-check-full-decode-streamk-ticket-port.md
 prepared_at: 2026-10-25T043330Z
+job: 6d48932b230d4067
+dispatched_at: 2026-10-25T043340Z
 ---
 
 # full-decode-streamk-ticket-port
