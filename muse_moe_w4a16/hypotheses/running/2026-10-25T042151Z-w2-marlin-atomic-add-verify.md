@@ -44,7 +44,7 @@ review: proceed
 status: running
 review_at: 2026-10-25T042602Z
 review_companions: null
-stage: implemented
+stage: dispatched
 claimed_at: 2026-10-25T042602Z
 base_sha: 9d3c58e166fc04c1df6f9c7b4eccd2672e82be7c
 base_blob: 60dfe35d5417d9c0f89067ff313efdc2c41d03a2
@@ -61,6 +61,8 @@ submission_blob: 28fdab5be6f60d2b4e91078e80a5bf4e2f8d098e
 lint_warnings: 18
 attempt_file: 2026-10-25T043034Z-check-w2-marlin-atomic-add-verify.md
 prepared_at: 2026-10-25T043034Z
+job: ccbcda65da584be0
+dispatched_at: 2026-10-25T043040Z
 ---
 
 # w2-marlin-atomic-add-verify
