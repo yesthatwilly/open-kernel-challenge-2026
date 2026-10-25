@@ -41,10 +41,19 @@ priority: 2
 kind: primary
 controls_for: null
 review: proceed
-status: queued
+status: running
 review_at: 2026-10-25T004021Z
 review_companions: [sliding-decode-paired-kvhead-rows-control-unpaired-s8]
 hold_reason: null
+stage: claimed
+claimed_at: 2026-10-25T014325Z
+base_sha: 0c91821ce96e550a59594394591699d20286eb84
+base_blob: c6854f093588da524e63657576b27ed720756e32
+branch: hyp/muse_attention_decode/sliding-decode-paired-kvhead-rows
+worktree: .worktrees/muse_attention_decode/sliding-decode-paired-kvhead-rows
+mode: null
+restack_of: null
+stale_base: null
 ---
 
 # sliding-decode-paired-kvhead-rows
