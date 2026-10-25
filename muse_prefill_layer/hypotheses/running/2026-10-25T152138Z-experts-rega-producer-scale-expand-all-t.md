@@ -88,7 +88,7 @@ base_sha: 1b7b960db97884fe5ecfbd4dd9b87b1265a6cac3
 base_blob: a2fe2a75893c60d4f68cf94fcce8ce8f9b708a71
 branch: hyp/muse_prefill_layer/experts-rega-producer-scale-expand-all-t
 worktree: .worktrees/muse_prefill_layer/experts-rega-producer-scale-expand-all-t
-mode: null
+mode: submit
 restack_of: null
 stale_base: null
 implemented_at: 2026-10-25T154433Z
@@ -97,6 +97,8 @@ submission_sha256: 7f997c6777f2c3c87c279598f2ee9495a1a8c8fde387287dd719a81b5f936
 norm_sha256: ed66ed62ea3da423fb2f46644a7b78217c6ba5b0dc800541097315d15a37a32c
 submission_blob: 762afd24649ce0dacac1fdd5dd8d057779e1c91c
 lint_warnings: 80
+attempt_file: 2026-10-25T154433Z-submit-experts-rega-producer-scale-expand-all-t.md
+prepared_at: 2026-10-25T154433Z
 ---
 
 # experts-rega-producer-scale-expand-all-t
