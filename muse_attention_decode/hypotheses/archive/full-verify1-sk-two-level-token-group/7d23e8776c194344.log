@@ -1,0 +1,143 @@
+2: splitkv_attn_sk_kernel returned
+[fv] v14 lens 80000 kv 0.25 grid SM/2: rel L2 1.63e-03, finite True -> ok
+[fv] v14 lens 80000 grid 2xSM: launching _pre_attention_kernel
+[fv] v14 lens 80000 grid 2xSM: _pre_attention_kernel returned; launching splitkv_attn_sk_kernel<4 stages, two-level ticket, FULLV TG=8 (2 x 32-key passes)> grid 264
+[fv] v14 lens 80000 grid 2xSM: splitkv_attn_sk_kernel returned
+[fv] v14 lens 80000 grid 2xSM: rel L2 1.65e-03, finite True -> ok
+[fv] v14 lens 80000 coherent grid SM: launching _pre_attention_kernel
+[fv] v14 lens 80000 coherent grid SM: _pre_attention_kernel returned; launching splitkv_attn_sk_kernel<4 stages, two-level ticket, FULLV TG=8 (2 x 32-key passes)> grid 132
+[fv] v14 lens 80000 coherent grid SM: splitkv_attn_sk_kernel returned
+[fv] v14 lens 80000 coherent grid SM: rel L2 1.65e-03, finite True -> ok
+[fv] v14 lens 5003 grid SM/2: launching _pre_attention_kernel
+[fv] v14 lens 5003 grid SM/2: _pre_attention_kernel returned; launching splitkv_attn_sk_kernel<4 stages, two-level ticket, FULLV TG=8 (2 x 32-key passes)> grid 66
+[fv] v14 lens 5003 grid SM/2: splitkv_attn_sk_kernel returned
+[fv] v14 lens 5003 grid SM/2: rel L2 1.66e-03, finite True -> ok
+[fv] v14 lens 5003 kv 0.25 grid SM: launching _pre_attention_kernel
+[fv] v14 lens 5003 kv 0.25 grid SM: _pre_attention_kernel returned; launching splitkv_attn_sk_kernel<4 stages, two-level ticket, FULLV TG=8 (2 x 32-key passes)> grid 132
+[fv] v14 lens 5003 kv 0.25 grid SM: splitkv_attn_sk_kernel returned
+[fv] v14 lens 5003 kv 0.25 grid SM: rel L2 1.61e-03, finite True -> ok
+[fv] v14 lens 5003 grid 2xSM: launching _pre_attention_kernel
+[fv] v14 lens 5003 grid 2xSM: _pre_attention_kernel returned; launching splitkv_attn_sk_kernel<4 stages, two-level ticket, FULLV TG=8 (2 x 32-key passes)> grid 264
+[fv] v14 lens 5003 grid 2xSM: splitkv_attn_sk_kernel returned
+[fv] v14 lens 5003 grid 2xSM: rel L2 1.66e-03, finite True -> ok
+[fv] v14 lens 5003 coherent grid SM: launching _pre_attention_kernel
+[fv] v14 lens 5003 coherent grid SM: _pre_attention_kernel returned; launching splitkv_attn_sk_kernel<4 stages, two-level ticket, FULLV TG=8 (2 x 32-key passes)> grid 132
+[fv] v14 lens 5003 coherent grid SM: splitkv_attn_sk_kernel returned
+[fv] v14 lens 5003 coherent grid SM: rel L2 1.66e-03, finite True -> ok
+[fv] v14 lens 80000 grid 3: launching _pre_attention_kernel
+[fv] v14 lens 80000 grid 3: _pre_attention_kernel returned; launching splitkv_attn_sk_kernel<4 stages, two-level ticket, FULLV TG=8 (2 x 32-key passes)> grid 3
+[fv] v14 lens 80000 grid 3: splitkv_attn_sk_kernel returned
+[fv] v14 lens 80000 grid 3: rel L2 1.64e-03, finite True -> ok
+[fv] v14 lens 4089 (S = 4097) grid 7: launching _pre_attention_kernel
+[fv] v14 lens 4089 (S = 4097) grid 7: _pre_attention_kernel returned; launching splitkv_attn_sk_kernel<4 stages, two-level ticket, FULLV TG=8 (2 x 32-key passes)> grid 7
+[fv] v14 lens 4089 (S = 4097) grid 7: splitkv_attn_sk_kernel returned
+[fv] v14 lens 4089 (S = 4097) grid 7: rel L2 1.64e-03, finite True -> ok
+[fv] v14 lens 57 (S = 65) grid 7: launching _pre_attention_kernel
+[fv] v14 lens 57 (S = 65) grid 7: _pre_attention_kernel returned; launching splitkv_attn_sk_kernel<4 stages, two-level ticket, FULLV TG=8 (2 x 32-key passes)> grid 7
+[fv] v14 lens 57 (S = 65) grid 7: splitkv_attn_sk_kernel returned
+[fv] v14 lens 57 (S = 65) grid 7: rel L2 1.68e-03, finite True -> ok
+[fv] v14 lens 56 (S = 64, one tile) grid 3: launching _pre_attention_kernel
+[fv] v14 lens 56 (S = 64, one tile) grid 3: _pre_attention_kernel returned; launching splitkv_attn_sk_kernel<4 stages, two-level ticket, FULLV TG=8 (2 x 32-key passes)> grid 3
+[fv] v14 lens 56 (S = 64, one tile) grid 3: splitkv_attn_sk_kernel returned
+[fv] v14 lens 56 (S = 64, one tile) grid 3: rel L2 1.66e-03, finite True -> ok
+[fv] v14 lens 3 (S = 11) kv 0.25 grid SM: launching _pre_attention_kernel
+[fv] v14 lens 3 (S = 11) kv 0.25 grid SM: _pre_attention_kernel returned; launching splitkv_attn_sk_kernel<4 stages, two-level ticket, FULLV TG=8 (2 x 32-key passes)> grid 132
+[fv] v14 lens 3 (S = 11) kv 0.25 grid SM: splitkv_attn_sk_kernel returned
+[fv] v14 lens 3 (S = 11) kv 0.25 grid SM: rel L2 1.67e-03, finite True -> ok
+[fv] v14 lens 0 (S = 8) grid 3: launching _pre_attention_kernel
+[fv] v14 lens 0 (S = 8) grid 3: _pre_attention_kernel returned; launching splitkv_attn_sk_kernel<4 stages, two-level ticket, FULLV TG=8 (2 x 32-key passes)> grid 3
+[fv] v14 lens 0 (S = 8) grid 3: splitkv_attn_sk_kernel returned
+[fv] v14 lens 0 (S = 8) grid 3: rel L2 1.63e-03, finite True -> ok
+[fv] tickets (both levels) after the self-check: sum 0
+[fv-gate] launching _pre_attention_kernel
+[fv-gate] launching FULLV TG=1 two-level (variant 10) grid SM (132) (eager correctness run)
+[fv-gate] FULLV TG=1 two-level (variant 10) grid SM (132) returned, rel L2 1.66e-03, finite True
+[fv-gate] launching FULLV TG=2 two-level (variant 11) grid SM/2 (66) (eager correctness run)
+[fv-gate] FULLV TG=2 two-level (variant 11) grid SM/2 (66) returned, rel L2 1.66e-03, finite True
+[fv-gate] launching FULLV TG=2 two-level (variant 11) grid SM (132) (eager correctness run)
+[fv-gate] FULLV TG=2 two-level (variant 11) grid SM (132) returned, rel L2 1.66e-03, finite True
+[fv-gate] launching FULLV TG=2 two-level (variant 11) grid 2xSM (264) (eager correctness run)
+[fv-gate] FULLV TG=2 two-level (variant 11) grid 2xSM (264) returned, rel L2 1.66e-03, finite True
+[fv-gate] launching FULLV TG=4 two-level (variant 12) grid SM/2 (66) (eager correctness run)
+[fv-gate] FULLV TG=4 two-level (variant 12) grid SM/2 (66) returned, rel L2 1.66e-03, finite True
+[fv-gate] launching FULLV TG=4 two-level (variant 12) grid SM (132) (eager correctness run)
+[fv-gate] FULLV TG=4 two-level (variant 12) grid SM (132) returned, rel L2 1.66e-03, finite True
+[fv-gate] launching FULLV TG=4 two-level (variant 12) grid 2xSM (264) (eager correctness run)
+[fv-gate] FULLV TG=4 two-level (variant 12) grid 2xSM (264) returned, rel L2 1.66e-03, finite True
+[fv-gate] launching FULLV TG=8 two-level (variant 13) grid SM/2 (66) (eager correctness run)
+[fv-gate] FULLV TG=8 two-level (variant 13) grid SM/2 (66) returned, rel L2 1.66e-03, finite True
+[fv-gate] launching FULLV TG=8 two-level (variant 13) grid SM (132) (eager correctness run)
+[fv-gate] FULLV TG=8 two-level (variant 13) grid SM (132) returned, rel L2 1.66e-03, finite True
+[fv-gate] launching FULLV TG=8 two-level (variant 13) grid 2xSM (264) (eager correctness run)
+[fv-gate] FULLV TG=8 two-level (variant 13) grid 2xSM (264) returned, rel L2 1.66e-03, finite True
+[fv-gate] launching FULLV TG=8 two-level 2x32-key passes (variant 14) grid SM/2 (66) (eager correctness run)
+[fv-gate] FULLV TG=8 two-level 2x32-key passes (variant 14) grid SM/2 (66) returned, rel L2 1.66e-03, finite True
+[fv-gate] launching FULLV TG=8 two-level 2x32-key passes (variant 14) grid SM (132) (eager correctness run)
+[fv-gate] FULLV TG=8 two-level 2x32-key passes (variant 14) grid SM (132) returned, rel L2 1.66e-03, finite True
+[fv-gate] launching FULLV TG=8 two-level 2x32-key passes (variant 14) grid 2xSM (264) (eager correctness run)
+[fv-gate] FULLV TG=8 two-level 2x32-key passes (variant 14) grid 2xSM (264) returned, rel L2 1.66e-03, finite True
+[fv-gate] master FA3 path: rel L2 2.97e-03, finite True
+[fv-gate] empty-graph baseline 5.6 us; master FA3 32.7 us raw, 27.1 us baseline-subtracted (pre-attention on neither side; interleaved graph replay, cold L2, median of 21)
+[fv-gate] FULLV TG=1 two-level (variant 10) grid SM (132):    70.4 us raw,    64.9 us subtracted -> 0.464x raw, 0.418x subtracted vs FA3
+[fv-gate] FULLV TG=2 two-level (variant 11) grid SM/2 (66):    83.6 us raw,    78.0 us subtracted -> 0.391x raw, 0.348x subtracted vs FA3
+[fv-gate] FULLV TG=2 two-level (variant 11) grid SM (132):    52.8 us raw,    47.3 us subtracted -> 0.618x raw, 0.573x subtracted vs FA3
+[fv-gate] FULLV TG=2 two-level (variant 11) grid 2xSM (264):    51.0 us raw,    45.4 us subtracted -> 0.641x raw, 0.596x subtracted vs FA3
+[fv-gate] FULLV TG=4 two-level (variant 12) grid SM/2 (66):    76.2 us raw,    70.7 us subtracted -> 0.429x raw, 0.384x subtracted vs FA3
+[fv-gate] FULLV TG=4 two-level (variant 12) grid SM (132):    55.2 us raw,    49.6 us subtracted -> 0.592x raw, 0.546x subtracted vs FA3
+[fv-gate] FULLV TG=4 two-level (variant 12) grid 2xSM (264):    60.5 us raw,    54.9 us subtracted -> 0.540x raw, 0.493x subtracted vs FA3
+[fv-gate] FULLV TG=8 two-level (variant 13) grid SM/2 (66):    70.0 us raw,    64.4 us subtracted -> 0.467x raw, 0.421x subtracted vs FA3
+[fv-gate] FULLV TG=8 two-level (variant 13) grid SM (132):    65.8 us raw,    60.3 us subtracted -> 0.496x raw, 0.450x subtracted vs FA3
+[fv-gate] FULLV TG=8 two-level (variant 13) grid 2xSM (264):    72.7 us raw,    67.2 us subtracted -> 0.449x raw, 0.404x subtracted vs FA3
+[fv-gate] FULLV TG=8 two-level 2x32-key passes (variant 14) grid SM/2 (66):    72.6 us raw,    67.1 us subtracted -> 0.450x raw, 0.404x subtracted vs FA3
+[fv-gate] FULLV TG=8 two-level 2x32-key passes (variant 14) grid SM (132):    67.6 us raw,    62.1 us subtracted -> 0.483x raw, 0.437x subtracted vs FA3
+[fv-gate] FULLV TG=8 two-level 2x32-key passes (variant 14) grid 2xSM (264):    74.9 us raw,    69.4 us subtracted -> 0.436x raw, 0.391x subtracted vs FA3
+[fv-gate] SUMMARY best per TG: TG=1 70.4 us (FULLV TG=1 two-level (variant 10) grid SM (132)) | TG=2 51.0 us (FULLV TG=2 two-level (variant 11) grid 2xSM (264)) | TG=4 55.2 us (FULLV TG=4 two-level (variant 12) grid SM (132)) | TG=8 65.8 us (FULLV TG=8 two-level (variant 13) grid SM (132)) | FA3 32.7 us
+[fv-gate] best FULLV TG=2 two-level (variant 11) grid 2xSM (264): 51.0 us vs FA3 32.7 us raw (0.641x), 45.4 vs 27.1 us baseline-subtracted (0.596x) -> below the 1.05x gate: FA3
+PATH CHOSEN: full verify_1 master FA3 (FULLV not >= 1.05x faster in the printed timings, or failed a check; best FULLV TG=2 two-level (variant 11) grid 2xSM (264) 51.0 us vs FA3 32.7 us (0.641x raw, 0.596x subtracted))
+[sk] diag variant check B=16 ragged: launching _pre_attention_kernel
+[sk] diag variant check B=16 ragged: launching splitkv_attn_sk_kernel<4 stages, no ticket> grid 264
+[sk] diag variant check B=16 ragged: splitkv_attn_sk_kernel returned
+[sk] diag variant check B=16 ragged: launching splitkv_sk_combine_kernel
+[sk] diag variant check B=16 ragged: splitkv_sk_combine_kernel returned
+[sk] diag variant check B=16 ragged: rel L2 1.66e-03, finite True -> ok
+[sk] diag variant check B=16 ragged: launching _pre_attention_kernel
+[sk] diag variant check B=16 ragged: launching splitkv_attn_sk_kernel<5 stages, ticket> grid 264
+[sk] diag variant check B=16 ragged: splitkv_attn_sk_kernel returned
+[sk] diag variant check B=16 ragged: rel L2 1.66e-03, finite True -> ok
+[sk-diag] B=16: launching _pre_attention_kernel
+[sk-diag] B=16: timing stage-1 A + B
+[sk-diag] B=16 x 80000: 328 MB of K+V rows, grid 264, eager, cold L2, median of 10
+[sk-diag]   stage-1 A splitkv_attn_kernel            118.4 us  2.77 TB/s
+[sk-diag]   stage-1 B splitkv_combine_kernel          12.2 us  -> A+B   130.6 us
+[sk-diag]   stream-K + ticket, 4 st (timed path)     113.9 us  2.88 TB/s  (vs stage-1 out rel 2.4e-04)
+[sk-diag] B=16: timing stream-K no ticket + combine
+[sk-diag]   stream-K no ticket, 4 st             106.9 us  3.07 TB/s  + combine 12.1 us -> 118.9 us  (rel 2.4e-04)
+[sk-diag] B=16: timing stream-K + ticket, 5 stages
+[sk-diag]   stream-K + ticket, 5 st              115.9 us  2.83 TB/s  (rel 2.4e-04)
+[sk-diag] B=16 ratios (>1 = first is slower): stage-1 A+B / v2 1.147x; split/locality: stage-1 A / stream-K no-ticket A 1.108x; ticket fold: (no-ticket A + combine) / ticket 1.045x; stages: 4 st / 5 st 0.982x
+[sk-diag] B=32: launching _pre_attention_kernel
+[sk-diag] B=32: timing stage-1 A + B
+[sk-diag] B=32 x 80000: 655 MB of K+V rows, grid 264, eager, cold L2, median of 10
+[sk-diag]   stage-1 A splitkv_attn_kernel            247.7 us  2.65 TB/s
+[sk-diag]   stage-1 B splitkv_combine_kernel          12.7 us  -> A+B   260.4 us
+[sk-diag]   stream-K + ticket, 4 st (timed path)     221.4 us  2.96 TB/s  (vs stage-1 out rel 1.9e-04)
+[sk-diag] B=32: timing stream-K no ticket + combine
+[sk-diag]   stream-K no ticket, 4 st             217.7 us  3.01 TB/s  + combine 11.8 us -> 229.6 us  (rel 1.9e-04)
+[sk-diag] B=32: timing stream-K + ticket, 5 stages
+[sk-diag]   stream-K + ticket, 5 st              224.1 us  2.92 TB/s  (rel 1.9e-04)
+[sk-diag] B=32 ratios (>1 = first is slower): stage-1 A+B / v2 1.176x; split/locality: stage-1 A / stream-K no-ticket A 1.138x; ticket fold: (no-ticket A + combine) / ticket 1.037x; stages: 4 st / 5 st 0.988x
+[sk3-diag] B=1: launching _pre_attention_kernel
+[sk3-diag] B=1 x 80000: 20 MB of K+V rows, eager, cold L2, median of 10
+[sk3-diag]   (a) single-level grid 2xSM (stage 2 as is)        53.5 us  0.38 TB/s  (rel L2 1.7e-03, finite True)
+[sk3-diag]   (b) single-level grid SM                          34.8 us  0.59 TB/s  (rel L2 1.7e-03, finite True)
+[sk3-diag]   (c) two-level grid SM (timed path)                22.9 us  0.89 TB/s  (rel L2 1.7e-03, finite True)
+[sk3-diag]   (d) two-level grid 2xSM                           24.4 us  0.84 TB/s  (rel L2 1.7e-03, finite True)
+[sk3-diag] fastest of the four: (c) two-level grid SM (timed path); timed path (c) is 22.9 us, (a) control 53.5 us, (c)/(a) 0.428x
+[sk3-diag] B=1: timing master FA3 (main + combine) and norm-gate
+[sk3-diag]   master FA3 main+combine    33.1 us + norm-gate 5.2 us = 38.3 us (pre-attention kernel excluded from both sides)
+[sk3-diag] B=16: launching _pre_attention_kernel
+[sk3-diag] B=16 x 80000: 328 MB of K+V rows, eager, cold L2, median of 10
+[sk3-diag]   two-level grid 2xSM at B=16 (diagnostic)         114.5 us  2.86 TB/s  (rel L2 1.6e-03, finite True)
+[sk3-diag]   single-level grid 2xSM at B=16 (stage 2)         107.1 us  3.06 TB/s  (rel L2 1.6e-03, finite True)
+PATH CHOSEN: full decode_1 streamk two-level
+PATH CHOSEN: every other shape (sliding decode, other verify bands, page 64, dp): master path, unchanged

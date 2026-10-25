@@ -49,10 +49,10 @@ controls_for: null
 rewrite_stage: 3
 replaces: "full verify batch 1 (q_len 8): prepare_varlen_num_blocks + FA3 main + FlashAttnFwdCombine + norm-gate"
 review: proceed
-status: running
+status: done
 review_at: 2026-10-25T054747Z
 review_companions: null
-stage: dispatched
+stage: harvested
 claimed_at: 2026-10-25T084919Z
 base_sha: 39fb54fe3f47f42f763160b2e09426e294bdbe7a
 base_blob: 7fd30a78be18303b7c935dc944c31ff33649bed0
@@ -71,6 +71,13 @@ attempt_file: 2026-10-25T090903Z-check-full-verify1-sk-two-level-token-group.md
 prepared_at: 2026-10-25T090903Z
 job: 7d23e8776c194344
 dispatched_at: 2026-10-25T090912Z
+outcome: neutral
+verdict_detail: beats-base-not-best
+speedup: 1.471441356010769
+speedup_ci: [1.4493697356706075, 1.4935129763509305]
+harvested_at: 2026-10-25T110749Z
+best_at_harvest: 1.4919706177473366
+promotion: null
 ---
 
 # full-verify1-sk-two-level-token-group
@@ -194,3 +201,36 @@ Fixes
 - Added `PATH CHOSEN: full verify_1 FA3 (fallback: stage-2 module unavailable)` for the case where the splitkv or stage-2 module fails before `_fv_setup` runs. Before this, that fallback printed no full verify_1 line.
 
 Residual risk: the uncompiled CUDA (5 more template instantiations; a FULLV compile error costs a second PSEUDO build's compile time) and register spills on variant 13. The gate requires 1.05x both raw and baseline-subtracted, which is stricter than the spec's subtracted-only rule and could reject a thin win.
+
+## Result
+
+- job `7d23e8776c194344` (check), status done, passed True, tests 16/16
+- speedup 1.4714x, 95% CI [1.4494, 1.4935], score 2559.5991200157864 µs vs SGLang 3766.3 µs
+- best at harvest: {"speedup": 1.4919706177473366, "ci": [1.4695910584811265, 1.5143501770135466], "job": "cbd49dc94be548e7"}; base result: muse_attention_decode/hypotheses/done/regression/sliding-verify-sk-pseudo-s2-token-group.result.json
+- **outcome: neutral** (beats-base-not-best)
+- files: `muse_attention_decode/hypotheses/done/neutral/full-verify1-sk-two-level-token-group.result.json`, `muse_attention_decode/hypotheses/done/neutral/full-verify1-sk-two-level-token-group.patch`; branch `hyp/muse_attention_decode/full-verify1-sk-two-level-token-group`
+
+## Attribution
+
+| shape | w | base µs | hyp µs | delta | verdict |
+|---|---|---|---|---|---|
+| batch=1 ctx=80000 dist=soft heads=tp8 layer=sliding load=decode_1 page=1 | 46 | 13.5 | 13.06 | 1.0552 | gained |
+| batch=1 ctx=80000 dist=coherent heads=tp8 layer=full load=decode_1 page=1 | 16 | 23.13 | 23.08 | 1.0033 | flat |
+| batch=16 ctx=80000 dist=soft heads=tp8 layer=sliding load=decode_16 page=1 spread=agentic | 46 | 15.16 | 15.23 | 1.0043 | flat |
+| batch=16 ctx=80000 dist=coherent heads=tp8 layer=full load=decode_16 page=1 spread=agentic | 16 | 111.73 | 111.81 | 1.0035 | flat |
+| batch=32 ctx=80000 dist=soft heads=tp8 layer=sliding load=decode_32 page=1 spread=agentic | 46 | 24.31 | 24.53 | 0.9968 | flat |
+| batch=32 ctx=80000 dist=coherent heads=tp8 layer=full load=decode_32 page=1 spread=agentic | 16 | 227.53 | 228.82 | 0.997 | flat |
+| batch=1 ctx=80000 dist=soft heads=tp8 layer=sliding load=verify_1 page=1 q_len=8 | 46 | 17.49 | 13.38 | 1.314 | gained |
+| batch=1 ctx=80000 dist=coherent heads=tp8 layer=full load=verify_1 page=1 q_len=8 | 16 | 30.0 | 30.07 | 1.0051 | flat |
+| batch=16 ctx=80000 dist=soft heads=tp8 layer=sliding load=verify_16 page=1 q_len=8 spread=agentic | 46 | 22.12 | 22.54 | 0.9859 | flat |
+| batch=16 ctx=80000 dist=coherent heads=tp8 layer=full load=verify_16 page=1 q_len=8 spread=agentic | 16 | 162.91 | 163.31 | 1.0019 | flat |
+| batch=32 ctx=80000 dist=soft heads=tp8 layer=sliding load=verify_32 page=1 q_len=8 spread=agentic | 46 | 28.72 | 28.93 | 0.9936 | flat |
+| batch=32 ctx=80000 dist=coherent heads=tp8 layer=full load=verify_32 page=1 q_len=8 spread=agentic | 16 | 300.48 | 303.13 | 0.9952 | flat |
+
+gained on sliding decode_1, verify_1. Expected hit: 1/3. Noise ±1.5%.
+
+## Follow-ups
+
+- rewrite stage 3 of `full verify batch 1 (q_len 8): prepare_varlen_num_blocks + FA3 main + FlashAttnFwdCombine + norm-gate`: read the replaced kernels' own us per shape (profile top_kernels) against the incumbent and the floor, and check which Milestone it reached. The next stage is `/hypothesize muse_attention_decode "<what to fix or tune>" --kind rewrite --depends-on full-verify1-sk-two-level-token-group --stage 4`; a slow or failed first cut is the expected start, not a do-not-retry.
+- beats-base-not-best: the change is not proven either way; a stacked hypothesis (`depends_on: full-verify1-sk-two-level-token-group`) that adds a further change in the same area is the only way to learn more (identical code is never re-run).
+
