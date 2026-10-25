@@ -33,9 +33,18 @@ priority: 2
 kind: control
 controls_for: experts-triton-turn4-persistent-local-align
 review: proceed
-status: queued
+status: running
 review_at: 2026-10-25T011030Z
 review_companions: null
+stage: claimed
+claimed_at: 2026-10-25T011048Z
+base_sha: e530b77b8a03d595f892b57b91b666002026a175
+base_blob: db8a3344398bca79ea5cafeb580f701c055fd475
+branch: hyp/muse_prefill_layer/experts-triton-turn4-persistent-local-align-control-no-persi
+worktree: .worktrees/muse_prefill_layer/experts-triton-turn4-persistent-local-align-control-no-persi
+mode: null
+restack_of: null
+stale_base: null
 ---
 
 # experts-triton-turn4-persistent-local-align-control-no-persi
