@@ -132,3 +132,31 @@ No companion. Every landed item outside parity sits in the MoE half. Parity is t
 - Turn_1 paged FA3 already runs a split plus FlashAttnFwdCombine (6.9 us). Contiguous VARLEN may choose a different num_splits. If the gate ever routes turn_1, read both the FA3 row and the combine row. Expected: the gate keeps A.
 - Since this is a scored submit with an expected headline of about +0.15%, the board entry will most likely land within noise of 1.448x, above or below it. The harvest should classify it from the GATE lines and the full first_turn FA3 rows, not from the speedup.
 
+
+## Implementation notes
+
+Base 7faa35ba equals master 47eaa27e for submission.py (master moved only md claims), so no merge was needed. All edits are in `muse_prefill_layer/submission.py` of the worktree: new block `FA3C_*` / `_kv_gather_contig_kernel` / `_fa3c_*` before `kernel_fn`, one call in `prepare()`, and the routed branch in `kernel_fn`.
+
+What changed: Triton kernel `_kv_gather_contig_kernel` (grid (B, cdiv(W,128)), 128 B rows as uint8, zeros for p >= cache_seqlens[b], `do_not_specialize=["width","pt_stride"]`, one compile serves every shape). `_fa3c_attend` runs A (master's paged call), B (gather + contiguous varlen) or C (gather + contiguous batched, q viewed [B,L,16,64], no cu_seqlens_q). `_fa3c_setup` runs a coherent-data self-check then a cold-L2 CUDA-graph gate (256 MB flush, 25 alternations, order rotated and flipped, median) per class, and fills `state['fa3c']['route']` keyed by `(batch, q_len, round((W - q_len)/16384))`. kernel_fn routes only when window == 0, page_size == 1, kv_scale == 1 and the key is in the dict; otherwise master's call is untouched.
+
+Review items applied:
+1. Gate placed AFTER `_rega_setup` (after master's whole setup); own deadlines `FA3C_START_DEADLINE_S` 235 s (skip all, master's paged path) and `FA3C_CLASS_DEADLINE_S` 265 s (skip remaining classes). First_turn classes are timed first.
+2. Exceptions are caught per variant (selfcheck, capture and replay): B failing does not switch off C and vice versa. Only an unexpected outer exception clears all routes.
+3. Bar 0.98 for the three first_turn classes, 0.97 for turn_1 and turn_4.
+4. Triton gather is launched (compiled) in prepare()'s self-check and in every class's eager warm-up before any capture, with `do_not_specialize` on the integer args. Buffers are shaped from page_table width and batch, held in the state's route dict, never module-global. If the live width differs from the gated width the call uses shape-derived `torch.empty` (graph-safe) instead.
+5. One `GATE` line per class (paged / varlen / batched / gather alone / bar / choice) and one `PATH CHOSEN` line in prepare(), reprinted after the align2 lines so the log tail keeps them; kernel_fn prints a `PATH CHOSEN` line the first time it sees each (key, width) (print-only set in state).
+Other review points: the gather runs after store_cache on the same stream; turn_1 combine row to be read if it ever routes; harvest should classify from the GATE lines and FA3 rows, not the headline.
+
+Deviations: route dict keeps the key spec'd, plus an exact-width check (above). Gate widths are my reading of reference.py: fixed spread W = ctx + L, turn_4 agentic spread W = ceil(1.075 ctx) + L with lens at ctx*(1 +- 0.075). Per-state buffers allocated at gate time (about 0.4 GB per state at most), instead of per-call torch.empty. The self-check does not replay across two states (buffers are per state and there are no globals).
+
+## Rules check
+
+- [x] CUDA-graph capturable: kernel_fn adds a dict lookup on shapes, one Triton launch and the FA3 call; no sync, no value branching (diff checked).
+- [x] Nothing derived from `data` is cached across calls: routes and buffers come from synthetic prepare() cases; the seen-set is print-only.
+- [x] Weights: n/a, untouched.
+- [x] Activations BF16 where SGLang keeps BF16; KV cache FP8 (copied bytes); queries FP8 E4M3 as master.
+- [x] Attention sees every key: contiguous copy of every cached row, zeros only beyond cache_seqlens; causal, window (-1,-1) as master on full layers.
+- [x] No timing patches, harness frames/I/O/secrets, module edits, reference import, processes or network.
+- [x] All work happens inside the timed call; no output caching or replay.
+
+okc_lint: OK with warnings (only host-sync warnings in prepare() and uint8 byte-buffer dtype warnings, no errors). py_compile OK, __pycache__ removed.

@@ -68,9 +68,18 @@ priority: 1
 kind: primary
 controls_for: null
 review: proceed
-status: queued
+status: running
 review_at: 2026-10-25T153001Z
 review_companions: null
+stage: claimed
+claimed_at: 2026-10-25T153001Z
+base_sha: e15152e9078a60b4c86e9eaf4e8b71da18b05e66
+base_blob: a2fe2a75893c60d4f68cf94fcce8ce8f9b708a71
+branch: hyp/muse_prefill_layer/pre-expert-norm-fused-rega-gather
+worktree: .worktrees/muse_prefill_layer/pre-expert-norm-fused-rega-gather
+mode: null
+restack_of: null
+stale_base: null
 ---
 
 # pre-expert-norm-fused-rega-gather
