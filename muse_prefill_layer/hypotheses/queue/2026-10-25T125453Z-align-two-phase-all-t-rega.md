@@ -60,8 +60,10 @@ depends_on: experts-turn-rega-s4-first-turn-n128
 priority: 1
 kind: primary
 controls_for: null
-review: required
+review: proceed
 status: queued
+review_at: 2026-10-25T125918Z
+review_companions: null
 ---
 
 # align-two-phase-all-t-rega
@@ -79,3 +81,28 @@ Restack of turn-align-two-phase-chunk-prefix (job d792e5c9d6d94f02, neutral 1.33
 ## Risk
 
 Low risk. Before the timing gate, every case is checked bit for bit against master's align, and any failure keeps master's align for that class. The ft class is new territory for the align2 kernels (n=131072, 8222 blocks), and the local-saturated case is what proves capacity. Confounder: rega's own ft gate (rega vs Triton at T=16384) now includes the faster align, so its ratio can only improve; this cannot turn rega OFF. Attribution: compare _align_parallel_kernel against _align2_count_kernel + _align2_place_kernel per shape. GEMM rows should stay flat within ~2%. SUPERSEDES the damaged file 2026-10-25T125421Z-align-two-phase-all-t-rega-restack.md: shell backtick substitution blanked its call-site text, so that file must be deleted and must not run.
+
+## Adversarial review
+
+Reviewed 2026-10-25T125918Z by an adversarial subagent (model opus).
+
+**Verdict: proceed.** Isolated, bit-exact replacement of a serial ~393-419 us align at first_turn (verified in 07a069 profile) plus 17/71 us at turn_1/turn_4 on the rega path; first_turn carries 186 of 310 shape weight, so a ~2-3% headline gain is plausible and attribution is readable straight from the align kernel rows. No companion is worth one of the 2 remaining checks.
+
+### Justification
+Profile 07a069bc69ba42a8 confirms _align_parallel_kernel at 17.1/16.7 us (turn_1), 71.2/69.6 us (turn_4), 393.9/392.5/396.1/418.9 us (first_turn, 2.1-3.3%), and the prepare log shows 441-454 us eager at T=16384. The mechanism is structural: 33 programs each stream all n=131072 ids twice with a [512x32] compare, so time scales with n on 33 SMs; the two-phase form reads each id ~twice in total over 128-256 programs per launch. The align sits serially between the router join and the rega gather/GEMMs (sorted_ids/block_experts feed them), so saved us become wall-time. Outputs are torch.equal to master's align, so rega GEMM rows should not move. Directions match TASK weights: first_turn ~-350 us/shape on 11.7-19.2 ms is ~2-3% on 186/310 of the weight, against a noise of ~1.5%. That is likely, but not certain, to clear the CI. Weakest links: (1) the ft-class cost of align2 is unmeasured. At T=16384 the place kernel holds a [NCH_P2=128-256, 32] count table plus a [CHUNK, 32] one-hot cumsum per program (128 regs/thread of one-hot at CHUNK 1024, so possible spills), and one tail CTA writes ~115k sentinels plus 33 [256x32] block_experts iterations. My estimate is 15-40 us, not the 30-60 us stated, so the risk is low but real. (2) The turn_1/turn_4 expectations rest on d792, where only sliding turn_4 moved (+4%, which is more than a 55 us saving can explain, so partly noise), turn_1 was flat, and the headline 1.3369 was within CI of its 1.3275 base. Read the turn rows as align-kernel rows, not headline deltas.
+
+### Confounders on the current kernel
+- experts-turn-rega-s4-first-turn-n128 (parent): created the ft call site that put _align_parallel on T=16384. Its ft gate (rega 3520 vs Triton 5584 us, ratio 0.630) now includes the faster align, so it can only move further ON. The margin rules out a flip, so no rega-vs-Triton confound. If rega ft were OFF, the ft class is dead code (the Triton path keeps moe_align_block_size), and the ft PATH CHOSEN line would show it.
+- experts-turn-rega-s4-port-t4096: owns the low/high call site (_experts_rega). Gates at 0.649/0.651 and bit-identical align outputs mean rega's GEMM rows cannot shift through the change. Only the launch count changes (1 to 2 kernels), worth ~2-3 us of launch/tail overlap.
+- stack-tonight-five-prefill (carries moe-align-local-routes-parallel-port): defines _align_parallel, which is both the equivalence reference and the incumbent timed in the gate, and _align2_setup returns OFF unless align_par_ok. That is a precondition, not a confound. Check that align_par_ok is ON in the log.
+- experts-turn4-ssdq-s1b-dataptr-symbol-fix, experts-hybrid-marlin-turn-triton-first-turn, sglang-pipeline-parity, experts-triton-w4a16-first-turn-blockt256: the ssdq and Marlin fallbacks keep _align_parallel byte-identical and are not the timed path at turn_1/turn_4 (rega wins those gates), so they do not interact.
+
+### Interference and A/B needs
+No companion. The change is one call site on one path, with outputs proven bit-identical in prepare, so every downstream kernel row should stay flat. The per-shape profile gives _align_parallel_kernel (master, 17/71/393-419 us) against _align2_count_kernel + _align2_place_kernel directly, and the re-printed per-class PATH CHOSEN line says which classes ran. A gain or a loss is therefore attributable from this one run. An ab-revert of the parent would remove the ft call site and with it the main expected gain. An ab-tune of chunk size is already covered by the in-prepare gate choosing between 512 and 1024. A control isolating the ft class from low/high would only split ~2-3% into finer pieces already visible per load row. With 2 prefill checks left today, spending one on a companion buys nothing the profile does not already show.
+
+### Open questions
+- Which chunk size wins the ft gate, and do the place kernel's regs or spills at CHUNK 1024 with NCH_P2 128 matter? Print the per-class medians next to master's ~393 us.
+- Does the single tail program (≈115k sentinel stores + 8222-entry block_experts at T=16384) stay under 10 us? If it falls back to the distributed fill, that form needs its own equivalence pass on the local-saturated and one-expert cases at T=16384.
+- d792's log tail lost the align2 lines. Confirm in the new log that the 16:low, 16:high and 16:ft classes are each ON, so that flat turn rows mean 'ran and did not help' and not 'never ran'.
+- Does the ft equivalence suite at T=16384 include 'one-expert' (all 131072 routes on expert 7: 8192 blocks for one expert) as well as 'local-saturated' (cap fully used, empty sentinel range)? Both extremes should be required.
+
