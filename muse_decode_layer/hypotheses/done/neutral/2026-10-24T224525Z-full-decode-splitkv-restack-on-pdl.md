@@ -68,7 +68,9 @@ speedup: 1.2680313318618024
 speedup_ci: [1.2490108618838753, 1.2870518018397292]
 harvested_at: 2026-10-25T010415Z
 best_at_harvest: 1.2521147631671776
-promotion: null
+promotion: merged
+hand_landed: true
+promotion_commit: b047510f64cf1919b8313cb88b2f6fe17c1c2305
 ---
 
 # full-decode-splitkv-restack-on-pdl

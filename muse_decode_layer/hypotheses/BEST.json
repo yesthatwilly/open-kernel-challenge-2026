@@ -1,17 +1,17 @@
 {
  "problem": "muse_decode_layer",
- "job": "39bcf05afc4e4dd3",
- "check_job": "cc92097b64784c0f",
- "mode": "submit",
- "speedup": 1.2521147631671776,
+ "job": "c243a29f26dc4725",
+ "check_job": "c243a29f26dc4725",
+ "mode": "check",
+ "speedup": 1.2680313318618024,
  "ci": [
-  1.23333304171967,
-  1.270896484614685
+  1.2490108618838753,
+  1.2870518018397292
  ],
- "score_us": 18065.676298538958,
- "commit": "8fa8fbf0c89a2b6323c511c25b8616c0290dde23",
- "submission_blob": "4da94677234faaa06b42b5ced541db8961fd6f34",
- "slug": "stack-align-par-sidestream-sliding1",
- "result": "muse_decode_layer/hypotheses/done/neutral/stack-align-par-sidestream-sliding1.result.json",
- "updated_at": "2026-10-25T003214Z"
+ "score_us": 17838.912518657933,
+ "commit": "b047510f64cf1919b8313cb88b2f6fe17c1c2305",
+ "submission_blob": "c9067b8201f2480c64910c4a71098df7ce616f73",
+ "slug": "full-decode-splitkv-restack-on-pdl",
+ "result": "muse_decode_layer/hypotheses/done/neutral/full-decode-splitkv-restack-on-pdl.result.json",
+ "updated_at": "2026-10-25T041905Z"
 }
