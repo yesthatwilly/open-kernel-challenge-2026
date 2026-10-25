@@ -1,17 +1,18 @@
 {
- "problem": "muse_moe_w4a16",
- "job": "4e4a0e26c85944f2",
- "check_job": "7be125e9e1ea42e3",
- "mode": "submit",
- "speedup": 1.3726662821010693,
- "ci": [
-  1.3520762878695534,
-  1.3932562763325853
- ],
- "score_us": 9797.35582884361,
- "commit": null,
- "submission_blob": "60dfe35d5417d9c0f89067ff313efdc2c41d03a2",
- "slug": "cuda-nvfp4-wgmma-rega-grouped-s5-copy-safe-bucket-gate",
- "result": "muse_moe_w4a16/hypotheses/done/neutral/cuda-nvfp4-wgmma-rega-grouped-s5-copy-safe-bucket-gate.result.json",
- "updated_at": "2026-10-25T150113Z"
+  "problem": "muse_moe_w4a16",
+  "job": "4e4a0e26c85944f2",
+  "check_job": "7be125e9e1ea42e3",
+  "mode": "submit",
+  "speedup": 1.3726662821010693,
+  "ci": [
+    1.3520762878695534,
+    1.3932562763325853
+  ],
+  "score_us": 9797.35582884361,
+  "commit": "fc959d9c0db31531d6ed750a69bb33b541435805",
+  "submission_blob": "1774e42c833541afe7204a9d9cd3d6bb265be5b1",
+  "slug": "cuda-nvfp4-wgmma-rega-grouped-s5-copy-safe-bucket-gate",
+  "result": "muse_moe_w4a16/hypotheses/done/neutral/cuda-nvfp4-wgmma-rega-grouped-s5-copy-safe-bucket-gate.result.json",
+  "updated_at": "2026-10-25T150113Z",
+  "note": "scored from the stale-base branch, not on master; master (9080a71 lineage) last checked 1.3445x; restack-bucket-gate-on-master-align-atomic brings it to master"
 }
