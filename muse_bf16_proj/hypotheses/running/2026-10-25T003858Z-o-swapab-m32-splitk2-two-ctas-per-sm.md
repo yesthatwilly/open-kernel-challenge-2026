@@ -48,9 +48,18 @@ priority: 3
 kind: primary
 controls_for: null
 review: proceed
-status: queued
+status: running
 review_at: 2026-10-25T004221Z
 review_companions: null
+stage: claimed
+claimed_at: 2026-10-25T004221Z
+base_sha: 9a3cafafd2a3738a49dc5fe238ef2bf753adafd4
+base_blob: a8bb42ac483318e9fbc84bc7826a27b7a704d1fb
+branch: hyp/muse_bf16_proj/o-swapab-m32-splitk2-two-ctas-per-sm
+worktree: .worktrees/muse_bf16_proj/o-swapab-m32-splitk2-two-ctas-per-sm
+mode: null
+restack_of: null
+stale_base: null
 ---
 
 # o-swapab-m32-splitk2-two-ctas-per-sm
