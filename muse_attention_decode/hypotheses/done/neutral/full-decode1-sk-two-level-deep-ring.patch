@@ -1,0 +1,296 @@
+diff --git a/muse_attention_decode/submission.py b/muse_attention_decode/submission.py
+index 6d6afa47..246f5494 100644
+--- a/muse_attention_decode/submission.py
++++ b/muse_attention_decode/submission.py
+@@ -868,6 +868,7 @@ def _sm_count(device) -> int:
+     return n
+ 
+ 
++_B1_VARIANT = 3  # B=1 stream-K variant: master's <4, two-level>; set only by _deep_ring_setup (prepare), fixed after
+ _B1_PATH = False  # batch 1 on the two-level stream-K kernel; set only once its in-process validation passes
+ 
+ 
+@@ -966,7 +967,11 @@ constexpr int STAGE_BYTES = 2 * TILE * ROW;  // K tile + V tile = 16 KB
+ constexpr int QBYTES = HQ * D;               // one request's e4m3 query
+ constexpr int PS_MAXR = 256;                 // PSEUDO: pseudo-rows (8 per verify request, B <= 32)
+ constexpr int PS_WINDOW = 2048;              // PSEUDO: the sliding window (keys p - 2047 .. p)
+-#ifdef SK_PSEUDO
++// Variants 0-3 landed, 4-7 PSEUDO (SK_PSEUDO build only), 8 / 9 = deep-ring two-level (8 / 10 stages, unless
++// SK_NO_DEEP: the fallback builds drop them so a deep-ring compile failure cannot take variants 0-7 down).
++#ifndef SK_NO_DEEP
++constexpr int SK_MAX_VARIANT = 9;
++#elif defined(SK_PSEUDO)
+ constexpr int SK_MAX_VARIANT = 7;
+ #else
+ constexpr int SK_MAX_VARIANT = 3;
+@@ -1497,6 +1502,10 @@ SkFn sk_pick(int64_t v) {
+   if (v == 5) return splitkv_attn_sk_kernel<4, true, true, true>;
+   if (v == 6) return splitkv_attn_sk_kernel<4, true, false, true, 1>;
+   if (v == 7) return splitkv_attn_sk_kernel<4, true, true, true, 1>;
++#endif
++#ifndef SK_NO_DEEP
++  if (v == 8) return splitkv_attn_sk_kernel<8, true, true>;
++  if (v == 9) return splitkv_attn_sk_kernel<10, true, true>;
+ #endif
+   if (v == 3) return splitkv_attn_sk_kernel<4, true, true>;
+   if (v == 1) return splitkv_attn_sk_kernel<4, false>;
+@@ -1505,12 +1514,18 @@ SkFn sk_pick(int64_t v) {
+ }
+ // variant 3 = <4, ticket, two-level>; 4 / 5 = the PSEUDO single-level / two-level ticket kernels (TOK 8, verify);
+ // 6 / 7 = the same with TOK 1 (sliding decode)
++constexpr int SMEM_OPTIN_LIMIT = 232448;  // sm_90 max dynamic smem per block (227 KB)
++static_assert(Lay<8>::BYTES <= SMEM_OPTIN_LIMIT, "Lay<8> must fit the sm_90 shared-memory opt-in limit");
++static_assert(Lay<10>::BYTES <= SMEM_OPTIN_LIMIT, "Lay<10> must fit the sm_90 shared-memory opt-in limit");
+ int sk_smem(int64_t v) {
++  if (v == 8) return Lay<8>::BYTES;
++  if (v == 9) return Lay<10>::BYTES;
+   if (v >= 4) return Lay<4, PS_MAXR, true>::BYTES;
+   return v == 2 ? Lay<5>::BYTES : Lay<4>::BYTES;
+ }
+ void sk_prepare(int64_t v) {
+-  static bool done[8] = {false, false, false, false, false, false, false, false};  // no device state
++  static bool done[16] = {false, false, false, false, false, false, false, false,
++                          false, false, false, false, false, false, false, false};  // no device state
+   if (!done[v]) {
+     C10_CUDA_CHECK(cudaFuncSetAttribute(reinterpret_cast<const void*>(sk_pick(v)),
+                                         cudaFuncAttributeMaxDynamicSharedMemorySize, sk_smem(v)));
+@@ -1527,11 +1542,14 @@ void sk_attn(torch::Tensor q, torch::Tensor k_cache, torch::Tensor v_cache, torc
+              double score_scale, double eps, int64_t grid, int64_t variant) {
+   const int B = static_cast<int>(cache_seqlens.size(0));
+   TORCH_CHECK(variant >= 0 && variant <= SK_MAX_VARIANT, "sk_attn: variant");
+-  const bool pseudo = variant >= 4;
++#ifndef SK_PSEUDO
++  TORCH_CHECK(variant < 4 || variant >= 8, "sk_attn: PSEUDO variant in the landed build");
++#endif
++  const bool pseudo = variant >= 4 && variant <= 7;
+   const int tok = variant >= 6 ? 1 : 8;  // rows per request: 8 (verify pseudo-rows) or 1 (decode)
+   const int R = pseudo ? B * tok : B;  // rows of the tile space (pseudo-rows for verify)
+   TORCH_CHECK(B >= 1 && B <= (pseudo ? PS_MAXR / tok : MAXB), "sk_attn: batch out of range");
+-  if (variant == 3 || variant == 5 || variant == 7) {
++  if (variant == 3 || variant == 5 || variant == 7 || variant >= 8) {
+     TORCH_CHECK(grid <= 1024, "sk_attn: two-level ticket needs grid <= 1024 (<= 32 groups)");
+     TORCH_CHECK(gticket.numel() >= R * 32 && gticket.scalar_type() == at::kInt, "sk_attn: gticket");
+     TORCH_CHECK(gacc.size(0) >= R * 32 && gml.size(0) >= R * 32 && gacc.scalar_type() == at::kFloat
+@@ -1572,6 +1590,9 @@ void sk_combine(torch::Tensor ws_acc, torch::Tensor ws_ml, torch::Tensor cache_s
+ // {binaryVersion, ptxVersion, numRegs, localSizeBytes, maxThreadsPerBlock, dynamic smem, CTAs/SM}
+ std::vector<int64_t> sk_attrs(int64_t variant) {
+   TORCH_CHECK(variant >= 0 && variant <= SK_MAX_VARIANT, "sk_attrs: variant");
++#ifndef SK_PSEUDO
++  TORCH_CHECK(variant < 4 || variant >= 8, "sk_attrs: PSEUDO variant in the landed build");
++#endif
+   sk_prepare(variant);
+   cudaFuncAttributes a;
+   C10_CUDA_CHECK(cudaFuncGetAttributes(&a, reinterpret_cast<const void*>(sk_pick(variant))));
+@@ -1585,7 +1606,8 @@ std::vector<int64_t> sk_attrs(int64_t variant) {
+ 
+ _SK_LABELS = ("<4 stages, ticket>", "<4 stages, no ticket>", "<5 stages, ticket>", "<4 stages, two-level ticket>",
+               "<4 stages, ticket, PSEUDO>", "<4 stages, two-level ticket, PSEUDO>",
+-              "<4 stages, ticket, PSEUDO TOK=1>", "<4 stages, two-level ticket, PSEUDO TOK=1>")
++              "<4 stages, ticket, PSEUDO TOK=1>", "<4 stages, two-level ticket, PSEUDO TOK=1>",
++              "<8 stages, two-level ticket>", "<10 stages, two-level ticket>")
+ _EXT2 = None       # the stage-2 module; None keeps stage 1 (A + B) on the gated path
+ _SK_VARIANT = 0    # the timed path: 4 stages + ticket (fixed; the diagnostics call the module directly)
+ _SK_ARCH_FLAGS = None
+@@ -1620,17 +1642,18 @@ def _sk_gticket(device) -> torch.Tensor:
+ 
+ 
+ _PS_BUILT = False  # the module holds the PSEUDO instantiations (SK_PSEUDO defined)
++_DEEP_BUILT = False  # the module holds the deep-ring variants 8 / 9 (SK_NO_DEEP not defined)
+ 
+ 
+-def _build_sk_one(pseudo: bool):
++def _build_sk_one(pseudo: bool, deep: bool = False):
+     """Compile the stage-2 module at import, sm_90a only (TORCH_CUDA_ARCH_LIST=9.0a, restored after).
+     pseudo=True also defines SK_PSEUDO (the sliding-verify instantiations); False is the landed source."""
+     global _SK_ARCH_FLAGS
+     t0 = time.perf_counter()
+     prev = os.environ.get("TORCH_CUDA_ARCH_LIST")
+     os.environ["TORCH_CUDA_ARCH_LIST"] = "9.0a"
+-    name = "muse_decode_sk_v4p" if pseudo else "muse_decode_sk_v4"
+-    flags = ["-O3", "-lineinfo"] + (["-DSK_PSEUDO=1"] if pseudo else [])
++    name = ("muse_decode_sk_v4p" if pseudo else "muse_decode_sk_v4") + ("d" if deep else "")
++    flags = ["-O3", "-lineinfo"] + (["-DSK_PSEUDO=1"] if pseudo else []) + ([] if deep else ["-DSK_NO_DEEP=1"])
+     try:
+         from torch.utils.cpp_extension import load_inline
+         try:
+@@ -1662,7 +1685,12 @@ def _build_sk_one(pseudo: bool):
+ def _build_sk():
+     """The module with the sliding-verify PSEUDO instantiations; if that build fails, the landed source
+     (no SK_PSEUDO: only the landed kernels exist) so the full-decode path keeps its stage 2/3 kernels."""
+-    global _PS_BUILT
++    global _PS_BUILT, _DEEP_BUILT
++    ext = _build_sk_one(True, deep=True)
++    if ext is not None:
++        _PS_BUILT = _DEEP_BUILT = True
++        return ext
++    _say("[sk] PSEUDO + deep-ring build failed: rebuilding without the deep-ring variants 8 / 9")
+     ext = _build_sk_one(True)
+     if ext is not None:
+         _PS_BUILT = True
+@@ -1679,7 +1707,7 @@ def _sk_launch(data: Inputs, q: torch.Tensor, qkv: torch.Tensor, variant: int, g
+     ws_acc = torch.empty((grid + batch, hq, d), dtype=torch.float32, device=device)
+     ws_ml = torch.empty((grid + batch, 2, hq), dtype=torch.float32, device=device)
+     out = torch.empty((batch, 1, hq * d), dtype=torch.bfloat16, device=device)
+-    ng = batch * 32 if variant == 3 else 1  # group slots only for the two-level variant
++    ng = batch * 32 if variant in (3, 8, 9) else 1  # group slots only for the two-level variants
+     gacc = torch.empty((ng, hq, d), dtype=torch.float32, device=device)
+     gml = torch.empty((ng, 2, hq), dtype=torch.float32, device=device)
+     _EXT2.sk_attn(q, data["k_cache"], data["v_cache"], data["page_table"], data["cache_seqlens"], data["k_scale"],
+@@ -1697,7 +1725,7 @@ def _full_decode_sk(data: Inputs, q: torch.Tensor, qkv: torch.Tensor) -> torch.T
+     no-ticket diagnostic, adds the separate combine)."""
+     sms = _sm_count(qkv.device)
+     if data["config"]["batch"] == 1:  # stage 3: one CTA per SM + the two-level ticket (fixed by shape)
+-        out, _, _ = _sk_launch(data, q, qkv, 3, _SPLITKV_GRID or sms)
++        out, _, _ = _sk_launch(data, q, qkv, _B1_VARIANT, _SPLITKV_GRID or sms)
+         return out
+     grid = _SPLITKV_GRID or 2 * sms
+     out, ws_acc, ws_ml = _sk_launch(data, q, qkv, _SK_VARIANT, grid)
+@@ -2188,6 +2216,135 @@ def _sk_validate_b1() -> "str | None":
+     return None
+ 
+ 
++_DEEP_GATE = 1.03  # master <4, two-level> time / deep-ring time needed in the printed timing to route a variant
++_DEEP_VARIANTS = (8, 9)
++
++
++def _deep_ring_setup() -> None:
++    """Prepare-time selector for full decode_1 (window 0, B 1, q_len 1): times master's variant 3
++    (<4 stages, two-level>) against the deep-ring variants 8 (8 stages) and 9 (10 stages) under the same
++    cold-L2 graph replay of [pre-attention + kernel] at synthetic lens 80000, and routes to a variant only
++    at >= _DEEP_GATE with rel L2 < 1e-2 vs master and every self-check + two-state replay passed. The
++    routed variant is fixed (_B1_VARIANT) after this returns. Any miss keeps variant 3; never raises."""
++    global _B1_VARIANT
++    _B1_VARIANT = 3
++    if _EXT2 is None or not _B1_PATH or not _DEEP_BUILT:
++        _say("PATH CHOSEN: full decode_1 ring depth: master <4 stages, two-level> (stream-K B=1 path or deep-ring "
++             f"build unavailable; deep built {_DEEP_BUILT})")
++        return
++    why = "no deep-ring variant passed"
++    try:
++        dev = torch.device("cuda")
++        sms = _sm_count(dev)
++        gen = torch.Generator(device="cuda").manual_seed(9753)
++        ok = []
++        for v in _DEEP_VARIANTS:
++            try:
++                a = list(_EXT2.sk_attrs(v))
++                _say(f"[deep] variant {v} splitkv_attn_sk_kernel{_SK_LABELS[v]}: binaryVersion {a[0]}, regs {a[2]}, "
++                     f"local {a[3]} B, dyn smem {a[5]} B, {a[6]} CTAs/SM")
++                if a[0] != 90 or a[6] < 1:
++                    _say(f"[deep] variant {v} dropped (cubin {a[0]}, {a[6]} CTAs/SM)")
++                    continue
++                cases = (
++                    ("B=1 80000 keys grid SM", [80000], 1.0, sms),
++                    ("B=1 80000 keys kv 0.25 grid SM", [80000], 0.25, sms),
++                    ("B=1 80000 keys grid 7", [80000], 1.0, 7),
++                    ("B=1 80000 keys grid 3", [80000], 0.25, 3),
++                    ("B=1 4097 keys grid SM", [4096], 1.0, sms),
++                    ("B=1 4097 keys kv 0.25 grid 7", [4096], 0.25, 7),
++                    ("B=1 63 keys grid SM", [62], 1.0, sms),
++                    ("B=1 63 keys kv 0.25 grid 3", [62], 0.25, 3),
++                    ("B=1 1 key grid SM", [0], 1.0, sms),
++                    ("B=1 1 key kv 0.25 grid 3", [0], 0.25, 3),
++                )
++                good = True
++                for tag, lens, kv_scale, grid in cases:
++                    if not _sk_case(f"deep{v} {tag}", lens, kv_scale, grid, gen, variant=v):
++                        good = False
++                        _say(f"[deep] variant {v} dropped (self-check {tag})")
++                        break
++                left = int(_sk_ticket(dev).abs().sum().item()) + int(_sk_gticket(dev).abs().sum().item())
++                _say(f"[deep] variant {v}: tickets (both levels) after the self-check: sum {left}")
++                if good and left == 0:
++                    ok.append(v)
++                elif good:
++                    _say(f"[deep] variant {v} dropped (tickets not reset)")
++            except Exception as e:
++                _say(f"[deep] variant {v} dropped (raised {e!r})")
++            finally:
++                _rezero_tickets()
++        if not ok:
++            why = "no deep-ring variant passed its build/launch/self-check"
++        else:
++            lens = [80000]
++            data = _splitkv_synthetic(lens, 1.0, gen, dev)
++            _say("[deep] timing: launching _pre_attention_kernel")
++            q, qkv = _sk_prepare_q(data)
++            torch.cuda.synchronize()
++            ref_out = {}
++            for v in [3] + ok:
++                _say(f"[deep] timing: eager launch of variant {v}")
++                out, _, _ = _sk_launch(data, q, qkv, v, sms)
++                torch.cuda.synchronize()
++                ref_out[v] = out.clone()
++                _say(f"[deep] timing: variant {v} returned")
++            rels = {}
++            for v in ok:
++                rels[v] = float((ref_out[v].float() - ref_out[3].float()).norm() / ref_out[3].float().norm())
++                _say(f"[deep] variant {v} vs master variant 3: rel L2 {rels[v]:.2e}")
++            flush = torch.empty(64 << 20, dtype=torch.float32, device=dev)  # 256 MB > L2
++
++            def mk(v):
++                def f():
++                    qq, kk = _sk_prepare_q(data)
++                    _sk_launch(data, qq, kk, v, sms)
++                return f
++
++            order = [3] + ok
++            ts = _interleaved_us([mk(v) for v in order], flush, reps=31)
++            del flush
++            t = dict(zip(order, ts))
++            _say(f"[deep] B=1 x 80000 [pre-attn + kernel], cold-L2 graph replay, empty graph subtracted, median of 31:")
++            for v in order:
++                _say(f"[deep]   variant {v} {_SK_LABELS[v]:34s} {t[v]:7.1f} us"
++                     + ("" if v == 3 else f"  master/variant {t[3] / t[v]:.3f}x  rel L2 vs master {rels[v]:.1e}"))
++            cand = sorted((v for v in ok if rels[v] < 1e-2 and t[v] > 0 and t[3] / t[v] >= _DEEP_GATE),
++                          key=lambda v: t[v])
++            if not cand:
++                why = f"no variant >= {_DEEP_GATE}x vs master (or rel L2 >= 1e-2)"
++            else:
++                v = cand[0]
++                _B1_VARIANT = v
++                try:
++                    sets = _alt_sets([80000])
++                    mp = max(max(s) for s in sets) + 1 + 37  # one page-table width for every set: refills copy_ in place
++                    r = _alt_check(f"[deep{v}]", lambda l: _splitkv_synthetic(l, 1.0, gen, dev, max_pages=mp),
++                                   lambda d, l: _splitkv_reference(d, l), sets, gate=_shape_gate)
++                except Exception as e:
++                    r = f"two-state replay raised {e!r}"
++                left = int(_sk_ticket(dev).abs().sum().item()) + int(_sk_gticket(dev).abs().sum().item())
++                if r is None and left:
++                    r = "tickets not reset after the two-state replay"
++                if r is not None:
++                    _B1_VARIANT = 3
++                    why = f"variant {v} failed {r}"
++                else:
++                    _say(f"PATH CHOSEN: full decode_1 ring depth: variant {v} {_SK_LABELS[v]} "
++                         f"({t[3] / t[v]:.3f}x vs master <4 stages, two-level> in the printed timing)")
++                    return
++    except Exception as e:
++        _B1_VARIANT = 3
++        why = f"setup raised {e!r}"
++    finally:
++        try:
++            _rezero_tickets()
++        except Exception as e:
++            _say(f"[deep] ticket re-zero raised: {e!r}")
++    _B1_VARIANT = 3
++    _say(f"PATH CHOSEN: full decode_1 ring depth: master <4 stages, two-level> (fallback: {why})")
++
++
+ def _sk_b1_diagnostics() -> None:
+     """Import-time eager timings at synthetic B=1 x 80000 (cold L2 per rep, median of 10) bracketing
+     the two fixed stage-3 choices: (a) stage-2 kernel as is (grid 2xSM, single-level) = the
+@@ -5875,6 +6032,12 @@ if torch.cuda.is_available():
+                 _b1_reason = f"batch-1 self-check raised {e!r}"
+             if _b1_reason is None:
+                 _B1_PATH = True
++            if _B1_PATH:
++                try:
++                    _deep_ring_setup()
++                except Exception as e:
++                    _B1_VARIANT = 3
++                    _say(f"PATH CHOSEN: full decode_1 ring depth: master <4 stages, two-level> (fallback: setup raised {e!r})")
+             try:
+                 _ps_setup()
+             except Exception as e:

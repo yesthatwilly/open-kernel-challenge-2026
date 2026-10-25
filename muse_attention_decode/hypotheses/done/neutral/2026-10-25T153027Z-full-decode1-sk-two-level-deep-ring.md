@@ -50,10 +50,10 @@ priority: 2
 kind: primary
 controls_for: null
 review: proceed
-status: running
+status: done
 review_at: 2026-10-25T203307Z
 review_companions: null
-stage: dispatched
+stage: harvested
 claimed_at: 2026-10-25T203307Z
 base_sha: 6d8fce0bdeed57b76fcd060aaec81554c9798b15
 base_blob: 6d6afa4722731ceb9cb8216d0334a03f1a96ad2b
@@ -72,6 +72,13 @@ attempt_file: 2026-10-25T203814Z-submit-full-decode1-sk-two-level-deep-ring.md
 prepared_at: 2026-10-25T203814Z
 job: 26c049edfdd842b3
 dispatched_at: 2026-10-25T203823Z
+outcome: neutral
+verdict_detail: within-ci
+speedup: 1.5108895860706448
+speedup_ci: [1.488226242279585, 1.5335529298617043]
+harvested_at: 2026-10-25T204820Z
+best_at_harvest: 1.5295495462227864
+promotion: null
 ---
 
 # full-decode1-sk-two-level-deep-ring
@@ -146,3 +153,35 @@ Fixes (worktree submission.py only):
 Checked and fine: Lay<8> 164,896 B, Lay<10> 199,712 B <= 232,448 B; `cudaFuncSetAttribute` runs in `sk_prepare` before every launch/attr query; the ring math (`nn % STAGES`, `cp_wait<STAGES-2>`, meta double buffer, prologue meta refills) is valid for STAGES 8 and 10 (meta block k+1 lands by tile 16k+16-STAGES+1 >= 16k); no co-residency needed (last-arriver tickets, no spin); tickets reset by the last arriver at both levels and re-zeroed in `finally`; `_B1_VARIANT` is set only after build/attrs/10 self-checks/ticket sum 0/rel L2/1.03x gate and reset to 3 on any replay miss or exception; kernel_fn reads only the module int (graph-capturable, no sync/alloc by values). FUSED_PRE routes only B >= 2, so the B=1 path is the one selected. okc_lint OK (prepare-time host-sync warnings only), py_compile clean.
 
 Residual risk: compile of the new instantiations unverified (now isolated), +~20 s compile and ~20-30 s setup against ~470 s of a 900 s budget; likely gain small (within CI).
+
+## Result
+
+- job `26c049edfdd842b3` (submit), status done, passed True, tests 16/16
+- speedup 1.5109x, 95% CI [1.4882, 1.5336], score 2492.7698454755905 µs vs SGLang 3766.3 µs
+- best at harvest: {"speedup": 1.5295495462227864, "ci": [1.5066063030294445, 1.552492789416128], "job": "8713665f3064462c"}; base result: muse_attention_decode/hypotheses/done/neutral/combo-b1-chain-c320-fused-pre-pdl.result.json
+- **outcome: neutral** (within-ci)
+- files: `muse_attention_decode/hypotheses/done/neutral/full-decode1-sk-two-level-deep-ring.result.json`, `muse_attention_decode/hypotheses/done/neutral/full-decode1-sk-two-level-deep-ring.patch`; branch `hyp/muse_attention_decode/full-decode1-sk-two-level-deep-ring`
+
+## Attribution
+
+| shape | w | base µs | hyp µs | delta | verdict |
+|---|---|---|---|---|---|
+| batch=1 ctx=80000 dist=soft heads=tp8 layer=sliding load=decode_1 page=1 | 46 | 12.1 | 11.25 | 1.076 | gained |
+| batch=1 ctx=80000 dist=coherent heads=tp8 layer=full load=decode_1 page=1 | 16 | 17.39 | 22.46 | 0.771 | lost |
+| batch=16 ctx=80000 dist=soft heads=tp8 layer=sliding load=decode_16 page=1 spread=agentic | 46 | 15.46 | 15.68 | 0.9892 | flat |
+| batch=16 ctx=80000 dist=coherent heads=tp8 layer=full load=decode_16 page=1 spread=agentic | 16 | 110.77 | 112.35 | 0.9896 | flat |
+| batch=32 ctx=80000 dist=soft heads=tp8 layer=sliding load=decode_32 page=1 spread=agentic | 46 | 17.46 | 17.27 | 0.997 | flat |
+| batch=32 ctx=80000 dist=coherent heads=tp8 layer=full load=decode_32 page=1 spread=agentic | 16 | 226.89 | 227.82 | 0.9991 | flat |
+| batch=1 ctx=80000 dist=soft heads=tp8 layer=sliding load=verify_1 page=1 q_len=8 | 46 | 13.23 | 13.32 | 0.9855 | flat |
+| batch=1 ctx=80000 dist=coherent heads=tp8 layer=full load=verify_1 page=1 q_len=8 | 16 | 30.27 | 30.51 | 1.0008 | flat |
+| batch=16 ctx=80000 dist=soft heads=tp8 layer=sliding load=verify_16 page=1 q_len=8 spread=agentic | 46 | 22.62 | 22.64 | 0.9933 | flat |
+| batch=16 ctx=80000 dist=coherent heads=tp8 layer=full load=verify_16 page=1 q_len=8 spread=agentic | 16 | 162.46 | 163.22 | 0.9967 | flat |
+| batch=32 ctx=80000 dist=soft heads=tp8 layer=sliding load=verify_32 page=1 q_len=8 spread=agentic | 46 | 29.01 | 28.66 | 1.0025 | flat |
+| batch=32 ctx=80000 dist=coherent heads=tp8 layer=full load=verify_32 page=1 q_len=8 spread=agentic | 16 | 301.99 | 302.1 | 1.0018 | flat |
+
+gained on sliding decode_1; lost on full decode_1. Expected hit: 3/5. Noise ±1.5%.
+
+## Follow-ups
+
+- within-ci: the change is not proven either way; a stacked hypothesis (`depends_on: full-decode1-sk-two-level-deep-ring`) that adds a further change in the same area is the only way to learn more.
+
