@@ -59,7 +59,7 @@ review: proceed
 status: running
 review_at: 2026-10-25T002121Z
 review_companions: null
-stage: implemented
+stage: dispatched
 claimed_at: 2026-10-25T002121Z
 base_sha: f50b333a602cc590f2785a1fdd2171af25fe94bb
 base_blob: 5c34fabe0f05fb53014dd85b66864cd3b38bc673
@@ -76,6 +76,8 @@ submission_blob: f09390b45e1e1af24f0ccc3645988b81f97b2bf8
 lint_warnings: 30
 attempt_file: 2026-10-25T003418Z-check-cuda-nvfp4-wgmma-rega-grouped-sm90a-rebuild-inproc.md
 prepared_at: 2026-10-25T003418Z
+job: b56d17fda2d54be2
+dispatched_at: 2026-10-25T003428Z
 ---
 
 # cuda-nvfp4-wgmma-rega-grouped-sm90a-rebuild-inproc
