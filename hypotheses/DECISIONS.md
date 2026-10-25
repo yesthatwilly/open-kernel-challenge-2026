@@ -250,3 +250,4 @@ overrides of a reviewer) with the reason, newest last. Written by `churn.py note
 - 2026-10-25T204433Z `muse_attention_decode` **diagnosis**: LESSONS: full-attention decode TB/s line corrected to FA3/Triton-only (CUDA split-KV 2.8-3.0, stream-K 3.0-3.07, FA3 verify ~2.2); limit is kernel design, merged decode+attention evidence
 - 2026-10-25T204433Z `muse_attention_decode` **diagnosis**: LESSONS: head pairing line corrected to dead on SLIDING layers only; full-layer FA3 pairing at B>1 is master
 - 2026-10-25T204433Z `muse_attention_decode` **diagnosis**: LESSONS: B=2..16 line now says leave on the incumbent (attention: Triton deep-splits kernel; FA3 for decode_layer only)
+- 2026-10-25T204433Z `muse_attention_decode` **diagnosis**: LESSONS: merged verify lines (full-verify-cuda-splitkv-stage2 + batch-1 Triton decode) into one Attention line with pseudo-decode, token-group and s5 wgmma latency-bound evidence; also covers decode's merge edit
