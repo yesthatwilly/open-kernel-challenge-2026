@@ -44,9 +44,18 @@ priority: 1
 kind: primary
 controls_for: null
 review: proceed
-status: queued
+status: running
 review_at: 2026-10-25T003615Z
 review_companions: null
+stage: claimed
+claimed_at: 2026-10-25T003624Z
+base_sha: d310c3558b4da1934c0587b4005cb3c14093af5f
+base_blob: db8a3344398bca79ea5cafeb580f701c055fd475
+branch: hyp/muse_prefill_layer/experts-triton-persistent-grid-first-turn
+worktree: .worktrees/muse_prefill_layer/experts-triton-persistent-grid-first-turn
+mode: null
+restack_of: null
+stale_base: null
 ---
 
 # experts-triton-persistent-grid-first-turn
