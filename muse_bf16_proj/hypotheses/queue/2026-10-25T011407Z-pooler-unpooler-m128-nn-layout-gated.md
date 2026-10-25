@@ -56,8 +56,10 @@ depends_on: bf16-m128-nn-weight-layout-probe
 priority: 1
 kind: primary
 controls_for: null
-review: required
+review: proceed
 status: queued
+review_at: 2026-10-25T011846Z
+review_companions: null
 ---
 
 # pooler-unpooler-m128-nn-layout-gated
@@ -81,3 +83,25 @@ Built on master (blob a8bb42a). Narrow bf16-m128-nn-weight-layout-probe (done/ne
 ## Risk
 
 Low. Pure dispatch, no kernel. The probe's gain came from one run against an older master; LESSONS says cuBLAS rows at m>=128 swing between runs (pooler m=128 nvjet 23.9 vs 25.7 us across runs), so a per-shape gain under ~7% needs a repeat before it counts. The headline effect is small (~+0.5-0.7%: one load of six), so judge on the two rows.
+
+## Adversarial review
+
+Reviewed 2026-10-25T011846Z by an adversarial subagent (model opus).
+
+**Verdict: proceed.** A narrow, lossless, dispatch-only follow-up to bf16-m128-nn-weight-layout-probe on the two rows where it won. Those rows are measured paired against SGLang's TN kernel in the same run, so one run gives a readable per-shape answer. Rules are clean: a transpose of a weight in prepare() is a BF16 repack, not caching derived from inputs.
+
+### Justification
+Plausible. On master, pooler verify_16 m=128 runs nvjet_sm90_tst_64x64_64x13_2x1 at 24.5 us (row 25.0 vs SGLang 24.9, SoL 14.6), and unpooler m=128 runs nvjet 128x64 at 20.3 us (row 20.0, SoL 14.6). Both are about 1.0x SGLang and 1.4-1.7x off the floor. An NN operand layout makes cuBLAS take a different heuristic entry, so it picks a different nvjet tile. The probe's result.json gives the paired per-shape ratios vs SGLang: pooler m=128 1.092x (22.86 vs 24.96 us, err 54 ns) and unpooler m=128 1.051x (19.15 vs 20.13, err 45 ns). Note that the brief quotes 1.120x/1.043x against master rows, not the paired ratio. Expected directions are consistent with TASK weights: verify_16 is one load of six, so the headline effect is about +0.3-0.6% and judging on the two rows is correct. WEAKEST LINK: the gain rests on one run, and the brief's own LESSONS cite cross-run nvjet swings (pooler m=128 23.9 vs 25.7 us). That swing concerns the absolute us. The paired ratio vs SGLang (same run, same GPU, alternating replays) largely cancels it, so read the paired speedup of the two rows, not the change in absolute us. A second, smaller point: the probe's pooler verify_32 m=256 was also 1.034x paired, which is not 'nothing', and the gate leaves it on TN. That is fine for attribution, but note it as a follow-up.
+
+### Confounders on the current kernel
+- None of the landed hypotheses touch m=65..128 for pooler/unpooler. sglang-gemm-dispatch-parity only made the TN incumbent the same cuBLAS call SGLang makes, which is why the paired ratio is the clean read. The swap-AB/Triton paths (bf16-shape-gated-triton-winners-combo, bf16-m32-swapab-wgmma-triton, the restack) gate at m<=32 and are not on these rows. The router changes are a different layer.
+- Not landed, but in flight on the same rows: bf16-verify-deepgemm-bf16-gemm-nt-route also routes pooler/unpooler at m=65..256 just before the cuBLAS fallback. If both are ever stacked, branch order decides which runs, so give each its own gate constant (LESSONS 2026-10-25 stacking note).
+
+### Interference and A/B needs
+No companion. A gain or a loss on the two m=128 rows is unambiguous: the only change on those rows is TN to NN on the same cuBLAS, measured paired against SGLang's TN in the same run, and nothing landed shares the path. A control would just be master. If the paired ratio comes back within ~2% of 1.0, the probe's win did not replicate on the current image/run, so close it as neutral rather than spending a companion.
+
+### Open questions
+- Record the NN nvjet kernel names and us for both m=128 rows in the attempt file. If they match the probe's kernels, the gain is a deterministic heuristic pick, and a repeat is less necessary.
+- Pooler m=256 was 1.034x paired in the probe. If this lands, a follow-up should widen the pooler gate to 129..256 (unpooler m=256 was 1.012x, about noise; qkv_gate m=256 lost at 0.941x, so keep it excluded).
+- Do the m=130 and m=1000 unpooler tests and any 65..127 test m stay on paths whose correctness was already exercised? NN at m in 65..127 is new for unpooler/pooler. The judge's checks cover correctness, but list the test m values in the gate's range in the attempt file.
+
