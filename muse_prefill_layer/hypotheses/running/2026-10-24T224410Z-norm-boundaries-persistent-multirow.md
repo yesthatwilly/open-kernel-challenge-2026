@@ -45,9 +45,18 @@ priority: 5
 kind: primary
 controls_for: null
 review: proceed
-status: queued
+status: running
 review_at: 2026-10-25T034755Z
 review_companions: null
+stage: claimed
+claimed_at: 2026-10-25T034755Z
+base_sha: dc91f8e5bab764e046dc86798ba9f2cc8afa6ee9
+base_blob: db8a3344398bca79ea5cafeb580f701c055fd475
+branch: hyp/muse_prefill_layer/norm-boundaries-persistent-multirow
+worktree: .worktrees/muse_prefill_layer/norm-boundaries-persistent-multirow
+mode: null
+restack_of: null
+stale_base: null
 ---
 
 # norm-boundaries-persistent-multirow
