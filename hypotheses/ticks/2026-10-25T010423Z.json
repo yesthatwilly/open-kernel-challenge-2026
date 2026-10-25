@@ -1,0 +1,546 @@
+{
+ "ok": true,
+ "promote": [],
+ "dispatch": [
+  {
+   "problem": "muse_bf16_proj",
+   "picks": [
+    {
+     "slug": "bf16-lossless-exp4-warpspec-persistent-stage3",
+     "mode": "check",
+     "priority": 1,
+     "review": "required",
+     "kind": "rewrite",
+     "controls_for": null
+    }
+   ]
+  },
+  {
+   "problem": "muse_decode_layer",
+   "picks": [
+    {
+     "slug": "boundaries-unpooler-pdl-small-t",
+     "mode": "check",
+     "priority": 2,
+     "review": "required",
+     "kind": "primary",
+     "controls_for": null
+    },
+    {
+     "slug": "dl-route-warp-topk-pdl",
+     "mode": "check",
+     "priority": 3,
+     "review": "required",
+     "kind": "primary",
+     "controls_for": null
+    }
+   ]
+  },
+  {
+   "problem": "muse_prefill_layer",
+   "picks": [
+    {
+     "slug": "experts-triton-turn1-blockt32-stream",
+     "mode": "check",
+     "priority": 2,
+     "review": "proceed",
+     "kind": "rewrite",
+     "controls_for": null
+    },
+    {
+     "slug": "experts-triton-turn4-persistent-local-align",
+     "mode": "check",
+     "priority": 2,
+     "review": "required",
+     "kind": "primary",
+     "controls_for": null
+    }
+   ]
+  }
+ ],
+ "wake_s": 1800,
+ "needs_human": [],
+ "report": {
+  "preflight": {
+   "ok": true,
+   "branch": "master",
+   "whoami": "yesthatwilly",
+   "quotas": {
+    "muse_bf16_proj": {
+     "scored": {
+      "per_day": 10,
+      "used": 0,
+      "left": 10
+     },
+     "checks": {
+      "per_day": 20,
+      "used": 7,
+      "left": 13
+     }
+    },
+    "muse_attention_decode": {
+     "scored": {
+      "per_day": 10,
+      "used": 0,
+      "left": 10
+     },
+     "checks": {
+      "per_day": 20,
+      "used": 4,
+      "left": 16
+     }
+    },
+    "muse_moe_w4a16": {
+     "scored": {
+      "per_day": 10,
+      "used": 0,
+      "left": 10
+     },
+     "checks": {
+      "per_day": 20,
+      "used": 7,
+      "left": 13
+     }
+    },
+    "muse_decode_layer": {
+     "scored": {
+      "per_day": 10,
+      "used": 1,
+      "left": 9
+     },
+     "checks": {
+      "per_day": 20,
+      "used": 5,
+      "left": 15
+     }
+    },
+    "muse_prefill_layer": {
+     "scored": {
+      "per_day": 10,
+      "used": 0,
+      "left": 10
+     },
+     "checks": {
+      "per_day": 20,
+      "used": 5,
+      "left": 15
+     }
+    }
+   },
+   "tracks": null,
+   "hours_to_reset": 22.93,
+   "lock": ".claude/churn.lock",
+   "_exit": 0
+  },
+  "intake": {
+   "ok": true,
+   "added": [],
+   "skipped": [],
+   "_exit": 0
+  },
+  "recover": {
+   "ok": true,
+   "actions": [],
+   "needs_human": [],
+   "_exit": 0
+  },
+  "harvest": {
+   "ok": true,
+   "harvested": [
+    {
+     "problem": "muse_bf16_proj",
+     "slug": "bf16-lossless-exp4-occupancy-dequant-once-stage2",
+     "job": "f1024212dd2f49f3",
+     "outcome": "neutral",
+     "detail": "beats-base-not-best",
+     "speedup": 0.8869580788126001,
+     "ci": [
+      0.8736537076304112,
+      0.9002624499947891
+     ],
+     "md": "muse_bf16_proj/hypotheses/done/neutral/2026-10-25T001220Z-bf16-lossless-exp4-occupancy-dequant-once-stage2.md"
+    },
+    {
+     "problem": "muse_decode_layer",
+     "slug": "full-decode-splitkv-restack-on-pdl",
+     "job": "c243a29f26dc4725",
+     "outcome": "neutral",
+     "detail": "unproven-vs-best",
+     "speedup": 1.2680313318618024,
+     "ci": [
+      1.2490108618838753,
+      1.2870518018397292
+     ],
+     "md": "muse_decode_layer/hypotheses/done/neutral/2026-10-24T224525Z-full-decode-splitkv-restack-on-pdl.md"
+    },
+    {
+     "problem": "muse_decode_layer",
+     "slug": "full-decode-splitkv-kv-bw-3p5",
+     "job": "6af3b0e3311943ee",
+     "outcome": "neutral",
+     "detail": "within-ci",
+     "speedup": 1.2663230268112668,
+     "ci": [
+      1.2473281814090977,
+      1.2853178722134357
+     ],
+     "md": "muse_decode_layer/hypotheses/done/neutral/2026-10-25T001251Z-full-decode-splitkv-kv-bw-3p5.md"
+    },
+    {
+     "problem": "muse_moe_w4a16",
+     "slug": "cuda-nvfp4-swapab-mma-persistent-small-m-inproc",
+     "job": "fecc63ef567b4dc2",
+     "outcome": "regression",
+     "detail": "regression",
+     "speedup": 0.924986143165979,
+     "ci": [
+      0.9111113510184894,
+      0.9388609353134686
+     ],
+     "md": "muse_moe_w4a16/hypotheses/done/regression/2026-10-25T001824Z-cuda-nvfp4-swapab-mma-persistent-small-m-inproc.md"
+    },
+    {
+     "problem": "muse_moe_w4a16",
+     "slug": "cuda-nvfp4-wgmma-rega-grouped-sm90a-rebuild-inproc",
+     "job": "b56d17fda2d54be2",
+     "outcome": "neutral",
+     "detail": "unproven-vs-best",
+     "speedup": 1.3302505045527886,
+     "ci": [
+      1.3102967469844968,
+      1.3502042621210804
+     ],
+     "md": "muse_moe_w4a16/hypotheses/done/neutral/2026-10-25T001824Z-cuda-nvfp4-wgmma-rega-grouped-sm90a-rebuild-inproc.md"
+    },
+    {
+     "problem": "muse_prefill_layer",
+     "slug": "experts-triton-packed-dequant-turn4",
+     "job": "ce3cc1a22a244ec7",
+     "outcome": "neutral",
+     "detail": "within-ci",
+     "speedup": 1.0521725563199795,
+     "ci": [
+      1.0363899679751798,
+      1.067955144664779
+     ],
+     "md": "muse_prefill_layer/hypotheses/done/neutral/2026-10-24T140133Z-experts-triton-packed-dequant-turn4.md"
+    },
+    {
+     "problem": "muse_prefill_layer",
+     "slug": "attn-full-prefill-cuda-fp8-wgmma-hard-gate-inproc",
+     "job": "306cbde58aff4fa4",
+     "outcome": "neutral",
+     "detail": "within-ci",
+     "speedup": 1.067909586990599,
+     "ci": [
+      1.05189094318574,
+      1.0839282307954579
+     ],
+     "md": "muse_prefill_layer/hypotheses/done/neutral/2026-10-25T001824Z-attn-full-prefill-cuda-fp8-wgmma-hard-gate-inproc.md"
+    },
+    {
+     "problem": "muse_prefill_layer",
+     "slug": "experts-cuda-wgmma-grouped-gemm-remeasure-sm90a-inproc",
+     "job": "6d047cdeefd94357",
+     "outcome": "regression",
+     "detail": "regression",
+     "speedup": 0.9400661628181909,
+     "ci": [
+      0.925965170375918,
+      0.9541671552604637
+     ],
+     "md": "muse_prefill_layer/hypotheses/done/regression/2026-10-25T001824Z-experts-cuda-wgmma-grouped-gemm-remeasure-sm90a-inproc.md"
+    }
+   ],
+   "pending": [
+    {
+     "problem": "muse_attention_decode",
+     "slug": "full-decode-splitkv-s2-streamk-ticket-inproc",
+     "job": "e592b1f5d3db4f83",
+     "status": "queued",
+     "age_h": 0.5
+    },
+    {
+     "problem": "muse_attention_decode",
+     "slug": "full-verify-wgmma-s3-warpgroup-per-kvhead-inproc",
+     "job": "2c3f7fff72bb4e1d",
+     "status": "queued",
+     "age_h": 0.3
+    },
+    {
+     "problem": "muse_attention_decode",
+     "slug": "sliding-cluster-s2-decode-c4-pdl-inproc",
+     "job": "1990ce53e9d34073",
+     "status": "queued",
+     "age_h": 0.5
+    },
+    {
+     "problem": "muse_attention_decode",
+     "slug": "sliding-verify-fa3-head-pairing",
+     "job": "031731b5db294a92",
+     "status": "queued",
+     "age_h": 0.4
+    },
+    {
+     "problem": "muse_bf16_proj",
+     "slug": "router-cuda-cluster-dsmem-splitk-rewrite",
+     "job": "dc5d03c4d9604b0e",
+     "status": "queued",
+     "age_h": 0.2
+    },
+    {
+     "problem": "muse_bf16_proj",
+     "slug": "o-unpooler-slice-cuda-cluster-dsmem-rewrite",
+     "job": "3f3330f70b6e4cdc",
+     "status": "queued",
+     "age_h": 0.2
+    },
+    {
+     "problem": "muse_bf16_proj",
+     "slug": "o-swapab-m32-splitk2-two-ctas-per-sm",
+     "job": "75f09fa68f9c4415",
+     "status": "queued",
+     "age_h": 0.3
+    },
+    {
+     "problem": "muse_bf16_proj",
+     "slug": "qkv-swapab-m32-splitk8-stages3",
+     "job": "a61778a08ec04ea6",
+     "status": "queued",
+     "age_h": 0.3
+    },
+    {
+     "problem": "muse_bf16_proj",
+     "slug": "unpooler-full-m16-swapab-route",
+     "job": "05782267384343eb",
+     "status": "queued",
+     "age_h": 0.3
+    },
+    {
+     "problem": "muse_decode_layer",
+     "slug": "full-verify-cuda-splitkv-stage2",
+     "job": "e9d5eeffddef4f70",
+     "status": "queued",
+     "age_h": 0.4
+    },
+    {
+     "problem": "muse_decode_layer",
+     "slug": "dense-chain-stage2-attn-side-pdl",
+     "job": "b31b8453208a471c",
+     "status": "queued",
+     "age_h": 0.3
+    },
+    {
+     "problem": "muse_decode_layer",
+     "slug": "moe-chain-cuda-swapab-expert-once-fix-inproc",
+     "job": "4ebd055adab34ecd",
+     "status": "queued",
+     "age_h": 0.5
+    },
+    {
+     "problem": "muse_moe_w4a16",
+     "slug": "post-norm-triton-hoisted-decode32",
+     "job": "47d186dd91974d84",
+     "status": "queued",
+     "age_h": 0.5
+    },
+    {
+     "problem": "muse_moe_w4a16",
+     "slug": "post-norm-pdl-launch-small-m",
+     "job": "5202cf15936c4492",
+     "status": "queued",
+     "age_h": 0.5
+    },
+    {
+     "problem": "muse_moe_w4a16",
+     "slug": "cuda-fused-moe-bs1-persistent-nospin-bandwidth-inproc",
+     "job": "7a6919420b724ee7",
+     "status": "queued",
+     "age_h": 0.5
+    },
+    {
+     "problem": "muse_prefill_layer",
+     "slug": "experts-triton-persistent-grid-first-turn",
+     "job": "5d9ddbbaaffd4599",
+     "status": "queued",
+     "age_h": 0.4
+    }
+   ],
+   "_exit": 0
+  },
+  "harvest-promotions": {
+   "ok": true,
+   "promotions": [],
+   "_exit": 1
+  },
+  "promote": {
+   "ok": true,
+   "promote": [],
+   "skipped": [],
+   "_exit": 1
+  },
+  "budget": {
+   "ok": true,
+   "plans": [
+    {
+     "problem": "muse_attention_decode",
+     "checks_left": 16,
+     "scored_left": 10,
+     "hours_to_reset": 22.93,
+     "in_flight": 4,
+     "in_flight_checks": 4,
+     "gains_pending": 0,
+     "promotion_hold": 1,
+     "spendable": 25,
+     "queue": 0,
+     "need": 25,
+     "pace": 2,
+     "N": 0,
+     "picks": [],
+     "shortfall": 25,
+     "reason": "queue has 0 eligible hypotheses; 25 more could be absorbed today (run /hypothesize muse_attention_decode)",
+     "wake_s": 1800
+    },
+    {
+     "problem": "muse_bf16_proj",
+     "checks_left": 13,
+     "scored_left": 10,
+     "hours_to_reset": 22.93,
+     "in_flight": 5,
+     "in_flight_checks": 5,
+     "gains_pending": 0,
+     "promotion_hold": 1,
+     "spendable": 22,
+     "queue": 1,
+     "need": 22,
+     "pace": 2,
+     "N": 1,
+     "picks": [
+      {
+       "slug": "bf16-lossless-exp4-warpspec-persistent-stage3",
+       "mode": "check",
+       "priority": 1,
+       "review": "required",
+       "kind": "rewrite",
+       "controls_for": null
+      }
+     ],
+     "shortfall": 21,
+     "reason": "queue has 1 eligible hypotheses; 21 more could be absorbed today (run /hypothesize muse_bf16_proj)",
+     "wake_s": 3588
+    },
+    {
+     "problem": "muse_decode_layer",
+     "checks_left": 15,
+     "scored_left": 9,
+     "hours_to_reset": 22.93,
+     "in_flight": 3,
+     "in_flight_checks": 3,
+     "gains_pending": 0,
+     "promotion_hold": 1,
+     "spendable": 23,
+     "queue": 4,
+     "need": 23,
+     "pace": 2,
+     "N": 2,
+     "picks": [
+      {
+       "slug": "boundaries-unpooler-pdl-small-t",
+       "mode": "check",
+       "priority": 2,
+       "review": "required",
+       "kind": "primary",
+       "controls_for": null
+      },
+      {
+       "slug": "dl-route-warp-topk-pdl",
+       "mode": "check",
+       "priority": 3,
+       "review": "required",
+       "kind": "primary",
+       "controls_for": null
+      }
+     ],
+     "shortfall": 19,
+     "reason": null,
+     "wake_s": 3432
+    },
+    {
+     "problem": "muse_moe_w4a16",
+     "checks_left": 13,
+     "scored_left": 10,
+     "hours_to_reset": 22.93,
+     "in_flight": 3,
+     "in_flight_checks": 3,
+     "gains_pending": 0,
+     "promotion_hold": 1,
+     "spendable": 22,
+     "queue": 0,
+     "need": 22,
+     "pace": 2,
+     "N": 0,
+     "picks": [],
+     "shortfall": 22,
+     "reason": "queue has 0 eligible hypotheses; 22 more could be absorbed today (run /hypothesize muse_moe_w4a16)",
+     "wake_s": 1800
+    },
+    {
+     "problem": "muse_prefill_layer",
+     "checks_left": 15,
+     "scored_left": 10,
+     "hours_to_reset": 22.93,
+     "in_flight": 1,
+     "in_flight_checks": 1,
+     "gains_pending": 0,
+     "promotion_hold": 1,
+     "spendable": 24,
+     "queue": 7,
+     "need": 24,
+     "pace": 2,
+     "N": 2,
+     "picks": [
+      {
+       "slug": "experts-triton-turn1-blockt32-stream",
+       "mode": "check",
+       "priority": 2,
+       "review": "proceed",
+       "kind": "rewrite",
+       "controls_for": null
+      },
+      {
+       "slug": "experts-triton-turn4-persistent-local-align",
+       "mode": "check",
+       "priority": 2,
+       "review": "required",
+       "kind": "primary",
+       "controls_for": null
+      }
+     ],
+     "shortfall": 17,
+     "reason": null,
+     "wake_s": 3289
+    }
+   ],
+   "wake_s": 1800,
+   "dispatch_total": 5,
+   "_exit": 0
+  },
+  "index": {
+   "ok": true,
+   "changed": [
+    "muse_attention_decode/hypotheses/INDEX.md",
+    "muse_attention_decode/hypotheses/FINDINGS.md",
+    "muse_bf16_proj/hypotheses/INDEX.md",
+    "muse_bf16_proj/hypotheses/FINDINGS.md",
+    "muse_decode_layer/hypotheses/INDEX.md",
+    "muse_decode_layer/hypotheses/FINDINGS.md",
+    "muse_moe_w4a16/hypotheses/INDEX.md",
+    "muse_moe_w4a16/hypotheses/FINDINGS.md",
+    "muse_prefill_layer/hypotheses/INDEX.md",
+    "muse_prefill_layer/hypotheses/FINDINGS.md",
+    "hypotheses/INDEX.md"
+   ],
+   "_exit": 0
+  }
+ }
+}
