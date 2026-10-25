@@ -1,6 +1,6 @@
 # muse_decode_layer findings
 
-Regenerated 2026-10-25T013623Z by `churn.py index`. Read this before writing a hypothesis for muse_decode_layer.
+Regenerated 2026-10-25T034141Z by `churn.py index`. Read this before writing a hypothesis for muse_decode_layer.
 
 ## Current best
 
@@ -77,9 +77,15 @@ Where the time goes (per scored shape, top kernels):
 ### output norm-gate
 - **paired-heads-pad-unpad-triton** → neutral (within-ci), 1.1654x — gained on full verify_16. Port the launch cleanup of muse_attention_decode's paired-heads-launch-cleanup (full layers there: decode_16 +6.4%, decode_32 +3.8%, verify_16 +5.9%) to master'
 
+### pooler + router GEMM (kernel P, T=9..32)
+- **dl-p-wide-tile-t16-t32** → neutral (within-ci), 1.2457x — no shape moved outside noise. Kernel P (dl_pooler_router_kernel<NF>) streams only 2.85 TB/s at T=32 and 3.41 at T=8 (prepare timing in 81ee6714b7614a99.log: 26.4 us vs 20.7 at T=1) because e
+
 ### pooler GEMM
 - **pooler-gemm-splitk-autotune** → neutral (within-ci), 1.0189x — no shape moved outside noise. For the pooler GEMM only (ffn_input [T, 8192] bf16 x pooler [4096, 8192] bf16, a 67 MB weight read whose floor is 14 us), pick the GEMM form per scored T in pre
 - **bf16-shape-gated-triton-gemms-small-t** → neutral (unproven-vs-best), 1.1688x — gained on sliding decode_1; full decode_1, decode_32, verify_16; lost on sliding decode_16, verify_1; full verify_1. Port muse_bf16_proj's landed bf16-shape-gated-triton-winners-combo (1.176x vs 1.151x there; code is muse_bf16_proj/submission.py on master: _bf16_splitk_kernel,
+
+### post-MoE unpooler + residual boundaries (T<=32)
+- **boundaries-unpooler-pdl-small-t** → neutral (unproven-vs-best), 1.2559x — no shape moved outside noise. Extend PDL to the stages around the landed dense chain at tokens <= DL_MAX_TOKENS (config gate plus state["dl"] and a new state["dlb_ok"] flag; T>32 master byte
 
 ### post-expert norm+combine
 - **post-expert-norm-triton-small-t** → gain (gain), 1.1635x — gained on sliding decode_1, decode_16, verify_1; full decode_1, decode_16, verify_1. Port muse_moe_w4a16's landed post-expert-norm-triton-small-m (1.130x there, job bacd1f502f4e46fa; patch muse_moe_w4a16/hypotheses/done/gain/post-expert-norm-tri
@@ -87,11 +93,17 @@ Where the time goes (per scored shape, top kernels):
 ### pre-attention norm+rope
 - **fused-preattention-triton** → neutral (unproven-vs-best), 1.0970x — gained on sliding decode_32. Port muse_attention_decode's fused pre-attention Triton kernel (main tree muse_attention_decode/submission.py, _pre_attention_kernel: passed 16/16 at 1.127x the
 
+### qkv GEMM + o GEMM + attention-side small kernels (T<=32)
+- **dense-chain-stage2-attn-side-pdl** → regression (regression), 1.2253x — gained on full decode_1; lost on sliding decode_16, decode_32; full decode_32. Stage 2 of the landed small-t-launch-minimal-dense-chain-pdl rewrite (master f1f2f35, its stage plan item 2). Gate: tokens <= DL_MAX_TOKENS (config) and state["
+
 ### restack (sliding decode_1 port + paired pad/unpad + T=1 Triton GEMMs)
 - **decode-restack-sliding-port-paired-pad-gemms-t1** → neutral (beats-base-not-best), 1.1937x — gained on sliding decode_1, verify_32; full decode_1, verify_16. Restack three harvested per-shape winners onto current master (post-expert-norm-triton-small-t) by a 3-way merge of their branches, resolving conflicts by hand 
 
 ### router GEMM
 - **sglang-pipeline-parity-router-hilo-m8** → gain (gain), 1.0216x — gained on sliding decode_1, decode_16, decode_32, verify_1, verify_16, verify_32; full decode_1, decode_16, decode_32, verify_1, verify_16, verify_32. Replace the starter's plain-PyTorch layer with SGLang's own pipeline exactly as baseline.py composes it: prepare() builds the Marlin bank via prepare_moe_nvfp4_
+
+### routing top-k + MoE align (kernel R, T<=32)
+- **dl-route-warp-topk-pdl** → neutral (unproven-vs-best), 1.2599x — no shape moved outside noise. Kernel R (dl_route_norm_align_kernel in master _DL_CUDA) costs 7.4-8.0 us at every T<=32 (profile 81ee6714b7614a99; its own milestone was <= 4 us). Two changes,
 
 ### w13 marlin
 - **marlin-block-m-cap-16** → gain (gain), 1.0621x — gained on sliding verify_16, verify_32; full verify_16, verify_32. Cap SGLang's block_size_m choice for the two Marlin MoE GEMMs at 16. Today _experts walks BLOCK_SIZE_M_CANDIDATES (8, 16, 32, 48, 64) and stops at the first siz
@@ -122,6 +134,9 @@ Where the time goes (per scored shape, top kernels):
 - sliding-fused-batched-decode-port: within-ci: the change is not proven either way; a stacked hypothesis (`depends_on: sliding-fused-batched-decode-port`) that adds a further change in the same area is the only way to learn more (identical code is never re
 - moe-dispatch-prep-on-side-stream: unproven-vs-best: the change is not proven either way; a stacked hypothesis (`depends_on: moe-dispatch-prep-on-side-stream`) that adds a further change in the same area is the only way to learn more (identical code is ne
 - moe-align-parallel-large-t-port: unproven-vs-best: the change is not proven either way; a stacked hypothesis (`depends_on: moe-align-parallel-large-t-port`) that adds a further change in the same area is the only way to learn more (identical code is nev
+- boundaries-unpooler-pdl-small-t: unproven-vs-best: the change is not proven either way; a stacked hypothesis (`depends_on: boundaries-unpooler-pdl-small-t`) that adds a further change in the same area is the only way to learn more (identical code is nev
+- dl-route-warp-topk-pdl: unproven-vs-best: the change is not proven either way; a stacked hypothesis (`depends_on: dl-route-warp-topk-pdl`) that adds a further change in the same area is the only way to learn more (identical code is never re-run
+- dl-p-wide-tile-t16-t32: within-ci: the change is not proven either way; a stacked hypothesis (`depends_on: dl-p-wide-tile-t16-t32`) that adds a further change in the same area is the only way to learn more (identical code is never re-run).
 - full-decode-splitkv-restack-on-pdl: unproven-vs-best: the change is not proven either way; a stacked hypothesis (`depends_on: full-decode-splitkv-restack-on-pdl`) that adds a further change in the same area is the only way to learn more (identical code is 
 - sliding-decode1-fused-restack-on-pdl: unproven-vs-best: the change is not proven either way; a stacked hypothesis (`depends_on: sliding-decode1-fused-restack-on-pdl`) that adds a further change in the same area is the only way to learn more (identical code i
 - stack-align-par-sliding1: unproven-vs-best: the change is not proven either way; a stacked hypothesis (`depends_on: stack-align-par-sliding1`) that adds a further change in the same area is the only way to learn more (identical code is never re-r
@@ -154,8 +169,5 @@ Where the time goes (per scored shape, top kernels):
 - queue: moe-bs1-fused-persistent-port [w13 marlin + silu-mul + w2 marlin + post-expert combine (T=1)] p5 hold
 - queue: prefork-qkv-o-swapab-t16-t32 [qkv GEMM + o GEMM (before the router fork)] p4 hold
 - queue: marlin-two-stream-halves-port [w13 marlin + silu-mul + w2 marlin (8<=T<=32, stream overlap)] p5 hold
-- queue: dl-p-wide-tile-t16-t32 [pooler + router GEMM (kernel P, T=9..32)] p4 queued
 - queue: moe-chain-cuda-swapab-expert-once-fix [w13 marlin + silu-mul + w2 marlin (T>32)] p2 hold
-- running: dense-chain-stage2-attn-side-pdl [qkv GEMM + o GEMM + attention-side small kernels (T<=32)] p1 running
-- running: boundaries-unpooler-pdl-small-t [post-MoE unpooler + residual boundaries (T<=32)] p2 running
-- running: dl-route-warp-topk-pdl [routing top-k + MoE align (kernel R, T<=32)] p3 running
+- queue: moe-chain-cuda-swapab-expert-once-s3-rebase-fp32ref-bound [w13 marlin + silu-mul + w2 marlin (T>32)] p2 queued

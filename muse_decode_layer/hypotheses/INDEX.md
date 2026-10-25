@@ -1,6 +1,6 @@
 # muse_decode_layer hypotheses
 
-Regenerated 2026-10-25T013623Z. Best: 1.2521x [1.2333,1.2709] job `39bcf05afc4e4dd3` (submit)
+Regenerated 2026-10-25T034141Z. Best: 1.2521x [1.2333,1.2709] job `39bcf05afc4e4dd3` (submit)
 
 | created | slug | kind | area | where | outcome | speedup | CI | job | mode | promotion | review | expected hit |
 |---|---|---|---|---|---|---|---|---|---|---|---|---|
@@ -43,10 +43,10 @@ Regenerated 2026-10-25T013623Z. Best: 1.2521x [1.2333,1.2709] job `39bcf05afc4e4
 | 2026-10-24T184451Z | prefork-qkv-o-swapab-t16-t32 | primary | qkv GEMM + o GEMM (before the router fork) | queue | hold |  |  |  |  |  | hold |  |
 | 2026-10-24T184511Z | moe-align-parallel-large-t-port | primary | MoE align/dispatch (T>32) | done/neutral | neutral | 1.2433 | [1.225,1.262] | b42e33406f2d4978 | check |  | proceed | 3/4 |
 | 2026-10-24T184527Z | marlin-two-stream-halves-port | primary | w13 marlin + silu-mul + w2 marlin (8<=T<=32, stream overlap) | queue | hold |  |  |  |  |  | hold |  |
-| 2026-10-24T224424Z | dense-chain-stage2-attn-side-pdl | rewrite | qkv GEMM + o GEMM + attention-side small kernels (T<=32) | running | running |  |  | b31b8453208a471c | check |  | proceed |  |
-| 2026-10-24T224452Z | boundaries-unpooler-pdl-small-t | primary | post-MoE unpooler + residual boundaries (T<=32) | running | running |  |  | 1dfe83fdbeea458a | check |  | proceed |  |
-| 2026-10-24T224452Z | dl-route-warp-topk-pdl | primary | routing top-k + MoE align (kernel R, T<=32) | running | running |  |  | b471a950805c4053 | check |  | proceed |  |
-| 2026-10-24T224506Z | dl-p-wide-tile-t16-t32 | primary | pooler + router GEMM (kernel P, T=9..32) | queue | queued |  |  |  |  |  | required |  |
+| 2026-10-24T224424Z | dense-chain-stage2-attn-side-pdl | rewrite | qkv GEMM + o GEMM + attention-side small kernels (T<=32) | done/regression | regression | 1.2253 | [1.207,1.244] | b31b8453208a471c | check |  | proceed | 3/7 |
+| 2026-10-24T224452Z | boundaries-unpooler-pdl-small-t | primary | post-MoE unpooler + residual boundaries (T<=32) | done/neutral | neutral | 1.2559 | [1.237,1.275] | 1dfe83fdbeea458a | check |  | proceed | 2/6 |
+| 2026-10-24T224452Z | dl-route-warp-topk-pdl | primary | routing top-k + MoE align (kernel R, T<=32) | done/neutral | neutral | 1.2599 | [1.241,1.279] | b471a950805c4053 | check |  | proceed | 2/6 |
+| 2026-10-24T224506Z | dl-p-wide-tile-t16-t32 | primary | pooler + router GEMM (kernel P, T=9..32) | done/neutral | neutral | 1.2457 | [1.227,1.264] | 9ad8e2cf869c4b4f | check |  | proceed | 2/4 |
 | 2026-10-24T224525Z | full-decode-splitkv-restack-on-pdl | primary | FA3 call (full decode, batch > 1) | done/neutral | neutral | 1.2680 | [1.249,1.287] | c243a29f26dc4725 | check |  | required | 5/5 |
 | 2026-10-24T224525Z | sliding-decode1-fused-restack-on-pdl | primary | FA3 call (sliding decode, batch 1) | done/neutral | neutral | 1.2374 | [1.219,1.256] | 30027c28212946fd | check |  | required | 1/4 |
 | 2026-10-24T233529Z | stack-align-par-sliding1 | primary | MoE align (T>32) + sliding batch-1 attention | done/neutral | neutral | 1.2444 | [1.226,1.263] | d41952184b714e37 | check |  | required | 1/1 |
@@ -57,6 +57,7 @@ Regenerated 2026-10-25T013623Z. Best: 1.2521x [1.2333,1.2709] job `39bcf05afc4e4
 | 2026-10-25T001250Z | moe-chain-cuda-swapab-expert-once-fix | rewrite | w13 marlin + silu-mul + w2 marlin (T>32) | queue | hold |  |  |  |  |  | hold |  |
 | 2026-10-25T001251Z | full-decode-splitkv-kv-bw-3p5 | rewrite | FA3 call (full decode, batch > 1): splitkv_attn_kernel bytes in flight | done/neutral | neutral | 1.2663 | [1.247,1.285] | 6af3b0e3311943ee | check |  | proceed | 3/5 |
 | 2026-10-25T001824Z | moe-chain-cuda-swapab-expert-once-fix-inproc | rewrite | w13 marlin + silu-mul + w2 marlin (T>32) | done/regression | regression | 1.1651 | [1.148,1.183] | 4ebd055adab34ecd | check |  | proceed | 2/4 |
+| 2026-10-25T014617Z | moe-chain-cuda-swapab-expert-once-s3-rebase-fp32ref-bound | rewrite | w13 marlin + silu-mul + w2 marlin (T>32) | queue | queued |  |  |  |  |  | required |  |
 
 ## Held
 
