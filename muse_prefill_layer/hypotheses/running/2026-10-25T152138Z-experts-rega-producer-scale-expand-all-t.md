@@ -82,7 +82,7 @@ review: proceed
 status: running
 review_at: 2026-10-25T152518Z
 review_companions: null
-stage: claimed
+stage: implemented
 claimed_at: 2026-10-25T152518Z
 base_sha: 1b7b960db97884fe5ecfbd4dd9b87b1265a6cac3
 base_blob: a2fe2a75893c60d4f68cf94fcce8ce8f9b708a71
@@ -91,6 +91,12 @@ worktree: .worktrees/muse_prefill_layer/experts-rega-producer-scale-expand-all-t
 mode: null
 restack_of: null
 stale_base: null
+implemented_at: 2026-10-25T154433Z
+impl_commit: a7f4c3df8df129dee02dd5ad2e4cbc92cd521900
+submission_sha256: 7f997c6777f2c3c87c279598f2ee9495a1a8c8fde387287dd719a81b5f9367b7
+norm_sha256: ed66ed62ea3da423fb2f46644a7b78217c6ba5b0dc800541097315d15a37a32c
+submission_blob: 762afd24649ce0dacac1fdd5dd8d057779e1c91c
+lint_warnings: 80
 ---
 
 # experts-rega-producer-scale-expand-all-t
@@ -220,3 +226,42 @@ okc_lint (`python3 -I .claude/skills/churnsubs/bin/okc_lint.py <worktree>/muse_p
 
 There are no errors and no warnings on the kernel_fn path. `python3 -I -m py_compile`: OK. `__pycache__` removed.
 
+
+## Pre-flight audit
+
+Audited 2026-10-25 (opus). **Verdict: dispatch-with-fixes** (scored submit OK).
+
+Hang / fault re-derivation (all hold):
+- **sfull[s] protocol.** Count 3, one arrive per helper warp per fill, unconditional (also when dead). tid 0, helpers and consumers all walk `for it = blockIdx.x; it < total; it += gridDim.x` x KS, with `total` from shared memory after the last `__syncthreads`, so they agree for I = 0, 1, 2 and k. For I = 0 and `s_bad` there are no waits or arrives.
+  - Helpers cannot run 2 phases ahead: fill f+1 on stage s needs full[s] f+1, which needs empty[s] f, which needs all consumers past sfull[s] f, which needs all 3 arrivals for f.
+  - full[s] cannot run 2 ahead of a helper for the same reason, so parity never aliases across ring wrap.
+  - Every wait is the bounded `mbar_wait` and `__syncwarp` is reached by all 32 lanes (uniform trip count), so no unbounded spin exists.
+- **Reuse ordering.**
+  - Scale bytes are read before the sfull arrive, which precedes the consumers' empty arrive, which precedes the TMA refill.
+  - sx[s] is rewritten only after full[s] f+1, which follows the consumers' `dq_stage_sx` loads, `wgmma_wait<0>` and empty arrive (asm volatile memory clobbers). Publication is st.shared, then `__syncwarp`, then a release `mbarrier.arrive`; consumers do an acquire `try_wait`.
+- **Smem.**
+  - w2 dynamic 211968 B plus small-class static of about 13.9 KB is about 225.8 KB, under the 227 KB opt-in limit (and under 228 KB per SM with the 1 KB reserve); 1 CTA/SM as master. w13 is 195584 B.
+  - sx sits at a 16-aligned offset after the epilogue tile. Helper writes reach at most r*1024+1016+8; consumer uint4 at cw*128+g*16 reaches at most 1024 per record. All of it is inside the 1024 B alignment slack accounted in BYTES.
+- **Global accesses** are master's verbatim (producer, epilogue, tables). The only new accesses are to shared memory, so fault exposure equals master's, which already ran at these shapes earlier in the same prepare().
+
+Exactness:
+- All 254 finite E4M3 codes (subnormals and ±0 included) emulated: x 2^119 is exact in fp32 and in bf16 (no rounding ever happens), so bf16 RN in the helper equals master's per-lane convert.
+- The 2 NaN codes go through the identical instruction sequence (cvt e4m3x2 -> f16 -> f32 FMUL -> cvt.rn.bf16x2.f32) on both paths.
+- Byte order checked: word c -> bf16 4c..4c+3. The uint4 at cw*128+g*16 holds exactly master's uint2 bytes cw*64+g*8..+7. `__byte_perm` 0x1010 / 0x3232 broadcast the row-g / row-g+8 halves, the same as `bf16x2_bcast(fs.x / fs.y)` (emulated).
+
+Master untouched:
+- `_REGA_HEAD`, `_REGA_BODY` and `_REGA_CPP` are byte-identical to master. v2 sha256 5892475a... is unchanged, and `_rega_src_v1()` still hashes to REGA_V1_SHA256.
+- `_rega_setup` runs first, unchanged. The sx build happens after it, and its own 185 s / 250 s deadlines stay under the 300 s prepare limit.
+
+kernel_fn and state:
+- `_experts` routes on T plus `state['rega_ok'|'rega_sx'][cls]` bools only. There are no prints, try/except or mutable state on the path.
+- Maps are encoded per call (stack-local `__grid_constant__`). There are no module, static or device globals (`_rega_audit_cpp` clean on the new source).
+
+Fix applied (1):
+- **Host-side extent / device checks in `rega_se_gemm`** (caller asked that the canary be as fault-safe as possible). All tensors are on bsrc's CUDA device; n_padded, blocks, grid and n_tiles are >= 1; `sorted_ids.numel() > (blocks_len-1)*16`; out rows are >= blocks_len*16 (w13) or >= num_routes (w2).
+  - Each condition holds structurally for every T: cap = T*8+480 and blocks = cdiv(cap,16).
+  - The checks deliberately do NOT require sorted_ids >= blocks*16, which odd T such as 753 violates.
+  - They are host-only (no sync, no allocation) and fail as a Python exception (sx OFF) rather than a device fault.
+- okc_lint: OK with warnings (prepare-only syncs). py_compile: OK. `__pycache__` removed.
+
+Residual risk: first nvcc compile of new CUDA (a build failure only costs sx). The per-warp `__syncwarp` + elected arrive relies on bar.warp.sync memory ordering. A visibility race would show as a non-bit-identical exact gate (sx OFF), not a fault.
