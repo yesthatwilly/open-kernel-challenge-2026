@@ -33,9 +33,18 @@ priority: 4
 kind: primary
 controls_for: null
 review: proceed
-status: queued
+status: running
 review_at: 2026-10-25T034754Z
 review_companions: null
+stage: claimed
+claimed_at: 2026-10-25T034755Z
+base_sha: 62d28685d7829e2134746918148e95305d852b47
+base_blob: db8a3344398bca79ea5cafeb580f701c055fd475
+branch: hyp/muse_prefill_layer/experts-triton-first-turn-unmasked-loads-l2-hints
+worktree: .worktrees/muse_prefill_layer/experts-triton-first-turn-unmasked-loads-l2-hints
+mode: null
+restack_of: null
+stale_base: null
 ---
 
 # experts-triton-first-turn-unmasked-loads-l2-hints
