@@ -107,10 +107,10 @@ priority: 1
 kind: primary
 controls_for: null
 review: proceed
-status: running
+status: done
 review_at: 2026-10-25T162256Z
 review_companions: null
-stage: dispatched
+stage: harvested
 claimed_at: 2026-10-25T162256Z
 base_sha: 0c4719336efd5dcbef40bf2e1bbbccad0ca34463
 base_blob: 4bb57fd292a7f0fd5a80bd88dc773008b490bf8c
@@ -129,6 +129,13 @@ attempt_file: 2026-10-25T191044Z-submit-combo-measured-rows-slide-batched-preatt
 prepared_at: 2026-10-25T191044Z
 job: a903b9d004d2452d
 dispatched_at: 2026-10-25T191052Z
+outcome: neutral
+verdict_detail: unproven-vs-best
+speedup: 1.3142361220457452
+speedup_ci: [1.294522580215059, 1.3339496638764312]
+harvested_at: 2026-10-25T192026Z
+best_at_harvest: 1.3079569800910293
+promotion: null
 ---
 
 # combo-measured-rows-slide-batched-preattn-t8-tail
@@ -290,3 +297,35 @@ Fixes (worktree `muse_decode_layer/submission.py`):
 lint: OK with warnings (prepare-only host syncs). py_compile: ok. __pycache__ removed.
 
 Residual risk: none of this has run on a GPU. Prepare wall time (estimated 60-90 s) and the S2a/S3 kernels' first T>1 launches inside this stack are unmeasured. A slow import plus prepare could squeeze the 15-minute run budget.
+
+## Result
+
+- job `a903b9d004d2452d` (submit), status done, passed True, tests 13/13
+- speedup 1.3142x, 95% CI [1.2945, 1.3339], score 17211.74728083805 µs vs SGLang 22620.3 µs
+- best at harvest: {"speedup": 1.3079569800910293, "ci": [1.288337625389664, 1.3275763347923946], "job": "933d3f825a044d36"}; base result: muse_decode_layer/hypotheses/done/neutral/dl3-piece-a-gate-stride-check-fix.result.json
+- **outcome: neutral** (unproven-vs-best)
+- files: `muse_decode_layer/hypotheses/done/neutral/combo-measured-rows-slide-batched-preattn-t8-tail.result.json`, `muse_decode_layer/hypotheses/done/neutral/combo-measured-rows-slide-batched-preattn-t8-tail.patch`; branch `hyp/muse_decode_layer/combo-measured-rows-slide-batched-preattn-t8-tail`
+
+## Attribution
+
+| shape | w | base µs | hyp µs | delta | verdict |
+|---|---|---|---|---|---|
+| batch=1 ctx=80000 dist=soft layer=sliding load=decode_1 page=1 repeats=60 | 46 | 118.05 | 118.48 | 1.0002 | flat |
+| batch=1 ctx=80000 dist=soft layer=full load=decode_1 page=1 repeats=60 | 16 | 122.2 | 124.31 | 0.9999 | flat |
+| batch=16 ctx=80000 dist=soft layer=sliding load=decode_16 page=1 spread=agentic | 46 | 195.64 | 210.54 | 0.9918 | flat |
+| batch=16 ctx=80000 dist=soft layer=full load=decode_16 page=1 spread=agentic | 16 | 296.66 | 290.53 | 1.0182 | flat |
+| batch=32 ctx=80000 dist=soft layer=sliding load=decode_32 page=1 spread=agentic | 46 | 239.18 | 239.48 | 1.0064 | flat |
+| batch=32 ctx=80000 dist=soft layer=full load=decode_32 page=1 spread=agentic | 16 | 430.66 | 446.42 | 0.9949 | flat |
+| batch=1 ctx=80000 dist=soft layer=sliding load=verify_1 page=1 q_len=8 | 46 | 180.39 | 181.08 | 1.0153 | flat |
+| batch=1 ctx=80000 dist=soft layer=full load=verify_1 page=1 q_len=8 | 16 | 199.99 | 189.51 | 1.0327 | gained |
+| batch=16 ctx=80000 dist=soft layer=sliding load=verify_16 page=1 q_len=8 spread=agentic | 46 | 427.64 | 414.69 | 1.0166 | flat |
+| batch=16 ctx=80000 dist=soft layer=full load=verify_16 page=1 q_len=8 spread=agentic | 16 | 570.07 | 593.41 | 1.0339 | gained |
+| batch=32 ctx=80000 dist=soft layer=sliding load=verify_32 page=1 q_len=8 spread=agentic | 46 | 606.99 | 599.76 | 0.9805 | flat |
+| batch=32 ctx=80000 dist=soft layer=full load=verify_32 page=1 q_len=8 spread=agentic | 16 | 869.34 | 866.62 | 0.9949 | flat |
+
+gained on full verify_1, verify_16. Expected hit: 3/8. Noise ±1.5%.
+
+## Follow-ups
+
+- unproven-vs-best: the change is not proven either way; a stacked hypothesis (`depends_on: combo-measured-rows-slide-batched-preattn-t8-tail`) that adds a further change in the same area is the only way to learn more (identical code is never re-run).
+

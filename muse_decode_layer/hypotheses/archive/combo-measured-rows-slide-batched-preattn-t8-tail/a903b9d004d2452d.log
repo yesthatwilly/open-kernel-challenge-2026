@@ -1,0 +1,72 @@
+), v exact True, other rows intact True, finite True, counters 0 -> ok
+[combo] S3 c4-t8 B=1 L=8 lens 5000..5000 kv_scale 0.015625: replay 1 on state 1: launching graph
+[combo] S3 c4-t8 B=1 L=8 lens 5000..5000 kv_scale 0.015625: replay 1 state 1: o vs master 3.52e-02 (<= 1e-2), vs fp64 new 5.13e-02 master 4.98e-02 rows ok True, k rel L2 vs master 1.42e-02 (<= 4e-2; info: gap 1 on 3.4% of bytes), v exact True, other rows intact True, finite True, counters 0 -> ok
+[combo] S3 c4-t8 B=1 L=8 lens 5000..5000 kv_scale 0.015625: replay 2 on state 0: launching graph
+[combo] S3 c4-t8 B=1 L=8 lens 5000..5000 kv_scale 0.015625: replay 2 state 0: o vs master 3.80e-02 (<= 1e-2), vs fp64 new 4.92e-02 master 4.53e-02 rows ok True, k rel L2 vs master 1.20e-02 (<= 4e-2; info: gap 1 on 3.1% of bytes), v exact True, other rows intact True, finite True, counters 0 -> ok
+[combo] S3 c4-t8 B=1 L=8 lens 5000..5000 kv_scale 0.015625: replay 3 on state 1: launching graph
+[combo] S3 c4-t8 B=1 L=8 lens 5000..5000 kv_scale 0.015625: replay 3 state 1: o vs master 4.05e-02 (<= 1e-2), vs fp64 new 5.60e-02 master 5.29e-02 rows ok True, k rel L2 vs master 1.91e-02 (<= 4e-2; info: gap 1 on 2.8% of bytes), v exact True, other rows intact True, finite True, counters 0 -> ok
+[combo] launching S3 c4-t8 B=1 L=8 lens 1..1 kv_scale 1.0: eager warm-up state 0
+[combo] ok        S3 c4-t8 B=1 L=8 lens 1..1 kv_scale 1.0: eager warm-up state 0 (0.00s)
+[combo] launching S3 c4-t8 B=1 L=8 lens 1..1 kv_scale 1.0: eager warm-up state 1
+[combo] ok        S3 c4-t8 B=1 L=8 lens 1..1 kv_scale 1.0: eager warm-up state 1 (0.00s)
+[combo] S3 c4-t8 B=1 L=8 lens 1..1 kv_scale 1.0: replay 0 on state 0: launching graph
+[combo] S3 c4-t8 B=1 L=8 lens 1..1 kv_scale 1.0: replay 0 state 0: o vs master 3.29e-02 (<= 1e-2), vs fp64 new 4.34e-02 master 3.51e-02 rows ok True, k rel L2 vs master 1.34e-02 (<= 4e-2; info: gap 1 on 3.0% of bytes), v exact True, other rows intact True, finite True, counters 0 -> ok
+[combo] S3 c4-t8 B=1 L=8 lens 1..1 kv_scale 1.0: replay 1 on state 1: launching graph
+[combo] S3 c4-t8 B=1 L=8 lens 1..1 kv_scale 1.0: replay 1 state 1: o vs master 3.34e-02 (<= 1e-2), vs fp64 new 4.66e-02 master 4.55e-02 rows ok False, k rel L2 vs master 1.36e-02 (<= 4e-2; info: gap 1 on 1.9% of bytes), v exact True, other rows intact True, finite True, counters 0 -> FAIL
+[combo] S3 c4-t8: correctness FAIL: S3 c4-t8 B=1 L=8 lens 1..1 kv_scale 1.0 replay 1 state 1: o vs master 3.34e-02 (<= 1e-2), vs fp64 new 4.66e-02 master 4.55e-02 rows ok False, k rel L2 vs master 1.36e-02 (<= 4e-2; info: gap 1 on 1.9% of bytes), v exact True, other rows intact True, finite True, counters 0
+[combo] phase S3: 1.2s wall, this prepare() 7.3s, all prepare() calls 7.3s
+[combo] phase T8: start 7.3s into prepare()
+[combo] launching T=8 layer full ctx 80000: eager warm-up state 0
+[combo] ok        T=8 layer full ctx 80000: eager warm-up state 0 (0.00s)
+[combo] launching T=8 layer full ctx 80000: eager warm-up state 1
+[combo] ok        T=8 layer full ctx 80000: eager warm-up state 1 (0.00s)
+[combo] T=8 layer full ctx 80000: replay 0 on state 0: launching graph
+[combo] T=8 layer full ctx 80000: replay 0 state 0: hidden 1.52e-05 (<= 0.02), stream 3.26e-06 (<= 0.01), update 5.70e-06 (<= 0.05), k_cache gap 0 rel 0.00e+00, v_cache exact True, other rows intact True, ids differ on 0/8 tokens, routing: picks within 0.05 True, clear-margin top-8 present True, routes 13/13, distinct 9/9, finite True, counters 0 -> ok
+[combo] T=8 layer full ctx 80000: replay 1 on state 1: launching graph
+[combo] T=8 layer full ctx 80000: replay 1 state 1: hidden 8.49e-06 (<= 0.02), stream 6.72e-06 (<= 0.01), update 1.16e-05 (<= 0.05), k_cache gap 0 rel 0.00e+00, v_cache exact True, other rows intact True, ids differ on 0/8 tokens, routing: picks within 0.05 True, clear-margin top-8 present True, routes 11/11, distinct 9/9, finite True, counters 0 -> ok
+[combo] T=8 layer full ctx 80000: replay 2 on state 0: launching graph
+[combo] T=8 layer full ctx 80000: replay 2 state 0: hidden 3.03e-05 (<= 0.02), stream 2.85e-05 (<= 0.01), update 5.13e-05 (<= 0.05), k_cache gap 0 rel 0.00e+00, v_cache exact True, other rows intact True, ids differ on 0/8 tokens, routing: picks within 0.05 True, clear-margin top-8 present True, routes 8/8, distinct 8/8, finite True, counters 0 -> ok
+[combo] T=8 layer full ctx 80000: replay 3 on state 1: launching graph
+[combo] T=8 layer full ctx 80000: replay 3 state 1: hidden 7.26e-05 (<= 0.02), stream 3.37e-05 (<= 0.01), update 5.94e-05 (<= 0.05), k_cache gap 0 rel 0.00e+00, v_cache exact True, other rows intact True, ids differ on 0/8 tokens, routing: picks within 0.05 True, clear-margin top-8 present True, routes 9/9, distinct 8/8, finite True, counters 0 -> ok
+[combo] launching T=8 layer full ctx 1048570: eager warm-up state 0
+[combo] ok        T=8 layer full ctx 1048570: eager warm-up state 0 (0.00s)
+[combo] launching T=8 layer full ctx 1048570: eager warm-up state 1
+[combo] ok        T=8 layer full ctx 1048570: eager warm-up state 1 (0.00s)
+[combo] T=8 layer full ctx 1048570: replay 0 on state 0: launching graph
+[combo] T=8 layer full ctx 1048570: replay 0 state 0: hidden 3.39e-05 (<= 0.02), stream 1.94e-05 (<= 0.01), update 3.37e-05 (<= 0.05), k_cache gap 0 rel 0.00e+00, v_cache exact True, other rows intact True, ids differ on 0/8 tokens, routing: picks within 0.05 True, clear-margin top-8 present True, routes 18/18, distinct 10/10, finite True, counters 0 -> ok
+[combo] T=8 layer full ctx 1048570: replay 1 on state 1: launching graph
+[combo] T=8 layer full ctx 1048570: replay 1 state 1: hidden 2.63e-05 (<= 0.02), stream 1.32e-05 (<= 0.01), update 2.31e-05 (<= 0.05), k_cache gap 0 rel 0.00e+00, v_cache exact True, other rows intact True, ids differ on 0/8 tokens, routing: picks within 0.05 True, clear-margin top-8 present True, routes 10/10, distinct 8/8, finite True, counters 0 -> ok
+[combo] T=8 layer full ctx 1048570: replay 2 on state 0: launching graph
+[combo] T=8 layer full ctx 1048570: replay 2 state 0: hidden 3.79e-05 (<= 0.02), stream 2.78e-05 (<= 0.01), update 4.95e-05 (<= 0.05), k_cache gap 0 rel 0.00e+00, v_cache exact True, other rows intact True, ids differ on 0/8 tokens, routing: picks within 0.05 True, clear-margin top-8 present True, routes 8/8, distinct 7/7, finite True, counters 0 -> ok
+[combo] T=8 layer full ctx 1048570: replay 3 on state 1: launching graph
+[combo] T=8 layer full ctx 1048570: replay 3 state 1: hidden 1.57e-05 (<= 0.02), stream 1.93e-05 (<= 0.01), update 3.38e-05 (<= 0.05), k_cache gap 0 rel 0.00e+00, v_cache exact True, other rows intact True, ids differ on 0/8 tokens, routing: picks within 0.05 True, clear-margin top-8 present True, routes 7/7, distinct 7/7, finite True, counters 0 -> ok
+[combo] launching T=8 layer sliding ctx 80000: eager warm-up state 0
+[combo] ok        T=8 layer sliding ctx 80000: eager warm-up state 0 (0.00s)
+[combo] launching T=8 layer sliding ctx 80000: eager warm-up state 1
+[combo] ok        T=8 layer sliding ctx 80000: eager warm-up state 1 (0.00s)
+[combo] T=8 layer sliding ctx 80000: replay 0 on state 0: launching graph
+[combo] T=8 layer sliding ctx 80000: replay 0 state 0: hidden 2.15e-05 (<= 0.02), stream 1.83e-06 (<= 0.01), update 3.28e-06 (<= 0.05), k_cache gap 0 rel 0.00e+00, v_cache exact True, other rows intact True, ids differ on 0/8 tokens, routing: picks within 0.05 True, clear-margin top-8 present True, routes 10/10, distinct 9/9, finite True, counters 0 -> ok
+[combo] T=8 layer sliding ctx 80000: replay 1 on state 1: launching graph
+[combo] T=8 layer sliding ctx 80000: replay 1 state 1: hidden 6.59e-05 (<= 0.02), stream 3.08e-05 (<= 0.01), update 5.44e-05 (<= 0.05), k_cache gap 0 rel 0.00e+00, v_cache exact True, other rows intact True, ids differ on 0/8 tokens, routing: picks within 0.05 True, clear-margin top-8 present True, routes 6/6, distinct 6/6, finite True, counters 0 -> ok
+[combo] T=8 layer sliding ctx 80000: replay 2 on state 0: launching graph
+[combo] T=8 layer sliding ctx 80000: replay 2 state 0: hidden 0.00e+00 (<= 0.02), stream 0.00e+00 (<= 0.01), update 0.00e+00 (<= 0.05), k_cache gap 0 rel 0.00e+00, v_cache exact True, other rows intact True, ids differ on 0/8 tokens, routing: picks within 0.05 True, clear-margin top-8 present True, routes 4/4, distinct 3/3, finite True, counters 0 -> ok
+[combo] T=8 layer sliding ctx 80000: replay 3 on state 1: launching graph
+[combo] T=8 layer sliding ctx 80000: replay 3 state 1: hidden 1.90e-06 (<= 0.02), stream 1.33e-06 (<= 0.01), update 2.37e-06 (<= 0.05), k_cache gap 0 rel 0.00e+00, v_cache exact True, other rows intact True, ids differ on 0/8 tokens, routing: picks within 0.05 True, clear-margin top-8 present True, routes 8/8, distinct 6/6, finite True, counters 0 -> ok
+[combo] T=8 layer check max error per output: hidden 7.26e-05, stream 3.37e-05, update 5.94e-05, k_cache 0, k_gap 0, ids_tokens_differ 0
+[combo] T=8 layer check passed with [('S2a', 8), ('S2b', 8)] on
+[combo] phase T8: 0.1s wall, this prepare() 7.4s, all prepare() calls 7.4s
+PATH CHOSEN: S1 sliding decode q_len 1 page 1, 2 <= B <= 16: MASTER FusedQKNorm + casts + store_cache + FA3 + FusedRMSNormGate [not timed] (fallback: check: S1 class A B=16 L=1 lens 1..80000 kv_scale 1.0 replay 0 state 0: o vs master 4.02e-02 (<= 1e-2), vs fp64 new 1.22e-02 master 3.99e-02 rows ok False, k rel L2 vs master 1.49e-02 (<= 4e-2; info: gap 2 on 4.0% of bytes), v exact True, other rows intact True, finite True, counters 0)
+PATH CHOSEN: S1 sliding decode q_len 1 page 1, 17 <= B <= 32: MASTER FusedQKNorm + casts + store_cache + FA3 + FusedRMSNormGate [not timed] (fallback: check: S1 class B B=17 L=1 lens 1..80000 kv_scale 1.0 replay 0 state 0: o vs master 4.87e-02 (<= 1e-2), vs fp64 new 2.41e-02 master 4.47e-02 rows ok False, k rel L2 vs master 1.77e-02 (<= 4e-2; info: gap 2 on 4.0% of bytes), v exact True, other rows intact True, finite True, counters 0)
+PATH CHOSEN: S2a routing kernel R, 2 <= T <= 8: NEW per-warp top-8 R (variant 0), PDL after P [new 32.99 us vs master 34.46 us]
+PATH CHOSEN: S2a routing kernel R, 9 <= T <= 16: NEW per-warp top-8 R (variant 0), PDL after P [new 34.50 us vs master 36.03 us]
+PATH CHOSEN: S2a routing kernel R, 17 <= T <= 32: NEW per-warp top-8 R (variant 0), PDL after P [new 37.22 us vs master 38.85 us]
+PATH CHOSEN: S2b unpooler, 2 <= T <= 8: NEW dl_unpool_kernel NF=1 [new 6.50 us vs master 11.10 us]
+PATH CHOSEN: S3 full decode 2 <= B <= 23 (sk / split-KV feed): NEW _pre_attention_kernel unpaired [new 129.18 us vs master 135.14 us]
+PATH CHOSEN: S3 full decode 24 <= B <= 64 (sk / split-KV feed): MASTER FusedQKNorm + casts + store_cache + q FP8 cast [not timed] (fallback: check: S3 c1-b32 B=32 L=1 lens 1..4000 kv_scale 1.0 replay 1 state 1: o vs master 3.11e-02 (<= 1e-2), vs fp64 new 4.48e-02 master 4.09e-02 rows ok False, k rel L2 vs master 1.75e-02 (<= 4e-2; info: gap 1 on 3.3% of bytes), v exact True, other rows intact True, finite True, counters 0)
+PATH CHOSEN: S3 sliding verify B = 1: MASTER FusedQKNorm + casts + store_cache + q FP8 cast [not timed] (fallback: check: S3 front unpaired sliding B=1 L=8 pos~299995 kv_scale 1.0: q gap 2 rel L2 vs fp64 new 2.69e-02 master 2.70e-02; k gap 1 rel L2 vs fp64 new 2.59e-02 master 2.62e-02; v exact True; zero half exact True; other rows intact True; S3 front unpaired sliding B=1 L=8 pos~1048500 kv_scale 1.0: q gap 2 rel L2 vs fp64 new 2.87e-02 master 2.89e-02; k gap 1 rel L2 vs fp64 new 2.89e-02 master 2.91e-02; v exact True; zero half exact True; other rows intact True)
+PATH CHOSEN: S3 sliding verify 2 <= B <= 23: MASTER FusedQKNorm + casts + store_cache + q FP8 cast [not timed] (fallback: check: S3 front unpaired sliding B=2 L=8 pos~80000 kv_scale 1.0: q gap 2 rel L2 vs fp64 new 2.64e-02 master 2.66e-02; k gap 2 rel L2 vs fp64 new 2.54e-02 master 2.56e-02; v exact True; zero half exact True; other rows intact True; S3 front unpaired sliding B=2 L=8 pos~299995 kv_scale 1.0: q gap 2 rel L2 vs fp64 new 2.67e-02 master 2.69e-02; k gap 1 rel L2 vs fp64 new 2.61e-02 master 2.62e-02; v exact True; zero half exact True; other rows intact True)
+PATH CHOSEN: S3 sliding verify 24 <= B <= 64: MASTER FusedQKNorm + casts + store_cache + q FP8 cast [not timed] (fallback: check: S3 front unpaired sliding B=32 L=8 pos~80000 kv_scale 1.0: q gap 3 rel L2 vs fp64 new 2.65e-02 master 2.67e-02; k gap 4 rel L2 vs fp64 new 2.65e-02 master 2.67e-02; v exact True; zero half exact True; other rows intact True; S3 front unpaired sliding B=32 L=8 pos~299995 kv_scale 1.0: q gap 3 rel L2 vs fp64 new 2.67e-02 master 2.69e-02; k gap 3 rel L2 vs fp64 new 2.69e-02 master 2.71e-02; v exact True; zero half exact True; other rows intact True)
+PATH CHOSEN: S3 full verify 2 <= B <= 23 (paired FA3): MASTER FusedQKNorm + casts + store_cache + paired zero pad + copies + FusedRMSNormGate [not timed] (fallback: check: S3 c3-t128 B=2 L=8 lens 1..4000 kv_scale 1.0 replay 1 state 1: o vs master 3.66e-02 (<= 1e-2), vs fp64 new 4.81e-02 master 4.40e-02 rows ok False, k rel L2 vs master 1.82e-02 (<= 4e-2; info: gap 1 on 3.3% of bytes), v exact True, other rows intact True, finite True, counters 0)
+PATH CHOSEN: S3 full verify 24 <= B <= 64 (paired FA3): MASTER FusedQKNorm + casts + store_cache + paired zero pad + copies + FusedRMSNormGate [not timed] (fallback: check: S3 c3-t256 B=32 L=8 lens 1..4000 kv_scale 1.0 replay 0 state 0: o vs master 4.26e-02 (<= 1e-2), vs fp64 new 5.60e-02 master 5.03e-02 rows ok False, k rel L2 vs master 1.60e-02 (<= 4e-2; info: gap 1 on 3.1% of bytes), v exact True, other rows intact True, finite True, counters 0)
+PATH CHOSEN: S3 full verify B = 1: MASTER FusedQKNorm + casts + store_cache + q FP8 cast [not timed] (fallback: check: S3 c4-t8 B=1 L=8 lens 1..1 kv_scale 1.0 replay 1 state 1: o vs master 3.34e-02 (<= 1e-2), vs fp64 new 4.66e-02 master 4.55e-02 rows ok False, k rel L2 vs master 1.36e-02 (<= 4e-2; info: gap 1 on 1.9% of bytes), v exact True, other rows intact True, finite True, counters 0)
+[prepare] this call 7.4s, cumulative 7.4s
