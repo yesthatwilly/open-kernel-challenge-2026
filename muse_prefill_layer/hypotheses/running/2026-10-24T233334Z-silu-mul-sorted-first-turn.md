@@ -25,21 +25,18 @@ review: required
 status: running
 stage: implemented
 claimed_at: 2026-10-24T233335Z
-base_sha: d4d4c077f75b6689b16c96c62fb5598b1756d3b5
-base_blob: 1a06deda403ddee4b4693b34127fd50b8bcb791c
+base_sha: a0eb6398a55163f42feb6a3cdfb8e02b392e090b
+base_blob: db8a3344398bca79ea5cafeb580f701c055fd475
 branch: hyp/muse_prefill_layer/silu-mul-sorted-first-turn
 worktree: .worktrees/muse_prefill_layer/silu-mul-sorted-first-turn
-mode: check
 restack_of: null
 stale_base: null
 implemented_at: 2026-10-24T233357Z
-impl_commit: a30a516734009c7b29043c582a0e8f006f9dd83e
+impl_commit: fc7f0a08663ad479ea473c461c282a70c85fd712
 submission_sha256: 1c7c6b27c04f1afe3fee01ce659e9e3f56704866761be61a98e60a22eadf6234
 norm_sha256: 15e47d79d157b9eebd87478eb8529df1ac369836121c3420d8915881b5c28ebe
 submission_blob: 9e85c24636d47e2cf91bb76ca793a5a9894ef683
 lint_warnings: 7
-attempt_file: 2026-10-24T233357Z-check-silu-mul-sorted-first-turn.md
-prepared_at: 2026-10-24T233357Z
 ---
 
 # silu-mul-sorted-first-turn
@@ -70,3 +67,7 @@ Built in the main thread 2026-10-24 ~23:35Z with user-approved self-review, on s
 - [x] No timing/harness access, processes, network or module edits.
 - [x] No work outside timed calls added.
 - [x] okc_lint: no errors.
+
+## Re-base (2026-10-25 00:0xZ)
+
+Reset priority 2: re-based onto prefill master after stack-tonight-five-prefill landed (it already carries the Marlin-path sorted silu). The parent diff (8+/2-: the Triton-path gate and the T=16384 self-check) applied cleanly. On first_turn the sorted silu now walks master's moe_align_block_size(LOCAL_EXPERTS) output and still masks local_ids >= 0, so it does not depend on which align ran. Rules check above still holds; lint has no errors.
