@@ -52,9 +52,18 @@ controls_for: null
 rewrite_stage: 2
 replaces: paired FA3 flash_fwd main + FlashAttnFwdCombine + pad/unpad copies + FusedRMSNormGate on full-layer verify (q_len 8), batch 16/32
 review: proceed
-status: queued
+status: running
 review_at: 2026-10-24T165634Z
 review_companions: null
+stage: claimed
+claimed_at: 2026-10-25T003235Z
+base_sha: f6cc1452343c4d93911ad7303c4a5d7878afd2fe
+base_blob: b83f5ec1976c82d5b45dcd92b6c0818ce04eda9f
+branch: hyp/muse_decode_layer/full-verify-cuda-splitkv-stage2
+worktree: .worktrees/muse_decode_layer/full-verify-cuda-splitkv-stage2
+mode: null
+restack_of: null
+stale_base: true
 ---
 
 # full-verify-cuda-splitkv-stage2
