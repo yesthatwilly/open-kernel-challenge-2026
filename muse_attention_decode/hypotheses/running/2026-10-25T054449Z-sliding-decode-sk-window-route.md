@@ -63,7 +63,7 @@ base_sha: 6f95ce71ba21682ba9cbb6d346abb2a93a862b2f
 base_blob: 76492911dfd6685139a2ffac06c1d27083ecdb0a
 branch: hyp/muse_attention_decode/sliding-decode-sk-window-route
 worktree: .worktrees/muse_attention_decode/sliding-decode-sk-window-route
-mode: null
+mode: check
 restack_of: null
 stale_base: null
 implemented_at: 2026-10-25T084628Z
@@ -72,6 +72,8 @@ submission_sha256: e93aa862c1d039a34a3d08f82d3aa0a854f0fb864e50ead13a7cf3ccd4ce4
 norm_sha256: 4c56bd6e319def87714abd15800346199303250c4fddfee0921d78ae2377db89
 submission_blob: 1117ad04a8bbcd5ca4da54c883e209c1b6e6f278
 lint_warnings: 42
+attempt_file: 2026-10-25T084628Z-check-sliding-decode-sk-window-route.md
+prepared_at: 2026-10-25T084628Z
 ---
 
 # sliding-decode-sk-window-route
