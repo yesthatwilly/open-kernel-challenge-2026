@@ -42,7 +42,7 @@ base_sha: 62d28685d7829e2134746918148e95305d852b47
 base_blob: db8a3344398bca79ea5cafeb580f701c055fd475
 branch: hyp/muse_prefill_layer/experts-triton-first-turn-unmasked-loads-l2-hints
 worktree: .worktrees/muse_prefill_layer/experts-triton-first-turn-unmasked-loads-l2-hints
-mode: null
+mode: check
 restack_of: null
 stale_base: null
 implemented_at: 2026-10-25T034946Z
@@ -51,6 +51,8 @@ submission_sha256: cd367d224bbe6d7e8c670cb65df0c69236a004d25f9270596449f741260ec
 norm_sha256: c6d47ba7433f421ab2c6e3b1c9b2c33d6f8a7a0e20185351f9a26f13fff1ef43
 submission_blob: 92d0b57884af6ce9d3a9770fd7e4f65fb49a7fd1
 lint_warnings: 18
+attempt_file: 2026-10-25T034946Z-check-experts-triton-first-turn-unmasked-loads-l2-hints.md
+prepared_at: 2026-10-25T034946Z
 ---
 
 # experts-triton-first-turn-unmasked-loads-l2-hints
