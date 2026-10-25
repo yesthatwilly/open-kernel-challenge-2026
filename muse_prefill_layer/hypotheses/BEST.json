@@ -1,17 +1,17 @@
 {
- "problem": "muse_prefill_layer",
- "job": "1cc92a43b8be40f8",
- "check_job": "1cc92a43b8be40f8",
- "mode": "check",
- "speedup": 1.4586709689454935,
- "ci": [
-  1.4367909044113112,
-  1.4805510334796759
- ],
- "score_us": 265586.8994774491,
- "commit": "020566aa96573ce235f3b70405c66115316f0fbf",
- "submission_blob": "9fb1f7c4b4282dd7461c6cdba926fe3ebf12128e",
- "slug": "fa3-full-contiguous-kv-triton-gather-gated",
- "result": "muse_prefill_layer/hypotheses/done/neutral/fa3-full-contiguous-kv-triton-gather-gated.result.json",
- "updated_at": "2026-10-25T153935Z"
+  "problem": "muse_prefill_layer",
+  "job": "1cc92a43b8be40f8",
+  "check_job": null,
+  "mode": "submit",
+  "speedup": 1.4586709689454935,
+  "ci": [
+    1.4367909044113112,
+    1.4805510334796759
+  ],
+  "score_us": 265586.8994774491,
+  "commit": "97e792cd86594c84955869d474331b1c65b34f23",
+  "submission_blob": "9fb1f7c4b4282dd7461c6cdba926fe3ebf12128e",
+  "slug": "fa3-full-contiguous-kv-triton-gather-gated",
+  "result": "muse_prefill_layer/hypotheses/done/neutral/fa3-full-contiguous-kv-triton-gather-gated.result.json",
+  "updated_at": "2026-10-25T153935Z"
 }
