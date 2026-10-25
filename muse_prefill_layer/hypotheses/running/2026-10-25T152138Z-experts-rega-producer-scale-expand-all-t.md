@@ -82,7 +82,7 @@ review: proceed
 status: running
 review_at: 2026-10-25T152518Z
 review_companions: null
-stage: implemented
+stage: dispatched
 claimed_at: 2026-10-25T152518Z
 base_sha: 1b7b960db97884fe5ecfbd4dd9b87b1265a6cac3
 base_blob: a2fe2a75893c60d4f68cf94fcce8ce8f9b708a71
@@ -99,6 +99,8 @@ submission_blob: 762afd24649ce0dacac1fdd5dd8d057779e1c91c
 lint_warnings: 80
 attempt_file: 2026-10-25T154433Z-submit-experts-rega-producer-scale-expand-all-t.md
 prepared_at: 2026-10-25T154433Z
+job: 6be2a8d3cf7d489f
+dispatched_at: 2026-10-25T154443Z
 ---
 
 # experts-rega-producer-scale-expand-all-t
