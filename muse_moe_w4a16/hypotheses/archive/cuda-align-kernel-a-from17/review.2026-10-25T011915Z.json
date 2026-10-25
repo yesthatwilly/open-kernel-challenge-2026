@@ -1,0 +1,22 @@
+{
+ "model": "opus",
+ "verdict": "hold",
+ "summary": "Hold. Kernel A's rows at bs=128/256 have already been measured three times, and a run cannot see a ~0.3% headline change. In the one new range (17..32), the comparator that matters is _align_parallel at 2.6 us, not _align_small at 4.2 us, and kernel A is unlikely to beat it there.",
+ "justification": "The mechanism is real and has already been measured. Kernel A is the (anonymous namespace)::cd... row in three runs: cuda-dispatch-combine-pdl-verify, stack-onewarp-hoisted-dispatchcombine and its -from17 variant. It read 3.2/3.2/3.2 us at bs=128 against _align_parallel's 4.0-4.1, and 3.9/3.8/4.4 us at bs=256 against 6.8-6.9. Re-running it on bs=128/256 can only reproduce those rows. The headline arithmetic: -0.7/318 us at verify_16 and -3/454 us at verify_32, plus perhaps -1/200 us at decode_32, comes to about 0.3% geomean over 6 equal-weight loads. That is far inside the +/-1.5% CI and inside the 1-3 us per-shape err_ns at those shapes. Both moe stacks that already carried kernel A at bs>=33 came back neutral and below best (1.318 and 1.324 vs 1.3287). The only unmeasured part is 17..32 (decode_32). WEAKEST LINK: the brief compares kernel A at bs=32 with _align_small (4.2 us), but align-parallel-from-17-tokens and stack-...-from17 both measured _align_parallel at bs=32 at 2.6 us. REWRITE_READ attributes kernel A's time to the single 1024-thread CTA's scan plus launch latency, about 2x its floor and roughly flat in T: 3.2 us at T=128 and 3.9 at T=256. At T=32 it therefore lands near 3 us, which beats master's _align_small but probably loses to the already-measured _align_parallel. So the 17..32 half picks the second-best known engine for decode_32. The decode_32 per-shape err (2.6-3.4 us) is also larger than the whole effect. The 'expected' directions are correct against master, but the result settles nothing that the existing rows do not.",
+ "confounders": [
+  "align-parallel-per-expert-verify: kernel A replaces its _align_parallel at 33..512. The patch was built on this same base, so it applies cleanly. The A/B is the align row, and that row is already known (4.0/6.9 -> 3.2/3.9 us).",
+  "triton-map-align-on-block-m-restack: kernel A replaces its _align_small at 17..32. align-parallel-from-17-tokens is the unpromoted but measured better alternative there (2.6 us). The new range's verdict depends on which comparator is used.",
+  "marlin-block-m-two-smaller-on-postnorm: kernel A takes block_size_m as an input (16 at bs=128, 32 at bs=256, SGLang's 16 at bs=32). Its self-check must use master's BSM per T, as the brief says. Otherwise the n_padded and block layout differ and Marlin's row moves for reasons unrelated to align."
+ ],
+ "interference": "No companion would rescue interpretability. The hypothesis is judged on its own align row, and every companion (revert align-parallel, tune the 17 bound) would also be sub-resolution at the headline and already measured at the row level. The decisive comparison at bs=32 (kernel A vs _align_parallel) needs no extra run beyond a prepare-time CUDA-event timing of both engines at T=17/24/32, printed in the log. LESSONS warns that prepare timings undercount by 20-25%, but they rank variants correctly. That belongs inside a larger hypothesis, not a standalone check.",
+ "rules_flags": [
+  "No rule issue in the design itself. Shape-only branching, own bound constants per LESSONS 2026-10-25, plain-stream launch and a load_inline build in prepare (the earlier build took 41 s, well under 300 s) are all fine.",
+  "The self-check must not spawn a child process (LESSONS 2026-10-25: starting processes is statically rejected). The brief's in-process byte-compare is fine. Sync and print after kernel A's first launch so that a fault is attributed."
+ ],
+ "companions": [],
+ "open_questions": [
+  "If the coordinator still wants kernel A on master, the better spec routes each shape to its measured-fastest align: _align_parallel at 17..32 (per align-parallel-from-17-tokens) and kernel A at 33..512. Each gets its own constant, and the result is folded into a larger bs>=17 change rather than spent as its own check.",
+  "Does kernel A at T=32 actually come in under 2.6 us? A prepare-time event timing of kernel A, _align_small and _align_parallel at T in {17, 24, 32} answers this for free in any run that builds kernel A.",
+  "Without PDL, does kernel A keep its 3.2/3.9 us rows? Those rows were measured with PDL on, and the launch-latency share is exactly what PDL hides."
+ ]
+}
