@@ -44,9 +44,18 @@ priority: 2
 kind: primary
 controls_for: null
 review: proceed
-status: queued
+status: running
 review_at: 2026-10-24T183956Z
 review_companions: null
+stage: claimed
+claimed_at: 2026-10-25T003236Z
+base_sha: 5415d32531be94c6b20cde97470e8c1127019215
+base_blob: 108d36e9f2266fc88531dd6ff0329a847c882013
+branch: hyp/muse_moe_w4a16/post-norm-triton-hoisted-decode32
+worktree: .worktrees/muse_moe_w4a16/post-norm-triton-hoisted-decode32
+mode: null
+restack_of: null
+stale_base: null
 ---
 
 # post-norm-triton-hoisted-decode32
