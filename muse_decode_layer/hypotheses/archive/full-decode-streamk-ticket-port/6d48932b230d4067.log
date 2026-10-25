@@ -1,0 +1,92 @@
+[small-t-dense-chain] load_inline compiled in 43.1s
+[splitkv] load_inline compiled in 41.0s
+[sk] building muse_decode_sk_ticket: TORCH_CUDA_ARCH_LIST=9.0a, arch flags ['-gencode=arch=compute_90a,code=sm_90a'], extra -O3 -std=c++20 -lineinfo
+[sk] load_inline compiled in 30.6s
+[small-t-dense-chain] P occupancy (CTAs/SM, NF=1/2/4): [3, 2, 2]; grid 216 CTAs
+[small-t-dense-chain] PDL probe: eager overlap False (-6.1 us), graph overlap True (49.7 us, secondary waited 50.3 us) -> pdl=1
+[small-t-dense-chain] P timing T=1 pdl=0 20.9 us (3.61 TB/s) pdl=1 20.7 us (3.65 TB/s)
+[small-t-dense-chain] P timing T=8 pdl=0 22.1 us (3.41 TB/s) pdl=1 21.9 us (3.45 TB/s)
+[small-t-dense-chain] P timing T=32 pdl=0 26.4 us (2.86 TB/s) pdl=1 26.1 us (2.90 TB/s)
+[small-t-dense-chain] ON pdl=1 compile 43.1s max errs ei 1.28e-04 logit 2.86e-06 xn 4.04e-05 w 0.00e+00 y 0.00e+00 graph 0.00e+00: PATH CHOSEN = DENSE-CHAIN at T <= 32, MASTER above
+[align-parallel-large-t] ON cases=18 mismatches=0
+[splitkv] self-check kernel A (splitkv_attn) ok, B=5 grid=device
+[splitkv] self-check kernel B (splitkv_combine) ok, B=5
+[splitkv] self-check B=5 kv_scale=1.0 grid=device: rel L2 1.67e-03, finite True
+[splitkv] self-check kernel A (splitkv_attn) ok, B=5 grid=3
+[splitkv] self-check kernel B (splitkv_combine) ok, B=5
+[splitkv] self-check B=5 kv_scale=0.25 grid=3: rel L2 1.66e-03, finite True
+[splitkv] self-check kernel A (splitkv_attn) ok, B=5 grid=3
+[splitkv] self-check kernel B (splitkv_combine) ok, B=5
+[splitkv] self-check B=5 kv_scale=1.0 grid=3: rel L2 1.69e-03, finite True
+[splitkv] self-check kernel A (splitkv_attn) ok, B=33 grid=device
+[splitkv] self-check kernel B (splitkv_combine) ok, B=33
+[splitkv] self-check B=33 kv_scale=1.0 grid=device: rel L2 1.63e-03, finite True
+[splitkv] ON: self-check passed: CUDA split-KV path on full decode, 1 < batch <= 64
+[sk] device capability (9, 0), NVIDIA H200, 132 SMs
+[sk] splitkv_attn_sk_kernel<4 stages, single-level ticket>: binaryVersion 90, ptxVersion 90, regs 119, local 0 B, dyn smem 95264 B, 2 CTAs/SM
+[sk] canary B=2 short: launching splitkv_attn_sk_kernel<4 stages, single-level ticket> B=2 grid 264
+[sk] canary B=2 short: splitkv_attn_sk_kernel returned
+[sk] canary B=2 short: rel L2 1.61e-03, finite True -> ok
+[sk] B=2 one request spans every CTA, grid 7: launching splitkv_attn_sk_kernel<4 stages, single-level ticket> B=2 grid 7
+[sk] B=2 one request spans every CTA, grid 7: splitkv_attn_sk_kernel returned
+[sk] B=2 one request spans every CTA, grid 7: rel L2 1.63e-03, finite True -> ok
+[sk] B=2 uniform kv 0.25 grid device: launching splitkv_attn_sk_kernel<4 stages, single-level ticket> B=2 grid 264
+[sk] B=2 uniform kv 0.25 grid device: splitkv_attn_sk_kernel returned
+[sk] B=2 uniform kv 0.25 grid device: rel L2 1.64e-03, finite True -> ok
+[sk] B=5 mixed grid device: launching splitkv_attn_sk_kernel<4 stages, single-level ticket> B=5 grid 264
+[sk] B=5 mixed grid device: splitkv_attn_sk_kernel returned
+[sk] B=5 mixed grid device: rel L2 1.64e-03, finite True -> ok
+[sk] B=5 mixed kv 0.25 grid 3: launching splitkv_attn_sk_kernel<4 stages, single-level ticket> B=5 grid 3
+[sk] B=5 mixed kv 0.25 grid 3: splitkv_attn_sk_kernel returned
+[sk] B=5 mixed kv 0.25 grid 3: rel L2 1.65e-03, finite True -> ok
+[sk] B=16 tails (seq%64 in 1..7, <64) grid device: launching splitkv_attn_sk_kernel<4 stages, single-level ticket> B=16 grid 264
+[sk] B=16 tails (seq%64 in 1..7, <64) grid device: splitkv_attn_sk_kernel returned
+[sk] B=16 tails (seq%64 in 1..7, <64) grid device: rel L2 1.62e-03, finite True -> ok
+[sk] B=16 tails kv 0.25 grid 3: launching splitkv_attn_sk_kernel<4 stages, single-level ticket> B=16 grid 3
+[sk] B=16 tails kv 0.25 grid 3: splitkv_attn_sk_kernel returned
+[sk] B=16 tails kv 0.25 grid 3: rel L2 1.66e-03, finite True -> ok
+[sk] B=16 tails grid 40: launching splitkv_attn_sk_kernel<4 stages, single-level ticket> B=16 grid 40
+[sk] B=16 tails grid 40: splitkv_attn_sk_kernel returned
+[sk] B=16 tails grid 40: rel L2 1.68e-03, finite True -> ok
+[sk] B=16 agentic ctx 8000 grid device: launching splitkv_attn_sk_kernel<4 stages, single-level ticket> B=16 grid 264
+[sk] B=16 agentic ctx 8000 grid device: splitkv_attn_sk_kernel returned
+[sk] B=16 agentic ctx 8000 grid device: rel L2 1.65e-03, finite True -> ok
+[sk] B=16 uniform 5000 kv 0.25 grid device: launching splitkv_attn_sk_kernel<4 stages, single-level ticket> B=16 grid 264
+[sk] B=16 uniform 5000 kv 0.25 grid device: splitkv_attn_sk_kernel returned
+[sk] B=16 uniform 5000 kv 0.25 grid device: rel L2 1.64e-03, finite True -> ok
+[sk] B=32 agentic ctx 8000 kv 0.25 grid device: launching splitkv_attn_sk_kernel<4 stages, single-level ticket> B=32 grid 264
+[sk] B=32 agentic ctx 8000 kv 0.25 grid device: splitkv_attn_sk_kernel returned
+[sk] B=32 agentic ctx 8000 kv 0.25 grid device: rel L2 1.65e-03, finite True -> ok
+[sk] B=32 agentic ctx 3000 grid 7: launching splitkv_attn_sk_kernel<4 stages, single-level ticket> B=32 grid 7
+[sk] B=32 agentic ctx 3000 grid 7: splitkv_attn_sk_kernel returned
+[sk] B=32 agentic ctx 3000 grid 7: rel L2 1.65e-03, finite True -> ok
+[sk] B=33 ragged grid device: launching splitkv_attn_sk_kernel<4 stages, single-level ticket> B=33 grid 264
+[sk] B=33 ragged grid device: splitkv_attn_sk_kernel returned
+[sk] B=33 ragged grid device: rel L2 1.65e-03, finite True -> ok
+[sk] B=33 uniform grid device: launching splitkv_attn_sk_kernel<4 stages, single-level ticket> B=33 grid 264
+[sk] B=33 uniform grid device: splitkv_attn_sk_kernel returned
+[sk] B=33 uniform grid device: rel L2 1.68e-03, finite True -> ok
+[sk] replay: eager warm-up of the launch on a side stream
+[sk] replay: warm-up returned
+[sk] replay: capturing the launch
+[sk] replay B=16 1: launching graph (splitkv_attn_sk_kernel)
+[sk] replay B=16 1: rel L2 1.66e-03, finite True -> ok
+[sk] replay B=16 2: launching graph (splitkv_attn_sk_kernel)
+[sk] replay B=16 2: rel L2 1.66e-03, finite True -> ok
+[sk] replay: eager warm-up of the launch on a side stream
+[sk] replay: warm-up returned
+[sk] replay: capturing the launch
+[sk] replay B=16 1: launching graph (splitkv_attn_sk_kernel)
+[sk] replay B=16 1: rel L2 1.66e-03, finite True -> ok
+[sk] replay B=16 2: launching graph (splitkv_attn_sk_kernel)
+[sk] replay B=16 2: rel L2 1.66e-03, finite True -> ok
+[sk] tickets after the self-check: sum 0
+[sk] selector B=16: launching splitkv_attn + splitkv_combine (incumbent), then splitkv_attn_sk_kernel, ctx 80000 agentic ragged lens 74847..85272
+[sk] selector B=16: both returned
+[sk] selector B=16: incumbent A+B 120.6 us (2.70 TB/s), stream-K 107.6 us (3.02 TB/s), ratio new/old 0.892, rel L2 vs incumbent 1.12e-04
+PATH CHOSEN: full decode attention batch 16: stream-K single-level ticket (muse_decode_sk_ticket) (new 107.6 us vs incumbent 120.6 us)
+[sk] selector B=32: launching splitkv_attn + splitkv_combine (incumbent), then splitkv_attn_sk_kernel, ctx 80000 agentic ragged lens 74762..85881
+[sk] selector B=32: both returned
+[sk] selector B=32: incumbent A+B 257.4 us (2.56 TB/s), stream-K 222.8 us (2.96 TB/s), ratio new/old 0.866, rel L2 vs incumbent 1.95e-04
+PATH CHOSEN: full decode attention batch 32: stream-K single-level ticket (muse_decode_sk_ticket) (new 222.8 us vs incumbent 257.4 us)
+[sk] ON=True choice {16: True, 32: True}: batch <= 23 follows 16, batch >= 24 follows 32 (gated range 1 < batch <= 64)

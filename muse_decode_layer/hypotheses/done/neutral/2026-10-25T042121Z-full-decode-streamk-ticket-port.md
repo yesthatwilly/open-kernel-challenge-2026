@@ -55,10 +55,10 @@ controls_for: null
 rewrite_stage: 3
 replaces: splitkv_attn_kernel + splitkv_combine_kernel on full decode, 1 < batch <= 64
 review: proceed
-status: running
+status: done
 review_at: 2026-10-25T042453Z
 review_companions: null
-stage: dispatched
+stage: harvested
 claimed_at: 2026-10-25T042453Z
 base_sha: f6e653b6cc358b21c20086af784b37d069a021a5
 base_blob: c9067b8201f2480c64910c4a71098df7ce616f73
@@ -77,6 +77,13 @@ attempt_file: 2026-10-25T043330Z-check-full-decode-streamk-ticket-port.md
 prepared_at: 2026-10-25T043330Z
 job: 6d48932b230d4067
 dispatched_at: 2026-10-25T043340Z
+outcome: neutral
+verdict_detail: within-ci
+speedup: 1.277468227859758
+speedup_ci: [1.2583062044418616, 1.2966302512776542]
+harvested_at: 2026-10-25T053800Z
+best_at_harvest: 1.2855726646854595
+promotion: null
 ---
 
 # full-decode-streamk-ticket-port
@@ -183,3 +190,36 @@ Audited 2026-10-25 by an opus subagent (read-only emulation, no GPU). **Verdict:
 - kernel_fn has no prints, try/except, syncs or per-call state. The only per-call allocation is the bf16 out, as on master. okc_lint: OK with warnings (all prepare-only). py_compile OK.
 
 Residual risk: the first judge compile and launch of the new module (2 CTAs/SM fit unverified), and a ~2% eager-timing bias in the selector that only matters if the true gain is under ~2%.
+
+## Result
+
+- job `6d48932b230d4067` (check), status done, passed True, tests 13/13
+- speedup 1.2775x, 95% CI [1.2583, 1.2966], score 17707.133145610635 µs vs SGLang 22620.3 µs
+- best at harvest: {"speedup": 1.2855726646854595, "ci": [1.2662890747151776, 1.3048562546557412], "job": "7a9f5de5aecc4aba"}; base result: muse_decode_layer/hypotheses/done/neutral/full-decode-splitkv-restack-on-pdl.result.json
+- **outcome: neutral** (within-ci)
+- files: `muse_decode_layer/hypotheses/done/neutral/full-decode-streamk-ticket-port.result.json`, `muse_decode_layer/hypotheses/done/neutral/full-decode-streamk-ticket-port.patch`; branch `hyp/muse_decode_layer/full-decode-streamk-ticket-port`
+
+## Attribution
+
+| shape | w | base µs | hyp µs | delta | verdict |
+|---|---|---|---|---|---|
+| batch=1 ctx=80000 dist=soft layer=sliding load=decode_1 page=1 repeats=60 | 46 | 126.15 | 126.54 | 0.9838 | flat |
+| batch=1 ctx=80000 dist=soft layer=full load=decode_1 page=1 repeats=60 | 16 | 142.7 | 143.8 | 0.9859 | flat |
+| batch=16 ctx=80000 dist=soft layer=sliding load=decode_16 page=1 spread=agentic | 46 | 209.82 | 204.88 | 0.9988 | flat |
+| batch=16 ctx=80000 dist=soft layer=full load=decode_16 page=1 spread=agentic | 16 | 306.72 | 296.35 | 1.0358 | gained |
+| batch=32 ctx=80000 dist=soft layer=sliding load=decode_32 page=1 spread=agentic | 46 | 242.33 | 237.43 | 1.0009 | flat |
+| batch=32 ctx=80000 dist=soft layer=full load=decode_32 page=1 spread=agentic | 16 | 479.6 | 437.49 | 1.072 | gained |
+| batch=1 ctx=80000 dist=soft layer=sliding load=verify_1 page=1 q_len=8 | 46 | 187.97 | 181.59 | 1.0065 | flat |
+| batch=1 ctx=80000 dist=soft layer=full load=verify_1 page=1 q_len=8 | 16 | 201.51 | 204.62 | 0.9948 | flat |
+| batch=16 ctx=80000 dist=soft layer=sliding load=verify_16 page=1 q_len=8 spread=agentic | 46 | 420.42 | 427.04 | 1.0199 | flat |
+| batch=16 ctx=80000 dist=soft layer=full load=verify_16 page=1 q_len=8 spread=agentic | 16 | 564.2 | 565.43 | 0.9983 | flat |
+| batch=32 ctx=80000 dist=soft layer=sliding load=verify_32 page=1 q_len=8 spread=agentic | 46 | 600.82 | 614.51 | 1.0069 | flat |
+| batch=32 ctx=80000 dist=soft layer=full load=verify_32 page=1 q_len=8 spread=agentic | 16 | 864.67 | 878.72 | 0.9992 | flat |
+
+gained on full decode_16, decode_32. Expected hit: 5/5. Noise ±1.5%.
+
+## Follow-ups
+
+- rewrite stage 3 of `splitkv_attn_kernel + splitkv_combine_kernel on full decode, 1 < batch <= 64`: read the replaced kernels' own us per shape (profile top_kernels) against the incumbent and the floor, and check which Milestone it reached. The next stage is `/hypothesize muse_decode_layer "<what to fix or tune>" --kind rewrite --depends-on full-decode-streamk-ticket-port --stage 4`; a slow or failed first cut is the expected start, not a do-not-retry.
+- within-ci: the change is not proven either way; a stacked hypothesis (`depends_on: full-decode-streamk-ticket-port`) that adds a further change in the same area is the only way to learn more (identical code is never re-run).
+
