@@ -102,7 +102,8 @@ controls_for: null
 rewrite_stage: 1
 replaces: Marlin w13 + act_and_mul + Marlin w2 at 128 <= T <= 512 (verify_16 T=128, verify_32 T=256), both layers
 review: required
-status: queued
+status: hold
+hold_reason: "superseded: decode's own selector switched rega OFF at T=128 (384.8 vs Marlin 327.2 us) and T=256 (454.6 vs 440.0) on 2026-10-25; dead in decode (decode minter, 2026-10-25)"
 ---
 
 # moe-rega-bucket-gate-port-t128-t512

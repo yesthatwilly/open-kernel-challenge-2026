@@ -345,3 +345,4 @@ overrides of a reviewer) with the reason, newest last. Written by `churn.py note
 - 2026-10-25T212148Z `muse_attention_decode` **sliding-decode-paired-kvhead-rows-control-unpaired-s8**: retired: retire per the attention DIAGNOSIS 2026-10-25
 - 2026-10-25T212148Z `muse_attention_decode` **sliding-verify-cuda-streamk-window**: retired: mma.sync verify design: attention DIAGNOSIS Do-not-try (0.48-0.82x across four designs)
 - 2026-10-25T212148Z `muse_attention_decode` **full-verify1-cuda-streamk-batch1**: retired: mma.sync verify design: attention DIAGNOSIS Do-not-try
+- 2026-10-25T213034Z `muse_decode_layer` **moe-rega-bucket-gate-port-t128-t512**: hold: superseded: decode's own selector switched rega OFF at T=128 (384.8 vs Marlin 327.2 us) and T=256 (454.6 vs 440.0) on 2026-10-25; dead in decode (decode minter, 2026-10-25)
