@@ -1,6 +1,6 @@
 # muse_prefill_layer hypotheses
 
-Regenerated 2026-10-25T010422Z. Best: 1.0744x [1.0583,1.0905] job `502f2eab95164781` (submit)
+Regenerated 2026-10-25T010545Z. Best: 1.0744x [1.0583,1.0905] job `502f2eab95164781` (submit)
 
 | created | slug | kind | area | where | outcome | speedup | CI | job | mode | promotion | review | expected hit |
 |---|---|---|---|---|---|---|---|---|---|---|---|---|
@@ -25,7 +25,7 @@ Regenerated 2026-10-25T010422Z. Best: 1.0744x [1.0583,1.0905] job `502f2eab95164
 | 2026-10-24T140058Z | experts-triton-nvfp4-packed-asm-dequant | rewrite | w13 marlin + w2 marlin (Triton NVFP4 engine, stage 5: packed inline-PTX dequant) | done/neutral | neutral | 1.0556 | [1.040,1.071] | 49ff8248b96547de | submit |  | proceed | 0/2 |
 | 2026-10-24T140119Z | experts-triton-w13-fused-silu-epilogue | primary | silu-mul (fused into the w13 Triton NVFP4 GEMM epilogue, T > 4096) | done/neutral | neutral | 1.0525 | [1.037,1.068] | 108231906a30407e | submit |  | proceed | 0/2 |
 | 2026-10-24T140133Z | experts-triton-packed-dequant-turn4 | rewrite | w13 marlin + w2 marlin (Triton NVFP4 engine, stage 6: take over turn_4) | done/neutral | neutral | 1.0522 | [1.036,1.068] | ce3cc1a22a244ec7 | check |  | proceed | 0/3 |
-| 2026-10-24T140154Z | experts-triton-turn1-blockt32-stream | rewrite | w13 marlin + w2 marlin (Triton NVFP4 engine, stage 7: take over turn_1 with a weight-stream config) | queue | queued |  |  |  |  |  | proceed |  |
+| 2026-10-24T140154Z | experts-triton-turn1-blockt32-stream | rewrite | w13 marlin + w2 marlin (Triton NVFP4 engine, stage 7: take over turn_1 with a weight-stream config) | running | running |  |  |  |  |  | proceed |  |
 | 2026-10-24T165318Z | dense-gemm-cublaslt-algo-pick-prefill-t | primary | dense bf16 GEMM dispatch (qkv, o, pooler, unpooler; cuBLASLt algo selection) | queue | hold |  |  |  |  |  | proceed |  |
 | 2026-10-24T165335Z | silu-mul-triton-local-rows-marlin-turn | primary | silu-mul (Marlin path, T <= 4096) | done/neutral | neutral | 1.0512 | [1.035,1.067] | b2259479e57e4196 | check |  | proceed | 1/3 |
 | 2026-10-24T165356Z | norm-residual-boundaries-triton-row-kernel | primary | attention boundary + FFN boundary (FusedPostNormResidualPreNorm x2) | queue | hold |  |  |  |  |  | proceed |  |

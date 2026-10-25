@@ -1,6 +1,6 @@
 # muse_prefill_layer findings
 
-Regenerated 2026-10-25T010422Z by `churn.py index`. Read this before writing a hypothesis for muse_prefill_layer.
+Regenerated 2026-10-25T010545Z by `churn.py index`. Read this before writing a hypothesis for muse_prefill_layer.
 
 ## Current best
 
@@ -143,7 +143,6 @@ Where the time goes (per scored shape, top kernels):
 - queue: experts-marlin-block-m-48-turn4 [w13 marlin + w2 marlin (block_size_m pick)] p3 hold
 - queue: router-triton-hilo-splitk-turn [router GEMM] p3 hold
 - queue: router-pooler-concat-gemm-turn [router GEMM + pooler GEMM (one concatenated GEMM, no side stream)] p5 hold
-- queue: experts-triton-turn1-blockt32-stream [w13 marlin + w2 marlin (Triton NVFP4 engine, stage 7: take over turn_1 with a weight-stream config)] p2 queued
 - queue: dense-gemm-cublaslt-algo-pick-prefill-t [dense bf16 GEMM dispatch (qkv, o, pooler, unpooler; cuBLASLt algo selection)] p2 hold
 - queue: norm-residual-boundaries-triton-row-kernel [attention boundary + FFN boundary (FusedPostNormResidualPreNorm x2)] p4 hold
 - queue: first-turn-moe-dead-work-stack [MoE dispatch + silu-mul + Triton NVFP4 grid at T > 4096 (first_turn dead-work removal, combined)] p3 queued
@@ -154,4 +153,5 @@ Where the time goes (per scored shape, top kernels):
 - queue: experts-triton-first-turn-unmasked-loads-l2-hints [w13 marlin + w2 marlin (Triton NVFP4 engine at T > 4096: K-loop load predication and L2 eviction hints)] p4 queued
 - queue: attn-full-prefill-cuda-fp8-wgmma-hard-gate [FA3 call on full-attention layers at page_size 1 (CUDA sm_90a FP8 wgmma flash attention, stage 1b: fix of attn-full-prefill-cuda-fp8-exp-offload with build fix, hard timing gate, no exp offload)] p2 hold
 - queue: experts-cuda-wgmma-grouped-gemm-remeasure-sm90a [w13 + w2 expert GEMMs at T > 4096 (CUDA sm_90a wgmma W4A16 grouped GEMM, stage 1b: re-measure of experts-cuda-wgmma-mixed-input-grouped-gemm with the build fix, on the new master)] p1 hold
+- running: experts-triton-turn1-blockt32-stream [w13 marlin + w2 marlin (Triton NVFP4 engine, stage 7: take over turn_1 with a weight-stream config)] p2 running
 - running: experts-triton-persistent-grid-first-turn [w13 marlin + w2 marlin (Triton NVFP4 engine at T > 4096: persistent grid, no dead CTAs)] p1 running
