@@ -79,9 +79,18 @@ priority: 2
 kind: primary
 controls_for: null
 review: proceed
-status: queued
+status: running
 review_at: 2026-10-25T152518Z
 review_companions: null
+stage: claimed
+claimed_at: 2026-10-25T152518Z
+base_sha: 1b7b960db97884fe5ecfbd4dd9b87b1265a6cac3
+base_blob: a2fe2a75893c60d4f68cf94fcce8ce8f9b708a71
+branch: hyp/muse_prefill_layer/experts-rega-producer-scale-expand-all-t
+worktree: .worktrees/muse_prefill_layer/experts-rega-producer-scale-expand-all-t
+mode: null
+restack_of: null
+stale_base: null
 ---
 
 # experts-rega-producer-scale-expand-all-t
