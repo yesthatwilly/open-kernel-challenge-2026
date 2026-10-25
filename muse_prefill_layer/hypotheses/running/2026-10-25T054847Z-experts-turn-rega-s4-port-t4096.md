@@ -84,7 +84,7 @@ review: proceed
 status: running
 review_at: 2026-10-25T111120Z
 review_companions: null
-stage: implemented
+stage: dispatched
 claimed_at: 2026-10-25T111120Z
 base_sha: c6fe58c3ab272abce5f98a2a19f884600fd2f6a8
 base_blob: f2d91dd181aeb44de20d2eed62ab7e564f2b181f
@@ -101,6 +101,8 @@ submission_blob: 712edc5ea5be2dde8f558a016d0877b285340ee4
 lint_warnings: 51
 attempt_file: 2026-10-25T112615Z-check-experts-turn-rega-s4-port-t4096.md
 prepared_at: 2026-10-25T112615Z
+job: 2910b2fb4b744865
+dispatched_at: 2026-10-25T112626Z
 ---
 
 # experts-turn-rega-s4-port-t4096
