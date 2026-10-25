@@ -75,10 +75,10 @@ controls_for: null
 rewrite_stage: 2
 replaces: Triton swap-AB m<=32 kernels (bf16-m32-swapab-wgmma-triton) on pooler m 1-32, unpooler-full m 16/32, qkv_gate m 1-32
 review: proceed
-status: running
+status: done
 review_at: 2026-10-25T001525Z
 review_companions: null
-stage: dispatched
+stage: harvested
 claimed_at: 2026-10-25T001525Z
 base_sha: 7895e56373c79d74ba78b7c0e7146755b118ce2c
 base_blob: a34e409b452e9a6e5f7ee3612486d30a989832f2
@@ -97,6 +97,13 @@ attempt_file: 2026-10-25T002149Z-check-bf16-lossless-exp4-occupancy-dequant-once
 prepared_at: 2026-10-25T002150Z
 job: f1024212dd2f49f3
 dispatched_at: 2026-10-25T002202Z
+outcome: neutral
+verdict_detail: beats-base-not-best
+speedup: 0.8869580788126001
+speedup_ci: [0.8736537076304112, 0.9002624499947891]
+harvested_at: 2026-10-25T010412Z
+best_at_harvest: 1.2215006063849365
+promotion: null
 ---
 
 # bf16-lossless-exp4-occupancy-dequant-once-stage2
@@ -270,3 +277,54 @@ What was checked:
 - **Rules.** kernel_fn is unchanged apart from its call graph: one launch and an output `torch.empty`. There are no new imports or processes, nothing derived from `data` is cached, and the weights stay bf16, repacked losslessly in prepare.
 
 Residual risk: the kernel was never compiled, so build or register-pressure surprises at NT=32 stay possible. Any such failure lands on master with a PATH CHOSEN line. On performance, 2 warps per SMSP may still not hide enough latency to reach the 19 us kill gate.
+
+## Result
+
+- job `f1024212dd2f49f3` (check), status done, passed True, tests 9/9
+- speedup 0.8870x, 95% CI [0.8737, 0.9003], score 5446.480634650908 µs vs SGLang 4830.8 µs
+- best at harvest: {"speedup": 1.2215006063849365, "ci": [1.2031780972891624, 1.2398231154807104], "job": "60b20fd0bf924267"}; base result: muse_bf16_proj/hypotheses/done/regression/bf16-lossless-exp4-weight-stream-rewrite.result.json
+- **outcome: neutral** (beats-base-not-best)
+- files: `muse_bf16_proj/hypotheses/done/neutral/bf16-lossless-exp4-occupancy-dequant-once-stage2.result.json`, `muse_bf16_proj/hypotheses/done/neutral/bf16-lossless-exp4-occupancy-dequant-once-stage2.patch`; branch `hyp/muse_bf16_proj/bf16-lossless-exp4-occupancy-dequant-once-stage2`
+
+## Attribution
+
+| shape | w | base µs | hyp µs | delta | verdict |
+|---|---|---|---|---|---|
+| layer=qkv_gate load=decode_1 m=1 | 62 | 30.19 | 22.58 | 1.3371 | gained |
+| layer=o load=decode_1 m=1 | 62 | 15.46 | 6.46 | 2.3649 | gained |
+| layer=pooler load=decode_1 m=1 | 62 | 41.49 | 31.23 | 1.3486 | gained |
+| layer=unpooler load=decode_1 m=1 | 62 | 10.98 | 6.09 | 1.7953 | gained |
+| layer=router load=decode_1 m=1 | 62 | 6.26 | 5.92 | 1.0195 | flat |
+| layer=qkv_gate load=decode_16 m=16 | 62 | 33.86 | 25.65 | 1.284 | gained |
+| layer=o load=decode_16 m=16 | 62 | 15.29 | 6.66 | 2.4856 | gained |
+| layer=pooler load=decode_16 m=16 | 62 | 44.82 | 34.6 | 1.2846 | gained |
+| layer=unpooler load=decode_16 m=16 | 62 | 41.58 | 32.15 | 1.3112 | gained |
+| layer=router load=decode_16 m=16 | 62 | 5.85 | 5.82 | 0.9973 | flat |
+| layer=qkv_gate load=decode_32 m=32 | 62 | 38.7 | 28.77 | 1.336 | gained |
+| layer=o load=decode_32 m=32 | 62 | 16.58 | 6.32 | 2.69 | gained |
+| layer=pooler load=decode_32 m=32 | 62 | 51.05 | 38.22 | 1.3465 | gained |
+| layer=unpooler load=decode_32 m=32 | 62 | 44.83 | 34.42 | 1.3316 | gained |
+| layer=router load=decode_32 m=32 | 62 | 6.59 | 6.47 | 1.0125 | flat |
+| layer=qkv_gate load=verify_1 m=8 | 62 | 31.59 | 23.43 | 1.3319 | gained |
+| layer=o load=verify_1 m=8 | 62 | 15.56 | 6.65 | 2.4535 | gained |
+| layer=pooler load=verify_1 m=8 | 62 | 42.11 | 31.08 | 1.3693 | gained |
+| layer=unpooler load=verify_1 m=8 | 62 | 11.49 | 5.91 | 1.939 | gained |
+| layer=router load=verify_1 m=8 | 62 | 6.22 | 5.83 | 1.032 | gained |
+| layer=qkv_gate load=verify_16 m=128 | 62 | 17.24 | 16.98 | 0.9988 | flat |
+| layer=o load=verify_16 m=128 | 62 | 7.5 | 7.59 | 1.0019 | flat |
+| layer=pooler load=verify_16 m=128 | 62 | 25.57 | 26.04 | 0.9768 | flat |
+| layer=unpooler load=verify_16 m=128 | 62 | 20.1 | 20.45 | 0.9886 | flat |
+| layer=router load=verify_16 m=128 | 62 | 7.96 | 7.57 | 1.0204 | flat |
+| layer=qkv_gate load=verify_32 m=256 | 62 | 19.57 | 19.93 | 1.0138 | flat |
+| layer=o load=verify_32 m=256 | 62 | 9.56 | 9.73 | 0.9913 | flat |
+| layer=pooler load=verify_32 m=256 | 62 | 31.12 | 31.22 | 0.9766 | flat |
+| layer=unpooler load=verify_32 m=256 | 62 | 24.74 | 24.2 | 1.0078 | flat |
+| layer=router load=verify_32 m=256 | 62 | 9.58 | 9.54 | 1.0171 | flat |
+
+gained on qkv_gate decode_1, decode_16, decode_32, verify_1; o decode_1, decode_16, decode_32, verify_1; pooler decode_1, decode_16, decode_32, verify_1; unpooler decode_1, decode_16, decode_32, verify_1; router verify_1. Expected hit: 13/13. Noise ±1.5%.
+
+## Follow-ups
+
+- rewrite stage 2 of `Triton swap-AB m<=32 kernels (bf16-m32-swapab-wgmma-triton) on pooler m 1-32, unpooler-full m 16/32, qkv_gate m 1-32`: read the replaced kernels' own us per shape (profile top_kernels) against the incumbent and the floor, and check which Milestone it reached. The next stage is `/hypothesize muse_bf16_proj "<what to fix or tune>" --kind rewrite --depends-on bf16-lossless-exp4-occupancy-dequant-once-stage2 --stage 3`; a slow or failed first cut is the expected start, not a do-not-retry.
+- beats-base-not-best: the change is not proven either way; a stacked hypothesis (`depends_on: bf16-lossless-exp4-occupancy-dequant-once-stage2`) that adds a further change in the same area is the only way to learn more (identical code is never re-run).
+

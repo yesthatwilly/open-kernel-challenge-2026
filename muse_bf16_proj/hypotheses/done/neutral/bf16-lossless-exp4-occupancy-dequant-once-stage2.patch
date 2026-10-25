@@ -1,0 +1,434 @@
+diff --git a/muse_bf16_proj/submission.py b/muse_bf16_proj/submission.py
+index a34e409..12be4cd 100644
+--- a/muse_bf16_proj/submission.py
++++ b/muse_bf16_proj/submission.py
+@@ -37,7 +37,8 @@ can emit wgmma m64n32k16; pooler split-K 2, qkv_gate split-K 4 (same ticket redu
+ workspace), unpooler / o full K. Every other shape keeps its path above.
+ 
+ Lossless-compressed weight stream at 1 <= m <= 32 (hypothesis bf16-lossless-exp4-weight-stream-
+-rewrite, stage 1): qkv_gate, o, pooler and unpooler (full and its n == 1024 slice) run ONE CUDA
++rewrite, stage 1; stage 2 bf16-lossless-exp4-occupancy-dequant-once-stage2: 8 warps/CTA, o and
++the unpooler slice back on master): qkv_gate, pooler and the full unpooler run ONE CUDA
+ kernel (_lossless_swapab_kernel<NT>, load_inline at import) over a copy of the bf16 weight
+ compressed losslessly in prepare(): per 64-K group a max-exponent byte, per element sign|mantissa
+ (8 bits) and a 4-bit exponent offset, escape groups as raw bf16 in a side table (~12.2 bits per
+@@ -687,32 +688,40 @@ def _swapab_prepare(state: dict) -> None:
+ # subtraction never borrows across the halves.
+ #
+ # KERNEL (_lossless_swapab_kernel<NT>, NT = 8 / 16 / 32 token columns): swap-AB mma.sync
+-# m16n8k16 bf16 -> fp32, the dequantized weight as A (16 rows per warp, 4 warps = 64 rows per CTA),
+-# x^T as B through ldmatrix from an XOR-swizzled smem tile (tokens >= m zero-filled). A cp.async.cg
+-# ring of 8 stages, each 128 K = 12288 B compressed weight + 128 B headers + NT x 256 B of x.
+-# Work items (one wave, 1 CTA/SM): pooler 64 x split 2, unpooler 128 x 1, o 128 x 1, qkv_gate 36 x 3
+-# (K stages 21/21/22), unpooler slice (n == 1024, m <= 8) 16 x 8. Split-K uses the gemv skeleton's
+-# ticket reduce on this path's own workspace / counters.
++# m16n8k16 bf16 -> fp32, the dequantized weight as A, x^T as B through ldmatrix from an XOR-swizzled
++# smem tile (tokens >= m zero-filled). A cp.async.cg ring of 8 stages, each 128 K = 12288 B
++# compressed weight + 128 B headers + NT x 256 B of x.
++# Stage 2 (hypothesis bf16-lossless-exp4-occupancy-dequant-once-stage2): 8 warps per CTA (was 4),
++# warp w owns 16-row tile w >> 1 and 64-K group w & 1 of every stage, so the warp pair of a tile
++# splits each K-stage and their fp32 accumulators are summed through smem (half 0 + half 1) before
++# the epilogue. Same grid as stage 1, so 8 warps/SM are actually resident (1 CTA/SM, one wave).
++# Each warp prefetches the next stage's group (smem -> registers) before this stage's MMAs, and
++# decodes k16 step s + 1's A fragment before issuing step s's MMAs (A decoded once per k16 step and
++# reused for all NT / 8 B fragments, as in stage 1).
++# Work items (one wave, 1 CTA/SM): pooler 64 x split 2, unpooler-full 128 x 1, qkv_gate 36 x 3
++# (K stages 21/21/22). o and the unpooler slice (n == 1024) stay on master's paths (stage 2 scope
++# cut). Split-K uses the gemv skeleton's ticket reduce on this path's own workspace / counters.
+ LL_GROUP_K = 64
+ LL_CHUNK = 1536
+ LL_HDR = 16
+ LL_MAX_M = 32
+ LL_STAGES = 8              # must match STAGES in the CUDA source
++LL_WARPS = 8               # must match THREADS / 32 in the CUDA source
++LL_FLUSH_BYTES = 256 << 20 # > H200 L2 (50 MB): cold-L2 diagnostic flush, prepare() only
+ LL_MAX_RATIO = 0.80        # compressed bytes / raw bytes, else the layer keeps master
+ LL_MAX_ESC = 0.025         # escape-group fraction, else the layer keeps master
+ LL_WEIGHTS = {             # weight name -> (N, K) it must have
+     "qkv_gate": (2304, 8192),
+-    "o":        (8192, 1024),
+     "pooler":   (4096, 8192),
+     "unpooler": (8192, 4096),
+ }
+-# route -> (weight name, N, K, SPLIT_K, max m); static, from cfg layer / n only.
++# route -> (weight name, N, K, SPLIT_K, max m); static, from cfg layer / n only. Stage 2 scope:
++# o (all m) and the unpooler slice (n == 1024) have no entry, so _ll_route_ok rejects them and they
++# reach master's gates (_unpool_shape_ok / _o_skinny_applies / _swapab_route_ok) unchanged.
+ LL_CFG = {
+     "qkv_gate":       ("qkv_gate", 2304, 8192, 3, LL_MAX_M),
+-    "o":              ("o",        8192, 1024, 1, LL_MAX_M),
+     "pooler":         ("pooler",   4096, 8192, 2, LL_MAX_M),
+     "unpooler":       ("unpooler", 8192, 4096, 1, LL_MAX_M),
+-    "unpooler_slice": ("unpooler", 1024, 4096, 8, 8),
+ }
+ LL_CHECK_MS = (1, 5, 7, 8, 9, 16, 17, 32)
+ 
+@@ -735,7 +744,7 @@ _LL_CUDA = r"""
+ 
+ namespace {
+ 
+-constexpr int THREADS = 128;                 // 4 warps x 16 weight rows
++constexpr int THREADS = 256;                 // 8 warps: 4 row tiles x 2 K-halves (one 64-K group each)
+ constexpr int BLOCK_N = 64;                  // weight rows per CTA
+ constexpr int GROUP_K = 64;                  // codec group
+ constexpr int BLOCK_K = 128;                 // K per pipeline stage = 2 groups
+@@ -743,7 +752,7 @@ constexpr int CHUNK = 1536;                  // compressed bytes per (16-row til
+ constexpr int HDR = 16;                      // header bytes per (16-row tile, group)
+ constexpr int MAXM = 32;                     // workspace rows
+ constexpr int STAGES = 8;
+-constexpr int W_STAGE = 4 * 2 * CHUNK;       // 12288: 4 warps x 2 groups
++constexpr int W_STAGE = 4 * 2 * CHUNK;       // 12288: 4 row tiles x 2 groups
+ constexpr int H_STAGE = 4 * 2 * HDR;         // 128
+ constexpr int X_ROW = BLOCK_K * 2;           // 256 B = 16 chunks of 16 B per token row
+ template <int NT> struct Cfg {
+@@ -824,7 +833,8 @@ __device__ __forceinline__ void decode_step(const Grp& G, int s, int tig, const
+ // out[m, n] bf16 = x[m, k] @ W[:n, k]^T for 1 <= m <= NT, W in the compressed layout above (the
+ // first n / 16 row tiles of it). Grid = (n / 64) * split CTAs: n-tile = blockIdx.x / split,
+ // K-chunk = blockIdx.x % split, covering K stages [s * KS / split, (s + 1) * KS / split) of
+-// KS = k / 128. split > 1: fp32 partials of token rows < m into ws [split, 32, n], one ticket per
++// KS = k / 128. Warp w: row tile w >> 1, 64-K group w & 1 of each stage; the pair is summed in smem.
++// split > 1: fp32 partials of token rows < m into ws [split, 32, n], one ticket per
+ // n-tile in cnt (0 between launches), the CTA drawing ticket split - 1 sums in fixed order 0..split-1,
+ // stores bf16 and resets the counter. No CTA waits on another.
+ template <int NT>
+@@ -835,20 +845,24 @@ _lossless_swapab_kernel(const __nv_bfloat16* __restrict__ x, int64_t stride_x,
+                         __nv_bfloat16* __restrict__ out, int64_t stride_o,
+                         float* __restrict__ ws, int* __restrict__ cnt,
+                         int m, int n, int k, int split) {
++  static_assert(STAGES >= 3, "the next-stage register prefetch needs stage i + 1 landed");
+   extern __shared__ __align__(128) uint8_t smem[];
+   __shared__ int s_last;
+   constexpr int STAGE = Cfg<NT>::STAGE;
++  constexpr int NF = NT / 8;
+   const int tid = threadIdx.x, lane = tid & 31, warp = tid >> 5;
++  const int wt = warp >> 1;   // 16-row tile of this warp (0..3)
++  const int hk = warp & 1;    // 64-K group of each stage this warp owns (0..1)
+   const int ntile = blockIdx.x / split, sidx = blockIdx.x % split;
+   const int n0 = ntile * BLOCK_N;
+   const int KG = k / GROUP_K;
+   const int KS = k / BLOCK_K;
+   const int ks0 = sidx * KS / split, ks1 = (sidx + 1) * KS / split;
+-  const int nsteps = ks1 - ks0;
++  const int nsteps = ks1 - ks0;   // >= 1 (host checks k / BLOCK_K >= split)
+   const int rt0 = ntile * 4;   // first 16-row tile of this CTA
+ 
+-  // One stage: 4 warps x 3072 contiguous compressed bytes (6 chunks of 16 B per thread), 4 x 32 B
+-  // of headers (threads 0..7), NT token rows x 16 chunks of x (NT / 8 per thread).
++  // One stage: 4 tiles x 3072 contiguous compressed bytes (3 chunks of 16 B per thread), 4 x 32 B
++  // of headers (threads 0..7), NT token rows x 16 chunks of x (guarded: NT * 16 may be < THREADS).
+   auto issue = [&](int j) {
+     uint8_t* sw = smem + (j % STAGES) * STAGE;
+     uint8_t* sh = sw + W_STAGE;
+@@ -866,13 +880,16 @@ _lossless_swapab_kernel(const __nv_bfloat16* __restrict__ x, int64_t stride_x,
+       cp_async16(smem_u32(sh + tid * 16), hdr + ((int64_t)(rt0 + w) * KG + g0 + h) * HDR, 16);
+     }
+     const int kel = (ks0 + j) * BLOCK_K;
++    constexpr int XU = (NT * 16 + THREADS - 1) / THREADS;
+ #pragma unroll
+-    for (int u = 0; u < (NT * 16) / THREADS; ++u) {
++    for (int u = 0; u < XU; ++u) {
+       const int q = tid + u * THREADS;
+-      const int row = q >> 4, c = q & 15;
+-      const bool ok = row < m;
+-      const __nv_bfloat16* src = x + (ok ? (int64_t)row * stride_x : (int64_t)0) + kel + c * 8;
+-      cp_async16(smem_u32(sx + row * X_ROW + ((c ^ (row & 7)) << 4)), src, ok ? 16 : 0);
++      if (q < NT * 16) {
++        const int row = q >> 4, c = q & 15;
++        const bool ok = row < m;
++        const __nv_bfloat16* src = x + (ok ? (int64_t)row * stride_x : (int64_t)0) + kel + c * 8;
++        cp_async16(smem_u32(sx + row * X_ROW + ((c ^ (row & 7)) << 4)), src, ok ? 16 : 0);
++      }
+     }
+   };
+ 
+@@ -882,75 +899,105 @@ _lossless_swapab_kernel(const __nv_bfloat16* __restrict__ x, int64_t stride_x,
+     cp_commit();  // always, so the group count stays uniform
+   }
+ 
+-  float acc[NT / 8][4];
++  float acc[NF][4];
+ #pragma unroll
+-  for (int f = 0; f < NT / 8; ++f) { acc[f][0] = 0.f; acc[f][1] = 0.f; acc[f][2] = 0.f; acc[f][3] = 0.f; }
++  for (int f = 0; f < NF; ++f) { acc[f][0] = 0.f; acc[f][1] = 0.f; acc[f][2] = 0.f; acc[f][3] = 0.f; }
+   const int g = lane >> 2, tig = lane & 3;
+   const int xr = lane & 7;    // ldmatrix row (token within an 8-token fragment) of this lane
+   const int xq = lane >> 3;   // ldmatrix matrix index = 16 B chunk within a 32-K slice
++  const int w_off = wt * 3072 + hk * CHUNK;     // this warp's chunk within a stage
++  const int h_off = W_STAGE + (wt * 2 + hk) * HDR;
++
++  // Stage 0's group into registers.
++  Grp Gn;
++  cp_wait<STAGES - 2>();
++  __syncthreads();
++  load_grp(Gn, smem + w_off, smem + h_off, lane);
+ 
+   for (int i = 0; i < nsteps; ++i) {
+-    cp_wait<STAGES - 2>();  // stage i (and everything issued before it) has landed
++    const Grp G = Gn;
++    cp_wait<STAGES - 3>();  // stages <= i + 1 (and everything issued before) have landed
+     __syncthreads();        // visible to all; every warp is done with stage i - 1's buffer
+     {
+-      const int nx = i + STAGES - 1;
++      const int nx = i + STAGES - 1;   // goes into stage i - 1's buffer, not i's or i + 1's
+       if (nx < nsteps) issue(nx);
+       cp_commit();
+     }
+     const uint8_t* sw = smem + (i % STAGES) * STAGE;
+-    const uint8_t* sh = sw + W_STAGE;
+-    const uint32_t sx = smem_u32(sh + H_STAGE);
+-#pragma unroll
+-    for (int h = 0; h < 2; ++h) {             // 64-K group within the stage
+-      Grp G;
+-      load_grp(G, sw + warp * 3072 + h * CHUNK, sh + (warp * 2 + h) * HDR, lane);
++    const uint32_t sx = smem_u32(sw + W_STAGE + H_STAGE);
++    if (i + 1 < nsteps) {   // next stage's group -> registers, ahead of this stage's MMAs
++      const uint8_t* sw1 = smem + ((i + 1) % STAGES) * STAGE;
++      load_grp(Gn, sw1 + w_off, sw1 + h_off, lane);
++    }
++    uint32_t a[2][4];                       // A of k16 step s in a[s & 1]; s + 1 decoded ahead
++    decode_step(G, 0, tig, side, a[0]);
+ #pragma unroll
+-      for (int kp = 0; kp < 2; ++kp) {        // 32-K slice within the group
+-        const int kc = h * 2 + kp;            // 32-K slice within the stage (0..3)
+-        uint32_t b[NT / 8][4];                // b[f][0..1]: k16 step 2 kp; b[f][2..3]: 2 kp + 1
++    for (int kp = 0; kp < 2; ++kp) {        // 32-K slice within the group
++      const int kc = hk * 2 + kp;           // 32-K slice within the stage (0..3)
++      uint32_t b[NF][4];                    // b[f][0..1]: k16 step 2 kp; b[f][2..3]: 2 kp + 1
+ #pragma unroll
+-        for (int f = 0; f < NT / 8; ++f)
+-          ldsm_x4(b[f], sx + (f * 8 + xr) * X_ROW + (((kc * 4 + xq) ^ xr) << 4));
++      for (int f = 0; f < NF; ++f)
++        ldsm_x4(b[f], sx + (f * 8 + xr) * X_ROW + (((kc * 4 + xq) ^ xr) << 4));
+ #pragma unroll
+-        for (int t = 0; t < 2; ++t) {
+-          uint32_t a[4];
+-          decode_step(G, kp * 2 + t, tig, side, a);
++      for (int t = 0; t < 2; ++t) {
++        const int s = kp * 2 + t;
++        if (s < 3) decode_step(G, s + 1, tig, side, a[(s + 1) & 1]);
+ #pragma unroll
+-          for (int f = 0; f < NT / 8; ++f) mma_bf16(acc[f], a, b[f][2 * t], b[f][2 * t + 1]);
+-        }
++        for (int f = 0; f < NF; ++f) mma_bf16(acc[f], a[s & 1], b[f][2 * t], b[f][2 * t + 1]);
+       }
+     }
+   }
+   cp_wait<0>();
++  __syncthreads();   // no warp reads the ring any more: reuse its first NT * 256 B for the pair sum
++
++  // Pair reduce: K-half 1 -> smem, K-half 0 adds it (fixed order: half 0 + half 1).
++  float* red = reinterpret_cast<float*>(smem);
++  if (hk == 1) {
++#pragma unroll
++    for (int f = 0; f < NF; ++f)
++#pragma unroll
++      for (int j = 0; j < 4; ++j) red[((wt * NF + f) * 4 + j) * 32 + lane] = acc[f][j];
++  }
++  __syncthreads();
++  if (hk == 0) {
++#pragma unroll
++    for (int f = 0; f < NF; ++f)
++#pragma unroll
++      for (int j = 0; j < 4; ++j) acc[f][j] += red[((wt * NF + f) * 4 + j) * 32 + lane];
++  }
+ 
+   // C fragment f: c0, c1 -> weight row g, tokens 8 f + 2 t + {0, 1}; c2, c3 -> row g + 8.
+-  const int r0 = n0 + warp * 16 + g;
++  const int r0 = n0 + wt * 16 + g;
+   if (split == 1) {
++    if (hk == 0) {
+ #pragma unroll
+-    for (int f = 0; f < NT / 8; ++f) {
+-      const int t0 = f * 8 + 2 * tig;
+-      if (t0 < m) {
+-        out[(int64_t)t0 * stride_o + r0] = __float2bfloat16_rn(acc[f][0]);
+-        out[(int64_t)t0 * stride_o + r0 + 8] = __float2bfloat16_rn(acc[f][2]);
+-      }
+-      if (t0 + 1 < m) {
+-        out[(int64_t)(t0 + 1) * stride_o + r0] = __float2bfloat16_rn(acc[f][1]);
+-        out[(int64_t)(t0 + 1) * stride_o + r0 + 8] = __float2bfloat16_rn(acc[f][3]);
++      for (int f = 0; f < NF; ++f) {
++        const int t0 = f * 8 + 2 * tig;
++        if (t0 < m) {
++          out[(int64_t)t0 * stride_o + r0] = __float2bfloat16_rn(acc[f][0]);
++          out[(int64_t)t0 * stride_o + r0 + 8] = __float2bfloat16_rn(acc[f][2]);
++        }
++        if (t0 + 1 < m) {
++          out[(int64_t)(t0 + 1) * stride_o + r0] = __float2bfloat16_rn(acc[f][1]);
++          out[(int64_t)(t0 + 1) * stride_o + r0 + 8] = __float2bfloat16_rn(acc[f][3]);
++        }
+       }
+     }
+     return;
+   }
+   float* wsp = ws + (int64_t)sidx * MAXM * n;
++  if (hk == 0) {
+ #pragma unroll
+-  for (int f = 0; f < NT / 8; ++f) {
+-    const int t0 = f * 8 + 2 * tig;
+-    if (t0 < m) {
+-      wsp[(int64_t)t0 * n + r0] = acc[f][0];
+-      wsp[(int64_t)t0 * n + r0 + 8] = acc[f][2];
+-    }
+-    if (t0 + 1 < m) {
+-      wsp[(int64_t)(t0 + 1) * n + r0] = acc[f][1];
+-      wsp[(int64_t)(t0 + 1) * n + r0 + 8] = acc[f][3];
++    for (int f = 0; f < NF; ++f) {
++      const int t0 = f * 8 + 2 * tig;
++      if (t0 < m) {
++        wsp[(int64_t)t0 * n + r0] = acc[f][0];
++        wsp[(int64_t)t0 * n + r0 + 8] = acc[f][2];
++      }
++      if (t0 + 1 < m) {
++        wsp[(int64_t)(t0 + 1) * n + r0] = acc[f][1];
++        wsp[(int64_t)(t0 + 1) * n + r0 + 8] = acc[f][3];
++      }
+     }
+   }
+   __threadfence();   // each thread's partial stores are visible GPU-wide before the ticket
+@@ -1098,11 +1145,11 @@ def _build_lossless():
+     try:
+         from torch.utils.cpp_extension import load_inline
+         ext = load_inline(
+-            name="muse_bf16_lossless_v1",
++            name="muse_bf16_lossless_v2",
+             cpp_sources=_LL_CPP,
+             cuda_sources=_LL_CUDA,
+             functions=["lossless_gemm", "lossless_decode", "lossless_attrs"],
+-            extra_cuda_cflags=["-O3", "-arch=sm_90a"],
++            extra_cuda_cflags=["-O3", "-arch=sm_90a", "-lineinfo"],   # mma.sync only: no wgmma/setmaxnreg
+             verbose=False,
+         )
+     except Exception as e:
+@@ -1177,8 +1224,9 @@ def _ll_route_ok(route: str, x: torch.Tensor, cfg, state: dict) -> bool:
+ 
+ 
+ def _ll_route(layer: str, cfg) -> str:
+-    """Route name from cfg only: the unpooler's n == 1024 slice has its own split."""
+-    if layer == "unpooler" and cfg["n"] == LL_CFG["unpooler_slice"][1]:
++    """Route name from cfg only. The unpooler slice (n != full n) is "unpooler_slice", which has
++    no LL_CFG entry in stage 2, so _ll_route_ok rejects it and it keeps master's path."""
++    if layer == "unpooler" and cfg["n"] != LL_CFG["unpooler"][1]:
+         return "unpooler_slice"
+     return layer
+ 
+@@ -1213,8 +1261,11 @@ def _ll_check_route(route: str, state: dict) -> str:
+         ref = x.double() @ wd.T
+         ref_b = ref.to(torch.bfloat16).double()
+         out1 = _ll_forward(route, x, state)
++        torch.cuda.synchronize()
++        print(f"[lossless] self-check {route} m={m}: launch 1 ok", flush=True)
+         out2 = _ll_forward(route, x, state)
+         torch.cuda.synchronize()
++        print(f"[lossless] self-check {route} m={m}: launch 2 ok", flush=True)
+         if not torch.equal(out1, out2):
+             return f"m={m}: second launch differs from the first"
+         o = out1.double()
+@@ -1233,14 +1284,17 @@ def _ll_check_route(route: str, state: dict) -> str:
+     return ""
+ 
+ 
+-def _ll_time_route(route: str, state: dict) -> None:
+-    """Diagnostic only (prepare): warm-L2 cudaEvent time per launch with compressed and
+-    raw-equivalent TB/s. Prints only; never routes."""
++def _ll_time_route(route: str, state: dict, flush: torch.Tensor) -> None:
++    """Diagnostic only (prepare): per m, a warm-L2 cudaEvent time per launch (back-to-back) next to a
++    cold-L2 one (a > L2 buffer is written before each timed launch, as the judge does; median of 15),
++    with compressed and raw-equivalent TB/s. Prints only; never routes. The pooler m=1 cold line is
++    the stage-2 kill-gate reading (gate: <= 19.0 us, the incumbent; the judged number is still the
++    pooler m=1 profile kernel time)."""
+     wname, n, k, _split, max_m = LL_CFG[route]
+     comp = state["ll_bytes_" + wname] * n / float(state[wname].shape[0])  # this route's share
+-    for m in (1, 16, 32):
++    for m in (1, 8, 16, 32):
+         if m > max_m:
+-            m = max_m
++            break
+         x = torch.randn((m, k), device=state[wname].device, dtype=torch.float32).to(torch.bfloat16)
+         for _ in range(3):
+             _ll_forward(route, x, state)
+@@ -1252,12 +1306,27 @@ def _ll_time_route(route: str, state: dict) -> None:
+             _ll_forward(route, x, state)
+         e1.record()
+         e1.synchronize()
+-        us = e0.elapsed_time(e1) * 1e3 / reps
+-        print(f"[lossless] route={route} m={m}: {us:.2f} us/launch warm-L2 (eager, incl. launch), "
+-              f"{comp / (us * 1e-6) / 1e12:.2f} TB/s compressed, "
+-              f"{n * k * 2 / (us * 1e-6) / 1e12:.2f} TB/s raw-equivalent", flush=True)
+-        if m == max_m:
+-            break
++        warm = e0.elapsed_time(e1) * 1e3 / reps
++        cold_ts = []
++        for _ in range(15):
++            c0 = torch.cuda.Event(enable_timing=True)
++            c1 = torch.cuda.Event(enable_timing=True)
++            flush.add_(1)          # touch > L2 so the weight stream starts from DRAM
++            c0.record()
++            _ll_forward(route, x, state)
++            c1.record()
++            c1.synchronize()
++            cold_ts.append(c0.elapsed_time(c1) * 1e3)
++        cold = sorted(cold_ts)[len(cold_ts) // 2]
++        print(f"[lossless] route={route} m={m}: warm-L2 {warm:.2f} us/launch "
++              f"({comp / (warm * 1e-6) / 1e12:.2f} TB/s compressed, "
++              f"{n * k * 2 / (warm * 1e-6) / 1e12:.2f} raw-eq) | cold-L2 {cold:.2f} us "
++              f"({comp / (cold * 1e-6) / 1e12:.2f} TB/s compressed, "
++              f"{n * k * 2 / (cold * 1e-6) / 1e12:.2f} raw-eq) (eager, incl. launch)", flush=True)
++        if route == "pooler" and m == 1:
++            print(f"[lossless] KILL-GATE pooler m=1 cold-L2 {cold:.2f} us vs gate 19.0 us: "
++                  f"{'PASS' if cold <= 19.0 else 'MISS'} (prepare reading, timing only; the judged "
++                  f"number is the profile kernel time)", flush=True)
+ 
+ 
+ def _lossless_prepare(state: dict) -> None:
+@@ -1271,9 +1340,18 @@ def _lossless_prepare(state: dict) -> None:
+     dev = state["pooler"].device
+     try:
+         attrs = _LL_EXT.lossless_attrs().tolist()
++        torch.cuda.synchronize()
++        sms = torch.cuda.get_device_properties(dev).multi_processor_count
+         for nt, regs, local, smem, occ in attrs:
+             print(f"[lossless] _lossless_swapab_kernel<{nt}>: {regs} regs, {local} B local (spills), "
+-                  f"{smem} B dynamic smem ({LL_STAGES} stages), {occ} CTAs/SM", flush=True)
++                  f"{smem} B dynamic smem ({LL_STAGES} stages), {LL_WARPS} warps/CTA, "
++                  f"occupancy {occ} CTAs/SM = {occ * LL_WARPS} warps/SM fit", flush=True)
++            for route, (_w, n, _k, split, _mm) in LL_CFG.items():
++                grid = (n // 64) * split
++                achieved = min(grid, occ * sms) / sms * LL_WARPS
++                print(f"[lossless]   NT={nt} route={route}: grid {grid} CTAs on {sms} SMs -> "
++                      f"achieved {achieved:.2f} warps/SM (min(grid, occ*SMs)/SMs*warps), "
++                      f"{min(grid, sms)} SMs busy", flush=True)
+         if any(a[4] < 1 for a in attrs):
+             print("[lossless] PATH CHOSEN: master everywhere (a kernel cannot launch: 0 CTAs/SM)", flush=True)
+             return
+@@ -1281,6 +1359,7 @@ def _lossless_prepare(state: dict) -> None:
+         print(f"[lossless] attribute query failed ({e!r}); PATH CHOSEN: master everywhere", flush=True)
+         return
+     ok_w = {}
++    flush = None
+     for wname, (n, k) in LL_WEIGHTS.items():
+         w = state[wname]
+         if not (w.dim() == 2 and tuple(w.shape) == (n, k) and w.dtype == torch.bfloat16
+@@ -1305,6 +1384,7 @@ def _lossless_prepare(state: dict) -> None:
+             dec = torch.empty_like(w)
+             _LL_EXT.lossless_decode(enc["payload"], enc["hdr"], enc["side"], dec, n, k)
+             torch.cuda.synchronize()
++            print(f"[lossless] {wname}: decode kernel ok", flush=True)
+             exact = torch.equal(dec.view(torch.int16), w.contiguous().view(torch.int16))
+             del dec
+             if not exact:
+@@ -1338,10 +1418,13 @@ def _lossless_prepare(state: dict) -> None:
+         print(f"[lossless] PATH CHOSEN route={route}: lossless (m 1..{max_m}, grid {(n // 64) * split} = "
+               f"{n // 64} n-tiles x SPLIT_K {split}); self-check passed", flush=True)
+         try:
+-            _ll_time_route(route, state)
++            if flush is None:
++                flush = torch.zeros(LL_FLUSH_BYTES // 4, dtype=torch.float32, device=dev)
++            _ll_time_route(route, state, flush)
+         except Exception as e:
+             print(f"[lossless] route={route}: timing diagnostics failed ({e!r})", flush=True)
+         state["ll_cnt_" + route].zero_()
++    del flush
+     torch.cuda.synchronize()
+ 
+ 
