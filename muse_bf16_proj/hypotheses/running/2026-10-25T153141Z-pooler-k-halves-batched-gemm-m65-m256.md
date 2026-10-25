@@ -50,7 +50,7 @@ review: proceed
 status: running
 review_at: 2026-10-25T161612Z
 review_companions: null
-stage: implemented
+stage: dispatched
 claimed_at: 2026-10-25T161612Z
 base_sha: e2a24e6c8d5b0c6b1ec53f88d2d22e18c50aa1ae
 base_blob: f919748b5af6e815f319e5d2d828ed68e5b28a71
@@ -67,6 +67,8 @@ submission_blob: 37b0e68c31722a46fd7377aaca28eba9d5955c68
 lint_warnings: 21
 attempt_file: 2026-10-25T162132Z-submit-pooler-k-halves-batched-gemm-m65-m256.md
 prepared_at: 2026-10-25T162132Z
+job: ce808e5a055f41b4
+dispatched_at: 2026-10-25T162139Z
 ---
 
 # pooler-k-halves-batched-gemm-m65-m256
