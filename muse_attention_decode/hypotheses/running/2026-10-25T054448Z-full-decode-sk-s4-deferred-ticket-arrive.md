@@ -60,7 +60,7 @@ review: proceed
 status: running
 review_at: 2026-10-25T054724Z
 review_companions: null
-stage: implemented
+stage: dispatched
 claimed_at: 2026-10-25T054724Z
 base_sha: 0561d7b52f7d8abd273c88d35e7f5da32adba650
 base_blob: d8769ef25caf845a0e207538ccc5c62394b6ee3b
@@ -77,6 +77,8 @@ submission_blob: 4326c3933949f96c023cf1095133ec105e76f55f
 lint_warnings: 25
 attempt_file: 2026-10-25T084530Z-check-full-decode-sk-s4-deferred-ticket-arrive.md
 prepared_at: 2026-10-25T084530Z
+job: 7f10d2d820cd49ee
+dispatched_at: 2026-10-25T084538Z
 ---
 
 # full-decode-sk-s4-deferred-ticket-arrive
