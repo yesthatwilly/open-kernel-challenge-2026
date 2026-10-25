@@ -75,10 +75,19 @@ priority: 2
 kind: primary
 controls_for: null
 review: proceed
-status: queued
+status: running
 review_at: 2026-10-25T203233Z
 review_companions: null
 hold_reason: null
+stage: claimed
+claimed_at: 2026-10-25T213134Z
+base_sha: 4b5ab758064dec781322c9326848d77ac8ab9b96
+base_blob: 3fc72e97304e132db432fcc87872be997f842929
+branch: hyp/muse_decode_layer/sliding-sk-window-port-decode32-verify1
+worktree: .worktrees/muse_decode_layer/sliding-sk-window-port-decode32-verify1
+mode: null
+restack_of: null
+stale_base: null
 ---
 
 # sliding-sk-window-port-decode32-verify1
