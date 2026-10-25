@@ -1,0 +1,73 @@
+okc run d4ad4f31d2764050 on muse_moe_w4a16
+submission  /home/user/git/musespark/.worktrees/muse_moe_w4a16/cuda-nvfp4-wgmma-rega-grouped-s5-copy-safe-forced/muse_moe_w4a16/submission.py
+status      ok
+passed      true
+speedup     1.3489834756507646
+speedup_ci  [1.3287487235160031 1.369218227785526]
+score_us    9969.358589446245
+tests       5/5 passed
+
+scored shapes (µs; speed of light is the reference's bound)
+case                                                         sglang      yours  speedup        sol  
+bs=1 load=decode 1 sharding=ep8                               77.63      45.47   1.708x      11.42  
+bs=16 load=decode 16 sharding=ep8                            187.42     145.97   1.284x      52.52  
+bs=32 load=decode 32 sharding=ep8                            205.12     198.58   1.033x      70.76  
+bs=8 load=verify 1 sharding=ep8                              150.37     112.38   1.338x      37.32  
+bs=128 load=verify 16 sharding=ep8                           473.76     364.85   1.299x     101.34  
+bs=256 load=verify 32 sharding=ep8                           619.79     404.67   1.532x     108.94  
+
+profile 0: bs=1 load=decode 1 sharding=ep8
+kernel                                                           GPU time  share  calls
+void sglang::device::marlin_moe::Marlin<__nv_bfloat16, 56...      35.7 µs  85.0%      2
+_post_norm_combine_kernel                                          2.9 µs   6.9%      1
+void sglang::act_and_mul_kernel<__nv_bfloat16, (sglang::A...       1.9 µs   4.6%      1
+_align_small_kernel                                                1.5 µs   3.5%      1
+total                                                             42.0 µs
+
+profile 1: bs=16 load=decode 16 sharding=ep8
+kernel                                                           GPU time  share  calls
+void sglang::device::marlin_moe::Marlin<__nv_bfloat16, 56...     135.7 µs  93.8%      2
+_post_norm_combine_kernel                                          3.9 µs   2.7%      1
+_align_small_kernel                                                2.8 µs   1.9%      1
+void sglang::act_and_mul_kernel<__nv_bfloat16, (sglang::A...       2.2 µs   1.5%      1
+total                                                            144.6 µs
+
+profile 2: bs=32 load=decode 32 sharding=ep8
+kernel                                                           GPU time  share  calls
+void sglang::device::marlin_moe::Marlin<__nv_bfloat16, 56...     177.7 µs  94.4%      2
+_align_small_kernel                                                4.2 µs   2.2%      1
+_post_expert_norm_weighted_sum_kernel                              4.0 µs   2.1%      1
+void sglang::act_and_mul_kernel<__nv_bfloat16, (sglang::A...       2.3 µs   1.2%      1
+total                                                            188.3 µs
+
+profile 3: bs=8 load=verify 1 sharding=ep8
+kernel                                                           GPU time  share  calls
+void sglang::device::marlin_moe::Marlin<__nv_bfloat16, 56...     136.5 µs  94.1%      2
+_post_norm_combine_kernel                                          3.8 µs   2.6%      1
+_align_small_kernel                                                2.7 µs   1.9%      1
+void sglang::act_and_mul_kernel<__nv_bfloat16, (sglang::A...       2.1 µs   1.4%      1
+total                                                            145.1 µs
+
+profile 4: bs=128 load=verify 16 sharding=ep8
+kernel                                                           GPU time  share  calls
+void (anonymous namespace)::wg_kernel<true>((anonymous na...     238.4 µs  64.7%      1
+void (anonymous namespace)::wg_kernel<false>((anonymous n...     110.9 µs  30.1%      1
+_post_expert_norm_weighted_sum_kernel                              5.1 µs   1.4%      1
+(anonymous namespace)::wg_gather_kernel(__nv_bfloat16 con...       3.7 µs   1.0%      1
+void at::native::index_elementwise_kernel<128, 4, at::nat...       3.3 µs   0.9%      1
+void at::native::unrolled_elementwise_kernel<at::native::...       3.0 µs   0.8%      1
+void moe_align_block_size_kernel<int>(int const*, int*, i...       2.5 µs   0.7%      1
+void count_and_sort_expert_tokens_kernel<int>(int const*,...       1.7 µs   0.5%      1
+total                                                            368.7 µs
+
+profile 5: bs=256 load=verify 32 sharding=ep8
+kernel                                                           GPU time  share  calls
+void (anonymous namespace)::wg_kernel<true>((anonymous na...     271.0 µs  64.8%      1
+void (anonymous namespace)::wg_kernel<false>((anonymous n...     126.1 µs  30.1%      1
+_post_expert_norm_weighted_sum_kernel                              5.2 µs   1.2%      1
+(anonymous namespace)::wg_gather_kernel(__nv_bfloat16 con...       4.8 µs   1.1%      1
+void at::native::unrolled_elementwise_kernel<at::native::...       3.1 µs   0.7%      1
+void at::native::index_elementwise_kernel<128, 4, at::nat...       3.1 µs   0.7%      1
+void moe_align_block_size_kernel<int>(int const*, int*, i...       2.8 µs   0.7%      1
+void count_and_sort_expert_tokens_kernel<int>(int const*,...       2.4 µs   0.6%      1
+total                                                            418.4 µs

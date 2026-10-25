@@ -68,10 +68,10 @@ controls_for: null
 rewrite_stage: 5
 replaces: Marlin w13+silu+w2 (moe_wna16_marlin_gemm x2 + act_and_mul) at 128<=T<=512
 review: proceed
-status: running
+status: done
 review_at: 2026-10-25T054930Z
 review_companions: null
-stage: dispatched
+stage: harvested
 claimed_at: 2026-10-25T084302Z
 base_sha: 928151c3ea4e903fc4a05ae7ac59672291b71d0d
 base_blob: a13d5fea2e79f85df573670cbd55a8a10fbc3d2c
@@ -90,6 +90,13 @@ attempt_file: 2026-10-25T085424Z-check-cuda-nvfp4-wgmma-rega-grouped-s5-copy-saf
 prepared_at: 2026-10-25T085424Z
 job: d4ad4f31d2764050
 dispatched_at: 2026-10-25T085432Z
+outcome: neutral
+verdict_detail: unproven-vs-best
+speedup: 1.3489834756507646
+speedup_ci: [1.3287487235160031, 1.369218227785526]
+harvested_at: 2026-10-25T091109Z
+best_at_harvest: 1.3438953504561806
+promotion: null
 ---
 
 # cuda-nvfp4-wgmma-rega-grouped-s5-copy-safe-forced
@@ -190,3 +197,30 @@ Audited 2026-10-25 (opus) by reading the code and emulating parts offline. No GP
 - okc_lint passes (prepare-only warnings). py_compile passes. __pycache__ was removed.
 
 Residual risk: the judge's copy mechanism is still inferred. If the judged bs=128/256 profile again shows only Marlin, then the copy hypothesis is wrong, not this code.
+
+## Result
+
+- job `d4ad4f31d2764050` (check), status done, passed True, tests 5/5
+- speedup 1.3490x, 95% CI [1.3287, 1.3692], score 9969.358589446245 µs vs SGLang 13448.5 µs
+- best at harvest: {"speedup": 1.3438953504561806, "ci": [1.3237369201993379, 1.364053780713023], "job": "7a0d900a1dd34666"}; base result: muse_moe_w4a16/hypotheses/done/neutral/cuda-nvfp4-wgmma-rega-grouped-s4-replay-safe.result.json
+- **outcome: neutral** (unproven-vs-best)
+- files: `muse_moe_w4a16/hypotheses/done/neutral/cuda-nvfp4-wgmma-rega-grouped-s5-copy-safe-forced.result.json`, `muse_moe_w4a16/hypotheses/done/neutral/cuda-nvfp4-wgmma-rega-grouped-s5-copy-safe-forced.patch`; branch `hyp/muse_moe_w4a16/cuda-nvfp4-wgmma-rega-grouped-s5-copy-safe-forced`
+
+## Attribution
+
+| shape | w | base µs | hyp µs | delta | verdict |
+|---|---|---|---|---|---|
+| bs=1 load=decode_1 sharding=ep8 | 60 | 46.89 | 45.47 | 1.0045 | flat |
+| bs=16 load=decode_16 sharding=ep8 | 60 | 145.58 | 145.97 | 1.0024 | flat |
+| bs=32 load=decode_32 sharding=ep8 | 60 | 197.23 | 198.58 | 1.0005 | flat |
+| bs=8 load=verify_1 sharding=ep8 | 60 | 113.34 | 112.38 | 1.0047 | flat |
+| bs=128 load=verify_16 sharding=ep8 | 60 | 349.79 | 364.85 | 0.9527 | lost |
+| bs=256 load=verify_32 sharding=ep8 | 60 | 428.84 | 404.67 | 1.0608 | gained |
+
+gained on verify_32 verify_32; lost on verify_16 verify_16. Expected hit: 5/6. Noise ±1.5%.
+
+## Follow-ups
+
+- rewrite stage 5 of `Marlin w13+silu+w2 (moe_wna16_marlin_gemm x2 + act_and_mul) at 128<=T<=512`: read the replaced kernels' own us per shape (profile top_kernels) against the incumbent and the floor, and check which Milestone it reached. The next stage is `/hypothesize muse_moe_w4a16 "<what to fix or tune>" --kind rewrite --depends-on cuda-nvfp4-wgmma-rega-grouped-s5-copy-safe-forced --stage 6`; a slow or failed first cut is the expected start, not a do-not-retry.
+- unproven-vs-best: the change is not proven either way; a stacked hypothesis (`depends_on: cuda-nvfp4-wgmma-rega-grouped-s5-copy-safe-forced`) that adds a further change in the same area is the only way to learn more (identical code is never re-run).
+
