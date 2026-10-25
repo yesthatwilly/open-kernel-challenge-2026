@@ -47,10 +47,10 @@ controls_for: null
 rewrite_stage: 2
 replaces: paired FA3 flash_fwd + FlashAttnFwdCombine + pad/unpad copies + FusedRMSNormGate on full decode, 1 < batch <= 64 (now splitkv_attn_kernel + splitkv_combine_kernel)
 review: proceed
-status: running
+status: done
 review_at: 2026-10-25T001534Z
 review_companions: null
-stage: dispatched
+stage: harvested
 claimed_at: 2026-10-25T002203Z
 base_sha: b2f95e63a6e8ad3cff7947760e69e448399e295d
 base_blob: c9067b8201f2480c64910c4a71098df7ce616f73
@@ -69,6 +69,13 @@ attempt_file: 2026-10-25T003019Z-check-full-decode-splitkv-kv-bw-3p5.md
 prepared_at: 2026-10-25T003019Z
 job: 6af3b0e3311943ee
 dispatched_at: 2026-10-25T003026Z
+outcome: neutral
+verdict_detail: within-ci
+speedup: 1.2663230268112668
+speedup_ci: [1.2473281814090977, 1.2853178722134357]
+harvested_at: 2026-10-25T010416Z
+best_at_harvest: 1.2521147631671776
+promotion: null
 ---
 
 # full-decode-splitkv-kv-bw-3p5
@@ -182,3 +189,36 @@ Verified:
 Scope note: the CHUNK rule is inverted from the spec, to 512 at batch <= 23, following the adversarial review. B=16 gets C512 and B=32 gets C1024.
 
 Residual risk: the 6-way template has never been compiled. A build error lands on FA3, not stage 1, and a device fault in a new variant's self-check would poison the CUDA context rather than fall back. No out-of-bounds path was found by reading.
+
+## Result
+
+- job `6af3b0e3311943ee` (check), status done, passed True, tests 13/13
+- speedup 1.2663x, 95% CI [1.2473, 1.2853], score 17862.977708744875 µs vs SGLang 22620.3 µs
+- best at harvest: {"speedup": 1.2521147631671776, "ci": [1.23333304171967, 1.270896484614685], "job": "39bcf05afc4e4dd3"}; base result: muse_decode_layer/hypotheses/done/neutral/full-decode-splitkv-restack-on-pdl.result.json
+- **outcome: neutral** (within-ci)
+- files: `muse_decode_layer/hypotheses/done/neutral/full-decode-splitkv-kv-bw-3p5.result.json`, `muse_decode_layer/hypotheses/done/neutral/full-decode-splitkv-kv-bw-3p5.patch`; branch `hyp/muse_decode_layer/full-decode-splitkv-kv-bw-3p5`
+
+## Attribution
+
+| shape | w | base µs | hyp µs | delta | verdict |
+|---|---|---|---|---|---|
+| batch=1 ctx=80000 dist=soft layer=sliding load=decode_1 page=1 repeats=60 | 46 | 126.15 | 126.13 | 0.9998 | flat |
+| batch=1 ctx=80000 dist=soft layer=full load=decode_1 page=1 repeats=60 | 16 | 142.7 | 143.23 | 1.0063 | flat |
+| batch=16 ctx=80000 dist=soft layer=sliding load=decode_16 page=1 spread=agentic | 46 | 209.82 | 212.89 | 0.9979 | flat |
+| batch=16 ctx=80000 dist=soft layer=full load=decode_16 page=1 spread=agentic | 16 | 306.72 | 334.87 | 0.9274 | lost |
+| batch=32 ctx=80000 dist=soft layer=sliding load=decode_32 page=1 spread=agentic | 46 | 242.33 | 242.98 | 1.0052 | flat |
+| batch=32 ctx=80000 dist=soft layer=full load=decode_32 page=1 spread=agentic | 16 | 479.6 | 473.33 | 0.9974 | flat |
+| batch=1 ctx=80000 dist=soft layer=sliding load=verify_1 page=1 q_len=8 | 46 | 187.97 | 184.9 | 1.0096 | flat |
+| batch=1 ctx=80000 dist=soft layer=full load=verify_1 page=1 q_len=8 | 16 | 201.51 | 198.74 | 1.0043 | flat |
+| batch=16 ctx=80000 dist=soft layer=sliding load=verify_16 page=1 q_len=8 spread=agentic | 46 | 420.42 | 430.1 | 1.0062 | flat |
+| batch=16 ctx=80000 dist=soft layer=full load=verify_16 page=1 q_len=8 spread=agentic | 16 | 564.2 | 555.7 | 0.9986 | flat |
+| batch=32 ctx=80000 dist=soft layer=sliding load=verify_32 page=1 q_len=8 spread=agentic | 46 | 600.82 | 634.75 | 1.0047 | flat |
+| batch=32 ctx=80000 dist=soft layer=full load=verify_32 page=1 q_len=8 spread=agentic | 16 | 864.67 | 893.3 | 1.0058 | flat |
+
+lost on full decode_16. Expected hit: 3/5. Noise ±1.5%.
+
+## Follow-ups
+
+- rewrite stage 2 of `paired FA3 flash_fwd + FlashAttnFwdCombine + pad/unpad copies + FusedRMSNormGate on full decode, 1 < batch <= 64 (now splitkv_attn_kernel + splitkv_combine_kernel)`: read the replaced kernels' own us per shape (profile top_kernels) against the incumbent and the floor, and check which Milestone it reached. The next stage is `/hypothesize muse_decode_layer "<what to fix or tune>" --kind rewrite --depends-on full-decode-splitkv-kv-bw-3p5 --stage 3`; a slow or failed first cut is the expected start, not a do-not-retry.
+- within-ci: the change is not proven either way; a stacked hypothesis (`depends_on: full-decode-splitkv-kv-bw-3p5`) that adds a further change in the same area is the only way to learn more (identical code is never re-run).
+

@@ -1,0 +1,129 @@
+[small-t-dense-chain] load_inline compiled in 50.2s
+[splitkv] load_inline compiled in 51.2s
+[small-t-dense-chain] P occupancy (CTAs/SM, NF=1/2/4): [3, 2, 2]; grid 216 CTAs
+[small-t-dense-chain] PDL probe: eager overlap False (-6.2 us), graph overlap True (49.7 us, secondary waited 50.3 us) -> pdl=1
+[small-t-dense-chain] P timing T=1 pdl=0 21.0 us (3.59 TB/s) pdl=1 20.7 us (3.64 TB/s)
+[small-t-dense-chain] P timing T=8 pdl=0 22.2 us (3.41 TB/s) pdl=1 22.0 us (3.44 TB/s)
+[small-t-dense-chain] P timing T=32 pdl=0 26.1 us (2.89 TB/s) pdl=1 25.8 us (2.92 TB/s)
+[small-t-dense-chain] ON pdl=1 compile 50.2s max errs ei 1.34e-04 logit 3.70e-06 xn 3.03e-05 w 0.00e+00 y 0.00e+00 graph 0.00e+00: PATH CHOSEN = DENSE-CHAIN at T <= 32, MASTER above
+[align-parallel-large-t] ON cases=18 mismatches=0
+[splitkv] self-check S4/C1024/A1 launching kernel A, B=5 grid=device
+[splitkv] self-check S4/C1024/A1 kernel A (splitkv_attn) ok
+[splitkv] self-check S4/C1024/A1 kernel B (splitkv_combine) ok, B=5
+[splitkv] self-check S4/C1024/A1 B=5 kv_scale=1.0 grid=device: rel L2 1.67e-03, finite True
+[splitkv] self-check S4/C1024/A1 launching kernel A, B=5 grid=3
+[splitkv] self-check S4/C1024/A1 kernel A (splitkv_attn) ok
+[splitkv] self-check S4/C1024/A1 kernel B (splitkv_combine) ok, B=5
+[splitkv] self-check S4/C1024/A1 B=5 kv_scale=0.25 grid=3: rel L2 1.66e-03, finite True
+[splitkv] self-check S4/C1024/A1 launching kernel A, B=5 grid=3
+[splitkv] self-check S4/C1024/A1 kernel A (splitkv_attn) ok
+[splitkv] self-check S4/C1024/A1 kernel B (splitkv_combine) ok, B=5
+[splitkv] self-check S4/C1024/A1 B=5 kv_scale=1.0 grid=3: rel L2 1.69e-03, finite True
+[splitkv] self-check S4/C1024/A1 launching kernel A, B=33 grid=device
+[splitkv] self-check S4/C1024/A1 kernel A (splitkv_attn) ok
+[splitkv] self-check S4/C1024/A1 kernel B (splitkv_combine) ok, B=33
+[splitkv] self-check S4/C1024/A1 B=33 kv_scale=1.0 grid=device: rel L2 1.63e-03, finite True
+[splitkv-s2] variant 0: stages 4 chunk 1024 ahead 1: smem 93200 B, occupancy 2 CTAs/SM
+[splitkv-s2] variant 1: stages 5 chunk 1024 ahead 1: smem 109584 B, occupancy 2 CTAs/SM
+[splitkv-s2] variant 2: stages 5 chunk 1024 ahead 2: smem 114704 B, occupancy 2 CTAs/SM
+[splitkv-s2] variant 3: stages 4 chunk 512 ahead 1: smem 89104 B, occupancy 2 CTAs/SM
+[splitkv-s2] variant 4: stages 5 chunk 512 ahead 1: smem 105488 B, occupancy 2 CTAs/SM
+[splitkv-s2] variant 5: stages 5 chunk 512 ahead 2: smem 108560 B, occupancy 2 CTAs/SM
+[splitkv] self-check S5/C1024/A1 launching kernel A, B=5 grid=device
+[splitkv] self-check S5/C1024/A1 kernel A (splitkv_attn) ok
+[splitkv] self-check S5/C1024/A1 kernel B (splitkv_combine) ok, B=5
+[splitkv] self-check S5/C1024/A1 B=5 kv_scale=1.0 grid=device: rel L2 1.67e-03, finite True
+[splitkv] self-check S5/C1024/A1 launching kernel A, B=5 grid=3
+[splitkv] self-check S5/C1024/A1 kernel A (splitkv_attn) ok
+[splitkv] self-check S5/C1024/A1 kernel B (splitkv_combine) ok, B=5
+[splitkv] self-check S5/C1024/A1 B=5 kv_scale=0.25 grid=3: rel L2 1.66e-03, finite True
+[splitkv] self-check S5/C1024/A1 launching kernel A, B=5 grid=3
+[splitkv] self-check S5/C1024/A1 kernel A (splitkv_attn) ok
+[splitkv] self-check S5/C1024/A1 kernel B (splitkv_combine) ok, B=5
+[splitkv] self-check S5/C1024/A1 B=5 kv_scale=1.0 grid=3: rel L2 1.69e-03, finite True
+[splitkv] self-check S5/C1024/A1 launching kernel A, B=33 grid=device
+[splitkv] self-check S5/C1024/A1 kernel A (splitkv_attn) ok
+[splitkv] self-check S5/C1024/A1 kernel B (splitkv_combine) ok, B=33
+[splitkv] self-check S5/C1024/A1 B=33 kv_scale=1.0 grid=device: rel L2 1.63e-03, finite True
+[splitkv] self-check S5/C1024/A2 launching kernel A, B=5 grid=device
+[splitkv] self-check S5/C1024/A2 kernel A (splitkv_attn) ok
+[splitkv] self-check S5/C1024/A2 kernel B (splitkv_combine) ok, B=5
+[splitkv] self-check S5/C1024/A2 B=5 kv_scale=1.0 grid=device: rel L2 1.67e-03, finite True
+[splitkv] self-check S5/C1024/A2 launching kernel A, B=5 grid=3
+[splitkv] self-check S5/C1024/A2 kernel A (splitkv_attn) ok
+[splitkv] self-check S5/C1024/A2 kernel B (splitkv_combine) ok, B=5
+[splitkv] self-check S5/C1024/A2 B=5 kv_scale=0.25 grid=3: rel L2 1.66e-03, finite True
+[splitkv] self-check S5/C1024/A2 launching kernel A, B=5 grid=3
+[splitkv] self-check S5/C1024/A2 kernel A (splitkv_attn) ok
+[splitkv] self-check S5/C1024/A2 kernel B (splitkv_combine) ok, B=5
+[splitkv] self-check S5/C1024/A2 B=5 kv_scale=1.0 grid=3: rel L2 1.69e-03, finite True
+[splitkv] self-check S5/C1024/A2 launching kernel A, B=33 grid=device
+[splitkv] self-check S5/C1024/A2 kernel A (splitkv_attn) ok
+[splitkv] self-check S5/C1024/A2 kernel B (splitkv_combine) ok, B=33
+[splitkv] self-check S5/C1024/A2 B=33 kv_scale=1.0 grid=device: rel L2 1.63e-03, finite True
+[splitkv] self-check S4/C512/A1 launching kernel A, B=5 grid=device
+[splitkv] self-check S4/C512/A1 kernel A (splitkv_attn) ok
+[splitkv] self-check S4/C512/A1 kernel B (splitkv_combine) ok, B=5
+[splitkv] self-check S4/C512/A1 B=5 kv_scale=1.0 grid=device: rel L2 1.67e-03, finite True
+[splitkv] self-check S4/C512/A1 launching kernel A, B=5 grid=3
+[splitkv] self-check S4/C512/A1 kernel A (splitkv_attn) ok
+[splitkv] self-check S4/C512/A1 kernel B (splitkv_combine) ok, B=5
+[splitkv] self-check S4/C512/A1 B=5 kv_scale=0.25 grid=3: rel L2 1.66e-03, finite True
+[splitkv] self-check S4/C512/A1 launching kernel A, B=5 grid=3
+[splitkv] self-check S4/C512/A1 kernel A (splitkv_attn) ok
+[splitkv] self-check S4/C512/A1 kernel B (splitkv_combine) ok, B=5
+[splitkv] self-check S4/C512/A1 B=5 kv_scale=1.0 grid=3: rel L2 1.69e-03, finite True
+[splitkv] self-check S4/C512/A1 launching kernel A, B=33 grid=device
+[splitkv] self-check S4/C512/A1 kernel A (splitkv_attn) ok
+[splitkv] self-check S4/C512/A1 kernel B (splitkv_combine) ok, B=33
+[splitkv] self-check S4/C512/A1 B=33 kv_scale=1.0 grid=device: rel L2 1.63e-03, finite True
+[splitkv] self-check S5/C512/A1 launching kernel A, B=5 grid=device
+[splitkv] self-check S5/C512/A1 kernel A (splitkv_attn) ok
+[splitkv] self-check S5/C512/A1 kernel B (splitkv_combine) ok, B=5
+[splitkv] self-check S5/C512/A1 B=5 kv_scale=1.0 grid=device: rel L2 1.67e-03, finite True
+[splitkv] self-check S5/C512/A1 launching kernel A, B=5 grid=3
+[splitkv] self-check S5/C512/A1 kernel A (splitkv_attn) ok
+[splitkv] self-check S5/C512/A1 kernel B (splitkv_combine) ok, B=5
+[splitkv] self-check S5/C512/A1 B=5 kv_scale=0.25 grid=3: rel L2 1.66e-03, finite True
+[splitkv] self-check S5/C512/A1 launching kernel A, B=5 grid=3
+[splitkv] self-check S5/C512/A1 kernel A (splitkv_attn) ok
+[splitkv] self-check S5/C512/A1 kernel B (splitkv_combine) ok, B=5
+[splitkv] self-check S5/C512/A1 B=5 kv_scale=1.0 grid=3: rel L2 1.69e-03, finite True
+[splitkv] self-check S5/C512/A1 launching kernel A, B=33 grid=device
+[splitkv] self-check S5/C512/A1 kernel A (splitkv_attn) ok
+[splitkv] self-check S5/C512/A1 kernel B (splitkv_combine) ok, B=33
+[splitkv] self-check S5/C512/A1 B=33 kv_scale=1.0 grid=device: rel L2 1.63e-03, finite True
+[splitkv] self-check S5/C512/A2 launching kernel A, B=5 grid=device
+[splitkv] self-check S5/C512/A2 kernel A (splitkv_attn) ok
+[splitkv] self-check S5/C512/A2 kernel B (splitkv_combine) ok, B=5
+[splitkv] self-check S5/C512/A2 B=5 kv_scale=1.0 grid=device: rel L2 1.67e-03, finite True
+[splitkv] self-check S5/C512/A2 launching kernel A, B=5 grid=3
+[splitkv] self-check S5/C512/A2 kernel A (splitkv_attn) ok
+[splitkv] self-check S5/C512/A2 kernel B (splitkv_combine) ok, B=5
+[splitkv] self-check S5/C512/A2 B=5 kv_scale=0.25 grid=3: rel L2 1.66e-03, finite True
+[splitkv] self-check S5/C512/A2 launching kernel A, B=5 grid=3
+[splitkv] self-check S5/C512/A2 kernel A (splitkv_attn) ok
+[splitkv] self-check S5/C512/A2 kernel B (splitkv_combine) ok, B=5
+[splitkv] self-check S5/C512/A2 B=5 kv_scale=1.0 grid=3: rel L2 1.69e-03, finite True
+[splitkv] self-check S5/C512/A2 launching kernel A, B=33 grid=device
+[splitkv] self-check S5/C512/A2 kernel A (splitkv_attn) ok
+[splitkv] self-check S5/C512/A2 kernel B (splitkv_combine) ok, B=33
+[splitkv] self-check S5/C512/A2 B=33 kv_scale=1.0 grid=device: rel L2 1.63e-03, finite True
+[splitkv] ON: self-check passed: CUDA split-KV path on full decode, 1 < batch <= 64
+[splitkv-s2] PATH CHOSEN = full decode batch 2..23: S5/C512/A2; batch 24..64: S5/C1024/A2
+[splitkv-s2] B=16 tokens=1097390 S4/C1024/A1: kernel A 94.0 us, 3.04 TB/s (stage 1)
+[splitkv-s2] B=16 combine at CHUNK 1024: 11.2 us
+[splitkv-s2] B=16 tokens=1097390 S5/C1024/A1: kernel A 93.9 us, 3.04 TB/s
+[splitkv-s2] B=16 tokens=1097390 S5/C1024/A2: kernel A 93.8 us, 3.04 TB/s
+[splitkv-s2] B=16 tokens=1097390 S4/C512/A1: kernel A 104.0 us, 2.74 TB/s
+[splitkv-s2] B=16 combine at CHUNK 512: 11.1 us
+[splitkv-s2] B=16 tokens=1097390 S5/C512/A1: kernel A 104.2 us, 2.74 TB/s
+[splitkv-s2] B=16 tokens=1097390 S5/C512/A2: kernel A 104.5 us, 2.73 TB/s <- CHOSEN
+[splitkv-s2] B=32 tokens=2320831 S4/C1024/A1: kernel A 215.1 us, 2.81 TB/s (stage 1)
+[splitkv-s2] B=32 combine at CHUNK 1024: 11.3 us
+[splitkv-s2] B=32 tokens=2320831 S5/C1024/A1: kernel A 214.9 us, 2.81 TB/s
+[splitkv-s2] B=32 tokens=2320831 S5/C1024/A2: kernel A 215.2 us, 2.80 TB/s <- CHOSEN
+[splitkv-s2] B=32 tokens=2320831 S4/C512/A1: kernel A 239.4 us, 2.52 TB/s
+[splitkv-s2] B=32 combine at CHUNK 512: 11.2 us
+[splitkv-s2] B=32 tokens=2320831 S5/C512/A1: kernel A 238.8 us, 2.53 TB/s
+[splitkv-s2] B=32 tokens=2320831 S5/C512/A2: kernel A 239.0 us, 2.53 TB/s
