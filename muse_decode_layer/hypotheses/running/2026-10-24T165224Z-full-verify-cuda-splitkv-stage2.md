@@ -55,7 +55,7 @@ review: proceed
 status: running
 review_at: 2026-10-24T165634Z
 review_companions: null
-stage: implemented
+stage: dispatched
 claimed_at: 2026-10-25T003235Z
 base_sha: f6cc1452343c4d93911ad7303c4a5d7878afd2fe
 base_blob: b83f5ec1976c82d5b45dcd92b6c0818ce04eda9f
@@ -72,6 +72,8 @@ submission_blob: dd79676b5f7daeef54fdcbbc6044e5e09beae843
 lint_warnings: 2
 attempt_file: 2026-10-25T004030Z-check-full-verify-cuda-splitkv-stage2.md
 prepared_at: 2026-10-25T004030Z
+job: e9d5eeffddef4f70
+dispatched_at: 2026-10-25T004037Z
 ---
 
 # full-verify-cuda-splitkv-stage2
