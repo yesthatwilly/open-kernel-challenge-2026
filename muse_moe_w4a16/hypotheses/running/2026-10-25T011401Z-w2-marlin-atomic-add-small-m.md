@@ -43,9 +43,18 @@ priority: 2
 kind: primary
 controls_for: null
 review: proceed
-status: queued
+status: running
 review_at: 2026-10-25T011915Z
 review_companions: null
+stage: claimed
+claimed_at: 2026-10-25T011915Z
+base_sha: 0ad8ffa797c1d65f94a31d3ee5951c1a36987746
+base_blob: 108d36e9f2266fc88531dd6ff0329a847c882013
+branch: hyp/muse_moe_w4a16/w2-marlin-atomic-add-small-m
+worktree: .worktrees/muse_moe_w4a16/w2-marlin-atomic-add-small-m
+mode: null
+restack_of: null
+stale_base: null
 ---
 
 # w2-marlin-atomic-add-small-m
