@@ -79,10 +79,10 @@ priority: 2
 kind: primary
 controls_for: null
 review: proceed
-status: running
+status: done
 review_at: 2026-10-25T152518Z
 review_companions: null
-stage: dispatched
+stage: harvested
 claimed_at: 2026-10-25T152518Z
 base_sha: 1b7b960db97884fe5ecfbd4dd9b87b1265a6cac3
 base_blob: a2fe2a75893c60d4f68cf94fcce8ce8f9b708a71
@@ -101,6 +101,13 @@ attempt_file: 2026-10-25T154433Z-submit-experts-rega-producer-scale-expand-all-t
 prepared_at: 2026-10-25T154433Z
 job: 6be2a8d3cf7d489f
 dispatched_at: 2026-10-25T154443Z
+outcome: neutral
+verdict_detail: within-ci
+speedup: 1.453792407430903
+speedup_ci: [1.4319855213194395, 1.4755992935423663]
+harvested_at: 2026-10-25T160622Z
+best_at_harvest: 1.4586709689454935
+promotion: null
 ---
 
 # experts-rega-producer-scale-expand-all-t
@@ -269,3 +276,31 @@ Fix applied (1):
 - okc_lint: OK with warnings (prepare-only syncs). py_compile: OK. `__pycache__` removed.
 
 Residual risk: first nvcc compile of new CUDA (a build failure only costs sx). The per-warp `__syncwarp` + elected arrive relies on bar.warp.sync memory ordering. A visibility race would show as a non-bit-identical exact gate (sx OFF), not a fault.
+
+## Result
+
+- job `6be2a8d3cf7d489f` (submit), status done, passed True, tests 5/5
+- speedup 1.4538x, 95% CI [1.4320, 1.4756], score 266478.14228484535 µs vs SGLang 387403.9 µs
+- best at harvest: {"speedup": 1.4586709689454935, "ci": [1.4367909044113112, 1.4805510334796759], "job": "1cc92a43b8be40f8"}; base result: muse_prefill_layer/hypotheses/done/neutral/align-two-phase-all-t-rega.result.json
+- **outcome: neutral** (within-ci)
+- files: `muse_prefill_layer/hypotheses/done/neutral/experts-rega-producer-scale-expand-all-t.result.json`, `muse_prefill_layer/hypotheses/done/neutral/experts-rega-producer-scale-expand-all-t.patch`; branch `hyp/muse_prefill_layer/experts-rega-producer-scale-expand-all-t`
+
+## Attribution
+
+| shape | w | base µs | hyp µs | delta | verdict |
+|---|---|---|---|---|---|
+| batch=1 ctx=80000 dist=soft layer=sliding load=turn_1 page=1 q_len=753 repeats=6 | 46 | 704.38 | 769.01 | 0.9689 | lost |
+| batch=1 ctx=80000 dist=soft layer=full load=turn_1 page=1 q_len=753 repeats=6 | 16 | 1097.89 | 1155.78 | 1.0021 | flat |
+| batch=4 ctx=80000 dist=soft layer=sliding load=turn_4 page=1 q_len=753 repeats=6 | 46 | 2098.36 | 2173.02 | 0.9901 | flat |
+| batch=4 ctx=80000 dist=soft layer=full load=turn_4 page=1 q_len=753 repeats=6 | 16 | 3644.6 | 3792.63 | 1.0278 | flat |
+| batch=1 ctx=0 dist=soft layer=full load=first_turn page=1 q_len=16384 repeats=6 | 16 | 12078.49 | 11546.02 | 1.028 | flat |
+| batch=1 ctx=32768 dist=soft layer=sliding load=first_turn page=1 q_len=16384 repeats=6 | 138 | 11285.6 | 10696.54 | 1.0382 | gained |
+| batch=1 ctx=32768 dist=soft layer=full load=first_turn page=1 q_len=16384 repeats=6 | 16 | 15310.56 | 15299.07 | 1.0287 | flat |
+| batch=1 ctx=65536 dist=soft layer=full load=first_turn page=1 q_len=16384 repeats=6 | 16 | 18819.51 | 19158.44 | 1.0363 | gained |
+
+gained on sliding first_turn; full first_turn; lost on sliding turn_1. Expected hit: 1/3. Noise ±1.5%.
+
+## Follow-ups
+
+- within-ci: the change is not proven either way; a stacked hypothesis (`depends_on: experts-rega-producer-scale-expand-all-t`) that adds a further change in the same area is the only way to learn more (identical code is never re-run).
+
