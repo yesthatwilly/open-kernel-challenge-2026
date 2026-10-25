@@ -51,13 +51,15 @@ restack_of: full-decode-cuda-splitkv-port
 restack_patch: muse_decode_layer/hypotheses/done/neutral/full-decode-cuda-splitkv-port.patch
 restack: conflicts
 worktree: .worktrees/muse_decode_layer/full-decode-splitkv-restack-on-pdl
-mode: null
+mode: check
 implemented_at: 2026-10-25T002142Z
 impl_commit: b2f95e63a6e8ad3cff7947760e69e448399e295d
 submission_sha256: a90477b0e505faf805e24b9aae2037f8a91f63ca2b11165bb7c64813b8b83532
 norm_sha256: f4fbc23fe33d9ee561f4344ec0899c79abb7cd699158d5065e0c9f5e6401b871
 submission_blob: c9067b8201f2480c64910c4a71098df7ce616f73
 lint_warnings: 30
+attempt_file: 2026-10-25T002143Z-check-full-decode-splitkv-restack-on-pdl.md
+prepared_at: 2026-10-25T002143Z
 ---
 
 # full-decode-splitkv-restack-on-pdl
