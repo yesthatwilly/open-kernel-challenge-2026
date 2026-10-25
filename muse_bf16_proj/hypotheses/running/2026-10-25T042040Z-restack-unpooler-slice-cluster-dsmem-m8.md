@@ -55,7 +55,7 @@ review: proceed
 status: running
 review_at: 2026-10-25T042349Z
 review_companions: null
-stage: implemented
+stage: dispatched
 claimed_at: 2026-10-25T042349Z
 base_sha: fd92cb3a1268dd03948af28bfe64ae31f385757e
 base_blob: 970b415b746fa03cb92e419d270be92588273178
@@ -72,6 +72,8 @@ submission_blob: 5b37668b80c0d70c2839a12eccae7da0b9cd5795
 lint_warnings: 7
 attempt_file: 2026-10-25T043016Z-check-restack-unpooler-slice-cluster-dsmem-m8.md
 prepared_at: 2026-10-25T043016Z
+job: e557d92969864449
+dispatched_at: 2026-10-25T043024Z
 ---
 
 # restack-unpooler-slice-cluster-dsmem-m8
