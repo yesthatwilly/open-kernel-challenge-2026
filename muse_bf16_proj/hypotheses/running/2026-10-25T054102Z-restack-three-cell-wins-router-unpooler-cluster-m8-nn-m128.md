@@ -110,7 +110,7 @@ review: proceed
 status: running
 review_at: 2026-10-25T054315Z
 review_companions: null
-stage: implemented
+stage: dispatched
 claimed_at: 2026-10-25T054315Z
 base_sha: 84c6b217af909ca0534b49bdd5a8072e10b692c5
 base_blob: 970b415b746fa03cb92e419d270be92588273178
@@ -127,6 +127,8 @@ submission_blob: 353e3b19a7edd5cb879e202d78097f474bcce207
 lint_warnings: 13
 attempt_file: 2026-10-25T054957Z-check-restack-three-cell-wins-router-unpooler-cluster-m8-nn-m128.md
 prepared_at: 2026-10-25T054957Z
+job: 84f17adc3f074a33
+dispatched_at: 2026-10-25T055005Z
 ---
 
 # restack-three-cell-wins-router-unpooler-cluster-m8-nn-m128
