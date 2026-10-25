@@ -53,7 +53,7 @@ review: proceed
 status: running
 review_at: 2026-10-25T203307Z
 review_companions: null
-stage: implemented
+stage: dispatched
 claimed_at: 2026-10-25T203307Z
 base_sha: 6d8fce0bdeed57b76fcd060aaec81554c9798b15
 base_blob: 6d6afa4722731ceb9cb8216d0334a03f1a96ad2b
@@ -70,6 +70,8 @@ submission_blob: 246f5494a75eb62a330900ae938f598bee8341b8
 lint_warnings: 64
 attempt_file: 2026-10-25T203814Z-submit-full-decode1-sk-two-level-deep-ring.md
 prepared_at: 2026-10-25T203814Z
+job: 26c049edfdd842b3
+dispatched_at: 2026-10-25T203823Z
 ---
 
 # full-decode1-sk-two-level-deep-ring
