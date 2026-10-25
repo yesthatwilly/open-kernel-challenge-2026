@@ -41,7 +41,7 @@ attempt_file: 2026-10-24T233216Z-check-stack-tonight-five-prefill.md
 prepared_at: 2026-10-24T233216Z
 job: c4d14d62f11e4aaf
 dispatched_at: 2026-10-24T233227Z
-promotion: null
+promotion: merged
 promotion_job: 502f2eab95164781
 promotion_at: 2026-10-24T234001Z
 outcome: neutral
@@ -50,6 +50,8 @@ speedup: 1.0705080897445196
 speedup_ci: [1.0544504683983518, 1.0865657110906872]
 harvested_at: 2026-10-25T000224Z
 best_at_harvest: 1.0591912383762452
+hand_landed: true
+promotion_commit: a81d19c4982ee781eb5faf78329a9ddc63e58206
 ---
 
 # stack-tonight-five-prefill

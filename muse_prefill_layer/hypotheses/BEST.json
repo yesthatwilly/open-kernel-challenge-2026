@@ -1,17 +1,17 @@
 {
  "problem": "muse_prefill_layer",
- "job": "ba9c16b9cc6b4605",
- "check_job": "fb1e52d2119d4175",
- "mode": "submit",
- "speedup": 1.0591912383762452,
+ "job": "c4d14d62f11e4aaf",
+ "check_job": "c4d14d62f11e4aaf",
+ "mode": "check",
+ "speedup": 1.0705080897445196,
  "ci": [
-  1.0433033698006016,
-  1.0750791069518888
+  1.0544504683983518,
+  1.0865657110906872
  ],
- "score_us": 365754.4416567263,
- "commit": "b92a0f47192b31b8618c3c53aab281b72204f3c4",
- "submission_blob": "635cfee3ac2c3f7c66840b8c8a082cad2fa41a68",
- "slug": "experts-hybrid-marlin-turn-triton-first-turn",
- "result": "muse_prefill_layer/hypotheses/done/gain/experts-hybrid-marlin-turn-triton-first-turn.result.json",
- "updated_at": "2026-10-24T170249Z"
+ "score_us": 361887.87708503474,
+ "commit": "a81d19c4982ee781eb5faf78329a9ddc63e58206",
+ "submission_blob": "db8a3344398bca79ea5cafeb580f701c055fd475",
+ "slug": "stack-tonight-five-prefill",
+ "result": "muse_prefill_layer/hypotheses/done/neutral/stack-tonight-five-prefill.result.json",
+ "updated_at": "2026-10-25T000302Z"
 }
