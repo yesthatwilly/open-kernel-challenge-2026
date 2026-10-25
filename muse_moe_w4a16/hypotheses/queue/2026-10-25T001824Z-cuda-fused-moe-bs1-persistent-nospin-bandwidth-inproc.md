@@ -57,8 +57,10 @@ kind: rewrite
 controls_for: null
 rewrite_stage: 2
 replaces: _align_small + Marlin w13+w2 + act_and_mul + _post_norm_combine at num_tokens == 1
-review: required
+review: proceed
 status: queued
+review_at: 2026-10-25T002132Z
+review_companions: null
 ---
 
 # cuda-fused-moe-bs1-persistent-nospin-bandwidth-inproc
@@ -88,3 +90,30 @@ shape (profile top_kernels) against the incumbent and the speed-of-light floor, 
 2. at or below the incumbent kernels' time on the target shapes;
 3. within ~1.5x of the floor on the target shapes, and the headline CI clears 1.0 (promotable).
 The next stage is minted with `--kind rewrite --depends-on <this slug> --stage N+1`.
+
+## Adversarial review
+
+Reviewed 2026-10-25T002132Z by an adversarial subagent (model opus).
+
+**Verdict: proceed.** Proceed as a diagnostic rewrite stage. The re-mint fixes the blocking child-process issue and splits off Part B as asked. However, two of its three slow-mode fixes have little leverage on the code stage 1 actually shipped, so the per-CTA timestamp log is the real deliverable here, and the bounded-spin and unimodality-assert handling must not turn a slow mode into wrong outputs or a silent fallback.
+
+### Justification
+The target is sound. In stage 1 (job 1105a02aa3fa4e56), moe_bs1_kernel profiled at 37.7 us against 51.2 us for the incumbent's replaced kernels; FINDINGS now shows decode_1 at 48.8 us, 87.9% of it Marlin. The scored per-pair speedup was 1.568 against a speedup of medians of 1.289, with err 1.29 us. That fits a two-mode distribution on our side, so removing the slow mode should put decode_1 near 1.8-1.9x. That is about +3% on the headline, not the +16% claimed for stage 1. The floor arithmetic (~55 MB, 11.4 us) is right. The M2 target of ~42 us scored is plausible if the slow mode goes away. WEAKEST LINK: the proposed fixes assume a cause that was never measured, and the shipped stage-1 code weakens them further. (a) __nanosleep(32) cannot account for a ~24 us second mode, because the sleep granularity is tens of ns. Replacing it with a tight poll will change almost nothing. (b) The spec's 'second wave' premise comes from the stage-1 spec (64-row tiles, 128R items), but the patch shipped ROWS=128 tiles (64 gate + 64 up), so T1=64 and there are 64R phase-1 items. At R=2 that is 128 items on 132 CTAs, which is already one wave: 128 CTAs get one item and 4 get none. Item (3) is a no-op at decode_1 unless R>2. (c) Each phase-2 item waits on a 1024-column chunk fed by 16 phase-1 tiles held by 16 different CTAs, and items are ordered (r, s, n). Phase 2 is therefore close to a global barrier on phase 1, and reordering phase-2 items by finish time has little room to help. The most likely remaining causes are a late-starting CTA (an SM still occupied at launch, or a clock or power state) or L2/HBM contention patterns. Only the per-CTA entry globaltimer and %smid, recorded under judge-like cold-L2 replays, can tell these apart. So this stage's value is the diagnostic log plus M1. The milestone should be read as 'the cause is identified', not 'M2 reached'. Implementers must start from the archived patch (ROWS=128, STAGES=8, SPLIT2=4, SPIN_MAX=1<<22, sticky C_ERR), not from the stage-1 spec text.
+
+### Confounders on the current kernel
+- post-expert-norm-triton-small-m (gain): _post_norm_combine_kernel is part of the bs=1 incumbent the fused kernel replaces, but it is bypassed at num_tokens == 1, so it only defines the incumbent's time and causes no runtime interaction.
+- triton-map-align-on-block-m-restack (gain): supplies _align_small at bs=1, which is likewise bypassed by the fused path. It defines the incumbent and does not confound.
+- align-parallel-per-expert-verify (master, neutral): only num_tokens > 32, so it is disjoint from bs=1. The rebase leaves the bs=1 base identical to stage 1's.
+- marlin-block-m-two-smaller-on-postnorm (gain): only num_tokens >= 128, so it is disjoint.
+- sglang-marlin-path-parity (gain): supplies the Marlin bank that the fallback path and the self-check's master reference use. It does not confound the fused kernel's timing.
+- Not landed but running: stack-onewarp-hoisted-dispatchcombine(-from17) changes the bs<=8 align and the bs<32 combine. If it lands first, the bs=1 incumbent drops by ~1-2 us, so read this stage against master at dispatch.
+
+### Interference and A/B needs
+No companion is needed. Every landed hypothesis that touches bs=1 is bypassed when num_tokens == 1, so neither an ab-revert nor an ab-tune would change the reading. The internal attribution problem (whether the spin change or the reordering killed the slow mode) is better answered by the in-kernel per-phase timestamps and the spin-iteration counts the self-check already logs than by a control run. If the slow mode persists, the next stage follows from the log.
+
+### Open questions
+- What is R at the judge's decode_1 seed? At R=2 the shipped kernel already runs phase 1 in one wave (64R = 128 items <= 132 CTAs), so step (3) changes nothing. Should the one-wave sizing target R=3..8 instead, where it does matter?
+- Does the self-check under cold-L2 graph replays reproduce the 41/59 bimodality at all? If not, the per-CTA log cannot explain the judge's slow mode, and the next stage would need the diagnostic to run in the timed path under a flag (which costs a check).
+- Is the slow mode a late CTA entry (an occupied SM or the launch tail of the judge's L2-flush/read kernel) rather than a phase-2 wait? If entry skew is ~24 us, neither the spin nor the ordering fix helps, and the remedy is a grid < SM count (e.g. 128 CTAs) or a work-stealing atomic item counter instead of the static c, c+G assignment.
+- Would a dynamic item queue (atomicAdd ticket over items) remove the dependency on a straggler CTA entirely? It is a better candidate for stage 3 than reordering.
+
