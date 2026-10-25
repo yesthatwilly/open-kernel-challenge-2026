@@ -63,7 +63,7 @@ review: proceed
 status: running
 review_at: 2026-10-25T002053Z
 review_companions: null
-stage: implemented
+stage: dispatched
 claimed_at: 2026-10-25T002053Z
 base_sha: 87125eea89ead0362371bb80cf6433cc316b0496
 base_blob: db8a3344398bca79ea5cafeb580f701c055fd475
@@ -80,6 +80,8 @@ submission_blob: f3e8bf0e46f3da14de298fec7290d3889b749c5c
 lint_warnings: 29
 attempt_file: 2026-10-25T003224Z-check-attn-full-prefill-cuda-fp8-wgmma-hard-gate-inproc.md
 prepared_at: 2026-10-25T003224Z
+job: 306cbde58aff4fa4
+dispatched_at: 2026-10-25T003235Z
 ---
 
 # attn-full-prefill-cuda-fp8-wgmma-hard-gate-inproc
