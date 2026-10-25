@@ -1,6 +1,6 @@
 # muse_decode_layer hypotheses
 
-Regenerated 2026-10-25T003217Z. Best: 1.2521x [1.2333,1.2709] job `39bcf05afc4e4dd3` (submit)
+Regenerated 2026-10-25T003349Z. Best: 1.2521x [1.2333,1.2709] job `39bcf05afc4e4dd3` (submit)
 
 | created | slug | kind | area | where | outcome | speedup | CI | job | mode | promotion | review | expected hit |
 |---|---|---|---|---|---|---|---|---|---|---|---|---|
@@ -27,7 +27,7 @@ Regenerated 2026-10-25T003217Z. Best: 1.2521x [1.2333,1.2709] job `39bcf05afc4e4
 | 2026-10-24T140135Z | sliding-fused-triton-decode1-port | primary | FA3 call | done/neutral | neutral | 1.1690 | [1.152,1.187] | 12198572363b49a4 | submit |  | proceed | 5/5 |
 | 2026-10-24T140156Z | paired-heads-pad-unpad-triton | primary | output norm-gate | done/neutral | neutral | 1.1654 | [1.148,1.183] | a92b64be4c6547d3 | submit |  | proceed | 4/7 |
 | 2026-10-24T165154Z | full-decode-cuda-splitkv-port | rewrite | FA3 call | done/neutral | neutral | 1.1862 | [1.168,1.204] | e789032128df4291 | submit |  | proceed | 5/5 |
-| 2026-10-24T165224Z | full-verify-cuda-splitkv-stage2 | rewrite | FA3 call | queue | queued |  |  |  |  |  | proceed |  |
+| 2026-10-24T165224Z | full-verify-cuda-splitkv-stage2 | rewrite | FA3 call | running | running |  |  |  |  |  | proceed |  |
 | 2026-10-24T165242Z | bf16-m32-swapab-wgmma-port | primary | pooler GEMM | queue | hold |  |  |  |  |  | proceed |  |
 | 2026-10-24T165302Z | moe-align-small-t-restack-on-master | primary | MoE align/dispatch | queue | hold |  |  |  |  |  | proceed |  |
 | 2026-10-24T165619Z | fused-preattention-paired-pad-restack | primary | pre-attention norm+rope | queue | queued |  |  |  |  |  | proceed |  |

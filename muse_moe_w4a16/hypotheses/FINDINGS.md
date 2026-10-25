@@ -1,6 +1,6 @@
 # muse_moe_w4a16 findings
 
-Regenerated 2026-10-25T003217Z by `churn.py index`. Read this before writing a hypothesis for muse_moe_w4a16.
+Regenerated 2026-10-25T003349Z by `churn.py index`. Read this before writing a hypothesis for muse_moe_w4a16.
 
 ## Current best
 
@@ -108,12 +108,12 @@ Where the time goes (per scored shape, top kernels):
 - queue: swapab-nvfp4-gemm-verify-rewrite [w13 marlin + w2 marlin] p1 hold
 - queue: swapab-w13-silu-epilogue-verify [silu-mul] p2 queued
 - queue: cuda-fused-moe-midm-single-launch-routed [whole-layer fusion] p2 hold
-- queue: post-norm-triton-hoisted-decode32 [post-expert norm+combine] p2 queued
-- queue: post-norm-pdl-launch-small-m [launch overhead] p2 queued
 - queue: cuda-nvfp4-wgmma-rega-grouped-sm90a-rebuild [w13 marlin + silu-mul + w2 marlin] p1 hold
 - queue: cuda-nvfp4-swapab-mma-persistent-small-m-childcheck [w13 marlin + silu-mul + w2 marlin] p2 hold
 - queue: cuda-fused-moe-bs1-persistent-nospin-bandwidth [whole-layer fusion] p3 hold
 - queue: cuda-fused-moe-bs1-persistent-bandwidth-s3-inproc [whole-layer fusion] p3 queued
+- running: post-norm-triton-hoisted-decode32 [post-expert norm+combine] p2 running
+- running: post-norm-pdl-launch-small-m [launch overhead] p2 running
 - running: cuda-fused-moe-bs1-persistent-nospin-bandwidth-inproc [whole-layer fusion] p3 running
 - running: cuda-nvfp4-swapab-mma-persistent-small-m-inproc [w13 marlin + silu-mul + w2 marlin] p2 running
 - running: cuda-nvfp4-wgmma-rega-grouped-sm90a-rebuild-inproc [w13 marlin + silu-mul + w2 marlin] p1 running

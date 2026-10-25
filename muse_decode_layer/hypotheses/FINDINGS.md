@@ -1,6 +1,6 @@
 # muse_decode_layer findings
 
-Regenerated 2026-10-25T003217Z by `churn.py index`. Read this before writing a hypothesis for muse_decode_layer.
+Regenerated 2026-10-25T003349Z by `churn.py index`. Read this before writing a hypothesis for muse_decode_layer.
 
 ## Current best
 
@@ -134,7 +134,6 @@ Where the time goes (per scored shape, top kernels):
 - queue: fa3-full-single-split-probe [FA3 call] p2 hold
 - queue: router-triton-splitk-side-stream [router GEMM] p1 hold
 - queue: triton-flash-decode-full-verify-paired-kv [FA3 call] p5 hold
-- queue: full-verify-cuda-splitkv-stage2 [FA3 call] p2 queued
 - queue: bf16-m32-swapab-wgmma-port [pooler GEMM] p3 hold
 - queue: moe-align-small-t-restack-on-master [MoE align/dispatch] p4 hold
 - queue: fused-preattention-paired-pad-restack [pre-attention norm+rope] p5 queued
@@ -148,6 +147,7 @@ Where the time goes (per scored shape, top kernels):
 - queue: dl-route-warp-topk-pdl [routing top-k + MoE align (kernel R, T<=32)] p3 queued
 - queue: dl-p-wide-tile-t16-t32 [pooler + router GEMM (kernel P, T=9..32)] p4 queued
 - queue: moe-chain-cuda-swapab-expert-once-fix [w13 marlin + silu-mul + w2 marlin (T>32)] p2 hold
+- running: full-verify-cuda-splitkv-stage2 [FA3 call] p2 running
 - running: full-decode-splitkv-restack-on-pdl [FA3 call (full decode, batch > 1)] p2 running
 - running: full-decode-splitkv-kv-bw-3p5 [FA3 call (full decode, batch > 1): splitkv_attn_kernel bytes in flight] p3 running
 - running: moe-chain-cuda-swapab-expert-once-fix-inproc [w13 marlin + silu-mul + w2 marlin (T>32)] p2 running
