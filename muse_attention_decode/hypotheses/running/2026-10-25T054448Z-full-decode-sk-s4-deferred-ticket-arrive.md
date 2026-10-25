@@ -57,9 +57,18 @@ controls_for: null
 rewrite_stage: 4
 replaces: "full decode 1<B<=64: master splitkv_attn_sk_kernel<4, ticket> single-level in-stream ticket epilogue"
 review: proceed
-status: queued
+status: running
 review_at: 2026-10-25T054724Z
 review_companions: null
+stage: claimed
+claimed_at: 2026-10-25T054724Z
+base_sha: 0561d7b52f7d8abd273c88d35e7f5da32adba650
+base_blob: d8769ef25caf845a0e207538ccc5c62394b6ee3b
+branch: hyp/muse_attention_decode/full-decode-sk-s4-deferred-ticket-arrive
+worktree: .worktrees/muse_attention_decode/full-decode-sk-s4-deferred-ticket-arrive
+mode: null
+restack_of: null
+stale_base: null
 ---
 
 # full-decode-sk-s4-deferred-ticket-arrive
