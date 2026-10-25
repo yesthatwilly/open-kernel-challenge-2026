@@ -78,7 +78,9 @@ speedup: 1.2393674362823563
 speedup_ci: [1.220776924738121, 1.2579579478265916]
 harvested_at: 2026-10-25T153250Z
 best_at_harvest: 1.2490645809967658
-promotion: null
+promotion: merged
+hand_landed: true
+promotion_commit: 67b46a57e69d86ab79f476a19502b06e05d4a471
 ---
 
 # pooler-nn-layout-widen-m256
