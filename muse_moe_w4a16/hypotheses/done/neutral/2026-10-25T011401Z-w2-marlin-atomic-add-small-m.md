@@ -43,10 +43,10 @@ priority: 2
 kind: primary
 controls_for: null
 review: proceed
-status: running
+status: done
 review_at: 2026-10-25T011915Z
 review_companions: null
-stage: dispatched
+stage: harvested
 claimed_at: 2026-10-25T011915Z
 base_sha: 0ad8ffa797c1d65f94a31d3ee5951c1a36987746
 base_blob: 108d36e9f2266fc88531dd6ff0329a847c882013
@@ -65,6 +65,13 @@ attempt_file: 2026-10-25T012018Z-check-w2-marlin-atomic-add-small-m.md
 prepared_at: 2026-10-25T012018Z
 job: a2744bc496b84790
 dispatched_at: 2026-10-25T012041Z
+outcome: neutral
+verdict_detail: unproven-vs-best
+speedup: 1.344525539017997
+speedup_ci: [1.324357655932727, 1.364693422103267]
+harvested_at: 2026-10-25T034137Z
+best_at_harvest: 1.3278240305297715
+promotion: null
 ---
 
 # w2-marlin-atomic-add-small-m
@@ -129,3 +136,29 @@ No companion. The change is one flag on one call, plus at most one memset that h
 - [x] All work inside the timed call; no output caching or replay.
 
 okc_lint: `OK with warnings: submission.py` (only host-sync warnings, all in prepare(), outside kernel_fn's call graph). py_compile OK; __pycache__ removed.
+
+## Result
+
+- job `a2744bc496b84790` (check), status done, passed True, tests 5/5
+- speedup 1.3445x, 95% CI [1.3244, 1.3647], score 10002.413200587025 µs vs SGLang 13448.5 µs
+- best at harvest: {"speedup": 1.3278240305297715, "ci": [1.307906670071825, 1.3477413909877178], "job": "1947e3ec2abb4bdf"}; base result: muse_moe_w4a16/hypotheses/done/neutral/align-parallel-per-expert-verify.result.json
+- **outcome: neutral** (unproven-vs-best)
+- files: `muse_moe_w4a16/hypotheses/done/neutral/w2-marlin-atomic-add-small-m.result.json`, `muse_moe_w4a16/hypotheses/done/neutral/w2-marlin-atomic-add-small-m.patch`; branch `hyp/muse_moe_w4a16/w2-marlin-atomic-add-small-m`
+
+## Attribution
+
+| shape | w | base µs | hyp µs | delta | verdict |
+|---|---|---|---|---|---|
+| bs=1 load=decode_1 sharding=ep8 | 60 | 48.82 | 44.88 | 1.0903 | gained |
+| bs=16 load=decode_16 sharding=ep8 | 60 | 148.37 | 147.71 | 1.0044 | flat |
+| bs=32 load=decode_32 sharding=ep8 | 60 | 199.88 | 198.72 | 1.0009 | flat |
+| bs=8 load=verify_1 sharding=ep8 | 60 | 107.74 | 106.03 | 1.0014 | flat |
+| bs=128 load=verify_16 sharding=ep8 | 60 | 318.26 | 317.77 | 1.0026 | flat |
+| bs=256 load=verify_32 sharding=ep8 | 60 | 454.28 | 467.8 | 0.9924 | flat |
+
+gained on decode_1 decode_1. Expected hit: 3/6. Noise ±1.5%.
+
+## Follow-ups
+
+- unproven-vs-best: the change is not proven either way; a stacked hypothesis (`depends_on: w2-marlin-atomic-add-small-m`) that adds a further change in the same area is the only way to learn more (identical code is never re-run).
+
