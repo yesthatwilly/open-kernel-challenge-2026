@@ -46,10 +46,10 @@ priority: 3
 kind: primary
 controls_for: null
 review: proceed
-status: running
+status: done
 review_at: 2026-10-25T010823Z
 review_companions: null
-stage: dispatched
+stage: harvested
 claimed_at: 2026-10-25T010823Z
 base_sha: 9d09de0cc3ef315d6ef3aab918058321b698da3f
 base_blob: 4da94677234faaa06b42b5ced541db8961fd6f34
@@ -68,6 +68,13 @@ attempt_file: 2026-10-25T011431Z-check-dl-route-warp-topk-pdl.md
 prepared_at: 2026-10-25T011431Z
 job: b471a950805c4053
 dispatched_at: 2026-10-25T011438Z
+outcome: neutral
+verdict_detail: unproven-vs-best
+speedup: 1.2598964262131513
+speedup_ci: [1.240997979819954, 1.2787948726063485]
+harvested_at: 2026-10-25T034135Z
+best_at_harvest: 1.2521147631671776
+promotion: null
 ---
 
 # dl-route-warp-topk-pdl
@@ -155,3 +162,35 @@ Audited 2026-10-25 by an opus subagent, by reading the code and emulating it in 
 - okc_lint: OK with warnings (prepare()-only syncs). py_compile: ok. __pycache__: removed.
 
 Residual risk: the code was never compiled, so an nvcc error in the shared TU would put all of stage 1 on master. The eager self-check syncs between P and R, so only the graph-replay case exercises the real PDL overlap.
+
+## Result
+
+- job `b471a950805c4053` (check), status done, passed True, tests 13/13
+- speedup 1.2599x, 95% CI [1.2410, 1.2788], score 17954.09489968111 µs vs SGLang 22620.3 µs
+- best at harvest: {"speedup": 1.2521147631671776, "ci": [1.23333304171967, 1.270896484614685], "job": "39bcf05afc4e4dd3"}; base result: muse_decode_layer/hypotheses/done/neutral/stack-align-par-sidestream-sliding1.result.json
+- **outcome: neutral** (unproven-vs-best)
+- files: `muse_decode_layer/hypotheses/done/neutral/dl-route-warp-topk-pdl.result.json`, `muse_decode_layer/hypotheses/done/neutral/dl-route-warp-topk-pdl.patch`; branch `hyp/muse_decode_layer/dl-route-warp-topk-pdl`
+
+## Attribution
+
+| shape | w | base µs | hyp µs | delta | verdict |
+|---|---|---|---|---|---|
+| batch=1 ctx=80000 dist=soft layer=sliding load=decode_1 page=1 repeats=60 | 46 | 127.48 | 124.13 | 1.0273 | flat |
+| batch=1 ctx=80000 dist=soft layer=full load=decode_1 page=1 repeats=60 | 16 | 142.93 | 141.16 | 1.022 | flat |
+| batch=16 ctx=80000 dist=soft layer=sliding load=decode_16 page=1 spread=agentic | 46 | 204.98 | 212.97 | 0.996 | flat |
+| batch=16 ctx=80000 dist=soft layer=full load=decode_16 page=1 spread=agentic | 16 | 349.47 | 346.67 | 1.009 | flat |
+| batch=32 ctx=80000 dist=soft layer=sliding load=decode_32 page=1 spread=agentic | 46 | 245.77 | 244.21 | 1.0072 | flat |
+| batch=32 ctx=80000 dist=soft layer=full load=decode_32 page=1 spread=agentic | 16 | 529.71 | 513.88 | 1.0031 | flat |
+| batch=1 ctx=80000 dist=soft layer=sliding load=verify_1 page=1 q_len=8 | 46 | 190.8 | 190.69 | 1.009 | flat |
+| batch=1 ctx=80000 dist=soft layer=full load=verify_1 page=1 q_len=8 | 16 | 192.44 | 205.61 | 0.9782 | flat |
+| batch=16 ctx=80000 dist=soft layer=sliding load=verify_16 page=1 q_len=8 spread=agentic | 46 | 429.61 | 424.41 | 1.012 | flat |
+| batch=16 ctx=80000 dist=soft layer=full load=verify_16 page=1 q_len=8 spread=agentic | 16 | 563.65 | 563.5 | 0.9959 | flat |
+| batch=32 ctx=80000 dist=soft layer=sliding load=verify_32 page=1 q_len=8 spread=agentic | 46 | 592.52 | 599.04 | 1.0165 | flat |
+| batch=32 ctx=80000 dist=soft layer=full load=verify_32 page=1 q_len=8 spread=agentic | 16 | 861.3 | 876.62 | 1.0006 | flat |
+
+no shape moved outside noise. Expected hit: 2/6. Noise ±1.5%.
+
+## Follow-ups
+
+- unproven-vs-best: the change is not proven either way; a stacked hypothesis (`depends_on: dl-route-warp-topk-pdl`) that adds a further change in the same area is the only way to learn more (identical code is never re-run).
+
