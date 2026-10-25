@@ -60,7 +60,7 @@ review: proceed
 status: running
 review_at: 2026-10-25T042320Z
 review_companions: null
-stage: implemented
+stage: dispatched
 claimed_at: 2026-10-25T042320Z
 base_sha: 459e84861e1a2c35ffa8148cd1fe09f5ead28416
 base_blob: 970b415b746fa03cb92e419d270be92588273178
@@ -77,6 +77,8 @@ submission_blob: c857e5300e8435a8deb056ba49439d4d23ea126b
 lint_warnings: 1
 attempt_file: 2026-10-25T042837Z-check-restack-router-cluster-dsmem-m8.md
 prepared_at: 2026-10-25T042837Z
+job: d323ce8ef6a54fde
+dispatched_at: 2026-10-25T042850Z
 ---
 
 # restack-router-cluster-dsmem-m8
