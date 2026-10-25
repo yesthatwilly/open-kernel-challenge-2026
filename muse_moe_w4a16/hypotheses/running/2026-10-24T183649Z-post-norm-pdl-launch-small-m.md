@@ -49,7 +49,7 @@ review: proceed
 status: running
 review_at: 2026-10-24T183956Z
 review_companions: null
-stage: claimed
+stage: implemented
 claimed_at: 2026-10-25T003236Z
 base_sha: 1d31a26689bb109c514db2e2c51c7167dbbb76f0
 base_blob: 108d36e9f2266fc88531dd6ff0329a847c882013
@@ -58,6 +58,12 @@ worktree: .worktrees/muse_moe_w4a16/post-norm-pdl-launch-small-m
 mode: null
 restack_of: null
 stale_base: null
+implemented_at: 2026-10-25T003435Z
+impl_commit: a53a567af1e053d7c253efc4558d40021eef7390
+submission_sha256: b36882b3db228eecd9823634c8ebb8fd331be66cbfc8b74ce0cda067d2a10c94
+norm_sha256: c4785bcb2d2ed9891903ba93a91cf3e246ef2d7a38356d7083a55ad42e2169db
+submission_blob: 062a12799f5d0eb53f65704727c665e6976fc6db
+lint_warnings: 11
 ---
 
 # post-norm-pdl-launch-small-m
@@ -102,3 +108,24 @@ No companion is warranted. (i) ab-revert: there is no landed hypothesis whose re
 - Does moe_wna16_marlin_gemm launch anything after the Marlin kernel (for example a reduce or copy for use_fp32_reduce=True)? If it does, the PDL edge attaches to that tail kernel rather than to Marlin. That is still correct, but the 'w2 Marlin tail' framing does not apply. Confirm in the profile's kernel order at bs=1.
 - Is the inter-kernel gap at the Marlin -> post-norm boundary in the bs=1 graph replay actually 1-2 us? An nsys trace of master's bs=1 graph would settle whether the expected magnitude is reachable before spending a check.
 
+
+## Implementation notes
+
+Only muse_moe_w4a16/submission.py changed (+68/-5).
+- `_post_norm_combine_kernel` gains constexpr `USE_PDL` (default False); `tl.extra.cuda.gdc_wait()` sits after the norm-weight load and before the first ids/topk_weights/y load. No gdc_launch_dependents.
+- New `_launch_post_norm(...)` wrapper passes `launch_pdl=True` only when use_pdl. kernel_fn (num_tokens < 32 only) calls it with `state["pdl_ok"]`; every other launch is master's.
+- New `_pdl_self_test(device, post_norm_w)`, in-process, no child process: warms the PDL variant, captures a CUDAGraph of an elementwise `y.copy_` plus the PDL launch, replays 3 times, torch.equal vs the plain launch. Whole body in try/except Exception, returns (False, reason) on any error or mismatch, never raises.
+- prepare() stores `pdl_ok`, compiles both variants for tokens 1..31 (only if the self-test passed; warmup also guarded), prints `[post-norm-pdl] PATH CHOSEN: pdl on|off (<reason>)`.
+- Deviation: none. The self-test uses seeded synthetic data from torch.Generator, not any input.
+
+## Rules check
+
+- [x] CUDA-graph capturable: kernel_fn has no sync/.item()/prints; the PDL flag is a prepare-time bool, the branch is on shape only (checked in diff).
+- [x] Nothing derived from `data` is cached across calls: state adds only pdl_ok (self-test on synthetic data) and the contiguous post_norm_w weight.
+- [x] Weights: n/a: no weight repack change; post_norm_w is the same BF16 weight made contiguous in prepare().
+- [x] Activations BF16 where SGLang keeps BF16; unchanged (n/a for KV/queries).
+- [x] Attention: n/a: MoE problem.
+- [x] No timing patches, harness frames/I/O/secrets, module edits, reference import, subprocesses or network: self-test is in-process, no subprocess/os/sys use.
+- [x] All work happens inside the timed call; no output caching or replay.
+
+okc_lint: "OK with warnings" (only host-sync warnings in prepare()/self-check code, outside kernel_fn's call graph). py_compile passed; __pycache__ removed.
