@@ -69,8 +69,11 @@ depends_on: null
 priority: 3
 kind: primary
 controls_for: null
-review: required
-status: queued
+review: hold
+status: hold
+review_at: 2026-10-25T203413Z
+review_companions: null
+hold_reason: "adversarial review: Duplicate of master: the landed combo-measured-rows-slide-batched-preattn-t8-tail (ec89382b, BEST 1.3142x) carries _pre_attention_kernel as source S3 (PAIRED an"
 ---
 
 # preattn-fused-t-gt1-sk-and-fa3-feeds
@@ -92,3 +95,27 @@ Replace the five pre-attention launches master still runs at T > 1 (FusedQKNorm 
 ## Risk
 
 LESSONS: fusing a handful of tiny kernels was flat on decode-sized shapes in several runs, so the per-shape gain is small (~1%) and may sit inside drift on the headline; judge on the replaced rows (FusedQKNorm, the cast elementwise rows, store_cache, the pad zeros/copies) and the paired ratio per shape. Not a re-run of fused-preattention-triton / fused-preattention-paired-pad-restack: attention's newer kernel, current master (sk feeds, dense chain at T=1), and T=1 excluded (REWRITE_READ: superseded by the dense chain there). If sliding-sk-window-port-decode32-verify1 also lands, its two bands use its own route and the same kernel source; the merge keeps one copy.
+
+## Adversarial review
+
+Reviewed 2026-10-25T203413Z by an adversarial subagent (model opus).
+
+**Verdict: hold.** Duplicate of master: the landed combo-measured-rows-slide-batched-preattn-t8-tail (ec89382b, BEST 1.3142x) carries _pre_attention_kernel as source S3 (PAIRED and unpaired, _paired_norm_gate_kernel, per-cell self-checks and >=1.02x cold-L2 selectors) over full decode 2<=B<=64 sk/split-KV feeds, every sliding verify batch, full verify paired FA3 and full verify B=1. Its brief also requires an okc check first.
+
+### Justification
+Written 15:32Z against 6773ec5cf5, before the combo landed (19:21Z). master _attn_core routes use_s3 -> _s3_pre_attention; _s3_cell maps c1-b16/b32, c2-t8/t128/t256, c3-t128/t256, c4-t8 (submission.py 3264-3400, 5960-6027). Only residual slices: sliding decode_16/32 when S1 loses, full decode_1 when dl3 piece A is off, and attention's newer kernel version (7e12891512 vs 963bcf0267 lineage). Missing prior: the landed combo S3. Re-mint as a stacked hypothesis on the combo that swaps in the newer kernel version and/or adds an S3 cell for sliding decode with S1 off.
+
+### Confounders on the current kernel
+- combo-measured-rows-slide-batched-preattn-t8-tail (landed): its S3 is this change; S1 pre-empts sliding decode B=2..32.
+- dl3-piece-a-gate-stride-check-fix / dense-chain-s3-t1-q-sk2-o-route-unpool: kernel Q already fuses the front half at full decode_1.
+- full-decode-splitkv-restack-on-pdl / sk tickets: S3 c1 selector already measures the remaining launch count.
+- fa3-hdim128-head-pairing-batched: S3 c3 already writes paired zero-padded q and uses _paired_norm_gate_kernel.
+
+### Interference and A/B needs
+No companion: on master it either reproduces the S3 selectors or swaps kernel versions.
+
+### Open questions
+- Which S3 cells were enabled in a903b9d004d2452d (check the log)?
+- How does attention's 7e12891512 kernel differ from master's?
+- When does S1 lose for sliding decode B=2..32?
+

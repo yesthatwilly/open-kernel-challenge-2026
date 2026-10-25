@@ -1,0 +1,24 @@
+{
+ "model": "opus",
+ "verdict": "hold",
+ "summary": "Duplicate of master: the landed combo-measured-rows-slide-batched-preattn-t8-tail (ec89382b, BEST 1.3142x) carries _pre_attention_kernel as source S3 (PAIRED and unpaired, _paired_norm_gate_kernel, per-cell self-checks and >=1.02x cold-L2 selectors) over full decode 2<=B<=64 sk/split-KV feeds, every sliding verify batch, full verify paired FA3 and full verify B=1. Its brief also requires an okc check first.",
+ "justification": "Written 15:32Z against 6773ec5cf5, before the combo landed (19:21Z). master _attn_core routes use_s3 -> _s3_pre_attention; _s3_cell maps c1-b16/b32, c2-t8/t128/t256, c3-t128/t256, c4-t8 (submission.py 3264-3400, 5960-6027). Only residual slices: sliding decode_16/32 when S1 loses, full decode_1 when dl3 piece A is off, and attention's newer kernel version (7e12891512 vs 963bcf0267 lineage). Missing prior: the landed combo S3. Re-mint as a stacked hypothesis on the combo that swaps in the newer kernel version and/or adds an S3 cell for sliding decode with S1 off.",
+ "confounders": [
+  "combo-measured-rows-slide-batched-preattn-t8-tail (landed): its S3 is this change; S1 pre-empts sliding decode B=2..32.",
+  "dl3-piece-a-gate-stride-check-fix / dense-chain-s3-t1-q-sk2-o-route-unpool: kernel Q already fuses the front half at full decode_1.",
+  "full-decode-splitkv-restack-on-pdl / sk tickets: S3 c1 selector already measures the remaining launch count.",
+  "fa3-hdim128-head-pairing-batched: S3 c3 already writes paired zero-padded q and uses _paired_norm_gate_kernel."
+ ],
+ "interference": "No companion: on master it either reproduces the S3 selectors or swaps kernel versions.",
+ "rules_flags": [
+  "No rules problem.",
+  "Process: first measurement must be an okc check; 0 checks left today.",
+  "If re-minted: Triton only (drop the renamed load_inline requirement); keep RoPE positions near 300000 and 1048576 in the self-check (_CB_POS_ROPE)."
+ ],
+ "companions": [],
+ "open_questions": [
+  "Which S3 cells were enabled in a903b9d004d2452d (check the log)?",
+  "How does attention's 7e12891512 kernel differ from master's?",
+  "When does S1 lose for sliding decode B=2..32?"
+ ]
+}
