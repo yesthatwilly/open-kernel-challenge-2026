@@ -21,6 +21,11 @@ profile are in `<problem>/hypotheses/archive/<slug>/`.
   triton → dfee6f2939974bad) or a scored run after a scored run (bf16-restack-m16) returns the
   earlier job's result. A scored submit of code already judged by a check is timed afresh. A
   confirm rerun (check after check) therefore carries a marker comment (churn.py `kind: confirm`).
+- A single-round 1.02x prepare-time selector is not enough to route a cell: on 2026-10-25 bf16 it
+  routed qkv K-split S=4 at m=256 (gate 1.041, IQR 2.05) and the judge went 19.46 -> 22.17 us, and
+  routed the router tall tile at m=256 and the judge went 9.72 -> 9.99 us (pooler K-halves 1.069/1.037
+  did hold). New gates: two interleaved rounds, both >= 1.03, candidate IQR <= 1.5x master's
+  (qkv-k-split-batched-gemm-m65-m256, router-hilo-tall-tile-m65-m256).
 - The headline is steadier than okc's CI says: 22 independent identical-code pairs (check vs its
   scored submit) differed by 0.4% mean, 1.01% max, so one run has sd ~0.35% against a CI of
   about ±1.5%. churn.py judges gains on that drift (margin 1.24% one run, 1.07% pooled).
