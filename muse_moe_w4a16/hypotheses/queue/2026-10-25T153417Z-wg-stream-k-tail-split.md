@@ -59,8 +59,11 @@ depends_on: null
 priority: 3
 kind: primary
 controls_for: null
-review: required
-status: queued
+review: hold
+status: hold
+review_at: 2026-10-25T203429Z
+review_companions: null
+hold_reason: "adversarial review: Tail mechanism real but small; numbers copied from the wrong profile; the spec's own condition is an okc check first and only scored submits remain today; a mas"
 ---
 
 # wg-stream-k-tail-split
@@ -79,3 +82,28 @@ Wave quantisation fix inside master's persistent wg_kernel, both kernels, 128 <=
 ## Risk
 
 Competes with wg-pdl-gather-w13-w2-chain for the same idle tail (that one only helps the w13 -> w2 boundary; this one also covers w2's own tail before the post-norm); measure each standalone, then stack. Risk: the gain depends on r mod G for the judge's routing, so one routing may show nothing; the log should print q, r and S for the scored T. Not touched by the queued consumer-side lines, but it edits the same item loop: whichever lands second rebases.
+
+## Adversarial review
+
+Reviewed 2026-10-25T203429Z by an adversarial subagent (model opus).
+
+**Verdict: hold.** Tail mechanism real but small; numbers copied from the wrong profile; the spec's own condition is an okc check first and only scored submits remain today; a master-based gain (<= ~2% on verify_32, ~+0.3% headline) cannot pass the 1.4021x occ2 board entry. Hold until checks reset, like wg-producer-direct-x-rows-no-gather.
+
+### Justification
+wg_kernel walks total = nc x n_tiles items over G=132 CTAs; makespan ceil(total/G). Real per-kernel times on master: wg_kernel<true> ~238 us, <false> ~112-119 us (~15 us per item), not 303/148. The S=2 rule only helps when r = total mod G <= G/2 (64*nc mod 132 for w13, 32*nc mod 132 for w2): a coin flip per kernel, expected 0-15 us of 358-405 us. True stream-k or S = min(KS, floor(G/r)) recovers the tail for every r with the same ticket/workspace machinery. Prior 'none' is defensible (wg-pdl-gather-w13-w2-chain targets the same tail from the dependent side, flat).
+
+### Confounders on the current kernel
+- wg-pdl-gather-w13-w2-chain (landed): PDL hides ~2-6 us of the same tail; savings overlap.
+- align-two-phase-port-from17 / combo F2 align2 front end: set nc and so r; log q, r, S per kernel.
+- combo-wg-occ2-v64-hot-interleave-align2 (board best, not on master): G=264, NMAX 64; a master result does not carry over.
+
+### Interference and A/B needs
+No companion: self-attributing via printed q, r, S and the prepare-time per-kernel A/B; the real question (which r the judge routing gives) is a print.
+
+### Open questions
+- Compute nc and r under the judge routing (_wg_judge_ids) offline before spending a run.
+- True stream-k or S = floor(G/r)?
+- Rebuild on the occ2 branch's wg2_kernel (G=264) where it can move the board?
+- Assert identical producer/consumer item sequences in the canary.
+- Correct expected rows to master's real per-kernel times.
+

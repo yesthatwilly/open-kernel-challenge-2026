@@ -1,0 +1,24 @@
+{
+ "model": "opus",
+ "verdict": "hold",
+ "summary": "Tail mechanism real but small; numbers copied from the wrong profile; the spec's own condition is an okc check first and only scored submits remain today; a master-based gain (<= ~2% on verify_32, ~+0.3% headline) cannot pass the 1.4021x occ2 board entry. Hold until checks reset, like wg-producer-direct-x-rows-no-gather.",
+ "justification": "wg_kernel walks total = nc x n_tiles items over G=132 CTAs; makespan ceil(total/G). Real per-kernel times on master: wg_kernel<true> ~238 us, <false> ~112-119 us (~15 us per item), not 303/148. The S=2 rule only helps when r = total mod G <= G/2 (64*nc mod 132 for w13, 32*nc mod 132 for w2): a coin flip per kernel, expected 0-15 us of 358-405 us. True stream-k or S = min(KS, floor(G/r)) recovers the tail for every r with the same ticket/workspace machinery. Prior 'none' is defensible (wg-pdl-gather-w13-w2-chain targets the same tail from the dependent side, flat).",
+ "confounders": [
+  "wg-pdl-gather-w13-w2-chain (landed): PDL hides ~2-6 us of the same tail; savings overlap.",
+  "align-two-phase-port-from17 / combo F2 align2 front end: set nc and so r; log q, r, S per kernel.",
+  "combo-wg-occ2-v64-hot-interleave-align2 (board best, not on master): G=264, NMAX 64; a master result does not carry over."
+ ],
+ "interference": "No companion: self-attributing via printed q, r, S and the prepare-time per-kernel A/B; the real question (which r the judge routing gives) is a print.",
+ "rules_flags": [
+  "None blocking: fp32 fixed-order two-half sum, workspace and tickets in state, zeroed in prepare, winner resets ticket.",
+  "Keep canary + synchronize before self-check; index the fp32 workspace by tail-item index, not blockIdx."
+ ],
+ "companions": [],
+ "open_questions": [
+  "Compute nc and r under the judge routing (_wg_judge_ids) offline before spending a run.",
+  "True stream-k or S = floor(G/r)?",
+  "Rebuild on the occ2 branch's wg2_kernel (G=264) where it can move the board?",
+  "Assert identical producer/consumer item sequences in the canary.",
+  "Correct expected rows to master's real per-kernel times."
+ ]
+}
