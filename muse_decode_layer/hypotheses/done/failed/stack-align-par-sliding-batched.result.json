@@ -1,0 +1,328 @@
+{
+ "schema": 1,
+ "problem": "muse_decode_layer",
+ "slug": "stack-align-par-sliding-batched",
+ "job": "b94e797333fb4a27",
+ "mode": "check",
+ "duplicate_of": null,
+ "content_hash": "7c0598db96db2ff458631bd724b243a1ab3f15012c309625077a7eb4d3e0d44f",
+ "submission_sha256": "4bb95888bbec38bfabc90a40fa18a7a42348d3c1edb7f18fe85469c9c00fcd55",
+ "submission_blob": "f9fc0379411724907de05cd9cdb046eeaf5382e7",
+ "impl_commit": "73b296a8edd9b98db5a21db5d4fa73f8b8617591",
+ "base_sha": "45997c629d0d2ab4312c7688acc660b9616ec817",
+ "created_at": 1792885016.4947116,
+ "finished_at": 1792885180.3013875,
+ "gpu": "H200",
+ "evaluator_sha256": "2999d8a201bb2b0bad6c7b3998af2143a1ed720d531dbb4d15670721ee9f957b",
+ "status": "done",
+ "passed": false,
+ "error": null,
+ "returncode": 112,
+ "tests": {
+  "total": 13,
+  "passed": 13
+ },
+ "first_failing": null,
+ "speedup": null,
+ "speedup_ci": null,
+ "score_us": null,
+ "baseline_us": null,
+ "flags": [],
+ "checks": {
+  "flagged": [],
+  "ok": true,
+  "rejected": []
+ },
+ "shapes": [
+  {
+   "key": "batch=1 ctx=80000 dist=soft layer=sliding load=decode_1 page=1 repeats=60",
+   "load": "decode 1",
+   "case": {
+    "batch": 1,
+    "ctx": 80000,
+    "dist": "soft",
+    "layer": "sliding",
+    "load": "decode 1",
+    "page": 1,
+    "repeats": 60,
+    "seed": 712463669528309940,
+    "weight": 46
+   },
+   "weight": 46,
+   "median_ns": 133406.2258951697,
+   "baseline_ns": 172399.99771118164,
+   "speedup": 1.2922934934584924,
+   "speedup_of_medians": 1.287028179349457,
+   "err_ns": 675.5577022473426,
+   "speed_of_light_ns": 40024.746666666666,
+   "status": "pass",
+   "top_kernels": []
+  },
+  {
+   "key": "batch=1 ctx=80000 dist=soft layer=full load=decode_1 page=1 repeats=60",
+   "load": "decode 1",
+   "case": {
+    "batch": 1,
+    "ctx": 80000,
+    "dist": "soft",
+    "layer": "full",
+    "load": "decode 1",
+    "page": 1,
+    "repeats": 60,
+    "seed": 712512815684358483,
+    "weight": 16
+   },
+   "weight": 16,
+   "median_ns": 143942.69235790503,
+   "baseline_ns": 183055.997826159,
+   "speedup": 1.271728316509469,
+   "speedup_of_medians": 1.2682629180339675,
+   "err_ns": 568.5667693327193,
+   "speed_of_light_ns": 44182.18666666667,
+   "status": "pass",
+   "top_kernels": []
+  },
+  {
+   "key": "batch=16 ctx=80000 dist=soft layer=sliding load=decode_16 page=1 spread=agentic",
+   "load": "decode 16",
+   "case": {
+    "batch": 16,
+    "ctx": 80000,
+    "dist": "soft",
+    "layer": "sliding",
+    "load": "decode 16",
+    "page": 1,
+    "seed": 712561961840407027,
+    "spread": "agentic",
+    "weight": 46
+   },
+   "weight": 46,
+   "median_ns": 190533.8607240151,
+   "baseline_ns": 249263.99672403932,
+   "speedup": 1.3082398885786173,
+   "speedup_of_medians": 1.3005258682279905,
+   "err_ns": 2581.2189483177394,
+   "speed_of_light_ns": 76721.90293333333,
+   "status": "pass",
+   "top_kernels": []
+  },
+  {
+   "key": "batch=16 ctx=80000 dist=soft layer=full load=decode_16 page=1 spread=agentic",
+   "load": "decode 16",
+   "case": {
+    "batch": 16,
+    "ctx": 80000,
+    "dist": "soft",
+    "layer": "full",
+    "load": "decode 16",
+    "page": 1,
+    "seed": 712611107996455572,
+    "spread": "agentic",
+    "weight": 16
+   },
+   "weight": 16,
+   "median_ns": 347970.13262747537,
+   "baseline_ns": 428223.9964231849,
+   "speedup": 1.2306343455104134,
+   "speedup_of_medians": 1.236840899673482,
+   "err_ns": 2934.085796182907,
+   "speed_of_light_ns": 137455.75253333335,
+   "status": "pass",
+   "top_kernels": []
+  },
+  {
+   "key": "batch=32 ctx=80000 dist=soft layer=sliding load=decode_32 page=1 spread=agentic",
+   "load": "decode 32",
+   "case": {
+    "batch": 32,
+    "ctx": 80000,
+    "dist": "soft",
+    "layer": "sliding",
+    "load": "decode 32",
+    "page": 1,
+    "seed": 712660254152504118,
+    "spread": "agentic",
+    "weight": 46
+   },
+   "weight": 46,
+   "median_ns": 221379.10738718,
+   "baseline_ns": 249408.00201147795,
+   "speedup": 1.126610387742132,
+   "speedup_of_medians": 1.104905061292838,
+   "err_ns": 3909.673645905047,
+   "speed_of_light_ns": 84505.39520000001,
+   "status": "pass",
+   "top_kernels": []
+  },
+  {
+   "key": "batch=32 ctx=80000 dist=soft layer=full load=decode_32 page=1 spread=agentic",
+   "load": "decode 32",
+   "case": {
+    "batch": 32,
+    "ctx": 80000,
+    "dist": "soft",
+    "layer": "full",
+    "load": "decode 32",
+    "page": 1,
+    "seed": 712709400308552665,
+    "spread": "agentic",
+    "weight": 16
+   },
+   "weight": 16,
+   "median_ns": 506694.9023777675,
+   "baseline_ns": 601936.0041245818,
+   "speedup": 1.1879653837050193,
+   "speedup_of_medians": 1.1926137486991224,
+   "err_ns": 3892.5499364408993,
+   "speed_of_light_ns": 208096.46079999997,
+   "status": "pass",
+   "top_kernels": []
+  },
+  {
+   "key": "batch=1 ctx=80000 dist=soft layer=sliding load=verify_1 page=1 q_len=8",
+   "load": "verify 1",
+   "case": {
+    "batch": 1,
+    "ctx": 80000,
+    "dist": "soft",
+    "layer": "sliding",
+    "load": "verify 1",
+    "page": 1,
+    "q_len": 8,
+    "seed": 712758546464601213,
+    "weight": 46
+   },
+   "weight": 46,
+   "median_ns": 196730.94034757622,
+   "baseline_ns": 274191.99142605066,
+   "speedup": 1.3937410706298634,
+   "speedup_of_medians": 1.3972278308626527,
+   "err_ns": 4059.6375553827024,
+   "speed_of_light_ns": 62286.50666666666,
+   "status": "pass",
+   "top_kernels": []
+  },
+  {
+   "key": "batch=1 ctx=80000 dist=soft layer=full load=verify_1 page=1 q_len=8",
+   "load": "verify 1",
+   "case": {
+    "batch": 1,
+    "ctx": 80000,
+    "dist": "soft",
+    "layer": "full",
+    "load": "verify 1",
+    "page": 1,
+    "q_len": 8,
+    "seed": 712807692620649762,
+    "weight": 16
+   },
+   "weight": 16,
+   "median_ns": null,
+   "baseline_ns": null,
+   "speedup": null,
+   "speedup_of_medians": null,
+   "err_ns": null,
+   "speed_of_light_ns": null,
+   "status": "fail",
+   "top_kernels": []
+  }
+ ],
+ "loads": [
+  {
+   "load": "decode 1",
+   "sglang_ns": 10859295.8599329,
+   "yours_ns": 8439769.468904287,
+   "speedup": 1.2866815734651498
+  },
+  {
+   "load": "decode 16",
+   "sglang_ns": 18317727.792076766,
+   "yours_ns": 14332079.715344302,
+   "speedup": 1.2780927929437431
+  },
+  {
+   "load": "decode 32",
+   "sglang_ns": 21103744.158521295,
+   "yours_ns": 18290557.37785456,
+   "speedup": 1.1538054156880329
+  },
+  {
+   "load": "verify 1",
+   "sglang_ns": 12612831.60559833,
+   "yours_ns": 9049623.255988507,
+   "speedup": 1.3937410706298632
+  }
+ ],
+ "attribution": {
+  "base_result": "muse_decode_layer/hypotheses/done/gain/small-t-launch-minimal-dense-chain-pdl.result.json",
+  "noise": 0.015,
+  "shapes": [
+   {
+    "key": "batch=1 ctx=80000 dist=soft layer=sliding load=decode_1 page=1 repeats=60",
+    "weight": 46,
+    "base_us": 132.74,
+    "hyp_us": 133.41,
+    "delta": 0.9952,
+    "verdict": "flat"
+   },
+   {
+    "key": "batch=1 ctx=80000 dist=soft layer=full load=decode_1 page=1 repeats=60",
+    "weight": 16,
+    "base_us": 142.57,
+    "hyp_us": 143.94,
+    "delta": 0.9984,
+    "verdict": "flat"
+   },
+   {
+    "key": "batch=16 ctx=80000 dist=soft layer=sliding load=decode_16 page=1 spread=agentic",
+    "weight": 46,
+    "base_us": 217.06,
+    "hyp_us": 190.53,
+    "delta": 1.0524,
+    "verdict": "gained"
+   },
+   {
+    "key": "batch=16 ctx=80000 dist=soft layer=full load=decode_16 page=1 spread=agentic",
+    "weight": 16,
+    "base_us": 347.51,
+    "hyp_us": 347.97,
+    "delta": 0.9923,
+    "verdict": "flat"
+   },
+   {
+    "key": "batch=32 ctx=80000 dist=soft layer=sliding load=decode_32 page=1 spread=agentic",
+    "weight": 46,
+    "base_us": 246.99,
+    "hyp_us": 221.38,
+    "delta": 1.0476,
+    "verdict": "gained"
+   },
+   {
+    "key": "batch=32 ctx=80000 dist=soft layer=full load=decode_32 page=1 spread=agentic",
+    "weight": 16,
+    "base_us": 534.98,
+    "hyp_us": 506.69,
+    "delta": 1.0169,
+    "verdict": "flat"
+   },
+   {
+    "key": "batch=1 ctx=80000 dist=soft layer=sliding load=verify_1 page=1 q_len=8",
+    "weight": 46,
+    "base_us": 186.48,
+    "hyp_us": 196.73,
+    "delta": 0.9871,
+    "verdict": "flat"
+   },
+   {
+    "key": "batch=1 ctx=80000 dist=soft layer=full load=verify_1 page=1 q_len=8",
+    "weight": 16,
+    "base_us": 195.92,
+    "hyp_us": 0.0,
+    "delta": null,
+    "verdict": "lost"
+   }
+  ],
+  "summary": "gained on sliding decode_16, decode_32; lost on full verify_1",
+  "expected_hit": "0/1"
+ }
+}
