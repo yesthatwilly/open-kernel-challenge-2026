@@ -63,7 +63,7 @@ worktree: .worktrees/muse_bf16_proj/pooler-k-halves-fp32-partials-restack-m128-m
 mode: check
 restack_of: null
 stale_base: null
-implemented_at: 2026-10-25T213420Z
+implemented_at: 2026-10-25T213426Z
 impl_commit: 7a842566976a907c441d7160dbc35c46214eb99c
 submission_sha256: f00e8e6dfa130ed27ff59df7cfaa6de97ccc09fe6e0c605387008e4c27e0ac52
 norm_sha256: 9cff3b5398f218fdf8febe421f83dd8b1e2d21afdbac1e7b3c0a7668bbd676ee
