@@ -47,9 +47,18 @@ controls_for: null
 rewrite_stage: 2
 replaces: paired FA3 flash_fwd + FlashAttnFwdCombine + pad/unpad copies + FusedRMSNormGate on full decode, 1 < batch <= 64 (now splitkv_attn_kernel + splitkv_combine_kernel)
 review: proceed
-status: queued
+status: running
 review_at: 2026-10-25T001534Z
 review_companions: null
+stage: claimed
+claimed_at: 2026-10-25T002203Z
+base_sha: b2f95e63a6e8ad3cff7947760e69e448399e295d
+base_blob: c9067b8201f2480c64910c4a71098df7ce616f73
+branch: hyp/muse_decode_layer/full-decode-splitkv-kv-bw-3p5
+worktree: .worktrees/muse_decode_layer/full-decode-splitkv-kv-bw-3p5
+mode: null
+restack_of: null
+stale_base: null
 ---
 
 # full-decode-splitkv-kv-bw-3p5
