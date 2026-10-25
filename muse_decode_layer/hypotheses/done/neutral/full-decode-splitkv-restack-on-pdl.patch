@@ -1,0 +1,779 @@
+diff --git a/muse_decode_layer/submission.py b/muse_decode_layer/submission.py
+index 4da9467..c9067b8 100644
+--- a/muse_decode_layer/submission.py
++++ b/muse_decode_layer/submission.py
+@@ -50,7 +50,13 @@ Differs from SGLang:
+     combine and the output norm x sigmoid(gate), replacing FusedQKNorm through FusedRMSNormGate.
+   * The step's positions, cache rows, FA3 lengths and FA3 scheduler metadata come in with the
+     inputs; SGLang builds them once per step for all layers.
+-  * All-reduces are the identity; the all-gather is a zero pad of the unpooler's output."""
++  * All-reduces are the identity; the all-gather is a zero pad of the unpooler's output.
++  * Full-layer decode at 1 < batch <= 64 (tp8 heads, page 1): two CUDA kernels ported from
++    muse_attention_decode (split-KV gather attention; LSE combine + output norm x sigmoid(gate))
++    replace FA3, the paired pad/unpad copies and FusedRMSNormGate. Compiled at import with
++    load_inline (its own module, separate from the dense-chain one) and self-checked once in
++    prepare() on synthetic data; a build or check failure logs a [splitkv] line and keeps the
++    path above on every shape."""
+ 
+ from typing import TypedDict
+ 
+@@ -1610,6 +1616,627 @@ def _sliding_forward(data, qkv):
+     return out
+ 
+ 
++# ---------------------------------------------------------------------------------------------
++# Full-layer decode at batch > 1 (tp8 heads, page 1): split-KV gather attention in CUDA.
++#
++# Kernel A (splitkv_attn_kernel): a persistent grid of 2 CTAs per SM, 8 warps each. Work items
++# are fixed 1024-token chunks of each request, laid out flat (request-major) from an in-kernel
++# prefix sum of the chunk counts, and CTA x walks items x, x + grid, ... Per item the 1024 page
++# indices and the request's FP8 query (16 heads x 64) are fetched into shared memory with
++# cp.async one item ahead (double-buffered), so no K/V address waits on an index load. The item
++# is streamed as 16 tiles of 64 tokens: each token is one 128-byte K row and one 128-byte V row
++# (both KV heads), copied with 16-byte cp.async.cg into a 4-stage ring (16 KB per stage), whose
++# 16-byte chunks are XOR-swizzled by token so the fragment reads are bank-conflict free. The
++# tile sequence runs across items without draining. Warp w serves KV head w % 2 and tokens
++# (w / 2) * 16 .. +16 of each tile with mma.sync m16n8k16 (f16 in, fp32 accumulate): S = Q K^T
++# with the head's 8 queries as rows 0-7 (rows 8-15 zero), then O += P V. FP8 E4M3 is widened to
++# f16 exactly (cvt.rn.f16x2.e4m3x2). The dot product's k order is permuted identically for Q
++# and K so each lane reads 4 contiguous K bytes; P@V's output columns are permuted (column n of
++# n-block nb is dim n * 8 + nb) so each lane reads 8 contiguous V bytes per token. Softmax is
++# online in the exp2 domain (fp32 m, l; -inf safe). Positions >= cache_seqlens[b] are never
++# dereferenced (zero-filled copies) and are masked to -inf. At item end the four warps of each
++# KV head merge in shared memory and the CTA stores one fp32 partial (acc [16, 64] unnormalized,
++# m [16], l [16]) at slot b * max_chunks + chunk.
++# Kernel B (splitkv_combine_kernel): grid (B, 16), 4 warps per (request, head): log-sum-exp merge
++# of the request's partials, times v_scale, then the master epilogue (scaleless RMSNorm over 64,
++# eps inside the sqrt, times sigmoid(gate)), bf16 out.
++# ---------------------------------------------------------------------------------------------
++
++_SPLITKV_CHUNK = 1024  # must match CHUNK in the CUDA source
++
++_SPLITKV_CPP = r"""
++#include <torch/extension.h>
++void splitkv_attn(torch::Tensor q, torch::Tensor k_cache, torch::Tensor v_cache, torch::Tensor page_table,
++                  torch::Tensor cache_seqlens, torch::Tensor k_scale, torch::Tensor ws_acc, torch::Tensor ws_ml,
++                  double score_scale, int64_t max_chunks, int64_t grid);
++void splitkv_combine(torch::Tensor ws_acc, torch::Tensor ws_ml, torch::Tensor cache_seqlens, torch::Tensor v_scale,
++                     torch::Tensor qkv, int64_t qkv_stride, torch::Tensor out, int64_t max_chunks, double eps);
++"""
++
++_SPLITKV_CUDA = r"""
++#include <torch/extension.h>
++#include <ATen/cuda/CUDAContext.h>
++#include <c10/cuda/CUDAException.h>
++#include <cuda_fp16.h>
++#include <cuda_bf16.h>
++#include <cstdint>
++
++namespace {
++
++constexpr int D = 64;              // head dim
++constexpr int HQ = 16;             // query heads
++constexpr int HKV = 2;             // kv heads
++constexpr int G = HQ / HKV;        // queries per kv head (8)
++constexpr int ROW = HKV * D;       // bytes per cache row (page 1: both kv heads, 128)
++constexpr int CHUNK = 1024;        // tokens per work item
++constexpr int TILE = 64;           // tokens per pipeline tile
++constexpr int TILES = CHUNK / TILE;
++constexpr int STAGES = 4;
++constexpr int THREADS = 256;
++constexpr int WARPS = THREADS / 32;
++constexpr int MAXB = 64;
++constexpr int STAGE_BYTES = 2 * TILE * ROW;                  // K tile + V tile = 16 KB
++constexpr int RING_OFF = 0;
++constexpr int IDX_OFF = RING_OFF + STAGES * STAGE_BYTES;     // int32 [2][CHUNK]
++constexpr int Q_OFF = IDX_OFF + 2 * CHUNK * 4;               // e4m3 [2][HQ][D]
++constexpr int ACC_OFF = Q_OFF + 2 * HQ * D;                  // f32 [WARPS][G][D]
++constexpr int ML_OFF = ACC_OFF + WARPS * G * D * 4;          // f32 [WARPS][G][2]
++constexpr int SEQ_OFF = ML_OFF + WARPS * G * 2 * 4;          // int32 [MAXB]
++constexpr int PRE_OFF = SEQ_OFF + MAXB * 4;                  // int32 [MAXB + 1]
++constexpr int SMEM_A = PRE_OFF + (MAXB + 4) * 4;
++
++__device__ __forceinline__ uint32_t smem_u32(const void* p) {
++  return static_cast<uint32_t>(__cvta_generic_to_shared(p));
++}
++__device__ __forceinline__ void cp_async16(uint32_t dst, const void* src, int src_bytes) {
++  asm volatile("cp.async.cg.shared.global [%0], [%1], 16, %2;\n" :: "r"(dst), "l"(src), "r"(src_bytes) : "memory");
++}
++__device__ __forceinline__ void cp_async4(uint32_t dst, const void* src, int src_bytes) {
++  asm volatile("cp.async.ca.shared.global [%0], [%1], 4, %2;\n" :: "r"(dst), "l"(src), "r"(src_bytes) : "memory");
++}
++__device__ __forceinline__ void cp_commit() { asm volatile("cp.async.commit_group;\n" ::: "memory"); }
++template <int N>
++__device__ __forceinline__ void cp_wait() { asm volatile("cp.async.wait_group %0;\n" :: "n"(N) : "memory"); }
++
++// Four E4M3 bytes -> two f16x2: lo from bytes 0,1 (byte 0 in the low half), hi from bytes 2,3.
++__device__ __forceinline__ void e4m3x4_to_f16x2x2(uint32_t w, uint32_t& lo, uint32_t& hi) {
++  asm("{\n\t.reg .b16 a, b;\n\tmov.b32 {a, b}, %2;\n\t"
++      "cvt.rn.f16x2.e4m3x2 %0, a;\n\tcvt.rn.f16x2.e4m3x2 %1, b;\n\t}\n"
++      : "=r"(lo), "=r"(hi) : "r"(w));
++}
++__device__ __forceinline__ uint32_t pack_f16x2(float lo, float hi) {
++  __half2 h = __floats2half2_rn(lo, hi);  // .x (low half) = lo
++  return *reinterpret_cast<uint32_t*>(&h);
++}
++__device__ __forceinline__ float ex2(float x) {
++  float y;
++  asm("ex2.approx.ftz.f32 %0, %1;" : "=f"(y) : "f"(x));
++  return y;
++}
++// D = A B + D, m16n8k16, A row-major f16 (4 regs), B col-major f16 (2 regs), fp32 accumulate.
++__device__ __forceinline__ void mma16816(float (&c)[4], uint32_t a0, uint32_t a1, uint32_t a2, uint32_t a3,
++                                         uint32_t b0, uint32_t b1) {
++  asm("mma.sync.aligned.m16n8k16.row.col.f32.f16.f16.f32 {%0,%1,%2,%3}, {%4,%5,%6,%7}, {%8,%9}, {%0,%1,%2,%3};\n"
++      : "+f"(c[0]), "+f"(c[1]), "+f"(c[2]), "+f"(c[3])
++      : "r"(a0), "r"(a1), "r"(a2), "r"(a3), "r"(b0), "r"(b1));
++}
++
++__global__ void __launch_bounds__(THREADS, 2)
++splitkv_attn_kernel(const uint8_t* __restrict__ q,          // e4m3 [B, HQ, D]
++                    const uint8_t* __restrict__ kc,         // e4m3 [rows, ROW]
++                    const uint8_t* __restrict__ vc,         // e4m3 [rows, ROW]
++                    const int* __restrict__ page_table, int64_t pt_stride,
++                    const int* __restrict__ seqlens, int B,
++                    const float* __restrict__ k_scale, float score_scale,
++                    float* __restrict__ ws_acc,             // f32 [B * max_chunks, HQ, D]
++                    float* __restrict__ ws_ml,              // f32 [B * max_chunks, 2, HQ]
++                    int max_chunks) {
++  extern __shared__ __align__(128) uint8_t smem[];
++  uint8_t* ring = smem + RING_OFF;
++  int* idx_s = reinterpret_cast<int*>(smem + IDX_OFF);
++  uint8_t* q_s = smem + Q_OFF;
++  float* acc_s = reinterpret_cast<float*>(smem + ACC_OFF);
++  float* ml_s = reinterpret_cast<float*>(smem + ML_OFF);
++  int* seq_s = reinterpret_cast<int*>(smem + SEQ_OFF);
++  int* pre_s = reinterpret_cast<int*>(smem + PRE_OFF);
++  const float NEG_INF = __int_as_float(0xff800000u);
++
++  const int tid = threadIdx.x, lane = tid & 31, warp = tid >> 5;
++  const int bx = blockIdx.x, gx = gridDim.x;
++  if (tid < B) seq_s[tid] = seqlens[tid];
++  __syncthreads();
++  if (tid == 0) {
++    int run = 0;
++    pre_s[0] = 0;
++    for (int b = 0; b < B; ++b) {
++      run += (seq_s[b] + CHUNK - 1) / CHUNK;
++      pre_s[b + 1] = run;
++    }
++  }
++  __syncthreads();
++  const int total = pre_s[B];
++  if (bx >= total) return;  // uniform over the CTA
++  const int nk = (total - bx + gx - 1) / gx;  // items of this CTA
++  const int N = nk * TILES;                   // tiles of this CTA, one flat pipeline
++  const float scale = score_scale * __ldg(k_scale);  // sm_scale * qk_scale_factor * log2(e) * k_scale
++
++  // Item k of this CTA -> (request, chunk, cache length).
++  auto item_of = [&](int k, int& b, int& chunk, int& seq) {
++    const int i = bx + k * gx;
++    int lo = 0;
++    while (lo + 1 < B && pre_s[lo + 1] <= i) ++lo;
++    b = lo;
++    chunk = i - pre_s[lo];
++    seq = seq_s[lo];
++  };
++  // Page indices and query of item k into buffer k & 1 (positions past the length zero-filled).
++  auto issue_meta = [&](int k) {
++    int b, chunk, seq;
++    item_of(k, b, chunk, seq);
++    const int buf = k & 1;
++    const int* prow = page_table + (int64_t)b * pt_stride;
++#pragma unroll
++    for (int j = 0; j < CHUNK / THREADS; ++j) {
++      const int e = tid + j * THREADS;
++      const int pos = chunk * CHUNK + e;
++      const bool ok = pos < seq;
++      cp_async4(smem_u32(idx_s + buf * CHUNK + e), ok ? prow + pos : prow, ok ? 4 : 0);
++    }
++    if (tid < HQ * D / 16)
++      cp_async16(smem_u32(q_s + buf * HQ * D + tid * 16), q + (int64_t)b * HQ * D + tid * 16, 16);
++  };
++  // Tile nn of the flat sequence into ring stage nn % STAGES: thread -> token tid / 4, 16-byte
++  // chunks 2 * (tid % 4) + {0, 1} of its K row and its V row, chunk c stored at c ^ (token % 8).
++  int ik = -1, ib = 0, ichunk = 0, iseq = 0;
++  auto issue_tile = [&](int nn) {
++    const int k = nn / TILES, t = nn % TILES;
++    if (k != ik) { ik = k; item_of(k, ib, ichunk, iseq); }
++    uint8_t* st = ring + (nn % STAGES) * STAGE_BYTES;
++    const int tt = tid >> 2;
++    const int e = t * TILE + tt;
++    const bool ok = ichunk * CHUNK + e < iseq;
++    const int64_t row = ok ? (int64_t)idx_s[(k & 1) * CHUNK + e] : 0;
++    const uint8_t* ks = kc + row * ROW;
++    const uint8_t* vs = vc + row * ROW;
++#pragma unroll
++    for (int j = 0; j < 2; ++j) {
++      const int c = (tid & 3) * 2 + j;
++      const int dst = tt * ROW + ((c ^ (tt & 7)) << 4);
++      cp_async16(smem_u32(st + dst), ks + c * 16, ok ? 16 : 0);
++      cp_async16(smem_u32(st + TILE * ROW + dst), vs + c * 16, ok ? 16 : 0);
++    }
++  };
++
++  // Prologue: item 0's meta (waited), then tiles 0 .. STAGES-2; item 1's meta rides tile 0's group.
++  issue_meta(0);
++  cp_commit();
++  cp_wait<0>();
++  __syncthreads();
++#pragma unroll
++  for (int j = 0; j < STAGES - 1; ++j) {
++    if (j < N) {
++      issue_tile(j);
++      if (j % TILES == 0 && j / TILES + 1 < nk) issue_meta(j / TILES + 1);
++    }
++    cp_commit();
++  }
++
++  const int g = warp & 1;             // kv head
++  const int slice = (warp >> 1) * 16; // token slice of each tile
++  const int quad = lane >> 2, qi = lane & 3;
++  uint32_t qa[4][2];
++  float m_i = NEG_INF, l_i = 0.f;
++  float acc[8][4];
++  int cb = 0, cchunk = 0, cseq = 0;
++
++  for (int n = 0; n < N; ++n) {
++    cp_wait<STAGES - 2>();  // tile n (and everything issued before it) has landed
++    __syncthreads();        // visible to all; every warp is done with tile n - 1's stage
++    {
++      const int nn = n + STAGES - 1;
++      if (nn < N) {
++        issue_tile(nn);
++        if (nn % TILES == 0 && nn / TILES + 1 < nk) issue_meta(nn / TILES + 1);
++      }
++      cp_commit();  // always, so the group count stays uniform
++    }
++    const int k = n / TILES, t = n % TILES;
++    if (t == 0) {
++      item_of(k, cb, cchunk, cseq);
++      // A operand for kstep s: row quad = query g * G + quad; k index 2 * qi + {0, 1} holds dims
++      // s * 16 + 4 * qi + {0, 1}, k index 8 + 2 * qi + {0, 1} holds dims s * 16 + 4 * qi + {2, 3}
++      // (K uses the same permutation, so the dot product is unchanged).
++      const uint8_t* qrow = q_s + (k & 1) * HQ * D + (g * G + quad) * D + qi * 4;
++#pragma unroll
++      for (int s = 0; s < 4; ++s)
++        e4m3x4_to_f16x2x2(*reinterpret_cast<const uint32_t*>(qrow + s * 16), qa[s][0], qa[s][1]);
++      m_i = NEG_INF;
++      l_i = 0.f;
++#pragma unroll
++      for (int nb = 0; nb < 8; ++nb) acc[nb][0] = acc[nb][1] = acc[nb][2] = acc[nb][3] = 0.f;
++    }
++    const uint8_t* Ks = ring + (n % STAGES) * STAGE_BYTES;
++    const uint8_t* Vs = Ks + TILE * ROW;
++
++    // S = Q K^T over the warp's 16 tokens: n-block nb holds tokens slice + nb * 8 + (0..7).
++    float s[2][4];
++#pragma unroll
++    for (int nb = 0; nb < 2; ++nb) {
++      s[nb][0] = s[nb][1] = s[nb][2] = s[nb][3] = 0.f;
++      const int tt = slice + nb * 8 + quad;
++      const uint8_t* kr = Ks + tt * ROW + qi * 4;
++#pragma unroll
++      for (int ks = 0; ks < 4; ++ks) {
++        const uint32_t w = *reinterpret_cast<const uint32_t*>(kr + (((g * 4 + ks) ^ (tt & 7)) << 4));
++        uint32_t b0, b1;
++        e4m3x4_to_f16x2x2(w, b0, b1);
++        mma16816(s[nb], qa[ks][0], 0u, qa[ks][1], 0u, b0, b1);
++      }
++    }
++    // Row quad's scores at tokens slice + 2 * qi + {0, 1} (nb 0) and + 8 (nb 1).
++    const int pos0 = cchunk * CHUNK + t * TILE + slice + qi * 2;
++    float x0 = pos0 < cseq ? s[0][0] * scale : NEG_INF;
++    float x1 = pos0 + 1 < cseq ? s[0][1] * scale : NEG_INF;
++    float x2 = pos0 + 8 < cseq ? s[1][0] * scale : NEG_INF;
++    float x3 = pos0 + 9 < cseq ? s[1][1] * scale : NEG_INF;
++    float mx = fmaxf(fmaxf(x0, x1), fmaxf(x2, x3));
++    mx = fmaxf(mx, __shfl_xor_sync(0xffffffffu, mx, 1));
++    mx = fmaxf(mx, __shfl_xor_sync(0xffffffffu, mx, 2));
++    const float m_new = fmaxf(m_i, mx);
++    const float m_use = m_new == NEG_INF ? 0.f : m_new;
++    const float alpha = ex2(m_i - m_use);
++    x0 = ex2(x0 - m_use);
++    x1 = ex2(x1 - m_use);
++    x2 = ex2(x2 - m_use);
++    x3 = ex2(x3 - m_use);
++    l_i = l_i * alpha + (x0 + x1) + (x2 + x3);  // this lane's columns; quad-reduced at item end
++    m_i = m_new;
++#pragma unroll
++    for (int nb = 0; nb < 8; ++nb) { acc[nb][0] *= alpha; acc[nb][1] *= alpha; }
++    const uint32_t pa0 = pack_f16x2(x0, x1), pa2 = pack_f16x2(x2, x3);
++
++    // O += P V. B operand of dim-block nb: k = token slice + 2 * qi + {0, 1} (reg 0) and + 8
++    // (reg 1), column quad = dim quad * 8 + nb. Each lane reads 8 contiguous bytes per token.
++    const int tv = slice + qi * 2;
++    const int vlc = g * 4 + (quad >> 1);
++    const int voff = (quad & 1) * 8;
++    const uint2 v0 = *reinterpret_cast<const uint2*>(Vs + tv * ROW + ((vlc ^ (tv & 7)) << 4) + voff);
++    const uint2 v1 = *reinterpret_cast<const uint2*>(Vs + (tv + 1) * ROW + ((vlc ^ ((tv + 1) & 7)) << 4) + voff);
++    const uint2 v8 = *reinterpret_cast<const uint2*>(Vs + (tv + 8) * ROW + ((vlc ^ ((tv + 8) & 7)) << 4) + voff);
++    const uint2 v9 = *reinterpret_cast<const uint2*>(Vs + (tv + 9) * ROW + ((vlc ^ ((tv + 9) & 7)) << 4) + voff);
++#pragma unroll
++    for (int hw = 0; hw < 2; ++hw) {
++      const uint32_t w0 = hw ? v0.y : v0.x, w1 = hw ? v1.y : v1.x;
++      const uint32_t w8 = hw ? v8.y : v8.x, w9 = hw ? v9.y : v9.x;
++      // Interleave the two tokens' bytes: byte 2j = token a dim j, byte 2j + 1 = token b dim j.
++      uint32_t r0[4], r1[4];
++      e4m3x4_to_f16x2x2(__byte_perm(w0, w1, 0x5140), r0[0], r0[1]);
++      e4m3x4_to_f16x2x2(__byte_perm(w0, w1, 0x7362), r0[2], r0[3]);
++      e4m3x4_to_f16x2x2(__byte_perm(w8, w9, 0x5140), r1[0], r1[1]);
++      e4m3x4_to_f16x2x2(__byte_perm(w8, w9, 0x7362), r1[2], r1[3]);
++#pragma unroll
++      for (int j = 0; j < 4; ++j) mma16816(acc[hw * 4 + j], pa0, 0u, pa2, 0u, r0[j], r1[j]);
++    }
++
++    if (t == TILES - 1) {
++      // Item end: merge the four warps of each kv head, store the item's partial.
++      l_i += __shfl_xor_sync(0xffffffffu, l_i, 1);
++      l_i += __shfl_xor_sync(0xffffffffu, l_i, 2);
++      const int rw = warp * G + quad;
++      if (qi == 0) { ml_s[rw * 2] = m_i; ml_s[rw * 2 + 1] = l_i; }
++      float* ar = acc_s + rw * D;
++#pragma unroll
++      for (int nb = 0; nb < 8; ++nb) {
++        ar[(qi * 2) * 8 + nb] = acc[nb][0];
++        ar[(qi * 2 + 1) * 8 + nb] = acc[nb][1];
++      }
++      __syncthreads();
++      const int h = tid >> 4, d0 = (tid & 15) * 4;
++      const int hg = h / G, r = h % G;
++      float mw[4];
++      float M = NEG_INF;
++#pragma unroll
++      for (int j = 0; j < 4; ++j) { mw[j] = ml_s[((hg + 2 * j) * G + r) * 2]; M = fmaxf(M, mw[j]); }
++      const float Mu = M == NEG_INF ? 0.f : M;
++      float4 o = make_float4(0.f, 0.f, 0.f, 0.f);
++      float L = 0.f;
++#pragma unroll
++      for (int j = 0; j < 4; ++j) {
++        const int wr = (hg + 2 * j) * G + r;
++        const float wt = mw[j] == NEG_INF ? 0.f : ex2(mw[j] - Mu);
++        L += wt * ml_s[wr * 2 + 1];
++        const float4 a = *reinterpret_cast<const float4*>(acc_s + wr * D + d0);
++        o.x += wt * a.x; o.y += wt * a.y; o.z += wt * a.z; o.w += wt * a.w;
++      }
++      const int64_t slot = (int64_t)cb * max_chunks + cchunk;
++      *reinterpret_cast<float4*>(ws_acc + (slot * HQ + h) * D + d0) = o;
++      if ((tid & 15) == 0) { ws_ml[slot * 2 * HQ + h] = M; ws_ml[slot * 2 * HQ + HQ + h] = L; }
++    }
++  }
++  cp_wait<0>();  // the trailing groups are empty; drain anyway
++}
++
++__global__ void __launch_bounds__(128)
++splitkv_combine_kernel(const float* __restrict__ ws_acc, const float* __restrict__ ws_ml,
++                       const int* __restrict__ seqlens, const float* __restrict__ v_scale,
++                       const __nv_bfloat16* __restrict__ qkv, int64_t qkv_stride,
++                       __nv_bfloat16* __restrict__ out, int max_chunks, float eps) {
++  __shared__ float red_m[4];
++  __shared__ float red_l[4];
++  __shared__ float red_acc[4][D];
++  const float NEG_INF = __int_as_float(0xff800000u);
++  const int b = blockIdx.x, h = blockIdx.y;
++  const int tid = threadIdx.x, lane = tid & 31, warp = tid >> 5;
++  const int n = (seqlens[b] + CHUNK - 1) / CHUNK;
++  const int64_t base = (int64_t)b * max_chunks;
++
++  float M = NEG_INF;
++  for (int c = tid; c < n; c += 128) M = fmaxf(M, ws_ml[(base + c) * 2 * HQ + h]);
++#pragma unroll
++  for (int o = 16; o > 0; o >>= 1) M = fmaxf(M, __shfl_xor_sync(0xffffffffu, M, o));
++  if (lane == 0) red_m[warp] = M;
++  __syncthreads();
++  M = fmaxf(fmaxf(red_m[0], red_m[1]), fmaxf(red_m[2], red_m[3]));
++  const float Mu = M == NEG_INF ? 0.f : M;
++
++  float a0 = 0.f, a1 = 0.f, L = 0.f;
++#pragma unroll 4
++  for (int c = warp; c < n; c += 4) {
++    const int64_t sl = base + c;
++    const float m = ws_ml[sl * 2 * HQ + h];
++    const float wt = m == NEG_INF ? 0.f : ex2(m - Mu);  // empty partials weigh 0
++    L += wt * ws_ml[sl * 2 * HQ + HQ + h];
++    const float2 a = *reinterpret_cast<const float2*>(ws_acc + (sl * HQ + h) * D + lane * 2);
++    a0 += wt * a.x;
++    a1 += wt * a.y;
++  }
++  red_acc[warp][lane * 2] = a0;
++  red_acc[warp][lane * 2 + 1] = a1;
++  if (lane == 0) red_l[warp] = L;
++  __syncthreads();
++  if (warp == 0) {
++    float o0 = 0.f, o1 = 0.f, Ls = 0.f;
++#pragma unroll
++    for (int w = 0; w < 4; ++w) { o0 += red_acc[w][lane * 2]; o1 += red_acc[w][lane * 2 + 1]; Ls += red_l[w]; }
++    const float vs = __ldg(v_scale);
++    o0 = o0 / Ls * vs;
++    o1 = o1 / Ls * vs;
++    float ss = o0 * o0 + o1 * o1;
++#pragma unroll
++    for (int o = 16; o > 0; o >>= 1) ss += __shfl_xor_sync(0xffffffffu, ss, o);
++    const float r = 1.f / sqrtf(ss / D + eps);
++    const __nv_bfloat16* gp = qkv + (int64_t)b * qkv_stride + (HQ + 2 * HKV) * D + h * D + lane * 2;
++    const float g0 = __bfloat162float(gp[0]), g1 = __bfloat162float(gp[1]);
++    const float y0 = o0 * r / (1.f + expf(-g0));
++    const float y1 = o1 * r / (1.f + expf(-g1));
++    *reinterpret_cast<__nv_bfloat162*>(out + ((int64_t)b * HQ + h) * D + lane * 2) = __floats2bfloat162_rn(y0, y1);
++  }
++}
++
++}  // namespace
++
++void splitkv_attn(torch::Tensor q, torch::Tensor k_cache, torch::Tensor v_cache, torch::Tensor page_table,
++                  torch::Tensor cache_seqlens, torch::Tensor k_scale, torch::Tensor ws_acc, torch::Tensor ws_ml,
++                  double score_scale, int64_t max_chunks, int64_t grid) {
++  const int B = static_cast<int>(cache_seqlens.size(0));
++  TORCH_CHECK(B >= 1 && B <= MAXB, "splitkv_attn: batch out of range");
++  TORCH_CHECK(page_table.stride(1) == 1 && q.is_contiguous() && k_cache.is_contiguous() && v_cache.is_contiguous(),
++              "splitkv_attn: layout");
++  static bool attr_set = false;
++  if (!attr_set) {
++    C10_CUDA_CHECK(cudaFuncSetAttribute(splitkv_attn_kernel, cudaFuncAttributeMaxDynamicSharedMemorySize, SMEM_A));
++    attr_set = true;
++  }
++  auto stream = at::cuda::getCurrentCUDAStream();
++  splitkv_attn_kernel<<<static_cast<unsigned>(grid), THREADS, SMEM_A, stream>>>(
++      reinterpret_cast<const uint8_t*>(q.data_ptr()), reinterpret_cast<const uint8_t*>(k_cache.data_ptr()),
++      reinterpret_cast<const uint8_t*>(v_cache.data_ptr()), page_table.data_ptr<int>(), page_table.stride(0),
++      cache_seqlens.data_ptr<int>(), B, k_scale.data_ptr<float>(), static_cast<float>(score_scale),
++      ws_acc.data_ptr<float>(), ws_ml.data_ptr<float>(), static_cast<int>(max_chunks));
++  C10_CUDA_KERNEL_LAUNCH_CHECK();
++}
++
++void splitkv_combine(torch::Tensor ws_acc, torch::Tensor ws_ml, torch::Tensor cache_seqlens, torch::Tensor v_scale,
++                     torch::Tensor qkv, int64_t qkv_stride, torch::Tensor out, int64_t max_chunks, double eps) {
++  const int B = static_cast<int>(cache_seqlens.size(0));
++  auto stream = at::cuda::getCurrentCUDAStream();
++  splitkv_combine_kernel<<<dim3(B, HQ), 128, 0, stream>>>(
++      ws_acc.data_ptr<float>(), ws_ml.data_ptr<float>(), cache_seqlens.data_ptr<int>(), v_scale.data_ptr<float>(),
++      reinterpret_cast<const __nv_bfloat16*>(qkv.data_ptr()), qkv_stride,
++      reinterpret_cast<__nv_bfloat16*>(out.data_ptr()), static_cast<int>(max_chunks), static_cast<float>(eps));
++  C10_CUDA_KERNEL_LAUNCH_CHECK();
++}
++"""
++
++
++def _build_splitkv():
++    """Compile the CUDA module once per process, at import (never during graph capture)."""
++    t0 = time.perf_counter()
++    try:
++        from torch.utils.cpp_extension import load_inline
++        ext = load_inline(
++            name="muse_full_decode_splitkv_v1",
++            cpp_sources=_SPLITKV_CPP,
++            cuda_sources=_SPLITKV_CUDA,
++            functions=["splitkv_attn", "splitkv_combine"],
++            extra_cuda_cflags=["-O3", "-arch=sm_90a", "-lineinfo"],
++            verbose=False,
++        )
++    except Exception as e:  # keep the master path if the build fails
++        print(f"[splitkv] load_inline failed after {time.perf_counter() - t0:.1f}s, master path kept: {e!r}",
++              flush=True)
++        return None
++    print(f"[splitkv] load_inline compiled in {time.perf_counter() - t0:.1f}s", flush=True)
++    return ext
++
++
++_EXT = None          # the compiled module; None keeps the master FA3 path everywhere
++_SPLITKV_GRID = None  # grid override, set only by the import-time self-check
++_SMS = {}
++
++
++def _sm_count(device) -> int:
++    """Streaming multiprocessors of the device (hardware property, not data)."""
++    key = device.index if device.index is not None else torch.cuda.current_device()
++    n = _SMS.get(key)
++    if n is None:
++        n = _SMS[key] = torch.cuda.get_device_properties(key).multi_processor_count
++    return n
++
++
++def _splitkv_gate(cfg) -> bool:
++    """Config-only predicate for the CUDA split-KV path: full-layer decode, 1 < batch <= 64, tp8
++    heads, head dim 64, page 1. Every other shape keeps the master path."""
++    return (_EXT is not None and cfg["window"] == 0 and cfg["q_len"] == 1 and 1 < cfg["batch"] <= 64
++            and cfg["num_q_heads"] == 16 and cfg["num_kv_heads"] == 2 and cfg["head_dim"] == 64
++            and cfg["page_size"] == 1)
++
++
++def _splitkv_attn(data: Inputs, q: torch.Tensor):
++    """Kernel A: the fp32 partials of every (request, 1024-token chunk); q is the unpaired FP8
++    query [B, 16, 64]. The workspace and grid come from shapes and the device only."""
++    cfg = data["config"]
++    batch, hq, d = cfg["batch"], cfg["num_q_heads"], cfg["head_dim"]
++    device = q.device
++    page_table = data["page_table"]
++    max_chunks = -(-page_table.shape[1] // _SPLITKV_CHUNK)  # page 1: one page per token
++    ws_acc = torch.empty((batch * max_chunks, hq, d), dtype=torch.float32, device=device)
++    ws_ml = torch.empty((batch * max_chunks, 2, hq), dtype=torch.float32, device=device)
++    grid = _SPLITKV_GRID or 2 * _sm_count(device)
++    _EXT.splitkv_attn(q, data["k_cache"], data["v_cache"], page_table, data["cache_seqlens"], data["k_scale"],
++                      ws_acc, ws_ml, cfg["sm_scale"] * cfg["qk_scale_factor"] * LOG2E, max_chunks, grid)
++    return ws_acc, ws_ml, max_chunks
++
++
++def _splitkv_combine(data: Inputs, qkv: torch.Tensor, ws_acc, ws_ml, max_chunks) -> torch.Tensor:
++    """Kernel B: LSE merge, x v_scale, output norm x sigmoid(gate from qkv); [B, 1, Hq*D] bf16."""
++    cfg = data["config"]
++    batch, hq, d = cfg["batch"], cfg["num_q_heads"], cfg["head_dim"]
++    out = torch.empty((batch, 1, hq * d), dtype=torch.bfloat16, device=qkv.device)
++    _EXT.splitkv_combine(ws_acc, ws_ml, data["cache_seqlens"], data["v_scale"], qkv, qkv.stride(0), out,
++                         max_chunks, RMS_EPS)
++    return out
++
++
++def _full_decode_splitkv(data: Inputs, q: torch.Tensor, qkv: torch.Tensor) -> torch.Tensor:
++    """Kernels A and B on the gated path (kernel_fn); no host sync."""
++    return _splitkv_combine(data, qkv, *_splitkv_attn(data, q))
++
++
++if torch.cuda.is_available():
++    _EXT = _build_splitkv()  # at import, never during graph capture; None keeps master everywhere
++_SPLITKV_CHECKED = False
++
++
++def _splitkv_synthetic(lens, kv_scale, gen, device):
++    """Synthetic gated-shape inputs for _full_decode_splitkv (full layer, decode, tp8, page 1),
++    never judge data: FP8 query [B, 16, 64], random FP8 caches [pages, 1, 2, 64], a shuffled
++    page table with an odd stride and ragged lengths, and a bf16 qkv row supplying the gate."""
++    batch, hq, hkv, d = len(lens), 16, 2, 64
++    max_pages = max(lens) + 37
++    total = batch * max_pages
++    perm = torch.randperm(total, generator=gen, device=device).to(torch.int32)
++    page_table = torch.full((batch, max_pages), -1, dtype=torch.int32, device=device)
++    off = 0
++    for b, n in enumerate(lens):
++        page_table[b, :n] = perm[off:off + n]
++        off += n
++    q = torch.randn((batch, hq, d), generator=gen, device=device)
++    q = (q * torch.rsqrt(q.pow(2).mean(-1, keepdim=True) + RMS_EPS)).to(FP8)
++    k_cache = (torch.randn((total, 1, hkv, d), generator=gen, device=device) / kv_scale).to(FP8)
++    v_cache = (torch.randn((total, 1, hkv, d), generator=gen, device=device) / kv_scale).to(FP8)
++    qkv = (2 * torch.randn((batch, (2 * hq + 2 * hkv) * d), generator=gen, device=device)).to(torch.bfloat16)
++    data = {
++        "k_cache": k_cache,
++        "v_cache": v_cache,
++        "cache_seqlens": torch.tensor(lens, dtype=torch.int32, device=device),
++        "k_scale": torch.tensor(kv_scale, dtype=torch.float32, device=device),
++        "v_scale": torch.tensor(kv_scale, dtype=torch.float32, device=device),
++        "page_table": page_table,
++        "config": {"batch": batch, "q_len": 1, "tokens": batch, "num_q_heads": hq, "num_kv_heads": hkv,
++                   "head_dim": d, "page_size": 1, "window": 0, "rope_theta": 0.0,
++                   "qk_scale_factor": 5.4730064863875, "sm_scale": d ** -0.5, "kv_scale": kv_scale},
++    }
++    return data, q, qkv
++
++
++def _splitkv_reference(data, q, qkv, lens):
++    """FP32: gather each request's rows, softmax(q k^T * sm_scale * qk_scale_factor * k_scale),
++    @ v * v_scale, scaleless RMSNorm over 64 (eps 1e-5), x sigmoid(gate)."""
++    cfg = data["config"]
++    batch, hq, hkv, d = cfg["batch"], cfg["num_q_heads"], cfg["num_kv_heads"], cfg["head_dim"]
++    qf = q.float() * cfg["qk_scale_factor"]
++    kf = data["k_cache"].view(-1, hkv, d)
++    vf = data["v_cache"].view(-1, hkv, d)
++    outs = []
++    for b, n in enumerate(lens):
++        rows = data["page_table"][b, :n].long()
++        keys = (kf[rows].float() * data["k_scale"]).repeat_interleave(hq // hkv, dim=1)
++        vals = (vf[rows].float() * data["v_scale"]).repeat_interleave(hq // hkv, dim=1)
++        p = torch.softmax(torch.einsum("hd,nhd->hn", qf[b], keys) * cfg["sm_scale"], dim=-1)
++        outs.append(torch.einsum("hn,nhd->hd", p, vals))
++    a = torch.stack(outs)
++    a = a * torch.rsqrt(a.pow(2).mean(-1, keepdim=True) + RMS_EPS)
++    gate = qkv.float()[:, (hq + 2 * hkv) * d:].view(batch, hq, d)
++    return (a * torch.sigmoid(gate)).reshape(batch, hq * d)
++
++
++def _splitkv_self_check(device) -> bool:
++    """Eager check of _full_decode_splitkv on synthetic data only (run once from prepare(), never
++    in the timed path) against an FP32 reference: ragged lengths (partial chunks, fully masked
++    warps), kv scale 1 and 1/4, the device grid and a 3-CTA grid (several items per CTA), plus a
++    batch-33 case (more sequences than a warp, a non-power-of-two chunk count)."""
++    global _SPLITKV_GRID
++    lens5 = [9000, 1025, 70, 4097, 1023]
++    lens33 = [1 + (i * 977) % 5000 for i in range(33)]
++    lens33[5], lens33[6] = 1024, 2048
++    gen = torch.Generator(device=device).manual_seed(1234)
++    ok = True
++    try:
++        for lens, kv_scale, grid in ((lens5, 1.0, None), (lens5, 0.25, 3), (lens5, 1.0, 3), (lens33, 1.0, None)):
++            data, q, qkv = _splitkv_synthetic(lens, kv_scale, gen, device)
++            assert _splitkv_gate(data["config"])
++            _SPLITKV_GRID = grid
++            # Kernels A and B launched separately, each synced and logged, so a fault is attributed.
++            ws = _splitkv_attn(data, q)
++            torch.cuda.synchronize()
++            print(f"[splitkv] self-check kernel A (splitkv_attn) ok, B={len(lens)} grid={grid or 'device'}",
++                  flush=True)
++            out = _splitkv_combine(data, qkv, *ws)
++            torch.cuda.synchronize()
++            print(f"[splitkv] self-check kernel B (splitkv_combine) ok, B={len(lens)}", flush=True)
++            out = out.reshape(len(lens), -1).float()
++            ref = _splitkv_reference(data, q, qkv, lens)
++            err = float((out - ref).norm() / ref.norm())
++            finite = bool(torch.isfinite(out).all())
++            print(f"[splitkv] self-check B={len(lens)} kv_scale={kv_scale} grid={grid or 'device'}: "
++                  f"rel L2 {err:.2e}, finite {finite}", flush=True)
++            ok = ok and finite and err < 2e-2
++    except Exception as e:
++        print(f"[splitkv] self-check raised: {e!r}", flush=True)
++        ok = False
++    finally:
++        _SPLITKV_GRID = None
++    return ok
++
++
++def _splitkv_prepare(device):
++    """Once per process, before any graph capture: run the self-check; on failure disable the
++    CUDA split-KV path globally (_EXT = None) so every shape takes the master path."""
++    global _EXT, _SPLITKV_CHECKED
++    if _SPLITKV_CHECKED:
++        return
++    if _EXT is None:
++        _SPLITKV_CHECKED = True
++        print("[splitkv] OFF: module not built, master FA3 path kept on every shape", flush=True)
++        return
++    _SPLITKV_CHECKED = True
++    if _splitkv_self_check(device):
++        print("[splitkv] ON: self-check passed: CUDA split-KV path on full decode, 1 < batch <= 64", flush=True)
++    else:
++        print("[splitkv] OFF: SELF-CHECK FAILED: CUDA split-KV path disabled, master FA3 path kept", flush=True)
++        _EXT = None
++
+ def prepare(weights):
+     device = weights["qkv_gate"].device
+     router = weights["router"]
+@@ -1652,6 +2279,8 @@ def prepare(weights):
+     # Small-T dense chain (T <= DL_MAX_TOKENS): constants, PDL probe and self-check; None keeps master.
+     state["dl"] = _dl_setup(weights, state)
+     _align_par_setup(state, device)
++    # Full decode at 1 < batch <= 64: split-KV self-check; failure keeps FA3 on every shape.
++    _splitkv_prepare(device)
+     torch.cuda.synchronize()
+     return state
+ 
+@@ -1755,60 +2384,69 @@ def kernel_fn(data, state):
+                     k_cache.view(-1, hkv * d).view(torch.uint8), v_cache.view(-1, hkv * d).view(torch.uint8),
+                     data["cache_loc"], reserved_skip_index=-1)
+         window = cfg["window"]
+-        # Full layers with batch > 1: pair the two KV heads of each token into one 128-byte FP8 row
+-        # (heads 2s and 2s+1 are adjacent halves of it) so FA3 gathers one row per token instead of
+-        # two. Each query sits in its own head's half of a zero-padded 128-wide FP8 query (the pad
+-        # copy also does the BF16 -> E4M3 cast), so the zero half adds exactly 0 to every logit; FA3
+-        # maps query head h to super-head h // (2G), which keeps the original grouping. The judge's
+-        # scheduler_metadata was built for the unpaired geometry, so it is not passed. Batch 1 stays
+-        # unpaired (pairing lost there in muse_attention_decode). The gate reads config only.
+-        paired = window == 0 and batch > 1 and hkv % 2 == 0
+-        if paired:
+-            g, s = hq // hkv, hkv // 2
+-            pages, page_size = k_cache.shape[0], k_cache.shape[1]
+-            k_attn = k_cache.view(pages, page_size, s, 2 * d)
+-            v_attn = v_cache.view(pages, page_size, s, 2 * d)
+-            q_attn = torch.zeros((tokens, hq, 2 * d), dtype=FP8, device=q.device)
+-            qp = q_attn.view(tokens, s, 2, g, 2 * d)
+-            qv = q.view(tokens, s, 2, g, d)
+-            qp[:, :, 0, :, :d] = qv[:, :, 0]
+-            qp[:, :, 1, :, d:] = qv[:, :, 1]
+-            attn_heads = s
+-            metadata = None
++        # Full-layer decode at 1 < batch <= 64 (tp8, page 1; config-only gate): the CUDA split-KV
++        # kernels (hypothesis full-decode-cuda-splitkv-port) take the unpaired FP8 query and replace
++        # FA3, the paired pad/unpad copies and FusedRMSNormGate; kernel B reads the gate from qkv and
++        # writes the normed, gated [T, Hq*D] bf16 input of the o GEMM. scheduler_metadata is unused.
++        splitkv = _splitkv_gate(cfg)
++        if splitkv:
++            q_fp8 = q.view(tokens, hq, d).to(FP8).contiguous()
++            o = _full_decode_splitkv(data, q_fp8, qkv).reshape(tokens, hq * d)
+         else:
+-            k_attn, v_attn, q_attn = k_cache, v_cache, q.view(tokens, hq, d).to(FP8)
+-            attn_heads = hkv
+-            metadata = data["scheduler_metadata"]
+-        descale = {}
+-        if scaled:
+-            descale = dict(k_descale=data["k_scale"].reshape(1, 1).expand(batch, attn_heads),
+-                           v_descale=data["v_scale"].reshape(1, 1).expand(batch, attn_heads))
+-        out = flash_attn_with_kvcache(
+-            q=q_attn,
+-            k_cache=k_attn,
+-            v_cache=v_attn,
+-            page_table=data["page_table"],
+-            cache_seqlens=data["cache_seqlens"],
+-            cu_seqlens_q=data["cu_seqlens_q"],
+-            max_seqlen_q=length,
+-            softmax_scale=cfg["sm_scale"] * cfg["qk_scale_factor"],
+-            causal=True,
+-            window_size=(window - 1, 0) if window else (-1, -1),
+-            scheduler_metadata=metadata,
+-            **descale,
+-        )
+-        if isinstance(out, tuple):
+-            out = out[0]
+-        if paired:
+-            # Keep each query's own half of FA3's 128-wide output; the other half is the other
+-            # head's P@V and is discarded.
+-            attn = torch.empty((tokens, hq, d), dtype=torch.bfloat16, device=q.device)
+-            a = attn.view(tokens, s, 2, g, d)
+-            o = out.view(tokens, s, 2, g, 2 * d)
+-            a[:, :, 0] = o[:, :, 0, :, :d]
+-            a[:, :, 1] = o[:, :, 1, :, d:]
+-            out = attn
+-        o = state["o_norm_gate"](out.reshape(tokens, hq * d).to(torch.bfloat16), gate)
++            # Full layers with batch > 1: pair the two KV heads of each token into one 128-byte FP8 row
++            # (heads 2s and 2s+1 are adjacent halves of it) so FA3 gathers one row per token instead of
++            # two. Each query sits in its own head's half of a zero-padded 128-wide FP8 query (the pad
++            # copy also does the BF16 -> E4M3 cast), so the zero half adds exactly 0 to every logit; FA3
++            # maps query head h to super-head h // (2G), which keeps the original grouping. The judge's
++            # scheduler_metadata was built for the unpaired geometry, so it is not passed. Batch 1 stays
++            # unpaired (pairing lost there in muse_attention_decode). The gate reads config only.
++            paired = window == 0 and batch > 1 and hkv % 2 == 0 and not splitkv
++            if paired:
++                g, s = hq // hkv, hkv // 2
++                pages, page_size = k_cache.shape[0], k_cache.shape[1]
++                k_attn = k_cache.view(pages, page_size, s, 2 * d)
++                v_attn = v_cache.view(pages, page_size, s, 2 * d)
++                q_attn = torch.zeros((tokens, hq, 2 * d), dtype=FP8, device=q.device)
++                qp = q_attn.view(tokens, s, 2, g, 2 * d)
++                qv = q.view(tokens, s, 2, g, d)
++                qp[:, :, 0, :, :d] = qv[:, :, 0]
++                qp[:, :, 1, :, d:] = qv[:, :, 1]
++                attn_heads = s
++                metadata = None
++            else:
++                k_attn, v_attn, q_attn = k_cache, v_cache, q.view(tokens, hq, d).to(FP8)
++                attn_heads = hkv
++                metadata = data["scheduler_metadata"]
++            descale = {}
++            if scaled:
++                descale = dict(k_descale=data["k_scale"].reshape(1, 1).expand(batch, attn_heads),
++                               v_descale=data["v_scale"].reshape(1, 1).expand(batch, attn_heads))
++            out = flash_attn_with_kvcache(
++                q=q_attn,
++                k_cache=k_attn,
++                v_cache=v_attn,
++                page_table=data["page_table"],
++                cache_seqlens=data["cache_seqlens"],
++                cu_seqlens_q=data["cu_seqlens_q"],
++                max_seqlen_q=length,
++                softmax_scale=cfg["sm_scale"] * cfg["qk_scale_factor"],
++                causal=True,
++                window_size=(window - 1, 0) if window else (-1, -1),
++                scheduler_metadata=metadata,
++                **descale,
++            )
++            if isinstance(out, tuple):
++                out = out[0]
++            if paired:
++                # Keep each query's own half of FA3's 128-wide output; the other half is the other
++                # head's P@V and is discarded.
++                attn = torch.empty((tokens, hq, d), dtype=torch.bfloat16, device=q.device)
++                a = attn.view(tokens, s, 2, g, d)
++                o = out.view(tokens, s, 2, g, 2 * d)
++                a[:, :, 0] = o[:, :, 0, :, :d]
++                a[:, :, 1] = o[:, :, 1, :, d:]
++                out = attn
++            o = state["o_norm_gate"](out.reshape(tokens, hq * d).to(torch.bfloat16), gate)
+     attn_output = _gemm(o, dense["o"])  # all-reduce: identity
+ 
+     # Post-attention boundary, router and MoE block: MuseSpark1xMoE._forward_experts.

@@ -41,8 +41,8 @@ priority: 2
 kind: primary
 controls_for: null
 review: required
-status: running
-stage: dispatched
+status: done
+stage: harvested
 claimed_at: 2026-10-24T231559Z
 base_sha: 6ee651fff7bb5c5df237c4dac9b6b32e474908f2
 base_blob: 4da94677234faaa06b42b5ced541db8961fd6f34
@@ -62,6 +62,13 @@ attempt_file: 2026-10-25T002143Z-check-full-decode-splitkv-restack-on-pdl.md
 prepared_at: 2026-10-25T002143Z
 job: c243a29f26dc4725
 dispatched_at: 2026-10-25T002202Z
+outcome: neutral
+verdict_detail: unproven-vs-best
+speedup: 1.2680313318618024
+speedup_ci: [1.2490108618838753, 1.2870518018397292]
+harvested_at: 2026-10-25T010415Z
+best_at_harvest: 1.2521147631671776
+promotion: null
 ---
 
 # full-decode-splitkv-restack-on-pdl
@@ -129,3 +136,35 @@ Verdict: **dispatch** (no fixes).
 - Compile: it uses mma.sync m16n8k16, cp.async and cvt.rn.f16x2.e4m3x2 (sm_89+), all valid under `-arch=sm_90a`, with no wgmma or sm_90a-only feature. There are no child processes. lint: OK with the 30 host-sync warnings, all outside kernel_fn. py_compile: OK.
 
 Residual risk: two sequential ~41 s load_inline compiles at import (about 80 s of the 15 min budget). An illegal-address fault in the self-check would fail the run rather than fall back, though that kernel is unchanged from the passing parent.
+
+## Result
+
+- job `c243a29f26dc4725` (check), status done, passed True, tests 13/13
+- speedup 1.2680x, 95% CI [1.2490, 1.2871], score 17838.912518657933 µs vs SGLang 22620.3 µs
+- best at harvest: {"speedup": 1.2521147631671776, "ci": [1.23333304171967, 1.270896484614685], "job": "39bcf05afc4e4dd3"}; base result: muse_decode_layer/hypotheses/done/neutral/stack-align-par-sidestream-sliding1.result.json
+- **outcome: neutral** (unproven-vs-best)
+- files: `muse_decode_layer/hypotheses/done/neutral/full-decode-splitkv-restack-on-pdl.result.json`, `muse_decode_layer/hypotheses/done/neutral/full-decode-splitkv-restack-on-pdl.patch`; branch `hyp/muse_decode_layer/full-decode-splitkv-restack-on-pdl`
+
+## Attribution
+
+| shape | w | base µs | hyp µs | delta | verdict |
+|---|---|---|---|---|---|
+| batch=1 ctx=80000 dist=soft layer=sliding load=decode_1 page=1 repeats=60 | 46 | 127.48 | 126.15 | 1.0145 | flat |
+| batch=1 ctx=80000 dist=soft layer=full load=decode_1 page=1 repeats=60 | 16 | 142.93 | 142.7 | 1.004 | flat |
+| batch=16 ctx=80000 dist=soft layer=sliding load=decode_16 page=1 spread=agentic | 46 | 204.98 | 209.82 | 0.9972 | flat |
+| batch=16 ctx=80000 dist=soft layer=full load=decode_16 page=1 spread=agentic | 16 | 349.47 | 306.72 | 1.1446 | gained |
+| batch=32 ctx=80000 dist=soft layer=sliding load=decode_32 page=1 spread=agentic | 46 | 245.77 | 242.33 | 1.0012 | flat |
+| batch=32 ctx=80000 dist=soft layer=full load=decode_32 page=1 spread=agentic | 16 | 529.71 | 479.6 | 1.105 | gained |
+| batch=1 ctx=80000 dist=soft layer=sliding load=verify_1 page=1 q_len=8 | 46 | 190.8 | 187.97 | 0.9987 | flat |
+| batch=1 ctx=80000 dist=soft layer=full load=verify_1 page=1 q_len=8 | 16 | 192.44 | 201.51 | 0.9789 | flat |
+| batch=16 ctx=80000 dist=soft layer=sliding load=verify_16 page=1 q_len=8 spread=agentic | 46 | 429.61 | 420.42 | 0.9978 | flat |
+| batch=16 ctx=80000 dist=soft layer=full load=verify_16 page=1 q_len=8 spread=agentic | 16 | 563.65 | 564.2 | 1.0007 | flat |
+| batch=32 ctx=80000 dist=soft layer=sliding load=verify_32 page=1 q_len=8 spread=agentic | 46 | 592.52 | 600.82 | 0.9948 | flat |
+| batch=32 ctx=80000 dist=soft layer=full load=verify_32 page=1 q_len=8 spread=agentic | 16 | 861.3 | 864.67 | 0.9986 | flat |
+
+gained on full decode_16, decode_32. Expected hit: 5/5. Noise ±1.5%.
+
+## Follow-ups
+
+- unproven-vs-best: the change is not proven either way; a stacked hypothesis (`depends_on: full-decode-splitkv-restack-on-pdl`) that adds a further change in the same area is the only way to learn more (identical code is never re-run).
+
