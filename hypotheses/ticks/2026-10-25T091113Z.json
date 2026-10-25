@@ -1,0 +1,474 @@
+{
+ "ok": true,
+ "promote": [
+  {
+   "problem": "muse_attention_decode",
+   "slug": "restack-sk-pseudo-cluster-plus-v3-fused-preattn",
+   "run": "okc submit muse_attention_decode /home/user/git/musespark/muse_attention_decode/submission.py --no-wait --json",
+   "then": "churn.py record-submit muse_attention_decode restack-sk-pseudo-cluster-plus-v3-fused-preattn <job>"
+  }
+ ],
+ "dispatch": [
+  {
+   "problem": "muse_moe_w4a16",
+   "picks": [
+    {
+     "slug": "cuda-nvfp4-wgmma-rega-grouped-s5-copy-safe-bucket-gate",
+     "mode": "check",
+     "priority": 2,
+     "review": "proceed",
+     "kind": "rewrite",
+     "controls_for": null
+    }
+   ]
+  },
+  {
+   "problem": "muse_prefill_layer",
+   "picks": [
+    {
+     "slug": "experts-turn-rega-s4-port-t4096",
+     "mode": "check",
+     "priority": 1,
+     "review": "required",
+     "kind": "rewrite",
+     "controls_for": null
+    },
+    {
+     "slug": "experts-first-turn-ssdq-s2-large-m",
+     "mode": "check",
+     "priority": 2,
+     "review": "required",
+     "kind": "rewrite",
+     "controls_for": null
+    }
+   ]
+  }
+ ],
+ "wake_s": 1800,
+ "needs_human": [],
+ "report": {
+  "preflight": {
+   "ok": true,
+   "branch": "master",
+   "whoami": "yesthatwilly",
+   "quotas": {
+    "muse_bf16_proj": {
+     "scored": {
+      "per_day": 10,
+      "used": 0,
+      "left": 10
+     },
+     "checks": {
+      "per_day": 20,
+      "used": 20,
+      "left": 0
+     }
+    },
+    "muse_attention_decode": {
+     "scored": {
+      "per_day": 10,
+      "used": 1,
+      "left": 9
+     },
+     "checks": {
+      "per_day": 20,
+      "used": 20,
+      "left": 0
+     }
+    },
+    "muse_moe_w4a16": {
+     "scored": {
+      "per_day": 10,
+      "used": 1,
+      "left": 9
+     },
+     "checks": {
+      "per_day": 20,
+      "used": 18,
+      "left": 2
+     }
+    },
+    "muse_decode_layer": {
+     "scored": {
+      "per_day": 10,
+      "used": 3,
+      "left": 7
+     },
+     "checks": {
+      "per_day": 20,
+      "used": 19,
+      "left": 1
+     }
+    },
+    "muse_prefill_layer": {
+     "scored": {
+      "per_day": 10,
+      "used": 0,
+      "left": 10
+     },
+     "checks": {
+      "per_day": 20,
+      "used": 14,
+      "left": 6
+     }
+    }
+   },
+   "tracks": null,
+   "hours_to_reset": 14.82,
+   "lock": ".claude/churn.lock",
+   "_exit": 0
+  },
+  "intake": {
+   "ok": true,
+   "added": [],
+   "skipped": [],
+   "_exit": 0
+  },
+  "recover": {
+   "ok": true,
+   "actions": [],
+   "needs_human": [],
+   "_exit": 0
+  },
+  "harvest": {
+   "ok": true,
+   "harvested": [
+    {
+     "problem": "muse_attention_decode",
+     "slug": "full-decode-sk-s4-deferred-ticket-arrive",
+     "job": "7f10d2d820cd49ee",
+     "outcome": "failed",
+     "detail": "test:{\"batch\": 1, \"ctx\": 10, \"heads\": \"tp8\", \"layer\": \"sliding\", \"seed\": 6893170448766904337}",
+     "speedup": null,
+     "ci": [
+      null,
+      null
+     ],
+     "md": "muse_attention_decode/hypotheses/done/failed/2026-10-25T054448Z-full-decode-sk-s4-deferred-ticket-arrive.md"
+    },
+    {
+     "problem": "muse_attention_decode",
+     "slug": "full-decode1-sk-two-level-fused-preattn",
+     "job": "2038a530edd04309",
+     "outcome": "neutral",
+     "detail": "within-ci",
+     "speedup": 1.4410831181175277,
+     "ci": [
+      1.4194668713457648,
+      1.4626993648892905
+     ],
+     "md": "muse_attention_decode/hypotheses/done/neutral/2026-10-25T054448Z-full-decode1-sk-two-level-fused-preattn.md"
+    },
+    {
+     "problem": "muse_attention_decode",
+     "slug": "full-verify-wgmma-s5-qfrag-reload",
+     "job": "71e40388a1904937",
+     "outcome": "neutral",
+     "detail": "beats-base-not-best",
+     "speedup": 1.4345479685047922,
+     "ci": [
+      1.4130297489772203,
+      1.456066188032364
+     ],
+     "md": "muse_attention_decode/hypotheses/done/neutral/2026-10-25T054448Z-full-verify-wgmma-s5-qfrag-reload.md"
+    },
+    {
+     "problem": "muse_attention_decode",
+     "slug": "restack-sk-pseudo-b1-cluster-c16-c4",
+     "job": "eb6ff0cb701d4def",
+     "outcome": "neutral",
+     "detail": "unproven-vs-best",
+     "speedup": 1.4870403803793002,
+     "ci": [
+      1.4647347746736106,
+      1.5093459860849896
+     ],
+     "md": "muse_attention_decode/hypotheses/done/neutral/2026-10-25T054448Z-restack-sk-pseudo-b1-cluster-c16-c4.md"
+    },
+    {
+     "problem": "muse_attention_decode",
+     "slug": "restack-sk-pseudo-cluster-plus-v3-fused-preattn",
+     "job": "cbd49dc94be548e7",
+     "outcome": "gain",
+     "detail": "gain",
+     "speedup": 1.4919706177473366,
+     "ci": [
+      1.4695910584811265,
+      1.5143501770135466
+     ],
+     "md": "muse_attention_decode/hypotheses/done/gain/2026-10-25T054448Z-restack-sk-pseudo-cluster-plus-v3-fused-preattn.md"
+    },
+    {
+     "problem": "muse_attention_decode",
+     "slug": "sliding-verify-sk-pseudo-s2-token-group",
+     "job": "bd0ddd413f7f4a94",
+     "outcome": "regression",
+     "detail": "regression",
+     "speedup": 1.4250766878672403,
+     "ci": [
+      1.4037005375492317,
+      1.451856608658083
+     ],
+     "md": "muse_attention_decode/hypotheses/done/regression/2026-10-25T054448Z-sliding-verify-sk-pseudo-s2-token-group.md"
+    },
+    {
+     "problem": "muse_attention_decode",
+     "slug": "sliding-decode-sk-window-route",
+     "job": "118c6de9704146f3",
+     "outcome": "neutral",
+     "detail": "unproven-vs-best",
+     "speedup": 1.4972632172137348,
+     "ci": [
+      1.4748042689555287,
+      1.5197221654719406
+     ],
+     "md": "muse_attention_decode/hypotheses/done/neutral/2026-10-25T054449Z-sliding-decode-sk-window-route.md"
+    },
+    {
+     "problem": "muse_decode_layer",
+     "slug": "full-decode-sk-ticket-restack-b1-b64",
+     "job": "9c99379067084f6e",
+     "outcome": "neutral",
+     "detail": "within-ci",
+     "speedup": 1.2847016460556344,
+     "ci": [
+      1.2654311213648,
+      1.3039721707464689
+     ],
+     "md": "muse_decode_layer/hypotheses/done/neutral/2026-10-25T054108Z-full-decode-sk-ticket-restack-b1-b64.md"
+    },
+    {
+     "problem": "muse_decode_layer",
+     "slug": "sliding-cluster-c4-decode32-s2-k-encode-match",
+     "job": "7c04214e90354dfa",
+     "outcome": "neutral",
+     "detail": "unproven-vs-best",
+     "speedup": 1.2802651084084147,
+     "ci": [
+      1.2610611317822884,
+      1.2994690850345407
+     ],
+     "md": "muse_decode_layer/hypotheses/done/neutral/2026-10-25T054127Z-sliding-cluster-c4-decode32-s2-k-encode-match.md"
+    },
+    {
+     "problem": "muse_moe_w4a16",
+     "slug": "cuda-nvfp4-wgmma-rega-grouped-s5-copy-safe-forced",
+     "job": "d4ad4f31d2764050",
+     "outcome": "neutral",
+     "detail": "unproven-vs-best",
+     "speedup": 1.3489834756507646,
+     "ci": [
+      1.3287487235160031,
+      1.369218227785526
+     ],
+     "md": "muse_moe_w4a16/hypotheses/done/neutral/2026-10-25T054545Z-cuda-nvfp4-wgmma-rega-grouped-s5-copy-safe-forced.md"
+    },
+    {
+     "problem": "muse_prefill_layer",
+     "slug": "experts-turn4-ssdq-s1b-dataptr-symbol-fix",
+     "job": "ef281fb8b7304240",
+     "outcome": "neutral",
+     "detail": "unproven-vs-best",
+     "speedup": 1.1004181185941053,
+     "ci": [
+      1.0839118468151938,
+      1.1169243903730168
+     ],
+     "md": "muse_prefill_layer/hypotheses/done/neutral/2026-10-25T054848Z-experts-turn4-ssdq-s1b-dataptr-symbol-fix.md"
+    },
+    {
+     "problem": "muse_prefill_layer",
+     "slug": "turn-align-sglang32-prenorm-triton-restack",
+     "job": "9cfd4f58d24044b2",
+     "outcome": "neutral",
+     "detail": "within-ci",
+     "speedup": 1.069365828013475,
+     "ci": [
+      1.053325340593273,
+      1.085406315433677
+     ],
+     "md": "muse_prefill_layer/hypotheses/done/neutral/2026-10-25T054848Z-turn-align-sglang32-prenorm-triton-restack.md"
+    }
+   ],
+   "pending": [
+    {
+     "problem": "muse_attention_decode",
+     "slug": "full-verify1-sk-two-level-token-group",
+     "job": "7d23e8776c194344",
+     "status": "running",
+     "age_h": 0.0
+    },
+    {
+     "problem": "muse_decode_layer",
+     "slug": "dense-chain-s3-t1-q-sk2-o-route-unpool",
+     "job": "34a9be06918d448b",
+     "status": "queued",
+     "age_h": 0.0
+    }
+   ],
+   "_exit": 0
+  },
+  "harvest-promotions": {
+   "ok": true,
+   "promotions": [],
+   "_exit": 1
+  },
+  "promote": {
+   "ok": true,
+   "promote": [
+    {
+     "problem": "muse_attention_decode",
+     "slug": "restack-sk-pseudo-cluster-plus-v3-fused-preattn",
+     "run": "okc submit muse_attention_decode /home/user/git/musespark/muse_attention_decode/submission.py --no-wait --json",
+     "then": "churn.py record-submit muse_attention_decode restack-sk-pseudo-cluster-plus-v3-fused-preattn <job>"
+    }
+   ],
+   "skipped": [],
+   "_exit": 0
+  },
+  "budget": {
+   "ok": true,
+   "plans": [
+    {
+     "problem": "muse_attention_decode",
+     "checks_left": 0,
+     "scored_left": 9,
+     "hours_to_reset": 14.81,
+     "in_flight": 1,
+     "in_flight_checks": 1,
+     "gains_pending": 1,
+     "promotion_hold": 1,
+     "spendable": 8,
+     "queue": 0,
+     "need": 8,
+     "pace": 1,
+     "N": 0,
+     "picks": [],
+     "shortfall": 8,
+     "reason": "queue has 0 eligible hypotheses; 8 more could be absorbed today (run /hypothesize muse_attention_decode)",
+     "wake_s": 1800
+    },
+    {
+     "problem": "muse_bf16_proj",
+     "checks_left": 0,
+     "scored_left": 10,
+     "hours_to_reset": 14.81,
+     "in_flight": 0,
+     "in_flight_checks": 0,
+     "gains_pending": 0,
+     "promotion_hold": 0,
+     "spendable": 10,
+     "queue": 0,
+     "need": 10,
+     "pace": 1,
+     "N": 0,
+     "picks": [],
+     "shortfall": 10,
+     "reason": "queue has 0 eligible hypotheses; 10 more could be absorbed today (run /hypothesize muse_bf16_proj)",
+     "wake_s": 3600
+    },
+    {
+     "problem": "muse_decode_layer",
+     "checks_left": 1,
+     "scored_left": 7,
+     "hours_to_reset": 14.81,
+     "in_flight": 1,
+     "in_flight_checks": 1,
+     "gains_pending": 0,
+     "promotion_hold": 1,
+     "spendable": 7,
+     "queue": 0,
+     "need": 7,
+     "pace": 1,
+     "N": 0,
+     "picks": [],
+     "shortfall": 7,
+     "reason": "queue has 0 eligible hypotheses; 7 more could be absorbed today (run /hypothesize muse_decode_layer)",
+     "wake_s": 1800
+    },
+    {
+     "problem": "muse_moe_w4a16",
+     "checks_left": 2,
+     "scored_left": 9,
+     "hours_to_reset": 14.81,
+     "in_flight": 0,
+     "in_flight_checks": 0,
+     "gains_pending": 0,
+     "promotion_hold": 0,
+     "spendable": 11,
+     "queue": 2,
+     "need": 11,
+     "pace": 1,
+     "N": 1,
+     "picks": [
+      {
+       "slug": "cuda-nvfp4-wgmma-rega-grouped-s5-copy-safe-bucket-gate",
+       "mode": "check",
+       "priority": 2,
+       "review": "proceed",
+       "kind": "rewrite",
+       "controls_for": null
+      }
+     ],
+     "shortfall": 9,
+     "reason": null,
+     "wake_s": 3600
+    },
+    {
+     "problem": "muse_prefill_layer",
+     "checks_left": 6,
+     "scored_left": 10,
+     "hours_to_reset": 14.81,
+     "in_flight": 0,
+     "in_flight_checks": 0,
+     "gains_pending": 0,
+     "promotion_hold": 0,
+     "spendable": 16,
+     "queue": 4,
+     "need": 16,
+     "pace": 2,
+     "N": 2,
+     "picks": [
+      {
+       "slug": "experts-turn-rega-s4-port-t4096",
+       "mode": "check",
+       "priority": 1,
+       "review": "required",
+       "kind": "rewrite",
+       "controls_for": null
+      },
+      {
+       "slug": "experts-first-turn-ssdq-s2-large-m",
+       "mode": "check",
+       "priority": 2,
+       "review": "required",
+       "kind": "rewrite",
+       "controls_for": null
+      }
+     ],
+     "shortfall": 12,
+     "reason": null,
+     "wake_s": 3107
+    }
+   ],
+   "wake_s": 1800,
+   "dispatch_total": 3,
+   "_exit": 0
+  },
+  "index": {
+   "ok": true,
+   "changed": [
+    "muse_attention_decode/hypotheses/INDEX.md",
+    "muse_attention_decode/hypotheses/FINDINGS.md",
+    "muse_decode_layer/hypotheses/INDEX.md",
+    "muse_decode_layer/hypotheses/FINDINGS.md",
+    "muse_moe_w4a16/hypotheses/INDEX.md",
+    "muse_moe_w4a16/hypotheses/FINDINGS.md",
+    "muse_prefill_layer/hypotheses/INDEX.md",
+    "muse_prefill_layer/hypotheses/FINDINGS.md",
+    "hypotheses/INDEX.md"
+   ],
+   "_exit": 0
+  }
+ }
+}
