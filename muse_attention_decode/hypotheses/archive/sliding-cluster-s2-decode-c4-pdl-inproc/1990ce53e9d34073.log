@@ -1,0 +1,75 @@
+[splitkv] load_inline compiled in 50.7s
+[splitkv] self-check kv_scale=1.0 grid=device: rel L2 1.69e-03, finite True
+[splitkv] self-check kv_scale=0.25 grid=3: rel L2 1.66e-03, finite True
+[splitkv] self-check kv_scale=1.0 grid=3: rel L2 1.62e-03, finite True
+[slide] device capability (9, 0)
+[slide] nvcc arch flags (fp8qk): ['-gencode=arch=compute_90a,code=sm_90a']
+[slide] load_inline (fp8qk) compiled in 40.7s
+[slide] fp8qk: sliding_cluster_kernel 124 regs, 32 B local/spill, 103424 B dynamic smem/CTA, binaryVersion 90, ptxVersion 90; cudaOccupancyMaxActiveClusters C=4 -> 62, C=8 -> 30, C=16 -> 14
+[slide] launch sliding_cluster_kernel canary fp8qk C=16 B=1 ...
+[slide] launch sliding_cluster_kernel canary fp8qk C=16: done
+[slide] canary fp8qk C=16: finite True
+[slide] launch master _pre_attention_kernel (reference store) B=1 ...
+[slide] launch master _pre_attention_kernel: done
+[slide] launch sliding_cluster_kernel self-check fp8qk C=16 B=1 ...
+[slide] launch sliding_cluster_kernel self-check fp8qk C=16: done
+[slide] self-check fp8qk C=16 B=1 kv_scale=1: rel L2 1.64e-03, finite True, cache k match 1.0000 rel 0.0e+00, v match 1.0000 rel 0.0e+00
+[slide] launch master _pre_attention_kernel (reference store) B=1 ...
+[slide] launch master _pre_attention_kernel: done
+[slide] launch sliding_cluster_kernel self-check fp8qk C=16 B=1 ...
+[slide] launch sliding_cluster_kernel self-check fp8qk C=16: done
+[slide] self-check fp8qk C=16 B=1 kv_scale=0.25: rel L2 1.59e-03, finite True, cache k match 1.0000 rel 0.0e+00, v match 1.0000 rel 0.0e+00
+[slide] launch sliding_cluster_kernel graph-eager fp8qk C=16 B=1 ...
+[slide] launch sliding_cluster_kernel graph-eager fp8qk C=16: done
+[slide] graph replay sliding_cluster_kernel fp8qk C=16 ...
+[slide] self-check fp8qk C=16: graph capture + replay matches
+[slide] launch sliding_cluster_kernel canary fp8qk C=8 B=1 ...
+[slide] launch sliding_cluster_kernel canary fp8qk C=8: done
+[slide] canary fp8qk C=8: finite True
+[slide] launch master _pre_attention_kernel (reference store) B=2 ...
+[slide] launch master _pre_attention_kernel: done
+[slide] launch sliding_cluster_kernel self-check fp8qk C=8 B=2 ...
+[slide] launch sliding_cluster_kernel self-check fp8qk C=8: done
+[slide] self-check fp8qk C=8 B=2 kv_scale=0.25: rel L2 1.65e-03, finite True, cache k match 1.0000 rel 0.0e+00, v match 1.0000 rel 0.0e+00
+[slide] launch master _pre_attention_kernel (reference store) B=16 ...
+[slide] launch master _pre_attention_kernel: done
+[slide] launch sliding_cluster_kernel self-check fp8qk C=8 B=16 ...
+[slide] launch sliding_cluster_kernel self-check fp8qk C=8: done
+[slide] self-check fp8qk C=8 B=16 kv_scale=1: rel L2 1.65e-03, finite True, cache k match 1.0000 rel 0.0e+00, v match 1.0000 rel 0.0e+00
+[slide] launch sliding_cluster_kernel graph-eager fp8qk C=8 B=16 ...
+[slide] launch sliding_cluster_kernel graph-eager fp8qk C=8: done
+[slide] graph replay sliding_cluster_kernel fp8qk C=8 ...
+[slide] self-check fp8qk C=8: graph capture + replay matches
+[slide] launch sliding_cluster_kernel canary fp8qk C=4 B=1 ...
+[slide] launch sliding_cluster_kernel canary fp8qk C=4: done
+[slide] canary fp8qk C=4: finite True
+[slide] launch master _pre_attention_kernel (reference store) B=17 ...
+[slide] launch master _pre_attention_kernel: done
+[slide] launch sliding_cluster_kernel self-check fp8qk C=4 B=17 ...
+[slide] launch sliding_cluster_kernel self-check fp8qk C=4: done
+[slide] self-check fp8qk C=4 B=17 kv_scale=0.25: rel L2 1.65e-03, finite True, cache k match 1.0000 rel 0.0e+00, v match 1.0000 rel 0.0e+00
+[slide] launch master _pre_attention_kernel (reference store) B=32 ...
+[slide] launch master _pre_attention_kernel: done
+[slide] launch sliding_cluster_kernel self-check fp8qk C=4 B=32 ...
+[slide] launch sliding_cluster_kernel self-check fp8qk C=4: done
+[slide] self-check fp8qk C=4 B=32 kv_scale=1: rel L2 1.67e-03, finite True, cache k match 1.0000 rel 0.0e+00, v match 1.0000 rel 0.0e+00
+[slide] launch sliding_cluster_kernel graph-eager fp8qk C=4 B=32 ...
+[slide] launch sliding_cluster_kernel graph-eager fp8qk C=4: done
+[slide] graph replay sliding_cluster_kernel fp8qk C=4 ...
+[slide] self-check fp8qk C=4: graph capture + replay matches
+[slide] PATH CHOSEN: sliding cluster v2 C=16 B=1 (fp8qk)
+[slide] PATH CHOSEN: sliding cluster v2 C=8 B=2..16 (fp8qk)
+[slide] PATH CHOSEN: sliding cluster v2 C=4 B=17..32 (fp8qk)
+[slide] PATH CHOSEN: sliding master for B>32 decode, every verify (FA3) and page 64 (by gate)
+[slide] path batch=1 q_len=1 page=64 hq=16 kv_scale=1.0: master Triton _sliding_fused_kernel
+[slide] path batch=3 q_len=1 page=64 hq=16 kv_scale=1.0: master Triton _sliding_fused_kernel
+[slide] path batch=5 q_len=8 page=1 hq=16 kv_scale=1.0: master FA3
+[slide] path batch=4 q_len=1 page=1 hq=16 kv_scale=1.0: cluster v2 C=8 (fp8qk)
+[slide] path batch=3 q_len=8 page=1 hq=16 kv_scale=0.015625: master FA3
+[slide] path batch=4 q_len=8 page=1 hq=16 kv_scale=1.0: master FA3
+[slide] path batch=1 q_len=1 page=1 hq=16 kv_scale=1.0: cluster v2 C=16 (fp8qk)
+[slide] path batch=16 q_len=1 page=1 hq=16 kv_scale=1.0: cluster v2 C=8 (fp8qk)
+[slide] path batch=32 q_len=1 page=1 hq=16 kv_scale=1.0: cluster v2 C=4 (fp8qk)
+[slide] path batch=1 q_len=8 page=1 hq=16 kv_scale=1.0: master FA3
+[slide] path batch=16 q_len=8 page=1 hq=16 kv_scale=1.0: master FA3
+[slide] path batch=32 q_len=8 page=1 hq=16 kv_scale=1.0: master FA3

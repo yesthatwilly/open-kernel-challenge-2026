@@ -68,10 +68,10 @@ controls_for: null
 rewrite_stage: 2
 replaces: "sliding layer decode at tp8/page 1, 1<=batch<=32: master Triton _sliding_fused_kernel (stage-1 sliding_cluster_kernel<1>)"
 review: proceed
-status: running
+status: done
 review_at: 2026-10-25T002143Z
 review_companions: null
-stage: dispatched
+stage: harvested
 claimed_at: 2026-10-25T002143Z
 base_sha: 593859d3ce482d60c7bb0ec1fb4e4101e7b1ce31
 base_blob: bd96c94a12cf87fdcdac119d1e0508f009c4120c
@@ -90,6 +90,13 @@ attempt_file: 2026-10-25T003616Z-check-sliding-cluster-s2-decode-c4-pdl-inproc.m
 prepared_at: 2026-10-25T003616Z
 job: 1990ce53e9d34073
 dispatched_at: 2026-10-25T003624Z
+outcome: neutral
+verdict_detail: unproven-vs-best
+speedup: 1.4001275093564591
+speedup_ci: [1.3791255967161122, 1.4258125744828354]
+harvested_at: 2026-10-25T013611Z
+best_at_harvest: 1.3948738389144513
+promotion: null
 ---
 
 # sliding-cluster-s2-decode-c4-pdl-inproc
@@ -227,3 +234,36 @@ Interpretation:
 - Before reading decode_32, read the printed `cudaOccupancyMaxActiveClusters C=4` value and the PATH CHOSEN lines. If C = 4 was disabled, decode_32 ran master.
 
 Residual risk: never compiled. A ptxas or `TORCH_CUDA_ARCH_LIST=9.0a` failure, or a C=4 occupancy below 32, silently lands those batches on master. Only the log lines distinguish that from "no gain".
+
+## Result
+
+- job `1990ce53e9d34073` (check), status done, passed True, tests 16/16
+- speedup 1.4001x, 95% CI [1.3791, 1.4258], score 2689.969288390816 µs vs SGLang 3766.3 µs
+- best at harvest: {"speedup": 1.3948738389144513, "ci": [1.3739507313307344, 1.415796946498168], "job": "698d4cd3838c4a63"}; base result: muse_attention_decode/hypotheses/done/regression/sliding-cuda-cluster-dsmem-onelaunch.result.json
+- **outcome: neutral** (unproven-vs-best)
+- files: `muse_attention_decode/hypotheses/done/neutral/sliding-cluster-s2-decode-c4-pdl-inproc.result.json`, `muse_attention_decode/hypotheses/done/neutral/sliding-cluster-s2-decode-c4-pdl-inproc.patch`; branch `hyp/muse_attention_decode/sliding-cluster-s2-decode-c4-pdl-inproc`
+
+## Attribution
+
+| shape | w | base µs | hyp µs | delta | verdict |
+|---|---|---|---|---|---|
+| batch=1 ctx=80000 dist=soft heads=tp8 layer=sliding load=decode_1 page=1 | 46 | 11.82 | 12.52 | 0.9557 | lost |
+| batch=1 ctx=80000 dist=coherent heads=tp8 layer=full load=decode_1 page=1 | 16 | 27.8 | 27.18 | 1.0 | flat |
+| batch=16 ctx=80000 dist=soft heads=tp8 layer=sliding load=decode_16 page=1 spread=agentic | 46 | 15.31 | 16.22 | 0.9398 | lost |
+| batch=16 ctx=80000 dist=coherent heads=tp8 layer=full load=decode_16 page=1 spread=agentic | 16 | 122.6 | 122.23 | 1.0042 | flat |
+| batch=32 ctx=80000 dist=soft heads=tp8 layer=sliding load=decode_32 page=1 spread=agentic | 46 | 25.84 | 20.15 | 1.2695 | gained |
+| batch=32 ctx=80000 dist=coherent heads=tp8 layer=full load=decode_32 page=1 spread=agentic | 16 | 258.6 | 257.72 | 1.0048 | flat |
+| batch=1 ctx=80000 dist=soft heads=tp8 layer=sliding load=verify_1 page=1 q_len=8 | 46 | 28.45 | 16.59 | 1.6873 | gained |
+| batch=1 ctx=80000 dist=coherent heads=tp8 layer=full load=verify_1 page=1 q_len=8 | 16 | 30.03 | 29.86 | 0.9847 | flat |
+| batch=16 ctx=80000 dist=soft heads=tp8 layer=sliding load=verify_16 page=1 q_len=8 spread=agentic | 46 | 41.52 | 22.6 | 1.8293 | gained |
+| batch=16 ctx=80000 dist=coherent heads=tp8 layer=full load=verify_16 page=1 q_len=8 spread=agentic | 16 | 162.91 | 161.97 | 1.0065 | flat |
+| batch=32 ctx=80000 dist=soft heads=tp8 layer=sliding load=verify_32 page=1 q_len=8 spread=agentic | 46 | 65.57 | 29.52 | 2.2315 | gained |
+| batch=32 ctx=80000 dist=coherent heads=tp8 layer=full load=verify_32 page=1 q_len=8 spread=agentic | 16 | 301.81 | 300.56 | 1.0038 | flat |
+
+gained on sliding decode_32, verify_1, verify_16, verify_32; lost on sliding decode_1, decode_16. Expected hit: 2/5. Noise ±1.7%.
+
+## Follow-ups
+
+- rewrite stage 2 of `sliding layer decode at tp8/page 1, 1<=batch<=32: master Triton _sliding_fused_kernel (stage-1 sliding_cluster_kernel<1>)`: read the replaced kernels' own us per shape (profile top_kernels) against the incumbent and the floor, and check which Milestone it reached. The next stage is `/hypothesize muse_attention_decode "<what to fix or tune>" --kind rewrite --depends-on sliding-cluster-s2-decode-c4-pdl-inproc --stage 3`; a slow or failed first cut is the expected start, not a do-not-retry.
+- unproven-vs-best: the change is not proven either way; a stacked hypothesis (`depends_on: sliding-cluster-s2-decode-c4-pdl-inproc`) that adds a further change in the same area is the only way to learn more (identical code is never re-run).
+
