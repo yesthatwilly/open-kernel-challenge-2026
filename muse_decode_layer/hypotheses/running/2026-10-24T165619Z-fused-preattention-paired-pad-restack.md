@@ -60,7 +60,7 @@ base_sha: 8ac7a2f409615586e09a8a8ce118f9c4f892b7ba
 base_blob: 4da94677234faaa06b42b5ced541db8961fd6f34
 branch: hyp/muse_decode_layer/fused-preattention-paired-pad-restack
 worktree: .worktrees/muse_decode_layer/fused-preattention-paired-pad-restack
-mode: null
+mode: check
 restack_of: paired-heads-pad-unpad-triton
 stale_base: null
 implemented_at: 2026-10-25T034605Z
@@ -69,6 +69,8 @@ submission_sha256: 2b321f331e1f7c8cdd1fa4dd6acac23425374816ef0eeb8479ef672de2427
 norm_sha256: 6a5ef1194cced186c0e9ede6711aafde54eba56d230f8edda917b488c2b28b80
 submission_blob: 549a90e07960194c47c7589e9fd5c35a5061cb0a
 lint_warnings: 28
+attempt_file: 2026-10-25T034605Z-check-fused-preattention-paired-pad-restack.md
+prepared_at: 2026-10-25T034605Z
 ---
 
 # fused-preattention-paired-pad-restack
