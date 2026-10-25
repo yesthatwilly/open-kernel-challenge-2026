@@ -61,7 +61,7 @@ review: proceed
 status: running
 review_at: 2026-10-25T111209Z
 review_companions: null
-stage: implemented
+stage: dispatched
 claimed_at: 2026-10-25T111210Z
 base_sha: 54d3a9ce8a155b629ac50f80222a1bf0dec23a79
 base_blob: 62c5a9413ba5710defea2ca3de14c1a1dc3b5a6d
@@ -78,6 +78,8 @@ submission_blob: 188072e2b5c7c7dd0b9b98d87989424d120d5b77
 lint_warnings: 66
 attempt_file: 2026-10-25T111944Z-submit-qkv-o-swapab16-t2-t16-no-fork.md
 prepared_at: 2026-10-25T111944Z
+job: b0057d2e6cef4d5a
+dispatched_at: 2026-10-25T111956Z
 ---
 
 # qkv-o-swapab16-t2-t16-no-fork
