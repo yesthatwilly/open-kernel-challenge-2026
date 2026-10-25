@@ -138,6 +138,7 @@ best_at_harvest: 1.2215006063849365
 promotion: merged
 hand_landed: true
 promotion_commit: 040fc7e18f4d9c17ea9fc4a4b9a4cae9216a2335
+promotion_attempt: 2026-10-25T110032Z-submit-restack-three-cell-wins-router-unpooler-cluster-m8-nn-m128.md
 ---
 
 # restack-three-cell-wins-router-unpooler-cluster-m8-nn-m128
