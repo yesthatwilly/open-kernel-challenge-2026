@@ -64,7 +64,7 @@ review: proceed
 status: running
 review_at: 2026-10-25T125918Z
 review_companions: null
-stage: claimed
+stage: implemented
 claimed_at: 2026-10-25T125919Z
 base_sha: 8517012b49a52a4bad4cd73abb2b38533a9adde2
 base_blob: c2e3e595def2e6b5949e0fd350ce98ed59729147
@@ -73,6 +73,12 @@ worktree: .worktrees/muse_prefill_layer/align-two-phase-all-t-rega
 mode: null
 restack_of: null
 stale_base: null
+implemented_at: 2026-10-25T130218Z
+impl_commit: 52b7bc8a5aa03656df66add7466ef473284843ef
+submission_sha256: d14e76b6b72de0f2a6866e964caa63eabba5c2b068bb500527fa0cb16742d563
+norm_sha256: 314fa6c25eec5de828251a2da8374d11abd960d6e9aca6fa820ea8e07657cce7
+submission_blob: a2fe2a75893c60d4f68cf94fcce8ce8f9b708a71
+lint_warnings: 65
 ---
 
 # align-two-phase-all-t-rega
@@ -115,3 +121,35 @@ No companion. The change is one call site on one path, with outputs proven bit-i
 - d792's log tail lost the align2 lines. Confirm in the new log that the 16:low, 16:high and 16:ft classes are each ON, so that flat turn rows mean 'ran and did not help' and not 'never ran'.
 - Does the ft equivalence suite at T=16384 include 'one-expert' (all 131072 routes on expert 7: 8192 blocks for one expert) as well as 'local-saturated' (cap fully used, empty sentinel range)? Both extremes should be required.
 
+
+## Implementation notes
+
+Edited only `.worktrees/muse_prefill_layer/align-two-phase-all-t-rega/muse_prefill_layer/submission.py` (+347/-2). The base is 8517012b, which differs from master 77b2e850 only in this md, so no merge was needed.
+
+- Ported the patch's align2 block (constants, `_align2_count_kernel`, `_align2_place_kernel`, `_align_two_phase`, `_align2_cases`, `_align2_first_mismatch`, `_align2_gate_time`, `_align2_setup`). It sits after `_align_par_ft_setup`. `_align2_setup` runs right after `_align_par_setup`, before `_rega_setup`.
+- NOT ported from the patch: its edits to `_experts_marlin` and `_experts_ssdq`. Both keep master's `_align_parallel`, and the rega gate diagnostic call (`_rega_tiles`) is untouched.
+- `_align_dispatch(local_ids, bsm, state)` has three classes: 'low' T<=1024, 'high' T<=MARLIN_MAX_TOKENS, 'ft' T<=REGA_FT_MAX. The key is `f'{bsm}:{cls}'`. T<=200 or T>REGA_FT_MAX goes to master. It reads only `local_ids.shape[0]` and `state['align2_ok']`. It has no try, print or .item, and no pointer-equality condition. The count table is `torch.empty((nchunks, 32))`, sized by shape.
+- `_experts_rega`'s align call is the only call-site change. `ALIGN2_BSMS=(16,)`. `ALIGN2_GATE=((16,753,'low'),(16,3012,'high'),(16,16384,'ft'))`. `ALIGN2_TESTS_T` gained 4500, 8192 and 16384. `ALIGN2_CHUNKS=(512,1024)`.
+
+Review items:
+1. Equivalence suite: at T=16384 it includes 'one-expert' (all routes on expert 7) and 'local-saturated' (`raw % 32`, added from T>=8192). Every case is checked with `torch.equal` on local_ids, sorted_ids, block_experts and n_padded against `_align_parallel`. The suite prints which (kind, chunk, fill form) passed at T=16384 for those two kinds.
+2. `'align2_ok'` is in `REGA_STATE_KEYS`. Its value is a plain dict of ints: the "bsm:class" chunk sizes plus key "dist" (0 or 1).
+3. Prints: per-class gate lines with the master median, each chunk's median, the chunk chosen, the ratio and the fill form. Prepare also prints the register count and spills of the place kernel at CHUNK 1024 (from the Triton launch handle's `n_regs` and `n_spills`; it prints "n/a" if the Triton version does not expose them). `_align2_setup` returns its gate lines and PATH CHOSEN line, and `prepare()` prints them again after `_rega_setup`.
+4. Tail program: a diagnostic (count+tail minus count-only graph medians at T=16384, using the place kernel's `TAIL_ONLY` constexpr) measures it. Above 10 us the code switches to the distributed fill, which is a `DIST` constexpr. Each place program fills the sentinel slots of its own range `[pid*span, (pid+1)*span)`, and the tail program skips the fill. The `dist` form has its own equivalence pass on all cases with T>=8192, which includes one-expert and local-saturated at 16384. If `dist` fails, the tail form is kept and the line says so. The chosen form is printed.
+5. kernel_fn: as in the dispatch bullet above. The state is cloned by the judge, and nothing is gated on pointers.
+6. Open question about align_par_ok: `_align2_setup` returns OFF unless `align_par_ok`. The log shows that flag in the `[align-local]` line.
+
+Not run: no GPU here, so the Triton kernels are uncompiled. The `dist` loop uses a runtime-start `range(lo, hi, SENT)`.
+
+## Rules check
+
+- [x] CUDA-graph capturable: kernel_fn path adds only torch.empty (shape-sized) and two Triton launches. The diff has no .item/.cpu/synchronize outside prepare.
+- [x] Nothing derived from `data` is cached across calls: the count table is allocated per call, and state holds only prepare-time ints.
+- [x] Weights untouched (the diff touches only the align).
+- [x] Activations/KV/queries: n/a, the align works on int32 ids only.
+- [x] Attention sees every key: n/a, no attention change.
+- [x] No timing patches, harness frames, I/O, module edits or reference import. No subprocess or process spawn.
+- [x] All work inside the timed call: the align runs in `_experts_rega` as before. Outputs are bit-identical to master's (torch.equal in prepare).
+- [x] Judge state copy: no module/static globals hold tensors; state['align2_ok'] is a dict of ints inside REGA_STATE_KEYS.
+
+okc_lint: `OK with warnings: muse_prefill_layer/submission.py` (only host-sync warnings in prepare code and the known dtype warnings). undef.py: `[]`. py_compile: OK. __pycache__ deleted.
