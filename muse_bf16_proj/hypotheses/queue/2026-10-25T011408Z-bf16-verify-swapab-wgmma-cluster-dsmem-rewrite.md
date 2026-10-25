@@ -102,10 +102,10 @@ controls_for: null
 rewrite_stage: 1
 replaces: cuBLAS nvjet at m=128/256 for qkv_gate (13.0+3.0 splitKreduce / 19.4 us), pooler (25.7 / 29.5 us) and unpooler m=128 (20.4 us)
 review: proceed
-status: hold
+status: queued
 review_at: 2026-10-25T012031Z
 review_companions: null
-hold_reason: "Reviewer: wait for the build/cluster-launch/self-check log lines of dc5d03c4d9604b0e and 3f3330f70b6e4cdc (in-flight cluster checks) before dispatch; not their perf."
+hold_reason: null
 ---
 
 # bf16-verify-swapab-wgmma-cluster-dsmem-rewrite
