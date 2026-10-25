@@ -53,7 +53,7 @@ review: proceed
 status: running
 review_at: 2026-10-25T150319Z
 review_companions: null
-stage: implemented
+stage: dispatched
 claimed_at: 2026-10-25T150319Z
 base_sha: b7d110b74193aba420325d572c4db747ff74118c
 base_blob: 353e3b19a7edd5cb879e202d78097f474bcce207
@@ -70,6 +70,8 @@ submission_blob: f919748b5af6e815f319e5d2d828ed68e5b28a71
 lint_warnings: 13
 attempt_file: 2026-10-25T150550Z-submit-pooler-nn-layout-widen-m256.md
 prepared_at: 2026-10-25T150550Z
+job: 85c91578cc184287
+dispatched_at: 2026-10-25T150558Z
 ---
 
 # pooler-nn-layout-widen-m256
