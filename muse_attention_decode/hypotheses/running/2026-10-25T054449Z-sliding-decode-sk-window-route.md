@@ -57,7 +57,7 @@ review: proceed
 status: running
 review_at: 2026-10-25T054724Z
 review_companions: null
-stage: implemented
+stage: dispatched
 claimed_at: 2026-10-25T054724Z
 base_sha: 6f95ce71ba21682ba9cbb6d346abb2a93a862b2f
 base_blob: 76492911dfd6685139a2ffac06c1d27083ecdb0a
@@ -74,6 +74,8 @@ submission_blob: 1117ad04a8bbcd5ca4da54c883e209c1b6e6f278
 lint_warnings: 42
 attempt_file: 2026-10-25T084628Z-check-sliding-decode-sk-window-route.md
 prepared_at: 2026-10-25T084628Z
+job: 118c6de9704146f3
+dispatched_at: 2026-10-25T084636Z
 ---
 
 # sliding-decode-sk-window-route
