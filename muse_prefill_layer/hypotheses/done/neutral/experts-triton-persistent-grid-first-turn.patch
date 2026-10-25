@@ -1,0 +1,389 @@
+diff --git a/muse_prefill_layer/submission.py b/muse_prefill_layer/submission.py
+index db8a334..680ae91 100644
+--- a/muse_prefill_layer/submission.py
++++ b/muse_prefill_layer/submission.py
+@@ -239,6 +239,58 @@ def _e2m1_bits_to_bf16(bits):
+     return bits.to(tl.uint16).to(tl.bfloat16, bitcast=True)
+ 
+ 
++@triton.jit
++def _nvfp4_live_tile(a_ptr, b_ptr, sf_ptr, gs_ptr, c_ptr, offs_token, token_mask, off_expert, pid_w,
++                     N: tl.constexpr, K: tl.constexpr, TOP_K: tl.constexpr,
++                     BLOCK_T: tl.constexpr, BLOCK_W: tl.constexpr, BLOCK_K: tl.constexpr):
++    """One (token tile, weight tile) of _moe_nvfp4_gemm_kernel for a local expert: the pointer
++    setup, K loop, in-register dequant, tl.dot and epilogue, shared by the non-persistent and the
++    persistent kernel (hypothesis experts-triton-persistent-grid-first-turn)."""
++    HALF: tl.constexpr = BLOCK_K // 2
++    GROUPS_HALF: tl.constexpr = HALF // SF_BLOCK
++    offs_w = pid_w * BLOCK_W + tl.arange(0, BLOCK_W)
++    # [BLOCK_W, BLOCK_T]: the transposed output tile.
++    c_ptrs = c_ptr + offs_token[None, :] * N + offs_w[:, None]
++    offs_h = tl.arange(0, HALF)
++    # [HALF, BLOCK_T] activation slab, K-contiguous down the rows: k0 + i for the low half; the high
++    # half is the same pointers + HALF.
++    a_ptrs = a_ptr + (offs_token[None, :] // TOP_K) * K + offs_h[:, None]
++    # [BLOCK_W, HALF] code bytes of one BLOCK_K chunk.
++    b_ptrs = b_ptr + off_expert * (N * (K // 2)) + offs_w[:, None] * (K // 2) + offs_h[None, :]
++    # [BLOCK_W, BLOCK_K // 16] compact scale tile: the chunk's 8 block scales per row, contiguous.
++    s_ptrs = (sf_ptr + off_expert * (N * (K // SF_BLOCK)) + offs_w[:, None] * (K // SF_BLOCK)
++              + tl.arange(0, BLOCK_K // SF_BLOCK)[None, :])
++
++    acc = tl.zeros((BLOCK_W, BLOCK_T), dtype=tl.float32)
++    for _ in range(0, K // BLOCK_K):
++        a_lo = tl.load(a_ptrs, mask=token_mask[None, :], other=0.0)
++        a_hi = tl.load(a_ptrs + HALF, mask=token_mask[None, :], other=0.0)
++        b = tl.load(b_ptrs).to(tl.int32)
++        s = tl.load(s_ptrs)
++        # Block scale * 2^119 (exact: e4m3 has 4 significant bits and 448 * 2^119 < bf16 max), once
++        # per scale on the compact tile, then split into the low half's groups 0..3 and the high
++        # half's 4..7 and broadcast to 16 k each (group g covers half-index i with i // 16 == g).
++        sb = (s.to(tl.float32) * SCALE_BIAS).to(tl.bfloat16)
++        sb_lo, sb_hi = tl.split(tl.permute(tl.reshape(sb, (BLOCK_W, 2, GROUPS_HALF)), (0, 2, 1)))
++        sb_lo = tl.reshape(tl.broadcast_to(sb_lo[:, :, None], (BLOCK_W, GROUPS_HALF, SF_BLOCK)), (BLOCK_W, HALF))
++        sb_hi = tl.reshape(tl.broadcast_to(sb_hi[:, :, None], (BLOCK_W, GROUPS_HALF, SF_BLOCK)), (BLOCK_W, HALF))
++        # E2M1 -> BF16 by bit placement: the 3 magnitude bits go to bf16 bits 8..6 (exponent low
++        # bits and the top mantissa bit), the sign to bit 15. That is E2M1 * 2^-126 exactly,
++        # e = 0 codes landing on bf16 subnormals (0.5 -> 2^-127). The product E2M1 * scale * 2^-7
++        # has at most 6 significant bits, so it is exact in BF16.
++        w_lo = _e2m1_bits_to_bf16(((b & 0x07) << 6) | ((b & 0x08) << 12)) * sb_lo  # k0 + i
++        w_hi = _e2m1_bits_to_bf16(((b & 0x70) << 2) | ((b & 0x80) << 8)) * sb_hi   # k0 + HALF + i
++        acc = tl.dot(w_lo, a_lo, acc)
++        acc = tl.dot(w_hi, a_hi, acc)
++        a_ptrs += BLOCK_K
++        b_ptrs += BLOCK_K // 2
++        s_ptrs += BLOCK_K // SF_BLOCK
++
++    # The per-expert global scale (and the 2^7 the W tile left out), once per output.
++    gs = tl.load(gs_ptr + off_expert) * EPILOGUE_BIAS
++    tl.store(c_ptrs, (acc * gs).to(c_ptr.dtype.element_ty), mask=token_mask[None, :])
++
++
+ @triton.jit(do_not_specialize=["num_valid_tokens", "EM"])
+ def _moe_nvfp4_gemm_kernel(
+     a_ptr, b_ptr, sf_ptr, gs_ptr, c_ptr, sorted_ids_ptr, expert_ids_ptr, n_padded_ptr,
+@@ -293,44 +345,68 @@ def _moe_nvfp4_gemm_kernel(
+                      mask=token_mask[None, :])
+         return
+ 
+-    offs_h = tl.arange(0, HALF)
+-    # [HALF, BLOCK_T] activation slab, K-contiguous down the rows: k0 + i for the low half; the high
+-    # half is the same pointers + HALF.
+-    a_ptrs = a_ptr + (offs_token[None, :] // TOP_K) * K + offs_h[:, None]
+-    # [BLOCK_W, HALF] code bytes of one BLOCK_K chunk.
+-    b_ptrs = b_ptr + off_expert * (N * (K // 2)) + offs_w[:, None] * (K // 2) + offs_h[None, :]
+-    # [BLOCK_W, BLOCK_K // 16] compact scale tile: the chunk's 8 block scales per row, contiguous.
+-    s_ptrs = (sf_ptr + off_expert * (N * (K // SF_BLOCK)) + offs_w[:, None] * (K // SF_BLOCK)
+-              + tl.arange(0, BLOCK_K // SF_BLOCK)[None, :])
++    _nvfp4_live_tile(a_ptr, b_ptr, sf_ptr, gs_ptr, c_ptr, offs_token, token_mask, off_expert, pid_w,
++                     N, K, TOP_K, BLOCK_T, BLOCK_W, BLOCK_K)
+ 
+-    acc = tl.zeros((BLOCK_W, BLOCK_T), dtype=tl.float32)
+-    for _ in range(0, K // BLOCK_K):
+-        a_lo = tl.load(a_ptrs, mask=token_mask[None, :], other=0.0)
+-        a_hi = tl.load(a_ptrs + HALF, mask=token_mask[None, :], other=0.0)
+-        b = tl.load(b_ptrs).to(tl.int32)
+-        s = tl.load(s_ptrs)
+-        # Block scale * 2^119 (exact: e4m3 has 4 significant bits and 448 * 2^119 < bf16 max), once
+-        # per scale on the compact tile, then split into the low half's groups 0..3 and the high
+-        # half's 4..7 and broadcast to 16 k each (group g covers half-index i with i // 16 == g).
+-        sb = (s.to(tl.float32) * SCALE_BIAS).to(tl.bfloat16)
+-        sb_lo, sb_hi = tl.split(tl.permute(tl.reshape(sb, (BLOCK_W, 2, GROUPS_HALF)), (0, 2, 1)))
+-        sb_lo = tl.reshape(tl.broadcast_to(sb_lo[:, :, None], (BLOCK_W, GROUPS_HALF, SF_BLOCK)), (BLOCK_W, HALF))
+-        sb_hi = tl.reshape(tl.broadcast_to(sb_hi[:, :, None], (BLOCK_W, GROUPS_HALF, SF_BLOCK)), (BLOCK_W, HALF))
+-        # E2M1 -> BF16 by bit placement: the 3 magnitude bits go to bf16 bits 8..6 (exponent low
+-        # bits and the top mantissa bit), the sign to bit 15. That is E2M1 * 2^-126 exactly,
+-        # e = 0 codes landing on bf16 subnormals (0.5 -> 2^-127). The product E2M1 * scale * 2^-7
+-        # has at most 6 significant bits, so it is exact in BF16.
+-        w_lo = _e2m1_bits_to_bf16(((b & 0x07) << 6) | ((b & 0x08) << 12)) * sb_lo  # k0 + i
+-        w_hi = _e2m1_bits_to_bf16(((b & 0x70) << 2) | ((b & 0x80) << 8)) * sb_hi   # k0 + HALF + i
+-        acc = tl.dot(w_lo, a_lo, acc)
+-        acc = tl.dot(w_hi, a_hi, acc)
+-        a_ptrs += BLOCK_K
+-        b_ptrs += BLOCK_K // 2
+-        s_ptrs += BLOCK_K // SF_BLOCK
+ 
+-    # The per-expert global scale (and the 2^7 the W tile left out), once per output.
+-    gs = tl.load(gs_ptr + off_expert) * EPILOGUE_BIAS
+-    tl.store(c_ptrs, (acc * gs).to(c_ptr.dtype.element_ty), mask=token_mask[None, :])
++@triton.jit
++def _persistent_tile_coords(tile, num_pid_t, num_pid_w: tl.constexpr, GROUP_SIZE_T: tl.constexpr):
++    """Master's GROUP_SIZE_T swizzle of a linear tile id into (token tile, weight tile), with the
++    runtime num_pid_t. group_size_t is clamped to 1 so a tile id past the end (only ever used under
++    a false load mask) never divides by zero."""
++    num_pid_in_group = GROUP_SIZE_T * num_pid_w
++    group_id = tile // num_pid_in_group
++    first_pid_t = group_id * GROUP_SIZE_T
++    group_size_t = tl.maximum(min(num_pid_t - first_pid_t, GROUP_SIZE_T), 1)
++    pid_t = first_pid_t + ((tile % num_pid_in_group) % group_size_t)
++    pid_w = (tile % num_pid_in_group) // group_size_t
++    return pid_t, pid_w
++
++
++@triton.jit(do_not_specialize=["num_valid_tokens", "EM"])
++def _moe_nvfp4_gemm_persistent_kernel(
++    a_ptr, b_ptr, sf_ptr, gs_ptr, c_ptr, sorted_ids_ptr, expert_ids_ptr, n_padded_ptr,
++    num_valid_tokens, EM,
++    N: tl.constexpr, K: tl.constexpr, TOP_K: tl.constexpr,
++    BLOCK_T: tl.constexpr, BLOCK_W: tl.constexpr, BLOCK_K: tl.constexpr, GROUP_SIZE_T: tl.constexpr,
++    ZERO_NONLOCAL: tl.constexpr,
++):
++    """_moe_nvfp4_gemm_kernel as a persistent grid (hypothesis experts-triton-persistent-grid-first-turn):
++    the grid is at most one program per SM and each strides over the tiles below the real padded
++    count (runtime n_padded), so the static-capacity tiles past it and nothing else never launch.
++    A -1 (remote) tile costs one scalar load: the next tile's expert id is prefetched at the loop
++    top, and sorted_ids is read only inside the live branch (and the zero-store). Same per-tile math
++    (_nvfp4_live_tile) and swizzle as the non-persistent kernel."""
++    pid = tl.program_id(axis=0)
++    nprog = tl.num_programs(axis=0)
++    num_tokens_post_padded = tl.load(n_padded_ptr)
++    num_pid_t = tl.cdiv(num_tokens_post_padded, BLOCK_T)
++    num_pid_w: tl.constexpr = N // BLOCK_W
++    num_tiles = num_pid_t * num_pid_w
++    first_t, first_w = _persistent_tile_coords(pid, num_pid_t, num_pid_w, GROUP_SIZE_T)
++    off_expert = tl.load(expert_ids_ptr + first_t, mask=pid < num_tiles, other=-1).to(tl.int64)
++    for tile in range(pid, num_tiles, nprog):
++        pid_t, pid_w = _persistent_tile_coords(tile, num_pid_t, num_pid_w, GROUP_SIZE_T)
++        nxt = tile + nprog
++        nxt_t, nxt_w = _persistent_tile_coords(nxt, num_pid_t, num_pid_w, GROUP_SIZE_T)
++        nxt_expert = tl.load(expert_ids_ptr + nxt_t, mask=nxt < num_tiles, other=-1).to(tl.int64)
++        if off_expert == -1:
++            # Routes to experts on other GPUs.
++            if ZERO_NONLOCAL:
++                offs_token_id = pid_t * BLOCK_T + tl.arange(0, BLOCK_T).to(tl.int64)
++                offs_token = tl.load(sorted_ids_ptr + offs_token_id).to(tl.int64)
++                token_mask = offs_token < num_valid_tokens
++                offs_w = pid_w * BLOCK_W + tl.arange(0, BLOCK_W)
++                c_ptrs = c_ptr + offs_token[None, :] * N + offs_w[:, None]
++                tl.store(c_ptrs, tl.zeros((BLOCK_W, BLOCK_T), dtype=c_ptr.dtype.element_ty),
++                         mask=token_mask[None, :])
++        else:
++            offs_token_id = pid_t * BLOCK_T + tl.arange(0, BLOCK_T).to(tl.int64)
++            offs_token = tl.load(sorted_ids_ptr + offs_token_id).to(tl.int64)
++            token_mask = offs_token < num_valid_tokens
++            _nvfp4_live_tile(a_ptr, b_ptr, sf_ptr, gs_ptr, c_ptr, offs_token, token_mask, off_expert, pid_w,
++                             N, K, TOP_K, BLOCK_T, BLOCK_W, BLOCK_K)
++        off_expert = nxt_expert
+ 
+ 
+ def _expert_config(tokens):
+@@ -340,8 +416,13 @@ def _expert_config(tokens):
+     raise AssertionError("unreachable")
+ 
+ 
++def _num_sms(device):
++    """The GPU's SM count: a hardware constant (not derived from any input), a host int."""
++    return torch.cuda.get_device_properties(device).multi_processor_count
++
++
+ def _nvfp4_moe_gemm(a, w, sf, gs, out, sorted_ids, expert_ids, n_padded, top_k, num_valid, cfg, zero_nonlocal,
+-                    report=None):
++                    report=None, persistent=False):
+     """out[sorted id] = a[sorted id // top_k] @ dequant(w[expert of its block]).T, on the
+     token blocks moe_align_block_size laid out (cfg's BLOCK_T). w is the nibble-reordered bank."""
+     n, k = w.shape[1], w.shape[2] * 2
+@@ -350,13 +431,18 @@ def _nvfp4_moe_gemm(a, w, sf, gs, out, sorted_ids, expert_ids, n_padded, top_k,
+     assert n % cfg["BLOCK_W"] == 0 and k % cfg["BLOCK_K"] == 0
+     em = sorted_ids.shape[0]
+     grid = (triton.cdiv(em, cfg["BLOCK_T"]) * (n // cfg["BLOCK_W"]),)
+-    compiled = _moe_nvfp4_gemm_kernel[grid](
++    kernel = _moe_nvfp4_gemm_kernel
++    if persistent:
++        # At most one program per SM, striding over the live tiles (n_padded, read in the kernel).
++        grid = (min(_num_sms(a.device), grid[0]),)
++        kernel = _moe_nvfp4_gemm_persistent_kernel
++    compiled = kernel[grid](
+         a, w, sf, gs, out, sorted_ids, expert_ids, n_padded, num_valid, em,
+         N=n, K=k, TOP_K=top_k, BLOCK_T=cfg["BLOCK_T"], BLOCK_W=cfg["BLOCK_W"], BLOCK_K=cfg["BLOCK_K"],
+         GROUP_SIZE_T=cfg["GROUP_SIZE_T"], ZERO_NONLOCAL=zero_nonlocal,
+         num_warps=cfg["num_warps"], num_stages=cfg["num_stages"])
+     if report is not None:  # prepare() only: register / spill / smem use of this variant, for the log
+-        print(f"[expert gemm] {report} BLOCK_T={cfg['BLOCK_T']} BLOCK_W={cfg['BLOCK_W']} "
++        print(f"[expert gemm] {report} {'persistent grid=' + str(grid[0]) if persistent else 'non-persistent'} BLOCK_T={cfg['BLOCK_T']} BLOCK_W={cfg['BLOCK_W']} "
+               f"warps={cfg['num_warps']} stages={cfg['num_stages']}: "
+               f"n_regs={getattr(compiled, 'n_regs', '?')} n_spills={getattr(compiled, 'n_spills', '?')} "
+               f"shared={getattr(compiled, 'shared', getattr(getattr(compiled, 'metadata', None), 'shared', '?'))}",
+@@ -424,7 +510,7 @@ CHECK_ROWS = 128
+ CHECK_K = EXPERT_BLOCK_K
+ 
+ 
+-def _check_expert_gemms(bank, weights, zero_w2=ZERO_NONLOCAL_W2):
++def _check_expert_gemms(bank, weights, zero_w2=ZERO_NONLOCAL_W2, persistent=False):
+     """Untimed. Runs every kernel variant kernel_fn can launch (so each is compiled before capture)
+     on a synthetic case built from the weights alone, and asserts its in-kernel dequant of the
+     reordered bank equals nvfp4.dequantize of the ORIGINAL packing. Row r of A is one-hot at
+@@ -434,6 +520,8 @@ def _check_expert_gemms(bank, weights, zero_w2=ZERO_NONLOCAL_W2):
+     block when zero-storing)."""
+     device = bank["w13"].device
+     e = LOCAL_EXPERTS - 1  # the largest expert offsets
++    # persistent=False: master's variants (a miss fails prepare); persistent=True: the persistent
++    # variants, called from _bench_persistent, whose try turns a miss into the non-persistent path.
+     for name, top_k, zero_nonlocal in (("w13", TOP_K, False), ("w2", 1, zero_w2)):
+         w, sf, gs = bank[name], bank[name + "_sf"], bank[name + "_gs"]
+         orig = weights[name]
+@@ -445,6 +533,11 @@ def _check_expert_gemms(bank, weights, zero_w2=ZERO_NONLOCAL_W2):
+         for _, cfg in EXPERT_CONFIGS:
+             bt = cfg["BLOCK_T"]
+             check_rows = max(CHECK_ROWS, bt)        # whole token blocks of valid rows
++            if persistent:
++                # Live tiles (live token blocks x weight tiles) >= 2 * NUM_SMS, so the persistent
++                # grid (<= NUM_SMS programs) strides at least twice and its loop wraps.
++                live = max(check_rows // bt, triton.cdiv(2 * _num_sms(device), n // cfg["BLOCK_W"]))
++                check_rows = live * bt
+             assert check_rows % bt == 0
+             rows = torch.arange(check_rows, device=device)
+             want = ref[:, rows % CHECK_K].t()       # [check_rows, n]
+@@ -459,23 +552,23 @@ def _check_expert_gemms(bank, weights, zero_w2=ZERO_NONLOCAL_W2):
+             n_padded = torch.tensor([check_rows + bt], dtype=torch.int32, device=device)
+             out = torch.full((total * top_k, n), float("nan"), dtype=torch.bfloat16, device=device)
+             _nvfp4_moe_gemm(x, w, sf, gs, out, sorted_ids, expert_ids, n_padded, top_k, total * top_k, cfg,
+-                            zero_nonlocal, report=name)
++                            zero_nonlocal, report=name, persistent=persistent)
+             torch.cuda.synchronize()
+             got = out[0:check_rows * top_k:top_k].float()
+             bad = ((got - want).abs() > want.abs() * 2.0 ** -7) | got.isnan()
+             if bool(bad.any()):
+                 halves = bool((want_codes[bad].abs() == 0.5).all())
+                 raise AssertionError(
+-                    f"NVFP4 in-kernel dequant mismatch: {name} BLOCK_T={bt}, {int(bad.sum())} of {bad.numel()} "
++                    f"NVFP4 in-kernel dequant mismatch: {name} persistent={persistent} BLOCK_T={bt}, {int(bad.sum())} of {bad.numel()} "
+                     f"values, max err {float((got - want).abs().max())}"
+                     + (" (only E2M1 +-0.5 codes: bf16 subnormals flushed to zero)" if halves else ""))
+             nonlocal_rows = out[check_rows * top_k:(check_rows + bt) * top_k:top_k].float()
+             if zero_nonlocal:
+-                assert bool((nonlocal_rows == 0).all()), f"{name} BLOCK_T={bt}: -1 block not zeroed"
++                assert bool((nonlocal_rows == 0).all()), f"{name} persistent={persistent} BLOCK_T={bt}: -1 block not zeroed"
+             else:
+-                assert bool(nonlocal_rows.isnan().all()), f"{name} BLOCK_T={bt}: -1 block was written"
++                assert bool(nonlocal_rows.isnan().all()), f"{name} persistent={persistent} BLOCK_T={bt}: -1 block was written"
+             past = out[(check_rows + bt) * top_k::top_k].float()
+-            assert bool(past.isnan().all()), f"{name} BLOCK_T={bt}: block past n_padded was written"
++            assert bool(past.isnan().all()), f"{name} persistent={persistent} BLOCK_T={bt}: block past n_padded was written"
+ 
+ 
+ # prepare()'s end-to-end expert check: a synthetic case above MARLIN_MAX_TOKENS (so _experts_triton
+@@ -515,6 +608,87 @@ def _check_experts_e2e(state, device):
+         f"expert e2e check: worst row {worst:.3e} > {E2E_ROW_FACTOR:g} x {E2E_CHECK_TOL:g}")
+ 
+ 
++# prepare()'s paired A/B of the persistent kernel against the non-persistent one (hypothesis
++# experts-triton-persistent-grid-first-turn): realistic first-turn routing, CUDA-graph replays,
++# interleaved, cold L2. The persistent path is used for a GEMM only when its median is at most
++# PERSISTENT_MAX_RATIO of the non-persistent one. A shape-class decision from synthetic data only.
++PERSISTENT_BENCH_TOKENS = 16384
++PERSISTENT_ALTERNATIONS = 7
++PERSISTENT_MAX_RATIO = 0.98
++PERSISTENT_FLUSH_BYTES = 256 * 2**20
++
++
++def _bench_persistent(state, weights, device):
++    """Untimed, prepare() only. Returns {'w13': bool, 'w2': bool}: whether the persistent kernel
++    is used for each GEMM. Any failure (build, dequant self-check, benchmark) turns it off."""
++    off = {"w13": False, "w2": False}
++    try:
++        bank = state["bank"]
++        _check_expert_gemms(bank, weights, state["zero_nonlocal_w2"], persistent=True)
++        torch.cuda.synchronize()
++        gen = torch.Generator(device=device)
++        gen.manual_seed(1)
++        t = PERSISTENT_BENCH_TOKENS
++        ids = torch.rand((t, N_EXPERTS), generator=gen, device=device).topk(TOP_K, dim=1).indices.to(torch.int32)
++        local_ids = torch.where(ids < LOCAL_EXPERTS, ids, torch.full_like(ids, -1)).contiguous()
++        cfg = _expert_config(t)
++        sorted_ids, block_experts, n_padded = moe_align_block_size(local_ids, cfg["BLOCK_T"], LOCAL_EXPERTS)
++        slots = t * TOP_K
++        n1, k1 = bank["w13"].shape[1], bank["w13"].shape[2] * 2
++        n2, k2 = bank["w2"].shape[1], bank["w2"].shape[2] * 2
++        x = torch.randn((t, k1), generator=gen, device=device, dtype=torch.float32).to(torch.bfloat16)
++        h = torch.randn((slots, k2), generator=gen, device=device, dtype=torch.float32).to(torch.bfloat16)
++        out1 = torch.empty((slots, n1), device=device, dtype=torch.bfloat16)
++        out2 = torch.empty((slots, n2), device=device, dtype=torch.bfloat16)
++        calls = {
++            "w13": (x, bank["w13"], bank["w13_sf"], bank["w13_gs"], out1, TOP_K, False),
++            "w2": (h, bank["w2"], bank["w2_sf"], bank["w2_gs"], out2, 1, state["zero_nonlocal_w2"]),
++        }
++        graphs = {}
++        for name, (a, w, sf, gs, out, top_k, zero) in calls.items():
++            for persistent in (False, True):
++                def launch():
++                    _nvfp4_moe_gemm(a, w, sf, gs, out, sorted_ids, block_experts, n_padded, top_k, slots, cfg,
++                                    zero, persistent=persistent)
++                launch()
++                torch.cuda.synchronize()
++                g = torch.cuda.CUDAGraph()
++                with torch.cuda.graph(g):
++                    launch()
++                graphs[(name, persistent)] = g
++        torch.cuda.synchronize()
++        flush = torch.empty(PERSISTENT_FLUSH_BYTES, dtype=torch.uint8, device=device)
++        times = {key: [] for key in graphs}
++        for rep in range(PERSISTENT_ALTERNATIONS):
++            for name in calls:
++                for persistent in ((False, True) if rep % 2 == 0 else (True, False)):
++                    flush.fill_(rep + 1)  # cold L2
++                    start, end = torch.cuda.Event(enable_timing=True), torch.cuda.Event(enable_timing=True)
++                    start.record()
++                    graphs[(name, persistent)].replay()
++                    end.record()
++                    torch.cuda.synchronize()
++                    times[(name, persistent)].append(start.elapsed_time(end) * 1e3)
++        chosen = {}
++        for name in calls:
++            base = sorted(times[(name, False)])[PERSISTENT_ALTERNATIONS // 2]
++            pers = sorted(times[(name, True)])[PERSISTENT_ALTERNATIONS // 2]
++            ratio = pers / base
++            chosen[name] = ratio <= PERSISTENT_MAX_RATIO
++            print(f"[persistent A/B] {name} T={t} BLOCK_T={cfg['BLOCK_T']} live blocks "
++                  f"{int((block_experts[:triton.cdiv(int(n_padded), cfg['BLOCK_T'])] >= 0).sum())}: "
++                  f"non-persistent median {base:.1f} us, persistent median {pers:.1f} us, ratio {ratio:.4f} "
++                  f"over {PERSISTENT_ALTERNATIONS} alternations", flush=True)
++        print(f"[persistent A/B] PATH CHOSEN: w13 {'persistent' if chosen['w13'] else 'non-persistent'}, "
++              f"w2 {'persistent' if chosen['w2'] else 'non-persistent'} (gate ratio <= {PERSISTENT_MAX_RATIO})",
++              flush=True)
++        del graphs, flush
++        return chosen
++    except Exception as e:
++        print(f"[persistent A/B] PATH CHOSEN: non-persistent (benchmark raised {e!r})", flush=True)
++        return off
++
++
+ def _weighted_sum_skips_remote(state, device):
+     """Untimed, prepare() only (hypothesis w2-nonlocal-zero-store-off-first-turn). True when
+     fused_post_expert_norm_weighted_sum never reads the y rows of remote slots: its output is
+@@ -602,8 +776,22 @@ def prepare(weights):
+     torch.cuda.empty_cache()
+     _align_par_setup(state, device)
+     _silu_sorted_setup(state, device)
++    state["persistent"] = {"w13": False, "w2": False}  # _experts_triton reads it; master's path first
+     _check_experts_e2e(state, device)
+     torch.cuda.synchronize()
++    chosen = _bench_persistent(state, weights, device)
++    if chosen["w13"] or chosen["w2"]:
++        # The chosen persistent kernels end to end, against Marlin; a miss falls back.
++        state["persistent"] = chosen
++        try:
++            _check_experts_e2e(state, device)
++            torch.cuda.synchronize()
++        except Exception as e:
++            state["persistent"] = {"w13": False, "w2": False}
++            print(f"[persistent A/B] PATH CHOSEN: non-persistent (e2e check of the persistent path raised {e!r})",
++                  flush=True)
++    torch.cuda.empty_cache()
++    torch.cuda.synchronize()
+     print(f"[prepare] max_memory_allocated {torch.cuda.max_memory_allocated(device) / 2**30:.2f} GiB", flush=True)
+     return state
+ 
+@@ -920,10 +1108,12 @@ def _experts_triton(x, topk_weights, local_ids, state):
+     cache1 = cache13[: num_slots * gemm1_n].view(-1, gemm1_n)
+     cache3 = cache13[: num_slots * size_k].view(-1, size_k)
+     _nvfp4_moe_gemm(x.contiguous(), bank["w13"], bank["w13_sf"], bank["w13_gs"], cache1, sorted_ids, block_experts,
+-                    n_padded, TOP_K, num_slots, cfg, False)
++                    n_padded, TOP_K, num_slots, cfg, False,
++                    persistent=state["persistent"]["w13"])
+     silu_and_mul(cache1, cache2, expert_ids=local_ids.view(-1), expert_step=1)
+     y = _nvfp4_moe_gemm(cache2, bank["w2"], bank["w2_sf"], bank["w2_gs"], cache3, sorted_ids, block_experts,
+-                        n_padded, 1, num_slots, cfg, state["zero_nonlocal_w2"]).view(num_tokens, TOP_K, size_k)
++                        n_padded, 1, num_slots, cfg, state["zero_nonlocal_w2"],
++                        persistent=state["persistent"]["w2"]).view(num_tokens, TOP_K, size_k)
+     return fused_post_expert_norm_weighted_sum(
+         y, topk_weights, norm_weight=state["post_expert_w"], eps=POST_NORM_EPS, weight_first=True,
+         slot_expert_ids=local_ids)

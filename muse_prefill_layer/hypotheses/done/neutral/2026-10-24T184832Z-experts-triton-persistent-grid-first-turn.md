@@ -44,10 +44,10 @@ priority: 1
 kind: primary
 controls_for: null
 review: proceed
-status: running
+status: done
 review_at: 2026-10-25T003615Z
 review_companions: null
-stage: dispatched
+stage: harvested
 claimed_at: 2026-10-25T003624Z
 base_sha: d310c3558b4da1934c0587b4005cb3c14093af5f
 base_blob: db8a3344398bca79ea5cafeb580f701c055fd475
@@ -66,6 +66,13 @@ attempt_file: 2026-10-25T004119Z-check-experts-triton-persistent-grid-first-turn
 prepared_at: 2026-10-25T004119Z
 job: 5d9ddbbaaffd4599
 dispatched_at: 2026-10-25T004152Z
+outcome: neutral
+verdict_detail: within-ci
+speedup: 1.0725632949628818
+speedup_ci: [1.0564748455384385, 1.088651744387325]
+harvested_at: 2026-10-25T034139Z
+best_at_harvest: 1.074386115190733
+promotion: null
 ---
 
 # experts-triton-persistent-grid-first-turn
@@ -144,3 +151,31 @@ Fixes:
 Residual risk: the gain (~0.3 ms upper bound) may land under the 0.98 gate. Then the run is neutral and the readout is the `[persistent A/B]` ratio line. Also, the nested loop may change the pipelining or spills of w13 at BLOCK_T 256 (see the `[expert gemm] ... persistent` n_regs/n_spills lines).
 
 okc_lint after fixes: `OK with warnings` (host-sync in prepare only); `py_compile` ok; `__pycache__` removed.
+
+## Result
+
+- job `5d9ddbbaaffd4599` (check), status done, passed True, tests 5/5
+- speedup 1.0726x, 95% CI [1.0565, 1.0887], score 361194.4412226105 µs vs SGLang 387403.9 µs
+- best at harvest: {"speedup": 1.074386115190733, "ci": [1.058270323462872, 1.090501906918594], "job": "502f2eab95164781"}; base result: muse_prefill_layer/hypotheses/done/neutral/stack-tonight-five-prefill.result.json
+- **outcome: neutral** (within-ci)
+- files: `muse_prefill_layer/hypotheses/done/neutral/experts-triton-persistent-grid-first-turn.result.json`, `muse_prefill_layer/hypotheses/done/neutral/experts-triton-persistent-grid-first-turn.patch`; branch `hyp/muse_prefill_layer/experts-triton-persistent-grid-first-turn`
+
+## Attribution
+
+| shape | w | base µs | hyp µs | delta | verdict |
+|---|---|---|---|---|---|
+| batch=1 ctx=80000 dist=soft layer=sliding load=turn_1 page=1 q_len=753 repeats=6 | 46 | 1101.29 | 1020.62 | 1.0012 | flat |
+| batch=1 ctx=80000 dist=soft layer=full load=turn_1 page=1 q_len=753 repeats=6 | 16 | 1529.55 | 1371.56 | 1.003 | flat |
+| batch=4 ctx=80000 dist=soft layer=sliding load=turn_4 page=1 q_len=753 repeats=6 | 46 | 3318.71 | 3306.49 | 0.9994 | flat |
+| batch=4 ctx=80000 dist=soft layer=full load=turn_4 page=1 q_len=753 repeats=6 | 16 | 4849.27 | 4836.84 | 0.9987 | flat |
+| batch=1 ctx=0 dist=soft layer=full load=first_turn page=1 q_len=16384 repeats=6 | 16 | 14705.32 | 14193.46 | 1.016 | flat |
+| batch=1 ctx=32768 dist=soft layer=sliding load=first_turn page=1 q_len=16384 repeats=6 | 138 | 14264.64 | 13901.86 | 1.0044 | flat |
+| batch=1 ctx=32768 dist=soft layer=full load=first_turn page=1 q_len=16384 repeats=6 | 16 | 17746.69 | 18142.13 | 1.0024 | flat |
+| batch=1 ctx=65536 dist=soft layer=full load=first_turn page=1 q_len=16384 repeats=6 | 16 | 21733.75 | 21746.19 | 1.0043 | flat |
+
+no shape moved outside noise. Expected hit: 0/2. Noise ±1.5%.
+
+## Follow-ups
+
+- within-ci: the change is not proven either way; a stacked hypothesis (`depends_on: experts-triton-persistent-grid-first-turn`) that adds a further change in the same area is the only way to learn more (identical code is never re-run).
+
