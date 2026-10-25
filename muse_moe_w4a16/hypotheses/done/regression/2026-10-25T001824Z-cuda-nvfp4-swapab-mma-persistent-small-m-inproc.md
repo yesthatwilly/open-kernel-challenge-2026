@@ -54,10 +54,10 @@ controls_for: null
 rewrite_stage: 1
 replaces: Marlin w13+w2 (moe_wna16_marlin_gemm x2) at bs<=32
 review: proceed
-status: running
+status: done
 review_at: 2026-10-25T002203Z
 review_companions: null
-stage: dispatched
+stage: harvested
 claimed_at: 2026-10-25T002203Z
 base_sha: f8b3f7230f2656a4143b6a87bb6b8dc1be0b5e49
 base_blob: 7d31b758c60017e045f6e0f75d2e437931ea34b0
@@ -76,6 +76,13 @@ attempt_file: 2026-10-25T003250Z-check-cuda-nvfp4-swapab-mma-persistent-small-m-
 prepared_at: 2026-10-25T003250Z
 job: fecc63ef567b4dc2
 dispatched_at: 2026-10-25T003256Z
+outcome: regression
+verdict_detail: regression
+speedup: 0.924986143165979
+speedup_ci: [0.9111113510184894, 0.9388609353134686]
+harvested_at: 2026-10-25T010418Z
+best_at_harvest: 1.3278240305297715
+promotion: null
 ---
 
 # cuda-nvfp4-swapab-mma-persistent-small-m-inproc
@@ -218,3 +225,29 @@ Audited 2026-10-25 by an opus subagent (read-only on the kernel, no GPU). **Verd
 - Note: the `_build_cuda` comment says that cpp_extension adds no -gencode beside `-arch=sm_90a`. The sibling wgmma rebuilds observed that it does add compute_90/sm_90. That is harmless here because no sm_90a-only instruction is used.
 
 Residual risk: the 715 cause is undiagnosed (dropping createpolicy is a guess). A second sticky trap still kills prepare, but the flushed probe and canary lines will name the instruction or launch.
+
+## Result
+
+- job `fecc63ef567b4dc2` (check), status done, passed True, tests 5/5
+- speedup 0.9250x, 95% CI [0.9111, 0.9389], score 14539.136720437127 µs vs SGLang 13448.5 µs
+- best at harvest: {"speedup": 1.3278240305297715, "ci": [1.307906670071825, 1.3477413909877178], "job": "1947e3ec2abb4bdf"}; base result: SGLang (no base result)
+- **outcome: regression** (regression)
+- files: `muse_moe_w4a16/hypotheses/done/regression/cuda-nvfp4-swapab-mma-persistent-small-m-inproc.result.json`, `muse_moe_w4a16/hypotheses/done/regression/cuda-nvfp4-swapab-mma-persistent-small-m-inproc.patch`; branch `hyp/muse_moe_w4a16/cuda-nvfp4-swapab-mma-persistent-small-m-inproc`
+
+## Attribution
+
+| shape | w | base µs | hyp µs | delta | verdict |
+|---|---|---|---|---|---|
+| bs=1 load=decode_1 sharding=ep8 | 60 | 78.43 | 68.62 | 1.1431 | gained |
+| bs=16 load=decode_16 sharding=ep8 | 60 | 187.34 | 267.12 | 0.7013 | lost |
+| bs=32 load=decode_32 sharding=ep8 | 60 | 214.42 | 368.81 | 0.5814 | lost |
+| bs=8 load=verify_1 sharding=ep8 | 60 | 149.36 | 218.0 | 0.6851 | lost |
+| bs=128 load=verify_16 sharding=ep8 | 60 | 472.86 | 324.58 | 1.4569 | gained |
+| bs=256 load=verify_32 sharding=ep8 | 60 | 620.27 | 460.7 | 1.3464 | gained |
+
+gained on decode_1 decode_1; verify_16 verify_16; verify_32 verify_32; lost on decode_16 decode_16; decode_32 decode_32; verify_1 verify_1. Expected hit: 1/6. Noise ±1.5%.
+
+## Follow-ups
+
+- rewrite stage 1 of `Marlin w13+w2 (moe_wna16_marlin_gemm x2) at bs<=32`: read the replaced kernels' own us per shape (profile top_kernels) against the incumbent and the floor, and check which Milestone it reached. The next stage is `/hypothesize muse_moe_w4a16 "<what to fix or tune>" --kind rewrite --depends-on cuda-nvfp4-swapab-mma-persistent-small-m-inproc --stage 2`; a slow or failed first cut is the expected start, not a do-not-retry.
+

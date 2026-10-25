@@ -1,0 +1,257 @@
+r_pad=32 DIFF
+[cuda-w4a16][align]   pad T=1 bsm=8 local_start=32 all-remote: n_pad=0 r_pad=8 DIFF
+[cuda-w4a16][align]   pad T=1 bsm=8 local_start=32 all-one-expert: n_pad=8 r_pad=16 DIFF
+[cuda-w4a16][align]   pad T=1 bsm=8 local_start=32 all-local: n_pad=64 r_pad=64
+[cuda-w4a16][align]   pad T=1 bsm=8 local_start=224 random: n_pad=0 r_pad=8 DIFF
+[cuda-w4a16][align]   pad T=1 bsm=8 local_start=224 skewed: n_pad=24 r_pad=32 DIFF
+[cuda-w4a16][align]   pad T=1 bsm=8 local_start=224 all-remote: n_pad=0 r_pad=8 DIFF
+[cuda-w4a16][align]   pad T=1 bsm=8 local_start=224 all-one-expert: n_pad=8 r_pad=16 DIFF
+[cuda-w4a16][align]   pad T=1 bsm=8 local_start=224 all-local: n_pad=64 r_pad=64
+[cuda-w4a16][align]   pad T=8 bsm=8 local_start=0 random: n_pad=64 r_pad=120 DIFF
+[cuda-w4a16][align]   pad T=8 bsm=8 local_start=0 skewed: n_pad=24 r_pad=64 DIFF
+[cuda-w4a16][align]   pad T=8 bsm=8 local_start=0 all-remote: n_pad=0 r_pad=64 DIFF
+[cuda-w4a16][align]   pad T=8 bsm=8 local_start=0 all-one-expert: n_pad=8 r_pad=64 DIFF
+[cuda-w4a16][align]   pad T=8 bsm=8 local_start=0 all-local: n_pad=64 r_pad=64
+[cuda-w4a16][align]   pad T=8 bsm=8 local_start=32 random: n_pad=48 r_pad=112 DIFF
+[cuda-w4a16][align]   pad T=8 bsm=8 local_start=32 skewed: n_pad=24 r_pad=64 DIFF
+[cuda-w4a16][align]   pad T=8 bsm=8 local_start=32 all-remote: n_pad=0 r_pad=64 DIFF
+[cuda-w4a16][align]   pad T=8 bsm=8 local_start=32 all-one-expert: n_pad=8 r_pad=64 DIFF
+[cuda-w4a16][align]   pad T=8 bsm=8 local_start=32 all-local: n_pad=64 r_pad=64
+[cuda-w4a16][align]   pad T=8 bsm=8 local_start=224 random: n_pad=72 r_pad=128 DIFF
+[cuda-w4a16][align]   pad T=8 bsm=8 local_start=224 skewed: n_pad=24 r_pad=64 DIFF
+[cuda-w4a16][align]   pad T=8 bsm=8 local_start=224 all-remote: n_pad=0 r_pad=64 DIFF
+[cuda-w4a16][align]   pad T=8 bsm=8 local_start=224 all-one-expert: n_pad=8 r_pad=64 DIFF
+[cuda-w4a16][align]   pad T=8 bsm=8 local_start=224 all-local: n_pad=64 r_pad=64
+[cuda-w4a16][align]   pad T=16 bsm=16 local_start=0 random: n_pad=240 r_pad=352 DIFF
+[cuda-w4a16][align]   pad T=16 bsm=16 local_start=0 skewed: n_pad=48 r_pad=128 DIFF
+[cuda-w4a16][align]   pad T=16 bsm=16 local_start=0 all-remote: n_pad=0 r_pad=128 DIFF
+[cuda-w4a16][align]   pad T=16 bsm=16 local_start=0 all-one-expert: n_pad=16 r_pad=128 DIFF
+[cuda-w4a16][align]   pad T=16 bsm=16 local_start=0 all-local: n_pad=128 r_pad=128
+[cuda-w4a16][align]   pad T=16 bsm=16 local_start=32 random: n_pad=176 r_pad=304 DIFF
+[cuda-w4a16][align]   pad T=16 bsm=16 local_start=32 skewed: n_pad=48 r_pad=128 DIFF
+[cuda-w4a16][align]   pad T=16 bsm=16 local_start=32 all-remote: n_pad=0 r_pad=128 DIFF
+[cuda-w4a16][align]   pad T=16 bsm=16 local_start=32 all-one-expert: n_pad=16 r_pad=128 DIFF
+[cuda-w4a16][align]   pad T=16 bsm=16 local_start=32 all-local: n_pad=128 r_pad=128
+[cuda-w4a16][align]   pad T=16 bsm=16 local_start=224 random: n_pad=192 r_pad=320 DIFF
+[cuda-w4a16][align]   pad T=16 bsm=16 local_start=224 skewed: n_pad=48 r_pad=128 DIFF
+[cuda-w4a16][align]   pad T=16 bsm=16 local_start=224 all-remote: n_pad=0 r_pad=128 DIFF
+[cuda-w4a16][align]   pad T=16 bsm=16 local_start=224 all-one-expert: n_pad=16 r_pad=128 DIFF
+[cuda-w4a16][align]   pad T=16 bsm=16 local_start=224 all-local: n_pad=128 r_pad=128
+[cuda-w4a16][align]   pad T=32 bsm=32 local_start=0 random: n_pad=672 r_pad=896 DIFF
+[cuda-w4a16][align]   pad T=32 bsm=32 local_start=0 skewed: n_pad=96 r_pad=256 DIFF
+[cuda-w4a16][align]   pad T=32 bsm=32 local_start=0 all-remote: n_pad=0 r_pad=256 DIFF
+[cuda-w4a16][align]   pad T=32 bsm=32 local_start=0 all-one-expert: n_pad=32 r_pad=256 DIFF
+[cuda-w4a16][align]   pad T=32 bsm=32 local_start=0 all-local: n_pad=256 r_pad=256
+[cuda-w4a16][align]   pad T=32 bsm=32 local_start=32 random: n_pad=576 r_pad=832 DIFF
+[cuda-w4a16][align]   pad T=32 bsm=32 local_start=32 skewed: n_pad=96 r_pad=256 DIFF
+[cuda-w4a16][align]   pad T=32 bsm=32 local_start=32 all-remote: n_pad=0 r_pad=256 DIFF
+[cuda-w4a16][align]   pad T=32 bsm=32 local_start=32 all-one-expert: n_pad=32 r_pad=256 DIFF
+[cuda-w4a16][align]   pad T=32 bsm=32 local_start=32 all-local: n_pad=256 r_pad=256
+[cuda-w4a16][align]   pad T=32 bsm=32 local_start=224 random: n_pad=736 r_pad=960 DIFF
+[cuda-w4a16][align]   pad T=32 bsm=32 local_start=224 skewed: n_pad=96 r_pad=256 DIFF
+[cuda-w4a16][align]   pad T=32 bsm=32 local_start=224 all-remote: n_pad=0 r_pad=256 DIFF
+[cuda-w4a16][align]   pad T=32 bsm=32 local_start=224 all-one-expert: n_pad=32 r_pad=256 DIFF
+[cuda-w4a16][align]   pad T=32 bsm=32 local_start=224 all-local: n_pad=256 r_pad=256
+[cuda-w4a16] device 'NVIDIA H200' capability (9, 0)
+[cuda-w4a16] nvcc flags ['-O3', '-arch=sm_90a', '-lineinfo'] (TORCH_CUDA_ARCH_LIST=None, not consulted when a cflag names the arch)
+[cuda-w4a16] load_inline compiled in 42.8s
+[cuda-w4a16] kernel w13+silu NT=1: attrs ok True, numRegs 104, localSizeBytes 0, dynamic smem 90112 B, binaryVersion 90, ptxVersion 90
+[cuda-w4a16] kernel w13+silu NT=2: attrs ok True, numRegs 80, localSizeBytes 0, dynamic smem 106496 B, binaryVersion 90, ptxVersion 90
+[cuda-w4a16] kernel w13+silu NT=4: attrs ok True, numRegs 128, localSizeBytes 0, dynamic smem 139264 B, binaryVersion 90, ptxVersion 90
+[cuda-w4a16] kernel w2 NT=1: attrs ok True, numRegs 104, localSizeBytes 0, dynamic smem 90112 B, binaryVersion 90, ptxVersion 90
+[cuda-w4a16] kernel w2 NT=2: attrs ok True, numRegs 80, localSizeBytes 0, dynamic smem 106496 B, binaryVersion 90, ptxVersion 90
+[cuda-w4a16] kernel w2 NT=4: attrs ok True, numRegs 128, localSizeBytes 0, dynamic smem 139264 B, binaryVersion 90, ptxVersion 90
+[cuda-w4a16] retiled 32 experts losslessly (round trips exact) in 0.1s
+[cuda-w4a16] grid 132, SK w13 {1: 4, 2: 2, 4: 1}, SK w2 {1: 8, 2: 4, 4: 2}, workspace 32 MiB
+[cuda-w4a16] device idle before the first CUDA-path launch (earlier work had no async error)
+[cuda-w4a16] > launch probe 0: cp.async.cg 16
+[cuda-w4a16] < ok probe 0
+[cuda-w4a16]   probe 0 values as expected
+[cuda-w4a16] > launch probe 1: cp.async.ca 16 src_bytes 16/0 (zero-fill)
+[cuda-w4a16] < ok probe 1
+[cuda-w4a16]   probe 1 values as expected
+[cuda-w4a16] > launch probe 2: ldmatrix.x4
+[cuda-w4a16] < ok probe 2
+[cuda-w4a16]   probe 2 values as expected
+[cuda-w4a16] > launch probe 3: cvt e4m3x2 + fma bf16x2 + mma.sync m16n8k16
+[cuda-w4a16] < ok probe 3
+[cuda-w4a16]   probe 3 values as expected
+[cuda-w4a16] > launch canary w13+silu M=1 NT=1 SK=4 grid 132
+[cuda-w4a16] < ok canary w13+silu
+[cuda-w4a16] > launch canary w2 M=1 NT=1 SK=8 grid 132
+[cuda-w4a16] < ok canary w2
+[cuda-w4a16] canary outputs finite True, |cache2[0]| 3.868e+01, |y[0]| 3.749e+01
+[cuda-w4a16] > launch M=1 random w13+silu NT=1 SK=4
+[cuda-w4a16] < ok M=1 random w13+silu
+[cuda-w4a16] > launch M=1 random w2 NT=1 SK=8
+[cuda-w4a16] < ok M=1 random w2
+[cuda-w4a16] > launch M=1 skewed w13+silu NT=1 SK=4
+[cuda-w4a16] < ok M=1 skewed w13+silu
+[cuda-w4a16] > launch M=1 skewed w2 NT=1 SK=8
+[cuda-w4a16] < ok M=1 skewed w2
+[cuda-w4a16] > launch M=1 all-one-expert w13+silu NT=1 SK=4
+[cuda-w4a16] < ok M=1 all-one-expert w13+silu
+[cuda-w4a16] > launch M=1 all-one-expert w2 NT=1 SK=8
+[cuda-w4a16] < ok M=1 all-one-expert w2
+[cuda-w4a16]   fp32-dequant M=1 expert 3: 1 routes, cache2 1.68e-03 y 1.64e-03
+[cuda-w4a16] > launch M=1 all-remote w13+silu NT=1 SK=4
+[cuda-w4a16] < ok M=1 all-remote w13+silu
+[cuda-w4a16] > launch M=1 all-remote w2 NT=1 SK=8
+[cuda-w4a16] < ok M=1 all-remote w2
+[cuda-w4a16] > launch M=1 all-local w13+silu NT=1 SK=4
+[cuda-w4a16] < ok M=1 all-local w13+silu
+[cuda-w4a16] > launch M=1 all-local w2 NT=1 SK=8
+[cuda-w4a16] < ok M=1 all-local w2
+[cuda-w4a16]   self-check M=1 (NT=1 BSM=8): max per-row rel-L2 vs Marlin 8.89e-03
+[cuda-w4a16] > launch M=2 random w13+silu NT=1 SK=4
+[cuda-w4a16] < ok M=2 random w13+silu
+[cuda-w4a16] > launch M=2 random w2 NT=1 SK=8
+[cuda-w4a16] < ok M=2 random w2
+[cuda-w4a16] > launch M=2 skewed w13+silu NT=1 SK=4
+[cuda-w4a16] < ok M=2 skewed w13+silu
+[cuda-w4a16] > launch M=2 skewed w2 NT=1 SK=8
+[cuda-w4a16] < ok M=2 skewed w2
+[cuda-w4a16] > launch M=2 all-one-expert w13+silu NT=1 SK=4
+[cuda-w4a16] < ok M=2 all-one-expert w13+silu
+[cuda-w4a16] > launch M=2 all-one-expert w2 NT=1 SK=8
+[cuda-w4a16] < ok M=2 all-one-expert w2
+[cuda-w4a16] > launch M=2 all-remote w13+silu NT=1 SK=4
+[cuda-w4a16] < ok M=2 all-remote w13+silu
+[cuda-w4a16] > launch M=2 all-remote w2 NT=1 SK=8
+[cuda-w4a16] < ok M=2 all-remote w2
+[cuda-w4a16] > launch M=2 all-local w13+silu NT=1 SK=4
+[cuda-w4a16] < ok M=2 all-local w13+silu
+[cuda-w4a16] > launch M=2 all-local w2 NT=1 SK=8
+[cuda-w4a16] < ok M=2 all-local w2
+[cuda-w4a16]   self-check M=2 (NT=1 BSM=8): max per-row rel-L2 vs Marlin 9.03e-03
+[cuda-w4a16] > launch M=4 random w13+silu NT=1 SK=4
+[cuda-w4a16] < ok M=4 random w13+silu
+[cuda-w4a16] > launch M=4 random w2 NT=1 SK=8
+[cuda-w4a16] < ok M=4 random w2
+[cuda-w4a16] > launch M=4 skewed w13+silu NT=1 SK=4
+[cuda-w4a16] < ok M=4 skewed w13+silu
+[cuda-w4a16] > launch M=4 skewed w2 NT=1 SK=8
+[cuda-w4a16] < ok M=4 skewed w2
+[cuda-w4a16] > launch M=4 all-one-expert w13+silu NT=1 SK=4
+[cuda-w4a16] < ok M=4 all-one-expert w13+silu
+[cuda-w4a16] > launch M=4 all-one-expert w2 NT=1 SK=8
+[cuda-w4a16] < ok M=4 all-one-expert w2
+[cuda-w4a16] > launch M=4 all-remote w13+silu NT=1 SK=4
+[cuda-w4a16] < ok M=4 all-remote w13+silu
+[cuda-w4a16] > launch M=4 all-remote w2 NT=1 SK=8
+[cuda-w4a16] < ok M=4 all-remote w2
+[cuda-w4a16] > launch M=4 all-local w13+silu NT=1 SK=4
+[cuda-w4a16] < ok M=4 all-local w13+silu
+[cuda-w4a16] > launch M=4 all-local w2 NT=1 SK=8
+[cuda-w4a16] < ok M=4 all-local w2
+[cuda-w4a16]   self-check M=4 (NT=1 BSM=8): max per-row rel-L2 vs Marlin 8.79e-03
+[cuda-w4a16] > launch M=8 random w13+silu NT=1 SK=4
+[cuda-w4a16] < ok M=8 random w13+silu
+[cuda-w4a16] > launch M=8 random w2 NT=1 SK=8
+[cuda-w4a16] < ok M=8 random w2
+[cuda-w4a16] > launch M=8 skewed w13+silu NT=1 SK=4
+[cuda-w4a16] < ok M=8 skewed w13+silu
+[cuda-w4a16] > launch M=8 skewed w2 NT=1 SK=8
+[cuda-w4a16] < ok M=8 skewed w2
+[cuda-w4a16] > launch M=8 all-one-expert w13+silu NT=1 SK=4
+[cuda-w4a16] < ok M=8 all-one-expert w13+silu
+[cuda-w4a16] > launch M=8 all-one-expert w2 NT=1 SK=8
+[cuda-w4a16] < ok M=8 all-one-expert w2
+[cuda-w4a16]   fp32-dequant M=8 expert 3: 8 routes, cache2 1.77e-03 y 1.68e-03
+[cuda-w4a16] > launch M=8 all-remote w13+silu NT=1 SK=4
+[cuda-w4a16] < ok M=8 all-remote w13+silu
+[cuda-w4a16] > launch M=8 all-remote w2 NT=1 SK=8
+[cuda-w4a16] < ok M=8 all-remote w2
+[cuda-w4a16] > launch M=8 all-local w13+silu NT=1 SK=4
+[cuda-w4a16] < ok M=8 all-local w13+silu
+[cuda-w4a16] > launch M=8 all-local w2 NT=1 SK=8
+[cuda-w4a16] < ok M=8 all-local w2
+[cuda-w4a16]   self-check M=8 (NT=1 BSM=8): max per-row rel-L2 vs Marlin 9.07e-03
+[cuda-w4a16] > launch M=12 random w13+silu NT=2 SK=2
+[cuda-w4a16] < ok M=12 random w13+silu
+[cuda-w4a16] > launch M=12 random w2 NT=2 SK=4
+[cuda-w4a16] < ok M=12 random w2
+[cuda-w4a16] > launch M=12 skewed w13+silu NT=2 SK=2
+[cuda-w4a16] < ok M=12 skewed w13+silu
+[cuda-w4a16] > launch M=12 skewed w2 NT=2 SK=4
+[cuda-w4a16] < ok M=12 skewed w2
+[cuda-w4a16] > launch M=12 all-one-expert w13+silu NT=2 SK=2
+[cuda-w4a16] < ok M=12 all-one-expert w13+silu
+[cuda-w4a16] > launch M=12 all-one-expert w2 NT=2 SK=4
+[cuda-w4a16] < ok M=12 all-one-expert w2
+[cuda-w4a16] > launch M=12 all-remote w13+silu NT=2 SK=2
+[cuda-w4a16] < ok M=12 all-remote w13+silu
+[cuda-w4a16] > launch M=12 all-remote w2 NT=2 SK=4
+[cuda-w4a16] < ok M=12 all-remote w2
+[cuda-w4a16] > launch M=12 all-local w13+silu NT=2 SK=2
+[cuda-w4a16] < ok M=12 all-local w13+silu
+[cuda-w4a16] > launch M=12 all-local w2 NT=2 SK=4
+[cuda-w4a16] < ok M=12 all-local w2
+[cuda-w4a16]   self-check M=12 (NT=2 BSM=16): max per-row rel-L2 vs Marlin 8.98e-03
+[cuda-w4a16] > launch M=16 random w13+silu NT=2 SK=2
+[cuda-w4a16] < ok M=16 random w13+silu
+[cuda-w4a16] > launch M=16 random w2 NT=2 SK=4
+[cuda-w4a16] < ok M=16 random w2
+[cuda-w4a16] > launch M=16 skewed w13+silu NT=2 SK=2
+[cuda-w4a16] < ok M=16 skewed w13+silu
+[cuda-w4a16] > launch M=16 skewed w2 NT=2 SK=4
+[cuda-w4a16] < ok M=16 skewed w2
+[cuda-w4a16] > launch M=16 all-one-expert w13+silu NT=2 SK=2
+[cuda-w4a16] < ok M=16 all-one-expert w13+silu
+[cuda-w4a16] > launch M=16 all-one-expert w2 NT=2 SK=4
+[cuda-w4a16] < ok M=16 all-one-expert w2
+[cuda-w4a16]   fp32-dequant M=16 expert 3: 16 routes, cache2 1.73e-03 y 1.68e-03
+[cuda-w4a16] > launch M=16 all-remote w13+silu NT=2 SK=2
+[cuda-w4a16] < ok M=16 all-remote w13+silu
+[cuda-w4a16] > launch M=16 all-remote w2 NT=2 SK=4
+[cuda-w4a16] < ok M=16 all-remote w2
+[cuda-w4a16] > launch M=16 all-local w13+silu NT=2 SK=2
+[cuda-w4a16] < ok M=16 all-local w13+silu
+[cuda-w4a16] > launch M=16 all-local w2 NT=2 SK=4
+[cuda-w4a16] < ok M=16 all-local w2
+[cuda-w4a16]   self-check M=16 (NT=2 BSM=16): max per-row rel-L2 vs Marlin 8.98e-03
+[cuda-w4a16] > launch M=24 random w13+silu NT=4 SK=1
+[cuda-w4a16] < ok M=24 random w13+silu
+[cuda-w4a16] > launch M=24 random w2 NT=4 SK=2
+[cuda-w4a16] < ok M=24 random w2
+[cuda-w4a16] > launch M=24 skewed w13+silu NT=4 SK=1
+[cuda-w4a16] < ok M=24 skewed w13+silu
+[cuda-w4a16] > launch M=24 skewed w2 NT=4 SK=2
+[cuda-w4a16] < ok M=24 skewed w2
+[cuda-w4a16] > launch M=24 all-one-expert w13+silu NT=4 SK=1
+[cuda-w4a16] < ok M=24 all-one-expert w13+silu
+[cuda-w4a16] > launch M=24 all-one-expert w2 NT=4 SK=2
+[cuda-w4a16] < ok M=24 all-one-expert w2
+[cuda-w4a16] > launch M=24 all-remote w13+silu NT=4 SK=1
+[cuda-w4a16] < ok M=24 all-remote w13+silu
+[cuda-w4a16] > launch M=24 all-remote w2 NT=4 SK=2
+[cuda-w4a16] < ok M=24 all-remote w2
+[cuda-w4a16] > launch M=24 all-local w13+silu NT=4 SK=1
+[cuda-w4a16] < ok M=24 all-local w13+silu
+[cuda-w4a16] > launch M=24 all-local w2 NT=4 SK=2
+[cuda-w4a16] < ok M=24 all-local w2
+[cuda-w4a16]   self-check M=24 (NT=4 BSM=32): max per-row rel-L2 vs Marlin 9.06e-03
+[cuda-w4a16] > launch M=32 random w13+silu NT=4 SK=1
+[cuda-w4a16] < ok M=32 random w13+silu
+[cuda-w4a16] > launch M=32 random w2 NT=4 SK=2
+[cuda-w4a16] < ok M=32 random w2
+[cuda-w4a16] > launch M=32 skewed w13+silu NT=4 SK=1
+[cuda-w4a16] < ok M=32 skewed w13+silu
+[cuda-w4a16] > launch M=32 skewed w2 NT=4 SK=2
+[cuda-w4a16] < ok M=32 skewed w2
+[cuda-w4a16] > launch M=32 all-one-expert w13+silu NT=4 SK=1
+[cuda-w4a16] < ok M=32 all-one-expert w13+silu
+[cuda-w4a16] > launch M=32 all-one-expert w2 NT=4 SK=2
+[cuda-w4a16] < ok M=32 all-one-expert w2
+[cuda-w4a16]   fp32-dequant M=32 expert 3: 32 routes, cache2 1.81e-03 y 1.73e-03
+[cuda-w4a16] > launch M=32 all-remote w13+silu NT=4 SK=1
+[cuda-w4a16] < ok M=32 all-remote w13+silu
+[cuda-w4a16] > launch M=32 all-remote w2 NT=4 SK=2
+[cuda-w4a16] < ok M=32 all-remote w2
+[cuda-w4a16] > launch M=32 all-local w13+silu NT=4 SK=1
+[cuda-w4a16] < ok M=32 all-local w13+silu
+[cuda-w4a16] > launch M=32 all-local w2 NT=4 SK=2
+[cuda-w4a16] < ok M=32 all-local w2
+[cuda-w4a16]   self-check M=32 (NT=4 BSM=32): max per-row rel-L2 vs Marlin 9.24e-03
+[cuda-w4a16] SELF-CHECK PASSED: max rel-L2 9.244e-03 (bound 1e-2), tickets zero True
+[cuda-w4a16] PATH CHOSEN = CUDA for num_tokens <= 32; MARLIN above
