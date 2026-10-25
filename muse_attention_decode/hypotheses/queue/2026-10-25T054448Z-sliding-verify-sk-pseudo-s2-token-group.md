@@ -61,8 +61,10 @@ kind: rewrite
 controls_for: null
 rewrite_stage: 2
 replaces: "sliding verify (q_len 8, page 1, tp8, 2<=B<=32): prepare_varlen_num_blocks + FA3 main + FlashAttnFwdCombine + sglang rms_norm_gate"
-review: required
+review: proceed
 status: queued
+review_at: 2026-10-25T054704Z
+review_companions: null
 ---
 
 # sliding-verify-sk-pseudo-s2-token-group
@@ -90,3 +92,29 @@ shape (profile top_kernels) against the incumbent and the speed-of-light floor, 
 2. at or below the incumbent kernels' time on the target shapes;
 3. within ~1.5x of the floor on the target shapes, and the headline CI clears 1.0 (promotable).
 The next stage is minted with `--kind rewrite --depends-on <this slug> --stage N+1`.
+
+## Adversarial review
+
+Reviewed 2026-10-25T054704Z by an adversarial subagent (model opus).
+
+**Verdict: proceed.** Token grouping aims at the cause s1 measured for its B=16/32 losses: 8x L2 re-reads of the same window. It keeps s1's 16-row mma.sync tile per token, and the per-band >=5% printed gate keeps every sliding verify row attributable. Proceed with no companion. Judge the run against s1's result (job 94523c3313444fd8), not master, and treat B=16 as a coin flip.
+
+### Justification
+The mechanism is plausible. s1 lost verify_16 (37.2 vs FA3 24.3 us in prepare) and verify_32 (62.6 vs 30.2) while DRAM bytes stayed about 1x (8.4 MB at B=16). That loss is consistent with an L2-bandwidth and per-key-gather bound: 67 MB of cp.async plus 8x page_table lookups at roughly 5-7 TB/s of L2 is 10-13 us before latency. TG=4 cuts both the K/V bytes and the page_table gathers 4x (to about 17 MB) and leaves total MMA work unchanged, since the union range adds only TG-1 keys. Each warp owns one 16-row group with its own O and m/l, so registers stay at the s1 level and no intra-CTA merge is added. The masking algebra extends s1's audited sp/lo correctly: groups g>0 mask only their first g keys of the union, so a fully masked tile occurs only at tiny lengths, where the m=-inf guard applies. The targets match the FINDINGS profile: sliding verify_16 is 22.7 us (FA3 main 10.7 + combine 4.0 + prepare 1.8 + norm-gate) against a 1.9 us floor, and verify_32 is 28.3 us against 3.7 us. These rows carry weight 46 each, so a real win would show in the headline. WEAKEST LINK: per-tile latency. With TG=4 each warp now runs all 64 keys of a tile against its group, about 4x the per-tile MMA, softmax and mask work of s1's decode split. The 4 groups also share one ring slot, so the slot is released only when the slowest group finishes. The kernel can therefore become issue/latency-bound before the L2 savings pay off. Going from 37 us to under 22.7 us needs a 1.65x drop, which is not guaranteed even at 4x fewer bytes. A second weak point: the B=2..16 and 17..32 bands are gated on uniform-80000 synthetic timing, but the scored shapes use spread=agentic, so the gate decision may not transfer exactly. The 5% margin covers most of that gap.
+
+### Confounders on the current kernel
+- sliding-verify-sk-pseudo-decode-s1 (base branch, NOT on master; 1.4705x check, verify_1 17.78 -> 13.44 us): a master-relative headline will include s1's whole verify_1 gain. Attribute TG only against s1's result json (verify_1 13.44, verify_16 22.39, verify_32 28.49), and confirm that PATH CHOSEN for B=1 names which TG won.
+- full-decode1-streamk-s3-two-level-ticket (c3c1b01, the templated splitkv_attn_sk_kernel): the TG template adds instantiations to the same TU. The PSEUDO=false variants must stay byte-identical (121 regs / 0 local / 95264 B / 2 CTAs per SM printed IDENTICAL). Otherwise a full decode_1/16/32 move would be a confound, not noise.
+- fused-preattention-triton (landed): provides the unpaired FP8 q rows b*8+j and the new K/V rows. It is unchanged and excluded from both sides of the gate timing, so it is not a confound unless TG reorders q reads. It does not.
+- sliding-deep-splits-on-cuda-splitkv / sliding-fused-triton-decode1-gate (landed): sliding decode only, a disjoint Triton path. A sliding decode_1 move (s1 showed -3.9%, which is noise-level) is run-to-run variance and not caused by TG.
+
+### Interference and A/B needs
+No companion. Every sliding verify row is either the TG kernel, routed only when its printed best variant beats the printed FA3 time by >=1.05x and named with TG/ticket/grid in PATH CHOSEN, or byte-identical FA3. The TG=1 point is s1's code and is timed in the same gate at B=1. s1's own check result is the stage control, so the in-run variant matrix already does what a TG=1 control would. Full layers and sliding decode run untouched code. A gain or a loss is therefore readable from the PATH CHOSEN lines plus the profile top_kernels without an extra check, which matters with 8 checks for 8 queued hypotheses.
+
+### Open questions
+- BUILDER: print the per-TG regs/local/smem/CTAs-per-SM and the per-tile issue layout (which warp runs which group over which keys). If 4 warps x TG=4 means one warp per group over all 64 keys, also time TG=4 with 8 warps (2 warps per group, keys split as in decode) when the template allows it cheaply. That targets the per-tile latency weak link.
+- BUILDER: also print the s1 TG=1 time in the B=16 and B=32 bands next to TG=2/4 and FA3. The ratio TG=1/TG=4 tests the L2-amplification diagnosis directly, even if the band falls back to FA3.
+- Prepare budget: 3 TG x 2 tickets x 4 grids x 3 bands of cold-L2 median-of-10 replays, plus per-TG self-checks and the extra instantiations' compile time. Confirm the total stays well inside the import budget. Prune grids per TG (for example drop 2xSM for TG=4 at B=1, where R=2) if it gets close.
+- The gate uses uniform 80000-length synthetic batches, but the scored B=16/32 shapes are spread=agentic. Consider timing the band candidates on a spread-like synthetic too, so a marginal (5-10%) route does not invert on the real shape.
+- Kill criterion as written: if every TG at B=16 is still slower than FA3, retire the pseudo line to B=1 only and hand verify_16/32 to the wgmma or cluster verify lines. Never stack those lines on this one.
+
