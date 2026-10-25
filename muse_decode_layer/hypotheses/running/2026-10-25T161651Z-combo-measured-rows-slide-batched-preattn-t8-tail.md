@@ -110,7 +110,7 @@ review: proceed
 status: running
 review_at: 2026-10-25T162256Z
 review_companions: null
-stage: implemented
+stage: dispatched
 claimed_at: 2026-10-25T162256Z
 base_sha: 0c4719336efd5dcbef40bf2e1bbbccad0ca34463
 base_blob: 4bb57fd292a7f0fd5a80bd88dc773008b490bf8c
@@ -127,6 +127,8 @@ submission_blob: 3fc72e97304e132db432fcc87872be997f842929
 lint_warnings: 71
 attempt_file: 2026-10-25T191044Z-submit-combo-measured-rows-slide-batched-preattn-t8-tail.md
 prepared_at: 2026-10-25T191044Z
+job: a903b9d004d2452d
+dispatched_at: 2026-10-25T191052Z
 ---
 
 # combo-measured-rows-slide-batched-preattn-t8-tail
