@@ -44,7 +44,8 @@ kind: primary
 controls_for: null
 prior: "qkv-o-swapab16-t2-t16-no-fork: that run carried the then-unlanded dense-chain-s3 (T=1) rewrite, so its +2.6% headline was mostly s3 (out-of-gate decode_1/32 gains); s3 has since landed, and this ports only the swap-AB part onto current master to measure it alone"
 review: required
-status: queued
+status: hold
+hold_reason: being run end to end by another session at the user's request (mint→submit today); do not claim
 ---
 
 # swapab16-t2-t16-port-on-master
