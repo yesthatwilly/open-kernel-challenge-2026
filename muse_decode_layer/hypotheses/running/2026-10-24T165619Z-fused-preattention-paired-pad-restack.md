@@ -54,7 +54,7 @@ review: proceed
 status: running
 review_at: 2026-10-24T170604Z
 review_companions: null
-stage: implemented
+stage: dispatched
 claimed_at: 2026-10-25T034153Z
 base_sha: 8ac7a2f409615586e09a8a8ce118f9c4f892b7ba
 base_blob: 4da94677234faaa06b42b5ced541db8961fd6f34
@@ -71,6 +71,8 @@ submission_blob: 549a90e07960194c47c7589e9fd5c35a5061cb0a
 lint_warnings: 28
 attempt_file: 2026-10-25T034605Z-check-fused-preattention-paired-pad-restack.md
 prepared_at: 2026-10-25T034605Z
+job: 5e9b5464d1444708
+dispatched_at: 2026-10-25T034613Z
 ---
 
 # fused-preattention-paired-pad-restack
