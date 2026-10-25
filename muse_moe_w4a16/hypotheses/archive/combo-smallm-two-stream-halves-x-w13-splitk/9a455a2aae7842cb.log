@@ -1,0 +1,177 @@
+s, delta -1.8 us (-1.03%)
+[cuda-wgmma-verify] PDL event timing, kernels T=128 (zipf a=0.9, 543 local routes): w13+silu alone 324.9 us, w2 alone 159.9 us (eager, cold L2); gather+w13+w2 chain as a graph: PDL off 478.1 us, PDL on 475.0 us, delta -3.1 us
+[cuda-wgmma-verify] PDL bit-identity T=256: 4/4 routings identical (PDL off vs on x2, refilled inputs, graph replays)
+[cuda-wgmma-verify] PDL event timing, full wgmma path T=256 (random routing, align + gather + w13 + w2 + norm, graph replays, cold L2, median of 41, empty-graph 5.6 us subtracted): PDL off 222.0 us, PDL on 218.2 us, delta -3.8 us (-1.73%)
+[cuda-wgmma-verify] PDL event timing, kernels T=256 (zipf a=0.9, 1140 local routes): w13+silu alone 363.4 us, w2 alone 182.2 us (eager, cold L2); gather+w13+w2 chain as a graph: PDL off 541.2 us, PDL on 536.4 us, delta -4.7 us
+[cuda-wgmma-verify] PDL three-state copy check with PDL on: PASS (0.8s): 60 refilled graph replays over states ABC (A, B, C, A, B per M (128, 256, 257) x 4 routings), launch marker seen 60/60, worst wgmma-vs-fp32 4.40e-03, worst Marlin-vs-fp32 5.51e-03, bound 1.5x Marlin
+[cuda-wgmma-verify] PDL on: the w13 -> w2 boundary launches with programmatic stream serialization (the gather and w13 are plain launches)
+[cuda-wgmma-verify] bucket selector (full kernel_fn graphs, cold L2, 41 interleaved reps, empty-graph baseline subtracted, margin 1.02x on the judge-like routing):
+[cuda-wgmma-verify]   B128 T=128 judge-like zipf a=0.3 (241 local routes, Marlin bsm 16): median of 41 cold graph replays minus empty-graph 5.7 us: Marlin full path 368.4 us, wgmma full path 460.4 us, Marlin/wgmma 0.800x (end-to-end rel-L2 6.09e-03)
+[cuda-wgmma-verify]   B128 T=128 random (133 local routes, Marlin bsm 16): median of 41 cold graph replays minus empty-graph 5.9 us: Marlin full path 365.4 us, wgmma full path 460.3 us, Marlin/wgmma 0.794x (end-to-end rel-L2 6.07e-03)
+[cuda-wgmma-verify]   B128 (128 <= T <= 255): wgmma DISABLED (Marlin): ratios 0.800x, 0.794x (judge-like, random) vs margin 1.02x on the judge-like routing (random printed, not gating); calibrated Marlin pair 380 us (judged s4 Marlin pair 306.2 us); 0.1s
+[cuda-wgmma-verify]   B256 T=256 judge-like zipf a=0.3 (457 local routes, Marlin bsm 32): median of 41 cold graph replays minus empty-graph 5.7 us: Marlin full path 496.7 us, wgmma full path 470.7 us, Marlin/wgmma 1.055x (end-to-end rel-L2 6.07e-03)
+[cuda-wgmma-verify]   B256 T=256 random (245 local routes, Marlin bsm 32): median of 41 cold graph replays minus empty-graph 5.8 us: Marlin full path 483.9 us, wgmma full path 460.8 us, Marlin/wgmma 1.050x (end-to-end rel-L2 6.03e-03)
+[cuda-wgmma-verify]   B256 (256 <= T <= 512): wgmma ENABLED: ratios 1.055x, 1.050x (judge-like, random) vs margin 1.02x on the judge-like routing (random printed, not gating); calibrated Marlin pair 500 us (judged s4 Marlin pair 483.2 us); 0.2s
+[cuda-wgmma-verify] verdicts: w13+silu PASS, w2 PASS, self-check PASS, copy check PASS; wgmma is enabled only if BOTH kernels pass rel-L2 <= 0.01 vs Marlin; setup 34.1s (prepare so far 49.8s; copy check 0.8s, selector 0.3s)
+[cuda-wgmma-verify] PATH CHOSEN B128 (128 <= T <= 255) = MARLIN (selector)
+[cuda-wgmma-verify] PATH CHOSEN B256 (256 <= T <= 512) = WGMMA (selector)
+[cuda-wgmma-verify] FINAL FLAGS wg_on_128=False wg_on_256=True wg_pdl=True; B128 took MARLIN, B256 took WGMMA; PDL on
+[cuda-wgmma-verify] PATH CHOSEN = B128 MARLIN, B256 WGMMA; MARLIN for num_tokens < 128 and > 512; kernel variant A (wgmma_wait<0>); per-bucket graph-timed selector; tensor maps encoded per call
+[combo-smallm] phase F1 start at 49.8s
+[combo-smallm] F1 launching master + atomic T=1 random
+[combo-smallm] F1 done master + atomic T=1 random
+[combo-smallm] F1 launching master + atomic T=1 skewed
+[combo-smallm] F1 done master + atomic T=1 skewed
+[combo-smallm] F1 launching master + atomic T=1 all-remote
+[combo-smallm] F1 done master + atomic T=1 all-remote
+[combo-smallm] F1 launching master + atomic T=1 all-one-expert
+[combo-smallm] F1 done master + atomic T=1 all-one-expert
+[combo-smallm] F1 atomic T=1: worst rel-L2 vs master 0.0103 (<= 0.01), vs fp32 0.00832 (<= 0.01); master vs fp32 0.00666; FAIL all-one-expert: rel-L2 vs master 0.0103, vs fp32 0.00832
+[combo-smallm] F1 launching master + atomic_zero T=1 random
+[combo-smallm] F1 done master + atomic_zero T=1 random
+[combo-smallm] F1 launching master + atomic_zero T=1 skewed
+[combo-smallm] F1 done master + atomic_zero T=1 skewed
+[combo-smallm] F1 launching master + atomic_zero T=1 all-remote
+[combo-smallm] F1 done master + atomic_zero T=1 all-remote
+[combo-smallm] F1 launching master + atomic_zero T=1 all-one-expert
+[combo-smallm] F1 done master + atomic_zero T=1 all-one-expert
+[combo-smallm] F1 atomic_zero T=1: worst rel-L2 vs master 0.0102 (<= 0.01), vs fp32 0.00853 (<= 0.01); master vs fp32 0.00664; FAIL all-one-expert: rel-L2 vs master 0.0102, vs fp32 0.00853
+[combo-smallm] phase F1 done in 0.0s
+[combo-smallm] phase F2 start at 49.8s
+[combo-smallm] F2 warming _align_two_phase at bsm 16 for T in [(256, 512)], chunks (64, 128, 256, 512)
+[combo-smallm] F2 warm done: 1028 calls
+[combo-smallm] F2 launching _moe_wgmma master front end T=256 judge-like
+[combo-smallm] F2 done _moe_wgmma T=256 judge-like: error word 0
+[combo-smallm] F2 launching _moe_wgmma master front end T=256 random
+[combo-smallm] F2 done _moe_wgmma T=256 random: error word 0
+[combo-smallm] F2 launching _moe_wgmma master front end T=257 judge-like
+[combo-smallm] F2 done _moe_wgmma T=257 judge-like: error word 0
+[combo-smallm] F2 launching _moe_wgmma master front end T=257 random
+[combo-smallm] F2 done _moe_wgmma T=257 random: error word 0
+[combo-smallm] F2 launching _moe_wgmma master front end T=384 judge-like
+[combo-smallm] F2 done _moe_wgmma T=384 judge-like: error word 0
+[combo-smallm] F2 launching _moe_wgmma master front end T=384 random
+[combo-smallm] F2 done _moe_wgmma T=384 random: error word 0
+[combo-smallm] F2 launching _moe_wgmma master front end T=512 judge-like
+[combo-smallm] F2 done _moe_wgmma T=512 judge-like: error word 0
+[combo-smallm] F2 launching _moe_wgmma master front end T=512 random
+[combo-smallm] F2 done _moe_wgmma T=512 random: error word 0
+[combo-smallm] phase F2 done in 1.9s
+[combo-smallm] phase C3 start at 51.7s
+[combo-smallm] C3 warming _align_small_halves for T 8..32
+[combo-smallm] C3 warm done
+[combo-smallm] C3 launching A (atomic) T=8 random
+[combo-smallm] C3 done A (atomic) T=8 random
+[combo-smallm] C3 launching A (atomic) T=8 skewed
+[combo-smallm] C3 done A (atomic) T=8 skewed
+[combo-smallm] C3 launching A (atomic) T=8 all-remote
+[combo-smallm] C3 done A (atomic) T=8 all-remote
+[combo-smallm] C3 launching A (atomic) T=8 all-one-expert
+[combo-smallm] C3 done A (atomic) T=8 all-one-expert
+[combo-smallm] C3 launching A (atomic_zero) T=8 random
+[combo-smallm] C3 done A (atomic_zero) T=8 random
+[combo-smallm] C3 launching A (atomic_zero) T=8 skewed
+[combo-smallm] C3 done A (atomic_zero) T=8 skewed
+[combo-smallm] C3 launching A (atomic_zero) T=8 all-remote
+[combo-smallm] C3 done A (atomic_zero) T=8 all-remote
+[combo-smallm] C3 launching A (atomic_zero) T=8 all-one-expert
+[combo-smallm] C3 done A (atomic_zero) T=8 all-one-expert
+[combo-smallm] C3 cross-half launching half 0 w2 alone (atomic) T=8 all-local-saturated
+[combo-smallm] C3 cross-half done half 0 T=8 all-local-saturated
+[combo-smallm] C3 cross-half launching half 1 w2 alone (atomic) T=8 all-local-saturated
+[combo-smallm] C3 cross-half done half 1 T=8 all-local-saturated
+[combo-smallm] C3 cross-half launching half 0 w2 alone (atomic) T=8 judge-like
+[combo-smallm] C3 cross-half done half 0 T=8 judge-like
+[combo-smallm] C3 cross-half launching half 1 w2 alone (atomic) T=8 judge-like
+[combo-smallm] C3 cross-half done half 1 T=8 judge-like
+[combo-smallm] C3 cross-half launching half 0 w2 alone (atomic) T=16 all-local-saturated
+[combo-smallm] C3 cross-half done half 0 T=16 all-local-saturated
+[combo-smallm] C3 cross-half launching half 1 w2 alone (atomic) T=16 all-local-saturated
+[combo-smallm] C3 cross-half done half 1 T=16 all-local-saturated
+[combo-smallm] C3 cross-half launching half 0 w2 alone (atomic) T=16 judge-like
+[combo-smallm] C3 cross-half done half 0 T=16 judge-like
+[combo-smallm] C3 cross-half launching half 1 w2 alone (atomic) T=16 judge-like
+[combo-smallm] C3 cross-half done half 1 T=16 judge-like
+[combo-smallm] C3 cross-half launching half 0 w2 alone (atomic) T=32 all-local-saturated
+[combo-smallm] C3 cross-half done half 0 T=32 all-local-saturated
+[combo-smallm] C3 cross-half launching half 1 w2 alone (atomic) T=32 all-local-saturated
+[combo-smallm] C3 cross-half done half 1 T=32 all-local-saturated
+[combo-smallm] C3 cross-half launching half 0 w2 alone (atomic) T=32 judge-like
+[combo-smallm] C3 cross-half done half 0 T=32 judge-like
+[combo-smallm] C3 cross-half launching half 1 w2 alone (atomic) T=32 judge-like
+[combo-smallm] C3 cross-half done half 1 T=32 judge-like
+[combo-smallm] C3 launching H T=8 random
+[combo-smallm] C3 done H T=8 random
+[combo-smallm] C3 launching H T=8 skewed
+[combo-smallm] C3 done H T=8 skewed
+[combo-smallm] C3 launching H T=8 all-remote
+[combo-smallm] C3 done H T=8 all-remote
+[combo-smallm] C3 launching H T=8 all-one-expert
+[combo-smallm] C3 done H T=8 all-one-expert
+[combo-smallm] C3 launching H T=8 all-local
+[combo-smallm] C3 done H T=8 all-local
+[combo-smallm] C3 launching H T=8 all-local-saturated
+[combo-smallm] C3 done H T=8 all-local-saturated
+[combo-smallm] C3 launching H T=8 judge-like
+[combo-smallm] C3 done H T=8 judge-like
+[combo-smallm] C3 launching H T=16 random
+[combo-smallm] C3 done H T=16 random
+[combo-smallm] C3 launching H T=16 skewed
+[combo-smallm] C3 done H T=16 skewed
+[combo-smallm] C3 launching H T=16 all-remote
+[combo-smallm] C3 done H T=16 all-remote
+[combo-smallm] C3 launching H T=16 all-one-expert
+[combo-smallm] C3 done H T=16 all-one-expert
+[combo-smallm] C3 launching H T=16 all-local
+[combo-smallm] C3 done H T=16 all-local
+[combo-smallm] C3 launching H T=16 all-local-saturated
+[combo-smallm] C3 done H T=16 all-local-saturated
+[combo-smallm] C3 launching H T=16 judge-like
+[combo-smallm] C3 done H T=16 judge-like
+[combo-smallm] C3 launching H T=32 random
+[combo-smallm] C3 done H T=32 random
+[combo-smallm] C3 launching H T=32 skewed
+[combo-smallm] C3 done H T=32 skewed
+[combo-smallm] C3 launching H T=32 all-remote
+[combo-smallm] C3 done H T=32 all-remote
+[combo-smallm] C3 launching H T=32 all-one-expert
+[combo-smallm] C3 done H T=32 all-one-expert
+[combo-smallm] C3 launching H T=32 all-local
+[combo-smallm] C3 done H T=32 all-local
+[combo-smallm] C3 launching H T=32 all-local-saturated
+[combo-smallm] C3 done H T=32 all-local-saturated
+[combo-smallm] C3 launching H T=32 judge-like
+[combo-smallm] C3 done H T=32 judge-like
+[combo-smallm] phase C3 done in 1.7s
+[combo-smallm] replay check T=8 state A: eager warm-up + capture of kernel_fn
+[combo-smallm] replay check T=8 state C: eager warm-up + capture of kernel_fn
+[combo-smallm] replay check T=16 state A: eager warm-up + capture of kernel_fn
+[combo-smallm] replay check T=16 state C: eager warm-up + capture of kernel_fn
+[combo-smallm] replay check T=32 state A: eager warm-up + capture of kernel_fn
+[combo-smallm] replay check T=32 state C: eager warm-up + capture of kernel_fn
+[combo-smallm] replay check T=256 state A: eager warm-up + capture of kernel_fn
+[combo-smallm] replay check T=256 state C: eager warm-up + capture of kernel_fn
+[align2] PATH CHOSEN class=d32 T=32 bsm=16 = master, incumbent 3.58 us, align2 4.06 us, ratio 0.882, equivalence 90 cases ok
+[align2] PATH CHOSEN class=v128 T=128 bsm=16 = master, incumbent 3.58 us, align2 4.51 us, ratio 0.794, equivalence 162 cases ok
+[align2] PATH CHOSEN class=v256 T=256 bsm=32 = align2 chunk 64, incumbent 6.11 us, align2 4.32 us, ratio 1.415, equivalence 72 cases ok
+[align2] final flags align2_ok={'d32': 0, 'v128': 0, 'v256': 64} (class: chunk, 0 = master)
+[combo-smallm] F1 PATH CHOSEN T==1 = master (no w13 atomic mode passed correctness)
+[combo-smallm] F2 PATH CHOSEN wgmma front end (T=256, bsm 16) = align2 chunk 64: cold-L2 graph medians judge-like: master 12.70 us, align_parallel16 (info) 6.40 us, c64 4.61 us, c128 5.95 us, c256 5.47 us, c512 7.49 us; random: master 12.96 us, align_parallel16 (info) 6.37 us, c64 4.38 us, c128 5.73 us, c256 5.28 us, c512 7.04 us; best chunk 64 worse-routing ratio 0.363 (ON at <= 0.98); tables ok 72 cases, bitwise _moe_wgmma 32 cases
+[combo-smallm] C3 halves align self-check vs moe_align_block_size (other half -1): 72 cases, 0 mismatches
+[combo-smallm] C3 A w13 atomic (poisoned): worst rel-L2 vs master 0.0103 FAIL T=8 all-one-expert: rel-L2 vs master 0.0103
+[combo-smallm] C3 A w13 atomic_zero (poisoned): worst rel-L2 vs master 0.0104 FAIL T=8 all-one-expert: rel-L2 vs master 0.0104
+[combo-smallm] C3 cross-half w2 wipe test: ok (12 half launches, other half's and remote rows bitwise unchanged); halves w2 mode = atomic (master's w2_mode atomic)
+[combo-smallm] C3 H T=8 (poisoned cache1 junk / cache3 NaN, w13 master, w2 atomic): worst rel-L2 vs master 0.0061 ok
+[combo-smallm] C3 H T=16 (poisoned cache1 junk / cache3 NaN, w13 master, w2 atomic): worst rel-L2 vs master 0.00527 ok
+[combo-smallm] C3 H T=32 (poisoned cache1 junk / cache3 NaN, w13 master, w2 atomic): worst rel-L2 vs master 0.00526 ok
+[combo-smallm] C3 PATH CHOSEN band [8, 12] rep T=8 = H: medians us (master / H / H+A / A) judge-like: master 95.9, H 90.9, H+A n/a, A n/a; random: master 124.3, H 121.7, H+A n/a, A n/a; worse-routing ratios H 0.980 (ON at <= 0.98)
+[combo-smallm] C3 PATH CHOSEN band [13, 24] rep T=16 = H: medians us (master / H / H+A / A) judge-like: master 144.6, H 138.7, H+A n/a, A n/a; random: master 184.0, H 178.1, H+A n/a, A n/a; worse-routing ratios H 0.968 (ON at <= 0.98)
+[combo-smallm] C3 PATH CHOSEN band [25, 32] rep T=32 = H: medians us (master / H / H+A / A) judge-like: master 186.5, H 180.7, H+A n/a, A n/a; random: master 216.7, H 210.5, H+A n/a, A n/a; worse-routing ratios H 0.971 (ON at <= 0.98)
+[combo-smallm] replay check T=8 (states A + cloned C, refilled, A C A C x 4 routings): 16 replays, worst rel-L2 vs master's flags 0.0057 (<= 0.02): ok
+[combo-smallm] replay check T=16 (states A + cloned C, refilled, A C A C x 4 routings): 16 replays, worst rel-L2 vs master's flags 0.00502 (<= 0.02): ok
+[combo-smallm] replay check T=32 (states A + cloned C, refilled, A C A C x 4 routings): 16 replays, worst rel-L2 vs master's flags 0.00469 (<= 0.02): ok
+[combo-smallm] replay check T=256 (states A + cloned C, refilled, A C A C x 4 routings): 16 replays, worst rel-L2 vs master's flags 0 (<= 0.02): ok
+[cuda-wgmma-verify] B256 PATH CHOSEN = WGMMA (wg_on_256 True, wg_on_128 False); F2 wg_align2 = 64 (live)
+[combo-smallm] FINAL flags: w13_t1 master, wg_align2 64, sm_mode [8,12] H, [13,24] H, [25,32] H, sm_w13 master, sm_w2 atomic, w2_mode atomic
+[combo-smallm] phase seconds: F1 0.0, F2 1.9, C3 1.7, replay 0.2; combo total 4.1s; prepare at 53.9s
+[combo-smallm] prepare total 53.9s

@@ -113,10 +113,10 @@ priority: 2
 kind: primary
 controls_for: null
 review: proceed
-status: running
+status: done
 review_at: 2026-10-25T162149Z
 review_companions: null
-stage: dispatched
+stage: harvested
 claimed_at: 2026-10-25T162149Z
 base_sha: 405d804d6756dfee33cc29cbda79b8057d85fbe1
 base_blob: 593b238c16387c5ac3774424ee9557882b9fc46a
@@ -135,6 +135,13 @@ attempt_file: 2026-10-25T185808Z-submit-combo-smallm-two-stream-halves-x-w13-spl
 prepared_at: 2026-10-25T185808Z
 job: 9a455a2aae7842cb
 dispatched_at: 2026-10-25T185817Z
+outcome: neutral
+verdict_detail: unproven-vs-best
+speedup: 1.3886517158680607
+speedup_ci: [1.3678219401300398, 1.4094814916060814]
+harvested_at: 2026-10-25T190511Z
+best_at_harvest: 1.3865522395057346
+promotion: null
 ---
 
 # combo-smallm-two-stream-halves-x-w13-splitk
@@ -308,3 +315,29 @@ Audited 2026-10-25 by an Opus subagent, by reading only (no GPU here). **Verdict
 **Lint/compile:** okc_lint OK with warnings (prepare-only syncs and pre-existing uint8 scratch). py_compile OK. __pycache__ removed.
 
 **Residual risk:** an exception inside a C3 band capture could leave stream/capture state dirty for later prepare work. The phase try/except and the replay check (which falls back to all master on any raise) contain it, at the cost of an all-master combo.
+
+## Result
+
+- job `9a455a2aae7842cb` (submit), status done, passed True, tests 5/5
+- speedup 1.3887x, 95% CI [1.3678, 1.4095], score 9684.573782125924 µs vs SGLang 13448.5 µs
+- best at harvest: {"speedup": 1.3865522395057346, "ci": [1.3546070184906125, 1.395864085043626], "job": "b395f5b6097348c7"}; base result: muse_moe_w4a16/hypotheses/done/neutral/align-two-phase-port-from17.result.json
+- **outcome: neutral** (unproven-vs-best)
+- files: `muse_moe_w4a16/hypotheses/done/neutral/combo-smallm-two-stream-halves-x-w13-splitk.result.json`, `muse_moe_w4a16/hypotheses/done/neutral/combo-smallm-two-stream-halves-x-w13-splitk.patch`; branch `hyp/muse_moe_w4a16/combo-smallm-two-stream-halves-x-w13-splitk`
+
+## Attribution
+
+| shape | w | base µs | hyp µs | delta | verdict |
+|---|---|---|---|---|---|
+| bs=1 load=decode_1 sharding=ep8 | 60 | 46.77 | 45.57 | 0.9969 | flat |
+| bs=16 load=decode_16 sharding=ep8 | 60 | 145.99 | 145.9 | 1.0077 | flat |
+| bs=32 load=decode_32 sharding=ep8 | 60 | 203.75 | 197.95 | 1.0132 | flat |
+| bs=8 load=verify_1 sharding=ep8 | 60 | 111.85 | 103.81 | 1.0295 | flat |
+| bs=128 load=verify_16 sharding=ep8 | 60 | 319.08 | 320.6 | 1.0047 | flat |
+| bs=256 load=verify_32 sharding=ep8 | 60 | 404.89 | 379.44 | 1.03 | flat |
+
+no shape moved outside noise. Expected hit: 1/6. Noise ±1.5%.
+
+## Follow-ups
+
+- unproven-vs-best: the change is not proven either way; a stacked hypothesis (`depends_on: combo-smallm-two-stream-halves-x-w13-splitk`) that adds a further change in the same area is the only way to learn more (identical code is never re-run).
+
