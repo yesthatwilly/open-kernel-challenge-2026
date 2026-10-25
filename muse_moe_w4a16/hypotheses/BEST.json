@@ -1,8 +1,8 @@
 {
  "problem": "muse_moe_w4a16",
- "job": "b395f5b6097348c7",
+ "job": "9a455a2aae7842cb",
  "mode": "submit",
- "speedup": 1.3865522395057346,
+ "speedup": 1.3886517158680607,
  "ci": [
   1.3546070184906125,
   1.395864085043626
@@ -10,7 +10,10 @@
  "score_us": 9699.237877105876,
  "commit": "64f18b03974a1a85ca81cac2e0f7e45d5d8bfbbc",
  "submission_blob": "35b8a851e4ef5fa8fd66b12d09caac88b7ea7615",
- "slug": "combo-toprow-w13t1-d32-alignpar-postnorm-wg-align2",
- "result": "muse_moe_w4a16/hypotheses/done/neutral/combo-toprow-w13t1-d32-alignpar-postnorm-wg-align2.result.json",
- "updated_at": "2026-10-25T185851Z"
+ "slug": "combo-smallm-two-stream-halves-x-w13-splitk",
+ "result": "muse_moe_w4a16/hypotheses/done/neutral/combo-smallm-two-stream-halves-x-w13-splitk.result.json",
+ "updated_at": "2026-10-25T190615Z",
+ "master_slug": "combo-toprow-w13t1-d32-alignpar-postnorm-wg-align2",
+ "master_job": "b395f5b6097348c7",
+ "note": "board entry is branch code hyp/muse_moe_w4a16/combo-smallm-two-stream-halves-x-w13-splitk (not on master: 3-way merge onto master conflicts); master is combo-toprow-w13t1-d32-alignpar-postnorm-wg-align2"
 }

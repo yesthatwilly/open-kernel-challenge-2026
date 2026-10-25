@@ -1,9 +1,9 @@
 {
  "problem": "muse_attention_decode",
- "job": "4b608df595b046fb",
+ "job": "52cbfaebab9646f2",
  "check_job": "4b608df595b046fb",
- "mode": "check",
- "speedup": 1.5119748206149146,
+ "mode": "submit",
+ "speedup": 1.5199437286563244,
  "ci": [
   1.4892951983056908,
   1.5346544429241382
@@ -11,7 +11,10 @@
  "score_us": 2490.9806358205487,
  "commit": "5d528bf313ed6deb0094c453214f1584fea0033b",
  "submission_blob": "6d6afa4722731ceb9cb8216d0334a03f1a96ad2b",
- "slug": "sliding-decode1-cluster-per-kvhead",
- "result": "muse_attention_decode/hypotheses/done/neutral/sliding-decode1-cluster-per-kvhead.result.json",
- "updated_at": "2026-10-25T185544Z"
+ "slug": "combo-tiled-preattn-neighbour-regate-c320",
+ "result": "muse_attention_decode/hypotheses/done/neutral/combo-tiled-preattn-neighbour-regate-c320.result.json",
+ "updated_at": "2026-10-25T190615Z",
+ "master_slug": "sliding-decode1-cluster-per-kvhead",
+ "master_job": "4b608df595b046fb",
+ "note": "board entry is branch code hyp/muse_attention_decode/combo-tiled-preattn-neighbour-regate-c320 (not on master: 3-way merge onto master conflicts); master is sliding-decode1-cluster-per-kvhead"
 }
