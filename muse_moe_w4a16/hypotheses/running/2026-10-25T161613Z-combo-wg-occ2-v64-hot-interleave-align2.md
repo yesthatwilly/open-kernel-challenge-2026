@@ -118,9 +118,18 @@ priority: 2
 kind: primary
 controls_for: null
 review: proceed
-status: queued
+status: running
 review_at: 2026-10-25T162203Z
 review_companions: null
+stage: claimed
+claimed_at: 2026-10-25T162203Z
+base_sha: 757927698c5069efecc0af3dde3ee3553dc1971f
+base_blob: 593b238c16387c5ac3774424ee9557882b9fc46a
+branch: hyp/muse_moe_w4a16/combo-wg-occ2-v64-hot-interleave-align2
+worktree: .worktrees/muse_moe_w4a16/combo-wg-occ2-v64-hot-interleave-align2
+mode: null
+restack_of: null
+stale_base: null
 ---
 
 # combo-wg-occ2-v64-hot-interleave-align2
