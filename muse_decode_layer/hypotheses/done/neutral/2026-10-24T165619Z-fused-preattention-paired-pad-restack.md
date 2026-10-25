@@ -51,10 +51,10 @@ priority: 5
 kind: primary
 controls_for: null
 review: proceed
-status: running
+status: done
 review_at: 2026-10-24T170604Z
 review_companions: null
-stage: dispatched
+stage: harvested
 claimed_at: 2026-10-25T034153Z
 base_sha: 8ac7a2f409615586e09a8a8ce118f9c4f892b7ba
 base_blob: 4da94677234faaa06b42b5ced541db8961fd6f34
@@ -73,6 +73,13 @@ attempt_file: 2026-10-25T034605Z-check-fused-preattention-paired-pad-restack.md
 prepared_at: 2026-10-25T034605Z
 job: 5e9b5464d1444708
 dispatched_at: 2026-10-25T034613Z
+outcome: neutral
+verdict_detail: unproven-vs-best
+speedup: 1.2744529931842001
+speedup_ci: [1.255336198286437, 1.293569788081963]
+harvested_at: 2026-10-25T043358Z
+best_at_harvest: 1.2680313318618024
+promotion: null
 ---
 
 # fused-preattention-paired-pad-restack
@@ -158,3 +165,35 @@ Verdict: **dispatch** (no fixes).
 - Rules: kernel_fn adds only `torch.empty` and two Triton launches; PAIRED/ROPE/scaled are config-only; nothing cached from data; no sync, autotune or child process. FP8 tensors passed directly to Triton (q, k/v cache) were already exercised by the parent patch's q pad. Lint OK (pre-existing prepare() warnings only), py_compile OK.
 
 Residual risk: Triton FP8 casts saturate where torch's produce NaN, and q/k now skip master's intermediate bf16 rounding. Both stay within tolerance at realistic magnitudes, but the run is the first execution of _pre_attention_kernel on the full and sliding batch>1/verify shapes.
+
+## Result
+
+- job `5e9b5464d1444708` (check), status done, passed True, tests 13/13
+- speedup 1.2745x, 95% CI [1.2553, 1.2936], score 17749.02653999309 µs vs SGLang 22620.3 µs
+- best at harvest: {"speedup": 1.2680313318618024, "ci": [1.2490108618838753, 1.2870518018397292], "job": "c243a29f26dc4725"}; base result: muse_decode_layer/hypotheses/done/neutral/stack-align-par-sidestream-sliding1.result.json
+- **outcome: neutral** (unproven-vs-best)
+- files: `muse_decode_layer/hypotheses/done/neutral/fused-preattention-paired-pad-restack.result.json`, `muse_decode_layer/hypotheses/done/neutral/fused-preattention-paired-pad-restack.patch`; branch `hyp/muse_decode_layer/fused-preattention-paired-pad-restack`
+
+## Attribution
+
+| shape | w | base µs | hyp µs | delta | verdict |
+|---|---|---|---|---|---|
+| batch=1 ctx=80000 dist=soft layer=sliding load=decode_1 page=1 repeats=60 | 46 | 127.48 | 125.43 | 1.0148 | flat |
+| batch=1 ctx=80000 dist=soft layer=full load=decode_1 page=1 repeats=60 | 16 | 142.93 | 138.37 | 1.0323 | gained |
+| batch=16 ctx=80000 dist=soft layer=sliding load=decode_16 page=1 spread=agentic | 46 | 204.98 | 211.33 | 1.0134 | flat |
+| batch=16 ctx=80000 dist=soft layer=full load=decode_16 page=1 spread=agentic | 16 | 349.47 | 336.11 | 1.0467 | gained |
+| batch=32 ctx=80000 dist=soft layer=sliding load=decode_32 page=1 spread=agentic | 46 | 245.77 | 229.71 | 1.0282 | flat |
+| batch=32 ctx=80000 dist=soft layer=full load=decode_32 page=1 spread=agentic | 16 | 529.71 | 512.59 | 1.0326 | gained |
+| batch=1 ctx=80000 dist=soft layer=sliding load=verify_1 page=1 q_len=8 | 46 | 190.8 | 182.44 | 1.0374 | gained |
+| batch=1 ctx=80000 dist=soft layer=full load=verify_1 page=1 q_len=8 | 16 | 192.44 | 192.51 | 1.0158 | flat |
+| batch=16 ctx=80000 dist=soft layer=sliding load=verify_16 page=1 q_len=8 spread=agentic | 46 | 429.61 | 435.24 | 0.9963 | flat |
+| batch=16 ctx=80000 dist=soft layer=full load=verify_16 page=1 q_len=8 spread=agentic | 16 | 563.65 | 563.83 | 1.0059 | flat |
+| batch=32 ctx=80000 dist=soft layer=sliding load=verify_32 page=1 q_len=8 spread=agentic | 46 | 592.52 | 619.5 | 1.0101 | flat |
+| batch=32 ctx=80000 dist=soft layer=full load=verify_32 page=1 q_len=8 spread=agentic | 16 | 861.3 | 868.91 | 1.0197 | flat |
+
+gained on full decode_1, decode_16, decode_32; sliding verify_1. Expected hit: 4/6. Noise ±1.5%.
+
+## Follow-ups
+
+- unproven-vs-best: the change is not proven either way; a stacked hypothesis (`depends_on: fused-preattention-paired-pad-restack`) that adds a further change in the same area is the only way to learn more (identical code is never re-run).
+

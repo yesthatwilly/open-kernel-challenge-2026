@@ -1,0 +1,236 @@
+diff --git a/muse_decode_layer/submission.py b/muse_decode_layer/submission.py
+index 4da9467..549a90e 100644
+--- a/muse_decode_layer/submission.py
++++ b/muse_decode_layer/submission.py
+@@ -14,10 +14,13 @@ GEMM (hypothesis sglang-pipeline-parity-router-hilo-m8):
+ Everything else is SGLang's pipeline as baseline.py composes it:
+ 
+   qkv_gate projection              bf16_gemm_dispatch (cuBLAS on H200)
+-  FusedQKNorm (Triton)             per-head RMSNorm of q and k, read from the fused projection,
+-                                   with the interleaved RoPE fused in on sliding layers
+-  cache store, q to FP8            as FlashAttentionBackend and set_kv_buffer do for an FP8 cache
+-                                   (cast, then the store_cache JIT kernel at the step's rows)
++  pre-attention, one Triton kernel (hypothesis fused-preattention-paired-pad-restack; replaces
++                                   SGLang's FusedQKNorm, the k/v scale divides and FP8 casts,
++                                   store_cache, the q FP8 cast and the paired zero pad): per
++                                   (token, head), scaleless RMSNorm of the q or k head, interleaved
++                                   RoPE from the cos | sin table FusedQKNorm reads, q stored as FP8
++                                   E4M3 for FA3, k / k_scale and v / v_scale stored as FP8 straight
++                                   into the cache at the step's rows
+   flash_attn_with_kvcache (FA3)    paged, causal, window (2047, 0) on sliding layers
+   FusedRMSNormGate (JIT)           per-head output norm x sigmoid(gate)
+   o projection                     bf16_gemm_dispatch; then the all-reduce (identity here)
+@@ -66,7 +69,6 @@ from sgl_kernel.scalar_type import scalar_types
+ from torch import nn
+ 
+ from sglang.kernels.ops.activation.activation import silu_and_mul
+-from sglang.kernels.ops.kvcache.kvcache import store_cache
+ from sglang.kernels.ops.moe.moe_wna16_marlin import moe_wna16_marlin_gemm
+ from sglang.kernels.ops.muse_spark_v12.fused_muse_spark_routing import FusedMuseSparkRouting
+ from sglang.kernels.ops.muse_spark_v12.fused_norm_gate import FusedRMSNormGate
+@@ -74,7 +76,6 @@ from sglang.kernels.ops.muse_spark_v12.fused_norm_residual import FusedPostNormR
+ from sglang.kernels.ops.muse_spark_v12.fused_post_expert_norm_weighted_sum_triton import (
+     fused_post_expert_norm_weighted_sum,
+ )
+-from sglang.kernels.ops.muse_spark_v12.fused_qk_norm import FusedQKNorm
+ from sglang.srt.layers.moe.fused_moe_triton import moe_align_block_size
+ from sglang.srt.layers.muse_spark_layers import (
+     MuseSpark1xNormPreservingResidualConnection,
+@@ -1576,6 +1577,99 @@ def _sliding_fused_kernel(
+             tl.store(cnt_ptr + bg, 0)  # ready for the next launch / graph replay
+ 
+ 
++@triton.jit
++def _pre_attention_kernel(
++    qkv_ptr, pos_ptr, loc_ptr, cos_sin_ptr, k_scale_ptr, v_scale_ptr,
++    q_out_ptr, k_cache_ptr, v_cache_ptr,
++    qkv_stride,
++    HQ: tl.constexpr, HKV: tl.constexpr, D: tl.constexpr, G: tl.constexpr, PAIRED: tl.constexpr,
++    ROPE: tl.constexpr, EPS: tl.constexpr,
++):
++    """One program per (token, head). Heads 0..HQ-1 are queries; HQ..HQ+HKV-1 are the new keys,
++    whose program also stores the matching value head. The q and k heads are contiguous in the
++    fused row, so head h starts at h*D for both. PAIRED: query h writes its D FP8 values into half
++    (h // G) % 2 of a [tokens, HQ, 2*D] FP8 row and D FP8 zeros into the other half."""
++    t = tl.program_id(0)
++    h = tl.program_id(1)
++    HALF: tl.constexpr = D // 2
++    i = tl.arange(0, HALF)
++    even = 2 * i
++    odd = 2 * i + 1
++
++    row = qkv_ptr + t.to(tl.int64) * qkv_stride
++    base = row + h * D
++    xe = tl.load(base + even).to(tl.float32)
++    xo = tl.load(base + odd).to(tl.float32)
++
++    # Scaleless RMSNorm over the head's D entries.
++    ss = tl.sum(xe * xe, axis=0) + tl.sum(xo * xo, axis=0)
++    r = 1.0 / tl.sqrt(ss / D + EPS)
++    xe = xe * r
++    xo = xo * r
++
++    if ROPE:
++        # Interleaved (GPT-J) RoPE: pair (2i, 2i+1) rotates by the angle in row positions[t] of
++        # the cos | sin table (cos in columns 0..HALF-1, sin in HALF..D-1), as FusedQKNorm reads it.
++        p = tl.load(pos_ptr + t).to(tl.int64)
++        cs = cos_sin_ptr + p * D
++        c = tl.load(cs + i)
++        s = tl.load(cs + HALF + i)
++        ye = xe * c - xo * s
++        yo = xe * s + xo * c
++        xe = ye
++        xo = yo
++
++    if h < HQ:
++        # Query, rounded to FP8 E4M3 for FA3 (qk_scale_factor is folded into the softmax scale).
++        if PAIRED:
++            half = (h // G) % 2
++            qrow = q_out_ptr + (t.to(tl.int64) * HQ + h) * (2 * D)
++            out = qrow + half * D
++            zj = tl.arange(0, D)
++            tl.store(qrow + (1 - half) * D + zj, tl.zeros([D], dtype=tl.float32).to(tl.float8e4nv))
++        else:
++            out = q_out_ptr + (t.to(tl.int64) * HQ + h) * D
++        tl.store(out + even, xe.to(tl.float8e4nv))
++        tl.store(out + odd, xo.to(tl.float8e4nv))
++    else:
++        kh = h - HQ
++        loc = tl.load(loc_ptr + t).to(tl.int64)
++        k_scale = tl.load(k_scale_ptr)
++        v_scale = tl.load(v_scale_ptr)
++        # The cache is [pages, page_size, HKV, D] contiguous: flat row loc, head kh.
++        kout = k_cache_ptr + (loc * HKV + kh) * D
++        tl.store(kout + even, (xe / k_scale).to(tl.float8e4nv))
++        tl.store(kout + odd, (xo / k_scale).to(tl.float8e4nv))
++        # The value head: no norm, no RoPE, just the scale and the FP8 cast.
++        j = tl.arange(0, D)
++        v = tl.load(row + (HQ + HKV + kh) * D + j).to(tl.float32)
++        vout = v_cache_ptr + (loc * HKV + kh) * D
++        tl.store(vout + j, (v / v_scale).to(tl.float8e4nv))
++
++
++@triton.jit
++def _paired_norm_gate_kernel(
++    attn_ptr, qkv_ptr, out_ptr,
++    attn_stride_t, attn_stride_h, qkv_stride,
++    HQ: tl.constexpr, HKV: tl.constexpr, D: tl.constexpr, G: tl.constexpr, EPS: tl.constexpr,
++):
++    """Full-layer epilogue for the paired path, one program per (token, query head): reads head
++    h's own half (h // G) % 2 of FA3's [tokens, HQ, 2*D] output (the other half is the other KV
++    head's P@V and is never read), applies the scaleless RMSNorm (eps inside the sqrt of the mean
++    of D squares, fp32) times sigmoid(gate) and stores bf16 into the [tokens, HQ*D] output."""
++    t = tl.program_id(0)
++    h = tl.program_id(1)
++    j = tl.arange(0, D)
++    half = (h // G) % 2
++    src = attn_ptr + t.to(tl.int64) * attn_stride_t + h * attn_stride_h + half * D
++    x = tl.load(src + j).to(tl.float32)
++    r = 1.0 / tl.sqrt(tl.sum(x * x, axis=0) / D + EPS)
++    gate = tl.load(qkv_ptr + t.to(tl.int64) * qkv_stride + (HQ + 2 * HKV) * D + h * D + j)
++    gate = gate.to(tl.float32)
++    y = x * r * tl.sigmoid(gate)
++    tl.store(out_ptr + (t.to(tl.int64) * HQ + h) * D + j, y.to(tl.bfloat16))
++
++
+ def _sliding_forward(data, qkv):
+     """Sliding batch-1 decode: one launch of _sliding_fused_kernel on the qkv GEMM's [T, 2304]
+     output, returning the [T, 1024] bf16 normed-and-gated attention output (master's FusedQKNorm,
+@@ -1635,7 +1729,6 @@ def prepare(weights):
+                                          router_output_multiplier=0.1767766952966369,
+                                          router_score_division_eps=1e-15),
+         "cos_sin": torch.cat((freqs.cos(), freqs.sin()), dim=-1),
+-        "qk_norm": FusedQKNorm(head_dim=64, num_q_heads=16, num_kv_heads=2, eps=RMS_EPS),
+         "o_norm_gate": FusedRMSNormGate(MuseSpark1xRMSNorm(64, eps=RMS_EPS, has_weight=False), True, 64),
+         "attn_boundary": FusedPostNormResidualPreNorm(post_attn, _residual(weights["attn_residual_gate"]), pre_ffn),
+         "ffn_boundary": FusedPostNormResidualPreNorm(post_ffn, _residual(weights["ffn_residual_gate"]), next_pre_attn),
+@@ -1739,22 +1832,24 @@ def kernel_fn(data, state):
+     if cfg["window"] and batch == 1 and length == 1:
+         o = _sliding_forward(data, qkv)
+     else:
+-        if cfg["rope_theta"]:
+-            q, k = state["qk_norm"](qkv, data["positions"], state["cos_sin"])
+-        else:
+-            q, k = state["qk_norm"](qkv)
+-        v = qkv[:, hq * d + hkv * d: hq * d + 2 * hkv * d]
+         gate = qkv[:, hq * d + 2 * hkv * d:]
+         k_cache, v_cache = data["k_cache"], data["v_cache"]
+         scaled = cfg["kv_scale"] != 1.0
+-        k = k.reshape(tokens, hkv * d)
+-        if scaled:
+-            k, v = k / data["k_scale"], v / data["v_scale"]
+-        # The pool keeps FP8 rows as bytes; slot 0 is a live row here (SGLang reserves it for padding).
+-        store_cache(k.to(FP8).view(torch.uint8), v.to(FP8).view(torch.uint8),
+-                    k_cache.view(-1, hkv * d).view(torch.uint8), v_cache.view(-1, hkv * d).view(torch.uint8),
+-                    data["cache_loc"], reserved_skip_index=-1)
+         window = cfg["window"]
++        paired = window == 0 and batch > 1 and hkv % 2 == 0  # config only
++        g = hq // hkv
++        # One launch for SGLang's FusedQKNorm (+RoPE), the k/v scale divides and FP8 casts,
++        # store_cache and the q FP8 cast (and, paired, the zero-padded pair layout): q comes out
++        # FP8 and the new k/v rows land in the cache (slot 0 is a live row here; SGLang reserves
++        # it for padding).
++        q = torch.empty((tokens, hq, 2 * d if paired else d), dtype=FP8, device=qkv.device)
++        _pre_attention_kernel[(tokens, hq + hkv)](
++            qkv, data["positions"], data["cache_loc"], state["cos_sin"], data["k_scale"], data["v_scale"],
++            q, k_cache, v_cache,
++            qkv.stride(0),
++            HQ=hq, HKV=hkv, D=d, G=g, PAIRED=paired, ROPE=bool(cfg["rope_theta"]), EPS=RMS_EPS,
++            num_warps=1,
++        )
+         # Full layers with batch > 1: pair the two KV heads of each token into one 128-byte FP8 row
+         # (heads 2s and 2s+1 are adjacent halves of it) so FA3 gathers one row per token instead of
+         # two. Each query sits in its own head's half of a zero-padded 128-wide FP8 query (the pad
+@@ -1762,21 +1857,16 @@ def kernel_fn(data, state):
+         # maps query head h to super-head h // (2G), which keeps the original grouping. The judge's
+         # scheduler_metadata was built for the unpaired geometry, so it is not passed. Batch 1 stays
+         # unpaired (pairing lost there in muse_attention_decode). The gate reads config only.
+-        paired = window == 0 and batch > 1 and hkv % 2 == 0
+         if paired:
+-            g, s = hq // hkv, hkv // 2
++            s = hkv // 2
+             pages, page_size = k_cache.shape[0], k_cache.shape[1]
+             k_attn = k_cache.view(pages, page_size, s, 2 * d)
+             v_attn = v_cache.view(pages, page_size, s, 2 * d)
+-            q_attn = torch.zeros((tokens, hq, 2 * d), dtype=FP8, device=q.device)
+-            qp = q_attn.view(tokens, s, 2, g, 2 * d)
+-            qv = q.view(tokens, s, 2, g, d)
+-            qp[:, :, 0, :, :d] = qv[:, :, 0]
+-            qp[:, :, 1, :, d:] = qv[:, :, 1]
++            q_attn = q  # zero-padded in place by _pre_attention_kernel
+             attn_heads = s
+             metadata = None
+         else:
+-            k_attn, v_attn, q_attn = k_cache, v_cache, q.view(tokens, hq, d).to(FP8)
++            k_attn, v_attn, q_attn = k_cache, v_cache, q
+             attn_heads = hkv
+             metadata = data["scheduler_metadata"]
+         descale = {}
+@@ -1800,15 +1890,18 @@ def kernel_fn(data, state):
+         if isinstance(out, tuple):
+             out = out[0]
+         if paired:
+-            # Keep each query's own half of FA3's 128-wide output; the other half is the other
+-            # head's P@V and is discarded.
+-            attn = torch.empty((tokens, hq, d), dtype=torch.bfloat16, device=q.device)
+-            a = attn.view(tokens, s, 2, g, d)
+-            o = out.view(tokens, s, 2, g, 2 * d)
+-            a[:, :, 0] = o[:, :, 0, :, :d]
+-            a[:, :, 1] = o[:, :, 1, :, d:]
+-            out = attn
+-        o = state["o_norm_gate"](out.reshape(tokens, hq * d).to(torch.bfloat16), gate)
++            # Each query's own half of FA3's 128-wide output (the other half is the other head's
++            # P@V and is never read), normalized and gated in one launch.
++            attn = out.view(tokens, hq, 2 * d)
++            o = torch.empty((tokens, hq * d), dtype=torch.bfloat16, device=q.device)
++            _paired_norm_gate_kernel[(tokens, hq)](
++                attn, qkv, o,
++                attn.stride(0), attn.stride(1), qkv.stride(0),
++                HQ=hq, HKV=hkv, D=d, G=g, EPS=RMS_EPS,
++                num_warps=1,
++            )
++        else:
++            o = state["o_norm_gate"](out.reshape(tokens, hq * d).to(torch.bfloat16), gate)
+     attn_output = _gemm(o, dense["o"])  # all-reduce: identity
+ 
+     # Post-attention boundary, router and MoE block: MuseSpark1xMoE._forward_experts.
