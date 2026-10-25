@@ -54,9 +54,18 @@ controls_for: null
 rewrite_stage: 1
 replaces: Marlin w13+w2 (moe_wna16_marlin_gemm x2) at bs<=32
 review: proceed
-status: queued
+status: running
 review_at: 2026-10-25T002203Z
 review_companions: null
+stage: claimed
+claimed_at: 2026-10-25T002203Z
+base_sha: f8b3f7230f2656a4143b6a87bb6b8dc1be0b5e49
+base_blob: 7d31b758c60017e045f6e0f75d2e437931ea34b0
+branch: hyp/muse_moe_w4a16/cuda-nvfp4-swapab-mma-persistent-small-m-inproc
+worktree: .worktrees/muse_moe_w4a16/cuda-nvfp4-swapab-mma-persistent-small-m-inproc
+mode: null
+restack_of: null
+stale_base: true
 ---
 
 # cuda-nvfp4-swapab-mma-persistent-small-m-inproc
