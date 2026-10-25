@@ -71,7 +71,7 @@ base_sha: 5e7ce21f82b7a49dc31b038e9868884c8a90a3e0
 base_blob: 5cf8fae31e5b84c36efeeb4569763eb9b06e1c8a
 branch: hyp/muse_attention_decode/epilogue-gate-l2-prefetch-cuda
 worktree: .worktrees/muse_attention_decode/epilogue-gate-l2-prefetch-cuda
-mode: null
+mode: submit
 restack_of: null
 stale_base: null
 implemented_at: 2026-10-25T150712Z
@@ -80,6 +80,8 @@ submission_sha256: 53abebec31b0d7bd995b4bbc2b753c32469cc5ac96e06ede79147345fc89c
 norm_sha256: 200be9567d61f0dc12473d35d29b00ec090f07c5d74166ee804ca9881d02bc79
 submission_blob: eb07606c72443e3a39558c0efc7d43f097d2f901
 lint_warnings: 57
+attempt_file: 2026-10-25T150712Z-submit-epilogue-gate-l2-prefetch-cuda.md
+prepared_at: 2026-10-25T150712Z
 ---
 
 # epilogue-gate-l2-prefetch-cuda
