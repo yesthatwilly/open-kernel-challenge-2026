@@ -2,3 +2,5 @@ profiles/
 __pycache__/
 *.pyc
 .worktrees/
+.claude/churn.lock
+.claude/diagnosis-started.json

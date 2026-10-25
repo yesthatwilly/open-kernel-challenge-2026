@@ -76,9 +76,11 @@ than the best, not proven) and about 30 neutrals had been landed by hand: the CI
 (`lo > best.ci.hi`) was the bottleneck, not the ideas.
 - **Measured drift.** 22 independent identical-code pairs (a check and its scored submit, from
   `archive/<slug>/<job>.okc.json.gz`) differ by 0.4% mean, 1.01% max: one run's headline sd is
-  ~0.35% (`SIGMA_RUN`), while okc's 95% CI is a near-constant ±1.5%. 13 further pairs returned
-  exactly the same number: okc deduplicated them (identical bytes), e.g. fused-preattention-triton's
-  check → dfee6f2939974bad. LESSONS.md's "not deduplicated" line was wrong.
+  ~0.35% (`SIGMA_RUN`), while okc's 95% CI is a near-constant ±1.5%. Check vs scored submit of
+  the same bytes is NOT deduplicated (those 22 pairs share a content_hash and still differ); check
+  after check and run after run are (fused-preattention-triton's check → dfee6f2939974bad;
+  bf16-restack-m16 run → run returned the same number). The 13 "identical" pairs first counted were
+  promotions of the same job id, not repeats.
 - **Rule.** gain iff `s > best * (1 + margin(runs))`, `margin = GAIN_Z * SIGMA_RUN * sqrt(1/runs + 1)`,
   `GAIN_Z = 2.5`: 1.24% one run, 1.07% pooled. At Z 2 (0.99%) two of the 22 pairs sat on the line.
   `reclassify` (dry) says 31 past `unproven-vs-best` results would have been gains (11 of them were
@@ -94,10 +96,31 @@ than the best, not proven) and about 30 neutrals had been landed by hand: the CI
   Validated in a scratch clone (queue → claim → commit-impl → prepare-run → synthetic harvest →
   parent in done/gain → promote picked the parent, unmerged because master moved; dedup path).
   Not yet validated against the live judge: the first real confirm will show whether a trailing
-  comment defeats okc's dedup.
-- **expire-holds**: holds older than 24 h whose reason does not mention the user, and confirms
-  whose parent stopped mattering, move to `done/expired/` (not run; slugs stay taken). First
-  dry run: 52 items, mostly FA3-path holds made moot by master.
+  comment defeats okc's check-after-check dedup.
+- **expire-holds**: holds older than 24 h, and confirms whose parent stopped mattering, move to
+  `done/expired/` (not run; slugs stay taken). Manual only (dry run first), not in `tick`; holds
+  whose reason waits on the user, a standing answer, another run or a condition (`HOLD_PROTECT`)
+  never expire by age.
+
+### Review fixes (same day, adversarial Opus review of f81211a5)
+- `_pool_confirm` leaves a parent landed by hand (or already promoted) in place: it records the
+  pool, it does not move or re-promote it.
+- A pooled gain also needs the confirm run alone to beat the best (`confirm-below-best`
+  otherwise): the parent was selected for its high run.
+- `promote` lands a pooled gain with the pooled number, not the selected first run.
+- `prepare-run` refuses a scored run for a confirm (checks only, even when quota ran out after
+  claim).
+- The backlog only confirms results whose base is today's master; older ones would land
+  `unmerged`.
+- `diagnose-start <p>` marks a spawned diagnosis (`.claude/diagnosis-started.json`, ignored);
+  `diagnose_due` skips it for 3 h.
+- `expire-holds` and `reclassify --queue-confirms` take the tick lock when run by hand
+  (`CHURN_IN_TICK` from `tick`), and commit with explicit paths.
+- Statistics caveat (reviewer's recomputation): n = 22 gives a 95% range of about 0.27-0.50% for
+  SIGMA_RUN; at the top of that range the one-run margin is 1.75 sd (~4% false-gain rate for a
+  null result). Day-to-day drift was not measured (pairs were 0.1-5 h apart). Re-estimate
+  SIGMA_RUN from confirm pairs once there are some. The new regression rule is laxer for bf16
+  (7 old regressions would now be within-ci).
 - **FINDINGS**: a mechanical "Do not try" list (regressions, within-ci, rejected, unconfirmed;
   rewrite stages exempt), generic per-outcome follow-ups dropped, a pointer to DIAGNOSIS.md.
 - **Daily diagnosis**: `tick` reports `diagnose` (DIAGNOSIS.md missing or not from today);

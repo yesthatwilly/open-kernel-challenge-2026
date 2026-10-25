@@ -60,16 +60,20 @@ C="python3 -I $CLAUDE_PROJECT_DIR/.claude/skills/churnsubs/bin/churn.py"
 1. **Plan.** `$C tick` → JSON with `promote` (scored submits to run), `dispatch` (per-problem
    picks with mode), `diagnose` (problems due a diagnosis), `wake_s`, `needs_human`, and the
    sub-reports. It already ran preflight (lock, master, okc signed in), intake (commits new queue
-   files that pass lint, and any new DIAGNOSIS.md), recover, expire-holds (stale holds and moot
-   confirms to `done/expired/`), harvest (pools confirms, queues new ones), harvest-promotions,
-   promote (merged gains + wrote their submit attempt files), reclassify --queue-confirms (the
-   older backlog, 3 per problem per day), budget, index.
+   files that pass lint, and any new DIAGNOSIS.md), recover, harvest (pools confirms, queues new
+   ones), harvest-promotions, promote (merged gains + wrote their submit attempt files),
+   reclassify --queue-confirms (backlog results on today's master, 3 per problem per day),
+   budget, index. `expire-holds` is not part of the tick: run `$C expire-holds --dry-run`, read
+   the list, and only then run it without `--dry-run` (it never expires holds that wait on the
+   user, a standing answer, another run or a condition, `HOLD_PROTECT`).
    Exit 2 = refused (another tick holds the lock, or the main tree is not on master): stop and say
    why. Anything in `needs_human`: report it and still continue with the rest.
 1b. **Diagnosis (Opus), once per problem per UTC day.** For each problem in `diagnose`, spawn
    `Agent` (`subagent_type: general-purpose`, **`model: opus`**) with
    `.claude/skills/hypothesize/RESEARCH_PROMPT.md`, `{PROBLEM}` and `{REPO}` filled in, in
-   parallel with step 4. Quote the predicted cost from COSTS.md first. It writes
+   parallel with step 4. Quote the predicted cost from COSTS.md first, and run
+   `$C diagnose-start <p>` before spawning, so later ticks do not spawn it again for 3 h while it
+   runs. It writes
    `<p>/hypotheses/DIAGNOSIS.md`; the next tick's intake commits it. Apply its "LESSONS edits"
    to `hypotheses/LESSONS.md` yourself, one `churn.py note <p> diagnosis "<edit and why>"` per
    edit. Its Actions are what `/hypothesize <p>` mints first when you refill the queue.
@@ -155,12 +159,14 @@ share on primaries all day.
 beat the best by `margin()` = 2.5 sd of the difference: 1.24% for one run, 1.07% for two pooled.
 A result above the best but inside that margin is `unproven-vs-best`; if it clears the best by
 `CONFIRM_MIN` (0.5%), harvest queues one `<slug>-cf` confirm: the parent's code plus a trailing
-comment (okc dedups identical bytes, so without it the judge returns the old job). Confirms run
-first, as checks only, within `CONFIRM_SHARE` (25%) of the day's checks, carved out of the
-non-rewrite side. Their harvest pools the two runs; a pooled gain moves the parent to `done/gain`
-(`gain-pooled`) for the normal promote path, logged in DECISIONS.md. A deduplicated rerun pools
-nothing. `churn.py reclassify` shows what the rule would change on past results without moving
-them.
+comment (okc dedups identical bytes within a mode, check after check, so without it the judge
+returns the old job). Confirms run first, as checks only (`prepare-run` refuses a scored run for
+one), within `CONFIRM_SHARE` (25%) of the day's checks, carved out of the non-rewrite side. Their
+harvest pools the two runs; a pooled gain whose confirm run alone also beats the best moves the
+parent to `done/gain` (`gain-pooled`) for the normal promote path, which lands it with the pooled
+number; logged in DECISIONS.md. A parent landed by hand meanwhile is left where it is. A
+deduplicated rerun pools nothing. `churn.py reclassify` shows what the rule would change on past
+results without moving them.
 
 ## What to tell the user each tick
 

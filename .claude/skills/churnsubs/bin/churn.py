@@ -48,7 +48,10 @@ GAIN_Z = 2.5               # a gain must clear Z sd of the difference: 1.24% for
 CONFIRM_MIN = 0.005        # an unproven result this far above the best earns one confirm rerun
 CONFIRM_SHARE = 0.25       # share of each day's checks kept for confirm reruns (user, 2026-10-25)
 CONFIRM_BACKLOG_PER_DAY = 3  # older unproven results queued for a confirm per problem per day
-HOLD_EXPIRE_H = 24.0       # a hold this old (not waiting on the user) moves to done/expired
+HOLD_EXPIRE_H = 24.0       # a hold this old (not waiting on anything) moves to done/expired
+# holds that wait on the user, a standing answer, another run or a condition never expire by age
+HOLD_PROTECT = re.compile(r"\buser\b|PENDING_USER|human|standing answer|by hand|\bwait|\bafter\b|\buntil\b|unhold|"
+                          r"\bgate[sd]?\b|re-queue|requeue|once\b|harvests?\b|condition", re.I)
 GLOBAL_TICK_CAP = 6
 SUBMIT_FLOOR = 1.0         # a check-proven gain is promoted with a scored run only if ci.low >= this
 STALE_H = 6.0              # queued this long: no longer counts as in flight
@@ -981,6 +984,9 @@ def _pool_confirm(p, h, job, res, best):
     base, _ = base_result_for(p, ph, best)
     oc, det = classify(dict(pres, speedup=sp, speedup_ci=[sp - hw, sp + hw], runs=2), best, base)
     B = (best or {}).get("speedup") or 0.0
+    if oc == "gain" and s2 <= B:
+        # the parent was picked because its run was high; the confirm itself must beat the best too
+        oc, det = "neutral", "confirm-below-best"
     note = (f"pooled {s1:.4f}x (job {pres.get('job')}) and {s2:.4f}x (job {job}) → {sp:.4f}x; best {B:.4f}x, "
             f"two-run margin {margin(2) * 100:.2f}% → {oc} ({det})")
     pres["pooled"] = {"jobs": [pres.get("job"), job], "speedups": [s1, s2], "speedup": sp, "ci": [sp - hw, sp + hw],
@@ -988,7 +994,10 @@ def _pool_confirm(p, h, job, res, best):
     json.dump(pres, open(prj, "w"), indent=1)
     open(prj, "a").write("\n")
     upd = {"confirm_job": job, "confirm_outcome": oc, "pooled_speedup": sp}
-    if oc == "gain" and where != "done/gain":
+    if oc == "gain" and (ph.get("hand_landed") or ph.get("promotion") not in (None, "pending")):
+        # landed by hand (or already promoted) while the confirm ran: record the pool, move nothing
+        note += f"; parent already {ph.get('promotion') or 'hand-landed'}, left in place"
+    elif oc == "gain" and where != "done/gain":
         gdir = hdir(p, "done", "gain")
         os.makedirs(gdir, exist_ok=True)
         for f in (os.path.basename(ppath), f"{parent}.patch", f"{parent}.result.json"):
@@ -1035,7 +1044,7 @@ def _queue_confirm(p, ph, job, why):
         return None
     fm_set(ph["_path"], confirm_queued=slug)
     git("add", "--", rel(path), rel(ph["_path"]))
-    git("commit", "-q", "-m", f"churn({p}): queue confirm {slug} of {ph['slug']} ({why})", check=False)
+    git("commit", "-q", "-m", f"churn({p}): queue confirm {slug} of {ph['slug']} ({why})", "--", rel(path), rel(ph["_path"]), check=False)
     return slug
 
 
@@ -1121,6 +1130,9 @@ def cmd_promote(a):
             continue
         rj = os.path.join(hdir(p, "done", h.get("_dir", "gain")), f"{h['slug']}.result.json")
         res = json.load(open(rj)) if os.path.exists(rj) else {"speedup": s, "speedup_ci": ci, "job": h.get("job")}
+        if res.get("pooled"):
+            # a confirmed gain lands with its pooled number, not the first run that was picked for being high
+            res = dict(res, speedup=res["pooled"]["speedup"], speedup_ci=res["pooled"]["ci"])
         if h.get("promotion") != "merged":
             if not _land(p, h, res, rel(rj)):
                 skipped.append({"problem": p, "slug": h["slug"], "reason": read_hyp(h["_path"]).get("promotion_reason")})
@@ -1714,6 +1726,8 @@ def cmd_prepare_run(a):
         mode = "check" if ((lim.get("checks") or {}).get("left") or 0) > 0 else "submit"
         if mode == "submit" and h.get("risk") == "high":
             refuse("no checks left and the hypothesis is high risk; not spending a scored run on it")
+    if mode == "submit" and h.get("kind") == "confirm":
+        refuse("a confirm rerun is checks only; it waits for tomorrow's checks (recover resumes it)")
     wt = os.path.join(WORKTREES, p, a.slug)
     # drop any stale placeholder attempt file for this slug on the branch
     ad = os.path.join(wt, p, "attempts")
@@ -1927,7 +1941,22 @@ def _findings(p, hs, best):
     return "\n".join(L)
 
 
+def _locked(fn, wants_lock):
+    """Run a committing subcommand under the tick lock when run by hand; inside a tick it is held."""
+    if not wants_lock or os.environ.get("CHURN_IN_TICK"):
+        return fn()
+    take_lock()
+    try:
+        return fn()
+    finally:
+        release_lock()
+
+
 def cmd_reclassify(a):
+    _locked(lambda: _reclassify(a), a.queue_confirms)
+
+
+def _reclassify(a):
     """Re-judge every harvested result under the current rule (nothing historical moves). Lists the
     outcomes that would change, and the unproven neutrals that still beat the best: the confirm
     backlog. --queue-confirms queues up to CONFIRM_BACKLOG_PER_DAY of those per problem per day."""
@@ -1937,6 +1966,7 @@ def cmd_reclassify(a):
     for p in probs:
         best = load_best(p)
         B = (best or {}).get("speedup") or 0
+        master_blob = _master_blob(p)
         flips, backlog = [], []
         for h in all_hyps(p):
             w = h["_where"]
@@ -1955,9 +1985,10 @@ def cmd_reclassify(a):
             if h.get("best_at_harvest") and (oc, det) != (w[5:], h.get("verdict_detail")) and not (oc == "neutral" and w == "done/neutral"):
                 flips.append({"slug": h["slug"], "was": f"{w[5:]}/{h.get('verdict_detail')}", "now": f"{oc}/{det}",
                               "speedup": round(res["speedup"], 4), "best_then": then["speedup"]})
+            # only results built on today's master: an older base would land `unmerged` and need a hand merge
             if (w == "done/neutral" and h.get("kind") not in ("confirm", "control") and h.get("mode") == "check"
                     and h.get("impl_commit") and not h.get("hand_landed") and not h.get("confirm_queued")
-                    and B and res["speedup"] >= B * (1 + CONFIRM_MIN)):
+                    and h.get("base_blob") == master_blob and B and res["speedup"] >= B * (1 + CONFIRM_MIN)):
                 backlog.append((res["speedup"] / B - 1, h))
         backlog.sort(key=lambda x: -x[0])
         queued = []
@@ -1974,6 +2005,10 @@ def cmd_reclassify(a):
 
 
 def cmd_expire_holds(a):
+    _locked(lambda: _expire_holds(a), not a.dry_run)
+
+
+def _expire_holds(a):
     """Retire stale queue items to done/expired/: holds older than HOLD_EXPIRE_H that are not waiting
     on the user, and confirms whose parent stopped mattering. They keep their slug; nothing is run."""
     reasons = []
@@ -1987,7 +2022,7 @@ def cmd_expire_holds(a):
                 since = git("log", "-1", "--format=%ct", "--", rel(path), check=False).strip()
                 age_h = (time.time() - int(since)) / 3600 if since.isdigit() else 0
                 hr = str(h.get("hold_reason") or "")
-                if age_h > HOLD_EXPIRE_H and not re.search(r"\buser\b|PENDING_USER|human", hr, re.I):
+                if age_h > HOLD_EXPIRE_H and not HOLD_PROTECT.search(hr):
                     why = f"hold expired after {age_h:.0f} h: {hr[:120]}"
             elif h.get("kind") == "confirm":
                 dp, where = find_hyp(p, str(h.get("confirm_of") or h.get("depends_on")))
@@ -2007,20 +2042,41 @@ def cmd_expire_holds(a):
             log_decision(p, h.get("slug"), f"expired: {why}")
             git("add", "--", rel(new))
     if reasons and not a.dry_run:
-        git("commit", "-q", "-m", f"churn: expire {len(reasons)} stale queue items", check=False)
+        git("commit", "-q", "-m", f"churn: expire {len(reasons)} stale queue items", "--",
+            *[rel(hdir(p)) for p in PROBLEMS], os.path.join("hypotheses", "DECISIONS.md"), check=False)
     out({"ok": True, "dry_run": bool(a.dry_run), "expired": reasons}, 0 if reasons else 1)
 
 
+DIAGNOSE_STARTED = os.path.join(REPO, ".claude", "diagnosis-started.json")
+DIAGNOSE_RETRY_H = 3.0     # a diagnosis started this recently is in flight, not due again
+
+
 def diagnose_due(t=None):
-    """Problems whose DIAGNOSIS.md is missing or older than today's 00:00Z (one diagnosis a day)."""
+    """Problems whose DIAGNOSIS.md is missing or older than today's 00:00Z (one diagnosis a day),
+    and that have no diagnosis started in the last DIAGNOSE_RETRY_H hours."""
     day = (t or now()).strftime("%Y-%m-%d")
+    try:
+        started = json.load(open(DIAGNOSE_STARTED))
+    except Exception:
+        started = {}
     due = []
     for p in PROBLEMS:
         path = hdir(p, "DIAGNOSIS.md")
         at = str((parse_fm(open(path).read())[0] if os.path.exists(path) else {}).get("diagnosed_at") or "")
-        if at[:10] != day:
+        if at[:10] != day and time.time() - started.get(p, 0) > DIAGNOSE_RETRY_H * 3600:
             due.append(p)
     return due
+
+
+def cmd_diagnose_start(a):
+    """Mark a problem's diagnosis as spawned, so the next ticks do not spawn it again while it runs."""
+    try:
+        started = json.load(open(DIAGNOSE_STARTED))
+    except Exception:
+        started = {}
+    started[problem_of(a.problem)] = time.time()
+    json.dump(started, open(DIAGNOSE_STARTED, "w"))
+    out({"ok": True, "problem": problem_of(a.problem)})
 
 
 def cmd_classify(a):
@@ -2043,7 +2099,7 @@ def cmd_tick(a):
     report = {}
 
     def sub(name, *args, ok_codes=(0, 1)):
-        p = subprocess.run(me + [name, *args], capture_output=True, text=True, cwd=REPO)
+        p = subprocess.run(me + [name, *args], capture_output=True, text=True, cwd=REPO, env=dict(os.environ, CHURN_IN_TICK="1"))
         try:
             j = json.loads(p.stdout or "{}")
         except json.JSONDecodeError:
@@ -2059,7 +2115,6 @@ def cmd_tick(a):
         out({"ok": False, "report": report}, 2)
     sub("intake")
     rc = sub("recover")
-    sub("expire-holds")
     sub("harvest")
     sub("harvest-promotions")
     pr = sub("promote")
@@ -2112,6 +2167,7 @@ def main():
     x = sp.add_parser("reclassify"); x.add_argument("--problem"); x.add_argument("--queue-confirms", action="store_true"); x.set_defaults(fn=cmd_reclassify)
     x = sp.add_parser("expire-holds"); x.add_argument("--dry-run", action="store_true"); x.set_defaults(fn=cmd_expire_holds)
     sp.add_parser("diagnose-due").set_defaults(fn=lambda a: out({"ok": True, "diagnose": diagnose_due()}))
+    x = sp.add_parser("diagnose-start"); x.add_argument("problem"); x.set_defaults(fn=cmd_diagnose_start)
     a = ap.parse_args()
     try:
         a.fn(a)
