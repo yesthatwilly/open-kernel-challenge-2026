@@ -72,7 +72,7 @@ review: proceed
 status: running
 review_at: 2026-10-25T111131Z
 review_companions: null
-stage: implemented
+stage: dispatched
 claimed_at: 2026-10-25T111131Z
 base_sha: b427e7bfe8620ee6bea6bcd1c992aa9f6eef1acb
 base_blob: f2d91dd181aeb44de20d2eed62ab7e564f2b181f
@@ -89,6 +89,8 @@ submission_blob: ab3dc5a011bcff33c3c1503e782b46f03335e239
 lint_warnings: 44
 attempt_file: 2026-10-25T112047Z-check-experts-turn4-ssdq-s2-tma-raw-weight-ring.md
 prepared_at: 2026-10-25T112047Z
+job: 05dbf2d59a874444
+dispatched_at: 2026-10-25T112055Z
 ---
 
 # experts-turn4-ssdq-s2-tma-raw-weight-ring
