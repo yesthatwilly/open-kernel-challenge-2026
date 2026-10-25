@@ -56,7 +56,7 @@ review: proceed
 status: running
 review_at: 2026-10-25T161512Z
 review_companions: null
-stage: claimed
+stage: implemented
 claimed_at: 2026-10-25T161512Z
 base_sha: 982cc0e7665f7a510a5b0128e83949922fd6b456
 base_blob: 9fb1f7c4b4282dd7461c6cdba926fe3ebf12128e
@@ -65,6 +65,12 @@ worktree: .worktrees/muse_prefill_layer/combo-a-master-normgather-naive-stack
 mode: null
 restack_of: null
 stale_base: null
+implemented_at: 2026-10-25T161534Z
+impl_commit: f2fdd7345a2ed73fe8bff23a451978ab75022211
+submission_sha256: 2011088dc8016a4e808bc761f3dc17f7b4c90d5ca41bc87a7b4c55605dc2c15f
+norm_sha256: bcf02317ab3d760b41cb135c6b7607a38e1f682c4c3384fc26205c933f00e6f8
+submission_blob: 6a16d158f6a6df0e484eb053e147a6fdae43b713
+lint_warnings: 82
 ---
 
 # combo-a-master-normgather-naive-stack
@@ -112,4 +118,26 @@ No companion. Checks are spent and this is a scored submit, so any companion wou
 - '[norm-gather] setup took 0.7s' in edf68fa3 looks low for three classes of self-checks plus 21-alternation cold-L2 timing (maybe Triton cache hits or a timer quirk). It is harmless under the 270 s budget, but confirm the per-class GATE lines print in full again here.
 - At turn_1/turn_4 the pooler output (6/24 MiB) fits in L2, so the in-layer pair cost may be below the cold-L2 gate's 14.8/42.8 us. Does the profile show the expected ~10/29 us saving, or less?
 - If the full first_turn FA3 rows differ from 1cc92a43 beyond noise while the [fa3 contig] PATH CHOSEN line is identical, that is the L2/allocator interaction the conjecture names. It would need a follow-up, not a revert.
+
+## Implementation notes
+
+Built by the orchestrator (no builder agent): submission.py is the archived 3-way merge
+muse_prefill_layer/hypotheses/archive/pre-expert-norm-fused-rega-gather/master_plus_normgather.merged.py
+(master's contiguous-KV FA3 + pre-expert-norm-fused-rega-gather bd60e2db; both sides' added blocks kept,
+prepare order _rega_setup -> _fa3c_setup -> _norm_gather_setup). The Opus adversarial review verified the
+merge semantically (diff vs master = only norm-gather hunks; diff vs bd60e2db = only the four fa3c hunks;
+deadlines intact). Both halves passed their own Opus audits and scored runs today (1cc92a43, edf68fa3), so
+no separate audit was spent on the unchanged code.
+
+## Rules check
+
+- [x] CUDA-graph capturable: union of two audited diffs; kernel_fn adds only shape/flag-routed launches; no sync, item, cpu, print, value-sized allocation.
+- [x] Nothing derived from `data` is cached across calls.
+- [x] Weights: unchanged (bf16 checkpoint norm weight; NVFP4 experts untouched).
+- [x] Activations BF16 as master; KV FP8; q E4M3 as master.
+- [x] Attention sees every key (contiguous-KV gather is byte-exact and zero-fills past cache_seqlens).
+- [x] No timing patches, harness access, module edits, reference import, subprocess or network.
+- [x] All work inside the timed call; no output caching or replay; per-state buffers only.
+
+okc_lint: OK with warnings (prepare-only host-sync/dtype notes); undef.py clean.
 
