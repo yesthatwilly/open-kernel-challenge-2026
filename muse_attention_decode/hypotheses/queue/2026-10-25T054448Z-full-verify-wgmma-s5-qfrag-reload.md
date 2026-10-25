@@ -57,8 +57,10 @@ kind: rewrite
 controls_for: null
 rewrite_stage: 5
 replaces: "full-layer verify at 1<batch<=64: FA3 main + prepare_varlen_num_blocks + FlashAttnFwdCombine + norm-gate (master paired FA3)"
-review: required
+review: proceed
 status: queued
+review_at: 2026-10-25T054737Z
+review_companions: null
 ---
 
 # full-verify-wgmma-s5-qfrag-reload
@@ -86,3 +88,27 @@ shape (profile top_kernels) against the incumbent and the speed-of-light floor, 
 2. at or below the incumbent kernels' time on the target shapes;
 3. within ~1.5x of the floor on the target shapes, and the headline CI clears 1.0 (promotable).
 The next stage is minted with `--kind rewrite --depends-on <this slug> --stage N+1`.
+
+## Adversarial review
+
+Reviewed 2026-10-25T054737Z by an adversarial subagent (model opus).
+
+**Verdict: proceed.** This is a sound stage-5 correctness bisect step for the wgmma verify rewrite. Read against the s4 kernel, the Q A-fragment is the only per-segment input to tile lt>=1's S wgmma that differs from tile 0, and the S-vs-carry DIAG makes even a fallback run informative. Proceed with no companions, but fix how the reload is placed, and the lineage, before building.
+
+### Justification
+Mechanism (A). In s4's splitkv_verify_wgmma_kernel<TICKET,SYNC>, qa[2][4] is loaded only under `if (n == 0 || lt == 0)`, and the S wgmmas take it as the register A operand. The S accumulator is reset by scale_d=0 every tile. 1-tile segments pass at any ring stage, so the K descriptor/stage path and the V^T double buffer (n&1, which multi-request 1-tile runs also exercise) are already cleared, and SYNC rules out ring races. Between tile lt==0 and lt>=1 that leaves three differences: the qa reuse, the carried mA/lA/oacc, and the lt-dependent edge mask (lim). The rows go bad on all 128 rows, including unmasked ones, which points at S (qa) or the carry rather than the mask. The DIAG (tile-1 S vs the fp32 reference) separates those two in one check, so the run is interpretable whatever happens. Floors: verify_16 incumbent 162.8 us (FA3 main 151.6) against a 63.4 us floor, and verify_32 302.2 us (288.0) against 126.8 us. M2 (<=150 / <=280 us) only needs about 8% off the FA3 main kernel, a modest and physically reachable target for a single-pass FP8 wgmma kernel at ~2.4x above floor. Sliding and decode shapes are untouched, so flat is right. Weakest link (performance, not correctness): an unconditional per-tile reload 'from smem/L2' done as __ldg just before the S wgmma puts one L2 round trip (~0.5 us) on the critical path of EVERY tile. At ctx 80K, B=16 that is ~20K tiles over a 2*SM grid, ~75 tiles per CTA, i.e. tens of us exposed. That could erase the M2 margin and make the >=1.05x gate refuse a correct kernel. Stage Q in shared memory once per segment (ld.shared per tile), or issue the qa reload before wait_bar(full_bar(st)) so it overlaps the barrier wait. Root-causing also matters: a C++ register array held across iterations should not go stale. Dump SASS (cuobjdump -sass) and the ptxas wgmma-serialization warnings for qa's registers, so the fix is understood and not just worked around.
+
+### Confounders on the current kernel
+- full-decode1-streamk-s3-two-level-ticket (master c3c1b01): the s4 branch lacks it (git merge-base confirms; s4's base table shows full decode_1 at 27.8 us vs master's 22.6 us). If s5 is built on s4 as written, the headline and full decode_1 will look worse than BEST from lineage alone, not from the verify change. The verify path is disjoint from the decode stream-K kernels, so rebase s5 onto master (frontmatter already says base: master) or judge strictly on the verify shapes' top_kernels.
+- fa3-hdim128-head-pairing / paired-heads-launch-cleanup (+ ab-tune-batch-gate): these define the incumbent being replaced at full verify_16/32 (paired FA3 + prepare + combine + paired norm-gate). The interleaved graph-replay gate must time exactly master's paired path, including _paired_norm_gate_kernel, or the >=1.05x routing decision is mis-anchored. That is not a confounder of the measured kernel's own time.
+- fused-preattention-triton: it writes the FP8 q (paired layout on full batched layers) that the new kernel reads via the qra/qrb addressing. If s5 sits on master, the q layout the kernel assumes (head-major, per-token HQ*D, unpadded vs paired-padded) must match what master's pre-attention kernel emits for the routed band. The self-check catches a mismatch, but it would show up as a fallback and be misread as the qfrag fix failing.
+
+### Interference and A/B needs
+No companions. This is a rewrite stage whose deliverable is the DIAG plus the self-check table; the next stage is the follow-up. A gain or loss on the headline is not the readout: verify_16/32 top_kernels against 151.6/288.0 us and the PATH CHOSEN lines are. The single-run ambiguities (S wrong vs carry wrong; correct-but-slower vs fallback) are already resolved inside the run by the DIAG and the printed paired timings. Attention has 8 checks left for 8 queued hypotheses, so an ab-revert or control would cost a check without adding information. The one lineage issue (s4 lacks c3c1b01) is fixed by rebasing, not by a companion run.
+
+### Open questions
+- Did s4's bisect include a 1-tile segment that STARTS mid-request (n == 0, lt >= 1, the stream-K tail case)? If it passed, the lt-based edge mask is cleared and qa is implicated even before s5's DIAG. If it was never tested, add it to the table.
+- Why would qa go stale at all? Does the SASS show ptxas reusing or rematerialising qa's registers across the loop (e.g. under register pressure with sacc/oacc/pa at 256 threads), and are there 'wgmma serialized' ptxas warnings? A real register-clobber root cause also threatens pa and the oacc carry.
+- After the fix, what are regs/thread and local bytes per variant? Reloading through smem keeps register pressure flat; an L2 __ldg reload before every tile adds latency on the critical path.
+- Will s5 be rebased onto master (c3c1b01) so that a promotable result carries master's full decode_1 stream-K kernel?
+
