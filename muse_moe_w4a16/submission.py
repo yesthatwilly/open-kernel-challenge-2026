@@ -73,6 +73,14 @@ plus a prepare-time selector. B128 (128 <= T <= 255) and B256 (256 <= T <= 512) 
 Marlin path by >= 1.02x on both a judge-like skewed and a random routing (graph-timed, cold L2, 41
 interleaved reps). kernel_fn reads the shape and those two flags only.
 
+Combo (hypothesis combo-toprow-w13t1-d32-alignpar-postnorm-wg-align2): after master's prepare (unchanged), four
+prepare-gated sources, each with its own start deadline and a cold-L2 graph gate (ON at new / master <= 0.98 on the
+worse of a judge-like and a random routing): F1 w13 Marlin use_atomic_add at T == 1 (state['w13_mode']); F2 the
+wgmma path's front end (expert_map gather + SGLang align) replaced by _align_parallel or an align2 chunk at block 16
+per ON wgmma bucket (state['wg_align2'], checked per expert vs SGLang and bitwise on the _moe_wgmma output); C1a
+_align_parallel at 17 <= T <= 32 (state['d32_align']); C1b the hoisted Triton post-norm at T == 32
+(state['d32_post_norm']). A two-state graph copy check runs last. Every OFF flag runs master byte for byte.
+
 Differs from SGLang: the expert all-reduce is not run."""
 
 from typing import TypedDict
@@ -164,6 +172,33 @@ ALIGN2_CLASSES = {
 ALIGN2_STARTS = (0, 32, 224)
 ALIGN2_MIN_RATIO = 1.05
 ALIGN2_REPLAYS = 41
+# Hypothesis combo-toprow-w13t1-d32-alignpar-postnorm-wg-align2: four prepare-gated sources, each its own bound
+# constant (LESSONS 141), each run after master's prepare with its own start deadline (s from prepare()'s start).
+COMBO_TAG = "[combo]"
+COMBO_MAX_RATIO = 0.98            # ON only at new / master <= this on the worse of judge-like and random routing
+COMBO_TIMING_DEADLINE_S = 270.0   # no phase starts a timing past this
+COMBO_DEADLINES_S = {"F1": 120.0, "F2": 150.0, "C1a": 160.0, "C1b": 170.0, "F2-select-diag": 200.0, "copy": 255.0}
+# (F1, source w13-marlin-atomic-add-t1-only f29a0b9e) w13 Marlin use_atomic_add at num_tokens <= this.
+W13_ATOMIC_MAX_TOKENS = 1
+W13_POISON = 3.0e4
+W13_ATOMIC_TOL = 1.25e-2          # rel-L2 vs current master (w2 mode as chosen); source measured 8.4e-3 on ONE routing
+# rel-L2 vs a full fp32 reference (judge bound 1.5e-2): review F1 amendment. Pre-flight audit: 1e-2 was below the
+# expected stack (w13 atomic 8.1e-3 + w2 atomic 4.7e-3 + Marlin base, ~1.0e-2 in quadrature), so F1 would gate OFF.
+W13_FP32_TOL = 1.25e-2
+# (F2, source master's own align2) state["wg_align2"][bucket]: 0 = master's SGLang front end, WG_ALIGN_PAR =
+# _align_parallel at WG_BSM, else an align2 chunk (all chunks are >= 64).
+WG_ALIGN_PAR = 1
+WG_ALIGN2_EQ_TOKENS = (128, 191, 192, 256, 257, 384, 512)
+# (C1a, source align-parallel-from-17-tokens c9c2db89) _align_parallel for these T when state["d32_align"] == 1.
+D32_ALIGN_MIN_TOKENS = 17
+D32_ALIGN_MAX_TOKENS = 32
+D32_ALIGN_EQ_TOKENS = (17, 24, 28, 29, 32)
+# (C1b, source post-norm-triton-hoisted-decode32 4aab0187) hoisted Triton post-norm at exactly this T when
+# state["d32_post_norm"] == 1.
+HOISTED_POST_NORM_TOKENS = 32
+POST_NORM_ERR_FACTOR = 1.5
+POST_NORM_ERR_FLOOR = 1e-5
+COMBO_COPY_TOL = 3e-2             # graph replay on a state copy vs eager kernel_fn (atomic paths are not bitwise)
 
 
 @triton.jit
@@ -187,6 +222,41 @@ def _post_norm_combine_kernel(y_ptr, ids_ptr, tw_ptr, w_ptr, out_ptr, H, eps,
             r = tl.rsqrt(tl.sum(v * v, axis=0) / H + eps)
             acc += g * v * r
     tl.store(out_ptr + t.to(tl.int64) * H + offs, acc.to(tl.bfloat16), mask=mask)
+
+
+@triton.jit
+def _post_norm_combine_hoisted_kernel(y_ptr, ids_ptr, tw_ptr, w_ptr, out_ptr, H, eps,
+                                      TOP_K_C: tl.constexpr, BLOCK_H: tl.constexpr):
+    """Same math and signature as _post_norm_combine_kernel, but all TOP_K_C slot rows are loaded
+    as one [TOP_K_C, BLOCK_H] tile before any reduction (hypothesis post-norm-triton-hoisted-decode32).
+    Remote slots (local id -1) are masked off the load, so their uninitialised y rows are never
+    read; a token with no local slot stores zeros."""
+    t = tl.program_id(0)
+    offs = tl.arange(0, BLOCK_H)
+    mask = offs < H
+    slots = tl.arange(0, TOP_K_C)
+    ids = tl.load(ids_ptr + t * TOP_K_C + slots)
+    gs = tl.load(tw_ptr + t * TOP_K_C + slots)
+    local = ids >= 0
+    nw = tl.load(w_ptr + offs, mask=mask, other=0.0).to(tl.float32) + 1.0
+    rows = (t * TOP_K_C + slots).to(tl.int64) * H
+    v = tl.load(y_ptr + rows[:, None] + offs[None, :], mask=local[:, None] & mask[None, :],
+                other=0.0).to(tl.float32) * nw[None, :]
+    r = tl.rsqrt(tl.sum(v * v, axis=1) / H + eps)
+    coef = tl.where(local, gs, 0.0) * r
+    acc = tl.sum(v * coef[:, None], axis=0)
+    tl.store(out_ptr + t.to(tl.int64) * H + offs, acc.to(tl.bfloat16), mask=mask)
+
+
+def _post_norm_hoisted(y, local_ids, topk_weights, post_norm_w):
+    """out [T, H] bf16 from y [T, 8, H] with _post_norm_combine_hoisted_kernel (one program per token)."""
+    num_tokens, _, size_k = y.shape
+    y = y.contiguous()
+    out = torch.empty((num_tokens, size_k), device=y.device, dtype=torch.bfloat16)
+    _post_norm_combine_hoisted_kernel[(num_tokens,)](
+        y, local_ids, topk_weights, post_norm_w, out, size_k, POST_NORM_EPS,
+        TOP_K_C=TOP_K, BLOCK_H=triton.next_power_of_2(size_k), num_warps=16)
+    return out
 
 
 @triton.jit(do_not_specialize=["local_start", "local_count", "n", "cap", "n_blocks"])
@@ -1896,8 +1966,16 @@ def _moe_wgmma(x, topk_ids, topk_weights, bank, state, trace=None):
     if trace is not None:
         trace("before expert_map gather + moe_align_block_size")
     topk_weights = topk_weights.to(torch.float32).contiguous()
-    local_ids = bank["expert_map"][topk_ids.to(torch.int32)].contiguous()
-    sorted_ids, block_experts, n_padded = moe_align_block_size(local_ids, WG_BSM, count)
+    # Combo F2: the bucket's prepare-gated front end (plain int; shape-only bucket pick). 0 = master's
+    # expert_map gather + SGLang moe_align_block_size; WG_ALIGN_PAR = _align_parallel; else an align2 chunk.
+    fe = state.get("wg_align2", {}).get(128 if num_tokens < WG_B256_MIN_TOKENS else 256, 0)
+    if fe == WG_ALIGN_PAR:
+        local_ids, (sorted_ids, block_experts, n_padded) = _align_parallel(topk_ids, start, count, WG_BSM)
+    elif fe:
+        local_ids, (sorted_ids, block_experts, n_padded) = _align_two_phase(topk_ids, start, count, WG_BSM, fe)
+    else:
+        local_ids = bank["expert_map"][topk_ids.to(torch.int32)].contiguous()
+        sorted_ids, block_experts, n_padded = moe_align_block_size(local_ids, WG_BSM, count)
     wb = state["wg_banks"][(start, count)]
     ext, err = state["wg_ext"], state["wg_err"]
     routes = num_tokens * TOP_K
@@ -3360,6 +3438,11 @@ def prepare(weights: Weights) -> dict:
         "post_norm_w": weights["post_norm_w"].contiguous(),
         "w2_mode": "master",
         "align2_ok": {cls: 0 for cls in ALIGN2_CLASSES},
+        # Combo flags (plain values; master until the combo phases after master's prepare gate them on).
+        "w13_mode": "master",
+        "wg_align2": {128: 0, 256: 0},
+        "d32_align": 0,
+        "d32_post_norm": 0,
     }
     align2_lines = []
     if (0, 32) in banks and banks[(0, 32)]["expert_map"] is not None:
@@ -3369,15 +3452,28 @@ def prepare(weights: Weights) -> dict:
     # The wgmma verify path: built, retiled and self-checked here; state["wgmma_ok"] gates it.
     _wg_setup(weights, banks, state, device, t_prepare)
     torch.cuda.synchronize()
-    # The [align2] lines last, so the archived log tail keeps them.
+    t_master = time.perf_counter() - t_prepare
+    # Combo phases: after master's prepare, unchanged; each with its own start deadline.
+    combo_lines = []
+    if (0, 32) in banks and banks[(0, 32)]["expert_map"] is not None:
+        combo_lines = _combo_setup(weights, state, device, t_prepare)
+    combo_lines.append(f"{COMBO_TAG} prepare seconds: master {t_master:.1f}, total {time.perf_counter() - t_prepare:.1f}")
+    # The [align2] lines, then the combo PATH CHOSEN / phase lines last, so the archived log tail keeps them.
     for line in align2_lines:
+        print(line, flush=True)
+    for line in combo_lines:
         print(line, flush=True)
     return state
 
 
-def _moe_marlin(x, topk_ids, topk_weights, bank, state, w2_mode="master"):
+def _moe_marlin(x, topk_ids, topk_weights, bank, state, w2_mode="master", w13_mode="master", d32_align=0,
+                d32_post_norm=0, poison=False):
     """(out, local_ids, cache2, y) for x [M, H]: master's launches, unchanged (w2_mode as master's
-    _forward: the atomic-add w2 only applies up to W2_ATOMIC_MAX_TOKENS tokens)."""
+    _forward: the atomic-add w2 only applies up to W2_ATOMIC_MAX_TOKENS tokens). Combo flags (plain
+    prepare-set values, branched with the shape only): w13_mode ("master" / "atomic" / "atomic_zero") at
+    num_tokens <= W13_ATOMIC_MAX_TOKENS (F1); d32_align 1 = _align_parallel at D32_ALIGN_MIN..MAX_TOKENS
+    (C1a); d32_post_norm 1 = the hoisted Triton post-norm at num_tokens == HOISTED_POST_NORM_TOKENS (C1b).
+    poison (prepare-time self-check only, never from kernel_fn) fills w13's output buffer with junk first."""
     num_tokens, size_k = x.shape
     size_n = bank["size_n"]
     gemm1_n = 2 * size_n
@@ -3393,7 +3489,11 @@ def _moe_marlin(x, topk_ids, topk_weights, bank, state, w2_mode="master"):
         # it _align_parallel (hypothesis align-parallel-per-expert-verify). Branch on shape only.
         cls = _align2_class(num_tokens)
         chunk = state["align2_ok"][cls] if cls is not None else 0
-        if chunk:
+        if d32_align and D32_ALIGN_MIN_TOKENS <= num_tokens <= D32_ALIGN_MAX_TOKENS:
+            # Combo C1a (hypothesis align-parallel-from-17-tokens): prepare() gated it against master's d32 pick.
+            local_ids, (sorted_ids, block_experts, n_padded) = _align_parallel(
+                topk_ids, bank["start"], bank["count"], block_size_m)
+        elif chunk:
             # Hypothesis align-two-phase-port-from17: prepare() gated this class (every T warmed).
             local_ids, (sorted_ids, block_experts, n_padded) = _align_two_phase(
                 topk_ids, bank["start"], bank["count"], block_size_m, chunk)
@@ -3424,10 +3524,19 @@ def _moe_marlin(x, topk_ids, topk_weights, bank, state, w2_mode="master"):
                   b_q_type=scalar_types.float4_e2m1f, is_k_full=True, use_atomic_add=False,
                   use_fp32_reduce=True, is_zp_float=False)
     ws = state["workspace"]
+    w13_common = common
+    if poison:
+        # Self-check only: junk in the w13 output buffer so a missing zero-fill is caught.
+        cache13.fill_(W13_POISON)
+    if w13_mode != "master" and num_tokens <= W13_ATOMIC_MAX_TOKENS:
+        # Combo F1 (hypothesis w13-marlin-atomic-add-t1-only); use_fp32_reduce stays True.
+        w13_common = dict(common, use_atomic_add=True)
+        if w13_mode == "atomic_zero":
+            cache1.zero_()
     cache1 = moe_wna16_marlin_gemm(
         x, cache1, bank["w13"], None, bank["w13_s"], bank["w13_gs"], None, None, None, ws,
         sorted_ids, block_experts, n_padded, topk_weights, top_k=TOP_K,
-        size_m=num_tokens, size_n=gemm1_n, size_k=size_k, **common)
+        size_m=num_tokens, size_n=gemm1_n, size_k=size_k, **w13_common)
     silu_and_mul(cache1.view(-1, gemm1_n), cache2, expert_ids=local_ids.view(-1), expert_step=1)
     w2_common = common
     if w2_mode != "master" and num_tokens <= W2_ATOMIC_MAX_TOKENS:
@@ -3445,6 +3554,10 @@ def _moe_marlin(x, topk_ids, topk_weights, bank, state, w2_mode="master"):
             y, local_ids, topk_weights, state["post_norm_w"], out, size_k, POST_NORM_EPS,
             TOP_K_C=TOP_K, BLOCK_H=triton.next_power_of_2(size_k), num_warps=8)
         return out, local_ids, cache2, y
+    if d32_post_norm and num_tokens == HOISTED_POST_NORM_TOKENS:
+        # Combo C1b (hypothesis post-norm-triton-hoisted-decode32).
+        y = y.contiguous()
+        return _post_norm_hoisted(y, local_ids, topk_weights, state["post_norm_w"]), local_ids, cache2, y
     out = fused_post_expert_norm_weighted_sum(
         y, topk_weights, norm_weight=state["norm_w"], eps=POST_NORM_EPS, weight_first=True,
         slot_expert_ids=local_ids)
@@ -3519,6 +3632,619 @@ def _forward(data: Inputs, state: dict, w2_mode: str) -> torch.Tensor:
     return _moe_marlin(x, data["topk_ids"], data["topk_weights"], bank, state, w2_mode)[0]
 
 
+# ---------------------------------------------------------------------------------------------
+# Combo (hypothesis combo-toprow-w13t1-d32-alignpar-postnorm-wg-align2): prepare-time gates, run after
+# master's prepare. Each phase: correctness first, then cold-L2 CUDA-graph A/B (_align2_gate_time: 41
+# interleaved replays, 256 MB flush before each, empty-graph baseline subtracted, medians) on a judge-like
+# Zipf routing and a random one; ON only at new / master <= COMBO_MAX_RATIO on the worse of the two.
+# ---------------------------------------------------------------------------------------------
+
+
+class _ComboSkip(Exception):
+    """A combo phase ran out of its deadline; its flag stays master."""
+
+
+def _combo_rel(a, b):
+    """Aggregate rel-L2 |a - b| / |b| in fp64 (inf on non-finite a; 0/inf when b is all zero)."""
+    a, b = a.double(), b.double()
+    if not bool(torch.isfinite(a).all()):
+        return float("inf")
+    d, r = float((a - b).norm()), float(b.norm())
+    if r == 0.0:
+        return 0.0 if d == 0.0 else float("inf")
+    return d / r
+
+
+def _combo_post_norm_fp32(y, local_ids, tw, post_norm_w):
+    """fp32 post-expert norm + weighted sum: out[t] = sum_local g * rmsnorm(y * (1 + w)); remote slots ignored."""
+    v = y.float() * (post_norm_w.float() + 1.0)
+    v = torch.where((local_ids >= 0).unsqueeze(-1), v, torch.zeros_like(v))
+    r = torch.rsqrt(v.pow(2).mean(-1, keepdim=True) + POST_NORM_EPS)
+    g = torch.where(local_ids >= 0, tw.float(), torch.zeros_like(tw.float()))
+    return (v * r * g.unsqueeze(-1)).sum(1)
+
+
+def _combo_ref_fp32(weights, bank, state, x, topk_ids, tw):
+    """The MoE output fully in fp32 (fp32-dequant weights of the routed local experts only, fp32 matmuls,
+    fp32 h and y, fp32 post-norm). For small T (F1's gate)."""
+    start, inter = bank["start"], bank["size_n"]
+    tokens, hidden = x.shape
+    local = bank["expert_map"][topk_ids.to(torch.int32)]
+    flat = local.reshape(-1)
+    y = torch.zeros((tokens * TOP_K, hidden), dtype=torch.float32, device=x.device)
+    for e in sorted(set(flat.tolist()) - {-1}):
+        g = start + e
+        w13 = _wg_decode_nvfp4(weights["w13"][g], weights["w13_sf"][g], weights["w13_gs"][g])
+        w2 = _wg_decode_nvfp4(weights["w2"][g], weights["w2_sf"][g], weights["w2_gs"][g])
+        rts = (flat == e).nonzero().flatten()
+        hh = x[rts // TOP_K].float() @ w13.T
+        h = torch.nn.functional.silu(hh[:, :inter]) * hh[:, inter:]
+        y[rts] = h @ w2.T
+        del w13, w2
+    return _combo_post_norm_fp32(y.view(tokens, TOP_K, hidden), local, tw, state["post_norm_w"])
+
+
+def _combo_routings(tokens, gen, local_set, device):
+    """Timing routings [tokens, 8] int32: 'zipf' (judge-like, this GPU's experts the busiest, alpha 0.9) and
+    'random' (uniform); each row keeps at least one local route at tokens == 1."""
+    remote_set = [e for e in range(N_EXPERTS) if e not in set(local_set)]
+    z = _wg_zipf_ids(tokens, 0.9, gen, local_set)
+    r = torch.tensor(_wg_routing("random", tokens, gen, local_set, remote_set), dtype=torch.int32)
+    if tokens == 1:
+        for ids in (z, r):
+            if not any(int(v) in set(local_set) for v in ids[0].tolist()):
+                ids[0, 0] = local_set[int(torch.randint(0, len(local_set), (1,), generator=gen))]
+    return {"zipf": z.to(device).contiguous(), "random": r.to(device).contiguous()}
+
+
+def _combo_time(fn_of, names, routings, device, t_prepare):
+    """Cold-L2 graph medians for every name on every routing (names[0] is master). Returns (best candidate,
+    {cand: worse ratio new/master}, {routing: {name: us}}); raises _ComboSkip past COMBO_TIMING_DEADLINE_S."""
+    meds = {}
+    for rlabel, ids in routings.items():
+        if time.perf_counter() - t_prepare > COMBO_TIMING_DEADLINE_S:
+            raise _ComboSkip(f"timing not started: past {COMBO_TIMING_DEADLINE_S:.0f} s")
+        meds[rlabel] = _align2_gate_time({n: fn_of(n, ids) for n in names}, device)
+    worse = {n: max(meds[r][n] / max(meds[r][names[0]], 1e-3) for r in routings) for n in names[1:]}
+    best = min(worse, key=worse.get)
+    return best, worse, meds
+
+
+def _combo_meds_text(meds, names):
+    return "; ".join(f"{r}: " + ", ".join(f"{n} {v[n]:.2f} us" for n in names) for r, v in meds.items())
+
+
+def _combo_choice(src, cls, best, worse, meds, label_of):
+    """PATH CHOSEN line for a timed source/class; asserts the ON side is the faster printed one."""
+    on = worse[best] <= COMBO_MAX_RATIO
+    if on:
+        assert all(v[best] < v["master"] for v in meds.values()), f"{src} {cls}: ON side is not faster"
+    wr = max(meds, key=lambda r: meds[r][best] / max(meds[r]["master"], 1e-3))
+    return on, (f"{COMBO_TAG} PATH CHOSEN {src} class={cls} = {label_of(best) if on else 'master'}: worse routing "
+                f"{wr}: master {meds[wr]['master']:.2f} us, {label_of(best)} {meds[wr][best]:.2f} us, ratio "
+                f"{worse[best]:.3f} (ON at <= {COMBO_MAX_RATIO})")
+
+
+def _combo_f1(weights, state, device, t_prepare):
+    """F1: w13 Marlin use_atomic_add at T == 1. Correctness on three T=1 routings: rel-L2 vs current master
+    (w2 mode as chosen) <= W13_ATOMIC_TOL AND vs a full fp32 reference <= W13_FP32_TOL, output buffer poisoned;
+    then the w13 Marlin call alone, graph-timed. Sets state['w13_mode']."""
+    bank = state["banks"][(0, 32)]
+    start, count, inter = bank["start"], bank["count"], bank["size_n"]
+    hidden = weights["w2"].shape[1]
+    w2_mode = state["w2_mode"]
+    local_set = list(range(start, start + count))
+    gen = torch.Generator().manual_seed(20261026)
+    cases = _combo_routings(1, gen, local_set, device)
+    cases["all-local"] = torch.tensor([local_set[8:16]], dtype=torch.int32, device=device)
+    ok = {"atomic": True, "atomic_zero": True}
+    why = {}
+    worst = {"atomic": [0.0, 0.0], "atomic_zero": [0.0, 0.0]}
+    m32_worst = 0.0
+    for label, ids in cases.items():
+        x = torch.randn((1, hidden), generator=gen).to(torch.bfloat16).to(device)
+        tw = torch.rand((1, TOP_K), generator=gen).to(device)
+        ref32 = _combo_ref_fp32(weights, bank, state, x, ids, tw)
+        print(f"{COMBO_TAG} F1 launching master T=1 {label}", flush=True)
+        ref = _moe_marlin(x, ids, tw, bank, state, w2_mode)[0].float()
+        torch.cuda.synchronize()
+        print(f"{COMBO_TAG} F1 ok master T=1 {label}", flush=True)
+        m32 = _combo_rel(ref, ref32)
+        m32_worst = max(m32_worst, m32)
+        for cand in ("atomic", "atomic_zero"):
+            if not ok[cand]:
+                continue
+            try:
+                print(f"{COMBO_TAG} F1 launching w13 {cand} T=1 {label} (poisoned buffer)", flush=True)
+                out = _moe_marlin(x, ids, tw, bank, state, w2_mode, w13_mode=cand, poison=True)[0].float()
+                torch.cuda.synchronize()
+                print(f"{COMBO_TAG} F1 ok w13 {cand} T=1 {label}", flush=True)
+                rm, r32 = _combo_rel(out, ref), _combo_rel(out, ref32)
+                worst[cand] = [max(worst[cand][0], rm), max(worst[cand][1], r32)]
+                print(f"{COMBO_TAG} F1 T=1 {label} {cand}: rel-L2 vs master {rm:.3g} (<= {W13_ATOMIC_TOL:g}), vs fp32 "
+                      f"{r32:.3g} (<= {W13_FP32_TOL:g}); master vs fp32 {m32:.3g}", flush=True)
+                if not (rm <= W13_ATOMIC_TOL and r32 <= W13_FP32_TOL):
+                    ok[cand] = False
+                    why[cand] = f"{label} vs master {rm:.3g}, vs fp32 {r32:.3g}"
+            except Exception as e:  # prepare only: the binding rejected the combination
+                ok[cand] = False
+                why[cand] = f"{label} {type(e).__name__}: {str(e)[:160]}"
+    mode = next((c for c in ("atomic", "atomic_zero") if ok[c]), None)
+    if mode is None:
+        return (f"{COMBO_TAG} PATH CHOSEN F1 class=decode_1 (T=1) = master: correctness "
+                + "; ".join(f"{k} failed ({v})" for k, v in why.items()))
+    print(f"{COMBO_TAG} F1 correctness: {mode} worst rel-L2 vs master {worst[mode][0]:.3g}, vs fp32 "
+          f"{worst[mode][1]:.3g}; master vs fp32 worst {m32_worst:.3g}", flush=True)
+    bsm = _block_size_m(1, count)
+    x = torch.randn((1, hidden), generator=gen).to(torch.bfloat16).to(device)
+    tw = torch.rand((1, TOP_K), generator=gen).to(device)
+    ws = state["workspace"]
+
+    def fn_of(name, ids):
+        _, (s_ids, b_exp, n_pad) = _align_small(ids, start, count, bsm)
+        c1 = torch.empty((TOP_K, 2 * inter), dtype=torch.bfloat16, device=device)
+        common = dict(moe_block_size=bsm, mul_topk_weights=False, is_ep=True, b_q_type=scalar_types.float4_e2m1f,
+                      is_k_full=True, use_atomic_add=name != "master", use_fp32_reduce=True, is_zp_float=False)
+
+        def run():
+            if name == "atomic_zero":
+                c1.zero_()
+            return moe_wna16_marlin_gemm(x, c1, bank["w13"], None, bank["w13_s"], bank["w13_gs"], None, None, None,
+                                         ws, s_ids, b_exp, n_pad, tw, top_k=TOP_K, size_m=1, size_n=2 * inter,
+                                         size_k=hidden, **common)
+        return run
+
+    best, worse, meds = _combo_time(fn_of, ["master", mode], _combo_routings(1, gen, local_set, device), device,
+                                    t_prepare)
+    print(f"{COMBO_TAG} F1 [A/B] w13 Marlin call alone T=1: {_combo_meds_text(meds, ['master', mode])}", flush=True)
+    on, line = _combo_choice("F1", "decode_1 (T=1)", best, worse, meds, lambda n: f"w13 {n}")
+    if on:
+        state["w13_mode"] = mode
+    return line + f"; fp32 worst {worst[mode][1]:.3g}, vs master worst {worst[mode][0]:.3g}"
+
+
+def _combo_per_expert(ids, tables, local_start, count, bsm):
+    """Master's _align_self_check per-expert semantics of (local_ids, (sorted_ids, block_experts, n_padded))
+    against SGLang's moe_align_block_size on the same local ids. None if equivalent, else the first reason."""
+    local_ids, (s_ids, b_exp, n_pad) = tables
+    ref_map = torch.full((N_EXPERTS,), -1, dtype=torch.int32, device=ids.device)
+    ref_map[local_start:local_start + count] = torch.arange(count, dtype=torch.int32, device=ids.device)
+    ref_local = ref_map[ids].contiguous()
+    if not torch.equal(local_ids, ref_local):
+        return "local_ids differ"
+    r_ids, r_exp, r_pad = moe_align_block_size(ref_local, bsm, count)
+    numel = ids.numel()
+    s_ids, b_exp, n_pad = s_ids.tolist(), b_exp.tolist(), int(n_pad.item())
+    r_ids, r_exp, r_pad = r_ids.tolist(), r_exp.tolist(), int(r_pad.item())
+
+    def per_expert(sorted_ids, block_experts, used):
+        groups, blocks = {}, {}
+        for b in range(used // bsm):
+            e = block_experts[b]
+            if e < 0:
+                continue
+            blocks[e] = blocks.get(e, 0) + 1
+            groups.setdefault(e, []).extend(i for i in sorted_ids[b * bsm:(b + 1) * bsm] if i < numel)
+        return groups, blocks
+
+    mine, mine_blocks = per_expert(s_ids, b_exp, n_pad)
+    ref, ref_blocks = per_expert(r_ids, r_exp, r_pad)
+    if {e: sorted(v) for e, v in mine.items()} != {e: sorted(v) for e, v in ref.items()}:
+        return "per-expert routes differ"
+    if mine_blocks != ref_blocks or n_pad != bsm * sum(ref_blocks.values()):
+        return f"blocks/n_padded {n_pad} vs SGLang {r_pad}"
+    used = n_pad // bsm
+    if any(e < 0 for e in b_exp[:used]) or any(e != -1 for e in b_exp[used:]) or b_exp[:used] != sorted(b_exp[:used]):
+        return "block_experts layout"
+    real = sum(len(v) for v in mine.values())
+    if sum(1 for i in s_ids if i == numel) != len(s_ids) - real or any(i > numel for i in s_ids):
+        return "sorted_ids sentinel fill"
+    if used > WG_MAX_BLOCKS or len(b_exp) > WG_MAX_BLOCKS or len(s_ids) > WG_CAP_ROWS or len(b_exp) * WG_BSM < len(s_ids):
+        return f"wgmma capacity: used blocks {used}, blocks {len(b_exp)}, slots {len(s_ids)}"
+    return None
+
+
+def _combo_f2(weights, state, device, t_prepare):
+    """F2: the wgmma path's front end (expert_map gather + SGLang align at WG_BSM) replaced, per ON wgmma bucket,
+    by _align_parallel or an align2 chunk at WG_BSM. Review amendment: the tables are checked per expert against
+    SGLang (_align_parallel, master's _align_self_check semantics) and torch.equal align2 vs _align_parallel, never
+    torch.equal vs SGLang (whose layout pads remote blocks); then _moe_wgmma output must be bitwise equal to master's
+    front end. Sets state['wg_align2'][bucket]. Returns PATH CHOSEN lines (one per bucket)."""
+    bank = state["banks"][(0, 32)]
+    start, count = bank["start"], bank["count"]
+    hidden = weights["w2"].shape[1]
+    local_set = list(range(start, start + count))
+    lines = []
+    on_buckets = [b for b in (128, 256) if state.get(f"wg_on_{b}", False)]
+    for b in (128, 256):
+        if b not in on_buckets:
+            lines.append(f"{COMBO_TAG} PATH CHOSEN F2 class=B{b} = master (wgmma bucket off: kernel_fn runs Marlin there)")
+    if not on_buckets:
+        return lines
+    cands = [WG_ALIGN_PAR] + list(ALIGN2_CHUNKS)
+
+    def label_of(c):
+        return "_align_parallel bsm 16" if c == WG_ALIGN_PAR else f"align2 chunk {c} bsm 16"
+    print(f"{COMBO_TAG} F2 launching warm: _align_parallel and align2 chunks {ALIGN2_CHUNKS} at bsm {WG_BSM}, "
+          f"T 128..512", flush=True)
+    for tokens in range(WG_MIN_TOKENS, WG_MAX_TOKENS + 1):
+        ids = torch.full((tokens, TOP_K), start, dtype=torch.int32, device=device)
+        _align_parallel(ids, start, count, WG_BSM)
+        for chunk in ALIGN2_CHUNKS:
+            _align_two_phase(ids, start, count, WG_BSM, chunk)
+    torch.cuda.synchronize()
+    print(f"{COMBO_TAG} F2 ok warm", flush=True)
+    gen = torch.Generator().manual_seed(20261027)
+    bad = {}
+    n_cases = 0
+    for tokens in WG_ALIGN2_EQ_TOKENS:
+        for cstart in ALIGN2_STARTS:
+            for name, ids in _align2_routings(tokens, cstart, count, gen, device).items():
+                n_cases += 1
+                ref = _align_parallel(ids, cstart, count, WG_BSM)
+                tag = f"T={tokens} local_start={cstart} {name}"
+                if WG_ALIGN_PAR not in bad:
+                    why = _combo_per_expert(ids, ref, cstart, count, WG_BSM)
+                    if why:
+                        bad[WG_ALIGN_PAR] = f"{tag}: _align_parallel vs SGLang per expert: {why}"
+                for chunk in ALIGN2_CHUNKS:
+                    if chunk in bad:
+                        continue
+                    why = _align2_first_mismatch(ref, _align_two_phase(ids, cstart, count, WG_BSM, chunk))
+                    if why:
+                        bad[chunk] = f"{tag}: vs _align_parallel: {why}"
+    torch.cuda.synchronize()
+    if WG_ALIGN_PAR in bad:  # the align2 chunks were only proven equal to _align_parallel
+        for chunk in ALIGN2_CHUNKS:
+            bad.setdefault(chunk, "its reference _align_parallel failed the per-expert check")
+    print(f"{COMBO_TAG} F2 table check: {n_cases} cases; failing candidates "
+          f"{ {label_of(c): w for c, w in bad.items()} or 'none'}"[:600], flush=True)
+    # Bitwise _moe_wgmma output: candidate front end vs master's, two routings per T.
+    for tokens in WG_ALIGN2_EQ_TOKENS:
+        rts = _align2_routings(tokens, start, count, gen, device)
+        for name in ("skewed", "random"):
+            good = [c for c in cands if c not in bad]
+            if not good:
+                break
+            x = torch.randn((tokens, hidden), generator=gen).to(torch.bfloat16).to(device)
+            tw = torch.rand((tokens, TOP_K), generator=gen).to(device)
+            state["wg_err"].zero_()
+            print(f"{COMBO_TAG} F2 launching _moe_wgmma master front end T={tokens} {name}", flush=True)
+            out_m = _moe_wgmma(x, rts[name], tw, bank, dict(state, wg_align2={128: 0, 256: 0}))[0]
+            torch.cuda.synchronize()
+            print(f"{COMBO_TAG} F2 ok _moe_wgmma master front end T={tokens} {name}", flush=True)
+            for c in good:
+                out_c = _moe_wgmma(x, rts[name], tw, bank, dict(state, wg_align2={128: c, 256: c}))[0]
+                torch.cuda.synchronize()
+                if not torch.equal(out_c, out_m):
+                    bad[c] = (f"T={tokens} {name}: _moe_wgmma output not bitwise equal (rel-L2 "
+                              f"{_combo_rel(out_c.float(), out_m.float()):.3g})")
+            err_word = int(state["wg_err"][0].item())
+            if err_word:
+                for c in good:
+                    bad.setdefault(c, f"T={tokens} {name}: wgmma error word {err_word}")
+    state["wg_err"].zero_()
+    good = [c for c in cands if c not in bad]
+    print(f"{COMBO_TAG} F2 bitwise _moe_wgmma check: passing {[label_of(c) for c in good]}; failing "
+          f"{ {label_of(c): w for c, w in bad.items()} or 'none'}"[:600], flush=True)
+    if not good:
+        for b in on_buckets:
+            lines.append(f"{COMBO_TAG} PATH CHOSEN F2 class=B{b} = master: no front end passed the table/bitwise checks")
+        return lines
+
+    def fn_of(name, ids):
+        if name == "master":
+            def run():
+                local = bank["expert_map"][ids.to(torch.int32)].contiguous()
+                return moe_align_block_size(local, WG_BSM, count)
+            return run
+        if name == WG_ALIGN_PAR:
+            return lambda: _align_parallel(ids, start, count, WG_BSM)
+        return lambda: _align_two_phase(ids, start, count, WG_BSM, name)
+
+    for b in on_buckets:
+        best, worse, meds = _combo_time(fn_of, ["master"] + good, _combo_routings(b, gen, local_set, device), device,
+                                        t_prepare)
+        print(f"{COMBO_TAG} F2 [A/B] B{b} front end alone T={b} (gather+cast+SGLang align vs candidates): "
+              + "; ".join(f"{r}: " + ", ".join(f"{label_of(n) if n != 'master' else 'master'} {v[n]:.2f} us"
+                                             for n in ["master"] + good) for r, v in meds.items()), flush=True)
+        on, line = _combo_choice("F2", f"B{b}", best, worse, meds, label_of)
+        if on:
+            state["wg_align2"][b] = best
+        lines.append(line)
+    return lines
+
+
+def _combo_f2_select_diag(weights, state, device):
+    """Diagnostic only (conjecture 2): master's _wg_select re-run with the F2 front end live. Its decisions are
+    printed and NEVER applied (the bucket flags stay as master's selector set them)."""
+    bank = state["banks"][(0, 32)]
+    flags = (state["wg_on_128"], state["wg_on_256"])
+    sel, _ = _wg_select(weights, bank, state, device)
+    assert (state["wg_on_128"], state["wg_on_256"]) == flags
+    return (f"{COMBO_TAG} F2 diag (not applied): _wg_select with the F2 front end would set B128 "
+            f"{'WGMMA' if sel.get(128) else 'MARLIN'}, B256 {'WGMMA' if sel.get(256) else 'MARLIN'}; live flags "
+            f"wg_on_128 {flags[0]}, wg_on_256 {flags[1]}")
+
+
+def _combo_c1a(weights, state, device, t_prepare):
+    """C1a: _align_parallel at D32_ALIGN_MIN..MAX_TOKENS vs master's d32 pick (_align_small or the align2 chunk
+    _align2_setup chose). torch.equal on all four outputs vs _align_small, then the align alone graph-timed at
+    T=32. Sets state['d32_align']."""
+    bank = state["banks"][(0, 32)]
+    start, count = bank["start"], bank["count"]
+    local_set = list(range(start, start + count))
+    print(f"{COMBO_TAG} C1a launching warm: _align_parallel T {D32_ALIGN_MIN_TOKENS}..{D32_ALIGN_MAX_TOKENS}", flush=True)
+    for tokens in range(D32_ALIGN_MIN_TOKENS, D32_ALIGN_MAX_TOKENS + 1):
+        _align_parallel(torch.full((tokens, TOP_K), start, dtype=torch.int32, device=device), start, count,
+                        _fwd_block_size_m(tokens, count))
+    torch.cuda.synchronize()
+    print(f"{COMBO_TAG} C1a ok warm", flush=True)
+    gen = torch.Generator().manual_seed(20261028)
+    n_ok, bad = 0, None
+    for tokens in D32_ALIGN_EQ_TOKENS:
+        bsm = _fwd_block_size_m(tokens, count)
+        for cstart in ALIGN2_STARTS:
+            for name, ids in _align2_routings(tokens, cstart, count, gen, device).items():
+                why = _align2_first_mismatch(_align_small(ids, cstart, count, bsm),
+                                             _align_parallel(ids, cstart, count, bsm))
+                if why:
+                    bad = bad or f"T={tokens} bsm={bsm} local_start={cstart} {name}: {why}"
+                else:
+                    n_ok += 1
+    torch.cuda.synchronize()
+    if bad:
+        return f"{COMBO_TAG} PATH CHOSEN C1a class=d32 (T 17..32) = master: _align_parallel vs _align_small {bad}"
+    tokens = D32_ALIGN_MAX_TOKENS
+    bsm = _fwd_block_size_m(tokens, count)
+    chunk = state["align2_ok"]["d32"]
+
+    def fn_of(name, ids):
+        if name == "master":
+            if chunk:
+                return lambda: _align_two_phase(ids, start, count, bsm, chunk)
+            return lambda: _align_small(ids, start, count, bsm)
+        return lambda: _align_parallel(ids, start, count, bsm)
+
+    best, worse, meds = _combo_time(fn_of, ["master", "align_parallel"], _combo_routings(tokens, gen, local_set, device),
+                                    device, t_prepare)
+    mname = f"align2 chunk {chunk}" if chunk else "_align_small"
+    print(f"{COMBO_TAG} C1a [A/B] align alone T={tokens} bsm={bsm} (master = {mname}): "
+          f"{_combo_meds_text(meds, ['master', 'align_parallel'])}", flush=True)
+    on, line = _combo_choice("C1a", "d32 (T 17..32)", best, worse, meds, lambda n: "_align_parallel")
+    if on:
+        state["d32_align"] = 1
+    return line + f"; master pick {mname}; equivalence {n_ok} cases torch.equal"
+
+
+def _combo_c1b(weights, state, device, t_prepare):
+    """C1b: the hoisted Triton post-norm at T == 32. rel-L2 vs an fp32 post-norm of the same y <= 1.5x SGLang's own
+    error (floor 1e-5) on six routings (incl. all-remote rows; remote y rows hold junk), then the post-norm alone
+    graph-timed. Sets state['d32_post_norm']."""
+    bank = state["banks"][(0, 32)]
+    start, count = bank["start"], bank["count"]
+    hidden = weights["w2"].shape[1]
+    local_set = list(range(start, start + count))
+    tokens = HOISTED_POST_NORM_TOKENS
+    pw = state["post_norm_w"]
+    print(f"{COMBO_TAG} C1b launching warm: _post_norm_combine_hoisted_kernel T={tokens}", flush=True)
+    _post_norm_hoisted(torch.zeros((tokens, TOP_K, hidden), dtype=torch.bfloat16, device=device),
+                       torch.zeros((tokens, TOP_K), dtype=torch.int32, device=device),
+                       torch.zeros((tokens, TOP_K), dtype=torch.float32, device=device), pw)
+    torch.cuda.synchronize()
+    print(f"{COMBO_TAG} C1b ok warm", flush=True)
+    gen = torch.Generator().manual_seed(20261029)
+
+    def make(ids):
+        local = bank["expert_map"][ids.to(torch.int32)].contiguous()
+        y = torch.randn((tokens, TOP_K, hidden), generator=gen).to(torch.bfloat16).to(device)
+        y = torch.where((local >= 0).unsqueeze(-1), y, torch.full_like(y, 3.0e4))  # junk in remote rows
+        tw = torch.rand((tokens, TOP_K), generator=gen).to(device)
+        return y, local, tw
+
+    bad, n_ok, worst = None, 0, (0.0, 0.0)
+    for name, ids in _align2_routings(tokens, start, count, gen, device).items():
+        y, local, tw = make(ids)
+        ref32 = _combo_post_norm_fp32(y, local, tw, pw)
+        sg = fused_post_expert_norm_weighted_sum(y, tw, norm_weight=state["norm_w"], eps=POST_NORM_EPS,
+                                                 weight_first=True, slot_expert_ids=local).float()
+        ho = _post_norm_hoisted(y, local, tw, pw).float()
+        torch.cuda.synchronize()
+        e_sg, e_ho = _combo_rel(sg, ref32), _combo_rel(ho, ref32)
+        bound = max(POST_NORM_ERR_FACTOR * e_sg, POST_NORM_ERR_FLOOR)
+        print(f"{COMBO_TAG} C1b T={tokens} {name}: hoisted rel-L2 vs fp32 {e_ho:.3g}, SGLang {e_sg:.3g}, bound "
+              f"{bound:.3g}", flush=True)
+        if not e_ho <= bound:
+            bad = bad or f"{name}: hoisted {e_ho:.3g} > bound {bound:.3g}"
+        else:
+            n_ok += 1
+            worst = (max(worst[0], e_ho), max(worst[1], e_sg))
+    if bad:
+        return f"{COMBO_TAG} PATH CHOSEN C1b class=decode_32 (T=32) = master: {bad}"
+    bufs = {}
+
+    def fn_of(name, ids):
+        if ids.data_ptr() not in bufs:
+            bufs[ids.data_ptr()] = make(ids)
+        y, local, tw = bufs[ids.data_ptr()]
+        if name == "master":
+            return lambda: fused_post_expert_norm_weighted_sum(y, tw, norm_weight=state["norm_w"], eps=POST_NORM_EPS,
+                                                               weight_first=True, slot_expert_ids=local)
+        return lambda: _post_norm_hoisted(y, local, tw, pw)
+
+    best, worse, meds = _combo_time(fn_of, ["master", "hoisted"], _combo_routings(tokens, gen, local_set, device),
+                                    device, t_prepare)
+    print(f"{COMBO_TAG} C1b [A/B] post-norm alone T={tokens}: {_combo_meds_text(meds, ['master', 'hoisted'])}",
+          flush=True)
+    on, line = _combo_choice("C1b", "decode_32 (T=32)", best, worse, meds, lambda n: "hoisted Triton post-norm")
+    if on:
+        state["d32_post_norm"] = 1
+    return line + f"; error vs fp32 worst hoisted {worst[0]:.3g} / SGLang {worst[1]:.3g} ({n_ok} routings)"
+
+
+def _combo_copy_check(weights, state, device):
+    """The judge prepares two states and rotates them: for every T an ON combo flag reaches, capture kernel_fn as
+    a graph on this state and on a tensor-cloning copy, then alternate replays with refilled inputs and compare
+    each against eager kernel_fn. A miss turns that T's sources back to master. Returns a line."""
+    bank = state["banks"][(0, 32)]
+    start, count = bank["start"], bank["count"]
+    hidden = weights["w2"].shape[1]
+    local_set = list(range(start, start + count))
+    shapes = []
+    if state["w13_mode"] != "master":
+        shapes.append((1, ("F1",)))
+    if state["d32_align"]:
+        shapes.append((24, ("C1a",)))
+    if state["d32_align"] or state["d32_post_norm"]:
+        shapes.append((32, tuple(s for s, f in (("C1a", state["d32_align"]), ("C1b", state["d32_post_norm"])) if f)))
+    for b in (128, 256):
+        if state["wg_align2"][b]:
+            shapes.append((b, (f"F2-B{b}",)))
+    if not shapes:
+        return f"{COMBO_TAG} copy check: no combo flag ON, nothing to check"
+    pad = torch.empty(2 * 2 ** 20, dtype=torch.uint8, device=device)
+    other = _wg_copy_tree(state)
+    gen = torch.Generator().manual_seed(20261030)
+    fails, n_rep = [], 0
+    for tokens, srcs in shapes:
+        cfg = {"bs": tokens, "d_hidden": hidden, "d_expert": bank["size_n"], "n_experts": N_EXPERTS,
+               "local_start": start, "local_count": count, "top_k": TOP_K, "sharding": "ep8"}
+        per = []
+        for st in (state, other):
+            data = {"hidden_states": torch.zeros((tokens, hidden), dtype=torch.bfloat16, device=device),
+                    "topk_ids": torch.full((tokens, TOP_K), start, dtype=torch.int32, device=device),
+                    "topk_weights": torch.full((tokens, TOP_K), 1.0 / TOP_K, dtype=torch.float32, device=device),
+                    "config": cfg}
+            graph, out = _wg_graph_of(lambda data=data, st=st: kernel_fn(data, st))
+            per.append((data, graph, out))
+        for k in range(4):
+            ids = _combo_routings(tokens, gen, local_set, device)["zipf" if k % 2 == 0 else "random"]
+            x = torch.randn((tokens, hidden), generator=gen).to(torch.bfloat16).to(device)
+            tw = torch.rand((tokens, TOP_K), generator=gen).to(device)
+            for data, _, _ in per:
+                data["hidden_states"].copy_(x)
+                data["topk_ids"].copy_(ids)
+                data["topk_weights"].copy_(tw)
+            order = per if k % 2 == 0 else per[::-1]
+            for _, graph, _ in order:
+                graph.replay()
+            torch.cuda.synchronize()
+            ref = kernel_fn({"hidden_states": x, "topk_ids": ids, "topk_weights": tw, "config": cfg}, state).float()
+            for i, (_, _, out) in enumerate(per):
+                n_rep += 1
+                rel = _combo_rel(out.float(), ref)
+                if not rel <= COMBO_COPY_TOL:
+                    fails.append((tokens, srcs, f"T={tokens} state {'AB'[i]} refill {k}: rel-L2 vs eager {rel:.3g}"))
+        del per
+        torch.cuda.synchronize()
+    off = sorted({s for _, ss, _ in fails for s in ss})
+    for s in off:
+        if s == "F1":
+            state["w13_mode"] = "master"
+        elif s == "C1a":
+            state["d32_align"] = 0
+        elif s == "C1b":
+            state["d32_post_norm"] = 0
+        else:
+            state["wg_align2"][int(s[4:])] = 0
+    del other, pad
+    gc.collect()
+    torch.cuda.empty_cache()
+    return (f"{COMBO_TAG} copy check (graphs through kernel_fn on the state and a tensor-cloning copy, alternating, "
+            f"refilled): {n_rep} replays, T {[t for t, _ in shapes]}; "
+            + ("PASS" if not fails else f"FAIL -> master for {off}: {fails[0][2]}"))
+
+
+def _combo_setup(weights, state, device, t_prepare):
+    """Untimed, after master's prepare (unchanged). Runs F1, F2 (+ its diagnostic selector re-run), C1a, C1b and
+    the copy check, each only if it can start before its own deadline (COMBO_DEADLINES_S, seconds from
+    prepare()'s start); a skipped, failed or raising phase leaves its flags at master. Returns the lines prepare()
+    prints last: per-phase seconds / skipped, wg_on_128 / wg_on_256, one PATH CHOSEN per source per class."""
+    phases = []    # (name, seconds, status)
+    chosen = []
+
+    def run(name, fn, default_lines, reset=None):
+        el = time.perf_counter() - t_prepare
+        if el > COMBO_DEADLINES_S[name]:
+            phases.append((name, 0.0, f"SKIPPED for time (start at {el:.1f} s > deadline {COMBO_DEADLINES_S[name]:.0f} s)"))
+            chosen.extend(f"{ln} (deadline)" for ln in default_lines)
+            return
+        t0 = time.perf_counter()
+        status = "ran"
+        try:
+            out = fn()
+            out = out if isinstance(out, list) else [out]
+            for ln in out:
+                print(ln, flush=True)
+            chosen.extend(out)
+        except _ComboSkip as e:
+            status = f"SKIPPED for time ({e})"
+            chosen.extend(f"{ln} ({e})" for ln in default_lines)
+            if reset is not None:
+                reset()
+        except Exception as e:  # prepare only: never raises, the flags go back to master
+            status = f"raised {type(e).__name__}: {str(e)[:200]}"
+            chosen.extend(f"{ln} (phase raised)" for ln in default_lines)
+            if reset is not None:
+                reset()
+        torch.cuda.synchronize()
+        phases.append((name, time.perf_counter() - t0, status))
+        print(f"{COMBO_TAG} phase {name}: {status}, {phases[-1][1]:.1f} s (prepare at "
+              f"{time.perf_counter() - t_prepare:.1f} s)", flush=True)
+
+    def master_line(src, cls):
+        return f"{COMBO_TAG} PATH CHOSEN {src} class={cls} = master"
+
+    def reset_f1():
+        state["w13_mode"] = "master"
+
+    def reset_f2():
+        state["wg_align2"] = {128: 0, 256: 0}
+
+    def reset_c1a():
+        state["d32_align"] = 0
+
+    def reset_c1b():
+        state["d32_post_norm"] = 0
+
+    run("F1", lambda: _combo_f1(weights, state, device, t_prepare), [master_line("F1", "decode_1 (T=1)")], reset_f1)
+    run("F2", lambda: _combo_f2(weights, state, device, t_prepare),
+        [master_line("F2", "B128"), master_line("F2", "B256")], reset_f2)
+    run("C1a", lambda: _combo_c1a(weights, state, device, t_prepare), [master_line("C1a", "d32 (T 17..32)")],
+        reset_c1a)
+    run("C1b", lambda: _combo_c1b(weights, state, device, t_prepare), [master_line("C1b", "decode_32 (T=32)")],
+        reset_c1b)
+    if any(state["wg_align2"].values()):
+        # Lowest priority, after every gate: a diagnostic that never changes a flag.
+        run("F2-select-diag", lambda: _combo_f2_select_diag(weights, state, device), [])
+    copy_lines = []
+
+    def copy_phase():
+        line = _combo_copy_check(weights, state, device)
+        copy_lines.append(line)
+        return line
+
+    def copy_skipped():
+        # A skipped copy check would leave unchecked flags live: turn every combo flag back to master.
+        state["w13_mode"], state["d32_align"], state["d32_post_norm"] = "master", 0, 0
+        state["wg_align2"] = {128: 0, 256: 0}
+
+    run("copy", copy_phase, [])
+    if not copy_lines and phases[-1][0] == "copy":
+        copy_skipped()
+        chosen.append(f"{COMBO_TAG} copy check did not complete ({phases[-1][2]}): every combo flag -> master")
+    lines = [f"{COMBO_TAG} ===== COMBO SUMMARY (after master's prepare; per-phase start deadlines "
+             f"{COMBO_DEADLINES_S}, no timing past {COMBO_TIMING_DEADLINE_S:.0f} s) ====="]
+    for name, sec, status in phases:
+        lines.append(f"{COMBO_TAG} phase {name}: {sec:.1f} s, {status}")
+    lines.append(f"{COMBO_TAG} wg_on_128 {state.get('wg_on_128', False)}, wg_on_256 {state.get('wg_on_256', False)} "
+                 f"(master's _wg_setup selector; F2 applies only to an ON bucket)")
+    lines.extend(chosen)
+    lines.append(f"{COMBO_TAG} final flags: w13_mode={state['w13_mode']!r} wg_align2={dict(state['wg_align2'])} "
+                 f"d32_align={state['d32_align']} d32_post_norm={state['d32_post_norm']} (master = 'master'/0)")
+    return lines
+
+
 def kernel_fn(data: Inputs, state: dict) -> torch.Tensor:
     """This GPU's share of the MoE output, bfloat16 [M, H]."""
     cfg = data["config"]
@@ -3531,4 +4257,6 @@ def kernel_fn(data: Inputs, state: dict) -> torch.Tensor:
     if bank["expert_map"] is not None and WG_MIN_TOKENS <= num_tokens <= WG_MAX_TOKENS:
         if state.get("wg_on_128", False) if num_tokens < WG_B256_MIN_TOKENS else state.get("wg_on_256", False):
             return _moe_wgmma(x, data["topk_ids"], data["topk_weights"], bank, state)[0]
-    return _moe_marlin(x, data["topk_ids"], data["topk_weights"], bank, state, state.get("w2_mode", "master"))[0]
+    # Combo flags are prepare-set plain values; _moe_marlin branches on them and the shape only.
+    return _moe_marlin(x, data["topk_ids"], data["topk_weights"], bank, state, state.get("w2_mode", "master"),
+                       state.get("w13_mode", "master"), state.get("d32_align", 0), state.get("d32_post_norm", 0))[0]

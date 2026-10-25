@@ -134,9 +134,10 @@ speedup: 1.3865522395057346
 speedup_ci: [1.3657539559131486, 1.4073505230983205]
 harvested_at: 2026-10-25T185827Z
 best_at_harvest: 1.3752355517671193
-promotion: unmerged
+promotion: done
+promotion_job: b395f5b6097348c7
 hand_landed: true
-promotion_reason: master moved since base; merge by hand
+promotion_reason: hand-landed: branch file verbatim (already contains master f7eac2c3 via the audit's 3-way merge; differs from master only by the combo)
 ---
 
 # combo-toprow-w13t1-d32-alignpar-postnorm-wg-align2
