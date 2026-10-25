@@ -85,7 +85,7 @@ base_sha: 7faa35ba9069ec4a6c1942887916e7e77d381e1c
 base_blob: a2fe2a75893c60d4f68cf94fcce8ce8f9b708a71
 branch: hyp/muse_prefill_layer/fa3-full-contiguous-kv-triton-gather-gated
 worktree: .worktrees/muse_prefill_layer/fa3-full-contiguous-kv-triton-gather-gated
-mode: null
+mode: submit
 restack_of: null
 stale_base: null
 implemented_at: 2026-10-25T153230Z
@@ -94,6 +94,8 @@ submission_sha256: 6a87e63c212c463fdb8d647d539d387ca03a3e3ddf4b0f8d788394977a7e3
 norm_sha256: 3b7c506364e79a82fc669458246dd4d5a53b9de437a9819e4c3b103c1de893b1
 submission_blob: 9fb1f7c4b4282dd7461c6cdba926fe3ebf12128e
 lint_warnings: 74
+attempt_file: 2026-10-25T153230Z-submit-fa3-full-contiguous-kv-triton-gather-gated.md
+prepared_at: 2026-10-25T153230Z
 ---
 
 # fa3-full-contiguous-kv-triton-gather-gated
