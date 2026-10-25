@@ -43,7 +43,7 @@ review: proceed
 status: running
 review_at: 2026-10-24T165620Z
 review_companions: null
-stage: implemented
+stage: dispatched
 claimed_at: 2026-10-25T010440Z
 base_sha: de7af5e266755a23304676ec04c4526206066029
 base_blob: 0910a52804bc45a2f5ace82707c915f4634d8add
@@ -60,6 +60,8 @@ submission_blob: 8b309ee5c5705d66ac6b4b7c8e0c777fda0c8008
 lint_warnings: 7
 attempt_file: 2026-10-25T010622Z-check-experts-triton-turn1-blockt32-stream.md
 prepared_at: 2026-10-25T010622Z
+job: 8d1a2efec67b4758
+dispatched_at: 2026-10-25T010629Z
 ---
 
 # experts-triton-turn1-blockt32-stream
