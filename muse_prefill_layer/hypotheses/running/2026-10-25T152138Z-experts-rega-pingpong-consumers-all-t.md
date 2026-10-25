@@ -95,7 +95,7 @@ base_sha: f4ace8661739740d326729699aeb3d2f785ae596
 base_blob: a2fe2a75893c60d4f68cf94fcce8ce8f9b708a71
 branch: hyp/muse_prefill_layer/experts-rega-pingpong-consumers-all-t
 worktree: .worktrees/muse_prefill_layer/experts-rega-pingpong-consumers-all-t
-mode: null
+mode: submit
 restack_of: null
 stale_base: null
 implemented_at: 2026-10-25T154139Z
@@ -104,6 +104,8 @@ submission_sha256: 1133f5f6fc4f9ab1c355909cee138d98b39e7f6294f22a9ef56accf377d8c
 norm_sha256: fb27e2247d1d41bfe5e2d6d91ba782778f8daf7ac947a3d54ec11eb6c77b05b7
 submission_blob: d3e7b75d044c8d3262672f0fb473e87a4f68f7af
 lint_warnings: 83
+attempt_file: 2026-10-25T154139Z-submit-experts-rega-pingpong-consumers-all-t.md
+prepared_at: 2026-10-25T154139Z
 ---
 
 # experts-rega-pingpong-consumers-all-t
