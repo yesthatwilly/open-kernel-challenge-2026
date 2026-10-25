@@ -43,7 +43,7 @@ base_sha: df59fe97803906261a926deeb694b808107ab115
 base_blob: d8769ef25caf845a0e207538ccc5c62394b6ee3b
 branch: hyp/muse_attention_decode/full-decode1-sk-pdl-from-preattn
 worktree: .worktrees/muse_attention_decode/full-decode1-sk-pdl-from-preattn
-mode: null
+mode: check
 restack_of: null
 stale_base: null
 implemented_at: 2026-10-25T043825Z
@@ -52,6 +52,8 @@ submission_sha256: 540e2541d3af9d26c354b2bc2c562bf6db9d00c87a5ca22f9f10c3165b096
 norm_sha256: 1b64ad9ae82a4f1b4883a816c4c4ef5555fcb06e8136faa09903742c59489842
 submission_blob: c91fe482d3d19c0c9785cc932c7db5732076adbf
 lint_warnings: 18
+attempt_file: 2026-10-25T043825Z-check-full-decode1-sk-pdl-from-preattn.md
+prepared_at: 2026-10-25T043825Z
 ---
 
 # full-decode1-sk-pdl-from-preattn
