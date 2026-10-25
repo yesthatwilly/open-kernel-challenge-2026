@@ -144,6 +144,26 @@ ALIGN_FUSED_MAX_TOKENS = 32
 ALIGN_PAR_CHUNK = 512
 ALIGN_PAR_WARPS = 8
 ALIGN_PAR_BLK = 64
+# Hypothesis align-two-phase-port-from17: prefill's two-phase Triton align (a count kernel, then a place
+# kernel) for 17 <= tokens <= 512, per T class, each gated in prepare() on bit-identical outputs against the
+# class incumbent and a >= ALIGN2_MIN_RATIO cold-L2 graph win. state["align2_ok"] is a plain dict of ints
+# {class: chunk or 0}; 0 keeps master's align.
+ALIGN2_TAG = "[align2]"
+ALIGN2_WARPS = 8
+ALIGN2_BLKT = 256
+ALIGN2_SENT = 2048
+ALIGN2_MIN_TOKENS = 17
+ALIGN2_MAX_TOKENS = 512
+ALIGN2_CHUNKS = (64, 128, 256, 512)
+# class: (first T, last T, representative T for the timing gate, equivalence T list)
+ALIGN2_CLASSES = {
+    "d32": (17, 32, 32, (17, 24, 32)),
+    "v128": (33, 191, 128, (33, 57, 120, 128, 191)),
+    "v256": (192, 512, 256, (192, 256, 257, 512)),
+}
+ALIGN2_STARTS = (0, 32, 224)
+ALIGN2_MIN_RATIO = 1.05
+ALIGN2_REPLAYS = 41
 
 
 @triton.jit
@@ -301,6 +321,76 @@ def _align_parallel_kernel(topk_ids_ptr, local_ids_ptr, sorted_ids_ptr, block_ex
         tl.store(n_padded_ptr, total)
 
 
+@triton.jit(do_not_specialize=["local_start", "local_count", "n"])
+def _align2_count_kernel(topk_ids_ptr, cnt_ptr, local_start, local_count, n, CHUNK: tl.constexpr,
+                         NUM_E: tl.constexpr):
+    """cnt[chunk, e] = routes of chunk `chunk` (CHUNK ids) that map to local expert e."""
+    pid = tl.program_id(0)
+    experts = tl.arange(0, NUM_E)
+    offs = pid * CHUNK + tl.arange(0, CHUNK)
+    mask = offs < n
+    ids = tl.load(topk_ids_ptr + offs, mask=mask, other=0).to(tl.int32)
+    local = ids - local_start
+    local = tl.where(mask & (local >= 0) & (local < local_count), local, -1)
+    counts = tl.sum((local[:, None] == experts[None, :]).to(tl.int32), axis=0)
+    tl.store(cnt_ptr + pid * NUM_E + experts, counts)
+
+
+@triton.jit(do_not_specialize=["local_start", "local_count", "n", "cap", "n_blocks", "nchunks"])
+def _align2_place_kernel(topk_ids_ptr, cnt_ptr, local_ids_ptr, sorted_ids_ptr, block_experts_ptr, n_padded_ptr,
+                         local_start, local_count, n, cap, n_blocks, nchunks, CHUNK: tl.constexpr,
+                         NCH_P2: tl.constexpr, NUM_E: tl.constexpr, BSM: tl.constexpr, PAD_BLOCK: tl.constexpr,
+                         BLKT: tl.constexpr, SENT: tl.constexpr):
+    """_align_parallel_kernel's four outputs, grid (nchunks + 1,). Programs < nchunks place their chunk's
+    routes and local ids; program nchunks writes the padding slots, the sentinel tail, block_experts and
+    n_padded. The store sets are disjoint (placement and padding stay below total, the sentinel at or above
+    it), so no atomics or ordering are needed."""
+    pid = tl.program_id(0)
+    experts = tl.arange(0, NUM_E)
+    chs = tl.arange(0, NCH_P2)
+    cnt = tl.load(cnt_ptr + chs[:, None] * NUM_E + experts[None, :],
+                  mask=(chs[:, None] < nchunks) & (experts[None, :] < NUM_E), other=0)
+    counts = tl.sum(cnt, axis=0)
+    padded = (counts + BSM - 1) // BSM * BSM
+    seg_start = tl.cumsum(padded, axis=0) - padded
+    total = tl.sum(padded, axis=0)
+    if pid < nchunks:
+        pre = tl.sum(tl.where(chs[:, None] < pid, cnt, 0), axis=0)
+        offs = pid * CHUNK + tl.arange(0, CHUNK)
+        mask = offs < n
+        ids = tl.load(topk_ids_ptr + offs, mask=mask, other=0).to(tl.int32)
+        local = ids - local_start
+        valid = mask & (local >= 0) & (local < local_count)
+        local = tl.where(valid, local, -1)
+        tl.store(local_ids_ptr + offs, local, mask=mask)
+        onehot = (local[:, None] == experts[None, :]).to(tl.int32)
+        rank = tl.cumsum(onehot, axis=0) - 1
+        pos = tl.sum(onehot * (seg_start[None, :] + pre[None, :] + rank), axis=1)
+        tl.store(sorted_ids_ptr + pos, offs, mask=valid)
+    else:
+        # Each expert's padding slots [seg_start + count, seg_start + padded): fewer than BSM.
+        j = tl.arange(0, PAD_BLOCK)
+        pslots = (seg_start + counts)[:, None] + j[None, :]
+        tl.store(sorted_ids_ptr + pslots, tl.zeros([NUM_E, PAD_BLOCK], dtype=tl.int32) + n,
+                 mask=j[None, :] < (padded - counts)[:, None])
+        # The sentinel in every slot past the used length.
+        s0 = tl.arange(0, SENT)
+        for s in range(0, cap, SENT):
+            slots = s + s0
+            tl.store(sorted_ids_ptr + slots, tl.zeros([SENT], dtype=tl.int32) + n,
+                     mask=(slots >= total) & (slots < cap))
+        # Block b belongs to the expert whose segment holds slot b * BSM: the number of experts whose
+        # segment ends at or before it; -1 past the used blocks.
+        seg_end = seg_start + padded
+        b0 = tl.arange(0, BLKT)
+        for b in range(0, n_blocks, BLKT):
+            blk = b + b0
+            first = blk * BSM
+            e_of = tl.sum((seg_end[None, :] <= first[:, None]).to(tl.int32), axis=1)
+            tl.store(block_experts_ptr + blk, tl.where(first < total, e_of, -1), mask=blk < n_blocks)
+        tl.store(n_padded_ptr, total)
+
+
 def _block_size_m(num_tokens, count):
     """MuseSpark1xFp4Experts' block_size_m choice (unchanged)."""
     for block_size_m in BLOCK_SIZE_M_CANDIDATES:
@@ -350,6 +440,244 @@ def _align_parallel(topk_ids, local_start, local_count, block_size_m):
         BLK=ALIGN_PAR_BLK, BSM=block_size_m, NUM_E=triton.next_power_of_2(local_count),
         num_warps=ALIGN_PAR_WARPS)
     return local_ids, (sorted_ids, block_experts, n_padded)
+
+
+def _fwd_block_size_m(num_tokens, count):
+    """kernel_fn's block_size_m for a token count: SGLang's pick, then at >= 128 tokens the two-smaller
+    pick (hypothesis marlin-block-m-two-smaller-on-postnorm). Shape only."""
+    block_size_m = _block_size_m(num_tokens, count)
+    if num_tokens >= 128:
+        block_size_m = BLOCK_SIZE_M_CANDIDATES[max(BLOCK_SIZE_M_CANDIDATES.index(block_size_m) - 2, 0)]
+    return block_size_m
+
+
+def _align2_class(num_tokens):
+    """The align2 T class of a token count ('d32', 'v128', 'v256'), or None outside
+    [ALIGN2_MIN_TOKENS, ALIGN2_MAX_TOKENS]. Shape only."""
+    if num_tokens < ALIGN2_MIN_TOKENS or num_tokens > ALIGN2_MAX_TOKENS:
+        return None
+    for cls, (lo, hi, _, _) in ALIGN2_CLASSES.items():
+        if lo <= num_tokens <= hi:
+            return cls
+    return None
+
+
+def _align_two_phase(topk_ids, local_start, local_count, block_size_m, chunk):
+    """The incumbent's (local_ids, (sorted_ids, block_experts, n_padded)), bit for bit, in two launches.
+    The count table is shape-sized scratch allocated per call (nothing is kept between calls). Every
+    constexpr (CHUNK, NCH_P2, BSM, PAD_BLOCK) is a function of the shape and chunk, so prepare() warms
+    every T of every enabled class."""
+    topk_ids = topk_ids.contiguous()
+    device = topk_ids.device
+    n = topk_ids.numel()
+    cap = n + local_count * (block_size_m - 1)
+    n_blocks = triton.cdiv(cap, block_size_m)
+    nchunks = triton.cdiv(n, chunk)
+    num_e = triton.next_power_of_2(local_count)
+    local_ids = torch.empty(topk_ids.shape, dtype=torch.int32, device=device)
+    sorted_ids = torch.empty((cap,), dtype=torch.int32, device=device)
+    block_experts = torch.empty((n_blocks,), dtype=torch.int32, device=device)
+    n_padded = torch.empty((1,), dtype=torch.int32, device=device)
+    cnt = torch.empty((nchunks, num_e), dtype=torch.int32, device=device)
+    _align2_count_kernel[(nchunks,)](topk_ids, cnt, local_start, local_count, n, CHUNK=chunk, NUM_E=num_e,
+                                     num_warps=ALIGN2_WARPS)
+    _align2_place_kernel[(nchunks + 1,)](
+        topk_ids, cnt, local_ids, sorted_ids, block_experts, n_padded, local_start, local_count, n, cap,
+        n_blocks, nchunks, CHUNK=chunk, NCH_P2=max(2, triton.next_power_of_2(nchunks)), NUM_E=num_e,
+        BSM=block_size_m, PAD_BLOCK=triton.next_power_of_2(block_size_m), BLKT=ALIGN2_BLKT,
+        SENT=ALIGN2_SENT, num_warps=ALIGN2_WARPS)
+    return local_ids, (sorted_ids, block_experts, n_padded)
+
+
+def _align2_incumbent(num_tokens):
+    return _align_small if num_tokens <= ALIGN_FUSED_MAX_TOKENS else _align_parallel
+
+
+def _align2_chunks(cls):
+    """Candidate chunk sizes of a class: CHUNK <= the class's largest T * 8 rounded up to a power of 2."""
+    top = triton.next_power_of_2(ALIGN2_CLASSES[cls][1] * TOP_K)
+    return tuple(c for c in ALIGN2_CHUNKS if c <= top)
+
+
+def _align2_warm(device, start, count):
+    """Compile (and run once, on dummy ids) _align_two_phase for EVERY T of every class, every candidate
+    chunk and kernel_fn's own block_size_m at that T, so no Triton compile can happen inside kernel_fn or
+    during graph capture (NCH_P2 = next_pow2(cdiv(T * 8, chunk)) varies with T inside a class)."""
+    n_calls = 0
+    for cls, (lo, hi, _, _) in ALIGN2_CLASSES.items():
+        chunks = _align2_chunks(cls)
+        for tokens in range(lo, hi + 1):
+            ids = torch.full((tokens, TOP_K), start, dtype=torch.int32, device=device)
+            bsm = _fwd_block_size_m(tokens, count)
+            for chunk in chunks:
+                _align_two_phase(ids, start, count, bsm, chunk)
+                n_calls += 1
+    torch.cuda.synchronize()
+    return n_calls
+
+
+def _align2_routings(tokens, start, count, gen, device):
+    """Synthetic raw (global-id) routings [tokens, 8] int32: random, skewed, all-remote, all-one-expert,
+    all-local, all-local-saturated (every route to a random local expert: the tail writes the most blocks)."""
+    local_set = torch.arange(start, start + count)
+    mask = torch.ones(N_EXPERTS, dtype=torch.bool)
+    mask[start:start + count] = False
+    remote_set = torch.arange(N_EXPERTS)[mask]
+
+    def pick(pool, rows, cols):
+        return pool[torch.randint(0, pool.numel(), (rows, cols), generator=gen)]
+
+    skewed = pick(remote_set, tokens, TOP_K)
+    skewed[:, 0], skewed[:, 1], skewed[:, 2] = int(local_set[0]), int(local_set[count - 1]), int(local_set[5])
+    one = pick(remote_set, tokens, TOP_K)
+    one[:, 0] = int(local_set[3])
+    out = {
+        "random": torch.rand((tokens, N_EXPERTS), generator=gen).argsort(dim=1)[:, :TOP_K],
+        "skewed": skewed,
+        "all-remote": pick(remote_set, tokens, TOP_K),
+        "all-one-expert": one,
+        "all-local": local_set[8:16].unsqueeze(0).expand(tokens, TOP_K).contiguous(),
+        "all-local-saturated": pick(local_set, tokens, TOP_K),
+    }
+    return {k: v.to(torch.int32).to(device).contiguous() for k, v in out.items()}
+
+
+def _align2_first_mismatch(ref, new):
+    names = ("local_ids", "sorted_ids", "block_experts", "n_padded")
+    r = (ref[0], ref[1][0], ref[1][1], ref[1][2])
+    w = (new[0], new[1][0], new[1][1], new[1][2])
+    for name, a, b in zip(names, r, w):
+        if a.shape != b.shape:
+            return f"{name} shape {tuple(a.shape)} vs {tuple(b.shape)}"
+        if not torch.equal(a, b):
+            idx = (a != b).nonzero().flatten()[0].item()
+            return f"{name}[{idx}] incumbent {a.view(-1)[idx].item()} vs align2 {b.view(-1)[idx].item()}"
+    return None
+
+
+def _align2_graph(fn, device):
+    """Capture fn once (after a warm-up on a side stream); returns the CUDA graph."""
+    side = torch.cuda.Stream(device)
+    side.wait_stream(torch.cuda.current_stream())
+    with torch.cuda.stream(side):
+        for _ in range(2):
+            fn()
+    torch.cuda.current_stream().wait_stream(side)
+    torch.cuda.synchronize()
+    graph = torch.cuda.CUDAGraph()
+    with torch.cuda.graph(graph):
+        fn()
+    torch.cuda.synchronize()
+    return graph
+
+
+def _align2_gate_time(fns, device):
+    """Cold-L2 graph-replay medians (us) of every fn: ALIGN2_REPLAYS interleaved replays each (order
+    rotated and flipped every round), a 256 MB buffer zeroed before every replay, the empty-graph baseline
+    subtracted."""
+    graphs = {name: _align2_graph(fn, device) for name, fn in fns.items()}
+    tiny = torch.zeros(16, dtype=torch.float32, device=device)
+    graphs["empty"] = _align2_graph(lambda: tiny.zero_(), device)
+    flush = torch.empty(256 * 2 ** 20 // 4, dtype=torch.float32, device=device)  # > the L2
+    ev = [torch.cuda.Event(enable_timing=True) for _ in range(2)]
+
+    def once(graph):
+        flush.zero_()
+        ev[0].record()
+        graph.replay()
+        ev[1].record()
+        torch.cuda.synchronize()
+        return ev[0].elapsed_time(ev[1]) * 1000.0
+
+    names = list(graphs)
+    samples = {name: [] for name in names}
+    for name in names:
+        once(graphs[name])
+    for i in range(ALIGN2_REPLAYS):
+        order = names[i % len(names):] + names[:i % len(names)]
+        if i % 2:
+            order = order[::-1]
+        for name in order:
+            samples[name].append(once(graphs[name]))
+    med = {name: sorted(v)[len(v) // 2] for name, v in samples.items()}
+    base = med.pop("empty")
+    del graphs
+    return {name: max(v - base, 0.0) for name, v in med.items()}
+
+
+def _align2_setup(state, device, start, count):
+    """Untimed, prepare() only, after _align_self_check and before _w2_atomic_self_check. Warms align2 for
+    every T of every class, checks torch.equal on all four outputs against the class incumbent (every
+    block_size_m the class reaches, three local_starts, six routings), times each surviving chunk against
+    the incumbent at the class's representative T on cold-L2 graph medians, and enables a class only for
+    its fastest chunk at incumbent / align2 >= ALIGN2_MIN_RATIO. Sets state["align2_ok"] (plain ints) and
+    returns the lines prepare() prints at its very end."""
+    ok = {cls: 0 for cls in ALIGN2_CLASSES}
+    state["align2_ok"] = ok
+    lines = []
+    try:
+        print(f"{ALIGN2_TAG} warming every T in every class (launch compile, then synchronize)", flush=True)
+        n_calls = _align2_warm(device, start, count)
+        print(f"{ALIGN2_TAG} warm done: {n_calls} calls, synchronized", flush=True)
+        gen = torch.Generator().manual_seed(20261025)
+        for cls, (lo, hi, rep_t, tests) in ALIGN2_CLASSES.items():
+            chunks = _align2_chunks(cls)
+            bsm_of = {t: _fwd_block_size_m(t, count) for t in range(lo, hi + 1)}
+            pairs = {(t, bsm_of[t]) for t in tests}
+            for bsm in sorted(set(bsm_of.values())):
+                ts = [t for t in range(lo, hi + 1) if bsm_of[t] == bsm]
+                pairs.add((ts[0], bsm))
+                pairs.add((ts[-1], bsm))
+            print(f"{ALIGN2_TAG} class {cls}: equivalence on (T, bsm) {sorted(pairs)}, chunks {chunks}", flush=True)
+            n_ok = {c: 0 for c in chunks}
+            bad = {}
+            inc = _align2_incumbent(lo)
+            for tokens, bsm in sorted(pairs):
+                for cstart in ALIGN2_STARTS:
+                    for name, ids in _align2_routings(tokens, cstart, count, gen, device).items():
+                        ref = inc(ids, cstart, count, bsm)
+                        for chunk in chunks:
+                            if chunk in bad:
+                                continue
+                            why = _align2_first_mismatch(ref, _align_two_phase(ids, cstart, count, bsm, chunk))
+                            if why:
+                                bad[chunk] = f"T={tokens} bsm={bsm} local_start={cstart} {name}: {why}"
+                            else:
+                                n_ok[chunk] += 1
+            torch.cuda.synchronize()
+            for chunk, why in bad.items():
+                print(f"{ALIGN2_TAG} class {cls} chunk {chunk} OFF: {why}", flush=True)
+            good = [c for c in chunks if c not in bad]
+            rep_bsm = bsm_of[rep_t]
+            if not good:
+                lines.append(f"{ALIGN2_TAG} PATH CHOSEN class={cls} T={rep_t} bsm={rep_bsm} = master, no chunk "
+                             f"passed equivalence")
+                continue
+            ids = _align2_routings(rep_t, 0, count, gen, device)["skewed"]
+            fns = {"incumbent": lambda: inc(ids, 0, count, rep_bsm)}
+            for c in good:
+                fns[f"c{c}"] = lambda c=c: _align_two_phase(ids, 0, count, rep_bsm, c)
+            meds = _align2_gate_time(fns, device)
+            best = min(good, key=lambda c: meds[f"c{c}"])
+            ratio = meds["incumbent"] / max(meds[f"c{best}"], 1e-9)
+            print(f"{ALIGN2_TAG} [A/B] class {cls} T={rep_t} bsm={rep_bsm} cold-L2 graph medians over "
+                  f"{ALIGN2_REPLAYS} replays (empty baseline subtracted): incumbent {meds['incumbent']:.2f} us; "
+                  + "; ".join(f"chunk {c} {meds[f'c{c}']:.2f} us" for c in good)
+                  + f"; best chunk {best} ratio {ratio:.3f} (ON at >= {ALIGN2_MIN_RATIO})", flush=True)
+            if ratio >= ALIGN2_MIN_RATIO:
+                ok[cls] = best
+            lines.append(f"{ALIGN2_TAG} PATH CHOSEN class={cls} T={rep_t} bsm={rep_bsm} = "
+                         + (f"align2 chunk {ok[cls]}" if ok[cls] else "master")
+                         + f", incumbent {meds['incumbent']:.2f} us, align2 {meds[f'c{best}']:.2f} us, "
+                           f"ratio {ratio:.3f}, equivalence {n_ok[best]} cases ok")
+            del ids, fns
+    except Exception as e:
+        print(f"{ALIGN2_TAG} OFF: setup raised {type(e).__name__}: {str(e)[:300]}", flush=True)
+        for cls in ok:
+            ok[cls] = 0
+        lines.append(f"{ALIGN2_TAG} PATH CHOSEN all classes = master (setup raised)")
+    lines.append(f"{ALIGN2_TAG} final flags align2_ok={dict(ok)} (class: chunk, 0 = master)")
+    return lines
 
 
 def _align_self_check(device, count):
@@ -2676,12 +3004,19 @@ def prepare(weights: Weights) -> dict:
         # The original BF16 weight for _post_norm_combine_kernel, which adds the 1 in fp32.
         "post_norm_w": weights["post_norm_w"].contiguous(),
         "w2_mode": "master",
+        "align2_ok": {cls: 0 for cls in ALIGN2_CLASSES},
     }
+    align2_lines = []
     if (0, 32) in banks and banks[(0, 32)]["expert_map"] is not None:
+        # Before the w2 self-check, so its T <= 32 _forward runs the align that will be timed.
+        align2_lines = _align2_setup(state, device, 0, 32)
         state["w2_mode"] = _w2_atomic_self_check(weights, state, device)
     # The wgmma verify path: built, retiled and self-checked here; state["wgmma_ok"] gates it.
     _wg_setup(weights, banks, state, device, t_prepare)
     torch.cuda.synchronize()
+    # The [align2] lines last, so the archived log tail keeps them.
+    for line in align2_lines:
+        print(line, flush=True)
     return state
 
 
@@ -2694,20 +3029,23 @@ def _moe_marlin(x, topk_ids, topk_weights, bank, state, w2_mode="master"):
     expert_map = bank["expert_map"]
 
     topk_weights = topk_weights.to(torch.float32).contiguous()
-    block_size_m = _block_size_m(num_tokens, bank["count"])
-
-    if num_tokens >= 128:
-        # Hypothesis marlin-block-m-two-smaller-on-postnorm: two candidates below SGLang's pick
-        # at the verify shapes (bs=128: 48 -> 16, bs=256/257: 64 -> 32). A host-side pick on the
-        # shape only; num_tokens < 128 keeps SGLang's pick.
-        block_size_m = BLOCK_SIZE_M_CANDIDATES[max(BLOCK_SIZE_M_CANDIDATES.index(block_size_m) - 2, 0)]
+    # SGLang's pick, and at >= 128 tokens the two-smaller pick (hypothesis
+    # marlin-block-m-two-smaller-on-postnorm: bs=128: 48 -> 16, bs=256/257: 64 -> 32); shape only.
+    block_size_m = _fwd_block_size_m(num_tokens, bank["count"])
     if expert_map is not None:
         # One launch does the expert_map gather and the align, with the bank's prepare-time
         # start/count: up to 32 tokens _align_small (hypothesis triton-map-align-small-m-port), above
         # it _align_parallel (hypothesis align-parallel-per-expert-verify). Branch on shape only.
-        align = _align_small if num_tokens <= ALIGN_FUSED_MAX_TOKENS else _align_parallel
-        local_ids, (sorted_ids, block_experts, n_padded) = align(
-            topk_ids, bank["start"], bank["count"], block_size_m)
+        cls = _align2_class(num_tokens)
+        chunk = state["align2_ok"][cls] if cls is not None else 0
+        if chunk:
+            # Hypothesis align-two-phase-port-from17: prepare() gated this class (every T warmed).
+            local_ids, (sorted_ids, block_experts, n_padded) = _align_two_phase(
+                topk_ids, bank["start"], bank["count"], block_size_m, chunk)
+        else:
+            align = _align_small if num_tokens <= ALIGN_FUSED_MAX_TOKENS else _align_parallel
+            local_ids, (sorted_ids, block_experts, n_padded) = align(
+                topk_ids, bank["start"], bank["count"], block_size_m)
     else:
         local_ids = topk_ids.to(torch.int32)
         if expert_map is not None:
