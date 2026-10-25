@@ -63,7 +63,7 @@ review: proceed
 status: running
 review_at: 2026-10-25T054818Z
 review_companions: null
-stage: implemented
+stage: dispatched
 claimed_at: 2026-10-25T054819Z
 base_sha: edf4bf29fe8d509a2574c0becee65138cb7705f2
 base_blob: d8769ef25caf845a0e207538ccc5c62394b6ee3b
@@ -80,6 +80,8 @@ submission_blob: 7eda7a001d411ff41aaf5946ed5c59c840686052
 lint_warnings: 36
 attempt_file: 2026-10-25T084553Z-check-restack-sk-pseudo-b1-cluster-c16-c4.md
 prepared_at: 2026-10-25T084553Z
+job: eb6ff0cb701d4def
+dispatched_at: 2026-10-25T084601Z
 ---
 
 # restack-sk-pseudo-b1-cluster-c16-c4
