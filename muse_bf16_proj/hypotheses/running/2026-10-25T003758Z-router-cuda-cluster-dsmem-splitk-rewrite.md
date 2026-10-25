@@ -82,7 +82,7 @@ review: proceed
 status: running
 review_at: 2026-10-25T004221Z
 review_companions: null
-stage: claimed
+stage: implemented
 claimed_at: 2026-10-25T004221Z
 base_sha: 97cde2a7e308e68b1ea49821182fcf5267f527bd
 base_blob: a8bb42ac483318e9fbc84bc7826a27b7a704d1fb
@@ -91,6 +91,12 @@ worktree: .worktrees/muse_bf16_proj/router-cuda-cluster-dsmem-splitk-rewrite
 mode: null
 restack_of: null
 stale_base: null
+implemented_at: 2026-10-25T005025Z
+impl_commit: 0dea576ae73cfb9d114326146a90d40766b24f0e
+submission_sha256: b4e4fc77e63373b67db082d5f1ca688f0e1f1dedddd6980239c87e4da18a72ba
+norm_sha256: f13d86368030d24540e8b681214e491d060b3df7588484a1263247ab1efc0722
+submission_blob: 441dcedb5cd6286e6851afb629598d27c30f6c82
+lint_warnings: 3
 ---
 
 # router-cuda-cluster-dsmem-splitk-rewrite
@@ -150,3 +156,52 @@ No companions. Clean shape gate; the profile names the new kernel on the four ro
 - Stage 2 (m=128/256) needs a K-tiled x pipeline.
 - At harvest confirm the build line, occupancy print, PATH CHOSEN, and no memset node before reading numbers.
 
+
+## Implementation notes
+
+Edited only `muse_bf16_proj/submission.py` in the worktree (+554 lines, nothing removed; master's router, memset path and every other layer are untouched). New section (7) before `prepare()`, a 3-line hook in `prepare()` after the router warm-up (`_router_cluster_prepare`), and a 3-line branch in `kernel_fn`'s router tail (`_router_cluster_route`).
+
+What changed:
+- `load_inline` extension `muse_bf16_router_cluster_v1` at import (`TORCH_CUDA_ARCH_LIST=9.0a` around the build, restored after; `-O3 -lineinfo`; arch flags printed). No sm_90a-only PTX is used, so no `__CUDA_ARCH_FEAT_SM90_ALL` guard.
+- Kernel `router_kernel<CS, NT>`, 128 CTAs, 128 threads, `cudaLaunchKernelEx` with cluster dim CS on `at::cuda::getCurrentCUDAStream()`. Cluster owns 2*CS output columns, rank r owns K [r*8192/CS, +8192/CS). Weight is the MMA A operand; tokens are B (NT 8/16/32, rows >= m zero-filled by cp.async src-size 0, never stored). Each warp loads its own K quarter (plain `cp.async.cg` 16 B, XOR-swizzled, one commit group per 64 K), so the main loop needs only `__syncwarp`.
+- Small deviation from the spec (same math): each group of 8 output columns is ONE 16-row A tile (rows 0-7 hi, rows 8-15 lo of the same columns), so one MMA gives hi.x and lo.x in different D rows held by the same thread, added in fp32 (c0+c2, c1+c3). The MMA count equals the spec's "two MMAs per k16 step", with simpler fragments.
+- Reduce: warp partials (aliasing the weight smem) summed in warp order 0..3 into a [cols, NT] CTA partial, `barrier.cluster.arrive.release` / `wait.acquire`, rank r sums columns {2r, 2r+1} over ranks 0..CS-1 in fixed order via `mapa` + `ld.shared::cluster`, plain fp32 stores, then the second `barrier.cluster` before exit (kept per review). No mbarrier or spin wait exists, so there is nothing to bound.
+- Review fixes applied (the review wins where it corrects the spec): launch via `cudaLaunchKernelEx` with `cudaGetLastError` checked and raised, no sync in `kernel_fn`; `torch.empty` output in `kernel_fn`; gate on x dtype / contiguity (`stride(1)==1`, `stride(0)%8==0`) / 16 B alignment / cfg shapes, falling back to master otherwise; `MaxDynamicSharedMemorySize` set per instance (CS=8: NT=32 is 130 KB; CS=4: NT=32 is 193 KB); `cudaOccupancyMaxActiveClusters` queried per instance and printed; a CS=4 variant is built (32 clusters of 4, 8 columns and K 2048 per CTA, same 64 KB weight per CTA) and used when CS=8 reports < 16 clusters and CS=4 reports >= 32, else master; PATH CHOSEN printed per m (1..32) and for m>32; unique extension name and its own constant `state["router_cluster"]` (NT bucket -> cluster size, 0 = master; set from synthetic data only).
+- Self-check in `prepare()` at m in {1, 8, 9, 16, 17, 32} (17 added to cover the NT=32 bucket's low end), each run twice: rel L2 <= 2e-5 vs `x.double() @ router.double().T`, worst row <= 1e-4 (5x), power-of-two one-hot row within 1e-6 of the hi+lo reconstruction, finite, run 2 bit-identical. Flushed print before every launch and `torch.cuda.synchronize()` plus flushed print after it.
+- Diagnostics (try/except): regs / spills / static+dynamic smem / max active clusters for all 6 instances; warm-L2 and cold-L2 (256 MB flush) eager event medians at m in {1, 8, 16, 32} for the cluster kernel, the same kernel with the DSMEM reduce removed (`mode=0`: no barriers, no peer reads, own partial stored, wrong result, diagnostic only) and master `_router_forward`.
+- Not run: no GPU, nvcc or torch on this node. The CUDA has never been compiled; the first measurement must be an `okc check`.
+
+Milestones recalibrated against master (base run 1602a4e947e64090: kernel 3.2/3.5/4.1/3.2 us + 0.7 us memset, rows 5.73/6.03/6.55/5.91 us for m=1/16/32/8). Row ~= kernel + 1.9 us, so M3 (rows 4.0-4.5) needs a ~2.1 us kernel and is unlikely; realistic is kernel 2.7-3.2 us, rows 4.7-5.1 us, saving 0.7-1.2 us per shape. M1 correct; M2 row below master's rows above; M3 within ~1.5x of floor (floor 1.8-1.9 us) i.e. rows <= ~4.7 and headline CI > 1.0. A sibling (`o-unpooler-slice-cuda-cluster-dsmem-rewrite`) uses the same design in another worktree; names and constants here are distinct.
+
+At harvest confirm first: the build line, the occupancy prints, PATH CHOSEN per m, no memset node in the profile, then read the rows.
+
+## Rules check
+
+- [x] CUDA-graph capturable: `kernel_fn` router branch does `torch.empty` plus one `cudaLaunchKernelEx` on the current stream; no `.item()` / `.cpu()` / `synchronize()` / prints; branches only on shapes, strides, alignment, cfg and a prepare() constant. All `synchronize()` calls are in prepare() (diff: `_rc_check`, `_rc_time`).
+- [x] Nothing derived from `data` is cached: `state["router_cluster"]` comes from synthetic x and the weights only; per-call `out` is fresh.
+- [x] Weights: hi/lo bf16 pair built in prepare() (unchanged from master); router stays FP32 -> bf16 hi+lo with fp32 accumulation, the permitted exception; other layers untouched.
+- [x] Activations BF16 (x bf16 in, no cast); output fp32 as the router requires.
+- [x] n/a: attention rule, this is a dense GEMM.
+- [x] No timing patches, harness frames/I/O/secrets, module edits, reference import, subprocesses or network: `os` is used only for `TORCH_CUDA_ARCH_LIST` set/restore; `load_inline` compiles in-process (no subprocess in the file; lint passed).
+- [x] All work inside the timed call; no output caching or replay; the self-check and timing diagnostics run in prepare() on synthetic data only.
+
+okc_lint output:
+```
+warn  host-sync    L1089: torch.cuda.synchronize()  (outside kernel_fn's call graph; fine in prepare())
+warn  dtype        L1116: flush = torch.empty(ROUTER_CLUSTER_FLUSH_BYTES, dtype=torch.uint8, device=dev)  (allowed only where SGLang does the same)
+warn  host-sync    L1132: torch.cuda.synchronize()  (outside kernel_fn's call graph; fine in prepare())
+OK with warnings: muse_bf16_proj/submission.py
+```
+(The uint8 warning is the L2-flush scratch buffer in the prepare() diagnostic, not data or weights.) `python3 -I -m py_compile` passed; `__pycache__` removed.
+
+## Pre-flight audit
+
+Audited 2026-10-24 by an opus subagent, by reading (no GPU here). **Verdict: dispatch** with no code changes.
+
+- Fragments checked by hand: the ldmatrix x4 A addressing (arow/ahalf giving a0..a3 = rows 0-7/8-15 x k 0-7/8-15), the B fragment from row-major x through non-trans ldmatrix (token = lane/4, k = 2*(lane%4)), the XOR swizzle on store and load (the chunk base is a multiple of 8, so the XOR stays inside its 8-chunk block), and the stacked hi/lo tile (c0+c2, c1+c3 = (hi+lo).x for column g*8+lane/4, with hi and lo against the same B). Each output element is stored once (cluster, rank, cj, tok<m); rows tok>=m are zero-filled and never stored.
+- DSMEM: mapa of the CTA's own P address with rank = blockIdx.x % CS (cluster dim is (CS,1,1)), then barrier.cluster.arrive.release / wait.acquire.aligned executed by every thread (mode is uniform) both before the peer reads and before exit. No early exit.
+- Precision: a numpy emulation of the kernel's exact fp32 accumulation order (k16 MMA steps, then warp, then rank) on N(0, 1/sqrt(K)) weights gives rel L2 2.4-2.7e-6 and a worst row of 2.8e-6 at m=1/8/9/32. The 2e-5 / 1e-4 gates therefore pass with about 8x margin, and the one-hot row reproduces hi+lo exactly. The judge's router bound is 1e-4.
+- Launch: cudaLaunchKernelEx with the cluster attribute on getCurrentCUDAStream, MaxDynamicSharedMemorySize set in prepare (via info) before any launch, the launch checked, the output from torch.empty, and the occupancy gates 16 (CS=8) / 32 (CS=4). The gates are perf-only, because the clusters have no inter-cluster dependency. There is no ptxVersion gate. TORCH_CUDA_ARCH_LIST is restored in `finally`.
+- Rules: kernel_fn branches only on cfg, shape, stride and alignment plus a prepare() constant; it has no sync and caches nothing from data. Lint passes with warnings, all in prepare(). py_compile passes.
+
+Residual risk: the CUDA has never been compiled (template or asm build errors fall back to master), and a first-launch fault in the self-check would poison the context and fail the run instead of falling back.
