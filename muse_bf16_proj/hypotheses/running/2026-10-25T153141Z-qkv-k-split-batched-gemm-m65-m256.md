@@ -46,7 +46,7 @@ review: proceed
 status: running
 review_at: 2026-10-25T203645Z
 review_companions: null
-stage: implemented
+stage: dispatched
 claimed_at: 2026-10-25T203645Z
 base_sha: 752b3dcbd27a45849093c5387a4716ce9fca68ae
 base_blob: ad8d7254a64a52db2a8f56ec0ad262748153a2e8
@@ -63,6 +63,8 @@ submission_blob: 76386bd87b0c1d31910cc21b81598ddb2c1addba
 lint_warnings: 39
 attempt_file: 2026-10-25T204055Z-submit-qkv-k-split-batched-gemm-m65-m256.md
 prepared_at: 2026-10-25T204055Z
+job: 9d93c3d0cc184226
+dispatched_at: 2026-10-25T204106Z
 ---
 
 # qkv-k-split-batched-gemm-m65-m256
