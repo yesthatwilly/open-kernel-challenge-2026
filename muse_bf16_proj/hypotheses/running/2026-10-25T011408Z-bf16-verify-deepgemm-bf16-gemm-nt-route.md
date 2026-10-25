@@ -76,7 +76,7 @@ base_sha: 9bb477f684086cd51b09c1e8a08fa8d50ae04e59
 base_blob: a8bb42ac483318e9fbc84bc7826a27b7a704d1fb
 branch: hyp/muse_bf16_proj/bf16-verify-deepgemm-bf16-gemm-nt-route
 worktree: .worktrees/muse_bf16_proj/bf16-verify-deepgemm-bf16-gemm-nt-route
-mode: null
+mode: check
 restack_of: null
 stale_base: null
 implemented_at: 2026-10-25T012031Z
@@ -85,6 +85,8 @@ submission_sha256: 0fb340d50b20a772f3b4d35da138746ed8a68dfa6132fa6be2da5fa424b42
 norm_sha256: ee29894b95224268b60cded8c47c7166f746b89f606ac3de3882987fb074fc1b
 submission_blob: 94b37346a8f849f5cc5a87d48977b9ff1b4f513b
 lint_warnings: 3
+attempt_file: 2026-10-25T012031Z-check-bf16-verify-deepgemm-bf16-gemm-nt-route.md
+prepared_at: 2026-10-25T012031Z
 ---
 
 # bf16-verify-deepgemm-bf16-gemm-nt-route
