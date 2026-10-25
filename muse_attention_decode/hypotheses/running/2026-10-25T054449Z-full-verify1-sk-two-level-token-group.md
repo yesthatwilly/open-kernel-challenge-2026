@@ -52,7 +52,7 @@ review: proceed
 status: running
 review_at: 2026-10-25T054747Z
 review_companions: null
-stage: claimed
+stage: implemented
 claimed_at: 2026-10-25T084919Z
 base_sha: 39fb54fe3f47f42f763160b2e09426e294bdbe7a
 base_blob: 7fd30a78be18303b7c935dc944c31ff33649bed0
@@ -61,6 +61,12 @@ worktree: .worktrees/muse_attention_decode/full-verify1-sk-two-level-token-group
 mode: null
 restack_of: null
 stale_base: null
+implemented_at: 2026-10-25T090903Z
+impl_commit: 990bf2fe52e2cc0943c18559531970d9a67f2c2b
+submission_sha256: 404a5c90967355a77eceb12855212df3d9518e8dc01be95ec5a3011f19475633
+norm_sha256: 6e37eb509d458b2cf40dde59667d4cb698e6af7d647d17281d847e7fd9613cb5
+submission_blob: 2a3da06aac723bdc92ec4648642f25ec1c2ccc2c
+lint_warnings: 41
 ---
 
 # full-verify1-sk-two-level-token-group
@@ -113,3 +119,74 @@ No companion. The route is decided in prepare from printed interleaved graph-rep
 - Is full-verify1-cuda-streamk-batch1 (queued p2, stacked on the regressed full-verify-cuda-streamk-splitkv) still worth a check? It targets the same row with the 64-row A8 tiles that LESSONS calls MMA-bound. Never stack it with this. Consider retiring it along with the superseded full-verify1-sk-pseudo-decode.
 - If stage 2 (sliding s2) fails to build or self-check, this hypothesis should rebase onto s1 (which has PSEUDO with TG=1 implicitly) rather than wait. The full-layer TG code does not need the sliding TG gate to land.
 
+
+## Implementation notes
+
+Base check: worktree HEAD is 39fb54fe ("impl: sliding-verify-sk-pseudo-s2-token-group"), the parent's impl commit; master's submission.py is unchanged since (only md commits after it), so no 3-way merge was needed. Edited only `muse_attention_decode/submission.py` in the worktree (about +770 lines, mostly the Python gate/self-check; the CUDA change is about 220 lines).
+
+What changed
+- Kernel: `splitkv_attn_sk_kernel` gets a 6th template parameter `FV` (0 = landed/PSEUDO, unchanged). New instantiations (module built with `-DSK_PSEUDO=1 -DSK_FULLV=1`): variant 10 = TG 1, 11 = TG 2, 12 = TG 4 (FV=1, reuse the existing TG=1 / token-pair code with `lo = 0`), 13 = TG 8 one 64-key pass per tile, 14 = TG 8 two 32-key passes per tile. All two-level ticket, 4 stages, grid-agnostic.
+- Window: a separate FULLV constant `FV_WINDOW = 1 << 30` replaces `PS_WINDOW` only through new template parameters (`load_prefix_pseudo<TG, WIN>` and a `constexpr WINV`); the shared PSEUDO predicate / `_ps_gate` and the sliding 2048 are untouched (the full layer has window 0, lo = 0 for every token, not 2048). The Python route is a new predicate `_fv_gate(cfg)` (window 0, q_len 8, batch 1, page 1, tp8, no RoPE) and a new branch in kernel_fn after the pseudo branch.
+- TG = 8 kernel branch (`else if constexpr (QONE)`): warp w = kv head w & 1, token pair w >> 1 (tokens 2p, 2p+1 in mma rows 0-7 / 8-15, as the TG 2/4 code), all 64 keys of each tile, so there is no cross-warp key merge. Partials go from registers through a per-warp smem stage (ring stages st+1, st+2, which hold only consumed tiles at the last tile; stride 66 floats + 1 per 32 dims, conflict-free) to the slot rows as coalesced stores. The first-level and second-level two-level merges are spread over warps by token (warp w merges and finalizes token w; its 32 lanes cover 2 heads x 64 dims per step so `finalize_store`'s 16-lane shuffles still work).
+- q for TG 8 uses one smem slot (Lay got a `QS` template parameter, default = STAGES, so every existing layout is unchanged; FULLV TG 8 is 8 KB for q instead of 4 x 8 KB, ~99 KB total, 2 CTAs/SM). The q load is 2 chunks per thread (512 chunks, 256 threads).
+- Fixed in passing (no effect on landed instantiations): the `prb` shift for `TG == 8` (`b >> 0`; the old expression gave 1).
+- Host: `sk_tg / sk_two / sk_smem / sk_pick / sk_prepare` extended; `sk_attn` TORCH_CHECKs FULLV is batch 1. Build chain `_build_sk`: FULLV+PSEUDO module first; on failure the parent's PSEUDO-only module; then the landed source. So a FULLV compile error cannot take the parent's sliding route down.
+- New Python: `_fv_launch` (workspace `(grid + 8/TG) * TG` slot rows, group slots `8/TG * 32 * TG`, all from config / grid only), own self-resetting ticket arrays `_fv_ticket` (16) and `_fv_gticket` (256), zeroed once at import, `_fv_fa3` (master's unpaired full path, `window_size=(-1,-1)`; the sliding `_ps_fa3` would pass (-1, 0)), `_fv_synthetic/_fv_prepare_q/_fv_reference/_fv_plant/_fv_case`, `_fv_validate`, `_fv_time_interleaved`, `_fv_gate_time`, `_fv_two_state_check`, `_fv_setup` (called after `_ps_setup` in its own try/except).
+
+Review points applied
+- "Full layer window = 0, so lo = 0 for every token; do NOT reuse the sliding 2048": done as above (FV_WINDOW; no 2048 anywhere on the FULLV path). The review's own text already says the same.
+- "Separate full-verify gate rather than loosening the shared PSEUDO predicate": `_fv_gate` / `_FV_ROUTE`, `_ps_gate` and `_PS_ROUTE` are unchanged.
+- "Self-check at full ctx > 2048 (80000 and ~5000) against fp32 reference": `_fv_validate` runs lens 80000 and 5003 at grids SM/2, SM, 2xSM (plain, kv_scale 0.25 and planted coherent-style keys that make the softmax peaked, including keys inside the 8 new rows so the last tile's per-token causal mask matters), plus lens 0, 3, 56, 57, 4089 (tile edges, S = 8..4097) and grid 3. TG 1 runs a subset. Rel L2 < 2e-2 against `_fv_reference` (fp32, e4m3 q, no RoPE, full causal), each launch announced before and synced + printed after.
+- BUILDER open question "TG=8 warp mapping, print regs/local for the options": mapping A (pair per warp, built) is variant 13 (8 live n8 key blocks) and variant 14 (two 32-key passes, fewer live registers); `_fv_validate` prints regs / local / smem / CTAs-per-SM for both (and refuses any variant that spills: no local memory). Mapping B (landed key split across 4 warps per kv head, looping 4 token pairs per warp) is not built: it needs 4 x 32 fp32 accumulator registers per thread under the 128 cap, a guaranteed spill; this reasoning is printed by `_fv_layout_lines`. I could not compile or run anything here (no GPU, torch or nvcc), so the printed regs/local lines are the first real numbers.
+- BUILDER open question "spread the two-level merge over warps by token": done (warp w merges token w at both levels). It does not reduce per-thread merge work (128 (token, head) pairs x 16 lanes / 256 threads = 8 per thread either way); it removes the token loop dependency and uses `#pragma unroll 2` over the head loop for L2 latency overlap. The grid sweep covers {SM/2, SM, 2xSM} and prints CTAs, tiles per CTA, group sizes, partial MB per grid.
+- Grids {SM/2, SM, 2xSM}: swept for TG 2/4/8 (TG 1 at SM only, for the record); gate prints every timing.
+- "TWO/PSEUDO=false instantiations byte-identical": every change on those instantiations is a constant folded to the same value (`WIN` default = PS_WINDOW, `WINV`, `QONE = false` => the original q-load statement is kept verbatim in the `else` arm, `Lay QS = STAGES`), and the TG=1 and generic TG 2/4 code is textually untouched. `_fv_setup` prints `sk_attrs` of variants 0 and 3 against the landed 121 regs / 0 local / 95264 B / 2 CTAs per SM and flags DRIFT; I cannot verify the SASS offline.
+- "workspace sized from config only": see `_fv_launch`. "tickets self-resetting": the last arriver of each group / block resets its own counter as in the landed kernel; the self-check prints the ticket sum after the cases and after the replay checks and drops the route if non-zero.
+- "two-state rule self-check": `_fv_two_state_check` prepares two states, captures kernel_fn once on each, then replays A, B, A, B with in-place refills of fresh inputs each time (lens plans 80000 / 5003 / 79321 / 4999, then kv_scale 0.25 with 3 / 70000 / 56 / 12345), output poisoned with NaN, compared with the fp32 reference of that state's current inputs. No device pointer, tensor map or workspace is held in a module global; the only globals are the self-resetting int32 ticket arrays.
+- "kernel_fn clean": the new branch is `if fullv: return _full_verify1_sk(...)`: one config-only predicate, one launch, no prints, no sync, no try/except, no input-dependent allocation (`torch.empty` sized by grid / config), nothing cached from inputs.
+- Gate: interleaved cold-L2 graph replays (256 MB flush, round-robin with alternating order, 21 reps, median) of every candidate, master's FA3 path (prepare + main + combine + norm-gate, pre-attention on neither side) and an empty-graph baseline (one trivial kernel). Routed only if the best candidate wins by >= 1.05x BOTH raw and baseline-subtracted (raw is the stricter when the new path is faster). PATH CHOSEN prints both numbers.
+
+Deviations / things to know
+- TG = 1 (variant 10) is in the sweep for the record only; it reads the 20 MB context 8 times (L2-served after the first) and is expected to lose.
+- Single-level ticket FULLV variants were not built (the review and decode_1 data say two-level at B = 1).
+- Inherited bug in the PARENT (not touched, outside this stage's area): the not-routed branch of the final PATH CHOSEN loop in `_ps_setup` evaluates `i.get(tgs, ) or none` and `i[t_a]` (undefined names, missing quotes). If any sliding band is not routed, `_ps_setup` raises NameError after setting `_PS_ROUTE`, and the caller's except runs `_PS_ROUTE.clear()`, which silently sends every sliding verify band back to FA3. Judge the parent's own run for this before trusting sliding rows here.
+- Compile risk: the FULLV module has 5 more instantiations of a big template (compile time up) and I could only g++ -fsyntax-only the kernel text against a CUDA shim (all three define sets parse and instantiate; nothing was run on a GPU).
+
+## Rules check
+
+- [x] CUDA-graph capturable: kernel_fn's new branch is one config-only predicate plus one `_EXT2.sk_attn` launch (the ticket arrays and `torch.empty` workspaces are shape/config sized); the self-checks `.item()` / `synchronize()` only in prepare-time functions (okc_lint lists them as outside kernel_fn's call graph). Checked in `git diff`.
+- [x] Nothing derived from `data` is cached across calls: the diff adds no cache; `_FV_ROUTE` holds (variant, grid) from the device SM count only; tickets hold no data.
+- [x] n/a: no weights in this problem.
+- [x] Activations BF16 (out bf16); KV cache FP8 e4m3 read as before; q is the pre-attention e4m3 query (no coarser); softmax / merges fp32; P is fp16 for the PV MMA as in the landed kernels.
+- [x] Attention sees every key: window 0, every token attends keys 0..p (per-token causal mask on the last tile), checked against the fp32 full-causal reference at 80000 / 5003 and tile edges; no top-k, sparse, block-skip or weight skipping.
+- [x] No timing patches, harness frames/I/O/secrets, module edits, reference import, subprocesses or network (grep of the diff for subprocess / fork / multiprocessing / Popen: none; the build uses torch load_inline in-process as the landed TUs).
+- [x] All work inside the timed call; no output caching or replay.
+- [x] sm_90a: the module is built with `TORCH_CUDA_ARCH_LIST=9.0a` (restored after) and `-lineinfo`; the arch flags are printed; this stage adds no wgmma / setmaxnreg (mma.sync only, as the landed kernels).
+- [x] Self-check announces each launch before and syncs + prints after; every spin-free (no mbarriers; tickets are not waited on); any miss or unsupported shape lands on master's FA3 path with a PATH CHOSEN line; nothing raises.
+- [x] Two-state rule: no module / static global holds a device pointer, TMA map or state buffer (only the self-resetting int32 tickets); self-check alternates two captured states with refilled inputs.
+
+okc_lint output:
+
+```
+OK with warnings: muse_attention_decode/submission.py
+(only host-sync warnings, all in prepare-time functions outside kernel_fn's call graph)
+```
+
+## Pre-flight audit
+
+Audited 2026-10-25 by an opus subagent (read-only plus emulation; there is no GPU, torch or nvcc on the build node). **Verdict: dispatch-with-fixes.**
+
+Verified
+- Hand fix of the parent's quote-stripped f-string in `_ps_setup`'s not-routed PATH CHOSEN branch (about lines 3447-3449): the quotes are restored, and `'t_a'` / `'fa3_a'` are always set together in `_ps_gate_band`. A symtable/AST pass over the whole file (every name referenced in any scope, including 268 f-strings, checked against module scope and builtins) finds no undefined names. The same pass on the parent commit flags exactly `tgs`, `none`, `fa3_u`, `t_a` and `fa3_a` in `_ps_setup`, so the checker works. A separate pass found no except handler that reads a local assigned only inside its try.
+- Full path: `load_prefix_pseudo<TG, FV_WINDOW>` and `WINV` give lo = 0 for every token, and the masks are t < S - 7 + j, which matches reference.py (keys 0..p). The self-check covers lens 80000 and 5003 at grids SM/2, SM and 2xSM, plus coherent plants inside the 8 new rows and tile edges 0/3/56/57/4089.
+- TG=8 kernel mapping: g = warp & 1 and pp = warp >> 1 give 8 distinct (kv head, token pair) pairs. QK/PV fragments, the V dim mapping (p = (qi*2+e)*8 + nb), the staging (only consumed ring stages, no cp.async in flight at the last tile, 8448 B per stage), the slot/ws/gacc indexing, the ticket sizes and the per-token finalize rows were all checked. With gx = 1 it goes through the ticket with ngrp = 1, which is correct.
+- Separate gate: `_fv_gate` requires window 0, q_len 8, batch 1, page 1, 16/2/64 heads, rope_theta 0 (reference.py sets 0.0 on full layers) and a validated route. `_ps_gate`/`_PS_ROUTE` are unchanged, so the sliding routes are untouched. Among the judge's tests only the scored full verify_1 shape routes; the B=1 1M test is page 64.
+- Landed instantiations: variants 0-9 fold every change to the original constants (QS = STAGES, WIN = PS_WINDOW, original q-load arm, prb unchanged for TG 1/2/4). The printed variant 0/3 attributes witness this.
+- No module/static global holds a device pointer: there are only the self-resetting int32 `_FV_TICKETS`/`_FV_GTICKETS` and floats in `_FV_INFO`. The two-state self-check alternates A/B with in-place refills under a NaN poison.
+- Every miss falls back without raising: build failure, attributes/spill, self-check, gate and two-state each land on FA3 with a PATH CHOSEN line, and `_fv_setup` is wrapped at module level. kernel_fn's new branch is one config-only predicate plus one launch, with no sync, print, try or input-sized allocation. okc_lint reports only prepare-time host-sync warnings.
+
+Fixes
+- `_fv_plant` wrote planted keys with an FP8 advanced-index assignment (`kc[rows, gh] = ... .to(FP8)`, an index_put on float8_e4m3fn that no earlier run had exercised). If that raised, `_fv_validate` would throw and every FULLV variant would drop to FA3, so the run would be wasted. It now writes through a uint8 byte view, which is bit-identical.
+- Added `PATH CHOSEN: full verify_1 FA3 (fallback: stage-2 module unavailable)` for the case where the splitkv or stage-2 module fails before `_fv_setup` runs. Before this, that fallback printed no full verify_1 line.
+
+Residual risk: the uncompiled CUDA (5 more template instantiations; a FULLV compile error costs a second PSEUDO build's compile time) and register spills on variant 13. The gate requires 1.05x both raw and baseline-subtracted, which is stricter than the spec's subtracted-only rule and could reject a thin win.
