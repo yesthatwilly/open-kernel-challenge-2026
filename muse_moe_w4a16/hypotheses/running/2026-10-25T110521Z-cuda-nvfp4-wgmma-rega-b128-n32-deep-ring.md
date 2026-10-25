@@ -63,7 +63,7 @@ review: proceed
 status: running
 review_at: 2026-10-25T120207Z
 review_companions: null
-stage: implemented
+stage: dispatched
 claimed_at: 2026-10-25T120207Z
 base_sha: 57e77548ba31c2145d575df62752f62684b2f6ad
 base_blob: 77f34503659c90a5953f91a93ba6e1a2b02e4613
@@ -80,6 +80,8 @@ submission_blob: 0ff43a7c6e340a04dce17ace8dc8e7b37aca61ac
 lint_warnings: 78
 attempt_file: 2026-10-25T121529Z-check-cuda-nvfp4-wgmma-rega-b128-n32-deep-ring.md
 prepared_at: 2026-10-25T121529Z
+job: 6759e36bbd4648fc
+dispatched_at: 2026-10-25T121537Z
 ---
 
 # cuda-nvfp4-wgmma-rega-b128-n32-deep-ring
