@@ -70,7 +70,7 @@ review: proceed
 status: running
 review_at: 2026-10-25T002131Z
 review_companions: null
-stage: implemented
+stage: dispatched
 claimed_at: 2026-10-25T002131Z
 base_sha: eacc593b09a9f93781b074c1c92079abb1a0756e
 base_blob: c6854f093588da524e63657576b27ed720756e32
@@ -87,6 +87,8 @@ submission_blob: 695c97d2e9fef8f806ec02d2fe14a02668989e3f
 lint_warnings: 10
 attempt_file: 2026-10-25T003701Z-check-full-decode-splitkv-s2-streamk-ticket-inproc.md
 prepared_at: 2026-10-25T003701Z
+job: e592b1f5d3db4f83
+dispatched_at: 2026-10-25T003708Z
 ---
 
 # full-decode-splitkv-s2-streamk-ticket-inproc
