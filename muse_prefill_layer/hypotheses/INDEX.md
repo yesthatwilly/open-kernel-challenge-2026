@@ -1,6 +1,6 @@
 # muse_prefill_layer hypotheses
 
-Regenerated 2026-10-25T000558Z. Best: 1.0705x [1.0545,1.0866] job `c4d14d62f11e4aaf` (check)
+Regenerated 2026-10-25T003217Z. Best: 1.0744x [1.0583,1.0905] job `502f2eab95164781` (submit)
 
 | created | slug | kind | area | where | outcome | speedup | CI | job | mode | promotion | review | expected hit |
 |---|---|---|---|---|---|---|---|---|---|---|---|---|
@@ -46,9 +46,13 @@ Regenerated 2026-10-25T000558Z. Best: 1.0705x [1.0545,1.0866] job `c4d14d62f11e4
 | 2026-10-24T232728Z | restack-router-hilo-align32-zerostore | primary | router GEMM + MoE align (T>4096) + w2 zero-store (T>4096) | done/neutral | neutral | 1.0608 | [1.045,1.077] | ead4bc2e7b364add | check |  | required | 0/1 |
 | 2026-10-24T232928Z | stack-tonight-four-prefill | primary | router GEMM + MoE align (both paths) + w2 zero-store | done/neutral | neutral | 1.0675 | [1.052,1.084] | 7499d9c71acd4417 | check |  | required | 0/1 |
 | 2026-10-24T232955Z | align-local-parallel-first-turn | primary | MoE align on the Triton path (T > 4096, first_turn) | done/neutral | neutral | 1.0626 | [1.047,1.079] | c2f3e9d8297f4a18 | check |  | required | 0/1 |
-| 2026-10-24T233200Z | stack-tonight-five-prefill | primary | router GEMM + MoE align (both paths) + w2 zero-store + Marlin silu-mul | done/neutral | neutral | 1.0705 | [1.054,1.087] | c4d14d62f11e4aaf | check | submitted | required | 0/1 |
+| 2026-10-24T233200Z | stack-tonight-five-prefill | primary | router GEMM + MoE align (both paths) + w2 zero-store + Marlin silu-mul | done/neutral | neutral | 1.0705 | [1.054,1.087] | c4d14d62f11e4aaf | check | done | required | 0/1 |
 | 2026-10-24T233245Z | stack-tonight-six-prefill | primary | router GEMM + MoE align (both paths, parallel) + w2 zero-store + Marlin silu-mul | done/neutral | neutral | 1.0642 | [1.048,1.080] | 5cb6e68a86ec48f0 | check |  | required | 0/1 |
-| 2026-10-24T233334Z | silu-mul-sorted-first-turn | primary | silu-mul on the Triton path (T > 4096, first_turn) | running | running |  |  | 9528eed511b04f33 | check |  | required |  |
+| 2026-10-24T233334Z | silu-mul-sorted-first-turn | primary | silu-mul on the Triton path (T > 4096, first_turn) | done/neutral | neutral | 1.0636 | [1.048,1.080] | 9528eed511b04f33 | check |  | required | 0/1 |
+| 2026-10-25T001301Z | attn-full-prefill-cuda-fp8-wgmma-hard-gate | rewrite | FA3 call on full-attention layers at page_size 1 (CUDA sm_90a FP8 wgmma flash attention, stage 1b: fix of attn-full-prefill-cuda-fp8-exp-offload with build fix, hard timing gate, no exp offload) | queue | hold |  |  |  |  |  | hold |  |
+| 2026-10-25T001301Z | experts-cuda-wgmma-grouped-gemm-remeasure-sm90a | rewrite | w13 + w2 expert GEMMs at T > 4096 (CUDA sm_90a wgmma W4A16 grouped GEMM, stage 1b: re-measure of experts-cuda-wgmma-mixed-input-grouped-gemm with the build fix, on the new master) | queue | hold |  |  |  |  |  | hold |  |
+| 2026-10-25T001824Z | attn-full-prefill-cuda-fp8-wgmma-hard-gate-inproc | rewrite | FA3 call on full-attention layers at page_size 1 (CUDA sm_90a FP8 wgmma flash attention, stage 1b: fix of attn-full-prefill-cuda-fp8-exp-offload with build fix, hard timing gate, no exp offload) | running | running |  |  |  |  |  | proceed |  |
+| 2026-10-25T001824Z | experts-cuda-wgmma-grouped-gemm-remeasure-sm90a-inproc | rewrite | w13 + w2 expert GEMMs at T > 4096 (CUDA sm_90a wgmma W4A16 grouped GEMM, stage 1b: re-measure of experts-cuda-wgmma-mixed-input-grouped-gemm with the build fix, on the new master) | running | running |  |  |  |  |  | proceed |  |
 
 ## Held
 
@@ -62,3 +66,5 @@ Regenerated 2026-10-25T000558Z. Best: 1.0705x [1.0545,1.0866] job `c4d14d62f11e4
 - router-pooler-concat-gemm-turn: adversarial review: Rule-clean, but the size of the win rests on a router side branch of ~80-90 us that the current master profile does not show. At turn_1 sliding the router pair 
 - dense-gemm-cublaslt-algo-pick-prefill-t: reviewer: claim only after the bf16 precedent (bf16-cublaslt-algo-pick-in-prepare-m128-m256, 26a8be34a5eb4426) harvests; ~0.5-1.1% headline; time pooler keys with the router running or require a >=5% margin
 - norm-residual-boundaries-triton-row-kernel: reviewer: same one-row-per-program structure as the incumbent; expect 0.2-0.4% headline, below run noise; re-mint as a multi-row/persistent variant if wanted
+- attn-full-prefill-cuda-fp8-wgmma-hard-gate: adversarial review: The rewrite's target and gate are sound, but sub-change (4) runs the first launch in a multiprocessing-spawn child process, and TASK.md says a submission that '
+- experts-cuda-wgmma-grouped-gemm-remeasure-sm90a: adversarial review: The rewrite design and the build fix are sound, but change item (2) spawns a multiprocessing child in prepare(), and TASK.md and the technical rules list 'start

@@ -1,6 +1,6 @@
 # muse_decode_layer hypotheses
 
-Regenerated 2026-10-25T000558Z. Best: 1.2283x [1.2099,1.2468] job `81ee6714b7614a99` (submit)
+Regenerated 2026-10-25T003217Z. Best: 1.2521x [1.2333,1.2709] job `39bcf05afc4e4dd3` (submit)
 
 | created | slug | kind | area | where | outcome | speedup | CI | job | mode | promotion | review | expected hit |
 |---|---|---|---|---|---|---|---|---|---|---|---|---|
@@ -47,13 +47,16 @@ Regenerated 2026-10-25T000558Z. Best: 1.2283x [1.2099,1.2468] job `81ee6714b7614
 | 2026-10-24T224452Z | boundaries-unpooler-pdl-small-t | primary | post-MoE unpooler + residual boundaries (T<=32) | queue | queued |  |  |  |  |  | required |  |
 | 2026-10-24T224452Z | dl-route-warp-topk-pdl | primary | routing top-k + MoE align (kernel R, T<=32) | queue | queued |  |  |  |  |  | required |  |
 | 2026-10-24T224506Z | dl-p-wide-tile-t16-t32 | primary | pooler + router GEMM (kernel P, T=9..32) | queue | queued |  |  |  |  |  | required |  |
-| 2026-10-24T224525Z | full-decode-splitkv-restack-on-pdl | primary | FA3 call (full decode, batch > 1) | running | running |  |  |  |  |  | required |  |
+| 2026-10-24T224525Z | full-decode-splitkv-restack-on-pdl | primary | FA3 call (full decode, batch > 1) | running | running |  |  | c243a29f26dc4725 | check |  | required |  |
 | 2026-10-24T224525Z | sliding-decode1-fused-restack-on-pdl | primary | FA3 call (sliding decode, batch 1) | done/neutral | neutral | 1.2374 | [1.219,1.256] | 30027c28212946fd | check |  | required | 1/4 |
 | 2026-10-24T233529Z | stack-align-par-sliding1 | primary | MoE align (T>32) + sliding batch-1 attention | done/neutral | neutral | 1.2444 | [1.226,1.263] | d41952184b714e37 | check |  | required | 1/1 |
 | 2026-10-24T233637Z | stack-sidestream-sliding1 | primary | T>32 MoE dispatch on the side stream + sliding batch-1 fused attention | done/neutral | neutral | 1.2352 | [1.217,1.254] | 158fed699fdb4d0e | check |  | required | 1/1 |
 | 2026-10-24T233637Z | stack-align-par-sliding-batched | primary | T>32 parallel align + sliding batch>1 fused attention | done/failed | failed |  |  | b94e797333fb4a27 | check |  | required | 0/1 |
 | 2026-10-24T233638Z | stack-sidestream-sliding-batched | primary | T>32 MoE dispatch on the side stream + sliding batch>1 fused attention | done/neutral | neutral | 1.2443 | [1.226,1.263] | 2193fc0dc9be4b3c | check |  | required | 1/1 |
-| 2026-10-24T233721Z | stack-align-par-sidestream-sliding1 | primary | T>32 MoE dispatch (parallel align on the side stream) + sliding batch-1 attention | done/neutral | neutral | 1.2495 | [1.231,1.268] | cc92097b64784c0f | check | submitted | required | 1/1 |
+| 2026-10-24T233721Z | stack-align-par-sidestream-sliding1 | primary | T>32 MoE dispatch (parallel align on the side stream) + sliding batch-1 attention | done/neutral | neutral | 1.2495 | [1.231,1.268] | cc92097b64784c0f | check | done | required | 1/1 |
+| 2026-10-25T001250Z | moe-chain-cuda-swapab-expert-once-fix | rewrite | w13 marlin + silu-mul + w2 marlin (T>32) | queue | hold |  |  |  |  |  | hold |  |
+| 2026-10-25T001251Z | full-decode-splitkv-kv-bw-3p5 | rewrite | FA3 call (full decode, batch > 1): splitkv_attn_kernel bytes in flight | running | running |  |  | 6af3b0e3311943ee | check |  | proceed |  |
+| 2026-10-25T001824Z | moe-chain-cuda-swapab-expert-once-fix-inproc | rewrite | w13 marlin + silu-mul + w2 marlin (T>32) | running | running |  |  |  |  |  | proceed |  |
 
 ## Held
 
@@ -72,3 +75,4 @@ Regenerated 2026-10-25T000558Z. Best: 1.2283x [1.2099,1.2468] job `81ee6714b7614
 - moe-bs1-fused-persistent-port: adversarial review: Hold: the hypothesis gates its own dispatch on the moe parent (1105a02aa3fa4e56) being faster than moe master at bs=1, and it was not (bs=1 50.93 us vs 48.37 us
 - prefork-qkv-o-swapab-t16-t32: adversarial review: Its main purpose no longer holds on the current master: small-t-launch-minimal-dense-chain-pdl removed the router side stream at T<=32, so there is no fork for 
 - marlin-two-stream-halves-port: adversarial review: Hold: the moe parent it ports (marlin-two-stream-expert-halves-small-m, job 5d630369b1634f77) came back neutral, with every scored shape flat and verify_1 1.5% 
+- moe-chain-cuda-swapab-expert-once-fix: adversarial review: Hold for a rules problem only: fix (1), the central fix, runs the self-check in a torch.multiprocessing spawn child or subprocess, and TASK.md says a submission

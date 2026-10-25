@@ -1,6 +1,6 @@
 # muse_attention_decode hypotheses
 
-Regenerated 2026-10-25T000226Z. Best: 1.3949x [1.3740,1.4158] job `698d4cd3838c4a63` (submit)
+Regenerated 2026-10-25T003217Z. Best: 1.3949x [1.3740,1.4158] job `698d4cd3838c4a63` (submit)
 
 | created | slug | kind | area | where | outcome | speedup | CI | job | mode | promotion | review | expected hit |
 |---|---|---|---|---|---|---|---|---|---|---|---|---|
@@ -52,6 +52,12 @@ Regenerated 2026-10-25T000226Z. Best: 1.3949x [1.3740,1.4158] job `698d4cd3838c4
 | 2026-10-24T183855Z | splitkv-chunk2048-batch32 | primary | FA3 call (full-layer decode gather) | done/neutral | neutral | 1.3838 | [1.363,1.405] | 7cfc8c5be3a04369 | check |  | proceed | 1/3 |
 | 2026-10-24T183855Z | splitkv-pdl-attn-to-combine | primary | launch overhead | done/neutral | neutral | 1.3929 | [1.372,1.414] | 113cbf3093dd40b9 | check |  | proceed | 0/2 |
 | 2026-10-24T183855Z | sliding-fused-hoist-first-tile | primary | sliding-layer attention (batched decode, gather prologue) | done/regression | regression | 1.3449 | [1.325,1.365] | ead13d58c6c843e9 | check |  | proceed | 1/3 |
+| 2026-10-25T001348Z | full-decode-splitkv-s2-streamk-ticket | rewrite | full-layer attention (decode, splitkv kernel A/B) | queue | hold |  |  |  |  |  | required |  |
+| 2026-10-25T001415Z | full-verify-wgmma-s3-warpgroup-per-kvhead | rewrite | full-layer attention (verify, splitkv A8/B8) | queue | hold |  |  |  |  |  | required |  |
+| 2026-10-25T001451Z | sliding-cluster-s2-decode-c4-pdl | rewrite | sliding-layer attention (decode, cluster kernel) | queue | hold |  |  |  |  |  | required |  |
+| 2026-10-25T001825Z | full-decode-splitkv-s2-streamk-ticket-inproc | rewrite | full-layer attention (decode, splitkv kernel A/B) | running | running |  |  |  |  |  | proceed |  |
+| 2026-10-25T001825Z | full-verify-wgmma-s3-warpgroup-per-kvhead-inproc | rewrite | full-layer attention (verify, splitkv A8/B8) | running | running |  |  |  |  |  | proceed |  |
+| 2026-10-25T001825Z | sliding-cluster-s2-decode-c4-pdl-inproc | rewrite | sliding-layer attention (decode, cluster kernel) | running | running |  |  |  |  |  | proceed |  |
 
 ## Held
 
@@ -72,3 +78,6 @@ Regenerated 2026-10-25T000226Z. Best: 1.3949x [1.3740,1.4158] job `698d4cd3838c4
 - triton-flash-decode-deep-pipeline: moot under master 1.269x (sweep by the attention minter): stacks on triton-flash-decode-full-both-heads (held)
 - triton-flash-decode-full-verify: moot under master 1.269x (sweep by the attention minter): stacks on triton-flash-decode-full-both-heads (held)
 - splitkv-l2-128b-prefetch-hint: adversarial review: The mechanism rests on a misreading of issue_tile: each warp-wide cp.async already touches all four 32-byte sectors of every 128-byte K/V line (chunks 0,2,4,6 a
+- full-decode-splitkv-s2-streamk-ticket: superseded by full-decode-splitkv-s2-streamk-ticket-inproc: the original spec runs a self-check in a child process, which the rules reject (starting processes)
+- full-verify-wgmma-s3-warpgroup-per-kvhead: superseded by full-verify-wgmma-s3-warpgroup-per-kvhead-inproc: the original spec runs a self-check in a child process, which the rules reject (starting processes)
+- sliding-cluster-s2-decode-c4-pdl: superseded by sliding-cluster-s2-decode-c4-pdl-inproc: the original spec runs a self-check in a child process, which the rules reject (starting processes)

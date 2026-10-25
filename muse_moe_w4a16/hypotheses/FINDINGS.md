@@ -1,6 +1,6 @@
 # muse_moe_w4a16 findings
 
-Regenerated 2026-10-25T000558Z by `churn.py index`. Read this before writing a hypothesis for muse_moe_w4a16.
+Regenerated 2026-10-25T003217Z by `churn.py index`. Read this before writing a hypothesis for muse_moe_w4a16.
 
 ## Current best
 
@@ -16,6 +16,12 @@ Where the time goes (per scored shape, top kernels):
 - bs=256 load=verify_32 sharding=ep8: yours 454.3µs vs SGLang 616.0µs (SoL 108.9µs) · void sglang::device::marlin_moe::Marlin<__nv_bfloat16, 56... 391.4µs 95.5%, _align_parallel_kernel 6.9µs 1.7%, _post_expert_norm_weighted_sum_kernel 6.0µs 1.5%
 
 ## By area
+
+### MoE align (bs<=8 one warp; 17..32 parallel; bs>=128 CUDA) + post-expert combine
+- **stack-onewarp-hoisted-dispatchcombine-from17** → neutral (within-ci), 1.3237x — no shape moved outside noise. Built on master. The variant of stack-onewarp-hoisted-dispatchcombine (same three done/ patches, unchanged) plus align-parallel-from-17-tokens (ALIGN_FUSED_MAX_
+
+### MoE align (bs<=8 one warp; bs>=128 CUDA) + post-expert combine (bs<32 hoisted; bs>=128 CUDA)
+- **stack-onewarp-hoisted-dispatchcombine** → neutral (within-ci), 1.3176x — no shape moved outside noise. Built on master. Stack the three moe results of 2026-10-24 that each matched the 1.3278 best within noise, applied unchanged from their done/ patches: align-sma
 
 ### MoE align/dispatch
 - **sglang-marlin-path-parity** → gain (gain), 0.9888x — gained on decode_1 decode_1; decode_16 decode_16; decode_32 decode_32; verify_1 verify_1; verify_16 verify_16; verify_32 verify_32. Replace the starter's 32-expert dense loop (dequantize every local expert to BF16 on every call, x @ w13.T over all tokens, masked weighted sum) with SGLang's M
@@ -83,6 +89,8 @@ Where the time goes (per scored shape, top kernels):
 - post-norm-combine-hoisted-slot-loads: unproven-vs-best: the change is not proven either way; a stacked hypothesis (`depends_on: post-norm-combine-hoisted-slot-loads`) that adds a further change in the same area is the only way to learn more (identical code i
 - align-parallel-from-17-tokens: unproven-vs-best: the change is not proven either way; a stacked hypothesis (`depends_on: align-parallel-from-17-tokens`) that adds a further change in the same area is the only way to learn more (identical code is never
 - align-small-one-warp-tiny-m: unproven-vs-best: the change is not proven either way; a stacked hypothesis (`depends_on: align-small-one-warp-tiny-m`) that adds a further change in the same area is the only way to learn more (identical code is never r
+- stack-onewarp-hoisted-dispatchcombine: within-ci: the change is not proven either way; a stacked hypothesis (`depends_on: stack-onewarp-hoisted-dispatchcombine`) that adds a further change in the same area is the only way to learn more (identical code is neve
+- stack-onewarp-hoisted-dispatchcombine-from17: within-ci: the change is not proven either way; a stacked hypothesis (`depends_on: stack-onewarp-hoisted-dispatchcombine-from17`) that adds a further change in the same area is the only way to learn more (identical code 
 - triton-map-align-verify-chunked: none
 - cuda-nvfp4-swapab-mma-persistent-small-m: rewrite stage 1 of `Marlin w13+w2 (moe_wna16_marlin_gemm x2) at bs<=32`: read the replaced kernels' own us per shape (profile top_kernels) against the incumbent and the floor, and check which Milestone it reached. The ne
 
@@ -99,8 +107,13 @@ Where the time goes (per scored shape, top kernels):
 - queue: marlin-two-class-block-m-decode32 [MoE align/dispatch + block_size_m pick] p2 hold
 - queue: swapab-nvfp4-gemm-verify-rewrite [w13 marlin + w2 marlin] p1 hold
 - queue: swapab-w13-silu-epilogue-verify [silu-mul] p2 queued
-- queue: cuda-fused-moe-midm-single-launch-routed [whole-layer fusion] p2 queued
+- queue: cuda-fused-moe-midm-single-launch-routed [whole-layer fusion] p2 hold
 - queue: post-norm-triton-hoisted-decode32 [post-expert norm+combine] p2 queued
 - queue: post-norm-pdl-launch-small-m [launch overhead] p2 queued
-- running: stack-onewarp-hoisted-dispatchcombine [MoE align (bs<=8 one warp; bs>=128 CUDA) + post-expert combine (bs<32 hoisted; bs>=128 CUDA)] p1 running
-- running: stack-onewarp-hoisted-dispatchcombine-from17 [MoE align (bs<=8 one warp; 17..32 parallel; bs>=128 CUDA) + post-expert combine] p1 running
+- queue: cuda-nvfp4-wgmma-rega-grouped-sm90a-rebuild [w13 marlin + silu-mul + w2 marlin] p1 hold
+- queue: cuda-nvfp4-swapab-mma-persistent-small-m-childcheck [w13 marlin + silu-mul + w2 marlin] p2 hold
+- queue: cuda-fused-moe-bs1-persistent-nospin-bandwidth [whole-layer fusion] p3 hold
+- queue: cuda-fused-moe-bs1-persistent-bandwidth-s3-inproc [whole-layer fusion] p3 queued
+- running: cuda-fused-moe-bs1-persistent-nospin-bandwidth-inproc [whole-layer fusion] p3 running
+- running: cuda-nvfp4-swapab-mma-persistent-small-m-inproc [w13 marlin + silu-mul + w2 marlin] p2 running
+- running: cuda-nvfp4-wgmma-rega-grouped-sm90a-rebuild-inproc [w13 marlin + silu-mul + w2 marlin] p1 running

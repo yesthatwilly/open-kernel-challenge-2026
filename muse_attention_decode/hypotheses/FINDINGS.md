@@ -1,6 +1,6 @@
 # muse_attention_decode findings
 
-Regenerated 2026-10-25T000226Z by `churn.py index`. Read this before writing a hypothesis for muse_attention_decode.
+Regenerated 2026-10-25T003217Z by `churn.py index`. Read this before writing a hypothesis for muse_attention_decode.
 
 ## Current best
 
@@ -139,3 +139,9 @@ Where the time goes (per scored shape, top kernels):
 - queue: sliding-verify-cuda-streamk-window [sliding-layer attention (verify)] p2 queued
 - queue: full-verify1-cuda-streamk-batch1 [full-layer attention (batch-1 verify gate)] p2 queued
 - queue: splitkv-l2-128b-prefetch-hint [FA3 call (full-layer decode gather)] p5 hold
+- queue: full-decode-splitkv-s2-streamk-ticket [full-layer attention (decode, splitkv kernel A/B)] p1 hold
+- queue: full-verify-wgmma-s3-warpgroup-per-kvhead [full-layer attention (verify, splitkv A8/B8)] p2 hold
+- queue: sliding-cluster-s2-decode-c4-pdl [sliding-layer attention (decode, cluster kernel)] p2 hold
+- running: full-decode-splitkv-s2-streamk-ticket-inproc [full-layer attention (decode, splitkv kernel A/B)] p1 running
+- running: full-verify-wgmma-s3-warpgroup-per-kvhead-inproc [full-layer attention (verify, splitkv A8/B8)] p2 running
+- running: sliding-cluster-s2-decode-c4-pdl-inproc [sliding-layer attention (decode, cluster kernel)] p2 running

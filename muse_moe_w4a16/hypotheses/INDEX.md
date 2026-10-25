@@ -1,6 +1,6 @@
 # muse_moe_w4a16 hypotheses
 
-Regenerated 2026-10-25T000558Z. Best: 1.3278x [1.3079,1.3477] job `1947e3ec2abb4bdf` (submit)
+Regenerated 2026-10-25T003217Z. Best: 1.3278x [1.3079,1.3477] job `1947e3ec2abb4bdf` (submit)
 
 | created | slug | kind | area | where | outcome | speedup | CI | job | mode | promotion | review | expected hit |
 |---|---|---|---|---|---|---|---|---|---|---|---|---|
@@ -36,15 +36,22 @@ Regenerated 2026-10-25T000558Z. Best: 1.3278x [1.3079,1.3477] job `1947e3ec2abb4
 | 2026-10-24T165851Z | cuda-fused-moe-bs1-persistent-w13-silu-w2 | rewrite | whole-layer fusion | done/neutral | neutral | 1.3074 | [1.269,1.327] | 1105a02aa3fa4e56 | submit |  | proceed | 5/6 |
 | 2026-10-24T165851Z | cuda-nvfp4-swapab-mma-persistent-small-m | rewrite | w13 marlin + silu-mul + w2 marlin | done/failed | failed |  |  | 8f198afc3bf14f6f | submit |  | proceed |  |
 | 2026-10-24T172038Z | cuda-nvfp4-wgmma-rega-grouped-verify | rewrite | w13 marlin + silu-mul + w2 marlin | done/neutral | neutral | 1.3123 | [1.293,1.332] | 3bb822f22ebc4a5c | submit |  | proceed | 4/6 |
-| 2026-10-24T172123Z | cuda-fused-moe-midm-single-launch-routed | rewrite | whole-layer fusion | queue | queued |  |  |  |  |  | proceed |  |
+| 2026-10-24T172123Z | cuda-fused-moe-midm-single-launch-routed | rewrite | whole-layer fusion | queue | hold |  |  |  |  |  | proceed |  |
 | 2026-10-24T183202Z | cuda-dispatch-combine-pdl-verify | rewrite | MoE align/dispatch + post-expert norm+combine | done/neutral | neutral | 1.3283 | [1.308,1.348] | c41860068fe4432f | submit |  | proceed | 4/6 |
 | 2026-10-24T183618Z | post-norm-combine-hoisted-slot-loads | primary | post-expert norm+combine | done/neutral | neutral | 1.3282 | [1.308,1.348] | d7501477ce2748d5 | submit |  | proceed | 3/6 |
 | 2026-10-24T183635Z | post-norm-triton-hoisted-decode32 | primary | post-expert norm+combine | queue | queued |  |  |  |  |  | proceed |  |
 | 2026-10-24T183649Z | post-norm-pdl-launch-small-m | primary | launch overhead | queue | queued |  |  |  |  |  | proceed |  |
 | 2026-10-24T183702Z | align-parallel-from-17-tokens | primary | MoE align/dispatch | done/neutral | neutral | 1.3250 | [1.305,1.345] | ed6d884240084d9c | submit |  | proceed | 5/6 |
 | 2026-10-24T183722Z | align-small-one-warp-tiny-m | primary | MoE align/dispatch | done/neutral | neutral | 1.3287 | [1.309,1.349] | 38532ba10e394e3c | submit |  | proceed | 4/6 |
-| 2026-10-25T000436Z | stack-onewarp-hoisted-dispatchcombine | primary | MoE align (bs<=8 one warp; bs>=128 CUDA) + post-expert combine (bs<32 hoisted; bs>=128 CUDA) | running | running |  |  | 7e5ab95a413f4ebe | check |  | required |  |
-| 2026-10-25T000511Z | stack-onewarp-hoisted-dispatchcombine-from17 | primary | MoE align (bs<=8 one warp; 17..32 parallel; bs>=128 CUDA) + post-expert combine | running | running |  |  | 0fde9013de97404d | check |  | required |  |
+| 2026-10-25T000436Z | stack-onewarp-hoisted-dispatchcombine | primary | MoE align (bs<=8 one warp; bs>=128 CUDA) + post-expert combine (bs<32 hoisted; bs>=128 CUDA) | done/neutral | neutral | 1.3176 | [1.298,1.337] | 7e5ab95a413f4ebe | check |  | required | 0/1 |
+| 2026-10-25T000511Z | stack-onewarp-hoisted-dispatchcombine-from17 | primary | MoE align (bs<=8 one warp; 17..32 parallel; bs>=128 CUDA) + post-expert combine | done/neutral | neutral | 1.3237 | [1.304,1.344] | 0fde9013de97404d | check |  | required | 0/1 |
+| 2026-10-25T001223Z | cuda-nvfp4-wgmma-rega-grouped-sm90a-rebuild | rewrite | w13 marlin + silu-mul + w2 marlin | queue | hold |  |  |  |  |  | hold |  |
+| 2026-10-25T001240Z | cuda-nvfp4-swapab-mma-persistent-small-m-childcheck | rewrite | w13 marlin + silu-mul + w2 marlin | queue | hold |  |  |  |  |  | hold |  |
+| 2026-10-25T001254Z | cuda-fused-moe-bs1-persistent-nospin-bandwidth | rewrite | whole-layer fusion | queue | hold |  |  |  |  |  | hold |  |
+| 2026-10-25T001824Z | cuda-fused-moe-bs1-persistent-nospin-bandwidth-inproc | rewrite | whole-layer fusion | running | running |  |  |  |  |  | proceed |  |
+| 2026-10-25T001824Z | cuda-nvfp4-swapab-mma-persistent-small-m-inproc | rewrite | w13 marlin + silu-mul + w2 marlin | running | running |  |  |  |  |  | proceed |  |
+| 2026-10-25T001824Z | cuda-nvfp4-wgmma-rega-grouped-sm90a-rebuild-inproc | rewrite | w13 marlin + silu-mul + w2 marlin | running | running |  |  |  |  |  | proceed |  |
+| 2026-10-25T001825Z | cuda-fused-moe-bs1-persistent-bandwidth-s3-inproc | rewrite | whole-layer fusion | queue | queued |  |  |  |  |  | proceed |  |
 
 ## Held
 
@@ -54,3 +61,7 @@ Regenerated 2026-10-25T000558Z. Best: 1.3278x [1.3079,1.3477] job `1947e3ec2abb4
 - align-remote-sentinel-ids: adversarial review: Moot on master and overlapped by the running triton-map-align-small-m-port. The 3.2 us bs=1 gap it was written to explain (80.2 vs 77.0 us) no longer exists: ma
 - marlin-two-class-block-m-decode32: reviewer expects flat: uniform block 8 cost only ~2.4% at bs=32, and the 239 vs 186 us premise is seed noise (unchanged bs=32 rows range 147-265 us); two extra Marlin launches (~2-4 us each) likely eat the rest
 - swapab-nvfp4-gemm-verify-rewrite: reviewer: stage 1 likely 1.5-2x slower than Marlin on the replaced kernels (Marlin runs only 15-18% more blocks; prefill's Triton tile costs ~25 us vs Marlin's 11.6-16.7 us/block). Unhold after prefill's packed-asm dequant stage (experts-triton-nvfp4-packed-asm-dequant) harvests and fold that dequant in, with BLOCK_T=64 at bs=256
+- cuda-fused-moe-midm-single-launch-routed: moe per-shape read 2026-10-25: its parent cuda-nvfp4-swapab-mma-persistent-small-m hit an illegal instruction on first launch (0/0 tests); hold until a fixed swap-AB runs on the CUDA path and reaches its M2
+- cuda-nvfp4-wgmma-rega-grouped-sm90a-rebuild: adversarial review: The sm_90a build fix is correct and the rewrite is worth re-running as stage 1, but the spec also requires the self-check to run in a spawned child process, and
+- cuda-nvfp4-swapab-mma-persistent-small-m-childcheck: adversarial review: Hold. Change (1) moves the self-check into a multiprocessing spawn child. TASK.md and the technical rules statically reject any submission that starts processes
+- cuda-fused-moe-bs1-persistent-nospin-bandwidth: adversarial review: The design is sound and stage 1's data supports a stage 2, but the change as written runs the self-check in a spawned child process, and muse_moe_w4a16/TASK.md 

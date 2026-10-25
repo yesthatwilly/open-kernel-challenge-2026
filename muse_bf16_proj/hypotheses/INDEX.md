@@ -1,6 +1,6 @@
 # muse_bf16_proj hypotheses
 
-Regenerated 2026-10-25T000558Z. Best: 1.1959x [1.1779,1.2138] job `eeb9985396764ac2` (submit)
+Regenerated 2026-10-25T003217Z. Best: 1.2215x [1.2032,1.2398] job `60b20fd0bf924267` (submit)
 
 | created | slug | kind | area | where | outcome | speedup | CI | job | mode | promotion | review | expected hit |
 |---|---|---|---|---|---|---|---|---|---|---|---|---|
@@ -39,8 +39,9 @@ Regenerated 2026-10-25T000558Z. Best: 1.1959x [1.1779,1.2138] job `eeb9985396764
 | 2026-10-24T165036Z | router-swapab-wgmma-all-m | primary | router GEMM | done/neutral | neutral | 1.1951 | [1.177,1.213] | 587e340476944b46 | submit |  | proceed | 4/10 |
 | 2026-10-24T165102Z | bf16-small-m-cuda-gemv-rewrite | rewrite | bf16 GEMM dispatch (m<=8, hand-written CUDA weight stream) | done/regression | regression | 1.1667 | [1.149,1.184] | b76aca7ec1a048e7 | submit |  | proceed | 4/13 |
 | 2026-10-24T172152Z | bf16-lossless-exp4-weight-stream-rewrite | rewrite | bf16 GEMM dispatch (m<=32, lossless-compressed weight stream) | done/regression | regression | 0.7071 | [0.697,0.718] | 542f2b169c934706 | submit |  | proceed | 2/17 |
-| 2026-10-24T172235Z | bf16-verify-streamk-cutlass-wgmma-rewrite | rewrite | bf16 GEMM dispatch (m=129..256, persistent stream-K TMA/wgmma) | running | running |  |  |  |  |  | proceed |  |
-| 2026-10-24T174421Z | bf16-restack-m16-swapab-router-swapab-m32 | primary | restack (m<=16 swap-AB GEMMs + router swap-AB) | done/neutral | neutral | 1.2215 | [1.203,1.240] | 1e90292c7b954d96 | submit | submitted | proceed | 3/4 |
+| 2026-10-24T172235Z | bf16-verify-streamk-cutlass-wgmma-rewrite | rewrite | bf16 GEMM dispatch (m=129..256, persistent stream-K TMA/wgmma) | done/regression | regression | 1.1635 | [1.146,1.181] | f5b1361aaa0e48b5 | check |  | proceed | 0/8 |
+| 2026-10-24T174421Z | bf16-restack-m16-swapab-router-swapab-m32 | primary | restack (m<=16 swap-AB GEMMs + router swap-AB) | done/neutral | neutral | 1.2215 | [1.203,1.240] | 1e90292c7b954d96 | submit | done | proceed | 3/4 |
+| 2026-10-25T001220Z | bf16-lossless-exp4-occupancy-dequant-once-stage2 | rewrite | lossless exp4 compressed-weight stream kernel (_lossless_swapab_kernel) | running | running |  |  | f1024212dd2f49f3 | check |  | proceed |  |
 
 ## Held
 
