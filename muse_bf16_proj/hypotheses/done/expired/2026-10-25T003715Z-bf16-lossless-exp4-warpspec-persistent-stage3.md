@@ -80,10 +80,13 @@ controls_for: null
 rewrite_stage: 3
 replaces: master Triton weight streams at m<=32 for pooler (_bf16_splitk_kernel m<=16, _bf16_swapab_kernel m 17..32), unpooler-full (nvjet m=16, swap-AB m=32) and qkv_gate (_qkv_splitk_sem_kernel m<=16, swap-AB m 17..32)
 review: hold
-status: hold
+status: done
 review_at: 2026-10-25T010658Z
 review_companions: null
 hold_reason: "adversarial review: Stage 2's pooler m=1 kernel took 30.8 us in the judge profile, past this hypothesis's own supersede threshold (> 28 us) and 1.62x short of the 19.0 us kill gate"
+outcome: expired
+verdict_detail: "retired: on the bf16 DIAGNOSIS Do-not-try list (lossless-exp4 line dead: decode alone 1.74 TB/s, kill gate missed 2.1x)"
+expired_at: 2026-10-25T211946Z
 ---
 
 # bf16-lossless-exp4-warpspec-persistent-stage3

@@ -55,10 +55,13 @@ priority: 3
 kind: primary
 controls_for: null
 review: proceed
-status: hold
+status: done
 review_at: 2026-10-25T150337Z
 review_companions: null
 hold_reason: "Opus review predicts 17.9-18.4 us vs nvjet 17.6 (BLOCK_T 32 run was 18.4 us; its 1.022x was baseline drift; DRAM-bound so BLOCK_T 16 should not help). Best case +0.07% headline: too weak to spend a scored run on."
+outcome: expired
+verdict_detail: "retired: on the bf16 DIAGNOSIS Do-not-try list (m<=32 weight streams settled)"
+expired_at: 2026-10-25T211947Z
 ---
 
 # unpooler-full-m16-swapab16-blockt16

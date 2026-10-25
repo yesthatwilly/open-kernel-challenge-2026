@@ -78,10 +78,13 @@ priority: 1
 kind: primary
 controls_for: null
 review: proceed
-status: hold
+status: done
 review_at: 2026-10-25T161800Z
 review_companions: null
 hold_reason: "Review: B3 and part of B4 launch identical kernels under Lt and cuBLAS; pooler/unpooler m=128 under Lt measured slower before; if B2-B4 gate to master it equals the naive combo, so it would spend a scored run re-measuring. Held in favour of the naive and row-owner combos."
+outcome: expired
+verdict_detail: "retired: superseded by bf16-verify-per-cell-cublaslt-plan-selector (2026-10-25 mint)"
+expired_at: 2026-10-25T211947Z
 ---
 
 # combo-cublaslt-single-node-m128-m256-plus-naive

@@ -321,3 +321,8 @@ overrides of a reviewer) with the reason, newest last. Written by `churn.py note
 - 2026-10-25T211931Z `muse_prefill_layer` **experts-dequant-threshold-turn4**: retired: ruled out by the user's rules ruling (no per-call BF16 dequant of NVFP4 weights)
 - 2026-10-25T211931Z `muse_prefill_layer` **experts-dequant-triton-moe-16k**: retired: ruled out by the user's rules ruling (no per-call BF16 dequant of NVFP4 weights)
 - 2026-10-25T211931Z `muse_prefill_layer` **dense-gemm-cublaslt-algo-pick-prefill-t**: retired: on the prefill DIAGNOSIS Do-not-try list
+- 2026-10-25T211946Z `muse_bf16_proj` **pooler-skinny-tiled-weight-layout**: retired: on the bf16 DIAGNOSIS Do-not-try list (m<=32 weight streams settled at 3.4-3.95 TB/s)
+- 2026-10-25T211946Z `muse_bf16_proj` **qkv-gate-o-m128-wgmma-splitk-semaphore**: retired: on the bf16 DIAGNOSIS Do-not-try list
+- 2026-10-25T211947Z `muse_bf16_proj` **bf16-lossless-exp4-warpspec-persistent-stage3**: retired: on the bf16 DIAGNOSIS Do-not-try list (lossless-exp4 line dead: decode alone 1.74 TB/s, kill gate missed 2.1x)
+- 2026-10-25T211947Z `muse_bf16_proj` **unpooler-full-m16-swapab16-blockt16**: retired: on the bf16 DIAGNOSIS Do-not-try list (m<=32 weight streams settled)
+- 2026-10-25T211947Z `muse_bf16_proj` **combo-cublaslt-single-node-m128-m256-plus-naive**: retired: superseded by bf16-verify-per-cell-cublaslt-plan-selector (2026-10-25 mint)
