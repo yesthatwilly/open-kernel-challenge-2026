@@ -47,9 +47,18 @@ priority: 1
 kind: primary
 controls_for: null
 review: proceed
-status: queued
+status: running
 review_at: 2026-10-25T161612Z
 review_companions: null
+stage: claimed
+claimed_at: 2026-10-25T161612Z
+base_sha: e2a24e6c8d5b0c6b1ec53f88d2d22e18c50aa1ae
+base_blob: f919748b5af6e815f319e5d2d828ed68e5b28a71
+branch: hyp/muse_bf16_proj/pooler-k-halves-batched-gemm-m65-m256
+worktree: .worktrees/muse_bf16_proj/pooler-k-halves-batched-gemm-m65-m256
+mode: null
+restack_of: null
+stale_base: null
 ---
 
 # pooler-k-halves-batched-gemm-m65-m256
