@@ -78,7 +78,7 @@ review: proceed
 status: running
 review_at: 2026-10-25T001525Z
 review_companions: null
-stage: claimed
+stage: implemented
 claimed_at: 2026-10-25T001525Z
 base_sha: 7895e56373c79d74ba78b7c0e7146755b118ce2c
 base_blob: a34e409b452e9a6e5f7ee3612486d30a989832f2
@@ -87,6 +87,12 @@ worktree: .worktrees/muse_bf16_proj/bf16-lossless-exp4-occupancy-dequant-once-st
 mode: null
 restack_of: null
 stale_base: null
+implemented_at: 2026-10-25T002149Z
+impl_commit: 39098a3d90b3988b8d51bd2e81cc65c40b81d89c
+submission_sha256: d11133a85dae43fccde181ba07ec3cf62693e14085f3ae9d1ee3f44ab6524c0c
+norm_sha256: ee2393a43ede21faa24e34a23cdd9e03ec8dabb7460fe48bc478ace3e2395f3e
+submission_blob: 12be4cd61f2a429f08b6a1d38499e6af8845bf86
+lint_warnings: 11
 ---
 
 # bf16-lossless-exp4-occupancy-dequant-once-stage2
@@ -156,3 +162,107 @@ No companions. This is a kind:rewrite judged per shape on the replaced kernels' 
 - qkv_gate at split 3 uses 108 of 132 SMs. Is its split being raised regardless of the occupancy option?
 - Is the M-KILL gate read from the pooler m=1 profile kernel time (DRAM-bound, profile and row agree within ~1 us) and not from the warm prepare() print? If it is the print, that should be stated.
 
+
+## Implementation notes
+
+All edits are in the worktree's `muse_bf16_proj/submission.py`, section (6), which holds `_LL_CUDA`, the launcher and the `_ll_*` helpers. The diff is 161+/78-. kernel_fn, the routers and the m>=128 paths are unchanged.
+
+- **(1) Occupancy: option (b), as the review asked.** Option (a) was rejected because it raises warps/SM only if the grid grows past 132 CTAs, which adds split-K reduce traffic.
+  - `THREADS` goes from 128 to 256 (8 warps per CTA). Warp w owns 16-row tile `w >> 1` and 64-K group `w & 1` of every 128-K stage, so the two warps of a tile split each K-stage.
+  - After the mainloop the ring is reused for the pair reduce: K-half 1 writes its accumulators to smem (bank-conflict-free, `[...]*32 + lane`, at most 8 KB), and K-half 0 adds them in fixed order (half 0 + half 1). Then K-half 0 runs the unchanged epilogue (direct bf16 store, or ws partial plus ticket reduce).
+  - The grid is unchanged: pooler 64x2=128, unpooler-full 128x1=128, qkv 36x3=108. So 8 warps/SM are actually resident on the busy SMs (1 CTA/SM, one wave).
+  - The ring stays at 8 stages, and the x-tile issue loop is now guarded: at NT=8, `NT*16 = 128 < 256` threads.
+  - `__launch_bounds__(256, 1)`. Deviation: the spec's "regs <=128 so 2+ CTAs fit" applies to option (a) only. Under (b) occupancy is limited by smem (1 CTA/SM), and 256 threads x up to 255 regs still fits the register file. The register count is printed.
+  - prepare prints, per NT, regs, spills, smem and `cudaOccupancyMaxActiveBlocksPerMultiprocessor` (what fits). Per NT x route it also prints the **achieved** warps/SM as `min(grid, occ*SMs)/SMs*8` and the number of busy SMs, per the review's formula.
+  - qkv keeps split 3 (108 CTAs, 24 SMs idle). Raising it would mean a second wave or option (a); that is left open for stage 3.
+- **(2) Dequant once per k16: ALREADY IN STAGE 1. Not re-implemented.** Stage 1 already calls `decode_step` once per k16 step and reuses it for all NT/8 B fragments, so the NT growth is not caused by re-decoding. Per the review, it more likely comes from ldmatrix/MMA serialisation on one warp per SMSP and from x L2 re-reads.
+  - Only the software-pipelining half was added:
+    - (i) Each warp loads the NEXT stage's group from smem into registers (`Gn`) before issuing this stage's MMAs. The wait became `cp_wait<STAGES-3>` so that stage i+1 has landed, and the prologue loads stage 0 after `cp_wait<STAGES-2>`. `issue(i+7)` writes stage i-1's buffer, so it does not race with that load.
+    - (ii) Inside a group, k16 step s+1's A fragment is decoded into `a[(s+1)&1]` before step s's MMAs issue.
+  - The milestone line "(2) did not land if the NT growth is >=4 us" is misattributed, per the review. Any remaining NT growth points at x traffic or ldmatrix, not decode.
+- **(3) Scope.**
+  - `LL_CFG` drops `o` and `unpooler_slice`, and `LL_WEIGHTS` drops `o`, so o is no longer encoded.
+  - `_ll_route` returns `"unpooler_slice"` for any unpooler n != 8192. With no LL_CFG entry, `_ll_route_ok` returns False, so o (all m) and the slice reach master's `_unpool_shape_ok`, `_o_skinny_applies` and `_swapab_route_ok` gates exactly as on master.
+  - If a kept route's self-check fails, it falls back to master's shape-gated Triton kernels (the same gates), not straight to `_bf16_gemm_dispatch_impl`.
+- **(4) Cold-L2 timing and the kill-gate reading.** `_ll_time_route` now prints, for m in 1/8/16/32:
+  - a warm-L2 time (20 back-to-back launches);
+  - a cold-L2 time: a 256 MB buffer (larger than the 50 MB L2) is touched with `add_(1)` before each timed launch, and the median of 15 is taken;
+  - TB/s compressed and raw-equivalent for both.
+  - pooler m=1 also prints `KILL-GATE pooler m=1 cold-L2 X us vs gate 19.0 us: PASS/MISS`. This is timing only and routes nothing. The judged kill gate is still the pooler m=1 **profile** kernel time, and the line says so. The flush buffer is freed at the end of prepare.
+- **LESSONS compliance.**
+  - No child processes.
+  - The self-check syncs and prints after each launch (`launch 1 ok` / `launch 2 ok` per route and m), and after each weight's decode kernel (`decode kernel ok`), so a fault is attributed.
+  - Build adds `-lineinfo`. The extension name is bumped to `muse_bf16_lossless_v2`.
+  - The CUDA is still mma.sync, ldmatrix and cp.async.cg only (no wgmma or setmaxnreg), so `TORCH_CUDA_ARCH_LIST=9.0a` is not needed and is not set.
+- **Bit-exactness.** The codec round trip is still checked bit-exact through the kernel decoder. GEMM outputs will differ from stage 1 in the last bits because the fp32 summation order changed (pair reduce). The self-check stays tolerance-based against fp64 (rel L2 <= 1e-3, worst row <= 5e-3, one-hot row exact, launch 1 == launch 2), as the review requires.
+- **Fallback.** All master fallbacks and `PATH CHOSEN` lines are kept.
+- **Uncertainties.**
+  - The register count at NT=32 with the `Gn` prefetch (about 18 extra registers) is unverified. It is printed, and spills would show as local bytes.
+  - Per SMSP there are now 2 warps rather than 4, since 8 warps sit across 4 SMSPs. That may still be too little latency hiding for 2.7 TB/s compressed.
+  - The x L2 re-read (BLOCK_N=64) is unchanged.
+  - Nothing could be compiled or run on this node.
+
+## Rules check
+
+Checked against `git -C .worktrees/muse_bf16_proj/bf16-lossless-exp4-occupancy-dequant-once-stage2 diff`:
+
+- [x] CUDA-graph capturable: kernel_fn is unchanged. `_ll_forward` makes one launch with no sync, no allocation beyond `torch.empty` for out (same as stage 1), and branches only on cfg/shape/strides/prepare constants. The new syncs and prints are in prepare-only helpers (`_ll_check_route`, `_ll_time_route`, `_lossless_prepare`).
+- [x] Nothing derived from `data` is cached across calls: no new state keys except the prepare-only flush buffer, which is deleted.
+- [x] Weights are repacked losslessly in prepare() only. The codec is unchanged and bit-exact round-trip gated. BF16 stays BF16 (losslessly smaller), and the router is untouched.
+- [x] Activations are BF16 where SGLang keeps BF16: x is consumed as bf16, fp32 accumulation, bf16 output. n/a for KV cache and queries: not an attention problem.
+- [x] n/a: attention key coverage. This problem has no attention, and nothing is skipped: every K element of every weight row is streamed.
+- [x] No timing patches, harness frames, I/O, secrets, module edits, reference import, subprocesses or network. The diff adds no imports. load_inline is unchanged apart from the name and `-lineinfo`, and it runs in-process with no child process of our own.
+- [x] All work happens inside the timed call, with no output caching or replay: the pair reduce and the split-K reduce run inside the kernel each launch.
+- [x] The first-line marker `# okc: problem=muse_bf16_proj` is kept, with no triton.autotune and no host sync in kernel_fn.
+
+Lint output:
+
+```
+warn  dtype        L1189: sm8 = sm.to(torch.uint8)  (allowed only where SGLang does the same)
+warn  dtype        L1190: c8 = c.to(torch.uint8)  (allowed only where SGLang does the same)
+warn  dtype        L1202: hdr_t = hdr.view(rt, 16, kg).permute(0, 2, 1).to(torch.uint8).contiguous().view(-1)  (allowed only where SGLang does the same)
+warn  host-sync    L1264: torch.cuda.synchronize()  (outside kernel_fn's call graph; fine in prepare())
+warn  host-sync    L1267: torch.cuda.synchronize()  (outside kernel_fn's call graph; fine in prepare())
+warn  host-sync    L1308: e1.synchronize()  (outside kernel_fn's call graph; fine in prepare())
+warn  host-sync    L1318: c1.synchronize()  (outside kernel_fn's call graph; fine in prepare())
+warn  host-sync    L1342: attrs = _LL_EXT.lossless_attrs().tolist()  (outside kernel_fn's call graph; fine in prepare())
+warn  host-sync    L1343: torch.cuda.synchronize()  (outside kernel_fn's call graph; fine in prepare())
+warn  host-sync    L1386: torch.cuda.synchronize()  (outside kernel_fn's call graph; fine in prepare())
+warn  host-sync    L1428: torch.cuda.synchronize()  (outside kernel_fn's call graph; fine in prepare())
+OK with warnings
+```
+
+The dtype warnings are the compressed payload packing to uint8 (lossless codec bytes, not a weight precision change; the same in stage 1). The host-sync warnings are all in prepare(). py_compile OK; __pycache__ removed.
+
+## Pre-flight audit
+
+Audited 2026-10-24 by an Opus subagent, against stage 1 (7895e56) and master (e5e9a7c).
+
+**Verdict: dispatch.** No fixes were needed. Lint is OK with warnings (prepare-only syncs and codec uint8 packing), py_compile passes, and __pycache__ was removed.
+
+What was checked:
+- **Pair reduce.** It is race-free:
+  - `cp_wait<0>` and `__syncthreads` run before the ring is reused.
+  - hk==1 writes at most 8 KB (NT=32: 2048 floats), then `__syncthreads`, then hk==0 adds.
+  - Every barrier is CTA-uniform: `nsteps` and `split` are per-CTA, and the `return` is uniform.
+  - hk==0 warps cover all 64 rows for the direct store and the ws partials.
+  - The ticket reduce is unchanged.
+- **Next-stage prefetch.** A Python emulation of the cp.async group, buffer and stage schedule ran for nsteps 21/22/32 (STAGES=8).
+  - `cp_wait<STAGES-3>` guarantees stage i+1 has landed before `load_grp(Gn)` reads it.
+  - `issue(i+7)` always writes buffer (i-1)%8, never buffer i or i+1, and it runs after the barrier that ends iteration i-1's reads.
+  - The prologue `cp_wait<STAGES-2>` plus a barrier covers stage 0.
+- **A pipeline.** The double buffer `a[2][4]` decodes step s+1 into the other slot before step s's MMAs. Indices are compile-time after unrolling, so there is no local-memory indexing.
+- **Codec and indexing.** The codec and `decode_step` are unchanged, so the round trip stays bit-exact, and it is still gated in prepare.
+  - The warp chunk offset `wt*3072 + hk*1536`, the header offset `(wt*2+hk)*16` and the x slice `kc = hk*2+kp` all match the issue layout.
+  - The W issue is exactly 3 chunks per thread at 256 threads.
+  - The x issue is guarded at NT=8.
+- **Routing.**
+  - Outside section (6) and the lossless gate in kernel_fn, the file differs from master only by additions.
+  - o and `unpooler_slice` have no LL_CFG entry, so they reach master's `_unpool_shape_ok`, `_o_skinny_applies` and `_swapab_route_ok` exactly as on master.
+  - A kept route that fails its self-check falls back to the same master gates.
+  - The test shapes (m 7 pooler, m 33 o, m 5 and 130 unpooler) route correctly.
+- **Kill-gate print.** It only prints PASS or MISS and routes nothing. The flush buffer is prepare-only and freed afterwards.
+- **Compile.** The CUDA is mma.sync, ldmatrix and cp.async only. `__launch_bounds__(256,1)` caps registers at 255, so the launch cannot fail for lack of registers. No constructs looked doubtful when read.
+- **Rules.** kernel_fn is unchanged apart from its call graph: one launch and an output `torch.empty`. There are no new imports or processes, nothing derived from `data` is cached, and the weights stay bf16, repacked losslessly in prepare.
+
+Residual risk: the kernel was never compiled, so build or register-pressure surprises at NT=32 stay possible. Any such failure lands on master with a PATH CHOSEN line. On performance, 2 warps per SMSP may still not hide enough latency to reach the 19 us kill gate.
