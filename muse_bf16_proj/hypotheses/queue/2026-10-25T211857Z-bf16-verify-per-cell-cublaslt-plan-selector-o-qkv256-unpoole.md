@@ -53,8 +53,10 @@ priority: 2
 kind: primary
 controls_for: null
 prior: "bf16-cublaslt-algo-pick-in-prepare-m128-m256: that pick was timed without interleaving against the incumbent, with no empty-graph baseline and no margin, and its qkv m=256 choice flipped (+14%) in the judge; this reuses master's cell-B Lt plan machinery per cell with the hardened two-round 1.03 gate, a profiler kernel assert, and excludes the dead K-split candidates"
-review: required
+review: proceed
 status: queued
+review_at: 2026-10-25T212522Z
+review_companions: null
 ---
 
 # bf16-verify-per-cell-cublaslt-plan-selector-o-qkv256-unpoole
@@ -73,3 +75,30 @@ DIAGNOSIS Action 2, narrowed by today's evidence. Built on master 36c26199. Gene
 ## Risk
 
 Effect: realistic -0.5 to -2 us on each of the five cells (0.230 %/us verify_16, 0.184 %/us verify_32), about +0.4-1.0% headline: likely below the margin alone, must stack (combo). The gate may route none; then the run reads as master and its PATH CHOSEN lines are the result. New cuBLASLt workspace split-K path: first measurement is an okc check. Supersedes the held combo-cublaslt-single-node-m128-m256-plus-naive (retire it).
+
+## Adversarial review
+
+Reviewed 2026-10-25T212522Z by an adversarial subagent (model opus).
+
+**Verdict: proceed.** This is a legitimate and well-scoped follow-up (DIAGNOSIS Action 2). It reuses master's proven cell-B Lt machinery behind a stricter two-round 1.03 + IQR gate, and its per-cell flags plus PATH CHOSEN lines let each row explain itself, so no companion run is needed. Two things will quietly void the run if missed: unpooler m=128 must branch before master's NN branch, and Lt candidates with reduction scheme OUTPUT_TYPE must be excluded.
+
+### Justification
+The mechanism is plausible but modest. The five cells sit at SGLang parity, 1.6-2.1x their floors. o is 7.68/9.44 us against floors of 4.0/4.5, qkv m=256 is 19.46 against 9.8, and unpooler is 18.88/24.18 against 14.6/17.4. The m=128/256 band is where DIAGNOSIS says the absolute gaps are, and every m>=128 win so far was a cuBLAS reshape: NN layout, K-halves, and the cell-B single-node Lt plan (predicted 0.919, judged 0.895 at 741072dc). The machinery is cheap: master's prepare total is 4.5 s against a 300 s budget, so 5 cells x <=24 candidates x 2 rounds fit easily. Split-K>1 Lt plans do exist on this image: archived [lt] logs show splitK=2/3, red=2, ws 2.3-4.7 MB, so a 32 MB query cap is enough. The prior field is accurate. bf16-cublaslt-algo-pick-in-prepare-m128-m256 (do-not-try, within-ci) used a non-interleaved pick with no margin. Its qkv m=256 choice flipped +14%, and the LESSONS correction blames the gate design, not the knob. The hardening (two interleaved rounds >=1.03, IQR bound, profiler kernel-name assert) is a real difference and follows today's new lesson. The per-call preferred_blas_library toggle is avoided as Do-not-try requires. The excluded dead candidates (qkv K-split bmm, unpooler K-halves at m=128) match their done/regression and neutral files. Weakest links: (1) qkv m=256 is the cell with the worst prepare-vs-judge record. Three separate picks there flipped (backend toggle 22.08 vs 19.5, algo-pick +14%, K-split S=4 judged 22.17). The incumbent is already cuBLAS's own heuristic top pick, so a gain needs a non-top heuristic plan or a split-K plan to genuinely beat nvjet 96x64 cold. Expect 'master' here more often than not. (2) The o rationale that 'the 2 us row-minus-kernel can be cut' is not supported. o m=128 is already ONE nvjet node (no splitKreduce), so there is no second graph node to remove. The gap is most likely cold-start/launch effects that any single-kernel plan also pays. The only new lever for o is the NN layout (o_t), which helped pooler/unpooler at m=128 but has never been measured on o (K=1024, short mainloop). (3) The expected 'faster' on all five cells contradicts the hypothesis's own Risk section, which says the gate may route none. Realistically 0-3 cells route, for a headline of about +0-1%, which is inside the >=1.5% CI. Judge it on per-row PATH CHOSEN plus the paired row ratios, not the headline.
+
+### Confounders on the current kernel
+- restack-three-cell-wins-router-unpooler-cluster-m8-nn-m128 (NN unpooler at 65<=m<=128 behind nn_ok): unpooler m=128's incumbent is torch.mm on unpooler_t, not dispatch_impl. kernel_fn's NN branch comes BEFORE the dispatch_impl fallback, so a new unpooler-m128 branch placed 'before the _bf16_gemm_dispatch_impl fallback' as the change says is unreachable. The cell would silently measure master. It must sit above the NN branch, and the gate's flag-off side must be the NN path. If nn_ok ever comes up False, the incumbent changes under the cell; PATH CHOSEN should print which incumbent was gated.
+- combo-rowowner-reduce-free-m1-qkv-o-plus-naive (cell B qkv m=128 Lt plan, _cell_gate, _LT_CPP, per-state Lt workspace via flags inheritance): this is the machinery being generalized. A regression in the shared MuseLtDesc (new transa flag) or in the workspace handling could also move the qkv m=128 row, which is not a target. Treat any qkv verify_16 move as a machinery defect, not as signal.
+- sglang-gemm-dispatch-parity: _bf16_gemm_dispatch_impl is the incumbent for o m=128/256, qkv m=256 and unpooler m=256. Its nvjet heuristic choice is very likely among the Lt top-8, so a candidate identical to master can win the pre-screen by noise. The 1.03 two-round gate should then reject it. Print the algo/tile of the candidate next to master's profiled kernel name so an identical kernel is visible.
+- pooler-nn-layout-widen-m256 / pooler NN at m=128: not touched (pooler is left to pooler-k-halves-fp32-partials-restack-m128-m256), so no confounding. The two queued items edit the same kernel_fn/prepare region, which is a merge problem for a later combo, not a measurement confounder.
+
+### Interference and A/B needs
+No companion is warranted. Each cell has its own state flag decided by an in-run A/B against master's exact path (flag off = byte-identical master routing), and the judge times shapes in isolation with a cold L2, so there are no cross-cell or cross-landed interactions in the timing. A row that PATH CHOSEN says routed and that moves in the paired ratio is attributable to that cell. A row that says master and moves is drift (LESSONS: +/-3-4% row noise between master-equivalent runs). A loss on a routed cell is unambiguous too: the selector failed to predict the judge, the same failure class as today's lesson. An ab-revert of the NN restack would only change unpooler m=128's incumbent, which the gate already measures directly. A control isolating one sub-change is redundant because each cell's candidate set is itself selected and printed. The headline cannot be resolved by any single extra run at the expected +0-1% size, so companions would buy nothing the PATH CHOSEN and GATE lines do not already give.
+
+### Open questions
+- Does the cuBLASLt heuristic at m=256 qkv_gate return any plan that is not the nvjet 96x64 2x4 dispatch_impl already uses? If the pre-screen's top two include master's own algo, the cell is a no-op by construction. Print the master kernel name next to each finalist.
+- IQR <= 1.5x master's IQR: is IQR computed from the 41 net replays per round? On ~7-9 us o rows, is the empty-graph-baseline jitter (~5.3 us base) large enough to make the IQR bound reject everything?
+- Are the two rounds independent, i.e. recaptured graphs and a fresh x? Or the same graphs replayed twice? Same-graph rounds share capture-time layout and are less independent than the lesson intends.
+- For o the NN layout (o_t [1024, 8192]) needs MuseLtDesc's transa flag and A layout (n, k, ld n). Is cell B's correctness check (_cell_check with the power-of-two probe column) re-pointed at the NN view so the probe row still compares against the true W_o column?
+- Per-cell 32 MB workspace x 5 cells x state copies is about 160+ MB per state. That is fine on H200, but would a single shared per-state workspace (cells run serially on one stream) be simpler and equally safe?
+- The hypothesis says it supersedes and retires the held combo-cublaslt-single-node-m128-m256-plus-naive. Confirm churn actually retires it so the two are not both dispatched.
+
