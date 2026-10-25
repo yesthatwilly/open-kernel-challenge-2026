@@ -40,9 +40,18 @@ controls_for: null
 rewrite_stage: 7
 replaces: Marlin w13+w2 (moe_wna16_marlin_gemm x2) at every prefill T
 review: proceed
-status: queued
+status: running
 review_at: 2026-10-24T165620Z
 review_companions: null
+stage: claimed
+claimed_at: 2026-10-25T010440Z
+base_sha: de7af5e266755a23304676ec04c4526206066029
+base_blob: 0910a52804bc45a2f5ace82707c915f4634d8add
+branch: hyp/muse_prefill_layer/experts-triton-turn1-blockt32-stream
+worktree: .worktrees/muse_prefill_layer/experts-triton-turn1-blockt32-stream
+mode: null
+restack_of: null
+stale_base: true
 ---
 
 # experts-triton-turn1-blockt32-stream
