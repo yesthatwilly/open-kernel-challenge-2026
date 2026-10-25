@@ -74,7 +74,7 @@ review: proceed
 status: running
 review_at: 2026-10-25T111218Z
 review_companions: null
-stage: claimed
+stage: implemented
 claimed_at: 2026-10-25T111218Z
 base_sha: 8bbf53baef204e1a7c7f2d0b36f6da1996b27db4
 base_blob: 84b54ae2c9800a7b9bf96692557dd390904ed09b
@@ -83,6 +83,12 @@ worktree: .worktrees/muse_attention_decode/restack-sliding-decode-sk-window-on-c
 mode: null
 restack_of: sliding-decode-sk-window-route
 stale_base: null
+implemented_at: 2026-10-25T111803Z
+impl_commit: 79b7a1b88e9e662b9104a7006cad727ebb252e4b
+submission_sha256: ae4af530224f3622f69a1551409a80f6342d9186a7104c609da6ebe969e7f2c3
+norm_sha256: 313cc0c77b7e6b68a9111bdcc7ac717c75b52d01e9473448bdff11367615515b
+submission_blob: 5cf8fae31e5b84c36efeeb4569763eb9b06e1c8a
+lint_warnings: 57
 ---
 
 # restack-sliding-decode-sk-window-on-cluster-master
@@ -129,3 +135,48 @@ No companion is warranted, and none is affordable (0 attention checks today). Ea
 - HARVEST: compare the sliding decode_32 row with 20.4-20.6 us (master's two cluster C=4 runs). A pass is <= about 18 us with the sk + pre-attn kernels in top_kernels. Ignore the headline unless it is outside the noise of full decode_32. Record the skF PATH CHOSEN outcome alongside the result.
 - Is a scored submit of eb1b68b's lineage already on the board? BEST.json is a check run. If no scored run carries master's 1.492x, this submit also posts master's gains, so a 'neutral' outcome still has board value.
 
+
+
+## Implementation notes
+
+Built in `.worktrees/muse_attention_decode/restack-sliding-decode-sk-window-on-cluster-master/muse_attention_decode/submission.py` (base 8bbf53ba; its submission.py is identical to current master dfc610f4, so no stale-base merge was needed). `git apply --reject` of `done/neutral/sliding-decode-sk-window-route.patch`: hunks 1-9 and 11 applied clean (MappingProxyType import, SK_MAX_VARIANT 7, `load_prefix_pseudo<TOK>`, kernel `TOK = 8` trailing param, sk_pick 6/7, sk_prepare done[8], sk_attn tok/R/two-level check, `_SK_LABELS`, `_ps_synthetic(..., L=8)`). Rejects merged by hand with a Python script:
+1. kernel_fn: `if _sd_gate(cfg): return _sliding_decode_sk(data)` inserted FIRST, above master's `_slide_gate` branch.
+2. The `_SD_*` block placed at module level just before the import-time `if torch.cuda.is_available():` block (after `_ps_setup`/`_skf`/`_slide_*` definitions, all defined before the import-time calls run).
+3. `_sd_setup()` called AFTER `_slide_init()`, in its own try/except (`_SD_ROUTE = MappingProxyType({})` + PATH CHOSEN on a raise).
+4. Final "every other shape" PATH CHOSEN wording updated.
+
+Adversarial review items applied:
+- Gate decision: `_sd_gate_band` now has pass 1 (all candidates + Triton + cluster, interleaved, median 21, empty subtracted) and pass 2 (picked pair vs cluster vs Triton + pre/sk rows, fresh graphs, median 31). Both passes are printed; routing uses ONLY the pass-2 ratio, vs the real incumbent (`_slide_forward(data, _slide_clusters(cfg))` if `_slide_gate(cfg)` else Triton), threshold 1.03x (1.05x if the incumbent falls back to Triton). `_SD_CLUSTER_C4_US` removed; measured cluster number printed; PATH CHOSEN prints pair, cluster and Triton.
+- Skip extra bands: only (3, 32) is gated; B=1 and B=2..16 print "master, not gated in this restack" and keep master (cluster C=16 / Triton). The replay check covers band 3 only. `_sd_validate` still runs the parent's TOK=1 cases (B=1/3/16/32) as a kernel self-check.
+- Ticket rezero: `_sd_setup` is a wrapper whose `finally` always calls `_rezero_tickets()` and prints the ticket sum (success, fallback or raise); the body keeps the parent's post-replay ticket check that drops the route if nonzero.
+- skF build: `_SKF_HEAD` slices before `template <int STAGES, bool TICKET`, so it includes the new `template <int TOK> load_prefix_pseudo`; without SK_PSEUDO its body is empty, an uninstantiated template with unused params, which is valid. CANNOT BE COMPILED HERE (no GPU/nvcc); confirm the `[skF]` / skF PATH CHOSEN lines in the run log.
+- Variants 4/5: `_sd_validate` prints regs/local/dyn smem/CTAs per sk_attrs for variants 4,5,6,7 (4/5 tagged "must equal sliding-verify line"); compare with master's `[ps]`/sk lines for byte-identity.
+- Review's headline correction (+0.55%, not +2%) noted; read the decode_32 sliding row and `[sd-gate]` B=32 lines.
+
+Deviation: none in the CUDA. Headline-level confounders (full decode_32 noise, skF gate flip) are unchanged and not addressed by the build.
+
+## Rules check
+
+- [x] CUDA-graph capturable: kernel_fn additions are a config-only predicate + `_sd_run` (pre-attn + sk launch, self-resetting tickets); all sync/.item()/prints live in prepare-time `_sd_*` setup only (checked in diff).
+- [x] Nothing derived from `data` cached across calls: `_SD_ROUTE` holds (variant, grid-spec) from config bands only; workspaces allocated per call from shapes; tickets are the existing self-resetting arrays, not state pointers.
+- [x] Weights: n/a, attention problem, no weights touched.
+- [x] Activations/KV/q: KV FP8, q e4m3 via `_pre_attention_kernel`, fp32 softmax/merges, bf16 out (unchanged parent kernel).
+- [x] Attention sees every key: sk kernel windows lo = max(0, sp - 2048) with the window including the new key; self-check vs FP32 reference at lens 0/1/63/2047/2048/2049/80000.
+- [x] No timing patches, harness I/O, module edits, reference import: none (diff is submission-only; no subprocess/fork).
+- [x] All work inside the timed call; no output caching or replay: graph replays only in prepare-time gate/check, kernel_fn recomputes.
+- [x] Two states (copies: 2): no module-global device pointers into a state; `_sd_replay_check` captures kernel_fn on two states and alternates refilled replays.
+
+okc_lint: `OK with warnings` (only host-sync warnings in prepare-time code outside kernel_fn's call graph). undef.py: `[]`. py_compile: ok.
+
+## Pre-flight audit
+
+Audited 2026-10-25 (opus, read-only emulation; no GPU here). **Verdict: dispatch.** No fixes applied.
+
+- Merge: the CUDA hunks match the parent patch line for line. The `_SD_*` block matches the parent except for the specified gate change (incumbent = `_slide_forward(C=4)` when `_slide_gate`, else Triton; pass-2 head-to-head re-time; 1.03x / 1.05x thresholds) and the B=32-only band list. In kernel_fn, `_sd_gate` comes first, then `_slide_gate`, then `_sliding_forward`. That branch has no try/except, no prints and no per-call state; its allocations are sized by config only. undef.py returned `[]`, ast/py_compile passed, and okc_lint printed OK with only prepare-time host-sync warnings.
+- Fallback: `_sd_setup()` runs after `_slide_init()` inside its own try/except. It rebinds `_SD_ROUTE = MappingProxyType({})` on a raise, and an inner `finally` re-zeroes the tickets. It only reads `_SLIDE_MOD`, `_PS_ROUTE`, `_FUSED_ROUTE` and `_EXT2` and never writes them, so master's routes survive any Python raise. The one exception is a sticky CUDA fault, which the parent's judge run (16/16, no fault) did not show.
+- skF: `_SKF_HEAD` now carries `template <int TOK> load_prefix_pseudo`. Its body is empty without SK_PSEUDO, and the skF TU never calls it (the only call is in the sk kernel template, which the slice excludes). It is an uninstantiated, valid template.
+- TOK=1 indexing: sp = cache_seqlens[b] = seq_len + 1 and lo = max(0, sp - 2048), so the kernel covers positions p-2047..p, which equals reference.py's window. Page-table, q, qkv and out rows are b. Ticket (256) and gticket (8192) cover R=32 and R*32.
+- State: the tickets are module-global and keyed by device index, not pointers into a state. `_SD_ROUTE` holds config bands only. Nothing is keyed on data_ptr or id.
+- Synthetic data for the incumbent timing has the dtypes slide_attn checks (positions int64, seq_lens int32, 4-D FP8 caches).
+
+Residual risk: the in-prepare 1.03x gate against cluster C=4 may land below the threshold, in which case B=17..32 stays on cluster and the scored run measures master. That outcome is neutral, not a failure.
