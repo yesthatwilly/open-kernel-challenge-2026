@@ -67,9 +67,18 @@ controls_for: null
 rewrite_stage: 2
 replaces: "full-layer decode at 1<batch<=64: splitkv_attn_kernel A + splitkv_combine_kernel B (stage 1, master)"
 review: proceed
-status: queued
+status: running
 review_at: 2026-10-25T002131Z
 review_companions: null
+stage: claimed
+claimed_at: 2026-10-25T002131Z
+base_sha: eacc593b09a9f93781b074c1c92079abb1a0756e
+base_blob: c6854f093588da524e63657576b27ed720756e32
+branch: hyp/muse_attention_decode/full-decode-splitkv-s2-streamk-ticket-inproc
+worktree: .worktrees/muse_attention_decode/full-decode-splitkv-s2-streamk-ticket-inproc
+mode: null
+restack_of: null
+stale_base: null
 ---
 
 # full-decode-splitkv-s2-streamk-ticket-inproc
