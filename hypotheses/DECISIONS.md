@@ -227,3 +227,4 @@ overrides of a reviewer) with the reason, newest last. Written by `churn.py note
 - 2026-10-25T163348Z `muse_moe_w4a16` **wg-pdl-gather-w13-w2-chain**: land by hand: Scored 667b64e3fb1343ec 1.3752, new moe board best; PDL on the w13->w2 boundary: -5.0 us (-2.2%) at T=256 in-run, bit-identical; verify_32 row +1.9%.
 - 2026-10-25T185543Z `muse_prefill_layer` **combo-b-normgather-two-cta-low-regate**: land by hand: scored 1.4677 (job 73b40cd1) beat board 1.4605; now the board entry
 - 2026-10-25T185544Z `muse_bf16_proj` **combo-rowowner-reduce-free-m1-qkv-o-plus-naive**: land by hand: scored 1.2566 (job 741072dc) beat board 1.2491; now the board entry
+- 2026-10-25T185544Z `muse_attention_decode` **sliding-decode1-cluster-per-kvhead**: land by hand: scored 1.5120 (job 4b608df5) beat board 1.5017; now the board entry
