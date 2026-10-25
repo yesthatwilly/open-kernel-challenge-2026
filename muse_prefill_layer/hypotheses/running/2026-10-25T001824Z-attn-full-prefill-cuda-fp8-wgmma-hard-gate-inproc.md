@@ -69,7 +69,7 @@ base_sha: 87125eea89ead0362371bb80cf6433cc316b0496
 base_blob: db8a3344398bca79ea5cafeb580f701c055fd475
 branch: hyp/muse_prefill_layer/attn-full-prefill-cuda-fp8-wgmma-hard-gate-inproc
 worktree: .worktrees/muse_prefill_layer/attn-full-prefill-cuda-fp8-wgmma-hard-gate-inproc
-mode: null
+mode: check
 restack_of: null
 stale_base: null
 implemented_at: 2026-10-25T003224Z
@@ -78,6 +78,8 @@ submission_sha256: 618e6ffe957035f814decc7291fa5dbb86d548da4b85cc5a5e3f6fde3d26d
 norm_sha256: b2ba9d05dfb618d930653b5e779a55718fffa0ebbb093ea3244fb0c9808fcba8
 submission_blob: f3e8bf0e46f3da14de298fec7290d3889b749c5c
 lint_warnings: 29
+attempt_file: 2026-10-25T003224Z-check-attn-full-prefill-cuda-fp8-wgmma-hard-gate-inproc.md
+prepared_at: 2026-10-25T003224Z
 ---
 
 # attn-full-prefill-cuda-fp8-wgmma-hard-gate-inproc
