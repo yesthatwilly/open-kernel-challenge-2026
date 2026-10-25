@@ -1,0 +1,155 @@
+nel<4,true,false> B=5 max 20000: replay 3 on state 1 kv_scale 0.25 lens 11193..20000: launching graph (splitkv_attn_sk_kernel<4,true,false>)
+[sk] alt splitkv_attn_sk_kernel<4,true,false> B=5 max 20000: replay 3 state 1: rel L2 1.61e-03, finite True, tickets 0
+[sk] alt splitkv_attn_sk_kernel<4,true,false> B=5 max 20000: replay 4 on state 0 kv_scale 1.0 lens 10982..20000: launching graph (splitkv_attn_sk_kernel<4,true,false>)
+[sk] alt splitkv_attn_sk_kernel<4,true,false> B=5 max 20000: replay 4 state 0: rel L2 1.70e-03, finite True, tickets 0
+[sk] alt splitkv_attn_sk_kernel<4,true,false> B=5 max 20000: replay 5 on state 1 kv_scale 1.0 lens 10118..20000: launching graph (splitkv_attn_sk_kernel<4,true,false>)
+[sk] alt splitkv_attn_sk_kernel<4,true,false> B=5 max 20000: replay 5 state 1: rel L2 1.72e-03, finite True, tickets 0
+[sk] alt splitkv_attn_sk_kernel<4,true,false> B=33 max 8000: capturing state 0
+[sk] alt splitkv_attn_sk_kernel<4,true,false> B=33 max 8000: capturing state 1
+[sk] alt splitkv_attn_sk_kernel<4,true,false> B=33 max 8000: replay 0 on state 0 kv_scale 1.0 lens 4222..8000: launching graph (splitkv_attn_sk_kernel<4,true,false>)
+[sk] alt splitkv_attn_sk_kernel<4,true,false> B=33 max 8000: replay 0 state 0: rel L2 1.66e-03, finite True, tickets 0
+[sk] alt splitkv_attn_sk_kernel<4,true,false> B=33 max 8000: replay 1 on state 1 kv_scale 1.0 lens 4095..8000: launching graph (splitkv_attn_sk_kernel<4,true,false>)
+[sk] alt splitkv_attn_sk_kernel<4,true,false> B=33 max 8000: replay 1 state 1: rel L2 1.66e-03, finite True, tickets 0
+[sk] alt splitkv_attn_sk_kernel<4,true,false> B=33 max 8000: replay 2 on state 0 kv_scale 0.25 lens 4112..8000: launching graph (splitkv_attn_sk_kernel<4,true,false>)
+[sk] alt splitkv_attn_sk_kernel<4,true,false> B=33 max 8000: replay 2 state 0: rel L2 1.65e-03, finite True, tickets 0
+[sk] alt splitkv_attn_sk_kernel<4,true,false> B=33 max 8000: replay 3 on state 1 kv_scale 0.25 lens 4004..8000: launching graph (splitkv_attn_sk_kernel<4,true,false>)
+[sk] alt splitkv_attn_sk_kernel<4,true,false> B=33 max 8000: replay 3 state 1: rel L2 1.66e-03, finite True, tickets 0
+[sk] alt splitkv_attn_sk_kernel<4,true,false> B=33 max 8000: replay 4 on state 0 kv_scale 1.0 lens 4114..8000: launching graph (splitkv_attn_sk_kernel<4,true,false>)
+[sk] alt splitkv_attn_sk_kernel<4,true,false> B=33 max 8000: replay 4 state 0: rel L2 1.67e-03, finite True, tickets 0
+[sk] alt splitkv_attn_sk_kernel<4,true,false> B=33 max 8000: replay 5 on state 1 kv_scale 1.0 lens 4024..8000: launching graph (splitkv_attn_sk_kernel<4,true,false>)
+[sk] alt splitkv_attn_sk_kernel<4,true,false> B=33 max 8000: replay 5 state 1: rel L2 1.65e-03, finite True, tickets 0
+[sk] selector B=1: launching incumbent (FA3 + combine + norm-gate) then splitkv_attn_sk_kernel<4,true,true>, lens 80000..80000
+[sk] selector B=1: both returned
+[sk] selector B=1: new 25.0 us (0.82 TB/s) vs incumbent FA3 + combine + norm-gate 33.6 us (0.61 TB/s), ratio old/new 1.346, need >= 1.02, rel L2 vs incumbent 3.88e-03
+[sk] selector B=16: launching incumbent (splitkv A+B) then splitkv_attn_sk_kernel<4,true,false>, lens 74116..84803
+[sk] selector B=16: both returned
+[sk] selector B=16: new 113.8 us (2.83 TB/s) vs incumbent splitkv A+B 125.9 us (2.56 TB/s), ratio old/new 1.106, need >= 1.02, rel L2 vs incumbent 1.93e-04
+[sk] selector B=32: launching incumbent (splitkv A+B) then splitkv_attn_sk_kernel<4,true,false>, lens 74400..83847
+[sk] selector B=32: both returned
+[sk] selector B=32: new 223.1 us (2.90 TB/s) vs incumbent splitkv A+B 255.2 us (2.53 TB/s), ratio old/new 1.144, need >= 1.02, rel L2 vs incumbent 1.76e-04
+[sk] state check: capturing splitkv_attn_sk_kernel<4,true,true> B=1 on this state's buffers
+[sk] state check: replay 1: launching graph (splitkv_attn_sk_kernel<4,true,true>)
+[sk] state check: replay 1: rel L2 1.64e-03, finite True
+[sk] state check: replay 2: launching graph (splitkv_attn_sk_kernel<4,true,true>)
+[sk] state check: replay 2: rel L2 1.64e-03, finite True
+[sk] state check: capturing splitkv_attn_sk_kernel<4,true,false> B=5 on this state's buffers
+[sk] state check: replay 1: launching graph (splitkv_attn_sk_kernel<4,true,false>)
+[sk] state check: replay 1: rel L2 1.66e-03, finite True
+[sk] state check: replay 2: launching graph (splitkv_attn_sk_kernel<4,true,false>)
+[sk] state check: replay 2: rel L2 1.66e-03, finite True
+[sk] tickets of this state zeroed: sum 0
+PATH CHOSEN: full decode attention B=1: stream-K two-level ticket, grid = SM count [new 25.0 us (0.82 TB/s) vs incumbent FA3 + combine + norm-gate 33.6 us (0.61 TB/s), ratio old/new 1.346, need >= 1.02, rel L2 vs incumbent 3.88e-03] w2_mode=atomic prepare_wall_cum=2.9s
+PATH CHOSEN: full decode attention B<=23: stream-K single-level ticket, grid 2 x SM [new 113.8 us (2.83 TB/s) vs incumbent splitkv A+B 125.9 us (2.56 TB/s), ratio old/new 1.106, need >= 1.02, rel L2 vs incumbent 1.93e-04] w2_mode=atomic prepare_wall_cum=2.9s
+PATH CHOSEN: full decode attention B>=24: stream-K single-level ticket, grid 2 x SM [new 223.1 us (2.90 TB/s) vs incumbent splitkv A+B 255.2 us (2.53 TB/s), ratio old/new 1.144, need >= 1.02, rel L2 vs incumbent 1.76e-04] w2_mode=atomic prepare_wall_cum=2.9s
+[dl3] launching Q full T=1 kv_scale=1.0 rep0
+[dl3] ok        Q full T=1 kv_scale=1.0 rep0
+[dl3] launching Q full T=1 kv_scale=1.0 rep1
+[dl3] ok        Q full T=1 kv_scale=1.0 rep1
+[dl3] Q kv_scale=1.0: fp8 code gap q 0 k 0 v 0 (<= 1 required), rel L2 q 0.00e+00 k 0.00e+00 v 0.00e+00 gate 0.00e+00, untouched rows intact True, gate stride 1024
+[dl3] launching O prologue-0 T=1 kv_scale=1.0 rep0
+[dl3] ok        O prologue-0 T=1 kv_scale=1.0 rep0
+[dl3] launching O prologue-0 T=1 kv_scale=1.0 rep1
+[dl3] ok        O prologue-0 T=1 kv_scale=1.0 rep1
+[dl3] O kv_scale=1.0: rel L2 9.56e-05
+[dl3] launching Q full T=1 kv_scale=0.25 rep0
+[dl3] ok        Q full T=1 kv_scale=0.25 rep0
+[dl3] launching Q full T=1 kv_scale=0.25 rep1
+[dl3] ok        Q full T=1 kv_scale=0.25 rep1
+[dl3] Q kv_scale=0.25: fp8 code gap q 0 k 0 v 0 (<= 1 required), rel L2 q 0.00e+00 k 0.00e+00 v 0.00e+00 gate 0.00e+00, untouched rows intact True, gate stride 1024
+[dl3] launching O prologue-0 T=1 kv_scale=0.25 rep0
+[dl3] ok        O prologue-0 T=1 kv_scale=0.25 rep0
+[dl3] launching O prologue-0 T=1 kv_scale=0.25 rep1
+[dl3] ok        O prologue-0 T=1 kv_scale=0.25 rep1
+[dl3] O kv_scale=0.25: rel L2 6.55e-05
+[dl3] launching sk two-level, gate in qkv (n=4097)
+[dl3] ok        sk two-level, gate in qkv (n=4097)
+[dl3] launching sk two-level, separate gate stride 1024 (n=4097)
+[dl3] ok        sk two-level, separate gate stride 1024 (n=4097)
+[dl3] sk gate plumbing n=4097: separate-gate output identical to qkv-gate output: True
+[dl3] sk gate plumbing n=4097: separate gate stride (1024, 1) (required row stride 1024)
+[dl3] launching sk two-level, gate in qkv (n=30000)
+[dl3] ok        sk two-level, gate in qkv (n=30000)
+[dl3] launching sk two-level, separate gate stride 1024 (n=30000)
+[dl3] ok        sk two-level, separate gate stride 1024 (n=30000)
+[dl3] sk gate plumbing n=30000: separate-gate output identical to qkv-gate output: True
+[dl3] sk gate plumbing n=30000: separate gate stride (1024, 1) (required row stride 1024)
+[dl3] piece A kernel-level worst: {'q': 0, 'k': 0, 'v': 0, 'gate': 0.0, 'o': 9.561654217126637e-05}
+[dl3] selector A: timing the full decode_1 attention side (new chain, then the parent's chain)
+[dl3] selector A: full decode_1 attention side, 80000 keys: new 48.96 us vs incumbent 57.25 us, ratio old/new 1.169, need >= 1.02 -> WINNER = NEW
+[dl3] M2 (Q + sk two-level + O chain <= 36 us in prepare timing): 49.0 us -> MISSED
+[dl3] launching layer full kv_scale=0.25 parent
+[dl3] ok        layer full kv_scale=0.25 parent
+[dl3] launching layer full kv_scale=0.25 pieces A=1 B=1 C=1
+[dl3] ok        layer full kv_scale=0.25 pieces A=1 B=1 C=1
+[dl3] eager layer full kv_scale=0.25 A=1 B=1 C=1: hidden 0.00e+00 stream 3.10e-06 ids_ok True cache_ok True finite True -> ok
+[dl3] launching layer full kv_scale=1 parent
+[dl3] ok        layer full kv_scale=1 parent
+[dl3] launching layer full kv_scale=1 pieces A=1 B=1 C=1
+[dl3] ok        layer full kv_scale=1 pieces A=1 B=1 C=1
+[dl3] eager layer full kv_scale=1 A=1 B=1 C=1: hidden 0.00e+00 stream 3.41e-06 ids_ok True cache_ok True finite True -> ok
+[dl3] launching layer sliding parent
+[dl3] ok        layer sliding parent
+[dl3] launching layer sliding pieces A=1 B=1 C=1
+[dl3] ok        layer sliding pieces A=1 B=1 C=1
+[dl3] eager layer sliding A=1 B=1 C=1: hidden 0.00e+00 stream 0.00e+00 ids_ok True cache_ok True finite True -> ok
+[dl3] launching alt full kv_scale=0.25 eager warm-up state 0
+[dl3] ok        alt full kv_scale=0.25 eager warm-up state 0
+[dl3] alt full kv_scale=0.25: capturing state 0
+[dl3] launching alt full kv_scale=0.25 eager warm-up state 1
+[dl3] ok        alt full kv_scale=0.25 eager warm-up state 1
+[dl3] alt full kv_scale=0.25: capturing state 1
+[dl3] alt full kv_scale=0.25: replay 0 on state 0: launching graph
+[dl3] alt full kv_scale=0.25: replay 0 state 0: hidden 1.44e-03 stream 1.23e-03 ids_ok True cache_ok True finite True, tickets 0 -> ok
+[dl3] alt full kv_scale=0.25: replay 1 on state 1: launching graph
+[dl3] alt full kv_scale=0.25: replay 1 state 1: hidden 0.00e+00 stream 3.99e-06 ids_ok True cache_ok True finite True, tickets 0 -> ok
+[dl3] alt full kv_scale=0.25: replay 2 on state 0: launching graph
+[dl3] alt full kv_scale=0.25: replay 2 state 0: hidden 1.22e-03 stream 1.11e-03 ids_ok True cache_ok True finite True, tickets 0 -> ok
+[dl3] alt full kv_scale=0.25: replay 3 on state 1: launching graph
+[dl3] alt full kv_scale=0.25: replay 3 state 1: hidden 2.08e-03 stream 1.91e-03 ids_ok True cache_ok True finite True, tickets 0 -> ok
+[dl3] alt full kv_scale=0.25: replay 4 on state 0: launching graph
+[dl3] alt full kv_scale=0.25: replay 4 state 0: hidden 1.84e-03 stream 1.64e-03 ids_ok True cache_ok True finite True, tickets 0 -> ok
+[dl3] alt full kv_scale=0.25: replay 5 on state 1: launching graph
+[dl3] alt full kv_scale=0.25: replay 5 state 1: hidden 1.75e-03 stream 1.62e-03 ids_ok True cache_ok True finite True, tickets 0 -> ok
+[dl3] launching alt full kv_scale=1 eager warm-up state 0
+[dl3] ok        alt full kv_scale=1 eager warm-up state 0
+[dl3] alt full kv_scale=1: capturing state 0
+[dl3] launching alt full kv_scale=1 eager warm-up state 1
+[dl3] ok        alt full kv_scale=1 eager warm-up state 1
+[dl3] alt full kv_scale=1: capturing state 1
+[dl3] alt full kv_scale=1: replay 0 on state 0: launching graph
+[dl3] alt full kv_scale=1: replay 0 state 0: hidden 5.36e-06 stream 7.37e-06 ids_ok True cache_ok True finite True, tickets 0 -> ok
+[dl3] alt full kv_scale=1: replay 1 on state 1: launching graph
+[dl3] alt full kv_scale=1: replay 1 state 1: hidden 1.47e-03 stream 1.20e-03 ids_ok True cache_ok True finite True, tickets 0 -> ok
+[dl3] alt full kv_scale=1: replay 2 on state 0: launching graph
+[dl3] alt full kv_scale=1: replay 2 state 0: hidden 1.84e-03 stream 1.58e-03 ids_ok True cache_ok True finite True, tickets 0 -> ok
+[dl3] alt full kv_scale=1: replay 3 on state 1: launching graph
+[dl3] alt full kv_scale=1: replay 3 state 1: hidden 2.81e-05 stream 2.71e-05 ids_ok True cache_ok True finite True, tickets 0 -> ok
+[dl3] alt full kv_scale=1: replay 4 on state 0: launching graph
+[dl3] alt full kv_scale=1: replay 4 state 0: hidden 1.99e-03 stream 1.81e-03 ids_ok True cache_ok True finite True, tickets 0 -> ok
+[dl3] alt full kv_scale=1: replay 5 on state 1: launching graph
+[dl3] alt full kv_scale=1: replay 5 state 1: hidden 0.00e+00 stream 2.29e-08 ids_ok True cache_ok True finite True, tickets 0 -> ok
+[dl3] launching alt sliding eager warm-up state 0
+[dl3] ok        alt sliding eager warm-up state 0
+[dl3] alt sliding: capturing state 0
+[dl3] launching alt sliding eager warm-up state 1
+[dl3] ok        alt sliding eager warm-up state 1
+[dl3] alt sliding: capturing state 1
+[dl3] alt sliding: replay 0 on state 0: launching graph
+[dl3] alt sliding: replay 0 state 0: hidden 1.75e-03 stream 1.57e-03 ids_ok True cache_ok True finite True, tickets 0 -> ok
+[dl3] alt sliding: replay 1 on state 1: launching graph
+[dl3] alt sliding: replay 1 state 1: hidden 0.00e+00 stream 0.00e+00 ids_ok True cache_ok True finite True, tickets 0 -> ok
+[dl3] alt sliding: replay 2 on state 0: launching graph
+[dl3] alt sliding: replay 2 state 0: hidden 1.87e-03 stream 1.60e-03 ids_ok True cache_ok True finite True, tickets 0 -> ok
+[dl3] alt sliding: replay 3 on state 1: launching graph
+[dl3] alt sliding: replay 3 state 1: hidden 0.00e+00 stream 0.00e+00 ids_ok True cache_ok True finite True, tickets 0 -> ok
+[dl3] alt sliding: replay 4 on state 0: launching graph
+[dl3] alt sliding: replay 4 state 0: hidden 0.00e+00 stream 0.00e+00 ids_ok True cache_ok True finite True, tickets 0 -> ok
+[dl3] alt sliding: replay 5 on state 1: launching graph
+[dl3] alt sliding: replay 5 state 1: hidden 1.77e-03 stream 1.56e-03 ids_ok True cache_ok True finite True, tickets 0 -> ok
+[dl3] layer-level check of pieces ['A', 'B', 'C']: eager + two-state alternating graph replays passed
+[dl3] tickets of this state after the stage-3 checks: sum 0
+[dl3] PATH CHOSEN: dl3 piece A (full decode_1 attention side): Q(qkv+norm+RoPE+FP8+KV store, gate stride 1024) + sk two-level (PDL) + O(prologue 0, PDL), FA3 not used [full decode_1 attention side, 80000 keys: new 48.96 us vs incumbent 57.25 us, ratio old/new 1.169, need >= 1.02] w2_mode=atomic
+[dl3] PATH CHOSEN: dl3 piece B (routing kernel R at T=1, both layers): per-warp top-8 R with PDL after P [P->R pair T=1 (R pdl=1): new 37.09 us vs incumbent 38.08 us, ratio old/new 1.027, need >= 1.02] w2_mode=atomic
+[dl3] PATH CHOSEN: dl3 piece C (unpooler at T=1, both layers): dl_unpool_kernel NF=1 [unpooler T=1 (kernel vs _gemm + F.pad): new 10.56 us vs incumbent 13.34 us, ratio old/new 1.264, need >= 1.02] w2_mode=atomic
+[dl3] PATH CHOSEN: dl3 T > 1 (decode_16/32, verify): parent path, all pieces gated to tokens == 1 w2_mode=atomic
+[prepare] this call 4.5s, cumulative 4.5s

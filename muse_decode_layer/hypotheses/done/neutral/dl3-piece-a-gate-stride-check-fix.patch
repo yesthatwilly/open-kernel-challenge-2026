@@ -1,0 +1,50 @@
+diff --git a/muse_decode_layer/submission.py b/muse_decode_layer/submission.py
+index 07cda658..4bb57fd2 100644
+--- a/muse_decode_layer/submission.py
++++ b/muse_decode_layer/submission.py
+@@ -5274,12 +5274,15 @@ def _dl3_check_a(state, device):
+     sk = _sk_buffers(device)
+     for n, kvs in ((4097, 1.0), (30000, 0.25)):
+         sdata, sq, sqkv = _splitkv_synthetic([n], kvs, gen, device)
+-        gate_c = sqkv[:, SK_QKV_GATE_OFF:].contiguous()
++        # A fresh [rows, 1024] tensor: .contiguous() on a one-row view keeps the parent's row stride (2304).
++        gate_c = torch.empty((sqkv.shape[0], 1024), dtype=sqkv.dtype, device=device)
++        gate_c.copy_(sqkv[:, SK_QKV_GATE_OFF:])
+         a = _dl3_launch(f"sk two-level, gate in qkv (n={n})", lambda: _full_decode_sk(sdata, sq, sqkv, sk, 3))
+         b = _dl3_launch(f"sk two-level, separate gate stride {gate_c.stride(0)} (n={n})",
+                         lambda: _full_decode_sk(sdata, sq, None, sk, 3, gate=gate_c))
+         same = bool(torch.equal(a, b)) and bool(torch.isfinite(b.float()).all())
+         _say3(f"sk gate plumbing n={n}: separate-gate output identical to qkv-gate output: {same}")
++        _say3(f"sk gate plumbing n={n}: separate gate stride {gate_c.stride()} (required row stride {DL3_GATE_STRIDE})")
+         if not same or gate_c.stride(0) != DL3_GATE_STRIDE:
+             problems.append(f"sk gate plumbing n={n}: outputs differ (or gate stride {gate_c.stride(0)})")
+     if _sk_ticket_sum(sk):
+@@ -5471,7 +5474,9 @@ def _dl3_select_a(state, device):
+ def _dl3_compare_layer(got, ref, d_got, d_ref, a_on):
+     finite = all(bool(torch.isfinite(t.float()).all()) for t in got[:2])
+     e_h, e_s = _rel_l2(got[0], ref[0]), _rel_l2(got[1], ref[1])
+-    tol_h, tol_s = (5e-2, 2e-2) if a_on else (1e-2, 5e-3)
++    # A on: stream 1e-2 on the synthetic stream (rms ~3) bounds the residual update vs the parent to ~3.5%, inside the
++    # judge's headroom at full decode_1 (parent update 5.6% of a 14.8% bound); 2e-2 here allowed ~7%.
++    tol_h, tol_s = (2e-2, 1e-2) if a_on else (1e-2, 5e-3)
+     if a_on:  # q rounds to FP8 differently in a few elements: one near-tied expert may swap, not more
+         overlap = (got[2].unsqueeze(-1) == ref[2].unsqueeze(-2)).any(-1).sum(-1)
+         ids_ok = bool((overlap >= TOP_K - 1).all())
+@@ -5485,6 +5490,8 @@ def _dl3_compare_layer(got, ref, d_got, d_ref, a_on):
+         mask = torch.ones(g.shape[0], dtype=torch.bool, device=g.device)
+         mask[loc] = False
+         cache_ok = cache_ok and torch.equal(g[mask], r[mask]) and _fp8_code_gap(g[loc], r[loc]) <= (1 if a_on else 0)
++        if a_on:  # a one-code gap on every element still passes the gap test: bound the new rows' L2 too (judge: 8%)
++            cache_ok = cache_ok and _rel_l2(g[loc].view(FP8).float(), r[loc].view(FP8).float()) <= 2e-2
+     ok = finite and e_h <= tol_h and e_s <= tol_s and ids_ok and cache_ok
+     return ok, f"hidden {e_h:.2e} stream {e_s:.2e} ids_ok {ids_ok} cache_ok {cache_ok} finite {finite}"
+ 
+@@ -5520,7 +5527,7 @@ def _dl3_alternation_check(state, device, a, b, u):
+     ms = [_dl3_flags(state, a, b, u), _dl3_flags(_dl3_ministate(state, device), a, b, u)]
+     gen = torch.Generator(device=device)
+     gen.manual_seed(20261036)
+-    for name, window, kvs, n, ls_val in (_DL3_CASES[0], _DL3_CASES[2]):
++    for name, window, kvs, n, ls_val in _DL3_CASES:  # incl. full kv_scale=1, the scale of the scored full decode_1
+         sets = []
+         for s in range(2):
+             data = _dl3_layer_data(state, device, gen, window, kvs, n, ls_val)

@@ -54,10 +54,10 @@ priority: 1
 kind: primary
 controls_for: null
 review: proceed
-status: running
+status: done
 review_at: 2026-10-25T150343Z
 review_companions: null
-stage: dispatched
+stage: harvested
 claimed_at: 2026-10-25T150343Z
 base_sha: 2f268b5931c7c758c5178f3bb152d80688ca9d95
 base_blob: 07cda658e21f2eb25a9dd1f50ac5202ad5985831
@@ -76,6 +76,13 @@ attempt_file: 2026-10-25T151022Z-submit-dl3-piece-a-gate-stride-check-fix.md
 prepared_at: 2026-10-25T151022Z
 job: 933d3f825a044d36
 dispatched_at: 2026-10-25T151030Z
+outcome: neutral
+verdict_detail: unproven-vs-best
+speedup: 1.3079569800910293
+speedup_ci: [1.288337625389664, 1.3275763347923946]
+harvested_at: 2026-10-25T153250Z
+best_at_harvest: 1.3017519911209459
+promotion: null
 ---
 
 # dl3-piece-a-gate-stride-check-fix
@@ -155,3 +162,35 @@ An observation, not fixed: in 34a9be06918d448b, alt full kv_scale=0.25 replays 2
 okc_lint: OK with warnings (only the pre-existing host-sync warnings in prepare()). py_compile OK, __pycache__ removed.
 
 Residual risk: A's Q/O kernels meet judge data for the first time in the timed path. The checks bound their deviation from the parent to about 3.5% of the update. That is inside the judge's headroom but rests on synthetic inputs (randn x, non-soft KV), and the worst case is a failed scored run, not a wrong board entry.
+
+## Result
+
+- job `933d3f825a044d36` (submit), status done, passed True, tests 13/13
+- speedup 1.3080x, 95% CI [1.2883, 1.3276], score 17294.37614869084 µs vs SGLang 22620.3 µs
+- best at harvest: {"speedup": 1.3017519911209459, "ci": [1.2822257112541318, 1.32127827098776], "job": "34a9be06918d448b"}; base result: muse_decode_layer/hypotheses/done/neutral/dense-chain-s3-t1-q-sk2-o-route-unpool.result.json
+- **outcome: neutral** (unproven-vs-best)
+- files: `muse_decode_layer/hypotheses/done/neutral/dl3-piece-a-gate-stride-check-fix.result.json`, `muse_decode_layer/hypotheses/done/neutral/dl3-piece-a-gate-stride-check-fix.patch`; branch `hyp/muse_decode_layer/dl3-piece-a-gate-stride-check-fix`
+
+## Attribution
+
+| shape | w | base µs | hyp µs | delta | verdict |
+|---|---|---|---|---|---|
+| batch=1 ctx=80000 dist=soft layer=sliding load=decode_1 page=1 repeats=60 | 46 | 117.81 | 118.05 | 0.9787 | flat |
+| batch=1 ctx=80000 dist=soft layer=full load=decode_1 page=1 repeats=60 | 16 | 130.03 | 122.2 | 1.0338 | gained |
+| batch=16 ctx=80000 dist=soft layer=sliding load=decode_16 page=1 spread=agentic | 46 | 209.22 | 195.64 | 1.0081 | flat |
+| batch=16 ctx=80000 dist=soft layer=full load=decode_16 page=1 spread=agentic | 16 | 298.39 | 296.66 | 1.0016 | flat |
+| batch=32 ctx=80000 dist=soft layer=sliding load=decode_32 page=1 spread=agentic | 46 | 236.43 | 239.18 | 1.0043 | flat |
+| batch=32 ctx=80000 dist=soft layer=full load=decode_32 page=1 spread=agentic | 16 | 441.9 | 430.66 | 1.0059 | flat |
+| batch=1 ctx=80000 dist=soft layer=sliding load=verify_1 page=1 q_len=8 | 46 | 189.87 | 180.39 | 1.0039 | flat |
+| batch=1 ctx=80000 dist=soft layer=full load=verify_1 page=1 q_len=8 | 16 | 199.07 | 199.99 | 0.9971 | flat |
+| batch=16 ctx=80000 dist=soft layer=sliding load=verify_16 page=1 q_len=8 spread=agentic | 46 | 427.37 | 427.64 | 1.0119 | flat |
+| batch=16 ctx=80000 dist=soft layer=full load=verify_16 page=1 q_len=8 spread=agentic | 16 | 571.83 | 570.07 | 1.0008 | flat |
+| batch=32 ctx=80000 dist=soft layer=sliding load=verify_32 page=1 q_len=8 spread=agentic | 46 | 600.4 | 606.99 | 1.0155 | flat |
+| batch=32 ctx=80000 dist=soft layer=full load=verify_32 page=1 q_len=8 spread=agentic | 16 | 881.43 | 869.34 | 1.0138 | flat |
+
+gained on full decode_1. Expected hit: 7/7. Noise ±1.5%.
+
+## Follow-ups
+
+- unproven-vs-best: the change is not proven either way; a stacked hypothesis (`depends_on: dl3-piece-a-gate-stride-check-fix`) that adds a further change in the same area is the only way to learn more (identical code is never re-run).
+
