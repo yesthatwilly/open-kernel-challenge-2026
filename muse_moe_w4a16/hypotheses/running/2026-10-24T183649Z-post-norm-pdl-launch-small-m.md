@@ -49,7 +49,7 @@ review: proceed
 status: running
 review_at: 2026-10-24T183956Z
 review_companions: null
-stage: implemented
+stage: dispatched
 claimed_at: 2026-10-25T003236Z
 base_sha: 1d31a26689bb109c514db2e2c51c7167dbbb76f0
 base_blob: 108d36e9f2266fc88531dd6ff0329a847c882013
@@ -66,6 +66,8 @@ submission_blob: 062a12799f5d0eb53f65704727c665e6976fc6db
 lint_warnings: 11
 attempt_file: 2026-10-25T003435Z-check-post-norm-pdl-launch-small-m.md
 prepared_at: 2026-10-25T003435Z
+job: 5202cf15936c4492
+dispatched_at: 2026-10-25T003443Z
 ---
 
 # post-norm-pdl-launch-small-m
