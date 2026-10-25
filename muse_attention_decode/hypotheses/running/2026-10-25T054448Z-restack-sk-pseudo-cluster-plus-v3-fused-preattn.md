@@ -59,7 +59,7 @@ review: proceed
 status: running
 review_at: 2026-10-25T054723Z
 review_companions: null
-stage: implemented
+stage: dispatched
 claimed_at: 2026-10-25T054723Z
 base_sha: 6f1f3a99d4b2849b4e653b5b3b88ff6f21aefaab
 base_blob: d8769ef25caf845a0e207538ccc5c62394b6ee3b
@@ -76,6 +76,8 @@ submission_blob: 84b54ae2c9800a7b9bf96692557dd390904ed09b
 lint_warnings: 40
 attempt_file: 2026-10-25T084824Z-check-restack-sk-pseudo-cluster-plus-v3-fused-preattn.md
 prepared_at: 2026-10-25T084824Z
+job: cbd49dc94be548e7
+dispatched_at: 2026-10-25T084834Z
 ---
 
 # restack-sk-pseudo-cluster-plus-v3-fused-preattn
