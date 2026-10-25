@@ -70,7 +70,7 @@ review: proceed
 status: running
 review_at: 2026-10-25T002131Z
 review_companions: null
-stage: claimed
+stage: implemented
 claimed_at: 2026-10-25T002131Z
 base_sha: eacc593b09a9f93781b074c1c92079abb1a0756e
 base_blob: c6854f093588da524e63657576b27ed720756e32
@@ -79,6 +79,12 @@ worktree: .worktrees/muse_attention_decode/full-decode-splitkv-s2-streamk-ticket
 mode: null
 restack_of: null
 stale_base: null
+implemented_at: 2026-10-25T003701Z
+impl_commit: f291b49c49670595d0615e749294f69bc15de1a4
+submission_sha256: f49bdef359197810d176338f1bf491251d9a22b13beadb48c8647f69cbe5628c
+norm_sha256: 61164dd99ca40724dc1494fa08e554f6c14e08d7036277822482a5828fc343a4
+submission_blob: 695c97d2e9fef8f806ec02d2fe14a02668989e3f
+lint_warnings: 10
 ---
 
 # full-decode-splitkv-s2-streamk-ticket-inproc
@@ -131,3 +137,57 @@ No companion is warranted. The spec already builds the needed controls in-proces
 - splitkv-full-line-gather-mapping (unproven-vs-best at 1.416x, gained on full decode_16/32) changes the same issue_tile mapping that v2 keeps 'exactly'. Should stage 3 stack it onto v2, since v2 freezes the stage-1 gather?
 - Two load_inline modules (v1 fallback + v2) at about 45 s each, plus eager diagnostics at B=32 x 80000 for 4 variants: confirm the total stays well inside the 15-minute budget with the 16 tests.
 
+
+## Implementation notes
+
+Built 2026-10-25 in the worktree (`muse_attention_decode/submission.py` only; not compiled here, no nvcc/GPU on this node).
+
+- **New module `muse_full_decode_splitkv_v2`** (`_SK_CPP`/`_SK_CUDA`, built by `_build_sk()` with `TORCH_CUDA_ARCH_LIST=9.0a` set around `load_inline` and restored after, `-O3 -lineinfo`; torch's resolved arch flags are printed). Stage-1 module v1 (kernels A + B), its build, its self-check and its code are untouched and stay the fallback; `_full_decode_splitkv` gains only a 2-line dispatch to `_full_decode_sk` when `_EXT2` is set.
+- **`splitkv_attn_sk_kernel<STAGES, TICKET>`**: ring, swizzle, cp.async.cg K/V issue, m16n8k16 QK/PV math, online softmax and the 4-warp smem merge are copied verbatim from kernel A. Changed: (1) stream-K over 64-token tiles, CTA c owns [c*T/grid, (c+1)*T/grid) (int64 math), tile prefix rebuilt per CTA in smem; producer and consumer walk request boundaries with incremental cursors; page indices prefetched 16 tiles per block, double-buffered, 4-byte cp.async zero-filled past each request end (binary search for the request per block). (2) Segment end: a whole-request segment finalizes in place; otherwise the fp32 partial goes to slot c + b (workspace [grid + B] slots, allocated per call from grid and batch), `__threadfence`, ticket `atomicAdd`; the CTA drawing `c_hi - c_lo` (owner(t) = ((t+1)*grid - 1)/T, the exact inverse) fences, LSE-merges slots c_lo..c_hi via `__ldcg`, times v_scale, applies the stage-1 B epilogue (scaleless RMSNorm over 64, eps 1e-5 inside the sqrt, sigmoid(gate), bf16) and resets `ticket[b] = 0`. No CTA waits on another, so there is no spin to bound. Ticket: int32[64] per device, zeroed once at import (`_sk_ticket`).
+- **Variants** (one template, three instantiations): 0 = <4 stages, ticket> (the only timed path), 1 = <4, no ticket> + `splitkv_sk_combine_kernel` (diagnostics), 2 = <5 stages, ticket> (112,672 B smem, still 2 CTA/SM by arithmetic; occupancy printed).
+- **Import sequence**: v1 build + v1 self-check (master) -> v2 build -> `_sk_validate()`: device capability, per-variant `cudaFuncGetAttributes` binaryVersion/ptxVersion/regs/local bytes/smem and occupancy, arch flags; anything not 90/sm_90a turns v2 OFF -> canary (B=2, lengths 5 and 67) -> 8 self-check cases (B=2 one request spanning every CTA at grid 7 and device; B=16 ragged with seq % 64 in 1..7 and lengths < 64, kv_scale 0.25/1, grids device/3; B=32 ragged grids 3/device; B=64 mixed grids device/7) -> kernel_fn captured as a CUDA graph and replayed twice with the output NaN-poisoned before each replay -> tickets must sum to 0. Every launch is announced with a flushed print, synced, and confirmed. Any failure prints `PATH CHOSEN: full decode splitkv v1 (fallback: <reason>)`; success prints `PATH CHOSEN: full decode streamk+ticket v2`. A final line names the unchanged path for every other shape.
+- **Diagnostics (review's request, never choose the path)**: after PATH CHOSEN, variants 1 and 2 are correctness-checked (skipped from timing if they fail or cannot launch), then at synthetic B=16 and B=32 x 80000 (randperm page table, as reference.py) eager cold-L2 (256 MB flush) median-of-10 per-kernel µs and TB/s (bytes = sum(seq_b) x 256) for stage-1 A, stage-1 B, stream-K + ticket (4 st), stream-K no ticket + its combine, stream-K + ticket (5 st), each with rel L2 vs the stage-1 output, plus a ratio line: `stage-1 A / stream-K no-ticket A` (the decode_32 locality claim, confirm/refute), `(no-ticket A + combine) / ticket` (the fold and the last-arriver tail), `4 st / 5 st`. Read decode_32 from these lines and profile top_kernels, not the headline.
+- **Deviations from the spec**: (a) the next request's query is not fetched into "a second smem slot when a segment starts": it rides the segment's first tile into a per-stage 1 KB query slot (STAGES slots), which keeps it in the same cp.async group as the tile and needs no extra wait. (b) Since segments are contiguous, every CTA in c_lo..c_hi has a non-empty intersection with the request, so there are no empty segments; merge still weights -inf partials 0. (c) Per the review, the decode_32 M2 target is treated as doubtful (randperm page table: contiguity only helps the 4 B/token index reads), hence the diagnostic ratio lines.
+- Review fixes applied: per-kernel µs and TB/s diagnostics with the named comparison lines (the only required fix); all build/safety rules from LESSONS 2026-10-25 (in-process only, sm_90a only, -lineinfo, plain cp.async.cg, sync+print per launch). First run must be `okc check`.
+
+## Rules check
+
+Checked against `git -C .worktrees/muse_attention_decode/full-decode-splitkv-s2-streamk-ticket-inproc diff`.
+
+- [x] CUDA-graph capturable: `_full_decode_sk`/`_sk_launch` do only `torch.empty` from shapes/grid and two extension launches; no `.item()`/sync/print in kernel_fn's call graph (lint: all host-sync hits are outside it); branches only on `_EXT2`/`_SK_VARIANT` module state and config; the self-check captures and replays kernel_fn itself.
+- [x] Nothing derived from `data` cached: the ticket is a zero int32[64] keyed by device index, allocated at import, and reset to 0 by every launch; workspaces are per call.
+- [x] Weights: n/a: this problem has no weights.
+- [x] Activations BF16 where SGLang keeps BF16 (bf16 output, gate read as bf16, fp32 accumulation/epilogue); KV cache FP8 read as E4M3 widened exactly to f16; queries FP8 E4M3 (unchanged pre-attention kernel).
+- [x] Every key attended: tiles cover [0, cache_seqlens[b]) of every request exactly once across CTAs; masking only past the length; no skipping by weight.
+- [x] No timing patches, harness frames/I/O/secrets, module edits, reference import, subprocesses (none: no subprocess/multiprocessing/fork/spawn anywhere) or network. The `TORCH_CUDA_ARCH_LIST` env var is set only around our own `load_inline` and restored.
+- [x] All work inside the timed call; no output caching or replay (the import-time graph is our own synthetic self-check, deleted after).
+- [x] Every other shape keeps master code byte for byte (the only edits outside new code are the 2-line dispatch inside the gated `_full_decode_splitkv`, the module docstring and two imports).
+
+okc_lint output:
+
+```
+warn  host-sync    L1722: torch.cuda.synchronize()  (outside kernel_fn's call graph; fine in prepare())
+warn  host-sync    L1725: torch.cuda.synchronize()  (outside kernel_fn's call graph; fine in prepare())
+warn  host-sync    L1730: torch.cuda.synchronize()  (outside kernel_fn's call graph; fine in prepare())
+warn  host-sync    L1749: torch.cuda.synchronize()  (outside kernel_fn's call graph; fine in prepare())
+warn  host-sync    L1756: torch.cuda.synchronize()  (outside kernel_fn's call graph; fine in prepare())
+warn  host-sync    L1761: torch.cuda.synchronize()  (outside kernel_fn's call graph; fine in prepare())
+warn  host-sync    L1816: left = int(_sk_ticket(dev).abs().sum().item())  (outside kernel_fn's call graph; fine in prepare())
+warn  host-sync    L1850: torch.cuda.synchronize()  (outside kernel_fn's call graph; fine in prepare())
+warn  host-sync    L1861: torch.cuda.synchronize()  (outside kernel_fn's call graph; fine in prepare())
+OK with warnings: submission.py
+```
+
+py_compile: OK; `__pycache__` removed.
+
+## Pre-flight audit
+
+Audited 2026-10-25 by an opus subagent (reading only, plus a Python emulation of the tile split; no GPU here). **Verdict: dispatch-with-fixes.**
+
+Fixes applied in the worktree `submission.py`:
+1. **The gate could never pass (category 1).** When Ttot < grid, some CTAs own zero tiles. The CTAs in `c_lo..c_hi` then include empty ones. The ticket target `c_hi - c_lo` was never reached, nothing finalized the request, the ticket was left non-zero, and `merge_slots` would have read slots that were never written. Implementation note (b) is false in this case. The canary (lengths [4, 66] -> cache_seqlens 5, 67 -> Ttot = 3 at grid 264) hits it every time, so v2 would always have fallen back to v1. Fix: `splitkv_attn_sk_kernel` now uses the effective grid `gx = min(gridDim.x, Ttot)` and CTAs at or above it exit. `splitkv_sk_combine_kernel` clamps `attn_grid` the same way. An emulation over 20k random (B, lengths, grid) cases, the canary included, confirms that every CTA in `c_lo..c_hi` then holds exactly one segment of the request. The scored shapes (Ttot around 20k-40k tiles) are unaffected.
+2. **The diagnostics could poison the timed path (category 2/6).** Variant 2 (5 stages, ticket) shares the ticket buffer with the timed variant 0, and its correctness check and timing run after PATH CHOSEN. A failing variant-2 run could leave tickets non-zero for the timed path. Fix: the tickets are re-zeroed and synced in a `finally` after `_sk_diagnostics()`.
+
+Checked and found sound: the ticket protocol (every thread runs `__threadfence` after writing its partial, then a barrier, then the atomic; the last arriver fences and reads with `__ldcg`). The reset needs no protection: it happens after every increment for that request, and no PDL attribute is used, so consecutive launches and graph replays are stream-ordered. The per-stage query slot has no RAW hazard (same cp.async group as its tile, then wait and barrier) and no WAR hazard (the slot is rewritten only after the next iteration's barrier, and its contents are already in registers). Slots `c + b` are unique and fit in `grid + B`. The tile-owner inverse is exact. Every key is attended once and masking happens only past the length. The FP8 query and KV and the bf16 output are unchanged. Nothing runs as a child process, and kernel_fn is capturable. okc_lint: OK with warnings (host syncs at import only); py_compile: OK.
+
+Residual risk: never compiled. Register pressure under the 128-register cap (`__launch_bounds__(256, 2)`) and spills are unverified (the import log prints regs and local bytes), and the ptxVersion==90 gate relies on cubin-only images reporting the virtual arch.
