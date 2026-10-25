@@ -455,18 +455,86 @@ def prepare(weights: Weights) -> dict:
             torch.cuda.synchronize()
             _align_self_check(device, count)
     torch.cuda.synchronize()
-    return {
+    state = {
         "banks": banks,
         "workspace": marlin_make_workspace(device, max_blocks_per_sm=4),
         # MuseSpark1xFp4Experts binds the effective (1 + w) weight of the post-expert norm.
         "norm_w": (weights["post_norm_w"].float() + 1.0).to(torch.bfloat16),
         # The original BF16 weight for _post_norm_combine_kernel, which adds the 1 in fp32.
         "post_norm_w": weights["post_norm_w"].contiguous(),
+        "w2_mode": "master",
     }
+    if (0, 32) in banks and banks[(0, 32)]["expert_map"] is not None:
+        state["w2_mode"] = _w2_atomic_self_check(weights, state, device)
+    return state
+
+
+# Hypothesis w2-marlin-atomic-add-small-m: up to this many tokens the w2 Marlin call may use
+# use_atomic_add=True (use_fp32_reduce stays True); prepare()'s self-check picks the mode.
+W2_ATOMIC_MAX_TOKENS = 32
+
+
+def _w2_atomic_self_check(weights, state, device):
+    """Untimed, synthetic inputs only. Pick the w2 mode for num_tokens <= 32: "atomic" (atomic add,
+    no memset), "atomic_zero" (atomic add after cache3.zero_()) or "master". cache3 aliases cache13,
+    which holds w13's output when w2 runs, so a non-zeroing atomic path that needs a zeroed C fails
+    the comparison here."""
+    count = 32
+    bank = state["banks"][(0, count)]
+    mode, reason = "master", "no candidate passed"
+    try:
+        gen = torch.Generator(device=device)
+        gen.manual_seed(1234)
+        worst = {"atomic": 0.0, "atomic_zero": 0.0}
+        ok = {"atomic": True, "atomic_zero": True}
+        err = {}
+        for tokens in (1, 4, 8, 16, 32):
+            ids = torch.randint(0, N_EXPERTS, (tokens, TOP_K), generator=gen, device=device, dtype=torch.int32)
+            ids[:, :3] = torch.randint(bank["start"], bank["start"] + count, (tokens, 3), generator=gen,
+                                       device=device, dtype=torch.int32)
+            data = {
+                "hidden_states": torch.randn((tokens, 4096), generator=gen, device=device, dtype=torch.bfloat16),
+                "topk_ids": ids,
+                "topk_weights": torch.rand((tokens, TOP_K), generator=gen, device=device, dtype=torch.float32),
+                "config": {"bs": tokens, "d_hidden": 4096, "d_expert": 4096, "n_experts": N_EXPERTS,
+                           "local_start": bank["start"], "local_count": count, "top_k": TOP_K,
+                           "sharding": "ep8"},
+            }
+            ref = _forward(data, state, "master").float()
+            for cand in ("atomic", "atomic_zero"):
+                if not ok[cand]:
+                    continue
+                try:
+                    out = _forward(data, state, cand).float()
+                    torch.cuda.synchronize()
+                    rel = ((out - ref).norm() / ref.norm().clamp_min(1e-12)).item()
+                    if not (torch.isfinite(out).all().item() and rel <= 5e-3):
+                        ok[cand] = False
+                        err[cand] = "T=%d rel-L2 %.3g" % (tokens, rel)
+                    worst[cand] = max(worst[cand], rel)
+                except Exception as e:  # binding rejected the combination
+                    ok[cand] = False
+                    err[cand] = "T=%d %s: %s" % (tokens, type(e).__name__, str(e)[:200])
+        for cand in ("atomic", "atomic_zero"):
+            if ok[cand]:
+                mode, reason = cand, "worst rel-L2 vs master %.3g" % worst[cand]
+                break
+        else:
+            reason = "; ".join("%s failed (%s)" % (k, v) for k, v in err.items())
+    except Exception as e:
+        mode, reason = "master", "self-check error %s: %s" % (type(e).__name__, str(e)[:200])
+    print("[w2-atomic] PATH CHOSEN = %s (%s)" % ("master" if mode == "master" else "atomic", reason))
+    print("[w2-atomic] atomic add enabled for w2 at T<=%d: %s; use_fp32_reduce=True; zeroing memset in path: %s"
+          % (W2_ATOMIC_MAX_TOKENS, mode != "master", mode == "atomic_zero"))
+    return mode
 
 
 def kernel_fn(data: Inputs, state: dict) -> torch.Tensor:
     """This GPU's share of the MoE output, bfloat16 [M, H]."""
+    return _forward(data, state, state.get("w2_mode", "master"))
+
+
+def _forward(data: Inputs, state: dict, w2_mode: str) -> torch.Tensor:
     cfg = data["config"]
     bank = state["banks"][(cfg["local_start"], cfg["local_count"])]
     x = data["hidden_states"].contiguous()
@@ -518,10 +586,15 @@ def kernel_fn(data: Inputs, state: dict) -> torch.Tensor:
         sorted_ids, block_experts, n_padded, topk_weights, top_k=TOP_K,
         size_m=num_tokens, size_n=gemm1_n, size_k=size_k, **common)
     silu_and_mul(cache1.view(-1, gemm1_n), cache2, expert_ids=local_ids.view(-1), expert_step=1)
+    w2_common = common
+    if w2_mode != "master" and num_tokens <= W2_ATOMIC_MAX_TOKENS:
+        w2_common = dict(common, use_atomic_add=True)
+        if w2_mode == "atomic_zero":
+            cache3.zero_()
     y = moe_wna16_marlin_gemm(
         cache2, cache3, bank["w2"], None, bank["w2_s"], bank["w2_gs"], None, None, None, ws,
         sorted_ids, block_experts, n_padded, topk_weights, top_k=1,
-        size_m=num_tokens * TOP_K, size_n=size_k, size_k=size_n, **common).view(num_tokens, TOP_K, size_k)
+        size_m=num_tokens * TOP_K, size_n=size_k, size_k=size_n, **w2_common).view(num_tokens, TOP_K, size_k)
     if num_tokens < SMALL_M_POST_NORM:
         y = y.contiguous()
         out = torch.empty((num_tokens, size_k), device=x.device, dtype=torch.bfloat16)
