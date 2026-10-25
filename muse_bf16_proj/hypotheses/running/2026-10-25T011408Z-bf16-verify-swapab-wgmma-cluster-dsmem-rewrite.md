@@ -102,10 +102,19 @@ controls_for: null
 rewrite_stage: 1
 replaces: cuBLAS nvjet at m=128/256 for qkv_gate (13.0+3.0 splitKreduce / 19.4 us), pooler (25.7 / 29.5 us) and unpooler m=128 (20.4 us)
 review: proceed
-status: queued
+status: running
 review_at: 2026-10-25T012031Z
 review_companions: null
 hold_reason: null
+stage: claimed
+claimed_at: 2026-10-25T042030Z
+base_sha: 2de39fe31bc772463640a6e1897c6c89e11c919a
+base_blob: 970b415b746fa03cb92e419d270be92588273178
+branch: hyp/muse_bf16_proj/bf16-verify-swapab-wgmma-cluster-dsmem-rewrite
+worktree: .worktrees/muse_bf16_proj/bf16-verify-swapab-wgmma-cluster-dsmem-rewrite
+mode: null
+restack_of: null
+stale_base: null
 ---
 
 # bf16-verify-swapab-wgmma-cluster-dsmem-rewrite
