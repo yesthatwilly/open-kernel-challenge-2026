@@ -59,7 +59,7 @@ review: proceed
 status: running
 review_at: 2026-10-25T010851Z
 review_companions: null
-stage: claimed
+stage: implemented
 claimed_at: 2026-10-25T010851Z
 base_sha: 63b7f3a3bc19c847c204f5d5298872f66d86505a
 base_blob: 4da94677234faaa06b42b5ced541db8961fd6f34
@@ -68,6 +68,12 @@ worktree: .worktrees/muse_decode_layer/boundaries-unpooler-pdl-small-t
 mode: null
 restack_of: null
 stale_base: null
+implemented_at: 2026-10-25T011821Z
+impl_commit: fadc1836cb3258ecd4aa35c99d7b6731c61ebe6e
+submission_sha256: ed0b3be71ffdce937b892bcf4d72b3fc8a43a56f873535f170c9ade758ff640d
+norm_sha256: 49f6255c1af271dde88fdaeb641cab353db592d2757d4e4cb9de0aa7e2b5de0f
+submission_blob: 7781304a6fb5d86a719e72d889f8db724b7f310f
+lint_warnings: 33
 ---
 
 # boundaries-unpooler-pdl-small-t
@@ -112,3 +118,56 @@ No companion. Rows dl_boundary_kernel, dl_unpool_kernel<1> (T<=8) and dl_unpool_
 - Does SGLang FusedPostNormResidualPreNorm read alpha/beta as precomputed fp32 buffers or recompute from bf16 gates? Match its rounding.
 - Is dl_unpool_kernel<2/4> faster than nvjet at T=9..32 in prepare timing? If not, gate it off.
 
+
+## Implementation notes
+
+Edited only `muse_decode_layer/submission.py` in the worktree (+743/-3). Nothing could be run here (no GPU), so every kernel is unexecuted.
+
+- New TU `_DLB_CUDA` (module `muse_decode_boundary_unpool_v1`, flags `-O3 -arch=sm_90a -lineinfo`, printed), built at import only when the dense-chain TU built. DEVIATION from the spec ("same TU"): a separate TU, so a compile error here cannot take down the landed dense chain; it also avoids textual conflicts with the other TU-editing hypotheses. No sm_90a-only PTX (griddepcontrol, mma.sync, plain cp.async.cg only), so no feature guard. No mbarriers or spin waits (ticket reduce only), so nothing to bound.
+- `dl_boundary_kernel`: one CTA per token, 256 threads. `griddepcontrol.launch_dependents` is the first instruction, then L2 prefetch of the constant vectors, then `griddepcontrol.wait`, then the reads. Attn: s1 = alpha1*s + beta1*rms(a, 1e-8) (no weight), out = bf16(rms(s1, 1e-5)*(1+pre_ffn)). FFN: s2 = alpha2*s1 + beta2*rms(f*(1+post_ffn_norm), 1e-8) (the (1+w) is an INPUT scale before the RMS), out = bf16(rms(s2, 1e-5)*(1+next_pre_attn)). Stream stays fp32, activations bf16. At T <= 8 the FFN boundary reads only columns 0..1023 (review optional item 3).
+- `dl_unpool_kernel<NF,SPLIT,NROWS>`: P's pipeline over K=4096. T<=8: <1,8,1024> (16 tiles x 8 = 128 CTAs), CTAs also store bf16 zeros to columns 1024..8191 (56 per token per CTA) AFTER `griddepcontrol.wait`; T 9..16: <2,2,8192>; T 17..32: <4,2,8192> (256 CTAs). Fixed-order ticket split-K reduce; ws/cnt self-reset.
+- kernel_fn: gate `use_dlb = use_dl and state["dlb"] is not None and tokens <= DLB_MAX_TOKENS` (new constant DLB_MAX_TOKENS = 32, distinct from DL_MAX_TOKENS and DL2_MAX_TOKENS; state["dlb_ok"] mirrors it). T > 32 and any failure: master byte for byte (the edits are an if-branch plus an early return).
+- Review corrections applied (the review wins over the spec): (1) alpha/beta are per-channel fp32 [8192] vectors, read from the residual module's own tensors (buffers/params/attrs whose name contains alpha/beta, numel 8192) when present, otherwise reference.py's formula with w = gate.float()/0.3 and clamp 1e-3; the source is printed. I could not read sglang here, so the buffer names are searched, not known. (2) (1+w) of post_ffn_norm is an input scale before the RMS; the attn post-norm has no weight; effective weights come from the modules' `_get_effective_weight()` (fallback 1+w).
+- Review items applied: self-check graph rerun with the new boundary (chain T=1, 8, 16, 31, 32: T=32 through the SGLang combine, T<32 through the Triton one, via the real `_experts`), graph vs eager <= 1e-3 and vs SGLang boundaries + master unpooler (next <= 1e-2, stream <= 2e-3). prepare() times `dl_unpool_kernel` against the master `_gemm` path per NF (T=1, 16, 32; 200 MB memset before each launch, its time subtracted, PDL off, so conservative) and keeps master's path for any NF where custom is not faster, printing the pick per NF. Zero stores after the wait kept. `dl_boundary_kernel` CUDA-event time printed at T=1, 8, 32 next to the SGLang module's.
+- Self-check per the spec: T in 1,4,8,9,16,32; branch rel L2 <= 2e-3, stream rel L2 <= 1e-5; unpooler vs master <= 2e-3 with the zero columns exactly 0 (output poisoned with 7.0 first); each launch is announced with a flushed print before and `torch.cuda.synchronize()` plus a print after. Failure policy: a boundary or chain failure turns the whole path off; an unpooler failure only turns that NF to master (finer than the spec's single flag); a chain failure with the custom unpooler retries with the master unpooler.
+- Biggest risks: the 1e-5 stream tolerance rests on SGLang keeping the post-norm output in fp32 before the residual add (if it rounds to bf16 the check fails and the run silently measures master); unexecuted cp.async/ldmatrix code copied from P with K=4096; the early launch_dependents PDL edge.
+
+## Rules check
+
+- [x] CUDA-graph capturable: kernel_fn adds only `torch.empty` of shape-sized buffers and kernel launches (cudaLaunchKernelEx); no `.item()`/`.cpu()`/synchronize/prints; control flow on `tokens` and state only. The self-check captures the full chain in a graph and replays it.
+- [x] Nothing derived from `data` is cached across calls: alpha/beta/weights/ws/cnt are built from `weights` in prepare(); `data["stream"]` and activations are read per call (git diff checked).
+- [x] Weights: only prepare()-time float32 vectors derived from the norm/gate weights (losslessly computed by the modules' own formulas); the unpooler stays the BF16 `state["dense"]["unpooler"]` untouched.
+- [x] Activations BF16 where SGLang keeps BF16 (ffn_input, ffn_output, next input), residual stream fp32; no FP8/KV changes.
+- [x] Attention sees every key: n/a, attention untouched.
+- [x] No timing patches, harness frames/I/O/secrets, module edits, reference import, subprocesses or network: load_inline only (no child process in the source; the existing build path is reused).
+- [x] All work happens inside the timed call; no output caching or replay (new kernels run every call).
+- [x] Gate constant DLB_MAX_TOKENS is separate from DL_MAX_TOKENS and DL2_MAX_TOKENS.
+
+okc_lint output (non-host-sync lines; host-sync warnings are all prepare()-only, "outside kernel_fn's call graph"):
+
+```
+OK with warnings: muse_decode_layer/submission.py
+```
+py_compile OK; __pycache__ removed.
+
+## Pre-flight audit
+
+Audited 2026-10-25 by an opus subagent (read-only review plus minimal fixes). This node has no GPU, and there is no sglang source on it or in the repo, so risks A and B are now settled at prepare() time by probing the module itself instead of by reading its source.
+
+**Verdict: dispatch-with-fixes.**
+
+Fixes (worktree `muse_decode_layer/submission.py`):
+1. (B) `_dlb_coeffs` no longer searches attribute names for alpha/beta. It builds a probe `FusedPostNormResidualPreNorm(post_attn (weightless), _residual(gate), pre_ffn)` and reads alpha = new_stream(stream=1, branch=0) and beta = new_stream(stream=0, branch=1). These are exactly the per-channel values the module applies, whatever its buffer names or storage dtype. They are cross-checked against reference.py:339-344 (a mismatch over 1e-2 raises, so the path turns OFF and prints PATH CHOSEN) and the source is printed.
+2. (A) Bit 1 of the kernel's `has_scale` argument, now `flags` (module renamed to `_v2`), rounds the post-norm output to bf16 before the residual add. New `_dlb_pick_round` runs both variants against the attn and ffn modules on synthetic data, keeps the closer one per boundary in `dlb["rnd1"]` / `dlb["rnd2"]`, and prints the errors.
+3. The stream self-check tolerance is now relative to the residual update, `|s - ref| / |ref - alpha*s_in| <= 4e-3`, which is bf16-level and is the quantity the judge checks, instead of `1e-5 * |stream|`. The old check would have failed on any bf16 rounding inside SGLang, whose contribution is about 3e-4 of |stream|. Formula bugs such as a wrong alpha, a missing scale or a wrong channel still give >= 1e-2.
+4. If `_dlb_setup` raises, it now re-zeroes the P/R tickets (`cnt_p` / `cnt_r`) before falling back.
+
+Checked OK:
+- Formulas against reference.py:452-453, 472-476 and 339-344: the attn post-norm has no weight; the ffn (1+w) is an input scale before the RMS with eps 1e-8; the pre-norm uses eps 1e-5 times (1+w).
+- PDL: the boundary prefetches only the prepare constants before `griddepcontrol.wait`. The unpooler issues only the weight ring before the wait and stores its zeros after it. Both kernels wait unconditionally, so the chain is transitive.
+- The unpooler is a faithful copy of P's pipeline and indexing: K=4096, workspace and tickets in range, zero slices 16-byte aligned.
+- The per-NF timing uses synthetic data only.
+- kernel_fn has no host sync, only shape-sized `torch.empty` calls and launches, and is graph-capturable.
+- No child process beyond load_inline, nothing cached from `data`, and no ptxVersion gate.
+
+Residual risk: all of the CUDA code is still unexecuted; a fault in the new kernels or a module probe that misbehaves turns the path OFF, so the run measures the landed dense chain.
