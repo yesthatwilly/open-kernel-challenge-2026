@@ -46,9 +46,18 @@ priority: 1
 kind: primary
 controls_for: null
 review: proceed
-status: queued
+status: running
 review_at: 2026-10-25T203138Z
 review_companions: null
+stage: claimed
+claimed_at: 2026-10-25T203138Z
+base_sha: 72279d8be856d60ae496236e976e81549d53cc2d
+base_blob: ad8d7254a64a52db2a8f56ec0ad262748153a2e8
+branch: hyp/muse_bf16_proj/router-hilo-tall-tile-m65-m256
+worktree: .worktrees/muse_bf16_proj/router-hilo-tall-tile-m65-m256
+mode: submit
+restack_of: null
+stale_base: null
 ---
 
 # router-hilo-tall-tile-m65-m256
