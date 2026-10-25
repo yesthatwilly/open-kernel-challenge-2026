@@ -67,7 +67,7 @@ base_sha: 3ee2b893476879190a690392a3295a35afed11bf
 base_blob: 9bcf522b0dd23a0a8173046d2150473827122206
 branch: hyp/muse_attention_decode/full-verify-wgmma-s5-qfrag-reload
 worktree: .worktrees/muse_attention_decode/full-verify-wgmma-s5-qfrag-reload
-mode: null
+mode: check
 restack_of: null
 stale_base: true
 implemented_at: 2026-10-25T084811Z
@@ -76,6 +76,8 @@ submission_sha256: 13bf4cd9d89b5ecfae6ce27e2cea9a3c83aee5824b64c7dd14c003f84621b
 norm_sha256: 12e83fd1688e4d04e45ce6a14bd8eceb6903de9f1835c9ebeb09ab2b0ffe1653
 submission_blob: 8e5ec0c7813b95db7011d9fe859f3835673f935c
 lint_warnings: 35
+attempt_file: 2026-10-25T084811Z-check-full-verify-wgmma-s5-qfrag-reload.md
+prepared_at: 2026-10-25T084811Z
 ---
 
 # full-verify-wgmma-s5-qfrag-reload
