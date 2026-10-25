@@ -113,9 +113,10 @@ controls_for: null
 rewrite_stage: 1
 replaces: _align_small + Marlin w13 + silu_and_mul + Marlin w2 + post-norm combine (the whole MoE, 5 launches) at 2 <= num_tokens <= 32
 review: proceed
-status: queued
+status: hold
 review_at: 2026-10-24T172507Z
 review_companions: null
+hold_reason: "moe per-shape read 2026-10-25: its parent cuda-nvfp4-swapab-mma-persistent-small-m hit an illegal instruction on first launch (0/0 tests); hold until a fixed swap-AB runs on the CUDA path and reaches its M2"
 ---
 
 # cuda-fused-moe-midm-single-launch-routed
