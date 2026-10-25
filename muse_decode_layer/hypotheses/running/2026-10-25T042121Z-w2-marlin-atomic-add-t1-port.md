@@ -35,9 +35,18 @@ priority: 2
 kind: primary
 controls_for: null
 review: proceed
-status: queued
+status: running
 review_at: 2026-10-25T042335Z
 review_companions: null
+stage: claimed
+claimed_at: 2026-10-25T042335Z
+base_sha: 4086e385d4c82ab39da7076fd7a040127403956c
+base_blob: c9067b8201f2480c64910c4a71098df7ce616f73
+branch: hyp/muse_decode_layer/w2-marlin-atomic-add-t1-port
+worktree: .worktrees/muse_decode_layer/w2-marlin-atomic-add-t1-port
+mode: null
+restack_of: null
+stale_base: null
 ---
 
 # w2-marlin-atomic-add-t1-port
