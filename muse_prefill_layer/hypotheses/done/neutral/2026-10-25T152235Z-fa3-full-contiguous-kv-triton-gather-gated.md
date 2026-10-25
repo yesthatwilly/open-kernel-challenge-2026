@@ -104,7 +104,9 @@ speedup: 1.4586709689454935
 speedup_ci: [1.4367909044113112, 1.4805510334796759]
 harvested_at: 2026-10-25T153923Z
 best_at_harvest: 1.4480354973438967
-promotion: null
+promotion: merged
+hand_landed: true
+promotion_commit: 020566aa96573ce235f3b70405c66115316f0fbf
 ---
 
 # fa3-full-contiguous-kv-triton-gather-gated

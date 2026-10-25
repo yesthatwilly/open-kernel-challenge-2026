@@ -1,17 +1,17 @@
 {
  "problem": "muse_prefill_layer",
- "job": "bff8e36788a04917",
- "check_job": "4e6f815a8dd945ba",
- "mode": "submit",
- "speedup": 1.4480354973438967,
+ "job": "1cc92a43b8be40f8",
+ "check_job": "1cc92a43b8be40f8",
+ "mode": "check",
+ "speedup": 1.4586709689454935,
  "ci": [
-  1.4263149648837383,
-  1.469756029804055
+  1.4367909044113112,
+  1.4805510334796759
  ],
- "score_us": 267537.57122018584,
- "commit": "1932a9c4fb3d8dc735bb1a513853637c0ada892c",
- "submission_blob": "a2fe2a75893c60d4f68cf94fcce8ce8f9b708a71",
- "slug": "align-two-phase-all-t-rega",
- "result": "muse_prefill_layer/hypotheses/done/neutral/align-two-phase-all-t-rega.result.json",
- "updated_at": "2026-10-25T150603Z"
+ "score_us": 265586.8994774491,
+ "commit": "020566aa96573ce235f3b70405c66115316f0fbf",
+ "submission_blob": "9fb1f7c4b4282dd7461c6cdba926fe3ebf12128e",
+ "slug": "fa3-full-contiguous-kv-triton-gather-gated",
+ "result": "muse_prefill_layer/hypotheses/done/neutral/fa3-full-contiguous-kv-triton-gather-gated.result.json",
+ "updated_at": "2026-10-25T153935Z"
 }
