@@ -66,9 +66,18 @@ controls_for: null
 rewrite_stage: 2
 replaces: Marlin w13+w2 (moe_wna16_marlin_gemm x2) + silu_and_mul at num_tokens >= 128
 review: proceed
-status: queued
+status: running
 review_at: 2026-10-25T012041Z
 review_companions: null
+stage: claimed
+claimed_at: 2026-10-25T012041Z
+base_sha: c89b01f6d4eeee26bad681a66af3e272ffc51f07
+base_blob: f09390b45e1e1af24f0ccc3645988b81f97b2bf8
+branch: hyp/muse_moe_w4a16/cuda-nvfp4-wgmma-rega-grouped-s2-finite-fix
+worktree: .worktrees/muse_moe_w4a16/cuda-nvfp4-wgmma-rega-grouped-s2-finite-fix
+mode: null
+restack_of: null
+stale_base: true
 ---
 
 # cuda-nvfp4-wgmma-rega-grouped-s2-finite-fix
