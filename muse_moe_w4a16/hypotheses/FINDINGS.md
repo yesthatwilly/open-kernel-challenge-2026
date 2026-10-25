@@ -1,6 +1,6 @@
 # muse_moe_w4a16 findings
 
-Regenerated 2026-10-25T084200Z by `churn.py index`. Read this before writing a hypothesis for muse_moe_w4a16.
+Regenerated 2026-10-25T091113Z by `churn.py index`. Read this before writing a hypothesis for muse_moe_w4a16.
 
 ## Current best
 
@@ -73,6 +73,7 @@ Where the time goes (per scored shape, top kernels):
 - **cuda-nvfp4-wgmma-rega-grouped-s2-finite-fix** → neutral (unproven-vs-best), 1.3307x — no shape moved outside noise. Stage 2 of the wgmma register-A grouped NVFP4 rewrite (make it numerically correct). Stage 1b (job b56d17fda2d54be2) finally BUILT and RAN on the judge: TORCH_C
 - **cuda-nvfp4-wgmma-rega-grouped-s3-wide-bucket-fix** → failed (test:failed) — lost on verify_16 verify_16. Stage 3 of the wgmma register-A grouped NVFP4 rewrite, built on the stage-2 commit (cuda-nvfp4-wgmma-rega-grouped-s2-finite-fix, claim bases a rewrite-on-rewrit
 - **cuda-nvfp4-wgmma-rega-tiny-m-bucket16** → neutral (unproven-vs-best), 1.3453x — gained on decode_1 decode_1. Tiny-M branch of the wgmma register-A grouped rewrite: bs=1 (decode_1) and the bs=4 test, which master runs at 44.9 us (Marlin pair ~42 us) vs a floor of 11.4 u
+- **cuda-nvfp4-wgmma-rega-grouped-s5-copy-safe-forced** → neutral (unproven-vs-best), 1.3490x — gained on verify_32 verify_32; lost on verify_16 verify_16. Stage 5 of the wgmma register-A grouped NVFP4 rewrite, built on the s4 commit (cuda-nvfp4-wgmma-rega-grouped-s4-replay-safe, job 4e7f8be895a145ba) rebased onto 
 
 ### w2 marlin
 - **w2-l2-prefetch-decode1** → regression (regression), 1.2615x — lost on decode_1 decode_1. At num_tokens == 1 only (decode_1; every other M runs master unchanged), warm L2 with the w2 weights of this token's local experts before the w13 Marlin call, s
@@ -119,6 +120,7 @@ Where the time goes (per scored shape, top kernels):
 - w13-marlin-atomic-add-on-master-small-m: unproven-vs-best: the change is not proven either way; a stacked hypothesis (`depends_on: w13-marlin-atomic-add-on-master-small-m`) that adds a further change in the same area is the only way to learn more (identical cod
 - w2-marlin-atomic-add-verify: within-ci: the change is not proven either way; a stacked hypothesis (`depends_on: w2-marlin-atomic-add-verify`) that adds a further change in the same area is the only way to learn more (identical code is never re-run).
 - cuda-nvfp4-wgmma-rega-grouped-s4-replay-safe: rewrite stage 4 of `Marlin w13+silu+w2 at 128<=T<=512`: read the replaced kernels' own us per shape (profile top_kernels) against the incumbent and the floor, and check which Milestone it reached. The next stage is `/hyp
+- cuda-nvfp4-wgmma-rega-grouped-s5-copy-safe-forced: rewrite stage 5 of `Marlin w13+silu+w2 (moe_wna16_marlin_gemm x2 + act_and_mul) at 128<=T<=512`: read the replaced kernels' own us per shape (profile top_kernels) against the incumbent and the floor, and check which Mile
 - w13-marlin-atomic-add-t1-only: unproven-vs-best: the change is not proven either way; a stacked hypothesis (`depends_on: w13-marlin-atomic-add-t1-only`) that adds a further change in the same area is the only way to learn more (identical code is never
 - triton-map-align-verify-chunked: none
 - cuda-nvfp4-swapab-mma-persistent-small-m: rewrite stage 1 of `Marlin w13+w2 (moe_wna16_marlin_gemm x2) at bs<=32`: read the replaced kernels' own us per shape (profile top_kernels) against the incumbent and the floor, and check which Milestone it reached. The ne
@@ -149,5 +151,4 @@ Where the time goes (per scored shape, top kernels):
 - queue: cuda-nvfp4-wgmma-rega-w2-only-midm [w2 marlin] p2 hold
 - queue: marlin-exec-config-autotune-mid-m [Marlin launch config (w13 + w2)] p3 hold
 - queue: cuda-nvfp4-wgmma-rega-grouped-s5-copy-safe-bucket-gate [w13 marlin + silu-mul + w2 marlin] p2 queued
-- queue: cuda-nvfp4-wgmma-rega-grouped-s5-copy-safe-forced [w13 marlin + silu-mul + w2 marlin] p1 queued
 - queue: cuda-nvfp4-wgmma-rega-s6-per-kernel-bucket-mix [w13 marlin + silu-mul + w2 marlin] p3 queued
