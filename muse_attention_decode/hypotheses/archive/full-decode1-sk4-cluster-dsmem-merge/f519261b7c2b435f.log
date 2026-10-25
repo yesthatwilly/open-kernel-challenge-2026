@@ -1,0 +1,186 @@
+tn_sk_kernel)
+[sk] replay B=1 2: rel L2 1.68e-03, finite True -> ok
+[sk] replay: eager warm-up of kernel_fn on a side stream
+[sk] replay: warm-up returned
+[sk] replay: capturing kernel_fn
+[sk] replay B=1 1: launching graph (_pre_attention_kernel + splitkv_attn_sk_kernel)
+[sk] replay B=1 1: rel L2 1.55e-03, finite True -> ok
+[sk] replay B=1 2: launching graph (_pre_attention_kernel + splitkv_attn_sk_kernel)
+[sk] replay B=1 2: rel L2 1.55e-03, finite True -> ok
+[sk] replay: eager warm-up of kernel_fn on a side stream
+[sk] replay: warm-up returned
+[sk] replay: capturing kernel_fn
+[sk] replay B=1 1: launching graph (_pre_attention_kernel + splitkv_attn_sk_kernel)
+[sk] replay B=1 1: rel L2 1.68e-03, finite True -> ok
+[sk] replay B=1 2: launching graph (_pre_attention_kernel + splitkv_attn_sk_kernel)
+[sk] replay B=1 2: rel L2 1.68e-03, finite True -> ok
+[sk4] cluster C=2 + group ticket grid 264 (2xSM): self-check + 2 graph replays ok
+[sk] B=1 80000 keys v4: launching _pre_attention_kernel
+[sk] B=1 80000 keys v4: launching splitkv_attn_sk_kernel<4 stages, cluster C=4 + group ticket> grid 132
+[sk] B=1 80000 keys v4: splitkv_attn_sk_kernel returned
+[sk] B=1 80000 keys v4: rel L2 1.61e-03, finite True -> ok
+[sk] B=1 80000 keys kv 0.25 v4: launching _pre_attention_kernel
+[sk] B=1 80000 keys kv 0.25 v4: launching splitkv_attn_sk_kernel<4 stages, cluster C=4 + group ticket> grid 132
+[sk] B=1 80000 keys kv 0.25 v4: splitkv_attn_sk_kernel returned
+[sk] B=1 80000 keys kv 0.25 v4: rel L2 1.61e-03, finite True -> ok
+[sk] B=1 80000 keys grid 3C v4: launching _pre_attention_kernel
+[sk] B=1 80000 keys grid 3C v4: launching splitkv_attn_sk_kernel<4 stages, cluster C=4 + group ticket> grid 12
+[sk] B=1 80000 keys grid 3C v4: splitkv_attn_sk_kernel returned
+[sk] B=1 80000 keys grid 3C v4: rel L2 1.78e-03, finite True -> ok
+[sk] B=1 4097 keys v4: launching _pre_attention_kernel
+[sk] B=1 4097 keys v4: launching splitkv_attn_sk_kernel<4 stages, cluster C=4 + group ticket> grid 132
+[sk] B=1 4097 keys v4: splitkv_attn_sk_kernel returned
+[sk] B=1 4097 keys v4: rel L2 1.66e-03, finite True -> ok
+[sk] B=1 4097 keys kv 0.25 grid 2C v4: launching _pre_attention_kernel
+[sk] B=1 4097 keys kv 0.25 grid 2C v4: launching splitkv_attn_sk_kernel<4 stages, cluster C=4 + group ticket> grid 8
+[sk] B=1 4097 keys kv 0.25 grid 2C v4: splitkv_attn_sk_kernel returned
+[sk] B=1 4097 keys kv 0.25 grid 2C v4: rel L2 1.66e-03, finite True -> ok
+[sk] B=1 201 keys (4 tiles: empty CTAs in the first cluster) v4: launching _pre_attention_kernel
+[sk] B=1 201 keys (4 tiles: empty CTAs in the first cluster) v4: launching splitkv_attn_sk_kernel<4 stages, cluster C=4 + group ticket> grid 132
+[sk] B=1 201 keys (4 tiles: empty CTAs in the first cluster) v4: splitkv_attn_sk_kernel returned
+[sk] B=1 201 keys (4 tiles: empty CTAs in the first cluster) v4: rel L2 1.64e-03, finite True -> ok
+[sk] B=1 63 keys (one tile: empty clusters) v4: launching _pre_attention_kernel
+[sk] B=1 63 keys (one tile: empty clusters) v4: launching splitkv_attn_sk_kernel<4 stages, cluster C=4 + group ticket> grid 132
+[sk] B=1 63 keys (one tile: empty clusters) v4: splitkv_attn_sk_kernel returned
+[sk] B=1 63 keys (one tile: empty clusters) v4: rel L2 1.52e-03, finite True -> ok
+[sk] B=1 1 key kv 0.25 v4: launching _pre_attention_kernel
+[sk] B=1 1 key kv 0.25 v4: launching splitkv_attn_sk_kernel<4 stages, cluster C=4 + group ticket> grid 132
+[sk] B=1 1 key kv 0.25 v4: splitkv_attn_sk_kernel returned
+[sk] B=1 1 key kv 0.25 v4: rel L2 1.59e-03, finite True -> ok
+[sk] replay: eager warm-up of kernel_fn on a side stream
+[sk] replay: warm-up returned
+[sk] replay: capturing kernel_fn
+[sk] replay B=1 1: launching graph (_pre_attention_kernel + splitkv_attn_sk_kernel)
+[sk] replay B=1 1: rel L2 1.68e-03, finite True -> ok
+[sk] replay B=1 2: launching graph (_pre_attention_kernel + splitkv_attn_sk_kernel)
+[sk] replay B=1 2: rel L2 1.68e-03, finite True -> ok
+[sk] replay: eager warm-up of kernel_fn on a side stream
+[sk] replay: warm-up returned
+[sk] replay: capturing kernel_fn
+[sk] replay B=1 1: launching graph (_pre_attention_kernel + splitkv_attn_sk_kernel)
+[sk] replay B=1 1: rel L2 1.68e-03, finite True -> ok
+[sk] replay B=1 2: launching graph (_pre_attention_kernel + splitkv_attn_sk_kernel)
+[sk] replay B=1 2: rel L2 1.68e-03, finite True -> ok
+[sk] replay: eager warm-up of kernel_fn on a side stream
+[sk] replay: warm-up returned
+[sk] replay: capturing kernel_fn
+[sk] replay B=1 1: launching graph (_pre_attention_kernel + splitkv_attn_sk_kernel)
+[sk] replay B=1 1: rel L2 1.59e-03, finite True -> ok
+[sk] replay B=1 2: launching graph (_pre_attention_kernel + splitkv_attn_sk_kernel)
+[sk] replay B=1 2: rel L2 1.59e-03, finite True -> ok
+[sk4] cluster C=4 + group ticket grid 132 (SM): self-check + 2 graph replays ok
+[sk] B=1 80000 keys v4: launching _pre_attention_kernel
+[sk] B=1 80000 keys v4: launching splitkv_attn_sk_kernel<4 stages, cluster C=4 + group ticket> grid 264
+[sk] B=1 80000 keys v4: splitkv_attn_sk_kernel returned
+[sk] B=1 80000 keys v4: rel L2 1.69e-03, finite True -> ok
+[sk] B=1 80000 keys kv 0.25 v4: launching _pre_attention_kernel
+[sk] B=1 80000 keys kv 0.25 v4: launching splitkv_attn_sk_kernel<4 stages, cluster C=4 + group ticket> grid 264
+[sk] B=1 80000 keys kv 0.25 v4: splitkv_attn_sk_kernel returned
+[sk] B=1 80000 keys kv 0.25 v4: rel L2 1.76e-03, finite True -> ok
+[sk] B=1 80000 keys grid 3C v4: launching _pre_attention_kernel
+[sk] B=1 80000 keys grid 3C v4: launching splitkv_attn_sk_kernel<4 stages, cluster C=4 + group ticket> grid 12
+[sk] B=1 80000 keys grid 3C v4: splitkv_attn_sk_kernel returned
+[sk] B=1 80000 keys grid 3C v4: rel L2 1.63e-03, finite True -> ok
+[sk] B=1 4097 keys v4: launching _pre_attention_kernel
+[sk] B=1 4097 keys v4: launching splitkv_attn_sk_kernel<4 stages, cluster C=4 + group ticket> grid 264
+[sk] B=1 4097 keys v4: splitkv_attn_sk_kernel returned
+[sk] B=1 4097 keys v4: rel L2 1.65e-03, finite True -> ok
+[sk] B=1 4097 keys kv 0.25 grid 2C v4: launching _pre_attention_kernel
+[sk] B=1 4097 keys kv 0.25 grid 2C v4: launching splitkv_attn_sk_kernel<4 stages, cluster C=4 + group ticket> grid 8
+[sk] B=1 4097 keys kv 0.25 grid 2C v4: splitkv_attn_sk_kernel returned
+[sk] B=1 4097 keys kv 0.25 grid 2C v4: rel L2 1.67e-03, finite True -> ok
+[sk] B=1 201 keys (4 tiles: empty CTAs in the first cluster) v4: launching _pre_attention_kernel
+[sk] B=1 201 keys (4 tiles: empty CTAs in the first cluster) v4: launching splitkv_attn_sk_kernel<4 stages, cluster C=4 + group ticket> grid 264
+[sk] B=1 201 keys (4 tiles: empty CTAs in the first cluster) v4: splitkv_attn_sk_kernel returned
+[sk] B=1 201 keys (4 tiles: empty CTAs in the first cluster) v4: rel L2 1.66e-03, finite True -> ok
+[sk] B=1 63 keys (one tile: empty clusters) v4: launching _pre_attention_kernel
+[sk] B=1 63 keys (one tile: empty clusters) v4: launching splitkv_attn_sk_kernel<4 stages, cluster C=4 + group ticket> grid 264
+[sk] B=1 63 keys (one tile: empty clusters) v4: splitkv_attn_sk_kernel returned
+[sk] B=1 63 keys (one tile: empty clusters) v4: rel L2 1.65e-03, finite True -> ok
+[sk] B=1 1 key kv 0.25 v4: launching _pre_attention_kernel
+[sk] B=1 1 key kv 0.25 v4: launching splitkv_attn_sk_kernel<4 stages, cluster C=4 + group ticket> grid 264
+[sk] B=1 1 key kv 0.25 v4: splitkv_attn_sk_kernel returned
+[sk] B=1 1 key kv 0.25 v4: rel L2 1.74e-03, finite True -> ok
+[sk] replay: eager warm-up of kernel_fn on a side stream
+[sk] replay: warm-up returned
+[sk] replay: capturing kernel_fn
+[sk] replay B=1 1: launching graph (_pre_attention_kernel + splitkv_attn_sk_kernel)
+[sk] replay B=1 1: rel L2 1.72e-03, finite True -> ok
+[sk] replay B=1 2: launching graph (_pre_attention_kernel + splitkv_attn_sk_kernel)
+[sk] replay B=1 2: rel L2 1.72e-03, finite True -> ok
+[sk] replay: eager warm-up of kernel_fn on a side stream
+[sk] replay: warm-up returned
+[sk] replay: capturing kernel_fn
+[sk] replay B=1 1: launching graph (_pre_attention_kernel + splitkv_attn_sk_kernel)
+[sk] replay B=1 1: rel L2 1.62e-03, finite True -> ok
+[sk] replay B=1 2: launching graph (_pre_attention_kernel + splitkv_attn_sk_kernel)
+[sk] replay B=1 2: rel L2 1.62e-03, finite True -> ok
+[sk] replay: eager warm-up of kernel_fn on a side stream
+[sk] replay: warm-up returned
+[sk] replay: capturing kernel_fn
+[sk] replay B=1 1: launching graph (_pre_attention_kernel + splitkv_attn_sk_kernel)
+[sk] replay B=1 1: rel L2 1.64e-03, finite True -> ok
+[sk] replay B=1 2: launching graph (_pre_attention_kernel + splitkv_attn_sk_kernel)
+[sk] replay B=1 2: rel L2 1.64e-03, finite True -> ok
+[sk4] cluster C=4 + group ticket grid 264 (2xSM): self-check + 2 graph replays ok
+[sk4] B=1 x 80000 keys, cold L2 (256 MB flush before every replay), CUDA-graph replay, median of 10, kernel only:
+[sk4]   landed two-level ticket, grid 132                         25.0 us
+[sk4]   cluster C=2 grid 132 (SM)                             27.7 us  (1.112x of landed)
+[sk4]   cluster C=2 grid 264 (2xSM)                           35.0 us  (1.403x of landed)
+[sk4]   cluster C=4 grid 132 (SM)                             28.5 us  (1.142x of landed)
+[sk4]   cluster C=4 grid 264 (2xSM)                           36.8 us  (1.476x of landed)
+[sk4]   cluster C=8 grid 128 (SM)                             26.7 us  (1.071x of landed)
+[sk4]   cluster C=8 grid 264 (2xSM)                           34.3 us  (1.376x of landed)
+[sk4]   cluster C=2 + group ticket grid 132 (SM)              24.9 us  (0.999x of landed)
+[sk4]   cluster C=2 + group ticket grid 264 (2xSM)            26.8 us  (1.072x of landed)
+[sk4]   cluster C=4 + group ticket grid 132 (SM)              29.3 us  (1.174x of landed)
+[sk4]   cluster C=4 + group ticket grid 264 (2xSM)            31.0 us  (1.241x of landed)
+[sk4] grid 2xSM + C=8 (cluster merge + more bytes in flight): 34.3 us vs landed 25.0 us (1.376x)
+PATH CHOSEN: full decode_1 two-level (fallback: best cluster cluster C=2 + group ticket grid 132 (SM) 24.9 us is not >= 3% faster than landed 25.0 us, 0.999x)
+[sk] diag variant check B=16 ragged: launching _pre_attention_kernel
+[sk] diag variant check B=16 ragged: launching splitkv_attn_sk_kernel<4 stages, no ticket> grid 264
+[sk] diag variant check B=16 ragged: splitkv_attn_sk_kernel returned
+[sk] diag variant check B=16 ragged: launching splitkv_sk_combine_kernel
+[sk] diag variant check B=16 ragged: splitkv_sk_combine_kernel returned
+[sk] diag variant check B=16 ragged: rel L2 1.66e-03, finite True -> ok
+[sk] diag variant check B=16 ragged: launching _pre_attention_kernel
+[sk] diag variant check B=16 ragged: launching splitkv_attn_sk_kernel<5 stages, ticket> grid 264
+[sk] diag variant check B=16 ragged: splitkv_attn_sk_kernel returned
+[sk] diag variant check B=16 ragged: rel L2 1.66e-03, finite True -> ok
+[sk-diag] B=16: launching _pre_attention_kernel
+[sk-diag] B=16: timing stage-1 A + B
+[sk-diag] B=16 x 80000: 328 MB of K+V rows, grid 264, eager, cold L2, median of 10
+[sk-diag]   stage-1 A splitkv_attn_kernel            117.3 us  2.79 TB/s
+[sk-diag]   stage-1 B splitkv_combine_kernel          12.0 us  -> A+B   129.3 us
+[sk-diag]   stream-K + ticket, 4 st (timed path)     112.3 us  2.92 TB/s  (vs stage-1 out rel 2.4e-04)
+[sk-diag] B=16: timing stream-K no ticket + combine
+[sk-diag]   stream-K no ticket, 4 st             106.0 us  3.09 TB/s  + combine 11.5 us -> 117.5 us  (rel 2.4e-04)
+[sk-diag] B=16: timing stream-K + ticket, 5 stages
+[sk-diag]   stream-K + ticket, 5 st              114.8 us  2.85 TB/s  (rel 2.4e-04)
+[sk-diag] B=16 ratios (>1 = first is slower): stage-1 A+B / v2 1.152x; split/locality: stage-1 A / stream-K no-ticket A 1.107x; ticket fold: (no-ticket A + combine) / ticket 1.047x; stages: 4 st / 5 st 0.978x
+[sk-diag] B=32: launching _pre_attention_kernel
+[sk-diag] B=32: timing stage-1 A + B
+[sk-diag] B=32 x 80000: 655 MB of K+V rows, grid 264, eager, cold L2, median of 10
+[sk-diag]   stage-1 A splitkv_attn_kernel            246.4 us  2.66 TB/s
+[sk-diag]   stage-1 B splitkv_combine_kernel          12.5 us  -> A+B   258.9 us
+[sk-diag]   stream-K + ticket, 4 st (timed path)     222.1 us  2.95 TB/s  (vs stage-1 out rel 1.9e-04)
+[sk-diag] B=32: timing stream-K no ticket + combine
+[sk-diag]   stream-K no ticket, 4 st             215.4 us  3.04 TB/s  + combine 11.4 us -> 226.8 us  (rel 1.9e-04)
+[sk-diag] B=32: timing stream-K + ticket, 5 stages
+[sk-diag]   stream-K + ticket, 5 st              222.6 us  2.94 TB/s  (rel 1.9e-04)
+[sk-diag] B=32 ratios (>1 = first is slower): stage-1 A+B / v2 1.166x; split/locality: stage-1 A / stream-K no-ticket A 1.144x; ticket fold: (no-ticket A + combine) / ticket 1.021x; stages: 4 st / 5 st 0.998x
+[sk3-diag] B=1: launching _pre_attention_kernel
+[sk3-diag] B=1 x 80000: 20 MB of K+V rows, eager, cold L2, median of 10
+[sk3-diag]   (a) single-level grid 2xSM (stage 2 as is)        52.8 us  0.39 TB/s  (rel L2 1.7e-03, finite True)
+[sk3-diag]   (b) single-level grid SM                          34.0 us  0.60 TB/s  (rel L2 1.7e-03, finite True)
+[sk3-diag]   (c) two-level grid SM (timed path)                22.9 us  0.89 TB/s  (rel L2 1.7e-03, finite True)
+[sk3-diag]   (d) two-level grid 2xSM                           24.0 us  0.85 TB/s  (rel L2 1.7e-03, finite True)
+[sk3-diag] fastest of the four: (c) two-level grid SM (timed path); timed path (c) is 22.9 us, (a) control 52.8 us, (c)/(a) 0.435x
+[sk3-diag] B=1: timing master FA3 (main + combine) and norm-gate
+[sk3-diag]   master FA3 main+combine    32.7 us + norm-gate 5.2 us = 37.9 us (pre-attention kernel excluded from both sides)
+[sk3-diag] B=16: launching _pre_attention_kernel
+[sk3-diag] B=16 x 80000: 328 MB of K+V rows, eager, cold L2, median of 10
+[sk3-diag]   two-level grid 2xSM at B=16 (diagnostic)         115.1 us  2.85 TB/s  (rel L2 1.6e-03, finite True)
+[sk3-diag]   single-level grid 2xSM at B=16 (stage 2)         106.0 us  3.09 TB/s  (rel L2 1.6e-03, finite True)
+PATH CHOSEN: full decode_1 streamk two-level (final; see the [sk4] lines above)
+PATH CHOSEN: every other shape (sliding, verify, page 64, dp): master path, unchanged

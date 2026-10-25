@@ -1,0 +1,618 @@
+diff --git a/muse_attention_decode/submission.py b/muse_attention_decode/submission.py
+index d8769ef..3dea00b 100644
+--- a/muse_attention_decode/submission.py
++++ b/muse_attention_decode/submission.py
+@@ -868,6 +868,7 @@ def _sm_count(device) -> int:
+ 
+ 
+ _B1_PATH = False  # batch 1 on the two-level stream-K kernel; set only once its in-process validation passes
++_B1_CL = None     # (variant, grid) of the stage-4 cluster kernel chosen at prepare; None = landed two-level path
+ 
+ 
+ def _shape_gate(cfg) -> bool:
+@@ -936,6 +937,12 @@ void sk_attn(torch::Tensor q, torch::Tensor k_cache, torch::Tensor v_cache, torc
+ void sk_combine(torch::Tensor ws_acc, torch::Tensor ws_ml, torch::Tensor cache_seqlens, torch::Tensor v_scale,
+                 torch::Tensor qkv, int64_t qkv_stride, torch::Tensor out, int64_t attn_grid, double eps);
+ std::vector<int64_t> sk_attrs(int64_t variant);
++void sk_attn_cluster(torch::Tensor q, torch::Tensor k_cache, torch::Tensor v_cache, torch::Tensor page_table,
++                     torch::Tensor cache_seqlens, torch::Tensor k_scale, torch::Tensor v_scale, torch::Tensor qkv,
++                     int64_t qkv_stride, torch::Tensor out, torch::Tensor ws_acc, torch::Tensor ws_ml,
++                     torch::Tensor ticket, torch::Tensor gticket, torch::Tensor gacc, torch::Tensor gml,
++                     double score_scale, double eps, int64_t grid, int64_t cvar);
++std::vector<int64_t> sk_cluster_attrs(int64_t cvar, int64_t grid);
+ """
+ 
+ _SK_CUDA = r"""
+@@ -1095,7 +1102,135 @@ __device__ __forceinline__ void finalize_store(float4 o, float L, float vs, int
+   op[1] = __floats2bfloat162_rn(y2, y3);
+ }
+ 
+-template <int STAGES, bool TICKET, bool TWO = false>
++// ---- Stage 4 (batch 1 only): thread-block-cluster DSMEM merge of the per-CTA partials ----------
++__device__ __forceinline__ void cluster_arrive_release() {
++  asm volatile("barrier.cluster.arrive.release.aligned;" ::: "memory");
++}
++__device__ __forceinline__ void cluster_wait_acquire() {
++  asm volatile("barrier.cluster.wait.acquire.aligned;" ::: "memory");
++}
++__device__ __forceinline__ uint32_t mapa_u32(const void* p, uint32_t rank) {
++  uint32_t r;
++  asm volatile("mapa.shared::cluster.u32 %0, %1, %2;" : "=r"(r) : "r"(smem_u32(p)), "r"(rank));
++  return r;
++}
++__device__ __forceinline__ float ld_dsmem_f32(uint32_t a) {
++  float v;
++  asm volatile("ld.shared::cluster.f32 %0, [%1];" : "=f"(v) : "r"(a) : "memory");
++  return v;
++}
++__device__ __forceinline__ float4 ld_dsmem_f32x4(uint32_t a) {
++  float4 v;
++  asm volatile("ld.shared::cluster.v4.f32 {%0, %1, %2, %3}, [%4];" : "=f"(v.x), "=f"(v.y), "=f"(v.z), "=f"(v.w)
++               : "r"(a) : "memory");
++  return v;
++}
++
++// Every CTA of a cluster of CL calls this exactly once (empty CTAs too: o = 0, L = 0, M = -inf), with its
++// CTA partial (head h = tid >> 4, dims d0..d0+3 = (tid & 15) * 4; M = the raw max). It stages the partial in
++// this CTA's own smem (`part`, 4.25 KB), cluster-barriers, and rank 0 LSE-merges the CL partials through
++// DSMEM, stores ONE cluster partial at global slot cid and draws a ticket over the nclu clusters (CGRP: a
++// group ticket over cluster partials first, then a second level, as the landed two-level path). The last
++// arrival merges, applies v_scale + the norm-gate epilogue, stores bf16 and resets the ticket(s). Peers
++// stay resident (second barrier phase) until rank 0 has read them.
++template <int CL, bool CGRP>
++__device__ __forceinline__ void cluster_finish(uint8_t* part, int* flag_s, float4 o, float L, float M, int bx,
++                                               int nclu, float* ws_acc, float* ws_ml, int* ticket, int* gticket,
++                                               float* gacc, float* gml, float vs,
++                                               const __nv_bfloat16* __restrict__ qkv, int64_t qkv_stride,
++                                               __nv_bfloat16* __restrict__ out, float eps) {
++  const float NEG_INF = __int_as_float(0xff800000u);
++  const int tid = threadIdx.x;
++  const int h = tid >> 4, d0 = (tid & 15) * 4;
++  const int rank = bx % CL, cid = bx / CL;
++  float* pacc = reinterpret_cast<float*>(part);  // f32 [HQ][D]
++  float* pml = pacc + HQ * D;                    // f32 [2][HQ]
++  *reinterpret_cast<float4*>(pacc + h * D + d0) = o;
++  if ((tid & 15) == 0) { pml[h] = M; pml[HQ + h] = L; }
++  cluster_arrive_release();  // phase 1: this CTA's partial is written (visible cluster-wide)
++  if (rank != 0) {
++    cluster_wait_acquire();   // phase 1 complete
++    cluster_arrive_release(); // phase 2: arrive, then stay resident until rank 0 has read every peer
++    cluster_wait_acquire();
++    return;
++  }
++  cluster_wait_acquire();  // every partial of the cluster is in its owner's smem
++  float mr[CL];
++#pragma unroll
++  for (int r = 0; r < CL; ++r) mr[r] = ld_dsmem_f32(mapa_u32(pml + h, r));
++  float Mc = NEG_INF;
++#pragma unroll
++  for (int r = 0; r < CL; ++r) Mc = fmaxf(Mc, mr[r]);
++  const float Mu = Mc == NEG_INF ? 0.f : Mc;
++  float4 om = make_float4(0.f, 0.f, 0.f, 0.f);
++  float Lm = 0.f;
++#pragma unroll
++  for (int r = 0; r < CL; ++r) {
++    const float wt = mr[r] == NEG_INF ? 0.f : ex2(mr[r] - Mu);
++    Lm += wt * ld_dsmem_f32(mapa_u32(pml + HQ + h, r));
++    const float4 a = ld_dsmem_f32x4(mapa_u32(pacc + h * D + d0, r));
++    om.x += wt * a.x; om.y += wt * a.y; om.z += wt * a.z; om.w += wt * a.w;
++  }
++  cluster_arrive_release();  // phase 2: all peer reads are done (the peers may exit)
++  {
++    const int64_t slot = cid;
++    *reinterpret_cast<float4*>(ws_acc + (slot * HQ + h) * D + d0) = om;
++    if ((tid & 15) == 0) { ws_ml[slot * 2 * HQ + h] = Mc; ws_ml[slot * 2 * HQ + HQ + h] = Lm; }
++  }
++  if constexpr (!CGRP) {
++    __threadfence();  // this cluster partial is visible device-wide before the ticket
++    __syncthreads();
++    if (tid == 0) flag_s[0] = ticket_arrive(ticket) == nclu - 1 ? 1 : 0;
++    __syncthreads();
++    if (flag_s[0]) {  // uniform: the last cluster to finish
++      __threadfence();
++      float4 of;
++      float Lf, Mf;
++      merge_range(ws_acc, ws_ml, 0, nclu - 1, h, d0, of, Lf, Mf);
++      finalize_store(of, Lf, vs, 0, h, d0, qkv, qkv_stride, out, eps);
++      if (tid == 0) ticket[0] = 0;  // every cluster has arrived: clean for the next launch
++    }
++  } else {
++    int Gs = 1;
++    while (Gs * Gs < nclu) ++Gs;
++    const int gi = cid / Gs;
++    const int ngrp = (nclu + Gs - 1) / Gs;
++    const int g_lo = gi * Gs;
++    const int g_hi = min(nclu - 1, g_lo + Gs - 1);
++    __threadfence();
++    __syncthreads();
++    if (tid == 0) flag_s[0] = ticket_arrive(gticket + gi) == g_hi - g_lo ? 1 : 0;
++    __syncthreads();
++    if (flag_s[0]) {  // uniform: the last cluster of group gi
++      __threadfence();
++      float4 og;
++      float Lg, Mg;
++      merge_range(ws_acc, ws_ml, g_lo, g_hi, h, d0, og, Lg, Mg);
++      if (tid == 0) gticket[gi] = 0;
++      if (ngrp == 1) {
++        finalize_store(og, Lg, vs, 0, h, d0, qkv, qkv_stride, out, eps);
++      } else {
++        *reinterpret_cast<float4*>(gacc + ((int64_t)gi * HQ + h) * D + d0) = og;
++        if ((tid & 15) == 0) { gml[(int64_t)gi * 2 * HQ + h] = Mg; gml[(int64_t)gi * 2 * HQ + HQ + h] = Lg; }
++        __threadfence();
++        __syncthreads();
++        if (tid == 0) flag_s[1] = ticket_arrive(ticket) == ngrp - 1 ? 1 : 0;
++        __syncthreads();
++        if (flag_s[1]) {  // uniform: the last group
++          __threadfence();
++          float4 of;
++          float Lf, Mf;
++          merge_range(gacc, gml, 0, ngrp - 1, h, d0, of, Lf, Mf);
++          finalize_store(of, Lf, vs, 0, h, d0, qkv, qkv_stride, out, eps);
++          if (tid == 0) ticket[0] = 0;
++        }
++      }
++    }
++  }
++  cluster_wait_acquire();  // phase 2 complete (trivially: the peers arrived long ago)
++}
++
++template <int STAGES, bool TICKET, bool TWO = false, int CL = 0, bool CGRP = false>
+ __global__ void __launch_bounds__(THREADS, 2)
+ splitkv_attn_sk_kernel(const uint8_t* __restrict__ q,          // e4m3 [B, HQ, D]
+                        const uint8_t* __restrict__ kc,         // e4m3 [rows, ROW]
+@@ -1132,10 +1267,22 @@ splitkv_attn_sk_kernel(const uint8_t* __restrict__ q,          // e4m3 [B, HQ, D
+   // Effective grid min(gridDim.x, T): below it every CTA owns >= 1 tile, so CTAs c_lo..c_hi of a
+   // request all hold a segment (the ticket count and the merge rely on it). CTAs above it exit.
+   const int gx = min(static_cast<int>(gridDim.x), T);
+-  if (bx >= gx) return;  // uniform
+-  const int t0 = range_start(bx, T, gx);
+-  const int N = range_start(bx + 1, T, gx) - t0;  // tiles of this CTA, one flat pipeline
+-  if (N <= 0) return;  // uniform
++  // Cluster variants (CL > 0, batch 1): a whole cluster with no tile exits together; inside a live
++  // cluster CTAs past gx own no tiles but still take part in the cluster barriers (empty partial).
++  const int nclu = CL > 0 ? (gx + CL - 1) / CL : 0;
++  if constexpr (CL == 0) {
++    if (bx >= gx) return;  // uniform
++  } else {
++    if (bx / CL >= nclu) return;  // uniform over the cluster
++  }
++  const int t0 = (CL == 0 || bx < gx) ? range_start(bx, T, gx) : 0;
++  const int N = (CL == 0 || bx < gx) ? range_start(bx + 1, T, gx) - t0 : 0;  // tiles of this CTA, one flat pipeline
++  if (N <= 0) {
++    if constexpr (CL > 0)
++      cluster_finish<CL, CGRP>(smem + S::RING, flag_s, make_float4(0.f, 0.f, 0.f, 0.f), 0.f, NEG_INF, bx, nclu,
++                               ws_acc, ws_ml, ticket, gticket, gacc, gml, __ldg(v_scale), qkv, qkv_stride, out, eps);
++    return;  // uniform
++  }
+   const int nblk = (N + MB_TILES - 1) / MB_TILES;
+   const float scale = score_scale * __ldg(k_scale);  // sm_scale * qk_scale_factor * log2(e) * k_scale
+   const float vs = __ldg(v_scale);
+@@ -1335,6 +1482,12 @@ splitkv_attn_sk_kernel(const uint8_t* __restrict__ q,          // e4m3 [B, HQ, D
+         const float4 a = *reinterpret_cast<const float4*>(acc_s + wr * D + d0);
+         o.x += wt * a.x; o.y += wt * a.y; o.z += wt * a.z; o.w += wt * a.w;
+       }
++      if constexpr (CL > 0) {
++        // The 4-warp merge (o, L, M) of this CTA goes through the cluster DSMEM merge. The ring is dead
++        // here (every warp passed the barrier above after its last tile; no cp.async is pending).
++        cluster_finish<CL, CGRP>(smem + S::RING, flag_s, o, L, M, bx, nclu, ws_acc, ws_ml, ticket, gticket, gacc,
++                                 gml, vs, qkv, qkv_stride, out, eps);
++      } else {
+       const bool whole = seg_head && lt == nt_b - 1;  // this CTA is the request's only segment
+       if (TICKET && whole) {
+         finalize_store(o, L, vs, c_b, h, d0, qkv, qkv_stride, out, eps);
+@@ -1401,6 +1554,7 @@ splitkv_attn_sk_kernel(const uint8_t* __restrict__ q,          // e4m3 [B, HQ, D
+           }
+         }
+       }
++      }  // CL == 0
+     }
+   }
+   cp_wait<0>();  // the trailing groups are empty; drain anyway
+@@ -1447,6 +1601,29 @@ void sk_prepare(int64_t v) {
+   }
+ }
+ 
++// Stage 4 cluster variants (batch 1): cvar 0..4 = C2, C4, C8, C2 + group ticket, C4 + group ticket.
++constexpr int NCV = 5;
++int cv_c(int64_t cv) { return cv == 0 || cv == 3 ? 2 : (cv == 1 || cv == 4 ? 4 : 8); }
++SkFn cv_pick(int64_t cv) {
++  switch (cv) {
++    case 0: return splitkv_attn_sk_kernel<4, true, false, 2, false>;
++    case 1: return splitkv_attn_sk_kernel<4, true, false, 4, false>;
++    case 2: return splitkv_attn_sk_kernel<4, true, false, 8, false>;
++    case 3: return splitkv_attn_sk_kernel<4, true, false, 2, true>;
++    default: return splitkv_attn_sk_kernel<4, true, false, 4, true>;
++  }
++}
++void cv_prepare(int64_t cv) {
++  static bool done[NCV] = {false, false, false, false, false};
++  if (!done[cv]) {
++    C10_CUDA_CHECK(cudaFuncSetAttribute(reinterpret_cast<const void*>(cv_pick(cv)),
++                                        cudaFuncAttributeMaxDynamicSharedMemorySize, Lay<4>::BYTES));
++    // C <= 8 is a portable cluster size; a larger C would also need
++    // cudaFuncAttributeNonPortableClusterSizeAllowed = 1 (not used).
++    done[cv] = true;
++  }
++}
++
+ }  // namespace
+ 
+ void sk_attn(torch::Tensor q, torch::Tensor k_cache, torch::Tensor v_cache, torch::Tensor page_table,
+@@ -1482,6 +1659,53 @@ void sk_attn(torch::Tensor q, torch::Tensor k_cache, torch::Tensor v_cache, torc
+   C10_CUDA_KERNEL_LAUNCH_CHECK();
+ }
+ 
++// Stage 4: the same kernel body launched with a thread-block cluster of C CTAs (cudaLaunchKernelEx), batch 1 only.
++void sk_attn_cluster(torch::Tensor q, torch::Tensor k_cache, torch::Tensor v_cache, torch::Tensor page_table,
++                     torch::Tensor cache_seqlens, torch::Tensor k_scale, torch::Tensor v_scale, torch::Tensor qkv,
++                     int64_t qkv_stride, torch::Tensor out, torch::Tensor ws_acc, torch::Tensor ws_ml,
++                     torch::Tensor ticket, torch::Tensor gticket, torch::Tensor gacc, torch::Tensor gml,
++                     double score_scale, double eps, int64_t grid, int64_t cvar) {
++  const int B = static_cast<int>(cache_seqlens.size(0));
++  TORCH_CHECK(B == 1, "sk_attn_cluster: batch 1 only");
++  TORCH_CHECK(cvar >= 0 && cvar < NCV, "sk_attn_cluster: cvar");
++  const int C = cv_c(cvar);
++  TORCH_CHECK(grid >= C && grid % C == 0 && grid <= 1024, "sk_attn_cluster: grid must be a multiple of C, <= 1024");
++  TORCH_CHECK(gticket.numel() >= 32 && gticket.scalar_type() == at::kInt, "sk_attn_cluster: gticket");
++  TORCH_CHECK(gacc.size(0) >= 32 && gml.size(0) >= 32 && gacc.scalar_type() == at::kFloat
++              && gml.scalar_type() == at::kFloat, "sk_attn_cluster: group slots");
++  TORCH_CHECK(ws_acc.size(0) >= grid + B && ws_ml.size(0) >= grid + B, "sk_attn_cluster: workspace");
++  TORCH_CHECK(ticket.numel() >= B && ticket.scalar_type() == at::kInt, "sk_attn_cluster: ticket");
++  TORCH_CHECK(cache_seqlens.scalar_type() == at::kInt && page_table.scalar_type() == at::kInt,
++              "sk_attn_cluster: dtypes");
++  TORCH_CHECK(page_table.stride(1) == 1 && q.is_contiguous() && k_cache.is_contiguous() && v_cache.is_contiguous()
++              && out.is_contiguous(), "sk_attn_cluster: layout");
++  cv_prepare(cvar);
++  auto stream = at::cuda::getCurrentCUDAStream();
++  SkFn fn = cv_pick(cvar);
++  cudaLaunchAttribute attr[1];
++  attr[0].id = cudaLaunchAttributeClusterDimension;
++  attr[0].val.clusterDim.x = static_cast<unsigned>(C);
++  attr[0].val.clusterDim.y = 1;
++  attr[0].val.clusterDim.z = 1;
++  cudaLaunchConfig_t cfg = {};
++  cfg.gridDim = dim3(static_cast<unsigned>(grid));
++  cfg.blockDim = dim3(THREADS);
++  cfg.dynamicSmemBytes = Lay<4>::BYTES;
++  cfg.stream = stream;
++  cfg.attrs = attr;
++  cfg.numAttrs = 1;
++  C10_CUDA_CHECK(cudaLaunchKernelEx(
++      &cfg, fn,
++      reinterpret_cast<const uint8_t*>(q.data_ptr()), reinterpret_cast<const uint8_t*>(k_cache.data_ptr()),
++      reinterpret_cast<const uint8_t*>(v_cache.data_ptr()), page_table.data_ptr<int>(),
++      static_cast<int64_t>(page_table.stride(0)), cache_seqlens.data_ptr<int>(), B, k_scale.data_ptr<float>(),
++      v_scale.data_ptr<float>(), static_cast<float>(score_scale),
++      reinterpret_cast<const __nv_bfloat16*>(qkv.data_ptr()), static_cast<int64_t>(qkv_stride),
++      reinterpret_cast<__nv_bfloat16*>(out.data_ptr()), ws_acc.data_ptr<float>(), ws_ml.data_ptr<float>(),
++      ticket.data_ptr<int>(), gticket.data_ptr<int>(), gacc.data_ptr<float>(), gml.data_ptr<float>(),
++      static_cast<float>(eps)));
++}
++
+ void sk_combine(torch::Tensor ws_acc, torch::Tensor ws_ml, torch::Tensor cache_seqlens, torch::Tensor v_scale,
+                 torch::Tensor qkv, int64_t qkv_stride, torch::Tensor out, int64_t attn_grid, double eps) {
+   const int B = static_cast<int>(cache_seqlens.size(0));
+@@ -1494,6 +1718,36 @@ void sk_combine(torch::Tensor ws_acc, torch::Tensor ws_ml, torch::Tensor cache_s
+   C10_CUDA_KERNEL_LAUNCH_CHECK();
+ }
+ 
++// {binaryVersion, ptxVersion, numRegs, localSizeBytes, maxThreadsPerBlock, dynamic smem, CTAs/SM (cluster-less),
++//  cudaOccupancyMaxActiveClusters for (grid, C) (-1 = the query failed), C}
++std::vector<int64_t> sk_cluster_attrs(int64_t cvar, int64_t grid) {
++  TORCH_CHECK(cvar >= 0 && cvar < NCV, "sk_cluster_attrs: cvar");
++  cv_prepare(cvar);
++  const int C = cv_c(cvar);
++  cudaFuncAttributes a;
++  C10_CUDA_CHECK(cudaFuncGetAttributes(&a, reinterpret_cast<const void*>(cv_pick(cvar))));
++  int occ = 0;
++  C10_CUDA_CHECK(cudaOccupancyMaxActiveBlocksPerMultiprocessor(&occ, cv_pick(cvar), THREADS, Lay<4>::BYTES));
++  cudaLaunchAttribute attr[1];
++  attr[0].id = cudaLaunchAttributeClusterDimension;
++  attr[0].val.clusterDim.x = static_cast<unsigned>(C);
++  attr[0].val.clusterDim.y = 1;
++  attr[0].val.clusterDim.z = 1;
++  cudaLaunchConfig_t cfg = {};
++  cfg.gridDim = dim3(static_cast<unsigned>(grid));
++  cfg.blockDim = dim3(THREADS);
++  cfg.dynamicSmemBytes = Lay<4>::BYTES;
++  cfg.attrs = attr;
++  cfg.numAttrs = 1;
++  int ncl = 0;
++  cudaError_t e = cudaOccupancyMaxActiveClusters(&ncl, reinterpret_cast<const void*>(cv_pick(cvar)), &cfg);
++  if (e != cudaSuccess) { (void)cudaGetLastError(); ncl = -1; }
++  return {static_cast<int64_t>(a.binaryVersion), static_cast<int64_t>(a.ptxVersion), static_cast<int64_t>(a.numRegs),
++          static_cast<int64_t>(a.localSizeBytes), static_cast<int64_t>(a.maxThreadsPerBlock),
++          static_cast<int64_t>(Lay<4>::BYTES), static_cast<int64_t>(occ), static_cast<int64_t>(ncl),
++          static_cast<int64_t>(C)};
++}
++
+ // {binaryVersion, ptxVersion, numRegs, localSizeBytes, maxThreadsPerBlock, dynamic smem, CTAs/SM}
+ std::vector<int64_t> sk_attrs(int64_t variant) {
+   TORCH_CHECK(variant >= 0 && variant <= 3, "sk_attrs: variant");
+@@ -1509,6 +1763,15 @@ std::vector<int64_t> sk_attrs(int64_t variant) {
+ """
+ 
+ _SK_LABELS = ("<4 stages, ticket>", "<4 stages, no ticket>", "<5 stages, ticket>", "<4 stages, two-level ticket>")
++_CL_CFG = ((2, False), (4, False), (8, False), (2, True), (4, True))  # (C, group ticket over cluster partials)
++
++
++def _sk_label(variant: int) -> str:
++    if variant >= 10:
++        c, grp = _CL_CFG[variant - 10]
++        return f"<4 stages, cluster C={c}{' + group ticket' if grp else ''}>"
++    return _SK_LABELS[variant]
++
+ _EXT2 = None       # the stage-2 module; None keeps stage 1 (A + B) on the gated path
+ _SK_VARIANT = 0    # the timed path: 4 stages + ticket (fixed; the diagnostics call the module directly)
+ _SK_ARCH_FLAGS = None
+@@ -1555,13 +1818,13 @@ def _build_sk():
+             _SK_ARCH_FLAGS = list(_get_cuda_arch_flags())
+         except Exception as e:  # private helper; the cubin check below is authoritative
+             _say(f"[sk] could not read torch's nvcc arch flags: {e!r}")
+-        _say(f"[sk] building muse_full_decode_splitkv_v3: TORCH_CUDA_ARCH_LIST=9.0a, arch flags {_SK_ARCH_FLAGS}, "
++        _say(f"[sk] building muse_full_decode_splitkv_v4: TORCH_CUDA_ARCH_LIST=9.0a, arch flags {_SK_ARCH_FLAGS}, "
+              f"extra -O3 -lineinfo")
+         ext = load_inline(
+-            name="muse_full_decode_splitkv_v3",
++            name="muse_full_decode_splitkv_v4",
+             cpp_sources=_SK_CPP,
+             cuda_sources=_SK_CUDA,
+-            functions=["sk_attn", "sk_combine", "sk_attrs"],
++            functions=["sk_attn", "sk_combine", "sk_attrs", "sk_attn_cluster", "sk_cluster_attrs"],
+             extra_cuda_cflags=["-O3", "-lineinfo"],
+             verbose=False,
+         )
+@@ -1585,9 +1848,15 @@ def _sk_launch(data: Inputs, q: torch.Tensor, qkv: torch.Tensor, variant: int, g
+     ws_acc = torch.empty((grid + batch, hq, d), dtype=torch.float32, device=device)
+     ws_ml = torch.empty((grid + batch, 2, hq), dtype=torch.float32, device=device)
+     out = torch.empty((batch, 1, hq * d), dtype=torch.bfloat16, device=device)
+-    ng = batch * 32 if variant == 3 else 1  # group slots only for the two-level variant
++    ng = batch * 32 if (variant == 3 or variant >= 10) else 1  # group slots: two-level and cluster variants
+     gacc = torch.empty((ng, hq, d), dtype=torch.float32, device=device)
+     gml = torch.empty((ng, 2, hq), dtype=torch.float32, device=device)
++    if variant >= 10:  # stage 4: cluster variant (batch 1 only), cvar = variant - 10
++        _EXT2.sk_attn_cluster(q, data["k_cache"], data["v_cache"], data["page_table"], data["cache_seqlens"],
++                              data["k_scale"], data["v_scale"], qkv, qkv.stride(0), out, ws_acc, ws_ml,
++                              _sk_ticket(device), _sk_gticket(device), gacc, gml,
++                              cfg["sm_scale"] * cfg["qk_scale_factor"] * LOG2E, RMS_EPS, grid, variant - 10)
++        return out, ws_acc, ws_ml
+     _EXT2.sk_attn(q, data["k_cache"], data["v_cache"], data["page_table"], data["cache_seqlens"], data["k_scale"],
+                   data["v_scale"], qkv, qkv.stride(0), out, ws_acc, ws_ml, _sk_ticket(device),
+                   _sk_gticket(device), gacc, gml, cfg["sm_scale"] * cfg["qk_scale_factor"] * LOG2E, RMS_EPS, grid, variant)
+@@ -1602,7 +1871,12 @@ def _full_decode_sk(data: Inputs, q: torch.Tensor, qkv: torch.Tensor) -> torch.T
+     """Stage 2 on the gated path: one launch after the pre-attention kernel (variant 1, the
+     no-ticket diagnostic, adds the separate combine)."""
+     sms = _sm_count(qkv.device)
+-    if data["config"]["batch"] == 1:  # stage 3: one CTA per SM + the two-level ticket (fixed by shape)
++    if data["config"]["batch"] == 1:
++        cl = _B1_CL  # stage 4: the cluster variant the prepare chose (None = the landed two-level path)
++        if cl is not None:
++            out, _, _ = _sk_launch(data, q, qkv, cl[0], cl[1])
++            return out
++        # stage 3: one CTA per SM + the two-level ticket (fixed by shape)
+         out, _, _ = _sk_launch(data, q, qkv, 3, _SPLITKV_GRID or sms)
+         return out
+     grid = _SPLITKV_GRID or 2 * sms
+@@ -1824,7 +2098,7 @@ def _sk_case(tag, lens, kv_scale, grid, gen, variant=0) -> bool:
+     _say(f"[sk] {tag}: launching _pre_attention_kernel")
+     q, qkv = _sk_prepare_q(data)
+     torch.cuda.synchronize()
+-    _say(f"[sk] {tag}: launching splitkv_attn_sk_kernel{_SK_LABELS[variant]} grid {g}")
++    _say(f"[sk] {tag}: launching splitkv_attn_sk_kernel{_sk_label(variant)} grid {g}")
+     out, ws_acc, ws_ml = _sk_launch(data, q, qkv, variant, g)
+     torch.cuda.synchronize()
+     _say(f"[sk] {tag}: splitkv_attn_sk_kernel returned")
+@@ -2081,6 +2355,184 @@ def _sk_validate_b1() -> "str | None":
+     return None
+ 
+ 
++def _sk_cl_candidates(sms: int):
++    """Stage-4 prepare matrix: (variant, grid, label). Grids are multiples of C near SM and 2xSM; the
++    group-ticket-over-cluster-partials variants only for C in {2, 4} (review)."""
++    out = []
++    for cv, (c, grp) in enumerate(_CL_CFG):
++        for mult, gname in ((1, "SM"), (2, "2xSM")):
++            grid = (mult * sms // c) * c
++            out.append((10 + cv, grid, f"cluster C={c}{' + group ticket' if grp else ''} grid {grid} ({gname})"))
++    return out
++
++
++def _sk_cl_validate(v: int, grid: int, gen) -> "str | None":
++    """One cluster candidate: the stage-3 B=1 cases at its grid (plus small grids and tiny lengths so
++    CTAs with no tile and clusters with no tile are exercised), then two graph replays per length to prove
++    the ticket(s) reset. Returns None on success, else the failure reason."""
++    global _B1_PATH, _B1_CL
++    c = _CL_CFG[v - 10][0]
++    cases = (
++        ("B=1 80000 keys", [80000], 1.0, grid),
++        ("B=1 80000 keys kv 0.25", [80000], 0.25, grid),
++        ("B=1 80000 keys grid 3C", [80000], 0.25, 3 * c),
++        ("B=1 4097 keys", [4096], 1.0, grid),
++        ("B=1 4097 keys kv 0.25 grid 2C", [4096], 0.25, 2 * c),
++        ("B=1 201 keys (4 tiles: empty CTAs in the first cluster)", [200], 1.0, grid),
++        ("B=1 63 keys (one tile: empty clusters)", [62], 1.0, grid),
++        ("B=1 1 key kv 0.25", [0], 0.25, grid),
++    )
++    for tag, lens, kv_scale, g in cases:
++        if not _sk_case(f"{tag} v{v - 10}", lens, kv_scale, g, gen, variant=v):
++            return f"self-check {tag}"
++    prev = (_B1_PATH, _B1_CL)
++    _B1_PATH, _B1_CL = True, (v, grid)
++    try:
++        for lens, kv_scale in (([80000], 1.0), ([4096], 0.25), ([200], 1.0)):
++            reason = _sk_replay_check(gen, lens, kv_scale)
++            if reason is not None:
++                return reason
++    finally:
++        _B1_PATH, _B1_CL = prev
++    dev = torch.device("cuda")
++    left = int(_sk_ticket(dev).abs().sum().item()) + int(_sk_gticket(dev).abs().sum().item())
++    if left:
++        return f"tickets not reset (sum {left})"
++    return None
++
++
++def _sk_cl_time(cands, dev, gen, reps: int = 10, warm: int = 2):
++    """Cold-L2 CUDA-graph-replay timing (median of `reps`) of the landed two-level kernel (grid SM) and every
++    candidate, at B=1 x 80000 keys. A 256 MB flush precedes EVERY replay and the order rotates each rep, so
++    no candidate rides another's warm L2 or a fixed position. Returns (landed_us, [us per candidate])."""
++    sms = _sm_count(dev)
++    data = _splitkv_synthetic([80000], 1.0, gen, dev)
++    q, qkv = _sk_prepare_q(data)
++    torch.cuda.synchronize()
++    cfg = data["config"]
++    scale = cfg["sm_scale"] * cfg["qk_scale_factor"] * LOG2E
++    kc, vc, pt = data["k_cache"], data["v_cache"], data["page_table"]
++    seql, ksc, vsc = data["cache_seqlens"], data["k_scale"], data["v_scale"]
++    tk, gtk = _sk_ticket(dev), _sk_gticket(dev)
++    flush = torch.empty(64 << 20, dtype=torch.float32, device=dev)  # 256 MB > L2
++    runs = [(3, sms)] + [(v, g) for v, g, _ in cands]
++    keep, graphs = [], []
++    for v, grid in runs:
++        wa = torch.empty((grid + 1, 16, 64), dtype=torch.float32, device=dev)
++        wm = torch.empty((grid + 1, 2, 16), dtype=torch.float32, device=dev)
++        ng = 32
++        ga = torch.empty((ng, 16, 64), dtype=torch.float32, device=dev)
++        gm = torch.empty((ng, 2, 16), dtype=torch.float32, device=dev)
++        out = torch.empty((1, 1, 1024), dtype=torch.bfloat16, device=dev)
++        keep.append((wa, wm, ga, gm, out))
++        if v >= 10:
++            def fn(v=v, grid=grid, wa=wa, wm=wm, ga=ga, gm=gm, out=out):
++                _EXT2.sk_attn_cluster(q, kc, vc, pt, seql, ksc, vsc, qkv, qkv.stride(0), out, wa, wm, tk, gtk, ga,
++                                      gm, scale, RMS_EPS, grid, v - 10)
++        else:
++            def fn(v=v, grid=grid, wa=wa, wm=wm, ga=ga, gm=gm, out=out):
++                _EXT2.sk_attn(q, kc, vc, pt, seql, ksc, vsc, qkv, qkv.stride(0), out, wa, wm, tk, gtk, ga, gm,
++                              scale, RMS_EPS, grid, v)
++        fn()  # eager warm-up before capture
++        torch.cuda.synchronize()
++        g = torch.cuda.CUDAGraph()
++        with torch.cuda.graph(g):
++            fn()
++        torch.cuda.synchronize()
++        graphs.append(g)
++    per = [[] for _ in runs]
++    n = len(runs)
++    for it in range(warm + reps):
++        for k in range(n):
++            i = (k + it) % n
++            flush.zero_()
++            e0, e1 = torch.cuda.Event(enable_timing=True), torch.cuda.Event(enable_timing=True)
++            e0.record()
++            graphs[i].replay()
++            e1.record()
++            torch.cuda.synchronize()
++            if it >= warm:
++                per[i].append(e0.elapsed_time(e1) * 1e3)
++    med = [sorted(t)[len(t) // 2] for t in per]
++    ref = _splitkv_reference(data, [80000])
++    for (v, grid), (_, _, _, _, out) in zip(runs, keep):
++        err, finite = _rel_l2(out, ref)
++        if not finite or err >= 2e-2:
++            _say(f"[sk4] WARNING: timing-input output of v{v} grid {grid} off: rel L2 {err:.2e}, finite {finite}")
++    del graphs, keep, flush, data, q, qkv, kc, vc, pt
++    torch.cuda.empty_cache()
++    return med[0], med[1:]
++
++
++def _sk_cluster_select() -> None:
++    """Stage 4 prepare (batch 1): print cluster occupancy per C and grid, validate every candidate in
++    process, time all against the landed two-level kernel (cold L2, CUDA-graph replay, median of 10), and set
++    _B1_CL to the fastest only if it beats the landed kernel by >= 3%; else the landed path stays."""
++    global _B1_CL
++    dev = torch.device("cuda")
++    sms = _sm_count(dev)
++    gen = torch.Generator(device="cuda").manual_seed(2468)
++    cands = _sk_cl_candidates(sms)
++    live = []
++    for v, grid, label in cands:
++        a = list(_EXT2.sk_cluster_attrs(v - 10, grid))
++        c = a[8]
++        resident = a[7] * c if a[7] > 0 else a[7]
++        per_sm = f"{resident / sms:.2f}" if a[7] > 0 else "n/a"
++        _say(f"[sk4] {label}: binaryVersion {a[0]}, regs {a[2]}, local {a[3]} B, dyn smem {a[5]} B, "
++             f"{a[6]} CTAs/SM (cluster-less), cudaOccupancyMaxActiveClusters {a[7]} for grid {grid} C={c} -> "
++             f"{resident} resident CTAs ({per_sm}/SM) vs grid {grid}")
++        if a[0] != 90:
++            _say(f"[sk4] {label}: cubin version is not 90: skipped")
++            continue
++        if a[7] < 1:
++            _say(f"[sk4] {label}: no cluster of this shape can be resident (maxActiveClusters {a[7]}): skipped")
++            continue
++        if a[7] * c < grid:
++            _say(f"[sk4] {label}: only {a[7] * c} of {grid} CTAs co-resident (waves); the timing decides")
++        if a[6] < 2 or a[7] * c < 2 * sms and grid > sms:
++            _say(f"[sk4] {label}: NOTE 2 CTAs/SM does not hold for this launch (a[6]={a[6]}, resident CTAs "
++                 f"{a[7] * c} vs {2 * sms})")
++        live.append((v, grid, label))
++    ok = []
++    for v, grid, label in live:
++        try:  # one candidate's launch/config error drops that candidate only, not the whole matrix
++            reason = _sk_cl_validate(v, grid, gen)
++        except Exception as e:
++            reason = f"raised {e!r}"
++        if reason is None:
++            ok.append((v, grid, label))
++            _say(f"[sk4] {label}: self-check + 2 graph replays ok")
++        else:
++            _say(f"[sk4] {label}: FAILED ({reason}): not timed")
++            dev_t = _sk_ticket(dev), _sk_gticket(dev)
++            for t in dev_t:
++                t.zero_()
++            torch.cuda.synchronize()
++    if not ok:
++        _say("[sk4] no cluster candidate passed its self-check: the landed two-level path stays")
++        return
++    landed, times = _sk_cl_time(ok, dev, gen)
++    _say(f"[sk4] B=1 x 80000 keys, cold L2 (256 MB flush before every replay), CUDA-graph replay, median of 10, "
++         f"kernel only:")
++    _say(f"[sk4]   landed two-level ticket, grid {sms}                      {landed:7.1f} us")
++    for (v, grid, label), t in zip(ok, times):
++        _say(f"[sk4]   {label:50s} {t:7.1f} us  ({t / landed:.3f}x of landed)")
++    best = min(range(len(times)), key=times.__getitem__)
++    bv, bg, blabel = ok[best]
++    c8 = [(t, lab) for (v, g, lab), t in zip(ok, times) if v == 12 and g > sms]
++    if c8:
++        _say(f"[sk4] grid 2xSM + C=8 (cluster merge + more bytes in flight): {c8[0][0]:.1f} us vs landed {landed:.1f} us "
++             f"({c8[0][0] / landed:.3f}x)")
++    if times[best] <= 0.97 * landed:
++        _B1_CL = (bv, bg)
++        _say(f"PATH CHOSEN: full decode_1 {blabel}: {times[best]:.1f} us vs landed two-level {landed:.1f} us "
++             f"({times[best] / landed:.3f}x)")
++    else:
++        _say(f"PATH CHOSEN: full decode_1 two-level (fallback: best cluster {blabel} {times[best]:.1f} us is not >= 3% "
++             f"faster than landed {landed:.1f} us, {times[best] / landed:.3f}x)")
++
++
+ def _sk_b1_diagnostics() -> None:
+     """Import-time eager timings at synthetic B=1 x 80000 (cold L2 per rep, median of 10) bracketing
+     the two fixed stage-3 choices: (a) stage-2 kernel as is (grid 2xSM, single-level) = the
+@@ -2213,6 +2665,18 @@ if torch.cuda.is_available():
+                 _b1_reason = f"batch-1 self-check raised {e!r}"
+             if _b1_reason is None:
+                 _B1_PATH = True
++                try:
++                    _sk_cluster_select()
++                except Exception as e:  # any build/launch/self-check problem keeps the landed two-level path
++                    _B1_CL = None
++                    _say(f"[sk4] cluster selection raised, landed two-level path kept: {e!r}")
++                finally:
++                    try:
++                        _sk_ticket(torch.device("cuda", torch.cuda.current_device())).zero_()
++                        _sk_gticket(torch.device("cuda", torch.cuda.current_device())).zero_()
++                        torch.cuda.synchronize()
++                    except Exception as e:
++                        _say(f"[sk4] ticket re-zero raised: {e!r}")
+             try:
+                 _sk_diagnostics()
+                 if _b1_reason is None:
+@@ -2227,7 +2691,8 @@ if torch.cuda.is_available():
+                 except Exception as e:
+                     _say(f"[sk-diag] ticket re-zero raised: {e!r}")
+         if _B1_PATH:
+-            _say("PATH CHOSEN: full decode_1 streamk two-level")
++            _say(f"PATH CHOSEN: full decode_1 streamk {'cluster ' + str(_B1_CL) if _B1_CL else 'two-level'} "
++                 f"(final; see the [sk4] lines above)")
+         else:
+             _say(f"PATH CHOSEN: full decode_1 FA3 (fallback: {_b1_reason})")
+     if _EXT is None:

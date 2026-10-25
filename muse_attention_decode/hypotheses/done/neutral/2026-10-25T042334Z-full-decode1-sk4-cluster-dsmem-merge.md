@@ -44,10 +44,10 @@ controls_for: null
 rewrite_stage: 4
 replaces: "full decode batch 1: master splitkv_attn_sk_kernel two-level global ticket (grid SM)"
 review: proceed
-status: running
+status: done
 review_at: 2026-10-25T043142Z
 review_companions: null
-stage: dispatched
+stage: harvested
 claimed_at: 2026-10-25T043142Z
 base_sha: aafeb8f4d969d4a791dafeca1ad8dda986c3e7c1
 base_blob: d8769ef25caf845a0e207538ccc5c62394b6ee3b
@@ -66,6 +66,13 @@ attempt_file: 2026-10-25T044042Z-check-full-decode1-sk4-cluster-dsmem-merge.md
 prepared_at: 2026-10-25T044042Z
 job: f519261b7c2b435f
 dispatched_at: 2026-10-25T044049Z
+outcome: neutral
+verdict_detail: unproven-vs-best
+speedup: 1.438759554221622
+speedup_ci: [1.4171781609082976, 1.4603409475349463]
+harvested_at: 2026-10-25T053756Z
+best_at_harvest: 1.4321773019894537
+promotion: null
 ---
 
 # full-decode1-sk4-cluster-dsmem-merge
@@ -160,3 +167,36 @@ Fixes:
 1. `_sk_cluster_select`: per-candidate try/except around `_sk_cl_validate`. Before, a TORCH_CHECK or launch-config error in one candidate (e.g. a refused C=8 grid-264 cluster launch) aborted the whole matrix to the landed path. Now only that candidate is dropped, with a loud `[sk4] ... FAILED (raised ...)` line, and the tickets are re-zeroed. okc_lint OK (prepare-only host-sync warnings); py_compile OK; `__pycache__` removed.
 
 Residual risk: the code has never been compiled. A ptxas error in the cluster PTX would fail the whole sk module build and lose stages 2-3 for this run (falling back to splitkv v1/FA3, loud), and a device fault in a cluster candidate is sticky and cannot be caught in process.
+
+## Result
+
+- job `f519261b7c2b435f` (check), status done, passed True, tests 16/16
+- speedup 1.4388x, 95% CI [1.4172, 1.4603], score 2617.7410874172037 µs vs SGLang 3766.3 µs
+- best at harvest: {"speedup": 1.4321773019894537, "ci": [1.4106946424596118, 1.4554282820505813], "job": "2a3241780c7b4c46"}; base result: muse_attention_decode/hypotheses/done/neutral/full-decode1-streamk-s3-two-level-ticket.result.json
+- **outcome: neutral** (unproven-vs-best)
+- files: `muse_attention_decode/hypotheses/done/neutral/full-decode1-sk4-cluster-dsmem-merge.result.json`, `muse_attention_decode/hypotheses/done/neutral/full-decode1-sk4-cluster-dsmem-merge.patch`; branch `hyp/muse_attention_decode/full-decode1-sk4-cluster-dsmem-merge`
+
+## Attribution
+
+| shape | w | base µs | hyp µs | delta | verdict |
+|---|---|---|---|---|---|
+| batch=1 ctx=80000 dist=soft heads=tp8 layer=sliding load=decode_1 page=1 | 46 | 13.15 | 13.45 | 0.9679 | lost |
+| batch=1 ctx=80000 dist=coherent heads=tp8 layer=full load=decode_1 page=1 | 16 | 22.6 | 22.83 | 1.0063 | flat |
+| batch=16 ctx=80000 dist=soft heads=tp8 layer=sliding load=decode_16 page=1 spread=agentic | 46 | 15.33 | 15.03 | 1.0154 | flat |
+| batch=16 ctx=80000 dist=coherent heads=tp8 layer=full load=decode_16 page=1 spread=agentic | 16 | 111.14 | 110.23 | 1.0071 | flat |
+| batch=32 ctx=80000 dist=soft heads=tp8 layer=sliding load=decode_32 page=1 spread=agentic | 46 | 24.33 | 24.47 | 1.0003 | flat |
+| batch=32 ctx=80000 dist=coherent heads=tp8 layer=full load=decode_32 page=1 spread=agentic | 16 | 226.42 | 226.47 | 1.0016 | flat |
+| batch=1 ctx=80000 dist=soft heads=tp8 layer=sliding load=verify_1 page=1 q_len=8 | 46 | 17.78 | 17.1 | 1.0523 | gained |
+| batch=1 ctx=80000 dist=coherent heads=tp8 layer=full load=verify_1 page=1 q_len=8 | 16 | 30.51 | 29.83 | 1.0198 | flat |
+| batch=16 ctx=80000 dist=soft heads=tp8 layer=sliding load=verify_16 page=1 q_len=8 spread=agentic | 46 | 22.68 | 22.84 | 0.9996 | flat |
+| batch=16 ctx=80000 dist=coherent heads=tp8 layer=full load=verify_16 page=1 q_len=8 spread=agentic | 16 | 162.8 | 162.61 | 0.9993 | flat |
+| batch=32 ctx=80000 dist=soft heads=tp8 layer=sliding load=verify_32 page=1 q_len=8 spread=agentic | 46 | 28.34 | 28.77 | 0.9915 | flat |
+| batch=32 ctx=80000 dist=coherent heads=tp8 layer=full load=verify_32 page=1 q_len=8 spread=agentic | 16 | 302.2 | 302.12 | 0.9985 | flat |
+
+gained on sliding verify_1; lost on sliding decode_1. Expected hit: 0/3. Noise ±1.5%.
+
+## Follow-ups
+
+- rewrite stage 4 of `full decode batch 1: master splitkv_attn_sk_kernel two-level global ticket (grid SM)`: read the replaced kernels' own us per shape (profile top_kernels) against the incumbent and the floor, and check which Milestone it reached. The next stage is `/hypothesize muse_attention_decode "<what to fix or tune>" --kind rewrite --depends-on full-decode1-sk4-cluster-dsmem-merge --stage 5`; a slow or failed first cut is the expected start, not a do-not-retry.
+- unproven-vs-best: the change is not proven either way; a stacked hypothesis (`depends_on: full-decode1-sk4-cluster-dsmem-merge`) that adds a further change in the same area is the only way to learn more (identical code is never re-run).
+
