@@ -39,7 +39,7 @@ review: proceed
 status: running
 review_at: 2026-10-25T043310Z
 review_companions: null
-stage: implemented
+stage: dispatched
 claimed_at: 2026-10-25T043310Z
 base_sha: 1a306457948093d586d8985f430235643dff1d1c
 base_blob: db8a3344398bca79ea5cafeb580f701c055fd475
@@ -56,6 +56,8 @@ submission_blob: 116f43fe0bea9fd64170c2f38973e38d7d3be8b4
 lint_warnings: 15
 attempt_file: 2026-10-25T043641Z-check-turn-align-remap-on-side-stream-under-pooler.md
 prepared_at: 2026-10-25T043641Z
+job: 40f21883155b47eb
+dispatched_at: 2026-10-25T043648Z
 ---
 
 # turn-align-remap-on-side-stream-under-pooler
