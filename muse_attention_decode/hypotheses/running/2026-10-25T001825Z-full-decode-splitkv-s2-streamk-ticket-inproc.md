@@ -76,7 +76,7 @@ base_sha: eacc593b09a9f93781b074c1c92079abb1a0756e
 base_blob: c6854f093588da524e63657576b27ed720756e32
 branch: hyp/muse_attention_decode/full-decode-splitkv-s2-streamk-ticket-inproc
 worktree: .worktrees/muse_attention_decode/full-decode-splitkv-s2-streamk-ticket-inproc
-mode: null
+mode: check
 restack_of: null
 stale_base: null
 implemented_at: 2026-10-25T003701Z
@@ -85,6 +85,8 @@ submission_sha256: f49bdef359197810d176338f1bf491251d9a22b13beadb48c8647f69cbe56
 norm_sha256: 61164dd99ca40724dc1494fa08e554f6c14e08d7036277822482a5828fc343a4
 submission_blob: 695c97d2e9fef8f806ec02d2fe14a02668989e3f
 lint_warnings: 10
+attempt_file: 2026-10-25T003701Z-check-full-decode-splitkv-s2-streamk-ticket-inproc.md
+prepared_at: 2026-10-25T003701Z
 ---
 
 # full-decode-splitkv-s2-streamk-ticket-inproc
