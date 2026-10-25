@@ -86,7 +86,7 @@ review: proceed
 status: running
 review_at: 2026-10-25T161800Z
 review_companions: null
-stage: claimed
+stage: implemented
 claimed_at: 2026-10-25T161801Z
 base_sha: a2286ee3352c35c3e80062a62bc74df5393b1d95
 base_blob: f919748b5af6e815f319e5d2d828ed68e5b28a71
@@ -95,6 +95,12 @@ worktree: .worktrees/muse_bf16_proj/combo-rowowner-reduce-free-m1-qkv-o-plus-nai
 mode: null
 restack_of: null
 stale_base: null
+implemented_at: 2026-10-25T163607Z
+impl_commit: a676774ecc5803e1dc7f1f47617630497f336c76
+submission_sha256: b8e36aedc8be79504e833bc6c76e8477833454de454282efa91ba8474882d47c
+norm_sha256: 8258046a5a1212b8ba2c01bf78b9f375f59e96336115f40ad2350f2ccb82d327
+submission_blob: ad8d7254a64a52db2a8f56ec0ad262748153a2e8
+lint_warnings: 31
 ---
 
 # combo-rowowner-reduce-free-m1-qkv-o-plus-naive
@@ -219,3 +225,31 @@ OK with warnings
 ```
 
 The uint8 hits are L2-flush and cuBLASLt workspace byte buffers, not activations. `python3 -I -m py_compile` passed, and `__pycache__` was removed. A symtable scan found no undefined global names in the file (LESSONS 2026-10-25 f-string check). No CPU dry run was possible: there is no torch on this node.
+
+## Pre-flight audit
+
+Audited 2026-10-25 by an Opus subagent, by reading the code only (no GPU on this node). **Verdict: dispatch-with-fixes.** Rules: OK.
+
+**What was verified.**
+- **Shared memory.** Every instance's smem comes from the same template S. A: 123,904 B. A2: 99,072 B, so two CTAs need 2 x (99,072 + 1 KB) = 200,192 B, under the 233,472 B per SM. A3: 111,616 B. Every static_assert holds: SLOT % 128 == 0, R*CKK*2 == 16384, and the epilogue scratch fits in the ring.
+- **Launch bounds and occupancy.** `__launch_bounds__(160, MINB)` comes from the template. The A2 occupancy query is checked before the first launch.
+- **Repack and indexing.** The chunk offset (c*NCHUNK+j)*R*CKK matches `_bulk_repack`'s [c][kb][row][64] layout for R = 16, 32 and 64.
+- **Lt plan.** Descriptors are per-call RAII objects. There is no static or global C++ state, no `preferred_blas_library` toggle, and the algo row and workspace live in each state.
+- **kernel_fn.** It writes nothing to state and has no sync. qkv_gate m=128 reaches the bf16 branch, because no earlier path catches it.
+- **Failure isolation.** A build failure turns off only the A, A2 and A3 cells (or only B). `_ab_component` maps each new cell to its own flag.
+- **Budget.** Four import-time builds (ouns 37 s, router_cluster 37 s, bulk about 45-55 s, Lt about 15 s) plus about 10-20 s of prepare fit within 10 minutes.
+
+**Fixes.**
+1. **Carveout.** `cudaSharedmemCarveoutMaxShared` is now set only when MINB > 1 (A2). A and A3 keep the driver default, as the sibling does, so cell A runs the same as in the sibling build.
+2. **Host checks in `bulk_run`.** It now also checks that x and out are 2-D, the error word is non-empty, and all tensors are on one device. A device fault voids the run, so these checks run on the host before any launch.
+3. **Profiler filter.** `_cell_kernels` drops Kineto bookkeeping rows ("Activity Buffer Request", "Buffer Flush"). Otherwise one of them could fail the "exactly one kernel" assertion and silently turn off a cell that won its gate.
+4. **Second-state repack.** In the A/B second state (flags branch), each cell's repack is wrapped in its own try. A failure there now turns off only that cell in that state, instead of failing the whole second-state build, which would have turned off nn_ok, nn_p256_ok, ouns_cl and router_cluster_ok.
+5. **Lt extension name.** Renamed to `muse_bf16_lt_qkv128_percall_v1`. The sibling compiles different source under the old name `muse_bf16_lt_qkv128_v1`, and the two could clobber each other in a shared torch_extensions cache.
+
+**Where this differs from the sibling combo-naive build (flagged, not changed):**
+- **Cell B is a different implementation.** The sibling also tries split-K results forced to SPLITK_NUM 1 (via AlgoCheck), with workspace caps 0, 1, 4 and 32 MiB and 32 algos, and falls back to a mode-2 `addmm`. It also bounds the error at 1.10x master's and asserts that qkv_gate m=256 launches the same kernels as master. This build keeps only native split-K-1 heuristic results at caps 0 and 1 MiB, with no fallback. B can therefore route in one run and not the other, or pick a different algo. Read B from each run's own `PATH CHOSEN B` line and its qkv_gate m=128 row, not from the difference between the two runs.
+- **One build failure covers all three bulk cells.** The bulk module here holds three instantiations in one compilation unit, so a build failure caused by A2 or A3 also loses A.
+- **No prepare deadline.** The sibling skips cells after 200 s (bulk) and 250 s (Lt); this build has no such deadline. Projected prepare time is far below either.
+- **Sibling profiler exposure.** The sibling's `_cell_kernel_names` lacks fix 3's filter.
+
+**Residual risk:** The A2 gate most likely keeps master, and B may diverge from the sibling, so the two runs are not a clean "only A2/A3 differ" pair. Attribute each cell from its PATH CHOSEN line and profile row.
