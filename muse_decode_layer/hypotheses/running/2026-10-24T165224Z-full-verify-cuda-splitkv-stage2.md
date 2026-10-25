@@ -61,7 +61,7 @@ base_sha: f6cc1452343c4d93911ad7303c4a5d7878afd2fe
 base_blob: b83f5ec1976c82d5b45dcd92b6c0818ce04eda9f
 branch: hyp/muse_decode_layer/full-verify-cuda-splitkv-stage2
 worktree: .worktrees/muse_decode_layer/full-verify-cuda-splitkv-stage2
-mode: null
+mode: check
 restack_of: null
 stale_base: true
 implemented_at: 2026-10-25T004030Z
@@ -70,6 +70,8 @@ submission_sha256: 56c1f88fd29a6cac1750a3f0f41a07be6fbde8e132bb0aa98a85a627d20fe
 norm_sha256: 6e636153b847e455107219497b47d258e56ae512d612318674a29737b9f16dd5
 submission_blob: dd79676b5f7daeef54fdcbbc6044e5e09beae843
 lint_warnings: 2
+attempt_file: 2026-10-25T004030Z-check-full-verify-cuda-splitkv-stage2.md
+prepared_at: 2026-10-25T004030Z
 ---
 
 # full-verify-cuda-splitkv-stage2
