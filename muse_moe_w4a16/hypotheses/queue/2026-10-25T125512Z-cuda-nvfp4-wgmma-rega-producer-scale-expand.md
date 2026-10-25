@@ -72,8 +72,11 @@ kind: rewrite
 controls_for: null
 rewrite_stage: 6
 replaces: Marlin w13+silu+w2 (moe_wna16_marlin_gemm x2 + act_and_mul) at 128<=T<=512
-review: required
-status: queued
+review: hold
+status: hold
+review_at: 2026-10-25T212523Z
+review_companions: null
+hold_reason: "adversarial review: This design has already been measured and refuted. muse_prefill_layer's experts-rega-producer-scale-expand-all-t (job 6be2a8d3, written as an explicit 'port of "
 ---
 
 # cuda-nvfp4-wgmma-rega-producer-scale-expand
@@ -101,3 +104,26 @@ shape (profile top_kernels) against the incumbent and the speed-of-light floor, 
 2. at or below the incumbent kernels' time on the target shapes;
 3. within ~1.5x of the floor on the target shapes, and the headline CI clears 1.0 (promotable).
 The next stage is minted with `--kind rewrite --depends-on <this slug> --stage N+1`.
+
+## Adversarial review
+
+Reviewed 2026-10-25T212523Z by an adversarial subagent (model opus).
+
+**Verdict: hold.** This design has already been measured and refuted. muse_prefill_layer's experts-rega-producer-scale-expand-all-t (job 6be2a8d3, written as an explicit 'port of muse_moe_w4a16's queued cuda-nvfp4-wgmma-rega-producer-scale-expand') built the same helper-warp scale buffer, sfull barriers and prmt broadcast on the same s5-derived rega kernel. It was bit-identical but slower in every class: low T=753 w13 sx/master 1.135, w2 1.079, block 1.099, gate OFF. Its incumbent ran in the same ~2 TB/s regime as moe's wg_kernel. The hypothesis has no `prior` field and does not cite that run.
+
+### Justification
+A. The instruction count is plausible. Master's dq_stage (submission.py L1123-1140) spends a scale load, 0.5 cvt.e4m3x2, __half22float2, two fmul by 2^119 and two bf16 broadcasts per k16 step, about 7 instructions against roughly 22-24 for dequant8, so cutting it to 2 prmt removes about 20% of consumer ALU. The smem budget is right: Smem<false>::BYTES 203776 + 8192 + 8192 static = 220160 <= 232448. The new layout (r*1024 + cw*128 + g*16, a uint4 per record, 8 consumer warps) is consistent and conflict-free. Bit-exactness holds. The weakest link is the premise that consumer ALU issue limits the kernel. It is only inferred from a negative result: b128-n32-deep-ring showed that bytes in flight are not the limiter, which does not show that scale-conversion ALU is. No ncu issue-slot or stall data is cited. The decisive evidence is the prefill twin. LESSONS L182 and archive/experts-rega-producer-scale-expand-all-t/6be2a8d3cf7d489f.log record the same mechanism (helpers wait full[s], convert, arrive sfull with count 3; consumers wait full then sfull and use prmt 0x1010/0x3232) on prefill's rega_kernel, itself a port of moe s5 (same REC 4608, same 203776 -> 211968 smem). It gated OFF in all classes. At the low class (T=753, 751 routes over 32 experts, buckets 32/64) master's w13 was 305.2 us at 1.98 TB/s and sx was 346.3 us at 1.74 TB/s. That is the same small-N, ~2 TB/s weight-streaming regime this hypothesis targets at B256 (s5/wg2 w13 ~1.8-2.1 TB/s), so the 'prefill was activation-ingest-bound' explanation does not cover the low-class loss. The hop itself costs time: helpers wait on full[s] before the consumers can proceed, so it adds latency in front of every stage. That points to consumers waiting on stage arrival or a serial dequant -> wgmma -> wait<0> chain, not to ALU throughput. The `expected` bs=256 target (w13 <= 215 us, row <= 370) is therefore contradicted by direct measurement, and the bs=128 'faster' expectation (selector at 0.80x vs Marlin, needing >= 1.02x) was already unlikely by the file's own admission. bs=1/32 flat is consistent (Marlin path). The 'Do not try' lists do not name this slug, but LESSONS L182 is a measured refutation of the same code on a sibling kernel, and a missing prior when that obvious attempt exists is grounds for hold. A materially different follow-up the prefill file itself lists would not be a re-run: the consumer-only bit-trick scale conversion, with no extra barrier hop, built from the e4m3 bits by integer ops and folded into dequant8's existing mul. That is the version worth minting.
+
+### Confounders on the current kernel
+- cuda-nvfp4-wgmma-rega-grouped-s5-copy-safe-bucket-gate (on master at 40e2e860): the base kernel. The hypothesis says to rebase s5's branch onto master, but master already contains s5 plus PDL and align2. Grafting the s5 branch again risks dropping wg-pdl-gather-w13-w2-chain's griddep_wait placement. Any build must start from master's wg_kernel as it is.
+- wg-pdl-gather-w13-w2-chain (f7eac2c3): the producer tid 0 calls griddep_wait before the first activation TMA, and consumers call griddep_wait before the loop. Helper warps 1-3 waiting on full[s] inherit that wait. Under PDL the w2 helpers' first conversions overlap w13's tail, so a small w2 delta could come from PDL overlap shifting rather than from consumer ALU.
+- combo-wg-occ2-v64-hot-interleave-align2 (the board, not on master; DIAGNOSIS action 1 restacks it tomorrow): if the restack lands first, B256 runs wg2 at 2 CTAs/SM (setmaxnreg 32/104, STG 3). There an extra 6-8 KB of scale buffer per CTA may break the 2-CTA fit, helpers drop to 32 registers, and TLP already hides consumer latency (0.955). The change would then measure something different from the s5 premise, and DIAGNOSIS action 3 explicitly asks for consumer work 'rebased on the restacked wg2 master'.
+
+### Interference and A/B needs
+No companions. The run would already contain an exact in-run A/B: s5 vs SX in the same graph-replay selector on the same routings, bit-identical outputs, printed per-kernel us and TB/s. Interference with landed items is not the problem. The problem is that the identical mechanism was measured slower (1.08-1.14x per kernel) on a near-identical kernel in the same TB/s regime, so a re-run would most likely gate SX off and re-measure master. If the author re-mints, make it materially different: (a) the consumer-only integer bit-trick scale conversion with no helper hop or extra barrier, or (b) wait for cuda-nvfp4-wgmma-rega-pingpong-consumers (sibling, p1) to show whether dequant/MMA serialisation is the limiter. The prefill pingpong port also lost (1.18-1.47x), but there the cause was activation ingest, which does not apply at moe small N. Build either on the post-restack wg2 master. Per the new lesson, use two interleaved selector rounds, both >= 1.03, with an IQR bound, not the single 1.02 margin.
+
+### Open questions
+- Why did the prefill twin get slower rather than flat at T=753 (w13 1.135)? If the consumers were ALU-bound with a full ring, the helper hop would be hidden. A slowdown suggests the consumers usually wait on full[s], so the ring is near-empty or the stage-arrival latency is exposed. That would also contradict the 'consumer ALU' reading of b128-n32-deep-ring. Has anyone printed per-stage mbar_wait spin counts or ncu stall reasons for wg_kernel?
+- Is the restack of wg2 (DIAGNOSIS action 1, queue restack-occ2-wg2-b256-two-stream-halves-on-master) going first tomorrow? If so, should every consumer-side wg stage, including pingpong-consumers, be re-based on wg2 before dispatch?
+- Should the consumer-only bit-trick (e4m3 -> bf16 via integer shift/or plus exponent rebias, fused into dequant8's existing fma.rn.bf16x2 multiplier) be minted as the replacement? It saves the same ALU with no extra barrier hop or smem round trip.
+
