@@ -1,6 +1,6 @@
 # muse_attention_decode hypotheses
 
-Regenerated 2026-10-25T154445Z. Best: 1.5017x [1.4791,1.5304] job `252abb7f11ec48c3` (check)
+Regenerated 2026-10-25T202706Z. Best: 1.5295x [1.5066,1.5525] job `8713665f3064462c` (submit)
 
 | created | slug | kind | area | where | outcome | speedup | CI | job | mode | promotion | review | expected hit |
 |---|---|---|---|---|---|---|---|---|---|---|---|---|
@@ -88,9 +88,13 @@ Regenerated 2026-10-25T154445Z. Best: 1.5017x [1.4791,1.5304] job `252abb7f11ec4
 | 2026-10-25T153027Z | full-decode1-sk-two-level-deep-ring | primary | full-layer attention (batch-1 decode, stream-K ring depth) | queue | queued |  |  |  |  |  | required |  |
 | 2026-10-25T153027Z | full-verify-fa3-num-splits-band-gate | primary | FA3 call (full verify split count) | queue | queued |  |  |  |  |  | required |  |
 | 2026-10-25T153027Z | full-verify-wgmma-ws-s1-producer-split | rewrite | full-layer attention (verify, wgmma stream-K kernel, warp-specialized pipeline) | queue | queued |  |  |  |  |  | required |  |
-| 2026-10-25T153027Z | sliding-decode1-cluster-per-kvhead | primary | sliding-layer attention (batch-1 decode, cluster kernel work split) | queue | queued |  |  |  |  |  | required |  |
 | 2026-10-25T153027Z | sliding-verify-fa3-num-splits-band-gate | primary | FA3 call (sliding verify split count) | queue | queued |  |  |  |  |  | required |  |
 | 2026-10-25T153027Z | sliding-verify-wgmma-window-s1 | rewrite | sliding-layer attention (verify, wgmma stream-K windowed kernel) | queue | queued |  |  |  |  |  | required |  |
+| 2026-10-25T153027Z | sliding-decode1-cluster-per-kvhead | primary | sliding-layer attention (batch-1 decode, cluster kernel work split) | done/neutral | neutral | 1.5120 | [1.489,1.535] | 4b608df595b046fb | submit | done | proceed | 5/5 |
+| 2026-10-25T161608Z | combo-b1-chain-c320-fused-pre-pdl | primary | combination (conjectural: full decode_1 chunk320 + fused pre-attention prologue + PDL to combine) | done/neutral | neutral | 1.5295 | [1.507,1.552] | 8713665f3064462c | submit |  | proceed | 3/4 |
+| 2026-10-25T161608Z | combo-naive-c320-fd1-tiled-preattn-verify | primary | combination (naive top-row stack: full decode_1 chunk320 + verify tiled pre-attention) | done/neutral | neutral | 1.5094 | [1.487,1.538] | b9d062aaa94c4cbf | submit |  | proceed | 5/6 |
+| 2026-10-25T161609Z | combo-tiled-preattn-neighbour-regate-c320 | primary | combination (conjectural: tiled pre-attention as every pair's first node, sd B=16 and skF selectors re-decided, + chunk320) | done/neutral | neutral | 1.5199 | [1.497,1.543] | 52cbfaebab9646f2 | submit |  | proceed | 3/7 |
+| 2026-10-25T190812Z | merge-perkvhead-c320-sv32-tiled | primary | full decode_1 split-KV + sliding verify_32 pre-attention | done/neutral | neutral | 1.5347 | [1.512,1.558] | a78f29aeab9b47cb | submit |  | proceed | 2/3 |
 
 ## Held
 

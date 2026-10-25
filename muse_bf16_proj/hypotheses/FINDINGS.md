@@ -1,43 +1,43 @@
 # muse_bf16_proj findings
 
-Regenerated 2026-10-25T154445Z by `churn.py index`. Read this before writing a hypothesis for muse_bf16_proj.
+Regenerated 2026-10-25T202706Z by `churn.py index`. Read this before writing a hypothesis for muse_bf16_proj.
 
 ## Current best
 
-1.2394x [1.2208,1.2580] from job `85c91578cc184287` (check), master commit `67b46a57e6`, hypothesis pooler-nn-layout-widen-m256
+1.2566x [1.2378,1.2755] from job `741072dca5fc4c9d` (check), master commit `36c26199f2`, hypothesis combo-rowowner-reduce-free-m1-qkv-o-plus-naive
 
 Where the time goes (per scored shape, top kernels):
 
-- layer=qkv_gate load=decode_1 m=1: yours 12.7µs vs SGLang 14.1µs (SoL 7.9µs) · _bf16_swapab_kernel 9.6µs 100.0%
-- layer=o load=decode_1 m=1: yours 6.0µs vs SGLang 6.8µs (SoL 3.5µs) · _bf16_swapab_kernel 3.9µs 100.0%
-- layer=pooler load=decode_1 m=1: yours 18.9µs vs SGLang 21.5µs (SoL 14.0µs) · _bf16_swapab_kernel 18.7µs 100.0%
-- layer=unpooler load=decode_1 m=1: yours 4.9µs vs SGLang 6.8µs (SoL 1.7µs) · void (anonymous namespace)::ouns_kernel<8, 64, 512, 8, 4>... 4.5µs 100.0%
-- layer=router load=decode_1 m=1: yours 5.0µs vs SGLang 10.3µs (SoL 1.8µs) · void (anonymous namespace)::router_kernel<8, 8>(__nv_bflo... 3.8µs 100.0%
-- layer=qkv_gate load=decode_16 m=16: yours 13.0µs vs SGLang 13.9µs (SoL 7.9µs) · _bf16_swapab_kernel 9.8µs 100.0%
-- layer=o load=decode_16 m=16: yours 6.0µs vs SGLang 6.7µs (SoL 3.6µs) · _bf16_swapab_kernel 4.2µs 100.0%
-- layer=pooler load=decode_16 m=16: yours 19.1µs vs SGLang 21.4µs (SoL 14.1µs) · _bf16_swapab_kernel 19.8µs 100.0%
-- layer=unpooler load=decode_16 m=16: yours 18.6µs vs SGLang 18.9µs (SoL 14.1µs) · nvjet_sm90_tst_64x16_64x16_2x1_v_bz_TNT 18.4µs 100.0%
-- layer=router load=decode_16 m=16: yours 5.5µs vs SGLang 15.0µs (SoL 1.8µs) · _router_swapab_kernel 3.3µs 82.4%, void at::native::vectorized_elementwise_kernel<4, at::nat... 0.7µs 17.6%
-- layer=qkv_gate load=decode_32 m=32: yours 13.8µs vs SGLang 14.3µs (SoL 8.0µs) · _bf16_swapab_kernel 11.6µs 100.0%
-- layer=o load=decode_32 m=32: yours 6.5µs vs SGLang 7.0µs (SoL 3.6µs) · _bf16_swapab_kernel 4.7µs 100.0%
-- layer=pooler load=decode_32 m=32: yours 19.9µs vs SGLang 22.1µs (SoL 14.1µs) · _bf16_swapab_kernel 20.5µs 100.0%
-- layer=unpooler load=decode_32 m=32: yours 18.0µs vs SGLang 18.7µs (SoL 14.1µs) · _bf16_swapab_kernel 18.8µs 100.0%
-- layer=router load=decode_32 m=32: yours 6.0µs vs SGLang 15.2µs (SoL 1.9µs) · _router_swapab_kernel 3.7µs 84.2%, void at::native::vectorized_elementwise_kernel<4, at::nat... 0.7µs 15.8%
-- layer=qkv_gate load=verify_1 m=8: yours 13.0µs vs SGLang 14.4µs (SoL 7.9µs) · _bf16_swapab_kernel 9.5µs 100.0%
-- layer=o load=verify_1 m=8: yours 5.8µs vs SGLang 6.3µs (SoL 3.5µs) · _bf16_swapab_kernel 4.1µs 100.0%
-- layer=pooler load=verify_1 m=8: yours 18.9µs vs SGLang 21.1µs (SoL 14.0µs) · _bf16_swapab_kernel 19.4µs 100.0%
-- layer=unpooler load=verify_1 m=8: yours 5.3µs vs SGLang 6.9µs (SoL 1.8µs) · void (anonymous namespace)::ouns_kernel<8, 64, 512, 8, 4>... 4.8µs 100.0%
-- layer=router load=verify_1 m=8: yours 5.5µs vs SGLang 26.5µs (SoL 1.8µs) · void (anonymous namespace)::router_kernel<8, 8>(__nv_bflo... 4.0µs 100.0%
-- layer=qkv_gate load=verify_16 m=128: yours 17.4µs vs SGLang 17.3µs (SoL 8.4µs) · nvjet_sm90_tst_96x64_64x10_4x2_h_bz_splitK_TNN 12.7µs 80.7%, void cublasLt::splitKreduce_kernel<32, 16, int, float, __... 3.0µs 19.3%
-- layer=o load=verify_16 m=128: yours 7.4µs vs SGLang 7.4µs (SoL 4.0µs) · nvjet_sm90_tst_128x64_64x8_1x2_h_bz_TNT 5.3µs 100.0%
-- layer=pooler load=verify_16 m=128: yours 23.2µs vs SGLang 25.3µs (SoL 14.6µs) · nvjet_sm90_tst_128x64_64x8_1x2_h_bz_splitK_NNT 20.9µs 87.1%, void cublasLt::splitKreduce_kernel<32, 16, int, float, __... 3.1µs 12.9%
-- layer=unpooler load=verify_16 m=128: yours 19.0µs vs SGLang 20.0µs (SoL 14.6µs) · nvjet_sm90_tst_128x64_64x8_1x2_h_bz_NNT 19.6µs 100.0%
-- layer=router load=verify_16 m=128: yours 7.4µs vs SGLang 16.3µs (SoL 2.2µs) · _router_hilo_kernel 5.0µs 86.2%, void at::native::vectorized_elementwise_kernel<4, at::nat... 0.8µs 13.8%
-- layer=qkv_gate load=verify_32 m=256: yours 20.2µs vs SGLang 19.9µs (SoL 9.8µs) · nvjet_sm90_tst_96x64_64x10_2x4_h_bz_TNN 20.0µs 100.0%
-- layer=o load=verify_32 m=256: yours 9.5µs vs SGLang 9.5µs (SoL 4.5µs) · nvjet_sm90_tst_128x128_64x6_2x1_v_bz_TNT 8.2µs 100.0%
-- layer=pooler load=verify_32 m=256: yours 29.9µs vs SGLang 30.9µs (SoL 17.4µs) · nvjet_sm90_tst_128x64_64x8_1x2_h_bz_NNT 29.5µs 100.0%
-- layer=unpooler load=verify_32 m=256: yours 24.6µs vs SGLang 24.7µs (SoL 17.4µs) · nvjet_sm90_tst_128x128_64x6_2x1_v_bz_TNT 25.1µs 100.0%
-- layer=router load=verify_32 m=256: yours 9.7µs vs SGLang 17.9µs (SoL 2.7µs) · _router_hilo_kernel 7.0µs 86.5%, void at::native::vectorized_elementwise_kernel<4, at::nat... 1.1µs 13.5%
+- layer=qkv_gate load=decode_1 m=1: yours 10.5µs vs SGLang 13.6µs (SoL 7.9µs) · void bulk_kernel<16, 8192, 8, 4, 2>(__nv_bfloat16 const*,... 7.4µs 100.0%
+- layer=o load=decode_1 m=1: yours 6.3µs vs SGLang 7.1µs (SoL 3.5µs) · _bf16_swapab_kernel 4.1µs 100.0%
+- layer=pooler load=decode_1 m=1: yours 17.7µs vs SGLang 21.5µs (SoL 14.0µs) · void bulk_kernel<32, 8192, 8, 6, 1>(__nv_bfloat16 const*,... 16.9µs 100.0%
+- layer=unpooler load=decode_1 m=1: yours 5.0µs vs SGLang 6.8µs (SoL 1.7µs) · void (anonymous namespace)::ouns_kernel<8, 64, 512, 8, 4>... 4.4µs 100.0%
+- layer=router load=decode_1 m=1: yours 5.2µs vs SGLang 10.4µs (SoL 1.8µs) · void (anonymous namespace)::router_kernel<8, 8>(__nv_bflo... 3.7µs 100.0%
+- layer=qkv_gate load=decode_16 m=16: yours 12.6µs vs SGLang 13.9µs (SoL 7.9µs) · _bf16_swapab_kernel 9.5µs 100.0%
+- layer=o load=decode_16 m=16: yours 6.2µs vs SGLang 6.9µs (SoL 3.6µs) · _bf16_swapab_kernel 4.0µs 100.0%
+- layer=pooler load=decode_16 m=16: yours 19.5µs vs SGLang 21.6µs (SoL 14.1µs) · _bf16_swapab_kernel 19.9µs 100.0%
+- layer=unpooler load=decode_16 m=16: yours 18.8µs vs SGLang 18.8µs (SoL 14.1µs) · nvjet_sm90_tst_64x16_64x16_2x1_v_bz_TNT 18.5µs 100.0%
+- layer=router load=decode_16 m=16: yours 5.5µs vs SGLang 15.1µs (SoL 1.8µs) · _router_swapab_kernel 3.4µs 82.0%, void at::native::vectorized_elementwise_kernel<4, at::nat... 0.7µs 18.0%
+- layer=qkv_gate load=decode_32 m=32: yours 13.7µs vs SGLang 14.2µs (SoL 8.0µs) · _bf16_swapab_kernel 11.7µs 100.0%
+- layer=o load=decode_32 m=32: yours 6.5µs vs SGLang 6.9µs (SoL 3.6µs) · _bf16_swapab_kernel 4.5µs 100.0%
+- layer=pooler load=decode_32 m=32: yours 19.9µs vs SGLang 21.9µs (SoL 14.1µs) · _bf16_swapab_kernel 20.7µs 100.0%
+- layer=unpooler load=decode_32 m=32: yours 18.5µs vs SGLang 18.7µs (SoL 14.1µs) · _bf16_swapab_kernel 18.3µs 100.0%
+- layer=router load=decode_32 m=32: yours 5.9µs vs SGLang 15.2µs (SoL 1.9µs) · _router_swapab_kernel 3.6µs 82.6%, void at::native::vectorized_elementwise_kernel<4, at::nat... 0.8µs 17.4%
+- layer=qkv_gate load=verify_1 m=8: yours 12.4µs vs SGLang 13.8µs (SoL 7.9µs) · _bf16_swapab_kernel 9.6µs 100.0%
+- layer=o load=verify_1 m=8: yours 5.9µs vs SGLang 6.5µs (SoL 3.5µs) · _bf16_swapab_kernel 3.9µs 100.0%
+- layer=pooler load=verify_1 m=8: yours 19.3µs vs SGLang 21.4µs (SoL 14.0µs) · _bf16_swapab_kernel 19.6µs 100.0%
+- layer=unpooler load=verify_1 m=8: yours 5.5µs vs SGLang 7.0µs (SoL 1.8µs) · void (anonymous namespace)::ouns_kernel<8, 64, 512, 8, 4>... 4.8µs 100.0%
+- layer=router load=verify_1 m=8: yours 5.5µs vs SGLang 26.4µs (SoL 1.8µs) · void (anonymous namespace)::router_kernel<8, 8>(__nv_bflo... 4.2µs 100.0%
+- layer=qkv_gate load=verify_16 m=128: yours 15.5µs vs SGLang 16.9µs (SoL 8.4µs) · nvjet_sm90_tst_40x64_64x16_4x2_h_bz_TNN 15.5µs 100.0%
+- layer=o load=verify_16 m=128: yours 7.7µs vs SGLang 7.7µs (SoL 4.0µs) · nvjet_sm90_tst_128x64_64x8_1x2_h_bz_TNT 5.7µs 100.0%
+- layer=pooler load=verify_16 m=128: yours 22.9µs vs SGLang 25.6µs (SoL 14.6µs) · nvjet_sm90_tst_128x64_64x8_1x2_h_bz_splitK_NNT 20.8µs 87.4%, void cublasLt::splitKreduce_kernel<32, 16, int, float, __... 3.0µs 12.6%
+- layer=unpooler load=verify_16 m=128: yours 18.9µs vs SGLang 20.0µs (SoL 14.6µs) · nvjet_sm90_tst_128x64_64x8_1x2_h_bz_NNT 19.3µs 100.0%
+- layer=router load=verify_16 m=128: yours 7.6µs vs SGLang 16.3µs (SoL 2.2µs) · _router_hilo_kernel 5.0µs 86.2%, void at::native::vectorized_elementwise_kernel<4, at::nat... 0.8µs 13.8%
+- layer=qkv_gate load=verify_32 m=256: yours 19.5µs vs SGLang 19.7µs (SoL 9.8µs) · nvjet_sm90_tst_96x64_64x10_2x4_h_bz_TNN 20.0µs 100.0%
+- layer=o load=verify_32 m=256: yours 9.4µs vs SGLang 9.4µs (SoL 4.5µs) · nvjet_sm90_tst_128x128_64x6_2x1_v_bz_TNT 8.3µs 100.0%
+- layer=pooler load=verify_32 m=256: yours 28.0µs vs SGLang 29.6µs (SoL 17.4µs) · nvjet_sm90_tst_128x64_64x8_1x2_h_bz_NNT 28.8µs 100.0%
+- layer=unpooler load=verify_32 m=256: yours 24.2µs vs SGLang 24.1µs (SoL 17.4µs) · nvjet_sm90_tst_128x128_64x6_2x1_v_bz_TNT 24.8µs 100.0%
+- layer=router load=verify_32 m=256: yours 9.7µs vs SGLang 17.7µs (SoL 2.7µs) · _router_hilo_kernel 6.9µs 90.0%, void at::native::vectorized_elementwise_kernel<4, at::nat... 0.8µs 10.0%
 
 ## By area
 
@@ -78,6 +78,12 @@ Where the time goes (per scored shape, top kernels):
 ### bf16 GEMM dispatch (shape-gated Triton routing, m<=16)
 - **bf16-shape-gated-triton-winners-combo** → neutral (unproven-vs-best), 1.1760x — gained on qkv_gate decode_1; o decode_1, decode_16; pooler decode_1, decode_16, verify_1; unpooler decode_1, verify_1; lost on router verify_1, verify_16. Built on master (dba4ffd: parity dispatch + 3-D split-K Triton router; router untouched). Combine, behind one shape gate in kernel_fn, the four individually-neu
 
+### combination (naive stack + bulk row-owner widened to qkv_gate/o m=1)
+- **combo-rowowner-reduce-free-m1-qkv-o-plus-naive** → neutral (unproven-vs-best), 1.2566x — gained on qkv_gate decode_1, verify_16; pooler decode_1, verify_16. Built on current master (commit 67b46a57, blob f919748b). Everything in combo-naive-pooler-m1-rowowner-qkv-m128-cublaslt (sources A and B, same routing and gate
+
+### combination (pooler m=1 bulk row-owner + qkv_gate m=128 cuBLASLt single-node)
+- **combo-naive-pooler-m1-rowowner-qkv-m128-cublaslt** → neutral (within-ci), 1.2448x — gained on pooler decode_1; router decode_32; qkv_gate verify_16; lost on o decode_16. Built on current master (commit 67b46a57, blob f919748b: restack-three-cell-wins + pooler-nn-layout-widen-m256). NAIVE TOP-ROW STACK: the only two cells where a
+
 ### lossless exp4 compressed-weight stream kernel (_lossless_swapab_kernel)
 - **bf16-lossless-exp4-occupancy-dequant-once-stage2** → neutral (beats-base-not-best), 0.8870x — gained on qkv_gate decode_1, decode_16, decode_32, verify_1; o decode_1, decode_16, decode_32, verify_1; pooler decode_1, decode_16, decode_32, verify_1; unpooler decode_1, decode_16, decode_32, verify_1; router verify_1. Build on the stage-1 code of bf16-lossless-exp4-weight-stream-rewrite (job 542f2b169c934706; codec 12.17 bits/elem, ratio 0.761, bit-exact; load_inline + per-ro
 - **bf16-lossless-exp4-decode-only-throughput-probe** → regression (regression), 1.1904x — lost on qkv_gate decode_1, decode_16, verify_1; o decode_1, decode_16, decode_32, verify_1; unpooler decode_1, verify_1; router decode_1, decode_16, decode_32, verify_1. A one-run kill/revive gate for the held lossless line, not a pipeline stage: kernel_fn routes NOTHING new (byte-identical master dispatch, so the headline shoul
@@ -99,6 +105,9 @@ Where the time goes (per scored shape, top kernels):
 
 ### pooler GEMM (m=129..256, cuBLAS NN layout)
 - **pooler-nn-layout-widen-m256** → neutral (within-ci), 1.2394x — gained on unpooler decode_32; pooler verify_32; lost on router decode_32, verify_1; unpooler verify_1. Built on master (blob 353e3b19, restack-three-cell-wins-router-unpooler-cluster-m8-nn-m128, submit ee4f89f2 1.2491x). Master already builds state['pooler_t'] = 
+
+### pooler GEMM (m=65..256, K-split as a 2-batch cuBLAS GEMM)
+- **pooler-k-halves-batched-gemm-m65-m256** → neutral (within-ci), 1.2470x — gained on qkv_gate decode_1, decode_16; router verify_1; pooler verify_16, verify_32; lost on router decode_16. Built on current master (blob 353e3b19). For layer == 'pooler' at 65 <= cfg m <= 256 only (scored rows verify_16 m=128 and verify_32 m=256; no test uses this ba
 
 ### pooler GEMM + unpooler GEMM (m<=32 DRAM weight streams, bulk-TMA row-owner kernel)
 - **pooler-unpooler-full-bulk-tma-row-owner-stream-rewrite** → regression (regression), 1.1828x — lost on qkv_gate decode_1, decode_16, verify_1; o decode_1, decode_16; pooler decode_1, decode_16, verify_1; unpooler decode_1; router decode_1, decode_16, decode_32. Built on master (blob a8bb42a). WHY: pooler (n=4096, k=8192) and the full unpooler (n=8192, k=4096) are 67.1 MB pure weight streams at m<=32 with a 14.0-14.1 us
@@ -160,42 +169,42 @@ Where the time goes (per scored shape, top kernels):
 
 ## Open follow-ups
 
-- router-hilo-addmm-epilogue: within-ci: the change is not proven either way; a stacked hypothesis (`depends_on: router-hilo-addmm-epilogue`) that adds a further change in the same area is the only way to learn more (identical code is never re-run).
-- pooler-triton-skinny-m32: within-ci: the change is not proven either way; a stacked hypothesis (`depends_on: pooler-triton-skinny-m32`) that adds a further change in the same area is the only way to learn more (identical code is never re-run).
-- bf16-cublaslt-backend-toggle: within-ci: the change is not proven either way; a stacked hypothesis (`depends_on: bf16-cublaslt-backend-toggle`) that adds a further change in the same area is the only way to learn more (identical code is never re-run)
-- o-triton-skinny-m32: within-ci: the change is not proven either way; a stacked hypothesis (`depends_on: o-triton-skinny-m32`) that adds a further change in the same area is the only way to learn more (identical code is never re-run).
-- unpooler-full-triton-skinny-m32: within-ci: the change is not proven either way; a stacked hypothesis (`depends_on: unpooler-full-triton-skinny-m32`) that adds a further change in the same area is the only way to learn more (identical code is never re-r
-- unpooler-full-triton-skinny-m32-control-blockm16-all-m: within-ci: the change is not proven either way; a stacked hypothesis (`depends_on: unpooler-full-triton-skinny-m32-control-blockm16-all-m`) that adds a further change in the same area is the only way to learn more (ident
-- pooler-triton-splitk2-blockn64-semaphore: unproven-vs-best: the change is not proven either way; a stacked hypothesis (`depends_on: pooler-triton-splitk2-blockn64-semaphore`) that adds a further change in the same area is the only way to learn more (identical co
-- qkv-gate-triton-splitk4-blockn64-semaphore: within-ci: the change is not proven either way; a stacked hypothesis (`depends_on: qkv-gate-triton-splitk4-blockn64-semaphore`) that adds a further change in the same area is the only way to learn more (identical code is
-- router-splitk32-small-m-all-loads-in-flight: within-ci: the change is not proven either way; a stacked hypothesis (`depends_on: router-splitk32-small-m-all-loads-in-flight`) that adds a further change in the same area is the only way to learn more (identical code i
-- router-splitk-semaphore-no-memset: unproven-vs-best: the change is not proven either way; a stacked hypothesis (`depends_on: router-splitk-semaphore-no-memset`) that adds a further change in the same area is the only way to learn more (identical code is n
-- unpooler-slice-triton-splitk8-semaphore: unproven-vs-best: the change is not proven either way; a stacked hypothesis (`depends_on: unpooler-slice-triton-splitk8-semaphore`) that adds a further change in the same area is the only way to learn more (identical cod
-- pooler-triton-splitk2-blockn64-semaphore-control-blockk256: within-ci: the change is not proven either way; a stacked hypothesis (`depends_on: pooler-triton-splitk2-blockn64-semaphore-control-blockk256`) that adds a further change in the same area is the only way to learn more (i
-- pooler-splitk2-tma-weight-stream: unproven-vs-best: the change is not proven either way; a stacked hypothesis (`depends_on: pooler-splitk2-tma-weight-stream`) that adds a further change in the same area is the only way to learn more (identical code is ne
-- router-splitk32-small-m-all-loads-in-flight-control-stages3: unproven-vs-best: the change is not proven either way; a stacked hypothesis (`depends_on: router-splitk32-small-m-all-loads-in-flight-control-stages3`) that adds a further change in the same area is the only way to learn
-- bf16-shape-gated-triton-winners-combo: unproven-vs-best: the change is not proven either way; a stacked hypothesis (`depends_on: bf16-shape-gated-triton-winners-combo`) that adds a further change in the same area is the only way to learn more (identical code 
-- bf16-m128-nn-weight-layout-probe: unproven-vs-best: the change is not proven either way; a stacked hypothesis (`depends_on: bf16-m128-nn-weight-layout-probe`) that adds a further change in the same area is the only way to learn more (identical code is ne
-- bf16-m32-swapab-wgmma-triton: unproven-vs-best: the change is not proven either way; a stacked hypothesis (`depends_on: bf16-m32-swapab-wgmma-triton`) that adds a further change in the same area is the only way to learn more (identical code is never 
-- bf16-cublaslt-algo-pick-in-prepare-m128-m256: within-ci: the change is not proven either way; a stacked hypothesis (`depends_on: bf16-cublaslt-algo-pick-in-prepare-m128-m256`) that adds a further change in the same area is the only way to learn more (identical code 
-- bf16-m16-swapab-wgmma-extend: unproven-vs-best: the change is not proven either way; a stacked hypothesis (`depends_on: bf16-m16-swapab-wgmma-extend`) that adds a further change in the same area is the only way to learn more (identical code is never 
-- router-swapab-wgmma-all-m: within-ci: the change is not proven either way; a stacked hypothesis (`depends_on: router-swapab-wgmma-all-m`) that adds a further change in the same area is the only way to learn more (identical code is never re-run).
-- bf16-restack-m16-swapab-router-swapab-m32: unproven-vs-best: the change is not proven either way; a stacked hypothesis (`depends_on: bf16-restack-m16-swapab-router-swapab-m32`) that adds a further change in the same area is the only way to learn more (identical c
 - bf16-lossless-exp4-occupancy-dequant-once-stage2: rewrite stage 2 of `Triton swap-AB m<=32 kernels (bf16-m32-swapab-wgmma-triton) on pooler m 1-32, unpooler-full m 16/32, qkv_gate m 1-32`: read the replaced kernels' own us per shape (profile top_kernels) against the inc
 - bf16-verify-swapab-wgmma-cluster-dsmem-rewrite: rewrite stage 1 of `cuBLAS nvjet at m=128/256 for qkv_gate (13.0+3.0 splitKreduce / 19.4 us), pooler (25.7 / 29.5 us) and unpooler m=128 (20.4 us)`: read the replaced kernels' own us per shape (profile top_kernels) again
 - bf16-verify-deepgemm-sm90-kernel-asserted-rewrite: rewrite stage 1 of `cuBLAS nvjet (+cublasLt splitKreduce) for qkv_gate, pooler, unpooler at m=65..256`: read the replaced kernels' own us per shape (profile top_kernels) against the incumbent and the floor, and check whi
-- restack-pooler-unpooler-nn-layout-m128: unproven-vs-best: the change is not proven either way; a stacked hypothesis (`depends_on: restack-pooler-unpooler-nn-layout-m128`) that adds a further change in the same area is the only way to learn more (identical code
-- restack-router-cluster-dsmem-m8: within-ci: the change is not proven either way; a stacked hypothesis (`depends_on: restack-router-cluster-dsmem-m8`) that adds a further change in the same area is the only way to learn more (identical code is never re-r
-- restack-unpooler-slice-cluster-dsmem-m8: unproven-vs-best: the change is not proven either way; a stacked hypothesis (`depends_on: restack-unpooler-slice-cluster-dsmem-m8`) that adds a further change in the same area is the only way to learn more (identical cod
 - router-cluster-dsmem-s2-flat-in-m-occupancy: rewrite stage 2 of `_router_swapab_kernel + memset at router m<=32 (restack) / _router_hilo_kernel + memset (master)`: read the replaced kernels' own us per shape (profile top_kernels) against the incumbent and the floor
 - router-m128-m256-cluster-dsmem-tiled-rewrite: rewrite stage 1 of `_router_hilo_kernel + torch.zeros memset at router m=65..256`: read the replaced kernels' own us per shape (profile top_kernels) against the incumbent and the floor, and check which Milestone it reach
-- restack-three-cell-wins-router-unpooler-cluster-m8-nn-m128: unproven-vs-best: the change is not proven either way; a stacked hypothesis (`depends_on: restack-three-cell-wins-router-unpooler-cluster-m8-nn-m128`) that adds a further change in the same area is the only way to learn 
-- qkv-swapab-w128-splitk7-one-wave-m32: within-ci: the change is not proven either way; a stacked hypothesis (`depends_on: qkv-swapab-w128-splitk7-one-wave-m32`) that adds a further change in the same area is the only way to learn more (identical code is never
-- pooler-nn-layout-widen-m256: within-ci: the change is not proven either way; a stacked hypothesis (`depends_on: pooler-nn-layout-widen-m256`) that adds a further change in the same area is the only way to learn more (identical code is never re-run).
 
-## Do not retry (rejected / duplicates)
+## Do not try (regressions, flat results, rejected)
 
-- none
+Rewrite stages are exempt: a slow early stage is not a dead end.
+
+- **router-hilo-addmm-epilogue** [router GEMM] neutral, within-ci: In kernel_fn's router branch above ROUTER_FP32_MAX_TOKENS, replace the two-statement accum
+- **pooler-triton-skinny-m32** [pooler GEMM] neutral, within-ci: For layer == 'pooler' and m <= 32 only, replace the _bf16_gemm_dispatch_impl call in kerne
+- **bf16-cublaslt-backend-toggle** [bf16 GEMM dispatch] neutral, within-ci: A dispatch probe, pure PyTorch, no kernel of ours: in kernel_fn, for the four bf16 layers 
+- **o-triton-skinny-m32** [o GEMM] neutral, within-ci: Extend the skinny Triton GEMM from pooler-triton-skinny-m32 to layer == 'o' at m <= 32 (n=
+- **unpooler-full-triton-skinny-m32** [unpooler GEMM] neutral, within-ci: Extend the skinny Triton GEMM from pooler-triton-skinny-m32 to layer == 'unpooler' at m in
+- **unpooler-full-triton-skinny-m32-control-blockm16-all-m** [unpooler GEMM] neutral, within-ci: From the parent's branch (unpooler-full-triton-skinny-m32), keep the unpooler routing, gri
+- **qkv-gate-triton-splitk4-blockn64-semaphore** [qkv GEMM] neutral, within-ci: For layer == 'qkv_gate' and cfg m <= 32 only (n=2304, k=8192, 37.7 MB bf16), replace _bf16
+- **router-splitk32-small-m-all-loads-in-flight** [router GEMM] neutral, within-ci: Change only the two small-m buckets of _router_config and the num_stages they launch with;
+- **pooler-triton-splitk2-blockn64-semaphore-control-blockk256** [pooler GEMM] neutral, within-ci: From the parent's branch (pooler-triton-splitk2-blockn64-semaphore), change exactly one co
+- **bf16-cublaslt-algo-pick-in-prepare-m128-m256** [bf16 GEMM dispatch (m=128/256, cuBLASLt algo selection)] neutral, within-ci: For the four bf16 layers at exactly cfg m == 128 and cfg m == 256 (loads verify_16 and ver
+- **router-swapab-wgmma-all-m** [router GEMM] neutral, within-ci: Master's router is _router_hilo_kernel with the tokens on tl.dot's M side: grid (cdiv(m, B
+- **restack-router-cluster-dsmem-m8** [router GEMM (m<=8)] neutral, within-ci: 2215x; check 1e90292c7b954d96). Port ONLY the router cluster kernel from branch hyp/muse_b
+- **qkv-swapab-w128-splitk7-one-wave-m32** [qkv GEMM (m<=32, swap-AB)] neutral, within-ci: 2366x). WHY: at m<=32 qkv_gate (n=2304, k=8192, a 37.7 MB weight, cold L2 every replay) is
+- **pooler-nn-layout-widen-m256** [pooler GEMM (m=129..256, cuBLAS NN layout)] neutral, within-ci: 2491x). Master already builds state['pooler_t'] = W_pooler.t().contiguous() ([8192, 4096] 
+- **pooler-k-halves-batched-gemm-m65-m256** [pooler GEMM (m=65..256, K-split as a 2-batch cuBLAS GEMM)] neutral, within-ci: Built on current master (blob 353e3b19). For layer == 'pooler' at 65 <= cfg m <= 256 only 
+- **combo-naive-pooler-m1-rowowner-qkv-m128-cublaslt** [combination (pooler m=1 bulk row-owner + qkv_gate m=128 cuBLASLt single-node)] neutral, within-ci: Built on current master (commit 67b46a57, blob f919748b: restack-three-cell-wins + pooler-
+- **router-triton-hilo-fused** [router GEMM] regression, regression: Replace the whole router branch of kernel_fn (both the F.linear fp32 path at m<=8 and the 
+- **unpooler-slice-triton-gemv** [unpooler GEMM] regression, regression: For layer == 'unpooler' and m <= 8 only (the sliced case: n=1024, k=4096, an 8.4 MB weight
+- **qkv-gate-triton-skinny-m32** [qkv GEMM] regression, regression: Extend the skinny Triton GEMM from pooler-triton-skinny-m32 to layer == 'qkv_gate' at m <=
+- **pooler-unpooler-m128-wgmma-splitk-semaphore** [pooler GEMM + unpooler GEMM (m=128)] regression, regression: For layer in {pooler, unpooler} and cfg m == 128 only (verify_16; any 65 <= m <= 128 may t
+- **o-swapab-m32-splitk2-two-ctas-per-sm** [o GEMM (m=17..32, swap-AB)] regression, regression: o at 17 <= m <= 32 runs _bf16_swapab_kernel with SWAPAB_CFG o = (8192, 1024, SPLIT_K 1, BL
+- **qkv-swapab-m32-splitk8-stages3** [qkv GEMM (m=17..32, swap-AB)] regression, regression: qkv_gate at 17 <= m <= 32 runs _bf16_swapab_kernel with SWAPAB_CFG qkv_gate = (2304, 8192,
+- **unpooler-full-m16-swapab-route** [unpooler GEMM] regression, regression: On master the full-weight unpooler (n=8192, k=4096, 67 MB) at 9 <= m <= 16 falls through t
+- **pooler-unpooler-m128-nn-layout-gated** [pooler GEMM + unpooler GEMM (m=65..128, cuBLAS NN layout)] regression, regression: Narrow bf16-m128-nn-weight-layout-probe (done/neutral, 1.158x on the older dba4ffd master)
+- **bf16-lossless-exp4-decode-only-throughput-probe** [lossless exp4 compressed-weight stream kernel (_lossless_swapab_kernel)] regression, regression: A one-run kill/revive gate for the held lossless line, not a pipeline stage: kernel_fn rou
+- **bf16-verify-deepgemm-bf16-gemm-nt-route** [bf16 GEMM dispatch (m=65..256, DeepGEMM bf16)] regression, regression: At m=128/256 all four bf16 layers still run cuBLAS nvjet and sit at ~1.0x SGLang (master p
 
 ## Queue and in flight
 
@@ -208,8 +217,8 @@ Where the time goes (per scored shape, top kernels):
 - queue: bf16-verify32-cutlass-coop-256x128-splitk-stage2 [bf16 GEMM dispatch (m=129..256, CUTLASS sm90 cooperative split-K)] p1 queued
 - queue: unpooler-full-m16-swapab16-blockt16 [unpooler GEMM (full width n=8192, m=9..16, swap-AB BLOCK_T 16)] p3 hold
 - queue: bf16-verify16-cutlass-m128-onetile-splitk-rewrite [bf16 GEMM dispatch (m=65..128, CUTLASS sm90 one-M-tile split-K)] p1 queued
-- queue: pooler-k-halves-batched-gemm-m65-m256 [pooler GEMM (m=65..256, K-split as a 2-batch cuBLAS GEMM)] p1 queued
 - queue: qkv-k-split-batched-gemm-m65-m256 [qkv GEMM (m=65..256, K-split as a batched cuBLAS GEMM)] p2 queued
 - queue: router-hilo-tall-tile-m65-m256 [router GEMM (m=65..256, hilo tile config)] p1 queued
 - queue: router-m128-m256-wgmma-swapab-tall-cluster-stage2 [router GEMM (m=65..256, CUDA wgmma swap-AB cluster kernel)] p2 queued
 - queue: unpooler-k-halves-batched-gemm-m65-m128 [unpooler GEMM (full width, m=65..128, K-split as a 2-batch cuBLAS GEMM)] p3 queued
+- queue: combo-cublaslt-single-node-m128-m256-plus-naive [combination (naive stack + cuBLASLt single-node probe on pooler/unpooler/o m=128/256)] p1 hold

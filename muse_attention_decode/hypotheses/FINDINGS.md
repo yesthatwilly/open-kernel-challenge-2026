@@ -1,25 +1,25 @@
 # muse_attention_decode findings
 
-Regenerated 2026-10-25T154445Z by `churn.py index`. Read this before writing a hypothesis for muse_attention_decode.
+Regenerated 2026-10-25T202706Z by `churn.py index`. Read this before writing a hypothesis for muse_attention_decode.
 
 ## Current best
 
-1.5017x [1.4791,1.5304] from job `252abb7f11ec48c3` (check), master commit `7e12891512`, hypothesis restack-sliding-decode-sk-window-on-cluster-master
+1.5295x [1.5066,1.5525] from job `8713665f3064462c` (submit), master commit `5d528bf313`, hypothesis combo-b1-chain-c320-fused-pre-pdl
 
 Where the time goes (per scored shape, top kernels):
 
-- batch=1 ctx=80000 dist=soft heads=tp8 layer=sliding load=decode_1 page=1: yours 11.9µs vs SGLang 20.3µs (SoL 0.1µs) · (anonymous namespace)::sliding_cluster_kernel(__nv_bfloat... 10.8µs 100.0%
-- batch=1 ctx=80000 dist=coherent heads=tp8 layer=full load=decode_1 page=1: yours 22.4µs vs SGLang 31.2µs (SoL 4.3µs) · void (anonymous namespace)::splitkv_attn_sk_kernel<4, tru... 19.0µs 93.0%, _pre_attention_kernel 1.4µs 7.0%
-- batch=16 ctx=80000 dist=soft heads=tp8 layer=sliding load=decode_16 page=1 spread=agentic: yours 15.5µs vs SGLang 26.9µs (SoL 1.6µs) · _sliding_fused_kernel 13.0µs 100.0%
-- batch=16 ctx=80000 dist=coherent heads=tp8 layer=full load=decode_16 page=1 spread=agentic: yours 111.1µs vs SGLang 200.8µs (SoL 63.2µs) · void (anonymous namespace)::splitkv_attn_sk_kernel<4, tru... 109.0µs 98.0%, _pre_attention_kernel 2.2µs 2.0%
-- batch=32 ctx=80000 dist=soft heads=tp8 layer=sliding load=decode_32 page=1 spread=agentic: yours 17.7µs vs SGLang 31.3µs (SoL 3.3µs) · void (anonymous namespace)::splitkv_attn_sk_kernel<4, tru... 14.0µs 88.3%, _pre_attention_kernel 1.9µs 11.7%
-- batch=32 ctx=80000 dist=coherent heads=tp8 layer=full load=decode_32 page=1 spread=agentic: yours 227.9µs vs SGLang 384.6µs (SoL 126.4µs) · void (anonymous namespace)::splitkv_attn_sk_kernel<4, tru... 227.7µs 99.0%, _pre_attention_kernel 2.4µs 1.0%
-- batch=1 ctx=80000 dist=soft heads=tp8 layer=sliding load=verify_1 page=1 q_len=8: yours 13.2µs vs SGLang 22.6µs (SoL 0.1µs) · void (anonymous namespace)::splitkv_attn_sk_kernel<4, tru... 10.0µs 85.7%, _pre_attention_kernel 1.7µs 14.3%
-- batch=1 ctx=80000 dist=coherent heads=tp8 layer=full load=verify_1 page=1 q_len=8: yours 30.5µs vs SGLang 36.5µs (SoL 4.3µs) · void cutlass::device_kernel<flash::enable_sm90_or_later<f... 14.9µs 54.2%, void cutlass::device_kernel<flash::FlashAttnFwdCombine<cu... 7.3µs 26.6%, void flash::prepare_varlen_num_blocks_kernel<1, true>(int... 2.8µs 10.0%
-- batch=16 ctx=80000 dist=soft heads=tp8 layer=sliding load=verify_16 page=1 q_len=8 spread=agentic: yours 22.8µs vs SGLang 29.3µs (SoL 1.9µs) · void cutlass::device_kernel<flash::enable_sm90_or_later<f... 10.7µs 51.7%, void cutlass::device_kernel<flash::FlashAttnFwdCombine<cu... 4.0µs 19.2%, _pre_attention_kernel 2.8µs 13.5%
-- batch=16 ctx=80000 dist=coherent heads=tp8 layer=full load=verify_16 page=1 q_len=8 spread=agentic: yours 163.0µs vs SGLang 205.0µs (SoL 63.4µs) · void cutlass::device_kernel<flash::enable_sm90_or_later<f... 154.5µs 91.7%, void cutlass::device_kernel<flash::FlashAttnFwdCombine<cu... 5.9µs 3.5%, void flash::prepare_varlen_num_blocks_kernel<1, true>(int... 3.0µs 1.8%
-- batch=32 ctx=80000 dist=soft heads=tp8 layer=sliding load=verify_32 page=1 q_len=8 spread=agentic: yours 29.2µs vs SGLang 34.7µs (SoL 3.7µs) · void cutlass::device_kernel<flash::enable_sm90_or_later<f... 15.0µs 56.1%, _pre_attention_kernel 4.2µs 15.7%, void cutlass::device_kernel<flash::FlashAttnFwdCombine<cu... 4.2µs 15.6%
-- batch=32 ctx=80000 dist=coherent heads=tp8 layer=full load=verify_32 page=1 q_len=8 spread=agentic: yours 302.3µs vs SGLang 389.8µs (SoL 126.8µs) · void cutlass::device_kernel<flash::enable_sm90_or_later<f... 293.1µs 93.8%, void cutlass::device_kernel<flash::FlashAttnFwdCombine<cu... 7.7µs 2.5%, _pre_attention_kernel 4.2µs 1.3%
+- batch=1 ctx=80000 dist=soft heads=tp8 layer=sliding load=decode_1 page=1: yours 12.1µs vs SGLang 20.9µs (SoL 0.1µs) · (anonymous namespace)::sliding_cluster_kernel(__nv_bfloat... 10.6µs 100.0%
+- batch=1 ctx=80000 dist=coherent heads=tp8 layer=full load=decode_1 page=1: yours 17.4µs vs SGLang 31.3µs (SoL 4.3µs) · void (anonymous namespace)::c320_attn_kernel<320, true>(u... 11.4µs 73.0%, void (anonymous namespace)::c320_combine_kernel<320, 16, ... 4.2µs 27.0%
+- batch=16 ctx=80000 dist=soft heads=tp8 layer=sliding load=decode_16 page=1 spread=agentic: yours 15.5µs vs SGLang 26.9µs (SoL 1.6µs) · _sliding_fused_kernel 12.7µs 100.0%
+- batch=16 ctx=80000 dist=coherent heads=tp8 layer=full load=decode_16 page=1 spread=agentic: yours 110.8µs vs SGLang 200.6µs (SoL 63.2µs) · void (anonymous namespace)::splitkv_attn_sk_kernel<4, tru... 108.2µs 98.1%, _pre_attention_kernel 2.1µs 1.9%
+- batch=32 ctx=80000 dist=soft heads=tp8 layer=sliding load=decode_32 page=1 spread=agentic: yours 17.5µs vs SGLang 31.3µs (SoL 3.3µs) · void (anonymous namespace)::splitkv_attn_sk_kernel<4, tru... 14.0µs 86.5%, _pre_attention_kernel 2.2µs 13.5%
+- batch=32 ctx=80000 dist=coherent heads=tp8 layer=full load=decode_32 page=1 spread=agentic: yours 226.9µs vs SGLang 383.8µs (SoL 126.4µs) · void (anonymous namespace)::splitkv_attn_sk_kernel<4, tru... 222.7µs 99.0%, _pre_attention_kernel 2.2µs 1.0%
+- batch=1 ctx=80000 dist=soft heads=tp8 layer=sliding load=verify_1 page=1 q_len=8: yours 13.2µs vs SGLang 22.7µs (SoL 0.1µs) · void (anonymous namespace)::splitkv_attn_sk_kernel<4, tru... 9.9µs 86.8%, _pre_attention_kernel 1.5µs 13.2%
+- batch=1 ctx=80000 dist=coherent heads=tp8 layer=full load=verify_1 page=1 q_len=8: yours 30.3µs vs SGLang 36.0µs (SoL 4.3µs) · void cutlass::device_kernel<flash::enable_sm90_or_later<f... 15.2µs 54.6%, void cutlass::device_kernel<flash::FlashAttnFwdCombine<cu... 7.2µs 25.8%, void flash::prepare_varlen_num_blocks_kernel<1, true>(int... 2.8µs 10.0%
+- batch=16 ctx=80000 dist=soft heads=tp8 layer=sliding load=verify_16 page=1 q_len=8 spread=agentic: yours 22.6µs vs SGLang 29.1µs (SoL 1.9µs) · void cutlass::device_kernel<flash::enable_sm90_or_later<f... 10.7µs 52.2%, void cutlass::device_kernel<flash::FlashAttnFwdCombine<cu... 3.8µs 18.8%, _pre_attention_kernel 2.7µs 13.3%
+- batch=16 ctx=80000 dist=coherent heads=tp8 layer=full load=verify_16 page=1 q_len=8 spread=agentic: yours 162.5µs vs SGLang 205.3µs (SoL 63.4µs) · void cutlass::device_kernel<flash::enable_sm90_or_later<f... 148.7µs 91.0%, void cutlass::device_kernel<flash::FlashAttnFwdCombine<cu... 6.4µs 3.9%, void flash::prepare_varlen_num_blocks_kernel<1, true>(int... 3.1µs 1.9%
+- batch=32 ctx=80000 dist=soft heads=tp8 layer=sliding load=verify_32 page=1 q_len=8 spread=agentic: yours 29.0µs vs SGLang 34.4µs (SoL 3.7µs) · void cutlass::device_kernel<flash::enable_sm90_or_later<f... 14.8µs 56.1%, void cutlass::device_kernel<flash::FlashAttnFwdCombine<cu... 4.3µs 16.1%, _pre_attention_kernel 4.1µs 15.6%
+- batch=32 ctx=80000 dist=coherent heads=tp8 layer=full load=verify_32 page=1 q_len=8 spread=agentic: yours 302.0µs vs SGLang 390.0µs (SoL 126.8µs) · void cutlass::device_kernel<flash::enable_sm90_or_later<f... 288.7µs 94.1%, void cutlass::device_kernel<flash::FlashAttnFwdCombine<cu... 6.7µs 2.2%, _pre_attention_kernel 4.1µs 1.3%
 
 ## By area
 
@@ -47,8 +47,20 @@ Where the time goes (per scored shape, top kernels):
 ### attention boundary
 - **paired-heads-launch-cleanup** → gain (gain), 1.2436x — gained on full decode_1, decode_16, decode_32, verify_1, verify_16. Stacked on fa3-hdim128-head-pairing (and using fused-preattention-triton's kernel, which must have landed too): remove the five pad/un-pad launches the pairing 
 
+### combination (conjectural: full decode_1 chunk320 + fused pre-attention prologue + PDL to combine)
+- **combo-b1-chain-c320-fused-pre-pdl** → neutral (unproven-vs-best), 1.5295x — gained on full decode_1. COMBINATION 2 of 3, a conjectural B=1 launch-chain pairing (not the top rows). Built on current master 7e12891 (blob 5cf8fae). Full decode_1 is the highest-leve
+
+### combination (conjectural: tiled pre-attention as every pair's first node, sd B=16 and skF selectors re-decided, + chunk320)
+- **combo-tiled-preattn-neighbour-regate-c320** → neutral (unproven-vs-best), 1.5199x — gained on full decode_1; sliding verify_32. COMBINATION 3 of 3, a conjectural neighbour pairing: the pre-attention kernel as the shared first node of every two-node pair, with the downstream selectors re-
+
+### combination (naive top-row stack: full decode_1 chunk320 + verify tiled pre-attention)
+- **combo-naive-c320-fd1-tiled-preattn-verify** → neutral (within-ci), 1.5094x — gained on full decode_1; sliding verify_32; lost on sliding decode_1. COMBINATION 1 of 3, the naive top-row stack. Built on current master 7e12891 (blob 5cf8fae; restack-sliding-decode-sk-window-on-cluster-master, 1.5017 scored). 
+
 ### full + sliding decode attention (stack of two pending kernels)
 - **stack-streamk-ticket-cluster-c16-c4** → neutral (beats-base-not-best), 1.4266x — gained on full decode_16, decode_32; sliding decode_32; lost on sliding verify_1. Stack the two pending (user-held, not on master) decode wins on current master; they touch disjoint shapes and code paths (REWRITE_READ_2026-10-25 '01:36Z harve
+
+### full decode_1 split-KV + sliding verify_32 pre-attention
+- **merge-perkvhead-c320-sv32-tiled** → neutral (unproven-vs-best), 1.5347x — gained on sliding decode_1, verify_32; lost on full decode_1. Hand-merge two gated pieces of combo-tiled-preattn-neighbour-regate-c320 (branch hyp/muse_attention_decode/combo-tiled-preattn-neighbour-regate-c320, impl 5add0
 
 ### full-layer attention (batch-1 decode gate)
 - **full-fused-triton-decode1-gate** → neutral (within-ci), 1.3417x — lost on full decode_1. Built on master. Route full-attention batch-1 decode (config window == 0 and batch == 1 and q_len == 1) through master _sliding_fused_kernel via _sliding_forwar
@@ -117,6 +129,9 @@ Where the time goes (per scored shape, top kernels):
 ### sliding-layer attention (batch-1 decode gate)
 - **sliding-fused-triton-decode1-gate** → neutral (unproven-vs-best), 1.2931x — gained on sliding decode_1. Port _sliding_fused_kernel and its helpers (_counters, _num_splits, _norm_rope, _gpu_fence, _online_update, _gate_epilogue, LOG2E, _sliding_forward) verbatim fr
 
+### sliding-layer attention (batch-1 decode, cluster kernel work split)
+- **sliding-decode1-cluster-per-kvhead** → neutral (unproven-vs-best), 1.5120x — gained on sliding decode_1. Built on current master (no depends_on). Sliding decode_1 (weight 46, 60% of the decode_1 load) runs sliding_cluster_kernel at C=16: ONE cluster of 16 CTAs for 
+
 ### sliding-layer attention (batch-1 decode, split depth)
 - **sliding-fused-triton-decode1-splits-32** → neutral (unproven-vs-best), 1.3520x — no shape moved outside noise. Built on master. One config-only change in _sliding_forward: at batch 1 and q_len 1 (the only shape master routes to _sliding_fused_kernel) use S = 32 splits in
 
@@ -162,45 +177,40 @@ Where the time goes (per scored shape, top kernels):
 
 ## Open follow-ups
 
-- paired-heads-launch-cleanup-ab-tune-batch-gate: unproven-vs-best: the change is not proven either way; a stacked hypothesis (`depends_on: paired-heads-launch-cleanup-ab-tune-batch-gate`) that adds a further change in the same area is the only way to learn more (identi
-- sliding-fused-triton-decode1-gate: unproven-vs-best: the change is not proven either way; a stacked hypothesis (`depends_on: sliding-fused-triton-decode1-gate`) that adds a further change in the same area is the only way to learn more (identical code is n
-- preattention-group-tiled-programs: within-ci: the change is not proven either way; a stacked hypothesis (`depends_on: preattention-group-tiled-programs`) that adds a further change in the same area is the only way to learn more (identical code is never re
-- sliding-fused-triton-decode-batched-deep-splits: unproven-vs-best: the change is not proven either way; a stacked hypothesis (`depends_on: sliding-fused-triton-decode-batched-deep-splits`) that adds a further change in the same area is the only way to learn more (ident
-- full-fused-triton-decode1-gate: within-ci: the change is not proven either way; a stacked hypothesis (`depends_on: full-fused-triton-decode1-gate`) that adds a further change in the same area is the only way to learn more (identical code is never re-ru
-- sliding-fused-triton-decode1-splits-32: unproven-vs-best: the change is not proven either way; a stacked hypothesis (`depends_on: sliding-fused-triton-decode1-splits-32`) that adds a further change in the same area is the only way to learn more (identical code
-- full-decode-cuda-fp8-qk-mma: within-ci: the change is not proven either way; a stacked hypothesis (`depends_on: full-decode-cuda-fp8-qk-mma`) that adds a further change in the same area is the only way to learn more (identical code is never re-run).
-- full-decode1-cuda-splitkv-chunk320: unproven-vs-best: the change is not proven either way; a stacked hypothesis (`depends_on: full-decode1-cuda-splitkv-chunk320`) that adds a further change in the same area is the only way to learn more (identical code is 
-- full-decode1-cuda-splitkv-chunk640: within-ci: the change is not proven either way; a stacked hypothesis (`depends_on: full-decode1-cuda-splitkv-chunk640`) that adds a further change in the same area is the only way to learn more (identical code is never r
-- splitkv-full-line-gather-mapping: unproven-vs-best: the change is not proven either way; a stacked hypothesis (`depends_on: splitkv-full-line-gather-mapping`) that adds a further change in the same area is the only way to learn more (identical code is ne
-- splitkv-combine-wide-mlp: within-ci: the change is not proven either way; a stacked hypothesis (`depends_on: splitkv-combine-wide-mlp`) that adds a further change in the same area is the only way to learn more (identical code is never re-run).
-- paired-norm-gate-token-tiled: within-ci: the change is not proven either way; a stacked hypothesis (`depends_on: paired-norm-gate-token-tiled`) that adds a further change in the same area is the only way to learn more (identical code is never re-run)
-- preattention-tiled-gate-large-tokens: within-ci: the change is not proven either way; a stacked hypothesis (`depends_on: preattention-tiled-gate-large-tokens`) that adds a further change in the same area is the only way to learn more (identical code is never
-- sliding-decode-blockn128-single-tile: within-ci: the change is not proven either way; a stacked hypothesis (`depends_on: sliding-decode-blockn128-single-tile`) that adds a further change in the same area is the only way to learn more (identical code is never
-- sliding-decode32-splits-8: unproven-vs-best: the change is not proven either way; a stacked hypothesis (`depends_on: sliding-decode32-splits-8`) that adds a further change in the same area is the only way to learn more (identical code is never re-
-- splitkv-chunk2048-batch32: within-ci: the change is not proven either way; a stacked hypothesis (`depends_on: splitkv-chunk2048-batch32`) that adds a further change in the same area is the only way to learn more (identical code is never re-run).
-- splitkv-pdl-attn-to-combine: within-ci: the change is not proven either way; a stacked hypothesis (`depends_on: splitkv-pdl-attn-to-combine`) that adds a further change in the same area is the only way to learn more (identical code is never re-run).
 - full-decode-splitkv-s2-streamk-ticket-inproc: rewrite stage 2 of `full-layer decode at 1<batch<=64: splitkv_attn_kernel A + splitkv_combine_kernel B (stage 1, master)`: read the replaced kernels' own us per shape (profile top_kernels) against the incumbent and the f
 - full-verify-wgmma-s3-warpgroup-per-kvhead-inproc: rewrite stage 3 of `full-layer verify at 1<batch<=64: FA3 main + prepare_varlen_num_blocks + FlashAttnFwdCombine + norm-gate (master); stage-2 splitkv_verify_kernel A8 + splitkv_verify_combine B8`: read the replaced kern
 - sliding-cluster-s2-decode-c4-pdl-inproc: rewrite stage 2 of `sliding layer decode at tp8/page 1, 1<=batch<=32: master Triton _sliding_fused_kernel (stage-1 sliding_cluster_kernel<1>)`: read the replaced kernels' own us per shape (profile top_kernels) against th
 - full-decode-splitkv-s3-fused-preattn: rewrite stage 3 of `_pre_attention_kernel launch on full decode 1<B<=64 (folded into splitkv_attn_sk_kernel)`: read the replaced kernels' own us per shape (profile top_kernels) against the incumbent and the floor, and ch
 - full-decode1-streamk-s3-two-level-ticket: rewrite stage 3 of `FA3 main + FlashAttnFwdCombine + sglang rms_norm_gate on full decode batch 1`: read the replaced kernels' own us per shape (profile top_kernels) against the incumbent and the floor, and check which Mi
-- stack-streamk-ticket-cluster-c16-c4: beats-base-not-best: the change is not proven either way; a stacked hypothesis (`depends_on: stack-streamk-ticket-cluster-c16-c4`) that adds a further change in the same area is the only way to learn more (identical code
 - full-verify-wgmma-s4-multitile-fix: rewrite stage 4 of `full-layer verify at 1<batch<=64: FA3 main + prepare_varlen_num_blocks + FlashAttnFwdCombine + norm-gate (master paired FA3)`: read the replaced kernels' own us per shape (profile top_kernels) against
 - full-decode1-sk4-cluster-dsmem-merge: rewrite stage 4 of `full decode batch 1: master splitkv_attn_sk_kernel two-level global ticket (grid SM)`: read the replaced kernels' own us per shape (profile top_kernels) against the incumbent and the floor, and check 
 - sliding-verify-sk-pseudo-decode-s1: rewrite stage 1 of `sliding verify (q_len 8, page 1, tp8, 1<=B<=32): prepare_varlen_num_blocks + FA3 main + FlashAttnFwdCombine + sglang rms_norm_gate`: read the replaced kernels' own us per shape (profile top_kernels) a
-- full-decode1-sk-pdl-from-preattn: unproven-vs-best: the change is not proven either way; a stacked hypothesis (`depends_on: full-decode1-sk-pdl-from-preattn`) that adds a further change in the same area is the only way to learn more (identical code is ne
 - full-decode1-sk-two-level-fused-preattn: rewrite stage 4 of `full decode batch 1: _pre_attention_kernel launch + master splitkv_attn_sk_kernel<4, two-level ticket>`: read the replaced kernels' own us per shape (profile top_kernels) against the incumbent and the
 - full-verify-wgmma-s5-qfrag-reload: rewrite stage 5 of `full-layer verify at 1<batch<=64: FA3 main + prepare_varlen_num_blocks + FlashAttnFwdCombine + norm-gate (master paired FA3)`: read the replaced kernels' own us per shape (profile top_kernels) against
-- restack-sk-pseudo-b1-cluster-c16-c4: unproven-vs-best: the change is not proven either way; a stacked hypothesis (`depends_on: restack-sk-pseudo-b1-cluster-c16-c4`) that adds a further change in the same area is the only way to learn more (identical code is
 - full-verify1-sk-two-level-token-group: rewrite stage 3 of `full verify batch 1 (q_len 8): prepare_varlen_num_blocks + FA3 main + FlashAttnFwdCombine + norm-gate`: read the replaced kernels' own us per shape (profile top_kernels) against the incumbent and the 
 - sliding-decode-sk-window-route: rewrite stage 2 of `sliding decode (q_len 1, page 1, tp8, 2<=B<=32): master Triton _sliding_fused_kernel (16 splits, in-kernel pre-attention)`: read the replaced kernels' own us per shape (profile top_kernels) against th
-- restack-sliding-decode-sk-window-on-cluster-master: unproven-vs-best: the change is not proven either way; a stacked hypothesis (`depends_on: restack-sliding-decode-sk-window-on-cluster-master`) that adds a further change in the same area is the only way to learn more (id
-- epilogue-gate-l2-prefetch-cuda: unproven-vs-best: the change is not proven either way; a stacked hypothesis (`depends_on: epilogue-gate-l2-prefetch-cuda`) that adds a further change in the same area is the only way to learn more (identical code is neve
 - full-decode-sk-s4-deferred-ticket-arrive: rewrite stage 4 of `full decode 1<B<=64: master splitkv_attn_sk_kernel<4, ticket> single-level in-stream ticket epilogue`: read the replaced kernels' own us per shape (profile top_kernels) against the incumbent and the f
 
-## Do not retry (rejected / duplicates)
+## Do not try (regressions, flat results, rejected)
 
-- none
+Rewrite stages are exempt: a slow early stage is not a dead end.
+
+- **preattention-group-tiled-programs** [pre-attention norm+rope] neutral, within-ci: Regrid master _pre_attention_kernel from one 1-warp program per (token, head) ((tokens, Hq
+- **full-fused-triton-decode1-gate** [full-layer attention (batch-1 decode gate)] neutral, within-ci: Route full-attention batch-1 decode (config window == 0 and batch == 1 and q_len == 1) thr
+- **full-decode-cuda-fp8-qk-mma** [FA3 call (full-layer decode gather)] neutral, within-ci: One change inside splitkv_attn_kernel (full-layer decode at 1 < batch <= 64, the only kern
+- **full-decode1-cuda-splitkv-chunk640** [full-layer attention (batch-1 decode gate)] neutral, within-ci: Same mechanism as full-decode1-cuda-splitkv-chunk320, with fewer, longer items. Route FULL
+- **splitkv-combine-wide-mlp** [split-KV combine] neutral, within-ci: Rework splitkv_combine_kernel (master full decode, 1 < batch <= 64) for more loads in flig
+- **paired-norm-gate-token-tiled** [output norm-gate] neutral, within-ci: Regrid master _paired_norm_gate_kernel (the paired full-layer epilogue, which now runs onl
+- **preattention-tiled-gate-large-tokens** [pre-attention norm+rope] neutral, within-ci: Restack preattention-group-tiled-programs (neutral at 1.261x on an older master; its patch
+- **sliding-decode-blockn128-single-tile** [sliding-layer attention (batched decode, tile size)] neutral, within-ci: Config-only change in _sliding_forward (master sliding decode at every batch, 16 splits): 
+- **splitkv-chunk2048-batch32** [FA3 call (full-layer decode gather)] neutral, within-ci: Shape-gated chunk size for master's CUDA split-KV path: at batch >= 32 use 2048-token work
+- **splitkv-pdl-attn-to-combine** [launch overhead] neutral, within-ci: Programmatic dependent launch between master's kernel A (splitkv_attn_kernel) and kernel B
+- **combo-naive-c320-fd1-tiled-preattn-verify** [combination (naive top-row stack: full decode_1 chunk320 + verify tiled pre-attention)] neutral, within-ci: COMBINATION 1 of 3, the naive top-row stack. Built on current master 7e12891 (blob 5cf8fae
+- **fa3-window-trimmed-page-table** [page table (sliding)] regression, regression: On sliding-window layers only (config window != 0) hand FA3 a window-trimmed view of each 
+- **fa3-scheduler-metadata-side-stream** [FA3 call (schedule, off critical path)] regression, regression: Wherever master calls flash_attn_with_kvcache with scheduler_metadata=None (every sliding 
+- **sliding-fused-hoist-first-tile** [sliding-layer attention (batched decode, gather prologue)] regression, regression: In master _sliding_fused_kernel, issue the first old-key tile's gather before the query wo
+- **sliding-decode-paired-kvhead-rows** [sliding-layer attention (batched decode, KV row gather)] regression, regression: One change inside master _sliding_fused_kernel and its launch in _sliding_forward, sliding
+- **sliding-verify-fa3-head-pairing** [FA3 call (head packing, sliding verify)] regression, regression: Config-only change in kernel_fn: extend master head-pairing predicate to sliding verify. T
 
 ## Queue and in flight
 
@@ -237,6 +247,5 @@ Where the time goes (per scored shape, top kernels):
 - queue: full-decode1-sk-two-level-deep-ring [full-layer attention (batch-1 decode, stream-K ring depth)] p2 queued
 - queue: full-verify-fa3-num-splits-band-gate [FA3 call (full verify split count)] p2 queued
 - queue: full-verify-wgmma-ws-s1-producer-split [full-layer attention (verify, wgmma stream-K kernel, warp-specialized pipeline)] p1 queued
-- queue: sliding-decode1-cluster-per-kvhead [sliding-layer attention (batch-1 decode, cluster kernel work split)] p2 queued
 - queue: sliding-verify-fa3-num-splits-band-gate [FA3 call (sliding verify split count)] p2 queued
 - queue: sliding-verify-wgmma-window-s1 [sliding-layer attention (verify, wgmma stream-K windowed kernel)] p1 queued

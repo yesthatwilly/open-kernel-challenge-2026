@@ -1,6 +1,6 @@
 # muse_decode_layer hypotheses
 
-Regenerated 2026-10-25T154445Z. Best: 1.3080x [1.2883,1.3276] job `933d3f825a044d36` (check)
+Regenerated 2026-10-25T202706Z. Best: 1.3142x [1.2945,1.3339] job `a903b9d004d2452d` (submit)
 
 | created | slug | kind | area | where | outcome | speedup | CI | job | mode | promotion | review | expected hit |
 |---|---|---|---|---|---|---|---|---|---|---|---|---|
@@ -72,12 +72,16 @@ Regenerated 2026-10-25T154445Z. Best: 1.3080x [1.2883,1.3276] job `933d3f825a044
 | 2026-10-25T110701Z | qkv-o-swapab16-t2-t16-no-fork | primary | qkv GEMM + o GEMM (2 <= T <= 16) | done/neutral | neutral | 1.3056 | [1.286,1.325] | b0057d2e6cef4d5a | submit |  | proceed | 3/6 |
 | 2026-10-25T145938Z | dl3-unpool-nf1-t2-t8 | primary | unpooler GEMM (T=2..8, dl3 piece C widened) | queue | queued |  |  |  |  |  | required |  |
 | 2026-10-25T145938Z | dl3-piece-a-gate-stride-check-fix | primary | full decode_1 attention side (dl3 piece A enable) | done/neutral | neutral | 1.3080 | [1.288,1.328] | 933d3f825a044d36 | submit | done | proceed | 7/7 |
-| 2026-10-25T153205Z | dense-qkv-o-unpool-swapab-bf16-master-port-t1-t32 | primary | qkv GEMM + o GEMM + unpooler GEMM (T <= 32) | queue | queued |  |  |  |  |  | required |  |
+| 2026-10-25T153205Z | dense-qkv-o-unpool-swapab-bf16-master-port-t1-t32 | primary | qkv GEMM + o GEMM + unpooler GEMM (T <= 32) | queue | hold |  |  |  |  |  | hold |  |
 | 2026-10-25T153205Z | ffn-front-t128-t256-concat-route | rewrite | pooler GEMM + router GEMM + routing top-k + MoE align + pre-expert norm (T > 32) | queue | queued |  |  |  |  |  | required |  |
 | 2026-10-25T153205Z | moe-rega-bucket-gate-port-t128-t512 | rewrite | w13 marlin + silu-mul + w2 marlin (128 <= T <= 512) | queue | queued |  |  |  |  |  | required |  |
 | 2026-10-25T153205Z | preattn-fused-t-gt1-sk-and-fa3-feeds | primary | pre-attention norm+rope + cache store (T > 1, every shape not routed to _sliding_forward or dl3 piece A) | queue | queued |  |  |  |  |  | required |  |
 | 2026-10-25T153205Z | sliding-cluster-c16-decode1-port | primary | FA3 call (sliding decode, batch 1) | queue | queued |  |  |  |  |  | required |  |
 | 2026-10-25T153205Z | sliding-sk-window-port-decode32-verify1 | primary | FA3 call (sliding decode B=17..32 and sliding verify B=1: windowed stream-K) | queue | queued |  |  |  |  |  | required |  |
+| 2026-10-25T161651Z | combo-attn-master-sliding-race-skw-c16 | primary | combination: sliding attention per-band race (B=1, 2..16, 17..32, verify B=1) + routing R / unpooler tail | running | running |  |  |  |  |  | proceed |  |
+| 2026-10-25T161651Z | combo-measured-rows-plus-rega-align2-large-t | primary | combination: C1 measured stack + w13/w2 rega and align2 at 128<=T<=512 | running | running |  |  |  |  |  | proceed |  |
+| 2026-10-25T161651Z | combo-measured-rows-slide-batched-preattn-t8-tail | primary | combination: sliding attention B=2..32 + pre-attention feeds (T>1) + routing R / unpooler (2<=T<=32 / 2<=T<=8) | done/neutral | neutral | 1.3142 | [1.295,1.334] | a903b9d004d2452d | submit | done | proceed | 3/8 |
+| 2026-10-25T202335Z | swapab16-t2-t16-port-on-master | primary | qkv GEMM + o GEMM (2 <= T <= 16) | queue | hold |  |  |  |  |  | hold |  |
 
 ## Held
 
@@ -97,3 +101,5 @@ Regenerated 2026-10-25T154445Z. Best: 1.3080x [1.2883,1.3276] job `933d3f825a044
 - prefork-qkv-o-swapab-t16-t32: adversarial review: Its main purpose no longer holds on the current master: small-t-launch-minimal-dense-chain-pdl removed the router side stream at T<=32, so there is no fork for 
 - marlin-two-stream-halves-port: adversarial review: Hold: the moe parent it ports (marlin-two-stream-expert-halves-small-m, job 5d630369b1634f77) came back neutral, with every scored shape flat and verify_1 1.5% 
 - moe-chain-cuda-swapab-expert-once-fix: Retired: its design runs the self-check in a child process, which the rules statically reject; superseded by the -inproc line (LESSONS 2026-10-25).
+- dense-qkv-o-unpool-swapab-bf16-master-port-t1-t32: adversarial review: Hold. The conjecture is that bf16 master's 'newer' swap-AB kernel will run in decode at its standalone 9.7/3.9 us. That premise is false, and the transfer has a
+- swapab16-t2-t16-port-on-master: adversarial review: Hold. The swap-AB in-gate effect (T=8/16) was already measured kernel-by-kernel in the parent's profile b0057d2e6cef4d5a: ~1.5-2 us per in-gate shape, ~+0.3% he

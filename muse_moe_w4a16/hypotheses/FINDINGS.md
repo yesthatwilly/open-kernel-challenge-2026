@@ -1,19 +1,19 @@
 # muse_moe_w4a16 findings
 
-Regenerated 2026-10-25T154445Z by `churn.py index`. Read this before writing a hypothesis for muse_moe_w4a16.
+Regenerated 2026-10-25T202706Z by `churn.py index`. Read this before writing a hypothesis for muse_moe_w4a16.
 
 ## Current best
 
-1.3727x [1.3521,1.3933] from job `4e4a0e26c85944f2` (submit), master commit `40e2e860c4`, hypothesis cuda-nvfp4-wgmma-rega-grouped-s5-copy-safe-bucket-gate
+1.4021x [1.3811,1.4231] from job `31c27e4b8fc84bd2` (submit), master commit `64f18b0397`, hypothesis combo-wg-occ2-v64-hot-interleave-align2
 
 Where the time goes (per scored shape, top kernels):
 
-- bs=1 load=decode_1 sharding=ep8: yours 45.8µs vs SGLang 77.7µs (SoL 11.4µs) · void sglang::device::marlin_moe::Marlin<__nv_bfloat16, 56... 36.7µs 85.7%, _post_norm_combine_kernel 2.9µs 6.8%, void sglang::act_and_mul_kernel<__nv_bfloat16, (sglang::A... 1.8µs 4.1%
-- bs=16 load=decode_16 sharding=ep8: yours 144.8µs vs SGLang 186.0µs (SoL 52.5µs) · void sglang::device::marlin_moe::Marlin<__nv_bfloat16, 56... 165.9µs 95.2%, _post_norm_combine_kernel 3.2µs 1.8%, _align_small_kernel 2.7µs 1.6%
-- bs=32 load=decode_32 sharding=ep8: yours 204.6µs vs SGLang 211.2µs (SoL 70.8µs) · void sglang::device::marlin_moe::Marlin<__nv_bfloat16, 56... 175.3µs 94.4%, _align_small_kernel 4.3µs 2.3%, _post_expert_norm_weighted_sum_kernel 3.6µs 1.9%
-- bs=8 load=verify_1 sharding=ep8: yours 104.5µs vs SGLang 141.3µs (SoL 37.3µs) · void sglang::device::marlin_moe::Marlin<__nv_bfloat16, 56... 105.3µs 92.5%, _post_norm_combine_kernel 3.7µs 3.2%, _align_small_kernel 2.8µs 2.4%
-- bs=128 load=verify_16 sharding=ep8: yours 314.3µs vs SGLang 454.1µs (SoL 101.3µs) · void sglang::device::marlin_moe::Marlin<__nv_bfloat16, 56... 419.7µs 96.7%, _post_expert_norm_weighted_sum_kernel 6.2µs 1.4%, _align_parallel_kernel 4.0µs 0.9%
-- bs=256 load=verify_32 sharding=ep8: yours 404.9µs vs SGLang 620.6µs (SoL 108.9µs) · void (anonymous namespace)::wg_kernel<true>((anonymous na... 239.2µs 62.9%, void (anonymous namespace)::wg_kernel<false>((anonymous n... 119.0µs 31.3%, _post_expert_norm_weighted_sum_kernel 5.8µs 1.5%
+- bs=1 load=decode_1 sharding=ep8: yours 46.4µs vs SGLang 80.0µs (SoL 11.4µs) · void sglang::device::marlin_moe::Marlin<__nv_bfloat16, 56... 35.4µs 85.8%, _post_norm_combine_kernel 2.9µs 7.1%, _align_small_kernel 1.5µs 3.6%
+- bs=16 load=decode_16 sharding=ep8: yours 150.9µs vs SGLang 192.4µs (SoL 52.5µs) · void sglang::device::marlin_moe::Marlin<__nv_bfloat16, 56... 156.4µs 94.9%, _post_norm_combine_kernel 3.5µs 2.1%, _align_small_kernel 2.7µs 1.6%
+- bs=32 load=decode_32 sharding=ep8: yours 199.1µs vs SGLang 205.2µs (SoL 70.8µs) · void sglang::device::marlin_moe::Marlin<__nv_bfloat16, 56... 176.8µs 94.4%, _align_small_kernel 4.5µs 2.4%, _post_expert_norm_weighted_sum_kernel 3.5µs 1.8%
+- bs=8 load=verify_1 sharding=ep8: yours 104.5µs vs SGLang 142.4µs (SoL 37.3µs) · void sglang::device::marlin_moe::Marlin<__nv_bfloat16, 56... 113.0µs 93.4%, _post_norm_combine_kernel 3.2µs 2.7%, _align_small_kernel 2.6µs 2.1%
+- bs=128 load=verify_16 sharding=ep8: yours 323.2µs vs SGLang 469.0µs (SoL 101.3µs) · void sglang::device::marlin_moe::Marlin<__nv_bfloat16, 56... 260.6µs 95.6%, _post_expert_norm_weighted_sum_kernel 4.3µs 1.6%, _align_parallel_kernel 3.9µs 1.4%
+- bs=256 load=verify_32 sharding=ep8: yours 358.1µs vs SGLang 606.9µs (SoL 108.9µs) · void (anonymous namespace)::wg2_kernel<true, 64, 3, 2, 0>... 225.3µs 59.3%, void (anonymous namespace)::wg2_kernel<false, 64, 3, 2, 0... 141.5µs 37.2%, _post_expert_norm_weighted_sum_kernel 5.2µs 1.4%
 
 ## By area
 
@@ -43,9 +43,19 @@ Where the time goes (per scored shape, top kernels):
 ### MoE align/dispatch + post-expert norm+combine
 - **cuda-dispatch-combine-pdl-verify** → neutral (unproven-vs-best), 1.3283x — no shape moved outside noise. Dispatch + combine only, at num_tokens > 32 (verify_16 bs=128, verify_32 bs=256, and the bs=33, bs=257 and skewed bs=128 tests). num_tokens <= 32 runs master by
 
+### combination: naive top-row stack (decode_1 w13 atomic, decode_32 align+post-norm, verify_32 wgmma align2 front end)
+- **combo-toprow-w13t1-d32-alignpar-postnorm-wg-align2** → neutral (unproven-vs-best), 1.3866x — gained on verify_32 verify_32. COMBINATION (naive top-row stack): every per-shape winner that beat master on its own row and never reached master, each behind its own prepare-time gate, built
+
+### combination: small-M Marlin two-stream halves x w13 split-K atomic + shared floor
+- **combo-smallm-two-stream-halves-x-w13-splitk** → neutral (unproven-vs-best), 1.3887x — no shape moved outside noise. COMBINATION (conjectural pairing, small-M Marlin side): two-stream expert halves paired with w13 split-K atomic add (w2 atomic is already on master) at 8 <= T <
+
+### combination: wgmma two-CTA/SM (prefill port) x hot-expert tile interleave + shared floor
+- **combo-wg-occ2-v64-hot-interleave-align2** → neutral (unproven-vs-best), 1.4021x — gained on verify_32 verify_32. COMBINATION (conjectural pairing, wgmma side): prefill's two-CTAs-per-SM rega variant ported to moe's wgmma kernels at B256 (and as a B128 candidate), paired wi
+
 ### launch overhead
 - **marlin-two-stream-expert-halves-small-m** → neutral (within-ci), 1.3024x — no shape moved outside noise. At 8 <= num_tokens <= 32 only (verify_1 bs=8, decode_16 bs=16, decode_32 bs=32; bs=1, the bs=4 test and num_tokens > 32 run master unchanged), split the expert 
 - **post-norm-pdl-launch-small-m** → neutral (within-ci), 1.3222x — no shape moved outside noise. num_tokens < SMALL_M_POST_NORM (bs=1, 8, 16, bs=4 test) only; master's _post_norm_combine_kernel body is otherwise unchanged and every other launch is master's.
+- **wg-pdl-gather-w13-w2-chain** → neutral (unproven-vs-best), 1.3752x — no shape moved outside noise. Programmatic dependent launch across master's wgmma chain at 128 <= T <= 512 (verify_32 bs=256 runs it; verify_16 only if its bucket flag is on). Kernels, tilin
 
 ### post-expert norm+combine
 - **post-expert-norm-triton-small-m** → gain (gain), 1.1297x — gained on decode_1 decode_1; decode_16 decode_16; verify_1 verify_1. For num_tokens < 32 only (bs=1, 8, 16; the bs=4 test too), replace the call to SGLang's fused_post_expert_norm_weighted_sum at the end of kernel_fn with one lau
@@ -93,48 +103,37 @@ Where the time goes (per scored shape, top kernels):
 
 ## Open follow-ups
 
-- align-single-token-ep: unproven-vs-best: the change is not proven either way; a stacked hypothesis (`depends_on: align-single-token-ep`) that adds a further change in the same area is the only way to learn more (identical code is never re-run)
-- marlin-workspace-blocks-per-sm-8: unproven-vs-best: the change is not proven either way; a stacked hypothesis (`depends_on: marlin-workspace-blocks-per-sm-8`) that adds a further change in the same area is the only way to learn more (identical code is ne
-- w13-marlin-atomic-add-small-m: within-ci: the change is not proven either way; a stacked hypothesis (`depends_on: w13-marlin-atomic-add-small-m`) that adds a further change in the same area is the only way to learn more (identical code is never re-run
-- w13-marlin-bf16-reduce-verify: within-ci: the change is not proven either way; a stacked hypothesis (`depends_on: w13-marlin-bf16-reduce-verify`) that adds a further change in the same area is the only way to learn more (identical code is never re-run
-- align-256-experts-below-128: unproven-vs-best: the change is not proven either way; a stacked hypothesis (`depends_on: align-256-experts-below-128`) that adds a further change in the same area is the only way to learn more (identical code is never r
-- marlin-block-m-cap-16-port: beats-base-not-best: the change is not proven either way; a stacked hypothesis (`depends_on: marlin-block-m-cap-16-port`) that adds a further change in the same area is the only way to learn more (identical code is never
-- triton-map-align-small-m-port: beats-base-not-best: the change is not proven either way; a stacked hypothesis (`depends_on: triton-map-align-small-m-port`) that adds a further change in the same area is the only way to learn more (identical code is ne
-- post-norm-triton-all-m: within-ci: the change is not proven either way; a stacked hypothesis (`depends_on: post-norm-triton-all-m`) that adds a further change in the same area is the only way to learn more (identical code is never re-run).
-- triton-map-align-verify-chunked-pow2-fix: within-ci: the change is not proven either way; a stacked hypothesis (`depends_on: triton-map-align-verify-chunked-pow2-fix`) that adds a further change in the same area is the only way to learn more (identical code is n
-- align-parallel-per-expert-verify: unproven-vs-best: the change is not proven either way; a stacked hypothesis (`depends_on: align-parallel-per-expert-verify`) that adds a further change in the same area is the only way to learn more (identical code is ne
-- marlin-two-stream-expert-halves-small-m: within-ci: the change is not proven either way; a stacked hypothesis (`depends_on: marlin-two-stream-expert-halves-small-m`) that adds a further change in the same area is the only way to learn more (identical code is ne
-- cuda-fused-moe-bs1-persistent-w13-silu-w2: rewrite stage 1 of `Marlin w13+w2 (moe_wna16_marlin_gemm x2) at bs<=32`: read the replaced kernels' own us per shape (profile top_kernels) against the incumbent and the floor, and check which Milestone it reached. The ne
-- cuda-nvfp4-wgmma-rega-grouped-verify: rewrite stage 1 of `Marlin w13+w2 (moe_wna16_marlin_gemm x2) + silu_and_mul at num_tokens >= 128`: read the replaced kernels' own us per shape (profile top_kernels) against the incumbent and the floor, and check which Mi
+- cuda-fused-moe-bs1-persistent-w13-silu-w2, cuda-nvfp4-swapab-mma-persistent-small-m: rewrite stage 1 of `Marlin w13+w2 (moe_wna16_marlin_gemm x2) at bs<=32`: read the replaced kernels' own us per shape (profile top_kernels) against the incumbent and the floor, and check which Milestone it reached. The ne
+- cuda-nvfp4-wgmma-rega-grouped-verify, cuda-nvfp4-wgmma-rega-grouped-sm90a-rebuild-inproc: rewrite stage 1 of `Marlin w13+w2 (moe_wna16_marlin_gemm x2) + silu_and_mul at num_tokens >= 128`: read the replaced kernels' own us per shape (profile top_kernels) against the incumbent and the floor, and check which Mi
 - cuda-dispatch-combine-pdl-verify: rewrite stage 1 of `_align_parallel_kernel + fused_post_expert_norm_weighted_sum at num_tokens > 32`: read the replaced kernels' own us per shape (profile top_kernels) against the incumbent and the floor, and check which
-- post-norm-combine-hoisted-slot-loads: unproven-vs-best: the change is not proven either way; a stacked hypothesis (`depends_on: post-norm-combine-hoisted-slot-loads`) that adds a further change in the same area is the only way to learn more (identical code i
-- post-norm-triton-hoisted-decode32: within-ci: the change is not proven either way; a stacked hypothesis (`depends_on: post-norm-triton-hoisted-decode32`) that adds a further change in the same area is the only way to learn more (identical code is never re
-- post-norm-pdl-launch-small-m: within-ci: the change is not proven either way; a stacked hypothesis (`depends_on: post-norm-pdl-launch-small-m`) that adds a further change in the same area is the only way to learn more (identical code is never re-run)
-- align-parallel-from-17-tokens: unproven-vs-best: the change is not proven either way; a stacked hypothesis (`depends_on: align-parallel-from-17-tokens`) that adds a further change in the same area is the only way to learn more (identical code is never
-- align-small-one-warp-tiny-m: unproven-vs-best: the change is not proven either way; a stacked hypothesis (`depends_on: align-small-one-warp-tiny-m`) that adds a further change in the same area is the only way to learn more (identical code is never r
-- stack-onewarp-hoisted-dispatchcombine: within-ci: the change is not proven either way; a stacked hypothesis (`depends_on: stack-onewarp-hoisted-dispatchcombine`) that adds a further change in the same area is the only way to learn more (identical code is neve
-- stack-onewarp-hoisted-dispatchcombine-from17: within-ci: the change is not proven either way; a stacked hypothesis (`depends_on: stack-onewarp-hoisted-dispatchcombine-from17`) that adds a further change in the same area is the only way to learn more (identical code 
 - cuda-fused-moe-bs1-persistent-nospin-bandwidth-inproc: rewrite stage 2 of `_align_small + Marlin w13+w2 + act_and_mul + _post_norm_combine at num_tokens == 1`: read the replaced kernels' own us per shape (profile top_kernels) against the incumbent and the floor, and check wh
-- cuda-nvfp4-wgmma-rega-grouped-sm90a-rebuild-inproc: rewrite stage 1 of `Marlin w13+w2 (moe_wna16_marlin_gemm x2) + silu_and_mul at num_tokens >= 128`: read the replaced kernels' own us per shape (profile top_kernels) against the incumbent and the floor, and check which Mi
 - cuda-fused-moe-bs1-persistent-bandwidth-s3-inproc: rewrite stage 3 of `_align_small + Marlin w13+w2 + act_and_mul + _post_norm_combine at num_tokens == 1`: read the replaced kernels' own us per shape (profile top_kernels) against the incumbent and the floor, and check wh
 - cuda-nvfp4-wgmma-rega-grouped-s2-finite-fix: rewrite stage 2 of `Marlin w13+w2 (moe_wna16_marlin_gemm x2) + silu_and_mul at num_tokens >= 128`: read the replaced kernels' own us per shape (profile top_kernels) against the incumbent and the floor, and check which Mi
-- w2-marlin-atomic-add-small-m: unproven-vs-best: the change is not proven either way; a stacked hypothesis (`depends_on: w2-marlin-atomic-add-small-m`) that adds a further change in the same area is the only way to learn more (identical code is never 
 - cuda-nvfp4-wgmma-rega-tiny-m-bucket16: rewrite stage 3 of `Marlin w13+w2 (moe_wna16_marlin_gemm x2) + silu_and_mul at 1 <= num_tokens <= 7`: read the replaced kernels' own us per shape (profile top_kernels) against the incumbent and the floor, and check which
-- w13-marlin-atomic-add-on-master-small-m: unproven-vs-best: the change is not proven either way; a stacked hypothesis (`depends_on: w13-marlin-atomic-add-on-master-small-m`) that adds a further change in the same area is the only way to learn more (identical cod
-- w2-marlin-atomic-add-verify: within-ci: the change is not proven either way; a stacked hypothesis (`depends_on: w2-marlin-atomic-add-verify`) that adds a further change in the same area is the only way to learn more (identical code is never re-run).
 - cuda-nvfp4-wgmma-rega-grouped-s4-replay-safe: rewrite stage 4 of `Marlin w13+silu+w2 at 128<=T<=512`: read the replaced kernels' own us per shape (profile top_kernels) against the incumbent and the floor, and check which Milestone it reached. The next stage is `/hyp
-- cuda-nvfp4-wgmma-rega-grouped-s5-copy-safe-bucket-gate: rewrite stage 5 of `Marlin w13+silu+w2 (moe_wna16_marlin_gemm x2 + act_and_mul) at 128<=T<=512`: read the replaced kernels' own us per shape (profile top_kernels) against the incumbent and the floor, and check which Mile
-- cuda-nvfp4-wgmma-rega-grouped-s5-copy-safe-forced: rewrite stage 5 of `Marlin w13+silu+w2 (moe_wna16_marlin_gemm x2 + act_and_mul) at 128<=T<=512`: read the replaced kernels' own us per shape (profile top_kernels) against the incumbent and the floor, and check which Mile
-- w13-marlin-atomic-add-t1-only: unproven-vs-best: the change is not proven either way; a stacked hypothesis (`depends_on: w13-marlin-atomic-add-t1-only`) that adds a further change in the same area is the only way to learn more (identical code is never
+- cuda-nvfp4-wgmma-rega-grouped-s5-copy-safe-bucket-gate, cuda-nvfp4-wgmma-rega-grouped-s5-copy-safe-forced: rewrite stage 5 of `Marlin w13+silu+w2 (moe_wna16_marlin_gemm x2 + act_and_mul) at 128<=T<=512`: read the replaced kernels' own us per shape (profile top_kernels) against the incumbent and the floor, and check which Mile
 - cuda-nvfp4-wgmma-rega-b128-n32-deep-ring: rewrite stage 6 of `Marlin w13+silu+w2 (moe_wna16_marlin_gemm x2 + act_and_mul) at 128<=T<=255`: read the replaced kernels' own us per shape (profile top_kernels) against the incumbent and the floor, and check which Mile
-- align-two-phase-port-from17: beats-base-not-best: the change is not proven either way; a stacked hypothesis (`depends_on: align-two-phase-port-from17`) that adds a further change in the same area is the only way to learn more (identical code is neve
 - triton-map-align-verify-chunked: none
-- cuda-nvfp4-swapab-mma-persistent-small-m: rewrite stage 1 of `Marlin w13+w2 (moe_wna16_marlin_gemm x2) at bs<=32`: read the replaced kernels' own us per shape (profile top_kernels) against the incumbent and the floor, and check which Milestone it reached. The ne
 - cuda-nvfp4-wgmma-rega-grouped-s3-wide-bucket-fix: rewrite stage 3 of `Marlin w13+w2 (moe_wna16_marlin_gemm x2) + silu_and_mul at num_tokens >= 128`: read the replaced kernels' own us per shape (profile top_kernels) against the incumbent and the floor, and check which Mi
 
-## Do not retry (rejected / duplicates)
+## Do not try (regressions, flat results, rejected)
 
-- none
+Rewrite stages are exempt: a slow early stage is not a dead end.
+
+- **w13-marlin-atomic-add-small-m** [w13 marlin] neutral, within-ci: For num_tokens <= 32, pass use_atomic_add=True (and use_fp32_reduce=False, which Marlin re
+- **w13-marlin-bf16-reduce-verify** [w13 marlin] neutral, within-ci: For num_tokens >= 128 (verify_16 and verify_32), pass use_fp32_reduce=False to the w13 moe
+- **post-norm-triton-all-m** [post-expert norm+combine] neutral, within-ci: On top of marlin-block-m-two-smaller-on-postnorm, remove the SMALL_M_POST_NORM = 32 split 
+- **triton-map-align-verify-chunked-pow2-fix** [MoE align/dispatch] neutral, within-ci: Re-run triton-map-align-verify-chunked (failed at compile: tl.arange(0, BSM) with BSM=48 i
+- **marlin-two-stream-expert-halves-small-m** [launch overhead] neutral, within-ci: At 8 <= num_tokens <= 32 only (verify_1 bs=8, decode_16 bs=16, decode_32 bs=32; bs=1, the 
+- **post-norm-triton-hoisted-decode32** [post-expert norm+combine] neutral, within-ci: num_tokens == 32 only (decode_32); bs<32 keeps master's _post_norm_combine_kernel unchange
+- **post-norm-pdl-launch-small-m** [launch overhead] neutral, within-ci: num_tokens < SMALL_M_POST_NORM (bs=1, 8, 16, bs=4 test) only; master's _post_norm_combine_
+- **stack-onewarp-hoisted-dispatchcombine** [MoE align (bs<=8 one warp; bs>=128 CUDA) + post-expert combine (bs<32 hoisted; bs>=128 CUDA)] neutral, within-ci: Stack the three moe results of 2026-10-24 that each matched the 1.3278 best within noise, 
+- **stack-onewarp-hoisted-dispatchcombine-from17** [MoE align (bs<=8 one warp; 17..32 parallel; bs>=128 CUDA) + post-expert combine] neutral, within-ci: The variant of stack-onewarp-hoisted-dispatchcombine (same three done/ patches, unchanged)
+- **w2-marlin-atomic-add-verify** [w2 marlin] neutral, within-ci: On master (9080a71), widen the landed w2 use_atomic_add path from num_tokens <= 32 to all 
+- **triton-w13-grouped-gemv-small-m** [w13 marlin] regression, regression: For num_tokens <= 8 only (decode_1 and verify_1; all other shapes keep the parity path unt
+- **marlin-block-size-m-next-larger** [MoE align/dispatch] regression, regression: Change only the block_size_m pick in kernel_fn. SGLang's loop breaks on the first candidat
+- **w2-l2-prefetch-decode1** [w2 marlin] regression, regression: At num_tokens == 1 only (decode_1; every other M runs master unchanged), warm L2 with the 
+- **marlin-block-m-8-verify16** [MoE align/dispatch + block_size_m pick] regression, regression: In _forward on master 9080a71, for 128 <= num_tokens <= 255 only (verify_16 bs=128 and the
 
 ## Queue and in flight
 
@@ -164,7 +163,6 @@ Where the time goes (per scored shape, top kernels):
 - queue: restack-bucket-gate-on-master-align-atomic [expert GEMM path selection (wgmma vs Marlin) restack] p1 hold
 - queue: cuda-fused-split-i-moe-midt-cluster-reduce [w13 marlin + silu-mul + w2 marlin] p2 queued
 - queue: cuda-fused-split-i-moe-tiny-t [w13 marlin + silu-mul + w2 marlin] p1 queued
-- queue: wg-pdl-gather-w13-w2-chain [launch overhead] p2 queued
 - queue: wg-producer-direct-x-rows-no-gather [MoE dispatch (wgmma x gather)] p3 queued
 - queue: wg-stream-k-tail-split [w13 marlin + silu-mul + w2 marlin] p3 queued
 - queue: wg-two-ctas-per-sm-port-b128-n32 [w13 marlin + silu-mul + w2 marlin] p2 queued

@@ -1,21 +1,21 @@
 # muse_prefill_layer findings
 
-Regenerated 2026-10-25T154445Z by `churn.py index`. Read this before writing a hypothesis for muse_prefill_layer.
+Regenerated 2026-10-25T202706Z by `churn.py index`. Read this before writing a hypothesis for muse_prefill_layer.
 
 ## Current best
 
-1.4587x [1.4368,1.4806] from job `1cc92a43b8be40f8` (submit), master commit `97e792cd86`, hypothesis fa3-full-contiguous-kv-triton-gather-gated
+1.4677x [1.4457,1.4898] from job `73b40cd13fdf4bb0` (submit), master commit `aab679312b`, hypothesis combo-b-normgather-two-cta-low-regate
 
 Where the time goes (per scored shape, top kernels):
 
-- batch=1 ctx=80000 dist=soft layer=sliding load=turn_1 page=1 q_len=753 repeats=6: yours 720.2µs vs SGLang 1053.1µs (SoL 257.0µs) · void (anonymous namespace)::rega_kernel<true, false>((ano... 249.0µs 35.0%, nvjet_sm90_tst_128x192_64x5_2x1_v_bz_coopB_TNN 154.6µs 21.7%, void (anonymous namespace)::rega_kernel<false, false>((an... 122.9µs 17.3%
-- batch=1 ctx=80000 dist=soft layer=full load=turn_1 page=1 q_len=753 repeats=6: yours 1132.2µs vs SGLang 1476.6µs (SoL 496.7µs) · void cutlass::device_kernel<flash::enable_sm90_or_later<f... 419.5µs 35.4%, void (anonymous namespace)::rega_kernel<true, false>((ano... 259.5µs 21.9%, nvjet_sm90_tst_128x192_64x5_2x1_v_bz_coopB_TNN 163.8µs 13.8%
-- batch=4 ctx=80000 dist=soft layer=sliding load=turn_4 page=1 q_len=753 repeats=6: yours 2152.7µs vs SGLang 3345.8µs (SoL 1036.3µs) · void (anonymous namespace)::rega_kernel<true, false>((ano... 714.7µs 31.8%, void (anonymous namespace)::rega_kernel<false, false>((an... 346.8µs 15.4%, nvjet_sm90_tst_256x152_64x4_1x2_h_bz_coopA_TNT 324.4µs 14.4%
-- batch=4 ctx=80000 dist=soft layer=full load=turn_4 page=1 q_len=753 repeats=6: yours 3701.2µs vs SGLang 4915.1µs (SoL 1992.4µs) · void cutlass::device_kernel<flash::enable_sm90_or_later<f... 1633.5µs 42.3%, void (anonymous namespace)::rega_kernel<true, false>((ano... 735.5µs 19.1%, void (anonymous namespace)::rega_kernel<false, false>((an... 364.3µs 9.4%
-- batch=1 ctx=0 dist=soft layer=full load=first_turn page=1 q_len=16384 repeats=6: yours 11852.9µs vs SGLang 18318.6µs (SoL 5518.4µs) · void (anonymous namespace)::rega_kernel<true, true>((anon... 3756.8µs 31.4%, nvjet_sm90_tst_192x192_64x4_2x1_v_bz_coopB_TNN 2525.0µs 21.1%, void (anonymous namespace)::rega_kernel<false, true>((ano... 1823.2µs 15.2%
-- batch=1 ctx=32768 dist=soft layer=sliding load=first_turn page=1 q_len=16384 repeats=6: yours 10947.2µs vs SGLang 16869.7µs (SoL 5663.4µs) · void (anonymous namespace)::rega_kernel<true, true>((anon... 3515.4µs 31.6%, nvjet_sm90_tst_192x192_64x4_2x1_v_bz_coopB_TNN 2529.1µs 22.7%, void (anonymous namespace)::rega_kernel<false, true>((ano... 1728.0µs 15.5%
-- batch=1 ctx=32768 dist=soft layer=full load=first_turn page=1 q_len=16384 repeats=6: yours 15058.2µs vs SGLang 21376.2µs (SoL 7710.0µs) · void cutlass::device_kernel<flash::enable_sm90_or_later<f... 4265.4µs 28.3%, void (anonymous namespace)::rega_kernel<true, true>((anon... 3499.2µs 23.2%, nvjet_sm90_tst_192x192_64x4_2x1_v_bz_coopB_TNN 2529.9µs 16.8%
-- batch=1 ctx=65536 dist=soft layer=full load=first_turn page=1 q_len=16384 repeats=6: yours 18490.9µs vs SGLang 24765.6µs (SoL 9847.7µs) · void cutlass::device_kernel<flash::enable_sm90_or_later<f... 7669.5µs 41.7%, void (anonymous namespace)::rega_kernel<true, true>((anon... 3467.7µs 18.9%, nvjet_sm90_tst_192x192_64x4_2x1_v_bz_coopB_TNN 2528.8µs 13.8%
+- batch=1 ctx=80000 dist=soft layer=sliding load=turn_1 page=1 q_len=753 repeats=6: yours 756.7µs vs SGLang 1099.7µs (SoL 257.0µs) · void (anonymous namespace)::rega_kernel<true, false>((ano... 278.1µs 36.2%, nvjet_sm90_tst_128x192_64x5_2x1_v_bz_coopB_TNN 157.8µs 20.6%, void (anonymous namespace)::rega_kernel<false, false>((an... 140.4µs 18.3%
+- batch=1 ctx=80000 dist=soft layer=full load=turn_1 page=1 q_len=753 repeats=6: yours 1150.3µs vs SGLang 1505.1µs (SoL 496.7µs) · void cutlass::device_kernel<flash::enable_sm90_or_later<f... 424.1µs 34.3%, void (anonymous namespace)::rega_kernel<true, false>((ano... 292.7µs 23.7%, nvjet_sm90_tst_128x192_64x5_2x1_v_bz_coopB_TNN 154.0µs 12.5%
+- batch=4 ctx=80000 dist=soft layer=sliding load=turn_4 page=1 q_len=753 repeats=6: yours 2197.8µs vs SGLang 3474.2µs (SoL 1036.3µs) · void (anonymous namespace)::rega_kernel<true, false>((ano... 741.2µs 32.7%, void (anonymous namespace)::rega_kernel<false, false>((an... 357.3µs 15.8%, nvjet_sm90_tst_256x152_64x4_1x2_h_bz_coopA_TNT 324.6µs 14.3%
+- batch=4 ctx=80000 dist=soft layer=full load=turn_4 page=1 q_len=753 repeats=6: yours 3744.8µs vs SGLang 5019.1µs (SoL 1992.4µs) · void cutlass::device_kernel<flash::enable_sm90_or_later<f... 1648.7µs 42.4%, void (anonymous namespace)::rega_kernel<true, false>((ano... 763.4µs 19.6%, void (anonymous namespace)::rega_kernel<false, false>((an... 370.5µs 9.5%
+- batch=1 ctx=0 dist=soft layer=full load=first_turn page=1 q_len=16384 repeats=6: yours 11889.8µs vs SGLang 18439.5µs (SoL 5518.4µs) · void (anonymous namespace)::rega_kernel<true, true>((anon... 3848.2µs 31.9%, nvjet_sm90_tst_192x192_64x4_2x1_v_bz_coopB_TNN 2534.0µs 21.0%, void (anonymous namespace)::rega_kernel<false, true>((ano... 1890.8µs 15.7%
+- batch=1 ctx=32768 dist=soft layer=sliding load=first_turn page=1 q_len=16384 repeats=6: yours 11119.7µs vs SGLang 17244.1µs (SoL 5663.4µs) · void (anonymous namespace)::rega_kernel<true, true>((anon... 3652.7µs 32.5%, nvjet_sm90_tst_192x192_64x4_2x1_v_bz_coopB_TNN 2534.6µs 22.6%, void (anonymous namespace)::rega_kernel<false, true>((ano... 1851.5µs 16.5%
+- batch=1 ctx=32768 dist=soft layer=full load=first_turn page=1 q_len=16384 repeats=6: yours 15073.4µs vs SGLang 21451.9µs (SoL 7710.0µs) · void cutlass::device_kernel<flash::enable_sm90_or_later<f... 4304.5µs 28.0%, void (anonymous namespace)::rega_kernel<true, true>((anon... 3769.2µs 24.5%, nvjet_sm90_tst_192x192_64x4_2x1_v_bz_coopB_TNN 2533.7µs 16.5%
+- batch=1 ctx=65536 dist=soft layer=full load=first_turn page=1 q_len=16384 repeats=6: yours 18589.7µs vs SGLang 25128.9µs (SoL 9847.7µs) · void cutlass::device_kernel<flash::enable_sm90_or_later<f... 7736.5µs 42.4%, void (anonymous namespace)::rega_kernel<true, true>((anon... 3401.4µs 18.6%, nvjet_sm90_tst_192x192_64x4_2x1_v_bz_coopB_TNN 2526.3µs 13.8%
 
 ## By area
 
@@ -61,8 +61,17 @@ Where the time goes (per scored shape, top kernels):
 ### pre-attention norm+rope + cache store
 - **qk-norm-fp8-cache-store-fusion** → neutral (unproven-vs-best), 1.0093x — no shape moved outside noise. One Triton kernel replaces five launches on the attention front: FusedQKNorm, k.to(FP8), v.to(FP8), store_cache and q.view(T, 16, 64).to(FP8). One program per t
 
+### pre-expert norm (MuseSpark1xRMSNorm) fused into the rega row gather
+- **pre-expert-norm-fused-rega-gather** → neutral (unproven-vs-best), 1.4600x — gained on sliding first_turn. Built on current master (submission blob a2fe2a75, align-two-phase-all-t-rega landed; no depends_on). On the rega expert path only (_experts dispatches to _expe
+
 ### pre-expert norm + post-expert norm/combine (the MoE elementwise ends)
 - **moe-pre-post-norm-triton-multitoken** → neutral (within-ci), 1.0714x — no shape moved outside noise. Built on master (635cfee). Two kernels at the ends of the MoE block, at every T. (1) PRE-EXPERT NORM: replace state['pre_expert_norm'](expert_input) (MuseSpark1
+
+### qkv GEMM (output-gate columns split onto the side stream, overlapping qk_norm + cache store + FA3)
+- **qkv-gate-columns-side-stream-under-attention** → neutral (within-ci), 1.4512x — no shape moved outside noise. Built on current master (submission blob a2fe2a75; no depends_on). The qkv_gate projection is one GEMM today (qkv = _gemm(attn_input, dense['qkv_gate']), N = 23
+
+### restack: pre-expert norm + rega gather fused (all rega classes) on master 1.4587; naive per-shape winner stack
+- **combo-a-master-normgather-naive-stack** → neutral (unproven-vs-best), 1.4605x — no shape moved outside noise. COMBINATION A (naive top-row stack, restack of measured ON paths only). Start from the resolved 3-way merge /home/user/git/musespark/muse_prefill_layer/hypothes
 
 ### router GEMM (hi and lo halves as one N=512 cuBLAS GEMM)
 - **router-hilo-one-gemm-n512** → neutral (unproven-vs-best), 1.0607x — no shape moved outside noise. Built on master (635cfee). prepare(): add state['router_hilo_t'] = torch.cat((hi.t(), lo.t()), dim=1).contiguous(), bf16 [8192, 512] (the same BF16 hi/lo split 
@@ -94,6 +103,12 @@ Where the time goes (per scored shape, top kernels):
 ### w13 + w2 at turn_4 (1024 < T <= 4096) routed to the Triton NVFP4 engine with local-routes align, original non-persistent grid
 - **experts-triton-turn4-persistent-local-align-control-no-persi** → neutral (within-ci), 1.0557x — no shape moved outside noise. Built on master (a81d19c). Implement only parts (1) and (3) of the parent. (1) In _experts, send 1024 < T <= 4096 to _experts_triton (set MARLIN_MAX_TOKENS = 10
 
+### w13 + w2 expert GEMMs (rega_kernel consumer schedule: two-warpgroup ping-pong), every rega class
+- **experts-rega-pingpong-consumers-all-t** → neutral (within-ci), 1.4478x — gained on full first_turn; lost on sliding turn_1. Built on master (1932a9c4, align-two-phase-all-t-rega). Consumer schedule of rega_kernel only. ARITHMETIC FIRST (the judge's router seed fixes the busiest GPU's
+
+### w13 + w2 expert GEMMs (rega_kernel dequant: E4M3 scale expansion moved to idle producer warps), every rega class
+- **experts-rega-producer-scale-expand-all-t** → neutral (within-ci), 1.4538x — gained on sliding first_turn; full first_turn; lost on sliding turn_1. Built on master (1932a9c4). Consumer instruction count of rega_kernel only. ARITHMETIC: turn_1 (~1.36K local routes, ~42 per expert, buckets 32/64) streams w13'
+
 ### w13 + w2 expert GEMMs at 1024 < T <= 4096 (turn_4): CUDA sm_90a dequant-producer warpgroup + SS wgmma grouped GEMM, stage 1b: rebuild with the undefined-symbol fix
 - **experts-turn4-ssdq-s1b-dataptr-symbol-fix** → neutral (unproven-vs-best), 1.1004x — gained on sliding turn_4; full turn_4. Re-run of experts-turn4-cuda-dequant-producer-ss-wgmma (job 40541db65f1b4ec6, neutral 1.0714), which NEVER RAN: the log reads '[ssdq] load_inline failed after 3
 
@@ -105,6 +120,9 @@ Where the time goes (per scored shape, top kernels):
 
 ### w13 + w2 expert GEMMs at 200 < T <= 1024 (turn_1, rega low class): two resident CTAs per SM with a 64- or 32-route slab, to hide consumer dequant latency
 - **experts-rega-low-class-two-ctas-per-sm** → neutral (unproven-vs-best), 1.4173x — gained on sliding turn_1. Rewrite stage 3 of the rega line, built on master a1a5497d (experts-turn-rega-s4-first-turn-n128). It touches ONLY the 'low' class (200 < T <= REGA_LOW_MAX = 10
+
+### w13 + w2 expert GEMMs at 200 < T <= 1024 (two CTAs/SM V64/V32 port, re-gated on master's random routing with a skew guard) stacked on combo A
+- **combo-b-normgather-two-cta-low-regate** → neutral (unproven-vs-best), 1.4677x — no shape moved outside noise. COMBINATION B (conjectural: re-gate the two-CTA/SM low class on master's own gate routing, stacked on A). Start from the same merge as combination A (/home/user
 
 ### w13 + w2 expert GEMMs at T <= 4096 (turn_1 T=753, turn_4 T=3012): port of muse_moe_w4a16's replay-safe register-A swap-AB wgmma NVFP4 grouped GEMM (s4), all four N buckets
 - **experts-turn-rega-s4-port-t4096** → gain (gain), 1.3275x — gained on sliding turn_1, turn_4; full turn_1, turn_4. Built on master (a81d19c, stack-tonight-five-prefill). The Marlin pair is 768.6/735.9 us at turn_1 (68%/48% of the sliding/full shape) and 2148/2115 us at turn_
@@ -157,46 +175,38 @@ Where the time goes (per scored shape, top kernels):
 
 ## Open follow-ups
 
-- moe-align-side-stream: unproven-vs-best: the change is not proven either way; a stacked hypothesis (`depends_on: moe-align-side-stream`) that adds a further change in the same area is the only way to learn more (identical code is never re-run)
-- qk-norm-fp8-cache-store-fusion: unproven-vs-best: the change is not proven either way; a stacked hypothesis (`depends_on: qk-norm-fp8-cache-store-fusion`) that adds a further change in the same area is the only way to learn more (identical code is neve
-- experts-marlin-block-m-48-turn1: within-ci: the change is not proven either way; a stacked hypothesis (`depends_on: experts-marlin-block-m-48-turn1`) that adds a further change in the same area is the only way to learn more (identical code is never re-r
 - experts-triton-w4a16-swapab-reglhs: rewrite stage 2 of `Marlin w13+w2 (moe_wna16_marlin_gemm x2) at every prefill T`: read the replaced kernels' own us per shape (profile top_kernels) against the incumbent and the floor, and check which Milestone it reache
 - experts-triton-w4a16-first-turn-blockt256: rewrite stage 3 of `Marlin w13+w2 (moe_wna16_marlin_gemm x2) at every prefill T`: read the replaced kernels' own us per shape (profile top_kernels) against the incumbent and the floor, and check which Milestone it reache
 - experts-triton-nvfp4-packed-asm-dequant: rewrite stage 5 of `Marlin w13+w2 (moe_wna16_marlin_gemm x2) at every prefill T`: read the replaced kernels' own us per shape (profile top_kernels) against the incumbent and the floor, and check which Milestone it reache
-- experts-triton-w13-fused-silu-epilogue: within-ci: the change is not proven either way; a stacked hypothesis (`depends_on: experts-triton-w13-fused-silu-epilogue`) that adds a further change in the same area is the only way to learn more (identical code is nev
 - experts-triton-packed-dequant-turn4: rewrite stage 6 of `Marlin w13+w2 (moe_wna16_marlin_gemm x2) at every prefill T`: read the replaced kernels' own us per shape (profile top_kernels) against the incumbent and the floor, and check which Milestone it reache
-- silu-mul-triton-local-rows-marlin-turn: within-ci: the change is not proven either way; a stacked hypothesis (`depends_on: silu-mul-triton-local-rows-marlin-turn`) that adds a further change in the same area is the only way to learn more (identical code is nev
 - experts-cuda-wgmma-mixed-input-grouped-gemm: rewrite stage 1 of `_moe_nvfp4_gemm_kernel x2 (w13, w2) at T > 4096 in stage 1; moe_wna16_marlin_gemm x2 at T <= 4096 in stages 2-3`: read the replaced kernels' own us per shape (profile top_kernels) against the incumben
 - sliding-attn-block-triton-gqa-fused-normgate: rewrite stage 1 of `q.view(T,16,64).to(FP8) + flash_attn_with_kvcache (FA3 cutlass::device_kernel<flash::...> + FlashAttnFwdCombine) + state['o_norm_gate'] (FusedRMSNormGate) on sliding layers (cfg['window'] == 2048)`: r
-- experts-triton-persistent-grid-first-turn: within-ci: the change is not proven either way; a stacked hypothesis (`depends_on: experts-triton-persistent-grid-first-turn`) that adds a further change in the same area is the only way to learn more (identical code is 
-- moe-align-local-routes-parallel-port: unproven-vs-best: the change is not proven either way; a stacked hypothesis (`depends_on: moe-align-local-routes-parallel-port`) that adds a further change in the same area is the only way to learn more (identical code i
-- w2-nonlocal-zero-store-off-first-turn: unproven-vs-best: the change is not proven either way; a stacked hypothesis (`depends_on: w2-nonlocal-zero-store-off-first-turn`) that adds a further change in the same area is the only way to learn more (identical code 
-- moe-align-32-experts-first-turn: unproven-vs-best: the change is not proven either way; a stacked hypothesis (`depends_on: moe-align-32-experts-first-turn`) that adds a further change in the same area is the only way to learn more (identical code is nev
-- router-hilo-one-gemm-n512: unproven-vs-best: the change is not proven either way; a stacked hypothesis (`depends_on: router-hilo-one-gemm-n512`) that adds a further change in the same area is the only way to learn more (identical code is never re-
-- norm-boundaries-persistent-multirow: within-ci: the change is not proven either way; a stacked hypothesis (`depends_on: norm-boundaries-persistent-multirow`) that adds a further change in the same area is the only way to learn more (identical code is never 
-- moe-pre-post-norm-triton-multitoken: within-ci: the change is not proven either way; a stacked hypothesis (`depends_on: moe-pre-post-norm-triton-multitoken`) that adds a further change in the same area is the only way to learn more (identical code is never 
-- experts-triton-first-turn-unmasked-loads-l2-hints: within-ci: the change is not proven either way; a stacked hypothesis (`depends_on: experts-triton-first-turn-unmasked-loads-l2-hints`) that adds a further change in the same area is the only way to learn more (identical 
-- restack-router-hilo-align32-zerostore: unproven-vs-best: the change is not proven either way; a stacked hypothesis (`depends_on: restack-router-hilo-align32-zerostore`) that adds a further change in the same area is the only way to learn more (identical code 
-- stack-tonight-four-prefill: unproven-vs-best: the change is not proven either way; a stacked hypothesis (`depends_on: stack-tonight-four-prefill`) that adds a further change in the same area is the only way to learn more (identical code is never re
-- align-local-parallel-first-turn: within-ci: the change is not proven either way; a stacked hypothesis (`depends_on: align-local-parallel-first-turn`) that adds a further change in the same area is the only way to learn more (identical code is never re-r
-- stack-tonight-five-prefill: unproven-vs-best: the change is not proven either way; a stacked hypothesis (`depends_on: stack-tonight-five-prefill`) that adds a further change in the same area is the only way to learn more (identical code is never re
-- stack-tonight-six-prefill: unproven-vs-best: the change is not proven either way; a stacked hypothesis (`depends_on: stack-tonight-six-prefill`) that adds a further change in the same area is the only way to learn more (identical code is never re-
-- silu-mul-sorted-first-turn: within-ci: the change is not proven either way; a stacked hypothesis (`depends_on: silu-mul-sorted-first-turn`) that adds a further change in the same area is the only way to learn more (identical code is never re-run).
 - attn-full-prefill-cuda-fp8-wgmma-hard-gate-inproc: rewrite stage 1 of `flash_attn_with_kvcache (FA3 cutlass::device_kernel<flash::...> + FlashAttnFwdCombine) on full-attention layers at page_size 1`: read the replaced kernels' own us per shape (profile top_kernels) again
-- experts-triton-turn4-persistent-local-align-control-no-persi: within-ci: the change is not proven either way; a stacked hypothesis (`depends_on: experts-triton-turn4-persistent-local-align-control-no-persi`) that adds a further change in the same area is the only way to learn more 
-- experts-turn4-cuda-dequant-producer-ss-wgmma: rewrite stage 1 of `moe_wna16_marlin_gemm x2 (Marlin w13 + w2) at 1024 < T <= 4096 (turn_4, T=3012)`: read the replaced kernels' own us per shape (profile top_kernels) against the incumbent and the floor, and check which
-- turn-align-remap-on-side-stream-under-pooler: within-ci: the change is not proven either way; a stacked hypothesis (`depends_on: turn-align-remap-on-side-stream-under-pooler`) that adds a further change in the same area is the only way to learn more (identical code 
-- experts-turn4-ssdq-s1b-dataptr-symbol-fix: rewrite stage 1 of `moe_wna16_marlin_gemm x2 (Marlin w13 + w2) at 1024 < T <= 4096 (turn_4, T=3012)`: read the replaced kernels' own us per shape (profile top_kernels) against the incumbent and the floor, and check which
-- turn-align-sglang32-prenorm-triton-restack: within-ci: the change is not proven either way; a stacked hypothesis (`depends_on: turn-align-sglang32-prenorm-triton-restack`) that adds a further change in the same area is the only way to learn more (identical code is
+- experts-turn4-cuda-dequant-producer-ss-wgmma, experts-turn4-ssdq-s1b-dataptr-symbol-fix: rewrite stage 1 of `moe_wna16_marlin_gemm x2 (Marlin w13 + w2) at 1024 < T <= 4096 (turn_4, T=3012)`: read the replaced kernels' own us per shape (profile top_kernels) against the incumbent and the floor, and check which
 - experts-turn4-ssdq-s2-tma-raw-weight-ring: rewrite stage 2 of `ssdq_kernel x2 (w13, w2) at 1024 < T <= 4096 (turn_4, T=3012)`: read the replaced kernels' own us per shape (profile top_kernels) against the incumbent and the floor, and check which Milestone it reac
-- turn-align-two-phase-chunk-prefix: unproven-vs-best: the change is not proven either way; a stacked hypothesis (`depends_on: turn-align-two-phase-chunk-prefix`) that adds a further change in the same area is the only way to learn more (identical code is n
-- align-two-phase-all-t-rega: unproven-vs-best: the change is not proven either way; a stacked hypothesis (`depends_on: align-two-phase-all-t-rega`) that adds a further change in the same area is the only way to learn more (identical code is never re
 - experts-rega-low-class-two-ctas-per-sm: rewrite stage 3 of `rega_kernel<true,false> + rega_kernel<false,false> (NMAX 128, 4 stages, 1 CTA/SM) in the low class 200 < T <= 1024`: read the replaced kernels' own us per shape (profile top_kernels) against the incum
-- fa3-full-contiguous-kv-triton-gather-gated: unproven-vs-best: the change is not proven either way; a stacked hypothesis (`depends_on: fa3-full-contiguous-kv-triton-gather-gated`) that adds a further change in the same area is the only way to learn more (identical 
 
-## Do not retry (rejected / duplicates)
+## Do not try (regressions, flat results, rejected)
 
-- none
+Rewrite stages are exempt: a slow early stage is not a dead end.
+
+- **experts-marlin-block-m-48-turn1** [w13 marlin + w2 marlin (block_size_m pick)] neutral, within-ci: Change only the block_size_m pick in _experts (muse_prefill_layer/submission.py): when 512
+- **experts-triton-w13-fused-silu-epilogue** [silu-mul (fused into the w13 Triton NVFP4 GEMM epilogue, T > 4096)] neutral, within-ci: Fuse SGLang's silu_and_mul into the epilogue of the first (w13) Triton NVFP4 GEMM on the T
+- **silu-mul-triton-local-rows-marlin-turn** [silu-mul (Marlin path, T <= 4096)] neutral, within-ci: In _experts_marlin only (the Marlin path, T <= MARLIN_MAX_TOKENS = 4096: turn_1 T=753, tur
+- **experts-triton-persistent-grid-first-turn** [w13 marlin + w2 marlin (Triton NVFP4 engine at T > 4096: persistent grid, no dead CTAs)] neutral, within-ci: Only _moe_nvfp4_gemm_kernel and its launcher _nvfp4_moe_gemm change; the per-tile math (po
+- **norm-boundaries-persistent-multirow** [attention boundary + FFN boundary (FusedPostNormResidualPreNorm x2, persistent multi-row variant)] neutral, within-ci: The multi-row/persistent re-mint the review of the held norm-residual-boundaries-triton-ro
+- **moe-pre-post-norm-triton-multitoken** [pre-expert norm + post-expert norm/combine (the MoE elementwise ends)] neutral, within-ci: Two kernels at the ends of the MoE block, at every T. (1) PRE-EXPERT NORM: replace state['
+- **experts-triton-first-turn-unmasked-loads-l2-hints** [w13 marlin + w2 marlin (Triton NVFP4 engine at T > 4096: K-loop load predication and L2 eviction hints)] neutral, within-ci: Only the K loop's loads in _moe_nvfp4_gemm_kernel change; tiles, configs, grid, dequant, d
+- **align-local-parallel-first-turn** [MoE align on the Triton path (T > 4096, first_turn)] neutral, within-ci: Built on moe-align-local-routes-parallel-port (running, its implementation commit). In _ex
+- **silu-mul-sorted-first-turn** [silu-mul on the Triton path (T > 4096, first_turn)] neutral, within-ci: Built on silu-mul-triton-local-rows-marlin-turn's implementation commit. In _experts_trito
+- **experts-triton-turn4-persistent-local-align-control-no-persi** [w13 + w2 at turn_4 (1024 < T <= 4096) routed to the Triton NVFP4 engine with local-routes align, original non-persistent grid] neutral, within-ci: Implement only parts (1) and (3) of the parent. (1) In _experts, send 1024 < T <= 4096 to 
+- **turn-align-remap-on-side-stream-under-pooler** [MoE align/dispatch placement at T <= 4096: local-id remap + _align_parallel moved onto the router side stream, under the pooler GEMM] neutral, within-ci: In the best profile master's _align_parallel_kernel runs serially on the main stream after
+- **turn-align-sglang32-prenorm-triton-restack** [MoE align on the Marlin path (T <= 4096) + pre-expert norm: restack of two measured row wins] neutral, within-ci: Two row-level wins already measured in the archive, applied together, shapes untouched oth
+- **experts-rega-pingpong-consumers-all-t** [w13 + w2 expert GEMMs (rega_kernel consumer schedule: two-warpgroup ping-pong), every rega class] neutral, within-ci: Consumer schedule of rega_kernel only. ARITHMETIC FIRST (the judge's router seed fixes the
+- **experts-rega-producer-scale-expand-all-t** [w13 + w2 expert GEMMs (rega_kernel dequant: E4M3 scale expansion moved to idle producer warps), every rega class] neutral, within-ci: Consumer instruction count of rega_kernel only. ARITHMETIC: turn_1 (~1.36K local routes, ~
+- **qkv-gate-columns-side-stream-under-attention** [qkv GEMM (output-gate columns split onto the side stream, overlapping qk_norm + cache store + FA3)] neutral, within-ci: Built on current master (submission blob a2fe2a75; no depends_on). The qkv_gate projection
+- **fa3-contiguous-kv-gather** [FA3 call] regression, regression: Replace the paged FA3 call with a contiguous one; everything before and after stays the pa
+- **experts-marlin-block-m-local-rows** [w13 marlin + w2 marlin (block_size_m pick)] regression, regression: Change only the block_size_m pick in _experts (muse_prefill_layer/submission.py). The pari
 
 ## Queue and in flight
 
@@ -226,7 +236,3 @@ Where the time goes (per scored shape, top kernels):
 - queue: attn-full-prefill-wgmma-s2-warpspec-pingpong-expoffload [FA3 call on full-attention layers at page_size 1 (CUDA sm_90a FP8 wgmma flash attention, stage 2: warp-specialized producer, 128-key tiles, intra-WG overlap + ping-pong, gated exp offload)] p2 queued
 - queue: fa3-num-splits-cap-gated-turn [FA3 call (num_splits cap on the paged path at q_len <= 4096, per-class timing gate)] p3 hold
 - queue: boundary-overlap-s1-slice-kernel-ffn-tail [FFN boundary + unpooler GEMM (boundary chunks overlapped under unpooler chunks via a slice-writing boundary kernel)] p2 queued
-- running: experts-rega-pingpong-consumers-all-t [w13 + w2 expert GEMMs (rega_kernel consumer schedule: two-warpgroup ping-pong), every rega class] p1 running
-- running: experts-rega-producer-scale-expand-all-t [w13 + w2 expert GEMMs (rega_kernel dequant: E4M3 scale expansion moved to idle producer warps), every rega class] p2 running
-- running: pre-expert-norm-fused-rega-gather [pre-expert norm (MuseSpark1xRMSNorm) fused into the rega row gather] p1 running
-- running: qkv-gate-columns-side-stream-under-attention [qkv GEMM (output-gate columns split onto the side stream, overlapping qk_norm + cache store + FA3)] p2 running
