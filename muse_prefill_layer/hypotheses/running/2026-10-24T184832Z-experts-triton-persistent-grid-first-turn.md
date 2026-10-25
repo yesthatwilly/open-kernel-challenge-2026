@@ -47,7 +47,7 @@ review: proceed
 status: running
 review_at: 2026-10-25T003615Z
 review_companions: null
-stage: implemented
+stage: dispatched
 claimed_at: 2026-10-25T003624Z
 base_sha: d310c3558b4da1934c0587b4005cb3c14093af5f
 base_blob: db8a3344398bca79ea5cafeb580f701c055fd475
@@ -64,6 +64,8 @@ submission_blob: 680ae9105b7863c930da7c8759029431bf2d4680
 lint_warnings: 22
 attempt_file: 2026-10-25T004119Z-check-experts-triton-persistent-grid-first-turn.md
 prepared_at: 2026-10-25T004119Z
+job: 5d9ddbbaaffd4599
+dispatched_at: 2026-10-25T004152Z
 ---
 
 # experts-triton-persistent-grid-first-turn
