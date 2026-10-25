@@ -252,3 +252,4 @@ overrides of a reviewer) with the reason, newest last. Written by `churn.py note
 - 2026-10-25T204433Z `muse_attention_decode` **diagnosis**: LESSONS: B=2..16 line now says leave on the incumbent (attention: Triton deep-splits kernel; FA3 for decode_layer only)
 - 2026-10-25T204433Z `muse_attention_decode` **diagnosis**: LESSONS: merged verify lines (full-verify-cuda-splitkv-stage2 + batch-1 Triton decode) into one Attention line with pseudo-decode, token-group and s5 wgmma latency-bound evidence; also covers decode's merge edit
 - 2026-10-25T204433Z `muse_bf16_proj` **diagnosis**: LESSONS: cublaslt backend toggle line corrected (changes kernel per cell; headline flat from cancellation)
+- 2026-10-25T204433Z `muse_bf16_proj` **diagnosis**: LESSONS: prepare-time algo pick line corrected (non-interleaved pick failed; interleaved >=1.02 selector worked)
