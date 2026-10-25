@@ -1,17 +1,17 @@
 {
  "problem": "muse_moe_w4a16",
- "job": "a2744bc496b84790",
+ "job": "7a0d900a1dd34666",
  "check_job": "a2744bc496b84790",
- "mode": "check",
- "speedup": 1.344525539017997,
+ "mode": "submit",
+ "speedup": 1.3438953504561806,
  "ci": [
-  1.324357655932727,
-  1.364693422103267
+  1.3237369201993379,
+  1.364053780713023
  ],
- "score_us": 10002.413200587025,
+ "score_us": 10007.103600317505,
  "commit": "9080a71e9183df77bc71f28ecfa0f635b7d0aff0",
  "submission_blob": "60dfe35d5417d9c0f89067ff313efdc2c41d03a2",
  "slug": "w2-marlin-atomic-add-small-m",
  "result": "muse_moe_w4a16/hypotheses/done/neutral/w2-marlin-atomic-add-small-m.result.json",
- "updated_at": "2026-10-25T041905Z"
+ "updated_at": "2026-10-25T043404Z"
 }

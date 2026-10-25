@@ -32,4 +32,4 @@ okc_lint: `OK with warnings: submission.py` (only host-sync warnings, all in pre
 medium
 
 ## Result (after the run)
-(pending)
+Promotion passed: 1.3439x [1.3237,1.3641], board: {"rank": 451, "team": "yesthatwilly", "speedup": 1.3439, "first": false, "ahead": 450, "to_first": 1.8771}
