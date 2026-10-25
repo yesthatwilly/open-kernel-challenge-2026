@@ -61,7 +61,7 @@ base_sha: fd92cb3a1268dd03948af28bfe64ae31f385757e
 base_blob: 970b415b746fa03cb92e419d270be92588273178
 branch: hyp/muse_bf16_proj/restack-unpooler-slice-cluster-dsmem-m8
 worktree: .worktrees/muse_bf16_proj/restack-unpooler-slice-cluster-dsmem-m8
-mode: null
+mode: check
 restack_of: null
 stale_base: null
 implemented_at: 2026-10-25T043016Z
@@ -70,6 +70,8 @@ submission_sha256: db26d0d70cb123c200e7ea3fe6fa87430aa97412aaa34cf0f446a532a2555
 norm_sha256: e9b3280b0bb3092c0fa286a242450f515529241c794cf8dc26e43ac38e8ecb9d
 submission_blob: 5b37668b80c0d70c2839a12eccae7da0b9cd5795
 lint_warnings: 7
+attempt_file: 2026-10-25T043016Z-check-restack-unpooler-slice-cluster-dsmem-m8.md
+prepared_at: 2026-10-25T043016Z
 ---
 
 # restack-unpooler-slice-cluster-dsmem-m8
