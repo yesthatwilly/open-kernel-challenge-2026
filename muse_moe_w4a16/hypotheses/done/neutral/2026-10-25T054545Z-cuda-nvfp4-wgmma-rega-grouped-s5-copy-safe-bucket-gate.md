@@ -74,7 +74,9 @@ speedup: 1.3743691121494652
 speedup_ci: [1.3537535754672232, 1.394984648831707]
 harvested_at: 2026-10-25T115711Z
 best_at_harvest: 1.3438953504561806
-promotion: null
+promotion: unmerged
+hand_landed: true
+promotion_reason: master moved since base; merge by hand
 ---
 
 # cuda-nvfp4-wgmma-rega-grouped-s5-copy-safe-bucket-gate
