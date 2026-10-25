@@ -87,7 +87,7 @@ base_sha: 848b2c2e1405318d09d245e2d959487d1742f8c0
 base_blob: 9fb1f7c4b4282dd7461c6cdba926fe3ebf12128e
 branch: hyp/muse_prefill_layer/combo-b-normgather-two-cta-low-regate
 worktree: .worktrees/muse_prefill_layer/combo-b-normgather-two-cta-low-regate
-mode: null
+mode: submit
 restack_of: null
 stale_base: null
 implemented_at: 2026-10-25T163415Z
@@ -96,6 +96,8 @@ submission_sha256: 7bb6651bce391f47600062e96ba41eb7dfec63165e60763198534bbd63d91
 norm_sha256: 599f71fc79be55b13159b5c2958db2c3e6fad5b10a271e1bcb23957bd5c03da5
 submission_blob: f4751fc054335a94d1b401af272e98a2d4760363
 lint_warnings: 93
+attempt_file: 2026-10-25T163415Z-submit-combo-b-normgather-two-cta-low-regate.md
+prepared_at: 2026-10-25T163415Z
 ---
 
 # combo-b-normgather-two-cta-low-regate
