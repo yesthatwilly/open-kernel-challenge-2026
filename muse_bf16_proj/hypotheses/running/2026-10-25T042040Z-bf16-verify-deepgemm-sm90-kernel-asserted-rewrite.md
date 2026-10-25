@@ -69,7 +69,7 @@ review: proceed
 status: running
 review_at: 2026-10-25T042455Z
 review_companions: null
-stage: claimed
+stage: implemented
 claimed_at: 2026-10-25T042455Z
 base_sha: e5548a78a3d321973c377dc21431b085c324a412
 base_blob: 970b415b746fa03cb92e419d270be92588273178
@@ -78,6 +78,12 @@ worktree: .worktrees/muse_bf16_proj/bf16-verify-deepgemm-sm90-kernel-asserted-re
 mode: null
 restack_of: null
 stale_base: null
+implemented_at: 2026-10-25T043743Z
+impl_commit: e4008591fb186026deeb850980bc31aed9fbe89a
+submission_sha256: ced06516176770328f48f0f642a6f99890f4bb650b70fa73832190a8e600db02
+norm_sha256: e8032bf830f649f5d8fa85f5cdfd059b29fdc58378a4c6665c936dffaea770e4
+submission_blob: 489174846c51a034e3c119f0f67cec9c213404f5
+lint_warnings: 4
 ---
 
 # bf16-verify-deepgemm-sm90-kernel-asserted-rewrite
@@ -168,3 +174,22 @@ Deviations / risks:
 - [x] Branches in kernel_fn are on cfg and shapes only, never on input values; `o`, router, m<=32 and m outside the verified set are untouched.
 
 okc_lint: `OK with warnings` (6 host-sync warnings, all `torch.cuda.synchronize()` in prepare()-only helpers, flagged by the linter as outside kernel_fn's call graph). py_compile clean, __pycache__ removed.
+
+## Pre-flight audit
+
+Audited 2026-10-25 by an opus subagent (read-only emulation, no GPU). **Verdict: dispatch-with-fixes.** Run it as `okc check`, not as a submit.
+
+Fixes, all in the worktree `muse_bf16_proj/submission.py`:
+1. **Hang fix: TMA multicast removed (cluster 1 only).** The port set the A/B TMA box to BLOCK/mc when multicast was 2. DeepGEMM's sm90 `tma_copy` multicasts the FULL box from cluster rank 0 (the half-box split is the sm100 2-CTA convention). The barrier's expect-tx would therefore never be met, which is an unbounded mbarrier hang. Every variant the cost model picked used mc=2, so every variant was exposed. `_dg2_pick_cfg` now only considers (mc=1, on_a=False). The new picks are pooler 64x64 / 64x128, qkv 64x48 / 64x96, unpooler 64x128 / 128x128, all 1 wave. Multicast is a follow-up once the kernel is proven to run.
+2. **Header parse gate that would always fail.** DeepGEMM writes `__global__ void __launch_bounds__(...) name(`. The parser then read the kernel name as `__launch_bounds__` and the arguments as the launch-bounds expression, so it always printed "signature mismatch" and VOID. The parser now strips `__launch_bounds__(...)` before matching; both placements were tested against a mock header. The known-name table gained `kMajorA`/`kMajorB` (`cute::UMMA::Major::K`) and `cd_dtype_t` (`cutlass::bfloat16_t`), so the current DeepGEMM signature can still instantiate. Any other unknown name still prints VOID and never raises.
+3. **kernel_fn is clean (policy).** The `[dg] ROUTE TAKEN` print-once and the `dg2_seen` mutable set were removed from kernel_fn and state. They are replaced by a prepare-time `_dg2_route_probe`: for each routed (layer, m) it calls kernel_fn itself on synthetic x with the judge's cfg, then compares bitwise with a direct call of the branch (`_dg2_forward`, deterministic with no split-K) and with cuBLAS. It prints `[dg] ROUTE TAKEN|NOT TAKEN|INCONCLUSIVE <layer> m=<m>`. A pair whose kernel_fn call raises is dropped from the route before the PATH CHOSEN lines.
+4. **Watchdog.** Every self-check and probe sync goes through `_dg2_sync`, which polls a CUDA event for up to 10 s and then raises `_Dg2Hang` (a BaseException, so per-pair handlers cannot swallow it). `_dg2_prepare` catches it, routes nothing, and prints `WATCHDOG ... run is LOST`. A hung kernel cannot be killed, so this only makes the log say so early. Given fix 1, the risk is acceptable for a check.
+5. **TMA alignment gate.** `_dg2_route_ok` also requires `x.data_ptr() % 16 == 0`, a pointer check rather than a value check. Otherwise the per-call `cuTensorMapEncodeTiled` could fail and the TORCH_CHECK would raise inside kernel_fn.
+
+Confirmed unchanged:
+- M is runtime (SHAPE_M=0, OOB zero-fill, clipped D store). Only m in {128, 130, 200, 256} is routed. Test m=130 unpooler is self-checked; m=512/1000 stay on master.
+- `-std=c++20` and sm_90a are passed only through load_inline args (extra_cuda_cflags `-gencode=arch=compute_90a,code=sm_90a`, plus TORCH_CUDA_ARCH_LIST=9.0a set around the build and restored), with the `#error` guard. torch.utils.cpp_extension is not patched.
+- Attribution: the kernel symbol is `deep_gemm::sm90_bf16_gemm_impl<...>` and the log tag is `[dg]`. These are distinct from the swap-AB cluster rewrite (`swcl_kernel`) and from the NN-layout probe (nvjet via torch.mm).
+- Lint: OK with warnings (prepare-only syncs). py_compile is clean.
+
+Residual risk: the 6-instantiation cute TU may compile slowly enough to crowd prepare's 300 s, the build starts by 110 s and there is no cap on compile time. The blind header port (an untested BLOCK_N=48 tile, enum or epilogue names) may still be a VOID build. A genuine in-kernel hang still loses the 10-minute check.
