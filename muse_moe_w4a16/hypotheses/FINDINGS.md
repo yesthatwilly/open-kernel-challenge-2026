@@ -1,6 +1,6 @@
 # muse_moe_w4a16 findings
 
-Regenerated 2026-10-25T043406Z by `churn.py index`. Read this before writing a hypothesis for muse_moe_w4a16.
+Regenerated 2026-10-25T043622Z by `churn.py index`. Read this before writing a hypothesis for muse_moe_w4a16.
 
 ## Current best
 
@@ -73,6 +73,7 @@ Where the time goes (per scored shape, top kernels):
 ### w2 marlin
 - **w2-l2-prefetch-decode1** → regression (regression), 1.2615x — lost on decode_1 decode_1. At num_tokens == 1 only (decode_1; every other M runs master unchanged), warm L2 with the w2 weights of this token's local experts before the w13 Marlin call, s
 - **w2-marlin-atomic-add-small-m** → neutral (unproven-vs-best), 1.3445x — gained on decode_1 decode_1. For num_tokens <= 32 only (bs=1, 8, 16, 32 and the bs=4 test), pass use_atomic_add=True and use_fp32_reduce=False (Marlin requires the pair) to the SECOND moe_w
+- **w2-marlin-atomic-add-verify** → neutral (within-ci), 1.3407x — no shape moved outside noise. On master (9080a71), widen the landed w2 use_atomic_add path from num_tokens <= 32 to all T by giving the verify range its own bound constant W2_ATOMIC_VERIFY =
 
 ### whole-layer fusion
 - **cuda-fused-moe-bs1-persistent-w13-silu-w2** → neutral (within-ci), 1.3074x — no shape moved outside noise. bs=1 only (num_tokens == 1: decode_1 and the bs=1 test); every other M runs master unchanged. Replace the whole bs=1 MoE (_align_small, Marlin w13, silu_and_mul
@@ -107,6 +108,7 @@ Where the time goes (per scored shape, top kernels):
 - cuda-fused-moe-bs1-persistent-bandwidth-s3-inproc: rewrite stage 3 of `_align_small + Marlin w13+w2 + act_and_mul + _post_norm_combine at num_tokens == 1`: read the replaced kernels' own us per shape (profile top_kernels) against the incumbent and the floor, and check wh
 - cuda-nvfp4-wgmma-rega-grouped-s2-finite-fix: rewrite stage 2 of `Marlin w13+w2 (moe_wna16_marlin_gemm x2) + silu_and_mul at num_tokens >= 128`: read the replaced kernels' own us per shape (profile top_kernels) against the incumbent and the floor, and check which Mi
 - w2-marlin-atomic-add-small-m: unproven-vs-best: the change is not proven either way; a stacked hypothesis (`depends_on: w2-marlin-atomic-add-small-m`) that adds a further change in the same area is the only way to learn more (identical code is never 
+- w2-marlin-atomic-add-verify: within-ci: the change is not proven either way; a stacked hypothesis (`depends_on: w2-marlin-atomic-add-verify`) that adds a further change in the same area is the only way to learn more (identical code is never re-run).
 - triton-map-align-verify-chunked: none
 - cuda-nvfp4-swapab-mma-persistent-small-m: rewrite stage 1 of `Marlin w13+w2 (moe_wna16_marlin_gemm x2) at bs<=32`: read the replaced kernels' own us per shape (profile top_kernels) against the incumbent and the floor, and check which Milestone it reached. The ne
 - cuda-nvfp4-wgmma-rega-grouped-s3-wide-bucket-fix: rewrite stage 3 of `Marlin w13+w2 (moe_wna16_marlin_gemm x2) + silu_and_mul at num_tokens >= 128`: read the replaced kernels' own us per shape (profile top_kernels) against the incumbent and the floor, and check which Mi
@@ -137,4 +139,3 @@ Where the time goes (per scored shape, top kernels):
 - queue: marlin-exec-config-autotune-mid-m [Marlin launch config (w13 + w2)] p3 hold
 - running: cuda-nvfp4-wgmma-rega-tiny-m-bucket16 [w13 marlin + silu-mul + w2 marlin] p2 running
 - running: w13-marlin-atomic-add-on-master-small-m [w13 marlin] p1 running
-- running: w2-marlin-atomic-add-verify [w2 marlin] p2 running

@@ -1,6 +1,6 @@
 # muse_decode_layer hypotheses
 
-Regenerated 2026-10-25T043406Z. Best: 1.2680x [1.2490,1.2871] job `c243a29f26dc4725` (check)
+Regenerated 2026-10-25T043621Z. Best: 1.2680x [1.2490,1.2871] job `c243a29f26dc4725` (check)
 
 | created | slug | kind | area | where | outcome | speedup | CI | job | mode | promotion | review | expected hit |
 |---|---|---|---|---|---|---|---|---|---|---|---|---|
@@ -63,8 +63,8 @@ Regenerated 2026-10-25T043406Z. Best: 1.2680x [1.2490,1.2871] job `c243a29f26dc4
 | 2026-10-25T042121Z | full-decode-streamk-ticket-port | rewrite | FA3 call (full decode, batch > 1): splitkv_attn_kernel + splitkv_combine_kernel | running | running |  |  | 6d48932b230d4067 | check |  | proceed |  |
 | 2026-10-25T042121Z | full-decode1-two-level-ticket-port | rewrite | FA3 call (full decode, batch 1) | running | running |  |  | 5e44c7aedecd4cc1 | check |  | proceed |  |
 | 2026-10-25T042121Z | sliding-cluster-c4-decode32-port | rewrite | FA3 call (sliding decode, batch 17..32) | running | running |  |  |  |  |  | proceed |  |
-| 2026-10-25T042121Z | w2-marlin-atomic-add-t1-port | primary | w2 marlin (T=1) | running | running |  |  | 7a9f5de5aecc4aba | check |  | proceed |  |
 | 2026-10-25T042121Z | sliding-batched-triton-b16-band | primary | FA3 call (sliding decode, batch 2..16) | done/neutral | neutral | 1.2743 | [1.255,1.293] | 02bf417257e14a3d | check |  | proceed | 3/5 |
+| 2026-10-25T042121Z | w2-marlin-atomic-add-t1-port | primary | w2 marlin (T=1) | done/neutral | neutral | 1.2856 | [1.266,1.305] | 7a9f5de5aecc4aba | check |  | proceed | 2/4 |
 
 ## Held
 

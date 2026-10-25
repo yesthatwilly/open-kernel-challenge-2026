@@ -1,6 +1,6 @@
 # muse_moe_w4a16 hypotheses
 
-Regenerated 2026-10-25T043406Z. Best: 1.3439x [1.3237,1.3641] job `7a0d900a1dd34666` (submit)
+Regenerated 2026-10-25T043622Z. Best: 1.3439x [1.3237,1.3641] job `7a0d900a1dd34666` (submit)
 
 | created | slug | kind | area | where | outcome | speedup | CI | job | mode | promotion | review | expected hit |
 |---|---|---|---|---|---|---|---|---|---|---|---|---|
@@ -64,7 +64,7 @@ Regenerated 2026-10-25T043406Z. Best: 1.3439x [1.3237,1.3641] job `7a0d900a1dd34
 | 2026-10-25T042150Z | cuda-nvfp4-wgmma-rega-tiny-m-bucket16 | rewrite | w13 marlin + silu-mul + w2 marlin | running | running |  |  |  |  |  | proceed |  |
 | 2026-10-25T042150Z | w13-marlin-atomic-add-on-master-small-m | primary | w13 marlin | running | running |  |  | 171684977ec1470f | check |  | proceed |  |
 | 2026-10-25T042151Z | marlin-exec-config-autotune-mid-m | primary | Marlin launch config (w13 + w2) | queue | hold |  |  |  |  |  | proceed |  |
-| 2026-10-25T042151Z | w2-marlin-atomic-add-verify | primary | w2 marlin | running | running |  |  | ccbcda65da584be0 | check |  | proceed |  |
+| 2026-10-25T042151Z | w2-marlin-atomic-add-verify | primary | w2 marlin | done/neutral | neutral | 1.3407 | [1.321,1.361] | ccbcda65da584be0 | check |  | proceed | 4/6 |
 
 ## Held
 

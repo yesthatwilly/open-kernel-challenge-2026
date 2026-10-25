@@ -1,6 +1,6 @@
 # muse_bf16_proj findings
 
-Regenerated 2026-10-25T043406Z by `churn.py index`. Read this before writing a hypothesis for muse_bf16_proj.
+Regenerated 2026-10-25T043621Z by `churn.py index`. Read this before writing a hypothesis for muse_bf16_proj.
 
 ## Current best
 
@@ -134,6 +134,9 @@ Where the time goes (per scored shape, top kernels):
 - **unpooler-slice-triton-splitk8-semaphore** → neutral (unproven-vs-best), 1.1546x — gained on unpooler decode_1, verify_1; lost on router verify_1, verify_16. Built on master (dba4ffd; router untouched). For layer == 'unpooler' with cfg n == 1024 (the sliced case, m <= 8: k=4096, an 8.4 MB bf16 read of W[:1024]) only,
 - **unpooler-full-m16-swapab-route** → regression (regression), 1.1885x — gained on router verify_32; lost on qkv_gate decode_1, decode_16, verify_1; o decode_1, decode_16, verify_1; pooler decode_1, decode_16, verify_1; router decode_1, decode_16, decode_32, verify_1; unpooler verify_1. Built on master (8b9ad43, blob a8bb42a). On master the full-weight unpooler (n=8192, k=4096, 67 MB) at 9 <= m <= 16 falls through to _bf16_gemm_dispatch_impl (c
 
+### unpooler GEMM (sliced n=1024, m<=8)
+- **restack-unpooler-slice-cluster-dsmem-m8** → neutral (unproven-vs-best), 1.2260x — gained on unpooler decode_1, verify_1; router verify_1; lost on o verify_16; router verify_16. Built on master (b99b1dd, the landed restack). Port ONLY the unpooler-slice half of the oun kernel from branch hyp/muse_bf16_proj/o-unpooler-slice-cuda-cluster-
+
 ## Open follow-ups
 
 - router-hilo-addmm-epilogue: within-ci: the change is not proven either way; a stacked hypothesis (`depends_on: router-hilo-addmm-epilogue`) that adds a further change in the same area is the only way to learn more (identical code is never re-run).
@@ -160,6 +163,7 @@ Where the time goes (per scored shape, top kernels):
 - bf16-lossless-exp4-occupancy-dequant-once-stage2: rewrite stage 2 of `Triton swap-AB m<=32 kernels (bf16-m32-swapab-wgmma-triton) on pooler m 1-32, unpooler-full m 16/32, qkv_gate m 1-32`: read the replaced kernels' own us per shape (profile top_kernels) against the inc
 - restack-pooler-unpooler-nn-layout-m128: unproven-vs-best: the change is not proven either way; a stacked hypothesis (`depends_on: restack-pooler-unpooler-nn-layout-m128`) that adds a further change in the same area is the only way to learn more (identical code
 - restack-router-cluster-dsmem-m8: within-ci: the change is not proven either way; a stacked hypothesis (`depends_on: restack-router-cluster-dsmem-m8`) that adds a further change in the same area is the only way to learn more (identical code is never re-r
+- restack-unpooler-slice-cluster-dsmem-m8: unproven-vs-best: the change is not proven either way; a stacked hypothesis (`depends_on: restack-unpooler-slice-cluster-dsmem-m8`) that adds a further change in the same area is the only way to learn more (identical cod
 
 ## Do not retry (rejected / duplicates)
 
@@ -175,6 +179,5 @@ Where the time goes (per scored shape, top kernels):
 - queue: bf16-lossless-exp4-warpspec-persistent-stage3 [lossless exp4 compressed-weight stream kernel (_lossless_swapab_kernel)] p1 hold
 - running: bf16-verify-swapab-wgmma-cluster-dsmem-rewrite [bf16 GEMM dispatch (m=65..256, swap-AB wgmma + cluster DSMEM split-K)] p1 running
 - running: bf16-verify-deepgemm-sm90-kernel-asserted-rewrite [bf16 GEMM dispatch (m=65..256, DeepGEMM sm90 BF16 kernel)] p1 running
-- running: restack-unpooler-slice-cluster-dsmem-m8 [unpooler GEMM (sliced n=1024, m<=8)] p1 running
 - running: router-cluster-dsmem-s2-flat-in-m-occupancy [router GEMM (m<=32, cluster DSMEM kernel)] p2 running
 - running: router-m128-m256-cluster-dsmem-tiled-rewrite [router GEMM (m=65..256)] p2 running
