@@ -110,3 +110,29 @@ No companion is warranted. An ab-revert of fa3-hdim128-head-pairing-batched remo
 - With an expected headline of +0.8-1.2% inside the CI, is a scored submit worth it, or should this go into a combined decode check with the other inside-CI restacks (moe-align-small-t-restack-on-master)?
 - If sliding-fused-triton-decode1-port lands first, sliding decode_1 (weight 46, this change's best-evidenced shape) leaves this code path, and the remaining expected gain drops to about +0.6%. Re-estimate the priority at that point.
 
+
+## Implementation notes
+
+Worktree base was clean master (8ac7a2f), because the restack's 3-way apply conflicted. Only `muse_decode_layer/submission.py` changed (+129/-36).
+
+Merge resolution:
+1. Hand-merged the parent paired-heads-pad-unpad-triton.patch onto current master. Master already carried the torch.zeros/slice-copy paired path (the parent's target text had moved), so I swapped those blocks for the patch's `_pair_pad_q_kernel` launch and its `_paired_norm_gate_kernel` un-pad+norm+gate launch. The un-paired branch keeps `state["o_norm_gate"]`. Both kernels are placed just before `_sliding_forward`, since master's `prepare()` now sits after the sliding and dense-chain code. The `prepare()` hunk had only context changes, so nothing was needed there.
+2. Applied this hypothesis: `_pre_attention_kernel` (from fused-preattention-triton.patch) with attention master's `G` and `PAIRED` constexprs, taken verbatim. It replaces `_pair_pad_q_kernel`, which was deleted because nothing else calls it. In `kernel_fn`: one launch on grid (tokens, hq+hkv), num_warps 1. It replaces `qk_norm`, the k/v scale divides, both FP8 casts, `store_cache` and the pair pad. The q buffer is `torch.empty((tokens, hq, 2*d if paired else d), FP8)`. `paired = window == 0 and batch > 1 and hkv % 2 == 0` is unchanged and is passed as PAIRED. The FA3 call, the descale and `_paired_norm_gate_kernel` are untouched.
+3. Removed the `qk_norm` entry from `prepare()`, plus the now-unused `store_cache` and `FusedQKNorm` imports. Updated the module docstring line.
+4. Kept intact: the sliding batch-1 `_sliding_forward` branch (it runs before this code), the small-t dense chain with PDL, and the align-par/side-stream code. full-decode-cuda-splitkv-port has not landed on master, so there is no splitkv gate and PAIRED is not forced to False anywhere.
+
+Deviations: the parent fused patch has no prepare() warm-up (only the qk_norm removal), so none was merged. `v` is no longer a slice in `kernel_fn`, since the kernel reads it from qkv; `gate` is still a slice of qkv. Nothing could be run on this node: no GPU, torch or Triton.
+
+## Rules check
+
+- [x] CUDA-graph capturable: `git diff` adds only `torch.empty` and Triton launches in `kernel_fn`, with no `.item()`, `.cpu()` or sync, and no control flow on values. The `paired` and `scaled` branches read config only.
+- [x] Nothing derived from `data` is cached: the q buffer is allocated per call, and cos_sin is a prepare() table indexed by the positions input.
+- [x] Weights: n/a, no weight change; only `qk_norm` was removed from state, and it held no weights.
+- [x] Activations and KV: the cache stays FP8, divided by the scales before the cast as before. The query is FP8 E4M3 only, as on master (master also cast q to FP8).
+- [x] Attention sees every key: FA3 call and window are unchanged, and the pad half is zero, as on master.
+- [x] No timing patches, harness access, module edits, reference import, subprocesses or network: the diff adds none.
+- [x] All work happens inside the timed call; no output caching or replay.
+- [x] No triton.autotune; the first-line marker is kept.
+
+okc_lint: `OK with warnings` (0 errors). The warnings are pre-existing host-sync lines in prepare()/self-check code, outside kernel_fn.
+py_compile: ok; `__pycache__` removed.
