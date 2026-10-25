@@ -63,9 +63,18 @@ kind: primary
 controls_for: null
 prior: "merge-perkvhead-c320-sv32-tiled: that merge ported c320 V1 (three nodes, 19.71 us, lost full decode_1 to the best's 17.39) and this one ports combo-b1-chain-c320-fused-pre-pdl's V3/V4 chain (fused pre-attention prologue + PDL) instead, keeping per-kvhead and SV32 unchanged"
 review: proceed
-status: queued
+status: running
 review_at: 2026-10-25T212855Z
 review_companions: null
+stage: claimed
+claimed_at: 2026-10-25T212904Z
+base_sha: b27495d07f7afbf34627adb964d4beee91b40864
+base_blob: 6d6afa4722731ceb9cb8216d0334a03f1a96ad2b
+branch: hyp/muse_attention_decode/merge-perkvhead-v3chain-sv32-tiled
+worktree: .worktrees/muse_attention_decode/merge-perkvhead-v3chain-sv32-tiled
+mode: null
+restack_of: null
+stale_base: null
 ---
 
 # merge-perkvhead-v3chain-sv32-tiled
