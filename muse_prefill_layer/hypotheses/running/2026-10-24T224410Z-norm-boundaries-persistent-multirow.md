@@ -48,7 +48,7 @@ review: proceed
 status: running
 review_at: 2026-10-25T034755Z
 review_companions: null
-stage: implemented
+stage: dispatched
 claimed_at: 2026-10-25T034755Z
 base_sha: dc91f8e5bab764e046dc86798ba9f2cc8afa6ee9
 base_blob: db8a3344398bca79ea5cafeb580f701c055fd475
@@ -65,6 +65,8 @@ submission_blob: 64df734f661474162d248733c3783591c8b005df
 lint_warnings: 22
 attempt_file: 2026-10-25T035047Z-check-norm-boundaries-persistent-multirow.md
 prepared_at: 2026-10-25T035047Z
+job: 46afe489e2754c83
+dispatched_at: 2026-10-25T035054Z
 ---
 
 # norm-boundaries-persistent-multirow
