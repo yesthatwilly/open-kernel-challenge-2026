@@ -36,9 +36,18 @@ priority: 3
 kind: primary
 controls_for: null
 review: proceed
-status: queued
+status: running
 review_at: 2026-10-25T043310Z
 review_companions: null
+stage: claimed
+claimed_at: 2026-10-25T043310Z
+base_sha: 1a306457948093d586d8985f430235643dff1d1c
+base_blob: db8a3344398bca79ea5cafeb580f701c055fd475
+branch: hyp/muse_prefill_layer/turn-align-remap-on-side-stream-under-pooler
+worktree: .worktrees/muse_prefill_layer/turn-align-remap-on-side-stream-under-pooler
+mode: null
+restack_of: null
+stale_base: null
 ---
 
 # turn-align-remap-on-side-stream-under-pooler
