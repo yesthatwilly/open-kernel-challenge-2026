@@ -106,8 +106,10 @@ depends_on: null
 priority: 1
 kind: primary
 controls_for: null
-review: required
+review: proceed
 status: queued
+review_at: 2026-10-25T162256Z
+review_companions: null
 ---
 
 # combo-measured-rows-slide-batched-preattn-t8-tail
@@ -134,3 +136,46 @@ Winner map behind this stack (paired SGLang ratio vs master 933d, which re-bases
 ## Conjecture
 
 The three sources were each measured on a base where the other two were absent, and S3's full-decode gain was measured feeding FA3 / split-KV, not today's sk kernel. The interaction tested is graph-node removal compounding in the T<=32 dense-chain layer: each source removes 2-5 graph nodes from the same serial stream that master's PDL chain (P -> R -> experts -> unpool) runs on, and at decode_16/32 the layer is node-bound (FINDINGS: ~27-29 nodes; the Triton kernel saved ~9-11 us of the decode_16 row, more than the 13.6 us FA3 kernel minus its own 13.0 us). If the whole-layer row delta exceeds the sum of the per-cell selector deltas (each selector times only its own sub-graph), the removed node boundaries were worth more than their kernels, i.e. launch gaps between neighbours, and the next move is fusing across sources; if it falls short, the selectors overstate (L2 warm from the neighbour in isolation). Confirm/refute: compare each 'PATH CHOSEN' line's (master - new) us with the per-shape us delta vs 933d on the same rows (Sd16, Sd32, Sv1, Fd16), and count nodes in the profile ('... N more' lines) before/after. Second check: S2a's R selector re-decides at T=16/32 now that P is the s3 module's and dl3 piece B owns T=1; a MASTER verdict there refutes the transfer of its T=1/8/32 sum.
+
+## Adversarial review
+
+Reviewed 2026-10-25T162256Z by an adversarial subagent (model opus).
+
+**Verdict: proceed.** Proceed with sharp conditions. Every cell has its own correctness gate and a 0.98 selector, so the worst likely outcome is flat rows, not a loss. The weakest link is S1 at B=2..16: its only direct kernel measurement lost. The Conjecture is only partly testable: its S2a re-decision half is readable, but its node-compounding half sits inside per-row noise.
+
+### Justification
+Arithmetic check: at master 933d's rows, -10 us on Sd16, -10 on Sd32, -4..-5 on Fd16/Fd32 and -6.5 on both verify_1 rows give load gains of about 3.9% (decode_16), 2.9% (decode_32) and 3.5% (verify_1), with the other three loads flat. That is a geomean of about +1.7%, which matches the stated +1.5..2% and sits right at the ±1.5% CI. So the run has to be read row by row and from the PATH CHOSEN lines, not from the headline. The expected shape directions are consistent with TASK weights (sliding rows weight 46) and floors. Sd32 is master's worst row (1.080x, 239.2 vs SoL 84.5), so it has the most to gain.
+
+S1 at 17<=B<=32 (class B) has the best evidence. b94e (Sd32 246.99 -> 221.38 on its own base) and b01fd both ran S=16 at B=32. The incumbent there is still the FA3 chain: FA3 18.2 + combine 2.9 + prepare_varlen 2.2 + FusedQKNorm/casts/store_cache/FusedRMSNormGate nodes. Removing about 6 serial nodes on a node-bound T=32 layer is plausible.
+
+WEAKEST LINK: S1 at 2<=B<=16 (class A). The only run of exactly this code form (sliding-batched-triton-b16-band, job 02bf417257e14a3d, on master) measured _sliding_fused_kernel at 14.6 us vs FA3 13.7 us. Its Sd16 row went 209.82 -> 215.34 (+2.6%), and REWRITE_READ_2026-10-25 calls the line DEAD. The '+1.7..+4.1% today by paired SGLang ratio vs 933d' is a cross-run paired-ratio comparison. The same 02bf run reads +1.7% vs 933d while it was -2.6% vs its own base, so that number is baseline drift and not evidence. The Sd16 gains in b94e and b01fd came on pre-sk, pre-dl3 bases whose Sd16 row was 209-217 us; today it is 195.6. Expect the class-A selector to print MASTER, and Sd16 to come in flat rather than at the ~185 us predicted. That is safe: the gate turns it off.
+
+S2 (route R variant 0 at T=2..32, unpool NF=1 at T=2..8): both kernels already live in master's s3 module and passed the judge at T<=32 in 87211e. The R selector was decided on an older P, so its re-decision at T=16/32 is a fair test.
+
+S3 c1 (Fd16/Fd32): the +4.7%/+3.3% was measured feeding paired FA3 / split-KV, not today's sk kernel, and REWRITE_READ found the batched rows of that run within err. Today the c1 saving is at most the q FP8 cast plus the FusedQKNorm/casts/store_cache nodes (~2-4 us on 297/431 us rows, 16-weight). 'Faster' there is weakly supported, so treat flat as the expected outcome.
+
+CONJECTURE: half testable. (1) Comparing the sum of the selector deltas (master - new, from prepare) against the per-row delta vs 933d cannot separate 'exceeds' from 'falls short'. Batched-row errs are 2.4-4.1 us and verify_1 2.9-3.5 us, and cross-run SGLang drift adds 2-7% on untouched rows (verify_32 1.02-1.07 in REWRITE_READ). The expected per-row deltas (5-10 us) are only about 1.5-3 z, so only a gap larger than about 5 us per row would read. (2) The node count before and after from the profile, and S2a's R selector verdict at T=16/32 vs its old T=1/8/32 sum, are directly readable from this run's log and profile. That half confirms or refutes.
+
+### Confounders on the current kernel
+- stack-align-par-sidestream-sliding1 (landed, 8fa8fbf): it put moe-align-parallel-large-t-port on master. The failed run b94e797333fb4a27 was exactly align-par + the Triton batched sliding path (sliding-fused-batched-decode-port), and it failed at full verify_1 in timing with tests 13/13 and no root cause. This combo re-creates that pairing (align-par on master + S1). It also changes full verify_1 itself through S2a, S2b and S3 c4, so a repeat failure on that row could not be pinned on any one source.
+- small-t-launch-minimal-dense-chain-pdl + dense-chain-s3-t1-q-sk2-o-route-unpool: S2a's per-warp R was chosen on the sum of P->R pairs measured against an older P and PDL pairing. The P kernel and its PDL edge are now the s3 module's, and dl3 piece B owns T=1, so the old T=1/8/32 sum does not transfer. The hypothesis already re-decides at T=8/16/32, which is correct. Read the T=16/32 verdict as the answer.
+- full-decode-splitkv-restack-on-pdl / sk ticket kernels (in master via dense-chain-s3's base): S3 c1's +4.7%/+3.3% was measured with paired FA3/split-KV as the consumer. With sk as the consumer, only the cast and pre-attention nodes are removed. The gain size is confounded by the consumer swap; the selector decides.
+- fa3-hdim128-head-pairing-batched (landed): S3 c3 replaces master's paired q zero-fill + two slice copies and the unpad/FusedRMSNormGate with the PAIRED pre-attention kernel + _paired_norm_gate_kernel. Any verify_16/verify_32 move is S3 c3 interacting with the paired layout. Those rows are expected flat and serve as the drift control, so a move there points at c3.
+- dl3-piece-a-gate-stride-check-fix (landed): S2's new phases must run after _dl3_finish, and the extended _dl3_layer_checks must not change piece A's T=1 decision. Sliding and full decode_1 should be byte-identical to 933d; if either moves beyond ~1 us err, the S2 phase changed piece A's or piece B/C's T=1 state.
+
+### Interference and A/B needs
+No companion. Each source x class cell has its own printed PATH CHOSEN line with new-vs-master us, and the profile names the kernels: _sliding_fused_kernel, dl_route variant, dl_unpool_kernel, _pre_attention_kernel. The rows split almost cleanly by source:
+- Sd16/Sd32 = S1 + S2a
+- Fd16/Fd32 = S3c1 + S2a
+- verify_1 = S2a + S2b + S3c2/c4
+- verify_16/32 = S3c2/c3 only
+- decode_1 = untouched control
+A gain or a loss on any row is attributable from the log plus the profile without another run. An ab-revert of align-par, to test the b94e pairing, would cost a scored run and still not explain a root cause that the earlier run never logged. The better spend is the extra prepare-time full-layer T=8 check below. A per-source control would only re-measure what the selectors already time.
+
+### Open questions
+- b94e797333fb4a27 exposure: the Triton batched path itself never runs on full verify_1, because S1's gate is window != 0 and q_len == 1. Its only cross-shape footprint in b94e was the module-global _COUNTERS, the module-global _SLIDING_FUSED_ON with try/except, and per-call graph-pool workspaces. This combo removes the first two (per-state counters, no try/except), and that is the guard against cross-state ticket corruption. The root cause stays unknown, and this combo changes full verify_1 directly through S2a (R variant 0 at T=8), S2b (unpool at T=8) and S3 c4, so it IS exposed on that exact row. Required guard: the T=8 eager layer check in _dl3_layer_checks must run a FULL-layer config (window 0, B=1, q_len 8, ctx 80000, plus one ctx near 1048576) as well as a sliding one. It should run end to end under two-state alternating graph replay with refilled inputs and apply the judge's routing rules (picked within 0.05 of the 8th best, clear-margin top-8 present, route and distinct-expert counts), not only bit-identity to stage-1 R. Print the max rel error per output. On any miss, turn off S2a/S2b/S3c4 at T=8 for that state.
+- If class A (B=2..16) prints MASTER, Sd16 should be flat and its expected 'faster' is refuted by the selector, not by the run. Is the builder keeping class A only because the selector is cheap?
+- Does the judge deep-copy prepare()'s state or call prepare() twice? Either way, per-state slide_cnt is correct. Under deepcopy, though, any tensor cached in a module global (the current _COUNTERS and _INV_FREQ) is shared, which is the reason to move both.
+- Do the S2 checks cover bsm=16 at T=32 (marlin-block-m-cap-16) for R variant 0's align output? The hypothesis lists T=32 in _dl3_check_r; confirm sorted_ids, block_experts and n_padded are compared there, not only the ids.
+- Total wall time: import ~120 s plus master prepare 4.5 s plus ~45 s of new phases, then 13 tests and 12 timed shapes, all inside 15 minutes. Two prepare() calls double the 45 s. Confirm the deadlines (120/150/180 s from t_prepare0) apply per prepare call.
+
