@@ -71,7 +71,7 @@ review: proceed
 status: running
 review_at: 2026-10-25T153001Z
 review_companions: null
-stage: claimed
+stage: implemented
 claimed_at: 2026-10-25T153001Z
 base_sha: e15152e9078a60b4c86e9eaf4e8b71da18b05e66
 base_blob: a2fe2a75893c60d4f68cf94fcce8ce8f9b708a71
@@ -80,6 +80,12 @@ worktree: .worktrees/muse_prefill_layer/pre-expert-norm-fused-rega-gather
 mode: null
 restack_of: null
 stale_base: null
+implemented_at: 2026-10-25T153857Z
+impl_commit: bd60e2db50eb68c61b4ad1f1a098f3e995fadfaf
+submission_sha256: 3327ab76d29b974b079737dc1ea161430a51f90ff93f06cb901b7b98a18c34d4
+norm_sha256: 806ff3e3439f1273369ccc64ddaec6ad3349770f8354b7ed5101d9ac190875b3
+submission_blob: 4aee2710f852edb7d5dadc94735d121c48385cab
+lint_warnings: 73
 ---
 
 # pre-expert-norm-fused-rega-gather
@@ -123,3 +129,59 @@ No companion is warranted. Every replaced kernel has its own row in the archived
 - At turn_1 (T=753, ~1.2k active slots of ~6.5k capacity) the pair is ~12 us and L2-resident. Expect the 0.90x gate to pass narrowly or fail. Either outcome is fine, but read turn_1 as 'flat by design'.
 - Follow-up if this lands: the same dead-CTA pattern may exist in other one-CTA-per-capacity-slot kernels on the rega path (e.g. any scatter or zero-fill keyed by num_slots). Worth a grep before minting the next row-level hypothesis.
 
+
+## Implementation notes
+
+Built in `.worktrees/muse_prefill_layer/pre-expert-norm-fused-rega-gather/muse_prefill_layer/submission.py` on base blob a2fe2a75 (= current master's submission; master moved only by claim commits, no merge needed). Nothing could be run on this node (no GPU/torch/Triton): compile and runtime behaviour are unverified until the scored run's prepare log.
+
+What changed:
+- `_norm_gather_kernel` (Triton, `do_not_specialize=["num_routes","nprog"]`): persistent loop `for slot in range(pid, n_pad, nprog)` with n_padded loaded from the device; skips remote blocks; zero row at sentinel slots; fp32 sum of squares, `rsqrt(ss/4096+eps)`, `row*rstd*(1+w)`, one bf16 rounding. `_norm_gather()` launches it and returns the compiled handle.
+- `state["pre_expert_w"]` = bf16 checkpoint weight (no fp32 copy of 1+w); the kernel adds 1 in fp32.
+- `_experts(..., pre_norm=False)`: on the rega branches (low/high/ft) with `state["norm_gather_ok"][cls]` it calls `_experts_rega(..., prenorm=True)`; every other path applies master's module norm first and then master's exact dispatch. `kernel_fn` now calls `_experts(expert_input, ..., pre_norm=True)`.
+- `_experts_rega(..., prenorm=False)`: with prenorm it launches the fused kernel in place of `ext.rega_gather`; config from `state["norm_gather_cfg"][cls]` (a tuple of ints).
+- `_norm_gather_setup` runs in `prepare()` after `_rega_setup` returns (and before the align2 lines are re-printed).
+
+Review items:
+1. Occupancy: the grid is `SMs x resident CTAs/SM x mult`, with resident CTAs computed from the compiled handle's n_regs/shared/threads (printed per num_warps); the gate also sweeps num_warps {4,8} x mult {1,2} and prints all four medians; the fastest config is the one used.
+2. bf16 checkpoint weight stored, +1 in fp32 in the kernel. Deviation (small, gated): if the plain fp32 1+w misses the 1-ulp check against the module, the self-check retries with 1+w rounded to bf16 first (`ROUND_W` constexpr, for a module that holds a bf16 effective weight); the chosen flag is printed in the GATE line. Still no fp32 weight copy.
+3. The branch lives inside `_experts` on the rega path, reusing its own class/flag condition.
+4. All configs of the chosen variant (plus the 4-warp compile, and ROUND_W True only if needed) are compiled and graph-captured in prepare; no integer arg is specialized; nothing compiles in `kernel_fn`.
+5. The new gate runs after `_rega_setup`; it skips (all OFF) if prepare used more than 270 s, checked at start and before each class.
+6. The gate uses `_rega_case` kinds 'random' and 'skewed' explicitly; GATE lines say 'random'.
+7. Self-check vs master's norm + rega_gather: canary-filled xs (0x5A5A), active rows compared (>= 99.9% within 1 bf16 ulp, max <= 2 ulp, rel L2 <= 1e-3) and no row outside the active set touched in either buffer; whole `_experts_rega` output prenorm vs master rel L2 <= 1e-3 alternating two states (second has its own weight copy); two-state graph replay A B A B with refilled inputs at T=753 and 3012 (not 16384: memory); timing = pair vs fused, cold-L2 (256 MiB flush) graph replays, 21 alternations, empty-graph baseline subtracted, ON only at ratio <= 0.90. Prints `[norm-gather] GATE <class> T=<T> random pair .. fused .. ratio ..: ON/OFF` and a final `[norm-gather] PATH CHOSEN` line. Each launch in the self-check has a flushed before/after print.
+- Open question answers: the module forward source and effective-weight dtype are printed once in prepare (read them before the ulp lines); n_regs/CTAs per SM printed per class.
+- Other deviation: the replay check is skipped at T=16384 (as rega's own is); ft is covered by the eager two-state whole-output check.
+- Biggest risk: Triton API details never compiled here (dynamic-step `range`, `tl.math.rsqrt`, handle attributes); any exception leaves the class OFF = master's path.
+
+## Rules check
+
+- [x] CUDA-graph capturable: kernel_fn adds only a Triton launch with shape-derived grid; no sync, item, cpu, print, allocation on values (git diff checked; the syncs are in prepare-only functions).
+- [x] Nothing derived from `data` is cached across calls (state holds only the checkpoint weight, ints and flags).
+- [x] Weights: bf16 checkpoint weight, unchanged values; no repack.
+- [x] Activations BF16 as master (fp32 math inside the kernel, one bf16 rounding, same as the module).
+- [x] Attention untouched.
+- [x] No timing patches, harness access, module edits, reference import, subprocess or network (inspect.getsource is read-only).
+- [x] All work inside the timed call; no output caching or replay.
+- [x] No module/static globals holding tensors or pointers; everything a launch reads comes from `state` or call tensors; the gate checks two separately allocated states.
+
+okc_lint: `OK with warnings: muse_prefill_layer/submission.py` (warnings are only host-sync/dtype notes in prepare-only code); `python3 -I -m py_compile` ok, __pycache__ removed.
+
+## Pre-flight audit
+
+Audited 2026-10-25 (model opus, read-only plus numpy emulation; nothing compiled). **Verdict: dispatch-with-fixes.**
+
+Fixes (submission.py in the worktree; okc_lint OK with prepare-only host-sync warnings, py_compile ok, __pycache__ removed):
+- `tl.math.rsqrt` -> `tl.rsqrt`. The other problems use `tl.rsqrt` on the installed Triton 3.8 and it is proven there; the `tl.math` spelling was never exercised in this repo.
+- `_ng_occupancy`: `shared` now falls back to `handle.metadata.shared`, the way master's expert-gemm report reads it, so the smem bound is applied when the handle has no `shared` attribute. This changes the log only: smem never limits this kernel.
+
+Checked and found OK:
+- Triton: `range(pid, n_pad, nprog)` with a runtime step is a valid scf.for. lb, ub and step are all i32 (n_padded is kInt, and nprog is do_not_specialize). The scalar `if` inside the loop is valid. Master's logs show `n_regs`/`n_spills` read from a launch-returned handle.
+- No host read of n_padded in kernel_fn. It is passed as a pointer and loaded inside the kernel. The grid is `min(cfg, sorted_ids.numel())`, which depends on shape only.
+- The write set equals rega_gather's: slots below n_padded in local blocks, with zeros at sentinel sids. Indices stay in bounds for every T.
+- Numerics: precedent run 3fb4e723 logged the module's effective weight as bf16, and the same `x*rsqrt(mean+1e-5)*w_eff` formula matched F.rms_norm there at relL2 ~7e-6 and max 1 spacing. In a numpy emulation, ROUND_W=False (fp32 1+w) has every element within 1 ulp but misses the gate on rel L2 (~2.8e-3 > 1e-3). ROUND_W=True reproduces bf16(1+w) bit-exactly (0 ulp). The retry is therefore the exact module formula, not a mask. eps is RMS_EPS on both sides.
+- The norm is applied exactly once on every _experts branch: fused on the rega path when ng is ON, otherwise the module norm followed by rega, ssdq, marlin or triton. kernel_fn has no other pre_expert_norm call.
+- kernel_fn path: no print, try/except or mutable state, and no allocation beyond master's xs. cfg is a tuple of ints set in prepare. Every (num_warps, round_w) used at run time is compiled in prepare.
+- Two states: the kernel reads only its arguments. `pre_expert_w` is a state tensor, which the judge's copy clones. Nothing is module-global.
+- prepare: `_norm_gather_setup` runs after `_rega_setup`, with the 270 s skip at its start and before each class. Exceptions are caught per class (class OFF = master's path), and the PATH CHOSEN line is printed in `finally`.
+
+Residual risk: the Triton 3.8 compile of the dynamic-step persistent loop is unverified. A compile failure only turns the class OFF, but an in-kernel fault would poison the context. Reading found no OOB path.
