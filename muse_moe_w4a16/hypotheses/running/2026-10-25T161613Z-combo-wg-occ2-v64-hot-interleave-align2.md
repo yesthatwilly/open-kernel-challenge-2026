@@ -127,7 +127,7 @@ base_sha: 757927698c5069efecc0af3dde3ee3553dc1971f
 base_blob: 593b238c16387c5ac3774424ee9557882b9fc46a
 branch: hyp/muse_moe_w4a16/combo-wg-occ2-v64-hot-interleave-align2
 worktree: .worktrees/muse_moe_w4a16/combo-wg-occ2-v64-hot-interleave-align2
-mode: null
+mode: submit
 restack_of: null
 stale_base: null
 implemented_at: 2026-10-25T190500Z
@@ -136,6 +136,8 @@ submission_sha256: e1ffa95d1d7c94de8249a6f0837834ac8df76369d21283c41f408d58258b2
 norm_sha256: 809db5d96e93c4ae71eb08349d36c0a9c3431047e7432f5331531074146f3406
 submission_blob: 1f96da53a3e3c191b471b7c49f22e098069ba50c
 lint_warnings: 100
+attempt_file: 2026-10-25T190500Z-submit-combo-wg-occ2-v64-hot-interleave-align2.md
+prepared_at: 2026-10-25T190500Z
 ---
 
 # combo-wg-occ2-v64-hot-interleave-align2
