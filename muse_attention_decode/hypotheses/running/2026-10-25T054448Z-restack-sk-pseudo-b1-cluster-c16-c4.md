@@ -69,7 +69,7 @@ base_sha: edf4bf29fe8d509a2574c0becee65138cb7705f2
 base_blob: d8769ef25caf845a0e207538ccc5c62394b6ee3b
 branch: hyp/muse_attention_decode/restack-sk-pseudo-b1-cluster-c16-c4
 worktree: .worktrees/muse_attention_decode/restack-sk-pseudo-b1-cluster-c16-c4
-mode: null
+mode: check
 restack_of: null
 stale_base: null
 implemented_at: 2026-10-25T084553Z
@@ -78,6 +78,8 @@ submission_sha256: b015a01e0175339af029dc93dc681c896a94682bf5336d611817445cd83be
 norm_sha256: de8fb43c57a6803dc508db9e4e4738a46d1f1b25db01df36959e63bcc7bd9a37
 submission_blob: 7eda7a001d411ff41aaf5946ed5c59c840686052
 lint_warnings: 36
+attempt_file: 2026-10-25T084553Z-check-restack-sk-pseudo-b1-cluster-c16-c4.md
+prepared_at: 2026-10-25T084553Z
 ---
 
 # restack-sk-pseudo-b1-cluster-c16-c4
