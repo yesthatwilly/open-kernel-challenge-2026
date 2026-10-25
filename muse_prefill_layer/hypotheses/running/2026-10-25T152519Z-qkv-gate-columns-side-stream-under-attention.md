@@ -74,7 +74,7 @@ base_sha: 712ef67fb9abd8cc36abfcb14e6187d4f513303b
 base_blob: a2fe2a75893c60d4f68cf94fcce8ce8f9b708a71
 branch: hyp/muse_prefill_layer/qkv-gate-columns-side-stream-under-attention
 worktree: .worktrees/muse_prefill_layer/qkv-gate-columns-side-stream-under-attention
-mode: null
+mode: submit
 restack_of: null
 stale_base: null
 implemented_at: 2026-10-25T153907Z
@@ -83,6 +83,8 @@ submission_sha256: 1f2b19424a21445e6d700e25b15ab4875c90173f16b6ed3bfe3d205d8f769
 norm_sha256: 83d3f9b76a4503578f9bffa24136c3f176ba18245a1fae513d8b0f3ac7117c73
 submission_blob: 19661e646dbeecc0186513d2515851128ab984d5
 lint_warnings: 72
+attempt_file: 2026-10-25T153907Z-submit-qkv-gate-columns-side-stream-under-attention.md
+prepared_at: 2026-10-25T153907Z
 ---
 
 # qkv-gate-columns-side-stream-under-attention
