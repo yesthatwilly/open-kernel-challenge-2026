@@ -81,7 +81,7 @@ review: proceed
 status: running
 review_at: 2026-10-25T161800Z
 review_companions: null
-stage: implemented
+stage: dispatched
 claimed_at: 2026-10-25T161800Z
 base_sha: 848b2c2e1405318d09d245e2d959487d1742f8c0
 base_blob: 9fb1f7c4b4282dd7461c6cdba926fe3ebf12128e
@@ -98,6 +98,8 @@ submission_blob: f4751fc054335a94d1b401af272e98a2d4760363
 lint_warnings: 93
 attempt_file: 2026-10-25T163415Z-submit-combo-b-normgather-two-cta-low-regate.md
 prepared_at: 2026-10-25T163415Z
+job: 73b40cd13fdf4bb0
+dispatched_at: 2026-10-25T163423Z
 ---
 
 # combo-b-normgather-two-cta-low-regate
