@@ -63,7 +63,7 @@ base_sha: f8b3f7230f2656a4143b6a87bb6b8dc1be0b5e49
 base_blob: 7d31b758c60017e045f6e0f75d2e437931ea34b0
 branch: hyp/muse_moe_w4a16/cuda-nvfp4-swapab-mma-persistent-small-m-inproc
 worktree: .worktrees/muse_moe_w4a16/cuda-nvfp4-swapab-mma-persistent-small-m-inproc
-mode: null
+mode: check
 restack_of: null
 stale_base: true
 implemented_at: 2026-10-25T003249Z
@@ -72,6 +72,8 @@ submission_sha256: 7fcc10488ad03889e2a90a0a719352967ce356cbe71a7f10d034eacdb37fc
 norm_sha256: c38f444c80bdae160f500f98ce4f8d792c61ad89161de7183964f653065d1829
 submission_blob: 90abfd1b6a054e344505bc60431e382b3f5fe552
 lint_warnings: 24
+attempt_file: 2026-10-25T003250Z-check-cuda-nvfp4-swapab-mma-persistent-small-m-inproc.md
+prepared_at: 2026-10-25T003250Z
 ---
 
 # cuda-nvfp4-swapab-mma-persistent-small-m-inproc
