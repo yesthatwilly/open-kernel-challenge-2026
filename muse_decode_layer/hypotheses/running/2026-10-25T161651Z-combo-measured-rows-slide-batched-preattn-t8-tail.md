@@ -110,7 +110,7 @@ review: proceed
 status: running
 review_at: 2026-10-25T162256Z
 review_companions: null
-stage: claimed
+stage: implemented
 claimed_at: 2026-10-25T162256Z
 base_sha: 0c4719336efd5dcbef40bf2e1bbbccad0ca34463
 base_blob: 4bb57fd292a7f0fd5a80bd88dc773008b490bf8c
@@ -119,6 +119,12 @@ worktree: .worktrees/muse_decode_layer/combo-measured-rows-slide-batched-preattn
 mode: null
 restack_of: null
 stale_base: null
+implemented_at: 2026-10-25T191043Z
+impl_commit: b257ef2b43b4e7fc3b6a738c33f35c155392c3ed
+submission_sha256: 56bed064ba73e4549099978a1dd05461d071cbf94032c3984f1da8cc58a2917d
+norm_sha256: b2394dd23614aa30635bb318b5cb32306e73ccbfce09cfac4da9071796e51f26
+submission_blob: 3fc72e97304e132db432fcc87872be997f842929
+lint_warnings: 71
 ---
 
 # combo-measured-rows-slide-batched-preattn-t8-tail
@@ -188,3 +194,95 @@ A gain or a loss on any row is attributable from the log plus the profile withou
 - Do the S2 checks cover bsm=16 at T=32 (marlin-block-m-cap-16) for R variant 0's align output? The hypothesis lists T=32 in _dl3_check_r; confirm sorted_ids, block_experts and n_padded are compared there, not only the ids.
 - Total wall time: import ~120 s plus master prepare 4.5 s plus ~45 s of new phases, then 13 tests and 12 timed shapes, all inside 15 minutes. Two prepare() calls double the 45 s. Confirm the deadlines (120/150/180 s from t_prepare0) apply per prepare call.
 
+
+## Implementation notes
+
+Built 2026-10-25 on base 0c4719336e (master's muse_decode_layer/submission.py is byte-identical at c3f81624, so no merge was needed). Only `muse_decode_layer/submission.py` changed: +1390 / -166 lines. The diff adds no new load_inline module.
+
+**Layout for the sibling combos C2 and C3.** Each source has one named prepare phase and one per-state flag:
+
+| Source | Phase | Flag |
+|---|---|---|
+| S1 | `_cb_prepare_s1` | `state["s1"][A or B]` |
+| S2a | `_cb_prepare_s2a` | `state["dl3"]["b_t"][8, 16 or 32]` |
+| S2b | `_cb_prepare_s2b` | `state["dl3"]["u8"]` |
+| S3 | `_cb_prepare_s3` | `state["s3"][cell]`, with cells c1-b16, c1-b32, c2-t8, c2-t128, c2-t256, c3-t128, c3-t256, c4-t8 |
+
+After those phases, `_cb_prepare_t8` runs the T=8 layer check. `_combo_prepare` calls all of them after `_dl3_finish`, and each phase goes through `_cb_phase`. `_cb_phase` checks the start deadline measured from t_prepare0 (S2a and S2b 120 s, S1 150 s, S3 180 s, T8 210 s; no new cell starts after 255 s). It catches exceptions, prints the phase's wall seconds and the cumulative prepare time, and applies the flags. `_cb_report` then prints one `PATH CHOSEN: <source> <class>: NEW|MASTER ... [new X us vs master Y us]` line for each of the 14 source x class cells. It checks that each flag equals the printed winner and forces master on a mismatch. Master's T>1 attention side is now `_attn_core`: `_master_front` + `_attn_route` + FA3, sk or split-KV. With every flag off it issues master's launches in master's order. `_parent_attention` is `_gemm(_attn_core(...), o)`.
+
+**kernel_fn** reads only config and this state's flags. `_attn_core` routes S1 (`_sliding_forward_band`, S=16, BLOCK_N 64, 4 warps, 2 stages) and S3 (`_s3_pre_attention`, plus `_s3_paired_norm_gate` in c3). kernel_fn itself passes `r_t` to `_dl_forward` for S2a and takes `dl3["u8"]` into the unpool branch for S2b. kernel_fn has no prints, no try/except and no per-call mutation.
+
+**Selectors (all cells).** `_cb_time` captures each path as a graph, flushes 256 MB before every replay, runs 41 interleaved rounds (order reversed every round, after 3 warm rounds) and subtracts the median of a one-kernel graph. A cell is enabled only when new/master <= 0.98. The plain numbers from the first prepare() are reused by the second one (`_CB_SELECT`). Each state still runs its own correctness gates.
+
+**Correctness gates.** Every source x class cell gets two-state alternating graph replay with refilled inputs and poisoned outputs. `_cb_second_state` gives the second state its own slide_cnt, P/R, Q/O/unpool and sk buffers.
+- S1 and S3 (`_cb_attn_alt`) compare the attention side (qkv to o-GEMM input) against master run eagerly on a clone, and against an fp64 reference (`_cb_attn_ref`).
+- S2a (`_dl3_check_r` at T in {2, 5, 8, 16, 32} plus `_cb_s2_alt` "R") requires all seven R outputs to be bit-identical to stage 1's R. That includes sorted_ids, block_experts and n_padded at T=32 (bsm 16), which answers the review's open question.
+- S2b (`_dl3_check_u` at T in {2, 5, 8} plus `_cb_s2_alt` "U") requires rel-L2 <= 2e-3 and exact zero columns.
+- S3 also runs a kernel-level `_s3_front_check` on q, k and v, described under review item (4).
+
+### Review fixes applied
+1. **S1 is ported only in the sliding-batched-triton-b16-band form (1cabea713e).** `_sliding_b16_gate` became `_s1_class` and `_sliding_forward_b16` became `_sliding_forward_band`, with the band widened to classes A (2..16) and B (17..32). Nothing from sliding-fused-batched-decode-port was taken: no try/except and no `_SLIDING_FUSED_ON`.
+2. **Counters and `_INV_FREQ` moved into the state.** `state["slide_cnt"]` is `torch.zeros(128, int32)` allocated in prepare() through `_slide_state`. The band uses [0:B*Hkv] and master's batch-1 `_sliding_forward` now uses its own slice [64:66]. `state["slide_inv_freq"]` replaces `_INV_FREQ`, and `_COUNTERS`, `_counters` and `_inv_freq` are deleted. `_dl3_ministate` also gives the second state its own slide_cnt.
+3. **Counter assertion.** `_cb_clean` runs after every check, alternation, selector and phase. If any counter (slide_cnt, cnt_p/r, cnt_q/o/u, both sk ticket levels) is not 0, it zeroes them and sets `recs["_dirty"]`, which keeps master for every combo cell of that state.
+4. **S3 RoPE check by rel-L2.** `_s3_front_check` covers position bases 80000, 299995 and 1048500 on the sliding cells, and 1048500 on c4. It compares q and the new k rows by rel-L2 against an fp64 accurate-RoPE reference (`_cb_rope64`) and requires new <= master + 1e-3 and at most one E4M3 code gap from master. It also requires v exact, the paired zero half exactly 0 and every other row untouched.
+5. **FULL-layer T=8 check.** `_dl3_layer_checks(..., t8=True)` calls `_cb_t8_layer_check`, which runs kernel_fn at B=1, q_len 8 on three cases: full ctx 80000, full ctx 1048570, and sliding ctx 80000 (the sliding companion the review asked for). Each case runs two states with one graph each and 4 alternating replays with refilled inputs and poisoned outputs.
+   - The judge's routing rules are applied against master's fp64 router scores (`_cb_route_rules`): pick within 0.05 of the 8th, clear-margin (> 0.03) local top-8 present, routes >= 92% - 4, distinct >= 85% - 2.
+   - It prints the max error per output: hidden, stream, update, k_cache, k_gap and token ids.
+   - On a miss, S2a class 8, S2b, S3 c4-t8 and S3 c2-t8 go off for that state. If the check cannot run (deadline or exception), those cells also go off.
+6. **Every source x class has its own gate, selector and line.** That is 14 cells, each with its own correctness gate, its own selector at <= 0.98 and one PATH CHOSEN line.
+
+### Answers to the open questions
+- **Is class A kept only because the selector is cheap?** Yes. It is gated, and the expected verdict is MASTER, which keeps Sd16 flat.
+- **Deepcopy vs a second prepare() call:** this works either way, because every buffer is per state and no module global holds a tensor.
+- **Deadlines** are per prepare() call, measured from that call's own t_prepare0.
+
+### Deviations
+- **S1/S3 attention-side bound.** The bound is "o rel-L2 <= 1e-2 vs master OR new vs fp64 <= 1.25 x master vs fp64 + 1e-3". The spec says only 1e-2 vs master. Master's FP8-q error alone can exceed 1e-2 on peaked synthetic softmax (LESSONS: calibrate bounds against fp32 and master's own error). Cache bounds follow the spec: k within 1 code on < 6% of bytes, v exact, other rows identical.
+- **S3 q check.** The spec asks for q (bf16 before the cast) rel-L2 <= 1e-3 vs master, but the S3 kernel never produces a bf16 q. The check instead compares the FP8 q against the fp64 reference (new <= master + 1e-3) and requires at most one code gap from master.
+- **S3 classes as cells.** S3 has 8 cells, one per selector point the spec lists: c1 {16, 32}, c2 {8, 128, 256}, c3 {128, 256}, c4 8. Batch splits at 23/24, as the sk batch classes do. Verify cells are limited to 2 <= q_len <= 8, B <= 64, and include a (B=5, L=3) check. c1 runs only when this state feeds sk or split-KV (unpaired q); otherwise that cell stays on master.
+- **Synthetic keys** have std 0.3 (soft) and are clamped to stay inside E4M3.
+- **T=8 layer tolerances.** With identical ids: hidden <= 2e-2, stream <= 1e-2, update <= 5e-2. If ids differ but the routing rules pass: 5e-2 / 2.5e-2 / 1e-1. Cache: k <= 1 code and rel <= 2e-2, v exact.
+
+### Biggest risk
+Prepare wall time, roughly 60-90 s per call and doubled across two calls:
+- Graph captures at ctx 80000, B=32, plus data builds of about 650 MB.
+- Full-layer verify at ctx 1048570.
+- About 50 S3 front checks and fp64 references.
+
+The per-phase deadlines bound it. First measurement must be an okc check.
+
+## Rules check
+- [x] CUDA-graph capturable. kernel_fn, `_attn_core`, `_sliding_forward_band`, `_s3_pre_attention` and `_s3_paired_norm_gate` have no .item(), .cpu(), synchronize, prints or try/except (grep of the diff). Allocations are sized by config only. Branches use config plus this state's prepare() flags only.
+- [x] Nothing derived from `data` is cached. The state holds only prepare()-built buffers and flags. `_CB_SELECT` holds plain floats and bools from prepare() timing on synthetic data.
+- [x] Weights are untouched (no new repack). NVFP4 and BF16 are as in master.
+- [x] Activations: BF16 as master. KV FP8 (S1 and S3 store E4M3). q is E4M3 (S3) or bf16 (S1), never coarser than E4M3.
+- [x] Every key is attended. S1 covers the full 2048-token window with 16 splits; S3 changes only the front half before FA3, sk or split-KV.
+- [x] No timing patches, harness access, module edits, reference import, processes or network. There is no subprocess, multiprocessing or os.fork anywhere.
+- [x] All work is inside the timed call, with no output caching. prepare() checks and selectors use synthetic data only.
+- [x] Two-state rotation is safe: there is no module global with a device pointer. `_COUNTERS` and `_INV_FREQ` were removed and slide_cnt is per state.
+- [x] n/a: there are no new load_inline, sm_90a or wgmma builds (no new CUDA module); Triton launches are announced and synced in prepare() (`_cb_launch`).
+
+```
+python3 -I .claude/skills/churnsubs/bin/okc_lint.py <wt>/muse_decode_layer/submission.py --problem muse_decode_layer
+-> OK with warnings (71 host-sync warnings, every one "outside kernel_fn's call graph; fine in prepare()"; 0 errors)
+python3 -I -m py_compile -> ok; symtable scan for undefined globals -> none; __pycache__ removed
+```
+
+## Pre-flight audit
+
+Audited 2026-10-25 (opus, read-only plus numpy emulation; no GPU). **Verdict: dispatch-with-fixes.**
+
+Verified as claimed:
+- With every flag off, `_attn_core` + `_parent_attention` issue master's launches in master's order with master's arguments: qkv GEMM, then the B=1 sliding kernel, or FusedQKNorm, the k/v divide, the FP8 casts and store_cache, then sk, split-KV, or the paired zero-pad copies + FA3 + unpad + FusedRMSNormGate, then the o GEMM. `_attn_route`, `_s1_class` and `_s3_cell` are pure Python on config and flags. kernel_fn's R and unpool conditions reduce to master's when `b_t` and `u8` are False.
+- No module global holds a per-state tensor. `_COUNTERS`, `_INV_FREQ`, `_counters` and `_inv_freq` are gone. `slide_cnt` is per state, with the band on [0:B*Hkv <= 64] and B=1 on [64:66]. `_dl3_ministate` and `_cb_second_state` give the second state its own counters. `_CB_SELECT` and `_SMS` hold only plain numbers.
+- Only one prepare() call per process has been seen in master logs (cumulative equals this call, 4.5 s). Deadlines are per call, from t_prepare0.
+
+Fixes (worktree `muse_decode_layer/submission.py`):
+1. **S1 cache gate could never pass (category 1).** `_cb_cmp_attn` required new k rows within one E4M3 code of master on < 6% of bytes. S1 is master's Triton `_sliding_fused_kernel`, which computes RoPE with tl.cos/tl.sin. If these lower to the approximate MUFU instructions (LESSONS line 140), numpy emulation gives code gaps of 6-7 at position ~2048 with kv_scale 1/64, and 8 (kv 1) or 90 (kv 1/64) at position 80000, because near-zero codes are dense. That would turn S1 off in both classes on every run. The k gate is now rel-L2 of the dequantized new k rows vs master's at <= 4e-2, which is half the judge's 8% cache bound. Emulated: mean 1.6%, max 3.6% on the smallest case. v exact and untouched rows identical are kept. Code gap and fraction are printed as info only.
+2. **The o bound could hide one wrong row.** The fp64 alternative (new <= 1.25x master + 1e-3, aggregate) could pass a row about 20% off in a B=32 batch. It now also requires every token row to satisfy new-vs-fp64 <= 2x master's row error + 5e-3. The first disjunct (<= 1e-2 vs master) is unchanged: a fully wrong row in B=32 gives an aggregate error >= 0.18. S3's q check (gap <= 1 code everywhere, zero half exact, no worse than master vs fp64 + 1e-3) already rejects wrong RoPE, heads or rounding, so it is left as is.
+3. **The T=8 layer check tripped on noise.** The k rel-L2 bound was 2e-2. fp32->E4M3 (S3) vs bf16->E4M3 (master) double rounding gives about 1.6% mean, with P(>2e-2) of about 7% per replay at 16 rows (emulated). Over up to 12 replays it would turn the verify_1 cells off about half the time. The bound is now 4e-2 (emulated max 2.6%). `k_gap <= 1` is kept, since both paths use the cos_sin table.
+4. **Deadlines tightened so a phase skips rather than overruns.** The T8 start deadline goes from 210 to 200 s and the cell deadline from 255 to 240 s. A new 260 s case deadline (`_cb_case_late`, using the plain float `_CB_T0`) is checked before each `_cb_attn_alt` case and each T=8 case. A late check returns a failure, which keeps master for that cell. The worst case is about 270 s, against the 300 s limit.
+
+lint: OK with warnings (prepare-only host syncs). py_compile: ok. __pycache__ removed.
+
+Residual risk: none of this has run on a GPU. Prepare wall time (estimated 60-90 s) and the S2a/S3 kernels' first T>1 launches inside this stack are unmeasured. A slow import plus prepare could squeeze the 15-minute run budget.
