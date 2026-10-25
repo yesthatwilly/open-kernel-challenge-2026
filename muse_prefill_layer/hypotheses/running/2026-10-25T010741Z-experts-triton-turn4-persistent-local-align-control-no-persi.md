@@ -42,7 +42,7 @@ base_sha: e530b77b8a03d595f892b57b91b666002026a175
 base_blob: db8a3344398bca79ea5cafeb580f701c055fd475
 branch: hyp/muse_prefill_layer/experts-triton-turn4-persistent-local-align-control-no-persi
 worktree: .worktrees/muse_prefill_layer/experts-triton-turn4-persistent-local-align-control-no-persi
-mode: null
+mode: check
 restack_of: null
 stale_base: null
 implemented_at: 2026-10-25T011203Z
@@ -51,6 +51,8 @@ submission_sha256: b1cbdd857e3645f66eba4e33ea05832d31ad47d9ba9dd05386369e4ce9ab1
 norm_sha256: 7c6cb53cad0be04fcc302765621c9e20591a53910e583104aa6b1f995859bcfe
 submission_blob: 91960546c9fde845f6690ef5ee756719aa4d0b71
 lint_warnings: 17
+attempt_file: 2026-10-25T011203Z-check-experts-triton-turn4-persistent-local-align-control-no-persi.md
+prepared_at: 2026-10-25T011203Z
 ---
 
 # experts-triton-turn4-persistent-local-align-control-no-persi
