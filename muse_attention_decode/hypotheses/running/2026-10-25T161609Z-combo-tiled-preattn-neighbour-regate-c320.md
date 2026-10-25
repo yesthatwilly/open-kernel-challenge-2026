@@ -110,7 +110,7 @@ review: proceed
 status: running
 review_at: 2026-10-25T162052Z
 review_companions: null
-stage: claimed
+stage: implemented
 claimed_at: 2026-10-25T162052Z
 base_sha: 1e8d6d6adbaadd4ecaf72ebd01c75f24004e81bc
 base_blob: 5cf8fae31e5b84c36efeeb4569763eb9b06e1c8a
@@ -119,6 +119,12 @@ worktree: .worktrees/muse_attention_decode/combo-tiled-preattn-neighbour-regate-
 mode: null
 restack_of: null
 stale_base: null
+implemented_at: 2026-10-25T185648Z
+impl_commit: 5add0d920bc74e267ce3bb4b111bb358b90c8002
+submission_sha256: 44401237b2b4e359add3d7a8babe17e1de4beebc62b314d9279a3690948facb9
+norm_sha256: 1f9d236445727a1acee7fb5ca70104cb8f25ef9f29463416708d8efd45393133
+submission_blob: 21b3e1e32dfdd66befa9a3f5bb59050edac082d2
+lint_warnings: 72
 ---
 
 # combo-tiled-preattn-neighbour-regate-c320
@@ -250,3 +256,27 @@ okc_lint output (`python3 -I .claude/skills/churnsubs/bin/okc_lint.py <worktree>
 Biggest compile/run risk:
 - **Concurrent load_inline.** The c320 build on a background thread runs alongside master's main-thread load_inline; this is untested on the judge. If it fails, the build error is printed and FD1 stays on master.
 - **Import time.** If master's import sequence is already near 400 s, the 480 s rule skips P3 to P6, and the run measures master plus at most band 2.
+
+## Pre-flight audit
+
+Audited 2026-10-25 by an Opus subagent (read-only on the judge path; no GPU here). **Verdict: dispatch-with-fixes.**
+
+Fixes (all in the worktree submission.py, minimal):
+1. **c320 build moved off the background thread.** Before: `_c320_start_build()` started a `threading.Thread` running `load_inline` before master's first build, concurrently with master's four main-thread `load_inline` calls. Those calls set and restore `os.environ["TORCH_CUDA_ARCH_LIST"]`, which every concurrent build reads. torch.utils.cpp_extension also shares the extensions root, its file-baton lock files and ninja. A race could break master's modules, not only c320, and this had never run on the judge.
+   - Now `_c320_build()` runs sequentially on the main thread as phase P3a, after master's whole import sequence and after P1/P2. It has the 480 s start rule and a 90 s deadline; a build that finishes past the deadline is discarded.
+   - GATE A is its own phase, P3b, with a 35 s deadline under the same rule.
+   - A skip, failure or overrun prints `PATH CHOSEN: full decode_1 [A chunk320]: master two-level (...)`.
+   - The thread, `_C320_THREAD`, `_C320_BUILD`, `_c320_start_build` and `_c320_join` are removed, and `threading` is no longer imported.
+2. **c320 build flags now match the judged chunk320 build (183eb55) and the sibling combo-naive-c320.** They are `extra_cuda_cflags=["-O3", "-arch=sm_90a"]`, with TORCH_CUDA_ARCH_LIST left as the environment has it. The thread build used `-O3 -lineinfo -std=c++20` without `-arch=sm_90a`. The CUDA needs no C++20, and GATE A's binaryVersion == 90 check stays.
+
+Checked, no change needed:
+- **(False, False) is master.** `_nb_step(data, False, False)` makes the same launches as master's kernel_fn body. A diff against master shows only the pre-attention launch moved into `_nb_pre`, with the same kernel, grid, arguments, constexprs and num_warps.
+- **Per-call Python.** kernel_fn adds only `_nb_class(cfg)` (a config-only predicate) and reads of the frozen tables. `_sliding_decode_sk` adds one frozenset lookup. This is host-side Python only and is not in the captured graph.
+- **Publish.** `_SD_ROUTE`, `_NB_TILED` and `_NB_C320` are assigned in one statement after P6, on the main thread only. `_nb_post_check` runs kernel_fn through the real dispatch. A failure there, or dirty tickets, restores all four tables from `_NB_SNAP`. The outer except around `_nb_setup` restores them too.
+- **Band 2 threshold.** Band 2 (B=16, incumbent Triton) keeps master's need = 1.05. Band 3 keeps 1.03 against cluster C=4.
+- **kernel_fn purity.** No sync, print or try/except. The c320 workspaces are torch.empty sized from page_table.shape[1] and batch. No global holds per-state pointers.
+- **Import budget.** The added phase deadlines are P1 60 + P2 40 + P3a 90 + P3b 35 + P4 40 + P5 60 + P6 30 s. Each phase starts only if elapsed + its deadline <= 480 s, which leaves about 400 s of the 15 minutes for tests and timing. Master's whole run 252abb7f took 470 s.
+
+okc_lint: OK with warnings (host-sync only, in import-time checks). py_compile: OK.
+
+Residual risk: if master's import already runs past about 390 s, P3a is skipped and the headline c320 lift is lost (a clean fallback to master), because the sequential build no longer hides its 40-50 s behind master's builds.
