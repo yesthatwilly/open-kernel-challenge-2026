@@ -38,10 +38,10 @@ priority: 2
 kind: primary
 controls_for: null
 review: proceed
-status: running
+status: done
 review_at: 2026-10-25T054817Z
 review_companions: null
-stage: dispatched
+stage: harvested
 claimed_at: 2026-10-25T054817Z
 base_sha: ea4c938779678da09fceb3d72b468aef6f3272d9
 base_blob: 60dfe35d5417d9c0f89067ff313efdc2c41d03a2
@@ -60,6 +60,13 @@ attempt_file: 2026-10-25T054919Z-check-w13-marlin-atomic-add-t1-only.md
 prepared_at: 2026-10-25T054919Z
 job: 1048c6edf3e54892
 dispatched_at: 2026-10-25T054930Z
+outcome: neutral
+verdict_detail: unproven-vs-best
+speedup: 1.3461325131176454
+speedup_ci: [1.3259405254208807, 1.3663245008144098]
+harvested_at: 2026-10-25T084158Z
+best_at_harvest: 1.3438953504561806
+promotion: null
 ---
 
 # w13-marlin-atomic-add-t1-only
@@ -127,3 +134,29 @@ Review points applied:
 - [x] n/a: sm90a/mbarrier/TMA items, no CUDA in this change
 
 okc_lint: "OK with warnings" (only host-sync warnings in prepare(), outside kernel_fn's call graph). py_compile OK; __pycache__ removed.
+
+## Result
+
+- job `1048c6edf3e54892` (check), status done, passed True, tests 5/5
+- speedup 1.3461x, 95% CI [1.3259, 1.3663], score 9990.472608713128 µs vs SGLang 13448.5 µs
+- best at harvest: {"speedup": 1.3438953504561806, "ci": [1.3237369201993379, 1.364053780713023], "job": "7a0d900a1dd34666"}; base result: muse_moe_w4a16/hypotheses/done/neutral/w2-marlin-atomic-add-small-m.result.json
+- **outcome: neutral** (unproven-vs-best)
+- files: `muse_moe_w4a16/hypotheses/done/neutral/w13-marlin-atomic-add-t1-only.result.json`, `muse_moe_w4a16/hypotheses/done/neutral/w13-marlin-atomic-add-t1-only.patch`; branch `hyp/muse_moe_w4a16/w13-marlin-atomic-add-t1-only`
+
+## Attribution
+
+| shape | w | base µs | hyp µs | delta | verdict |
+|---|---|---|---|---|---|
+| bs=1 load=decode_1 sharding=ep8 | 60 | 44.88 | 43.89 | 1.0192 | flat |
+| bs=16 load=decode_16 sharding=ep8 | 60 | 147.71 | 148.41 | 0.9922 | flat |
+| bs=32 load=decode_32 sharding=ep8 | 60 | 198.72 | 200.01 | 0.9989 | flat |
+| bs=8 load=verify_1 sharding=ep8 | 60 | 106.03 | 106.2 | 0.9971 | flat |
+| bs=128 load=verify_16 sharding=ep8 | 60 | 317.77 | 326.45 | 0.9979 | flat |
+| bs=256 load=verify_32 sharding=ep8 | 60 | 467.8 | 468.23 | 1.0021 | flat |
+
+no shape moved outside noise. Expected hit: 3/4. Noise ±1.5%.
+
+## Follow-ups
+
+- unproven-vs-best: the change is not proven either way; a stacked hypothesis (`depends_on: w13-marlin-atomic-add-t1-only`) that adds a further change in the same area is the only way to learn more (identical code is never re-run).
+

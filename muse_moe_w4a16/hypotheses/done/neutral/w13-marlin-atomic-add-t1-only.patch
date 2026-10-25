@@ -1,0 +1,180 @@
+diff --git a/muse_moe_w4a16/submission.py b/muse_moe_w4a16/submission.py
+index 60dfe35..34e5b52 100644
+--- a/muse_moe_w4a16/submission.py
++++ b/muse_moe_w4a16/submission.py
+@@ -463,9 +463,16 @@ def prepare(weights: Weights) -> dict:
+         # The original BF16 weight for _post_norm_combine_kernel, which adds the 1 in fp32.
+         "post_norm_w": weights["post_norm_w"].contiguous(),
+         "w2_mode": "master",
++        "w13_modes": {},
+     }
+     if (0, 32) in banks and banks[(0, 32)]["expert_map"] is not None:
+         state["w2_mode"] = _w2_atomic_self_check(weights, state, device)
++        try:
++            state["w13_modes"] = _w13_atomic_self_check(weights, state, device)
++        except Exception as e:  # never raises: master path
++            state["w13_modes"] = {}
++            print("[w13-atomic] PATH CHOSEN = master for every T band (self-check error %s: %s)"
++                  % (type(e).__name__, str(e)[:200]), flush=True)
+     return state
+ 
+ 
+@@ -529,12 +536,136 @@ def _w2_atomic_self_check(weights, state, device):
+     return mode
+ 
+ 
++# Hypothesis w13-marlin-atomic-add-t1-only: up to this many tokens (T=1 only; w2 has its own bound) the w13 Marlin call may
++# use use_atomic_add=True (use_fp32_reduce stays True); prepare()'s self-check picks the mode per T band.
++W13_ATOMIC_MAX_TOKENS = 1
++W13_POISON = 3.0e4
++# Pre-flight audit: 5e-3 is about the noise floor here. Landed w2 atomic alone is 4.79e-3 vs non-atomic, and
++# the w13 delta changes w2's input by ~1 bf16 ulp, which decorrelates w2's atomic rounding between ref and
++# candidate, so a correct candidate can read 6-8e-3 at T=1. A missing zero or a wrong write reads >> 1e-1.
++# Candidate vs FP32 stays well inside the judge's 1.5%.
++W13_ATOMIC_TOL = 1e-2
++W13_CHECK_TOKENS = (1,)
++
++
++def _w13_band(tokens):
++    """The self-check T each token count is served by (None above W13_ATOMIC_MAX_TOKENS)."""
++    for t in W13_CHECK_TOKENS:
++        if tokens <= t:
++            return t
++    return None
++
++
++def _rel_l2(a, b):
++    return ((a.float() - b.float()).norm() / b.float().norm().clamp_min(1e-12)).item()
++
++
++def _synthetic_decode_data(bank, gen, device, tokens, pool=None):
++    ids = torch.randint(0, N_EXPERTS, (tokens, TOP_K), generator=gen, device=device, dtype=torch.int32)
++    lo = bank["start"]
++    hi = bank["start"] + (bank["count"] if pool is None else pool)
++    ids[:, :3] = torch.randint(lo, hi, (tokens, 3), generator=gen, device=device, dtype=torch.int32)
++    return {
++        "hidden_states": torch.randn((tokens, 4096), generator=gen, device=device, dtype=torch.bfloat16),
++        "topk_ids": ids,
++        "topk_weights": torch.rand((tokens, TOP_K), generator=gen, device=device, dtype=torch.float32),
++        "config": {"bs": tokens, "d_hidden": 4096, "d_expert": 4096, "n_experts": N_EXPERTS,
++                   "local_start": bank["start"], "local_count": bank["count"], "top_k": TOP_K,
++                   "sharding": "ep8"},
++    }
++
++
++def _print_slice_estimate(state, device, gen):
++    """Print-only. Marlin's real thread_k/thread_n and grid are not readable here, so these are
++    ESTIMATES assuming a 128x128 tile, 4 CTAs/SM (the workspace's max_blocks_per_sm) and an even
++    stripe of (m-block, n-tile, k-tile) work over the grid; m-blocks come from the real align."""
++    bank = state["banks"][(0, 32)]
++    sms = torch.cuda.get_device_properties(device).multi_processor_count
++    grid = sms * 4
++    for tokens in (1,):
++        data = _synthetic_decode_data(bank, gen, device, tokens)
++        bsm = _block_size_m(tokens, bank["count"])
++        _, (_, _, n_padded) = _align_small(data["topk_ids"], bank["start"], bank["count"], bsm)
++        torch.cuda.synchronize()
++        m_blocks = max(1, int(n_padded.item()) // bsm)
++        for name, n, k in (("w13", 2 * bank["size_n"], 4096), ("w2", 4096, bank["size_n"])):
++            n_tiles, k_tiles = n // 128, k // 128
++            per_cta = -(-(m_blocks * n_tiles * k_tiles) // grid)
++            slices = max(1, -(-k_tiles // max(per_cta, 1)))
++            print("[w13-atomic] slice estimate T=%d %s: block_size_m=%d n_padded/bsm=%d m_blocks=%d n_tiles=%d "
++                  "k_tiles=%d grid~%d work/CTA~%d k-tiles => split-K slices ~%d (ESTIMATE, 128x128 tile)"
++                  % (tokens, name, bsm, int(n_padded.item()), m_blocks, n_tiles, k_tiles, grid, per_cta, slices),
++                  flush=True)
++
++
++def _w13_atomic_self_check(weights, state, device):
++    """Untimed, synthetic inputs only. Per T band in W13_CHECK_TOKENS pick the w13 mode: "atomic"
++    (use_atomic_add, no memset, output buffer pre-filled with junk), "atomic_zero" (cache1.zero_()
++    first) or "master". The gate compares against CURRENT master (w2 mode as chosen, w13 non-atomic):
++    rel-L2 <= W13_ATOMIC_TOL (1e-2) for the w13 delta alone. The rel-L2 against a fully non-atomic path is printed only."""
++    bank = state["banks"][(0, 32)]
++    w2_mode = state["w2_mode"]
++    modes = {}
++    gen = torch.Generator(device=device)
++    gen.manual_seed(4321)
++    try:
++        _print_slice_estimate(state, device, gen)
++    except Exception as e:
++        print("[w13-atomic] slice estimate failed: %s: %s" % (type(e).__name__, str(e)[:200]), flush=True)
++    for tokens in W13_CHECK_TOKENS:
++        mode, reason = "master", "no candidate passed"
++        try:
++            data = _synthetic_decode_data(bank, gen, device, tokens)
++            print("[w13-atomic] launching master ref T=%d" % tokens, flush=True)
++            ref = _forward(data, state, w2_mode, "master").float()
++            torch.cuda.synchronize()
++            print("[w13-atomic] done master ref T=%d" % tokens, flush=True)
++            full = _forward(data, state, "master", "master").float()
++            torch.cuda.synchronize()
++            print("[w13-atomic] T=%d current master (w2=%s) vs fully non-atomic: rel-L2 %.3g"
++                  % (tokens, w2_mode, _rel_l2(ref, full)), flush=True)
++            err = {}
++            for cand in ("atomic", "atomic_zero"):
++                try:
++                    print("[w13-atomic] launching %s T=%d" % (cand, tokens), flush=True)
++                    out = _forward(data, state, w2_mode, cand, poison=True).float()
++                    torch.cuda.synchronize()
++                    print("[w13-atomic] done %s T=%d" % (cand, tokens), flush=True)
++                    rel = _rel_l2(out, ref)
++                    rel_full = _rel_l2(out, full)
++                    finite = bool(torch.isfinite(out).all().item())
++                    print("[w13-atomic] T=%d %s: rel-L2 vs master %.3g, vs fully non-atomic %.3g, finite %s"
++                          % (tokens, cand, rel, rel_full, finite), flush=True)
++                    if finite and rel <= W13_ATOMIC_TOL:
++                        mode, reason = cand, "rel-L2 vs current master %.3g" % rel
++                        break
++                    err[cand] = "rel-L2 %.3g finite %s" % (rel, finite)
++                except Exception as e:  # binding rejected the combination
++                    err[cand] = "%s: %s" % (type(e).__name__, str(e)[:200])
++            if mode == "master":
++                reason = "; ".join("%s failed (%s)" % (k, v) for k, v in err.items())
++        except Exception as e:
++            mode, reason = "master", "self-check error %s: %s" % (type(e).__name__, str(e)[:200])
++        modes[tokens] = mode
++        print("[w13-atomic] PATH CHOSEN T<=%d = %s (%s); memset in path: %s"
++              % (tokens, mode, reason, mode == "atomic_zero"), flush=True)
++    if all(m == "master" for m in modes.values()):
++        print("[w13-atomic] PATH CHOSEN = master for every band: this run measured nothing (harvest as VOID)",
++              flush=True)
++    print("[w13-atomic] w13 atomic add bound T<=%d; use_fp32_reduce=True; modes by band %s"
++          % (W13_ATOMIC_MAX_TOKENS, modes), flush=True)
++    return modes
++
++
+ def kernel_fn(data: Inputs, state: dict) -> torch.Tensor:
+     """This GPU's share of the MoE output, bfloat16 [M, H]."""
+-    return _forward(data, state, state.get("w2_mode", "master"))
++    # w13 mode is chosen per T band in prepare (a shape, not a value); anything unlisted is master.
++    w13_mode = state.get("w13_modes", {}).get(_w13_band(data["hidden_states"].shape[0]), "master")
++    return _forward(data, state, state.get("w2_mode", "master"), w13_mode)
+ 
+ 
+-def _forward(data: Inputs, state: dict, w2_mode: str) -> torch.Tensor:
++def _forward(data: Inputs, state: dict, w2_mode: str, w13_mode: str = "master",
++             poison: bool = False) -> torch.Tensor:
+     cfg = data["config"]
+     bank = state["banks"][(cfg["local_start"], cfg["local_count"])]
+     x = data["hidden_states"].contiguous()
+@@ -581,10 +712,18 @@ def _forward(data: Inputs, state: dict, w2_mode: str) -> torch.Tensor:
+                   b_q_type=scalar_types.float4_e2m1f, is_k_full=True, use_atomic_add=False,
+                   use_fp32_reduce=True, is_zp_float=False)
+     ws = state["workspace"]
++    w13_common = common
++    if poison:
++        # Self-check only: junk in the w13 output buffer so a missing zero-fill is caught.
++        cache13.fill_(W13_POISON)
++    if w13_mode != "master" and num_tokens <= W13_ATOMIC_MAX_TOKENS:
++        w13_common = dict(common, use_atomic_add=True)
++        if w13_mode == "atomic_zero":
++            cache1.zero_()
+     cache1 = moe_wna16_marlin_gemm(
+         x, cache1, bank["w13"], None, bank["w13_s"], bank["w13_gs"], None, None, None, ws,
+         sorted_ids, block_experts, n_padded, topk_weights, top_k=TOP_K,
+-        size_m=num_tokens, size_n=gemm1_n, size_k=size_k, **common)
++        size_m=num_tokens, size_n=gemm1_n, size_k=size_k, **w13_common)
+     silu_and_mul(cache1.view(-1, gemm1_n), cache2, expert_ids=local_ids.view(-1), expert_step=1)
+     w2_common = common
+     if w2_mode != "master" and num_tokens <= W2_ATOMIC_MAX_TOKENS:
