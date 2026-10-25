@@ -1,6 +1,6 @@
 # muse_prefill_layer findings
 
-Regenerated 2026-10-25T115715Z by `churn.py index`. Read this before writing a hypothesis for muse_prefill_layer.
+Regenerated 2026-10-25T121703Z by `churn.py index`. Read this before writing a hypothesis for muse_prefill_layer.
 
 ## Current best
 
@@ -200,8 +200,8 @@ Where the time goes (per scored shape, top kernels):
 - queue: experts-triton-first-turn-per-gemm-config-pick [Triton NVFP4 engine at T > 4096 (first_turn): separate tile config for w13 and w2, picked by prepare timing] p3 hold
 - queue: experts-turn1-cuda-wgmma-rega-port-bucket32 [w13 + w2 expert GEMMs at T <= 1024 (turn_1): port of muse_moe_w4a16's register-A swap-AB wgmma NVFP4 grouped GEMM, 16/32-row buckets only] p1 hold
 - queue: marlin-w2-atomic-add-turn [w2 Marlin call on the Marlin path (T <= 4096): use_atomic_add, picked per shape class in prepare] p4 hold
-- queue: experts-first-turn-ssdq-s2-large-m [w13 + w2 expert GEMMs at T > 4096 (first_turn T=16384): extend the ssdq dequant-producer + SS wgmma grouped GEMM to large M, replacing the Triton NVFP4 GEMM] p2 queued
-- queue: experts-turn-rega-s4-first-turn-n128 [w13 + w2 expert GEMMs at T > 4096 (first_turn T=16384): extend the ported s4 register-A wgmma engine past Marlin's range, replacing the Triton NVFP4 GEMM] p2 queued
-- queue: experts-turn-rega-s4-w2-only-t4096 [w2 expert GEMM only at T <= 4096 (turn_1, turn_4): s4 register-A swap-AB wgmma w2 fed by master's Marlin w13 + _silu_mul_sorted output] p2 queued
-- queue: experts-turn1-ssdq-s2-m64-tile [w13 + w2 expert GEMMs at T <= 1024 (turn_1 T=753): ssdq with a 64-route M tile, one consumer warpgroup per tile, dequant-once per weight stage] p3 queued
-- queue: turn-align-two-phase-chunk-prefix [MoE align/dispatch on T <= 4096 (Marlin turn_1 + ssdq turn_4): _align_parallel replaced by a two-launch chunk-count + prefix-place align] p2 queued
+- queue: experts-first-turn-ssdq-s2-large-m [w13 + w2 expert GEMMs at T > 4096 (first_turn T=16384): extend the ssdq dequant-producer + SS wgmma grouped GEMM to large M, replacing the Triton NVFP4 GEMM] p2 hold
+- queue: experts-turn-rega-s4-w2-only-t4096 [w2 expert GEMM only at T <= 4096 (turn_1, turn_4): s4 register-A swap-AB wgmma w2 fed by master's Marlin w13 + _silu_mul_sorted output] p2 hold
+- queue: experts-turn1-ssdq-s2-m64-tile [w13 + w2 expert GEMMs at T <= 1024 (turn_1 T=753): ssdq with a 64-route M tile, one consumer warpgroup per tile, dequant-once per weight stage] p3 hold
+- running: experts-turn-rega-s4-first-turn-n128 [w13 + w2 expert GEMMs at T > 4096 (first_turn T=16384): extend the ported s4 register-A wgmma engine past Marlin's range, replacing the Triton NVFP4 GEMM] p2 running
+- running: turn-align-two-phase-chunk-prefix [MoE align/dispatch on T <= 4096 (Marlin turn_1 + ssdq turn_4): _align_parallel replaced by a two-launch chunk-count + prefix-place align] p2 running
