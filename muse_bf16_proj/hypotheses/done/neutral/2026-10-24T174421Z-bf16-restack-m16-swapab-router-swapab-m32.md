@@ -59,10 +59,12 @@ speedup: 1.2215006063849365
 speedup_ci: [1.2031780972891624, 1.2398231154807104]
 harvested_at: 2026-10-24T184717Z
 best_at_harvest: 1.1958517819004566
-promotion: done
+promotion: merged
 promotion_job: 60b20fd0bf924267
 promotion_at: 2026-10-25T000254Z
 board: "{\"rank\": 320, \"team\": \"yesthatwilly\", \"speedup\": 1.2215, \"first\": false, \"ahead\": 319, \"to_first\": 1.318}"
+hand_landed: true
+promotion_commit: b99b1dd3508b24bbdf847b51d2fb53de219ca957
 ---
 
 # bf16-restack-m16-swapab-router-swapab-m32
