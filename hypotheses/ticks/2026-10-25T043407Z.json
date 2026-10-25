@@ -1,0 +1,534 @@
+{
+ "ok": true,
+ "promote": [
+  {
+   "problem": "muse_attention_decode",
+   "slug": "full-decode1-streamk-s3-two-level-ticket",
+   "run": "okc submit muse_attention_decode /home/user/git/musespark/muse_attention_decode/submission.py --no-wait --json",
+   "then": "churn.py record-submit muse_attention_decode full-decode1-streamk-s3-two-level-ticket <job>"
+  },
+  {
+   "problem": "muse_decode_layer",
+   "slug": "full-decode-splitkv-restack-on-pdl",
+   "run": "okc submit muse_decode_layer /home/user/git/musespark/muse_decode_layer/submission.py --no-wait --json",
+   "then": "churn.py record-submit muse_decode_layer full-decode-splitkv-restack-on-pdl <job>"
+  }
+ ],
+ "dispatch": [
+  {
+   "problem": "muse_prefill_layer",
+   "picks": [
+    {
+     "slug": "moe-pre-post-norm-triton-multitoken",
+     "mode": "check",
+     "priority": 5,
+     "review": "required",
+     "kind": "primary",
+     "controls_for": null
+    }
+   ]
+  }
+ ],
+ "wake_s": 1800,
+ "needs_human": [],
+ "report": {
+  "preflight": {
+   "ok": true,
+   "branch": "master",
+   "whoami": "yesthatwilly",
+   "quotas": {
+    "muse_bf16_proj": {
+     "scored": {
+      "per_day": 10,
+      "used": 0,
+      "left": 10
+     },
+     "checks": {
+      "per_day": 20,
+      "used": 17,
+      "left": 3
+     }
+    },
+    "muse_attention_decode": {
+     "scored": {
+      "per_day": 10,
+      "used": 0,
+      "left": 10
+     },
+     "checks": {
+      "per_day": 20,
+      "used": 9,
+      "left": 11
+     }
+    },
+    "muse_moe_w4a16": {
+     "scored": {
+      "per_day": 10,
+      "used": 1,
+      "left": 9
+     },
+     "checks": {
+      "per_day": 20,
+      "used": 13,
+      "left": 7
+     }
+    },
+    "muse_decode_layer": {
+     "scored": {
+      "per_day": 10,
+      "used": 1,
+      "left": 9
+     },
+     "checks": {
+      "per_day": 20,
+      "used": 15,
+      "left": 5
+     }
+    },
+    "muse_prefill_layer": {
+     "scored": {
+      "per_day": 10,
+      "used": 0,
+      "left": 10
+     },
+     "checks": {
+      "per_day": 20,
+      "used": 9,
+      "left": 11
+     }
+    }
+   },
+   "tracks": null,
+   "hours_to_reset": 19.44,
+   "lock": ".claude/churn.lock",
+   "_exit": 0
+  },
+  "intake": {
+   "ok": true,
+   "added": [],
+   "skipped": [],
+   "_exit": 0
+  },
+  "recover": {
+   "ok": true,
+   "actions": [],
+   "needs_human": [],
+   "_exit": 0
+  },
+  "harvest": {
+   "ok": true,
+   "harvested": [
+    {
+     "problem": "muse_attention_decode",
+     "slug": "full-decode-splitkv-s3-fused-preattn",
+     "job": "825baa03798f431a",
+     "outcome": "neutral",
+     "detail": "within-ci",
+     "speedup": 1.42828155853798,
+     "ci": [
+      1.4068573351599103,
+      1.4497057819160495
+     ],
+     "md": "muse_attention_decode/hypotheses/done/neutral/2026-10-25T003621Z-full-decode-splitkv-s3-fused-preattn.md"
+    },
+    {
+     "problem": "muse_attention_decode",
+     "slug": "stack-streamk-ticket-cluster-c16-c4",
+     "job": "195dcc1209b6457b",
+     "outcome": "neutral",
+     "detail": "beats-base-not-best",
+     "speedup": 1.4265750765791432,
+     "ci": [
+      1.405176450430456,
+      1.4537135820295741
+     ],
+     "md": "muse_attention_decode/hypotheses/done/neutral/2026-10-25T014545Z-stack-streamk-ticket-cluster-c16-c4.md"
+    },
+    {
+     "problem": "muse_attention_decode",
+     "slug": "full-verify-wgmma-s4-multitile-fix",
+     "job": "51b0d5c110f3459c",
+     "outcome": "neutral",
+     "detail": "within-ci",
+     "speedup": 1.3757685809606255,
+     "ci": [
+      1.355132052246216,
+      1.3964051096750347
+     ],
+     "md": "muse_attention_decode/hypotheses/done/neutral/2026-10-25T035310Z-full-verify-wgmma-s4-multitile-fix.md"
+    },
+    {
+     "problem": "muse_bf16_proj",
+     "slug": "pooler-unpooler-bulk-tma-row-owner-s2-cxx20-rebuild",
+     "job": "571ea532ad7a410d",
+     "outcome": "regression",
+     "detail": "regression",
+     "speedup": 1.0330747408154506,
+     "ci": [
+      1.0175786197032188,
+      1.0485708619276823
+     ],
+     "md": "muse_bf16_proj/hypotheses/done/regression/2026-10-25T035343Z-pooler-unpooler-bulk-tma-row-owner-s2-cxx20-rebuild.md"
+    },
+    {
+     "problem": "muse_bf16_proj",
+     "slug": "restack-pooler-unpooler-nn-layout-m128",
+     "job": "92cd4e758a924ca0",
+     "outcome": "neutral",
+     "detail": "unproven-vs-best",
+     "speedup": 1.2281845792246262,
+     "ci": [
+      1.2097618105362569,
+      1.2466073479129955
+     ],
+     "md": "muse_bf16_proj/hypotheses/done/neutral/2026-10-25T042040Z-restack-pooler-unpooler-nn-layout-m128.md"
+    },
+    {
+     "problem": "muse_bf16_proj",
+     "slug": "restack-router-cluster-dsmem-m8",
+     "job": "d323ce8ef6a54fde",
+     "outcome": "neutral",
+     "detail": "within-ci",
+     "speedup": 1.2198658542111795,
+     "ci": [
+      1.2015678663980118,
+      1.238163842024347
+     ],
+     "md": "muse_bf16_proj/hypotheses/done/neutral/2026-10-25T042040Z-restack-router-cluster-dsmem-m8.md"
+    },
+    {
+     "problem": "muse_decode_layer",
+     "slug": "fused-preattention-paired-pad-restack",
+     "job": "5e9b5464d1444708",
+     "outcome": "neutral",
+     "detail": "unproven-vs-best",
+     "speedup": 1.2744529931842001,
+     "ci": [
+      1.255336198286437,
+      1.293569788081963
+     ],
+     "md": "muse_decode_layer/hypotheses/done/neutral/2026-10-24T165619Z-fused-preattention-paired-pad-restack.md"
+    },
+    {
+     "problem": "muse_decode_layer",
+     "slug": "moe-chain-cuda-swapab-expert-once-s3-rebase-fp32ref-bound",
+     "job": "51d047cbc5ff450a",
+     "outcome": "regression",
+     "detail": "regression",
+     "speedup": 1.0637372150195272,
+     "ci": [
+      1.0477811567942343,
+      1.0796932732448201
+     ],
+     "md": "muse_decode_layer/hypotheses/done/regression/2026-10-25T014617Z-moe-chain-cuda-swapab-expert-once-s3-rebase-fp32ref-bound.md"
+    },
+    {
+     "problem": "muse_decode_layer",
+     "slug": "stack-route-topk-pdl-unpool-nf1",
+     "job": "87211e1362b64c4c",
+     "outcome": "neutral",
+     "detail": "within-ci",
+     "speedup": 1.2671291437775074,
+     "ci": [
+      1.2481222066208448,
+      1.28613608093417
+     ],
+     "md": "muse_decode_layer/hypotheses/done/neutral/2026-10-25T035400Z-stack-route-topk-pdl-unpool-nf1.md"
+    },
+    {
+     "problem": "muse_decode_layer",
+     "slug": "dense-chain-stage2-attn-side-pdl-t1-gate",
+     "job": "c6cb53d8ebc2478a",
+     "outcome": "neutral",
+     "detail": "unproven-vs-best",
+     "speedup": 1.2716873487088036,
+     "ci": [
+      1.2526120384781716,
+      1.2907626589394356
+     ],
+     "md": "muse_decode_layer/hypotheses/done/neutral/2026-10-25T035414Z-dense-chain-stage2-attn-side-pdl-t1-gate.md"
+    },
+    {
+     "problem": "muse_decode_layer",
+     "slug": "sliding-batched-triton-b16-band",
+     "job": "02bf417257e14a3d",
+     "outcome": "neutral",
+     "detail": "unproven-vs-best",
+     "speedup": 1.274307463334638,
+     "ci": [
+      1.2551928513846184,
+      1.2934220752846575
+     ],
+     "md": "muse_decode_layer/hypotheses/done/neutral/2026-10-25T042121Z-sliding-batched-triton-b16-band.md"
+    },
+    {
+     "problem": "muse_moe_w4a16",
+     "slug": "cuda-nvfp4-wgmma-rega-grouped-s3-wide-bucket-fix",
+     "job": "3bdec0e58d684c17",
+     "outcome": "failed",
+     "detail": "test:failed",
+     "speedup": null,
+     "ci": [
+      null,
+      null
+     ],
+     "md": "muse_moe_w4a16/hypotheses/done/failed/2026-10-25T035329Z-cuda-nvfp4-wgmma-rega-grouped-s3-wide-bucket-fix.md"
+    },
+    {
+     "problem": "muse_prefill_layer",
+     "slug": "norm-boundaries-persistent-multirow",
+     "job": "46afe489e2754c83",
+     "outcome": "neutral",
+     "detail": "within-ci",
+     "speedup": 1.0716402826818254,
+     "ci": [
+      1.055565678441598,
+      1.0877148869220528
+     ],
+     "md": "muse_prefill_layer/hypotheses/done/neutral/2026-10-24T224410Z-norm-boundaries-persistent-multirow.md"
+    },
+    {
+     "problem": "muse_prefill_layer",
+     "slug": "experts-triton-first-turn-unmasked-loads-l2-hints",
+     "job": "aeda8b5a523642b1",
+     "outcome": "neutral",
+     "detail": "within-ci",
+     "speedup": 1.0677050569173394,
+     "ci": [
+      1.0516894810635793,
+      1.0837206327710993
+     ],
+     "md": "muse_prefill_layer/hypotheses/done/neutral/2026-10-24T224437Z-experts-triton-first-turn-unmasked-loads-l2-hints.md"
+    }
+   ],
+   "pending": [
+    {
+     "problem": "muse_bf16_proj",
+     "slug": "restack-unpooler-slice-cluster-dsmem-m8",
+     "job": "e557d92969864449",
+     "status": "running",
+     "age_h": 0.1
+    },
+    {
+     "problem": "muse_bf16_proj",
+     "slug": "router-cluster-dsmem-s2-flat-in-m-occupancy",
+     "job": "ef8a8bca31ef420e",
+     "status": "queued",
+     "age_h": 0.0
+    },
+    {
+     "problem": "muse_bf16_proj",
+     "slug": "router-m128-m256-cluster-dsmem-tiled-rewrite",
+     "job": "b7b2b55d04544660",
+     "status": "queued",
+     "age_h": 0.0
+    },
+    {
+     "problem": "muse_decode_layer",
+     "slug": "full-decode-streamk-ticket-port",
+     "job": "6d48932b230d4067",
+     "status": "queued",
+     "age_h": 0.0
+    },
+    {
+     "problem": "muse_decode_layer",
+     "slug": "full-decode1-two-level-ticket-port",
+     "job": "5e44c7aedecd4cc1",
+     "status": "queued",
+     "age_h": 0.0
+    },
+    {
+     "problem": "muse_decode_layer",
+     "slug": "w2-marlin-atomic-add-t1-port",
+     "job": "7a9f5de5aecc4aba",
+     "status": "running",
+     "age_h": 0.1
+    },
+    {
+     "problem": "muse_moe_w4a16",
+     "slug": "w13-marlin-atomic-add-on-master-small-m",
+     "job": "171684977ec1470f",
+     "status": "queued",
+     "age_h": 0.0
+    },
+    {
+     "problem": "muse_moe_w4a16",
+     "slug": "w2-marlin-atomic-add-verify",
+     "job": "ccbcda65da584be0",
+     "status": "queued",
+     "age_h": 0.1
+    }
+   ],
+   "_exit": 0
+  },
+  "harvest-promotions": {
+   "ok": true,
+   "promotions": [
+    {
+     "problem": "muse_moe_w4a16",
+     "slug": "w2-marlin-atomic-add-small-m",
+     "job": "7a0d900a1dd34666",
+     "promotion": "done",
+     "speedup": 1.3438953504561806,
+     "you": {
+      "rank": 451,
+      "team": "yesthatwilly",
+      "speedup": 1.3439,
+      "first": false,
+      "ahead": 450,
+      "to_first": 1.8771
+     }
+    }
+   ],
+   "_exit": 0
+  },
+  "promote": {
+   "ok": true,
+   "promote": [
+    {
+     "problem": "muse_attention_decode",
+     "slug": "full-decode1-streamk-s3-two-level-ticket",
+     "run": "okc submit muse_attention_decode /home/user/git/musespark/muse_attention_decode/submission.py --no-wait --json",
+     "then": "churn.py record-submit muse_attention_decode full-decode1-streamk-s3-two-level-ticket <job>"
+    },
+    {
+     "problem": "muse_decode_layer",
+     "slug": "full-decode-splitkv-restack-on-pdl",
+     "run": "okc submit muse_decode_layer /home/user/git/musespark/muse_decode_layer/submission.py --no-wait --json",
+     "then": "churn.py record-submit muse_decode_layer full-decode-splitkv-restack-on-pdl <job>"
+    }
+   ],
+   "skipped": [],
+   "_exit": 0
+  },
+  "budget": {
+   "ok": true,
+   "plans": [
+    {
+     "problem": "muse_attention_decode",
+     "checks_left": 11,
+     "scored_left": 10,
+     "hours_to_reset": 19.43,
+     "in_flight": 3,
+     "in_flight_checks": 0,
+     "gains_pending": 0,
+     "promotion_hold": 0,
+     "spendable": 21,
+     "queue": 0,
+     "need": 21,
+     "pace": 2,
+     "N": 0,
+     "picks": [],
+     "shortfall": 21,
+     "reason": "queue has 0 eligible hypotheses; 21 more could be absorbed today (run /hypothesize muse_attention_decode)",
+     "wake_s": 1800
+    },
+    {
+     "problem": "muse_bf16_proj",
+     "checks_left": 3,
+     "scored_left": 10,
+     "hours_to_reset": 19.43,
+     "in_flight": 5,
+     "in_flight_checks": 3,
+     "gains_pending": 0,
+     "promotion_hold": 1,
+     "spendable": 12,
+     "queue": 0,
+     "need": 12,
+     "pace": 1,
+     "N": 0,
+     "picks": [],
+     "shortfall": 12,
+     "reason": "queue has 0 eligible hypotheses; 12 more could be absorbed today (run /hypothesize muse_bf16_proj)",
+     "wake_s": 1800
+    },
+    {
+     "problem": "muse_decode_layer",
+     "checks_left": 4,
+     "scored_left": 9,
+     "hours_to_reset": 19.43,
+     "in_flight": 4,
+     "in_flight_checks": 3,
+     "gains_pending": 0,
+     "promotion_hold": 1,
+     "spendable": 12,
+     "queue": 0,
+     "need": 12,
+     "pace": 1,
+     "N": 0,
+     "picks": [],
+     "shortfall": 12,
+     "reason": "queue has 0 eligible hypotheses; 12 more could be absorbed today (run /hypothesize muse_decode_layer)",
+     "wake_s": 1800
+    },
+    {
+     "problem": "muse_moe_w4a16",
+     "checks_left": 7,
+     "scored_left": 9,
+     "hours_to_reset": 19.43,
+     "in_flight": 3,
+     "in_flight_checks": 2,
+     "gains_pending": 0,
+     "promotion_hold": 1,
+     "spendable": 15,
+     "queue": 0,
+     "need": 15,
+     "pace": 1,
+     "N": 0,
+     "picks": [],
+     "shortfall": 15,
+     "reason": "queue has 0 eligible hypotheses; 15 more could be absorbed today (run /hypothesize muse_moe_w4a16)",
+     "wake_s": 1800
+    },
+    {
+     "problem": "muse_prefill_layer",
+     "checks_left": 11,
+     "scored_left": 10,
+     "hours_to_reset": 19.43,
+     "in_flight": 2,
+     "in_flight_checks": 0,
+     "gains_pending": 0,
+     "promotion_hold": 0,
+     "spendable": 21,
+     "queue": 1,
+     "need": 21,
+     "pace": 2,
+     "N": 1,
+     "picks": [
+      {
+       "slug": "moe-pre-post-norm-triton-multitoken",
+       "mode": "check",
+       "priority": 5,
+       "review": "required",
+       "kind": "primary",
+       "controls_for": null
+      }
+     ],
+     "shortfall": 20,
+     "reason": "queue has 1 eligible hypotheses; 20 more could be absorbed today (run /hypothesize muse_prefill_layer)",
+     "wake_s": 3159
+    }
+   ],
+   "wake_s": 1800,
+   "dispatch_total": 1,
+   "_exit": 0
+  },
+  "index": {
+   "ok": true,
+   "changed": [
+    "muse_attention_decode/hypotheses/INDEX.md",
+    "muse_attention_decode/hypotheses/FINDINGS.md",
+    "muse_bf16_proj/hypotheses/INDEX.md",
+    "muse_bf16_proj/hypotheses/FINDINGS.md",
+    "muse_decode_layer/hypotheses/INDEX.md",
+    "muse_decode_layer/hypotheses/FINDINGS.md",
+    "muse_moe_w4a16/hypotheses/INDEX.md",
+    "muse_moe_w4a16/hypotheses/FINDINGS.md",
+    "muse_prefill_layer/hypotheses/INDEX.md",
+    "muse_prefill_layer/hypotheses/FINDINGS.md",
+    "hypotheses/INDEX.md"
+   ],
+   "_exit": 0
+  }
+ }
+}
