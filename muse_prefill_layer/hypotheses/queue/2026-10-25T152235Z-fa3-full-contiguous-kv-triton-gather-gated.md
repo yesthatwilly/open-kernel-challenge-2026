@@ -75,8 +75,10 @@ depends_on: null
 priority: 1
 kind: primary
 controls_for: null
-review: required
+review: proceed
 status: queued
+review_at: 2026-10-25T152551Z
+review_companions: null
 ---
 
 # fa3-full-contiguous-kv-triton-gather-gated
@@ -97,3 +99,27 @@ Built on master (commit 1932a9c4, submission blob a2fe2a75). Only the FA3 call o
 ## Risk
 
 Low risk: the same FA3 binary, the same FP8 q and KV and P precision, and every key attended; only the KV source changes from paged rows to a contiguous copy of the same rows. Headline stake is small (~+0.3%; first_turn load +0.6%, turn_4 at most +0.3%), so judge it on the FA3 row per routed shape and the GATE lines. The scored effect may sit inside the +-1.5% interval. Distinct from the regressed fa3-contiguous-kv-gather in form, which its follow-up forbade repeating: a bandwidth-sane Triton gather instead of torch indexing, full layers only, a per-class cold-L2 timing gate instead of unconditional routing, and a zeroed tail. Failure modes: (a) FA3's contiguous path may pick a tile config whose advantage is smaller at the judge's widths than at the parity era's: the gate makes this flat, not a loss; (b) the batched-mode variant may fail to accept FP8 q without cu_seqlens_q in sgl_kernel's wrapper: caught by the self-check, which turns C off. The step's rows must be gathered after store_cache (same stream). If it lands, it is the base a later stage can use to put the prefix gather on a side stream under the qkv GEMM (prefix rows do not depend on this call's qkv), which would let turn_4 route too.
+
+## Adversarial review
+
+Reviewed 2026-10-25T152551Z by an adversarial subagent (model opus).
+
+**Verdict: proceed.** Proceed with no companion. The prepare-time GATE lines time paged and contiguous FA3 against each other in the same process, which is a better A/B than any scored companion. But the expected headline move is about +0.15% geomean, roughly 10x smaller than the +-1.5% interval, so judge this scored submit on the GATE lines and the full first_turn FA3 rows, never on the headline.
+
+### Justification
+Mechanism is real and already measured once. At page_size 1, FA3 takes the non-TMA paged path: cp.async row gathers and forced PackGQA. The regression run 75bbf278 (5/5 tests passed, so the contiguous VARLEN API works with an FP8 cache) measured FA3 alone at 856.7 / 4299.7 / 7746.9 us on first_turn full ctx 0 / 32768 / 65536, plus 405.4 us on turn_1 and 1563.0 us on turn_4. Its losses came from the torch vectorized_gather_kernel: 100.5 us on turn_1 and 391.6 us on turn_4, about 0.4 TB/s on 165 MB. That run also gathered on the sliding layers, which no longer happens. The judge's page_table is a torch.randperm scatter (reference.py:261), so the gate's randomly permuted synthetic page table matches what the judge serves, and the judge's cold-L2 replays match the gate's flush. Arithmetic: turn_4 needs (1563 + ~55-65 us gather of 165 MB of scattered 128 B rows) / 1647 = 0.98-0.99, and turn_1 needs (405 + ~14) / 422 = 0.99. Both miss the 0.97 bar, so the gate keeps A there, as the md predicts. first_turn ctx0 at (857 + ~3) / 907-912 = 0.94-0.95 and ctx32768 at (4300 + ~10) / 4525-4545 = 0.95 should route. Converting to the score: about 16 x (390 + 225 + 45) us = ~10.5 ms of a 2.297 s first_turn load (0.46%), which is ~0.15% of the geomean. The md's '+0.6% first_turn load' is about 30% optimistic. WEAKEST LINK: the 5% FA3 advantage compares one contiguous sample against paged rows from other runs, and those rows themselves vary: ctx65536 paged FA3 is 8164.1 (parity 62025c), 8004.1 (check 4e6f815a) and 8352.6 us (scored bff8e367), about +-2%. Against the 8004 row, the ctx65536 advantage is only 3.2%, right at the 0.97 bar. So the class with the most at stake may route differently from run to run (in prepare, in the judge, and in the final-review reruns). That does no correctness harm, because both paths are exact, but each run's attribution must use the GATE line it printed. The md's cited numbers (8352.6 / 18349.9, 4542.4, 911.7, 1643.1, 417.5) are from bff8e367, which is consistent.
+
+### Confounders on the current kernel
+- sglang-pipeline-parity (muse_prefill_layer/hypotheses/done/gain/sglang-pipeline-parity.patch): it set the exact FA3 call being swapped (paged, VARLEN, scheduler_metadata from data) and the store_cache that writes the step's rows. It does not confound the measurement, because the change lives entirely inside that call. The one hard requirement it imposes is ordering: the Triton gather must run on the main stream after store_cache, or the step's own 753/16384 keys are stale.
+- experts-turn-rega-s4-port-t4096 / experts-turn-rega-s4-first-turn-n128 / align-two-phase-all-t-rega: no shared kernels, traffic or numerics with attention. The only indirect coupling is the 300 s prepare budget: master already uses 124.4 s of its internal 200 s (bff8e log). The new self-check, Triton compile and 5-class x 3-candidate x >=25-replay gate (~5-10 s) must run inside that budget accounting and fall back to A on overrun, or a slow prepare could starve the rega gates.
+- No landed item changes the L2 state FA3 sees (the judge flushes before each replay), so the gather-then-FA3 L2 residency is the same in the gate and the judge. Remaining landed items (stack-tonight-five, hybrid/triton expert stages, ssdq s1b) touch only the MoE half: no interaction.
+
+### Interference and A/B needs
+No companion. Every landed item outside parity sits in the MoE half. Parity is the base and cannot sensibly be reverted. A revert or tune A/B therefore has nothing to isolate. The two sub-effects the md separates (gather cost vs. FA3 TMA kernel gain, and VARLEN vs. BATCHED) come for free: they are separate rows in the profile (Triton gather kernel vs the flash::enable_sm90_or_later row), and the GATE line reports A/B/C and the gather's own time from the same process, with cold L2 and alternated order. Every outcome is already readable. If the GATE routes ctx32768/65536 to B or C and the FA3 row drops by more than the gather row adds, the mechanism is confirmed. If the GATE keeps A everywhere, the result is flat, nothing is lost, and the contiguous advantage at these widths is below 3% (the idea closes). If the GATE routes but the scored rows lose, the gate's synthetic timing disagrees with the judge, and that is visible by comparing the GATE us against the profile rows. A scored companion would only add a second noisy headline, ~10x inside its own CI, and the in-process gate already answers the question it would ask.
+
+### Open questions
+- The ctx65536 class is the one with the most at stake, and its contiguous advantage may sit at 3% against the 0.97 bar. Should the bar be 0.98 for first_turn classes only? There the gather is <1% of FA3 time and a 2% win is still ~160 us x 16. As written, a real 3% win can be gated off by gate noise.
+- BATCHED mode (C) with FP8 q and no cu_seqlens_q in sgl_kernel's wrapper is unverified. The self-check turns it off on failure, but an exception in the wrapper during graph capture must also be caught per variant, so that a C failure does not knock B off too (the md says 'any exception anywhere leaves every class on A', which would discard a working B).
+- Turn_1 paged FA3 already runs a split plus FlashAttnFwdCombine (6.9 us). Contiguous VARLEN may choose a different num_splits. If the gate ever routes turn_1, read both the FA3 row and the combine row. Expected: the gate keeps A.
+- Since this is a scored submit with an expected headline of about +0.15%, the board entry will most likely land within noise of 1.448x, above or below it. The harvest should classify it from the GATE lines and the full first_turn FA3 rows, not from the speedup.
+
