@@ -93,16 +93,16 @@ priority: 1
 kind: primary
 controls_for: null
 review: proceed
-status: queued
+status: running
 review_at: 2026-10-25T162247Z
 review_companions: null
-stage: null
-claimed_at: null
-base_sha: null
-base_blob: null
-branch: null
-worktree: null
-mode: null
+stage: claimed
+claimed_at: 2026-10-25T202838Z
+base_sha: 955dc77c0c4e24a2271f21aa7a6691e2fd1d3086
+base_blob: 3fc72e97304e132db432fcc87872be997f842929
+branch: hyp/muse_decode_layer/combo-measured-rows-plus-rega-align2-large-t
+worktree: .worktrees/muse_decode_layer/combo-measured-rows-plus-rega-align2-large-t
+mode: submit
 restack_of: null
 stale_base: null
 ---
