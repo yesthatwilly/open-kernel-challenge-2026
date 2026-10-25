@@ -68,7 +68,7 @@ review: proceed
 status: running
 review_at: 2026-10-25T153023Z
 review_companions: null
-stage: claimed
+stage: implemented
 claimed_at: 2026-10-25T153023Z
 base_sha: 712ef67fb9abd8cc36abfcb14e6187d4f513303b
 base_blob: a2fe2a75893c60d4f68cf94fcce8ce8f9b708a71
@@ -77,6 +77,12 @@ worktree: .worktrees/muse_prefill_layer/qkv-gate-columns-side-stream-under-atten
 mode: null
 restack_of: null
 stale_base: null
+implemented_at: 2026-10-25T153907Z
+impl_commit: 90b7f9eff94d6c0402f92d2450c62e16f8b243c9
+submission_sha256: 1f2b19424a21445e6d700e25b15ab4875c90173f16b6ed3bfe3d205d8f769dc0
+norm_sha256: 83d3f9b76a4503578f9bffa24136c3f176ba18245a1fae513d8b0f3ac7117c73
+submission_blob: 19661e646dbeecc0186513d2515851128ab984d5
+lint_warnings: 72
 ---
 
 # qkv-gate-columns-side-stream-under-attention
@@ -120,3 +126,57 @@ No companion. The hypothesis carries its own in-process A/B: the prepare gate ti
 - The mechanism text attributes the T=753 qkv to nvjet 112x128 at 39 us, but that row is the o projection; qkv is one of the three 128x192 calls (~34 us). This does not change the conclusion that turn_1 will gate OFF.
 - With fa3-full-contiguous-kv-triton-gather-gated running now, decide the landing order before building, so this build is not rebased onto a changed FA3 call site mid-run.
 
+
+## Implementation notes
+
+Edited only `.worktrees/muse_prefill_layer/qkv-gate-columns-side-stream-under-attention/muse_prefill_layer/submission.py` (+318/-8). Base 712ef67f; master 8ae0a9c9 has the same submission.py blob, so no merge was needed.
+
+What changed:
+- kernel_fn's attention front moved verbatim into `_attn_chain` (FusedQKNorm through FA3, with an optional `fork` callback right after store_cache) and `_attn_front(data, state, mode)`. `mode None` is master's code (one `_gemm`, one stream). kernel_fn reads `state["qkv_split_ok"].get((_qkv_class(tokens), window != 0))`, a shape/config branch only.
+- Split mode `(fork, prio)`: `qkv = torch.empty((T, 2304))`; q|k|v GEMM `torch.mm(x, qkv_w_main.t(), out=qkv[:, :1280])` on main; the gate GEMM into `qkv[:, 1280:]` on `state["side_stream"]`, forked with `side.wait_stream(src)` either from main right after the q|k|v GEMM (fork "qkv") or from the chain stream right after store_cache (fork "store"); the chain runs on `state["hp_stream"]` (priority -1) when prio, else on main; `main.wait_stream(chain)` and `main.wait_stream(side)` come immediately before `o_norm_gate`. Event-based only, graph-capturable.
+- prepare(): `_qkv_split_setup` runs after master's whole setup (rega and the align2 re-print), so rega's 150 s first_turn deadline is untouched. It makes qkv_w_main / qkv_w_gate (row slices of dense qkv_gate), creates the priority -1 stream (falls back to no-hp variants if unsupported), and runs the profiler no-copy proof. It then gates each of 3 T classes x {sliding, full} = 6 keys on the real attention front (synthetic scored-shape inputs: b1 ctx 80000 T=753, b4 ctx 80000 T=3012, b1 ctx 32768 T=16384, page 1, random FP8 caches), master vs 4 variants {qkv, store} x {hp, main}, as captured graphs, 15 interleaved alternations, 256 MiB flush, empty-graph baseline subtracted. Prints `[qkv-split] GATE T=.. <layer> master .. split .. ratio ..: ON/OFF` per key and `[qkv-split] PATH CHOSEN` last. Skipped (all OFF) if prepare already used > 240 s. Everything is wrapped so it never raises and leaves master's path.
+
+Adversarial review items:
+1. Byte-identical KV parity replaced by tolerance: dequantized K and V rel L2 <= 1e-2 and worst row <= 5e-2 (row norm floored at 0.1 x mean row norm); output (o_norm_gate) rel L2 vs master <= 2e-3 kept; differing-row fractions printed for information. The K/V rows master wrote are zeroed before the split run so a missed write shows.
+2. FA3 starvation: both fork points and the priority -1 chain stream are timed; best variant per key wins if <= 0.98x master and parity passes, else master. Whether a captured graph keeps the stream priority is not observable in-process; this is logged and the gate decides.
+3. attn_input.record_stream dropped (and qkv.record_stream too: every side stream joins main before the function returns, so none is needed).
+4. Fork/join event-based; side stream and hp stream both join before o_norm_gate; the router later reuses side_stream in order as before.
+5. Gate per (T class, layer) on the real subgraph, cold L2, threshold 0.98 (spec said 0.97; the review says 0.98, applied), runs last.
+6. Profiler proof runs in prepare only (no copy/elementwise/memset kernel, 2..4 GEMM-class kernels, data_ptr unchanged), else all OFF.
+
+Deviations / open questions:
+- Gate threshold 0.98 (review) not 0.97 (spec).
+- Full-layer ft is gated once at ctx 32768, not keyed by ctx (the review only suggested it). First-turn full rows at ctx 0 / 65536 share that decision.
+- Profiler proof allows up to 4 GEMM-class kernels (a split-K reduce counts as GEMM-class) rather than exactly 2.
+- Landing order vs fa3-full-contiguous-kv-triton-gather-gated (same kernel_fn span): not decided here; expect a textual merge conflict, and the full-layer keys would need re-gating.
+- Nothing run (no GPU on this node): the profiler-event API, `torch.cuda.Stream(priority=-1)` and `torch.mm(out=<column slice>)` are the compile/run risks; each fails to master.
+
+## Rules check
+
+- [x] CUDA-graph capturable: no syncs/prints/allocation on values in kernel_fn path; `_attn_front` only does shape-based branching, torch.empty by shape, event-based stream fork/join (checked in diff).
+- [x] Nothing derived from `data` is cached: all per-call tensors are locals; state holds only weights views, streams and the ON/OFF dict.
+- [x] Weights: qkv_w_main / qkv_w_gate are bf16 row slices of the bf16 qkv_gate (lossless).
+- [x] Activations: qkv stays BF16, q to FP8 as master, KV cache FP8.
+- [x] Attention sees every key: FA3 call unchanged (same window / context args).
+- [x] No timing patches, harness access, module edits, reference import, subprocesses or network (the synthetic inputs are built locally).
+- [x] All work inside the timed call; no output caching or replay.
+- [x] No module-global tensors/buffers: streams, weights and flags live in `state`; module constants are scalars.
+- [x] No try/except or prints in kernel_fn, `_attn_front`, `_attn_chain`.
+
+okc_lint: `OK with warnings: submission.py` (only the existing host-sync-in-prepare warnings, none new in kernel_fn's call graph). py_compile OK, __pycache__ removed.
+
+## Pre-flight audit
+
+Audited 2026-10-25 (opus), by reading (no GPU here). **Verdict: dispatch-with-fixes.**
+
+Confirmed by reading: kernel_fn / `_attn_front` / `_attn_chain` hold no prints, no try/except, no per-call mutable state; the mode comes from `(_qkv_class(tokens), window != 0)` (shape/config only); `torch.empty((tokens, 2304))` is sized by shape. Fork/join is event-based (`wait_stream`): the side and hp streams fork from the capture stream and both join main before `o_norm_gate`, so before kernel_fn returns and before the router reuses side_stream. Nothing is allocated on the side stream (the gate GEMM writes `out=` a slice of main-allocated `qkv`); `qkv` is dropped only after main has joined side, so the allocator cannot reuse it early (no record_stream needed). Tensors allocated on hp (q/k, FP8 temporaries, FA3 out) are read on main only after the join, and the next hp allocation follows `chain.wait_stream(main)`. Mode None is master's code. Streams/flags live in `state` beside master's `side_stream` (same copy behaviour as master's stream); weights are per-state tensors. `_qkv_split_setup` runs after rega and the align2 re-print, skips past 240 s, and every untested call (priority stream, profiler, column-slice `out=`, graph capture, FA3 on synthetic inputs) sits inside its try and lands on master with a PATH CHOSEN line.
+
+Fixes:
+1. `QKV_OUT_REL_L2` 2e-3 -> 1e-2: the split GEMMs (torch.mm, possibly split-K) vs master's `_gemm` differ by bf16 accumulation order, amplified by FP8 q/k/v rounding; 2e-3 risked switching valid keys OFF. A missed join, race or wrong slice gives >> 1e-2; the judge allows 3-15% vs FP32. Matches the K/V bound.
+2. Parity K/V row gather now indexes the uint8 views and reinterprets as FP8 (`ku[rows].view(FP8).float()`): advanced indexing on float8 tensors is not guaranteed, and a raise there would have turned every key OFF.
+3. hp stream accepted when `priority < 0` (was `== -1` only): a build reporting another high priority would have dropped the hp variants for nothing.
+4. No-copy proof: added a fatal correctness proof (NaN-filled qkv, every element written in place, split pair vs one-GEMM rel L2 <= 1e-3, data_ptr unchanged); the torch.profiler part now fails open only when the profiler itself is unavailable (raises / records no kernels), since it is a performance check the timing gate repeats. A profiled copy kernel still turns the path OFF.
+
+okc_lint OK with warnings (prepare-only syncs); py_compile OK; __pycache__ removed.
+
+Residual risk: never run on a GPU; the split may gate OFF everywhere (the review expects ~0 at turn_1), and whether captured graphs keep stream priority is unknown (the gate times it).
