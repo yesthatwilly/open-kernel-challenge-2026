@@ -58,10 +58,10 @@ controls_for: null
 rewrite_stage: 1
 replaces: _router_hilo_kernel + torch.zeros memset at router m=65..256
 review: proceed
-status: running
+status: done
 review_at: 2026-10-25T042454Z
 review_companions: null
-stage: dispatched
+stage: harvested
 claimed_at: 2026-10-25T042454Z
 base_sha: c67ea8677fb5f5a23ea879170b1d782395102bf1
 base_blob: 970b415b746fa03cb92e419d270be92588273178
@@ -80,6 +80,13 @@ attempt_file: 2026-10-25T043258Z-check-router-m128-m256-cluster-dsmem-tiled-rewr
 prepared_at: 2026-10-25T043258Z
 job: b7b2b55d04544660
 dispatched_at: 2026-10-25T043310Z
+outcome: neutral
+verdict_detail: within-ci
+speedup: 1.2189260558410087
+speedup_ci: [1.2006421650033936, 1.2372099466786237]
+harvested_at: 2026-10-25T053800Z
+best_at_harvest: 1.2215006063849365
+promotion: null
 ---
 
 # router-m128-m256-cluster-dsmem-tiled-rewrite
@@ -184,3 +191,54 @@ Audited 2026-10-24 (opus), by reading the code and emulating the numerics in num
 - okc_lint: OK with the same 3 prepare-only warnings. py_compile OK, and __pycache__ was removed.
 
 Residual risk: a device fault in the in-prepare self-check would poison the context and fail the run, because it cannot fall back. Also, the choice of instance is made on eager cold-L2 timing, and master's eager time includes a separate memset launch, so it may pick the new kernel where graph replay is a wash.
+
+## Result
+
+- job `b7b2b55d04544660` (check), status done, passed True, tests 9/9
+- speedup 1.2189x, 95% CI [1.2006, 1.2372], score 3963.1608306764333 µs vs SGLang 4830.8 µs
+- best at harvest: {"speedup": 1.2215006063849365, "ci": [1.2031780972891624, 1.2398231154807104], "job": "1e90292c7b954d96"}; base result: muse_bf16_proj/hypotheses/done/neutral/bf16-restack-m16-swapab-router-swapab-m32.result.json
+- **outcome: neutral** (within-ci)
+- files: `muse_bf16_proj/hypotheses/done/neutral/router-m128-m256-cluster-dsmem-tiled-rewrite.result.json`, `muse_bf16_proj/hypotheses/done/neutral/router-m128-m256-cluster-dsmem-tiled-rewrite.patch`; branch `hyp/muse_bf16_proj/router-m128-m256-cluster-dsmem-tiled-rewrite`
+
+## Attribution
+
+| shape | w | base µs | hyp µs | delta | verdict |
+|---|---|---|---|---|---|
+| layer=qkv_gate load=decode_1 m=1 | 62 | 12.18 | 12.56 | 0.9718 | flat |
+| layer=o load=decode_1 m=1 | 62 | 5.89 | 6.37 | 0.9824 | flat |
+| layer=pooler load=decode_1 m=1 | 62 | 18.84 | 18.96 | 1.0178 | flat |
+| layer=unpooler load=decode_1 m=1 | 62 | 6.15 | 5.67 | 1.0025 | flat |
+| layer=router load=decode_1 m=1 | 62 | 5.38 | 5.2 | 1.0096 | flat |
+| layer=qkv_gate load=decode_16 m=16 | 62 | 13.15 | 12.96 | 1.0075 | flat |
+| layer=o load=decode_16 m=16 | 62 | 6.23 | 6.14 | 0.9959 | flat |
+| layer=pooler load=decode_16 m=16 | 62 | 19.47 | 19.85 | 0.9993 | flat |
+| layer=unpooler load=decode_16 m=16 | 62 | 18.51 | 18.56 | 0.9893 | flat |
+| layer=router load=decode_16 m=16 | 62 | 5.47 | 5.57 | 0.9726 | flat |
+| layer=qkv_gate load=decode_32 m=32 | 62 | 14.19 | 14.17 | 0.9812 | flat |
+| layer=o load=decode_32 m=32 | 62 | 6.34 | 6.53 | 0.9604 | lost |
+| layer=pooler load=decode_32 m=32 | 62 | 19.73 | 20.13 | 0.9883 | flat |
+| layer=unpooler load=decode_32 m=32 | 62 | 18.08 | 18.73 | 0.9795 | flat |
+| layer=router load=decode_32 m=32 | 62 | 6.2 | 6.14 | 0.9879 | flat |
+| layer=qkv_gate load=verify_1 m=8 | 62 | 12.5 | 12.79 | 0.9981 | flat |
+| layer=o load=verify_1 m=8 | 62 | 6.13 | 5.98 | 1.0213 | flat |
+| layer=pooler load=verify_1 m=8 | 62 | 18.89 | 19.03 | 1.0091 | flat |
+| layer=unpooler load=verify_1 m=8 | 62 | 6.0 | 5.46 | 1.0391 | gained |
+| layer=router load=verify_1 m=8 | 62 | 5.47 | 5.33 | 1.0233 | flat |
+| layer=qkv_gate load=verify_16 m=128 | 62 | 17.05 | 16.64 | 1.0171 | flat |
+| layer=o load=verify_16 m=128 | 62 | 6.98 | 7.36 | 0.9871 | flat |
+| layer=pooler load=verify_16 m=128 | 62 | 25.0 | 24.9 | 1.0234 | flat |
+| layer=unpooler load=verify_16 m=128 | 62 | 19.96 | 19.61 | 1.0 | flat |
+| layer=router load=verify_16 m=128 | 62 | 7.28 | 7.48 | 0.9824 | flat |
+| layer=qkv_gate load=verify_32 m=256 | 62 | 19.69 | 19.91 | 0.9906 | flat |
+| layer=o load=verify_32 m=256 | 62 | 9.26 | 9.19 | 0.9873 | flat |
+| layer=pooler load=verify_32 m=256 | 62 | 31.19 | 31.04 | 0.9957 | flat |
+| layer=unpooler load=verify_32 m=256 | 62 | 24.42 | 24.3 | 1.0037 | flat |
+| layer=router load=verify_32 m=256 | 62 | 9.6 | 9.29 | 1.024 | flat |
+
+gained on unpooler verify_1; lost on o decode_32. Expected hit: 5/8. Noise ±1.5%.
+
+## Follow-ups
+
+- rewrite stage 1 of `_router_hilo_kernel + torch.zeros memset at router m=65..256`: read the replaced kernels' own us per shape (profile top_kernels) against the incumbent and the floor, and check which Milestone it reached. The next stage is `/hypothesize muse_bf16_proj "<what to fix or tune>" --kind rewrite --depends-on router-m128-m256-cluster-dsmem-tiled-rewrite --stage 2`; a slow or failed first cut is the expected start, not a do-not-retry.
+- within-ci: the change is not proven either way; a stacked hypothesis (`depends_on: router-m128-m256-cluster-dsmem-tiled-rewrite`) that adds a further change in the same area is the only way to learn more (identical code is never re-run).
+

@@ -1,0 +1,616 @@
+diff --git a/muse_bf16_proj/submission.py b/muse_bf16_proj/submission.py
+index 970b415..095978e 100644
+--- a/muse_bf16_proj/submission.py
++++ b/muse_bf16_proj/submission.py
+@@ -45,8 +45,16 @@ unpooler's n == 1024 slice run the same _bf16_swapab_kernel with BLOCK_T = WS_M
+ m64n16k16) and their own 16-row workspaces / tickets, routed BEFORE the m <= 16 kernels above
+ (which stay in the file, no longer routed for these shapes). The unpooler full width at m = 16
+ keeps cuBLAS; every m >= 17 shape keeps its path.
++
++Router at 65 <= m <= 256 (hypothesis router-m128-m256-cluster-dsmem-tiled-rewrite): a hand-written
++CUDA kernel (load_inline at import), 64 x 64 output tiles each owned by one cluster that splits K
++and reduces through distributed shared memory in one launch (no memset, no atomics); see section
++(7). Routed per token-tile count only where it beat master's router in prepare(); master's
++_router_hilo_forward everywhere else and on any build / self-check / occupancy miss.
+ """
+ 
++import os
++import time
+ from typing import TypedDict
+ 
+ import torch
+@@ -985,6 +993,572 @@ def _swapab16_prepare(state: dict) -> None:
+             state[f"swapab16_cnt_{key}"].zero_()
+ 
+ 
++# --- (7) router, 65 <= m <= 256: hand-written CUDA tiled GEMM, split-K reduced through DSMEM ---
++# (hypothesis router-m128-m256-cluster-dsmem-tiled-rewrite, rewrite stage 1)
++#
++# Replaces master's _router_hilo_kernel + torch.zeros memset at m = 65..256 by ONE launch with no
++# memset, no atomics and no global workspace. The [m, 256] fp32 output is tiled 64 tokens x 64
++# experts (BM = BN = 64, the same tiling as master's grid, so the L2 -> SM operand bytes equal the
++# incumbent's). Each tile is one cluster of CS CTAs splitting K = 8192 (CS = 8: 1024-wide slices,
++# CS = 16: 512-wide slices, a non-portable cluster size); grid = ceil(m / 64) * 4 * CS CTAs
++# (128 CTAs at m = 128 with CS 16, at m = 256 with CS 8). Adversarial-review fixes applied (the
++# review overrides the spec): BLOCK_K = 64 with a 4-stage cp.async.cg ring (24 KB per stage, 96 KB
++# of dynamic smem per CTA so 2 CTAs / SM fit and the occupancy query can reach 16 clusters), the
++# fp32 partial tile aliased onto the ring, 8 warps (4 token x 2 expert warp tiles of 16 x 32),
++# cudaOccupancyMaxActiveClusters printed and enforced per (instance, token-tile count), the
++# L2 -> SM bytes printed per instance and compared with the incumbent's, the DSMEM reduce done as
++# 16-B ld.shared::cluster.v4 loads, and the final choice per token-tile count made by in-prepare
++# cold-L2 timing against master's _router_hilo_forward (which includes its memset), with master
++# kept wherever the new kernel does not win.
++# Math: per k16 step one A fragment (x, row-major, ldmatrix) feeds two mma.sync m16n8k16 per
++# n8 tile, B = hi then B = lo ([n][k] row-major is exactly the col operand), into ONE fp32
++# accumulator: the same (hi + lo) fp32-equivalent math as master. Each CTA writes its fp32 tile
++# partial to smem, barrier.cluster arrive.release / wait.acquire, rank r reduces rows
++# [BM/CS * r, +BM/CS) of the tile over ranks 0..CS-1 in fixed order (mapa + ld.shared::cluster)
++# and stores fp32 with plain float4 stores (deterministic); a second barrier.cluster keeps every
++# CTA's smem alive for its peers. Rows >= m are zero-filled on load and never stored. No mbarrier
++# and no spin wait exists in the kernel (cp.async groups and hardware cluster barriers only), so
++# there is nothing to bound; no sm_90a-only PTX is used (mma.sync, cp.async, cluster launch,
++# mapa, barrier.cluster are baseline sm_90), the arch list is pinned to 9.0a around the build.
++ROUTER_TILED_MIN_M = 65
++ROUTER_TILED_MAX_M = 256
++ROUTER_TILED_CS = (8, 16)                 # compiled instances (BN = 64)
++ROUTER_TILED_CHECK_MS = (65, 128, 129, 130, 192, 200, 256)
++ROUTER_TILED_TIME_MS = (65, 128, 130, 192, 200, 256)
++ROUTER_TILED_REP_M = {2: 128, 3: 192, 4: 256}   # token-tile count -> m timed to choose the instance
++ROUTER_TILED_MAX_SMEM = 110 * 1024
++ROUTER_TILED_WIN = 0.98                   # must beat master's cold-L2 eager time by 2%
++ROUTER_TILED_FLUSH_BYTES = 256 * 1024 * 1024
++
++_RT_CPP = r"""
++#include <torch/extension.h>
++#include <vector>
++void router_tiled(torch::Tensor x, torch::Tensor hi, torch::Tensor lo, torch::Tensor out,
++                  int64_t cs, int64_t mode);
++std::vector<int64_t> router_tiled_info(int64_t cs);
++"""
++
++_RT_CUDA = r"""
++#include <torch/extension.h>
++#include <ATen/cuda/CUDAContext.h>
++#include <c10/cuda/CUDAException.h>
++#include <cuda_bf16.h>
++#include <cuda_runtime.h>
++#include <cstdint>
++#include <vector>
++
++namespace {
++
++constexpr int N_OUT = 256;
++constexpr int K_TOT = 8192;
++constexpr int BM = 64;           // tokens per tile
++constexpr int BN = 64;           // experts per tile
++constexpr int BK = 64;           // K per pipeline stage (64 bf16 = 128 B = 8 x 16 B chunks per row)
++constexpr int STAGES = 4;
++constexpr int THREADS = 256;     // 8 warps: 4 (token rows of 16) x 2 (expert columns of 32)
++constexpr int NTN = N_OUT / BN;  // expert tiles
++constexpr int PS = BN + 4;       // padded fp32 row of the partial tile
++
++template <int CS>
++struct Cfg {
++  static constexpr int KC = K_TOT / CS;               // K per CTA
++  static constexpr int NK = KC / BK;                  // pipeline iterations
++  static constexpr int X_BYTES = BM * 128;
++  static constexpr int W_BYTES = BN * 128;
++  static constexpr int STAGE_BYTES = X_BYTES + 2 * W_BYTES;   // x + hi + lo = 24 KB
++  static constexpr int SMEM = STAGES * STAGE_BYTES;           // 96 KB
++  static constexpr int P_BYTES = BM * PS * 4;                 // aliased onto the ring
++  static constexpr int RPR = BM / CS;                         // tile rows reduced by one rank
++  static constexpr int RF4 = RPR * BN / 4;                    // float4 per rank
++  static_assert(K_TOT % (CS * BK) == 0 && NK >= STAGES, "tiling");
++  static_assert(P_BYTES <= SMEM, "partial tile aliases the ring");
++  static_assert(RF4 <= THREADS && BM % CS == 0, "reduce threads");
++};
++
++__device__ __forceinline__ uint32_t smem_u32(const void* p) {
++  return static_cast<uint32_t>(__cvta_generic_to_shared(p));
++}
++__device__ __forceinline__ void cp_async16(uint32_t dst, const void* src, int src_bytes) {
++  asm volatile("cp.async.cg.shared.global [%0], [%1], 16, %2;\n" :: "r"(dst), "l"(src), "r"(src_bytes) : "memory");
++}
++__device__ __forceinline__ void cp_commit() { asm volatile("cp.async.commit_group;\n" ::: "memory"); }
++template <int N>
++__device__ __forceinline__ void cp_wait() { asm volatile("cp.async.wait_group %0;\n" :: "n"(N) : "memory"); }
++__device__ __forceinline__ void ldsm_x4(uint32_t (&r)[4], uint32_t addr) {
++  asm volatile("ldmatrix.sync.aligned.m8n8.x4.shared.b16 {%0,%1,%2,%3}, [%4];\n"
++               : "=r"(r[0]), "=r"(r[1]), "=r"(r[2]), "=r"(r[3]) : "r"(addr) : "memory");
++}
++// D = A B + D, m16n8k16, A row-major bf16 (4 regs), B col-major bf16 (2 regs), fp32 accumulate.
++__device__ __forceinline__ void mma_bf16(float (&c)[4], const uint32_t (&a)[4], uint32_t b0, uint32_t b1) {
++  asm volatile("mma.sync.aligned.m16n8k16.row.col.f32.bf16.bf16.f32 {%0,%1,%2,%3}, {%4,%5,%6,%7}, {%8,%9}, {%0,%1,%2,%3};\n"
++               : "+f"(c[0]), "+f"(c[1]), "+f"(c[2]), "+f"(c[3])
++               : "r"(a[0]), "r"(a[1]), "r"(a[2]), "r"(a[3]), "r"(b0), "r"(b1));
++}
++__device__ __forceinline__ void cluster_sync_rel_acq() {
++  asm volatile("barrier.cluster.arrive.release.aligned;\n" ::: "memory");
++  asm volatile("barrier.cluster.wait.acquire.aligned;\n" ::: "memory");
++}
++__device__ __forceinline__ uint32_t map_rank(uint32_t addr, uint32_t rank) {
++  uint32_t r;
++  asm volatile("mapa.shared::cluster.u32 %0, %1, %2;\n" : "=r"(r) : "r"(addr), "r"(rank));
++  return r;
++}
++__device__ __forceinline__ float4 ld_cluster_f4(uint32_t addr) {
++  float4 v;
++  asm volatile("ld.shared::cluster.v4.f32 {%0,%1,%2,%3}, [%4];\n"
++               : "=f"(v.x), "=f"(v.y), "=f"(v.z), "=f"(v.w) : "r"(addr) : "memory");
++  return v;
++}
++
++// out[m, 256] fp32 = x[m, 8192] bf16 @ (hi + lo)[256, 8192]^T, 1 <= m <= 256. Grid
++// ceil(m / 64) * NTN * CS CTAs, cluster dim (CS, 1, 1): blockIdx.x = tile * CS + rank, tile =
++// token_tile * NTN + expert_tile. mode 1 = full (DSMEM reduce); mode 0 = diagnostic only: no
++// barriers, no peer reads, each CTA stores its OWN partial rows (wrong result).
++template <int CS>
++__global__ void __launch_bounds__(THREADS, 2)
++router_tiled_kernel(const __nv_bfloat16* __restrict__ x, int64_t sx,
++                    const __nv_bfloat16* __restrict__ hi, const __nv_bfloat16* __restrict__ lo,
++                    float* __restrict__ out, int m, int mode) {
++  using C = Cfg<CS>;
++  extern __shared__ __align__(128) uint8_t smem[];
++  const int tid = threadIdx.x, lane = tid & 31, warp = tid >> 5;
++  const int rank = blockIdx.x % CS;
++  const int tile = blockIdx.x / CS;
++  const int m0 = (tile / NTN) * BM;
++  const int n0 = (tile % NTN) * BN;
++  const int kbase = rank * C::KC;
++  const uint32_t smem_u = smem_u32(smem);
++
++  auto load_stage = [&](int slot, int ki) {
++    const int kb = kbase + ki * BK;
++    const uint32_t xs = smem_u + slot * C::STAGE_BYTES;
++    const uint32_t hs = xs + C::X_BYTES;
++    const uint32_t ls = hs + C::W_BYTES;
++#pragma unroll
++    for (int j = 0; j < BM * 8 / THREADS; ++j) {
++      const int idx = j * THREADS + tid;
++      const int row = idx >> 3, c = idx & 7;
++      const bool ok = (m0 + row) < m;
++      const __nv_bfloat16* src = ok ? (x + (int64_t)(m0 + row) * sx + kb + c * 8) : x;
++      cp_async16(xs + row * 128 + ((c ^ (row & 7)) << 4), src, ok ? 16 : 0);
++    }
++#pragma unroll
++    for (int j = 0; j < BN * 8 / THREADS; ++j) {
++      const int idx = j * THREADS + tid;
++      const int row = idx >> 3, c = idx & 7;
++      const int64_t off = (int64_t)(n0 + row) * K_TOT + kb + c * 8;
++      const uint32_t d = row * 128 + ((c ^ (row & 7)) << 4);
++      cp_async16(hs + d, hi + off, 16);
++      cp_async16(ls + d, lo + off, 16);
++    }
++  };
++
++#pragma unroll
++  for (int s = 0; s < STAGES - 1; ++s) {
++    load_stage(s, s);
++    cp_commit();
++  }
++
++  const int wm = warp & 3, wn = warp >> 2;
++  constexpr int NT8 = BN / 2 / 8;   // n8 tiles per warp (4)
++  float acc[NT8][4];
++#pragma unroll
++  for (int t = 0; t < NT8; ++t)
++#pragma unroll
++    for (int e = 0; e < 4; ++e) acc[t][e] = 0.f;
++
++  const int arow = wm * 16 + (lane & 7) + ((lane >> 3) & 1) * 8;   // ldmatrix A row of this lane
++  const int ahalf = (lane >> 4) & 1;                               // k chunk (0: k0-7, 1: k8-15)
++  const int bkc = (lane >> 3) & 1;                                 // B k chunk of this lane
++  const int brow0 = wn * (BN / 2) + (lane & 7) + ((lane >> 4) & 1) * 8;
++
++  for (int it = 0; it < C::NK; ++it) {
++    cp_wait<STAGES - 2>();
++    __syncthreads();   // stage it landed for every thread; the slot refilled below is idle
++    const int nxt = it + STAGES - 1;
++    if (nxt < C::NK) load_stage(nxt % STAGES, nxt);
++    cp_commit();
++    const uint32_t xs = smem_u + (it % STAGES) * C::STAGE_BYTES;
++    const uint32_t hs = xs + C::X_BYTES;
++    const uint32_t ls = hs + C::W_BYTES;
++#pragma unroll
++    for (int ks = 0; ks < BK / 16; ++ks) {
++      uint32_t a[4];
++      ldsm_x4(a, xs + arow * 128 + (((ks * 2 + ahalf) ^ (arow & 7)) << 4));
++      uint32_t bh[NT8 / 2][4], bl[NT8 / 2][4];
++#pragma unroll
++      for (int p = 0; p < NT8 / 2; ++p) {
++        const int brow = brow0 + p * 16;
++        const uint32_t off = brow * 128 + (((ks * 2 + bkc) ^ (brow & 7)) << 4);
++        ldsm_x4(bh[p], hs + off);
++        ldsm_x4(bl[p], ls + off);
++      }
++#pragma unroll
++      for (int p = 0; p < NT8 / 2; ++p)
++#pragma unroll
++        for (int h = 0; h < 2; ++h) {
++          mma_bf16(acc[2 * p + h], a, bh[p][2 * h], bh[p][2 * h + 1]);
++          mma_bf16(acc[2 * p + h], a, bl[p][2 * h], bl[p][2 * h + 1]);
++        }
++    }
++  }
++  cp_wait<0>();
++  __syncthreads();   // every warp is done reading the ring, which the partial tile now reuses
++
++  float* P = reinterpret_cast<float*>(smem);   // [BM][PS] fp32 partial of this CTA
++#pragma unroll
++  for (int t = 0; t < NT8; ++t) {
++    const int col = wn * (BN / 2) + t * 8 + (lane & 3) * 2;
++    const int r0 = wm * 16 + (lane >> 2);
++    *reinterpret_cast<float2*>(P + r0 * PS + col) = make_float2(acc[t][0], acc[t][1]);
++    *reinterpret_cast<float2*>(P + (r0 + 8) * PS + col) = make_float2(acc[t][2], acc[t][3]);
++  }
++  __syncthreads();
++
++  if (mode != 0) cluster_sync_rel_acq();   // every CTA's P is complete and visible cluster-wide
++  if (tid < C::RF4) {
++    const int row = rank * C::RPR + tid / (BN / 4), c4 = tid % (BN / 4);
++    float4 s;
++    if (mode != 0) {
++      const uint32_t loc = smem_u32(P + row * PS + c4 * 4);
++      float4 v[CS];
++#pragma unroll
++      for (int q = 0; q < CS; ++q) v[q] = ld_cluster_f4(map_rank(loc, q));
++      s = v[0];
++#pragma unroll
++      for (int q = 1; q < CS; ++q) {   // fixed rank order: deterministic
++        s.x += v[q].x; s.y += v[q].y; s.z += v[q].z; s.w += v[q].w;
++      }
++    } else {
++      s = *reinterpret_cast<const float4*>(P + row * PS + c4 * 4);
++    }
++    if (m0 + row < m) *reinterpret_cast<float4*>(out + (int64_t)(m0 + row) * N_OUT + n0 + c4 * 4) = s;
++  }
++  if (mode != 0) cluster_sync_rel_acq();   // peers are done reading this CTA's smem before it exits
++}
++
++template <int CS>
++void set_attr() {
++  static bool done = false;
++  if (!done) {
++    C10_CUDA_CHECK(cudaFuncSetAttribute(router_tiled_kernel<CS>, cudaFuncAttributeMaxDynamicSharedMemorySize,
++                                        Cfg<CS>::SMEM));
++    if (CS > 8) {
++      C10_CUDA_CHECK(cudaFuncSetAttribute(router_tiled_kernel<CS>,
++                                          cudaFuncAttributeNonPortableClusterSizeAllowed, 1));
++    }
++    done = true;
++  }
++}
++
++template <int CS>
++void launch(torch::Tensor x, torch::Tensor hi, torch::Tensor lo, torch::Tensor out, int mode) {
++  set_attr<CS>();
++  const int mt = (static_cast<int>(x.size(0)) + BM - 1) / BM;
++  cudaLaunchConfig_t cfg = {};
++  cfg.gridDim = dim3(mt * NTN * CS);
++  cfg.blockDim = dim3(THREADS);
++  cfg.dynamicSmemBytes = Cfg<CS>::SMEM;
++  cfg.stream = at::cuda::getCurrentCUDAStream();
++  cudaLaunchAttribute attr[1];
++  attr[0].id = cudaLaunchAttributeClusterDimension;
++  attr[0].val.clusterDim.x = CS;
++  attr[0].val.clusterDim.y = 1;
++  attr[0].val.clusterDim.z = 1;
++  cfg.attrs = attr;
++  cfg.numAttrs = 1;
++  C10_CUDA_CHECK(cudaLaunchKernelEx(
++      &cfg, router_tiled_kernel<CS>,
++      reinterpret_cast<const __nv_bfloat16*>(x.data_ptr()), static_cast<int64_t>(x.stride(0)),
++      reinterpret_cast<const __nv_bfloat16*>(hi.data_ptr()), reinterpret_cast<const __nv_bfloat16*>(lo.data_ptr()),
++      out.data_ptr<float>(), static_cast<int>(x.size(0)), mode));
++  C10_CUDA_KERNEL_LAUNCH_CHECK();  // cudaGetLastError, raises
++}
++
++template <int CS>
++std::vector<int64_t> info() {
++  set_attr<CS>();
++  cudaFuncAttributes fa;
++  C10_CUDA_CHECK(cudaFuncGetAttributes(&fa, router_tiled_kernel<CS>));
++  cudaLaunchConfig_t cfg = {};
++  cfg.gridDim = dim3(CS * NTN);
++  cfg.blockDim = dim3(THREADS);
++  cfg.dynamicSmemBytes = Cfg<CS>::SMEM;
++  cudaLaunchAttribute attr[1];
++  attr[0].id = cudaLaunchAttributeClusterDimension;
++  attr[0].val.clusterDim.x = CS;
++  attr[0].val.clusterDim.y = 1;
++  attr[0].val.clusterDim.z = 1;
++  cfg.attrs = attr;
++  cfg.numAttrs = 1;
++  int nclusters = -1;
++  if (cudaOccupancyMaxActiveClusters(&nclusters, router_tiled_kernel<CS>, &cfg) != cudaSuccess) {
++    (void)cudaGetLastError();
++    nclusters = -1;
++  }
++  return {fa.numRegs, static_cast<int64_t>(fa.localSizeBytes), static_cast<int64_t>(fa.sharedSizeBytes),
++          static_cast<int64_t>(Cfg<CS>::SMEM), nclusters};
++}
++
++}  // namespace
++
++void router_tiled(torch::Tensor x, torch::Tensor hi, torch::Tensor lo, torch::Tensor out,
++                  int64_t cs, int64_t mode) {
++  const int64_t m = x.size(0);
++  TORCH_CHECK(x.dim() == 2 && m >= 1 && m <= 256 && x.size(1) == K_TOT, "router_tiled: x shape");
++  TORCH_CHECK(x.scalar_type() == at::kBFloat16 && hi.scalar_type() == at::kBFloat16 &&
++              lo.scalar_type() == at::kBFloat16 && out.scalar_type() == at::kFloat, "router_tiled: dtypes");
++  TORCH_CHECK(hi.is_contiguous() && lo.is_contiguous() && hi.size(0) == N_OUT && hi.size(1) == K_TOT &&
++              lo.size(0) == N_OUT && lo.size(1) == K_TOT, "router_tiled: weights");
++  TORCH_CHECK(x.stride(1) == 1 && (m == 1 || x.stride(0) % 8 == 0) &&
++              reinterpret_cast<uintptr_t>(x.data_ptr()) % 16 == 0 &&
++              reinterpret_cast<uintptr_t>(hi.data_ptr()) % 16 == 0 &&
++              reinterpret_cast<uintptr_t>(lo.data_ptr()) % 16 == 0, "router_tiled: x strides / alignment");
++  TORCH_CHECK(out.is_contiguous() && out.size(0) == m && out.size(1) == N_OUT, "router_tiled: out");
++  if (cs == 8) launch<8>(x, hi, lo, out, (int)mode);
++  else if (cs == 16) launch<16>(x, hi, lo, out, (int)mode);
++  else TORCH_CHECK(false, "router_tiled: unsupported cluster size");
++}
++
++// {regs, local (spill) bytes, static smem, dynamic smem, max active clusters (-1: query failed)}
++std::vector<int64_t> router_tiled_info(int64_t cs) {
++  if (cs == 8) return info<8>();
++  if (cs == 16) return info<16>();
++  TORCH_CHECK(false, "router_tiled_info: unsupported config");
++  return {};
++}
++"""
++
++
++def _build_router_tiled():
++    """Compile the CUDA module once per process, at import (never during graph capture). The arch
++    list is pinned to 9.0a around the build and restored after. Any failure keeps master's router
++    path."""
++    t0 = time.perf_counter()
++    prev = os.environ.get("TORCH_CUDA_ARCH_LIST")
++    os.environ["TORCH_CUDA_ARCH_LIST"] = "9.0a"
++    flags = ["-O3", "-lineinfo"]
++    print(f"[router_tiled] building: TORCH_CUDA_ARCH_LIST={os.environ['TORCH_CUDA_ARCH_LIST']} "
++          f"extra_cuda_cflags={flags}", flush=True)
++    try:
++        from torch.utils.cpp_extension import load_inline
++        ext = load_inline(
++            name="muse_bf16_router_tiled_v1",
++            cpp_sources=_RT_CPP,
++            cuda_sources=_RT_CUDA,
++            functions=["router_tiled", "router_tiled_info"],
++            extra_cuda_cflags=flags,
++            verbose=False,
++        )
++    except Exception as e:
++        print(f"[router_tiled] load_inline failed after {time.perf_counter() - t0:.1f}s, "
++              f"master router path kept: {e!r}", flush=True)
++        return None
++    finally:
++        if prev is None:
++            os.environ.pop("TORCH_CUDA_ARCH_LIST", None)
++        else:
++            os.environ["TORCH_CUDA_ARCH_LIST"] = prev
++    print(f"[router_tiled] load_inline compiled in {time.perf_counter() - t0:.1f}s", flush=True)
++    return ext
++
++
++_RT_EXT = _build_router_tiled() if torch.cuda.is_available() else None
++
++
++def _rt_mt(m: int) -> int:
++    """Token-tile count (64 tokens per tile) for m tokens."""
++    return (m + 63) // 64
++
++
++def _router_tiled_route(x: torch.Tensor, cfg, state: dict) -> int:
++    """Cluster size (8 or 16) the CUDA tiled router runs at for this call, 0 for master's path.
++    Branches on cfg, shapes, strides, alignment and the prepare() constant only."""
++    if _RT_EXT is None or x.dim() != 2:
++        return 0
++    m = x.shape[0]
++    if not ROUTER_TILED_MIN_M <= m <= ROUTER_TILED_MAX_M:
++        return 0
++    cs = state["router_tiled"][_rt_mt(m)]
++    if (cs and cfg["m"] == m and cfg["n"] == ROUTER_N and cfg["k"] == ROUTER_K
++            and x.shape[1] == ROUTER_K and x.dtype == torch.bfloat16 and x.is_cuda
++            and x.stride(1) == 1 and x.stride(0) % 8 == 0 and x.data_ptr() % 16 == 0):
++        return cs
++    return 0
++
++
++def _router_tiled_forward(x: torch.Tensor, state: dict, cs: int, mode: int = 1) -> torch.Tensor:
++    """x bf16 [65 <= m <= 256, 8192] @ (hi + lo).T -> fp32 [m, 256]: ONE cluster launch, no memset."""
++    out = torch.empty((x.shape[0], ROUTER_N), dtype=torch.float32, device=x.device)
++    _RT_EXT.router_tiled(x, state["router_hi"], state["router_lo"], out, cs, mode)
++    return out
++
++
++def _rt_traffic_mb(m: int, bm: int, bn: int) -> float:
++    """L2 -> SM operand bytes (MB) of a (bm, bn)-tiled grid: x re-read once per expert tile, the
++    hi + lo weights (8.4 MB) once per token tile. Independent of the K split."""
++    return (m * ROUTER_K * 2 * (ROUTER_N // bn) + 2 * ROUTER_N * ROUTER_K * 2 * ((m + bm - 1) // bm)) / 1e6
++
++
++def _rt_check(state: dict, cs: int, ms) -> str:
++    """In-process self-check of cluster size cs at the token counts ms, each launched twice, with a
++    flushed print before and a synchronize + flushed print after every launch so a fault names its
++    kernel. Returns "" if it passes, else why. Bounds: rel L2 <= 2e-5 against x.double() @
++    router.double().T, worst row <= 1e-4 (5x), the one-hot power-of-two row within 1e-6 of the
++    hi + lo reconstruction, finite, run 2 bit-identical."""
++    router, hi, lo = state["router"], state["router_hi"], state["router_lo"]
++    dev = router.device
++    k = router.shape[1]
++    rd = router.double()
++    hld = hi.double() + lo.double()
++    g = torch.Generator(device=dev)
++    g.manual_seed(2468)
++    for m in ms:
++        x = torch.randn((m, k), device=dev, dtype=torch.float32, generator=g).to(torch.bfloat16)
++        x[m - 1].zero_()   # last row: a single power-of-two entry, its output is a (hi + lo) column
++        x[m - 1, (37 * m + 5) % k] = 2.0 ** ((m % 5) - 2)
++        ref = x.double() @ rd.T
++        ref_hl = x.double() @ hld.T
++        outs = []
++        for run in (1, 2):
++            print(f"[router_tiled] launching cs={cs} m={m} run {run}", flush=True)
++            o = _router_tiled_forward(x, state, cs)
++            torch.cuda.synchronize()
++            print(f"[router_tiled] cs={cs} m={m} run {run} finished OK", flush=True)
++            outs.append(o)
++        if not torch.equal(outs[0], outs[1]):
++            return f"m={m}: second launch differs from the first"
++        o = outs[0].double()
++        if not bool(torch.isfinite(o).all()):
++            return f"m={m}: non-finite output"
++        err = float((o - ref).norm() / ref.norm().clamp_min(1e-30))
++        row_ref = ref.norm(dim=1)
++        row_den = torch.maximum(row_ref, 0.1 * row_ref.mean()).clamp_min(1e-30)
++        row_err = float(((o - ref).norm(dim=1) / row_den).max())
++        if not (err <= 2e-5 and row_err <= 1e-4):
++            return f"m={m}: rel L2 {err:.2e} (bound 2e-5), worst row {row_err:.2e} (bound 1e-4)"
++        oh = float((o[m - 1] - ref_hl[m - 1]).norm() / ref_hl[m - 1].norm().clamp_min(1e-30))
++        if not oh <= 1e-6:
++            return f"m={m}: one-hot row off the hi+lo reconstruction by {oh:.2e} (bound 1e-6)"
++    return ""
++
++
++def _rt_timer(dev):
++    """Median cold-L2 (flush >= 256 MB) cudaEvent time per eager launch (includes the launch), us."""
++    flush = torch.empty(ROUTER_TILED_FLUSH_BYTES, dtype=torch.uint8, device=dev)
++
++    def timeit(fn, reps: int = 20) -> float:
++        for _ in range(3):
++            fn()
++        evs = []
++        for _ in range(reps):
++            flush.zero_()
++            a = torch.cuda.Event(enable_timing=True)
++            b = torch.cuda.Event(enable_timing=True)
++            a.record()
++            fn()
++            b.record()
++            evs.append((a, b))
++        torch.cuda.synchronize()
++        ts = sorted(a.elapsed_time(b) * 1e3 for a, b in evs)
++        return ts[len(ts) // 2]
++    return timeit
++
++
++def _router_tiled_prepare(state: dict) -> None:
++    """Choose, per token-tile count mt in {2, 3, 4} (m = 65..128 / 129..192 / 193..256), the
++    cluster size the router runs at: an instance is a candidate when its build has no spills and
++    <= ~110 KB of dynamic smem, cudaOccupancyMaxActiveClusters >= mt * 4 clusters (one wave) and
++    its self-check passes; the candidate with the lowest cold-L2 eager time at the representative
++    m wins if it beats master's _router_hilo_forward (kernel + memset) by 2%, else 0 (master's
++    path, byte for byte). The result is a constant in state, derived from synthetic data and the
++    weights only; it never raises. Also prints the L2 -> SM bytes per tiling vs the incumbent's
++    and cold-L2 timings (full, no-DSMEM-reduce mode, master) at m = 65 / 128 / 130 / 192 / 200 / 256."""
++    choice = {2: 0, 3: 0, 4: 0}
++    state["router_tiled"] = choice
++    router = state["router"]
++    try:
++        if (_RT_EXT is None or router.shape != (ROUTER_N, ROUTER_K) or router.dtype != torch.float32
++                or not router.is_cuda):
++            raise RuntimeError("extension missing or router weight shape/dtype unexpected")
++        infos = {}
++        for cs in ROUTER_TILED_CS:
++            infos[cs] = _RT_EXT.router_tiled_info(cs)
++            regs, spill, ssmem, dsmem, ncl = infos[cs]
++            print(f"[router_tiled] cs={cs}: regs={regs} local(spill)={spill} B static smem={ssmem} B "
++                  f"dynamic smem={dsmem} B max active clusters={ncl} threads=256 mma.sync/CTA/k64-stage="
++                  f"{8 * 4 * 8}", flush=True)
++        for m in (128, 256):
++            bm, bn, _sk = _router_hilo_config(m)
++            print(f"[router_tiled] L2->SM operand bytes m={m}: incumbent {bm}x{bn} tiles "
++                  f"{_rt_traffic_mb(m, bm, bn):.1f} MB; new 64x64 tiles {_rt_traffic_mb(m, 64, 64):.1f} MB",
++                  flush=True)
++        passed = {}
++        for cs in ROUTER_TILED_CS:
++            regs, spill, ssmem, dsmem, ncl = infos[cs]
++            for mt in (2, 3, 4):
++                need = mt * (ROUTER_N // 64)
++                if spill != 0 or dsmem > ROUTER_TILED_MAX_SMEM:
++                    print(f"[router_tiled] mt={mt}: cs={cs} skipped (spill {spill} B, smem {dsmem} B)", flush=True)
++                    continue
++                if ncl < need:
++                    print(f"[router_tiled] mt={mt}: cs={cs} skipped, max active clusters {ncl} < {need}",
++                          flush=True)
++                    continue
++                ms = [m for m in ROUTER_TILED_CHECK_MS if _rt_mt(m) == mt]
++                why = _rt_check(state, cs, ms)
++                if why:
++                    print(f"[router_tiled] mt={mt}: cs={cs} self-check FAILED: {why}", flush=True)
++                    continue
++                print(f"[router_tiled] mt={mt}: cs={cs} self-check passed (m in {ms})", flush=True)
++                passed[(cs, mt)] = True
++        if passed:
++            hi, lo = state["router_hi"], state["router_lo"]
++            timeit = _rt_timer(router.device)
++            rep = {}
++            for m in ROUTER_TILED_TIME_MS:
++                mt = _rt_mt(m)
++                x = torch.randn((m, ROUTER_K), device=router.device, dtype=torch.float32).to(torch.bfloat16)
++                t_master = timeit(lambda: _router_hilo_forward(x, hi, lo))
++                row = []
++                best = None
++                for cs in ROUTER_TILED_CS:
++                    if not passed.get((cs, mt)):
++                        continue
++                    t_full = timeit(lambda: _router_tiled_forward(x, state, cs, 1))
++                    t_nored = timeit(lambda: _router_tiled_forward(x, state, cs, 0))
++                    row.append(f"cs={cs} full {t_full:.2f} | no-DSMEM-reduce {t_nored:.2f}")
++                    if best is None or t_full < best[1]:
++                        best = (cs, t_full)
++                print(f"[router_tiled] m={m} cold-L2 eager median us: master {t_master:.2f} | "
++                      + "; ".join(row), flush=True)
++                if ROUTER_TILED_REP_M.get(mt) == m and best is not None:
++                    rep[mt] = (best, t_master)
++            for mt, ((cs, t), t_master) in rep.items():
++                if t < ROUTER_TILED_WIN * t_master:
++                    choice[mt] = cs
++                else:
++                    print(f"[router_tiled] mt={mt}: best cs={cs} {t:.2f} us does not beat master "
++                          f"{t_master:.2f} us by 2%; master kept", flush=True)
++    except Exception as e:
++        print(f"[router_tiled] prepare failed ({e!r}); master router path for every m", flush=True)
++        for mt in choice:
++            choice[mt] = 0
++    for m in (64, 65, 128, 129, 130, 192, 193, 200, 256, 257):
++        # Resolved through the timed call's own gate (synthetic x / cfg), so the m = 64 / 257
++        # boundaries printed here are the ones kernel_fn actually applies.
++        try:
++            xs = torch.empty((m, ROUTER_K), dtype=torch.bfloat16, device=router.device)
++            cs = _router_tiled_route(xs, {"m": m, "n": ROUTER_N, "k": ROUTER_K, "layer": "router"}, state)
++        except Exception as e:
++            print(f"[router_tiled] route probe m={m} failed ({e!r})", flush=True)
++            cs = 0
++        print(f"[router_tiled] PATH CHOSEN router m={m}: "
++              + (f"CUDA tiled cluster kernel, cluster size {cs}" if cs else "master Triton router"),
++              flush=True)
++
++
++
+ def prepare(weights: Weights) -> dict:
+     """Called once, untimed. Keep the bf16 weights as they are (contiguous), build the router's
+     hi + lo bf16 split as [256, 8192] row-major (N x K), and pre-compile every m-bucket of the
+@@ -997,6 +1571,8 @@ def prepare(weights: Weights) -> dict:
+     state["router_lo"] = lo
+     # Stage choice, side-by-side diagnostics and warm-up on synthetic inputs.
+     _router_prepare(state)
++    # Router CUDA tiled cluster path at m = 65..256 (own constant state["router_tiled"], never raises).
++    _router_tiled_prepare(state)
+     # (1) Pooler split-K scratch (fp32 partials, overwritten every call) and per-N-tile tickets.
+     pooler = state["pooler"]
+     state["pooler_ws"] = torch.empty((POOLER_SPLIT_K, POOLER_MAX_M, POOLER_N),
+@@ -1073,7 +1649,10 @@ def kernel_fn(data: Inputs, state: dict) -> torch.Tensor:
+     path = _router_path(x, hi, cfg["n"], state["router_stages"])
+     if path == "swapab":   # m <= 32
+         return _router_forward(x, hi, lo, state["router_stages"][_router_config(x.shape[0])])
+-    if path == "hilo":     # m > 32: master's forward
+-        return _router_hilo_forward(x, hi, lo)
++    if path == "hilo":     # m > 32
++        cluster_size = _router_tiled_route(x, cfg, state)
++        if cluster_size:   # 65 <= m <= 256 where the CUDA tiled kernel won in prepare()
++            return _router_tiled_forward(x, state, cluster_size)
++        return _router_hilo_forward(x, hi, lo)   # master's forward
+     # Shape outside the kernel's preconditions (never for this problem's router): exact fp32 path.
+     return F.linear(x.float(), state["router"][: cfg["n"]])

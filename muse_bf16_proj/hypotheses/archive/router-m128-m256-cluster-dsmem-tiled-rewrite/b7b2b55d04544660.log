@@ -1,0 +1,100 @@
+[router_tiled] building: TORCH_CUDA_ARCH_LIST=9.0a extra_cuda_cflags=['-O3', '-lineinfo']
+[router_tiled] load_inline compiled in 30.2s
+[router] swapab m=1 BLOCK_T=16 SPLIT_K=32 grid=(1, 4, 32) stages=3: n_regs=64 n_spills=0 wgmma=16 mma.sync=0 cp.async=65
+[router] swapab m=32 BLOCK_T=32 SPLIT_K=32 grid=(1, 4, 32) stages=3: n_regs=80 n_spills=0 wgmma=16 mma.sync=0 cp.async=71
+[router] m=1: swapab
+[router] m=8: swapab
+[router] m=16: swapab
+[router] m=32: swapab
+[router] m=64: hilo
+[router] m=128: hilo
+[router] m=256: hilo
+[router_tiled] cs=8: regs=69 local(spill)=0 B static smem=0 B dynamic smem=98304 B max active clusters=30 threads=256 mma.sync/CTA/k64-stage=256
+[router_tiled] cs=16: regs=72 local(spill)=0 B static smem=0 B dynamic smem=98304 B max active clusters=14 threads=256 mma.sync/CTA/k64-stage=256
+[router_tiled] L2->SM operand bytes m=128: incumbent 64x64 tiles 25.2 MB; new 64x64 tiles 25.2 MB
+[router_tiled] L2->SM operand bytes m=256: incumbent 64x64 tiles 50.3 MB; new 64x64 tiles 50.3 MB
+[router_tiled] launching cs=8 m=65 run 1
+[router_tiled] cs=8 m=65 run 1 finished OK
+[router_tiled] launching cs=8 m=65 run 2
+[router_tiled] cs=8 m=65 run 2 finished OK
+[router_tiled] launching cs=8 m=128 run 1
+[router_tiled] cs=8 m=128 run 1 finished OK
+[router_tiled] launching cs=8 m=128 run 2
+[router_tiled] cs=8 m=128 run 2 finished OK
+[router_tiled] mt=2: cs=8 self-check passed (m in [65, 128])
+[router_tiled] launching cs=8 m=129 run 1
+[router_tiled] cs=8 m=129 run 1 finished OK
+[router_tiled] launching cs=8 m=129 run 2
+[router_tiled] cs=8 m=129 run 2 finished OK
+[router_tiled] launching cs=8 m=130 run 1
+[router_tiled] cs=8 m=130 run 1 finished OK
+[router_tiled] launching cs=8 m=130 run 2
+[router_tiled] cs=8 m=130 run 2 finished OK
+[router_tiled] launching cs=8 m=192 run 1
+[router_tiled] cs=8 m=192 run 1 finished OK
+[router_tiled] launching cs=8 m=192 run 2
+[router_tiled] cs=8 m=192 run 2 finished OK
+[router_tiled] mt=3: cs=8 self-check passed (m in [129, 130, 192])
+[router_tiled] launching cs=8 m=200 run 1
+[router_tiled] cs=8 m=200 run 1 finished OK
+[router_tiled] launching cs=8 m=200 run 2
+[router_tiled] cs=8 m=200 run 2 finished OK
+[router_tiled] launching cs=8 m=256 run 1
+[router_tiled] cs=8 m=256 run 1 finished OK
+[router_tiled] launching cs=8 m=256 run 2
+[router_tiled] cs=8 m=256 run 2 finished OK
+[router_tiled] mt=4: cs=8 self-check passed (m in [200, 256])
+[router_tiled] launching cs=16 m=65 run 1
+[router_tiled] cs=16 m=65 run 1 finished OK
+[router_tiled] launching cs=16 m=65 run 2
+[router_tiled] cs=16 m=65 run 2 finished OK
+[router_tiled] launching cs=16 m=128 run 1
+[router_tiled] cs=16 m=128 run 1 finished OK
+[router_tiled] launching cs=16 m=128 run 2
+[router_tiled] cs=16 m=128 run 2 finished OK
+[router_tiled] mt=2: cs=16 self-check passed (m in [65, 128])
+[router_tiled] launching cs=16 m=129 run 1
+[router_tiled] cs=16 m=129 run 1 finished OK
+[router_tiled] launching cs=16 m=129 run 2
+[router_tiled] cs=16 m=129 run 2 finished OK
+[router_tiled] launching cs=16 m=130 run 1
+[router_tiled] cs=16 m=130 run 1 finished OK
+[router_tiled] launching cs=16 m=130 run 2
+[router_tiled] cs=16 m=130 run 2 finished OK
+[router_tiled] launching cs=16 m=192 run 1
+[router_tiled] cs=16 m=192 run 1 finished OK
+[router_tiled] launching cs=16 m=192 run 2
+[router_tiled] cs=16 m=192 run 2 finished OK
+[router_tiled] mt=3: cs=16 self-check passed (m in [129, 130, 192])
+[router_tiled] mt=4: cs=16 skipped, max active clusters 14 < 16
+[router_tiled] m=65 cold-L2 eager median us: master 12.42 | cs=8 full 17.25 | no-DSMEM-reduce 15.42; cs=16 full 17.15 | no-DSMEM-reduce 14.88
+[router_tiled] m=128 cold-L2 eager median us: master 12.54 | cs=8 full 17.31 | no-DSMEM-reduce 15.65; cs=16 full 17.50 | no-DSMEM-reduce 15.20
+[router_tiled] m=130 cold-L2 eager median us: master 14.43 | cs=8 full 17.47 | no-DSMEM-reduce 15.74; cs=16 full 17.41 | no-DSMEM-reduce 15.07
+[router_tiled] m=192 cold-L2 eager median us: master 14.46 | cs=8 full 17.86 | no-DSMEM-reduce 16.10; cs=16 full 17.57 | no-DSMEM-reduce 15.30
+[router_tiled] m=200 cold-L2 eager median us: master 14.56 | cs=8 full 23.68 | no-DSMEM-reduce 21.86
+[router_tiled] m=256 cold-L2 eager median us: master 14.69 | cs=8 full 24.03 | no-DSMEM-reduce 22.18
+[router_tiled] mt=2: best cs=8 17.31 us does not beat master 12.54 us by 2%; master kept
+[router_tiled] mt=3: best cs=16 17.57 us does not beat master 14.46 us by 2%; master kept
+[router_tiled] mt=4: best cs=8 24.03 us does not beat master 14.69 us by 2%; master kept
+[router_tiled] PATH CHOSEN router m=64: master Triton router
+[router_tiled] PATH CHOSEN router m=65: master Triton router
+[router_tiled] PATH CHOSEN router m=128: master Triton router
+[router_tiled] PATH CHOSEN router m=129: master Triton router
+[router_tiled] PATH CHOSEN router m=130: master Triton router
+[router_tiled] PATH CHOSEN router m=192: master Triton router
+[router_tiled] PATH CHOSEN router m=193: master Triton router
+[router_tiled] PATH CHOSEN router m=200: master Triton router
+[router_tiled] PATH CHOSEN router m=256: master Triton router
+[router_tiled] PATH CHOSEN router m=257: master Triton router
+[swapab] layer=pooler m=32 N=4096 K=8192 SPLIT_K=2 BLOCK_K=256 stages=4: n_regs=96 n_spills=0 wgmma=16 mma.sync=0 cp.async=106
+[swapab] layer=qkv_gate m=32 N=2304 K=8192 SPLIT_K=4 BLOCK_K=128 stages=4: n_regs=56 n_spills=0 wgmma=8 mma.sync=0 cp.async=58
+[swapab] layer=unpooler m=32 N=8192 K=4096 SPLIT_K=1 BLOCK_K=256 stages=4: n_regs=96 n_spills=0 wgmma=16 mma.sync=0 cp.async=106
+[swapab] layer=o m=32 N=8192 K=1024 SPLIT_K=1 BLOCK_K=256 stages=4: n_regs=96 n_spills=0 wgmma=16 mma.sync=0 cp.async=106
+[swapab16] pooler m=16 N=4096 K=8192 SPLIT_K=2 BLOCK_K=256 stages=4: n_regs=72 n_spills=0 wgmma=16 mma.sync=0 cp.async=90
+[swapab16] qkv_gate m=16 N=2304 K=8192 SPLIT_K=4 BLOCK_K=128 stages=4: n_regs=48 n_spills=0 wgmma=8 mma.sync=0 cp.async=50
+[swapab16] o m=16 N=8192 K=1024 SPLIT_K=1 BLOCK_K=256 stages=4: n_regs=72 n_spills=0 wgmma=16 mma.sync=0 cp.async=90
+[swapab16] unpooler_slice m=8 N=1024 K=4096 SPLIT_K=8 BLOCK_K=128 stages=3: n_regs=56 n_spills=0 wgmma=8 mma.sync=0 cp.async=38
+[incumbent16] pooler _bf16_splitk_kernel m=16: n_regs=96 n_spills=0 wgmma=0 mma.sync=32 cp.async=90
+[incumbent16] qkv_gate _qkv_splitk_sem_kernel m=16: n_regs=64 n_spills=0 wgmma=0 mma.sync=16 cp.async=50
+[incumbent16] o _pooler_skinny_kernel m=16: n_regs=90 n_spills=0 wgmma=0 mma.sync=32 cp.async=90
+[incumbent16] unpooler_slice _bf16_splitk_kernel m=16: n_regs=72 n_spills=0 wgmma=0 mma.sync=16 cp.async=38
