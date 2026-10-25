@@ -77,7 +77,7 @@ base_sha: 928151c3ea4e903fc4a05ae7ac59672291b71d0d
 base_blob: a13d5fea2e79f85df573670cbd55a8a10fbc3d2c
 branch: hyp/muse_moe_w4a16/cuda-nvfp4-wgmma-rega-grouped-s5-copy-safe-forced
 worktree: .worktrees/muse_moe_w4a16/cuda-nvfp4-wgmma-rega-grouped-s5-copy-safe-forced
-mode: null
+mode: check
 restack_of: null
 stale_base: true
 implemented_at: 2026-10-25T085424Z
@@ -86,6 +86,8 @@ submission_sha256: a7d57b4914045a9b48dc6be15fde917e51501da41cc9ddcfc64374e081a23
 norm_sha256: 8f75ca09f7dfc58a2923d73cd265e34e0cf7c6219191de179cf77970f91ea9df
 submission_blob: 77f34503659c90a5953f91a93ba6e1a2b02e4613
 lint_warnings: 60
+attempt_file: 2026-10-25T085424Z-check-cuda-nvfp4-wgmma-rega-grouped-s5-copy-safe-forced.md
+prepared_at: 2026-10-25T085424Z
 ---
 
 # cuda-nvfp4-wgmma-rega-grouped-s5-copy-safe-forced
