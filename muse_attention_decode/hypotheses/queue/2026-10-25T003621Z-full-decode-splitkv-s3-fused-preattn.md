@@ -51,8 +51,10 @@ kind: rewrite
 controls_for: null
 rewrite_stage: 3
 replaces: _pre_attention_kernel launch on full decode 1<B<=64 (folded into splitkv_attn_sk_kernel)
-review: required
+review: proceed
 status: queued
+review_at: 2026-10-25T014055Z
+review_companions: null
 ---
 
 # full-decode-splitkv-s3-fused-preattn
@@ -79,3 +81,29 @@ shape (profile top_kernels) against the incumbent and the speed-of-light floor, 
 2. at or below the incumbent kernels' time on the target shapes;
 3. within ~1.5x of the floor on the target shapes, and the headline CI clears 1.0 (promotable).
 The next stage is minted with `--kind rewrite --depends-on <this slug> --stage N+1`.
+
+## Adversarial review
+
+Reviewed 2026-10-25T014055Z by an adversarial subagent (model opus).
+
+**Verdict: proceed.** Builds on a real stage-2 gain and is rules-clean, but the prize is small (~2 us of 111/227 us, ~2%) and the spec wrongly says to apply RoPE on full layers, which have none (rope_theta 0, master runs _pre_attention_kernel with ROPE=False); the builder must mirror master's ROPE=False math or the self-check will fail and the run will measure the v2 fallback.
+
+### Justification
+Stage 2 (job e592b1f5d3db4f83, 1.4171 [1.396,1.443] vs best 1.3949 [1.374,1.416], unproven-vs-best only because the CIs overlap) made a real, attributable kernel gain: full decode_16 shape 122.8 -> 110.9 us (A+B 120.0 -> splitkv_attn_sk_kernel 108.9), full decode_32 241.9 -> 226.8 us (A+B 254.3 -> 226.8); every other shape within ~1 us of best. M1 met on both; M2 narrowly missed (108.9 vs <=108, 226.8 vs <=222). The in-process diagnostics split it: stream-K work split alone gave 1.10x/1.14x on kernel A (117.5 -> 106.9, 245.3 -> 215.1 us eager), while the ticket fold saved only 1.05x/1.03x net: the ticket kernel is ~5.8/6.2 us slower than the no-ticket kernel, i.e. the serialized last-arriver merge tail costs ~6 us against the 11.7 us separate combine it replaces. A: the mechanism is sound but small. On the gated shapes _pre_attention_kernel is 2.2 us (decode_16) and 2.3 us (decode_32) in the stage-2 profile, 2.0% and 1.0% of the shape. The profile shows no measurable inter-kernel gap (108.9 + 2.2 = 111.1 vs median 110.9), so the realistic ceiling is ~2 us per shape, minus whatever the in-kernel q build adds to each CTA's critical path. Expected directions match TASK.md: weight 16 full decode_16/32 faster, everything else gated out. Floors are 63.2/126.4 us, so this stage moves the milestones by about 2%; M3 (<=1.5x floor) is unreachable by this change and is not claimed. WEAKEST LINK: the q build latency. In stage 2 the FP8 q rides the cp.async ring (issue_tile issues it with the segment's first tile, so it costs nothing). In v3 each CTA must load 2 KB of bf16 qkv, RMSNorm it and cast it to FP8 before its first QK MMA, once per segment (~17 CTAs per request at B=16, ~8 at B=32). If that compute is serialized ahead of the ring prologue it adds ~0.5-1 us to every CTA and eats most of the 2 us. sliding-fused-hoist-first-tile (regression) already showed that prologue ordering is sensitive in this codebase. Build it so the 2 KB qkv slice is cp.async'd into smem with the segment's first tile, exactly where q is fetched today, and normalized when that stage is consumed. SPEC ERROR: the change paragraph says RoPE at positions[b] with inv_freq for both q and the new k. Full layers have no RoPE (TASK.md 'rope(q,p), rope(k,p)  # sliding layers'; submission rope_theta 0 = no RoPE; master full-layer pre-attn passes ROPE=bool(theta)=False and a dummy inv_freq). Mirror master: RMSNorm (scaleless, eps 1e-5) plus the FP8 cast, no rotation. The LESSONS sin/cos caveat is therefore moot here, and k/v rows should match master almost byte for byte (only rsqrt rounding can differ). The ownership argument holds: reference.py builds cache_loc = page_table[b, pos] with cache_seqlens = pos + 1, so key seq_b - 1 is exactly cache_loc[b], and stream-K tile ranges are disjoint, so exactly one CTA owns it.
+
+### Confounders on the current kernel
+- full-decode-splitkv-s2-streamk-ticket-inproc (the depends_on parent, not on master): the measured baseline for this stage is the stage-2 profile (110.9 / 226.8 us), not BEST.json. A headline compared against best (1.3949) mixes in stage 2's own ~12/15 us gain, so read top_kernels against stage 2.
+- fused-preattention-triton: its _pre_attention_kernel is the reference math being folded in. If v3's q/k differ (e.g. RoPE wrongly applied), the in-process self-check falls back to v2 and the run silently re-measures stage 2. Grep for PATH CHOSEN before interpreting anything.
+- paired-heads-launch-cleanup / ab-tune-batch-gate: the gated path takes the UNPAIRED q layout (paired = ... and not splitkv). v3 must build q unpaired [16,64]; no interaction otherwise.
+- full-decode-cuda-gather-splitkv (v1) stays compiled as a second-level fallback; no timing interaction.
+- sliding-* landed hypotheses: gated out; sliding-shape movement is noise (stage 2 moved them by <=1 us).
+
+### Interference and A/B needs
+No okc companion. The only ambiguity is whether a ~2 us shape delta is the launch removal or noise. Shape err_ns is ~50 ns, so a 2 us move is readable, and the cleanest control is in-process: extend the stage-2 eager diagnostic (same GPU, same synthetic B=16/32 x 80000 inputs) to print (pre-attn + v2) vs v3, plus v3's kernel time alone vs v2's kernel time alone. That shows directly how much the in-kernel q/kv build costs inside the attention kernel versus the launch it saves. Remember that prepare timings undercount the judge by 20-25% (LESSONS), so rank variants with them but do not quote them as the milestone. Reverting a landed hypothesis would isolate nothing, because no landed change shares this prologue.
+
+### Open questions
+- The bigger tail on this kernel is the ticket merge (~6 us per shape per the stage-2 diagnostics), not pre-attn (2 us). Should a sibling stage target the merge, e.g. the two-level ticket from full-decode1-streamk-s3-two-level-ticket applied at B=16 (nseg ~17), or a parallel merge across the last arriver's threads?
+- This branch and full-decode1-streamk-s3-two-level-ticket both edit splitkv_attn_sk_kernel from the same parent. If both pass, stage 4 has to merge v3 (fused pre-attn, 1<B<=64) with the batch-1 two-level path. Fused pre-attn is proportionally worth more at batch 1 (1.4 us of a ~14 us target shape).
+- Does the q build add per-segment latency measurable in v3's own kernel time vs v2's? The eager diagnostic should print it.
+- positions and inv_freq are not needed on full layers. Drop them from the v3 signature, or confirm they are unused.
+
