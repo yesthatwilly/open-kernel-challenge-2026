@@ -109,9 +109,10 @@ speedup: 1.3274587526558561
 speedup_ci: [1.3075468713660183, 1.347370633945694]
 harvested_at: 2026-10-25T115711Z
 best_at_harvest: 1.1075501334948785
-promotion: merged
+promotion: superseded
 promotion_commit: 23c1d5fa90e63b93b142d0f2461c4647a1e9d68c
 promotion_attempt: 2026-10-25T115714Z-submit-experts-turn-rega-s4-port-t4096.md
+promotion_reason: best is now 1.4677493909229
 ---
 
 # experts-turn-rega-s4-port-t4096
