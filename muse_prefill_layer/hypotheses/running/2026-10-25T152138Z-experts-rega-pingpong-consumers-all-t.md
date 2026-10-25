@@ -86,9 +86,18 @@ priority: 1
 kind: primary
 controls_for: null
 review: proceed
-status: queued
+status: running
 review_at: 2026-10-25T152526Z
 review_companions: null
+stage: claimed
+claimed_at: 2026-10-25T152526Z
+base_sha: f4ace8661739740d326729699aeb3d2f785ae596
+base_blob: a2fe2a75893c60d4f68cf94fcce8ce8f9b708a71
+branch: hyp/muse_prefill_layer/experts-rega-pingpong-consumers-all-t
+worktree: .worktrees/muse_prefill_layer/experts-rega-pingpong-consumers-all-t
+mode: null
+restack_of: null
+stale_base: null
 ---
 
 # experts-rega-pingpong-consumers-all-t
