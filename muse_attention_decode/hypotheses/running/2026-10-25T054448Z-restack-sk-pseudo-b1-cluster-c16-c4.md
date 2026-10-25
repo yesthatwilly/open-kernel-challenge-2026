@@ -63,7 +63,7 @@ review: proceed
 status: running
 review_at: 2026-10-25T054818Z
 review_companions: null
-stage: claimed
+stage: implemented
 claimed_at: 2026-10-25T054819Z
 base_sha: edf4bf29fe8d509a2574c0becee65138cb7705f2
 base_blob: d8769ef25caf845a0e207538ccc5c62394b6ee3b
@@ -72,6 +72,12 @@ worktree: .worktrees/muse_attention_decode/restack-sk-pseudo-b1-cluster-c16-c4
 mode: null
 restack_of: null
 stale_base: null
+implemented_at: 2026-10-25T084553Z
+impl_commit: 00223bb62adc15f5b9d56ea5faff2034aaee58b5
+submission_sha256: b015a01e0175339af029dc93dc681c896a94682bf5336d611817445cd83becee
+norm_sha256: de8fb43c57a6803dc508db9e4e4738a46d1f1b25db01df36959e63bcc7bd9a37
+submission_blob: 7eda7a001d411ff41aaf5946ed5c59c840686052
+lint_warnings: 36
 ---
 
 # restack-sk-pseudo-b1-cluster-c16-c4
@@ -116,3 +122,49 @@ No companion is warranted. The two sub-changes route disjoint shapes, (A) to sli
 - Does the s1 IDENTICAL check (sk_attrs for landed variants) still print IDENTICAL when (B)'s TU is also loaded in the same process? Register pressure and smem attributes should not change, but the line must be in the log to read the full rows as flat.
 - The (B) self-check's cache tolerance is rel < 5e-2 with byte match as info only. Does the new-cache correctness bound (8% of the reference's) still pass on the kv_scale 0.015625 page-1 test? That test routes to master today (q_len 8 or page 64), so check that no cluster-gated test case has kv_scale != 1.
 
+
+## Implementation notes
+
+Base: worktree base edf4bf2 = current master for muse_attention_decode/submission.py (blob d8769ef, unchanged since); no stale_base merge needed. Built in `muse_attention_decode/submission.py` only (+1722/-40).
+
+What changed
+- (A) Took the whole s1 PSEUDO change (impl 6f95ce7, blob-identical base) as is: `splitkv_attn_sk_kernel<..., PSEUDO>`, `Lay<STAGES,256,true>`, `load_prefix_pseudo`, `_ps_setup` gate (>= 1.05x vs FA3, unchanged), `_ps_launch`, `-DSK_PSEUDO=1` build with landed-only rebuild fallback.
+- (B) Ported only the sliding cluster TU from 41fcca0 (`_SLIDE_CPP`/`_SLIDE_CUDA`, byte-identical CUDA text, fp8qk with f16qk rebuild fallback) plus its Python glue, nothing of that branch's stream-K. Own constants `_SLIDE_*` (no shared constant with the PSEUDO/stream-K path). C=8 dropped from the Python tables (never routed).
+- `kernel_fn`: `if window and q_len == 1: if _slide_gate(cfg): c = _slide_clusters(cfg); return _slide_launch(_SLIDE_MOD[c], data, c); return _sliding_forward(data)`. Pure config-gated dispatch (batch 1 -> C=16, 17..32 -> C=4, else master Triton; verify untouched).
+
+Review fixes / asks applied
+1. Strip kernel_fn try/except, `_slide_note` prints and `_SLIDE_NOTED` set (and `_slide_forward`): done, none remain (grep clean).
+2. (B) margin: kept config-only (C=16 at B=1, C=4 at B=17..32), no margin gate; `_slide_timing` prints the interleaved cold-L2 (256 MB flush) graph-replay time of cluster vs master `_sliding_forward` with an empty-graph baseline subtracted (round-robin, order flipped each round, median of 20) for each enabled C, information only. PATH CHOSEN lines carry both numbers.
+3. Two-state rule for (B)'s self-check: `_slide_two_state_check` builds state A and state B (different lens, cache_loc, page tables, caches, kv scale 1.0 vs 0.25, same shapes), captures the launch ONCE on a third buffer set after a side-stream warm-up, then alternates refill A / replay / compare, refill B / replay / compare, twice, output poisoned with NaN before each replay, each vs the fp32 reference (rel L2 < 2e-2). Any miss drops that C to the f16qk rebuild, then master Triton, with a PATH CHOSEN line naming the cause. The old single-state eager+graph block was removed.
+   Also extended (A): `_ps_replay_check` now refills state B then state A again then B again (fresh pages/cache values) after the existing A, A, B sequence, each against its own reference.
+4. TU audit for static device pointers: `_SLIDE_CUDA` has no `__device__`/`__constant__` globals, no static locals, no cudaMalloc/cudaMemcpyToSymbol, no cached tensor maps; `slide_attn` reads every pointer from its tensor arguments each launch and allocates only `out` (shape-only, torch.empty). Only host-side function attributes are set (in `slide_setup`, once). Python side: the only module-level tensor is master's `_inv_freq` cache (theta-only, not state data) and master/PSEUDO's self-resetting tickets. Nothing to move.
+5. Per-phase wall times: `_phase(...)` prints after splitkv v1, stage-2 build, stage-2 validate, batch-1 validate, pseudo gate + replay, diagnostics, and sliding cluster build/checks/timing, each with running total; `_build_slide` also prints its own compile time.
+6. sk_attrs IDENTICAL line with both TUs loaded: after `_slide_init()`, `_EXT2.sk_attrs(0)` is re-read and printed as "landed-kernel check with both TUs loaded ... IDENTICAL to landed / DIFFERS FROM LANDED" (landed 121 regs, 0 local, 95264 B, 2 CTAs/SM). The earlier in-validate line is kept.
+7. Open questions: compile budget is printed per phase (cache warmth on the judge unknown; fp8qk build is first, f16qk only on failure). Cache bound: the cache rel < 5e-2 check is unchanged and is run in the eager cases at kv_scale 0.25 and 1.0 (cluster cases include kv_scale 0.25); page-1 kv_scale 0.015625 tests route to master per the review, no new gate case has kv_scale != 1 outside the synthetic ones.
+
+Deviations: none from the change paragraph; (A)'s gate untouched. Nothing was run (no GPU here).
+
+## Rules check
+
+- [x] CUDA-graph capturable: kernel_fn dispatch has no sync/.item()/prints/try; allocations are shape-only; all sync/prints are in import-time prepare code (diff checked).
+- [x] Nothing derived from `data` is cached across calls: no module/static global holds a state pointer, TMA map or state-sized buffer (TU audited); only master's theta-keyed `_inv_freq` and self-resetting tickets.
+- [x] Weights: n/a: attention problem, no weights.
+- [x] Activations/KV: KV FP8, q rounded to E4M3 once in the cluster kernel (as in 41fcca0), fp32 softmax/merges, bf16 out.
+- [x] Attention sees every key: cluster ranks cover [lo, seq) of the window, no skipping; checked against the fp32 reference in the self-check.
+- [x] No timing patches, harness access, module edits, reference import, subprocesses or network (grep for subprocess/fork/multiprocessing/Popen clean; lint network check passes).
+- [x] All work inside the timed call; no output caching or replay.
+- [x] sm_90a: TORCH_CUDA_ARCH_LIST=9.0a set around each load_inline and restored; arch flags printed; `-lineinfo`; cluster TU is sm_90 (no wgmma); PTX paths are those of the landed/ported TUs.
+
+okc_lint: `OK with warnings` (36 host-sync warnings, all outside kernel_fn's call graph, prepare-time only); no errors. py_compile OK; __pycache__ removed.
+
+## Pre-flight audit
+
+Audited 2026-10-25 by an opus subagent (read-only emulation; no GPU). **Verdict: dispatch** (no fixes needed).
+
+- (A) is byte-identical to s1 impl 6f95ce7 apart from the extended `_ps_replay_check` (A, A, refill B, refill A, refill B, each against its own fp32 reference, NaN-poisoned output); its 1.05x gate is unchanged and routed B=1 in 94523c33. The landed instantiations differ only in compile-time-folded code (`Lay<STAGES>` defaults, `plo = 0`, `R = B`), so full rows run master's kernels.
+- (B) `_SLIDE_CPP`/`_SLIDE_CUDA` are byte-identical to 41fcca0, whose run 195dcc12 passed every gate (occupancy C=16 -> 14 >= 1, C=4 -> 62 >= 32, rel L2 ~1.6e-3 vs 2e-2, cache bytes 1.0000 match). The TU has no `__device__`/`__constant__` globals and no static pointers or maps (only `cudaFuncSetAttribute` in `slide_setup`). Python holds only extension handles, the theta-keyed `_inv_freq` and self-resetting tickets.
+- Gates are config-only and strict: tp8, page 1, q_len 1, 0 < window <= 2048, RoPE, B=1 or 17..32, and they fall to `_sliding_forward` whenever the module is None. None of the 16 tests reaches the cluster route (page 64 / B 2..16 / verify), and the pseudo route reaches only verify bands whose replay check passed. The `_slide_two_state_check` setup (capture once on a third buffer set, then refill A / B / A / B with poisoned output, each against fp32) follows the two-state rule. Every check and the init are wrapped, so a failure falls to master with a PATH CHOSEN line instead of raising.
+- kernel_fn's call graph has no host sync, prints, try/except, mutable state or allocation sized by input values (out/ws are shape-only). okc_lint gives OK with warnings (prepare-time syncs only) and py_compile passes.
+- Budget: about 49 s splitkv + about 40 s sk(PSEUDO) + about 41 s slide fp8qk compiles, plus checks and gating, which is roughly 3-4 min cold, well inside the 15 min limit.
+
+Residual risk: a sticky CUDA fault in a canary or self-check launch would poison the context, as in every landed TU. The sliding decode_1 C=16 gain (0.58 us) sits within drift, and the 16 KB log tail may cut off the earlier [ps] PATH CHOSEN lines; the phase and [slide] lines print last.
