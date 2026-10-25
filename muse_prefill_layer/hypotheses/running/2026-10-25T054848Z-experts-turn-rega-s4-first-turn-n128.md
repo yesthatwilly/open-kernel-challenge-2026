@@ -80,7 +80,7 @@ base_sha: c0cdf3a56f74658d323e211e760d12b57dcf6772
 base_blob: 712edc5ea5be2dde8f558a016d0877b285340ee4
 branch: hyp/muse_prefill_layer/experts-turn-rega-s4-first-turn-n128
 worktree: .worktrees/muse_prefill_layer/experts-turn-rega-s4-first-turn-n128
-mode: null
+mode: check
 restack_of: null
 stale_base: null
 implemented_at: 2026-10-25T121653Z
@@ -89,6 +89,8 @@ submission_sha256: 12a9680ac1d8b09158917d5cec51dd07e8af044263357248ca997c07eed5b
 norm_sha256: af4fbff4b62d1424d07b1d7d3689809b5c6e6c3e41115fb908a2b699789c11b9
 submission_blob: c2e3e595def2e6b5949e0fd350ce98ed59729147
 lint_warnings: 59
+attempt_file: 2026-10-25T121653Z-check-experts-turn-rega-s4-first-turn-n128.md
+prepared_at: 2026-10-25T121653Z
 ---
 
 # experts-turn-rega-s4-first-turn-n128
