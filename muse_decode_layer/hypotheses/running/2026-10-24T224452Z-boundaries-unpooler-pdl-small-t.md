@@ -56,9 +56,18 @@ priority: 2
 kind: primary
 controls_for: null
 review: proceed
-status: queued
+status: running
 review_at: 2026-10-25T010851Z
 review_companions: null
+stage: claimed
+claimed_at: 2026-10-25T010851Z
+base_sha: 63b7f3a3bc19c847c204f5d5298872f66d86505a
+base_blob: 4da94677234faaa06b42b5ced541db8961fd6f34
+branch: hyp/muse_decode_layer/boundaries-unpooler-pdl-small-t
+worktree: .worktrees/muse_decode_layer/boundaries-unpooler-pdl-small-t
+mode: null
+restack_of: null
+stale_base: null
 ---
 
 # boundaries-unpooler-pdl-small-t
