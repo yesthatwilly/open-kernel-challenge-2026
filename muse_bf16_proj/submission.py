@@ -9,11 +9,15 @@ batch size: "the router's FP32 weights may run as a BF16 hi + lo pair with FP32 
 The split is built once in prepare() from the weights alone and stored as two [256, 8192] bf16
 row-major tensors; nothing derived from the inputs is kept between calls.
 
-Grid (the one difference from the parent): grid = (cdiv(M, BLOCK_M), N // BLOCK_N, SPLIT_K)
-at every m. Each program owns one (M-block, N-block, K-slice), never loops over M, and
-atomically adds its fp32 K-partial into an output zeroed right before the launch; there is no
-plain-store path. Configs are static, chosen from m at launch; rows beyond m are masked, so any
-m is valid.
+Swap-AB router (hypothesis router-swapab-wgmma-all-m): _router_swapab_kernel puts 64 hi / lo
+weight rows on tl.dot's M side and the tokens on N (the router analogue of _bf16_swapab_kernel),
+grid = (cdiv(M, BLOCK_T), 256 // 64, SPLIT_K) at every m. Each program owns one (token-block,
+weight-block, K-slice) and atomically adds its fp32 K-partial, transposed, into an output zeroed
+right before the launch; there is no plain-store path. Configs are static, chosen from m at
+launch; tokens beyond m are masked, so any m is valid. Restacked (hypothesis
+bf16-restack-m16-swapab-router-swapab-m32) gated to m <= ROUTER_SWAPAB_MAX_M = 32 only: above
+that, master's tokens-on-M _router_hilo_kernel via _router_hilo_forward (master's forward,
+unchanged), with _router_hilo_config and ROUTER_NUM_STAGES.
 
 Shape-gated Triton winners (hypothesis bf16-shape-gated-triton-winners-combo): four
 individually-measured Triton paths, each routed ONLY on the (layer, m, n) shapes where its own
@@ -35,6 +39,12 @@ Swap-AB at 17 <= m <= 32 (hypothesis bf16-m32-swapab-wgmma-triton): all four bf1
 _bf16_swapab_kernel, 64 weight rows on tl.dot's M side and the (<= 32) tokens on N, so Triton
 can emit wgmma m64n32k16; pooler split-K 2, qkv_gate split-K 4 (same ticket reduce, transposed
 workspace), unpooler / o full K. Every other shape keeps its path above.
+
+Swap-AB at 1 <= m <= 16 (hypothesis bf16-m16-swapab-wgmma-extend): pooler, qkv_gate, o and the
+unpooler's n == 1024 slice run the same _bf16_swapab_kernel with BLOCK_T = WS_M = 16 (wgmma
+m64n16k16) and their own 16-row workspaces / tickets, routed BEFORE the m <= 16 kernels above
+(which stay in the file, no longer routed for these shapes). The unpooler full width at m = 16
+keeps cuBLAS; every m >= 17 shape keeps its path.
 """
 
 from typing import TypedDict
@@ -69,23 +79,33 @@ class Inputs(TypedDict):
 ROUTER_N = 256
 ROUTER_K = 8192
 ROUTER_BLOCK_K = 128
+ROUTER_BLOCK_W = 64     # router weight rows per program = wgmma M for one warpgroup (swap-AB)
 ROUTER_NUM_STAGES = 3
-ROUTER_NUM_WARPS = 4
+ROUTER_FALLBACK_STAGES = 2  # used for a bucket whose 3-stage compile is OutOfResources (prepare)
+ROUTER_NUM_WARPS = 4    # one warpgroup
+ROUTER_SWAPAB_MAX_M = 32  # m <= this: swap-AB _router_forward; above: master's hilo forward
 # m values pre-warmed in prepare(): one per config bucket plus the scored/tested ones, so that
-# the timed call never compiles (M is not specialized and the grid's M extent is a launch
+# the timed call never compiles (M is not specialized and the grid's token extent is a launch
 # argument, so one compile serves a whole bucket).
 ROUTER_WARM_MS = (1, 8, 16, 32, 64, 128, 256)
 
 
 def _router_config(m: int):
-    """Static launch config from m only: (BLOCK_M, BLOCK_N, SPLIT_K).
+    """Static swap-AB launch config from m only, for m <= ROUTER_SWAPAB_MAX_M: (BLOCK_T, SPLIT_K).
 
-    grid = (cdiv(m, BLOCK_M), 256 // BLOCK_N, SPLIT_K), always atomic_add into a zeroed output:
-      m <=  16: BLOCK_M=16, BLOCK_N=32, SPLIT_K=16 -> (1, 8, 16) = 128 CTAs, K-slice 512
-      m <=  32: BLOCK_M=32, BLOCK_N=32, SPLIT_K=16 -> (1, 8, 16) = 128 CTAs, K-slice 512
-      m <= 128: BLOCK_M=64, BLOCK_N=64, SPLIT_K=16 -> (2, 4, 16) = 128 CTAs at m=128, K-slice 512
-      m >  128: BLOCK_M=64, BLOCK_N=64, SPLIT_K=8  -> (4, 4,  8) = 128 CTAs at m=256, K-slice 1024
+    grid = (cdiv(m, BLOCK_T), 256 // 64, SPLIT_K), always atomic_add into a zeroed output:
+      m <=  16: BLOCK_T=16, SPLIT_K=32 -> (1, 4, 32) = 128 CTAs, K-slice 256
+      m <=  32: BLOCK_T=32, SPLIT_K=32 -> (1, 4, 32) = 128 CTAs, K-slice 256
+    m > 32 runs master's hilo path (_router_hilo_config), never this config.
     """
+    if m <= 16:
+        return 16, 32
+    return 32, 32
+
+
+def _router_hilo_config(m: int):
+    """Master's tokens-on-M config (BLOCK_M, BLOCK_N, SPLIT_K) for _router_hilo_kernel; the timed
+    path uses it at m > ROUTER_SWAPAB_MAX_M only (the m <= 32 rows are master's, unused)."""
     if m <= 16:
         return 16, 32, 16
     if m <= 32:
@@ -139,12 +159,82 @@ def _router_hilo_kernel(
     tl.atomic_add(out_ptrs, acc, mask=m_mask[:, None], sem="relaxed")
 
 
-def _router_forward(x: torch.Tensor, hi: torch.Tensor, lo: torch.Tensor) -> torch.Tensor:
+@triton.jit(do_not_specialize=["M"])
+def _router_swapab_kernel(
+    x_ptr, hi_ptr, lo_ptr, out_ptr,
+    M,
+    stride_xm, stride_wn, stride_om,
+    K_SLICE: tl.constexpr,
+    BLOCK_W: tl.constexpr, BLOCK_T: tl.constexpr, BLOCK_K: tl.constexpr,
+):
+    """out[M, N] (+)= x[M, K] @ (hi + lo)[N, K]^T over this program's K-slice, computed as
+    ((hi + lo) @ x^T)^T (swap-AB), fp32 accumulate.
+
+    x: bf16 [M, K] row-major; hi, lo: bf16 [N, K] row-major; out: fp32 [M, N] row-major.
+    Program (pid_t, pid_w, pid_k) covers tokens [pid_t*BLOCK_T, +BLOCK_T) (tokens >= M load as
+    zero and are never added), weight rows [pid_w*BLOCK_W, +BLOCK_W) and K [pid_k*K_SLICE,
+    +K_SLICE). hi / lo tiles [BLOCK_W, BLOCK_K] (as stored) are tl.dot's LHS, the x^T tile
+    [BLOCK_K, BLOCK_T] its RHS, so 64 weight rows sit on the MMA M side. The fp32 K-partial is
+    atomically added, transposed, into the zeroed output. K_SLICE is a multiple of BLOCK_K.
+    """
+    pid_t = tl.program_id(0)
+    pid_w = tl.program_id(1)
+    pid_k = tl.program_id(2)
+    k_start = pid_k * K_SLICE
+
+    offs_w = pid_w * BLOCK_W + tl.arange(0, BLOCK_W)
+    offs_k = k_start + tl.arange(0, BLOCK_K)
+    offs_t = pid_t * BLOCK_T + tl.arange(0, BLOCK_T)
+    t_mask = offs_t < M
+    hi_ptrs = hi_ptr + offs_w[:, None] * stride_wn + offs_k[None, :]   # [BLOCK_W, BLOCK_K]
+    lo_ptrs = lo_ptr + offs_w[:, None] * stride_wn + offs_k[None, :]
+    xt_ptrs = x_ptr + offs_t[None, :] * stride_xm + offs_k[:, None]    # [BLOCK_K, BLOCK_T] = x^T
+    acc = tl.zeros((BLOCK_W, BLOCK_T), dtype=tl.float32)
+    for kk in range(0, K_SLICE // BLOCK_K):
+        hi_tile = tl.load(hi_ptrs)
+        lo_tile = tl.load(lo_ptrs)
+        xt_tile = tl.load(xt_ptrs, mask=t_mask[None, :], other=0.0)
+        acc = tl.dot(hi_tile, xt_tile, acc)
+        acc = tl.dot(lo_tile, xt_tile, acc)
+        hi_ptrs += BLOCK_K
+        lo_ptrs += BLOCK_K
+        xt_ptrs += BLOCK_K
+    out_ptrs = out_ptr + offs_t[None, :] * stride_om + offs_w[:, None]
+    tl.atomic_add(out_ptrs, acc, mask=t_mask[None, :], sem="relaxed")
+
+
+def _router_forward(x: torch.Tensor, hi: torch.Tensor, lo: torch.Tensor, num_stages: int,
+                    report: bool = False) -> torch.Tensor:
+    """x bf16 [m, 8192] @ (hi + lo).T with fp32 accumulation -> fp32 [m, 256]. One launch plus
+    the memset of the zeroed output. Branches only on shapes. report=True (prepare() only)
+    prints the compiled variant's registers, spills and PTX counts."""
+    m, k = x.shape
+    n = hi.shape[0]
+    block_t, split_k = _router_config(m)
+    k_slice = k // split_k
+    # Zeroed right before the launch, every call: the K-partials are atomically added into it.
+    out = torch.zeros((m, n), dtype=torch.float32, device=x.device)
+    grid = (triton.cdiv(m, block_t), n // ROUTER_BLOCK_W, split_k)
+    compiled = _router_swapab_kernel[grid](
+        x, hi, lo, out,
+        m,
+        x.stride(0), hi.stride(0), out.stride(0),
+        K_SLICE=k_slice,
+        BLOCK_W=ROUTER_BLOCK_W, BLOCK_T=block_t, BLOCK_K=ROUTER_BLOCK_K,
+        num_warps=ROUTER_NUM_WARPS, num_stages=num_stages,
+    )
+    if report:
+        _print_ptx_counts(f"[router] swapab m={m} BLOCK_T={block_t} SPLIT_K={split_k} "
+                          f"grid={grid} stages={num_stages}", compiled)
+    return out
+
+
+def _router_hilo_forward(x: torch.Tensor, hi: torch.Tensor, lo: torch.Tensor) -> torch.Tensor:
     """x bf16 [m, 8192] @ (hi + lo).T with fp32 accumulation -> fp32 [m, 256]. One launch plus
     the memset of the zeroed output. Branches only on shapes."""
     m, k = x.shape
     n = hi.shape[0]
-    block_m, block_n, split_k = _router_config(m)
+    block_m, block_n, split_k = _router_hilo_config(m)
     k_slice = k // split_k
     # Zeroed right before the launch, every call: the K-partials are atomically added into it.
     out = torch.zeros((m, n), dtype=torch.float32, device=x.device)
@@ -166,9 +256,63 @@ def _router_shape_ok(x: torch.Tensor, hi: torch.Tensor) -> bool:
         return False
     m, k = x.shape
     n = hi.shape[0]
-    block_m, block_n, split_k = _router_config(m)
+    if m <= ROUTER_SWAPAB_MAX_M:   # swap-AB: SPLIT_K 32, 64 weight rows per program
+        _block_t, split_k = _router_config(m)
+        block_n = ROUTER_BLOCK_W
+    else:                          # master's hilo: SPLIT_K 16 / 8
+        _block_m, block_n, split_k = _router_hilo_config(m)
     return (k == hi.shape[1] and k % (ROUTER_BLOCK_K * split_k) == 0 and n % block_n == 0
             and hi.stride(1) == 1)
+
+
+def _router_path(x: torch.Tensor, hi: torch.Tensor, n: int, stages: dict) -> str:
+    """Which router kernel a call takes, from shapes only: "swapab" (m <= 32), "hilo" (m > 32,
+    master's) or "" (the exact fp32 F.linear fallback)."""
+    if not (_router_shape_ok(x, hi) and n == hi.shape[0]):
+        return ""
+    if x.shape[0] > ROUTER_SWAPAB_MAX_M:
+        return "hilo"
+    return "swapab" if _router_config(x.shape[0]) in stages else ""
+
+
+def _router_prepare(state: dict) -> None:
+    """Choose each swap-AB bucket's stage count (3, or 2 if the 3-stage compile is
+    OutOfResources; recorded in state as a constant per bucket) and warm every m in
+    ROUTER_WARM_MS on synthetic x so the timed call never compiles: m <= 32 on the swap-AB
+    kernel, m > 32 (64 / 128 / 256) on master's hilo forward. Asserts that every warm m resolves
+    to a kernel path, never the F.linear fallback. Weights only; nothing from a later call is
+    involved."""
+    hi, lo = state["router_hi"], state["router_lo"]
+    k = hi.shape[1]
+    stages = {}
+    xs = {}
+    for m in ROUTER_WARM_MS:
+        x = torch.randn((m, k), device=hi.device, dtype=torch.float32).to(torch.bfloat16)
+        xs[m] = x
+        if not _router_shape_ok(x, hi):
+            continue
+        if m > ROUTER_SWAPAB_MAX_M:
+            _router_hilo_forward(x, hi, lo)
+            continue
+        bucket = _router_config(m)
+        if bucket not in stages:
+            num_stages = ROUTER_NUM_STAGES
+            try:
+                _router_forward(x, hi, lo, num_stages, report=True)
+            except _OutOfResources as e:
+                print(f"[router] bucket {bucket}: {num_stages} stages OutOfResources ({e}); "
+                      f"retrying at {ROUTER_FALLBACK_STAGES}", flush=True)
+                num_stages = ROUTER_FALLBACK_STAGES
+                _router_forward(x, hi, lo, num_stages, report=True)
+            stages[bucket] = num_stages
+        else:
+            _router_forward(x, hi, lo, stages[bucket])
+    state["router_stages"] = stages
+    if tuple(hi.shape) == (ROUTER_N, ROUTER_K):
+        for m, x in xs.items():
+            path = _router_path(x, hi, ROUTER_N, stages)
+            assert path in ("swapab", "hilo"), f"router m={m} resolves to the F.linear fallback"
+            print(f"[router] m={m}: {path}", flush=True)
 
 
 @triton.jit(do_not_specialize=["M"])
@@ -651,6 +795,196 @@ def _swapab_prepare(state: dict) -> None:
     state["swapab_cnt_qkv"].zero_()
 
 
+# --- (6) pooler / qkv_gate / o at 1 <= m <= 16 and the unpooler slice: swap-AB, BLOCK_T 16 ------
+# (hypothesis bf16-m16-swapab-wgmma-extend). The same _bf16_swapab_kernel as (5), with 16 token
+# columns (wgmma m64n16k16) and its OWN 16-row workspaces / tickets: WS_M and BLOCK_T are passed
+# as 16 here, never master's SWAPAB_MAX_M / SWAPAB_BLOCK_T (32), so the [SPLIT_K, 16, n]
+# workspace is addressed with a 16-row stride. Per-layer grid / BLOCK_K / stages equal the
+# incumbent m <= 16 kernels', so tl.dot orientation is the only variable.
+SWAPAB16_MAX_M = 16
+SWAPAB16_BLOCK_T = 16   # token columns per program; columns >= m masked
+SWAPAB16_WS_M = 16      # workspace rows (== BLOCK_T)
+# key -> (N, K, SPLIT_K, BLOCK_K, num_stages); static, from cfg layer (and n for the slice).
+SWAPAB16_CFG = {
+    "pooler":         (4096, 8192, 2, 256, 4),  # grid (64, 2)
+    "qkv_gate":       (2304, 8192, 4, 128, 4),  # grid (36, 4)
+    "o":              (8192, 1024, 1, 256, 4),  # grid (128, 1), full K
+    # first 1024 rows of the full [8192, 4096] unpooler weight read in place (stride_wn 4096)
+    "unpooler_slice": (1024, 4096, 8, 128, 3),  # grid (16, 8)
+}
+SWAPAB16_UNPOOL_WARM_MS = tuple(range(1, 9))  # every m the n == 1024 slice can take
+
+
+def _swapab16_key(layer: str, cfg) -> str:
+    """Config key from cfg only: the unpooler routes here only as its n == 1024 slice."""
+    if layer == "unpooler":
+        return "unpooler_slice" if cfg["n"] == 1024 else ""
+    return layer if layer in ("pooler", "qkv_gate", "o") else ""
+
+
+def _swapab16_route_ok(key: str, x: torch.Tensor, w: torch.Tensor, cfg) -> bool:
+    """m <= 16 swap-AB path: 1 <= cfg m <= 16 with the key's n/k. pooler / qkv_gate / o need the
+    full weight shape (n, k); the unpooler slice needs the full weight ([>= 1024, 4096]), of
+    which only the first 1024 rows are read. Branches on cfg and shapes only."""
+    spec = SWAPAB16_CFG.get(key)
+    if spec is None:
+        return False
+    n, k = spec[0], spec[1]
+    m = cfg["m"]
+    if not (1 <= m <= SWAPAB16_MAX_M and cfg["n"] == n and cfg["k"] == k
+            and x.dim() == 2 and x.shape[0] == m and x.shape[1] == k
+            and x.dtype == torch.bfloat16 and x.stride(1) == 1
+            and w.dim() == 2 and w.dtype == torch.bfloat16 and w.stride(1) == 1):
+        return False
+    if key == "unpooler_slice":
+        return w.shape[0] >= n and w.shape[1] == k
+    return tuple(w.shape) == (n, k)
+
+
+def _print_ptx_counts(tag: str, compiled) -> None:
+    """prepare()-only diagnostic: registers, spills and PTX MMA / cp.async counts."""
+    try:
+        ptx = compiled.asm["ptx"]
+        print(f"{tag}: n_regs={getattr(compiled, 'n_regs', '?')} "
+              f"n_spills={getattr(compiled, 'n_spills', '?')} "
+              f"wgmma={ptx.count('wgmma.mma_async')} mma.sync={ptx.count('mma.sync')} "
+              f"cp.async={ptx.count('cp.async')}", flush=True)
+    except Exception as e:  # diagnostic only
+        print(f"{tag}: diagnostics unavailable ({type(e).__name__}: {e})", flush=True)
+
+
+def _swapab16_forward(key: str, x: torch.Tensor, w: torch.Tensor, ws, cnt, num_stages: int,
+                      report: bool = False) -> torch.Tensor:
+    """x bf16 [1..16, k] @ w[:n, k].T -> bf16 [m, n], ONE launch, BLOCK_T = WS_M = 16. w is read
+    in place (for the unpooler slice, the full weight with stride_wn = 4096, first n rows only).
+    ws / cnt are the key's own prepare()-allocated 16-row workspace and tickets (None at
+    SPLIT_K == 1, where the kernel never touches them)."""
+    n, k, split_k, block_k, _ = SWAPAB16_CFG[key]
+    m = x.shape[0]
+    out = torch.empty((m, n), dtype=torch.bfloat16, device=x.device)
+    if ws is None:  # SPLIT_K == 1: the pointers are unused by the compiled kernel
+        ws, cnt = out, out
+    grid = (n // SWAPAB_BLOCK_W, split_k)
+    compiled = _bf16_swapab_kernel[grid](
+        x, w, out, ws, cnt,
+        m,
+        x.stride(0), w.stride(0), out.stride(0),
+        N=n, WS_M=SWAPAB16_WS_M, K_SLICE=k // split_k, SPLIT_K=split_k,
+        BLOCK_W=SWAPAB_BLOCK_W, BLOCK_T=SWAPAB16_BLOCK_T, BLOCK_K=block_k,
+        num_warps=SWAPAB_NUM_WARPS, num_stages=num_stages,
+    )
+    if report:
+        _print_ptx_counts(f"[swapab16] {key} m={m} N={n} K={k} SPLIT_K={split_k} "
+                          f"BLOCK_K={block_k} stages={num_stages}", compiled)
+    return out
+
+
+def _swapab16_buffers(state: dict, key: str):
+    if key in ("pooler", "qkv_gate", "unpooler_slice"):
+        return state[f"swapab16_ws_{key}"], state[f"swapab16_cnt_{key}"]
+    return None, None
+
+
+def _incumbent16_report(state: dict) -> None:
+    """prepare()-only: relaunch master's incumbent m <= 16 kernels once each on synthetic x
+    (same constants as their forward helpers, own buffers) and print their PTX counts, so the
+    log shows incumbent mma.sync vs the new path's wgmma. Outputs are dropped."""
+    dev = state["pooler"].device
+    try:
+        if tuple(state["pooler"].shape) == (POOLER_N, POOLER_K):
+            m, w = 16, state["pooler"]
+            x = torch.zeros((m, POOLER_K), dtype=torch.bfloat16, device=dev)
+            out = torch.empty((m, POOLER_N), dtype=torch.bfloat16, device=dev)
+            c = _bf16_splitk_kernel[(POOLER_N // POOLER_BLOCK_N, POOLER_SPLIT_K)](
+                x, w, out, state["pooler_ws"], state["pooler_cnt"], m,
+                x.stride(0), w.stride(0), out.stride(0),
+                N=POOLER_N, WS_M=POOLER_MAX_M, K_SLICE=POOLER_K // POOLER_SPLIT_K,
+                SPLIT_K=POOLER_SPLIT_K, BLOCK_M=_pooler_block_m(m), BLOCK_N=POOLER_BLOCK_N,
+                BLOCK_K=POOLER_BLOCK_K, num_warps=POOLER_NUM_WARPS, num_stages=POOLER_NUM_STAGES)
+            _print_ptx_counts(f"[incumbent16] pooler _bf16_splitk_kernel m={m}", c)
+        if tuple(state["qkv_gate"].shape) == (QKV_N, QKV_K):
+            m, w = 16, state["qkv_gate"]
+            ws = state["qkv_ws"]
+            x = torch.zeros((m, QKV_K), dtype=torch.bfloat16, device=dev)
+            out = torch.empty((m, QKV_N), dtype=torch.bfloat16, device=dev)
+            c = _qkv_splitk_sem_kernel[(QKV_N // QKV_BLOCK_N, QKV_SPLIT_K)](
+                x, w, ws, state["qkv_cnt"], out, m,
+                x.stride(0), w.stride(0), ws.stride(0), ws.stride(1), out.stride(0),
+                K_SLICE=QKV_K // QKV_SPLIT_K, SPLIT_K=QKV_SPLIT_K,
+                BLOCK_M=16, BLOCK_N=QKV_BLOCK_N, BLOCK_K=QKV_BLOCK_K,
+                num_warps=QKV_NUM_WARPS, num_stages=QKV_NUM_STAGES)
+            _print_ptx_counts(f"[incumbent16] qkv_gate _qkv_splitk_sem_kernel m={m}", c)
+        if tuple(state["o"].shape) == (O_N, O_K):
+            m, w = 16, state["o"]
+            x = torch.zeros((m, O_K), dtype=torch.bfloat16, device=dev)
+            out = torch.empty((m, O_N), dtype=torch.bfloat16, device=dev)
+            c = _pooler_skinny_kernel[(O_N // O_BLOCK_N,)](
+                x, w, out, m, x.stride(0), w.stride(0), out.stride(0),
+                K=O_K, BLOCK_M=16, BLOCK_N=O_BLOCK_N, BLOCK_K=O_BLOCK_K,
+                num_warps=O_NUM_WARPS, num_stages=O_NUM_STAGES)
+            _print_ptx_counts(f"[incumbent16] o _pooler_skinny_kernel m={m}", c)
+        w = state["unpooler"]
+        if w.dim() == 2 and w.shape[0] >= UNPOOL_N and w.shape[1] == UNPOOL_K:
+            m = 16
+            x = torch.zeros((m, UNPOOL_K), dtype=torch.bfloat16, device=dev)
+            out = torch.empty((m, UNPOOL_N), dtype=torch.bfloat16, device=dev)
+            c = _bf16_splitk_kernel[(UNPOOL_N // UNPOOL_BLOCK_N, UNPOOL_SPLIT_K)](
+                x, w, out, state["unpool_ws"], state["unpool_cnt"], m,
+                x.stride(0), w.stride(0), out.stride(0),
+                N=UNPOOL_N, WS_M=UNPOOL_MAX_M, K_SLICE=UNPOOL_K // UNPOOL_SPLIT_K,
+                SPLIT_K=UNPOOL_SPLIT_K, BLOCK_M=UNPOOL_MAX_M, BLOCK_N=UNPOOL_BLOCK_N,
+                BLOCK_K=UNPOOL_BLOCK_K, num_warps=UNPOOL_NUM_WARPS, num_stages=UNPOOL_NUM_STAGES)
+            _print_ptx_counts(f"[incumbent16] unpooler_slice _bf16_splitk_kernel m={m}", c)
+    except Exception as e:  # diagnostic only
+        print(f"[incumbent16] diagnostics unavailable ({type(e).__name__}: {e})", flush=True)
+    state["pooler_cnt"].zero_()
+    state["qkv_cnt"].zero_()
+    state["unpool_cnt"].zero_()
+
+
+def _swapab16_prepare(state: dict) -> None:
+    """Allocate the m <= 16 swap-AB workspaces (fp32 [SPLIT_K, 16, n]) / tickets (int32
+    [n // 64], zeroed) under their own keys, choose each key's stage count (its config, or 3 if
+    that is OutOfResources), warm every m in 1..16 (1..8 for the unpooler slice) on synthetic x
+    so the timed call never compiles, print the PTX counts of the new and incumbent kernels, and
+    re-zero all counters."""
+    dev = state["pooler"].device
+    for key, (n, _k, split_k, _bk, _st) in SWAPAB16_CFG.items():
+        if split_k > 1:
+            state[f"swapab16_ws_{key}"] = torch.empty((split_k, SWAPAB16_WS_M, n),
+                                                      dtype=torch.float32, device=dev)
+            state[f"swapab16_cnt_{key}"] = torch.zeros(n // SWAPAB_BLOCK_W, dtype=torch.int32,
+                                                       device=dev)
+    stages = {}
+    for key, (n, k, _split, _bk, num_stages) in SWAPAB16_CFG.items():
+        layer = "unpooler" if key == "unpooler_slice" else key
+        w = state[layer]
+        warm_ms = SWAPAB16_UNPOOL_WARM_MS if key == "unpooler_slice" else tuple(range(1, SWAPAB16_MAX_M + 1))
+        m_top = warm_ms[-1]
+        if not _swapab16_route_ok(key, torch.empty((m_top, k), dtype=torch.bfloat16, device=dev), w,
+                                  {"m": m_top, "n": n, "k": k}):
+            continue
+        ws, cnt = _swapab16_buffers(state, key)
+        x = torch.randn((m_top, k), device=dev, dtype=torch.float32).to(torch.bfloat16)
+        try:
+            _swapab16_forward(key, x, w, ws, cnt, num_stages, report=True)
+        except _OutOfResources as e:
+            print(f"[swapab16] {key}: {num_stages} stages OutOfResources ({e}); "
+                  f"retrying at {SWAPAB_FALLBACK_STAGES}", flush=True)
+            num_stages = SWAPAB_FALLBACK_STAGES
+            _swapab16_forward(key, x, w, ws, cnt, num_stages, report=True)
+        stages[key] = num_stages
+        for m in warm_ms:
+            xm = torch.randn((m, k), device=dev, dtype=torch.float32).to(torch.bfloat16)
+            _swapab16_forward(key, xm, w, ws, cnt, num_stages)
+    state["swapab16_stages"] = stages
+    _incumbent16_report(state)
+    # The split-K variants self-reset, but re-zero the counters after the warm-ups regardless.
+    for key in SWAPAB16_CFG:
+        if f"swapab16_cnt_{key}" in state:
+            state[f"swapab16_cnt_{key}"].zero_()
+
+
 def prepare(weights: Weights) -> dict:
     """Called once, untimed. Keep the bf16 weights as they are (contiguous), build the router's
     hi + lo bf16 split as [256, 8192] row-major (N x K), and pre-compile every m-bucket of the
@@ -661,11 +995,8 @@ def prepare(weights: Weights) -> dict:
     lo = (router - hi.float()).to(torch.bfloat16).contiguous()
     state["router_hi"] = hi
     state["router_lo"] = lo
-    # Warm-up on synthetic inputs (weights only; nothing from a later call is involved).
-    for m in ROUTER_WARM_MS:
-        x = torch.randn((m, router.shape[1]), device=router.device, dtype=torch.float32).to(torch.bfloat16)
-        if _router_shape_ok(x, hi):
-            _router_forward(x, hi, lo)
+    # Stage choice, side-by-side diagnostics and warm-up on synthetic inputs.
+    _router_prepare(state)
     # (1) Pooler split-K scratch (fp32 partials, overwritten every call) and per-N-tile tickets.
     pooler = state["pooler"]
     state["pooler_ws"] = torch.empty((POOLER_SPLIT_K, POOLER_MAX_M, POOLER_N),
@@ -708,6 +1039,8 @@ def prepare(weights: Weights) -> dict:
     state["unpool_cnt"].zero_()
     # (5) Swap-AB at 17 <= m <= 32 for all four bf16 layers (own workspaces / tickets).
     _swapab_prepare(state)
+    # (6) Swap-AB, BLOCK_T 16, at m <= 16 for pooler / qkv_gate / o and the unpooler slice.
+    _swapab16_prepare(state)
     return state
 
 
@@ -715,6 +1048,11 @@ def kernel_fn(data: Inputs, state: dict) -> torch.Tensor:
     x, cfg = data["x"], data["config"]
     layer = cfg["layer"]
     # Shape gate (cfg layer / m / n and shape preconditions only; never on input values).
+    key16 = _swapab16_key(layer, cfg)
+    if (key16 in state["swapab16_stages"]
+            and _swapab16_route_ok(key16, x, state[layer], cfg)):
+        ws, cnt = _swapab16_buffers(state, key16)
+        return _swapab16_forward(key16, x, state[layer], ws, cnt, state["swapab16_stages"][key16])
     if layer == "pooler" and _pooler_shape_ok(x, state["pooler"], cfg):
         return _pooler_forward(x, state["pooler"], state["pooler_ws"], state["pooler_cnt"])
     if (layer == "qkv_gate" and state["qkv_gate"].shape == (QKV_N, QKV_K)
@@ -732,7 +1070,10 @@ def kernel_fn(data: Inputs, state: dict) -> torch.Tensor:
         # The unpooler's slice is its first n rows (all of them above 8 tokens).
         return _bf16_gemm_dispatch_impl(x, state[layer][: cfg["n"]], None)
     hi, lo = state["router_hi"], state["router_lo"]
-    if _router_shape_ok(x, hi) and cfg["n"] == hi.shape[0]:
-        return _router_forward(x, hi, lo)
+    path = _router_path(x, hi, cfg["n"], state["router_stages"])
+    if path == "swapab":   # m <= 32
+        return _router_forward(x, hi, lo, state["router_stages"][_router_config(x.shape[0])])
+    if path == "hilo":     # m > 32: master's forward
+        return _router_hilo_forward(x, hi, lo)
     # Shape outside the kernel's preconditions (never for this problem's router): exact fp32 path.
     return F.linear(x.float(), state["router"][: cfg["n"]])
