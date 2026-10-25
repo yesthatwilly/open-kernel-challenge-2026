@@ -47,7 +47,7 @@ review: proceed
 status: running
 review_at: 2026-10-24T183956Z
 review_companions: null
-stage: implemented
+stage: dispatched
 claimed_at: 2026-10-25T003236Z
 base_sha: 5415d32531be94c6b20cde97470e8c1127019215
 base_blob: 108d36e9f2266fc88531dd6ff0329a847c882013
@@ -64,6 +64,8 @@ submission_blob: c54141f38978ee496a8ff7b2a4384572342d4585
 lint_warnings: 8
 attempt_file: 2026-10-25T003435Z-check-post-norm-triton-hoisted-decode32.md
 prepared_at: 2026-10-25T003435Z
+job: 47d186dd91974d84
+dispatched_at: 2026-10-25T003443Z
 ---
 
 # post-norm-triton-hoisted-decode32
