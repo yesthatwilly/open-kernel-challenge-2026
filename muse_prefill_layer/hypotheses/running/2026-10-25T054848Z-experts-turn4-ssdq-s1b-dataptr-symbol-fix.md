@@ -80,7 +80,7 @@ review: proceed
 status: running
 review_at: 2026-10-25T085139Z
 review_companions: null
-stage: implemented
+stage: dispatched
 claimed_at: 2026-10-25T085139Z
 base_sha: de61d5aeb2cabe210254a89cbdd05b3f99ff7b1c
 base_blob: db8a3344398bca79ea5cafeb580f701c055fd475
@@ -97,6 +97,8 @@ submission_blob: f2d91dd181aeb44de20d2eed62ab7e564f2b181f
 lint_warnings: 35
 attempt_file: 2026-10-25T085911Z-check-experts-turn4-ssdq-s1b-dataptr-symbol-fix.md
 prepared_at: 2026-10-25T085911Z
+job: ef281fb8b7304240
+dispatched_at: 2026-10-25T085923Z
 ---
 
 # experts-turn4-ssdq-s1b-dataptr-symbol-fix
