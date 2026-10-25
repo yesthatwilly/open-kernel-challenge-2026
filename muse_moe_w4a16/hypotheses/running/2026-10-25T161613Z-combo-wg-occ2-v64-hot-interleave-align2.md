@@ -121,7 +121,7 @@ review: proceed
 status: running
 review_at: 2026-10-25T162203Z
 review_companions: null
-stage: claimed
+stage: implemented
 claimed_at: 2026-10-25T162203Z
 base_sha: 757927698c5069efecc0af3dde3ee3553dc1971f
 base_blob: 593b238c16387c5ac3774424ee9557882b9fc46a
@@ -130,6 +130,12 @@ worktree: .worktrees/muse_moe_w4a16/combo-wg-occ2-v64-hot-interleave-align2
 mode: null
 restack_of: null
 stale_base: null
+implemented_at: 2026-10-25T190500Z
+impl_commit: 195ad2846671802fa04ad1eef44155ef4c063b35
+submission_sha256: e1ffa95d1d7c94de8249a6f0837834ac8df76369d21283c41f408d58258b25d9
+norm_sha256: 809db5d96e93c4ae71eb08349d36c0a9c3431047e7432f5331531074146f3406
+submission_blob: 1f96da53a3e3c191b471b7c49f22e098069ba50c
+lint_warnings: 100
 ---
 
 # combo-wg-occ2-v64-hot-interleave-align2
@@ -213,3 +219,16 @@ Base: worktree base 757927698c, then 3-way merged (git merge-file, base = 757927
 - [x] Judge's two states: everything per state (wg_xs, wg_hs, wg_err, wg2_grid int, ext modules shared); copy check on A/deepcopy B/clone C for V64.
 
 okc_lint: `OK with warnings` (only prepare-side host-sync and uint8 scratch dtype warnings, same classes as master). py_compile OK; custom undefined-name scan 0 suspects; __pycache__ removed.
+
+## Pre-flight audit
+
+Audited 2026-10-25 (opus). Read only: no GPU, nvcc or torch on this node. **Verdict: dispatch-with-fixes.**
+
+- **Fix 1 (gate that would almost always fail): F1 tolerances raised from 1e-2 to 1.25e-2** (`W13_ATOMIC_TOL`, `W13_FP32_TOL`). The source measured 8.4e-3 vs master on ONE routing. The sibling combo's judge run (b395f5b6, same F1 gate) logged a worst-of-6 vs master of 1.07e-2 and vs fp32 of 8.55e-3. At 1e-2 F1 would keep master. 1.25e-2 matches the sibling's audited value and is still inside the judge's 1.5e-2.
+- **Fix 2 (fallback cascade): phase order changed to F1 -> F2 -> C2 build -> C2 checks + selector, as the spec orders it.** The builder had moved the C2 build ahead of F2. Builds on the judge take 31-51 s (master's module: 37.2 s), and wg2 has 4 instantiations. A failed -Werror build followed by the plain rebuild (allowed up to 160 s) would have pushed F2 past its 150 s start deadline, so a C2 build problem could silently cost F2, the surest gain. C2 still has its own 140 s build deadline, and its checks and selector now see the final front end.
+- **Merge (f7eac2c3 PDL):** every `-` line in diff(master, worktree) is a combo signature or call-site edit. No PDL logic is lost. `_wg_gemm` keeps master's `pdl` / `wg_ext_pdl` dispatch for variant 0 and passes `pdl` to `wg2_gemm`, which takes it in the right position. `_wg_copy_check` keeps `st["wg_pdl"] = bool(pdl)`, adds the variant flags and the WG2_MAGIC marker, and shares both ext modules in the deepcopy memo. With every flag at master, kernel_fn issues master's launches byte for byte.
+- **C2 isolation and hang safety:** wg2 builds as a separate load_inline name, after master's module is already loaded. TORCH_CUDA_ARCH_LIST is restored in `finally`. A build exception, a setmaxnreg ptxas line, an attribute-gate failure (numRegs == 80, localSizeBytes 0, CTAs/SM >= 2, smem fit, binaryVersion 90), or any raise in a phase leaves `wg2_variant_*` = 0 and restores `wg_on_256`, and no wg2 launch is ever made before the gate. The register split is exact: 32x128 + 104x256 = 80x384, 2 CTAs <= 64K. setmaxnreg.inc therefore cannot starve once numRegs == 80. Every mbarrier spin is bounded by master's 2^26-cycle timeout and error word, and an unreachable bucket > BMAX is skipped by the producer and consumers alike. PDL with 2 CTAs/SM cannot deadlock, because launch_dependents fires only after every primary CTA is resident. The wg2 source passes `_wg_audit_cpp` with 0 findings (recomputed here), its braces balance, and it closes one anonymous namespace.
+- **Prepare time:** master, including its PDL stage, logged 60.1 s (667b64e3, b395f5b6). Expected: F1 ~1-3 s, F2 ~15-25 s, C2 build ~45-60 s (~100 s more with a rebuild), checks ~15-25 s, selector ~5-10 s, so ~150-180 s. Start deadlines (C2 build 140 s, checks 200 s, selector 230 s, timing 270 s) bound the worst case to about 250 s, under 300 s.
+- Rules: kernel_fn branches only on shape and prepare-set ints and strings. `_wg_front` / `_align_two_phase` allocate shape-sized buffers only, with no sync or print. Weights stay NVFP4 (register dequant only). Tensor maps are encoded per call. The judge's state copy shares `wg2_ext` like `wg_ext`. okc_lint: OK with warnings (prepare-side only). py_compile OK, the AST undefined-name scan found 0, and __pycache__ was removed.
+
+Residual risk: the wg2 module has never been compiled. If ptxas does not land exactly on 80 registers, or spills, C2 turns itself off and the run reads as F1 + F2 only. A device fault inside a wg2 launch (as opposed to a hang) would still be sticky and would fail the run.
