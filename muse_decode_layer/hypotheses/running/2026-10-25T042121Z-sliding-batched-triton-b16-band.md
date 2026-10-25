@@ -39,7 +39,7 @@ review: proceed
 status: running
 review_at: 2026-10-25T042452Z
 review_companions: null
-stage: implemented
+stage: dispatched
 claimed_at: 2026-10-25T042453Z
 base_sha: 94f52a0a74f65619042e18250fd7cb4a206cf66a
 base_blob: c9067b8201f2480c64910c4a71098df7ce616f73
@@ -56,6 +56,8 @@ submission_blob: 97d379721e56bf4fe6307b85b74f821940f73e67
 lint_warnings: 30
 attempt_file: 2026-10-25T042712Z-check-sliding-batched-triton-b16-band.md
 prepared_at: 2026-10-25T042712Z
+job: 02bf417257e14a3d
+dispatched_at: 2026-10-25T042729Z
 ---
 
 # sliding-batched-triton-b16-band
