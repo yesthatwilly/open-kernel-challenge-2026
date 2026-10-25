@@ -82,7 +82,7 @@ review: proceed
 status: running
 review_at: 2026-10-25T004221Z
 review_companions: null
-stage: implemented
+stage: dispatched
 claimed_at: 2026-10-25T004221Z
 base_sha: 97cde2a7e308e68b1ea49821182fcf5267f527bd
 base_blob: a8bb42ac483318e9fbc84bc7826a27b7a704d1fb
@@ -99,6 +99,8 @@ submission_blob: 441dcedb5cd6286e6851afb629598d27c30f6c82
 lint_warnings: 3
 attempt_file: 2026-10-25T005026Z-check-router-cuda-cluster-dsmem-splitk-rewrite.md
 prepared_at: 2026-10-25T005026Z
+job: dc5d03c4d9604b0e
+dispatched_at: 2026-10-25T005033Z
 ---
 
 # router-cuda-cluster-dsmem-splitk-rewrite
