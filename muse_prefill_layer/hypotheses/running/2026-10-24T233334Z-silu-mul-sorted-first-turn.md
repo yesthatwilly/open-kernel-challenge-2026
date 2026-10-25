@@ -37,6 +37,9 @@ submission_sha256: 1c7c6b27c04f1afe3fee01ce659e9e3f56704866761be61a98e60a22eadf6
 norm_sha256: 15e47d79d157b9eebd87478eb8529df1ac369836121c3420d8915881b5c28ebe
 submission_blob: 9e85c24636d47e2cf91bb76ca793a5a9894ef683
 lint_warnings: 7
+attempt_file: 2026-10-25T000329Z-check-silu-mul-sorted-first-turn.md
+mode: check
+prepared_at: 2026-10-25T000329Z
 ---
 
 # silu-mul-sorted-first-turn
