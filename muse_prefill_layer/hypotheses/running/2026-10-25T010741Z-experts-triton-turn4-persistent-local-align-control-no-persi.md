@@ -36,7 +36,7 @@ review: proceed
 status: running
 review_at: 2026-10-25T011030Z
 review_companions: null
-stage: claimed
+stage: implemented
 claimed_at: 2026-10-25T011048Z
 base_sha: e530b77b8a03d595f892b57b91b666002026a175
 base_blob: db8a3344398bca79ea5cafeb580f701c055fd475
@@ -45,6 +45,12 @@ worktree: .worktrees/muse_prefill_layer/experts-triton-turn4-persistent-local-al
 mode: null
 restack_of: null
 stale_base: null
+implemented_at: 2026-10-25T011203Z
+impl_commit: 8c5e69035dcde14da111fa852bc43996d3ab33de
+submission_sha256: b1cbdd857e3645f66eba4e33ea05832d31ad47d9ba9dd05386369e4ce9ab15e7
+norm_sha256: 7c6cb53cad0be04fcc302765621c9e20591a53910e583104aa6b1f995859bcfe
+submission_blob: 91960546c9fde845f6690ef5ee756719aa4d0b71
+lint_warnings: 17
 ---
 
 # experts-triton-turn4-persistent-local-align-control-no-persi
@@ -85,3 +91,25 @@ No companion. Parent turn_4 minus control turn_4 = persistent-grid effect plus t
 - Optionally print n_padded at T=3012 in prepare() with both aligns to confirm ~165 tiles difference.
 - If the control loses at turn_4 by more than ~7%, the parent must win by more than that margin before the gate move is worth keeping.
 
+
+## Implementation notes
+
+All in muse_prefill_layer/submission.py (+97/-7). Review fixes applied:
+- MARLIN_MAX_TOKENS = 1024 (commented); `_experts` reads `state.get('marlin_max_tokens', MARLIN_MAX_TOKENS)`; fallback sets `state['marlin_max_tokens'] = 4096`; global never mutated (b).
+- New `_align_par_triton_setup`: own flag `state['align_par_triton_ok']`, `align_par_ok` untouched (a). Self-check of `_align_parallel` vs `moe_align_block_size(local_ids, bsm, LOCAL_EXPERTS)` at bsm 128/256, T=3012 and 16384 (random/skewed/all_remote). Warms both BSMs before capture (c). Prints n_padded at T=3012 for both aligns (f).
+- Instead of NaN poison, the flag is forced False when `state['zero_nonlocal_w2']` is True (d); `_experts_triton` then passes zero_nonlocal=False only when the local align is used.
+- `_check_experts_e2e(state, device, tokens)`; new `_turn4_triton_setup` runs 8192 (as master; if it fails with local align, drops the flag and rechecks under master align) then 3012 (e) and logs `[turn4-triton] ON` / `OFF: <reason>` (g).
+- Deviation: the local align also applies at T>4096 (first_turn) when the flag is on, per spec part (3); review expects flat there.
+- Kernel grid unchanged. Nothing run (no GPU).
+
+## Rules check
+
+- [x] CUDA-graph capturable: diff adds only prepare()-time syncs/.cpu(); kernel_fn path adds `_align_parallel` launch (no sync) and a shape/state-based branch.
+- [x] Nothing derived from `data` is cached: state flags come from synthetic prepare() data only.
+- [x] Weights: unchanged; NVFP4 stays NVFP4.
+- [x] Activations: n/a: no dtype changes.
+- [x] Attention: n/a: untouched.
+- [x] No timing patches, harness access, subprocesses or network (checked diff).
+- [x] All work inside the timed call; no output caching or replay.
+
+okc_lint: `OK with warnings: submission.py` (only host-sync warnings, all in prepare(), outside kernel_fn). py_compile OK; __pycache__ removed.
