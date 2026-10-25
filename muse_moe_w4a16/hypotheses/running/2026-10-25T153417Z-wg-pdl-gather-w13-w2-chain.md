@@ -64,7 +64,7 @@ review: proceed
 status: running
 review_at: 2026-10-25T162011Z
 review_companions: null
-stage: implemented
+stage: dispatched
 claimed_at: 2026-10-25T162011Z
 base_sha: 04b5d4ce29ff4cb29cbed7b24b63a5492c811e97
 base_blob: 593b238c16387c5ac3774424ee9557882b9fc46a
@@ -81,6 +81,8 @@ submission_blob: 72de8f1edeaa3215bb806cdc5ae13791f54cebd2
 lint_warnings: 77
 attempt_file: 2026-10-25T163022Z-submit-wg-pdl-gather-w13-w2-chain.md
 prepared_at: 2026-10-25T163022Z
+job: 667b64e3fb1343ec
+dispatched_at: 2026-10-25T163042Z
 ---
 
 # wg-pdl-gather-w13-w2-chain
