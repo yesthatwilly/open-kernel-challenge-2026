@@ -2,7 +2,7 @@
 
 Hypothesis: `muse_decode_layer/hypotheses/done/neutral/2026-10-25T042121Z-w2-marlin-atomic-add-t1-port.md` (branch `hyp/muse_decode_layer/w2-marlin-atomic-add-t1-port`).
 
-- **Job:** `<job id>` (`okc status <job>`)
+- **Job:** `3fd3fa1f96d045dd` (`okc status <job>`)
 - **File:** `muse_decode_layer/submission.py` at git `daed376`
 
 ## Goal
