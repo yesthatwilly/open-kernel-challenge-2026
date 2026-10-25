@@ -58,9 +58,18 @@ controls_for: null
 rewrite_stage: 2
 replaces: _router_swapab_kernel + memset at router m<=32 (restack) / _router_hilo_kernel + memset (master)
 review: proceed
-status: queued
+status: running
 review_at: 2026-10-25T042412Z
 review_companions: null
+stage: claimed
+claimed_at: 2026-10-25T042413Z
+base_sha: 0dea576ae73cfb9d114326146a90d40766b24f0e
+base_blob: 441dcedb5cd6286e6851afb629598d27c30f6c82
+branch: hyp/muse_bf16_proj/router-cluster-dsmem-s2-flat-in-m-occupancy
+worktree: .worktrees/muse_bf16_proj/router-cluster-dsmem-s2-flat-in-m-occupancy
+mode: null
+restack_of: null
+stale_base: true
 ---
 
 # router-cluster-dsmem-s2-flat-in-m-occupancy
