@@ -75,9 +75,18 @@ controls_for: null
 rewrite_stage: 2
 replaces: Triton swap-AB m<=32 kernels (bf16-m32-swapab-wgmma-triton) on pooler m 1-32, unpooler-full m 16/32, qkv_gate m 1-32
 review: proceed
-status: queued
+status: running
 review_at: 2026-10-25T001525Z
 review_companions: null
+stage: claimed
+claimed_at: 2026-10-25T001525Z
+base_sha: 7895e56373c79d74ba78b7c0e7146755b118ce2c
+base_blob: a34e409b452e9a6e5f7ee3612486d30a989832f2
+branch: hyp/muse_bf16_proj/bf16-lossless-exp4-occupancy-dequant-once-stage2
+worktree: .worktrees/muse_bf16_proj/bf16-lossless-exp4-occupancy-dequant-once-stage2
+mode: null
+restack_of: null
+stale_base: null
 ---
 
 # bf16-lossless-exp4-occupancy-dequant-once-stage2
