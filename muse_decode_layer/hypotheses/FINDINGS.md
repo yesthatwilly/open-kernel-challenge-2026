@@ -1,6 +1,6 @@
 # muse_decode_layer findings
 
-Regenerated 2026-10-25T010422Z by `churn.py index`. Read this before writing a hypothesis for muse_decode_layer.
+Regenerated 2026-10-25T013623Z by `churn.py index`. Read this before writing a hypothesis for muse_decode_layer.
 
 ## Current best
 
@@ -29,6 +29,7 @@ Where the time goes (per scored shape, top kernels):
 - **fa3-hdim128-head-pairing-batched** → neutral (unproven-vs-best), 1.0874x — gained on full decode_16, decode_32, verify_16, verify_32. Port muse_attention_decode's landed fa3-hdim128-head-pairing (1.171x) to the flash_attn_with_kvcache call in muse_decode_layer kernel_fn, gated to full-attentio
 - **sliding-fused-triton-decode1-port** → neutral (unproven-vs-best), 1.1690x — gained on sliding decode_1. Port muse_attention_decode's landed sliding-fused-triton-decode1-gate (1.293x there, sliding decode_1 16.56 -> 13.12 us) to muse_decode_layer kernel_fn. Copy ve
 - **full-decode-cuda-splitkv-port** → neutral (unproven-vs-best), 1.1862x — gained on full decode_16, decode_32. Stage 1 of a rewrite of decode_layer full-attention decode at batch > 1, ported from muse_attention_decode master (full-decode-cuda-gather-splitkv, job 82085a4e
+- **full-verify-cuda-splitkv-stage2** → regression (regression), 1.1559x — lost on full verify_16, verify_32. Stage 2 of full-decode-cuda-splitkv-port: extend the CUDA split-KV path to full-layer verify blocks (q_len 8) at batch 16/32, where master still runs paired FA3
 
 ### FA3 call (full decode, batch > 1)
 - **full-decode-splitkv-restack-on-pdl** → neutral (unproven-vs-best), 1.2680x — gained on full decode_16, decode_32. Restack decode own neutral full-decode-cuda-splitkv-port (1.186x vs 1.166x base; its gated shapes moved full decode_16 364.9 -> 329.1 us (+12.8%) and full decod
@@ -98,6 +99,9 @@ Where the time goes (per scored shape, top kernels):
 ### w13 marlin + silu-mul + w2 marlin
 - **moe-chain-cuda-swapab-expert-once-large-t** → failed (test:failed). WHY: at T=128/256 the two Marlin MoE GEMMs are the single largest block of the whole problem: 254/271 us (sliding/full verify_16) and 443/427 us (verify_32) in 
 
+### w13 marlin + silu-mul + w2 marlin (T>32)
+- **moe-chain-cuda-swapab-expert-once-fix-inproc** → regression (regression), 1.1651x — gained on sliding decode_1, decode_16, verify_1, verify_16, verify_32; full decode_1, decode_16, decode_32, verify_1, verify_16, verify_32. Stage 1b FIX (numbered stage 2 only because stage is an int; the original stage plan's stage 2 still comes after this) of failed moe-chain-cuda-swapab-expert-on
+
 ### whole-layer fusion
 - **small-t-launch-minimal-dense-chain-pdl** → gain (gain), 1.2283x — gained on sliding decode_1, decode_16, decode_32, verify_1; full decode_1, decode_16, verify_1. WHY: at T<=32 (decode_1/16/32 and verify_1: 4 of the 6 loads) master runs ~27-29 graph nodes per layer. At decode_1 sliding (145.6 us, floor 40.0) Marlin is 40.
 
@@ -150,10 +154,8 @@ Where the time goes (per scored shape, top kernels):
 - queue: moe-bs1-fused-persistent-port [w13 marlin + silu-mul + w2 marlin + post-expert combine (T=1)] p5 hold
 - queue: prefork-qkv-o-swapab-t16-t32 [qkv GEMM + o GEMM (before the router fork)] p4 hold
 - queue: marlin-two-stream-halves-port [w13 marlin + silu-mul + w2 marlin (8<=T<=32, stream overlap)] p5 hold
-- queue: boundaries-unpooler-pdl-small-t [post-MoE unpooler + residual boundaries (T<=32)] p2 queued
-- queue: dl-route-warp-topk-pdl [routing top-k + MoE align (kernel R, T<=32)] p3 queued
 - queue: dl-p-wide-tile-t16-t32 [pooler + router GEMM (kernel P, T=9..32)] p4 queued
 - queue: moe-chain-cuda-swapab-expert-once-fix [w13 marlin + silu-mul + w2 marlin (T>32)] p2 hold
-- running: full-verify-cuda-splitkv-stage2 [FA3 call] p2 running
 - running: dense-chain-stage2-attn-side-pdl [qkv GEMM + o GEMM + attention-side small kernels (T<=32)] p1 running
-- running: moe-chain-cuda-swapab-expert-once-fix-inproc [w13 marlin + silu-mul + w2 marlin (T>32)] p2 running
+- running: boundaries-unpooler-pdl-small-t [post-MoE unpooler + residual boundaries (T<=32)] p2 running
+- running: dl-route-warp-topk-pdl [routing top-k + MoE align (kernel R, T<=32)] p3 running

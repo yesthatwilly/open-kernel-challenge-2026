@@ -1,6 +1,6 @@
 # muse_attention_decode hypotheses
 
-Regenerated 2026-10-25T010422Z. Best: 1.3949x [1.3740,1.4158] job `698d4cd3838c4a63` (submit)
+Regenerated 2026-10-25T013623Z. Best: 1.3949x [1.3740,1.4158] job `698d4cd3838c4a63` (submit)
 
 | created | slug | kind | area | where | outcome | speedup | CI | job | mode | promotion | review | expected hit |
 |---|---|---|---|---|---|---|---|---|---|---|---|---|
@@ -55,9 +55,9 @@ Regenerated 2026-10-25T010422Z. Best: 1.3949x [1.3740,1.4158] job `698d4cd3838c4
 | 2026-10-25T001348Z | full-decode-splitkv-s2-streamk-ticket | rewrite | full-layer attention (decode, splitkv kernel A/B) | queue | hold |  |  |  |  |  | required |  |
 | 2026-10-25T001415Z | full-verify-wgmma-s3-warpgroup-per-kvhead | rewrite | full-layer attention (verify, splitkv A8/B8) | queue | hold |  |  |  |  |  | required |  |
 | 2026-10-25T001451Z | sliding-cluster-s2-decode-c4-pdl | rewrite | sliding-layer attention (decode, cluster kernel) | queue | hold |  |  |  |  |  | required |  |
-| 2026-10-25T001825Z | full-decode-splitkv-s2-streamk-ticket-inproc | rewrite | full-layer attention (decode, splitkv kernel A/B) | running | running |  |  | e592b1f5d3db4f83 | check |  | proceed |  |
 | 2026-10-25T001825Z | full-verify-wgmma-s3-warpgroup-per-kvhead-inproc | rewrite | full-layer attention (verify, splitkv A8/B8) | running | running |  |  | 2c3f7fff72bb4e1d | check |  | proceed |  |
-| 2026-10-25T001825Z | sliding-cluster-s2-decode-c4-pdl-inproc | rewrite | sliding-layer attention (decode, cluster kernel) | running | running |  |  | 1990ce53e9d34073 | check |  | proceed |  |
+| 2026-10-25T001825Z | full-decode-splitkv-s2-streamk-ticket-inproc | rewrite | full-layer attention (decode, splitkv kernel A/B) | done/neutral | neutral | 1.4171 | [1.396,1.443] | e592b1f5d3db4f83 | check |  | proceed | 2/3 |
+| 2026-10-25T001825Z | sliding-cluster-s2-decode-c4-pdl-inproc | rewrite | sliding-layer attention (decode, cluster kernel) | done/neutral | neutral | 1.4001 | [1.379,1.426] | 1990ce53e9d34073 | check |  | proceed | 2/5 |
 | 2026-10-25T003621Z | full-decode-splitkv-s3-fused-preattn | rewrite | full-layer attention (decode, splitkv stream-K kernel prologue) | queue | queued |  |  |  |  |  | required |  |
 | 2026-10-25T003637Z | full-decode1-streamk-s3-two-level-ticket | rewrite | full-layer attention (batch-1 decode, splitkv stream-K kernel) | queue | queued |  |  |  |  |  | required |  |
 | 2026-10-25T003705Z | full-verify-wgmma-s4-sliding-window | rewrite | sliding-layer attention (verify, wgmma stream-K kernel) | queue | queued |  |  |  |  |  | required |  |

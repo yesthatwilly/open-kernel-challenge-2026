@@ -1,6 +1,6 @@
 # muse_attention_decode findings
 
-Regenerated 2026-10-25T010422Z by `churn.py index`. Read this before writing a hypothesis for muse_attention_decode.
+Regenerated 2026-10-25T013623Z by `churn.py index`. Read this before writing a hypothesis for muse_attention_decode.
 
 ## Current best
 
@@ -49,6 +49,9 @@ Where the time goes (per scored shape, top kernels):
 - **full-decode1-cuda-splitkv-chunk320** → neutral (unproven-vs-best), 1.3954x — gained on full decode_1; lost on full decode_32; sliding verify_1. Route FULL-layer decode at batch 1 (window == 0, q_len 1, tp8, d 64, page 1) through master's existing CUDA split-KV path with a smaller work chunk, instead of 
 - **full-decode1-cuda-splitkv-chunk640** → neutral (within-ci), 1.3805x — gained on full decode_1; lost on full decode_32; sliding verify_1. Same mechanism as full-decode1-cuda-splitkv-chunk320, with fewer, longer items. Route FULL-layer decode at batch 1 (window == 0, q_len 1, tp8, d 64, page 1) thr
 
+### full-layer attention (decode, splitkv kernel A/B)
+- **full-decode-splitkv-s2-streamk-ticket-inproc** → neutral (unproven-vs-best), 1.4171x — gained on full decode_16, decode_32. Stage 2 of the full-decode rewrite, built on master (stage 1 kernels splitkv_attn_kernel A + splitkv_combine_kernel B in load_inline module muse_full_decode_spl
+
 ### full-layer attention (whole-path rewrite, warp-specialized one launch)
 - **full-cuda-onelaunch-warpspec-bulk-gather** → regression (regression), 0.8238x — lost on full decode_16, decode_32; sliding verify_1. Stage 1 of a rewrite of the FULL-layer path, built on master (stage 1 of the first CUDA kernel, full-decode-cuda-gather-splitkv, has landed; no depends_on). Why
 
@@ -85,6 +88,9 @@ Where the time goes (per scored shape, top kernels):
 ### sliding-layer attention (batched decode, tile size)
 - **sliding-decode-blockn128-single-tile** → neutral (within-ci), 1.3834x — gained on sliding decode_1; lost on full decode_32. Config-only change in _sliding_forward (master sliding decode at every batch, 16 splits): pass BLOCK_N=128 instead of 64 when length == 1. With S = 16 a split c
 
+### sliding-layer attention (decode, cluster kernel)
+- **sliding-cluster-s2-decode-c4-pdl-inproc** → neutral (unproven-vs-best), 1.4001x — gained on sliding decode_32, verify_1, verify_16, verify_32; lost on sliding decode_1, decode_16. Stage 2 of the sliding-layer cluster rewrite, built on the stage-1 code (branch hyp/muse_attention_decode/sliding-cuda-cluster-dsmem-onelaunch, impl_commit 5938
+
 ### sliding-layer attention (whole-path rewrite)
 - **sliding-single-launch-fused-attention** → regression (regression), 0.9452x — gained on sliding decode_1; lost on sliding decode_16, decode_32, verify_1, verify_16, verify_32. Stage 1 of a rewrite of the sliding-layer path. Built on hyp/muse_attention_decode/fused-preattention-triton (1.127x, job dfee6f2939974bad). On sliding layers (
 
@@ -113,6 +119,8 @@ Where the time goes (per scored shape, top kernels):
 - sliding-decode32-splits-8: unproven-vs-best: the change is not proven either way; a stacked hypothesis (`depends_on: sliding-decode32-splits-8`) that adds a further change in the same area is the only way to learn more (identical code is never re-
 - splitkv-chunk2048-batch32: within-ci: the change is not proven either way; a stacked hypothesis (`depends_on: splitkv-chunk2048-batch32`) that adds a further change in the same area is the only way to learn more (identical code is never re-run).
 - splitkv-pdl-attn-to-combine: within-ci: the change is not proven either way; a stacked hypothesis (`depends_on: splitkv-pdl-attn-to-combine`) that adds a further change in the same area is the only way to learn more (identical code is never re-run).
+- full-decode-splitkv-s2-streamk-ticket-inproc: rewrite stage 2 of `full-layer decode at 1<batch<=64: splitkv_attn_kernel A + splitkv_combine_kernel B (stage 1, master)`: read the replaced kernels' own us per shape (profile top_kernels) against the incumbent and the f
+- sliding-cluster-s2-decode-c4-pdl-inproc: rewrite stage 2 of `sliding layer decode at tp8/page 1, 1<=batch<=32: master Triton _sliding_fused_kernel (stage-1 sliding_cluster_kernel<1>)`: read the replaced kernels' own us per shape (profile top_kernels) against th
 
 ## Do not retry (rejected / duplicates)
 
@@ -148,7 +156,5 @@ Where the time goes (per scored shape, top kernels):
 - queue: full-verify1-wgmma-s4-batch1-grid-sm [full-layer attention (batch-1 verify, wgmma stream-K kernel)] p2 queued
 - queue: sliding-decode-paired-kvhead-rows [sliding-layer attention (batched decode, KV row gather)] p2 hold
 - queue: sliding-decode-paired-kvhead-rows-control-unpaired-s8 [sliding-layer attention (batched decode, split depth)] p2 queued
-- running: full-decode-splitkv-s2-streamk-ticket-inproc [full-layer attention (decode, splitkv kernel A/B)] p1 running
 - running: full-verify-wgmma-s3-warpgroup-per-kvhead-inproc [full-layer attention (verify, splitkv A8/B8)] p2 running
-- running: sliding-cluster-s2-decode-c4-pdl-inproc [sliding-layer attention (decode, cluster kernel)] p2 running
 - running: sliding-verify-fa3-head-pairing [FA3 call (head packing, sliding verify)] p3 running

@@ -1,6 +1,6 @@
 # muse_prefill_layer findings
 
-Regenerated 2026-10-25T010545Z by `churn.py index`. Read this before writing a hypothesis for muse_prefill_layer.
+Regenerated 2026-10-25T013623Z by `churn.py index`. Read this before writing a hypothesis for muse_prefill_layer.
 
 ## Current best
 
@@ -146,7 +146,7 @@ Where the time goes (per scored shape, top kernels):
 - queue: dense-gemm-cublaslt-algo-pick-prefill-t [dense bf16 GEMM dispatch (qkv, o, pooler, unpooler; cuBLASLt algo selection)] p2 hold
 - queue: norm-residual-boundaries-triton-row-kernel [attention boundary + FFN boundary (FusedPostNormResidualPreNorm x2)] p4 hold
 - queue: first-turn-moe-dead-work-stack [MoE dispatch + silu-mul + Triton NVFP4 grid at T > 4096 (first_turn dead-work removal, combined)] p3 queued
-- queue: experts-triton-turn4-persistent-local-align [w13 marlin + w2 marlin at turn_4 (route 1024 < T <= 4096 to the Triton NVFP4 engine, with persistent grid and local-routes align)] p2 queued
+- queue: experts-triton-turn4-persistent-local-align [w13 marlin + w2 marlin at turn_4 (route 1024 < T <= 4096 to the Triton NVFP4 engine, with persistent grid and local-routes align)] p2 hold
 - queue: turn-moe-local-align-sorted-silu [MoE align/dispatch + silu-mul on the Marlin path (T <= 4096)] p3 queued
 - queue: norm-boundaries-persistent-multirow [attention boundary + FFN boundary (FusedPostNormResidualPreNorm x2, persistent multi-row variant)] p5 queued
 - queue: moe-pre-post-norm-triton-multitoken [pre-expert norm + post-expert norm/combine (the MoE elementwise ends)] p5 queued
@@ -155,3 +155,4 @@ Where the time goes (per scored shape, top kernels):
 - queue: experts-cuda-wgmma-grouped-gemm-remeasure-sm90a [w13 + w2 expert GEMMs at T > 4096 (CUDA sm_90a wgmma W4A16 grouped GEMM, stage 1b: re-measure of experts-cuda-wgmma-mixed-input-grouped-gemm with the build fix, on the new master)] p1 hold
 - running: experts-triton-turn1-blockt32-stream [w13 marlin + w2 marlin (Triton NVFP4 engine, stage 7: take over turn_1 with a weight-stream config)] p2 running
 - running: experts-triton-persistent-grid-first-turn [w13 marlin + w2 marlin (Triton NVFP4 engine at T > 4096: persistent grid, no dead CTAs)] p1 running
+- running: experts-triton-turn4-persistent-local-align-control-no-persi [w13 + w2 at turn_4 (1024 < T <= 4096) routed to the Triton NVFP4 engine with local-routes align, original non-persistent grid] p2 running

@@ -1,6 +1,6 @@
 # muse_bf16_proj findings
 
-Regenerated 2026-10-25T010422Z by `churn.py index`. Read this before writing a hypothesis for muse_bf16_proj.
+Regenerated 2026-10-25T013623Z by `churn.py index`. Read this before writing a hypothesis for muse_bf16_proj.
 
 ## Current best
 
@@ -144,9 +144,14 @@ Where the time goes (per scored shape, top kernels):
 - queue: router-hilo-addmm-epilogue-control-inplace-out [router GEMM] p1 hold
 - queue: qkv-gate-o-m128-wgmma-splitk-semaphore [qkv GEMM + o GEMM (m=128)] p2 hold
 - queue: pooler-m32-tma-splitk-extend [pooler GEMM (m=17..32)] p3 hold
-- queue: bf16-lossless-exp4-warpspec-persistent-stage3 [lossless exp4 compressed-weight stream kernel (_lossless_swapab_kernel)] p1 queued
+- queue: bf16-lossless-exp4-warpspec-persistent-stage3 [lossless exp4 compressed-weight stream kernel (_lossless_swapab_kernel)] p1 hold
+- queue: bf16-verify-swapab-wgmma-cluster-dsmem-rewrite [bf16 GEMM dispatch (m=65..256, swap-AB wgmma + cluster DSMEM split-K)] p1 hold
 - running: router-cuda-cluster-dsmem-splitk-rewrite [router GEMM] p1 running
 - running: o-unpooler-slice-cuda-cluster-dsmem-rewrite [o GEMM + unpooler GEMM (latency-bound small streams)] p2 running
 - running: o-swapab-m32-splitk2-two-ctas-per-sm [o GEMM (m=17..32, swap-AB)] p3 running
 - running: qkv-swapab-m32-splitk8-stages3 [qkv GEMM (m=17..32, swap-AB)] p2 running
 - running: unpooler-full-m16-swapab-route [unpooler GEMM] p2 running
+- running: pooler-unpooler-m128-nn-layout-gated [pooler GEMM + unpooler GEMM (m=65..128, cuBLAS NN layout)] p1 running
+- running: bf16-lossless-exp4-decode-only-throughput-probe [lossless exp4 compressed-weight stream kernel (_lossless_swapab_kernel)] p4 running
+- running: bf16-verify-deepgemm-bf16-gemm-nt-route [bf16 GEMM dispatch (m=65..256, DeepGEMM bf16)] p2 running
+- running: pooler-unpooler-full-bulk-tma-row-owner-stream-rewrite [pooler GEMM + unpooler GEMM (m<=32 DRAM weight streams, bulk-TMA row-owner kernel)] p2 running

@@ -1,6 +1,6 @@
 # muse_prefill_layer hypotheses
 
-Regenerated 2026-10-25T010545Z. Best: 1.0744x [1.0583,1.0905] job `502f2eab95164781` (submit)
+Regenerated 2026-10-25T013623Z. Best: 1.0744x [1.0583,1.0905] job `502f2eab95164781` (submit)
 
 | created | slug | kind | area | where | outcome | speedup | CI | job | mode | promotion | review | expected hit |
 |---|---|---|---|---|---|---|---|---|---|---|---|---|
@@ -25,7 +25,7 @@ Regenerated 2026-10-25T010545Z. Best: 1.0744x [1.0583,1.0905] job `502f2eab95164
 | 2026-10-24T140058Z | experts-triton-nvfp4-packed-asm-dequant | rewrite | w13 marlin + w2 marlin (Triton NVFP4 engine, stage 5: packed inline-PTX dequant) | done/neutral | neutral | 1.0556 | [1.040,1.071] | 49ff8248b96547de | submit |  | proceed | 0/2 |
 | 2026-10-24T140119Z | experts-triton-w13-fused-silu-epilogue | primary | silu-mul (fused into the w13 Triton NVFP4 GEMM epilogue, T > 4096) | done/neutral | neutral | 1.0525 | [1.037,1.068] | 108231906a30407e | submit |  | proceed | 0/2 |
 | 2026-10-24T140133Z | experts-triton-packed-dequant-turn4 | rewrite | w13 marlin + w2 marlin (Triton NVFP4 engine, stage 6: take over turn_4) | done/neutral | neutral | 1.0522 | [1.036,1.068] | ce3cc1a22a244ec7 | check |  | proceed | 0/3 |
-| 2026-10-24T140154Z | experts-triton-turn1-blockt32-stream | rewrite | w13 marlin + w2 marlin (Triton NVFP4 engine, stage 7: take over turn_1 with a weight-stream config) | running | running |  |  |  |  |  | proceed |  |
+| 2026-10-24T140154Z | experts-triton-turn1-blockt32-stream | rewrite | w13 marlin + w2 marlin (Triton NVFP4 engine, stage 7: take over turn_1 with a weight-stream config) | running | running |  |  | 8d1a2efec67b4758 | check |  | proceed |  |
 | 2026-10-24T165318Z | dense-gemm-cublaslt-algo-pick-prefill-t | primary | dense bf16 GEMM dispatch (qkv, o, pooler, unpooler; cuBLASLt algo selection) | queue | hold |  |  |  |  |  | proceed |  |
 | 2026-10-24T165335Z | silu-mul-triton-local-rows-marlin-turn | primary | silu-mul (Marlin path, T <= 4096) | done/neutral | neutral | 1.0512 | [1.035,1.067] | b2259479e57e4196 | check |  | proceed | 1/3 |
 | 2026-10-24T165356Z | norm-residual-boundaries-triton-row-kernel | primary | attention boundary + FFN boundary (FusedPostNormResidualPreNorm x2) | queue | hold |  |  |  |  |  | proceed |  |
@@ -37,7 +37,7 @@ Regenerated 2026-10-25T010545Z. Best: 1.0744x [1.0583,1.0905] job `502f2eab95164
 | 2026-10-24T184911Z | first-turn-moe-dead-work-stack | primary | MoE dispatch + silu-mul + Triton NVFP4 grid at T > 4096 (first_turn dead-work removal, combined) | queue | queued |  |  |  |  |  | required |  |
 | 2026-10-24T184923Z | w2-nonlocal-zero-store-off-first-turn | primary | w2 (Triton NVFP4 engine at T > 4096: remote-block zero store) | done/neutral | neutral | 1.0609 | [1.045,1.077] | 9b731599dfa24278 | check |  | required | 0/2 |
 | 2026-10-24T184946Z | moe-align-32-experts-first-turn | primary | MoE align/dispatch (align over the 32 local experts at T > 4096) | done/neutral | neutral | 1.0604 | [1.044,1.076] | b5bf94b463d34d21 | check |  | required | 0/2 |
-| 2026-10-24T185108Z | experts-triton-turn4-persistent-local-align | primary | w13 marlin + w2 marlin at turn_4 (route 1024 < T <= 4096 to the Triton NVFP4 engine, with persistent grid and local-routes align) | queue | queued |  |  |  |  |  | required |  |
+| 2026-10-24T185108Z | experts-triton-turn4-persistent-local-align | primary | w13 marlin + w2 marlin at turn_4 (route 1024 < T <= 4096 to the Triton NVFP4 engine, with persistent grid and local-routes align) | queue | hold |  |  |  |  |  | proceed |  |
 | 2026-10-24T185232Z | turn-moe-local-align-sorted-silu | primary | MoE align/dispatch + silu-mul on the Marlin path (T <= 4096) | queue | queued |  |  |  |  |  | required |  |
 | 2026-10-24T185248Z | router-hilo-one-gemm-n512 | primary | router GEMM (hi and lo halves as one N=512 cuBLAS GEMM) | done/neutral | neutral | 1.0607 | [1.045,1.077] | f4e3c5f4c306427b | check |  | required | 0/3 |
 | 2026-10-24T224410Z | norm-boundaries-persistent-multirow | primary | attention boundary + FFN boundary (FusedPostNormResidualPreNorm x2, persistent multi-row variant) | queue | queued |  |  |  |  |  | required |  |
@@ -53,6 +53,7 @@ Regenerated 2026-10-25T010545Z. Best: 1.0744x [1.0583,1.0905] job `502f2eab95164
 | 2026-10-25T001301Z | experts-cuda-wgmma-grouped-gemm-remeasure-sm90a | rewrite | w13 + w2 expert GEMMs at T > 4096 (CUDA sm_90a wgmma W4A16 grouped GEMM, stage 1b: re-measure of experts-cuda-wgmma-mixed-input-grouped-gemm with the build fix, on the new master) | queue | hold |  |  |  |  |  | hold |  |
 | 2026-10-25T001824Z | attn-full-prefill-cuda-fp8-wgmma-hard-gate-inproc | rewrite | FA3 call on full-attention layers at page_size 1 (CUDA sm_90a FP8 wgmma flash attention, stage 1b: fix of attn-full-prefill-cuda-fp8-exp-offload with build fix, hard timing gate, no exp offload) | done/neutral | neutral | 1.0679 | [1.052,1.084] | 306cbde58aff4fa4 | check |  | proceed | 0/2 |
 | 2026-10-25T001824Z | experts-cuda-wgmma-grouped-gemm-remeasure-sm90a-inproc | rewrite | w13 + w2 expert GEMMs at T > 4096 (CUDA sm_90a wgmma W4A16 grouped GEMM, stage 1b: re-measure of experts-cuda-wgmma-mixed-input-grouped-gemm with the build fix, on the new master) | done/regression | regression | 0.9401 | [0.926,0.954] | 6d047cdeefd94357 | check |  | proceed | 0/3 |
+| 2026-10-25T010741Z | experts-triton-turn4-persistent-local-align-control-no-persi | control→experts-triton-turn4-persistent-local-align | w13 + w2 at turn_4 (1024 < T <= 4096) routed to the Triton NVFP4 engine with local-routes align, original non-persistent grid | running | running |  |  | 374efc72c4d14856 | check |  | proceed |  |
 
 ## Held
 
@@ -66,5 +67,6 @@ Regenerated 2026-10-25T010545Z. Best: 1.0744x [1.0583,1.0905] job `502f2eab95164
 - router-pooler-concat-gemm-turn: adversarial review: Rule-clean, but the size of the win rests on a router side branch of ~80-90 us that the current master profile does not show. At turn_1 sliding the router pair 
 - dense-gemm-cublaslt-algo-pick-prefill-t: reviewer: claim only after the bf16 precedent (bf16-cublaslt-algo-pick-in-prepare-m128-m256, 26a8be34a5eb4426) harvests; ~0.5-1.1% headline; time pooler keys with the router running or require a >=5% margin
 - norm-residual-boundaries-triton-row-kernel: reviewer: same one-row-per-program structure as the incumbent; expect 0.2-0.4% headline, below run noise; re-mint as a multi-row/persistent variant if wanted
+- experts-triton-turn4-persistent-local-align: Reviewer: wait for experts-triton-persistent-grid-first-turn (job 5d9ddbbaaffd4599); if it gains, rebuild on its branch with parts 1+3 only, else retire. The control runs now.
 - attn-full-prefill-cuda-fp8-wgmma-hard-gate: adversarial review: The rewrite's target and gate are sound, but sub-change (4) runs the first launch in a multiprocessing-spawn child process, and TASK.md says a submission that '
 - experts-cuda-wgmma-grouped-gemm-remeasure-sm90a: adversarial review: The rewrite design and the build fix are sound, but change item (2) spawns a multiprocessing child in prepare(), and TASK.md and the technical rules list 'start
