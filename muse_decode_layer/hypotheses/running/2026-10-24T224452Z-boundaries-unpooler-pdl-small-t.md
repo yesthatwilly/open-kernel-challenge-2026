@@ -59,7 +59,7 @@ review: proceed
 status: running
 review_at: 2026-10-25T010851Z
 review_companions: null
-stage: implemented
+stage: dispatched
 claimed_at: 2026-10-25T010851Z
 base_sha: 63b7f3a3bc19c847c204f5d5298872f66d86505a
 base_blob: 4da94677234faaa06b42b5ced541db8961fd6f34
@@ -76,6 +76,8 @@ submission_blob: 7781304a6fb5d86a719e72d889f8db724b7f310f
 lint_warnings: 33
 attempt_file: 2026-10-25T011821Z-check-boundaries-unpooler-pdl-small-t.md
 prepared_at: 2026-10-25T011821Z
+job: 1dfe83fdbeea458a
+dispatched_at: 2026-10-25T011829Z
 ---
 
 # boundaries-unpooler-pdl-small-t
