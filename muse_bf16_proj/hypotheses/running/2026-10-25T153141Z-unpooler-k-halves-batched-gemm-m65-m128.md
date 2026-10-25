@@ -56,6 +56,8 @@ submission_sha256: 893edf99de9bc7dceb9a5198428741f4a5b81449e347e4a3e7e270e0feee4
 norm_sha256: 1ddd2b82957d3794fddce4dd750dbca0debc391cc7e4274f303c0e1330218ffb
 submission_blob: 572599cf4876a6353e8acc95486e0bb0be34586c
 lint_warnings: 39
+attempt_file: 2026-10-25T204107Z-submit-unpooler-k-halves-batched-gemm-m65-m128.md
+prepared_at: 2026-10-25T204107Z
 ---
 
 # unpooler-k-halves-batched-gemm-m65-m128
