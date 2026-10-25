@@ -59,9 +59,18 @@ kind: primary
 controls_for: null
 prior: "restack-bucket-gate-on-master-align-atomic: that held restack carried an older bucket-gate branch; this one ports the board-best code itself (wg2 C2 module + selector, job 31c27e4b) plus the two-stream H cell from 9a455a2a, leaving out F1/F2 which master already has. Expected ~1.41-1.43 vs board 1.4021, so it clears the 1.24% margin only if C2 reproduces AND at least one H band goes live."
 review: proceed
-status: queued
+status: running
 review_at: 2026-10-25T212523Z
 review_companions: null
+stage: claimed
+claimed_at: 2026-10-25T212549Z
+base_sha: 2b505e1ba8846dfb42e476ada051a571345fbfbf
+base_blob: 35b8a851e4ef5fa8fd66b12d09caac88b7ea7615
+branch: hyp/muse_moe_w4a16/restack-occ2-wg2-b256-two-stream-halves-on-master
+worktree: .worktrees/muse_moe_w4a16/restack-occ2-wg2-b256-two-stream-halves-on-master
+mode: check
+restack_of: null
+stale_base: null
 ---
 
 # restack-occ2-wg2-b256-two-stream-halves-on-master
