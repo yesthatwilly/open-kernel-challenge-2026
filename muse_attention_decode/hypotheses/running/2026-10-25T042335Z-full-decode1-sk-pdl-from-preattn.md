@@ -34,9 +34,18 @@ priority: 2
 kind: primary
 controls_for: null
 review: proceed
-status: queued
+status: running
 review_at: 2026-10-25T043143Z
 review_companions: null
+stage: claimed
+claimed_at: 2026-10-25T043143Z
+base_sha: df59fe97803906261a926deeb694b808107ab115
+base_blob: d8769ef25caf845a0e207538ccc5c62394b6ee3b
+branch: hyp/muse_attention_decode/full-decode1-sk-pdl-from-preattn
+worktree: .worktrees/muse_attention_decode/full-decode1-sk-pdl-from-preattn
+mode: null
+restack_of: null
+stale_base: null
 ---
 
 # full-decode1-sk-pdl-from-preattn
