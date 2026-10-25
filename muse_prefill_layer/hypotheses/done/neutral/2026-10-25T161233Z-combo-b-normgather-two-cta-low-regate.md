@@ -106,7 +106,9 @@ speedup: 1.4677493909229
 speedup_ci: [1.4457331500590564, 1.4897656317867434]
 harvested_at: 2026-10-25T185517Z
 best_at_harvest: 1.4604901800994607
-promotion: null
+promotion: unmerged
+hand_landed: true
+promotion_reason: master moved since base; merge by hand
 ---
 
 # combo-b-normgather-two-cta-low-regate
