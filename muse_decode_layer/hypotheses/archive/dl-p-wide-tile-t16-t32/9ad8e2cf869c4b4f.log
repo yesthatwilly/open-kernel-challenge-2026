@@ -1,0 +1,74 @@
+[small-t-dense-chain] load_inline compiled in 41.6s
+[small-t-dense-chain] P occupancy (CTAs/SM, NF=1/2/4): [3, 2, 2]; grid 216 CTAs
+[small-t-dense-chain] P-old NF=2: 102 regs, 0 B local/spill, smem 82048 B, occupancy 2 CTAs/SM = 8 warps/SM at the limit, grid 216 CTAs on 132 SMs -> ~8 warps/SM resident
+[small-t-dense-chain] P-wide NF=2: 80 regs, 0 B local/spill, smem 73856 B, occupancy 3 CTAs/SM = 24 warps/SM at the limit, grid 216 CTAs on 132 SMs -> ~16 warps/SM resident
+[small-t-dense-chain] P-old NF=4: 139 regs, 0 B local/spill, smem 98432 B, occupancy 2 CTAs/SM = 8 warps/SM at the limit, grid 216 CTAs on 132 SMs -> ~8 warps/SM resident
+[small-t-dense-chain] P-wide NF=4: 106 regs, 0 B local/spill, smem 82048 B, occupancy 2 CTAs/SM = 16 warps/SM at the limit, grid 216 CTAs on 132 SMs -> ~16 warps/SM resident
+[small-t-dense-chain] PDL probe: eager overlap False (-6.2 us), graph overlap True (49.7 us, secondary waited 50.3 us) -> pdl=1
+[small-t-dense-chain] P timing T=1 pdl=0 20.8 us (3.64 TB/s) pdl=1 20.5 us (3.68 TB/s)
+[small-t-dense-chain] P timing T=8 pdl=0 22.0 us (3.43 TB/s) pdl=1 21.8 us (3.47 TB/s)
+[small-t-dense-chain] P timing T=32 pdl=0 26.3 us (2.87 TB/s) pdl=1 26.0 us (2.90 TB/s)
+[small-t-dense-chain] wide-check NF=2 T=9 P-old launch 0: starting
+[small-t-dense-chain] wide-check NF=2 T=9 P-old launch 0: synced ok
+[small-t-dense-chain] wide-check NF=2 T=9 P-old launch 1: starting
+[small-t-dense-chain] wide-check NF=2 T=9 P-old launch 1: synced ok
+[small-t-dense-chain] wide-check NF=2 T=9 P-wide launch 0: starting
+[small-t-dense-chain] wide-check NF=2 T=9 P-wide launch 0: synced ok
+[small-t-dense-chain] wide-check NF=2 T=9 P-wide launch 1: starting
+[small-t-dense-chain] wide-check NF=2 T=9 P-wide launch 1: synced ok
+[small-t-dense-chain] wide-check NF=2 T=12 P-old launch 0: starting
+[small-t-dense-chain] wide-check NF=2 T=12 P-old launch 0: synced ok
+[small-t-dense-chain] wide-check NF=2 T=12 P-old launch 1: starting
+[small-t-dense-chain] wide-check NF=2 T=12 P-old launch 1: synced ok
+[small-t-dense-chain] wide-check NF=2 T=12 P-wide launch 0: starting
+[small-t-dense-chain] wide-check NF=2 T=12 P-wide launch 0: synced ok
+[small-t-dense-chain] wide-check NF=2 T=12 P-wide launch 1: starting
+[small-t-dense-chain] wide-check NF=2 T=12 P-wide launch 1: synced ok
+[small-t-dense-chain] wide-check NF=2 T=16 P-old launch 0: starting
+[small-t-dense-chain] wide-check NF=2 T=16 P-old launch 0: synced ok
+[small-t-dense-chain] wide-check NF=2 T=16 P-old launch 1: starting
+[small-t-dense-chain] wide-check NF=2 T=16 P-old launch 1: synced ok
+[small-t-dense-chain] wide-check NF=2 T=16 P-wide launch 0: starting
+[small-t-dense-chain] wide-check NF=2 T=16 P-wide launch 0: synced ok
+[small-t-dense-chain] wide-check NF=2 T=16 P-wide launch 1: starting
+[small-t-dense-chain] wide-check NF=2 T=16 P-wide launch 1: synced ok
+[small-t-dense-chain] wide P NF=2 check ok: ei rel L2 7.72e-05 logit 1.02e-06 vs master's P, bit-exact False
+[small-t-dense-chain] wide-check NF=4 T=17 P-old launch 0: starting
+[small-t-dense-chain] wide-check NF=4 T=17 P-old launch 0: synced ok
+[small-t-dense-chain] wide-check NF=4 T=17 P-old launch 1: starting
+[small-t-dense-chain] wide-check NF=4 T=17 P-old launch 1: synced ok
+[small-t-dense-chain] wide-check NF=4 T=17 P-wide launch 0: starting
+[small-t-dense-chain] wide-check NF=4 T=17 P-wide launch 0: synced ok
+[small-t-dense-chain] wide-check NF=4 T=17 P-wide launch 1: starting
+[small-t-dense-chain] wide-check NF=4 T=17 P-wide launch 1: synced ok
+[small-t-dense-chain] wide-check NF=4 T=24 P-old launch 0: starting
+[small-t-dense-chain] wide-check NF=4 T=24 P-old launch 0: synced ok
+[small-t-dense-chain] wide-check NF=4 T=24 P-old launch 1: starting
+[small-t-dense-chain] wide-check NF=4 T=24 P-old launch 1: synced ok
+[small-t-dense-chain] wide-check NF=4 T=24 P-wide launch 0: starting
+[small-t-dense-chain] wide-check NF=4 T=24 P-wide launch 0: synced ok
+[small-t-dense-chain] wide-check NF=4 T=24 P-wide launch 1: starting
+[small-t-dense-chain] wide-check NF=4 T=24 P-wide launch 1: synced ok
+[small-t-dense-chain] wide-check NF=4 T=32 P-old launch 0: starting
+[small-t-dense-chain] wide-check NF=4 T=32 P-old launch 0: synced ok
+[small-t-dense-chain] wide-check NF=4 T=32 P-old launch 1: starting
+[small-t-dense-chain] wide-check NF=4 T=32 P-old launch 1: synced ok
+[small-t-dense-chain] wide-check NF=4 T=32 P-wide launch 0: starting
+[small-t-dense-chain] wide-check NF=4 T=32 P-wide launch 0: synced ok
+[small-t-dense-chain] wide-check NF=4 T=32 P-wide launch 1: starting
+[small-t-dense-chain] wide-check NF=4 T=32 P-wide launch 1: synced ok
+[small-t-dense-chain] wide P NF=4 check ok: ei rel L2 5.73e-05 logit 1.14e-06 vs master's P, bit-exact False
+[small-t-dense-chain] wide P ON (mask 6) full self-check ok: ei 1.09e-04 logit 3.56e-06 xn 0.00e+00 w 0.00e+00 y 0.00e+00 graph 0.00e+00
+[small-t-dense-chain] wide-timing T=16 P-old: replaying
+[small-t-dense-chain] wide-timing T=16 P-old: synced ok
+[small-t-dense-chain] wide-timing T=16 P-wide: replaying
+[small-t-dense-chain] wide-timing T=16 P-wide: synced ok
+[small-t-dense-chain] P timing (CUDA events, pdl=0) T=16: old 23.4 us (3.22 TB/s), wide 24.9 us (3.03 TB/s)
+[small-t-dense-chain] wide-timing T=32 P-old: replaying
+[small-t-dense-chain] wide-timing T=32 P-old: synced ok
+[small-t-dense-chain] wide-timing T=32 P-wide: replaying
+[small-t-dense-chain] wide-timing T=32 P-wide: synced ok
+[small-t-dense-chain] P timing (CUDA events, pdl=0) T=32: old 26.4 us (2.86 TB/s), wide 28.9 us (2.62 TB/s)
+[small-t-dense-chain] PATH CHOSEN for P: T<=8 master P, T=9..16 WIDE, T=17..32 WIDE
+[small-t-dense-chain] ON pdl=1 compile 41.6s max errs ei 9.20e-05 logit 3.56e-06 xn 1.75e-05 w 0.00e+00 y 0.00e+00 graph 0.00e+00: PATH CHOSEN = DENSE-CHAIN at T <= 32, MASTER above
+[align-parallel-large-t] ON cases=18 mismatches=0

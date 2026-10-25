@@ -1,0 +1,489 @@
+diff --git a/muse_decode_layer/submission.py b/muse_decode_layer/submission.py
+index 4da9467..930f0e6 100644
+--- a/muse_decode_layer/submission.py
++++ b/muse_decode_layer/submission.py
+@@ -284,11 +284,17 @@ DL_ROWS = D_EXPERT + 2 * N_EXPERTS   # 4608: pooler rows, then the router hi/lo
+ DL_SPLIT_K = 3                       # must match SPLIT in the CUDA source
+ DL_N_TILES = DL_ROWS // 64           # 72
+ DL_TAG = "[small-t-dense-chain]"
++# Wide-tile kernel P (hypothesis dl-p-wide-tile-t16-t32): own bound, not DL_MAX_TOKENS. T <= 8 keeps
++# master's kernel P; 9 <= T <= DL_WIDE_MAX_TOKENS may take the 128-row / 64-K variant per NF, once
++# its prepare() occupancy and self-checks pass. DL_WIDE_SPLIT_K must match WSPLIT in the CUDA source.
++DL_WIDE_MAX_TOKENS = 32
++DL_WIDE_SPLIT_K = 6
+ 
+ _DL_CPP = r"""
+ #include <torch/extension.h>
+ void dl_pooler_router(torch::Tensor x, torch::Tensor w, torch::Tensor ei, torch::Tensor logits,
+-                      torch::Tensor ws, torch::Tensor cnt, int64_t pdl);
++                      torch::Tensor ws, torch::Tensor cnt, int64_t pdl, int64_t wide);
++int64_t dl_kernel_info(int64_t nf, int64_t wide, int64_t what);
+ void dl_route_norm_align(torch::Tensor ei, torch::Tensor norm_w, torch::Tensor xn, torch::Tensor logits,
+                          torch::Tensor bias, torch::Tensor local_start, torch::Tensor topk_ids,
+                          torch::Tensor topk_w, torch::Tensor local_ids, torch::Tensor sorted_ids,
+@@ -501,6 +507,165 @@ dl_pooler_router_kernel(const __nv_bfloat16* __restrict__ x, const __nv_bfloat16
+   }
+ }
+ 
++// KERNEL PW dl_pooler_router_wide_kernel<NF> (hypothesis dl-p-wide-tile-t16-t32), NF = 2 / 4 only
++// (T 9..32). Same contract and tile layout as dl_pooler_router_kernel, but 128 weight rows per CTA
++// (8 warps x 16), BLOCK_K 64 per stage (W stage 16 KB, x stage NF KB), 4 stages = 72 / 80 KB so
++// 2 CTAs/SM (16 warps/SM); grid 36 n-tiles x 6 K-chunks of 21/21/22/21/21/22 blocks = 216 CTAs.
++// Router tiles: rows 4096.. = 4 wide tiles of 4 x [16 hi ; 16 lo] = experts 64*(tile-32) + 0..63.
++constexpr int WN = 128;
++constexpr int WK = 64;
++constexpr int WKB = KDIM / WK;                    // 128 K-blocks
++constexpr int WSPLIT = 6;
++constexpr int WNTILES = ROWS / WN;                // 36
++constexpr int WTHREADS = 256;
++constexpr int WROW_BYTES = WK * 2;                // 128 B = 8 chunks of 16 B
++constexpr int WW_STAGE = WN * WROW_BYTES;         // 16384
++template <int NF> struct WSmem {
++  static constexpr int X_STAGE = NF * 8 * WROW_BYTES;          // 2048 / 4096
++  static constexpr int STAGE_BYTES = WW_STAGE + X_STAGE;
++  static constexpr int BYTES = STAGES * STAGE_BYTES;           // 73728 / 81920
++};
++
++template <int NF>
++__global__ void __launch_bounds__(WTHREADS, 2)
++dl_pooler_router_wide_kernel(const __nv_bfloat16* __restrict__ x, const __nv_bfloat16* __restrict__ w,
++                             __nv_bfloat16* __restrict__ ei, float* __restrict__ logits,
++                             float* __restrict__ ws, int* __restrict__ cnt, int m) {
++  using S = WSmem<NF>;
++  extern __shared__ __align__(128) uint8_t smem[];
++  __shared__ int s_last;
++  const int tid = threadIdx.x, lane = tid & 31, warp = tid >> 5;
++  const int ntile = blockIdx.x / WSPLIT, sidx = blockIdx.x % WSPLIT;
++  const int n0 = ntile * WN;
++  const int kb0 = sidx * WKB / WSPLIT, kb1 = (sidx + 1) * WKB / WSPLIT;
++  const int nsteps = kb1 - kb0;
++  const __nv_bfloat16* wbase = w + (int64_t)n0 * KDIM;
++
++  // Weight part of stage j: 128 rows x 8 chunks = 4 per thread.
++  auto issue_w = [&](int j) {
++    uint8_t* sw = smem + (j % STAGES) * S::STAGE_BYTES;
++    const int kel = (kb0 + j) * WK;
++#pragma unroll
++    for (int u = 0; u < (WN * 8) / WTHREADS; ++u) {
++      const int q = tid + u * WTHREADS;
++      const int row = q >> 3, c = q & 7;
++      cp_async16(smem_u32(sw + row * WROW_BYTES + ((c ^ (row & 7)) << 4)),
++                 wbase + (int64_t)row * KDIM + kel + c * 8, 16);
++    }
++  };
++  // Token part of stage j: 8 * NF rows x 8 chunks (NF * 64 chunks); rows >= m zero-filled.
++  auto issue_x = [&](int j) {
++    uint8_t* sx = smem + (j % STAGES) * S::STAGE_BYTES + WW_STAGE;
++    const int kel = (kb0 + j) * WK;
++#pragma unroll
++    for (int u = 0; u < (NF * 64 + WTHREADS - 1) / WTHREADS; ++u) {
++      const int q = tid + u * WTHREADS;
++      if (q < NF * 64) {
++        const int row = q >> 3, c = q & 7;
++        const bool ok = row < m;
++        const __nv_bfloat16* src = x + (ok ? (int64_t)row * KDIM : (int64_t)0) + kel + c * 8;
++        cp_async16(smem_u32(sx + row * WROW_BYTES + ((c ^ (row & 7)) << 4)), src, ok ? 16 : 0);
++      }
++    }
++  };
++
++  // Prologue as kernel P: weight copies of stages 0..2 before the PDL wait, x after it.
++#pragma unroll
++  for (int j = 0; j < STAGES - 1; ++j)
++    if (j < nsteps) issue_w(j);
++  griddep_wait();
++#pragma unroll
++  for (int j = 0; j < STAGES - 1; ++j) {
++    if (j < nsteps) issue_x(j);
++    cp_commit();
++  }
++
++  float acc[2][NF][4];
++#pragma unroll
++  for (int h = 0; h < 2; ++h)
++#pragma unroll
++    for (int f = 0; f < NF; ++f)
++#pragma unroll
++      for (int r = 0; r < 4; ++r) acc[h][f][r] = 0.f;
++  const int arow = warp * 16 + (lane & 15);
++  const int asw = arow & 7;
++  const int ahalf = lane >> 4;
++  const int xrow = lane & 7;
++  const int xq = lane >> 3;
++
++  for (int i = 0; i < nsteps; ++i) {
++    cp_wait<STAGES - 2>();
++    __syncthreads();
++    {
++      const int nx = i + STAGES - 1;
++      if (nx < nsteps) { issue_w(nx); issue_x(nx); }
++      cp_commit();
++    }
++    const uint8_t* sw = smem + (i % STAGES) * S::STAGE_BYTES;
++    const uint32_t a_base = smem_u32(sw) + arow * WROW_BYTES;
++    const uint32_t b_base = smem_u32(sw + WW_STAGE) + xrow * WROW_BYTES;
++#pragma unroll
++    for (int kp = 0; kp < WK / 32; ++kp) {
++      uint32_t a0[4], a1[4];
++      ldsm_x4(a0, a_base + ((((kp * 2 + 0) * 2 + ahalf) ^ asw) << 4));
++      ldsm_x4(a1, a_base + ((((kp * 2 + 1) * 2 + ahalf) ^ asw) << 4));
++#pragma unroll
++      for (int f = 0; f < NF; ++f) {
++        uint32_t b[4];
++        ldsm_x4(b, b_base + f * 8 * WROW_BYTES + (((kp * 4 + xq) ^ xrow) << 4));
++        mma_bf16(acc[0][f], a0, b[0], b[1]);
++        mma_bf16(acc[1][f], a1, b[2], b[3]);
++      }
++    }
++  }
++
++  const int r0 = n0 + warp * 16 + (lane >> 2);
++  float* wsp = ws + (int64_t)sidx * MAXT * ROWS;
++#pragma unroll
++  for (int f = 0; f < NF; ++f) {
++    const int t0 = f * 8 + (lane & 3) * 2;
++    if (t0 < m) {
++      wsp[(int64_t)t0 * ROWS + r0] = acc[0][f][0] + acc[1][f][0];
++      wsp[(int64_t)t0 * ROWS + r0 + 8] = acc[0][f][2] + acc[1][f][2];
++    }
++    if (t0 + 1 < m) {
++      wsp[(int64_t)(t0 + 1) * ROWS + r0] = acc[0][f][1] + acc[1][f][1];
++      wsp[(int64_t)(t0 + 1) * ROWS + r0 + 8] = acc[0][f][3] + acc[1][f][3];
++    }
++  }
++  __threadfence();
++  __syncthreads();
++  if (tid == 0) s_last = (atomicAdd(cnt + ntile, 1) == WSPLIT - 1);
++  __syncthreads();
++  if (s_last) {
++    __threadfence();
++    if (n0 < POOL_ROWS) {
++      for (int e = tid; e < m * WN; e += WTHREADS) {
++        const int t = e / WN, r = n0 + (e % WN);
++        float s = 0.f;
++#pragma unroll
++        for (int p = 0; p < WSPLIT; ++p) s += __ldcg(ws + ((int64_t)p * MAXT + t) * ROWS + r);
++        ei[(int64_t)t * POOL_ROWS + r] = __float2bfloat16_rn(s);
++      }
++    } else {
++      // Router tile: local rows 4 x [hi 16 | lo 16] = experts 64*(ntile - 32) + 0..63.
++      for (int e = tid; e < m * 64; e += WTHREADS) {
++        const int t = e >> 6, q = e & 63, sub = q >> 4, j = q & 15;
++        const int rhi = n0 + sub * 32 + j, rlo = rhi + 16;
++        const int expert = (ntile - POOL_ROWS / WN) * 64 + sub * 16 + j;
++        float shi = 0.f, slo = 0.f;
++#pragma unroll
++        for (int p = 0; p < WSPLIT; ++p) {
++          shi += __ldcg(ws + ((int64_t)p * MAXT + t) * ROWS + rhi);
++          slo += __ldcg(ws + ((int64_t)p * MAXT + t) * ROWS + rlo);
++        }
++        logits[t * 256 + expert] = shi + slo;
++      }
++    }
++    if (tid == 0) atomicExch(cnt + ntile, 0);
++  }
++}
++
+ // Orderable key: larger biased score first, then the lower expert id (key 0 = taken / none).
+ __device__ __forceinline__ unsigned long long route_key(float v, int e) {
+   uint32_t u = __float_as_uint(v);
+@@ -709,10 +874,52 @@ void launch_p(const __nv_bfloat16* x, const __nv_bfloat16* w, __nv_bfloat16* ei,
+   C10_CUDA_CHECK(cudaLaunchKernelEx(&cfg, dl_pooler_router_kernel<NF>, x, w, ei, logits, ws, cnt, m));
+ }
+ 
++template <int NF>
++void set_attrs_wide() {
++  static bool done = false;
++  if (!done) {
++    C10_CUDA_CHECK(cudaFuncSetAttribute(dl_pooler_router_wide_kernel<NF>, cudaFuncAttributeMaxDynamicSharedMemorySize,
++                                        WSmem<NF>::BYTES));
++    C10_CUDA_CHECK(cudaFuncSetAttribute(dl_pooler_router_wide_kernel<NF>, cudaFuncAttributePreferredSharedMemoryCarveout,
++                                        cudaSharedmemCarveoutMaxShared));
++    done = true;
++  }
++}
++
++template <int NF>
++void launch_pw(const __nv_bfloat16* x, const __nv_bfloat16* w, __nv_bfloat16* ei, float* logits, float* ws,
++               int* cnt, int m, bool pdl, cudaStream_t stream) {
++  set_attrs_wide<NF>();
++  cudaLaunchConfig_t cfg = {};
++  cfg.gridDim = dim3(WNTILES * WSPLIT);
++  cfg.blockDim = dim3(WTHREADS);
++  cfg.dynamicSmemBytes = WSmem<NF>::BYTES;
++  cfg.stream = stream;
++  cudaLaunchAttribute attr[1];
++  attr[0].id = cudaLaunchAttributeProgrammaticStreamSerialization;
++  attr[0].val.programmaticStreamSerializationAllowed = 1;
++  cfg.attrs = attr;
++  cfg.numAttrs = pdl ? 1 : 0;
++  C10_CUDA_CHECK(cudaLaunchKernelEx(&cfg, dl_pooler_router_wide_kernel<NF>, x, w, ei, logits, ws, cnt, m));
++}
++
++template <typename F>
++int64_t kernel_info(F kernel, int threads, size_t smem, int64_t what) {
++  cudaFuncAttributes a;
++  C10_CUDA_CHECK(cudaFuncGetAttributes(&a, kernel));
++  if (what == 0) return a.numRegs;
++  if (what == 1) return static_cast<int64_t>(a.localSizeBytes);
++  if (what == 3) return static_cast<int64_t>(a.sharedSizeBytes + smem);
++  int blocks = 0;
++  C10_CUDA_CHECK(cudaOccupancyMaxActiveBlocksPerMultiprocessor(&blocks, kernel, threads, smem));
++  return blocks;
++}
++
+ }  // namespace
+ 
++// wide: bit mask of the NF values that take the wide kernel (2 -> NF=2, 4 -> NF=4); 0 = master's P everywhere.
+ void dl_pooler_router(torch::Tensor x, torch::Tensor w, torch::Tensor ei, torch::Tensor logits,
+-                      torch::Tensor ws, torch::Tensor cnt, int64_t pdl) {
++                      torch::Tensor ws, torch::Tensor cnt, int64_t pdl, int64_t wide) {
+   const int64_t m = x.size(0);
+   TORCH_CHECK(m >= 1 && m <= MAXT, "dl_pooler_router: tokens out of range");
+   TORCH_CHECK(x.scalar_type() == at::kBFloat16 && x.is_contiguous() && x.size(1) == KDIM, "dl_pooler_router: x");
+@@ -722,7 +929,7 @@ void dl_pooler_router(torch::Tensor x, torch::Tensor w, torch::Tensor ei, torch:
+               "dl_pooler_router: ei");
+   TORCH_CHECK(logits.scalar_type() == at::kFloat && logits.is_contiguous() && logits.size(0) == m &&
+               logits.size(1) == 256, "dl_pooler_router: logits");
+-  TORCH_CHECK(ws.scalar_type() == at::kFloat && ws.numel() >= (int64_t)SPLIT * MAXT * ROWS, "dl_pooler_router: ws");
++  TORCH_CHECK(ws.scalar_type() == at::kFloat && ws.numel() >= (int64_t)WSPLIT * MAXT * ROWS, "dl_pooler_router: ws");
+   TORCH_CHECK(cnt.scalar_type() == at::kInt && cnt.numel() >= NTILES, "dl_pooler_router: cnt");
+   auto stream = at::cuda::getCurrentCUDAStream().stream();
+   const auto* xp = reinterpret_cast<const __nv_bfloat16*>(x.data_ptr());
+@@ -733,8 +940,26 @@ void dl_pooler_router(torch::Tensor x, torch::Tensor w, torch::Tensor ei, torch:
+   int* cp = cnt.data_ptr<int>();
+   const int mi = static_cast<int>(m);
+   if (m <= 8) launch_p<1>(xp, wp, ep, lp, wsp, cp, mi, pdl != 0, stream);
+-  else if (m <= 16) launch_p<2>(xp, wp, ep, lp, wsp, cp, mi, pdl != 0, stream);
+-  else launch_p<4>(xp, wp, ep, lp, wsp, cp, mi, pdl != 0, stream);
++  else if (m <= 16) {
++    if (wide & 2) launch_pw<2>(xp, wp, ep, lp, wsp, cp, mi, pdl != 0, stream);
++    else launch_p<2>(xp, wp, ep, lp, wsp, cp, mi, pdl != 0, stream);
++  } else {
++    if (wide & 4) launch_pw<4>(xp, wp, ep, lp, wsp, cp, mi, pdl != 0, stream);
++    else launch_p<4>(xp, wp, ep, lp, wsp, cp, mi, pdl != 0, stream);
++  }
++}
++
++// what: 0 registers/thread, 1 local bytes (spill + local arrays), 2 CTAs/SM, 3 static + dynamic smem.
++int64_t dl_kernel_info(int64_t nf, int64_t wide, int64_t what) {
++  TORCH_CHECK(nf == 2 || nf == 4, "dl_kernel_info: nf");
++  if (wide) {
++    if (nf == 2) { set_attrs_wide<2>(); return kernel_info(dl_pooler_router_wide_kernel<2>, WTHREADS, WSmem<2>::BYTES, what); }
++    set_attrs_wide<4>();
++    return kernel_info(dl_pooler_router_wide_kernel<4>, WTHREADS, WSmem<4>::BYTES, what);
++  }
++  if (nf == 2) { set_attrs<2>(); return kernel_info(dl_pooler_router_kernel<2>, THREADS, Smem<2>::BYTES, what); }
++  set_attrs<4>();
++  return kernel_info(dl_pooler_router_kernel<4>, THREADS, Smem<4>::BYTES, what);
+ }
+ 
+ void dl_route_norm_align(torch::Tensor ei, torch::Tensor norm_w, torch::Tensor xn, torch::Tensor logits,
+@@ -821,8 +1046,8 @@ def _build_dense_chain():
+             name="muse_decode_dense_chain_v1",
+             cpp_sources=_DL_CPP,
+             cuda_sources=_DL_CUDA,
+-            functions=["dl_pooler_router", "dl_route_norm_align", "dl_occupancy", "dl_pdl_probe"],
+-            extra_cuda_cflags=["-O3", "-arch=sm_90a"],
++            functions=["dl_pooler_router", "dl_kernel_info", "dl_route_norm_align", "dl_occupancy", "dl_pdl_probe"],
++            extra_cuda_cflags=["-O3", "-arch=sm_90a", "-lineinfo"],
+             verbose=False,
+         )
+     except Exception as e:  # keep the master path if the build fails
+@@ -1025,7 +1250,7 @@ def _align_par_setup(state, device):
+           flush=True)
+ 
+ 
+-def _dl_forward(ffn_input, local_start, dl, pdl=None):
++def _dl_forward(ffn_input, local_start, dl, pdl=None, wide=None):
+     """Kernels P and R for T <= DL_MAX_TOKENS. Returns (pre-expert-normed expert input bf16 [T, 4096],
+     topk_weights fp32 [T, 8], topk_ids int32 [T, 8] global, local_ids int32 [T, 8],
+     (sorted_ids, block_experts, n_padded)) plus the raw (expert_input, logits) for the self-check.
+@@ -1036,7 +1261,9 @@ def _dl_forward(ffn_input, local_start, dl, pdl=None):
+     x = ffn_input.contiguous()
+     ei = torch.empty((tokens, D_EXPERT), dtype=torch.bfloat16, device=dev)
+     logits = torch.empty((tokens, N_EXPERTS), dtype=torch.float32, device=dev)
+-    ext.dl_pooler_router(x, dl["w_pr"], ei, logits, dl["ws"], dl["cnt_p"], dl["pdl"] if pdl is None else pdl)
++    wd = dl["wide"] if wide is None else wide
++    wd = wd if tokens <= DL_WIDE_MAX_TOKENS else 0
++    ext.dl_pooler_router(x, dl["w_pr"], ei, logits, dl["ws"], dl["cnt_p"], dl["pdl"] if pdl is None else pdl, wd)
+     xn, routed = _dl_route(ei, logits, local_start, dl)
+     return xn, routed, (ei, logits)
+ 
+@@ -1264,7 +1491,7 @@ def _dl_pdl_probe():
+     return (1 if overlap else 0), msg
+ 
+ 
+-def _dl_time_p(state, with_pdl):
++def _dl_time_p(state, with_pdl):  # master's P only (wide=0)
+     """Print-only: P's own stream time with PDL off and on (20 back-to-back launches in a graph,
+     CUDA events), so the milestones are judged on P, not on a profiler row that includes its wait."""
+     dl = state["dl"]
+@@ -1280,7 +1507,7 @@ def _dl_time_p(state, with_pdl):
+                 graph = torch.cuda.CUDAGraph()
+                 with torch.cuda.graph(graph):
+                     for _ in range(20):
+-                        _DL_EXT.dl_pooler_router(x, dl["w_pr"], ei, logits, dl["ws"], dl["cnt_p"], pdl)
++                        _DL_EXT.dl_pooler_router(x, dl["w_pr"], ei, logits, dl["ws"], dl["cnt_p"], pdl, 0)
+                 graph.replay()
+                 torch.cuda.synchronize()
+                 start, end = torch.cuda.Event(enable_timing=True), torch.cuda.Event(enable_timing=True)
+@@ -1298,6 +1525,91 @@ def _dl_time_p(state, with_pdl):
+     return out
+ 
+ 
++def _dl_wide_info():
++    """Print-only: registers, local/spill bytes, CTAs/SM and warps/SM of master's P and the wide P."""
++    dev = torch.cuda.current_device()
++    sms = torch.cuda.get_device_properties(dev).multi_processor_count
++    occ = {}
++    for nf in (2, 4):
++        for wd, name, threads, grid in ((0, "old", 128, DL_N_TILES * DL_SPLIT_K), (1, "wide", 256, 36 * DL_WIDE_SPLIT_K)):
++            regs, local, ctas, smem = (int(_DL_EXT.dl_kernel_info(nf, wd, k)) for k in (0, 1, 2, 3))
++            resident = min(ctas, -(-grid // sms))  # CTAs/SM actually placed by this grid
++            print(f"{DL_TAG} P-{name} NF={nf}: {regs} regs, {local} B local/spill, smem {smem} B, "
++                  f"occupancy {ctas} CTAs/SM = {ctas * threads // 32} warps/SM at the limit, "
++                  f"grid {grid} CTAs on {sms} SMs -> ~{resident * threads // 32} warps/SM resident", flush=True)
++            occ[(nf, wd)] = ctas
++    return occ
++
++
++def _dl_wide_check(state, nf, pdl):
++    """Wide P vs master's P at the same x (two launches each: a ticket that fails to reset shows on
++    the second). Every launch is announced and synced. Returns (ok, message)."""
++    dl = state["dl"]
++    dev = dl["w_pr"].device
++    gen = torch.Generator(device=dev)
++    gen.manual_seed(20261025 + nf)
++    bit = nf  # wide mask bit for this NF: 2 or 4
++    worst_ei, worst_lg, exact = 0.0, 0.0, True
++    for tokens in ((9, 12, 16) if nf == 2 else (17, 24, 32)):
++        x = torch.randn((tokens, HIDDEN), device=dev, generator=gen).to(torch.bfloat16)
++        res = {}
++        for label, wd in (("old", 0), ("wide", bit)):
++            ei = torch.empty((tokens, D_EXPERT), dtype=torch.bfloat16, device=dev)
++            logits = torch.empty((tokens, N_EXPERTS), dtype=torch.float32, device=dev)
++            for rep in range(2):
++                print(f"{DL_TAG} wide-check NF={nf} T={tokens} P-{label} launch {rep}: starting", flush=True)
++                _DL_EXT.dl_pooler_router(x, dl["w_pr"], ei, logits, dl["ws"], dl["cnt_p"], pdl, wd)
++                torch.cuda.synchronize()
++                print(f"{DL_TAG} wide-check NF={nf} T={tokens} P-{label} launch {rep}: synced ok", flush=True)
++            res[label] = (ei, logits)
++        if bool((dl["cnt_p"] != 0).any()):
++            return False, f"T={tokens}: ticket counters not reset"
++        (ei_o, lg_o), (ei_w, lg_w) = res["old"], res["wide"]
++        if not (bool(torch.isfinite(ei_w).all()) and bool(torch.isfinite(lg_w).all())):
++            return False, f"T={tokens}: non-finite wide output"
++        e_ei = _rel_l2(ei_w, ei_o)
++        e_lg = float((lg_w.double() - lg_o.double()).abs().max() / lg_o.double().abs().max().clamp_min(1e-30))
++        exact = exact and torch.equal(ei_w, ei_o) and torch.equal(lg_w, lg_o)
++        worst_ei, worst_lg = max(worst_ei, e_ei), max(worst_lg, e_lg)
++        if e_ei > 2e-3 or e_lg > 1e-4:  # a different split-K order only flips rare bf16 roundings
++            return False, f"T={tokens}: ei rel L2 {e_ei:.2e} logit {e_lg:.2e} vs master's P"
++    return True, f"ei rel L2 {worst_ei:.2e} logit {worst_lg:.2e} vs master's P, bit-exact {exact}"
++
++
++def _dl_time_wide(state, pdl_off=0):
++    """Print-only: master's P vs the wide P at T=16 / 32 (20 launches per graph, CUDA events)."""
++    dl = state["dl"]
++    dev = dl["w_pr"].device
++    for tokens in (16, 32):
++        x = torch.randn((tokens, HIDDEN), device=dev).to(torch.bfloat16)
++        ei = torch.empty((tokens, D_EXPERT), dtype=torch.bfloat16, device=dev)
++        logits = torch.empty((tokens, N_EXPERTS), dtype=torch.float32, device=dev)
++        row, times = [], {}
++        for label, wd in (("old", 0), ("wide", 2 if tokens <= 16 else 4)):
++            try:
++                graph = torch.cuda.CUDAGraph()
++                with torch.cuda.graph(graph):
++                    for _ in range(20):
++                        _DL_EXT.dl_pooler_router(x, dl["w_pr"], ei, logits, dl["ws"], dl["cnt_p"], pdl_off, wd)
++                print(f"{DL_TAG} wide-timing T={tokens} P-{label}: replaying", flush=True)
++                graph.replay()
++                torch.cuda.synchronize()
++                start, end = torch.cuda.Event(enable_timing=True), torch.cuda.Event(enable_timing=True)
++                start.record()
++                for _ in range(5):
++                    graph.replay()
++                end.record()
++                torch.cuda.synchronize()
++                print(f"{DL_TAG} wide-timing T={tokens} P-{label}: synced ok", flush=True)
++                times[label] = start.elapsed_time(end) * 1e3 / 100
++                row.append(f"{label} {times[label]:.1f} us ({DL_ROWS * HIDDEN * 2 / times[label] / 1e6:.2f} TB/s)")
++                del graph
++            except Exception as e:
++                row.append(f"{label} timing raised {e!r}")
++        dl["cnt_p"].zero_()
++        print(f"{DL_TAG} P timing (CUDA events, pdl=0) T={tokens}: " + ", ".join(row), flush=True)
++
++
+ def _dl_setup(weights, state):
+     """Build the small-T chain's prepare() constants, probe PDL, self-check (pdl=1 then pdl=0),
+     and return its dict, or None to keep master's path. Prints the verdict loudly."""
+@@ -1317,15 +1629,21 @@ def _dl_setup(weights, state):
+         dev = w_pr.device
+         state["dl"] = {
+             "w_pr": w_pr,
+-            "ws": torch.zeros((DL_SPLIT_K * DL_MAX_TOKENS * DL_ROWS,), dtype=torch.float32, device=dev),
++            "ws": torch.zeros((max(DL_SPLIT_K, DL_WIDE_SPLIT_K) * DL_MAX_TOKENS * DL_ROWS,), dtype=torch.float32, device=dev),
+             "cnt_p": torch.zeros((DL_N_TILES,), dtype=torch.int32, device=dev),
+             "cnt_r": torch.zeros((1,), dtype=torch.int32, device=dev),
+             "norm_w": norm_w.reshape(-1),
+             "bias": weights["router_bias"].float().contiguous(),
+             "pdl": 0,
++            "wide": 0,
+         }
+         occ = [int(_DL_EXT.dl_occupancy(nf)) for nf in (1, 2, 4)]
+         print(f"{DL_TAG} P occupancy (CTAs/SM, NF=1/2/4): {occ}; grid {DL_N_TILES * DL_SPLIT_K} CTAs", flush=True)
++        try:
++            wide_occ = _dl_wide_info()
++        except Exception as e:
++            print(f"{DL_TAG} wide P info raised {e!r}: wide variant off", flush=True)
++            wide_occ = {}
+         pdl, probe = _dl_pdl_probe()
+         print(f"{DL_TAG} PDL probe: {probe} -> pdl={pdl}", flush=True)
+         ok, summary, problems = False, "", []
+@@ -1350,6 +1668,43 @@ def _dl_setup(weights, state):
+             return None
+         for line in _dl_time_p(state, with_pdl=pdl == 1 or "raised" not in probe):
+             print(f"{DL_TAG} P timing {line}", flush=True)
++        # Wide-tile P (T 9..32): per NF, gated on occupancy >= 2, a check against master's P, then the
++        # full self-check with it switched on. Any miss leaves that NF on master's P.
++        wide_mask = 0
++        for nf in (2, 4):
++            if wide_occ.get((nf, 1), 0) < 2:
++                print(f"{DL_TAG} wide P NF={nf} OFF: occupancy {wide_occ.get((nf, 1), 0)} < 2: master's P", flush=True)
++                continue
++            try:
++                ok_w, msg_w = _dl_wide_check(state, nf, pdl)
++            except Exception as e:
++                ok_w, msg_w = False, f"raised {e!r}"
++            state["dl"]["cnt_p"].zero_()
++            print(f"{DL_TAG} wide P NF={nf} check {'ok' if ok_w else 'FAILED'}: {msg_w}", flush=True)
++            if ok_w:
++                wide_mask |= nf
++        if wide_mask:
++            state["dl"]["wide"] = wide_mask
++            try:
++                ok_w, summary_w, problems_w = _dl_self_check(state, pdl)
++            except Exception as e:
++                ok_w, summary_w, problems_w = False, "", [f"self-check raised {e!r}"]
++            state["dl"]["cnt_p"].zero_()
++            state["dl"]["cnt_r"].zero_()
++            if ok_w:
++                print(f"{DL_TAG} wide P ON (mask {wide_mask}) full self-check ok: {summary_w}", flush=True)
++                try:
++                    _dl_time_wide(state)
++                except Exception as e:
++                    print(f"{DL_TAG} wide timing raised {e!r}", flush=True)
++            else:
++                state["dl"]["wide"] = 0
++                print(f"{DL_TAG} wide P OFF: full self-check FAILED with it on: {len(problems_w)} problems", flush=True)
++                for message in problems_w[:12]:
++                    print(f"{DL_TAG}   {message}", flush=True)
++        print(f"{DL_TAG} PATH CHOSEN for P: T<=8 master P, T=9..16 "
++              f"{'WIDE' if state['dl']['wide'] & 2 else 'master P'}, T=17..32 "
++              f"{'WIDE' if state['dl']['wide'] & 4 else 'master P'}", flush=True)
+         state["dl"]["cnt_p"].zero_()
+         state["dl"]["cnt_r"].zero_()
+         print(f"{DL_TAG} ON pdl={pdl} compile {_DL_COMPILE_S:.1f}s max errs {summary}: "
