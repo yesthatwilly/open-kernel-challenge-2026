@@ -54,7 +54,7 @@ review_companions: null
 stage: harvested
 claimed_at: 2026-10-25T014056Z
 base_sha: f291b49c49670595d0615e749294f69bc15de1a4
-base_blob: 695c97d2e9fef8f806ec02d2fe14a02668989e3f
+base_blob: c6854f093588da524e63657576b27ed720756e32
 branch: hyp/muse_attention_decode/full-decode1-streamk-s3-two-level-ticket
 worktree: .worktrees/muse_attention_decode/full-decode1-streamk-s3-two-level-ticket
 mode: check
@@ -76,7 +76,9 @@ speedup: 1.4321773019894537
 speedup_ci: [1.4106946424596118, 1.4554282820505813]
 harvested_at: 2026-10-25T034127Z
 best_at_harvest: 1.3948738389144513
-promotion: null
+promotion: merged
+hand_landed: true
+promotion_commit: c3c1b01b18837f889ac11a15d8f0daf06d356d98
 ---
 
 # full-decode1-streamk-s3-two-level-ticket
