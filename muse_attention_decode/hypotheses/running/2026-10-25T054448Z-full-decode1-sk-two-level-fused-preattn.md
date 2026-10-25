@@ -52,9 +52,18 @@ controls_for: null
 rewrite_stage: 4
 replaces: "full decode batch 1: _pre_attention_kernel launch + master splitkv_attn_sk_kernel<4, two-level ticket>"
 review: proceed
-status: queued
+status: running
 review_at: 2026-10-25T054716Z
 review_companions: null
+stage: claimed
+claimed_at: 2026-10-25T054717Z
+base_sha: dbb845684aa94ad1867281815e42f53464870f19
+base_blob: 50274a3d8678d5656197b8e401ca411d4f08a6e2
+branch: hyp/muse_attention_decode/full-decode1-sk-two-level-fused-preattn
+worktree: .worktrees/muse_attention_decode/full-decode1-sk-two-level-fused-preattn
+mode: null
+restack_of: null
+stale_base: true
 ---
 
 # full-decode1-sk-two-level-fused-preattn
