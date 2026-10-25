@@ -258,3 +258,4 @@ overrides of a reviewer) with the reason, newest last. Written by `churn.py note
 - 2026-10-25T204433Z `muse_bf16_proj` **diagnosis**: LESSONS: merged three bf16 m<=32 stream lines into one (3.4-3.95 TB/s cap, knobs settled, headroom at m=128/256)
 - 2026-10-25T204434Z `muse_decode_layer` **diagnosis**: LESSONS: use_atomic_add knobs line corrected (pays on w2 at M~1, flat at T>=8; w13 routing-dependent); also covers moe and prefill's same correction
 - 2026-10-25T204434Z `muse_decode_layer` **diagnosis**: LESSONS: fusion line extended (pays on T<=32 when fusion removes nodes into a PDL chain)
+- 2026-10-25T204434Z `muse_moe_w4a16` **diagnosis**: LESSONS: added rega-tiny-m-bucket16 never-live line next to 202
