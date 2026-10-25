@@ -57,7 +57,7 @@ review: proceed
 status: running
 review_at: 2026-10-25T042453Z
 review_companions: null
-stage: implemented
+stage: dispatched
 claimed_at: 2026-10-25T042453Z
 base_sha: 1cd12f4d3d46062939ca75935ef0fcad232f2ffc
 base_blob: c9067b8201f2480c64910c4a71098df7ce616f73
@@ -74,6 +74,8 @@ submission_blob: e7b58542dc954a2a306648904dbd486bda0c417b
 lint_warnings: 35
 attempt_file: 2026-10-25T043714Z-check-sliding-cluster-c4-decode32-port.md
 prepared_at: 2026-10-25T043714Z
+job: 0fb2c9451c5d4283
+dispatched_at: 2026-10-25T043721Z
 ---
 
 # sliding-cluster-c4-decode32-port
