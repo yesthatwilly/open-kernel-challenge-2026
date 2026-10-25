@@ -5,6 +5,7 @@ items here and in each tick's summary. Resolved items move to the log at the bot
 
 ## Open
 
+- 2026-10-25 11:08Z decode: **dense-chain-s3-t1-q-sk2-o-route-unpool** checked 1.3017 [1.282,1.321] (job 34a9be06918d448b), CI fully above the decode board 1.2726; filed neutral ("unproven-vs-best"). Planned: `churn.py land muse_decode_layer dense-chain-s3-t1-q-sk2-o-route-unpool --reason ...`, then promote's `okc submit muse_decode_layer /home/user/git/musespark/muse_decode_layer/submission.py --no-wait --json`. Default: not landed.
 - 2026-10-24 rules heads-up (not blocking): bf16 **bf16-cublaslt-algo-pick-in-prepare-m128-m256** times cuBLASLt algorithm candidates on synthetic data inside the untimed prepare() and replays the winner in kernel_fn (no timing or autotune in kernel_fn). The Opus reviewer read the rules as allowing it, and decode's pooler-gemm-splitk-autotune used the same pattern. It runs on tomorrow's quota unless you say to hold it.
 
 ## Standing answers
