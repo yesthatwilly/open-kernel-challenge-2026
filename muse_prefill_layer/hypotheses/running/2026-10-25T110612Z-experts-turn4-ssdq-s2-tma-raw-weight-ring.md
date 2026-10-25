@@ -78,7 +78,7 @@ base_sha: b427e7bfe8620ee6bea6bcd1c992aa9f6eef1acb
 base_blob: f2d91dd181aeb44de20d2eed62ab7e564f2b181f
 branch: hyp/muse_prefill_layer/experts-turn4-ssdq-s2-tma-raw-weight-ring
 worktree: .worktrees/muse_prefill_layer/experts-turn4-ssdq-s2-tma-raw-weight-ring
-mode: null
+mode: check
 restack_of: null
 stale_base: null
 implemented_at: 2026-10-25T112047Z
@@ -87,6 +87,8 @@ submission_sha256: c6b135e1dd972b70ab5ab7ff1afffd70ff9df1af168e317b235a794825248
 norm_sha256: 25ac7b55c95fbb20c8296da8d34b6b0511ec1f1eaef18044ed02f96ca0e960be
 submission_blob: ab3dc5a011bcff33c3c1503e782b46f03335e239
 lint_warnings: 44
+attempt_file: 2026-10-25T112047Z-check-experts-turn4-ssdq-s2-tma-raw-weight-ring.md
+prepared_at: 2026-10-25T112047Z
 ---
 
 # experts-turn4-ssdq-s2-tma-raw-weight-ring
