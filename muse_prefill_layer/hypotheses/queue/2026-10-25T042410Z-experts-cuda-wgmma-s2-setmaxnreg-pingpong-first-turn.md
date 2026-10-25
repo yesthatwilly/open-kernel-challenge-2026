@@ -57,8 +57,10 @@ kind: rewrite
 controls_for: null
 rewrite_stage: 2
 replaces: _moe_nvfp4_gemm_kernel x2 (Triton w13, w2) at T > 4096 (first_turn)
-review: required
+review: proceed
 status: queued
+review_at: 2026-10-25T043311Z
+review_companions: null
 ---
 
 # experts-cuda-wgmma-s2-setmaxnreg-pingpong-first-turn
@@ -85,3 +87,27 @@ shape (profile top_kernels) against the incumbent and the speed-of-light floor, 
 2. at or below the incumbent kernels' time on the target shapes;
 3. within ~1.5x of the floor on the target shapes, and the headline CI clears 1.0 (promotable).
 The next stage is minted with `--kind rewrite --depends-on <this slug> --stage N+1`.
+
+## Adversarial review
+
+Reviewed 2026-10-25T043311Z by an adversarial subagent (model opus).
+
+**Verdict: proceed.** Right next stage for the first_turn CUDA engine (the Triton line is exhausted at ~5x floor), but two premises are wrong as written: setmaxnreg 232 will not lift ptxas's 168-register compile cap, and the described dequant ordering (write A-buffer j+1 before wait_group 1) is a register-A WAR hazard. Sequence after moe s3 (3bdec0e58d684c17), which tests exactly that hazard.
+
+### Justification
+Target is physically reachable: Triton _moe_nvfp4_gemm_kernel is 8.08-9.17 ms vs a 1670 us floor (~5x), and REWRITE_READ shows the binding cost is Triton's synchronous wgmma after full in-register dequant (packed-asm dequant moved nothing; persistent grid lost 3-5%). Stage 1b ran at 14.7-16.2 ms with regs=168, local_bytes=680, 288 threads, 1 CTA/SM. Weakest link: the plan's 0 B local relies on consumers getting 232 registers. Per the moe s3 finding, __launch_bounds__(384,1) makes ptxas compile the whole function for 168 regs (65536/384) and setmaxnreg.inc 232 does not change that; an m64n256 consumer already holds 128 fp32 accumulators plus 2x4 double-buffered A regs, addresses and scales, i.e. ~150-175 of 168 -> spill or C7510 'wgmma serialized'. So M0 (0 B local) is likely to fail as designed. Second weak link: item (2) says dequant step j+1 is issued 'after commit_group of step j and before wait_group 1'. With 2 A buffers, buffer (j+1)%2 is the one wgmma j-1 reads; until wait_group<1> retires j-1, overwriting it is undefined for RS wgmma. CUTLASS's mixed-input RS mainloop issues wgmma j, then warpgroup_wait<1>, THEN transforms the next fragment into the freed buffer (with wgmma.fence before the next issue). The 2x speedup needed for M2 (15 ms -> <=7.5 ms) is large but within reach if the spill and the serialized dequant both go.
+
+### Confounders on the current kernel
+- stack-tonight-five-prefill: first_turn now aligns over 32 local experts and runs with zero_nonlocal_w2 OFF; stage 1b already follows both (its e2e was built on a81d19c). The gate compares against master's Triton call with the same align, so no confound.
+- experts-triton-w4a16-first-turn-blockt256 / hybrid: define the Triton incumbent (BLOCK_T 256, GROUP_SIZE_T 4) the gate measures against; unchanged by this run.
+- In flight, not landed: experts-triton-first-turn-unmasked-loads-l2-hints (aeda8b5a523642b1) changes the incumbent's K-loop. If it lands before this is built, the gate's incumbent moves; build from whatever master is at claim time and print which Triton variant the A/B timed.
+
+### Interference and A/B needs
+No companion: rewrite stage gated per GEMM with printed A/B; a gated-off run is master. The next stage is the follow-up. Readability depends on the log lines (regs/local_bytes per kernel, PATH CHOSEN T=16384 per GEMM), which the hypothesis already requires.
+
+### Open questions
+- Does moe s3 confirm the A-fragment WAR hazard and which variant (wait<0> vs double-buffered a[]) is correct and faster? Adopt it here.
+- Why did stage 1b compile at 168 regs with only 288 threads (cap would be 224)? Check whether a launch_bounds/maxrregcount from the 384-thread design leaked in.
+- Is 0 B local reachable at m64n256 per consumer under 168 regs? If not, m64n128 per consumer (64 accumulators) with BLOCK_T 256 split as 2 x 128-token halves per warpgroup, or BLOCK_W 64 per consumer with 4 consumer tiles, is the fallback.
+- Stage 1b's e2e w13/w2 vs Triton rel L2 was exactly 0.000 - confirm the comparison really read the CUDA output (it should differ by MMA order unless k-order and dequant are identical).
+
