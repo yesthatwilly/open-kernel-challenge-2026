@@ -1,17 +1,17 @@
 {
  "problem": "muse_decode_layer",
- "job": "3fd3fa1f96d045dd",
- "check_job": "7a9f5de5aecc4aba",
- "mode": "submit",
- "speedup": 1.2725637226942819,
+ "job": "34a9be06918d448b",
+ "check_job": "34a9be06918d448b",
+ "mode": "check",
+ "speedup": 1.3017519911209459,
  "ci": [
-  1.2534752668538676,
-  1.291652178534696
+  1.2822257112541318,
+  1.32127827098776
  ],
- "score_us": 17775.37705703894,
- "commit": "00e36e3a74224d6c0cc4f10708dfd9e759d8ee84",
- "submission_blob": "62c5a9413ba5710defea2ca3de14c1a1dc3b5a6d",
- "slug": "w2-marlin-atomic-add-t1-port",
- "result": "muse_decode_layer/hypotheses/done/neutral/w2-marlin-atomic-add-t1-port.result.json",
- "updated_at": "2026-10-25T053807Z"
+ "score_us": 17376.81229165744,
+ "commit": "d5595769062af2701dafcd15e4a410b3684e1760",
+ "submission_blob": "07cda658e21f2eb25a9dd1f50ac5202ad5985831",
+ "slug": "dense-chain-s3-t1-q-sk2-o-route-unpool",
+ "result": "muse_decode_layer/hypotheses/done/neutral/dense-chain-s3-t1-q-sk2-o-route-unpool.result.json",
+ "updated_at": "2026-10-25T145718Z"
 }
