@@ -60,9 +60,18 @@ priority: 1
 kind: primary
 controls_for: null
 review: proceed
-status: queued
+status: running
 review_at: 2026-10-25T054818Z
 review_companions: null
+stage: claimed
+claimed_at: 2026-10-25T054819Z
+base_sha: edf4bf29fe8d509a2574c0becee65138cb7705f2
+base_blob: d8769ef25caf845a0e207538ccc5c62394b6ee3b
+branch: hyp/muse_attention_decode/restack-sk-pseudo-b1-cluster-c16-c4
+worktree: .worktrees/muse_attention_decode/restack-sk-pseudo-b1-cluster-c16-c4
+mode: null
+restack_of: null
+stale_base: null
 ---
 
 # restack-sk-pseudo-b1-cluster-c16-c4
