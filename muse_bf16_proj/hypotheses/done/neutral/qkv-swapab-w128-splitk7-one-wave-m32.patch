@@ -1,0 +1,571 @@
+diff --git a/muse_bf16_proj/submission.py b/muse_bf16_proj/submission.py
+index 353e3b19..b3a2f3b5 100644
+--- a/muse_bf16_proj/submission.py
++++ b/muse_bf16_proj/submission.py
+@@ -51,6 +51,11 @@ unpooler's n == 1024 slice run the same _bf16_swapab_kernel with BLOCK_T = WS_M
+ m64n16k16) and their own 16-row workspaces / tickets, routed BEFORE the m <= 16 kernels above
+ (which stay in the file, no longer routed for these shapes). The unpooler full width at m = 16
+ keeps cuBLAS; every m >= 17 shape keeps its path.
++
++qkv_gate swap-AB retune (hypothesis qkv-swapab-w128-splitk7-one-wave-m32), both the m <= 16 and
++17..32 routes: BLOCK_W 128, SPLIT_K 7 with an uneven static K split (kb_lo = pid_k * 64 // 7),
++grid (18, 7) = 126 CTAs, 18 tickets. prepare() self-checks it (relative L2) and falls back to
++the old (36, 4) config on any miss; a print-only cold-L2 A/B never routes.
+ """
+ 
+ import os
+@@ -656,11 +661,39 @@ SWAPAB_NUM_WARPS = 4  # one warpgroup
+ # layer -> (N, K, SPLIT_K, BLOCK_K, num_stages); static, from cfg layer only.
+ SWAPAB_CFG = {
+     "pooler":   (4096, 8192, 2, 256, 4),  # grid (64, 2) = 128 CTAs, 48 KB/stage
+-    "qkv_gate": (2304, 8192, 4, 128, 4),  # grid (36, 4) = 144 CTAs, 24 KB/stage
++    # qkv_gate (hypothesis qkv-swapab-w128-splitk7-one-wave-m32): BLOCK_W 128, SPLIT_K 7 with an
++    # uneven static K split (64 K-blocks -> 9/9/9/9/9/9/10), grid (18, 7) = 126 CTAs, one wave.
++    "qkv_gate": (2304, 8192, 7, 128, 4),
++    # master's qkv config (BLOCK_W 64, SPLIT_K 4, grid (36, 4)): the fallback if the new one
++    # fails to compile or its self-check, and the "old" arm of the print-only A/B.
++    "qkv_gate_old": (2304, 8192, 4, 128, 4),
+     "unpooler": (8192, 4096, 1, 256, 4),  # grid (128, 1), full width (m > 8)
+     "o":        (8192, 1024, 1, 256, 4),  # grid (128, 1), 4 K-steps, all in flight
+ }
+ SWAPAB_FALLBACK_STAGES = 3  # used for a layer whose 4-stage compile is OutOfResources
++# Per-config weight rows per program (wgmma M tiles per warpgroup); default SWAPAB_BLOCK_W.
++SWAPAB_BLOCK_W_BY_KEY = {"qkv_gate": 128}
++QKV_SELFCHECK_REL_L2 = 1e-2   # relative-L2 bound of the bf16 output vs x.float() @ W.float().T
++
++
++def _swapab_block_w(key: str) -> int:
++    return SWAPAB_BLOCK_W_BY_KEY.get(key, SWAPAB_BLOCK_W)
++
++
++def _swapab_weight_name(key: str) -> str:
++    """State key of the weight a config key runs on."""
++    if key == "unpooler_slice":
++        return "unpooler"
++    return "qkv_gate" if key == "qkv_gate_old" else key
++
++
++def _swapab_k_split(k: int, split_k: int, block_k: int):
++    """(K_SLICE, NUM_KB) constexprs. Even split: (k // split_k, 0), the original kernel code.
++    Uneven (k // block_k K-blocks not divisible by split_k): (0, NUM_KB), kb_lo = pid_k *
++    NUM_KB // SPLIT_K, kb_hi = (pid_k + 1) * NUM_KB // SPLIT_K."""
++    if k % (split_k * block_k) == 0:
++        return k // split_k, 0
++    return 0, k // block_k
+ 
+ try:
+     from triton.runtime.errors import OutOfResources as _OutOfResources
+@@ -673,11 +706,17 @@ def _bf16_swapab_kernel(
+     x_ptr, w_ptr, out_ptr, ws_ptr, cnt_ptr,
+     M,
+     stride_xm, stride_wn, stride_om,
+-    N: tl.constexpr, WS_M: tl.constexpr, K_SLICE: tl.constexpr, SPLIT_K: tl.constexpr,
+-    BLOCK_W: tl.constexpr, BLOCK_T: tl.constexpr, BLOCK_K: tl.constexpr,
++    N: tl.constexpr, WS_M: tl.constexpr, K_SLICE: tl.constexpr, NUM_KB: tl.constexpr,
++    SPLIT_K: tl.constexpr, BLOCK_W: tl.constexpr, BLOCK_T: tl.constexpr, BLOCK_K: tl.constexpr,
++    MAINLOOP_ONLY: tl.constexpr,
+ ):
+     """out[M, N] bf16 = x[M, K] @ w[N, K]^T computed as (w @ x^T)^T, swap-AB.
+ 
++    NUM_KB == 0: even split, K [pid_k*K_SLICE, +K_SLICE) (the original code, unchanged).
++    NUM_KB > 0: uneven static split of NUM_KB K-blocks, K-blocks [pid_k*NUM_KB//SPLIT_K,
++    (pid_k+1)*NUM_KB//SPLIT_K). MAINLOOP_ONLY (print-only A/B control): partial store only, no
++    ticket / reduce, out never written.
++
+     Program (pid_w, pid_k) owns weight rows [pid_w*BLOCK_W, +BLOCK_W) and K [pid_k*K_SLICE,
+     +K_SLICE) for all M <= BLOCK_T tokens (token columns >= M load as zero and are never stored).
+     acc[BLOCK_W, BLOCK_T] fp32 = w_tile[BLOCK_W, BLOCK_K] @ xt_tile[BLOCK_K, BLOCK_T]; both
+@@ -689,7 +728,14 @@ def _bf16_swapab_kernel(
+     """
+     pid_w = tl.program_id(0)
+     pid_k = tl.program_id(1)
+-    k_start = pid_k * K_SLICE
++    if NUM_KB == 0:
++        k_start = pid_k * K_SLICE
++        n_iter = K_SLICE // BLOCK_K
++    else:
++        kb_lo = pid_k * NUM_KB // SPLIT_K
++        kb_hi = (pid_k + 1) * NUM_KB // SPLIT_K
++        k_start = kb_lo * BLOCK_K
++        n_iter = kb_hi - kb_lo
+ 
+     offs_w = pid_w * BLOCK_W + tl.arange(0, BLOCK_W)
+     offs_k = k_start + tl.arange(0, BLOCK_K)
+@@ -698,7 +744,7 @@ def _bf16_swapab_kernel(
+     w_ptrs = w_ptr + offs_w[:, None] * stride_wn + offs_k[None, :]    # [BLOCK_W, BLOCK_K], as stored
+     xt_ptrs = x_ptr + offs_t[None, :] * stride_xm + offs_k[:, None]   # [BLOCK_K, BLOCK_T] = x^T tile
+     acc = tl.zeros((BLOCK_W, BLOCK_T), dtype=tl.float32)
+-    for kk in range(0, K_SLICE // BLOCK_K):
++    for kk in range(0, n_iter):
+         w_tile = tl.load(w_ptrs)
+         xt_tile = tl.load(xt_ptrs, mask=t_mask[None, :], other=0.0)
+         acc = tl.dot(w_tile, xt_tile, acc)
+@@ -712,20 +758,36 @@ def _bf16_swapab_kernel(
+         # fp32 partial -> workspace slice pid_k, token rows < M only (the reducer reads the same mask).
+         ws_tile = offs_t[None, :] * N + offs_w[:, None]
+         tl.store(ws_ptr + pid_k * (WS_M * N) + ws_tile, acc, mask=t_mask[None, :])
+-        # All threads' partial stores precede the (single, scalar) gpu-scope acq_rel ticket.
+-        tl.debug_barrier()
+-        ticket = tl.atomic_add(cnt_ptr + pid_w, 1, sem="acq_rel", scope="gpu")
+-        # Order the other threads' reloads after the ticket's acquire.
+-        tl.debug_barrier()
+-        if ticket == SPLIT_K - 1:
+-            total = tl.load(ws_ptr + ws_tile, mask=t_mask[None, :], other=0.0, cache_modifier=".cg")
+-            for s in tl.static_range(1, SPLIT_K):
+-                total += tl.load(ws_ptr + s * (WS_M * N) + ws_tile, mask=t_mask[None, :], other=0.0,
+-                                 cache_modifier=".cg")
+-            out_ptrs = out_ptr + offs_t[None, :] * stride_om + offs_w[:, None]
+-            tl.store(out_ptrs, total.to(tl.bfloat16), mask=t_mask[None, :])
+-            # Self-reset so the next launch / graph replay starts from 0.
+-            tl.atomic_xchg(cnt_ptr + pid_w, 0, sem="relaxed", scope="gpu")
++        if not MAINLOOP_ONLY:
++            # All threads' partial stores precede the (single, scalar) gpu-scope acq_rel ticket.
++            tl.debug_barrier()
++            ticket = tl.atomic_add(cnt_ptr + pid_w, 1, sem="acq_rel", scope="gpu")
++            # Order the other threads' reloads after the ticket's acquire.
++            tl.debug_barrier()
++            if ticket == SPLIT_K - 1:
++                total = tl.load(ws_ptr + ws_tile, mask=t_mask[None, :], other=0.0, cache_modifier=".cg")
++                for s in tl.static_range(1, SPLIT_K):
++                    total += tl.load(ws_ptr + s * (WS_M * N) + ws_tile, mask=t_mask[None, :], other=0.0,
++                                     cache_modifier=".cg")
++                out_ptrs = out_ptr + offs_t[None, :] * stride_om + offs_w[:, None]
++                tl.store(out_ptrs, total.to(tl.bfloat16), mask=t_mask[None, :])
++                # Self-reset so the next launch / graph replay starts from 0.
++                tl.atomic_xchg(cnt_ptr + pid_w, 0, sem="relaxed", scope="gpu")
++
++
++def _swapab_launch(x, w, out, ws, cnt, n, k, split_k, block_k, block_w, block_t, ws_m,
++                   num_stages, mainloop_only: bool = False):
++    """The one launch of _bf16_swapab_kernel (every route and the print-only A/B): grid
++    (n // block_w, split_k); even or uneven K split from (k, split_k, block_k) only."""
++    k_slice, num_kb = _swapab_k_split(k, split_k, block_k)
++    return _bf16_swapab_kernel[(n // block_w, split_k)](
++        x, w, out, ws, cnt,
++        x.shape[0],
++        x.stride(0), w.stride(0), out.stride(0),
++        N=n, WS_M=ws_m, K_SLICE=k_slice, NUM_KB=num_kb, SPLIT_K=split_k,
++        BLOCK_W=block_w, BLOCK_T=block_t, BLOCK_K=block_k, MAINLOOP_ONLY=mainloop_only,
++        num_warps=SWAPAB_NUM_WARPS, num_stages=num_stages,
++    )
+ 
+ 
+ def _swapab_route_ok(layer: str, x: torch.Tensor, w: torch.Tensor, cfg) -> bool:
+@@ -750,29 +812,17 @@ def _swapab_forward(layer: str, x: torch.Tensor, w: torch.Tensor, ws, cnt, num_s
+     never touches them). report=True (prepare() only) prints the compiled variant's registers,
+     spills and PTX MMA counts."""
+     n, k, split_k, block_k, _ = SWAPAB_CFG[layer]
++    block_w = _swapab_block_w(layer)
+     m = x.shape[0]
+     out = torch.empty((m, n), dtype=torch.bfloat16, device=x.device)
+     if ws is None:  # SPLIT_K == 1: the pointers are unused by the compiled kernel
+         ws, cnt = out, out
+-    grid = (n // SWAPAB_BLOCK_W, split_k)
+-    compiled = _bf16_swapab_kernel[grid](
+-        x, w, out, ws, cnt,
+-        m,
+-        x.stride(0), w.stride(0), out.stride(0),
+-        N=n, WS_M=SWAPAB_MAX_M, K_SLICE=k // split_k, SPLIT_K=split_k,
+-        BLOCK_W=SWAPAB_BLOCK_W, BLOCK_T=SWAPAB_BLOCK_T, BLOCK_K=block_k,
+-        num_warps=SWAPAB_NUM_WARPS, num_stages=num_stages,
+-    )
++    compiled = _swapab_launch(x, w, out, ws, cnt, n, k, split_k, block_k, block_w,
++                              SWAPAB_BLOCK_T, SWAPAB_MAX_M, num_stages)
+     if report:
+-        try:
+-            ptx = compiled.asm["ptx"]
+-            print(f"[swapab] layer={layer} m={m} N={n} K={k} SPLIT_K={split_k} BLOCK_K={block_k} "
+-                  f"stages={num_stages}: n_regs={getattr(compiled, 'n_regs', '?')} "
+-                  f"n_spills={getattr(compiled, 'n_spills', '?')} "
+-                  f"wgmma={ptx.count('wgmma.mma_async')} mma.sync={ptx.count('mma.sync')} "
+-                  f"cp.async={ptx.count('cp.async')}", flush=True)
+-        except Exception as e:  # diagnostic only
+-            print(f"[swapab] layer={layer}: diagnostics unavailable ({type(e).__name__}: {e})", flush=True)
++        _print_ptx_counts(f"[swapab] layer={layer} m={m} N={n} K={k} SPLIT_K={split_k} "
++                          f"BLOCK_W={block_w} BLOCK_K={block_k} BLOCK_T={SWAPAB_BLOCK_T} "
++                          f"stages={num_stages}", compiled, check_wgmma=True)
+     return out
+ 
+ 
+@@ -781,6 +831,8 @@ def _swapab_buffers(state: dict, layer: str):
+         return state["swapab_ws_pooler"], state["swapab_cnt_pooler"]
+     if layer == "qkv_gate":
+         return state["swapab_ws_qkv"], state["swapab_cnt_qkv"]
++    if layer == "qkv_gate_old":
++        return state["swapab_ws_qkv_old"], state["swapab_cnt_qkv_old"]
+     return None, None
+ 
+ 
+@@ -791,31 +843,53 @@ def _swapab_prepare(state: dict) -> None:
+     dev = state["pooler"].device
+     state["swapab_ws_pooler"] = torch.empty((2, SWAPAB_MAX_M, 4096), dtype=torch.float32, device=dev)
+     state["swapab_cnt_pooler"] = torch.zeros(4096 // SWAPAB_BLOCK_W, dtype=torch.int32, device=dev)
+-    state["swapab_ws_qkv"] = torch.empty((4, SWAPAB_MAX_M, 2304), dtype=torch.float32, device=dev)
+-    state["swapab_cnt_qkv"] = torch.zeros(2304 // SWAPAB_BLOCK_W, dtype=torch.int32, device=dev)
++    qk = SWAPAB_CFG["qkv_gate"]
++    qo = SWAPAB_CFG["qkv_gate_old"]
++    state["swapab_ws_qkv"] = torch.empty((qk[2], SWAPAB_MAX_M, qk[0]), dtype=torch.float32, device=dev)
++    state["swapab_cnt_qkv"] = torch.zeros(qk[0] // _swapab_block_w("qkv_gate"), dtype=torch.int32, device=dev)
++    state["swapab_ws_qkv_old"] = torch.empty((qo[2], SWAPAB_MAX_M, qo[0]), dtype=torch.float32, device=dev)
++    state["swapab_cnt_qkv_old"] = torch.zeros(qo[0] // _swapab_block_w("qkv_gate_old"),
++                                              dtype=torch.int32, device=dev)
+     stages = {}
+     for layer, (n, k, _split, _bk, num_stages) in SWAPAB_CFG.items():
+-        w = state[layer]
++        w = state[_swapab_weight_name(layer)]
+         if not (w.dim() == 2 and tuple(w.shape) == (n, k) and w.dtype == torch.bfloat16
+                 and w.stride(1) == 1):
+             continue
+         ws, cnt = _swapab_buffers(state, layer)
+         x = torch.randn((SWAPAB_MAX_M, k), device=dev, dtype=torch.float32).to(torch.bfloat16)
+         try:
+-            _swapab_forward(layer, x, w, ws, cnt, num_stages, report=True)
+-        except _OutOfResources as e:
+-            print(f"[swapab] layer={layer}: {num_stages} stages OutOfResources ({e}); "
+-                  f"retrying at {SWAPAB_FALLBACK_STAGES}", flush=True)
+-            num_stages = SWAPAB_FALLBACK_STAGES
+-            _swapab_forward(layer, x, w, ws, cnt, num_stages, report=True)
++            try:
++                _swapab_forward(layer, x, w, ws, cnt, num_stages, report=True)
++            except _OutOfResources as e:
++                print(f"[swapab] layer={layer}: {num_stages} stages OutOfResources ({e}); "
++                      f"retrying at {SWAPAB_FALLBACK_STAGES}", flush=True)
++                num_stages = SWAPAB_FALLBACK_STAGES
++                _swapab_forward(layer, x, w, ws, cnt, num_stages, report=True)
++            for m in range(SWAPAB_MIN_M, SWAPAB_MAX_M):
++                xm = torch.randn((m, k), device=dev, dtype=torch.float32).to(torch.bfloat16)
++                _swapab_forward(layer, xm, w, ws, cnt, num_stages)
++        except Exception as e:
++            if layer != "qkv_gate":   # only the new qkv config may fail soft (-> the old config)
++                raise
++            print(f"[swapab] layer=qkv_gate NEW config build failed ({type(e).__name__}: {e}); "
++                  f"falling back to qkv_gate_old", flush=True)
++            continue
+         stages[layer] = num_stages
+-        for m in range(SWAPAB_MIN_M, SWAPAB_MAX_M):
+-            xm = torch.randn((m, k), device=dev, dtype=torch.float32).to(torch.bfloat16)
+-            _swapab_forward(layer, xm, w, ws, cnt, num_stages)
+     state["swapab_stages"] = stages
+     # The split-K variants self-reset, but re-zero the counters after the warm-ups regardless.
+     state["swapab_cnt_pooler"].zero_()
+     state["swapab_cnt_qkv"].zero_()
++    state["swapab_cnt_qkv_old"].zero_()
++    # qkv self-check of the new config (rel-L2 vs fp32); a miss or error -> the old config.
++    if "qkv_gate" in stages and not _qkv_selfcheck(state, "swapab", stages["qkv_gate"], (17, 24, 32)):
++        del stages["qkv_gate"]
++    state["swapab_qkv_key"] = "qkv_gate" if "qkv_gate" in stages else "qkv_gate_old"
++    print(f"[swapab] PATH CHOSEN: qkv_gate m=17..32 -> config {state['swapab_qkv_key']} "
++          f"(stages={stages.get(state['swapab_qkv_key'])}, BLOCK_W={_swapab_block_w(state['swapab_qkv_key'])}, "
++          f"SPLIT_K={SWAPAB_CFG[state['swapab_qkv_key']][2]})", flush=True)
++    state["swapab_cnt_qkv"].zero_()
++    state["swapab_cnt_qkv_old"].zero_()
+ 
+ 
+ # --- (6) pooler / qkv_gate / o at 1 <= m <= 16 and the unpooler slice: swap-AB, BLOCK_T 16 ------
+@@ -830,7 +904,9 @@ SWAPAB16_WS_M = 16      # workspace rows (== BLOCK_T)
+ # key -> (N, K, SPLIT_K, BLOCK_K, num_stages); static, from cfg layer (and n for the slice).
+ SWAPAB16_CFG = {
+     "pooler":         (4096, 8192, 2, 256, 4),  # grid (64, 2)
+-    "qkv_gate":       (2304, 8192, 4, 128, 4),  # grid (36, 4)
++    # qkv_gate: BLOCK_W 128 (SWAPAB_BLOCK_W_BY_KEY), SPLIT_K 7 uneven, grid (18, 7) = 126 CTAs
++    "qkv_gate":       (2304, 8192, 7, 128, 4),
++    "qkv_gate_old":   (2304, 8192, 4, 128, 4),  # master's grid (36, 4): fallback / A/B arm
+     "o":              (8192, 1024, 1, 256, 4),  # grid (128, 1), full K
+     # first 1024 rows of the full [8192, 4096] unpooler weight read in place (stride_wn 4096)
+     "unpooler_slice": (1024, 4096, 8, 128, 3),  # grid (16, 8)
+@@ -864,14 +940,20 @@ def _swapab16_route_ok(key: str, x: torch.Tensor, w: torch.Tensor, cfg) -> bool:
+     return tuple(w.shape) == (n, k)
+ 
+ 
+-def _print_ptx_counts(tag: str, compiled) -> None:
+-    """prepare()-only diagnostic: registers, spills and PTX MMA / cp.async counts."""
++def _print_ptx_counts(tag: str, compiled, check_wgmma: bool = False) -> None:
++    """prepare()-only diagnostic: registers, spills, shared bytes and PTX MMA / cp.async counts.
++    check_wgmma adds wgmma_ok = (wgmma > 0 and mma.sync == 0) for the swap-AB kernels."""
+     try:
+         ptx = compiled.asm["ptx"]
++        shared = getattr(compiled, "shared", None)
++        if shared is None:
++            shared = getattr(getattr(compiled, "metadata", None), "shared", "?")
++        n_wg, n_ms = ptx.count('wgmma.mma_async'), ptx.count('mma.sync')
++        extra = f" wgmma_ok={n_wg > 0 and n_ms == 0}" if check_wgmma else ""
+         print(f"{tag}: n_regs={getattr(compiled, 'n_regs', '?')} "
+-              f"n_spills={getattr(compiled, 'n_spills', '?')} "
+-              f"wgmma={ptx.count('wgmma.mma_async')} mma.sync={ptx.count('mma.sync')} "
+-              f"cp.async={ptx.count('cp.async')}", flush=True)
++              f"n_spills={getattr(compiled, 'n_spills', '?')} shared={shared} "
++              f"wgmma={n_wg} mma.sync={n_ms} "
++              f"cp.async={ptx.count('cp.async')}{extra}", flush=True)
+     except Exception as e:  # diagnostic only
+         print(f"{tag}: diagnostics unavailable ({type(e).__name__}: {e})", flush=True)
+ 
+@@ -883,27 +965,22 @@ def _swapab16_forward(key: str, x: torch.Tensor, w: torch.Tensor, ws, cnt, num_s
+     ws / cnt are the key's own prepare()-allocated 16-row workspace and tickets (None at
+     SPLIT_K == 1, where the kernel never touches them)."""
+     n, k, split_k, block_k, _ = SWAPAB16_CFG[key]
++    block_w = _swapab_block_w(key)
+     m = x.shape[0]
+     out = torch.empty((m, n), dtype=torch.bfloat16, device=x.device)
+     if ws is None:  # SPLIT_K == 1: the pointers are unused by the compiled kernel
+         ws, cnt = out, out
+-    grid = (n // SWAPAB_BLOCK_W, split_k)
+-    compiled = _bf16_swapab_kernel[grid](
+-        x, w, out, ws, cnt,
+-        m,
+-        x.stride(0), w.stride(0), out.stride(0),
+-        N=n, WS_M=SWAPAB16_WS_M, K_SLICE=k // split_k, SPLIT_K=split_k,
+-        BLOCK_W=SWAPAB_BLOCK_W, BLOCK_T=SWAPAB16_BLOCK_T, BLOCK_K=block_k,
+-        num_warps=SWAPAB_NUM_WARPS, num_stages=num_stages,
+-    )
++    compiled = _swapab_launch(x, w, out, ws, cnt, n, k, split_k, block_k, block_w,
++                              SWAPAB16_BLOCK_T, SWAPAB16_WS_M, num_stages)
+     if report:
+         _print_ptx_counts(f"[swapab16] {key} m={m} N={n} K={k} SPLIT_K={split_k} "
+-                          f"BLOCK_K={block_k} stages={num_stages}", compiled)
++                          f"BLOCK_W={block_w} BLOCK_K={block_k} BLOCK_T={SWAPAB16_BLOCK_T} "
++                          f"stages={num_stages}", compiled, check_wgmma=True)
+     return out
+ 
+ 
+ def _swapab16_buffers(state: dict, key: str):
+-    if key in ("pooler", "qkv_gate", "unpooler_slice"):
++    if key in ("pooler", "qkv_gate", "qkv_gate_old", "unpooler_slice"):
+         return state[f"swapab16_ws_{key}"], state[f"swapab16_cnt_{key}"]
+     return None, None
+ 
+@@ -965,6 +1042,137 @@ def _incumbent16_report(state: dict) -> None:
+     state["unpool_cnt"].zero_()
+ 
+ 
++def _qkv_selfcheck(state: dict, route: str, num_stages: int, ms) -> bool:
++    """prepare()-only, in-process self-check of the NEW qkv_gate swap-AB config on one route
++    ("swapab" = BLOCK_T 32, m 17..32; "swapab16" = BLOCK_T 16, m <= 16): for each m two launches
++    on different synthetic x, each compared against x.float() @ W.float().T by relative L2
++    (bound QKV_SELFCHECK_REL_L2; bf16 output rounding alone is ~3e-3), and the tickets must be
++    back at 0 after every launch. Announces each launch (flushed) before and after a sync so a
++    fault names its kernel. Never raises: False means 'use the old config'."""
++    w = state["qkv_gate"]
++    dev = w.device
++    try:
++        if route == "swapab":
++            fwd, (ws, cnt) = _swapab_forward, _swapab_buffers(state, "qkv_gate")
++        else:
++            fwd, (ws, cnt) = _swapab16_forward, _swapab16_buffers(state, "qkv_gate")
++        wf = w.float()
++        ok = True
++        for m in ms:
++            for rep_i in range(2):
++                x = torch.randn((m, w.shape[1]), device=dev, dtype=torch.float32).to(torch.bfloat16)
++                ref = x.float() @ wf.t()
++                print(f"[qkv-selfcheck] {route} m={m} rep={rep_i}: launching qkv_gate swap-AB "
++                      f"(stages={num_stages})", flush=True)
++                out = fwd("qkv_gate", x, w, ws, cnt, num_stages)
++                torch.cuda.synchronize()
++                print(f"[qkv-selfcheck] {route} m={m} rep={rep_i}: kernel done", flush=True)
++                rel = float(torch.linalg.vector_norm(out.float() - ref) / torch.linalg.vector_norm(ref))
++                tickets = int(cnt.abs().sum().item())
++                good = (rel == rel) and rel <= QKV_SELFCHECK_REL_L2 and tickets == 0
++                ok = ok and good
++                print(f"[qkv-selfcheck] {route} m={m} rep={rep_i}: rel_l2={rel:.3e} "
++                      f"(bound {QKV_SELFCHECK_REL_L2:.0e}) tickets_nonzero={tickets} -> "
++                      f"{'PASS' if good else 'FAIL'}", flush=True)
++        del wf
++        cnt.zero_()
++        return ok
++    except Exception as e:
++        print(f"[qkv-selfcheck] {route}: raised {type(e).__name__}: {e} -> FAIL", flush=True)
++        return False
++
++
++def _qkv_ab_report(state: dict) -> None:
++    """PRINT-ONLY cold-L2 A/B of the qkv_gate swap-AB config (never routes, never raises).
++    Per route and m, three variants on the same synthetic x, each with its OWN workspace and
++    ticket tensors, timed as CUDA-graph replays with a 256 MB flush written before each replay
++    (the 37.7 MB weight is cold in L2) and the tickets re-zeroed after every replay:
++      old  BLOCK_W 64,  SPLIT_K 4, BLOCK_K 128 (master's config)
++      new  BLOCK_W 128, SPLIT_K 7, BLOCK_K 128
++      ctl  the new grid, partial stores only, no ticket / reduce (prices the reduce tail)
++    Event timings undercount absolute time (~20-25%): read them as a ranking. Flush and A/B
++    buffers are freed before returning."""
++    w = state["qkv_gate"]
++    n, k = SWAPAB_CFG["qkv_gate"][0], SWAPAB_CFG["qkv_gate"][1]
++    if not (tuple(w.shape) == (n, k) and w.dtype == torch.bfloat16 and w.stride(1) == 1):
++        return
++    dev = w.device
++    flush = graph = None
++    try:
++        flush = torch.empty(256 * 1024 * 1024, dtype=torch.uint8, device=dev)
++        wf = w.float()
++        routes = (("swapab16", 16, 16, (1, 8, 16), state["swapab16_stages"], SWAPAB16_CFG),
++                  ("swapab", SWAPAB_BLOCK_T, SWAPAB_MAX_M, (1, 8, 16, 32), state["swapab_stages"], SWAPAB_CFG))
++        for route, block_t, ws_m, ms, stages, cfgs in routes:
++            variants = []
++            for name, key, mainloop_only in (("old", "qkv_gate_old", False), ("new", "qkv_gate", False),
++                                             ("ctl", "qkv_gate", True)):
++                st = stages.get(key, cfgs[key][4])
++                variants.append((name, key, mainloop_only, st))
++            for m in ms:
++                x = torch.randn((m, k), device=dev, dtype=torch.float32).to(torch.bfloat16)
++                ref = x.float() @ wf.t()
++                row = []
++                for name, key, mainloop_only, st in variants:
++                    _n, _k, split_k, block_k, _st = cfgs[key]
++                    block_w = _swapab_block_w(key)
++                    out = torch.zeros((m, n), dtype=torch.bfloat16, device=dev)
++                    ws = torch.empty((split_k, ws_m, n), dtype=torch.float32, device=dev)
++                    cnt = torch.zeros(n // block_w, dtype=torch.int32, device=dev)
++
++                    def launch(st=st):
++                        return _swapab_launch(x, w, out, ws, cnt, n, k, split_k, block_k, block_w,
++                                              block_t, ws_m, st, mainloop_only)
++                    try:
++                        launch()
++                    except _OutOfResources:
++                        st = SWAPAB_FALLBACK_STAGES
++                        launch(st)
++                    torch.cuda.synchronize()
++                    cnt.zero_()
++                    graph = torch.cuda.CUDAGraph()
++                    with torch.cuda.graph(graph):
++                        launch(st)
++                    ts = []
++                    for it in range(25):
++                        flush.zero_()
++                        e0 = torch.cuda.Event(enable_timing=True)
++                        e1 = torch.cuda.Event(enable_timing=True)
++                        e0.record()
++                        graph.replay()
++                        e1.record()
++                        e1.synchronize()
++                        cnt.zero_()   # tickets back to 0 after EVERY replay
++                        if it >= 5:
++                            ts.append(e0.elapsed_time(e1) * 1e3)
++                    torch.cuda.synchronize()
++                    ts.sort()
++                    med = ts[len(ts) // 2]
++                    rel = (float(torch.linalg.vector_norm(out.float() - ref) / torch.linalg.vector_norm(ref))
++                           if not mainloop_only else float("nan"))
++                    row.append(f"{name}={med:.2f}us(st{st},rel={rel:.1e})")
++                    graph = None
++                    del out, ws, cnt
++                print(f"[qkv-ab] route={route} m={m} BLOCK_T={block_t}: " + " ".join(row)
++                      + " [print-only: cold-L2 graph replay, event timing]", flush=True)
++        del wf
++    except Exception as e:   # diagnostic only: never routes, never raises
++        print(f"[qkv-ab] aborted ({type(e).__name__}: {e})", flush=True)
++    finally:
++        graph = None
++        flush = None
++        try:
++            torch.cuda.synchronize()
++        except Exception:
++            pass
++        torch.cuda.empty_cache()
++        for key in ("swapab_cnt_qkv", "swapab_cnt_qkv_old"):
++            state[key].zero_()
++        for key in ("qkv_gate", "qkv_gate_old"):
++            if f"swapab16_cnt_{key}" in state:
++                state[f"swapab16_cnt_{key}"].zero_()
++
++
+ def _swapab16_prepare(state: dict) -> None:
+     """Allocate the m <= 16 swap-AB workspaces (fp32 [SPLIT_K, 16, n]) / tickets (int32
+     [n // 64], zeroed) under their own keys, choose each key's stage count (its config, or 3 if
+@@ -976,11 +1184,11 @@ def _swapab16_prepare(state: dict) -> None:
+         if split_k > 1:
+             state[f"swapab16_ws_{key}"] = torch.empty((split_k, SWAPAB16_WS_M, n),
+                                                       dtype=torch.float32, device=dev)
+-            state[f"swapab16_cnt_{key}"] = torch.zeros(n // SWAPAB_BLOCK_W, dtype=torch.int32,
++            state[f"swapab16_cnt_{key}"] = torch.zeros(n // _swapab_block_w(key), dtype=torch.int32,
+                                                        device=dev)
+     stages = {}
+     for key, (n, k, _split, _bk, num_stages) in SWAPAB16_CFG.items():
+-        layer = "unpooler" if key == "unpooler_slice" else key
++        layer = _swapab_weight_name(key)
+         w = state[layer]
+         warm_ms = SWAPAB16_UNPOOL_WARM_MS if key == "unpooler_slice" else tuple(range(1, SWAPAB16_MAX_M + 1))
+         m_top = warm_ms[-1]
+@@ -990,22 +1198,39 @@ def _swapab16_prepare(state: dict) -> None:
+         ws, cnt = _swapab16_buffers(state, key)
+         x = torch.randn((m_top, k), device=dev, dtype=torch.float32).to(torch.bfloat16)
+         try:
+-            _swapab16_forward(key, x, w, ws, cnt, num_stages, report=True)
+-        except _OutOfResources as e:
+-            print(f"[swapab16] {key}: {num_stages} stages OutOfResources ({e}); "
+-                  f"retrying at {SWAPAB_FALLBACK_STAGES}", flush=True)
+-            num_stages = SWAPAB_FALLBACK_STAGES
+-            _swapab16_forward(key, x, w, ws, cnt, num_stages, report=True)
++            try:
++                _swapab16_forward(key, x, w, ws, cnt, num_stages, report=True)
++            except _OutOfResources as e:
++                print(f"[swapab16] {key}: {num_stages} stages OutOfResources ({e}); "
++                      f"retrying at {SWAPAB_FALLBACK_STAGES}", flush=True)
++                num_stages = SWAPAB_FALLBACK_STAGES
++                _swapab16_forward(key, x, w, ws, cnt, num_stages, report=True)
++            for m in warm_ms:
++                xm = torch.randn((m, k), device=dev, dtype=torch.float32).to(torch.bfloat16)
++                _swapab16_forward(key, xm, w, ws, cnt, num_stages)
++        except Exception as e:
++            if key != "qkv_gate":   # only the new qkv config may fail soft (-> the old config)
++                raise
++            print(f"[swapab16] qkv_gate NEW config build failed ({type(e).__name__}: {e}); "
++                  f"falling back to qkv_gate_old", flush=True)
++            continue
+         stages[key] = num_stages
+-        for m in warm_ms:
+-            xm = torch.randn((m, k), device=dev, dtype=torch.float32).to(torch.bfloat16)
+-            _swapab16_forward(key, xm, w, ws, cnt, num_stages)
+     state["swapab16_stages"] = stages
+     _incumbent16_report(state)
+     # The split-K variants self-reset, but re-zero the counters after the warm-ups regardless.
+     for key in SWAPAB16_CFG:
+         if f"swapab16_cnt_{key}" in state:
+             state[f"swapab16_cnt_{key}"].zero_()
++    # qkv self-check of the new config (rel-L2 vs fp32); a miss or error -> the old config.
++    if "qkv_gate" in stages and not _qkv_selfcheck(state, "swapab16", stages["qkv_gate"], (1, 8, 16)):
++        del stages["qkv_gate"]
++    state["swapab16_qkv_key"] = "qkv_gate" if "qkv_gate" in stages else "qkv_gate_old"
++    print(f"[swapab16] PATH CHOSEN: qkv_gate m=1..16 -> config {state['swapab16_qkv_key']} "
++          f"(stages={stages.get(state['swapab16_qkv_key'])}, BLOCK_W={_swapab_block_w(state['swapab16_qkv_key'])}, "
++          f"SPLIT_K={SWAPAB16_CFG[state['swapab16_qkv_key']][2]})", flush=True)
++    for key in ("qkv_gate", "qkv_gate_old"):
++        if f"swapab16_cnt_{key}" in state:
++            state[f"swapab16_cnt_{key}"].zero_()
+ 
+ 
+ # --- (7) unpooler n == 1024 slice, m <= 8: CUDA cluster / DSMEM split-K, gated at prepare -------
+@@ -2113,6 +2338,9 @@ def _prepare_state(weights: Weights, flags=None) -> dict:
+     # (6) Swap-AB, BLOCK_T 16, at m <= 16 for pooler / qkv_gate / o and the unpooler slice.
+     _swapab16_prepare(state)
+     t = tick("swapab16 warm-up", t)
++    if flags is None:   # print-only qkv A/B (state A only): never routes, frees its buffers
++        _qkv_ab_report(state)
++        t = tick("qkv swapab A/B print", t)
+     if flags is None:
+         # (7) Unpooler slice m <= 8: CUDA cluster + DSMEM split-K behind a graph-replay gate.
+         _ouns_prepare(state)
+@@ -2263,6 +2491,8 @@ def kernel_fn(data: Inputs, state: dict) -> torch.Tensor:
+     if layer == "unpooler" and _ouns_route_ok(x, state["unpooler"], cfg, state):
+         return _ouns_forward(x, state["unpooler"], state["ouns_cl"])
+     key16 = _swapab16_key(layer, cfg)
++    if key16 == "qkv_gate":   # new or old qkv config, decided once in prepare (a constant)
++        key16 = state["swapab16_qkv_key"]
+     if (key16 in state["swapab16_stages"]
+             and _swapab16_route_ok(key16, x, state[layer], cfg)):
+         ws, cnt = _swapab16_buffers(state, key16)
+@@ -2276,10 +2506,11 @@ def kernel_fn(data: Inputs, state: dict) -> torch.Tensor:
+         return _unpool_forward(x, state["unpooler"], state["unpool_ws"], state["unpool_cnt"])
+     if layer == "o" and state["o_skinny"] and _o_skinny_applies(x, cfg):
+         return _o_skinny_gemm(x, state["o"])
+-    if (layer in state["swapab_stages"]
+-            and _swapab_route_ok(layer, x, state[layer], cfg)):
+-        ws, cnt = _swapab_buffers(state, layer)
+-        return _swapab_forward(layer, x, state[layer], ws, cnt, state["swapab_stages"][layer])
++    skey = state["swapab_qkv_key"] if layer == "qkv_gate" else layer
++    if (skey in state["swapab_stages"]
++            and _swapab_route_ok(skey, x, state[layer], cfg)):
++        ws, cnt = _swapab_buffers(state, skey)
++        return _swapab_forward(skey, x, state[layer], ws, cnt, state["swapab_stages"][skey])
+     if layer != "router":
+         if (state["nn_ok"] and layer in NN_GATED_LAYERS and NN_GATED_MIN_M <= cfg["m"] <= NN_GATED_MAX_M
+                 and cfg["n"] == state[layer + "_t"].shape[1]):

@@ -56,10 +56,10 @@ priority: 1
 kind: primary
 controls_for: null
 review: proceed
-status: running
+status: done
 review_at: 2026-10-25T111210Z
 review_companions: null
-stage: dispatched
+stage: harvested
 claimed_at: 2026-10-25T111210Z
 base_sha: 848976650adeb8a2fc5263b71136dbf192bebf90
 base_blob: 353e3b19a7edd5cb879e202d78097f474bcce207
@@ -78,6 +78,13 @@ attempt_file: 2026-10-25T111928Z-submit-qkv-swapab-w128-splitk7-one-wave-m32.md
 prepared_at: 2026-10-25T111928Z
 job: c7138fe05598428e
 dispatched_at: 2026-10-25T111935Z
+outcome: neutral
+verdict_detail: within-ci
+speedup: 1.2228568912616218
+speedup_ci: [1.2045140378926975, 1.241199744630546]
+harvested_at: 2026-10-25T115709Z
+best_at_harvest: 1.2490645809967658
+promotion: null
 ---
 
 # qkv-swapab-w128-splitk7-one-wave-m32
@@ -175,3 +182,53 @@ Audited 2026-10-25 (opus), by reading the diff against master blob 353e3b19; the
 - Lint passes with warnings only (host-sync in prepare code, the existing ouns uint8 flush). undef.py reports [] and py_compile is OK.
 
 Residual risk: Triton may pipeline the dynamic-trip-count loop or the [128, BLOCK_T] wgmma poorly, which would make the qkv rows flat or slower. That is a performance risk, not a correctness one, and the self-check catches a numerics miss.
+
+## Result
+
+- job `c7138fe05598428e` (submit), status done, passed True, tests 9/9
+- speedup 1.2229x, 95% CI [1.2045, 1.2412], score 3950.4213735231624 µs vs SGLang 4830.8 µs
+- best at harvest: {"speedup": 1.2490645809967658, "ci": [1.2303286122818142, 1.267800549711717], "job": "ee4f89f2f62c42d3"}; base result: muse_bf16_proj/hypotheses/done/neutral/restack-three-cell-wins-router-unpooler-cluster-m8-nn-m128.result.json
+- **outcome: neutral** (within-ci)
+- files: `muse_bf16_proj/hypotheses/done/neutral/qkv-swapab-w128-splitk7-one-wave-m32.result.json`, `muse_bf16_proj/hypotheses/done/neutral/qkv-swapab-w128-splitk7-one-wave-m32.patch`; branch `hyp/muse_bf16_proj/qkv-swapab-w128-splitk7-one-wave-m32`
+
+## Attribution
+
+| shape | w | base µs | hyp µs | delta | verdict |
+|---|---|---|---|---|---|
+| layer=qkv_gate load=decode_1 m=1 | 62 | 12.38 | 12.35 | 0.9936 | flat |
+| layer=o load=decode_1 m=1 | 62 | 5.89 | 6.3 | 0.9838 | flat |
+| layer=pooler load=decode_1 m=1 | 62 | 18.74 | 19.03 | 0.9792 | flat |
+| layer=unpooler load=decode_1 m=1 | 62 | 5.27 | 4.92 | 1.0108 | flat |
+| layer=router load=decode_1 m=1 | 62 | 5.1 | 5.23 | 0.9727 | flat |
+| layer=qkv_gate load=decode_16 m=16 | 62 | 13.14 | 13.67 | 0.9937 | flat |
+| layer=o load=decode_16 m=16 | 62 | 6.27 | 6.13 | 1.0215 | flat |
+| layer=pooler load=decode_16 m=16 | 62 | 18.72 | 19.15 | 0.9839 | flat |
+| layer=unpooler load=decode_16 m=16 | 62 | 18.57 | 18.51 | 1.006 | flat |
+| layer=router load=decode_16 m=16 | 62 | 5.58 | 5.99 | 0.9593 | lost |
+| layer=qkv_gate load=decode_32 m=32 | 62 | 13.93 | 14.96 | 0.926 | lost |
+| layer=o load=decode_32 m=32 | 62 | 6.07 | 6.67 | 0.9673 | lost |
+| layer=pooler load=decode_32 m=32 | 62 | 19.84 | 20.2 | 0.9785 | flat |
+| layer=unpooler load=decode_32 m=32 | 62 | 17.99 | 18.68 | 1.0073 | flat |
+| layer=router load=decode_32 m=32 | 62 | 5.73 | 6.3 | 0.9344 | lost |
+| layer=qkv_gate load=verify_1 m=8 | 62 | 12.45 | 12.99 | 0.9587 | lost |
+| layer=o load=verify_1 m=8 | 62 | 6.13 | 6.11 | 1.0073 | flat |
+| layer=pooler load=verify_1 m=8 | 62 | 18.91 | 19.13 | 0.975 | flat |
+| layer=unpooler load=verify_1 m=8 | 62 | 4.99 | 5.18 | 0.9786 | flat |
+| layer=router load=verify_1 m=8 | 62 | 4.97 | 5.2 | 0.9592 | lost |
+| layer=qkv_gate load=verify_16 m=128 | 62 | 16.58 | 16.82 | 0.9926 | flat |
+| layer=o load=verify_16 m=128 | 62 | 7.35 | 7.29 | 1.0107 | flat |
+| layer=pooler load=verify_16 m=128 | 62 | 22.94 | 23.2 | 0.9751 | flat |
+| layer=unpooler load=verify_16 m=128 | 62 | 18.95 | 19.02 | 1.0193 | flat |
+| layer=router load=verify_16 m=128 | 62 | 7.38 | 7.59 | 0.9773 | flat |
+| layer=qkv_gate load=verify_32 m=256 | 62 | 19.71 | 19.48 | 1.0214 | flat |
+| layer=o load=verify_32 m=256 | 62 | 9.61 | 9.46 | 1.0331 | gained |
+| layer=pooler load=verify_32 m=256 | 62 | 31.33 | 29.15 | 1.0161 | flat |
+| layer=unpooler load=verify_32 m=256 | 62 | 24.55 | 24.14 | 1.0064 | flat |
+| layer=router load=verify_32 m=256 | 62 | 9.31 | 9.47 | 0.98 | flat |
+
+gained on o verify_32; lost on router decode_16, decode_32, verify_1; qkv_gate decode_32, verify_1; o decode_32. Expected hit: 1/5. Noise ±1.5%.
+
+## Follow-ups
+
+- within-ci: the change is not proven either way; a stacked hypothesis (`depends_on: qkv-swapab-w128-splitk7-one-wave-m32`) that adds a further change in the same area is the only way to learn more (identical code is never re-run).
+
