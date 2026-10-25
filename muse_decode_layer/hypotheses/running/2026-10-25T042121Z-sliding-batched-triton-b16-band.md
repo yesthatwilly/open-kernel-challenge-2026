@@ -45,7 +45,7 @@ base_sha: 94f52a0a74f65619042e18250fd7cb4a206cf66a
 base_blob: c9067b8201f2480c64910c4a71098df7ce616f73
 branch: hyp/muse_decode_layer/sliding-batched-triton-b16-band
 worktree: .worktrees/muse_decode_layer/sliding-batched-triton-b16-band
-mode: null
+mode: check
 restack_of: null
 stale_base: null
 implemented_at: 2026-10-25T042712Z
@@ -54,6 +54,8 @@ submission_sha256: 4d7058499be102b9ede8f6d4e75520364f48dc530b8e28ca3eb28a5803c7d
 norm_sha256: 88f354bf180a612d29e0fcb2a25a382a5ab8a2c231a3e3b9bad730e078755f81
 submission_blob: 97d379721e56bf4fe6307b85b74f821940f73e67
 lint_warnings: 30
+attempt_file: 2026-10-25T042712Z-check-sliding-batched-triton-b16-band.md
+prepared_at: 2026-10-25T042712Z
 ---
 
 # sliding-batched-triton-b16-band
