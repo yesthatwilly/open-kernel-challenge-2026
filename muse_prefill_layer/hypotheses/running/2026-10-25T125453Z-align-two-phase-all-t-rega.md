@@ -64,7 +64,7 @@ review: proceed
 status: running
 review_at: 2026-10-25T125918Z
 review_companions: null
-stage: implemented
+stage: dispatched
 claimed_at: 2026-10-25T125919Z
 base_sha: 8517012b49a52a4bad4cd73abb2b38533a9adde2
 base_blob: c2e3e595def2e6b5949e0fd350ce98ed59729147
@@ -81,6 +81,8 @@ submission_blob: a2fe2a75893c60d4f68cf94fcce8ce8f9b708a71
 lint_warnings: 65
 attempt_file: 2026-10-25T130218Z-check-align-two-phase-all-t-rega.md
 prepared_at: 2026-10-25T130218Z
+job: 4e6f815a8dd945ba
+dispatched_at: 2026-10-25T130234Z
 ---
 
 # align-two-phase-all-t-rega
