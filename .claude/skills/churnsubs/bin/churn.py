@@ -1347,6 +1347,12 @@ def cmd_claim(a):
         elif builds_on_parent or not (dwhere or "").startswith("done/"):
             # Companion, rewrite stage, or a parent still queued/running (a pending gain to stack on).
             base_ref = parent_ref
+            if (h.get("base") == "master" and not parent.get("impl_commit")
+                    and subprocess.run(["git", "rev-parse", "--verify", "--quiet", parent_ref],
+                                       cwd=REPO, capture_output=True).returncode != 0):
+                # A control the reviewer specified on master whose parent was never built (held):
+                # there is no parent code to build on, so take the explicit master base.
+                base_ref = "master"
             if (dwhere or "").startswith("done/") and parent.get("base_blob"):
                 stale_base = git("rev-parse", f"master:{p}/submission.py").strip() != parent["base_blob"]
         else:
