@@ -53,7 +53,7 @@ base_sha: d310c3558b4da1934c0587b4005cb3c14093af5f
 base_blob: db8a3344398bca79ea5cafeb580f701c055fd475
 branch: hyp/muse_prefill_layer/experts-triton-persistent-grid-first-turn
 worktree: .worktrees/muse_prefill_layer/experts-triton-persistent-grid-first-turn
-mode: null
+mode: check
 restack_of: null
 stale_base: null
 implemented_at: 2026-10-25T004119Z
@@ -62,6 +62,8 @@ submission_sha256: a5897dd8c1546dc182ed1e23c3545fd869d6fef6bb57c0c9d5f1a3523f8f8
 norm_sha256: 273f451c9c54497e1a3c42621dcd160319cc524f79e8df40078df98c6496f942
 submission_blob: 680ae9105b7863c930da7c8759029431bf2d4680
 lint_warnings: 22
+attempt_file: 2026-10-25T004119Z-check-experts-triton-persistent-grid-first-turn.md
+prepared_at: 2026-10-25T004119Z
 ---
 
 # experts-triton-persistent-grid-first-turn
