@@ -84,7 +84,7 @@ review: proceed
 status: running
 review_at: 2026-10-25T111120Z
 review_companions: null
-stage: claimed
+stage: implemented
 claimed_at: 2026-10-25T111120Z
 base_sha: c6fe58c3ab272abce5f98a2a19f884600fd2f6a8
 base_blob: f2d91dd181aeb44de20d2eed62ab7e564f2b181f
@@ -93,6 +93,12 @@ worktree: .worktrees/muse_prefill_layer/experts-turn-rega-s4-port-t4096
 mode: null
 restack_of: null
 stale_base: null
+implemented_at: 2026-10-25T112615Z
+impl_commit: cbec93e99c3d87bf325820062d8daf93a41b3969
+submission_sha256: ea5b5ea0bbea782ee143ec92ec2a43f74a9a277b43bb22bce908e0e8bc029ba5
+norm_sha256: bde5993f4966b997dc84622f3b16b884aa893547377dfce8b01f04879e8ed5c1
+submission_blob: 712edc5ea5be2dde8f558a016d0877b285340ee4
+lint_warnings: 51
 ---
 
 # experts-turn-rega-s4-port-t4096
@@ -143,3 +149,56 @@ No companion. This is a rewrite stage, and the readout is the replaced kernels' 
 - Does the turn_1 gain survive judge-like soft routing? At ~24 routes/expert with skew, some experts hit bucket 64/128 and many hit bucket 16. s5's loss at bs=128 (~same per-expert counts as turn_1's low end) is the warning sign.
 - If both this and experts-turn4-ssdq-s2-tma-raw-weight-ring pass, which lands first? The second must be re-gated against the first's master, not merged blind.
 
+## Implementation notes
+
+Worktree `.worktrees/muse_prefill_layer/experts-turn-rega-s4-port-t4096`, only `muse_prefill_layer/submission.py` edited (+1331/-4). Base: the worktree HEAD c6fe58c3 has a byte-identical `submission.py` to current master 537653db (`git diff c6fe58c3 master -- muse_prefill_layer/submission.py` is empty; it carries ssdq s1b), so no 3-way merge was needed; everything outside the change is master's.
+
+What was added (all new code sits between `_experts_ssdq`'s block and `kernel_fn`; master's functions are untouched except `_experts` and the last lines of `prepare`):
+- `_REGA_CPP/_REGA_HEAD/_REGA_BODY`: the s5 copy-safe kernel (git show hyp/muse_moe_w4a16/cuda-nvfp4-wgmma-rega-grouped-s5-copy-safe-forced:muse_moe_w4a16/submission.py, lines 504-1125), renamed `rega_*`, one `load_inline` extension `muse_prefill_rega_v1`, `TORCH_CUDA_ARCH_LIST=9.0a` set around the build and restored, `extra_cuda_cflags = ['-O3','-std=c++20','-lineinfo','-gencode=arch=compute_90a,code=sm_90a']`, all wgmma/setmaxnreg behind `__CUDA_ARCH_FEAT_SM90_ALL` with an `#else` that sets error word 2; no templated `data_ptr<T>()` (reinterpret_cast, and a pre-build audit `_rega_source_audit` reuses the ssdq regex); regs/local bytes/smem/CTAs per SM/binaryVersion/flags/compile seconds are printed.
+- `_experts_rega(x, topk_weights, local_ids, state)`: master's `_align_parallel` at block 16 -> `rega_gather` -> `rega_gemm` w13 (fused silu*up) into hs -> `rega_gemm` w2 scattered to master's slot-ordered y [T*8, 4096] -> master's `fused_post_expert_norm_weighted_sum` (slot_expert_ids=local_ids). xs/hs/y are allocated per call (graph pool, as master's ssdq path does), so no persistent scratch exists to be aliased by a state copy.
+- `_rega_bank`: s5's lossless retiling of w13/w2 codes and e4m3 scales (round trip asserted equal), done once in prepare() from `weights[...]`; global scales fp32 x 128 (exact). NVFP4 bytes only: no BF16 copy of any weight.
+- `_rega_setup` (called at the end of `prepare` after `_ssdq_setup`): guards (align_par_ok, 200 s budget, sm_90, weight shapes, smem), source audit, build, attribute / occupancy / register-pool check, global/static audit, retile, canary with before/after prints, 7-case eager self-check, copy / replay check, two gates, final PATH CHOSEN. Any failure prints one `OFF:` line and both flags stay False.
+- `_experts`: for T <= MARLIN_MAX_TOKENS: rega if `T > REGA_MIN_TOKENS (200)` and `state['rega_ok']['low' if T <= 1024 else 'high']`; else ssdq if `T > SSDQ_MIN_TOKENS` and `ssdq_ok`; else Marlin. Reads a shape and prepare-time flags only. T > 4096 untouched.
+
+Changes to the s5 kernel for T up to 4096 (s5 served T <= 512 only):
+- Block table 384 -> 2304 blocks (T=4096 needs 2078), chunk table 512 (a chunk is <= 8 blocks, so <= ~320 are reachable). The one-thread-per-block prologue was replaced by rounds of 384 blocks with a running base, run starts found with `atomicCAS` into a per-expert table, and per-expert `gfirst/gcount` instead of per-chunk group arrays (no O(run) walk-back). Overflow of either table or a second run of one expert sets error word 3 / 4 (never a silent truncation). Static smem ~13.8 KB + 203,776 B dynamic < 227 KB; a Python model of the new chunking (`scratchpad/rega/model.py`) matched the host mirror of the original chunk rule and covered every (chunk, tile) item exactly once on 60 random layouts up to 2078 blocks. The mock-header g++ -fsyntax-only pass over the whole CUDA source is clean (no nvcc / GPU on this node: nothing was compiled for sm_90a or run).
+- Launch marker: w13 writes err[1], w2 writes err[2] (err is int32[3] per state) so BOTH kernels are proven launched.
+- silu*up epilogue: fp32 from the fp32 accumulators and rounded to bf16 once (s5 rounded gate and up to bf16 first, SGLang-parity; dropped per the rules, so rega is slightly MORE exact than Marlin there). The self-check reference keeps h in fp32 and rounds a once.
+- The only file-scope state in s5 (the `cuTensorMapEncodeTiled` function pointer) is gone: every `rega_gemm` call resolves the entry point and encodes its 4 maps from the bsrc passed in that call into a stack `Maps` passed as `__grid_constant__`.
+
+Adversarial-review items, each applied:
+1. Base on master: done (same submission.py as 537653db).
+2. Dispatch order rega > ssdq > Marlin: done in `_experts`, classes 'low' (T<=1024) and 'high' gated separately.
+3. Three-way gate at T=3012: `_rega_gate` times in ONE interleaved loop (9 alternations, order rotated and flipped, >=256 MB cold-L2 flush before each replay, empty-graph baseline subtracted) rega, `dispatch` (= `_experts` with rega off, i.e. whatever master would actually run: ssdq when ON, else Marlin), `ssdq` itself when ON, and `marlin`. rega ON only if <= 0.95x the fastest of the alternatives. All medians are printed in the last lines of prepare whatever the outcome. If a correctness stage fails first there is nothing valid to time and the OFF line says why.
+4. T<=1024 gate at T=753: rega vs `_experts` with rega off (= master's whole Marlin block: align + Marlin + silu + Marlin), plus `_experts_marlin` as a cross-check column.
+5. Port source: s5 copy-safe code (not s4); per-call TMA encode as `__grid_constant__`; no `wg_mptr_py`, no `_wg_state_live`, no key/pointer check in the timed call; the copy check (`_rega_replay_check`) builds state B with `copy.deepcopy` (ext module through the memo) and state C with a tensor-cloning walk after a pad allocation (over the pieces `_experts_rega` reads, not the whole state, to avoid cloning every bank), captures one graph per state per T in (753, 3012, 4096), replays A,B,C,A,B per routing in (random, skewed, one) with inputs refilled in place, compares with the fp32 reference (bound max(2x Marlin's own error, 8e-3), worst row 5x); LAUNCHED asserted from both launch markers + error word 0 in each state's own error tensor after every replay (error-word route, no torch.profiler).
+Open questions: bucket policy is s5-copy-safe-forced's (pinned in the header comment; the in-flight bucket-gate variant is not ported). The gate routing is uniform random top-8 (T/32 ~ 24 and ~94 routes per expert), not a skewed judge-like routing: a judged soft routing with some hot experts uses the 64/128 buckets more, so read the judged kernel rows. Memory: no persistent scratch; per call at T=3012 about 200 MB xs + 200 MB hs + 200 MB y from the graph pool, bank 0.9 GB per state.
+
+Deviations / risks: (a) scratch is per call rather than per state (spec said per state; per call cannot be aliased by a state copy and is how master's ssdq works; it costs nothing at replay). (b) Only the post-sort align at bsm=16 was not covered by master's `_align_par_setup` (it self-checks the bsm Marlin picks); the rega self-check is end-to-end against the fp32 reference, which catches an align fault. (c) Biggest risk: the build (never compiled here; a first `okc check`, not a scored submit) and the T up to 4096 table logic (s5 only ran T <= 512 on the judge); the canary / self-check prints name the kernel on a fault, and a non-launching or wrong kernel keeps master.
+
+## Rules check
+
+- [x] CUDA-graph capturable: `_experts_rega` has no `.item()/.cpu()/synchronize()/prints` (the tracer is only passed by prepare and is a callable object, not reachable by name from kernel_fn); no allocation sized by input values (rows come from `block_experts.shape`, a shape), no control flow on values; the host-side map encode is stream-free and runs at capture.
+- [x] Nothing derived from `data` is cached across calls: the only new per-state tensors are the retiled bank and the error/marker tensor; xs/hs/y are per call; no module/static/file-scope variable in C++ or Python (audited at prepare by `_rega_audit_cpp` / `_rega_audit_globals`; the C++ audit was run locally on the generated source: 0 findings).
+- [x] Weights: repacked losslessly in `prepare()` only (E2M1 codes + e4m3 scales permuted, round trips asserted equal, fp32 global scale x 128 exact); NVFP4 stays NVFP4, dequantized inside the kernel only; no stored BF16 dequant of any expert weight.
+- [x] Activations BF16 where SGLang keeps BF16 (xs, hs, y are bf16, fp32 accumulation); silu*up is fp32 and rounded to bf16 once; KV cache FP8 and attention untouched (n/a: not changed).
+- [x] Attention sees every key: n/a, attention code untouched; every route of every token is computed by the expert kernels.
+- [x] No timing patches, harness frames/I/O/secrets, module edits, reference import, subprocesses or network (`load_inline` in process only; okc_lint clean of process/network/harness findings).
+- [x] All work happens inside the timed call; no output caching or replay; no pointer-equality gate or live-state check in `kernel_fn` (dispatch is on T and `state['rega_ok'][class]` only).
+- [x] sm_90a only: `TORCH_CUDA_ARCH_LIST=9.0a` around `load_inline` (restored), `-gencode=arch=compute_90a,code=sm_90a`, wgmma/setmaxnreg under `__CUDA_ARCH_FEAT_SM90_ALL` with an error-word-2 `#else`, arch flags printed.
+- [x] Two judge states: per-state data is cloned with the state; the copy check proves graphs on a deepcopy and a tensor-clone state replay correctly with refilled inputs and each leave their own launch markers.
+
+okc_lint (`python3 -I .claude/skills/churnsubs/bin/okc_lint.py muse_prefill_layer/submission.py --problem muse_prefill_layer`): `OK with warnings`, 0 errors; 48 host-sync warnings, all outside kernel_fn's call graph (prepare-only `synchronize`/`.tolist()`, most of them master's own), 3 dtype warnings (uint8 for the lossless NVFP4 byte bank and one pad buffer). `python3 -I scratchpad/undef.py`: `[]`. `py_compile`: ok, `__pycache__` removed.
+
+## Pre-flight audit
+
+Audited 2026-10-25 (opus) against master and the s5 copy-safe-forced source. **Verdict: dispatch-with-fixes.**
+
+- The diff against s5 is limited to what the notes describe: the new prologue, silu*up in fp32 rounded once, per-call map encode with the file-scope `g_encode_pfn` removed, err[1]/err[2] markers and `reinterpret_cast` accessors. The rest of the kernel body is s5's.
+- Prologue: `_align_parallel` at bsm 16 gives n_blocks = cdiv(8T + 480, 16), which is 2078 at T=4096. That is within MAXBLK 2304 and within the `block_experts.numel()` TORCH_CHECK, and sorted_ids.numel() equals the xs rows. Blocks come sorted by expert with a -1 tail. A Python emulation of the rounds, CAS, gfirst/gcount and decode_item ran on align outputs for T from 201 to 4096 with uniform, all-local, skewed and one-expert routings. Every (chunk, tile) was covered exactly once and every local block was in exactly one chunk, with no error word. The maxima were 2066 blocks and 272 chunks (MAXC 512). The ballot, s_wsum and sync ordering is race-free.
+- Scratch xs/hs/y is sized from block_experts.shape and T only, from the graph pool. Dispatch is rega, then ssdq, then Marlin, decided by T and the prepare flags only. The gates are 'low' at T=753 against dispatch (Marlin) and 'high' at T=3012 against dispatch, ssdq and Marlin in one interleaved loop. kernel_fn has no try/except, prints or mutable state. Python and C++ have no file-scope device state (C++ audit re-run: 0 findings). The replay check uses separate per-state err tensors that are zeroed before each replay, so it is meaningful. Any failure in setup leaves rega_ok False and master's ssdq/Marlin path unchanged.
+
+Fix:
+1. `rega_kernel`: added a shared `s_bad` flag that is set together with error word 4 (an expert with two block runs). When it is set, `total = 0`. Without this, decode_item's group arithmetic could index outside s_cblk and then produce a wild weight or output address, and the resulting illegal address would poison the CUDA context and kill master's fallback. With the sorted align this cannot happen, so the change is defensive only. undef.py `[]`, py_compile ok, okc_lint OK with warnings (prepare-only syncs), __pycache__ removed.
+
+Residual risk: the code has never been compiled (build errors or regs < 168 turn the path OFF cleanly). A device fault in the first canary launch would still poison the context. The prepare budget is tight only if the build takes more than ~150 s.
