@@ -77,10 +77,10 @@ controls_for: null
 rewrite_stage: 1
 replaces: moe_wna16_marlin_gemm x2 (Marlin w13 + w2) at 1024 < T <= 4096 (turn_4, T=3012)
 review: proceed
-status: running
+status: done
 review_at: 2026-10-25T085139Z
 review_companions: null
-stage: dispatched
+stage: harvested
 claimed_at: 2026-10-25T085139Z
 base_sha: de61d5aeb2cabe210254a89cbdd05b3f99ff7b1c
 base_blob: db8a3344398bca79ea5cafeb580f701c055fd475
@@ -99,6 +99,13 @@ attempt_file: 2026-10-25T085911Z-check-experts-turn4-ssdq-s1b-dataptr-symbol-fix
 prepared_at: 2026-10-25T085911Z
 job: ef281fb8b7304240
 dispatched_at: 2026-10-25T085923Z
+outcome: neutral
+verdict_detail: unproven-vs-best
+speedup: 1.1004181185941053
+speedup_ci: [1.0839118468151938, 1.1169243903730168]
+harvested_at: 2026-10-25T091110Z
+best_at_harvest: 1.074386115190733
+promotion: null
 ---
 
 # experts-turn4-ssdq-s1b-dataptr-symbol-fix
@@ -199,3 +206,32 @@ Fixes:
 Minor, not changed: the gate does not subtract an empty-graph baseline. That costs about 4 us on about 2000 us, which slightly favours Marlin, so it is conservative.
 
 Residual risk: the kernel has never run on hardware. The likeliest outcome is a canary or self-check OFF (descriptor, swizzle or barrier bug), which re-measures master at about 1.07. The gate's 0.95x bar may also keep it OFF. A device fault (as opposed to a timeout) would poison the context and fail the run.
+
+## Result
+
+- job `ef281fb8b7304240` (check), status done, passed True, tests 5/5
+- speedup 1.1004x, 95% CI [1.0839, 1.1169], score 352051.5460931772 µs vs SGLang 387403.9 µs
+- best at harvest: {"speedup": 1.074386115190733, "ci": [1.058270323462872, 1.090501906918594], "job": "502f2eab95164781"}; base result: muse_prefill_layer/hypotheses/done/neutral/stack-tonight-five-prefill.result.json
+- **outcome: neutral** (unproven-vs-best)
+- files: `muse_prefill_layer/hypotheses/done/neutral/experts-turn4-ssdq-s1b-dataptr-symbol-fix.result.json`, `muse_prefill_layer/hypotheses/done/neutral/experts-turn4-ssdq-s1b-dataptr-symbol-fix.patch`; branch `hyp/muse_prefill_layer/experts-turn4-ssdq-s1b-dataptr-symbol-fix`
+
+## Attribution
+
+| shape | w | base µs | hyp µs | delta | verdict |
+|---|---|---|---|---|---|
+| batch=1 ctx=80000 dist=soft layer=sliding load=turn_1 page=1 q_len=753 repeats=6 | 46 | 1101.29 | 1081.49 | 1.0019 | flat |
+| batch=1 ctx=80000 dist=soft layer=full load=turn_1 page=1 q_len=753 repeats=6 | 16 | 1529.55 | 1460.63 | 1.0016 | flat |
+| batch=4 ctx=80000 dist=soft layer=sliding load=turn_4 page=1 q_len=753 repeats=6 | 46 | 3318.71 | 3012.25 | 1.1046 | gained |
+| batch=4 ctx=80000 dist=soft layer=full load=turn_4 page=1 q_len=753 repeats=6 | 16 | 4849.27 | 4686.3 | 1.0614 | gained |
+| batch=1 ctx=0 dist=soft layer=full load=first_turn page=1 q_len=16384 repeats=6 | 16 | 14705.32 | 14970.94 | 0.9862 | flat |
+| batch=1 ctx=32768 dist=soft layer=sliding load=first_turn page=1 q_len=16384 repeats=6 | 138 | 14264.64 | 14118.46 | 0.9966 | flat |
+| batch=1 ctx=32768 dist=soft layer=full load=first_turn page=1 q_len=16384 repeats=6 | 16 | 17746.69 | 18379.93 | 1.0003 | flat |
+| batch=1 ctx=65536 dist=soft layer=full load=first_turn page=1 q_len=16384 repeats=6 | 16 | 21733.75 | 22181.89 | 0.9919 | flat |
+
+gained on sliding turn_4; full turn_4. Expected hit: 1/3. Noise ±1.5%.
+
+## Follow-ups
+
+- rewrite stage 1 of `moe_wna16_marlin_gemm x2 (Marlin w13 + w2) at 1024 < T <= 4096 (turn_4, T=3012)`: read the replaced kernels' own us per shape (profile top_kernels) against the incumbent and the floor, and check which Milestone it reached. The next stage is `/hypothesize muse_prefill_layer "<what to fix or tune>" --kind rewrite --depends-on experts-turn4-ssdq-s1b-dataptr-symbol-fix --stage 2`; a slow or failed first cut is the expected start, not a do-not-retry.
+- unproven-vs-best: the change is not proven either way; a stacked hypothesis (`depends_on: experts-turn4-ssdq-s1b-dataptr-symbol-fix`) that adds a further change in the same area is the only way to learn more (identical code is never re-run).
+

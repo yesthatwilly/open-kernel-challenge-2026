@@ -1,0 +1,106 @@
+[w2 zero-store] OFF (weighted sum skips remote slots)
+[expert gemm] w13 BLOCK_T=64 BLOCK_W=128 warps=4 stages=3: n_regs=255 n_spills=0 shared=67584
+[expert gemm] w13 BLOCK_T=128 BLOCK_W=128 warps=8 stages=3: n_regs=176 n_spills=0 shared=116736
+[expert gemm] w13 BLOCK_T=256 BLOCK_W=128 warps=8 stages=2: n_regs=254 n_spills=4 shared=140288
+[expert gemm] w2 BLOCK_T=64 BLOCK_W=128 warps=4 stages=3: n_regs=255 n_spills=0 shared=67584
+[expert gemm] w2 BLOCK_T=128 BLOCK_W=128 warps=8 stages=3: n_regs=176 n_spills=0 shared=116736
+[expert gemm] w2 BLOCK_T=256 BLOCK_W=128 warps=8 stages=2: n_regs=254 n_spills=4 shared=140288
+[align-local] ON cases=15 mismatches=0 (PATH CHOSEN = parallel align on the Marlin path)
+[silu-sorted] ON max rel err 0.00e+00 (PATH CHOSEN = sorted silu on the Marlin path)
+[expert e2e] T=8192 triton vs marlin: rel L2 5.887e-03, worst row 7.209e-03 (8341 local routes)
+[prepare] max_memory_allocated before ssdq 4.93 GiB
+[ssdq] prepare used 5.6s before this setup (budget 170s, remaining 164.4s)
+[ssdq] source audit ok: no data_ptr<..> or templated size/item/data/to accessor
+[ssdq] phase audit: 0.0s; prepare total 5.6s; budget remaining 164.4s of 170s
+[ssdq] torch 2.14.1+cu130 cuda 13.0; device capability (9, 0)
+[ssdq] build arch flags: TORCH_CUDA_ARCH_LIST='9.0a' -> ['-gencode=arch=compute_90a,code=sm_90a']; extra_cuda_cflags ['-O3', '-std=c++20', '-lineinfo', '-gencode=arch=compute_90a,code=sm_90a']
+[ssdq] load_inline compiled in 37.9s
+[ssdq] phase build: 37.9s; prepare total 43.5s; budget remaining 126.5s of 170s
+[ssdq] kernel ssdq_kernel: regs=168 local_bytes=104 static_smem=1024 dyn_smem=197632 ctas_per_sm=1 setattr_rc=0 binaryVersion=90 ptxVersion=90 attr_ok=1
+[ssdq] [canary] launching align
+[ssdq] [canary] align done
+[ssdq] [canary] launching ssdq_gather
+[ssdq] [canary] ssdq_gather done
+[ssdq] [canary] launching ssdq_gemm w13
+[ssdq] [canary] ssdq_gemm w13 done
+[ssdq] [canary] launching silu_rows
+[ssdq] [canary] silu_rows done
+[ssdq] [canary] launching ssdq_gemm w2
+[ssdq] [canary] ssdq_gemm w2 done
+[ssdq] canary launch marker: w13 CTAs started 1024, w2 CTAs started 512
+[ssdq] canary ok: error word 0, every tensor finite
+[ssdq] phase canary: 0.4s; prepare total 43.9s; budget remaining 126.1s of 170s
+[ssdq] [T=1506 random] launching align
+[ssdq] [T=1506 random] align done
+[ssdq] [T=1506 random] launching ssdq_gather
+[ssdq] [T=1506 random] ssdq_gather done
+[ssdq] [T=1506 random] launching ssdq_gemm w13
+[ssdq] [T=1506 random] ssdq_gemm w13 done
+[ssdq] [T=1506 random] launching silu_rows
+[ssdq] [T=1506 random] silu_rows done
+[ssdq] [T=1506 random] launching ssdq_gemm w2
+[ssdq] [T=1506 random] ssdq_gemm w2 done
+[ssdq] self-check T=1506 random: ssdq rel L2 5.870e-04 worst row 2.779e-03; marlin rel L2 5.888e-03 worst row 6.710e-03; bound 1.178e-02; error word 0; 1512 local routes; launch marker w13 1024 w2 512
+[ssdq] [T=3012 random] launching align
+[ssdq] [T=3012 random] align done
+[ssdq] [T=3012 random] launching ssdq_gather
+[ssdq] [T=3012 random] ssdq_gather done
+[ssdq] [T=3012 random] launching ssdq_gemm w13
+[ssdq] [T=3012 random] ssdq_gemm w13 done
+[ssdq] [T=3012 random] launching silu_rows
+[ssdq] [T=3012 random] silu_rows done
+[ssdq] [T=3012 random] launching ssdq_gemm w2
+[ssdq] [T=3012 random] ssdq_gemm w2 done
+[ssdq] self-check T=3012 random: ssdq rel L2 5.851e-04 worst row 2.920e-03; marlin rel L2 5.887e-03 worst row 6.862e-03; bound 1.177e-02; error word 0; 3102 local routes; launch marker w13 1024 w2 512
+[ssdq] [T=4096 skewed] launching align
+[ssdq] [T=4096 skewed] align done
+[ssdq] [T=4096 skewed] launching ssdq_gather
+[ssdq] [T=4096 skewed] ssdq_gather done
+[ssdq] [T=4096 skewed] launching ssdq_gemm w13
+[ssdq] [T=4096 skewed] ssdq_gemm w13 done
+[ssdq] [T=4096 skewed] launching silu_rows
+[ssdq] [T=4096 skewed] silu_rows done
+[ssdq] [T=4096 skewed] launching ssdq_gemm w2
+[ssdq] [T=4096 skewed] ssdq_gemm w2 done
+[ssdq] self-check T=4096 skewed: ssdq rel L2 7.392e-04 worst row 2.003e-03; marlin rel L2 5.870e-03 worst row 6.613e-03; bound 1.174e-02; error word 0; 18446 local routes; launch marker w13 5120 w2 2560
+[ssdq] [T=1100 one] launching align
+[ssdq] [T=1100 one] align done
+[ssdq] [T=1100 one] launching ssdq_gather
+[ssdq] [T=1100 one] ssdq_gather done
+[ssdq] [T=1100 one] launching ssdq_gemm w13
+[ssdq] [T=1100 one] ssdq_gemm w13 done
+[ssdq] [T=1100 one] launching silu_rows
+[ssdq] [T=1100 one] silu_rows done
+[ssdq] [T=1100 one] launching ssdq_gemm w2
+[ssdq] [T=1100 one] ssdq_gemm w2 done
+[ssdq] self-check T=1100 one: ssdq rel L2 6.025e-04 worst row 2.399e-03; marlin rel L2 5.836e-03 worst row 6.767e-03; bound 1.167e-02; error word 0; 1100 local routes; launch marker w13 288 w2 144
+[ssdq] [T=4096 random] launching align
+[ssdq] [T=4096 random] align done
+[ssdq] [T=4096 random] launching ssdq_gather
+[ssdq] [T=4096 random] ssdq_gather done
+[ssdq] [T=4096 random] launching ssdq_gemm w13
+[ssdq] [T=4096 random] ssdq_gemm w13 done
+[ssdq] [T=4096 random] launching silu_rows
+[ssdq] [T=4096 random] silu_rows done
+[ssdq] [T=4096 random] launching ssdq_gemm w2
+[ssdq] [T=4096 random] ssdq_gemm w2 done
+[ssdq] self-check T=4096 random: ssdq rel L2 6.009e-04 worst row 3.119e-03; marlin rel L2 5.880e-03 worst row 7.578e-03; bound 1.176e-02; error word 0; 4058 local routes; launch marker w13 1536 w2 768
+[ssdq] phase self-check: 0.2s; prepare total 44.2s; budget remaining 125.8s of 170s
+[ssdq] replay round 0 state A T=4096: ssdq rel L2 5.789e-04 worst row 2.293e-03; bound 1.174e-02; error word 0; launch marker w13 1472 w2 736
+[ssdq] replay round 0 state B T=4096: ssdq rel L2 5.953e-04 worst row 2.290e-03; bound 1.176e-02; error word 0; launch marker w13 1504 w2 752
+[ssdq] replay round 1 state B T=4096: ssdq rel L2 5.646e-04 worst row 2.477e-03; bound 1.170e-02; error word 0; launch marker w13 1024 w2 512
+[ssdq] replay round 1 state A T=4096: ssdq rel L2 7.394e-04 worst row 2.041e-03; bound 1.175e-02; error word 0; launch marker w13 5120 w2 2560
+[ssdq] replay round 2 state A T=4096: ssdq rel L2 5.731e-04 worst row 3.276e-03; bound 1.172e-02; error word 0; launch marker w13 1024 w2 512
+[ssdq] replay round 2 state B T=4096: ssdq rel L2 7.392e-04 worst row 2.169e-03; bound 1.175e-02; error word 0; launch marker w13 5120 w2 2560
+[ssdq] replay round 3 state B T=4096: ssdq rel L2 5.895e-04 worst row 2.419e-03; bound 1.178e-02; error word 0; launch marker w13 1536 w2 768
+[ssdq] replay round 3 state A T=4096: ssdq rel L2 5.691e-04 worst row 1.960e-03; bound 1.178e-02; error word 0; launch marker w13 1440 w2 720
+[ssdq] two-state replay check ok (4 rounds x 2 states)
+[ssdq] phase replay-check: 0.3s; prepare total 44.4s; budget remaining 125.6s of 170s
+[ssdq] counters w13 T=3012: 1024 CTAs, per CTA 157242 cycles, producer waiting on empty stages 6353 cycles, consumer waiting on full stages 132587 cycles per warpgroup (producer-bound if the consumer wait is large and the producer wait small)
+[ssdq] counters w2 T=3012: 512 CTAs, per CTA 158024 cycles, producer waiting on empty stages 6356 cycles, consumer waiting on full stages 133191 cycles per warpgroup (producer-bound if the consumer wait is large and the producer wait small)
+[ssdq] phase counters: 0.0s; prepare total 44.4s; budget remaining 125.6s of 170s
+[ssdq] phase gate: 0.1s; prepare total 44.5s; budget remaining 125.5s of 170s
+[ssdq] GATE T=3012 cold-L2 graph medians over 9 alternations: marlin pair 1553.8 us, ssdq 1256.4 us, ratio 0.809 (ON at <= 0.95)
+[ssdq] PATH CHOSEN T in (1024, 4096]: ssdq (faster: 1256.4 < 1553.8 us); all other T: unchanged
+[ssdq] prepare per-phase seconds: before-ssdq 5.6, audit 0.0, build 37.9, canary 0.4, self-check 0.2, replay-check 0.3, counters 0.0, gate 0.1; total 44.5s; budget remaining 125.5s of 170s
+[ssdq] PATH CHOSEN T <= 1024: marlin/unchanged; T in (1024, 4096]: ssdq (gate ratio constant SSDQ_GATE_RATIO = 0.95); T > 4096: triton/unchanged
