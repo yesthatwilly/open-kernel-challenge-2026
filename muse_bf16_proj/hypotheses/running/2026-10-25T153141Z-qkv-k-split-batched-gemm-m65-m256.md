@@ -61,6 +61,8 @@ submission_sha256: a8da8943c1e510c3eea66f7ae0d4027206774cde527ae908fa90e64fef2d3
 norm_sha256: b5e58a8d3dab336830b7cd27d81818e927348944e6498a6c73b418789457f25c
 submission_blob: 76386bd87b0c1d31910cc21b81598ddb2c1addba
 lint_warnings: 39
+attempt_file: 2026-10-25T204055Z-submit-qkv-k-split-batched-gemm-m65-m256.md
+prepared_at: 2026-10-25T204055Z
 ---
 
 # qkv-k-split-batched-gemm-m65-m256
