@@ -77,9 +77,18 @@ controls_for: null
 rewrite_stage: 2
 replaces: "flash_attn_with_kvcache (FA3 cutlass::device_kernel<flash::...> + FlashAttnFwdCombine) on full-attention layers at page_size 1"
 review: proceed
-status: queued
+status: running
 review_at: 2026-10-25T212615Z
 review_companions: null
+stage: claimed
+claimed_at: 2026-10-25T212615Z
+base_sha: 227ec481c126a03a5a6fea46bf672e6f3f8ff689
+base_blob: f3e8bf0e46f3da14de298fec7290d3889b749c5c
+branch: hyp/muse_prefill_layer/attn-full-prefill-wgmma-s2-warpspec-pingpong-expoffload
+worktree: .worktrees/muse_prefill_layer/attn-full-prefill-wgmma-s2-warpspec-pingpong-expoffload
+mode: check
+restack_of: null
+stale_base: true
 ---
 
 # attn-full-prefill-wgmma-s2-warpspec-pingpong-expoffload
