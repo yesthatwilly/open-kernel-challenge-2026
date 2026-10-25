@@ -73,7 +73,7 @@ review: proceed
 status: running
 review_at: 2026-10-25T003616Z
 review_companions: null
-stage: implemented
+stage: dispatched
 claimed_at: 2026-10-25T003624Z
 base_sha: 6a839f514cc7024729ac75ac28402e894091c0bd
 base_blob: 4da94677234faaa06b42b5ced541db8961fd6f34
@@ -90,6 +90,8 @@ submission_blob: b4771cc5ac7c69bf030cba94a480f3ae96f5d06c
 lint_warnings: 33
 attempt_file: 2026-10-25T004858Z-check-dense-chain-stage2-attn-side-pdl.md
 prepared_at: 2026-10-25T004858Z
+job: b31b8453208a471c
+dispatched_at: 2026-10-25T004905Z
 ---
 
 # dense-chain-stage2-attn-side-pdl
