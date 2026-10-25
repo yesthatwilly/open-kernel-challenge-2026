@@ -1,17 +1,17 @@
 {
  "problem": "muse_prefill_layer",
- "job": "4e6f815a8dd945ba",
+ "job": "bff8e36788a04917",
  "check_job": "4e6f815a8dd945ba",
- "mode": "check",
- "speedup": 1.4457544543391616,
+ "mode": "submit",
+ "speedup": 1.4480354973438967,
  "ci": [
-  1.4240681375240742,
-  1.467440771154249
+  1.4263149648837383,
+  1.469756029804055
  ],
- "score_us": 267959.6793475404,
+ "score_us": 267537.57122018584,
  "commit": "1932a9c4fb3d8dc735bb1a513853637c0ada892c",
  "submission_blob": "a2fe2a75893c60d4f68cf94fcce8ce8f9b708a71",
  "slug": "align-two-phase-all-t-rega",
  "result": "muse_prefill_layer/hypotheses/done/neutral/align-two-phase-all-t-rega.result.json",
- "updated_at": "2026-10-25T145718Z"
+ "updated_at": "2026-10-25T150603Z"
 }

@@ -89,12 +89,13 @@ speedup: 1.4457544543391616
 speedup_ci: [1.4240681375240742, 1.467440771154249]
 harvested_at: 2026-10-25T135010Z
 best_at_harvest: 1.4060131381907617
-promotion: submitted
+promotion: done
 hand_landed: true
 promotion_commit: 1932a9c4fb3d8dc735bb1a513853637c0ada892c
 promotion_attempt: 2026-10-25T145748Z-submit-align-two-phase-all-t-rega.md
 promotion_job: bff8e36788a04917
 promotion_at: 2026-10-25T145756Z
+board: "{\"rank\": 142, \"team\": \"yesthatwilly\", \"speedup\": 1.448, \"first\": false, \"ahead\": 141, \"to_first\": 1.3299}"
 ---
 
 # align-two-phase-all-t-rega
