@@ -107,10 +107,10 @@ priority: 1
 kind: primary
 controls_for: null
 review: proceed
-status: running
+status: done
 review_at: 2026-10-25T054315Z
 review_companions: null
-stage: dispatched
+stage: harvested
 claimed_at: 2026-10-25T054315Z
 base_sha: 84c6b217af909ca0534b49bdd5a8072e10b692c5
 base_blob: 970b415b746fa03cb92e419d270be92588273178
@@ -129,6 +129,13 @@ attempt_file: 2026-10-25T054957Z-check-restack-three-cell-wins-router-unpooler-c
 prepared_at: 2026-10-25T054957Z
 job: 84f17adc3f074a33
 dispatched_at: 2026-10-25T055005Z
+outcome: neutral
+verdict_detail: unproven-vs-best
+speedup: 1.236629518166488
+speedup_ci: [1.2180800753939907, 1.2551789609389852]
+harvested_at: 2026-10-25T084157Z
+best_at_harvest: 1.2215006063849365
+promotion: null
 ---
 
 # restack-three-cell-wins-router-unpooler-cluster-m8-nn-m128
@@ -236,3 +243,53 @@ Audited 2026-10-25 by an opus subagent, by reading the diff against master blob 
 - okc_lint: OK with warnings (13, all host syncs in prepare plus the uint8 flush buffer). py_compile OK. __pycache__ removed.
 
 Residual risk: the ouns graph-replay gate can still turn the unpooler m<=8 cluster off on noise (it needs >=1.02x at both m), and the same prepare-time timing pattern is still the open rules heads-up. Read `[ouns] PATH CHOSEN` and `[prepare] FINAL FLAGS` before reading the six target rows.
+
+## Result
+
+- job `84f17adc3f074a33` (check), status done, passed True, tests 9/9
+- speedup 1.2366x, 95% CI [1.2181, 1.2552], score 3906.4246235707496 µs vs SGLang 4830.8 µs
+- best at harvest: {"speedup": 1.2215006063849365, "ci": [1.2031780972891624, 1.2398231154807104], "job": "1e90292c7b954d96"}; base result: muse_bf16_proj/hypotheses/done/neutral/bf16-restack-m16-swapab-router-swapab-m32.result.json
+- **outcome: neutral** (unproven-vs-best)
+- files: `muse_bf16_proj/hypotheses/done/neutral/restack-three-cell-wins-router-unpooler-cluster-m8-nn-m128.result.json`, `muse_bf16_proj/hypotheses/done/neutral/restack-three-cell-wins-router-unpooler-cluster-m8-nn-m128.patch`; branch `hyp/muse_bf16_proj/restack-three-cell-wins-router-unpooler-cluster-m8-nn-m128`
+
+## Attribution
+
+| shape | w | base µs | hyp µs | delta | verdict |
+|---|---|---|---|---|---|
+| layer=qkv_gate load=decode_1 m=1 | 62 | 12.18 | 12.38 | 0.9929 | flat |
+| layer=o load=decode_1 m=1 | 62 | 5.89 | 5.89 | 1.0022 | flat |
+| layer=pooler load=decode_1 m=1 | 62 | 18.84 | 18.74 | 0.9958 | flat |
+| layer=unpooler load=decode_1 m=1 | 62 | 6.15 | 5.27 | 1.1662 | gained |
+| layer=router load=decode_1 m=1 | 62 | 5.38 | 5.1 | 1.0722 | gained |
+| layer=qkv_gate load=decode_16 m=16 | 62 | 13.15 | 13.14 | 0.9999 | flat |
+| layer=o load=decode_16 m=16 | 62 | 6.23 | 6.27 | 0.9804 | flat |
+| layer=pooler load=decode_16 m=16 | 62 | 19.47 | 18.72 | 1.0082 | flat |
+| layer=unpooler load=decode_16 m=16 | 62 | 18.51 | 18.57 | 0.9814 | flat |
+| layer=router load=decode_16 m=16 | 62 | 5.47 | 5.58 | 0.9806 | flat |
+| layer=qkv_gate load=decode_32 m=32 | 62 | 14.19 | 13.93 | 0.9972 | flat |
+| layer=o load=decode_32 m=32 | 62 | 6.34 | 6.07 | 0.9943 | flat |
+| layer=pooler load=decode_32 m=32 | 62 | 19.73 | 19.84 | 0.9938 | flat |
+| layer=unpooler load=decode_32 m=32 | 62 | 18.08 | 17.99 | 0.9724 | flat |
+| layer=router load=decode_32 m=32 | 62 | 6.2 | 5.73 | 1.0518 | gained |
+| layer=qkv_gate load=verify_1 m=8 | 62 | 12.5 | 12.45 | 1.0154 | flat |
+| layer=o load=verify_1 m=8 | 62 | 6.13 | 6.13 | 1.0013 | flat |
+| layer=pooler load=verify_1 m=8 | 62 | 18.89 | 18.91 | 0.9928 | flat |
+| layer=unpooler load=verify_1 m=8 | 62 | 6.0 | 4.99 | 1.1542 | gained |
+| layer=router load=verify_1 m=8 | 62 | 5.47 | 4.97 | 1.1074 | gained |
+| layer=qkv_gate load=verify_16 m=128 | 62 | 17.05 | 16.58 | 1.01 | flat |
+| layer=o load=verify_16 m=128 | 62 | 6.98 | 7.35 | 0.9819 | flat |
+| layer=pooler load=verify_16 m=128 | 62 | 25.0 | 22.94 | 1.1171 | gained |
+| layer=unpooler load=verify_16 m=128 | 62 | 19.96 | 18.95 | 1.0297 | flat |
+| layer=router load=verify_16 m=128 | 62 | 7.28 | 7.38 | 0.9865 | flat |
+| layer=qkv_gate load=verify_32 m=256 | 62 | 19.69 | 19.71 | 0.9901 | flat |
+| layer=o load=verify_32 m=256 | 62 | 9.26 | 9.61 | 0.9636 | lost |
+| layer=pooler load=verify_32 m=256 | 62 | 31.19 | 31.33 | 0.9856 | flat |
+| layer=unpooler load=verify_32 m=256 | 62 | 24.42 | 24.55 | 0.987 | flat |
+| layer=router load=verify_32 m=256 | 62 | 9.6 | 9.31 | 1.0218 | flat |
+
+gained on unpooler decode_1, verify_1; router decode_1, decode_32, verify_1; pooler verify_16; lost on o verify_32. Expected hit: 15/17. Noise ±1.5%.
+
+## Follow-ups
+
+- unproven-vs-best: the change is not proven either way; a stacked hypothesis (`depends_on: restack-three-cell-wins-router-unpooler-cluster-m8-nn-m128`) that adds a further change in the same area is the only way to learn more (identical code is never re-run).
+
