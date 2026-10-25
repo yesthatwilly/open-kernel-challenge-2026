@@ -1,6 +1,6 @@
 # muse_prefill_layer findings
 
-Regenerated 2026-10-25T051708Z by `churn.py index`. Read this before writing a hypothesis for muse_prefill_layer.
+Regenerated 2026-10-25T053809Z by `churn.py index`. Read this before writing a hypothesis for muse_prefill_layer.
 
 ## Current best
 
@@ -40,11 +40,17 @@ Where the time goes (per scored shape, top kernels):
 ### MoE align/dispatch (local-routes-only align, port of muse_moe_w4a16 align-parallel-per-expert-verify)
 - **moe-align-local-routes-parallel-port** → neutral (unproven-vs-best), 1.0658x — no shape moved outside noise. Built on master (635cfee). Port muse_moe_w4a16's measured align (master there: _align_parallel_kernel and its host wrapper _align_parallel in muse_moe_w4a16/sub
 
+### MoE align/dispatch placement at T <= 4096: local-id remap + _align_parallel moved onto the router side stream, under the pooler GEMM
+- **turn-align-remap-on-side-stream-under-pooler** → neutral (within-ci), 1.0683x — no shape moved outside noise. Built on master (a81d19c). In the best profile master's _align_parallel_kernel runs serially on the main stream after the router join: 16.9 us at turn_1 (1.7%) 
+
 ### attention boundary + FFN boundary (FusedPostNormResidualPreNorm x2, persistent multi-row variant)
 - **norm-boundaries-persistent-multirow** → neutral (within-ci), 1.0716x — no shape moved outside noise. Built on master (635cfee). The multi-row/persistent re-mint the review of the held norm-residual-boundaries-triton-row-kernel invited ('same one-row-per-program
 
 ### pre-attention norm+rope + cache store
 - **qk-norm-fp8-cache-store-fusion** → neutral (unproven-vs-best), 1.0093x — no shape moved outside noise. One Triton kernel replaces five launches on the attention front: FusedQKNorm, k.to(FP8), v.to(FP8), store_cache and q.view(T, 16, 64).to(FP8). One program per t
+
+### pre-expert norm + post-expert norm/combine (the MoE elementwise ends)
+- **moe-pre-post-norm-triton-multitoken** → neutral (within-ci), 1.0714x — no shape moved outside noise. Built on master (635cfee). Two kernels at the ends of the MoE block, at every T. (1) PRE-EXPERT NORM: replace state['pre_expert_norm'](expert_input) (MuseSpark1
 
 ### router GEMM (hi and lo halves as one N=512 cuBLAS GEMM)
 - **router-hilo-one-gemm-n512** → neutral (unproven-vs-best), 1.0607x — no shape moved outside noise. Built on master (635cfee). prepare(): add state['router_hilo_t'] = torch.cat((hi.t(), lo.t()), dim=1).contiguous(), bf16 [8192, 512] (the same BF16 hi/lo split 
@@ -75,6 +81,9 @@ Where the time goes (per scored shape, top kernels):
 
 ### w13 + w2 at turn_4 (1024 < T <= 4096) routed to the Triton NVFP4 engine with local-routes align, original non-persistent grid
 - **experts-triton-turn4-persistent-local-align-control-no-persi** → neutral (within-ci), 1.0557x — no shape moved outside noise. Built on master (a81d19c). Implement only parts (1) and (3) of the parent. (1) In _experts, send 1024 < T <= 4096 to _experts_triton (set MARLIN_MAX_TOKENS = 10
+
+### w13 + w2 expert GEMMs at 1024 < T <= 4096 (turn_4): CUDA sm_90a warp-specialized grouped GEMM with an in-kernel dequant-producer warpgroup and SS wgmma
+- **experts-turn4-cuda-dequant-producer-ss-wgmma** → neutral (within-ci), 1.0714x — no shape moved outside noise. Built on master (a81d19c). At turn_4 the Marlin pair is 2148/2115 us (64%/43% of the sliding/full turn_4 shapes) against a 306 us math floor (~3012 local routes
 
 ### w13 + w2 expert GEMMs at T > 4096 (CUDA sm_90a wgmma W4A16 grouped GEMM, stage 1b: re-measure of experts-cuda-wgmma-mixed-input-grouped-gemm with the build fix, on the new master)
 - **experts-cuda-wgmma-grouped-gemm-remeasure-sm90a-inproc** → regression (regression), 0.9401x — lost on full first_turn; sliding first_turn. BUILDS ON THE CURRENT MASTER (stack-tonight-five-prefill, 1.0705 check / 1.0744 scored), not on the old branch: start from master's submission.py and hand-port 
@@ -138,6 +147,7 @@ Where the time goes (per scored shape, top kernels):
 - moe-align-32-experts-first-turn: unproven-vs-best: the change is not proven either way; a stacked hypothesis (`depends_on: moe-align-32-experts-first-turn`) that adds a further change in the same area is the only way to learn more (identical code is nev
 - router-hilo-one-gemm-n512: unproven-vs-best: the change is not proven either way; a stacked hypothesis (`depends_on: router-hilo-one-gemm-n512`) that adds a further change in the same area is the only way to learn more (identical code is never re-
 - norm-boundaries-persistent-multirow: within-ci: the change is not proven either way; a stacked hypothesis (`depends_on: norm-boundaries-persistent-multirow`) that adds a further change in the same area is the only way to learn more (identical code is never 
+- moe-pre-post-norm-triton-multitoken: within-ci: the change is not proven either way; a stacked hypothesis (`depends_on: moe-pre-post-norm-triton-multitoken`) that adds a further change in the same area is the only way to learn more (identical code is never 
 - experts-triton-first-turn-unmasked-loads-l2-hints: within-ci: the change is not proven either way; a stacked hypothesis (`depends_on: experts-triton-first-turn-unmasked-loads-l2-hints`) that adds a further change in the same area is the only way to learn more (identical 
 - restack-router-hilo-align32-zerostore: unproven-vs-best: the change is not proven either way; a stacked hypothesis (`depends_on: restack-router-hilo-align32-zerostore`) that adds a further change in the same area is the only way to learn more (identical code 
 - stack-tonight-four-prefill: unproven-vs-best: the change is not proven either way; a stacked hypothesis (`depends_on: stack-tonight-four-prefill`) that adds a further change in the same area is the only way to learn more (identical code is never re
@@ -147,6 +157,8 @@ Where the time goes (per scored shape, top kernels):
 - silu-mul-sorted-first-turn: within-ci: the change is not proven either way; a stacked hypothesis (`depends_on: silu-mul-sorted-first-turn`) that adds a further change in the same area is the only way to learn more (identical code is never re-run).
 - attn-full-prefill-cuda-fp8-wgmma-hard-gate-inproc: rewrite stage 1 of `flash_attn_with_kvcache (FA3 cutlass::device_kernel<flash::...> + FlashAttnFwdCombine) on full-attention layers at page_size 1`: read the replaced kernels' own us per shape (profile top_kernels) again
 - experts-triton-turn4-persistent-local-align-control-no-persi: within-ci: the change is not proven either way; a stacked hypothesis (`depends_on: experts-triton-turn4-persistent-local-align-control-no-persi`) that adds a further change in the same area is the only way to learn more 
+- experts-turn4-cuda-dequant-producer-ss-wgmma: rewrite stage 1 of `moe_wna16_marlin_gemm x2 (Marlin w13 + w2) at 1024 < T <= 4096 (turn_4, T=3012)`: read the replaced kernels' own us per shape (profile top_kernels) against the incumbent and the floor, and check which
+- turn-align-remap-on-side-stream-under-pooler: within-ci: the change is not proven either way; a stacked hypothesis (`depends_on: turn-align-remap-on-side-stream-under-pooler`) that adds a further change in the same area is the only way to learn more (identical code 
 
 ## Do not retry (rejected / duplicates)
 
@@ -173,6 +185,3 @@ Where the time goes (per scored shape, top kernels):
 - queue: experts-triton-first-turn-per-gemm-config-pick [Triton NVFP4 engine at T > 4096 (first_turn): separate tile config for w13 and w2, picked by prepare timing] p3 hold
 - queue: experts-turn1-cuda-wgmma-rega-port-bucket32 [w13 + w2 expert GEMMs at T <= 1024 (turn_1): port of muse_moe_w4a16's register-A swap-AB wgmma NVFP4 grouped GEMM, 16/32-row buckets only] p1 hold
 - queue: marlin-w2-atomic-add-turn [w2 Marlin call on the Marlin path (T <= 4096): use_atomic_add, picked per shape class in prepare] p4 hold
-- running: moe-pre-post-norm-triton-multitoken [pre-expert norm + post-expert norm/combine (the MoE elementwise ends)] p5 running
-- running: experts-turn4-cuda-dequant-producer-ss-wgmma [w13 + w2 expert GEMMs at 1024 < T <= 4096 (turn_4): CUDA sm_90a warp-specialized grouped GEMM with an in-kernel dequant-producer warpgroup and SS wgmma] p2 running
-- running: turn-align-remap-on-side-stream-under-pooler [MoE align/dispatch placement at T <= 4096: local-id remap + _align_parallel moved onto the router side stream, under the pooler GEMM] p3 running

@@ -1,6 +1,6 @@
 # muse_moe_w4a16 hypotheses
 
-Regenerated 2026-10-25T051708Z. Best: 1.3439x [1.3237,1.3641] job `7a0d900a1dd34666` (submit)
+Regenerated 2026-10-25T053809Z. Best: 1.3439x [1.3237,1.3641] job `7a0d900a1dd34666` (submit)
 
 | created | slug | kind | area | where | outcome | speedup | CI | job | mode | promotion | review | expected hit |
 |---|---|---|---|---|---|---|---|---|---|---|---|---|
@@ -61,11 +61,11 @@ Regenerated 2026-10-25T051708Z. Best: 1.3439x [1.3237,1.3641] job `7a0d900a1dd34
 | 2026-10-25T035329Z | cuda-nvfp4-wgmma-rega-grouped-s3-wide-bucket-fix | rewrite | w13 marlin + silu-mul + w2 marlin | done/failed | failed |  |  | 3bdec0e58d684c17 | check |  | proceed | 0/3 |
 | 2026-10-25T042150Z | cuda-nvfp4-wgmma-rega-midm-bucket-cap32 | rewrite | w13 marlin + silu-mul + w2 marlin | queue | hold |  |  |  |  |  | proceed |  |
 | 2026-10-25T042150Z | cuda-nvfp4-wgmma-rega-w2-only-midm | rewrite | w2 marlin | queue | hold |  |  |  |  |  | proceed |  |
-| 2026-10-25T042150Z | cuda-nvfp4-wgmma-rega-tiny-m-bucket16 | rewrite | w13 marlin + silu-mul + w2 marlin | running | running |  |  | 3df5c69750884600 | check |  | proceed |  |
-| 2026-10-25T042150Z | w13-marlin-atomic-add-on-master-small-m | primary | w13 marlin | running | running |  |  | 171684977ec1470f | check |  | proceed |  |
+| 2026-10-25T042150Z | cuda-nvfp4-wgmma-rega-tiny-m-bucket16 | rewrite | w13 marlin + silu-mul + w2 marlin | done/neutral | neutral | 1.3453 | [1.325,1.366] | 3df5c69750884600 | check |  | proceed | 6/6 |
+| 2026-10-25T042150Z | w13-marlin-atomic-add-on-master-small-m | primary | w13 marlin | done/neutral | neutral | 1.3558 | [1.335,1.376] | 171684977ec1470f | check |  | proceed | 4/6 |
 | 2026-10-25T042151Z | marlin-exec-config-autotune-mid-m | primary | Marlin launch config (w13 + w2) | queue | hold |  |  |  |  |  | proceed |  |
 | 2026-10-25T042151Z | w2-marlin-atomic-add-verify | primary | w2 marlin | done/neutral | neutral | 1.3407 | [1.321,1.361] | ccbcda65da584be0 | check |  | proceed | 4/6 |
-| 2026-10-25T044131Z | cuda-nvfp4-wgmma-rega-grouped-s4-replay-safe | rewrite | wgmma NVFP4 grouped w13+silu/w2 at 128<=T<=512: per-state tensor maps, graph-replay safety | running | running |  |  | 4e7f8be895a145ba | check |  | proceed |  |
+| 2026-10-25T044131Z | cuda-nvfp4-wgmma-rega-grouped-s4-replay-safe | rewrite | wgmma NVFP4 grouped w13+silu/w2 at 128<=T<=512: per-state tensor maps, graph-replay safety | done/neutral | neutral | 1.3439 | [1.324,1.364] | 4e7f8be895a145ba | check |  | proceed | 0/3 |
 
 ## Held
 

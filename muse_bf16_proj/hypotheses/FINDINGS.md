@@ -1,6 +1,6 @@
 # muse_bf16_proj findings
 
-Regenerated 2026-10-25T043621Z by `churn.py index`. Read this before writing a hypothesis for muse_bf16_proj.
+Regenerated 2026-10-25T053809Z by `churn.py index`. Read this before writing a hypothesis for muse_bf16_proj.
 
 ## Current best
 
@@ -66,6 +66,12 @@ Where the time goes (per scored shape, top kernels):
 ### bf16 GEMM dispatch (m=65..256, DeepGEMM bf16)
 - **bf16-verify-deepgemm-bf16-gemm-nt-route** → regression (regression), 1.2027x — lost on qkv_gate decode_1, decode_16, verify_1; o decode_1, decode_16, verify_1; router decode_16, decode_32. Built on master (blob a8bb42a). At m=128/256 all four bf16 layers still run cuBLAS nvjet and sit at ~1.0x SGLang (master profile 1602a4e947e64090): qkv_gate m=1
 
+### bf16 GEMM dispatch (m=65..256, DeepGEMM sm90 BF16 kernel)
+- **bf16-verify-deepgemm-sm90-kernel-asserted-rewrite** → neutral (unproven-vs-best), 1.2221x — gained on unpooler verify_1; router verify_1; lost on router decode_16, verify_16; o decode_32. Built on master. bf16-verify-deepgemm-bf16-gemm-nt-route (2d522d47) printed PATH CHOSEN deepgemm for all 16 (layer, m) pairs, every self-check at 0.0 s (no JIT 
+
+### bf16 GEMM dispatch (m=65..256, swap-AB wgmma + cluster DSMEM split-K)
+- **bf16-verify-swapab-wgmma-cluster-dsmem-rewrite** → neutral (within-ci), 1.2155x — gained on router decode_32, verify_32; lost on o decode_1, decode_16, decode_32. Built on master (blob a8bb42a). WHY: the m=128/256 rows are the last ones on cuBLAS and the furthest from their floors in absolute us (master profile 1602a4e947
+
 ### bf16 GEMM dispatch (m>=128, weight layout)
 - **bf16-m128-nn-weight-layout-probe** → neutral (unproven-vs-best), 1.1580x — gained on pooler verify_16; unpooler verify_16; lost on o decode_1; router verify_1, verify_16; qkv_gate verify_32. Built on master (dba4ffd; router untouched; m <= 32 paths untouched). The m=128/256 shapes are where cuBLAS sits furthest from the floor (pooler verify_16 25.2 
 
@@ -124,8 +130,14 @@ Where the time goes (per scored shape, top kernels):
 - **router-swapab-wgmma-all-m** → neutral (within-ci), 1.1951x — gained on router decode_1, decode_16, decode_32, verify_1; lost on qkv_gate decode_1, decode_16, decode_32, verify_1; router verify_16. Built on master (8b9ad43). Master's router is _router_hilo_kernel with the tokens on tl.dot's M side: grid (cdiv(m, BLOCK_M), 256 // BLOCK_N, SPLIT_K), (BLOCK_M
 - **router-cuda-cluster-dsmem-splitk-rewrite** → regression (regression), 1.1897x — gained on router decode_1, verify_1; lost on qkv_gate decode_1, decode_16, verify_1; o decode_1, decode_16, verify_1, verify_16, verify_32; unpooler decode_1, verify_1; router decode_16, decode_32, verify_16. Built on master (8b9ad43, blob a8bb42a); the restack is not landed and is not needed. WHY: router rows at m<=32 are 5.4-6.2 us against a 1.8-1.9 us floor (8.4 M
 
+### router GEMM (m<=32, cluster DSMEM kernel)
+- **router-cluster-dsmem-s2-flat-in-m-occupancy** → neutral (within-ci), 1.2058x — gained on qkv_gate decode_1, decode_16, verify_1; o decode_1, decode_16, verify_1; unpooler decode_1, verify_1; router decode_32; lost on router verify_1; pooler verify_16. Build on branch hyp/muse_bf16_proj/router-cuda-cluster-dsmem-splitk-rewrite (stage 1, dc5d03c4). Stage 1 won rows at m=1/8 only by deleting the memset node: its
+
 ### router GEMM (m<=8)
 - **restack-router-cluster-dsmem-m8** → neutral (within-ci), 1.2199x — gained on router decode_1, verify_1; qkv_gate decode_16; lost on o decode_32, verify_16; router verify_16. Built on master (b99b1dd, the landed restack bf16-restack-m16-swapab-router-swapab-m32, 1.2215x; check 1e90292c7b954d96). Port ONLY the router cluster kernel fr
+
+### router GEMM (m=65..256)
+- **router-m128-m256-cluster-dsmem-tiled-rewrite** → neutral (within-ci), 1.2189x — gained on unpooler verify_1; lost on o decode_32. Built on master (the router at m > 32 is identical on master and the restack). Router rows at m=128/256 are 7.3/9.6 us against floors of 2.2/2.7 (3.3-3.6x, the 
 
 ### unpooler GEMM
 - **unpooler-slice-triton-gemv** → regression (regression), 0.8801x — gained on o verify_1; lost on unpooler decode_1, verify_1. For layer == 'unpooler' and m <= 8 only (the sliced case: n=1024, k=4096, an 8.4 MB weight read), replace the _bf16_gemm_dispatch_impl(x, W[:1024], None) call i
@@ -161,9 +173,13 @@ Where the time goes (per scored shape, top kernels):
 - router-swapab-wgmma-all-m: within-ci: the change is not proven either way; a stacked hypothesis (`depends_on: router-swapab-wgmma-all-m`) that adds a further change in the same area is the only way to learn more (identical code is never re-run).
 - bf16-restack-m16-swapab-router-swapab-m32: unproven-vs-best: the change is not proven either way; a stacked hypothesis (`depends_on: bf16-restack-m16-swapab-router-swapab-m32`) that adds a further change in the same area is the only way to learn more (identical c
 - bf16-lossless-exp4-occupancy-dequant-once-stage2: rewrite stage 2 of `Triton swap-AB m<=32 kernels (bf16-m32-swapab-wgmma-triton) on pooler m 1-32, unpooler-full m 16/32, qkv_gate m 1-32`: read the replaced kernels' own us per shape (profile top_kernels) against the inc
+- bf16-verify-swapab-wgmma-cluster-dsmem-rewrite: rewrite stage 1 of `cuBLAS nvjet at m=128/256 for qkv_gate (13.0+3.0 splitKreduce / 19.4 us), pooler (25.7 / 29.5 us) and unpooler m=128 (20.4 us)`: read the replaced kernels' own us per shape (profile top_kernels) again
+- bf16-verify-deepgemm-sm90-kernel-asserted-rewrite: rewrite stage 1 of `cuBLAS nvjet (+cublasLt splitKreduce) for qkv_gate, pooler, unpooler at m=65..256`: read the replaced kernels' own us per shape (profile top_kernels) against the incumbent and the floor, and check whi
 - restack-pooler-unpooler-nn-layout-m128: unproven-vs-best: the change is not proven either way; a stacked hypothesis (`depends_on: restack-pooler-unpooler-nn-layout-m128`) that adds a further change in the same area is the only way to learn more (identical code
 - restack-router-cluster-dsmem-m8: within-ci: the change is not proven either way; a stacked hypothesis (`depends_on: restack-router-cluster-dsmem-m8`) that adds a further change in the same area is the only way to learn more (identical code is never re-r
 - restack-unpooler-slice-cluster-dsmem-m8: unproven-vs-best: the change is not proven either way; a stacked hypothesis (`depends_on: restack-unpooler-slice-cluster-dsmem-m8`) that adds a further change in the same area is the only way to learn more (identical cod
+- router-cluster-dsmem-s2-flat-in-m-occupancy: rewrite stage 2 of `_router_swapab_kernel + memset at router m<=32 (restack) / _router_hilo_kernel + memset (master)`: read the replaced kernels' own us per shape (profile top_kernels) against the incumbent and the floor
+- router-m128-m256-cluster-dsmem-tiled-rewrite: rewrite stage 1 of `_router_hilo_kernel + torch.zeros memset at router m=65..256`: read the replaced kernels' own us per shape (profile top_kernels) against the incumbent and the floor, and check which Milestone it reach
 
 ## Do not retry (rejected / duplicates)
 
@@ -177,7 +193,3 @@ Where the time goes (per scored shape, top kernels):
 - queue: qkv-gate-o-m128-wgmma-splitk-semaphore [qkv GEMM + o GEMM (m=128)] p2 hold
 - queue: pooler-m32-tma-splitk-extend [pooler GEMM (m=17..32)] p3 hold
 - queue: bf16-lossless-exp4-warpspec-persistent-stage3 [lossless exp4 compressed-weight stream kernel (_lossless_swapab_kernel)] p1 hold
-- running: bf16-verify-swapab-wgmma-cluster-dsmem-rewrite [bf16 GEMM dispatch (m=65..256, swap-AB wgmma + cluster DSMEM split-K)] p1 running
-- running: bf16-verify-deepgemm-sm90-kernel-asserted-rewrite [bf16 GEMM dispatch (m=65..256, DeepGEMM sm90 BF16 kernel)] p1 running
-- running: router-cluster-dsmem-s2-flat-in-m-occupancy [router GEMM (m<=32, cluster DSMEM kernel)] p2 running
-- running: router-m128-m256-cluster-dsmem-tiled-rewrite [router GEMM (m=65..256)] p2 running

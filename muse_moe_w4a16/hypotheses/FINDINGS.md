@@ -1,6 +1,6 @@
 # muse_moe_w4a16 findings
 
-Regenerated 2026-10-25T051708Z by `churn.py index`. Read this before writing a hypothesis for muse_moe_w4a16.
+Regenerated 2026-10-25T053809Z by `churn.py index`. Read this before writing a hypothesis for muse_moe_w4a16.
 
 ## Current best
 
@@ -61,6 +61,7 @@ Where the time goes (per scored shape, top kernels):
 - **small-m-grouped-gemv-splitk-rewrite** → regression (regression), 0.6635x — lost on decode_1 decode_1; decode_16 decode_16; verify_1 verify_1. Stage 1 of a small-batch grouped W4A16 GEMV that replaces both moe_wna16_marlin_gemm calls when num_tokens <= 16 (decode_1 bs=1, verify_1 bs=8, decode_16 bs=16)
 - **marlin-block-m-cap-16-port** → neutral (beats-base-not-best), 1.0950x — gained on verify_16 verify_16; verify_32 verify_32. Port muse_decode_layer marlin-block-m-cap-16 (landed gain 1.062x, job 0730135cdcac43b7; patch in muse_decode_layer/hypotheses/done/gain/marlin-block-m-cap-16.pa
 - **marlin-block-m-two-smaller-on-postnorm** → gain (gain), 1.2536x — gained on verify_16 verify_16; verify_32 verify_32. Restack the landed-but-unmerged marlin-block-size-m-verify-two-smaller (1.092x on the pre-post-norm base, job ed837a4a46d44a95; patch at muse_moe_w4a16/hypothes
+- **w13-marlin-atomic-add-on-master-small-m** → neutral (unproven-vs-best), 1.3558x — no shape moved outside noise. On master (9080a71, w2 atomic add already landed for T <= 32), pass use_atomic_add=True to the FIRST moe_wna16_marlin_gemm (w13, top_k=8) for num_tokens <= 32 o
 
 ### w13 marlin + silu-mul + w2 marlin
 - **cuda-nvfp4-swapab-mma-persistent-small-m** → failed (test:failed). Small-M only: num_tokens <= 32 (decode_1 bs=1, verify_1 bs=8, decode_16, decode_32 and the bs=1/bs=4 tests); num_tokens > 32 (bs=33, 128, 256, 257 tests and ver
@@ -69,11 +70,15 @@ Where the time goes (per scored shape, top kernels):
 - **cuda-nvfp4-swapab-mma-persistent-small-m-inproc** → regression (regression), 0.9250x — gained on decode_1 decode_1; verify_16 verify_16; verify_32 verify_32; lost on decode_16 decode_16; decode_32 decode_32; verify_1 verify_1. FIX (stage 1b, make it run): the previous run built (51.2 s, 80-128 regs, 0 local) but its first CUDA launch in _cuda_self_check hit illegal instruction 715 (st
 - **cuda-nvfp4-wgmma-rega-grouped-s2-finite-fix** → neutral (unproven-vs-best), 1.3307x — no shape moved outside noise. Stage 2 of the wgmma register-A grouped NVFP4 rewrite (make it numerically correct). Stage 1b (job b56d17fda2d54be2) finally BUILT and RAN on the judge: TORCH_C
 - **cuda-nvfp4-wgmma-rega-grouped-s3-wide-bucket-fix** → failed (test:failed) — lost on verify_16 verify_16. Stage 3 of the wgmma register-A grouped NVFP4 rewrite, built on the stage-2 commit (cuda-nvfp4-wgmma-rega-grouped-s2-finite-fix, claim bases a rewrite-on-rewrit
+- **cuda-nvfp4-wgmma-rega-tiny-m-bucket16** → neutral (unproven-vs-best), 1.3453x — gained on decode_1 decode_1. Tiny-M branch of the wgmma register-A grouped rewrite: bs=1 (decode_1) and the bs=4 test, which master runs at 44.9 us (Marlin pair ~42 us) vs a floor of 11.4 u
 
 ### w2 marlin
 - **w2-l2-prefetch-decode1** → regression (regression), 1.2615x — lost on decode_1 decode_1. At num_tokens == 1 only (decode_1; every other M runs master unchanged), warm L2 with the w2 weights of this token's local experts before the w13 Marlin call, s
 - **w2-marlin-atomic-add-small-m** → neutral (unproven-vs-best), 1.3445x — gained on decode_1 decode_1. For num_tokens <= 32 only (bs=1, 8, 16, 32 and the bs=4 test), pass use_atomic_add=True and use_fp32_reduce=False (Marlin requires the pair) to the SECOND moe_w
 - **w2-marlin-atomic-add-verify** → neutral (within-ci), 1.3407x — no shape moved outside noise. On master (9080a71), widen the landed w2 use_atomic_add path from num_tokens <= 32 to all T by giving the verify range its own bound constant W2_ATOMIC_VERIFY =
+
+### wgmma NVFP4 grouped w13+silu/w2 at 128<=T<=512: per-state tensor maps, graph-replay safety
+- **cuda-nvfp4-wgmma-rega-grouped-s4-replay-safe** → neutral (within-ci), 1.3439x — gained on decode_1 decode_1; decode_16 decode_16; decode_32 decode_32; verify_1 verify_1; verify_16 verify_16; verify_32 verify_32. Fix the s3 judge failure (job 3bdec0e58d684c17: verify 16 bs=128 "recheck failed on repetition 2: relative L2 error 1.211e+00"). CAUSE (s3 branch submission.py)
 
 ### whole-layer fusion
 - **cuda-fused-moe-bs1-persistent-w13-silu-w2** → neutral (within-ci), 1.3074x — no shape moved outside noise. bs=1 only (num_tokens == 1: decode_1 and the bs=1 test); every other M runs master unchanged. Replace the whole bs=1 MoE (_align_small, Marlin w13, silu_and_mul
@@ -108,7 +113,10 @@ Where the time goes (per scored shape, top kernels):
 - cuda-fused-moe-bs1-persistent-bandwidth-s3-inproc: rewrite stage 3 of `_align_small + Marlin w13+w2 + act_and_mul + _post_norm_combine at num_tokens == 1`: read the replaced kernels' own us per shape (profile top_kernels) against the incumbent and the floor, and check wh
 - cuda-nvfp4-wgmma-rega-grouped-s2-finite-fix: rewrite stage 2 of `Marlin w13+w2 (moe_wna16_marlin_gemm x2) + silu_and_mul at num_tokens >= 128`: read the replaced kernels' own us per shape (profile top_kernels) against the incumbent and the floor, and check which Mi
 - w2-marlin-atomic-add-small-m: unproven-vs-best: the change is not proven either way; a stacked hypothesis (`depends_on: w2-marlin-atomic-add-small-m`) that adds a further change in the same area is the only way to learn more (identical code is never 
+- cuda-nvfp4-wgmma-rega-tiny-m-bucket16: rewrite stage 3 of `Marlin w13+w2 (moe_wna16_marlin_gemm x2) + silu_and_mul at 1 <= num_tokens <= 7`: read the replaced kernels' own us per shape (profile top_kernels) against the incumbent and the floor, and check which
+- w13-marlin-atomic-add-on-master-small-m: unproven-vs-best: the change is not proven either way; a stacked hypothesis (`depends_on: w13-marlin-atomic-add-on-master-small-m`) that adds a further change in the same area is the only way to learn more (identical cod
 - w2-marlin-atomic-add-verify: within-ci: the change is not proven either way; a stacked hypothesis (`depends_on: w2-marlin-atomic-add-verify`) that adds a further change in the same area is the only way to learn more (identical code is never re-run).
+- cuda-nvfp4-wgmma-rega-grouped-s4-replay-safe: rewrite stage 4 of `Marlin w13+silu+w2 at 128<=T<=512`: read the replaced kernels' own us per shape (profile top_kernels) against the incumbent and the floor, and check which Milestone it reached. The next stage is `/hyp
 - triton-map-align-verify-chunked: none
 - cuda-nvfp4-swapab-mma-persistent-small-m: rewrite stage 1 of `Marlin w13+w2 (moe_wna16_marlin_gemm x2) at bs<=32`: read the replaced kernels' own us per shape (profile top_kernels) against the incumbent and the floor, and check which Milestone it reached. The ne
 - cuda-nvfp4-wgmma-rega-grouped-s3-wide-bucket-fix: rewrite stage 3 of `Marlin w13+w2 (moe_wna16_marlin_gemm x2) + silu_and_mul at num_tokens >= 128`: read the replaced kernels' own us per shape (profile top_kernels) against the incumbent and the floor, and check which Mi
@@ -137,6 +145,3 @@ Where the time goes (per scored shape, top kernels):
 - queue: cuda-nvfp4-wgmma-rega-midm-bucket-cap32 [w13 marlin + silu-mul + w2 marlin] p1 hold
 - queue: cuda-nvfp4-wgmma-rega-w2-only-midm [w2 marlin] p2 hold
 - queue: marlin-exec-config-autotune-mid-m [Marlin launch config (w13 + w2)] p3 hold
-- running: cuda-nvfp4-wgmma-rega-tiny-m-bucket16 [w13 marlin + silu-mul + w2 marlin] p2 running
-- running: w13-marlin-atomic-add-on-master-small-m [w13 marlin] p1 running
-- running: cuda-nvfp4-wgmma-rega-grouped-s4-replay-safe [wgmma NVFP4 grouped w13+silu/w2 at 128<=T<=512: per-state tensor maps, graph-replay safety] p1 running

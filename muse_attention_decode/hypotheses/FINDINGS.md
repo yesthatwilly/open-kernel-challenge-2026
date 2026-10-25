@@ -1,10 +1,10 @@
 # muse_attention_decode findings
 
-Regenerated 2026-10-25T043406Z by `churn.py index`. Read this before writing a hypothesis for muse_attention_decode.
+Regenerated 2026-10-25T053809Z by `churn.py index`. Read this before writing a hypothesis for muse_attention_decode.
 
 ## Current best
 
-1.4322x [1.4107,1.4554] from job `2a3241780c7b4c46` (check), master commit `c3c1b01b18`, hypothesis full-decode1-streamk-s3-two-level-ticket
+1.4441x [1.4225,1.4658] from job `341623fa53d94cef` (submit), master commit `c3c1b01b18`, hypothesis full-decode1-streamk-s3-two-level-ticket
 
 Where the time goes (per scored shape, top kernels):
 
@@ -58,6 +58,9 @@ Where the time goes (per scored shape, top kernels):
 ### full-layer attention (batch-1 decode, splitkv stream-K kernel)
 - **full-decode1-streamk-s3-two-level-ticket** → neutral (unproven-vs-best), 1.4322x — gained on full decode_1; lost on sliding verify_1. Stage 3 of the full-decode rewrite, built on the stage-2 branch hyp/muse_attention_decode/full-decode-splitkv-s2-streamk-ticket-inproc (splitkv_attn_sk_kernel: 
 
+### full-layer attention (batch-1 decode, stream-K kernel merge)
+- **full-decode1-sk4-cluster-dsmem-merge** → neutral (unproven-vs-best), 1.4388x — gained on sliding verify_1; lost on sliding decode_1. Stage 4 of the full-decode rewrite, built on master (stage 3 two-level ticket landed, c3c1b01). Full decode_1 is 22.6 us with the kernel at 18.6 us (0.89 TB/s) 
+
 ### full-layer attention (decode, splitkv kernel A/B)
 - **full-decode-splitkv-s2-streamk-ticket-inproc** → neutral (unproven-vs-best), 1.4171x — gained on full decode_16, decode_32. Stage 2 of the full-decode rewrite, built on master (stage 1 kernels splitkv_attn_kernel A + splitkv_combine_kernel B in load_inline module muse_full_decode_spl
 
@@ -75,6 +78,9 @@ Where the time goes (per scored shape, top kernels):
 
 ### launch overhead
 - **splitkv-pdl-attn-to-combine** → neutral (within-ci), 1.3929x — lost on full decode_32. Programmatic dependent launch between master's kernel A (splitkv_attn_kernel) and kernel B (splitkv_combine_kernel), full decode 1 < batch <= 64. (1) In splitkv
+
+### launch overhead (full decode_1, pre-attention -> stream-K kernel)
+- **full-decode1-sk-pdl-from-preattn** → neutral (unproven-vs-best), 1.4571x — gained on full decode_32; sliding verify_1. Built on master (stream-K two-level ticket at full decode B=1, landed c3c1b01). Full decode_1 is 22.6 us shape vs pre-attn 1.4 + sk kernel 18.6 us of kernels, s
 
 ### output norm-gate
 - **paired-norm-gate-token-tiled** → neutral (within-ci), 1.3911x — lost on full decode_32. Regrid master _paired_norm_gate_kernel (the paired full-layer epilogue, which now runs only at full verify_16/32) from one 1-warp program per (token, query head
@@ -112,6 +118,9 @@ Where the time goes (per scored shape, top kernels):
 ### sliding-layer attention (decode, cluster kernel)
 - **sliding-cluster-s2-decode-c4-pdl-inproc** → neutral (unproven-vs-best), 1.4001x — gained on sliding decode_32, verify_1, verify_16, verify_32; lost on sliding decode_1, decode_16. Stage 2 of the sliding-layer cluster rewrite, built on the stage-1 code (branch hyp/muse_attention_decode/sliding-cuda-cluster-dsmem-onelaunch, impl_commit 5938
 
+### sliding-layer attention (verify, stream-K pseudo-decode kernel)
+- **sliding-verify-sk-pseudo-decode-s1** → neutral (unproven-vs-best), 1.4705x — gained on sliding verify_1; lost on sliding decode_1. Stage 1 of a new sliding-verify line, built on master (which now carries the full-decode stream-K kernels: splitkv_attn_sk_kernel single-level ticket at 1<B<=64
+
 ### sliding-layer attention (whole-path rewrite)
 - **sliding-single-launch-fused-attention** → regression (regression), 0.9452x — gained on sliding decode_1; lost on sliding decode_16, decode_32, verify_1, verify_16, verify_32. Stage 1 of a rewrite of the sliding-layer path. Built on hyp/muse_attention_decode/fused-preattention-triton (1.127x, job dfee6f2939974bad). On sliding layers (
 
@@ -147,6 +156,9 @@ Where the time goes (per scored shape, top kernels):
 - full-decode1-streamk-s3-two-level-ticket: rewrite stage 3 of `FA3 main + FlashAttnFwdCombine + sglang rms_norm_gate on full decode batch 1`: read the replaced kernels' own us per shape (profile top_kernels) against the incumbent and the floor, and check which Mi
 - stack-streamk-ticket-cluster-c16-c4: beats-base-not-best: the change is not proven either way; a stacked hypothesis (`depends_on: stack-streamk-ticket-cluster-c16-c4`) that adds a further change in the same area is the only way to learn more (identical code
 - full-verify-wgmma-s4-multitile-fix: rewrite stage 4 of `full-layer verify at 1<batch<=64: FA3 main + prepare_varlen_num_blocks + FlashAttnFwdCombine + norm-gate (master paired FA3)`: read the replaced kernels' own us per shape (profile top_kernels) against
+- full-decode1-sk4-cluster-dsmem-merge: rewrite stage 4 of `full decode batch 1: master splitkv_attn_sk_kernel two-level global ticket (grid SM)`: read the replaced kernels' own us per shape (profile top_kernels) against the incumbent and the floor, and check 
+- sliding-verify-sk-pseudo-decode-s1: rewrite stage 1 of `sliding verify (q_len 8, page 1, tp8, 1<=B<=32): prepare_varlen_num_blocks + FA3 main + FlashAttnFwdCombine + sglang rms_norm_gate`: read the replaced kernels' own us per shape (profile top_kernels) a
+- full-decode1-sk-pdl-from-preattn: unproven-vs-best: the change is not proven either way; a stacked hypothesis (`depends_on: full-decode1-sk-pdl-from-preattn`) that adds a further change in the same area is the only way to learn more (identical code is ne
 
 ## Do not retry (rejected / duplicates)
 
@@ -182,6 +194,3 @@ Where the time goes (per scored shape, top kernels):
 - queue: sliding-cluster-s3-verify-attn-only-phase-timed [sliding-layer attention (verify, cluster kernel)] p2 hold
 - queue: sliding-verify1-triton-pseudo-decode [sliding-layer attention (batch-1 verify, Triton fused decode kernel)] p2 hold
 - queue: full-verify1-sk-pseudo-decode [full-layer attention (batch-1 verify, stream-K pseudo-decode)] p3 hold
-- running: full-decode1-sk4-cluster-dsmem-merge [full-layer attention (batch-1 decode, stream-K kernel merge)] p1 running
-- running: sliding-verify-sk-pseudo-decode-s1 [sliding-layer attention (verify, stream-K pseudo-decode kernel)] p1 running
-- running: full-decode1-sk-pdl-from-preattn [launch overhead (full decode_1, pre-attention -> stream-K kernel)] p2 running

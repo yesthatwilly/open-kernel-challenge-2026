@@ -1,6 +1,6 @@
 # muse_bf16_proj hypotheses
 
-Regenerated 2026-10-25T051708Z. Best: 1.2215x [1.2032,1.2398] job `1e90292c7b954d96` (check)
+Regenerated 2026-10-25T053809Z. Best: 1.2215x [1.2032,1.2398] job `1e90292c7b954d96` (check)
 
 | created | slug | kind | area | where | outcome | speedup | CI | job | mode | promotion | review | expected hit |
 |---|---|---|---|---|---|---|---|---|---|---|---|---|
@@ -49,17 +49,17 @@ Regenerated 2026-10-25T051708Z. Best: 1.2215x [1.2032,1.2398] job `1e90292c7b954
 | 2026-10-25T003858Z | qkv-swapab-m32-splitk8-stages3 | primary | qkv GEMM (m=17..32, swap-AB) | done/regression | regression | 1.1963 | [1.178,1.214] | a61778a08ec04ea6 | check |  | proceed | 3/8 |
 | 2026-10-25T003858Z | unpooler-full-m16-swapab-route | primary | unpooler GEMM | done/regression | regression | 1.1885 | [1.171,1.206] | 05782267384343eb | check |  | proceed | 5/8 |
 | 2026-10-25T011407Z | pooler-unpooler-m128-nn-layout-gated | primary | pooler GEMM + unpooler GEMM (m=65..128, cuBLAS NN layout) | done/regression | regression | 1.1953 | [1.177,1.213] | 0daf3faa83ab4e81 | check |  | proceed | 8/9 |
-| 2026-10-25T011408Z | bf16-verify-swapab-wgmma-cluster-dsmem-rewrite | rewrite | bf16 GEMM dispatch (m=65..256, swap-AB wgmma + cluster DSMEM split-K) | running | running |  |  | 3a7f42bc7f544886 | check |  | proceed |  |
+| 2026-10-25T011408Z | bf16-verify-swapab-wgmma-cluster-dsmem-rewrite | rewrite | bf16 GEMM dispatch (m=65..256, swap-AB wgmma + cluster DSMEM split-K) | done/neutral | neutral | 1.2155 | [1.197,1.234] | 3a7f42bc7f544886 | check |  | proceed | 3/10 |
 | 2026-10-25T011408Z | bf16-lossless-exp4-decode-only-throughput-probe | primary | lossless exp4 compressed-weight stream kernel (_lossless_swapab_kernel) | done/regression | regression | 1.1904 | [1.173,1.208] | 9148142cee4441ad | check |  | proceed | 1/1 |
 | 2026-10-25T011408Z | bf16-verify-deepgemm-bf16-gemm-nt-route | primary | bf16 GEMM dispatch (m=65..256, DeepGEMM bf16) | done/regression | regression | 1.2027 | [1.185,1.221] | 2d522d47ca5c4fc9 | check |  | proceed | 5/8 |
 | 2026-10-25T011408Z | pooler-unpooler-full-bulk-tma-row-owner-stream-rewrite | rewrite | pooler GEMM + unpooler GEMM (m<=32 DRAM weight streams, bulk-TMA row-owner kernel) | done/regression | regression | 1.1828 | [1.165,1.201] | cd39d36e31814087 | check |  | proceed | 8/15 |
 | 2026-10-25T035343Z | pooler-unpooler-bulk-tma-row-owner-s2-cxx20-rebuild | rewrite | pooler GEMM + unpooler GEMM (m<=32 DRAM weight streams, bulk-TMA row-owner kernel) | done/regression | regression | 1.0331 | [1.018,1.049] | 571ea532ad7a410d | check |  | proceed | 1/7 |
-| 2026-10-25T042040Z | bf16-verify-deepgemm-sm90-kernel-asserted-rewrite | rewrite | bf16 GEMM dispatch (m=65..256, DeepGEMM sm90 BF16 kernel) | running | running |  |  | 4c224bebdd384541 | check |  | proceed |  |
-| 2026-10-25T042040Z | router-cluster-dsmem-s2-flat-in-m-occupancy | rewrite | router GEMM (m<=32, cluster DSMEM kernel) | running | running |  |  | ef8a8bca31ef420e | check |  | proceed |  |
-| 2026-10-25T042040Z | router-m128-m256-cluster-dsmem-tiled-rewrite | rewrite | router GEMM (m=65..256) | running | running |  |  | b7b2b55d04544660 | check |  | proceed |  |
+| 2026-10-25T042040Z | bf16-verify-deepgemm-sm90-kernel-asserted-rewrite | rewrite | bf16 GEMM dispatch (m=65..256, DeepGEMM sm90 BF16 kernel) | done/neutral | neutral | 1.2221 | [1.204,1.240] | 4c224bebdd384541 | check |  | proceed | 2/8 |
 | 2026-10-25T042040Z | restack-pooler-unpooler-nn-layout-m128 | primary | pooler GEMM + unpooler GEMM (m=65..128, cuBLAS NN layout) | done/neutral | neutral | 1.2282 | [1.210,1.247] | 92cd4e758a924ca0 | check |  | proceed | 6/8 |
 | 2026-10-25T042040Z | restack-router-cluster-dsmem-m8 | primary | router GEMM (m<=8) | done/neutral | neutral | 1.2199 | [1.202,1.238] | d323ce8ef6a54fde | check |  | proceed | 8/10 |
 | 2026-10-25T042040Z | restack-unpooler-slice-cluster-dsmem-m8 | primary | unpooler GEMM (sliced n=1024, m<=8) | done/neutral | neutral | 1.2260 | [1.208,1.244] | e557d92969864449 | check |  | proceed | 7/9 |
+| 2026-10-25T042040Z | router-cluster-dsmem-s2-flat-in-m-occupancy | rewrite | router GEMM (m<=32, cluster DSMEM kernel) | done/neutral | neutral | 1.2058 | [1.188,1.224] | ef8a8bca31ef420e | check |  | proceed | 4/10 |
+| 2026-10-25T042040Z | router-m128-m256-cluster-dsmem-tiled-rewrite | rewrite | router GEMM (m=65..256) | done/neutral | neutral | 1.2189 | [1.201,1.237] | b7b2b55d04544660 | check |  | proceed | 5/8 |
 
 ## Held
 

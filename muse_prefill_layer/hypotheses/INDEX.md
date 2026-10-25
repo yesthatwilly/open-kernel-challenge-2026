@@ -1,6 +1,6 @@
 # muse_prefill_layer hypotheses
 
-Regenerated 2026-10-25T051708Z. Best: 1.0744x [1.0583,1.0905] job `502f2eab95164781` (submit)
+Regenerated 2026-10-25T053809Z. Best: 1.0744x [1.0583,1.0905] job `502f2eab95164781` (submit)
 
 | created | slug | kind | area | where | outcome | speedup | CI | job | mode | promotion | review | expected hit |
 |---|---|---|---|---|---|---|---|---|---|---|---|---|
@@ -41,7 +41,7 @@ Regenerated 2026-10-25T051708Z. Best: 1.0744x [1.0583,1.0905] job `502f2eab95164
 | 2026-10-24T185232Z | turn-moe-local-align-sorted-silu | primary | MoE align/dispatch + silu-mul on the Marlin path (T <= 4096) | queue | hold |  |  |  |  |  | hold |  |
 | 2026-10-24T185248Z | router-hilo-one-gemm-n512 | primary | router GEMM (hi and lo halves as one N=512 cuBLAS GEMM) | done/neutral | neutral | 1.0607 | [1.045,1.077] | f4e3c5f4c306427b | check |  | required | 0/3 |
 | 2026-10-24T224410Z | norm-boundaries-persistent-multirow | primary | attention boundary + FFN boundary (FusedPostNormResidualPreNorm x2, persistent multi-row variant) | done/neutral | neutral | 1.0716 | [1.056,1.088] | 46afe489e2754c83 | check |  | proceed | 0/3 |
-| 2026-10-24T224425Z | moe-pre-post-norm-triton-multitoken | primary | pre-expert norm + post-expert norm/combine (the MoE elementwise ends) | running | running |  |  | 3fb4e7237a604fa3 | check |  | proceed |  |
+| 2026-10-24T224425Z | moe-pre-post-norm-triton-multitoken | primary | pre-expert norm + post-expert norm/combine (the MoE elementwise ends) | done/neutral | neutral | 1.0714 | [1.055,1.087] | 3fb4e7237a604fa3 | check |  | proceed | 0/3 |
 | 2026-10-24T224437Z | experts-triton-first-turn-unmasked-loads-l2-hints | primary | w13 marlin + w2 marlin (Triton NVFP4 engine at T > 4096: K-loop load predication and L2 eviction hints) | done/neutral | neutral | 1.0677 | [1.052,1.084] | aeda8b5a523642b1 | check |  | proceed | 0/2 |
 | 2026-10-24T232728Z | restack-router-hilo-align32-zerostore | primary | router GEMM + MoE align (T>4096) + w2 zero-store (T>4096) | done/neutral | neutral | 1.0608 | [1.045,1.077] | ead4bc2e7b364add | check |  | required | 0/1 |
 | 2026-10-24T232928Z | stack-tonight-four-prefill | primary | router GEMM + MoE align (both paths) + w2 zero-store | done/neutral | neutral | 1.0675 | [1.052,1.084] | 7499d9c71acd4417 | check |  | required | 0/1 |
@@ -58,8 +58,8 @@ Regenerated 2026-10-25T051708Z. Best: 1.0744x [1.0583,1.0905] job `502f2eab95164
 | 2026-10-25T042410Z | experts-triton-first-turn-per-gemm-config-pick | primary | Triton NVFP4 engine at T > 4096 (first_turn): separate tile config for w13 and w2, picked by prepare timing | queue | hold |  |  |  |  |  | hold |  |
 | 2026-10-25T042410Z | experts-turn1-cuda-wgmma-rega-port-bucket32 | rewrite | w13 + w2 expert GEMMs at T <= 1024 (turn_1): port of muse_moe_w4a16's register-A swap-AB wgmma NVFP4 grouped GEMM, 16/32-row buckets only | queue | hold |  |  |  |  |  | proceed |  |
 | 2026-10-25T042410Z | marlin-w2-atomic-add-turn | primary | w2 Marlin call on the Marlin path (T <= 4096): use_atomic_add, picked per shape class in prepare | queue | hold |  |  |  |  |  | hold |  |
-| 2026-10-25T042410Z | experts-turn4-cuda-dequant-producer-ss-wgmma | rewrite | w13 + w2 expert GEMMs at 1024 < T <= 4096 (turn_4): CUDA sm_90a warp-specialized grouped GEMM with an in-kernel dequant-producer warpgroup and SS wgmma | running | running |  |  | 40541db65f1b4ec6 | check |  | proceed |  |
-| 2026-10-25T042410Z | turn-align-remap-on-side-stream-under-pooler | primary | MoE align/dispatch placement at T <= 4096: local-id remap + _align_parallel moved onto the router side stream, under the pooler GEMM | running | running |  |  | 40f21883155b47eb | check |  | proceed |  |
+| 2026-10-25T042410Z | experts-turn4-cuda-dequant-producer-ss-wgmma | rewrite | w13 + w2 expert GEMMs at 1024 < T <= 4096 (turn_4): CUDA sm_90a warp-specialized grouped GEMM with an in-kernel dequant-producer warpgroup and SS wgmma | done/neutral | neutral | 1.0714 | [1.055,1.087] | 40541db65f1b4ec6 | check |  | proceed | 0/3 |
+| 2026-10-25T042410Z | turn-align-remap-on-side-stream-under-pooler | primary | MoE align/dispatch placement at T <= 4096: local-id remap + _align_parallel moved onto the router side stream, under the pooler GEMM | done/neutral | neutral | 1.0683 | [1.052,1.084] | 40f21883155b47eb | check |  | proceed | 0/3 |
 
 ## Held
 

@@ -1,10 +1,10 @@
 # muse_decode_layer findings
 
-Regenerated 2026-10-25T051708Z by `churn.py index`. Read this before writing a hypothesis for muse_decode_layer.
+Regenerated 2026-10-25T053809Z by `churn.py index`. Read this before writing a hypothesis for muse_decode_layer.
 
 ## Current best
 
-1.2856x [1.2663,1.3049] from job `7a9f5de5aecc4aba` (check), master commit `00e36e3a74`, hypothesis w2-marlin-atomic-add-t1-port
+1.2726x [1.2535,1.2917] from job `3fd3fa1f96d045dd` (submit), master commit `00e36e3a74`, hypothesis w2-marlin-atomic-add-t1-port
 
 Where the time goes (per scored shape, top kernels):
 
@@ -31,14 +31,23 @@ Where the time goes (per scored shape, top kernels):
 - **full-decode-cuda-splitkv-port** → neutral (unproven-vs-best), 1.1862x — gained on full decode_16, decode_32. Stage 1 of a rewrite of decode_layer full-attention decode at batch > 1, ported from muse_attention_decode master (full-decode-cuda-gather-splitkv, job 82085a4e
 - **full-verify-cuda-splitkv-stage2** → regression (regression), 1.1559x — lost on full verify_16, verify_32. Stage 2 of full-decode-cuda-splitkv-port: extend the CUDA split-KV path to full-layer verify blocks (q_len 8) at batch 16/32, where master still runs paired FA3
 
+### FA3 call (full decode, batch 1)
+- **full-decode1-two-level-ticket-port** → neutral (within-ci), 1.2746x — gained on sliding verify_32. Built on master, which now carries the landed full-decode-splitkv-restack-on-pdl (CUDA split-KV kernel A/B on full decode 1 < batch <= 64). Port muse_attention_
+
 ### FA3 call (full decode, batch > 1)
 - **full-decode-splitkv-restack-on-pdl** → neutral (unproven-vs-best), 1.2680x — gained on full decode_16, decode_32. Restack decode own neutral full-decode-cuda-splitkv-port (1.186x vs 1.166x base; its gated shapes moved full decode_16 364.9 -> 329.1 us (+12.8%) and full decod
+
+### FA3 call (full decode, batch > 1): splitkv_attn_kernel + splitkv_combine_kernel
+- **full-decode-streamk-ticket-port** → neutral (within-ci), 1.2775x — gained on full decode_16, decode_32. Stage 3 of the decode split-KV line (stage 1 full-decode-cuda-splitkv-port, stage 2 the landed restack). Built on master, which now carries the landed full-deco
 
 ### FA3 call (full decode, batch > 1): splitkv_attn_kernel bytes in flight
 - **full-decode-splitkv-kv-bw-3p5** → neutral (within-ci), 1.2663x — lost on full decode_16. Stage 2 of full-decode-cuda-splitkv-port (REWRITE_READ_2026-10-25 section 2, item 2), built on the restacked code from full-decode-splitkv-restack-on-pdl. Kerne
 
 ### FA3 call (sliding decode, batch 1)
 - **sliding-decode1-fused-restack-on-pdl** → neutral (unproven-vs-best), 1.2374x — gained on sliding decode_1, decode_16, decode_32, verify_1, verify_16; full decode_1, decode_16, decode_32, verify_1. Restack decode own neutral sliding-fused-triton-decode1-port (sliding decode_1 145.8 -> 139.4 us, +4.4%, every other shape flat; it also carried the +8.75% slid
+
+### FA3 call (sliding decode, batch 17..32)
+- **sliding-cluster-c4-decode32-port** → neutral (within-ci), 1.2693x — no shape moved outside noise. Built on master, which now carries the landed full-decode-splitkv-restack-on-pdl (CUDA split-KV kernel A/B on full decode 1 < batch <= 64). Port muse_attention_
 
 ### FA3 call (sliding decode, batch 2..16)
 - **sliding-batched-triton-b16-band** → neutral (unproven-vs-best), 1.2743x — gained on full decode_32. Built on master, which now carries the landed full-decode-splitkv-restack-on-pdl (CUDA split-KV kernel A/B on full decode 1 < batch <= 64). Re-apply decode's ha
@@ -161,7 +170,10 @@ Where the time goes (per scored shape, top kernels):
 - full-decode-splitkv-kv-bw-3p5: rewrite stage 2 of `paired FA3 flash_fwd + FlashAttnFwdCombine + pad/unpad copies + FusedRMSNormGate on full decode, 1 < batch <= 64 (now splitkv_attn_kernel + splitkv_combine_kernel)`: read the replaced kernels' own us 
 - stack-route-topk-pdl-unpool-nf1: within-ci: the change is not proven either way; a stacked hypothesis (`depends_on: stack-route-topk-pdl-unpool-nf1`) that adds a further change in the same area is the only way to learn more (identical code is never re-r
 - dense-chain-stage2-attn-side-pdl-t1-gate: unproven-vs-best: the change is not proven either way; a stacked hypothesis (`depends_on: dense-chain-stage2-attn-side-pdl-t1-gate`) that adds a further change in the same area is the only way to learn more (identical co
+- full-decode-streamk-ticket-port: rewrite stage 3 of `splitkv_attn_kernel + splitkv_combine_kernel on full decode, 1 < batch <= 64`: read the replaced kernels' own us per shape (profile top_kernels) against the incumbent and the floor, and check which Mi
+- full-decode1-two-level-ticket-port: rewrite stage 1 of `FA3 main + FlashAttnFwdCombine + pad/unpad elementwise + FusedRMSNormGate on full decode batch 1`: read the replaced kernels' own us per shape (profile top_kernels) against the incumbent and the floor
 - sliding-batched-triton-b16-band: unproven-vs-best: the change is not proven either way; a stacked hypothesis (`depends_on: sliding-batched-triton-b16-band`) that adds a further change in the same area is the only way to learn more (identical code is nev
+- sliding-cluster-c4-decode32-port: rewrite stage 1 of `FusedQKNorm/rope + FP8 casts + store_cache + FA3 main + FlashAttnFwdCombine + prepare_varlen_num_blocks + FusedRMSNormGate on sliding decode, 17 <= batch <= 32`: read the replaced kernels' own us per 
 - w2-marlin-atomic-add-t1-port: unproven-vs-best: the change is not proven either way; a stacked hypothesis (`depends_on: w2-marlin-atomic-add-t1-port`) that adds a further change in the same area is the only way to learn more (identical code is never 
 - moe-chain-cuda-swapab-expert-once-large-t: rewrite stage 1 of `moe_align_block_size + Marlin w13 + silu_and_mul (act_and_mul_kernel) + Marlin w2 at T > 32 (verify_16 T=128, verify_32 T=256)`: read the replaced kernels' own us per shape (profile top_kernels) again
 - stack-align-par-sliding-batched: none
@@ -188,6 +200,3 @@ Where the time goes (per scored shape, top kernels):
 - queue: prefork-qkv-o-swapab-t16-t32 [qkv GEMM + o GEMM (before the router fork)] p4 hold
 - queue: marlin-two-stream-halves-port [w13 marlin + silu-mul + w2 marlin (8<=T<=32, stream overlap)] p5 hold
 - queue: moe-chain-cuda-swapab-expert-once-fix [w13 marlin + silu-mul + w2 marlin (T>32)] p2 hold
-- running: full-decode-streamk-ticket-port [FA3 call (full decode, batch > 1): splitkv_attn_kernel + splitkv_combine_kernel] p1 running
-- running: full-decode1-two-level-ticket-port [FA3 call (full decode, batch 1)] p2 running
-- running: sliding-cluster-c4-decode32-port [FA3 call (sliding decode, batch 17..32)] p1 running
