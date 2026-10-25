@@ -57,9 +57,18 @@ priority: 1
 kind: primary
 controls_for: null
 review: proceed
-status: queued
+status: running
 review_at: 2026-10-25T011846Z
 review_companions: null
+stage: claimed
+claimed_at: 2026-10-25T011846Z
+base_sha: a9625932047aa6e3c155977025168939699cb9b2
+base_blob: a8bb42ac483318e9fbc84bc7826a27b7a704d1fb
+branch: hyp/muse_bf16_proj/pooler-unpooler-m128-nn-layout-gated
+worktree: .worktrees/muse_bf16_proj/pooler-unpooler-m128-nn-layout-gated
+mode: null
+restack_of: bf16-m128-nn-weight-layout-probe
+stale_base: null
 ---
 
 # pooler-unpooler-m128-nn-layout-gated
