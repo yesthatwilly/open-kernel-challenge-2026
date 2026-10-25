@@ -57,7 +57,7 @@ review: proceed
 status: running
 review_at: 2026-10-25T002203Z
 review_companions: null
-stage: claimed
+stage: implemented
 claimed_at: 2026-10-25T002203Z
 base_sha: f8b3f7230f2656a4143b6a87bb6b8dc1be0b5e49
 base_blob: 7d31b758c60017e045f6e0f75d2e437931ea34b0
@@ -66,6 +66,12 @@ worktree: .worktrees/muse_moe_w4a16/cuda-nvfp4-swapab-mma-persistent-small-m-inp
 mode: null
 restack_of: null
 stale_base: true
+implemented_at: 2026-10-25T003249Z
+impl_commit: 98d0dd04651b5f30e34b1aff6cf4233906880375
+submission_sha256: 7fcc10488ad03889e2a90a0a719352967ce356cbe71a7f10d034eacdb37fcb61
+norm_sha256: c38f444c80bdae160f500f98ce4f8d792c61ad89161de7183964f653065d1829
+submission_blob: 90abfd1b6a054e344505bc60431e382b3f5fe552
+lint_warnings: 24
 ---
 
 # cuda-nvfp4-swapab-mma-persistent-small-m-inproc
@@ -195,3 +201,16 @@ OK with warnings: muse_moe_w4a16/submission.py
 An earlier draft called the synchronize helper directly from `_moe`, and lint rejected it (`error host-sync`). It is now reached only through the prepare-only callback.
 
 py_compile: OK. __pycache__ removed.
+
+## Pre-flight audit
+
+Audited 2026-10-25 by an opus subagent (read-only on the kernel, no GPU). **Verdict: dispatch** (as an `okc check`, per the spec). No fixes applied.
+
+- Merge: the non-CUDA code matches master blob 108d36e. `_moe`'s else branch is master's kernel_fn body unchanged (the two-smaller pick at >=128, the `_align_small` / `_align_parallel` dispatch, both Marlin calls, silu_and_mul), and so is the post-norm tail. prepare() keeps master's warm-ups and `_align_self_check(device, count)`. `_align_self_check` is master's version plus `bsm_of` / `tag0` / `return len(hard)`, and the `(info) capacity` relabel is required: capacity always differs from SGLang (master's log shows 135/135 capacity-only), so without it the CUDA gate would never pass. With `bsm_of=None`, master's `[align-parallel-per-expert-verify]` line now always reports 0 capacity-only. That is a log-only change.
+- Gates that can pass: capability (9,0) and binaryVersion == 90 only, both observable on an H200. The probes don't gate. The self-check bound of 1e-2 per row against Marlin and against the fp32 dequant sits well above the expected bf16-rounding gap (about 2-3e-3). blocks_cap = 32, the tickets and the workspace are big enough for M <= 32 at BSM 8/16/32 (each expert has at most one m-block because top-k ids are distinct).
+- Fallback: every build, image, align, canary, retile-assert and self-check failure is caught inside `_cuda_setup`, which logs `PATH CHOSEN = MARLIN`. The exception is a sticky 715, which cannot be recovered in-process (accepted by the spec).
+- Rules: kernel_fn -> `_moe(..., use_cuda)` has no sync, `.item()` or print. `trace` is None there, the allocations depend on shape only, and the launches use the current stream, so it is graph-capturable. Nothing is derived from inputs. The NVFP4 bytes are retiled losslessly (asserted) and gs x 2^7 is exact. Activations stay BF16. There is no subprocess, network or reference import, and `os.environ` is read only for a log line. okc_lint: OK with warnings (prepare-only syncs, the uint8 NVFP4 byte banks). py_compile: OK.
+- Scope: the probe_kernel (4 one-instruction launches) goes beyond "exactly three changes". It is diagnostic only, runs only in prepare and doesn't gate, so it is acceptable.
+- Note: the `_build_cuda` comment says that cpp_extension adds no -gencode beside `-arch=sm_90a`. The sibling wgmma rebuilds observed that it does add compute_90/sm_90. That is harmless here because no sm_90a-only instruction is used.
+
+Residual risk: the 715 cause is undiagnosed (dropping createpolicy is a guess). A second sticky trap still kills prepare, but the flushed probe and canary lines will name the instruction or launch.
