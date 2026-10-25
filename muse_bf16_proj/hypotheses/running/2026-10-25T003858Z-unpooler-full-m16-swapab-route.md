@@ -48,9 +48,18 @@ priority: 2
 kind: primary
 controls_for: null
 review: proceed
-status: queued
+status: running
 review_at: 2026-10-25T004113Z
 review_companions: null
+stage: claimed
+claimed_at: 2026-10-25T004113Z
+base_sha: e024827fbfe10f55e792e5540c00390bc0df3798
+base_blob: a8bb42ac483318e9fbc84bc7826a27b7a704d1fb
+branch: hyp/muse_bf16_proj/unpooler-full-m16-swapab-route
+worktree: .worktrees/muse_bf16_proj/unpooler-full-m16-swapab-route
+mode: null
+restack_of: null
+stale_base: null
 ---
 
 # unpooler-full-m16-swapab-route
