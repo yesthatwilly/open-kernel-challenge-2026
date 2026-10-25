@@ -65,7 +65,7 @@ base_sha: f50b333a602cc590f2785a1fdd2171af25fe94bb
 base_blob: 5c34fabe0f05fb53014dd85b66864cd3b38bc673
 branch: hyp/muse_moe_w4a16/cuda-nvfp4-wgmma-rega-grouped-sm90a-rebuild-inproc
 worktree: .worktrees/muse_moe_w4a16/cuda-nvfp4-wgmma-rega-grouped-sm90a-rebuild-inproc
-mode: null
+mode: check
 restack_of: null
 stale_base: true
 implemented_at: 2026-10-25T003418Z
@@ -74,6 +74,8 @@ submission_sha256: e0877f3e365fcbabe7eee80f4343f64b2eacb77ad952034ad3785b27b45ef
 norm_sha256: c1b2762ac7d1bc7b239c59ceb492b584c0a35be528a0f37fc3849e6f31505214
 submission_blob: f09390b45e1e1af24f0ccc3645988b81f97b2bf8
 lint_warnings: 30
+attempt_file: 2026-10-25T003418Z-check-cuda-nvfp4-wgmma-rega-grouped-sm90a-rebuild-inproc.md
+prepared_at: 2026-10-25T003418Z
 ---
 
 # cuda-nvfp4-wgmma-rega-grouped-sm90a-rebuild-inproc
