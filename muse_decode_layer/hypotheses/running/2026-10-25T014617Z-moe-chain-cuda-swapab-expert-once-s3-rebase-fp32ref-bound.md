@@ -71,7 +71,7 @@ review: proceed
 status: running
 review_at: 2026-10-25T034534Z
 review_companions: null
-stage: claimed
+stage: implemented
 claimed_at: 2026-10-25T034535Z
 base_sha: 1177e314e5b0c1b2d21bb03967270350659d0f15
 base_blob: 451c3c09efdc6fc55db461ae20f27cd8e1cd4e9c
@@ -80,6 +80,12 @@ worktree: .worktrees/muse_decode_layer/moe-chain-cuda-swapab-expert-once-s3-reba
 mode: null
 restack_of: null
 stale_base: true
+implemented_at: 2026-10-25T035159Z
+impl_commit: f75681f6130e914b9d18cf614cd177c9d63c48ff
+submission_sha256: cdcac6439df93fb054336b23ab4c5cec6367baeb93e5a66a54cc8deef36d4988
+norm_sha256: 2e18883291be972ece9c4588d8b6421f45d470803b492f037078ff59c7576269
+submission_blob: aa4d099296999ecc3e96238423bded7c90dd656e
+lint_warnings: 52
 ---
 
 # moe-chain-cuda-swapab-expert-once-s3-rebase-fp32ref-bound
@@ -130,3 +136,41 @@ No companion. This is a rewrite stage whose result is read from the replaced ker
 - If the fp32 reference shows the new chain at >1.5x Marlin, find the cause (scale fold in bf16 via __hmul2, global-scale rounding, act rounding) before raising any bound. If it shows Marlin at the larger error, the stage-2 OFF was a false negative.
 - Is stage 2's original queued sibling 'moe-chain-cuda-swapab-expert-once-fix' (child-process design, queue/2026-10-25T001250Z) still queued? The rules reject process starts, so it should be retired, not run.
 
+
+## Implementation notes
+
+- Rebase (review wins over the spec's `git apply -3` recipe): cumulative `git merge-file` of base a449561, ours master, theirs 1177e31 on scratch copies. Its conflicts were two large pure insertions at one point plus small edits, so the resolution kept ALL of master (dense chain, parallel align, side-stream `_expert_dispatch`, sliding batch-1 path) and carried the chain's section (`# CUDA large-T MoE path` through `_lt_setup`, unchanged kernels and canary ladder) in before `prepare()`. Diff vs master: +1247/-9, only the module docstring, `import os`, that section, the `_lt_setup` call at the end of `prepare()`, `_experts` -> `_marlin_experts` (returns out, y, cache2, local_ids; `_experts` is a thin wrapper returning out, so the dense chain call is unchanged) and the `kernel_fn` large-T branch.
+- Dispatch: `use_lt = tokens > 32 and state["moe_cuda_large_t"]` (host flag, shape only). On the side stream: shifted ids, fp32 weights and `moe_route_list`; on the main stream after `wait_stream`: `moe_w13_silu_swapab`, `moe_w2_swapab`, combine. `_lt_experts` was split into `_lt_route` + GEMMs for that. No align runs on the chain path.
+- Gate (review): fp32 reference per T=40/128/256, dequantized ONE expert at a time and freed (`_lt_fp32_ref`); x is `pre_expert_norm(randn)` (unit-RMS fallback). Both Marlin and the new chain are measured against it (global rel L2 and max row rel, row reference floored at 0.1 x mean row norm) for act, y and out. Enable only if finite, ids equal, repeat identical and, on the FINAL out, new <= max(1.5 x Marlin, floor 3e-3 global / 6e-3 row) and under caps 1.5e-2 / 3e-2. act and y errors, the ratios, the old Marlin-relative numbers and a sanity check of the fp32 combine are printed only. Deviation from the spec: floors 3e-3/6e-3 (not 5e-3/1e-2), ratio binding. The old hot-expert check is subsumed. Reference freed and `empty_cache()` before timing.
+- Timing now prints for T=128/256 before the decision whenever the canaries and the self-check ran, ON or OFF.
+- Kept: sm_90a-only build, binaryVersion==90 gate, canary ladder, plain cp.async.cg, __hmul2, flushed announce + synchronize around each prepare launch, loud PATH CHOSEN line.
+- Not verifiable here: no GPU. The reference's final norm (rsqrt(mean s^2 + eps) * post_expert_w) is my reading of `weight_first=True`; the printed combine sanity line shows if it is wrong (then the path stays OFF, safely).
+
+## Rules check
+
+- [x] CUDA-graph capturable: kernel_fn additions are launches, allocations by shape and stream waits only; syncs, .cpu(), the build, canaries and the reference are in prepare() (checked in the diff).
+- [x] Nothing derived from `data` is cached: only weights-derived `lt_bank`, `lt_ext`, `lt_grid`, flag; ids and routing are per call.
+- [x] Weights repacked losslessly in prepare() only (round-trip asserts kept); NVFP4 stays NVFP4.
+- [x] Activations BF16, act rounded to bf16 as SGLang's Marlin path does; fp32 only in the prepare-time reference.
+- [x] n/a: attention is untouched by this diff.
+- [x] No timing patches, harness access, reference import, or child process (grep for subprocess/multiprocessing/fork/Popen: none).
+- [x] All work inside the timed call; no output caching or replay.
+- [x] No triton.autotune added; no host sync in kernel_fn.
+
+okc_lint: "OK with warnings" (warnings are only prepare()-side host-sync and uint8 weight/canary dtypes). py_compile OK, __pycache__ removed.
+
+## Pre-flight audit
+
+Audited 2026-10-25 by an opus subagent. **Verdict: dispatch-with-fixes.**
+
+Fixes (in the worktree submission.py):
+- `_lt_fp32_ref` combine semantics were wrong. It took the weighted sum first, then one RMSNorm, then multiplied by (1 + w). reference.py `post_expert_norm` / `_experts` (and SGLang's `weight_first=True`) apply the norm per route: z = y * (1 + w), then z * rsqrt(mean z^2 + 1e-8), then the topk-weighted sum over the local routes. Against the old "reference", both kernels would show O(1) error, which fails the 1.5e-2 / 3e-2 caps on every T. The path would always be OFF, so the run would be wasted. Fixed to reference.py's exact order, with fp32 (1 + post_expert_norm) as the judge uses (not the bf16 effective weight), and updated the docstring. okc_lint OK (prepare-side warnings only), py_compile OK, no __pycache__ left.
+
+Checked, no change needed:
+- kernel_fn: the large-T branch is reachable only in the non-dense-chain branch with tokens > 32 and the prepare() flag set. Master's dl chain (T <= 32), parallel align, `_expert_dispatch` and side-stream overlap are unchanged on every shape the chain does not take. `_experts` is a pure wrapper.
+- Graph capture: launches use getCurrentCUDAStream, there is no host sync, allocations depend on shape only, and record_stream is guarded by the capture state.
+- Memory and time: the fp32 dequant runs one expert at a time (peak under 1 GB) and is freed, with empty_cache before timing. Stage 2 compiled in ~31 s, well inside the 300 s prepare budget.
+- Gates: binaryVersion==90 and the arch probe, announced and synced canaries.
+- Rules: no child process beyond load_inline's build, nothing cached from inputs.
+
+Residual risk: the fp32 reference now matches the judge, but stage 2's ~6e-3 out gap may be real new-chain error. If so, the 1.5x-Marlin ratio keeps the path OFF (a neutral run).
