@@ -76,8 +76,10 @@ kind: rewrite
 controls_for: null
 rewrite_stage: 1
 replaces: moe_wna16_marlin_gemm x2 (Marlin w13 + w2) at 1024 < T <= 4096 (turn_4, T=3012)
-review: required
+review: proceed
 status: queued
+review_at: 2026-10-25T085139Z
+review_companions: null
 ---
 
 # experts-turn4-ssdq-s1b-dataptr-symbol-fix
@@ -104,3 +106,27 @@ shape (profile top_kernels) against the incumbent and the speed-of-light floor, 
 2. at or below the incumbent kernels' time on the target shapes;
 3. within ~1.5x of the floor on the target shapes, and the headline CI clears 1.0 (promotable).
 The next stage is minted with `--kind rewrite --depends-on <this slug> --stage N+1`.
+
+## Adversarial review
+
+Reviewed 2026-10-25T085139Z by an adversarial subagent (model opus).
+
+**Verdict: proceed.** This is a legitimate re-run: stage 1 never executed because of an import-time undefined symbol (data_ptr<long long>), and the fix is mechanical and correct. The design is copy-safe for the judge's two-state clone (TMA map encoded per launch from the passed tensor, dispatch gated only on the state boolean ssdq_ok), so run it as one okc check with no companions. Two spec-vs-code contradictions need fixing at build time: setmaxnreg 232/160 cannot fit in the register file, and the gate ratio is 0.92 in code but 0.95 in the spec.
+
+### Justification
+A: The mechanism is plausible. At turn_4 the Marlin pair costs 2148/2115 us (64.5% / 42.8% of the shape) against a 306 us math floor. At T=3012 there are about 94 local routes per expert, so one 128-route M tile per expert dequantizes each weight tile about once. That moves the dequant from per-use in registers (Marlin) to once per (expert, N tile, K step), and SS wgmma m64n256k16 then runs at near tensor rate. The <=1200 us target (about 4x the floor) is reachable on paper. The expected directions are consistent with the code: the path serves only 1024 < T <= 4096, so turn_1 (T=753) stays on Marlin and first_turn (T=16384) stays on Triton. The diagnosis is right. libtorch exports data_ptr<int64_t> (long on LP64), not long long, so the .so linked but failed at dlopen (patch line 530). data_ptr<int> and data_ptr<float> are exported, so replacing them is uniformity only, which is harmless. Weakest link: the kernel has never executed. This run is the first real test of the mbarrier/TMA ring, the producer dequant into a 128B-swizzled stage, and the wgmma descriptors. The most likely outcome is an OFF at the canary or self-check, which re-measures master (neutral about 1.07). That is still readable, because the log prints the error word, the first non-finite tensor and the per-case rel-L2. Second weak point: the occupancy and parallelism shape. __launch_bounds__(THREADS,1) gives 1 CTA/SM, with 32 local experts x (N/256) tiles per GEMM, about 27% M-padding (94 -> 128) and a single producer WG doing all dequant. If the counters show a large consumer wait, the bottleneck is the producer, and fixing it belongs in stage 2.
+
+### Confounders on the current kernel
+- experts-hybrid-marlin-turn-triton-first-turn: defines MARLIN_MAX_TOKENS=4096 and the shape gate that the ssdq branch nests inside. If that threshold changes, the T range served changes. It does not confound turn_4 kernel time, which is the stage's milestone.
+- stack-tonight-five-prefill: provides _align_parallel and the align_par_ok flag (ssdq setup goes OFF if parallel align is off), plus the zero_nonlocal_w2 flag that _experts_ssdq honours. The ssdq path reuses the parallel align, so the gate's Marlin-vs-ssdq comparison shares that cost and attribution stays clean. If align_par_ok is False in the judge run, the result is a silent master re-measure; the harvest must check the OFF line.
+- sglang-pipeline-parity and experts-triton-w4a16-first-turn-blockt256: they touch different shapes or launch paths and do not confound the turn_4 expert kernel time.
+
+### Interference and A/B needs
+No companions. This is a kind: rewrite stage judged on the replaced kernels' own time in the profile (Marlin 2148/2115 us at turn_4 vs the ssdq kernel rows), not on the headline. The path is self-gated, with an in-prepare cold-L2 A/B against master's exact Marlin block. Every failure mode prints a distinct OFF line, so both a gain and a loss can be read from the log plus the profile without a second run. With 8 prefill checks left, a companion would buy nothing that the gate medians and the producer/consumer counters do not already print.
+
+### Open questions
+- After the fix, grep the built C++ string for 'data_ptr<' (the planned prepare audit). Also confirm that any at::Tensor accessor with a template (e.g. size<>, item<>) is absent, since those could hit the same long/long long trap.
+- If the canary passes but the self-check fails, is the bound max(2x Marlin rel-L2, 8e-3) tight enough to separate a swizzle or descriptor bug from fp32-accumulation noise? The per-case print gives both numbers; read them before minting stage 2.
+- Harvest: confirm the profile shows the ssdq kernel row at turn_4 and that Marlin is absent there. A PATH CHOSEN=ssdq line alone is not proof (moe s4 lesson).
+- SSDQ_BUDGET_S=170 s plus about 31 s of compile: does prepare() on current master (with the stack-tonight-five checks) leave room, or will the run go OFF for budget before it builds?
+
