@@ -64,7 +64,7 @@ base_sha: f6e653b6cc358b21c20086af784b37d069a021a5
 base_blob: c9067b8201f2480c64910c4a71098df7ce616f73
 branch: hyp/muse_decode_layer/full-decode-streamk-ticket-port
 worktree: .worktrees/muse_decode_layer/full-decode-streamk-ticket-port
-mode: null
+mode: check
 restack_of: null
 stale_base: null
 implemented_at: 2026-10-25T043330Z
@@ -73,6 +73,8 @@ submission_sha256: a69a00ee5d71779ad51f9fb05824d398a416f7d62f2609e73d64723e081d4
 norm_sha256: 07b790c1ca28561819a451e3ec1ad0a5a4f52bf75bd1ae58b75d60d378d0f1a7
 submission_blob: 14a7c7be22acb26d22510ac7c55ea96451f9c483
 lint_warnings: 44
+attempt_file: 2026-10-25T043330Z-check-full-decode-streamk-ticket-port.md
+prepared_at: 2026-10-25T043330Z
 ---
 
 # full-decode-streamk-ticket-port
