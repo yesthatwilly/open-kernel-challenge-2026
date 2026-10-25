@@ -2,7 +2,7 @@
 
 Hypothesis: `muse_attention_decode/hypotheses/done/gain/2026-10-25T054448Z-restack-sk-pseudo-cluster-plus-v3-fused-preattn.md` (branch `hyp/muse_attention_decode/restack-sk-pseudo-cluster-plus-v3-fused-preattn`).
 
-- **Job:** `<job id>` (`okc status <job>`)
+- **Job:** `d672f69ea69b4396` (`okc status <job>`)
 - **File:** `muse_attention_decode/submission.py` at git `00f7debf`
 
 ## Goal
