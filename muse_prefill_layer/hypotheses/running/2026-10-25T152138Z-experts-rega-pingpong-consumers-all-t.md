@@ -141,3 +141,60 @@ No companion is warranted. The change carries its own control: prepare() runs ma
 - At turn_4 (~173 routes/expert, a mix of NB=128 and NB=64 chunks), does PP win on the NB=64 items, where each group's MMA (~256 clk) is about as long as its dequant? The per-class gate decides, but a per-bucket split in the print would say whether a bucket-gated PP is the follow-up.
 - Is the route count used for the TFLOP/s print measured in prepare (from n_padded / sorted_ids at the gate routing) or backed out from TASK.md floors? Only the measured number makes the per-kernel efficiency comparable across variants and shapes.
 
+
+## Implementation notes
+
+Built on base f4ace866 (master 47eaa27e has the same submission.py blob a2fe2a75, so no merge needed). Only `muse_prefill_layer/submission.py` in the worktree changed (+629/-12).
+
+**What changed**
+- New section before `kernel_fn` with constants `REGA_PP_*`, `_REGA_PP_CPP`, `_REGA_PP_PRE`, `_REGA_PP_INIT`, `_REGA_PP_SUBS`, plus `_rega_class`, `_rega_pp_src`, `_rega_pp_diff/_compare/_replay_check/_medians/_kernel_times/_gate` and `_rega_pp_setup`.
+- CUDA: a separate extension **muse_prefill_rega_pp**. It holds only `rega_kernel_pp<G, BIG>` (4 instantiations), `rega_pp_init` and `rega_gemm_pp`, which has master's `rega_gemm` signature. Its source is **derived** from master's `_REGA_HEAD` / `_REGA_BODY` by slicing at 7 anchors and 14 exact substitutions, each required to match exactly once. Master's strings are not edited. A CPU harness confirmed that the v1 fallback still hashes to `REGA_V1_SHA256`, that the derived source has no master kernel names left, and that `_rega_audit_cpp` finds 0 globals in it. The gather stays master's `rega_ext.rega_gather`.
+  - `consume_item_pp`: in each k-stage, WG2 (`cw >= 4`) runs `pp_sync(3)`. WG1 runs `if (started) pp_sync(2); started = true;`. Then come master's mbar_wait / dq / 8 wgmma / commit, then `pp_arrive(wg2 ? 2 : 3)`, then master's `wgmma_wait<0>` / fence_acc / `if (lane == 0) mbar_arrive(empty)`. The epilogue is master's text, unchanged.
+  - `rega_kernel_pp`: master's kernel text with these changes: launch marker 0x50504d4d (instead of master's 0x57474d4d), `const bool wg2 = cw >= 4; bool started = false;`, the `consume_item_pp` call, and after the item loop `if (!wg2 && started) pp_sync(PP_BAR_A);`.
+  - `pp_sync` / `pp_arrive` call `__syncwarp()` and then `bar.sync` / `bar.arrive id, 256`.
+- `_experts_rega(..., pp=None, keep=None)`. When `pp` is None (the timed call) it uses `state.get("rega_pp", {}).get(_rega_class(T), False)`, which is a shape class plus a prepare-time flag. When pp is set it calls `state["rega_pp_ext"].rega_gemm_pp`. `keep` (prepare only) receives hs, y and the align tables.
+- `_rega_build` gained optional `cpp=` / `functions=` arguments. Their defaults are master's, so master's call is unchanged.
+- `prepare()` calls `_rega_pp_setup` **after** `_rega_setup` returns, then prints the align2 lines, then the PP lines (gate lines, `OFF <cls>: reason`, and one `[rega-pp] PATH CHOSEN <cls>` line per class) as the last lines.
+
+**Binding review / caller items**
+1. Build order: master's whole setup is untouched and runs in its original order, including the ft start deadline (150 s) and copy deadline (255 s). The PP build starts only afterwards, under its own deadlines: no build after `REGA_PP_START_DEADLINE_S` = 180 s, and no new class step after `REGA_PP_STEP_DEADLINE_S` = 240 s. Classes are processed ft, high, low, and only those whose master `rega_ok` is ON. A build failure, spill, attribute or register-pool failure, canary miss, exactness miss, replay miss, gate miss or exception leaves that class on master's rega. PP is also skipped when master is running its v1 fallback (`len(rega_init()) != 40`).
+2. `_REGA_HEAD` / `_REGA_BODY` are not edited (SHA check reproduced on CPU).
+3. Hang safety: every item in the review checklist is applied. `started` is a per-thread register. The final PP_A sync uses the same predicate in all 128 WG1 threads. PP ops are unconditional with respect to `dead`. Bars 2/3 are used nowhere else (0 is `__syncthreads`, 1 is the epilogue). `__syncwarp` precedes each bar op, and lane 0's mbar_arrive sits outside them. A canary runs before any other PP launch: T=210 `one` (2 chunks; w2 has 64 items on 132 CTAs, so CTAs get 0 or 1 item; w13 has 128 items) and then T=300 random (7-16 items per CTA). Every launch has a flushed print before it and a sync plus print after it.
+4. The per-kernel line `[rega-pp] KERNELS T=...` shows w13 and w2 timed alone (one-launch graphs, cold L2, interleaved) for master and pp. Each shows us, TFLOP/s and **TB/s L2->SM**. The traffic counts 9216 B of weight plus 2 x NB x 128 B of activation per item-stage, with NB taken from each chunk's block count. The route count is measured from the gate routing (`(lids >= 0).sum()`). The line also prints padded slots and the chunk histogram per N bucket.
+5. Per-class gate: (a) exactness: max diff 0 between pp and master's rega, eager, on master's self-check routings (low: 753/1024 random/skewed/one; high: 3012/4096 random/skewed/one; ft: 4500 local, 8192 random/local, 16384 random/skewed/one/local). This uses `torch.equal` on hs (rows of used local blocks) and y (local-route rows) and on the align tables, and requires error word 0 and the right markers on both. (b) Copy check: states A, B (deepcopy with both modules in the memo) and C (tensor clone), one graph each, replays A, B, C, A, B with refilled inputs. Each replay must be bit-identical to master's eager rega on the same inputs, with that state's own error word 0 and both PP markers. TMA maps are encoded per call from that call's tensors, as in master, and nothing sits at file scope. (c) Speed: whole expert block, cold-L2 graph medians over `REGA_ALTERNATIONS` with the empty graph subtracted, at master's gate T (753 / 3012 / 16384 soft). ON only if pp <= 0.98 x master's rega.
+
+**Barrier count table** (all four instantiations share one warp layout: 384 threads, producer warps 0-3, WG1 = CTA warps 4-7 (cw 0-3), WG2 = CTA warps 8-11 (cw 4-7); NB only changes the wgmma width; KS = 4096/128 = 32 for both w13 and w2; S = stages consumed by the CTA = 32 x items):
+
+| items/CTA | S | PP_A (bar 2): WG1 bar.sync | PP_A: WG2 bar.arrive | PP_B (bar 3): WG1 bar.arrive | PP_B: WG2 bar.sync | bar 1 (epilogue, 256) |
+|---|---|---|---|---|---|---|
+| 0 | 0 | 0 (`started` false, no final) | 0 | 0 | 0 | 0 |
+| 1 | 32 | 31 in-loop + 1 final = 32 | 32 | 32 | 32 | 2 (both WGs) |
+| 2 | 64 | 63 + 1 = 64 | 64 | 64 | 64 | 4 |
+| k >= 1 | 32k | 32k - 1 + 1 = 32k | 32k | 32k | 32k | 2k |
+
+Every phase is 128 syncing threads plus 128 arriving threads = 256, the count. WG2 cannot arrive PP_A twice inside one phase, because its next PP_B sync needs WG1's next PP_B arrive, which comes after WG1's PP_A sync. WG1 cannot arrive PP_B twice either, because its next arrive comes after a PP_A sync that needs WG2's arrive, which comes after WG2's PP_B sync. At an item boundary, WG1 reaches the epilogue's bar 1 after its last PP_B arrive. WG2 reaches bar 1 after its last PP_B sync, which is already satisfied, so it cannot deadlock. WG1's next-item PP_A sync pairs with WG2's arrive from before bar 1. The mbar timeout path (`dead`) skips only mbar waits, never PP ops. WG1 runs at most one stage ahead of WG2 on the 4-stage ring, so full/empty parity aliasing cannot occur.
+
+**Deviations from the spec**
+- The module is named `muse_prefill_rega_pp`, not v3 (caller's instruction; the sibling uses v3). It does **not** recompile master's source plus PP: it compiles only the 4 PP instantiations, which saves about half the nvcc time. If the build fails, PP stays OFF and master's already-built module keeps running. Nothing is rebuilt.
+- Exactness and the copy check compare against master's rega bit for bit, not against the fp32 reference, which master's own checks already cover. Rows the kernels never write (torch.empty padding) are excluded. The final weighted-sum output's max diff is printed for information but not gated, so a non-deterministic SGLang reduction cannot veto the class.
+- Per-bucket split (open question 3): only the chunk histogram per N bucket is printed. Per-bucket timing is not.
+- Open question 2 (the epilogue's half-stage drain per item): not modelled. The in-prepare gate measures it.
+
+## Rules check
+
+- [x] CUDA-graph capturable: `kernel_fn` adds only a dict lookup on a prepare-time flag keyed by a token-count class. There are no syncs, prints, try/except or allocations sized by input values. The PP launch is `rega_gemm_pp`, with master's signature and per-call map encoding.
+- [x] Nothing derived from `data` is cached: `state["rega_pp"]` holds bools set in prepare and `state["rega_pp_ext"]` is a module. `keep` is passed only by prepare.
+- [x] Weights: the same `rega_bank` (lossless NVFP4/E4M3 retile from master). Dequant happens in registers, unchanged.
+- [x] Activations BF16, fp32 accumulation; outputs bit-identical to master's rega (gated).
+- [x] n/a: attention is untouched (every key).
+- [x] No timing patches, harness access, module edits, reference import, subprocesses or network: only in-process `load_inline`.
+- [x] All work happens inside the timed call; no output caching or replay.
+- [x] Two-state safety: no module, static or C++ globals (audit: 0 findings on the derived source). The A/B/C refilled-replay check runs with PP on.
+
+```
+$ python3 -I .claude/skills/churnsubs/bin/okc_lint.py <wt>/muse_prefill_layer/submission.py --problem muse_prefill_layer
+warn  host-sync ... (prepare-only; many, all "outside kernel_fn's call graph; fine in prepare()")
+warn  dtype        L3427/L3428 (master's rega bank), L3686 (master's pad), L4364 (PP replay-check pad, same as master's)
+OK with warnings: muse_prefill_layer/submission.py
+```
+`python3 -I -m py_compile` ok; `__pycache__` removed. A CPU dry run of `_rega_pp_setup` exercised these branches: master all OFF, start deadline, v1 fallback, and build failure. Each printed per-class OFF reasons and `PATH CHOSEN ... master`.

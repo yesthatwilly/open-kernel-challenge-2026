@@ -76,10 +76,10 @@ priority: 1
 kind: primary
 controls_for: null
 review: proceed
-status: running
+status: done
 review_at: 2026-10-25T152551Z
 review_companions: null
-stage: dispatched
+stage: harvested
 claimed_at: 2026-10-25T152552Z
 base_sha: 7faa35ba9069ec4a6c1942887916e7e77d381e1c
 base_blob: a2fe2a75893c60d4f68cf94fcce8ce8f9b708a71
@@ -98,6 +98,13 @@ attempt_file: 2026-10-25T153230Z-submit-fa3-full-contiguous-kv-triton-gather-gat
 prepared_at: 2026-10-25T153230Z
 job: 1cc92a43b8be40f8
 dispatched_at: 2026-10-25T153238Z
+outcome: neutral
+verdict_detail: unproven-vs-best
+speedup: 1.4586709689454935
+speedup_ci: [1.4367909044113112, 1.4805510334796759]
+harvested_at: 2026-10-25T153923Z
+best_at_harvest: 1.4480354973438967
+promotion: null
 ---
 
 # fa3-full-contiguous-kv-triton-gather-gated
@@ -187,3 +194,31 @@ Verified with no change needed:
 - Variant C fails closed. Exceptions are caught per variant in the self-check, in capture and in replay, and a wrong output fails the tolerance. Sliding layers, page 64, kv-scaled and every untimed key stay on master's call. No test shape hits a routed key.
 
 Residual risk: a sticky CUDA fault (illegal address) inside FA3 batched mode C during the self-check could not be contained by try/except, and the ctx65536 class sits near its 0.98 bar, so its routing may differ from run to run.
+
+## Result
+
+- job `1cc92a43b8be40f8` (submit), status done, passed True, tests 5/5
+- speedup 1.4587x, 95% CI [1.4368, 1.4806], score 265586.8994774491 µs vs SGLang 387403.9 µs
+- best at harvest: {"speedup": 1.4480354973438967, "ci": [1.4263149648837383, 1.469756029804055], "job": "bff8e36788a04917"}; base result: muse_prefill_layer/hypotheses/done/neutral/align-two-phase-all-t-rega.result.json
+- **outcome: neutral** (unproven-vs-best)
+- files: `muse_prefill_layer/hypotheses/done/neutral/fa3-full-contiguous-kv-triton-gather-gated.result.json`, `muse_prefill_layer/hypotheses/done/neutral/fa3-full-contiguous-kv-triton-gather-gated.patch`; branch `hyp/muse_prefill_layer/fa3-full-contiguous-kv-triton-gather-gated`
+
+## Attribution
+
+| shape | w | base µs | hyp µs | delta | verdict |
+|---|---|---|---|---|---|
+| batch=1 ctx=80000 dist=soft layer=sliding load=turn_1 page=1 q_len=753 repeats=6 | 46 | 704.38 | 720.18 | 0.9946 | flat |
+| batch=1 ctx=80000 dist=soft layer=full load=turn_1 page=1 q_len=753 repeats=6 | 16 | 1097.89 | 1132.2 | 1.0055 | flat |
+| batch=4 ctx=80000 dist=soft layer=sliding load=turn_4 page=1 q_len=753 repeats=6 | 46 | 2098.36 | 2152.68 | 0.9906 | flat |
+| batch=4 ctx=80000 dist=soft layer=full load=turn_4 page=1 q_len=753 repeats=6 | 16 | 3644.6 | 3701.15 | 1.0191 | flat |
+| batch=1 ctx=0 dist=soft layer=full load=first_turn page=1 q_len=16384 repeats=6 | 16 | 12078.49 | 11852.94 | 1.0342 | gained |
+| batch=1 ctx=32768 dist=soft layer=sliding load=first_turn page=1 q_len=16384 repeats=6 | 138 | 11285.6 | 10947.18 | 1.0234 | flat |
+| batch=1 ctx=32768 dist=soft layer=full load=first_turn page=1 q_len=16384 repeats=6 | 16 | 15310.56 | 15058.23 | 1.0423 | gained |
+| batch=1 ctx=65536 dist=soft layer=full load=first_turn page=1 q_len=16384 repeats=6 | 16 | 18819.51 | 18490.87 | 1.0471 | gained |
+
+gained on full first_turn. Expected hit: 5/6. Noise ±1.5%.
+
+## Follow-ups
+
+- unproven-vs-best: the change is not proven either way; a stacked hypothesis (`depends_on: fa3-full-contiguous-kv-triton-gather-gated`) that adds a further change in the same area is the only way to learn more (identical code is never re-run).
+

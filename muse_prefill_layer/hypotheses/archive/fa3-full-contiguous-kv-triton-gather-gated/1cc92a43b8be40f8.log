@@ -1,0 +1,113 @@
+m] launching rega_gather
+[rega] [ft T=16384 random] rega_gather done (168 us eager)
+[rega] [ft T=16384 random] launching rega_kernel<w13+silu>
+[rega] [ft T=16384 random] rega_kernel<w13+silu> done (1955 us eager)
+[rega] [ft T=16384 random] launching rega_kernel<w2>
+[rega] [ft T=16384 random] rega_kernel<w2> done (948 us eager)
+[rega] ft self-check T=16384 random: 16368 local routes; block table 8222 (first-turn class), 1038 used, 144 chunks (max 5 per expert; items w13 9216, w2 4608); rega rel L2 5.628e-04 worst row 2.640e-03; triton 4.517e-03 / 5.200e-03; bound 9.033e-03; error word 0 (ok); launch markers w13 0x57474d4d w2 0x57474d4d
+[rega] [ft T=16384 skewed] launching align
+[rega] [ft T=16384 skewed] align done (145 us eager)
+[rega] [ft T=16384 skewed] launching rega_gather
+[rega] [ft T=16384 skewed] rega_gather done (360 us eager)
+[rega] [ft T=16384 skewed] launching rega_kernel<w13+silu>
+[rega] [ft T=16384 skewed] rega_kernel<w13+silu> done (8923 us eager)
+[rega] [ft T=16384 skewed] launching rega_kernel<w2>
+[rega] [ft T=16384 skewed] rega_kernel<w2> done (4467 us eager)
+[rega] ft self-check T=16384 skewed: 73668 local routes; block table 8222 (first-turn class), 4619 used, 588 chunks (max 131 per expert; items w13 37632, w2 18816); rega rel L2 6.994e-04 worst row 1.923e-03; triton 4.651e-03 / 5.118e-03; bound 9.301e-03; error word 0 (ok); launch markers w13 0x57474d4d w2 0x57474d4d
+[rega] [ft T=16384 one] launching align
+[rega] [ft T=16384 one] align done (124 us eager)
+[rega] [ft T=16384 one] launching rega_gather
+[rega] [ft T=16384 one] rega_gather done (160 us eager)
+[rega] [ft T=16384 one] launching rega_kernel<w13+silu>
+[rega] [ft T=16384 one] rega_kernel<w13+silu> done (2050 us eager)
+[rega] [ft T=16384 one] launching rega_kernel<w2>
+[rega] [ft T=16384 one] rega_kernel<w2> done (1046 us eager)
+[rega] ft self-check T=16384 one: 16384 local routes; block table 8222 (first-turn class), 1024 used, 128 chunks (max 128 per expert; items w13 8192, w2 4096); rega rel L2 5.461e-04 worst row 2.088e-03; triton 4.357e-03 / 5.388e-03; bound 8.715e-03; error word 0 (ok); launch markers w13 0x57474d4d w2 0x57474d4d
+[rega] [ft T=16384 local] launching align
+[rega] [ft T=16384 local] align done (134 us eager)
+[rega] [ft T=16384 local] launching rega_gather
+[rega] [ft T=16384 local] rega_gather done (565 us eager)
+[rega] [ft T=16384 local] launching rega_kernel<w13+silu>
+[rega] [ft T=16384 local] rega_kernel<w13+silu> done (15180 us eager)
+[rega] [ft T=16384 local] launching rega_kernel<w2>
+[rega] [ft T=16384 local] rega_kernel<w2> done (7276 us eager)
+[rega] ft self-check T=16384 local: 131072 local routes; block table 8222 (first-turn class), 8207 used, 1042 chunks (max 33 per expert; items w13 66688, w2 33344); rega rel L2 7.678e-04 worst row 2.086e-03; triton 4.683e-03 / 5.091e-03; bound 9.366e-03; error word 0 (ok); launch markers w13 0x57474d4d w2 0x57474d4d
+[rega] ft self-check done; max_memory_allocated 13.65 GiB
+[rega] phase ft-self-check: 1.0s; prepare total 120.2s; budget remaining 79.8s of 200s
+[rega] copy B: bank 0xc8610000000 vs A 0xc87b8000000, err 0xc8a47f14800 vs A 0xc8a47ee3a00 (shared: False)
+[rega] copy C: bank 0xc85ec000000 vs A 0xc87b8000000, err 0xc8a47f17c00 vs A 0xc8a47ee3a00 (shared: False)
+[rega] replay T=8192 random state A: rega rel L2 5.543e-04 worst row 2.945e-03; triton 4.523e-03; bound 9.046e-03; error word 0; launch markers w13 yes w2 yes
+[rega] replay T=8192 random state B: rega rel L2 5.489e-04 worst row 2.072e-03; triton 4.529e-03; bound 9.058e-03; error word 0; launch markers w13 yes w2 yes
+[rega] replay T=8192 random state C: rega rel L2 5.564e-04 worst row 2.111e-03; triton 4.510e-03; bound 9.020e-03; error word 0; launch markers w13 yes w2 yes
+[rega] replay T=8192 random state A: rega rel L2 5.479e-04 worst row 2.185e-03; triton 4.520e-03; bound 9.040e-03; error word 0; launch markers w13 yes w2 yes
+[rega] replay T=8192 random state B: rega rel L2 5.655e-04 worst row 2.496e-03; triton 4.511e-03; bound 9.022e-03; error word 0; launch markers w13 yes w2 yes
+[rega] replay T=8192 local state A: rega rel L2 7.693e-04 worst row 1.734e-03; triton 4.683e-03; bound 9.366e-03; error word 0; launch markers w13 yes w2 yes
+[rega] replay T=8192 local state B: rega rel L2 7.631e-04 worst row 1.816e-03; triton 4.684e-03; bound 9.367e-03; error word 0; launch markers w13 yes w2 yes
+[rega] replay T=8192 local state C: rega rel L2 7.660e-04 worst row 1.836e-03; triton 4.685e-03; bound 9.371e-03; error word 0; launch markers w13 yes w2 yes
+[rega] replay T=8192 local state A: rega rel L2 7.649e-04 worst row 1.665e-03; triton 4.685e-03; bound 9.371e-03; error word 0; launch markers w13 yes w2 yes
+[rega] replay T=8192 local state B: rega rel L2 7.619e-04 worst row 1.745e-03; triton 4.682e-03; bound 9.365e-03; error word 0; launch markers w13 yes w2 yes
+[rega] replay T=8192: graphs freed; max_memory_allocated 14.03 GiB
+[rega] replay T=16384 random state A: rega rel L2 5.684e-04 worst row 2.387e-03; triton 4.517e-03; bound 9.034e-03; error word 0; launch markers w13 yes w2 yes
+[rega] replay T=16384 random state B: rega rel L2 5.644e-04 worst row 2.631e-03; triton 4.514e-03; bound 9.028e-03; error word 0; launch markers w13 yes w2 yes
+[rega] replay T=16384 random state C: rega rel L2 5.690e-04 worst row 2.490e-03; triton 4.515e-03; bound 9.029e-03; error word 0; launch markers w13 yes w2 yes
+[rega] replay T=16384 random state A: rega rel L2 5.642e-04 worst row 2.620e-03; triton 4.518e-03; bound 9.035e-03; error word 0; launch markers w13 yes w2 yes
+[rega] replay T=16384 random state B: rega rel L2 5.698e-04 worst row 2.394e-03; triton 4.515e-03; bound 9.029e-03; error word 0; launch markers w13 yes w2 yes
+[rega] replay T=16384 skewed state A: rega rel L2 6.998e-04 worst row 2.208e-03; triton 4.650e-03; bound 9.300e-03; error word 0; launch markers w13 yes w2 yes
+[rega] replay T=16384 skewed state B: rega rel L2 6.968e-04 worst row 2.535e-03; triton 4.652e-03; bound 9.305e-03; error word 0; launch markers w13 yes w2 yes
+[rega] replay T=16384 skewed state C: rega rel L2 7.053e-04 worst row 2.135e-03; triton 4.649e-03; bound 9.297e-03; error word 0; launch markers w13 yes w2 yes
+[rega] replay T=16384 skewed state A: rega rel L2 7.028e-04 worst row 2.076e-03; triton 4.650e-03; bound 9.301e-03; error word 0; launch markers w13 yes w2 yes
+[rega] replay T=16384 skewed state B: rega rel L2 7.028e-04 worst row 1.933e-03; triton 4.650e-03; bound 9.300e-03; error word 0; launch markers w13 yes w2 yes
+[rega] replay T=16384 one state A: rega rel L2 5.504e-04 worst row 2.033e-03; triton 4.356e-03; bound 8.711e-03; error word 0; launch markers w13 yes w2 yes
+[rega] replay T=16384 one state B: rega rel L2 5.497e-04 worst row 2.680e-03; triton 4.355e-03; bound 8.711e-03; error word 0; launch markers w13 yes w2 yes
+[rega] replay T=16384 one state C: rega rel L2 5.500e-04 worst row 2.043e-03; triton 4.356e-03; bound 8.712e-03; error word 0; launch markers w13 yes w2 yes
+[rega] replay T=16384 one state A: rega rel L2 5.453e-04 worst row 2.577e-03; triton 4.356e-03; bound 8.713e-03; error word 0; launch markers w13 yes w2 yes
+[rega] replay T=16384 one state B: rega rel L2 5.512e-04 worst row 2.684e-03; triton 4.357e-03; bound 8.713e-03; error word 0; launch markers w13 yes w2 yes
+[rega] replay T=16384 local state A: rega rel L2 7.642e-04 worst row 1.770e-03; triton 4.684e-03; bound 9.369e-03; error word 0; launch markers w13 yes w2 yes
+[rega] replay T=16384 local state B: rega rel L2 7.628e-04 worst row 1.823e-03; triton 4.685e-03; bound 9.370e-03; error word 0; launch markers w13 yes w2 yes
+[rega] replay T=16384 local state C: rega rel L2 7.671e-04 worst row 1.787e-03; triton 4.683e-03; bound 9.366e-03; error word 0; launch markers w13 yes w2 yes
+[rega] replay T=16384 local state A: rega rel L2 7.631e-04 worst row 2.008e-03; triton 4.685e-03; bound 9.370e-03; error word 0; launch markers w13 yes w2 yes
+[rega] replay T=16384 local state B: rega rel L2 7.686e-04 worst row 1.911e-03; triton 4.683e-03; bound 9.366e-03; error word 0; launch markers w13 yes w2 yes
+[rega] replay T=16384: graphs freed; max_memory_allocated 16.22 GiB
+[rega] LAUNCHED = rega (ft): 30 refilled graph replays over states A, B (deepcopy), C (tensor clone) at [(8192, ('random', 'local')), (16384, ('random', 'skewed', 'one', 'local'))]; LAUNCHED = rega on 30/30 (both launch markers); worst rel L2 7.69e-04 (incumbent 4.69e-03)
+[rega] phase ft-copy-check: 4.4s; prepare total 124.6s; budget remaining 75.4s of 200s
+[rega] GATE ft T=16384 soft cold-L2 graph medians over 9 alternations (empty-graph baseline subtracted): rega 3107.2 us; dispatch (master's Triton block) 5589.0 us; ratio 0.556 (ON at <= 0.95); zero_nonlocal_w2 False; max_memory_allocated 16.22 GiB: ON
+[rega] phase ft-gate: 0.1s; prepare total 124.8s; budget remaining 75.2s of 200s
+[rega] prepare per-phase seconds: before-rega 77.0, audit 0.0, build 39.1, retile 0.1, canary 0.9, self-check 1.0, copy-check 1.0, gate 0.1, ft-self-check 1.0, ft-copy-check 4.4, ft-gate 0.1; total 124.8s; budget 200s
+[rega] GATE low T=753 cold-L2 graph medians over 9 alternations (empty-graph baseline subtracted): rega 475.6 us; dispatch 749.8 us; marlin 750.4 us; fastest alternative dispatch; ratio rega/dispatch 0.634 (ON at <= 0.95): ON
+[rega] GATE high T=3012 cold-L2 graph medians over 9 alternations (empty-graph baseline subtracted): rega 739.6 us; dispatch 1256.9 us; ssdq 1256.1 us; marlin 1546.2 us; fastest alternative ssdq; ratio rega/ssdq 0.589 (ON at <= 0.95): ON
+[rega] GATE ft T=16384 soft cold-L2 graph medians over 9 alternations (empty-graph baseline subtracted): rega 3107.2 us; dispatch (master's Triton block) 5589.0 us; ratio 0.556 (ON at <= 0.95); zero_nonlocal_w2 False; max_memory_allocated 16.22 GiB: ON
+[rega] PATH CHOSEN T in (200, 1024]: rega; T in (1024, 4096]: rega (dispatch order: rega if ON, else ssdq if ON, else marlin; ssdq ON); T <= 200: marlin; T > 4096: next line
+[rega] PATH CHOSEN T in (4096, 16384]: rega; T > 16384: triton
+[fa3 contig] selfcheck b1 ctx3000 L753 gather byte-exact: True
+[fa3 contig] selfcheck b1 ctx3000 L753 variant B: launching
+[fa3 contig] selfcheck b1 ctx3000 L753 variant B: done
+[fa3 contig] selfcheck b1 ctx3000 L753 variant B: rel L2 0.000e+00, worst row 0.000e+00, finite True, bitwise-equal to paged True -> ok
+[fa3 contig] selfcheck b4 {0,777,5000,80000} L753 gather byte-exact: True
+[fa3 contig] selfcheck b4 {0,777,5000,80000} L753 variant B: launching
+[fa3 contig] selfcheck b4 {0,777,5000,80000} L753 variant B: done
+[fa3 contig] selfcheck b4 {0,777,5000,80000} L753 variant B: rel L2 0.000e+00, worst row 0.000e+00, finite True, bitwise-equal to paged True -> ok
+[fa3 contig] selfcheck b1 ctx0 L16384 gather byte-exact: True
+[fa3 contig] selfcheck b1 ctx0 L16384 variant B: launching
+[fa3 contig] selfcheck b1 ctx0 L16384 variant B: done
+[fa3 contig] selfcheck b1 ctx0 L16384 variant B: rel L2 0.000e+00, worst row 0.000e+00, finite True, bitwise-equal to paged True -> ok
+[fa3 contig] selfcheck b2 {37,1000} L211 gather byte-exact: True
+[fa3 contig] selfcheck b2 {37,1000} L211 variant B: launching
+[fa3 contig] selfcheck b2 {37,1000} L211 variant B: done
+[fa3 contig] selfcheck b2 {37,1000} L211 variant B: rel L2 0.000e+00, worst row 0.000e+00, finite True, bitwise-equal to paged True -> ok
+[fa3 contig] selfcheck took 0.2s; variants on: B True, C False
+[fa3 contig] GATE first_turn b1 L16384 ctx65536: paged 8022.6 us, contig-varlen 7624.5 us, contig-batched n/a us (gather alone 16.9 us; bar 0.98 x paged, best/paged 0.950) -> B
+[fa3 contig] GATE first_turn b1 L16384 ctx32768: paged 4464.8 us, contig-varlen 4245.0 us, contig-batched n/a us (gather alone 12.7 us; bar 0.98 x paged, best/paged 0.951) -> B
+[fa3 contig] GATE first_turn b1 L16384 ctx0: paged 902.8 us, contig-varlen 864.0 us, contig-batched n/a us (gather alone 8.8 us; bar 0.98 x paged, best/paged 0.957) -> B
+[fa3 contig] GATE turn_4 b4 L753 ctx80000: paged 1629.7 us, contig-varlen 1587.5 us, contig-batched n/a us (gather alone 49.2 us; bar 0.97 x paged, best/paged 0.974) -> A
+[fa3 contig] GATE turn_1 b1 L753 ctx80000: paged 427.9 us, contig-varlen 419.5 us, contig-batched n/a us (gather alone 16.7 us; bar 0.97 x paged, best/paged 0.980) -> A
+[fa3 contig] PATH CHOSEN (full layers, page_size 1; sliding, page 64, scaled and untimed shapes run master's paged FA3): first_turn b1 L16384 ctx65536: B; first_turn b1 L16384 ctx32768: B; first_turn b1 L16384 ctx0: B; turn_4 b4 L753 ctx80000: A; turn_1 b1 L753 ctx80000: A; setup 1.1s, prepare total 125.9s
+[align2] GATE bsm 16 low T=753 cold-L2 graph medians over 15 alternations (empty-graph baseline subtracted): master 18.1 us; chunk 512 8.9 us; chunk 1024 21.9 us; chunk chosen 512 ratio 0.489 (ON at <= 0.98), fill dist: ON
+[align2] GATE bsm 16 high T=3012 cold-L2 graph medians over 15 alternations (empty-graph baseline subtracted): master 70.0 us; chunk 512 9.1 us; chunk 1024 22.3 us; chunk chosen 512 ratio 0.129 (ON at <= 0.98), fill dist: ON
+[align2] GATE bsm 16 ft T=16384 cold-L2 graph medians over 15 alternations (empty-graph baseline subtracted): master 398.2 us; chunk 512 26.9 us; chunk 1024 23.1 us; chunk chosen 1024 ratio 0.058 (ON at <= 0.98), fill dist: ON
+[align2] PATH CHOSEN: bsm:class 16:ft: two-phase chunk 1024, fill dist; bsm:class 16:high: two-phase chunk 512, fill dist; bsm:class 16:low: two-phase chunk 512, fill dist (every other (bsm, class): master _align_parallel; rega path only; Marlin / ssdq keep master's align)
+[fa3 contig] GATE first_turn b1 L16384 ctx65536: paged 8022.6 us, contig-varlen 7624.5 us, contig-batched n/a us (gather alone 16.9 us; bar 0.98 x paged, best/paged 0.950) -> B
+[fa3 contig] GATE first_turn b1 L16384 ctx32768: paged 4464.8 us, contig-varlen 4245.0 us, contig-batched n/a us (gather alone 12.7 us; bar 0.98 x paged, best/paged 0.951) -> B
+[fa3 contig] GATE first_turn b1 L16384 ctx0: paged 902.8 us, contig-varlen 864.0 us, contig-batched n/a us (gather alone 8.8 us; bar 0.98 x paged, best/paged 0.957) -> B
+[fa3 contig] GATE turn_4 b4 L753 ctx80000: paged 1629.7 us, contig-varlen 1587.5 us, contig-batched n/a us (gather alone 49.2 us; bar 0.97 x paged, best/paged 0.974) -> A
+[fa3 contig] GATE turn_1 b1 L753 ctx80000: paged 427.9 us, contig-varlen 419.5 us, contig-batched n/a us (gather alone 16.7 us; bar 0.97 x paged, best/paged 0.980) -> A
+[fa3 contig] PATH CHOSEN (full layers, page_size 1; sliding, page 64, scaled and untimed shapes run master's paged FA3): first_turn b1 L16384 ctx65536: B; first_turn b1 L16384 ctx32768: B; first_turn b1 L16384 ctx0: B; turn_4 b4 L753 ctx80000: A; turn_1 b1 L753 ctx80000: A; setup 1.1s, prepare total 125.9s
