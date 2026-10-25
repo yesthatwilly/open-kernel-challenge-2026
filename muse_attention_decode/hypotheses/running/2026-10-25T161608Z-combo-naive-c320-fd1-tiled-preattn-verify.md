@@ -100,9 +100,18 @@ priority: 1
 kind: primary
 controls_for: null
 review: proceed
-status: queued
+status: running
 review_at: 2026-10-25T162023Z
 review_companions: null
+stage: claimed
+claimed_at: 2026-10-25T162023Z
+base_sha: 7b2fc03434e07e7c148cc064c8afa2187e4db00e
+base_blob: 5cf8fae31e5b84c36efeeb4569763eb9b06e1c8a
+branch: hyp/muse_attention_decode/combo-naive-c320-fd1-tiled-preattn-verify
+worktree: .worktrees/muse_attention_decode/combo-naive-c320-fd1-tiled-preattn-verify
+mode: null
+restack_of: null
+stale_base: null
 ---
 
 # combo-naive-c320-fd1-tiled-preattn-verify
