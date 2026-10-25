@@ -1,0 +1,91 @@
+48570: eager warm-up state 0
+[combo] ok        T=8 layer full ctx 1048570: eager warm-up state 0 (0.00s)
+[combo] launching T=8 layer full ctx 1048570: eager warm-up state 1
+[combo] ok        T=8 layer full ctx 1048570: eager warm-up state 1 (0.00s)
+[combo] T=8 layer full ctx 1048570: replay 0 on state 0: launching graph
+[combo] T=8 layer full ctx 1048570: replay 0 state 0: hidden 5.68e-06 (<= 0.02), stream 5.51e-06 (<= 0.01), update 9.92e-06 (<= 0.05), k_cache gap 0 rel 0.00e+00, v_cache exact True, other rows intact True, ids differ on 0/8 tokens, routing: picks within 0.05 True, clear-margin top-8 present True, routes 10/10, distinct 9/9, finite True, counters 0 -> ok
+[combo] T=8 layer full ctx 1048570: replay 1 on state 1: launching graph
+[combo] T=8 layer full ctx 1048570: replay 1 state 1: hidden 7.64e-06 (<= 0.02), stream 6.41e-06 (<= 0.01), update 1.14e-05 (<= 0.05), k_cache gap 0 rel 0.00e+00, v_cache exact True, other rows intact True, ids differ on 0/8 tokens, routing: picks within 0.05 True, clear-margin top-8 present True, routes 11/11, distinct 10/10, finite True, counters 0 -> ok
+[combo] T=8 layer full ctx 1048570: replay 2 on state 0: launching graph
+[combo] T=8 layer full ctx 1048570: replay 2 state 0: hidden 1.13e-04 (<= 0.02), stream 9.65e-05 (<= 0.01), update 1.73e-04 (<= 0.05), k_cache gap 0 rel 0.00e+00, v_cache exact True, other rows intact True, ids differ on 0/8 tokens, routing: picks within 0.05 True, clear-margin top-8 present True, routes 9/9, distinct 9/9, finite True, counters 0 -> ok
+[combo] T=8 layer full ctx 1048570: replay 3 on state 1: launching graph
+[combo] T=8 layer full ctx 1048570: replay 3 state 1: hidden 1.69e-05 (<= 0.02), stream 1.56e-05 (<= 0.01), update 2.75e-05 (<= 0.05), k_cache gap 0 rel 0.00e+00, v_cache exact True, other rows intact True, ids differ on 0/8 tokens, routing: picks within 0.05 True, clear-margin top-8 present True, routes 12/12, distinct 9/9, finite True, counters 0 -> ok
+[combo] launching T=8 layer sliding ctx 80000: eager warm-up state 0
+[combo] ok        T=8 layer sliding ctx 80000: eager warm-up state 0 (0.00s)
+[combo] launching T=8 layer sliding ctx 80000: eager warm-up state 1
+[combo] ok        T=8 layer sliding ctx 80000: eager warm-up state 1 (0.00s)
+[combo] T=8 layer sliding ctx 80000: replay 0 on state 0: launching graph
+[combo] T=8 layer sliding ctx 80000: replay 0 state 0: hidden 0.00e+00 (<= 0.02), stream 3.14e-06 (<= 0.01), update 5.65e-06 (<= 0.05), k_cache gap 0 rel 0.00e+00, v_cache exact True, other rows intact True, ids differ on 0/8 tokens, routing: picks within 0.05 True, clear-margin top-8 present True, routes 4/4, distinct 4/4, finite True, counters 0 -> ok
+[combo] T=8 layer sliding ctx 80000: replay 1 on state 1: launching graph
+[combo] T=8 layer sliding ctx 80000: replay 1 state 1: hidden 2.28e-05 (<= 0.02), stream 1.50e-05 (<= 0.01), update 2.63e-05 (<= 0.05), k_cache gap 0 rel 0.00e+00, v_cache exact True, other rows intact True, ids differ on 0/8 tokens, routing: picks within 0.05 True, clear-margin top-8 present True, routes 11/11, distinct 10/10, finite True, counters 0 -> ok
+[combo] T=8 layer sliding ctx 80000: replay 2 on state 0: launching graph
+[combo] T=8 layer sliding ctx 80000: replay 2 state 0: hidden 0.00e+00 (<= 0.02), stream 4.24e-06 (<= 0.01), update 7.57e-06 (<= 0.05), k_cache gap 0 rel 0.00e+00, v_cache exact True, other rows intact True, ids differ on 0/8 tokens, routing: picks within 0.05 True, clear-margin top-8 present True, routes 7/7, distinct 6/6, finite True, counters 0 -> ok
+[combo] T=8 layer sliding ctx 80000: replay 3 on state 1: launching graph
+[combo] T=8 layer sliding ctx 80000: replay 3 state 1: hidden 0.00e+00 (<= 0.02), stream 9.84e-09 (<= 0.01), update 1.73e-08 (<= 0.05), k_cache gap 0 rel 0.00e+00, v_cache exact True, other rows intact True, ids differ on 0/8 tokens, routing: picks within 0.05 True, clear-margin top-8 present True, routes 11/11, distinct 9/9, finite True, counters 0 -> ok
+[combo] T=8 layer check max error per output: hidden 0.000113, stream 9.65e-05, update 0.000173, k_cache 0, k_gap 0, ids_tokens_differ 0
+[combo] T=8 layer check passed with [('S2a', 8), ('S2b', 8)] on
+[combo] phase T8: 0.1s wall, this prepare() 6.1s, all prepare() calls 6.1s
+PATH CHOSEN: S1 sliding decode q_len 1 page 1, 2 <= B <= 16: MASTER FusedQKNorm + casts + store_cache + FA3 + FusedRMSNormGate [not timed] (fallback: check: S1 class A B=9 L=1 lens 1..80000 kv_scale 1.0 replay 1 state 1: o vs master 4.29e-02 (<= 1e-2), vs fp64 new 1.36e-02 master 4.14e-02 rows ok False, k rel L2 vs master 1.89e-02 (<= 4e-2; info: gap 1 on 3.9% of bytes), v exact True, other rows intact True, finite True, counters 0)
+PATH CHOSEN: S1 sliding decode q_len 1 page 1, 17 <= B <= 32: MASTER FusedQKNorm + casts + store_cache + FA3 + FusedRMSNormGate [not timed] (fallback: check: S1 class B B=17 L=1 lens 1..80000 kv_scale 1.0 replay 2 state 0: o vs master 5.11e-02 (<= 1e-2), vs fp64 new 1.97e-02 master 4.36e-02 rows ok False, k rel L2 vs master 1.47e-02 (<= 4e-2; info: gap 2 on 4.0% of bytes), v exact True, other rows intact True, finite True, counters 0)
+PATH CHOSEN: S2a routing kernel R, 2 <= T <= 8: NEW per-warp top-8 R (variant 0), PDL after P [new 33.38 us vs master 34.62 us]
+PATH CHOSEN: S2a routing kernel R, 9 <= T <= 16: NEW per-warp top-8 R (variant 0), PDL after P [new 34.53 us vs master 36.22 us]
+PATH CHOSEN: S2a routing kernel R, 17 <= T <= 32: NEW per-warp top-8 R (variant 0), PDL after P [new 37.28 us vs master 39.07 us]
+PATH CHOSEN: S2b unpooler, 2 <= T <= 8: NEW dl_unpool_kernel NF=1 [new 6.53 us vs master 11.07 us]
+PATH CHOSEN: S3 full decode 2 <= B <= 23 (sk / split-KV feed): MASTER FusedQKNorm + casts + store_cache + q FP8 cast [not timed] (fallback: check: S3 c1-b16 B=2 L=1 lens 1..4000 kv_scale 1.0 replay 3 state 1: o vs master 3.09e-02 (<= 1e-2), vs fp64 new 4.10e-02 master 3.06e-02 rows ok True, k rel L2 vs master 1.21e-02 (<= 4e-2; info: gap 1 on 2.7% of bytes), v exact True, other rows intact True, finite True, counters 0)
+PATH CHOSEN: S3 full decode 24 <= B <= 64 (sk / split-KV feed): MASTER FusedQKNorm + casts + store_cache + q FP8 cast [not timed] (fallback: check: S3 c1-b32 B=40 L=1 lens 1..4000 kv_scale 1.0 replay 0 state 0: o vs master 2.72e-02 (<= 1e-2), vs fp64 new 4.12e-02 master 4.07e-02 rows ok False, k rel L2 vs master 1.66e-02 (<= 4e-2; info: gap 1 on 3.0% of bytes), v exact True, other rows intact True, finite True, counters 0)
+PATH CHOSEN: S3 sliding verify B = 1: MASTER FusedQKNorm + casts + store_cache + q FP8 cast [not timed] (fallback: check: S3 front unpaired sliding B=1 L=8 pos~299995 kv_scale 1.0: q gap 2 rel L2 vs fp64 new 2.69e-02 master 2.70e-02; k gap 1 rel L2 vs fp64 new 2.59e-02 master 2.62e-02; v exact True; zero half exact True; other rows intact True; S3 front unpaired sliding B=1 L=8 pos~1048500 kv_scale 1.0: q gap 2 rel L2 vs fp64 new 2.87e-02 master 2.89e-02; k gap 1 rel L2 vs fp64 new 2.89e-02 master 2.91e-02; v exact True; zero half exact True; other rows intact True)
+PATH CHOSEN: S3 sliding verify 2 <= B <= 23: MASTER FusedQKNorm + casts + store_cache + q FP8 cast [not timed] (fallback: check: S3 front unpaired sliding B=2 L=8 pos~80000 kv_scale 1.0: q gap 2 rel L2 vs fp64 new 2.64e-02 master 2.66e-02; k gap 2 rel L2 vs fp64 new 2.54e-02 master 2.56e-02; v exact True; zero half exact True; other rows intact True; S3 front unpaired sliding B=2 L=8 pos~299995 kv_scale 1.0: q gap 2 rel L2 vs fp64 new 2.67e-02 master 2.69e-02; k gap 1 rel L2 vs fp64 new 2.61e-02 master 2.62e-02; v exact True; zero half exact True; other rows intact True)
+PATH CHOSEN: S3 sliding verify 24 <= B <= 64: MASTER FusedQKNorm + casts + store_cache + q FP8 cast [not timed] (fallback: check: S3 front unpaired sliding B=32 L=8 pos~80000 kv_scale 1.0: q gap 3 rel L2 vs fp64 new 2.65e-02 master 2.67e-02; k gap 4 rel L2 vs fp64 new 2.65e-02 master 2.67e-02; v exact True; zero half exact True; other rows intact True; S3 front unpaired sliding B=32 L=8 pos~299995 kv_scale 1.0: q gap 3 rel L2 vs fp64 new 2.67e-02 master 2.69e-02; k gap 3 rel L2 vs fp64 new 2.69e-02 master 2.71e-02; v exact True; zero half exact True; other rows intact True)
+PATH CHOSEN: S3 full verify 2 <= B <= 23 (paired FA3): MASTER FusedQKNorm + casts + store_cache + paired zero pad + copies + FusedRMSNormGate [not timed] (fallback: check: S3 c3-t128 B=2 L=8 lens 1..4000 kv_scale 1.0 replay 3 state 1: o vs master 4.23e-02 (<= 1e-2), vs fp64 new 5.24e-02 master 4.70e-02 rows ok False, k rel L2 vs master 1.49e-02 (<= 4e-2; info: gap 1 on 2.7% of bytes), v exact True, other rows intact True, finite True, counters 0)
+PATH CHOSEN: S3 full verify 24 <= B <= 64 (paired FA3): MASTER FusedQKNorm + casts + store_cache + paired zero pad + copies + FusedRMSNormGate [not timed] (fallback: check: S3 c3-t256 B=32 L=8 lens 1..4000 kv_scale 1.0 replay 0 state 0: o vs master 4.11e-02 (<= 1e-2), vs fp64 new 5.38e-02 master 4.89e-02 rows ok False, k rel L2 vs master 1.69e-02 (<= 4e-2; info: gap 1 on 3.3% of bytes), v exact True, other rows intact True, finite True, counters 0)
+PATH CHOSEN: S3 full verify B = 1: MASTER FusedQKNorm + casts + store_cache + q FP8 cast [not timed] (fallback: check: S3 c4-t8 B=1 L=8 lens 5000..5000 kv_scale 0.015625 replay 3 state 1: o vs master 4.26e-02 (<= 1e-2), vs fp64 new 6.18e-02 master 4.66e-02 rows ok True, k rel L2 vs master 1.83e-02 (<= 4e-2; info: gap 1 on 2.8% of bytes), v exact True, other rows intact True, finite True, counters 0)
+[rega] kernel w13+silu: attrs ok True (rc 0), numRegs 168, local 0 B, smem 8192+187392 B, CTAs/SM 1, binary 90, ptx 90
+[rega] kernel w2: attrs ok True (rc 0), numRegs 168, local 0 B, smem 8192+203776 B, CTAs/SM 1, binary 90, ptx 90
+[rega] retiled 32 experts losslessly (round trips exact) from the clones in 0.0s
+[rega]   [canary N16 c=16] launching rega (gather, w13+silu, w2, post-norm)
+[rega]   [canary N16 c=16] done rega; device error word 0, launch marker 0x57474d4d
+[rega]   [canary N16 c=16] T=128 16 local routes: rega vs fp32 3.94e-03 (Marlin vs fp32 5.26e-03, bound 1.05e-02), align_par-vs-sglang-align 0.00e+00, N bucket 0: PASS
+[rega]   [canary N32 c=32] launching rega (gather, w13+silu, w2, post-norm)
+[rega]   [canary N32 c=32] done rega; device error word 0, launch marker 0x57474d4d
+[rega]   [canary N32 c=32] T=128 32 local routes: rega vs fp32 3.93e-03 (Marlin vs fp32 5.27e-03, bound 1.05e-02), align_par-vs-sglang-align 0.00e+00, N bucket 1: PASS
+[rega]   [canary N64 c=64] launching rega (gather, w13+silu, w2, post-norm)
+[rega]   [canary N64 c=64] done rega; device error word 0, launch marker 0x57474d4d
+[rega]   [canary N64 c=64] T=128 64 local routes: rega vs fp32 3.96e-03 (Marlin vs fp32 5.20e-03, bound 1.04e-02), align_par-vs-sglang-align 0.00e+00, N bucket 2: PASS
+[rega]   [canary N128 c=128] launching rega (gather, w13+silu, w2, post-norm)
+[rega]   [canary N128 c=128] done rega; device error word 0, launch marker 0x57474d4d
+[rega]   [canary N128 c=128] T=128 128 local routes: rega vs fp32 3.95e-03 (Marlin vs fp32 5.19e-03, bound 1.04e-02), align_par-vs-sglang-align 0.00e+00, N bucket 3: PASS
+[rega] canary passed (0.0s)
+[rega]   copy B: copy.deepcopy of the rega keys: built; wg_xs 0x5afa4000000 vs A 0x5b0ac000000
+[rega]   copy C: recursive tensor-cloning walk after a 2 MB pad: built; wg_xs 0x5af9c000000 vs A 0x5b0ac000000
+[rega]   [copy A T=128] eager warm-up + capture
+[rega]   [copy B T=128] eager warm-up + capture
+[rega]   [copy C T=128] eager warm-up + capture
+[rega]   copy-check T=128 random [A B C A B]: 5/5 ok
+[rega]   copy-check T=128 skewed-4hot [A B C A B]: 5/5 ok
+[rega]   copy-check T=128 all-one-expert [A B C A B]: 5/5 ok
+[rega]   copy-check T=128 mixed-local-remote [A B C A B]: 5/5 ok
+[rega]   [copy A T=256] eager warm-up + capture
+[rega]   [copy B T=256] eager warm-up + capture
+[rega]   [copy C T=256] eager warm-up + capture
+[rega]   copy-check T=256 random [A B C A B]: 5/5 ok
+[rega]   copy-check T=256 skewed-4hot [A B C A B]: 5/5 ok
+[rega]   copy-check T=256 all-one-expert [A B C A B]: 5/5 ok
+[rega]   copy-check T=256 mixed-local-remote [A B C A B]: 5/5 ok
+[rega]   [copy A T=257] eager warm-up + capture
+[rega]   [copy B T=257] eager warm-up + capture
+[rega]   [copy C T=257] eager warm-up + capture
+[rega]   copy-check T=257 random [A B C A B]: 5/5 ok
+[rega]   copy-check T=257 skewed-4hot [A B C A B]: 5/5 ok
+[rega]   copy-check T=257 all-one-expert [A B C A B]: 5/5 ok
+[rega]   copy-check T=257 mixed-local-remote [A B C A B]: 5/5 ok
+[rega] copy check PASS (1.0s): 60 refilled graph replays over states ABC, launch marker 60/60, worst rega-vs-fp32 4.34e-03, worst Marlin-vs-fp32 5.42e-03
+[rega]   select B128 T=128 soft: 163 local routes: rega 384.8 us vs Marlin 327.2 us (cold graph replay, 256 MB flush, 41 interleaved reps, baseline 5.5 us subtracted), rega/Marlin 1.176, need <= 0.98
+[rega]   select B128 T=128 skew: 208 local routes: rega 456.2 us vs Marlin 370.2 us (cold graph replay, 256 MB flush, 41 interleaved reps, baseline 5.7 us subtracted), rega/Marlin 1.232, need <= 0.98
+[rega]   select B256 T=256 soft: 320 local routes: rega 454.6 us vs Marlin 440.0 us (cold graph replay, 256 MB flush, 41 interleaved reps, baseline 5.7 us subtracted), rega/Marlin 1.033, need <= 0.98
+[rega]   select B256 T=256 skew: 480 local routes: rega 467.2 us vs Marlin 484.1 us (cold graph replay, 256 MB flush, 41 interleaved reps, baseline 5.5 us subtracted), rega/Marlin 0.965, need <= 0.98
+[rega] PATH CHOSEN B128 = MARLIN [rega 384.8 / 456.2 us vs marlin 327.2 / 370.2 us on soft / skew, local routes 163 / 208]
+PATH CHOSEN: M1 B128: MASTER marlin [new 384.83 us vs master 327.23 us (soft; skew 456.22 vs 370.24)]
+[rega] PATH CHOSEN B256 = MARLIN [rega 454.6 / 467.2 us vs marlin 440.0 / 484.1 us on soft / skew, local routes 320 / 480]
+PATH CHOSEN: M1 B256: MASTER marlin [new 454.56 us vs master 440.03 us (soft; skew 467.23 vs 484.10)]
+[rega] phase M1: 1.8s wall, this prepare() 7.9s, all prepare() calls 7.9s
+[prepare] this call 7.9s, cumulative 7.9s

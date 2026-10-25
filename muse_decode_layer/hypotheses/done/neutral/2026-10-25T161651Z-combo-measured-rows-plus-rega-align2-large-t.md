@@ -93,10 +93,10 @@ priority: 1
 kind: primary
 controls_for: null
 review: proceed
-status: running
+status: done
 review_at: 2026-10-25T162247Z
 review_companions: null
-stage: dispatched
+stage: harvested
 claimed_at: 2026-10-25T202838Z
 base_sha: 955dc77c0c4e24a2271f21aa7a6691e2fd1d3086
 base_blob: 3fc72e97304e132db432fcc87872be997f842929
@@ -115,6 +115,13 @@ attempt_file: 2026-10-25T204200Z-submit-combo-measured-rows-plus-rega-align2-lar
 prepared_at: 2026-10-25T204200Z
 job: eaa8cc0f18f64bfb
 dispatched_at: 2026-10-25T204209Z
+outcome: neutral
+verdict_detail: unproven-vs-best
+speedup: 1.316368461737821
+speedup_ci: [1.2966229348117537, 1.3361139886638882]
+harvested_at: 2026-10-25T204641Z
+best_at_harvest: 1.3142361220457452
+promotion: null
 ---
 
 # combo-measured-rows-plus-rega-align2-large-t
@@ -224,3 +231,35 @@ Audited 2026-10-25 by an opus pre-flight auditor (by reading, no GPU). **Verdict
 - Lint: okc_lint OK with warnings (uint8 retile/pad dtype notes, prepare-only syncs); py_compile clean; __pycache__ removed.
 
 Residual risk: a device fault (sticky illegal instruction) in the prepare canary would fail the whole run instead of falling back. The selector may keep both classes on Marlin, which would make this a neutral run.
+
+## Result
+
+- job `eaa8cc0f18f64bfb` (submit), status done, passed True, tests 13/13
+- speedup 1.3164x, 95% CI [1.2966, 1.3361], score 17183.866567372417 µs vs SGLang 22620.3 µs
+- best at harvest: {"speedup": 1.3142361220457452, "ci": [1.294522580215059, 1.3339496638764312], "job": "a903b9d004d2452d"}; base result: muse_decode_layer/hypotheses/done/neutral/combo-measured-rows-slide-batched-preattn-t8-tail.result.json
+- **outcome: neutral** (unproven-vs-best)
+- files: `muse_decode_layer/hypotheses/done/neutral/combo-measured-rows-plus-rega-align2-large-t.result.json`, `muse_decode_layer/hypotheses/done/neutral/combo-measured-rows-plus-rega-align2-large-t.patch`; branch `hyp/muse_decode_layer/combo-measured-rows-plus-rega-align2-large-t`
+
+## Attribution
+
+| shape | w | base µs | hyp µs | delta | verdict |
+|---|---|---|---|---|---|
+| batch=1 ctx=80000 dist=soft layer=sliding load=decode_1 page=1 repeats=60 | 46 | 118.48 | 117.26 | 1.0121 | flat |
+| batch=1 ctx=80000 dist=soft layer=full load=decode_1 page=1 repeats=60 | 16 | 124.31 | 122.83 | 1.0063 | flat |
+| batch=16 ctx=80000 dist=soft layer=sliding load=decode_16 page=1 spread=agentic | 46 | 210.54 | 201.05 | 1.0095 | flat |
+| batch=16 ctx=80000 dist=soft layer=full load=decode_16 page=1 spread=agentic | 16 | 290.53 | 284.65 | 0.9999 | flat |
+| batch=32 ctx=80000 dist=soft layer=sliding load=decode_32 page=1 spread=agentic | 46 | 239.48 | 239.27 | 1.0041 | flat |
+| batch=32 ctx=80000 dist=soft layer=full load=decode_32 page=1 spread=agentic | 16 | 446.42 | 431.18 | 1.0131 | flat |
+| batch=1 ctx=80000 dist=soft layer=sliding load=verify_1 page=1 q_len=8 | 46 | 181.08 | 174.79 | 1.0269 | flat |
+| batch=1 ctx=80000 dist=soft layer=full load=verify_1 page=1 q_len=8 | 16 | 189.51 | 187.87 | 1.0125 | flat |
+| batch=16 ctx=80000 dist=soft layer=sliding load=verify_16 page=1 q_len=8 spread=agentic | 46 | 414.69 | 425.85 | 0.9674 | lost |
+| batch=16 ctx=80000 dist=soft layer=full load=verify_16 page=1 q_len=8 spread=agentic | 16 | 593.41 | 579.72 | 0.9494 | lost |
+| batch=32 ctx=80000 dist=soft layer=sliding load=verify_32 page=1 q_len=8 spread=agentic | 46 | 599.76 | 591.47 | 1.0094 | flat |
+| batch=32 ctx=80000 dist=soft layer=full load=verify_32 page=1 q_len=8 spread=agentic | 16 | 866.62 | 901.01 | 0.9897 | flat |
+
+lost on sliding verify_16; full verify_16. Expected hit: 1/7. Noise ±1.5%.
+
+## Follow-ups
+
+- unproven-vs-best: faster than the best but inside the drift margin; churn queues one confirm rerun when the margin allows (CONFIRM_MIN), and pools the two runs.
+
