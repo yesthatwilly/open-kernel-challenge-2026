@@ -54,9 +54,18 @@ controls_for: null
 rewrite_stage: 2
 replaces: "sliding decode (q_len 1, page 1, tp8, 2<=B<=32): master Triton _sliding_fused_kernel (16 splits, in-kernel pre-attention)"
 review: proceed
-status: queued
+status: running
 review_at: 2026-10-25T054724Z
 review_companions: null
+stage: claimed
+claimed_at: 2026-10-25T054724Z
+base_sha: 6f95ce71ba21682ba9cbb6d346abb2a93a862b2f
+base_blob: 76492911dfd6685139a2ffac06c1d27083ecdb0a
+branch: hyp/muse_attention_decode/sliding-decode-sk-window-route
+worktree: .worktrees/muse_attention_decode/sliding-decode-sk-window-route
+mode: null
+restack_of: null
+stale_base: null
 ---
 
 # sliding-decode-sk-window-route
