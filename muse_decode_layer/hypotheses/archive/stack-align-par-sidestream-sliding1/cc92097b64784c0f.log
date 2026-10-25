@@ -1,0 +1,8 @@
+[small-t-dense-chain] load_inline compiled in 42.5s
+[small-t-dense-chain] P occupancy (CTAs/SM, NF=1/2/4): [3, 2, 2]; grid 216 CTAs
+[small-t-dense-chain] PDL probe: eager overlap False (-6.5 us), graph overlap True (49.7 us, secondary waited 50.4 us) -> pdl=1
+[small-t-dense-chain] P timing T=1 pdl=0 20.9 us (3.62 TB/s) pdl=1 20.6 us (3.66 TB/s)
+[small-t-dense-chain] P timing T=8 pdl=0 22.0 us (3.44 TB/s) pdl=1 21.7 us (3.48 TB/s)
+[small-t-dense-chain] P timing T=32 pdl=0 26.1 us (2.89 TB/s) pdl=1 25.8 us (2.92 TB/s)
+[small-t-dense-chain] ON pdl=1 compile 42.5s max errs ei 1.64e-04 logit 3.22e-06 xn 1.08e-05 w 0.00e+00 y 0.00e+00 graph 0.00e+00: PATH CHOSEN = DENSE-CHAIN at T <= 32, MASTER above
+[align-parallel-large-t] ON cases=18 mismatches=0
