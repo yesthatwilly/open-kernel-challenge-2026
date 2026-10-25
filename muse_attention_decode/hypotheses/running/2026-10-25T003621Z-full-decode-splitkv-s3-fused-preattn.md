@@ -61,7 +61,7 @@ base_sha: f291b49c49670595d0615e749294f69bc15de1a4
 base_blob: 695c97d2e9fef8f806ec02d2fe14a02668989e3f
 branch: hyp/muse_attention_decode/full-decode-splitkv-s3-fused-preattn
 worktree: .worktrees/muse_attention_decode/full-decode-splitkv-s3-fused-preattn
-mode: null
+mode: check
 restack_of: null
 stale_base: null
 implemented_at: 2026-10-25T034225Z
@@ -70,6 +70,8 @@ submission_sha256: b3dc55fa26451719bee99e40ab0f68e21f31286baad2e829ac91327bf871e
 norm_sha256: 1fd1af6913adfa2d5c5eeb7bcd11699de723fcbfda56d510f875849fb74daeba
 submission_blob: 50274a3d8678d5656197b8e401ca411d4f08a6e2
 lint_warnings: 16
+attempt_file: 2026-10-25T034225Z-check-full-decode-splitkv-s3-fused-preattn.md
+prepared_at: 2026-10-25T034225Z
 ---
 
 # full-decode-splitkv-s3-fused-preattn
