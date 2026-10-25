@@ -69,8 +69,10 @@ kind: rewrite
 controls_for: null
 rewrite_stage: 2
 replaces: "T<=32 attention side: qkv nvjet GEMM + splitKreduce, FusedQKNorm, k/v divide + FP8 casts, store_cache, q FP8 cast or paired pad copies, paired unpad copies, FusedRMSNormGate, o nvjet GEMM"
-review: required
+review: proceed
 status: queued
+review_at: 2026-10-25T003616Z
+review_companions: null
 ---
 
 # dense-chain-stage2-attn-side-pdl
@@ -101,3 +103,28 @@ shape (profile top_kernels) against the incumbent and the speed-of-light floor, 
 2. at or below the incumbent kernels' time on the target shapes;
 3. within ~1.5x of the floor on the target shapes, and the headline CI clears 1.0 (promotable).
 The next stage is minted with `--kind rewrite --depends-on <this slug> --stage N+1`.
+
+## Adversarial review
+
+Reviewed 2026-10-25T003616Z by an adversarial subagent (model opus).
+
+**Verdict: proceed.** The design is sound and the target is physically reachable: 37.7 MB of qkv plus 16.8 MB of o weight, about 15 us at 3.6 TB/s against roughly 20-24 us of incumbent GEMM rows plus small nodes. But the spec predates the landed sliding batch-1 fused path (_sliding_forward), so at sliding decode_1 it must not touch the attention chain, and its expected gain there is overstated. Proceed with no companions. The builder must apply the sliding decode_1 carve-out, use its own token-bound constant, and add a kv_scale=1/64 self-check case.
+
+### Justification
+Q and O are swap-AB mma.sync split-K GEMVs from the dl_pooler_router_kernel body, which already ran on the judge (no faults) at 3.6 TB/s at T=1 and 2.85 TB/s at T=32. Q is 36 head tiles x SPLIT 6 = 216 CTAs, the same wave shape as P, so Q should land near 10.5-11 us at T<=8 against qkv nvjet 13.2 us plus splitKreduce. O is 16.8 MB, ~4.7 us plus a norm-gate prologue, against nvjet o ~7.0 us plus reduce ~1.7 us. GEMV-only saving ~4-6 us per T<=8 shape; node removal adds ~6-10 us; M3 (<=1.5x floor) reachable at T<=8. Weak links: (1) the expected rows predate stack-align-par-sidestream-sliding1 (master 8fa8fbf); at sliding decode_1 _sliding_forward reads raw [T,2304] qkv and returns normed-gated o, so only the qkv nvjet and the o GEMM are replaceable there: ~5-7 us off 127.5 us (+4-5%), not +9-11%. Incumbent decode_1 is now 127.5/142.9 us. (2) At T=16/32 Q inherits P's x L2 re-read (2.85 TB/s), so the decode_32 gain rests mostly on node removal, which LESSONS found flat alone, except the full decode_16/32 paired pad/unpad rows (~11 us). PDL buys ~0 here: no two of our kernels are adjacent; do not count PDL in the milestone read. verify_16/32 flat is the in-run control.
+
+### Confounders on the current kernel
+- stack-align-par-sidestream-sliding1 (master): _sliding_forward owns sliding decode_1 from qkv output to normed-gated o. On that shape the builder must either (a) run Q in raw mode (bf16 qkv [T,2304] for _sliding_forward) and O without the prologue, or (b) keep nvjet there; config-only, printed in the log.
+- small-t-launch-minimal-dense-chain-pdl (parent, master): do not reuse DL_MAX_TOKENS; use DL2_MAX_TOKENS = 32 (LESSONS 2026-10-25: each path its own bound constant). A moved P row would be a cache/L2 or code-layout interaction.
+- fa3-hdim128-head-pairing-batched (master): at full decode_16/32 Q writes zero-padded [T,16,128] paired q and O reads its half of FA3's paired output; report pad/unpad removal (~6.5 + 4.5 us) separately from Q/O stream rates.
+- full-decode-splitkv-restack-on-pdl (in flight): if it lands before the claim, O's prologue would duplicate the splitkv combine's norm+gate at full decode_16/32; re-gate O and re-derive expected rows.
+
+### Interference and A/B needs
+No companion warranted. A rewrite judged on replaced-row time; the profile separates dl_qkv_kernel and dl_o_kernel from incumbent nvjet rows, and prepare prints Q/O CUDA-event times at pdl 0/1 for T=1 and T=32. Judge on the Q/O rows plus the count of vanished nodes, with verify_16/32 as the flat control. Marlin rows are noise.
+
+### Open questions
+- Sliding decode_1: Q raw mode + O without prologue feeding _sliding_forward (preferred), or keep nvjet?
+- Does the nvjet_sm90_tst_64x16/64x32 row at decode_16/32 aggregate qkv + o + the unpooler slice?
+- Will Q at T=32 hit P's 2.85 TB/s ceiling? If so stage 3 should share dl-p-wide-tile-t16-t32's BLOCK_N 128 tiling.
+- Does FA3 here execute griddepcontrol.launch_dependents? Print O's pdl 0 vs 1 event times.
+
