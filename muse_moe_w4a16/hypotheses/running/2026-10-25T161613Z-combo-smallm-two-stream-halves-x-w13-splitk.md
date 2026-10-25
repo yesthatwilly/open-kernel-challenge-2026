@@ -116,7 +116,7 @@ review: proceed
 status: running
 review_at: 2026-10-25T162149Z
 review_companions: null
-stage: claimed
+stage: implemented
 claimed_at: 2026-10-25T162149Z
 base_sha: 405d804d6756dfee33cc29cbda79b8057d85fbe1
 base_blob: 593b238c16387c5ac3774424ee9557882b9fc46a
@@ -125,6 +125,12 @@ worktree: .worktrees/muse_moe_w4a16/combo-smallm-two-stream-halves-x-w13-splitk
 mode: null
 restack_of: null
 stale_base: null
+implemented_at: 2026-10-25T185807Z
+impl_commit: f53e0bef77139e462a56b3d71fedb0248b4da65f
+submission_sha256: c299a5c75fd2305ffa2161d743164ab7f3ad5e41cffd514d5e7f1d74a0d0af2d
+norm_sha256: 37fb180d9fb10fa8f5e71c51ddc3a6567965cda670c34db29e69dcb747c5402b
+submission_blob: c728d78fabda55f5f6ce3fab29e38c3b9f537be9
+lint_warnings: 106
 ---
 
 # combo-smallm-two-stream-halves-x-w13-splitk
@@ -175,3 +181,126 @@ No companion is warranted. The hypothesis already carries its own in-run A/B. Fo
 - Expected 'faster' at bs=8 and bs=16 should be read as 'faster or flat (band keeps master)'. Given A flat and H -1.5%/flat, master is the most likely PATH CHOSEN for both bands, and that outcome still refutes the conjecture cleanly.
 - The 'four Marlin rows' profile readout is not available: the profile aggregates every Marlin launch into one row by kernel name. Use the PATH CHOSEN medians and launch counts instead.
 
+
+## Implementation notes
+
+Built 2026-10-25 in worktree `.worktrees/muse_moe_w4a16/combo-smallm-two-stream-halves-x-w13-splitk` on base 405d804d. Master is 5b1c422e, but `muse_moe_w4a16/submission.py` is byte-identical between the two (the commits in between touch other problems or only md files), so no merge was needed. Only `muse_moe_w4a16/submission.py` was edited: +925 / -7 lines. Not committed, okc not run.
+
+**What changed**
+- `_moe_marlin` gains `w13_mode` ("master" / "atomic" / "atomic_zero") and a prepare-only `poison` flag. The poison fills cache13 with 3e4. For `atomic_zero`, the zero_ runs inside the call on the current stream. Defaults keep master's behaviour.
+- `_moe_wgmma`: when `state["wg_align2"]` (a plain int chunk) is set, it uses `_align_two_phase(topk_ids, start, count, WG_BSM, chunk)`; otherwise it runs master's gather plus `moe_align_block_size` (F2).
+- New combo block before `kernel_fn`:
+  - Ported from ea345883: `_align_small_halves_kernel`, `_align_small_halves` and `_align_halves_self_check` (it now returns cases and mismatches).
+  - New: `_experts_two_stream` (H / H+A) and `_sm_post_norm`.
+  - New gates: `_combo_f1`, `_combo_f2`, `_sm_cross_half`, `_sm_time_band`, `_combo_c3`, `_combo_replay_check`, `_combo_setup`.
+- `prepare()`: master's prepare runs unchanged. `_combo_setup` runs after `_wg_setup`. The combo lines print last, after the [align2] lines, then the prepare total.
+- `kernel_fn` routes by shape and prepare-set plain values only:
+  - T == 1: `state["w13_t1"]`.
+  - 8..32: `state["sm_mode"][band rep]` (0 master / 1 H / 2 H+A / 3 A, with A using `state["sm_w13"]`).
+  - 128..512: master's wgmma gate (F2 sits inside `_moe_wgmma`).
+  - Everything else: master.
+- Deadlines from t_prepare:
+  - Phase starts: F1 120 s, F2 150 s, C3 150 s.
+  - C3 gate start 230 s; no C3 band timing starts past 270 s.
+  - Replay check 280 s. Past it, every combo class reverts to master, because unverified flags must not ship.
+- Each phase is wrapped in try/except in prepare and falls back to master on failure. Per-phase seconds and the prepare total are printed.
+
+**F1 / F2, identical to the sibling combo-toprow-w13t1-d32-alignpar-postnorm-wg-align2 spec plus its review fixes**
+- F1 correctness:
+  - Candidates are "atomic", then "atomic_zero", with cache13 poisoned.
+  - Routings: the six `_align2_routings` plus a judge-like one, at T=1.
+  - Requires rel-L2 vs current master <= 1e-2 AND vs an fp32 reference <= 1e-2 (sibling review fix), and finite.
+  - The fp32 reference is `_combo_fp32_ref`: fp32 dequant of the used experts, fp32 matmuls, fp32 post-norm. Master's own error vs fp32 is printed too.
+- F1 timing: a component graph of the w13 Marlin call alone at T=1 (judge-like and all-local-saturated routings). It is ON at a worse-routing ratio <= 0.98.
+- F2 only acts on the wgmma buckets that are ON. If none is, it prints "inert".
+- F2 warm and capacity: every T of the ON buckets is warmed for every chunk. Capacity is checked against WG_MAX_BLOCKS and WG_CAP_ROWS.
+- F2 table check: torch.equal on all four outputs against `_align_parallel` at bsm 16, never against SGLang's tables (review fix). It runs on F2_TEST_T x three local_starts x six routings. local_ids is also checked against the expert_map gather, and n_padded/16 <= WG_MAX_BLOCKS.
+- F2 output check: the full `_moe_wgmma` output must be bitwise equal (torch.equal) to master's front end on two routings per T. There is no rel-L2 fallback, as the user's message requires bitwise. The wg error word is checked too.
+- F2 timing: a front-end component graph at T=256 (T=128 if only B128 is ON). Master's gather plus align is compared against each chunk, and `_align_parallel` at bsm 16 is printed as info only. Worse-routing ratio <= 0.98.
+
+**User-binding review edits**
+1. Poisoned H+A self-check: the stacked cache1 is filled with 3e4 and the shared cache3 with NaN before any launch. Any atomic_zero (w13 via `sm_w13`, w2 via `sm_w2`) does one zero_() inside `_experts_two_stream` (the kernel_fn path), on the current stream, before the fork, on every call. Nothing is zeroed only in prepare.
+2. Serialized cross-half wipe test (`_sm_cross_half`):
+   - It runs at T 8/16/32 on two routings, with both halves' w13+silu run first.
+   - Then cache3 is filled with random bf16 junk and each half's w2 runs alone, with master's w2_mode kwargs and its own workspace.
+   - Every row the half does not own (the other half's routes and the remote routes) must be bitwise unchanged, and its own rows must change.
+   - If this fails with the atomic w2 mode, `state["sm_w2"] = "master"` and the line "the halves run w2 NON-ATOMIC" is printed. If it fails non-atomic too, H and H+A are OFF.
+3. Graph-safe fork/join:
+   - `state["sm_side"]` (a torch.cuda.Stream) and `state["sm_workspace_b"]` (Marlin lock workspace) are created in prepare. This happens after `_wg_setup`, so master's deepcopy copy check never sees a stream.
+   - Every buffer is allocated before the fork. The current stream waits on the side stream before the post-norm. There is no record_stream.
+   - The gate replays the captured fork/join on a cloned state. `_combo_replay_check` captures kernel_fn on state A and on `_wg_copy_tree(state)` (state C). It then replays A, C, A, C with refilled inputs on four routings, for every class whose flag is on, against master's flags in eager mode (tol 2e-2). A failing class reverts to master.
+4. Post-norm masking: `_sm_post_norm` keeps master's choice by shape. Below 32, `_post_norm_combine_kernel` skips local id -1 slots and never loads those rows. At T == 32, SGLang's fused kernel gets slot_expert_ids, and the NaN-poisoned cache3 in the H/H+A self-check decides per band: a failure there turns only band [25, 32] off.
+5. Prints: per band, the four-way medians (master / H / H+A / A) on both routings, the worse-routing ratios and PATH CHOSEN. There is a `B256 PATH CHOSEN = ... (wg_on_256 ..., wg_on_128 ...)` line with F2 inert or live, a FINAL flags line, and phase seconds. All of these sit at the very end of the log.
+
+**This md's own review**
+- The cross-half test is item 2 above.
+- The poisoned self-check is item 1 above.
+- The mechanism caveat (no "grid refill") needs no code change. A flat result at 8/16 is expected, and the band keeps master.
+- The "four Marlin rows" profile readout is replaced by the printed per-band medians.
+- The B256 line is printed so bs=256 can be attributed.
+
+**C3 gate details**
+- The halves align self-check is ported from the source and must pass with 0 mismatches.
+- A (w13 atomic) flavour: the first of atomic / atomic_zero that passes poisoned rel-L2 <= 1e-2 vs master at all three representative T on 7 routings. H+A uses the same flavour.
+- H and H+A are checked per band, poisoned, on 7 routings, rel-L2 <= 1e-2 and finite.
+- Timing per band: each passed candidate's full kernel_fn is captured (a capture test first), then cold-L2 graph medians are taken with `_align2_gate_time`: 41 interleaved replays, a 256 MB flush, and the empty-graph baseline subtracted. Routings are judge-like and random. A band takes the lowest worse-routing ratio only at <= 0.98.
+
+**Deviations**
+- The A flavour is chosen once for all bands, not per band.
+- The candidates' graph correctness is proven by the final A/C replay check of the chosen flags, not of every candidate. Each candidate is still capture-tested.
+- The replay-check tolerance is 2e-2, not 1e-2. Its job is catching copy and graph bugs, which give errors much larger than 0.1, and F1's own correctness check already holds 1e-2.
+- The judge-like routing (`_combo_judge_ids`) is written from TASK.md's description of the "normal" busiest routing. reference.py is not imported.
+- No new CUDA or PTX is added, so no arch flags are changed. Only Triton and SGLang ops are used.
+
+## Rules check
+- [x] CUDA-graph capturable: no `.item()`/`.cpu()`/`synchronize()`/tensor prints in kernel_fn's call graph (`_moe_marlin`, `_moe_wgmma`, `_experts_two_stream`, `_align_small_halves`, `_sm_post_norm`, `_align_two_phase`). There is no allocation or control flow on input values: branches are on num_tokens and prepare-set ints/strings only. The fork/join is captured on both states in prepare.
+- [x] Nothing derived from `data` is cached across calls. All buffers are allocated per call. The state holds only prepare-made streams, workspaces and flags.
+- [x] Weights: no new weight storage. The halves read master's Marlin bank, and NVFP4 stays NVFP4. The fp32 dequant exists only in the prepare-time reference.
+- [x] Activations: BF16 where SGLang keeps BF16 (cache1/2/3 bf16, fp32 reduce as master). KV cache: n/a (MoE problem).
+- [x] Attention sees every key: n/a (no attention). Every local route is computed: the halves cover experts 0-15 and 16-31, and the align self-check proves the per-half route sets.
+- [x] No timing patches, harness frames/I/O/secrets, module edits, reference import, subprocesses or network. torch.cuda.Stream is not a process.
+- [x] All work happens inside the timed call; no output caching or replay. The atomic_zero memsets run inside kernel_fn on every call.
+- [x] kernel_fn has no prints, no try/except and no mutable state. `poison` is only ever passed by prepare.
+
+okc_lint (`python3 -I .claude/skills/churnsubs/bin/okc_lint.py <worktree>/muse_moe_w4a16/submission.py --problem muse_moe_w4a16`):
+```
+OK with warnings: muse_moe_w4a16/submission.py
+(102 warnings, all `host-sync ... (outside kernel_fn's call graph; fine in prepare())` or pre-existing `dtype` uint8 scratch/flush allocations)
+```
+py_compile: OK; __pycache__ removed.
+
+## Pre-flight audit
+
+Audited 2026-10-25 by an Opus subagent, by reading only (no GPU here). **Verdict: dispatch-with-fixes.**
+
+**Fixes**
+- **PDL merge (restack).** Master moved to f7eac2c3 (wg-pdl-gather-w13-w2-chain). Master's `muse_moe_w4a16/submission.py` was 3-way merged into the worktree's with `git merge-file` (base 405d804d). It merged clean, with no conflicts. Results:
+  - The combo now runs on the PDL module `muse_moe_w4a16_wgmma_rega_v6_pdl`, falling back to master's v5 module.
+  - It also carries `wg_pdl`, `wg_ext_pdl` and `_wg_pdl_stage`.
+  - F2 composes with PDL. The align2 front end sits upstream of the w13 launch, and only w2 is a PDL dependent of w13, which is a plain launch. F2's bitwise `_moe_wgmma` check and the A/C replay check both run with the state's `wg_pdl` flag, so they cover align2 x PDL.
+- **Deadlines tightened against the 300 s prepare limit.** C3_GATE 230 to 220 s, COMBO_TIMING 270 to 255 s, COMBO_REPLAY 280 to 265 s.
+  - Reason: the replay check has no internal budget. It covers up to 5 shapes, each with 2 captures, 16 replays and 16 eager reference runs. Starting it at 280 s left about 20 s of margin.
+  - An overrun of 300 s fails the whole run, while a skip only reverts the combo to master.
+  - Master's own PDL stage measures from t_prepare: the stage starts by 225 s and its copy check by 250 s. Master's prepare took 59.8 s in job 667b64e3fb1343ec, so the realistic schedule is unaffected.
+
+**Checked, no change needed**
+1. **Fork/join.**
+   - The fork and join use `wait_stream`, which is event-based.
+   - `sm_side` and `sm_workspace_b` are created in prepare and held in state.
+   - Every buffer and the align tables are allocated on the current stream before the fork. Marlin's internal fp32-reduce temp is allocated on the side stream inside the same capture.
+   - The join comes before the post-norm.
+   - The source (job 5d630369b1634f77) scored on the judge with a stream in state, so the judge's state copy tolerates it.
+2. **Atomic zeroing.** Every atomic_zero `zero_()` runs inside the kernel_fn path on every call:
+   - in `_moe_marlin` for w13, and for w2 as on master;
+   - in `_experts_two_stream`, before the fork;
+   - in the F1 component timing, inside the timed graph.
+3. **Cross-half wipe test.**
+   - It covers the review's open question. Master's aliased w2 "atomic" mode passes, so Marlin's atomic mode initialises C itself.
+   - If that is a full-C zero in the wrapper or kernel, half h's lone w2 changes rows it does not own, and the halves fall back to a non-atomic w2.
+4. **NaN-poisoned checks.** `_wg_rel` returns inf on any non-finite value, and each gate is `not rel <= tol`, so NaN fails. H and H+A get cache1 = 3e4 and cache3 = NaN; F1 and A get cache13 = 3e4.
+5. **kernel_fn purity.** kernel_fn only reads shape, prepare-set ints/strings and dict lookups. It has no prints, try/except, syncs or state mutation. An AST pass found no undefined globals.
+6. **Rep T = judged shapes.** The band reps T = 8/16/32 are exactly the judged decode/verify shapes, so checking only the reps loses nothing on judged inputs.
+
+**Lint/compile:** okc_lint OK with warnings (prepare-only syncs and pre-existing uint8 scratch). py_compile OK. __pycache__ removed.
+
+**Residual risk:** an exception inside a C3 band capture could leave stream/capture state dirty for later prepare work. The phase try/except and the replay check (which falls back to all master on any raise) contain it, at the cost of an all-master combo.
