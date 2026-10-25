@@ -91,10 +91,11 @@ speedup: 1.3017519911209459
 speedup_ci: [1.2822257112541318, 1.32127827098776]
 harvested_at: 2026-10-25T110750Z
 best_at_harvest: 1.2725637226942819
-promotion: merged
+promotion: superseded
 hand_landed: true
 promotion_commit: d5595769062af2701dafcd15e4a410b3684e1760
-promotion_attempt: 2026-10-25T202704Z-submit-dense-chain-s3-t1-q-sk2-o-route-unpool.md
+promotion_attempt: null
+promotion_reason: master already scored as a903b9d004d2452d
 ---
 
 # dense-chain-s3-t1-q-sk2-o-route-unpool
