@@ -60,8 +60,10 @@ kind: rewrite
 controls_for: null
 rewrite_stage: 1
 replaces: moe_wna16_marlin_gemm x2 (Marlin w13 + w2) and the silu-mul between them at T <= 1024 (turn_1, T=753)
-review: required
+review: proceed
 status: queued
+review_at: 2026-10-25T043311Z
+review_companions: null
 ---
 
 # experts-turn1-cuda-wgmma-rega-port-bucket32
@@ -88,3 +90,27 @@ shape (profile top_kernels) against the incumbent and the speed-of-light floor, 
 2. at or below the incumbent kernels' time on the target shapes;
 3. within ~1.5x of the floor on the target shapes, and the headline CI clears 1.0 (promotable).
 The next stage is minted with `--kind rewrite --depends-on <this slug> --stage N+1`.
+
+## Adversarial review
+
+Reviewed 2026-10-25T043311Z by an adversarial subagent (model opus).
+
+**Verdict: proceed.** Highest-EV prefill move on the board (turn_1 load is 1.01x and Marlin is 64-68%/47% of its shapes; a 750->450 us expert pair is ~1.33x on the turn_1 load, ~+10% headline). Sound swap-AB design, but SEQUENCE IT AFTER moe s3 (job 3bdec0e58d684c17) is harvested and port from s3's commit with its hazard-free A-fragment variant, because the N16/N32 buckets may be passing by luck.
+
+### Justification
+Mechanism holds: at T=753 ~753 local routes / 32 experts = ~24 rows per expert, Marlin pads to moe_block_size 64 on the mma M side (2.7x MMA waste) and streams 905 MB at ~1.3 TB/s vs the 189 us floor; swap-AB puts the 24 tokens on wgmma N and reads each weight once. The moe and prefill expert dims are identical (K=4096, w13 N=8192, w2 N=4096 K=4096, 32 local experts, same NVFP4 layout), so the port is dimensional, not a redesign. Profile supports it: Marlin 768.6/735.9 us at turn_1 (master check c4d14d62), 649.7/709.5 in submit 502f2eab. Weakest link: the only speed evidence is the moe s2 warm-eager figure (515.9 vs 911.3 us at M=128), and that M=128 timing ran with 64/128-bucket chunks that were producing NaN, so N16/N32 have NO clean timing yet; moe s3 is the first run that prints cold-L2 per-bucket N16/N32 times vs Marlin. Second weak link: the moe s3 review raises a register-A WAR hazard (A fragments rewritten while an RS wgmma is in flight); if s3's variant A (wait<0>) or B (double-buffered a[]) is what fixes N64/N128, then N16/N32 correctness in s2 was luck and the port must carry the fix. Register cap: the real cap is 168 under __launch_bounds__(384,1) (setmaxnreg.inc 232 does not lift ptxas's compile budget); at N16/N32 the accumulators are 8/16 regs so the cap does not bind, and an N16/N32-only instantiation (no 64/128 code in the same function) should drop regs and the w2 8 B spill.
+
+### Confounders on the current kernel
+- stack-tonight-five-prefill: supplies the incumbent this gate is measured against (_align_parallel local-routes align + _silu_mul_sorted + Marlin pair); the gate must time new pair vs exactly that, which the hypothesis does. Not a confound of the result, but the new path must consume _align_parallel's Marlin-format (sorted_ids, block_experts, n_padded) at bsm=32, not moe_align_block_size's, and its self-check must run on that output.
+- experts-hybrid-marlin-turn-triton-first-turn: defines MARLIN_MAX_TOKENS=4096; the new T<=1024 branch sits inside _experts_marlin under that gate. Tests with T=300/753 (and the T=200 outliers test) take the new path, so correctness is exercised by the judge's tests too.
+- sglang-pipeline-parity, experts-triton-w4a16-first-turn-blockt256: no interaction (first_turn engine untouched).
+
+### Interference and A/B needs
+No companion. It is a kind:rewrite judged on its own Marlin-replacement rows at turn_1, and its hard prepare gate prints both times and PATH CHOSEN, so a loss means 'gated off' (master re-measured) and a gain is attributable from the kernel rows. turn_1 shape rows drift -7 to -10% on untouched code, so the builder/harvester must read the per-kernel rows and PATH CHOSEN, never the shape z.
+
+### Open questions
+- Does moe s3 (3bdec0e58d684c17) show the A-fragment hazard is real (variant A/B fixes N64/N128)? If yes, port s3's variant for N16/N32; if s3 fails both variants, still apply variant A (wgmma wait<0> before overwriting A regs) - correct per the PTX ISA, small speed cost.
+- s3's cold-L2 N16/N32 pair times vs Marlin: if w13+w2 at N32 does not beat Marlin there, the turn_1 port's M1 is unlikely; demote before spending the check.
+- Grid order: are the chunks of one expert adjacent for the SAME weight N-tile (N-tile major, chunk minor)? Otherwise an expert with >32 routes re-reads its 28 MB of weights from HBM.
+- Does the soft distribution at T=753 give some experts 100+ local routes (4+ chunks)? Print the chunk histogram in prepare from a soft synthetic routing.
+
