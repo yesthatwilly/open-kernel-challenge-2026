@@ -84,7 +84,8 @@ speedup: 1.4919706177473366
 speedup_ci: [1.4695910584811265, 1.5143501770135466]
 harvested_at: 2026-10-25T091106Z
 best_at_harvest: 1.444132502888963
-promotion: pending
+promotion: merged
+promotion_commit: eb1b68bad24c7457aaa0606c1df0fa7733c03365
 ---
 
 # restack-sk-pseudo-cluster-plus-v3-fused-preattn

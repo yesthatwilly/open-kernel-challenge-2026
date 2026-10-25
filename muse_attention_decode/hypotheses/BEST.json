@@ -1,17 +1,17 @@
 {
  "problem": "muse_attention_decode",
- "job": "341623fa53d94cef",
- "check_job": "2a3241780c7b4c46",
- "mode": "submit",
- "speedup": 1.444132502888963,
+ "job": "cbd49dc94be548e7",
+ "check_job": "cbd49dc94be548e7",
+ "mode": "check",
+ "speedup": 1.4919706177473366,
  "ci": [
-  1.4224705153456287,
-  1.4657944904322975
+  1.4695910584811265,
+  1.5143501770135466
  ],
- "score_us": 2608.001684378393,
- "commit": "c3c1b01b18837f889ac11a15d8f0daf06d356d98",
- "submission_blob": "d8769ef25caf845a0e207538ccc5c62394b6ee3b",
- "slug": "full-decode1-streamk-s3-two-level-ticket",
- "result": "muse_attention_decode/hypotheses/done/neutral/full-decode1-streamk-s3-two-level-ticket.result.json",
- "updated_at": "2026-10-25T053805Z"
+ "score_us": 2524.379471820013,
+ "commit": "eb1b68bad24c7457aaa0606c1df0fa7733c03365",
+ "submission_blob": "84b54ae2c9800a7b9bf96692557dd390904ed09b",
+ "slug": "restack-sk-pseudo-cluster-plus-v3-fused-preattn",
+ "result": "muse_attention_decode/hypotheses/done/gain/restack-sk-pseudo-cluster-plus-v3-fused-preattn.result.json",
+ "updated_at": "2026-10-25T091112Z"
 }
