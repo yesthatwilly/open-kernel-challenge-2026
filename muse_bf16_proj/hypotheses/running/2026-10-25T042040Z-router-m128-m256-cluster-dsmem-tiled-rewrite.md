@@ -61,7 +61,7 @@ review: proceed
 status: running
 review_at: 2026-10-25T042454Z
 review_companions: null
-stage: claimed
+stage: implemented
 claimed_at: 2026-10-25T042454Z
 base_sha: c67ea8677fb5f5a23ea879170b1d782395102bf1
 base_blob: 970b415b746fa03cb92e419d270be92588273178
@@ -70,6 +70,12 @@ worktree: .worktrees/muse_bf16_proj/router-m128-m256-cluster-dsmem-tiled-rewrite
 mode: null
 restack_of: null
 stale_base: null
+implemented_at: 2026-10-25T043257Z
+impl_commit: 8dd2a8d59b8619aeeb15dc4ebd6d2939f2eab87e
+submission_sha256: 804d25754399f0f05d71fda82aa30adb31c9223de3a0738e1795f9cd1743536f
+norm_sha256: 120c2f57279243cf3c1b03b0aadd5871a2ebca47ece4ba12cd968ac4616e655a
+submission_blob: 095978ec904ee937a4b5b039bf2b47b911801fa6
+lint_warnings: 3
 ---
 
 # router-m128-m256-cluster-dsmem-tiled-rewrite
@@ -129,3 +135,48 @@ No companions. This is a rewrite judged on the replaced kernels' own time. The g
 - Harvest: before reading numbers, confirm the build line, the occupancy prints, PATH CHOSEN for m=65..256, and no vectorized_elementwise memset node on the two target rows. M2 means the kernel is below 5.8/7.6 us (incumbent kernel + memset), rows below 7.28/9.60. If M2 fails at m=256 with the traffic-equal tiling, stage 2 should be wgmma (sm_90a) + TMA multicast of x across N-tiles in the cluster, not more mma.sync tuning.
 - Coordinate with the queued bf16-verify-swapab-wgmma-cluster-dsmem-rewrite (m=65..256, bf16 layers). If its wgmma+cluster scaffold lands first, router stage 2 should reuse it.
 
+
+## Implementation notes
+
+Edited only `muse_bf16_proj/submission.py` in the worktree (+574/-2): new section (7) before `prepare()`, an `os`/`time` import, a docstring paragraph, a call to `_router_tiled_prepare(state)` after `_router_prepare(state)`, and a gate in kernel_fn's router `hilo` branch (m > 32 only).
+- CUDA kernel `router_tiled_kernel<CS>` (load_inline at import, `TORCH_CUDA_ARCH_LIST=9.0a` around the build and restored, `-O3 -lineinfo`, flags printed). One launch, `torch.empty` output, no memset, no atomics. 64x64 output tiles, one cluster per tile, CS CTAs split K (CS=8: 1024-wide, CS=16: 512-wide non-portable cluster), grid = ceil(m/64)*4*CS. Per CTA 8 warps (4 token x 2 expert warp tiles of 16x32), 4-stage cp.async.cg ring of BLOCK_K=64 (x 8 KB + hi 8 KB + lo 8 KB per stage = 96 KB), mma.sync m16n8k16 with hi then lo into one fp32 accumulator, fp32 partial tile (padded) aliased onto the ring, barrier.cluster release/acquire, rank r reduces BM/CS rows via mapa + 16-B ld.shared::cluster.v4 in fixed rank order, plain float4 stores, second cluster barrier. Rows >= m zero-filled and never stored. No mbarrier, so no spin wait to bound.
+- Per-mt choice (token-tile count 2/3/4 = m 65..128/129..192/193..256) in prepare(): candidate needs no spill, dynamic smem <= 110 KB, cudaOccupancyMaxActiveClusters >= mt*4, self-check pass (m in 65,128,129,130,192,200,256, twice, rel L2 <= 2e-5, row <= 1e-4, one-hot within 1e-6 of hi+lo, bit-identical, flushed print before and sync+print after each launch). Winner = fastest candidate at the representative m (128/192/256) by cold-L2 (256 MB flush) eager median, kept only if < 0.98x master `_router_hilo_forward` (kernel + memset); else master. Prints regs/spills/smem/max-active-clusters, L2->SM bytes per tiling vs incumbent, cold-L2 medians (full, no-DSMEM-reduce mode 0, master) at m=65/128/130/192/200/256, and `PATH CHOSEN` for m=64/65/128/129/130/192/193/200/256/257. m=64 and m>256 are routed to master by `_router_tiled_route`.
+- Review fixes applied (the review wins over the spec): smem 96 KB per CTA (not 3x48 KB), BLOCK_K=64 4 stages, occupancy >= need enforced else master, L2->SM bytes printed (64x64 tiling equals the incumbent's, 25.2 / 50.3 MB by my formula, it counts x and hi+lo exactly), 8 warps, vectorized DSMEM reduce, no-reduce and master cold-L2 timings, m=64 stays master.
+- Deviations: (1) the spec's 64x32/cs8 tile and the optional 128x64 instance were NOT built; the 64x32 tiling moves more L2 bytes than the incumbent (review: do not ship that), so the two instances are 64x64 with CS 8 and CS 16 (the review's "64x64 split 16 cluster 16" for m=128), picked by timing per token-tile count. (2) No `-std=c++20` override (nothing needs it). (3) No wgmma, so no `__CUDA_ARCH_FEAT_SM90_ALL` guard or error flag. (4) Worktree base is c67ea86 (the claimed base_sha), which lacks stage 1's CUDA scaffold, so the scaffold's helpers were re-embedded here.
+- Uncertainties: I could not compile or run anything (no GPU/torch here). Biggest risk is a CUDA fault or compile error: a fault in the self-check poisons the context (lesson 2026-10-25); a build error falls back to master. Second risk is cs=16 non-portable cluster support / occupancy (falls back to cs=8 or master by the occupancy and timing gates).
+
+## Rules check
+
+- [x] CUDA-graph capturable: kernel_fn launches via cudaLaunchKernelEx on the current stream, no sync/.item()/print in kernel_fn; allocation is `torch.empty` of a shape-only size; branches only on m, cfg, strides, alignment and a prepare() constant (checked in the diff).
+- [x] Nothing derived from `data` is cached across calls: `state["router_tiled"]` is built in prepare() from synthetic x and the weights only.
+- [x] Weights: unchanged hi/lo bf16 split built in prepare(); no new weight copies.
+- [x] Activations BF16 (x stays bf16, cp.async straight from it); router accumulation fp32 over hi+lo as before.
+- [x] Attention: n/a, router GEMM only.
+- [x] No timing patches, harness frames/I/O/secrets, module edits, reference import, process creation or network in the file (grep of the file for process-spawning names is empty; load_inline is the same build path stage 1 used).
+- [x] All work happens inside the timed call; no output caching or replay.
+- [x] Router hi+lo fp32 accumulation rules unchanged; gate is shape-based (65 <= m <= 256, router only).
+
+okc_lint output:
+```
+warn  host-sync    L1426: torch.cuda.synchronize()  (outside kernel_fn's call graph; fine in prepare())
+warn  dtype        L1448: flush = torch.empty(ROUTER_TILED_FLUSH_BYTES, dtype=torch.uint8, device=dev)  (allowed only where SGLang does the same)
+warn  host-sync    L1462: torch.cuda.synchronize()  (outside kernel_fn's call graph; fine in prepare())
+OK with warnings
+```
+py_compile OK; __pycache__ removed.
+
+## Pre-flight audit
+
+Audited 2026-10-24 (opus), by reading the code and emulating the numerics in numpy. **Verdict: dispatch-with-fixes.** Rules OK.
+
+- Occupancy gate: `cudaOccupancyMaxActiveClusters >= mt*4` is the right single-wave test, since the grid is exactly mt*4 clusters (one per 64x64 tile) and nothing depends across clusters, so even a short count costs a second wave, not a hang. `set_attr<16>` sets `cudaFuncAttributeNonPortableClusterSizeAllowed` before both the occupancy query (`info()`) and the launch. A failed query is cleared and reports -1, which skips that instance.
+- Ring and alias: `cp.async.wait_group 0` + `__syncthreads` run before the fp32 partial (17 KB) is written onto the ring, so nothing reads the aliased region before the ring drains. The first cluster barrier (release/acquire) orders the peer DSMEM reads, and the second keeps each CTA's smem alive. The `barrier.cluster` calls are warp-uniform (RF4 = 128/64).
+- Fragments: the ldmatrix A/B lane maps, the 128-B XOR swizzle (consistent between load and ldmatrix), the C-fragment store columns, and the pipeline slot reuse (`wait_group STAGES-2`, refill slot (it-1)%4 after the barrier) all check out. Math is hi then lo, two mma.sync into one fp32 accumulator, which matches the router rule.
+- Tails: x rows >= m are zero-filled (`src_size` 0, valid base pointer) and the float4 store is guarded on `m0+row < m`. hi/lo and K never go out of bounds. m=130/200 are self-checked.
+- Self-check tolerance: a numpy emulation with pessimistic round-toward-zero fp32 after every mma (randn/sqrt(K) weights, as in reference.py) gives rel L2 3.7e-6 (cs8) / 2.8e-6 (cs16) and worst row 4.4e-6, against bounds of 2e-5 / 1e-4. The gate can pass.
+- Routing: kernel_fn branches only on cfg, shape, strides, pointer alignment and the prepare() constant `state["router_tiled"][mt]`. No prints or try/except. `torch.empty` output. m=64 and 257 return 0 before the dict lookup.
+- Fix: the `PATH CHOSEN` lines recomputed the gate inline. They now resolve each m (64, 65, 128, 129, 130, 192, 193, 200, 256, 257) through `_router_tiled_route` itself on a synthetic x/cfg. This way the m=64/257 boundary print is the gate kernel_fn really applies, which covers the review's "m=64 stays master" ask without launching the kernel at m=64.
+- Compile/prepare: one load_inline at import (two template instances, likely ~40-90 s). The added prepare work (self-check, fp64 refs, about 700 timed launches) takes a few seconds.
+- okc_lint: OK with the same 3 prepare-only warnings. py_compile OK, and __pycache__ was removed.
+
+Residual risk: a device fault in the in-prepare self-check would poison the context and fail the run, because it cannot fall back. Also, the choice of instance is made on eager cold-L2 timing, and master's eager time includes a separate memset launch, so it may pick the new kernel where graph replay is a wash.
