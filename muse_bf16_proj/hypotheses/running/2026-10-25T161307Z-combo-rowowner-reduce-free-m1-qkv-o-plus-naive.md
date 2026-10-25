@@ -101,8 +101,8 @@ submission_sha256: b8e36aedc8be79504e833bc6c76e8477833454de454282efa91ba8474882d
 norm_sha256: 8258046a5a1212b8ba2c01bf78b9f375f59e96336115f40ad2350f2ccb82d327
 submission_blob: ad8d7254a64a52db2a8f56ec0ad262748153a2e8
 lint_warnings: 31
-attempt_file: 2026-10-25T163608Z-submit-combo-rowowner-reduce-free-m1-qkv-o-plus-naive.md
-prepared_at: 2026-10-25T163608Z
+attempt_file: 2026-10-25T185059Z-submit-combo-rowowner-reduce-free-m1-qkv-o-plus-naive.md
+prepared_at: 2026-10-25T185100Z
 ---
 
 # combo-rowowner-reduce-free-m1-qkv-o-plus-naive
