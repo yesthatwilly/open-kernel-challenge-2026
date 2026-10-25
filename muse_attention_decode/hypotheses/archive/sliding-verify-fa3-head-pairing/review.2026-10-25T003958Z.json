@@ -1,0 +1,22 @@
+{
+ "model": "opus",
+ "verdict": "proceed",
+ "summary": "Cheap, rule-clean, one-predicate change; per-kernel profile rows (FA3 main, FlashAttnFwdCombine, prepare_varlen, _pre_attention_kernel, norm-gate) make the result readable without a companion. But the mechanism carries the full-layer bandwidth argument to a latency-bound shape; most likely outcome is flat or a small loss on sliding verify_16/32.",
+ "justification": "Correctness holds: the zero half adds 0 to each logit, FA3 maps query head h to super-head h//16, window_size is per position, ROPE with PAIRED is already sound. Performance is the weak part: sliding verify_16 reads ~8.4 MB (~2.8 us at 3 TB/s) vs FA3 main 10.7 us; verify_32 ~17 MB vs 14.5 us, so both are latency/parallelism-bound and halving gathered rows has little to act on. The closest analogue, full verify_1, showed pairing slowing FA3 main 14.9->18.1 us and combine 7.3->12.4 us after the launch cleanup. Pairing halves (request, kv-head) tiles (32->16) at 2x rows and 2x head dim, so FA3 likely picks more splits and combine grows. The epilogue swap is probably a cost: _paired_norm_gate_kernel 2.5/3.9 us vs sglang norm_gate <1.8 us, ~+1/+2 us. Weight: sliding is ~29%/22% of the verify_16/32 loads, so +-10% on the shape moves the load ~+-2-3%, near the CI floor.",
+ "confounders": [
+  "paired-heads-launch-cleanup (+ab-tune-batch-gate): supplies paired q layout and _paired_norm_gate_kernel; its own profile row, attributable.",
+  "fa3-hdim128-head-pairing: same mechanism, gain measured only in the bandwidth-bound regime; its batch-1 results are the relevant prior.",
+  "fused-preattention-triton: PAIRED writes 2x q bytes (<33 KB), ~0.1-0.3 us, its own row.",
+  "sliding decode / splitkv paths do not touch sliding verify; they are the flat control (sliding decode_1 drifts 2-3.5% run to run)."
+ ],
+ "interference": "No companion warranted. Harvest on sliding verify_16/32 per-shape ratios and FA3 main + combine us vs master (10.7+4.1 and 14.5+4.3), not on the headline. 'Main down, combine and epilogue up, net flat' is a valid outcome pointing to a follow-up that folds the epilogue differently, not a rerun.",
+ "rules_flags": [],
+ "companions": [],
+ "open_questions": [
+  "Does the image's FA3 contain the e4m3 hdim-128 paged pack_gqa Is_local=true instantiation? If not, the sliding q_len-8 tests fail at dispatch: harvest as failed, not regression.",
+  "Which split count does FA3 pick for 16/32 paired tiles of ~2K keys? If combine grows >1.5 us, pairing on sliding is dead.",
+  "Is _paired_norm_gate_kernel slower than sglang norm_gate at 128/256 tokens here?",
+  "The kv_scale 1/64 sliding verify test exercises descale (B,1) under a local window; a failure there points at descale.",
+  "LESSONS 103-105 attributes the batch-1 pairing loss to launches, but post-cleanup rows show FA3 main +21% and combine +70%; consider correcting that lesson."
+ ]
+}
