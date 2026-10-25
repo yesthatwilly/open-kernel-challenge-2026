@@ -154,3 +154,10 @@ Run these before ordinary queue dispatch. Harvest first (tonight's decode stacks
 4. **moe: stack the sub-noise winners**, the way prefill's stack showed accumulation. Candidates at 1.328-1.329 vs best 1.3278: `align-small-one-warp-tiny-m`, `post-norm-combine-hoisted-slot-loads`, `cuda-dispatch-combine-pdl-verify` (bs >= 128 align+combine, disjoint from the other two). Mint one stack of all three (+ `align-parallel-from-17-tokens` as a separate variant), restack via the fixed claim, run as checks.
 
 Decode note: `stack-align-par-sliding-batched` (`b94e797333fb4a27`) FAILED its tests: the parallel align and the batched sliding port do not compose as built; do not stack them again without a diagnosis.
+
+### Progress (reset tick, 2026-10-25 ~00:15Z)
+
+1. Scored confirmations SUBMITTED: decode stack-align-par-sidestream-sliding1 -> `39bcf05afc4e4dd3`, bf16 restack -> `60b20fd0bf924267` (from `<slug>-confirm` worktrees). NEXT TICK: when they finish, if each beats its best again (decode 1.2283, bf16 1.1959), `churn.py land <p> <slug> --reason ...` (both are in done/neutral), then remove the `-confirm` worktrees.
+2. DONE: prefill stack-tonight-five-prefill landed on master (5bdc653, BEST 1.0705), promotion recorded as scored `502f2eab95164781`. silu-mul-sorted-first-turn re-based onto it and dispatched as check `9528eed511b04f33`.
+3. IN FLIGHT: five Opus per-shape readers write `<p>/hypotheses/REWRITE_READ_2026-10-25.md` (uncommitted). NEXT TICK: commit them, then mint/unhold stage 2 only for PROMISING verdicts; hold stage-2 picks (full-verify-cuda-splitkv-stage2, cuda-fused-moe-midm-single-launch-routed, experts-triton-packed-dequant-turn4) until their problem's read is in.
+4. DONE: moe stacks dispatched as checks: stack-onewarp-hoisted-dispatchcombine `7e5ab95a413f4ebe`, and the +from17 variant `0fde9013de97404d` (with a CDC_MIN_TOKENS gate fix, see its notes).
