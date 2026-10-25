@@ -68,7 +68,7 @@ base_sha: ff9bf1e4fbe38f9f847a906f5135ecaf60604668
 base_blob: 136874e0158f8b76208c4130e523bc91b84160ad
 branch: hyp/muse_attention_decode/full-verify-wgmma-s4-multitile-fix
 worktree: .worktrees/muse_attention_decode/full-verify-wgmma-s4-multitile-fix
-mode: null
+mode: check
 restack_of: null
 stale_base: true
 implemented_at: 2026-10-25T041932Z
@@ -77,6 +77,8 @@ submission_sha256: c0b8173eb722f5a655d5e072dbcded9cf8bb90cde652ab077ad34e1b184c3
 norm_sha256: b4c0abba9555df955e632b86d0dcbe8b2bd85739ce933ff73a04d14abc9455f0
 submission_blob: 9bcf522b0dd23a0a8173046d2150473827122206
 lint_warnings: 11
+attempt_file: 2026-10-25T041932Z-check-full-verify-wgmma-s4-multitile-fix.md
+prepared_at: 2026-10-25T041932Z
 ---
 
 # full-verify-wgmma-s4-multitile-fix
