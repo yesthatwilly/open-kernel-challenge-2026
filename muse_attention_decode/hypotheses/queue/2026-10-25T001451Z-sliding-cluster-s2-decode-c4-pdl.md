@@ -59,7 +59,8 @@ controls_for: null
 rewrite_stage: 2
 replaces: "sliding layer decode at tp8/page 1, 1<=batch<=32: master Triton _sliding_fused_kernel (stage-1 sliding_cluster_kernel<1>)"
 review: required
-status: queued
+status: hold
+hold_reason: "superseded by sliding-cluster-s2-decode-c4-pdl-inproc: the original spec runs a self-check in a child process, which the rules reject (starting processes)"
 ---
 
 # sliding-cluster-s2-decode-c4-pdl
