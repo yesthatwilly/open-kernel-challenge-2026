@@ -24,7 +24,7 @@ kind: primary
 controls_for: null
 review: required
 status: running
-stage: implemented
+stage: dispatched
 claimed_at: 2026-10-25T000436Z
 base_sha: f540d1c19b5798a2bd1f0421964922a582602231
 base_blob: 108d36e9f2266fc88531dd6ff0329a847c882013
@@ -41,6 +41,8 @@ submission_blob: e9478869b802250d219d7cdefe73e07526622cd7
 lint_warnings: 19
 attempt_file: 2026-10-25T000449Z-check-stack-onewarp-hoisted-dispatchcombine.md
 prepared_at: 2026-10-25T000449Z
+job: 7e5ab95a413f4ebe
+dispatched_at: 2026-10-25T000511Z
 ---
 
 # stack-onewarp-hoisted-dispatchcombine
