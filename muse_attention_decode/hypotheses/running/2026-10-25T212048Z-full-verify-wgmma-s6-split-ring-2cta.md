@@ -89,9 +89,18 @@ prior: "full-verify-wgmma-s5-qfrag-reload: same math and 2 CTAs/SM, but each war
 rewrite_stage: 6
 replaces: "full-layer verify at 1<batch<=64: FA3 main + prepare_varlen_num_blocks + FlashAttnFwdCombine + _paired_norm_gate_kernel (master paired FA3)"
 review: proceed
-status: queued
+status: running
 review_at: 2026-10-25T212855Z
 review_companions: null
+stage: claimed
+claimed_at: 2026-10-25T212904Z
+base_sha: 99066e11fda854f911b0326172179d3ef997818c
+base_blob: 6d6afa4722731ceb9cb8216d0334a03f1a96ad2b
+branch: hyp/muse_attention_decode/full-verify-wgmma-s6-split-ring-2cta
+worktree: .worktrees/muse_attention_decode/full-verify-wgmma-s6-split-ring-2cta
+mode: null
+restack_of: null
+stale_base: null
 ---
 
 # full-verify-wgmma-s6-split-ring-2cta
