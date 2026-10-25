@@ -74,7 +74,7 @@ review: proceed
 status: running
 review_at: 2026-10-25T111218Z
 review_companions: null
-stage: implemented
+stage: dispatched
 claimed_at: 2026-10-25T111218Z
 base_sha: 8bbf53baef204e1a7c7f2d0b36f6da1996b27db4
 base_blob: 84b54ae2c9800a7b9bf96692557dd390904ed09b
@@ -91,6 +91,8 @@ submission_blob: 5cf8fae31e5b84c36efeeb4569763eb9b06e1c8a
 lint_warnings: 57
 attempt_file: 2026-10-25T111803Z-submit-restack-sliding-decode-sk-window-on-cluster-master.md
 prepared_at: 2026-10-25T111803Z
+job: 252abb7f11ec48c3
+dispatched_at: 2026-10-25T111810Z
 ---
 
 # restack-sliding-decode-sk-window-on-cluster-master
