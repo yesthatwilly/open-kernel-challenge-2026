@@ -1,0 +1,2764 @@
+diff --git a/muse_attention_decode/submission.py b/muse_attention_decode/submission.py
+index d8769ef2..84b54ae2 100644
+--- a/muse_attention_decode/submission.py
++++ b/muse_attention_decode/submission.py
+@@ -945,6 +945,7 @@ _SK_CUDA = r"""
+ #include <cuda_fp16.h>
+ #include <cuda_bf16.h>
+ #include <cstdint>
++#include <type_traits>
+ #include <vector>
+ 
+ namespace {
+@@ -962,18 +963,28 @@ constexpr int WARPS = THREADS / 32;
+ constexpr int MAXB = 64;
+ constexpr int STAGE_BYTES = 2 * TILE * ROW;  // K tile + V tile = 16 KB
+ constexpr int QBYTES = HQ * D;               // one request's e4m3 query
+-
+-template <int STAGES>
++constexpr int PS_MAXR = 256;                 // PSEUDO: pseudo-rows (8 per verify request, B <= 32)
++constexpr int PS_WINDOW = 2048;              // PSEUDO: the sliding window (keys p - 2047 .. p)
++#ifdef SK_PSEUDO
++constexpr int SK_MAX_VARIANT = 5;
++#else
++constexpr int SK_MAX_VARIANT = 3;
++#endif
++
++// MAXR = request capacity of the smem tables. The default (64, no LO table) is exactly the landed
++// layout (95264 B at 4 stages); PSEUDO instantiations use Lay<STAGES, PS_MAXR, true>.
++template <int STAGES, int MAXR = MAXB, bool WITH_LO = false>
+ struct Lay {
+   static constexpr int RING = 0;
+   static constexpr int QR = RING + STAGES * STAGE_BYTES;      // e4m3 [STAGES][HQ][D]
+   static constexpr int IDX = QR + STAGES * QBYTES;            // int32 [2][MB_TOK]
+   static constexpr int ACC = IDX + 2 * MB_TOK * 4;            // f32 [WARPS][G][D]
+   static constexpr int ML = ACC + WARPS * G * D * 4;          // f32 [WARPS][G][2]
+-  static constexpr int SEQ = ML + WARPS * G * 2 * 4;          // int32 [MAXB]
+-  static constexpr int TP = SEQ + MAXB * 4;                   // int32 [MAXB + 1] (+pad)
+-  static constexpr int FLAG = TP + (MAXB + 4) * 4;            // int32 [4]
+-  static constexpr int BYTES = FLAG + 16;
++  static constexpr int SEQ = ML + WARPS * G * 2 * 4;          // int32 [MAXR]
++  static constexpr int TP = SEQ + MAXR * 4;                   // int32 [MAXR + 1] (+pad)
++  static constexpr int FLAG = TP + (MAXR + 4) * 4;            // int32 [4]
++  static constexpr int LO = FLAG + 16;                        // int32 [MAXR], only when WITH_LO
++  static constexpr int BYTES = LO + (WITH_LO ? MAXR * 4 : 0);
+ };
+ 
+ __device__ __forceinline__ uint32_t smem_u32(const void* p) {
+@@ -1025,6 +1036,42 @@ __device__ __forceinline__ void load_prefix(const int* __restrict__ seqlens, int
+   }
+   __syncthreads();
+ }
++// PSEUDO prefix. Pseudo-request r = 8 * b + j (token j of verify block b) attends keys [lo_r, sp_r) of
++// page-table row b, sp_r = cache_seqlens[b] - 7 + j (= position + 1: causal inside the block),
++// lo_r = max(0, sp_r - PS_WINDOW) (= position - 2047 clamped: the sliding window, every key of it).
++// cnt_s[r] = sp_r - lo_r is the key count the rest of the kernel treats as the request length,
++// lo_s[r] = lo_r is added only to the page-table offset, tp_s is the inclusive tile prefix by one
++// block-wide scan (R = 8B <= 256 = THREADS). wsum: >= 8 ints of scratch. Ends with a barrier.
++// Without SK_PSEUDO the body is empty (the landed build).
++__device__ __forceinline__ void load_prefix_pseudo(const int* __restrict__ seqlens, int B, int* cnt_s, int* lo_s,
++                                                   int* tp_s, int* wsum) {
++#ifdef SK_PSEUDO
++  const int tid = threadIdx.x, lane = tid & 31, warp = tid >> 5;
++  const int R = B * 8;
++  int v = 0;
++  if (tid < R) {
++    int sp = seqlens[tid >> 3] - 7 + (tid & 7);
++    sp = sp > 0 ? sp : 0;
++    const int lo = sp > PS_WINDOW ? sp - PS_WINDOW : 0;
++    const int cnt = sp - lo;
++    cnt_s[tid] = cnt;
++    lo_s[tid] = lo;
++    v = (cnt + TILE - 1) / TILE;
++  }
++#pragma unroll
++  for (int off = 1; off < 32; off <<= 1) {
++    const int n = __shfl_up_sync(0xffffffffu, v, off);
++    if (lane >= off) v += n;
++  }
++  if (lane == 31) wsum[warp] = v;
++  __syncthreads();
++  int add = 0;
++  for (int w = 0; w < warp; ++w) add += wsum[w];
++  if (tid < R) tp_s[tid + 1] = v + add;
++  if (tid == 0) tp_s[0] = 0;
++  __syncthreads();
++#endif
++}
+ // First tile of CTA c, and the CTA owning tile t (the exact inverse: s_c <= t < s_{c+1}).
+ __device__ __forceinline__ int range_start(int c, int T, int gx) {
+   return static_cast<int>((static_cast<long long>(c) * T) / gx);
+@@ -1095,7 +1142,10 @@ __device__ __forceinline__ void finalize_store(float4 o, float L, float vs, int
+   op[1] = __floats2bfloat162_rn(y2, y3);
+ }
+ 
+-template <int STAGES, bool TICKET, bool TWO = false>
++// PSEUDO (sliding verify, q_len 8): the kernel rows are the R = 8B pseudo-rows r = 8 b + j; q is the
++// e4m3 query [B * 8, HQ, D] (token r), qkv / out rows are r, page_table row is r >> 3, seqlens is
++// cache_seqlens [B]; ws / ticket / group slots are sized for R. PSEUDO = false is the landed kernel.
++template <int STAGES, bool TICKET, bool TWO = false, bool PSEUDO = false>
+ __global__ void __launch_bounds__(THREADS, 2)
+ splitkv_attn_sk_kernel(const uint8_t* __restrict__ q,          // e4m3 [B, HQ, D]
+                        const uint8_t* __restrict__ kc,         // e4m3 [rows, ROW]
+@@ -1105,14 +1155,14 @@ splitkv_attn_sk_kernel(const uint8_t* __restrict__ q,          // e4m3 [B, HQ, D
+                        const float* __restrict__ k_scale, const float* __restrict__ v_scale, float score_scale,
+                        const __nv_bfloat16* __restrict__ qkv, int64_t qkv_stride,
+                        __nv_bfloat16* __restrict__ out,        // bf16 [B, HQ * D]
+-                       float* __restrict__ ws_acc,             // f32 [grid + B, HQ, D]
+-                       float* __restrict__ ws_ml,              // f32 [grid + B, 2, HQ]
+-                       int* __restrict__ ticket,               // int32 [>= B], 0 between launches
+-                       int* __restrict__ gticket,              // int32 [>= B * 32], 0 between launches (TWO)
+-                       float* __restrict__ gacc,               // f32 [B * 32, HQ, D] group slots (TWO)
+-                       float* __restrict__ gml,                // f32 [B * 32, 2, HQ] (TWO)
++                       float* __restrict__ ws_acc,             // f32 [grid + R, HQ, D]
++                       float* __restrict__ ws_ml,              // f32 [grid + R, 2, HQ]
++                       int* __restrict__ ticket,               // int32 [>= R], 0 between launches
++                       int* __restrict__ gticket,              // int32 [>= R * 32], 0 between launches (TWO)
++                       float* __restrict__ gacc,               // f32 [R * 32, HQ, D] group slots (TWO)
++                       float* __restrict__ gml,                // f32 [R * 32, 2, HQ] (TWO)
+                        float eps) {
+-  using S = Lay<STAGES>;
++  using S = typename std::conditional<PSEUDO, Lay<STAGES, PS_MAXR, true>, Lay<STAGES>>::type;
+   extern __shared__ __align__(128) uint8_t smem[];
+   uint8_t* ring = smem + S::RING;
+   uint8_t* qr = smem + S::QR;
+@@ -1122,12 +1172,15 @@ splitkv_attn_sk_kernel(const uint8_t* __restrict__ q,          // e4m3 [B, HQ, D
+   int* seq_s = reinterpret_cast<int*>(smem + S::SEQ);
+   int* tp_s = reinterpret_cast<int*>(smem + S::TP);
+   int* flag_s = reinterpret_cast<int*>(smem + S::FLAG);
++  int* lo_s = reinterpret_cast<int*>(smem + S::LO);  // PSEUDO only (no storage otherwise: never read)
+   const float NEG_INF = __int_as_float(0xff800000u);
+ 
+   const int tid = threadIdx.x, lane = tid & 31, warp = tid >> 5;
+   const int bx = blockIdx.x;
+-  load_prefix(seqlens, B, seq_s, tp_s);
+-  const int T = tp_s[B];
++  const int R = PSEUDO ? B * 8 : B;  // rows of the flat tile space
++  if constexpr (PSEUDO) load_prefix_pseudo(seqlens, B, seq_s, lo_s, tp_s, reinterpret_cast<int*>(acc_s));
++  else load_prefix(seqlens, B, seq_s, tp_s);
++  const int T = tp_s[R];
+   if (T <= 0) return;  // uniform
+   // Effective grid min(gridDim.x, T): below it every CTA owns >= 1 tile, so CTAs c_lo..c_hi of a
+   // request all hold a segment (the ticket count and the merge rely on it). CTAs above it exit.
+@@ -1142,7 +1195,7 @@ splitkv_attn_sk_kernel(const uint8_t* __restrict__ q,          // e4m3 [B, HQ, D
+ 
+   // Request holding global tile gt: the largest b with tp_s[b] <= gt (gt < Ttot).
+   auto find_req = [&](int gt) {
+-    int lo = 0, hi = B - 1;
++    int lo = 0, hi = R - 1;
+     while (lo < hi) {
+       const int mid = (lo + hi + 1) >> 1;
+       if (tp_s[mid] <= gt) lo = mid; else hi = mid - 1;
+@@ -1163,11 +1216,13 @@ splitkv_attn_sk_kernel(const uint8_t* __restrict__ q,          // e4m3 [B, HQ, D
+       pos = (gt - tp_s[b]) * TILE + e0;
+       seq = seq_s[b];
+     }
+-    const int* prow = page_table + (int64_t)b * pt_stride;
++    int prb = b, plo = 0;  // page-table row, first key of the request's range
++    if constexpr (PSEUDO) { prb = b >> 3; plo = lo_s[b]; }
++    const int* prow = page_table + (int64_t)prb * pt_stride;
+ #pragma unroll
+     for (int j = 0; j < 4; ++j) {
+       const bool ok = pos + j < seq;
+-      cp_async4(smem_u32(idx_s + buf * MB_TOK + tl * TILE + e0 + j), ok ? prow + pos + j : prow, ok ? 4 : 0);
++      cp_async4(smem_u32(idx_s + buf * MB_TOK + tl * TILE + e0 + j), ok ? prow + plo + pos + j : prow, ok ? 4 : 0);
+     }
+   };
+   // Tile nn (issued in order 0, 1, 2, ...) into ring stage nn % STAGES, as kernel A: thread ->
+@@ -1432,14 +1487,22 @@ using SkFn = void (*)(const uint8_t*, const uint8_t*, const uint8_t*, const int*
+                       float*, float*, int*, int*, float*, float*, float);
+ 
+ SkFn sk_pick(int64_t v) {
++#ifdef SK_PSEUDO
++  if (v == 4) return splitkv_attn_sk_kernel<4, true, false, true>;
++  if (v == 5) return splitkv_attn_sk_kernel<4, true, true, true>;
++#endif
+   if (v == 3) return splitkv_attn_sk_kernel<4, true, true>;
+   if (v == 1) return splitkv_attn_sk_kernel<4, false>;
+   if (v == 2) return splitkv_attn_sk_kernel<5, true>;
+   return splitkv_attn_sk_kernel<4, true>;
+ }
+-int sk_smem(int64_t v) { return v == 2 ? Lay<5>::BYTES : Lay<4>::BYTES; }  // variant 3 = <4, ticket, two-level>
++// variant 3 = <4, ticket, two-level>; 4 / 5 = the PSEUDO single-level / two-level ticket kernels
++int sk_smem(int64_t v) {
++  if (v >= 4) return Lay<4, PS_MAXR, true>::BYTES;
++  return v == 2 ? Lay<5>::BYTES : Lay<4>::BYTES;
++}
+ void sk_prepare(int64_t v) {
+-  static bool done[4] = {false, false, false, false};
++  static bool done[6] = {false, false, false, false, false, false};
+   if (!done[v]) {
+     C10_CUDA_CHECK(cudaFuncSetAttribute(reinterpret_cast<const void*>(sk_pick(v)),
+                                         cudaFuncAttributeMaxDynamicSharedMemorySize, sk_smem(v)));
+@@ -1455,16 +1518,19 @@ void sk_attn(torch::Tensor q, torch::Tensor k_cache, torch::Tensor v_cache, torc
+              torch::Tensor gticket, torch::Tensor gacc, torch::Tensor gml,
+              double score_scale, double eps, int64_t grid, int64_t variant) {
+   const int B = static_cast<int>(cache_seqlens.size(0));
+-  TORCH_CHECK(B >= 1 && B <= MAXB, "sk_attn: batch out of range");
+-  TORCH_CHECK(variant >= 0 && variant <= 3, "sk_attn: variant");
+-  if (variant == 3) {
++  TORCH_CHECK(variant >= 0 && variant <= SK_MAX_VARIANT, "sk_attn: variant");
++  const bool pseudo = variant >= 4;
++  const int R = pseudo ? B * 8 : B;  // rows of the tile space (pseudo-rows for verify)
++  TORCH_CHECK(B >= 1 && B <= (pseudo ? PS_MAXR / 8 : MAXB), "sk_attn: batch out of range");
++  if (variant == 3 || variant == 5) {
+     TORCH_CHECK(grid <= 1024, "sk_attn: two-level ticket needs grid <= 1024 (<= 32 groups)");
+-    TORCH_CHECK(gticket.numel() >= B * 32 && gticket.scalar_type() == at::kInt, "sk_attn: gticket");
+-    TORCH_CHECK(gacc.size(0) >= B * 32 && gml.size(0) >= B * 32 && gacc.scalar_type() == at::kFloat
++    TORCH_CHECK(gticket.numel() >= R * 32 && gticket.scalar_type() == at::kInt, "sk_attn: gticket");
++    TORCH_CHECK(gacc.size(0) >= R * 32 && gml.size(0) >= R * 32 && gacc.scalar_type() == at::kFloat
+                 && gml.scalar_type() == at::kFloat, "sk_attn: group slots");
+   }
+-  TORCH_CHECK(grid >= 1 && ws_acc.size(0) >= grid + B && ws_ml.size(0) >= grid + B, "sk_attn: workspace");
+-  TORCH_CHECK(ticket.numel() >= B && ticket.scalar_type() == at::kInt, "sk_attn: ticket");
++  TORCH_CHECK(grid >= 1 && ws_acc.size(0) >= grid + R && ws_ml.size(0) >= grid + R, "sk_attn: workspace");
++  TORCH_CHECK(ticket.numel() >= R && ticket.scalar_type() == at::kInt, "sk_attn: ticket");
++  if (pseudo) TORCH_CHECK(q.size(0) >= R, "sk_attn: pseudo query rows");
+   TORCH_CHECK(cache_seqlens.scalar_type() == at::kInt && page_table.scalar_type() == at::kInt, "sk_attn: dtypes");
+   TORCH_CHECK(page_table.stride(1) == 1 && q.is_contiguous() && k_cache.is_contiguous() && v_cache.is_contiguous()
+               && out.is_contiguous(), "sk_attn: layout");
+@@ -1496,7 +1562,7 @@ void sk_combine(torch::Tensor ws_acc, torch::Tensor ws_ml, torch::Tensor cache_s
+ 
+ // {binaryVersion, ptxVersion, numRegs, localSizeBytes, maxThreadsPerBlock, dynamic smem, CTAs/SM}
+ std::vector<int64_t> sk_attrs(int64_t variant) {
+-  TORCH_CHECK(variant >= 0 && variant <= 3, "sk_attrs: variant");
++  TORCH_CHECK(variant >= 0 && variant <= SK_MAX_VARIANT, "sk_attrs: variant");
+   sk_prepare(variant);
+   cudaFuncAttributes a;
+   C10_CUDA_CHECK(cudaFuncGetAttributes(&a, reinterpret_cast<const void*>(sk_pick(variant))));
+@@ -1508,7 +1574,8 @@ std::vector<int64_t> sk_attrs(int64_t variant) {
+ }
+ """
+ 
+-_SK_LABELS = ("<4 stages, ticket>", "<4 stages, no ticket>", "<5 stages, ticket>", "<4 stages, two-level ticket>")
++_SK_LABELS = ("<4 stages, ticket>", "<4 stages, no ticket>", "<5 stages, ticket>", "<4 stages, two-level ticket>",
++              "<4 stages, ticket, PSEUDO>", "<4 stages, two-level ticket, PSEUDO>")
+ _EXT2 = None       # the stage-2 module; None keeps stage 1 (A + B) on the gated path
+ _SK_VARIANT = 0    # the timed path: 4 stages + ticket (fixed; the diagnostics call the module directly)
+ _SK_ARCH_FLAGS = None
+@@ -1542,12 +1609,18 @@ def _sk_gticket(device) -> torch.Tensor:
+     return t
+ 
+ 
+-def _build_sk():
+-    """Compile the stage-2 module at import, sm_90a only (TORCH_CUDA_ARCH_LIST=9.0a, restored after)."""
++_PS_BUILT = False  # the module holds the PSEUDO instantiations (SK_PSEUDO defined)
++
++
++def _build_sk_one(pseudo: bool):
++    """Compile the stage-2 module at import, sm_90a only (TORCH_CUDA_ARCH_LIST=9.0a, restored after).
++    pseudo=True also defines SK_PSEUDO (the sliding-verify instantiations); False is the landed source."""
+     global _SK_ARCH_FLAGS
+     t0 = time.perf_counter()
+     prev = os.environ.get("TORCH_CUDA_ARCH_LIST")
+     os.environ["TORCH_CUDA_ARCH_LIST"] = "9.0a"
++    name = "muse_decode_sk_v4p" if pseudo else "muse_decode_sk_v4"
++    flags = ["-O3", "-lineinfo"] + (["-DSK_PSEUDO=1"] if pseudo else [])
+     try:
+         from torch.utils.cpp_extension import load_inline
+         try:
+@@ -1555,28 +1628,39 @@ def _build_sk():
+             _SK_ARCH_FLAGS = list(_get_cuda_arch_flags())
+         except Exception as e:  # private helper; the cubin check below is authoritative
+             _say(f"[sk] could not read torch's nvcc arch flags: {e!r}")
+-        _say(f"[sk] building muse_full_decode_splitkv_v3: TORCH_CUDA_ARCH_LIST=9.0a, arch flags {_SK_ARCH_FLAGS}, "
+-             f"extra -O3 -lineinfo")
++        _say(f"[sk] building {name}: TORCH_CUDA_ARCH_LIST=9.0a, arch flags {_SK_ARCH_FLAGS}, extra {flags}")
+         ext = load_inline(
+-            name="muse_full_decode_splitkv_v3",
++            name=name,
+             cpp_sources=_SK_CPP,
+             cuda_sources=_SK_CUDA,
+             functions=["sk_attn", "sk_combine", "sk_attrs"],
+-            extra_cuda_cflags=["-O3", "-lineinfo"],
++            extra_cuda_cflags=flags,
+             verbose=False,
+         )
+     except Exception as e:
+-        _say(f"[sk] load_inline failed after {time.perf_counter() - t0:.1f}s: {e!r}")
++        _say(f"[sk] load_inline ({name}) failed after {time.perf_counter() - t0:.1f}s: {e!r}")
+         return None
+     finally:
+         if prev is None:
+             os.environ.pop("TORCH_CUDA_ARCH_LIST", None)
+         else:
+             os.environ["TORCH_CUDA_ARCH_LIST"] = prev
+-    _say(f"[sk] load_inline compiled in {time.perf_counter() - t0:.1f}s")
++    _say(f"[sk] load_inline ({name}) compiled in {time.perf_counter() - t0:.1f}s")
+     return ext
+ 
+ 
++def _build_sk():
++    """The module with the sliding-verify PSEUDO instantiations; if that build fails, the landed source
++    (no SK_PSEUDO: only the landed kernels exist) so the full-decode path keeps its stage 2/3 kernels."""
++    global _PS_BUILT
++    ext = _build_sk_one(True)
++    if ext is not None:
++        _PS_BUILT = True
++        return ext
++    _say("[sk] PSEUDO build failed: rebuilding the landed kernels only (sliding verify stays on FA3)")
++    return _build_sk_one(False)
++
++
+ def _sk_launch(data: Inputs, q: torch.Tensor, qkv: torch.Tensor, variant: int, grid: int):
+     """splitkv_attn_sk_kernel on the gated shape; workspace from grid and batch only."""
+     cfg = data["config"]
+@@ -1617,6 +1701,8 @@ def kernel_fn(data: Inputs) -> torch.Tensor:
+     # Sliding decode at every batch (config-only predicate): the whole step in one fused launch.
+     # Every other shape (sliding verify, every full layer) keeps the path below.
+     if cfg["window"] and cfg["q_len"] == 1:
++        if _slide_gate(cfg):  # sliding cluster kernel at B=1 (C=16) and B=17..32 (C=4), config-only
++            return _slide_forward(data, _slide_clusters(cfg))
+         return _sliding_forward(data)
+     batch, length = cfg["batch"], cfg["q_len"]
+     hq, hkv, d = cfg["num_q_heads"], cfg["num_kv_heads"], cfg["head_dim"]
+@@ -1638,6 +1724,9 @@ def kernel_fn(data: Inputs) -> torch.Tensor:
+     # keeps the unpaired path, where pairing lost 27-35%).
+     # The CUDA split-KV path (full decode, 1 < batch <= 64, tp8, page 1) takes the unpaired query.
+     splitkv = _splitkv_gate(cfg)
++    if splitkv and _fused_gate(cfg):  # FUSED_PRE: full decode 1 < B <= 64, pre-attention folded into the kernel
++        return _full_decode_skf(data, qkv)
++    pseudo = _ps_gate(cfg)  # sliding verify band routed to the stream-K pseudo-decode kernel
+     paired = window == 0 and hkv % 2 == 0 and batch > 1 and not splitkv
+     g = hq // hkv
+     q = torch.empty((tokens, hq, 2 * d if paired else d), dtype=FP8, device=device)
+@@ -1651,6 +1740,8 @@ def kernel_fn(data: Inputs) -> torch.Tensor:
+     )
+     if splitkv:
+         return _full_decode_splitkv(data, q, qkv)
++    if pseudo:
++        return _sliding_verify_pseudo(data, q, qkv)
+ 
+     # The judge's scheduler_metadata was built for the unpaired geometry, so on the paired path
+     # it is not passed (FA3 builds its own schedule from the paged lengths).
+@@ -1703,11 +1794,11 @@ def kernel_fn(data: Inputs) -> torch.Tensor:
+     return o.view(batch, length, hq * d)
+ 
+ 
+-def _splitkv_synthetic(lens, kv_scale, gen, device):
++def _splitkv_synthetic(lens, kv_scale, gen, device, max_pages=None):
+     """Gated-shape inputs (full layer, decode, tp8, page 1) with ragged lengths, built as
+     reference.generate_input builds them (scattered pages, odd page-table stride)."""
+     batch, hq, hkv, d = len(lens), 16, 2, 64
+-    max_pages = max(lens) + 1 + 37
++    max_pages = max_pages or max(lens) + 1 + 37
+     total = batch * max_pages
+     perm = torch.randperm(total, generator=gen, device=device).to(torch.int32)
+     page_table = torch.full((batch, max_pages), -1, dtype=torch.int32, device=device)
+@@ -1885,6 +1976,10 @@ def _sk_validate():
+         attrs.append(a)
+         _say(f"[sk] splitkv_attn_sk_kernel{_SK_LABELS[v]}: binaryVersion {a[0]}, ptxVersion {a[1]}, regs {a[2]}, "
+              f"local {a[3]} B, dyn smem {a[5]} B, {a[6]} CTAs/SM")
++    a0 = attrs[0]
++    _say(f"[sk] landed-kernel check (variant 0 = PSEUDO=false, shared Lay<4> layout): regs {a0[2]} (landed 121), "
++         f"local {a0[3]} B (landed 0), dyn smem {a0[5]} B (landed 95264), {a0[6]} CTAs/SM (landed 2) -> "
++         f"{'IDENTICAL to landed' if (a0[2], a0[3], a0[5], a0[6]) == (121, 0, 95264, 2) else 'DIFFERS FROM LANDED'}")
+     if attrs[0][6] < 2:
+         _say("[sk] WARNING: the timed variant does not reach 2 CTAs/SM (performance, not correctness)")
+     if cap != (9, 0):
+@@ -2184,52 +2279,2360 @@ def _sk_b1_diagnostics() -> None:
+     torch.cuda.empty_cache()
+ 
+ 
+-if torch.cuda.is_available():
+-    _EXT = _build_splitkv()
+-    if _EXT is not None and not _splitkv_self_check():
+-        print("[splitkv] SELF-CHECK FAILED: CUDA split-KV path disabled, master FA3 path kept")
+-        _EXT = None
+-    if _EXT is None:
+-        _say("PATH CHOSEN: full decode 1<B<=64 tp8 page 1: master FA3 (splitkv v1 unavailable; v2 not tried)")
++# ---------------------------------------------------------------------------------------------
++# Sliding verify (q_len 8, window 2048, page 1, tp8, 1 <= B <= 32) as stream-K pseudo-decode.
++#
++# Verify token j of request b attends keys max(0, p - 2047) .. p inclusive (p = seq_lens[b] + j), which
++# is exactly a decode query over the range [lo, p + 1): so the stage-2/3 gather kernel is launched
++# with its PSEUDO flag over R = 8B pseudo-rows r = 8b + j (key count and range start from
++# cache_seqlens in smem, page-table row b, query / qkv / out row r). The pre-attention kernel is the
++# master one (RoPE on, e4m3 q, the 8 new K/V rows stored), excluded from every timing below. Variants:
++# single-level (4) and two-level (5) ticket, grid 4R / 8R / SM / 2xSM (capped at 2xSM). Each band
++# (B = 1, 2..16, 17..32) is routed only if its best variant, timed against the master FA3 path
++# (prepare + main + combine + norm-gate) as cold-L2 CUDA-graph replays at B = 1 / 16 / 32 x 80000, is
++# >= 5% faster; otherwise it keeps FA3, byte-identical.
++# ---------------------------------------------------------------------------------------------
++
++_PS_ROUTE = {}   # band (1, 2, 3) -> (variant, grid spec); empty = sliding verify stays on FA3
++_PS_TICKETS = {}
++_PS_GTICKETS = {}
++_PS_WINDOW = 2048
++_PS_BAND_NAMES = {1: "B=1", 2: "B=2..16", 3: "B=17..32"}
++
++
++def _ps_band(batch: int) -> int:
++    return 1 if batch == 1 else (2 if batch <= 16 else 3)
++
++
++def _ps_gate(cfg) -> bool:
++    """Config-only predicate: the band's validated pseudo-decode route exists for this verify shape."""
++    return (bool(_PS_ROUTE) and _EXT2 is not None and cfg["window"] == _PS_WINDOW and cfg["q_len"] == 8
++            and cfg["page_size"] == 1 and cfg["num_q_heads"] == 16 and cfg["num_kv_heads"] == 2
++            and cfg["head_dim"] == 64 and bool(cfg["rope_theta"]) and 1 <= cfg["batch"] <= 32
++            and _ps_band(cfg["batch"]) in _PS_ROUTE)
++
++
++def _ps_ticket(device) -> torch.Tensor:
++    """int32 [256] per-pseudo-request ticket counters, zeroed once at import (device-only allocation)."""
++    key = device.index if device.index is not None else torch.cuda.current_device()
++    t = _PS_TICKETS.get(key)
++    if t is None:
++        t = _PS_TICKETS[key] = torch.zeros(256, dtype=torch.int32, device=device)
++    return t
++
++
++def _ps_gticket(device) -> torch.Tensor:
++    """int32 [256 * 32] group-level counters of the two-level variant, zeroed once at import."""
++    key = device.index if device.index is not None else torch.cuda.current_device()
++    t = _PS_GTICKETS.get(key)
++    if t is None:
++        t = _PS_GTICKETS[key] = torch.zeros(256 * 32, dtype=torch.int32, device=device)
++    return t
++
++
++def _ps_grid(spec: str, pseudo: int, sms: int) -> int:
++    """CTAs of a grid spec for `pseudo` = 8B pseudo-rows: 4R / 8R (a merge of ~4 / ~8 slots per
++    pseudo-request), one CTA per SM, or two per SM; never above 2 x SM."""
++    g = {"p4": 4 * pseudo, "p8": 8 * pseudo, "sm": sms, "2sm": 2 * sms}[spec]
++    return max(1, min(g, 2 * sms))
++
++
++def _ps_launch(data: Inputs, q: torch.Tensor, qkv: torch.Tensor, variant: int, grid: int) -> torch.Tensor:
++    """The PSEUDO kernel on a sliding verify shape; q is the pre-attention e4m3 query [B * 8, 16, 64].
++    Workspace, ticket and group slots come from shapes and the device only."""
++    cfg = data["config"]
++    batch, hq, d = cfg["batch"], cfg["num_q_heads"], cfg["head_dim"]
++    pseudo = 8 * batch
++    device = qkv.device
++    ws_acc = torch.empty((grid + pseudo, hq, d), dtype=torch.float32, device=device)
++    ws_ml = torch.empty((grid + pseudo, 2, hq), dtype=torch.float32, device=device)
++    out = torch.empty((batch, 8, hq * d), dtype=torch.bfloat16, device=device)
++    ng = pseudo * 32 if variant == 5 else 1
++    gacc = torch.empty((ng, hq, d), dtype=torch.float32, device=device)
++    gml = torch.empty((ng, 2, hq), dtype=torch.float32, device=device)
++    _EXT2.sk_attn(q, data["k_cache"], data["v_cache"], data["page_table"], data["cache_seqlens"], data["k_scale"],
++                  data["v_scale"], qkv, qkv.stride(0), out, ws_acc, ws_ml, _ps_ticket(device), _ps_gticket(device),
++                  gacc, gml, cfg["sm_scale"] * cfg["qk_scale_factor"] * LOG2E, RMS_EPS, grid, variant)
++    return out
++
++
++def _sliding_verify_pseudo(data: Inputs, q: torch.Tensor, qkv: torch.Tensor) -> torch.Tensor:
++    batch = data["config"]["batch"]
++    variant, spec = _PS_ROUTE[_ps_band(batch)]
++    return _ps_launch(data, q, qkv, variant, _ps_grid(spec, 8 * batch, _sm_count(qkv.device)))
++
++
++def _ps_fa3(data: Inputs, q: torch.Tensor, qkv: torch.Tensor) -> torch.Tensor:
++    """Master's sliding-verify attention exactly as kernel_fn issues it (FA3 with its own prepare +
++    combine, then the SGLang norm-gate); the pre-attention kernel is not included."""
++    cfg = data["config"]
++    batch, hq, hkv, d = cfg["batch"], cfg["num_q_heads"], cfg["num_kv_heads"], cfg["head_dim"]
++    descale = {}
++    if cfg["kv_scale"] != 1.0:
++        descale = dict(k_descale=data["k_scale"].reshape(1, 1).expand(batch, hkv),
++                       v_descale=data["v_scale"].reshape(1, 1).expand(batch, hkv))
++    out = flash_attn_with_kvcache(
++        q=q, k_cache=data["k_cache"], v_cache=data["v_cache"], page_table=data["page_table"],
++        cache_seqlens=data["cache_seqlens"], cu_seqlens_q=data["cu_seqlens_q"], max_seqlen_q=8,
++        softmax_scale=cfg["sm_scale"] * cfg["qk_scale_factor"], causal=True,
++        window_size=(cfg["window"] - 1, 0), scheduler_metadata=data["scheduler_metadata"], **descale)
++    if isinstance(out, tuple):
++        out = out[0]
++    gate = qkv[:, (hq + 2 * hkv) * d:]
++    o = rms_norm_gate(out.reshape(batch * 8, hq * d).to(torch.bfloat16), gate, None, head_dim=d, eps=RMS_EPS,
++                      has_norm=True)
++    return o.view(batch, 8, hq * d)
++
++
++def _ps_synthetic(lens, kv_scale, gen, device, max_pages=None):
++    """Sliding verify inputs (q_len 8, window 2048, RoPE 500000, page 1, tp8) with seq_lens = lens,
++    built as reference.generate_input builds them (scattered pages, room for the 8 new tokens).
++    max_pages (>= max(lens) + 8) fixes the shapes so a second set can refill the first in place."""
++    batch, hq, hkv, d, L = len(lens), 16, 2, 64, 8
++    max_pages = max_pages or max(lens) + L + 37
++    total = batch * max_pages
++    perm = torch.randperm(total, generator=gen, device=device).to(torch.int32)
++    page_table = torch.full((batch, max_pages), -1, dtype=torch.int32, device=device)
++    off = 0
++    for b, n in enumerate(lens):
++        page_table[b, :n + L] = perm[off:off + n + L]
++        off += n + L
++    seq = torch.tensor(lens, dtype=torch.int64, device=device)
++    pos = seq[:, None] + torch.arange(L, device=device)
++    k_cache = (torch.randn((total, 1, hkv, d), generator=gen, device=device) / kv_scale).to(FP8)
++    v_cache = (torch.randn((total, 1, hkv, d), generator=gen, device=device) / kv_scale).to(FP8)
++    qkv = (2 * torch.randn((batch, L, (2 * hq + 2 * hkv) * d), generator=gen, device=device)).to(torch.bfloat16)
++    return {
++        "qkv": qkv,
++        "positions": pos.reshape(-1),
++        "cache_loc": torch.gather(page_table.long(), 1, pos).reshape(-1),
++        "cache_seqlens": (seq + L).to(torch.int32),
++        "cu_seqlens_q": torch.arange(0, batch * L + 1, L, dtype=torch.int32, device=device),
++        "scheduler_metadata": None,
++        "k_cache": k_cache,
++        "v_cache": v_cache,
++        "k_scale": torch.tensor(kv_scale, dtype=torch.float32, device=device),
++        "v_scale": torch.tensor(kv_scale, dtype=torch.float32, device=device),
++        "page_table": page_table,
++        "seq_lens": seq.to(torch.int32),
++        "config": {"batch": batch, "q_len": L, "num_q_heads": hq, "num_kv_heads": hkv, "head_dim": d,
++                   "page_size": 1, "window": _PS_WINDOW, "rope_theta": 500000.0,
++                   "qk_scale_factor": 5.4730064863875, "sm_scale": d ** -0.5, "kv_scale": kv_scale},
++    }
++
++
++def _ps_prepare_q(data: Inputs):
++    """The master pre-attention launch of a sliding verify step (RoPE on, unpaired e4m3 query, the 8
++    new K/V rows per request stored), as kernel_fn issues it. Self-check and gate only."""
++    cfg = data["config"]
++    batch, hq, hkv, d = cfg["batch"], cfg["num_q_heads"], cfg["num_kv_heads"], cfg["head_dim"]
++    tokens = batch * cfg["q_len"]
++    qkv = data["qkv"].reshape(tokens, -1)
++    q = torch.empty((tokens, hq, d), dtype=FP8, device=qkv.device)
++    _pre_attention_kernel[(tokens, hq + hkv)](
++        qkv, data["positions"], data["cache_loc"], _inv_freq(cfg["rope_theta"], d, qkv.device), data["k_scale"],
++        data["v_scale"], q, data["k_cache"], data["v_cache"],
++        qkv.stride(0),
++        HQ=hq, HKV=hkv, D=d, ROPE=True, EPS=RMS_EPS, PAIRED=False, G=hq // hkv,
++        num_warps=1,
++    )
++    return q, qkv
++
++
++def _ps_reference(data, lens):
++    """FP32 sliding-window causal attention over the cache as the pre-attention kernel left it (new rows
++    included), e4m3 queries, as reference.py: verify token j of request b sees positions
++    max(0, p - 2047) .. p inclusive with p = lens[b] + j."""
++    cfg = data["config"]
++    batch, hq, hkv, d, L = cfg["batch"], cfg["num_q_heads"], cfg["num_kv_heads"], cfg["head_dim"], cfg["q_len"]
++    qkv = data["qkv"].reshape(batch * L, -1).float()
++    q = qkv[:, :hq * d].view(batch * L, hq, d)
++    q = q * torch.rsqrt(q.pow(2).mean(-1, keepdim=True) + RMS_EPS)
++    ang = data["positions"].float()[:, None] * _inv_freq(cfg["rope_theta"], d, qkv.device)
++    cos, sin = ang.cos()[:, None, :], ang.sin()[:, None, :]
++    ev, od = q[..., 0::2], q[..., 1::2]
++    q = torch.stack([ev * cos - od * sin, ev * sin + od * cos], -1).flatten(-2)
++    q = q.to(FP8).float() * cfg["qk_scale_factor"]
++    kf = data["k_cache"].view(-1, hkv, d)
++    vf = data["v_cache"].view(-1, hkv, d)
++    outs = []
++    for b, n in enumerate(lens):
++        for j in range(L):
++            p = n + j
++            lo = max(0, p - cfg["window"] + 1)
++            rows = data["page_table"][b, lo:p + 1].long()
++            keys = (kf[rows].float() * data["k_scale"]).repeat_interleave(hq // hkv, dim=1)
++            vals = (vf[rows].float() * data["v_scale"]).repeat_interleave(hq // hkv, dim=1)
++            sc = torch.einsum("hd,nhd->hn", q[b * L + j], keys) * cfg["sm_scale"]
++            outs.append(torch.einsum("hn,nhd->hd", torch.softmax(sc, dim=-1), vals))
++    a = torch.stack(outs)
++    a = a * torch.rsqrt(a.pow(2).mean(-1, keepdim=True) + RMS_EPS)
++    gate = qkv[:, (hq + 2 * hkv) * d:].view(batch * L, hq, d)
++    return (a * torch.sigmoid(gate)).reshape(batch, L, hq * d)
++
++
++def _ps_case(tag, lens, kv_scale, variant, grid, gen) -> bool:
++    """One synthetic sliding-verify case, each launch announced before and synced + confirmed after
++    (a fault names its kernel), against the FP32 windowed causal reference."""
++    data = _ps_synthetic(lens, kv_scale, gen, torch.device("cuda"))
++    _say(f"[ps] {tag}: launching _pre_attention_kernel")
++    q, qkv = _ps_prepare_q(data)
++    torch.cuda.synchronize()
++    _say(f"[ps] {tag}: _pre_attention_kernel returned; launching splitkv_attn_sk_kernel{_SK_LABELS[variant]} "
++         f"grid {grid}")
++    out = _ps_launch(data, q, qkv, variant, grid)
++    torch.cuda.synchronize()
++    _say(f"[ps] {tag}: splitkv_attn_sk_kernel returned")
++    err, finite = _rel_l2(out, _ps_reference(data, lens))
++    ok = finite and err < 2e-2
++    _say(f"[ps] {tag}: rel L2 {err:.2e}, finite {finite} -> {'ok' if ok else 'FAIL'}")
++    return ok
++
++
++def _ps_replay_check(batch: int, lens, kv_scale: float, gen) -> "str | None":
++    """kernel_fn (pre-attention + the routed pseudo kernel) through the two-state alternating check: two
++    states with a captured graph each, replayed alternately with refilled inputs (other seq lens, same
++    shapes), every replay compared with the FP32 windowed reference."""
++    dev = torch.device("cuda")
++    sets = _alt_sets(lens)
++    mp = max(max(s) for s in sets) + 8 + 37
++    return _alt_check(f"[ps] replay B={batch}",
++                      lambda l: _ps_synthetic(l, kv_scale, gen, dev, max_pages=mp), _ps_reference, sets, gate=_ps_gate)
++
++
++def _ps_graph_us(fn, flush, warm=3, reps=10) -> float:
++    """Median GPU time of one CUDA-graph replay of fn, L2 made cold by reading a 256 MB buffer before each
++    replay (events around the replay only), as the judge times."""
++    side = torch.cuda.Stream()
++    side.wait_stream(torch.cuda.current_stream())
++    with torch.cuda.stream(side):
++        for _ in range(2):
++            fn()
++    torch.cuda.current_stream().wait_stream(side)
++    torch.cuda.synchronize()
++    graph = torch.cuda.CUDAGraph()
++    with torch.cuda.graph(graph):
++        fn()
++    torch.cuda.synchronize()
++    ts = []
++    for it in range(warm + reps):
++        flush.sum()
++        e0, e1 = torch.cuda.Event(enable_timing=True), torch.cuda.Event(enable_timing=True)
++        e0.record()
++        graph.replay()
++        e1.record()
++        torch.cuda.synchronize()
++        if it >= warm:
++            ts.append(e0.elapsed_time(e1) * 1e3)
++    del graph
++    return sorted(ts)[len(ts) // 2]
++
++
++def _ps_validate() -> "str | None":
++    """Canary + self-check of the PSEUDO kernels against the FP32 windowed causal reference at B = 1, 3,
++    16, 32 (lens < 8, < window, < window + 8, 80000; kv scale 1 and 0.25; grids 3 / 7 / device).
++    None on success, else the reason sliding verify stays on FA3."""
++    dev = torch.device("cuda")
++    sms = _sm_count(dev)
++    attrs = {}
++    for v in (4, 5):
++        a = list(_EXT2.sk_attrs(v))
++        attrs[v] = a
++        _say(f"[ps] splitkv_attn_sk_kernel{_SK_LABELS[v]}: binaryVersion {a[0]}, ptxVersion {a[1]}, regs {a[2]}, "
++             f"local {a[3]} B, dyn smem {a[5]} B, {a[6]} CTAs/SM (landed variant 0: 121 regs, 0 local, 95264 B, 2 CTAs/SM)")
++        if a[0] != 90:
++            return f"cubin version is not 90 (variant {v})"
++        if a[6] < 1:
++            return f"pseudo variant {v} cannot launch (0 CTAs/SM)"
++        if a[6] < 2:
++            _say(f"[ps] WARNING: pseudo variant {v} does not reach 2 CTAs/SM (performance, not correctness)")
++    gen = torch.Generator(device="cuda").manual_seed(2468)
++    rng = random.Random(2026)
++    lens16 = list(_SK_LENS16)
++    lens16[0] = 80000
++    lens32 = [rng.randint(1, 12000) for _ in range(32)]
++    lens32[0], lens32[3], lens32[5], lens32[9], lens32[17] = 80000, 2047, 2048, 7, 0
++    lens32[21], lens32[22], lens32[23] = 2055, 2056, 2049
++    two = 2 * sms
++    cases = (
++        ("canary B=1 lens 3 grid 3", [3], 1.0, 4, 3),
++        ("B=1 lens 7 (<8) kv 0.25 two-level grid 7", [7], 0.25, 5, 7),
++        ("B=1 lens 0 two-level grid 3", [0], 1.0, 5, 3),
++        ("B=1 lens 1500 (<window) grid 7", [1500], 1.0, 4, 7),
++        ("B=1 lens 2045 (<window+8) kv 0.25 two-level grid 3", [2045], 0.25, 5, 3),
++        ("B=1 lens 2047 grid device", [2047], 1.0, 4, two),
++        ("B=1 lens 2055 two-level grid 4P", [2055], 1.0, 5, 32),
++        ("B=1 lens 80000 grid 4P", [80000], 1.0, 4, 32),
++        ("B=1 lens 80000 kv 0.25 grid 8P", [80000], 0.25, 4, 64),
++        ("B=1 lens 80000 two-level grid SM", [80000], 1.0, 5, sms),
++        ("B=3 lens 5/2040/80000 grid 7", [5, 2040, 80000], 1.0, 4, 7),
++        ("B=3 lens 5/2040/80000 kv 0.25 two-level grid device", [5, 2040, 80000], 0.25, 5, two),
++        ("B=16 ragged kv 0.25 grid device", lens16, 0.25, 4, two),
++        ("B=16 ragged two-level grid 3", lens16, 1.0, 5, 3),
++        ("B=16 ragged two-level grid SM", lens16, 1.0, 5, sms),
++        ("B=32 ragged grid device", lens32, 1.0, 4, two),
++        ("B=32 ragged kv 0.25 two-level grid 7", lens32, 0.25, 5, 7),
++        ("B=32 ragged two-level grid device", lens32, 1.0, 5, two),
++    )
++    for tag, lens, kv_scale, variant, grid in cases:
++        if not _ps_case(tag, lens, kv_scale, variant, grid, gen):
++            return f"self-check {tag}"
++    left = int(_ps_ticket(dev).abs().sum().item()) + int(_ps_gticket(dev).abs().sum().item())
++    _say(f"[ps] tickets (both levels) after the self-check: sum {left}")
++    if left:
++        return "pseudo tickets not reset"
++    return None
++
++
++def _ps_gate_band(batch: int, gen, flush, sms: int):
++    """Time every pseudo variant (cold-L2 graph replays) and the master FA3 path at `batch` x 80000, print
++    every number, and return (variant, spec) of the best variant if it is >= 5% faster than FA3, else None."""
++    dev = torch.device("cuda")
++    lens = [80000] * batch
++    data = _ps_synthetic(lens, 1.0, gen, dev)
++    pseudo = 8 * batch
++    _say(f"[ps-gate] B={batch}: launching _pre_attention_kernel")
++    q, qkv = _ps_prepare_q(data)
++    torch.cuda.synchronize()
++    _say(f"[ps-gate] B={batch}: pre-attention returned (new rows stored)")
++    ref = _ps_reference(data, lens)
++    nbytes = sum(min(n + 8, _PS_WINDOW + 8) for n in lens) * 256  # unique window bytes per request ~ 2056 rows
++    cands, seen = [], set()
++    for spec in ("p4", "p8", "sm", "2sm"):
++        g = _ps_grid(spec, pseudo, sms)
++        for v in (4, 5):
++            if (v, g) not in seen:
++                seen.add((v, g))
++                cands.append((v, spec, g))
++    tiles = pseudo * (_PS_WINDOW // 64)
++    _say(f"[ps-gate] B={batch}: {pseudo} pseudo-rows x {_PS_WINDOW // 64} tiles = {tiles} tiles; unique K+V "
++         f"{nbytes / 1e6:.1f} MB over DRAM vs ~{nbytes * 8 / 1e6:.0f} MB of L2-served reads (analytic: 8 pseudo-rows "
++         f"share ~2041 of 2048 keys)")
++    if batch == 1:
++        for v, spec, g in cands:
++            _say(f"[ps-gate] B=1 layout {_SK_LABELS[v]} grid {g} ({spec}): {tiles / g:.1f} tiles per CTA, "
++                 f"~{g / pseudo:.1f} slots to merge per pseudo-request" + (", two-level groups" if v == 5 else ""))
++    results = []
++    for v, spec, g in cands:
++        label = f"{_SK_LABELS[v]} grid {g} ({spec})"
++        fn = (lambda v=v, g=g: _ps_launch(data, q, qkv, v, g))
++        _say(f"[ps-gate] B={batch}: launching {label} (eager correctness run)")
++        out = fn()
++        torch.cuda.synchronize()
++        err, finite = _rel_l2(out, ref)
++        _say(f"[ps-gate] B={batch}: {label} returned, rel L2 {err:.2e}, finite {finite}")
++        if not (finite and err < 2e-2):
++            _say(f"[ps-gate] B={batch}: {label} FAILED its correctness check: not timed")
++            continue
++        _say(f"[ps-gate] B={batch}: timing {label} (graph replays)")
++        t = _ps_graph_us(fn, flush)
++        _say(f"[ps-gate] B={batch}: {label}: {t:7.1f} us")
++        results.append((t, v, spec, g))
++    _say(f"[ps-gate] B={batch}: launching master FA3 path (eager) for its error")
++    fa3_out = _ps_fa3(data, q, qkv)
++    torch.cuda.synchronize()
++    ferr, ffin = _rel_l2(fa3_out, ref)
++    _say(f"[ps-gate] B={batch}: master FA3 path rel L2 {ferr:.2e}, finite {ffin}; timing it (graph replays)")
++    t_fa3 = _ps_graph_us(lambda: _ps_fa3(data, q, qkv), flush)
++    _say(f"[ps-gate] B={batch}: master FA3 (prepare + main + combine + norm-gate): {t_fa3:7.1f} us "
++         f"(pre-attention excluded from both sides; graph replay, cold L2, median of 10)")
++    choice = None
++    if results:
++        t, v, spec, g = min(results)
++        ratio = t_fa3 / t
++        if ratio >= 1.05:
++            choice = (v, spec)
++        _say(f"[ps-gate] B={batch}: best pseudo {_SK_LABELS[v]} grid {g} ({spec}) {t:.1f} us vs FA3 {t_fa3:.1f} us "
++             f"-> FA3 / pseudo {ratio:.3f}x ({'ROUTE' if choice else 'below the 1.05x gate: FA3'})")
+     else:
+-        _sk_ticket(torch.device("cuda", torch.cuda.current_device()))  # zeroed once, here
+-        _sk_gticket(torch.device("cuda", torch.cuda.current_device()))  # zeroed once, here
+-        _EXT2 = _build_sk()
+-        _sk_reason = "build failed" if _EXT2 is None else None
+-        if _EXT2 is not None:
+-            try:
+-                _sk_reason = _sk_validate()
+-            except Exception as e:
+-                _sk_reason = f"self-check raised {e!r}"
+-        _b1_reason = "stage 2 unavailable"
+-        if _sk_reason is not None:
+-            _EXT2 = None
+-            _say(f"PATH CHOSEN: full decode splitkv v1 (fallback: {_sk_reason})")
+-        else:
+-            _say("PATH CHOSEN: full decode streamk+ticket v2")
+-            try:
+-                _b1_reason = _sk_validate_b1()
+-            except Exception as e:
+-                _b1_reason = f"batch-1 self-check raised {e!r}"
+-            if _b1_reason is None:
+-                _B1_PATH = True
++        _say(f"[ps-gate] B={batch}: no pseudo variant passed its correctness check")
++    del data, q, qkv, ref, fa3_out
++    torch.cuda.empty_cache()
++    return choice
++
++
++def _ps_setup() -> None:
++    """Validate the PSEUDO kernels, gate each batch band against master FA3 on printed timings, replay-check
++    the routed bands, and set _PS_ROUTE. Any failure leaves sliding verify on FA3; nothing here raises."""
++    dev = torch.device("cuda")
++    _ps_ticket(dev)
++    _ps_gticket(dev)
++    if not _PS_BUILT or _EXT2 is None:
++        _say("PATH CHOSEN: sliding verify FA3 (fallback: PSEUDO build or stage-2 module unavailable)")
++        return
++    try:
++        reason = _ps_validate()
++    except Exception as e:
++        reason = f"self-check raised {e!r}"
++    if reason is not None:
++        _say(f"PATH CHOSEN: sliding verify FA3 (fallback: {reason})")
++        return
++    sms = _sm_count(dev)
++    gen = torch.Generator(device="cuda").manual_seed(1357)
++    flush = torch.empty(64 << 20, dtype=torch.float32, device=dev)  # 256 MB > L2
++    choice = {}
++    for band, batch in ((1, 1), (2, 16), (3, 32)):
++        try:
++            c = _ps_gate_band(batch, gen, flush, sms)
++        except Exception as e:
++            _say(f"[ps-gate] B={batch} raised (band stays on FA3): {e!r}")
++            c = None
++        if c is not None:
++            choice[band] = c
++    del flush
++    torch.cuda.empty_cache()
++    if choice:
++        rng = random.Random(77)
++        lens32 = [rng.randint(1, 12000) for _ in range(32)]
++        lens32[0], lens32[1] = 80000, 2047
++        replay = {1: (1, [80000], 1.0), 2: (16, [80000] + _SK_LENS16[1:], 0.25), 3: (32, lens32, 1.0)}
++        _PS_ROUTE.update(choice)
++        for band in sorted(choice):
++            batch, lens, kv_scale = replay[band]
+             try:
+-                _sk_diagnostics()
+-                if _b1_reason is None:
+-                    _sk_b1_diagnostics()
++                why = _ps_replay_check(batch, lens, kv_scale, gen)
+             except Exception as e:
+-                _say(f"[sk-diag] diagnostics raised (path unaffected): {e!r}")
+-            finally:  # a diagnostic variant must not leave the shared tickets dirty for the timed path
+-                try:
+-                    _sk_ticket(torch.device("cuda", torch.cuda.current_device())).zero_()
+-                    _sk_gticket(torch.device("cuda", torch.cuda.current_device())).zero_()
+-                    torch.cuda.synchronize()
+-                except Exception as e:
+-                    _say(f"[sk-diag] ticket re-zero raised: {e!r}")
+-        if _B1_PATH:
+-            _say("PATH CHOSEN: full decode_1 streamk two-level")
++                why = f"replay raised {e!r}"
++            if why is not None:
++                _say(f"[ps] band {_PS_BAND_NAMES[band]} dropped to FA3 ({why})")
++                _PS_ROUTE.pop(band, None)
++        left = int(_ps_ticket(dev).abs().sum().item()) + int(_ps_gticket(dev).abs().sum().item())
++        _say(f"[ps] tickets (both levels) after the replay checks: sum {left}")
++        if left:
++            _PS_ROUTE.clear()
++            _say("[ps] tickets not reset: every band dropped to FA3")
++    for band in (1, 2, 3):
++        if band in _PS_ROUTE:
++            v, spec = _PS_ROUTE[band]
++            _say(f"PATH CHOSEN: sliding verify {_PS_BAND_NAMES[band]}: stream-K pseudo-decode {_SK_LABELS[v]} "
++                 f"grid {spec} (best printed variant >= 1.05x faster than FA3)")
+         else:
+-            _say(f"PATH CHOSEN: full decode_1 FA3 (fallback: {_b1_reason})")
+-    if _EXT is None:
+-        _say("PATH CHOSEN: full decode_1 FA3 (fallback: splitkv v1 unavailable)")
+-    _say("PATH CHOSEN: every other shape (sliding, verify, page 64, dp): master path, unchanged")
++            _say(f"PATH CHOSEN: sliding verify {_PS_BAND_NAMES[band]}: master FA3 (pseudo-decode not >= 1.05x "
++                 f"faster than FA3 in the printed timings, or failed a check)")
++
++
++
++# ---------------------------------------------------------------------------------------------
++# Shared helpers of the two-state replay checks and the interleaved timing gates (prepare-time only).
++# ---------------------------------------------------------------------------------------------
++
++_ALT_KEYS = ("qkv", "positions", "cache_loc", "cache_seqlens", "cu_seqlens_q", "k_cache", "v_cache",
++             "k_scale", "v_scale", "page_table", "seq_lens")
++
++
++def _alt_sets(lens):
++    """Six length sets for a two-state alternating check: the base set, then five reshuffled variants
++    (state A, state B, A refilled, B refilled, A refilled, B refilled in the order the check walks them)."""
++    top = max(lens)
++    out = [list(lens)]
++    for k in (1, 2, 3, 4, 5):
++        r = (k * 7) % len(lens)
++        rot = list(lens[r:]) + list(lens[:r])
++        out.append([max(1, (n * (k + 2) + 977 * k) % (top + 1)) for n in rot])
++    return out
++
++
++def _alt_check(tag, synth, ref_fn, sets, fn=None, gate=None, tol=2e-2) -> "str | None":
++    """The judge prepares two states and rotates them across repetitions with refilled inputs: build two
++    states A and B (synth(lens), identical shapes), warm up and CAPTURE a CUDA graph on each (fn(data),
++    default kernel_fn), then replay A, B, refill A in place (sets[2]), replay A, refill B (sets[3]),
++    replay B, ... comparing every replay's output against ref_fn(data, lens) (output poisoned with NaN
++    first). Every launch is announced before and synced + confirmed after. None on success, else the
++    reason."""
++    fn = fn or kernel_fn
++    states = []
++    for who, lens in (("A", sets[0]), ("B", sets[1])):
++        states.append({"who": who, "data": synth(lens), "lens": lens})
++    if gate is not None:
++        for st in states:
++            assert gate(st["data"]["config"]), f"{tag}: route not active for the check shapes"
++    side = torch.cuda.Stream()
++    side.wait_stream(torch.cuda.current_stream())
++    for st in states:
++        _say(f"{tag} state {st['who']}: eager warm-up on a side stream")
++        with torch.cuda.stream(side):
++            fn(st["data"])
++    torch.cuda.current_stream().wait_stream(side)
++    torch.cuda.synchronize()
++    _say(f"{tag}: warm-ups returned")
++    for st in states:
++        graph = torch.cuda.CUDAGraph()
++        _say(f"{tag} state {st['who']}: capturing")
++        with torch.cuda.graph(graph):
++            st["out"] = fn(st["data"])
++        st["graph"] = graph
++    torch.cuda.synchronize()
++    plan = [(0, None), (1, None)] + [(i % 2, sets[i]) for i in range(2, len(sets))]
++    for step, (si, refill) in enumerate(plan):
++        st = states[si]
++        if refill is not None:
++            new = synth(refill)
++            for key in _ALT_KEYS:
++                st["data"][key].copy_(new[key])
++            del new
++            st["lens"] = refill
++            torch.cuda.synchronize()
++        st["out"].fill_(float("nan"))
++        _say(f"{tag} step {step}: launching state {st['who']} graph" + (" (refilled)" if refill is not None else ""))
++        st["graph"].replay()
++        torch.cuda.synchronize()
++        err, finite = _rel_l2(st["out"], ref_fn(st["data"], st["lens"]))
++        ok = finite and err < tol
++        _say(f"{tag} step {step}: state {st['who']} rel L2 {err:.2e}, finite {finite} -> {'ok' if ok else 'FAIL'}")
++        if not ok:
++            return f"{tag} two-state replay step {step} (state {st['who']})"
++    for st in states:
++        del st["graph"]
++    return None
++
++
++def _graph_of(fn):
++    """Capture fn as a CUDA graph (after two eager warm-ups on a side stream)."""
++    side = torch.cuda.Stream()
++    side.wait_stream(torch.cuda.current_stream())
++    with torch.cuda.stream(side):
++        for _ in range(2):
++            fn()
++    torch.cuda.current_stream().wait_stream(side)
++    torch.cuda.synchronize()
++    graph = torch.cuda.CUDAGraph()
++    with torch.cuda.graph(graph):
++        fn()
++    torch.cuda.synchronize()
++    return graph
++
++
++def _interleaved_us(fns, flush, warm=3, reps=15):
++    """Median GPU time (us) of one CUDA-graph replay of each fn, replays interleaved (the order flips
++    every round), L2 made cold by reading a 256 MB buffer before every replay, the median time of an
++    empty graph subtracted (0 with a printed note if an empty graph cannot be captured)."""
++    graphs = [_graph_of(f) for f in fns]
++    base = None
++    try:
++        base = torch.cuda.CUDAGraph()
++        with torch.cuda.graph(base):
++            pass
++        torch.cuda.synchronize()
++    except Exception as e:
++        _say(f"[gate] empty-graph baseline unavailable ({e!r}): nothing subtracted")
++        base = None
++    allg = graphs + ([base] if base is not None else [])
++    ts = [[] for _ in allg]
++    for it in range(warm + reps):
++        order = list(range(len(allg)))
++        if it % 2:
++            order.reverse()
++        for i in order:
++            flush.sum()
++            e0, e1 = torch.cuda.Event(enable_timing=True), torch.cuda.Event(enable_timing=True)
++            e0.record()
++            allg[i].replay()
++            e1.record()
++            torch.cuda.synchronize()
++            if it >= warm:
++                ts[i].append(e0.elapsed_time(e1) * 1e3)
++    med = [sorted(t)[len(t) // 2] for t in ts]
++    b = med[-1] if base is not None else 0.0
++    if base is not None:
++        _say(f"[gate] empty-graph baseline {b:.1f} us (subtracted)")
++    del graphs, base, allg
++    return [m - b for m in med[:len(fns)]]
++
++
++def _rezero_tickets() -> None:
++    """The shared self-resetting ticket arrays must be 0 for the timed path: re-zero after any check
++    or diagnostic that might have left them dirty (an aborted launch)."""
++    dev = torch.device("cuda", torch.cuda.current_device())
++    for t in (_sk_ticket(dev), _sk_gticket(dev), _ps_ticket(dev), _ps_gticket(dev)):
++        t.zero_()
++    torch.cuda.synchronize()
++
++
++# ---------------------------------------------------------------------------------------------
++# FUSED_PRE (module muse_decode_skf_v1, kernel splitkv_attn_sk_fused_kernel, log tag [skF]): the
++# measured stage-3 kernel of full-decode-splitkv-s3-fused-preattn (job 825baa03798f431a), ported
++# VERBATIM as its own module on top of this file's helper head (the helpers before the kernel template)
++# rather than as a template flag of splitkv_attn_sk_kernel: the landed variants 0-3 and the PSEUDO
++# variants 4-5 stay byte-identical by construction (their module is not touched), the module builds and
++# fails independently of the PSEUDO build (fallback order: this module off first, PSEUDO separately),
++# and the measured code is not re-allocated on a 121/128-register kernel.
++# It is the stage-2 kernel (4 stages, ticket) with the pre-attention work folded in (full layers have no
++# RoPE): it takes the bf16 qkv, builds the FP8 q (scaleless RMSNorm, e4m3) in-kernel and stores the new
++# k/v row at cache_loc[b] from the CTA that owns the request's last tile (key seq_b - 1). Full decode
++# 1 < B <= 64 only; B = 1 keeps the two-level ticket with the separate pre-attention kernel.
++# ---------------------------------------------------------------------------------------------
++
++_SKF_CPP = r"""
++#include <torch/extension.h>
++#include <vector>
++void skf_attn(torch::Tensor k_cache, torch::Tensor v_cache, torch::Tensor page_table, torch::Tensor cache_seqlens,
++              torch::Tensor cache_loc, torch::Tensor k_scale, torch::Tensor v_scale, torch::Tensor qkv,
++              int64_t qkv_stride, torch::Tensor out, torch::Tensor ws_acc, torch::Tensor ws_ml, torch::Tensor ticket,
++              double score_scale, double eps, int64_t grid);
++std::vector<int64_t> skf_attrs();
++"""
++
++# FUSED_PRE's CUDA source: this file's helper head (everything before the stream-K kernel template) + the fused kernel.
++_SKF_HEAD = _SK_CUDA[:_SK_CUDA.index("template <int STAGES, bool TICKET")]
++_SKF_CUDA = "#include <cuda_fp8.h>\n" + _SKF_HEAD + r"""
++// ---- FUSED_PRE (module muse_decode_skf_v1): splitkv_attn_sk_fused_kernel ----
++// The stage-2 kernel (4 stages, ticket) with the pre-attention work folded in: no FP8 query input.
++// (a) The segment's first tile carries the request's 2 KB bf16 q slice of qkv into a per-stage slot
++//     (cp.async, with the K/V rows); the CTA that consumes it RMS-normalizes (scaleless, eps) its
++//     own row, rounds to e4m3 and builds the MMA A fragments (full layers have no RoPE; this is
++//     _pre_attention_kernel with ROPE=False). Nothing is serialized ahead of the ring.
++// (b) The CTA whose tile range holds a request's last tile (key seq_b - 1, the token being
++//     decoded, at cache_loc[b]) computes that row's 2 kv heads (k: norm / k_scale, v: / v_scale,
++//     e4m3) and stores them to the caches while block 0's page indices are in flight; the barrier
++//     after the index wait orders those stores before every cp.async of the ring. Tile ranges are
++//     disjoint, so no other CTA reads that row.
++constexpr int S3_STAGES = 4;
++constexpr int QRAW = HQ * D * 2;   // one request's bf16 q slice of qkv (2 KB)
++
++struct Lay3 {
++  static constexpr int RING = 0;
++  static constexpr int QR = RING + S3_STAGES * STAGE_BYTES;   // bf16 [STAGES][HQ][D], raw qkv
++  static constexpr int IDX = QR + S3_STAGES * QRAW;           // int32 [2][MB_TOK]
++  static constexpr int ACC = IDX + 2 * MB_TOK * 4;            // f32 [WARPS][G][D]
++  static constexpr int ML = ACC + WARPS * G * D * 4;          // f32 [WARPS][G][2]
++  static constexpr int SEQ = ML + WARPS * G * 2 * 4;          // int32 [MAXB]
++  static constexpr int TP = SEQ + MAXB * 4;                   // int32 [MAXB + 1] (+pad)
++  static constexpr int FLAG = TP + (MAXB + 4) * 4;            // int32 [4]
++  static constexpr int BYTES = FLAG + 16;
++};
++
++__device__ __forceinline__ float warp_sum(float v) {
++#pragma unroll
++  for (int o = 16; o > 0; o >>= 1) v += __shfl_xor_sync(0xffffffffu, v, o);
++  return v;
++}
++__device__ __forceinline__ uint32_t e4m3_byte(float x) {
++  return static_cast<uint32_t>(__nv_cvt_float_to_fp8(x, __NV_SATFINITE, __NV_E4M3));
++}
++
++__global__ void __launch_bounds__(THREADS, 2)
++splitkv_attn_sk_fused_kernel(uint8_t* __restrict__ kc,                 // e4m3 [rows, ROW], new rows written
++                             uint8_t* __restrict__ vc,                 // e4m3 [rows, ROW], new rows written
++                             const int* __restrict__ page_table, int64_t pt_stride,
++                             const int* __restrict__ seqlens, int B,
++                             const int64_t* __restrict__ cache_loc,    // [B] row of each request's new token
++                             const float* __restrict__ k_scale, const float* __restrict__ v_scale,
++                             float score_scale,
++                             const __nv_bfloat16* __restrict__ qkv, int64_t qkv_stride,
++                             __nv_bfloat16* __restrict__ out,        // bf16 [B, HQ * D]
++                             float* __restrict__ ws_acc,             // f32 [grid + B, HQ, D]
++                             float* __restrict__ ws_ml,              // f32 [grid + B, 2, HQ]
++                             int* __restrict__ ticket,               // int32 [>= B], 0 between launches
++                             float eps) {
++  constexpr int STAGES = S3_STAGES;
++  using S = Lay3;
++  extern __shared__ __align__(128) uint8_t smem[];
++  uint8_t* ring = smem + S::RING;
++  uint8_t* qr = smem + S::QR;
++  int* idx_s = reinterpret_cast<int*>(smem + S::IDX);
++  float* acc_s = reinterpret_cast<float*>(smem + S::ACC);
++  float* ml_s = reinterpret_cast<float*>(smem + S::ML);
++  int* seq_s = reinterpret_cast<int*>(smem + S::SEQ);
++  int* tp_s = reinterpret_cast<int*>(smem + S::TP);
++  int* flag_s = reinterpret_cast<int*>(smem + S::FLAG);
++  const float NEG_INF = __int_as_float(0xff800000u);
++
++  const int tid = threadIdx.x, lane = tid & 31, warp = tid >> 5;
++  const int bx = blockIdx.x;
++  load_prefix(seqlens, B, seq_s, tp_s);
++  const int T = tp_s[B];
++  if (T <= 0) return;  // uniform
++  // Effective grid min(gridDim.x, T), as stage 2: every live CTA owns >= 1 tile.
++  const int gx = min(static_cast<int>(gridDim.x), T);
++  if (bx >= gx) return;  // uniform
++  const int t0 = range_start(bx, T, gx);
++  const int N = range_start(bx + 1, T, gx) - t0;  // tiles of this CTA, one flat pipeline
++  if (N <= 0) return;  // uniform
++  const int nblk = (N + MB_TILES - 1) / MB_TILES;
++  const float ksv = __ldg(k_scale);
++  const float scale = score_scale * ksv;  // sm_scale * qk_scale_factor * log2(e) * k_scale
++  const float vs = __ldg(v_scale);
++
++  auto find_req = [&](int gt) {
++    int lo = 0, hi = B - 1;
++    while (lo < hi) {
++      const int mid = (lo + hi + 1) >> 1;
++      if (tp_s[mid] <= gt) lo = mid; else hi = mid - 1;
++    }
++    return lo;
++  };
++  auto issue_meta = [&](int k) {
++    const int buf = k & 1;
++    const int tl = tid >> 4;
++    const int e0 = (tid & 15) * 4;
++    const int n = k * MB_TILES + tl;
++    int b = 0, pos = 0, seq = 0;
++    if (n < N) {
++      const int gt = t0 + n;
++      b = find_req(gt);
++      pos = (gt - tp_s[b]) * TILE + e0;
++      seq = seq_s[b];
++    }
++    const int* prow = page_table + (int64_t)b * pt_stride;
++#pragma unroll
++    for (int j = 0; j < 4; ++j) {
++      const bool ok = pos + j < seq;
++      cp_async4(smem_u32(idx_s + buf * MB_TOK + tl * TILE + e0 + j), ok ? prow + pos + j : prow, ok ? 4 : 0);
++    }
++  };
++  // Tile nn into ring stage nn % STAGES (as stage 2); a segment's first tile also brings the
++  // request's raw bf16 q slice of qkv (2 KB, 128 threads x 16 B) into that stage's q slot.
++  int p_b = find_req(t0);
++  auto issue_tile = [&](int nn) {
++    const int gt = t0 + nn;
++    while (gt >= tp_s[p_b + 1]) ++p_b;
++    const int lt = gt - tp_s[p_b];
++    const int st = nn % STAGES;
++    uint8_t* stp = ring + st * STAGE_BYTES;
++    const int tt = tid >> 2;
++    const bool ok = lt * TILE + tt < seq_s[p_b];
++    const int64_t row = ok ? (int64_t)idx_s[((nn / MB_TILES) & 1) * MB_TOK + (nn % MB_TILES) * TILE + tt] : 0;
++    const uint8_t* ks = kc + row * ROW;
++    const uint8_t* vsrc = vc + row * ROW;
++#pragma unroll
++    for (int j = 0; j < 2; ++j) {
++      const int c = (tid & 3) * 2 + j;
++      const int dst = tt * ROW + ((c ^ (tt & 7)) << 4);
++      cp_async16(smem_u32(stp + dst), ks + c * 16, ok ? 16 : 0);
++      cp_async16(smem_u32(stp + TILE * ROW + dst), vsrc + c * 16, ok ? 16 : 0);
++    }
++    if ((nn == 0 || lt == 0) && tid < QRAW / 16)
++      cp_async16(smem_u32(qr + st * QRAW + tid * 16),
++                 reinterpret_cast<const uint8_t*>(qkv + (int64_t)p_b * qkv_stride) + tid * 16, 16);
++  };
++
++  // Prologue: block 0's page indices go in flight first; while they land, the CTA stores the new
++  // k/v row of every request whose last tile it owns (warps 0-1: k head, warps 2-3: v head, a
++  // lane per 2 dims). The barrier after the index wait orders the stores before every ring load.
++  issue_meta(0);
++  cp_commit();
++  if (warp < 4) {
++    const int b_lo = find_req(t0), b_hi = find_req(t0 + N - 1);
++    for (int b = b_lo; b <= b_hi; ++b) {
++      const int last = tp_s[b + 1] - 1;
++      if (tp_s[b + 1] > tp_s[b] && last >= t0 && last < t0 + N) {  // warp-uniform
++        const int64_t loc = cache_loc[b];
++        const int kh = warp & 1;
++        const bool is_v = warp >= 2;
++        const __nv_bfloat16* src = qkv + (int64_t)b * qkv_stride + ((is_v ? HQ + HKV : HQ) + kh) * D + lane * 2;
++        const float2 x = __bfloat1622float2(*reinterpret_cast<const __nv_bfloat162*>(src));
++        float f0 = x.x, f1 = x.y;
++        if (is_v) {
++          f0 = f0 / vs;
++          f1 = f1 / vs;
++        } else {
++          const float r = 1.f / sqrtf(warp_sum(f0 * f0 + f1 * f1) / D + eps);
++          f0 = (f0 * r) / ksv;
++          f1 = (f1 * r) / ksv;
++        }
++        uint8_t* dst = (is_v ? vc : kc) + (loc * HKV + kh) * D + lane * 2;
++        *reinterpret_cast<uint16_t*>(dst) = static_cast<uint16_t>(e4m3_byte(f0) | (e4m3_byte(f1) << 8));
++      }
++    }
++    __threadfence();
++  }
++  cp_wait<0>();
++  __syncthreads();
++#pragma unroll
++  for (int j = 0; j < STAGES - 1; ++j) {
++    if (j < N) {
++      issue_tile(j);
++      if (j % MB_TILES == 0 && j / MB_TILES + 1 < nblk) issue_meta(j / MB_TILES + 1);
++    }
++    cp_commit();
++  }
++
++  const int g = warp & 1;             // kv head
++  const int slice = (warp >> 1) * 16; // token slice of each tile
++  const int quad = lane >> 2, qi = lane & 3;
++  uint32_t qa[4][2];
++  float m_i = NEG_INF, l_i = 0.f;
++  float acc[8][4];
++  int c_b = find_req(t0);
++  bool seg_head = false;
++
++  for (int n = 0; n < N; ++n) {
++    cp_wait<STAGES - 2>();
++    __syncthreads();
++    {
++      const int nn = n + STAGES - 1;
++      if (nn < N) {
++        issue_tile(nn);
++        if (nn % MB_TILES == 0 && nn / MB_TILES + 1 < nblk) issue_meta(nn / MB_TILES + 1);
++      }
++      cp_commit();
++    }
++    const int gt = t0 + n;
++    while (gt >= tp_s[c_b + 1]) ++c_b;
++    const int lt = gt - tp_s[c_b];
++    const int nt_b = tp_s[c_b + 1] - tp_s[c_b];
++    const int cseq = seq_s[c_b];
++    const int st = n % STAGES;
++    if (n == 0 || lt == 0) {
++      seg_head = lt == 0;
++      // q build, after the segment's tile landed (the next STAGES-1 tiles are already in flight):
++      // this thread's row (head g*G+quad), columns qi*4 + 16*s + {0..3}; the 4 lanes of a quad
++      // hold the whole 64-wide row, so the RMS is a 2-step shuffle.
++      const __nv_bfloat16* qs = reinterpret_cast<const __nv_bfloat16*>(qr + st * QRAW) + (g * G + quad) * D + qi * 4;
++      // Two passes over the smem slot (sum of squares, then scale + cast) instead of holding the
++      // 16 values in registers next to acc/qa: stage 2 already sits at 121 of 128 regs.
++      float ss = 0.f;
++#pragma unroll
++      for (int s = 0; s < 4; ++s) {
++        const uint2 raw = *reinterpret_cast<const uint2*>(qs + s * 16);
++        const float2 a = __bfloat1622float2(*reinterpret_cast<const __nv_bfloat162*>(&raw.x));
++        const float2 b2 = __bfloat1622float2(*reinterpret_cast<const __nv_bfloat162*>(&raw.y));
++        ss += a.x * a.x + a.y * a.y + b2.x * b2.x + b2.y * b2.y;
++      }
++      ss += __shfl_xor_sync(0xffffffffu, ss, 1);
++      ss += __shfl_xor_sync(0xffffffffu, ss, 2);
++      const float r = 1.f / sqrtf(ss / D + eps);
++#pragma unroll
++      for (int s = 0; s < 4; ++s) {
++        const uint2 raw = *reinterpret_cast<const uint2*>(qs + s * 16);
++        const float2 a = __bfloat1622float2(*reinterpret_cast<const __nv_bfloat162*>(&raw.x));
++        const float2 b2 = __bfloat1622float2(*reinterpret_cast<const __nv_bfloat162*>(&raw.y));
++        const uint32_t w = e4m3_byte(a.x * r) | (e4m3_byte(a.y * r) << 8) |
++                           (e4m3_byte(b2.x * r) << 16) | (e4m3_byte(b2.y * r) << 24);
++        e4m3x4_to_f16x2x2(w, qa[s][0], qa[s][1]);
++      }
++      m_i = NEG_INF;
++      l_i = 0.f;
++#pragma unroll
++      for (int nb = 0; nb < 8; ++nb) acc[nb][0] = acc[nb][1] = acc[nb][2] = acc[nb][3] = 0.f;
++    }
++    const uint8_t* Ks = ring + st * STAGE_BYTES;
++    const uint8_t* Vs = Ks + TILE * ROW;
++
++    float s[2][4];
++#pragma unroll
++    for (int nb = 0; nb < 2; ++nb) {
++      s[nb][0] = s[nb][1] = s[nb][2] = s[nb][3] = 0.f;
++      const int tt = slice + nb * 8 + quad;
++      const uint8_t* kr = Ks + tt * ROW + qi * 4;
++#pragma unroll
++      for (int ks = 0; ks < 4; ++ks) {
++        const uint32_t w = *reinterpret_cast<const uint32_t*>(kr + (((g * 4 + ks) ^ (tt & 7)) << 4));
++        uint32_t b0, b1;
++        e4m3x4_to_f16x2x2(w, b0, b1);
++        mma16816(s[nb], qa[ks][0], 0u, qa[ks][1], 0u, b0, b1);
++      }
++    }
++    const int pos0 = lt * TILE + slice + qi * 2;
++    float x0 = pos0 < cseq ? s[0][0] * scale : NEG_INF;
++    float x1 = pos0 + 1 < cseq ? s[0][1] * scale : NEG_INF;
++    float x2 = pos0 + 8 < cseq ? s[1][0] * scale : NEG_INF;
++    float x3 = pos0 + 9 < cseq ? s[1][1] * scale : NEG_INF;
++    float mx = fmaxf(fmaxf(x0, x1), fmaxf(x2, x3));
++    mx = fmaxf(mx, __shfl_xor_sync(0xffffffffu, mx, 1));
++    mx = fmaxf(mx, __shfl_xor_sync(0xffffffffu, mx, 2));
++    const float m_new = fmaxf(m_i, mx);
++    const float m_use = m_new == NEG_INF ? 0.f : m_new;
++    const float alpha = ex2(m_i - m_use);
++    x0 = ex2(x0 - m_use);
++    x1 = ex2(x1 - m_use);
++    x2 = ex2(x2 - m_use);
++    x3 = ex2(x3 - m_use);
++    l_i = l_i * alpha + (x0 + x1) + (x2 + x3);
++    m_i = m_new;
++#pragma unroll
++    for (int nb = 0; nb < 8; ++nb) { acc[nb][0] *= alpha; acc[nb][1] *= alpha; }
++    const uint32_t pa0 = pack_f16x2(x0, x1), pa2 = pack_f16x2(x2, x3);
++
++    const int tv = slice + qi * 2;
++    const int vlc = g * 4 + (quad >> 1);
++    const int voff = (quad & 1) * 8;
++    const uint2 v0 = *reinterpret_cast<const uint2*>(Vs + tv * ROW + ((vlc ^ (tv & 7)) << 4) + voff);
++    const uint2 v1 = *reinterpret_cast<const uint2*>(Vs + (tv + 1) * ROW + ((vlc ^ ((tv + 1) & 7)) << 4) + voff);
++    const uint2 v8 = *reinterpret_cast<const uint2*>(Vs + (tv + 8) * ROW + ((vlc ^ ((tv + 8) & 7)) << 4) + voff);
++    const uint2 v9 = *reinterpret_cast<const uint2*>(Vs + (tv + 9) * ROW + ((vlc ^ ((tv + 9) & 7)) << 4) + voff);
++#pragma unroll
++    for (int hw = 0; hw < 2; ++hw) {
++      const uint32_t w0 = hw ? v0.y : v0.x, w1 = hw ? v1.y : v1.x;
++      const uint32_t w8 = hw ? v8.y : v8.x, w9 = hw ? v9.y : v9.x;
++      uint32_t r0[4], r1[4];
++      e4m3x4_to_f16x2x2(__byte_perm(w0, w1, 0x5140), r0[0], r0[1]);
++      e4m3x4_to_f16x2x2(__byte_perm(w0, w1, 0x7362), r0[2], r0[3]);
++      e4m3x4_to_f16x2x2(__byte_perm(w8, w9, 0x5140), r1[0], r1[1]);
++      e4m3x4_to_f16x2x2(__byte_perm(w8, w9, 0x7362), r1[2], r1[3]);
++#pragma unroll
++      for (int j = 0; j < 4; ++j) mma16816(acc[hw * 4 + j], pa0, 0u, pa2, 0u, r0[j], r1[j]);
++    }
++
++    if (n == N - 1 || lt == nt_b - 1) {
++      // Segment end (uniform over the CTA): merge the four warps of each kv head in smem.
++      l_i += __shfl_xor_sync(0xffffffffu, l_i, 1);
++      l_i += __shfl_xor_sync(0xffffffffu, l_i, 2);
++      const int rw = warp * G + quad;
++      if (qi == 0) { ml_s[rw * 2] = m_i; ml_s[rw * 2 + 1] = l_i; }
++      float* ar = acc_s + rw * D;
++#pragma unroll
++      for (int nb = 0; nb < 8; ++nb) {
++        ar[(qi * 2) * 8 + nb] = acc[nb][0];
++        ar[(qi * 2 + 1) * 8 + nb] = acc[nb][1];
++      }
++      __syncthreads();
++      const int h = tid >> 4, d0 = (tid & 15) * 4;
++      const int hg = h / G, r = h % G;
++      float mw[4];
++      float M = NEG_INF;
++#pragma unroll
++      for (int j = 0; j < 4; ++j) { mw[j] = ml_s[((hg + 2 * j) * G + r) * 2]; M = fmaxf(M, mw[j]); }
++      const float Mu = M == NEG_INF ? 0.f : M;
++      float4 o = make_float4(0.f, 0.f, 0.f, 0.f);
++      float L = 0.f;
++#pragma unroll
++      for (int j = 0; j < 4; ++j) {
++        const int wr = (hg + 2 * j) * G + r;
++        const float wt = mw[j] == NEG_INF ? 0.f : ex2(mw[j] - Mu);
++        L += wt * ml_s[wr * 2 + 1];
++        const float4 a = *reinterpret_cast<const float4*>(acc_s + wr * D + d0);
++        o.x += wt * a.x; o.y += wt * a.y; o.z += wt * a.z; o.w += wt * a.w;
++      }
++      const bool whole = seg_head && lt == nt_b - 1;  // this CTA is the request's only segment
++      if (whole) {
++        finalize_store(o, L, vs, c_b, h, d0, qkv, qkv_stride, out, eps);
++      } else {
++        const int64_t slot = (int64_t)bx + c_b;
++        *reinterpret_cast<float4*>(ws_acc + (slot * HQ + h) * D + d0) = o;
++        if ((tid & 15) == 0) { ws_ml[slot * 2 * HQ + h] = M; ws_ml[slot * 2 * HQ + HQ + h] = L; }
++        {
++          const int c_lo = tile_owner(tp_s[c_b], T, gx);
++          const int c_hi = tile_owner(tp_s[c_b + 1] - 1, T, gx);
++          __threadfence();  // this CTA's partial is visible device-wide before the ticket
++          __syncthreads();
++          if (tid == 0) flag_s[0] = atomicAdd(ticket + c_b, 1) == c_hi - c_lo ? 1 : 0;
++          __syncthreads();
++          if (flag_s[0]) {  // uniform: the last segment of request c_b to finish
++            __threadfence();
++            float4 om;
++            float Lm;
++            merge_slots(ws_acc, ws_ml, c_b, c_lo, c_hi, h, d0, om, Lm);
++            finalize_store(om, Lm, vs, c_b, h, d0, qkv, qkv_stride, out, eps);
++            if (tid == 0) ticket[c_b] = 0;  // every segment has arrived: clean for the next launch
++          }
++        }
++      }
++    }
++  }
++  cp_wait<0>();  // the trailing groups are empty; drain anyway
++}
++
++
++void skf_prepare() {
++  static bool done = false;
++  if (!done) {
++    C10_CUDA_CHECK(cudaFuncSetAttribute(reinterpret_cast<const void*>(splitkv_attn_sk_fused_kernel),
++                                        cudaFuncAttributeMaxDynamicSharedMemorySize, Lay3::BYTES));
++    done = true;
++  }
++}
++
++}  // namespace
++
++void skf_attn(torch::Tensor k_cache, torch::Tensor v_cache, torch::Tensor page_table, torch::Tensor cache_seqlens,
++              torch::Tensor cache_loc, torch::Tensor k_scale, torch::Tensor v_scale, torch::Tensor qkv,
++              int64_t qkv_stride, torch::Tensor out, torch::Tensor ws_acc, torch::Tensor ws_ml, torch::Tensor ticket,
++              double score_scale, double eps, int64_t grid) {
++  const int B = static_cast<int>(cache_seqlens.size(0));
++  TORCH_CHECK(B >= 1 && B <= MAXB, "skf_attn: batch out of range");
++  TORCH_CHECK(grid >= 1 && ws_acc.size(0) >= grid + B && ws_ml.size(0) >= grid + B, "skf_attn: workspace");
++  TORCH_CHECK(ticket.numel() >= B && ticket.scalar_type() == at::kInt, "skf_attn: ticket");
++  TORCH_CHECK(cache_seqlens.scalar_type() == at::kInt && page_table.scalar_type() == at::kInt, "skf_attn: dtypes");
++  TORCH_CHECK(cache_loc.scalar_type() == at::kLong && cache_loc.is_contiguous() && cache_loc.numel() >= B,
++              "skf_attn: cache_loc");
++  TORCH_CHECK(page_table.stride(1) == 1 && k_cache.is_contiguous() && v_cache.is_contiguous() && out.is_contiguous(),
++              "skf_attn: layout");
++  TORCH_CHECK(qkv.scalar_type() == at::kBFloat16 && qkv.stride(1) == 1 && qkv_stride % 8 == 0 &&
++              reinterpret_cast<uintptr_t>(qkv.data_ptr()) % 16 == 0 && qkv.size(1) >= (HQ + 2 * HKV + HQ) * D,
++              "skf_attn: qkv layout");
++  skf_prepare();
++  auto stream = at::cuda::getCurrentCUDAStream();
++  splitkv_attn_sk_fused_kernel<<<static_cast<unsigned>(grid), THREADS, Lay3::BYTES, stream>>>(
++      reinterpret_cast<uint8_t*>(k_cache.data_ptr()), reinterpret_cast<uint8_t*>(v_cache.data_ptr()),
++      page_table.data_ptr<int>(), page_table.stride(0), cache_seqlens.data_ptr<int>(), B,
++      cache_loc.data_ptr<int64_t>(), k_scale.data_ptr<float>(), v_scale.data_ptr<float>(),
++      static_cast<float>(score_scale), reinterpret_cast<const __nv_bfloat16*>(qkv.data_ptr()), qkv_stride,
++      reinterpret_cast<__nv_bfloat16*>(out.data_ptr()), ws_acc.data_ptr<float>(), ws_ml.data_ptr<float>(),
++      ticket.data_ptr<int>(), static_cast<float>(eps));
++  C10_CUDA_KERNEL_LAUNCH_CHECK();
++}
++
++// {binaryVersion, ptxVersion, numRegs, localSizeBytes, maxThreadsPerBlock, dynamic smem, CTAs/SM}
++std::vector<int64_t> skf_attrs() {
++  skf_prepare();
++  cudaFuncAttributes a;
++  C10_CUDA_CHECK(cudaFuncGetAttributes(&a, reinterpret_cast<const void*>(splitkv_attn_sk_fused_kernel)));
++  int occ = 0;
++  C10_CUDA_CHECK(cudaOccupancyMaxActiveBlocksPerMultiprocessor(&occ, splitkv_attn_sk_fused_kernel, THREADS,
++                                                               Lay3::BYTES));
++  return {static_cast<int64_t>(a.binaryVersion), static_cast<int64_t>(a.ptxVersion), static_cast<int64_t>(a.numRegs),
++          static_cast<int64_t>(a.localSizeBytes), static_cast<int64_t>(a.maxThreadsPerBlock),
++          static_cast<int64_t>(Lay3::BYTES), static_cast<int64_t>(occ)};
++}
++"""
++
++ROW_BYTES = 128  # one page-1 cache row: both kv heads x 64 e4m3 bytes
++_EXTF = None       # the FUSED_PRE module; None keeps pre-attention + the v2 kernel
++_FUSED_ROUTE = {}  # band (2 = B=2..16, 3 = B=17..64) -> True once its gate and replay checks passed
++_FUSED_BAND_NAMES = {2: "B=2..16", 3: "B=17..64"}
++_FUSED_GATE = 1.02  # the interleaved graph-replay time of [pre-attn + v2] must beat [FUSED_PRE] by this
++_SKF_S3 = (125, 0, 99360, 2)  # s3's [sk3] attrs line (job 825baa03798f431a): regs, local B, dyn smem B, CTAs/SM
++
++
++def _fused_band(batch: int) -> int:
++    return 2 if batch <= 16 else 3
++
++
++def _fused_gate(cfg) -> bool:
++    """Config-only predicate (the caller has already passed the full-decode split-KV gate): 1 < batch <= 64
++    on a layer without RoPE (full layers), band routed by the in-process gate."""
++    return (_EXTF is not None and cfg["batch"] > 1 and not cfg["rope_theta"]
++            and _fused_band(cfg["batch"]) in _FUSED_ROUTE)
++
++
++def _build_skf():
++    """Compile the FUSED_PRE module at import, sm_90a only (TORCH_CUDA_ARCH_LIST=9.0a, restored after)."""
++    global _SK_ARCH_FLAGS
++    t0 = time.perf_counter()
++    prev = os.environ.get("TORCH_CUDA_ARCH_LIST")
++    os.environ["TORCH_CUDA_ARCH_LIST"] = "9.0a"
++    name = "muse_decode_skf_v1"
++    try:
++        from torch.utils.cpp_extension import load_inline
++        try:
++            from torch.utils.cpp_extension import _get_cuda_arch_flags
++            _SK_ARCH_FLAGS = list(_get_cuda_arch_flags())
++        except Exception as e:  # private helper; the cubin check in the validation is authoritative
++            _say(f"[skF] could not read torch's nvcc arch flags: {e!r}")
++        _say(f"[skF] building {name}: TORCH_CUDA_ARCH_LIST=9.0a, arch flags {_SK_ARCH_FLAGS}, extra -O3 -lineinfo")
++        ext = load_inline(
++            name=name,
++            cpp_sources=_SKF_CPP,
++            cuda_sources=_SKF_CUDA,
++            functions=["skf_attn", "skf_attrs"],
++            extra_cuda_cflags=["-O3", "-lineinfo"],
++            verbose=False,
++        )
++    except Exception as e:
++        _say(f"[skF] load_inline ({name}) failed after {time.perf_counter() - t0:.1f}s: {str(e)[-1500:]!r}")
++        return None
++    finally:
++        if prev is None:
++            os.environ.pop("TORCH_CUDA_ARCH_LIST", None)
++        else:
++            os.environ["TORCH_CUDA_ARCH_LIST"] = prev
++    _say(f"[skF] load_inline ({name}) compiled in {time.perf_counter() - t0:.1f}s")
++    return ext
++
++
++def _skf_launch(data: Inputs, qkv: torch.Tensor, grid: int):
++    """splitkv_attn_sk_fused_kernel: the whole gated step (pre-attention, attention, combine, norm-gate)
++    in one launch; workspace from grid and batch only; the shared self-resetting ticket."""
++    cfg = data["config"]
++    batch, hq, d = cfg["batch"], cfg["num_q_heads"], cfg["head_dim"]
++    device = qkv.device
++    ws_acc = torch.empty((grid + batch, hq, d), dtype=torch.float32, device=device)
++    ws_ml = torch.empty((grid + batch, 2, hq), dtype=torch.float32, device=device)
++    out = torch.empty((batch, 1, hq * d), dtype=torch.bfloat16, device=device)
++    _EXTF.skf_attn(data["k_cache"], data["v_cache"], data["page_table"], data["cache_seqlens"], data["cache_loc"],
++                   data["k_scale"], data["v_scale"], qkv, qkv.stride(0), out, ws_acc, ws_ml, _sk_ticket(device),
++                   cfg["sm_scale"] * cfg["qk_scale_factor"] * LOG2E, RMS_EPS, grid)
++    return out
++
++
++def _full_decode_skf(data: Inputs, qkv: torch.Tensor) -> torch.Tensor:
++    """FUSED_PRE on the gated path: ONE launch (no _pre_attention_kernel, no FP8 q tensor); the kernel
++    also stores the new k/v rows into the caches."""
++    return _skf_launch(data, qkv, _SPLITKV_GRID or 2 * _sm_count(qkv.device))
++
++
++def _skf_owner_check(lens, grid) -> bool:
++    """Host check of the ownership invariant FUSED_PRE relies on: for every request, exactly one CTA of
++    the effective grid min(grid, Ttot) has the request's last tile (the one holding key seq_b - 1, the new
++    token) in its stream-K range, and tile_owner names it. lens are positions (cache_seqlens = lens + 1)."""
++    tp = [0]
++    for n in lens:
++        tp.append(tp[-1] + (n + 1 + 63) // 64)
++    T = tp[-1]
++    gx = min(grid, T)
++    starts = [c * T // gx for c in range(gx + 1)]
++    for b in range(len(lens)):
++        last = tp[b + 1] - 1
++        owners = [c for c in range(gx) if starts[c] <= last < starts[c + 1]]
++        if owners != [((last + 1) * gx - 1) // T]:
++            return False
++    return True
++
++
++def _skf_case(tag, lens, kv_scale, grid, gen) -> bool:
++    """One synthetic gated-shape case for the fused kernel. The same inputs run twice: the master
++    _pre_attention_kernel + the v2 kernel on cloned caches (the reference), and the fused kernel on the
++    originals. Each launch is announced before and synced + confirmed after. Checks: the ownership
++    assertion cache_loc[b] == page_table[b, seq_b - 1] (and exactly one owning CTA per request); the fused
++    output against the FP32 reference (< 2e-2) and against v2's (rel L2 < 5e-3); the new k/v rows against
++    master's (rel L2 < 2e-2, finite); every other cache byte unchanged."""
++    dev = torch.device("cuda")
++    data = _splitkv_synthetic(lens, kv_scale, gen, dev)
++    assert _splitkv_gate(data["config"])
++    g = grid or 2 * _sm_count(dev)
++    batch = len(lens)
++    loc = data["cache_loc"]
++    owned = bool(torch.equal(data["page_table"].gather(1, (data["cache_seqlens"] - 1).long()[:, None]).reshape(-1)
++                             .long(), loc)) and _skf_owner_check(lens, g)
++    if not owned:
++        _say(f"[skF] {tag}: ownership invariant (cache_loc[b] == page_table[b, seq_b - 1], one owner CTA) FAIL")
++        return False
++    data2 = dict(data)
++    data2["k_cache"], data2["v_cache"] = data["k_cache"].clone(), data["v_cache"].clone()
++    _say(f"[skF] {tag}: launching _pre_attention_kernel (master reference, cloned caches)")
++    q, qkv = _sk_prepare_q(data2)
++    torch.cuda.synchronize()
++    _say(f"[skF] {tag}: launching splitkv_attn_sk_kernel (v2 reference) grid {g}")
++    out2, _, _ = _sk_launch(data2, q, qkv, 0, g)
++    torch.cuda.synchronize()
++    _say(f"[skF] {tag}: launching splitkv_attn_sk_fused_kernel grid {g}")
++    out3 = _skf_launch(data, data["qkv"].reshape(batch, -1), g)
++    torch.cuda.synchronize()
++    _say(f"[skF] {tag}: splitkv_attn_sk_fused_kernel returned")
++    e_ref, fin = _rel_l2(out3, _splitkv_reference(data, lens))
++    e_v2, fin2 = _rel_l2(out3, out2.float())
++    ok = fin and fin2 and e_ref < 2e-2 and e_v2 < 5e-3
++    rows_ok = True
++    for name in ("k_cache", "v_cache"):
++        a = data[name].view(torch.uint8).view(-1, ROW_BYTES)
++        b = data2[name].view(torch.uint8).view(-1, ROW_BYTES)
++        e_row, fin_row = _rel_l2(a[loc].view(FP8).float(), b[loc].view(FP8).float())
++        a, b = a.clone(), b.clone()
++        a[loc] = 0
++        b[loc] = 0
++        same = bool(torch.equal(a, b))
++        _say(f"[skF] {tag}: {name} new rows rel L2 {e_row:.2e}, finite {fin_row}, other rows unchanged {same}")
++        # 2e-2, not 5e-3: one e4m3 ulp flip from Triton's approx sqrt/div vs IEEE is ~8e-3 of a B=2 row
++        # set; an indexing/scale bug is O(1).
++        rows_ok = rows_ok and fin_row and e_row < 2e-2 and same
++    ok = ok and rows_ok
++    _say(f"[skF] {tag}: out vs fp32 ref {e_ref:.2e}, vs v2 {e_v2:.2e}, finite {fin and fin2} -> {'ok' if ok else 'FAIL'}")
++    return ok
++
++
++def _skf_validate() -> "str | None":
++    """In-process validation of FUSED_PRE: image check, attrs (regs / local next to s3's [sk3] line),
++    canary, self-check cases. None on success, else the reason it stays off. The two-state replay checks
++    run per routed band in _skf_setup."""
++    dev = torch.device("cuda")
++    cap = tuple(torch.cuda.get_device_capability())
++    a = list(_EXTF.skf_attrs())
++    _say(f"[skF] splitkv_attn_sk_fused_kernel: binaryVersion {a[0]}, ptxVersion {a[1]}, regs {a[2]}, local {a[3]} B, "
++         f"dyn smem {a[5]} B, {a[6]} CTAs/SM")
++    _say(f"[skF] s3's measured [sk3] line (job 825baa03798f431a): regs {_SKF_S3[0]}, local {_SKF_S3[1]} B, "
++         f"dyn smem {_SKF_S3[2]} B, {_SKF_S3[3]} CTAs/SM -> "
++         f"{'IDENTICAL to s3' if (a[2], a[3], a[5], a[6]) == _SKF_S3 else 'DIFFERS FROM s3 (read the timings with care)'}")
++    if a[6] < 2:
++        _say("[skF] WARNING: the fused kernel does not reach 2 CTAs/SM (performance, not correctness)")
++    if cap != (9, 0):
++        return f"device capability {cap}"
++    if a[0] != 90:
++        return "cubin version is not 90 (sm_90a image not loaded)"
++    if a[6] < 1:
++        return "fused kernel cannot launch (0 CTAs/SM)"
++    gen = torch.Generator(device="cuda").manual_seed(8642)
++    if not _skf_case("canary B=2 short", [4, 66], 1.0, None, gen):
++        return "canary"
++    rng = random.Random(2026)
++    lens32 = [rng.randint(1, 12000) for _ in range(32)]
++    lens32[5], lens32[9], lens32[17] = 6, 64, 1
++    lens64 = [rng.randint(1, 70) if i % 3 == 0 else rng.randint(64, 6000) for i in range(64)]
++    cases = (
++        ("B=2 one request spans every CTA, grid 7", [20000, 2], 1.0, 7),
++        ("B=2 one request spans every CTA, grid device", [60000, 2], 0.25, None),
++        ("B=16 ragged kv 0.25 grid device", _SK_LENS16, 0.25, None),
++        ("B=16 ragged grid 3", _SK_LENS16, 1.0, 3),
++        ("B=32 ragged grid 3", lens32, 1.0, 3),
++        ("B=32 ragged kv 0.25 grid device", lens32, 0.25, None),
++        ("B=64 mixed kv 0.25 grid device", lens64, 0.25, None),
++        ("B=64 mixed grid 7", lens64, 1.0, 7),
++    )
++    for tag, lens, kv_scale, grid in cases:
++        if not _skf_case(tag, lens, kv_scale, grid, gen):
++            return f"self-check {tag}"
++    left = int(_sk_ticket(dev).abs().sum().item())
++    _say(f"[skF] tickets after the self-check: sum {left}")
++    if left:
++        return "tickets not reset"
++    return None
++
++
++def _skf_gate_band(batch: int, gen, flush) -> bool:
++    """Time (interleaved cold-L2 graph replays, empty-graph baseline subtracted) [pre-attn + v2] against
++    [FUSED_PRE] (and the v2 kernel alone) at `batch` x 80000, print every number, and return True if
++    FUSED_PRE wins by >= _FUSED_GATE."""
++    dev = torch.device("cuda")
++    sms = _sm_count(dev)
++    grid = 2 * sms
++    data = _splitkv_synthetic([80000] * batch, 1.0, gen, dev)
++    q, qkv = _sk_prepare_q(data)
++    torch.cuda.synchronize()
++    _say(f"[skF-gate] B={batch}: launching splitkv_attn_sk_fused_kernel (eager correctness run)")
++    out = _skf_launch(data, qkv, grid)
++    torch.cuda.synchronize()
++    err, finite = _rel_l2(out, _splitkv_reference(data, [80000] * batch))
++    _say(f"[skF-gate] B={batch}: fused returned, rel L2 {err:.2e}, finite {finite}")
++    if not (finite and err < 2e-2):
++        _say(f"[skF-gate] B={batch}: FUSED_PRE failed its correctness check: not timed")
++        return False
++
++    def pre_v2():
++        q2, qkv2 = _sk_prepare_q(data)
++        _sk_launch(data, q2, qkv2, 0, grid)
++
++    def fused():
++        _skf_launch(data, qkv, grid)
++
++    def v2_only():
++        _sk_launch(data, q, qkv, 0, grid)
++
++    _say(f"[skF-gate] B={batch}: timing [pre-attn + v2], [FUSED_PRE], [v2 alone] interleaved (graph replays, cold L2)")
++    t_pre, t_fused, t_v2 = _interleaved_us([pre_v2, fused, v2_only], flush)
++    ratio = t_pre / t_fused
++    win = ratio >= _FUSED_GATE
++    _say(f"[skF-gate] B={batch} x 80000: [pre-attn + v2] {t_pre:.1f} us, [FUSED_PRE] {t_fused:.1f} us, "
++         f"[v2 kernel alone] {t_v2:.1f} us (FUSED_PRE - v2 kernel alone {t_fused - t_v2:+.1f} us; s3 diag measured "
++         f"{'118.2 vs 115.1' if batch == 16 else '227.7 vs 220.5'} us) -> [pre-attn + v2] / [FUSED_PRE] {ratio:.3f}x "
++         f"({'ROUTE' if win else f'below the {_FUSED_GATE:.2f}x gate: pre-attn + v2'})")
++    del data, q, qkv, out
++    torch.cuda.empty_cache()
++    return win
++
++
++def _skf_setup() -> None:
++    """Validate FUSED_PRE, gate each band on printed interleaved timings, run the two-state alternating
++    replay check through kernel_fn on each routed band, and set _FUSED_ROUTE. Any failure leaves that band
++    (or all) on pre-attention + v2; nothing here raises. Re-zeroes the shared tickets afterwards."""
++    global _EXTF
++    dev = torch.device("cuda")
++    try:
++        if _EXT2 is None:
++            _say("PATH CHOSEN: full decode fused pre-attention [skF]: pre-attn + v2 (fallback: stage-2 module unavailable)")
++            return
++        ext = _build_skf()
++        if ext is None:
++            _say("PATH CHOSEN: full decode fused pre-attention [skF]: pre-attn + v2 (fallback: FUSED_PRE build failed; "
++                 "PSEUDO / cluster routes unaffected)")
++            return
++        _EXTF = ext
++        try:
++            reason = _skf_validate()
++        except Exception as e:
++            reason = f"self-check raised {e!r}"
++        if reason is not None:
++            _EXTF = None
++            _say(f"PATH CHOSEN: full decode fused pre-attention [skF]: pre-attn + v2 (fallback: {reason})")
++            return
++        gen = torch.Generator(device="cuda").manual_seed(2468)
++        flush = torch.empty(64 << 20, dtype=torch.float32, device=dev)  # 256 MB > L2
++        choice = {}
++        for band, batch in ((2, 16), (3, 32)):
++            try:
++                if _skf_gate_band(batch, gen, flush):
++                    choice[band] = True
++            except Exception as e:
++                _say(f"[skF-gate] B={batch} raised (band stays on pre-attn + v2): {e!r}")
++        del flush
++        torch.cuda.empty_cache()
++        if choice:
++            rng = random.Random(77)
++            lens32 = [rng.randint(1, 12000) for _ in range(32)]
++            lens32[0] = 9000
++            replay = {2: (list(_SK_LENS16), 0.25), 3: (lens32, 1.0)}
++            _FUSED_ROUTE.update(choice)
++            for band in sorted(choice):
++                lens, kv_scale = replay[band]
++                sets = _alt_sets(lens)
++                mp = max(max(s) for s in sets) + 1 + 37
++                try:
++                    why = _alt_check(f"[skF] replay {_FUSED_BAND_NAMES[band]}",
++                                     lambda l, kv=kv_scale, mp=mp: _splitkv_synthetic(l, kv, gen, dev, max_pages=mp),
++                                     _splitkv_reference, sets,
++                                     gate=lambda cfg: _splitkv_gate(cfg) and _fused_gate(cfg))
++                except Exception as e:
++                    why = f"replay raised {e!r}"
++                if why is not None:
++                    _say(f"[skF] band {_FUSED_BAND_NAMES[band]} dropped to pre-attn + v2 ({why})")
++                    _FUSED_ROUTE.pop(band, None)
++        if not _FUSED_ROUTE:
++            _EXTF = None
++        for band in (2, 3):
++            if band in _FUSED_ROUTE:
++                _say(f"PATH CHOSEN: full decode {_FUSED_BAND_NAMES[band]} fused pre-attention [skF] "
++                     f"(interleaved [pre-attn + v2] / [FUSED_PRE] >= {_FUSED_GATE:.2f}x in the printed timings)")
++            else:
++                _say(f"PATH CHOSEN: full decode {_FUSED_BAND_NAMES[band]}: pre-attn + v2 (FUSED_PRE not >= "
++                     f"{_FUSED_GATE:.2f}x in the printed timings, or failed a check)")
++        _say("PATH CHOSEN: full decode B=1: master two-level ticket + separate pre-attention kernel (FUSED_PRE has no "
++             "two-level variant)")
++    finally:
++        try:
++            _rezero_tickets()
++            left = int(_sk_ticket(dev).abs().sum().item()) + int(_ps_ticket(dev).abs().sum().item())
++            _say(f"[skF] shared tickets re-zeroed after the self-check: sum {left}")
++        except Exception as e:
++            _say(f"[skF] ticket re-zero raised: {e!r}")
++
++
++# ---------------------------------------------------------------------------------------------
++# Sliding-window decode (tp8 heads, page 1, q_len 1, batch <= 32): ONE CUDA kernel,
++# sliding_cluster_kernel, in its own load_inline module (muse_sliding_cluster_v2), so a failed
++# build or self-check leaves the full-layer split-KV module and every master path untouched.
++# Stage 2 of the cluster rewrite: verify (q_len 8) is not built (master FA3), and the cluster size
++# is C = 16 at batch 1 and 4 at batch 17..32 (one wave at decode_32); C=8 (batch 2..16) is gated off, master Triton.
++#
++# One thread-block cluster of C CTAs per request, grid B * C, 256 threads per CTA, two CTAs per
++# SM (dynamic smem 101 KB). Rank r owns the old keys [lo + r ck, lo + (r + 1) ck) with
++# lo = max(0, seq - (window - 1)) and ck = round_up(ceil((seq - lo) / C), 16) <= 512; every token
++# is one full 128-byte K row and one V row (both kv heads). Split gather: the chunk is cut into
++# sub-chunks of SK = 128 keys, each its own cp.async group, into a ring of NS = 3 smem slots
++# (token-XOR swizzle as the split-KV kernel); the first NS are issued at once, the fourth (C = 4
++# only) into slot 0 as soon as slot 0 is consumed. While they fly, every CTA builds the request's
++# queries (scaleless RMSNorm, interleaved RoPE with sincosf on an fp32 angle, times
++# qk_scale_factor, rounded to E4M3 once) and the last rank builds the new key/value (RMSNorm +
++# RoPE on k, / k_scale and / v_scale, E4M3), stores them at cache_loc and keeps them in a separate
++# 16-row smem tile (never read back from the cache). Compute per sub-chunk as soon as its group
++# lands (cp.async.wait_group NS - 1): S = Q K^T with mma.sync m16n8k32 e4m3 on the raw bytes (an
++# f16 m16n8k16 build is the fallback when that does not compile or check), score scale
++# sm_scale * log2(e) * k_scale, online exp2 softmax with the window/causal mask on every tile,
++# O += P V with m16n8k16 f16, V widened per fragment in registers; warp w serves kv head w & 1
++# and every 4th 16-token tile (slice w >> 1), merged in smem. The CTA partial (m, l, unnormalized
++# acc) aliases the consumed ring. Merge over distributed shared memory: cluster barrier, then rank
++# r reduces rows [r 16 / C, (r + 1) 16 / C) from all C partials (masked partials, m = -inf, weigh
++# 0), times v_scale, scaleless RMSNorm, times sigmoid(gate), bf16 out; a second cluster barrier
++# keeps peers' smem alive until all have read. No PDL: the kernel is the only node of the sliding
++# graph, so there is nothing upstream to overlap.
++# ---------------------------------------------------------------------------------------------
++
++_SLIDE_CPP = r"""
++#include <torch/extension.h>
++torch::Tensor slide_setup();
++void slide_attn(torch::Tensor qkv, torch::Tensor positions, torch::Tensor cache_loc, torch::Tensor seq_lens,
++                torch::Tensor page_table, torch::Tensor inv_freq, torch::Tensor k_scale, torch::Tensor v_scale,
++                torch::Tensor k_cache, torch::Tensor v_cache, torch::Tensor out,
++                int64_t C, int64_t window, double q_scale, double score_scale, double eps);
++"""
++
++_SLIDE_CUDA = r"""
++#include <torch/extension.h>
++#include <ATen/cuda/CUDAContext.h>
++#include <c10/cuda/CUDAException.h>
++#include <cooperative_groups.h>
++#include <cuda_fp16.h>
++#include <cuda_bf16.h>
++#include <cstdint>
++#include <vector>
++
++#ifndef SLIDE_FP8QK
++#define SLIDE_FP8QK 1
++#endif
++
++namespace cg = cooperative_groups;
++
++namespace {
++
++constexpr int D = 64;              // head dim
++constexpr int HQ = 16;             // query heads
++constexpr int HKV = 2;             // kv heads
++constexpr int G = HQ / HKV;        // queries per kv head (8)
++constexpr int ROW = HKV * D;       // bytes per cache row (page 1: both kv heads, 128)
++constexpr int THREADS = 256;
++constexpr int WARPS = THREADS / 32;
++constexpr int SK = 128;            // keys per sub-chunk (one cp.async group, one ring slot)
++constexpr int NS = 3;              // ring slots, all in flight at the start
++constexpr int NSUB_MAX = 4;        // ck <= round16(ceil(2047 / 4)) = 512: host keeps window <= 2048, C >= 4
++static_assert(NSUB_MAX <= NS + 1, "only one late sub-chunk is prefetched (its indices sit in registers)");
++constexpr int SLOT = SK * ROW;                   // 16384 B per slot, for K and again for V
++constexpr int K_OFF = 0;                         // e4m3 [NS][SK][ROW], swizzled
++constexpr int V_OFF = K_OFF + NS * SLOT;         // e4m3 [NS][SK][ROW], swizzled
++constexpr int XK_OFF = V_OFF + NS * SLOT;        // e4m3 [16][ROW]: the new key (row 0), zero rows after
++constexpr int XV_OFF = XK_OFF + 16 * ROW;        // e4m3 [16][ROW]: the new value
++constexpr int Q_OFF = XV_OFF + 16 * ROW;         // e4m3 [HQ][D]
++constexpr int SMEM_BYTES = Q_OFF + HQ * D;       // 103424
++static_assert(SMEM_BYTES <= 113 * 1024, "two CTAs per SM (C = 4 needs them for one wave at batch 32)");
++#if SLIDE_FP8QK
++constexpr int QKS = 2;             // k32 steps of the m16n8k32 e4m3 QK
++#else
++constexpr int QKS = 4;             // k16 steps of the m16n8k16 f16 QK
++#endif
++
++// Partials alias the consumed ring once every warp is done: per-warp staging f32 [WARPS][G][D]
++// and [WARPS][G][2], then the CTA partial acc f32 [16][D], m f32 [16], l f32 [16].
++constexpr int STG_ACC = 0;
++constexpr int STG_ML = STG_ACC + WARPS * G * D * 4;    // 16384
++constexpr int P_ACC = STG_ML + WARPS * G * 2 * 4;      // 16896
++constexpr int P_M = P_ACC + HQ * D * 4;
++constexpr int P_L = P_M + HQ * 4;
++static_assert(P_L + HQ * 4 <= NS * SLOT, "partials must fit in the consumed ring");
++static_assert(P_ACC % 16 == 0, "float4 alignment");
++
++__device__ __forceinline__ uint32_t smem_u32(const void* p) {
++  return static_cast<uint32_t>(__cvta_generic_to_shared(p));
++}
++__device__ __forceinline__ void cp_async16(uint32_t dst, const void* src) {
++  asm volatile("cp.async.cg.shared.global [%0], [%1], 16;\n" :: "r"(dst), "l"(src) : "memory");
++}
++__device__ __forceinline__ void cp_commit() { asm volatile("cp.async.commit_group;\n" ::: "memory"); }
++__device__ __forceinline__ void cp_wait_ring() { asm volatile("cp.async.wait_group 2;\n" ::: "memory"); }
++static_assert(NS - 1 == 2, "cp_wait_ring waits for all but the NS - 1 newest groups");
++__device__ __forceinline__ void cp_wait_all() { asm volatile("cp.async.wait_group 0;\n" ::: "memory"); }
++
++// Four E4M3 bytes -> two f16x2: lo from bytes 0,1 (byte 0 in the low half), hi from bytes 2,3.
++__device__ __forceinline__ void e4m3x4_to_f16x2x2(uint32_t w, uint32_t& lo, uint32_t& hi) {
++  asm("{\n\t.reg .b16 a, b;\n\tmov.b32 {a, b}, %2;\n\t"
++      "cvt.rn.f16x2.e4m3x2 %0, a;\n\tcvt.rn.f16x2.e4m3x2 %1, b;\n\t}\n"
++      : "=r"(lo), "=r"(hi) : "r"(w));
++}
++// Two fp32 -> two E4M3 bytes (round to nearest even, saturating): lo in the low byte. The PTX
++// cvt puts its first source in the upper half.
++__device__ __forceinline__ uint16_t f32x2_to_e4m3x2(float lo, float hi) {
++  uint16_t r;
++  asm("cvt.rn.satfinite.e4m3x2.f32 %0, %1, %2;\n" : "=h"(r) : "f"(hi), "f"(lo));
++  return r;
++}
++__device__ __forceinline__ uint32_t pack_f16x2(float lo, float hi) {
++  __half2 h = __floats2half2_rn(lo, hi);  // .x (low half) = lo
++  return *reinterpret_cast<uint32_t*>(&h);
++}
++__device__ __forceinline__ float ex2(float x) {
++  float y;
++  asm("ex2.approx.ftz.f32 %0, %1;" : "=f"(y) : "f"(x));
++  return y;
++}
++__device__ __forceinline__ uint32_t ld32(const uint8_t* p) { return *reinterpret_cast<const uint32_t*>(p); }
++
++// D = A B + D, m16n8k16, A row-major f16 (4 regs), B col-major f16 (2 regs), fp32 accumulate.
++__device__ __forceinline__ void mma16816(float (&c)[4], uint32_t a0, uint32_t a1, uint32_t a2, uint32_t a3,
++                                         uint32_t b0, uint32_t b1) {
++  asm("mma.sync.aligned.m16n8k16.row.col.f32.f16.f16.f32 {%0,%1,%2,%3}, {%4,%5,%6,%7}, {%8,%9}, {%0,%1,%2,%3};\n"
++      : "+f"(c[0]), "+f"(c[1]), "+f"(c[2]), "+f"(c[3])
++      : "r"(a0), "r"(a1), "r"(a2), "r"(a3), "r"(b0), "r"(b1));
++}
++#if SLIDE_FP8QK
++// D = A B + D, m16n8k32, A row-major e4m3 (a0: row g, k 4t..4t+3; a1: row g+8, same k; a2: row g,
++// k 16+4t..; a3: row g+8, k 16+4t..), B col-major e4m3 (b0: k 4t..4t+3, b1: k 16+4t.., col g),
++// fp32 accumulate (C layout as m16n8k16).
++__device__ __forceinline__ void mma16832(float (&c)[4], uint32_t a0, uint32_t a1, uint32_t a2, uint32_t a3,
++                                         uint32_t b0, uint32_t b1) {
++  asm("mma.sync.aligned.m16n8k32.row.col.f32.e4m3.e4m3.f32 {%0,%1,%2,%3}, {%4,%5,%6,%7}, {%8,%9}, {%0,%1,%2,%3};\n"
++      : "+f"(c[0]), "+f"(c[1]), "+f"(c[2]), "+f"(c[3])
++      : "r"(a0), "r"(a1), "r"(a2), "r"(a3), "r"(b0), "r"(b1));
++}
++#endif
++
++// One row's online-softmax step over the lane's 4 base-2 logits (-inf = masked), quad-reduced
++// max; -inf safe (a row with no valid key so far keeps m = -inf, l = 0, alpha = 0).
++__device__ __forceinline__ float online_row(float& x0, float& x1, float& x2, float& x3, float& m_i, float& l_i) {
++  const float NEG_INF = __int_as_float(0xff800000u);
++  float mx = fmaxf(fmaxf(x0, x1), fmaxf(x2, x3));
++  mx = fmaxf(mx, __shfl_xor_sync(0xffffffffu, mx, 1));
++  mx = fmaxf(mx, __shfl_xor_sync(0xffffffffu, mx, 2));
++  const float m_new = fmaxf(m_i, mx);
++  const float m_use = m_new == NEG_INF ? 0.f : m_new;
++  const float alpha = ex2(m_i - m_use);
++  x0 = ex2(x0 - m_use);
++  x1 = ex2(x1 - m_use);
++  x2 = ex2(x2 - m_use);
++  x3 = ex2(x3 - m_use);
++  l_i = l_i * alpha + (x0 + x1) + (x2 + x3);  // this lane's columns; quad-reduced at the end
++  m_i = m_new;
++  return alpha;
++}
++
++// Page indices of sub-chunk s for this thread's tokens (tid / 8 + 32 i); 0 past the rank's keys.
++__device__ __forceinline__ void load_idx(int (&idx)[SK / 32], const int* prow, int s, int n_old, int tid) {
++  const int tsub = tid >> 3;
++#pragma unroll
++  for (int i = 0; i < SK / 32; ++i) {
++    const int e = s * SK + tsub + 32 * i;
++    idx[i] = e < n_old ? __ldg(prow + e) : 0;
++  }
++}
++
++// Gather sub-chunk s (s < nsub) into ring slot s % NS: thread -> token tid / 8 (+ 32 i), 16-byte
++// chunk tid % 8 of its K row and of its V row, chunk c stored at c ^ (slot row % 8); each warp
++// instruction covers 4 full 128-byte lines. Slot rows past the rank's last key up to the end of
++// its 16-row tile are zeroed (P = 0 there must not meet NaN bytes). The caller commits the group.
++__device__ __forceinline__ void issue_sub(uint8_t* smem, const uint8_t* kc, const uint8_t* vc,
++                                          const int (&idx)[SK / 32], int s, int n_old, int tid) {
++  const int tsub = tid >> 3, c = tid & 7;
++  uint8_t* Kd = smem + K_OFF + (s % NS) * SLOT;
++  uint8_t* Vd = smem + V_OFF + (s % NS) * SLOT;
++  const int base = s * SK;
++#pragma unroll
++  for (int i = 0; i < SK / 32; ++i) {
++    const int r = tsub + 32 * i;
++    if (base + r < n_old) {
++      const int dst = r * ROW + ((c ^ (r & 7)) << 4);
++      const int64_t row = static_cast<int64_t>(idx[i]);
++      cp_async16(smem_u32(Kd + dst), kc + row * ROW + c * 16);
++      cp_async16(smem_u32(Vd + dst), vc + row * ROW + c * 16);
++    }
++  }
++  const int rows = min(SK, n_old - base);
++  const int rpad = (rows + 15) & ~15;
++  for (int x = tid; x < (rpad - rows) * 16; x += THREADS) {
++    const int r = rows + (x >> 4), part = x & 15;
++    *reinterpret_cast<uint4*>((part < 8 ? Kd : Vd) + r * ROW + (part & 7) * 16) = make_uint4(0u, 0u, 0u, 0u);
++  }
++}
++
++// One 16-key tile at buffer rows tb .. tb + 15 of Kb / Vb (chunks swizzled on the buffer row):
++// S = Q K^T, mask (buffer row < nvalid, key position kp0 + row inside [low, p_row]), online
++// softmax, O += P V. A rows: row quad = query head g * 8 + quad, rows 8-15 zero.
++__device__ __forceinline__ void attend_tile(const uint8_t* Kb, const uint8_t* Vb, int tb, int nvalid, int kp0,
++                                            const uint32_t (&qa)[QKS][4], int g, int quad, int qi, float scale,
++                                            int p_row, int low, float& m_a, float& l_a, float (&acc)[8][4]) {
++  const float NEG_INF = __int_as_float(0xff800000u);
++  // S = Q K^T over the tile's 16 rows: n-block nb holds rows tb + nb * 8 + (0..7).
++  float s[2][4];
++#pragma unroll
++  for (int nb = 0; nb < 2; ++nb) {
++    s[nb][0] = s[nb][1] = s[nb][2] = s[nb][3] = 0.f;
++    const int tt = tb + nb * 8 + quad;
++    const uint8_t* kr = Kb + tt * ROW + qi * 4;
++#if SLIDE_FP8QK
++#pragma unroll
++    for (int ks = 0; ks < 2; ++ks) {
++      const uint32_t b0 = ld32(kr + (((g * 4 + 2 * ks) ^ (tt & 7)) << 4));
++      const uint32_t b1 = ld32(kr + (((g * 4 + 2 * ks + 1) ^ (tt & 7)) << 4));
++      mma16832(s[nb], qa[ks][0], qa[ks][1], qa[ks][2], qa[ks][3], b0, b1);
++    }
++#else
++#pragma unroll
++    for (int ks = 0; ks < 4; ++ks) {
++      uint32_t b0, b1;
++      e4m3x4_to_f16x2x2(ld32(kr + (((g * 4 + ks) ^ (tt & 7)) << 4)), b0, b1);
++      mma16816(s[nb], qa[ks][0], qa[ks][1], qa[ks][2], qa[ks][3], b0, b1);
++    }
++#endif
++  }
++  // This lane's columns: rows tb + 2 qi + {0, 1} (nb 0) and + 8 (nb 1).
++  bool ok[4];
++#pragma unroll
++  for (int c = 0; c < 4; ++c) {
++    const int e = tb + 2 * qi + (c & 1) + (c >> 1) * 8;
++    const int kp = kp0 + e;
++    ok[c] = e < nvalid && kp <= p_row && kp >= low;
++  }
++  float x0 = ok[0] ? s[0][0] * scale : NEG_INF;
++  float x1 = ok[1] ? s[0][1] * scale : NEG_INF;
++  float x2 = ok[2] ? s[1][0] * scale : NEG_INF;
++  float x3 = ok[3] ? s[1][1] * scale : NEG_INF;
++  const float alpha = online_row(x0, x1, x2, x3, m_a, l_a);
++  const uint32_t pa0 = pack_f16x2(x0, x1), pa2 = pack_f16x2(x2, x3);
++#pragma unroll
++  for (int nb = 0; nb < 8; ++nb) {
++    acc[nb][0] *= alpha;
++    acc[nb][1] *= alpha;
++  }
++  // O += P V. B operand of dim-block nb: k = rows tb + 2 qi + {0, 1} (reg 0) and + 8 (reg 1),
++  // column quad = dim quad * 8 + nb; each lane reads 8 contiguous V bytes per row and widens
++  // them to f16 in registers.
++  const int tv = tb + qi * 2;
++  const int vlc = g * 4 + (quad >> 1);
++  const int voff = (quad & 1) * 8;
++  const uint2 v0 = *reinterpret_cast<const uint2*>(Vb + tv * ROW + ((vlc ^ (tv & 7)) << 4) + voff);
++  const uint2 v1 = *reinterpret_cast<const uint2*>(Vb + (tv + 1) * ROW + ((vlc ^ ((tv + 1) & 7)) << 4) + voff);
++  const uint2 v8 = *reinterpret_cast<const uint2*>(Vb + (tv + 8) * ROW + ((vlc ^ ((tv + 8) & 7)) << 4) + voff);
++  const uint2 v9 = *reinterpret_cast<const uint2*>(Vb + (tv + 9) * ROW + ((vlc ^ ((tv + 9) & 7)) << 4) + voff);
++#pragma unroll
++  for (int hw = 0; hw < 2; ++hw) {
++    const uint32_t w0 = hw ? v0.y : v0.x, w1 = hw ? v1.y : v1.x;
++    const uint32_t w8 = hw ? v8.y : v8.x, w9 = hw ? v9.y : v9.x;
++    // Interleave two rows' bytes: byte 2j = row a dim j, byte 2j + 1 = row b dim j.
++    uint32_t r0[4], r1[4];
++    e4m3x4_to_f16x2x2(__byte_perm(w0, w1, 0x5140), r0[0], r0[1]);
++    e4m3x4_to_f16x2x2(__byte_perm(w0, w1, 0x7362), r0[2], r0[3]);
++    e4m3x4_to_f16x2x2(__byte_perm(w8, w9, 0x5140), r1[0], r1[1]);
++    e4m3x4_to_f16x2x2(__byte_perm(w8, w9, 0x7362), r1[2], r1[3]);
++#pragma unroll
++    for (int j = 0; j < 4; ++j) mma16816(acc[hw * 4 + j], pa0, 0u, pa2, 0u, r0[j], r1[j]);
++  }
++}
++
++__global__ void __launch_bounds__(THREADS, 2)
++sliding_cluster_kernel(const __nv_bfloat16* __restrict__ qkv, int64_t qkv_stride,
++                       const int64_t* __restrict__ positions, const int64_t* __restrict__ cache_loc,
++                       const int* __restrict__ seq_lens, const int* __restrict__ page_table, int64_t pt_stride,
++                       const float* __restrict__ inv_freq, const float* __restrict__ k_scale_p,
++                       const float* __restrict__ v_scale_p, uint8_t* kc, uint8_t* vc,
++                       __nv_bfloat16* __restrict__ out, int C, int window, float q_scale, float score_scale,
++                       float eps) {
++  extern __shared__ __align__(128) uint8_t smem[];
++  uint8_t* XK = smem + XK_OFF;
++  uint8_t* XV = smem + XV_OFF;
++  uint8_t* Qs = smem + Q_OFF;
++  cg::cluster_group cluster = cg::this_cluster();
++  const float NEG_INF = __int_as_float(0xff800000u);
++
++  const int tid = threadIdx.x, lane = tid & 31, warp = tid >> 5;
++  const int b = static_cast<int>(blockIdx.x) / C;      // 1-D clusters: blocks b*C .. b*C+C-1
++  const int rank = static_cast<int>(blockIdx.x) % C;   // == cluster.block_rank()
++  const int seq = seq_lens[b];
++  const int lo = max(0, seq - (window - 1));
++  const int ck = (((seq - lo) + C - 1) / C + 15) & ~15;
++  const int start = lo + rank * ck;
++  const int n_old = max(0, min(ck, seq - start));      // old keys of this rank
++  const bool last = rank == C - 1;
++  const int nsub = (n_old + SK - 1) / SK;              // 0 .. NSUB_MAX, CTA-uniform
++  const int* prow = page_table + static_cast<int64_t>(b) * pt_stride + start;
++
++  // ---- Prologue: the page indices of the first NS sub-chunks (every load before any copy), then
++  // one cp.async group per sub-chunk (empty groups past nsub keep the group count fixed).
++  {
++    int idx[NS][SK / 32];
++#pragma unroll
++    for (int s = 0; s < NS; ++s) load_idx(idx[s], prow, s, n_old, tid);
++#pragma unroll
++    for (int s = 0; s < NS; ++s) {
++      if (s < nsub) issue_sub(smem, kc, vc, idx[s], s, n_old, tid);
++      cp_commit();
++    }
++  }
++  int idx_late[SK / 32];  // sub-chunk NS (C = 4 only), issued into slot 0 once slot 0 is consumed
++  load_idx(idx_late, prow, NS, n_old, tid);
++
++  // ---- While the gather flies: the request's queries, one warp per head, lane = RoPE pair
++  // (dims 2 lane, 2 lane + 1). qk_scale_factor is applied here, once, before E4M3.
++  const float fr = inv_freq[lane];
++  const float pos = static_cast<float>(positions[b]);
++  for (int h = warp; h < HQ; h += WARPS) {
++    const __nv_bfloat162 x2 = *reinterpret_cast<const __nv_bfloat162*>(
++        qkv + static_cast<int64_t>(b) * qkv_stride + h * D + 2 * lane);
++    float xe = __low2float(x2), xo = __high2float(x2);
++    float ss = xe * xe + xo * xo;
++#pragma unroll
++    for (int o = 16; o > 0; o >>= 1) ss += __shfl_xor_sync(0xffffffffu, ss, o);
++    const float r = 1.f / sqrtf(ss / D + eps);
++    xe *= r;
++    xo *= r;
++    float sn, cs;
++    sincosf(pos * fr, &sn, &cs);
++    const float ye = xe * cs - xo * sn, yo = xe * sn + xo * cs;
++    *reinterpret_cast<uint16_t*>(Qs + h * D + 2 * lane) = f32x2_to_e4m3x2(ye * q_scale, yo * q_scale);
++  }
++  // The last rank: the new key (RMSNorm + RoPE, / k_scale) and value (/ v_scale), E4M3, stored at
++  // cache_loc and kept as row 0 of the XK / XV tile (rows 1..15 zero). One warp per (kind, kv head).
++  if (last) {
++    for (int x = tid; x < 15 * 16; x += THREADS) {
++      const int r = 1 + (x >> 4), part = x & 15;
++      *reinterpret_cast<uint4*>((part < 8 ? XK : XV) + r * ROW + (part & 7) * 16) = make_uint4(0u, 0u, 0u, 0u);
++    }
++    const float ksc = __ldg(k_scale_p), vsc = __ldg(v_scale_p);
++    for (int u = warp; u < 2 * HKV; u += WARPS) {
++      const bool isv = u >= HKV;
++      const int g = u % HKV;
++      const __nv_bfloat162 x2 = *reinterpret_cast<const __nv_bfloat162*>(
++          qkv + static_cast<int64_t>(b) * qkv_stride + (HQ + (isv ? HKV : 0) + g) * D + 2 * lane);
++      float xe = __low2float(x2), xo = __high2float(x2);
++      uint16_t packed;
++      if (!isv) {  // warp-uniform
++        float ss = xe * xe + xo * xo;
++#pragma unroll
++        for (int o = 16; o > 0; o >>= 1) ss += __shfl_xor_sync(0xffffffffu, ss, o);
++        const float r = 1.f / sqrtf(ss / D + eps);
++        xe *= r;
++        xo *= r;
++        float sn, cs;
++        sincosf(pos * fr, &sn, &cs);
++        const float ye = xe * cs - xo * sn, yo = xe * sn + xo * cs;
++        packed = f32x2_to_e4m3x2(ye / ksc, yo / ksc);
++      } else {
++        packed = f32x2_to_e4m3x2(xe / vsc, xo / vsc);
++      }
++      const int64_t loc = cache_loc[b];
++      *reinterpret_cast<uint16_t*>((isv ? vc : kc) + loc * ROW + g * D + 2 * lane) = packed;
++      const int db = g * D + 2 * lane;  // byte within the 128-byte row; row 0, so the swizzle is identity
++      *reinterpret_cast<uint16_t*>((isv ? XV : XK) + db) = packed;
++    }
++  }
++  __syncthreads();  // queries and the new-key tile are in smem
++
++  const int quad = lane >> 2, qi = lane & 3;
++  const int g = warp & 1;     // kv head
++  const int sub = warp >> 1;  // tile slice
++  const int qra = g * G + quad;
++#if SLIDE_FP8QK
++  uint32_t qa[QKS][4];
++#pragma unroll
++  for (int ks = 0; ks < 2; ++ks) {
++    const uint8_t* pa = Qs + qra * D + ks * 32 + qi * 4;
++    qa[ks][0] = ld32(pa);
++    qa[ks][2] = ld32(pa + 16);
++    qa[ks][1] = qa[ks][3] = 0u;
++  }
++#else
++  // f16 fallback: k index 2 qi + {0, 1} holds dims s*16 + 4 qi + {0, 1}, k index 8 + 2 qi + {0, 1}
++  // holds dims s*16 + 4 qi + {2, 3}; K uses the same permutation, so the dot product is unchanged.
++  uint32_t qa[QKS][4];
++#pragma unroll
++  for (int s = 0; s < 4; ++s) {
++    e4m3x4_to_f16x2x2(ld32(Qs + qra * D + s * 16 + qi * 4), qa[s][0], qa[s][2]);
++    qa[s][1] = qa[s][3] = 0u;
++  }
++#endif
++  const float scale = score_scale * __ldg(k_scale_p);  // sm_scale * log2(e) * k_scale
++  const int p_row = seq;                                // the query's position
++  const int low = p_row - (window - 1);
++  float m_a = NEG_INF, l_a = 0.f;
++  float acc[8][4];
++#pragma unroll
++  for (int nb = 0; nb < 8; ++nb) acc[nb][0] = acc[nb][1] = acc[nb][2] = acc[nb][3] = 0.f;
++
++  // ---- Attention, sub-chunk by sub-chunk as each cp.async group lands.
++  for (int s = 0; s < nsub; ++s) {
++    cp_wait_ring();   // groups 0 .. s are complete (NS + s committed so far)
++    __syncthreads();  // ... for every thread's copies
++    const int base = s * SK;
++    const int rows = min(SK, n_old - base);
++    const uint8_t* Kb = smem + K_OFF + (s % NS) * SLOT;
++    const uint8_t* Vb = smem + V_OFF + (s % NS) * SLOT;
++    const int nt = (rows + 15) >> 4;
++    for (int k = sub; k < nt; k += 4)
++      attend_tile(Kb, Vb, k * 16, rows, start + base, qa, g, quad, qi, scale, p_row, low, m_a, l_a, acc);
++    if (s + NS < nsub) {  // CTA-uniform; only s = 0 at C = 4
++      __syncthreads();    // every warp is done with slot s % NS
++      issue_sub(smem, kc, vc, idx_late, s + NS, n_old, tid);
++    }
++    cp_commit();
++  }
++  // The new key: one more tile on the last rank, for the slice next in the round robin
++  // (SK is a multiple of 4 tiles, so global tile t belongs to slice t % 4).
++  if (last && sub == (((n_old + 15) >> 4) & 3))
++    attend_tile(XK, XV, 0, 1, seq, qa, g, quad, qi, scale, p_row, low, m_a, l_a, acc);
++  cp_wait_all();  // only empty groups can remain
++  l_a += __shfl_xor_sync(0xffffffffu, l_a, 1);
++  l_a += __shfl_xor_sync(0xffffffffu, l_a, 2);
++  __syncthreads();  // every warp is done with the ring: the partials alias it
++
++  float* pacc = reinterpret_cast<float*>(smem + P_ACC);
++  float* pm = reinterpret_cast<float*>(smem + P_M);
++  float* pl = reinterpret_cast<float*>(smem + P_L);
++  {
++    // Stage each warp's 8 rows, then merge the four slice warps of each kv head (row h = head).
++    float* stg_acc = reinterpret_cast<float*>(smem + STG_ACC);
++    float* stg_ml = reinterpret_cast<float*>(smem + STG_ML);
++    const int rw = warp * G + quad;
++    if (qi == 0) { stg_ml[rw * 2] = m_a; stg_ml[rw * 2 + 1] = l_a; }
++    float* ar = stg_acc + rw * D;
++#pragma unroll
++    for (int nb = 0; nb < 8; ++nb) {
++      ar[(qi * 2) * 8 + nb] = acc[nb][0];
++      ar[(qi * 2 + 1) * 8 + nb] = acc[nb][1];
++    }
++    __syncthreads();
++    const int h = tid >> 4, d0 = (tid & 15) * 4;
++    const int hg = h / G, r = h % G;
++    float mw[4];
++    float M = NEG_INF;
++#pragma unroll
++    for (int j = 0; j < 4; ++j) { mw[j] = stg_ml[((hg + 2 * j) * G + r) * 2]; M = fmaxf(M, mw[j]); }
++    const float Mu = M == NEG_INF ? 0.f : M;
++    float4 o = make_float4(0.f, 0.f, 0.f, 0.f);
++    float Ls = 0.f;
++#pragma unroll
++    for (int j = 0; j < 4; ++j) {
++      const int wr = (hg + 2 * j) * G + r;
++      const float wt = mw[j] == NEG_INF ? 0.f : ex2(mw[j] - Mu);
++      Ls += wt * stg_ml[wr * 2 + 1];
++      const float4 a = *reinterpret_cast<const float4*>(stg_acc + wr * D + d0);
++      o.x += wt * a.x; o.y += wt * a.y; o.z += wt * a.z; o.w += wt * a.w;
++    }
++    *reinterpret_cast<float4*>(pacc + h * D + d0) = o;
++    if ((tid & 15) == 0) { pm[h] = M; pl[h] = Ls; }
++  }
++  cluster.sync();  // every rank's partial is written and visible cluster-wide
++
++  // ---- Reduce-scatter over DSMEM: rank r finishes rows [r NR, (r + 1) NR), 16 threads per row
++  // (4 dims each); warps past the owned rows idle, partially used warps duplicate the last row.
++  {
++    const int NR = HQ / C;
++    const int nthr = NR * 16;
++    if (warp * 32 < nthr) {
++      const int rl = min(tid >> 4, NR - 1);
++      const int h = rank * NR + rl;
++      const int d0 = (tid & 15) * 4;
++      float mv[16];
++      float M = NEG_INF;
++#pragma unroll
++      for (int c = 0; c < 16; ++c) {
++        mv[c] = NEG_INF;
++        if (c < C) {
++          mv[c] = *cluster.map_shared_rank(pm + h, static_cast<unsigned>(c));
++          M = fmaxf(M, mv[c]);
++        }
++      }
++      const float Mu = M == NEG_INF ? 0.f : M;
++      float4 o = make_float4(0.f, 0.f, 0.f, 0.f);
++      float Ls = 0.f;
++#pragma unroll
++      for (int c = 0; c < 16; ++c) {
++        if (c < C) {
++          const float wt = mv[c] == NEG_INF ? 0.f : ex2(mv[c] - Mu);  // masked partials weigh 0
++          Ls += wt * *cluster.map_shared_rank(pl + h, static_cast<unsigned>(c));
++          const float4 a = *reinterpret_cast<const float4*>(
++              cluster.map_shared_rank(pacc + h * D + d0, static_cast<unsigned>(c)));
++          o.x += wt * a.x; o.y += wt * a.y; o.z += wt * a.z; o.w += wt * a.w;
++        }
++      }
++      // Every row sees its own new key (last rank), so Ls > 0.
++      const float vs = __ldg(v_scale_p);
++      o.x = o.x / Ls * vs; o.y = o.y / Ls * vs; o.z = o.z / Ls * vs; o.w = o.w / Ls * vs;
++      float ss = o.x * o.x + o.y * o.y + o.z * o.z + o.w * o.w;
++#pragma unroll
++      for (int x = 8; x > 0; x >>= 1) ss += __shfl_xor_sync(0xffffffffu, ss, x);
++      const float rr = 1.f / sqrtf(ss / D + eps);
++      const int64_t t = static_cast<int64_t>(b);
++      const __nv_bfloat162* gp = reinterpret_cast<const __nv_bfloat162*>(
++          qkv + t * qkv_stride + (HQ + 2 * HKV) * D + h * D + d0);
++      const __nv_bfloat162 g01 = gp[0], g23 = gp[1];
++      const float y0 = o.x * rr / (1.f + expf(-__low2float(g01)));
++      const float y1 = o.y * rr / (1.f + expf(-__high2float(g01)));
++      const float y2 = o.z * rr / (1.f + expf(-__low2float(g23)));
++      const float y3 = o.w * rr / (1.f + expf(-__high2float(g23)));
++      if (tid < nthr) {
++        __nv_bfloat162* op = reinterpret_cast<__nv_bfloat162*>(out + (t * HQ + h) * D + d0);
++        op[0] = __floats2bfloat162_rn(y0, y1);
++        op[1] = __floats2bfloat162_rn(y2, y3);
++      }
++    }
++  }
++  cluster.sync();  // peers' smem stays live until every rank has read it
++}
++
++int occupancy_of(int C) {
++  cudaLaunchConfig_t cfg = {};
++  cfg.gridDim = dim3(static_cast<unsigned>(C), 1, 1);
++  cfg.blockDim = dim3(THREADS, 1, 1);
++  cfg.dynamicSmemBytes = SMEM_BYTES;
++  cudaLaunchAttribute attr[1];
++  attr[0].id = cudaLaunchAttributeClusterDimension;
++  attr[0].val.clusterDim.x = static_cast<unsigned>(C);
++  attr[0].val.clusterDim.y = 1;
++  attr[0].val.clusterDim.z = 1;
++  cfg.attrs = attr;
++  cfg.numAttrs = 1;
++  int n = -1;
++  if (cudaOccupancyMaxActiveClusters(&n, reinterpret_cast<const void*>(sliding_cluster_kernel), &cfg) != cudaSuccess) {
++    (void)cudaGetLastError();
++    return -1;
++  }
++  return n;
++}
++
++}  // namespace
++
++// int64 CPU [occ C=4, occ C=8, occ C=16, regs, local bytes, dynamic smem, binaryVersion, ptxVersion].
++torch::Tensor slide_setup() {
++  C10_CUDA_CHECK(cudaFuncSetAttribute(sliding_cluster_kernel, cudaFuncAttributeMaxDynamicSharedMemorySize,
++                                      SMEM_BYTES));
++  if (cudaFuncSetAttribute(sliding_cluster_kernel, cudaFuncAttributePreferredSharedMemoryCarveout, 100) != cudaSuccess)
++    (void)cudaGetLastError();
++  if (cudaFuncSetAttribute(sliding_cluster_kernel, cudaFuncAttributeNonPortableClusterSizeAllowed, 1) != cudaSuccess)
++    (void)cudaGetLastError();  // then a cluster of 16 reports occupancy <= 0 and is not used
++  std::vector<int64_t> info;
++  info.push_back(occupancy_of(4));
++  info.push_back(occupancy_of(8));
++  info.push_back(occupancy_of(16));
++  cudaFuncAttributes fa;
++  C10_CUDA_CHECK(cudaFuncGetAttributes(&fa, reinterpret_cast<const void*>(sliding_cluster_kernel)));
++  info.push_back(fa.numRegs);
++  info.push_back(static_cast<int64_t>(fa.localSizeBytes));
++  info.push_back(SMEM_BYTES);
++  info.push_back(fa.binaryVersion);
++  info.push_back(fa.ptxVersion);
++  torch::Tensor t = torch::empty({static_cast<int64_t>(info.size())}, torch::dtype(torch::kLong));
++  for (size_t i = 0; i < info.size(); ++i) t.data_ptr<int64_t>()[i] = info[i];
++  return t;
++}
++
++void slide_attn(torch::Tensor qkv, torch::Tensor positions, torch::Tensor cache_loc, torch::Tensor seq_lens,
++                torch::Tensor page_table, torch::Tensor inv_freq, torch::Tensor k_scale, torch::Tensor v_scale,
++                torch::Tensor k_cache, torch::Tensor v_cache, torch::Tensor out,
++                int64_t C, int64_t window, double q_scale, double score_scale, double eps) {
++  const int64_t B = seq_lens.size(0);
++  TORCH_CHECK(B >= 1 && B <= 64, "slide_attn: batch out of range");
++  TORCH_CHECK(C == 4 || C == 8 || C == 16, "slide_attn: cluster size must be 4, 8 or 16");
++  TORCH_CHECK(window >= 1 && window <= 2048, "slide_attn: window must be in [1, 2048]");
++  TORCH_CHECK(qkv.scalar_type() == at::kBFloat16 && qkv.dim() == 2 && qkv.size(0) == B &&
++              qkv.size(1) >= (2 * HQ + 2 * HKV) * D && qkv.stride(1) == 1, "slide_attn: qkv layout (decode)");
++  TORCH_CHECK(out.scalar_type() == at::kBFloat16 && out.is_contiguous() && out.numel() == B * HQ * D,
++              "slide_attn: out layout");
++  TORCH_CHECK(positions.scalar_type() == at::kLong && positions.is_contiguous() && positions.numel() == B &&
++              cache_loc.scalar_type() == at::kLong && cache_loc.is_contiguous() && cache_loc.numel() == B,
++              "slide_attn: positions / cache_loc");
++  TORCH_CHECK(seq_lens.scalar_type() == at::kInt && seq_lens.is_contiguous() &&
++              page_table.scalar_type() == at::kInt && page_table.dim() == 2 && page_table.size(0) == B &&
++              page_table.stride(1) == 1, "slide_attn: seq_lens / page_table");
++  TORCH_CHECK(inv_freq.scalar_type() == at::kFloat && inv_freq.is_contiguous() && inv_freq.numel() == D / 2,
++              "slide_attn: inv_freq");
++  TORCH_CHECK(k_scale.scalar_type() == at::kFloat && v_scale.scalar_type() == at::kFloat, "slide_attn: scales");
++  for (const auto* c : {&k_cache, &v_cache})
++    TORCH_CHECK(c->is_contiguous() && c->element_size() == 1 && c->dim() == 4 && c->size(1) == 1 &&
++                c->size(2) == HKV && c->size(3) == D, "slide_attn: cache layout (page 1, 2 kv heads, 64)");
++  cudaLaunchConfig_t cfg = {};
++  cfg.gridDim = dim3(static_cast<unsigned>(B * C), 1, 1);
++  cfg.blockDim = dim3(THREADS, 1, 1);
++  cfg.dynamicSmemBytes = SMEM_BYTES;
++  cfg.stream = at::cuda::getCurrentCUDAStream();
++  cudaLaunchAttribute attr[1];
++  attr[0].id = cudaLaunchAttributeClusterDimension;
++  attr[0].val.clusterDim.x = static_cast<unsigned>(C);
++  attr[0].val.clusterDim.y = 1;
++  attr[0].val.clusterDim.z = 1;
++  cfg.attrs = attr;
++  cfg.numAttrs = 1;
++  C10_CUDA_CHECK(cudaLaunchKernelEx(
++      &cfg, sliding_cluster_kernel,
++      reinterpret_cast<const __nv_bfloat16*>(qkv.data_ptr()), static_cast<int64_t>(qkv.stride(0)),
++      positions.data_ptr<int64_t>(), cache_loc.data_ptr<int64_t>(), seq_lens.data_ptr<int>(),
++      page_table.data_ptr<int>(), static_cast<int64_t>(page_table.stride(0)), inv_freq.data_ptr<float>(),
++      k_scale.data_ptr<float>(), v_scale.data_ptr<float>(), reinterpret_cast<uint8_t*>(k_cache.data_ptr()),
++      reinterpret_cast<uint8_t*>(v_cache.data_ptr()), reinterpret_cast<__nv_bfloat16*>(out.data_ptr()),
++      static_cast<int>(C), static_cast<int>(window), static_cast<float>(q_scale), static_cast<float>(score_scale),
++      static_cast<float>(eps)));
++}
++"""
++
++_SLIDE_MOD = {16: None, 8: None, 4: None}  # per cluster size: the module whose checks passed; None = master
++_SLIDE_TAG = {16: None, 8: None, 4: None}
++_SLIDE_WHY = {16: "not built", 8: "not built", 4: "not built"}  # per cluster size: why it is off
++_SLIDE_NEED = {16: 1, 8: 16, 4: 32}  # co-resident clusters for one wave at the largest batch each C serves
++_SLIDE_RANGE = {16: "B=1", 8: "B=2..16", 4: "B=17..32"}
++_SLIDE_GATE = 1.0  # master Triton time / cluster time needed in the printed interleaved timing to route a size
++_SLIDE_LENS16 = [2049, 17, 3000, 2048, 2047, 10, 5000, 2046, 1, 600, 2055, 129, 4096, 2000, 33, 2050]
++_SLIDE_CASES = {  # (lens, kv_scale) per cluster size, batches inside the range it serves
++    16: (([2049], 1.0), ([1000], 0.25)),
++    8: (([10, 5000], 0.25), (_SLIDE_LENS16, 1.0)),
++    4: ((_SLIDE_LENS16 + [513], 0.25), (_SLIDE_LENS16 + [n + 7 for n in _SLIDE_LENS16], 1.0)),
++}
++
++
++def _build_slide(fp8qk: bool):
++    """Compile the sliding cluster module once per process, at import (never during capture),
++    for sm_90a only (TORCH_CUDA_ARCH_LIST=9.0a, restored afterwards)."""
++    tag = "fp8qk" if fp8qk else "f16qk"
++    t0 = time.perf_counter()
++    prev = os.environ.get("TORCH_CUDA_ARCH_LIST")
++    os.environ["TORCH_CUDA_ARCH_LIST"] = "9.0a"
++    try:
++        from torch.utils.cpp_extension import load_inline
++        try:
++            from torch.utils.cpp_extension import _get_cuda_arch_flags
++            print(f"[slide] nvcc arch flags ({tag}): {_get_cuda_arch_flags()}", flush=True)
++        except Exception as e:
++            print(f"[slide] nvcc arch flags ({tag}) unavailable: {e!r}", flush=True)
++        ext = load_inline(
++            name="muse_sliding_cluster_v2" + ("" if fp8qk else "_f16qk"),
++            cpp_sources=_SLIDE_CPP,
++            cuda_sources=f"#define SLIDE_FP8QK {int(fp8qk)}\n" + _SLIDE_CUDA,
++            functions=["slide_setup", "slide_attn"],
++            extra_cuda_cflags=["-O3", "-lineinfo"],
++            verbose=False,
++        )
++    except Exception as e:
++        print(f"[slide] load_inline ({tag}) FAILED after {time.perf_counter() - t0:.1f}s: {str(e)[-1500:]!r}",
++              flush=True)
++        return None
++    finally:
++        if prev is None:
++            os.environ.pop("TORCH_CUDA_ARCH_LIST", None)
++        else:
++            os.environ["TORCH_CUDA_ARCH_LIST"] = prev
++    print(f"[slide] load_inline ({tag}) compiled in {time.perf_counter() - t0:.1f}s", flush=True)
++    return ext
++
++
++def _slide_clusters(cfg) -> int:
++    """CTAs per request, from config only: 16 at batch 1, 4 at 17..32; 0 (master Triton) at 2..16
++    (the C=8 band is gated off: it lost to master there), when that size is off, or above 32."""
++    batch = cfg["batch"]
++    if batch == 1:
++        return 16 if _SLIDE_MOD[16] is not None else 0
++    if batch <= 16:
++        return 0
++    if batch <= 32:
++        return 4 if _SLIDE_MOD[4] is not None else 0
++    return 0
++
++
++def _slide_gate(cfg) -> bool:
++    """Config-only predicate for the sliding cluster kernel: decode only (verify keeps master FA3)."""
++    return (cfg["q_len"] == 1 and 0 < cfg["window"] <= 2048 and cfg["rope_theta"] != 0
++            and cfg["num_q_heads"] == 16 and cfg["num_kv_heads"] == 2 and cfg["head_dim"] == 64
++            and cfg["page_size"] == 1 and _slide_clusters(cfg) > 0)
++
++
++def _slide_launch(ext, data: Inputs, c: int) -> torch.Tensor:
++    """One launch of sliding_cluster_kernel with clusters of c CTAs (decode, q_len 1)."""
++    cfg = data["config"]
++    batch, hq, d = cfg["batch"], cfg["num_q_heads"], cfg["head_dim"]
++    qkv = data["qkv"].reshape(batch, -1)
++    out = torch.empty((batch, 1, hq * d), dtype=torch.bfloat16, device=qkv.device)
++    ext.slide_attn(
++        qkv, data["positions"], data["cache_loc"], data["seq_lens"], data["page_table"],
++        _inv_freq(cfg["rope_theta"], d, qkv.device), data["k_scale"], data["v_scale"],
++        data["k_cache"], data["v_cache"], out,
++        c, cfg["window"], cfg["qk_scale_factor"], cfg["sm_scale"] * LOG2E, RMS_EPS)
++    return out
++
++
++def _slide_forward(data: Inputs, c: int) -> torch.Tensor:
++    """The gated path: the module that passed for cluster size c."""
++    return _slide_launch(_SLIDE_MOD[c], data, c)
++
++
++def _slide_rms(x):
++    return x * torch.rsqrt(x.pow(2).mean(-1, keepdim=True) + RMS_EPS)
++
++
++def _slide_rope(x, pos, inv_freq):
++    """Interleaved RoPE of x [..., heads, 64] at pos [...] (fp32 angle), as the reference."""
++    ang = pos.float()[..., None] * inv_freq
++    cos, sin = ang.cos().unsqueeze(-2), ang.sin().unsqueeze(-2)
++    even, odd = x[..., 0::2], x[..., 1::2]
++    return torch.stack([even * cos - odd * sin, even * sin + odd * cos], -1).flatten(-2)
++
++
++def _slide_synthetic(lens, length, kv_scale, gen, device, max_pages=None):
++    """Gated-shape sliding inputs (tp8, page 1, window 2048) with scattered rows and, per request,
++    a key aligned with its first query planted at the window's oldest position (inside for token
++    0 only) and just outside it, as reference.generate_input's dist="edges" does."""
++    batch, hq, hkv, d, window = len(lens), 16, 2, 64, 2048
++    max_pages = max_pages or max(lens) + length + 29
++    total = batch * max_pages
++    perm = torch.randperm(total, generator=gen, device=device).to(torch.int32)
++    page_table = torch.full((batch, max_pages), -1, dtype=torch.int32, device=device)
++    off = 0
++    for b, n in enumerate(lens):
++        page_table[b, :n + length] = perm[off:off + n + length]
++        off += n + length
++    seq = torch.tensor(lens, dtype=torch.int64, device=device)
++    k_cache = (torch.randn((total, 1, hkv, d), generator=gen, device=device) / kv_scale).clamp(-448, 448).to(FP8)
++    v_cache = (torch.randn((total, 1, hkv, d), generator=gen, device=device) / kv_scale).clamp(-448, 448).to(FP8)
++    qkv = (2 * torch.randn((batch, length, (2 * hq + 2 * hkv) * d), generator=gen, device=device)).to(torch.bfloat16)
++    inv = _inv_freq(500000.0, d, device)
++    qn = _slide_rope(_slide_rms(qkv[:, 0, :hq * d].float().view(batch, hq, d)), seq, inv)
++    planted = (qn[:, ::hq // hkv] / kv_scale).clamp(-448, 448).to(FP8)  # [B, Hkv, 64]
++    k_flat = k_cache.view(-1, hkv, d)
++    for b, p in enumerate(lens):
++        for t in (p - window + 1, p - window):
++            if 0 <= t < p:
++                k_flat[page_table[b, t].long()] = planted[b]
++    positions = (seq[:, None] + torch.arange(length, device=device)).reshape(-1)
++    cache_loc = torch.gather(page_table.long(), 1, positions.view(batch, length)).reshape(-1)
++    return {
++        "qkv": qkv,
++        "positions": positions,
++        "cache_loc": cache_loc,
++        "cache_seqlens": (seq + length).to(torch.int32),
++        "cu_seqlens_q": torch.arange(0, batch * length + 1, length, dtype=torch.int32, device=device),
++        "scheduler_metadata": None,
++        "k_cache": k_cache,
++        "v_cache": v_cache,
++        "k_scale": torch.tensor(kv_scale, dtype=torch.float32, device=device),
++        "v_scale": torch.tensor(kv_scale, dtype=torch.float32, device=device),
++        "page_table": page_table,
++        "seq_lens": seq.to(torch.int32),
++        "config": {"batch": batch, "q_len": length, "num_q_heads": hq, "num_kv_heads": hkv, "head_dim": d,
++                   "page_size": 1, "window": window, "rope_theta": 500000.0, "qk_scale_factor": 5.4730064863875,
++                   "sm_scale": d ** -0.5, "kv_scale": kv_scale},
++    }
++
++
++def _slide_reference(data, lens):
++    """FP32 windowed causal attention over the cache as kernel_fn left it (its new rows included),
++    with the kernel's query rounding (q * qk_scale_factor to E4M3), then rmsnorm x sigmoid(gate)."""
++    cfg = data["config"]
++    batch, length, hq, hkv, d = cfg["batch"], cfg["q_len"], cfg["num_q_heads"], cfg["num_kv_heads"], cfg["head_dim"]
++    window = cfg["window"]
++    qkv = data["qkv"].float()
++    pos = data["positions"].view(batch, length)
++    q = _slide_rope(_slide_rms(qkv[..., :hq * d].reshape(batch, length, hq, d)), pos,
++                    _inv_freq(cfg["rope_theta"], d, qkv.device))
++    q = (q * cfg["qk_scale_factor"]).to(FP8).float()
++    kf = data["k_cache"].view(-1, hkv, d)
++    vf = data["v_cache"].view(-1, hkv, d)
++    out = torch.empty((batch, length, hq, d), device=qkv.device)
++    for b, n in enumerate(lens):
++        rows = data["page_table"][b, :n + length].long()
++        keys = (kf[rows].float() * data["k_scale"]).repeat_interleave(hq // hkv, dim=1)
++        vals = (vf[rows].float() * data["v_scale"]).repeat_interleave(hq // hkv, dim=1)
++        for j in range(length):
++            p = n + j
++            s0 = max(0, p - window + 1)
++            att = torch.einsum("hd,thd->ht", q[b, j], keys[s0:p + 1]) * cfg["sm_scale"]
++            out[b, j] = torch.einsum("ht,thd->hd", att.softmax(-1), vals[s0:p + 1])
++    gate = qkv[..., (hq + 2 * hkv) * d:].reshape(batch, length, hq, d)
++    return (_slide_rms(out) * torch.sigmoid(gate)).reshape(batch, length, hq * d)
++
++
++def _slide_run(ext, data, c: int, what: str) -> torch.Tensor:
++    """An announced, synchronized launch (prepare-time only), so a fault names its kernel."""
++    print(f"[slide] launch sliding_cluster_kernel {what} C={c} B={data['config']['batch']} ...", flush=True)
++    out = _slide_launch(ext, data, c)
++    torch.cuda.synchronize()
++    print(f"[slide] launch sliding_cluster_kernel {what} C={c}: done", flush=True)
++    return out
++
++
++def _slide_canary(ext, c: int, tag: str) -> bool:
++    """A tiny synthetic first launch (B=1, 40 keys) at cluster size c."""
++    try:
++        gen = torch.Generator(device="cuda").manual_seed(97 + c)
++        data = _slide_synthetic([40], 1, 1.0, gen, torch.device("cuda"))
++        out = _slide_run(ext, data, c, f"canary {tag}")
++        ok = bool(torch.isfinite(out).all())
++        print(f"[slide] canary {tag} C={c}: finite {ok}", flush=True)
++        return ok
++    except Exception as e:
++        print(f"[slide] canary {tag} C={c} raised: {e!r}", flush=True)
++        return False
++
++
++def _slide_self_check(ext, c: int, tag: str) -> bool:
++    """One-time eager check at import, on synthetic data only (never in the timed path): cluster
++    size c at batches of the range it serves, against the FP32 reference (lens below, at and past
++    the window, window-edge keys, kv scale 1 and 0.25), its new cache rows against master
++    _pre_attention_kernel on cloned caches (the two-state alternating graph replays and the timing gate follow in
++    _slide_route_checks)."""
++    gen = torch.Generator(device="cuda").manual_seed(4321 + c)
++    dev = torch.device("cuda")
++    ok = True
++    try:
++        for lens, kv_scale in _SLIDE_CASES[c]:
++            data = _slide_synthetic(lens, 1, kv_scale, gen, dev)
++            cfg = data["config"]
++            tokens = cfg["batch"]
++            k_ref, v_ref = data["k_cache"].clone(), data["v_cache"].clone()
++            qkv2 = data["qkv"].reshape(tokens, -1)
++            print(f"[slide] launch master _pre_attention_kernel (reference store) B={tokens} ...", flush=True)
++            _pre_attention_kernel[(tokens, 18)](
++                qkv2, data["positions"], data["cache_loc"], _inv_freq(cfg["rope_theta"], 64, dev),
++                data["k_scale"], data["v_scale"], torch.empty((tokens, 16, 64), dtype=FP8, device=dev),
++                k_ref, v_ref, qkv2.stride(0),
++                HQ=16, HKV=2, D=64, ROPE=True, EPS=RMS_EPS, PAIRED=False, G=8, num_warps=1)
++            torch.cuda.synchronize()
++            print("[slide] launch master _pre_attention_kernel: done", flush=True)
++            out = _slide_run(ext, data, c, f"self-check {tag}").float()
++            ref = _slide_reference(data, lens)
++            err = float((out - ref).norm() / ref.norm())
++            finite = bool(torch.isfinite(out).all())
++            loc = data["cache_loc"]
++            cache_ok = True
++            notes = []
++            for name, mine, master in (("k", data["k_cache"], k_ref), ("v", data["v_cache"], v_ref)):
++                a = mine.view(-1, 2, 64)[loc]
++                m = master.view(-1, 2, 64)[loc]
++                match = float((a.view(torch.uint8) == m.view(torch.uint8)).float().mean())
++                rel = float((a.float() - m.float()).norm() / m.float().norm().clamp_min(1e-30))
++                notes.append(f"{name} match {match:.4f} rel {rel:.1e}")
++                cache_ok = cache_ok and rel < 5e-2  # master Triton RoPE uses fast sin/cos at ~5000 rad; byte match is info only
++            print(f"[slide] self-check {tag} C={c} B={cfg['batch']} kv_scale={kv_scale:g}: rel L2 {err:.2e}, "
++                  f"finite {finite}, cache {', '.join(notes)}", flush=True)
++            ok = ok and finite and err < 2e-2 and cache_ok
++    except Exception as e:
++        print(f"[slide] self-check {tag} C={c} raised: {e!r}", flush=True)
++        ok = False
++    return ok
++
++
++def _slide_route_checks(ext, c: int, tag: str) -> "str | None":
++    """After the eager self-check: (1) the two-state alternating graph-replay check through kernel_fn (the
++    route is provisionally set, refilled inputs, A/B states with a captured graph each), then (2) the
++    timing gate: interleaved cold-L2 graph replays of master's Triton _sliding_fused_kernel against the
++    cluster kernel (empty-graph baseline subtracted), routed only if the cluster kernel is not slower.
++    None on success, else the reason the cluster size stays off."""
++    dev = torch.device("cuda")
++    gen = torch.Generator(device="cuda").manual_seed(6789 + c)
++    batch = 1 if c == 16 else 32
++    base = _SLIDE_CASES[c][-1][0]
++    kv_scale = _SLIDE_CASES[c][-1][1]
++    sets = _alt_sets(base)
++    mp = max(max(s) for s in sets) + 1 + 29
++    prev = (_SLIDE_MOD[c], _SLIDE_TAG[c])
++    _SLIDE_MOD[c], _SLIDE_TAG[c] = ext, tag  # provisional: kernel_fn must take the route under test
++    try:
++        why = _alt_check(f"[slide] replay C={c} B={len(base)}",
++                         lambda l: _slide_synthetic(l, 1, kv_scale, gen, dev, max_pages=mp), _slide_reference, sets,
++                         gate=_slide_gate)
++        if why is not None:
++            return why
++        data = _slide_synthetic([80000] * batch, 1, 1.0, gen, dev)
++        flush = torch.empty(64 << 20, dtype=torch.float32, device=dev)  # 256 MB > L2
++        print(f"[slide-gate] C={c} B={batch}: timing [master Triton] vs [cluster C={c}] interleaved (graph replays, "
++              f"cold L2)", flush=True)
++        t_master, t_cluster = _interleaved_us([lambda: _sliding_forward(data), lambda: _slide_launch(ext, data, c)], flush)
++        ratio = t_master / t_cluster
++        print(f"[slide-gate] C={c} B={batch} x 80000: [master Triton] {t_master:.1f} us, [cluster C={c}] "
++              f"{t_cluster:.1f} us -> master / cluster {ratio:.3f}x ({'ROUTE' if ratio >= _SLIDE_GATE else 'cluster slower: master'})",
++              flush=True)
++        del data, flush
++        torch.cuda.empty_cache()
++        if ratio < _SLIDE_GATE:
++            return f"timing gate: master {t_master:.1f} us vs cluster {t_cluster:.1f} us ({ratio:.3f}x < {_SLIDE_GATE:.2f}x)"
++        prev = (ext, tag)
++        return None
++    finally:
++        _SLIDE_MOD[c], _SLIDE_TAG[c] = prev
++
++
++def _slide_init():
++    """Confirm the sm_90a image, build (fp8 QK first, then the f16 QK fallback only for a cluster
++    size whose canary or self-check failed), report occupancy / registers / spills, disable each
++    cluster size that cannot run its largest batch in one wave, canary + self-check the rest, and
++    print the path chosen per batch class."""
++    try:
++        cap = tuple(torch.cuda.get_device_capability())
++    except Exception as e:
++        cap = repr(e)
++    print(f"[slide] device capability {cap}", flush=True)
++    if cap != (9, 0):
++        for c in _SLIDE_MOD:
++            _SLIDE_WHY[c] = f"device capability {cap}, the sm_90a image needs (9, 0)"
++    else:
++        todo = [c for c in _SLIDE_MOD if c != 8]  # C=8 stays off: _SLIDE_MOD[8] is None, never self-checked
++        for fp8qk in (True, False):
++            if not todo:
++                break
++            tag = "fp8qk" if fp8qk else "f16qk"
++            ext = _build_slide(fp8qk)
++            if ext is None:
++                for c in todo:
++                    _SLIDE_WHY[c] = f"{tag} build failed"
++                continue
++            try:
++                info = [int(x) for x in ext.slide_setup()]  # a CPU int64 tensor (host values)
++            except Exception as e:
++                print(f"[slide] slide_setup ({tag}) raised: {e!r}", flush=True)
++                for c in todo:
++                    _SLIDE_WHY[c] = f"{tag} slide_setup raised"
++                continue
++            occ = {4: info[0], 8: info[1], 16: info[2]}
++            regs, local, smem, binv, ptxv = info[3:8]
++            print(f"[slide] {tag}: sliding_cluster_kernel {regs} regs, {local} B local/spill, {smem} B dynamic "
++                  f"smem/CTA, binaryVersion {binv}, ptxVersion {ptxv}; cudaOccupancyMaxActiveClusters "
++                  f"C=4 -> {occ[4]}, C=8 -> {occ[8]}, C=16 -> {occ[16]}", flush=True)
++            if binv != 90:
++                for c in todo:
++                    _SLIDE_WHY[c] = f"binaryVersion {binv} is not the sm_90 image"
++                break
++            retry = []
++            for c in todo:
++                if occ[c] < _SLIDE_NEED[c]:
++                    _SLIDE_WHY[c] = (f"max active clusters {occ[c]} < {_SLIDE_NEED[c]} needed for one wave "
++                                     f"at {_SLIDE_RANGE[c]}")
++                    print(f"[slide] {tag} C={c} disabled: {_SLIDE_WHY[c]}", flush=True)
++                    continue
++                if not _slide_canary(ext, c, tag):
++                    _SLIDE_WHY[c] = f"{tag} canary failed"
++                elif _slide_self_check(ext, c, tag):
++                    try:
++                        bad = _slide_route_checks(ext, c, tag)
++                    except Exception as e:
++                        bad = f"route checks raised {e!r}"
++                    if bad is None:
++                        _SLIDE_MOD[c], _SLIDE_TAG[c] = ext, tag
++                        continue
++                    _SLIDE_WHY[c] = f"{tag} {bad}"
++                    print(f"[slide] C={c}: {_SLIDE_WHY[c]}", flush=True)
++                    if bad.startswith("timing gate"):
++                        continue  # a correct kernel that is not faster: master, no f16 retry
++                    retry.append(c)
++                    continue
++                else:
++                    _SLIDE_WHY[c] = f"{tag} self-check failed"
++                print(f"[slide] C={c}: {_SLIDE_WHY[c]}", flush=True)
++                retry.append(c)
++            todo = retry
++    for batch, rng in ((1, "B=1"), (16, "B=2..16"), (32, "B=17..32")):
++        c = _slide_clusters({"batch": batch})
++        if 1 < batch <= 16:
++            print(f"[slide] PATH CHOSEN: sliding master Triton {rng} (C=8 off by gate)", flush=True)
++        elif c:
++            print(f"[slide] PATH CHOSEN: sliding cluster v2 C={c} {rng} ({_SLIDE_TAG[c]})", flush=True)
++        else:
++            want = 16 if batch == 1 else 4
++            print(f"[slide] PATH CHOSEN: sliding master (fallback: {_SLIDE_WHY[want]}) {rng}", flush=True)
++    print("[slide] PATH CHOSEN: sliding master for B>32 decode, every verify (FA3) and page 64 (by gate)",
++          flush=True)
++
++
++if torch.cuda.is_available():
++    _EXT = _build_splitkv()
++    if _EXT is not None and not _splitkv_self_check():
++        print("[splitkv] SELF-CHECK FAILED: CUDA split-KV path disabled, master FA3 path kept")
++        _EXT = None
++    if _EXT is None:
++        _say("PATH CHOSEN: full decode 1<B<=64 tp8 page 1: master FA3 (splitkv v1 unavailable; v2 not tried)")
++    else:
++        _sk_ticket(torch.device("cuda", torch.cuda.current_device()))  # zeroed once, here
++        _sk_gticket(torch.device("cuda", torch.cuda.current_device()))  # zeroed once, here
++        _EXT2 = _build_sk()
++        _sk_reason = "build failed" if _EXT2 is None else None
++        if _EXT2 is not None:
++            try:
++                _sk_reason = _sk_validate()
++            except Exception as e:
++                _sk_reason = f"self-check raised {e!r}"
++        _b1_reason = "stage 2 unavailable"
++        if _sk_reason is not None:
++            _EXT2 = None
++            _say(f"PATH CHOSEN: full decode splitkv v1 (fallback: {_sk_reason})")
++        else:
++            _say("PATH CHOSEN: full decode streamk+ticket v2")
++            try:
++                _b1_reason = _sk_validate_b1()
++            except Exception as e:
++                _b1_reason = f"batch-1 self-check raised {e!r}"
++            if _b1_reason is None:
++                _B1_PATH = True
++            try:
++                _ps_setup()
++            except Exception as e:
++                _PS_ROUTE.clear()
++                _say(f"PATH CHOSEN: sliding verify FA3 (fallback: setup raised {e!r})")
++            try:
++                _skf_setup()
++            except Exception as e:
++                _FUSED_ROUTE.clear()
++                _EXTF = None
++                _say(f"PATH CHOSEN: full decode fused pre-attention [skF]: pre-attn + v2 (fallback: setup raised {e!r})")
++            try:
++                _sk_diagnostics()
++                if _b1_reason is None:
++                    _sk_b1_diagnostics()
++            except Exception as e:
++                _say(f"[sk-diag] diagnostics raised (path unaffected): {e!r}")
++            finally:  # a diagnostic variant must not leave the shared tickets dirty for the timed path
++                try:
++                    _rezero_tickets()
++                except Exception as e:
++                    _say(f"[sk-diag] ticket re-zero raised: {e!r}")
++        if _B1_PATH:
++            _say("PATH CHOSEN: full decode_1 streamk two-level")
++        else:
++            _say(f"PATH CHOSEN: full decode_1 FA3 (fallback: {_b1_reason})")
++    if _EXT is None:
++        _say("PATH CHOSEN: full decode_1 FA3 (fallback: splitkv v1 unavailable)")
++    if _PS_ROUTE == {} and (_EXT is None or _EXT2 is None):
++        _say("PATH CHOSEN: sliding verify FA3 (fallback: stage-2 module unavailable)")
++    _say("PATH CHOSEN: every other shape (sliding decode, other verify bands, page 64, dp): master path, unchanged")
++    try:
++        _slide_init()
++    except Exception as _e:  # never raise at import: every sliding shape keeps master
++        for _c in _SLIDE_MOD:
++            _SLIDE_MOD[_c] = None
++        print(f"[slide] PATH CHOSEN: sliding master (fallback: init raised {_e!r})", flush=True)

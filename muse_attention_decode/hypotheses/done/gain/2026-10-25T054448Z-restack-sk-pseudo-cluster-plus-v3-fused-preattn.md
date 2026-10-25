@@ -56,10 +56,10 @@ priority: 1
 kind: primary
 controls_for: null
 review: proceed
-status: running
+status: done
 review_at: 2026-10-25T054723Z
 review_companions: null
-stage: dispatched
+stage: harvested
 claimed_at: 2026-10-25T054723Z
 base_sha: 6f1f3a99d4b2849b4e653b5b3b88ff6f21aefaab
 base_blob: d8769ef25caf845a0e207538ccc5c62394b6ee3b
@@ -78,6 +78,13 @@ attempt_file: 2026-10-25T084824Z-check-restack-sk-pseudo-cluster-plus-v3-fused-p
 prepared_at: 2026-10-25T084824Z
 job: cbd49dc94be548e7
 dispatched_at: 2026-10-25T084834Z
+outcome: gain
+verdict_detail: gain
+speedup: 1.4919706177473366
+speedup_ci: [1.4695910584811265, 1.5143501770135466]
+harvested_at: 2026-10-25T091106Z
+best_at_harvest: 1.444132502888963
+promotion: pending
 ---
 
 # restack-sk-pseudo-cluster-plus-v3-fused-preattn
@@ -163,3 +170,35 @@ What I checked:
 - Fidelity. Two deviations, both noted but not changed. (1) FUSED_PRE was built as its own module, not as a template flag; the review's open question allowed this. (2) The sliding cluster's Python glue comes from stack-streamk-ticket-cluster-c16-c4, not from the partner, and adds a >= 1.00x interleaved timing gate. The partner routes config-only. Its _SLIDE_CUDA text is identical to the partner's. The partner's `_phase` timing prints and its sk_attrs re-check with both TUs loaded were dropped.
 
 Residual risk: the 1.02x FUSED gate (s3 measured 1.027x at B=16) and the 1.00x cluster gate can flip on prepare-time noise. If either does, this run's sliding or full rows stop pairing cleanly with the partner's, so grep the PATH CHOSEN lines before comparing the two runs.
+
+## Result
+
+- job `cbd49dc94be548e7` (check), status done, passed True, tests 16/16
+- speedup 1.4920x, 95% CI [1.4696, 1.5144], score 2524.379471820013 µs vs SGLang 3766.3 µs
+- best at harvest: {"speedup": 1.444132502888963, "ci": [1.4224705153456287, 1.4657944904322975], "job": "341623fa53d94cef"}; base result: muse_attention_decode/hypotheses/done/neutral/full-decode1-streamk-s3-two-level-ticket.result.json
+- **outcome: gain** (gain)
+- files: `muse_attention_decode/hypotheses/done/gain/restack-sk-pseudo-cluster-plus-v3-fused-preattn.result.json`, `muse_attention_decode/hypotheses/done/gain/restack-sk-pseudo-cluster-plus-v3-fused-preattn.patch`; branch `hyp/muse_attention_decode/restack-sk-pseudo-cluster-plus-v3-fused-preattn`
+
+## Attribution
+
+| shape | w | base µs | hyp µs | delta | verdict |
+|---|---|---|---|---|---|
+| batch=1 ctx=80000 dist=soft heads=tp8 layer=sliding load=decode_1 page=1 | 46 | 13.15 | 11.89 | 1.1026 | gained |
+| batch=1 ctx=80000 dist=coherent heads=tp8 layer=full load=decode_1 page=1 | 16 | 22.6 | 22.48 | 0.9973 | flat |
+| batch=16 ctx=80000 dist=soft heads=tp8 layer=sliding load=decode_16 page=1 spread=agentic | 46 | 15.33 | 15.41 | 0.9949 | flat |
+| batch=16 ctx=80000 dist=coherent heads=tp8 layer=full load=decode_16 page=1 spread=agentic | 16 | 111.14 | 111.34 | 1.0013 | flat |
+| batch=32 ctx=80000 dist=soft heads=tp8 layer=sliding load=decode_32 page=1 spread=agentic | 46 | 24.33 | 20.64 | 1.1846 | gained |
+| batch=32 ctx=80000 dist=coherent heads=tp8 layer=full load=decode_32 page=1 spread=agentic | 16 | 226.42 | 227.88 | 0.9973 | flat |
+| batch=1 ctx=80000 dist=soft heads=tp8 layer=sliding load=verify_1 page=1 q_len=8 | 46 | 17.78 | 13.33 | 1.3305 | gained |
+| batch=1 ctx=80000 dist=coherent heads=tp8 layer=full load=verify_1 page=1 q_len=8 | 16 | 30.51 | 30.27 | 0.999 | flat |
+| batch=16 ctx=80000 dist=soft heads=tp8 layer=sliding load=verify_16 page=1 q_len=8 spread=agentic | 46 | 22.68 | 23.1 | 0.989 | flat |
+| batch=16 ctx=80000 dist=coherent heads=tp8 layer=full load=verify_16 page=1 q_len=8 spread=agentic | 16 | 162.8 | 163.37 | 0.9899 | flat |
+| batch=32 ctx=80000 dist=soft heads=tp8 layer=sliding load=verify_32 page=1 q_len=8 spread=agentic | 46 | 28.34 | 28.93 | 0.992 | flat |
+| batch=32 ctx=80000 dist=coherent heads=tp8 layer=full load=verify_32 page=1 q_len=8 spread=agentic | 16 | 302.2 | 303.64 | 0.9929 | flat |
+
+gained on sliding decode_1, decode_32, verify_1. Expected hit: 3/5. Noise ±1.5%.
+
+## Follow-ups
+
+- candidate for promotion; stack further changes with `depends_on` once it lands.
+

@@ -1,0 +1,170 @@
+True
+[skF] B=16 ragged grid 3: out vs fp32 ref 1.65e-03, vs v2 0.00e+00, finite True -> ok
+[skF] B=32 ragged grid 3: launching _pre_attention_kernel (master reference, cloned caches)
+[skF] B=32 ragged grid 3: launching splitkv_attn_sk_kernel (v2 reference) grid 3
+[skF] B=32 ragged grid 3: launching splitkv_attn_sk_fused_kernel grid 3
+[skF] B=32 ragged grid 3: splitkv_attn_sk_fused_kernel returned
+[skF] B=32 ragged grid 3: k_cache new rows rel L2 0.00e+00, finite True, other rows unchanged True
+[skF] B=32 ragged grid 3: v_cache new rows rel L2 0.00e+00, finite True, other rows unchanged True
+[skF] B=32 ragged grid 3: out vs fp32 ref 1.65e-03, vs v2 0.00e+00, finite True -> ok
+[skF] B=32 ragged kv 0.25 grid device: launching _pre_attention_kernel (master reference, cloned caches)
+[skF] B=32 ragged kv 0.25 grid device: launching splitkv_attn_sk_kernel (v2 reference) grid 264
+[skF] B=32 ragged kv 0.25 grid device: launching splitkv_attn_sk_fused_kernel grid 264
+[skF] B=32 ragged kv 0.25 grid device: splitkv_attn_sk_fused_kernel returned
+[skF] B=32 ragged kv 0.25 grid device: k_cache new rows rel L2 0.00e+00, finite True, other rows unchanged True
+[skF] B=32 ragged kv 0.25 grid device: v_cache new rows rel L2 0.00e+00, finite True, other rows unchanged True
+[skF] B=32 ragged kv 0.25 grid device: out vs fp32 ref 1.66e-03, vs v2 0.00e+00, finite True -> ok
+[skF] B=64 mixed kv 0.25 grid device: launching _pre_attention_kernel (master reference, cloned caches)
+[skF] B=64 mixed kv 0.25 grid device: launching splitkv_attn_sk_kernel (v2 reference) grid 264
+[skF] B=64 mixed kv 0.25 grid device: launching splitkv_attn_sk_fused_kernel grid 264
+[skF] B=64 mixed kv 0.25 grid device: splitkv_attn_sk_fused_kernel returned
+[skF] B=64 mixed kv 0.25 grid device: k_cache new rows rel L2 0.00e+00, finite True, other rows unchanged True
+[skF] B=64 mixed kv 0.25 grid device: v_cache new rows rel L2 0.00e+00, finite True, other rows unchanged True
+[skF] B=64 mixed kv 0.25 grid device: out vs fp32 ref 1.68e-03, vs v2 0.00e+00, finite True -> ok
+[skF] B=64 mixed grid 7: launching _pre_attention_kernel (master reference, cloned caches)
+[skF] B=64 mixed grid 7: launching splitkv_attn_sk_kernel (v2 reference) grid 7
+[skF] B=64 mixed grid 7: launching splitkv_attn_sk_fused_kernel grid 7
+[skF] B=64 mixed grid 7: splitkv_attn_sk_fused_kernel returned
+[skF] B=64 mixed grid 7: k_cache new rows rel L2 0.00e+00, finite True, other rows unchanged True
+[skF] B=64 mixed grid 7: v_cache new rows rel L2 0.00e+00, finite True, other rows unchanged True
+[skF] B=64 mixed grid 7: out vs fp32 ref 1.65e-03, vs v2 0.00e+00, finite True -> ok
+[skF] tickets after the self-check: sum 0
+[skF-gate] B=16: launching splitkv_attn_sk_fused_kernel (eager correctness run)
+[skF-gate] B=16: fused returned, rel L2 1.65e-03, finite True
+[skF-gate] B=16: timing [pre-attn + v2], [FUSED_PRE], [v2 alone] interleaved (graph replays, cold L2)
+/opt/sglang/lib/python3.12/site-packages/torch/cuda/graphs.py:630: UserWarning: The CUDA Graph is empty. This usually means that the graph was attempted to be captured on wrong device or stream. (Triggered internally at /__w/pytorch/pytorch/aten/src/ATen/cuda/CUDAGraph.cpp:249.)
+  super().capture_end_pre()
+[gate] empty-graph baseline 2.9 us (subtracted)
+[skF-gate] B=16 x 80000: [pre-attn + v2] 107.3 us, [FUSED_PRE] 107.7 us, [v2 kernel alone] 104.5 us (FUSED_PRE - v2 kernel alone +3.2 us; s3 diag measured 118.2 vs 115.1 us) -> [pre-attn + v2] / [FUSED_PRE] 0.996x (below the 1.02x gate: pre-attn + v2)
+[skF-gate] B=32: launching splitkv_attn_sk_fused_kernel (eager correctness run)
+[skF-gate] B=32: fused returned, rel L2 1.67e-03, finite True
+[skF-gate] B=32: timing [pre-attn + v2], [FUSED_PRE], [v2 alone] interleaved (graph replays, cold L2)
+[gate] empty-graph baseline 2.9 us (subtracted)
+[skF-gate] B=32 x 80000: [pre-attn + v2] 219.4 us, [FUSED_PRE] 216.2 us, [v2 kernel alone] 216.2 us (FUSED_PRE - v2 kernel alone +0.0 us; s3 diag measured 227.7 vs 220.5 us) -> [pre-attn + v2] / [FUSED_PRE] 1.015x (below the 1.02x gate: pre-attn + v2)
+PATH CHOSEN: full decode B=2..16: pre-attn + v2 (FUSED_PRE not >= 1.02x in the printed timings, or failed a check)
+PATH CHOSEN: full decode B=17..64: pre-attn + v2 (FUSED_PRE not >= 1.02x in the printed timings, or failed a check)
+PATH CHOSEN: full decode B=1: master two-level ticket + separate pre-attention kernel (FUSED_PRE has no two-level variant)
+[skF] shared tickets re-zeroed after the self-check: sum 0
+[sk] diag variant check B=16 ragged: launching _pre_attention_kernel
+[sk] diag variant check B=16 ragged: launching splitkv_attn_sk_kernel<4 stages, no ticket> grid 264
+[sk] diag variant check B=16 ragged: splitkv_attn_sk_kernel returned
+[sk] diag variant check B=16 ragged: launching splitkv_sk_combine_kernel
+[sk] diag variant check B=16 ragged: splitkv_sk_combine_kernel returned
+[sk] diag variant check B=16 ragged: rel L2 1.66e-03, finite True -> ok
+[sk] diag variant check B=16 ragged: launching _pre_attention_kernel
+[sk] diag variant check B=16 ragged: launching splitkv_attn_sk_kernel<5 stages, ticket> grid 264
+[sk] diag variant check B=16 ragged: splitkv_attn_sk_kernel returned
+[sk] diag variant check B=16 ragged: rel L2 1.66e-03, finite True -> ok
+[sk-diag] B=16: launching _pre_attention_kernel
+[sk-diag] B=16: timing stage-1 A + B
+[sk-diag] B=16 x 80000: 328 MB of K+V rows, grid 264, eager, cold L2, median of 10
+[sk-diag]   stage-1 A splitkv_attn_kernel            118.5 us  2.77 TB/s
+[sk-diag]   stage-1 B splitkv_combine_kernel          12.1 us  -> A+B   130.6 us
+[sk-diag]   stream-K + ticket, 4 st (timed path)     113.2 us  2.89 TB/s  (vs stage-1 out rel 2.4e-04)
+[sk-diag] B=16: timing stream-K no ticket + combine
+[sk-diag]   stream-K no ticket, 4 st             106.9 us  3.06 TB/s  + combine 12.2 us -> 119.1 us  (rel 2.4e-04)
+[sk-diag] B=16: timing stream-K + ticket, 5 stages
+[sk-diag]   stream-K + ticket, 5 st              116.3 us  2.82 TB/s  (rel 2.4e-04)
+[sk-diag] B=16 ratios (>1 = first is slower): stage-1 A+B / v2 1.153x; split/locality: stage-1 A / stream-K no-ticket A 1.108x; ticket fold: (no-ticket A + combine) / ticket 1.052x; stages: 4 st / 5 st 0.974x
+[sk-diag] B=32: launching _pre_attention_kernel
+[sk-diag] B=32: timing stage-1 A + B
+[sk-diag] B=32 x 80000: 655 MB of K+V rows, grid 264, eager, cold L2, median of 10
+[sk-diag]   stage-1 A splitkv_attn_kernel            247.0 us  2.65 TB/s
+[sk-diag]   stage-1 B splitkv_combine_kernel          12.5 us  -> A+B   259.5 us
+[sk-diag]   stream-K + ticket, 4 st (timed path)     222.2 us  2.95 TB/s  (vs stage-1 out rel 1.9e-04)
+[sk-diag] B=32: timing stream-K no ticket + combine
+[sk-diag]   stream-K no ticket, 4 st             216.9 us  3.02 TB/s  + combine 11.7 us -> 228.6 us  (rel 1.9e-04)
+[sk-diag] B=32: timing stream-K + ticket, 5 stages
+[sk-diag]   stream-K + ticket, 5 st              223.3 us  2.94 TB/s  (rel 1.9e-04)
+[sk-diag] B=32 ratios (>1 = first is slower): stage-1 A+B / v2 1.168x; split/locality: stage-1 A / stream-K no-ticket A 1.139x; ticket fold: (no-ticket A + combine) / ticket 1.029x; stages: 4 st / 5 st 0.995x
+[sk3-diag] B=1: launching _pre_attention_kernel
+[sk3-diag] B=1 x 80000: 20 MB of K+V rows, eager, cold L2, median of 10
+[sk3-diag]   (a) single-level grid 2xSM (stage 2 as is)        54.0 us  0.38 TB/s  (rel L2 1.7e-03, finite True)
+[sk3-diag]   (b) single-level grid SM                          35.0 us  0.59 TB/s  (rel L2 1.7e-03, finite True)
+[sk3-diag]   (c) two-level grid SM (timed path)                22.8 us  0.90 TB/s  (rel L2 1.7e-03, finite True)
+[sk3-diag]   (d) two-level grid 2xSM                           24.4 us  0.84 TB/s  (rel L2 1.7e-03, finite True)
+[sk3-diag] fastest of the four: (c) two-level grid SM (timed path); timed path (c) is 22.8 us, (a) control 54.0 us, (c)/(a) 0.422x
+[sk3-diag] B=1: timing master FA3 (main + combine) and norm-gate
+[sk3-diag]   master FA3 main+combine    33.0 us + norm-gate 5.2 us = 38.2 us (pre-attention kernel excluded from both sides)
+[sk3-diag] B=16: launching _pre_attention_kernel
+[sk3-diag] B=16 x 80000: 328 MB of K+V rows, eager, cold L2, median of 10
+[sk3-diag]   two-level grid 2xSM at B=16 (diagnostic)         115.4 us  2.84 TB/s  (rel L2 1.6e-03, finite True)
+[sk3-diag]   single-level grid 2xSM at B=16 (stage 2)         107.1 us  3.06 TB/s  (rel L2 1.6e-03, finite True)
+PATH CHOSEN: full decode_1 streamk two-level
+PATH CHOSEN: every other shape (sliding decode, other verify bands, page 64, dp): master path, unchanged
+[slide] device capability (9, 0)
+[slide] nvcc arch flags (fp8qk): ['-gencode=arch=compute_90a,code=sm_90a']
+[slide] load_inline (fp8qk) compiled in 34.7s
+[slide] fp8qk: sliding_cluster_kernel 124 regs, 32 B local/spill, 103424 B dynamic smem/CTA, binaryVersion 90, ptxVersion 90; cudaOccupancyMaxActiveClusters C=4 -> 62, C=8 -> 30, C=16 -> 14
+[slide] launch sliding_cluster_kernel canary fp8qk C=16 B=1 ...
+[slide] launch sliding_cluster_kernel canary fp8qk C=16: done
+[slide] canary fp8qk C=16: finite True
+[slide] launch master _pre_attention_kernel (reference store) B=1 ...
+[slide] launch master _pre_attention_kernel: done
+[slide] launch sliding_cluster_kernel self-check fp8qk C=16 B=1 ...
+[slide] launch sliding_cluster_kernel self-check fp8qk C=16: done
+[slide] self-check fp8qk C=16 B=1 kv_scale=1: rel L2 1.64e-03, finite True, cache k match 1.0000 rel 0.0e+00, v match 1.0000 rel 0.0e+00
+[slide] launch master _pre_attention_kernel (reference store) B=1 ...
+[slide] launch master _pre_attention_kernel: done
+[slide] launch sliding_cluster_kernel self-check fp8qk C=16 B=1 ...
+[slide] launch sliding_cluster_kernel self-check fp8qk C=16: done
+[slide] self-check fp8qk C=16 B=1 kv_scale=0.25: rel L2 1.59e-03, finite True, cache k match 1.0000 rel 0.0e+00, v match 1.0000 rel 0.0e+00
+[slide] replay C=16 B=1 state A: eager warm-up on a side stream
+[slide] replay C=16 B=1 state B: eager warm-up on a side stream
+[slide] replay C=16 B=1: warm-ups returned
+[slide] replay C=16 B=1 state A: capturing
+[slide] replay C=16 B=1 state B: capturing
+[slide] replay C=16 B=1 step 0: launching state A graph
+[slide] replay C=16 B=1 step 0: state A rel L2 1.60e-03, finite True -> ok
+[slide] replay C=16 B=1 step 1: launching state B graph
+[slide] replay C=16 B=1 step 1: state B rel L2 1.57e-03, finite True -> ok
+[slide] replay C=16 B=1 step 2: launching state A graph (refilled)
+[slide] replay C=16 B=1 step 2: state A rel L2 1.66e-03, finite True -> ok
+[slide] replay C=16 B=1 step 3: launching state B graph (refilled)
+[slide] replay C=16 B=1 step 3: state B rel L2 1.63e-03, finite True -> ok
+[slide] replay C=16 B=1 step 4: launching state A graph (refilled)
+[slide] replay C=16 B=1 step 4: state A rel L2 1.62e-03, finite True -> ok
+[slide] replay C=16 B=1 step 5: launching state B graph (refilled)
+[slide] replay C=16 B=1 step 5: state B rel L2 1.62e-03, finite True -> ok
+[slide-gate] C=16 B=1: timing [master Triton] vs [cluster C=16] interleaved (graph replays, cold L2)
+/opt/sglang/lib/python3.12/site-packages/torch/cuda/graphs.py:630: UserWarning: The CUDA Graph is empty. This usually means that the graph was attempted to be captured on wrong device or stream. (Triggered internally at /__w/pytorch/pytorch/aten/src/ATen/cuda/CUDAGraph.cpp:249.)
+  super().capture_end_pre()
+[gate] empty-graph baseline 2.9 us (subtracted)
+[slide-gate] C=16 B=1 x 80000: [master Triton] 13.5 us, [cluster C=16] 13.0 us -> master / cluster 1.039x (ROUTE)
+[slide] launch sliding_cluster_kernel canary fp8qk C=4 B=1 ...
+[slide] launch sliding_cluster_kernel canary fp8qk C=4: done
+[slide] canary fp8qk C=4: finite True
+[slide] launch master _pre_attention_kernel (reference store) B=17 ...
+[slide] launch master _pre_attention_kernel: done
+[slide] launch sliding_cluster_kernel self-check fp8qk C=4 B=17 ...
+[slide] launch sliding_cluster_kernel self-check fp8qk C=4: done
+[slide] self-check fp8qk C=4 B=17 kv_scale=0.25: rel L2 1.65e-03, finite True, cache k match 1.0000 rel 0.0e+00, v match 1.0000 rel 0.0e+00
+[slide] launch master _pre_attention_kernel (reference store) B=32 ...
+[slide] launch master _pre_attention_kernel: done
+[slide] launch sliding_cluster_kernel self-check fp8qk C=4 B=32 ...
+[slide] launch sliding_cluster_kernel self-check fp8qk C=4: done
+[slide] self-check fp8qk C=4 B=32 kv_scale=1: rel L2 1.67e-03, finite True, cache k match 1.0000 rel 0.0e+00, v match 1.0000 rel 0.0e+00
+[slide] replay C=4 B=32 state A: eager warm-up on a side stream
+[slide] replay C=4 B=32 state B: eager warm-up on a side stream
+[slide] replay C=4 B=32: warm-ups returned
+[slide] replay C=4 B=32 state A: capturing
+[slide] replay C=4 B=32 state B: capturing
+[slide] replay C=4 B=32 step 0: launching state A graph
+[slide] replay C=4 B=32 step 0: state A rel L2 1.65e-03, finite True -> ok
+[slide] replay C=4 B=32 step 1: launching state B graph
+[slide] replay C=4 B=32 step 1: state B rel L2 1.67e-03, finite True -> ok
+[slide] replay C=4 B=32 step 2: launching state A graph (refilled)
+[slide] replay C=4 B=32 step 2: state A rel L2 1.66e-03, finite True -> ok
+[slide] replay C=4 B=32 step 3: launching state B graph (refilled)
+[slide] replay C=4 B=32 step 3: state B rel L2 1.65e-03, finite True -> ok
+[slide] replay C=4 B=32 step 4: launching state A graph (refilled)
+[slide] replay C=4 B=32 step 4: state A rel L2 1.67e-03, finite True -> ok
+[slide] replay C=4 B=32 step 5: launching state B graph (refilled)
+[slide] replay C=4 B=32 step 5: state B rel L2 1.65e-03, finite True -> ok
+[slide-gate] C=4 B=32: timing [master Triton] vs [cluster C=4] interleaved (graph replays, cold L2)
+[gate] empty-graph baseline 2.9 us (subtracted)
+[slide-gate] C=4 B=32 x 80000: [master Triton] 26.0 us, [cluster C=4] 21.8 us -> master / cluster 1.193x (ROUTE)
+[slide] PATH CHOSEN: sliding cluster v2 C=16 B=1 (fp8qk)
+[slide] PATH CHOSEN: sliding master Triton B=2..16 (C=8 off by gate)
+[slide] PATH CHOSEN: sliding cluster v2 C=4 B=17..32 (fp8qk)
+[slide] PATH CHOSEN: sliding master for B>32 decode, every verify (FA3) and page 64 (by gate)
