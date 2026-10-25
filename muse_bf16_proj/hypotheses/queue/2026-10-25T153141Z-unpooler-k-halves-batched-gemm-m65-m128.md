@@ -37,8 +37,10 @@ depends_on: null
 priority: 3
 kind: primary
 controls_for: null
-review: required
+review: proceed
 status: queued
+review_at: 2026-10-25T203723Z
+review_companions: null
 ---
 
 # unpooler-k-halves-batched-gemm-m65-m128
@@ -55,3 +57,30 @@ Built on current master (blob 353e3b19). For layer == 'unpooler' at full width (
 ## Risk
 
 Weakest of the four primaries (best case about 1.4 us on one row, about +0.3% headline). Its value is diagnostic: it tests the x-re-read limiter that bf16-verify16-cutlass-m128-onetile-splitk-rewrite is built to remove. If cuBLAS keeps 128x64 tiles for the halves, the add makes it lose, and the selector should keep master.
+
+## Adversarial review
+
+Reviewed 2026-10-25T203723Z by an adversarial subagent (model opus).
+
+**Verdict: proceed.** Real, untried variant of pooler-k-halves-batched-gemm-m65-m256 (own rows 1.063/1.123 paired; selector and profiler machinery worked under a scored submit). Weaker case: the add costs ~2 us (not 1), so the batched GEMM must reach <= ~17.3 us vs 19.3-19.4 today (~11%) from a tile change alone. The prepare-time selector makes a loss safe and readable.
+
+### Justification
+master unpooler verify_16 m=128: torch.mm(x, unpooler_t) under nn_ok, nvjet 128x64 NNT 19.3-19.4 us, row 18.9-19.15, floor 14.64. 128 CTAs of 128x64 over k=4096 pull ~128 MB of x via L2 vs 67 MB weight; 2-batch k=2048 128x128 halves it; L2 limiter plausible, not shown. The add moves 4 MB read / 2 MB write (pooler m=256 analogue 2.1 us); realistic row 18.5-19.3. Sibling at m=128 picked 128x64 (bmm 20.1 vs 19.4 us); at m=256 128x128. Weakest link: an ~11% GEMM speedup from a tile change on the shape where cuBLAS prefers 128x64. Prior (missing field): pooler-k-halves-batched-gemm-m65-m256; difference is real (tile-deficit fix vs x-L2 re-read on a matched tile).
+
+### Confounders on the current kernel
+- restack-three-cell-wins-router-unpooler-cluster-m8-nn-m128 (landed): owns unpooler_t and shared nn_ok (pooler m=128 and unpooler m=128); give the path its own flag (unpooler_khalf_ok) in NEW_CELL_FLAGS checked before nn_ok in _ab_component; a miss falls back to master's NN mm.
+- combo-rowowner-reduce-free-m1-qkv-o-plus-naive (landed): follow the NEW_CELL_FLAGS/_ab_flags/B-state pattern; select once on state A.
+- sglang-gemm-dispatch-parity: fallback if nn_ok off; record nn_ok in the attempt file.
+- pooler-nn-layout-widen-m256: insert the route without reordering the nn_p256_ok condition.
+
+### Interference and A/B needs
+No companion: the selector times master's exact path vs both candidates (N view, T view) with cold L2 and names the kernel; log medians+IQR, bmm-only median, kernel names, xh.stride(), final flags; 'refuted at prepare-time' if master kept.
+
+### Open questions
+- Port _khalf_forward/_khalf_select/relaxed _khalf_names_ok from the sibling branch/patch.
+- Stack the sibling pooler k-halves later (separate hypothesis).
+- Correct expected row to ~18.5-19.3; break-even bmm <= ~17.3 us.
+- Does cuBLAS pick 128x128 for (b=2, m=128, n=8192, k=2048)? If 128x64, follow up with a pinned cuBLASLt algo.
+- Add prior: pooler-k-halves-batched-gemm-m65-m256.
+- Overlaps queued bf16-verify16-cutlass-m128-onetile-splitk-rewrite (re-baseline).
+
