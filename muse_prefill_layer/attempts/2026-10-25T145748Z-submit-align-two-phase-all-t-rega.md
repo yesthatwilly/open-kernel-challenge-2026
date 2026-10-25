@@ -2,7 +2,7 @@
 
 Hypothesis: `muse_prefill_layer/hypotheses/done/neutral/2026-10-25T125453Z-align-two-phase-all-t-rega.md` (branch `hyp/muse_prefill_layer/align-two-phase-all-t-rega`).
 
-- **Job:** `<job id>` (`okc status <job>`)
+- **Job:** `bff8e36788a04917` (`okc status <job>`)
 - **File:** `muse_prefill_layer/submission.py` at git `f92f45e1`
 
 ## Goal
