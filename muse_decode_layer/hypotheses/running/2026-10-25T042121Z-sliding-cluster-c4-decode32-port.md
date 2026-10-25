@@ -63,7 +63,7 @@ base_sha: 1cd12f4d3d46062939ca75935ef0fcad232f2ffc
 base_blob: c9067b8201f2480c64910c4a71098df7ce616f73
 branch: hyp/muse_decode_layer/sliding-cluster-c4-decode32-port
 worktree: .worktrees/muse_decode_layer/sliding-cluster-c4-decode32-port
-mode: null
+mode: check
 restack_of: null
 stale_base: null
 implemented_at: 2026-10-25T043714Z
@@ -72,6 +72,8 @@ submission_sha256: 6bc87cd5411ce83e3a66d094be94c2d5bb4d94045a2f85bf5c66e9458cc1b
 norm_sha256: f1a9292234f511aaf177bbad3b01d3b6940d525ee88242155f748f3d8ce21cca
 submission_blob: e7b58542dc954a2a306648904dbd486bda0c417b
 lint_warnings: 35
+attempt_file: 2026-10-25T043714Z-check-sliding-cluster-c4-decode32-port.md
+prepared_at: 2026-10-25T043714Z
 ---
 
 # sliding-cluster-c4-decode32-port
