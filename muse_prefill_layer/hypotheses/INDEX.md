@@ -1,6 +1,6 @@
 # muse_prefill_layer hypotheses
 
-Regenerated 2026-10-25T110754Z. Best: 1.1076x [1.0909,1.1242] job `810b5f7decc84206` (submit)
+Regenerated 2026-10-25T112626Z. Best: 1.1076x [1.0909,1.1242] job `810b5f7decc84206` (submit)
 
 | created | slug | kind | area | where | outcome | speedup | CI | job | mode | promotion | review | expected hit |
 |---|---|---|---|---|---|---|---|---|---|---|---|---|
@@ -60,14 +60,14 @@ Regenerated 2026-10-25T110754Z. Best: 1.1076x [1.0909,1.1242] job `810b5f7decc84
 | 2026-10-25T042410Z | marlin-w2-atomic-add-turn | primary | w2 Marlin call on the Marlin path (T <= 4096): use_atomic_add, picked per shape class in prepare | queue | hold |  |  |  |  |  | hold |  |
 | 2026-10-25T042410Z | experts-turn4-cuda-dequant-producer-ss-wgmma | rewrite | w13 + w2 expert GEMMs at 1024 < T <= 4096 (turn_4): CUDA sm_90a warp-specialized grouped GEMM with an in-kernel dequant-producer warpgroup and SS wgmma | done/neutral | neutral | 1.0714 | [1.055,1.087] | 40541db65f1b4ec6 | check |  | proceed | 0/3 |
 | 2026-10-25T042410Z | turn-align-remap-on-side-stream-under-pooler | primary | MoE align/dispatch placement at T <= 4096: local-id remap + _align_parallel moved onto the router side stream, under the pooler GEMM | done/neutral | neutral | 1.0683 | [1.052,1.084] | 40f21883155b47eb | check |  | proceed | 0/3 |
-| 2026-10-25T054847Z | experts-turn-rega-s4-port-t4096 | rewrite | w13 + w2 expert GEMMs at T <= 4096 (turn_1 T=753, turn_4 T=3012): port of muse_moe_w4a16's replay-safe register-A swap-AB wgmma NVFP4 grouped GEMM (s4), all four N buckets | queue | queued |  |  |  |  |  | required |  |
+| 2026-10-25T054847Z | experts-turn-rega-s4-port-t4096 | rewrite | w13 + w2 expert GEMMs at T <= 4096 (turn_1 T=753, turn_4 T=3012): port of muse_moe_w4a16's replay-safe register-A swap-AB wgmma NVFP4 grouped GEMM (s4), all four N buckets | running | running |  |  | 2910b2fb4b744865 | check |  | proceed |  |
 | 2026-10-25T054848Z | experts-first-turn-ssdq-s2-large-m | rewrite | w13 + w2 expert GEMMs at T > 4096 (first_turn T=16384): extend the ssdq dequant-producer + SS wgmma grouped GEMM to large M, replacing the Triton NVFP4 GEMM | queue | queued |  |  |  |  |  | required |  |
 | 2026-10-25T054848Z | experts-turn-rega-s4-first-turn-n128 | rewrite | w13 + w2 expert GEMMs at T > 4096 (first_turn T=16384): extend the ported s4 register-A wgmma engine past Marlin's range, replacing the Triton NVFP4 GEMM | queue | queued |  |  |  |  |  | required |  |
 | 2026-10-25T054848Z | experts-turn-rega-s4-w2-only-t4096 | rewrite | w2 expert GEMM only at T <= 4096 (turn_1, turn_4): s4 register-A swap-AB wgmma w2 fed by master's Marlin w13 + _silu_mul_sorted output | queue | queued |  |  |  |  |  | required |  |
 | 2026-10-25T054848Z | experts-turn1-ssdq-s2-m64-tile | rewrite | w13 + w2 expert GEMMs at T <= 1024 (turn_1 T=753): ssdq with a 64-route M tile, one consumer warpgroup per tile, dequant-once per weight stage | queue | queued |  |  |  |  |  | required |  |
 | 2026-10-25T054848Z | experts-turn4-ssdq-s1b-dataptr-symbol-fix | rewrite | w13 + w2 expert GEMMs at 1024 < T <= 4096 (turn_4): CUDA sm_90a dequant-producer warpgroup + SS wgmma grouped GEMM, stage 1b: rebuild with the undefined-symbol fix | done/neutral | neutral | 1.1004 | [1.084,1.117] | ef281fb8b7304240 | check | done | proceed | 1/3 |
 | 2026-10-25T054848Z | turn-align-sglang32-prenorm-triton-restack | primary | MoE align on the Marlin path (T <= 4096) + pre-expert norm: restack of two measured row wins | done/neutral | neutral | 1.0694 | [1.053,1.085] | 9cfd4f58d24044b2 | check |  | proceed | 0/3 |
-| 2026-10-25T110612Z | experts-turn4-ssdq-s2-tma-raw-weight-ring | rewrite | w13 + w2 expert GEMMs at 1024 < T <= 4096 (turn_4): ssdq producer weight feed, TMA raw-code smem ring instead of register __ldg prefetch | queue | queued |  |  |  |  |  | required |  |
+| 2026-10-25T110612Z | experts-turn4-ssdq-s2-tma-raw-weight-ring | rewrite | w13 + w2 expert GEMMs at 1024 < T <= 4096 (turn_4): ssdq producer weight feed, TMA raw-code smem ring instead of register __ldg prefetch | running | running |  |  | 05dbf2d59a874444 | check |  | proceed |  |
 | 2026-10-25T110643Z | turn-align-two-phase-chunk-prefix | primary | MoE align/dispatch on T <= 4096 (Marlin turn_1 + ssdq turn_4): _align_parallel replaced by a two-launch chunk-count + prefix-place align | queue | queued |  |  |  |  |  | required |  |
 
 ## Held

@@ -1,6 +1,6 @@
 # muse_moe_w4a16 findings
 
-Regenerated 2026-10-25T110754Z by `churn.py index`. Read this before writing a hypothesis for muse_moe_w4a16.
+Regenerated 2026-10-25T112626Z by `churn.py index`. Read this before writing a hypothesis for muse_moe_w4a16.
 
 ## Current best
 
@@ -150,7 +150,7 @@ Where the time goes (per scored shape, top kernels):
 - queue: cuda-nvfp4-wgmma-rega-midm-bucket-cap32 [w13 marlin + silu-mul + w2 marlin] p1 hold
 - queue: cuda-nvfp4-wgmma-rega-w2-only-midm [w2 marlin] p2 hold
 - queue: marlin-exec-config-autotune-mid-m [Marlin launch config (w13 + w2)] p3 hold
-- queue: cuda-nvfp4-wgmma-rega-grouped-s5-copy-safe-bucket-gate [w13 marlin + silu-mul + w2 marlin] p2 queued
 - queue: cuda-nvfp4-wgmma-rega-s6-per-kernel-bucket-mix [w13 marlin + silu-mul + w2 marlin] p3 queued
 - queue: cuda-nvfp4-wgmma-rega-b128-n32-deep-ring [w13 marlin + silu-mul + w2 marlin] p2 queued
 - queue: cuda-nvfp4-wgmma-rega-b256-n64-deep-ring [w13 marlin + silu-mul + w2 marlin] p3 queued
+- running: cuda-nvfp4-wgmma-rega-grouped-s5-copy-safe-bucket-gate [w13 marlin + silu-mul + w2 marlin] p2 running

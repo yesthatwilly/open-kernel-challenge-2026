@@ -1,6 +1,6 @@
 # muse_bf16_proj findings
 
-Regenerated 2026-10-25T110754Z by `churn.py index`. Read this before writing a hypothesis for muse_bf16_proj.
+Regenerated 2026-10-25T112626Z by `churn.py index`. Read this before writing a hypothesis for muse_bf16_proj.
 
 ## Current best
 
@@ -197,5 +197,5 @@ Where the time goes (per scored shape, top kernels):
 - queue: qkv-gate-o-m128-wgmma-splitk-semaphore [qkv GEMM + o GEMM (m=128)] p2 hold
 - queue: pooler-m32-tma-splitk-extend [pooler GEMM (m=17..32)] p3 hold
 - queue: bf16-lossless-exp4-warpspec-persistent-stage3 [lossless exp4 compressed-weight stream kernel (_lossless_swapab_kernel)] p1 hold
-- queue: qkv-swapab-w128-splitk7-one-wave-m32 [qkv GEMM (m<=32, swap-AB)] p1 queued
 - queue: bf16-verify32-cutlass-coop-256x128-splitk-stage2 [bf16 GEMM dispatch (m=129..256, CUTLASS sm90 cooperative split-K)] p1 queued
+- running: qkv-swapab-w128-splitk7-one-wave-m32 [qkv GEMM (m<=32, swap-AB)] p1 running

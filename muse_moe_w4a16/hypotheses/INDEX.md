@@ -1,6 +1,6 @@
 # muse_moe_w4a16 hypotheses
 
-Regenerated 2026-10-25T110754Z. Best: 1.3439x [1.3237,1.3641] job `7a0d900a1dd34666` (submit)
+Regenerated 2026-10-25T112626Z. Best: 1.3439x [1.3237,1.3641] job `7a0d900a1dd34666` (submit)
 
 | created | slug | kind | area | where | outcome | speedup | CI | job | mode | promotion | review | expected hit |
 |---|---|---|---|---|---|---|---|---|---|---|---|---|
@@ -66,8 +66,8 @@ Regenerated 2026-10-25T110754Z. Best: 1.3439x [1.3237,1.3641] job `7a0d900a1dd34
 | 2026-10-25T042151Z | marlin-exec-config-autotune-mid-m | primary | Marlin launch config (w13 + w2) | queue | hold |  |  |  |  |  | proceed |  |
 | 2026-10-25T042151Z | w2-marlin-atomic-add-verify | primary | w2 marlin | done/neutral | neutral | 1.3407 | [1.321,1.361] | ccbcda65da584be0 | check |  | proceed | 4/6 |
 | 2026-10-25T044131Z | cuda-nvfp4-wgmma-rega-grouped-s4-replay-safe | rewrite | wgmma NVFP4 grouped w13+silu/w2 at 128<=T<=512: per-state tensor maps, graph-replay safety | done/neutral | neutral | 1.3439 | [1.324,1.364] | 4e7f8be895a145ba | check |  | proceed | 0/3 |
-| 2026-10-25T054545Z | cuda-nvfp4-wgmma-rega-grouped-s5-copy-safe-bucket-gate | rewrite | w13 marlin + silu-mul + w2 marlin | queue | queued |  |  |  |  |  | proceed |  |
 | 2026-10-25T054545Z | cuda-nvfp4-wgmma-rega-s6-per-kernel-bucket-mix | rewrite | w13 marlin + silu-mul + w2 marlin | queue | queued |  |  |  |  |  | proceed |  |
+| 2026-10-25T054545Z | cuda-nvfp4-wgmma-rega-grouped-s5-copy-safe-bucket-gate | rewrite | w13 marlin + silu-mul + w2 marlin | running | running |  |  | 7be125e9e1ea42e3 | check |  | proceed |  |
 | 2026-10-25T054545Z | cuda-nvfp4-wgmma-rega-grouped-s5-copy-safe-forced | rewrite | w13 marlin + silu-mul + w2 marlin | done/neutral | neutral | 1.3490 | [1.329,1.369] | d4ad4f31d2764050 | check |  | proceed | 5/6 |
 | 2026-10-25T054545Z | w13-marlin-atomic-add-t1-only | primary | w13 marlin | done/neutral | neutral | 1.3461 | [1.326,1.366] | 1048c6edf3e54892 | check |  | proceed | 3/4 |
 | 2026-10-25T054545Z | marlin-block-m-8-verify16 | primary | MoE align/dispatch + block_size_m pick | done/regression | regression | 1.2992 | [1.280,1.319] | d0811c27500c416a | check |  | proceed | 3/4 |

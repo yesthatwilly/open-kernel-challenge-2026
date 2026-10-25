@@ -1,6 +1,6 @@
 # muse_attention_decode findings
 
-Regenerated 2026-10-25T110754Z by `churn.py index`. Read this before writing a hypothesis for muse_attention_decode.
+Regenerated 2026-10-25T112626Z by `churn.py index`. Read this before writing a hypothesis for muse_attention_decode.
 
 ## Current best
 
@@ -224,5 +224,5 @@ Where the time goes (per scored shape, top kernels):
 - queue: sliding-cluster-s3-verify-attn-only-phase-timed [sliding-layer attention (verify, cluster kernel)] p2 hold
 - queue: sliding-verify1-triton-pseudo-decode [sliding-layer attention (batch-1 verify, Triton fused decode kernel)] p2 hold
 - queue: full-verify1-sk-pseudo-decode [full-layer attention (batch-1 verify, stream-K pseudo-decode)] p3 hold
-- queue: restack-sliding-decode-sk-window-on-cluster-master [sliding-layer attention (decode, stream-K windowed kernel) restack] p1 queued
 - queue: sliding-decode-sk-s3-fused-preattn-rope [sliding-layer attention (decode, stream-K windowed kernel, pre-attention fold)] p2 queued
+- running: restack-sliding-decode-sk-window-on-cluster-master [sliding-layer attention (decode, stream-K windowed kernel) restack] p1 running
