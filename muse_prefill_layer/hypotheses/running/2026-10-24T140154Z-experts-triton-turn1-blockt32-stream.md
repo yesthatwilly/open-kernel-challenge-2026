@@ -49,7 +49,7 @@ base_sha: de7af5e266755a23304676ec04c4526206066029
 base_blob: 0910a52804bc45a2f5ace82707c915f4634d8add
 branch: hyp/muse_prefill_layer/experts-triton-turn1-blockt32-stream
 worktree: .worktrees/muse_prefill_layer/experts-triton-turn1-blockt32-stream
-mode: null
+mode: check
 restack_of: null
 stale_base: true
 implemented_at: 2026-10-25T010622Z
@@ -58,6 +58,8 @@ submission_sha256: 27542e50b532516b1a0fe9ad0cf7351ac0c9078b4e8801801c0120a8d4802
 norm_sha256: a99caf50932ec91cb12ee2693ea13cfc1be0e20e7d4e552b523e17cbb4928942
 submission_blob: 8b309ee5c5705d66ac6b4b7c8e0c777fda0c8008
 lint_warnings: 7
+attempt_file: 2026-10-25T010622Z-check-experts-triton-turn1-blockt32-stream.md
+prepared_at: 2026-10-25T010622Z
 ---
 
 # experts-triton-turn1-blockt32-stream
