@@ -56,7 +56,7 @@ review: proceed
 status: running
 review_at: 2026-10-25T042454Z
 review_companions: null
-stage: claimed
+stage: implemented
 claimed_at: 2026-10-25T042454Z
 base_sha: 08b1841a86f49e34227afd254a2476f445746929
 base_blob: c9067b8201f2480c64910c4a71098df7ce616f73
@@ -65,6 +65,12 @@ worktree: .worktrees/muse_decode_layer/full-decode1-two-level-ticket-port
 mode: null
 restack_of: null
 stale_base: null
+implemented_at: 2026-10-25T043231Z
+impl_commit: 6474188deef249cf073331583fa5654a7b2acbf3
+submission_sha256: 820d148b2802f92c7dc1c3330444e7f99f525489303a624db290357b317eabfb
+norm_sha256: fbdeed8229000872e5363f1c3ab8727f206576940cc890d0348fc64144d8e914
+submission_blob: b47225b69da4fb9da4572795511e455d26c0ad2b
+lint_warnings: 39
 ---
 
 # full-decode1-two-level-ticket-port
@@ -120,3 +126,44 @@ No companion. This is kind: rewrite, stage 1. Its own replaced-kernel rows decid
 - If dense-chain-stage2-attn-side-pdl-t1-gate gains and lands first, mint the composed restack (Q -> SK -> O prologue=False) as this hypothesis's stage 2 rather than landing this branch as is.
 - fa3-full-single-split-probe and fa3-num-splits-full-no-metadata (queued, hold) tune FA3 at full decode. If this lands, they no longer apply at batch 1 and should be re-scoped to batch > 1 or retired.
 
+
+## Implementation notes
+
+Worktree `.worktrees/muse_decode_layer/full-decode1-two-level-ticket-port`, `muse_decode_layer/submission.py` only (+872/-1). Nothing could be run on this node (no GPU/torch).
+
+What changed:
+- New section before `prepare()`: the CUDA source of `splitkv_attn_sk_kernel` taken verbatim from muse_attention_decode master c3c1b01, module `muse_decode_sk_ticket` (name shared with sibling full-decode-streamk-ticket-port), built with `TORCH_CUDA_ARCH_LIST=9.0a` set around `load_inline` and restored, nvcc extras `-O3 -lineinfo` (same as the landed attention build; no `-gencode` override, so no `-std=c++20` needed), arch flags printed. Built at import, like `_EXT`.
+- Review fixes applied (review wins over spec): ONLY the `<4, true, true>` instantiation is built (`sk_pick()` returns it; `sk_attn`/`sk_attrs` TORCH_CHECK variant == 3; the diagnostic combine kernel, `sk_combine` and variants 0-2 are removed); the B=16 diagnostic and the [sk3-diag] sweep are dropped (compile/prepare budget); the gate is a separate `_sk_gate` (full, q_len 1, page 1, batch == 1, tp8 heads) ahead of the paired/FA3 else-branch, `_splitkv_gate` is untouched (decode_16/32 unchanged); the q/k/v FP8 casts and store_cache stay; the "elementwise 3 us" is not replaced (it is the casts).
+- `kernel_fn`: `if _sk_gate(cfg): q_fp8 = q.view(...).to(FP8).contiguous(); o = _full_decode_sk(...)`, then `elif splitkv:` (master's, unchanged), else FA3. One launch replaces FA3 + FlashAttnFwdCombine + FusedRMSNormGate at full decode_1. Grid = SM count, workspaces from shapes/device only, no sync.
+- `prepare()` -> `_sk_prepare(state, device)`, all in-process: attrs print (binaryVersion, regs, local, smem, CTAs/SM), cubin == 90 and arch-flag checks; tiny canary (63 keys); self-check at B=1 with 80000, 4097, 63, 1 keys, kv_scale 1 and 0.25, grids 3/7/SM count (rel L2 < 2e-2 vs FP32 reference, finite); two graph replays (NaN-poisoned output) for 80000/kv1 and 4097/kv0.25; both ticket levels must sum to 0; every launch has flushed print before and synchronize + print after. Then a CUDA-graph, cold-L2 timing selector at B=1 x 80000: new vs incumbent (FA3 + combine + FusedRMSNormGate); the new path is kept only if faster; margin printed (flagged if < 2 us). Tickets are created in prepare (outside capture) and zeroed after the self-check regardless of outcome. Any failure/raise sets `_SK=None` and prints `PATH CHOSEN: full decode_1 FA3 + combine + norm-gate (fallback: <reason>)`; success prints `PATH CHOSEN: full decode_1 streamk two-level ticket`.
+- No sm_90a-only PTX in this kernel (mma.sync, cp.async, cvt e4m3x2), so no `__CUDA_ARCH_FEAT_SM90_ALL` guard was added; the 9.0a build is kept per the spec.
+
+Deviations: the self-check uses this file's `_splitkv_synthetic` (FP8 q fed directly, real lengths 4097/63/1, no pre-attention kernel); the selector times graphs rather than eager.
+
+Landing note: dense-chain-stage2-attn-side-pdl-t1-gate also takes full decode_1. Whichever lands second must be restacked by hand as Q(dl_qkv) -> two-level kernel with norm-gate epilogue -> dl_o prologue=False, then a fresh check. Expectation: 142.7 -> ~135-138 us, kill at 140.
+
+## Rules check
+
+- [x] CUDA-graph capturable: kernel_fn path has no `.item()`/`.cpu()`/sync/prints; workspaces from shapes only; tickets pre-created in prepare; the self-check captures and replays it (checked in diff).
+- [x] Nothing derived from `data` is cached across calls (only device-keyed ticket buffers, zeroed, input-free).
+- [x] Weights: n/a: no weight change.
+- [x] Activations BF16 where SGLang keeps BF16; KV cache FP8; query FP8 E4M3 (unchanged casts).
+- [x] Attention sees every key: the kernel tiles all cache_seqlens keys, no skipping (self-check vs FP32 reference).
+- [x] No timing patches, harness frames/I/O/secrets, module edits, reference import, subprocesses or network (lint PROCESS clean; os used only for TORCH_CUDA_ARCH_LIST).
+- [x] All work happens inside the timed call; no output caching or replay.
+
+okc_lint: `OK with warnings` (only host-sync warnings in prepare()-side code, none in kernel_fn); `py_compile` OK, __pycache__ removed.
+
+## Pre-flight audit
+
+Audited 2026-10-25 (opus, read-only emulation; no GPU on this node). **Verdict: dispatch** (no fixes).
+
+- Kernel fidelity: the `_SK_CUDA` string, extracted and diffed against `muse_attention_decode/submission.py` at c3c1b01. `splitkv_attn_sk_kernel`, `finalize_store`, `merge_range`, `ticket_arrive`, `load_prefix`, `Lay<4>` and the swizzle are byte-identical. The only differences are that the diagnostic `splitkv_sk_combine_kernel`/`sk_combine` were removed and `sk_pick`/`sk_smem`/`sk_prepare` were collapsed to variant 3. Host wrapper TORCH_CHECKs and launch args are unchanged. Build flags are the same as the attention build that compiled on the judge (TORCH_CUDA_ARCH_LIST=9.0a, `-O3 -lineinfo`).
+- Layout vs decode_layer: q is `q.view(tokens,16,64).to(FP8).contiguous()`, as in master's batch>1 split-KV route. The k/v caches are `[pages,1,2,64]` contiguous (ROW 128 B, page 1). page_table is int32 `[1,max_pages]`, -1 padded and never read past cache_seqlens. cache_seqlens includes the new token and store_cache runs first. The gate comes from qkv at offset `(16+4)*64`, with `qkv.stride(0)` passed, the same as `gate = qkv[:, hq*d+2*hkv*d:]`. o_norm_gate is `MuseSpark1xRMSNorm(64, has_weight=False)`, eps `RMS_EPS` 1e-5, which matches the scaleless epilogue. k_scale and v_scale are always 0-d fp32 tensors in the reference, applied in-kernel. score_scale is `sm_scale*qk_scale_factor*LOG2E`, the same as master split-KV.
+- Workspaces: slot `bx+c_b` < grid+B; group slot `c_b*32+gi` with ngrp <= ceil(sqrt(132)) = 12 <= 32; grid 132 <= 1024.
+- Tickets: created zeroed in `_sk_prepare` outside capture. The kernel resets both levels: the group's last arrival resets gticket, and the last group resets ticket. Two NaN-poisoned graph replays check the reset (80000/kv1 and 4097/kv0.25), and the summed-ticket check follows. A `finally` re-zeroes both levels after validation and the selector, whatever the outcome.
+- Selector: CUDA-graph, cold-L2 (256 MB zero before each replay, outside the events), median of 15. New vs FA3 (+internal combine) + FusedRMSNormGate at B=1 x 80000. It keeps FA3 unless new < incumbent, and prints the margin.
+- Gate and rules: `_sk_gate` covers window 0, q_len 1, batch 1, tp8, d64, page 1, AND `_SK_ON`. It sits ahead of `elif splitkv`, and `_splitkv_gate` is untouched (diff-verified). Among the tests, only `batch 1, ctx 80000, layer full, page 1` hits it (default page is 64). kernel_fn adds only shape-derived `torch.empty` calls, dict lookups and one launch: no sync, no print, no try/except, nothing cached from data. Lint is OK (host-sync warnings in prepare only), and py_compile is OK.
+- Budget: one extra load_inline with a single instantiation (split-KV v1 took 41.5 s). Prepare adds 11 eager cases, 2 replays and an 18x2 selector, which fits easily within 300 s.
+
+Residual risk: an in-kernel fault on the first launch would poison the context (the canary is mitigation only, and the kernel already ran clean on the judge); in-layer L2/launch tax may leave the gain at -5..-8 us or let the selector keep FA3.
