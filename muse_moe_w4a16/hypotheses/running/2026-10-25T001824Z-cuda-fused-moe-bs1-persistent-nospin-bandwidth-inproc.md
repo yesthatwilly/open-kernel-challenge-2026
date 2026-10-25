@@ -61,7 +61,7 @@ review: proceed
 status: running
 review_at: 2026-10-25T002132Z
 review_companions: null
-stage: claimed
+stage: implemented
 claimed_at: 2026-10-25T002132Z
 base_sha: 0efab7bdfa79cfea6a430d51c5b7c038a7bd2af3
 base_blob: 62b00bb77cbc9e2fce8ed39dd25d87fb78503a5d
@@ -70,6 +70,12 @@ worktree: .worktrees/muse_moe_w4a16/cuda-fused-moe-bs1-persistent-nospin-bandwid
 mode: null
 restack_of: null
 stale_base: true
+implemented_at: 2026-10-25T003453Z
+impl_commit: ea3464f424a209eb0f46541178cd3dd11062426f
+submission_sha256: 8483d78ed40c60aa5c92c13671a1ce2654db503d1d85dd90b05105278a285344
+norm_sha256: 89e64b5b2950de0e165973e23425229de43651c16ee304064b31962d847fe3a5
+submission_blob: c80e3a831390ffb38cbcb7560231b59a64a2c6a0
+lint_warnings: 33
 ---
 
 # cuda-fused-moe-bs1-persistent-nospin-bandwidth-inproc
@@ -181,3 +187,14 @@ Checked against `git -C .worktrees/muse_moe_w4a16/cuda-fused-moe-bs1-persistent-
 - [x] The first measurement must be an `okc check`, never a scored submit (per spec and LESSONS 2026-10-25).
 
 okc_lint output (`python3 -I .claude/skills/churnsubs/bin/okc_lint.py <worktree>/muse_moe_w4a16/submission.py --problem muse_moe_w4a16`): 33 × `warn host-sync ... (outside kernel_fn's call graph; fine in prepare())`. These are the synchronize, `.tolist()` and randperm calls in `_align_self_check`, `_fused_case`, `_fp32_moe`, `_arch_gate`, `_fused_setup`, `_fused_diag` and `prepare`. Final line: `OK with warnings: submission.py`. `py_compile` passed, and `__pycache__` was removed.
+
+## Pre-flight audit
+
+Audited 2026-10-25 (opus). **Verdict: dispatch-with-fixes.**
+
+- Confirmed: `git diff master` is additions only (plus the kernel_fn rename/docstring and `return {` to `state = {`), and `_master_kernel_fn` is master's body byte for byte, so bs != 1 runs master. kernel_fn passes the empty `dbg_off`, so the timed path always launches `<false>`, and every DBG write is a compile-time `if (DBG ...)`. Phase-1 items precede phase-2 items in each CTA's static sequence, grid = SM count, and occupancy 1 is asserted, so every CTA becomes resident once the previous same-stream kernel drains: no deadlock. A bound hit (after about 1 s) ends that launch's waits only, gives wrong output for that one call (the judge checks every timed call, so it is detectable, not silent), and does not reach the next call (C_ABORT and the counters are reset by the exit ticket). The diagnostic replays are about 450 cold-L2 replays of about 0.1 ms each, under 1 s. kernel_fn reads none of their results. There is no child process, nothing cached from `data`, the NVFP4 repack is lossless and round-trip asserted, h and y are bf16, and the path is graph-capturable.
+- Fix 1, gate that may always fail: the arch gate no longer requires `ptxVersion == 90`, which is now logged only. For a PTX-less sm_90a cubin that value is not documented well enough to gate on, and a wrong guess would silently measure master. The image is still proven by capability (9, 0), compute_90a/sm_90a-only gencode tokens, binaryVersion 90, and the same-module probe (`__CUDA_ARCH_FEAT_SM90_ALL` and `__CUDA_ARCH__` 900).
+- Fix 2, build robustness: the `want_dbg ? &k<true> : &k<false>` function-pointer triple-chevron launch is now two explicit `moe_bs1_kernel<true|false><<<...>>>` launches through a shared argument macro. `moe_bs1_info` now takes `auto*` pointers to the specializations before `reinterpret_cast<const void*>`, not a template-id cast. Behaviour is unchanged.
+- Lint: OK with warnings (host syncs outside kernel_fn only). py_compile OK. __pycache__ removed.
+
+Residual risk: never compiled here (nvcc, torch accepting `9.0a`), and a sticky device fault in the in-process canary cannot fall back, so the first measurement must be `okc check`.
