@@ -57,10 +57,10 @@ controls_for: null
 rewrite_stage: 4
 replaces: "full decode 1<B<=64: master splitkv_attn_sk_kernel<4, ticket> single-level in-stream ticket epilogue"
 review: proceed
-status: running
+status: done
 review_at: 2026-10-25T054724Z
 review_companions: null
-stage: dispatched
+stage: harvested
 claimed_at: 2026-10-25T054724Z
 base_sha: 0561d7b52f7d8abd273c88d35e7f5da32adba650
 base_blob: d8769ef25caf845a0e207538ccc5c62394b6ee3b
@@ -79,6 +79,13 @@ attempt_file: 2026-10-25T084530Z-check-full-decode-sk-s4-deferred-ticket-arrive.
 prepared_at: 2026-10-25T084530Z
 job: 7f10d2d820cd49ee
 dispatched_at: 2026-10-25T084538Z
+outcome: failed
+verdict_detail: "test:{\"batch\": 1, \"ctx\": 10, \"heads\": \"tp8\", \"layer\": \"sliding\", \"seed\": 6893170448766904337}"
+speedup: null
+speedup_ci: null
+harvested_at: 2026-10-25T091103Z
+best_at_harvest: 1.444132502888963
+promotion: null
 ---
 
 # full-decode-sk-s4-deferred-ticket-arrive
@@ -173,3 +180,25 @@ Audited 2026-10-25 (opus). **Verdict: dispatch** (no edits needed).
 - Budget: three more instantiations of the sk kernel; the last sk build took 31.2 s with four. The new prepare work is 26 small eager cases, 6 two-state replay sets, and 3 matrices with 4 graphs and 23 x 5 replays each. Expected prepare time is about a minute, well inside 15 minutes. okc_lint is OK (prepare-side host-sync warnings only), py_compile passes, and __pycache__ was removed.
 
 Residual risk: the gate compares the best DEFER cell (2xSM or SM) against master at 2xSM only. If DEFER wins only at grid SM, part of the gain may come from the grid and not from DEFER; read the "<4,ticket> SM" cell in the matrix to tell them apart. The reviewer expects the result to be flat.
+
+## Result
+
+- job `7f10d2d820cd49ee` (check), status done, passed False, tests 0/16
+- first failing: {"batch": 1, "ctx": 10, "heads": "tp8", "layer": "sliding", "seed": 6893170448766904337}: AcceleratorError: CUDA error: an illegal memory access was encountered
+Search for `cudaErrorIllegalAddress' in https://docs.nvidia.com/cuda/cuda-runtime-api/group__CUDART__TYPES.html for more information.
+CUDA kernel errors might be asynchronously reported at some other API call, so the stacktrace below might be incorrect.
+For debugging consider passing CUDA_LAUNCH_BLOCKING=1
+
+- best at harvest: {"speedup": 1.444132502888963, "ci": [1.4224705153456287, 1.4657944904322975], "job": "341623fa53d94cef"}; base result: muse_attention_decode/hypotheses/done/neutral/full-decode1-streamk-s3-two-level-ticket.result.json
+- **outcome: failed** (test:{"batch": 1, "ctx": 10, "heads": "tp8", "layer": "sliding", "seed": 6893170448766904337})
+- files: `muse_attention_decode/hypotheses/done/failed/full-decode-sk-s4-deferred-ticket-arrive.result.json`, `muse_attention_decode/hypotheses/done/failed/full-decode-sk-s4-deferred-ticket-arrive.patch`; branch `hyp/muse_attention_decode/full-decode-sk-s4-deferred-ticket-arrive`
+
+## Follow-ups
+
+- rewrite stage 4 of `full decode 1<B<=64: master splitkv_attn_sk_kernel<4, ticket> single-level in-stream ticket epilogue`: read the replaced kernels' own us per shape (profile top_kernels) against the incumbent and the floor, and check which Milestone it reached. The next stage is `/hypothesize muse_attention_decode "<what to fix or tune>" --kind rewrite --depends-on full-decode-sk-s4-deferred-ticket-arrive --stage 5`; a slow or failed first cut is the expected start, not a do-not-retry.
+- first failing case {"batch": 1, "ctx": 10, "heads": "tp8", "layer": "sliding", "seed": 6893170448766904337}: AcceleratorError: CUDA error: an illegal memory access was encountered
+Search for `cudaErrorIllegalAddress' in https://docs.nvidia.com/cuda/cuda-runtime-api/group__CUDART__TYPES.html for more information.
+CUDA kernel errors might be asynchronously reported at some other API call, so the stacktrace below might be incorrect.
+For debugging consider passing CUDA_LAUNCH_BLOCKING=1
+. Suggest `/hypothesize muse_attention_decode "fix full-decode-sk-s4-deferred-ticket-arrive: ..."` with the fix as its own change.
+

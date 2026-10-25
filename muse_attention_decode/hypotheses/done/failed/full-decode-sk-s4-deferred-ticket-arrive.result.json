@@ -1,0 +1,49 @@
+{
+ "schema": 1,
+ "problem": "muse_attention_decode",
+ "slug": "full-decode-sk-s4-deferred-ticket-arrive",
+ "job": "7f10d2d820cd49ee",
+ "mode": "check",
+ "duplicate_of": null,
+ "content_hash": "a0477b18939154fc319072379f9d84208a5f0475a4b9b7ac62b5bd1172fa7ef7",
+ "submission_sha256": "60f75b152859d787c14199405b1f423f0d3e9fcced02ae825f7173fe223a4398",
+ "submission_blob": "4326c3933949f96c023cf1095133ec105e76f55f",
+ "impl_commit": "a94b74ede576aa49f574495c01fd9968f9f4496a",
+ "base_sha": "0561d7b52f7d8abd273c88d35e7f5da32adba650",
+ "created_at": 1792917934.6500874,
+ "finished_at": 1792918076.715822,
+ "gpu": "H200",
+ "evaluator_sha256": "1d519ebf2014fef91b41ffea9bcd7e9c5066784ef5a2a5e2cf06a8cec554d188",
+ "status": "done",
+ "passed": false,
+ "error": null,
+ "returncode": 112,
+ "tests": {
+  "total": 16,
+  "passed": 0
+ },
+ "first_failing": {
+  "index": 0,
+  "case": {
+   "batch": 1,
+   "ctx": 10,
+   "heads": "tp8",
+   "layer": "sliding",
+   "seed": 6893170448766904337
+  },
+  "message": "AcceleratorError: CUDA error: an illegal memory access was encountered\nSearch for `cudaErrorIllegalAddress' in https://docs.nvidia.com/cuda/cuda-runtime-api/group__CUDART__TYPES.html for more information.\nCUDA kernel errors might be asynchronously reported at some other API call, so the stacktrace below might be incorrect.\nFor debugging consider passing CUDA_LAUNCH_BLOCKING=1\n"
+ },
+ "speedup": null,
+ "speedup_ci": null,
+ "score_us": null,
+ "baseline_us": null,
+ "flags": [],
+ "checks": {
+  "flagged": [],
+  "ok": true,
+  "rejected": []
+ },
+ "shapes": [],
+ "loads": [],
+ "attribution": null
+}
