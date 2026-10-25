@@ -10,6 +10,8 @@ items here and in each tick's summary. Resolved items move to the log at the bot
 
 ## Standing answers
 
+- Focus (2026-10-25 ~15:30Z, the user: "the most amount of focus, at this moment, to be on prefill"): prefill first in minting, review, build and spend; other problems only harvest and use leftover capacity.
+
 - Scored runs: Claude may send any scored submit at its discretion (2026-10-25 ~15:00Z, the user: "submit any scored runs at your discretoin"). Landings that only serve a submit go with it.
 
 - Scored runs for experiments: when a problem's checks are spent, churnsubs may dispatch reviewed hypotheses as scored submits (never risk: high), since the board shows only the best run. (2026-10-24, the user: "yes, do all three")
