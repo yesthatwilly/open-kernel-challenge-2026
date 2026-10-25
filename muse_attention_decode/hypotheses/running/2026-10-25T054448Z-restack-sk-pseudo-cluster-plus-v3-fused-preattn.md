@@ -65,7 +65,7 @@ base_sha: 6f1f3a99d4b2849b4e653b5b3b88ff6f21aefaab
 base_blob: d8769ef25caf845a0e207538ccc5c62394b6ee3b
 branch: hyp/muse_attention_decode/restack-sk-pseudo-cluster-plus-v3-fused-preattn
 worktree: .worktrees/muse_attention_decode/restack-sk-pseudo-cluster-plus-v3-fused-preattn
-mode: null
+mode: check
 restack_of: null
 stale_base: null
 implemented_at: 2026-10-25T084824Z
@@ -74,6 +74,8 @@ submission_sha256: 5589f1c4b89b8129c4d3f69d494c90f83ef283186028446d936efec0b2669
 norm_sha256: a0ca656e3fb25b2fa0a62203136188fdcdc618a45219b4d6c1429c2f670d2a1b
 submission_blob: 84b54ae2c9800a7b9bf96692557dd390904ed09b
 lint_warnings: 40
+attempt_file: 2026-10-25T084824Z-check-restack-sk-pseudo-cluster-plus-v3-fused-preattn.md
+prepared_at: 2026-10-25T084824Z
 ---
 
 # restack-sk-pseudo-cluster-plus-v3-fused-preattn
