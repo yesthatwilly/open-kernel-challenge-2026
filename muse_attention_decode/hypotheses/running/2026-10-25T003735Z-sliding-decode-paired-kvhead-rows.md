@@ -45,7 +45,7 @@ status: running
 review_at: 2026-10-25T004021Z
 review_companions: [sliding-decode-paired-kvhead-rows-control-unpaired-s8]
 hold_reason: null
-stage: implemented
+stage: dispatched
 claimed_at: 2026-10-25T014325Z
 base_sha: 0c91821ce96e550a59594394591699d20286eb84
 base_blob: c6854f093588da524e63657576b27ed720756e32
@@ -62,6 +62,8 @@ submission_blob: af33f9553ee353859b9026c4071c9d22288fd453
 lint_warnings: 0
 attempt_file: 2026-10-25T014526Z-check-sliding-decode-paired-kvhead-rows.md
 prepared_at: 2026-10-25T014526Z
+job: 48ffbe5690cc4ab4
+dispatched_at: 2026-10-25T014607Z
 ---
 
 # sliding-decode-paired-kvhead-rows
