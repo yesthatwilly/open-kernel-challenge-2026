@@ -77,7 +77,7 @@ base_sha: 593859d3ce482d60c7bb0ec1fb4e4101e7b1ce31
 base_blob: bd96c94a12cf87fdcdac119d1e0508f009c4120c
 branch: hyp/muse_attention_decode/sliding-cluster-s2-decode-c4-pdl-inproc
 worktree: .worktrees/muse_attention_decode/sliding-cluster-s2-decode-c4-pdl-inproc
-mode: null
+mode: check
 restack_of: null
 stale_base: true
 implemented_at: 2026-10-25T003616Z
@@ -86,6 +86,8 @@ submission_sha256: 50aaf8535c92809fb540f38da73f9dbdb68e5909b91acb8569a383a0e99b8
 norm_sha256: 51e427419bb99b1fec184ef72795f13ffdf01d534fdc62af30f34b12b84c8017
 submission_blob: 01024fb7e27a1343414dfbd5fca8c0e5f5449225
 lint_warnings: 3
+attempt_file: 2026-10-25T003616Z-check-sliding-cluster-s2-decode-c4-pdl-inproc.md
+prepared_at: 2026-10-25T003616Z
 ---
 
 # sliding-cluster-s2-decode-c4-pdl-inproc
