@@ -55,7 +55,7 @@ review: proceed
 status: running
 review_at: 2026-10-25T014055Z
 review_companions: null
-stage: implemented
+stage: dispatched
 claimed_at: 2026-10-25T014055Z
 base_sha: f291b49c49670595d0615e749294f69bc15de1a4
 base_blob: 695c97d2e9fef8f806ec02d2fe14a02668989e3f
@@ -72,6 +72,8 @@ submission_blob: 50274a3d8678d5656197b8e401ca411d4f08a6e2
 lint_warnings: 16
 attempt_file: 2026-10-25T034225Z-check-full-decode-splitkv-s3-fused-preattn.md
 prepared_at: 2026-10-25T034225Z
+job: 825baa03798f431a
+dispatched_at: 2026-10-25T034233Z
 ---
 
 # full-decode-splitkv-s3-fused-preattn
