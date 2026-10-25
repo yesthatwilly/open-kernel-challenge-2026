@@ -61,7 +61,7 @@ base_sha: dbb845684aa94ad1867281815e42f53464870f19
 base_blob: 50274a3d8678d5656197b8e401ca411d4f08a6e2
 branch: hyp/muse_attention_decode/full-decode1-sk-two-level-fused-preattn
 worktree: .worktrees/muse_attention_decode/full-decode1-sk-two-level-fused-preattn
-mode: null
+mode: check
 restack_of: null
 stale_base: true
 implemented_at: 2026-10-25T084647Z
@@ -70,6 +70,8 @@ submission_sha256: 39a86a5c348bd983ff953edfbfb59a9216acd0b46cc7a708005325af6f88e
 norm_sha256: e4d308f3c69ff0019f3a0d59da2a94f4268593f73e3bd84e11a63aa8f08162cb
 submission_blob: fd1c193f0c8d523702cf3687711a06c01db9bce5
 lint_warnings: 27
+attempt_file: 2026-10-25T084648Z-check-full-decode1-sk-two-level-fused-preattn.md
+prepared_at: 2026-10-25T084648Z
 ---
 
 # full-decode1-sk-two-level-fused-preattn
