@@ -67,7 +67,7 @@ base_sha: 0efab7bdfa79cfea6a430d51c5b7c038a7bd2af3
 base_blob: 62b00bb77cbc9e2fce8ed39dd25d87fb78503a5d
 branch: hyp/muse_moe_w4a16/cuda-fused-moe-bs1-persistent-nospin-bandwidth-inproc
 worktree: .worktrees/muse_moe_w4a16/cuda-fused-moe-bs1-persistent-nospin-bandwidth-inproc
-mode: null
+mode: check
 restack_of: null
 stale_base: true
 implemented_at: 2026-10-25T003453Z
@@ -76,6 +76,8 @@ submission_sha256: 8483d78ed40c60aa5c92c13671a1ce2654db503d1d85dd90b05105278a285
 norm_sha256: 89e64b5b2950de0e165973e23425229de43651c16ee304064b31962d847fe3a5
 submission_blob: c80e3a831390ffb38cbcb7560231b59a64a2c6a0
 lint_warnings: 33
+attempt_file: 2026-10-25T003453Z-check-cuda-fused-moe-bs1-persistent-nospin-bandwidth-inproc.md
+prepared_at: 2026-10-25T003453Z
 ---
 
 # cuda-fused-moe-bs1-persistent-nospin-bandwidth-inproc
