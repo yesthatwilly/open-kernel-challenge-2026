@@ -86,7 +86,7 @@ review: proceed
 status: running
 review_at: 2026-10-25T161800Z
 review_companions: null
-stage: implemented
+stage: dispatched
 claimed_at: 2026-10-25T161801Z
 base_sha: a2286ee3352c35c3e80062a62bc74df5393b1d95
 base_blob: f919748b5af6e815f319e5d2d828ed68e5b28a71
@@ -103,6 +103,8 @@ submission_blob: ad8d7254a64a52db2a8f56ec0ad262748153a2e8
 lint_warnings: 31
 attempt_file: 2026-10-25T185059Z-submit-combo-rowowner-reduce-free-m1-qkv-o-plus-naive.md
 prepared_at: 2026-10-25T185100Z
+job: 741072dca5fc4c9d
+dispatched_at: 2026-10-25T185253Z
 ---
 
 # combo-rowowner-reduce-free-m1-qkv-o-plus-naive
