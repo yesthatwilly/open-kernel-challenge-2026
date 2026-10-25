@@ -41,7 +41,7 @@ review: proceed
 status: running
 review_at: 2026-10-25T054817Z
 review_companions: null
-stage: claimed
+stage: implemented
 claimed_at: 2026-10-25T054817Z
 base_sha: ea4c938779678da09fceb3d72b468aef6f3272d9
 base_blob: 60dfe35d5417d9c0f89067ff313efdc2c41d03a2
@@ -50,6 +50,12 @@ worktree: .worktrees/muse_moe_w4a16/w13-marlin-atomic-add-t1-only
 mode: null
 restack_of: w13-marlin-atomic-add-on-master-small-m
 stale_base: null
+implemented_at: 2026-10-25T054919Z
+impl_commit: f29a0b9e34299e122d6c05ad93492885c2c9484d
+submission_sha256: 99f131fd0b4c055483fe2da22f8581d675ec5db7d54b59f186dde3c730c07785
+norm_sha256: b42c84d36edc8fc938435770ac7fbaefe197a66865d46a41316df5d174a407c1
+submission_blob: 34e5b52476fd39c5296e0de9a53a3c5797cd52e1
+lint_warnings: 19
 ---
 
 # w13-marlin-atomic-add-t1-only
@@ -90,3 +96,30 @@ No companion. An ab-revert of w2-marlin-atomic-add-small-m would change the bs=1
 - Was the Marlin pair 34.2 us (hyp) vs 42.1 us (master) measured under the same profiler and graph mode? If master's paired profile also shows about 34 us, the profile-level 'gain' is a harness artifact and the prior is weaker than stated.
 - Does Marlin's atomic path zero C internally? The prior self-check passed 'atomic' (no memset) with poisoned output buffers at T=1/4/8, which suggests yes. The w2 atomic write into cache3 aliases cache1, so the builder should keep the poison test to catch a regression there.
 
+
+## Implementation notes
+
+Base: claim 3-way applied the earlier w13 atomic patch (staged) on ea4c938; not stale. Narrowed it in muse_moe_w4a16/submission.py (worktree, not committed): W13_ATOMIC_MAX_TOKENS 32 -> 1 (own constant, W2 bound untouched); W13_CHECK_TOKENS (1,4,8,16,32) -> (1,), so prepare self-checks only T=1 against current master (w2 mode as chosen), atomic then atomic_zero then master fallback; the slice-estimate print now covers T=1 only. _forward gate unchanged in form (`num_tokens <= W13_ATOMIC_MAX_TOKENS`), so every T>=2 uses master's w13 kwargs. Diff vs HEAD: +142/-3.
+
+Review points applied:
+- W13_ATOMIC_TOL = 1e-2 kept; `PATH CHOSEN` print kept (per band, plus the all-master VOID line).
+- Old print-only _marlin_exec_config_probe dropped entirely (function, constants, call site, and the now-unused `inspect`/`time` imports).
+- Poisoned-output test kept at T=1 (cache13.fill_ with 3e4 before the w13 call; guards the w2-atomic alias into cache3/cache1).
+- kernel_fn has no try/except/print; it only looks up a prepare-time mode by shape band. try/except exist only in prepare().
+- Open questions (profile 34.2 vs 42.1 us harness equivalence) cannot be answered by the build; read only the bs=1 row and its Marlin top_kernels entry. Do not cite the 8 us.
+- CUDA/sm90a brief bullets n/a (pure Python change). No process spawn. Two-state rule: modes dict lives in state per prepare; no module globals hold tensors.
+
+## Rules check
+
+- [x] first-line marker `# okc: problem=muse_moe_w4a16` unchanged (diff touches only the named areas)
+- [x] no triton.autotune added
+- [x] no host sync / .item / allocation on input values in kernel_fn (checked diff: only a shape lookup)
+- [x] no try/except or print in kernel_fn; no per-call mutable state
+- [x] CUDA-graph capturable: w13 change is a kwarg flip (plus cache1.zero_() only in atomic_zero mode, a graph-safe memset)
+- [x] nothing cached from inputs; state["w13_modes"] derived from synthetic data in prepare
+- [x] no child process/subprocess; NVFP4 weights unchanged; BF16 activations unchanged
+- [x] no module/static global holds device pointers or buffers
+- [x] self-check never raises (wrapped); falls back to master
+- [x] n/a: sm90a/mbarrier/TMA items, no CUDA in this change
+
+okc_lint: "OK with warnings" (only host-sync warnings in prepare(), outside kernel_fn's call graph). py_compile OK; __pycache__ removed.
