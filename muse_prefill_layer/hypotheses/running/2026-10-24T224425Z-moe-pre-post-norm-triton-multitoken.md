@@ -44,7 +44,7 @@ review: proceed
 status: running
 review_at: 2026-10-25T043904Z
 review_companions: null
-stage: implemented
+stage: dispatched
 claimed_at: 2026-10-25T043904Z
 base_sha: 7e9d65cd4721de1932a376a8f32f7db7343f97ef
 base_blob: db8a3344398bca79ea5cafeb580f701c055fd475
@@ -61,6 +61,8 @@ submission_blob: cab1f9ab2b7d6180afac73a43cbcf68cf1b6eb07
 lint_warnings: 23
 attempt_file: 2026-10-25T044421Z-check-moe-pre-post-norm-triton-multitoken.md
 prepared_at: 2026-10-25T044421Z
+job: 3fb4e7237a604fa3
+dispatched_at: 2026-10-25T044428Z
 ---
 
 # moe-pre-post-norm-triton-multitoken
