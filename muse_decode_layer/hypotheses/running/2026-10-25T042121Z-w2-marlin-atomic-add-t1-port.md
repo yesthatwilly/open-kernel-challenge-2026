@@ -38,7 +38,7 @@ review: proceed
 status: running
 review_at: 2026-10-25T042335Z
 review_companions: null
-stage: implemented
+stage: dispatched
 claimed_at: 2026-10-25T042335Z
 base_sha: 4086e385d4c82ab39da7076fd7a040127403956c
 base_blob: c9067b8201f2480c64910c4a71098df7ce616f73
@@ -55,6 +55,8 @@ submission_blob: 62c5a9413ba5710defea2ca3de14c1a1dc3b5a6d
 lint_warnings: 34
 attempt_file: 2026-10-25T042854Z-check-w2-marlin-atomic-add-t1-port.md
 prepared_at: 2026-10-25T042854Z
+job: 7a9f5de5aecc4aba
+dispatched_at: 2026-10-25T042908Z
 ---
 
 # w2-marlin-atomic-add-t1-port
