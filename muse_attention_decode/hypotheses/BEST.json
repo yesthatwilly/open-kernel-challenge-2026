@@ -1,17 +1,17 @@
 {
  "problem": "muse_attention_decode",
- "job": "d672f69ea69b4396",
- "check_job": "cbd49dc94be548e7",
- "mode": "submit",
- "speedup": 1.482482693793331,
+ "job": "252abb7f11ec48c3",
+ "check_job": "252abb7f11ec48c3",
+ "mode": "check",
+ "speedup": 1.5016522435853301,
  "ci": [
-  1.460245453386431,
-  1.5047199342002309
+  1.47912745993155,
+  1.530423257736894
  ],
- "score_us": 2540.5355595503834,
- "commit": "eb1b68bad24c7457aaa0606c1df0fa7733c03365",
- "submission_blob": "84b54ae2c9800a7b9bf96692557dd390904ed09b",
- "slug": "restack-sk-pseudo-cluster-plus-v3-fused-preattn",
- "result": "muse_attention_decode/hypotheses/done/gain/restack-sk-pseudo-cluster-plus-v3-fused-preattn.result.json",
- "updated_at": "2026-10-25T115712Z"
+ "score_us": 2508.1040008355194,
+ "commit": "7e12891512c09b829cc4fb9ea07edbebc27ebe01",
+ "submission_blob": "5cf8fae31e5b84c36efeeb4569763eb9b06e1c8a",
+ "slug": "restack-sliding-decode-sk-window-on-cluster-master",
+ "result": "muse_attention_decode/hypotheses/done/neutral/restack-sliding-decode-sk-window-on-cluster-master.result.json",
+ "updated_at": "2026-10-25T150110Z"
 }

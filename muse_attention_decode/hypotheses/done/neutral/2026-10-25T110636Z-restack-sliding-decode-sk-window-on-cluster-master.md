@@ -99,7 +99,9 @@ speedup: 1.5016522435853301
 speedup_ci: [1.47912745993155, 1.530423257736894]
 harvested_at: 2026-10-25T115709Z
 best_at_harvest: 1.4919706177473366
-promotion: null
+promotion: merged
+hand_landed: true
+promotion_commit: 7e12891512c09b829cc4fb9ea07edbebc27ebe01
 ---
 
 # restack-sliding-decode-sk-window-on-cluster-master
