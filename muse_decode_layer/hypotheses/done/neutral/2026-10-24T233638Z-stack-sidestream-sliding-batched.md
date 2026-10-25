@@ -19,8 +19,8 @@ priority: 2
 kind: primary
 controls_for: null
 review: required
-status: running
-stage: dispatched
+status: done
+stage: harvested
 claimed_at: 2026-10-24T233638Z
 base_sha: fc2c96a83dc62731f5a5ebd4f4791da8fdeb14ed
 base_blob: 3d70ae6e2de0d48c4a4f2a469ced8234f5348182
@@ -39,6 +39,13 @@ attempt_file: 2026-10-24T233649Z-check-stack-sidestream-sliding-batched.md
 prepared_at: 2026-10-24T233649Z
 job: 2193fc0dc9be4b3c
 dispatched_at: 2026-10-24T233707Z
+outcome: neutral
+verdict_detail: unproven-vs-best
+speedup: 1.2442805027115935
+speedup_ci: [1.2256162951709195, 1.2629447102522673]
+harvested_at: 2026-10-25T000220Z
+best_at_harvest: 1.228328123558382
+promotion: null
 ---
 
 # stack-sidestream-sliding-batched
@@ -69,3 +76,35 @@ Built in the main thread 2026-10-24 ~23:37Z with user-approved self-review. Work
 - [x] No timing/harness access, processes, network or module edits.
 - [x] No work outside timed calls added.
 - [x] okc_lint: no errors.
+
+## Result
+
+- job `2193fc0dc9be4b3c` (check), status done, passed True, tests 13/13
+- speedup 1.2443x, 95% CI [1.2256, 1.2629], score 18179.421722597755 µs vs SGLang 22620.3 µs
+- best at harvest: {"speedup": 1.228328123558382, "ci": [1.2099032017050062, 1.2467530454117577], "job": "81ee6714b7614a99"}; base result: muse_decode_layer/hypotheses/done/gain/small-t-launch-minimal-dense-chain-pdl.result.json
+- **outcome: neutral** (unproven-vs-best)
+- files: `muse_decode_layer/hypotheses/done/neutral/stack-sidestream-sliding-batched.result.json`, `muse_decode_layer/hypotheses/done/neutral/stack-sidestream-sliding-batched.patch`; branch `hyp/muse_decode_layer/stack-sidestream-sliding-batched`
+
+## Attribution
+
+| shape | w | base µs | hyp µs | delta | verdict |
+|---|---|---|---|---|---|
+| batch=1 ctx=80000 dist=soft layer=sliding load=decode_1 page=1 repeats=60 | 46 | 132.74 | 133.97 | 0.9951 | flat |
+| batch=1 ctx=80000 dist=soft layer=full load=decode_1 page=1 repeats=60 | 16 | 142.57 | 143.58 | 1.0038 | flat |
+| batch=16 ctx=80000 dist=soft layer=sliding load=decode_16 page=1 spread=agentic | 46 | 217.06 | 195.39 | 1.0551 | gained |
+| batch=16 ctx=80000 dist=soft layer=full load=decode_16 page=1 spread=agentic | 16 | 347.51 | 357.61 | 0.9992 | flat |
+| batch=32 ctx=80000 dist=soft layer=sliding load=decode_32 page=1 spread=agentic | 46 | 246.99 | 236.82 | 1.0411 | gained |
+| batch=32 ctx=80000 dist=soft layer=full load=decode_32 page=1 spread=agentic | 16 | 534.98 | 520.45 | 1.0142 | flat |
+| batch=1 ctx=80000 dist=soft layer=sliding load=verify_1 page=1 q_len=8 | 46 | 186.48 | 188.9 | 0.9925 | flat |
+| batch=1 ctx=80000 dist=soft layer=full load=verify_1 page=1 q_len=8 | 16 | 195.92 | 198.4 | 0.9936 | flat |
+| batch=16 ctx=80000 dist=soft layer=sliding load=verify_16 page=1 q_len=8 spread=agentic | 46 | 447.55 | 442.33 | 1.0154 | flat |
+| batch=16 ctx=80000 dist=soft layer=full load=verify_16 page=1 q_len=8 spread=agentic | 16 | 599.37 | 588.03 | 1.0193 | flat |
+| batch=32 ctx=80000 dist=soft layer=sliding load=verify_32 page=1 q_len=8 spread=agentic | 46 | 626.79 | 615.65 | 1.0169 | flat |
+| batch=32 ctx=80000 dist=soft layer=full load=verify_32 page=1 q_len=8 spread=agentic | 16 | 910.91 | 900.31 | 0.9946 | flat |
+
+gained on sliding decode_16, decode_32. Expected hit: 1/1. Noise ±1.5%.
+
+## Follow-ups
+
+- unproven-vs-best: the change is not proven either way; a stacked hypothesis (`depends_on: stack-sidestream-sliding-batched`) that adds a further change in the same area is the only way to learn more (identical code is never re-run).
+
