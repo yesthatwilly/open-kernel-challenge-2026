@@ -65,9 +65,18 @@ priority: 2
 kind: primary
 controls_for: null
 review: proceed
-status: queued
+status: running
 review_at: 2026-10-25T153023Z
 review_companions: null
+stage: claimed
+claimed_at: 2026-10-25T153023Z
+base_sha: 712ef67fb9abd8cc36abfcb14e6187d4f513303b
+base_blob: a2fe2a75893c60d4f68cf94fcce8ce8f9b708a71
+branch: hyp/muse_prefill_layer/qkv-gate-columns-side-stream-under-attention
+worktree: .worktrees/muse_prefill_layer/qkv-gate-columns-side-stream-under-attention
+mode: null
+restack_of: null
+stale_base: null
 ---
 
 # qkv-gate-columns-side-stream-under-attention
