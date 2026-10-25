@@ -64,7 +64,7 @@ review: proceed
 status: running
 review_at: 2026-10-25T054427Z
 review_companions: null
-stage: claimed
+stage: implemented
 claimed_at: 2026-10-25T054427Z
 base_sha: a3136ce5805b8fcc8f1c58fdd3500b1d54aeb06e
 base_blob: e7b58542dc954a2a306648904dbd486bda0c417b
@@ -73,6 +73,12 @@ worktree: .worktrees/muse_decode_layer/sliding-cluster-c4-decode32-s2-k-encode-m
 mode: null
 restack_of: null
 stale_base: true
+implemented_at: 2026-10-25T084640Z
+impl_commit: 48412ae9b9b890e6d097dd9014575034f92c67c2
+submission_sha256: 01bcb4e8a0a511883ccd10a5a8e8abff605396e76baf5c3c0e19110f073ce1b5
+norm_sha256: be67125f36401efa5b437f04a77c424668cebb2de8c13fadcd20ca51cfa2206f
+submission_blob: f8b86798e27c264fb4b8a7bea2e7c97d8c086d8f
+lint_warnings: 44
 ---
 
 # sliding-cluster-c4-decode32-s2-k-encode-match
@@ -126,3 +132,47 @@ No companion is warranted. The gate selects exactly one scored shape (sliding de
 - Does FusedQKNorm round to bf16 between norm and rope? If not, do not add that rounding. Only the final bf16 write (and the bf16 result of k / k_scale) are master's roundings.
 - Does stage 1's selector timing exist for B=32? It likely never ran because the self-check failed first. If it runs this time, make sure the L2 flush and whole-chain timing are kept, and print compile seconds per module to watch the 15-minute budget.
 
+
+## Implementation notes
+
+Only `muse_decode_layer/submission.py` in the worktree changed. Nothing could be run here (no GPU).
+
+**Rebase.** 3-way `git merge-file` (ours = stage 1 `a3136ce`, base = its parent `1cd12f4`, theirs = master `00e36e3`): clean, no conflicts. Against master the file differs only in the sliding-cluster section, the two header bullets, the `prepare()` call and `kernel_fn`'s else branch, which stage 1 had already moved verbatim into `_master_attn`. `_sliding_forward` (batch 1) is byte-identical to master again.
+
+**Review fixes applied (the review wins over the spec where they differ):**
+- Lever 1: `_slide_cache_ok` prints, for every k and v comparison, class counts (overflow/NaN-code mismatch, >1 code, 1 code, +-0 equal value, NaN and 0x7E counts in both) and the 6 worst mismatches with master byte, new byte, fp32 pre-quant value, its bf16 value and |x/kv_scale|.
+- "Within one code" is the sign-magnitude ordinal distance <= 1 with -0 == +0, so a 0x00/0x80 crossing is no longer a miss. The NaN class must match exactly (NaN code in one only, or a different sign, fails). The k byte-mismatch bound stays < 6%, v stays byte exact; nothing else loosened.
+- Overflow emulation: satfinite cvt, then a per-element select of `sign | 0x7F` where `!(|x| < nan_thr)`. DEVIATION: the review says the NaN edge is |x| >= 480 and that (448, 480) saturates. Reading c10's `fp8e4m3fn_from_fp32_value` (round to nearest even after the `>= 1087<<20` test) values in (464, 480) round up to 0x7F, i.e. NaN. I could not run torch, so `_slide_probe_nan_thr` measures the edge from `bf16.to(float8_e4m3fn)` in prepare() (448..518 step 2, both signs, inf, nan), prints the bytes at 448/450/464/466/478/480/482 and passes the measured edge to the kernel as `nan_thr`. If torch is not "RNE below an edge, NaN at and above it" the path stays off. The log line `probe:` settles 480 vs 466.
+- Synthetic overflow case: B=32, kv_scale 1/64, positions 0 (RoPE identity), each (request, kv head) row has a hot key lane whose normed value x/kv_scale is set to 444..452, 460..468, 476..484 and 490..510 (64 targets, random sign), v values at 430..520 * kv_scale. Cache bytes only are compared. The log prints master's NaN and 0x7E counts and a WARNING if a class is not exercised (lenient, so a construction slip does not cost the measurement).
+- Round to bf16 BEFORE RoPE: not unconditional. Always applied: bf16 after RoPE, then bf16(bf16(x) / bf16(scale)) (torch's bf16 / 0-dim fp32 promotion), then the cast. Pre-RoPE rounding is the kernel's `enc_mode` bit 0, and the self-check runs the whole case set in mode 0 and mode 1 and keeps the passing mode with the fewest k byte mismatches (ties: 0). Reason: I could not see FusedQKNorm, and a bf16 round of the normed k before RoPE (cancellation in xe cos - xo sin) is the other plausible cause of 2-code k misses at tiny values, a class the stage-1 "within" test would flag. Both mode lines are printed.
+- Selector: kept the 320 MB L2 flush, whole-chain timing (`_master_attn` vs the cluster launch as graphs, interleaved, medians printed). It now also requires the cluster to win by 1.02x (LESSONS 04:36Z). Compile seconds are printed for the module (`compile seconds, module muse_sliding_cluster_c4_v2`; the dense-chain and split-KV modules already print theirs). Module renamed v2 so a stale build cache cannot be reused.
+
+**Two-state rule.** The cluster path now reads everything from `state`: `slide_inv_freq` (own copy), `slide_nan_thr`, `slide_enc_mode`, `slide_path` (the module global `_SLIDE_PATH` is gone). The Triton `splits=16` candidate was dropped (its tickets sit in the module-global `_counters`, which the two-state rule forbids, and its k encode was the same as the kernel's); it was a stage-1 candidate and no part of this spec. New `_slide_two_state_check`: two independent states (own caches, tables, qkv), one graph captured on each, six alternating replays 0,1,0,1,... with all inputs refilled in place (shuffled lengths, new keys and page tables), each replay compared with master's chain (outputs vs fp32 as before, k and v bytes vs master) and the other state's last output checked for change.
+
+**Kernel change** (`sliding_cluster_kernel`): two new args `nan_thr`, `enc_mode`; the new k and v are encoded as above. Query encode and attention are untouched. C=4 only, same gate (sliding, q_len 1, page 1, 17 <= batch <= 32); batch 1 keeps `_sliding_forward`.
+
+## Rules check
+
+- [x] CUDA-graph capturable: `kernel_fn` branch is `_slide_launch` (one `torch.empty` and one kernel launch, no sync, query or print); everything else is in prepare().
+- [x] Nothing derived from `data` is cached across calls: the per-state values (inv_freq, nan edge, mode, path) come from constants and synthetic data in prepare().
+- [x] Weights: n/a, no weight change.
+- [x] Activations BF16 where SGLang keeps BF16; KV cache FP8 (E4M3 bytes as master's cast writes them); the query is rounded to E4M3 once, as stage 1.
+- [x] Attention sees every key: the same window logic as stage 1, the new key attended from smem.
+- [x] No timing patches, harness access, module edits, reference import, subprocesses or network (grep for subprocess/multiprocessing/fork/Popen: none). load_inline builds in-process, `TORCH_CUDA_ARCH_LIST=9.0a` set and restored, `-std=c++20 -lineinfo`; the kernel uses mma.sync and cluster barriers, no wgmma/setmaxnreg, so no sm_90a-only PTX guard is needed.
+- [x] All work inside the timed call; no output caching or replay; no device pointers, tensor maps, tickets or buffers in module globals for the cluster path (two-state check added).
+- [x] Prepare-time launches are announced with a flushed print before and after (`_slide_run`, replays); no spin waits in the kernel (cluster barriers only); any failure lands on master with a `PATH CHOSEN ... (fallback: <reason>)` line.
+
+okc_lint output (`python3 -I okc_lint.py muse_decode_layer/submission.py --problem muse_decode_layer`): `OK with warnings`; the only non-host-sync warning is `dtype L3429: flush = torch.empty(SLIDE_FLUSH_BYTES, dtype=torch.uint8, ...)` (prepare-only L2 flush buffer); all `host-sync` warnings are in prepare() paths. `py_compile` OK, `__pycache__` removed.
+
+## Pre-flight audit
+
+Audited 2026-10-25 (opus). **Verdict: dispatch-with-fixes** (the fixes are to comments only; no logic changed).
+
+- Merge: outside the sliding-cluster section the file equals master 00e36e3 (blob 62c5a94, current master). `_master_attn` is master's kernel_fn else-branch verbatim (diffed after dedent). `_sliding_forward` (batch 1), the split-KV path and the w2 marlin atomic-add code (`_w2_atomic_self_check`, `_experts` w2_mode) are byte-identical. The only other additions are `import os`, two header bullets, the `_slide_prepare` call and the `elif _slide_gate` branch.
+- Overflow edge deviation: accepted. prepare() measures `slide_nan_thr` from torch's own cast of constant bf16 values (400..518, inf, nan). That is a library property, not derived from inputs, and it is stored per state. A numpy emulation of c10 `fp8e4m3fn_from_fp32_value` agrees with the builder, not the review: 464 -> 0x7E (RNE tie to even) and 466 -> 0x7F, so the bf16 edge is 466, not 480. The kernel's operand is bf16-valued, so `|x| < 466` reproduces torch exactly. The 480 default is never used on the cluster path, because a probe that returns None turns the path off.
+- Two states: no module or static global holds a device pointer or buffer. `_SLIDE_EXT` is only the compiled module, the CUDA source has no static or `__device__` state, and `cudaFuncSetAttribute` sets a per-function attribute. inv_freq, the NaN edge, the enc mode and the path are kept in `state`. The two-state graph alternation check is present and gates the path.
+- Fallback: a miss in the probe, canary, self-check, two-state check or selector, and any exception, lands on master with a `PATH CHOSEN ... (fallback: ...)` line, all inside one try/except. kernel_fn checks a gate on config and `state`, then does one `torch.empty` and one launch. It has no sync, print, try/except or branch on data. The judge's dtypes (positions/cache_loc int64, seq_lens/page_table int32, page-1 cache) match the launcher's TORCH_CHECKs.
+- Fixes 1-2: two comments, at the `_slide_prepare` call and in kernel_fn, still described the dropped 16-split Triton candidate. Both are reworded. Lint is OK with warnings (syncs that run only in prepare, and the L2 flush buffer), py_compile is OK, and `__pycache__` was removed.
+- Note: the stage-1 k miss at kv_scale 0.25 cannot be overflow. Scaleless-normed |k| <= 8, so |k/0.25| <= 32. It belongs to a near-zero class: stage 1's value-based test failed either a sign flip of one subnormal or a miss of 2 codes. The new ordinal test still fails a +1/-1 flip (distance 2). So the path is taken only if enc_mode 0 or 1 actually reproduces FusedQKNorm's rounding.
+
+Residual risk: if neither enc_mode reproduces FusedQKNorm's near-zero k bytes, the self-check falls back again. The run is then diagnosis only, with the classes printed.
