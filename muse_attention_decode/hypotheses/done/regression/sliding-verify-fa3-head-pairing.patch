@@ -1,0 +1,15 @@
+diff --git a/muse_attention_decode/submission.py b/muse_attention_decode/submission.py
+index c6854f0..226b4fc 100644
+--- a/muse_attention_decode/submission.py
++++ b/muse_attention_decode/submission.py
+@@ -917,7 +917,9 @@ def kernel_fn(data: Inputs) -> torch.Tensor:
+     # keeps the unpaired path, where pairing lost 27-35%).
+     # The CUDA split-KV path (full decode, 1 < batch <= 64, tp8, page 1) takes the unpaired query.
+     splitkv = _splitkv_gate(cfg)
+-    paired = window == 0 and hkv % 2 == 0 and batch > 1 and not splitkv
++    # Companion sliding-verify-fa3-head-pairing: window == 0 dropped, so sliding verify_16/32 pair too
++    # (sliding decode returns above through _sliding_forward).
++    paired = hkv % 2 == 0 and batch > 1 and not splitkv
+     g = hq // hkv
+     q = torch.empty((tokens, hq, 2 * d if paired else d), dtype=FP8, device=device)
+     inv_freq = _inv_freq(theta, d, device) if theta else data["k_scale"]  # unused when ROPE is off
