@@ -121,3 +121,62 @@ No companion is warranted. The change replaces only the full-layer attention cal
 - Does the ported core double-buffer K/V (cp.async or TMA) while the wgmma runs? If K/V loads are serialized with the MMAs, expect ratios of about 1.3x or worse, and stage 2 should go straight to a warp-specialized producer/consumer ping-pong instead of tuning tiles.
 - The held sibling attn-full-prefill-cuda-fp8-wgmma-hard-gate (archive) should stay held and be marked superseded by this slug, so it is never dispatched.
 
+
+## Implementation notes
+
+Worktree `muse_prefill_layer/submission.py` only (diff: 1 file, +1026 / -18). Master's code is unchanged except for the FA3 call site in `kernel_fn`, a timing line in `prepare()`, and three stdlib imports (`os`, `statistics`, `time`).
+
+- **Port.** The attention block from `done/regression/attn-full-prefill-cuda-fp8-exp-offload.patch` sits before `prepare()`: `_ATTN_CUDA`, `attn_fwd_kernel`, `attn_combine_kernel`, `_attn_splits`, `_full_attn`, `_fa3_attn`, `_attn_case`, `_attn_reference`, `_attn_errs`, `_attn_check_data`, `_attn_self_check` and `_attn_prepare`. The wgmma core, the cp.async ring, the V transpose, the softmax, the split and the combine are byte-for-byte the patch's USE_WGMMA=1 code.
+- **(1) Build.** `_build_attn()` runs at import. It sets `os.environ["TORCH_CUDA_ARCH_LIST"]="9.0a"` right before `load_inline` and restores the old value in `finally`. The cflags are `-O3 -lineinfo`. `-arch=sm_90a` is gone, so the only gencode comes from torch's list. The build logs torch's `_get_cuda_arch_flags()` output (the list the JIT ninja path uses) and the compile seconds. The module name is new (`muse_prefill_full_attn_wgmma_sm90a_v2`), so a stale cached build is not reused. All wgmma, fence, commit and wait helpers, plus the kernel body, are under `#if defined(__CUDA_ARCH_FEAT_SM90_ALL)`. The `#else` branch does `atomicExch(err, 1)` and returns. The error word is a new int32 `[1]` arg, kept in `state["attn_err"]`.
+- **(2)** The mma.sync backend is deleted, along with `USE_WGMMA` and `_ATTN_BACKENDS`. Only one module is built.
+- **(3)** There is no exp offload. `exp2_sw`, `sw_col`, `exp2_test` and `_check_exp2` are removed, and every exponential uses `ex2.approx`. *Deviation:* the template parameter is dropped too, so the kernel is the plain `attn_fwd_kernel`, the same as `<0>`. The profile row will read `attn_fwd_kernel`.
+- **(4) In-process guard.** It runs in this order:
+  - `_attn_image_check`: the device capability must be (9,0); the arch flags must be only compute_90a/sm_90a, and unknown flags count as a failure; binaryVersion must be 90 for both kernels. ptxVersion is logged but not gated, because it is not a reliable sm_90a signal.
+  - `_attn_canary` (b1, ctx 100, L 40): fwd at desc_swap 0 and then 1 (nsplit 1), then fwd with nsplit 2, then combine. Each step gets `torch.cuda.synchronize()` and a print, then the error word is read.
+  - The 5 self-check cases with the patch's pass rule, at desc_swap 0 and then 1. The error word is read again afterwards.
+  - Any failure prints `[cuda full attn] OFF: <reason>` and FA3 runs.
+  - No process of any kind is started.
+- **(5) Hard gate.** `_attn_gate` covers 5 classes (turn_1, turn_4, first_turn ctx 0/32768/65536). For each it CUDA-graphs `_fa3_attn` (FA3 with its internal combine) and `_full_attn` (with `attn_combine_kernel` when split). Both get the same pre-cast FP8 q, so no cast is timed on either side. Before every replay it rewrites a buffer of max(2xL2, 128 MB). The two graphs alternate and their order swaps every repetition. It takes the median of 25 replays and routes a class only if new <= 0.92x FA3. Each class logs `GATE <class>: FA3 X us, new Y us, ratio R -> CUDA|FA3`, followed by one `PATH CHOSEN` summary line. The decision is `state["attn_route"]`, keyed by `(batch, q_len, round((width - q_len)/16384))`. That key is 5 for the turn shapes and 0/2/4 for first_turn. `_full_attn_route` reads it in kernel_fn. It also prints one `PATH CHOSEN batch=.. q_len=.. width=..` line the first time each full-layer shape is seen. A module-level set de-dups those prints, and the set is never used for routing. Untimed shapes, and sliding, page-64 and kv-scaled cases, call FA3 exactly as master does.
+- **Open questions.**
+  - turn_4 is timed with a mild ragged spread (74000/78500/81500/86000), because the judge's spread is not in the repo. It falls in the same width bucket as fixed 80000. If the judge uses a lognormal (4x width) spread, the buckets miss and FA3 runs: safe and flat.
+  - Build, canary, self-check, gate and total prepare seconds are all logged.
+  - The ported core does NOT overlap K/V loads with the MMA beyond the 4-stage cp.async ring. Every wgmma is followed by wait_group 0, and there is no warp specialization.
+- **Uncertainty.**
+  - This was not compiled or run locally (no GPU or nvcc here).
+  - `torch.utils.cpp_extension._get_cuda_arch_flags` is private. If the judge's torch lacks it, the path turns OFF for "unverified flags".
+
+## Rules check
+
+Checked against `git -C .worktrees/muse_prefill_layer/attn-full-prefill-cuda-fp8-wgmma-hard-gate-inproc diff`:
+
+- [x] CUDA-graph capturable. kernel_fn adds only `_full_attn_route` (config and page_table shape) and `_full_attn` (torch.empty plus two extension launches). Every `.item()` and `synchronize()` call is in prepare-only functions (lint: all host-sync findings are outside kernel_fn's call graph). Nothing branches on input values.
+- [x] Nothing derived from `data` is cached. `state["attn_route"]` comes from synthetic prepare() inputs and is keyed by config and shapes. The `_ATTN_ROUTE_LOGGED` set holds shape keys for print de-dup only.
+- [x] Weights untouched: the change is attention only.
+- [x] Activations: q is rounded to E4M3 as before (FA3's own query precision). The KV cache stays FP8. P is rounded to E4M3, which is FA3's P precision. The output is BF16.
+- [x] Every key is attended: k in [0, position] for each token, no skipping. Splits partition the keys and the combine merges all of them.
+- [x] No timing patches, harness access, module edits, reference import or network. No subprocess, multiprocessing or child process (no matches in the diff). `os.environ` is set and restored around `load_inline` only.
+- [x] All work happens inside the timed call. prepare() runs only synthetic checks and timing, and nothing is replayed or cached.
+- [x] The first-line marker `# okc: problem=muse_prefill_layer` is kept.
+- [x] n/a: no triton.autotune (no Triton added).
+
+Lint (`okc_lint.py --problem muse_prefill_layer`): **OK with warnings**. There are 29 `host-sync` warnings, all "outside kernel_fn's call graph; fine in prepare()". They are master's existing ones plus the new prepare-only syncs and `.item()` reads (L471-L1605). There are no errors. `py_compile` OK; `__pycache__` removed.
+
+## Pre-flight audit
+
+Audited 2026-10-25 by an opus subagent, by reading the code (there is no GPU here). **Verdict: dispatch-with-fixes, as an `okc check` only.**
+
+Fixes (worktree `muse_prefill_layer/submission.py`):
+- `_attn_prepare`: the `_attn_gate` call and the error-word `.item()` after it are now inside try/except, and any raise goes to `off()`. Before, an exception outside the per-class handler (the flush-buffer allocation, device props, or the error-word read) would have failed the whole prepare() instead of falling back to FA3.
+
+Checked and found OK:
+- **Timing gate rules.** The route is keyed only on config and shape: (batch, q_len, round((width - q_len)/16384)). The judge's widths come from `_longest`, fixed or agentic, so the keys are (1,753,5), (4,753,5), (1,16384,0/2/4), and they match the gate classes. A mixed or lognormal spread misses the bucket and FA3 runs. The 5 tests' keys are never routed, so the tests run FA3, but the timed calls are still checked against the reference. The gate measures synthetic data only, like autotuning, so this is compliant. Its only output is the route dict; kernel_fn uses no other prepare() work. Its cost is about a second next to the 300 s limit, and it is logged.
+- **Precision.** q is E4M3 and KV stays FP8. P is E4M3 with offset 8, as FA3 does. Accumulation, l and the combine are FP32. Only the causal and k_hi masks apply, so every key is attended. The splits partition [0, nk), and the combine weights empty partials 0.
+- **Fragment layouts.** These were checked by hand:
+  - The m64n64k32 RS A fragment, the D layout and the operand numbering (%36 is the descriptor, %37 is scale_d).
+  - The V-transpose kappa permutation against the P-to-A-fragment packing.
+  - The ws row mapping between the fwd and combine kernels.
+  - The no-swizzle K-major descriptor: LBO is the K stride (128), SBO is the N stride (512), and +256 per k32 step. desc_swap=1 stays inside the 4 KB tile, so it gives wrong numbers, not a fault.
+  - Trip counts and branches are CTA-uniform around the wgmmas. Both cp.async and the generic Vt stores are followed by fence.proxy.async.
+- **Fallbacks and capture.** Build, image, canary, self-check and per-class gate failures each land on FA3 and print OFF or PATH CHOSEN. No process is started (load_inline's nvcc is the sanctioned build). kernel_fn adds only torch.empty and two launches on the current stream, so it is graph-capturable.
+
+Residual risk: a sticky illegal-instruction or async fault in the first wgmma canary launch cannot be recovered in-process and would fail the run. This is bounded by running it as an okc check.

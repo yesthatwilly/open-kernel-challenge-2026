@@ -134,3 +134,46 @@ No companion. This is kind: rewrite, judged on the replaced kernels' own row (_n
 - For stage 2: is the activation gather (one producer warp, 2048 x 16 B cp.async per stage, 64x re-read for w13) the limiter? Compare the kernel row against ~4 TB/s of L2 activation traffic; if bound there, widen the weight tile (cluster multicast of the B slab or 256 weight rows per CTA) before tuning dequant.
 - silu-mul-sorted-first-turn is running and first-turn-moe-dead-work-stack / experts-triton-persistent-grid-first-turn are queued on the same T > 4096 path; if any lands first, re-read the incumbent row from the new master before scoring milestones.
 
+
+## Implementation notes
+
+Built on master d7ccd53 (the worktree's submission.py). Hunks 1-5 of `done/neutral/experts-cuda-wgmma-mixed-input-grouped-gemm.patch` were applied with `git apply -C1` (the CUDA source and helpers, `_cuda_fragment_maps`/`_cuda_bank_one`/`_cuda_bank`, `_check_cuda_onehot`, `_rel_err`, `_check_cuda_e2e`, `_setup_cuda_experts`, and its call at the end of `prepare()`). The `_experts`/`_experts_triton` hunks were ported by hand onto master's versions. The kernel design is unchanged: persistent 288-thread CTAs, 2 consumer WGs on m64n256k16 RS wgmma, 1 producer warp, 5 stages, 1-D cp.async.bulk weight blocks, plain `cp.async.cg` 16 B activation gather, and every mbarrier wait bounded by about 2 s of clock64.
+
+Changes against the parent patch:
+1. **Build (sm_90a only).** `_build_cuda_experts` now runs in `prepare()` (via `_setup_cuda_experts`), not at import. It sets `TORCH_CUDA_ARCH_LIST=9.0a` around `load_inline` and restores the old value in `finally`. It logs torch's own arch flags (`_get_cuda_arch_flags()`), the extra cflags, the compile seconds, and the `-gencode`/`-arch` tokens read back from the build.ninja that load_inline wrote (what nvcc received). If any of those tokens is not 90a, the path is turned OFF. cflags are `-O3 -lineinfo`, plus `-gencode=arch=compute_90a,code=sm_90a` only when torch's own flags carry a non-90a entry.
+   - **Deviation.** The spec says "pass only -gencode arch=compute_90a,code=sm_90a". I did not add our own gencode when torch's flags are already 90a-only. Torch's JIT path appends its arch flags regardless of user flags, so adding ours too would duplicate the gencode.
+   - The extension was renamed `muse_prefill_nvfp4_wgmma_sm90a_v2`.
+2. **Guard.** All wgmma asm sits under `#if defined(__CUDA_ARCH_FEAT_SM90_ALL)`: `wgmma_m64n256k16_rs` and `wg_fence`/`wg_commit`/`wg_wait`, which become empty stubs otherwise. The kernel body itself is wrapped in `#if !defined(__CUDA_ARCH_FEAT_SM90_ALL)`, whose branch does `atomicOr(err, 4)` and returns (no `__trap`), `#else <body> #endif`. There is no setmaxnreg in this kernel.
+3. **Distinct profile name.** The kernel is now `extern "C"`, so the profile row reads the bare name `_nvfp4_wgmma_grouped_kernel`.
+4. **Image check.** `_setup_cuda_experts` logs the device capability and requires (9, 0). It logs the `cudaFuncGetAttributes` regs, local bytes, ptx and sass.
+   - It asserts sass (binaryVersion) == 90, plus occupancy ≥ 1 and max threads ≥ 288.
+   - **Deviation.** ptxVersion is only logged. Following the review's open question, the attributes cannot tell 90 from 90a, and a cubin-only build might report a ptx value I can't predict. The canary's error word is the decisive check.
+5. **In-process canary** (`_check_cuda_canary`, new). It runs before the one-hot check: one 256-token tile on a contiguous slice of expert 0's CUDA bank (128 rows × 2 chunks), w13 (top_k 8) then w2 (top_k 1). It checks the error word (bit 4 means a non-sm_90a image, 1/2 mean barrier timeouts) and that the output is finite.
+   - Every self-check launch (canary, one-hot w13/w2, e2e w13/w2, e2e full) goes through `_cuda_checked_launch`. That helper prints a flushed line before the launch, then `torch.cuda.synchronize()`, then a flushed line with the error word, so a fault names its call. There are no child processes anywhere.
+6. **Master's w2 zero-store flag.** `_experts_triton`'s CUDA branch passes `state["zero_nonlocal_w2"]` for w2, exactly as master's Triton branch does. `_check_cuda_onehot` and `_check_cuda_e2e` use the same state flag instead of the `ZERO_NONLOCAL_W2` constant.
+   - The kernel already skipped both MMA and stores for -1 items when zero_nonlocal is 0. Its `if (e < 0) { if (zero_nonlocal) {...} continue; }` was unchanged.
+   - The one-hot check asserts the -1 block stays NaN when the flag is off.
+7. **Master's 32-expert align.** The CUDA engine sits inside master's `_experts_triton`. It consumes that function's `moe_align_block_size(local_ids, 256, LOCAL_EXPERTS)` outputs, with expert index 0-31 into `_cuda_bank`, which holds the same 32 local experts, in the same order, as `state["bank"]`. `_check_cuda_e2e` now aligns with `LOCAL_EXPERTS` (it was `N_EXPERTS`), so the check exercises the same tile layout as kernel_fn.
+8. **Routing.** `_experts` logs `[cuda expert gemm] PATH CHOSEN T=<T>: marlin|cuda|triton` once per token count. `_use_cuda_experts` is a shape plus a prepare() flag. The Marlin path, the router, the silu_and_mul between the GEMMs and the weighted sum are untouched.
+   - Any build, arch-flag, image, canary, one-hot or e2e failure prints exactly one `[cuda expert gemm] OFF: <reason>`, and master's Triton path runs.
+
+Review fixes applied: (3) and (4) as specified. The open question on attributes is handled as above (diagnostic only; the error word decides). The regs/local-bytes log covers the spill question.
+
+## Rules check
+
+Checked against `git -C .worktrees/muse_prefill_layer/experts-cuda-wgmma-grouped-gemm-remeasure-sm90a-inproc diff`:
+- [x] CUDA-graph capturable. kernel_fn's new code (`_experts` → `_use_cuda_experts`, `_experts_triton` CUDA branch → `_cuda_moe_gemm`) has no `.item()`/`.cpu()`/sync/tensor print. It branches only on `x.shape[0]` and prepare()'s `state["cuda_experts"]`. Buffers are the same `torch.empty` allocations sized by shape. The PATH CHOSEN print is host text, not a tensor. The pybind launch uses the current stream, with grid = SM count and no host reads.
+- [x] Nothing derived from `data` is cached across calls. `_PATH_LOGGED` holds token counts (shapes) only. `state["cuda_err"]` is an error word that only the prepare() checks read.
+- [x] Weights are repacked losslessly in prepare() only. `_cuda_bank` permutes the E2M1 codes and e4m3 scales into new uint8 blocks, and each expert is asserted to invert exactly. Global scales stay fp32 (the Triton bank's). NVFP4 stays NVFP4.
+- [x] Activations stay BF16 in and out of both GEMMs. Dequant is exact in BF16 (no ftz, no fast-math), with fp32 accumulation. The KV cache and queries are untouched.
+- [x] Attention sees every key: attention code is untouched.
+- [x] No timing patches, harness frames/I/O/secrets, module edits, reference import, subprocess/multiprocessing/fork/spawn, or network. `load_inline` is torch's own JIT build, as in the parent. `os` is used only for `os.environ` (TORCH_CUDA_ARCH_LIST, restored) and `os.path.join` to read our own build.ninja.
+- [x] All work happens inside the timed call. The self-checks, canary and bank are prepare()-only and untimed. There is no output caching or replay.
+- [x] First measurement must be `okc check`, not a scored submit (per hypothesis/LESSONS). Noted for the dispatcher.
+
+okc_lint (`python3 -I .claude/skills/churnsubs/bin/okc_lint.py <worktree>/muse_prefill_layer/submission.py --problem muse_prefill_layer`):
+```
+24 x warn host-sync ... (outside kernel_fn's call graph; fine in prepare())   [all in prepare()-only checks]
+OK with warnings: muse_prefill_layer/submission.py
+```
+`python3 -I -m py_compile`: ok; __pycache__ removed. The CUDA source's `#if`/`#else`/`#endif` nesting and brace count were checked as balanced by extracting the string. nvcc is not available on this node, so the source is not compiled here.

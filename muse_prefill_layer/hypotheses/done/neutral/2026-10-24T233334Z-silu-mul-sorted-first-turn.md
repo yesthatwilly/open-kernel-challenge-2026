@@ -22,8 +22,8 @@ priority: 1
 kind: primary
 controls_for: null
 review: required
-status: running
-stage: dispatched
+status: done
+stage: harvested
 claimed_at: 2026-10-24T233335Z
 base_sha: a0eb6398a55163f42feb6a3cdfb8e02b392e090b
 base_blob: db8a3344398bca79ea5cafeb580f701c055fd475
@@ -42,6 +42,13 @@ mode: check
 prepared_at: 2026-10-25T000329Z
 job: 9528eed511b04f33
 dispatched_at: 2026-10-25T000344Z
+outcome: neutral
+verdict_detail: within-ci
+speedup: 1.0636456311695792
+speedup_ci: [1.0476909467020354, 1.0796003156371228]
+harvested_at: 2026-10-25T003212Z
+best_at_harvest: 1.0705080897445196
+promotion: null
 ---
 
 # silu-mul-sorted-first-turn
@@ -76,3 +83,31 @@ Built in the main thread 2026-10-24 ~23:35Z with user-approved self-review, on s
 ## Re-base (2026-10-25 00:0xZ)
 
 Reset priority 2: re-based onto prefill master after stack-tonight-five-prefill landed (it already carries the Marlin-path sorted silu). The parent diff (8+/2-: the Triton-path gate and the T=16384 self-check) applied cleanly. On first_turn the sorted silu now walks master's moe_align_block_size(LOCAL_EXPERTS) output and still masks local_ids >= 0, so it does not depend on which align ran. Rules check above still holds; lint has no errors.
+
+## Result
+
+- job `9528eed511b04f33` (check), status done, passed True, tests 5/5
+- speedup 1.0636x, 95% CI [1.0477, 1.0796], score 364222.7153925436 µs vs SGLang 387403.9 µs
+- best at harvest: {"speedup": 1.0705080897445196, "ci": [1.0544504683983518, 1.0865657110906872], "job": "c4d14d62f11e4aaf"}; base result: muse_prefill_layer/hypotheses/done/neutral/stack-tonight-five-prefill.result.json
+- **outcome: neutral** (within-ci)
+- files: `muse_prefill_layer/hypotheses/done/neutral/silu-mul-sorted-first-turn.result.json`, `muse_prefill_layer/hypotheses/done/neutral/silu-mul-sorted-first-turn.patch`; branch `hyp/muse_prefill_layer/silu-mul-sorted-first-turn`
+
+## Attribution
+
+| shape | w | base µs | hyp µs | delta | verdict |
+|---|---|---|---|---|---|
+| batch=1 ctx=80000 dist=soft layer=sliding load=turn_1 page=1 q_len=753 repeats=6 | 46 | 1101.29 | 1107.19 | 1.0003 | flat |
+| batch=1 ctx=80000 dist=soft layer=full load=turn_1 page=1 q_len=753 repeats=6 | 16 | 1529.55 | 1554.34 | 1.0015 | flat |
+| batch=4 ctx=80000 dist=soft layer=sliding load=turn_4 page=1 q_len=753 repeats=6 | 46 | 3318.71 | 3465.97 | 0.9984 | flat |
+| batch=4 ctx=80000 dist=soft layer=full load=turn_4 page=1 q_len=753 repeats=6 | 16 | 4849.27 | 5119.82 | 0.9986 | flat |
+| batch=1 ctx=0 dist=soft layer=full load=first_turn page=1 q_len=16384 repeats=6 | 16 | 14705.32 | 15166.77 | 0.9792 | flat |
+| batch=1 ctx=32768 dist=soft layer=sliding load=first_turn page=1 q_len=16384 repeats=6 | 138 | 14264.64 | 14378.67 | 0.9814 | flat |
+| batch=1 ctx=32768 dist=soft layer=full load=first_turn page=1 q_len=16384 repeats=6 | 16 | 17746.69 | 18942.77 | 0.9897 | flat |
+| batch=1 ctx=65536 dist=soft layer=full load=first_turn page=1 q_len=16384 repeats=6 | 16 | 21733.75 | 22677.63 | 0.982 | flat |
+
+no shape moved outside noise. Expected hit: 0/1. Noise ±1.5%.
+
+## Follow-ups
+
+- within-ci: the change is not proven either way; a stacked hypothesis (`depends_on: silu-mul-sorted-first-turn`) that adds a further change in the same area is the only way to learn more (identical code is never re-run).
+
