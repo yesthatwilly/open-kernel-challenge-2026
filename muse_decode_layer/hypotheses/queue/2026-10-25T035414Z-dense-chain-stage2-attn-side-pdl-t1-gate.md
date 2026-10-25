@@ -33,8 +33,10 @@ depends_on: dense-chain-stage2-attn-side-pdl
 priority: 2
 kind: primary
 controls_for: null
-review: required
+review: proceed
 status: queued
+review_at: 2026-10-25T040253Z
+review_companions: null
 ---
 
 # dense-chain-stage2-attn-side-pdl-t1-gate
@@ -52,3 +54,26 @@ Restack dense-chain-stage2-attn-side-pdl onto master (claim applies its patch, d
 ## Risk
 
 Small single-shape gain (~+0.003-0.005 headline) near check resolution; read the full decode_1 row (err ~0.6 us) and the dl_qkv/dl_o profile rows. The patch also renames the _DL_CUDA module; if stack-route-topk-pdl-unpool-nf1 lands first, rebase onto it and merge the TU by hand.
+
+## Adversarial review
+
+Reviewed 2026-10-25T040253Z by an adversarial subagent (model opus).
+
+**Verdict: proceed.** The diagnosis is right: dl_o_kernel does not scale past T=1 (0.41 TB/s at T=32), and narrowing to T=1 keeps the one measured win (full decode_1 -3.7 us, z -3.9) while removing the +6 to +13.5% losses. Sharpen the gate to full-attention T=1 only (DL2_SLIDING1='nvjet'), so sliding decode_1 becomes an in-run drift control for the single target row.
+
+### Justification
+The source run used the current master blob (base_blob 4da9467), so its rows compare directly to BEST. At T=1, Q ran 8.4 us at 4.5 TB/s and O 6.4 us. Full decode_1 measured 139.3 vs BEST 142.9/145.9 and vs the control run's 144.1, so -3.6 to -4.8 us, about 6-8 err. Sliding decode_1 was 125.8 vs control 126.5 (-0.7 us, within err), and the 03:41Z harvest explicitly recommended full only. The patch already has the knobs: DL2_MAX_TOKENS (its own bound, also sizing ws_q/ws_o) and _dl2_applies(), which honours DL2_SLIDING1 != 'raw' to keep sliding decode_1 on master's nvjet + _sliding_forward. Setting DL2_MAX_TOKENS = 1 and DL2_SLIDING1 = 'nvjet' implements the narrowed gate without touching kernel code. One check is readable: a single target row at err ~0.6 us with an expected -3.7 us, plus the dl_qkv_kernel/dl_o_kernel profile rows. With sliding decode_1 off, that row reads batch drift in the same run. Weakest link: the gain is small (~+0.003-0.005 headline) and lives on one shape, so landing will need a submit-grade read either way.
+
+### Confounders on the current kernel
+- small-t-launch-minimal-dense-chain-pdl (master): stage 2's O kernel PDL-chains into the stage-1 chain (boundary -> P). The T=1 gain partly depends on P's PDL pre-wait overlap, which is unchanged and landed.
+- fa3-hdim128-head-pairing-batched (master): pairing is batch>1 only, so it does not apply at decode_1 (batch 1). Q writes the paired pad layout only where paired, so no interaction at T=1.
+- stack-route-topk-pdl-unpool-nf1 (queued sibling): it also improves T=1 (R and unpool). Run both independently on master. The patches conflict in _DL_CUDA (verified: dense-chain-stage2 patch fails to apply after the route patch at ~line 295), so whichever lands second must hand-merge the TU with one module name. Their T=1 gains may be sub-additive through the shared PDL chain.
+
+### Interference and A/B needs
+No companion. With DL2_SLIDING1='nvjet' the sliding decode_1 row is master code in the same run and serves as the control. T>1 shapes return to master byte for byte. A separate ab run would only duplicate that.
+
+### Open questions
+- BUILDER: implement the gate with the existing constants: DL2_MAX_TOKENS = 1 (also shrinks ws_q/ws_o) and DL2_SLIDING1 = 'nvjet' (full-only at T=1), rename the module, and drop the NF=2/4 instantiations and T>1 self-check cases. Print PATH CHOSEN per T, showing Q/O only at full T=1.
+- BUILDER: make the selector compare its printed T=1 timing (Q + FA3 + O vs master nvjet qkv + FusedQKNorm + casts + store_cache + FA3 + FusedRMSNormGate + nvjet o) and assert the custom path wins before enabling it (LESSONS 163).
+- If the user prefers to keep sliding T=1 on (the spec as written), the run is still readable on the full decode_1 row, but then there is no in-run decode_1 drift control.
+
