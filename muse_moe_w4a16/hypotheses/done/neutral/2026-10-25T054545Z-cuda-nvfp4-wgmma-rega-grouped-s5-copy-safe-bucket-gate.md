@@ -46,10 +46,10 @@ controls_for: null
 rewrite_stage: 5
 replaces: Marlin w13+silu+w2 (moe_wna16_marlin_gemm x2 + act_and_mul) at 128<=T<=512
 review: proceed
-status: running
+status: done
 review_at: 2026-10-25T054944Z
 review_companions: null
-stage: dispatched
+stage: harvested
 claimed_at: 2026-10-25T110823Z
 base_sha: 928151c3ea4e903fc4a05ae7ac59672291b71d0d
 base_blob: a13d5fea2e79f85df573670cbd55a8a10fbc3d2c
@@ -68,6 +68,13 @@ attempt_file: 2026-10-25T111451Z-check-cuda-nvfp4-wgmma-rega-grouped-s5-copy-saf
 prepared_at: 2026-10-25T111451Z
 job: 7be125e9e1ea42e3
 dispatched_at: 2026-10-25T111459Z
+outcome: neutral
+verdict_detail: unproven-vs-best
+speedup: 1.3743691121494652
+speedup_ci: [1.3537535754672232, 1.394984648831707]
+harvested_at: 2026-10-25T115711Z
+best_at_harvest: 1.3438953504561806
+promotion: null
 ---
 
 # cuda-nvfp4-wgmma-rega-grouped-s5-copy-safe-bucket-gate
@@ -156,3 +163,30 @@ Fixes (worktree submission.py; undef, py_compile and okc_lint OK, 0 errors):
 - The LAUNCHED line now says it describes the copy check, where both flags are forced on. Each per-bucket PATH CHOSEN line now ends with "(selector)", "(selector skipped or raised)" or "(wgmma path off)", so a reader can tell which path ran in each bucket.
 
 Residual risk: the prepare forecast says B128 = Marlin (wgmma 1.21x slower) and B256 = wgmma by ~1.06x eager. B256 is close to the 1.02x margin, so graph-timing noise could still disable it and give a master-identical run.
+
+## Result
+
+- job `7be125e9e1ea42e3` (check), status done, passed True, tests 5/5
+- speedup 1.3744x, 95% CI [1.3538, 1.3950], score 9785.216999650855 µs vs SGLang 13448.5 µs
+- best at harvest: {"speedup": 1.3438953504561806, "ci": [1.3237369201993379, 1.364053780713023], "job": "7a0d900a1dd34666"}; base result: muse_moe_w4a16/hypotheses/done/neutral/cuda-nvfp4-wgmma-rega-grouped-s4-replay-safe.result.json
+- **outcome: neutral** (unproven-vs-best)
+- files: `muse_moe_w4a16/hypotheses/done/neutral/cuda-nvfp4-wgmma-rega-grouped-s5-copy-safe-bucket-gate.result.json`, `muse_moe_w4a16/hypotheses/done/neutral/cuda-nvfp4-wgmma-rega-grouped-s5-copy-safe-bucket-gate.patch`; branch `hyp/muse_moe_w4a16/cuda-nvfp4-wgmma-rega-grouped-s5-copy-safe-bucket-gate`
+
+## Attribution
+
+| shape | w | base µs | hyp µs | delta | verdict |
+|---|---|---|---|---|---|
+| bs=1 load=decode_1 sharding=ep8 | 60 | 46.89 | 45.78 | 0.9988 | flat |
+| bs=16 load=decode_16 sharding=ep8 | 60 | 145.58 | 144.81 | 1.0026 | flat |
+| bs=32 load=decode_32 sharding=ep8 | 60 | 197.23 | 204.6 | 0.9997 | flat |
+| bs=8 load=verify_1 sharding=ep8 | 60 | 113.34 | 104.53 | 1.0152 | flat |
+| bs=128 load=verify_16 sharding=ep8 | 60 | 349.79 | 314.26 | 1.0602 | gained |
+| bs=256 load=verify_32 sharding=ep8 | 60 | 428.84 | 404.85 | 1.0617 | gained |
+
+gained on verify_16 verify_16; verify_32 verify_32. Expected hit: 4/4. Noise ±1.5%.
+
+## Follow-ups
+
+- rewrite stage 5 of `Marlin w13+silu+w2 (moe_wna16_marlin_gemm x2 + act_and_mul) at 128<=T<=512`: read the replaced kernels' own us per shape (profile top_kernels) against the incumbent and the floor, and check which Milestone it reached. The next stage is `/hypothesize muse_moe_w4a16 "<what to fix or tune>" --kind rewrite --depends-on cuda-nvfp4-wgmma-rega-grouped-s5-copy-safe-bucket-gate --stage 6`; a slow or failed first cut is the expected start, not a do-not-retry.
+- unproven-vs-best: the change is not proven either way; a stacked hypothesis (`depends_on: cuda-nvfp4-wgmma-rega-grouped-s5-copy-safe-bucket-gate`) that adds a further change in the same area is the only way to learn more (identical code is never re-run).
+
