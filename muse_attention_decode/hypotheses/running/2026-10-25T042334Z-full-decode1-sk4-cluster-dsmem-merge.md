@@ -47,7 +47,7 @@ review: proceed
 status: running
 review_at: 2026-10-25T043142Z
 review_companions: null
-stage: implemented
+stage: dispatched
 claimed_at: 2026-10-25T043142Z
 base_sha: aafeb8f4d969d4a791dafeca1ad8dda986c3e7c1
 base_blob: d8769ef25caf845a0e207538ccc5c62394b6ee3b
@@ -64,6 +64,8 @@ submission_blob: 3dea00b0efb40e1019685585557f439ee4ccd0d6
 lint_warnings: 20
 attempt_file: 2026-10-25T044042Z-check-full-decode1-sk4-cluster-dsmem-merge.md
 prepared_at: 2026-10-25T044042Z
+job: f519261b7c2b435f
+dispatched_at: 2026-10-25T044049Z
 ---
 
 # full-decode1-sk4-cluster-dsmem-merge
