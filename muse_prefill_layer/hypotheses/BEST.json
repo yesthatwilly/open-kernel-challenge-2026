@@ -1,17 +1,17 @@
 {
  "problem": "muse_prefill_layer",
- "job": "c4d14d62f11e4aaf",
+ "job": "502f2eab95164781",
  "check_job": "c4d14d62f11e4aaf",
- "mode": "check",
- "speedup": 1.0705080897445196,
+ "mode": "submit",
+ "speedup": 1.074386115190733,
  "ci": [
-  1.0544504683983518,
-  1.0865657110906872
+  1.058270323462872,
+  1.090501906918594
  ],
- "score_us": 361887.87708503474,
+ "score_us": 360581.633104245,
  "commit": "a81d19c4982ee781eb5faf78329a9ddc63e58206",
  "submission_blob": "db8a3344398bca79ea5cafeb580f701c055fd475",
  "slug": "stack-tonight-five-prefill",
  "result": "muse_prefill_layer/hypotheses/done/neutral/stack-tonight-five-prefill.result.json",
- "updated_at": "2026-10-25T000302Z"
+ "updated_at": "2026-10-25T003215Z"
 }

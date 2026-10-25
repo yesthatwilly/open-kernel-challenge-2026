@@ -41,7 +41,7 @@ attempt_file: 2026-10-24T233216Z-check-stack-tonight-five-prefill.md
 prepared_at: 2026-10-24T233216Z
 job: c4d14d62f11e4aaf
 dispatched_at: 2026-10-24T233227Z
-promotion: submitted
+promotion: done
 promotion_job: 502f2eab95164781
 promotion_at: 2026-10-25T000315Z
 outcome: neutral
@@ -52,6 +52,7 @@ harvested_at: 2026-10-25T000224Z
 best_at_harvest: 1.0591912383762452
 hand_landed: true
 promotion_commit: a81d19c4982ee781eb5faf78329a9ddc63e58206
+board: "{\"rank\": 273, \"team\": \"yesthatwilly\", \"speedup\": 1.0744, \"first\": false, \"ahead\": 272, \"to_first\": 1.7372}"
 ---
 
 # stack-tonight-five-prefill
