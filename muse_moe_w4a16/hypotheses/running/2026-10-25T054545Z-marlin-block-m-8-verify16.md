@@ -50,7 +50,7 @@ base_sha: 1f8d1d245fbad53f62cd763917484822e82cb0ff
 base_blob: 60dfe35d5417d9c0f89067ff313efdc2c41d03a2
 branch: hyp/muse_moe_w4a16/marlin-block-m-8-verify16
 worktree: .worktrees/muse_moe_w4a16/marlin-block-m-8-verify16
-mode: null
+mode: check
 restack_of: null
 stale_base: null
 implemented_at: 2026-10-25T054935Z
@@ -59,6 +59,8 @@ submission_sha256: e120fb16f9d7cc0941655601606b670c29c20a9dfb420c81be80333f174b4
 norm_sha256: f0c5de4921acc049cc037b08d09ab2a543d4b22235e99e85c473e6eff995934a
 submission_blob: 5ce6af6b334300197dd14ec64f045cf23f54566c
 lint_warnings: 11
+attempt_file: 2026-10-25T054935Z-check-marlin-block-m-8-verify16.md
+prepared_at: 2026-10-25T054935Z
 ---
 
 # marlin-block-m-8-verify16
