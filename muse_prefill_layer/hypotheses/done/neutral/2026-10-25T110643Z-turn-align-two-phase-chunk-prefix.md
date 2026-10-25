@@ -57,10 +57,10 @@ priority: 2
 kind: primary
 controls_for: null
 review: proceed
-status: running
+status: done
 review_at: 2026-10-25T115947Z
 review_companions: null
-stage: dispatched
+stage: harvested
 claimed_at: 2026-10-25T115947Z
 base_sha: f896dc264c4b4ee1df6c4b33556b50f2d4282f9c
 base_blob: 712edc5ea5be2dde8f558a016d0877b285340ee4
@@ -79,6 +79,13 @@ attempt_file: 2026-10-25T120316Z-check-turn-align-two-phase-chunk-prefix.md
 prepared_at: 2026-10-25T120316Z
 job: d792e5c9d6d94f02
 dispatched_at: 2026-10-25T120324Z
+outcome: neutral
+verdict_detail: unproven-vs-best
+speedup: 1.3368513655111065
+speedup_ci: [1.31679859502844, 1.356904135993773]
+harvested_at: 2026-10-25T124811Z
+best_at_harvest: 1.3274587526558561
+promotion: null
 ---
 
 # turn-align-two-phase-chunk-prefix
@@ -152,3 +159,31 @@ Risks: Triton compile of the 2-D axis-0 cumsum on a [512|1024, 32] tile with 8 w
 - [x] All work inside the timed call; no output caching or replay.
 
 okc_lint output: "OK with warnings: muse_prefill_layer/submission.py". The warnings are host-sync/dtype notes, all in prepare() (including the new .item() at the first-mismatch helper) or pre-existing. undef.py reported []; py_compile passed; __pycache__ removed.
+
+## Result
+
+- job `d792e5c9d6d94f02` (check), status done, passed True, tests 5/5
+- speedup 1.3369x, 95% CI [1.3168, 1.3569], score 289788.31154642784 µs vs SGLang 387403.9 µs
+- best at harvest: {"speedup": 1.3274587526558561, "ci": [1.3075468713660183, 1.347370633945694], "job": "2910b2fb4b744865"}; base result: muse_prefill_layer/hypotheses/done/gain/experts-turn-rega-s4-port-t4096.result.json
+- **outcome: neutral** (unproven-vs-best)
+- files: `muse_prefill_layer/hypotheses/done/neutral/turn-align-two-phase-chunk-prefix.result.json`, `muse_prefill_layer/hypotheses/done/neutral/turn-align-two-phase-chunk-prefix.patch`; branch `hyp/muse_prefill_layer/turn-align-two-phase-chunk-prefix`
+
+## Attribution
+
+| shape | w | base µs | hyp µs | delta | verdict |
+|---|---|---|---|---|---|
+| batch=1 ctx=80000 dist=soft layer=sliding load=turn_1 page=1 q_len=753 repeats=6 | 46 | 730.17 | 765.13 | 0.9956 | flat |
+| batch=1 ctx=80000 dist=soft layer=full load=turn_1 page=1 q_len=753 repeats=6 | 16 | 1105.64 | 1149.82 | 1.0013 | flat |
+| batch=4 ctx=80000 dist=soft layer=sliding load=turn_4 page=1 q_len=753 repeats=6 | 46 | 2167.2 | 2182.18 | 1.0403 | gained |
+| batch=4 ctx=80000 dist=soft layer=full load=turn_4 page=1 q_len=753 repeats=6 | 16 | 3748.07 | 3687.78 | 1.0123 | flat |
+| batch=1 ctx=0 dist=soft layer=full load=first_turn page=1 q_len=16384 repeats=6 | 16 | 14585.46 | 15283.79 | 1.0051 | flat |
+| batch=1 ctx=32768 dist=soft layer=sliding load=first_turn page=1 q_len=16384 repeats=6 | 138 | 14010.59 | 14177.46 | 0.9902 | flat |
+| batch=1 ctx=32768 dist=soft layer=full load=first_turn page=1 q_len=16384 repeats=6 | 16 | 17741.73 | 18620.6 | 0.9876 | flat |
+| batch=1 ctx=65536 dist=soft layer=full load=first_turn page=1 q_len=16384 repeats=6 | 16 | 21874.7 | 21827.18 | 1.0013 | flat |
+
+gained on sliding turn_4. Expected hit: 1/3. Noise ±1.5%.
+
+## Follow-ups
+
+- unproven-vs-best: the change is not proven either way; a stacked hypothesis (`depends_on: turn-align-two-phase-chunk-prefix`) that adds a further change in the same area is the only way to learn more (identical code is never re-run).
+
