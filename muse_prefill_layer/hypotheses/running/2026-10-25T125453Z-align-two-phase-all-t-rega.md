@@ -70,7 +70,7 @@ base_sha: 8517012b49a52a4bad4cd73abb2b38533a9adde2
 base_blob: c2e3e595def2e6b5949e0fd350ce98ed59729147
 branch: hyp/muse_prefill_layer/align-two-phase-all-t-rega
 worktree: .worktrees/muse_prefill_layer/align-two-phase-all-t-rega
-mode: null
+mode: check
 restack_of: null
 stale_base: null
 implemented_at: 2026-10-25T130218Z
@@ -79,6 +79,8 @@ submission_sha256: d14e76b6b72de0f2a6866e964caa63eabba5c2b068bb500527fa0cb16742d
 norm_sha256: 314fa6c25eec5de828251a2da8374d11abd960d6e9aca6fa820ea8e07657cce7
 submission_blob: a2fe2a75893c60d4f68cf94fcce8ce8f9b708a71
 lint_warnings: 65
+attempt_file: 2026-10-25T130218Z-check-align-two-phase-all-t-rega.md
+prepared_at: 2026-10-25T130218Z
 ---
 
 # align-two-phase-all-t-rega
