@@ -65,7 +65,7 @@ review: proceed
 status: running
 review_at: 2026-10-25T150347Z
 review_companions: null
-stage: implemented
+stage: dispatched
 claimed_at: 2026-10-25T150348Z
 base_sha: 5e7ce21f82b7a49dc31b038e9868884c8a90a3e0
 base_blob: 5cf8fae31e5b84c36efeeb4569763eb9b06e1c8a
@@ -82,6 +82,8 @@ submission_blob: eb07606c72443e3a39558c0efc7d43f097d2f901
 lint_warnings: 57
 attempt_file: 2026-10-25T150712Z-submit-epilogue-gate-l2-prefetch-cuda.md
 prepared_at: 2026-10-25T150712Z
+job: 917a9689ba4645bd
+dispatched_at: 2026-10-25T150720Z
 ---
 
 # epilogue-gate-l2-prefetch-cuda
