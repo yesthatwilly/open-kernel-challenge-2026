@@ -65,7 +65,7 @@ review: proceed
 status: running
 review_at: 2026-10-25T054704Z
 review_companions: null
-stage: implemented
+stage: dispatched
 claimed_at: 2026-10-25T054704Z
 base_sha: 6f95ce71ba21682ba9cbb6d346abb2a93a862b2f
 base_blob: 76492911dfd6685139a2ffac06c1d27083ecdb0a
@@ -82,6 +82,8 @@ submission_blob: 7fd30a78be18303b7c935dc944c31ff33649bed0
 lint_warnings: 27
 attempt_file: 2026-10-25T084910Z-check-sliding-verify-sk-pseudo-s2-token-group.md
 prepared_at: 2026-10-25T084910Z
+job: bd0ddd413f7f4a94
+dispatched_at: 2026-10-25T084919Z
 ---
 
 # sliding-verify-sk-pseudo-s2-token-group
