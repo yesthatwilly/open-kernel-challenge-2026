@@ -1,17 +1,18 @@
 {
   "problem": "muse_prefill_layer",
-  "job": "1cc92a43b8be40f8",
+  "job": "edf68fa3131c4bf8",
   "check_job": null,
   "mode": "submit",
-  "speedup": 1.4586709689454935,
+  "speedup": 1.4599652306075455,
   "ci": [
-    1.4367909044113112,
-    1.4805510334796759
+    1.4380657521484324,
+    1.4818647090666586
   ],
-  "score_us": 265586.8994774491,
+  "score_us": 265351.4562389866,
   "commit": "97e792cd86594c84955869d474331b1c65b34f23",
   "submission_blob": "9fb1f7c4b4282dd7461c6cdba926fe3ebf12128e",
-  "slug": "fa3-full-contiguous-kv-triton-gather-gated",
+  "slug": "pre-expert-norm-fused-rega-gather",
   "result": "muse_prefill_layer/hypotheses/done/neutral/fa3-full-contiguous-kv-triton-gather-gated.result.json",
-  "updated_at": "2026-10-25T153935Z"
+  "updated_at": "2026-10-25T153935Z",
+  "note": "board best; scored from this slug (code may differ from master, see DECISIONS)"
 }
