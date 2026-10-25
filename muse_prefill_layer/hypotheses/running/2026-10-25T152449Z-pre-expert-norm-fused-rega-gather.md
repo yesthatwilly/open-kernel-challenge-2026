@@ -71,7 +71,7 @@ review: proceed
 status: running
 review_at: 2026-10-25T153001Z
 review_companions: null
-stage: implemented
+stage: dispatched
 claimed_at: 2026-10-25T153001Z
 base_sha: e15152e9078a60b4c86e9eaf4e8b71da18b05e66
 base_blob: a2fe2a75893c60d4f68cf94fcce8ce8f9b708a71
@@ -88,6 +88,8 @@ submission_blob: 4aee2710f852edb7d5dadc94735d121c48385cab
 lint_warnings: 73
 attempt_file: 2026-10-25T153857Z-submit-pre-expert-norm-fused-rega-gather.md
 prepared_at: 2026-10-25T153857Z
+job: edf68fa3131c4bf8
+dispatched_at: 2026-10-25T153906Z
 ---
 
 # pre-expert-norm-fused-rega-gather
