@@ -56,9 +56,10 @@ priority: 3
 kind: primary
 controls_for: null
 review: proceed
-status: queued
+status: hold
 review_at: 2026-10-25T203206Z
 review_companions: null
+hold_reason: "own condition: first measurement must be an okc check (new cp.async/mbarrier producer can fault or hang); only scored submits remained on 2026-10-25, and a gain on master cannot move the board (best is the occ2 branch). Unhold when checks reset; apply the reviewer's fence.proxy.async and nvalid-bound fixes when building"
 ---
 
 # wg-producer-direct-x-rows-no-gather
