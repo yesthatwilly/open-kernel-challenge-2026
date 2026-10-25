@@ -1,17 +1,17 @@
 {
  "problem": "muse_decode_layer",
- "job": "34a9be06918d448b",
- "check_job": "34a9be06918d448b",
+ "job": "933d3f825a044d36",
+ "check_job": "933d3f825a044d36",
  "mode": "check",
- "speedup": 1.3017519911209459,
+ "speedup": 1.3079569800910293,
  "ci": [
-  1.2822257112541318,
-  1.32127827098776
+  1.288337625389664,
+  1.3275763347923946
  ],
- "score_us": 17376.81229165744,
- "commit": "d5595769062af2701dafcd15e4a410b3684e1760",
- "submission_blob": "07cda658e21f2eb25a9dd1f50ac5202ad5985831",
- "slug": "dense-chain-s3-t1-q-sk2-o-route-unpool",
- "result": "muse_decode_layer/hypotheses/done/neutral/dense-chain-s3-t1-q-sk2-o-route-unpool.result.json",
- "updated_at": "2026-10-25T145718Z"
+ "score_us": 17294.37614869084,
+ "commit": "6773ec5cf56207a62cd84d77607d9c11cabca6f9",
+ "submission_blob": "4bb57fd292a7f0fd5a80bd88dc773008b490bf8c",
+ "slug": "dl3-piece-a-gate-stride-check-fix",
+ "result": "muse_decode_layer/hypotheses/done/neutral/dl3-piece-a-gate-stride-check-fix.result.json",
+ "updated_at": "2026-10-25T153311Z"
 }
