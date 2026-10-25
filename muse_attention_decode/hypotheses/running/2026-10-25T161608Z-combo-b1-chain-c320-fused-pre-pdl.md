@@ -105,7 +105,7 @@ review: proceed
 status: running
 review_at: 2026-10-25T162106Z
 review_companions: null
-stage: claimed
+stage: implemented
 claimed_at: 2026-10-25T162106Z
 base_sha: c20f01f78876c85beb295ad153dccfe3078c3ad4
 base_blob: 5cf8fae31e5b84c36efeeb4569763eb9b06e1c8a
@@ -114,6 +114,12 @@ worktree: .worktrees/muse_attention_decode/combo-b1-chain-c320-fused-pre-pdl
 mode: null
 restack_of: null
 stale_base: null
+implemented_at: 2026-10-25T185755Z
+impl_commit: 4a910a709e3b61bda37f7456d3b0855c176071bb
+submission_sha256: 87633370d03bb7e83b2fe78221dcdb6d2d88669aacdc9c0e88a85789dc117938
+norm_sha256: 073e0180315a85ff288cffc4259044bf88c0c9e6cb1ae85e417dab663d8f71d5
+submission_blob: 6aeaa6d224eb1a7eede636e8781f36b65c438965
+lint_warnings: 71
 ---
 
 # combo-b1-chain-c320-fused-pre-pdl
@@ -228,3 +234,25 @@ OK with warnings: .worktrees/muse_attention_decode/combo-b1-chain-c320-fused-pre
 ```
 
 `python3 -I -m py_compile` ok and `__pycache__` removed. An AST scan of the new functions and kernel_fn found no undefined names.
+
+## Pre-flight audit
+
+Audited 2026-10-25 by an Opus subagent, by reading the code and emulating the index arithmetic in numpy-free Python. No GPU or nvcc was available.
+
+**Verdict: dispatch-with-fixes.**
+
+Findings, with no defect found in any of them:
+- Fault safety of kernel A was emulated for every key count 1..1999 plus 4097, 5001, 79680/79681, 80000/80001, 80037 and 1048577, on grids 1/2/3/7/264/300, with page-table width = seq and seq+37. The owner rule `bx == (total-1) % gx` gives exactly one owner, and its tile `n_last` and token `tt_last` map to position seq-1. Every work item is covered, and every ws slot is below `max_chunks`. The swizzled smem overwrite offset equals issue_tile's layout for the same byte and stays inside the 8 KB tile. The global row store `loc*128 + kh*64 + dd` stays inside the row. The smem layout totals 88,352 B for FUSED (2 CTAs/SM fit), and the FKV_LOC int64 and float4 regions are aligned.
+- The judge's inputs satisfy the fused-store precondition: reference.generate_input sets cache_loc = page_table[seq_lens] (page 1), cache_seqlens = seq_lens + 1 and page-table width >= seq. So the smem overwrite of key seq-1 and the store at cache_loc are the same row, and every ws slot fits.
+- The fused numerics match master's _pre_attention_kernel (ROPE=False). q and k use scaleless RMSNorm `1/sqrt(ss/64 + 1e-5)`, k is divided by k_scale after the norm, and v is divided by v_scale with no norm. The cast is RTNE SATFINITE e4m3, the same as Triton's float8e4nv. The q column map is identical to the smem path's, the gate offset is 1280, and the score scale equals master's.
+- PDL: only seqlens, v_scale and the gate logits (graph inputs that A never writes) are read above `griddepcontrol.wait`. Every ws_acc/ws_ml read is below it, and the trigger comes after the partial stores.
+- The FUSED macro fallback is sound: every FUSED-only symbol sits under `#ifdef C320_FUSED`, and the rebuild uses a distinct module name.
+- Master is untouched: the only removed line is the moved `import time`. `_C320_FN` is written only during setup and frozen at the end. kernel_fn's new branch is config-only, and `_c320_run` has no sync, no data-dependent control flow and no state.
+- The import budget is bounded by the 480 s clock gates.
+
+Fix:
+1. Added `_c320_bounds(data, tag)`, an import-time-only host-side bounds check. It covers dtype and layout, `1 <= seq <= width`, `0 <= cache_loc < rows`, `positions[0] == seq-1`, `page_table[0, seq-1] == cache_loc`, `page_table[0, :seq]` in range, and the qkv width and 16 B alignment. It runs before the first launch of every correctness case, for each state before the warm-up/capture, after every refill before replay in `_c320_alt`, and before the gate's graphs. A bad input now raises (the variant is dropped or the route stays on V0) instead of risking a device fault that would poison the context. Reason: the coordinator asked for fault safety in the import checks. The synthetic inputs already satisfy these conditions, so the check is insurance.
+
+After the edit, okc_lint returned OK with warnings (host-sync only outside kernel_fn), py_compile passed, and __pycache__ was removed.
+
+Residual risk: nvcc and the device semantics (inline PTX, griddepcontrol, the cp.async/overwrite ordering) are not compile- or run-verified. A FUSED build failure falls back cleanly, but a runtime device fault in the import checks would still void the run.
