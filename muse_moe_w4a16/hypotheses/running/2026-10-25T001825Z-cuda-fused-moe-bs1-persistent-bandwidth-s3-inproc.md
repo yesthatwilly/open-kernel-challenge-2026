@@ -52,7 +52,7 @@ review: proceed
 status: running
 review_at: 2026-10-25T002107Z
 review_companions: null
-stage: implemented
+stage: dispatched
 claimed_at: 2026-10-25T013639Z
 base_sha: ea3464f424a209eb0f46541178cd3dd11062426f
 base_blob: c80e3a831390ffb38cbcb7560231b59a64a2c6a0
@@ -69,6 +69,8 @@ submission_blob: a716550e4581bde58743d07845f5a7e77aec1aea
 lint_warnings: 33
 attempt_file: 2026-10-25T013943Z-check-cuda-fused-moe-bs1-persistent-bandwidth-s3-inproc.md
 prepared_at: 2026-10-25T013943Z
+job: cd0f6b08a6dd4165
+dispatched_at: 2026-10-25T013951Z
 ---
 
 # cuda-fused-moe-bs1-persistent-bandwidth-s3-inproc
