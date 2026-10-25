@@ -44,7 +44,7 @@ review: proceed
 status: running
 review_at: 2026-10-25T085209Z
 review_companions: null
-stage: implemented
+stage: dispatched
 claimed_at: 2026-10-25T085209Z
 base_sha: e6cf5ce8f79493b9904b7c6d74e6a6c25f14f820
 base_blob: db8a3344398bca79ea5cafeb580f701c055fd475
@@ -61,6 +61,8 @@ submission_blob: 8507f9e93acf5b0c3acb3b0dd45789b556d1344a
 lint_warnings: 31
 attempt_file: 2026-10-25T085911Z-check-turn-align-sglang32-prenorm-triton-restack.md
 prepared_at: 2026-10-25T085911Z
+job: 9cfd4f58d24044b2
+dispatched_at: 2026-10-25T085923Z
 ---
 
 # turn-align-sglang32-prenorm-triton-restack
