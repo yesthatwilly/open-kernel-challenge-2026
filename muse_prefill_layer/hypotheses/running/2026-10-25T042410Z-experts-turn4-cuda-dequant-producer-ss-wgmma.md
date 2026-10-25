@@ -69,7 +69,7 @@ base_sha: 8c0b24db143ab6bf6ff8765c64729c63abac3138
 base_blob: db8a3344398bca79ea5cafeb580f701c055fd475
 branch: hyp/muse_prefill_layer/experts-turn4-cuda-dequant-producer-ss-wgmma
 worktree: .worktrees/muse_prefill_layer/experts-turn4-cuda-dequant-producer-ss-wgmma
-mode: null
+mode: check
 restack_of: null
 stale_base: null
 implemented_at: 2026-10-25T044809Z
@@ -78,6 +78,8 @@ submission_sha256: 5e18a107a67cf8b1369e76e334ecc3d3e474e53a02e7989ec327ef3fba894
 norm_sha256: d657ebd0be595907a6128d52dfe3bd273810fa729d21269af71d7fce3e387454
 submission_blob: d5e8e93c9f001ce31b439299ad78db8bf3b8f614
 lint_warnings: 32
+attempt_file: 2026-10-25T044809Z-check-experts-turn4-cuda-dequant-producer-ss-wgmma.md
+prepared_at: 2026-10-25T044809Z
 ---
 
 # experts-turn4-cuda-dequant-producer-ss-wgmma
