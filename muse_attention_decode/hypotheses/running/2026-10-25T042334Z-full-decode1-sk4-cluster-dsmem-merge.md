@@ -53,7 +53,7 @@ base_sha: aafeb8f4d969d4a791dafeca1ad8dda986c3e7c1
 base_blob: d8769ef25caf845a0e207538ccc5c62394b6ee3b
 branch: hyp/muse_attention_decode/full-decode1-sk4-cluster-dsmem-merge
 worktree: .worktrees/muse_attention_decode/full-decode1-sk4-cluster-dsmem-merge
-mode: null
+mode: check
 restack_of: null
 stale_base: null
 implemented_at: 2026-10-25T044042Z
@@ -62,6 +62,8 @@ submission_sha256: cecebe4df2e9f4cc2e7fc66cb75c1d99810384377d749a5ba300f9015a3a1
 norm_sha256: 405c2d4ba202c3a1ae83d31b590b4c9b52ec099ab2630ac9f3eb495dc5ff52c0
 submission_blob: 3dea00b0efb40e1019685585557f439ee4ccd0d6
 lint_warnings: 20
+attempt_file: 2026-10-25T044042Z-check-full-decode1-sk4-cluster-dsmem-merge.md
+prepared_at: 2026-10-25T044042Z
 ---
 
 # full-decode1-sk4-cluster-dsmem-merge
