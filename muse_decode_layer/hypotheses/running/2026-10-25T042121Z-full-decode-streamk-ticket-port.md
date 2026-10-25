@@ -55,9 +55,18 @@ controls_for: null
 rewrite_stage: 3
 replaces: splitkv_attn_kernel + splitkv_combine_kernel on full decode, 1 < batch <= 64
 review: proceed
-status: queued
+status: running
 review_at: 2026-10-25T042453Z
 review_companions: null
+stage: claimed
+claimed_at: 2026-10-25T042453Z
+base_sha: f6e653b6cc358b21c20086af784b37d069a021a5
+base_blob: c9067b8201f2480c64910c4a71098df7ce616f73
+branch: hyp/muse_decode_layer/full-decode-streamk-ticket-port
+worktree: .worktrees/muse_decode_layer/full-decode-streamk-ticket-port
+mode: null
+restack_of: null
+stale_base: null
 ---
 
 # full-decode-streamk-ticket-port
