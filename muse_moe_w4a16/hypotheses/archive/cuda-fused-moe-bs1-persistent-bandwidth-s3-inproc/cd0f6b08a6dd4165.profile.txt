@@ -1,0 +1,62 @@
+okc run cd0f6b08a6dd4165 on muse_moe_w4a16
+submission  /home/user/git/musespark/.worktrees/muse_moe_w4a16/cuda-fused-moe-bs1-persistent-bandwidth-s3-inproc/muse_moe_w4a16/submission.py
+status      ok
+passed      true
+speedup     1.3294905627410667
+speedup_ci  [1.3095482042999507 1.3494329211821825]
+score_us    10115.528742282053
+tests       5/5 passed
+
+scored shapes (µs; speed of light is the reference's bound)
+case                                                         sglang      yours  speedup        sol  
+bs=1 load=decode 1 sharding=ep8                               80.48      50.41   1.597x      11.42  
+bs=16 load=decode 16 sharding=ep8                            188.40     147.57   1.277x      52.52  
+bs=32 load=decode 32 sharding=ep8                            207.02     200.82   1.031x      70.76  
+bs=8 load=verify 1 sharding=ep8                              150.42     113.00   1.331x      37.32  
+bs=128 load=verify 16 sharding=ep8                           471.26     323.26   1.458x     101.34  
+bs=256 load=verify 32 sharding=ep8                           624.82     461.40   1.354x     108.94  
+
+profile 0: bs=1 load=decode 1 sharding=ep8
+kernel                                                           GPU time  share  calls
+void (anonymous namespace)::moe_bs1_kernel<false>(__nv_bf...      62.5 µs 100.0%      1
+total                                                             62.5 µs
+
+profile 1: bs=16 load=decode 16 sharding=ep8
+kernel                                                           GPU time  share  calls
+void sglang::device::marlin_moe::Marlin<__nv_bfloat16, 56...     147.4 µs  94.4%      2
+_post_norm_combine_kernel                                          3.7 µs   2.4%      1
+_align_small_kernel                                                2.9 µs   1.8%      1
+void sglang::act_and_mul_kernel<__nv_bfloat16, (sglang::A...       2.2 µs   1.4%      1
+total                                                            156.1 µs
+
+profile 2: bs=32 load=decode 32 sharding=ep8
+kernel                                                           GPU time  share  calls
+void sglang::device::marlin_moe::Marlin<__nv_bfloat16, 56...     189.3 µs  94.8%      2
+_align_small_kernel                                                4.2 µs   2.1%      1
+_post_expert_norm_weighted_sum_kernel                              3.7 µs   1.9%      1
+void sglang::act_and_mul_kernel<__nv_bfloat16, (sglang::A...       2.5 µs   1.2%      1
+total                                                            199.6 µs
+
+profile 3: bs=8 load=verify 1 sharding=ep8
+kernel                                                           GPU time  share  calls
+void sglang::device::marlin_moe::Marlin<__nv_bfloat16, 56...      85.4 µs  91.3%      2
+_post_norm_combine_kernel                                          3.2 µs   3.5%      1
+_align_small_kernel                                                2.8 µs   3.0%      1
+void sglang::act_and_mul_kernel<__nv_bfloat16, (sglang::A...       2.1 µs   2.2%      1
+total                                                             93.5 µs
+
+profile 4: bs=128 load=verify 16 sharding=ep8
+kernel                                                           GPU time  share  calls
+void sglang::device::marlin_moe::Marlin<__nv_bfloat16, 56...     307.9 µs  95.8%      2
+_post_expert_norm_weighted_sum_kernel                              5.6 µs   1.7%      1
+_align_parallel_kernel                                             4.1 µs   1.3%      1
+void sglang::act_and_mul_kernel<__nv_bfloat16, (sglang::A...       3.8 µs   1.2%      1
+total                                                            321.4 µs
+
+profile 5: bs=256 load=verify 32 sharding=ep8
+kernel                                                           GPU time  share  calls
+void sglang::device::marlin_moe::Marlin<__nv_bfloat16, 56...     437.5 µs  96.1%      2
+_align_parallel_kernel                                             6.9 µs   1.5%      1
+void sglang::act_and_mul_kernel<__nv_bfloat16, (sglang::A...       5.7 µs   1.2%      1
+_post_expert_norm_weighted_sum_kernel                              5.3 µs   1.2%      1
+total                                                            455.4 µs

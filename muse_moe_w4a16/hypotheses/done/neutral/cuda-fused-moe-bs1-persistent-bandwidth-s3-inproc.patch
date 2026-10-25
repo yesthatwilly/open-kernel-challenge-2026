@@ -1,0 +1,90 @@
+diff --git a/muse_moe_w4a16/submission.py b/muse_moe_w4a16/submission.py
+index c80e3a8..a716550 100644
+--- a/muse_moe_w4a16/submission.py
++++ b/muse_moe_w4a16/submission.py
+@@ -477,7 +477,7 @@ constexpr int THREADS = 256;
+ constexpr int WARPS = THREADS / 32;
+ constexpr int ROWS = 16 * WARPS;               // 128 weight rows per tile
+ constexpr int BK = 256;
+-constexpr int STAGES = 8;
++constexpr int STAGES = 10;                     // stage 3: 8 -> 10 (SMEM 195072 B); the ring now holds a CTA's whole phase-2 share
+ constexpr int CODE_BYTES = ROWS * BK / 2;      // 16 KB
+ constexpr int SC_BYTES = ROWS * BK / 16;       // 2 KB
+ constexpr int STAGE_BYTES = CODE_BYTES + SC_BYTES;
+@@ -578,7 +578,7 @@ __device__ __forceinline__ void mma_bf16(float (&c)[4], uint32_t a0, uint32_t a1
+ // uint32 for step s holds register pair j (a0a1, a2a3, a4a5, a6a7) at nibbles 3-j (lo) and 7-j (hi);
+ // its 8 scale bytes are (step s, row g / g+8) at byte 2s / 2s+1. bsrc: bf16 pairs of the B operand
+ // for this stage's 256 k (only column 0, lanes 0-3, carries the token).
+-__device__ __forceinline__ void compute_stage(float (&c)[4], const uint8_t* slot, const uint32_t* bsrc,
++__device__ __forceinline__ void compute_stage(float (&c)[4], float (&cb)[4], const uint8_t* slot, const uint32_t* bsrc,
+                                               int warp, int lane) {
+   const int g = lane >> 2, t = lane & 3;
+   const bool col0 = g == 0;
+@@ -605,8 +605,14 @@ __device__ __forceinline__ void compute_stage(float (&c)[4], const uint8_t* slot
+         a[i] = (q & 0x80008000u) | ((q & 0x70007000u) >> 6);
+         q <<= 4;
+       }
+-      mma_bf16(c, mul_bf16x2(a[0], slo), mul_bf16x2(a[1], shi), mul_bf16x2(a[2], slo), mul_bf16x2(a[3], shi),
+-               b0, b1);
++      // Stage 3: two accumulators (even / odd k16 step) halve the dependent MMA chain; summed in the epilogue.
++      if (s & 1) {
++        mma_bf16(cb, mul_bf16x2(a[0], slo), mul_bf16x2(a[1], shi), mul_bf16x2(a[2], slo), mul_bf16x2(a[3], shi),
++                 b0, b1);
++      } else {
++        mma_bf16(c, mul_bf16x2(a[0], slo), mul_bf16x2(a[1], shi), mul_bf16x2(a[2], slo), mul_bf16x2(a[3], shi),
++                 b0, b1);
++      }
+     }
+   }
+ }
+@@ -707,10 +713,17 @@ moe_bs1_kernel(const __nv_bfloat16* __restrict__ x,      // [H]
+ 
+   // Routing: the local routes in slot order (identical in every CTA).
+   if (tid == 0) {
++    // Stage 3: all 8 ids and weights are loaded first (independent loads, one memory latency); the
++    // stage-2 log showed setup (entry to the first ring issue) at 1.8-1.9 us, i.e. the serial loop.
++    int ids[TOPK];
++    float ws[TOPK];
++#pragma unroll
++    for (int s = 0; s < TOPK; ++s) { ids[s] = __ldg(topk_ids + s); ws[s] = __ldg(topk_w + s); }
+     int R = 0;
++#pragma unroll
+     for (int s = 0; s < TOPK; ++s) {
+-      const int e = topk_ids[s] - local_start;
+-      if (e >= 0 && e < local_count) { r_e[R] = e; r_g[R] = topk_w[s]; ++R; }
++      const int e = ids[s] - local_start;
++      if (e >= 0 && e < local_count) { r_e[R] = e; r_g[R] = ws[s]; ++R; }
+     }
+     r_n[0] = R;
+   }
+@@ -754,7 +767,7 @@ moe_bs1_kernel(const __nv_bfloat16* __restrict__ x,      // [H]
+     cp_commit();
+   }
+   int ci = cta, ck = 0, step = 0;
+-  float c[4] = {0.f, 0.f, 0.f, 0.f};
++  float c[4] = {0.f, 0.f, 0.f, 0.f}, cb[4] = {0.f, 0.f, 0.f, 0.f};
+ #pragma unroll 1
+   while (ci < N) {
+     cp_wait<STAGES - 2>();
+@@ -767,6 +780,7 @@ moe_bs1_kernel(const __nv_bfloat16* __restrict__ x,      // [H]
+     const bool p1 = ci < n1;
+     if (ck == 0) {
+       c[0] = c[1] = c[2] = c[3] = 0.f;
++      cb[0] = cb[1] = cb[2] = cb[3] = 0.f;
+       if (!p1) {
+         // Phase 2: wait for the 16 phase-1 tiles of this k-split (weights are already streaming).
+         const int i2 = ci - n1, r = i2 / (NT2 * SPLIT2), s = (i2 - r * (NT2 * SPLIT2)) / NT2;
+@@ -799,10 +813,12 @@ moe_bs1_kernel(const __nv_bfloat16* __restrict__ x,      // [H]
+       }
+     }
+     const uint32_t* bsrc = reinterpret_cast<const uint32_t*>(p1 ? xs : hs) + ck * (BK / 2);
+-    compute_stage(c, smem + (step % STAGES) * STAGE_BYTES, bsrc, warp, lane);
++    compute_stage(c, cb, smem + (step % STAGES) * STAGE_BYTES, bsrc, warp, lane);
+     ++step;
+     if (++ck < nst(ci)) continue;
+     // ---- item epilogue ----
++#pragma unroll
++    for (int i = 0; i < 4; ++i) c[i] += cb[i];
+     if (p1) {
+       const int r = ci / T1, j = ci - r * T1;
+       if (t == 0) {

@@ -49,10 +49,10 @@ controls_for: null
 rewrite_stage: 3
 replaces: _align_small + Marlin w13+w2 + act_and_mul + _post_norm_combine at num_tokens == 1
 review: proceed
-status: running
+status: done
 review_at: 2026-10-25T002107Z
 review_companions: null
-stage: dispatched
+stage: harvested
 claimed_at: 2026-10-25T013639Z
 base_sha: ea3464f424a209eb0f46541178cd3dd11062426f
 base_blob: c80e3a831390ffb38cbcb7560231b59a64a2c6a0
@@ -71,6 +71,13 @@ attempt_file: 2026-10-25T013943Z-check-cuda-fused-moe-bs1-persistent-bandwidth-s
 prepared_at: 2026-10-25T013943Z
 job: cd0f6b08a6dd4165
 dispatched_at: 2026-10-25T013951Z
+outcome: neutral
+verdict_detail: unproven-vs-best
+speedup: 1.3294905627410667
+speedup_ci: [1.3095482042999507, 1.3494329211821825]
+harvested_at: 2026-10-25T034136Z
+best_at_harvest: 1.3278240305297715
+promotion: null
 ---
 
 # cuda-fused-moe-bs1-persistent-bandwidth-s3-inproc
@@ -153,3 +160,30 @@ Deviations from the spec / review: no cross-CTA K-split (review: contradicts one
 - n/a: attention items (KV cache FP8, full window): MoE problem.
 
 okc_lint: `OK with warnings: submission.py` (only host-sync warnings, all "outside kernel_fn's call graph; fine in prepare()"). py_compile rc=0, __pycache__ removed.
+
+## Result
+
+- job `cd0f6b08a6dd4165` (check), status done, passed True, tests 5/5
+- speedup 1.3295x, 95% CI [1.3095, 1.3494], score 10115.528742282053 µs vs SGLang 13448.5 µs
+- best at harvest: {"speedup": 1.3278240305297715, "ci": [1.307906670071825, 1.3477413909877178], "job": "1947e3ec2abb4bdf"}; base result: muse_moe_w4a16/hypotheses/done/neutral/cuda-fused-moe-bs1-persistent-nospin-bandwidth-inproc.result.json
+- **outcome: neutral** (unproven-vs-best)
+- files: `muse_moe_w4a16/hypotheses/done/neutral/cuda-fused-moe-bs1-persistent-bandwidth-s3-inproc.result.json`, `muse_moe_w4a16/hypotheses/done/neutral/cuda-fused-moe-bs1-persistent-bandwidth-s3-inproc.patch`; branch `hyp/muse_moe_w4a16/cuda-fused-moe-bs1-persistent-bandwidth-s3-inproc`
+
+## Attribution
+
+| shape | w | base µs | hyp µs | delta | verdict |
+|---|---|---|---|---|---|
+| bs=1 load=decode_1 sharding=ep8 | 60 | 47.67 | 50.41 | 0.9896 | flat |
+| bs=16 load=decode_16 sharding=ep8 | 60 | 146.77 | 147.57 | 1.0044 | flat |
+| bs=32 load=decode_32 sharding=ep8 | 60 | 199.56 | 200.82 | 1.0026 | flat |
+| bs=8 load=verify_1 sharding=ep8 | 60 | 107.97 | 113.0 | 1.0006 | flat |
+| bs=128 load=verify_16 sharding=ep8 | 60 | 327.29 | 323.26 | 1.0134 | flat |
+| bs=256 load=verify_32 sharding=ep8 | 60 | 467.21 | 461.4 | 1.0069 | flat |
+
+no shape moved outside noise. Expected hit: 5/6. Noise ±1.5%.
+
+## Follow-ups
+
+- rewrite stage 3 of `_align_small + Marlin w13+w2 + act_and_mul + _post_norm_combine at num_tokens == 1`: read the replaced kernels' own us per shape (profile top_kernels) against the incumbent and the floor, and check which Milestone it reached. The next stage is `/hypothesize muse_moe_w4a16 "<what to fix or tune>" --kind rewrite --depends-on cuda-fused-moe-bs1-persistent-bandwidth-s3-inproc --stage 4`; a slow or failed first cut is the expected start, not a do-not-retry.
+- unproven-vs-best: the change is not proven either way; a stacked hypothesis (`depends_on: cuda-fused-moe-bs1-persistent-bandwidth-s3-inproc`) that adds a further change in the same area is the only way to learn more (identical code is never re-run).
+
