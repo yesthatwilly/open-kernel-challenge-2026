@@ -30,7 +30,7 @@ base_sha: f540d1c19b5798a2bd1f0421964922a582602231
 base_blob: 108d36e9f2266fc88531dd6ff0329a847c882013
 branch: hyp/muse_moe_w4a16/stack-onewarp-hoisted-dispatchcombine
 worktree: .worktrees/muse_moe_w4a16/stack-onewarp-hoisted-dispatchcombine
-mode: null
+mode: check
 restack_of: null
 stale_base: null
 implemented_at: 2026-10-25T000449Z
@@ -39,6 +39,8 @@ submission_sha256: 538c39378a082f9a8eafe32e5f8482cd4be0e25182d778bc7ae02666bd2d8
 norm_sha256: 5ad9f9485e682fe07a216033d7f53f05d882f4545de49171d1da17d60602de5d
 submission_blob: e9478869b802250d219d7cdefe73e07526622cd7
 lint_warnings: 19
+attempt_file: 2026-10-25T000449Z-check-stack-onewarp-hoisted-dispatchcombine.md
+prepared_at: 2026-10-25T000449Z
 ---
 
 # stack-onewarp-hoisted-dispatchcombine
