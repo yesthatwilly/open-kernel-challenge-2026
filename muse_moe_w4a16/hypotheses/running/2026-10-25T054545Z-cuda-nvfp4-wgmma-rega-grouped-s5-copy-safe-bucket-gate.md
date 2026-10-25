@@ -49,7 +49,7 @@ review: proceed
 status: running
 review_at: 2026-10-25T054944Z
 review_companions: null
-stage: claimed
+stage: implemented
 claimed_at: 2026-10-25T110823Z
 base_sha: 928151c3ea4e903fc4a05ae7ac59672291b71d0d
 base_blob: a13d5fea2e79f85df573670cbd55a8a10fbc3d2c
@@ -58,6 +58,12 @@ worktree: .worktrees/muse_moe_w4a16/cuda-nvfp4-wgmma-rega-grouped-s5-copy-safe-b
 mode: null
 restack_of: null
 stale_base: true
+implemented_at: 2026-10-25T111451Z
+impl_commit: fc959d9c0db31531d6ed750a69bb33b541435805
+submission_sha256: df4015221c841885cfd0bb09c73db61dacbcf319ab400e161e5626ba8b5aca69
+norm_sha256: cfff66e4073b3a4672d1dd38d33c134d33a4a1717a3300d97304097ceac0af62
+submission_blob: 1774e42c833541afe7204a9d9cd3d6bb265be5b1
+lint_warnings: 66
 ---
 
 # cuda-nvfp4-wgmma-rega-grouped-s5-copy-safe-bucket-gate
@@ -110,3 +116,39 @@ No companions. The forced twin is this run's control: identical code, selector o
 - If the forced twin shows wgmma rows at or below Marlin in only one bucket, does this gate enable exactly that bucket? That agreement is the only new fact this run can add, so print the per-bucket decision late in the log tail.
 - Prepare budget: s4 was 39 s. Three-state captures, a profiler pass and 2 buckets x 2 routings x 41 cold-flushed graph A/B reps should add well under 60 s, but print per-phase timings.
 
+
+## Implementation notes
+
+Base: the worktree was on s4 (928151c, stale). master's muse_moe_w4a16/submission.py is unchanged since 9080a71 (git diff 9080a71 master empty), which is the base of s5-forced, so no 3-way merge was needed. submission.py = the s5-forced submission verbatim (from branch hyp/.../s5-copy-safe-forced, same job-proven code: per-call cuTensorMapEncodeTiled, no wg_maps/_wg_state_live, three-state copy check, device launch marker, LAUNCHED line), plus only these changes (221 changed lines vs forced):
+- Removed the forced "no timing gate" and print-only `_wg_time_vs_marlin`. Added `_wg_calibrate` (alpha pick so Marlin pair ~0.8x judged: 245 us T=128, 370 us T=256; same code as before), `_wg_graph_of`, `_wg_ab_graphs` (3 untimed warm-up replays, 41 interleaved reps with alternating order, 256 MB flush.zero_() before EVERY replay, events per replay, medians) and `_wg_select`.
+- `_wg_select` runs after the copy check and only if the path is otherwise ok. Per bucket (T=128 -> B128, T=256 -> B256) it captures TWO full-path graphs on static inputs: `_moe_marlin` (master's align + block_size_m + w13 + silu + w2 + norm, w2_mode master) and `_moe_wgmma` (align + gather + w13+silu + w2 + norm), plus an empty-ish baseline graph (dummy add_); baseline median is subtracted from both. Routings: the calibrated Zipf routing and one random routing; local route counts, Marlin bsm, both medians, ratio and the calibrated Marlin pair vs judged 306.2/483.2 us are printed per routing and per bucket. Enabled only if Marlin/wgmma >= 1.02 on BOTH routings; also required: wg_err word 0, launch marker == WG_MAGIC, finite output and end-to-end rel-L2 vs Marlin <= 2e-2 on the same graphs. Asserts that an enabled bucket has wgmma faster on every printed routing. Any exception -> both buckets Marlin.
+- state['wg_on_128'], state['wg_on_256'] (False by default, set at the end of `_wg_setup` from the selector). kernel_fn branches on shape and these flags only: 128<=T<=255 -> wg_on_128, 256<=T<=512 -> wg_on_256, else Marlin. `wgmma_ok` remains as the "path is correct" capability flag but kernel_fn no longer reads it. The copy check sets both flags True on its three states so it exercises wgmma at M=128, 256 and 257.
+- Logging: `PATH CHOSEN B128 / B256 = WGMMA|MARLIN` lines and a combined PATH CHOSEN line are printed last; the diagnostic summary contains the selector lines; LAUNCHED = wgmma line retained from the copy check. Per-phase times (copy check, selector, setup) are printed. Review open question: id(state['wg_ext']) and wg_xs data_ptr are printed in prepare.
+- Review items applied: (1) selector times each side as its full graph, align included, and calls master's own `_moe_marlin` so master's block_size_m is used (review "Confounders"); (2) Marlin pair printed beside judged 306.2/483.2 us; (3) per-bucket decision printed late in the log; (4) per-phase prepare timings printed. Not applied: the review's advice to dispatch only after the forced twin is harvested is a sequencing decision for the caller. Spec deviation: none besides using 256 MB flush and 3 warm-up replays.
+- Expected from s5-forced judge data: B128 Marlin (wgmma 353 vs Marlin 310 us) and B256 wgmma (402 vs 457 us).
+
+## Rules check
+
+- [x] CUDA-graph capturable: kernel_fn adds only a Python branch on shape + two prepare-time booleans; no sync/.item/allocation on values (checked in diff: selector code is prepare-only, called from `_wg_setup`).
+- [x] Nothing derived from `data` cached across calls: flags come from synthetic prepare-time routings only.
+- [x] Weights: unchanged from s5-forced (lossless retile in prepare, NVFP4 stays NVFP4, dequant in registers).
+- [x] Activations BF16 where SGLang keeps BF16: unchanged.
+- [x] Attention: n/a (MoE problem); every route attended (no skipping), unchanged.
+- [x] No timing patches, harness/IO/secrets, module edits, reference import, subprocesses or network: no subprocess/fork/spawn added; selector only uses torch events/graphs.
+- [x] All work inside the timed call; no output caching or replay. No module/static globals hold device pointers (selector tensors are locals; `_wg_audit_globals` unchanged and still run; flags are in state).
+- [x] Two-state judge copies: flags are plain bools in state and survive a tree-map clone; copy check (A, deepcopy B, clone C) unchanged.
+
+okc_lint: `OK with warnings` (0 errors; only host-sync/dtype warnings outside kernel_fn's call graph, prepare-only). undef.py: `submission.py []` (no undefined names). py_compile OK, __pycache__ removed.
+
+## Pre-flight audit
+
+Audited 2026-10-25 by an opus subagent, by reading the code against the s5-forced branch and its judged log (archive d4ad4f31d2764050).
+
+**Verdict: dispatch-with-fixes.** kernel_fn branches only on T and the two prepare-time bools. It has no try/except, prints, syncs or per-call state. No module global holds pointers, maps or buffers. The flags the copy check turns on are overwritten unconditionally after `_wg_setup`'s try/except, from `ok and sel`. A selector exception or a skip leaves both buckets on Marlin. The selector times the full `_moe_marlin` path (master's bsm, align included) against the full `_moe_wgmma` path as graphs on the same static buffers, interleaved, cold, with the baseline subtracted. Prepare took 44.6 s in s5-forced, so the budget has plenty of headroom.
+
+Fixes (worktree submission.py; undef, py_compile and okc_lint OK, 0 errors):
+- **The selector now gates on the judge-like routing only. The random routing is still printed and still checked for health (err word, marker, finite output, rel-L2), but it no longer gates.** Reason: the both-routings gate could essentially never pass B256. At equal T the uniform random routing has about half the local routes of the judge-like one (T=256: ~256 vs 464). In the s5-forced prepare, wgmma's time barely moves with route count (456 us at 241 routes, 466 us at 464) while Marlin's grows with it (376 to 495 us). So the random routing forecasts Marlin ~0.8x of wgmma at T=256, below the 1.02x margin, although the judge measured wgmma faster at bs=256 (402 vs 457 us). The run would have reproduced master, which is a category-1 gate that always fails. This departs from the spec's "BOTH routings"; revert it if the double gate was meant to be strict anyway.
+- The tautological assert was removed. The faster-side assert now checks the gating routing.
+- The LAUNCHED line now says it describes the copy check, where both flags are forced on. Each per-bucket PATH CHOSEN line now ends with "(selector)", "(selector skipped or raised)" or "(wgmma path off)", so a reader can tell which path ran in each bucket.
+
+Residual risk: the prepare forecast says B128 = Marlin (wgmma 1.21x slower) and B256 = wgmma by ~1.06x eager. B256 is close to the 1.02x margin, so graph-timing noise could still disable it and give a master-identical run.
