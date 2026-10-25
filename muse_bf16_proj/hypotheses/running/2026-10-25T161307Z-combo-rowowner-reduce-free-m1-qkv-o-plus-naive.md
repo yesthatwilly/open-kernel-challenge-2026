@@ -92,7 +92,7 @@ base_sha: a2286ee3352c35c3e80062a62bc74df5393b1d95
 base_blob: f919748b5af6e815f319e5d2d828ed68e5b28a71
 branch: hyp/muse_bf16_proj/combo-rowowner-reduce-free-m1-qkv-o-plus-naive
 worktree: .worktrees/muse_bf16_proj/combo-rowowner-reduce-free-m1-qkv-o-plus-naive
-mode: null
+mode: submit
 restack_of: null
 stale_base: null
 implemented_at: 2026-10-25T163607Z
@@ -101,6 +101,8 @@ submission_sha256: b8e36aedc8be79504e833bc6c76e8477833454de454282efa91ba8474882d
 norm_sha256: 8258046a5a1212b8ba2c01bf78b9f375f59e96336115f40ad2350f2ccb82d327
 submission_blob: ad8d7254a64a52db2a8f56ec0ad262748153a2e8
 lint_warnings: 31
+attempt_file: 2026-10-25T163608Z-submit-combo-rowowner-reduce-free-m1-qkv-o-plus-naive.md
+prepared_at: 2026-10-25T163608Z
 ---
 
 # combo-rowowner-reduce-free-m1-qkv-o-plus-naive
