@@ -71,9 +71,18 @@ priority: 1
 kind: primary
 controls_for: null
 review: proceed
-status: queued
+status: running
 review_at: 2026-10-25T111218Z
 review_companions: null
+stage: claimed
+claimed_at: 2026-10-25T111218Z
+base_sha: 8bbf53baef204e1a7c7f2d0b36f6da1996b27db4
+base_blob: 84b54ae2c9800a7b9bf96692557dd390904ed09b
+branch: hyp/muse_attention_decode/restack-sliding-decode-sk-window-on-cluster-master
+worktree: .worktrees/muse_attention_decode/restack-sliding-decode-sk-window-on-cluster-master
+mode: null
+restack_of: sliding-decode-sk-window-route
+stale_base: null
 ---
 
 # restack-sliding-decode-sk-window-on-cluster-master
