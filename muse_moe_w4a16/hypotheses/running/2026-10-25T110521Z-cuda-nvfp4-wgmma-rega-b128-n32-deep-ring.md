@@ -69,7 +69,7 @@ base_sha: 57e77548ba31c2145d575df62752f62684b2f6ad
 base_blob: 77f34503659c90a5953f91a93ba6e1a2b02e4613
 branch: hyp/muse_moe_w4a16/cuda-nvfp4-wgmma-rega-b128-n32-deep-ring
 worktree: .worktrees/muse_moe_w4a16/cuda-nvfp4-wgmma-rega-b128-n32-deep-ring
-mode: null
+mode: check
 restack_of: null
 stale_base: true
 implemented_at: 2026-10-25T121529Z
@@ -78,6 +78,8 @@ submission_sha256: f56d66ed56172aea69bf8f2b46153a13aca09da79762057579db1c791a27b
 norm_sha256: 64b78e769b3c8135c0204f0801805499ad9bb6cfaadf5040fb58dffd503b5750
 submission_blob: 0ff43a7c6e340a04dce17ace8dc8e7b37aca61ac
 lint_warnings: 78
+attempt_file: 2026-10-25T121529Z-check-cuda-nvfp4-wgmma-rega-b128-n32-deep-ring.md
+prepared_at: 2026-10-25T121529Z
 ---
 
 # cuda-nvfp4-wgmma-rega-b128-n32-deep-ring
