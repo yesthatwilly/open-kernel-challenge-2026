@@ -46,7 +46,7 @@ review: proceed
 status: running
 review_at: 2026-10-25T203645Z
 review_companions: null
-stage: claimed
+stage: implemented
 claimed_at: 2026-10-25T203645Z
 base_sha: 752b3dcbd27a45849093c5387a4716ce9fca68ae
 base_blob: ad8d7254a64a52db2a8f56ec0ad262748153a2e8
@@ -55,6 +55,12 @@ worktree: .worktrees/muse_bf16_proj/qkv-k-split-batched-gemm-m65-m256
 mode: submit
 restack_of: null
 stale_base: null
+implemented_at: 2026-10-25T204055Z
+impl_commit: dbd922b795fec313a8f3f0ea92420b6bb4920a74
+submission_sha256: a8da8943c1e510c3eea66f7ae0d4027206774cde527ae908fa90e64fef2d31d7
+norm_sha256: b5e58a8d3dab336830b7cd27d81818e927348944e6498a6c73b418789457f25c
+submission_blob: 76386bd87b0c1d31910cc21b81598ddb2c1addba
+lint_warnings: 39
 ---
 
 # qkv-k-split-batched-gemm-m65-m256
@@ -98,3 +104,39 @@ No companion: the prepare-time selector times master's actual path and the four 
 - Credit per row against 20.0/15.5 us incumbents.
 - Stack later with unlanded pooler-k-halves?
 
+
+## Implementation notes
+
+Edited only muse_bf16_proj/submission.py (+197/-2) in the worktree. Layer name in code is `qkv_gate`.
+- `_qk_forward(x, state, (S, 'T'|'N'))`: strided K-slice bmm + torch.add (S=2) / p.sum(0) (S=4). One lossless NN repack `state['qkv_t']` [8192, 2304] made in `_prepare_state` (both states); S=2/4 are views of it.
+- `_qk_select(state)`: runs once on state A at the end of the flags-None branch, AFTER `_lt_prepare`. Master baseline is `kernel_fn` itself with the new flag off, so it times exactly what master runs per m (cell B at 128 if LT_FLAG, dispatch at 256). Four candidates, cold-L2 (256 MB flush) interleaved 41 reps, empty-graph baseline subtracted, medians/IQR/kernel names printed for all, 1.02x threshold per m. Name check rejects only copy kernels and splitKreduce; prints 'name check skipped' on empty events. Per-candidate and global try/except keep master; never raises.
+- Own flag `qkv_ksplit_ok` + dict `qkv_ksplit` {m: (S, layout)}; passed to B via `_ab_flags`; `_ab_component(layer, m, state)` returns it before LT_FLAG; AB_CASES gains qkv m=256. A miss only turns this flag off. nn_ok/nn_p256_ok/LT_FLAG untouched.
+- kernel_fn: one gate (layer, cfg m in (128,256), n/k/x shape/dtype/contiguity, dict lookup) before `if layer != "router"`; no print/try/sync/mutation; outputs fresh.
+- Deviation: none. Not run (no GPU).
+
+## Rules check
+
+- [x] No subprocess/fork/spawn added (diff checked).
+- [x] No triton.autotune; no host sync, print, try/except or .item() in kernel_fn.
+- [x] Nothing derived from inputs cached; weights repack lives in `state` only.
+- [x] Both states: B inherits the choice via _ab_flags; A/B graph check covers qkv m=128 and 256.
+- [x] Precision: S bf16 roundings; selector rejects rel L2 > 6e-3 vs fp32 reference.
+- [x] Any selector failure keeps master and never raises.
+- [x] No CUDA/PTX load_inline added: n/a.
+- [x] First-line marker kept; not committed, not staged, okc not run.
+
+okc_lint: OK with warnings (prepare-side host-sync / flush-dtype only); py_compile OK; __pycache__ removed.
+
+## Pre-flight audit
+
+Audited 2026-10-25 (model opus), by reading the code plus a numpy emulation of the view/permute K-slice math. No GPU was available. **Verdict: dispatch.** No fixes were made.
+- Base blob ad8d7254 matches master. The first-line marker is intact. okc_lint reports OK with prepare-side warnings only, and py_compile passes.
+- Routing: qkv_gate at m=128/256 is not caught by any earlier gate (_qkv_route_ok covers m<=16, swapab16 m<=16, swapab 17..32, bulk m=1). The new gate comes before the NN and Lt branches and checks only cfg, shapes and state.
+- Selector: it runs after _lt_prepare, with qkv_ksplit_ok forced False. That makes "master" kernel_fn itself (cell B at m=128 when LT_FLAG is set, dispatch at m=256). Each candidate and master is wrapped in its own try. A global except keeps master, so the selector never raises.
+- Name check: it rejects only copy/contiguous/memcpy kernels and cublasLt splitKreduce. The kernel names pooler-k-halves produced on the judge (ce808e5a: nvjet_*_TNT/NNT + CUDAFunctor_add) contain none of these, so the check cannot reject every candidate.
+- A/B: state B inherits qkv_ksplit and builds its own qkv_t. The refill uses the same (m, k) shape and the same fp32-reference bound (6e-3) as state A, so this is not an always-fail gate. _ab_component returns qkv_ksplit_ok before LT_FLAG, so a miss turns off only the new flag. Build failure also clears it.
+- Cleanup: the flush buffer is dropped in finally and the selector graphs go out of scope. prepare() calls empty_cache after the A/B check.
+- Numerics: the slices index correctly for S=2/4 in both T and N layouts (emulated exactly). Two bf16 partials plus the add give about 2.5e-3 rel L2, the same as pooler-k-halves on the judge. Single-nonzero rows are exact. The m=512 test is not routed.
+- Minor deviation from the spec (accepted): kernel counts are printed, not asserted. The S=4 sum shows up as reduce_kernel.
+
+Residual risk: at m=128 the incumbent is cell B (~15.5 us, no splitKreduce), so the 1.02x gate may keep master there. The gain probably depends on m=256 alone.
