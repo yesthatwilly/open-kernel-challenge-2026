@@ -1,0 +1,23 @@
+{
+ "model": "opus",
+ "verdict": "proceed",
+ "summary": "PDL from the Triton pre-attention kernel into the B=1 stream-K kernel is rules-safe: only key seq_b-1 is written by the primary, and the hypothesis defers that tile plus q until after griddepcontrol.wait. With no explicit trigger in the primary, though, the overlap is limited to the launch gap and roughly meets the 1 us kill bar. Time an explicit early-trigger variant too, and split the q load out of the first tile's cp.async group.",
+ "justification": "Mechanism: full decode_1 is 22.6 us of shape against 1.4 + 18.6 us of kernels, leaving ~2.6 us of launch and dependency gap. The sk kernel's prologue is a serial chain: load_prefix(seqlens) -> issue_meta (page_table) -> cp.async of K/V tiles, two dependent DRAM round trips (~1-1.5 us) before the first byte of KV arrives. Running that chain under pre-attention is a real saving. WEAKEST LINK: without griddepcontrol.launch_dependents in the primary, the dependent is released only when every primary CTA has exited. The overlap is then the dependent's launch latency and the primary's tail/flush (~0.5-1 us), not the 1.4 us body. splitkv-pdl-attn-to-combine (neutral, same environment) is the precedent for a sub-noise PDL gain. An explicit trigger at the top of _pre_attention_kernel (Triton gdc_launch_dependents if this Triton has it, else tl.inline_asm_elementwise('griddepcontrol.launch_dependents;')) lets the index chain overlap the body. It is a no-op for any dependent launched without the PDL attribute, so every other shape is unaffected.",
+ "confounders": [
+  "full-decode1-streamk-s3-two-level-ticket (landed c3c1b01): the dependent is its variant-3 kernel at grid SM. The change touches only the B=1 launch, so read the full decode_1 row and the sk kernel row. The kernel row should not change; the shape row should drop.",
+  "fused-preattention-triton (landed): this is the primary. If an explicit trigger is added, the kernel changes for every shape (benign no-op). Check that sliding decode rows (which do not run it) and the other full rows stay flat.",
+  "In flight: full-decode1-sk4-cluster-dsmem-merge (queued) changes the same B=1 launch to a cluster launch. Run against master each is attributable on its own; a later stack needs both attributes on one cudaLaunchKernelEx. full-decode-splitkv-s3-fused-preattn (running) removes pre-attn at B>1 only, so it does not overlap."
+ ],
+ "interference": "No companion. The prepare prints pre-attn+kernel with and without PDL (and with the explicit-trigger variant, see open_questions) on the same input. PATH CHOSEN names the variant, so a gain or flat on full decode_1 is attributable. A separate control check would only repeat the prepare.",
+ "rules_flags": [
+  "Data dependency (correct as written): pre-attention writes q (all 16 heads) and cache row cache_loc[0] = position seq_lens[0] = key seq_b-1 (seq_b = cache_seqlens[0]). Everything before griddepcontrol.wait may read only page_table, cache_seqlens and KV rows < seq_b-1. The tile containing key seq_b-1 and the q load go after the wait. All rows read before the wait were written by work completed before the primary started.",
+  "q is currently loaded INSIDE issue_tile (cp_async16 of q when nn==0 || lt==0, in the same cp.async group as the first tile). The builder must move the q copy out of the pre-wait tiles into its own post-wait copy (its own cp.async group or a direct load) and keep the cp.async.wait_group counts correct. Otherwise q is read before the primary has written it, a race the self-check may not catch every time.",
+  "Workspace, ticket and gticket writes after the wait (as stated). The previous replay's kernel completed before this replay's primary started, so there is no cross-replay hazard.",
+  "Fallback to plain launch on any error is fine. The choice must be fixed at import, not per call."
+ ],
+ "companions": [],
+ "open_questions": [
+  "BUILDER: add the variant 'PDL + explicit griddepcontrol.launch_dependents at the top of _pre_attention_kernel' to the prepare timing, alongside no-PDL and PDL-implicit. Print all three and choose the fastest that is not slower than no-PDL.",
+  "BUILDER: report the shape-row delta against the 1 us kill bar from the profile. If only the implicit variant is available and the delta is < 1 us, record it as a stacking item for sk4 rather than a dead end."
+ ]
+}
