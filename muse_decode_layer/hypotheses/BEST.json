@@ -1,17 +1,17 @@
 {
  "problem": "muse_decode_layer",
- "job": "81ee6714b7614a99",
- "check_job": null,
- "mode": "submit",
- "speedup": 1.228328123558382,
+ "job": "cc92097b64784c0f",
+ "check_job": "cc92097b64784c0f",
+ "mode": "check",
+ "speedup": 1.2495238726339006,
  "ci": [
-  1.2099032017050062,
-  1.2467530454117577
+  1.230781014544392,
+  1.268266730723409
  ],
- "score_us": 18415.519083346026,
- "commit": "f1f2f35cf76890e924a0d0ae1576b1050ed9020f",
- "submission_blob": "3d70ae6e2de0d48c4a4f2a469ced8234f5348182",
- "slug": "small-t-launch-minimal-dense-chain-pdl",
- "result": "muse_decode_layer/hypotheses/done/gain/small-t-launch-minimal-dense-chain-pdl.result.json",
- "updated_at": "2026-10-24T184718Z"
+ "score_us": 18103.13551858608,
+ "commit": "8fa8fbf0c89a2b6323c511c25b8616c0290dde23",
+ "submission_blob": "4da94677234faaa06b42b5ced541db8961fd6f34",
+ "slug": "stack-align-par-sidestream-sliding1",
+ "result": "muse_decode_layer/hypotheses/done/neutral/stack-align-par-sidestream-sliding1.result.json",
+ "updated_at": "2026-10-25T001048Z"
 }
