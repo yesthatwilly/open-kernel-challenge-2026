@@ -65,9 +65,18 @@ prior: "bf16-verify-deepgemm-sm90-kernel-asserted-rewrite: stage 1 never compile
 rewrite_stage: 2
 replaces: cuBLAS nvjet (+splitKreduce) for qkv_gate, pooler, unpooler at m=128/256
 review: proceed
-status: queued
+status: running
 review_at: 2026-10-25T212521Z
 review_companions: null
+stage: claimed
+claimed_at: 2026-10-25T212548Z
+base_sha: e4008591fb186026deeb850980bc31aed9fbe89a
+base_blob: 489174846c51a034e3c119f0f67cec9c213404f5
+branch: hyp/muse_bf16_proj/bf16-verify-deepgemm-sm90-explicit-instantiation-stage2
+worktree: .worktrees/muse_bf16_proj/bf16-verify-deepgemm-sm90-explicit-instantiation-stage2
+mode: check
+restack_of: null
+stale_base: true
 ---
 
 # bf16-verify-deepgemm-sm90-explicit-instantiation-stage2
