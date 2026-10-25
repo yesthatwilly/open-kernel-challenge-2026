@@ -54,7 +54,7 @@ review: proceed
 status: running
 review_at: 2026-10-25T212522Z
 review_companions: null
-stage: claimed
+stage: implemented
 claimed_at: 2026-10-25T212546Z
 base_sha: c1d4c033dc83025d0a9fec3357e4d7f493a6c1b0
 base_blob: ad8d7254a64a52db2a8f56ec0ad262748153a2e8
@@ -63,6 +63,12 @@ worktree: .worktrees/muse_bf16_proj/pooler-k-halves-fp32-partials-restack-m128-m
 mode: check
 restack_of: null
 stale_base: null
+implemented_at: 2026-10-25T213420Z
+impl_commit: 7a842566976a907c441d7160dbc35c46214eb99c
+submission_sha256: f00e8e6dfa130ed27ff59df7cfaa6de97ccc09fe6e0c605387008e4c27e0ac52
+norm_sha256: 9cff3b5398f218fdf8febe421f83dd8b1e2d21afdbac1e7b3c0a7668bbd676ee
+submission_blob: 03dd07ed56ce92262edbc277f9f9e407dacb01e0
+lint_warnings: 36
 ---
 
 # pooler-k-halves-fp32-partials-restack-m128-m256
@@ -107,3 +113,43 @@ No companion. (i) An ab-revert of either NN-layout hypothesis would recreate a s
 - The single-round m=256 margin was 1.037 while the judge measured about 1.12. Should m=256 keep the 1.03 two-round bar (risk: a false negative that makes the run a no-op on that row), or should the gate record both rounds so the orchestrator can decide? At minimum, the outcome must distinguish 'gate rejected' from 'row lost'.
 - The queued combo depends_on this branch. If the gate routes only m=128 here, does the combo re-gate m=256 itself, or inherit the master route?
 
+
+## Implementation notes
+
+Edited only `<worktree>/muse_bf16_proj/submission.py` (base blob ad8d7254, +279/-15).
+
+What changed:
+- New constants `KHALF_*` and per-m flags `pooler_khalf128_ok` / `pooler_khalf256_ok` (appended to `NEW_CELL_FLAGS`, so `_ab_flags` hands them to state B); per-state dict `state['pooler_khalf_kind']` ({m: 'a'|'b'}), also inherited by state B.
+- `_khalf_forward`: xh = x.view(m,2,4096).permute(1,0,2) (strided), wh = pooler_t.view(2,4096,4096) (master's existing NN repack, no new bytes). Kind a: bf16 bmm + add. Kind b: `torch.bmm(..., out_dtype=torch.float32)`, then `torch.add(p[0], p[1], out=<fresh bf16>)`.
+- `_khalf_route_ok` (cfg/shape/flag only) and a kernel_fn branch placed immediately before master's NN torch.mm branch, under `layer != "router"`; no print/try/sync.
+- `_khalf_prepare` (state A only, after `_lt_prepare`, own start deadline 170 s, prints `skipped: deadline`) and `_khalf_cell` per m. Per candidate: `_cell_check` through kernel_fn (rel L2 vs fp64, power-of-two probe row, bit-identical rerun), then `_cell_kernels` profiler assertion (needs a GEMM kernel; rejects copy/memcpy and splitKreduce; elementwise names are only printed, so a mixed-dtype add cannot falsely reject b). Then 2 independent interleaved rounds (41 reps, 256 MB flush, own empty-graph baseline each) of master's ACTUALLY ROUTED path (kernel_fn with the flag off, so nn_ok / nn_p256_ok already True) against each valid candidate. Route only if EVERY round has master/cand >= 1.03 AND cand IQR <= 1.5x master IQR. Prefer b; route a only if it passes and its min round ratio >= 1.01x b's (or b fails). Prints xh.stride(), master kernels, both candidates' kernels (even if unrouted or excluded), every round's medians/IQRs, and one PATH CHOSEN line per m that says "gate rejected, not a measured loss of the row" vs a candidate.
+- `_ab_component(layer, m, state)` now returns the K-halves flag FIRST for a routed pooler 128/256 cell, so a miss turns off only that flag (master NN path serves it), never `nn_ok` (shared with unpooler m=128). No duplicate AB_CASES entries.
+- `_path_print` helper: PATH CHOSEN / gate lines of the existing cells (ouns, router cluster, bulk A/A2/A3, Lt B) and the new khalf cells now also go to `_PATH_LINES` (host strings), and prepare() repeats them as `[summary]` lines AFTER FINAL FLAGS, as the last lines of prepare (long lines cut at 260 chars, last 40 kept). This is a print-only change to the old cells.
+
+Review fixes applied: (1) gate baseline is master's routed flag-off path with nn flags True (khalf runs inside `_prepare_state`, before the A/B check); (2) `_ab_component` remap, no duplicate AB_CASES; (3) hardened two-round 1.03 + IQR 1.5x gate (extended gate returns IQRs, written as `_khalf_cell` since `_cell_gate` returns medians only); (4) FINAL FLAGS prints nn_ok, nn_p256_ok and both khalf flags plus kinds; (5) profiler assertion does not match elementwise names. Open questions answered in code: out_dtype and xh strides are probed and printed (b excluded if bmm rejects it; copy kernel in profile excludes a candidate); b's GEMM kernel name is printed; m=256 keeps the 1.03 two-round bar, but the PATH CHOSEN line separates 'gate rejected' from a lost row, and both rounds are printed so the orchestrator can decide; m=128 and m=256 are gated and flagged independently, and the combo parent inherits whatever each cell routed (flags are per cell, per state).
+
+Deviations: none from the review. Compile/run risks are listed in the report (bmm out_dtype availability, bf16 candidate a rel L2 2.45e-3 against the 3e-3 CELL_REL_L2 canary bound).
+
+## Rules check
+
+- [x] CUDA-graph capturable: kernel_fn branch is torch.bmm/torch.add/torch.empty on shapes and flags only; no .item()/.cpu()/sync/print/try (all syncs, prints and try blocks are in prepare()).
+- [x] Nothing derived from `data` is cached: only the kind choice from synthetic prepare-time x, stored per state; kernel_fn reads x and cfg only.
+- [x] Weights: no new weight bytes; reuses master's lossless bf16 NN repack pooler_t (view only). fp32 only in internal partials.
+- [x] Activations BF16 where SGLang keeps BF16: x and the output are bf16; the output of both kinds is bf16 (b: one rounding from an fp32 add).
+- [x] Attention: n/a, no attention in this problem.
+- [x] No timing patches, harness frames/I/O/secrets, module edits, reference import, subprocesses or network: diff adds only torch ops, torch.profiler in prepare and prints.
+- [x] All work happens inside the timed call; no output caching or replay (fresh output tensor per call).
+- [x] Review required fixes applied (see Implementation notes).
+
+okc_lint: `OK with warnings: muse_bf16_proj/submission.py` (only pre-existing-style host-sync/dtype warnings in prepare(); no errors). `python3 -I -m py_compile` passed; __pycache__ deleted.
+
+## Pre-flight audit
+
+Audited 2026-10-25 (opus) by reading, plus a numpy emulation of the numerics. **Verdict: dispatch** (no fixes).
+
+- Candidate b fallback: the out_dtype probe in `_khalf_prepare` sits inside its own try and only prints. If torch.bmm rejects out_dtype, b raises inside `_cell_check` within `_khalf_cell`'s per-candidate try. b is then printed as EXCLUDED and never becomes a kind, and a runs alone. Every outer layer (the per-m try and the whole-function try) falls back to master with a PATH CHOSEN line. The parity base already uses torch.mm(out_dtype=torch.float32) on this image, so bmm's overload is very likely present.
+- Landed cells: with `_path_print(` mapped back to `print(`, the only differences from master are the new khalf code, the NEW_CELL_FLAGS extension, `_ab_component`'s state arg and its khalf-first check, the B-state inherit, the FINAL FLAGS/summary prints and the kernel_fn branch. No routing or flag logic changed in ouns, router cluster, bulk A/A2/A3 or Lt B. The new kernel_fn branch fires only for pooler with a khalf flag set, and it sits before master's NN torch.mm. No earlier branch takes pooler at m=128/256.
+- Numerics (numpy emulation, m=128/256): rel L2 is 1.66e-3 for master, 2.45e-3 for a and 1.66e-3 for b. The canary bound is 3e-3 and the A/B bound is 6e-3. Probe rows are exact for both kinds, so no gate is always-fail.
+- Rules: the kernel_fn branch reads only cfg, shapes and flags, with no sync, print or try, and it returns a fresh output. pooler_t is master's lossless bf16 NN repack. fp32 appears only in the internal partials.
+
+Residual risk: the hardened gate (two rounds at 1.03, IQR <= 1.5x) may keep master at m=256, which is a gate false negative and is printed as one. Candidate b is excluded if cuBLAS picks a split-K plan for the fp32 bmm.
