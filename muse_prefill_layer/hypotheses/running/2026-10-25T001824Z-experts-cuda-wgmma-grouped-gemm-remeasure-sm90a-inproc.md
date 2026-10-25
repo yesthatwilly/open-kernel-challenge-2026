@@ -72,7 +72,7 @@ review: proceed
 status: running
 review_at: 2026-10-25T002131Z
 review_companions: null
-stage: implemented
+stage: dispatched
 claimed_at: 2026-10-25T002131Z
 base_sha: d7ccd530009419f0e32f5bd4bdae7f0fdad273a3
 base_blob: db8a3344398bca79ea5cafeb580f701c055fd475
@@ -89,6 +89,8 @@ submission_blob: 113e7ac977c8ebb579d91c34400f9530c4ae6881
 lint_warnings: 24
 attempt_file: 2026-10-25T003406Z-check-experts-cuda-wgmma-grouped-gemm-remeasure-sm90a-inproc.md
 prepared_at: 2026-10-25T003406Z
+job: 6d047cdeefd94357
+dispatched_at: 2026-10-25T003418Z
 ---
 
 # experts-cuda-wgmma-grouped-gemm-remeasure-sm90a-inproc
