@@ -43,7 +43,7 @@ review: proceed
 status: running
 review_at: 2026-10-24T165620Z
 review_companions: null
-stage: claimed
+stage: implemented
 claimed_at: 2026-10-25T010440Z
 base_sha: de7af5e266755a23304676ec04c4526206066029
 base_blob: 0910a52804bc45a2f5ace82707c915f4634d8add
@@ -52,6 +52,12 @@ worktree: .worktrees/muse_prefill_layer/experts-triton-turn1-blockt32-stream
 mode: null
 restack_of: null
 stale_base: true
+implemented_at: 2026-10-25T010622Z
+impl_commit: 28e1d99bcb6f1bc6b7ab6130234aa8c56a1dfe1c
+submission_sha256: 27542e50b532516b1a0fe9ad0cf7351ac0c9078b4e8801801c0120a8d4802693
+norm_sha256: a99caf50932ec91cb12ee2693ea13cfc1be0e20e7d4e552b523e17cbb4928942
+submission_blob: 8b309ee5c5705d66ac6b4b7c8e0c777fda0c8008
+lint_warnings: 7
 ---
 
 # experts-triton-turn1-blockt32-stream
@@ -103,3 +109,29 @@ No companions. This is a rewrite stage judged on the turn_1 _moe_nvfp4_gemm_kern
 - Is ZERO_NONLOCAL_W2 still required? fused_post_expert_norm_weighted_sum receives slot_expert_ids and may already mask the -1 slots. Dropping the zero-store removes ~10-15 us at turn_1 and ~35 us at turn_4 (a separate, later change; verify the masking first).
 - Under dist=soft, how many of the 32 local experts exceed 32 rows at T=753? Each one dequantizes its weights twice. If it is many, BLOCK_T 48 is not a power of two for wgmma, but a 64-wide tile for the hottest experts is a future option.
 
+
+## Implementation notes
+
+Edited only `muse_prefill_layer/submission.py` in the worktree (5 insertions, 2 deletions).
+- `MARLIN_MAX_TOKENS` 1024 -> 0 (gate kept, comment added). Every prefill T runs `_experts_triton` with the packed dequant; the Marlin bank and the e2e Triton-vs-Marlin check are untouched. The older prose comment above the constant still describes the 1024 gate (not edited, comment only).
+- First `EXPERT_CONFIGS` entry (T <= 1024): BLOCK_T 64 -> 32, num_stages 3 -> 4; BLOCK_W=128, BLOCK_K=128, GROUP_SIZE_T=8, num_warps=4 as specified. The 4096 and first_turn entries are unchanged.
+- No deviation from the spec. The num_stages=3 fallback was not applied (no prepare log is available on this node); if the log shows spills or smem over budget, use 3.
+- STALE BASE: claim reported stale_base: true. The worktree is on stage 6's commit (de7af5e), which predates prefill master (stack-tonight-five-prefill, 1.0705 check). Built on it as the spec says, not rebased. Master's parallel align and `_silu_mul_sorted_kernel` are absent, so the Marlin comparison (master 768.6/735.9 us at turn_1) is against a different surrounding pipeline; compare against stage 6's own run.
+- Context: sibling stage 6 (experts-triton-packed-dequant-turn4, 1.0522, neutral) measured Triton at turn_4 as flat (0.995-1.005 on every shape). REWRITE_READ rates the Triton dequant line as ALU/lowering-bound (~5x floor at first_turn), and the review expects 2 CTAs/SM, not 3. Read n_regs/n_spills/shared for the BLOCK_T=32 variant before attributing.
+
+## Rules check
+
+- [x] CUDA-graph capturable: the diff changes a constant and a config dict; kernel_fn path is unchanged, with no sync/alloc/value-dependent control flow (gate reads x.shape[0] only).
+- [x] Nothing derived from `data` is cached across calls: no state added by the diff.
+- [x] Weights: no repacking changes; NVFP4 stays NVFP4 (Triton engine dequantizes in-kernel).
+- [x] Activations BF16 / KV FP8 / queries: unchanged by the diff.
+- [x] Attention sees every key: attention untouched.
+- [x] No timing patches, harness frames/I/O/secrets, module edits, reference import, subprocesses or network: none added.
+- [x] All work happens inside the timed call; no output caching or replay.
+
+okc_lint output:
+```
+warn  host-sync    L540, L582, L636, L641, L652, L661, L671: torch.cuda.synchronize()  (outside kernel_fn's call graph; fine in prepare())
+OK with warnings: muse_prefill_layer/submission.py
+```
+py_compile passed; __pycache__ removed.
