@@ -12,7 +12,7 @@ Agents counted: 632; total subagent tokens: 70,087,123; 632 have a transcript wi
 | scope | input | output | cache read | cache write | wtok |
 |---|---|---|---|---|---|
 | subagents (with transcript) | 27,020 | 12,641,987 | 772,221,823 | 60,622,410 | 216,237,149 |
-| main thread (all days) | 9,478 | 1,725,239 | 798,969,538 | 6,804,925 | 97,038,783 |
+| main thread (all days) | 9,512 | 1,735,834 | 802,014,466 | 6,874,933 | 97,483,794 |
 
 ## Prediction table (per agent run)
 
@@ -39,8 +39,8 @@ Per-hypothesis review + build + audit spend, grouped by how the run ended.
 
 | outcome | hypotheses | median tokens | total tokens | total wtok |
 |---|---|---|---|---|
-| neutral | 145 | 135,550 | 30,648,930 | 92,890,297 |
-| open | 44 | 91,039 | 4,631,238 | 11,945,076 |
+| neutral | 147 | 135,550 | 31,275,384 | 95,549,154 |
+| open | 42 | 88,998 | 4,004,784 | 9,286,219 |
 | regression | 40 | 134,600 | 7,480,805 | 23,383,947 |
 | gain | 16 | 103,449 | 3,044,850 | 9,241,922 |
 | failed | 5 | 238,441 | 1,306,552 | 3,895,773 |
@@ -55,7 +55,7 @@ Orchestration in the main conversation; not attributed to hypotheses.
 |---|---|---|---|---|---|
 | 2026-10-23 | 4,160 | 315,104 | 34,151,573 | 1,075,582 | 6,339,314 |
 | 2026-10-24 | 3,048 | 842,226 | 475,818,183 | 3,321,857 | 55,948,317 |
-| 2026-10-25 | 2,270 | 567,909 | 288,999,782 | 2,407,486 | 34,751,150 |
+| 2026-10-25 | 2,304 | 578,504 | 292,044,710 | 2,477,494 | 35,196,162 |
 
 ## Per hypothesis
 
@@ -69,7 +69,7 @@ Orchestration in the main conversation; not attributed to hypotheses.
 | attention_decode | restack-sk-pseudo-cluster-plus-v3-fused-preattn | gain | 1.4920 | 204,649 | 195,796 | 179,019 | 579,464 | 2,364,999 |
 | moe_w4a16 | cuda-nvfp4-wgmma-rega-grouped-sm90a-rebuild-inproc | neutral | 1.3303 | 217,762 | 156,055 | 166,670 | 540,487 | 1,844,983 |
 | moe_w4a16 | cuda-nvfp4-wgmma-rega-tiny-m-bucket16 | neutral | 1.3453 | 114,333 | 209,039 | 193,820 | 517,192 | 2,318,699 |
-| prefill_layer | experts-rega-low-class-two-ctas-per-sm | open | - | 103,862 | 248,377 | 162,372 | 514,611 | 2,349,127 |
+| prefill_layer | experts-rega-low-class-two-ctas-per-sm | neutral | 1.4173 | 103,862 | 248,377 | 162,372 | 514,611 | 2,349,127 |
 | attention_decode | full-verify-wgmma-s3-warpgroup-per-kvhead-inproc | neutral | 1.3801 | 96,654 | 236,778 | 163,363 | 496,795 | 2,118,277 |
 | decode_layer | small-t-launch-minimal-dense-chain-pdl | gain | 1.2283 | 112,875 | 91,559 | 271,128 | 475,562 | 1,400,462 |
 | prefill_layer | experts-turn-rega-s4-first-turn-n128 | gain | 1.4060 | 123,124 | 213,669 | 135,120 | 471,913 | 1,953,733 |
@@ -190,7 +190,7 @@ Orchestration in the main conversation; not attributed to hypotheses.
 | decode_layer | fa3-num-splits-sliding | open | - | 113,421 | 0 | 0 | 113,421 | 354,637 |
 | bf16_proj | unpooler-full-triton-skinny-m32 | neutral | 1.0053 | 112,459 | 0 | 0 | 112,459 | 294,582 |
 | bf16_proj | pooler-skinny-tiled-weight-layout | open | - | 112,296 | 0 | 0 | 112,296 | 303,911 |
-| prefill_layer | align-two-phase-all-t-rega | open | - | 111,843 | 0 | 0 | 111,843 | 309,730 |
+| prefill_layer | align-two-phase-all-t-rega | neutral | 1.4458 | 111,843 | 0 | 0 | 111,843 | 309,730 |
 | bf16_proj | bf16-m32-swapab-wgmma-triton | neutral | 1.1984 | 108,685 | 0 | 0 | 108,685 | 221,841 |
 | bf16_proj | pooler-unpooler-bulk-tma-row-owner-s2-cxx20-rebuild | regression | 1.0331 | 0 | 0 | 108,613 | 108,613 | 282,198 |
 | attention_decode | sliding-verify-cuda-streamk-window | open | - | 106,223 | 0 | 0 | 106,223 | 213,831 |
