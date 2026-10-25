@@ -45,7 +45,7 @@ base_sha: 3c444875aef3f2a85c86b412e22d10ce0a6290dc
 base_blob: 526518b54879e7929be2f03a0c8084907596fa70
 branch: hyp/muse_prefill_layer/experts-triton-packed-dequant-turn4
 worktree: .worktrees/muse_prefill_layer/experts-triton-packed-dequant-turn4
-mode: null
+mode: check
 restack_of: null
 stale_base: true
 implemented_at: 2026-10-25T003418Z
@@ -54,6 +54,8 @@ submission_sha256: 05424a69403b2c02e4e13bafd664dea069f501d3c8b82bbd85595eed371c5
 norm_sha256: e58f695f11f4803b559e8d0c23c67e51b80393eddb8ddeb844118ad5099d04e7
 submission_blob: 0910a52804bc45a2f5ace82707c915f4634d8add
 lint_warnings: 7
+attempt_file: 2026-10-25T003418Z-check-experts-triton-packed-dequant-turn4.md
+prepared_at: 2026-10-25T003418Z
 ---
 
 # experts-triton-packed-dequant-turn4
