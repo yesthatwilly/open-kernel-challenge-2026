@@ -46,9 +46,18 @@ kind: primary
 controls_for: null
 prior: "pooler-unpooler-bulk-tma-row-owner-s2-cxx20-rebuild: that row-owner lost +1 us at m=8 and +6 us at m=16 on pooler/unpooler at 1 CTA/SM; this widens master's qkv A2 instance, which runs 2 CTAs/SM and won 1.16x at m=1, against the split-K-4 swap-AB incumbent, behind a per-cell gate"
 review: proceed
-status: queued
+status: running
 review_at: 2026-10-25T212522Z
 review_companions: null
+stage: claimed
+claimed_at: 2026-10-25T212547Z
+base_sha: e90069716dd467a3801b43a8166dedef6c2ed987
+base_blob: ad8d7254a64a52db2a8f56ec0ad262748153a2e8
+branch: hyp/muse_bf16_proj/qkv-rowowner-a2-widen-m8-m16
+worktree: .worktrees/muse_bf16_proj/qkv-rowowner-a2-widen-m8-m16
+mode: check
+restack_of: null
+stale_base: null
 ---
 
 # qkv-rowowner-a2-widen-m8-m16
