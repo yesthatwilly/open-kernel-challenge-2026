@@ -65,7 +65,7 @@ review: proceed
 status: running
 review_at: 2026-10-25T150347Z
 review_companions: null
-stage: claimed
+stage: implemented
 claimed_at: 2026-10-25T150348Z
 base_sha: 5e7ce21f82b7a49dc31b038e9868884c8a90a3e0
 base_blob: 5cf8fae31e5b84c36efeeb4569763eb9b06e1c8a
@@ -74,6 +74,12 @@ worktree: .worktrees/muse_attention_decode/epilogue-gate-l2-prefetch-cuda
 mode: null
 restack_of: null
 stale_base: null
+implemented_at: 2026-10-25T150712Z
+impl_commit: de94b09f8a5b5f4eb5433327bb3aee2ddd8f773e
+submission_sha256: 53abebec31b0d7bd995b4bbc2b753c32469cc5ac96e06ede79147345fc89c6bb
+norm_sha256: 200be9567d61f0dc12473d35d29b00ec090f07c5d74166ee804ca9881d02bc79
+submission_blob: eb07606c72443e3a39558c0efc7d43f097d2f901
+lint_warnings: 57
 ---
 
 # epilogue-gate-l2-prefetch-cuda
@@ -119,3 +125,37 @@ No companion. The submit is scored and the change is one hint instruction in two
 - At full decode_1 (~20 MB of KV in 19 us), do the 16 prefetched gate lines survive in L2 until the two-level finalize? If they are partly evicted, full decode_1 reads flat while the sliding rows (0.5 MB window) still gain.
 - Is the v_scale_p prefetch in the cluster kernel worth keeping? The last rank already __ldg's v_scale_p at kernel start, so it is probably warm for every rank by the epilogue. It is harmless either way.
 
+
+## Implementation notes
+
+Worktree base 5e7ce21f; master (9716bda4) has an identical muse_attention_decode/submission.py, so no merge was needed. +16 lines, only P/submission.py.
+- _SK_CUDA: `prefetch_l2` helper defined once, above load_prefix (before the `template <int STAGES, bool TICKET` slice point, so _SKF_HEAD carries it and skF still compiles; skF kernel itself untouched). In splitkv_attn_sk_kernel, right after `const int R`, before load_prefix: grid-stride loop over R*16 gate lines.
+- _SLIDE_CUDA: helper defined once above sliding_cluster_kernel; after b/rank, tid < HQ/C prefetch the gate line of row rank*NR+tid, tid == NR prefetches v_scale_p.
+- Review fix 1 (applied): loop bound uses the kernel's own R = PSEUDO ? B*TOK : B, not B*8, so TOK=1 (sliding decode B=17..32 sk window) never reads past the tensor. Overrides the spec.
+- Review fix 2 (applied): helper exactly once in _SK_CUDA above the slice point, once in _SLIDE_CUDA.
+- Review fix 3 (applied): no PATH CHOSEN / logging line touched, including the sliding decode B=17..32 sk-window line.
+- Open questions (SASS position, regs/spill, L2 survival at full decode_1): cannot be answered here (no GPU); the existing [slide]/[sk]/[sd]/[ps]/[skF] regs/local/spill lines print at prepare time and must be read from the run log.
+- Deviation: none beyond the R correction.
+
+## Rules check
+
+- [x] CUDA-graph capturable: only a prefetch hint added, no sync/alloc/.item() in kernel_fn.
+- [x] Nothing derived from data is cached across calls (no globals added; pointers come from kernel args).
+- [x] Weights unchanged.
+- [x] Activations/KV/q precision unchanged (FP8 KV, E4M3 q).
+- [x] Attention sees every key: no math, grid or route change.
+- [x] No timing patches, harness edits, reference import, subprocess/fork.
+- [x] All work inside the timed call; no output caching.
+
+okc_lint: "OK with warnings" (only existing host-sync warnings in prepare(), outside kernel_fn). py_compile OK, __pycache__ removed.
+
+## Pre-flight audit
+
+Audited 2026-10-25 by an Opus subagent (read-only; no GPU or nvcc on this node). **Verdict: dispatch** (no fixes).
+- Bounds, sk kernel: the loop covers lines i < R*16 with R = PSEUDO ? B*TOK : B, which is the kernel's own R. It touches rows 0..R-1 at columns 1280 + (i&15)*64, at most column 2303, inside the qkv.size(1) >= 2304 layout. Those are the same rows and columns finalize_store reads. Callers pass qkv reshaped to batch*q_len rows: full decode is B, verify PSEUDO TOK=8 is B*8, and the sliding decode window TOK=1 for B=17..32 is B. In-bounds on every route, including the sk3-diag and stage-2 gate launches.
+- Bounds, cluster kernel: C is 4, 8 or 16 (host TORCH_CHECK), so NRp = HQ/C is 4, 2 or 1, and rank*NRp + tid < HQ. b < B == qkv.size(0) (host-checked). The v_scale_p pointer is valid.
+- The helper is defined exactly once in each translation unit. _SK_CUDA has it at line 1026, inside the anonymous namespace and above the `template <int STAGES, bool TICKET` slice at line 1156, so _SKF_HEAD carries exactly one copy and the skF body adds none. _SLIDE_CUDA has it at line 3885, outside every SLIDE_FP8QK #if. _SPLITKV_CUDA is untouched. No -Werror, so the unused inline in the skF unit is harmless.
+- No change to math, sync or barrier order. The loop has no barrier and comes before load_prefix / load_prefix_pseudo, whose __syncthreads every thread still reaches. The cluster kernel's prefetch block comes before every cluster.sync and has no early return. The early returns in the sk kernel (T<=0, bx>=gx, N<=0) are unchanged and come after the prefetch, so every CTA prefetches.
+- Rules: the prefetch is a hint only. There is no host sync, allocation or Python change; the kernel stays capturable and nothing is cached. lint gives "OK with warnings" (existing prepare()-only warnings). py_compile is OK and __pycache__ was removed.
+
+Residual risk: performance only (regs/spill or scheduling changes in the shared sk template, or the gate load already being hidden). Read the [slide]/[sk]/[ps]/[sd]/[skF] regs lines and the PATH CHOSEN lines in the log; correctness is not at risk.
