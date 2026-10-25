@@ -17,7 +17,13 @@ profile are in `<problem>/hypotheses/archive/<slug>/`.
 - Triton kernels' times reproduce within ~1% between runs; cuBLAS split-K rows swing more.
 - Reported shape time minus the profiled kernel sum is a real per-graph-node cost: ~2-4 us for
   nvjet+splitKreduce pairs, ~0.3 us for a single Triton launch (bf16 pooler/unpooler runs).
-- Resubmitting byte-identical code gets a new job id (it is not deduplicated) and costs a check.
+- Resubmitting byte-identical code is deduplicated by okc: it gets a job id but returns the earlier
+  job's result, so it measures nothing new (13 check/submit pairs returned exactly the same number;
+  fused-preattention-triton's check → dfee6f2939974bad). A confirm rerun therefore carries a
+  marker comment (churn.py `kind: confirm`).
+- The headline is steadier than okc's CI says: 22 independent identical-code pairs (check vs its
+  scored submit) differed by 0.4% mean, 1.01% max, so one run has sd ~0.35% against a CI of
+  about ±1.5%. churn.py judges gains on that drift (margin 1.24% one run, 1.07% pooled).
 
 ## Launches and fusion
 
