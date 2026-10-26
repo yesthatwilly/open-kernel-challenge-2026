@@ -46,7 +46,7 @@ review: proceed
 status: running
 review_at: 2026-10-25T212524Z
 review_companions: null
-stage: implemented
+stage: dispatched
 claimed_at: 2026-10-25T212551Z
 base_sha: 30f67a9af087bff842ec0bd3a8a3ea252c962f52
 base_blob: f4751fc054335a94d1b401af272e98a2d4760363
@@ -63,6 +63,8 @@ submission_blob: 1834ae36e06f81546b302addcb09c9a912b7e381
 lint_warnings: 98
 attempt_file: 2026-10-26T012540Z-check-experts-rega-pdl-chain-gather-w13-w2.md
 prepared_at: 2026-10-26T012540Z
+job: 8e4685f303c143a8
+dispatched_at: 2026-10-26T012831Z
 ---
 
 # experts-rega-pdl-chain-gather-w13-w2
