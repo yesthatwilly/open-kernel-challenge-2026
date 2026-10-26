@@ -85,6 +85,8 @@ submission_sha256: 6f4f815ba8afe271d06d8512e6c879a259027f19ff8c799288664833232fa
 norm_sha256: 89033c648111f6a5bba3a295216709f0c559d26cc8451e5ddc9032d34adbfe3d
 submission_blob: 18bc92b5a7d3cfa10ac6120d8ab524a4fd8cb25a
 lint_warnings: 35
+attempt_file: 2026-10-26T012539Z-check-bf16-verify16-cutlass-m128-onetile-splitk-rewrite.md
+prepared_at: 2026-10-26T012539Z
 ---
 
 # bf16-verify16-cutlass-m128-onetile-splitk-rewrite
