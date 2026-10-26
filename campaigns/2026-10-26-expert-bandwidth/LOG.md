@@ -11,7 +11,10 @@ append-only, newest last.
   attention_decode > prefill (last). On bf16 / attention, favour kernels that port into decode, and submit when a check
   beats that board. Every check must answer a new question; using every check is not required; no identical bytes
   re-rolled.
-- updated: 2026-10-26T21:40Z
+- updated: 2026-10-26T21:45Z
+- **Sprint (the user's 21:40Z steer, this window only):** spend bf16 / attention / prefill quota before 00:00Z on ~30
+  hypotheses via /hypothesize + /churnsubs with ~8-10 agents. No dispatch after ~23:45Z; harvest and land winners;
+  at 00:00Z back to the reset plan and the 19:05Z policy.
 - step: **bf16_proj**.
   - Done: bulk12 m=1 scored at 1.2664 (board 1.2566 -> 1.2664, rank 381 -> 355) and landed on master.
   - Building: bulk12 for m = 8 / 16 / 32 (branch campaign/expert-bandwidth after 3acb748e, uncommitted). b12x_kernel
@@ -397,3 +400,24 @@ append-only, newest last.
   - It drops the torch.zeros memset launch on the d16 / d32 / v16 / v32 router rows.
   - Self-check plus a graph gate per kernel.
   - Expected ~1 us per row, about +0.9% on the headline.
+
+## 2026-10-26T21:45Z: user steer acknowledged (21:40Z expiring-quota sprint until 00:00Z)
+
+- Read at 21:40Z in the campaign CLAUDE.md (relayed from the openclaw session): use as much of today's checks and scored
+  runs as possible before 00:00Z.
+  - Scope: ~30 hypotheses, bf16_proj first, then attention_decode, then prefill.
+  - Run in parallel through the revived /hypothesize + /churnsubs pipeline, with ~8-10 concurrent agents.
+  - For this window only it overrides "churn paused", "prefill idle", "<= 3 agents" and "one Opus audit per module".
+  - Hard stop: dispatch nothing after ~23:45Z. Decode / moe code, quota and the 00:00Z reset plan stay untouched.
+- Quota at 21:40Z:
+
+  | problem | checks | scored |
+  |---|---|---|
+  | bf16 | 8 | 9 |
+  | attention | 14 | 10 |
+  | prefill | 16 | 10 |
+  | moe | 0 | 4 |
+
+- Started: three /hypothesize minting agents (bf16 6, attention 12, prefill 12). My bulk12 line continues alongside:
+  - router-ticket check 7e8be36a is in flight;
+  - the b12x chunk-rotation build a7da6fa9 is audited (ship) and waits for that result.

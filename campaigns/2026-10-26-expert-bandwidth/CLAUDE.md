@@ -1,5 +1,21 @@
 # Campaign instructions (from the user)
 
+> **STOP — NEW USER STEER, 2026-10-26 ~21:40Z, relayed from the user's openclaw session: EXPIRING-QUOTA SPRINT until 00:00Z. Act on it this tick.**
+>
+> The user explicitly chose (over a one-agent option and a bf16+attention-only option): **use as much of today's remaining
+> checks and scored runs as possible before 00:00Z, ~30 hypotheses, across all pools with quota: bf16_proj, attention_decode
+> AND prefill** (and moe's 4 scored if a moe check ever beats its board; none expected). This overrides, for this window only:
+> "churn paused", "prefill stays idle", "<=3 concurrent agents" and "one Opus audit per module".
+> - **Run it in parallel:** revive the hypothesis pipeline (/hypothesize + /churnsubs, one worktree per hypothesis) with
+>   **about 8-10 concurrent agents**. One check answers each hypothesis; submit the exact bytes of any check that beats its board.
+> - **Priority inside the sprint:** bf16_proj first (decode-portable ideas, bulk12 variants), then attention_decode, then prefill.
+>   Draw ideas from each problem's hypotheses/ backlog and FINDINGS, not only new ones.
+> - **Keep:** the rules checklist on every check and submit; no identical bytes re-rolled; fresh hypotheses only.
+>   Lighter audits are acceptable for small deltas; a new CUDA module still gets a quick read-only audit.
+> - **Do not touch** decode or moe code or quota, or the 00:00Z reset plan. Your own bulk12 line keeps going alongside.
+> - **Hard stop:** dispatch nothing after ~23:45Z; harvest and land winners; at 00:00Z return to the reset plan and the
+>   19:05Z policy below (single agent, gain-priority order). Log the sprint's results (checks used, wins, landed) in LOG.md.
+
 > **STOP — USER STEER, 2026-10-26 ~19:05Z, relayed from the user's openclaw session. Not yet acknowledged. Read before acting on this tick.**
 >
 > **Do not idle until 00:00Z, and do not pre-build hours ahead of a reset.** Decode and moe quota is spent for 10-26. Their
