@@ -62,7 +62,7 @@ base_sha: 2922874607ac8f3aee67594fba45a5337e29365e
 base_blob: 6d6afa4722731ceb9cb8216d0334a03f1a96ad2b
 branch: hyp/muse_attention_decode/full-verify-fa3-num-splits-band-gate
 worktree: .worktrees/muse_attention_decode/full-verify-fa3-num-splits-band-gate
-mode: null
+mode: check
 restack_of: null
 stale_base: null
 implemented_at: 2026-10-25T213737Z
@@ -71,6 +71,8 @@ submission_sha256: 66068e3c96f6dffe814729ba85437b0e71df2cfa3a70cf9da2f9d143d75f3
 norm_sha256: 5ddd85291d12665f2ebab53159a422d2c031c6f2f47aa8b0f9e01f8ec40d5c19
 submission_blob: f171866b1c89fc143bbb35f711723ef60d39a715
 lint_warnings: 65
+attempt_file: 2026-10-26T012536Z-check-full-verify-fa3-num-splits-band-gate.md
+prepared_at: 2026-10-26T012536Z
 ---
 
 # full-verify-fa3-num-splits-band-gate
