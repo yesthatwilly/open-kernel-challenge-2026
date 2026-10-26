@@ -68,7 +68,7 @@ review: proceed
 status: running
 review_at: 2026-10-25T212521Z
 review_companions: null
-stage: implemented
+stage: dispatched
 claimed_at: 2026-10-25T212548Z
 base_sha: e4008591fb186026deeb850980bc31aed9fbe89a
 base_blob: 489174846c51a034e3c119f0f67cec9c213404f5
@@ -85,6 +85,8 @@ submission_blob: ff4b91b7ccf2b0111c4ed8a900c2f48cfed8d73b
 lint_warnings: 37
 attempt_file: 2026-10-26T012540Z-check-bf16-verify-deepgemm-sm90-explicit-instantiation-stage2.md
 prepared_at: 2026-10-26T012540Z
+job: 566a79e403754c76
+dispatched_at: 2026-10-26T012819Z
 ---
 
 # bf16-verify-deepgemm-sm90-explicit-instantiation-stage2
