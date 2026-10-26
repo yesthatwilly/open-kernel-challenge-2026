@@ -1,0 +1,86 @@
+ n=80000 plant last: skw_attn_kernel v4 p4 grid 32 (0.00s)
+[skw] B=1 q_len 8 n=80000 plant last: skw_attn_kernel v4 p4 grid 32: rel L2 1.67e-03 (<= 0.015), worst row 1.75e-03 (<= 0.05), finite True, tickets 0 -> ok
+[skw] launching B=1 q_len 8 n=80000 plant last: skw_attn_kernel v4 p8 grid 64
+[skw] ok        B=1 q_len 8 n=80000 plant last: skw_attn_kernel v4 p8 grid 64 (0.00s)
+[skw] B=1 q_len 8 n=80000 plant last: skw_attn_kernel v4 p8 grid 64: rel L2 1.67e-03 (<= 0.015), worst row 1.75e-03 (<= 0.05), finite True, tickets 0 -> ok
+[skw] launching B=1 q_len 8 n=80000 plant last: skw_attn_kernel v4 sm grid 132
+[skw] ok        B=1 q_len 8 n=80000 plant last: skw_attn_kernel v4 sm grid 132 (0.00s)
+[skw] B=1 q_len 8 n=80000 plant last: skw_attn_kernel v4 sm grid 132: rel L2 1.67e-03 (<= 0.015), worst row 1.75e-03 (<= 0.05), finite True, tickets 0 -> ok
+[skw] launching B=1 q_len 8 n=80000 plant last: skw_attn_kernel v5 p4 grid 32
+[skw] ok        B=1 q_len 8 n=80000 plant last: skw_attn_kernel v5 p4 grid 32 (0.00s)
+[skw] B=1 q_len 8 n=80000 plant last: skw_attn_kernel v5 p4 grid 32: rel L2 1.67e-03 (<= 0.015), worst row 1.75e-03 (<= 0.05), finite True, tickets 0 -> ok
+[skw] launching B=1 q_len 8 n=80000 plant last: skw_attn_kernel v5 p8 grid 64
+[skw] ok        B=1 q_len 8 n=80000 plant last: skw_attn_kernel v5 p8 grid 64 (0.00s)
+[skw] B=1 q_len 8 n=80000 plant last: skw_attn_kernel v5 p8 grid 64: rel L2 1.67e-03 (<= 0.015), worst row 1.75e-03 (<= 0.05), finite True, tickets 0 -> ok
+[skw] launching B=1 q_len 8 n=80000 plant last: skw_attn_kernel v5 sm grid 132
+[skw] ok        B=1 q_len 8 n=80000 plant last: skw_attn_kernel v5 sm grid 132 (0.00s)
+[skw] B=1 q_len 8 n=80000 plant last: skw_attn_kernel v5 sm grid 132: rel L2 1.67e-03 (<= 0.015), worst row 1.75e-03 (<= 0.05), finite True, tickets 0 -> ok
+[skw] v1 kernel-level gates: 6/6 candidates passed
+[skw] race v1 round 1/2 (baseline 5.60 us subtracted): master (as routed: FA3 chain / S1 / S3 per this state's flags): median 48.61 us IQR 0.90 us
+[skw] race v1 round 1/2 (baseline 5.60 us subtracted): skw_pre_kernel + skw_attn_kernel v4 p4 (grid 32): median 40.54 us IQR 0.83 us, master/new 1.199
+[skw] race v1 round 1/2 (baseline 5.60 us subtracted): skw_pre_kernel + skw_attn_kernel v4 p8 (grid 64): median 38.56 us IQR 0.61 us, master/new 1.261
+[skw] race v1 round 1/2 (baseline 5.60 us subtracted): skw_pre_kernel + skw_attn_kernel v4 sm (grid 132): median 39.55 us IQR 0.86 us, master/new 1.229
+[skw] race v1 round 1/2 (baseline 5.60 us subtracted): skw_pre_kernel + skw_attn_kernel v5 p4 (grid 32): median 43.39 us IQR 0.58 us, master/new 1.120
+[skw] race v1 round 1/2 (baseline 5.60 us subtracted): skw_pre_kernel + skw_attn_kernel v5 p8 (grid 64): median 41.09 us IQR 0.83 us, master/new 1.183
+[skw] race v1 round 1/2 (baseline 5.60 us subtracted): skw_pre_kernel + skw_attn_kernel v5 sm (grid 132): median 39.90 us IQR 0.67 us, master/new 1.218
+[skw] race v1 round 2/2 (baseline 5.57 us subtracted): master (as routed: FA3 chain / S1 / S3 per this state's flags): median 47.94 us IQR 1.34 us
+[skw] race v1 round 2/2 (baseline 5.57 us subtracted): skw_pre_kernel + skw_attn_kernel v4 p4 (grid 32): median 40.96 us IQR 0.61 us, master/new 1.170
+[skw] race v1 round 2/2 (baseline 5.57 us subtracted): skw_pre_kernel + skw_attn_kernel v4 p8 (grid 64): median 38.82 us IQR 1.09 us, master/new 1.235
+[skw] race v1 round 2/2 (baseline 5.57 us subtracted): skw_pre_kernel + skw_attn_kernel v4 sm (grid 132): median 39.46 us IQR 1.18 us, master/new 1.215
+[skw] race v1 round 2/2 (baseline 5.57 us subtracted): skw_pre_kernel + skw_attn_kernel v5 p4 (grid 32): median 43.17 us IQR 0.86 us, master/new 1.110
+[skw] race v1 round 2/2 (baseline 5.57 us subtracted): skw_pre_kernel + skw_attn_kernel v5 p8 (grid 64): median 41.09 us IQR 0.80 us, master/new 1.167
+[skw] race v1 round 2/2 (baseline 5.57 us subtracted): skw_pre_kernel + skw_attn_kernel v5 sm (grid 132): median 40.16 us IQR 1.12 us, master/new 1.194
+[skw] race v1: v4 p4: master/new 1.199 / 1.170 (need >= 1.03 both), IQR ok True -> QUALIFIES
+[skw] race v1: v4 p8: master/new 1.261 / 1.235 (need >= 1.03 both), IQR ok True -> QUALIFIES
+[skw] race v1: v4 sm: master/new 1.229 / 1.215 (need >= 1.03 both), IQR ok True -> QUALIFIES
+[skw] race v1: v5 p4: master/new 1.120 / 1.110 (need >= 1.03 both), IQR ok True -> QUALIFIES
+[skw] race v1: v5 p8: master/new 1.183 / 1.167 (need >= 1.03 both), IQR ok True -> QUALIFIES
+[skw] race v1: v5 sm: master/new 1.218 / 1.194 (need >= 1.03 both), IQR ok True -> QUALIFIES
+[skw] race v1: WINNER = NEW (4, 'p8') [new 38.69 us vs master 48.27 us]
+[combo] launching SKW v1 B=1 L=8 lens 1..1 kv_scale 1.0: eager warm-up state 0
+[combo] ok        SKW v1 B=1 L=8 lens 1..1 kv_scale 1.0: eager warm-up state 0 (0.00s)
+[combo] launching SKW v1 B=1 L=8 lens 1..1 kv_scale 1.0: eager warm-up state 1
+[combo] ok        SKW v1 B=1 L=8 lens 1..1 kv_scale 1.0: eager warm-up state 1 (0.00s)
+[combo] SKW v1 B=1 L=8 lens 1..1 kv_scale 1.0: replay 0 on state 0: launching graph
+[combo] SKW v1 B=1 L=8 lens 1..1 kv_scale 1.0: replay 0 state 0: o vs master 2.60e-02 (<= 1e-2), vs fp64 new 4.75e-02 master 4.75e-02 rows ok True, k rel L2 vs master 1.16e-02 (<= 4e-2; info: gap 1 on 2.7% of bytes), v exact True, other rows intact True, finite True, counters 0 -> ok
+[combo] SKW v1 B=1 L=8 lens 1..1 kv_scale 1.0: replay 1 on state 1: launching graph
+[combo] SKW v1 B=1 L=8 lens 1..1 kv_scale 1.0: replay 1 state 1: o vs master 5.00e-02 (<= 1e-2), vs fp64 new 4.87e-02 master 3.97e-02 rows ok True, k rel L2 vs master 1.60e-02 (<= 4e-2; info: gap 1 on 2.8% of bytes), v exact True, other rows intact True, finite True, counters 0 -> ok
+[combo] SKW v1 B=1 L=8 lens 1..1 kv_scale 1.0: replay 2 on state 0: launching graph
+[combo] SKW v1 B=1 L=8 lens 1..1 kv_scale 1.0: replay 2 state 0: o vs master 5.14e-02 (<= 1e-2), vs fp64 new 6.50e-02 master 4.16e-02 rows ok True, k rel L2 vs master 2.30e-02 (<= 4e-2; info: gap 1 on 3.6% of bytes), v exact True, other rows intact True, finite True, counters 0 -> FAIL
+[skw] v1 attention-side alternation: FAIL: SKW v1 B=1 L=8 lens 1..1 kv_scale 1.0 replay 2 state 0: o vs master 5.14e-02 (<= 1e-2), vs fp64 new 6.50e-02 master 4.16e-02 rows ok True, k rel L2 vs master 2.30e-02 (<= 4e-2; info: gap 1 on 3.6% of bytes), v exact True, other rows intact True, finite True, counters 0
+[combo] phase SKW: 1.2s wall, this prepare() 9.6s, all prepare() calls 9.6s
+PATH CHOSEN: S1 sliding decode q_len 1 page 1, 2 <= B <= 16: NEW _sliding_fused_kernel S=16 (per-state counters) [new 32.74 us vs master 44.58 us]
+PATH CHOSEN: S1 sliding decode q_len 1 page 1, 17 <= B <= 32: NEW _sliding_fused_kernel S=16 (per-state counters) [new 43.17 us vs master 51.55 us]
+PATH CHOSEN: S2a routing kernel R, 2 <= T <= 8: NEW per-warp top-8 R (variant 0), PDL after P [new 33.47 us vs master 34.94 us]
+PATH CHOSEN: S2a routing kernel R, 9 <= T <= 16: NEW per-warp top-8 R (variant 0), PDL after P [new 34.40 us vs master 35.97 us]
+PATH CHOSEN: S2a routing kernel R, 17 <= T <= 32: NEW per-warp top-8 R (variant 0), PDL after P [new 37.34 us vs master 39.30 us]
+PATH CHOSEN: S2b unpooler, 2 <= T <= 8: NEW dl_unpool_kernel NF=1 [new 6.56 us vs master 10.98 us]
+PATH CHOSEN: S3 full decode 2 <= B <= 23 (sk / split-KV feed): NEW _pre_attention_kernel unpaired [new 130.72 us vs master 135.52 us]
+PATH CHOSEN: S3 full decode 24 <= B <= 64 (sk / split-KV feed): MASTER FusedQKNorm + casts + store_cache + q FP8 cast [not timed] (fallback: check: S3 c1-b32 B=32 L=1 lens 1..4000 kv_scale 0.015625 replay 3 state 1: o vs master 2.73e-02 (<= 1e-2), vs fp64 new 4.20e-02 master 4.35e-02 rows ok False, k rel L2 vs master 1.73e-02 (<= 4e-2; info: gap 1 on 4.0% of bytes), v exact True, other rows intact True, finite True, counters 0)
+PATH CHOSEN: S3 sliding verify B = 1: MASTER FusedQKNorm + casts + store_cache + q FP8 cast [not timed] (fallback: check: S3 front unpaired sliding B=1 L=8 pos~299995 kv_scale 1.0: q gap 2 rel L2 vs fp64 new 2.69e-02 master 2.70e-02; k gap 1 rel L2 vs fp64 new 2.59e-02 master 2.62e-02; v exact True; zero half exact True; other rows intact True; S3 front unpaired sliding B=1 L=8 pos~1048500 kv_scale 1.0: q gap 2 rel L2 vs fp64 new 2.87e-02 master 2.89e-02; k gap 1 rel L2 vs fp64 new 2.89e-02 master 2.91e-02; v exact True; zero half exact True; other rows intact True)
+PATH CHOSEN: S3 sliding verify 2 <= B <= 23: MASTER FusedQKNorm + casts + store_cache + q FP8 cast [not timed] (fallback: check: S3 front unpaired sliding B=2 L=8 pos~80000 kv_scale 1.0: q gap 2 rel L2 vs fp64 new 2.64e-02 master 2.66e-02; k gap 2 rel L2 vs fp64 new 2.54e-02 master 2.56e-02; v exact True; zero half exact True; other rows intact True; S3 front unpaired sliding B=2 L=8 pos~299995 kv_scale 1.0: q gap 2 rel L2 vs fp64 new 2.67e-02 master 2.69e-02; k gap 1 rel L2 vs fp64 new 2.61e-02 master 2.62e-02; v exact True; zero half exact True; other rows intact True)
+PATH CHOSEN: S3 sliding verify 24 <= B <= 64: MASTER FusedQKNorm + casts + store_cache + q FP8 cast [not timed] (fallback: check: S3 front unpaired sliding B=32 L=8 pos~80000 kv_scale 1.0: q gap 3 rel L2 vs fp64 new 2.65e-02 master 2.67e-02; k gap 4 rel L2 vs fp64 new 2.65e-02 master 2.67e-02; v exact True; zero half exact True; other rows intact True; S3 front unpaired sliding B=32 L=8 pos~299995 kv_scale 1.0: q gap 3 rel L2 vs fp64 new 2.67e-02 master 2.69e-02; k gap 3 rel L2 vs fp64 new 2.69e-02 master 2.71e-02; v exact True; zero half exact True; other rows intact True)
+PATH CHOSEN: S3 full verify 2 <= B <= 23 (paired FA3): MASTER FusedQKNorm + casts + store_cache + paired zero pad + copies + FusedRMSNormGate [not timed] (fallback: check: S3 c3-t128 B=5 L=3 lens 1..4000 kv_scale 1.0 replay 1 state 1: o vs master 4.42e-02 (<= 1e-2), vs fp64 new 5.34e-02 master 4.32e-02 rows ok False, k rel L2 vs master 1.53e-02 (<= 4e-2; info: gap 1 on 3.8% of bytes), v exact True, other rows intact True, finite True, counters 0)
+PATH CHOSEN: S3 full verify 24 <= B <= 64 (paired FA3): MASTER FusedQKNorm + casts + store_cache + paired zero pad + copies + FusedRMSNormGate [not timed] (fallback: check: S3 c3-t256 B=32 L=8 lens 1..4000 kv_scale 1.0 replay 0 state 0: o vs master 4.13e-02 (<= 1e-2), vs fp64 new 5.40e-02 master 4.90e-02 rows ok False, k rel L2 vs master 1.67e-02 (<= 4e-2; info: gap 1 on 3.3% of bytes), v exact True, other rows intact True, finite True, counters 0)
+PATH CHOSEN: S3 full verify B = 1: MASTER FusedQKNorm + casts + store_cache + q FP8 cast [not timed] (fallback: check: S3 c4-t8 B=1 L=8 lens 1..1 kv_scale 1.0 replay 0 state 0: o vs master 3.85e-02 (<= 1e-2), vs fp64 new 4.74e-02 master 3.67e-02 rows ok True, k rel L2 vs master 1.57e-02 (<= 4e-2; info: gap 1 on 2.7% of bytes), v exact True, other rows intact True, finite True, counters 0)
+PATH CHOSEN: SKW sliding decode 17 <= B <= 32 (q_len 1, page 1): MASTER the attention side as master routes it (FusedQKNorm + casts + store_cache + FA3 + combine + FusedRMSNormGate) [new 43.07 us vs master 51.10 us] (fallback: check: SKW layer b32 agentic ctx 80000 kv 1 replay 1 state 1: hidden 4.46e-02 (<= 0.05), stream 4.40e-02 (<= 0.025), update 7.76e-02 (<= 0.1), k_cache gap 0 rel 0.00e+00, v_cache exact True, other rows intact True, ids differ on 6/32 tokens, routing: picks within 0.05 True, clear-margin top-8 present True, routes 46/45, distinct 19/19, finite True, counters 0)
+PATH CHOSEN: SKW sliding verify B = 1 (q_len 8, page 1): MASTER the attention side as master routes it (FusedQKNorm + casts + store_cache + FA3 + combine + FusedRMSNormGate) [new 38.69 us vs master 48.27 us] (fallback: check: SKW v1 B=1 L=8 lens 1..1 kv_scale 1.0 replay 2 state 0: o vs master 5.14e-02 (<= 1e-2), vs fp64 new 6.50e-02 master 4.16e-02 rows ok True, k rel L2 vs master 2.30e-02 (<= 4e-2; info: gap 1 on 3.6% of bytes), v exact True, other rows intact True, finite True, counters 0)
+[prepare] this call 9.6s, cumulative 9.6s
+[summary] PATH CHOSEN S1 A: NEW [new 32.74 us vs master 44.58 us]
+[summary] PATH CHOSEN S1 B: NEW [new 43.17 us vs master 51.55 us]
+[summary] PATH CHOSEN S2a 8: NEW [new 33.47 us vs master 34.94 us]
+[summary] PATH CHOSEN S2a 16: NEW [new 34.40 us vs master 35.97 us]
+[summary] PATH CHOSEN S2a 32: NEW [new 37.34 us vs master 39.30 us]
+[summary] PATH CHOSEN S2b 8: NEW [new 6.56 us vs master 10.98 us]
+[summary] PATH CHOSEN S3 c1-b16: NEW [new 130.72 us vs master 135.52 us]
+[summary] PATH CHOSEN S3 c1-b32: MASTER [not timed] (fallback: check: S3 c1-b32 B=32 L=1 lens 1..4000 kv_scale 0.015625 replay 3 state 1: o vs master 2.7)
+[summary] PATH CHOSEN S3 c2-t8: MASTER [not timed] (fallback: check: S3 front unpaired sliding B=1 L=8 pos~299995 kv_scale 1.0: q gap 2 rel L2 vs fp64 n)
+[summary] PATH CHOSEN S3 c2-t128: MASTER [not timed] (fallback: check: S3 front unpaired sliding B=2 L=8 pos~80000 kv_scale 1.0: q gap 2 rel L2 vs fp64 ne)
+[summary] PATH CHOSEN S3 c2-t256: MASTER [not timed] (fallback: check: S3 front unpaired sliding B=32 L=8 pos~80000 kv_scale 1.0: q gap 3 rel L2 vs fp64 n)
+[summary] PATH CHOSEN S3 c3-t128: MASTER [not timed] (fallback: check: S3 c3-t128 B=5 L=3 lens 1..4000 kv_scale 1.0 replay 1 state 1: o vs master 4.42e-02)
+[summary] PATH CHOSEN S3 c3-t256: MASTER [not timed] (fallback: check: S3 c3-t256 B=32 L=8 lens 1..4000 kv_scale 1.0 replay 0 state 0: o vs master 4.13e-0)
+[summary] PATH CHOSEN S3 c4-t8: MASTER [not timed] (fallback: check: S3 c4-t8 B=1 L=8 lens 1..1 kv_scale 1.0 replay 0 state 0: o vs master 3.85e-02 (<= )
+[summary] PATH CHOSEN SKW b32: MASTER [new 43.07 us vs master 51.10 us] (fallback: check: SKW layer b32 agentic ctx 80000 kv 1 replay 1 state 1: hidden 4.46e-02 (<= 0.05), s)
+[summary] PATH CHOSEN SKW v1: MASTER [new 38.69 us vs master 48.27 us] (fallback: check: SKW v1 B=1 L=8 lens 1..1 kv_scale 1.0 replay 2 state 0: o vs master 5.14e-02 (<= 1e)
+[summary] dense-chain ON, w2 atomic, full-decode sk on=True b1=True n={16: True, 32: True}
+[summary] [skw] module built, routes b32=None v1=None (None = master's chain), prepare wall 9.6s

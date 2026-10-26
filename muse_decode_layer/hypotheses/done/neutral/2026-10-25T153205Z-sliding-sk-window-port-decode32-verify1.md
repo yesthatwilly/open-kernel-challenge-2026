@@ -75,11 +75,11 @@ priority: 2
 kind: primary
 controls_for: null
 review: proceed
-status: running
+status: done
 review_at: 2026-10-25T203233Z
 review_companions: null
 hold_reason: null
-stage: dispatched
+stage: harvested
 claimed_at: 2026-10-25T213134Z
 base_sha: 4b5ab758064dec781322c9326848d77ac8ab9b96
 base_blob: 3fc72e97304e132db432fcc87872be997f842929
@@ -98,6 +98,13 @@ attempt_file: 2026-10-26T012541Z-check-sliding-sk-window-port-decode32-verify1.m
 prepared_at: 2026-10-26T012541Z
 job: 3117f2e423d44cb7
 dispatched_at: 2026-10-26T012819Z
+outcome: neutral
+verdict_detail: within-ci
+speedup: 1.31165922246349
+speedup_ci: [1.2919843341265376, 1.3313341108004422]
+harvested_at: 2026-10-26T023154Z
+best_at_harvest: 1.3142361220457452
+promotion: null
 ---
 
 # sliding-sk-window-port-decode32-verify1
@@ -189,3 +196,35 @@ py_compile ok; __pycache__ removed.
 
 Verdict: dispatch (no edits made). Checked: (1) every generalized helper (_cb_flags skw, _cb_cmp_attn row_agg, _cb_cmp_layer loose/k_gap_max, _s3_front_check pre_fn/gap_gate/label, _cb_attn_ref q_override) keeps its old behavior at its existing master call sites (defaults reproduce the old code and tag text; _cb_off now also forces skw routes off, a no-op while state["skw"] is absent or its route is all None, which holds through T8); (2) the SKW layer check is loose only on the layer residual, while the kernel-level suite (fp64 reference fed the kernel's own q bytes, window-edge plants, <= 1.5e-2 total / 5e-2 per row) and the row-aggregated attention alternation still fail an O(1) wrong row; the new path is fp16-MMA so it is closer to the fp64 reference than master's FP8-P FA3, so the "new <= 1.25x master" gate does not trip; (3) tickets, workspaces and routes live in state["skw"], cloned per state by _cb_second_state, no module-global device pointer (_SKW_RES holds floats/tuples, the C++ static is a host bool array); (4) SKW starts at <= 150 s into prepare() (prior master logs show prepare at ~7 s), the cell/case deadlines (240/260 s) bound the rest below 300 s, and the compile adds ~45 s to the import clock. The CUDA TU diffs against attention master as rename + PSEUDO-only + qkv layout TORCH_CHECK; skw_pre_kernel is byte-identical to _pre_attention_kernel.
 Residual risk: the race's IQR gate (candidate <= 1.5x master's, master floored at 0.5 us) can reject a real win on 0.5 us event quantization, which would leave both bands unmeasured on master's path.
+
+## Result
+
+- job `3117f2e423d44cb7` (check), status done, passed True, tests 13/13
+- speedup 1.3117x, 95% CI [1.2920, 1.3313], score 17245.561661599673 µs vs SGLang 22620.3 µs
+- best at harvest: {"speedup": 1.3142361220457452, "ci": [1.294522580215059, 1.3339496638764312], "job": "a903b9d004d2452d"}; base result: muse_decode_layer/hypotheses/done/neutral/combo-measured-rows-slide-batched-preattn-t8-tail.result.json
+- **outcome: neutral** (within-ci)
+- files: `muse_decode_layer/hypotheses/done/neutral/sliding-sk-window-port-decode32-verify1.result.json`, `muse_decode_layer/hypotheses/done/neutral/sliding-sk-window-port-decode32-verify1.patch`; branch `hyp/muse_decode_layer/sliding-sk-window-port-decode32-verify1`
+
+## Attribution
+
+| shape | w | base µs | hyp µs | delta | verdict |
+|---|---|---|---|---|---|
+| batch=1 ctx=80000 dist=soft layer=sliding load=decode_1 page=1 repeats=60 | 46 | 118.48 | 117.62 | 1.0047 | flat |
+| batch=1 ctx=80000 dist=soft layer=full load=decode_1 page=1 repeats=60 | 16 | 124.31 | 122.99 | 1.0051 | flat |
+| batch=16 ctx=80000 dist=soft layer=sliding load=decode_16 page=1 spread=agentic | 46 | 210.54 | 203.7 | 1.0505 | gained |
+| batch=16 ctx=80000 dist=soft layer=full load=decode_16 page=1 spread=agentic | 16 | 290.53 | 285.2 | 1.0004 | flat |
+| batch=32 ctx=80000 dist=soft layer=sliding load=decode_32 page=1 spread=agentic | 46 | 239.48 | 231.01 | 1.0236 | flat |
+| batch=32 ctx=80000 dist=soft layer=full load=decode_32 page=1 spread=agentic | 16 | 446.42 | 440.83 | 1.0055 | flat |
+| batch=1 ctx=80000 dist=soft layer=sliding load=verify_1 page=1 q_len=8 | 46 | 181.08 | 185.64 | 0.9944 | flat |
+| batch=1 ctx=80000 dist=soft layer=full load=verify_1 page=1 q_len=8 | 16 | 189.51 | 201.59 | 0.9803 | flat |
+| batch=16 ctx=80000 dist=soft layer=sliding load=verify_16 page=1 q_len=8 spread=agentic | 46 | 414.69 | 419.87 | 0.9758 | flat |
+| batch=16 ctx=80000 dist=soft layer=full load=verify_16 page=1 q_len=8 spread=agentic | 16 | 593.41 | 567.24 | 0.9693 | lost |
+| batch=32 ctx=80000 dist=soft layer=sliding load=verify_32 page=1 q_len=8 spread=agentic | 46 | 599.76 | 599.04 | 0.9674 | lost |
+| batch=32 ctx=80000 dist=soft layer=full load=verify_32 page=1 q_len=8 spread=agentic | 16 | 866.62 | 866.0 | 0.9789 | flat |
+
+gained on sliding decode_16; lost on full verify_16; sliding verify_32. Expected hit: 3/6. Noise ±1.5%.
+
+## Follow-ups
+
+- within-ci: the change is not proven either way; a stacked hypothesis (`depends_on: sliding-sk-window-port-decode32-verify1`) that adds a further change in the same area is the only way to learn more.
+
