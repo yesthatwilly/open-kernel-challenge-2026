@@ -43,8 +43,11 @@ controls_for: null
 prior: "experts-rega-mc2-slab-multicast-all-t: stage 1 shares the slab across 2 CTAs by k-halves; this shares it across 4 by 32-token row quarters, so issued slab reads per CTA halve again, at the cost of possible idle SMs from cluster-4 occupancy"
 rewrite_stage: 2
 replaces: rega_kernel / rega_mc_kernel (w13, w2) in the rega high (T=3012) and ft (T=16384) classes
-review: required
-status: queued
+review: hold
+status: hold
+review_at: 2026-10-26T215518Z
+review_companions: null
+hold_reason: "adversarial review: Hold: this hypothesis's own build condition has failed. Stage 1's 2-CTA slab multicast cut issued L2 bytes by 24-39% yet rega ran 1.31-1.38x slower at high/ft a"
 ---
 
 # experts-rega-mc4-cluster-high-ft
@@ -71,3 +74,28 @@ shape (profile top_kernels) against the incumbent and the speed-of-light floor, 
 2. at or below the incumbent kernels' time on the target shapes;
 3. within ~1.5x of the floor on the target shapes, and the headline CI clears 1.0 (promotable).
 The next stage is minted with `--kind rewrite --depends-on <this slug> --stage N+1`.
+
+## Adversarial review
+
+Reviewed 2026-10-26T215518Z by an adversarial subagent (model opus).
+
+**Verdict: hold.** Hold: this hypothesis's own build condition has failed. Stage 1's 2-CTA slab multicast cut issued L2 bytes by 24-39% yet rega ran 1.31-1.38x slower at high/ft and 1.80x at low (OFF in every class, job 0ca60bb781db48e4), and the in-CTA bm256 byte cut also lost 1.16-1.21x (job a6f6063051f14750), so slab ingest is not the limiter and CL=4 widens exactly the cluster handshake that cost CL=2 ~0.3-0.5 us per stage. Spend the check on diagnosing that cost (or master's real limiter), not on CL=4.
+
+### Justification
+Its build condition (an issued-TB/s drop that moved time) failed in stage 1 (job 0ca60bb781db48e4): issued bytes fell 24-39% while rega_mc_kernel got 1.32-1.90x slower; bm256 (job a6f6063051f14750) cut the same ~38% bytes and also lost 1.16-1.20x. The ingest-cap premise behind DIAGNOSIS actions 1-2 is falsified; CL=4 widens the per-stage cluster handshake (4-way lockstep, 32-arrival empty barriers, 3 remote arrives per consumer warp per stage). Spec defects noted: tail-bucket boxes vs expect_tx, rank skipping at bucket 64, quad pairing in the decode.
+
+### Confounders on the current kernel
+- experts-turn-rega-s4-port-t4096 / experts-turn-rega-s4-first-turn-n128: the incumbent's serial consumer, not ingest, sets the pace
+- align-two-phase-all-t-rega: fixes chunking k and the tail-bucket mix
+- combo-a-master-normgather-naive-stack: the gate must time the norm-gather-on routed block
+- combo-b-normgather-two-cta-low-regate: prepare-only difference
+
+### Interference and A/B needs
+No companion warranted; the prepare gate already A/Bs master vs CL=2 vs CL=4. The open question is upstream: why CL=2 added ~0.3-0.5 us per stage.
+
+### Open questions
+- Re-scope: print-only variants (a) master rega as (2,1,1) clusters, (b) plus 16-arrival cross-CTA empty barrier, (c) stage-1 mc2, (d) mc2 with remote arrives spread across lanes at .release.cta
+- Re-diagnose master's limiter (clock64 stamps of the consumer's waits / dq_stage / wgmma_wait) before minting new rega stages
+- Siblings experts-rega-mc2-bm256-stack-high-ft and experts-rega-low-2cta-fullslab-mc2 share the falsified premise
+- The -cf confirm (13cfaf1e25c341af) re-measures master: its parent's gate kept master in high and ft
+
