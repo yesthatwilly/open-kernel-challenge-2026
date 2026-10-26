@@ -1,6 +1,6 @@
 # muse_moe_w4a16 findings
 
-Regenerated 2026-10-25T204227Z by `churn.py index`. Read this before writing a hypothesis for muse_moe_w4a16.
+Regenerated 2026-10-26T044456Z by `churn.py index`. Read this before writing a hypothesis for muse_moe_w4a16.
 
 ## Current best
 
@@ -54,6 +54,9 @@ Today's clean-context diagnosis: `muse_moe_w4a16/hypotheses/DIAGNOSIS.md` (ranke
 ### combination: wgmma two-CTA/SM (prefill port) x hot-expert tile interleave + shared floor
 - **combo-wg-occ2-v64-hot-interleave-align2** → neutral (unproven-vs-best), 1.4021x — gained on verify_32 verify_32. COMBINATION (conjectural pairing, wgmma side): prefill's two-CTAs-per-SM rega variant ported to moe's wgmma kernels at B256 (and as a B128 candidate), paired wi
 
+### expert GEMM path selection (wgmma wg2 at B256 + Marlin two-stream halves at T 8-32) restack
+- **restack-occ2-wg2-b256-two-stream-halves-on-master** → neutral (within-ci), 1.3996x — no shape moved outside noise. COMBINATION RESTACK of two measured per-cell wins onto current master (bdbbc97b, combo-toprow-w13t1-d32-alignpar-postnorm-wg-align2, 1.3866x), each behind its o
+
 ### launch overhead
 - **marlin-two-stream-expert-halves-small-m** → neutral (within-ci), 1.3024x — no shape moved outside noise. At 8 <= num_tokens <= 32 only (verify_1 bs=8, decode_16 bs=16, decode_32 bs=32; bs=1, the bs=4 test and num_tokens > 32 run master unchanged), split the expert 
 - **post-norm-pdl-launch-small-m** → neutral (within-ci), 1.3222x — no shape moved outside noise. num_tokens < SMALL_M_POST_NORM (bs=1, 8, 16, bs=4 test) only; master's _post_norm_combine_kernel body is otherwise unchanged and every other launch is master's.
@@ -89,6 +92,8 @@ Today's clean-context diagnosis: `muse_moe_w4a16/hypotheses/DIAGNOSIS.md` (ranke
 - **cuda-nvfp4-wgmma-rega-grouped-s5-copy-safe-bucket-gate** → neutral (unproven-vs-best), 1.3744x — gained on verify_16 verify_16; verify_32 verify_32. The shippable twin of cuda-nvfp4-wgmma-rega-grouped-s5-copy-safe-forced: identical code (same s4 base rebased onto master 9080a71, same per-call cuTensorMapEnco
 - **cuda-nvfp4-wgmma-rega-grouped-s5-copy-safe-forced** → neutral (unproven-vs-best), 1.3490x — gained on verify_32 verify_32; lost on verify_16 verify_16. Stage 5 of the wgmma register-A grouped NVFP4 rewrite, built on the s4 commit (cuda-nvfp4-wgmma-rega-grouped-s4-replay-safe, job 4e7f8be895a145ba) rebased onto 
 - **cuda-nvfp4-wgmma-rega-b128-n32-deep-ring** → neutral (unproven-vs-best), 1.3690x — gained on verify_16 verify_16. Built on cuda-nvfp4-wgmma-rega-grouped-s5-copy-safe-forced's commit (branch hyp/muse_moe_w4a16/cuda-nvfp4-wgmma-rega-grouped-s5-copy-safe-forced, job d4ad4f31d2
+- **cuda-fused-split-i-moe-midt-cluster-reduce** → neutral (within-ci), 1.3885x — lost on verify_32 verify_32. Stage 1 of a fused split-I MoE for mid T: 9 <= num_tokens <= 32 only (decode_16 bs=16, decode_32 bs=32). num_tokens <= 8 and >= 33 (incl. the bs=33 test) run ma
+- **nvfp4-rowowner-bulk-stream-tiny-t-rewrite** → neutral (within-ci), 1.3887x — lost on verify_32 verify_32. Stage 1 of a reduce-free bulk-stream NVFP4 MoE for tiny T: 1 <= num_tokens <= 4 only (decode_1 bs=1, the bs=1 and bs=4 tests). Every other T runs master byte fo
 
 ### w2 marlin
 - **w2-l2-prefetch-decode1** → regression (regression), 1.2615x — lost on decode_1 decode_1. At num_tokens == 1 only (decode_1; every other M runs master unchanged), warm L2 with the w2 weights of this token's local experts before the w13 Marlin call, s
@@ -115,6 +120,8 @@ Today's clean-context diagnosis: `muse_moe_w4a16/hypotheses/DIAGNOSIS.md` (ranke
 - cuda-nvfp4-wgmma-rega-grouped-s4-replay-safe: rewrite stage 4 of `Marlin w13+silu+w2 at 128<=T<=512`: read the replaced kernels' own us per shape (profile top_kernels) against the incumbent and the floor, and check which Milestone it reached. The next stage is `/hyp
 - cuda-nvfp4-wgmma-rega-grouped-s5-copy-safe-bucket-gate, cuda-nvfp4-wgmma-rega-grouped-s5-copy-safe-forced: rewrite stage 5 of `Marlin w13+silu+w2 (moe_wna16_marlin_gemm x2 + act_and_mul) at 128<=T<=512`: read the replaced kernels' own us per shape (profile top_kernels) against the incumbent and the floor, and check which Mile
 - cuda-nvfp4-wgmma-rega-b128-n32-deep-ring: rewrite stage 6 of `Marlin w13+silu+w2 (moe_wna16_marlin_gemm x2 + act_and_mul) at 128<=T<=255`: read the replaced kernels' own us per shape (profile top_kernels) against the incumbent and the floor, and check which Mile
+- cuda-fused-split-i-moe-midt-cluster-reduce: rewrite stage 1 of `Marlin w13 + act_and_mul + Marlin w2 (moe_wna16_marlin_gemm x2 + silu_and_mul) and the post-norm tail at 9 <= num_tokens <= 32`: read the replaced kernels' own us per shape (profile top_kernels) again
+- nvfp4-rowowner-bulk-stream-tiny-t-rewrite: rewrite stage 1 of `Marlin w13 + silu_and_mul + Marlin w2 (moe_wna16_marlin_gemm x2) at 1 <= num_tokens <= 4`: read the replaced kernels' own us per shape (profile top_kernels) against the incumbent and the floor, and ch
 - triton-map-align-verify-chunked: none
 - cuda-nvfp4-wgmma-rega-grouped-s3-wide-bucket-fix: rewrite stage 3 of `Marlin w13+w2 (moe_wna16_marlin_gemm x2) + silu_and_mul at num_tokens >= 128`: read the replaced kernels' own us per shape (profile top_kernels) against the incumbent and the floor, and check which Mi
 
@@ -132,6 +139,7 @@ Rewrite stages are exempt: a slow early stage is not a dead end.
 - **stack-onewarp-hoisted-dispatchcombine** [MoE align (bs<=8 one warp; bs>=128 CUDA) + post-expert combine (bs<32 hoisted; bs>=128 CUDA)] neutral, within-ci: Stack the three moe results of 2026-10-24 that each matched the 1.3278 best within noise, 
 - **stack-onewarp-hoisted-dispatchcombine-from17** [MoE align (bs<=8 one warp; 17..32 parallel; bs>=128 CUDA) + post-expert combine] neutral, within-ci: The variant of stack-onewarp-hoisted-dispatchcombine (same three done/ patches, unchanged)
 - **w2-marlin-atomic-add-verify** [w2 marlin] neutral, within-ci: On master (9080a71), widen the landed w2 use_atomic_add path from num_tokens <= 32 to all 
+- **restack-occ2-wg2-b256-two-stream-halves-on-master** [expert GEMM path selection (wgmma wg2 at B256 + Marlin two-stream halves at T 8-32) restack] neutral, within-ci: COMBINATION RESTACK of two measured per-cell wins onto current master (bdbbc97b, combo-top
 - **triton-w13-grouped-gemv-small-m** [w13 marlin] regression, regression: For num_tokens <= 8 only (decode_1 and verify_1; all other shapes keep the parity path unt
 - **marlin-block-size-m-next-larger** [MoE align/dispatch] regression, regression: Change only the block_size_m pick in kernel_fn. SGLang's loop breaks on the first candidat
 - **w2-l2-prefetch-decode1** [w2 marlin] regression, regression: At num_tokens == 1 only (decode_1; every other M runs master unchanged), warm L2 with the 
@@ -139,32 +147,14 @@ Rewrite stages are exempt: a slow early stage is not a dead end.
 
 ## Queue and in flight
 
-- queue: triton-w13-silu-epilogue [silu-mul] p3 hold
-- queue: triton-w2-grouped-gemv-small-m [w2 marlin] p3 hold
-- queue: triton-small-m-threshold-32 [MoE align/dispatch] p4 hold
-- queue: align-remote-sentinel-ids [MoE align/dispatch] p3 hold
-- queue: marlin-two-class-block-m-decode32 [MoE align/dispatch + block_size_m pick] p2 hold
-- queue: swapab-nvfp4-gemm-verify-rewrite [w13 marlin + w2 marlin] p1 hold
-- queue: swapab-w13-silu-epilogue-verify [silu-mul] p2 queued
 - queue: cuda-fused-moe-midm-single-launch-routed [whole-layer fusion] p2 hold
 - queue: cuda-nvfp4-wgmma-rega-grouped-sm90a-rebuild [w13 marlin + silu-mul + w2 marlin] p1 hold
-- queue: cuda-nvfp4-swapab-mma-persistent-small-m-childcheck [w13 marlin + silu-mul + w2 marlin] p2 hold
-- queue: cuda-fused-moe-bs1-persistent-nospin-bandwidth [whole-layer fusion] p3 hold
-- queue: cuda-nvfp4-wgmma-rega-s2-fix-gate-from-8 [w13 marlin + silu-mul + w2 marlin] p2 hold
-- queue: cuda-nvfp4-wgmma-rega-s2-per-kernel-enable [w13 marlin + silu-mul + w2 marlin] p1 hold
-- queue: cuda-align-kernel-a-from17 [MoE align/dispatch] p2 hold
-- queue: cuda-combine-kernel-b-bs128-only [post-expert norm+combine] p3 hold
-- queue: cuda-nvfp4-wgmma-rega-midm-bucket-cap32 [w13 marlin + silu-mul + w2 marlin] p1 hold
-- queue: cuda-nvfp4-wgmma-rega-w2-only-midm [w2 marlin] p2 hold
 - queue: marlin-exec-config-autotune-mid-m [Marlin launch config (w13 + w2)] p3 hold
 - queue: cuda-nvfp4-wgmma-rega-s6-per-kernel-bucket-mix [w13 marlin + silu-mul + w2 marlin] p3 queued
-- queue: cuda-nvfp4-wgmma-rega-b256-n64-deep-ring [w13 marlin + silu-mul + w2 marlin] p3 queued
-- queue: cuda-nvfp4-wgmma-rega-pingpong-consumers [w13 marlin + silu-mul + w2 marlin] p1 queued
-- queue: cuda-nvfp4-wgmma-rega-producer-scale-expand [w13 marlin + silu-mul + w2 marlin] p2 queued
-- queue: silu-mul-triton-row-tiled-gated [silu-mul] p2 hold
-- queue: restack-bucket-gate-on-master-align-atomic [expert GEMM path selection (wgmma vs Marlin) restack] p1 hold
-- queue: cuda-fused-split-i-moe-midt-cluster-reduce [w13 marlin + silu-mul + w2 marlin] p2 queued
+- queue: cuda-nvfp4-wgmma-rega-producer-scale-expand [w13 marlin + silu-mul + w2 marlin] p2 hold
 - queue: cuda-fused-split-i-moe-tiny-t [w13 marlin + silu-mul + w2 marlin] p1 queued
 - queue: wg-producer-direct-x-rows-no-gather [MoE dispatch (wgmma x gather)] p3 hold
-- queue: wg-stream-k-tail-split [w13 marlin + silu-mul + w2 marlin] p3 hold
-- queue: wg-two-ctas-per-sm-port-b128-n32 [w13 marlin + silu-mul + w2 marlin] p2 hold
+- queue: wg2-pingpong-consumers-occ2-b256 [w13 marlin + silu-mul + w2 marlin] p2 queued
+- queue: wg2-w13-occ2-nmax128-stg2-hot [w13 marlin + silu-mul] p3 queued
+- queue: wg2-stream-k-tail-floor-g-over-r [w13 marlin + silu-mul + w2 marlin] p3 queued
+- 21 stale holds expired to `done/expired/` (not run)

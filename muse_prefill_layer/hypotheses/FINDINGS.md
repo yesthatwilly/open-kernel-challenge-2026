@@ -1,6 +1,6 @@
 # muse_prefill_layer findings
 
-Regenerated 2026-10-25T204227Z by `churn.py index`. Read this before writing a hypothesis for muse_prefill_layer.
+Regenerated 2026-10-26T044456Z by `churn.py index`. Read this before writing a hypothesis for muse_prefill_layer.
 
 ## Current best
 
@@ -33,6 +33,9 @@ Today's clean-context diagnosis: `muse_prefill_layer/hypotheses/DIAGNOSIS.md` (r
 ### FA3 call on full-attention layers at page_size 1 (CUDA sm_90a FP8 wgmma flash attention, stage 1b: fix of attn-full-prefill-cuda-fp8-exp-offload with build fix, hard timing gate, no exp offload)
 - **attn-full-prefill-cuda-fp8-wgmma-hard-gate-inproc** → neutral (within-ci), 1.0679x — no shape moved outside noise. BUILDS ON THE CURRENT MASTER (stack-tonight-five-prefill, 1.0705 check / 1.0744 scored; its attention code is unchanged from the old base): start from master's 
 
+### FFN boundary + unpooler GEMM (boundary chunks overlapped under unpooler chunks via a slice-writing boundary kernel)
+- **boundary-overlap-s1-slice-kernel-ffn-tail** → regression (regression), 1.4438x — lost on sliding turn_1. Rewrite stage 1, built on current master (blob a2fe2a75). Goal of the line: take the two FusedPostNormResidualPreNorm boundaries (muse_spark_norm_residual_kerne
+
 ### MoE align on the Marlin path (T <= 4096) + pre-expert norm: restack of two measured row wins
 - **turn-align-sglang32-prenorm-triton-restack** → neutral (within-ci), 1.0694x — no shape moved outside noise. Built on master (a81d19c). Two row-level wins already measured in the archive, applied together, shapes untouched otherwise. (1) ALIGN at 200 < T <= 4096: maste
 
@@ -59,6 +62,9 @@ Today's clean-context diagnosis: `muse_prefill_layer/hypotheses/DIAGNOSIS.md` (r
 
 ### attention boundary + FFN boundary (FusedPostNormResidualPreNorm x2, persistent multi-row variant)
 - **norm-boundaries-persistent-multirow** → neutral (within-ci), 1.0716x — no shape moved outside noise. Built on master (635cfee). The multi-row/persistent re-mint the review of the held norm-residual-boundaries-triton-row-kernel invited ('same one-row-per-program
+
+### launch overhead: PDL chain across the expert block (_norm_gather_kernel -> rega w13 -> rega w2)
+- **experts-rega-pdl-chain-gather-w13-w2** → neutral (within-ci), 1.4622x — no shape moved outside noise. DIAGNOSIS action 4. Built on master (blob f4751fc0); independent of the mc2 line. Prefill has no programmatic dependent launch (griddepcontrol appears 0 times i
 
 ### pre-attention norm+rope + cache store
 - **qk-norm-fp8-cache-store-fusion** → neutral (unproven-vs-best), 1.0093x — no shape moved outside noise. One Triton kernel replaces five launches on the attention front: FusedQKNorm, k.to(FP8), v.to(FP8), store_cache and q.view(T, 16, 64).to(FP8). One program per t
@@ -111,6 +117,9 @@ Today's clean-context diagnosis: `muse_prefill_layer/hypotheses/DIAGNOSIS.md` (r
 ### w13 + w2 expert GEMMs (rega_kernel dequant: E4M3 scale expansion moved to idle producer warps), every rega class
 - **experts-rega-producer-scale-expand-all-t** → neutral (within-ci), 1.4538x — gained on sliding first_turn; full first_turn; lost on sliding turn_1. Built on master (1932a9c4). Consumer instruction count of rega_kernel only. ARITHMETIC: turn_1 (~1.36K local routes, ~42 per expert, buckets 32/64) streams w13'
 
+### w13 + w2 expert GEMMs at 1024 < T <= 16384 (rega high + ft classes): 256-weight-row CTA tile with in-warpgroup dequant/MMA overlap
+- **experts-rega-s4-bm256-wide-tile-high-ft** → neutral (unproven-vs-best), 1.4758x — gained on sliding first_turn, turn_1, turn_4; full first_turn, turn_4. Rewrite stage 4 of the rega line, built on master (1932a9c4; stage 2 experts-turn-rega-s4-first-turn-n128 landed, stage 3 experts-rega-low-class-two-ctas-per-sm
+
 ### w13 + w2 expert GEMMs at 1024 < T <= 4096 (turn_4): CUDA sm_90a dequant-producer warpgroup + SS wgmma grouped GEMM, stage 1b: rebuild with the undefined-symbol fix
 - **experts-turn4-ssdq-s1b-dataptr-symbol-fix** → neutral (unproven-vs-best), 1.1004x — gained on sliding turn_4; full turn_4. Re-run of experts-turn4-cuda-dequant-producer-ss-wgmma (job 40541db65f1b4ec6, neutral 1.0714), which NEVER RAN: the log reads '[ssdq] load_inline failed after 3
 
@@ -134,6 +143,9 @@ Today's clean-context diagnosis: `muse_prefill_layer/hypotheses/DIAGNOSIS.md` (r
 
 ### w13 + w2 expert GEMMs at T > 4096 (first_turn T=16384): extend the ported s4 register-A wgmma engine past Marlin's range, replacing the Triton NVFP4 GEMM
 - **experts-turn-rega-s4-first-turn-n128** → gain (gain), 1.4060x — gained on full first_turn; sliding first_turn; lost on sliding turn_1. Stage 2, built on the branch of experts-turn-rega-s4-port-t4096 whatever its score (it carries the ported _wg_* module and its per-state scratch). First_turn is
+
+### w13 + w2 expert GEMMs, every rega class: activation slab loaded once per 2-CTA cluster and shared by TMA multicast
+- **experts-rega-mc2-slab-multicast-all-t** → neutral (within-ci), 1.4630x — no shape moved outside noise. DIAGNOSIS action 1. Built on master (combo-b-normgather-two-cta-low-regate code, blob f4751fc0). New kernel rega_mc_kernel<G, BIG> appended to the rega module s
 
 ### w13 marlin + w2 marlin (CUDA sm_90a warp-specialized wgmma W4A16 grouped GEMM, stage 1: first_turn)
 - **experts-cuda-wgmma-mixed-input-grouped-gemm** → neutral (unproven-vs-best), 1.0637x — no shape moved outside noise. Replace the expert GEMM engine with a hand-written Hopper (sm_90a) mixed-input grouped GEMM in CUDA, compiled with torch.utils.cpp_extension.load_inline at impo
@@ -187,6 +199,8 @@ Today's clean-context diagnosis: `muse_prefill_layer/hypotheses/DIAGNOSIS.md` (r
 - experts-turn4-cuda-dequant-producer-ss-wgmma, experts-turn4-ssdq-s1b-dataptr-symbol-fix: rewrite stage 1 of `moe_wna16_marlin_gemm x2 (Marlin w13 + w2) at 1024 < T <= 4096 (turn_4, T=3012)`: read the replaced kernels' own us per shape (profile top_kernels) against the incumbent and the floor, and check which
 - experts-turn4-ssdq-s2-tma-raw-weight-ring: rewrite stage 2 of `ssdq_kernel x2 (w13, w2) at 1024 < T <= 4096 (turn_4, T=3012)`: read the replaced kernels' own us per shape (profile top_kernels) against the incumbent and the floor, and check which Milestone it reac
 - experts-rega-low-class-two-ctas-per-sm: rewrite stage 3 of `rega_kernel<true,false> + rega_kernel<false,false> (NMAX 128, 4 stages, 1 CTA/SM) in the low class 200 < T <= 1024`: read the replaced kernels' own us per shape (profile top_kernels) against the incum
+- experts-rega-s4-bm256-wide-tile-high-ft: rewrite stage 4 of `rega_kernel<true,*> + rega_kernel<false,*> (128-row tile) in the high (T=3012) and ft (T=16384) classes`: read the replaced kernels' own us per shape (profile top_kernels) against the incumbent and th
+- experts-rega-mc2-slab-multicast-all-t: rewrite stage 1 of `rega_kernel<true,BIG> + rega_kernel<false,BIG> (w13, w2) in all three rega classes: low T<=1024, high 1024<T<=4096, ft 4096<T<=16384`: read the replaced kernels' own us per shape (profile top_kernels)
 
 ## Do not try (regressions, flat results, rejected)
 
@@ -207,34 +221,16 @@ Rewrite stages are exempt: a slow early stage is not a dead end.
 - **experts-rega-pingpong-consumers-all-t** [w13 + w2 expert GEMMs (rega_kernel consumer schedule: two-warpgroup ping-pong), every rega class] neutral, within-ci: Consumer schedule of rega_kernel only. ARITHMETIC FIRST (the judge's router seed fixes the
 - **experts-rega-producer-scale-expand-all-t** [w13 + w2 expert GEMMs (rega_kernel dequant: E4M3 scale expansion moved to idle producer warps), every rega class] neutral, within-ci: Consumer instruction count of rega_kernel only. ARITHMETIC: turn_1 (~1.36K local routes, ~
 - **qkv-gate-columns-side-stream-under-attention** [qkv GEMM (output-gate columns split onto the side stream, overlapping qk_norm + cache store + FA3)] neutral, within-ci: Built on current master (submission blob a2fe2a75; no depends_on). The qkv_gate projection
+- **experts-rega-pdl-chain-gather-w13-w2** [launch overhead: PDL chain across the expert block (_norm_gather_kernel -> rega w13 -> rega w2)] neutral, within-ci: DIAGNOSIS action 4. Built on master (blob f4751fc0); independent of the mc2 line. Prefill 
 - **fa3-contiguous-kv-gather** [FA3 call] regression, regression: Replace the paged FA3 call with a contiguous one; everything before and after stays the pa
 - **experts-marlin-block-m-local-rows** [w13 marlin + w2 marlin (block_size_m pick)] regression, regression: Change only the block_size_m pick in _experts (muse_prefill_layer/submission.py). The pari
 
 ## Queue and in flight
 
-- queue: experts-dequant-grouped-mm-cutlass [w13 marlin + w2 marlin (GEMM engine: CUTLASS grouped GEMM instead of Triton)] p4 hold
-- queue: experts-dequant-overlap-attention [w13 marlin + w2 marlin (dequant placement on a side stream)] p3 hold
-- queue: experts-dequant-threshold-turn4 [w13 marlin + w2 marlin (Marlin vs dequant crossover)] p4 hold
-- queue: experts-dequant-triton-moe-16k [w13 marlin + w2 marlin (expert grouped GEMM engine at 16K tokens)] p2 hold
-- queue: fa3-batched-mode [FA3 call] p4 hold
-- queue: experts-marlin-block-m-48-turn4 [w13 marlin + w2 marlin (block_size_m pick)] p3 hold
-- queue: router-triton-hilo-splitk-turn [router GEMM] p3 hold
-- queue: router-pooler-concat-gemm-turn [router GEMM + pooler GEMM (one concatenated GEMM, no side stream)] p5 hold
-- queue: dense-gemm-cublaslt-algo-pick-prefill-t [dense bf16 GEMM dispatch (qkv, o, pooler, unpooler; cuBLASLt algo selection)] p2 hold
-- queue: norm-residual-boundaries-triton-row-kernel [attention boundary + FFN boundary (FusedPostNormResidualPreNorm x2)] p4 hold
-- queue: first-turn-moe-dead-work-stack [MoE dispatch + silu-mul + Triton NVFP4 grid at T > 4096 (first_turn dead-work removal, combined)] p3 hold
-- queue: experts-triton-turn4-persistent-local-align [w13 marlin + w2 marlin at turn_4 (route 1024 < T <= 4096 to the Triton NVFP4 engine, with persistent grid and local-routes align)] p2 hold
-- queue: turn-moe-local-align-sorted-silu [MoE align/dispatch + silu-mul on the Marlin path (T <= 4096)] p3 hold
-- queue: attn-full-prefill-cuda-fp8-wgmma-hard-gate [FA3 call on full-attention layers at page_size 1 (CUDA sm_90a FP8 wgmma flash attention, stage 1b: fix of attn-full-prefill-cuda-fp8-exp-offload with build fix, hard timing gate, no exp offload)] p2 hold
-- queue: experts-cuda-wgmma-grouped-gemm-remeasure-sm90a [w13 + w2 expert GEMMs at T > 4096 (CUDA sm_90a wgmma W4A16 grouped GEMM, stage 1b: re-measure of experts-cuda-wgmma-mixed-input-grouped-gemm with the build fix, on the new master)] p1 hold
-- queue: experts-cuda-wgmma-s2-setmaxnreg-pingpong-first-turn [w13 + w2 expert GEMMs at T > 4096 (CUDA sm_90a wgmma W4A16 grouped GEMM, stage 2: setmaxnreg register split + overlapped register-A dequant)] p2 hold
-- queue: experts-triton-first-turn-per-gemm-config-pick [Triton NVFP4 engine at T > 4096 (first_turn): separate tile config for w13 and w2, picked by prepare timing] p3 hold
-- queue: experts-turn1-cuda-wgmma-rega-port-bucket32 [w13 + w2 expert GEMMs at T <= 1024 (turn_1): port of muse_moe_w4a16's register-A swap-AB wgmma NVFP4 grouped GEMM, 16/32-row buckets only] p1 hold
-- queue: marlin-w2-atomic-add-turn [w2 Marlin call on the Marlin path (T <= 4096): use_atomic_add, picked per shape class in prepare] p4 hold
-- queue: experts-first-turn-ssdq-s2-large-m [w13 + w2 expert GEMMs at T > 4096 (first_turn T=16384): extend the ssdq dequant-producer + SS wgmma grouped GEMM to large M, replacing the Triton NVFP4 GEMM] p2 hold
-- queue: experts-turn-rega-s4-w2-only-t4096 [w2 expert GEMM only at T <= 4096 (turn_1, turn_4): s4 register-A swap-AB wgmma w2 fed by master's Marlin w13 + _silu_mul_sorted output] p2 hold
-- queue: experts-turn1-ssdq-s2-m64-tile [w13 + w2 expert GEMMs at T <= 1024 (turn_1 T=753): ssdq with a 64-route M tile, one consumer warpgroup per tile, dequant-once per weight stage] p3 hold
-- queue: experts-rega-s4-bm256-wide-tile-high-ft [w13 + w2 expert GEMMs at 1024 < T <= 16384 (rega high + ft classes): 256-weight-row CTA tile with in-warpgroup dequant/MMA overlap] p1 queued
-- queue: attn-full-prefill-wgmma-s2-warpspec-pingpong-expoffload [FA3 call on full-attention layers at page_size 1 (CUDA sm_90a FP8 wgmma flash attention, stage 2: warp-specialized producer, 128-key tiles, intra-WG overlap + ping-pong, gated exp offload)] p2 queued
 - queue: fa3-num-splits-cap-gated-turn [FA3 call (num_splits cap on the paged path at q_len <= 4096, per-class timing gate)] p3 hold
-- queue: boundary-overlap-s1-slice-kernel-ffn-tail [FFN boundary + unpooler GEMM (boundary chunks overlapped under unpooler chunks via a slice-writing boundary kernel)] p2 queued
+- queue: experts-rega-low-2cta-fullslab-mc2 [w13 + w2 expert GEMMs at 200 < T <= 1024 (rega low class, turn_1): 2 CTAs/SM with the full 128-route slab, slab multicast across a 2-CTA cluster] p4 queued
+- queue: experts-rega-mc2-bm256-stack-high-ft [w13 + w2 expert GEMMs at 1024 < T <= 16384 (rega high + ft): 256-row wide tile x 2-CTA slab multicast, stacked] p3 queued
+- queue: experts-rega-mc4-cluster-high-ft [w13 + w2 expert GEMMs at 1024 < T <= 16384 (rega high + ft): activation slab shared across a 4-CTA cluster by TMA multicast] p5 queued
+- queue: experts-rega-s4-bm256-wide-tile-high-ft-cf [w13 + w2 expert GEMMs at 1024 < T <= 16384 (rega high + ft classes): 256-weight-row CTA tile with in-warpgroup dequant/MMA overlap] p1 queued
+- running: attn-full-prefill-wgmma-s2-warpspec-pingpong-expoffload [FA3 call on full-attention layers at page_size 1 (CUDA sm_90a FP8 wgmma flash attention, stage 2: warp-specialized producer, 128-key tiles, intra-WG overlap + ping-pong, gated exp offload)] p2 running
+- 22 stale holds expired to `done/expired/` (not run)

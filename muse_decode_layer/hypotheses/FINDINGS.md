@@ -1,6 +1,6 @@
 # muse_decode_layer findings
 
-Regenerated 2026-10-25T204644Z by `churn.py index`. Read this before writing a hypothesis for muse_decode_layer.
+Regenerated 2026-10-26T044456Z by `churn.py index`. Read this before writing a hypothesis for muse_decode_layer.
 
 ## Current best
 
@@ -47,6 +47,9 @@ Today's clean-context diagnosis: `muse_decode_layer/hypotheses/DIAGNOSIS.md` (ra
 
 ### FA3 call (full decode, batch > 1): splitkv_attn_kernel bytes in flight
 - **full-decode-splitkv-kv-bw-3p5** → neutral (within-ci), 1.2663x — lost on full decode_16. Stage 2 of full-decode-cuda-splitkv-port (REWRITE_READ_2026-10-25 section 2, item 2), built on the restacked code from full-decode-splitkv-restack-on-pdl. Kerne
+
+### FA3 call (sliding decode B=17..32 and sliding verify B=1: windowed stream-K)
+- **sliding-sk-window-port-decode32-verify1** → neutral (within-ci), 1.3117x — gained on sliding decode_16; lost on full verify_16; sliding verify_32. Port muse_attention_decode master's windowed stream-K sliding routes (commit 7e12891512, best 1.5017x check 252abb7f11ec48c3; hypotheses restack-sliding-decode-
 
 ### FA3 call (sliding decode, batch 1)
 - **sliding-decode1-fused-restack-on-pdl** → neutral (unproven-vs-best), 1.2374x — gained on sliding decode_1, decode_16, decode_32, verify_1, verify_16; full decode_1, decode_16, decode_32, verify_1. Restack decode own neutral sliding-fused-triton-decode1-port (sliding decode_1 145.8 -> 139.4 us, +4.4%, every other shape flat; it also carried the +8.75% slid
@@ -185,33 +188,27 @@ Rewrite stages are exempt: a slow early stage is not a dead end.
 - **dl-p-wide-tile-t16-t32** [pooler + router GEMM (kernel P, T=9..32)] neutral, within-ci: Kernel P (dl_pooler_router_kernel<NF>) streams only 2.85 TB/s at T=32 and 3.41 at T=8 (pre
 - **stack-route-topk-pdl-unpool-nf1** [routing top-k (kernel R) + post-MoE unpooler (T<=8)] neutral, within-ci: Stack two measured T=1 gains on master (BEST stack-align-par-sidestream-sliding1). Claim r
 - **full-decode-sk-ticket-restack-b1-b64** [FA3 call (full decode, all batches): split-KV A/B at 1<B<=64 and FA3 chain at B=1] neutral, within-ci: Restack onto current master (w2-marlin-atomic-add-t1-port, 1.2856 check) the two attention
+- **sliding-sk-window-port-decode32-verify1** [FA3 call (sliding decode B=17..32 and sliding verify B=1: windowed stream-K)] neutral, within-ci: Port muse_attention_decode master's windowed stream-K sliding routes (commit 7e12891512, b
 - **l2-prefetch-o-pooler-during-sliding-attention** [o GEMM + pooler GEMM (L2 warm-up overlapped with attention)] regression, regression: On sliding layers at 2 <= tokens <= 32 (config gate: window != 0 and 2 <= tokens <= 32, i.
 
 ## Queue and in flight
 
-- queue: fa3-num-splits-full-no-metadata [FA3 call] p3 hold
-- queue: moe-align-local-expert-count [MoE align/dispatch] p4 hold
-- queue: trtllm-decode-full-attention [FA3 call] p5 hold
-- queue: fa3-num-splits-sliding [FA3 call] p2 hold
-- queue: moe-align-single-kernel-small-t-control-capacity-256 [MoE align/dispatch] p3 hold
-- queue: fa3-full-single-split-probe [FA3 call] p2 hold
-- queue: router-triton-splitk-side-stream [router GEMM] p1 hold
-- queue: triton-flash-decode-full-verify-paired-kv [FA3 call] p5 hold
 - queue: bf16-m32-swapab-wgmma-port [pooler GEMM] p3 hold
-- queue: moe-align-small-t-restack-on-master [MoE align/dispatch] p4 hold
-- queue: pre-expert-rmsnorm-triton [pre-expert norm] p3 hold
 - queue: moe-small-t-cuda-swapab-port [w13 marlin + silu-mul + w2 marlin (T<=32)] p4 hold
 - queue: moe-bs1-fused-persistent-port [w13 marlin + silu-mul + w2 marlin + post-expert combine (T=1)] p5 hold
-- queue: prefork-qkv-o-swapab-t16-t32 [qkv GEMM + o GEMM (before the router fork)] p4 hold
-- queue: marlin-two-stream-halves-port [w13 marlin + silu-mul + w2 marlin (8<=T<=32, stream overlap)] p5 hold
 - queue: moe-chain-cuda-swapab-expert-once-fix [w13 marlin + silu-mul + w2 marlin (T>32)] p2 hold
 - queue: sliding-cluster-c4-s3-satfinite-on-sk-ticket [FA3 call (sliding decode, batch 17..32)] p1 queued
 - queue: dl3-unpool-nf1-t2-t8 [unpooler GEMM (T=2..8, dl3 piece C widened)] p2 hold
 - queue: dense-qkv-o-unpool-swapab-bf16-master-port-t1-t32 [qkv GEMM + o GEMM + unpooler GEMM (T <= 32)] p1 hold
 - queue: ffn-front-t128-t256-concat-route [pooler GEMM + router GEMM + routing top-k + MoE align + pre-expert norm (T > 32)] p2 queued
-- queue: moe-rega-bucket-gate-port-t128-t512 [w13 marlin + silu-mul + w2 marlin (128 <= T <= 512)] p1 queued
+- queue: moe-rega-bucket-gate-port-t128-t512 [w13 marlin + silu-mul + w2 marlin (128 <= T <= 512)] p1 hold
 - queue: preattn-fused-t-gt1-sk-and-fa3-feeds [pre-attention norm+rope + cache store (T > 1, every shape not routed to _sliding_forward or dl3 piece A)] p3 hold
 - queue: sliding-cluster-c16-decode1-port [FA3 call (sliding decode, batch 1)] p4 hold
-- queue: sliding-sk-window-port-decode32-verify1 [FA3 call (sliding decode B=17..32 and sliding verify B=1: windowed stream-K)] p2 hold
 - queue: combo-attn-master-sliding-race-skw-c16 [combination: sliding attention per-band race (B=1, 2..16, 17..32, verify B=1) + routing R / unpooler tail] p1 hold
 - queue: swapab16-t2-t16-port-on-master [qkv GEMM + o GEMM (2 <= T <= 16)] p1 hold
+- queue: fsi-moe-midt-decode-port [w13 marlin + silu-mul + w2 marlin + post-expert combine (9 <= T <= 32)] p2 queued
+- queue: fsi-moe-tiny-t-decode-port [w13 marlin + silu-mul + w2 marlin + post-expert combine (1 <= T <= 8)] p1 queued
+- queue: marlin-bsm8-t17-t32-w13-atomic-t1 [w13 marlin + w2 marlin (call knobs: block_size_m 8 at 17 <= T <= 32; w13 use_atomic_add at T = 1)] p2 queued
+- queue: marlin-hot-cold-two-class-bsm-t128-t256 [w13 marlin + w2 marlin (block_size_m per expert class, 128 <= T <= 256)] p2 queued
+- queue: wg2-occ2-b256-decode-port [w13 marlin + silu-mul + w2 marlin (T = 256; T = 128 candidate)] p4 queued
+- 12 stale holds expired to `done/expired/` (not run)

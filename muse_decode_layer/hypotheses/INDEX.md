@@ -1,25 +1,25 @@
 # muse_decode_layer hypotheses
 
-Regenerated 2026-10-25T204644Z. Best: 1.3142x [1.2945,1.3339] job `a903b9d004d2452d` (submit)
+Regenerated 2026-10-26T044456Z. Best: 1.3142x [1.2945,1.3339] job `a903b9d004d2452d` (submit)
 
 | created | slug | kind | area | where | outcome | speedup | CI | job | mode | promotion | review | expected hit |
 |---|---|---|---|---|---|---|---|---|---|---|---|---|
 | 2026-10-23T225318Z | sglang-pipeline-parity-router-hilo-m8 | primary | router GEMM | done/gain | gain | 1.0216 | [1.006,1.037] | e260dfe413e448c7 | check | done | proceed | 1/6 |
 | 2026-10-23T225338Z | cache-store-fused-fp8-cast | primary | cache store | done/neutral | neutral | 1.0303 | [1.015,1.046] | 7264526cf9f94c37 | check |  | proceed | 2/4 |
 | 2026-10-23T225353Z | expert-id-map-single-kernel | primary | MoE align/dispatch | done/neutral | neutral | 1.0374 | [1.022,1.053] | 11b8df414a2245ae | check |  | proceed | 2/4 |
-| 2026-10-23T225545Z | fa3-num-splits-full-no-metadata | primary | FA3 call | queue | hold |  |  |  |  |  | hold |  |
-| 2026-10-23T225545Z | moe-align-local-expert-count | primary | MoE align/dispatch | queue | hold |  |  |  |  |  | proceed |  |
-| 2026-10-23T225545Z | trtllm-decode-full-attention | primary | FA3 call | queue | hold |  |  |  |  |  | hold |  |
 | 2026-10-23T225545Z | marlin-block-m-cap-16 | primary | w13 marlin | done/gain | gain | 1.0621 | [1.046,1.078] | 0730135cdcac43b7 | check | done | proceed | 4/4 |
 | 2026-10-23T225545Z | pooler-gemm-splitk-autotune | primary | pooler GEMM | done/neutral | neutral | 1.0189 | [1.004,1.034] | 2e1a43ab85324776 | check |  | proceed | 2/4 |
-| 2026-10-23T225609Z | fa3-num-splits-sliding | primary | FA3 call | queue | hold |  |  |  |  |  | hold |  |
+| 2026-10-23T225545Z | fa3-num-splits-full-no-metadata | primary | FA3 call | done/expired | expired |  |  |  |  |  | hold |  |
+| 2026-10-23T225545Z | moe-align-local-expert-count | primary | MoE align/dispatch | done/expired | expired |  |  |  |  |  | proceed |  |
+| 2026-10-23T225545Z | trtllm-decode-full-attention | primary | FA3 call | done/expired | expired |  |  |  |  |  | hold |  |
 | 2026-10-23T225609Z | moe-align-single-kernel-small-t | primary | MoE align/dispatch | done/neutral | neutral | 1.0431 | [1.027,1.059] | 0a0af8669ffe4cb0 | check |  | proceed | 2/6 |
-| 2026-10-24T071442Z | moe-align-single-kernel-small-t-control-capacity-256 | control→moe-align-single-kernel-small-t | MoE align/dispatch | queue | hold |  |  |  |  |  | required |  |
-| 2026-10-24T075400Z | fa3-full-single-split-probe | primary | FA3 call | queue | hold |  |  |  |  |  | hold |  |
-| 2026-10-24T075400Z | router-triton-splitk-side-stream | primary | router GEMM | queue | hold |  |  |  |  |  | proceed |  |
-| 2026-10-24T075400Z | triton-flash-decode-full-verify-paired-kv | rewrite | FA3 call | queue | hold |  |  |  |  |  | hold |  |
+| 2026-10-23T225609Z | fa3-num-splits-sliding | primary | FA3 call | done/expired | expired |  |  |  |  |  | hold |  |
+| 2026-10-24T071442Z | moe-align-single-kernel-small-t-control-capacity-256 | control→moe-align-single-kernel-small-t | MoE align/dispatch | done/expired | expired |  |  |  |  |  | required |  |
 | 2026-10-24T075400Z | fused-preattention-triton | primary | pre-attention norm+rope | done/neutral | neutral | 1.0970 | [1.081,1.113] | c7c26e2fd8b142a7 | check |  | proceed | 3/6 |
 | 2026-10-24T075400Z | triton-flash-decode-full-paired-kv | rewrite | FA3 call | done/neutral | neutral | 1.0702 | [1.054,1.086] | e82b11f9d9f64b23 | check |  | proceed | 1/5 |
+| 2026-10-24T075400Z | fa3-full-single-split-probe | primary | FA3 call | done/expired | expired |  |  |  |  |  | hold |  |
+| 2026-10-24T075400Z | router-triton-splitk-side-stream | primary | router GEMM | done/expired | expired |  |  |  |  |  | proceed |  |
+| 2026-10-24T075400Z | triton-flash-decode-full-verify-paired-kv | rewrite | FA3 call | done/expired | expired |  |  |  |  |  | hold |  |
 | 2026-10-24T100416Z | triton-flash-decode-full-oversub-kv-prefetch | rewrite | FA3 call | done/regression | regression | 1.0413 | [1.026,1.057] | e55908a05eec4000 | check |  | proceed | 3/5 |
 | 2026-10-24T103909Z | fa3-hdim128-head-pairing-batched | primary | FA3 call | done/neutral | neutral | 1.0874 | [1.071,1.104] | fb07a3bd3aa54baf | check | merged | proceed | 7/7 |
 | 2026-10-24T140057Z | post-expert-norm-triton-small-t | primary | post-expert norm+combine | done/gain | gain | 1.1635 | [1.146,1.181] | 9dcaec316b3045a7 | check | done | proceed | 6/6 |
@@ -29,20 +29,20 @@ Regenerated 2026-10-25T204644Z. Best: 1.3142x [1.2945,1.3339] job `a903b9d004d24
 | 2026-10-24T165154Z | full-decode-cuda-splitkv-port | rewrite | FA3 call | done/neutral | neutral | 1.1862 | [1.168,1.204] | e789032128df4291 | submit |  | proceed | 5/5 |
 | 2026-10-24T165224Z | full-verify-cuda-splitkv-stage2 | rewrite | FA3 call | done/regression | regression | 1.1559 | [1.139,1.173] | e9d5eeffddef4f70 | check |  | proceed | 3/5 |
 | 2026-10-24T165242Z | bf16-m32-swapab-wgmma-port | primary | pooler GEMM | queue | hold |  |  |  |  |  | proceed |  |
-| 2026-10-24T165302Z | moe-align-small-t-restack-on-master | primary | MoE align/dispatch | queue | hold |  |  |  |  |  | proceed |  |
+| 2026-10-24T165302Z | moe-align-small-t-restack-on-master | primary | MoE align/dispatch | done/expired | expired |  |  |  |  |  | proceed |  |
 | 2026-10-24T165619Z | fused-preattention-paired-pad-restack | primary | pre-attention norm+rope | done/neutral | neutral | 1.2745 | [1.255,1.294] | 5e9b5464d1444708 | check |  | proceed | 4/6 |
 | 2026-10-24T172107Z | moe-chain-cuda-swapab-expert-once-large-t | rewrite | w13 marlin + silu-mul + w2 marlin | done/failed | failed |  |  | 1bba1bab70da4f61 | submit |  | proceed |  |
 | 2026-10-24T172138Z | small-t-launch-minimal-dense-chain-pdl | rewrite | whole-layer fusion | done/gain | gain | 1.2283 | [1.210,1.247] | 81ee6714b7614a99 | submit | done | proceed | 6/6 |
 | 2026-10-24T174421Z | decode-restack-sliding-port-paired-pad-gemms-t1 | primary | restack (sliding decode_1 port + paired pad/unpad + T=1 Triton GEMMs) | done/neutral | neutral | 1.1937 | [1.176,1.212] | 4739dd4590524487 | submit |  | proceed | 3/5 |
 | 2026-10-24T184247Z | sliding-fused-batched-decode-port | primary | FA3 call (sliding decode, batch > 1) | done/neutral | neutral | 1.2248 | [1.206,1.243] | b01fd2df41a040b3 | check |  | proceed | 5/5 |
 | 2026-10-24T184303Z | moe-dispatch-prep-on-side-stream | primary | MoE align/dispatch (stream placement) | done/neutral | neutral | 1.2294 | [1.211,1.248] | fe3422db9ea540d8 | check |  | proceed | 0/6 |
-| 2026-10-24T184316Z | pre-expert-rmsnorm-triton | primary | pre-expert norm | queue | hold |  |  |  |  |  | hold |  |
+| 2026-10-24T184316Z | pre-expert-rmsnorm-triton | primary | pre-expert norm | done/expired | expired |  |  |  |  |  | hold |  |
 | 2026-10-24T184335Z | moe-small-t-cuda-swapab-port | rewrite | w13 marlin + silu-mul + w2 marlin (T<=32) | queue | hold |  |  |  |  |  | required |  |
 | 2026-10-24T184355Z | moe-bs1-fused-persistent-port | primary | w13 marlin + silu-mul + w2 marlin + post-expert combine (T=1) | queue | hold |  |  |  |  |  | hold |  |
 | 2026-10-24T184430Z | l2-prefetch-o-pooler-during-sliding-attention | primary | o GEMM + pooler GEMM (L2 warm-up overlapped with attention) | done/regression | regression | 1.1670 | [1.150,1.185] | 96ee63e15edb438c | check |  | proceed | 3/6 |
-| 2026-10-24T184451Z | prefork-qkv-o-swapab-t16-t32 | primary | qkv GEMM + o GEMM (before the router fork) | queue | hold |  |  |  |  |  | hold |  |
+| 2026-10-24T184451Z | prefork-qkv-o-swapab-t16-t32 | primary | qkv GEMM + o GEMM (before the router fork) | done/expired | expired |  |  |  |  |  | hold |  |
 | 2026-10-24T184511Z | moe-align-parallel-large-t-port | primary | MoE align/dispatch (T>32) | done/neutral | neutral | 1.2433 | [1.225,1.262] | b42e33406f2d4978 | check |  | proceed | 3/4 |
-| 2026-10-24T184527Z | marlin-two-stream-halves-port | primary | w13 marlin + silu-mul + w2 marlin (8<=T<=32, stream overlap) | queue | hold |  |  |  |  |  | hold |  |
+| 2026-10-24T184527Z | marlin-two-stream-halves-port | primary | w13 marlin + silu-mul + w2 marlin (8<=T<=32, stream overlap) | done/expired | expired |  |  |  |  |  | hold |  |
 | 2026-10-24T224424Z | dense-chain-stage2-attn-side-pdl | rewrite | qkv GEMM + o GEMM + attention-side small kernels (T<=32) | done/regression | regression | 1.2253 | [1.207,1.244] | b31b8453208a471c | check |  | proceed | 3/7 |
 | 2026-10-24T224452Z | boundaries-unpooler-pdl-small-t | primary | post-MoE unpooler + residual boundaries (T<=32) | done/neutral | neutral | 1.2559 | [1.237,1.275] | 1dfe83fdbeea458a | check |  | proceed | 2/6 |
 | 2026-10-24T224452Z | dl-route-warp-topk-pdl | primary | routing top-k + MoE align (kernel R, T<=32) | done/neutral | neutral | 1.2599 | [1.241,1.279] | b471a950805c4053 | check |  | proceed | 2/6 |
@@ -74,37 +74,30 @@ Regenerated 2026-10-25T204644Z. Best: 1.3142x [1.2945,1.3339] job `a903b9d004d24
 | 2026-10-25T145938Z | dl3-piece-a-gate-stride-check-fix | primary | full decode_1 attention side (dl3 piece A enable) | done/neutral | neutral | 1.3080 | [1.288,1.328] | 933d3f825a044d36 | submit | done | proceed | 7/7 |
 | 2026-10-25T153205Z | dense-qkv-o-unpool-swapab-bf16-master-port-t1-t32 | primary | qkv GEMM + o GEMM + unpooler GEMM (T <= 32) | queue | hold |  |  |  |  |  | hold |  |
 | 2026-10-25T153205Z | ffn-front-t128-t256-concat-route | rewrite | pooler GEMM + router GEMM + routing top-k + MoE align + pre-expert norm (T > 32) | queue | queued |  |  |  |  |  | required |  |
-| 2026-10-25T153205Z | moe-rega-bucket-gate-port-t128-t512 | rewrite | w13 marlin + silu-mul + w2 marlin (128 <= T <= 512) | queue | queued |  |  |  |  |  | required |  |
+| 2026-10-25T153205Z | moe-rega-bucket-gate-port-t128-t512 | rewrite | w13 marlin + silu-mul + w2 marlin (128 <= T <= 512) | queue | hold |  |  |  |  |  | required |  |
 | 2026-10-25T153205Z | preattn-fused-t-gt1-sk-and-fa3-feeds | primary | pre-attention norm+rope + cache store (T > 1, every shape not routed to _sliding_forward or dl3 piece A) | queue | hold |  |  |  |  |  | hold |  |
 | 2026-10-25T153205Z | sliding-cluster-c16-decode1-port | primary | FA3 call (sliding decode, batch 1) | queue | hold |  |  |  |  |  | hold |  |
-| 2026-10-25T153205Z | sliding-sk-window-port-decode32-verify1 | primary | FA3 call (sliding decode B=17..32 and sliding verify B=1: windowed stream-K) | queue | hold |  |  |  |  |  | proceed |  |
+| 2026-10-25T153205Z | sliding-sk-window-port-decode32-verify1 | primary | FA3 call (sliding decode B=17..32 and sliding verify B=1: windowed stream-K) | done/neutral | neutral | 1.3117 | [1.292,1.331] | 3117f2e423d44cb7 | check |  | proceed | 3/6 |
 | 2026-10-25T161651Z | combo-attn-master-sliding-race-skw-c16 | primary | combination: sliding attention per-band race (B=1, 2..16, 17..32, verify B=1) + routing R / unpooler tail | queue | hold |  |  |  |  |  | proceed |  |
 | 2026-10-25T161651Z | combo-measured-rows-plus-rega-align2-large-t | primary | combination: C1 measured stack + w13/w2 rega and align2 at 128<=T<=512 | done/neutral | neutral | 1.3164 | [1.297,1.336] | eaa8cc0f18f64bfb | submit |  | proceed | 1/7 |
 | 2026-10-25T161651Z | combo-measured-rows-slide-batched-preattn-t8-tail | primary | combination: sliding attention B=2..32 + pre-attention feeds (T>1) + routing R / unpooler (2<=T<=32 / 2<=T<=8) | done/neutral | neutral | 1.3142 | [1.295,1.334] | a903b9d004d2452d | submit | done | proceed | 3/8 |
 | 2026-10-25T202335Z | swapab16-t2-t16-port-on-master | primary | qkv GEMM + o GEMM (2 <= T <= 16) | queue | hold |  |  |  |  |  | hold |  |
+| 2026-10-25T212731Z | fsi-moe-midt-decode-port | rewrite | w13 marlin + silu-mul + w2 marlin + post-expert combine (9 <= T <= 32) | queue | queued |  |  |  |  |  | required |  |
+| 2026-10-25T212731Z | fsi-moe-tiny-t-decode-port | rewrite | w13 marlin + silu-mul + w2 marlin + post-expert combine (1 <= T <= 8) | queue | queued |  |  |  |  |  | required |  |
+| 2026-10-25T212731Z | marlin-bsm8-t17-t32-w13-atomic-t1 | primary | w13 marlin + w2 marlin (call knobs: block_size_m 8 at 17 <= T <= 32; w13 use_atomic_add at T = 1) | queue | queued |  |  |  |  |  | required |  |
+| 2026-10-25T212731Z | marlin-hot-cold-two-class-bsm-t128-t256 | primary | w13 marlin + w2 marlin (block_size_m per expert class, 128 <= T <= 256) | queue | queued |  |  |  |  |  | required |  |
+| 2026-10-25T212731Z | wg2-occ2-b256-decode-port | primary | w13 marlin + silu-mul + w2 marlin (T = 256; T = 128 candidate) | queue | queued |  |  |  |  |  | required |  |
 
 ## Held
 
-- fa3-num-splits-full-no-metadata: adversarial review: An explicit num_splits cannot raise FA3's split count on this call: every flash_attn_with_kvcache call with cache_seqlens is varlen, so FA3 runs its device-side
-- moe-align-local-expert-count: weak: the identical one-argument change (align over 32 experts instead of 256) was already measured in muse_moe_w4a16 (sglang-marlin-path-parity): verify_16/32 flat, decode_1 about 4% slower. Under the landed block cap the verify effect is a ~2 us fill launch, below resolution; decode has few checks left today. The reviewer suggests at most a T>=128-only variant later.
-- trtllm-decode-full-attention: adversarial review: Hold. The spec was written on 2026-10-23 against the parity base. Since then master has landed head-paired FA3 for full layers at batch>1, so as written this ch
-- fa3-num-splits-sliding: adversarial review: The premise (FA3 sizes the sliding split-KV for the 80K page-table extent) is contradicted by both FA3's own get_num_splits, which clamps seqlen_k by the window
-- moe-align-single-kernel-small-t-control-capacity-256: control for moe-align-single-kernel-small-t, which was neutral; a capacity control of a non-gain cannot change a decision, and decode has 2 checks left for the attention rewrite and pairing follow-ups
-- fa3-full-single-split-probe: adversarial review: The probe is sound and would give a clear reading, but neither reading can change a decision that is open right now. The rewrite it is meant to inform (triton-f
-- router-triton-splitk-side-stream: reviewer: the 9.2-9.5 us splitK row is 2 calls (~4.6 us each), so the side-stream router branch (~14-18 us) already finishes before the ~22-25 us pooler and is off the critical path; most likely flat, and decode has 4 checks left
-- triton-flash-decode-full-verify-paired-kv: adversarial review: Stage 1 measured the paired-KV kernel at about 1.63-1.66 TB/s, which is slower than FA3: 200.8 vs 188.8 us at decode_16 and 394.8 vs 374.4 us at decode_32. That
 - bf16-m32-swapab-wgmma-port: reviewer: ~0.15% headline (3-5 us at decode_32), inside drift; edits the same call sites as bf16-shape-gated-triton-gemms-small-t (in the judge). Revisit as part of a combined decode GEMM restack after that harvests (per-layer kernel names for attribution)
-- moe-align-small-t-restack-on-master: projected +0.5-0.9% is below noise, and small-t-launch-minimal-dense-chain-pdl (built for the reset) replaces the same align at T<=32. Revisit only if that rewrite fails.
-- pre-expert-rmsnorm-triton: adversarial review: Stale premise: master (small-t-launch-minimal-dense-chain-pdl, f1f2f35) already folds the pre-expert RMSNorm into dl_route_norm_align at T <= 32, so 4 of the 6 
 - moe-small-t-cuda-swapab-port: its parent, moe cuda-nvfp4-swapab-mma-persistent-small-m (8f198afc3bf14f6f), failed its tests on 2026-10-24; the minter made dispatch conditional on that parent winning
 - moe-bs1-fused-persistent-port: adversarial review: Hold: the hypothesis gates its own dispatch on the moe parent (1105a02aa3fa4e56) being faster than moe master at bs=1, and it was not (bs=1 50.93 us vs 48.37 us
-- prefork-qkv-o-swapab-t16-t32: adversarial review: Its main purpose no longer holds on the current master: small-t-launch-minimal-dense-chain-pdl removed the router side stream at T<=32, so there is no fork for 
-- marlin-two-stream-halves-port: adversarial review: Hold: the moe parent it ports (marlin-two-stream-expert-halves-small-m, job 5d630369b1634f77) came back neutral, with every scored shape flat and verify_1 1.5% 
 - moe-chain-cuda-swapab-expert-once-fix: Retired: its design runs the self-check in a child process, which the rules statically reject; superseded by the -inproc line (LESSONS 2026-10-25).
-- dl3-unpool-nf1-t2-t8: adversarial review: Duplicate of master: the landed combo-measured-rows-slide-batched-preattn-t8-tail (ec89382b, BEST 1.3142x) contains S2b, dl_unpool_kernel NF=1 at 2 <= T <= 8 wi
+- dl3-unpool-nf1-t2-t8: superseded: the unpooler path is already on master (decode minter, 2026-10-25)
 - dense-qkv-o-unpool-swapab-bf16-master-port-t1-t32: adversarial review: Hold. The conjecture is that bf16 master's 'newer' swap-AB kernel will run in decode at its standalone 9.7/3.9 us. That premise is false, and the transfer has a
+- moe-rega-bucket-gate-port-t128-t512: superseded: decode's own selector switched rega OFF at T=128 (384.8 vs Marlin 327.2 us) and T=256 (454.6 vs 440.0) on 2026-10-25; dead in decode (decode minter, 2026-10-25)
 - preattn-fused-t-gt1-sk-and-fa3-feeds: adversarial review: Duplicate of master: the landed combo-measured-rows-slide-batched-preattn-t8-tail (ec89382b, BEST 1.3142x) carries _pre_attention_kernel as source S3 (PAIRED an
 - sliding-cluster-c16-decode1-port: adversarial review: Plausible but small (~2 us on the 118.5 us sliding decode_1 row, ~0.25% headline); its own first measurement must be an okc check, and it is an unchecked cross-
-- sliding-sk-window-port-decode32-verify1: own condition: first measurement is an okc check (unchecked multi-thousand-line CUDA port; a sticky fault fails the run with no prepare log); only scored submits remained on 2026-10-25. Unhold when checks reset; apply the review's per-state tickets, distinct kernel symbols and variant sub-race
-- combo-attn-master-sliding-race-skw-c16: builder found D1-D3 and C1 already on master (ec89382b); what remains is A1+A2, a multi-thousand-line CUDA port from muse_attention_decode with two new load_inline builds: not buildable here and unsafe as an unchecked scored submit; run it as a check once checks reset, or split A1 and A2
+- combo-attn-master-sliding-race-skw-c16: superseded: remainder equals sliding-sk-window-port-decode32-verify1 + sliding-cluster-c16-decode1-port, both queued (decode minter, 2026-10-25)
 - swapab16-t2-t16-port-on-master: adversarial review: Hold. The swap-AB in-gate effect (T=8/16) was already measured kernel-by-kernel in the parent's profile b0057d2e6cef4d5a: ~1.5-2 us per in-gate shape, ~+0.3% he

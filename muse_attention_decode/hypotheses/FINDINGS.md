@@ -1,6 +1,6 @@
 # muse_attention_decode findings
 
-Regenerated 2026-10-25T204823Z by `churn.py index`. Read this before writing a hypothesis for muse_attention_decode.
+Regenerated 2026-10-26T044456Z by `churn.py index`. Read this before writing a hypothesis for muse_attention_decode.
 
 ## Current best
 
@@ -24,6 +24,9 @@ Where the time goes (per scored shape, top kernels):
 Today's clean-context diagnosis: `muse_attention_decode/hypotheses/DIAGNOSIS.md` (ranked actions and its own Do-not-try list).
 
 ## By area
+
+### FA3 call (full verify split count)
+- **full-verify-fa3-num-splits-band-gate** → neutral (within-ci), 1.5216x — gained on sliding decode_1; lost on full decode_1. Built on current master (no depends_on). Full verify still runs FA3: B=1 unpaired (FA3 main 14.9 + combine 7.3 + prepare 2.8 + norm-gate 1.1 us, shape 30.5) and
 
 ### FA3 call (full-layer decode gather)
 - **full-decode-cuda-gather-splitkv** → gain (gain), 1.3468x — gained on full decode_16, decode_32; lost on sliding decode_1. Stage 1 of a rewrite of full-attention decode, built on master (sliding-fused-triton-decode1-gate). Gate (config/shape only): cfg window == 0 and q_len == 1 and
@@ -64,6 +67,9 @@ Today's clean-context diagnosis: `muse_attention_decode/hypotheses/DIAGNOSIS.md`
 ### full decode_1 split-KV + sliding verify_32 pre-attention
 - **merge-perkvhead-c320-sv32-tiled** → neutral (unproven-vs-best), 1.5347x — gained on sliding decode_1, verify_32; lost on full decode_1. Hand-merge two gated pieces of combo-tiled-preattn-neighbour-regate-c320 (branch hyp/muse_attention_decode/combo-tiled-preattn-neighbour-regate-c320, impl 5add0
 
+### full decode_1 split-KV launch chain (merge onto per-kvhead master, with SV32 tiled pre-attention)
+- **merge-perkvhead-v3chain-sv32-tiled** → neutral (unproven-vs-best), 1.5360x — gained on sliding decode_1. DIAGNOSIS action 3(i), the PENDING_USER hand-merge. Start from branch hyp/muse_attention_decode/merge-perkvhead-c320-sv32-tiled (built on master 5d528bf3 = per-
+
 ### full-layer attention (batch-1 decode gate)
 - **full-fused-triton-decode1-gate** → neutral (within-ci), 1.3417x — lost on full decode_1. Built on master. Route full-attention batch-1 decode (config window == 0 and batch == 1 and q_len == 1) through master _sliding_fused_kernel via _sliding_forwar
 - **full-decode1-cuda-splitkv-chunk320** → neutral (unproven-vs-best), 1.3954x — gained on full decode_1; lost on full decode_32; sliding verify_1. Route FULL-layer decode at batch 1 (window == 0, q_len 1, tp8, d 64, page 1) through master's existing CUDA split-KV path with a smaller work chunk, instead of 
@@ -89,6 +95,7 @@ Today's clean-context diagnosis: `muse_attention_decode/hypotheses/DIAGNOSIS.md`
 
 ### full-layer attention (decode 1<B<=64, stream-K ticket epilogue)
 - **full-decode-sk-s4-deferred-ticket-arrive** → failed (test:{\"batch\": 1, \"ctx\": 10, \"heads\": \"tp8\", \"layer\": \"sliding\", \"seed\": 6893170448766904337}). Built on master (c3c1b01). Master's <4 stages, ticket> kernel runs 112.3-113.5 us at B=16 vs 106.0-106.7 us for the same stream-K kernel with no ticket (3.07-3.
+- **full-decode-sk-s5-deferred-ticket-fault-fix** → neutral (within-ci), 1.5162x — gained on sliding decode_1; lost on full decode_1. DIAGNOSIS action 4: re-measure the deferred ticket arrive, which has never been measured because it faulted. Re-apply done/failed/full-decode-sk-s4-deferred-tic
 
 ### full-layer attention (decode, splitkv kernel A/B)
 - **full-decode-splitkv-s2-streamk-ticket-inproc** → neutral (unproven-vs-best), 1.4171x — gained on full decode_16, decode_32. Stage 2 of the full-decode rewrite, built on master (stage 1 kernels splitkv_attn_kernel A + splitkv_combine_kernel B in load_inline module muse_full_decode_spl
@@ -104,6 +111,12 @@ Today's clean-context diagnosis: `muse_attention_decode/hypotheses/DIAGNOSIS.md`
 
 ### full-layer attention (verify, wgmma stream-K kernel, multi-tile correctness)
 - **full-verify-wgmma-s4-multitile-fix** → neutral (within-ci), 1.3758x — no shape moved outside noise. Stage 4 (correctness fix) of the full-verify wgmma rewrite, built on the stage-3 commit (hyp/muse_attention_decode/full-verify-wgmma-s3-warpgroup-per-kvhead-inp
+
+### full-layer attention (verify, wgmma stream-K kernel, per-warpgroup ring)
+- **full-verify-wgmma-s6-split-ring-2cta** → neutral (unproven-vs-best), 1.5331x — gained on sliding decode_1; lost on full decode_1. DIAGNOSIS action 1(a)+(b): the sibling of the queued full-verify-wgmma-ws-s1-producer-split that KEEPS s5's proven occupancy (2 CTAs/SM, every thread issues loa
+
+### full-layer attention (verify, wgmma stream-K kernel, warp-specialized pipeline)
+- **full-verify-wgmma-ws-s1-producer-split** → neutral (within-ci), 1.5157x — gained on sliding decode_1; lost on full decode_1. Fresh stage 1 on CURRENT master (no depends_on). Why now: the s3/s4 wgmma full-verify items are held because the stage-3 kernel failed its self-check; that hold
 
 ### full-layer attention (whole-path rewrite, warp-specialized one launch)
 - **full-cuda-onelaunch-warpspec-bulk-gather** → regression (regression), 0.8238x — lost on full decode_16, decode_32; sliding verify_1. Stage 1 of a rewrite of the FULL-layer path, built on master (stage 1 of the first CUDA kernel, full-decode-cuda-gather-splitkv, has landed; no depends_on). Why
@@ -171,6 +184,9 @@ Today's clean-context diagnosis: `muse_attention_decode/hypotheses/DIAGNOSIS.md`
 ### sliding-layer attention (verify, stream-K pseudo-decode kernel, token grouping)
 - **sliding-verify-sk-pseudo-s2-token-group** → regression (regression), 1.4251x — lost on sliding verify_1. Stage 2 of the pseudo-decode line, on branch hyp/muse_attention_decode/sliding-verify-sk-pseudo-decode-s1. Measured: the PSEUDO kernel won B=1 (15.4 vs FA3 19.6
 
+### sliding-layer attention (verify, wgmma stream-K windowed kernel)
+- **sliding-verify-wgmma-window-s1** → neutral (within-ci), 1.5164x — gained on sliding decode_1; lost on full decode_1. Fresh stage 1 on CURRENT master (no depends_on). This is the held full-verify-wgmma-s4-sliding-window idea with its hold reason fixed: it was held because the s
+
 ### sliding-layer attention (whole-path rewrite)
 - **sliding-single-launch-fused-attention** → regression (regression), 0.9452x — gained on sliding decode_1; lost on sliding decode_16, decode_32, verify_1, verify_16, verify_32. Stage 1 of a rewrite of the sliding-layer path. Built on hyp/muse_attention_decode/fused-preattention-triton (1.127x, job dfee6f2939974bad). On sliding layers (
 
@@ -194,6 +210,10 @@ Today's clean-context diagnosis: `muse_attention_decode/hypotheses/DIAGNOSIS.md`
 - full-verify-wgmma-s5-qfrag-reload: rewrite stage 5 of `full-layer verify at 1<batch<=64: FA3 main + prepare_varlen_num_blocks + FlashAttnFwdCombine + norm-gate (master paired FA3)`: read the replaced kernels' own us per shape (profile top_kernels) against
 - full-verify1-sk-two-level-token-group: rewrite stage 3 of `full verify batch 1 (q_len 8): prepare_varlen_num_blocks + FA3 main + FlashAttnFwdCombine + norm-gate`: read the replaced kernels' own us per shape (profile top_kernels) against the incumbent and the 
 - sliding-decode-sk-window-route: rewrite stage 2 of `sliding decode (q_len 1, page 1, tp8, 2<=B<=32): master Triton _sliding_fused_kernel (16 splits, in-kernel pre-attention)`: read the replaced kernels' own us per shape (profile top_kernels) against th
+- full-verify-wgmma-ws-s1-producer-split: rewrite stage 1 of `full-layer verify at 1<batch<=64: FA3 main + prepare_varlen_num_blocks + FlashAttnFwdCombine + _paired_norm_gate_kernel (master paired FA3)`: read the replaced kernels' own us per shape (profile top_k
+- sliding-verify-wgmma-window-s1: rewrite stage 1 of `sliding verify (q_len 8, page 1, tp8) at 1<=B<=32: prepare_varlen_num_blocks + FA3 main + FlashAttnFwdCombine + sglang norm_gate (B=16/32), and the PSEUDO sk route (B=1)`: read the replaced kernels' o
+- full-verify-wgmma-s6-split-ring-2cta: rewrite stage 6 of `full-layer verify at 1<batch<=64: FA3 main + prepare_varlen_num_blocks + FlashAttnFwdCombine + _paired_norm_gate_kernel (master paired FA3)`: read the replaced kernels' own us per shape (profile top_k
+- full-decode-sk-s5-deferred-ticket-fault-fix: rewrite stage 5 of `full decode 1<B<=64: master splitkv_attn_sk_kernel<4, ticket> single-level in-stream ticket epilogue`: read the replaced kernels' own us per shape (profile top_kernels) against the incumbent and the f
 - full-decode-sk-s4-deferred-ticket-arrive: rewrite stage 4 of `full decode 1<B<=64: master splitkv_attn_sk_kernel<4, ticket> single-level in-stream ticket epilogue`: read the replaced kernels' own us per shape (profile top_kernels) against the incumbent and the f
 
 ## Do not try (regressions, flat results, rejected)
@@ -211,6 +231,7 @@ Rewrite stages are exempt: a slow early stage is not a dead end.
 - **splitkv-chunk2048-batch32** [FA3 call (full-layer decode gather)] neutral, within-ci: Shape-gated chunk size for master's CUDA split-KV path: at batch >= 32 use 2048-token work
 - **splitkv-pdl-attn-to-combine** [launch overhead] neutral, within-ci: Programmatic dependent launch between master's kernel A (splitkv_attn_kernel) and kernel B
 - **full-decode1-sk-two-level-deep-ring** [full-layer attention (batch-1 decode, stream-K ring depth)] neutral, within-ci: Built on current master (no depends_on). Full decode_1 runs splitkv_attn_sk_kernel<4 stage
+- **full-verify-fa3-num-splits-band-gate** [FA3 call (full verify split count)] neutral, within-ci: Built on current master (no depends_on). Full verify still runs FA3: B=1 unpaired (FA3 mai
 - **combo-naive-c320-fd1-tiled-preattn-verify** [combination (naive top-row stack: full decode_1 chunk320 + verify tiled pre-attention)] neutral, within-ci: COMBINATION 1 of 3, the naive top-row stack. Built on current master 7e12891 (blob 5cf8fae
 - **fa3-window-trimmed-page-table** [page table (sliding)] regression, regression: On sliding-window layers only (config window != 0) hand FA3 a window-trimmed view of each 
 - **fa3-scheduler-metadata-side-stream** [FA3 call (schedule, off critical path)] regression, regression: Wherever master calls flash_attn_with_kvcache with scheduler_metadata=None (every sliding 
@@ -220,37 +241,20 @@ Rewrite stages are exempt: a slow early stage is not a dead end.
 
 ## Queue and in flight
 
-- queue: sglang-path-parity [SGLang path parity] p1 hold
-- queue: fa3-num-splits-full-decode [FA3 call] p4 hold
-- queue: fa3-num-splits-sliding [FA3 call] p3 hold
 - queue: triton-window-attention-sliding [FA3 call] p5 hold
 - queue: fa3-drop-cu-seqlens-decode [FA3 call] p5 hold
-- queue: fa3-scheduler-metadata-full-verify [FA3 call] p4 hold
-- queue: triton-flash-decode-full-both-heads [FA3 call] p5 hold
-- queue: fused-sliding-preattn-into-window-kernel [attention boundary] p4 hold
-- queue: fused-sliding-normgate-epilogue [output norm-gate] p5 hold
-- queue: fa3-batched-q-verify [FA3 call (q layout)] p4 hold
-- queue: fa3-num-splits-full-verify [FA3 call] p5 hold
-- queue: fa3-single-split-sliding [FA3 call] p4 hold
 - queue: fused-full-combine-normgate [output norm-gate] p5 hold
-- queue: stream-fork-preattention [launch overhead] p4 hold
-- queue: triton-flash-decode-deep-pipeline [FA3 call (Triton pipeline)] p4 hold
-- queue: triton-flash-decode-full-verify [FA3 call] p4 hold
-- queue: sliding-verify-cuda-streamk-window [sliding-layer attention (verify)] p2 queued
-- queue: full-verify1-cuda-streamk-batch1 [full-layer attention (batch-1 verify gate)] p2 queued
-- queue: splitkv-l2-128b-prefetch-hint [FA3 call (full-layer decode gather)] p5 hold
 - queue: full-decode-splitkv-s2-streamk-ticket [full-layer attention (decode, splitkv kernel A/B)] p1 hold
 - queue: full-verify-wgmma-s3-warpgroup-per-kvhead [full-layer attention (verify, splitkv A8/B8)] p2 hold
 - queue: sliding-cluster-s2-decode-c4-pdl [sliding-layer attention (decode, cluster kernel)] p2 hold
 - queue: full-verify-wgmma-s4-sliding-window [sliding-layer attention (verify, wgmma stream-K kernel)] p2 hold
 - queue: full-verify1-wgmma-s4-batch1-grid-sm [full-layer attention (batch-1 verify, wgmma stream-K kernel)] p2 hold
-- queue: sliding-decode-paired-kvhead-rows-control-unpaired-s8 [sliding-layer attention (batched decode, split depth)] p2 queued
 - queue: sliding-cluster-s3-verify-attn-only-phase-timed [sliding-layer attention (verify, cluster kernel)] p2 hold
 - queue: sliding-verify1-triton-pseudo-decode [sliding-layer attention (batch-1 verify, Triton fused decode kernel)] p2 hold
 - queue: full-verify1-sk-pseudo-decode [full-layer attention (batch-1 verify, stream-K pseudo-decode)] p3 hold
 - queue: sliding-decode-sk-s3-fused-preattn-rope [sliding-layer attention (decode, stream-K windowed kernel, pre-attention fold)] p2 queued
 - queue: preattention-tiled-every-verify-block [pre-attention norm+rope] p2 hold
-- queue: full-verify-fa3-num-splits-band-gate [FA3 call (full verify split count)] p2 queued
-- queue: full-verify-wgmma-ws-s1-producer-split [full-layer attention (verify, wgmma stream-K kernel, warp-specialized pipeline)] p1 queued
 - queue: sliding-verify-fa3-num-splits-band-gate [FA3 call (sliding verify split count)] p2 queued
-- queue: sliding-verify-wgmma-window-s1 [sliding-layer attention (verify, wgmma stream-K windowed kernel)] p1 queued
+- queue: full-verify1-wgmma-s7-grid-sm-two-level [full-layer attention (batch-1 verify, wgmma stream-K kernel, two-level ticket)] p2 queued
+- queue: sliding-verify1-pseudo-fused-preattn-rope [sliding-layer attention (batch-1 verify, PSEUDO stream-K kernel, pre-attention fold)] p1 queued
+- 17 stale holds expired to `done/expired/` (not run)
