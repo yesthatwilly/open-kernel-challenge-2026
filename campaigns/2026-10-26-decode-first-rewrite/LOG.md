@@ -91,3 +91,22 @@ Passed 5/5 (master path scored 1.3865, irrelevant). 201 MB bank, read flush, gra
 - In parallel: an Opus audit of Engine A v2 (T <= 32); an Opus builder for Engine B (W3, T = 128..512) on branch
   campaign/engine-b in .worktrees/engine-b (no okc runs; I dispatch).
 
+## 2026-10-26T06:25Z: Engine A v1 on the moe board (1.4434); decode v1 measured but not yet live
+
+- moe check 7e40dd8509da4586: **1.4501** (master path 1.3865): decode 1 44.6 -> 40.5 us, verify 1 106.7 -> 95.2 us.
+  Canary clean T 1..8 (worst rel-L2 0.00408), gates T=1 x1.19 / T=8 x1.15, copy check PASS, build 30.5 s, setup 32 s.
+  Kernel-only: T=8 (19 active) w13 3.00 TB/s, w2 2.81 TB/s; T=1 (2 active) w13 1.88, w2 1.33 TB/s (latency-bound:
+  ~9 us of fixed cost per kernel against 6-11 us of streaming).
+- moe scored 1b3f70acd8c14900: **1.4434**, moe rank 490 -> 473 of 814.
+- decode check 485b670ef12f4909: FAILED, illegal address in prepare. My gate captured master's expert block from a
+  closure that owned its align tensors and dropped it after capture; the freed blocks were reused (n_padded garbage)
+  and Marlin read out of bounds on replay. Fix: keep closures alive until the replays are done (7323673f).
+- decode re-check 4594d4d07d114cdc: passed 13/13, 1.3488 (M0 1.3408), but Engine A was ON only at T = 2..7: the layer
+  check left T=1/T=8 switched off after running (fixed b640edc4). Measured on decode routings (expert block given R's
+  outputs): T=1 judge-like 40.9 -> 34.4 us (x1.19), one expert 33.3 -> 23.0 (x1.44); T=8 judge-like 110.9 -> 96.9
+  (x1.14), skewed 62.5 -> 55.2 (x1.13); layer checks clean (hidden <= 2.0e-3). Expected once ON: d1 x1.05, v1 x1.07,
+  headline about +2%.
+- Next: unified adapters (ebac60b2: one module with v1 + v2; classes T = 1/8/16/32 choose master/v1/v2) go out in moe
+  and decode as soon as the v2 audit returns. T=1 idea queued: align the stream-K split to whole groups when the
+  groups fit the grid (no fix-ups at T=1 w13; 2-way at w2).
+

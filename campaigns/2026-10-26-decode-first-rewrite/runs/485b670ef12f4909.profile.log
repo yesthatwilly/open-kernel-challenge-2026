@@ -1,0 +1,138 @@
+..80000 kv_scale 1.0: eager warm-up state 0 (0.00s)
+[combo] launching SKW v1 B=1 L=8 lens 80000..80000 kv_scale 1.0: eager warm-up state 1
+[combo] ok        SKW v1 B=1 L=8 lens 80000..80000 kv_scale 1.0: eager warm-up state 1 (0.00s)
+[combo] SKW v1 B=1 L=8 lens 80000..80000 kv_scale 1.0: replay 0 on state 0: launching graph
+[combo] SKW v1 B=1 L=8 lens 80000..80000 kv_scale 1.0: replay 0 state 0: o vs master 4.40e-02 (<= 1e-2), vs fp64 new 4.98e-02 master 4.77e-02 rows ok True, fp8-q ref err 4.48e-02 -> bound 7.94e-02, worst row 6.81e-02 (<= 3.97e-01), k rel L2 vs master 1.54e-02 (<= 4e-2; info: gap 1 on 5.3% of bytes), v exact True, other rows intact True, finite True, counters 0 -> ok
+[combo] SKW v1 B=1 L=8 lens 80000..80000 kv_scale 1.0: replay 1 on state 1: launching graph
+[combo] SKW v1 B=1 L=8 lens 80000..80000 kv_scale 1.0: replay 1 state 1: o vs master 3.60e-02 (<= 1e-2), vs fp64 new 4.74e-02 master 4.41e-02 rows ok True, fp8-q ref err 4.28e-02 -> bound 7.60e-02, worst row 6.32e-02 (<= 3.80e-01), k rel L2 vs master 1.55e-02 (<= 4e-2; info: gap 1 on 3.9% of bytes), v exact True, other rows intact True, finite True, counters 0 -> ok
+[combo] SKW v1 B=1 L=8 lens 80000..80000 kv_scale 1.0: replay 2 on state 0: launching graph
+[combo] SKW v1 B=1 L=8 lens 80000..80000 kv_scale 1.0: replay 2 state 0: o vs master 4.25e-02 (<= 1e-2), vs fp64 new 5.39e-02 master 5.48e-02 rows ok True, fp8-q ref err 5.09e-02 -> bound 9.02e-02, worst row 6.74e-02 (<= 4.51e-01), k rel L2 vs master 1.68e-02 (<= 4e-2; info: gap 2 on 4.0% of bytes), v exact True, other rows intact True, finite True, counters 0 -> ok
+[combo] SKW v1 B=1 L=8 lens 80000..80000 kv_scale 1.0: replay 3 on state 1: launching graph
+[combo] SKW v1 B=1 L=8 lens 80000..80000 kv_scale 1.0: replay 3 state 1: o vs master 4.81e-02 (<= 1e-2), vs fp64 new 6.23e-02 master 5.09e-02 rows ok True, fp8-q ref err 4.89e-02 -> bound 8.65e-02, worst row 8.96e-02 (<= 4.33e-01), k rel L2 vs master 1.88e-02 (<= 4e-2; info: gap 1 on 4.7% of bytes), v exact True, other rows intact True, finite True, counters 0 -> ok
+[combo] launching SKW v1 B=1 L=8 lens 80000..80000 kv_scale 0.015625: eager warm-up state 0
+[combo] ok        SKW v1 B=1 L=8 lens 80000..80000 kv_scale 0.015625: eager warm-up state 0 (0.00s)
+[combo] launching SKW v1 B=1 L=8 lens 80000..80000 kv_scale 0.015625: eager warm-up state 1
+[combo] ok        SKW v1 B=1 L=8 lens 80000..80000 kv_scale 0.015625: eager warm-up state 1 (0.00s)
+[combo] SKW v1 B=1 L=8 lens 80000..80000 kv_scale 0.015625: replay 0 on state 0: launching graph
+[combo] SKW v1 B=1 L=8 lens 80000..80000 kv_scale 0.015625: replay 0 state 0: o vs master 4.27e-02 (<= 1e-2), vs fp64 new 5.07e-02 master 5.05e-02 rows ok True, fp8-q ref err 4.70e-02 -> bound 8.32e-02, worst row 6.87e-02 (<= 4.16e-01), k rel L2 vs master 1.61e-02 (<= 4e-2; info: gap 40 on 4.7% of bytes), v exact True, other rows intact True, finite True, counters 0 -> ok
+[combo] SKW v1 B=1 L=8 lens 80000..80000 kv_scale 0.015625: replay 1 on state 1: launching graph
+[combo] SKW v1 B=1 L=8 lens 80000..80000 kv_scale 0.015625: replay 1 state 1: o vs master 3.22e-02 (<= 1e-2), vs fp64 new 4.02e-02 master 4.27e-02 rows ok True, fp8-q ref err 3.96e-02 -> bound 7.03e-02, worst row 4.82e-02 (<= 3.51e-01), k rel L2 vs master 1.74e-02 (<= 4e-2; info: gap 8 on 5.1% of bytes), v exact True, other rows intact True, finite True, counters 0 -> ok
+[combo] SKW v1 B=1 L=8 lens 80000..80000 kv_scale 0.015625: replay 2 on state 0: launching graph
+[combo] SKW v1 B=1 L=8 lens 80000..80000 kv_scale 0.015625: replay 2 state 0: o vs master 3.99e-02 (<= 1e-2), vs fp64 new 5.93e-02 master 5.19e-02 rows ok True, fp8-q ref err 4.96e-02 -> bound 8.78e-02, worst row 7.49e-02 (<= 4.39e-01), k rel L2 vs master 1.46e-02 (<= 4e-2; info: gap 5 on 4.2% of bytes), v exact True, other rows intact True, finite True, counters 0 -> ok
+[combo] SKW v1 B=1 L=8 lens 80000..80000 kv_scale 0.015625: replay 3 on state 1: launching graph
+[combo] SKW v1 B=1 L=8 lens 80000..80000 kv_scale 0.015625: replay 3 state 1: o vs master 3.17e-02 (<= 1e-2), vs fp64 new 4.65e-02 master 5.14e-02 rows ok True, fp8-q ref err 4.71e-02 -> bound 8.35e-02, worst row 5.55e-02 (<= 4.17e-01), k rel L2 vs master 1.73e-02 (<= 4e-2; info: gap 16 on 5.3% of bytes), v exact True, other rows intact True, finite True, counters 0 -> ok
+[combo] SKW v1: max errors over every replay: o_fp8q_ref 0.0565, o_new_over_ref8 1.36, o_vs_master 0.0537, o_new_vs_fp64 0.0661, o_master_vs_fp64 0.0569, k_rel 0.0214, k_gap 45, k_frac 0.0557
+[skw] v1 attention-side alternation: ok
+[skw] launching SKW layer v1 agentic ctx 80000 kv 1: eager warm-up state 0
+[skw] ok        SKW layer v1 agentic ctx 80000 kv 1: eager warm-up state 0 (0.00s)
+[skw] launching SKW layer v1 agentic ctx 80000 kv 1: eager warm-up state 1
+[skw] ok        SKW layer v1 agentic ctx 80000 kv 1: eager warm-up state 1 (0.00s)
+[skw] SKW layer v1 agentic ctx 80000 kv 1: replay 0 on state 0: launching graph
+[skw] SKW layer v1 agentic ctx 80000 kv 1: replay 0 state 0: hidden 3.79e-03 (<= 0.1), stream 3.24e-03 (<= inf), update 5.81e-03 (<= 0.1), k_cache gap 0 rel 0.00e+00, v_cache exact True, other rows intact True, ids differ on 0/8 tokens, routing: picks within 0.05 True, clear-margin top-8 present True, routes 9/9, distinct 7/7, finite True, counters 0 -> ok
+[skw] SKW layer v1 agentic ctx 80000 kv 1: replay 1 on state 1: launching graph
+[skw] SKW layer v1 agentic ctx 80000 kv 1: replay 1 state 1: hidden 3.98e-03 (<= 0.1), stream 3.43e-03 (<= inf), update 6.09e-03 (<= 0.1), k_cache gap 0 rel 0.00e+00, v_cache exact True, other rows intact True, ids differ on 0/8 tokens, routing: picks within 0.05 True, clear-margin top-8 present True, routes 9/9, distinct 8/8, finite True, counters 0 -> ok
+[skw] SKW layer v1 agentic ctx 80000 kv 1: replay 2 on state 0: launching graph
+[skw] SKW layer v1 agentic ctx 80000 kv 1: replay 2 state 0: hidden 3.71e-03 (<= 0.1), stream 3.12e-03 (<= inf), update 5.65e-03 (<= 0.1), k_cache gap 0 rel 0.00e+00, v_cache exact True, other rows intact True, ids differ on 0/8 tokens, routing: picks within 0.05 True, clear-margin top-8 present True, routes 4/4, distinct 4/4, finite True, counters 0 -> ok
+[skw] SKW layer v1 agentic ctx 80000 kv 1: replay 3 on state 1: launching graph
+[skw] SKW layer v1 agentic ctx 80000 kv 1: replay 3 state 1: hidden 3.51e-03 (<= 0.1), stream 2.93e-03 (<= inf), update 5.39e-03 (<= 0.1), k_cache gap 0 rel 0.00e+00, v_cache exact True, other rows intact True, ids differ on 0/8 tokens, routing: picks within 0.05 True, clear-margin top-8 present True, routes 5/5, distinct 5/5, finite True, counters 0 -> ok
+[skw] launching SKW layer v1 ragged kv 1/64: eager warm-up state 0
+[skw] ok        SKW layer v1 ragged kv 1/64: eager warm-up state 0 (0.00s)
+[skw] launching SKW layer v1 ragged kv 1/64: eager warm-up state 1
+[skw] ok        SKW layer v1 ragged kv 1/64: eager warm-up state 1 (0.00s)
+[skw] SKW layer v1 ragged kv 1/64: replay 0 on state 0: launching graph
+[skw] SKW layer v1 ragged kv 1/64: replay 0 state 0: hidden 4.18e-03 (<= 0.1), stream 3.68e-03 (<= inf), update 6.42e-03 (<= 0.1), k_cache gap 0 rel 0.00e+00, v_cache exact True, other rows intact True, ids differ on 0/8 tokens, routing: picks within 0.05 True, clear-margin top-8 present True, routes 11/11, distinct 8/8, finite True, counters 0 -> ok
+[skw] SKW layer v1 ragged kv 1/64: replay 1 on state 1: launching graph
+[skw] SKW layer v1 ragged kv 1/64: replay 1 state 1: hidden 4.07e-03 (<= 0.1), stream 3.53e-03 (<= inf), update 6.23e-03 (<= 0.1), k_cache gap 0 rel 0.00e+00, v_cache exact True, other rows intact True, ids differ on 0/8 tokens, routing: picks within 0.05 True, clear-margin top-8 present True, routes 7/7, distinct 7/7, finite True, counters 0 -> ok
+[skw] SKW layer v1 ragged kv 1/64: replay 2 on state 0: launching graph
+[skw] SKW layer v1 ragged kv 1/64: replay 2 state 0: hidden 3.83e-03 (<= 0.1), stream 3.29e-03 (<= inf), update 5.79e-03 (<= 0.1), k_cache gap 0 rel 0.00e+00, v_cache exact True, other rows intact True, ids differ on 0/8 tokens, routing: picks within 0.05 True, clear-margin top-8 present True, routes 8/8, distinct 6/6, finite True, counters 0 -> ok
+[skw] SKW layer v1 ragged kv 1/64: replay 3 on state 1: launching graph
+[skw] SKW layer v1 ragged kv 1/64: replay 3 state 1: hidden 3.63e-03 (<= 0.1), stream 3.06e-03 (<= inf), update 5.62e-03 (<= 0.1), k_cache gap 0 rel 0.00e+00, v_cache exact True, other rows intact True, ids differ on 0/8 tokens, routing: picks within 0.05 True, clear-margin top-8 present True, routes 8/8, distinct 6/6, finite True, counters 0 -> ok
+[skw] SKW layer v1: max error per output: hidden 0.00418, stream 0.00368, update 0.00642, k_cache 0, k_gap 0, ids_tokens_differ 0
+[skw] v1 whole-layer check: ok
+[combo] phase SKW: 1.7s wall, this prepare() 11.5s, all prepare() calls 11.5s
+PATH CHOSEN: S1 sliding decode q_len 1 page 1, 2 <= B <= 16: NEW _sliding_fused_kernel S=16 (per-state counters) [new 28.51 us vs master 39.78 us]
+PATH CHOSEN: S1 sliding decode q_len 1 page 1, 17 <= B <= 32: NEW _sliding_fused_kernel S=16 (per-state counters) [new 38.59 us vs master 45.54 us]
+PATH CHOSEN: S2a routing kernel R, 2 <= T <= 8: NEW per-warp top-8 R (variant 0), PDL after P [new 27.04 us vs master 28.42 us]
+PATH CHOSEN: S2a routing kernel R, 9 <= T <= 16: NEW per-warp top-8 R (variant 0), PDL after P [new 28.19 us vs master 29.95 us]
+PATH CHOSEN: S2a routing kernel R, 17 <= T <= 32: NEW per-warp top-8 R (variant 0), PDL after P [new 31.17 us vs master 32.80 us]
+PATH CHOSEN: S2b unpooler, 2 <= T <= 8: NEW dl_unpool_kernel NF=1 [new 5.41 us vs master 10.18 us]
+PATH CHOSEN: S3 full decode 2 <= B <= 23 (sk / split-KV feed): NEW _pre_attention_kernel unpaired [new 122.21 us vs master 128.64 us]
+PATH CHOSEN: S3 full decode 24 <= B <= 64 (sk / split-KV feed): NEW _pre_attention_kernel unpaired [new 230.27 us vs master 236.99 us]
+PATH CHOSEN: S3 sliding verify B = 1: NEW _pre_attention_kernel unpaired [new 30.46 us vs master 36.03 us]
+PATH CHOSEN: S3 sliding verify 2 <= B <= 23: NEW _pre_attention_kernel unpaired [new 38.94 us vs master 44.67 us]
+PATH CHOSEN: S3 sliding verify 24 <= B <= 64: NEW _pre_attention_kernel unpaired [new 48.64 us vs master 55.14 us]
+PATH CHOSEN: S3 full verify 2 <= B <= 23 (paired FA3): NEW _pre_attention_kernel PAIRED + _paired_norm_gate_kernel [new 178.02 us vs master 195.39 us]
+PATH CHOSEN: S3 full verify 24 <= B <= 64 (paired FA3): NEW _pre_attention_kernel PAIRED + _paired_norm_gate_kernel [new 320.74 us vs master 334.85 us]
+PATH CHOSEN: S3 full verify B = 1: NEW _pre_attention_kernel unpaired [new 44.13 us vs master 49.06 us]
+PATH CHOSEN: SKW sliding decode 17 <= B <= 32 (q_len 1, page 1): NEW skw_pre_kernel + skw_attn_kernel (PSEUDO TOK=1) variant 6 grid p4 [new 38.42 us vs master 45.58 us]
+PATH CHOSEN: SKW sliding verify B = 1 (q_len 8, page 1): NEW skw_pre_kernel + skw_attn_kernel (PSEUDO TOK=8) variant 4 grid p8 [new 33.74 us vs master 37.84 us]
+[prepare] this call 11.5s, cumulative 11.5s
+[summary] PATH CHOSEN S1 A: NEW [new 28.51 us vs master 39.78 us]
+[summary] PATH CHOSEN S1 B: NEW [new 38.59 us vs master 45.54 us]
+[summary] PATH CHOSEN S2a 8: NEW [new 27.04 us vs master 28.42 us]
+[summary] PATH CHOSEN S2a 16: NEW [new 28.19 us vs master 29.95 us]
+[summary] PATH CHOSEN S2a 32: NEW [new 31.17 us vs master 32.80 us]
+[summary] PATH CHOSEN S2b 8: NEW [new 5.41 us vs master 10.18 us]
+[summary] PATH CHOSEN S3 c1-b16: NEW [new 122.21 us vs master 128.64 us]
+[summary] PATH CHOSEN S3 c1-b32: NEW [new 230.27 us vs master 236.99 us]
+[summary] PATH CHOSEN S3 c2-t8: NEW [new 30.46 us vs master 36.03 us]
+[summary] PATH CHOSEN S3 c2-t128: NEW [new 38.94 us vs master 44.67 us]
+[summary] PATH CHOSEN S3 c2-t256: NEW [new 48.64 us vs master 55.14 us]
+[summary] PATH CHOSEN S3 c3-t128: NEW [new 178.02 us vs master 195.39 us]
+[summary] PATH CHOSEN S3 c3-t256: NEW [new 320.74 us vs master 334.85 us]
+[summary] PATH CHOSEN S3 c4-t8: NEW [new 44.13 us vs master 49.06 us]
+[summary] PATH CHOSEN SKW b32: NEW variant 6 grid p4 [new 38.42 us vs master 45.58 us]
+[summary] PATH CHOSEN SKW v1: NEW variant 4 grid p8 [new 33.74 us vs master 37.84 us]
+[summary] dense-chain ON, w2 atomic, full-decode sk on=True b1=True n={16: True, 32: True}
+[summary] [skw] module built, routes b32=(6, 'p4') v1=(4, 'p8') (None = master's chain), prepare wall 11.5s
+[engineA-dl] load_inline okc_campaign_engine_a_v1_dl compiled in 36.9s (TORCH_CUDA_ARCH_LIST=9.0a, ['-O3', '-std=c++20', '-lineinfo'])
+[engineA-dl] kernel w13/dq1: attrs ok True, 106 regs, 0 B spill, 104 KB smem, 2 CTAs/SM
+[engineA-dl] kernel w13/dq2: attrs ok True, 83 regs, 0 B spill, 104 KB smem, 2 CTAs/SM
+[engineA-dl] kernel w2/dq1: attrs ok True, 111 regs, 0 B spill, 104 KB smem, 2 CTAs/SM
+[engineA-dl] kernel w2/dq2: attrs ok True, 89 regs, 0 B spill, 104 KB smem, 2 CTAs/SM
+[engineA-dl] exact integer dequant; repack 0.1 s; grid 264 (2 CTAs/SM x 160 threads); build 36.9 s
+[engineA-dl] first launch: T=1 judge (each launch named, synced)
+[engineA-dl]     [T=1 judge] before ea_w13
+[engineA-dl]     [T=1 judge] after ea_w13 / before ea_w2
+[engineA-dl]     [T=1 judge] after ea_w2 / before post-expert norm
+[engineA-dl]     [T=1 judge] after post-expert norm
+[engineA-dl] canary: clean per T {1: True, 2: True, 3: True, 4: True, 5: True, 6: True, 7: True, 8: True}; worst rel-L2 vs fp32 0.00395
+[W1026 05:57:48.060475993 CUDAEvent.h:57] Warning: CUDA warning: an illegal memory access was encountered (function ~CUDAEvent)
+[W1026 05:57:48.060490649 CUDAEvent.h:57] Warning: CUDA warning: an illegal memory access was encountered (function ~CUDAEvent)
+[engineA-dl] ===== ENGINE A (decode) SUMMARY (38.3 s; module okc_campaign_engine_a_v1_dl) =====
+[engineA-dl] exact integer dequant; repack 0.1 s; grid 264 (2 CTAs/SM x 160 threads); build 36.9 s
+[engineA-dl] canary: clean per T {1: True, 2: True, 3: True, 4: True, 5: True, 6: True, 7: True, 8: True}; worst rel-L2 vs fp32 0.00395
+[engineA-dl] AcceleratorError: CUDA error: an illegal memory access was encountered
+Search for `cudaErrorIllegalAddress' in https://docs.nvidia.com/cuda/cuda-runtime-api/group__CUDART__TYPES.html for more information.
+CUDA kernel errors might be asynchronously reported at some other API call, so the stacktrace below might be incorrect.
+For debugging consider passing CUDA_LAUNCH_BLOCKING=1
+The CUDA driver logged these messages, 
+[engineA-dl] final sync raised AcceleratorError: CUDA error: an illegal memory access was encountered
+Search for `cudaErrorIllegalAddress' in https://docs.nvidia.com/cuda/cuda-runtime-api/group__CUDART__TYPES.html for more information.
+CUDA kernel e
+[engineA-dl] PATH CHOSEN T=1 = MASTER
+[engineA-dl] PATH CHOSEN T=2 = MASTER
+[engineA-dl] PATH CHOSEN T=3 = MASTER
+[engineA-dl] PATH CHOSEN T=4 = MASTER
+[engineA-dl] PATH CHOSEN T=5 = MASTER
+[engineA-dl] PATH CHOSEN T=6 = MASTER
+[engineA-dl] PATH CHOSEN T=7 = MASTER
+[engineA-dl] PATH CHOSEN T=8 = MASTER
+Traceback (most recent call last):
+  File "/tmp/muse_decode_layer-lbq9woh1/run/worker.py", line 423, in child_main
+    send(_setup_op(msg, module, state, sync, perf))
+         ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/tmp/muse_decode_layer-lbq9woh1/run/worker.py", line 323, in _setup_op
+    sync()
+  File "/opt/sglang/lib/python3.12/site-packages/torch/cuda/__init__.py", line 1281, in synchronize
+    return torch._C._cuda_synchronize()
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+torch.AcceleratorError: CUDA error: an illegal memory access was encountered
+Search for `cudaErrorIllegalAddress' in https://docs.nvidia.com/cuda/cuda-runtime-api/group__CUDART__TYPES.html for more information.
+CUDA kernel errors might be asynchronously reported at some other API call, so the stacktrace below might be incorrect.
+For debugging consider passing CUDA_LAUNCH_BLOCKING=1
+The CUDA driver logged these messages, which may provide useful details:
+Sticky error detected
+Returning 700 (CUDA_ERROR_ILLEGAL_ADDRESS) from cuCtxSynchronize_v2
+
+
