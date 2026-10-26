@@ -75,10 +75,10 @@ controls_for: null
 rewrite_stage: 2
 replaces: cuBLAS nvjet at m=129..256 (verify_32) for qkv_gate (nvjet 96x64 2x4 TNN 19.4 us), o (nvjet 128x128 TNT 8.1 us), pooler (nvjet 128x64 TNT 29.7 us) and unpooler (nvjet 128x128 TNT 24.8 us)
 review: proceed
-status: running
+status: done
 review_at: 2026-10-25T212522Z
 review_companions: null
-stage: dispatched
+stage: harvested
 claimed_at: 2026-10-25T212548Z
 base_sha: e4182610b1552724381a1f2451f6bcd56b7dc1ed
 base_blob: bcf8bff0b622eecf0d9dc9abecf9e4c7067df872
@@ -97,6 +97,13 @@ attempt_file: 2026-10-26T012540Z-check-bf16-verify32-cutlass-coop-256x128-splitk
 prepared_at: 2026-10-26T012540Z
 job: 92c42836caf54987
 dispatched_at: 2026-10-26T012616Z
+outcome: neutral
+verdict_detail: within-ci
+speedup: 1.2483041726350044
+speedup_ci: [1.2295796100454792, 1.2670287352245293]
+harvested_at: 2026-10-26T023149Z
+best_at_harvest: 1.2566457115954903
+promotion: null
 ---
 
 # bf16-verify32-cutlass-coop-256x128-splitk-stage2
@@ -216,3 +223,54 @@ Verdict: dispatch-with-fixes. Audited by reading (no GPU, torch or CUTLASS heade
 - Shadowing (concern 4): the sp2 route sits after every m <= 32 path, the m == 1 bulk, m == 128 Lt and ouns routes, and before the NN-layout block. In 129..256 the only landed cell it can shadow is the pooler NN layout (`nn_p256_ok`); the per-layer gate compares against exactly that routed path (flag off) at m=256 and needs >= 1.03 in both rounds. Gate runs at m=256 only, so m=129..255 (test m=130 unpooler n=8192 only) rides the m=256 decision; unscored, correctness checked at 130/200/256. unpooler slice (n=1024) and m=128/512/1000 never reach it.
 - Fixes: (1) IQR veto floor was `max(im, 0.05)` us, so a timer-resolution IQR on the incumbent could veto a real win; raised to `max(im, 0.5)`. (2) `_sp2_diag` (print-only) was inside the layer's try, so any exception in it (e.g. the splits=1 DataParallel query/launch) would disable the layer; wrapped in its own try. okc_lint OK with warnings, py_compile OK, __pycache__ removed.
 - Residual risk: first compile and launch of the 256x128 cooperative StreamK SplitK instantiation with `splits` on CUTLASS 4.5.0 and a CUTLASS-internal unbounded barrier hang or fault in the canary would poison the context rather than fall back.
+
+## Result
+
+- job `92c42836caf54987` (check), status done, passed True, tests 9/9
+- speedup 1.2483x, 95% CI [1.2296, 1.2670], score 3869.890132468934 µs vs SGLang 4830.8 µs
+- best at harvest: {"speedup": 1.2566457115954903, "ci": [1.237796025921558, 1.2754953972694225], "job": "741072dca5fc4c9d"}; base result: SGLang (no base result)
+- **outcome: neutral** (within-ci)
+- files: `muse_bf16_proj/hypotheses/done/neutral/bf16-verify32-cutlass-coop-256x128-splitk-stage2.result.json`, `muse_bf16_proj/hypotheses/done/neutral/bf16-verify32-cutlass-coop-256x128-splitk-stage2.patch`; branch `hyp/muse_bf16_proj/bf16-verify32-cutlass-coop-256x128-splitk-stage2`
+
+## Attribution
+
+| shape | w | base µs | hyp µs | delta | verdict |
+|---|---|---|---|---|---|
+| layer=qkv_gate load=decode_1 m=1 | 62 | 14.18 | 11.06 | 1.2819 | gained |
+| layer=o load=decode_1 m=1 | 62 | 6.78 | 5.89 | 1.1526 | gained |
+| layer=pooler load=decode_1 m=1 | 62 | 21.6 | 17.59 | 1.2279 | gained |
+| layer=unpooler load=decode_1 m=1 | 62 | 7.12 | 5.04 | 1.4138 | gained |
+| layer=router load=decode_1 m=1 | 62 | 10.43 | 4.95 | 2.1066 | gained |
+| layer=qkv_gate load=decode_16 m=16 | 62 | 14.1 | 13.15 | 1.0718 | gained |
+| layer=o load=decode_16 m=16 | 62 | 6.69 | 5.99 | 1.1162 | gained |
+| layer=pooler load=decode_16 m=16 | 62 | 21.41 | 19.3 | 1.1095 | gained |
+| layer=unpooler load=decode_16 m=16 | 62 | 18.62 | 18.75 | 0.9932 | flat |
+| layer=router load=decode_16 m=16 | 62 | 14.64 | 5.32 | 2.7508 | gained |
+| layer=qkv_gate load=decode_32 m=32 | 62 | 14.72 | 14.29 | 1.03 | flat |
+| layer=o load=decode_32 m=32 | 62 | 6.94 | 6.6 | 1.0514 | gained |
+| layer=pooler load=decode_32 m=32 | 62 | 21.81 | 19.89 | 1.0965 | gained |
+| layer=unpooler load=decode_32 m=32 | 62 | 18.85 | 18.9 | 0.9972 | flat |
+| layer=router load=decode_32 m=32 | 62 | 15.04 | 5.84 | 2.5768 | gained |
+| layer=qkv_gate load=verify_1 m=8 | 62 | 14.5 | 13.13 | 1.1037 | gained |
+| layer=o load=verify_1 m=8 | 62 | 6.88 | 6.46 | 1.0648 | gained |
+| layer=pooler load=verify_1 m=8 | 62 | 21.36 | 19.22 | 1.1112 | gained |
+| layer=unpooler load=verify_1 m=8 | 62 | 6.98 | 5.46 | 1.2769 | gained |
+| layer=router load=verify_1 m=8 | 62 | 26.3 | 5.24 | 5.0219 | gained |
+| layer=qkv_gate load=verify_16 m=128 | 62 | 16.85 | 15.81 | 1.0656 | gained |
+| layer=o load=verify_16 m=128 | 62 | 7.36 | 7.48 | 0.9844 | flat |
+| layer=pooler load=verify_16 m=128 | 62 | 25.38 | 22.81 | 1.1123 | gained |
+| layer=unpooler load=verify_16 m=128 | 62 | 19.89 | 19.23 | 1.0341 | gained |
+| layer=router load=verify_16 m=128 | 62 | 16.27 | 7.57 | 2.1498 | gained |
+| layer=qkv_gate load=verify_32 m=256 | 62 | 19.63 | 19.79 | 0.9922 | flat |
+| layer=o load=verify_32 m=256 | 62 | 9.22 | 9.37 | 0.9832 | flat |
+| layer=pooler load=verify_32 m=256 | 62 | 30.88 | 30.12 | 1.0254 | flat |
+| layer=unpooler load=verify_32 m=256 | 62 | 24.8 | 24.82 | 0.9993 | flat |
+| layer=router load=verify_32 m=256 | 62 | 17.47 | 9.56 | 1.8282 | gained |
+
+gained on qkv_gate decode_1, decode_16, verify_1, verify_16; o decode_1, decode_16, decode_32, verify_1; pooler decode_1, decode_16, decode_32, verify_1, verify_16; unpooler decode_1, verify_1, verify_16; router decode_1, decode_16, decode_32, verify_1, verify_16, verify_32. Expected hit: 0/8. Noise ±1.5%.
+
+## Follow-ups
+
+- rewrite stage 2 of `cuBLAS nvjet at m=129..256 (verify_32) for qkv_gate (nvjet 96x64 2x4 TNN 19.4 us), o (nvjet 128x128 TNT 8.1 us), pooler (nvjet 128x64 TNT 29.7 us) and unpooler (nvjet 128x128 TNT 24.8 us)`: read the replaced kernels' own us per shape (profile top_kernels) against the incumbent and the floor, and check which Milestone it reached. The next stage is `/hypothesize muse_bf16_proj "<what to fix or tune>" --kind rewrite --depends-on bf16-verify32-cutlass-coop-256x128-splitk-stage2 --stage 3`; a slow or failed first cut is the expected start, not a do-not-retry.
+- within-ci: the change is not proven either way; a stacked hypothesis (`depends_on: bf16-verify32-cutlass-coop-256x128-splitk-stage2`) that adds a further change in the same area is the only way to learn more.
+
