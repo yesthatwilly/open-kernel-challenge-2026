@@ -11,11 +11,11 @@ append-only, newest last.
   attention_decode > prefill (last). On bf16 / attention, favour kernels that port into decode, and submit when a check
   beats that board. Every check must answer a new question; using every check is not required; no identical bytes
   re-rolled.
-- updated: 2026-10-26T21:58Z
+- updated: 2026-10-26T22:42Z
 - **The sprint is ended (the user, ~22:00Z):** start nothing new (no minting, reviews, implementations, worktrees or
   subagents). Finish and harvest what is in flight, submitting only a check that beats its board. Then go quiet with
   long heartbeats until the 00:00Z reset plan.
-- in flight: prefill confirm 13cfaf1e25c341af, bf16 b12r 6617f94dd1ce459f, 3 minting agents, 1 review (attention).
+- in flight: nothing. Quiet until the 00:00Z reset plan below.
 - step: **bf16_proj**.
   - Done: bulk12 m=1 scored at 1.2664 (board 1.2566 -> 1.2664, rank 381 -> 355) and landed on master.
   - Building: bulk12 for m = 8 / 16 / 32 (branch campaign/expert-bandwidth after 3acb748e, uncommitted). b12x_kernel
@@ -459,3 +459,30 @@ append-only, newest last.
   - Next window: re-gate with a read flush and a stricter margin before routing anything at m >= 8.
 - The bf16 board stays at the landed bulk12 m=1 (3834ceec 1.2664, rank 355). bf16 checks used today: 13 of 20 (8 by
   the churn before the campaign, 5 bulk12 + 1 router + 1 resident-x after 20:00Z).
+
+## 2026-10-26T22:42Z: sprint summary (21:40Z start, ended by the user at ~22:00Z)
+
+- Checks used by the sprint pipeline: 1 (prefill confirm 13cfaf1e, 1.4711, neutral). No wins, nothing landed, no scored
+  runs.
+- My bf16 line, which kept running alongside: 3 checks after 21:40Z (router ticket 7e8be36a 1.2650 killed; rotation
+  2980f57a 1.2690; resident-x 6617f94d 1.2528). None beat the 1.2664 board. bf16 used 14 of 20 checks today (8 by the
+  pre-campaign churn, 6 by bulk12 / router).
+- Reviews (Opus):
+
+  | hypothesis | problem | verdict |
+  |---|---|---|
+  | experts-rega-mc4-cluster-high-ft | prefill | hold (mc2 premise falsified) |
+  | combo-verify-cells-pooler-khalf-plus-qkv-rowowner-m8-m16 | bf16 | proceed narrowed; held by me (kind (a) bf16 partials fail the fp32-accumulation gate) |
+  | sliding-decode-sk-s3-fused-preattn-rope | attention | proceed with builder notes; queued, not built |
+
+- Minted and committed to the queues (churn intake 73a62c81), none implemented: 30 hypotheses.
+  - bf16 6: pooler K-halves fp32 + Triton cast-add, b12 qkv m=1 R32, swapab16 5-stage, b12 unpooler slice, Lt NN
+    cells, Lt m=256 config sweep.
+  - attention 12: sk full-line gather, sliding-verify wgmma s2 split-combine, c320 one-pass combine and PDL trigger,
+    combos.
+  - prefill 12: rega rotated schedule, fine N buckets, fast silu epilogue, combos, front fusion, PDL regate, dynamic
+    scheduler, routing fusion, LPT, anatomy diagnostic.
+  - The minters flag the three queued prefill mc items as dead (mc2 gated off at 1.31-1.81x).
+- Agent tokens, approximate: 3 minting agents ~1.6M, 3 reviews ~0.77M, 5 audits ~0.65M. About 3.0M in total, with
+  only one check spent.
+- Quota left at 22:42Z: bf16 6 / 9, attention 14 / 10, prefill 15 / 10, moe 0 / 4 (untouched).
