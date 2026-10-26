@@ -81,10 +81,10 @@ controls_for: null
 rewrite_stage: 1
 replaces: "full-layer verify at 1<batch<=64: FA3 main + prepare_varlen_num_blocks + FlashAttnFwdCombine + _paired_norm_gate_kernel (master paired FA3)"
 review: proceed
-status: running
+status: done
 review_at: 2026-10-25T212521Z
 review_companions: null
-stage: dispatched
+stage: harvested
 claimed_at: 2026-10-25T212552Z
 base_sha: b3b8b66c3106acbf5b6caf1c61d24bda67cd95d5
 base_blob: 6d6afa4722731ceb9cb8216d0334a03f1a96ad2b
@@ -103,6 +103,13 @@ attempt_file: 2026-10-26T012538Z-check-full-verify-wgmma-ws-s1-producer-split.md
 prepared_at: 2026-10-26T012538Z
 job: e701c51d7b944a13
 dispatched_at: 2026-10-26T012615Z
+outcome: neutral
+verdict_detail: within-ci
+speedup: 1.5157484979627829
+speedup_ci: [1.493012270493341, 1.5441783756593475]
+harvested_at: 2026-10-26T015633Z
+best_at_harvest: 1.5295495462227864
+promotion: null
 ---
 
 # full-verify-wgmma-ws-s1-producer-split
@@ -198,3 +205,36 @@ Fixes:
 6. A gate exception left `_WS_FORCE` set (kernel_fn would then force that variant for every verify shape at import end); `_ws_setup`'s finally now resets all setup-only globals.
 
 Residual risk: no nvcc/GPU run, so compile time of four heavy instantiations, ptxas register/spill counts (producer at 56, consumers at 224) and the 128-thread producer's gather bandwidth are untested; the build has a start deadline (400 s) but no duration cap, so a slow compile can push the import past 480 s, though the later phases then skip cleanly to master.
+
+## Result
+
+- job `e701c51d7b944a13` (check), status done, passed True, tests 16/16
+- speedup 1.5157x, 95% CI [1.4930, 1.5442], score 2484.778975576776 µs vs SGLang 3766.3 µs
+- best at harvest: {"speedup": 1.5295495462227864, "ci": [1.5066063030294445, 1.552492789416128], "job": "8713665f3064462c"}; base result: muse_attention_decode/hypotheses/done/neutral/combo-b1-chain-c320-fused-pre-pdl.result.json
+- **outcome: neutral** (within-ci)
+- files: `muse_attention_decode/hypotheses/done/neutral/full-verify-wgmma-ws-s1-producer-split.result.json`, `muse_attention_decode/hypotheses/done/neutral/full-verify-wgmma-ws-s1-producer-split.patch`; branch `hyp/muse_attention_decode/full-verify-wgmma-ws-s1-producer-split`
+
+## Attribution
+
+| shape | w | base µs | hyp µs | delta | verdict |
+|---|---|---|---|---|---|
+| batch=1 ctx=80000 dist=soft heads=tp8 layer=sliding load=decode_1 page=1 | 46 | 12.1 | 11.16 | 1.0764 | gained |
+| batch=1 ctx=80000 dist=coherent heads=tp8 layer=full load=decode_1 page=1 | 16 | 17.39 | 23.19 | 0.7634 | lost |
+| batch=16 ctx=80000 dist=soft heads=tp8 layer=sliding load=decode_16 page=1 spread=agentic | 46 | 15.46 | 15.5 | 1.0069 | flat |
+| batch=16 ctx=80000 dist=coherent heads=tp8 layer=full load=decode_16 page=1 spread=agentic | 16 | 110.77 | 110.77 | 0.9973 | flat |
+| batch=32 ctx=80000 dist=soft heads=tp8 layer=sliding load=decode_32 page=1 spread=agentic | 46 | 17.46 | 17.48 | 1.0078 | flat |
+| batch=32 ctx=80000 dist=coherent heads=tp8 layer=full load=decode_32 page=1 spread=agentic | 16 | 226.89 | 226.51 | 1.0004 | flat |
+| batch=1 ctx=80000 dist=soft heads=tp8 layer=sliding load=verify_1 page=1 q_len=8 | 46 | 13.23 | 13.69 | 0.982 | flat |
+| batch=1 ctx=80000 dist=coherent heads=tp8 layer=full load=verify_1 page=1 q_len=8 | 16 | 30.27 | 30.07 | 1.0084 | flat |
+| batch=16 ctx=80000 dist=soft heads=tp8 layer=sliding load=verify_16 page=1 q_len=8 spread=agentic | 46 | 22.62 | 22.59 | 1.0088 | flat |
+| batch=16 ctx=80000 dist=coherent heads=tp8 layer=full load=verify_16 page=1 q_len=8 spread=agentic | 16 | 162.46 | 162.33 | 0.9972 | flat |
+| batch=32 ctx=80000 dist=soft heads=tp8 layer=sliding load=verify_32 page=1 q_len=8 spread=agentic | 46 | 29.01 | 28.94 | 1.0151 | flat |
+| batch=32 ctx=80000 dist=coherent heads=tp8 layer=full load=verify_32 page=1 q_len=8 spread=agentic | 16 | 301.99 | 300.38 | 1.0023 | flat |
+
+gained on sliding decode_1; lost on full decode_1. Expected hit: 1/5. Noise ±1.7%.
+
+## Follow-ups
+
+- rewrite stage 1 of `full-layer verify at 1<batch<=64: FA3 main + prepare_varlen_num_blocks + FlashAttnFwdCombine + _paired_norm_gate_kernel (master paired FA3)`: read the replaced kernels' own us per shape (profile top_kernels) against the incumbent and the floor, and check which Milestone it reached. The next stage is `/hypothesize muse_attention_decode "<what to fix or tune>" --kind rewrite --depends-on full-verify-wgmma-ws-s1-producer-split --stage 2`; a slow or failed first cut is the expected start, not a do-not-retry.
+- within-ci: the change is not proven either way; a stacked hypothesis (`depends_on: full-verify-wgmma-ws-s1-producer-split`) that adds a further change in the same area is the only way to learn more.
+

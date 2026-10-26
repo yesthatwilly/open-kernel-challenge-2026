@@ -1,0 +1,112 @@
+(p2) returned, rel L2 1.65e-03, finite True, 16.0 tiles per CTA, ~2.0 slots per request
+[sd-gate] B=32: launching <4 stages, ticket, PSEUDO TOK=1> grid 96 (p3) (eager correctness run)
+[sd-gate] B=32: <4 stages, ticket, PSEUDO TOK=1> grid 96 (p3) returned, rel L2 1.65e-03, finite True, 10.7 tiles per CTA, ~3.0 slots per request
+[sd-gate] B=32: launching <4 stages, two-level ticket, PSEUDO TOK=1> grid 96 (p3) (eager correctness run)
+[sd-gate] B=32: <4 stages, two-level ticket, PSEUDO TOK=1> grid 96 (p3) returned, rel L2 1.65e-03, finite True, 10.7 tiles per CTA, ~3.0 slots per request
+[sd-gate] B=32: launching <4 stages, ticket, PSEUDO TOK=1> grid 128 (p4) (eager correctness run)
+[sd-gate] B=32: <4 stages, ticket, PSEUDO TOK=1> grid 128 (p4) returned, rel L2 1.65e-03, finite True, 8.0 tiles per CTA, ~4.0 slots per request
+[sd-gate] B=32: launching <4 stages, two-level ticket, PSEUDO TOK=1> grid 128 (p4) (eager correctness run)
+[sd-gate] B=32: <4 stages, two-level ticket, PSEUDO TOK=1> grid 128 (p4) returned, rel L2 1.65e-03, finite True, 8.0 tiles per CTA, ~4.0 slots per request
+[sd-gate] B=32: launching <4 stages, ticket, PSEUDO TOK=1> grid 256 (p8) (eager correctness run)
+[sd-gate] B=32: <4 stages, ticket, PSEUDO TOK=1> grid 256 (p8) returned, rel L2 1.65e-03, finite True, 4.0 tiles per CTA, ~8.0 slots per request
+[sd-gate] B=32: launching <4 stages, two-level ticket, PSEUDO TOK=1> grid 256 (p8) (eager correctness run)
+[sd-gate] B=32: <4 stages, two-level ticket, PSEUDO TOK=1> grid 256 (p8) returned, rel L2 1.65e-03, finite True, 4.0 tiles per CTA, ~8.0 slots per request
+[sd-gate] B=32: launching <4 stages, ticket, PSEUDO TOK=1> grid 132 (sm) (eager correctness run)
+[sd-gate] B=32: <4 stages, ticket, PSEUDO TOK=1> grid 132 (sm) returned, rel L2 1.65e-03, finite True, 7.8 tiles per CTA, ~4.1 slots per request
+[sd-gate] B=32: launching <4 stages, two-level ticket, PSEUDO TOK=1> grid 132 (sm) (eager correctness run)
+[sd-gate] B=32: <4 stages, two-level ticket, PSEUDO TOK=1> grid 132 (sm) returned, rel L2 1.65e-03, finite True, 7.8 tiles per CTA, ~4.1 slots per request
+[sd-gate] B=32: launching <4 stages, ticket, PSEUDO TOK=1> grid 264 (2sm) (eager correctness run)
+[sd-gate] B=32: <4 stages, ticket, PSEUDO TOK=1> grid 264 (2sm) returned, rel L2 1.65e-03, finite True, 3.9 tiles per CTA, ~8.2 slots per request
+[sd-gate] B=32: launching <4 stages, two-level ticket, PSEUDO TOK=1> grid 264 (2sm) (eager correctness run)
+[sd-gate] B=32: <4 stages, two-level ticket, PSEUDO TOK=1> grid 264 (2sm) returned, rel L2 1.65e-03, finite True, 3.9 tiles per CTA, ~8.2 slots per request
+[sd-gate] B=32: launching master Triton _sliding_fused_kernel (eager) for its error
+[sd-gate] B=32: master Triton rel L2 8.22e-02, finite True
+[sd-gate] B=32: launching master sliding cluster kernel C=4 (eager) for its error
+[sd-gate] B=32: master cluster C=4 rel L2 1.13e-01, finite True
+[sd-gate] B=32: incumbent = master cluster C=4; route needs the best pair >= 1.03x faster in the head-to-head re-time
+[sd-gate] B=32: pass 1: timing 14 graphs interleaved (+ empty), cold L2, median of 21
+[sd-gate] B=32: pass 1 empty graph replay 2.8 us (subtracted from every number below)
+[sd-gate] B=32: pass 1 master Triton _sliding_fused_kernel:    29.1 us raw,    26.2 us net
+[sd-gate] B=32: pass 1 master cluster C=4:    25.0 us raw,    22.1 us net
+[sd-gate] B=32: pass 1 [pre-attn + sk] <4 stages, ticket, PSEUDO TOK=1> grid 64 (p2):    27.9 us raw,    25.1 us net, Triton / pair 1.046x, cluster C=4 / pair 0.883x
+[sd-gate] B=32: pass 1 [pre-attn + sk] <4 stages, two-level ticket, PSEUDO TOK=1> grid 64 (p2):    28.2 us raw,    25.3 us net, Triton / pair 1.037x, cluster C=4 / pair 0.875x
+[sd-gate] B=32: pass 1 [pre-attn + sk] <4 stages, ticket, PSEUDO TOK=1> grid 96 (p3):    24.6 us raw,    21.8 us net, Triton / pair 1.204x, cluster C=4 / pair 1.016x
+[sd-gate] B=32: pass 1 [pre-attn + sk] <4 stages, two-level ticket, PSEUDO TOK=1> grid 96 (p3):    26.8 us raw,    24.0 us net, Triton / pair 1.095x, cluster C=4 / pair 0.924x
+[sd-gate] B=32: pass 1 [pre-attn + sk] <4 stages, ticket, PSEUDO TOK=1> grid 128 (p4):    22.2 us raw,    19.3 us net, Triton / pair 1.358x, cluster C=4 / pair 1.146x
+[sd-gate] B=32: pass 1 [pre-attn + sk] <4 stages, two-level ticket, PSEUDO TOK=1> grid 128 (p4):    24.8 us raw,    22.0 us net, Triton / pair 1.194x, cluster C=4 / pair 1.007x
+[sd-gate] B=32: pass 1 [pre-attn + sk] <4 stages, ticket, PSEUDO TOK=1> grid 256 (p8):    25.1 us raw,    22.2 us net, Triton / pair 1.182x, cluster C=4 / pair 0.997x
+[sd-gate] B=32: pass 1 [pre-attn + sk] <4 stages, two-level ticket, PSEUDO TOK=1> grid 256 (p8):    27.6 us raw,    24.8 us net, Triton / pair 1.058x, cluster C=4 / pair 0.893x
+[sd-gate] B=32: pass 1 [pre-attn + sk] <4 stages, ticket, PSEUDO TOK=1> grid 132 (sm):    24.5 us raw,    21.7 us net, Triton / pair 1.209x, cluster C=4 / pair 1.021x
+[sd-gate] B=32: pass 1 [pre-attn + sk] <4 stages, two-level ticket, PSEUDO TOK=1> grid 132 (sm):    27.6 us raw,    24.8 us net, Triton / pair 1.059x, cluster C=4 / pair 0.894x
+[sd-gate] B=32: pass 1 [pre-attn + sk] <4 stages, ticket, PSEUDO TOK=1> grid 264 (2sm):    27.6 us raw,    24.8 us net, Triton / pair 1.058x, cluster C=4 / pair 0.893x
+[sd-gate] B=32: pass 1 [pre-attn + sk] <4 stages, two-level ticket, PSEUDO TOK=1> grid 264 (2sm):    30.6 us raw,    27.7 us net, Triton / pair 0.946x, cluster C=4 / pair 0.798x
+[sd-gate] B=32: pass 1 picked <4 stages, ticket, PSEUDO TOK=1> grid 128 (p4): 19.3 us net, cluster C=4 / pair 1.146x (first-pass minimum of 12: biased, NOT the routing number)
+[sd-gate] B=32: pass 2: re-timing the picked pair vs cluster C=4 vs Triton, median of 31
+[sd-gate] B=32: pass 2 (empty 2.8 us): pair 19.5 us net, cluster C=4 22.0 us net, Triton 26.1 us net; sk kernel alone 16.4 us net (1.02 TB/s of window bytes), pre-attention alone 4.1 us net
+[sd-gate] B=32: pass 2 pair <4 stages, ticket, PSEUDO TOK=1> grid 128 (p4) 19.5 us vs cluster C=4 22.0 us vs Triton 26.1 us -> cluster C=4 / pair 1.131x, Triton / pair 1.342x (ROUTE)
+[sd] replay B=32 state A: eager warm-up of kernel_fn on a side stream
+[sd] replay B=32 state A: warm-up returned; capturing kernel_fn
+[sd] replay B=32 state B: eager warm-up of kernel_fn on a side stream
+[sd] replay B=32 state B: warm-up returned; capturing kernel_fn
+[sd] replay B=32 round 0 state A (refilled): launching graph (_pre_attention_kernel + splitkv_attn_sk_kernel)
+[sd] replay B=32 round 0 state A: rel L2 1.67e-03, finite True -> ok
+[sd] replay B=32 round 0 state B (refilled): launching graph (_pre_attention_kernel + splitkv_attn_sk_kernel)
+[sd] replay B=32 round 0 state B: rel L2 1.67e-03, finite True -> ok
+[sd] replay B=32 round 1 state A (refilled): launching graph (_pre_attention_kernel + splitkv_attn_sk_kernel)
+[sd] replay B=32 round 1 state A: rel L2 1.66e-03, finite True -> ok
+[sd] replay B=32 round 1 state B (refilled): launching graph (_pre_attention_kernel + splitkv_attn_sk_kernel)
+[sd] replay B=32 round 1 state B: rel L2 1.65e-03, finite True -> ok
+[sd] replay B=32 round 2 state A (refilled): launching graph (_pre_attention_kernel + splitkv_attn_sk_kernel)
+[sd] replay B=32 round 2 state A: rel L2 1.66e-03, finite True -> ok
+[sd] replay B=32 round 2 state B (refilled): launching graph (_pre_attention_kernel + splitkv_attn_sk_kernel)
+[sd] replay B=32 round 2 state B: rel L2 1.65e-03, finite True -> ok
+[sd] replay B=32 round 3 state A (refilled): launching graph (_pre_attention_kernel + splitkv_attn_sk_kernel)
+[sd] replay B=32 round 3 state A: rel L2 1.66e-03, finite True -> ok
+[sd] replay B=32 round 3 state B (refilled): launching graph (_pre_attention_kernel + splitkv_attn_sk_kernel)
+[sd] replay B=32 round 3 state B: rel L2 1.65e-03, finite True -> ok
+[sd] tickets (both levels) after the replay checks: sum 0
+PATH CHOSEN: sliding decode B=1: master (cluster C=16), not gated in this restack
+PATH CHOSEN: sliding decode B=2..16: master (Triton), not gated in this restack
+PATH CHOSEN: sliding decode B=17..32: [pre-attn + stream-K sk window] <4 stages, ticket, PSEUDO TOK=1> grid p4; head-to-head (pass 2) pair 19.5 us net vs cluster C=4 22.0 us net vs Triton 26.1 us net (cluster C=4 / pair 1.131x; pass 1 1.146x) (>= 1.03x vs master incumbent)
+[sd] shared tickets re-zeroed at the end of the sliding-decode setup: sum 0
+[ws] building muse_full_verify_wgmma_ws_v1: TORCH_CUDA_ARCH_LIST=9.0a, arch flags ['-gencode=arch=compute_90a,code=sm_90a'], extra ['-O3', '-lineinfo']
+[ws] load_inline compiled in 44.6s
+[ws] ws64: regs 168, local bytes 0, static smem 0, dynamic smem 157344 B (device opt-in 232448), CTAs/SM 1, binaryVersion 90, ptxVersion 90, max dyn attr 157344
+[ws] ws128: regs 168, local bytes 0, static smem 0, dynamic smem 206448 B (device opt-in 232448), CTAs/SM 1, binaryVersion 90, ptxVersion 90, max dyn attr 206448
+[ws] c2: regs 128, local bytes 72, static smem 0, dynamic smem 108224 B (device opt-in 232448), CTAs/SM 2, binaryVersion 90, ptxVersion 90, max dyn attr 108224
+[ws] c2 REFUSED: 72 local (spill) bytes
+[ws] ws64-phase-diag: regs 168, local bytes 0, static smem 0, dynamic smem 157344 B (device opt-in 232448), CTAs/SM 1, binaryVersion 90, ptxVersion 90, max dyn attr 157344
+[ws] ws64 quick canary: B=2 kv_scale=1.0 grid=4 coherent=False; launching kernel_fn (pre-attention first)
+[ws]   pre-attention (Triton) done; launching wsv1_ws_kernel<64,8,dual> grid 4
+[ws]   wsv1 kernel done
+[ws] ws64 quick canary: rel L2 7.86e-03, finite True, ERROR WORD 0 (1: not sm_90a, 2: mbarrier wait timeout, 4: shape) -> PASS
+[ws] ws64 quick single-tile-lens_a-device: B=6 kv_scale=1.0 grid=device coherent=False; launching kernel_fn (pre-attention first)
+[ws]   pre-attention (Triton) done; launching wsv1_ws_kernel<64,8,dual> grid 132
+[ws]   wsv1 kernel done
+[ws] ws64 quick single-tile-lens_a-device: rel L2 4.94e-03, finite True, ERROR WORD 0 (1: not sm_90a, 2: mbarrier wait timeout, 4: shape) -> PASS
+[ws] ws64 quick BISECT table: canary=ok, single-tile-lens_a-device=ok
+[ws] ws128 quick canary: B=2 kv_scale=1.0 grid=4 coherent=False; launching kernel_fn (pre-attention first)
+[ws]   pre-attention (Triton) done; launching wsv1_ws_kernel<128,5,single> grid 4
+[ws]   wsv1 kernel done
+[ws] ws128 quick canary: rel L2 7.91e-03, finite True, ERROR WORD 0 (1: not sm_90a, 2: mbarrier wait timeout, 4: shape) -> PASS
+[ws] ws128 quick single-tile-lens_a-device: B=6 kv_scale=1.0 grid=device coherent=False; launching kernel_fn (pre-attention first)
+[ws]   pre-attention (Triton) done; launching wsv1_ws_kernel<128,5,single> grid 132
+[ws]   wsv1 kernel done
+[ws] ws128 quick single-tile-lens_a-device: rel L2 5.27e-03, finite True, ERROR WORD 0 (1: not sm_90a, 2: mbarrier wait timeout, 4: shape) -> PASS
+[ws] ws128 quick BISECT table: canary=ok, single-tile-lens_a-device=ok
+[ws-gate] B=16 ws64: round 1: master 164.8 us (IQR 1.9) vs ws64 272.9 us (IQR 1.4) -> 0.604x; round 2: master 165.0 us (IQR 2.2) vs ws64 272.8 us (IQR 1.4) -> 0.605x; candidate IQR <= 1.5x master's: True; vs master rel L2 7.62e-03, finite True, error word 0; kernels: pre-attention (Triton) + wsv1_ws_kernel<64,8,dual> vs master pre-attention + FA3 + prepare + combine + _paired_norm_gate_kernel -> fails (needs min ratio >= 1.05 in both rounds)
+[ws-gate] B=16 ws128: round 1: master 164.8 us (IQR 1.9) vs ws128 310.1 us (IQR 2.1) -> 0.531x; round 2: master 165.0 us (IQR 2.2) vs ws128 310.6 us (IQR 2.4) -> 0.531x; candidate IQR <= 1.5x master's: True; vs master rel L2 7.62e-03, finite True, error word 0; kernels: pre-attention (Triton) + wsv1_ws_kernel<128,5,single> vs master pre-attention + FA3 + prepare + combine + _paired_norm_gate_kernel -> fails (needs min ratio >= 1.05 in both rounds)
+[ws-gate] B=32 ws64: round 1: master 303.3 us (IQR 2.6) vs ws64 518.4 us (IQR 2.6) -> 0.585x; round 2: master 303.1 us (IQR 2.5) vs ws64 518.7 us (IQR 2.8) -> 0.584x; candidate IQR <= 1.5x master's: True; vs master rel L2 9.40e-03, finite True, error word 0; kernels: pre-attention (Triton) + wsv1_ws_kernel<64,8,dual> vs master pre-attention + FA3 + prepare + combine + _paired_norm_gate_kernel -> fails (needs min ratio >= 1.05 in both rounds)
+[ws-gate] B=32 ws128: round 1: master 303.3 us (IQR 2.6) vs ws128 736.8 us (IQR 2.2) -> 0.412x; round 2: master 303.1 us (IQR 2.5) vs ws128 737.7 us (IQR 3.1) -> 0.411x; candidate IQR <= 1.5x master's: True; vs master rel L2 9.38e-03, finite True, error word 0; kernels: pre-attention (Triton) + wsv1_ws_kernel<128,5,single> vs master pre-attention + FA3 + prepare + combine + _paired_norm_gate_kernel -> fails (needs min ratio >= 1.05 in both rounds)
+[ws-diag] gather-only roofline ws64 B=16 x ~80K: 142.7 us graph replay (incl. ~4 us launch), 2.28 TB/s over 325 MB (master decode gather ~3.0 TB/s; floor 4.8)
+[ws-diag] gather-only roofline ws128 B=16 x ~80K: 180.1 us graph replay (incl. ~4 us launch), 1.81 TB/s over 325 MB (master decode gather ~3.0 TB/s; floor 4.8)
+[ws-diag] PHASE consumer WG0 (CTA 0, 150 tiles, ~0.769 ns/cycle): FULL wait 123 cyc (95 ns)/tile, transpose 447 cyc (344 ns)/tile, S wait 151 cyc (116 ns)/tile, softmax+issue 1317 cyc (1013 ns)/tile, PV wait 42 cyc (32 ns)/tile; total 3146 cyc (2420 ns)/tile
+[ws-diag] PHASE consumer WG1 (CTA 0, 150 tiles, ~0.770 ns/cycle): FULL wait 129 cyc (100 ns)/tile, transpose 420 cyc (324 ns)/tile, S wait 106 cyc (81 ns)/tile, softmax+issue 1330 cyc (1024 ns)/tile, PV wait 28 cyc (22 ns)/tile; total 3144 cyc (2420 ns)/tile
+[ws-diag] PHASE producer (CTA 0): EMPTY wait 2175 cyc (1761 ns)/tile, issue 278 cyc (225 ns)/tile, total 2989 cyc/tile; launch 363.0 us eager
+[ws-summary] GATE c2: refused (72 local (spill) bytes)
+[ws-summary] GATE B=16 ws64: min ratio 0.604x -> fails
+[ws-summary] GATE B=16 ws128: min ratio 0.531x -> fails
+[ws-summary] GATE B=32 ws64: min ratio 0.584x -> fails
+[ws-summary] GATE B=32 ws128: min ratio 0.411x -> fails
+PATH CHOSEN: full verify B=16 band (1..24): master FA3 paired heads (wsv1 did not clear every gate)
+PATH CHOSEN: full verify B=32 band (25..64): master FA3 paired heads (wsv1 did not clear every gate)

@@ -1,0 +1,1791 @@
+diff --git a/muse_attention_decode/submission.py b/muse_attention_decode/submission.py
+index 6d6afa47..680eba9f 100644
+--- a/muse_attention_decode/submission.py
++++ b/muse_attention_decode/submission.py
+@@ -15,6 +15,9 @@ stage 1's two kernels kept as its fallback.
+ import os
+ import random
+ import time
++
++_IMPORT_T0 = time.perf_counter()  # import clock, started BEFORE the torch / triton / sglang imports: the wsv1 phase deadlines run from here
++
+ from types import MappingProxyType
+ from typing import TypedDict
+ 
+@@ -1706,6 +1709,1744 @@ def _full_decode_sk(data: Inputs, q: torch.Tensor, qkv: torch.Tensor) -> torch.T
+     return out
+ 
+ 
++# ---------------------------------------------------------------------------------------------
++# Full-layer VERIFY (q_len 8, causal inside the block) at 1 < batch <= 64 (tp8, page 1): rewrite stage 1 of the
++# warp-specialized wgmma line (full-verify-wgmma-ws-s1-producer-split), module muse_full_verify_wgmma_ws_v1, kernel
++# symbols wsv1_*, python names _ws_* / _wsv_* (none shared with the sibling split-ring-2cta build). Built on stage 5's
++# proven math (full-verify-wgmma-s5-qfrag-reload, 19 bisect cases and two-state replays passed): SW128 K/V ring filled by
++# 16-byte cp.async.cg, stream-K over TILE-token tiles, fp8 QK wgmma m64nTILEk32 with the per-tile Q A-fragment reload from
++# shared memory, FA3 Max_offset-8 FP8 P, per-warpgroup V^T transpose, in-kernel ticket combine + norm-gate epilogue.
++# Only the pipeline changes:
++#  variant 0 "ws64"  : 384 threads, 1 CTA/SM. WG0 = producer (setmaxnreg.dec 56): its 128 threads issue every K/V tile
++#                      (8 cp.async per thread per 64-token tile; page indices prefetched 4 tiles ahead in registers)
++#                      and arrive (cp.async.mbarrier.arrive.noinc) on FULL[st]; it waits EMPTY[st] (256 consumer
++#                      arrivals) only to refill stage st. WG1/WG2 = consumers (setmaxnreg.inc 224), kv head 0/1, never
++#                      load. 8-stage ring of 16 KB. Two S accumulator sets: S(n+1) is issued before softmax(n), PV(n-1)
++#                      is issued before S(n+1) and awaited with wgmma.wait_group 1, so tensor-core work overlaps softmax.
++#  variant 1 "ws128" : the same with TILE = 128 (m64n128k32 S, 4 PV k-steps), 5 stages of 32 KB (160 KB ring), ONE S
++#                      accumulator set (two sets of 64 registers would not fit 224 with the softmax temporaries): FA3
++#                      order, PV(n-1) overlaps softmax(n).
++#  variant 2 "c2"    : s5's layout (2 CTAs/SM, 256 threads, every thread issues cp.async) with the ring split per
++#                      warpgroup (one ring of 8 KB stages per kv head, per-warpgroup FULL/EMPTY barriers of 128 arrivals,
++#                      no CTA-wide rendezvous), single S set, FA3 order (PV(n-1) overlaps softmax(n)). 5 stages.
++#  variant 3         : ws64 with the PHASE DIAG (clock64 stamps per phase, CTA 0), prepare only, never timed or routed.
++# Every variant also takes a runtime GO flag (gather-only roofline DIAG): same ring and producer, consumers just wait
++# FULL and arrive EMPTY, no math, no output.
++# All wgmma / mbarrier / setmaxnreg code sits under __CUDA_ARCH_FEAT_SM90_ALL; any other image only sets the device error
++# flag (bit 1), which the self-check reads. Every mbarrier wait is bounded (clock64 -> error bit 2 + CTA abort flag).
++# ---------------------------------------------------------------------------------------------
++
++from string import Template as _WsTemplate
++
++_WSV1_CPP = r"""
++#include <torch/extension.h>
++void wsv1_attn(torch::Tensor q, torch::Tensor k_cache, torch::Tensor v_cache, torch::Tensor page_table,
++               torch::Tensor cache_seqlens, torch::Tensor k_scale, torch::Tensor v_scale, torch::Tensor qkv,
++               int64_t qkv_stride, torch::Tensor out, torch::Tensor ws_acc, torch::Tensor ws_ml,
++               torch::Tensor ticket, torch::Tensor err, torch::Tensor dbg, double score_scale, double eps,
++               int64_t grid, int64_t variant, int64_t go);
++torch::Tensor wsv1_attrs();
++"""
++
++_WSV1_HEAD = r"""
++#include <torch/extension.h>
++#include <ATen/cuda/CUDAContext.h>
++#include <c10/cuda/CUDAException.h>
++#include <cuda_bf16.h>
++#include <cuda_fp8.h>
++#include <cstdint>
++
++namespace {
++
++constexpr int D = 64;              // head dim
++constexpr int HQ = 16;             // query heads
++constexpr int HKV = 2;             // kv heads
++constexpr int G = HQ / HKV;        // queries per kv head (8)
++constexpr int QL = 8;              // block tokens (q_len)
++constexpr int ROW = HKV * D;       // bytes per cache row (page 1: both kv heads, 128)
++constexpr int MAXB = 64;
++constexpr int CT = 256;            // consumer threads (two warpgroups)
++constexpr long long WAIT_LIMIT = 2000000000LL;   // ~1 s of SM clock per mbarrier wait
++
++__device__ __forceinline__ uint32_t smem_u32(const void* p) {
++  return static_cast<uint32_t>(__cvta_generic_to_shared(p));
++}
++__device__ __forceinline__ void cp_async16(uint32_t dst, const void* src, int src_bytes) {
++  asm volatile("cp.async.cg.shared.global [%0], [%1], 16, %2;\n" :: "r"(dst), "l"(src), "r"(src_bytes) : "memory");
++}
++__device__ __forceinline__ void cp_wait_all() { asm volatile("cp.async.wait_all;\n" ::: "memory"); }
++// Per-thread Q fragment staging: volatile shared accesses, so the compiler can neither keep the fragment in registers
++// across tiles nor move the reload relative to the barrier waits.
++__device__ __forceinline__ void sts32(uint32_t a, uint32_t v) {
++  asm volatile("st.shared.u32 [%0], %1;\n" :: "r"(a), "r"(v) : "memory");
++}
++__device__ __forceinline__ uint32_t lds32(uint32_t a) {
++  uint32_t v;
++  asm volatile("ld.shared.u32 %0, [%1];\n" : "=r"(v) : "r"(a) : "memory");
++  return v;
++}
++__device__ __forceinline__ float ex2(float x) {
++  float y;
++  asm("ex2.approx.ftz.f32 %0, %1;" : "=f"(y) : "f"(x));
++  return y;
++}
++
++// First flat tile of CTA c: floor(c * T / grid), int64 math.
++__device__ __forceinline__ int start_of(int c, int T, int grid) {
++  return static_cast<int>((static_cast<int64_t>(c) * T) / grid);
++}
++// The CTA whose range holds flat tile x (0 <= x < T): the largest c with start(c) <= x.
++__device__ __forceinline__ int owner_of(int x, int T, int grid) {
++  int c = static_cast<int>(((static_cast<int64_t>(x) + 1) * grid - 1) / T);
++  c = c < 0 ? 0 : (c > grid - 1 ? grid - 1 : c);
++  while (c > 0 && start_of(c, T, grid) > x) --c;
++  while (c + 1 < grid && start_of(c + 1, T, grid) <= x) ++c;
++  return c;
++}
++// Request of flat tile f: the largest b with pre[b] <= f.
++__device__ __forceinline__ int req_of(const int* pre, int B, int f) {
++  int lo = 0, hi = B - 1;
++  while (lo < hi) {
++    const int mid = (lo + hi + 1) >> 1;
++    if (pre[mid] <= f) lo = mid; else hi = mid - 1;
++  }
++  return lo;
++}
++// Warp 0: pre[0] = 0, pre[b + 1] = sum of tiles (of `tile` tokens) of batch rows 0..b (seq in smem, B <= 64).
++__device__ __forceinline__ void tile_prefix(const int* seq, int* pre, int B, int lane, int tile) {
++  const int i0 = lane * 2, i1 = lane * 2 + 1;
++  const int v0 = i0 < B ? (seq[i0] + tile - 1) / tile : 0;
++  const int v1 = i1 < B ? (seq[i1] + tile - 1) / tile : 0;
++  int s = v0 + v1;
++#pragma unroll
++  for (int o = 1; o < 32; o <<= 1) {
++    const int t = __shfl_up_sync(0xffffffffu, s, o);
++    if (lane >= o) s += t;
++  }
++  if (i0 < B) pre[i0 + 1] = s - v1;
++  if (i1 < B) pre[i1 + 1] = s;
++  if (lane == 0) pre[0] = 0;
++}
++
++// The LSE merge of request b's slots for kv head g's 8 q heads (64 rows x 64 dims), by the 128 threads of one warpgroup
++// (thread tw: row tw / 2, dims (tw & 1) * 32 .. + 31), times v_scale, then the master epilogue: scaleless RMSNorm over 64
++// (eps inside the sqrt) times sigmoid(gate), bf16. Slots are read through L2 (__ldcg): other CTAs wrote them.
++__device__ __forceinline__ void merge_head(int b, int g, int tw, const int* pre_s, int B, int gx,
++                                           const float* ws_acc, const float* ws_ml, const float* v_scale,
++                                           const __nv_bfloat16* qkv, int64_t qkv_stride,
++                                           __nv_bfloat16* out, float eps) {
++  const float NEG_INF = __int_as_float(0xff800000u);
++  const int rr = tw >> 1, hh = rr >> 3, j = rr & 7, h = g * G + hh, dh = (tw & 1) * 32;
++  const int T = pre_s[B], x0 = pre_s[b], x1 = pre_s[b + 1];
++  const int c_lo = owner_of(x0, T, gx), c_hi = owner_of(x1 - 1, T, gx);
++  const int row = j * HQ + h;
++  float M = NEG_INF;
++  for (int c = c_lo; c <= c_hi; ++c) {
++    const int lo = max(start_of(c, T, gx), x0), hi = min(start_of(c + 1, T, gx), x1);
++    if (lo < hi) M = fmaxf(M, __ldcg(ws_ml + static_cast<int64_t>(c + b) * 2 * QL * HQ + row));
++  }
++  const float Mu = M == NEG_INF ? 0.f : M;
++  float o[32];
++#pragma unroll
++  for (int i = 0; i < 32; ++i) o[i] = 0.f;
++  float L = 0.f;
++  for (int c = c_lo; c <= c_hi; ++c) {
++    const int lo = max(start_of(c, T, gx), x0), hi = min(start_of(c + 1, T, gx), x1);
++    if (lo >= hi) continue;
++    const int64_t sl = static_cast<int64_t>(c + b);
++    const float m = __ldcg(ws_ml + sl * 2 * QL * HQ + row);
++    const float wt = m == NEG_INF ? 0.f : ex2(m - Mu);  // rows with no valid key here weigh 0
++    L += wt * __ldcg(ws_ml + sl * 2 * QL * HQ + QL * HQ + row);
++    const float4* src = reinterpret_cast<const float4*>(ws_acc + ((sl * QL + j) * HQ + h) * D + dh);
++#pragma unroll
++    for (int i = 0; i < 8; ++i) {
++      const float4 a = __ldcg(src + i);
++      o[4 * i] += wt * a.x; o[4 * i + 1] += wt * a.y; o[4 * i + 2] += wt * a.z; o[4 * i + 3] += wt * a.w;
++    }
++  }
++  const float fsc = L > 0.f ? __ldg(v_scale) / L : 0.f;  // every row has key 0, so L > 0
++  float ss = 0.f;
++#pragma unroll
++  for (int i = 0; i < 32; ++i) { o[i] *= fsc; ss += o[i] * o[i]; }
++  ss += __shfl_xor_sync(0xffffffffu, ss, 1);  // the other half of the row's 64 dims
++  const float rinv = 1.f / sqrtf(ss / D + eps);
++  const int64_t tok = static_cast<int64_t>(b) * QL + j;
++  const __nv_bfloat16* gp = qkv + tok * qkv_stride + (HQ + 2 * HKV) * D + h * D + dh;
++  __nv_bfloat16* op = out + (tok * HQ + h) * D + dh;
++#pragma unroll
++  for (int i = 0; i < 32; i += 2) {
++    const __nv_bfloat162 gg = *reinterpret_cast<const __nv_bfloat162*>(gp + i);
++    const float g0 = __low2float(gg), g1 = __high2float(gg);
++    *reinterpret_cast<__nv_bfloat162*>(op + i) =
++        __floats2bfloat162_rn(o[i] * rinv / (1.f + expf(-g0)), o[i + 1] * rinv / (1.f + expf(-g1)));
++  }
++}
++
++#if defined(__CUDA_ARCH_FEAT_SM90_ALL)
++__device__ __forceinline__ void mbar_init(uint32_t a, uint32_t count) {
++  asm volatile("mbarrier.init.shared::cta.b64 [%0], %1;\n" :: "r"(a), "r"(count) : "memory");
++}
++__device__ __forceinline__ void fence_mbar_init() {
++  asm volatile("fence.mbarrier_init.release.cluster;\n" ::: "memory");
++}
++__device__ __forceinline__ void mbar_arrive(uint32_t a) {
++  asm volatile("{\n\t.reg .b64 st;\n\tmbarrier.arrive.shared::cta.b64 st, [%0];\n\t}\n" :: "r"(a) : "memory");
++}
++// Arrives on the mbarrier once every cp.async this thread issued so far has landed (no pending++).
++__device__ __forceinline__ void cp_mbar_arrive_noinc(uint32_t a) {
++  asm volatile("cp.async.mbarrier.arrive.noinc.shared::cta.b64 [%0];\n" :: "r"(a) : "memory");
++}
++__device__ __forceinline__ bool mbar_try_wait(uint32_t a, uint32_t parity) {
++  uint32_t ok;
++  asm volatile("{\n\t.reg .pred p;\n\tmbarrier.try_wait.parity.shared::cta.b64 p, [%1], %2;\n\t"
++               "selp.u32 %0, 1, 0, p;\n\t}\n" : "=r"(ok) : "r"(a), "r"(parity) : "memory");
++  return ok != 0;
++}
++__device__ __forceinline__ void fence_proxy_async() {
++  asm volatile("fence.proxy.async.shared::cta;\n" ::: "memory");
++}
++__device__ __forceinline__ void named_bar(int id) {
++  asm volatile("bar.sync %0, 128;\n" :: "r"(id) : "memory");
++}
++__device__ __forceinline__ void wg_fence() { asm volatile("wgmma.fence.sync.aligned;\n" ::: "memory"); }
++__device__ __forceinline__ void wg_commit() { asm volatile("wgmma.commit_group.sync.aligned;\n" ::: "memory"); }
++template <int N>
++__device__ __forceinline__ void wg_wait() { asm volatile("wgmma.wait_group.sync.aligned %0;\n" :: "n"(N) : "memory"); }
++__device__ __forceinline__ void wg_wait_dyn(int n) {
++  if (n <= 0) wg_wait<0>(); else if (n == 1) wg_wait<1>(); else wg_wait<2>();
++}
++template <int N>
++__device__ __forceinline__ void fence_f(float (&d)[N]) {
++#pragma unroll
++  for (int i = 0; i < N; ++i) asm volatile("" : "+f"(d[i]) :: "memory");
++}
++template <int N>
++__device__ __forceinline__ void fence_u(uint32_t (&d)[N]) {
++#pragma unroll
++  for (int i = 0; i < N; ++i) asm volatile("" : "+r"(d[i]) :: "memory");
++}
++template <int R>
++__device__ __forceinline__ void reg_dec() { asm volatile("setmaxnreg.dec.sync.aligned.u32 %0;\n" :: "n"(R)); }
++template <int R>
++__device__ __forceinline__ void reg_inc() { asm volatile("setmaxnreg.inc.sync.aligned.u32 %0;\n" :: "n"(R)); }
++// sm90 shared-memory matrix descriptor: start >> 4 (bits 0-13), LBO 16 B (unused for swizzled K-major), SBO >> 4
++// (bits 32-45), base offset 0 (atoms are aligned), layout (bits 62-63): 1 = 128B swizzle, 2 = 64B swizzle.
++__device__ __forceinline__ uint64_t make_desc(uint32_t saddr, uint32_t sbo, uint32_t layout) {
++  uint64_t d = static_cast<uint64_t>((saddr & 0x3FFFFu) >> 4);
++  d |= static_cast<uint64_t>(1u) << 16;
++  d |= static_cast<uint64_t>((sbo >> 4) & 0x3FFFu) << 32;
++  d |= static_cast<uint64_t>(layout & 3u) << 62;
++  return d;
++}
++// Four fp32 -> four E4M3 bytes (a in the low byte), round to nearest, saturating.
++__device__ __forceinline__ uint32_t pack_e4m3x4(float a, float b, float c, float d) {
++  const uint32_t lo = __nv_cvt_float2_to_fp8x2(make_float2(a, b), __NV_SATFINITE, __NV_E4M3);
++  const uint32_t hi = __nv_cvt_float2_to_fp8x2(make_float2(c, d), __NV_SATFINITE, __NV_E4M3);
++  return lo | (hi << 16);
++}
++"""
++
++
++def _ws_wgmma_src(n: int) -> str:
++    """D (+)= A B, m64n<n>k32, A = e4m3 registers (4 x b32 per thread), B = e4m3 K-major smem descriptor; the accumulator
++    is n / 2 fp32 registers per thread. Overloaded on the accumulator array size (32 -> n64, 64 -> n128)."""
++    nreg = n // 2
++    outs = ", ".join('"+f"(d[%d])' % i for i in range(nreg))
++    regs = ", ".join("%%%d" % i for i in range(nreg))
++    a = ", ".join("%%%d" % (nreg + i) for i in range(4))
++    return (
++        "__device__ __forceinline__ void wgmma_s(float (&d)[%d], const uint32_t (&a)[4], uint64_t desc, int scale_d) {\n"
++        "  asm volatile(\n"
++        "      \"{\\n\\t.reg .pred p;\\n\\tsetp.ne.b32 p, %%%d, 0;\\n\\t\"\n"
++        "      \"wgmma.mma_async.sync.aligned.m64n%dk32.f32.e4m3.e4m3 \"\n"
++        "      \"{%s}, \"\n"
++        "      \"{%s}, %%%d, p, 1, 1;\\n\\t}\\n\"\n"
++        "      : %s\n"
++        "      : \"r\"(a[0]), \"r\"(a[1]), \"r\"(a[2]), \"r\"(a[3]), \"l\"(desc), \"r\"(scale_d)\n"
++        "      : \"memory\");\n"
++        "}\n" % (nreg, nreg + 5, n, regs, a, nreg + 4, outs)
++    )
++
++
++# Shared consumer machinery. The same text is expanded (python string templates, so the two parities of the S accumulator
++# sets are literal indices and nothing lands in local memory) into the warp-specialized kernel and the 2-CTA/SM kernel.
++# The kernel defines: TL, STAGES, DUAL, DBG, NS, NB, NK, VTB, tid/lane/warp, bx, gx, B, s0, N, bfirst, scale, g, tw, w, r, tig,
++# hA, qs_u, vt_gu, vt_base, flag_s, pre_s, seq_s and the small lambdas wait_bar, full_of, empty_of, kdesc, vstage, vword,
++# refill (loads issued by the consumers themselves; empty for the warp-specialized kernel).
++
++_WS_T_ISSUE = _WsTemplate(r"""
++{
++  if (${XSS}) {  // segment start: stage request ${XCB}'s FP8 query as this thread's wgmma A fragment words (once per segment)
++    const uint8_t* qra = q + (static_cast<int64_t>(${XCB}) * QL + r) * HQ * D + hA * D + tig * 4;
++    const uint8_t* qrb = qra + D;  // head hA + 1, same block token
++#pragma unroll
++    for (int kk = 0; kk < 2; ++kk) {
++      sts32(qs_u + 4u * CT * (4 * kk + 0), __ldg(reinterpret_cast<const unsigned int*>(qra + kk * 32)));
++      sts32(qs_u + 4u * CT * (4 * kk + 1), __ldg(reinterpret_cast<const unsigned int*>(qrb + kk * 32)));
++      sts32(qs_u + 4u * CT * (4 * kk + 2), __ldg(reinterpret_cast<const unsigned int*>(qra + kk * 32 + 16)));
++      sts32(qs_u + 4u * CT * (4 * kk + 3), __ldg(reinterpret_cast<const unsigned int*>(qrb + kk * 32 + 16)));
++    }
++  }
++  // qa is RELOADED from shared memory before every S issue (stage 5's fix), into the register set of this S buffer.
++#pragma unroll
++  for (int kk = 0; kk < 2; ++kk) {
++#pragma unroll
++    for (int j = 0; j < 4; ++j) qa[${BUF}][kk][j] = lds32(qs_u + 4u * CT * (4 * kk + j));
++  }
++  long long t_f0 = 0;
++  if (DBG) t_f0 = clock64();
++  wait_bar(full_of((${X}) % STAGES), (((${X}) / STAGES) & 1));
++  if (DBG) c_full += clock64() - t_f0;
++  fence_proxy_async();  // the cp.async (generic proxy) writes -> wgmma (async proxy) reads
++  __syncwarp();
++  fence_f(sa[${BUF}]);
++  wg_fence();
++  wgmma_s(sa[${BUF}], qa[${BUF}][0], kdesc((${X}) % STAGES, 0), 0);
++  wgmma_s(sa[${BUF}], qa[${BUF}][1], kdesc((${X}) % STAGES, 1), 1);
++  wg_commit();
++}
++""")
++
++_WS_T_PV = _WsTemplate(r"""
++{
++  named_bar(1 + g);  // every thread of the warpgroup finished V^T buffer (${PT}) & 1 (its stores + the proxy fence)
++  const uint32_t vtu_ = vt_gu + (((${PT}) & 1) * VTB);
++  fence_f(oacc);
++  wg_fence();
++#pragma unroll
++  for (int kt = 0; kt < NK; ++kt)
++    wgmma_s(oacc, pa[kt], make_desc(vtu_ + 32u * kt, TL == 64 ? 512u : 1024u, TL == 64 ? 2u : 1u), 1);
++  wg_commit();
++}
++""")
++
++_WS_T_STORE = _WsTemplate(r"""
++{
++  // Segment end of request ${CB} (last flat tile ${FL}): this warp's 16 rows of the partial at slot bx + request.
++  float la_ = ${LA}, lb_ = ${LB};
++  la_ += __shfl_xor_sync(0xffffffffu, la_, 1);
++  la_ += __shfl_xor_sync(0xffffffffu, la_, 2);
++  lb_ += __shfl_xor_sync(0xffffffffu, lb_, 1);
++  lb_ += __shfl_xor_sync(0xffffffffu, lb_, 2);
++  const int64_t slot = static_cast<int64_t>(bx) + (${CB});
++  float* pa_ = ws_acc + ((slot * QL + r) * HQ + hA) * D + 2 * tig;
++  float* pb_ = pa_ + D;  // head hA + 1
++#pragma unroll
++  for (int nd = 0; nd < 8; ++nd) {
++    *reinterpret_cast<float2*>(pa_ + nd * 8) = make_float2(oacc[4 * nd], oacc[4 * nd + 1]);
++    *reinterpret_cast<float2*>(pb_ + nd * 8) = make_float2(oacc[4 * nd + 2], oacc[4 * nd + 3]);
++  }
++  if (tig == 0) {
++    float* ml = ws_ml + slot * 2 * QL * HQ + r * HQ + hA;
++    ml[0] = ${MA};
++    ml[1] = ${MB};
++    ml[QL * HQ] = la_;
++    ml[QL * HQ + 1] = lb_;
++  }
++  // Release: every thread fences its partial at gpu scope, the warpgroup syncs, one thread adds this segment's tile count;
++  // the warpgroup completing the request's count merges.
++  __threadfence();
++  named_bar(1 + g);
++  if (tw == 0) {
++    const int add = (${FL}) + 1 - max(s0, pre_s[${CB}]);
++    const int old = atomicAdd(ticket + (${CB}) * HKV + g, add);
++    flag_s[1 + g] = (old + add == pre_s[(${CB}) + 1] - pre_s[${CB}]) ? 1 : 0;
++  }
++  named_bar(1 + g);
++  if (flag_s[1 + g]) {
++    __threadfence();  // acquire side, every thread, before the L2 (.cg) reloads
++    merge_head(${CB}, g, tw, pre_s, B, gx, ws_acc, ws_ml, v_scale, qkv, qkv_stride, out, eps);
++    if (tw == 0) ticket[(${CB}) * HKV + g] = 0;  // ready for the next launch / graph replay
++  }
++}
++""")
++
++_WS_T_TRANSPOSE = r"""
++{
++  // Head g's V half of tile m -> V^T buffer m & 1 (rows = dims, K-major, SW64 at TL 64 / SW128 at TL 128). Byte k' of row d =
++  // V[token(k')][d], token(32 kt + 16 h + 4 t + e) = 32 kt + 16 h + 8 (e >> 1) + 2 t + (e & 1) (the P fragment's token
++  // permutation). Unit u = (dim group dg, k' group kg): 4 tokens x 4 dims, 4 x 32-bit loads, byte transpose, 4 x 32-bit stores.
++  const uint8_t* Vs = vstage(st);
++  uint8_t* vt = vt_base + (m & 1) * VTB;
++#pragma unroll
++  for (int i = 0; i < TL / 32; ++i) {
++    const int u = tw + 128 * i, kg = u % (TL / 4), dg = u / (TL / 4);
++    const int T0 = 32 * (kg >> 3) + 16 * ((kg >> 2) & 1) + 2 * (kg & 3);
++    const uint32_t w0 = vword(Vs, T0, dg);
++    const uint32_t w1 = vword(Vs, T0 + 1, dg);
++    const uint32_t w2 = vword(Vs, T0 + 8, dg);
++    const uint32_t w3 = vword(Vs, T0 + 9, dg);
++    const uint32_t t0 = __byte_perm(w0, w1, 0x5140), t1 = __byte_perm(w0, w1, 0x7362);
++    const uint32_t t2 = __byte_perm(w2, w3, 0x5140), t3 = __byte_perm(w2, w3, 0x7362);
++    uint32_t o4[4];
++    o4[0] = __byte_perm(t0, t2, 0x5410);  // dim d0:     tokens T0, T0 + 1, T0 + 8, T0 + 9
++    o4[1] = __byte_perm(t0, t2, 0x7632);  // dim d0 + 1
++    o4[2] = __byte_perm(t1, t3, 0x5410);  // dim d0 + 2
++    o4[3] = __byte_perm(t1, t3, 0x7632);  // dim d0 + 3
++    // Odd dim groups store their rows in the order 1, 0, 3, 2 so the two half-warps hit rows of opposite parity.
++    const int odd = dg & 1;
++#pragma unroll
++    for (int ii = 0; ii < 4; ++ii) {
++      const int dd = 4 * dg + (ii ^ odd);
++      const uint32_t val = odd ? o4[ii ^ 1] : o4[ii];
++      const int chunk = (kg >> 2) ^ (TL == 64 ? ((dd >> 1) & 3) : (dd & 7));
++      *reinterpret_cast<uint32_t*>(vt + dd * (TL == 64 ? 64 : 128) + (chunk << 4) + (kg & 3) * 4) = val;
++    }
++  }
++}
++fence_proxy_async();  // this thread's V^T stores -> visible to the async proxy
++"""
++
++_WS_T_SOFTMAX = _WsTemplate(r"""
++{
++  // Thread scores: sa[UB][4 nb + e] (head hA) and sa[UB][4 nb + 2 + e] (head hA + 1) at tile token nb * 8 + 2 tig + e, both for
++  // block token r. Key t valid iff t <= seq - QL + r, i.e. tile token < lim; only tiles reaching past seq - QL need the test.
++  const bool edge = lt_c * TL + TL + (QL - 1) > seq_c;
++  const int lim = seq_c - (QL - 1) + r - lt_c * TL;
++  float mxA = NEG_INF, mxB = NEG_INF;
++#pragma unroll
++  for (int nb = 0; nb < NB; ++nb) {
++#pragma unroll
++    for (int e = 0; e < 2; ++e) {
++      float xa = sa[${UB}][4 * nb + e] * scale, xb = sa[${UB}][4 * nb + 2 + e] * scale;
++      if (edge && nb * 8 + 2 * tig + e >= lim) { xa = NEG_INF; xb = NEG_INF; }
++      sa[${UB}][4 * nb + e] = xa;
++      sa[${UB}][4 * nb + 2 + e] = xb;
++      mxA = fmaxf(mxA, xa);
++      mxB = fmaxf(mxB, xb);
++    }
++  }
++  mxA = fmaxf(mxA, __shfl_xor_sync(0xffffffffu, mxA, 1));
++  mxA = fmaxf(mxA, __shfl_xor_sync(0xffffffffu, mxA, 2));
++  mxB = fmaxf(mxB, __shfl_xor_sync(0xffffffffu, mxB, 1));
++  mxB = fmaxf(mxB, __shfl_xor_sync(0xffffffffu, mxB, 2));
++  const float nA = fmaxf(mA, mxA), nB = fmaxf(mB, mxB);
++  const float uA = nA == NEG_INF ? 0.f : nA, uB = nB == NEG_INF ? 0.f : nB;
++  aA = ex2(mA - uA);  // 0 while the row has seen no valid key (and at every segment start: mA was reset to -inf)
++  aB = ex2(mB - uB);
++  mA = nA;
++  mB = nB;
++  // FA3's FP8 Max_offset = 8: P = 2^(s - max + 8) in [0, 256], so the E4M3 rounding keeps weights down to 2^-17 of the row max.
++  // l and O both carry the 2^8, which cancels in O / l (and in the slot merge, which scales l and O by the same weight).
++  const float vA = uA - 8.f, vB = uB - 8.f;
++  float sumA = 0.f, sumB = 0.f;
++#pragma unroll
++  for (int nb = 0; nb < NB; ++nb) {
++    const float p0 = ex2(sa[${UB}][4 * nb] - vA), p1 = ex2(sa[${UB}][4 * nb + 1] - vA);
++    const float p2 = ex2(sa[${UB}][4 * nb + 2] - vB), p3 = ex2(sa[${UB}][4 * nb + 3] - vB);
++    sumA += p0 + p1;
++    sumB += p2 + p3;
++    sa[${UB}][4 * nb] = p0;
++    sa[${UB}][4 * nb + 1] = p1;
++    sa[${UB}][4 * nb + 2] = p2;
++    sa[${UB}][4 * nb + 3] = p3;
++  }
++  lA = lA * aA + sumA;  // this lane's columns; quad-reduced at segment end
++  lB = lB * aB + sumB;
++}
++""")
++
++_WS_T_PACK = _WsTemplate(r"""
++{
++  // O rescale (PV(m-1) has retired), then P (E4M3) as the A fragment of k-step kt: reg 0 row r k' 4 tig + e = n-blocks 4kt,
++  // 4kt + 1 (cols 2 tig, 2 tig + 1), reg 1 the same for row r + 8, regs 2 / 3 n-blocks 4kt + 2, 4kt + 3.
++#pragma unroll
++  for (int nd = 0; nd < 8; ++nd) {
++    oacc[4 * nd] *= aA; oacc[4 * nd + 1] *= aA; oacc[4 * nd + 2] *= aB; oacc[4 * nd + 3] *= aB;
++  }
++#pragma unroll
++  for (int kt = 0; kt < NK; ++kt) {
++    const int b0 = 16 * kt;
++    pa[kt][0] = pack_e4m3x4(sa[${UB}][b0], sa[${UB}][b0 + 1], sa[${UB}][b0 + 4], sa[${UB}][b0 + 5]);
++    pa[kt][1] = pack_e4m3x4(sa[${UB}][b0 + 2], sa[${UB}][b0 + 3], sa[${UB}][b0 + 6], sa[${UB}][b0 + 7]);
++    pa[kt][2] = pack_e4m3x4(sa[${UB}][b0 + 8], sa[${UB}][b0 + 9], sa[${UB}][b0 + 12], sa[${UB}][b0 + 13]);
++    pa[kt][3] = pack_e4m3x4(sa[${UB}][b0 + 10], sa[${UB}][b0 + 11], sa[${UB}][b0 + 14], sa[${UB}][b0 + 15]);
++  }
++}
++""")
++
++# One loop iteration for tile m (UB = the S buffer of tile m). Order of wgmma commit groups, DUAL:  ... S(m) [issued by
++# iteration m - 1], PV(m - 1), S(m + 1); single:  ... S(m), PV(m - 1). S(m) is therefore always the oldest group, and
++# PV(m - 1) is older than S(m + 1), so wait_group <number of newer groups> retires exactly what each phase needs.
++_WS_T_ITER = _WsTemplate(r"""
++{
++  const int m = ${M};
++  const int st = m % STAGES;
++  const int f = s0 + m;
++  const bool ss_c = (m == 0) || (lt_c == 0);
++  const int seq_c = seq_s[cb_c];
++  int cb_n = cb_c, lt_n = 0;
++  if (m + 1 < N) {
++    const int fn = f + 1;
++    while (fn >= pre_s[cb_n + 1]) ++cb_n;
++    lt_n = fn - pre_s[cb_n];
++  }
++  const bool ss_n = (lt_n == 0);
++  refill(m);
++  if (!DUAL) ${ISSUE_CUR}
++  if (m >= 1) ${PV_PREV}
++  if (DUAL) {
++    if (m + 1 < N) ${ISSUE_NXT}
++  }
++  long long t_t0 = 0;
++  if (DBG) t_t0 = clock64();
++  ${TRANSPOSE}
++  long long t_s0 = 0;
++  if (DBG) { t_s0 = clock64(); c_trans += t_s0 - t_t0; }
++  wg_wait_dyn((m >= 1 ? 1 : 0) + ((DUAL && m + 1 < N) ? 1 : 0));  // S(m) retired
++  fence_f(sa[${UB}]);
++  fence_u(qa[${UB}][0]);
++  fence_u(qa[${UB}][1]);
++  mbar_arrive(empty_of(st));  // this thread is done with stage st (K via the S wgmma, V via the transpose)
++  long long t_m0 = 0;
++  if (DBG) { t_m0 = clock64(); c_swait += t_m0 - t_s0; }
++  fmA = mA; fmB = mB; flA = lA; flB = lB;  // the previous tile's segment finals (used iff tile m starts a segment)
++  if (ss_c) { mA = NEG_INF; mB = NEG_INF; lA = 0.f; lB = 0.f; }
++  float aA = 0.f, aB = 0.f;
++  ${SOFTMAX}
++  long long t_p0 = 0;
++  if (DBG) { t_p0 = clock64(); c_soft += t_p0 - t_m0; }
++  wg_wait_dyn((DUAL && m + 1 < N) ? 1 : 0);  // PV(m - 1) retired (S(m + 1) may still run)
++  fence_f(oacc);
++#pragma unroll
++  for (int kt = 0; kt < NK; ++kt) fence_u(pa[kt]);
++  if (DBG) { const long long t_p1 = clock64(); c_pvw += t_p1 - t_p0; }
++  if (m >= 1 && ss_c) ${STORE_PREV}
++  ${PACK}
++  cb_p = cb_c;
++  cb_c = cb_n;
++  lt_c = lt_n;
++}
++""")
++
++_WS_T_CONSUMER = _WsTemplate(r"""
++  float sa[2][NS];
++  float oacc[32];
++  uint32_t qa[2][2][4];
++  uint32_t pa[NK][4];
++#pragma unroll
++  for (int i = 0; i < NS; ++i) { sa[0][i] = 0.f; sa[1][i] = 0.f; }
++#pragma unroll
++  for (int i = 0; i < 32; ++i) oacc[i] = 0.f;
++#pragma unroll
++  for (int kk = 0; kk < 2; ++kk) {
++#pragma unroll
++    for (int j = 0; j < 4; ++j) { qa[0][kk][j] = 0u; qa[1][kk][j] = 0u; }
++  }
++#pragma unroll
++  for (int kt = 0; kt < NK; ++kt) {
++#pragma unroll
++    for (int j = 0; j < 4; ++j) pa[kt][j] = 0u;
++  }
++  float mA = NEG_INF, mB = NEG_INF, lA = 0.f, lB = 0.f;
++  float fmA = NEG_INF, fmB = NEG_INF, flA = 0.f, flB = 0.f;
++  int cb_c = bfirst, cb_p = bfirst;
++  int lt_c = s0 - pre_s[bfirst];
++  long long c_full = 0, c_trans = 0, c_swait = 0, c_soft = 0, c_pvw = 0, c_t0 = 0;
++  if (DBG) c_t0 = clock64();
++  if (go) {
++    // Gather-only roofline DIAG: same ring and producer, no math, no output.
++    for (int m = 0; m < N; ++m) {
++      refill(m);
++      wait_bar(full_of(m % STAGES), ((m / STAGES) & 1));
++      mbar_arrive(empty_of(m % STAGES));
++    }
++    return;
++  }
++  if (DUAL) ${PROLOGUE_ISSUE}
++  if (DUAL) {
++    for (int mb = 0; mb < N; mb += 2) {
++      ${ITER0}
++      if (mb + 1 < N) ${ITER1}
++    }
++  } else {
++    for (int mb = 0; mb < N; ++mb) ${ITER0}
++  }
++  // Drain: PV of the last tile, then the last segment's partial.
++  ${PV_LAST}
++  wg_wait<0>();
++  fence_f(oacc);
++#pragma unroll
++  for (int kt = 0; kt < NK; ++kt) fence_u(pa[kt]);
++  ${STORE_LAST}
++  if (DBG) {
++    if (bx == 0 && tw == 0) {
++      dbg[1 + 5 * g + 0] = static_cast<float>(c_full);
++      dbg[1 + 5 * g + 1] = static_cast<float>(c_trans);
++      dbg[1 + 5 * g + 2] = static_cast<float>(c_swait);
++      dbg[1 + 5 * g + 3] = static_cast<float>(c_soft);
++      dbg[1 + 5 * g + 4] = static_cast<float>(c_pvw);
++      dbg[11 + g] = static_cast<float>(clock64() - c_t0);
++      dbg[0] = static_cast<float>(N);
++    }
++  }
++""")
++
++
++def _ws_consumer_text() -> str:
++    """The consumer main loop (everything after the per-kernel setup), with the iteration bodies, the S issue, PV issue and
++    partial-store fragments expanded for both S-buffer parities."""
++    issue = lambda x, cb, ss, buf: _WS_T_ISSUE.substitute(X=x, XCB=cb, XSS=ss, BUF=buf)
++    pv = lambda pt: _WS_T_PV.substitute(PT=pt)
++    store = lambda cb, fl, ma, mb, la, lb: _WS_T_STORE.substitute(CB=cb, FL=fl, MA=ma, MB=mb, LA=la, LB=lb)
++
++    def it(ub: int, m: str) -> str:
++        return _WS_T_ITER.substitute(
++            M=m, UB=str(ub),
++            ISSUE_CUR=issue("m", "cb_c", "ss_c", str(ub)),
++            ISSUE_NXT=issue("(m + 1)", "cb_n", "ss_n", str(1 - ub)),
++            PV_PREV=pv("m - 1"),
++            TRANSPOSE=_WS_T_TRANSPOSE,
++            SOFTMAX=_WS_T_SOFTMAX.substitute(UB=str(ub)),
++            STORE_PREV=store("cb_p", "f - 1", "fmA", "fmB", "flA", "flB"),
++            PACK=_WS_T_PACK.substitute(UB=str(ub)))
++
++    return _WS_T_CONSUMER.substitute(
++        PROLOGUE_ISSUE=issue("0", "cb_c", "true", "0"),
++        ITER0=it(0, "mb"),
++        ITER1=it(1, "mb + 1"),
++        PV_LAST=pv("N - 1"),
++        STORE_LAST=store("cb_p", "s0 + N - 1", "mA", "mB", "lA", "lB"))
++
++
++# The per-kernel setup shared by both kernels (smem carve-up differs, so each kernel declares its own pointers first).
++_WSV1_KERNELS = r"""
++template <int TL, int STAGES>
++struct WsLay {
++  static constexpr int STAGE_BYTES = 2 * TL * ROW;                       // K tile + V tile
++  static constexpr int VT_BYTES = D * TL;                                // one head's V^T: 64 dims x TL tokens
++  static constexpr int RING_OFF = 0;
++  static constexpr int VT_OFF = RING_OFF + STAGES * STAGE_BYTES;         // [HKV][2 buffers][VT_BYTES]
++  static constexpr int SEQ_OFF = VT_OFF + HKV * 2 * VT_BYTES;            // int32 [MAXB]
++  static constexpr int PRE_OFF = SEQ_OFF + MAXB * 4;                     // int32 [MAXB + 4]
++  static constexpr int BAR_OFF = PRE_OFF + (MAXB + 4) * 4;               // u64 FULL[STAGES], EMPTY[STAGES]
++  static constexpr int FLAG_OFF = BAR_OFF + 2 * STAGES * 8;              // int abort, last[HKV], pad
++  static constexpr int QS_OFF = FLAG_OFF + 16;                           // u32 [8][CT]: each thread's own Q A fragment
++  static constexpr int SMEM_USED = QS_OFF + 8 * CT * 4;
++  static constexpr int SMEM_A = SMEM_USED + 1024;                        // slack: the base is rounded up to 1024 B
++  static_assert(RING_OFF % 1024 == 0 && VT_OFF % 1024 == 0 && STAGE_BYTES % 1024 == 0 && VT_BYTES % 1024 == 0,
++                "swizzle atom alignment");
++  static_assert(BAR_OFF % 8 == 0, "mbarrier alignment");
++  static_assert(SMEM_A <= 227 * 1024, "dynamic shared memory exceeds the 227 KB per-CTA limit");
++};
++
++template <int STAGES>
++struct C2Lay {
++  static constexpr int STG8 = 2 * 64 * 64;                               // per-warpgroup stage: K 4 KB + V 4 KB (head g only)
++  static constexpr int VT_BYTES = D * 64;
++  static constexpr int RING_OFF = 0;                                     // [HKV][STAGES][STG8]
++  static constexpr int VT_OFF = RING_OFF + HKV * STAGES * STG8;          // [HKV][2][VT_BYTES]
++  static constexpr int SEQ_OFF = VT_OFF + HKV * 2 * VT_BYTES;
++  static constexpr int PRE_OFF = SEQ_OFF + MAXB * 4;
++  static constexpr int BAR_OFF = PRE_OFF + (MAXB + 4) * 4;               // FULL[HKV][STAGES], EMPTY[HKV][STAGES]
++  static constexpr int FLAG_OFF = BAR_OFF + 2 * HKV * STAGES * 8;
++  static constexpr int QS_OFF = FLAG_OFF + 16;
++  static constexpr int SMEM_USED = QS_OFF + 8 * CT * 4;
++  static constexpr int SMEM_A = SMEM_USED + 1024;
++  static_assert(VT_OFF % 1024 == 0 && STG8 % 1024 == 0 && VT_BYTES % 1024 == 0, "swizzle atom alignment");
++  static_assert(BAR_OFF % 8 == 0, "mbarrier alignment");
++  static_assert(2 * (SMEM_A + 1024) <= 227 * 1024, "two CTAs per SM do not fit in shared memory");
++};
++
++// ---- variants 0, 1, 3: warp-specialized, 384 threads, 1 CTA/SM.
++template <int TL, int STAGES, bool DUAL, bool DBG>
++__global__ void __launch_bounds__(384, 1)
++wsv1_ws_kernel(const uint8_t* __restrict__ q,          // e4m3 [B * QL, HQ, D]
++               const uint8_t* __restrict__ kc,         // e4m3 [rows, ROW]
++               const uint8_t* __restrict__ vc,         // e4m3 [rows, ROW]
++               int64_t rows,
++               const int* __restrict__ page_table, int64_t pt_stride,
++               const int* __restrict__ seqlens, int B,
++               const float* __restrict__ k_scale, const float* __restrict__ v_scale,
++               float score_scale,
++               const __nv_bfloat16* __restrict__ qkv, int64_t qkv_stride,
++               __nv_bfloat16* out, float eps,
++               float* ws_acc,                          // f32 [grid + B, QL, HQ, D]
++               float* ws_ml,                           // f32 [grid + B, 2, QL * HQ]
++               int* ticket,                            // int32 [MAXB * HKV], 0 between launches
++               int* err,
++               float* dbg,                             // DBG only: phase cycle counters
++               int go) {
++#if defined(__CUDA_ARCH_FEAT_SM90_ALL)
++  using L = WsLay<TL, STAGES>;
++  constexpr int NS = TL / 2;      // S accumulator registers per thread
++  constexpr int NB = TL / 8;      // 8-token column blocks
++  constexpr int NK = TL / 32;     // PV k-steps (32 tokens each)
++  constexpr int VTB = L::VT_BYTES;
++  constexpr int PRODR = 56, CONSR = 224;  // 128 * 56 + 256 * 224 = 64512 registers
++  extern __shared__ __align__(1024) uint8_t wsv1_smem[];
++  // Swizzle atoms need 1024-byte-aligned bases: round the dynamic base up (SMEM_A has slack).
++  uint8_t* smem = wsv1_smem + ((1024u - (smem_u32(wsv1_smem) & 1023u)) & 1023u);
++  uint8_t* ring = smem + L::RING_OFF;
++  int* seq_s = reinterpret_cast<int*>(smem + L::SEQ_OFF);
++  int* pre_s = reinterpret_cast<int*>(smem + L::PRE_OFF);
++  volatile int* flag_s = reinterpret_cast<volatile int*>(smem + L::FLAG_OFF);  // [0] abort, [1 + g] last
++  const uint32_t ring_u = smem_u32(ring);
++  const uint32_t vt_u = smem_u32(smem + L::VT_OFF);
++  const uint32_t bar_u = smem_u32(smem + L::BAR_OFF);
++  const float NEG_INF = __int_as_float(0xff800000u);
++
++  const int tid = threadIdx.x, lane = tid & 31, warp = tid >> 5;
++  const int bx = blockIdx.x, gx = gridDim.x;
++  if (blockDim.x != 384) {  // uniform; never expected
++    if (tid == 0) atomicOr(err, 4);
++    return;
++  }
++  if (tid < B) seq_s[tid] = seqlens[tid];
++  if (tid == 0) {
++    for (int s = 0; s < STAGES; ++s) {
++      mbar_init(bar_u + 8 * s, 128);                 // FULL[s]: one noinc arrival per producer thread
++      mbar_init(bar_u + 8 * (STAGES + s), CT);       // EMPTY[s]: one arrival per consumer thread
++    }
++    flag_s[0] = 0;
++    flag_s[1] = 0;
++    flag_s[2] = 0;
++    fence_mbar_init();
++  }
++  __syncthreads();
++  if (warp == 0) tile_prefix(seq_s, pre_s, B, lane, TL);
++  __syncthreads();
++  const int Ttot = pre_s[B];
++  const int s0 = start_of(bx, Ttot, gx), s1 = start_of(bx + 1, Ttot, gx);
++  if (s0 >= s1) return;  // empty range (grid > Ttot): writes nothing; uniform over the CTA
++  const int N = s1 - s0;  // tiles of this CTA, one flat pipeline (phases of every barrier are tracked on this index)
++  const float scale = score_scale * __ldg(k_scale);  // sm_scale * qk_scale_factor * log2(e) * k_scale
++  const int bfirst = req_of(pre_s, B, s0);
++  const int wg = warp >> 2;
++
++  // Bounded mbarrier wait: on timeout set the CTA abort flag and the device error flag; once the abort flag is set every wait
++  // returns at once, so the CTA runs to the end (garbage, no hang).
++  auto wait_bar = [&](uint32_t a, uint32_t parity) {
++    if (mbar_try_wait(a, parity)) return;
++    const long long t0 = clock64();
++    while (!flag_s[0]) {
++      if (mbar_try_wait(a, parity)) return;
++      if (clock64() - t0 > WAIT_LIMIT) {
++        flag_s[0] = 1;
++        atomicOr(err, 2);
++        return;
++      }
++    }
++  };
++  auto full_of = [&](int s) -> uint32_t { return bar_u + 8 * s; };
++  auto empty_of = [&](int s) -> uint32_t { return bar_u + 8 * (STAGES + s); };
++
++  if (wg == 0) {
++    // ---------------------------------------------------------------- producer warpgroup
++    reg_dec<PRODR>();
++    constexpr int TPT = 128 / TL;   // threads per token (2 at TL 64, 1 at TL 128)
++    constexpr int CHK = 8 / TPT;    // 16-byte chunks per thread per K / V row
++    const int tt = tid / TPT;       // token inside the tile
++    const int c0 = (tid % TPT) * CHK;
++    int ip = bfirst;                // request pointer of the index stream (monotone)
++    long long p_wait = 0, p_issue = 0, p_t0 = 0;
++    if (DBG) p_t0 = clock64();
++    // Page indices of tiles 4k .. 4k + 3 into registers (raw value + valid bit): one 4-byte load per tile, issued a block
++    // (4 tiles) before the issue that uses it, so the dependent load never sits on the issue path.
++    auto fetch = [&](int k, int (&raw)[4], unsigned& okm) {
++      okm = 0u;
++#pragma unroll
++      for (int j = 0; j < 4; ++j) {
++        raw[j] = 0;
++        const int nn = 4 * k + j;
++        if (nn < N) {
++          const int f = s0 + nn;
++          while (f >= pre_s[ip + 1]) ++ip;
++          const int pos = (f - pre_s[ip]) * TL + tt;
++          if (pos < seq_s[ip]) {
++            raw[j] = __ldg(page_table + static_cast<int64_t>(ip) * pt_stride + pos);
++            okm |= (1u << j);
++          }
++        }
++      }
++    };
++    int rc[4], rn[4];
++    unsigned okc = 0u, okn = 0u;
++    fetch(0, rc, okc);
++    const int nblk = (N + 3) >> 2;
++    for (int k = 0; k < nblk; ++k) {
++      fetch(k + 1, rn, okn);
++#pragma unroll
++      for (int j = 0; j < 4; ++j) {
++        const int nn = 4 * k + j;
++        if (nn < N) {
++          const int st = nn % STAGES;
++          long long t_a = 0;
++          if (DBG) t_a = clock64();
++          if (nn >= STAGES) wait_bar(empty_of(st), (((nn / STAGES) - 1) & 1));  // the previous occupant of stage st was released
++          long long t_b = 0;
++          if (DBG) { t_b = clock64(); p_wait += t_b - t_a; }
++          int64_t row = 0;
++          const bool ok = ((okc >> j) & 1u) != 0u;
++          if (ok) {
++            row = static_cast<int64_t>(static_cast<uint32_t>(rc[j]));  // the page index is clamped into the cache
++            row = row < rows - 1 ? row : rows - 1;
++          }
++          const uint8_t* ks = kc + row * ROW;
++          const uint8_t* vs = vc + row * ROW;
++          const uint32_t stu = ring_u + st * L::STAGE_BYTES;
++#pragma unroll
++          for (int c = 0; c < CHK; ++c) {
++            const int cc = c0 + c;
++            const int dst = tt * ROW + ((cc ^ (tt & 7)) << 4);  // chunk cc at cc ^ (token % 8): the SW128 pattern
++            cp_async16(stu + dst, ks + cc * 16, ok ? 16 : 0);
++            cp_async16(stu + TL * ROW + dst, vs + cc * 16, ok ? 16 : 0);
++          }
++          cp_mbar_arrive_noinc(full_of(st));
++          if (DBG) p_issue += clock64() - t_b;
++        }
++      }
++#pragma unroll
++      for (int j = 0; j < 4; ++j) rc[j] = rn[j];
++      okc = okn;
++    }
++    cp_wait_all();
++    if (DBG) {
++      if (bx == 0 && tid == 0) {
++        dbg[13] = static_cast<float>(p_wait);
++        dbg[14] = static_cast<float>(p_issue);
++        dbg[15] = static_cast<float>(clock64() - p_t0);
++      }
++    }
++    return;
++  }
++
++  // ------------------------------------------------------------------ consumer warpgroups
++  reg_inc<CONSR>();
++  const int g = wg - 1;                    // warpgroup = kv head
++  const int w = warp & 3;                  // warp in the warpgroup: rows 16w .. 16w + 15
++  const int tw = tid & 127;
++  const int ctid = tid - 128;
++  const int r = lane >> 2, tig = lane & 3; // r = the block token of both rows of this thread
++  const int hA = g * G + 2 * w;            // row 16w + r: head hA; row 16w + r + 8: head hA + 1
++  const uint32_t qs_u = smem_u32(smem + L::QS_OFF) + 4u * ctid;
++  const uint32_t vt_gu = vt_u + g * 2 * VTB;
++  uint8_t* vt_base = smem + L::VT_OFF + g * 2 * VTB;
++  auto kdesc = [&](int s, int kk) -> uint64_t { return make_desc(ring_u + s * L::STAGE_BYTES + 64 * g + 32 * kk, 1024, 1); };
++  auto vstage = [&](int s) -> const uint8_t* { return ring + s * L::STAGE_BYTES + TL * ROW; };
++  auto vword = [&](const uint8_t* Vs, int t, int dg) -> uint32_t {
++    return *reinterpret_cast<const uint32_t*>(Vs + t * ROW + (((4 * g + (dg >> 2)) ^ (t & 7)) << 4) + ((dg & 3) << 2));
++  };
++  auto refill = [&](int mm) { (void)mm; };  // the producer warpgroup issues every load
++@CONSUMER@
++#else
++  // Not the sm_90a image: no wgmma / mbarrier here. Flag it; the self-check turns the path off.
++  if (threadIdx.x == 0) atomicOr(err, 1);
++#endif
++}
++
++// ---- variant 2: s5's layout (2 CTAs/SM, 256 threads, every thread issues) with the ring split per warpgroup.
++template <int STAGES>
++__global__ void __launch_bounds__(256, 2)
++wsv1_c2_kernel(const uint8_t* __restrict__ q, const uint8_t* __restrict__ kc, const uint8_t* __restrict__ vc,
++               int64_t rows, const int* __restrict__ page_table, int64_t pt_stride,
++               const int* __restrict__ seqlens, int B, const float* __restrict__ k_scale,
++               const float* __restrict__ v_scale, float score_scale,
++               const __nv_bfloat16* __restrict__ qkv, int64_t qkv_stride, __nv_bfloat16* out, float eps,
++               float* ws_acc, float* ws_ml, int* ticket, int* err, float* dbg, int go) {
++#if defined(__CUDA_ARCH_FEAT_SM90_ALL)
++  using L = C2Lay<STAGES>;
++  constexpr int TL = 64;
++  constexpr bool DUAL = false;
++  constexpr bool DBG = false;
++  constexpr int NS = 32, NB = 8, NK = 2;
++  constexpr int VTB = L::VT_BYTES;
++  extern __shared__ __align__(1024) uint8_t wsv1_smem[];
++  uint8_t* smem = wsv1_smem + ((1024u - (smem_u32(wsv1_smem) & 1023u)) & 1023u);
++  uint8_t* ring = smem + L::RING_OFF;
++  int* seq_s = reinterpret_cast<int*>(smem + L::SEQ_OFF);
++  int* pre_s = reinterpret_cast<int*>(smem + L::PRE_OFF);
++  volatile int* flag_s = reinterpret_cast<volatile int*>(smem + L::FLAG_OFF);
++  const uint32_t ring_u = smem_u32(ring);
++  const uint32_t vt_u = smem_u32(smem + L::VT_OFF);
++  const uint32_t bar_u = smem_u32(smem + L::BAR_OFF);
++  const float NEG_INF = __int_as_float(0xff800000u);
++
++  const int tid = threadIdx.x, lane = tid & 31, warp = tid >> 5;
++  const int bx = blockIdx.x, gx = gridDim.x;
++  if (blockDim.x != 256) {
++    if (tid == 0) atomicOr(err, 4);
++    return;
++  }
++  if (tid < B) seq_s[tid] = seqlens[tid];
++  if (tid == 0) {
++    for (int s = 0; s < HKV * STAGES; ++s) {
++      mbar_init(bar_u + 8 * s, 128);                          // FULL[g][s]: one noinc arrival per thread of warpgroup g
++      mbar_init(bar_u + 8 * (HKV * STAGES + s), 128);         // EMPTY[g][s]: one arrival per thread of warpgroup g
++    }
++    flag_s[0] = 0;
++    flag_s[1] = 0;
++    flag_s[2] = 0;
++    fence_mbar_init();
++  }
++  __syncthreads();
++  if (warp == 0) tile_prefix(seq_s, pre_s, B, lane, TL);
++  __syncthreads();
++  const int Ttot = pre_s[B];
++  const int s0 = start_of(bx, Ttot, gx), s1 = start_of(bx + 1, Ttot, gx);
++  if (s0 >= s1) return;
++  const int N = s1 - s0;
++  const float scale = score_scale * __ldg(k_scale);
++  const int bfirst = req_of(pre_s, B, s0);
++
++  auto wait_bar = [&](uint32_t a, uint32_t parity) {
++    if (mbar_try_wait(a, parity)) return;
++    const long long t0 = clock64();
++    while (!flag_s[0]) {
++      if (mbar_try_wait(a, parity)) return;
++      if (clock64() - t0 > WAIT_LIMIT) {
++        flag_s[0] = 1;
++        atomicOr(err, 2);
++        return;
++      }
++    }
++  };
++  const int g = warp >> 2;                 // warpgroup = kv head = this thread's ring
++  const int w = warp & 3;
++  const int tw = tid & 127;
++  const int ctid = tid;
++  const int r = lane >> 2, tig = lane & 3;
++  const int hA = g * G + 2 * w;
++  const uint32_t qs_u = smem_u32(smem + L::QS_OFF) + 4u * ctid;
++  const uint32_t vt_gu = vt_u + g * 2 * VTB;
++  uint8_t* vt_base = smem + L::VT_OFF + g * 2 * VTB;
++  uint8_t* ring_g = ring + g * STAGES * L::STG8;
++  const uint32_t ring_gu = ring_u + g * STAGES * L::STG8;
++  auto full_of = [&](int s) -> uint32_t { return bar_u + 8 * (g * STAGES + s); };
++  auto empty_of = [&](int s) -> uint32_t { return bar_u + 8 * (HKV * STAGES + g * STAGES + s); };
++  auto kdesc = [&](int s, int kk) -> uint64_t { return make_desc(ring_gu + s * L::STG8 + 32 * kk, 512, 2); };  // K: SW64, 64 B rows
++  auto vstage = [&](int s) -> const uint8_t* { return ring_g + s * L::STG8 + 4096; };
++  auto vword = [&](const uint8_t* Vs, int t, int dg) -> uint32_t {
++    return *reinterpret_cast<const uint32_t*>(Vs + t * 64 + (((dg >> 2) ^ ((t >> 1) & 3)) << 4) + ((dg & 3) << 2));
++  };
++  // This warpgroup's own gather (head g's 64-byte half of each cache row): thread tw -> token tw / 2, 16-byte chunks
++  // 2 (tw & 1) + {0, 1}; K tile at the stage base, V tile 4 KB above it, both SW64 (chunk ^ ((token >> 1) & 3)).
++  const int tt = tw >> 1;
++  const int c0 = (tw & 1) * 2;
++  int ip = bfirst;
++  auto fetch1 = [&](int nn, int& raw, bool& okv) {
++    okv = false;
++    raw = 0;
++    if (nn < N) {
++      const int f = s0 + nn;
++      while (f >= pre_s[ip + 1]) ++ip;
++      const int pos = (f - pre_s[ip]) * TL + tt;
++      if (pos < seq_s[ip]) {
++        raw = __ldg(page_table + static_cast<int64_t>(ip) * pt_stride + pos);
++        okv = true;
++      }
++    }
++  };
++  auto issue2 = [&](int nn, int raw, bool okv) {
++    int64_t row = 0;
++    if (okv) {
++      row = static_cast<int64_t>(static_cast<uint32_t>(raw));
++      row = row < rows - 1 ? row : rows - 1;
++    }
++    const uint8_t* ks = kc + row * ROW + g * 64;
++    const uint8_t* vs = vc + row * ROW + g * 64;
++    const uint32_t stu = ring_gu + (nn % STAGES) * L::STG8;
++#pragma unroll
++    for (int c = 0; c < 2; ++c) {
++      const int cc = c0 + c;
++      const int dst = tt * 64 + ((cc ^ ((tt >> 1) & 3)) << 4);
++      cp_async16(stu + dst, ks + cc * 16, okv ? 16 : 0);
++      cp_async16(stu + 4096 + dst, vs + cc * 16, okv ? 16 : 0);
++    }
++  };
++  int nraw = 0;
++  bool nok = false;
++  for (int j = 0; j < STAGES - 1; ++j) {  // prologue: tiles 0 .. STAGES - 2
++    if (j < N) {
++      int rw = 0;
++      bool ok = false;
++      fetch1(j, rw, ok);
++      issue2(j, rw, ok);
++      cp_mbar_arrive_noinc(full_of(j));
++    }
++  }
++  fetch1(STAGES - 1, nraw, nok);  // the next tile's index, prefetched a whole iteration ahead
++  auto refill = [&](int mm) {
++    const int nn = mm + STAGES - 1;
++    if (nn < N) {
++      if (mm >= 1) wait_bar(empty_of(nn % STAGES), (((mm - 1) / STAGES) & 1));  // stage of tile mm - 1: all 128 threads released it
++      issue2(nn, nraw, nok);
++      cp_mbar_arrive_noinc(full_of(nn % STAGES));
++      fetch1(nn + 1, nraw, nok);
++    }
++  };
++@CONSUMER@
++#else
++  if (threadIdx.x == 0) atomicOr(err, 1);
++#endif
++}
++
++template <typename Kern>
++void set_smem(Kern kernel, int bytes) {
++  C10_CUDA_CHECK(cudaFuncSetAttribute(kernel, cudaFuncAttributeMaxDynamicSharedMemorySize, bytes));
++}
++
++constexpr int V0_SMEM = WsLay<64, 8>::SMEM_A;
++constexpr int V1_SMEM = WsLay<128, 5>::SMEM_A;
++constexpr int V2_SMEM = C2Lay<5>::SMEM_A;
++
++void set_attrs_once() {
++  static bool done = false;
++  if (!done) {
++    set_smem(wsv1_ws_kernel<64, 8, true, false>, V0_SMEM);
++    set_smem(wsv1_ws_kernel<128, 5, false, false>, V1_SMEM);
++    set_smem(wsv1_c2_kernel<5>, V2_SMEM);
++    set_smem(wsv1_ws_kernel<64, 8, true, true>, V0_SMEM);  // PHASE DIAG instantiation (prepare only)
++    done = true;
++  }
++}
++
++int smem_of(int64_t variant) {
++  return variant == 1 ? V1_SMEM : (variant == 2 ? V2_SMEM : V0_SMEM);
++}
++
++template <typename Kern>
++void fill_attrs(int64_t* p, Kern kernel, int threads, int smem) {
++  cudaFuncAttributes a;
++  int occ = 0;
++  C10_CUDA_CHECK(cudaFuncGetAttributes(&a, kernel));
++  C10_CUDA_CHECK(cudaOccupancyMaxActiveBlocksPerMultiprocessor(&occ, kernel, threads, smem));
++  p[0] = a.numRegs;
++  p[1] = static_cast<int64_t>(a.localSizeBytes);
++  p[2] = static_cast<int64_t>(a.sharedSizeBytes);
++  p[3] = smem;
++  p[4] = occ;
++  p[5] = a.binaryVersion;
++  p[6] = a.ptxVersion;
++  p[7] = a.maxDynamicSharedSizeBytes;
++}
++
++}  // namespace
++
++void wsv1_attn(torch::Tensor q, torch::Tensor k_cache, torch::Tensor v_cache, torch::Tensor page_table,
++               torch::Tensor cache_seqlens, torch::Tensor k_scale, torch::Tensor v_scale, torch::Tensor qkv,
++               int64_t qkv_stride, torch::Tensor out, torch::Tensor ws_acc, torch::Tensor ws_ml,
++               torch::Tensor ticket, torch::Tensor err, torch::Tensor dbg, double score_scale, double eps,
++               int64_t grid, int64_t variant, int64_t go) {
++  const int B = static_cast<int>(cache_seqlens.size(0));
++  TORCH_CHECK(B >= 1 && B <= MAXB, "wsv1_attn: batch out of range");
++  TORCH_CHECK(variant >= 0 && variant <= 3, "wsv1_attn: variant");
++  TORCH_CHECK(grid >= 1, "wsv1_attn: grid");
++  TORCH_CHECK(q.size(0) == static_cast<int64_t>(B) * QL && q.size(1) == HQ && q.size(2) == D, "wsv1_attn: q shape");
++  TORCH_CHECK(ws_acc.size(0) >= grid + B && ws_ml.size(0) >= grid + B, "wsv1_attn: workspace too small");
++  TORCH_CHECK(ticket.numel() >= static_cast<int64_t>(MAXB) * HKV && err.numel() >= 1, "wsv1_attn: ticket/err");
++  TORCH_CHECK(k_cache.numel() % ROW == 0 && k_cache.numel() >= ROW, "wsv1_attn: cache rows");
++  TORCH_CHECK(page_table.stride(1) == 1 && q.is_contiguous() && k_cache.is_contiguous() && v_cache.is_contiguous()
++              && ws_acc.is_contiguous() && ws_ml.is_contiguous() && out.is_contiguous(), "wsv1_attn: layout");
++  if (variant == 3) TORCH_CHECK(dbg.numel() >= 16, "wsv1_attn: dbg buffer");
++  set_attrs_once();
++  int dev = 0, optin = 0;
++  C10_CUDA_CHECK(cudaGetDevice(&dev));
++  C10_CUDA_CHECK(cudaDeviceGetAttribute(&optin, cudaDevAttrMaxSharedMemoryPerBlockOptin, dev));
++  TORCH_CHECK(smem_of(variant) <= optin, "wsv1_attn: dynamic shared memory exceeds the device limit");
++  const int64_t rows = k_cache.numel() / ROW;
++  auto stream = at::cuda::getCurrentCUDAStream();
++  const unsigned g = static_cast<unsigned>(grid);
++  float* dbgp = reinterpret_cast<float*>(dbg.data_ptr());
++#define WSV1_ARGS                                                                                                   \
++  reinterpret_cast<const uint8_t*>(q.data_ptr()), reinterpret_cast<const uint8_t*>(k_cache.data_ptr()),             \
++      reinterpret_cast<const uint8_t*>(v_cache.data_ptr()), rows, page_table.data_ptr<int>(), page_table.stride(0), \
++      cache_seqlens.data_ptr<int>(), B, k_scale.data_ptr<float>(), v_scale.data_ptr<float>(),                       \
++      static_cast<float>(score_scale), reinterpret_cast<const __nv_bfloat16*>(qkv.data_ptr()), qkv_stride,          \
++      reinterpret_cast<__nv_bfloat16*>(out.data_ptr()), static_cast<float>(eps), ws_acc.data_ptr<float>(),          \
++      ws_ml.data_ptr<float>(), ticket.data_ptr<int>(), err.data_ptr<int>(), dbgp, static_cast<int>(go)
++  if (variant == 0) {
++    wsv1_ws_kernel<64, 8, true, false><<<g, 384, V0_SMEM, stream>>>(WSV1_ARGS);
++  } else if (variant == 1) {
++    wsv1_ws_kernel<128, 5, false, false><<<g, 384, V1_SMEM, stream>>>(WSV1_ARGS);
++  } else if (variant == 2) {
++    wsv1_c2_kernel<5><<<g, 256, V2_SMEM, stream>>>(WSV1_ARGS);
++  } else {
++    wsv1_ws_kernel<64, 8, true, true><<<g, 384, V0_SMEM, stream>>>(WSV1_ARGS);
++  }
++#undef WSV1_ARGS
++  C10_CUDA_KERNEL_LAUNCH_CHECK();
++}
++
++// CPU int64 [33]: per variant 0..3 (ws64, ws128, c2, ws64 DBG): regs, local bytes, static smem, dynamic smem, CTAs/SM,
++// binaryVersion, ptxVersion, max dynamic smem attr; then the device's opt-in smem limit.
++torch::Tensor wsv1_attrs() {
++  set_attrs_once();
++  auto t = torch::zeros({33}, torch::dtype(torch::kInt64));
++  int64_t* p = t.data_ptr<int64_t>();
++  fill_attrs(p + 0, wsv1_ws_kernel<64, 8, true, false>, 384, V0_SMEM);
++  fill_attrs(p + 8, wsv1_ws_kernel<128, 5, false, false>, 384, V1_SMEM);
++  fill_attrs(p + 16, wsv1_c2_kernel<5>, 256, V2_SMEM);
++  fill_attrs(p + 24, wsv1_ws_kernel<64, 8, true, true>, 384, V0_SMEM);
++  int dev = 0, optin = 0;
++  C10_CUDA_CHECK(cudaGetDevice(&dev));
++  C10_CUDA_CHECK(cudaDeviceGetAttribute(&optin, cudaDevAttrMaxSharedMemoryPerBlockOptin, dev));
++  p[32] = optin;
++  return t;
++}
++"""
++
++
++def _wsv1_cuda_source() -> str:
++    """The module's CUDA source: head + generated wgmma wrappers (n64, n128) + the two kernels with the shared consumer."""
++    consumer = _ws_consumer_text()
++    kernels = _WSV1_KERNELS.replace("@CONSUMER@", consumer)
++    return _WSV1_HEAD + _ws_wgmma_src(64) + _ws_wgmma_src(128) + "#endif\n" + kernels
++
++
++_WS_NAMES = {0: "ws64", 1: "ws128", 2: "c2"}
++_WS_KERNELS = {0: "wsv1_ws_kernel<64,8,dual>", 1: "wsv1_ws_kernel<128,5,single>", 2: "wsv1_c2_kernel<5>"}
++_WS_THRESH = 1.05        # master paired FA3 time / candidate time, BOTH interleaved rounds
++_WS_IQR_MAX = 1.5        # candidate IQR / master IQR, both rounds
++_WS_IQR_FLOOR_US = 0.5   # absolute floor on master's IQR (timer resolution): a 0.2 us spread must not veto a real win
++# Phase start deadlines on the import clock (seconds since the top of this file), against the judge's 480 s start rule.
++_WS_BUILD_BY, _WS_QUICK_BY, _WS_GATE_BY, _WS_FULL_BY, _WS_DIAG_BY = 400.0, 440.0, 455.0, 465.0, 470.0
++
++_WSX = None            # the compiled module
++_WS_ERR = None         # int32 [1] device error flag (1: not the sm_90a image, 2: mbarrier timeout, 4: launch shape)
++_WS_TICKETS = {}
++_WS_ROUTE = MappingProxyType({})  # band (16 | 32) -> variant id; frozen after the gate, kernel_fn only reads it
++_WS_FORCE = None       # setup only: variant forced through kernel_fn (every band open)
++_WS_GRID = None        # setup only: grid override
++_WS_HOOK = None        # setup only: called between launches (sync + print)
++_WS_KEEP = None        # setup only: dict the launch fills with its workspaces
++_WS_ANYB = False       # setup only: let the gate accept batch 1 (the single-request bisect cases)
++_WS_GO = 0             # setup only: gather-only roofline launch
++_WS_DBG = None         # setup only: float32 [16] PHASE DIAG buffer (variant 3)
++
++
++def _ws_late(what: str, limit: float) -> bool:
++    """True (after printing 'skipped: deadline') when the import clock is already past a phase's start deadline."""
++    t = time.perf_counter() - _IMPORT_T0
++    if t > limit:
++        _say(f"[ws] {what}: skipped: deadline (import clock {t:.0f} s > start limit {limit:.0f} s)")
++        return True
++    return False
++
++
++def _ws_tickets(device) -> torch.Tensor:
++    """int32 [64 * 2] per-(request, kv head) tickets, this module's own. Zeroed once per device at setup (eager); every launch
++    leaves them at 0 again (the merging warpgroup resets its ticket), so they hold no data."""
++    dev = torch.device(device)
++    if dev.index is None:  # setup passes torch.device("cuda"), kernel_fn passes qkv.device (cuda:N): one key for both
++        dev = torch.device("cuda", torch.cuda.current_device())
++    key = str(dev)
++    buf = _WS_TICKETS.get(key)
++    if buf is None:
++        buf = _WS_TICKETS[key] = torch.zeros(64 * 2, dtype=torch.int32, device=device)
++    return buf
++
++
++def _ws_band(batch: int) -> int:
++    """Timing band of a batch: 16 for 1..24, 32 for 25..64 (config only)."""
++    return 16 if batch <= 24 else 32
++
++
++def _ws_variant(cfg):
++    """Config-only predicate: full layer, q_len 8, 1 < batch <= 64, tp8, head dim 64, page 1, and a variant that passed its checks
++    and the gate for this batch band (or the setup-only forced variant). None puts these shapes on master's paired FA3 path."""
++    if (_WSX is None or cfg["window"] != 0 or cfg["q_len"] != 8 or not (1 < cfg["batch"] or _WS_ANYB) or cfg["batch"] > 64
++            or cfg["num_q_heads"] != 16 or cfg["num_kv_heads"] != 2 or cfg["head_dim"] != 64 or cfg["page_size"] != 1):
++        return None
++    if _WS_FORCE is not None:
++        return _WS_FORCE
++    return _WS_ROUTE.get(_ws_band(cfg["batch"]))
++
++
++def _ws_launch(data: Inputs, q: torch.Tensor, qkv: torch.Tensor, variant: int, out, ws_acc, ws_ml, grid: int) -> None:
++    cfg = data["config"]
++    dbg = _WS_DBG if _WS_DBG is not None else _WS_ERR
++    _WSX.wsv1_attn(q, data["k_cache"], data["v_cache"], data["page_table"], data["cache_seqlens"], data["k_scale"],
++                   data["v_scale"], qkv, qkv.stride(0), out, ws_acc, ws_ml, _ws_tickets(qkv.device), _WS_ERR, dbg,
++                   cfg["sm_scale"] * cfg["qk_scale_factor"] * LOG2E, RMS_EPS, grid, variant, _WS_GO)
++
++
++def _ws_run(data: Inputs, q: torch.Tensor, qkv: torch.Tensor, variant: int) -> torch.Tensor:
++    """The wsv1 kernel (combine + norm-gate inside); q is the unpaired FP8 query [B*8, 16, 64]. Grid and workspace come from
++    shapes and the device only: CTA c writes slot c + b for each request b its range touches."""
++    cfg = data["config"]
++    batch, length, hq, d = cfg["batch"], cfg["q_len"], cfg["num_q_heads"], cfg["head_dim"]
++    device = qkv.device
++    grid = _WS_GRID or (2 if variant == 2 else 1) * _sm_count(device)
++    slots = grid + batch
++    ws_acc = torch.empty((slots, length, hq, d), dtype=torch.float32, device=device)
++    ws_ml = torch.empty((slots, 2, length * hq), dtype=torch.float32, device=device)
++    out = torch.empty((batch, length, hq * d), dtype=torch.bfloat16, device=device)
++    if _WS_KEEP is not None:
++        _WS_KEEP.update(ws_acc=ws_acc, ws_ml=ws_ml, grid=grid)
++    hook = _WS_HOOK
++    if hook is not None:
++        hook(f"pre-attention (Triton) done; launching {_WS_KERNELS.get(variant, 'wsv1 phase-diag kernel')} grid {grid}")
++    _ws_launch(data, q, qkv, variant, out, ws_acc, ws_ml, grid)
++    if hook is not None:
++        hook("wsv1 kernel done")
++    return out
++
++
++def _build_ws():
++    """Compile the module once per process (never during graph capture) for sm_90a ONLY (TORCH_CUDA_ARCH_LIST=9.0a around the
++    build, restored after). Returns (module, None) or (None, reason); a failure leaves every shape on master."""
++    t0 = time.perf_counter()
++    flags = ["-O3", "-lineinfo"]
++    prev = os.environ.get("TORCH_CUDA_ARCH_LIST")
++    os.environ["TORCH_CUDA_ARCH_LIST"] = "9.0a"
++    try:
++        from torch.utils.cpp_extension import load_inline
++        try:
++            from torch.utils.cpp_extension import _get_cuda_arch_flags
++            arch = list(_get_cuda_arch_flags())
++        except Exception as e:
++            arch = f"unreadable ({e!r})"
++        _say(f"[ws] building muse_full_verify_wgmma_ws_v1: TORCH_CUDA_ARCH_LIST=9.0a, arch flags {arch}, extra {flags}")
++        ext = load_inline(
++            name="muse_full_verify_wgmma_ws_v1",
++            cpp_sources=_WSV1_CPP,
++            cuda_sources=_wsv1_cuda_source(),
++            functions=["wsv1_attn", "wsv1_attrs"],
++            extra_cuda_cflags=flags,
++            verbose=False,
++        )
++    except Exception as e:
++        _say(f"[ws] load_inline failed after {time.perf_counter() - t0:.1f}s: {type(e).__name__}: ...{str(e)[-3000:]}")
++        return None, f"build failed ({type(e).__name__})"
++    finally:
++        if prev is None:
++            os.environ.pop("TORCH_CUDA_ARCH_LIST", None)
++        else:
++            os.environ["TORCH_CUDA_ARCH_LIST"] = prev
++    _say(f"[ws] load_inline compiled in {time.perf_counter() - t0:.1f}s")
++    return ext, None
++
++
++def _ws_image_check() -> dict:
++    """Print regs / spill bytes / smem / occupancy per variant; return {variant: None (usable) or the reason it is refused}.
++    A variant is refused on local bytes > 0, a non-sm_90 image, dynamic smem above the device limit, or (c2) occupancy < 2."""
++    cap = torch.cuda.get_device_capability()
++    a = _WSX.wsv1_attrs().tolist()
++    optin = a[32]
++    res = {}
++    for v, name in ((0, "ws64"), (1, "ws128"), (2, "c2"), (3, "ws64-phase-diag")):
++        regs, local, sh, dyn, occ, binv, ptxv, maxdyn = a[8 * v: 8 * v + 8]
++        _say(f"[ws] {name}: regs {regs}, local bytes {local}, static smem {sh}, dynamic smem {dyn} B (device opt-in {optin}), "
++             f"CTAs/SM {occ}, binaryVersion {binv}, ptxVersion {ptxv}, max dyn attr {maxdyn}")
++        why = None
++        if cap != (9, 0):
++            why = f"device capability {cap} is not (9, 0)"
++        elif binv != 90:
++            why = f"loaded image is not sm_90 SASS (binaryVersion {binv})"
++        elif local > 0:
++            why = f"{local} local (spill) bytes"
++        elif dyn > optin:
++            why = f"dynamic smem {dyn} B > device limit {optin} B"
++        elif v != 2 and regs < 168:
++            # setmaxnreg: 128 * 56 + 256 * 224 = 64512 = 168 * 384. With fewer registers allocated at launch the consumers'
++            # setmaxnreg.inc would wait forever for registers the producer never frees (a hang, not a fallback).
++            why = f"{regs} registers/thread < 168: setmaxnreg.inc 224 could never be satisfied"
++        elif occ < (2 if v == 2 else 1):
++            why = f"occupancy {occ} CTAs/SM"
++        res[v] = why
++        if why is not None:
++            _say(f"[ws] {name} REFUSED: {why}")
++    return res
++
++
++# ---- synthetic data / reference (the gated verify shape: full layer, q_len 8, tp8, page 1), as stage 5's self-check built them.
++
++def _wsv_synth(lens, kv_scale, gen, device, coherent=False):
++    """lens are cache_seqlens (seq_lens + 8). Scattered pages, odd page-table stride, 8 positions / cache rows per request."""
++    batch, length, hq, hkv, d = len(lens), 8, 16, 2, 64
++    max_pages = max(lens) + 37
++    total = batch * max_pages
++    perm = torch.randperm(total, generator=gen, device=device).to(torch.int32)
++    page_table = torch.full((batch, max_pages), -1, dtype=torch.int32, device=device)
++    off = 0
++    for b, n in enumerate(lens):
++        page_table[b, :n] = perm[off:off + n]
++        off += n
++    seq = torch.tensor([n - length for n in lens], dtype=torch.int64, device=device)
++    pos = seq[:, None] + torch.arange(length, dtype=torch.int64, device=device)[None, :]
++    k_cache = (torch.randn((total, 1, hkv, d), generator=gen, device=device) / kv_scale).to(FP8)
++    v_cache = (torch.randn((total, 1, hkv, d), generator=gen, device=device) / kv_scale).to(FP8)
++    qkv = (2 * torch.randn((batch, length, (2 * hq + 2 * hkv) * d), generator=gen, device=device)).to(torch.bfloat16)
++    if coherent:
++        # Low-norm noise keys plus a few planted keys per request and kv head along the block's last query: a peaked softmax
++        # with a long low-weight tail (the regime that exercises the FP8 P operand's Max_offset 8 range).
++        kf = k_cache.float() * 0.3
++        qn = qkv[..., :hq * d].float().reshape(batch, length, hq, d)
++        qn = qn * torch.rsqrt(qn.pow(2).mean(-1, keepdim=True) + RMS_EPS)
++        for b, n in enumerate(lens):
++            rows = page_table[b, torch.randperm(n, generator=gen, device=device)[:4]].long()
++            for g in range(hkv):
++                kf[rows, 0, g] = qn[b, length - 1, g * (hq // hkv)] * (0.35 / kv_scale)
++        k_cache = kf.to(FP8)
++    return {
++        "qkv": qkv,
++        "positions": pos.reshape(-1).clone(),
++        "cache_loc": torch.gather(page_table.long(), 1, pos).reshape(-1),
++        "cache_seqlens": (seq + length).to(torch.int32),
++        "cu_seqlens_q": torch.arange(0, batch + 1, dtype=torch.int32, device=device) * length,
++        "scheduler_metadata": None,
++        "k_cache": k_cache,
++        "v_cache": v_cache,
++        "k_scale": torch.tensor(kv_scale, dtype=torch.float32, device=device),
++        "v_scale": torch.tensor(kv_scale, dtype=torch.float32, device=device),
++        "page_table": page_table,
++        "seq_lens": seq.to(torch.int32),
++        "config": {"batch": batch, "q_len": length, "num_q_heads": hq, "num_kv_heads": hkv, "head_dim": d,
++                   "page_size": 1, "window": 0, "rope_theta": 0.0, "qk_scale_factor": 5.4730064863875,
++                   "sm_scale": d ** -0.5, "kv_scale": kv_scale},
++    }
++
++
++def _wsv_ref(data, lens):
++    """FP32 causal attention over the cache as kernel_fn left it (the block's own keys included), FP8 queries: block token i
++    of request b sees keys t <= cache_seqlens[b] - 8 + i; then the master epilogue."""
++    cfg = data["config"]
++    batch, length = cfg["batch"], cfg["q_len"]
++    hq, hkv, d = cfg["num_q_heads"], cfg["num_kv_heads"], cfg["head_dim"]
++    qkv = data["qkv"].reshape(batch, length, -1).float()
++    q = qkv[..., :hq * d].reshape(batch, length, hq, d)
++    q = q * torch.rsqrt(q.pow(2).mean(-1, keepdim=True) + RMS_EPS)
++    q = q.to(FP8).float() * cfg["qk_scale_factor"]
++    kf = data["k_cache"].view(-1, hkv, d)
++    vf = data["v_cache"].view(-1, hkv, d)
++    outs = []
++    for b, n in enumerate(lens):
++        rows = data["page_table"][b, :n].long()
++        keys = (kf[rows].float() * data["k_scale"]).repeat_interleave(hq // hkv, dim=1)
++        vals = (vf[rows].float() * data["v_scale"]).repeat_interleave(hq // hkv, dim=1)
++        s = torch.einsum("lhd,nhd->lhn", q[b], keys) * cfg["sm_scale"]
++        t = torch.arange(n, device=s.device)
++        lim = n - length + torch.arange(length, device=s.device)
++        s = s.masked_fill((t[None, :] > lim[:, None])[:, None, :], float("-inf"))
++        p = torch.softmax(s, dim=-1)
++        outs.append(torch.einsum("lhn,nhd->lhd", p, vals))
++    a = torch.stack(outs)
++    a = a * torch.rsqrt(a.pow(2).mean(-1, keepdim=True) + RMS_EPS)
++    gate = qkv[..., (hq + 2 * hkv) * d:].reshape(batch, length, hq, d)
++    return (a * torch.sigmoid(gate)).reshape(batch, length, hq * d)
++
++
++def _ws_trace(msg: str) -> None:
++    """Hook between launches: wait for the GPU, then say what finished, so a fault is attributed to the kernel before it."""
++    torch.cuda.synchronize()
++    print(f"[ws]   {msg}", flush=True)
++
++
++def _ws_lens80(B: int):
++    """The scored shapes' lengths: ctx 80000, agentic spread (uniform within +/- 7.5%)."""
++    return [int(80000 * (1 + 0.075 * (2 * ((i * 7) % 13) / 12 - 1))) for i in range(B)]
++
++
++_WS_LENS_A = [9000, 1025, 70, 4097, 1023, 8]
++_WS_LENS_B = [129, 66, 195, 260, 69, 70, 71, 9, 15, 8, 64, 65, 3000]
++# (name, lens, kv_scale, grid, coherent, second eager call). Stage 5's 19-case bisect table plus a 100-tile single request
++# (many ring wraps and barrier phase flips) and a 2-grid-CTA multi-request case.
++_WS_CASES = [("canary", [70, 13], 1.0, 4, False, False),
++             ("single-tile-lens_a-device", _WS_LENS_A, 1.0, None, False, True),
++             ("lens_a-grid3-kv1", _WS_LENS_A, 1.0, 3, False, False),
++             ("kv0.25-grid264", _WS_LENS_A, 0.25, 264, False, False),
++             ("B1-2t", [128], 1.0, 1, False, False),
++             ("B1-4t", [256], 1.0, 1, False, False),
++             ("B1-17t", [1088], 1.0, 1, False, False),
++             ("B1-34t", [2176], 1.0, 1, False, False),
++             ("B1-100t", [6400], 1.0, 1, False, False),
++             ("B1-4t-kv0.25", [256], 0.25, 1, False, False),
++             ("cross-2req-4t", [128, 128], 1.0, 1, False, False),
++             ("mid-1t-B1-3t-grid3", [192], 1.0, 3, False, False),
++             ("mid-1t-2req-grid3", [128, 128], 1.0, 3, False, False),
++             ("lens_a-grid3-kv0.25", _WS_LENS_A, 0.25, 3, False, False),
++             ("lens_a-grid7-kv1", _WS_LENS_A, 1.0, 7, False, False),
++             ("lens_a-grid61-kv0.25", _WS_LENS_A, 0.25, 61, False, False),
++             ("lens_b-device", _WS_LENS_B, 1.0, None, False, True),
++             ("lens_b-grid7-kv0.25", _WS_LENS_B, 0.25, 7, False, False),
++             ("coherent-lens_a-grid3", _WS_LENS_A, 1.0, 3, True, False),
++             ("coherent-lens_a-device", _WS_LENS_A, 1.0, None, True, False)]
++_WS_QUICK = ("canary", "single-tile-lens_a-device")
++
++
++def _ws_selfcheck(v: int, quick: bool):
++    """In-process eager check of variant v on synthetic data through kernel_fn (every launch traced: sync + print, the device
++    ERROR WORD printed per case). quick: the canary and the device-grid case only. Full: every case (all run even after a
++    failure, so one check bisects the failing variable), a second eager call on some, then the two-state alternating graph replay.
++    Returns (ok, reason)."""
++    global _WS_FORCE, _WS_GRID, _WS_HOOK, _WS_ANYB, _WS_KEEP
++    gen = torch.Generator(device="cuda").manual_seed(4321)
++    dev = torch.device("cuda")
++    tag = f"{_WS_NAMES[v]}{' quick' if quick else ''}"
++    _WS_FORCE = v
++    _WS_ANYB = True
++    results, fails = {}, []
++    try:
++        for name, lens, kv_scale, grid, coherent, second in _WS_CASES:
++            if quick and name not in _WS_QUICK:
++                continue
++            data = _wsv_synth(lens, kv_scale, gen, dev, coherent)
++            assert _ws_variant(data["config"]) == v
++            _WS_GRID = grid
++            _WS_ERR.zero_()
++            keep = {}
++            _WS_KEEP = keep
++            print(f"[ws] {tag} {name}: B={len(lens)} kv_scale={kv_scale} grid={grid or 'device'} coherent={coherent}; "
++                  f"launching kernel_fn (pre-attention first)", flush=True)
++            _WS_HOOK = _ws_trace
++            out = kernel_fn(data)
++            _WS_HOOK = None
++            _WS_KEEP = None
++            torch.cuda.synchronize()
++            flag = int(_WS_ERR.item())
++            ref = _wsv_ref(data, lens)
++            err = float((out.float() - ref).norm() / ref.norm())
++            finite = bool(torch.isfinite(out).all())
++            passed = finite and err < 3e-2 and not flag
++            results[name] = passed
++            print(f"[ws] {tag} {name}: rel L2 {err:.2e}, finite {finite}, ERROR WORD {flag} "
++                  f"(1: not sm_90a, 2: mbarrier wait timeout, 4: shape) -> {'PASS' if passed else 'FAIL'}", flush=True)
++            if not passed:
++                fails.append((name, err, finite, flag))
++                continue
++            if second and not quick:
++                again = kernel_fn(data)
++                torch.cuda.synchronize()
++                same = bool(torch.equal(again, out))
++                print(f"[ws] {tag} {name}: second eager call identical {same}", flush=True)
++                if not same or int(_WS_ERR.item()):
++                    fails.append((name + " (second call)", float("nan"), True, int(_WS_ERR.item())))
++        print(f"[ws] {tag} BISECT table: " + ", ".join(f"{k}={'ok' if r else 'FAIL'}" for k, r in results.items()), flush=True)
++        if fails:
++            n, e, f, w = fails[0]
++            return False, f"{n}, rel L2 {e:.2e}, finite {f}, error word {w}"
++        if not quick:
++            ok2, why2 = _ws_two_state_check(v, gen, dev)
++            if not ok2:
++                return False, why2
++    except Exception as e:
++        print(f"[ws] {tag} self-check raised: {e!r}", flush=True)
++        return False, f"raised {type(e).__name__}"
++    finally:
++        _WS_GRID = None
++        _WS_HOOK = None
++        _WS_KEEP = None
++        _WS_ANYB = False
++        _WS_FORCE = None
++        try:  # a failed or aborted case may leave tickets dirty: clean them so the next variant starts from 0
++            torch.cuda.synchronize()
++            _ws_tickets(dev).zero_()
++        except Exception as e:
++            print(f"[ws] ticket re-zero after self-check raised: {e!r}", flush=True)
++    return True, None
++
++
++def _ws_refill(data, gen, kv_scale=1.0) -> None:
++    """Overwrite a state's qkv / k_cache / v_cache IN PLACE with fresh random values (the judge refills its inputs between
++    repetitions); page table, lengths and every pointer stay."""
++    dev = data["qkv"].device
++    data["qkv"].copy_((2 * torch.randn(data["qkv"].shape, generator=gen, device=dev)).to(torch.bfloat16))
++    data["k_cache"].copy_((torch.randn(data["k_cache"].shape, generator=gen, device=dev) / kv_scale).to(FP8))
++    data["v_cache"].copy_((torch.randn(data["v_cache"].shape, generator=gen, device=dev) / kv_scale).to(FP8))
++
++
++def _ws_two_state_check(v: int, gen, dev):
++    """Two states, one CUDA graph each (variant v forced), alternating replays with refilled inputs (A B A B B A), each compared
++    with the fp32 reference of its own state. Nothing in the kernel may hold a pointer into either state."""
++    tag = _WS_NAMES[v]
++    states = [_wsv_synth(_WS_LENS_A, 1.0, gen, dev) for _ in range(2)]
++    assert _ws_variant(states[0]["config"]) == v
++    _WS_ERR.zero_()
++    for i, d in enumerate(states):
++        print(f"[ws] {tag} two-state: eager warm-up of state {'AB'[i]}", flush=True)
++        side = torch.cuda.Stream()
++        side.wait_stream(torch.cuda.current_stream())
++        with torch.cuda.stream(side):
++            kernel_fn(d)
++        torch.cuda.current_stream().wait_stream(side)
++        torch.cuda.synchronize()
++    graphs, outs = [], []
++    for i, d in enumerate(states):
++        print(f"[ws] {tag} two-state: capturing graph of state {'AB'[i]}", flush=True)
++        g = torch.cuda.CUDAGraph()
++        with torch.cuda.graph(g):
++            outs.append(kernel_fn(d))
++        torch.cuda.synchronize()
++        graphs.append(g)
++    worst = 0.0
++    for step, i in enumerate((0, 1, 0, 1, 1, 0)):
++        _ws_refill(states[i], gen)
++        outs[i].fill_(float("nan"))
++        print(f"[ws] {tag} two-state: step {step} refilled state {'AB'[i]}, replaying its graph", flush=True)
++        graphs[i].replay()
++        torch.cuda.synchronize()
++        ref = _wsv_ref(states[i], _WS_LENS_A)
++        err = float((outs[i].float() - ref).norm() / ref.norm())
++        flag = int(_WS_ERR.item())
++        fin = bool(torch.isfinite(outs[i]).all())
++        worst = max(worst, err)
++        print(f"[ws] {tag} two-state: step {step} state {'AB'[i]} rel L2 {err:.2e}, finite {fin}, error word {flag}", flush=True)
++        if not fin or err >= 3e-2 or flag:
++            return False, f"two-state graph replay step {step} (state {'AB'[i]}): rel L2 {err:.2e}, finite {fin}, error word {flag}"
++    print(f"[ws] {tag} two-state graph replays PASS (worst rel L2 {worst:.2e})", flush=True)
++    del graphs, outs
++    return True, None
++
++
++def _ws_capture(fn):
++    side = torch.cuda.Stream()
++    side.wait_stream(torch.cuda.current_stream())
++    with torch.cuda.stream(side):
++        fn()
++    torch.cuda.current_stream().wait_stream(side)
++    torch.cuda.synchronize()
++    g = torch.cuda.CUDAGraph()
++    with torch.cuda.graph(g):
++        o = fn()
++    torch.cuda.synchronize()
++    return g, o
++
++
++def _ws_quartiles(xs):
++    s = sorted(xs)
++    n = len(s)
++    return s[n // 2], s[(3 * n) // 4] - s[n // 4]
++
++
++def _ws_gate_band(B: int, cands, gen, flush, scratch):
++    """Two interleaved rounds (40 replays each, cold L2 via a 256 MB flush, empty-graph baseline subtracted) of master's
++    ACTUALLY ROUTED path (kernel_fn with no variant forced and an empty route) against each candidate variant through kernel_fn,
++    at batch B with ~80K-token contexts. Prints both rounds' medians / IQRs per cell. Returns {variant: (min ratio, passed, text)}."""
++    global _WS_FORCE
++    lens = _ws_lens80(B)
++    data = _wsv_synth(lens, 1.0, gen, torch.device("cuda"))
++    _WS_ERR.zero_()
++    graphs, outs = {}, {}
++    _WS_FORCE = None
++    graphs["master"], outs["master"] = _ws_capture(lambda: kernel_fn(data))
++    for v in cands:
++        _WS_FORCE = v
++        graphs[v], outs[v] = _ws_capture(lambda: kernel_fn(data))
++    _WS_FORCE = None
++    graphs["empty"], _ = _ws_capture(lambda: scratch.add_(0.0))
++    # A captured graph has not run: its output buffers are uninitialised until it is replayed. Replay each once before the
++    # agreement / finiteness / error-word reads below (otherwise the gate compares garbage and can never pass).
++    for k in graphs:
++        graphs[k].replay()
++    torch.cuda.synchronize()
++    om = outs["master"].float()
++    agree, fin = {}, {}
++    for v in cands:
++        ov = outs[v].float()
++        agree[v] = float((ov - om).norm() / om.norm())
++        fin[v] = bool(torch.isfinite(ov).all())
++    eword = int(_WS_ERR.item())
++    rounds = []
++    for rnd in range(2):
++        times = {k: [] for k in graphs}
++        order = list(graphs.keys())
++        for rep in range(40):
++            for label in (order if rep % 2 == 0 else order[::-1]):
++                flush.zero_()
++                e0, e1 = torch.cuda.Event(enable_timing=True), torch.cuda.Event(enable_timing=True)
++                e0.record()
++                graphs[label].replay()
++                e1.record()
++                times[label].append((e0, e1))
++        torch.cuda.synchronize()
++        us = {k: [1000.0 * a.elapsed_time(b) for a, b in t] for k, t in times.items()}
++        base = _ws_quartiles(us["empty"])[0]
++        rounds.append({k: (_ws_quartiles(us[k])[0] - base, _ws_quartiles(us[k])[1]) for k in us if k != "empty"})
++    res = {}
++    for v in cands:
++        ratios, iqr_ok, parts = [], True, []
++        for rnd, rd in enumerate(rounds):
++            mm, mi = rd["master"]
++            cm, ci = rd[v]
++            ratio = mm / cm if cm > 0 else 0.0
++            ratios.append(ratio)
++            iqr_ok = iqr_ok and ci <= _WS_IQR_MAX * max(mi, _WS_IQR_FLOOR_US)
++            parts.append(f"round {rnd + 1}: master {mm:.1f} us (IQR {mi:.1f}) vs {_WS_NAMES[v]} {cm:.1f} us (IQR {ci:.1f}) -> {ratio:.3f}x")
++        passed = (min(ratios) >= _WS_THRESH and iqr_ok and agree[v] < 3e-2 and fin[v] and not eword)
++        txt = (f"B={B} {_WS_NAMES[v]}: " + "; ".join(parts) + f"; candidate IQR <= {_WS_IQR_MAX}x master's: {iqr_ok}; vs master rel L2 "
++               f"{agree[v]:.2e}, finite {fin[v]}, error word {eword}; kernels: pre-attention (Triton) + {_WS_KERNELS[v]} vs "
++               f"master pre-attention + FA3 + prepare + combine + _paired_norm_gate_kernel -> {'CLEARS' if passed else 'fails'} "
++               f"(needs min ratio >= {_WS_THRESH} in both rounds)")
++        _say("[ws-gate] " + txt)
++        res[v] = (min(ratios), passed, txt)
++    del graphs, outs, data
++    return res
++
++
++def _ws_diag_gather(v: int, B: int, gen, flush) -> None:
++    """Gather-only roofline DIAG: the same ring and producer, consumers only wait FULL / arrive EMPTY. Printed as achieved TB/s
++    over the K+V bytes of the batch (256 B per token); master decode's gather runs at ~3.0 TB/s."""
++    global _WS_GO
++    lens = _ws_lens80(B)
++    data = _wsv_synth(lens, 1.0, gen, torch.device("cuda"))
++    cfg = data["config"]
++    qkv = data["qkv"].reshape(B * 8, -1)
++    q = torch.zeros((B * 8, 16, 64), dtype=FP8, device=qkv.device)
++    sms = _sm_count(qkv.device)
++    grid = (2 if v == 2 else 1) * sms
++    ws_acc = torch.empty((grid + B, 8, 16, 64), dtype=torch.float32, device=qkv.device)
++    ws_ml = torch.empty((grid + B, 2, 8 * 16), dtype=torch.float32, device=qkv.device)
++    out = torch.empty((B, 8, 1024), dtype=torch.bfloat16, device=qkv.device)
++    _WS_GO = 1
++    try:
++        g = _ws_capture(lambda: _ws_launch(data, q, qkv, v, out, ws_acc, ws_ml, grid))[0]
++        ts = []
++        for _ in range(20):
++            flush.zero_()
++            e0, e1 = torch.cuda.Event(enable_timing=True), torch.cuda.Event(enable_timing=True)
++            e0.record()
++            g.replay()
++            e1.record()
++            torch.cuda.synchronize()
++            ts.append(1000.0 * e0.elapsed_time(e1))
++        med = sorted(ts)[len(ts) // 2]
++    finally:
++        _WS_GO = 0
++    nbytes = sum(lens) * 256
++    _say(f"[ws-diag] gather-only roofline {_WS_NAMES[v]} B={B} x ~80K: {med:.1f} us graph replay (incl. ~4 us launch), "
++         f"{nbytes / (med * 1e-6) / 1e12:.2f} TB/s over {nbytes / 1e6:.0f} MB (master decode gather ~3.0 TB/s; floor 4.8)")
++    del g, data
++
++
++def _ws_diag_phases(B: int, gen) -> None:
++    """PHASE DIAG: the ws64 kernel's PHASE instantiation (clock64 stamps, CTA 0), one eager launch, never timed or routed."""
++    global _WS_DBG, _WS_FORCE
++    lens = _ws_lens80(B)
++    data = _wsv_synth(lens, 1.0, gen, torch.device("cuda"))
++    _WS_DBG = torch.zeros(16, dtype=torch.float32, device="cuda")
++    _WS_FORCE = 3
++    try:
++        _WS_ERR.zero_()
++        kernel_fn(data)  # warm (module load / first launch)
++        torch.cuda.synchronize()
++        _WS_DBG.zero_()
++        e0, e1 = torch.cuda.Event(enable_timing=True), torch.cuda.Event(enable_timing=True)
++        e0.record()
++        kernel_fn(data)
++        e1.record()
++        torch.cuda.synchronize()
++        d = _WS_DBG.cpu().tolist()
++        ms = e0.elapsed_time(e1)
++    finally:
++        _WS_FORCE = None
++        _WS_DBG = None
++    n = max(d[0], 1.0)
++    for g in range(2):
++        tot = max(d[11 + g], 1.0)
++        nsc = ms * 1e6 / tot  # cycles -> ns, calibrated on this CTA's own total (CTA 0 spans ~the whole launch)
++        names = ("FULL wait", "transpose", "S wait", "softmax+issue", "PV wait")
++        _say(f"[ws-diag] PHASE consumer WG{g} (CTA 0, {int(n)} tiles, ~{nsc:.3f} ns/cycle): "
++             + ", ".join(f"{nm} {d[1 + 5 * g + i] / n:.0f} cyc ({d[1 + 5 * g + i] / n * nsc:.0f} ns)/tile" for i, nm in enumerate(names))
++             + f"; total {tot / n:.0f} cyc ({tot / n * nsc:.0f} ns)/tile")
++    nsc = ms * 1e6 / max(d[15], 1.0)
++    _say(f"[ws-diag] PHASE producer (CTA 0): EMPTY wait {d[13] / n:.0f} cyc ({d[13] / n * nsc:.0f} ns)/tile, "
++         f"issue {d[14] / n:.0f} cyc ({d[14] / n * nsc:.0f} ns)/tile, total {d[15] / n:.0f} cyc/tile; launch {ms * 1e3:.1f} us eager")
++
++
++def _ws_setup() -> None:
++    """Build, image check, quick check per variant, two-round gate per band, full self-check of the routed variants, then the
++    DIAGs. Any failure lands on master's paired FA3 path; every phase has its own start deadline. The compact PATH CHOSEN / GATE
++    summary is repeated as the LAST lines (the judge keeps only the log tail)."""
++    global _WSX, _WS_ERR, _WS_ROUTE, _WS_FORCE, _WS_GO, _WS_DBG, _WS_GRID, _WS_HOOK, _WS_KEEP, _WS_ANYB
++    summary = []
++    if torch.cuda.get_device_capability() != (9, 0):
++        _say("PATH CHOSEN: full verify B=16/B=32: master FA3 paired heads (wsv1 skipped: not an sm_90 device)")
++        return
++    if _ws_late("build", _WS_BUILD_BY):
++        _say("PATH CHOSEN: full verify B=16/B=32: master FA3 paired heads (wsv1 build skipped: deadline)")
++        return
++    ext, reason = _build_ws()
++    if ext is None:
++        _say(f"PATH CHOSEN: full verify B=16/B=32: master FA3 paired heads (wsv1 {reason})")
++        return
++    _WSX = ext
++    _WS_ERR = torch.zeros(1, dtype=torch.int32, device="cuda")
++    _ws_tickets(torch.device("cuda"))
++    usable = _ws_image_check()
++    ok = {}
++    try:
++        for v in (0, 1, 2):
++            if usable[v] is not None:
++                summary.append(f"GATE {_WS_NAMES[v]}: refused ({usable[v]})")
++                continue
++            if _ws_late(f"quick check {_WS_NAMES[v]}", _WS_QUICK_BY):
++                summary.append(f"GATE {_WS_NAMES[v]}: skipped: deadline (quick check)")
++                continue
++            good, why = _ws_selfcheck(v, True)
++            if good:
++                ok[v] = True
++            else:
++                summary.append(f"GATE {_WS_NAMES[v]}: quick check FAILED ({why})")
++        best = {}
++        if ok and not _ws_late("gate timing", _WS_GATE_BY):
++            gen = torch.Generator(device="cuda").manual_seed(99)
++            flush = torch.empty(64 << 20, dtype=torch.float32, device="cuda")  # 256 MB > L2
++            scratch = torch.zeros(16, dtype=torch.float32, device="cuda")
++            for B in (16, 32):
++                try:
++                    res = _ws_gate_band(B, sorted(ok), gen, flush, scratch)
++                except Exception as e:
++                    _say(f"[ws-gate] B={B} raised ({e!r}): band stays on master")
++                    summary.append(f"GATE B={B}: raised {type(e).__name__}")
++                    continue
++                order = sorted((v for v in res if res[v][1]), key=lambda v: -res[v][0])
++                for v in res:
++                    summary.append(f"GATE B={B} {_WS_NAMES[v]}: min ratio {res[v][0]:.3f}x -> {'clears' if res[v][1] else 'fails'}")
++                best[B] = order
++            del flush
++        full = {}
++        route = {}
++        for B in (16, 32):
++            for v in best.get(B, []):
++                if v not in full:
++                    if _ws_late(f"full self-check {_WS_NAMES[v]}", _WS_FULL_BY):
++                        full[v] = False
++                        summary.append(f"GATE {_WS_NAMES[v]}: full self-check skipped: deadline")
++                    else:
++                        good, why = _ws_selfcheck(v, False)
++                        full[v] = good
++                        if not good:
++                            summary.append(f"GATE {_WS_NAMES[v]}: full self-check FAILED ({why})")
++                if full[v]:
++                    route[B] = v
++                    break
++        _WS_ROUTE = MappingProxyType(route)
++        # DIAGs (informational, never gating) once the decision is frozen.
++        gen = torch.Generator(device="cuda").manual_seed(31)
++        if not _ws_late("roofline / phase DIAGs", _WS_DIAG_BY):
++            flush = torch.empty(64 << 20, dtype=torch.float32, device="cuda")  # 256 MB > L2
++            for v in sorted(ok):
++                try:
++                    _ws_diag_gather(v, 16, gen, flush)
++                except Exception as e:
++                    _say(f"[ws-diag] gather-only {_WS_NAMES[v]} raised {e!r}")
++            del flush
++            if usable.get(3) is None and 0 in ok:
++                try:
++                    _ws_diag_phases(16, gen)
++                except Exception as e:
++                    _say(f"[ws-diag] PHASE DIAG raised {e!r}")
++    except Exception as e:  # never raise at import: master's path everywhere
++        _WS_ROUTE = MappingProxyType({})
++        summary.append(f"setup raised {type(e).__name__}")
++        _say(f"[ws] setup raised {e!r}: every band on master")
++    finally:
++        # Setup-only overrides must never survive into the timed path (a gate exception can leave a forced variant behind).
++        _WS_FORCE, _WS_GO, _WS_DBG, _WS_GRID, _WS_HOOK, _WS_KEEP, _WS_ANYB = None, 0, None, None, None, None, False
++        try:
++            _ws_tickets(torch.device("cuda")).zero_()
++            torch.cuda.synchronize()
++        except Exception as e:
++            _say(f"[ws] ticket re-zero raised: {e!r}")
++    for B in (16, 32):
++        v = _WS_ROUTE.get(B)
++        summary.append(f"PATH CHOSEN: full verify B={B} band ({'1..24' if B == 16 else '25..64'}): "
++                       + (f"wsv1 {_WS_NAMES[v]} ({_WS_KERNELS[v]})" if v is not None else "master FA3 paired heads (wsv1 did not clear every gate)"))
++    for line in summary:
++        _say("[ws-summary] " + line if not line.startswith("PATH CHOSEN") else line)
++
++
+ def kernel_fn(data: Inputs) -> torch.Tensor:
+     cfg = data["config"]
+     # Sliding decode at every batch (config-only predicate): the whole step in one fused launch.
+@@ -1739,7 +3480,11 @@ def kernel_fn(data: Inputs) -> torch.Tensor:
+     if splitkv and _fused_gate(cfg):  # FUSED_PRE: full decode 1 < B <= 64, pre-attention folded into the kernel
+         return _full_decode_skf(data, qkv)
+     pseudo = _ps_gate(cfg)  # sliding verify band routed to the stream-K pseudo-decode kernel
+-    paired = window == 0 and hkv % 2 == 0 and batch > 1 and not splitkv
++    # Full verify at 1 < batch <= 64 (tp8, page 1): the warp-specialized wgmma path (module muse_full_verify_wgmma_ws_v1) takes
++    # the unpaired query; its config-only predicate is None unless a variant passed its checks and the two-round gate for this
++    # batch band, which leaves these shapes on the paired FA3 path below.
++    wsv = _ws_variant(cfg)
++    paired = window == 0 and hkv % 2 == 0 and batch > 1 and not splitkv and wsv is None
+     g = hq // hkv
+     q = torch.empty((tokens, hq, 2 * d if paired else d), dtype=FP8, device=device)
+     inv_freq = _inv_freq(theta, d, device) if theta else data["k_scale"]  # unused when ROPE is off
+@@ -1754,6 +3499,8 @@ def kernel_fn(data: Inputs) -> torch.Tensor:
+         return _full_decode_splitkv(data, q, qkv)
+     if pseudo:
+         return _sliding_verify_pseudo(data, q, qkv)
++    if wsv is not None:
++        return _ws_run(data, q, qkv, wsv)
+ 
+     # The judge's scheduler_metadata was built for the unpaired geometry, so on the paired path
+     # it is not passed (FA3 builds its own schedule from the paged lengths).
+@@ -5919,3 +7666,9 @@ if torch.cuda.is_available():
+     except Exception as _e:  # never raise at import: sliding decode keeps master exactly
+         _SD_ROUTE = MappingProxyType({})
+         _say(f"PATH CHOSEN: sliding decode master (fallback: setup raised {_e!r})")
++    # Last: master's final routed paths are all in place, so the wsv1 gate times the real incumbent. Never raises.
++    try:
++        _ws_setup()
++    except Exception as _e:
++        _WS_ROUTE = MappingProxyType({})
++        _say(f"PATH CHOSEN: full verify B=16/B=32: master FA3 paired heads (wsv1 setup raised {_e!r})")
