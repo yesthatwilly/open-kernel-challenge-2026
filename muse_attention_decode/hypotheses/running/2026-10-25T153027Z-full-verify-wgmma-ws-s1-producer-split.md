@@ -84,7 +84,7 @@ review: proceed
 status: running
 review_at: 2026-10-25T212521Z
 review_companions: null
-stage: implemented
+stage: dispatched
 claimed_at: 2026-10-25T212552Z
 base_sha: b3b8b66c3106acbf5b6caf1c61d24bda67cd95d5
 base_blob: 6d6afa4722731ceb9cb8216d0334a03f1a96ad2b
@@ -101,6 +101,8 @@ submission_blob: 680eba9fc5edd19dfbbeae4c15929ab6eca23fce
 lint_warnings: 82
 attempt_file: 2026-10-26T012538Z-check-full-verify-wgmma-ws-s1-producer-split.md
 prepared_at: 2026-10-26T012538Z
+job: e701c51d7b944a13
+dispatched_at: 2026-10-26T012615Z
 ---
 
 # full-verify-wgmma-ws-s1-producer-split
