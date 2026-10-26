@@ -70,10 +70,10 @@ controls_for: null
 rewrite_stage: 1
 replaces: "sliding verify (q_len 8, page 1, tp8) at 1<=B<=32: prepare_varlen_num_blocks + FA3 main + FlashAttnFwdCombine + sglang norm_gate (B=16/32), and the PSEUDO sk route (B=1)"
 review: proceed
-status: running
+status: done
 review_at: 2026-10-25T212855Z
 review_companions: null
-stage: dispatched
+stage: harvested
 claimed_at: 2026-10-25T212905Z
 base_sha: 29d5f864b053aab03e8c54ff87dd01db6442070e
 base_blob: 6d6afa4722731ceb9cb8216d0334a03f1a96ad2b
@@ -92,6 +92,13 @@ attempt_file: 2026-10-26T012537Z-check-sliding-verify-wgmma-window-s1.md
 prepared_at: 2026-10-26T012537Z
 job: cd01da3909cc4f4c
 dispatched_at: 2026-10-26T012615Z
+outcome: neutral
+verdict_detail: within-ci
+speedup: 1.516417328039991
+speedup_ci: [1.4936710681193912, 1.5391635879605907]
+harvested_at: 2026-10-26T015634Z
+best_at_harvest: 1.5295495462227864
+promotion: null
 ---
 
 # sliding-verify-wgmma-window-s1
@@ -197,3 +204,36 @@ Checked and sound:
 - The self-check reference matches the kernel's seq convention (cache_seqlens = lens + 8). Shared memory is about 100 KB, so 2 CTAs/SM fits.
 
 Residual risk: the speed is unmeasured at low occupancy (about 2 tiles per CTA), so the 1.05x two-round gate may leave a band on master; the 480 s start rule drops late phases to master with PATH CHOSEN lines rather than failing.
+
+## Result
+
+- job `cd01da3909cc4f4c` (check), status done, passed True, tests 16/16
+- speedup 1.5164x, 95% CI [1.4937, 1.5392], score 2483.6830405176397 µs vs SGLang 3766.3 µs
+- best at harvest: {"speedup": 1.5295495462227864, "ci": [1.5066063030294445, 1.552492789416128], "job": "8713665f3064462c"}; base result: muse_attention_decode/hypotheses/done/neutral/combo-b1-chain-c320-fused-pre-pdl.result.json
+- **outcome: neutral** (within-ci)
+- files: `muse_attention_decode/hypotheses/done/neutral/sliding-verify-wgmma-window-s1.result.json`, `muse_attention_decode/hypotheses/done/neutral/sliding-verify-wgmma-window-s1.patch`; branch `hyp/muse_attention_decode/sliding-verify-wgmma-window-s1`
+
+## Attribution
+
+| shape | w | base µs | hyp µs | delta | verdict |
+|---|---|---|---|---|---|
+| batch=1 ctx=80000 dist=soft heads=tp8 layer=sliding load=decode_1 page=1 | 46 | 12.1 | 10.85 | 1.1261 | gained |
+| batch=1 ctx=80000 dist=coherent heads=tp8 layer=full load=decode_1 page=1 | 16 | 17.39 | 22.77 | 0.7571 | lost |
+| batch=16 ctx=80000 dist=soft heads=tp8 layer=sliding load=decode_16 page=1 spread=agentic | 46 | 15.46 | 15.56 | 1.0013 | flat |
+| batch=16 ctx=80000 dist=coherent heads=tp8 layer=full load=decode_16 page=1 spread=agentic | 16 | 110.77 | 111.46 | 0.9895 | flat |
+| batch=32 ctx=80000 dist=soft heads=tp8 layer=sliding load=decode_32 page=1 spread=agentic | 46 | 17.46 | 17.86 | 0.9769 | flat |
+| batch=32 ctx=80000 dist=coherent heads=tp8 layer=full load=decode_32 page=1 spread=agentic | 16 | 226.89 | 228.29 | 0.994 | flat |
+| batch=1 ctx=80000 dist=soft heads=tp8 layer=sliding load=verify_1 page=1 q_len=8 | 46 | 13.23 | 13.43 | 0.998 | flat |
+| batch=1 ctx=80000 dist=coherent heads=tp8 layer=full load=verify_1 page=1 q_len=8 | 16 | 30.27 | 29.95 | 1.0016 | flat |
+| batch=16 ctx=80000 dist=soft heads=tp8 layer=sliding load=verify_16 page=1 q_len=8 spread=agentic | 46 | 22.62 | 22.93 | 0.9862 | flat |
+| batch=16 ctx=80000 dist=coherent heads=tp8 layer=full load=verify_16 page=1 q_len=8 spread=agentic | 16 | 162.46 | 163.34 | 0.9946 | flat |
+| batch=32 ctx=80000 dist=soft heads=tp8 layer=sliding load=verify_32 page=1 q_len=8 spread=agentic | 46 | 29.01 | 28.54 | 1.0085 | flat |
+| batch=32 ctx=80000 dist=coherent heads=tp8 layer=full load=verify_32 page=1 q_len=8 spread=agentic | 16 | 301.99 | 301.12 | 0.9991 | flat |
+
+gained on sliding decode_1; lost on full decode_1. Expected hit: 2/5. Noise ±1.5%.
+
+## Follow-ups
+
+- rewrite stage 1 of `sliding verify (q_len 8, page 1, tp8) at 1<=B<=32: prepare_varlen_num_blocks + FA3 main + FlashAttnFwdCombine + sglang norm_gate (B=16/32), and the PSEUDO sk route (B=1)`: read the replaced kernels' own us per shape (profile top_kernels) against the incumbent and the floor, and check which Milestone it reached. The next stage is `/hypothesize muse_attention_decode "<what to fix or tune>" --kind rewrite --depends-on sliding-verify-wgmma-window-s1 --stage 2`; a slow or failed first cut is the expected start, not a do-not-retry.
+- within-ci: the change is not proven either way; a stacked hypothesis (`depends_on: sliding-verify-wgmma-window-s1`) that adds a further change in the same area is the only way to learn more.
+

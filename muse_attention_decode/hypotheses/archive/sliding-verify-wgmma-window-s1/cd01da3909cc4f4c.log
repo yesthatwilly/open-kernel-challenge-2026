@@ -1,0 +1,132 @@
+lidewin_verify_wgmma_kernel<ticket> grid 7 window 2048
+[sw] B=2 lens 5/80000 grid 7: slidewin_verify_wgmma_kernel returned, error word 0
+[sw] B=2 lens 5/80000 grid 7: rel L2 5.57e-03, finite True -> ok
+[sw] B=5 ragged lens 0/7/2047/2048/60000 kv 0.25 grid device: launching _pre_attention_kernel
+[sw] B=5 ragged lens 0/7/2047/2048/60000 kv 0.25 grid device: _pre_attention_kernel returned; launching slidewin_verify_wgmma_kernel<ticket> grid 264 window 2048
+[sw] B=5 ragged lens 0/7/2047/2048/60000 kv 0.25 grid device: slidewin_verify_wgmma_kernel returned, error word 0
+[sw] B=5 ragged lens 0/7/2047/2048/60000 kv 0.25 grid device: rel L2 4.92e-03, finite True -> ok
+[sw] B=16 ragged kv 1/64 grid device: launching _pre_attention_kernel
+[sw] B=16 ragged kv 1/64 grid device: _pre_attention_kernel returned; launching slidewin_verify_wgmma_kernel<ticket> grid 264 window 2048
+[sw] B=16 ragged kv 1/64 grid device: slidewin_verify_wgmma_kernel returned, error word 0
+[sw] B=16 ragged kv 1/64 grid device: rel L2 5.80e-03, finite True -> ok
+[sw] B=16 ragged kv 0.25 grid 3: launching _pre_attention_kernel
+[sw] B=16 ragged kv 0.25 grid 3: _pre_attention_kernel returned; launching slidewin_verify_wgmma_kernel<ticket> grid 3 window 2048
+[sw] B=16 ragged kv 0.25 grid 3: slidewin_verify_wgmma_kernel returned, error word 0
+[sw] B=16 ragged kv 0.25 grid 3: rel L2 8.35e-03, finite True -> ok
+[sw] B=16 ragged grid SM: launching _pre_attention_kernel
+[sw] B=16 ragged grid SM: _pre_attention_kernel returned; launching slidewin_verify_wgmma_kernel<ticket> grid 132 window 2048
+[sw] B=16 ragged grid SM: slidewin_verify_wgmma_kernel returned, error word 0
+[sw] B=16 ragged grid SM: rel L2 6.17e-03, finite True -> ok
+[sw] B=32 ragged kv 1/64 grid device: launching _pre_attention_kernel
+[sw] B=32 ragged kv 1/64 grid device: _pre_attention_kernel returned; launching slidewin_verify_wgmma_kernel<ticket> grid 264 window 2048
+[sw] B=32 ragged kv 1/64 grid device: slidewin_verify_wgmma_kernel returned, error word 0
+[sw] B=32 ragged kv 1/64 grid device: rel L2 4.62e-03, finite True -> ok
+[sw] B=32 ragged kv 0.25 grid 7: launching _pre_attention_kernel
+[sw] B=32 ragged kv 0.25 grid 7: _pre_attention_kernel returned; launching slidewin_verify_wgmma_kernel<ticket> grid 7 window 2048
+[sw] B=32 ragged kv 0.25 grid 7: slidewin_verify_wgmma_kernel returned, error word 0
+[sw] B=32 ragged kv 0.25 grid 7: rel L2 8.58e-03, finite True -> ok
+[sw] window=0 B=1 lens 5000 grid 3: launching _pre_attention_kernel
+[sw] window=0 B=1 lens 5000 grid 3: _pre_attention_kernel returned; launching slidewin_verify_wgmma_kernel<ticket> grid 3 window 0
+[sw] window=0 B=1 lens 5000 grid 3: slidewin_verify_wgmma_kernel returned, error word 0
+[sw] window=0 B=1 lens 5000 grid 3: rel L2 8.16e-03, finite True -> ok
+[sw] window=0 B=2 lens 100/3000 grid 7: launching _pre_attention_kernel
+[sw] window=0 B=2 lens 100/3000 grid 7: _pre_attention_kernel returned; launching slidewin_verify_wgmma_kernel<ticket> grid 7 window 0
+[sw] window=0 B=2 lens 100/3000 grid 7: slidewin_verify_wgmma_kernel returned, error word 0
+[sw] window=0 B=2 lens 100/3000 grid 7: rel L2 7.61e-03, finite True -> ok
+[sw] window=0 B=5 lens 0/7/63/64/4000 kv 0.25 grid device: launching _pre_attention_kernel
+[sw] window=0 B=5 lens 0/7/63/64/4000 kv 0.25 grid device: _pre_attention_kernel returned; launching slidewin_verify_wgmma_kernel<ticket> grid 264 window 0
+[sw] window=0 B=5 lens 0/7/63/64/4000 kv 0.25 grid device: slidewin_verify_wgmma_kernel returned, error word 0
+[sw] window=0 B=5 lens 0/7/63/64/4000 kv 0.25 grid device: rel L2 7.44e-03, finite True -> ok
+[sw] tickets after the self-check: sum 0
+[sw] phase self-check: 0.2 s (import clock now 250 s)
+[sw] phase gate B=2..16: starting (import clock 250 s, deadline 430 s)
+[sw-gate] B=2..16 (B=16 x 80000): master's routed path (kernel_fn, sw route off) rel L2 vs fp32 6.55e-03, finite True
+[sw-gate] B=2..16: launching grid 32 (2b), 16.5 tiles per CTA (eager correctness run)
+[sw-gate] B=2..16: grid 32 (2b) returned: rel L2 vs fp32 7.10e-03, vs master 8.63e-03, finite True, error word 0 -> ok
+[sw-gate] B=2..16: launching grid 64 (4b), 8.2 tiles per CTA (eager correctness run)
+[sw-gate] B=2..16: grid 64 (4b) returned: rel L2 vs fp32 5.73e-03, vs master 7.45e-03, finite True, error word 0 -> ok
+[sw-gate] B=2..16: launching grid 128 (8b), 4.1 tiles per CTA (eager correctness run)
+[sw-gate] B=2..16: grid 128 (8b) returned: rel L2 vs fp32 4.63e-03, vs master 6.59e-03, finite True, error word 0 -> ok
+[sw-gate] B=2..16: launching grid 132 (sm), 4.0 tiles per CTA (eager correctness run)
+[sw-gate] B=2..16: grid 132 (sm) returned: rel L2 vs fp32 4.69e-03, vs master 6.74e-03, finite True, error word 0 -> ok
+[sw-gate] B=2..16: launching grid 264 (2sm), 2.0 tiles per CTA (eager correctness run)
+[sw-gate] B=2..16: grid 264 (2sm) returned: rel L2 vs fp32 3.85e-03, vs master 6.24e-03, finite True, error word 0 -> ok
+[sw] phase B=2..16 quick pass: starting (import clock 250 s, deadline 430 s)
+/opt/sglang/lib/python3.12/site-packages/torch/cuda/graphs.py:630: UserWarning: The CUDA Graph is empty. This usually means that the graph was attempted to be captured on wrong device or stream. (Triggered internally at /__w/pytorch/pytorch/aten/src/ATen/cuda/CUDAGraph.cpp:249.)
+  super().capture_end_pre()
+[sw-gate] B=2..16 quick pass (7 reps, cold L2, empty graph 2.9 us subtracted): master 24.4 us (IQR 0.6)
+[sw-gate] B=2..16: grid 32 (2b): pre-attn + kernel 55.2 us (master / it 0.441x); kernel only (no merge) 37.6 us; kernel + ticket merge 52.5 us; merge tail 14.9 us
+[sw-gate] B=2..16: grid 64 (4b): pre-attn + kernel 44.0 us (master / it 0.554x); kernel only (no merge) 22.6 us; kernel + ticket merge 40.2 us; merge tail 17.6 us
+[sw-gate] B=2..16: grid 128 (8b): pre-attn + kernel 43.8 us (master / it 0.557x); kernel only (no merge) 16.1 us; kernel + ticket merge 40.1 us; merge tail 24.0 us
+[sw-gate] B=2..16: grid 132 (sm): pre-attn + kernel 50.6 us (master / it 0.482x); kernel only (no merge) 15.0 us; kernel + ticket merge 47.0 us; merge tail 32.0 us
+[sw-gate] B=2..16: grid 264 (2sm): pre-attn + kernel 100.0 us (master / it 0.244x); kernel only (no merge) 14.9 us; kernel + ticket merge 96.6 us; merge tail 81.7 us
+[sw] phase B=2..16 quick pass: 0.0 s (import clock now 250 s)
+[sw] phase gate B=2..16: 0.1 s (import clock now 250 s)
+[sw] GATE B=2..16: quick pass best grid 128 (8b) 43.8 us vs master 24.4 us (< 1.0x): master kept
+[sw] phase gate B=17..32: starting (import clock 250 s, deadline 430 s)
+[sw-gate] B=17..32 (B=32 x 80000): master's routed path (kernel_fn, sw route off) rel L2 vs fp32 7.62e-03, finite True
+[sw-gate] B=17..32: launching grid 64 (2b), 16.5 tiles per CTA (eager correctness run)
+[sw-gate] B=17..32: grid 64 (2b) returned: rel L2 vs fp32 7.33e-03, vs master 9.70e-03, finite True, error word 0 -> ok
+[sw-gate] B=17..32: launching grid 128 (4b), 8.2 tiles per CTA (eager correctness run)
+[sw-gate] B=17..32: grid 128 (4b) returned: rel L2 vs fp32 5.86e-03, vs master 8.51e-03, finite True, error word 0 -> ok
+[sw-gate] B=17..32: launching grid 256 (8b), 4.1 tiles per CTA (eager correctness run)
+[sw-gate] B=17..32: grid 256 (8b) returned: rel L2 vs fp32 4.72e-03, vs master 7.71e-03, finite True, error word 0 -> ok
+[sw-gate] B=17..32: launching grid 132 (sm), 8.0 tiles per CTA (eager correctness run)
+[sw-gate] B=17..32: grid 132 (sm) returned: rel L2 vs fp32 5.71e-03, vs master 8.51e-03, finite True, error word 0 -> ok
+[sw-gate] B=17..32: launching grid 264 (2sm), 4.0 tiles per CTA (eager correctness run)
+[sw-gate] B=17..32: grid 264 (2sm) returned: rel L2 vs fp32 4.66e-03, vs master 7.79e-03, finite True, error word 0 -> ok
+[sw] phase B=17..32 quick pass: starting (import clock 250 s, deadline 430 s)
+[sw-gate] B=17..32 quick pass (7 reps, cold L2, empty graph 2.9 us subtracted): master 31.6 us (IQR 1.6)
+[sw-gate] B=17..32: grid 64 (2b): pre-attn + kernel 55.2 us (master / it 0.573x); kernel only (no merge) 37.3 us; kernel + ticket merge 50.6 us; merge tail 13.3 us
+[sw-gate] B=17..32: grid 128 (4b): pre-attn + kernel 45.2 us (master / it 0.701x); kernel only (no merge) 23.7 us; kernel + ticket merge 40.7 us; merge tail 17.0 us
+[sw-gate] B=17..32: grid 256 (8b): pre-attn + kernel 68.7 us (master / it 0.461x); kernel only (no merge) 23.0 us; kernel + ticket merge 63.2 us; merge tail 40.2 us
+[sw-gate] B=17..32: grid 132 (sm): pre-attn + kernel 48.4 us (master / it 0.654x); kernel only (no merge) 22.7 us; kernel + ticket merge 43.8 us; merge tail 21.2 us
+[sw-gate] B=17..32: grid 264 (2sm): pre-attn + kernel 72.8 us (master / it 0.435x); kernel only (no merge) 21.6 us; kernel + ticket merge 70.4 us; merge tail 48.8 us
+[sw] phase B=17..32 quick pass: 0.0 s (import clock now 250 s)
+[sw] phase gate B=17..32: 0.1 s (import clock now 250 s)
+[sw] GATE B=17..32: quick pass best grid 128 (4b) 45.2 us vs master 31.6 us (< 1.0x): master kept
+[sw] phase gate B=1: starting (import clock 250 s, deadline 430 s)
+[sw-gate] B=1 (B=1 x 80000): master's routed path (kernel_fn, sw route off) rel L2 vs fp32 1.66e-03, finite True
+[sw-gate] B=1: launching grid 2 (2b), 16.5 tiles per CTA (eager correctness run)
+[sw-gate] B=1: grid 2 (2b) returned: rel L2 vs fp32 7.40e-03, vs master 7.47e-03, finite True, error word 0 -> ok
+[sw-gate] B=1: launching grid 4 (4b), 8.2 tiles per CTA (eager correctness run)
+[sw-gate] B=1: grid 4 (4b) returned: rel L2 vs fp32 5.85e-03, vs master 5.90e-03, finite True, error word 0 -> ok
+[sw-gate] B=1: launching grid 8 (8b), 4.1 tiles per CTA (eager correctness run)
+[sw-gate] B=1: grid 8 (8b) returned: rel L2 vs fp32 4.52e-03, vs master 4.51e-03, finite True, error word 0 -> ok
+[sw-gate] B=1: launching grid 132 (sm), 0.2 tiles per CTA (eager correctness run)
+[sw-gate] B=1: grid 132 (sm) returned: rel L2 vs fp32 2.81e-03, vs master 2.70e-03, finite True, error word 0 -> ok
+[sw-gate] B=1: launching grid 264 (2sm), 0.1 tiles per CTA (eager correctness run)
+[sw-gate] B=1: grid 264 (2sm) returned: rel L2 vs fp32 2.81e-03, vs master 2.70e-03, finite True, error word 0 -> ok
+[sw] phase B=1 quick pass: starting (import clock 250 s, deadline 430 s)
+[sw-gate] B=1 quick pass (7 reps, cold L2, empty graph 2.9 us subtracted): master 15.1 us (IQR 0.9)
+[sw-gate] B=1: grid 2 (2b): pre-attn + kernel 52.0 us (master / it 0.290x); kernel only (no merge) 36.6 us; kernel + ticket merge 50.3 us; merge tail 13.7 us
+[sw-gate] B=1: grid 4 (4b): pre-attn + kernel 41.1 us (master / it 0.368x); kernel only (no merge) 21.5 us; kernel + ticket merge 38.2 us; merge tail 16.8 us
+[sw-gate] B=1: grid 8 (8b): pre-attn + kernel 40.9 us (master / it 0.369x); kernel only (no merge) 14.1 us; kernel + ticket merge 38.5 us; merge tail 24.4 us
+[sw-gate] B=1: grid 132 (sm): pre-attn + kernel 111.8 us (master / it 0.135x); kernel only (no merge) 7.5 us; kernel + ticket merge 108.6 us; merge tail 101.2 us
+[sw-gate] B=1: grid 264 (2sm): pre-attn + kernel 162.6 us (master / it 0.093x); kernel only (no merge) 7.5 us; kernel + ticket merge 158.8 us; merge tail 151.4 us
+[sw] phase B=1 quick pass: 0.0 s (import clock now 250 s)
+[sw] phase gate B=1: 0.0 s (import clock now 250 s)
+[sw] GATE B=1: quick pass best grid 8 (8b) 40.9 us vs master 15.1 us (< 1.0x): master kept
+PATH CHOSEN: sliding verify B=1: master's routed path (GATE B=1: quick pass best grid 8 (8b) 40.9 us vs master 15.1 us (< 1.0x): master kept)
+PATH CHOSEN: sliding verify B=2..16: master's routed path (GATE B=2..16: quick pass best grid 128 (8b) 43.8 us vs master 24.4 us (< 1.0x): master kept)
+PATH CHOSEN: sliding verify B=17..32: master's routed path (GATE B=17..32: quick pass best grid 128 (4b) 45.2 us vs master 31.6 us (< 1.0x): master kept)
+[sw] total setup 40.7 s (import clock 250 s)
+[recap] ---- every PATH CHOSEN / GATE result of this prepare ----
+[recap] PATH CHOSEN: full decode streamk+ticket v2
+[recap] PATH CHOSEN: sliding verify B=1: stream-K pseudo-decode <4 stages, ticket, PSEUDO> grid p8 (best printed variant >= 1.05x faster than FA3)
+[recap] PATH CHOSEN: sliding verify B=2..16: master FA3 (pseudo-decode not >= 1.05x faster than FA3 in the printed timings, or failed a check)
+[recap] PATH CHOSEN: sliding verify B=17..32: master FA3 (pseudo-decode not >= 1.05x faster than FA3 in the printed timings, or failed a check)
+[recap] PATH CHOSEN: full decode B=2..16: pre-attn + v2 (FUSED_PRE not >= 1.02x in the printed timings, or failed a check)
+[recap] PATH CHOSEN: full decode B=17..64: pre-attn + v2 (FUSED_PRE not >= 1.02x in the printed timings, or failed a check)
+[recap] PATH CHOSEN: full decode B=1: master two-level ticket + separate pre-attention kernel (FUSED_PRE has no two-level variant)
+[recap] PATH CHOSEN: full decode_1 streamk two-level
+[recap] PATH CHOSEN: every other shape (sliding decode bands not named above, other verify bands, page 64, dp): master path, unchanged
+[recap] PATH CHOSEN: sliding decode B=1: master (cluster C=16), not gated in this restack
+[recap] PATH CHOSEN: sliding decode B=2..16: master (Triton), not gated in this restack
+[recap] PATH CHOSEN: sliding decode B=17..32: [pre-attn + stream-K sk window] <4 stages, ticket, PSEUDO TOK=1> grid p4; head-to-head (pass 2) pair 19.4 us net vs cluster C=4 21.9 us net vs Triton 26.0 us net (cluster C=4 / pair 
+[recap] [sw] GATE B=2..16: quick pass best grid 128 (8b) 43.8 us vs master 24.4 us (< 1.0x): master kept
+[recap] [sw] GATE B=17..32: quick pass best grid 128 (4b) 45.2 us vs master 31.6 us (< 1.0x): master kept
+[recap] [sw] GATE B=1: quick pass best grid 8 (8b) 40.9 us vs master 15.1 us (< 1.0x): master kept
+[recap] PATH CHOSEN: sliding verify B=1: master's routed path (GATE B=1: quick pass best grid 8 (8b) 40.9 us vs master 15.1 us (< 1.0x): master kept)
+[recap] PATH CHOSEN: sliding verify B=2..16: master's routed path (GATE B=2..16: quick pass best grid 128 (8b) 43.8 us vs master 24.4 us (< 1.0x): master kept)
+[recap] PATH CHOSEN: sliding verify B=17..32: master's routed path (GATE B=17..32: quick pass best grid 128 (4b) 45.2 us vs master 31.6 us (< 1.0x): master kept)
