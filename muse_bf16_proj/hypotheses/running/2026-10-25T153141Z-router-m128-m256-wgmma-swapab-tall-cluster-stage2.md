@@ -73,6 +73,8 @@ submission_sha256: b2f154c5c2c58bb8fc92a8b25638a0d2f163174a1f11b6878a87704f39ffb
 norm_sha256: 0eb8636ce0288818fc5074ad949dcd28aae5a0a8919517e00fd2037c9a0838e3
 submission_blob: 6c52162510bc950d3e53196acc57c9df34525b5d
 lint_warnings: 38
+attempt_file: 2026-10-26T012540Z-check-router-m128-m256-wgmma-swapab-tall-cluster-stage2.md
+prepared_at: 2026-10-26T012540Z
 ---
 
 # router-m128-m256-wgmma-swapab-tall-cluster-stage2
