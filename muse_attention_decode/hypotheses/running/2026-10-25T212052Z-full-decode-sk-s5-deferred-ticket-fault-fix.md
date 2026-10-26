@@ -68,7 +68,7 @@ review: proceed
 status: running
 review_at: 2026-10-25T212956Z
 review_companions: null
-stage: claimed
+stage: implemented
 claimed_at: 2026-10-25T212957Z
 base_sha: d6a7be8f77635e613d619df51fa1de4dea8f9afd
 base_blob: 6d6afa4722731ceb9cb8216d0334a03f1a96ad2b
@@ -77,6 +77,12 @@ worktree: .worktrees/muse_attention_decode/full-decode-sk-s5-deferred-ticket-fau
 mode: null
 restack_of: null
 stale_base: null
+implemented_at: 2026-10-26T010812Z
+impl_commit: 1f1606ddfd698aad1cae3543a4307890889d36a6
+submission_sha256: 59ee0e087888e997328347f5a9ac23cf336319a41be37cc4261b067968f1e514
+norm_sha256: 07544ddb1060da31e6763941bb5cc4d3c0758fd842cdccc9c1cd7995c9cc784b
+submission_blob: 88bb41b311e7024af915b0e57604182680a03e7a
+lint_warnings: 74
 ---
 
 # full-decode-sk-s5-deferred-ticket-fault-fix
@@ -130,3 +136,48 @@ No companion is warranted. This is a kind: rewrite stage judged on the sk kernel
 - Did FUSED_PRE skF route either full band on this run? If it did, the DEFER result for that band is unread on the scored path.
 - With the gate at 1.02x (or 1.03x x2 per LESSONS), B=32 cannot route. Is the stage's real deliverable the printed B=16 DEFER-vs-v0 delta plus the SKIPM gap split, and should the expected decode_32 row be 'flat'?
 
+
+## Implementation notes
+
+Edited only `.worktrees/muse_attention_decode/full-decode-sk-s5-deferred-ticket-fault-fix/muse_attention_decode/submission.py` (+477/-23). Not run (no GPU on this node).
+
+**CUDA (module source `_SK_CUDA`)**
+- `splitkv_attn_sk_kernel` gets two new trailing template parameters after TOK: `DEFER` (6th) and `SKIPM` (7th), with `static_assert(!(DEFER && (PSEUDO || TWO)))` and an assert that SKIPM excludes PSEUDO/TWO/DEFER. Both are constexpr-dead for variants 0-7, so those instantiations compile as before.
+- Variant 8 = DEFER `<4, true, false, false, 8, true>`, variant 9 = SKIPM `<4, true, false, false, 8, false, true>` (diag only). Both are picked OUTSIDE `#ifdef SK_PSEUDO`, so the non-PSEUDO fallback build has them. `SK_MAX_VARIANT = 9` in both builds; `sk_variant_ok()` keeps 4-7 invalid in the non-PSEUDO build; `sk_is_pseudo(v) = 4..7` replaces `variant >= 4` in `sk_attn` and `sk_smem`, and `tok` is 1 only for 6/7. 8 and 9 are excluded from the pseudo / tok / B<=32 predicates and use `Lay<4>` smem. `done[]` is `SK_MAX_VARIANT + 1` = 10 entries (the review said 9, but variant 9 SKIPM needs index 9). `_SK_LABELS` extended to ten entries.
+- DEFER mechanism as in s4 (record c_b in `flag_s[2+ndef]`, `ndef < 2`, one fence + sync after the last tile, then the ticket draws). Device guard: a recorded request outside [0, B) or a CTA outside [c_lo, c_hi] does `atomicExch(ticket + 64, 1)` and skips the draw (no memory touched).
+- Error word: slot 64 of the existing static `_sk_ticket` int32 buffer (grown 64 -> 128 ints; slots >= 64 are used by nothing else, unlike gticket[2047], which is a live two-level slot). It is read only in prepare (`_s5_err_word`); `_rezero_tickets` clears it, and every ticket-sum check also trips on it.
+- Host asserts in `sk_attn` for variant 8 (2 <= B <= 64, ticket numel > 64 and >= B, ws rows >= grid + B with the right shape) and Python asserts (`_s5_assert_defer`) before every matrix DEFER launch; each matrix cell allocates its own workspaces from its grid and B.
+
+**Prepare (Python)**
+- Order: master's sk-diag first (unchanged except the added SKIPM variant-9 diag at B=16/32, one announced + synced eager launch first, then timed, with the fence-vs-merge gap split printed), then `_s5_phase()` LAST: `_s5_validate` (attrs of all sk variants incl. 4-7 local-byte warnings and the variant-0 identity line; 10 eager cases at B=2/16/32 + B=24x80000, no B=64; two-state alternating replays at B=16 for both grids, replaying pre-attn + variant 8 directly so skF cannot intercept) -> `_s5_band(16, route=True)` -> `_s5_band(32, route=False)` -> `_s5_probe_b64` (one eager variant-0 launch at B=64 x 80000, sync + print, after the matrix).
+- Every DEFER launch prints `[sk5] launching v8 B=.. grid=..` and `returned (error word ..)` with `torch.cuda.synchronize()` around it. A canary per cell (lengths 1..130, same B and grid) runs before that cell's 80K timing.
+- Gate (B=16 only): master's routed path (variant 0, `_SPLITKV_GRID or 2*SM`, flag-off) vs DEFER at 2xSM and SM; two interleaved rounds (rotation reversed in round 2), cold L2 (256 MB flush), empty graph subtracted, median/IQR of 20 printed per cell per round. Route only if BOTH rounds >= 1.03x AND the cell's IQR <= 1.5x master's in both rounds AND the band is not owned by skF (`_fused_gate`). B=32: numbers only, never routes. Route lands in `_SK_ROUTE[16] = (8, mult)`, read in `_full_decode_sk` by batch only; a miss leaves master's exact (variant 0, 2xSM) path.
+- Deadlines: the phase starts only below 235 s of import clock, each band/probe below 275 s (`skipped: deadline` printed). All PATH CHOSEN/GATE lines of the phase are repeated as the last lines of prepare (`[sk5] SUMMARY`).
+
+**Deviations / notes**
+- `done[]` grown to 10, not 9 (see above). The review's variant-4-7 "keeps master's regs/local" check is a printed comparison: master's pseudo-variant reg counts are not recorded anywhere in the repo, so the `[sk5]` attrs lines must be compared by eye with the `[ps]` lines of master's log; variant 0 is checked against the landed 121/0/95264/2.
+- No `_ab_flags`/NEW_CELL_FLAGS pattern exists in this problem, so there is no per-state flag; a miss falls back by construction.
+- Biggest risk: variant 8 compile/regs (DEFER adds live state; a spill refuses it, < 2 CTAs/SM is only warned) and the unexplained s4 fault, which may not be DEFER-specific.
+
+## Rules check
+
+- [x] CUDA-graph capturable: kernel_fn change is one dict `.get` by batch and the same launch; no sync/.item()/alloc on values in kernel_fn (all syncs/.item() are prepare-only, lint: host-sync warnings only outside kernel_fn).
+- [x] Nothing derived from `data` is cached across calls: `_SK_ROUTE` is keyed by config batch, written only in prepare; the ticket buffers are self-resetting int32 (error word is a device-only int, read in prepare).
+- [x] Weights: n/a: no weight handling touched.
+- [x] Activations / KV / queries: KV FP8, e4m3 queries, fp32 softmax/merges, bf16 out, unchanged (DEFER only reorders when the ticket draw happens).
+- [x] Attention sees every key: tile ranges and merges unchanged; DEFER merges exactly the same slots.
+- [x] No timing patches, harness access, module edits, reference import, subprocesses or network: timing only in prepare, no child processes.
+- [x] All work inside the timed call; no output caching or replay.
+
+okc_lint: `OK with warnings` (only `host-sync` warnings for prepare-only synchronize()/.item() outside kernel_fn's call graph); `python3 -I -m py_compile` passes; `__pycache__` deleted.
+
+## Pre-flight audit
+
+Verdict: dispatch-with-fixes. Evidence: diff of master vs worktree saved at /tmp/claude-1000/-home-user-git-musespark/73199a37-afd5-408c-8bef-97b87f4411ce/scratchpad/audits26/s5.diff (read by hand; no new CUDA index maps, so no numpy emulation).
+- Variant ids: `sk_is_pseudo` = 4..7 drives pseudo, sk_smem and the B<=32 check; `tok` is 1 only for 6/7; 8/9 are non-PSEUDO in both builds (sk_pick 8/9 sit outside `#ifdef SK_PSEUDO`; `sk_variant_ok` rejects 4-7 in the non-PSEUDO build); `done[10]`, `SK_MAX_VARIANT=9` and the 10 `_SK_LABELS` agree. OK.
+- Error word: ticket[64] of the 128-int buffer; master indexes ticket[c_b], c_b < 64, so it never reaches 64..127; `_rezero_tickets` zero_()s all 128 and the ticket-sum checks include slot 64. OK.
+- Guard: no spin-waits anywhere, so a skipped draw leaves the ticket nonzero (caught by the error word / sum / re-zero) and cannot hang. OK.
+- Order: master sk-diag, then DEFER validate, B=16, B=32, B=64 v0 probe last; every DEFER launch is synced and printed. OK.
+- Fix 1: phase start/band deadlines 235/275 s -> 420/470 s (import clock starts after `import torch`; master compiles alone are ~200 s per DIAGNOSIS.md and the phase takes under a minute, TASK.md allows 900 s, so 235 s risked skipping the phase on every run).
+- Fix 2: the IQR veto (`<= 1.5x master IQR`) gets a 0.5 us floor on master's spread (`1.5 * max(master_iqr, 0.5)`).
+Residual risk: a DEFER or B=64 v0 illegal address would poison the context for the remaining prepare and tests (B=64 x 80K is neither scored nor tested), and a compile error in the shared _SK_CUDA module would lose master's sk path.
