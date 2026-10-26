@@ -1,0 +1,119 @@
+
+[rt2] launching rt2_wgmma_swapab_kernel BT=128 CS=8 m=65 run 2
+[rt2] BT=128 CS=8 m=65 run 2 finished OK (synced, error word 0)
+[rt2] check BT=128 CS=8 m=65: rel L2 3.29e-06 (<= 1e-05), vs hi+lo 2.24e-06 (<= 5e-06), worst row 4.79e-06 (<= 5e-05), one-hot rows 9 worst 2.64e-06 (<= 0.001)
+[rt2] launching rt2_wgmma_swapab_kernel BT=128 CS=8 m=128 run 1
+[rt2] BT=128 CS=8 m=128 run 1 finished OK (synced, error word 0)
+[rt2] launching rt2_wgmma_swapab_kernel BT=128 CS=8 m=128 run 2
+[rt2] BT=128 CS=8 m=128 run 2 finished OK (synced, error word 0)
+[rt2] check BT=128 CS=8 m=128: rel L2 3.27e-06 (<= 1e-05), vs hi+lo 2.20e-06 (<= 5e-06), worst row 4.83e-06 (<= 5e-05), one-hot rows 17 worst 2.81e-06 (<= 0.001)
+[rt2] launching rt2_wgmma_swapab_kernel BT=128 CS=8 m=129 run 1
+[rt2] BT=128 CS=8 m=129 run 1 finished OK (synced, error word 0)
+[rt2] launching rt2_wgmma_swapab_kernel BT=128 CS=8 m=129 run 2
+[rt2] BT=128 CS=8 m=129 run 2 finished OK (synced, error word 0)
+[rt2] check BT=128 CS=8 m=129: rel L2 3.22e-06 (<= 1e-05), vs hi+lo 2.22e-06 (<= 5e-06), worst row 4.81e-06 (<= 5e-05), one-hot rows 17 worst 2.70e-06 (<= 0.001)
+[rt2] launching rt2_wgmma_swapab_kernel BT=128 CS=8 m=200 run 1
+[rt2] BT=128 CS=8 m=200 run 1 finished OK (synced, error word 0)
+[rt2] launching rt2_wgmma_swapab_kernel BT=128 CS=8 m=200 run 2
+[rt2] BT=128 CS=8 m=200 run 2 finished OK (synced, error word 0)
+[rt2] check BT=128 CS=8 m=200: rel L2 3.27e-06 (<= 1e-05), vs hi+lo 2.26e-06 (<= 5e-06), worst row 4.74e-06 (<= 5e-05), one-hot rows 26 worst 2.65e-06 (<= 0.001)
+[rt2] launching rt2_wgmma_swapab_kernel BT=128 CS=8 m=256 run 1
+[rt2] BT=128 CS=8 m=256 run 1 finished OK (synced, error word 0)
+[rt2] launching rt2_wgmma_swapab_kernel BT=128 CS=8 m=256 run 2
+[rt2] BT=128 CS=8 m=256 run 2 finished OK (synced, error word 0)
+[rt2] check BT=128 CS=8 m=256: rel L2 3.35e-06 (<= 1e-05), vs hi+lo 2.23e-06 (<= 5e-06), worst row 4.76e-06 (<= 5e-05), one-hot rows 33 worst 2.98e-06 (<= 0.001)
+[rt2] BT=128 CS=8 self-check passed (m in (65, 128, 129, 200, 256))
+[rt2] gate band a m=128 BT=64 CS=16 (graph replay, 256 MB flush, 41 reps x 2 interleaved rounds, baseline 5.06 us, net us; need >= 1.03 both rounds and IQR <= 1.5x): round 1: master 7.14 (IQR 0.19) cand 9.50 (IQR 0.29) no-reduce 7.04 -> master/cand 0.751 iqr_ok=True | round 2: master 7.14 (IQR 0.19) cand 9.50 (IQR 0.26) no-reduce 7.10 -> master/cand 0.751 iqr_ok=True | pass=False error word 0
+[rt2] gate band a m=128 BT=128 CS=16 (graph replay, 256 MB flush, 41 reps x 2 interleaved rounds, baseline 5.06 us, net us; need >= 1.03 both rounds and IQR <= 1.5x): round 1: master 7.14 (IQR 0.19) cand 9.15 (IQR 0.19) no-reduce 6.59 -> master/cand 0.780 iqr_ok=True | round 2: master 7.14 (IQR 0.19) cand 9.18 (IQR 0.22) no-reduce 6.62 -> master/cand 0.777 iqr_ok=True | pass=False error word 0
+PATH CHOSEN router band a (m 65..128, rep m=128): master [BT=64/CS=16 master/cand 0.751/0.751 iqr_ok=True; BT=128/CS=16 master/cand 0.780/0.777 iqr_ok=True; no candidate won both rounds with a tight IQR]
+[rt2] gate band b m=256 BT=128 CS=16 (graph replay, 256 MB flush, 41 reps x 2 interleaved rounds, baseline 5.18 us, net us; need >= 1.03 both rounds and IQR <= 1.5x): round 1: master 9.28 (IQR 0.16) cand 12.77 (IQR 0.26) no-reduce 8.96 -> master/cand 0.727 iqr_ok=True | round 2: master 9.18 (IQR 0.22) cand 12.80 (IQR 0.26) no-reduce 8.93 -> master/cand 0.718 iqr_ok=True | pass=False error word 0
+[rt2] gate band b m=256 BT=128 CS=8 (graph replay, 256 MB flush, 41 reps x 2 interleaved rounds, baseline 5.18 us, net us; need >= 1.03 both rounds and IQR <= 1.5x): round 1: master 9.28 (IQR 0.16) cand 12.00 (IQR 0.19) no-reduce 10.05 -> master/cand 0.773 iqr_ok=True | round 2: master 9.18 (IQR 0.22) cand 11.97 (IQR 0.19) no-reduce 10.05 -> master/cand 0.767 iqr_ok=True | pass=False error word 0
+PATH CHOSEN router band b (m 129..256, rep m=256): master [BT=128/CS=16 master/cand 0.727/0.718 iqr_ok=True; BT=128/CS=8 master/cand 0.773/0.767 iqr_ok=True; no candidate won both rounds with a tight IQR]
+[prepare-time] rt2 phase total: 0.14s
+[prepare-time] rt2 router wgmma (check + two-round gate + profile): 0.14s
+[prepare-time] state build (A) total: 4.59s
+[prepare-time] weight splits + NN copies: 0.00s
+[router] swapab m=1 BLOCK_T=16 SPLIT_K=32 grid=(1, 4, 32) stages=3: n_regs=64 n_spills=0 wgmma=16 mma.sync=0 cp.async=65
+[router] swapab m=32 BLOCK_T=32 SPLIT_K=32 grid=(1, 4, 32) stages=3: n_regs=80 n_spills=0 wgmma=16 mma.sync=0 cp.async=71
+[router] m=1: swapab
+[router] m=8: swapab
+[router] m=16: swapab
+[router] m=32: swapab
+[router] m=64: hilo
+[router] m=128: hilo
+[router] m=256: hilo
+[prepare-time] router triton warm-up: 0.00s
+[prepare-time] pooler / qkv / unpooler / o triton warm-up: 0.00s
+[swapab] layer=pooler m=32 N=4096 K=8192 SPLIT_K=2 BLOCK_K=256 stages=4: n_regs=96 n_spills=0 wgmma=16 mma.sync=0 cp.async=106
+[swapab] layer=qkv_gate m=32 N=2304 K=8192 SPLIT_K=4 BLOCK_K=128 stages=4: n_regs=56 n_spills=0 wgmma=8 mma.sync=0 cp.async=58
+[swapab] layer=unpooler m=32 N=8192 K=4096 SPLIT_K=1 BLOCK_K=256 stages=4: n_regs=96 n_spills=0 wgmma=16 mma.sync=0 cp.async=106
+[swapab] layer=o m=32 N=8192 K=1024 SPLIT_K=1 BLOCK_K=256 stages=4: n_regs=96 n_spills=0 wgmma=16 mma.sync=0 cp.async=106
+[prepare-time] swapab m17-32 warm-up: 0.00s
+[swapab16] pooler m=16 N=4096 K=8192 SPLIT_K=2 BLOCK_K=256 stages=4: n_regs=72 n_spills=0 wgmma=16 mma.sync=0 cp.async=90
+[swapab16] qkv_gate m=16 N=2304 K=8192 SPLIT_K=4 BLOCK_K=128 stages=4: n_regs=48 n_spills=0 wgmma=8 mma.sync=0 cp.async=50
+[swapab16] o m=16 N=8192 K=1024 SPLIT_K=1 BLOCK_K=256 stages=4: n_regs=72 n_spills=0 wgmma=16 mma.sync=0 cp.async=90
+[swapab16] unpooler_slice m=8 N=1024 K=4096 SPLIT_K=8 BLOCK_K=128 stages=3: n_regs=56 n_spills=0 wgmma=8 mma.sync=0 cp.async=38
+[incumbent16] pooler _bf16_splitk_kernel m=16: n_regs=96 n_spills=0 wgmma=0 mma.sync=32 cp.async=90
+[incumbent16] qkv_gate _qkv_splitk_sem_kernel m=16: n_regs=64 n_spills=0 wgmma=0 mma.sync=16 cp.async=50
+[incumbent16] o _pooler_skinny_kernel m=16: n_regs=90 n_spills=0 wgmma=0 mma.sync=32 cp.async=90
+[incumbent16] unpooler_slice _bf16_splitk_kernel m=16: n_regs=72 n_spills=0 wgmma=0 mma.sync=16 cp.async=38
+[prepare-time] swapab16 warm-up: 0.00s
+[prepare-time] bulk / lt / rt2 per-state buffers (flags inherited): 0.00s
+[prepare-time] state build (B) total: 0.01s
+[ab] capture kernel_fn router m=1 n=256 state A (component router_cluster_ok) ...
+[ab] capture kernel_fn router m=1 n=256 state B (component router_cluster_ok) ...
+[ab] router m=1 n=256: A,B,A,B replays OK, worst rel L2 2.66e-06
+[ab] capture kernel_fn router m=8 n=256 state A (component router_cluster_ok) ...
+[ab] capture kernel_fn router m=8 n=256 state B (component router_cluster_ok) ...
+[ab] router m=8 n=256: A,B,A,B replays OK, worst rel L2 2.46e-06
+[ab] capture kernel_fn router m=128 n=256 state A (component rt2_a_ok) ...
+[ab] capture kernel_fn router m=128 n=256 state B (component rt2_a_ok) ...
+[ab] router m=128 n=256: A,B,A,B replays OK, worst rel L2 2.74e-06
+[ab] capture kernel_fn unpooler m=1 n=1024 state A (component ouns_cl) ...
+[ab] capture kernel_fn unpooler m=1 n=1024 state B (component ouns_cl) ...
+[ab] unpooler m=1 n=1024: A,B,A,B replays OK, worst rel L2 1.71e-03
+[ab] capture kernel_fn unpooler m=8 n=1024 state A (component ouns_cl) ...
+[ab] capture kernel_fn unpooler m=8 n=1024 state B (component ouns_cl) ...
+[ab] unpooler m=8 n=1024: A,B,A,B replays OK, worst rel L2 1.69e-03
+[ab] capture kernel_fn unpooler m=128 n=8192 state A (component nn_ok) ...
+[ab] capture kernel_fn unpooler m=128 n=8192 state B (component nn_ok) ...
+[ab] unpooler m=128 n=8192: A,B,A,B replays OK, worst rel L2 1.66e-03
+[ab] capture kernel_fn pooler m=1 n=4096 state A (component bulk_pooler_ok) ...
+[ab] capture kernel_fn pooler m=1 n=4096 state B (component bulk_pooler_ok) ...
+[ab] pooler m=1 n=4096: A,B,A,B replays OK, worst rel L2 1.70e-03
+[ab] capture kernel_fn pooler m=8 n=4096 state A (component master path) ...
+[ab] capture kernel_fn pooler m=8 n=4096 state B (component master path) ...
+[ab] pooler m=8 n=4096: A,B,A,B replays OK, worst rel L2 1.67e-03
+[ab] capture kernel_fn pooler m=128 n=4096 state A (component nn_ok) ...
+[ab] capture kernel_fn pooler m=128 n=4096 state B (component nn_ok) ...
+[ab] pooler m=128 n=4096: A,B,A,B replays OK, worst rel L2 1.67e-03
+[ab] capture kernel_fn pooler m=256 n=4096 state A (component nn_p256_ok) ...
+[ab] capture kernel_fn pooler m=256 n=4096 state B (component nn_p256_ok) ...
+[ab] pooler m=256 n=4096: A,B,A,B replays OK, worst rel L2 1.66e-03
+[ab] capture kernel_fn qkv_gate m=1 n=2304 state A (component bulk_qkv_ok) ...
+[ab] capture kernel_fn qkv_gate m=1 n=2304 state B (component bulk_qkv_ok) ...
+[ab] qkv_gate m=1 n=2304: A,B,A,B replays OK, worst rel L2 1.73e-03
+[ab] capture kernel_fn o m=1 n=8192 state A (component bulk_o_ok) ...
+[ab] capture kernel_fn o m=1 n=8192 state B (component bulk_o_ok) ...
+[ab] o m=1 n=8192: A,B,A,B replays OK, worst rel L2 1.68e-03
+[ab] capture kernel_fn qkv_gate m=128 n=2304 state A (component lt_qkv128_ok) ...
+[ab] capture kernel_fn qkv_gate m=128 n=2304 state B (component lt_qkv128_ok) ...
+[ab] qkv_gate m=128 n=2304: A,B,A,B replays OK, worst rel L2 1.66e-03
+[ab] capture kernel_fn router m=65 n=256 state A (component rt2_a_ok) ...
+[ab] capture kernel_fn router m=65 n=256 state B (component rt2_a_ok) ...
+[ab] router m=65 n=256: A,B,A,B replays OK, worst rel L2 2.73e-06
+[ab] capture kernel_fn router m=200 n=256 state A (component rt2_b_ok) ...
+[ab] capture kernel_fn router m=200 n=256 state B (component rt2_b_ok) ...
+[ab] router m=200 n=256: A,B,A,B replays OK, worst rel L2 3.37e-06
+[ab] capture kernel_fn router m=256 n=256 state A (component rt2_b_ok) ...
+[ab] capture kernel_fn router m=256 n=256 state B (component rt2_b_ok) ...
+[ab] router m=256 n=256: A,B,A,B replays OK, worst rel L2 3.38e-06
+[ab] done in 0.2s; flags now {'ouns_cl': 8, 'router_cluster_ok': True, 'nn_ok': True, 'nn_p256_ok': True, 'bulk_pooler_ok': True, 'bulk_qkv_ok': True, 'bulk_o_ok': False, 'lt_qkv128_ok': True, 'rt2_a_ok': False, 'rt2_b_ok': False, 'rt2_cfg_a': None, 'rt2_cfg_b': None}
+[ouns] final: cl=8: cudaOccupancyMaxActiveClusters=45, needs 16
+[ouns] final: cl=4: cudaOccupancyMaxActiveClusters=62, needs 32
+[router_cluster] final: [162, 0, 0, 82432, 30] (regs, spill B, static smem, dyn smem, max active clusters; needs 16)
+[prepare] FINAL FLAGS: ouns_cl=8 router_cluster_ok=True nn_ok=True nn_p256_ok=True bulk_pooler_ok=True bulk_qkv_ok=True bulk_o_ok=False lt_qkv128_ok=True rt2_a_ok=False rt2_b_ok=False; prepare total 4.7s
+[rt2] FINAL router band a (rep m=128): master hilo path
+[rt2] FINAL router band b (rep m=256): master hilo path
+PATH CHOSEN router band a (m 65..128, rep m=128): master [BT=64/CS=16 master/cand 0.751/0.751 iqr_ok=True; BT=128/CS=16 master/cand 0.780/0.777 iqr_ok=True; no candidate won both rounds with a tight IQR]
+PATH CHOSEN router band b (m 129..256, rep m=256): master [BT=128/CS=16 master/cand 0.727/0.718 iqr_ok=True; BT=128/CS=8 master/cand 0.773/0.767 iqr_ok=True; no candidate won both rounds with a tight IQR]

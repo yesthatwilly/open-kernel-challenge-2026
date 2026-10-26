@@ -1,0 +1,3427 @@
+diff --git a/muse_bf16_proj/submission.py b/muse_bf16_proj/submission.py
+index 095978ec..6c521625 100644
+--- a/muse_bf16_proj/submission.py
++++ b/muse_bf16_proj/submission.py
+@@ -1,9 +1,26 @@
+ # okc: problem=muse_bf16_proj
+-"""Router as one fused Triton hi/lo GEMM with a 3-D split-K grid at every m (hypothesis
++"""Router m = 65..256 (hypothesis router-m128-m256-wgmma-swapab-tall-cluster-stage2): section (10) adds
++an sm90a wgmma swap-AB + TMA + cluster/DSMEM split-K CUDA kernel (rt2_wgmma_swapab_kernel, tall token
++tiles, in-cluster reduce-scatter, torch.empty output) behind per-band flags rt2_a_ok / rt2_b_ok and a
++two-round graph-replay gate against master's routed hilo path; a miss keeps master's exact path.
++
++Router as one fused Triton hi/lo GEMM with a 3-D split-K grid at every m (hypothesis
+ router-triton-hilo-fused-control-splitk-all-m, the control for router-triton-hilo-fused).
+ 
++Restack (hypothesis restack-three-cell-wins-router-unpooler-cluster-m8-nn-m128): on top of the
++swap-AB master, three row wins each gated to exactly the cells they won: unpooler slice m <= 8
++(CUDA cluster/DSMEM, ouns_cl, behind a graph-replay gate), router m <= 8 (CUDA cluster/DSMEM,
++router_cluster_ok) and pooler/unpooler 65 <= m <= 128 (NN-layout torch.mm, nn_ok). Every flag
++lives in the state dict; prepare() A/B/A/B-checks the whole dispatch on two states.
++
++Combo (hypothesis combo-rowowner-reduce-free-m1-qkv-o-plus-naive), section (9): at m == 1 the
++pooler (A), qkv_gate (A2, 2 CTAs/SM) and o (A3) can run the bulk-TMA row-owner CUDA kernel on a
++per-state losslessly repacked weight, and qkv_gate m == 128 (B) a cuBLASLt split-K-1 algo fixed in
++prepare(); each cell has its own state flag, canary, graph-replay gate (<= 0.98x master) and
++profiler kernel-name assertion, else master's path.
++
+ The four bf16 layers go through the same cuBLAS dispatch SGLang uses on H200
+-(`_bf16_gemm_dispatch_impl`), untouched. The fp32 router runs, at every m, as ONE Triton kernel
++(`_bf16_gemm_dispatch_impl`), untouched except the NN cells above. The fp32 router runs, at every m, as ONE Triton kernel
+ over a bf16 hi + lo split of its weight with fp32 accumulation (allowed by the rules at any
+ batch size: "the router's FP32 weights may run as a BF16 hi + lo pair with FP32 accumulation").
+ The split is built once in prepare() from the weights alone and stored as two [256, 8192] bf16
+@@ -45,12 +62,6 @@ unpooler's n == 1024 slice run the same _bf16_swapab_kernel with BLOCK_T = WS_M
+ m64n16k16) and their own 16-row workspaces / tickets, routed BEFORE the m <= 16 kernels above
+ (which stay in the file, no longer routed for these shapes). The unpooler full width at m = 16
+ keeps cuBLAS; every m >= 17 shape keeps its path.
+-
+-Router at 65 <= m <= 256 (hypothesis router-m128-m256-cluster-dsmem-tiled-rewrite): a hand-written
+-CUDA kernel (load_inline at import), 64 x 64 output tiles each owned by one cluster that splits K
+-and reduces through distributed shared memory in one launch (no memset, no atomics); see section
+-(7). Routed per token-tile count only where it beat master's router in prepare(); master's
+-_router_hilo_forward everywhere else and on any build / self-check / occupancy miss.
+ """
+ 
+ import os
+@@ -96,6 +107,30 @@ ROUTER_SWAPAB_MAX_M = 32  # m <= this: swap-AB _router_forward; above: master's
+ # the timed call never compiles (M is not specialized and the grid's token extent is a launch
+ # argument, so one compile serves a whole bucket).
+ ROUTER_WARM_MS = (1, 8, 16, 32, 64, 128, 256)
++# Gate for the pooler/unpooler NN path (own constants so it stacks cleanly with the cluster routes
++# on other rows): these layers run torch.mm(x, W_t) against a transposed [K, N] copy of the
++# weight made once in prepare() for NN_GATED_MIN_M <= m <= NN_GATED_MAX_M, full width only.
++NN_GATED_LAYERS = ("pooler", "unpooler")
++NN_GATED_MIN_M = 65
++NN_GATED_MAX_M = 128
++# Pooler only: widen the NN gate to 129..256 under its OWN flag (nn_p256_ok) so a self-check miss
++# there cannot switch off the proven m <= 128 NN path (nn_ok).
++NN_POOLER_MAX_M = 256
++# Cells of the prepare()-time A/B/A/B graph self-check: (layer, n, k, m).
++AB_CASES = (
++    ("router", ROUTER_N, ROUTER_K, 1), ("router", ROUTER_N, ROUTER_K, 8), ("router", ROUTER_N, ROUTER_K, 128),
++    ("unpooler", 1024, 4096, 1), ("unpooler", 1024, 4096, 8), ("unpooler", 8192, 4096, 128),
++    ("pooler", 4096, 8192, 1), ("pooler", 4096, 8192, 8), ("pooler", 4096, 8192, 128),
++    ("pooler", 4096, 8192, 256),
++    # combo-rowowner-reduce-free-m1-qkv-o-plus-naive: the new cells (pooler m=1 is above).
++    ("qkv_gate", 2304, 8192, 1), ("o", 8192, 1024, 1), ("qkv_gate", 2304, 8192, 128),
++    # router-m128-m256-wgmma-swapab-tall-cluster-stage2: band a (65..128) incl. a partial tile, band b.
++    ("router", ROUTER_N, ROUTER_K, 65), ("router", ROUTER_N, ROUTER_K, 200),
++    ("router", ROUTER_N, ROUTER_K, 256),
++)
++AB_ROUNDS = 2           # A, B, A, B
++AB_BF16_REL_L2 = 6e-3   # bf16 output rounding is ~2e-3; the judge allows 1e-2
++AB_ROUTER_REL_L2 = 5e-5  # the judge allows 1e-4
+ 
+ 
+ def _router_config(m: int):
+@@ -993,52 +1028,626 @@ def _swapab16_prepare(state: dict) -> None:
+             state[f"swapab16_cnt_{key}"].zero_()
+ 
+ 
+-# --- (7) router, 65 <= m <= 256: hand-written CUDA tiled GEMM, split-K reduced through DSMEM ---
+-# (hypothesis router-m128-m256-cluster-dsmem-tiled-rewrite, rewrite stage 1)
++# --- (7) unpooler n == 1024 slice, m <= 8: CUDA cluster / DSMEM split-K, gated at prepare -------
++# (hypothesis restack-unpooler-slice-cluster-dsmem-m8; the kernel is ported unchanged from job
++# 3f3330f7's oun_kernel, unpooler instantiation only: NT 8, no o instantiation is compiled.)
++#
++# Weight rows sit on the mma.sync m16n8k16 M side, the tokens on N (NT 8). A thread-block cluster of
++# CL CTAs splits K: rank r owns K [r*K/CL, (r+1)*K/CL) of the cluster's ROWS output rows. Every CTA
++# issues ALL its weight loads at once (NG cp.async.cg commit groups, no ring, 64 KB per CTA), the
++# smem tile is XOR-swizzled (16 B chunk c of row r stored at c ^ (r & 7)) in both the cp.async
++# destination and the ldmatrix addresses, the fp32 partial aliases the consumed weight buffer, and
++# the CL partials are reduced through distributed shared memory in fixed rank order with one bf16
++# store: no global workspace, no ticket, no atomics, no memset. There is no mbarrier and no
++# spin-wait in this kernel (only cluster barriers), so nothing to bound.
++#   CL 8 -> 16 clusters x 8 = 128 CTAs (1/SM), ROWS 64, K/CTA 512,  NG 4
++#   CL 4 -> 32 clusters x 4 = 128 CTAs (1/SM), ROWS 32, K/CTA 1024, NG 4
++# CL 8 is used only if cudaOccupancyMaxActiveClusters reports every cluster co-resident, else CL 4
++# under the same rule, else master's path. All PTX is baseline sm_90 (cluster launch, mapa,
++# barrier.cluster, mma.sync, cp.async): no wgmma / setmaxnreg, so no sm_90a-only guard is needed.
++#
++# The route is enabled only if, in prepare(), it passes the self-check AND beats the restack's own
++# unpooler-slice path by OUNS_MIN_WIN on the judge's own measurement: CUDA-graph replay, >= 256 MB
++# L2 flush before every replay, both paths interleaved (order swapped each rep), median of reps,
++# at m = 1 and m = 8. The profile shows no kernel-time gain; the gain lives in row time minus
++# kernel time, which only a graph replay includes.
++OUNS_MAX_M = 8
++OUNS_N = 1024
++OUNS_K = 4096
++OUNS_CLUSTERS_NEEDED = {8: 16, 4: 32}
++OUNS_CHECK_MS = (1, 5, 8)
++OUNS_GATE_MS = (1, 8)
++OUNS_FLUSH_BYTES = 256 * 1024 * 1024
++OUNS_GATE_REPS = 41
++OUNS_MIN_WIN = 1.02
++OUNS_EXT_NAME = "muse_bf16_unpool_slice_cluster_v3"
++
++_OUNS_CPP = r"""
++#include <torch/extension.h>
++#include <string>
++void ouns_run(torch::Tensor x, torch::Tensor w, torch::Tensor out, int64_t cl);
++int64_t ouns_occupancy(int64_t cl);
++std::string ouns_attrs(int64_t cl);
++"""
++
++_OUNS_CUDA = r"""
++#include <torch/extension.h>
++#include <ATen/cuda/CUDAContext.h>
++#include <c10/cuda/CUDAException.h>
++#include <cuda_bf16.h>
++#include <cstdint>
++#include <string>
++
++namespace {
++
++__device__ __forceinline__ uint32_t smem_u32(const void* p) {
++  return static_cast<uint32_t>(__cvta_generic_to_shared(p));
++}
++__device__ __forceinline__ void cp_async16(uint32_t dst, const void* src, int src_bytes) {
++  asm volatile("cp.async.cg.shared.global [%0], [%1], 16, %2;\n" :: "r"(dst), "l"(src), "r"(src_bytes) : "memory");
++}
++__device__ __forceinline__ void cp_commit() { asm volatile("cp.async.commit_group;\n" ::: "memory"); }
++template <int N>
++__device__ __forceinline__ void cp_wait() { asm volatile("cp.async.wait_group %0;\n" :: "n"(N) : "memory"); }
++__device__ __forceinline__ void cp_wait_pending(int pending) {
++  if (pending >= 3) cp_wait<3>();
++  else if (pending == 2) cp_wait<2>();
++  else if (pending == 1) cp_wait<1>();
++  else cp_wait<0>();
++}
++__device__ __forceinline__ void ldsm_x4(uint32_t (&r)[4], uint32_t addr) {
++  asm volatile("ldmatrix.sync.aligned.m8n8.x4.shared.b16 {%0,%1,%2,%3}, [%4];\n"
++               : "=r"(r[0]), "=r"(r[1]), "=r"(r[2]), "=r"(r[3]) : "r"(addr));
++}
++__device__ __forceinline__ void mma_bf16(float (&c)[4], const uint32_t (&a)[4], uint32_t b0, uint32_t b1) {
++  asm volatile("mma.sync.aligned.m16n8k16.row.col.f32.bf16.bf16.f32 {%0,%1,%2,%3}, {%4,%5,%6,%7}, {%8,%9}, {%0,%1,%2,%3};\n"
++               : "+f"(c[0]), "+f"(c[1]), "+f"(c[2]), "+f"(c[3])
++               : "r"(a[0]), "r"(a[1]), "r"(a[2]), "r"(a[3]), "r"(b0), "r"(b1));
++}
++__device__ __forceinline__ void cluster_arrive() { asm volatile("barrier.cluster.arrive.release.aligned;\n" ::: "memory"); }
++__device__ __forceinline__ void cluster_wait() { asm volatile("barrier.cluster.wait.acquire.aligned;\n" ::: "memory"); }
++__device__ __forceinline__ uint32_t map_rank(uint32_t addr, uint32_t rank) {
++  uint32_t r;
++  asm volatile("mapa.shared::cluster.u32 %0, %1, %2;\n" : "=r"(r) : "r"(addr), "r"(rank));
++  return r;
++}
++__device__ __forceinline__ float4 ld_remote_f4(uint32_t addr) {
++  float4 v;
++  asm volatile("ld.shared::cluster.v4.f32 {%0,%1,%2,%3}, [%4];\n"
++               : "=f"(v.x), "=f"(v.y), "=f"(v.z), "=f"(v.w) : "r"(addr) : "memory");
++  return v;
++}
++
++template <int NT, int ROWS, int KPER, int CL, int NG>
++struct Cfg {
++  static constexpr int THREADS = 256, NW = 8;
++  static constexpr int T = ROWS / 16;                 // 16-row MMA tiles per cluster
++  static constexpr int RG = T < NW ? T : NW;          // warp row groups
++  static constexpr int KG = NW / RG;                  // warp K groups
++  static constexpr int TPW = T / RG;                  // row tiles per warp
++  static constexpr int NB = NT / 8;                   // n8 blocks
++  static constexpr int PITCH = KPER * 2;              // smem row pitch, bytes
++  static constexpr int CHG = KPER / NG / 8;           // 16 B chunks per row per commit group
++  static constexpr int SG = KPER / NG / 16;           // k16 steps per commit group
++  static constexpr int SPG = SG / KG;                 // k16 steps per warp per group
++  static constexpr int PR = ROWS + 4;                 // partial pitch (floats): conflict-free C stores
++  static constexpr int W_BYTES = ROWS * PITCH;
++  static constexpr int X_BYTES = NT * PITCH;
++  static constexpr int SMEM = W_BYTES + X_BYTES;
++  static constexpr int RPR = ROWS / CL;               // rows each rank reduces
++  static_assert(ROWS % 16 == 0 && T % RG == 0 && NW % RG == 0, "row tiling");
++  static_assert(KPER % (NG * 16) == 0 && CHG % 8 == 0, "swizzle needs groups of 8-chunk multiples");
++  static_assert(SG % KG == 0 && SPG % 2 == 0, "k split");
++  static_assert(NT * PR * 4 <= W_BYTES, "fp32 partial must fit on the weight buffer");
++  static_assert(RPR % 4 == 0 && NG <= 4, "reduce / wait");
++};
++
++// out[m, n] bf16 = x[m, KPER*CL] @ w[:n, :KPER*CL]^T. Grid = (n / ROWS) * CL CTAs, cluster dim CL.
++template <int NT, int ROWS, int KPER, int CL, int NG>
++__global__ void __launch_bounds__(256, 2)
++ouns_kernel(const __nv_bfloat16* __restrict__ x, int64_t stride_x,
++           const __nv_bfloat16* __restrict__ w, int64_t stride_w,
++           __nv_bfloat16* __restrict__ out, int64_t stride_o, int m) {
++#if defined(__CUDA_ARCH__) && __CUDA_ARCH__ >= 900
++  using C = Cfg<NT, ROWS, KPER, CL, NG>;
++  extern __shared__ __align__(128) uint8_t smem[];
++  const int tid = threadIdx.x, lane = tid & 31, warp = tid >> 5;
++  uint32_t rank;
++  asm volatile("mov.u32 %0, %%cluster_ctarank;\n" : "=r"(rank));
++  const int cid = blockIdx.x / CL;
++  const int n0 = cid * ROWS;
++  const int kbase = static_cast<int>(rank) * KPER;
++  const uint32_t sw = smem_u32(smem);
++  const uint32_t sx = sw + C::W_BYTES;
++  const __nv_bfloat16* wb = w + (int64_t)n0 * stride_w + kbase;
++  const __nv_bfloat16* xb = x + kbase;
++
++  // All loads in flight at once: NG commit groups, each a K chunk of every weight row + x.
++#pragma unroll
++  for (int g = 0; g < NG; ++g) {
++    for (int q = tid; q < ROWS * C::CHG; q += C::THREADS) {
++      const int row = q / C::CHG, c = g * C::CHG + (q % C::CHG);
++      cp_async16(sw + row * C::PITCH + ((c ^ (row & 7)) << 4), wb + (int64_t)row * stride_w + c * 8, 16);
++    }
++    for (int q = tid; q < NT * C::CHG; q += C::THREADS) {
++      const int tok = q / C::CHG, c = g * C::CHG + (q % C::CHG);
++      const bool ok = tok < m;
++      cp_async16(sx + tok * C::PITCH + ((c ^ (tok & 7)) << 4),
++                 xb + (ok ? (int64_t)tok * stride_x : (int64_t)0) + c * 8, ok ? 16 : 0);
++    }
++    cp_commit();
++  }
++
++  float acc[C::TPW][C::NB][4];
++#pragma unroll
++  for (int i = 0; i < C::TPW; ++i)
++#pragma unroll
++    for (int nb = 0; nb < C::NB; ++nb)
++#pragma unroll
++      for (int e = 0; e < 4; ++e) acc[i][nb][e] = 0.f;
++
++  const int rg = warp % C::RG, kg = warp / C::RG;
++#pragma unroll
++  for (int g = 0; g < NG; ++g) {
++    cp_wait_pending(NG - 1 - g);
++    __syncthreads();  // group g (all threads' copies) is visible
++#pragma unroll
++    for (int j = 0; j < C::SPG; j += 2) {
++      const int kp = (g * C::SG + kg * C::SPG + j) / 2;  // k32 pair index in the CTA's K range
++      uint32_t b[C::NB][4];
++#pragma unroll
++      for (int nb = 0; nb < C::NB; ++nb)
++        ldsm_x4(b[nb], sx + (nb * 8 + (lane & 7)) * C::PITCH + (((kp * 4 + (lane >> 3)) ^ (lane & 7)) << 4));
++#pragma unroll
++      for (int i = 0; i < C::TPW; ++i) {
++        const int arow = (rg * C::TPW + i) * 16 + (lane & 15);
++#pragma unroll
++        for (int h = 0; h < 2; ++h) {
++          uint32_t a[4];
++          ldsm_x4(a, sw + arow * C::PITCH + (((((kp * 2 + h) * 2) + (lane >> 4)) ^ (lane & 7)) << 4));
++#pragma unroll
++          for (int nb = 0; nb < C::NB; ++nb) mma_bf16(acc[i][nb], a, b[nb][2 * h], b[nb][2 * h + 1]);
++        }
++      }
++    }
++  }
++  __syncthreads();  // every warp is done with the weight buffer: the fp32 partial aliases it
++
++  // CTA partial part[t][row] (pitch PR), K groups added in fixed order.
++  float* part = reinterpret_cast<float*>(smem);
++#pragma unroll
++  for (int st = 0; st < C::KG; ++st) {
++    if (kg == st) {
++#pragma unroll
++      for (int i = 0; i < C::TPW; ++i)
++#pragma unroll
++        for (int nb = 0; nb < C::NB; ++nb) {
++          const int row = (rg * C::TPW + i) * 16 + (lane >> 2);
++          const int t = nb * 8 + (lane & 3) * 2;
++          float* p0 = part + t * C::PR + row;
++          float* p1 = p0 + C::PR;
++          if (st == 0) {
++            p0[0] = acc[i][nb][0]; p1[0] = acc[i][nb][1]; p0[8] = acc[i][nb][2]; p1[8] = acc[i][nb][3];
++          } else {
++            p0[0] += acc[i][nb][0]; p1[0] += acc[i][nb][1]; p0[8] += acc[i][nb][2]; p1[8] += acc[i][nb][3];
++          }
++        }
++    }
++    __syncthreads();
++  }
++
++  cluster_arrive();  // release: this CTA's partial is visible cluster-wide
++  cluster_wait();    // acquire: all CL partials are visible
++
++  const uint32_t part_s = smem_u32(part);
++  constexpr int Q4 = C::RPR / 4;
++  const int items = m * Q4;
++  for (int idx = tid; idx < items; idx += C::THREADS) {
++    const int t = idx / Q4, j = idx % Q4;
++    const uint32_t off = static_cast<uint32_t>((t * C::PR + static_cast<int>(rank) * C::RPR + j * 4) * 4);
++    float4 s = make_float4(0.f, 0.f, 0.f, 0.f);
++#pragma unroll
++    for (int r = 0; r < CL; ++r) {  // fixed rank order: bit-deterministic
++      const float4 v = ld_remote_f4(map_rank(part_s + off, static_cast<uint32_t>(r)));
++      s.x += v.x; s.y += v.y; s.z += v.z; s.w += v.w;
++    }
++    __nv_bfloat162 lo = __floats2bfloat162_rn(s.x, s.y), hi = __floats2bfloat162_rn(s.z, s.w);
++    uint2 pk;
++    pk.x = *reinterpret_cast<uint32_t*>(&lo);
++    pk.y = *reinterpret_cast<uint32_t*>(&hi);
++    *reinterpret_cast<uint2*>(out + (int64_t)t * stride_o + n0 + static_cast<int>(rank) * C::RPR + j * 4) = pk;
++  }
++
++  cluster_arrive();  // nobody exits while another CTA may still read its shared memory
++  cluster_wait();
++#endif
++}
++
++template <int NT, int ROWS, int KPER, int CL, int NG>
++struct Inst {
++  using C = Cfg<NT, ROWS, KPER, CL, NG>;
++  static void prep() {
++    static bool done = false;
++    if (!done) {
++      C10_CUDA_CHECK(cudaFuncSetAttribute(ouns_kernel<NT, ROWS, KPER, CL, NG>,
++                                          cudaFuncAttributeMaxDynamicSharedMemorySize, C::SMEM));
++      done = true;
++    }
++  }
++  static cudaLaunchConfig_t config(int64_t n, cudaStream_t stream, cudaLaunchAttribute* attr) {
++    cudaLaunchConfig_t cfg = {};
++    cfg.gridDim = dim3(static_cast<unsigned>((n / ROWS) * CL), 1, 1);
++    cfg.blockDim = dim3(C::THREADS, 1, 1);
++    cfg.dynamicSmemBytes = C::SMEM;
++    cfg.stream = stream;
++    attr[0].id = cudaLaunchAttributeClusterDimension;
++    attr[0].val.clusterDim.x = CL;
++    attr[0].val.clusterDim.y = 1;
++    attr[0].val.clusterDim.z = 1;
++    cfg.attrs = attr;
++    cfg.numAttrs = 1;
++    return cfg;
++  }
++  static void launch(const torch::Tensor& x, const torch::Tensor& w, torch::Tensor& out, int64_t n, int64_t k) {
++    TORCH_CHECK(k == (int64_t)KPER * CL && n % ROWS == 0, "ouns: tiling");
++    prep();
++    cudaLaunchAttribute attr[1];
++    cudaLaunchConfig_t cfg = config(n, at::cuda::getCurrentCUDAStream(), attr);
++    C10_CUDA_CHECK(cudaLaunchKernelEx(
++        &cfg, ouns_kernel<NT, ROWS, KPER, CL, NG>,
++        reinterpret_cast<const __nv_bfloat16*>(x.data_ptr()), (int64_t)x.stride(0),
++        reinterpret_cast<const __nv_bfloat16*>(w.data_ptr()), (int64_t)w.stride(0),
++        reinterpret_cast<__nv_bfloat16*>(out.data_ptr()), (int64_t)out.stride(0), (int)x.size(0)));
++    C10_CUDA_KERNEL_LAUNCH_CHECK();
++  }
++  static int64_t occupancy(int64_t n) {
++    prep();
++    cudaLaunchAttribute attr[1];
++    cudaLaunchConfig_t cfg = config(n, at::cuda::getCurrentCUDAStream(), attr);
++    int clusters = 0;
++    C10_CUDA_CHECK(cudaOccupancyMaxActiveClusters(&clusters, ouns_kernel<NT, ROWS, KPER, CL, NG>, &cfg));
++    return clusters;
++  }
++  static std::string attrs() {
++    prep();
++    cudaFuncAttributes a;
++    C10_CUDA_CHECK(cudaFuncGetAttributes(&a, ouns_kernel<NT, ROWS, KPER, CL, NG>));
++    return "NT=" + std::to_string(NT) + " ROWS=" + std::to_string(ROWS) + " CL=" + std::to_string(CL) +
++           " regs=" + std::to_string(a.numRegs) + " local(spill)=" + std::to_string(a.localSizeBytes) +
++           " static_smem=" + std::to_string(a.sharedSizeBytes) + " dyn_smem=" + std::to_string(C::SMEM) +
++           " max_threads=" + std::to_string(a.maxThreadsPerBlock);
++  }
++};
++
++// The unpooler n == 1024 slice only (k 4096, m 1..8, NT = 8): NO o instantiation is compiled.
++template <class F>
++bool dispatch(int64_t cl, int64_t m, F&& f) {
++  if (m < 1 || m > 8) return false;
++  if (cl == 8) { f(Inst<8, 64, 512, 8, 4>{}, 1024, 4096); return true; }
++  if (cl == 4) { f(Inst<8, 32, 1024, 4, 4>{}, 1024, 4096); return true; }
++  return false;
++}
++
++}  // namespace
++
++void ouns_run(torch::Tensor x, torch::Tensor w, torch::Tensor out, int64_t cl) {
++  TORCH_CHECK(x.dim() == 2 && x.stride(1) == 1 && x.stride(0) % 8 == 0 && x.data_ptr<at::BFloat16>() != nullptr, "ouns: x");
++  TORCH_CHECK(w.dim() == 2 && w.stride(1) == 1 && w.stride(0) % 8 == 0, "ouns: w");
++  TORCH_CHECK(reinterpret_cast<uintptr_t>(x.data_ptr()) % 16 == 0 && reinterpret_cast<uintptr_t>(w.data_ptr()) % 16 == 0, "ouns: align");
++  TORCH_CHECK(out.dim() == 2 && out.stride(1) == 1 && out.stride(0) % 4 == 0 && out.size(0) == x.size(0), "ouns: out");
++  const bool ok = dispatch(cl, x.size(0), [&](auto inst, int64_t n, int64_t k) {
++    using I = decltype(inst);
++    TORCH_CHECK(x.size(1) == k && w.size(1) == k && w.size(0) >= n && out.size(1) == n, "ouns: shapes");
++    I::launch(x, w, out, n, k);
++  });
++  TORCH_CHECK(ok, "ouns: unsupported (cl, m)");
++}
++
++int64_t ouns_occupancy(int64_t cl) {
++  int64_t r = -1;
++  dispatch(cl, 8, [&](auto inst, int64_t n, int64_t) { r = decltype(inst)::occupancy(n); });
++  return r;
++}
++
++std::string ouns_attrs(int64_t cl) {
++  std::string r = "unsupported";
++  dispatch(cl, 8, [&](auto inst, int64_t, int64_t) { r = decltype(inst)::attrs(); });
++  return r;
++}
++
++"""
++
++
++def _build_ouns():
++    """Compile the CUDA module once per process, at import (never during graph capture), under its
++    OWN extension name. No -std flag is passed (torch's default compiled this kernel in 31 s on
++    3f3330f7). Built for 9.0a only (TORCH_CUDA_ARCH_LIST set around the build and restored after).
++    On any build failure the nvcc error tail is printed and master's routing is kept."""
++    t0 = time.perf_counter()
++    prev = os.environ.get("TORCH_CUDA_ARCH_LIST")
++    os.environ["TORCH_CUDA_ARCH_LIST"] = "9.0a"
++    flags = ["-O3", "-lineinfo"]
++    try:
++        from torch.utils.cpp_extension import load_inline
++        print(f"[ouns] building {OUNS_EXT_NAME}: TORCH_CUDA_ARCH_LIST={os.environ.get('TORCH_CUDA_ARCH_LIST')!r} "
++              f"(was {prev!r}), device cc {torch.cuda.get_device_capability()}, extra nvcc flags {flags}",
++              flush=True)
++        ext = load_inline(
++            name=OUNS_EXT_NAME,
++            cpp_sources=_OUNS_CPP,
++            cuda_sources=_OUNS_CUDA,
++            functions=["ouns_run", "ouns_occupancy", "ouns_attrs"],
++            extra_cuda_cflags=flags,
++            verbose=False,
++        )
++    except Exception as e:  # a build failure must never raise out of the import
++        msg = str(e)
++        print(f"[ouns] load_inline FAILED after {time.perf_counter() - t0:.1f}s ({type(e).__name__}); "
++              f"nvcc error tail:\n{msg[-3000:]}\n[ouns] master path kept", flush=True)
++        return None
++    finally:
++        if prev is None:
++            os.environ.pop("TORCH_CUDA_ARCH_LIST", None)
++        else:
++            os.environ["TORCH_CUDA_ARCH_LIST"] = prev
++    print(f"[ouns] load_inline compiled in {time.perf_counter() - t0:.1f}s", flush=True)
++    return ext
++
++
++_OUNS_EXT = _build_ouns() if torch.cuda.is_available() else None
++
++
++def _ouns_route_ok(x: torch.Tensor, w: torch.Tensor, cfg, state: dict) -> bool:
++    """The unpooler's n == 1024 slice at 1 <= m <= 8, the cluster dim chosen in prepare()
++    (state["ouns_cl"] > 0 means self-check passed AND the graph-replay gate won), 16-byte-aligned
++    bf16 rows. Branches on cfg, shapes, strides and a prepare() constant only."""
++    if not state["ouns_cl"]:   # constant set in prepare() (0 when no module, check or gate failed)
++        return False
++    m = cfg["m"]
++    return (1 <= m <= OUNS_MAX_M and cfg["n"] == OUNS_N and cfg["k"] == OUNS_K
++            and x.dim() == 2 and x.shape[0] == m and x.shape[1] == OUNS_K
++            and x.dtype == torch.bfloat16 and x.stride(1) == 1 and x.stride(0) % 8 == 0
++            and x.data_ptr() % 16 == 0
++            and w.dim() == 2 and w.dtype == torch.bfloat16 and w.shape[0] >= OUNS_N
++            and w.shape[1] == OUNS_K and w.stride(1) == 1 and w.stride(0) % 8 == 0
++            and w.data_ptr() % 16 == 0)
++
++
++def _ouns_forward(x: torch.Tensor, w: torch.Tensor, cl: int) -> torch.Tensor:
++    """x bf16 [m, 4096] @ w[:1024].T -> bf16 [m, 1024], ONE cluster launch, w read in place."""
++    out = torch.empty((x.shape[0], OUNS_N), dtype=torch.bfloat16, device=x.device)
++    _OUNS_EXT.ouns_run(x, w, out, cl)
++    return out
++
++
++def _ouns_check(cl: int, w: torch.Tensor) -> str:
++    """In-process self-check of one cluster dim at m = 1, 5, 8 (plus a final m = 1): synthetic x
++    against an fp64 reference, every case launched twice and required bit-identical. A flushed
++    print precedes each launch and a synchronize plus a flushed print follows it, so a fault names
++    its kernel. Returns "" on pass, else why."""
++    n, k = OUNS_N, OUNS_K
++    dev = w.device
++    wd = w[:n].double()
++    g = torch.Generator(device=dev)
++    g.manual_seed(4321)
++    cases = [(m, m >= 2) for m in OUNS_CHECK_MS] + [(1, True)]
++    for m, onehot in cases:
++        x = torch.randn((m, k), device=dev, dtype=torch.float32, generator=g).to(torch.bfloat16)
++        if onehot:  # last row: one power-of-two entry, its output is a weight column exactly
++            x[m - 1].zero_()
++            x[m - 1, (37 * m + 5) % k] = 2.0
++        ref = x.double() @ wd.T
++        ref_b = ref.to(torch.bfloat16).double()
++        outs = []
++        for rep in (1, 2):
++            print(f"[ouns] self-check launch: ouns_kernel cl={cl} m={m} run={rep} ...", flush=True)
++            outs.append(_ouns_forward(x, w, cl))
++            torch.cuda.synchronize()
++            print(f"[ouns] self-check done:   ouns_kernel cl={cl} m={m} run={rep}", flush=True)
++        if not torch.equal(outs[0], outs[1]):
++            return f"m={m}: second launch differs from the first"
++        o = outs[0].double()
++        if not bool(torch.isfinite(o).all()):
++            return f"m={m}: non-finite output"
++        err = float((o - ref).norm() / ref.norm().clamp_min(1e-30))
++        if not err <= 3e-3:
++            return f"m={m}: rel L2 {err:.2e} (bound 3e-3)"
++        if onehot:
++            probe = float((o[m - 1] - ref_b[m - 1]).abs().max())
++            if not probe <= 1e-4:
++                return f"m={m}: one-hot row off by {probe:.2e} (bound 1e-4)"
++    return ""
++
++
++def _ouns_median(v):
++    s = sorted(v)
++    return s[len(s) // 2]
++
++
++def _ouns_incumbent(state: dict):
++    """The restack's own path for the unpooler slice (what kernel_fn runs without this route):
++    _swapab16_forward 'unpooler_slice' when it was prepared, else the split-K8 ticket path."""
++    w = state["unpooler"]
++    stages = state.get("swapab16_stages", {})
++    if "unpooler_slice" in stages:
++        ws, cnt = _swapab16_buffers(state, "unpooler_slice")
++        return "swapab16", (lambda x: _swapab16_forward("unpooler_slice", x, w, ws, cnt,
++                                                       stages["unpooler_slice"]))
++    return "unpool_splitk8", (lambda x: _unpool_forward(x, w, state["unpool_ws"], state["unpool_cnt"]))
++
++
++def _ouns_gate(cl: int, state: dict) -> bool:
++    """prepare()-only: does the cluster route beat the incumbent on the judge's measurement?
++    For m in OUNS_GATE_MS: capture each path once as a CUDA graph (synthetic x, output allocated
++    from the graph's pool), then OUNS_GATE_REPS times replay both with a >= 256 MB flush before
++    each replay (the order alternates every rep, so drift and which-went-first cancel), time each
++    replay with CUDA events and take medians. A trivial-kernel graph measured the same way gives
++    the fixed replay cost, subtracted from both (the judge subtracts about 4 us). The route is
++    enabled only if incumbent / cluster >= OUNS_MIN_WIN at every m. Eager cold medians are printed
++    too, for continuity with 3f3330f7, but never decide. Any exception keeps master's path."""
++    w = state["unpooler"]
++    dev = w.device
++    inc_name, inc = _ouns_incumbent(state)
++    flush = torch.empty(OUNS_FLUSH_BYTES, dtype=torch.uint8, device=dev)
++    scratch = torch.zeros(1, dtype=torch.float32, device=dev)
++    ev = [torch.cuda.Event(enable_timing=True) for _ in range(2)]
++
++    def replay_us(g) -> float:
++        flush.zero_()
++        ev[0].record()
++        g.replay()
++        ev[1].record()
++        ev[1].synchronize()
++        return ev[0].elapsed_time(ev[1]) * 1e3
++
++    def capture(fn):
++        for _ in range(3):  # warm on the current stream before capture
++            fn()
++        torch.cuda.synchronize()
++        g = torch.cuda.CUDAGraph()
++        with torch.cuda.graph(g):
++            fn()
++        torch.cuda.synchronize()
++        return g
++
++    wins = []
++    g_base = None
++    try:
++        g_base = capture(lambda: scratch.add_(1.0))
++        base = _ouns_median([replay_us(g_base) for _ in range(OUNS_GATE_REPS)])
++        for m in OUNS_GATE_MS:
++            x = torch.randn((m, OUNS_K), device=dev, dtype=torch.float32).to(torch.bfloat16)
++            fns = {"cluster": (lambda x=x: _ouns_forward(x, w, cl)), "incumbent": (lambda x=x: inc(x))}
++            graphs = {name: capture(fn) for name, fn in fns.items()}
++            times = {"cluster": [], "incumbent": []}
++            for rep in range(OUNS_GATE_REPS):
++                order = ("cluster", "incumbent") if rep % 2 == 0 else ("incumbent", "cluster")
++                for name in order:
++                    times[name].append(replay_us(graphs[name]))
++            med = {name: _ouns_median(v) for name, v in times.items()}
++            adj = {name: max(v - base, 0.25) for name, v in med.items()}
++            ratio = adj["incumbent"] / adj["cluster"]
++            # eager cold, continuity only (includes Python / Triton launch cost, biased to cluster)
++            eager = {}
++            for name, fn in fns.items():
++                vals = []
++                for _ in range(20):
++                    flush.zero_()
++                    ev[0].record()
++                    fn()
++                    ev[1].record()
++                    ev[1].synchronize()
++                    vals.append(ev[0].elapsed_time(ev[1]) * 1e3)
++                eager[name] = _ouns_median(vals)
++            win = ratio >= OUNS_MIN_WIN
++            wins.append(win)
++            print(f"[ouns] gate m={m} (graph replay, {OUNS_FLUSH_BYTES >> 20} MB flush, {OUNS_GATE_REPS} reps, "
++                  f"interleaved): cluster median {med['cluster']:.2f} us, {inc_name} median "
++                  f"{med['incumbent']:.2f} us, empty-graph baseline {base:.2f} us -> net "
++                  f"{adj['cluster']:.2f} vs {adj['incumbent']:.2f} us, incumbent/cluster {ratio:.3f}x "
++                  f"(need >= {OUNS_MIN_WIN}) -> {'WIN' if win else 'LOSS'}; eager-cold (not used) "
++                  f"cluster {eager['cluster']:.2f} / {inc_name} {eager['incumbent']:.2f} us", flush=True)
++            del graphs
++    except Exception as e:
++        print(f"[ouns] gate failed ({type(e).__name__}: {e}); master path kept", flush=True)
++        return False
++    finally:
++        # Release the 256 MB flush buffer and the baseline graph; prepare() empties the caching
++        # allocator before it returns.
++        flush = None
++        g_base = None
++        scratch = None
++        torch.cuda.synchronize()
++    return len(wins) == len(OUNS_GATE_MS) and all(wins)
++
++
++def _ouns_prepare(state: dict) -> None:
++    """Query co-residency (cluster 8, else cluster 4, else master), self-check the chosen cluster
++    dim, run the graph-replay gate, and fix state["ouns_cl"] (0 = restack's path) for the run."""
++    state["ouns_cl"] = 0
++    if _OUNS_EXT is None:
++        print("[ouns] PATH CHOSEN: unpooler slice m<=8 -> restack path (swapab16): no CUDA module", flush=True)
++        return
++    w = state["unpooler"]
++    if not (w.dim() == 2 and w.dtype == torch.bfloat16 and w.shape[0] >= OUNS_N
++            and w.shape[1] == OUNS_K and w.stride(1) == 1 and w.stride(0) % 8 == 0
++            and w.data_ptr() % 16 == 0):
++        print(f"[ouns] PATH CHOSEN: unpooler slice m<=8 -> restack path: weight {tuple(w.shape)} unexpected",
++              flush=True)
++        return
++    chosen = 0
++    try:
++        for cl in (8, 4):
++            need = OUNS_CLUSTERS_NEEDED[cl]
++            try:
++                print(f"[ouns] cl={cl} {_OUNS_EXT.ouns_attrs(cl)}", flush=True)
++                have = int(_OUNS_EXT.ouns_occupancy(cl))
++            except Exception as e:
++                print(f"[ouns] cl={cl}: attribute/occupancy query failed ({e!r})", flush=True)
++                continue
++            print(f"[ouns] cl={cl}: cudaOccupancyMaxActiveClusters={have}, needs {need}", flush=True)
++            if have < need:
++                print(f"[ouns] cl={cl}: too few co-resident clusters, trying the next", flush=True)
++                continue
++            try:
++                why = _ouns_check(cl, w)
++            except Exception as e:
++                why = f"raised {e!r}"
++            if why:
++                print(f"[ouns] SELF-CHECK FAILED cl={cl}: {why}", flush=True)
++                continue
++            chosen = cl
++            break
++        if chosen and _ouns_gate(chosen, state):
++            state["ouns_cl"] = chosen
++    except Exception as e:  # never raises: any surprise leaves the restack path
++        print(f"[ouns] prepare raised ({type(e).__name__}: {e}); restack path kept", flush=True)
++        state["ouns_cl"] = 0
++    torch.cuda.synchronize()
++    for key in ("unpool_cnt", "swapab16_cnt_unpooler_slice"):
++        if key in state:
++            state[key].zero_()
++    if state["ouns_cl"]:
++        print(f"[ouns] PATH CHOSEN: unpooler slice m<=8 (n=1024) -> CUDA cluster/DSMEM split-K, cluster dim "
++              f"{state['ouns_cl']}; self-check passed (m {OUNS_CHECK_MS}) and graph-replay gate won at m "
++              f"{OUNS_GATE_MS} (see the [ouns] gate lines for both medians)", flush=True)
++    else:
++        print("[ouns] PATH CHOSEN: unpooler slice m<=8 (n=1024) -> restack path (swapab16); cluster route off "
++              "(see the [ouns] lines above for why)", flush=True)
++
++
++# --- (8) router, 1 <= m <= 8: hand-written CUDA split-K reduced through cluster DSMEM ---------
++# (hypothesis restack-router-cluster-dsmem-m8, the router kernel of branch
++# hyp/muse_bf16_proj/router-cuda-cluster-dsmem-splitk-rewrite / job dc5d03c4, ported gated to
++# m <= 8 only.)
++#
++# One launch, no memset, no atomics, no global workspace (output is torch.empty). 128 CTAs = 16
++# clusters of CS = 8 CTAs. Cluster c owns output columns [16c, 16c + 16) of the 256 experts, CTA
++# rank r owns K [r * 1024, +1024). Swap-AB mma.sync m16n8k16 bf16 -> fp32 with the weight as the A
++# operand (each 16-row A tile = 8 hi rows over the same 8 lo rows) and the <= 8 tokens as B.
++# Each warp loads its own K quarter with cp.async.cg (XOR-swizzled smem), the 4 warp partials are
++# summed in fixed order into a CTA partial in smem, then barrier.cluster, CTA rank r reduces
++# output columns {2r, 2r + 1} over ranks 0..7 in fixed order via mapa + ld.shared::cluster and
++# stores fp32 out, and a second barrier.cluster keeps every CTA's smem alive for its peers.
++# No mbarrier and no spin wait exists in the kernel, so there is nothing to bound.
+ #
+-# Replaces master's _router_hilo_kernel + torch.zeros memset at m = 65..256 by ONE launch with no
+-# memset, no atomics and no global workspace. The [m, 256] fp32 output is tiled 64 tokens x 64
+-# experts (BM = BN = 64, the same tiling as master's grid, so the L2 -> SM operand bytes equal the
+-# incumbent's). Each tile is one cluster of CS CTAs splitting K = 8192 (CS = 8: 1024-wide slices,
+-# CS = 16: 512-wide slices, a non-portable cluster size); grid = ceil(m / 64) * 4 * CS CTAs
+-# (128 CTAs at m = 128 with CS 16, at m = 256 with CS 8). Adversarial-review fixes applied (the
+-# review overrides the spec): BLOCK_K = 64 with a 4-stage cp.async.cg ring (24 KB per stage, 96 KB
+-# of dynamic smem per CTA so 2 CTAs / SM fit and the occupancy query can reach 16 clusters), the
+-# fp32 partial tile aliased onto the ring, 8 warps (4 token x 2 expert warp tiles of 16 x 32),
+-# cudaOccupancyMaxActiveClusters printed and enforced per (instance, token-tile count), the
+-# L2 -> SM bytes printed per instance and compared with the incumbent's, the DSMEM reduce done as
+-# 16-B ld.shared::cluster.v4 loads, and the final choice per token-tile count made by in-prepare
+-# cold-L2 timing against master's _router_hilo_forward (which includes its memset), with master
+-# kept wherever the new kernel does not win.
+-# Math: per k16 step one A fragment (x, row-major, ldmatrix) feeds two mma.sync m16n8k16 per
+-# n8 tile, B = hi then B = lo ([n][k] row-major is exactly the col operand), into ONE fp32
+-# accumulator: the same (hi + lo) fp32-equivalent math as master. Each CTA writes its fp32 tile
+-# partial to smem, barrier.cluster arrive.release / wait.acquire, rank r reduces rows
+-# [BM/CS * r, +BM/CS) of the tile over ranks 0..CS-1 in fixed order (mapa + ld.shared::cluster)
+-# and stores fp32 with plain float4 stores (deterministic); a second barrier.cluster keeps every
+-# CTA's smem alive for its peers. Rows >= m are zero-filled on load and never stored. No mbarrier
+-# and no spin wait exists in the kernel (cp.async groups and hardware cluster barriers only), so
+-# there is nothing to bound; no sm_90a-only PTX is used (mma.sync, cp.async, cluster launch,
+-# mapa, barrier.cluster are baseline sm_90), the arch list is pinned to 9.0a around the build.
+-ROUTER_TILED_MIN_M = 65
+-ROUTER_TILED_MAX_M = 256
+-ROUTER_TILED_CS = (8, 16)                 # compiled instances (BN = 64)
+-ROUTER_TILED_CHECK_MS = (65, 128, 129, 130, 192, 200, 256)
+-ROUTER_TILED_TIME_MS = (65, 128, 130, 192, 200, 256)
+-ROUTER_TILED_REP_M = {2: 128, 3: 192, 4: 256}   # token-tile count -> m timed to choose the instance
+-ROUTER_TILED_MAX_SMEM = 110 * 1024
+-ROUTER_TILED_WIN = 0.98                   # must beat master's cold-L2 eager time by 2%
+-ROUTER_TILED_FLUSH_BYTES = 256 * 1024 * 1024
+-
+-_RT_CPP = r"""
++# Differences from the source: only the NT = 8 instance at CS = 8 is compiled (the CS = 4 and
++# NT = 16 / 32 variants are dropped); the mode = 0 diagnostic (no DSMEM reduce, wrong result) is
++# not ported; the timing diagnostics are not ported; the self-check runs at m in {1, 5, 8}. The
++# occupancy gate is kept: fewer than 16 active clusters of 8 -> swap-AB router (no CS = 4
++# fallback). The gain this hypothesis expects is dropping the memset node (swap-AB router =
++# kernel + torch.zeros), so the m <= 8 path launches exactly one kernel and no memset.
++ROUTER_CLUSTER_MAX_M = 8
++ROUTER_CLUSTER_CHECK_MS = (1, 5, 8)
++
++_RC_CPP = r"""
+ #include <torch/extension.h>
+ #include <vector>
+-void router_tiled(torch::Tensor x, torch::Tensor hi, torch::Tensor lo, torch::Tensor out,
+-                  int64_t cs, int64_t mode);
+-std::vector<int64_t> router_tiled_info(int64_t cs);
++void router_cluster(torch::Tensor x, torch::Tensor hi, torch::Tensor lo, torch::Tensor out);
++std::vector<int64_t> router_info();
+ """
+ 
+-_RT_CUDA = r"""
++_RC_CUDA = r"""
+ #include <torch/extension.h>
+ #include <ATen/cuda/CUDAContext.h>
+ #include <c10/cuda/CUDAException.h>
+@@ -1049,30 +1658,31 @@ _RT_CUDA = r"""
+ 
+ namespace {
+ 
++constexpr int THREADS = 128;     // 4 warps, each owns a K quarter of the CTA's K range
++constexpr int NWARP = 4;
+ constexpr int N_OUT = 256;
+ constexpr int K_TOT = 8192;
+-constexpr int BM = 64;           // tokens per tile
+-constexpr int BN = 64;           // experts per tile
+-constexpr int BK = 64;           // K per pipeline stage (64 bf16 = 128 B = 8 x 16 B chunks per row)
+-constexpr int STAGES = 4;
+-constexpr int THREADS = 256;     // 8 warps: 4 (token rows of 16) x 2 (expert columns of 32)
+-constexpr int NTN = N_OUT / BN;  // expert tiles
+-constexpr int PS = BN + 4;       // padded fp32 row of the partial tile
+-
+-template <int CS>
++constexpr int NCTA = 128;
++constexpr int SUB_K = 64;        // K per cp.async commit group (8 x 16 B per smem row)
++
++template <int CS, int NT>
+ struct Cfg {
+-  static constexpr int KC = K_TOT / CS;               // K per CTA
+-  static constexpr int NK = KC / BK;                  // pipeline iterations
+-  static constexpr int X_BYTES = BM * 128;
+-  static constexpr int W_BYTES = BN * 128;
+-  static constexpr int STAGE_BYTES = X_BYTES + 2 * W_BYTES;   // x + hi + lo = 24 KB
+-  static constexpr int SMEM = STAGES * STAGE_BYTES;           // 96 KB
+-  static constexpr int P_BYTES = BM * PS * 4;                 // aliased onto the ring
+-  static constexpr int RPR = BM / CS;                         // tile rows reduced by one rank
+-  static constexpr int RF4 = RPR * BN / 4;                    // float4 per rank
+-  static_assert(K_TOT % (CS * BK) == 0 && NK >= STAGES, "tiling");
+-  static_assert(P_BYTES <= SMEM, "partial tile aliases the ring");
+-  static_assert(RF4 <= THREADS && BM % CS == 0, "reduce threads");
++  static constexpr int KC = K_TOT / CS;        // K per CTA
++  static constexpr int QK = KC / NWARP;        // K per warp
++  static constexpr int COLS = 2 * CS;          // output columns per cluster
++  static constexpr int G = COLS / 8;           // 8-column groups, one 16-row stacked hi/lo A tile each
++  static constexpr int RB = KC * 2;            // smem row bytes
++  static constexpr int W_ROWS = 16 * G;
++  static constexpr int W_BYTES = W_ROWS * RB;  // 64 KB for both CS
++  static constexpr int X_BYTES = NT * RB;
++  static constexpr int P_BYTES = COLS * NT * 4;
++  static constexpr int SMEM = W_BYTES + X_BYTES + P_BYTES;
++  static constexpr int NTILE = NT / 8;
++  static constexpr int NSUB = QK / SUB_K;
++  static_assert(NCTA % CS == 0 && NSUB >= 1 && NSUB <= 8 && SUB_K * NSUB == QK, "tiling");
++  static_assert(NWARP * COLS * NT * 4 <= W_BYTES, "warp partials alias the weight region");
++  static_assert(SMEM <= 226 * 1024, "smem");
++  static_assert(2 * NT <= THREADS, "reduce threads");
+ };
+ 
+ __device__ __forceinline__ uint32_t smem_u32(const void* p) {
+@@ -1084,6 +1694,18 @@ __device__ __forceinline__ void cp_async16(uint32_t dst, const void* src, int sr
+ __device__ __forceinline__ void cp_commit() { asm volatile("cp.async.commit_group;\n" ::: "memory"); }
+ template <int N>
+ __device__ __forceinline__ void cp_wait() { asm volatile("cp.async.wait_group %0;\n" :: "n"(N) : "memory"); }
++__device__ __forceinline__ void cp_wait_dyn(int n) {  // n is a compile-time constant after unrolling
++  switch (n) {
++    case 7: cp_wait<7>(); break;
++    case 6: cp_wait<6>(); break;
++    case 5: cp_wait<5>(); break;
++    case 4: cp_wait<4>(); break;
++    case 3: cp_wait<3>(); break;
++    case 2: cp_wait<2>(); break;
++    case 1: cp_wait<1>(); break;
++    default: cp_wait<0>(); break;
++  }
++}
+ __device__ __forceinline__ void ldsm_x4(uint32_t (&r)[4], uint32_t addr) {
+   asm volatile("ldmatrix.sync.aligned.m8n8.x4.shared.b16 {%0,%1,%2,%3}, [%4];\n"
+                : "=r"(r[0]), "=r"(r[1]), "=r"(r[2]), "=r"(r[3]) : "r"(addr) : "memory");
+@@ -1103,162 +1725,141 @@ __device__ __forceinline__ uint32_t map_rank(uint32_t addr, uint32_t rank) {
+   asm volatile("mapa.shared::cluster.u32 %0, %1, %2;\n" : "=r"(r) : "r"(addr), "r"(rank));
+   return r;
+ }
+-__device__ __forceinline__ float4 ld_cluster_f4(uint32_t addr) {
+-  float4 v;
+-  asm volatile("ld.shared::cluster.v4.f32 {%0,%1,%2,%3}, [%4];\n"
+-               : "=f"(v.x), "=f"(v.y), "=f"(v.z), "=f"(v.w) : "r"(addr) : "memory");
++__device__ __forceinline__ float ld_cluster_f32(uint32_t addr) {
++  float v;
++  asm volatile("ld.shared::cluster.f32 %0, [%1];\n" : "=f"(v) : "r"(addr) : "memory");
+   return v;
+ }
+ 
+-// out[m, 256] fp32 = x[m, 8192] bf16 @ (hi + lo)[256, 8192]^T, 1 <= m <= 256. Grid
+-// ceil(m / 64) * NTN * CS CTAs, cluster dim (CS, 1, 1): blockIdx.x = tile * CS + rank, tile =
+-// token_tile * NTN + expert_tile. mode 1 = full (DSMEM reduce); mode 0 = diagnostic only: no
+-// barriers, no peer reads, each CTA stores its OWN partial rows (wrong result).
+-template <int CS>
+-__global__ void __launch_bounds__(THREADS, 2)
+-router_tiled_kernel(const __nv_bfloat16* __restrict__ x, int64_t sx,
+-                    const __nv_bfloat16* __restrict__ hi, const __nv_bfloat16* __restrict__ lo,
+-                    float* __restrict__ out, int m, int mode) {
+-  using C = Cfg<CS>;
++// out[m, 256] fp32 = x[m, 8192] bf16 @ (hi + lo)[256, 8192]^T, 1 <= m <= NT. Grid 128 CTAs, cluster
++// dim (CS, 1, 1): blockIdx.x = cluster * CS + rank. Only <8, 8> is instantiated.
++template <int CS, int NT>
++__global__ void __launch_bounds__(THREADS, 1)
++router_kernel(const __nv_bfloat16* __restrict__ x, int64_t sx,
++              const __nv_bfloat16* __restrict__ hi, const __nv_bfloat16* __restrict__ lo,
++              float* __restrict__ out, int m) {
++  using C = Cfg<CS, NT>;
+   extern __shared__ __align__(128) uint8_t smem[];
+   const int tid = threadIdx.x, lane = tid & 31, warp = tid >> 5;
+   const int rank = blockIdx.x % CS;
+-  const int tile = blockIdx.x / CS;
+-  const int m0 = (tile / NTN) * BM;
+-  const int n0 = (tile % NTN) * BN;
++  const int col0 = (blockIdx.x / CS) * C::COLS;
+   const int kbase = rank * C::KC;
+-  const uint32_t smem_u = smem_u32(smem);
++  const uint32_t ws_u = smem_u32(smem);
++  const uint32_t xs_u = ws_u + C::W_BYTES;
++  float* P = reinterpret_cast<float*>(smem + C::W_BYTES + C::X_BYTES);   // [COLS][NT] CTA partial
++  const int kw = warp * C::QK;  // CTA-local K start of this warp's quarter
+ 
+-  auto load_stage = [&](int slot, int ki) {
+-    const int kb = kbase + ki * BK;
+-    const uint32_t xs = smem_u + slot * C::STAGE_BYTES;
+-    const uint32_t hs = xs + C::X_BYTES;
+-    const uint32_t ls = hs + C::W_BYTES;
++  // ---- issue every load for this warp's quarter up front, one commit group per 64 K ----
+ #pragma unroll
+-    for (int j = 0; j < BM * 8 / THREADS; ++j) {
+-      const int idx = j * THREADS + tid;
+-      const int row = idx >> 3, c = idx & 7;
+-      const bool ok = (m0 + row) < m;
+-      const __nv_bfloat16* src = ok ? (x + (int64_t)(m0 + row) * sx + kb + c * 8) : x;
+-      cp_async16(xs + row * 128 + ((c ^ (row & 7)) << 4), src, ok ? 16 : 0);
+-    }
++  for (int s = 0; s < C::NSUB; ++s) {
++    const int k0 = kw + s * SUB_K;  // multiple of 64: chunk index k0/8 is a multiple of 8
+ #pragma unroll
+-    for (int j = 0; j < BN * 8 / THREADS; ++j) {
+-      const int idx = j * THREADS + tid;
++    for (int j = 0; j < C::W_ROWS * 8 / 32; ++j) {
++      const int idx = j * 32 + lane;
+       const int row = idx >> 3, c = idx & 7;
+-      const int64_t off = (int64_t)(n0 + row) * K_TOT + kb + c * 8;
+-      const uint32_t d = row * 128 + ((c ^ (row & 7)) << 4);
+-      cp_async16(hs + d, hi + off, 16);
+-      cp_async16(ls + d, lo + off, 16);
++      const int g = row >> 4, half = (row >> 3) & 1, i = row & 7;
++      const __nv_bfloat16* src = (half ? lo : hi) + (int64_t)(col0 + g * 8 + i) * K_TOT + kbase + k0 + c * 8;
++      cp_async16(ws_u + row * C::RB + ((k0 / 8 + (c ^ (row & 7))) << 4), src, 16);
+     }
+-  };
+-
+ #pragma unroll
+-  for (int s = 0; s < STAGES - 1; ++s) {
+-    load_stage(s, s);
++    for (int j = 0; j < NT * 8 / 32; ++j) {
++      const int idx = j * 32 + lane;
++      const int tok = idx >> 3, c = idx & 7;
++      const bool ok = tok < m;
++      const __nv_bfloat16* src = ok ? (x + (int64_t)tok * sx + kbase + k0 + c * 8) : x;
++      cp_async16(xs_u + tok * C::RB + ((k0 / 8 + (c ^ (tok & 7))) << 4), src, ok ? 16 : 0);
++    }
+     cp_commit();
+   }
+ 
+-  const int wm = warp & 3, wn = warp >> 2;
+-  constexpr int NT8 = BN / 2 / 8;   // n8 tiles per warp (4)
+-  float acc[NT8][4];
++  // ---- main loop: this warp only waits for its own copies ----
++  float acc[C::G][C::NTILE][4];
+ #pragma unroll
+-  for (int t = 0; t < NT8; ++t)
++  for (int g = 0; g < C::G; ++g)
+ #pragma unroll
+-    for (int e = 0; e < 4; ++e) acc[t][e] = 0.f;
+-
+-  const int arow = wm * 16 + (lane & 7) + ((lane >> 3) & 1) * 8;   // ldmatrix A row of this lane
+-  const int ahalf = (lane >> 4) & 1;                               // k chunk (0: k0-7, 1: k8-15)
+-  const int bkc = (lane >> 3) & 1;                                 // B k chunk of this lane
+-  const int brow0 = wn * (BN / 2) + (lane & 7) + ((lane >> 4) & 1) * 8;
+-
+-  for (int it = 0; it < C::NK; ++it) {
+-    cp_wait<STAGES - 2>();
+-    __syncthreads();   // stage it landed for every thread; the slot refilled below is idle
+-    const int nxt = it + STAGES - 1;
+-    if (nxt < C::NK) load_stage(nxt % STAGES, nxt);
+-    cp_commit();
+-    const uint32_t xs = smem_u + (it % STAGES) * C::STAGE_BYTES;
+-    const uint32_t hs = xs + C::X_BYTES;
+-    const uint32_t ls = hs + C::W_BYTES;
++    for (int t = 0; t < C::NTILE; ++t)
+ #pragma unroll
+-    for (int ks = 0; ks < BK / 16; ++ks) {
+-      uint32_t a[4];
+-      ldsm_x4(a, xs + arow * 128 + (((ks * 2 + ahalf) ^ (arow & 7)) << 4));
+-      uint32_t bh[NT8 / 2][4], bl[NT8 / 2][4];
++      for (int e = 0; e < 4; ++e) acc[g][t][e] = 0.f;
++
++  const int arow = (lane & 7) + ((lane >> 3) & 1) * 8;  // ldmatrix A row supplied by this lane
++  const int ahalf = (lane >> 4) & 1;                    // k chunk (0: k0-7, 1: k8-15)
++  const int xr = lane & 7, xq = lane >> 3;
+ #pragma unroll
+-      for (int p = 0; p < NT8 / 2; ++p) {
+-        const int brow = brow0 + p * 16;
+-        const uint32_t off = brow * 128 + (((ks * 2 + bkc) ^ (brow & 7)) << 4);
+-        ldsm_x4(bh[p], hs + off);
+-        ldsm_x4(bl[p], ls + off);
+-      }
++  for (int s = 0; s < C::NSUB; ++s) {
++    cp_wait_dyn(C::NSUB - 1 - s);
++    __syncwarp();
+ #pragma unroll
+-      for (int p = 0; p < NT8 / 2; ++p)
++    for (int kp = 0; kp < SUB_K / 32; ++kp) {
++      const int cbase = (kw + s * SUB_K) / 8 + kp * 4;  // 16 B chunk index, multiple of 4
++      uint32_t b[C::NTILE][4];  // b[t][0..1]: k16 step 2kp, b[t][2..3]: k16 step 2kp + 1
+ #pragma unroll
+-        for (int h = 0; h < 2; ++h) {
+-          mma_bf16(acc[2 * p + h], a, bh[p][2 * h], bh[p][2 * h + 1]);
+-          mma_bf16(acc[2 * p + h], a, bl[p][2 * h], bl[p][2 * h + 1]);
++      for (int t = 0; t < C::NTILE; ++t)
++        ldsm_x4(b[t], xs_u + (t * 8 + xr) * C::RB + (((cbase + xq) ^ xr) << 4));
++#pragma unroll
++      for (int h = 0; h < 2; ++h) {
++#pragma unroll
++        for (int g = 0; g < C::G; ++g) {
++          uint32_t a[4];
++          ldsm_x4(a, ws_u + (g * 16 + arow) * C::RB + (((cbase + h * 2 + ahalf) ^ (arow & 7)) << 4));
++#pragma unroll
++          for (int t = 0; t < C::NTILE; ++t) mma_bf16(acc[g][t], a, b[t][2 * h], b[t][2 * h + 1]);
+         }
++      }
+     }
+   }
+-  cp_wait<0>();
+-  __syncthreads();   // every warp is done reading the ring, which the partial tile now reuses
+ 
+-  float* P = reinterpret_cast<float*>(smem);   // [BM][PS] fp32 partial of this CTA
++  // ---- warp partials (aliasing the weight region) -> CTA partial P, fixed warp order ----
++  __syncthreads();  // every warp is done reading the weight / x tiles
++  float* WP = reinterpret_cast<float*>(smem);  // [NWARP][COLS][NT]
++#pragma unroll
++  for (int g = 0; g < C::G; ++g)
++#pragma unroll
++    for (int t = 0; t < C::NTILE; ++t) {
++      // c0, c1: hi row lane/4, tokens 2*(lane%4) + {0, 1}; c2, c3: the lo row of the same column.
++      const int col = g * 8 + (lane >> 2), tk = t * 8 + (lane & 3) * 2;
++      WP[(warp * C::COLS + col) * NT + tk] = acc[g][t][0] + acc[g][t][2];
++      WP[(warp * C::COLS + col) * NT + tk + 1] = acc[g][t][1] + acc[g][t][3];
++    }
++  __syncthreads();
++  for (int e = tid; e < C::COLS * NT; e += THREADS) {
++    float s = WP[e];
+ #pragma unroll
+-  for (int t = 0; t < NT8; ++t) {
+-    const int col = wn * (BN / 2) + t * 8 + (lane & 3) * 2;
+-    const int r0 = wm * 16 + (lane >> 2);
+-    *reinterpret_cast<float2*>(P + r0 * PS + col) = make_float2(acc[t][0], acc[t][1]);
+-    *reinterpret_cast<float2*>(P + (r0 + 8) * PS + col) = make_float2(acc[t][2], acc[t][3]);
++    for (int w = 1; w < NWARP; ++w) s += WP[w * C::COLS * NT + e];
++    P[e] = s;
+   }
+   __syncthreads();
+ 
+-  if (mode != 0) cluster_sync_rel_acq();   // every CTA's P is complete and visible cluster-wide
+-  if (tid < C::RF4) {
+-    const int row = rank * C::RPR + tid / (BN / 4), c4 = tid % (BN / 4);
+-    float4 s;
+-    if (mode != 0) {
+-      const uint32_t loc = smem_u32(P + row * PS + c4 * 4);
+-      float4 v[CS];
+-#pragma unroll
+-      for (int q = 0; q < CS; ++q) v[q] = ld_cluster_f4(map_rank(loc, q));
+-      s = v[0];
++  const int cj = tid / NT, tok = tid % NT;  // meaningful for tid < 2 * NT
++  const bool mine = tid < 2 * NT && tok < m;
++  const int colo = col0 + 2 * rank + cj;
++  cluster_sync_rel_acq();  // every CTA's P is complete and visible cluster-wide
++  if (mine) {
++    const uint32_t loc = smem_u32(P + (2 * rank + cj) * NT + tok);
++    float s = 0.f;
+ #pragma unroll
+-      for (int q = 1; q < CS; ++q) {   // fixed rank order: deterministic
+-        s.x += v[q].x; s.y += v[q].y; s.z += v[q].z; s.w += v[q].w;
+-      }
+-    } else {
+-      s = *reinterpret_cast<const float4*>(P + row * PS + c4 * 4);
+-    }
+-    if (m0 + row < m) *reinterpret_cast<float4*>(out + (int64_t)(m0 + row) * N_OUT + n0 + c4 * 4) = s;
++    for (int q = 0; q < CS; ++q) s += ld_cluster_f32(map_rank(loc, q));  // fixed rank order
++    out[(int64_t)tok * N_OUT + colo] = s;
+   }
+-  if (mode != 0) cluster_sync_rel_acq();   // peers are done reading this CTA's smem before it exits
++  cluster_sync_rel_acq();  // peers are done reading this CTA's smem before it exits
+ }
+ 
+-template <int CS>
++template <int CS, int NT>
+ void set_attr() {
+   static bool done = false;
+   if (!done) {
+-    C10_CUDA_CHECK(cudaFuncSetAttribute(router_tiled_kernel<CS>, cudaFuncAttributeMaxDynamicSharedMemorySize,
+-                                        Cfg<CS>::SMEM));
+-    if (CS > 8) {
+-      C10_CUDA_CHECK(cudaFuncSetAttribute(router_tiled_kernel<CS>,
+-                                          cudaFuncAttributeNonPortableClusterSizeAllowed, 1));
+-    }
++    C10_CUDA_CHECK(cudaFuncSetAttribute(router_kernel<CS, NT>, cudaFuncAttributeMaxDynamicSharedMemorySize,
++                                        Cfg<CS, NT>::SMEM));
+     done = true;
+   }
+ }
+ 
+-template <int CS>
+-void launch(torch::Tensor x, torch::Tensor hi, torch::Tensor lo, torch::Tensor out, int mode) {
+-  set_attr<CS>();
+-  const int mt = (static_cast<int>(x.size(0)) + BM - 1) / BM;
++template <int CS, int NT>
++void launch(torch::Tensor x, torch::Tensor hi, torch::Tensor lo, torch::Tensor out) {
++  set_attr<CS, NT>();
+   cudaLaunchConfig_t cfg = {};
+-  cfg.gridDim = dim3(mt * NTN * CS);
++  cfg.gridDim = dim3(NCTA);
+   cfg.blockDim = dim3(THREADS);
+-  cfg.dynamicSmemBytes = Cfg<CS>::SMEM;
++  cfg.dynamicSmemBytes = Cfg<CS, NT>::SMEM;
+   cfg.stream = at::cuda::getCurrentCUDAStream();
+   cudaLaunchAttribute attr[1];
+   attr[0].id = cudaLaunchAttributeClusterDimension;
+@@ -1268,22 +1869,22 @@ void launch(torch::Tensor x, torch::Tensor hi, torch::Tensor lo, torch::Tensor o
+   cfg.attrs = attr;
+   cfg.numAttrs = 1;
+   C10_CUDA_CHECK(cudaLaunchKernelEx(
+-      &cfg, router_tiled_kernel<CS>,
++      &cfg, router_kernel<CS, NT>,
+       reinterpret_cast<const __nv_bfloat16*>(x.data_ptr()), static_cast<int64_t>(x.stride(0)),
+       reinterpret_cast<const __nv_bfloat16*>(hi.data_ptr()), reinterpret_cast<const __nv_bfloat16*>(lo.data_ptr()),
+-      out.data_ptr<float>(), static_cast<int>(x.size(0)), mode));
++      out.data_ptr<float>(), static_cast<int>(x.size(0))));
+   C10_CUDA_KERNEL_LAUNCH_CHECK();  // cudaGetLastError, raises
+ }
+ 
+-template <int CS>
++template <int CS, int NT>
+ std::vector<int64_t> info() {
+-  set_attr<CS>();
++  set_attr<CS, NT>();
+   cudaFuncAttributes fa;
+-  C10_CUDA_CHECK(cudaFuncGetAttributes(&fa, router_tiled_kernel<CS>));
++  C10_CUDA_CHECK(cudaFuncGetAttributes(&fa, router_kernel<CS, NT>));
+   cudaLaunchConfig_t cfg = {};
+-  cfg.gridDim = dim3(CS * NTN);
++  cfg.gridDim = dim3(NCTA);
+   cfg.blockDim = dim3(THREADS);
+-  cfg.dynamicSmemBytes = Cfg<CS>::SMEM;
++  cfg.dynamicSmemBytes = Cfg<CS, NT>::SMEM;
+   cudaLaunchAttribute attr[1];
+   attr[0].id = cudaLaunchAttributeClusterDimension;
+   attr[0].val.clusterDim.x = CS;
+@@ -1292,119 +1893,97 @@ std::vector<int64_t> info() {
+   cfg.attrs = attr;
+   cfg.numAttrs = 1;
+   int nclusters = -1;
+-  if (cudaOccupancyMaxActiveClusters(&nclusters, router_tiled_kernel<CS>, &cfg) != cudaSuccess) {
++  if (cudaOccupancyMaxActiveClusters(&nclusters, router_kernel<CS, NT>, &cfg) != cudaSuccess) {
+     (void)cudaGetLastError();
+     nclusters = -1;
+   }
+   return {fa.numRegs, static_cast<int64_t>(fa.localSizeBytes), static_cast<int64_t>(fa.sharedSizeBytes),
+-          static_cast<int64_t>(Cfg<CS>::SMEM), nclusters};
++          static_cast<int64_t>(Cfg<CS, NT>::SMEM), nclusters};
+ }
+ 
+ }  // namespace
+ 
+-void router_tiled(torch::Tensor x, torch::Tensor hi, torch::Tensor lo, torch::Tensor out,
+-                  int64_t cs, int64_t mode) {
++void router_cluster(torch::Tensor x, torch::Tensor hi, torch::Tensor lo, torch::Tensor out) {
+   const int64_t m = x.size(0);
+-  TORCH_CHECK(x.dim() == 2 && m >= 1 && m <= 256 && x.size(1) == K_TOT, "router_tiled: x shape");
++  TORCH_CHECK(x.dim() == 2 && m >= 1 && m <= 8 && x.size(1) == K_TOT, "router_cluster: x shape");
+   TORCH_CHECK(x.scalar_type() == at::kBFloat16 && hi.scalar_type() == at::kBFloat16 &&
+-              lo.scalar_type() == at::kBFloat16 && out.scalar_type() == at::kFloat, "router_tiled: dtypes");
++              lo.scalar_type() == at::kBFloat16 && out.scalar_type() == at::kFloat, "router_cluster: dtypes");
+   TORCH_CHECK(hi.is_contiguous() && lo.is_contiguous() && hi.size(0) == N_OUT && hi.size(1) == K_TOT &&
+-              lo.size(0) == N_OUT && lo.size(1) == K_TOT, "router_tiled: weights");
++              lo.size(0) == N_OUT && lo.size(1) == K_TOT, "router_cluster: weights");
+   TORCH_CHECK(x.stride(1) == 1 && (m == 1 || x.stride(0) % 8 == 0) &&
+               reinterpret_cast<uintptr_t>(x.data_ptr()) % 16 == 0 &&
+               reinterpret_cast<uintptr_t>(hi.data_ptr()) % 16 == 0 &&
+-              reinterpret_cast<uintptr_t>(lo.data_ptr()) % 16 == 0, "router_tiled: x strides / alignment");
+-  TORCH_CHECK(out.is_contiguous() && out.size(0) == m && out.size(1) == N_OUT, "router_tiled: out");
+-  if (cs == 8) launch<8>(x, hi, lo, out, (int)mode);
+-  else if (cs == 16) launch<16>(x, hi, lo, out, (int)mode);
+-  else TORCH_CHECK(false, "router_tiled: unsupported cluster size");
++              reinterpret_cast<uintptr_t>(lo.data_ptr()) % 16 == 0, "router_cluster: x strides / alignment");
++  TORCH_CHECK(out.is_contiguous() && out.size(0) == m && out.size(1) == N_OUT, "router_cluster: out");
++  launch<8, 8>(x, hi, lo, out);
+ }
+ 
+ // {regs, local (spill) bytes, static smem, dynamic smem, max active clusters (-1: query failed)}
+-std::vector<int64_t> router_tiled_info(int64_t cs) {
+-  if (cs == 8) return info<8>();
+-  if (cs == 16) return info<16>();
+-  TORCH_CHECK(false, "router_tiled_info: unsupported config");
+-  return {};
+-}
++std::vector<int64_t> router_info() { return info<8, 8>(); }
+ """
+ 
+ 
+-def _build_router_tiled():
+-    """Compile the CUDA module once per process, at import (never during graph capture). The arch
+-    list is pinned to 9.0a around the build and restored after. Any failure keeps master's router
+-    path."""
++def _build_router_cluster():
++    """Compile the CUDA module once per process, at import (never during graph capture). Nothing
++    here needs sm_90a-only PTX (mma.sync, cp.async.cg, cluster launch, mapa, barrier.cluster are
++    baseline sm_90), but the arch list is pinned to 9.0a around the build and restored after.
++    Any failure keeps the swap-AB router path."""
+     t0 = time.perf_counter()
+     prev = os.environ.get("TORCH_CUDA_ARCH_LIST")
+     os.environ["TORCH_CUDA_ARCH_LIST"] = "9.0a"
+     flags = ["-O3", "-lineinfo"]
+-    print(f"[router_tiled] building: TORCH_CUDA_ARCH_LIST={os.environ['TORCH_CUDA_ARCH_LIST']} "
++    print(f"[router_cluster] building: TORCH_CUDA_ARCH_LIST={os.environ['TORCH_CUDA_ARCH_LIST']} "
+           f"extra_cuda_cflags={flags}", flush=True)
+     try:
+         from torch.utils.cpp_extension import load_inline
+         ext = load_inline(
+-            name="muse_bf16_router_tiled_v1",
+-            cpp_sources=_RT_CPP,
+-            cuda_sources=_RT_CUDA,
+-            functions=["router_tiled", "router_tiled_info"],
++            name="muse_bf16_router_cluster_m8_v1",
++            cpp_sources=_RC_CPP,
++            cuda_sources=_RC_CUDA,
++            functions=["router_cluster", "router_info"],
+             extra_cuda_cflags=flags,
+             verbose=False,
+         )
+     except Exception as e:
+-        print(f"[router_tiled] load_inline failed after {time.perf_counter() - t0:.1f}s, "
+-              f"master router path kept: {e!r}", flush=True)
++        print(f"[router_cluster] load_inline failed after {time.perf_counter() - t0:.1f}s, "
++              f"swap-AB router path kept: {e!r}", flush=True)
+         return None
+     finally:
+         if prev is None:
+             os.environ.pop("TORCH_CUDA_ARCH_LIST", None)
+         else:
+             os.environ["TORCH_CUDA_ARCH_LIST"] = prev
+-    print(f"[router_tiled] load_inline compiled in {time.perf_counter() - t0:.1f}s", flush=True)
++    print(f"[router_cluster] load_inline compiled in {time.perf_counter() - t0:.1f}s", flush=True)
+     return ext
+ 
+ 
+-_RT_EXT = _build_router_tiled() if torch.cuda.is_available() else None
++_RC_EXT = _build_router_cluster() if torch.cuda.is_available() else None
+ 
+ 
+-def _rt_mt(m: int) -> int:
+-    """Token-tile count (64 tokens per tile) for m tokens."""
+-    return (m + 63) // 64
++def _router_cluster_route(x: torch.Tensor, cfg, state: dict) -> bool:
++    """True when the CUDA cluster router runs for this call. Branches on cfg, shapes, strides,
++    alignment and the prepare() constant only, never on input values."""
++    if not state["router_cluster_ok"] or x.dim() != 2:   # constant set in prepare(); False if no module
++        return False
++    m = x.shape[0]
++    return (1 <= m <= ROUTER_CLUSTER_MAX_M and cfg["m"] == m and cfg["n"] == ROUTER_N
++            and cfg["k"] == ROUTER_K and x.shape[1] == ROUTER_K and x.dtype == torch.bfloat16
++            and x.is_cuda and x.stride(1) == 1 and (m == 1 or x.stride(0) % 8 == 0)
++            and x.data_ptr() % 16 == 0)
+ 
+ 
+-def _router_tiled_route(x: torch.Tensor, cfg, state: dict) -> int:
+-    """Cluster size (8 or 16) the CUDA tiled router runs at for this call, 0 for master's path.
+-    Branches on cfg, shapes, strides, alignment and the prepare() constant only."""
+-    if _RT_EXT is None or x.dim() != 2:
+-        return 0
+-    m = x.shape[0]
+-    if not ROUTER_TILED_MIN_M <= m <= ROUTER_TILED_MAX_M:
+-        return 0
+-    cs = state["router_tiled"][_rt_mt(m)]
+-    if (cs and cfg["m"] == m and cfg["n"] == ROUTER_N and cfg["k"] == ROUTER_K
+-            and x.shape[1] == ROUTER_K and x.dtype == torch.bfloat16 and x.is_cuda
+-            and x.stride(1) == 1 and x.stride(0) % 8 == 0 and x.data_ptr() % 16 == 0):
+-        return cs
+-    return 0
+-
+-
+-def _router_tiled_forward(x: torch.Tensor, state: dict, cs: int, mode: int = 1) -> torch.Tensor:
+-    """x bf16 [65 <= m <= 256, 8192] @ (hi + lo).T -> fp32 [m, 256]: ONE cluster launch, no memset."""
++def _router_cluster_forward(x: torch.Tensor, state: dict) -> torch.Tensor:
++    """x bf16 [m <= 8, 8192] @ (hi + lo).T -> fp32 [m, 256]: ONE cluster launch, no memset."""
+     out = torch.empty((x.shape[0], ROUTER_N), dtype=torch.float32, device=x.device)
+-    _RT_EXT.router_tiled(x, state["router_hi"], state["router_lo"], out, cs, mode)
++    _RC_EXT.router_cluster(x, state["router_hi"], state["router_lo"], out)
+     return out
+ 
+ 
+-def _rt_traffic_mb(m: int, bm: int, bn: int) -> float:
+-    """L2 -> SM operand bytes (MB) of a (bm, bn)-tiled grid: x re-read once per expert tile, the
+-    hi + lo weights (8.4 MB) once per token tile. Independent of the K split."""
+-    return (m * ROUTER_K * 2 * (ROUTER_N // bn) + 2 * ROUTER_N * ROUTER_K * 2 * ((m + bm - 1) // bm)) / 1e6
+-
+-
+-def _rt_check(state: dict, cs: int, ms) -> str:
+-    """In-process self-check of cluster size cs at the token counts ms, each launched twice, with a
+-    flushed print before and a synchronize + flushed print after every launch so a fault names its
+-    kernel. Returns "" if it passes, else why. Bounds: rel L2 <= 2e-5 against x.double() @
+-    router.double().T, worst row <= 1e-4 (5x), the one-hot power-of-two row within 1e-6 of the
++def _rc_check(state: dict, ms) -> str:
++    """In-process self-check at the token counts ms, each launched twice, with a flushed print
++    before and a synchronize + flushed print after every launch so a fault names its kernel.
++    Returns "" if it passes, else why. Bounds: rel L2 <= 2e-5 against x.double() @
++    router.double().T, worst row <= 1e-4, the one-hot power-of-two row within 1e-6 of the
+     hi + lo reconstruction, finite, run 2 bit-identical."""
+     router, hi, lo = state["router"], state["router_hi"], state["router_lo"]
+     dev = router.device
+@@ -1415,16 +1994,17 @@ def _rt_check(state: dict, cs: int, ms) -> str:
+     g.manual_seed(2468)
+     for m in ms:
+         x = torch.randn((m, k), device=dev, dtype=torch.float32, generator=g).to(torch.bfloat16)
+-        x[m - 1].zero_()   # last row: a single power-of-two entry, its output is a (hi + lo) column
+-        x[m - 1, (37 * m + 5) % k] = 2.0 ** ((m % 5) - 2)
++        if m >= 2:  # last row: a single power-of-two entry, its output is a (hi + lo) weight column
++            x[m - 1].zero_()
++            x[m - 1, (37 * m + 5) % k] = 2.0 ** ((m % 5) - 2)
+         ref = x.double() @ rd.T
+         ref_hl = x.double() @ hld.T
+         outs = []
+         for run in (1, 2):
+-            print(f"[router_tiled] launching cs={cs} m={m} run {run}", flush=True)
+-            o = _router_tiled_forward(x, state, cs)
++            print(f"[router_cluster] launching router_kernel<8,8> m={m} run {run}", flush=True)
++            o = _router_cluster_forward(x, state)
+             torch.cuda.synchronize()
+-            print(f"[router_tiled] cs={cs} m={m} run {run} finished OK", flush=True)
++            print(f"[router_cluster] router_kernel<8,8> m={m} run {run} finished OK", flush=True)
+             outs.append(o)
+         if not torch.equal(outs[0], outs[1]):
+             return f"m={m}: second launch differs from the first"
+@@ -1437,156 +2017,1756 @@ def _rt_check(state: dict, cs: int, ms) -> str:
+         row_err = float(((o - ref).norm(dim=1) / row_den).max())
+         if not (err <= 2e-5 and row_err <= 1e-4):
+             return f"m={m}: rel L2 {err:.2e} (bound 2e-5), worst row {row_err:.2e} (bound 1e-4)"
+-        oh = float((o[m - 1] - ref_hl[m - 1]).norm() / ref_hl[m - 1].norm().clamp_min(1e-30))
+-        if not oh <= 1e-6:
+-            return f"m={m}: one-hot row off the hi+lo reconstruction by {oh:.2e} (bound 1e-6)"
++        if m >= 2:
++            oh = float((o[m - 1] - ref_hl[m - 1]).norm() / ref_hl[m - 1].norm().clamp_min(1e-30))
++            if not oh <= 1e-6:
++                return f"m={m}: one-hot row off the hi+lo reconstruction by {oh:.2e} (bound 1e-6)"
+     return ""
+ 
+ 
+-def _rt_timer(dev):
+-    """Median cold-L2 (flush >= 256 MB) cudaEvent time per eager launch (includes the launch), us."""
+-    flush = torch.empty(ROUTER_TILED_FLUSH_BYTES, dtype=torch.uint8, device=dev)
+-
+-    def timeit(fn, reps: int = 20) -> float:
+-        for _ in range(3):
+-            fn()
+-        evs = []
+-        for _ in range(reps):
+-            flush.zero_()
+-            a = torch.cuda.Event(enable_timing=True)
+-            b = torch.cuda.Event(enable_timing=True)
+-            a.record()
+-            fn()
+-            b.record()
+-            evs.append((a, b))
+-        torch.cuda.synchronize()
+-        ts = sorted(a.elapsed_time(b) * 1e3 for a, b in evs)
+-        return ts[len(ts) // 2]
+-    return timeit
+-
+-
+-def _router_tiled_prepare(state: dict) -> None:
+-    """Choose, per token-tile count mt in {2, 3, 4} (m = 65..128 / 129..192 / 193..256), the
+-    cluster size the router runs at: an instance is a candidate when its build has no spills and
+-    <= ~110 KB of dynamic smem, cudaOccupancyMaxActiveClusters >= mt * 4 clusters (one wave) and
+-    its self-check passes; the candidate with the lowest cold-L2 eager time at the representative
+-    m wins if it beats master's _router_hilo_forward (kernel + memset) by 2%, else 0 (master's
+-    path, byte for byte). The result is a constant in state, derived from synthetic data and the
+-    weights only; it never raises. Also prints the L2 -> SM bytes per tiling vs the incumbent's
+-    and cold-L2 timings (full, no-DSMEM-reduce mode, master) at m = 65 / 128 / 130 / 192 / 200 / 256."""
+-    choice = {2: 0, 3: 0, 4: 0}
+-    state["router_tiled"] = choice
++def _router_cluster_prepare(state: dict) -> None:
++    """Set the constant state["router_cluster_ok"]: True iff the extension built, the router
++    weight is the expected [256, 8192] fp32 CUDA tensor, cudaOccupancyMaxActiveClusters reports
++    >= 16 active clusters for CS = 8 NT = 8, and the self-check at m in {1, 5, 8} passes. Derived
++    from synthetic data and the weights only; never raises (any failure keeps the swap-AB router)."""
++    ok = False
++    state["router_cluster_ok"] = False
+     router = state["router"]
+     try:
+-        if (_RT_EXT is None or router.shape != (ROUTER_N, ROUTER_K) or router.dtype != torch.float32
+-                or not router.is_cuda):
++        if (_RC_EXT is None or tuple(router.shape) != (ROUTER_N, ROUTER_K)
++                or router.dtype != torch.float32 or not router.is_cuda):
+             raise RuntimeError("extension missing or router weight shape/dtype unexpected")
+-        infos = {}
+-        for cs in ROUTER_TILED_CS:
+-            infos[cs] = _RT_EXT.router_tiled_info(cs)
+-            regs, spill, ssmem, dsmem, ncl = infos[cs]
+-            print(f"[router_tiled] cs={cs}: regs={regs} local(spill)={spill} B static smem={ssmem} B "
+-                  f"dynamic smem={dsmem} B max active clusters={ncl} threads=256 mma.sync/CTA/k64-stage="
+-                  f"{8 * 4 * 8}", flush=True)
+-        for m in (128, 256):
+-            bm, bn, _sk = _router_hilo_config(m)
+-            print(f"[router_tiled] L2->SM operand bytes m={m}: incumbent {bm}x{bn} tiles "
+-                  f"{_rt_traffic_mb(m, bm, bn):.1f} MB; new 64x64 tiles {_rt_traffic_mb(m, 64, 64):.1f} MB",
+-                  flush=True)
+-        passed = {}
+-        for cs in ROUTER_TILED_CS:
+-            regs, spill, ssmem, dsmem, ncl = infos[cs]
+-            for mt in (2, 3, 4):
+-                need = mt * (ROUTER_N // 64)
+-                if spill != 0 or dsmem > ROUTER_TILED_MAX_SMEM:
+-                    print(f"[router_tiled] mt={mt}: cs={cs} skipped (spill {spill} B, smem {dsmem} B)", flush=True)
+-                    continue
+-                if ncl < need:
+-                    print(f"[router_tiled] mt={mt}: cs={cs} skipped, max active clusters {ncl} < {need}",
+-                          flush=True)
+-                    continue
+-                ms = [m for m in ROUTER_TILED_CHECK_MS if _rt_mt(m) == mt]
+-                why = _rt_check(state, cs, ms)
+-                if why:
+-                    print(f"[router_tiled] mt={mt}: cs={cs} self-check FAILED: {why}", flush=True)
+-                    continue
+-                print(f"[router_tiled] mt={mt}: cs={cs} self-check passed (m in {ms})", flush=True)
+-                passed[(cs, mt)] = True
+-        if passed:
+-            hi, lo = state["router_hi"], state["router_lo"]
+-            timeit = _rt_timer(router.device)
+-            rep = {}
+-            for m in ROUTER_TILED_TIME_MS:
+-                mt = _rt_mt(m)
+-                x = torch.randn((m, ROUTER_K), device=router.device, dtype=torch.float32).to(torch.bfloat16)
+-                t_master = timeit(lambda: _router_hilo_forward(x, hi, lo))
+-                row = []
+-                best = None
+-                for cs in ROUTER_TILED_CS:
+-                    if not passed.get((cs, mt)):
+-                        continue
+-                    t_full = timeit(lambda: _router_tiled_forward(x, state, cs, 1))
+-                    t_nored = timeit(lambda: _router_tiled_forward(x, state, cs, 0))
+-                    row.append(f"cs={cs} full {t_full:.2f} | no-DSMEM-reduce {t_nored:.2f}")
+-                    if best is None or t_full < best[1]:
+-                        best = (cs, t_full)
+-                print(f"[router_tiled] m={m} cold-L2 eager median us: master {t_master:.2f} | "
+-                      + "; ".join(row), flush=True)
+-                if ROUTER_TILED_REP_M.get(mt) == m and best is not None:
+-                    rep[mt] = (best, t_master)
+-            for mt, ((cs, t), t_master) in rep.items():
+-                if t < ROUTER_TILED_WIN * t_master:
+-                    choice[mt] = cs
+-                else:
+-                    print(f"[router_tiled] mt={mt}: best cs={cs} {t:.2f} us does not beat master "
+-                          f"{t_master:.2f} us by 2%; master kept", flush=True)
++        regs, spill, ssmem, dsmem, ncl = _RC_EXT.router_info()
++        print(f"[router_cluster] cs=8 nt=8: regs={regs} local(spill)={spill} B static smem={ssmem} B "
++              f"dynamic smem={dsmem} B max active clusters={ncl}", flush=True)
++        if ncl < 16:
++            print(f"[router_cluster] cs=8 skipped, max active clusters {ncl} < 16", flush=True)
++        else:
++            why = _rc_check(state, ROUTER_CLUSTER_CHECK_MS)
++            if why:
++                print(f"[router_cluster] cs=8 self-check FAILED: {why}", flush=True)
++            else:
++                print(f"[router_cluster] cs=8 self-check passed (m in {ROUTER_CLUSTER_CHECK_MS})", flush=True)
++                ok = True
+     except Exception as e:
+-        print(f"[router_tiled] prepare failed ({e!r}); master router path for every m", flush=True)
+-        for mt in choice:
+-            choice[mt] = 0
+-    for m in (64, 65, 128, 129, 130, 192, 193, 200, 256, 257):
+-        # Resolved through the timed call's own gate (synthetic x / cfg), so the m = 64 / 257
+-        # boundaries printed here are the ones kernel_fn actually applies.
+-        try:
+-            xs = torch.empty((m, ROUTER_K), dtype=torch.bfloat16, device=router.device)
+-            cs = _router_tiled_route(xs, {"m": m, "n": ROUTER_N, "k": ROUTER_K, "layer": "router"}, state)
+-        except Exception as e:
+-            print(f"[router_tiled] route probe m={m} failed ({e!r})", flush=True)
+-            cs = 0
+-        print(f"[router_tiled] PATH CHOSEN router m={m}: "
+-              + (f"CUDA tiled cluster kernel, cluster size {cs}" if cs else "master Triton router"),
+-              flush=True)
++        print(f"[router_cluster] prepare failed ({e!r}); swap-AB router path for every m", flush=True)
++        ok = False
++    state["router_cluster_ok"] = ok
++    print("[router_cluster] PATH CHOSEN router m<=8 (n=256): "
++          + ("CUDA cluster kernel router_kernel<8,8>, no memset" if ok else "swap-AB Triton router (cluster off)")
++          + "; 9 <= m <= 32: swap-AB Triton router; m > 32: hilo", flush=True)
+ 
+ 
++# --- (9) m == 1 bulk-TMA row-owner stream (pooler A, qkv_gate A2, o A3) and qkv_gate m == 128 on a
++# prepare-time cuBLASLt plan (B) (hypothesis combo-rowowner-reduce-free-m1-qkv-o-plus-naive).
++#
++# A / A2 / A3: the bulk_kernel of hyp/muse_bf16_proj/pooler-unpooler-bulk-tma-row-owner-s2-cxx20-rebuild
++# (impl b3e80b45, job 571ea532), MODE 0 only, with the ring depth S and the min-CTAs/SM of
++# __launch_bounds__ as template parameters and the grid (N / R) a launch argument. Warp 0 is the
++# producer (cp.async.bulk + mbarrier full/empty ring, every wait bounded to 0.5 s, then an error
++# word), warps 1-4 consume (mma.sync m16n8k16, a quarter of each chunk's K each). Each CTA owns R
++# output rows over the WHOLE K: no split-K, no workspace, no ticket. prepare() repacks each weight
++# losslessly (pure permutation, round trip asserted bit-exact) into Wt[cta][kblock][row][64 k] with
++# the 16 B segments of each 128 B row XOR-swizzled by (row & 7), per state.
++#   A  pooler   m=1: bulk_kernel<32, 8192, 8, 6, 1>, grid 128, dyn smem 123,904 B, 1 CTA/SM
++#   A2 qkv_gate m=1: bulk_kernel<16, 8192, 8, 4, 2>, grid 144, dyn smem  99,072 B, 2 CTAs/SM
++#                    (max-shared carveout set; the cell is disabled unless the occupancy query is 2)
++#   A3 o        m=1: bulk_kernel<64, 1024, 8, 6, 1>, grid 128, dyn smem 111,616 B, 1 CTA/SM
++# B: qkv_gate m == 128 runs cublasLtMatmul with an algo chosen ONCE in prepare() among
++# cublasLtMatmulAlgoGetHeuristic's SPLIT-K-1 candidates (no workspace reduce node; review fix (1):
++# no per-call preferred_blas_library toggle). Descriptors are built per call on the host (no
++# static / global state); under graph replay none of that host code runs.
++# Every cell: canary launch (flushed LAUNCH / DONE prints, synced, error word) and a correctness
++# check before any capture, then a model-selector gate (graph replay of kernel_fn with the cell's
++# flag on vs off, 256 MB flush before each replay, 41 interleaved reps, empty-graph baseline
++# subtracted) that routes only at candidate / master <= 0.98, then one torch.profiler call that
++# asserts the launched kernel name. One PATH CHOSEN line per cell. Flags and buffers live in state.
++BULK_EXT_NAME = "muse_bf16_bulk_rowown_m1_v1"
++BULK_NVCC_FLAGS = ["-O3", "-lineinfo", "-std=c++20"]
++BULK_M = 1
++# layer -> (source, instance id, N, K, rows per CTA R, ring stages S, min CTAs/SM, state flag)
++BULK_CELLS = {
++    "pooler":   ("A", 0, 4096, 8192, 32, 6, 1, "bulk_pooler_ok"),
++    "qkv_gate": ("A2", 1, 2304, 8192, 16, 4, 2, "bulk_qkv_ok"),
++    "o":        ("A3", 2, 8192, 1024, 64, 6, 1, "bulk_o_ok"),
++}
++BULK_REF_TBS = 3.95          # best effective rate the row-owner kernel reached in the judge (pooler m=1)
++CELL_MAX_RATIO = 0.98        # route only if candidate / master <= this (graph replay, cold L2)
++CELL_GATE_REPS = 41
++CELL_FLUSH_BYTES = 256 * 1024 * 1024
++CELL_REL_L2 = 3e-3           # vs fp64 on random x
++CELL_PROBE_REL = 1e-4        # the single power-of-two row (a weight column, exact)
++LT_M = 128
++LT_FLAG = "lt_qkv128_ok"
++LT_EXT_NAME = "muse_bf16_lt_qkv128_percall_v1"   # not the sibling combo's name: different source
++LT_QUERY_WS = (0, 1 << 20)   # heuristic workspace caps queried; only split-K-1 candidates are kept
++LT_WS_BYTES = 1 << 20        # per-state workspace handed to cublasLtMatmul
++LT_MAX_ALGOS = 16
++LT_PICK_REPS = 15
++LT_ALIGN = 256
++NEW_CELL_FLAGS = ("bulk_pooler_ok", "bulk_qkv_ok", "bulk_o_ok", LT_FLAG, "rt2_a_ok", "rt2_b_ok")
++
++_BULK_CPP = r"""
++#include <torch/extension.h>
++#include <vector>
++void bulk_run(torch::Tensor wt, torch::Tensor x, torch::Tensor out, torch::Tensor err, int64_t inst, int64_t m);
++std::vector<int64_t> bulk_setup(int64_t inst);
++"""
+ 
+-def prepare(weights: Weights) -> dict:
+-    """Called once, untimed. Keep the bf16 weights as they are (contiguous), build the router's
+-    hi + lo bf16 split as [256, 8192] row-major (N x K), and pre-compile every m-bucket of the
+-    router kernel on synthetic bf16 x so the timed call never compiles."""
+-    state = {name: w.contiguous() for name, w in weights.items()}
+-    router = state["router"]
+-    hi = router.to(torch.bfloat16).contiguous()
+-    lo = (router - hi.float()).to(torch.bfloat16).contiguous()
+-    state["router_hi"] = hi
+-    state["router_lo"] = lo
+-    # Stage choice, side-by-side diagnostics and warm-up on synthetic inputs.
+-    _router_prepare(state)
+-    # Router CUDA tiled cluster path at m = 65..256 (own constant state["router_tiled"], never raises).
+-    _router_tiled_prepare(state)
+-    # (1) Pooler split-K scratch (fp32 partials, overwritten every call) and per-N-tile tickets.
+-    pooler = state["pooler"]
+-    state["pooler_ws"] = torch.empty((POOLER_SPLIT_K, POOLER_MAX_M, POOLER_N),
+-                                     dtype=torch.float32, device=pooler.device)
+-    state["pooler_cnt"] = torch.zeros(POOLER_N // POOLER_BLOCK_N, dtype=torch.int32, device=pooler.device)
+-    pcfg = {"n": POOLER_N, "k": POOLER_K}
+-    for m in range(1, POOLER_MAX_M + 1):
+-        x = torch.randn((m, POOLER_K), device=pooler.device, dtype=torch.float32).to(torch.bfloat16)
+-        if _pooler_shape_ok(x, pooler, dict(pcfg, m=m)):
+-            _pooler_forward(x, pooler, state["pooler_ws"], state["pooler_cnt"])
+-    # (2) qkv_gate m <= 16: persistent split-K workspace and per-n-tile ticket counters (own keys).
+-    qkv = state["qkv_gate"]
+-    state["qkv_ws"] = torch.empty((QKV_SPLIT_K, QKV_MAX_M, QKV_N), dtype=torch.float32,
+-                                  device=qkv.device)
++_BULK_CUDA = r"""
++#include <torch/extension.h>
++#include <ATen/cuda/CUDAContext.h>
++#include <c10/cuda/CUDAException.h>
++#include <cuda_runtime.h>
++#include <cuda_bf16.h>
++#include <cstdint>
++#include <vector>
++
++#define BULK_WAIT_NS 500000000ULL   // every mbarrier wait is bounded to 0.5 s, then an error word
++
++__device__ __forceinline__ uint32_t smem_u32(const void* p) {
++  return static_cast<uint32_t>(__cvta_generic_to_shared(p));
++}
++__device__ __forceinline__ void mbar_init(uint32_t a, uint32_t cnt) {
++  asm volatile("mbarrier.init.shared::cta.b64 [%0], %1;" :: "r"(a), "r"(cnt) : "memory");
++}
++__device__ __forceinline__ void mbar_expect_tx(uint32_t a, uint32_t tx) {
++  asm volatile("mbarrier.arrive.expect_tx.shared::cta.b64 _, [%0], %1;" :: "r"(a), "r"(tx) : "memory");
++}
++__device__ __forceinline__ void mbar_arrive(uint32_t a) {
++  asm volatile("mbarrier.arrive.shared::cta.b64 _, [%0];" :: "r"(a) : "memory");
++}
++__device__ __forceinline__ unsigned long long gtimer() {
++  unsigned long long t;
++  asm volatile("mov.u64 %0, %%globaltimer;" : "=l"(t));
++  return t;
++}
++// Bounded wait: false after BULK_WAIT_NS (the caller sets the error word and leaves the loop).
++__device__ __forceinline__ bool mbar_wait(uint32_t a, uint32_t parity) {
++  unsigned long long t0 = 0;
++  for (uint32_t it = 0;; ++it) {
++    uint32_t done;
++    asm volatile("{\n .reg .pred p;\n mbarrier.try_wait.parity.shared::cta.b64 p, [%1], %2;\n"
++                 " selp.u32 %0, 1, 0, p;\n}\n" : "=r"(done) : "r"(a), "r"(parity) : "memory");
++    if (done) return true;
++    if (it == 0) t0 = gtimer();
++    else if (gtimer() - t0 > BULK_WAIT_NS) return false;
++  }
++}
++// Plain 1-D bulk copy global -> shared, completion counted on the mbarrier; no cache-hint form.
++__device__ __forceinline__ void bulk_g2s(uint32_t dst, const void* src, uint32_t bytes, uint32_t bar) {
++  asm volatile("cp.async.bulk.shared::cluster.global.mbarrier::complete_tx::bytes [%0], [%1], %2, [%3];"
++               :: "r"(dst), "l"(src), "r"(bytes), "r"(bar) : "memory");
++}
++__device__ __forceinline__ void ldsm_x4(uint32_t& r0, uint32_t& r1, uint32_t& r2, uint32_t& r3, uint32_t a) {
++  asm volatile("ldmatrix.sync.aligned.m8n8.x4.shared.b16 {%0,%1,%2,%3}, [%4];"
++               : "=r"(r0), "=r"(r1), "=r"(r2), "=r"(r3) : "r"(a) : "memory");
++}
++__device__ __forceinline__ void ldsm_x2(uint32_t& r0, uint32_t& r1, uint32_t a) {
++  asm volatile("ldmatrix.sync.aligned.m8n8.x2.shared.b16 {%0,%1}, [%2];"
++               : "=r"(r0), "=r"(r1) : "r"(a) : "memory");
++}
++__device__ __forceinline__ void mma_bf16(float* d, uint32_t a0, uint32_t a1, uint32_t a2, uint32_t a3,
++                                         uint32_t b0, uint32_t b1) {
++  asm volatile("mma.sync.aligned.m16n8k16.row.col.f32.bf16.bf16.f32 "
++               "{%0,%1,%2,%3}, {%4,%5,%6,%7}, {%8,%9}, {%0,%1,%2,%3};"
++               : "+f"(d[0]), "+f"(d[1]), "+f"(d[2]), "+f"(d[3])
++               : "r"(a0), "r"(a1), "r"(a2), "r"(a3), "r"(b0), "r"(b1));
++}
++
++// R: weight rows per CTA; K: reduction length; NT: padded tokens (8); S: ring stages; MINB: the
++// __launch_bounds__ min-CTAs/SM. Grid = N / R (N = gridDim.x * R in the epilogue).
++// err codes: 1 producer wait timeout, 2 consumer wait timeout, 3 built without sm_90.
++template <int R, int K, int NT, int S, int MINB>
++__global__ void __launch_bounds__(160, MINB)
++bulk_kernel(const __nv_bfloat16* __restrict__ wt, const __nv_bfloat16* __restrict__ x,
++            __nv_bfloat16* __restrict__ out, int* err, int m) {
++#if defined(__CUDA_ARCH__) && (__CUDA_ARCH__ >= 900)
++  constexpr int CKK = 8192 / R;              // K per chunk: the weight chunk is exactly 16 KB
++  constexpr int NCHUNK = K / CKK;
++  constexpr int XS = CKK * 2 + 16;           // padded x row stride in smem (bank-conflict free)
++  constexpr int SLOT = 16384 + NT * XS;
++  constexpr int MT = R / 16;
++  constexpr int NN = NT / 8;
++  constexpr int KSW = CKK / 64;              // k16 steps per consumer warp per chunk
++  static_assert(K % CKK == 0 && (SLOT % 128) == 0 && R * CKK * 2 == 16384, "geometry");
++  static_assert(R % 16 == 0 && CKK % 64 == 0, "tiles");
++  static_assert(NN == 1 || NN % 2 == 0, "NT");
++  static_assert(S >= 2 && S <= 8, "full / empty barriers live in 64 B each");
++  static_assert(4 * R * NT * 4 <= S * SLOT, "epilogue scratch must fit in the ring");
++  extern __shared__ __align__(1024) unsigned char smem[];
++  const uint32_t sbase = smem_u32(smem);
++  const uint32_t full0 = sbase, empty0 = sbase + 64, slot0 = sbase + 256;
++  const int tid = threadIdx.x, warp = tid >> 5, lane = tid & 31;
++  if (tid == 0) {
++#pragma unroll
++    for (int s = 0; s < S; ++s) { mbar_init(full0 + 8 * s, 1); mbar_init(empty0 + 8 * s, 4); }
++    asm volatile("fence.mbarrier_init.release.cluster;" ::: "memory");
++  }
++  __syncthreads();
++
++  float acc[MT][NN][4];
++#pragma unroll
++  for (int a = 0; a < MT; ++a)
++#pragma unroll
++    for (int b = 0; b < NN; ++b)
++#pragma unroll
++      for (int c = 0; c < 4; ++c) acc[a][b][c] = 0.f;
++
++  if (warp == 0) {
++    // ---- producer: whole warp, lane 0 waits and arms the barrier, lanes issue the copies ----
++    const uint32_t tx = 16384u + (uint32_t)m * (CKK * 2);
++    for (int j = 0; j < NCHUNK; ++j) {
++      const int s = j % S;
++      const uint32_t eph = ((j / S) & 1) ^ 1;
++      int good = 1;
++      if (lane == 0) {
++        good = mbar_wait(empty0 + 8 * s, eph) ? 1 : 0;
++        if (good) mbar_expect_tx(full0 + 8 * s, tx);
++      }
++      good = __shfl_sync(0xffffffffu, good, 0);
++      if (!good) { if (lane == 0) atomicExch(err, 1); break; }
++      const uint32_t wslot = slot0 + (uint32_t)s * SLOT;
++      const uint32_t fb = full0 + 8 * s;
++      if (lane == 0)
++        bulk_g2s(wslot, wt + ((size_t)blockIdx.x * NCHUNK + j) * (size_t)(R * CKK), 16384, fb);
++      if (lane < m)
++        bulk_g2s(wslot + 16384 + (uint32_t)lane * XS, x + (size_t)lane * K + (size_t)j * CKK,
++                 CKK * 2, fb);
++    }
++    __syncwarp();
++  } else {
++    // ---- consumers: warp cw owns k16 steps [cw*KSW, (cw+1)*KSW) of every chunk ----
++    const int cw = warp - 1;
++    for (int j = 0; j < NCHUNK; ++j) {
++      const int s = j % S;
++      const uint32_t ph = (j / S) & 1;
++      if (!mbar_wait(full0 + 8 * s, ph)) { if (lane == 0) atomicExch(err, 2); break; }
++      const uint32_t wslot = slot0 + (uint32_t)s * SLOT;
++      const uint32_t xslot = wslot + 16384;
++#pragma unroll
++      for (int i = 0; i < KSW; ++i) {
++        const int kk16 = cw * KSW + i;
++        const int kbi = kk16 >> 2;
++        const int seg = (kk16 & 3) * 2;
++        uint32_t bfr[NN][2];
++        if constexpr (NN == 1) {
++          const int khalf = (lane >> 3) & 1;
++          ldsm_x2(bfr[0][0], bfr[0][1],
++                  xslot + (uint32_t)((lane & 7) * XS + kk16 * 32 + khalf * 16));
++        } else {
++#pragma unroll
++          for (int p = 0; p < NN / 2; ++p) {
++            const int mi = lane >> 3;
++            const int tok = (2 * p + (mi >> 1)) * 8 + (lane & 7);
++            ldsm_x4(bfr[2 * p][0], bfr[2 * p][1], bfr[2 * p + 1][0], bfr[2 * p + 1][1],
++                    xslot + (uint32_t)(tok * XS + kk16 * 32 + (mi & 1) * 16));
++          }
++        }
++#pragma unroll
++        for (int mt = 0; mt < MT; ++mt) {
++          uint32_t a0, a1, a2, a3;
++          const int row = mt * 16 + (lane & 15);
++          ldsm_x4(a0, a1, a2, a3,
++                  wslot + (uint32_t)((kbi * R + row) * 128 + (((seg + (lane >> 4)) ^ (lane & 7)) * 16)));
++#pragma unroll
++          for (int nn = 0; nn < NN; ++nn) mma_bf16(acc[mt][nn], a0, a1, a2, a3, bfr[nn][0], bfr[nn][1]);
++        }
++      }
++      __syncwarp();
++      if (lane == 0) mbar_arrive(empty0 + 8 * s);
++    }
++  }
++  __syncthreads();   // every issued copy has been waited on by the consumers: the ring is quiescent
++  float* scratch = reinterpret_cast<float*>(smem + 256);   // aliases the ring: [cw][R][NT]
++  if (warp >= 1) {
++    const int cw = warp - 1;
++#pragma unroll
++    for (int mt = 0; mt < MT; ++mt)
++#pragma unroll
++      for (int nn = 0; nn < NN; ++nn)
++#pragma unroll
++        for (int c = 0; c < 4; ++c) {
++          const int row = mt * 16 + (lane >> 2) + (c >> 1) * 8;
++          const int tok = nn * 8 + (lane & 3) * 2 + (c & 1);
++          scratch[(cw * R + row) * NT + tok] = acc[mt][nn][c];
++        }
++  }
++  __syncthreads();
++  const int N = gridDim.x * R;
++  for (int idx = tid; idx < R * m; idx += 160) {
++    const int tok = idx / R, row = idx % R;
++    const float s0 = scratch[(0 * R + row) * NT + tok], s1 = scratch[(1 * R + row) * NT + tok];
++    const float s2 = scratch[(2 * R + row) * NT + tok], s3 = scratch[(3 * R + row) * NT + tok];
++    out[(size_t)tok * N + (size_t)blockIdx.x * R + row] = __float2bfloat16_rn(((s0 + s1) + s2) + s3);
++  }
++#else
++  if (threadIdx.x == 0) atomicExch(err, 3);
++#endif
++}
++
++// One instance: its smem size (from the SAME template S as the kernel), launch and setup. No static
++// or global state: the function attributes are set by bulk_setup() in prepare(), before any launch.
++template <int R, int K, int NT, int S, int MINB>
++struct BulkInst {
++  static constexpr int XS = (8192 / R) * 2 + 16;
++  static constexpr int SMEM = 256 + S * (16384 + NT * XS);
++  static void launch(const torch::Tensor& wt, const torch::Tensor& x, const torch::Tensor& out,
++                     const torch::Tensor& err, int m) {
++    const int64_t n = out.size(1);
++    TORCH_CHECK(n % R == 0 && x.size(1) == K && wt.numel() == n * K, "bulk_run: shape");
++    TORCH_CHECK(m >= 1 && m <= NT && x.size(0) == m && out.size(0) == m, "bulk_run: m");
++    bulk_kernel<R, K, NT, S, MINB><<<(unsigned)(n / R), 160, SMEM, at::cuda::getCurrentCUDAStream()>>>(
++        reinterpret_cast<const __nv_bfloat16*>(wt.data_ptr()),
++        reinterpret_cast<const __nv_bfloat16*>(x.data_ptr()),
++        reinterpret_cast<__nv_bfloat16*>(out.data_ptr()), err.data_ptr<int>(), m);
++    C10_CUDA_KERNEL_LAUNCH_CHECK();
++  }
++  // {regs, local (spill) B, static smem B, dyn smem B, occupancy CTAs/SM, S, MINB, R, NT}
++  static std::vector<int64_t> setup() {
++    C10_CUDA_CHECK(cudaFuncSetAttribute(bulk_kernel<R, K, NT, S, MINB>,
++                                        cudaFuncAttributeMaxDynamicSharedMemorySize, SMEM));
++    // Max-shared carveout only where 2 CTAs/SM must co-reside (A2); A / A3 keep the driver default,
++    // as in the sibling combo, so cell A behaves the same in both builds.
++    if constexpr (MINB > 1)
++      C10_CUDA_CHECK(cudaFuncSetAttribute(bulk_kernel<R, K, NT, S, MINB>,
++                                          cudaFuncAttributePreferredSharedMemoryCarveout,
++                                          (int)cudaSharedmemCarveoutMaxShared));
++    cudaFuncAttributes a;
++    C10_CUDA_CHECK(cudaFuncGetAttributes(&a, bulk_kernel<R, K, NT, S, MINB>));
++    int occ = 0;
++    C10_CUDA_CHECK(cudaOccupancyMaxActiveBlocksPerMultiprocessor(&occ, bulk_kernel<R, K, NT, S, MINB>,
++                                                                 160, (size_t)SMEM));
++    return {(int64_t)a.numRegs, (int64_t)a.localSizeBytes, (int64_t)a.sharedSizeBytes, (int64_t)SMEM,
++            (int64_t)occ, (int64_t)S, (int64_t)MINB, (int64_t)R, (int64_t)NT};
++  }
++};
++using BulkPooler = BulkInst<32, 8192, 8, 6, 1>;   // A:  pooler   m=1, grid 128
++using BulkQkv = BulkInst<16, 8192, 8, 4, 2>;      // A2: qkv_gate m=1, grid 144, 2 CTAs/SM
++using BulkO = BulkInst<64, 1024, 8, 6, 1>;        // A3: o        m=1, grid 128
++
++void bulk_run(torch::Tensor wt, torch::Tensor x, torch::Tensor out, torch::Tensor err, int64_t inst, int64_t m) {
++  TORCH_CHECK(wt.is_cuda() && x.is_cuda() && out.is_cuda() && err.is_cuda(), "bulk_run: cuda tensors");
++  TORCH_CHECK(wt.scalar_type() == at::kBFloat16 && x.scalar_type() == at::kBFloat16 &&
++              out.scalar_type() == at::kBFloat16 && err.scalar_type() == at::kInt, "bulk_run: dtypes");
++  TORCH_CHECK(wt.is_contiguous() && x.is_contiguous() && out.is_contiguous(), "bulk_run: contiguity");
++  TORCH_CHECK(x.dim() == 2 && out.dim() == 2 && err.numel() >= 1, "bulk_run: dims / error word");
++  TORCH_CHECK(wt.get_device() == x.get_device() && out.get_device() == x.get_device() &&
++              err.get_device() == x.get_device(), "bulk_run: one device");
++  TORCH_CHECK(reinterpret_cast<uintptr_t>(wt.data_ptr()) % 16 == 0 &&
++              reinterpret_cast<uintptr_t>(x.data_ptr()) % 16 == 0, "bulk_run: 16 B alignment");
++  const int mi = (int)m;
++  if (inst == 0) BulkPooler::launch(wt, x, out, err, mi);
++  else if (inst == 1) BulkQkv::launch(wt, x, out, err, mi);
++  else if (inst == 2) BulkO::launch(wt, x, out, err, mi);
++  else TORCH_CHECK(false, "bulk_run: unknown instance");
++}
++
++std::vector<int64_t> bulk_setup(int64_t inst) {
++  if (inst == 0) return BulkPooler::setup();
++  if (inst == 1) return BulkQkv::setup();
++  if (inst == 2) return BulkO::setup();
++  TORCH_CHECK(false, "bulk_setup: unknown instance");
++  return {};
++}
++"""
++
++_LT_CPP = r"""
++#include <torch/extension.h>
++#include <ATen/cuda/CUDAContext.h>
++#include <cublasLt.h>
++#include <cstring>
++#include <vector>
++
++#define MUSE_LT_CHECK(expr)                                                              \
++  do {                                                                                   \
++    cublasStatus_t muse_s_ = (expr);                                                     \
++    TORCH_CHECK(muse_s_ == CUBLAS_STATUS_SUCCESS, #expr " -> cublasStatus ",             \
++                static_cast<int>(muse_s_));                                              \
++  } while (0)
++
++static_assert(sizeof(cublasLtMatmulAlgo_t) == 8 * sizeof(int64_t),
++              "cublasLtMatmulAlgo_t is expected to be uint64_t[8]");
++
++// Per-call host descriptors for out[m, n] = x[m, k] @ w[n, k]^T (column-major D[n, m] =
++// op_T(W)[n, k] * x[k, m], bf16 in / out, fp32 compute and scale). Created and destroyed around one
++// call: no static or global state. Under CUDA graph replay none of this host code runs.
++struct MuseLtDesc {
++  cublasLtMatmulDesc_t op = nullptr;
++  cublasLtMatrixLayout_t a = nullptr, b = nullptr, d = nullptr;
++  MuseLtDesc(int64_t n, int64_t k, int64_t m) {
++    MUSE_LT_CHECK(cublasLtMatmulDescCreate(&op, CUBLAS_COMPUTE_32F, CUDA_R_32F));
++    const cublasOperation_t ta = CUBLAS_OP_T, tb = CUBLAS_OP_N;
++    MUSE_LT_CHECK(cublasLtMatmulDescSetAttribute(op, CUBLASLT_MATMUL_DESC_TRANSA, &ta, sizeof(ta)));
++    MUSE_LT_CHECK(cublasLtMatmulDescSetAttribute(op, CUBLASLT_MATMUL_DESC_TRANSB, &tb, sizeof(tb)));
++    MUSE_LT_CHECK(cublasLtMatrixLayoutCreate(&a, CUDA_R_16BF, k, n, k));   // W as stored, op T
++    MUSE_LT_CHECK(cublasLtMatrixLayoutCreate(&b, CUDA_R_16BF, k, m, k));   // x
++    MUSE_LT_CHECK(cublasLtMatrixLayoutCreate(&d, CUDA_R_16BF, n, m, n));   // out
++  }
++  ~MuseLtDesc() {
++    if (d) cublasLtMatrixLayoutDestroy(d);
++    if (b) cublasLtMatrixLayoutDestroy(b);
++    if (a) cublasLtMatrixLayoutDestroy(a);
++    if (op) cublasLtMatmulDescDestroy(op);
++  }
++  MuseLtDesc(const MuseLtDesc&) = delete;
++  MuseLtDesc& operator=(const MuseLtDesc&) = delete;
++};
++
++template <typename T>
++static int64_t muse_lt_cfg(const cublasLtMatmulAlgo_t& algo, cublasLtMatmulAlgoConfigAttributes_t attr) {
++  T v{};
++  size_t written = 0;
++  if (cublasLtMatmulAlgoConfigGetAttribute(&algo, attr, &v, sizeof(v), &written) != CUBLAS_STATUS_SUCCESS ||
++      written != sizeof(v))
++    return -1;
++  return static_cast<int64_t>(v);
++}
++
++// Heuristic candidates: {algos int64 [count, 8] (raw cublasLtMatmulAlgo_t), info int64 [count, 8] =
++// (algo_id, tile_id, stages_id, splitk_num, reduction_scheme, workspace_bytes, waves*1000, state)}.
++std::vector<torch::Tensor> candidates(int64_t n, int64_t k, int64_t m, int64_t max_algos, int64_t ws_bytes) {
++  MuseLtDesc d(n, k, m);
++  cublasLtHandle_t h = at::cuda::getCurrentCUDABlasLtHandle();
++  cublasLtMatmulPreference_t pref;
++  MUSE_LT_CHECK(cublasLtMatmulPreferenceCreate(&pref));
++  const uint64_t ws = static_cast<uint64_t>(ws_bytes);
++  cublasStatus_t st = cublasLtMatmulPreferenceSetAttribute(
++      pref, CUBLASLT_MATMUL_PREF_MAX_WORKSPACE_BYTES, &ws, sizeof(ws));
++  std::vector<cublasLtMatmulHeuristicResult_t> res(static_cast<size_t>(max_algos));
++  int returned = 0;
++  if (st == CUBLAS_STATUS_SUCCESS)
++    st = cublasLtMatmulAlgoGetHeuristic(h, d.op, d.a, d.b, d.d, d.d, pref, static_cast<int>(max_algos),
++                                        res.data(), &returned);
++  cublasLtMatmulPreferenceDestroy(pref);
++  MUSE_LT_CHECK(st);
++  auto algos = torch::zeros({returned, 8}, torch::kInt64);
++  auto info = torch::full({returned, 8}, -1, torch::kInt64);
++  int64_t* ap = algos.data_ptr<int64_t>();
++  int64_t* ip = info.data_ptr<int64_t>();
++  for (int i = 0; i < returned; ++i) {
++    const cublasLtMatmulAlgo_t& a = res[i].algo;
++    std::memcpy(ap + 8 * i, &a, sizeof(a));
++    ip[8 * i + 0] = muse_lt_cfg<int32_t>(a, CUBLASLT_ALGO_CONFIG_ID);
++    ip[8 * i + 1] = muse_lt_cfg<uint32_t>(a, CUBLASLT_ALGO_CONFIG_TILE_ID);
++    ip[8 * i + 2] = muse_lt_cfg<uint32_t>(a, CUBLASLT_ALGO_CONFIG_STAGES_ID);
++    ip[8 * i + 3] = muse_lt_cfg<uint32_t>(a, CUBLASLT_ALGO_CONFIG_SPLITK_NUM);
++    ip[8 * i + 4] = muse_lt_cfg<uint32_t>(a, CUBLASLT_ALGO_CONFIG_REDUCTION_SCHEME);
++    ip[8 * i + 5] = static_cast<int64_t>(res[i].workspaceSize);
++    ip[8 * i + 6] = static_cast<int64_t>(res[i].wavesCount * 1000.0f);
++    ip[8 * i + 7] = static_cast<int64_t>(res[i].state);
++  }
++  return {algos, info};
++}
++
++// out[m, n] = x[m, k] @ w[n, k]^T with the given algo on the current stream: no sync, no allocation,
++// the workspace is the caller's prepare()-allocated per-state tensor (graph-capturable).
++void run(torch::Tensor x, torch::Tensor w, torch::Tensor out, torch::Tensor algo_row, torch::Tensor ws) {
++  TORCH_CHECK(x.is_cuda() && w.is_cuda() && out.is_cuda() && ws.is_cuda(), "cuda tensors expected");
++  TORCH_CHECK(x.scalar_type() == at::kBFloat16 && w.scalar_type() == at::kBFloat16 &&
++              out.scalar_type() == at::kBFloat16, "bf16 x / w / out expected");
++  TORCH_CHECK(x.dim() == 2 && w.dim() == 2 && out.dim() == 2, "2-D tensors expected");
++  TORCH_CHECK(x.is_contiguous() && w.is_contiguous() && out.is_contiguous() && ws.is_contiguous(),
++              "contiguous tensors expected");
++  const int64_t m = x.size(0), k = x.size(1), n = w.size(0);
++  TORCH_CHECK(w.size(1) == k && out.size(0) == m && out.size(1) == n, "shape mismatch");
++  TORCH_CHECK(!algo_row.is_cuda() && algo_row.scalar_type() == at::kLong && algo_row.numel() == 8 &&
++              algo_row.is_contiguous(), "algo_row must be a CPU int64 [8]");
++  MuseLtDesc d(n, k, m);
++  cublasLtMatmulAlgo_t algo;
++  std::memcpy(&algo, algo_row.data_ptr<int64_t>(), sizeof(algo));
++  const float alpha = 1.0f, beta = 0.0f;
++  cublasLtHandle_t h = at::cuda::getCurrentCUDABlasLtHandle();
++  cudaStream_t stream = at::cuda::getCurrentCUDAStream();
++  MUSE_LT_CHECK(cublasLtMatmul(h, d.op, &alpha, w.data_ptr(), d.a, x.data_ptr(), d.b, &beta,
++                               out.data_ptr(), d.d, out.data_ptr(), d.d, &algo, ws.data_ptr(),
++                               static_cast<size_t>(ws.numel() * ws.element_size()), stream));
++}
++"""
++
++
++def _bulk_build():
++    """Compile the bulk row-owner module once per process, at import (never during capture), for
++    9.0a only (TORCH_CUDA_ARCH_LIST set around the build and restored after). Prints the arch flags
++    and the build seconds. Returns None (master paths) on any failure; never raises."""
++    t0 = time.perf_counter()
++    prev = os.environ.get("TORCH_CUDA_ARCH_LIST")
++    os.environ["TORCH_CUDA_ARCH_LIST"] = "9.0a"
++    try:
++        from torch.utils import cpp_extension
++        try:
++            print(f"[bulk] arch flags passed to nvcc: {cpp_extension._get_cuda_arch_flags()}", flush=True)
++        except Exception as e:  # diagnostic only
++            print(f"[bulk] arch flags unavailable ({type(e).__name__}: {e})", flush=True)
++        print(f"[bulk] building {BULK_EXT_NAME}: extra_cuda_cflags {BULK_NVCC_FLAGS}", flush=True)
++        ext = cpp_extension.load_inline(
++            name=BULK_EXT_NAME, cpp_sources=_BULK_CPP, cuda_sources=_BULK_CUDA,
++            functions=["bulk_run", "bulk_setup"],
++            extra_cuda_cflags=list(BULK_NVCC_FLAGS), verbose=False)
++    except Exception as e:
++        tail = "\n".join(str(e).splitlines()[-60:])
++        print(f"[bulk] build FAILED after {time.perf_counter() - t0:.1f}s ({type(e).__name__}); build log "
++              f"tail:\n{tail}\n[bulk] master paths kept", flush=True)
++        return None
++    finally:
++        if prev is None:
++            os.environ.pop("TORCH_CUDA_ARCH_LIST", None)
++        else:
++            os.environ["TORCH_CUDA_ARCH_LIST"] = prev
++    print(f"[build-time] bulk load_inline compiled in {time.perf_counter() - t0:.1f}s", flush=True)
++    return ext
++
++
++def _lt_build():
++    """Compile the cuBLASLt plan module (C++ only, with_cuda, -lcublasLt) at import. Prints the
++    build seconds. Returns None (master path) on any failure; never raises."""
++    t0 = time.perf_counter()
++    try:
++        from torch.utils.cpp_extension import load_inline
++        ext = load_inline(
++            name=LT_EXT_NAME, cpp_sources=_LT_CPP, functions=["candidates", "run"],
++            with_cuda=True, extra_cflags=["-O2"], extra_ldflags=["-lcublasLt"], verbose=False)
++    except Exception as e:
++        print(f"[lt] load_inline FAILED after {time.perf_counter() - t0:.1f}s, master path kept: {e!r}",
++              flush=True)
++        return None
++    print(f"[build-time] lt load_inline compiled in {time.perf_counter() - t0:.1f}s", flush=True)
++    return ext
++
++
++_BULK_EXT = _bulk_build() if torch.cuda.is_available() else None
++_LT_EXT = _lt_build() if torch.cuda.is_available() else None
++
++
++def _bulk_repack(w: torch.Tensor, rows: int) -> torch.Tensor:
++    """Lossless permutation of a bf16 [N, K] weight into Wt[cta][kblock][row][64 k], with the 8
++    16-byte segments of each 128 B row swizzled by seg ^ (row & 7). Verified bit-exact."""
++    n, k = w.shape
++    c, kb = n // rows, k // 64
++    src = w.contiguous().view(c, rows, kb, 8, 8).permute(0, 2, 1, 3, 4)  # [c, kb, row, seg, e]
++    rr = torch.arange(rows, device=w.device).view(rows, 1)
++    ss = torch.arange(8, device=w.device).view(1, 8) ^ (rr & 7)
++    dst = src[:, :, rr, ss, :].contiguous()                                # [c, kb, row, seg', e]
++    back = dst[:, :, rr, ss, :]                                            # xor is an involution
++    ok = torch.equal(back.reshape(c, kb, rows, 64).permute(0, 2, 1, 3).reshape(n, k).view(torch.int16),
++                     w.contiguous().view(torch.int16))
++    if not ok:
++        raise RuntimeError("bulk repack is not bit-exact")
++    return dst.view(n, k)
++
++
++def _bulk_route_ok(layer: str, x: torch.Tensor, cfg, state: dict) -> bool:
++    """Bulk row-owner cell: layer in BULK_CELLS with its prepare()-set flag, cfg m == 1 and the
++    cell's n / k, x a contiguous 16-byte-aligned bf16 [1, k]. cfg, shapes and state flags only."""
++    spec = BULK_CELLS.get(layer)
++    if spec is None or not state[spec[7]]:
++        return False
++    n, k = spec[2], spec[3]
++    return (cfg["m"] == BULK_M and cfg["n"] == n and cfg["k"] == k
++            and x.dim() == 2 and x.shape[0] == BULK_M and x.shape[1] == k
++            and x.dtype == torch.bfloat16 and x.is_contiguous() and x.data_ptr() % 16 == 0)
++
++
++def _bulk_forward(layer: str, x: torch.Tensor, state: dict) -> torch.Tensor:
++    """ONE launch: out[m, n] = x @ W.T, whole K per CTA, bf16 stored once, no workspace. Reads the
++    state's repacked weight and error word; writes nothing to state."""
++    spec = BULK_CELLS[layer]
++    out = torch.empty((x.shape[0], spec[2]), dtype=torch.bfloat16, device=x.device)
++    _BULK_EXT.bulk_run(state["bulk_wt_" + layer], x, out, state["bulk_err"], spec[1], x.shape[0])
++    return out
++
++
++def _lt_route_ok(x: torch.Tensor, cfg, state: dict) -> bool:
++    """qkv_gate m == 128 on the prepare()-chosen cuBLASLt algo: flag set, cfg n / k the weight's full
++    shape, x a contiguous 256-byte-aligned bf16 [128, k]. cfg, shapes and state only."""
++    if not state[LT_FLAG]:
++        return False
++    w = state["qkv_gate"]
++    return (cfg["m"] == LT_M and cfg["n"] == w.shape[0] and cfg["k"] == w.shape[1]
++            and x.dim() == 2 and x.shape[0] == LT_M and x.shape[1] == w.shape[1]
++            and x.dtype == torch.bfloat16 and x.is_contiguous() and x.data_ptr() % LT_ALIGN == 0)
++
++
++def _lt_forward(x: torch.Tensor, w: torch.Tensor, algo_row: torch.Tensor, ws: torch.Tensor) -> torch.Tensor:
++    """x bf16 [m, k] @ w[n, k].T -> bf16 [m, n]: one cublasLtMatmul with a fixed algo."""
++    out = torch.empty((x.shape[0], w.shape[0]), dtype=torch.bfloat16, device=x.device)
++    _LT_EXT.run(x, w, out, algo_row, ws)
++    return out
++
++
++def _cell_check(tag: str, fn, w: torch.Tensor, m: int, n: int, k: int, err=None) -> str:
++    """prepare()-only canary + correctness for one new path fn(x) -> [m, n] bf16. Every launch is
++    announced with a flushed print and followed by a synchronize, the error word (if any) and a
++    flushed print, so a fault names its kernel. Random x: rel L2 vs fp64 <= CELL_REL_L2, finite,
++    a second launch bit-identical; probe x (row 0 a single power-of-two entry): that row's rel error
++    vs the weight column <= CELL_PROBE_REL. Returns "" on pass, else why."""
++    dev = w.device
++    g = torch.Generator(device=dev)
++    g.manual_seed(8642 + m)
++    wd = w[:n].double()
++    x = torch.randn((m, k), device=dev, dtype=torch.float32, generator=g).to(torch.bfloat16)
++    xp = x.clone()
++    xp[0].zero_()
++    col = (1234 + 7 * m) % k
++    xp[0, col] = 0.5
++    outs = []
++    for label, xin in (("random", x), ("random-again", x), ("probe", xp)):
++        print(f"[cell] LAUNCH {tag} {label} m={m} ...", flush=True)
++        o = fn(xin)
++        torch.cuda.synchronize()
++        code = 0
++        if err is not None:
++            code = int(err.item())
++            err.zero_()
++        print(f"[cell] DONE   {tag} {label} m={m} (synced, error word {code})", flush=True)
++        if code:
++            return f"{label}: error word {code}"
++        outs.append(o)
++    if not torch.equal(outs[0], outs[1]):
++        return "second launch differs from the first"
++    for o, label in ((outs[0], "random"), (outs[2], "probe")):
++        if not bool(torch.isfinite(o.float()).all()):
++            return f"{label}: non-finite output"
++    ref = x.double() @ wd.T
++    rel = float((outs[0].double() - ref).norm() / ref.norm().clamp_min(1e-30))
++    pref = wd[:, col] * 0.5
++    prel = float((outs[2][0].double() - pref).norm() / pref.norm().clamp_min(1e-30))
++    print(f"[cell] check {tag} m={m}: rel L2 {rel:.3e} (<= {CELL_REL_L2:g}), probe row rel {prel:.3e} "
++          f"(<= {CELL_PROBE_REL:g})", flush=True)
++    if not rel <= CELL_REL_L2:
++        return f"rel L2 {rel:.3e} > {CELL_REL_L2:g}"
++    if not prel <= CELL_PROBE_REL:
++        return f"probe row rel {prel:.3e} > {CELL_PROBE_REL:g}"
++    return ""
++
++
++def _cell_capture(fn):
++    """Graph-capture fn() after 3 eager warm calls (prepare()-only; every new kernel has already run
++    in its canary)."""
++    for _ in range(3):
++        fn()
++    torch.cuda.synchronize()
++    gr = torch.cuda.CUDAGraph()
++    with torch.cuda.graph(gr):
++        fn()
++    torch.cuda.synchronize()
++    return gr
++
++
++def _cell_gate(tag: str, layer: str, m: int, n: int, k: int, flag: str, state: dict):
++    """Model selector (copied from _ouns_gate): kernel_fn captured with the cell's flag on
++    (candidate) and off (master's path, byte-identical routing otherwise) on shallow copies of
++    state, the same synthetic x; CELL_GATE_REPS interleaved replays (order swapped every rep), a
++    CELL_FLUSH_BYTES write before each, medians minus an empty-graph baseline. Returns
++    (candidate_us, master_us), both net. prepare()-only."""
++    dev = state["router"].device
++    st_c = dict(state)
++    st_c[flag] = True
++    st_i = dict(state)
++    st_i[flag] = False
++    x = torch.randn((m, k), device=dev, dtype=torch.float32).to(torch.bfloat16)
++    data = {"x": x, "config": {"m": m, "n": n, "k": k, "layer": layer}}
++    flush = torch.empty(CELL_FLUSH_BYTES, dtype=torch.uint8, device=dev)
++    scratch = torch.zeros(1, dtype=torch.float32, device=dev)
++    ev = [torch.cuda.Event(enable_timing=True) for _ in range(2)]
++
++    def replay_us(gr) -> float:
++        flush.zero_()
++        ev[0].record()
++        gr.replay()
++        ev[1].record()
++        ev[1].synchronize()
++        return ev[0].elapsed_time(ev[1]) * 1e3
++
++    g_base = _cell_capture(lambda: scratch.add_(1.0))
++    base = _ouns_median([replay_us(g_base) for _ in range(CELL_GATE_REPS)])
++    graphs = {"cand": _cell_capture(lambda: kernel_fn(data, st_c)),
++              "master": _cell_capture(lambda: kernel_fn(data, st_i))}
++    times = {"cand": [], "master": []}
++    for rep in range(CELL_GATE_REPS):
++        order = ("cand", "master") if rep % 2 == 0 else ("master", "cand")
++        for name in order:
++            times[name].append(replay_us(graphs[name]))
++    med = {name: _ouns_median(v) for name, v in times.items()}
++    adj = {name: max(v - base, 0.25) for name, v in med.items()}
++    print(f"[cell] gate {tag} {layer} m={m} (graph replay, {CELL_FLUSH_BYTES >> 20} MB flush, "
++          f"{CELL_GATE_REPS} reps, interleaved): cand median {med['cand']:.2f} us, master median "
++          f"{med['master']:.2f} us, empty-graph baseline {base:.2f} us -> net {adj['cand']:.2f} vs "
++          f"{adj['master']:.2f} us, cand/master {adj['cand'] / adj['master']:.3f} (route if <= "
++          f"{CELL_MAX_RATIO})", flush=True)
++    del graphs, g_base, flush
++    torch.cuda.synchronize()
++    return adj["cand"], adj["master"]
++
++
++def _cell_kernels(fn):
++    """prepare()-only: the CUDA kernel names one call of fn launches, from torch.profiler (a
++    PATH CHOSEN line proves the selector, not the launched kernel). Raises if the profiler fails."""
++    from torch.profiler import ProfilerActivity, profile
++    fn()
++    torch.cuda.synchronize()
++    with profile(activities=[ProfilerActivity.CUDA]) as prof:
++        fn()
++        torch.cuda.synchronize()
++    # Kineto bookkeeping rows are not launches; drop them so they cannot fail a "one kernel" assert.
++    return [e.name for e in prof.events() if "CUDA" in str(getattr(e, "device_type", ""))
++            and not e.name.startswith(("Activity Buffer Request", "Buffer Flush"))]
++
++
++def _bulk_prepare(state: dict, flags=None) -> None:
++    """A / A2 / A3. Sets state[flag] (False unless every step passes) and, per routed cell, the
++    state's own repacked weight; one per-state error word. flags None (the judge's state): per cell
++    query instance attributes + occupancy (A2 needs exactly 2 CTAs/SM), repack, canary +
++    correctness, model-selector gate, profiler kernel-name assertion, one PATH CHOSEN line. flags a
++    dict (the A/B check's second state): inherit each flag, repack only for cells that are on."""
++    for spec in BULK_CELLS.values():
++        state[spec[7]] = False
++    if _BULK_EXT is None:
++        if flags is None:
++            for layer, spec in BULK_CELLS.items():
++                print(f"PATH CHOSEN {spec[0]} {layer} m={BULK_M}: master (cand n/a us vs master n/a us; "
++                      f"no bulk module)", flush=True)
++        return
++    dev = state["router"].device
++    state["bulk_err"] = torch.zeros(1, dtype=torch.int32, device=dev)
++    if flags is not None:
++        for layer, spec in BULK_CELLS.items():
++            if flags.get(spec[7]):
++                try:   # a failure here turns off only this cell in this state, never the whole A/B
++                    state["bulk_wt_" + layer] = _bulk_repack(state[layer], spec[4])
++                    state[spec[7]] = True
++                except Exception as e:
++                    print(f"[bulk] second state: {spec[0]} {layer} repack raised {type(e).__name__}: {e}; "
++                          f"cell off in this state", flush=True)
++        return
++    for layer, spec in BULK_CELLS.items():
++        src, inst, n, k, rows, stages, minb, flag = spec
++        t0 = time.perf_counter()
++        cand_us = master_us = float("nan")
++        why = ""
++        try:
++            w = state[layer]
++            if not (w.dim() == 2 and tuple(w.shape) == (n, k) and w.dtype == torch.bfloat16
++                    and w.is_contiguous()):
++                why = f"weight {tuple(w.shape)} {w.dtype} unexpected"
++            else:
++                info = [int(v) for v in _BULK_EXT.bulk_setup(inst)]
++                occ = info[4]
++                print(f"[bulk] {src} {layer} bulk_kernel<{rows}, {k}, 8, {stages}, {minb}>: regs={info[0]} "
++                      f"local(spill)={info[1]} B static smem={info[2]} B dyn smem={info[3]} B "
++                      f"(S={info[5]} from the template), occupancy {occ} CTA/SM (needs {minb}), grid "
++                      f"{n // rows}, max-shared carveout set", flush=True)
++                if occ < minb:
++                    why = f"occupancy {occ} CTA/SM < {minb}"
++                else:
++                    state["bulk_wt_" + layer] = _bulk_repack(w, rows)
++                    print(f"[bulk] {src} {layer}: repack Wt{tuple(state['bulk_wt_' + layer].shape)} rows {rows}, "
++                          f"lossless bf16 permutation, bit-exact round trip verified", flush=True)
++                    st_on = dict(state)
++                    st_on[flag] = True
++                    why = _cell_check(f"{src} bulk_kernel<{rows},{k},8,{stages},{minb}>",
++                                      lambda xx: _bulk_forward(layer, xx, st_on), w, BULK_M, n, k,
++                                      err=state["bulk_err"])
++                    if not why:
++                        tg = time.perf_counter()
++                        cand_us, master_us = _cell_gate(src, layer, BULK_M, n, k, flag, state)
++                        proj = n * k * 2 / (BULK_REF_TBS * 1e12) * 1e6
++                        print(f"[prepare-time] gate {src} {layer} m={BULK_M}: {time.perf_counter() - tg:.2f}s; "
++                              f"projected {n * k * 2 / 1e6:.1f} MB / {BULK_REF_TBS} TB/s = {proj:.2f} us", flush=True)
++                        code = int(state["bulk_err"].item())
++                        if code:
++                            why = f"error word {code} after the gate"
++                        elif not cand_us <= CELL_MAX_RATIO * master_us:
++                            why = f"gate: cand/master {cand_us / master_us:.3f} > {CELL_MAX_RATIO}"
++                        else:
++                            data = {"x": torch.randn((BULK_M, k), device=dev, dtype=torch.float32).to(torch.bfloat16),
++                                    "config": {"m": BULK_M, "n": n, "k": k, "layer": layer}}
++                            try:
++                                names = _cell_kernels(lambda: kernel_fn(data, st_on))
++                                print(f"[bulk] {src} {layer} m={BULK_M}: profiled kernels {names}", flush=True)
++                                if not names:
++                                    print(f"[bulk] {src} {layer}: profiler returned no CUDA kernel events; "
++                                          f"route kept (kernel_fn calls bulk_run directly)", flush=True)
++                                elif not (len(names) == 1 and "bulk_kernel" in names[0]):
++                                    why = f"profiled kernels {names}: expected exactly one bulk_kernel"
++                            except Exception as e:  # own extension, direct launch: keep the route
++                                print(f"[bulk] {src} {layer}: profiler unavailable ({type(e).__name__}: {e}); "
++                                      f"route kept (kernel_fn calls bulk_run directly)", flush=True)
++                            if not why:
++                                state[flag] = True
++        except Exception as e:  # never raises: any surprise keeps master's path for this cell
++            why = f"raised {type(e).__name__}: {str(e)[-300:]}"
++            state[flag] = False
++        if not state[flag]:
++            state.pop("bulk_wt_" + layer, None)
++        state["bulk_err"].zero_()
++        print(f"[prepare-time] cell {src} {layer} m={BULK_M} total: {time.perf_counter() - t0:.2f}s", flush=True)
++        print(f"PATH CHOSEN {src} {layer} m={BULK_M}: {'candidate' if state[flag] else 'master'} "
++              f"(cand {cand_us:.2f} us vs master {master_us:.2f} us)"
++              + ("" if state[flag] else f"; {why}"), flush=True)
++    torch.cuda.synchronize()
++
++
++def _lt_graph_median_us(fn, flush: torch.Tensor, reps: int) -> float:
++    """Median of reps graph replays of fn() after a flush write each (prepare()-only ranking)."""
++    gr = _cell_capture(fn)
++    ts = []
++    ev = [torch.cuda.Event(enable_timing=True) for _ in range(2)]
++    for _ in range(reps):
++        flush.zero_()
++        ev[0].record()
++        gr.replay()
++        ev[1].record()
++        ev[1].synchronize()
++        ts.append(ev[0].elapsed_time(ev[1]) * 1e3)
++    del gr
++    return _ouns_median(ts)
++
++
++def _lt_prepare(state: dict, flags=None) -> None:
++    """B: qkv_gate m == 128. flags None: query cublasLtMatmulAlgoGetHeuristic at workspace caps
++    LT_QUERY_WS, keep split-K-1 candidates only, canary + correctness-check each eagerly, rank them
++    by graph replay, gate the best against master via kernel_fn, assert by torch.profiler that the
++    routed call launches exactly one kernel with no split-K / reduce in its name (else drop the
++    cell), print one PATH CHOSEN line. flags a dict: inherit the flag and the algo row, allocate the
++    state's own workspace."""
++    state[LT_FLAG] = False
++    state["lt_algo_qkv128"] = None
++    state["lt_ws_qkv128"] = None
++    if _LT_EXT is None:
++        if flags is None:
++            print(f"PATH CHOSEN B qkv_gate m={LT_M}: master (cand n/a us vs master n/a us; no Lt module)", flush=True)
++        return
++    w = state["qkv_gate"]
++    dev = w.device
++    if flags is not None:
++        if flags.get(LT_FLAG) and flags.get("_lt_algo") is not None:
++            state["lt_algo_qkv128"] = flags["_lt_algo"].clone()
++            state["lt_ws_qkv128"] = torch.empty(LT_WS_BYTES, dtype=torch.uint8, device=dev)
++            state[LT_FLAG] = True
++        return
++    t0 = time.perf_counter()
++    cand_us = master_us = float("nan")
++    why = ""
++    try:
++        if not (w.dim() == 2 and tuple(w.shape) == (QKV_N, QKV_K) and w.dtype == torch.bfloat16
++                and w.is_contiguous()):
++            raise RuntimeError(f"weight {tuple(w.shape)} unexpected")
++        n, k = QKV_N, QKV_K
++        ws = torch.empty(LT_WS_BYTES, dtype=torch.uint8, device=dev)
++        cands = {}
++        for cap in LT_QUERY_WS:
++            algos, info = _LT_EXT.candidates(n, k, LT_M, LT_MAX_ALGOS, cap)
++            for i in range(algos.shape[0]):
++                algo_id, tile, stg, splitk, red, ws_need, waves, st = (int(v) for v in info[i].tolist())
++                desc = (f"[lt] cap={cap} cand {i:2d} algo={algo_id} tile={tile} stages={stg} splitK={splitk} "
++                        f"red={red} ws={ws_need} waves={waves / 1000:.2f}")
++                if st != 0 or splitk != 1 or ws_need < 0 or ws_need > LT_WS_BYTES:
++                    print(f"{desc}: excluded (state {st}; only split-K 1 within {LT_WS_BYTES} B kept)", flush=True)
++                    continue
++                key = tuple(int(v) for v in algos[i].tolist())
++                if key in cands:
++                    print(f"{desc}: duplicate", flush=True)
++                    continue
++                cands[key] = (algos[i].clone().contiguous(), desc)
++        flush = torch.empty(CELL_FLUSH_BYTES, dtype=torch.uint8, device=dev)
++        x = torch.randn((LT_M, k), device=dev, dtype=torch.float32).to(torch.bfloat16)
++        best = None
++        for row, desc in cands.values():
++            bad = _cell_check(f"B cublasLt {desc[5:]}", lambda xx, row=row: _lt_forward(xx, w, row, ws),
++                              w, LT_M, n, k)
++            if bad:
++                print(f"{desc}: excluded ({bad})", flush=True)
++                continue
++            us = _lt_graph_median_us(lambda row=row: _lt_forward(x, w, row, ws), flush, LT_PICK_REPS)
++            print(f"{desc}: {us:.2f} us (graph replay, cold L2, median of {LT_PICK_REPS})", flush=True)
++            if best is None or us < best[0]:
++                best = (us, row, desc)
++        del flush
++        if best is None:
++            why = f"no usable split-K-1 candidate ({len(cands)} queried)"
++        else:
++            print(f"[lt] best split-K-1 candidate: {best[2]} at {best[0]:.2f} us", flush=True)
++            state["lt_algo_qkv128"] = best[1]
++            state["lt_ws_qkv128"] = ws
++            tg = time.perf_counter()
++            cand_us, master_us = _cell_gate("B", "qkv_gate", LT_M, n, k, LT_FLAG, state)
++            print(f"[prepare-time] gate B qkv_gate m={LT_M}: {time.perf_counter() - tg:.2f}s", flush=True)
++            if not cand_us <= CELL_MAX_RATIO * master_us:
++                why = f"gate: cand/master {cand_us / master_us:.3f} > {CELL_MAX_RATIO}"
++            else:
++                st_on = dict(state)
++                st_on[LT_FLAG] = True
++                data = {"x": x, "config": {"m": LT_M, "n": n, "k": k, "layer": "qkv_gate"}}
++                try:
++                    names = _cell_kernels(lambda: kernel_fn(data, st_on))
++                except Exception as e:
++                    names = None
++                    why = f"profiler unavailable ({type(e).__name__}: {e}); kernel name unverified, cell dropped"
++                if names is not None:
++                    print(f"[lt] B qkv_gate m={LT_M}: profiled kernels {names}", flush=True)
++                    low = [s.lower() for s in names]
++                    if not (len(names) == 1 and "splitk" not in low[0] and "reduce" not in low[0]):
++                        why = f"profiled kernels {names}: expected exactly one non-split-K kernel"
++                    else:
++                        state[LT_FLAG] = True
++    except Exception as e:  # never raises: any surprise keeps master's path for this cell
++        why = f"raised {type(e).__name__}: {str(e)[-300:]}"
++        state[LT_FLAG] = False
++    if not state[LT_FLAG]:
++        state["lt_algo_qkv128"] = None
++        state["lt_ws_qkv128"] = None
++    torch.cuda.synchronize()
++    print(f"[prepare-time] cell B qkv_gate m={LT_M} total: {time.perf_counter() - t0:.2f}s", flush=True)
++    print(f"PATH CHOSEN B qkv_gate m={LT_M}: {'candidate' if state[LT_FLAG] else 'master'} "
++          f"(cand {cand_us:.2f} us vs master {master_us:.2f} us)"
++          + ("" if state[LT_FLAG] else f"; {why}"), flush=True)
++
++
++# --- (10) Router m = 65..256: sm90a wgmma swap-AB + TMA + cluster/DSMEM split-K, tall token tiles
++# (hypothesis router-m128-m256-wgmma-swapab-tall-cluster-stage2, stage 2 of
++# router-m128-m256-cluster-dsmem-tiled-rewrite). Built on master blob ad8d7254.
++#
++# Kernel rt2_wgmma_swapab_kernel<BT, CS, ST>: out[m, 256] fp32 = x[m, 8192] bf16 @ (hi + lo)^T, one
++# launch, torch.empty output (no memset node). Grid ceil(m / BT) * 4 * CS CTAs, cluster (CS, 1, 1),
++# blockIdx.x = (token_tile * 4 + column_group) * CS + rank. Each CTA owns 64 weight rows (one column
++# group) x BT tokens x a K slice of 8192 / CS. 160 threads: warps 0-3 are the consumer warpgroup,
++# warp 4 lane 0 is the producer. Per 64-wide K step the producer TMA-loads the hi tile [64 rows x
++# 64 K], the lo tile of the same rows and the x tile [BT tokens x 64 K] (128B swizzle) into a ST-deep
++# mbarrier ring; the consumer issues, per k16, wgmma m64nBTk16 twice (A = hi rows then lo rows from
++# smem, B = the x tile from smem, both K-major) into ONE fp32 accumulator, so each x tile feeds both
++# halves. D[weight row][token] is written to smem as P[token][weight row] (aliasing the ring, which
++# is fully consumed by then), a cluster barrier publishes it, and rank r reduce-scatters tokens
++# [r * BT / CS, + BT / CS): it reads the CS peers' float4 of every owned token row (mapa +
++# ld.shared::cluster, fixed rank order, deterministic) and stores fp32 once; a second cluster
++# barrier keeps every CTA's smem alive until its peers are done.
++# Review fixes applied here: (a) the reduce is a reduce-scatter, not a gather onto rank 0; (b) no
++# setmaxnreg (a lone producer warp cannot legally run setmaxnreg, which is warpgroup-wide, and
++# nothing here is register-limited, so the mismatch is removed instead of papered over); (c) the x
++# TMA descriptor is encoded on the host on EVERY call from that call's x pointer and baked into
++# the graph like any pointer argument (never cached); the hi / lo descriptors are encoded per call
++# from the state's own tensors (nothing module-global, nothing in state); (d) smem is <= ~100 KB so
++# two CTAs fit per SM, which is what lets a cluster of 16 run with enough co-resident clusters
++# (stage 1 measured 14 active clusters of 16 at 2 CTAs/SM; the occupancy query gates every
++# candidate); (e) every mbarrier wait is bounded by clock64 and sets an error word; (f) the sm90a
++# code is under __CUDA_ARCH_FEAT_SM90_ALL with an #else that sets an error flag.
++# mode 0 is a diagnostic only (no cluster barriers, no peer reads, wrong result): the "no-DSMEM-
++# reduce" mainloop time of the kill criterion.
++RT2_MIN_M = 65
++RT2_MAX_M = 256
++RT2_BAND_SPLIT = 128                 # band "a": 65..128 (rep m 128), band "b": 129..256 (rep m 256)
++RT2_INSTANCES = ((64, 16), (128, 16), (128, 8))    # compiled (BT, CS); stages 4 / 3 / 3
++RT2_BAND_CANDS = {"a": ((64, 16), (128, 16)), "b": ((128, 16), (128, 8))}
++RT2_BAND_REP_M = {"a": 128, "b": 256}
++RT2_CHECK_MS = (65, 128, 129, 200, 256)
++RT2_GATE_REPS = 41
++RT2_GATE_ROUNDS = 2
++RT2_MIN_WIN = 1.03                   # both interleaved rounds must reach this (master / candidate)
++RT2_MAX_IQR_RATIO = 1.5              # candidate IQR <= this x master's IQR
++RT2_IQR_FLOOR_US = 0.5                # floor on master's IQR in the veto (audit: >= ~0.5 us)
++RT2_REL_L2 = 1e-5                    # vs fp64 router (judge bound 1e-4)
++RT2_REL_L2_HL = 5e-6                 # vs fp64 of the hi + lo reconstruction (kernel error only)
++RT2_ROW_REL = 5e-5                   # worst row (judge: 5 x 1e-4)
++RT2_ONEHOT_REL = 1e-3                # exact-column rows (judge 1e-3 of the original weights)
++RT2_START_DEADLINE_S = 150.0         # do not start the phase later than this into state-A's build
++RT2_PHASE_BUDGET_S = 70.0            # nor keep starting new steps this long after it began
++RT2_EXT_NAME = "muse_bf16_router_wgmma_tall_v1"
++RT2_NVCC_FLAGS = ["-O3", "-lineinfo", "-std=c++20"]
++
++_RT2_CPP = r"""
++#include <torch/extension.h>
++#include <vector>
++void rt2_run(torch::Tensor x, torch::Tensor hi, torch::Tensor lo, torch::Tensor out,
++             torch::Tensor err, int64_t bt, int64_t cs, int64_t mode);
++std::vector<int64_t> rt2_info(int64_t bt, int64_t cs);
++"""
++
++_RT2_CUDA_HEAD = r"""
++#include <torch/extension.h>
++#include <ATen/cuda/CUDAContext.h>
++#include <c10/cuda/CUDAException.h>
++#include <cuda.h>
++#include <cuda_bf16.h>
++#include <cuda_runtime.h>
++#include <dlfcn.h>
++#include <cstdint>
++#include <vector>
++
++namespace {
++
++constexpr int N_OUT = 256;
++constexpr int K_TOT = 8192;
++constexpr int BW = 64;              // weight rows per CTA = wgmma M
++constexpr int BK = 64;              // K per pipeline stage (64 bf16 = 128 B rows, 128B swizzle)
++constexpr int NCG = N_OUT / BW;     // column groups
++constexpr int PS = BW + 4;          // padded fp32 row of the partial tile P[token][weight row]
++constexpr int NTHREADS = 160;       // warps 0-3 consumer warpgroup, warp 4 producer
++constexpr long long WAIT_CYCLES = 1LL << 30;   // ~0.6 s: bounded spin, then the error word
++
++template <int BT, int CS, int ST>
++struct Cfg {
++  static constexpr int KC = K_TOT / CS;
++  static constexpr int NK = KC / BK;
++  static constexpr int A_BYTES = BW * 128;
++  static constexpr int X_BYTES = BT * 128;
++  static constexpr int STAGE = 2 * A_BYTES + X_BYTES;
++  static constexpr int RING = ST * STAGE;
++  static constexpr int P_BYTES = BT * PS * 4;
++  static constexpr int SMEM = 1024 + RING + 2 * ST * 8 + 16;
++  static constexpr int TPR = BT / CS;                // tokens reduced by one rank
++  static constexpr int ITEMS = TPR * (BW / 4);       // float4 per rank
++  static_assert(K_TOT % (CS * BK) == 0 && NK >= ST, "tiling");
++  static_assert(BT % CS == 0 && TPR >= 1, "reduce split");
++  static_assert(STAGE % 1024 == 0 && A_BYTES % 1024 == 0, "swizzle atom alignment");
++  static_assert(P_BYTES <= RING, "partial tile aliases the ring");
++};
++
++__device__ __forceinline__ uint32_t smem_u32(const void* p) {
++  return static_cast<uint32_t>(__cvta_generic_to_shared(p));
++}
++__device__ __forceinline__ void mbar_init(uint32_t bar, uint32_t count) {
++  asm volatile("mbarrier.init.shared::cta.b64 [%0], %1;\n" :: "r"(bar), "r"(count) : "memory");
++}
++__device__ __forceinline__ void mbar_expect_tx(uint32_t bar, uint32_t bytes) {
++  asm volatile("mbarrier.arrive.expect_tx.shared::cta.b64 _, [%0], %1;\n" :: "r"(bar), "r"(bytes) : "memory");
++}
++__device__ __forceinline__ void mbar_arrive(uint32_t bar) {
++  asm volatile("mbarrier.arrive.shared::cta.b64 _, [%0];\n" :: "r"(bar) : "memory");
++}
++// Bounded wait: true when the phase with this parity completed, false after WAIT_CYCLES.
++__device__ __forceinline__ bool mbar_wait(uint32_t bar, uint32_t parity) {
++  const long long t0 = clock64();
++  while (true) {
++    uint32_t ok;
++    asm volatile("{\n.reg .pred p;\nmbarrier.try_wait.parity.shared::cta.b64 p, [%1], %2;\nselp.u32 %0, 1, 0, p;\n}\n"
++                 : "=r"(ok) : "r"(bar), "r"(parity) : "memory");
++    if (ok) return true;
++    if (clock64() - t0 > WAIT_CYCLES) return false;
++  }
++}
++__device__ __forceinline__ void tma_load_2d(uint32_t dst, const CUtensorMap* tm, int c0, int c1, uint32_t bar) {
++  asm volatile("cp.async.bulk.tensor.2d.shared::cluster.global.mbarrier::complete_tx::bytes [%0], [%1, {%3, %4}], [%2];\n"
++               :: "r"(dst), "l"(reinterpret_cast<uint64_t>(tm)), "r"(bar), "r"(c0), "r"(c1) : "memory");
++}
++__device__ __forceinline__ void wgmma_fence() { asm volatile("wgmma.fence.sync.aligned;\n" ::: "memory"); }
++__device__ __forceinline__ void wgmma_commit() { asm volatile("wgmma.commit_group.sync.aligned;\n" ::: "memory"); }
++__device__ __forceinline__ void wgmma_wait0() { asm volatile("wgmma.wait_group.sync.aligned 0;\n" ::: "memory"); }
++// K-major operand tile with 128B swizzle: 8-row groups of 1024 B, 64 bf16 (128 B) per row.
++__device__ __forceinline__ uint64_t make_desc(uint32_t smem_addr) {
++  uint64_t d = 0;
++  d |= static_cast<uint64_t>((smem_addr & 0x3FFFF) >> 4);          // start address >> 4
++  d |= static_cast<uint64_t>(1) << 16;                             // LBO (unused with swizzle)
++  d |= static_cast<uint64_t>(1024 >> 4) << 32;                     // SBO = 1024 B
++  d |= static_cast<uint64_t>(1) << 62;                             // 128B swizzle
++  return d;
++}
++__device__ __forceinline__ void cluster_sync_rel_acq() {
++  asm volatile("barrier.cluster.arrive.release.aligned;\n" ::: "memory");
++  asm volatile("barrier.cluster.wait.acquire.aligned;\n" ::: "memory");
++}
++__device__ __forceinline__ uint32_t map_rank(uint32_t addr, uint32_t rank) {
++  uint32_t r;
++  asm volatile("mapa.shared::cluster.u32 %0, %1, %2;\n" : "=r"(r) : "r"(addr), "r"(rank));
++  return r;
++}
++__device__ __forceinline__ float4 ld_cluster_f4(uint32_t addr) {
++  float4 v;
++  asm volatile("ld.shared::cluster.v4.f32 {%0,%1,%2,%3}, [%4];\n"
++               : "=f"(v.x), "=f"(v.y), "=f"(v.z), "=f"(v.w) : "r"(addr) : "memory");
++  return v;
++}
++"""
++
++_RT2_CUDA_BODY = r"""
++template <int BT, int CS, int ST>
++__global__ void __launch_bounds__(NTHREADS, 2)
++rt2_wgmma_swapab_kernel(const __grid_constant__ CUtensorMap tm_hi,
++                        const __grid_constant__ CUtensorMap tm_lo,
++                        const __grid_constant__ CUtensorMap tm_x,
++                        float* __restrict__ out, int* __restrict__ err, int m, int mode) {
++#if defined(__CUDA_ARCH_FEAT_SM90_ALL)
++  using C = Cfg<BT, CS, ST>;
++  extern __shared__ uint8_t smem_raw[];
++  const uint32_t raw_u = smem_u32(smem_raw);
++  const uint32_t base_u = (raw_u + 1023u) & ~1023u;
++  uint8_t* base = smem_raw + (base_u - raw_u);
++  const uint32_t full_u = base_u + C::RING;
++  const uint32_t empty_u = full_u + ST * 8;
++  const int tid = threadIdx.x, warp = tid >> 5, lane = tid & 31;
++  const int rank = blockIdx.x % CS;
++  const int tile = blockIdx.x / CS;
++  const int m0 = (tile / NCG) * BT;
++  const int n0 = (tile % NCG) * BW;
++  const int kbase = rank * C::KC;
++
++  if (tid == 0) {
++#pragma unroll
++    for (int s = 0; s < ST; ++s) {
++      mbar_init(full_u + 8 * s, 1);     // one arrive.expect_tx from the producer + the TMA bytes
++      mbar_init(empty_u + 8 * s, 4);    // one arrive per consumer warp
++    }
++    asm volatile("fence.mbarrier_init.release.cluster;\n" ::: "memory");
++  }
++  __syncthreads();
++
++  float d[BT / 2];
++#pragma unroll
++  for (int i = 0; i < BT / 2; ++i) d[i] = 0.f;
++
++  if (warp < 4) {
++    // ---------------- consumer warpgroup ----------------
++    for (int ki = 0; ki < C::NK; ++ki) {
++      const int s = ki % ST;
++      if (!mbar_wait(full_u + 8 * s, (ki / ST) & 1)) {
++        atomicOr(err, 1);
++        break;
++      }
++      const uint32_t a_hi = base_u + s * C::STAGE;
++      const uint32_t a_lo = a_hi + C::A_BYTES;
++      const uint32_t xb = a_lo + C::A_BYTES;
++#pragma unroll
++      for (int i = 0; i < BT / 2; ++i) asm volatile("" : "+f"(d[i]) :: "memory");
++      wgmma_fence();
++#pragma unroll
++      for (int kk = 0; kk < BK / 16; ++kk) {
++        const uint64_t db = make_desc(xb + kk * 32);
++        if constexpr (BT == 64) {
++          wgmma_n64(d, make_desc(a_hi + kk * 32), db);
++          wgmma_n64(d, make_desc(a_lo + kk * 32), db);
++        } else {
++          wgmma_n128(d, make_desc(a_hi + kk * 32), db);
++          wgmma_n128(d, make_desc(a_lo + kk * 32), db);
++        }
++      }
++      wgmma_commit();
++      wgmma_wait0();
++#pragma unroll
++      for (int i = 0; i < BT / 2; ++i) asm volatile("" : "+f"(d[i]) :: "memory");
++      __syncwarp();
++      if (lane == 0) mbar_arrive(empty_u + 8 * s);
++    }
++    // every consumer warp is past its last wgmma before P overwrites the ring
++    asm volatile("bar.sync 1, 128;\n" ::: "memory");
++    float* P = reinterpret_cast<float*>(base);
++    const int rbase = warp * 16 + (lane >> 2);
++#pragma unroll
++    for (int j = 0; j < BT / 2; ++j) {
++      const int r = rbase + 8 * ((j >> 1) & 1);
++      const int c = (j >> 2) * 8 + (lane & 3) * 2 + (j & 1);
++      P[c * PS + r] = d[j];
++    }
++  } else if (lane == 0) {
++    // ---------------- producer (warp 4, lane 0) ----------------
++    for (int ki = 0; ki < C::NK; ++ki) {
++      const int s = ki % ST;
++      if (ki >= ST) {
++        if (!mbar_wait(empty_u + 8 * s, ((ki / ST) - 1) & 1)) {
++          atomicOr(err, 2);
++          break;
++        }
++      }
++      const uint32_t fb = full_u + 8 * s;
++      const uint32_t a_hi = base_u + s * C::STAGE;
++      const uint32_t a_lo = a_hi + C::A_BYTES;
++      const uint32_t xb = a_lo + C::A_BYTES;
++      const int kc = kbase + ki * BK;
++      mbar_expect_tx(fb, C::STAGE);
++      tma_load_2d(a_hi, &tm_hi, kc, n0, fb);
++      tma_load_2d(a_lo, &tm_lo, kc, n0, fb);
++      tma_load_2d(xb, &tm_x, kc, m0, fb);
++    }
++  }
++  __syncthreads();   // P complete in this CTA; producer done
++
++  if (mode != 0) cluster_sync_rel_acq();   // every CTA's P is visible cluster-wide
++  for (int i = tid; i < C::ITEMS; i += NTHREADS) {
++    const int tl = rank * C::TPR + i / (BW / 4);   // token row of the tile this rank owns
++    const int c4 = i % (BW / 4);
++    float4 s4;
++    if (mode != 0) {
++      const uint32_t loc = base_u + (tl * PS + c4 * 4) * 4;
++      float4 v[CS];
++#pragma unroll
++      for (int q = 0; q < CS; ++q) v[q] = ld_cluster_f4(map_rank(loc, q));
++      s4 = v[0];
++#pragma unroll
++      for (int q = 1; q < CS; ++q) {   // fixed rank order: deterministic
++        s4.x += v[q].x; s4.y += v[q].y; s4.z += v[q].z; s4.w += v[q].w;
++      }
++    } else {
++      s4 = *reinterpret_cast<const float4*>(base + (tl * PS + c4 * 4) * 4);
++    }
++    if (m0 + tl < m) *reinterpret_cast<float4*>(out + static_cast<int64_t>(m0 + tl) * N_OUT + n0 + c4 * 4) = s4;
++  }
++  if (mode != 0) cluster_sync_rel_acq();   // peers are done reading this CTA's smem before it exits
++#else
++  if (threadIdx.x == 0) atomicOr(err, 1 << 30);   // built without sm_90a: the self-check reads this
++#endif
++}
++
++using EncodeFn = CUresult (*)(CUtensorMap*, CUtensorMapDataType, cuuint32_t, void*, const cuuint64_t*,
++                              const cuuint64_t*, const cuuint32_t*, const cuuint32_t*, CUtensorMapInterleave,
++                              CUtensorMapSwizzle, CUtensorMapL2promotion, CUtensorMapFloatOOBfill);
++
++EncodeFn get_encode() {
++  static EncodeFn fn = nullptr;   // a host function pointer, not device state
++  if (fn == nullptr) {
++    void* h = dlsym(RTLD_DEFAULT, "cuTensorMapEncodeTiled");
++    if (h == nullptr) {
++      void* lib = dlopen("libcuda.so.1", RTLD_NOW);
++      if (lib != nullptr) h = dlsym(lib, "cuTensorMapEncodeTiled");
++    }
++    fn = reinterpret_cast<EncodeFn>(h);
++  }
++  TORCH_CHECK(fn != nullptr, "rt2: cuTensorMapEncodeTiled not found");
++  return fn;
++}
++
++// bf16 [rows, 8192] row-major (row stride in elements), box [64 K, box_rows], 128B swizzle, OOB = 0.
++void make_map(CUtensorMap* tm, const void* ptr, int64_t rows, int64_t row_stride_elems, int box_rows) {
++  cuuint64_t dims[2] = {static_cast<cuuint64_t>(K_TOT), static_cast<cuuint64_t>(rows)};
++  cuuint64_t strides[1] = {static_cast<cuuint64_t>(row_stride_elems) * 2};
++  cuuint32_t box[2] = {static_cast<cuuint32_t>(BK), static_cast<cuuint32_t>(box_rows)};
++  cuuint32_t estr[2] = {1, 1};
++  CUresult rc = get_encode()(tm, CU_TENSOR_MAP_DATA_TYPE_BFLOAT16, 2, const_cast<void*>(ptr), dims, strides, box, estr,
++                             CU_TENSOR_MAP_INTERLEAVE_NONE, CU_TENSOR_MAP_SWIZZLE_128B,
++                             CU_TENSOR_MAP_L2_PROMOTION_L2_256B, CU_TENSOR_MAP_FLOAT_OOB_FILL_NONE);
++  TORCH_CHECK(rc == CUDA_SUCCESS, "rt2: cuTensorMapEncodeTiled failed, code ", static_cast<int>(rc));
++}
++
++template <int BT, int CS, int ST>
++void set_attr() {
++  static bool done = false;
++  if (!done) {
++    C10_CUDA_CHECK(cudaFuncSetAttribute(rt2_wgmma_swapab_kernel<BT, CS, ST>,
++                                        cudaFuncAttributeMaxDynamicSharedMemorySize, Cfg<BT, CS, ST>::SMEM));
++    C10_CUDA_CHECK(cudaFuncSetAttribute(rt2_wgmma_swapab_kernel<BT, CS, ST>,
++                                        cudaFuncAttributePreferredSharedMemoryCarveout, 100));
++    if (CS > 8) {
++      C10_CUDA_CHECK(cudaFuncSetAttribute(rt2_wgmma_swapab_kernel<BT, CS, ST>,
++                                          cudaFuncAttributeNonPortableClusterSizeAllowed, 1));
++    }
++    done = true;
++  }
++}
++
++template <int BT, int CS, int ST>
++void launch(torch::Tensor x, torch::Tensor hi, torch::Tensor lo, torch::Tensor out, torch::Tensor err, int mode) {
++  set_attr<BT, CS, ST>();
++  const int m = static_cast<int>(x.size(0));
++  CUtensorMap tm_hi, tm_lo, tm_x;
++  make_map(&tm_hi, hi.data_ptr(), N_OUT, K_TOT, BW);
++  make_map(&tm_lo, lo.data_ptr(), N_OUT, K_TOT, BW);
++  make_map(&tm_x, x.data_ptr(), m, x.stride(0), BT);   // this call's x pointer, never cached
++  cudaLaunchConfig_t cfg = {};
++  cfg.gridDim = dim3(((m + BT - 1) / BT) * NCG * CS);
++  cfg.blockDim = dim3(NTHREADS);
++  cfg.dynamicSmemBytes = Cfg<BT, CS, ST>::SMEM;
++  cfg.stream = at::cuda::getCurrentCUDAStream();
++  cudaLaunchAttribute attr[1];
++  attr[0].id = cudaLaunchAttributeClusterDimension;
++  attr[0].val.clusterDim.x = CS;
++  attr[0].val.clusterDim.y = 1;
++  attr[0].val.clusterDim.z = 1;
++  cfg.attrs = attr;
++  cfg.numAttrs = 1;
++  C10_CUDA_CHECK(cudaLaunchKernelEx(&cfg, rt2_wgmma_swapab_kernel<BT, CS, ST>, tm_hi, tm_lo, tm_x,
++                                    out.data_ptr<float>(), err.data_ptr<int>(), m, mode));
++  C10_CUDA_KERNEL_LAUNCH_CHECK();
++}
++
++template <int BT, int CS, int ST>
++std::vector<int64_t> info() {
++  set_attr<BT, CS, ST>();
++  cudaFuncAttributes fa;
++  C10_CUDA_CHECK(cudaFuncGetAttributes(&fa, rt2_wgmma_swapab_kernel<BT, CS, ST>));
++  cudaLaunchConfig_t cfg = {};
++  cfg.gridDim = dim3(CS * NCG);
++  cfg.blockDim = dim3(NTHREADS);
++  cfg.dynamicSmemBytes = Cfg<BT, CS, ST>::SMEM;
++  cudaLaunchAttribute attr[1];
++  attr[0].id = cudaLaunchAttributeClusterDimension;
++  attr[0].val.clusterDim.x = CS;
++  attr[0].val.clusterDim.y = 1;
++  attr[0].val.clusterDim.z = 1;
++  cfg.attrs = attr;
++  cfg.numAttrs = 1;
++  int nclusters = -1;
++  if (cudaOccupancyMaxActiveClusters(&nclusters, rt2_wgmma_swapab_kernel<BT, CS, ST>, &cfg) != cudaSuccess) {
++    (void)cudaGetLastError();
++    nclusters = -1;
++  }
++  int nblocks = -1;
++  if (cudaOccupancyMaxActiveBlocksPerMultiprocessor(&nblocks, rt2_wgmma_swapab_kernel<BT, CS, ST>, NTHREADS,
++                                                    Cfg<BT, CS, ST>::SMEM) != cudaSuccess) {
++    (void)cudaGetLastError();
++    nblocks = -1;
++  }
++  return {fa.numRegs, static_cast<int64_t>(fa.localSizeBytes), static_cast<int64_t>(fa.sharedSizeBytes),
++          static_cast<int64_t>(Cfg<BT, CS, ST>::SMEM), nclusters, nblocks};
++}
++
++}  // namespace
++
++void rt2_run(torch::Tensor x, torch::Tensor hi, torch::Tensor lo, torch::Tensor out, torch::Tensor err,
++             int64_t bt, int64_t cs, int64_t mode) {
++  const int64_t m = x.size(0);
++  TORCH_CHECK(x.dim() == 2 && m >= 1 && m <= 256 && x.size(1) == K_TOT, "rt2: x shape");
++  TORCH_CHECK(x.scalar_type() == at::kBFloat16 && hi.scalar_type() == at::kBFloat16 &&
++              lo.scalar_type() == at::kBFloat16 && out.scalar_type() == at::kFloat &&
++              err.scalar_type() == at::kInt, "rt2: dtypes");
++  TORCH_CHECK(hi.is_contiguous() && lo.is_contiguous() && hi.size(0) == N_OUT && hi.size(1) == K_TOT &&
++              lo.size(0) == N_OUT && lo.size(1) == K_TOT, "rt2: weights");
++  TORCH_CHECK(x.stride(1) == 1 && x.stride(0) % 8 == 0 &&
++              reinterpret_cast<uintptr_t>(x.data_ptr()) % 16 == 0 &&
++              reinterpret_cast<uintptr_t>(hi.data_ptr()) % 16 == 0 &&
++              reinterpret_cast<uintptr_t>(lo.data_ptr()) % 16 == 0, "rt2: x strides / alignment");
++  TORCH_CHECK(out.is_contiguous() && out.size(0) == m && out.size(1) == N_OUT && err.numel() >= 1, "rt2: out / err");
++  if (bt == 64 && cs == 16) launch<64, 16, 4>(x, hi, lo, out, err, static_cast<int>(mode));
++  else if (bt == 128 && cs == 16) launch<128, 16, 3>(x, hi, lo, out, err, static_cast<int>(mode));
++  else if (bt == 128 && cs == 8) launch<128, 8, 3>(x, hi, lo, out, err, static_cast<int>(mode));
++  else TORCH_CHECK(false, "rt2: unsupported (BT, CS)");
++}
++
++// {regs, local (spill) bytes, static smem, dynamic smem, max active clusters, CTAs/SM (-1: query failed)}
++std::vector<int64_t> rt2_info(int64_t bt, int64_t cs) {
++  if (bt == 64 && cs == 16) return info<64, 16, 4>();
++  if (bt == 128 && cs == 16) return info<128, 16, 3>();
++  if (bt == 128 && cs == 8) return info<128, 8, 3>();
++  TORCH_CHECK(false, "rt2_info: unsupported (BT, CS)");
++  return {};
++}
++"""
++
++
++def _rt2_wgmma_src(n: int) -> str:
++    """wgmma.mma_async m64n{n}k16 bf16 x bf16 -> fp32, both operands K-major from smem descriptors,
++    accumulating in place (scale-d = 1: the caller zeroes the accumulator)."""
++    regs = n // 2
++    outs = ", ".join("%%%d" % i for i in range(regs))
++    cons = ", ".join('"+f"(d[%d])' % i for i in range(regs))
++    return (
++        "#if defined(__CUDA_ARCH_FEAT_SM90_ALL)\n"
++        "__device__ __forceinline__ void wgmma_n%d(float (&d)[%d], uint64_t da, uint64_t db) {\n"
++        "  const int sd = 1;\n"
++        "  asm volatile(\n"
++        '      "{\\n.reg .pred p;\\nsetp.ne.b32 p, %%%d, 0;\\n"\n'
++        '      "wgmma.mma_async.sync.aligned.m64n%dk16.f32.bf16.bf16 "\n'
++        '      "{%s}, %%%d, %%%d, p, 1, 1, 0, 0;\\n}\\n"\n'
++        '      : %s : "l"(da), "l"(db), "r"(sd));\n'
++        "}\n"
++        "#endif\n"
++    ) % (n, regs, regs + 2, n, outs, regs, regs + 1, cons)
++
++
++_RT2_CUDA = _RT2_CUDA_HEAD + _rt2_wgmma_src(64) + _rt2_wgmma_src(128) + _RT2_CUDA_BODY
++
++
++def _build_rt2():
++    """Compile the CUDA module once per process, at import (never during graph capture), for sm_90a
++    only (TORCH_CUDA_ARCH_LIST=9.0a around the build, restored after; the default list adds a plain
++    sm_90 pass that cannot assemble wgmma). Prints the arch flags, nvcc flags and the build seconds.
++    Any failure keeps master's router path; never raises."""
++    t0 = time.perf_counter()
++    prev = os.environ.get("TORCH_CUDA_ARCH_LIST")
++    os.environ["TORCH_CUDA_ARCH_LIST"] = "9.0a"
++    try:
++        from torch.utils import cpp_extension
++        try:
++            print(f"[rt2] arch flags passed to nvcc: {cpp_extension._get_cuda_arch_flags()}", flush=True)
++        except Exception as e:  # diagnostic only
++            print(f"[rt2] arch flags unavailable ({type(e).__name__}: {e})", flush=True)
++        print(f"[rt2] building {RT2_EXT_NAME}: TORCH_CUDA_ARCH_LIST=9.0a extra_cuda_cflags {RT2_NVCC_FLAGS}",
++              flush=True)
++        ext = cpp_extension.load_inline(
++            name=RT2_EXT_NAME, cpp_sources=_RT2_CPP, cuda_sources=_RT2_CUDA,
++            functions=["rt2_run", "rt2_info"], extra_cuda_cflags=list(RT2_NVCC_FLAGS),
++            extra_ldflags=["-ldl"], verbose=False)
++    except Exception as e:
++        tail = "\n".join(str(e).splitlines()[-60:])
++        print(f"[rt2] build FAILED after {time.perf_counter() - t0:.1f}s ({type(e).__name__}); build log "
++              f"tail:\n{tail}\n[rt2] master router path kept", flush=True)
++        return None
++    finally:
++        if prev is None:
++            os.environ.pop("TORCH_CUDA_ARCH_LIST", None)
++        else:
++            os.environ["TORCH_CUDA_ARCH_LIST"] = prev
++    print(f"[build-time] rt2 load_inline compiled in {time.perf_counter() - t0:.1f}s", flush=True)
++    return ext
++
++
++_RT2_EXT = _build_rt2() if torch.cuda.is_available() else None
++
++
++def _rt2_route(x: torch.Tensor, cfg, state: dict):
++    """(BT, CS) the CUDA wgmma router runs at for this call, or None for master's hilo path. Branches on
++    cfg, shapes, strides, alignment and the prepare() constants in state only; with the band's flag
++    off this is master's exact path."""
++    if _RT2_EXT is None or x.dim() != 2:
++        return None
++    m = x.shape[0]
++    if not RT2_MIN_M <= m <= RT2_MAX_M:
++        return None
++    key = "a" if m <= RT2_BAND_SPLIT else "b"
++    rc = state.get("rt2_cfg_" + key)
++    if rc is None or not state.get("rt2_" + key + "_ok"):
++        return None
++    if (cfg["m"] == m and cfg["n"] == ROUTER_N and cfg["k"] == ROUTER_K and x.shape[1] == ROUTER_K
++            and x.dtype == torch.bfloat16 and x.is_cuda and x.stride(1) == 1 and x.stride(0) % 8 == 0
++            and x.data_ptr() % 16 == 0):
++        return rc
++    return None
++
++
++def _rt2_forward(x: torch.Tensor, state: dict, rc, mode: int = 1) -> torch.Tensor:
++    """x bf16 [65 <= m <= 256, 8192] @ (hi + lo).T -> fp32 [m, 256]: ONE cluster launch, torch.empty
++    output (no memset node). The error word is per state and only written on a bounded-wait timeout."""
++    out = torch.empty((x.shape[0], ROUTER_N), dtype=torch.float32, device=x.device)
++    _RT2_EXT.rt2_run(x, state["router_hi"], state["router_lo"], out, state["rt2_err"], rc[0], rc[1], mode)
++    return out
++
++
++def _rt2_traffic_mb(m: int, bt: int) -> float:
++    """L2 -> SM operand bytes (MB): x re-read once per column group (4), hi + lo (8.4 MB) once per
++    token tile. Independent of the K split."""
++    tiles = (m + bt - 1) // bt
++    return (m * ROUTER_K * 2 * (ROUTER_N // 64) + 2 * ROUTER_N * ROUTER_K * 2 * tiles) / 1e6
++
++
++def _rt2_check(state: dict, rc, ms) -> str:
++    """In-process self-check of (BT, CS) = rc at the token counts ms. Every launch is announced with a
++    flushed print before it and a synchronize, an error-word read and a flushed print after it, so a
++    fault names its kernel. x has random rows, outlier rows (x64) and entries (x1024), and about one
++    row in eight is a single power-of-two entry (an exact weight column). Bounds: rel L2 vs fp64
++    router <= RT2_REL_L2 (judge 1e-4), vs fp64 hi + lo reconstruction <= RT2_REL_L2_HL, worst row <=
++    RT2_ROW_REL, one-hot rows <= RT2_ONEHOT_REL of the original column, finite, run 2 bit-identical,
++    error word 0. Returns "" on pass, else why."""
++    router, hi, lo = state["router"], state["router_hi"], state["router_lo"]
++    dev = router.device
++    k = router.shape[1]
++    rd = router.double()
++    hld = hi.double() + lo.double()
++    g = torch.Generator(device=dev)
++    g.manual_seed(1357)
++    for m in ms:
++        x = torch.randn((m, k), device=dev, dtype=torch.float32, generator=g)
++        for r in range(m):
++            if r % 9 == 3:
++                x[r] *= 64.0
++            if r % 11 == 5:
++                x[r, (r * 131) % k] = 1024.0
++        x = x.to(torch.bfloat16)
++        oh_rows = sorted({r for r in range(m) if r % 8 == 6} | {m - 1})
++        oh_cols, oh_vals = [], []
++        for r in oh_rows:
++            c = (37 * r + 5 * m + 11) % k
++            v = 2.0 ** ((r % 7) - 3)
++            x[r].zero_()
++            x[r, c] = v
++            oh_cols.append(c)
++            oh_vals.append(v)
++        ref = x.double() @ rd.T
++        ref_hl = x.double() @ hld.T
++        outs = []
++        for run in (1, 2):
++            print(f"[rt2] launching rt2_wgmma_swapab_kernel BT={rc[0]} CS={rc[1]} m={m} run {run}", flush=True)
++            o = _rt2_forward(x, state, rc)
++            torch.cuda.synchronize()
++            code = int(state["rt2_err"].item())
++            state["rt2_err"].zero_()
++            print(f"[rt2] BT={rc[0]} CS={rc[1]} m={m} run {run} finished OK (synced, error word {code})", flush=True)
++            if code:
++                return f"m={m}: error word {code}"
++            outs.append(o)
++        if not torch.equal(outs[0], outs[1]):
++            return f"m={m}: second launch differs from the first"
++        o = outs[0].double()
++        if not bool(torch.isfinite(o).all()):
++            return f"m={m}: non-finite output"
++        err = float((o - ref).norm() / ref.norm().clamp_min(1e-30))
++        err_hl = float((o - ref_hl).norm() / ref_hl.norm().clamp_min(1e-30))
++        row_ref = ref.norm(dim=1)
++        row_den = torch.maximum(row_ref, 0.1 * row_ref.mean()).clamp_min(1e-30)
++        row_err = float(((o - ref).norm(dim=1) / row_den).max())
++        idx = torch.tensor(oh_rows, device=dev)
++        exact = (torch.tensor(oh_vals, device=dev, dtype=torch.float64)[:, None]
++                 * rd[:, torch.tensor(oh_cols, device=dev)].T)
++        oh = float(((o[idx] - exact).norm(dim=1) / exact.norm(dim=1).clamp_min(1e-30)).max())
++        print(f"[rt2] check BT={rc[0]} CS={rc[1]} m={m}: rel L2 {err:.2e} (<= {RT2_REL_L2:g}), vs hi+lo {err_hl:.2e} "
++              f"(<= {RT2_REL_L2_HL:g}), worst row {row_err:.2e} (<= {RT2_ROW_REL:g}), one-hot rows "
++              f"{len(oh_rows)} worst {oh:.2e} (<= {RT2_ONEHOT_REL:g})", flush=True)
++        if not (err <= RT2_REL_L2 and err_hl <= RT2_REL_L2_HL and row_err <= RT2_ROW_REL and oh <= RT2_ONEHOT_REL):
++            return (f"m={m}: rel L2 {err:.2e}, vs hi+lo {err_hl:.2e}, worst row {row_err:.2e}, "
++                    f"one-hot {oh:.2e} out of bounds")
++    return ""
++
++
++def _rt2_quantile(v, q: float) -> float:
++    s = sorted(v)
++    return s[min(len(s) - 1, max(0, int(round(q * (len(s) - 1)))))]
++
++
++def _rt2_gate(state: dict, key: str, m: int, cands):
++    """Model selector for the router band `key` at its representative m. Captures as CUDA graphs, on
++    shallow copies of state and the same synthetic x: master's ACTUALLY ROUTED path (kernel_fn with
++    the band's flag off, i.e. _router_hilo_forward + torch.zeros), kernel_fn with the flag on and each
++    candidate (BT, CS), and each candidate's mode-0 no-DSMEM-reduce diagnostic. RT2_GATE_ROUNDS rounds
++    of RT2_GATE_REPS reps, every graph once per rep in rotating order, a CELL_FLUSH_BYTES write before
++    each replay, medians minus an empty-graph baseline. Prints both rounds' medians / IQRs per
++    candidate, and returns (best candidate or None, {candidate: (ratios, iqr_ok, win)}) where a candidate
++    passes only if BOTH rounds reach RT2_MIN_WIN over master and its IQR <= RT2_MAX_IQR_RATIO x
++    master's in both rounds. prepare()-only."""
++    dev = state["router"].device
++    flag, cfgk = "rt2_" + key + "_ok", "rt2_cfg_" + key
++    x = torch.randn((m, ROUTER_K), device=dev, dtype=torch.float32).to(torch.bfloat16)
++    data = {"x": x, "config": {"m": m, "n": ROUTER_N, "k": ROUTER_K, "layer": "router"}}
++    st_m = dict(state)
++    st_m[flag] = False
++    sts = {}
++    for c in cands:
++        st = dict(state)
++        st[flag] = True
++        st[cfgk] = c
++        sts[c] = st
++    flush = torch.empty(CELL_FLUSH_BYTES, dtype=torch.uint8, device=dev)
++    scratch = torch.zeros(1, dtype=torch.float32, device=dev)
++    ev = [torch.cuda.Event(enable_timing=True) for _ in range(2)]
++
++    def replay_us(gr) -> float:
++        flush.zero_()
++        ev[0].record()
++        gr.replay()
++        ev[1].record()
++        ev[1].synchronize()
++        return ev[0].elapsed_time(ev[1]) * 1e3
++
++    g_base = _cell_capture(lambda: scratch.add_(1.0))
++    base = _ouns_median([replay_us(g_base) for _ in range(RT2_GATE_REPS)])
++    graphs = {"master": _cell_capture(lambda: kernel_fn(data, st_m))}
++    for c in cands:
++        graphs[c] = _cell_capture(lambda c=c: kernel_fn(data, sts[c]))
++        graphs[("nored",) + c] = _cell_capture(lambda c=c: _rt2_forward(x, state, c, 0))
++    names = list(graphs)
++    rounds = []
++    for rnd in range(RT2_GATE_ROUNDS):
++        samples = {n: [] for n in names}
++        for rep in range(RT2_GATE_REPS):
++            rot = rep % len(names)
++            for n in names[rot:] + names[:rot]:
++                samples[n].append(replay_us(graphs[n]))
++        rounds.append(samples)
++    code = int(state["rt2_err"].item())
++    state["rt2_err"].zero_()
++
++    def net(v):
++        return max(_ouns_median(v) - base, 0.25)
++
++    lines = []
++    data_out = {}
++    best, best_score = None, 0.0
++    for c in cands:
++        ratios, iqr_ok, parts = [], [], []
++        for rnd, samples in enumerate(rounds):
++            mm, cm = net(samples["master"]), net(samples[c])
++            im = _rt2_quantile(samples["master"], 0.75) - _rt2_quantile(samples["master"], 0.25)
++            ic = _rt2_quantile(samples[c], 0.75) - _rt2_quantile(samples[c], 0.25)
++            nr = net(samples[("nored",) + c])
++            ratio = mm / cm
++            ok = ic <= RT2_MAX_IQR_RATIO * max(im, RT2_IQR_FLOOR_US)   # absolute floor: a timer-resolution IQR must not veto a win
++            ratios.append(ratio)
++            iqr_ok.append(ok)
++            parts.append(f"round {rnd + 1}: master {mm:.2f} (IQR {im:.2f}) cand {cm:.2f} (IQR {ic:.2f}) "
++                         f"no-reduce {nr:.2f} -> master/cand {ratio:.3f} iqr_ok={ok}")
++        win = all(r >= RT2_MIN_WIN for r in ratios) and all(iqr_ok) and code == 0
++        score = min(ratios)
++        line = (f"[rt2] gate band {key} m={m} BT={c[0]} CS={c[1]} (graph replay, {CELL_FLUSH_BYTES >> 20} MB flush, "
++                f"{RT2_GATE_REPS} reps x {RT2_GATE_ROUNDS} interleaved rounds, baseline {base:.2f} us, net us; need "
++                f">= {RT2_MIN_WIN} both rounds and IQR <= {RT2_MAX_IQR_RATIO}x): " + " | ".join(parts)
++                + f" | pass={win} error word {code}")
++        print(line, flush=True)
++        lines.append(line)
++        data_out[c] = (ratios, iqr_ok, win)
++        if win and score > best_score:
++            best, best_score = c, score
++    del graphs, g_base, flush, rounds
++    torch.cuda.synchronize()
++    return best, data_out
++
++
++def _rt2_prepare(state: dict, t_all: float, flags=None) -> None:
++    """Decide, per band ("a": m 65..128, "b": 129..256), whether the CUDA wgmma router replaces
++    master's hilo kernel + memset, and at which (BT, CS). Sets state["rt2_a_ok"/"rt2_b_ok"] (False
++    unless every step passes), state["rt2_cfg_a"/"rt2_cfg_b"], a per-state error word and the
++    summary lines prepare() repeats last. flags a dict (the A/B check's second state): inherit the
++    flags and configs, own error word. Steps (flags None): module present, per-candidate attribute /
++    occupancy / spill query, self-check at RT2_CHECK_MS, the two-round graph-replay gate against
++    master's routed path, one torch.profiler call asserting the launched kernel names. Own start
++    deadline; never raises."""
++    t0 = time.perf_counter()
++    state["rt2_a_ok"], state["rt2_b_ok"] = False, False
++    state["rt2_cfg_a"], state["rt2_cfg_b"] = None, None
++    state["rt2_summary"] = []
++    router = state["router"]
++    dev = router.device
++    state["rt2_err"] = torch.zeros(1, dtype=torch.int32, device=dev)
++    if flags is not None:
++        for key in ("a", "b"):
++            rc = flags.get("rt2_cfg_" + key)
++            state["rt2_cfg_" + key] = rc
++            state["rt2_" + key + "_ok"] = bool(flags.get("rt2_" + key + "_ok")) and rc is not None
++        return
++    summary = state["rt2_summary"]
++    why_all = ""
++    infos, passed = {}, {}
++    try:
++        if (_RT2_EXT is None or tuple(router.shape) != (ROUTER_N, ROUTER_K) or router.dtype != torch.float32
++                or not router.is_cuda):
++            why_all = "extension missing or router weight shape/dtype unexpected"
++        elif time.perf_counter() - t_all > RT2_START_DEADLINE_S:
++            why_all = f"skipped: deadline (state build already {time.perf_counter() - t_all:.0f}s > {RT2_START_DEADLINE_S:.0f}s)"
++            print(f"[rt2] {why_all}", flush=True)
++    except Exception as e:
++        why_all = f"raised {type(e).__name__}: {e}"
++    if not why_all:
++        try:
++            for m_rep, bts in ((128, (64, 128)), (256, (128,))):
++                for bt in bts:
++                    print(f"[rt2] L2->SM operand bytes m={m_rep}: incumbent {_router_hilo_config(m_rep)[:2]} tiles "
++                          f"{_rt_hilo_traffic_mb(m_rep):.1f} MB; new BT={bt} tiles {_rt2_traffic_mb(m_rep, bt):.1f} MB",
++                          flush=True)
++            for cfg in RT2_INSTANCES:
++                regs, spill, ssmem, dsmem, ncl, nb = [int(v) for v in _RT2_EXT.rt2_info(*cfg)]
++                infos[cfg] = (regs, spill, ssmem, dsmem, ncl, nb)
++                print(f"[rt2] BT={cfg[0]} CS={cfg[1]}: regs={regs} local(spill)={spill} B static smem={ssmem} B "
++                      f"dynamic smem={dsmem} B max active clusters={ncl} CTAs/SM={nb} threads=160", flush=True)
++            for cfg in RT2_INSTANCES:
++                regs, spill, ssmem, dsmem, ncl, nb = infos[cfg]
++                need = max(((RT2_BAND_REP_M[k] + cfg[0] - 1) // cfg[0]) * 4 for k in RT2_BAND_REP_M
++                           if cfg in RT2_BAND_CANDS[k])
++                if time.perf_counter() - t0 > RT2_PHASE_BUDGET_S:
++                    print(f"[rt2] BT={cfg[0]} CS={cfg[1]} skipped: deadline (phase {time.perf_counter() - t0:.0f}s)",
++                          flush=True)
++                    continue
++                if spill != 0 or nb < 2 or ncl < need:
++                    print(f"[rt2] BT={cfg[0]} CS={cfg[1]} skipped: spill {spill} B, CTAs/SM {nb} (needs 2), max "
++                          f"active clusters {ncl} (needs {need})", flush=True)
++                    continue
++                why = _rt2_check(state, cfg, RT2_CHECK_MS)
++                if why:
++                    print(f"[rt2] BT={cfg[0]} CS={cfg[1]} self-check FAILED: {why}", flush=True)
++                    continue
++                print(f"[rt2] BT={cfg[0]} CS={cfg[1]} self-check passed (m in {RT2_CHECK_MS})", flush=True)
++                passed[cfg] = True
++        except Exception as e:
++            why_all = f"raised {type(e).__name__}: {str(e)[-300:]}"
++            print(f"[rt2] prepare failed ({why_all}); master router path for every m", flush=True)
++            passed = {}
++            state["rt2_err"].zero_()
++    for key in ("a", "b"):
++        m = RT2_BAND_REP_M[key]
++        result = "master"
++        detail = why_all or "no candidate passed its self-check / occupancy"
++        try:
++            cands = tuple(c for c in RT2_BAND_CANDS[key] if passed.get(c))
++            if cands and not why_all:
++                if time.perf_counter() - t0 > RT2_PHASE_BUDGET_S:
++                    detail = f"skipped: deadline (phase {time.perf_counter() - t0:.0f}s)"
++                    print(f"[rt2] gate band {key} m={m} {detail}", flush=True)
++                else:
++                    best, res = _rt2_gate(state, key, m, cands)
++                    detail = "; ".join(f"BT={c[0]}/CS={c[1]} master/cand "
++                                       + "/".join(f"{r:.3f}" for r in res[c][0])
++                                       + f" iqr_ok={all(res[c][1])}" for c in cands)
++                    if best is None:
++                        detail += "; no candidate won both rounds with a tight IQR"
++                    else:
++                        st_on = dict(state)
++                        st_on["rt2_" + key + "_ok"] = True
++                        st_on["rt2_cfg_" + key] = best
++                        xd = torch.randn((m, ROUTER_K), device=dev, dtype=torch.float32).to(torch.bfloat16)
++                        data = {"x": xd, "config": {"m": m, "n": ROUTER_N, "k": ROUTER_K, "layer": "router"}}
++                        try:
++                            kn = _cell_kernels(lambda: kernel_fn(data, st_on))
++                            print(f"[rt2] band {key} m={m} chosen BT={best[0]} CS={best[1]}: profiled kernels {kn}", flush=True)
++                            if kn and not (len(kn) == 1 and "rt2_wgmma_swapab_kernel" in kn[0]):
++                                detail += f"; profiled kernels {kn}: expected exactly one rt2_wgmma_swapab_kernel"
++                                best = None
++                            elif not kn:
++                                print(f"[rt2] band {key}: profiler returned no CUDA kernel events; route kept "
++                                      f"(kernel_fn calls rt2_run directly)", flush=True)
++                        except Exception as e:  # own extension, direct launch: keep the route
++                            print(f"[rt2] band {key}: profiler unavailable ({type(e).__name__}: {e}); route kept "
++                                  f"(kernel_fn calls rt2_run directly)", flush=True)
++                        if best is not None:
++                            state["rt2_cfg_" + key] = best
++                            state["rt2_" + key + "_ok"] = True
++                            result = f"CUDA wgmma BT={best[0]} CS={best[1]}"
++        except Exception as e:  # never raises: any surprise keeps master's path for this band
++            detail = f"raised {type(e).__name__}: {str(e)[-300:]}"
++            state["rt2_" + key + "_ok"] = False
++            state["rt2_cfg_" + key] = None
++        state["rt2_err"].zero_()
++        line = f"PATH CHOSEN router band {key} (m {'65..128' if key == 'a' else '129..256'}, rep m={m}): {result} [{detail}]"
++        print(line, flush=True)
++        summary.append(line)
++    torch.cuda.synchronize()
++    print(f"[prepare-time] rt2 phase total: {time.perf_counter() - t0:.2f}s", flush=True)
++
++
++def _rt_hilo_traffic_mb(m: int) -> float:
++    """Master's hilo tiles (BLOCK_M x BLOCK_N from _router_hilo_config) L2 -> SM operand MB."""
++    bm, bn, _sk = _router_hilo_config(m)
++    return (m * ROUTER_K * 2 * (ROUTER_N // bn) + 2 * ROUTER_N * ROUTER_K * 2 * ((m + bm - 1) // bm)) / 1e6
++
++
++def _prepare_state(weights: Weights, flags=None) -> dict:
++    """Build one state. flags None: run the router-cluster and unpooler-cluster self-checks and the
++    unpooler gate (the state the judge keeps). flags a dict: the second state of the prepare()-time
++    A/B self-check, which inherits the first state's three dispatch flags instead of re-deciding."""
++    t_all = time.perf_counter()
++    marks = []
++
++    def tick(label, t0):
++        dt = time.perf_counter() - t0
++        marks.append((label, dt))
++        print(f"[prepare-time] {label}: {dt:.2f}s", flush=True)
++        return time.perf_counter()
++
++    t = time.perf_counter()
++    state = {name: w.contiguous() for name, w in weights.items()}
++    router = state["router"]
++    hi = router.to(torch.bfloat16).contiguous()
++    lo = (router - hi.float()).to(torch.bfloat16).contiguous()
++    state["router_hi"] = hi
++    state["router_lo"] = lo
++    # Lossless transposed bf16 copies [K, N] row-major (truly contiguous, not a .t() view) for
++    # the gated pooler/unpooler NN path; the original [N, K] weights stay for every other path.
++    for name in NN_GATED_LAYERS:
++        state[name + "_t"] = state[name].t().contiguous()
++    state["nn_ok"] = True   # constant; the A/B self-check may turn it off for the run
++    state["nn_p256_ok"] = True   # pooler 129..256 only; own flag, own self-check cell
++    # Router m = 65..256 CUDA wgmma path: defaults (off) before anything can call kernel_fn.
++    state["rt2_a_ok"], state["rt2_b_ok"] = False, False
++    state["rt2_cfg_a"], state["rt2_cfg_b"] = None, None
++    t = tick("weight splits + NN copies", t)
++    # Stage choice, side-by-side diagnostics and warm-up on synthetic inputs.
++    _router_prepare(state)
++    t = tick("router triton warm-up", t)
++    # (1) Pooler split-K scratch (fp32 partials, overwritten every call) and per-N-tile tickets.
++    pooler = state["pooler"]
++    state["pooler_ws"] = torch.empty((POOLER_SPLIT_K, POOLER_MAX_M, POOLER_N),
++                                     dtype=torch.float32, device=pooler.device)
++    state["pooler_cnt"] = torch.zeros(POOLER_N // POOLER_BLOCK_N, dtype=torch.int32, device=pooler.device)
++    pcfg = {"n": POOLER_N, "k": POOLER_K}
++    for m in range(1, POOLER_MAX_M + 1):
++        x = torch.randn((m, POOLER_K), device=pooler.device, dtype=torch.float32).to(torch.bfloat16)
++        if _pooler_shape_ok(x, pooler, dict(pcfg, m=m)):
++            _pooler_forward(x, pooler, state["pooler_ws"], state["pooler_cnt"])
++    # (2) qkv_gate m <= 16: persistent split-K workspace and per-n-tile ticket counters (own keys).
++    qkv = state["qkv_gate"]
++    state["qkv_ws"] = torch.empty((QKV_SPLIT_K, QKV_MAX_M, QKV_N), dtype=torch.float32,
++                                  device=qkv.device)
+     state["qkv_cnt"] = torch.zeros((QKV_N // QKV_BLOCK_N,), dtype=torch.int32, device=qkv.device)
+     if qkv.shape == (QKV_N, QKV_K) and qkv.dtype == torch.bfloat16:
+         for m in range(1, QKV_MAX_M + 1):
+@@ -1613,17 +3793,211 @@ def prepare(weights: Weights) -> dict:
+     state["pooler_cnt"].zero_()
+     state["qkv_cnt"].zero_()
+     state["unpool_cnt"].zero_()
++    t = tick("pooler / qkv / unpooler / o triton warm-up", t)
+     # (5) Swap-AB at 17 <= m <= 32 for all four bf16 layers (own workspaces / tickets).
+     _swapab_prepare(state)
++    t = tick("swapab m17-32 warm-up", t)
+     # (6) Swap-AB, BLOCK_T 16, at m <= 16 for pooler / qkv_gate / o and the unpooler slice.
+     _swapab16_prepare(state)
++    t = tick("swapab16 warm-up", t)
++    if flags is None:
++        # (7) Unpooler slice m <= 8: CUDA cluster + DSMEM split-K behind a graph-replay gate.
++        _ouns_prepare(state)
++        t = tick("ouns self-check + graph-replay gate", t)
++        # (8) Router m <= 8: CUDA cluster + DSMEM split-K (constant state["router_cluster_ok"]).
++        _router_cluster_prepare(state)
++        t = tick("router cluster self-check", t)
++        # (9) m == 1 bulk row-owner cells A / A2 / A3 and qkv_gate m == 128 cuBLASLt plan B, each
++        # behind its own canary, gate and kernel-name assertion (after master's own work).
++        _bulk_prepare(state)
++        t = tick("bulk cells A/A2/A3 (setup + repack + canary + gate + profile)", t)
++        _lt_prepare(state)
++        t = tick("lt cell B (heuristic + canary + gate + profile)", t)
++        # (10) Router m = 65..256: sm90a wgmma swap-AB cluster kernel, own flags / configs / error word,
++        # own start deadline, model selector against master's routed hilo path.
++        _rt2_prepare(state, t_all)
++        t = tick("rt2 router wgmma (check + two-round gate + profile)", t)
++    else:
++        state["ouns_cl"] = flags["ouns_cl"]
++        state["router_cluster_ok"] = flags["router_cluster_ok"]
++        state["nn_ok"] = flags["nn_ok"]
++        state["nn_p256_ok"] = flags["nn_p256_ok"]
++        # Second state: its own repacked weights / error word / Lt workspace; flags inherited.
++        _bulk_prepare(state, flags=flags)
++        _lt_prepare(state, flags=flags)
++        _rt2_prepare(state, t_all, flags=flags)
++        t = tick("bulk / lt / rt2 per-state buffers (flags inherited)", t)
++    print(f"[prepare-time] state build ({'A' if flags is None else 'B'}) total: "
++          f"{time.perf_counter() - t_all:.2f}s", flush=True)
++    return state
++
++
++def _ab_flags(state: dict) -> dict:
++    flags = {"ouns_cl": state["ouns_cl"], "router_cluster_ok": state["router_cluster_ok"],
++             "nn_ok": state["nn_ok"], "nn_p256_ok": state["nn_p256_ok"]}
++    for name in NEW_CELL_FLAGS:
++        flags[name] = state[name]
++    flags["rt2_cfg_a"], flags["rt2_cfg_b"] = state["rt2_cfg_a"], state["rt2_cfg_b"]
++    return flags
++
++
++def _ab_component(layer: str, m: int) -> str:
++    """Which stacked component serves this cell ("" = master's path, nothing to switch off). Each
++    new cell maps to its OWN flag, so a miss there cannot switch off nn_ok or any other cell."""
++    if layer in BULK_CELLS and m == BULK_M:
++        return BULK_CELLS[layer][7]
++    if layer == "qkv_gate" and m == LT_M:
++        return LT_FLAG
++    if layer == "router" and m <= ROUTER_CLUSTER_MAX_M:
++        return "router_cluster_ok"
++    if layer == "router" and RT2_MIN_M <= m <= RT2_BAND_SPLIT:
++        return "rt2_a_ok"
++    if layer == "router" and RT2_BAND_SPLIT < m <= RT2_MAX_M:
++        return "rt2_b_ok"
++    if layer == "unpooler" and m <= OUNS_MAX_M:
++        return "ouns_cl"
++    if layer in NN_GATED_LAYERS and NN_GATED_MIN_M <= m <= NN_GATED_MAX_M:
++        return "nn_ok"
++    if layer == "pooler" and NN_GATED_MAX_M < m <= NN_POOLER_MAX_M:
++        return "nn_p256_ok"
++    return ""
++
++
++def _ab_selfcheck(weights: Weights, state_a: dict) -> None:
++    """In-process self-check of the whole dispatch the way the judge runs it: a second state B is
++    prepared (inheriting A's flags), kernel_fn is captured as a CUDA graph per state at m in
++    {1, 8, 128} for router, unpooler and pooler, and the graphs are replayed alternately A, B, A, B
++    with x refilled in place before every replay; every output is compared with an fp32 (router:
++    fp64) reference. A miss, or any exception, switches off the component serving that cell in
++    BOTH states (router cluster / unpooler cluster / NN layout) and falls back to master's path.
++    A flushed print precedes each capture and a synchronize plus flushed print follows each replay
++    so a fault names its cell. Never raises."""
++    t0 = time.perf_counter()
++    try:
++        fl = _ab_flags(state_a)
++        fl["_lt_algo"] = state_a["lt_algo_qkv128"]   # the B cell's prepare()-chosen algo row (CPU)
++        state_b = _prepare_state(weights, flags=fl)
++    except Exception as e:
++        print(f"[ab] second-state build failed ({type(e).__name__}: {e}); NN, router cluster, "
++              f"unpooler cluster, bulk and Lt cells OFF", flush=True)
++        for st in (state_a,):
++            st["nn_ok"], st["router_cluster_ok"], st["ouns_cl"] = False, False, 0
++            st["nn_p256_ok"] = False
++            for name in NEW_CELL_FLAGS:
++                st[name] = False
++        return
++    states = {"A": state_a, "B": state_b}
++    dev = state_a["router"].device
++    g = torch.Generator(device=dev)
++    g.manual_seed(97531)
++    bad = {}
++    wf = {}
++    for layer, n, k, m in AB_CASES:
++        comp = _ab_component(layer, m)
++        graphs, xs, outs = {}, {}, {}
++        try:
++            cfg = {"m": m, "n": n, "k": k, "layer": layer}
++            for tag, st in states.items():
++                xs[tag] = torch.randn((m, k), device=dev, dtype=torch.float32, generator=g).to(torch.bfloat16)
++                data = {"x": xs[tag], "config": cfg}
++                print(f"[ab] capture kernel_fn {layer} m={m} n={n} state {tag} (component "
++                      f"{comp or 'master path'}) ...", flush=True)
++                for _ in range(2):
++                    kernel_fn(data, st)
++                torch.cuda.synchronize()
++                gr = torch.cuda.CUDAGraph()
++                with torch.cuda.graph(gr):
++                    outs[tag] = kernel_fn(data, st)
++                torch.cuda.synchronize()
++                graphs[tag] = gr
++            if layer == "router":
++                ref_w = state_a["router"].double()
++            else:
++                if layer not in wf:
++                    wf[layer] = state_a[layer].float()
++                ref_w = wf[layer][:n]
++            worst = 0.0
++            for rnd in range(AB_ROUNDS):
++                for tag in ("A", "B"):
++                    xs[tag].copy_(torch.randn((m, k), device=dev, dtype=torch.float32, generator=g).to(torch.bfloat16))
++                    graphs[tag].replay()
++                    torch.cuda.synchronize()
++                    o = outs[tag].double() if layer == "router" else outs[tag].float()
++                    ref = xs[tag].double() @ ref_w.T if layer == "router" else xs[tag].float() @ ref_w.T
++                    if not bool(torch.isfinite(o).all()):
++                        raise RuntimeError(f"non-finite output (state {tag}, round {rnd})")
++                    err = float((o.double() - ref.double()).norm() / ref.double().norm().clamp_min(1e-30))
++                    worst = max(worst, err)
++                    bound = AB_ROUTER_REL_L2 if layer == "router" else AB_BF16_REL_L2
++                    if err > bound:
++                        raise RuntimeError(f"rel L2 {err:.2e} > {bound:.0e} (state {tag}, round {rnd})")
++            print(f"[ab] {layer} m={m} n={n}: A,B,A,B replays OK, worst rel L2 {worst:.2e}", flush=True)
++        except Exception as e:
++            print(f"[ab] MISS {layer} m={m} n={n}: {type(e).__name__}: {e}"
++                  + (f" -> switching {comp} off in both states" if comp else
++                     " (master path cell: nothing to switch off)"), flush=True)
++            if comp:
++                bad[comp] = True
++        finally:
++            graphs.clear()
++            outs.clear()
++    wf.clear()
++    for comp in bad:
++        for st in states.values():
++            st[comp] = 0 if comp == "ouns_cl" else False
++    print(f"[ab] done in {time.perf_counter() - t0:.1f}s; flags now {_ab_flags(state_a)}", flush=True)
++    del states, state_b
++
++
++def prepare(weights: Weights) -> dict:
++    """Called once, untimed. Keep the bf16 weights as they are (contiguous), build the router's
++    hi + lo bf16 split as [256, 8192] row-major (N x K), pre-compile every m-bucket of the router
++    kernel on synthetic bf16 x so the timed call never compiles, decide the three dispatch flags
++    (router cluster, unpooler cluster, NN layout), A/B-check the whole dispatch on two states, and
++    release every gate / self-check scratch buffer before returning."""
++    t0 = time.perf_counter()
++    state = _prepare_state(weights)
++    t = time.perf_counter()
++    _ab_selfcheck(weights, state)
++    t = time.perf_counter()
++    torch.cuda.synchronize()
++    torch.cuda.empty_cache()   # the gate's 256 MB flush buffer and graph pools are gone by now
++    # Re-print the co-residency numbers now that both cluster modules are loaded and checked.
++    try:
++        if _OUNS_EXT is not None:
++            for cl in (8, 4):
++                print(f"[ouns] final: cl={cl}: cudaOccupancyMaxActiveClusters={int(_OUNS_EXT.ouns_occupancy(cl))}, "
++                      f"needs {OUNS_CLUSTERS_NEEDED[cl]}", flush=True)
++        if _RC_EXT is not None:
++            print(f"[router_cluster] final: {_RC_EXT.router_info()} (regs, spill B, static smem, dyn smem, "
++                  f"max active clusters; needs 16)", flush=True)
++    except Exception as e:
++        print(f"[prepare] final occupancy query failed ({type(e).__name__}: {e})", flush=True)
++    print(f"[prepare] FINAL FLAGS: ouns_cl={state['ouns_cl']} router_cluster_ok={state['router_cluster_ok']} "
++          f"nn_ok={state['nn_ok']} nn_p256_ok={state['nn_p256_ok']} "
++          + " ".join(f"{name}={state[name]}" for name in NEW_CELL_FLAGS)
++          + f"; prepare total {time.perf_counter() - t0:.1f}s", flush=True)
++    # Compact repeat of every new-path PATH CHOSEN / GATE result as the LAST lines of prepare (the
++    # judge keeps only the log tail); the flags are the final ones, after the A/B self-check.
++    for key in ("a", "b"):
++        print(f"[rt2] FINAL router band {key} (rep m={RT2_BAND_REP_M[key]}): "
++              + (f"CUDA wgmma BT={state['rt2_cfg_' + key][0]} CS={state['rt2_cfg_' + key][1]}"
++                 if state.get("rt2_" + key + "_ok") and state.get("rt2_cfg_" + key) else "master hilo path"),
++              flush=True)
++    for line in state.get("rt2_summary", []):
++        print(line, flush=True)
+     return state
+ 
+ 
+ def kernel_fn(data: Inputs, state: dict) -> torch.Tensor:
+     x, cfg = data["x"], data["config"]
+     layer = cfg["layer"]
+-    # Shape gate (cfg layer / m / n and shape preconditions only; never on input values).
++    # Shape gate (cfg layer / m / n and shape preconditions only; never on input values). Every
++    # dispatch flag (ouns_cl, router_cluster_ok, nn_ok) is read from `state`.
++    if layer == "unpooler" and _ouns_route_ok(x, state["unpooler"], cfg, state):
++        return _ouns_forward(x, state["unpooler"], state["ouns_cl"])
++    if _bulk_route_ok(layer, x, cfg, state):   # pooler / qkv_gate / o at m == 1, per-cell flag
++        return _bulk_forward(layer, x, state)
+     key16 = _swapab16_key(layer, cfg)
+     if (key16 in state["swapab16_stages"]
+             and _swapab16_route_ok(key16, x, state[layer], cfg)):
+@@ -1643,16 +4017,26 @@ def kernel_fn(data: Inputs, state: dict) -> torch.Tensor:
+         ws, cnt = _swapab_buffers(state, layer)
+         return _swapab_forward(layer, x, state[layer], ws, cnt, state["swapab_stages"][layer])
+     if layer != "router":
++        if (layer in NN_GATED_LAYERS and cfg["n"] == state[layer + "_t"].shape[1]
++                and ((state["nn_ok"] and NN_GATED_MIN_M <= cfg["m"] <= NN_GATED_MAX_M)
++                     or (layer == "pooler" and state["nn_p256_ok"]
++                         and NN_GATED_MAX_M < cfg["m"] <= NN_POOLER_MAX_M))):
++            # NN layout: x [m, k] @ W_t [k, n] at the full weight width (cfg-only gate).
++            return torch.mm(x, state[layer + "_t"])
++        if layer == "qkv_gate" and _lt_route_ok(x, cfg, state):   # m == 128, prepare()-fixed Lt algo
++            return _lt_forward(x, state["qkv_gate"], state["lt_algo_qkv128"], state["lt_ws_qkv128"])
+         # The unpooler's slice is its first n rows (all of them above 8 tokens).
+         return _bf16_gemm_dispatch_impl(x, state[layer][: cfg["n"]], None)
++    if _router_cluster_route(x, cfg, state):   # 1 <= m <= 8, n == 256: one launch, no memset
++        return _router_cluster_forward(x, state)
+     hi, lo = state["router_hi"], state["router_lo"]
+     path = _router_path(x, hi, cfg["n"], state["router_stages"])
+     if path == "swapab":   # m <= 32
+         return _router_forward(x, hi, lo, state["router_stages"][_router_config(x.shape[0])])
+     if path == "hilo":     # m > 32
+-        cluster_size = _router_tiled_route(x, cfg, state)
+-        if cluster_size:   # 65 <= m <= 256 where the CUDA tiled kernel won in prepare()
+-            return _router_tiled_forward(x, state, cluster_size)
++        rc = _rt2_route(x, cfg, state)
++        if rc is not None:   # 65 <= m <= 256 where the CUDA wgmma kernel won in prepare(): no memset
++            return _rt2_forward(x, state, rc)
+         return _router_hilo_forward(x, hi, lo)   # master's forward
+     # Shape outside the kernel's preconditions (never for this problem's router): exact fp32 path.
+     return F.linear(x.float(), state["router"][: cfg["n"]])

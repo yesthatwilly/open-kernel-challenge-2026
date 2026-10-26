@@ -55,10 +55,10 @@ controls_for: null
 rewrite_stage: 2
 replaces: _router_hilo_kernel + torch.zeros memset at router m=65..256 (hilo 5.0 + 0.8 us at m=128, 7.0 + 0.7 us at m=256)
 review: proceed
-status: running
+status: done
 review_at: 2026-10-25T212522Z
 review_companions: null
-stage: dispatched
+stage: harvested
 claimed_at: 2026-10-25T212549Z
 base_sha: 8dd2a8d59b8619aeeb15dc4ebd6d2939f2eab87e
 base_blob: 095978ec904ee937a4b5b039bf2b47b911801fa6
@@ -77,6 +77,13 @@ attempt_file: 2026-10-26T012540Z-check-router-m128-m256-wgmma-swapab-tall-cluste
 prepared_at: 2026-10-26T012540Z
 job: 38daa28c6a704810
 dispatched_at: 2026-10-26T012820Z
+outcome: neutral
+verdict_detail: unproven-vs-best
+speedup: 1.2612263731910855
+speedup_ci: [1.2423079775932193, 1.2801447687889518]
+harvested_at: 2026-10-26T023150Z
+best_at_harvest: 1.2566457115954903
+promotion: null
 ---
 
 # router-m128-m256-wgmma-swapab-tall-cluster-stage2
@@ -174,3 +181,54 @@ Verdict: dispatch-with-fixes. Read-only audit (no GPU/nvcc on the node); nothing
 - Emulation: /tmp/claude-1000/-home-user-git-musespark/73199a37-afd5-408c-8bef-97b87f4411ce/scratchpad/audits26/emu_rt2_wgmma_swapab_cluster.py (128B swizzle store, descriptor reads, accumulator fragment map is a bijection, P layout, reduce-scatter, K slicing); rel L2 vs fp64(hi+lo) about 2e-7, ALL OK.
 - Deadlines: master prepare is about 4.5 s (archive log 741072dc); the file has no import clock; sibling load_inline builds take 30-49 s each, so rt2's compile adds roughly 40-60 s at import, well inside 10 min. Phase start deadline 150 s is measured from state-build start (about 4.4 s in), so it will not skip.
 - Residual: unverified by compile or hardware (wgmma asm, 160-thread layout, 16-cluster co-residency); any miss falls back to master.
+
+## Result
+
+- job `38daa28c6a704810` (check), status done, passed True, tests 9/9
+- speedup 1.2612x, 95% CI [1.2423, 1.2801], score 3830.2402349685854 µs vs SGLang 4830.8 µs
+- best at harvest: {"speedup": 1.2566457115954903, "ci": [1.237796025921558, 1.2754953972694225], "job": "741072dca5fc4c9d"}; base result: muse_bf16_proj/hypotheses/done/neutral/router-m128-m256-cluster-dsmem-tiled-rewrite.result.json
+- **outcome: neutral** (unproven-vs-best)
+- files: `muse_bf16_proj/hypotheses/done/neutral/router-m128-m256-wgmma-swapab-tall-cluster-stage2.result.json`, `muse_bf16_proj/hypotheses/done/neutral/router-m128-m256-wgmma-swapab-tall-cluster-stage2.patch`; branch `hyp/muse_bf16_proj/router-m128-m256-wgmma-swapab-tall-cluster-stage2`
+
+## Attribution
+
+| shape | w | base µs | hyp µs | delta | verdict |
+|---|---|---|---|---|---|
+| layer=qkv_gate load=decode_1 m=1 | 62 | 12.56 | 11.38 | 1.1781 | gained |
+| layer=o load=decode_1 m=1 | 62 | 6.37 | 5.84 | 1.0166 | flat |
+| layer=pooler load=decode_1 m=1 | 62 | 18.96 | 17.76 | 1.0647 | gained |
+| layer=unpooler load=decode_1 m=1 | 62 | 5.67 | 4.97 | 1.1716 | gained |
+| layer=router load=decode_1 m=1 | 62 | 5.2 | 4.94 | 1.0521 | gained |
+| layer=qkv_gate load=decode_16 m=16 | 62 | 12.96 | 12.79 | 1.0392 | gained |
+| layer=o load=decode_16 m=16 | 62 | 6.14 | 5.93 | 1.0114 | flat |
+| layer=pooler load=decode_16 m=16 | 62 | 19.85 | 19.1 | 1.0119 | flat |
+| layer=unpooler load=decode_16 m=16 | 62 | 18.56 | 18.22 | 1.0123 | flat |
+| layer=router load=decode_16 m=16 | 62 | 5.57 | 5.15 | 1.08 | gained |
+| layer=qkv_gate load=decode_32 m=32 | 62 | 14.17 | 13.91 | 1.0327 | gained |
+| layer=o load=decode_32 m=32 | 62 | 6.53 | 6.4 | 1.0242 | flat |
+| layer=pooler load=decode_32 m=32 | 62 | 20.13 | 19.88 | 1.0081 | flat |
+| layer=unpooler load=decode_32 m=32 | 62 | 18.73 | 18.33 | 1.0207 | flat |
+| layer=router load=decode_32 m=32 | 62 | 6.14 | 5.97 | 1.0317 | gained |
+| layer=qkv_gate load=verify_1 m=8 | 62 | 12.79 | 12.38 | 1.0469 | gained |
+| layer=o load=verify_1 m=8 | 62 | 5.98 | 6.05 | 0.9887 | flat |
+| layer=pooler load=verify_1 m=8 | 62 | 19.03 | 19.14 | 0.992 | flat |
+| layer=unpooler load=verify_1 m=8 | 62 | 5.46 | 5.27 | 1.0704 | gained |
+| layer=router load=verify_1 m=8 | 62 | 5.33 | 5.05 | 1.0405 | gained |
+| layer=qkv_gate load=verify_16 m=128 | 62 | 16.64 | 15.74 | 1.0492 | gained |
+| layer=o load=verify_16 m=128 | 62 | 7.36 | 7.37 | 0.9729 | flat |
+| layer=pooler load=verify_16 m=128 | 62 | 24.9 | 22.96 | 1.1067 | gained |
+| layer=unpooler load=verify_16 m=128 | 62 | 19.61 | 19.15 | 1.0433 | gained |
+| layer=router load=verify_16 m=128 | 62 | 7.48 | 7.55 | 0.9781 | flat |
+| layer=qkv_gate load=verify_32 m=256 | 62 | 19.91 | 19.85 | 1.0127 | flat |
+| layer=o load=verify_32 m=256 | 62 | 9.19 | 9.54 | 0.9957 | flat |
+| layer=pooler load=verify_32 m=256 | 62 | 31.04 | 28.59 | 1.0307 | gained |
+| layer=unpooler load=verify_32 m=256 | 62 | 24.3 | 24.32 | 0.9848 | flat |
+| layer=router load=verify_32 m=256 | 62 | 9.29 | 9.89 | 0.9591 | lost |
+
+gained on qkv_gate decode_1, decode_16, decode_32, verify_1, verify_16; pooler decode_1, verify_16, verify_32; unpooler decode_1, verify_1, verify_16; router decode_1, decode_16, decode_32, verify_1; lost on router verify_32. Expected hit: 1/3. Noise ±1.5%.
+
+## Follow-ups
+
+- rewrite stage 2 of `_router_hilo_kernel + torch.zeros memset at router m=65..256 (hilo 5.0 + 0.8 us at m=128, 7.0 + 0.7 us at m=256)`: read the replaced kernels' own us per shape (profile top_kernels) against the incumbent and the floor, and check which Milestone it reached. The next stage is `/hypothesize muse_bf16_proj "<what to fix or tune>" --kind rewrite --depends-on router-m128-m256-wgmma-swapab-tall-cluster-stage2 --stage 3`; a slow or failed first cut is the expected start, not a do-not-retry.
+- unproven-vs-best: faster than the best but inside the drift margin; churn queues one confirm rerun when the margin allows (CONFIRM_MIN), and pools the two runs.
+
