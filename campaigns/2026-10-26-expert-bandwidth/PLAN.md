@@ -12,17 +12,34 @@ approved: 2026-10-26 by the user (plan approved; "fully autonomous today, no cho
 mode: autonomous self-paced /loop, single agent + one Opus audit per new CUDA module
 ---
 
-> **STOP — NEWEST USER STEER, 2026-10-26 ~22:00Z, relayed from the user's openclaw session: THE SPRINT IS ENDED. No new work. Act on it this tick.**
+> **STOP — NEWEST USER STEER, 2026-10-26 ~23:00Z, relayed from the user's openclaw session: DISTIL YOUR CONTEXT, THEN STOP THE LOOP. DO NOT RUN THE 00:00Z RESET PLAN. Act on it this tick.**
 >
-> The user said: "stop any more new sprints. Keep what's in flight." This replaces the ~21:40Z expiring-quota sprint banner.
-> - **Start nothing new:** no new /hypothesize minting, no new adversarial reviews, no new implementations, no new
->   worktrees, no new subagents of any kind. Minted hypotheses not yet implemented stay queued; do not implement them.
-> - **Keep what is in flight:** let agents already running finish; harvest checks already dispatched; submit the exact
->   bytes of any harvested check that beats its board (rules checklist as usual). A hypothesis already implemented
->   and committed when you read this may be dispatched; anything earlier than that stops.
-> - Your own bf16 line likewise: finish and check what is already built/audited (b12r); do not start another build.
-> - **Then go quiet** until the 00:00Z reset plan (decode scored run, moe + decode checks). Long heartbeats while idle.
-> - Log what the sprint did (checks used, wins, landed, what was left queued) in LOG.md.
+> The user's goals, in order: (1) capture the value in this session's context; (2) the user resumes the campaign
+> manually in a fresh session after clearing context. This replaces the ~22:00Z "sprint ended" banner.
+> - **No judge actions at all:** no okc check, submit or withdraw; the 00:00Z reset plan is on hold for the new
+>   session. No builds, no new hypothesis work. Let the three minting agents finish and queue their output.
+> - **Write `campaigns/2026-10-26-expert-bandwidth/DISTILL.md`** on master. Spend your context here: quality over
+>   brevity, but no padding. A cold session with none of your context must be able to resume from it. Include:
+>   1. **Resume block:** exact state, boards and ranks, quota, branches/worktrees/HEADs, and the first actions in order (the
+>      full 00:00Z reset plan: `submission.edoff-27ef83df.py` hash 613b6c2d / check f59cb301; the moe dq A/B + H=-8 + v4c
+>      check at 731d149e; the decode H=-8 + v4c + anatomy check; then the bulk12 decode port at T=1).
+>   2. **Copy every scratchpad draft into the repo** (`campaigns/2026-10-26-expert-bandwidth/scratchpad/`: submit_attempt.md,
+>      dqab_attempt.md, anat_attempt.md, now.md, log_now.py, bfcmp.py, b12_section.py, anything else still needed). /tmp
+>      does not survive and a new session cannot find it.
+>   3. **Judgment that exists only in your context:** why each killed line died, and what would make it worth reopening;
+>      where the judge disagrees with the prepare-time gates (b12r m=8, Engine D, the tie-break); levers ranked by
+>      expected gain, effort and kill rule; traps and dead ends not to retry; what you would do differently.
+>   4. **A hardened plan for the next work:** the rest of expert-bandwidth (dq3/v4c/H=-8 outcomes as branches), the
+>      bulk12 decode port, then `decode-chain`; the queued sprint hypotheses (attention sliding s3 "proceed", the bf16
+>      combo, the prefill items) with your verdict on each.
+>   5. **Operating lessons for the next loop:** `date -u` stamps; read the Now block before rewriting it; the user's
+>      steers arrive as banners in INDEX.md, PLAN.md and the campaign CLAUDE.md; heartbeats vs prompt-cache expiry;
+>      keep the main context lean by delegating execution to subagents.
+> - Read and fold in `research/openclaw-relay-2026-10-26.md` (the judge-weighted time shares by area, steering-channel
+>   findings, cost data). Update FINDINGS.md with anything that is only in your context, and update your okc-* memories
+>   where facts changed (mark this campaign paused for a manual resume).
+> - **Then:** set the LOG Now block to "PAUSED for a manual resume by the user; read DISTILL.md first", commit, stop the
+>   loop (`ScheduleWakeup` with stop), and give a summary of 15 lines or fewer. Do not restart the loop.
 
 
 > **STOP — USER STEER, 2026-10-26 ~19:05Z, relayed from the user's openclaw session. Not yet acknowledged. Read before acting on this tick.**
@@ -259,17 +276,34 @@ Slip order: drop X4, then X3's boundary piece. X1 and X2 are protected; D1 is ch
 
 ## 6. Autonomous operation (single agent + audits)
 
-> **STOP — NEWEST USER STEER, 2026-10-26 ~22:00Z, relayed from the user's openclaw session: THE SPRINT IS ENDED. No new work. Act on it this tick.**
+> **STOP — NEWEST USER STEER, 2026-10-26 ~23:00Z, relayed from the user's openclaw session: DISTIL YOUR CONTEXT, THEN STOP THE LOOP. DO NOT RUN THE 00:00Z RESET PLAN. Act on it this tick.**
 >
-> The user said: "stop any more new sprints. Keep what's in flight." This replaces the ~21:40Z expiring-quota sprint banner.
-> - **Start nothing new:** no new /hypothesize minting, no new adversarial reviews, no new implementations, no new
->   worktrees, no new subagents of any kind. Minted hypotheses not yet implemented stay queued; do not implement them.
-> - **Keep what is in flight:** let agents already running finish; harvest checks already dispatched; submit the exact
->   bytes of any harvested check that beats its board (rules checklist as usual). A hypothesis already implemented
->   and committed when you read this may be dispatched; anything earlier than that stops.
-> - Your own bf16 line likewise: finish and check what is already built/audited (b12r); do not start another build.
-> - **Then go quiet** until the 00:00Z reset plan (decode scored run, moe + decode checks). Long heartbeats while idle.
-> - Log what the sprint did (checks used, wins, landed, what was left queued) in LOG.md.
+> The user's goals, in order: (1) capture the value in this session's context; (2) the user resumes the campaign
+> manually in a fresh session after clearing context. This replaces the ~22:00Z "sprint ended" banner.
+> - **No judge actions at all:** no okc check, submit or withdraw; the 00:00Z reset plan is on hold for the new
+>   session. No builds, no new hypothesis work. Let the three minting agents finish and queue their output.
+> - **Write `campaigns/2026-10-26-expert-bandwidth/DISTILL.md`** on master. Spend your context here: quality over
+>   brevity, but no padding. A cold session with none of your context must be able to resume from it. Include:
+>   1. **Resume block:** exact state, boards and ranks, quota, branches/worktrees/HEADs, and the first actions in order (the
+>      full 00:00Z reset plan: `submission.edoff-27ef83df.py` hash 613b6c2d / check f59cb301; the moe dq A/B + H=-8 + v4c
+>      check at 731d149e; the decode H=-8 + v4c + anatomy check; then the bulk12 decode port at T=1).
+>   2. **Copy every scratchpad draft into the repo** (`campaigns/2026-10-26-expert-bandwidth/scratchpad/`: submit_attempt.md,
+>      dqab_attempt.md, anat_attempt.md, now.md, log_now.py, bfcmp.py, b12_section.py, anything else still needed). /tmp
+>      does not survive and a new session cannot find it.
+>   3. **Judgment that exists only in your context:** why each killed line died, and what would make it worth reopening;
+>      where the judge disagrees with the prepare-time gates (b12r m=8, Engine D, the tie-break); levers ranked by
+>      expected gain, effort and kill rule; traps and dead ends not to retry; what you would do differently.
+>   4. **A hardened plan for the next work:** the rest of expert-bandwidth (dq3/v4c/H=-8 outcomes as branches), the
+>      bulk12 decode port, then `decode-chain`; the queued sprint hypotheses (attention sliding s3 "proceed", the bf16
+>      combo, the prefill items) with your verdict on each.
+>   5. **Operating lessons for the next loop:** `date -u` stamps; read the Now block before rewriting it; the user's
+>      steers arrive as banners in INDEX.md, PLAN.md and the campaign CLAUDE.md; heartbeats vs prompt-cache expiry;
+>      keep the main context lean by delegating execution to subagents.
+> - Read and fold in `research/openclaw-relay-2026-10-26.md` (the judge-weighted time shares by area, steering-channel
+>   findings, cost data). Update FINDINGS.md with anything that is only in your context, and update your okc-* memories
+>   where facts changed (mark this campaign paused for a manual resume).
+> - **Then:** set the LOG Now block to "PAUSED for a manual resume by the user; read DISTILL.md first", commit, stop the
+>   loop (`ScheduleWakeup` with stop), and give a summary of 15 lines or fewer. Do not restart the loop.
 
 - **the user, 2026-10-26 ~19:05Z (relayed from the openclaw session): quota policy; replaces the ~18:50Z note.**
   - Prioritise real gains for decode. Order by gain potential: **decode** (the KPI) > **moe** (the expert block,

@@ -1,6 +1,6 @@
 ---
 campaign: 2026-10-26-expert-bandwidth
-updated: 2026-10-26T15:30Z
+updated: 2026-10-26T23:56Z (date -u): the evening's findings added at the pause; the judgment and plan are in DISTILL.md
 ---
 
 # Findings: the evidence base for the expert-bandwidth campaign
@@ -143,3 +143,116 @@ Tags: **[M]** judge-measured, **[P]** prepare-time measured, **[I]** inference o
   - Its fixed cost per launch (ramp, fix-up tails, T x-copies per stage) outweighs the streaming gain.
   - Killed; the code stays behind CAMPAIGN_ENGINE_D = False.
 
+
+## Ladder-2: v4 is bound by its consumer's instruction stream (moe 5eafb39e, 10-26 17:50Z)
+
+- **[M] Rung ceilings in v4's geometry** (8 consumer warps, two 18 KB records per stage, D=2, 2 CTAs/SM; graph-timed,
+  read flush):
+
+  | rung | TB/s | drop |
+  |---|---|---|
+  | C-R1 ring alone | 4.37 | (4-warp ring 4.46) |
+  | C-R2 + exact dequant | 3.98 | -8.9% |
+  | C-R3 + MMA (const B, 1 tile) | 3.75 | -5.8% |
+  | C-R4 + x from smem, 8 tokens | 3.45 | -8.0% |
+  | C-R4 + x from smem, 16 tokens (2 tiles) | 2.94 | -14.8% |
+  | C-R1 / C-R4 at D=3, 1 CTA/SM | 4.34 / 3.44 | same as D=2 |
+
+- **[M] Warp count barely matters.** 8 vs 4 consumer warps at the same ring work: x1.024 (8 tokens), x1.043 (16
+  tokens). The kernel is neither ring- nor latency-bound: each addition costs throughput in proportion to its
+  instructions per weight element. v4's real kernels (3.21 / 3.12 / 2.92 TB/s at T=8 / 16 / 32) sit ~7% under C-R4
+  (maps, scatter, fix-ups).
+- **[I] The two remaining consumer levers:**
+  - B-fragment reuse: each warp takes a k-slice of all 128 rows, so one ldmatrix B fragment feeds 8 m-tiles, at the
+    cost of one cross-warp reduction per unit. It attacks the C-R4 drop.
+  - A cheaper dequant, which attacks C-R2.
+- **[P] dq3, the cheaper dequant.**
+  - It extracts each NVFP4 code pair with a funnel-shift rotation plus AND (two of each for pair 3): ~9 ops per 32-bit
+    word instead of ~11.
+  - An exhaustive search showed that four pure rotations cannot tile the word, and that 9 is the minimum. It was
+    verified on the host over all 2^32 words (`scratchpad/dqcheck`).
+  - The audit noted that dq3's ops are all ALU-pipe, where production dq2's left shifts run as IMAD.SHL on the FMA
+    pipe. dq4 does the rotations as IMAD.WIDE.U32 by run-time powers of two, to balance the pipes.
+  - All three are timed in the ladder at the reset (VERDICT-dq: switch production only at >= 5% at C-R4).
+- **[I] v4c.** A two-tile pass's unit costs about 7/6 of a one-tile one, so equal unit counts leave the CTAs that
+  draw two-tile passes as the kernel's tail. v4c weights the stream-K ranges by pass cost (`Map::s_cost`). It is
+  raced against v4 in every gate from eacf0722; unmeasured.
+- **[I] H=-8.** With a hot threshold of 8 routes, Engine A keeps only one-tile cold passes (the C-R4 8-token ceiling,
+  3.45, instead of 2.94). Unmeasured (eacf0722).
+
+## Judge-weighted decode time by area (check f59cb301, 1.5347; openclaw relay)
+
+Shares of (46 x sliding + 16 x full) time per load. The headline moves by about share x cut.
+
+| load | moe block | bf16 dense | attention | small ops |
+|---|---|---|---|---|
+| decode 1 | 35% | 44% | 14% | 7% |
+| decode 16 | 53% | 27% | 17% | 4% |
+| decode 32 | 53% | 22% | 23% | 3% |
+| verify 1 | 59% | 29% | 8% | 4% |
+| verify 16 | 62% | 18% | 12% | 1% |
+| verify 32 | 60% | 18% | 14% | 2% |
+| **headline** | **53%** | **26%** | **15%** | **3%** |
+
+- About 2% sits in the profiler's "... N more" rows.
+- **[I] Ceilings, from `1 / (1 - share x cut)`:**
+
+  | scenario | multiplier |
+  |---|---|
+  | moe block cut to x0.6-0.7 | x1.19-1.27 |
+  | dense cut 10-15% | x1.03-1.04 |
+  | attention | x1.014-1.032 |
+  | small ops halved | x1.017 |
+  | everything outside moe | ~x1.09 |
+  | everything stacked | ~x1.30 |
+
+## bulk12: lossless 12-bit bf16 weights (bf16 board, 10-26 20:20-22:05Z)
+
+- **Codec.** A bf16 weight is H << 8 | L:
+  - H = sign | exponent bits 7..1; L = exponent bit 0 | 7 mantissa bits.
+  - L stays raw. H becomes a 4-bit code c = sign << 3 | (e71 - base) over the 8 most-used e71 values; base is 54 on
+    every judge weight (N(0, 1/k), a 16-binade window).
+  - Escapes (|w| < 2^-19 and rare large values; 1.0-1.4e-4 of the elements, <= 58 per CTA, cap 224) decode to the
+    window floor (code 0, L = 0). The epilogue corrects them exactly from a per-CTA escape block: + x·w_true - x·w_floor.
+  - Decode costs 2 integer ops per element: `H4 = ((c4 >> 3) & 0x01010101) * 0x78 + (c4 + base4)`, then
+    `__byte_perm`.
+  - Layout: 384 B tiles (256 B L + 128 B codes) in mma.sync m16n8k16 A-fragment order.
+  - Lossless for any weights; only the speed depends on the distribution.
+- **[M] m=1 (row-owner kernel, x resident).** pooler 17.7 -> **14.8 us**: 50.3 MB at ~3.4-3.6 TB/s, i.e. ~4.8 TB/s
+  raw-equivalent, the first bf16 row below its raw-byte floor rate. qkv 10.5 -> 10.7 (flat: 144 CTAs at 2/SM).
+  o 6.3 -> 5.9. Board 1.2566 -> 1.2664 (3834ceec).
+- **[M] m >= 8 lost every time:**
+  - Per-row TMA bulk copies cost ~30-50 ns each, serialized: +7 / +21 / +51 us for 256 / 512 / 1024 copies per CTA
+    (22ddaf4a).
+  - With LSU cp.async for x, ~1 us per token row remains (0acdca48). It is L2 hot-spotting: every CTA reads the same
+    x lines in lockstep. Rotating each CTA's chunk order cut qkv m=8 17.1 -> 14.5 net us (2980f57a).
+  - b12r (x resident, m=2..8) judged pooler m=8 x1.016 only (6617f94d).
+  - Open: x once per cluster (TMA multicast).
+- **[M] Router at m >= 9:** a memset graph node is cheaper than a serialized last-arriver ticket epilogue (7e8be36a:
+  x1.07-1.10 slower).
+
+## Gates vs the judge (10-26)
+
+- **[M] Write flush vs read flush.** bf16 `_cell_gate` flushes with `flush.zero_()` (a write); the judge reads a
+  buffer larger than L2. The write leaves ~50 MB of dirty lines whose write-back the timed kernel pays, less so for a
+  byte-light kernel. Gate vs judge:
+
+  | cell | gate | judge |
+  |---|---|---|
+  | b12 pooler m=1 | 0.82-0.85 | 0.84 |
+  | qkv m=1 | 0.88 | ~1.00 |
+  | o m=1 | 0.87 | 0.97 |
+  | b12x qkv m=8 | 0.976 | **x0.769** |
+  | b12r pooler m=8 | 0.938 | 0.984 |
+
+  `rewrite/lib/rt.py` (decode / moe) already reads. bf16 needs the same.
+- **[M] Big T:** moe v4 T=256 gate p50 x1.12, judged row +1.3%. The judge's T=256 routing sits near our p90 draw.
+- **[M] Same-bytes scored spread:** about ±1.2% (decode X0b: check 1.4569, scored 1.4401).
+- **[M] Selector tie-breaks:** a 1% preference for the earlier engine cost d16 -4..-6% (a1bc1756). Use the best worst
+  ratio.
+
+## Tooling state at the pause
+
+- Churn's BEST.json is stale for decode (1.3142, a903b9d0) and moe (1.4021, 31c27e4b): campaign runs submitted from
+  worktree copies are invisible to churn. bf16's was registered by hand (3834ceec).
+- `rewrite/bin/archive.py` hardcodes the old session's /tmp runs dir (`SCRATCH_RUNS`). Repoint it before use.

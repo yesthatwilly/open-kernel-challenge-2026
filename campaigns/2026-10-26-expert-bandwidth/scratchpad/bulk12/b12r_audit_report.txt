@@ -1,0 +1,20 @@
+b12r_kernel audit (c8b98e27, muse_bf16_proj/submission.py): no BLOCKER or MAJOR findings.
+
+1. xbar (3561, 3575-3578, 3591, 3596) is correct. The count is 1, and lane 0's arrive.expect_tx is the only arrival. tx = m*K*2 + 2048 equals the bytes copied; the largest value (133,120) is under the 2^20 limit. Parity is 0, and the ring code matches b12_kernel. The phase cannot complete before lane 0's arrive. Lanes 1..m-1 issue their copies before parking at 3589, and every wait is bounded. Nothing can hang.
+
+2. Smem: RING is 133,504 / 18,816 B, both 128-aligned. Totals are 207,232 / 117,120 B, under 232,448. Every bulk address and size is 16-aligned (x is checked at 3826). Row 7 ends 16 B below RING. Scratch (9,216 / 17,408 B) fits in the ring, and x and the escapes sit below it.
+
+3. ldmatrix (3608) is b12x's NN==1 form with XR and an absolute k. XR mod 128 = 16 puts the 8 rows in distinct bank groups, so there are no conflicts. Each D column depends only on its B column, and 3642 stores only tok < m. At the routed m=8 every row is written anyway.
+
+4. Epilogue: indexing is correct. Scratch writes land on banks 8q+g, xrow[k] = x[tok][k], and N = n.
+
+5. Host: SMEM (3775) equals RING + S*CHUNK. The attribute is set before the occupancy query and the launch; the A/B second state reuses instances that were already set up. Cases 18..21 have the right geometry (<32,8192> and <64,1024>). The kname at 4109 is correct.
+
+MINOR:
+- 4079/4080/4109: `inst >= 18` is brittle; use an explicit B12R_INSTS set.
+- 4032: the docstring still says "else b12x_kernel".
+- Perf, optional: S=8 fits for pooler (231,808 B) and removes the confound with b12x's S=8. The attempt file's 6-slot limit is wrong.
+- Perf, optional: the ~130 KB of x copies queue in the TMA ahead of the weight chunks. Issuing chunks 0..S-1 first overlaps HBM latency with the L2 fetch of x.
+- x bytes per CTA equal streamed b12x's (128 KB). Only the issue path changes.
+
+verdict: ship

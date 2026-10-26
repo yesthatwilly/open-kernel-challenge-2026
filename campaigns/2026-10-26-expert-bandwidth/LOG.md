@@ -5,48 +5,31 @@ append-only, newest last.
 
 ## Now
 
-- **Quota policy (the user, 2026-10-26 ~19:05Z, PLAN §6 top and §11; keep this bullet first):** never idle until a
-  reset, and never pre-build hours ahead of one. When a problem's checks run out, write its reset plan, then work on the
-  highest-gain problem that still has checks today, with immediate check feedback. Order: decode > moe > bf16_proj >
-  attention_decode > prefill (last). On bf16 / attention, favour kernels that port into decode, and submit when a check
-  beats that board. Every check must answer a new question; using every check is not required; no identical bytes
-  re-rolled.
-- updated: 2026-10-26T22:42Z
-- **The sprint is ended (the user, ~22:00Z):** start nothing new (no minting, reviews, implementations, worktrees or
-  subagents). Finish and harvest what is in flight, submitting only a check that beats its board. Then go quiet with
-  long heartbeats until the 00:00Z reset plan.
-- in flight: nothing. Quiet until the 00:00Z reset plan below.
-- step: **bf16_proj**.
-  - Done: bulk12 m=1 scored at 1.2664 (board 1.2566 -> 1.2664, rank 381 -> 355) and landed on master.
-  - Building: bulk12 for m = 8 / 16 / 32 (branch campaign/expert-bandwidth after 3acb748e, uncommitted). b12x_kernel
-    streams the NT token rows of x with each chunk.
-    - Cells: pooler / qkv / o at m=8, then pooler / o / full unpooler at m=16 / 32.
-    - Each layer's codec stats, instance gates and PATH CHOSEN lines are re-printed at the end of prepare.
-  - Check 22ddaf4a (1.2683): no m >= 8 cell routed. Per-row x TMA copies cost ~30-50 ns each.
-  - Fixed in d466a692 (x via cp.async from all producer lanes): check 0acdca48 still loses at m >= 8. The next b12 step
-    is cluster multicast of x (a later bf16 window).
-  - In flight: router ticket check 7e8be36a (no memset at m >= 9). Submit if it beats 1.2664.
-- in flight: bf16 check 7e8be36a77534aa7 (router ticket)
-- at 00:00Z (10-27), decode / moe, from the drafts in the session scratchpad (submit_attempt.md, dqab_attempt.md,
-  anat_attempt.md):
-  1. `okc submit` of `submission.edoff-27ef83df.py` (check f59cb301, 1.5347). Verify that the content hash is
-     613b6c2d..., then land it on master.
-  2. moe check at eacf0722:
-     - the ladder dq A/B (dq2 / dq3 / dq4);
-     - H=-8;
-     - v4c.
-  3. decode check at eacf0722: H=-8, v4c, and the anatomies.
-  4. Then build, for the next decode check: the bulk12 codec in decode's P = dl_pooler_router at T=1, on the pooler's
-     4096 rows of W_pr (the router's hi / lo rows stay raw).
-     - Pooler is the only bulk12 cell that is clearly judge-proven: gate 0.82 vs judge 0.84; bf16 pooler m=1
-       17.7 -> 14.8 us.
-     - qkv / o at m=1 judged ~1.00 / 0.97 against gate 0.88 / 0.87, so port them only after a read-flush gate shows a
-       win.
-     - The decode gates should flush L2 with a read (the judge's method), not a write.
-     - T >= 8 stays raw: the bf16 m >= 8 variants lost in the judge.
-- quota left 10-26: decode 0 checks / 0 scored, moe 0 / 4, bf16 8 / 9, attention 14 / 10, prefill 16 / 10
-- boards: decode **1.4956** (rank 347 of 740; 1.5347 would be about 318), moe **1.6851** (rank 370 of 844),
-  bf16 **1.2664** (rank 355 of 1090; rank 300 = 1.2865, 200 = 1.3503), overall 347 of 1228
+- **PAUSED for a manual resume by the user; read DISTILL.md first.** The user's steer of ~23:00Z ("distil your
+  context, then stop the loop; do not run the 00:00Z reset plan") stops the loop at 2026-10-26T23:57Z. The user
+  resumes the campaign by hand in a fresh session.
+- updated: 2026-10-26T23:58Z (date -u)
+- **Quota policy (the user, 2026-10-26 ~19:05Z, PLAN §6 top and §11; still in force on resume):**
+  - Never idle until a reset, and never pre-build hours ahead of one.
+  - When a problem's checks run out, write its reset plan, then work on the highest-gain problem that still has checks
+    today, with immediate check feedback.
+  - Order: decode > moe > bf16_proj > attention_decode > prefill (last). On bf16 / attention, favour kernels that port
+    into decode, and submit when a check beats that board.
+  - Every check must answer a new question; using every check is not required; no identical bytes re-rolled.
+- In flight: nothing (no okc job, no agent). No judge action since bf16 check 6617f94d (~21:56Z).
+- On resume, the first actions are DISTILL.md §1.3 (drafts in `scratchpad/`):
+  1. decode scored run of `submission.edoff-27ef83df.py` (check f59cb301, 1.5347; okc content hash 613b6c2d...);
+  2. moe check at eacf0722 (dq A/B, H=-8, v4c);
+  3. decode check at eacf0722 (anatomies, H=-8, v4c);
+  4. the k-slice consumer rung and the bulk12 decode port (DISTILL §4).
+- Boards at 23:46Z:
+  - decode 1.4956 (rank 365 of 754);
+  - moe 1.6851 (400 of 871);
+  - bf16 1.2664 (370 of 1102);
+  - attention 1.5347 (451 of 828);
+  - prefill 1.4677 (179 of 486);
+  - overall 370 of 1265.
+- Quota: 20 checks / 10 scored per problem per UTC day from 10-27; the 10-26 leftovers expired unused.
 
 ## 2026-10-26T15:35Z: campaign opened
 
@@ -486,3 +469,36 @@ append-only, newest last.
 - Agent tokens, approximate: 3 minting agents ~1.6M, 3 reviews ~0.77M, 5 audits ~0.65M. About 3.0M in total, with
   only one check spent.
 - Quota left at 22:42Z: bf16 6 / 9, attention 14 / 10, prefill 15 / 10, moe 0 / 4 (untouched).
+
+## 2026-10-26T23:58Z: user steer acknowledged (~23:00Z: distil the context, then stop the loop); campaign paused
+
+- Read at 23:41Z (date -u) in the campaign CLAUDE.md, PLAN.md and INDEX.md banners, relayed from the openclaw session.
+  - The user's goals: capture the value in this session's context; the user then resumes the campaign by hand in a
+    fresh session.
+  - No judge actions: the 00:00Z reset plan is on hold.
+- Done, with no okc check, submit or withdraw, no build and no hypothesis work (the three minting agents had finished
+  and been queued at 22:42Z):
+  - **DISTILL.md:**
+    - the resume block: boards, ranks, quota, branches, HEADs, the kept bytes with their sha256 and source commits,
+      and the reset plan as exact commands;
+    - the killed lines and what would reopen them;
+    - where the judge disagreed with the gates;
+    - levers ranked by gain, effort and kill rule;
+    - traps; what I would do differently;
+    - the plan branches by outcome; the bulk12 decode port design; verdicts on the 33 queued sprint hypotheses;
+    - operating lessons; a run ledger.
+  - **`scratchpad/`:** the reset drafts, LOG tooling, run comparers, the bulk12 models, the Engine A emulators, the
+    dq3 exhaustive check and the three sprint reviews, copied from /tmp (README.md lists them).
+  - **FINDINGS.md:** ladder-2 rungs and the consumer-bound verdict, dq3 / dq4 / v4c / H=-8 rationale, the
+    judge-weighted time shares by area (from `research/openclaw-relay-2026-10-26.md`), bulk12, gates vs the judge,
+    and the tooling state.
+- Boards read at 23:46Z (read-only):
+  - decode 1.4956, rank 365 of 754 (1.5347 would be about 332);
+  - moe 1.6851, 400 of 871;
+  - bf16 1.2664, 370 of 1102;
+  - attention 1.5347, 451 of 828;
+  - prefill 1.4677, 179 of 486;
+  - overall 370 of 1265.
+- `okc problems` gives the close as Nov 4 11:59 pm PT, which is 11-05 07:59Z after DST ends on 11-01. The working
+  deadline stays 06:59Z.
+- The loop is stopped (ScheduleWakeup stop) and is not restarted.
