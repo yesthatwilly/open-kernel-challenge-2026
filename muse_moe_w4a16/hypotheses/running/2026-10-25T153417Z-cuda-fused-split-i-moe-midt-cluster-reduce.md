@@ -91,7 +91,7 @@ review: proceed
 status: running
 review_at: 2026-10-25T212522Z
 review_companions: null
-stage: claimed
+stage: implemented
 claimed_at: 2026-10-25T212550Z
 base_sha: ce2461b1ea24995a3c81d11487611f052d8ecc35
 base_blob: 35b8a851e4ef5fa8fd66b12d09caac88b7ea7615
@@ -100,6 +100,12 @@ worktree: .worktrees/muse_moe_w4a16/cuda-fused-split-i-moe-midt-cluster-reduce
 mode: check
 restack_of: null
 stale_base: null
+implemented_at: 2026-10-26T011142Z
+impl_commit: 0a06690077200b6ab009a36340b8aee82eb40dc4
+submission_sha256: dc4c3d77ebfd7c291b42a1a7a1848c10854d3abd73107bc19f0333e9f3f341f3
+norm_sha256: 3bb492c7ec6babacb0da7b28dea14e1499935dabfe142bfc88385a58e9261dd6
+submission_blob: c7e48df9b5d8e30a800cfc54936f233eae895e7c
+lint_warnings: 122
 ---
 
 # cuda-fused-split-i-moe-midt-cluster-reduce
@@ -183,3 +189,45 @@ Align the gate with today's lesson. Require >= 1.03x over the incumbent on the W
 - How many CL=4 clusters does cudaOccupancyMaxActiveClusters actually report on the judge's H100 (GPC SM counts are not all multiples of 4)? Is the effective grid 128 or 132 CTAs, and how does that change the KC wave arithmetic?
 - Would double-buffering the 16 KB partial tile (two buffers, one cluster.sync per tile instead of two), or a once-per-unit DSMEM reduction, fit the smem budget alongside the ring and h? If so, consider it for stage 1, since sync cost is the likeliest stage-1 failure after consumer TB/s.
 
+
+## Implementation notes
+
+Built on the worktree's master blob (35b8a851, bdbbc97b-era, C1a/C1b flags intact); only `muse_moe_w4a16/submission.py` changed (+1442 lines, new section before `kernel_fn`, 3 small hooks). The tiny-T sibling had not landed, so everything shared was written from scratch.
+
+- Module `muse_moe_w4a16_fsi_midt_v1_red{1,0}` (own load_inline, sm_90a only, TORCH_CUDA_ARCH_LIST=9.0a around the build, -O3 -lineinfo, wgmma under __CUDA_ARCH_FEAT_SM90_ALL else error word 2). Kernel `fsi_midt_kernel<NT,CL>`, gather `fsi_midt_gather_kernel`, Triton `_fsi_combine_kernel`. No setmaxnreg (consumers fit in the 168-reg launch-bounds cap; avoids the inc-hang if the compiler allocates fewer).
+- Unit = (active expert block, chunk of KC=64*NT columns); swap-AB wgmma m64n32k16 (master's proven dequant/A fragments/N32 B slab by TMA from a block-32 gathered slab); NT tiles share each x slab stage (cuts L2 re-reads NT-fold). h kept in smem as bf16 in SWIZZLE_128B K-major groups, fence.proxy.async, then W2 over the chunk with h as wgmma B. Partial y tile (128 rows x 32 tokens fp32, pitch 132) double-buffered; CL=4 cluster of 4 consecutive chunks of the same expert reduces through DSMEM (mapa + ld.shared::cluster.v4) in fixed rank order, then fp32 add to y32 for real routes only.
+- Cluster barrier = two alternating cluster-scope mbarriers per CTA (count CL*8, one arrive per consumer warp, producer warpgroup not involved), fence.acq_rel.cluster around arrive/try_wait, bounded wait (error word 3); final sync before exit. CL=1 uses a named barrier (diagnostic (a) and fallback). Variants: KC128/CL4, KC256/CL4, KC128/CL1, KC256/CL1; smem 210 KB / 186 KB.
+- Global add: `atomicAdd(float4*)` build first, scalar-add rebuild if it does not compile (PTX red.v4 syntax uncertain).
+- Combine at T=9..32 (also replaces SGLang's fused post-norm at T=32): fp32 y32, master's formula, zero-after-read; y32, xs, err are per state; tensor map encoded per call; no module-global device state (audited with the master audit).
+- prepare: runs after master + combo phases, own deadlines (start 150 s, retry 185, correctness 205, timing 232, copy 248; prints "skipped: deadline"). Canary per variant (CL=1 first, flushed prints around each sync), correctness matrix T {9,16,17,32} x {zipf, random-local, skewed-4hot, one-expert, all-remote} vs fp32 dequant reference (bound max(2x master err, 1e-2), rows 5x), kernel-only diagnostics (gather, fsi event time, TB/s, units/waves/co-resident clusters, combine alone), per-class gate: two interleaved 41-rep cold-L2 graph rounds vs master's actually-routed kernel_fn path (state['fsi_sel']={} ), zipf and random-local, each round >= 1.03x and IQR <= 1.5x master's; assert winner is faster; three-state (state, tensor-cloning copy) refilled graph check incl. y32 back to zero. Flags `state['fsi_sel'][class]`; kernel_fn branches on shape + flag only; T<=8, T>=33 untouched.
+- Review fixes applied: build on current master (flags C1a/C1b untouched); gate vs master's routed path; >=1.03x on worse of zipf/random-local in two rounds with IQR bound; diagnostics (a) CL=1, (b) KC128/256 with units/waves/clusters, (c) combine time separate, (d) kernel-only TB/s; co-residency query before any cluster launch; double-buffered partial tile (one sync per H tile, one per two tiles at KC128); PATH CHOSEN/GATE/DIAG repeated as the last prepare lines.
+- Deviations: stage-1 spec said red.v4 PTX; used atomicAdd(float4) with scalar fallback. The w2 stage packs two H tiles per ring stage. Kernels not compiled here (no nvcc); only a g++ syntax pass with CUDA stubs (clean for both red modes).
+
+## Rules check
+- [x] CUDA-graph capturable: kernel_fn path = align (warmed Triton) + gather + fsi kernel + combine; no sync/alloc on values; syncs only in prepare.
+- [x] Nothing derived from `data` cached across calls (scratch zero-after-read, maps per call).
+- [x] Weights: master's lossless retiling (state['wg_banks']); NVFP4 stays NVFP4.
+- [x] Activations bf16 (x slab, h bf16 like SGLang); fp32 only for the accumulation scratch.
+- [n/a] Attention: not applicable.
+- [x] No timing patches, harness access, module edits, reference import, subprocesses or network (load_inline in-process only).
+- [x] All work inside the timed call; no output caching or replay.
+- [x] Misses fall back to master's exact path; own per-class flags.
+
+okc_lint: OK with warnings (host-sync warnings only, all in prepare); py_compile OK; __pycache__ removed.
+
+## Pre-flight audit
+
+Verdict: dispatch-with-fixes. Rules ok.
+
+Checked by reading plus numpy (scripts in /tmp/claude-1000/-home-user-git-musespark/73199a37-afd5-408c-8bef-97b87f4411ce/scratchpad/midt_audit):
+- Index math: emu_index.py emulates unit decomposition (g = cid + k*ncl, qd/rank), the gate/up fragment -> swizzled h write, the swizzled wgmma B read, the partial tile, the rank-row DSMEM reduction and the y32 add for real routes only, against a dense reference. Align port includes sentinel/pad tails. H=I=1024 (T 9,10,16,17,23,32 x NT/CL four variants) max rel err 4e-7; emu_real.py at H=I=4096 (T 9,17,32,16) 6e-7 (emu_real.out). The 32-row block tail (pad slots, remote routes) leaves y32 exactly zero for non-local routes. dq_stage/dequant8/silu_mul/make_desc are text-identical to master's (verbatim.py).
+- Cluster barrier: counts CL*8 match (8 consumer warps x 4 CTAs); alternating barriers/parities and the double-buffered partial tile cannot be overwritten before peers read (race_model.py, 300 random schedules, passes; the program order write -> arrive -> wait -> read -> next arrive forces it). Every wait is bounded (2^26 cycles -> error word 1 or 3, then no further waits); producer WG takes no part. Residual: remote arrive is the CUTLASS-form .release.cta mbarrier with fence.acq_rel.cluster around it, not .cluster scoped; left as written.
+- Co-residency: fsi_init (cudaOccupancyMaxActiveClusters) runs before the CL=1 canary and before any cluster launch; ncl < 1 or a failed query makes the variant unusable.
+- Build fallback: red mode 1 and 0 are separate module names, env restored in finally, a failed load_inline never sets state['fsi_ext']; retry only if prepare < 185 s. Master prepare ends ~105 s (combo log), so worst case build 150 s start + retry ends ~250 s, later phases skip on their own deadlines, total under 300 s. Prepare clock starts after import torch.
+- Shapes: align capacity 256+32*31 = 1248 <= FSI_XS_ROWS 1280, block_experts*32 >= cap, so fsi_run's size checks hold at T=32.
+
+Fixes:
+1. IQR veto had no absolute floor (candidate IQR <= 1.5x master IQR): now 1.5 x max(master IQR, 0.5 us) (FSI_IQR_FLOOR_US).
+2. Skip paths (build failure, unsupported bank, canary/correctness miss, deadline, copy-check turn-off) printed FINAL = MASTER but no PATH CHOSEN line: finish() now emits a PATH CHOSEN = MASTER line per class when none was printed or the earlier one said FSI.
+
+Residual risk: kernels were never compiled or run (no nvcc/GPU here); if the cluster build fails the class stays on master, and KC=256 wave quantization plus ~2 TB/s dequant may leave the 1.03x gate on master.
