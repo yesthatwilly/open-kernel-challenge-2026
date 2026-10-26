@@ -92,3 +92,39 @@ Tags: **[M]** judge-measured, **[P]** prepare-time measured, **[I]** inference o
   noise-high older run can hold the board row with worse code.
 - Before the close: submit the final bytes. If an older run still leads, consider `okc withdraw` of the older run so
   the final code is the one rerun.
+
+## Engine results, 10-26 (expert-bandwidth day 1)
+
+- **v4 = v3 on 8 consumer warps** (2 group records per stage, D=2, 2 CTAs/SM).
+  - Kernel-only w13 (moe, zipf) at T=8/16/32: 3.21/3.12/2.92 TB/s vs v3's 3.07/2.88/2.66, i.e. +5-10%. The research
+    expected +15-25% (3.4-3.7).
+  - It wins every T>=9 class and T=128 in both problems (whole layer, decode: T=16 x1.12-1.19, T=32 x1.07-1.10, T=128
+    x1.09 vs master; v3 is 3-5% behind at T=16/32 in every run).
+  - Decode scored 1.4956 (from 1.4466).
+- **v5 = D1 (32-route passes on 256-k records) lost every gate**: kernel-only 2.39-2.90 TB/s, big gates x0.86-0.90.
+  - The 4-tile mma.sync path is tensor-issue bound: about 0.25 HMMA/clk/SM against a 0.31 floor.
+  - Half-size stages double the per-stage overhead with less in flight.
+  - **Wide passes on mma.sync are a dead end. Hot experts need wgmma.**
+- **Hot experts on moe's wgmma path + cold on v4 (hybrid H=-16)**: the wgmma path forms per-expert chunks of up to 128
+  routes, so a hot expert is read about once.
+  - moe T=256: x1.12-1.20 over master on every reference-style draw; row 391 -> 340 us; scored 1.6851.
+  - decode: T=128 x1.055 and T=256 x1.179 over Engine A v4 alone; v32 rows -8..-11%; check 1.5097.
+  - The path is shared via rewrite/lib/wg_core.py. Decode prepare grows to 108 s (the wgmma build).
+  - At moe T=128 it loses (x0.97): moe's T=128 routing has few hot experts.
+- **Selector policy**:
+  - Earliest engine within 1% (`prefer_within`) put T=9..16 on v3 where v4 leads by 3-5%, costing d16 -4..-6%.
+    Back to the best worst ratio.
+  - Near-tie classes (T=2..8: v1/v2/v3/v4 within ~3%) still flip between runs. Row noise on v1 sliding is about +-5%
+    even with the same engine.
+- **The decode copy-check fault (ff2bd918)** (illegal address with v4 at T=2 + PDL K1, unexplained): K1 of v4/v5 now
+  runs plain (the PDL gate measured no gain). It has not recurred in 3 decode runs since.
+- **Board context**: decode leader 2.38, top 10 >= 2.18, rank 100 1.86, rank 200 1.70, rank 300 1.54. The gap is broad:
+  our T<=32 rows run 2.4-2.6x their speed-of-light bounds, the verify rows 2.9-3.3x.
+- **Bandwidth budget per T<=32 row (d32 sliding 206 us, SoL 84.5)**:
+  - expert block, at about 3 TB/s;
+  - P (pooler + router) at 2.75-3.5 TB/s;
+  - unpooler 3.7 TB/s (graph-timed 17 us);
+  - qkv_gate 3.0 TB/s;
+  - sliding attention about 15 us (SoL 3.5).
+  The expert block and P are the largest gaps. Ladder-2 (moe, 10-26 evening) measures v4's geometry rung by rung to
+  find v4's limiter.
