@@ -79,7 +79,7 @@ base_sha: 29d5f864b053aab03e8c54ff87dd01db6442070e
 base_blob: 6d6afa4722731ceb9cb8216d0334a03f1a96ad2b
 branch: hyp/muse_attention_decode/sliding-verify-wgmma-window-s1
 worktree: .worktrees/muse_attention_decode/sliding-verify-wgmma-window-s1
-mode: null
+mode: check
 restack_of: null
 stale_base: null
 implemented_at: 2026-10-26T004942Z
@@ -88,6 +88,8 @@ submission_sha256: 88cb856674238b072969154919eba5b619d2416a0ede6ce9cc001d433bed4
 norm_sha256: 2aa40cd291ecdbe482a93231c86c7267c92357d03183e1aa4b667bac32c4ec58
 submission_blob: c06e0fbeba63badb368924c2a565fe5ba167d510
 lint_warnings: 73
+attempt_file: 2026-10-26T012537Z-check-sliding-verify-wgmma-window-s1.md
+prepared_at: 2026-10-26T012537Z
 ---
 
 # sliding-verify-wgmma-window-s1
