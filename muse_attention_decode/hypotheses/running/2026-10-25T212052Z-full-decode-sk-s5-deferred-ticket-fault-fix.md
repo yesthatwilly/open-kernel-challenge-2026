@@ -74,7 +74,7 @@ base_sha: d6a7be8f77635e613d619df51fa1de4dea8f9afd
 base_blob: 6d6afa4722731ceb9cb8216d0334a03f1a96ad2b
 branch: hyp/muse_attention_decode/full-decode-sk-s5-deferred-ticket-fault-fix
 worktree: .worktrees/muse_attention_decode/full-decode-sk-s5-deferred-ticket-fault-fix
-mode: null
+mode: check
 restack_of: null
 stale_base: null
 implemented_at: 2026-10-26T010812Z
@@ -83,6 +83,8 @@ submission_sha256: 59ee0e087888e997328347f5a9ac23cf336319a41be37cc4261b067968f1e
 norm_sha256: 07544ddb1060da31e6763941bb5cc4d3c0758fd842cdccc9c1cd7995c9cc784b
 submission_blob: 88bb41b311e7024af915b0e57604182680a03e7a
 lint_warnings: 74
+attempt_file: 2026-10-26T012539Z-check-full-decode-sk-s5-deferred-ticket-fault-fix.md
+prepared_at: 2026-10-26T012539Z
 ---
 
 # full-decode-sk-s5-deferred-ticket-fault-fix
