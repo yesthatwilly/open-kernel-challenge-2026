@@ -1,0 +1,143 @@
+ fp32 0.00595 (<= 0.0125); master vs fp32 0.00556
+[combo] F1 correctness: atomic worst rel-L2 vs master 0.0107, vs fp32 0.00886; master vs fp32 worst 0.00642
+[combo] F1 [A/B] w13 Marlin call alone T=1: zipf: master 26.78 us, atomic 25.60 us; random: master 18.21 us, atomic 13.60 us
+[combo] PATH CHOSEN F1 class=decode_1 (T=1) = w13 atomic: worse routing zipf: master 26.78 us, w13 atomic 25.60 us, ratio 0.956 (ON at <= 0.98); fp32 worst 0.00886, vs master worst 0.0107
+[combo] phase F1: ran, 0.1 s (prepare at 60.0 s)
+[combo] F2 launching warm: _align_parallel and align2 chunks (64, 128, 256, 512) at bsm 16, T 128..512
+[combo] F2 ok warm
+[combo] F2 table check: 126 cases; failing candidates none
+[combo] F2 launching _moe_wgmma master front end T=128 skewed
+[combo] F2 ok _moe_wgmma master front end T=128 skewed
+[combo] F2 launching _moe_wgmma master front end T=128 random
+[combo] F2 ok _moe_wgmma master front end T=128 random
+[combo] F2 launching _moe_wgmma master front end T=191 skewed
+[combo] F2 ok _moe_wgmma master front end T=191 skewed
+[combo] F2 launching _moe_wgmma master front end T=191 random
+[combo] F2 ok _moe_wgmma master front end T=191 random
+[combo] F2 launching _moe_wgmma master front end T=192 skewed
+[combo] F2 ok _moe_wgmma master front end T=192 skewed
+[combo] F2 launching _moe_wgmma master front end T=192 random
+[combo] F2 ok _moe_wgmma master front end T=192 random
+[combo] F2 launching _moe_wgmma master front end T=256 skewed
+[combo] F2 ok _moe_wgmma master front end T=256 skewed
+[combo] F2 launching _moe_wgmma master front end T=256 random
+[combo] F2 ok _moe_wgmma master front end T=256 random
+[combo] F2 launching _moe_wgmma master front end T=257 skewed
+[combo] F2 ok _moe_wgmma master front end T=257 skewed
+[combo] F2 launching _moe_wgmma master front end T=257 random
+[combo] F2 ok _moe_wgmma master front end T=257 random
+[combo] F2 launching _moe_wgmma master front end T=384 skewed
+[combo] F2 ok _moe_wgmma master front end T=384 skewed
+[combo] F2 launching _moe_wgmma master front end T=384 random
+[combo] F2 ok _moe_wgmma master front end T=384 random
+[combo] F2 launching _moe_wgmma master front end T=512 skewed
+[combo] F2 ok _moe_wgmma master front end T=512 skewed
+[combo] F2 launching _moe_wgmma master front end T=512 random
+[combo] F2 ok _moe_wgmma master front end T=512 random
+[combo] F2 bitwise _moe_wgmma check: passing ['_align_parallel bsm 16', 'align2 chunk 64 bsm 16', 'align2 chunk 128 bsm 16', 'align2 chunk 256 bsm 16', 'align2 chunk 512 bsm 16']; failing none
+[combo] F2 [A/B] B256 front end alone T=256 (gather+cast+SGLang align vs candidates): zipf: master 12.42 us, _align_parallel bsm 16 6.27 us, align2 chunk 64 bsm 16 4.58 us, align2 chunk 128 bsm 16 5.79 us, align2 chunk 256 bsm 16 5.28 us, align2 chunk 512 bsm 16 7.30 us; random: master 12.38 us, _align_parallel bsm 16 6.46 us, align2 chunk 64 bsm 16 4.58 us, align2 chunk 128 bsm 16 5.79 us, align2 chunk 256 bsm 16 5.09 us, align2 chunk 512 bsm 16 7.14 us
+[combo] PATH CHOSEN F2 class=B128 = master (wgmma bucket off: kernel_fn runs Marlin there)
+[combo] PATH CHOSEN F2 class=B256 = align2 chunk 64 bsm 16: worse routing random: master 12.38 us, align2 chunk 64 bsm 16 4.58 us, ratio 0.370 (ON at <= 0.98)
+[combo] phase F2: ran, 2.4 s (prepare at 62.4 s)
+[combo] C1a launching warm: _align_parallel T 17..32
+[combo] C1a ok warm
+[combo] C1a [A/B] align alone T=32 bsm=16 (master = _align_small): zipf: master 3.42 us, align_parallel 1.92 us; random: master 3.58 us, align_parallel 2.05 us
+[combo] PATH CHOSEN C1a class=d32 (T 17..32) = _align_parallel: worse routing random: master 3.58 us, _align_parallel 2.05 us, ratio 0.571 (ON at <= 0.98); master pick _align_small; equivalence 90 cases torch.equal
+[combo] phase C1a: ran, 0.3 s (prepare at 62.7 s)
+[combo] C1b launching warm: _post_norm_combine_hoisted_kernel T=32
+[combo] C1b ok warm
+[combo] C1b T=32 random: hoisted rel-L2 vs fp32 0.00167, SGLang 0.00242, bound 0.00363
+[combo] C1b T=32 skewed: hoisted rel-L2 vs fp32 0.00166, SGLang 0.00242, bound 0.00363
+[combo] C1b T=32 all-remote: hoisted rel-L2 vs fp32 0, SGLang 0, bound 1e-05
+[combo] C1b T=32 all-one-expert: hoisted rel-L2 vs fp32 0.00166, SGLang 0.00241, bound 0.00361
+[combo] C1b T=32 all-local: hoisted rel-L2 vs fp32 0.00166, SGLang 0.00243, bound 0.00364
+[combo] C1b T=32 all-local-saturated: hoisted rel-L2 vs fp32 0.00166, SGLang 0.00243, bound 0.00365
+[combo] C1b [A/B] post-norm alone T=32: zipf: master 7.65 us, hoisted 3.26 us; random: master 3.78 us, hoisted 2.91 us
+[combo] PATH CHOSEN C1b class=decode_32 (T=32) = hoisted Triton post-norm: worse routing random: master 3.78 us, hoisted Triton post-norm 2.91 us, ratio 0.771 (ON at <= 0.98); error vs fp32 worst hoisted 0.00167 / SGLang 0.00243 (6 routings)
+[combo] phase C1b: ran, 0.2 s (prepare at 63.0 s)
+[cuda-wgmma-verify] select  B128 T=128 judge-like zipf a=0.3 (241 local routes, Marlin bsm 16): median of 41 cold graph replays minus empty-graph 5.2 us: Marlin full path 368.3 us, wgmma full path 460.7 us, Marlin/wgmma 0.799x (end-to-end rel-L2 6.03e-03)
+[cuda-wgmma-verify] select  B128 T=128 random (133 local routes, Marlin bsm 16): median of 41 cold graph replays minus empty-graph 5.2 us: Marlin full path 365.2 us, wgmma full path 462.1 us, Marlin/wgmma 0.790x (end-to-end rel-L2 6.09e-03)
+[cuda-wgmma-verify] select  B128 (128 <= T <= 255): wgmma DISABLED (Marlin): ratios 0.799x, 0.790x (judge-like, random) vs margin 1.02x on the judge-like routing (random printed, not gating); calibrated Marlin pair 374 us (judged s4 Marlin pair 306.2 us); 0.2s
+[cuda-wgmma-verify] select  B256 T=256 judge-like zipf a=0.3 (457 local routes, Marlin bsm 32): median of 41 cold graph replays minus empty-graph 5.2 us: Marlin full path 498.0 us, wgmma full path 464.4 us, Marlin/wgmma 1.072x (end-to-end rel-L2 6.07e-03)
+[cuda-wgmma-verify] select  B256 T=256 random (245 local routes, Marlin bsm 32): median of 41 cold graph replays minus empty-graph 5.2 us: Marlin full path 484.4 us, wgmma full path 454.1 us, Marlin/wgmma 1.067x (end-to-end rel-L2 6.04e-03)
+[cuda-wgmma-verify] select  B256 (256 <= T <= 512): wgmma ENABLED: ratios 1.072x, 1.067x (judge-like, random) vs margin 1.02x on the judge-like routing (random printed, not gating); calibrated Marlin pair 499 us (judged s4 Marlin pair 483.2 us); 0.2s
+[combo] F2 diag (not applied): _wg_select with the F2 front end would set B128 MARLIN, B256 WGMMA; live flags wg_on_128 False, wg_on_256 True
+[combo] phase F2-select-diag: ran, 0.3 s (prepare at 63.3 s)
+[combo] copy check (graphs through kernel_fn on the state and a tensor-cloning copy, alternating, refilled): 32 replays, T [1, 24, 32, 256]; PASS
+[combo] phase copy: ran, 0.4 s (prepare at 63.7 s)
+[align2] PATH CHOSEN class=d32 T=32 bsm=16 = master, incumbent 3.49 us, align2 3.58 us, ratio 0.973, equivalence 90 cases ok
+[align2] PATH CHOSEN class=v128 T=128 bsm=16 = master, incumbent 3.52 us, align2 4.26 us, ratio 0.827, equivalence 162 cases ok
+[align2] PATH CHOSEN class=v256 T=256 bsm=32 = align2 chunk 64, incumbent 6.30 us, align2 4.26 us, ratio 1.481, equivalence 72 cases ok
+[align2] final flags align2_ok={'d32': 0, 'v128': 0, 'v256': 64} (class: chunk, 0 = master)
+[combo] ===== COMBO SUMMARY (after master's prepare; per-phase start deadlines {'F1': 120.0, 'F2': 150.0, 'C1a': 160.0, 'C1b': 170.0, 'F2-select-diag': 200.0, 'copy': 255.0}, no timing past 270 s) =====
+[combo] phase F1: 0.1 s, ran
+[combo] phase F2: 2.4 s, ran
+[combo] phase C1a: 0.3 s, ran
+[combo] phase C1b: 0.2 s, ran
+[combo] phase F2-select-diag: 0.3 s, ran
+[combo] phase copy: 0.4 s, ran
+[combo] wg_on_128 False, wg_on_256 True (master's _wg_setup selector; F2 applies only to an ON bucket)
+[combo] PATH CHOSEN F1 class=decode_1 (T=1) = w13 atomic: worse routing zipf: master 26.78 us, w13 atomic 25.60 us, ratio 0.956 (ON at <= 0.98); fp32 worst 0.00886, vs master worst 0.0107
+[combo] PATH CHOSEN F2 class=B128 = master (wgmma bucket off: kernel_fn runs Marlin there)
+[combo] PATH CHOSEN F2 class=B256 = align2 chunk 64 bsm 16: worse routing random: master 12.38 us, align2 chunk 64 bsm 16 4.58 us, ratio 0.370 (ON at <= 0.98)
+[combo] PATH CHOSEN C1a class=d32 (T 17..32) = _align_parallel: worse routing random: master 3.58 us, _align_parallel 2.05 us, ratio 0.571 (ON at <= 0.98); master pick _align_small; equivalence 90 cases torch.equal
+[combo] PATH CHOSEN C1b class=decode_32 (T=32) = hoisted Triton post-norm: worse routing random: master 3.78 us, hoisted Triton post-norm 2.91 us, ratio 0.771 (ON at <= 0.98); error vs fp32 worst hoisted 0.00167 / SGLang 0.00243 (6 routings)
+[combo] F2 diag (not applied): _wg_select with the F2 front end would set B128 MARLIN, B256 WGMMA; live flags wg_on_128 False, wg_on_256 True
+[combo] copy check (graphs through kernel_fn on the state and a tensor-cloning copy, alternating, refilled): 32 replays, T [1, 24, 32, 256]; PASS
+[combo] final flags: w13_mode='atomic' wg_align2={128: 0, 256: 64} d32_align=1 d32_post_norm=1 (master = 'master'/0)
+[combo] prepare seconds: master 60.0, total 63.7
+[engineA] load_inline okc_campaign_engine_a_v2 compiled in 38.3s (TORCH_CUDA_ARCH_LIST=9.0a, ['-O3', '-std=c++20', '-lineinfo'])
+[engineA] kernel v1 w13/dq1: attrs ok True, 106 regs, 0 B spill, 104 KB smem, 2 CTAs/SM
+[engineA] kernel v1 w13/dq2: attrs ok True, 83 regs, 0 B spill, 104 KB smem, 2 CTAs/SM
+[engineA] kernel v1 w2/dq1: attrs ok True, 111 regs, 0 B spill, 104 KB smem, 2 CTAs/SM
+[engineA] kernel v1 w2/dq2: attrs ok True, 89 regs, 0 B spill, 104 KB smem, 2 CTAs/SM
+[engineA] kernel v2 w13/dq1: attrs ok True, 95 regs, 0 B spill, 107 KB smem, 2 CTAs/SM
+[engineA] kernel v2 w13/dq2: attrs ok True, 79 regs, 0 B spill, 107 KB smem, 2 CTAs/SM
+[engineA] kernel v2 w2/dq1: attrs ok True, 94 regs, 0 B spill, 107 KB smem, 2 CTAs/SM
+[engineA] kernel v2 w2/dq2: attrs ok True, 85 regs, 0 B spill, 107 KB smem, 2 CTAs/SM
+[engineA] exact integer dequant; repack 0.1 s; grid 264 (2 CTAs/SM x 160 threads); build 38.3 s
+[engineA] first v1 launch: T=1 zipf (each launch named, synced)
+[engineA]     [v1 T=1 zipf] before ea_w13
+[engineA]     [v1 T=1 zipf] after ea_w13 / before ea_w2
+[engineA]     [v1 T=1 zipf] after ea_w2 / before post-expert norm
+[engineA]     [v1 T=1 zipf] after post-expert norm
+[engineA] first v2 launch: T=1 zipf (each launch named, synced)
+[engineA]     [v2 T=1 zipf] before ea2_w13
+[engineA]     [v2 T=1 zipf] after ea2_w13 / before ea2_w2
+[engineA]     [v2 T=1 zipf] after ea2_w2 / before post-expert norm
+[engineA]     [v2 T=1 zipf] after post-expert norm
+[engineA] canary v1: T 1..8 clean; worst rel-L2 vs fp32 0.00402
+[engineA] canary v2: T 1..32 clean; worst rel-L2 vs fp32 0.00402
+[engineA] gate T=1 zipf round 1 (graph baseline 5.25 us subtracted): master 71.49 us (IQR 0.83) | v1 60.16 us (IQR 0.54, p10/p90 59.65/60.86, x1.188) | v2 63.74 us (IQR 0.80, p10/p90 63.01/64.86, x1.121)
+[engineA] gate T=1 zipf round 2 (graph baseline 5.22 us subtracted): master 71.52 us (IQR 0.86) | v1 60.32 us (IQR 0.64, p10/p90 59.58/61.31, x1.186) | v2 63.46 us (IQR 0.83, p10/p90 62.98/64.58, x1.127)
+[engineA] gate T=1 random round 1 (graph baseline 5.22 us subtracted): master 30.59 us (IQR 0.64) | v1 23.04 us (IQR 0.77, p10/p90 22.75/24.22, x1.328) | v2 26.11 us (IQR 0.58, p10/p90 25.60/26.66, x1.172)
+[engineA] gate T=1 random round 2 (graph baseline 5.25 us subtracted): master 30.62 us (IQR 0.38) | v1 23.01 us (IQR 0.35, p10/p90 22.82/23.87, x1.331) | v2 25.95 us (IQR 0.42, p10/p90 25.73/26.62, x1.180)
+[engineA] gate T=8 zipf round 1 (graph baseline 5.25 us subtracted): master 194.75 us (IQR 0.96) | v1 167.23 us (IQR 0.90, p10/p90 166.46/168.16, x1.165) | v2 162.91 us (IQR 1.15, p10/p90 161.98/164.26, x1.195)
+[engineA] gate T=8 zipf round 2 (graph baseline 5.25 us subtracted): master 194.53 us (IQR 0.93) | v1 167.30 us (IQR 1.12, p10/p90 166.37/168.16, x1.163) | v2 162.82 us (IQR 0.96, p10/p90 162.14/163.84, x1.195)
+[engineA] gate T=8 random round 1 (graph baseline 5.22 us subtracted): master 132.90 us (IQR 1.06) | v1 112.38 us (IQR 0.70, p10/p90 111.52/113.09, x1.183) | v2 108.86 us (IQR 0.99, p10/p90 108.03/109.92, x1.221)
+[engineA] gate T=8 random round 2 (graph baseline 5.09 us subtracted): master 131.97 us (IQR 0.77) | v1 111.94 us (IQR 1.15, p10/p90 111.10/112.99, x1.179) | v2 108.74 us (IQR 0.96, p10/p90 107.84/109.60, x1.214)
+[engineA] gate T=16 zipf round 1 (graph baseline 5.25 us subtracted): master 283.23 us (IQR 1.09) | v2 240.77 us (IQR 1.06, p10/p90 239.94/242.56, x1.176)
+[engineA] gate T=16 zipf round 2 (graph baseline 5.22 us subtracted): master 283.30 us (IQR 1.06) | v2 240.80 us (IQR 0.96, p10/p90 239.65/243.04, x1.176)
+[engineA] gate T=16 random round 1 (graph baseline 5.22 us subtracted): master 151.46 us (IQR 0.54) | v2 126.05 us (IQR 1.02, p10/p90 125.47/127.20, x1.202)
+[engineA] gate T=16 random round 2 (graph baseline 5.22 us subtracted): master 151.42 us (IQR 1.12) | v2 126.11 us (IQR 0.86, p10/p90 125.34/127.07, x1.201)
+[engineA] gate T=32 zipf round 1 (graph baseline 5.22 us subtracted): master 327.81 us (IQR 1.31) | v2 309.63 us (IQR 1.66, p10/p90 308.16/311.52, x1.059)
+[engineA] gate T=32 zipf round 2 (graph baseline 5.22 us subtracted): master 326.53 us (IQR 1.63) | v2 308.77 us (IQR 2.05, p10/p90 306.94/310.62, x1.058)
+[engineA] gate T=32 random round 1 (graph baseline 5.18 us subtracted): master 231.87 us (IQR 1.15) | v2 183.81 us (IQR 1.54, p10/p90 182.75/185.38, x1.261)
+[engineA] gate T=32 random round 2 (graph baseline 5.18 us subtracted): master 231.65 us (IQR 1.38) | v2 183.68 us (IQR 0.80, p10/p90 183.01/184.58, x1.261)
+[engineA] ===== ENGINE A SUMMARY (45.2 s; module okc_campaign_engine_a_v2) =====
+[engineA] exact integer dequant; repack 0.1 s; grid 264 (2 CTAs/SM x 160 threads); build 38.3 s
+[engineA] canary v1: T 1..8 clean; worst rel-L2 vs fp32 0.00402
+[engineA] canary v2: T 1..32 clean; worst rel-L2 vs fp32 0.00402
+[engineA] kernel-only v1 T=1 zipf active=2: w13 20.16 us (1.87 TB/s), w2 14.18 us (1.33 TB/s), sum 34.34 us for 56.6 MB
+[engineA] kernel-only v2 T=1 zipf active=2: w13 21.63 us (1.75 TB/s), w2 15.68 us (1.20 TB/s), sum 37.31 us for 56.6 MB
+[engineA] kernel-only v1 T=8 zipf active=19: w13 119.23 us (3.01 TB/s), w2 63.81 us (2.81 TB/s), sum 183.04 us for 537.9 MB
+[engineA] kernel-only v2 T=8 zipf active=19: w13 117.98 us (3.04 TB/s), w2 64.29 us (2.79 TB/s), sum 182.27 us for 537.9 MB
+[engineA] kernel-only v2 T=16 zipf active=24: w13 149.12 us (3.04 TB/s), w2 81.44 us (2.78 TB/s), sum 230.56 us for 679.5 MB
+[engineA] kernel-only v2 T=32 zipf active=28: w13 192.48 us (2.75 TB/s), w2 101.57 us (2.60 TB/s), sum 294.05 us for 792.7 MB
+[engineA] gate T=1: worst ratio v1 1.186, v2 1.121 -> ENGINE A v1
+[engineA] gate T=8: worst ratio v1 1.163, v2 1.195 -> ENGINE A v2
+[engineA] gate T=16: worst ratio v2 1.176 -> ENGINE A v2
+[engineA] gate T=32: worst ratio v2 1.058 -> ENGINE A v2
+[engineA] copy check: 24 replays on two states, T [1, 2, 32]: PASS
+[engineA] PATH CHOSEN T=1 = ENGINE A v1
+[engineA] PATH CHOSEN T=2..32 = ENGINE A v2

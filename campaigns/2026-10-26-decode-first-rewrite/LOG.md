@@ -91,7 +91,7 @@ Passed 5/5 (master path scored 1.3865, irrelevant). 201 MB bank, read flush, gra
 - In parallel: an Opus audit of Engine A v2 (T <= 32); an Opus builder for Engine B (W3, T = 128..512) on branch
   campaign/engine-b in .worktrees/engine-b (no okc runs; I dispatch).
 
-## 2026-10-26T06:25Z: Engine A v1 on the moe board (1.4434); decode v1 measured but not yet live
+## 2026-10-26T06:12Z: Engine A v1 on the moe board (1.4434); decode v1 measured but not yet live
 
 - moe check 7e40dd8509da4586: **1.4501** (master path 1.3865): decode 1 44.6 -> 40.5 us, verify 1 106.7 -> 95.2 us.
   Canary clean T 1..8 (worst rel-L2 0.00408), gates T=1 x1.19 / T=8 x1.15, copy check PASS, build 30.5 s, setup 32 s.
@@ -109,4 +109,24 @@ Passed 5/5 (master path scored 1.3865, irrelevant). 201 MB bank, read flush, gra
 - Next: unified adapters (ebac60b2: one module with v1 + v2; classes T = 1/8/16/32 choose master/v1/v2) go out in moe
   and decode as soon as the v2 audit returns. T=1 idea queued: align the stream-K split to whole groups when the
   groups fit the grid (no fix-ups at T=1 w13; 2-way at w2).
+
+## 2026-10-26T06:32Z: Engine A v1 + v2 live in moe (scored 1.5269, rank 437) and decode (check 1.3783)
+
+- v2 audit (Opus): dispatch, no findings. One module now holds v1 and v2; classes T = 1/8/16/32 pick master/v1/v2.
+- moe check 33e25409b3e044a6: **1.5254**: decode 16 146.1 -> 127.1 us, decode 32 198.2 -> 168.0; T=1 v1 (x1.19),
+  T=8..32 v2 (x1.19 / x1.17 / x1.06). Build 38.9 s (8 kernels at 2 CTAs/SM), setup 45.9 s. moe scored
+  7c4d16997dfc43df: **1.5269**, rank 473 -> 437 of 815.
+- decode check 903de4ed3a9c4558: **1.3783** (+2.8% over M0): d1s 118.3 -> 115.1, v1s 168.2 -> 158.6, d16s 198.4 ->
+  180.5 us. T=1..8 v1, T=9..16 v2, T=32 master: v2 scored x0.698 on the gate's 4-hot-expert routing (4 passes per
+  expert). Scored run c3b7440aa9394c04 sent.
+- Profile insight: at the judge's T=16/32 the hot experts take 9-32 routes, so v2 re-dequantizes them per 8-route pass
+  (ea2_w13 at ~2.1 TB/s vs ~3.0 with spread routes). -> v3: passes of up to 16 routes with two n8 tiles sharing each
+  dequantized A fragment (ladder: 16 rows cost ~1.2x of 8, not 2x). Opus builder on branch campaign/ea-v3
+  (.worktrees/ea-v3).
+- Round 3 dispatched at 06:30Z (moe 223452681ddb4a22, decode 7f0f22f40f694929; git dc240ed8): aligned split (no
+  fix-up at T=1 w13), K2 triggers dependents early, CUDA combine (PDL; check vs Triton + per-class gate), decode engine
+  gate on whole-layer graphs of judge-like inputs. Focused Opus audit of that diff running in parallel.
+- Decode T=1 anatomy (4594d4d0 profile, d1s 121.8 us of kernels): Marlin pair 42.2 (now Engine A), P pooler+router
+  20.9 (75.5 MB bf16: ~3.6 TB/s, near floor), sliding attention 13.2, qkv nvjet 12.2 + splitK reduce 1.7, o 7.0,
+  R 6.6, unpool 6.0, boundaries 3.6 + 3.4, combine 3.4. Remaining T=1 slack is launch gaps and PDL breaks (W4).
 
