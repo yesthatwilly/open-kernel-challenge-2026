@@ -101,11 +101,11 @@ worktree: .worktrees/muse_attention_decode/full-verify-wgmma-s6-split-ring-2cta
 mode: null
 restack_of: null
 stale_base: null
-implemented_at: 2026-10-26T005058Z
-impl_commit: 70430b0a3e21171b7f70abbeb3a0358eec70e1ad
-submission_sha256: f0af4d4c39b3db7c6275a2c5c50251f69e996d6e8d7329efeb65875f0b402cc6
-norm_sha256: 32b53af4bd6ac7373ebfb6ba7fc2f5ea87b628086dd335a460ec1c34a9ef2025
-submission_blob: d5dc8fd50cef373b8e19f5d0c868b0a78a195155
+implemented_at: 2026-10-26T010520Z
+impl_commit: d708cbde0daeb3705686792cd6d030c115406b9b
+submission_sha256: c760577ce11e687c7ba00b681bd2d8fade2e4e05b5641b77077c422fae1b0d0c
+norm_sha256: b8c90e0254a429139cab95fd59549a43a21d1cbff537bcf26aa7aec1eccc4f00
+submission_blob: 3cd54814f4dcbb30997660d9de6dfacd05908e07
 lint_warnings: 80
 ---
 
