@@ -35,3 +35,23 @@ Confirmation rerun of pooler-k-halves-fp32-partials-restack-m128-m256: its imple
 ## Why
 
 Queued by churn.py (harvest): `pooler-k-halves-fp32-partials-restack-m128-m256` ran 1.2683x against best 1.2566x, above the best but inside the one-run margin (1.24%). Two pooled runs need 1.07%. No new idea is tested, so it skips the adversarial review; the user sanctioned confirm reruns on 2026-10-25.
+
+## Implementation notes
+
+No code change: `pooler-k-halves-fp32-partials-restack-m128-m256` implementation commit `659ff4783582d8103e09cf89dd5fae13e57f96cf` plus one trailing comment, so okc times it again instead of returning the earlier job. Written by churn.py claim.
+
+## Rules check
+
+- [x] CUDA-graph capturable: kernel_fn branch is torch.bmm/torch.add/torch.empty on shapes and flags only; no .item()/.cpu()/sync/print/try (all syncs, prints and try blocks are in prepare()).
+- [x] Nothing derived from `data` is cached: only the kind choice from synthetic prepare-time x, stored per state; kernel_fn reads x and cfg only.
+- [x] Weights: no new weight bytes; reuses master's lossless bf16 NN repack pooler_t (view only). fp32 only in internal partials.
+- [x] Activations BF16 where SGLang keeps BF16: x and the output are bf16; the output of both kinds is bf16 (b: one rounding from an fp32 add).
+- [x] Attention: n/a, no attention in this problem.
+- [x] No timing patches, harness frames/I/O/secrets, module edits, reference import, subprocesses or network: diff adds only torch ops, torch.profiler in prepare and prints.
+- [x] All work happens inside the timed call; no output caching or replay (fresh output tensor per call).
+- [x] Review required fixes applied (see Implementation notes).
+
+okc_lint: `OK with warnings: muse_bf16_proj/submission.py` (only pre-existing-style host-sync/dtype warnings in prepare(); no errors). `python3 -I -m py_compile` passed; __pycache__ deleted.
+
+Copied from `pooler-k-halves-fp32-partials-restack-m128-m256`, whose code this is; the only change is a comment.
+
