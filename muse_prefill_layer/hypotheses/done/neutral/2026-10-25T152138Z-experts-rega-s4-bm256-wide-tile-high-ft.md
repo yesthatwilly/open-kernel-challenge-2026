@@ -115,6 +115,9 @@ harvested_at: 2026-10-26T023858Z
 best_at_harvest: 1.4677493909229
 promotion: null
 confirm_queued: experts-rega-s4-bm256-wide-tile-high-ft-cf
+confirm_job: 13cfaf1e25c341af
+confirm_outcome: neutral
+pooled_speedup: 1.4734212859920082
 ---
 
 # experts-rega-s4-bm256-wide-tile-high-ft

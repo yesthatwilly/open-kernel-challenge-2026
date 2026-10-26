@@ -497,5 +497,24 @@
   ],
   "summary": "gained on sliding first_turn, turn_1, turn_4; full first_turn, turn_4",
   "expected_hit": "3/3"
+ },
+ "pooled": {
+  "jobs": [
+   "a6f6063051f14750",
+   "13cfaf1e25c341af"
+  ],
+  "speedups": [
+   1.4757672292732262,
+   1.47107534271079
+  ],
+  "speedup": 1.4734212859920082,
+  "ci": [
+   1.457793273440352,
+   1.4890492985436643
+  ],
+  "outcome": "neutral",
+  "detail": "unproven-vs-best",
+  "best": 1.4677493909229,
+  "at": "2026-10-26T220301Z"
  }
 }

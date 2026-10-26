@@ -14,8 +14,8 @@ controls_for: experts-rega-s4-bm256-wide-tile-high-ft
 confirm_of: experts-rega-s4-bm256-wide-tile-high-ft
 confirm_of_job: a6f6063051f14750
 review: proceed
-status: running
-stage: dispatched
+status: done
+stage: harvested
 claimed_at: 2026-10-26T214345Z
 base_sha: 97bc07f18b4cbc9aa9b228fdea23c980cefe6fc2
 base_blob: 82449fd7e7fae52ba13d26109cc48a9fd256b40c
@@ -34,6 +34,13 @@ attempt_file: 2026-10-26T214409Z-check-experts-rega-s4-bm256-wide-tile-high-ft-c
 prepared_at: 2026-10-26T214409Z
 job: 13cfaf1e25c341af
 dispatched_at: 2026-10-26T214415Z
+outcome: neutral
+verdict_detail: within-ci
+speedup: 1.47107534271079
+speedup_ci: [1.4490092125701282, 1.4931414728514518]
+harvested_at: 2026-10-26T220301Z
+best_at_harvest: 1.4677493909229
+promotion: null
 ---
 
 # experts-rega-s4-bm256-wide-tile-high-ft-cf
@@ -66,4 +73,33 @@ No code change: `experts-rega-s4-bm256-wide-tile-high-ft` implementation commit 
 okc_lint: `OK with warnings` (0 errors; 101 host-sync warnings, all in prepare-only code outside kernel_fn's call graph, and 5 pre-existing dtype warnings). `python3 -I -m py_compile`: ok; `__pycache__` removed.
 
 Copied from `experts-rega-s4-bm256-wide-tile-high-ft`, whose code this is; the only change is a comment.
+
+## Result
+
+- job `13cfaf1e25c341af` (check), status done, passed True, tests 5/5
+- speedup 1.4711x, 95% CI [1.4490, 1.4931], score 263347.4226317467 µs vs SGLang 387403.9 µs
+- best at harvest: {"speedup": 1.4677493909229, "ci": [1.4457331500590564, 1.4897656317867434], "job": "73b40cd13fdf4bb0"}; base result: muse_prefill_layer/hypotheses/done/neutral/experts-rega-s4-bm256-wide-tile-high-ft.result.json
+- **outcome: neutral** (within-ci)
+- files: `muse_prefill_layer/hypotheses/done/neutral/experts-rega-s4-bm256-wide-tile-high-ft-cf.result.json`, `muse_prefill_layer/hypotheses/done/neutral/experts-rega-s4-bm256-wide-tile-high-ft-cf.patch`; branch `hyp/muse_prefill_layer/experts-rega-s4-bm256-wide-tile-high-ft-cf`
+- confirm of `experts-rega-s4-bm256-wide-tile-high-ft`: pooled 1.4758x (job a6f6063051f14750) and 1.4711x (job 13cfaf1e25c341af) → 1.4734x; best 1.4677x, two-run margin 1.07% → neutral (unproven-vs-best)
+
+## Attribution
+
+| shape | w | base µs | hyp µs | delta | verdict |
+|---|---|---|---|---|---|
+| batch=1 ctx=80000 dist=soft layer=sliding load=turn_1 page=1 q_len=753 repeats=6 | 46 | 769.33 | 727.71 | 1.015 | flat |
+| batch=1 ctx=80000 dist=soft layer=full load=turn_1 page=1 q_len=753 repeats=6 | 16 | 1145.38 | 1101.56 | 1.0103 | flat |
+| batch=4 ctx=80000 dist=soft layer=sliding load=turn_4 page=1 q_len=753 repeats=6 | 46 | 2148.97 | 2094.58 | 0.9982 | flat |
+| batch=4 ctx=80000 dist=soft layer=full load=turn_4 page=1 q_len=753 repeats=6 | 16 | 3725.86 | 3682.33 | 0.9941 | flat |
+| batch=1 ctx=0 dist=soft layer=full load=first_turn page=1 q_len=16384 repeats=6 | 16 | 10973.2 | 11119.1 | 0.9786 | flat |
+| batch=1 ctx=32768 dist=soft layer=sliding load=first_turn page=1 q_len=16384 repeats=6 | 138 | 10828.31 | 11000.86 | 0.9794 | flat |
+| batch=1 ctx=32768 dist=soft layer=full load=first_turn page=1 q_len=16384 repeats=6 | 16 | 14827.97 | 14714.82 | 0.98 | flat |
+| batch=1 ctx=65536 dist=soft layer=full load=first_turn page=1 q_len=16384 repeats=6 | 16 | 18238.85 | 18343.87 | 0.9939 | flat |
+
+no shape moved outside noise. Noise ±1.5%.
+
+## Follow-ups
+
+- pooled verdict for `experts-rega-s4-bm256-wide-tile-high-ft`: neutral (unproven-vs-best); this file is the record of the rerun only.
+- within-ci: the change is not proven either way; a stacked hypothesis (`depends_on: experts-rega-s4-bm256-wide-tile-high-ft-cf`) that adds a further change in the same area is the only way to learn more.
 

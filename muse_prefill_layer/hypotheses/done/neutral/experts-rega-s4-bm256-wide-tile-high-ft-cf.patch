@@ -1,0 +1,10 @@
+diff --git a/muse_prefill_layer/submission.py b/muse_prefill_layer/submission.py
+index 82449fd7..5d7e2cb0 100644
+--- a/muse_prefill_layer/submission.py
++++ b/muse_prefill_layer/submission.py
+@@ -6803,3 +6803,5 @@ def kernel_fn(data, state):
+     # Post-FFN boundary, with the next layer's pre-attention norm.
+     next_attn_input, stream, _ = state["ffn_boundary"](stream, ffn_output, branch_dtype=torch.bfloat16)
+     return next_attn_input, stream, topk_ids
++
++# churn confirm rerun of experts-rega-s4-bm256-wide-tile-high-ft (job a6f6063051f14750); code otherwise identical
