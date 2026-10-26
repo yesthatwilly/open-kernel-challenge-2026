@@ -73,7 +73,7 @@ review: proceed
 status: running
 review_at: 2026-10-25T212855Z
 review_companions: null
-stage: claimed
+stage: implemented
 claimed_at: 2026-10-25T212905Z
 base_sha: 29d5f864b053aab03e8c54ff87dd01db6442070e
 base_blob: 6d6afa4722731ceb9cb8216d0334a03f1a96ad2b
@@ -82,6 +82,12 @@ worktree: .worktrees/muse_attention_decode/sliding-verify-wgmma-window-s1
 mode: null
 restack_of: null
 stale_base: null
+implemented_at: 2026-10-26T004942Z
+impl_commit: ae788b564701c5b041a7cf8d94efa567ae51eb0e
+submission_sha256: 88cb856674238b072969154919eba5b619d2416a0ede6ce9cc001d433bed419e
+norm_sha256: 2aa40cd291ecdbe482a93231c86c7267c92357d03183e1aa4b667bac32c4ec58
+submission_blob: c06e0fbeba63badb368924c2a565fe5ba167d510
+lint_warnings: 73
 ---
 
 # sliding-verify-wgmma-window-s1
@@ -136,3 +142,54 @@ No companions. This is kind: rewrite, judged on the replaced kernels' own time p
 - Retire or mark superseded the held full-verify-wgmma-s4-sliding-window and sliding-verify-cuda-streamk-window queue items, so a later tick does not run the same idea again on the broken base.
 - Does the gate's B=2..16 band (timed only at B=16) risk routing small-B tests (B=3/4/5 ragged, ctx 4000-6000) through a grid tuned for 528 tiles? Correctness is covered by the self-check; only speed at unscored B is affected, which is acceptable but worth noting.
 
+
+## Implementation notes
+
+Edited only `<worktree>/muse_attention_decode/submission.py` (+1215 lines, nothing removed). Base is master 29d5f864 (the claim base). The s5 kernel is NOT on master (branch `hyp/muse_attention_decode/full-verify-wgmma-s5-qfrag-reload`, 69378d7), so its CUDA source was taken from that branch's file and ported by script into a new `_SW_CUDA` string (new module `muse_sliding_verify_wgmma_v1`, kernel `slidewin_verify_wgmma_kernel<TICKET>`, entry points `sw_verify_attn` / `sw_verify_attrs`, so no symbol shares a name with another module).
+
+What changed:
+- Kernel: math, 4-stage ring, SW128/SW64 layouts, qa reload, ticket merge + norm-gate, bounded mbarrier waits and error word are verbatim. Dropped: the DBG instantiation and stage 2's B8 combine (the merge tail is timed with the `TICKET=false` instantiation instead). Added one int `window`: `lo_s[b] = window > 0 ? max(0, seq - 8 - (window - 1)) : 0`, `seq_s[b]` holds the window's key COUNT (seq - lo), so `tile_prefix`, the ticket tile count, the tile loop and the `edge` test are unchanged; page-index prefetch reads `page_table[b, lo + pos]` only when `pos < count`; mask adds `elo = window > 0 && lt*64 < count - window` and masks `tile token < lim - window` (equivalent to key t >= seq - 8 + j - (window - 1)). `window = 0` gives lo = 0, no lower mask (same math as s5).
+- Route: `_sw_gate(cfg)` (config-only, window == 2048, q_len 8, page 1, hq 16, hkv 2, hd 64, rope on, 1 <= B <= 32, band routed) is tested in kernel_fn BEFORE the PSEUDO predicate and returns `_sw_forward` (master `_ps_prepare_q` = `_pre_attention_kernel` unchanged, then the one kernel). `paired` needs window == 0, so it is disjoint by construction; PSEUDO (B=1) is shadowed only while this route is on for that band.
+- New state: `_SW_ROUTE` (frozen MappingProxyType, read-only after prepare), `_sw_buf` int32[129] (self-resetting tickets + error word, zeroed once from the device alone), per-launch workspace by `torch.empty` from shapes. No device pointer into a state's tensors, no TMA, no state-sized buffer. No per-state flag pattern (`_ab_flags` / `NEW_CELL_FLAGS`) exists in this file, so the band dict is the flag; a miss never touches another landed route.
+- Prepare (`_sw_setup`, called last at import so master's routes are final): build (deadline), image check (regs, spill, CTAs/SM printed), self-check, three band gates (B=16, 32, then 1), two-state replay of each routed band through `kernel_fn`, ticket/error-word check, recap.
+- `_say` now also records `PATH CHOSEN` lines in `_PATH_LOG`; `_sw_recap()` prints them plus this hypothesis' GATE/PATH lines as the last lines of prepare. `_IMPORT_T0` was added at the top for phase deadlines.
+
+Review fixes applied:
+1. Partial tail tile: prefetch predicated on `pos < count` (zero-fill, no read), tile starts at lo_b (not 64-aligned), page index also clamped to the cache as in s5.
+2. kv_scale 1/64 (0.015625) added to the self-check (B=1 lens 1500 and 80000, B=16, B=32) and to the B=16 two-state replay; kv 0.25 and 1 kept. Route is not restricted by kv_scale.
+3. Two interleaved gate rounds (31 reps, cold L2, empty graph subtracted) for the best two grids; a grid routes only if master/cand >= 1.05 in BOTH rounds, candidate IQR <= 1.5x master's in both, and rel L2 vs master's routed output < 3e-2 (plus < 2e-2 vs fp32 reference). Master is `kernel_fn(data)` with this route off, i.e. the ACTUALLY routed path (PSEUDO at B=1 if landed, FA3 + norm-gate otherwise), pre-attention on both sides.
+4. Budget: quick ~7-rep interleaved pass over {2B, 4B, 8B, SM, 2xSM} (deduped, capped at 2xSM), finals only for the top 2 and only if the quick best is >= 1.0x. Elapsed per phase printed; deadlines on the import clock: build 360 s, self-check 420, quick/gate start 470, finals 520, replay 560, each prints `skipped: deadline` and keeps master. Constants are `_SW_*_BY`.
+5. Per grid, printed separately: pre-attn + kernel, kernel only (no merge, partials only), kernel + ticket merge + norm-gate, and the tail (difference).
+6. Route predicate disjoint from `paired` and the B=1 PSEUDO route (checked first, early return).
+
+Answers to open questions: B=2..16 band is gated only at B=16 and the grid spec scales with B (2B/4B/8B) or is SM-based, so B=3..5 ragged get a sensible grid; speed at unscored B is unmeasured but correctness is covered by B=2/5 self-check cases (grid 7 / device). Retiring held queue items s4 / streamk-window is not done (the build is limited to submission.py).
+
+Deviations: the 300 s prepare budget cannot be met if import is already ~222 s (DIAGNOSIS); the deadlines above are on the import clock and are my judgment, please adjust `_SW_*_BY` if the judge's prepare limit is hard. Nothing could be compiled or run on this node.
+
+## Rules check
+
+- [x] CUDA-graph capturable: kernel_fn adds only `_sw_gate` (config) and `_sw_forward` (pre-attn + one launch); `.item()`/synchronize only in prepare (lint: warnings outside kernel_fn's call graph); allocations are shape-only.
+- [x] Nothing derived from `data` is cached: `_sw_buf` is device-only self-resetting tickets; `_SW_ROUTE` is config/band only.
+- [x] Weights: n/a: attention problem, no weights touched.
+- [x] KV FP8, q e4m3 (master pre-attention kernel), fp32 softmax/merge, bf16 out, P e4m3 as FA3's FP8 path (s5 verbatim).
+- [x] Every key in each window attended: tiles cover [lo_b, seq_b); mask exactly FA3 window_size=(window-1, 0); no skipping.
+- [x] No timing patches, harness access, module edits, subprocesses or network; load_inline only (no child process code added).
+- [x] All work inside the timed call; no output caching or replay; timing code only in prepare.
+
+okc_lint: `OK with warnings: muse_attention_decode/submission.py` (only host-sync warnings in prepare-only code, outside kernel_fn's call graph). `python3 -I -m py_compile` passes; __pycache__ removed.
+
+## Pre-flight audit
+
+Verdict: dispatch-with-fixes (auditor: opus; read only, nothing could be compiled or run).
+
+Fixes:
+- Phase deadlines `_SW_*_BY` tightened from 360/420/470/470/520/560 s to build 330, self-check 380, quick+gate start 430, finals 460, replay 480 s. Reason: the old values let the replay phase start at 560 s and finish near 600 s on a clock that starts after the torch/triton imports, which leaves the 16 tests and timing little room inside the 15 min limit. The new values match the 480 s import start rule used by the merge port. Master's import is about 222 s, so the build (about 34 s) still starts with about 100 s of slack.
+
+Checked and sound:
+- Tail-tile reads: `issue_meta` reads `page_table[b, lo + pos]` only when `f < s1` and `pos < count`, and zero-fills otherwise. `issue_tile` zero-fills K/V rows past the count, and the score mask removes them. lo + pos < seq, so it never passes the page-table row.
+- Mask: upper edge unchanged. Lower edge `ct < lim - window` is equivalent to FA3 window_size=(window-1, 0), checked at seq = window+7, window+8 and ragged tails. `elo` is a correct tile-level guard.
+- Route: `_sw_gate` is config-only and runs before the PSEUDO predicate. Sliding verify has window != 0, so it is never `paired` and never reaches splitkv/fused. The band dict is frozen after prepare, and the replay check asserts the gate.
+- kernel_fn branches only on config. Allocations are shape-only, `_sw_buf` is device-only, and there are no syncs or prints.
+- The self-check reference matches the kernel's seq convention (cache_seqlens = lens + 8). Shared memory is about 100 KB, so 2 CTAs/SM fits.
+
+Residual risk: the speed is unmeasured at low occupancy (about 2 tiles per CTA), so the 1.05x two-round gate may leave a band on master; the 480 s start rule drops late phases to master with PATH CHOSEN lines rather than failing.
