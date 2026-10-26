@@ -5,17 +5,21 @@ append-only, newest last.
 
 ## Now
 
-- updated: 2026-10-26T18:45Z
-- step: dq3 (Engine A's exact dequant in 9 ALU ops per code word instead of about 11) in its read-only audit; Engine
-  D killed
-- in flight: nothing on the judge; the dq3 audit is running
-- next action at 00:00Z (10-27):
-  1. decode scored run of `submission.edoff-27ef83df.py` (check f59cb301, 1.5347; content hash 613b6c2d...); land
-     it on master.
-  2. moe check of dq3 (the ladder re-measures C-R2/C-R4 and dq_exact; moe's own rows show the effect).
-  3. decode check of dq3 + the anatomy print.
+- updated: 2026-10-26T19:30Z
+- step: waiting for the 00:00Z reset. Ready: a decode scored run, a moe dequant A/B check and a decode anatomy check.
+  Engine D is killed.
+- in flight: nothing
+- next action at 00:00Z (10-27), from the drafts in the session scratchpad (submit_attempt.md, dqab_attempt.md,
+  anat_attempt.md):
+  1. `okc submit` of `submission.edoff-27ef83df.py` (check f59cb301, 1.5347). Verify that the content hash is
+     613b6c2d..., then land it on master.
+  2. moe check at 338cf9fe: ladder dq A/B (dq2 production vs dq3 rot-shf vs dq4 rot-mul in v4's geometry; dq_exact
+     with crosstalk filler). If dq3 or dq4 wins by 5% or more at C-R4, switch the production layout.
+  3. decode check at 338cf9fe: the anatomies (expert block alone at T=1/8/16/32; the T=128/256 hybrid whole / hot /
+     cold) choose the next lever: T=1 fixed costs (glue), cold-engine rate, or hot (wgmma).
 - quota left 10-26: decode 0 checks / 0 scored, moe 0 / 4
-- boards: decode **1.4956** (rank 342 of 737), moe **1.6851** (rank 370 of 844), overall 347 of 1228
+- boards: decode **1.4956** (rank 347 of 740; 1.5347 would be about 318, 1.552 is rank 300, 1.707 rank 200),
+  moe **1.6851** (rank 370 of 844), overall 347 of 1228
 
 ## 2026-10-26T15:35Z: campaign opened
 
