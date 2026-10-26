@@ -160,3 +160,17 @@ Passed 5/5 (master path scored 1.3865, irrelevant). 201 MB bank, read flush, gra
 - Checks turn around in ~8 minutes. Remaining levers come from the builders: v3 (T=16/32 hot experts), Engine B
   iteration (T=128/256), dense swap-AB port (decode qkv / o / unpooler at T <= 32).
 
+## 2026-10-26T07:38Z: v3 and the dense port on the decode board (1.3928, overall 404); Engine B parked
+
+- Engine A v3 (builder, merged c2d85fb7; Opus audit clean): canary clean T 1..32 in both problems, 2 CTAs/SM (110/93/
+  111/94 regs). Gates pick v3 at T=32: decode whole layer x1.140, moe x1.094. decode check 37acd0bba1a44f56 **1.4107**
+  (d32 load 1.242 -> 1.305), scored 28a26c95166941ef drew 1.3838 (verify loads low); moe 22ac0cb836e34645 1.5582.
+- Dense swap-AB port (builder, merged 689b0424): swap-AB wins every qkv_gate (x1.09-1.16) and o (x1.04-1.12) GEMM
+  selector at T 1/8/16/32, unpooler stays cuBLAS; whole-layer gates x1.003-1.018. decode check c32a67ebbb8b4367 1.4052,
+  scored f8accdd5c5cc4923 **1.3928**.
+- Engine B v2 (mma.sync cell m + wgmma cell w, 128-k stages, its own repack): correct, 1.5-1.76 TB/s, gates 0.60-0.76x
+  -> master; diagnostics: ring alone 4.0 TB/s, no-dequant 3.5, no-MMA 2.9, together 1.76 ("OVERLAP": the consumer
+  doing dequant plus up to 4 n-tiles of MMA is the cost). Parked (CAMPAIGN_ENGINE_B = False).
+- In flight: hot/cold Marlin builder (decode T=128/256: cold experts at bsm 16, hot at 32/48/64) and a v3-to-T<=256
+  builder (both problems' T=128/256 classes).
+
