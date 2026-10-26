@@ -1,0 +1,139 @@
+d; launching splitkv_attn_sk_kernel<4 stages, ticket, PSEUDO TOK=1> grid 64
+[sd] B=32 ragged grid 2R: splitkv_attn_sk_kernel returned
+[sd] B=32 ragged grid 2R: rel L2 1.66e-03, finite True -> ok
+[sd] B=32 ragged two-level grid device: launching _pre_attention_kernel
+[sd] B=32 ragged two-level grid device: _pre_attention_kernel returned; launching splitkv_attn_sk_kernel<4 stages, two-level ticket, PSEUDO TOK=1> grid 264
+[sd] B=32 ragged two-level grid device: splitkv_attn_sk_kernel returned
+[sd] B=32 ragged two-level grid device: rel L2 1.66e-03, finite True -> ok
+[sd] tickets (both levels) after the self-check: sum 0
+[sd-gate] B=32: 32 rows x 32 tiles = 1024 tiles; unique K+V 16.8 MB over DRAM (no amplification: one token per request)
+[sd-gate] B=32: launching _pre_attention_kernel
+[sd-gate] B=32: pre-attention returned (new rows stored)
+[sd-gate] B=32: launching <4 stages, ticket, PSEUDO TOK=1> grid 64 (p2) (eager correctness run)
+[sd-gate] B=32: <4 stages, ticket, PSEUDO TOK=1> grid 64 (p2) returned, rel L2 1.65e-03, finite True, 16.0 tiles per CTA, ~2.0 slots per request
+[sd-gate] B=32: launching <4 stages, two-level ticket, PSEUDO TOK=1> grid 64 (p2) (eager correctness run)
+[sd-gate] B=32: <4 stages, two-level ticket, PSEUDO TOK=1> grid 64 (p2) returned, rel L2 1.65e-03, finite True, 16.0 tiles per CTA, ~2.0 slots per request
+[sd-gate] B=32: launching <4 stages, ticket, PSEUDO TOK=1> grid 96 (p3) (eager correctness run)
+[sd-gate] B=32: <4 stages, ticket, PSEUDO TOK=1> grid 96 (p3) returned, rel L2 1.65e-03, finite True, 10.7 tiles per CTA, ~3.0 slots per request
+[sd-gate] B=32: launching <4 stages, two-level ticket, PSEUDO TOK=1> grid 96 (p3) (eager correctness run)
+[sd-gate] B=32: <4 stages, two-level ticket, PSEUDO TOK=1> grid 96 (p3) returned, rel L2 1.65e-03, finite True, 10.7 tiles per CTA, ~3.0 slots per request
+[sd-gate] B=32: launching <4 stages, ticket, PSEUDO TOK=1> grid 128 (p4) (eager correctness run)
+[sd-gate] B=32: <4 stages, ticket, PSEUDO TOK=1> grid 128 (p4) returned, rel L2 1.65e-03, finite True, 8.0 tiles per CTA, ~4.0 slots per request
+[sd-gate] B=32: launching <4 stages, two-level ticket, PSEUDO TOK=1> grid 128 (p4) (eager correctness run)
+[sd-gate] B=32: <4 stages, two-level ticket, PSEUDO TOK=1> grid 128 (p4) returned, rel L2 1.65e-03, finite True, 8.0 tiles per CTA, ~4.0 slots per request
+[sd-gate] B=32: launching <4 stages, ticket, PSEUDO TOK=1> grid 256 (p8) (eager correctness run)
+[sd-gate] B=32: <4 stages, ticket, PSEUDO TOK=1> grid 256 (p8) returned, rel L2 1.65e-03, finite True, 4.0 tiles per CTA, ~8.0 slots per request
+[sd-gate] B=32: launching <4 stages, two-level ticket, PSEUDO TOK=1> grid 256 (p8) (eager correctness run)
+[sd-gate] B=32: <4 stages, two-level ticket, PSEUDO TOK=1> grid 256 (p8) returned, rel L2 1.65e-03, finite True, 4.0 tiles per CTA, ~8.0 slots per request
+[sd-gate] B=32: launching <4 stages, ticket, PSEUDO TOK=1> grid 132 (sm) (eager correctness run)
+[sd-gate] B=32: <4 stages, ticket, PSEUDO TOK=1> grid 132 (sm) returned, rel L2 1.65e-03, finite True, 7.8 tiles per CTA, ~4.1 slots per request
+[sd-gate] B=32: launching <4 stages, two-level ticket, PSEUDO TOK=1> grid 132 (sm) (eager correctness run)
+[sd-gate] B=32: <4 stages, two-level ticket, PSEUDO TOK=1> grid 132 (sm) returned, rel L2 1.65e-03, finite True, 7.8 tiles per CTA, ~4.1 slots per request
+[sd-gate] B=32: launching <4 stages, ticket, PSEUDO TOK=1> grid 264 (2sm) (eager correctness run)
+[sd-gate] B=32: <4 stages, ticket, PSEUDO TOK=1> grid 264 (2sm) returned, rel L2 1.65e-03, finite True, 3.9 tiles per CTA, ~8.2 slots per request
+[sd-gate] B=32: launching <4 stages, two-level ticket, PSEUDO TOK=1> grid 264 (2sm) (eager correctness run)
+[sd-gate] B=32: <4 stages, two-level ticket, PSEUDO TOK=1> grid 264 (2sm) returned, rel L2 1.65e-03, finite True, 3.9 tiles per CTA, ~8.2 slots per request
+[sd-gate] B=32: launching master Triton _sliding_fused_kernel (eager) for its error
+[sd-gate] B=32: master Triton rel L2 8.22e-02, finite True
+[sd-gate] B=32: launching master sliding cluster kernel C=4 (eager) for its error
+[sd-gate] B=32: master cluster C=4 rel L2 1.13e-01, finite True
+[sd-gate] B=32: incumbent = master cluster C=4; route needs the best pair >= 1.03x faster in the head-to-head re-time
+[sd-gate] B=32: pass 1: timing 14 graphs interleaved (+ empty), cold L2, median of 21
+[sd-gate] B=32: pass 1 empty graph replay 3.0 us (subtracted from every number below)
+[sd-gate] B=32: pass 1 master Triton _sliding_fused_kernel:    28.6 us raw,    25.6 us net
+[sd-gate] B=32: pass 1 master cluster C=4:    25.1 us raw,    22.0 us net
+[sd-gate] B=32: pass 1 [pre-attn + sk] <4 stages, ticket, PSEUDO TOK=1> grid 64 (p2):    27.6 us raw,    24.6 us net, Triton / pair 1.042x, cluster C=4 / pair 0.897x
+[sd-gate] B=32: pass 1 [pre-attn + sk] <4 stages, two-level ticket, PSEUDO TOK=1> grid 64 (p2):    27.9 us raw,    24.9 us net, Triton / pair 1.028x, cluster C=4 / pair 0.886x
+[sd-gate] B=32: pass 1 [pre-attn + sk] <4 stages, ticket, PSEUDO TOK=1> grid 96 (p3):    24.6 us raw,    21.6 us net, Triton / pair 1.187x, cluster C=4 / pair 1.022x
+[sd-gate] B=32: pass 1 [pre-attn + sk] <4 stages, two-level ticket, PSEUDO TOK=1> grid 96 (p3):    26.5 us raw,    23.5 us net, Triton / pair 1.090x, cluster C=4 / pair 0.939x
+[sd-gate] B=32: pass 1 [pre-attn + sk] <4 stages, ticket, PSEUDO TOK=1> grid 128 (p4):    22.1 us raw,    19.1 us net, Triton / pair 1.338x, cluster C=4 / pair 1.152x
+[sd-gate] B=32: pass 1 [pre-attn + sk] <4 stages, two-level ticket, PSEUDO TOK=1> grid 128 (p4):    24.8 us raw,    21.8 us net, Triton / pair 1.176x, cluster C=4 / pair 1.013x
+[sd-gate] B=32: pass 1 [pre-attn + sk] <4 stages, ticket, PSEUDO TOK=1> grid 256 (p8):    25.0 us raw,    22.0 us net, Triton / pair 1.166x, cluster C=4 / pair 1.004x
+[sd-gate] B=32: pass 1 [pre-attn + sk] <4 stages, two-level ticket, PSEUDO TOK=1> grid 256 (p8):    27.8 us raw,    24.8 us net, Triton / pair 1.032x, cluster C=4 / pair 0.889x
+[sd-gate] B=32: pass 1 [pre-attn + sk] <4 stages, ticket, PSEUDO TOK=1> grid 132 (sm):    24.5 us raw,    21.5 us net, Triton / pair 1.192x, cluster C=4 / pair 1.027x
+[sd-gate] B=32: pass 1 [pre-attn + sk] <4 stages, two-level ticket, PSEUDO TOK=1> grid 132 (sm):    27.4 us raw,    24.4 us net, Triton / pair 1.050x, cluster C=4 / pair 0.904x
+[sd-gate] B=32: pass 1 [pre-attn + sk] <4 stages, ticket, PSEUDO TOK=1> grid 264 (2sm):    27.2 us raw,    24.2 us net, Triton / pair 1.058x, cluster C=4 / pair 0.911x
+[sd-gate] B=32: pass 1 [pre-attn + sk] <4 stages, two-level ticket, PSEUDO TOK=1> grid 264 (2sm):    30.1 us raw,    27.1 us net, Triton / pair 0.945x, cluster C=4 / pair 0.813x
+[sd-gate] B=32: pass 1 picked <4 stages, ticket, PSEUDO TOK=1> grid 128 (p4): 19.1 us net, cluster C=4 / pair 1.152x (first-pass minimum of 12: biased, NOT the routing number)
+[sd-gate] B=32: pass 2: re-timing the picked pair vs cluster C=4 vs Triton, median of 31
+[sd-gate] B=32: pass 2 (empty 3.0 us): pair 19.2 us net, cluster C=4 22.0 us net, Triton 25.7 us net; sk kernel alone 16.1 us net (1.04 TB/s of window bytes), pre-attention alone 4.0 us net
+[sd-gate] B=32: pass 2 pair <4 stages, ticket, PSEUDO TOK=1> grid 128 (p4) 19.2 us vs cluster C=4 22.0 us vs Triton 25.7 us -> cluster C=4 / pair 1.145x, Triton / pair 1.341x (ROUTE)
+[sd] replay B=32 state A: eager warm-up of kernel_fn on a side stream
+[sd] replay B=32 state A: warm-up returned; capturing kernel_fn
+[sd] replay B=32 state B: eager warm-up of kernel_fn on a side stream
+[sd] replay B=32 state B: warm-up returned; capturing kernel_fn
+[sd] replay B=32 round 0 state A (refilled): launching graph (_pre_attention_kernel + splitkv_attn_sk_kernel)
+[sd] replay B=32 round 0 state A: rel L2 1.67e-03, finite True -> ok
+[sd] replay B=32 round 0 state B (refilled): launching graph (_pre_attention_kernel + splitkv_attn_sk_kernel)
+[sd] replay B=32 round 0 state B: rel L2 1.67e-03, finite True -> ok
+[sd] replay B=32 round 1 state A (refilled): launching graph (_pre_attention_kernel + splitkv_attn_sk_kernel)
+[sd] replay B=32 round 1 state A: rel L2 1.66e-03, finite True -> ok
+[sd] replay B=32 round 1 state B (refilled): launching graph (_pre_attention_kernel + splitkv_attn_sk_kernel)
+[sd] replay B=32 round 1 state B: rel L2 1.65e-03, finite True -> ok
+[sd] replay B=32 round 2 state A (refilled): launching graph (_pre_attention_kernel + splitkv_attn_sk_kernel)
+[sd] replay B=32 round 2 state A: rel L2 1.66e-03, finite True -> ok
+[sd] replay B=32 round 2 state B (refilled): launching graph (_pre_attention_kernel + splitkv_attn_sk_kernel)
+[sd] replay B=32 round 2 state B: rel L2 1.65e-03, finite True -> ok
+[sd] replay B=32 round 3 state A (refilled): launching graph (_pre_attention_kernel + splitkv_attn_sk_kernel)
+[sd] replay B=32 round 3 state A: rel L2 1.66e-03, finite True -> ok
+[sd] replay B=32 round 3 state B (refilled): launching graph (_pre_attention_kernel + splitkv_attn_sk_kernel)
+[sd] replay B=32 round 3 state B: rel L2 1.65e-03, finite True -> ok
+[sd] tickets (both levels) after the replay checks: sum 0
+PATH CHOSEN: sliding decode B=1: master (cluster C=16), not gated in this restack
+PATH CHOSEN: sliding decode B=2..16: master (Triton), not gated in this restack
+PATH CHOSEN: sliding decode B=17..32: [pre-attn + stream-K sk window] <4 stages, ticket, PSEUDO TOK=1> grid p4; head-to-head (pass 2) pair 19.2 us net vs cluster C=4 22.0 us net vs Triton 25.7 us net (cluster C=4 / pair 1.145x; pass 1 1.152x) (>= 1.03x vs master incumbent)
+[sd] shared tickets re-zeroed at the end of the sliding-decode setup: sum 0
+[fv] B=1 round 0 (batch 1, ctx 80000, empty graph 3.0 us subtracted, median of 31):
+[fv]   auto: median 29.8 us, IQR 1.15 (29.4..30.6), auto/this 1.000x
+[fv]   cap 16: median 56.5 us, IQR 0.86 (55.8..56.7), auto/this 0.527x
+[fv]   cap 24: median 43.7 us, IQR 0.90 (43.3..44.2), auto/this 0.681x
+[fv]   cap 32: median 37.1 us, IQR 0.83 (36.8..37.6), auto/this 0.802x
+[fv]   cap 48: median 32.0 us, IQR 1.09 (31.7..32.8), auto/this 0.929x
+[fv]   cap 64: median 30.4 us, IQR 0.96 (30.0..30.9), auto/this 0.978x
+[fv]   cap 96: median 30.2 us, IQR 0.90 (29.8..30.7), auto/this 0.985x
+[fv]   cap 8 (diagnostic, never routed): median 96.4 us, IQR 1.02 (95.9..97.0), auto/this 0.309x
+[fv]   cap 1 (diagnostic, never routed): median 701.3 us, IQR 3.01 (699.8..702.8), auto/this 0.042x
+[fv] B=1 round 1 (batch 1, ctx 80000, empty graph 3.0 us subtracted, median of 31):
+[fv]   auto: median 30.3 us, IQR 0.83 (29.9..30.8), auto/this 1.000x
+[fv]   cap 16: median 56.7 us, IQR 0.77 (56.2..57.0), auto/this 0.534x
+[fv]   cap 24: median 43.5 us, IQR 0.99 (43.3..44.3), auto/this 0.697x
+[fv]   cap 32: median 37.1 us, IQR 0.77 (36.7..37.5), auto/this 0.818x
+[fv]   cap 48: median 31.8 us, IQR 0.86 (31.6..32.5), auto/this 0.954x
+[fv]   cap 64: median 30.0 us, IQR 0.70 (29.8..30.5), auto/this 1.011x
+[fv]   cap 96: median 30.2 us, IQR 0.48 (30.1..30.6), auto/this 1.003x
+[fv]   cap 8 (diagnostic, never routed): median 96.4 us, IQR 0.77 (96.0..96.8), auto/this 0.314x
+[fv]   cap 1 (diagnostic, never routed): median 701.6 us, IQR 3.62 (699.8..703.4), auto/this 0.043x
+[fv] B=2..24 round 0 (batch 16, ctx 80000, empty graph 3.0 us subtracted, median of 31):
+[fv]   auto: median 147.9 us, IQR 1.41 (147.1..148.5), auto/this 1.000x
+[fv]   cap 4: median 270.8 us, IQR 2.69 (269.2..271.9), auto/this 0.546x
+[fv]   cap 6: median 188.7 us, IQR 1.98 (187.3..189.3), auto/this 0.784x
+[fv]   cap 8: median 148.0 us, IQR 1.25 (147.3..148.5), auto/this 0.999x
+[fv]   cap 12: median 107.4 us, IQR 1.06 (106.9..108.0), auto/this 1.377x
+[fv]   cap 16: median 101.4 us, IQR 0.99 (100.9..101.9), auto/this 1.459x
+[fv] B=2..24 round 1 (batch 16, ctx 80000, empty graph 3.0 us subtracted, median of 31):
+[fv]   auto: median 148.3 us, IQR 1.50 (147.7..149.2), auto/this 1.000x
+[fv]   cap 4: median 272.1 us, IQR 2.21 (270.6..272.8), auto/this 0.545x
+[fv]   cap 6: median 188.6 us, IQR 1.34 (188.0..189.4), auto/this 0.786x
+[fv]   cap 8: median 148.3 us, IQR 1.73 (147.3..149.0), auto/this 1.000x
+[fv]   cap 12: median 107.4 us, IQR 1.22 (106.7..107.9), auto/this 1.381x
+[fv]   cap 16: median 101.3 us, IQR 0.80 (100.9..101.7), auto/this 1.463x
+[fv] B=25..64 round 0 (batch 32, ctx 80000, empty graph 3.0 us subtracted, median of 31):
+[fv]   auto: median 274.6 us, IQR 2.30 (273.9..276.2), auto/this 1.000x
+[fv]   cap 4: median 274.3 us, IQR 1.31 (273.4..274.7), auto/this 1.001x
+[fv]   cap 6: median 196.0 us, IQR 3.39 (194.0..197.4), auto/this 1.401x
+[fv]   cap 8: median 173.7 us, IQR 1.86 (172.7..174.6), auto/this 1.581x
+[fv]   cap 12: median 173.6 us, IQR 1.41 (172.7..174.1), auto/this 1.582x
+[fv]   cap 16: median 172.5 us, IQR 1.47 (172.1..173.6), auto/this 1.592x
+[fv] B=25..64 round 1 (batch 32, ctx 80000, empty graph 3.0 us subtracted, median of 31):
+[fv]   auto: median 274.3 us, IQR 3.78 (272.8..276.5), auto/this 1.000x
+[fv]   cap 4: median 273.8 us, IQR 1.60 (273.1..274.7), auto/this 1.002x
+[fv]   cap 6: median 194.6 us, IQR 3.14 (193.3..196.5), auto/this 1.409x
+[fv]   cap 8: median 172.4 us, IQR 1.54 (171.9..173.4), auto/this 1.591x
+[fv]   cap 12: median 172.9 us, IQR 1.57 (172.4..174.0), auto/this 1.586x
+[fv]   cap 16: median 172.8 us, IQR 1.76 (171.8..173.5), auto/this 1.588x
+[fv] check B=2..24 B=2 kv 0.25 cap 16: rel L2 vs auto 3.99e-03, finite True -> ok
+[fv] check B=2..24 B=4 kv 0.25 cap 16: rel L2 vs auto 2.86e-03, finite True -> ok
+[fv] check B=25..64 B=26 kv 1.0 cap 16: rel L2 vs auto 3.49e-03, finite True -> ok
+PATH CHOSEN: full verify B=1: FA3 auto (gate not met: round 0 0.985x < 1.03; round 0 cap Q3 30.7 >= auto median 29.8; round 1 1.003x < 1.03; round 1 cap Q3 30.6 >= auto median 30.3; best cap 96: auto 29.8/30.3 us vs cap 30.2/30.2 us (rounds 0/1; 0.985x / 1.003x))
+PATH CHOSEN: full verify B=2..24: FA3 num_splits=16 (best cap 16: auto 147.9/148.3 us vs cap 101.4/101.3 us (rounds 0/1; 1.459x / 1.463x))
+PATH CHOSEN: full verify B=25..64: FA3 num_splits=16 (best cap 16: auto 274.6/274.3 us vs cap 172.5/172.8 us (rounds 0/1; 1.592x / 1.588x))

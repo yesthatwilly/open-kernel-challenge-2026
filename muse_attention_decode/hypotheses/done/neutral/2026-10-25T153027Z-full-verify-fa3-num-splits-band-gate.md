@@ -53,10 +53,10 @@ kind: primary
 controls_for: null
 prior: fa3-num-splits-full-verify (expired, unrun; it raised splits, this one caps below the dynamic pick)
 review: proceed
-status: running
+status: done
 review_at: 2026-10-25T212855Z
 review_companions: null
-stage: dispatched
+stage: harvested
 claimed_at: 2026-10-25T212903Z
 base_sha: 2922874607ac8f3aee67594fba45a5337e29365e
 base_blob: 6d6afa4722731ceb9cb8216d0334a03f1a96ad2b
@@ -75,6 +75,13 @@ attempt_file: 2026-10-26T012536Z-check-full-verify-fa3-num-splits-band-gate.md
 prepared_at: 2026-10-26T012536Z
 job: 849f2733f8ea4888
 dispatched_at: 2026-10-26T012615Z
+outcome: neutral
+verdict_detail: within-ci
+speedup: 1.5215855200006427
+speedup_ci: [1.498761737200633, 1.550561162638478]
+harvested_at: 2026-10-26T015632Z
+best_at_harvest: 1.5295495462227864
+promotion: null
 ---
 
 # full-verify-fa3-num-splits-band-gate
@@ -160,3 +167,35 @@ Concern answers:
 - (4) The table applies only at window 0, q_len 8, page 1, hq 16/hkv 2, head_dim 64, metadata None, B<=64. The 1M-ctx test (page 64), the dp tests and decode stay on auto. The banded B=2..24 cap does reach the `batch 2 ctx 100000 q_len 8 page 1` test, which is self-checked in prepare at exactly that shape. This follows the spec's banding, so I kept it.
 
 Residual risk: on the judge, a cap below the dynamic pick may simply not win 1.03x in both rounds, giving a flat "auto kept" run. Untested on the judge: the num_splits kwarg itself, and the sweep's wall-clock fit after master's ~400 s import.
+
+## Result
+
+- job `849f2733f8ea4888` (check), status done, passed True, tests 16/16
+- speedup 1.5216x, 95% CI [1.4988, 1.5506], score 2475.2470041896886 µs vs SGLang 3766.3 µs
+- best at harvest: {"speedup": 1.5295495462227864, "ci": [1.5066063030294445, 1.552492789416128], "job": "8713665f3064462c"}; base result: muse_attention_decode/hypotheses/done/neutral/combo-b1-chain-c320-fused-pre-pdl.result.json
+- **outcome: neutral** (within-ci)
+- files: `muse_attention_decode/hypotheses/done/neutral/full-verify-fa3-num-splits-band-gate.result.json`, `muse_attention_decode/hypotheses/done/neutral/full-verify-fa3-num-splits-band-gate.patch`; branch `hyp/muse_attention_decode/full-verify-fa3-num-splits-band-gate`
+
+## Attribution
+
+| shape | w | base µs | hyp µs | delta | verdict |
+|---|---|---|---|---|---|
+| batch=1 ctx=80000 dist=soft heads=tp8 layer=sliding load=decode_1 page=1 | 46 | 12.1 | 11.04 | 1.0892 | gained |
+| batch=1 ctx=80000 dist=coherent heads=tp8 layer=full load=decode_1 page=1 | 16 | 17.39 | 22.49 | 0.7769 | lost |
+| batch=16 ctx=80000 dist=soft heads=tp8 layer=sliding load=decode_16 page=1 spread=agentic | 46 | 15.46 | 15.16 | 1.0122 | flat |
+| batch=16 ctx=80000 dist=coherent heads=tp8 layer=full load=decode_16 page=1 spread=agentic | 16 | 110.77 | 109.43 | 1.0058 | flat |
+| batch=32 ctx=80000 dist=soft heads=tp8 layer=sliding load=decode_32 page=1 spread=agentic | 46 | 17.46 | 17.39 | 0.9995 | flat |
+| batch=32 ctx=80000 dist=coherent heads=tp8 layer=full load=decode_32 page=1 spread=agentic | 16 | 226.89 | 226.68 | 0.9998 | flat |
+| batch=1 ctx=80000 dist=soft heads=tp8 layer=sliding load=verify_1 page=1 q_len=8 | 46 | 13.23 | 13.59 | 1.005 | flat |
+| batch=1 ctx=80000 dist=coherent heads=tp8 layer=full load=verify_1 page=1 q_len=8 | 16 | 30.27 | 29.87 | 1.0082 | flat |
+| batch=16 ctx=80000 dist=soft heads=tp8 layer=sliding load=verify_16 page=1 q_len=8 spread=agentic | 46 | 22.62 | 22.12 | 1.011 | flat |
+| batch=16 ctx=80000 dist=coherent heads=tp8 layer=full load=verify_16 page=1 q_len=8 spread=agentic | 16 | 162.46 | 162.8 | 0.9927 | flat |
+| batch=32 ctx=80000 dist=soft heads=tp8 layer=sliding load=verify_32 page=1 q_len=8 spread=agentic | 46 | 29.01 | 29.43 | 0.9912 | flat |
+| batch=32 ctx=80000 dist=coherent heads=tp8 layer=full load=verify_32 page=1 q_len=8 spread=agentic | 16 | 301.99 | 301.59 | 0.9964 | flat |
+
+gained on sliding decode_1; lost on full decode_1. Expected hit: 2/5. Noise ±1.7%.
+
+## Follow-ups
+
+- within-ci: the change is not proven either way; a stacked hypothesis (`depends_on: full-verify-fa3-num-splits-band-gate`) that adds a further change in the same area is the only way to learn more.
+

@@ -1,0 +1,312 @@
+diff --git a/muse_attention_decode/submission.py b/muse_attention_decode/submission.py
+index 6d6afa47..f171866b 100644
+--- a/muse_attention_decode/submission.py
++++ b/muse_attention_decode/submission.py
+@@ -25,6 +25,8 @@ from sgl_kernel.flash_attn import flash_attn_with_kvcache
+ 
+ from sglang.kernels.ops.muse_spark_v12.norm_gate import rms_norm_gate
+ 
++_T_IMPORT = time.perf_counter()  # prepare-budget reference for the late setup phases (full-verify cap sweep)
++
+ 
+ class Config(TypedDict):
+     batch: int            # B
+@@ -1786,6 +1788,7 @@ def kernel_fn(data: Inputs) -> torch.Tensor:
+         window_size=(window - 1, 0) if window else (-1, -1),
+         scheduler_metadata=metadata,
+         **descale,
++        **_fv_kw(cfg, metadata),  # {} (master's call, FA3 auto) everywhere except the frozen full-verify band caps
+     )
+     if isinstance(out, tuple):
+         out = out[0]
+@@ -5846,6 +5849,280 @@ def _sd_setup_body() -> None:
+              f"head-to-head timings, or failed a check){timing}")
+ 
+ 
++# ---------------------------------------------------------------------------------------------
++# full-verify-fa3-num-splits-band-gate: FA3's num_splits is a CAP under varlen dynamic split, so a value below the
++# dynamic pick trades main-kernel parallelism for a cheaper combine. _FV_SPLITS (band -> int cap) is frozen at
++# import from a synthetic-tensor sweep of master's own step (FA3 + norm gate) and read by kernel_fn through
++# _fv_cap. Only the scored geometry (tp8 hkv 2 / hq 16, head_dim 64, page 1, window 0, q_len 8) is gated;
++# everything else, and every band that does not win the gate, stays on auto (num_splits=0). No new module.
++# ---------------------------------------------------------------------------------------------
++_FV_SPLITS = MappingProxyType({})  # band (1 = B=1, 16 = B=2..24, 32 = B=25..64) -> int cap; absent = auto
++_FV_GATE = 1.03        # auto median / cap median needed in BOTH interleaved rounds
++_FV_IQR_RATIO = 1.5    # cap IQR <= this x auto IQR (+ _FV_IQR_SLACK_US) in both rounds
++_FV_IQR_SLACK_US = 0.5  # absolute slack: event-timer granularity can make auto's IQR 0, which no cap could match
++_FV_REPS = 31
++_FV_IMPORT_DEADLINE_S = 480  # master's import (four ~41 s load_inline builds + gates) alone runs well past 230 s; 15-min run cap
++_FV_BAND_NAMES = {1: "B=1", 16: "B=2..24", 32: "B=25..64"}
++
++
++def _fv_band(batch: int) -> int:
++    if batch == 1:
++        return 1
++    if batch <= 24:
++        return 16
++    return 32 if batch <= 64 else 0
++
++
++def _fv_cap(cfg, metadata) -> int:
++    """Config-only: the frozen cap for this full-verify shape, else 0 (FA3's own dynamic split)."""
++    if (not _FV_SPLITS or cfg["window"] != 0 or cfg["q_len"] != 8 or cfg["page_size"] != 1
++            or cfg["num_q_heads"] != 16 or cfg["num_kv_heads"] != 2 or cfg["head_dim"] != 64
++            or metadata is not None):
++        return 0
++    return _FV_SPLITS.get(_fv_band(cfg["batch"]), 0)
++
++
++def _fv_kw(cfg, metadata) -> dict:
++    """Config-only: extra FA3 kwargs. Empty (byte-identical to master's call) unless a band cap was frozen."""
++    cap = _fv_cap(cfg, metadata)
++    return {"num_splits": cap} if cap else {}
++
++
++def _fv_prep(data):
++    """The master pre-attention launch of a full-verify step (no RoPE; paired query at batch > 1)."""
++    cfg = data["config"]
++    batch, length = cfg["batch"], cfg["q_len"]
++    hq, hkv, d = cfg["num_q_heads"], cfg["num_kv_heads"], cfg["head_dim"]
++    tokens = batch * length
++    qkv = data["qkv"].reshape(tokens, -1)
++    paired = batch > 1
++    q = torch.empty((tokens, hq, 2 * d if paired else d), dtype=FP8, device=qkv.device)
++    _pre_attention_kernel[(tokens, hq + hkv)](
++        qkv, data["positions"], data["cache_loc"], data["k_scale"], data["k_scale"], data["v_scale"],
++        q, data["k_cache"], data["v_cache"],
++        qkv.stride(0),
++        HQ=hq, HKV=hkv, D=d, ROPE=False, EPS=RMS_EPS, PAIRED=paired, G=hq // hkv,
++        num_warps=1,
++    )
++    return q, qkv, paired
++
++
++def _fv_step(data, q, qkv, paired, ns):
++    """Master's step after pre-attention (FA3 + combine + norm gate), as kernel_fn issues it, with num_splits=ns."""
++    cfg = data["config"]
++    batch, length = cfg["batch"], cfg["q_len"]
++    hq, hkv, d = cfg["num_q_heads"], cfg["num_kv_heads"], cfg["head_dim"]
++    tokens = batch * length
++    if paired:
++        s = hkv // 2
++        pages, page_size = data["k_cache"].shape[0], data["k_cache"].shape[1]
++        k_attn = data["k_cache"].view(pages, page_size, s, 2 * d)
++        v_attn = data["v_cache"].view(pages, page_size, s, 2 * d)
++        attn_heads = s
++    else:
++        k_attn, v_attn, attn_heads = data["k_cache"], data["v_cache"], hkv
++    descale = {}
++    if cfg["kv_scale"] != 1.0:
++        descale = dict(k_descale=data["k_scale"].reshape(1, 1).expand(batch, attn_heads),
++                       v_descale=data["v_scale"].reshape(1, 1).expand(batch, attn_heads))
++    out = flash_attn_with_kvcache(
++        q=q, k_cache=k_attn, v_cache=v_attn, page_table=data["page_table"],
++        cache_seqlens=data["cache_seqlens"], cu_seqlens_q=data["cu_seqlens_q"], max_seqlen_q=length,
++        softmax_scale=cfg["sm_scale"] * cfg["qk_scale_factor"], causal=True, window_size=(-1, -1),
++        scheduler_metadata=None, num_splits=ns, **descale,
++    )
++    if isinstance(out, tuple):
++        out = out[0]
++    if paired:
++        attn = out.view(tokens, hq, 2 * d)
++        o = torch.empty((tokens, hq * d), dtype=torch.bfloat16, device=q.device)
++        _paired_norm_gate_kernel[(tokens, hq)](
++            attn, qkv, o, attn.stride(0), attn.stride(1), qkv.stride(0),
++            HQ=hq, HKV=hkv, D=d, G=hq // hkv, EPS=RMS_EPS, num_warps=1,
++        )
++        return o.view(batch, length, hq * d)
++    gate = qkv[:, (hq + 2 * hkv) * d:]
++    o = rms_norm_gate(out.reshape(tokens, hq * d).to(torch.bfloat16), gate, None, head_dim=d, eps=RMS_EPS,
++                      has_norm=True)
++    return o.view(batch, length, hq * d)
++
++
++def _fv_data(lens, kv_scale, gen, dev):
++    """Synthetic full-layer verify inputs (tp8, page 1, q_len 8, no RoPE, window 0)."""
++    data = _ps_synthetic(lens, kv_scale, gen, dev)
++    data["config"].update(window=0, rope_theta=0.0)
++    return data
++
++
++def _fv_samples(fns, flush, reps=_FV_REPS, warm=3):
++    """Per-fn sorted lists of CUDA-graph replay times (us), replays interleaved with the order flipping each
++    iteration, L2 cold (256 MB read before every replay), the empty graph's median subtracted."""
++    graphs = [_graph_of(f) for f in fns]
++    base = torch.cuda.CUDAGraph()
++    with torch.cuda.graph(base):
++        pass
++    torch.cuda.synchronize()
++    allg = graphs + [base]
++    ts = [[] for _ in allg]
++    for it in range(warm + reps):
++        order = list(range(len(allg)))
++        if it % 2:
++            order.reverse()
++        for i in order:
++            flush.sum()
++            e0, e1 = torch.cuda.Event(enable_timing=True), torch.cuda.Event(enable_timing=True)
++            e0.record()
++            allg[i].replay()
++            e1.record()
++            torch.cuda.synchronize()
++            if it >= warm:
++                ts[i].append(e0.elapsed_time(e1) * 1e3)
++    b = sorted(ts[-1])[len(ts[-1]) // 2]
++    del graphs, base, allg
++    return [sorted(t - b for t in tl) for tl in ts[:len(fns)]], b
++
++
++def _fv_stats(s):
++    n = len(s)
++    return s[n // 2], s[n // 4], s[(3 * n) // 4]  # median, q1, q3
++
++
++def _fv_check(batch_lens, kv_scale, cap, gen, dev, tag) -> bool:
++    """The cap's output against auto's on one synthetic shape (rel L2 < 1e-2, finite)."""
++    data = _fv_data(batch_lens, kv_scale, gen, dev)
++    q, qkv, paired = _fv_prep(data)
++    ref = _fv_step(data, q, qkv, paired, 0).clone()
++    got = _fv_step(data, q, qkv, paired, cap)
++    torch.cuda.synchronize()
++    err, finite = _rel_l2(got, ref.float())
++    ok = finite and err < 1e-2
++    _say(f"[fv] check {tag} cap {cap}: rel L2 vs auto {err:.2e}, finite {finite} -> {'ok' if ok else 'FAIL'}")
++    del data, q, qkv, ref, got
++    return ok
++
++
++def _fv_gate_band(band, batch, caps, diag, gen, flush, dev):
++    """Sweep one band on synthetic tensors; returns the chosen int cap or None (keep auto)."""
++    rng = random.Random(2026 + batch)
++    lens = [80000] if batch == 1 else [80000] + [rng.randint(2000, 80000) for _ in range(batch - 1)]
++    data = _fv_data(lens, 1.0, gen, dev)
++    q, qkv, paired = _fv_prep(data)
++    torch.cuda.synchronize()
++    order = [0] + list(caps) + list(diag)  # 0 = auto (master's routed path)
++    fns = [(lambda ns=ns: _fv_step(data, q, qkv, paired, ns)) for ns in order]
++    rounds = []
++    for rnd in range(2):
++        samples, base = _fv_samples(fns, flush)
++        st = {ns: _fv_stats(sm) for ns, sm in zip(order, samples)}
++        rounds.append(st)
++        _say(f"[fv] {_FV_BAND_NAMES[band]} round {rnd} (batch {batch}, ctx {max(lens)}, empty graph {base:.1f} us "
++             f"subtracted, median of {_FV_REPS}):")
++        am, aq1, aq3 = st[0]
++        for ns in order:
++            m, q1, q3 = st[ns]
++            tag = "auto" if ns == 0 else (f"cap {ns}" + (" (diagnostic, never routed)" if ns in diag else ""))
++            _say(f"[fv]   {tag}: median {m:.1f} us, IQR {q3 - q1:.2f} ({q1:.1f}..{q3:.1f}), auto/this {am / m:.3f}x")
++    best = min(caps, key=lambda ns: max(rounds[0][ns][0], rounds[1][ns][0]))
++    ok = True
++    why = []
++    for rnd, st in enumerate(rounds):
++        am, aq1, aq3 = st[0]
++        m, q1, q3 = st[best]
++        if am / m < _FV_GATE:
++            ok = False
++            why.append(f"round {rnd} {am / m:.3f}x < {_FV_GATE}")
++        if not q3 < am:
++            ok = False
++            why.append(f"round {rnd} cap Q3 {q3:.1f} >= auto median {am:.1f}")
++        if (q3 - q1) > _FV_IQR_RATIO * (aq3 - aq1) + _FV_IQR_SLACK_US:
++            ok = False
++            why.append(f"round {rnd} cap IQR {q3 - q1:.2f} > {_FV_IQR_RATIO}x auto IQR {aq3 - aq1:.2f}")
++    del data, q, qkv, fns
++    s0, s1 = rounds[0], rounds[1]
++    summary = (f"best cap {best}: auto {s0[0][0]:.1f}/{s1[0][0]:.1f} us vs cap {s0[best][0]:.1f}/{s1[best][0]:.1f} us "
++               f"(rounds 0/1; {s0[0][0] / s0[best][0]:.3f}x / {s1[0][0] / s1[best][0]:.3f}x)")
++    return (best if ok else None), summary, ("; ".join(why) if why else "")
++
++
++def _fv_recover(stream0) -> bool:
++    """After a raise in the sweep. torch.cuda.graph's __exit__ always ends capture, but if capture_end itself raised
++    (invalidated capture) its capture stream stays current. Restore the import-time stream, confirm nothing is
++    capturing and the device syncs; False means stop sweeping and keep every band on auto."""
++    try:
++        torch.cuda.set_stream(stream0)
++        if torch.cuda.is_current_stream_capturing():
++            return False
++        torch.cuda.synchronize()
++        return True
++    except Exception as e:
++        _say(f"[fv] recovery after a sweep raise failed: {e!r}")
++        return False
++
++
++def _fv_setup() -> None:
++    """Choose and freeze _FV_SPLITS. Any failure, miss or deadline leaves that band on auto (num_splits=0)."""
++    global _FV_SPLITS
++    dev = torch.device("cuda")
++    stream0 = torch.cuda.current_stream()
++    gen = torch.Generator(device="cuda").manual_seed(4242)
++    flush = torch.empty(64 << 20, dtype=torch.float32, device=dev)  # 256 MB > L2
++    t_start = time.perf_counter()
++    table, lines = {}, []
++    sweeps = ((1, 1, (16, 24, 32, 48, 64, 96), (8, 1)),
++              (16, 16, (4, 6, 8, 12, 16), ()),
++              (32, 32, (4, 6, 8, 12, 16), ()))
++    for band, batch, caps, diag in sweeps:
++        name = _FV_BAND_NAMES[band]
++        if time.perf_counter() - _T_IMPORT > _FV_IMPORT_DEADLINE_S or time.perf_counter() - t_start > 45:
++            _say(f"[fv] {name}: skipped: deadline")
++            lines.append(f"PATH CHOSEN: full verify {name}: FA3 auto (skipped: deadline)")
++            continue
++        try:
++            cap, summary, why = _fv_gate_band(band, batch, caps, diag, gen, flush, dev)
++        except Exception as e:
++            _say(f"[fv] {name} raised (band stays auto): {e!r}")
++            lines.append(f"PATH CHOSEN: full verify {name}: FA3 auto (fallback: sweep raised {type(e).__name__})")
++            if not _fv_recover(stream0):
++                table.clear()
++                lines.append("PATH CHOSEN: full verify: FA3 auto in every band (fallback: state not recovered)")
++                break
++            continue
++        if cap is None:
++            lines.append(f"PATH CHOSEN: full verify {name}: FA3 auto (gate not met: {why}; {summary})")
++        else:
++            table[band] = int(cap)
++            lines.append(f"PATH CHOSEN: full verify {name}: FA3 num_splits={cap} ({summary})")
++    del flush
++    torch.cuda.empty_cache()
++    # Self-check each chosen cap against auto on the full-verify tests' shapes at page 1 (and kv scale 1 / 0.25).
++    checks = {1: (([1000], 0.25), ([80000], 1.0)),
++              16: (([100000, 100000], 0.25), ([6000, 1, 4095, 4096], 0.25)),
++              32: (([rng_l for rng_l in range(3000, 3000 + 25 * 1000, 1000)] + [1], 1.0),)}
++    for band in sorted(table):
++        if band not in table:  # cleared by an unrecovered raise
++            continue
++        for lens, kvs in checks[band]:
++            try:
++                good = _fv_check(lens, kvs, table[band], gen, dev, f"{_FV_BAND_NAMES[band]} B={len(lens)} kv {kvs}")
++            except Exception as e:
++                _say(f"[fv] check raised: {e!r}")
++                good = False
++                if not _fv_recover(stream0):
++                    table.clear()
++                    lines.append("PATH CHOSEN: full verify: FA3 auto in every band (fallback: state not recovered)")
++                    break
++            if not good:
++                _say(f"[fv] {_FV_BAND_NAMES[band]} cap dropped to auto (self-check)")
++                lines = [ln.replace(f"FA3 num_splits={table[band]}", "FA3 auto (self-check failed; was num_splits="
++                                    f"{table[band]}") if _FV_BAND_NAMES[band] in ln else ln for ln in lines]
++                table.pop(band, None)
++                break
++    torch.cuda.empty_cache()
++    _FV_SPLITS = MappingProxyType(dict(table))
++    for ln in lines:
++        _say(ln)
++
++
+ if torch.cuda.is_available():
+     _EXT = _build_splitkv()
+     if _EXT is not None and not _splitkv_self_check():
+@@ -5919,3 +6196,9 @@ if torch.cuda.is_available():
+     except Exception as _e:  # never raise at import: sliding decode keeps master exactly
+         _SD_ROUTE = MappingProxyType({})
+         _say(f"PATH CHOSEN: sliding decode master (fallback: setup raised {_e!r})")
++    # Last, so its PATH CHOSEN lines close the prepare log. Never raises: every band keeps auto on any failure.
++    try:
++        _fv_setup()
++    except Exception as _e:
++        _FV_SPLITS = MappingProxyType({})
++        _say(f"PATH CHOSEN: full verify FA3 auto in every band (fallback: setup raised {_e!r})")
