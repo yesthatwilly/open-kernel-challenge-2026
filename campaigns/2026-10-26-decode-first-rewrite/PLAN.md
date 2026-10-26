@@ -1,6 +1,6 @@
 ---
 id: 2026-10-26-decode-first-rewrite
-status: active
+status: closed
 objective: overall board rank (Muse Spark Open Kernel Challenge, kernel track)
 kpi: muse_decode_layer headline (overall rank tracks decode rank, Spearman 0.996)
 baseline: decode 1.3164 board (eaa8cc0f) / 1.3142 master (a903b9d0); overall rank 480 of 1163

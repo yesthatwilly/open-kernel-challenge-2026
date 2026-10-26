@@ -1,0 +1,22 @@
+reported 1.4422  model 1.4422
+loads: decode 1 1.608, decode 16 1.465, decode 32 1.314, verify 1 1.665, verify 16 1.307, verify 32 1.336
+  decode 1  sliding ours   105.0  experts 39%  dense 20%  pooler_router 17%  attention 11%  moe_glue 8%  small 6%
+  decode 1  full    ours   112.7  experts 26%  dense 24%  pooler_router 19%  attention 18%  moe_glue 8%  small 6%
+  decode 16 sliding ours   185.1  experts 50%  moe_glue 17%  dense 15%  pooler_router 9%  attention 6%  small 3%
+  decode 16 full    ours   287.4  attention 35%  experts 32%  dense 13%  moe_glue 10%  pooler_router 8%  small 2%
+  decode 32 sliding ours   226.4  experts 52%  moe_glue 16%  dense 14%  pooler_router 9%  attention 6%  small 3%
+  decode 32 full    ours   431.8  attention 45%  experts 31%  moe_glue 9%  dense 8%  pooler_router 5%  small 2%
+  verify 1  sliding ours   152.3  experts 47%  moe_glue 16%  dense 15%  pooler_router 12%  attention 7%  small 4%
+  verify 1  full    ours   172.8  experts 44%  dense 16%  moe_glue 14%  attention 12%  pooler_router 10%  small 3%
+  verify 16 sliding ours   411.1  experts 75%  dense 18%  small 3%  attention 3%  moe_glue 1%
+  verify 16 full    ours   560.7  experts 57%  attention 26%  dense 13%  small 3%  moe_glue 1%
+  verify 32 sliding ours   546.5  experts 72%  dense 18%  attention 4%  small 3%  moe_glue 3%
+  verify 32 full    ours   816.1  experts 49%  attention 36%  dense 12%  small 2%  moe_glue 1%
+
+scenarios (headline, multiplier):
+  experts T=128/256 x0.5                   1.6508  x1.145
+  experts T<=32 x0.7                       1.5782  x1.094
+  full-layer attention x0.6                1.5017  x1.041
+  dense T=128/256 x0.6                     1.4748  x1.023
+  pooler_router + moe_glue + small x0.6    1.5688  x1.088
+  experts at every T (both above)          1.8065  x1.253

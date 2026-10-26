@@ -1,0 +1,37 @@
+overall rows 1222; with a decode run 731; adjacent decode-order violations among them 94
+solved counts: {1: 405, 2: 92, 3: 50, 4: 675, 5: 0}
+
+teams without a decode run (first 12): overall rank, boards, bracketing decode speedups
+    274 ymiled           {'bf16': 1.5474, 'moe_': 2.3169}  between 1.5779 and 1.5733
+    276 aldinash         {'atte': 2.5226, 'bf16': 1.2113, 'moe_': 2.1078}  between 1.5733 and 1.5715
+    338 jacobortiz       {'atte': 1.8069, 'bf16': 1.1799, 'moe_': 2.04}  between 1.5034 and 1.5009
+    358 mattteochen      {'bf16': 1.3078, 'moe_': 2.1432}  between 1.468 and 1.4654
+    379 m-deepankar-sing {'bf16': 1.2548, 'moe_': 2.1172}  between 1.4443 and 1.4422
+    390 CFC87            {'atte': 2.0806, 'moe_': 2.0331}  between 1.4344 and 1.4331
+    406 Pranshu-Bahadur  {'bf16': 1.2399, 'moe_': 2.0337}  between 1.4192 and 1.4115
+    407 ronithrashmikara {'atte': 1.5074, 'bf16': 1.2231, 'moe_': 1.7712}  between 1.4192 and 1.4115
+    414 Abarbir12        {'moe_': 2.4794}  between 1.4031 and 1.3937
+    423 gauravjain14     {'moe_': 2.3872, 'pref': 1.8455}  between 1.397 and 1.3915
+    429 raskin1          {'moe_': 2.3616}  between 1.3882 and 1.3874
+    440 tarik-sarac      {'moe_': 2.3116}  between 1.3807 and 1.3789
+
+moe-only teams: 65; implied Amdahl moe weight median 0.476 (p25 0.407, p75 0.484)
+
+us: overall rank 380
+  muse_attention_decode    1.5347  rank 424/797
+  muse_bf16_proj           1.2566  rank 362/1064
+  muse_moe_w4a16           1.5762  rank 428/840
+  muse_decode_layer        1.4422  rank 373/731
+  muse_prefill_layer       1.4677  rank 164/464
+
+decode speedup -> decode rank today
+  1.46 -> 358
+  1.51 -> 329
+  1.53 -> 310
+  1.56 -> 283
+  1.62 -> 253
+  1.69 -> 206
+  1.78 -> 136
+  1.86 -> 98
+  1.97 -> 50
+  2.05 -> 27
