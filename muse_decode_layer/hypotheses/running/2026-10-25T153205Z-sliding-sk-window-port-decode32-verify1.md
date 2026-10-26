@@ -85,7 +85,7 @@ base_sha: 4b5ab758064dec781322c9326848d77ac8ab9b96
 base_blob: 3fc72e97304e132db432fcc87872be997f842929
 branch: hyp/muse_decode_layer/sliding-sk-window-port-decode32-verify1
 worktree: .worktrees/muse_decode_layer/sliding-sk-window-port-decode32-verify1
-mode: null
+mode: check
 restack_of: null
 stale_base: null
 implemented_at: 2026-10-26T005253Z
@@ -94,6 +94,8 @@ submission_sha256: fa63b1fb5cbcf0af88c7c1db7264f9f0f273cdf968b31845ea92289bf99e7
 norm_sha256: 12c87fd68d38764b1d0d66d37a797148eb347d4ede0c1ce35e47ccd2ad2b8c4b
 submission_blob: 2e0687a9bdbdcede1b35478fb931d2a37e0dbbc4
 lint_warnings: 78
+attempt_file: 2026-10-26T012541Z-check-sliding-sk-window-port-decode32-verify1.md
+prepared_at: 2026-10-26T012541Z
 ---
 
 # sliding-sk-window-port-decode32-verify1
