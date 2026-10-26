@@ -5,7 +5,7 @@ append-only, newest last.
 
 ## Now
 
-- updated: 2026-10-26T19:50Z
+- updated: 2026-10-26T18:49Z (the 19:30Z / 19:50Z stamps of the last two Now rewrites were estimates, not date -u: wrong)
 - step: waiting for the 00:00Z reset. Ready: a decode scored run, a moe dequant A/B check and a decode anatomy check.
   Engine D is killed.
 - in flight: nothing
