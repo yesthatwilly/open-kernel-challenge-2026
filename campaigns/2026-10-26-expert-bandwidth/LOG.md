@@ -1,6 +1,9 @@
 # Log: campaign 2026-10-26-expert-bandwidth
 
-The "## Now
+The "## Now" block is rewritten by every loop tick (read it first; `head -40 LOG.md`). Entries below it are
+append-only, newest last.
+
+## Now
 
 - updated: 2026-10-26T16:05Z
 - step: X0a dispatched (moe harvested, decode in flight); X0b built (R no-align + combine prefetch), Opus audit running
