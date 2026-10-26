@@ -1,0 +1,67 @@
+16 n=8192: A,B,A,B replays OK, worst rel L2 1.67e-03
+[ab] capture kernel_fn unpooler m=32 n=8192 state A (component master path) ...
+[ab] capture kernel_fn unpooler m=32 n=8192 state B (component master path) ...
+[ab] unpooler m=32 n=8192: A,B,A,B replays OK, worst rel L2 1.67e-03
+[ab] capture kernel_fn o m=16 n=8192 state A (component master path) ...
+[ab] capture kernel_fn o m=16 n=8192 state B (component master path) ...
+[ab] o m=16 n=8192: A,B,A,B replays OK, worst rel L2 1.67e-03
+[ab] capture kernel_fn o m=32 n=8192 state A (component master path) ...
+[ab] capture kernel_fn o m=32 n=8192 state B (component master path) ...
+[ab] o m=32 n=8192: A,B,A,B replays OK, worst rel L2 1.67e-03
+[ab] done in 0.5s; flags now {'ouns_cl': 8, 'router_cluster_ok': True, 'nn_ok': True, 'nn_p256_ok': True, 'bulk_pooler_ok': True, 'bulk_qkv_ok': True, 'bulk_o_ok': False, 'lt_qkv128_ok': True, 'b12_pooler_ok': True, 'b12_qkv_ok': True, 'b12_o_ok': True, 'b12_pooler_m8_ok': False, 'b12_qkv_m8_ok': False, 'b12_o_m8_ok': False, 'b12_pooler_m16_ok': False, 'b12_pooler_m32_ok': False, 'b12_unpooler_m16_ok': False, 'b12_unpooler_m32_ok': False, 'b12_o_m16_ok': False, 'b12_o_m32_ok': False}
+[ouns] final: cl=8: cudaOccupancyMaxActiveClusters=45, needs 16
+[ouns] final: cl=4: cudaOccupancyMaxActiveClusters=62, needs 32
+[router_cluster] final: [162, 0, 0, 82432, 30] (regs, spill B, static smem, dyn smem, max active clusters; needs 16)
+[prepare] FINAL FLAGS: ouns_cl=8 router_cluster_ok=True nn_ok=True nn_p256_ok=True bulk_pooler_ok=True bulk_qkv_ok=True bulk_o_ok=False lt_qkv128_ok=True b12_pooler_ok=True b12_qkv_ok=True b12_o_ok=True b12_pooler_m8_ok=False b12_qkv_m8_ok=False b12_o_m8_ok=False b12_pooler_m16_ok=False b12_pooler_m32_ok=False b12_unpooler_m16_ok=False b12_unpooler_m32_ok=False b12_o_m16_ok=False b12_o_m32_ok=False; prepare total 5.4s
+[b12 final] [b12] pooler: base 54 (e71 window 54..61, binades -19..-4), escapes 4757 (1.42e-04 of 33554432), max 51 per CTA (cap 224); stream 50.33 MB + escape blocks 0.262 MB vs raw 67.11 MB (x0.7539); host + device round trips bit-exact
+[b12 final] [b12] A12 pooler m=1 b12_kernel<32,8192,8,1,8>: regs=40 local(spill)=0 B static smem=0 B dyn smem=116992 B, occupancy 1 CTA/SM (needs 1), grid 128 x 288 threads
+[b12 final] [b12] gate A12 m=1 b12_kernel<32,8192,8,1,8>: 0.02s; cand 18.27 us (raw-equivalent 3.67 TB/s, stream 2.75 TB/s) vs incumbent 22.18 us (net of the empty-graph baseline)
+[b12 final] [b12] A12 pooler m=1 b12_kernel<32,8192,8,1,4>: regs=45 local(spill)=0 B static smem=0 B dyn smem=116992 B, occupancy 1 CTA/SM (needs 1), grid 128 x 160 threads
+[b12 final] [b12] gate A12 m=1 b12_kernel<32,8192,8,1,4>: 0.02s; cand 18.50 us (raw-equivalent 3.63 TB/s, stream 2.72 TB/s) vs incumbent 22.21 us (net of the empty-graph baseline)
+[b12 final] [b12] A12x8 pooler m=8 b12x_kernel<32,8192,8,1,8,8>: regs=40 local(spill)=0 B static smem=0 B dyn smem=141696 B, occupancy 1 CTA/SM (needs 1), grid 128 x 288 threads
+[b12 final] [b12] gate A12x8 m=8 b12x_kernel<32,8192,8,1,8,8>: 0.02s; cand 25.25 us (raw-equivalent 2.66 TB/s, stream 1.99 TB/s) vs incumbent 23.39 us (net of the empty-graph baseline)
+[b12 final] [b12] A12x8 pooler m=8 b12x_kernel<32,8192,8,1,4,8>: regs=45 local(spill)=0 B static smem=0 B dyn smem=141696 B, occupancy 1 CTA/SM (needs 1), grid 128 x 160 threads
+[b12 final] [b12] gate A12x8 m=8 b12x_kernel<32,8192,8,1,4,8>: 0.02s; cand 25.44 us (raw-equivalent 2.64 TB/s, stream 1.98 TB/s) vs incumbent 23.42 us (net of the empty-graph baseline)
+[b12 final] [b12] A12x16 pooler m=16 b12x_kernel<32,8192,8,1,8,16>: regs=51 local(spill)=0 B static smem=0 B dyn smem=182656 B, occupancy 1 CTA/SM (needs 1), grid 128 x 288 threads
+[b12 final] [b12] gate A12x16 m=16 b12x_kernel<32,8192,8,1,8,16>: 0.02s; cand 34.94 us (raw-equivalent 1.92 TB/s, stream 1.44 TB/s) vs incumbent 23.39 us (net of the empty-graph baseline)
+[b12 final] [b12] A12x32 pooler m=32 b12x_kernel<32,8192,6,1,8,32>: regs=72 local(spill)=0 B static smem=0 B dyn smem=206208 B, occupancy 1 CTA/SM (needs 1), grid 128 x 288 threads
+[b12 final] [b12] gate A12x32 m=32 b12x_kernel<32,8192,6,1,8,32>: 0.02s; cand 52.83 us (raw-equivalent 1.27 TB/s, stream 0.95 TB/s) vs incumbent 24.13 us (net of the empty-graph baseline)
+[b12 final] PATH CHOSEN A12 pooler m=1: candidate b12_kernel<32,8192,8,1,8> (cand 18.27 us vs incumbent 22.18 us)
+[b12 final] PATH CHOSEN A12x8 pooler m=8: incumbent (cand 25.25 us vs incumbent 23.39 us); gate: best b12x_kernel<32,8192,8,1,8,8> cand/incumbent 1.079 > 0.98
+[b12 final] PATH CHOSEN A12x16 pooler m=16: incumbent (cand 34.94 us vs incumbent 23.39 us); gate: best b12x_kernel<32,8192,8,1,8,16> cand/incumbent 1.494 > 0.98
+[b12 final] PATH CHOSEN A12x32 pooler m=32: incumbent (cand 52.83 us vs incumbent 24.13 us); gate: best b12x_kernel<32,8192,6,1,8,32> cand/incumbent 2.190 > 0.98
+[b12 final] [b12] qkv_gate: base 54 (e71 window 54..61, binades -19..-4), escapes 2564 (1.36e-04 of 18874368), max 30 per CTA (cap 224); stream 28.31 MB + escape blocks 0.295 MB vs raw 37.75 MB (x0.7578); host + device round trips bit-exact
+[b12 final] [b12] A2_12 qkv_gate m=1 b12_kernel<16,8192,6,2,4>: regs=35 local(spill)=0 B static smem=0 B dyn smem=92416 B, occupancy 2 CTA/SM (needs 2), grid 144 x 160 threads
+[b12 final] [b12] gate A2_12 m=1 b12_kernel<16,8192,6,2,4>: 0.02s; cand 11.90 us (raw-equivalent 3.17 TB/s, stream 2.38 TB/s) vs incumbent 13.41 us (net of the empty-graph baseline)
+[b12 final] [b12] A2_12 qkv_gate m=1 b12_kernel<16,8192,6,2,8>: regs=35 local(spill)=0 B static smem=0 B dyn smem=92416 B, occupancy 2 CTA/SM (needs 2), grid 144 x 288 threads
+[b12 final] [b12] gate A2_12 m=1 b12_kernel<16,8192,6,2,8>: 0.02s; cand 11.87 us (raw-equivalent 3.18 TB/s, stream 2.38 TB/s) vs incumbent 13.47 us (net of the empty-graph baseline)
+[b12 final] [b12] A2_12x8 qkv_gate m=8 b12x_kernel<16,8192,4,2,4,8>: regs=32 local(spill)=0 B static smem=0 B dyn smem=92032 B, occupancy 2 CTA/SM (needs 2), grid 144 x 160 threads
+[b12 final] [b12] gate A2_12x8 m=8 b12x_kernel<16,8192,4,2,4,8>: 0.02s; cand 17.12 us (raw-equivalent 2.20 TB/s, stream 1.65 TB/s) vs incumbent 14.82 us (net of the empty-graph baseline)
+[b12 final] [b12] A2_12x8 qkv_gate m=8 b12x_kernel<16,8192,4,2,8,8>: regs=34 local(spill)=0 B static smem=0 B dyn smem=92032 B, occupancy 2 CTA/SM (needs 2), grid 144 x 288 threads
+[b12 final] [b12] gate A2_12x8 m=8 b12x_kernel<16,8192,4,2,8,8>: 0.02s; cand 18.05 us (raw-equivalent 2.09 TB/s, stream 1.57 TB/s) vs incumbent 14.91 us (net of the empty-graph baseline)
+[b12 final] PATH CHOSEN A2_12 qkv_gate m=1: candidate b12_kernel<16,8192,6,2,8> (cand 11.87 us vs incumbent 13.47 us)
+[b12 final] PATH CHOSEN A2_12x8 qkv_gate m=8: incumbent (cand 17.12 us vs incumbent 14.82 us); gate: best b12x_kernel<16,8192,4,2,4,8> cand/incumbent 1.156 > 0.98
+[b12 final] [b12] o: base 54 (e71 window 54..61, binades -19..-4), escapes 971 (1.16e-04 of 8388608), max 17 per CTA (cap 224); stream 12.58 MB + escape blocks 0.262 MB vs raw 16.78 MB (x0.7656); host + device round trips bit-exact
+[b12 final] [b12] A3_12 o m=1 b12_kernel<64,1024,8,1,8>: regs=48 local(spill)=0 B static smem=0 B dyn smem=102656 B, occupancy 2 CTA/SM (needs 1), grid 128 x 288 threads
+[b12 final] [b12] gate A3_12 m=1 b12_kernel<64,1024,8,1,8>: 0.02s; cand 5.73 us (raw-equivalent 2.93 TB/s, stream 2.20 TB/s) vs incumbent 6.62 us (net of the empty-graph baseline)
+[b12 final] [b12] A3_12 o m=1 b12_kernel<64,1024,8,1,4>: regs=48 local(spill)=0 B static smem=0 B dyn smem=102656 B, occupancy 2 CTA/SM (needs 1), grid 128 x 160 threads
+[b12 final] [b12] gate A3_12 m=1 b12_kernel<64,1024,8,1,4>: 0.02s; cand 5.86 us (raw-equivalent 2.86 TB/s, stream 2.15 TB/s) vs incumbent 6.78 us (net of the empty-graph baseline)
+[b12 final] [b12] A3_12x8 o m=8 b12x_kernel<64,1024,8,1,8,8>: regs=47 local(spill)=0 B static smem=0 B dyn smem=125312 B, occupancy 1 CTA/SM (needs 1), grid 128 x 288 threads
+[b12 final] [b12] gate A3_12x8 m=8 b12x_kernel<64,1024,8,1,8,8>: 0.02s; cand 7.97 us (raw-equivalent 2.11 TB/s, stream 1.58 TB/s) vs incumbent 6.59 us (net of the empty-graph baseline)
+[b12 final] [b12] A3_12x8 o m=8 b12x_kernel<64,1024,8,1,4,8>: regs=51 local(spill)=0 B static smem=0 B dyn smem=125312 B, occupancy 1 CTA/SM (needs 1), grid 128 x 160 threads
+[b12 final] [b12] gate A3_12x8 m=8 b12x_kernel<64,1024,8,1,4,8>: 0.02s; cand 8.29 us (raw-equivalent 2.02 TB/s, stream 1.52 TB/s) vs incumbent 6.59 us (net of the empty-graph baseline)
+[b12 final] [b12] A3_12x16 o m=16 b12x_kernel<64,1024,8,1,8,16>: regs=63 local(spill)=0 B static smem=0 B dyn smem=149888 B, occupancy 1 CTA/SM (needs 1), grid 128 x 288 threads
+[b12 final] [b12] gate A3_12x16 m=16 b12x_kernel<64,1024,8,1,8,16>: 0.02s; cand 10.69 us (raw-equivalent 1.57 TB/s, stream 1.18 TB/s) vs incumbent 6.78 us (net of the empty-graph baseline)
+[b12 final] [b12] A3_12x32 o m=32 b12x_kernel<64,1024,8,1,8,32>: regs=95 local(spill)=0 B static smem=0 B dyn smem=199040 B, occupancy 1 CTA/SM (needs 1), grid 128 x 288 threads
+[b12 final] [b12] gate A3_12x32 m=32 b12x_kernel<64,1024,8,1,8,32>: 0.02s; cand 16.10 us (raw-equivalent 1.04 TB/s, stream 0.78 TB/s) vs incumbent 6.94 us (net of the empty-graph baseline)
+[b12 final] PATH CHOSEN A3_12 o m=1: candidate b12_kernel<64,1024,8,1,8> (cand 5.73 us vs incumbent 6.62 us)
+[b12 final] PATH CHOSEN A3_12x8 o m=8: incumbent (cand 7.97 us vs incumbent 6.59 us); gate: best b12x_kernel<64,1024,8,1,8,8> cand/incumbent 1.209 > 0.98
+[b12 final] PATH CHOSEN A3_12x16 o m=16: incumbent (cand 10.69 us vs incumbent 6.78 us); gate: best b12x_kernel<64,1024,8,1,8,16> cand/incumbent 1.575 > 0.98
+[b12 final] PATH CHOSEN A3_12x32 o m=32: incumbent (cand 16.10 us vs incumbent 6.94 us); gate: best b12x_kernel<64,1024,8,1,8,32> cand/incumbent 2.318 > 0.98
+[b12 final] [b12] unpooler: base 54 (e71 window 54..61, binades -19..-4), escapes 3234 (9.64e-05 of 33554432), max 38 per CTA (cap 224); stream 50.33 MB + escape blocks 0.262 MB vs raw 67.11 MB (x0.7539); host + device round trips bit-exact
+[b12 final] [b12] U12x16 unpooler m=16 b12x_kernel<64,4096,8,1,8,16>: regs=63 local(spill)=0 B static smem=0 B dyn smem=149888 B, occupancy 1 CTA/SM (needs 1), grid 128 x 288 threads
+[b12 final] [b12] gate U12x16 m=16 b12x_kernel<64,4096,8,1,8,16>: 0.09s; cand 28.51 us (raw-equivalent 2.35 TB/s, stream 1.77 TB/s) vs incumbent 22.43 us (net of the empty-graph baseline)
+[b12 final] [b12] U12x32 unpooler m=32 b12x_kernel<64,4096,8,1,8,32>: regs=95 local(spill)=0 B static smem=0 B dyn smem=199040 B, occupancy 1 CTA/SM (needs 1), grid 128 x 288 threads
+[b12 final] [b12] gate U12x32 m=32 b12x_kernel<64,4096,8,1,8,32>: 0.02s; cand 41.12 us (raw-equivalent 1.63 TB/s, stream 1.22 TB/s) vs incumbent 22.40 us (net of the empty-graph baseline)
+[b12 final] PATH CHOSEN U12x16 unpooler m=16: incumbent (cand 28.51 us vs incumbent 22.43 us); gate: best b12x_kernel<64,4096,8,1,8,16> cand/incumbent 1.271 > 0.98
+[b12 final] PATH CHOSEN U12x32 unpooler m=32: incumbent (cand 41.12 us vs incumbent 22.40 us); gate: best b12x_kernel<64,4096,8,1,8,32> cand/incumbent 1.836 > 0.98

@@ -11,7 +11,7 @@ append-only, newest last.
   attention_decode > prefill (last). On bf16 / attention, favour kernels that port into decode, and submit when a check
   beats that board. Every check must answer a new question; using every check is not required; no identical bytes
   re-rolled.
-- updated: 2026-10-26T21:20Z
+- updated: 2026-10-26T21:40Z
 - step: **bf16_proj**.
   - Done: bulk12 m=1 scored at 1.2664 (board 1.2566 -> 1.2664, rank 381 -> 355) and landed on master.
   - Building: bulk12 for m = 8 / 16 / 32 (branch campaign/expert-bandwidth after 3acb748e, uncommitted). b12x_kernel
@@ -19,8 +19,10 @@ append-only, newest last.
     - Cells: pooler / qkv / o at m=8, then pooler / o / full unpooler at m=16 / 32.
     - Each layer's codec stats, instance gates and PATH CHOSEN lines are re-printed at the end of prepare.
   - Check 22ddaf4a (1.2683): no m >= 8 cell routed. Per-row x TMA copies cost ~30-50 ns each.
-  - Fixed in d466a692 (x via cp.async from all producer lanes), in audit. Next: one check; submit if it beats 1.2664.
-- in flight: nothing
+  - Fixed in d466a692 (x via cp.async from all producer lanes): check 0acdca48 still loses at m >= 8. The next b12 step
+    is cluster multicast of x (a later bf16 window).
+  - In flight: router ticket check 7e8be36a (no memset at m >= 9). Submit if it beats 1.2664.
+- in flight: bf16 check 7e8be36a77534aa7 (router ticket)
 - at 00:00Z (10-27), decode / moe, from the drafts in the session scratchpad (submit_attempt.md, dqab_attempt.md,
   anat_attempt.md):
   1. `okc submit` of `submission.edoff-27ef83df.py` (check f59cb301, 1.5347). Verify that the content hash is
@@ -35,7 +37,7 @@ append-only, newest last.
      - qkv and o, from bf16's b12_kernel (judge-proven: pooler m=1 17.7 -> 14.8 us in bf16).
      - Gate each against today's route, as in bf16. At T >= 8 the decision waits on the bf16 cp.async-x check
        (0acdca48).
-- quota left 10-26: decode 0 checks / 0 scored, moe 0 / 4, bf16 10 / 9, attention 14 / 10, prefill 16 / 10
+- quota left 10-26: decode 0 checks / 0 scored, moe 0 / 4, bf16 8 / 9, attention 14 / 10, prefill 16 / 10
 - boards: decode **1.4956** (rank 347 of 740; 1.5347 would be about 318), moe **1.6851** (rank 370 of 844),
   bf16 **1.2664** (rank 355 of 1090; rank 300 = 1.2865, 200 = 1.3503), overall 347 of 1228
 
@@ -373,3 +375,25 @@ append-only, newest last.
   - Lesson: never stream many small rows through cp.async.bulk. One TMA copy per chunk, LSU cp.async for small pieces.
 - Fix built (d466a692, in audit): x pieces as 16 B cp.async from all 32 producer lanes, with
   cp.async.mbarrier.arrive.noinc on the slot's full barrier (count 1 + 32). The weight chunk stays on the TMA.
+
+## 2026-10-26T21:40Z: bf16 cp.async x path: check 0acdca48 1.2670, m >= 8 still loses; router ticket check dispatched
+
+- check 0acdca481ebc4b47 (03e8197d, audited: ship): passed 9/9 at 1.2670. The m=1 cells routed. No m >= 8 cell
+  routed:
+
+  | cell | b12x (net us) | incumbent (net us) | before cp.async (net us) |
+  |---|---|---|---|
+  | pooler m=8 | 25.3 | 23.4 | 26.4 |
+  | pooler m=16 | 34.9 | 23.4 | 40.4 |
+  | pooler m=32 | 52.8 | 24.1 | 70.6 |
+  | unpooler m=16 / 32 | 28.5 / 41.1 | 22.4 | |
+  | qkv m=8 | 17.1 | 14.8 | |
+  | o m=8 | 8.0 | 6.6 | |
+
+  - The per-row TMA cost is gone. ~1 us per token row remains, probably L2 hot-spotting: 128 CTAs read the same x lines
+    in lockstep.
+  - Next b12 step (a later bf16 window): x once per cluster (2D TMA tensor map + multicast), or a cluster-pair K split.
+- Dispatched 7e8be36a (c891dc84): the router ticket path at m >= 9.
+  - It drops the torch.zeros memset launch on the d16 / d32 / v16 / v32 router rows.
+  - Self-check plus a graph gate per kernel.
+  - Expected ~1 us per row, about +0.9% on the headline.
