@@ -21,7 +21,7 @@ base_sha: 97bc07f18b4cbc9aa9b228fdea23c980cefe6fc2
 base_blob: 82449fd7e7fae52ba13d26109cc48a9fd256b40c
 branch: hyp/muse_prefill_layer/experts-rega-s4-bm256-wide-tile-high-ft-cf
 worktree: .worktrees/muse_prefill_layer/experts-rega-s4-bm256-wide-tile-high-ft-cf
-mode: null
+mode: check
 restack_of: null
 stale_base: true
 implemented_at: 2026-10-26T214402Z
@@ -30,6 +30,8 @@ submission_sha256: 263f2e32390c52ac7c285f0b126d42ab3f13bacc3328fc182f1ab39ba25e5
 norm_sha256: 0c499f6341769f494a929dd9b5fdb8c2a8b71d1fea622a4e6f5687d48fc94a1b
 submission_blob: 5d7e2cb0f68f381154fb868581be341a63e9aca3
 lint_warnings: 106
+attempt_file: 2026-10-26T214409Z-check-experts-rega-s4-bm256-wide-tile-high-ft-cf.md
+prepared_at: 2026-10-26T214409Z
 ---
 
 # experts-rega-s4-bm256-wide-tile-high-ft-cf
