@@ -72,7 +72,7 @@ review: proceed
 status: running
 review_at: 2026-10-25T212333Z
 review_companions: null
-stage: implemented
+stage: dispatched
 claimed_at: 2026-10-25T212552Z
 base_sha: cc874e4f97ac53e4c4a00078d39a8ff28d8316aa
 base_blob: f4751fc054335a94d1b401af272e98a2d4760363
@@ -89,6 +89,8 @@ submission_blob: d24dd7d968891f49c1073544913df9dc158131b9
 lint_warnings: 104
 attempt_file: 2026-10-26T012540Z-check-boundary-overlap-s1-slice-kernel-ffn-tail.md
 prepared_at: 2026-10-26T012540Z
+job: 6962f6c6af3d4e5b
+dispatched_at: 2026-10-26T012946Z
 ---
 
 # boundary-overlap-s1-slice-kernel-ffn-tail
