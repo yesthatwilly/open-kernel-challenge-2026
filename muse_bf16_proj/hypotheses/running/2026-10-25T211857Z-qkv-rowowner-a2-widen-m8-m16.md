@@ -64,6 +64,8 @@ submission_sha256: 042526c721a4122d7d687eacb0cf536e5acb6c9dfca3ab43e01d8d75e8052
 norm_sha256: a8fc057b6ab26474e2c3a026c7083b8f255fe1f2a2001eba200638182b7e1c69
 submission_blob: 463e7b309adf7b48cc294b2f9cff0d85dd4fb9ae
 lint_warnings: 36
+attempt_file: 2026-10-26T012539Z-check-qkv-rowowner-a2-widen-m8-m16.md
+prepared_at: 2026-10-26T012539Z
 ---
 
 # qkv-rowowner-a2-widen-m8-m16
